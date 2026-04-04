@@ -1,0 +1,232 @@
+---
+title: "Unix 时间戳转换完全指南：epoch 与日期互转"
+description: "深入讲解 Unix 时间戳原理、秒与毫秒的区别、时区处理与 2038 年问题，附 Python/JS/Go/SQL 代码示例及在线转换工具。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "timestamp-converter-guide"
+tags: ["时间戳", "unix时间戳", "epoch", "时区", "开发工具"]
+---
+
+看着日志里的 `1712265600`，你知道这是几点吗？Unix 时间戳是软件系统中时间的通用语言——紧凑、无歧义、天然 UTC。这篇文章帮你彻底搞清楚时间戳的一切，从原理到实际代码。
+
+## 什么是 Unix 时间戳？
+
+Unix 时间戳（也叫 epoch time）是从 **1970 年 1 月 1 日 00:00:00 UTC** 到某一时刻所经过的**秒数**。这个基准点（Unix Epoch）是 Unix 系统设计时的约定，此后成为了计算机系统的时间标准。
+
+```
+0          → 1970-01-01 00:00:00 UTC
+1712265600 → 2024-04-05 00:00:00 UTC
+```
+
+核心特性：
+- **无时区**：时间戳永远是 UTC，转成本地时间需要显式指定时区
+- **单调递增**：数字越大 = 时间越晚，直接用整数比较大小
+- **全平台统一**：任何语言、任何操作系统，`1712265600` 代表同一时刻
+
+## 在线转换时间戳
+
+**[使用 ZeroTool 时间戳转换器 →](/tools/timestamp-converter)**
+
+输入 Unix 时间戳，立即看到 UTC 和本地时间。输入日期，得到对应的时间戳。支持秒、毫秒，支持相对时间偏移。
+
+## 秒 vs 毫秒：最常见的坑
+
+各 API 和库对时间戳单位并不统一，这是开发者最常踩的坑：
+
+- **秒**：Unix 命令行、大多数数据库、Python `time.time()`
+- **毫秒**：JavaScript `Date.now()`、Redis、MongoDB、很多 REST API
+
+```
+秒级时间戳：  1712265600       （10 位）
+毫秒级时间戳：1712265600000    （13 位）
+```
+
+判断技巧：如果时间戳有 13 位，几乎可以确定是毫秒。10 位是秒，13 位是毫秒。
+
+## 获取当前时间戳
+
+```bash
+# Bash — 秒
+date +%s
+
+# Bash — 毫秒
+date +%s%3N
+```
+
+```js
+// JavaScript — 毫秒
+Date.now()
+
+// JavaScript — 秒
+Math.floor(Date.now() / 1000)
+```
+
+```python
+# Python — 秒（浮点数）
+import time
+time.time()
+
+# Python — 秒（整数）
+int(time.time())
+```
+
+## 代码转换示例
+
+### Python
+
+```python
+from datetime import datetime, timezone
+import zoneinfo
+
+ts = 1712265600
+
+# 时间戳 → UTC datetime
+dt_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
+print(dt_utc.isoformat())
+# 2024-04-05T00:00:00+00:00
+
+# 时间戳 → 北京时间（CST = UTC+8）
+dt_cst = datetime.fromtimestamp(ts, tz=zoneinfo.ZoneInfo("Asia/Shanghai"))
+print(dt_cst.isoformat())
+# 2024-04-05T08:00:00+08:00
+
+# datetime → 时间戳
+dt = datetime(2024, 4, 5, 8, 0, 0, tzinfo=zoneinfo.ZoneInfo("Asia/Shanghai"))
+print(int(dt.timestamp()))  # 1712265600
+```
+
+**常见错误：** `datetime.fromtimestamp(ts)` 不加时区参数，会使用**服务器的本地时区**。服务器通常是 UTC，但国内开发机可能是 CST，导致生产和开发环境行为不一致。**永远显式指定时区。**
+
+### JavaScript / Node.js
+
+```js
+const ts = 1712265600;  // 秒
+
+// 时间戳 → Date（注意 JS 用毫秒）
+const date = new Date(ts * 1000);
+
+console.log(date.toISOString());
+// "2024-04-05T00:00:00.000Z"
+
+// 转成北京时间
+console.log(date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }));
+// "2024/4/5 08:00:00"
+
+// Date → 时间戳（秒）
+const timestamp = Math.floor(new Date('2024-04-05T00:00:00Z').getTime() / 1000);
+```
+
+### Go
+
+```go
+import (
+    "fmt"
+    "time"
+)
+
+ts := int64(1712265600)
+
+// 时间戳 → time.Time（UTC）
+t := time.Unix(ts, 0).UTC()
+fmt.Println(t.Format(time.RFC3339))
+// 2024-04-05T00:00:00Z
+
+// 转成上海时间
+loc, _ := time.LoadLocation("Asia/Shanghai")
+t_cst := t.In(loc)
+fmt.Println(t_cst.Format(time.RFC3339))
+// 2024-04-05T08:00:00+08:00
+
+// time.Time → 时间戳
+timestamp := t.Unix()
+```
+
+### SQL
+
+```sql
+-- PostgreSQL：时间戳 → 可读时间
+SELECT to_timestamp(1712265600) AT TIME ZONE 'UTC';
+-- 2024-04-05 00:00:00+00
+
+-- 转成北京时间（UTC+8）
+SELECT to_timestamp(1712265600) AT TIME ZONE 'Asia/Shanghai';
+-- 2024-04-05 08:00:00
+
+-- MySQL
+SELECT FROM_UNIXTIME(1712265600);
+
+-- 当前时间戳
+SELECT EXTRACT(EPOCH FROM now())::int;  -- PostgreSQL
+SELECT UNIX_TIMESTAMP();               -- MySQL
+```
+
+## 时区处理的正确姿势
+
+很多国内项目在部署时会遇到时区问题，尤其是：
+
+1. **开发机在国内（CST），服务器在海外（UTC）**，时间差 8 小时
+2. **Docker 容器默认 UTC**，与宿主机时区不同
+3. **数据库存储的是 UTC，前端展示要转本地时间**
+
+正确做法：
+- **存储层**：统一存 UTC 时间戳或带时区的 datetime
+- **业务层**：所有时间计算用 UTC 进行
+- **展示层**：在最终渲染时转成用户的本地时区
+
+```python
+# 不要这样（依赖服务器时区）
+dt = datetime.fromtimestamp(ts)
+
+# 要这样（显式 UTC）
+dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+```
+
+## ISO 8601：人类可读的时间格式
+
+对于 API 接口和日志，推荐使用 ISO 8601 格式而非裸时间戳：
+
+```
+2024-04-05T00:00:00Z            UTC（推荐）
+2024-04-05T08:00:00+08:00       带时区偏移
+2024-04-05T00:00:00.000Z        毫秒精度
+```
+
+ISO 8601 的优点：按字典序排序即是时间顺序，人类可读，无歧义。
+
+```python
+from datetime import datetime, timezone
+datetime.now(timezone.utc).isoformat()
+# "2024-04-05T00:00:00.000000+00:00"
+```
+
+## 2038 年问题
+
+Unix 时间戳如果用 **32 位有符号整数**存储，最大值是 `2,147,483,647`，对应 **2038 年 1 月 19 日 03:14:07 UTC**——超过这个值就会溢出为负数。
+
+现代系统（64 位操作系统、新版数据库）已经使用 64 位整数，几十亿年后才会溢出。但以下情况需要留意：
+
+- 老旧的嵌入式系统或 C 代码
+- MySQL 的 `TIMESTAMP` 类型（上限 2038 年，用 `DATETIME` 替代）
+- 32 位平台上的旧库
+
+如果你的系统会运行到 2038 年之后，检查数据库字段类型是否为 64 位。
+
+## 时间戳格式速查
+
+| 格式 | 示例 | 适用场景 |
+|------|------|---------|
+| Unix 秒 | `1712265600` | 系统内部、数据库 |
+| Unix 毫秒 | `1712265600000` | JavaScript、Redis |
+| ISO 8601 UTC | `2024-04-05T00:00:00Z` | API 接口（推荐） |
+| ISO 8601 带偏移 | `2024-04-05T08:00:00+08:00` | 包含时区信息 |
+| RFC 2822 | `Fri, 05 Apr 2024 00:00:00 +0000` | 邮件头 |
+
+## 小结
+
+时间处理是每个项目都会遇到的基础问题，但细节多、坑多。记住三条原则：
+
+1. **存 UTC，显示再转本地时区**
+2. **搞清楚 API 用的是秒还是毫秒**
+3. **显式指定时区，不依赖服务器默认时区**
+
+**[在线 Unix 时间戳转换，支持秒/毫秒/时区 →](/tools/timestamp-converter)**

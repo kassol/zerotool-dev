@@ -1,0 +1,232 @@
+---
+title: "Unix Timestamp Converter: Epoch to Date and Back"
+description: "Learn what Unix timestamps are, how to convert epoch time to human-readable dates in any timezone, and how to work with timestamps in JavaScript, Python, and more."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "timestamp-converter-guide-zh"
+tags: ["timestamp", "unix-timestamp", "epoch", "datetime", "developer-tools"]
+---
+
+Every developer has stared at `1712265600` in a log file and wondered what time that actually is. Unix timestamps are the universal language of time in software — compact, unambiguous, timezone-free. This guide explains how they work and how to convert them without hunting for a calculator.
+
+## What Is a Unix Timestamp?
+
+A Unix timestamp (also called epoch time) is the number of **seconds elapsed since January 1, 1970, 00:00:00 UTC** — the Unix epoch. This reference point was chosen somewhat arbitrarily when Unix was designed, but it has become the universal standard for representing points in time in computer systems.
+
+```
+0          → 1970-01-01 00:00:00 UTC
+1712265600 → 2024-04-05 00:00:00 UTC
+```
+
+Key properties:
+- **Timezone-free**: a timestamp is always in UTC. Converting to a local time requires a timezone.
+- **Monotonically increasing**: higher number = later point in time
+- **Integer arithmetic**: comparing timestamps is just integer comparison
+
+## Convert Timestamps Instantly
+
+**[Try the ZeroTool Timestamp Converter →](/tools/timestamp-converter)**
+
+Enter any Unix timestamp to see the UTC and local time equivalents. Enter a date to get the corresponding timestamp. Handles milliseconds, seconds, and relative offsets.
+
+## Seconds vs Milliseconds
+
+APIs are inconsistent about this. JavaScript uses **milliseconds** (`Date.now()` returns ms). Unix command-line tools and most database timestamps use **seconds**. Redis, MongoDB, and many REST APIs use milliseconds.
+
+```
+Timestamp in seconds:      1712265600
+Timestamp in milliseconds: 1712265600000
+```
+
+When you get a timestamp, check if it is roughly the current time — if it is 1000x larger than expected, you have milliseconds instead of seconds. The ZeroTool converter handles both formats.
+
+## Current Timestamp
+
+```bash
+# Bash — seconds
+date +%s
+
+# Bash — milliseconds (GNU date)
+date +%s%3N
+```
+
+```js
+// JavaScript — milliseconds
+Date.now()
+
+// JavaScript — seconds
+Math.floor(Date.now() / 1000)
+```
+
+```python
+# Python — seconds (float)
+import time
+time.time()
+
+# Python — seconds (integer)
+int(time.time())
+```
+
+## Converting Timestamps in Code
+
+### JavaScript
+
+```js
+// Timestamp → Date
+const ts = 1712265600;  // seconds
+const date = new Date(ts * 1000);  // multiply by 1000 for ms
+
+console.log(date.toISOString());
+// "2024-04-05T00:00:00.000Z"
+
+console.log(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+// "4/4/2024, 8:00:00 PM"
+
+// Date → Timestamp
+const timestamp = Math.floor(new Date('2024-04-05').getTime() / 1000);
+console.log(timestamp);  // 1712275200
+```
+
+### Python
+
+```python
+from datetime import datetime, timezone
+
+# Timestamp → datetime (UTC)
+ts = 1712265600
+dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+print(dt.isoformat())
+# 2024-04-05 00:00:00+00:00
+
+# Timestamp → datetime (local timezone)
+dt_local = datetime.fromtimestamp(ts)
+print(dt_local)
+
+# datetime → timestamp
+from datetime import datetime, timezone
+dt = datetime(2024, 4, 5, 0, 0, 0, tzinfo=timezone.utc)
+print(int(dt.timestamp()))  # 1712265600
+```
+
+### Go
+
+```go
+import (
+    "fmt"
+    "time"
+)
+
+// Timestamp → time.Time
+ts := int64(1712265600)
+t := time.Unix(ts, 0).UTC()
+fmt.Println(t.Format(time.RFC3339))
+// 2024-04-05T00:00:00Z
+
+// time.Time → timestamp
+timestamp := t.Unix()
+fmt.Println(timestamp)  // 1712265600
+```
+
+### SQL
+
+```sql
+-- PostgreSQL: timestamp → human readable
+SELECT to_timestamp(1712265600) AT TIME ZONE 'UTC';
+-- 2024-04-05 00:00:00+00
+
+-- MySQL: timestamp → human readable
+SELECT FROM_UNIXTIME(1712265600);
+-- 2024-04-05 00:00:00
+
+-- Current timestamp
+SELECT EXTRACT(EPOCH FROM now())::int;  -- PostgreSQL
+SELECT UNIX_TIMESTAMP();               -- MySQL
+```
+
+## Timezones
+
+A Unix timestamp is always UTC. Converting to a local time requires a timezone identifier:
+
+```python
+from datetime import datetime
+import zoneinfo
+
+ts = 1712265600
+# Tokyo time (UTC+9)
+dt = datetime.fromtimestamp(ts, tz=zoneinfo.ZoneInfo("Asia/Tokyo"))
+print(dt.isoformat())
+# 2024-04-05T09:00:00+09:00
+
+# New York time
+dt = datetime.fromtimestamp(ts, tz=zoneinfo.ZoneInfo("America/New_York"))
+print(dt.isoformat())
+# 2024-04-04T20:00:00-04:00
+```
+
+**Common mistake**: `datetime.fromtimestamp(ts)` without a timezone uses the server's local timezone, which is non-deterministic in production. Always specify a timezone explicitly.
+
+## The Year 2038 Problem
+
+Unix timestamps stored as 32-bit signed integers overflow on **January 19, 2038 at 03:14:07 UTC** — the value exceeds the maximum for a 32-bit integer (`2,147,483,647`).
+
+Modern systems use 64-bit integers, which won't overflow for billions of years. But embedded systems, legacy databases, and some C code may still use 32-bit timestamps. If you are working on long-lived systems, verify that timestamp fields are 64-bit.
+
+## ISO 8601: The Human-Readable Alternative
+
+ISO 8601 is the international standard for representing dates and times as strings:
+
+```
+2024-04-05T00:00:00Z          UTC
+2024-04-05T09:00:00+09:00     Tokyo
+2024-04-05T00:00:00.000Z      Millisecond precision
+```
+
+ISO 8601 strings sort lexicographically in the correct order and are unambiguous across locales. For logs, APIs, and user-facing timestamps, prefer ISO 8601 over Unix timestamps.
+
+```js
+new Date().toISOString()
+// "2024-04-05T00:00:00.000Z"
+```
+
+```python
+from datetime import datetime, timezone
+datetime.now(timezone.utc).isoformat()
+# "2024-04-05T00:00:00.000000+00:00"
+```
+
+## Duration Arithmetic
+
+```js
+const ONE_HOUR = 3600;    // seconds
+const ONE_DAY  = 86400;
+const ONE_WEEK = 604800;
+
+// One week from now
+const nextWeek = Math.floor(Date.now() / 1000) + ONE_WEEK;
+
+// Days between two timestamps
+const diff = Math.abs(ts2 - ts1);
+const days = Math.floor(diff / 86400);
+```
+
+## Common Timestamp Formats
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| Unix seconds | `1712265600` | 10 digits (until 2286) |
+| Unix milliseconds | `1712265600000` | 13 digits |
+| ISO 8601 UTC | `2024-04-05T00:00:00Z` | Best for APIs |
+| ISO 8601 with offset | `2024-04-05T09:00:00+09:00` | Includes timezone |
+| RFC 2822 | `Fri, 05 Apr 2024 00:00:00 +0000` | Used in email headers |
+
+## Summary
+
+Unix timestamps are the backbone of time in software. The key rules:
+
+1. **Always work in UTC** — convert to local time only at display layer
+2. **Know whether your API returns seconds or milliseconds**
+3. **Use 64-bit integers** for timestamps (32-bit overflows in 2038)
+4. **Specify timezones explicitly** — never rely on the server's local timezone
+5. **Prefer ISO 8601** for human-readable time in APIs and logs
+
+**[Convert any Unix timestamp to a readable date with ZeroTool →](/tools/timestamp-converter)**

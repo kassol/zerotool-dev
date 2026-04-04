@@ -1,0 +1,196 @@
+---
+title: "JWT Decoder Online: Decode and Understand JSON Web Tokens"
+description: "Learn how JSON Web Tokens work, how to decode JWT claims, verify signatures, and avoid common security mistakes. Free online JWT decoder tool included."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "jwt-decoder-guide-zh"
+tags: ["jwt", "json-web-token", "authentication", "developer-tools"]
+---
+
+JSON Web Tokens (JWTs) are the backbone of modern authentication — they carry user identity and permissions across APIs and services. But they are also opaque by design: a raw JWT looks like random noise. This guide explains what is inside a JWT, how to decode it, and the security traps developers fall into.
+
+## What Is a JWT?
+
+A JWT is a compact, URL-safe string that encodes a set of **claims** (key-value pairs) and optionally carries a **cryptographic signature**. It is used to pass identity and authorization data between parties.
+
+A JWT looks like this:
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+```
+
+Three Base64URL-encoded parts separated by dots (`.`):
+
+1. **Header** — algorithm and token type
+2. **Payload** — the claims (user data)
+3. **Signature** — cryptographic proof of authenticity
+
+## Decoding a JWT
+
+**[Try the ZeroTool JWT Decoder →](/tools/jwt-decoder)**
+
+Paste any JWT and instantly see the decoded header, payload, and signature details. The tool works entirely in your browser — your token never leaves your machine.
+
+### What Decoding Reveals
+
+Decoding the example token above:
+
+**Header:**
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+**Payload:**
+```json
+{
+  "sub": "1234567890",
+  "name": "Alice",
+  "iat": 1516239022
+}
+```
+
+Decoding is trivial — Base64URL decoding with no secret needed. This means **the payload is not encrypted and not secret**. Never put sensitive data (passwords, payment info, private API keys) in a JWT payload.
+
+## Standard Claims
+
+The JWT specification defines several registered claims:
+
+| Claim | Meaning |
+|-------|---------|
+| `sub` | Subject — who the token is about (typically a user ID) |
+| `iss` | Issuer — who created the token |
+| `aud` | Audience — who the token is intended for |
+| `exp` | Expiration time (Unix timestamp) |
+| `iat` | Issued at (Unix timestamp) |
+| `nbf` | Not before — token not valid before this time |
+| `jti` | JWT ID — unique identifier for the token |
+
+`exp` is critical: always check it. A token is only valid between `nbf` (or `iat`) and `exp`.
+
+## Signature Algorithms
+
+### HMAC (HS256, HS384, HS512)
+
+A shared secret key is used for both signing and verification. Simple, but requires that both the issuer and verifier share the same secret.
+
+```
+Signature = HMAC-SHA256(base64url(header) + "." + base64url(payload), secret)
+```
+
+If the secret is weak (e.g., `"secret"` or `"123456"`), the token can be brute-forced.
+
+### RSA / ECDSA (RS256, RS384, ES256, ES384)
+
+Asymmetric algorithms: the issuer signs with a **private key**, and verifiers check the signature with a **public key**. The public key can be distributed freely — only the holder of the private key can create valid tokens.
+
+This is the right choice for multi-service architectures where multiple services need to verify tokens but only one service should issue them.
+
+## Verifying a JWT in Code
+
+### Node.js (jsonwebtoken)
+
+```js
+const jwt = require('jsonwebtoken');
+
+// Verify with a symmetric secret
+try {
+  const decoded = jwt.verify(token, 'your-secret-key');
+  console.log(decoded.sub); // user ID
+} catch (err) {
+  // TokenExpiredError, JsonWebTokenError, etc.
+  console.error('Invalid token:', err.message);
+}
+```
+
+### Python (PyJWT)
+
+```python
+import jwt
+
+try:
+    payload = jwt.decode(token, "your-secret-key", algorithms=["HS256"])
+    print(payload["sub"])
+except jwt.ExpiredSignatureError:
+    print("Token has expired")
+except jwt.InvalidTokenError as e:
+    print(f"Invalid token: {e}")
+```
+
+### Go (golang-jwt/jwt)
+
+```go
+import "github.com/golang-jwt/jwt/v5"
+
+token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+    if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+        return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+    }
+    return []byte("your-secret-key"), nil
+})
+
+if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+    fmt.Println(claims["sub"])
+}
+```
+
+## The `alg: none` Vulnerability
+
+Some early JWT libraries had a catastrophic flaw: if the `alg` header was set to `"none"`, they would accept the token without verifying the signature — allowing anyone to craft arbitrary tokens.
+
+**Always explicitly specify the expected algorithm when verifying:**
+
+```python
+# Wrong — accepts any algorithm including "none"
+jwt.decode(token, key)
+
+# Correct — only accepts HS256
+jwt.decode(token, key, algorithms=["HS256"])
+```
+
+Never allow `"none"` as a valid algorithm in your verification code.
+
+## Where to Store JWTs in the Browser
+
+| Storage | XSS Risk | CSRF Risk | Notes |
+|---------|----------|-----------|-------|
+| `localStorage` | High | None | XSS can steal the token; no mitigation possible |
+| `sessionStorage` | High | None | Same as localStorage |
+| `HttpOnly` cookie | Low | Medium | XSS cannot read it; use `SameSite=Strict` to mitigate CSRF |
+
+The safest option is an `HttpOnly; Secure; SameSite=Strict` cookie. JWTs in `localStorage` are accessible to any JavaScript on the page — a single XSS vulnerability exposes all tokens.
+
+## JWT vs Session Tokens
+
+JWTs are stateless: the server does not need to look them up in a database on every request, which scales well. But this means **you cannot revoke a JWT before it expires**.
+
+If you need immediate revocation (e.g., log out, user banned, password changed), you have two options:
+
+1. Keep JWTs short-lived (5-15 minutes) and use refresh tokens
+2. Maintain a server-side revocation list (denylist) — this makes JWTs essentially stateful
+
+## Debugging Tips
+
+When a JWT-related error occurs in production:
+
+1. **Decode the token** with [ZeroTool JWT Decoder](/tools/jwt-decoder) — check `exp`, `iss`, `aud`
+2. **Check clock skew** — if your server clock differs from the issuer's, `exp` checks will fail inconsistently
+3. **Verify the algorithm** — make sure the token's `alg` matches what your code expects
+4. **Check the audience** — if `aud` is set, your verification must pass the expected audience
+
+## Summary
+
+| Task | Tool / Approach |
+|------|----------------|
+| Inspect a JWT payload | [ZeroTool JWT Decoder](/tools/jwt-decoder) |
+| Verify in Node.js | `jsonwebtoken` library |
+| Verify in Python | `PyJWT` library |
+| Algorithm for new systems | RS256 (asymmetric) or HS256 (symmetric with strong secret) |
+| Token storage | `HttpOnly` cookie |
+| Revocation | Short expiry + refresh tokens |
+
+JWTs are powerful and widely supported, but they carry subtle security risks that bite developers who treat them as opaque blobs. Understanding what is inside — and what verification actually means — is the difference between secure and broken authentication.
+
+**[Decode any JWT instantly with ZeroTool →](/tools/jwt-decoder)**

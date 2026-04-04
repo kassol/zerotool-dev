@@ -1,0 +1,206 @@
+---
+title: "SHA256 Hash Generator Online: The Complete Guide"
+description: "Learn how SHA256, MD5, and other hash functions work. Generate and verify hashes instantly with our free online hash generator tool."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "hash-generator-guide-zh"
+tags: ["hash", "sha256", "md5", "cryptography", "developer-tools"]
+---
+
+A hash is one of the most useful primitives in software engineering — verifying file integrity, storing passwords, and building checksums all rely on it. This guide explains how hash functions work, when to use each algorithm, and how to generate hashes without leaving your browser.
+
+## What Is a Hash Function?
+
+A hash function takes any input (a string, a file, bytes) and produces a fixed-length output called a **digest** or **hash**. Key properties:
+
+- **Deterministic**: same input always produces the same hash
+- **One-way**: you cannot reverse a hash back to the input
+- **Avalanche effect**: one character change completely alters the output
+- **Fixed length**: SHA-256 always outputs 64 hex characters regardless of input size
+
+```
+Input:  "hello"
+SHA-256: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+
+Input:  "Hello"  (capital H)
+SHA-256: 185f8db32921bd46d35cc06fbf3a8a26d2c25e5b7cb1f21edf4e5e523f3b8a4f
+```
+
+A single character change produces a completely different digest.
+
+## Common Hash Algorithms
+
+### MD5
+
+Output: 128-bit (32 hex chars)
+
+MD5 was once the standard for checksums and password hashing. It is now **cryptographically broken** — collision attacks are practical, meaning two different inputs can produce the same hash. Do not use MD5 for security purposes.
+
+**Still acceptable for:** non-security checksums (e.g. detecting accidental file corruption), content-addressed caching where collision resistance does not matter.
+
+```bash
+echo -n "hello" | md5sum
+# 5d41402abc4b2a76b9719d911017c592
+```
+
+### SHA-1
+
+Output: 160-bit (40 hex chars)
+
+SHA-1 is also broken for security purposes (Google demonstrated a practical collision attack in 2017). Git historically used SHA-1 for commit hashes, but is migrating to SHA-256.
+
+**Avoid for:** TLS certificates, digital signatures, password hashing.
+
+### SHA-256
+
+Output: 256-bit (64 hex chars)
+
+Part of the SHA-2 family, SHA-256 is the current standard for most security-sensitive applications. Bitcoin uses it for proof-of-work. TLS certificates use it for signing.
+
+```bash
+echo -n "hello" | sha256sum
+# 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+```
+
+### SHA-512
+
+Output: 512-bit (128 hex chars)
+
+Slower than SHA-256 but with a larger digest. Preferred on 64-bit systems where full 64-bit word operations give a performance advantage.
+
+### SHA-3 (Keccak)
+
+A fundamentally different algorithm from SHA-2, not just a larger version. SHA-3 provides an independent security foundation — if SHA-2 were ever broken, SHA-3 would not automatically be affected.
+
+## Generating Hashes Online
+
+**[Try the ZeroTool Hash Generator →](/tools/hash-generator)**
+
+Paste any text, select your algorithm (MD5, SHA-1, SHA-256, SHA-512), and get the hash instantly. No data is sent to a server — the computation runs entirely in your browser.
+
+Use cases:
+- Verify a downloaded file matches its published checksum
+- Generate a content hash for cache-busting URLs
+- Check that two strings are identical without revealing the originals
+- Compute a quick fingerprint during debugging
+
+## Hashing in Code
+
+### JavaScript / Node.js
+
+```js
+const crypto = require('crypto');
+
+const hash = crypto.createHash('sha256')
+  .update('hello world')
+  .digest('hex');
+
+console.log(hash);
+// b94d27b9934d3e08a52e52d7da7dabfac484efe04294e576f3b5380e7f09ed66
+```
+
+For browser environments without Node.js:
+
+```js
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+const hash = await sha256('hello world');
+```
+
+### Python
+
+```python
+import hashlib
+
+text = "hello world"
+
+md5    = hashlib.md5(text.encode()).hexdigest()
+sha256 = hashlib.sha256(text.encode()).hexdigest()
+sha512 = hashlib.sha512(text.encode()).hexdigest()
+
+print(f"MD5:    {md5}")
+print(f"SHA256: {sha256}")
+print(f"SHA512: {sha512}")
+```
+
+### Go
+
+```go
+import (
+    "crypto/sha256"
+    "fmt"
+)
+
+func main() {
+    h := sha256.Sum256([]byte("hello world"))
+    fmt.Printf("%x\n", h)
+}
+```
+
+## Hashing Files
+
+### Verify a Download
+
+Most software distributions publish a SHA-256 checksum alongside their downloads:
+
+```bash
+# Compute hash of downloaded file
+sha256sum archive.tar.gz
+
+# Compare against published hash
+echo "expected-hash-here  archive.tar.gz" | sha256sum --check
+```
+
+### HMAC: Keyed Hashing
+
+A plain hash has no secret — anyone can compute `SHA256("hello")`. HMAC (Hash-based Message Authentication Code) adds a secret key, making the output verifiable only by parties that know the key:
+
+```js
+const hmac = crypto.createHmac('sha256', 'my-secret-key')
+  .update('hello world')
+  .digest('hex');
+```
+
+This is how webhook signatures work (e.g., GitHub webhooks include an `X-Hub-Signature-256` header computed with HMAC-SHA256 over the request body).
+
+## Password Hashing: Do Not Use SHA-256
+
+SHA-256 is too fast for password storage. An attacker with a GPU can compute billions of SHA-256 hashes per second, making brute-force and rainbow table attacks practical.
+
+For passwords, use a **slow hashing algorithm** designed specifically for the purpose:
+
+| Algorithm | When to Use |
+|-----------|-------------|
+| bcrypt | Most widely supported, safe default |
+| Argon2id | Winner of Password Hashing Competition, recommended for new systems |
+| scrypt | Memory-hard, good alternative to Argon2 |
+
+```python
+# Python — bcrypt
+import bcrypt
+
+hashed = bcrypt.hashpw(b"my-password", bcrypt.gensalt())
+bcrypt.checkpw(b"my-password", hashed)  # True
+```
+
+## Choosing the Right Algorithm
+
+| Use Case | Algorithm |
+|----------|-----------|
+| File integrity check | SHA-256 |
+| Digital signature / TLS | SHA-256 or SHA-384 |
+| Password storage | Argon2id or bcrypt |
+| HMAC / webhook signature | HMAC-SHA256 |
+| Legacy checksum compatibility | MD5 (non-security only) |
+| Non-cryptographic hash (hashtable) | xxHash, MurmurHash3 |
+
+## Summary
+
+SHA-256 is the practical default for nearly all cryptographic needs today — it is fast enough for non-password use cases, standardized, and well-audited. MD5 and SHA-1 should be avoided for anything security-related. For passwords, always use a dedicated slow algorithm like Argon2id.
+
+**[Generate SHA-256, MD5, and other hashes instantly with ZeroTool →](/tools/hash-generator)**

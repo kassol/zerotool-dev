@@ -1,0 +1,208 @@
+---
+title: "JWT 完全指南：解码、验证与常见安全陷阱"
+description: "深入讲解 JSON Web Token 结构、标准声明、签名算法与验证流程，附 Python/Node.js/Go 代码示例，在线 JWT 解码工具免安装。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "jwt-decoder-guide"
+tags: ["jwt", "身份认证", "token", "开发工具"]
+---
+
+JWT（JSON Web Token）是当前最主流的无状态身份认证方案。从微服务内部调用到前后端鉴权，几乎处处可见。但 JWT 的"不透明"外表让很多开发者把它当黑箱用，遇到问题不知从何下手。这篇文章帮你拆开这个黑箱。
+
+## JWT 是什么？
+
+JWT 是一个紧凑的、URL 安全的字符串，用于在不同系统间传递**声明（claims）**——通常是用户身份和权限信息，并附带可选的**密码学签名**。
+
+一个典型的 JWT 长这样：
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IuW8oOWPkSIsImlhdCI6MTUxNjIzOTAyMn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+```
+
+用 `.` 分隔的三段，每段都是 Base64URL 编码：
+
+1. **Header**（头部）— 算法和 Token 类型
+2. **Payload**（载荷）— 声明数据
+3. **Signature**（签名）— 完整性验证
+
+## 在线解码 JWT
+
+**[使用 ZeroTool JWT 解码器 →](/tools/jwt-decoder)**
+
+粘贴 JWT，立即看到解码后的 Header、Payload 和签名信息。所有运算在浏览器本地完成，Token 不会上传到任何服务器。
+
+### 解码后看到什么？
+
+**Header：**
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+**Payload：**
+```json
+{
+  "sub": "1234567890",
+  "name": "张三",
+  "iat": 1516239022
+}
+```
+
+解码 Payload 不需要任何密钥——Base64URL 解码是公开操作。这意味着 **JWT 的 Payload 不是加密的，不是保密的**。永远不要在 JWT 里放密码、支付信息或私密 API Key。
+
+## 标准声明（Registered Claims）
+
+JWT 规范定义了以下标准字段：
+
+| 字段 | 含义 |
+|------|------|
+| `sub` | Subject，Token 描述的主体（通常是用户 ID） |
+| `iss` | Issuer，Token 的颁发者 |
+| `aud` | Audience，Token 的目标接收方 |
+| `exp` | 过期时间（Unix 时间戳），**必须验证** |
+| `iat` | 颁发时间（Unix 时间戳） |
+| `nbf` | Not Before，Token 在此时间之前不可用 |
+| `jti` | JWT ID，Token 的唯一标识符 |
+
+`exp` 字段是最关键的——任何 JWT 验证代码都必须检查 `exp`，否则过期的 Token 永远有效。
+
+## 签名算法
+
+### HMAC（HS256、HS384、HS512）
+
+对称算法，颁发方和验证方共享同一个密钥。简单，但所有需要验证的服务都必须持有密钥。
+
+```
+Signature = HMAC-SHA256(base64url(header) + "." + base64url(payload), 密钥)
+```
+
+如果密钥太弱（比如 `"secret"` 或 `"123456"`），Token 可以被暴力破解。
+
+### RSA / ECDSA（RS256、RS384、ES256、ES384）
+
+非对称算法：颁发方用**私钥**签名，验证方用**公钥**验证。公钥可以公开分发，只有私钥持有者才能签发有效的 Token。
+
+适用于微服务架构：认证服务持有私钥签发 Token，其他所有服务用公钥验证，无需共享密钥。
+
+## 代码验证示例
+
+### Python（PyJWT）
+
+```python
+import jwt
+
+try:
+    payload = jwt.decode(
+        token,
+        "your-secret-key",
+        algorithms=["HS256"]  # 必须显式指定，禁止 "none"
+    )
+    user_id = payload["sub"]
+except jwt.ExpiredSignatureError:
+    print("Token 已过期")
+except jwt.InvalidTokenError as e:
+    print(f"Token 无效：{e}")
+```
+
+### Node.js（jsonwebtoken）
+
+```js
+const jwt = require('jsonwebtoken');
+
+try {
+  const decoded = jwt.verify(token, 'your-secret-key');
+  console.log(decoded.sub);  // 用户 ID
+} catch (err) {
+  if (err.name === 'TokenExpiredError') {
+    console.error('Token 已过期');
+  } else {
+    console.error('Token 无效:', err.message);
+  }
+}
+```
+
+### Go（golang-jwt/jwt）
+
+```go
+import "github.com/golang-jwt/jwt/v5"
+
+token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+    // 验证算法，防止算法混淆攻击
+    if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+        return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+    }
+    return []byte("your-secret-key"), nil
+})
+```
+
+## 三大高危安全漏洞
+
+### 1. `alg: none` 攻击
+
+早期某些 JWT 库存在严重漏洞：如果 Header 中 `alg` 设置为 `"none"`，库会跳过签名验证，接受任意伪造的 Token。
+
+**防御：永远显式指定允许的算法列表：**
+
+```python
+# 错误 — 可能接受 alg: none
+jwt.decode(token, key)
+
+# 正确
+jwt.decode(token, key, algorithms=["HS256"])
+```
+
+### 2. 算法混淆攻击（RS256 → HS256）
+
+攻击者将 Header 中的 `alg` 从 `RS256` 改为 `HS256`，然后用服务器的**公钥**（公开可知）作为 HMAC 密钥签名。如果服务器验证逻辑没有锁定算法，就会误用公钥验证 HMAC 签名，导致伪造成功。
+
+**防御：验证时严格指定算法，不信任 Token Header 中的 `alg`。**
+
+### 3. 不验证 `exp`
+
+有些实现只解码 Payload 不验证签名和过期时间，导致任意 Token 都被接受。
+
+**防御：使用成熟的 JWT 库，不要手动解码+手动校验。**
+
+## JWT 在浏览器中的存储
+
+| 存储位置 | XSS 风险 | CSRF 风险 | 建议 |
+|---------|---------|---------|------|
+| `localStorage` | 高 | 低 | 不推荐，XSS 可直接读取 |
+| `sessionStorage` | 高 | 低 | 同上 |
+| `HttpOnly` Cookie | 低 | 中 | 推荐，配合 `SameSite=Strict` |
+
+国内前后端分离项目常把 JWT 存 `localStorage`，图的是方便。但一旦页面有任何 XSS 漏洞，所有用户的 Token 都会被窃取。**推荐用 `HttpOnly; Secure; SameSite=Strict` Cookie。**
+
+## JWT 的局限性：无法即时吊销
+
+JWT 是无状态的，服务器不存储 Token 状态。这意味着一旦签发，在 `exp` 到期之前无法撤销——即使用户已注销、密码已修改。
+
+**常见解决方案：**
+
+1. **短有效期 + Refresh Token**：Access Token 5-15 分钟过期，用 Refresh Token 换新 Token
+2. **服务端黑名单**：维护一个已吊销 Token 的 ID 列表（`jti` 字段），验证时查一次 Redis——但这让 JWT 变成"有状态的"，失去了无状态的优势
+
+大多数场景下，短有效期 + Refresh Token 是更好的权衡。
+
+## 调试技巧
+
+线上出现 JWT 相关报错时：
+
+1. 用 [ZeroTool JWT 解码器](/tools/jwt-decoder) 解码 Token，检查 `exp`（是否过期）、`iss`（颁发者是否正确）、`aud`（受众是否匹配）
+2. 检查服务器时钟偏差——如果颁发方和验证方的系统时间不一致，`exp` 验证会随机失败
+3. 确认算法 `alg` 与代码预期一致
+4. 检查 `aud`——如果 Token 设置了 `aud`，验证时必须传入预期的 `aud` 值
+
+## 小结
+
+JWT 是强大且广泛支持的认证标准，但有一套必须了解的安全规则：
+
+- Payload 不加密，不放敏感数据
+- 验证时必须检查 `exp`、`iss`、`aud`
+- 显式指定允许的算法，拒绝 `none`
+- 存储用 `HttpOnly Cookie`，不用 `localStorage`
+- 需要即时吊销时，用短有效期 + Refresh Token
+
+**[在线解码任意 JWT，浏览器本地运算 →](/tools/jwt-decoder)**

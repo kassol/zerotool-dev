@@ -1,0 +1,209 @@
+---
+title: "URL Encode / Decode Online: Percent Encoding Explained"
+description: "Learn how URL encoding (percent encoding) works, when to use encodeURIComponent vs encodeURI, and how to encode and decode URLs instantly online."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "url-encode-decode-guide-zh"
+tags: ["url-encoding", "percent-encoding", "encodeURIComponent", "developer-tools"]
+---
+
+Pasting a URL with spaces or special characters into a browser and watching it break is a rite of passage for developers. URL encoding — or percent encoding — is what makes arbitrary data safe to include in a URL. This guide explains exactly how it works and when to apply it.
+
+## Why URLs Need Encoding
+
+A URL can only contain a limited set of characters: letters (`A-Z`, `a-z`), digits (`0-9`), and a small set of special characters (`-`, `_`, `.`, `~`). Every other character must be **percent-encoded**: replaced with a `%` followed by its two-digit hexadecimal ASCII code.
+
+```
+Space  →  %20
+#      →  %23
+?      →  %3F
+=      →  %3D
+&      →  %26
+/      →  %2F
++      →  %2B
+```
+
+Without encoding, a space in a query parameter would end the parameter. A `&` inside a parameter value would be interpreted as a separator. The encoding makes the structure unambiguous.
+
+## Encoding Online
+
+**[Try the ZeroTool URL Encoder/Decoder →](/tools/url-encode)**
+
+Paste any text or URL and encode or decode it instantly. Useful for debugging API calls, constructing redirect URLs, and decoding obfuscated query strings.
+
+## encodeURI vs encodeURIComponent
+
+JavaScript has two built-in functions for URL encoding. Choosing the wrong one is a common source of bugs.
+
+### `encodeURI(url)`
+
+Encodes a **complete URL**. It preserves characters that have structural meaning in a URL: `:`, `/`, `?`, `#`, `[`, `]`, `@`, `!`, `$`, `&`, `'`, `(`, `)`, `*`, `+`, `,`, `;`, `=`.
+
+```js
+encodeURI("https://example.com/search?q=hello world&lang=en")
+// "https://example.com/search?q=hello%20world&lang=en"
+```
+
+The space becomes `%20`, but `?`, `=`, and `&` are preserved because they are part of the URL structure.
+
+### `encodeURIComponent(value)`
+
+Encodes a **single value** to be used as a query parameter or path segment. It encodes everything that `encodeURI` preserves, including `?`, `#`, `&`, `/`, and `=`.
+
+```js
+const query = encodeURIComponent("C++ is great & fast");
+const url = `https://example.com/search?q=${query}`;
+// https://example.com/search?q=C%2B%2B%20is%20great%20%26%20fast
+```
+
+**Rule of thumb:** When building a URL from parts, use `encodeURIComponent` on each query parameter value. When encoding an entire URL string that is already structured, use `encodeURI`.
+
+### The `+` vs `%20` Difference
+
+HTML form submissions traditionally encode spaces as `+` rather than `%20`. This is called **application/x-www-form-urlencoded** encoding. When parsing query strings, both should be treated as spaces, but they are technically different encodings — which can cause subtle bugs when mixing them.
+
+```js
+// x-www-form-urlencoded style (form submissions)
+"hello world" → "hello+world"
+
+// RFC 3986 percent encoding (modern standard)
+"hello world" → "hello%20world"
+```
+
+## Decoding URLs
+
+The reverse operation:
+
+```js
+decodeURI("https://example.com/search?q=hello%20world")
+// "https://example.com/search?q=hello world"
+
+decodeURIComponent("C%2B%2B%20is%20great%20%26%20fast")
+// "C++ is great & fast"
+```
+
+In Python:
+
+```python
+from urllib.parse import quote, unquote, urlencode, parse_qs
+
+# Encode a value
+encoded = quote("C++ is great & fast")
+# "C%2B%2B%20is%20great%20%26%20fast"
+
+# Decode
+decoded = unquote("C%2B%2B%20is%20great%20%26%20fast")
+# "C++ is great & fast"
+```
+
+## Building Query Strings Correctly
+
+Never build query strings by hand with string concatenation. Use the platform's built-in utilities:
+
+### JavaScript (Browser)
+
+```js
+const params = new URLSearchParams({
+  q: "C++ is great & fast",
+  lang: "en",
+  page: 1
+});
+
+const url = `https://example.com/search?${params}`;
+// https://example.com/search?q=C%2B%2B+is+great+%26+fast&lang=en&page=1
+```
+
+Note: `URLSearchParams` uses `+` for spaces (form encoding), not `%20`.
+
+### Python
+
+```python
+from urllib.parse import urlencode
+
+params = {
+    "q": "C++ is great & fast",
+    "lang": "en",
+    "page": 1
+}
+
+query_string = urlencode(params)
+url = f"https://example.com/search?{query_string}"
+```
+
+### Go
+
+```go
+import "net/url"
+
+params := url.Values{}
+params.Set("q", "C++ is great & fast")
+params.Set("lang", "en")
+url := "https://example.com/search?" + params.Encode()
+```
+
+## Path Segments vs Query Parameters
+
+Encoding rules differ slightly between path segments and query parameters. The `/` character in a path segment means "directory separator" — to include a literal `/` in a path segment value, you must encode it as `%2F`.
+
+```
+/files/2024/report.pdf        →  three path segments
+/files/2024%2Freport.pdf      →  two path segments, second contains a slash
+```
+
+Most web frameworks handle this correctly at the routing level, but it matters when constructing URLs manually or working with REST APIs that embed IDs in paths.
+
+## International Characters
+
+Modern URLs support Unicode through **Internationalized Resource Identifiers (IRI)**. Browsers automatically percent-encode non-ASCII characters using their UTF-8 byte representation:
+
+```
+https://example.com/search?q=日本語
+→ https://example.com/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E
+```
+
+```python
+from urllib.parse import quote
+
+quote("日本語", safe="")
+# "%E6%97%A5%E6%9C%AC%E8%AA%9E"
+```
+
+## Common Pitfalls
+
+### Double-encoding
+
+Encoding an already-encoded string produces broken output:
+
+```js
+// Wrong: encoding an already-encoded value
+encodeURIComponent("hello%20world")
+// "hello%2520world"  — %25 is the encoding of %
+```
+
+Always decode first if you are unsure whether a value is already encoded.
+
+### Forgetting to encode redirect URLs
+
+Redirect targets embedded in query parameters must be fully encoded:
+
+```
+# Broken — the outer ?next= parser cannot tell where the redirect URL ends
+https://auth.example.com/login?next=https://app.example.com/page?id=1&view=full
+
+# Correct
+https://auth.example.com/login?next=https%3A%2F%2Fapp.example.com%2Fpage%3Fid%3D1%26view%3Dfull
+```
+
+## Summary
+
+| Situation | Use |
+|-----------|-----|
+| Encode a query parameter value | `encodeURIComponent` |
+| Encode a full URL string | `encodeURI` |
+| Build query strings | `URLSearchParams` / `urlencode` |
+| Decode a URL or component | `decodeURIComponent` / `unquote` |
+| Quick manual encode/decode | [ZeroTool URL Encoder](/tools/url-encode) |
+
+URL encoding is one of those topics where knowing the details prevents a whole class of hard-to-reproduce bugs. When in doubt, encode — and use your language's built-in utilities, not string concatenation.
+
+**[Encode and decode URLs instantly with ZeroTool →](/tools/url-encode)**

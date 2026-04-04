@@ -1,0 +1,207 @@
+---
+title: "哈希函数完全指南：SHA256、MD5 在线生成与校验"
+description: "深入讲解 SHA256、MD5 等哈希算法原理与适用场景，附代码示例，在线哈希生成器免安装即用。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "hash-generator-guide"
+tags: ["哈希", "sha256", "md5", "密码学", "开发工具"]
+---
+
+哈希（Hash）是开发者日常工作中绕不开的基础概念——校验文件完整性、存储密码、生成缓存 key，背后都是哈希函数。这篇文章从原理到实战，帮你建立正确的认知，并告诉你什么场景该用什么算法。
+
+## 哈希函数是什么？
+
+哈希函数将任意长度的输入（字符串、文件、字节流）映射到固定长度的输出，这个输出叫做**摘要（digest）**或**哈希值**。
+
+核心特性：
+
+- **确定性**：相同输入永远得到相同输出
+- **单向性**：无法从哈希值反推原始输入
+- **雪崩效应**：改变输入中的任意一个字符，输出会发生彻底变化
+- **固定长度**：SHA-256 无论输入多长，输出始终是 64 个十六进制字符
+
+```
+输入：  "hello"
+SHA-256: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+
+输入：  "Hello"  （大写 H）
+SHA-256: 185f8db32921bd46d35cc06fbf3a8a26d2c25e5b7cb1f21edf4e5e523f3b8a4f
+```
+
+仅改了一个字母，输出完全不同——这就是雪崩效应。
+
+## 常见哈希算法对比
+
+### MD5
+
+输出：128 位（32 个十六进制字符）
+
+MD5 曾是校验和、密码哈希的主流选择。但现在**已被证明不安全**——碰撞攻击在实践中可行，即两段不同的输入可以产生相同的哈希值。
+
+**仍可用于**：非安全场景的文件完整性校验（排除意外损坏）、内容寻址缓存。
+
+```bash
+echo -n "hello" | md5sum
+# 5d41402abc4b2a76b9719d911017c592
+```
+
+### SHA-1
+
+输出：160 位（40 个十六进制字符）
+
+Google 在 2017 年演示了实际的 SHA-1 碰撞攻击（SHAttered）。Git 曾经使用 SHA-1 作为 commit 哈希，正在迁移到 SHA-256。**不要用于安全场合。**
+
+### SHA-256
+
+输出：256 位（64 个十六进制字符）
+
+SHA-2 家族的主力，目前绝大多数安全场景的标准选择。比特币工作量证明、TLS 证书签名均使用 SHA-256。
+
+```bash
+echo -n "hello" | sha256sum
+# 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+```
+
+### SHA-512
+
+输出：512 位（128 个十六进制字符）
+
+比 SHA-256 摘要更长。在 64 位系统上利用 64 位字操作，性能反而可能优于 SHA-256。
+
+### SHA-3（Keccak）
+
+与 SHA-2 底层架构完全不同的独立算法——不是"更大的 SHA-2"。即使 SHA-2 将来被攻破，SHA-3 也不受影响，提供额外的安全边界。
+
+## 在线生成哈希
+
+**[使用 ZeroTool 哈希生成器 →](/tools/hash-generator)**
+
+粘贴任意文本，选择算法（MD5、SHA-1、SHA-256、SHA-512），即时得到哈希值。所有计算在浏览器本地完成，不上传数据。
+
+适用场景：
+- 验证下载文件与官方公布的校验和是否一致
+- 生成内容哈希用于 CDN 缓存失效（cache busting）
+- 在不暴露原文的情况下比较两个字符串是否相同
+- 调试时快速生成数据指纹
+
+## 代码示例
+
+### Python
+
+```python
+import hashlib
+
+text = "你好，世界"
+
+md5    = hashlib.md5(text.encode()).hexdigest()
+sha256 = hashlib.sha256(text.encode()).hexdigest()
+
+print(f"MD5:    {md5}")
+print(f"SHA256: {sha256}")
+```
+
+### Node.js
+
+```js
+const crypto = require('crypto');
+
+const hash = crypto.createHash('sha256')
+  .update('你好，世界')
+  .digest('hex');
+
+console.log(hash);
+```
+
+浏览器环境（无 Node.js）：
+
+```js
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+```
+
+### Go
+
+```go
+import (
+    "crypto/sha256"
+    "fmt"
+)
+
+func main() {
+    h := sha256.Sum256([]byte("你好，世界"))
+    fmt.Printf("%x\n", h)
+}
+```
+
+## 文件完整性校验
+
+开源软件发布时通常会附上 SHA-256 校验和，下载完成后验证：
+
+```bash
+# 计算下载文件的哈希值
+sha256sum archive.tar.gz
+
+# 对照官方公布的哈希值验证
+echo "官方哈希值  archive.tar.gz" | sha256sum --check
+```
+
+国内很多软件镜像站（清华 TUNA、阿里云镜像）都会提供 SHA-256 或 MD5 校验和，养成下载后校验的习惯，避免下载到被篡改的文件。
+
+## HMAC：带密钥的哈希
+
+普通哈希没有密钥，任何人都可以计算 `SHA256("hello")`。HMAC（基于哈希的消息认证码）引入密钥，只有持有密钥的双方才能验证：
+
+```python
+import hmac
+import hashlib
+
+key = b'my-secret-key'
+message = b'hello world'
+
+signature = hmac.new(key, message, hashlib.sha256).hexdigest()
+```
+
+微信公众号、支付宝等开放平台的接口签名本质上都是 HMAC 的变体。GitHub Webhook 的 `X-Hub-Signature-256` 也是用 HMAC-SHA256 计算的。
+
+## 密码存储：不要用 SHA-256
+
+SHA-256 的问题在于**太快了**。现代 GPU 每秒可以计算数十亿次 SHA-256，使得暴力破解和彩虹表攻击非常可行。
+
+密码存储必须使用专为此设计的**慢哈希算法**：
+
+| 算法 | 推荐指数 |
+|------|---------|
+| Argon2id | 首选，密码哈希竞赛冠军 |
+| bcrypt | 支持最广泛，兼容性好 |
+| scrypt | 内存困难型，是 Argon2 的好替代 |
+
+```python
+# Python — passlib
+from passlib.hash import argon2
+
+hashed = argon2.hash("用户密码")
+argon2.verify("用户密码", hashed)  # True
+```
+
+Django 默认使用 PBKDF2+SHA256，可以切换为 Argon2；Laravel 默认使用 bcrypt。
+
+## 算法选型速查表
+
+| 场景 | 推荐算法 |
+|------|---------|
+| 文件完整性校验 | SHA-256 |
+| TLS 证书 / 数字签名 | SHA-256 / SHA-384 |
+| 密码存储 | Argon2id 或 bcrypt |
+| API 签名 / Webhook | HMAC-SHA256 |
+| 非安全场景兼容旧系统 | MD5（明确标注非安全） |
+| 哈希表、布隆过滤器 | xxHash、MurmurHash3 |
+
+## 小结
+
+SHA-256 是当前绝大多数密码学需求的实践标准——足够快、标准化且经过充分审计。MD5 和 SHA-1 已不适用于安全场景。密码存储请务必使用 Argon2id 或 bcrypt，永远不要用 SHA-256 直接哈希密码。
+
+**[在线生成 SHA-256、MD5 等哈希值，浏览器本地计算 →](/tools/hash-generator)**

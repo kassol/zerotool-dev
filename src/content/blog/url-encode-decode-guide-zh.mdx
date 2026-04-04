@@ -1,0 +1,208 @@
+---
+title: "URL 编码解码完全指南：百分号编码与中文 URL"
+description: "深入讲解 URL 编码（百分号编码）原理，encodeURIComponent 与 encodeURI 的区别，附 Python/JS/Go 代码示例及在线工具。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "url-encode-decode-guide"
+tags: ["url编码", "百分号编码", "encodeURIComponent", "开发工具"]
+---
+
+URL 里只能出现有限的字符集。当你的 URL 包含中文、空格、`&`、`=` 这些"特殊字符"时，就需要对它们进行编码，否则浏览器和服务器会误解 URL 的结构。这篇文章讲清楚 URL 编码的来龙去脉，帮你避开常见的坑。
+
+## 为什么需要 URL 编码？
+
+URL 规范（RFC 3986）规定，URL 中只能包含以下字符而无需编码：
+
+- 字母 `A-Z`、`a-z`
+- 数字 `0-9`
+- 特殊符号 `-`、`_`、`.`、`~`
+- 结构保留字符：`:`、`/`、`?`、`#`、`[`、`]`、`@`、`!`、`$`、`&`、`'`、`()`、`*`、`+`、`,`、`;`、`=`
+
+其他所有字符必须进行**百分号编码**：用 `%` 加上该字符 UTF-8 字节的十六进制表示。
+
+```
+空格   →  %20
+#     →  %23
+?     →  %3F
+=     →  %3D
+&     →  %26
+/     →  %2F
+中    →  %E4%B8%AD
+```
+
+如果不编码，一个 `&` 会被解析为查询参数的分隔符，一个 `?` 会开启新的查询字符串，URL 结构就乱了。
+
+## 在线编码 / 解码
+
+**[使用 ZeroTool URL 编码/解码工具 →](/tools/url-encode)**
+
+粘贴任意文本或 URL，一键完成编码或解码。调试 API 请求、分析重定向链接、解读被混淆的查询参数都用得上。
+
+## encodeURI 与 encodeURIComponent 的区别
+
+这是 JavaScript 开发者最容易踩的坑。
+
+### `encodeURI(url)`
+
+用于编码**完整 URL**。它会保留 URL 结构字符（`:`、`/`、`?`、`#`、`&`、`=` 等），只对不合法的字符编码。
+
+```js
+encodeURI("https://example.com/search?q=hello world&lang=zh")
+// "https://example.com/search?q=hello%20world&lang=zh"
+```
+
+空格被编码为 `%20`，但 `?`、`=`、`&` 保持原样（它们是 URL 结构的一部分）。
+
+### `encodeURIComponent(value)`
+
+用于编码**单个参数值**。它比 `encodeURI` 更激进，连 `?`、`#`、`&`、`/`、`=` 也一并编码。
+
+```js
+const q = encodeURIComponent("C++ 开发 & 实战");
+const url = `https://example.com/search?q=${q}`;
+// https://example.com/search?q=C%2B%2B%20%E5%BC%80%E5%8F%91%20%26%20%E5%AE%9E%E6%88%98
+```
+
+**记住这条规则：**
+- 拼接查询参数值 → 用 `encodeURIComponent`
+- 对一个已经结构化的完整 URL 编码 → 用 `encodeURI`
+
+### `+` 与 `%20` 的区别
+
+HTML 表单提交（`application/x-www-form-urlencoded`）用 `+` 表示空格，而 RFC 3986 百分号编码用 `%20`。两者在语义上等同，但在不同的上下文下混用会产生 bug。
+
+```js
+"hello world" → "hello+world"   // 表单编码
+"hello world" → "hello%20world" // RFC 3986
+```
+
+## 解码
+
+```js
+decodeURIComponent("C%2B%2B%20%E5%BC%80%E5%8F%91")
+// "C++ 开发"
+```
+
+Python：
+
+```python
+from urllib.parse import quote, unquote
+
+# 编码
+encoded = quote("C++ 开发 & 实战", safe="")
+# "C%2B%2B%20%E5%BC%80%E5%8F%91%20%26%20%E5%AE%9E%E6%88%98"
+
+# 解码
+decoded = unquote(encoded)
+# "C++ 开发 & 实战"
+```
+
+## 正确构建查询字符串
+
+**永远不要用字符串拼接手动构造查询字符串。** 用平台内置的工具：
+
+### JavaScript（浏览器 / Node.js）
+
+```js
+const params = new URLSearchParams({
+  q: "C++ 开发 & 实战",
+  lang: "zh",
+  page: 1
+});
+
+const url = `https://example.com/search?${params}`;
+// https://example.com/search?q=C%2B%2B+%E5%BC%80%E5%8F%91+%26+%E5%AE%9E%E6%88%98&lang=zh&page=1
+```
+
+注意：`URLSearchParams` 用 `+` 表示空格（表单编码）。
+
+### Python
+
+```python
+from urllib.parse import urlencode
+
+params = {
+    "q": "C++ 开发 & 实战",
+    "lang": "zh",
+    "page": 1
+}
+
+query = urlencode(params)
+url = f"https://example.com/search?{query}"
+```
+
+### Go
+
+```go
+import "net/url"
+
+params := url.Values{}
+params.Set("q", "C++ 开发 & 实战")
+params.Set("lang", "zh")
+url := "https://example.com/search?" + params.Encode()
+```
+
+## 中文 URL 编码
+
+中文字符在 URL 中会被编码为其 UTF-8 字节序列的百分号形式。浏览器地址栏显示的是解码后的形式（更易读），但实际发出的请求是编码后的。
+
+```python
+from urllib.parse import quote
+
+# 中文 → UTF-8 字节 → 百分号编码
+quote("中文")        # "%E4%B8%AD%E6%96%87"
+quote("日本語", safe="")  # "%E6%97%A5%E6%9C%AC%E8%AA%9E"
+```
+
+这也是为什么国内一些旧系统用 GBK 编码中文 URL——它们用的不是 UTF-8，解码时如果字符集不匹配就会出现乱码。现代系统统一使用 UTF-8，不再有这个问题。
+
+## 路径段 vs 查询参数
+
+路径段（path segment）和查询参数的编码规则略有不同。路径中的 `/` 是分隔符——如果你的值本身包含 `/`，必须编码为 `%2F`：
+
+```
+/files/2024/report.pdf       →  三个路径段
+/files/2024%2Freport.pdf     →  两个路径段，第二段的值含斜杠
+```
+
+在构造含有任意 ID 的 REST API URL 时，务必对 ID 中的特殊字符进行编码。
+
+## 重定向 URL 中的坑
+
+重定向目标嵌套在查询参数里时，必须完整编码：
+
+```
+# 错误 — 外层解析器会被 next= 后面的 ? 和 & 迷惑
+https://auth.example.com/login?next=https://app.example.com/page?id=1&view=full
+
+# 正确
+https://auth.example.com/login?next=https%3A%2F%2Fapp.example.com%2Fpage%3Fid%3D1%26view%3Dfull
+```
+
+OAuth 回调 URL 也是如此——`redirect_uri` 参数值必须先进行 `encodeURIComponent`，否则某些严格的 OAuth 服务器会拒绝请求。
+
+## 二次编码问题
+
+对已经编码的字符串再次编码会产生 `%25XX`（`%` 本身被编码为 `%25`）：
+
+```js
+// 错误：对已编码的值再次编码
+encodeURIComponent("hello%20world")
+// "hello%2520world"  ← %25 是 % 的编码，不是你想要的
+```
+
+如果不确定输入是否已经编码，先 decode 再 encode。
+
+## 速查表
+
+| 场景 | 使用 |
+|------|------|
+| 编码查询参数值 | `encodeURIComponent` / `quote(s, safe="")` |
+| 编码完整 URL 字符串 | `encodeURI` / `quote(url, safe=":/?#[]@!$&'()*+,;=")` |
+| 构建查询字符串 | `URLSearchParams` / `urlencode` |
+| 解码 | `decodeURIComponent` / `unquote` |
+| 快速手工编码解码 | [ZeroTool URL 编码工具](/tools/url-encode) |
+
+URL 编码是那种"不了解时频繁踩坑、了解后一劳永逸"的知识点。记住核心规则：**参数值用 `encodeURIComponent`，不要手动拼接字符串**，就能避免 90% 的问题。
+
+**[在线 URL 编码 / 解码，即粘即用 →](/tools/url-encode)**
