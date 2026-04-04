@@ -1,0 +1,148 @@
+---
+// ToolLayout.astro — for SEO tool pages
+// Pattern: "Free Online [Tool Name] - [Site Name]"
+// Each tool gets its own URL, full SEO, and ad slots
+
+import BaseLayout from './BaseLayout.astro';
+import AdUnit from '../components/AdUnit.astro';
+
+interface Props {
+  title: string;           // e.g. "Capitalize Title Online — Free Tool"
+  description: string;     // 120-160 chars, keyword-rich
+  toolName: string;        // e.g. "Title Case Converter"
+  lang?: string;
+  canonicalUrl?: string;
+  faqItems?: { question: string; answer: string }[];
+}
+
+const {
+  title,
+  description,
+  toolName,
+  lang = 'en',
+  canonicalUrl,
+  faqItems = [],
+} = Astro.props;
+
+// JSON-LD structured data for tool pages (SoftwareApplication schema)
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: toolName,
+  description,
+  applicationCategory: 'UtilityApplication',
+  operatingSystem: 'Any',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+};
+
+// FAQ schema when faqItems present
+const faqJsonLd = faqItems.length > 0 ? {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqItems.map(({ question, answer }) => ({
+    '@type': 'Question',
+    name: question,
+    acceptedAnswer: { '@type': 'Answer', text: answer },
+  })),
+} : null;
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonicalUrl={canonicalUrl}
+  lang={lang}
+>
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+    {faqJsonLd && (
+      <script type="application/ld+json" set:html={JSON.stringify(faqJsonLd)} />
+    )}
+  </Fragment>
+
+  <div class="tool-page">
+    <header class="tool-header">
+      <h1>{toolName}</h1>
+      <p class="tool-description">{description}</p>
+    </header>
+
+    <!-- Top ad: above the fold but below h1 -->
+    <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_TOP ?? ''} format="horizontal" />
+
+    <!-- Tool UI injected here -->
+    <section class="tool-widget">
+      <slot name="tool" />
+    </section>
+
+    <!-- Mid ad: between tool and instructions -->
+    <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_MID ?? ''} format="rectangle" />
+
+    <!-- How-to / instructions (SEO content) -->
+    <section class="tool-content">
+      <slot />
+    </section>
+
+    <!-- FAQ section -->
+    {faqItems.length > 0 && (
+      <section class="tool-faq">
+        <h2>FAQ</h2>
+        {faqItems.map(({ question, answer }) => (
+          <details>
+            <summary>{question}</summary>
+            <p>{answer}</p>
+          </details>
+        ))}
+      </section>
+    )}
+
+    <!-- Bottom ad -->
+    <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_BOTTOM ?? ''} format="rectangle" />
+  </div>
+</BaseLayout>
+
+<style>
+  .tool-page {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+  }
+
+  .tool-header h1 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .tool-description {
+    color: #555;
+    font-size: 1.05rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .tool-widget {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+  }
+
+  .tool-content {
+    line-height: 1.8;
+    margin: 1.5rem 0;
+  }
+
+  .tool-faq details {
+    margin: 0.75rem 0;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 0.75rem;
+  }
+
+  .tool-faq summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 0.5rem 0;
+  }
+</style>
