@@ -1,0 +1,238 @@
+---
+// TimestampConverterTool — reusable widget, no props needed
+---
+<div>
+  <div class="tc-wrap">
+
+    <!-- Section 1: Timestamp -> Date -->
+    <div class="tc-section">
+      <h3 class="tc-section-title">Timestamp → Date</h3>
+      <div class="tc-input-row">
+        <input
+          id="tc-ts-input"
+          type="text"
+          placeholder="e.g. 1712160000"
+          spellcheck="false"
+          inputmode="numeric"
+        />
+        <button id="tc-ts-convert" class="btn-primary">Convert</button>
+        <button id="tc-ts-now" class="btn-secondary">Now</button>
+      </div>
+      <div id="tc-ts-status" class="tc-status" aria-live="polite"></div>
+      <div id="tc-ts-results" class="tc-results"></div>
+    </div>
+
+    <hr class="tc-divider" />
+
+    <!-- Section 2: Date -> Timestamp -->
+    <div class="tc-section">
+      <h3 class="tc-section-title">Date → Timestamp</h3>
+      <div class="tc-input-row">
+        <input
+          id="tc-date-input"
+          type="datetime-local"
+          step="1"
+        />
+        <button id="tc-date-convert" class="btn-primary">Convert</button>
+      </div>
+      <div id="tc-date-status" class="tc-status" aria-live="polite"></div>
+      <div id="tc-date-results" class="tc-results"></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var tsInput = document.getElementById('tc-ts-input');
+      var tsStatus = document.getElementById('tc-ts-status');
+      var tsResults = document.getElementById('tc-ts-results');
+      var dateInput = document.getElementById('tc-date-input');
+      var dateStatus = document.getElementById('tc-date-status');
+      var dateResults = document.getElementById('tc-date-results');
+
+      function pad(n) { return ('0' + n).slice(-2); }
+
+      function fmtOffset(offsetMin) {
+        var sign = offsetMin <= 0 ? '+' : '-';
+        var abs = Math.abs(offsetMin);
+        return 'UTC' + sign + pad(Math.floor(abs/60)) + ':' + pad(abs%60);
+      }
+
+      function isoLocal(d) {
+        return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+          ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      }
+
+      function makeResultRow(label, value) {
+        var div = document.createElement('div');
+        div.className = 'tc-row';
+        div.innerHTML = '<span class="tc-label">' + label + '</span><code class="tc-value" id="tc-rv-' + label.replace(/\s/g,'') + '">' + value + '</code><button class="btn-copy" data-id="tc-rv-' + label.replace(/\s/g,'') + '">Copy</button>';
+        return div;
+      }
+
+      function attachCopyListeners(container) {
+        container.querySelectorAll('.btn-copy').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var el = document.getElementById(btn.getAttribute('data-id'));
+            if (!el) return;
+            navigator.clipboard.writeText(el.textContent).then(function () {
+              var prev = btn.textContent;
+              btn.textContent = 'Copied!';
+              setTimeout(function () { btn.textContent = prev; }, 1500);
+            });
+          });
+        });
+      }
+
+      function setStatus(el, msg, isErr) {
+        el.textContent = msg;
+        el.className = 'tc-status ' + (isErr ? 'error' : 'success');
+      }
+
+      // Timestamp -> Date
+      function convertTs() {
+        var raw = tsInput.value.trim();
+        tsResults.innerHTML = '';
+        if (!raw) { tsStatus.textContent = ''; tsStatus.className = 'tc-status'; return; }
+        var num = Number(raw);
+        if (isNaN(num) || raw === '') { setStatus(tsStatus, 'Not a valid number.', true); return; }
+
+        // Auto-detect ms vs s: 13+ digits = milliseconds
+        var ms = raw.replace('.','').length >= 13 ? num : num * 1000;
+        var d = new Date(ms);
+        if (isNaN(d.getTime())) { setStatus(tsStatus, 'Out of range.', true); return; }
+
+        setStatus(tsStatus, '', false);
+        tsStatus.className = 'tc-status';
+
+        var tzLabel = fmtOffset(d.getTimezoneOffset());
+
+        [
+          ['Unix (s)', Math.floor(ms / 1000).toString()],
+          ['Unix (ms)', ms.toString()],
+          ['ISO 8601', d.toISOString()],
+          ['UTC', d.toUTCString()],
+          ['Local (' + tzLabel + ')', isoLocal(d)],
+        ].forEach(function (pair) {
+          tsResults.appendChild(makeResultRow(pair[0], pair[1]));
+        });
+        attachCopyListeners(tsResults);
+      }
+
+      document.getElementById('tc-ts-convert').addEventListener('click', function () {
+        convertTs();
+        window.trackTool && window.trackTool('timestamp_converter', 'ts_to_date');
+      });
+      tsInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') convertTs(); });
+
+      document.getElementById('tc-ts-now').addEventListener('click', function () {
+        var now = Date.now();
+        tsInput.value = Math.floor(now / 1000).toString();
+        convertTs();
+      });
+
+      // Date -> Timestamp
+      function convertDate() {
+        var val = dateInput.value;
+        dateResults.innerHTML = '';
+        if (!val) { dateStatus.textContent = ''; dateStatus.className = 'tc-status'; return; }
+
+        // datetime-local gives local time — parse as local
+        var d = new Date(val);
+        if (isNaN(d.getTime())) { setStatus(dateStatus, 'Invalid date.', true); return; }
+
+        setStatus(dateStatus, '', false);
+        dateStatus.className = 'tc-status';
+
+        var ms = d.getTime();
+        var tzLabel = fmtOffset(d.getTimezoneOffset());
+
+        [
+          ['Unix (s)', Math.floor(ms / 1000).toString()],
+          ['Unix (ms)', ms.toString()],
+          ['ISO 8601', d.toISOString()],
+          ['UTC', d.toUTCString()],
+          ['Local (' + tzLabel + ')', isoLocal(d)],
+        ].forEach(function (pair) {
+          dateResults.appendChild(makeResultRow(pair[0], pair[1]));
+        });
+        attachCopyListeners(dateResults);
+      }
+
+      document.getElementById('tc-date-convert').addEventListener('click', function () {
+        convertDate();
+        window.trackTool && window.trackTool('timestamp_converter', 'date_to_ts');
+      });
+      dateInput.addEventListener('change', convertDate);
+    })();
+  </script>
+</div>
+
+<style>
+  .tc-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .tc-section { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .tc-section-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+
+  .tc-input-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .tc-input-row input[type="text"],
+  .tc-input-row input[type="datetime-local"] {
+    flex: 1;
+    min-width: 160px;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .tc-input-row input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .tc-divider { border: none; border-top: 1px solid var(--color-border); margin: 0; }
+
+  .tc-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .tc-status.success { color: #057a55; }
+  .tc-status.error { color: #c0392b; }
+
+  .tc-results { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .tc-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    flex-wrap: wrap;
+  }
+
+  .tc-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    min-width: 90px;
+    white-space: nowrap;
+  }
+
+  .tc-value {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    word-break: break-all;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .tc-status.success { color: #34d399; }
+    .tc-status.error { color: #f87171; }
+  }
+</style>

@@ -1,0 +1,170 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="url-wrap">
+    <div class="url-mode">
+      <label>
+        <input type="radio" name="urlmode" value="encode" checked /> Encode
+      </label>
+      <label>
+        <input type="radio" name="urlmode" value="decode" /> Decode
+      </label>
+    </div>
+
+    <div class="url-row">
+      <label for="url-input" id="url-input-label">Plain Text / URL</label>
+      <textarea
+        id="url-input"
+        placeholder="Enter text or URL to encode..."
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="url-actions">
+      <button id="url-run" class="btn-primary">Encode</button>
+      <button id="url-swap" class="btn-secondary">Swap</button>
+      <button id="url-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="url-status" class="url-status" aria-live="polite"></div>
+
+    <div class="url-row">
+      <label for="url-output" id="url-output-label">
+        Encoded URL
+        <button id="url-copy" class="btn-copy" type="button">Copy</button>
+      </label>
+      <textarea
+        id="url-output"
+        placeholder="Result appears here..."
+        readonly
+        spellcheck="false"
+      ></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('url-input');
+      var outputEl = document.getElementById('url-output');
+      var statusEl = document.getElementById('url-status');
+      var runBtn = document.getElementById('url-run');
+      var copyBtn = document.getElementById('url-copy');
+      var mode = 'encode';
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'url-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'url-status';
+      }
+
+      function updateUI() {
+        if (mode === 'encode') {
+          document.getElementById('url-input-label').textContent = 'Plain Text / URL';
+          runBtn.textContent = 'Encode';
+          inputEl.placeholder = 'Enter text or URL to encode...';
+          outputEl.placeholder = 'Percent-encoded output appears here...';
+        } else {
+          document.getElementById('url-input-label').textContent = 'Encoded URL';
+          runBtn.textContent = 'Decode';
+          inputEl.placeholder = 'Enter percent-encoded URL to decode...';
+          outputEl.placeholder = 'Decoded text appears here...';
+        }
+      }
+
+      document.querySelectorAll('input[name="urlmode"]').forEach(function (r) {
+        r.addEventListener('change', function () {
+          mode = this.value;
+          updateUI();
+          clearStatus();
+          outputEl.value = '';
+        });
+      });
+
+      runBtn.addEventListener('click', function () {
+        var val = inputEl.value;
+        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        try {
+          outputEl.value = mode === 'encode'
+            ? encodeURIComponent(val)
+            : decodeURIComponent(val);
+          setStatus(mode === 'encode' ? 'Encoded.' : 'Decoded.', false);
+          window.trackTool && window.trackTool('url_encode', mode);
+        } catch (e) {
+          outputEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('url-swap').addEventListener('click', function () {
+        var tmp = inputEl.value;
+        inputEl.value = outputEl.value;
+        outputEl.value = tmp;
+        clearStatus();
+      });
+
+      document.getElementById('url-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputEl.value = '';
+        clearStatus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        if (!outputEl.value) return;
+        navigator.clipboard.writeText(outputEl.value).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .url-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .url-mode { display: flex; gap: 1.5rem; font-size: 0.95rem; }
+  .url-mode label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+
+  .url-row { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .url-row label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .url-row textarea {
+    width: 100%;
+    min-height: 120px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .url-row textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .url-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .url-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .url-status.success { color: #057a55; }
+  .url-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .url-status.success { color: #34d399; }
+    .url-status.error { color: #f87171; }
+  }
+</style>

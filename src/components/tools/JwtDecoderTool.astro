@@ -1,0 +1,289 @@
+---
+// JwtDecoderTool — JWT token decoder widget
+---
+<div>
+  <div class="jwt-wrap">
+    <div class="jwt-input-section">
+      <label for="jwt-input">Paste JWT Token</label>
+      <textarea
+        id="jwt-input"
+        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        spellcheck="false"
+        autocomplete="off"
+      ></textarea>
+      <div class="jwt-actions">
+        <button id="jwt-decode" class="btn-primary">Decode</button>
+        <button id="jwt-clear" class="btn-ghost">Clear</button>
+      </div>
+    </div>
+
+    <div id="jwt-status" class="jwt-status" aria-live="polite"></div>
+
+    <div id="jwt-results" class="jwt-results"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      function b64urlDecode(str) {
+        str = str.replace(/-/g, '+').replace(/_/g, '/');
+        while (str.length % 4) str += '=';
+        try {
+          return atob(str);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function parseJSON(str) {
+        try { return JSON.parse(str); } catch (e) { return null; }
+      }
+
+      function syntaxHighlight(obj) {
+        var json = JSON.stringify(obj, null, 2);
+        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g, function (match) {
+          var cls = 'jv-num';
+          if (/^"/.test(match)) {
+            if (/:$/.test(match)) {
+              cls = 'jv-key';
+            } else {
+              cls = 'jv-str';
+            }
+          } else if (/true|false/.test(match)) {
+            cls = 'jv-bool';
+          } else if (/null/.test(match)) {
+            cls = 'jv-null';
+          }
+          return '<span class="' + cls + '">' + match + '</span>';
+        });
+      }
+
+      function formatTimeClaim(key, val) {
+        if (['exp', 'iat', 'nbf'].indexOf(key) !== -1 && typeof val === 'number') {
+          var d = new Date(val * 1000);
+          var now = Date.now();
+          var extra = ' <span class="jwt-time-hint">(' + d.toUTCString();
+          if (key === 'exp') {
+            extra += val * 1000 < now ? ' — <span class="jwt-expired">EXPIRED</span>' : ' — <span class="jwt-valid">valid</span>';
+          }
+          extra += ')</span>';
+          return extra;
+        }
+        return '';
+      }
+
+      function buildSection(label, color, obj) {
+        var div = document.createElement('div');
+        div.className = 'jwt-section';
+
+        var header = document.createElement('div');
+        header.className = 'jwt-section-header';
+        header.innerHTML = '<span class="jwt-section-dot" style="background:' + color + '"></span><strong>' + label + '</strong>';
+        div.appendChild(header);
+
+        var pre = document.createElement('pre');
+        pre.className = 'jwt-json';
+        if (label === 'Payload' && obj) {
+          var json = JSON.stringify(obj, null, 2);
+          var highlighted = syntaxHighlight(obj);
+          highlighted = highlighted.replace(/"(exp|iat|nbf)": (<span[^>]*>(\d+)<\/span>)/g, function(match, key, spanHtml, val) {
+            return '"' + key + '": ' + spanHtml + formatTimeClaim(key, parseInt(val));
+          });
+          pre.innerHTML = highlighted;
+        } else if (obj) {
+          pre.innerHTML = syntaxHighlight(obj);
+        } else {
+          pre.textContent = '(unable to parse)';
+        }
+        div.appendChild(pre);
+
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-copy';
+        copyBtn.textContent = 'Copy';
+        copyBtn.addEventListener('click', function () {
+          navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).then(function () {
+            copyBtn.textContent = 'Copied!';
+            setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+          });
+        });
+        div.appendChild(copyBtn);
+
+        return div;
+      }
+
+      function buildSigSection(sigRaw) {
+        var div = document.createElement('div');
+        div.className = 'jwt-section';
+        var header = document.createElement('div');
+        header.className = 'jwt-section-header';
+        header.innerHTML = '<span class="jwt-section-dot" style="background:#f59e0b"></span><strong>Signature</strong> <span class="jwt-sig-note">(raw Base64URL — not verified)</span>';
+        div.appendChild(header);
+        var code = document.createElement('code');
+        code.className = 'jwt-sig';
+        code.textContent = sigRaw;
+        div.appendChild(code);
+        return div;
+      }
+
+      function decode() {
+        var raw = document.getElementById('jwt-input').value.trim();
+        var statusEl = document.getElementById('jwt-status');
+        var resultsEl = document.getElementById('jwt-results');
+        resultsEl.innerHTML = '';
+
+        if (!raw) {
+          statusEl.textContent = 'Please paste a JWT token.';
+          statusEl.className = 'jwt-status error';
+          return;
+        }
+
+        var parts = raw.split('.');
+        if (parts.length !== 3) {
+          statusEl.textContent = 'Invalid JWT: expected 3 dot-separated parts, got ' + parts.length + '.';
+          statusEl.className = 'jwt-status error';
+          return;
+        }
+
+        var headerStr = b64urlDecode(parts[0]);
+        var payloadStr = b64urlDecode(parts[1]);
+
+        if (!headerStr || !payloadStr) {
+          statusEl.textContent = 'Failed to Base64URL-decode token parts.';
+          statusEl.className = 'jwt-status error';
+          return;
+        }
+
+        var header = parseJSON(headerStr);
+        var payload = parseJSON(payloadStr);
+
+        resultsEl.appendChild(buildSection('Header', '#6366f1', header));
+        resultsEl.appendChild(buildSection('Payload', '#10b981', payload));
+        resultsEl.appendChild(buildSigSection(parts[2]));
+
+        statusEl.textContent = 'Decoded successfully.';
+        statusEl.className = 'jwt-status success';
+        window.trackTool && window.trackTool('jwt_decoder', 'decode');
+      }
+
+      document.getElementById('jwt-decode').addEventListener('click', decode);
+
+      document.getElementById('jwt-input').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) decode();
+      });
+
+      document.getElementById('jwt-clear').addEventListener('click', function () {
+        document.getElementById('jwt-input').value = '';
+        document.getElementById('jwt-results').innerHTML = '';
+        document.getElementById('jwt-status').textContent = '';
+        document.getElementById('jwt-status').className = 'jwt-status';
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jwt-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .jwt-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jwt-input-section label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jwt-input-section textarea {
+    width: 100%;
+    min-height: 90px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    word-break: break-all;
+  }
+  .jwt-input-section textarea:focus { outline: none; border-color: #6366f1; background: var(--color-bg); }
+
+  .jwt-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+
+  .jwt-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jwt-status.success { color: #057a55; }
+  .jwt-status.error { color: #c0392b; }
+
+  .jwt-results { display: flex; flex-direction: column; gap: 1rem; }
+
+  .jwt-section {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .jwt-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.88rem;
+  }
+
+  .jwt-section-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .jwt-sig-note {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    font-weight: 400;
+  }
+
+  .jwt-json {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.55;
+    overflow-x: auto;
+    background: var(--color-bg);
+    color: var(--color-text);
+    white-space: pre;
+  }
+
+  .jwt-sig {
+    display: block;
+    padding: 0.75rem 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    word-break: break-all;
+    background: var(--color-bg);
+  }
+
+  .jv-key { color: #6366f1; }
+  .jv-str { color: #e67e22; }
+  .jv-num { color: #27ae60; }
+  .jv-bool { color: #8e44ad; }
+  .jv-null { color: #95a5a6; }
+
+  .jwt-time-hint { font-size: 0.78rem; color: var(--color-text-muted); }
+  .jwt-expired { color: #e00; font-weight: 700; }
+  .jwt-valid { color: #057a55; font-weight: 700; }
+
+  @media (prefers-color-scheme: dark) {
+    .jwt-status.success { color: #34d399; }
+    .jwt-status.error { color: #f87171; }
+    .jv-key { color: #818cf8; }
+    .jv-str { color: #fb923c; }
+    .jv-num { color: #4ade80; }
+    .jv-bool { color: #c084fc; }
+    .jv-null { color: #94a3b8; }
+    .jwt-expired { color: #f87171; }
+    .jwt-valid { color: #34d399; }
+  }
+</style>

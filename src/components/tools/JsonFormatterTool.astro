@@ -1,0 +1,153 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="jf-wrap">
+    <div class="jf-row">
+      <label for="jf-input">Input JSON</label>
+      <textarea
+        id="jf-input"
+        placeholder='{"name":"ZeroTool","free":true}'
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="jf-actions">
+      <button id="jf-format" class="btn-primary">Format</button>
+      <button id="jf-minify" class="btn-secondary">Minify</button>
+      <button id="jf-validate" class="btn-secondary">Validate</button>
+      <button id="jf-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="jf-status" class="jf-status" aria-live="polite"></div>
+
+    <div class="jf-row">
+      <label for="jf-output">
+        Output
+        <button id="jf-copy" class="btn-copy" type="button">Copy</button>
+      </label>
+      <textarea
+        id="jf-output"
+        placeholder="Formatted JSON appears here..."
+        readonly
+        spellcheck="false"
+      ></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var input = document.getElementById('jf-input');
+      var output = document.getElementById('jf-output');
+      var status = document.getElementById('jf-status');
+      var copyBtn = document.getElementById('jf-copy');
+
+      function setStatus(msg, isError) {
+        status.textContent = msg;
+        status.className = 'jf-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        status.textContent = '';
+        status.className = 'jf-status';
+      }
+
+      document.getElementById('jf-format').addEventListener('click', function () {
+        var raw = input.value.trim();
+        if (!raw) { clearStatus(); output.value = ''; return; }
+        try {
+          output.value = JSON.stringify(JSON.parse(raw), null, 2);
+          setStatus('Valid JSON — formatted.', false);
+          window.trackTool && window.trackTool('json_formatter', 'format');
+        } catch (e) {
+          output.value = '';
+          setStatus('Invalid JSON: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('jf-minify').addEventListener('click', function () {
+        var raw = input.value.trim();
+        if (!raw) { clearStatus(); output.value = ''; return; }
+        try {
+          output.value = JSON.stringify(JSON.parse(raw));
+          setStatus('Minified.', false);
+          window.trackTool && window.trackTool('json_formatter', 'minify');
+        } catch (e) {
+          output.value = '';
+          setStatus('Invalid JSON: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('jf-validate').addEventListener('click', function () {
+        var raw = input.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          JSON.parse(raw);
+          setStatus('Valid JSON.', false);
+          window.trackTool && window.trackTool('json_formatter', 'validate');
+        } catch (e) {
+          setStatus('Invalid JSON: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('jf-clear').addEventListener('click', function () {
+        input.value = '';
+        output.value = '';
+        clearStatus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = output.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jf-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jf-row { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jf-row label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .jf-row textarea {
+    width: 100%;
+    min-height: 160px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    line-height: 1.5;
+    color: var(--color-text);
+  }
+
+  .jf-row textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .jf-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .jf-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jf-status.success { color: #057a55; }
+  .jf-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .jf-status.success { color: #34d399; }
+    .jf-status.error { color: #f87171; }
+  }
+</style>

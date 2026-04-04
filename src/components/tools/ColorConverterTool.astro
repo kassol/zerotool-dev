@@ -1,0 +1,278 @@
+---
+// ColorConverterTool — reusable widget, no props needed
+---
+<div>
+  <div class="cc-wrap">
+    <div class="cc-preview-row">
+      <div id="cc-swatch" class="cc-swatch"></div>
+      <span id="cc-swatch-label" class="cc-swatch-label">#000000</span>
+    </div>
+
+    <div class="cc-fields">
+      <div class="cc-field">
+        <label for="cc-hex">HEX</label>
+        <div class="cc-input-row">
+          <input id="cc-hex" type="text" placeholder="#1a73e8" spellcheck="false" />
+          <button class="btn-copy" data-copy="cc-hex">Copy</button>
+        </div>
+      </div>
+
+      <div class="cc-field">
+        <label for="cc-rgb">RGB</label>
+        <div class="cc-input-row">
+          <input id="cc-rgb" type="text" placeholder="rgb(26, 115, 232)" spellcheck="false" />
+          <button class="btn-copy" data-copy="cc-rgb">Copy</button>
+        </div>
+      </div>
+
+      <div class="cc-field">
+        <label for="cc-hsl">HSL</label>
+        <div class="cc-input-row">
+          <input id="cc-hsl" type="text" placeholder="hsl(217, 80%, 51%)" spellcheck="false" />
+          <button class="btn-copy" data-copy="cc-hsl">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="cc-status" class="cc-status" aria-live="polite"></div>
+
+    <div class="cc-actions">
+      <input id="cc-picker" type="color" value="#1a73e8" title="Pick a color" />
+      <label for="cc-picker" class="btn-secondary cc-picker-label">Pick Color</label>
+      <button id="cc-clear" class="btn-ghost">Clear</button>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var hexEl = document.getElementById('cc-hex');
+      var rgbEl = document.getElementById('cc-rgb');
+      var hslEl = document.getElementById('cc-hsl');
+      var swatch = document.getElementById('cc-swatch');
+      var swatchLabel = document.getElementById('cc-swatch-label');
+      var statusEl = document.getElementById('cc-status');
+      var picker = document.getElementById('cc-picker');
+
+      function setStatus(msg, isErr) {
+        statusEl.textContent = msg;
+        statusEl.className = 'cc-status ' + (isErr ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'cc-status';
+      }
+
+      function hexToRgb(hex) {
+        hex = hex.trim().replace(/^#/, '');
+        if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+        if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+        return {
+          r: parseInt(hex.slice(0,2), 16),
+          g: parseInt(hex.slice(2,4), 16),
+          b: parseInt(hex.slice(4,6), 16),
+        };
+      }
+
+      function rgbToHex(r, g, b) {
+        return '#' + [r, g, b].map(function(v) {
+          return ('0' + Math.round(v).toString(16)).slice(-2);
+        }).join('');
+      }
+
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        var max = Math.max(r, g, b), min = Math.min(r, g, b);
+        var h, s, l = (max + min) / 2;
+        if (max === min) {
+          h = s = 0;
+        } else {
+          var d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+            case g: h = ((b - r) / d + 2) / 6; break;
+            case b: h = ((r - g) / d + 4) / 6; break;
+          }
+        }
+        return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+      }
+
+      function hslToRgb(h, s, l) {
+        h /= 360; s /= 100; l /= 100;
+        var r, g, b;
+        if (s === 0) {
+          r = g = b = l;
+        } else {
+          function hue2rgb(p, q, t) {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+          }
+          var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          var p = 2 * l - q;
+          r = hue2rgb(p, q, h + 1/3);
+          g = hue2rgb(p, q, h);
+          b = hue2rgb(p, q, h - 1/3);
+        }
+        return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+      }
+
+      function parseRgb(str) {
+        var m = str.trim().match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+        if (!m) return null;
+        var r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
+        if (r > 255 || g > 255 || b > 255) return null;
+        return { r: r, g: g, b: b };
+      }
+
+      function parseHsl(str) {
+        var m = str.trim().match(/^hsla?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%?\s*,\s*(\d+(?:\.\d+)?)%?/);
+        if (!m) return null;
+        return { h: parseFloat(m[1]), s: parseFloat(m[2]), l: parseFloat(m[3]) };
+      }
+
+      function updateAll(hex, source) {
+        var rgb = hexToRgb(hex);
+        if (!rgb) { setStatus('Invalid color', true); return; }
+        var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+        var hexStr = rgbToHex(rgb.r, rgb.g, rgb.b);
+        var rgbStr = 'rgb(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ')';
+        var hslStr = 'hsl(' + hsl.h + ', ' + hsl.s + '%, ' + hsl.l + '%)';
+        if (source !== 'hex') hexEl.value = hexStr;
+        if (source !== 'rgb') rgbEl.value = rgbStr;
+        if (source !== 'hsl') hslEl.value = hslStr;
+        swatch.style.background = hexStr;
+        swatchLabel.textContent = hexStr;
+        picker.value = hexStr;
+        clearStatus();
+      }
+
+      hexEl.addEventListener('input', function () {
+        var raw = this.value.trim().replace(/^#/, '');
+        if (raw.length === 3 || raw.length === 6) {
+          var rgb = hexToRgb(raw);
+          if (rgb) updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hex');
+        }
+      });
+
+      rgbEl.addEventListener('input', function () {
+        var rgb = parseRgb(this.value);
+        if (rgb) updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'rgb');
+      });
+
+      hslEl.addEventListener('input', function () {
+        var hsl = parseHsl(this.value);
+        if (hsl) {
+          var rgb = hslToRgb(hsl.h, hsl.s, hsl.l);
+          updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hsl');
+        }
+      });
+
+      picker.addEventListener('input', function () {
+        updateAll(this.value, 'picker');
+        hexEl.value = this.value;
+      });
+
+      document.getElementById('cc-clear').addEventListener('click', function () {
+        hexEl.value = '';
+        rgbEl.value = '';
+        hslEl.value = '';
+        swatch.style.background = '';
+        swatchLabel.textContent = '';
+        picker.value = '#000000';
+        clearStatus();
+      });
+
+      document.querySelectorAll('.btn-copy[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-copy');
+          var val = document.getElementById(id).value;
+          if (!val) return;
+          navigator.clipboard.writeText(val).then(function () {
+            var prev = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(function () { btn.textContent = prev; }, 1500);
+          });
+          window.trackTool && window.trackTool('color_converter', 'copy_' + id.replace('cc-', ''));
+        });
+      });
+
+      // Init with a default
+      updateAll('#1a73e8', 'picker');
+      hexEl.value = '#1a73e8';
+    })();
+  </script>
+</div>
+
+<style>
+  .cc-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .cc-preview-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .cc-swatch {
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: #1a73e8;
+    flex-shrink: 0;
+  }
+
+  .cc-swatch-label {
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    color: var(--color-text);
+  }
+
+  .cc-fields { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cc-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .cc-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .cc-input-row { display: flex; gap: 0.5rem; }
+
+  .cc-input-row input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .cc-input-row input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .cc-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+
+  #cc-picker { width: 0; height: 0; opacity: 0; position: absolute; }
+
+  .cc-picker-label {
+    display: inline-block;
+  }
+
+  .cc-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .cc-status.success { color: #057a55; }
+  .cc-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .cc-status.success { color: #34d399; }
+    .cc-status.error { color: #f87171; }
+  }
+</style>

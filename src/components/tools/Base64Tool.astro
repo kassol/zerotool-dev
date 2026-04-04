@@ -1,0 +1,178 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="b64-wrap">
+    <div class="b64-mode">
+      <label>
+        <input type="radio" name="b64mode" value="encode" checked /> Encode
+      </label>
+      <label>
+        <input type="radio" name="b64mode" value="decode" /> Decode
+      </label>
+    </div>
+
+    <div class="b64-row">
+      <label for="b64-input" id="b64-input-label"><span>Plain Text</span></label>
+      <textarea
+        id="b64-input"
+        placeholder="Enter text to encode..."
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="b64-actions">
+      <button id="b64-run" class="btn-primary">Encode</button>
+      <button id="b64-swap" class="btn-secondary">Swap</button>
+      <button id="b64-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="b64-status" class="b64-status" aria-live="polite"></div>
+
+    <div class="b64-row">
+      <label for="b64-output" id="b64-output-label">
+        <span>Base64</span>
+        <button id="b64-copy" class="btn-copy" type="button">Copy</button>
+      </label>
+      <textarea
+        id="b64-output"
+        placeholder="Result appears here..."
+        readonly
+        spellcheck="false"
+      ></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('b64-input');
+      var outputEl = document.getElementById('b64-output');
+      var statusEl = document.getElementById('b64-status');
+      var runBtn = document.getElementById('b64-run');
+      var copyBtn = document.getElementById('b64-copy');
+      var inputLabel = document.getElementById('b64-input-label');
+      var outputLabel = document.getElementById('b64-output-label');
+      var mode = 'encode';
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'b64-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'b64-status';
+      }
+
+      function updateLabels() {
+        if (mode === 'encode') {
+          inputLabel.querySelector('span').textContent = 'Plain Text';
+          outputLabel.querySelector('span').textContent = 'Base64';
+          inputEl.placeholder = 'Enter text to encode...';
+          outputEl.placeholder = 'Base64 output appears here...';
+          runBtn.textContent = 'Encode';
+        } else {
+          inputLabel.querySelector('span').textContent = 'Base64';
+          outputLabel.querySelector('span').textContent = 'Plain Text';
+          inputEl.placeholder = 'Enter Base64 string to decode...';
+          outputEl.placeholder = 'Decoded text appears here...';
+          runBtn.textContent = 'Decode';
+        }
+      }
+
+      document.querySelectorAll('input[name="b64mode"]').forEach(function (radio) {
+        radio.addEventListener('change', function () {
+          mode = this.value;
+          updateLabels();
+          clearStatus();
+          outputEl.value = '';
+        });
+      });
+
+      runBtn.addEventListener('click', function () {
+        var val = inputEl.value;
+        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        try {
+          if (mode === 'encode') {
+            outputEl.value = btoa(unescape(encodeURIComponent(val)));
+            setStatus('Encoded.', false);
+            window.trackTool && window.trackTool('base64', 'encode');
+          } else {
+            outputEl.value = decodeURIComponent(escape(atob(val.trim())));
+            setStatus('Decoded.', false);
+            window.trackTool && window.trackTool('base64', 'decode');
+          }
+        } catch (e) {
+          outputEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('b64-swap').addEventListener('click', function () {
+        var tmp = inputEl.value;
+        inputEl.value = outputEl.value;
+        outputEl.value = tmp;
+        clearStatus();
+      });
+
+      document.getElementById('b64-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputEl.value = '';
+        clearStatus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        if (!outputEl.value) return;
+        navigator.clipboard.writeText(outputEl.value).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .b64-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .b64-mode { display: flex; gap: 1.5rem; font-size: 0.95rem; }
+  .b64-mode label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+
+  .b64-row { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .b64-row label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .b64-row textarea {
+    width: 100%;
+    min-height: 140px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .b64-row textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .b64-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .b64-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .b64-status.success { color: #057a55; }
+  .b64-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .b64-status.success { color: #34d399; }
+    .b64-status.error { color: #f87171; }
+  }
+</style>

@@ -1,0 +1,372 @@
+---
+// CronParserTool — cron expression parser and scheduler widget
+---
+<div>
+  <div class="cron-wrap">
+    <div class="cron-input-row">
+      <label for="cron-input">Cron Expression</label>
+      <div class="cron-input-group">
+        <input
+          type="text"
+          id="cron-input"
+          placeholder="* * * * *"
+          spellcheck="false"
+          autocomplete="off"
+          value="0 9 * * 1-5"
+        />
+        <button id="cron-parse" class="btn-primary">Parse</button>
+      </div>
+      <div class="cron-field-labels">
+        <span>minute</span><span>hour</span><span>day</span><span>month</span><span>weekday</span>
+      </div>
+    </div>
+
+    <div class="cron-presets">
+      <span class="cron-preset-label">Presets:</span>
+      <button class="btn-preset" data-expr="* * * * *">Every minute</button>
+      <button class="btn-preset" data-expr="0 * * * *">Every hour</button>
+      <button class="btn-preset" data-expr="0 0 * * *">Daily midnight</button>
+      <button class="btn-preset" data-expr="0 9 * * 1-5">Weekdays 9am</button>
+      <button class="btn-preset" data-expr="0 0 * * 0">Weekly Sunday</button>
+      <button class="btn-preset" data-expr="0 0 1 * *">Monthly 1st</button>
+      <button class="btn-preset" data-expr="*/5 * * * *">Every 5 min</button>
+      <button class="btn-preset" data-expr="0 0 1 1 *">Yearly Jan 1st</button>
+    </div>
+
+    <div id="cron-status" class="cron-status" aria-live="polite"></div>
+
+    <div id="cron-results" class="cron-results"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      var WDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      var WDAY_ABBR = ['sun','mon','tue','wed','thu','fri','sat'];
+      var MONTH_ABBR = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
+      function replaceNames(s, names, offset) {
+        return s.toLowerCase().replace(new RegExp(names.join('|'), 'g'), function(m) {
+          return names.indexOf(m) + offset;
+        });
+      }
+
+      function parseField(field, min, max, names, nameOffset) {
+        if (names) field = replaceNames(field, names, nameOffset);
+        var result = [];
+        var parts = field.split(',');
+        for (var p = 0; p < parts.length; p++) {
+          var part = parts[p].trim();
+          var step = 1;
+          if (part.indexOf('/') !== -1) {
+            var sp = part.split('/');
+            step = parseInt(sp[1]);
+            if (isNaN(step) || step < 1) return null;
+            part = sp[0];
+          }
+          var lo, hi;
+          if (part === '*') {
+            lo = min; hi = max;
+          } else if (part.indexOf('-') !== -1) {
+            var rp = part.split('-');
+            lo = parseInt(rp[0]); hi = parseInt(rp[1]);
+            if (isNaN(lo) || isNaN(hi)) return null;
+          } else {
+            var v = parseInt(part);
+            if (isNaN(v)) return null;
+            lo = hi = v;
+          }
+          if (lo < min || hi > max || lo > hi) return null;
+          for (var i = lo; i <= hi; i += step) result.push(i);
+        }
+        var seen = {};
+        return result.filter(function(v) { return seen[v] ? false : (seen[v] = true); }).sort(function(a,b){return a-b;});
+      }
+
+      function humanizeField(expr, min, max, names, nameOffset, singular, plural) {
+        if (expr === '*') return 'every ' + singular;
+        var vals = parseField(expr, min, max, names, nameOffset);
+        if (!vals) return expr;
+
+        if (expr.indexOf('*/') === 0) {
+          var step = parseInt(expr.slice(2));
+          return 'every ' + step + ' ' + (step === 1 ? singular : plural);
+        }
+
+        if (/^\d+-\d+$/.test(expr)) {
+          var parts = expr.split('-');
+          var lo = parseInt(parts[0]), hi = parseInt(parts[1]);
+          var loName = names ? (names[lo - nameOffset] || lo) : lo;
+          var hiName = names ? (names[hi - nameOffset] || hi) : hi;
+          return loName + ' through ' + hiName;
+        }
+
+        return vals.map(function(v) { return names ? (names[v - nameOffset] || v) : v; }).join(', ');
+      }
+
+      function humanizeCron(fields) {
+        var min = fields[0], hr = fields[1], dom = fields[2], mon = fields[3], dow = fields[4];
+
+        var minH = humanizeField(min, 0, 59, null, 0, 'minute', 'minutes');
+        var hrH = humanizeField(hr, 0, 23, null, 0, 'hour', 'hours');
+        var domH = humanizeField(dom, 1, 31, null, 0, 'day', 'days');
+        var monH = humanizeField(mon, 1, 12, MONTH_ABBR, 1, 'month', 'months');
+        var dowH = humanizeField(dow, 0, 7, WDAY_ABBR, 0, 'day of week', 'days of week');
+
+        var when = '';
+
+        if (min === '0' && hr === '0') when = 'At midnight';
+        else if (min === '0') when = 'At ' + hrH + (hr.indexOf('*') === -1 ? ':00' : '');
+        else if (hr === '*') when = 'At ' + minH + ' past every hour';
+        else when = 'At ' + minH + ' past ' + hrH;
+
+        if (dom !== '*' && dow !== '*') when += ', on ' + domH + ' of the month and on ' + dowH;
+        else if (dom !== '*') when += ', on day ' + domH + ' of the month';
+        else if (dow !== '*') when += ', on ' + dowH;
+
+        if (mon !== '*') when += ', in ' + monH;
+
+        return when;
+      }
+
+      function nextRuns(fields, count) {
+        var minVals = parseField(fields[0], 0, 59, null, 0);
+        var hrVals = parseField(fields[1], 0, 23, null, 0);
+        var domVals = parseField(fields[2], 1, 31, null, 0);
+        var monVals = parseField(fields[3], 1, 12, MONTH_ABBR, 1);
+        var dowVals = parseField(fields[4], 0, 7, WDAY_ABBR, 0);
+        if (dowVals) dowVals = dowVals.map(function(v){ return v === 7 ? 0 : v; });
+        var dowSet = dowVals ? {} : null;
+        if (dowVals) dowVals.forEach(function(v){ dowSet[v] = true; });
+
+        if (!minVals || !hrVals || !domVals || !monVals) return null;
+
+        var runs = [];
+        var d = new Date();
+        d.setSeconds(0, 0);
+        d = new Date(d.getTime() + 60000);
+
+        var limit = 100000;
+        while (runs.length < count && limit-- > 0) {
+          var ok =
+            monVals.indexOf(d.getMonth() + 1) !== -1 &&
+            domVals.indexOf(d.getDate()) !== -1 &&
+            hrVals.indexOf(d.getHours()) !== -1 &&
+            minVals.indexOf(d.getMinutes()) !== -1;
+
+          if (dowSet) ok = ok && !!dowSet[d.getDay()];
+
+          if (ok) runs.push(new Date(d));
+          d = new Date(d.getTime() + 60000);
+        }
+        return runs;
+      }
+
+      function parse() {
+        var raw = document.getElementById('cron-input').value.trim();
+        var statusEl = document.getElementById('cron-status');
+        var resultsEl = document.getElementById('cron-results');
+        resultsEl.innerHTML = '';
+
+        if (!raw) {
+          statusEl.textContent = 'Please enter a cron expression.';
+          statusEl.className = 'cron-status error';
+          return;
+        }
+
+        var fields = raw.split(/\s+/);
+        if (fields.length !== 5) {
+          statusEl.textContent = 'Invalid: expected 5 fields, got ' + fields.length + '.';
+          statusEl.className = 'cron-status error';
+          return;
+        }
+
+        var mins = parseField(fields[0], 0, 59, null, 0);
+        var hrs = parseField(fields[1], 0, 23, null, 0);
+        var doms = parseField(fields[2], 1, 31, null, 0);
+        var mons = parseField(fields[3], 1, 12, MONTH_ABBR, 1);
+        var dows = parseField(fields[4], 0, 7, WDAY_ABBR, 0);
+
+        if (!mins || !hrs || !doms || !mons || !dows) {
+          statusEl.textContent = 'Invalid expression — check each field range.';
+          statusEl.className = 'cron-status error';
+          return;
+        }
+
+        var human = humanizeCron(fields);
+        var runs = nextRuns(fields, 10);
+
+        var html = '<div class="cron-human">' + human + '</div>';
+
+        html += '<div class="cron-breakdown">';
+        var labels = ['Minute', 'Hour', 'Day', 'Month', 'Weekday'];
+        var fieldVals = [mins, hrs, doms, mons, dows];
+        var names = [null, null, null, MONTHS, WDAYS];
+        var nameOff = [0, 0, 0, 1, 0];
+        for (var i = 0; i < 5; i++) {
+          var displayVals = fieldVals[i].map(function(v, idx) {
+            if (!names[i]) return v;
+            return names[i][v - nameOff[i]] || v;
+          });
+          html += '<div class="cron-field-row"><span class="cron-field-name">' + labels[i] + '</span><code class="cron-field-expr">' + fields[i] + '</code><span class="cron-field-vals">' + displayVals.slice(0, 12).join(', ') + (displayVals.length > 12 ? '…' : '') + '</span></div>';
+        }
+        html += '</div>';
+
+        if (runs && runs.length) {
+          html += '<div class="cron-next-label">Next 10 scheduled runs (local time):</div>';
+          html += '<ol class="cron-next-list">';
+          runs.forEach(function(d) {
+            html += '<li>' + d.toLocaleString() + '</li>';
+          });
+          html += '</ol>';
+        }
+
+        resultsEl.innerHTML = html;
+        statusEl.textContent = 'Valid expression.';
+        statusEl.className = 'cron-status success';
+        window.trackTool && window.trackTool('cron_parser', 'parse');
+      }
+
+      document.getElementById('cron-parse').addEventListener('click', parse);
+
+      document.getElementById('cron-input').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') parse();
+      });
+
+      document.querySelectorAll('.btn-preset').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.getElementById('cron-input').value = btn.getAttribute('data-expr');
+          parse();
+        });
+      });
+
+      // Auto-parse on load
+      parse();
+    })();
+  </script>
+</div>
+
+<style>
+  .cron-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cron-input-row { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .cron-input-row > label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .cron-input-group { display: flex; gap: 0.5rem; }
+
+  .cron-input-group input {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    letter-spacing: 0.08em;
+  }
+  .cron-input-group input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .cron-field-labels {
+    display: flex;
+    gap: 0;
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    padding-left: 1px;
+  }
+  .cron-field-labels span { flex: 1; text-align: center; }
+
+  .cron-presets { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+
+  .cron-preset-label { font-size: 0.78rem; color: var(--color-text-muted); font-weight: 600; }
+
+  .btn-preset {
+    padding: 0.2rem 0.65rem;
+    font-size: 0.78rem;
+    background: var(--color-bg-icon);
+    color: var(--color-primary);
+    border: 1px solid #c7d7ff;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-preset:hover { background: #dbe6ff; }
+
+  .cron-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .cron-status.success { color: #057a55; }
+  .cron-status.error { color: #c0392b; }
+
+  .cron-results { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cron-human {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--color-text);
+    padding: 0.75rem 1rem;
+    background: var(--color-bg-icon);
+    border: 1px solid #c7d7ff;
+    border-radius: var(--radius-md);
+    line-height: 1.4;
+  }
+
+  .cron-breakdown {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .cron-field-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.45rem 0.75rem;
+    font-size: 0.85rem;
+    border-bottom: 1px solid var(--color-bg-secondary);
+  }
+  .cron-field-row:last-child { border-bottom: none; }
+
+  .cron-field-name {
+    min-width: 70px;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .cron-field-expr {
+    font-family: var(--font-mono);
+    background: var(--color-bg-secondary);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: var(--color-primary);
+    min-width: 60px;
+    text-align: center;
+  }
+
+  .cron-field-vals { color: var(--color-text-secondary); flex: 1; font-size: 0.82rem; }
+
+  .cron-next-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+
+  .cron-next-list {
+    margin: 0;
+    padding: 0 0 0 1.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.8;
+    color: var(--color-text);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .cron-status.success { color: #34d399; }
+    .cron-status.error { color: #f87171; }
+    .btn-preset { border-color: #4b5e8a; }
+    .btn-preset:hover { background: rgba(99, 102, 241, 0.15); }
+    .cron-human { border-color: #4b5e8a; }
+  }
+</style>
