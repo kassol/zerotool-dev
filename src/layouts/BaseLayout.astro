@@ -1,5 +1,6 @@
 ---
 import SEO from '../components/SEO.astro';
+import { t } from '../i18n/utils';
 
 interface Props {
   title: string;
@@ -10,6 +11,7 @@ interface Props {
   lang?: string;
   pubDate?: Date;
   updatedDate?: Date;
+  translationSlug?: string;
 }
 
 const {
@@ -21,23 +23,33 @@ const {
   lang = 'en',
   pubDate,
   updatedDate,
+  translationSlug,
 } = Astro.props;
 
 const adsenseId = import.meta.env.PUBLIC_ADSENSE_PUBLISHER_ID ?? '';
 const ga4Id = import.meta.env.PUBLIC_GA4_MEASUREMENT_ID ?? '';
 
 const tools = [
-  { href: '/tools/json-formatter', label: 'JSON Formatter' },
-  { href: '/tools/base64', label: 'Base64' },
-  { href: '/tools/uuid-generator', label: 'UUID' },
-  { href: '/tools/url-encode', label: 'URL Encode' },
-  { href: '/tools/text-case', label: 'Text Case' },
+  { href: '/tools/json-formatter', en: 'JSON Formatter', zh: 'JSON 格式化' },
+  { href: '/tools/base64', en: 'Base64', zh: 'Base64' },
+  { href: '/tools/uuid-generator', en: 'UUID', zh: 'UUID' },
+  { href: '/tools/url-encode', en: 'URL Encode', zh: 'URL 编解码' },
+  { href: '/tools/text-case', en: 'Text Case', zh: '大小写转换' },
 ];
 
 const isZh = lang === 'zh';
-const langSwitch = isZh
-  ? { href: '/', label: 'English' }
-  : { href: '/zh', label: '中文' };
+const pathname = Astro.url.pathname;
+const langSwitchHref = (() => {
+  if (translationSlug) {
+    // Blog post with known translation — link to counterpart slug
+    return isZh ? `/blog/${translationSlug}/` : `/zh/blog/${translationSlug}/`;
+  }
+  // General pages: swap /zh prefix
+  return isZh
+    ? (pathname.replace(/^\/zh(\/|$)/, '/'))
+    : ('/zh' + (pathname === '/' ? '' : pathname));
+})();
+const langSwitch = { href: langSwitchHref, label: isZh ? 'English' : '中文' };
 ---
 
 <!doctype html>
@@ -57,6 +69,7 @@ const langSwitch = isZh
       lang={lang}
       pubDate={pubDate}
       updatedDate={updatedDate}
+      translationSlug={translationSlug}
     />
 
     <!-- AdSense Auto Ads — loads via Partytown worker thread -->
@@ -104,10 +117,10 @@ const langSwitch = isZh
   <body>
     <header class="site-header">
       <nav class="site-nav">
-        <a href="/" class="site-brand">ZeroTool</a>
+        <a href={isZh ? '/zh' : '/'} class="site-brand">ZeroTool</a>
         <div class="nav-tools">
-          {tools.map(t => (
-            <a href={t.href}>{t.label}</a>
+          {tools.map(tool => (
+            <a href={tool.href}>{isZh ? tool.zh : tool.en}</a>
           ))}
         </div>
         <a href={langSwitch.href} class="lang-switch">{langSwitch.label}</a>
@@ -120,8 +133,7 @@ const langSwitch = isZh
 
     <footer class="site-footer">
       <p>
-        &copy; {new Date().getFullYear()} <a href="/">ZeroTool</a> — Free online developer tools.
-        No sign-up, no tracking, no BS.
+        &copy; {new Date().getFullYear()} <a href={isZh ? '/zh' : '/'}>ZeroTool</a> — {t(lang, 'footer.tagline')}
       </p>
     </footer>
   </body>

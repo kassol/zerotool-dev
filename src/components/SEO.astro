@@ -8,6 +8,7 @@ interface Props {
   lang?: string;
   pubDate?: Date;
   updatedDate?: Date;
+  translationSlug?: string;
 }
 
 const {
@@ -19,6 +20,7 @@ const {
   lang = 'en',
   pubDate,
   updatedDate,
+  translationSlug,
 } = Astro.props;
 
 const siteUrl = Astro.site?.toString() ?? '';
@@ -52,6 +54,32 @@ const ogImageUrl = ogImage
 <meta name="twitter:image" content={ogImageUrl} />
 
 <!-- hreflang alternates for i18n -->
-<link rel="alternate" hreflang="en" href={new URL(Astro.url.pathname.replace(/^\/zh/, ''), siteUrl).toString()} />
-<link rel="alternate" hreflang="zh" href={new URL('/zh' + Astro.url.pathname.replace(/^\/zh/, ''), siteUrl).toString()} />
-<link rel="alternate" hreflang="x-default" href={new URL(Astro.url.pathname.replace(/^\/zh/, ''), siteUrl).toString()} />
+{(() => {
+  const pathname = Astro.url.pathname;
+  const isBlogPost = /^\/(zh\/)?blog\/[^/]+/.test(pathname);
+  const isZh = lang === 'zh';
+
+  if (isBlogPost && translationSlug) {
+    // Blog post with a known translation counterpart
+    const enUrl = new URL(`/blog/${isZh ? translationSlug : pathname.replace(/^\/(zh\/)?blog\//, '').replace(/\/$/, '')}/`, siteUrl).toString();
+    const zhUrl = new URL(`/zh/blog/${isZh ? pathname.replace(/^\/zh\/blog\//, '').replace(/\/$/, '') : translationSlug}/`, siteUrl).toString();
+    return [
+      <link rel="alternate" hreflang="en" href={enUrl} />,
+      <link rel="alternate" hreflang="zh" href={zhUrl} />,
+      <link rel="alternate" hreflang="x-default" href={enUrl} />,
+    ];
+  } else if (isBlogPost) {
+    // Blog post without translation — self-referencing only
+    const selfUrl = new URL(pathname, siteUrl).toString();
+    return <link rel="alternate" hreflang={lang} href={selfUrl} />;
+  } else {
+    // Non-blog pages: path-based swap works correctly
+    const enPath = pathname.replace(/^\/zh/, '') || '/';
+    const zhPath = '/zh' + (pathname.replace(/^\/zh/, '') || '/');
+    return [
+      <link rel="alternate" hreflang="en" href={new URL(enPath, siteUrl).toString()} />,
+      <link rel="alternate" hreflang="zh" href={new URL(zhPath, siteUrl).toString()} />,
+      <link rel="alternate" hreflang="x-default" href={new URL(enPath, siteUrl).toString()} />,
+    ];
+  }
+})()}
