@@ -1,0 +1,184 @@
+---
+title: "UUID 生成器：什么是 UUID 以及如何使用"
+description: "了解 UUID 的格式、版本差异、生成方法，以及在数据库主键、API 和分布式系统中的最佳实践——附免费在线 UUID 生成工具。"
+pubDate: 2026-04-04
+lang: "zh"
+tags: ["uuid", "唯一标识符", "开发者工具"]
+---
+
+UUID（通用唯一标识符）是分布式系统、数据库和 API 中生成唯一 ID 的标准方法。无需中央协调，就能保证全局唯一性。
+
+**[立即生成 UUID →](/tools/uuid-generator)**
+
+## UUID 是什么？
+
+UUID 是一个 128 位的数字，通常表示为 5 组十六进制数字，用连字符分隔：
+
+```
+550e8400-e29b-41d4-a716-446655440000
+xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
+```
+
+- `M`：版本号（1、3、4、5）
+- `N`：变体（8、9、a 或 b）
+
+标准格式是 8-4-4-4-12，共 36 个字符（含连字符），32 个十六进制字符。
+
+## UUID 版本
+
+| 版本 | 生成方式 | 适用场景 |
+|------|--------|--------|
+| v1 | 时间戳 + MAC 地址 | 需要时间排序但可能泄露 MAC 地址 |
+| v3 | 命名空间 + 名称的 MD5 | 确定性 ID，相同输入产生相同 UUID |
+| v4 | 随机 | **最常用**——纯随机，无信息泄露 |
+| v5 | 命名空间 + 名称的 SHA-1 | 比 v3 更安全的确定性 ID |
+
+**v4 是绝大多数场景的正确选择。**
+
+## UUID v4 碰撞概率
+
+每秒生成 10 亿个 UUID，需要约 **85 年**才会有 50% 的概率出现一次碰撞。实际上可以认为是无限唯一。
+
+## 在线生成 UUID
+
+**[ZeroTool UUID 生成器 →](/tools/uuid-generator)**
+
+- 单个或批量生成
+- 一键复制
+- 纯浏览器端，不联网
+
+## 在代码中生成 UUID
+
+### JavaScript（Node.js 18+）
+
+```js
+import { randomUUID } from 'crypto';
+
+const id = randomUUID();
+// 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+```
+
+Node.js 14.17+ 也可用：`crypto.randomUUID()`
+
+### JavaScript（浏览器）
+
+```js
+const id = crypto.randomUUID();
+// 所有现代浏览器均支持（Chrome 92+, Firefox 95+, Safari 15.4+）
+```
+
+### 使用 uuid 库（兼容旧版本）
+
+```bash
+npm install uuid
+```
+
+```js
+import { v4 as uuidv4 } from 'uuid';
+
+const id = uuidv4();
+```
+
+### Python
+
+```python
+import uuid
+
+# v4（随机）
+id = uuid.uuid4()
+print(str(id))  # 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+
+# v5（命名空间，确定性）
+id = uuid.uuid5(uuid.NAMESPACE_URL, 'https://zerotool.dev')
+```
+
+### Go
+
+```go
+import "github.com/google/uuid"
+
+id := uuid.New()
+fmt.Println(id.String())
+```
+
+### SQL（PostgreSQL）
+
+```sql
+-- 生成 UUID
+SELECT gen_random_uuid();
+
+-- 用 UUID 作为主键
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL
+);
+```
+
+## UUID 作为数据库主键
+
+### 优点
+
+- **全局唯一** — 多服务、多数据库之间不会冲突
+- **无需中央序列** — 客户端可提前生成 ID
+- **不泄露信息** — 不像自增 ID 会暴露记录数量
+
+### 缺点
+
+- **索引性能** — 随机 UUID 导致 B-tree 索引碎片化，插入性能比自增整数差
+- **体积** — 16 字节 vs 整数的 4-8 字节
+- **不可排序** — v4 UUID 无时间顺序
+
+### 解决方案：UUID v7（草案）
+
+UUID v7 将时间戳放在高位，兼顾唯一性和单调递增，是数据库主键的理想选择。目前部分库已支持：
+
+```js
+// Node.js
+import { v7 as uuidv7 } from 'uuid';
+const id = uuidv7();
+// '017f22e2-79b0-7cc3-98c4-dc0c0c07398f'
+// 前面部分是毫秒级时间戳，天然有序
+```
+
+## 格式变体
+
+```
+标准：    550e8400-e29b-41d4-a716-446655440000
+无连字符：550e8400e29b41d4a716446655440000
+大写：    550E8400-E29B-41D4-A716-446655440000
+URN：     urn:uuid:550e8400-e29b-41d4-a716-446655440000
+```
+
+存储到数据库时，优先使用原生 UUID 类型（PostgreSQL、MySQL 8.0+）而非 VARCHAR，可节省空间并加快比较速度。
+
+## 验证 UUID
+
+```js
+// JavaScript
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+UUID_REGEX.test('550e8400-e29b-41d4-a716-446655440000'); // true
+```
+
+```python
+# Python
+import uuid
+
+def is_valid_uuid(val):
+    try:
+        uuid.UUID(str(val))
+        return True
+    except ValueError:
+        return False
+```
+
+## 总结
+
+| 需求 | 推荐方案 |
+|------|--------|
+| 快速生成 | [ZeroTool UUID 生成器](/tools/uuid-generator) |
+| 浏览器/Node.js | `crypto.randomUUID()` |
+| Python | `uuid.uuid4()` |
+| 数据库主键（有序） | UUID v7 或 ULID |
+| 确定性 ID | UUID v5 |
+
+UUID v4 适合绝大多数场景。如果需要数据库友好的有序 ID，考虑 UUID v7 或 ULID。

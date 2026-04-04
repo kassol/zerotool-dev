@@ -1,0 +1,161 @@
+---
+title: "Base64 编码详解：原理与使用方法"
+description: "了解 Base64 编码是什么、为何存在，以及如何在 JavaScript、Python 和命令行中编码解码——附免费在线 Base64 工具。"
+pubDate: 2026-04-02
+lang: "zh"
+tags: ["base64", "编码", "开发者工具"]
+---
+
+Base64 出现在电子邮件、JWT、Data URI 和 HTTP Basic Auth 中。它究竟是什么，什么时候该用它？
+
+## 什么是 Base64？
+
+Base64 是一种将二进制数据转换为 64 个可打印 ASCII 字符的编码方案。字符集为：
+
+```
+A–Z  (26个)
+a–z  (26个)
+0–9  (10个)
++  /  (2个)
+=    (填充)
+```
+
+它不是加密——只是编码。任何人都可以解码。
+
+## Base64 为什么存在？
+
+二进制数据（图片、文件、任意字节）无法安全地在只处理文本的系统中传输——邮件协议、XML、JSON、HTTP Header。Base64 通过将二进制表示为纯文本来弥补这个差距。
+
+**常见使用场景：**
+
+- **在 HTML/CSS 中嵌入图片**：`src="data:image/png;base64,..."`
+- **JWT 令牌**：Header 和 Payload 使用 Base64URL 编码
+- **HTTP Basic Auth**：`Authorization: Basic dXNlcjpwYXNz`
+- **邮件附件**：MIME 编码
+- **在 JSON 中存储二进制**：返回 Base64 字符串形式图片的 API
+
+## Base64 编码原理
+
+Base64 每次取 3 个字节（24 位），分成四组 6 位。每个 6 位值映射到 64 字符表中的一个字符。
+
+```
+输入:  M  a  n
+字节:  77 97 110
+二进制: 01001101 01100001 01101110
+分组:  010011 010110 000101 101110
+索引:  19     22     5      46
+输出:  T      W      F      u
+```
+
+如果输入不能被 3 整除，添加 `=` 填充使输出长度为 4 的倍数。
+
+## 在线 Base64 编码
+
+在浏览器中快速编码或解码 Base64：
+
+**[试试 ZeroTool Base64 编码/解码工具 →](/tools/base64)**
+
+粘贴文本或 URL，即时编码或解码，一键复制。无需安装。
+
+## 在代码中编码和解码
+
+### JavaScript（浏览器）
+
+```js
+// 编码
+const encoded = btoa('Hello, World!');
+// SGVsbG8sIFdvcmxkIQ==
+
+// 解码
+const decoded = atob('SGVsbG8sIFdvcmxkIQ==');
+// Hello, World!
+```
+
+**注意：** `btoa` / `atob` 只支持 Latin-1。处理 Unicode 字符串：
+
+```js
+// Unicode 编码
+const encoded = btoa(unescape(encodeURIComponent('你好世界')));
+
+// Unicode 解码
+const decoded = decodeURIComponent(escape(atob(encoded)));
+```
+
+### JavaScript（Node.js）
+
+```js
+// 编码
+const encoded = Buffer.from('Hello, World!').toString('base64');
+
+// 解码
+const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
+```
+
+### Python
+
+```python
+import base64
+
+# 编码
+encoded = base64.b64encode(b'Hello, World!').decode('utf-8')
+# SGVsbG8sIFdvcmxkIQ==
+
+# 解码
+decoded = base64.b64decode('SGVsbG8sIFdvcmxkIQ==').decode('utf-8')
+# Hello, World!
+```
+
+### 命令行
+
+```bash
+# 编码
+echo -n 'Hello, World!' | base64
+# SGVsbG8sIFdvcmxkIQ==
+
+# 解码
+echo 'SGVsbG8sIFdvcmxkIQ==' | base64 --decode
+# Hello, World!
+```
+
+macOS 上使用 `base64 -D` 代替 `--decode`。
+
+## Base64URL：URL 安全变体
+
+标准 Base64 使用的 `+` 和 `/` 在 URL 中有特殊含义。**Base64URL** 做了替换：
+
+| 标准 Base64 | Base64URL |
+|------------|-----------|
+| `+`        | `-`       |
+| `/`        | `_`       |
+| `=` 填充    | 省略（可选） |
+
+JWT 使用 Base64URL。如果你看到 `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.xxx` 这样的 JWT，每个 `.` 分隔的部分都是 Base64URL 编码的字符串。
+
+## 空间开销
+
+Base64 将数据体积增加约 33%（3 字节变成 4 个字符）。对于大文件——图片、视频——这个开销不可忽视。能直接引用 URL 或直接传输二进制的场景，不要用 Base64。
+
+| 原始大小 | Base64 大小 |
+|---------|------------|
+| 1 KB    | ~1.37 KB   |
+| 1 MB    | ~1.37 MB   |
+| 10 MB   | ~13.7 MB   |
+
+## 不该用 Base64 的场景
+
+- **文件下载** — 直接提供文件；Base64 放进 JSON 是浪费
+- **密码** — Base64 不是加密；应使用正确的哈希（bcrypt、argon2）
+- **大型二进制传输** — 优先使用 multipart form data 或二进制协议
+
+## 总结
+
+| 任务 | 方法 |
+|------|------|
+| 快速编码/解码 | [ZeroTool Base64 工具](/tools/base64) |
+| 浏览器 JS | `btoa()` / `atob()` |
+| Node.js | `Buffer.from(...).toString('base64')` |
+| Python | `base64.b64encode()` / `base64.b64decode()` |
+| 命令行 | `base64` / `base64 --decode` |
+| URL 安全变体 | Base64URL（用 `-` 和 `_` 替换 `+` 和 `/`） |
+
+Base64 是开发者工具箱中的基础技能——了解何时以及如何使用它，可以避免 API、认证头和数据管道中的隐蔽 bug。
