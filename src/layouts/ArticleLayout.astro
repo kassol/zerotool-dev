@@ -5,10 +5,12 @@ import type { CollectionEntry } from 'astro:content';
 
 interface Props {
   post: CollectionEntry<'blog'>;
+  headings?: { depth: number; slug: string; text: string }[];
+  allPosts?: CollectionEntry<'blog'>[];
 }
 
-const { post } = Astro.props;
-const { title, description, pubDate, updatedDate, lang, ogImage, canonicalUrl, noindex } = post.data;
+const { post, headings = [], allPosts = [] } = Astro.props;
+const { title, description, pubDate, updatedDate, lang, ogImage, canonicalUrl, noindex, tags } = post.data;
 
 // Estimate read time
 const wordCount = post.body.split(/\s+/).length;
@@ -17,6 +19,29 @@ const readMinutes = Math.ceil(wordCount / 200);
 const siteUrl = Astro.site?.toString().replace(/\/$/, '') ?? 'https://zerotool.dev';
 const canonical = canonicalUrl ?? `${siteUrl}${Astro.url.pathname}`;
 const ogImageUrl = ogImage ? `${siteUrl}${ogImage}` : `${siteUrl}/og-default.png`;
+
+const isZh = lang === 'zh';
+const blogBase = isZh ? '/zh/blog' : '/blog';
+
+// TOC: only h2 and h3
+const tocItems = headings.filter(h => h.depth === 2 || h.depth === 3);
+
+// Related articles: same language, share at least one tag, exclude self
+const relatedPosts = allPosts
+  .filter(p => p.slug !== post.slug && p.data.tags.some(t => tags.includes(t)))
+  .sort((a, b) => b.data.pubDate.getTime() - a.data.pubDate.getTime())
+  .slice(0, 3);
+
+// Breadcrumb JSON-LD
+const breadcrumbJsonLd = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: 'Home', item: siteUrl + (isZh ? '/zh' : '/') },
+    { '@type': 'ListItem', position: 2, name: 'Blog', item: `${siteUrl}${blogBase}` },
+    { '@type': 'ListItem', position: 3, name: title, item: canonical },
+  ],
+});
 
 const jsonLd = JSON.stringify({
   '@context': 'https://schema.org',
@@ -49,13 +74,26 @@ const jsonLd = JSON.stringify({
   canonicalUrl={canonicalUrl}
   noindex={noindex}
 >
-  <script type="application/ld+json" slot="head" set:html={jsonLd} />
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={jsonLd} />
+    <script type="application/ld+json" set:html={breadcrumbJsonLd} />
+  </Fragment>
+
   <article class="article-container">
+    <!-- Breadcrumbs -->
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+      <a href={isZh ? '/zh' : '/'}>{isZh ? '首页' : 'Home'}</a>
+      <span aria-hidden="true">/</span>
+      <a href={blogBase}>{isZh ? '博客' : 'Blog'}</a>
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{title}</span>
+    </nav>
+
     <header class="article-header">
       <h1>{title}</h1>
       <div class="article-meta">
         <time datetime={pubDate.toISOString()}>
-          {pubDate.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', {
+          {pubDate.toLocaleDateString(isZh ? 'zh-CN' : 'en-US', {
             year: 'numeric', month: 'long', day: 'numeric',
           })}
         </time>
@@ -66,11 +104,42 @@ const jsonLd = JSON.stringify({
     <!-- Top ad: after article header, before content -->
     <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_TOP ?? ''} format="horizontal" />
 
+    <!-- Table of Contents -->
+    {tocItems.length >= 3 && (
+      <nav class="toc" aria-label="Table of contents">
+        <details open>
+          <summary><strong>{isZh ? '目录' : 'Table of Contents'}</strong></summary>
+          <ul>
+            {tocItems.map(h => (
+              <li class={h.depth === 3 ? 'toc-h3' : ''}>
+                <a href={`#${h.slug}`}>{h.text}</a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      </nav>
+    )}
+
     <div class="article-body">
       <slot />
     </div>
 
-    <!-- Mid-content ad: injected via AdUnit in MDX, or add a marker here -->
+    <!-- Related Articles -->
+    {relatedPosts.length > 0 && (
+      <section class="related-articles">
+        <h2>{isZh ? '相关文章' : 'Related Articles'}</h2>
+        <ul>
+          {relatedPosts.map(p => (
+            <li>
+              <a href={`${blogBase}/${p.slug}`}>
+                <strong>{p.data.title}</strong>
+                <span>{p.data.description.slice(0, 100)}{p.data.description.length > 100 ? '...' : ''}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
 
     <!-- Bottom ad: after article content -->
     <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_BOTTOM ?? ''} format="rectangle" />
@@ -82,6 +151,27 @@ const jsonLd = JSON.stringify({
     max-width: 720px;
     margin: 0 auto;
     padding: 2rem 1rem;
+  }
+
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 1.5rem;
+  }
+
+  .breadcrumbs a {
+    color: #666;
+  }
+
+  .breadcrumbs a:hover {
+    color: #0070f3;
+  }
+
+  .breadcrumbs span[aria-current] {
+    color: #333;
   }
 
   .article-header h1 {
@@ -98,8 +188,92 @@ const jsonLd = JSON.stringify({
     margin-bottom: 1.5rem;
   }
 
+  .toc {
+    margin: 1rem 0 1.5rem;
+    padding: 1rem 1.25rem;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+  }
+
+  .toc summary {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .toc ul {
+    margin: 0.5rem 0 0;
+    padding-left: 1.25rem;
+    list-style: none;
+  }
+
+  .toc li {
+    margin: 0.3rem 0;
+    line-height: 1.5;
+  }
+
+  .toc li.toc-h3 {
+    padding-left: 1rem;
+  }
+
+  .toc a {
+    font-size: 0.9rem;
+    color: #555;
+  }
+
+  .toc a:hover {
+    color: #0070f3;
+  }
+
   .article-body {
     line-height: 1.8;
     font-size: 1.05rem;
+  }
+
+  .related-articles {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #eee;
+  }
+
+  .related-articles h2 {
+    font-size: 1.3rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .related-articles ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .related-articles a {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  .related-articles a:hover {
+    border-color: #0070f3;
+    box-shadow: 0 2px 8px rgba(0,112,243,0.08);
+    text-decoration: none;
+  }
+
+  .related-articles a strong {
+    font-size: 0.95rem;
+    color: #0070f3;
+  }
+
+  .related-articles a span {
+    font-size: 0.85rem;
+    color: #666;
   }
 </style>
