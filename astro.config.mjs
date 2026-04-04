@@ -22,9 +22,9 @@ export default defineConfig({
       },
     }),
     partytown({
-      // Forward GA4 events from worker thread
+      // Forward GA4 + AdSense calls from main thread to worker
       config: {
-        forward: ['dataLayer.push'],
+        forward: ['dataLayer.push', 'adsbygoogle'],
       },
     }),
   ],
