@@ -1,0 +1,257 @@
+---
+// LineToolsTool — deduplicate, sort, and transform text lines (pure JS)
+---
+
+<div>
+  <div class="lt-wrap">
+    <div class="lt-field">
+      <label for="lt-input">
+        <span>Input Lines</span>
+        <span id="lt-count" class="lt-count"></span>
+      </label>
+      <textarea
+        id="lt-input"
+        placeholder="apple&#10;banana&#10;cherry&#10;apple&#10;banana&#10;date"
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="lt-actions">
+      <button id="lt-dedup" class="btn-primary">Remove Duplicates</button>
+      <button id="lt-sort-asc" class="btn-primary">Sort A→Z</button>
+      <button id="lt-sort-desc" class="btn-primary">Sort Z→A</button>
+      <button id="lt-sort-num" class="btn-secondary">Sort Numeric</button>
+      <button id="lt-reverse" class="btn-secondary">Reverse</button>
+      <button id="lt-shuffle" class="btn-secondary">Shuffle</button>
+      <button id="lt-trim" class="btn-secondary">Trim Lines</button>
+      <button id="lt-empty" class="btn-secondary">Remove Empty</button>
+      <button id="lt-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="lt-status" class="lt-status" aria-live="polite"></div>
+
+    <div class="lt-field">
+      <label for="lt-output">
+        <span>Output</span>
+        <button id="lt-copy" class="btn-copy" type="button">Copy</button>
+      </label>
+      <textarea id="lt-output" readonly spellcheck="false"></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('lt-input');
+      var outputEl = document.getElementById('lt-output');
+      var statusEl = document.getElementById('lt-status');
+      var countEl = document.getElementById('lt-count');
+      var copyBtn = document.getElementById('lt-copy');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'lt-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'lt-status';
+      }
+
+      function getLines() {
+        var raw = inputEl.value;
+        if (!raw) return [];
+        return raw.split('\n');
+      }
+
+      function updateCount() {
+        var raw = inputEl.value.trim();
+        if (!raw) { countEl.textContent = ''; return; }
+        var lines = raw.split('\n');
+        countEl.textContent = lines.length + ' line' + (lines.length === 1 ? '' : 's');
+      }
+
+      inputEl.addEventListener('input', updateCount);
+      updateCount();
+
+      /* ── Remove Duplicates ── */
+      document.getElementById('lt-dedup').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        var seen = {};
+        var result = [];
+        var removed = 0;
+        for (var i = 0; i < lines.length; i++) {
+          if (!seen.hasOwnProperty(lines[i])) {
+            seen[lines[i]] = true;
+            result.push(lines[i]);
+          } else {
+            removed++;
+          }
+        }
+        outputEl.value = result.join('\n');
+        setStatus('Removed ' + removed + ' duplicate' + (removed === 1 ? '' : 's') + '. ' + result.length + ' unique line' + (result.length === 1 ? '' : 's') + '.', false);
+        window.trackTool && window.trackTool('line_tools', 'deduplicate');
+      });
+
+      /* ── Sort A→Z ── */
+      document.getElementById('lt-sort-asc').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        var sorted = lines.slice().sort(function (a, b) {
+          return a.localeCompare(b);
+        });
+        outputEl.value = sorted.join('\n');
+        setStatus('Sorted ' + sorted.length + ' line' + (sorted.length === 1 ? '' : 's') + ' alphabetically (A→Z).', false);
+        window.trackTool && window.trackTool('line_tools', 'sort_asc');
+      });
+
+      /* ── Sort Z→A ── */
+      document.getElementById('lt-sort-desc').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        var sorted = lines.slice().sort(function (a, b) {
+          return b.localeCompare(a);
+        });
+        outputEl.value = sorted.join('\n');
+        setStatus('Sorted ' + sorted.length + ' line' + (sorted.length === 1 ? '' : 's') + ' reverse alphabetically (Z→A).', false);
+        window.trackTool && window.trackTool('line_tools', 'sort_desc');
+      });
+
+      /* ── Sort Numeric ── */
+      document.getElementById('lt-sort-num').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        var sorted = lines.slice().sort(function (a, b) {
+          var na = parseFloat(a);
+          var nb = parseFloat(b);
+          if (isNaN(na) && isNaN(nb)) return a.localeCompare(b);
+          if (isNaN(na)) return 1;
+          if (isNaN(nb)) return -1;
+          return na - nb;
+        });
+        outputEl.value = sorted.join('\n');
+        setStatus('Sorted ' + sorted.length + ' line' + (sorted.length === 1 ? '' : 's') + ' numerically.', false);
+        window.trackTool && window.trackTool('line_tools', 'sort_numeric');
+      });
+
+      /* ── Reverse ── */
+      document.getElementById('lt-reverse').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        outputEl.value = lines.slice().reverse().join('\n');
+        setStatus('Reversed ' + lines.length + ' line' + (lines.length === 1 ? '' : 's') + '.', false);
+        window.trackTool && window.trackTool('line_tools', 'reverse');
+      });
+
+      /* ── Shuffle ── */
+      document.getElementById('lt-shuffle').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        var arr = lines.slice();
+        for (var i = arr.length - 1; i > 0; i--) {
+          var j = Math.floor(Math.random() * (i + 1));
+          var tmp = arr[i];
+          arr[i] = arr[j];
+          arr[j] = tmp;
+        }
+        outputEl.value = arr.join('\n');
+        setStatus('Shuffled ' + arr.length + ' line' + (arr.length === 1 ? '' : 's') + '.', false);
+        window.trackTool && window.trackTool('line_tools', 'shuffle');
+      });
+
+      /* ── Trim Lines ── */
+      document.getElementById('lt-trim').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        var trimmed = lines.map(function (l) { return l.trim(); });
+        outputEl.value = trimmed.join('\n');
+        setStatus('Trimmed whitespace from ' + trimmed.length + ' line' + (trimmed.length === 1 ? '' : 's') + '.', false);
+        window.trackTool && window.trackTool('line_tools', 'trim');
+      });
+
+      /* ── Remove Empty ── */
+      document.getElementById('lt-empty').addEventListener('click', function () {
+        var lines = getLines();
+        if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
+
+        var result = lines.filter(function (l) { return l.trim() !== ''; });
+        var removed = lines.length - result.length;
+        outputEl.value = result.join('\n');
+        setStatus('Removed ' + removed + ' empty line' + (removed === 1 ? '' : 's') + '. ' + result.length + ' line' + (result.length === 1 ? '' : 's') + ' remaining.', false);
+        window.trackTool && window.trackTool('line_tools', 'remove_empty');
+      });
+
+      /* ── Clear ── */
+      document.getElementById('lt-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputEl.value = '';
+        countEl.textContent = '';
+        clearStatus();
+      });
+
+      /* ── Copy ── */
+      copyBtn.addEventListener('click', function () {
+        if (!outputEl.value) return;
+        navigator.clipboard.writeText(outputEl.value).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .lt-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .lt-field { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .lt-field label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .lt-count {
+    font-weight: 400;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+  }
+
+  .lt-field textarea {
+    width: 100%;
+    min-height: 180px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .lt-field textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .lt-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .lt-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .lt-status.success { color: #057a55; }
+  .lt-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .lt-status.success { color: #34d399; }
+    .lt-status.error { color: #f87171; }
+  }
+</style>

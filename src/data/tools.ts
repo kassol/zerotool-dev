@@ -26,6 +26,8 @@ export const allTools: ToolInfo[] = [
   { slug: 'chmod-calculator', name: 'Chmod Calculator', description: 'Calculate Linux file permissions', category: 'dev' },
   { slug: 'csv-json', name: 'CSV to JSON Converter', description: 'Convert between CSV and JSON formats', category: 'data' },
   { slug: 'html-entity', name: 'HTML Entity Encoder/Decoder', description: 'Encode and decode HTML entities', category: 'encoding' },
+  { slug: 'yaml-json', name: 'YAML to JSON Converter', description: 'Convert between YAML and JSON formats', category: 'data' },
+  { slug: 'line-tools', name: 'Line Tools', description: 'Remove duplicates, sort, and transform text lines', category: 'text' },
 ];
 
 /** Return related tools for a given slug: same category first, then others. */

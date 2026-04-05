@@ -1,0 +1,194 @@
+---
+// YamlJsonTool — bidirectional YAML ↔ JSON converter (uses js-yaml CDN)
+---
+
+<div>
+  <div class="yj-wrap">
+    <div class="yj-panels">
+      <div class="yj-panel">
+        <label for="yj-yaml">
+          <span>YAML</span>
+          <button id="yj-copy-yaml" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="yj-yaml"
+          placeholder="name: Alice&#10;age: 30&#10;hobbies:&#10;  - reading&#10;  - hiking"
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="yj-panel">
+        <label for="yj-json">
+          <span>JSON</span>
+          <button id="yj-copy-json" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="yj-json"
+          placeholder='{"name":"Alice","age":30,"hobbies":["reading","hiking"]}'
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="yj-actions">
+      <button id="yj-to-json" class="btn-primary">YAML → JSON</button>
+      <button id="yj-to-yaml" class="btn-primary">JSON → YAML</button>
+      <button id="yj-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="yj-status" class="yj-status" aria-live="polite"></div>
+  </div>
+
+  <!-- js-yaml via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js" is:inline></script>
+
+  <script is:inline>
+    (function () {
+      var yamlEl = document.getElementById('yj-yaml');
+      var jsonEl = document.getElementById('yj-json');
+      var statusEl = document.getElementById('yj-status');
+      var copyYamlBtn = document.getElementById('yj-copy-yaml');
+      var copyJsonBtn = document.getElementById('yj-copy-json');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'yj-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'yj-status';
+      }
+
+      /* ── YAML → JSON ── */
+      document.getElementById('yj-to-json').addEventListener('click', function () {
+        var raw = yamlEl.value.trim();
+        if (!raw) { clearStatus(); jsonEl.value = ''; return; }
+
+        if (typeof jsyaml === 'undefined') {
+          setStatus('YAML library not loaded. Please check your network connection.', true);
+          return;
+        }
+
+        try {
+          var data = jsyaml.load(raw);
+          jsonEl.value = JSON.stringify(data, null, 2);
+          setStatus('Converted YAML to JSON.', false);
+          window.trackTool && window.trackTool('yaml_json', 'yaml_to_json');
+        } catch (e) {
+          jsonEl.value = '';
+          setStatus('Invalid YAML: ' + e.message, true);
+        }
+      });
+
+      /* ── JSON → YAML ── */
+      document.getElementById('yj-to-yaml').addEventListener('click', function () {
+        var raw = jsonEl.value.trim();
+        if (!raw) { clearStatus(); yamlEl.value = ''; return; }
+
+        if (typeof jsyaml === 'undefined') {
+          setStatus('YAML library not loaded. Please check your network connection.', true);
+          return;
+        }
+
+        try {
+          var data = JSON.parse(raw);
+          yamlEl.value = jsyaml.dump(data, { indent: 2, lineWidth: -1, noRefs: true });
+          setStatus('Converted JSON to YAML.', false);
+          window.trackTool && window.trackTool('yaml_json', 'json_to_yaml');
+        } catch (e) {
+          yamlEl.value = '';
+          setStatus('Invalid JSON: ' + e.message, true);
+        }
+      });
+
+      /* ── Clear ── */
+      document.getElementById('yj-clear').addEventListener('click', function () {
+        yamlEl.value = '';
+        jsonEl.value = '';
+        clearStatus();
+      });
+
+      /* ── Copy buttons ── */
+      copyYamlBtn.addEventListener('click', function () {
+        if (!yamlEl.value) return;
+        navigator.clipboard.writeText(yamlEl.value).then(function () {
+          copyYamlBtn.textContent = 'Copied!';
+          setTimeout(function () { copyYamlBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      copyJsonBtn.addEventListener('click', function () {
+        if (!jsonEl.value) return;
+        navigator.clipboard.writeText(jsonEl.value).then(function () {
+          copyJsonBtn.textContent = 'Copied!';
+          setTimeout(function () { copyJsonBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
+      yamlEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          document.getElementById('yj-to-json').click();
+        }
+      });
+
+      jsonEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          document.getElementById('yj-to-yaml').click();
+        }
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .yj-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .yj-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .yj-panels { grid-template-columns: 1fr; }
+  }
+
+  .yj-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .yj-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .yj-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .yj-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .yj-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .yj-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .yj-status.success { color: #057a55; }
+  .yj-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .yj-status.success { color: #34d399; }
+    .yj-status.error { color: #f87171; }
+  }
+</style>
