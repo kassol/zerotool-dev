@@ -112,6 +112,56 @@ async function imageUrlToBase64(url) {
 }
 ```
 
+#### CORS 陷阱：Tainted Canvas 安全错误
+
+用 Canvas 转换**跨域图片**时，调用 `canvas.toDataURL()` 可能会报错：
+
+```
+SecurityError: The operation is insecure.
+```
+
+这是浏览器的安全机制：把跨域图片绘制到 canvas 后，canvas 会被标记为"受污染（tainted）"，`toDataURL()` 随即被禁用，以防止跨域像素数据泄露。
+
+**方案一：`crossOrigin = "anonymous"` + 服务端 CORS 响应头**
+
+如果图片服务器支持 CORS，在赋值 `src` 之前设置 `crossOrigin`，同时确保服务器返回 `Access-Control-Allow-Origin: *`：
+
+```javascript
+const img = new Image();
+img.crossOrigin = 'anonymous'; // 必须在设置 .src 之前
+img.onload = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  console.log(canvas.toDataURL()); // 需要服务器配合返回 CORS 头
+};
+img.src = 'https://external-server.com/image.png';
+```
+
+注意：光设置 `crossOrigin = "anonymous"` 还不够，服务端必须同时返回 `Access-Control-Allow-Origin` 响应头，否则图片请求会直接失败。
+
+**方案二：`fetch()` + Blob + FileReader（完全绕开 Canvas）**
+
+对任何支持 CORS 的服务器，用 `fetch()` 替代 Canvas 方案，彻底规避污染问题：
+
+```javascript
+async function imageUrlToBase64(url) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+```
+
+这个方案不经过 Canvas，天然没有 tainted 问题，同时支持同域 URL 和带 CORS 头的跨域 URL。
+
+> **提示：** [ZeroTool 的图片转 Base64 工具](/tools/image-to-base64)通过 `FileReader` 直接读取本地文件，不发起任何外部请求，不存在 CORS 问题。
+
 ### JavaScript（Node.js）
 
 ```javascript

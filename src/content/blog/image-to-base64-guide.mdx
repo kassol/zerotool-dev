@@ -112,6 +112,56 @@ async function imageUrlToBase64(url) {
 }
 ```
 
+#### The CORS Pitfall: Tainted Canvas Error
+
+When you draw a cross-origin image onto a canvas and call `canvas.toDataURL()`, you may encounter:
+
+```
+SecurityError: The operation is insecure.
+```
+
+The browser marks the canvas as "tainted" when it contains pixels from a different origin, blocking `toDataURL()` to prevent cross-origin data leakage.
+
+**Fix 1 — `crossOrigin = "anonymous"` + server CORS headers**
+
+If the image server supports CORS, set `crossOrigin` before assigning `src`, and ensure the server responds with `Access-Control-Allow-Origin: *`:
+
+```javascript
+const img = new Image();
+img.crossOrigin = 'anonymous'; // must be set BEFORE .src
+img.onload = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  console.log(canvas.toDataURL()); // works only if server sends CORS headers
+};
+img.src = 'https://external-server.com/image.png';
+```
+
+Setting `crossOrigin = "anonymous"` alone is not enough — the server must also send the `Access-Control-Allow-Origin` response header.
+
+**Fix 2 — `fetch()` + Blob + FileReader (avoids canvas entirely)**
+
+For any server that supports CORS, skip canvas and use `fetch()` instead:
+
+```javascript
+async function imageUrlToBase64(url) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+```
+
+This avoids the tainted-canvas restriction entirely. It works for same-origin URLs and for cross-origin URLs where the server sends CORS headers.
+
+> **Note:** [ZeroTool's image converter](/tools/image-to-base64) uses `FileReader` on local files — no external requests, no CORS issues.
+
 ### JavaScript (Node.js)
 
 ```javascript
