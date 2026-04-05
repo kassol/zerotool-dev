@@ -1,0 +1,221 @@
+---
+title: "文本行处理工具：在线排序、去重与行变换完全指南"
+description: "在线对文本行进行字母排序、去除重复行、倒序排列和清理空行。适用于日志分析、数据清洗和日常开发文本处理场景的实用指南。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "line-tools-guide"
+tags: ["sort-lines", "remove-duplicates", "text-tools", "developer-tools", "data-cleaning"]
+---
+
+按行处理文本是开发者日常频繁遇到的任务——清洗导出的数据、去重域名列表、对日志条目排序、颠倒调用栈顺序。在命令行上，`sort`、`uniq`、`awk` 可以胜任。在浏览器里，没有终端窗口时，在线行处理工具是最快的选择。
+
+**[在线排序、去重和清理文本行 →](/tools/line-tools)**
+
+## 常用行操作
+
+### 按字母排序
+
+对列表排序是最常见的文本操作之一。典型场景：
+
+- 代码评审前统一 import 或依赖项的顺序
+- 对 `.gitignore` 或 `hosts` 文件排序，提升可读性
+- 对词汇表或单词列表排序
+- 对 `.env` 文件中的环境变量名排序
+
+等效的 Shell 命令：
+
+```bash
+sort input.txt
+```
+
+忽略大小写排序：
+
+```bash
+sort -f input.txt
+```
+
+倒序：
+
+```bash
+sort -r input.txt
+```
+
+### 去除重复行
+
+重复行很容易积累：合并两个列表、追加写入日志、从多个来源导出数据。去重通常是数据清洗的第一步。
+
+Shell 等效命令（使用 `awk` 保留顺序）：
+
+```bash
+# 仅删除相邻重复项（需先排序）
+sort input.txt | uniq
+
+# 删除所有重复项，保留首次出现（保持原始顺序）
+awk '!seen[$0]++' input.txt
+```
+
+`awk` 方案在实际使用中更实用，因为它不需要先排序，就能在保留原始顺序的同时去重。
+
+### 行顺序倒置
+
+倒置行顺序在以下场景很有用：希望时间线日志最新条目在前，或者需要从底部往上阅读调用栈。
+
+```bash
+# macOS
+tail -r input.txt
+
+# Linux
+tac input.txt
+```
+
+### 删除空行
+
+从 PDF、HTML 或 CSV 提取文本时，空行很常见。过滤掉空行可以得到更干净的数据集。
+
+```bash
+grep -v '^$' input.txt
+```
+
+或使用 `sed`：
+
+```bash
+sed '/^[[:space:]]*$/d' input.txt
+```
+
+### 去除首尾空白
+
+列表中的前导和尾随空白会造成隐性问题——两个看起来一样的条目，在 join、去重或查找操作中可能无法匹配。
+
+```bash
+sed 's/^[[:space:]]*//;s/[[:space:]]*$//' input.txt
+```
+
+## 真实开发场景
+
+### 去重依赖列表
+
+多位协作者合并需求后，重复依赖很常见：
+
+```
+处理前：
+requests==2.31.0
+numpy==1.26.0
+requests==2.31.0
+pandas==2.1.0
+numpy==1.26.0
+
+去重后：
+requests==2.31.0
+numpy==1.26.0
+pandas==2.1.0
+```
+
+### 对 hosts 文件条目排序
+
+包含成千上万条目的 `hosts` 文件或 DNS 拦截列表，排序后更易维护：
+
+```
+0.0.0.0 ads.example.com
+0.0.0.0 analytics.example.com
+0.0.0.0 tracking.example.com
+```
+
+排序后的条目更容易发现重复项，也方便定位特定域名。
+
+### 清洗日志导出
+
+从 Datadog、Grafana Loki 或 Splunk 导出日志并粘贴到文本编辑器时，常常会有重复行（来自重叠的时间窗口）或多余的空行。执行去重 + 删除空行后，就能得到干净的数据集。
+
+### 规范化 API 测试数据
+
+随时间积累的测试 ID 列表或测试端点列表，通常存在重复和顺序不一致。入版本控制前先排序 + 去重，可以保持列表在团队成员之间的一致性。
+
+### 处理剪贴板数据
+
+从电子表格复制某一列、从数据库查询结果复制 ID 列表，或从 PDF 摘取文字时，原始粘贴内容通常需要：
+1. 去除首尾空白（列值可能有填充字符）
+2. 删除空行（选区中的空行）
+3. 去重（透视表可能重复值）
+4. 排序（提升可读性或便于对比）
+
+## 命令行速查
+
+喜欢在终端操作的开发者可以参考这份速查表：
+
+| 操作 | 命令 |
+|------|------|
+| 字母排序 | `sort file.txt` |
+| 忽略大小写排序 | `sort -f file.txt` |
+| 倒序排列 | `sort -r file.txt` |
+| 数字排序 | `sort -n file.txt` |
+| 删除相邻重复行 | `sort file.txt \| uniq` |
+| 删除所有重复行（保留顺序） | `awk '!seen[$0]++' file.txt` |
+| 统计重复次数 | `sort file.txt \| uniq -c \| sort -rn` |
+| 行顺序倒置 | `tac file.txt`（Linux）/ `tail -r file.txt`（macOS） |
+| 删除空行 | `grep -v '^$' file.txt` |
+| 去除首尾空白 | `sed 's/^[[:space:]]*//;s/[[:space:]]*$//' file.txt` |
+| 统计行数 | `wc -l file.txt` |
+
+## 什么时候用浏览器工具，什么时候用终端
+
+对大文件或自动化场景，终端更强大。以下情况下浏览器工具更合适：
+
+- 当前机器没有终端（Windows 未安装 WSL、远程桌面环境）
+- 数据来自浏览器（从网页复制、表单输出、API 响应）
+- 只需要一次性操作，不值得打开终端窗口
+- 需要与非技术团队成员共享同一个工作流
+
+对同一数据流的重复操作，写脚本。对一次性清洗，粘贴到浏览器工具直接解决。
+
+## 在代码中处理文本行
+
+常用语言的程序化行处理方式：
+
+### JavaScript
+
+```js
+const text = `苹果\n香蕉\n苹果\n樱桃\n香蕉`;
+
+const lines = text.split('\n');
+const sorted = [...lines].sort();
+const unique = [...new Set(lines)];
+const reversed = [...lines].reverse();
+const noBlank = lines.filter(line => line.trim() !== '');
+```
+
+### Python
+
+```python
+text = "苹果\n香蕉\n苹果\n樱桃\n香蕉"
+
+lines = text.splitlines()
+sorted_lines = sorted(lines)
+unique_lines = list(dict.fromkeys(lines))  # 保留顺序
+reversed_lines = list(reversed(lines))
+no_blank = [l for l in lines if l.strip()]
+```
+
+### Go
+
+```go
+lines := strings.Split(text, "\n")
+
+// 排序
+sort.Strings(lines)
+
+// 去重（保留顺序）
+seen := make(map[string]bool)
+unique := []string{}
+for _, line := range lines {
+    if !seen[line] {
+        seen[line] = true
+        unique = append(unique, line)
+    }
+}
+```
+
+## 无需终端，直接在浏览器处理
+
+快速的文本行操作，无需命令行：
+
+**[打开行处理工具 →](/tools/line-tools)** — 粘贴文本，选择排序、去重、倒序或去除空白，复制结果。
