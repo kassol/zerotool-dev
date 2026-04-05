@@ -1,0 +1,324 @@
+---
+title: "TOML 转 JSON 完整指南：语法详解与实战场景"
+description: "深入解析 TOML 格式与 JSON 互转方法，涵盖 Cargo.toml、pyproject.toml 等常见配置文件场景，附 Python/Node.js/Rust 代码示例。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "toml-json-guide"
+tags: ["toml", "json", "toml转json", "配置文件", "开发工具"]
+---
+
+TOML（Tom's Obvious, Minimal Language）是 Rust 生态的标准配置格式，也是 Python `pyproject.toml`、Hugo、Gitea 等现代工具的首选。JSON 是 API 和数据交换的通用语。当你需要在这两种格式之间转换——比如用 JSON 工具分析 Cargo 依赖、或将 TOML 配置值注入 JSON API——就需要可靠的转换工具。
+
+[在线 TOML↔JSON 转换工具 →](/tools/toml-json)
+
+## TOML 是什么？
+
+TOML 由 GitHub 联合创始人 Tom Preston-Werner 设计，目标是：对人类友好、无歧义、易于解析。与 YAML 相比，TOML 有严格的类型规则，不依赖缩进来表达层级；与 JSON 相比，它支持注释。
+
+```toml
+# TOML
+[server]
+host = "localhost"
+port = 8080
+tls = true
+tags = ["web", "production"]
+```
+
+对应的 JSON：
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": true,
+    "tags": ["web", "production"]
+  }
+}
+```
+
+TOML 本质上是哈希表的文本表示，与 JSON 的映射关系清晰且无损——每个合法的 TOML 文档都有唯一对应的 JSON 表示。
+
+## TOML 核心语法速览
+
+### 基本键值对
+
+```toml
+name = "张三"
+age = 28
+ratio = 1.5
+active = true
+version = "1.0.0"
+```
+
+TOML 类型与 JSON 类型直接对应：字符串→字符串，整数→数字，浮点数→数字，布尔值→布尔值。
+
+### 表（对象）
+
+方括号定义一个表，等同于 JSON 对象：
+
+```toml
+[database]
+host = "db.example.com"
+port = 5432
+name = "myapp"
+```
+
+转换结果：
+
+```json
+{
+  "database": {
+    "host": "db.example.com",
+    "port": 5432,
+    "name": "myapp"
+  }
+}
+```
+
+### 嵌套表与点号键
+
+```toml
+[database.credentials]
+user = "admin"
+password = "secret"
+```
+
+也可以写成点号键形式：
+
+```toml
+database.credentials.user = "admin"
+database.credentials.password = "secret"
+```
+
+### 数组
+
+```toml
+ports = [8080, 8081, 8082]
+hosts = ["web1", "web2", "web3"]
+```
+
+### 表数组（Array of Tables）
+
+这是 TOML 表达对象数组的方式，使用双方括号 `[[]]`：
+
+```toml
+[[servers]]
+name = "alpha"
+ip = "10.0.0.1"
+role = "primary"
+
+[[servers]]
+name = "beta"
+ip = "10.0.0.2"
+role = "replica"
+```
+
+转换结果：
+
+```json
+{
+  "servers": [
+    { "name": "alpha", "ip": "10.0.0.1", "role": "primary" },
+    { "name": "beta", "ip": "10.0.0.2", "role": "replica" }
+  ]
+}
+```
+
+### 日期时间
+
+TOML 原生支持日期时间类型，这是 JSON 不具备的：
+
+```toml
+created_at = 2024-01-15T10:30:00Z
+release_date = 2024-06-01
+```
+
+转换为 JSON 时，日期时间变为 ISO 8601 字符串：
+
+```json
+{
+  "created_at": "2024-01-15T10:30:00Z",
+  "release_date": "2024-06-01"
+}
+```
+
+### 内联表
+
+```toml
+point = { x = 1, y = 2 }
+rgb = { r = 255, g = 128, b = 0 }
+```
+
+## 常见 TOML 配置文件场景
+
+### Rust：Cargo.toml
+
+```toml
+[package]
+name = "my-crate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+```
+
+转换为 JSON 后，可以用 `jq` 等工具对依赖树做自动化分析，比如检查特定 crate 的版本约束、生成依赖报告等。
+
+### Python：pyproject.toml
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "my-package"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "pydantic>=2.0",
+]
+
+[project.scripts]
+my-cli = "my_package.cli:main"
+```
+
+CI/CD 流水线中经常需要从 `pyproject.toml` 提取版本号或依赖列表，转为 JSON 后可以用标准工具处理。
+
+### 应用配置（Go/Rust 服务）
+
+```toml
+[app]
+name = "my-service"
+port = 9000
+debug = false
+
+[database]
+dsn = "postgres://user:pass@localhost/db?sslmode=disable"
+max_connections = 25
+
+[[middlewares]]
+name = "cors"
+enabled = true
+
+[[middlewares]]
+name = "ratelimit"
+enabled = false
+requests_per_second = 100
+```
+
+## TOML vs JSON vs YAML 对比
+
+| 特性 | TOML | JSON | YAML |
+|---|---|---|---|
+| 注释 | 支持（`#`） | 不支持 | 支持（`#`） |
+| 数据类型 | 丰富（含日期时间） | 基本 | 隐式推断 |
+| 多行字符串 | 支持 | 需转义 `\n` | 支持（`\|`、`>`） |
+| 对象数组 | `[[table]]` 语法 | 原生支持 | `- key: val` |
+| null 值 | 无原生支持 | `null` | `null`/`~` |
+| 可读性 | 高 | 中 | 高 |
+| 解析歧义 | 极低 | 极低 | 较高 |
+
+TOML 相比 YAML 的核心优势是**无歧义**。YAML 1.1 中臭名昭著的布尔值陷阱（`yes`/`no`/`on`/`off` 被解析为布尔值）在 TOML 中根本不存在。
+
+## 代码实现：TOML 转 JSON
+
+### Python（3.11+）
+
+Python 3.11 内置了 `tomllib`：
+
+```python
+import tomllib
+import json
+
+with open("config.toml", "rb") as f:
+    data = tomllib.load(f)
+
+# default=str 处理日期时间类型
+print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+```
+
+Python 3.10 及以下，安装 `tomli`：
+
+```bash
+pip install tomli
+```
+
+```python
+import tomli
+import json
+
+with open("config.toml", "rb") as f:
+    data = tomli.load(f)
+
+print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+```
+
+### Node.js
+
+```bash
+npm install @iarna/toml
+```
+
+```javascript
+const TOML = require('@iarna/toml');
+const fs = require('fs');
+
+const data = TOML.parse(fs.readFileSync('config.toml', 'utf8'));
+console.log(JSON.stringify(data, null, 2));
+```
+
+### Rust
+
+```toml
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+```
+
+```rust
+fn main() {
+    let toml_str = std::fs::read_to_string("config.toml").unwrap();
+    let value: toml::Value = toml::from_str(&toml_str).unwrap();
+    println!("{}", serde_json::to_string_pretty(&value).unwrap());
+}
+```
+
+### 命令行工具 `dasel`
+
+```bash
+# macOS
+brew install dasel
+
+# TOML 转 JSON
+dasel -f config.toml -r toml -w json
+
+# 提取特定字段
+dasel -f config.toml select -s '.server.port'
+```
+
+## 常见转换问题
+
+**TOML 没有 null**：TOML 不支持 null 类型。如果需要表达"无值"，通常用空字符串或直接省略该键。将含 `null` 的 JSON 转回 TOML 时，行为取决于具体库的实现。
+
+**日期时间序列化**：TOML 的 datetime 类型转 JSON 时变为字符串，Python 中用 `default=str` 处理。其他语言需要查阅对应库的文档确认序列化行为。
+
+**大整数精度**：TOML 整数是 64 位有符号整数，而 JSON 的数字类型是 IEEE 754 双精度浮点数，超过 2^53 的整数在转换时可能丢失精度。配置文件场景中极少遇到，但需要了解。
+
+**键顺序**：TOML 规范不保证键的顺序，JSON 输出的顺序依赖具体解析器实现，不要依赖特定顺序。
+
+## 在线转换工具
+
+不想安装命令行工具？[ZeroTool 的 TOML↔JSON 在线转换器](/tools/toml-json)完全在浏览器内运行，不上传任何数据，支持实时预览和错误高亮。
+
+**[立即使用 TOML↔JSON 转换器 →](/tools/toml-json)**
+
+{/* FAQ structured data is rendered via ToolLayout on the tool page */}

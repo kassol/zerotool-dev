@@ -1,0 +1,343 @@
+---
+title: "TOML to JSON: A Complete Developer Guide"
+description: "Learn how to convert TOML to JSON online and in code. Covers TOML syntax, comparison with JSON and YAML, and real-world Rust/Python/Go config use cases."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "toml-json-guide-zh"
+tags: ["toml", "json", "toml-to-json", "config", "developer-tools"]
+---
+
+TOML (Tom's Obvious, Minimal Language) is the configuration format of choice for Rust projects, Python's `pyproject.toml`, and a growing number of modern tools. JSON is the universal data format for APIs and structured interchange. When you need to move data between these two worlds — inspecting a Cargo config in a JSON-aware tool, or feeding TOML values into a JSON API — you need reliable conversion.
+
+[Convert TOML to JSON instantly →](/tools/toml-json)
+
+## What Is TOML?
+
+TOML was created by Tom Preston-Werner (co-founder of GitHub) with a clear goal: a config file format that is easy for humans to read and unambiguous to parse. Unlike YAML, TOML has strict typing rules and no indentation-based structure. Unlike JSON, it supports comments.
+
+```toml
+# TOML
+[server]
+host = "localhost"
+port = 8080
+tls = true
+tags = ["web", "production"]
+```
+
+The equivalent JSON:
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": true,
+    "tags": ["web", "production"]
+  }
+}
+```
+
+TOML maps cleanly to a hash table (nested key-value pairs), which makes conversion to JSON straightforward and lossless — every TOML document has an unambiguous JSON representation.
+
+## TOML Syntax Essentials
+
+### Basic Key-Value Pairs
+
+```toml
+name = "Alice"
+age = 30
+ratio = 1.5
+active = true
+nothing = ""          # TOML has no null; use empty string or omit the key
+version = "1.0.0"
+```
+
+TOML types map directly to JSON: strings → strings, integers → numbers, floats → numbers, booleans → booleans.
+
+### Tables (Objects)
+
+Square brackets define a table (equivalent to a JSON object):
+
+```toml
+[database]
+host = "db.example.com"
+port = 5432
+name = "myapp"
+```
+
+Converts to:
+
+```json
+{
+  "database": {
+    "host": "db.example.com",
+    "port": 5432,
+    "name": "myapp"
+  }
+}
+```
+
+### Nested Tables (Dotted Keys)
+
+```toml
+[database.credentials]
+user = "admin"
+password = "secret"
+```
+
+Or equivalently using dotted keys:
+
+```toml
+database.credentials.user = "admin"
+database.credentials.password = "secret"
+```
+
+### Arrays
+
+```toml
+ports = [8080, 8081, 8082]
+hosts = ["web1", "web2", "web3"]
+```
+
+### Array of Tables
+
+This is TOML's way to express an array of objects — the `[[double bracket]]` syntax:
+
+```toml
+[[servers]]
+name = "alpha"
+ip = "10.0.0.1"
+role = "primary"
+
+[[servers]]
+name = "beta"
+ip = "10.0.0.2"
+role = "replica"
+```
+
+Converts to:
+
+```json
+{
+  "servers": [
+    { "name": "alpha", "ip": "10.0.0.1", "role": "primary" },
+    { "name": "beta", "ip": "10.0.0.2", "role": "replica" }
+  ]
+}
+```
+
+### Dates and Times
+
+TOML has first-class date/time support, which JSON lacks:
+
+```toml
+created_at = 2024-01-15T10:30:00Z
+release_date = 2024-06-01
+```
+
+When converting to JSON, datetimes become ISO 8601 strings:
+
+```json
+{
+  "created_at": "2024-01-15T10:30:00Z",
+  "release_date": "2024-06-01"
+}
+```
+
+### Inline Tables
+
+TOML supports compact inline table syntax for simple cases:
+
+```toml
+point = { x = 1, y = 2 }
+rgb = { r = 255, g = 128, b = 0 }
+```
+
+## Real-World TOML Files and Their JSON Equivalents
+
+### Rust: Cargo.toml
+
+```toml
+[package]
+name = "my-crate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+```
+
+Converted to JSON (useful for scripting or CI tooling that parses package metadata):
+
+```json
+{
+  "package": {
+    "name": "my-crate",
+    "version": "0.1.0",
+    "edition": "2021"
+  },
+  "dependencies": {
+    "serde": { "version": "1.0", "features": ["derive"] },
+    "tokio": { "version": "1", "features": ["full"] }
+  },
+  "dev-dependencies": {
+    "assert_cmd": "2"
+  }
+}
+```
+
+### Python: pyproject.toml
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "my-package"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "pydantic>=2.0",
+]
+
+[project.scripts]
+my-cli = "my_package.cli:main"
+```
+
+This is a common conversion target for tools that need to programmatically read Python project metadata without a TOML parser.
+
+### Go: go.work (TOML-adjacent)
+
+While Go uses its own module format, many Go projects use TOML for application configuration:
+
+```toml
+[app]
+name = "my-service"
+port = 9000
+debug = false
+
+[database]
+dsn = "postgres://user:pass@localhost/db?sslmode=disable"
+max_connections = 25
+```
+
+## TOML vs JSON vs YAML
+
+| Feature | TOML | JSON | YAML |
+|---|---|---|---|
+| Comments | Yes (`#`) | No | Yes (`#`) |
+| Data types | Rich (datetime, etc.) | Basic | Implicit |
+| Multiline strings | Yes | Escaped `\n` | Yes (`|`, `>`) |
+| Array of objects | `[[table]]` syntax | Native | `- key: val` |
+| Null value | Not built-in | `null` | `null`/`~` |
+| Readability | High | Medium | High |
+| Parse ambiguity | Low | Low | High |
+
+TOML's primary advantage over YAML is its lack of ambiguity. The famous YAML boolean trap (`yes`/`no`/`on`/`off` being booleans) doesn't exist in TOML.
+
+## Converting TOML to JSON in Code
+
+### Python
+
+```bash
+pip install tomllib  # built-in from Python 3.11+
+```
+
+```python
+import tomllib
+import json
+
+with open("config.toml", "rb") as f:
+    data = tomllib.load(f)
+
+print(json.dumps(data, indent=2, default=str))  # default=str handles datetimes
+```
+
+For Python 3.10 and earlier:
+
+```bash
+pip install tomli
+```
+
+```python
+import tomli
+import json
+
+with open("config.toml", "rb") as f:
+    data = tomli.load(f)
+
+print(json.dumps(data, indent=2, default=str))
+```
+
+### Node.js
+
+```bash
+npm install @iarna/toml
+```
+
+```javascript
+const TOML = require('@iarna/toml');
+const fs = require('fs');
+
+const data = TOML.parse(fs.readFileSync('config.toml', 'utf8'));
+console.log(JSON.stringify(data, null, 2));
+```
+
+### Rust
+
+```toml
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+```
+
+```rust
+use serde_json;
+use toml;
+
+fn main() {
+    let toml_str = std::fs::read_to_string("config.toml").unwrap();
+    let value: toml::Value = toml::from_str(&toml_str).unwrap();
+    println!("{}", serde_json::to_string_pretty(&value).unwrap());
+}
+```
+
+### Command Line with `dasel`
+
+[`dasel`](https://github.com/TomWright/dasel) is a Swiss Army knife for structured data:
+
+```bash
+# Install
+brew install dasel
+
+# TOML to JSON
+dasel -f config.toml -r toml -w json
+
+# Read a specific field
+dasel -f config.toml select -s '.server.port'
+```
+
+## Common Conversion Issues
+
+**TOML null vs JSON null**: TOML has no native null. If you need to represent absence, use an empty string or omit the key entirely. When converting JSON with `null` back to TOML, the behavior depends on the library.
+
+**Datetime serialization**: TOML datetimes become strings in JSON. The `default=str` pattern in Python handles this. In other languages, check your library's serialization behavior.
+
+**Integer overflow**: TOML integers are 64-bit signed. JSON has no integer type (numbers are IEEE 754 doubles), which can lose precision for very large integers (> 2^53). Rare in config files but worth knowing.
+
+**Key ordering**: TOML does not guarantee key order. JSON output order depends on the parser implementation — don't rely on it being alphabetical or insertion-ordered without explicit sorting.
+
+## Online TOML↔JSON Converter
+
+For quick one-off conversions without installing any tools, [ZeroTool's TOML↔JSON converter](/tools/toml-json) runs entirely in your browser. Paste your TOML on one side, get JSON on the other. No data is sent to any server.
+
+**[Try the TOML↔JSON converter →](/tools/toml-json)**
+
+{/* FAQ structured data is rendered via ToolLayout on the tool page */}

@@ -1,0 +1,270 @@
+---
+title: "图片转 Base64 完整指南：Data URI、API 传图与内嵌方案"
+description: "详解图片转 Base64 的使用场景与代码实现，涵盖 CSS Data URI、HTML 邮件内嵌、JSON API 传图，附 Python/Node.js/命令行示例。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "image-to-base64-guide"
+tags: ["base64", "图片", "data-uri", "编码", "开发工具"]
+---
+
+图片转 Base64 是开发者日常频繁遇到的需求：把小图标直接嵌入 CSS 减少 HTTP 请求、把图片作为 JSON 字段传给 API、在 HTML 邮件中内嵌 Logo、或者把图片数据存进数据库字段。Base64 编码把二进制图片数据转换成可打印的 ASCII 字符串，让图片能够在任何文本协议中安全传输。
+
+[在线图片转 Base64 工具 →](/tools/image-to-base64)
+
+## Base64 图片编码原理
+
+Base64 是一种编码方案，用 64 个可打印 ASCII 字符（A–Z、a–z、0–9、`+`、`/`）表示任意二进制数据。图片文件本质是二进制数据——像素值、压缩表和元数据的字节序列。Base64 把这些字节转换成文本字符串，让图片可以嵌入任何支持文本的地方。
+
+代价是：Base64 编码后的数据体积比原始二进制大约增加 **33%**。一张 100 KB 的 PNG 转成 Base64 后约为 133 KB。
+
+## Data URI 语法
+
+Base64 图片在 Web 上最常见的用途是 **Data URI**：
+
+```
+data:[<mediatype>][;base64],<data>
+```
+
+实际案例：
+
+```html
+<!-- HTML 中直接内嵌 PNG 图片 -->
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="1px 点">
+
+<!-- CSS 中用 Base64 SVG 图标 -->
+.icon {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01eiIvPjwvc3ZnPg==");
+}
+```
+
+媒体类型告诉浏览器如何解析数据：`image/png`、`image/jpeg`、`image/svg+xml`、`image/webp`、`image/gif`。
+
+## 什么时候用 Base64 图片
+
+### 适合的场景
+
+**CSS 中的小图标和 Logo**：把 2–3 KB 的 SVG 或 PNG 作为 Data URI 内嵌，省掉一次 HTTP 请求。对于每个页面都要用到的小资源，能改善首屏感知性能。
+
+**HTML 邮件模板**：邮件客户端通常会屏蔽外部图片请求，内嵌 Base64 图片能确保图片在不需要网络访问或用户授权的情况下直接显示。
+
+**JSON API 传图**：很多 API（计算机视觉、文档处理、缩略图上传）接受 JSON 请求体中的 Base64 编码图片字段。
+
+**离线/自包含 HTML**：制作需要在无网络环境使用的 HTML 报告或文档时，Base64 内嵌图片确保所有资源随文件一起传递。
+
+**Canvas 和 WebGL**：JavaScript 的 `drawImage()` 等 API 直接支持 Base64 Data URI。
+
+### 不适合用 Base64 的场景
+
+**大图片**：对于超过 10–20 KB 的图片，33% 的体积增加代价较高，应使用文件引用。
+
+**多页面共用的图片**：Base64 图片不能被浏览器独立缓存。外部图片 URL 只缓存一次；同一个 Base64 字符串嵌在 10 个页面就会被解码 10 次。
+
+**性能敏感页面**：解析大型 Base64 字符串会阻塞主线程，而外部图片可以并行下载、在独立线程解码。
+
+## 代码实现：图片转 Base64
+
+### JavaScript（浏览器）
+
+从 `<input>` 文件选择器读取图片：
+
+```javascript
+const input = document.getElementById('fileInput');
+
+input.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = (event) => {
+    const base64 = event.target.result;
+    // base64 = "data:image/png;base64,iVBORw0KGgo..."
+    console.log(base64);
+
+    // 去掉 Data URI 前缀，只保留 Base64 数据部分：
+    const base64Data = base64.split(',')[1];
+    console.log(base64Data);
+  };
+
+  reader.readAsDataURL(file);
+});
+```
+
+通过 Canvas 将图片 URL 转为 Base64：
+
+```javascript
+async function imageUrlToBase64(url) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';  // 跨域图片需要此设置
+
+  return new Promise((resolve, reject) => {
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+```
+
+### JavaScript（Node.js）
+
+```javascript
+const fs = require('fs');
+const path = require('path');
+
+function imageToDataUri(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mimeTypes = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+  };
+  const mime = mimeTypes[ext] || 'application/octet-stream';
+  const data = fs.readFileSync(filePath).toString('base64');
+  return `data:${mime};base64,${data}`;
+}
+
+console.log(imageToDataUri('./logo.png'));
+```
+
+### Python
+
+```python
+import base64
+from pathlib import Path
+
+def image_to_base64(file_path: str) -> str:
+    """返回图片文件的 Base64 编码字符串"""
+    return base64.b64encode(Path(file_path).read_bytes()).decode('utf-8')
+
+def image_to_data_uri(file_path: str, mime_type: str = 'image/png') -> str:
+    """返回可内嵌于 HTML/CSS 的 Data URI"""
+    b64 = image_to_base64(file_path)
+    return f"data:{mime_type};base64,{b64}"
+
+# 使用示例
+print(image_to_data_uri('logo.png', 'image/png'))
+```
+
+### 命令行
+
+```bash
+# macOS / Linux
+base64 -i image.png
+base64 -i image.png | tr -d '\n'  # 单行输出，去掉换行
+
+# 生成完整 Data URI
+echo "data:image/png;base64,$(base64 -i image.png | tr -d '\n')"
+```
+
+## 常见场景：调用视觉 AI API
+
+国内外主流计算机视觉 API（如阿里云视觉智能、百度 AI、OpenAI Vision）通常支持 Base64 传图：
+
+```python
+import base64
+import httpx
+
+# 读取图片并编码
+with open('photo.jpg', 'rb') as f:
+    image_b64 = base64.b64encode(f.read()).decode('utf-8')
+
+# 调用 API（以通用格式为例）
+response = httpx.post(
+    'https://api.example.com/vision/analyze',
+    json={
+        'image': {
+            'type': 'base64',
+            'media_type': 'image/jpeg',
+            'data': image_b64,
+        }
+    }
+)
+print(response.json())
+```
+
+OpenAI Vision API 格式：
+
+```python
+import base64
+from openai import OpenAI
+
+client = OpenAI()
+
+with open('screenshot.png', 'rb') as f:
+    image_b64 = base64.b64encode(f.read()).decode('utf-8')
+
+response = client.chat.completions.create(
+    model='gpt-4o',
+    messages=[{
+        'role': 'user',
+        'content': [
+            {'type': 'text', 'text': '请描述这张图片的内容'},
+            {
+                'type': 'image_url',
+                'image_url': {
+                    'url': f'data:image/png;base64,{image_b64}'
+                }
+            }
+        ]
+    }]
+)
+```
+
+## Base64 解码回图片
+
+```javascript
+// Node.js：Base64 字符串 → 图片文件
+const fs = require('fs');
+
+const base64Data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA...';
+const buffer = Buffer.from(base64Data, 'base64');
+fs.writeFileSync('output.png', buffer);
+```
+
+```python
+# Python：Base64 字符串 → 图片文件
+import base64
+from pathlib import Path
+
+base64_data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...'
+Path('output.png').write_bytes(base64.b64decode(base64_data))
+```
+
+## 图片格式参考
+
+| 格式 | MIME 类型 | 适用场景 | Base64 使用频率 |
+|---|---|---|---|
+| PNG | `image/png` | 图标、截图、Logo | 高 |
+| JPEG | `image/jpeg` | 照片 | 较低（体积大） |
+| SVG | `image/svg+xml` | 矢量图标、Logo | 非常高 |
+| WebP | `image/webp` | 高压缩比图片 | 增长中 |
+| GIF | `image/gif` | 动图 | 较少 |
+| ICO | `image/x-icon` | Favicon | 常见 |
+
+**SVG 的特殊处理**：因为 SVG 本身是 XML 文本，可以不用 Base64 而直接 URL 编码嵌入，避免 33% 的体积增加：
+
+```css
+/* Base64 方式（有 33% 体积开销） */
+background-image: url("data:image/svg+xml;base64,PHN2Zy4uLg==");
+
+/* URL 编码方式（更小、更可读） */
+background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'...%3E%3C/svg%3E");
+```
+
+## 在线转换工具
+
+不想写代码？[ZeroTool 的图片转 Base64 工具](/tools/image-to-base64)完全在浏览器内运行，拖入或选择图片，立即得到 Base64 字符串或完整 Data URI，不上传任何文件到服务器。
+
+**[立即使用图片转 Base64 工具 →](/tools/image-to-base64)**
+
+{/* FAQ structured data is rendered via ToolLayout on the tool page */}

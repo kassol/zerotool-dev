@@ -1,0 +1,179 @@
+---
+// TomlJsonTool — bidirectional TOML ↔ JSON converter (uses smol-toml via Astro bundle)
+---
+
+<div>
+  <div class="tj-wrap">
+    <div class="tj-panels">
+      <div class="tj-panel">
+        <label for="tj-toml">
+          <span>TOML</span>
+          <button id="tj-copy-toml" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="tj-toml"
+          placeholder={'[database]\nhost = "localhost"\nport = 5432\nenabled = true'}
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="tj-panel">
+        <label for="tj-json">
+          <span>JSON</span>
+          <button id="tj-copy-json" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="tj-json"
+          placeholder='{"database":{"host":"localhost","port":5432,"enabled":true}}'
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="tj-actions">
+      <button id="tj-to-json" class="btn-primary">TOML → JSON</button>
+      <button id="tj-to-toml" class="btn-primary">JSON → TOML</button>
+      <button id="tj-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="tj-status" class="tj-status" aria-live="polite"></div>
+  </div>
+
+  <script>
+    import { parse, stringify } from 'smol-toml';
+
+    const tomlEl = document.getElementById('tj-toml') as HTMLTextAreaElement;
+    const jsonEl = document.getElementById('tj-json') as HTMLTextAreaElement;
+    const statusEl = document.getElementById('tj-status') as HTMLElement;
+    const copyTomlBtn = document.getElementById('tj-copy-toml') as HTMLButtonElement;
+    const copyJsonBtn = document.getElementById('tj-copy-json') as HTMLButtonElement;
+
+    function setStatus(msg: string, isError: boolean) {
+      statusEl.textContent = msg;
+      statusEl.className = 'tj-status ' + (isError ? 'error' : 'success');
+    }
+
+    function clearStatus() {
+      statusEl.textContent = '';
+      statusEl.className = 'tj-status';
+    }
+
+    /* ── TOML → JSON ── */
+    document.getElementById('tj-to-json')!.addEventListener('click', () => {
+      const raw = tomlEl.value.trim();
+      if (!raw) { clearStatus(); jsonEl.value = ''; return; }
+      try {
+        const data = parse(raw);
+        jsonEl.value = JSON.stringify(data, null, 2);
+        setStatus('Converted TOML to JSON.', false);
+        (window as any).trackTool && (window as any).trackTool('toml_json', 'toml_to_json');
+      } catch (e: any) {
+        jsonEl.value = '';
+        setStatus('Invalid TOML: ' + e.message, true);
+      }
+    });
+
+    /* ── JSON → TOML ── */
+    document.getElementById('tj-to-toml')!.addEventListener('click', () => {
+      const raw = jsonEl.value.trim();
+      if (!raw) { clearStatus(); tomlEl.value = ''; return; }
+      try {
+        const data = JSON.parse(raw);
+        tomlEl.value = stringify(data);
+        setStatus('Converted JSON to TOML.', false);
+        (window as any).trackTool && (window as any).trackTool('toml_json', 'json_to_toml');
+      } catch (e: any) {
+        tomlEl.value = '';
+        setStatus('Error: ' + e.message, true);
+      }
+    });
+
+    /* ── Clear ── */
+    document.getElementById('tj-clear')!.addEventListener('click', () => {
+      tomlEl.value = '';
+      jsonEl.value = '';
+      clearStatus();
+    });
+
+    /* ── Copy buttons ── */
+    copyTomlBtn.addEventListener('click', () => {
+      if (!tomlEl.value) return;
+      navigator.clipboard.writeText(tomlEl.value).then(() => {
+        copyTomlBtn.textContent = 'Copied!';
+        setTimeout(() => { copyTomlBtn.textContent = 'Copy'; }, 1500);
+      });
+    });
+
+    copyJsonBtn.addEventListener('click', () => {
+      if (!jsonEl.value) return;
+      navigator.clipboard.writeText(jsonEl.value).then(() => {
+        copyJsonBtn.textContent = 'Copied!';
+        setTimeout(() => { copyJsonBtn.textContent = 'Copy'; }, 1500);
+      });
+    });
+
+    /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
+    tomlEl.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        document.getElementById('tj-to-json')!.click();
+      }
+    });
+
+    jsonEl.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        document.getElementById('tj-to-toml')!.click();
+      }
+    });
+  </script>
+</div>
+
+<style>
+  .tj-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .tj-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .tj-panels { grid-template-columns: 1fr; }
+  }
+
+  .tj-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .tj-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .tj-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .tj-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .tj-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .tj-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .tj-status.success { color: #057a55; }
+  .tj-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .tj-status.success { color: #34d399; }
+    .tj-status.error { color: #f87171; }
+  }
+</style>

@@ -33,6 +33,9 @@ export const allTools: ToolInfo[] = [
   { slug: 'aspect-ratio', name: 'Aspect Ratio Calculator', description: 'Calculate and resize aspect ratios', category: 'dev' },
   { slug: 'xml-formatter', name: 'XML Formatter', description: 'Format, beautify, and minify XML documents', category: 'data' },
   { slug: 'ascii-converter', name: 'ASCII Converter', description: 'Convert between text and ASCII codes', category: 'encoding' },
+  { slug: 'toml-json', name: 'TOML to JSON Converter', description: 'Convert between TOML and JSON formats', category: 'data' },
+  { slug: 'image-to-base64', name: 'Image to Base64 Converter', description: 'Convert images to Base64 strings and Data URIs', category: 'encoding' },
+  { slug: 'css-to-tailwind', name: 'CSS to Tailwind Converter', description: 'Convert CSS properties to Tailwind utility classes', category: 'dev' },
 ];
 
 /** Return related tools for a given slug: same category first, then others. */

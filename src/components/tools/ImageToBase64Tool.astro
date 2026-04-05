@@ -1,0 +1,278 @@
+---
+// ImageToBase64Tool — drag-and-drop / select image → base64 + data URI
+---
+
+<div>
+  <div class="i2b-wrap">
+    <!-- Drop zone -->
+    <div id="i2b-drop" class="i2b-drop" role="button" tabindex="0" aria-label="Drop image here or click to select">
+      <div class="i2b-drop-inner">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <p>Drop an image here, or <strong>click to select</strong></p>
+        <p class="i2b-hint">Supports JPG, PNG, GIF, WebP, SVG, BMP</p>
+      </div>
+      <input type="file" id="i2b-file" accept="image/*" class="i2b-file-input" aria-label="Select image file" />
+    </div>
+
+    <!-- Preview + info -->
+    <div id="i2b-preview-wrap" class="i2b-preview-wrap" hidden>
+      <img id="i2b-preview" class="i2b-preview" src="" alt="Preview" />
+      <div id="i2b-info" class="i2b-info"></div>
+    </div>
+
+    <!-- Outputs -->
+    <div id="i2b-outputs" class="i2b-outputs" hidden>
+      <div class="i2b-output-row">
+        <label for="i2b-base64-out">
+          <span>Base64 String</span>
+          <button id="i2b-copy-b64" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea id="i2b-base64-out" readonly spellcheck="false" rows="4"></textarea>
+      </div>
+      <div class="i2b-output-row">
+        <label for="i2b-datauri-out">
+          <span>Data URI</span>
+          <button id="i2b-copy-uri" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea id="i2b-datauri-out" readonly spellcheck="false" rows="4"></textarea>
+      </div>
+    </div>
+
+    <div class="i2b-actions" id="i2b-actions" hidden>
+      <button id="i2b-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="i2b-status" class="i2b-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var dropEl = document.getElementById('i2b-drop');
+      var fileInput = document.getElementById('i2b-file');
+      var previewWrap = document.getElementById('i2b-preview-wrap');
+      var previewImg = document.getElementById('i2b-preview');
+      var infoEl = document.getElementById('i2b-info');
+      var outputsEl = document.getElementById('i2b-outputs');
+      var actionsEl = document.getElementById('i2b-actions');
+      var b64Out = document.getElementById('i2b-base64-out');
+      var uriOut = document.getElementById('i2b-datauri-out');
+      var statusEl = document.getElementById('i2b-status');
+      var copyB64Btn = document.getElementById('i2b-copy-b64');
+      var copyUriBtn = document.getElementById('i2b-copy-uri');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'i2b-status ' + (isError ? 'error' : 'success');
+      }
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+      }
+
+      function processFile(file) {
+        if (!file || !file.type.startsWith('image/')) {
+          setStatus('Please select a valid image file.', true);
+          return;
+        }
+
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          var dataUri = e.target.result;
+          var base64 = dataUri.split(',')[1];
+
+          previewImg.src = dataUri;
+          previewWrap.hidden = false;
+
+          var b64Len = base64.length;
+          var outputSizeKb = (b64Len / 1024).toFixed(1);
+          infoEl.innerHTML =
+            '<strong>' + file.name + '</strong> &mdash; ' +
+            file.type + ' &mdash; ' +
+            formatBytes(file.size) + ' original &mdash; ' +
+            outputSizeKb + ' KB base64';
+
+          b64Out.value = base64;
+          uriOut.value = dataUri;
+          outputsEl.hidden = false;
+          actionsEl.hidden = false;
+
+          setStatus('Converted successfully.', false);
+          window.trackTool && window.trackTool('image_to_base64', 'convert');
+        };
+        reader.onerror = function () {
+          setStatus('Failed to read the file.', true);
+        };
+        reader.readAsDataURL(file);
+      }
+
+      /* ── Click to open file picker ── */
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+
+      fileInput.addEventListener('change', function () {
+        if (this.files && this.files[0]) processFile(this.files[0]);
+      });
+
+      /* ── Drag & Drop ── */
+      dropEl.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        dropEl.classList.add('drag-over');
+      });
+
+      dropEl.addEventListener('dragleave', function () {
+        dropEl.classList.remove('drag-over');
+      });
+
+      dropEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        var file = e.dataTransfer.files[0];
+        if (file) processFile(file);
+      });
+
+      /* ── Clear ── */
+      document.getElementById('i2b-clear').addEventListener('click', function () {
+        fileInput.value = '';
+        previewImg.src = '';
+        previewWrap.hidden = true;
+        outputsEl.hidden = true;
+        actionsEl.hidden = true;
+        b64Out.value = '';
+        uriOut.value = '';
+        statusEl.textContent = '';
+        statusEl.className = 'i2b-status';
+      });
+
+      /* ── Copy buttons ── */
+      copyB64Btn.addEventListener('click', function () {
+        if (!b64Out.value) return;
+        navigator.clipboard.writeText(b64Out.value).then(function () {
+          copyB64Btn.textContent = 'Copied!';
+          setTimeout(function () { copyB64Btn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      copyUriBtn.addEventListener('click', function () {
+        if (!uriOut.value) return;
+        navigator.clipboard.writeText(uriOut.value).then(function () {
+          copyUriBtn.textContent = 'Copied!';
+          setTimeout(function () { copyUriBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .i2b-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .i2b-drop {
+    position: relative;
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 2rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--color-bg-secondary);
+  }
+
+  .i2b-drop:hover,
+  .i2b-drop.drag-over {
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .i2b-drop-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text-secondary);
+    pointer-events: none;
+  }
+
+  .i2b-drop-inner p { margin: 0; font-size: 0.95rem; }
+  .i2b-hint { font-size: 0.8rem; opacity: 0.7; }
+
+  .i2b-file-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .i2b-preview-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .i2b-preview {
+    max-width: 100%;
+    max-height: 240px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    object-fit: contain;
+    background: repeating-conic-gradient(#ccc 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+  }
+
+  .i2b-info {
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    text-align: center;
+  }
+
+  .i2b-outputs { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .i2b-output-row { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .i2b-output-row label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .i2b-output-row textarea {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    word-break: break-all;
+  }
+
+  .i2b-actions { display: flex; gap: 0.5rem; }
+
+  .i2b-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .i2b-status.success { color: #057a55; }
+  .i2b-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .i2b-status.success { color: #34d399; }
+    .i2b-status.error { color: #f87171; }
+    .i2b-preview {
+      background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 16px 16px;
+    }
+  }
+</style>

@@ -1,0 +1,262 @@
+---
+title: "Image to Base64: Complete Guide for Developers"
+description: "Learn how to convert images to Base64 encoding for CSS data URIs, HTML inline images, JSON APIs, and email attachments. Includes code examples in Python, JS, and more."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "image-to-base64-guide-zh"
+tags: ["base64", "image", "data-uri", "encoding", "developer-tools"]
+---
+
+Converting an image to Base64 is one of those tasks developers encounter constantly: embedding a small icon directly in CSS to avoid an HTTP request, attaching an image to a JSON API payload, including a logo in an HTML email, or storing image data in a database field. Base64 encoding turns binary image data into a printable ASCII string that travels safely through text-based protocols.
+
+[Convert images to Base64 instantly →](/tools/image-to-base64)
+
+## What Is Base64 Image Encoding?
+
+Base64 is an encoding scheme that represents binary data using 64 printable ASCII characters (A–Z, a–z, 0–9, `+`, `/`). An image file is binary data — a sequence of bytes representing pixel values, compression tables, and metadata. Base64 converts those bytes into a text string that can be embedded anywhere text is valid.
+
+The trade-off: Base64-encoded data is approximately 33% larger than the original binary. A 100 KB PNG becomes roughly 133 KB as a Base64 string.
+
+## Data URI Syntax
+
+The most common use of Base64 images on the web is the **data URI scheme**:
+
+```
+data:[<mediatype>][;base64],<data>
+```
+
+Real-world examples:
+
+```html
+<!-- PNG image embedded directly in HTML -->
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="1px dot">
+
+<!-- SVG icon as data URI in CSS -->
+.icon {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01eiIvPjwvc3ZnPg==");
+}
+```
+
+The media type tells the browser how to interpret the data: `image/png`, `image/jpeg`, `image/svg+xml`, `image/webp`, `image/gif`.
+
+## When to Use Base64 Images
+
+### Good use cases
+
+**Small icons and logos in CSS**: Embedding a 2–3 KB SVG or PNG as a data URI eliminates one HTTP request. For small assets that are used on every page, this can improve perceived performance.
+
+**Email HTML templates**: Email clients typically block external image requests. Embedding images as Base64 ensures they display without requiring network access or user permission.
+
+**JSON API payloads**: Some APIs accept images as Base64-encoded strings in JSON request bodies — for example, computer vision APIs, document processing services, or thumbnail upload endpoints.
+
+**Offline/self-contained HTML**: If you're building an HTML report or documentation that must work without a network connection, Base64-embedded images ensure all assets travel with the file.
+
+**Canvas and WebGL**: JavaScript `drawImage()` and similar APIs work with Base64 data URIs directly.
+
+### When NOT to use Base64
+
+**Large images**: The 33% size overhead is significant for images over 10–20 KB. Use file references instead.
+
+**Images used on multiple pages**: Base64 images can't be cached independently by the browser. An external image URL is cached once; the same Base64 string embedded on 10 pages is decoded 10 times.
+
+**Performance-critical pages**: Parsing large Base64 strings blocks the main thread. External images download in parallel and are decoded off-thread by the browser.
+
+## Converting Images to Base64 in Code
+
+### JavaScript (Browser)
+
+Reading a file from an `<input>` element:
+
+```javascript
+const input = document.getElementById('fileInput');
+
+input.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = (event) => {
+    const base64 = event.target.result;
+    // base64 = "data:image/png;base64,iVBORw0KGgo..."
+    console.log(base64);
+
+    // Strip the data URI prefix to get just the Base64 string:
+    const base64Data = base64.split(',')[1];
+    console.log(base64Data);
+  };
+
+  reader.readAsDataURL(file);
+});
+```
+
+Converting an image URL to Base64 via Canvas:
+
+```javascript
+async function imageUrlToBase64(url) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+
+  return new Promise((resolve, reject) => {
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+```
+
+### JavaScript (Node.js)
+
+```javascript
+const fs = require('fs');
+
+// File to Base64
+const imageBuffer = fs.readFileSync('./image.png');
+const base64 = imageBuffer.toString('base64');
+const dataUri = `data:image/png;base64,${base64}`;
+
+console.log(dataUri);
+```
+
+Using the `path` module to detect media type from extension:
+
+```javascript
+const fs = require('fs');
+const path = require('path');
+
+function imageToDataUri(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mimeTypes = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+  };
+  const mime = mimeTypes[ext] || 'application/octet-stream';
+  const data = fs.readFileSync(filePath).toString('base64');
+  return `data:${mime};base64,${data}`;
+}
+```
+
+### Python
+
+```python
+import base64
+from pathlib import Path
+
+def image_to_base64(file_path: str) -> str:
+    """Return the Base64-encoded content of an image file."""
+    return base64.b64encode(Path(file_path).read_bytes()).decode('utf-8')
+
+def image_to_data_uri(file_path: str, mime_type: str = 'image/png') -> str:
+    """Return a data URI suitable for embedding in HTML or CSS."""
+    b64 = image_to_base64(file_path)
+    return f"data:{mime_type};base64,{b64}"
+
+# Usage
+print(image_to_data_uri('logo.png', 'image/png'))
+```
+
+### Command Line
+
+```bash
+# macOS / Linux
+base64 -i image.png
+base64 -i image.png | tr -d '\n'  # single line, no wrapping
+
+# Create a data URI
+echo "data:image/png;base64,$(base64 -i image.png | tr -d '\n')"
+```
+
+## Working with the Base64 String
+
+### Decoding Base64 Back to an Image
+
+```javascript
+// Node.js: Base64 string → file
+const fs = require('fs');
+
+const base64Data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA...';
+const buffer = Buffer.from(base64Data, 'base64');
+fs.writeFileSync('output.png', buffer);
+```
+
+```python
+# Python: Base64 string → file
+import base64
+from pathlib import Path
+
+base64_data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...'
+Path('output.png').write_bytes(base64.b64decode(base64_data))
+```
+
+### Stripping or Adding the Data URI Prefix
+
+```javascript
+// Add prefix
+const withPrefix = `data:image/png;base64,${base64String}`;
+
+// Strip prefix
+const withoutPrefix = dataUri.replace(/^data:image\/\w+;base64,/, '');
+```
+
+## Common Use Case: Sending Images to an API
+
+Many computer vision APIs (OpenAI Vision, Google Cloud Vision, AWS Rekognition) accept Base64-encoded images:
+
+```python
+import base64
+import httpx
+
+with open('photo.jpg', 'rb') as f:
+    image_b64 = base64.b64encode(f.read()).decode('utf-8')
+
+response = httpx.post(
+    'https://api.example.com/analyze',
+    json={
+        'image': {
+            'type': 'base64',
+            'media_type': 'image/jpeg',
+            'data': image_b64,
+        }
+    }
+)
+```
+
+## Image Format Reference
+
+| Format | MIME Type | Best For | Base64 Use |
+|---|---|---|---|
+| PNG | `image/png` | Icons, screenshots, logos | Common |
+| JPEG | `image/jpeg` | Photos | Less common (large) |
+| SVG | `image/svg+xml` | Vector icons, logos | Very common |
+| WebP | `image/webp` | Photos with better compression | Growing |
+| GIF | `image/gif` | Animated images | Rare |
+| ICO | `image/x-icon` | Favicons | Common |
+
+SVG files deserve special mention: because SVG is XML (text), you can also embed SVG without Base64 encoding by URL-encoding the raw SVG string. This avoids the 33% size overhead:
+
+```css
+/* Base64 approach */
+background-image: url("data:image/svg+xml;base64,PHN2Zy4uLg==");
+
+/* URL-encoded approach (smaller, more readable) */
+background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'...%3E%3C/svg%3E");
+```
+
+## Online Image to Base64 Converter
+
+For quick conversions without writing code, [ZeroTool's Image to Base64 converter](/tools/image-to-base64) runs entirely in your browser. Drag and drop or select any image file and get the Base64 string or data URI immediately. No file is uploaded to any server.
+
+**[Try the Image to Base64 converter →](/tools/image-to-base64)**
+
+{/* FAQ structured data is rendered via ToolLayout on the tool page */}
