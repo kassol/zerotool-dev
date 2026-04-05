@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 15 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 27 tools and growing.
 
 ## Tools
 
@@ -23,6 +23,18 @@
 | Password Generator | [/tools/password-generator](https://zerotool.dev/tools/password-generator) |
 | QR Code Generator | [/tools/qr-code-generator](https://zerotool.dev/tools/qr-code-generator) |
 | Cron Expression Parser | [/tools/cron-parser](https://zerotool.dev/tools/cron-parser) |
+| Lorem Ipsum Generator | [/tools/lorem-ipsum](https://zerotool.dev/tools/lorem-ipsum) |
+| Word Counter | [/tools/word-counter](https://zerotool.dev/tools/word-counter) |
+| Chmod Calculator | [/tools/chmod-calculator](https://zerotool.dev/tools/chmod-calculator) |
+| CSV ↔ JSON Converter | [/tools/csv-json](https://zerotool.dev/tools/csv-json) |
+| HTML Entity Encoder | [/tools/html-entity](https://zerotool.dev/tools/html-entity) |
+| YAML ↔ JSON Converter | [/tools/yaml-json](https://zerotool.dev/tools/yaml-json) |
+| Line Tools | [/tools/line-tools](https://zerotool.dev/tools/line-tools) |
+| Number Base Converter | [/tools/number-base](https://zerotool.dev/tools/number-base) |
+| SQL Formatter | [/tools/sql-formatter](https://zerotool.dev/tools/sql-formatter) |
+| Aspect Ratio Calculator | [/tools/aspect-ratio](https://zerotool.dev/tools/aspect-ratio) |
+| XML Formatter | [/tools/xml-formatter](https://zerotool.dev/tools/xml-formatter) |
+| ASCII Converter | [/tools/ascii-converter](https://zerotool.dev/tools/ascii-converter) |
 
 ## Why ZeroTool?
 
