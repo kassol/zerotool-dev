@@ -1,0 +1,208 @@
+---
+title: "Linux File Permissions Explained: chmod 755, 644, 777 Complete Guide"
+description: "Understand Linux file permissions with octal notation. Learn what chmod 755, 644, and 777 mean, when to use each, and how to set permissions correctly."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "chmod-calculator-guide-zh"
+tags: ["chmod", "linux", "file-permissions", "terminal", "developer-tools"]
+---
+
+Linux file permissions confuse almost every developer at some point. A file locked at 644 when you need 755, or an entire directory accidentally set to 777 in production — these are common mistakes with real security consequences. This guide breaks down exactly what each permission value means and when to use it.
+
+## The Unix Permission Model
+
+Every file and directory on a Linux system has three permission sets:
+
+- **Owner** — the user who owns the file
+- **Group** — users in the file's assigned group
+- **Others** — everyone else
+
+Each set can have three permission types:
+
+| Symbol | Name    | On files                  | On directories                        |
+|--------|---------|---------------------------|---------------------------------------|
+| `r`    | read    | view file contents        | list directory contents (`ls`)        |
+| `w`    | write   | modify file contents      | create, rename, delete files inside   |
+| `x`    | execute | run as a program          | enter directory (`cd`) and access files |
+
+```bash
+ls -la
+# -rwxr-xr-- 1 alice dev 4096 Apr 5 10:00 deploy.sh
+#  ^^^ ^^^ ^^^
+#  |   |   others: r-- (4)
+#  |   group: r-x (5)
+#  owner: rwx (7)
+```
+
+## Octal Notation
+
+Each permission triple maps to a single digit using binary weights:
+
+```
+r = 4  (binary 100)
+w = 2  (binary 010)
+x = 1  (binary 001)
+```
+
+Add the values together for each set:
+
+| Octal | Binary | Permissions |
+|-------|--------|-------------|
+| 7     | 111    | rwx         |
+| 6     | 110    | rw-         |
+| 5     | 101    | r-x         |
+| 4     | 100    | r--         |
+| 0     | 000    | ---         |
+
+A three-digit octal value (e.g. `755`) represents owner / group / others in that order.
+
+## Common chmod Values
+
+### chmod 755
+
+```
+owner: rwx (7)  — read, write, execute
+group: r-x (5)  — read, execute
+other: r-x (5)  — read, execute
+```
+
+**Use for:** executables, shell scripts, and directories you want to be publicly accessible but not writable by others. The standard for binaries, application directories, and web server roots.
+
+```bash
+chmod 755 /var/www/html
+chmod 755 deploy.sh
+```
+
+### chmod 644
+
+```
+owner: rw- (6)  — read, write
+group: r-- (4)  — read only
+other: r-- (4)  — read only
+```
+
+**Use for:** regular files like configuration files, HTML files, images, and text documents. The owner can modify them; everyone else can only read.
+
+```bash
+chmod 644 index.html
+chmod 644 /etc/nginx/nginx.conf
+```
+
+### chmod 600
+
+```
+owner: rw- (6)  — read, write
+group: --- (0)  — no access
+other: --- (0)  — no access
+```
+
+**Use for:** private files that only the owner should access — SSH private keys (`~/.ssh/id_rsa`), password files, secret tokens. SSH will refuse to use a private key unless it has exactly these permissions.
+
+```bash
+chmod 600 ~/.ssh/id_rsa
+chmod 600 .env
+```
+
+### chmod 777
+
+```
+owner: rwx (7)  — read, write, execute
+group: rwx (7)  — read, write, execute
+other: rwx (7)  — read, write, execute
+```
+
+**Danger zone.** Anyone on the system can read, write, and execute. Never use 777 on a production server, especially on directories inside a web root — it allows any process or user to write arbitrary files.
+
+The one legitimate use: quick debugging in a local development environment where you need to rule out permissions as the cause of an issue. Always revert it.
+
+### chmod 775 vs 755
+
+`775` gives the group write access. Use this in collaborative environments where multiple team members (all in the same group) need to modify shared files:
+
+```bash
+chown -R :developers /var/www/project
+chmod -R 775 /var/www/project
+```
+
+## Symbolic Notation
+
+The octal form is precise but requires mental arithmetic. Symbolic notation is more readable for incremental changes:
+
+```bash
+# Add execute for owner
+chmod u+x script.sh
+
+# Remove write for group and others
+chmod go-w sensitive.cfg
+
+# Set exact permissions: rw-r--r--
+chmod u=rw,go=r file.txt
+
+# Add execute bit to all
+chmod a+x script.sh
+```
+
+Symbols: `u` = owner (user), `g` = group, `o` = others, `a` = all.
+Operators: `+` = add, `-` = remove, `=` = set exactly.
+
+## Recursive Permissions
+
+Apply permissions to a directory and everything inside it:
+
+```bash
+chmod -R 755 /var/www/html
+```
+
+**Warning:** `-R` applies the same mode to both files and directories. A directory needs `x` to be entered; a regular file usually does not need `x`. Blindly running `chmod -R 777` on a codebase gives every file execute permission, which is unnecessary and messy.
+
+Better: use `find` to apply different permissions to files vs directories:
+
+```bash
+# Directories: 755
+find /var/www/html -type d -exec chmod 755 {} \;
+
+# Files: 644
+find /var/www/html -type f -exec chmod 644 {} \;
+```
+
+## Special Bits
+
+Beyond the standard nine bits, three special modes exist:
+
+**Setuid (4xxx):** When set on an executable, the program runs as the file's owner rather than the user executing it. Used by `sudo`, `passwd`, etc.
+
+**Setgid (2xxx):** On a directory, new files inherit the directory's group rather than the creator's primary group. Useful for shared project directories.
+
+**Sticky bit (1xxx):** On a directory, prevents users from deleting files they don't own. Set on `/tmp` so users cannot delete each other's temporary files.
+
+```bash
+ls -la /
+# drwxrwxrwt  ... tmp   (sticky bit = 't' at the end)
+
+ls -la /usr/bin/passwd
+# -rwsr-xr-x  ... passwd  (setuid = 's')
+```
+
+## Quick Reference
+
+| Octal | Symbolic   | Common use                         |
+|-------|------------|------------------------------------|
+| 400   | r--------  | read-only for owner                |
+| 600   | rw-------  | private files, SSH keys, .env      |
+| 644   | rw-r--r--  | web files, config, regular files   |
+| 700   | rwx------  | private scripts, personal dirs     |
+| 755   | rwxr-xr-x  | scripts, binaries, public dirs     |
+| 775   | rwxrwxr-x  | shared group project directories   |
+| 777   | rwxrwxrwx  | avoid in production                |
+
+## Calculate chmod Values Without Math
+
+If you find yourself doing octal arithmetic in your head, use a calculator instead. **[Try the ZeroTool chmod Calculator →](/tools/chmod-calculator)**
+
+Check or uncheck read/write/execute for owner, group, and others, and the octal value updates instantly. You can also paste an octal value and see the exact permissions it grants — useful when reading someone else's deployment scripts.
+
+## Summary
+
+The two values you'll use 90% of the time are **644** for files and **755** for directories and executables. Use **600** for anything that should stay private. Avoid **777** in any environment that matters.
+
+When in doubt about what a specific octal value means, **[check it with the chmod calculator](/tools/chmod-calculator)** rather than guessing.

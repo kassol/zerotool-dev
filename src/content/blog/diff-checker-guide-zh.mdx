@@ -1,0 +1,189 @@
+---
+title: "在线文本对比工具使用指南：diff 算法与实战技巧"
+description: "快速比较两段文本、配置文件或代码片段的差异。详解 diff 算法原理、unified diff 格式解读，以及在线对比工具的最佳使用场景。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "diff-checker-guide"
+tags: ["diff", "文本对比", "代码审查", "developer-tools"]
+---
+
+文本对比是开发者的日常操作——两个环境的配置文件哪里不一样？这次提交改了什么？API 返回的 JSON 和预期值差在哪？本文覆盖 diff 的工作原理、输出格式解读，以及在线工具适合哪些场景。
+
+## 什么是 diff？
+
+diff（difference 的缩写）展示将一段文本转换为另一段文本所需的最少修改。输出高亮标记新增、删除和未变化的内容。
+
+最常见的是 **unified diff 格式**，也是 `git diff` 的默认输出：
+
+```diff
+--- a/config.yaml
++++ b/config.yaml
+@@ -3,7 +3,7 @@
+ server:
+   host: localhost
+-  port: 8080
++  port: 9090
+   debug: false
+```
+
+`-` 开头的行被删除，`+` 开头的行是新增，无前缀的行是未变化的上下文。
+
+## diff 算法原理
+
+大多数 diff 工具使用 **Myers 算法**（1986）的变体，寻找两段文本之间的最短编辑路径。算法的核心是求解**最长公共子序列（LCS）**——公共部分越长，需要的编辑操作越少。
+
+```
+文本 A: "the quick brown fox"
+文本 B: "the slow brown dog"
+
+LCS: "the brown"
+差异:
+  the          (未变化)
+- quick        (删除)
++ slow         (新增)
+  brown        (未变化)
+- fox          (删除)
++ dog          (新增)
+```
+
+Git 默认使用 **histogram diff** 变体进行文件比较，它以唯一行作为锚点，对代码的对比效果更好。
+
+## 命令行 diff
+
+### diff 命令
+
+任何 Linux/macOS 系统都内置 `diff`：
+
+```bash
+diff file1.txt file2.txt
+
+# unified 格式（同 git diff 风格）
+diff -u file1.txt file2.txt
+
+# 忽略空白差异
+diff -w file1.txt file2.txt
+
+# 左右并排对比
+diff -y file1.txt file2.txt
+```
+
+### git diff
+
+代码仓库中最常用：
+
+```bash
+# 未暂存的修改
+git diff
+
+# 已暂存的修改（将要提交的内容）
+git diff --staged
+
+# 两个 commit 之间的差异
+git diff abc123 def456
+
+# 分支间对比
+git diff main..feature-branch
+
+# 只显示改动的文件名
+git diff --name-only
+
+# 按词高亮差异（而非整行）
+git diff --word-diff
+```
+
+## 解读 unified diff 格式
+
+```diff
+--- a/src/app.js          # 原始文件
++++ b/src/app.js          # 修改后文件
+@@ -10,6 +10,8 @@        # hunk 头部
+ function init() {        # 上下文行（未变化）
+   const config = load(); # 上下文行
+-  start(config);         # 被删除的行
++  validate(config);      # 新增的行
++  start(config);         # 新增的行
+ }                        # 上下文行
+```
+
+`@@ -10,6 +10,8 @@` 的含义：
+- `-10,6` — 原始文件从第 10 行开始，展示 6 行
+- `+10,8` — 修改后文件从第 10 行开始，展示 8 行
+
+`+` 的行数大于 `-` 说明有行被新增；小于则说明有行被删除。
+
+## 在线对比工具适合哪些场景
+
+命令行强大，但某些场景用在线工具更快：
+
+**多环境配置对比：** 从不同服务器或环境复制来的 YAML/JSON 配置文件，直接粘贴比创建临时文件再运行 diff 快得多。
+
+**API 响应核验：** 接口返回的 JSON 与预期不符，粘贴两段内容即可立刻看到差异——缺少字段、类型不一致、多余空格一目了然。
+
+**日志分析：** 两份带时间戳或 trace ID 的日志文件，肉眼逐行对比效率很低，可视化 diff 帮你聚焦实质性差异。
+
+**代码评审演示：** `git diff` 的纯文本输出不够直观，在会议或文档中展示时，左右并排的高亮对比更易理解。
+
+**[试用 ZeroTool 在线文本对比工具 →](/tools/diff-checker)**
+
+左右两栏分别粘贴文本，差异会内联高亮——新增内容绿色，删除内容红色。无需注册，数据不上传服务器。
+
+## diff 在代码审查中的最佳实践
+
+理解 diff 的工作方式有助于写出更容易审查的代码：
+
+**格式化变更独立提交：** 把缩进调整、空白整理和逻辑修改分开提交。混在一起的 diff 很难看出实质改动。
+
+**原子性提交：** 每个 commit 只做一件事。范围清晰的 diff 能讲清楚"为什么改"，评审者不需要逆向推理意图。
+
+**大 PR 拆分：** 40 个文件的改动往往掺杂了多个独立关注点。把彼此不依赖的部分拆成独立 PR，每个 diff 会更聚焦，评审质量会更高。
+
+## 在代码中生成 diff
+
+需要在程序内处理 diff 时：
+
+### Python（difflib，标准库）
+
+```python
+import difflib
+
+a = ['第一行\n', '第二行\n', '第三行\n']
+b = ['第一行\n', '第二行已修改\n', '第三行\n']
+
+diff = difflib.unified_diff(
+    a, b,
+    fromfile='原始.txt',
+    tofile='修改后.txt'
+)
+print(''.join(diff))
+```
+
+### JavaScript（diff 库）
+
+```js
+import { diffWords, diffLines } from 'diff';
+
+const a = '快速的棕色狐狸';
+const b = '缓慢的棕色狗';
+
+const result = diffWords(a, b);
+result.forEach(part => {
+  const color = part.added ? 'green' : part.removed ? 'red' : 'grey';
+  process.stdout.write(`\x1b[${color === 'green' ? '32' : color === 'red' ? '31' : '37'}m${part.value}\x1b[0m`);
+});
+```
+
+### Go（go-diff）
+
+```go
+import "github.com/sergi/go-diff/diffmatchpatch"
+
+dmp := diffmatchpatch.New()
+diffs := dmp.DiffMain("Hello 世界", "Hello Go", false)
+fmt.Println(dmp.DiffPrettyText(diffs))
+```
+
+## 小结
+
+diff 是软件开发中最基础的操作之一。命令行场景用 `git diff` 和 `diff -u` 足以覆盖大多数需求。需要快速可视化对比、不想开终端时，在线工具是最短路径。
+
+**[立即用 ZeroTool 对比文本 →](/tools/diff-checker)** — 左右并排，高亮标注，无需账号。

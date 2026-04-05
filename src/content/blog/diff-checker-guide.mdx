@@ -1,0 +1,198 @@
+---
+title: "How to Compare Text Online: A Developer's Text Diff Guide"
+description: "Compare two texts, files, or code snippets instantly with an online diff checker. Learn how diff algorithms work, how to read diff output, and when to use each tool."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "diff-checker-guide-zh"
+tags: ["diff", "compare-text", "code-review", "developer-tools", "text-diff"]
+---
+
+Comparing text is a daily operation for developers — spotting what changed between two config files, reviewing code before committing, or debugging why a serialized payload doesn't match its expected value. This guide covers how diff works, how to read its output, and when an online diff checker beats the command line.
+
+## What Is a Text Diff?
+
+A diff (short for "difference") shows the minimum set of changes needed to transform one text into another. The result highlights what was added, removed, or unchanged.
+
+The canonical format is the **unified diff**, which Git uses for `git diff`:
+
+```diff
+--- a/config.yaml
++++ b/config.yaml
+@@ -3,7 +3,7 @@
+ server:
+   host: localhost
+-  port: 8080
++  port: 9090
+   debug: false
+```
+
+Lines starting with `-` were removed, `+` lines were added, and unmarked lines are context.
+
+## How Diff Algorithms Work
+
+Most diff tools use a variant of the **Myers diff algorithm** (1986), which finds the shortest edit script between two sequences. The algorithm solves the Longest Common Subsequence (LCS) problem — the longer the shared subsequence, the fewer edits needed.
+
+In practice:
+
+```
+Text A: "the quick brown fox"
+Text B: "the slow brown dog"
+
+LCS: "the brown"   (common to both)
+Diff:
+  the          (unchanged)
+- quick        (removed)
++ slow         (added)
+  brown        (unchanged)
+- fox          (removed)
++ dog          (added)
+```
+
+Git uses a variant called **histogram diff** by default for file comparisons, which tends to produce more readable output for code by preferring unique lines as anchors.
+
+## Diff on the Command Line
+
+### diff
+
+The Unix `diff` command is available on any Linux/macOS system:
+
+```bash
+diff file1.txt file2.txt
+
+# Unified format (same as git diff)
+diff -u file1.txt file2.txt
+
+# Ignore whitespace differences
+diff -w file1.txt file2.txt
+
+# Side-by-side comparison
+diff -y file1.txt file2.txt
+```
+
+### git diff
+
+For code in a git repository:
+
+```bash
+# Unstaged changes
+git diff
+
+# Staged changes (what will be committed)
+git diff --staged
+
+# Diff between two commits
+git diff abc123 def456
+
+# Diff between branches
+git diff main..feature-branch
+
+# Only show changed file names
+git diff --name-only
+
+# Word-level diff (highlights individual words, not lines)
+git diff --word-diff
+```
+
+### vimdiff / diff3
+
+For interactive comparison or three-way merge:
+
+```bash
+vimdiff original.txt modified.txt
+diff3 mine.txt base.txt theirs.txt > merged.txt
+```
+
+## Reading Unified Diff Format
+
+The unified diff format is compact but requires knowing how to parse the header:
+
+```diff
+--- a/src/app.js          # original file
++++ b/src/app.js          # modified file
+@@ -10,6 +10,8 @@        # hunk header
+ function init() {        # context line (unchanged)
+   const config = load(); # context line
+-  start(config);         # removed line
++  validate(config);      # added line
++  start(config);         # added line
+ }                        # context line
+```
+
+The hunk header `@@ -10,6 +10,8 @@` means:
+- `-10,6` — original file starting at line 10, showing 6 lines
+- `+10,8` — modified file starting at line 10, showing 8 lines
+
+A `+` count larger than `-` count means lines were added; smaller means lines were removed.
+
+## When to Use an Online Diff Checker
+
+The command line is powerful but has friction for certain tasks:
+
+**Config file comparison:** You have two versions of a YAML or JSON config file copied from different environments. Pasting both into a browser is faster than writing to temp files and running `diff`.
+
+**Checking API responses:** You expect a JSON response to match a reference. Paste both into a diff checker to immediately spot the discrepancy — missing fields, type mismatches, extra whitespace.
+
+**Reviewing logs:** Two log files with slightly different timestamps or trace IDs are hard to diff line-by-line by eye. A visual diff highlights the semantic differences.
+
+**Sharing diffs with non-developers:** The output of `git diff` is readable but ugly. A rendered side-by-side comparison is easier to walk through in a meeting.
+
+**[Try ZeroTool's online diff checker →](/tools/diff-checker)**
+
+Paste two texts in the side-by-side panels. Differences are highlighted inline — additions in green, deletions in red. No signup required, nothing is sent to a server.
+
+## Diff in Code Review Workflows
+
+Understanding how diff is used in pull request reviews helps you write cleaner diffs:
+
+**Reduce whitespace noise:** Separate formatting commits from logic changes. A diff that mixes indentation fixes with logic changes is hard to review. Use `--ignore-whitespace` in your CI or reviewer config if necessary.
+
+**Atomic commits:** Each commit should change one logical thing. A well-scoped diff tells a clear story — reviewers can follow the intent rather than reconstruct it.
+
+**Splitting a large diff:** If a PR has 40 files changed, consider whether some changes are independent enough to be a separate PR. Reviewers can give better feedback on focused diffs.
+
+## Programmatic Diffing
+
+When you need diff output inside your application:
+
+### JavaScript (diff library)
+
+```js
+import { diffWords, diffLines } from 'diff';
+
+const a = 'The quick brown fox';
+const b = 'The slow brown dog';
+
+const result = diffWords(a, b);
+result.forEach(part => {
+  const color = part.added ? 'green' : part.removed ? 'red' : 'grey';
+  console.log(`[${color}] ${part.value}`);
+});
+```
+
+### Python (difflib)
+
+```python
+import difflib
+
+a = ['line 1\n', 'line 2\n', 'line 3\n']
+b = ['line 1\n', 'line 2 changed\n', 'line 3\n']
+
+diff = difflib.unified_diff(a, b, fromfile='before.txt', tofile='after.txt')
+print(''.join(diff))
+```
+
+### Go (go-diff)
+
+```go
+import "github.com/sergi/go-diff/diffmatchpatch"
+
+dmp := diffmatchpatch.New()
+diffs := dmp.DiffMain("Hello World", "Hello Go", false)
+fmt.Println(dmp.DiffPrettyText(diffs))
+```
+
+## Summary
+
+Diff is one of the most fundamental operations in software development. On the command line, `git diff` and `diff -u` cover most needs. For quick visual comparison without opening a terminal, an online diff checker is the fastest path.
+
+**[Compare two texts instantly with ZeroTool →](/tools/diff-checker)** — side-by-side, syntax-highlighted, no account needed.
