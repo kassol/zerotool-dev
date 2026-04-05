@@ -1,0 +1,259 @@
+---
+/**
+ * ShareButtons — Copy link · Twitter/X · WeChat QR
+ * Used at the bottom of each tool widget.
+ */
+
+interface Props {
+  toolName: string;
+  lang?: string;
+}
+
+const { toolName, lang = 'en' } = Astro.props;
+
+const isZh = lang === 'zh';
+const labelCopy     = isZh ? '复制链接' : 'Copy Link';
+const labelCopied   = isZh ? '已复制' : 'Copied!';
+const labelTwitter  = isZh ? '分享到 X' : 'Share on X';
+const labelWechat   = isZh ? '微信分享' : 'WeChat';
+const labelQrClose  = isZh ? '关闭' : 'Close';
+const shareText     = isZh
+  ? `在 ZeroTool 发现了「${toolName}」工具`
+  : `Check out ${toolName} on ZeroTool — free, browser-based`;
+---
+
+<div class="share-bar">
+  <span class="share-label">{isZh ? '分享：' : 'Share:'}</span>
+
+  <!-- Copy Link -->
+  <button class="share-btn share-copy" data-copied-label={labelCopied} aria-label={labelCopy}>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+    </svg>
+    <span class="share-btn-text">{labelCopy}</span>
+  </button>
+
+  <!-- Twitter / X -->
+  <a
+    class="share-btn share-twitter"
+    href="#"
+    data-share-text={shareText}
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label={labelTwitter}
+  >
+    <!-- X logo -->
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.259 5.63zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+    </svg>
+    <span class="share-btn-text">{labelTwitter}</span>
+  </a>
+
+  <!-- WeChat QR trigger -->
+  <button class="share-btn share-wechat" aria-label={labelWechat} aria-expanded="false">
+    <!-- WeChat icon -->
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8.5 10.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
+      <path d="M2 12c0 5.523 4.477 10 10 10s10-4.477 10-10S17.523 2 12 2 2 6.477 2 12zm10-8a8 8 0 0 1 6.472 12.764C17.4 15.67 15.016 14 12 14c-3.016 0-5.4 1.67-6.472 2.764A8 8 0 0 1 12 4z"/>
+      <path d="M8.5 14.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm7 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>
+    </svg>
+    <span class="share-btn-text">{labelWechat}</span>
+  </button>
+</div>
+
+<!-- WeChat QR Modal -->
+<div class="wechat-modal" hidden role="dialog" aria-modal="true" aria-label={isZh ? '微信二维码' : 'WeChat QR Code'}>
+  <div class="wechat-modal-inner">
+    <p class="wechat-modal-hint">
+      {isZh
+        ? '用微信扫描以下二维码即可分享'
+        : 'Scan with WeChat to share this tool'}
+    </p>
+    <canvas id="wechat-qr-canvas" width="200" height="200"></canvas>
+    <p class="wechat-modal-url"></p>
+    <button class="share-btn wechat-modal-close">{labelQrClose}</button>
+  </div>
+</div>
+<div class="wechat-backdrop" hidden></div>
+
+<!-- qrcode.js — same CDN as QR Code Generator tool -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js" is:inline></script>
+
+<script is:inline define:vars={{ shareText, labelCopied }}>
+  (function () {
+    var bar = document.querySelector('.share-bar');
+    if (!bar) return;
+
+    // ── Copy Link ──
+    var copyBtn = bar.querySelector('.share-copy');
+    var copyLabel = copyBtn ? copyBtn.querySelector('.share-btn-text') : null;
+    var originalCopyText = copyLabel ? copyLabel.textContent : '';
+    if (copyBtn) {
+      copyBtn.addEventListener('click', function () {
+        navigator.clipboard.writeText(window.location.href).then(function () {
+          if (copyLabel) {
+            copyLabel.textContent = labelCopied;
+            copyBtn.classList.add('copied');
+            setTimeout(function () {
+              copyLabel.textContent = originalCopyText;
+              copyBtn.classList.remove('copied');
+            }, 1800);
+          }
+        });
+      });
+    }
+
+    // ── Twitter / X ──
+    var twitterLink = bar.querySelector('.share-twitter');
+    if (twitterLink) {
+      twitterLink.addEventListener('click', function (e) {
+        e.preventDefault();
+        var text = encodeURIComponent(shareText);
+        var url  = encodeURIComponent(window.location.href);
+        window.open(
+          'https://twitter.com/intent/tweet?text=' + text + '&url=' + url,
+          '_blank',
+          'noopener,width=550,height=420'
+        );
+      });
+    }
+
+    // ── WeChat QR ──
+    var wechatBtn  = bar.querySelector('.share-wechat');
+    var modal      = document.querySelector('.wechat-modal');
+    var backdrop   = document.querySelector('.wechat-backdrop');
+    var closeBtn   = modal ? modal.querySelector('.wechat-modal-close') : null;
+    var urlDisplay = modal ? modal.querySelector('.wechat-modal-url') : null;
+    var qrCanvas   = modal ? modal.querySelector('#wechat-qr-canvas') : null;
+    var qrRendered = false;
+
+    function openModal() {
+      if (!modal || !backdrop) return;
+      modal.hidden = false;
+      backdrop.hidden = false;
+      wechatBtn && wechatBtn.setAttribute('aria-expanded', 'true');
+      document.body.style.overflow = 'hidden';
+
+      if (!qrRendered && typeof QRCode !== 'undefined' && qrCanvas) {
+        var pageUrl = window.location.href;
+        if (urlDisplay) urlDisplay.textContent = pageUrl;
+        QRCode.toCanvas(qrCanvas, pageUrl, {
+          width: 200,
+          margin: 2,
+          color: { dark: '#000000', light: '#ffffff' },
+        }, function (err) {
+          if (!err) qrRendered = true;
+        });
+      }
+    }
+
+    function closeModal() {
+      if (!modal || !backdrop) return;
+      modal.hidden = true;
+      backdrop.hidden = true;
+      wechatBtn && wechatBtn.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+    }
+
+    if (wechatBtn) wechatBtn.addEventListener('click', openModal);
+    if (closeBtn)  closeBtn.addEventListener('click', closeModal);
+    if (backdrop)  backdrop.addEventListener('click', closeModal);
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modal && !modal.hidden) closeModal();
+    });
+  })();
+</script>
+
+<style>
+  .share-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
+    margin-top: 0.75rem;
+    border-top: 1px solid var(--color-border-light);
+  }
+
+  .share-label {
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+    margin-right: 0.15rem;
+  }
+
+  .share-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.82rem;
+    font-family: inherit;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    text-decoration: none;
+    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .share-btn:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+    text-decoration: none;
+  }
+
+  .share-btn.copied {
+    color: #16a34a;
+    border-color: #16a34a;
+    background: rgba(22, 163, 74, 0.08);
+  }
+
+  /* ── WeChat Modal ── */
+  .wechat-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 200;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 1.5rem;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    min-width: 260px;
+  }
+
+  .wechat-modal-hint {
+    font-size: 0.88rem;
+    color: var(--color-text-secondary);
+    margin: 0 0 1rem;
+  }
+
+  .wechat-modal-url {
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+    margin: 0.75rem 0 1rem;
+    word-break: break-all;
+    max-width: 200px;
+    margin-inline: auto;
+  }
+
+  .wechat-modal #wechat-qr-canvas {
+    display: block;
+    margin: 0 auto;
+    border-radius: 4px;
+  }
+
+  .wechat-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 199;
+  }
+</style>
