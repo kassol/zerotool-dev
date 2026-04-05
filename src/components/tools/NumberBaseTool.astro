@@ -1,0 +1,300 @@
+---
+// NumberBaseTool — reusable widget, no props needed
+---
+<div>
+  <div class="nb-wrap">
+    <div class="nb-input-section">
+      <div class="nb-field">
+        <label for="nb-base-select">Input Base</label>
+        <select id="nb-base-select">
+          <option value="2">Binary (base 2)</option>
+          <option value="8">Octal (base 8)</option>
+          <option value="10" selected>Decimal (base 10)</option>
+          <option value="16">Hexadecimal (base 16)</option>
+        </select>
+      </div>
+
+      <div class="nb-field">
+        <label for="nb-input">Number</label>
+        <input
+          id="nb-input"
+          type="text"
+          placeholder="Enter a decimal number..."
+          spellcheck="false"
+          autocomplete="off"
+        />
+      </div>
+    </div>
+
+    <div id="nb-status" class="nb-status" aria-live="polite"></div>
+
+    <div class="nb-results">
+      <div class="nb-result" data-base="2">
+        <label for="nb-out-bin">Binary</label>
+        <div class="nb-input-row">
+          <input id="nb-out-bin" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="nb-out-bin">Copy</button>
+        </div>
+      </div>
+
+      <div class="nb-result" data-base="8">
+        <label for="nb-out-oct">Octal</label>
+        <div class="nb-input-row">
+          <input id="nb-out-oct" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="nb-out-oct">Copy</button>
+        </div>
+      </div>
+
+      <div class="nb-result" data-base="10">
+        <label for="nb-out-dec">Decimal</label>
+        <div class="nb-input-row">
+          <input id="nb-out-dec" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="nb-out-dec">Copy</button>
+        </div>
+      </div>
+
+      <div class="nb-result" data-base="16">
+        <label for="nb-out-hex">Hexadecimal</label>
+        <div class="nb-input-row">
+          <input id="nb-out-hex" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="nb-out-hex">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="nb-actions">
+      <button id="nb-clear" class="btn-ghost">Clear</button>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('nb-input');
+      var baseSelect = document.getElementById('nb-base-select');
+      var statusEl = document.getElementById('nb-status');
+      var outBin = document.getElementById('nb-out-bin');
+      var outOct = document.getElementById('nb-out-oct');
+      var outDec = document.getElementById('nb-out-dec');
+      var outHex = document.getElementById('nb-out-hex');
+
+      var placeholders = {
+        '2': 'Enter a binary number (0-1)...',
+        '8': 'Enter an octal number (0-7)...',
+        '10': 'Enter a decimal number...',
+        '16': 'Enter a hex number (0-9, A-F)...',
+      };
+
+      var validators = {
+        '2': /^-?[01]+$/,
+        '8': /^-?[0-7]+$/,
+        '10': /^-?[0-9]+$/,
+        '16': /^-?[0-9a-fA-F]+$/,
+      };
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'nb-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'nb-status';
+      }
+
+      function clearOutputs() {
+        outBin.value = '';
+        outOct.value = '';
+        outDec.value = '';
+        outHex.value = '';
+      }
+
+      function highlightActiveBase(base) {
+        document.querySelectorAll('.nb-result').forEach(function (el) {
+          el.classList.toggle('nb-active', el.getAttribute('data-base') === base);
+        });
+      }
+
+      function bigIntToBase(n, base) {
+        if (n === 0n) return '0';
+        var negative = n < 0n;
+        if (negative) n = -n;
+        var digits = '';
+        var chars = '0123456789ABCDEF';
+        var b = BigInt(base);
+        while (n > 0n) {
+          digits = chars[Number(n % b)] + digits;
+          n = n / b;
+        }
+        return negative ? '-' + digits : digits;
+      }
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) {
+          clearOutputs();
+          clearStatus();
+          return;
+        }
+
+        var base = baseSelect.value;
+
+        // Strip common prefixes for convenience
+        var cleaned = raw;
+        if (base === '16') cleaned = cleaned.replace(/^0x/i, '');
+        if (base === '2') cleaned = cleaned.replace(/^0b/i, '');
+        if (base === '8') cleaned = cleaned.replace(/^0o/i, '');
+
+        if (!validators[base].test(cleaned)) {
+          clearOutputs();
+          setStatus('Invalid input for base ' + base + '.', true);
+          return;
+        }
+
+        try {
+          // Parse using BigInt for arbitrary precision
+          var isNegative = cleaned.startsWith('-');
+          var abs = isNegative ? cleaned.slice(1) : cleaned;
+          var value = BigInt(0);
+          var b = BigInt(parseInt(base));
+          for (var i = 0; i < abs.length; i++) {
+            var ch = abs[i].toUpperCase();
+            var digit = ch >= '0' && ch <= '9' ? ch.charCodeAt(0) - 48 : ch.charCodeAt(0) - 55;
+            value = value * b + BigInt(digit);
+          }
+          if (isNegative) value = -value;
+
+          outBin.value = bigIntToBase(value, 2);
+          outOct.value = bigIntToBase(value, 8);
+          outDec.value = value.toString(10);
+          outHex.value = bigIntToBase(value, 16);
+
+          setStatus('Converted.', false);
+          window.trackTool && window.trackTool('number_base', 'convert');
+        } catch (e) {
+          clearOutputs();
+          setStatus('Error: ' + e.message, true);
+        }
+      }
+
+      inputEl.addEventListener('input', convert);
+
+      baseSelect.addEventListener('change', function () {
+        inputEl.placeholder = placeholders[this.value];
+        highlightActiveBase(this.value);
+        convert();
+      });
+
+      document.getElementById('nb-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        clearOutputs();
+        clearStatus();
+        inputEl.focus();
+      });
+
+      document.querySelectorAll('.nb-wrap .btn-copy[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-copy');
+          var val = document.getElementById(id).value;
+          if (!val) return;
+          navigator.clipboard.writeText(val).then(function () {
+            btn.textContent = 'Copied!';
+            setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+          });
+          window.trackTool && window.trackTool('number_base', 'copy');
+        });
+      });
+
+      // Keyboard shortcut: Ctrl/Cmd+K to clear
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+          var active = document.activeElement;
+          if (active && active.closest('.nb-wrap')) {
+            e.preventDefault();
+            document.getElementById('nb-clear').click();
+          }
+        }
+      });
+
+      // Init
+      highlightActiveBase(baseSelect.value);
+    })();
+  </script>
+</div>
+
+<style>
+  .nb-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .nb-input-section { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .nb-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .nb-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .nb-field select,
+  .nb-field input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .nb-field select:focus,
+  .nb-field input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .nb-results { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .nb-result { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .nb-result label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .nb-result.nb-active label {
+    color: var(--color-primary);
+  }
+
+  .nb-input-row { display: flex; gap: 0.5rem; }
+
+  .nb-input-row input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .nb-result.nb-active .nb-input-row input {
+    border-color: var(--color-primary);
+  }
+
+  .nb-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .nb-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .nb-status.success { color: #057a55; }
+  .nb-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .nb-status.success { color: #34d399; }
+    .nb-status.error { color: #f87171; }
+  }
+</style>

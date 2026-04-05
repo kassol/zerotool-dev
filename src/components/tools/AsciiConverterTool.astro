@@ -1,0 +1,331 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="ac-wrap">
+    <div class="ac-panels">
+      <div class="ac-panel">
+        <label for="ac-text">
+          <span>Text</span>
+          <button id="ac-copy-text" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="ac-text"
+          placeholder="Enter text here..."
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="ac-panel">
+        <label for="ac-codes">
+          <span>ASCII / Unicode Codes</span>
+          <button id="ac-copy-codes" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="ac-codes"
+          placeholder="Enter space-separated codes (e.g. 72 101 108 108 111)..."
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="ac-actions">
+      <div class="ac-format">
+        <label for="ac-format-select">Format:</label>
+        <select id="ac-format-select">
+          <option value="dec">Decimal</option>
+          <option value="hex">Hex (0x41)</option>
+          <option value="oct">Octal (0o101)</option>
+          <option value="bin">Binary (0b01000001)</option>
+        </select>
+      </div>
+      <button id="ac-to-ascii" class="btn-primary">Text &rarr; ASCII</button>
+      <button id="ac-to-text" class="btn-primary">ASCII &rarr; Text</button>
+      <button id="ac-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="ac-status" class="ac-status" aria-live="polite"></div>
+
+    <details class="ac-ref">
+      <summary>ASCII Reference Table (32–126)</summary>
+      <div class="ac-ref-table-wrap">
+        <table class="ac-ref-table" id="ac-ref-table">
+          <thead>
+            <tr><th>Char</th><th>Dec</th><th>Hex</th><th>Char</th><th>Dec</th><th>Hex</th><th>Char</th><th>Dec</th><th>Hex</th></tr>
+          </thead>
+          <tbody id="ac-ref-tbody"></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var textEl = document.getElementById('ac-text');
+      var codesEl = document.getElementById('ac-codes');
+      var statusEl = document.getElementById('ac-status');
+      var formatEl = document.getElementById('ac-format-select');
+      var copyTextBtn = document.getElementById('ac-copy-text');
+      var copyCodesBtn = document.getElementById('ac-copy-codes');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'ac-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'ac-status';
+      }
+
+      /* ── Format a code point based on selected format ── */
+      function formatCode(cp, fmt) {
+        switch (fmt) {
+          case 'hex': return '0x' + cp.toString(16).toUpperCase();
+          case 'oct': return '0o' + cp.toString(8);
+          case 'bin': return '0b' + cp.toString(2);
+          default:    return String(cp);
+        }
+      }
+
+      /* ── Text → ASCII ── */
+      document.getElementById('ac-to-ascii').addEventListener('click', function () {
+        var val = textEl.value;
+        if (!val) { clearStatus(); codesEl.value = ''; return; }
+
+        try {
+          var fmt = formatEl.value;
+          var codes = [];
+          for (var i = 0; i < val.length; ) {
+            var cp = val.codePointAt(i);
+            codes.push(formatCode(cp, fmt));
+            i += cp > 0xFFFF ? 2 : 1;
+          }
+          codesEl.value = codes.join(' ');
+          setStatus('Converted ' + codes.length + ' character' + (codes.length !== 1 ? 's' : '') + '.', false);
+          window.trackTool && window.trackTool('ascii_converter', 'text_to_ascii');
+        } catch (e) {
+          codesEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      /* ── ASCII → Text ── */
+      document.getElementById('ac-to-text').addEventListener('click', function () {
+        var val = codesEl.value.trim();
+        if (!val) { clearStatus(); textEl.value = ''; return; }
+
+        try {
+          /* Split on whitespace and/or commas */
+          var tokens = val.split(/[\s,]+/).filter(function (t) { return t.length > 0; });
+          var chars = [];
+          for (var i = 0; i < tokens.length; i++) {
+            var t = tokens[i];
+            var num;
+            if (/^0x/i.test(t))      num = parseInt(t.slice(2), 16);
+            else if (/^0o/i.test(t))  num = parseInt(t.slice(2), 8);
+            else if (/^0b/i.test(t))  num = parseInt(t.slice(2), 2);
+            else                      num = parseInt(t, 10);
+
+            if (isNaN(num)) throw new Error('Invalid code: ' + tokens[i]);
+            if (num < 0 || num > 0x10FFFF) throw new Error('Code point out of range: ' + tokens[i]);
+            chars.push(String.fromCodePoint(num));
+          }
+          textEl.value = chars.join('');
+          setStatus('Converted ' + tokens.length + ' code' + (tokens.length !== 1 ? 's' : '') + '.', false);
+          window.trackTool && window.trackTool('ascii_converter', 'ascii_to_text');
+        } catch (e) {
+          textEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      /* ── Clear ── */
+      document.getElementById('ac-clear').addEventListener('click', function () {
+        textEl.value = '';
+        codesEl.value = '';
+        clearStatus();
+      });
+
+      /* ── Copy buttons ── */
+      copyTextBtn.addEventListener('click', function () {
+        if (!textEl.value) return;
+        navigator.clipboard.writeText(textEl.value).then(function () {
+          copyTextBtn.textContent = 'Copied!';
+          setTimeout(function () { copyTextBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      copyCodesBtn.addEventListener('click', function () {
+        if (!codesEl.value) return;
+        navigator.clipboard.writeText(codesEl.value).then(function () {
+          copyCodesBtn.textContent = 'Copied!';
+          setTimeout(function () { copyCodesBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      /* ── Build reference table (printable ASCII 32–126, 3 columns) ── */
+      (function buildRefTable() {
+        var tbody = document.getElementById('ac-ref-tbody');
+        var chars = [];
+        for (var c = 32; c <= 126; c++) chars.push(c);
+        var cols = 3;
+        var rows = Math.ceil(chars.length / cols);
+
+        for (var r = 0; r < rows; r++) {
+          var tr = document.createElement('tr');
+          for (var col = 0; col < cols; col++) {
+            var idx = col * rows + r;
+            if (idx < chars.length) {
+              var code = chars[idx];
+              var ch = code === 32 ? 'SP' : String.fromCharCode(code);
+
+              var tdChar = document.createElement('td');
+              tdChar.textContent = ch;
+              var tdDec = document.createElement('td');
+              tdDec.textContent = String(code);
+              var tdHex = document.createElement('td');
+              tdHex.textContent = '0x' + code.toString(16).toUpperCase();
+
+              tr.appendChild(tdChar);
+              tr.appendChild(tdDec);
+              tr.appendChild(tdHex);
+            } else {
+              for (var k = 0; k < 3; k++) {
+                tr.appendChild(document.createElement('td'));
+              }
+            }
+          }
+          tbody.appendChild(tr);
+        }
+      })();
+    })();
+  </script>
+</div>
+
+<style>
+  .ac-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .ac-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .ac-panels { grid-template-columns: 1fr; }
+  }
+
+  .ac-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .ac-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .ac-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .ac-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .ac-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .ac-format {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+  }
+
+  .ac-format select {
+    font-size: 0.82rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    cursor: pointer;
+  }
+
+  .ac-format select:focus { outline: none; border-color: var(--color-primary); }
+
+  .ac-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .ac-status.success { color: #057a55; }
+  .ac-status.error { color: #c0392b; }
+
+  .ac-ref {
+    margin-top: 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .ac-ref summary {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .ac-ref-table-wrap {
+    overflow-x: auto;
+    padding: 0 0.75rem 0.75rem;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .ac-ref-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+  }
+
+  .ac-ref-table th,
+  .ac-ref-table td {
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .ac-ref-table th {
+    font-family: inherit;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    position: sticky;
+    top: 0;
+    background: var(--color-bg-secondary);
+  }
+
+  .ac-ref-table tbody tr:last-child td { border-bottom: none; }
+
+  @media (prefers-color-scheme: dark) {
+    .ac-status.success { color: #34d399; }
+    .ac-status.error { color: #f87171; }
+  }
+</style>

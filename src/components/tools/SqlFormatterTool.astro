@@ -1,0 +1,563 @@
+---
+// SqlFormatterTool — format & minify SQL queries (pure JS, no deps)
+---
+
+<div>
+  <div class="sf-wrap">
+    <div class="sf-row">
+      <label for="sf-input">SQL Input</label>
+      <textarea
+        id="sf-input"
+        placeholder="SELECT u.id, u.name FROM users u WHERE u.active = 1 ORDER BY u.name;"
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="sf-options">
+      <label class="sf-opt">
+        Indent:
+        <select id="sf-indent">
+          <option value="2">2 spaces</option>
+          <option value="4">4 spaces</option>
+          <option value="tab">Tab</option>
+        </select>
+      </label>
+      <label class="sf-opt">
+        <input type="checkbox" id="sf-uppercase" checked />
+        Uppercase keywords
+      </label>
+    </div>
+
+    <div class="sf-actions">
+      <button id="sf-format" class="btn-primary">Format</button>
+      <button id="sf-minify" class="btn-secondary">Minify</button>
+      <button id="sf-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="sf-status" class="sf-status" aria-live="polite"></div>
+
+    <div class="sf-row">
+      <label for="sf-output">
+        Output
+        <button id="sf-copy" class="btn-copy" type="button">Copy</button>
+      </label>
+      <textarea
+        id="sf-output"
+        placeholder="Formatted SQL appears here..."
+        readonly
+        spellcheck="false"
+      ></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var input = document.getElementById('sf-input');
+      var output = document.getElementById('sf-output');
+      var statusEl = document.getElementById('sf-status');
+      var copyBtn = document.getElementById('sf-copy');
+      var indentSel = document.getElementById('sf-indent');
+      var uppercaseCb = document.getElementById('sf-uppercase');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'sf-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'sf-status';
+      }
+
+      /* ── SQL Keywords ── */
+      var KEYWORDS = [
+        'SELECT','FROM','WHERE','AND','OR','NOT','IN','JOIN','LEFT','RIGHT',
+        'INNER','OUTER','FULL','CROSS','ON','AS','ORDER','BY','GROUP',
+        'HAVING','LIMIT','OFFSET','INSERT','INTO','VALUES','UPDATE','SET',
+        'DELETE','CREATE','TABLE','ALTER','DROP','INDEX','UNION','ALL',
+        'DISTINCT','CASE','WHEN','THEN','ELSE','END','EXISTS','BETWEEN',
+        'LIKE','IS','NULL','ASC','DESC','COUNT','SUM','AVG','MIN','MAX','WITH'
+      ];
+      var kwSet = {};
+      for (var i = 0; i < KEYWORDS.length; i++) kwSet[KEYWORDS[i]] = true;
+
+      /* ── Tokenizer ── */
+      function tokenize(sql) {
+        var tokens = [];
+        var len = sql.length;
+        var pos = 0;
+
+        while (pos < len) {
+          var ch = sql[pos];
+
+          /* whitespace — skip */
+          if (/\s/.test(ch)) { pos++; continue; }
+
+          /* single-line comment -- */
+          if (ch === '-' && pos + 1 < len && sql[pos + 1] === '-') {
+            var end = sql.indexOf('\n', pos);
+            if (end === -1) end = len;
+            tokens.push({ type: 'comment', value: sql.slice(pos, end) });
+            pos = end;
+            continue;
+          }
+
+          /* multi-line comment */
+          if (ch === '/' && pos + 1 < len && sql[pos + 1] === '*') {
+            var end = sql.indexOf('*/', pos + 2);
+            if (end === -1) end = len; else end += 2;
+            tokens.push({ type: 'comment', value: sql.slice(pos, end) });
+            pos = end;
+            continue;
+          }
+
+          /* string literal (single-quoted, with '' escape) */
+          if (ch === "'") {
+            var s = ch;
+            pos++;
+            while (pos < len) {
+              if (sql[pos] === "'" && pos + 1 < len && sql[pos + 1] === "'") {
+                s += "''"; pos += 2;
+              } else if (sql[pos] === "'") {
+                s += "'"; pos++; break;
+              } else {
+                s += sql[pos]; pos++;
+              }
+            }
+            tokens.push({ type: 'string', value: s });
+            continue;
+          }
+
+          /* double-quoted identifier */
+          if (ch === '"') {
+            var s = ch;
+            pos++;
+            while (pos < len && sql[pos] !== '"') { s += sql[pos]; pos++; }
+            if (pos < len) { s += sql[pos]; pos++; }
+            tokens.push({ type: 'ident', value: s });
+            continue;
+          }
+
+          /* backtick-quoted identifier */
+          if (ch === '`') {
+            var s = ch;
+            pos++;
+            while (pos < len && sql[pos] !== '`') { s += sql[pos]; pos++; }
+            if (pos < len) { s += sql[pos]; pos++; }
+            tokens.push({ type: 'ident', value: s });
+            continue;
+          }
+
+          /* number */
+          if (/[0-9]/.test(ch) || (ch === '.' && pos + 1 < len && /[0-9]/.test(sql[pos + 1]))) {
+            var s = '';
+            while (pos < len && /[0-9.eE\-+]/.test(sql[pos])) { s += sql[pos]; pos++; }
+            tokens.push({ type: 'number', value: s });
+            continue;
+          }
+
+          /* operators: >=, <=, <>, !=, ||, ::, => */
+          if (pos + 1 < len) {
+            var two = sql.slice(pos, pos + 2);
+            if (two === '>=' || two === '<=' || two === '<>' || two === '!=' || two === '||' || two === '::' || two === '=>') {
+              tokens.push({ type: 'operator', value: two });
+              pos += 2;
+              continue;
+            }
+          }
+
+          /* punctuation and single-char operators */
+          if ('(),.;=<>+-*/%&|^~!@#'.indexOf(ch) !== -1) {
+            tokens.push({ type: ch === '(' || ch === ')' || ch === ',' || ch === ';' || ch === '.' ? 'punct' : 'operator', value: ch });
+            pos++;
+            continue;
+          }
+
+          /* word (keyword or identifier) */
+          if (/[A-Za-z_]/.test(ch)) {
+            var s = '';
+            while (pos < len && /[A-Za-z0-9_$]/.test(sql[pos])) { s += sql[pos]; pos++; }
+            var upper = s.toUpperCase();
+            if (kwSet[upper]) {
+              tokens.push({ type: 'keyword', value: upper, raw: s });
+            } else {
+              tokens.push({ type: 'word', value: s });
+            }
+            continue;
+          }
+
+          /* fallback — push single char */
+          tokens.push({ type: 'other', value: ch });
+          pos++;
+        }
+
+        return tokens;
+      }
+
+      /* ── Clause detection ── */
+      var CLAUSE_HEADS = {
+        'SELECT': true, 'FROM': true, 'WHERE': true,
+        'HAVING': true, 'LIMIT': true, 'OFFSET': true,
+        'INSERT': true, 'UPDATE': true, 'DELETE': true,
+        'CREATE': true, 'VALUES': true, 'SET': true, 'UNION': true
+      };
+      var JOIN_KW = { 'JOIN': true, 'LEFT': true, 'RIGHT': true, 'INNER': true, 'OUTER': true, 'FULL': true, 'CROSS': true };
+
+      function isJoinStart(tokens, idx) {
+        var kw = tokens[idx].value;
+        if (kw === 'JOIN') return true;
+        if (JOIN_KW[kw] && idx + 1 < tokens.length) {
+          /* LEFT JOIN, LEFT OUTER JOIN, etc. */
+          for (var j = idx + 1; j < tokens.length && j <= idx + 3; j++) {
+            if (tokens[j].type === 'keyword' && tokens[j].value === 'JOIN') return true;
+            if (tokens[j].type !== 'keyword' || !JOIN_KW[tokens[j].value]) break;
+          }
+        }
+        return false;
+      }
+
+      function isOrderOrGroupBy(tokens, idx) {
+        return ((tokens[idx].value === 'ORDER' || tokens[idx].value === 'GROUP') &&
+                idx + 1 < tokens.length && tokens[idx + 1].type === 'keyword' && tokens[idx + 1].value === 'BY');
+      }
+
+      /* ── Formatter ── */
+      function formatSQL(sql, indentStr, toUpper) {
+        var tokens = tokenize(sql);
+        if (tokens.length === 0) return '';
+
+        var lines = [];
+        var curLine = '';
+        var depth = 0;
+        var inSelect = false;
+        var afterClause = false;
+
+        function indent(d) {
+          var s = '';
+          for (var i = 0; i < d; i++) s += indentStr;
+          return s;
+        }
+
+        function pushLine() {
+          if (curLine.length > 0) lines.push(curLine);
+          curLine = '';
+        }
+
+        function kwText(tok) {
+          return toUpper ? tok.value : tok.value.toLowerCase();
+        }
+
+        function tokText(tok) {
+          if (tok.type === 'keyword') return kwText(tok);
+          return tok.value;
+        }
+
+        var i = 0;
+        while (i < tokens.length) {
+          var tok = tokens[i];
+
+          /* ── open paren: increase depth ── */
+          if (tok.type === 'punct' && tok.value === '(') {
+            /* Check if this starts a subquery */
+            var nextReal = null;
+            for (var ni = i + 1; ni < tokens.length; ni++) {
+              if (tokens[ni].type !== 'comment') { nextReal = tokens[ni]; break; }
+            }
+            var isSubquery = nextReal && nextReal.type === 'keyword' && CLAUSE_HEADS[nextReal.value];
+            if (isSubquery) {
+              curLine += ' (';
+              pushLine();
+              depth++;
+              i++;
+              continue;
+            }
+            curLine += tok.value;
+            i++;
+            continue;
+          }
+
+          /* ── close paren: decrease depth ── */
+          if (tok.type === 'punct' && tok.value === ')') {
+            if (depth > 0) {
+              pushLine();
+              depth--;
+              curLine = indent(depth) + ')';
+            } else {
+              curLine += ')';
+            }
+            i++;
+            continue;
+          }
+
+          /* ── ORDER BY / GROUP BY ── */
+          if (tok.type === 'keyword' && isOrderOrGroupBy(tokens, i)) {
+            pushLine();
+            inSelect = false;
+            curLine = indent(depth) + kwText(tok) + ' ' + kwText(tokens[i + 1]);
+            afterClause = true;
+            i += 2;
+            continue;
+          }
+
+          /* ── JOIN keywords ── */
+          if (tok.type === 'keyword' && isJoinStart(tokens, i)) {
+            pushLine();
+            inSelect = false;
+            var joinParts = kwText(tok);
+            i++;
+            while (i < tokens.length && tokens[i].type === 'keyword' && (JOIN_KW[tokens[i].value] || tokens[i].value === 'JOIN')) {
+              joinParts += ' ' + kwText(tokens[i]);
+              if (tokens[i].value === 'JOIN') { i++; break; }
+              i++;
+            }
+            curLine = indent(depth) + joinParts;
+            afterClause = false;
+            continue;
+          }
+
+          /* ── Major clause head ── */
+          if (tok.type === 'keyword' && CLAUSE_HEADS[tok.value]) {
+            pushLine();
+            inSelect = (tok.value === 'SELECT');
+            curLine = indent(depth) + kwText(tok);
+            afterClause = true;
+            i++;
+
+            /* DISTINCT right after SELECT */
+            if (inSelect && i < tokens.length && tokens[i].type === 'keyword' && tokens[i].value === 'DISTINCT') {
+              curLine += ' ' + kwText(tokens[i]);
+              i++;
+            }
+
+            /* INSERT INTO — keep together */
+            if (tok.value === 'INSERT' && i < tokens.length && tokens[i].type === 'keyword' && tokens[i].value === 'INTO') {
+              curLine += ' ' + kwText(tokens[i]);
+              i++;
+            }
+
+            /* CREATE TABLE — keep together */
+            if (tok.value === 'CREATE' && i < tokens.length && tokens[i].type === 'keyword' && tokens[i].value === 'TABLE') {
+              curLine += ' ' + kwText(tokens[i]);
+              i++;
+            }
+
+            /* UNION ALL — keep together */
+            if (tok.value === 'UNION' && i < tokens.length && tokens[i].type === 'keyword' && tokens[i].value === 'ALL') {
+              curLine += ' ' + kwText(tokens[i]);
+              i++;
+            }
+
+            continue;
+          }
+
+          /* ── AND / OR under WHERE/HAVING ── */
+          if (tok.type === 'keyword' && (tok.value === 'AND' || tok.value === 'OR')) {
+            pushLine();
+            curLine = indent(depth + 1) + kwText(tok);
+            i++;
+            continue;
+          }
+
+          /* ── Comma in SELECT: end of field ── */
+          if (tok.type === 'punct' && tok.value === ',' && inSelect) {
+            curLine += ',';
+            pushLine();
+            curLine = indent(depth + 1);
+            afterClause = false;
+            i++;
+            continue;
+          }
+
+          /* ── Comma elsewhere ── */
+          if (tok.type === 'punct' && tok.value === ',') {
+            curLine += ',';
+            i++;
+            continue;
+          }
+
+          /* ── Semicolon ── */
+          if (tok.type === 'punct' && tok.value === ';') {
+            curLine += ';';
+            pushLine();
+            i++;
+            continue;
+          }
+
+          /* ── After a clause head, first token goes indented on new line (for SELECT) ── */
+          if (afterClause && inSelect) {
+            pushLine();
+            curLine = indent(depth + 1) + tokText(tok);
+            afterClause = false;
+            i++;
+            continue;
+          }
+
+          /* ── Default: append with space ── */
+          if (curLine.length > 0 && curLine[curLine.length - 1] !== '(' && tok.value !== '.') {
+            var prevChar = curLine[curLine.length - 1];
+            if (prevChar !== '.' && prevChar !== '(') {
+              curLine += ' ';
+            }
+          }
+          curLine += tokText(tok);
+          afterClause = false;
+          i++;
+        }
+
+        pushLine();
+
+        /* trim trailing whitespace from each line */
+        for (var k = 0; k < lines.length; k++) {
+          lines[k] = lines[k].replace(/\s+$/, '');
+        }
+
+        return lines.join('\n');
+      }
+
+      /* ── Minifier ── */
+      function minifySQL(sql) {
+        var tokens = tokenize(sql);
+        var parts = [];
+        for (var i = 0; i < tokens.length; i++) {
+          var tok = tokens[i];
+          if (tok.type === 'comment') continue;
+          if (parts.length > 0) {
+            var last = parts[parts.length - 1];
+            var needsSpace =
+              (tok.type === 'punct' && (tok.value === '(' || tok.value === ')' || tok.value === ',' || tok.value === ';' || tok.value === '.')) ||
+              (last === '(' || last === '.' || last === ')');
+            if (!needsSpace) parts.push(' ');
+          }
+          parts.push(tok.value);
+        }
+        return parts.join('');
+      }
+
+      function getIndent() {
+        var v = indentSel.value;
+        if (v === 'tab') return '\t';
+        return v === '4' ? '    ' : '  ';
+      }
+
+      /* ── Button handlers ── */
+      document.getElementById('sf-format').addEventListener('click', function () {
+        var raw = input.value.trim();
+        if (!raw) { clearStatus(); output.value = ''; return; }
+        try {
+          output.value = formatSQL(raw, getIndent(), uppercaseCb.checked);
+          setStatus('Formatted.', false);
+          window.trackTool && window.trackTool('sql_formatter', 'format');
+        } catch (e) {
+          output.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('sf-minify').addEventListener('click', function () {
+        var raw = input.value.trim();
+        if (!raw) { clearStatus(); output.value = ''; return; }
+        try {
+          output.value = minifySQL(raw);
+          setStatus('Minified.', false);
+          window.trackTool && window.trackTool('sql_formatter', 'minify');
+        } catch (e) {
+          output.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('sf-clear').addEventListener('click', function () {
+        input.value = '';
+        output.value = '';
+        clearStatus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = output.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        });
+      });
+
+      /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          document.getElementById('sf-format').click();
+        }
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .sf-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .sf-row { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .sf-row label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .sf-row textarea {
+    width: 100%;
+    min-height: 160px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    line-height: 1.5;
+    color: var(--color-text);
+  }
+
+  .sf-row textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .sf-options {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .sf-opt {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .sf-opt select {
+    font-size: 0.85rem;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .sf-opt input[type="checkbox"] {
+    accent-color: var(--color-primary);
+  }
+
+  .sf-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .sf-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .sf-status.success { color: #057a55; }
+  .sf-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .sf-status.success { color: #34d399; }
+    .sf-status.error { color: #f87171; }
+  }
+</style>

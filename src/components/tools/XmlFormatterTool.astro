@@ -1,0 +1,356 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="xf-wrap">
+    <div class="xf-panels">
+      <div class="xf-panel">
+        <label for="xf-input">
+          <span>XML Input</span>
+          <button id="xf-copy-input" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="xf-input"
+          placeholder='<?xml version="1.0"?>&#10;<root><item id="1"><name>Example</name></item></root>'
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="xf-panel">
+        <label for="xf-output">
+          <span>Formatted XML</span>
+          <button id="xf-copy-output" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="xf-output"
+          readonly
+          placeholder="Formatted XML will appear here…"
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="xf-actions">
+      <button id="xf-format" class="btn-primary">Format</button>
+      <button id="xf-minify" class="btn-primary">Minify</button>
+      <button id="xf-clear" class="btn-ghost">Clear</button>
+      <label class="xf-indent-label">
+        Indent:
+        <select id="xf-indent">
+          <option value="2" selected>2 spaces</option>
+          <option value="4">4 spaces</option>
+          <option value="tab">Tab</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="xf-status" class="xf-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('xf-input');
+      var outputEl = document.getElementById('xf-output');
+      var statusEl = document.getElementById('xf-status');
+      var copyInputBtn = document.getElementById('xf-copy-input');
+      var copyOutputBtn = document.getElementById('xf-copy-output');
+      var indentEl = document.getElementById('xf-indent');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'xf-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'xf-status';
+      }
+
+      function getIndent() {
+        var val = indentEl.value;
+        if (val === 'tab') return '\t';
+        return new Array(parseInt(val, 10) + 1).join(' ');
+      }
+
+      /* ── Parse XML with DOMParser ── */
+      function parseXml(text) {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(text, 'application/xml');
+        var errNode = doc.querySelector('parsererror');
+        if (errNode) {
+          var errText = errNode.textContent || errNode.innerText || 'Invalid XML';
+          throw new Error(errText.split('\n')[0]);
+        }
+        return doc;
+      }
+
+      /* ── Escape XML special chars ── */
+      function escapeXml(str) {
+        return str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&apos;');
+      }
+
+      /* ── Pretty-print by walking the DOM tree ── */
+      function prettyPrint(doc, indent) {
+        var lines = [];
+
+        function serializeNode(node, depth) {
+          var pad = '';
+          for (var p = 0; p < depth; p++) pad += indent;
+
+          switch (node.nodeType) {
+            case 7: /* ProcessingInstruction */
+              lines.push(pad + '<?' + node.target + ' ' + node.data + '?>');
+              break;
+
+            case 8: /* Comment */
+              lines.push(pad + '<!--' + node.data + '-->');
+              break;
+
+            case 4: /* CDATASection */
+              lines.push(pad + '<![CDATA[' + node.data + ']]>');
+              break;
+
+            case 3: /* Text */
+              var text = node.data;
+              var trimmed = text.trim();
+              if (trimmed) {
+                lines.push(pad + escapeXml(trimmed));
+              }
+              break;
+
+            case 1: /* Element */
+              var tag = node.tagName;
+              var attrs = '';
+              for (var a = 0; a < node.attributes.length; a++) {
+                var attr = node.attributes[a];
+                attrs += ' ' + attr.name + '="' + escapeXml(attr.value) + '"';
+              }
+
+              /* Check if element has only a single text child */
+              if (node.childNodes.length === 1 && node.childNodes[0].nodeType === 3) {
+                var txt = node.childNodes[0].data.trim();
+                if (txt) {
+                  lines.push(pad + '<' + tag + attrs + '>' + escapeXml(txt) + '</' + tag + '>');
+                } else {
+                  lines.push(pad + '<' + tag + attrs + '/>');
+                }
+                break;
+              }
+
+              /* No children → self-closing */
+              if (node.childNodes.length === 0) {
+                lines.push(pad + '<' + tag + attrs + '/>');
+                break;
+              }
+
+              /* Has child elements or mixed content */
+              lines.push(pad + '<' + tag + attrs + '>');
+              for (var c = 0; c < node.childNodes.length; c++) {
+                serializeNode(node.childNodes[c], depth + 1);
+              }
+              lines.push(pad + '</' + tag + '>');
+              break;
+
+            case 9: /* Document */
+            case 11: /* DocumentFragment */
+              for (var d = 0; d < node.childNodes.length; d++) {
+                serializeNode(node.childNodes[d], depth);
+              }
+              break;
+          }
+        }
+
+        serializeNode(doc, 0);
+        return lines.join('\n');
+      }
+
+      /* ── Minify by walking the DOM tree ── */
+      function minify(doc) {
+        var parts = [];
+
+        function serializeNode(node) {
+          switch (node.nodeType) {
+            case 7: /* ProcessingInstruction */
+              parts.push('<?' + node.target + ' ' + node.data + '?>');
+              break;
+
+            case 8: /* Comment */
+              parts.push('<!--' + node.data + '-->');
+              break;
+
+            case 4: /* CDATASection */
+              parts.push('<![CDATA[' + node.data + ']]>');
+              break;
+
+            case 3: /* Text */
+              var trimmed = node.data.trim();
+              if (trimmed) parts.push(escapeXml(trimmed));
+              break;
+
+            case 1: /* Element */
+              var tag = node.tagName;
+              var attrs = '';
+              for (var a = 0; a < node.attributes.length; a++) {
+                var attr = node.attributes[a];
+                attrs += ' ' + attr.name + '="' + escapeXml(attr.value) + '"';
+              }
+
+              if (node.childNodes.length === 0) {
+                parts.push('<' + tag + attrs + '/>');
+                break;
+              }
+
+              parts.push('<' + tag + attrs + '>');
+              for (var c = 0; c < node.childNodes.length; c++) {
+                serializeNode(node.childNodes[c]);
+              }
+              parts.push('</' + tag + '>');
+              break;
+
+            case 9: /* Document */
+            case 11: /* DocumentFragment */
+              for (var d = 0; d < node.childNodes.length; d++) {
+                serializeNode(node.childNodes[d]);
+              }
+              break;
+          }
+        }
+
+        serializeNode(doc);
+        return parts.join('');
+      }
+
+      /* ── Format button ── */
+      document.getElementById('xf-format').addEventListener('click', function () {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputEl.value = ''; return; }
+
+        try {
+          var doc = parseXml(raw);
+          var indent = getIndent();
+          outputEl.value = prettyPrint(doc, indent);
+          setStatus('Formatted successfully.', false);
+          window.trackTool && window.trackTool('xml_formatter', 'format');
+        } catch (e) {
+          outputEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      /* ── Minify button ── */
+      document.getElementById('xf-minify').addEventListener('click', function () {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputEl.value = ''; return; }
+
+        try {
+          var doc = parseXml(raw);
+          outputEl.value = minify(doc);
+          setStatus('Minified successfully.', false);
+          window.trackTool && window.trackTool('xml_formatter', 'minify');
+        } catch (e) {
+          outputEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      /* ── Clear ── */
+      document.getElementById('xf-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputEl.value = '';
+        clearStatus();
+      });
+
+      /* ── Copy buttons ── */
+      copyInputBtn.addEventListener('click', function () {
+        if (!inputEl.value) return;
+        navigator.clipboard.writeText(inputEl.value).then(function () {
+          copyInputBtn.textContent = 'Copied!';
+          setTimeout(function () { copyInputBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      copyOutputBtn.addEventListener('click', function () {
+        if (!outputEl.value) return;
+        navigator.clipboard.writeText(outputEl.value).then(function () {
+          copyOutputBtn.textContent = 'Copied!';
+          setTimeout(function () { copyOutputBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .xf-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .xf-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .xf-panels { grid-template-columns: 1fr; }
+  }
+
+  .xf-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .xf-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .xf-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .xf-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .xf-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+  .xf-indent-label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-left: auto;
+  }
+
+  .xf-indent-label select {
+    font-size: 0.82rem;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .xf-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .xf-status.success { color: #057a55; }
+  .xf-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .xf-status.success { color: #34d399; }
+    .xf-status.error { color: #f87171; }
+  }
+</style>

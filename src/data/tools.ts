@@ -28,6 +28,11 @@ export const allTools: ToolInfo[] = [
   { slug: 'html-entity', name: 'HTML Entity Encoder/Decoder', description: 'Encode and decode HTML entities', category: 'encoding' },
   { slug: 'yaml-json', name: 'YAML to JSON Converter', description: 'Convert between YAML and JSON formats', category: 'data' },
   { slug: 'line-tools', name: 'Line Tools', description: 'Remove duplicates, sort, and transform text lines', category: 'text' },
+  { slug: 'number-base', name: 'Number Base Converter', description: 'Convert between binary, octal, decimal, and hex', category: 'dev' },
+  { slug: 'sql-formatter', name: 'SQL Formatter', description: 'Format, beautify, and minify SQL queries', category: 'dev' },
+  { slug: 'aspect-ratio', name: 'Aspect Ratio Calculator', description: 'Calculate and resize aspect ratios', category: 'dev' },
+  { slug: 'xml-formatter', name: 'XML Formatter', description: 'Format, beautify, and minify XML documents', category: 'data' },
+  { slug: 'ascii-converter', name: 'ASCII Converter', description: 'Convert between text and ASCII codes', category: 'encoding' },
 ];
 
 /** Return related tools for a given slug: same category first, then others. */

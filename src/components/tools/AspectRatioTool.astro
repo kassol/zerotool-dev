@@ -1,0 +1,546 @@
+---
+// AspectRatioTool — reusable widget, no props needed
+---
+<div>
+  <div class="ar-wrap">
+    <!-- Dimension Inputs -->
+    <div class="ar-inputs">
+      <div class="ar-field">
+        <label for="ar-width">Width</label>
+        <input id="ar-width" type="number" class="tool-input" placeholder="1920" min="1" step="1" />
+      </div>
+      <span class="ar-times">&times;</span>
+      <div class="ar-field">
+        <label for="ar-height">Height</label>
+        <input id="ar-height" type="number" class="tool-input" placeholder="1080" min="1" step="1" />
+      </div>
+    </div>
+
+    <!-- Lock Ratio Toggle -->
+    <div class="ar-lock-row">
+      <label class="ar-toggle">
+        <input id="ar-lock" type="checkbox" />
+        <span class="ar-toggle-slider"></span>
+        <span class="ar-toggle-label">Lock Ratio</span>
+      </label>
+    </div>
+
+    <!-- Result Display -->
+    <div class="ar-result" id="ar-result">
+      <div class="ar-ratio-display">
+        <span class="ar-ratio-value" id="ar-ratio">—</span>
+        <span class="ar-ratio-label">Aspect Ratio</span>
+      </div>
+      <div class="ar-ratio-display">
+        <span class="ar-ratio-value ar-decimal" id="ar-decimal">—</span>
+        <span class="ar-ratio-label">Decimal</span>
+      </div>
+    </div>
+
+    <!-- Visual Preview -->
+    <div class="ar-preview-wrap">
+      <div class="ar-preview-label">Preview</div>
+      <div class="ar-preview-container">
+        <div id="ar-preview" class="ar-preview"></div>
+      </div>
+    </div>
+
+    <!-- Presets -->
+    <div class="ar-presets">
+      <span class="ar-presets-label">Presets</span>
+      <div class="ar-preset-chips" id="ar-preset-chips">
+        <button class="ar-chip" data-w="16" data-h="9">16:9</button>
+        <button class="ar-chip" data-w="4" data-h="3">4:3</button>
+        <button class="ar-chip" data-w="21" data-h="9">21:9</button>
+        <button class="ar-chip" data-w="1" data-h="1">1:1</button>
+        <button class="ar-chip" data-w="9" data-h="16">9:16</button>
+        <button class="ar-chip" data-w="3" data-h="2">3:2</button>
+        <button class="ar-chip" data-w="2" data-h="3">2:3</button>
+      </div>
+    </div>
+
+    <!-- Resize Section -->
+    <div class="ar-resize">
+      <div class="ar-resize-title">Resize (maintains ratio)</div>
+      <div class="ar-resize-inputs">
+        <div class="ar-field">
+          <label for="ar-new-width">New Width</label>
+          <input id="ar-new-width" type="number" class="tool-input" placeholder="Width" min="1" step="1" />
+        </div>
+        <span class="ar-times">&times;</span>
+        <div class="ar-field">
+          <label for="ar-new-height">New Height</label>
+          <input id="ar-new-height" type="number" class="tool-input" placeholder="Height" min="1" step="1" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div id="ar-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var widthEl = document.getElementById('ar-width');
+      var heightEl = document.getElementById('ar-height');
+      var lockEl = document.getElementById('ar-lock');
+      var ratioEl = document.getElementById('ar-ratio');
+      var decimalEl = document.getElementById('ar-decimal');
+      var previewEl = document.getElementById('ar-preview');
+      var newWidthEl = document.getElementById('ar-new-width');
+      var newHeightEl = document.getElementById('ar-new-height');
+      var statusEl = document.getElementById('ar-status');
+      var chips = document.querySelectorAll('.ar-chip');
+
+      var lockedRatio = 0; // w/h
+
+      function gcd(a, b) {
+        a = Math.abs(Math.round(a));
+        b = Math.abs(Math.round(b));
+        while (b) {
+          var t = b;
+          b = a % b;
+          a = t;
+        }
+        return a;
+      }
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status ' + (type || '');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'tool-status';
+      }
+
+      function updatePreview(w, h) {
+        if (!w || !h || w <= 0 || h <= 0) {
+          previewEl.style.width = '0';
+          previewEl.style.height = '0';
+          return;
+        }
+        var maxW = 300;
+        var maxH = 200;
+        var scale = Math.min(maxW / w, maxH / h);
+        var pw = Math.max(Math.round(w * scale), 20);
+        var ph = Math.max(Math.round(h * scale), 20);
+        previewEl.style.width = pw + 'px';
+        previewEl.style.height = ph + 'px';
+      }
+
+      function updateRatioDisplay(w, h) {
+        if (!w || !h || w <= 0 || h <= 0) {
+          ratioEl.textContent = '\u2014';
+          decimalEl.textContent = '\u2014';
+          updatePreview(0, 0);
+          return;
+        }
+        var d = gcd(w, h);
+        var rw = w / d;
+        var rh = h / d;
+        ratioEl.textContent = rw + ':' + rh;
+        decimalEl.textContent = (w / h).toFixed(4);
+        updatePreview(w, h);
+        clearStatus();
+      }
+
+      function getVal(el) {
+        var v = parseFloat(el.value);
+        if (isNaN(v) || v <= 0) return 0;
+        return v;
+      }
+
+      function onWidthChange() {
+        var w = getVal(widthEl);
+        if (lockEl.checked && lockedRatio > 0 && w > 0) {
+          var h = Math.round(w / lockedRatio);
+          heightEl.value = h;
+          updateRatioDisplay(w, h);
+        } else {
+          updateRatioDisplay(w, getVal(heightEl));
+        }
+        updateLockedRatio();
+        clearResize();
+        window.trackTool && window.trackTool('aspect_ratio', 'calculate');
+      }
+
+      function onHeightChange() {
+        var h = getVal(heightEl);
+        if (lockEl.checked && lockedRatio > 0 && h > 0) {
+          var w = Math.round(h * lockedRatio);
+          widthEl.value = w;
+          updateRatioDisplay(w, h);
+        } else {
+          updateRatioDisplay(getVal(widthEl), h);
+        }
+        updateLockedRatio();
+        clearResize();
+        window.trackTool && window.trackTool('aspect_ratio', 'calculate');
+      }
+
+      function updateLockedRatio() {
+        if (!lockEl.checked) return;
+        var w = getVal(widthEl);
+        var h = getVal(heightEl);
+        if (w > 0 && h > 0) {
+          lockedRatio = w / h;
+        }
+      }
+
+      function clearResize() {
+        newWidthEl.value = '';
+        newHeightEl.value = '';
+      }
+
+      // Lock toggle
+      lockEl.addEventListener('change', function () {
+        var w = getVal(widthEl);
+        var h = getVal(heightEl);
+        if (this.checked) {
+          if (w > 0 && h > 0) {
+            lockedRatio = w / h;
+            setStatus('Ratio locked at ' + ratioEl.textContent, 'info');
+          } else {
+            setStatus('Enter width and height first to lock ratio.', 'error');
+            this.checked = false;
+          }
+        } else {
+          lockedRatio = 0;
+          clearStatus();
+        }
+      });
+
+      // Dimension inputs
+      widthEl.addEventListener('input', onWidthChange);
+      heightEl.addEventListener('input', onHeightChange);
+
+      // Presets
+      chips.forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          var pw = parseInt(chip.getAttribute('data-w'));
+          var ph = parseInt(chip.getAttribute('data-h'));
+          // Set a reasonable default size using the ratio
+          var scale = Math.max(Math.ceil(1920 / Math.max(pw, ph)), 100);
+          widthEl.value = pw * Math.round(scale / pw) || pw * 120;
+          heightEl.value = ph * Math.round(scale / ph) || ph * 120;
+          // Simpler: just use the ratio numbers scaled up
+          widthEl.value = pw * 120;
+          heightEl.value = ph * 120;
+          updateRatioDisplay(pw * 120, ph * 120);
+          if (lockEl.checked) {
+            lockedRatio = pw / ph;
+          }
+          clearResize();
+
+          // Highlight active chip
+          chips.forEach(function (c) { c.classList.remove('ar-chip-active'); });
+          chip.classList.add('ar-chip-active');
+
+          setStatus('Preset ' + pw + ':' + ph + ' applied', 'success');
+          window.trackTool && window.trackTool('aspect_ratio', 'calculate');
+        });
+      });
+
+      // Resize inputs
+      newWidthEl.addEventListener('input', function () {
+        var w = getVal(widthEl);
+        var h = getVal(heightEl);
+        var nw = getVal(newWidthEl);
+        if (w <= 0 || h <= 0) {
+          setStatus('Set original width and height first.', 'error');
+          return;
+        }
+        if (nw <= 0) { newHeightEl.value = ''; return; }
+        var ratio = h / w;
+        newHeightEl.value = Math.round(nw * ratio);
+        clearStatus();
+      });
+
+      newHeightEl.addEventListener('input', function () {
+        var w = getVal(widthEl);
+        var h = getVal(heightEl);
+        var nh = getVal(newHeightEl);
+        if (w <= 0 || h <= 0) {
+          setStatus('Set original width and height first.', 'error');
+          return;
+        }
+        if (nh <= 0) { newWidthEl.value = ''; return; }
+        var ratio = w / h;
+        newWidthEl.value = Math.round(nh * ratio);
+        clearStatus();
+      });
+
+      // Init with 16:9 default
+      widthEl.value = 1920;
+      heightEl.value = 1080;
+      updateRatioDisplay(1920, 1080);
+    })();
+  </script>
+</div>
+
+<style>
+  .ar-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  /* Dimension inputs row */
+  .ar-inputs,
+  .ar-resize-inputs {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+  }
+
+  .ar-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex: 1;
+  }
+
+  .ar-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .ar-field .tool-input {
+    width: 100%;
+  }
+
+  .ar-times {
+    font-size: 1.2rem;
+    color: var(--color-text-secondary);
+    padding-bottom: 0.45rem;
+    flex-shrink: 0;
+  }
+
+  /* Lock toggle */
+  .ar-lock-row {
+    display: flex;
+    align-items: center;
+  }
+
+  .ar-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .ar-toggle input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .ar-toggle-slider {
+    width: 36px;
+    height: 20px;
+    background: var(--color-border);
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .ar-toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+  }
+
+  .ar-toggle input:checked + .ar-toggle-slider {
+    background: var(--color-primary);
+  }
+
+  .ar-toggle input:checked + .ar-toggle-slider::after {
+    transform: translateX(16px);
+  }
+
+  .ar-toggle-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  /* Result display */
+  .ar-result {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .ar-ratio-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 1rem 1.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    flex: 1;
+    transition: border-color 0.15s ease;
+  }
+
+  .ar-ratio-display:hover {
+    border-color: var(--color-primary);
+  }
+
+  .ar-ratio-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--color-text);
+    font-family: var(--font-mono);
+  }
+
+  .ar-ratio-value.ar-decimal {
+    font-size: 1.25rem;
+  }
+
+  .ar-ratio-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* Visual preview */
+  .ar-preview-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .ar-preview-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .ar-preview-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    min-height: 80px;
+  }
+
+  .ar-preview {
+    background: var(--color-primary);
+    opacity: 0.15;
+    border: 2px solid var(--color-primary);
+    border-radius: 4px;
+    transition: width 0.3s ease, height 0.3s ease;
+  }
+
+  /* Presets */
+  .ar-presets {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .ar-presets-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .ar-preset-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .ar-chip {
+    padding: 0.4rem 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+
+  .ar-chip:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  .ar-chip-active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .ar-chip-active:hover {
+    color: #fff;
+  }
+
+  /* Resize section */
+  .ar-resize {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .ar-resize-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  /* Mobile */
+  @media (max-width: 500px) {
+    .ar-inputs,
+    .ar-resize-inputs {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .ar-times {
+      text-align: center;
+      padding-bottom: 0;
+    }
+
+    .ar-result {
+      flex-direction: column;
+    }
+
+    .ar-chip {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+</style>
