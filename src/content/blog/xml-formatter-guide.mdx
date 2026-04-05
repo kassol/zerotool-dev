@@ -1,0 +1,291 @@
+---
+title: "XML Formatter: Pretty Print and Validate XML Online"
+description: "Format and validate XML documents instantly in your browser. Learn XML structure, namespaces, and how to debug malformed XML with our free online formatter."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "xml-formatter-guide-zh"
+tags: ["xml", "xml-formatter", "xml-validator", "developer-tools"]
+---
+
+XML is everywhere. It powers SOAP web services, Android manifests, Maven build configs, RSS feeds, SVG graphics, and countless legacy enterprise systems. Despite JSON's dominance in new APIs, XML remains the format of choice for structured documents, configuration files that need comments, and systems where a formal schema matters. This guide covers what you need to know to read, write, debug, and format XML effectively.
+
+[Format and validate XML instantly →](/tools/xml-formatter)
+
+## What Is XML?
+
+XML (eXtensible Markup Language) is a text-based format for representing structured data using nested tags. Unlike HTML, XML has no predefined tags — you define your own schema.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<order id="12345">
+  <customer>
+    <name>Alice Zhao</name>
+    <email>alice@example.com</email>
+  </customer>
+  <items>
+    <item sku="A001" qty="2">
+      <name>Mechanical Keyboard</name>
+      <price currency="USD">149.99</price>
+    </item>
+  </items>
+  <status>shipped</status>
+</order>
+```
+
+**XML vs JSON at a glance:**
+
+| Feature | XML | JSON |
+|---------|-----|------|
+| Human readability | Verbose but readable | Concise |
+| Comments | Supported (`<!-- -->`) | Not supported |
+| Attributes | Yes (on elements) | No (keys only) |
+| Schema validation | XSD, DTD, RelaxNG | JSON Schema |
+| Namespaces | Built-in | Not built-in |
+| Binary data | Via Base64 / CDATA | Via strings |
+| Typical use | Docs, configs, SOAP | REST APIs, config |
+
+XML is more verbose than JSON, but that verbosity carries metadata: attributes, namespaces, and comments that JSON simply cannot express natively.
+
+## XML Syntax Rules
+
+### Elements and Tags
+
+Every XML document must have exactly one root element. Tags are case-sensitive. Every opening tag requires a matching closing tag.
+
+```xml
+<!-- Correct -->
+<root>
+  <child>value</child>
+</root>
+
+<!-- Wrong: multiple root elements -->
+<root1></root1>
+<root2></root2>
+```
+
+### Attributes
+
+Attributes live inside the opening tag and must be quoted (single or double quotes, but consistent):
+
+```xml
+<element id="42" class="primary" visible="true" />
+```
+
+Self-closing tags (`/>`) are valid for empty elements.
+
+### Special Characters and CDATA
+
+Five characters must be escaped in element content and attribute values:
+
+| Character | Escape sequence |
+|-----------|----------------|
+| `<`       | `&lt;`          |
+| `>`       | `&gt;`          |
+| `&`       | `&amp;`         |
+| `"`       | `&quot;`        |
+| `'`       | `&apos;`        |
+
+For blocks with many special characters (SQL, code, HTML fragments), use a CDATA section:
+
+```xml
+<query><![CDATA[
+  SELECT * FROM users WHERE name = 'Alice' AND age > 18;
+]]></query>
+```
+
+Everything inside `<![CDATA[` and `]]>` is treated as literal text, not markup.
+
+### Namespaces
+
+Namespaces prevent element name collisions when combining XML vocabularies. They are declared with `xmlns`:
+
+```xml
+<root
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Envelope>
+    <soap:Body>...</soap:Body>
+  </soap:Envelope>
+</root>
+```
+
+The namespace URI is just a unique identifier — it does not need to be a resolvable URL.
+
+### The XML Declaration
+
+The optional but recommended prolog at the top of an XML file:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+```
+
+Always declare `encoding="UTF-8"` if your document contains non-ASCII characters.
+
+## Common XML Errors
+
+### Unclosed Tags
+
+```xml
+<!-- Error: <name> not closed -->
+<person>
+  <name>Alice
+  <age>30</age>
+</person>
+```
+
+### Mismatched Tags
+
+```xml
+<!-- Error: opened <b>, closed </i> -->
+<b>bold text</i>
+```
+
+### Illegal Characters
+
+Raw `<` and `&` inside element content will break any XML parser:
+
+```xml
+<!-- Error: & must be &amp; -->
+<company>AT&T</company>
+
+<!-- Correct -->
+<company>AT&amp;T</company>
+```
+
+### Multiple Root Elements
+
+```xml
+<!-- Error: two root-level elements -->
+<record>...</record>
+<record>...</record>
+```
+
+Fix: wrap them in a parent element or use `<records>` as the root.
+
+### Attribute Values Not Quoted
+
+```xml
+<!-- Error -->
+<element id=42>
+
+<!-- Correct -->
+<element id="42">
+```
+
+## XML vs JSON
+
+Both are widely used, but they have distinct strengths:
+
+**When to choose XML:**
+- You need inline comments in config files
+- You're working with a legacy system (SOAP, EDI, SAP)
+- You need formal schema validation (XSD)
+- The document has mixed content (text + inline markup, like XHTML)
+- You're generating SVG, RSS/Atom feeds, or Office Open XML documents
+
+**When to choose JSON:**
+- You're building a REST API
+- The consumer is a JavaScript frontend
+- You want minimal payload size
+- Schema validation is optional or handled by the app layer
+
+Many modern systems accept both: Kubernetes supports YAML/JSON, and some enterprise APIs offer both SOAP (XML) and REST (JSON) endpoints.
+
+## Working with XML in Code
+
+### JavaScript (Browser and Node.js)
+
+```javascript
+// Parse XML string
+const parser = new DOMParser();
+const doc = parser.parseFromString(xmlString, 'application/xml');
+
+// Check for parse errors
+const error = doc.querySelector('parsererror');
+if (error) {
+  console.error('XML parse error:', error.textContent);
+}
+
+// Read elements
+const name = doc.querySelector('customer name')?.textContent;
+const price = doc.querySelector('price')?.textContent;
+
+// Navigate with XPath
+const result = doc.evaluate(
+  '//item[@sku="A001"]/price',
+  doc,
+  null,
+  XPathResult.STRING_TYPE,
+  null
+);
+console.log(result.stringValue); // "149.99"
+```
+
+In Node.js, use the [`fast-xml-parser`](https://github.com/NaturalIntelligence/fast-xml-parser) or [`xml2js`](https://github.com/Leonidas-from-XIV/node-xml2js) package:
+
+```javascript
+import { XMLParser } from 'fast-xml-parser';
+
+const parser = new XMLParser({ ignoreAttributes: false });
+const result = parser.parse(xmlString);
+console.log(result.order.customer.name); // "Alice Zhao"
+```
+
+### Python
+
+Python's standard library includes `xml.etree.ElementTree`:
+
+```python
+import xml.etree.ElementTree as ET
+
+tree = ET.parse('order.xml')
+root = tree.getroot()
+
+# Find elements
+customer = root.find('customer')
+print(customer.find('name').text)  # Alice Zhao
+
+# Iterate items
+for item in root.findall('items/item'):
+    print(item.get('sku'), item.find('price').text)
+
+# XPath-like queries
+prices = root.findall('.//price[@currency="USD"]')
+```
+
+For large files, use the iterparse approach to avoid loading the entire document into memory:
+
+```python
+for event, elem in ET.iterparse('large.xml', events=('end',)):
+    if elem.tag == 'record':
+        process(elem)
+        elem.clear()  # free memory
+```
+
+### Java
+
+```java
+DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+factory.setNamespaceAware(true);
+DocumentBuilder builder = factory.newDocumentBuilder();
+Document doc = builder.parse(new File("order.xml"));
+
+// XPath
+XPath xpath = XPathFactory.newInstance().newXPath();
+String name = xpath.evaluate("//customer/name", doc); // Alice Zhao
+
+// Safely handle namespaces with namespace-aware factory
+NodeList items = doc.getElementsByTagNameNS("*", "item");
+```
+
+## Format and Validate XML Online
+
+Minified or hand-written XML is hard to read and debug. [ZeroTool's XML Formatter](/tools/xml-formatter) pretty-prints your XML with proper indentation, highlights syntax errors, and catches structural problems — all in the browser without sending your data anywhere.
+
+Use cases:
+- Debug a malformed SOAP response from an API
+- Pretty-print a minified XML config before checking it into version control
+- Quickly validate an Android manifest or Maven `pom.xml` without opening an IDE
+- Inspect an RSS feed or Atom export
+
+**[Format Your XML Instantly →](/tools/xml-formatter)**

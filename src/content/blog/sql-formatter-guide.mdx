@@ -1,0 +1,277 @@
+---
+title: "SQL Formatter: Format and Beautify SQL Queries Online"
+description: "Format messy SQL queries into readable, consistent code instantly. Supports SELECT, INSERT, CREATE TABLE, and complex JOINs. Free online SQL beautifier."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "sql-formatter-guide-zh"
+tags: ["sql", "sql-formatter", "sql-beautifier", "database", "developer-tools"]
+---
+
+Unformatted SQL is a productivity tax. A 200-line query with no indentation, inconsistent keyword casing, and JOINs crammed onto a single line takes three times longer to read and debug than well-formatted SQL. SQL formatting is not a cosmetic concern — it directly affects how quickly you can reason about query logic, catch bugs in code review, and onboard teammates to complex queries.
+
+[Format your SQL instantly →](/tools/sql-formatter)
+
+## Why SQL Formatting Matters
+
+### Readability
+
+Databases don't care about whitespace. Humans do. Compare:
+
+```sql
+select u.id,u.name,o.total from users u inner join orders o on u.id=o.user_id where o.status='completed' and o.total>100 order by o.total desc limit 50;
+```
+
+vs.
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  o.total
+FROM users u
+INNER JOIN orders o ON u.id = o.user_id
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+ORDER BY o.total DESC
+LIMIT 50;
+```
+
+The second query communicates intent. The column list, join condition, filters, and sort order are each visually distinct. Spotting a bug — or verifying the query is correct — takes seconds instead of minutes.
+
+### Code Review
+
+SQL often lives inside application code as string literals, ORM raw queries, or migration files. During code review, reviewers need to quickly verify join conditions, check for missing indexes, and spot potential N+1 patterns. Unformatted SQL in a diff is nearly impossible to review meaningfully. Formatted SQL lets reviewers focus on logic rather than parsing.
+
+### Team Collaboration
+
+Consistent formatting enables diffing. When two developers edit the same stored procedure, consistent style produces clean diffs that highlight only the intentional changes — not formatting noise. Teams that standardize SQL formatting spend less time in "style debates" and more time on actual database design.
+
+## SQL Formatting Conventions
+
+### Keywords: Always Uppercase
+
+SQL keywords (`SELECT`, `FROM`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `HAVING`, `LIMIT`) should be uppercase. Identifiers (table names, column names) should match your database's convention — typically lowercase with underscores.
+
+```sql
+-- Wrong
+select id, created_at from users where active = true;
+
+-- Correct
+SELECT id, created_at FROM users WHERE active = TRUE;
+```
+
+### One Column Per Line
+
+In `SELECT` clauses, each column gets its own line with consistent indentation. This makes it trivial to add, remove, or reorder columns, and keeps diffs clean.
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  u.email,
+  u.created_at
+FROM users u
+```
+
+### Indentation for Subqueries
+
+Nested queries should be indented by two or four spaces relative to their parent:
+
+```sql
+SELECT
+  id,
+  name,
+  (
+    SELECT COUNT(*)
+    FROM orders
+    WHERE orders.user_id = users.id
+  ) AS order_count
+FROM users;
+```
+
+### JOIN Alignment
+
+Each JOIN goes on its own line, with the ON condition indented or aligned:
+
+```sql
+SELECT
+  u.name,
+  p.title,
+  c.name AS category
+FROM users u
+INNER JOIN posts p ON p.author_id = u.id
+INNER JOIN categories c ON c.id = p.category_id
+WHERE u.active = TRUE;
+```
+
+### Long WHERE Clauses
+
+When filtering on multiple conditions, start each condition on a new line with the boolean operator (`AND`/`OR`) at the beginning:
+
+```sql
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+  AND o.created_at >= '2025-01-01'
+  AND u.country IN ('US', 'CA', 'GB')
+```
+
+Leading `AND`/`OR` (rather than trailing) makes it easy to comment out individual conditions during debugging.
+
+## Format SQL in Your Editor
+
+### VS Code
+
+Install the **SQLTools** extension or **sql-formatter** via the marketplace. Once installed:
+
+- Format selection: `Cmd+K Cmd+F` (Mac) / `Ctrl+K Ctrl+F` (Windows)
+- Format entire file: `Shift+Alt+F`
+
+For project-level consistency, add a `.editorconfig` or configure Prettier with the `prettier-plugin-sql` plugin:
+
+```json
+// .prettierrc
+{
+  "plugins": ["prettier-plugin-sql"],
+  "language": "sql",
+  "keywordCase": "upper",
+  "indentStyle": "standard",
+  "logicalOperatorNewline": "before"
+}
+```
+
+### JetBrains (DataGrip, IntelliJ, PyCharm)
+
+JetBrains IDEs have built-in SQL formatting. Reformat Code: `Cmd+Alt+L` (Mac) / `Ctrl+Alt+L` (Windows). Configure under **Settings → Editor → Code Style → SQL**.
+
+DataGrip additionally supports dialect-specific formatting (MySQL vs. PostgreSQL vs. Oracle syntax differences).
+
+### Command Line
+
+For scripting or CI pipelines, `sql-formatter-cli` handles batch formatting:
+
+```bash
+npm install -g sql-formatter
+
+# Format a file in place
+sql-formatter -l postgresql -o query.sql query.sql
+
+# Format from stdin
+cat query.sql | sql-formatter -l mysql
+```
+
+## Format SQL Online
+
+For ad-hoc formatting without installing anything, [ZeroTool's SQL Formatter](/tools/sql-formatter) processes your query entirely in the browser. Paste any SQL — `SELECT`, `INSERT`, `CREATE TABLE`, stored procedures, complex multi-join queries — and get formatted output immediately.
+
+Features:
+- Keyword uppercasing
+- Consistent indentation
+- JOIN alignment
+- Subquery nesting
+- Works with MySQL, PostgreSQL, SQLite, and standard SQL syntax
+
+**[Format Your SQL Instantly →](/tools/sql-formatter)**
+
+## Common SQL Formatting Patterns
+
+### CTEs (Common Table Expressions)
+
+CTEs should be formatted so the name, column list (if any), and body are all readable:
+
+```sql
+WITH monthly_revenue AS (
+  SELECT
+    DATE_TRUNC('month', created_at) AS month,
+    SUM(amount) AS revenue
+  FROM orders
+  WHERE status = 'completed'
+  GROUP BY 1
+),
+previous_month AS (
+  SELECT
+    month,
+    revenue,
+    LAG(revenue) OVER (ORDER BY month) AS prev_revenue
+  FROM monthly_revenue
+)
+SELECT
+  month,
+  revenue,
+  prev_revenue,
+  ROUND((revenue - prev_revenue) / prev_revenue * 100, 2) AS growth_pct
+FROM previous_month
+ORDER BY month DESC;
+```
+
+Each CTE body gets full indentation. Separating CTEs with blank lines and aligning the `AS (` pattern helps scanability.
+
+### Subquery in FROM Clause
+
+```sql
+SELECT
+  dept,
+  avg_salary
+FROM (
+  SELECT
+    department AS dept,
+    AVG(salary) AS avg_salary
+  FROM employees
+  GROUP BY department
+) AS dept_stats
+WHERE avg_salary > 75000
+ORDER BY avg_salary DESC;
+```
+
+The derived table body is indented inside the parentheses, and the alias appears on the closing `)`.
+
+### CASE Expressions
+
+Multi-branch CASE statements benefit from consistent alignment:
+
+```sql
+SELECT
+  id,
+  name,
+  CASE
+    WHEN age < 18 THEN 'minor'
+    WHEN age BETWEEN 18 AND 64 THEN 'adult'
+    ELSE 'senior'
+  END AS age_group
+FROM users;
+```
+
+### INSERT with SELECT
+
+```sql
+INSERT INTO order_archive (
+  id,
+  user_id,
+  total,
+  created_at
+)
+SELECT
+  id,
+  user_id,
+  total,
+  created_at
+FROM orders
+WHERE created_at < '2024-01-01';
+```
+
+Aligning the INSERT column list with the SELECT column list makes it immediately verifiable that the columns match.
+
+## Building a SQL Style Guide
+
+For teams, codifying SQL style in a short document eliminates ambiguity. Key decisions to standardize:
+
+- Keyword case (almost universally uppercase)
+- Indentation size (2 or 4 spaces)
+- Table alias strategy (initials vs. short names)
+- Where to put commas (leading vs. trailing)
+- Whether to alias all columns in SELECT
+
+Most teams adopt a formatter and define config rather than writing rules manually — the formatter enforces consistency automatically in CI.
+
+**[Format Your SQL Instantly →](/tools/sql-formatter)**

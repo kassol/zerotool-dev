@@ -1,0 +1,306 @@
+---
+title: "XML 格式化与验证：结构解析、常见错误和在线工具"
+description: "理解 XML 语法规则，快速定位格式错误，对比 XML 与 JSON 的适用场景，附 Python/Java 解析代码示例。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "xml-formatter-guide"
+tags: ["XML格式化", "XML验证", "配置文件", "开发工具"]
+---
+
+XML 在中国开发者的日常工作中无处不在：Maven 的 `pom.xml`、Android 的 `AndroidManifest.xml`、微信支付的回调报文、Spring 的 Bean 配置、MyBatis 的 Mapper——凡是有历史积累的系统，XML 必然出现在某个角落。理解 XML 的结构和错误排查方法，是后端和 Android 开发者的基础技能。
+
+[在线 XML 格式化与验证 →](/tools/xml-formatter)
+
+## XML 是什么？
+
+XML（可扩展标记语言）是一种基于文本的数据描述格式，用嵌套标签表示结构化数据。与 HTML 不同，XML 没有预定义标签——你可以自己定义标签名和层级关系。
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<order id="12345">
+  <customer>
+    <name>张三</name>
+    <phone>13800138000</phone>
+  </customer>
+  <amount currency="CNY">299.00</amount>
+  <status>paid</status>
+</order>
+```
+
+XML 的核心特点：
+- **强结构性** — 标签必须正确嵌套、闭合
+- **支持注释** — `<!-- 注释 -->` 是合法语法，JSON 不支持
+- **支持命名空间** — 避免不同 XML 词汇表之间的标签冲突
+- **有正式验证机制** — XSD Schema 可以精确约束字段类型和结构
+
+## 国内常见 XML 场景
+
+### Maven pom.xml
+
+Maven 项目的核心配置文件，定义依赖、插件和构建流程：
+
+```xml
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>my-app</artifactId>
+  <version>1.0.0</version>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+      <version>3.2.0</version>
+    </dependency>
+  </dependencies>
+</project>
+```
+
+### Android AndroidManifest.xml
+
+声明应用权限、Activity、Service 等组件：
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.myapp">
+
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+  <application
+      android:label="@string/app_name"
+      android:theme="@style/AppTheme">
+    <activity android:name=".MainActivity"
+              android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
+```
+
+### 微信支付 XML 报文
+
+微信支付 V2 接口（含退款、红包等旧接口）使用 XML 格式传输数据：
+
+```xml
+<xml>
+  <appid>wx2421b1c4370ec43b</appid>
+  <mch_id>10000100</mch_id>
+  <nonce_str>IITRi8Iabbblz1Jc</nonce_str>
+  <body><![CDATA[商品描述]]></body>
+  <out_trade_no>1415659990</out_trade_no>
+  <total_fee>1</total_fee>
+  <spbill_create_ip>14.23.150.211</spbill_create_ip>
+  <notify_url>https://example.com/notify</notify_url>
+  <trade_type>JSAPI</trade_type>
+  <sign>0CB01533B8C1EF103065174F50BCA001</sign>
+</xml>
+```
+
+注意微信支付的 XML 没有 XML 声明头，根元素是 `<xml>`，特殊字符内容用 CDATA 包裹。
+
+### Spring XML 配置（遗留项目）
+
+虽然现代 Spring Boot 项目通常用注解配置，但大量遗留项目仍在使用 XML 配置 Bean：
+
+```xml
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+  <bean id="dataSource" class="com.alibaba.druid.pool.DruidDataSource">
+    <property name="url" value="${db.url}"/>
+    <property name="username" value="${db.username}"/>
+    <property name="password" value="${db.password}"/>
+  </bean>
+
+</beans>
+```
+
+## XML 语法规则
+
+### 必须有且仅有一个根元素
+
+```xml
+<!-- 正确 -->
+<root>
+  <item>a</item>
+  <item>b</item>
+</root>
+
+<!-- 错误：两个根级元素 -->
+<item>a</item>
+<item>b</item>
+```
+
+### 标签必须正确闭合且大小写一致
+
+```xml
+<!-- 正确：自闭合 -->
+<br/>
+<img src="logo.png"/>
+
+<!-- 错误：未闭合 -->
+<br>
+
+<!-- 错误：大小写不匹配 -->
+<Name>张三</name>
+```
+
+### 特殊字符必须转义
+
+| 字符 | 转义写法 |
+|------|----------|
+| `<`  | `&lt;`   |
+| `>`  | `&gt;`   |
+| `&`  | `&amp;`  |
+| `"`  | `&quot;` |
+| `'`  | `&apos;` |
+
+```xml
+<!-- 错误 -->
+<company>阿里&巴巴</company>
+
+<!-- 正确 -->
+<company>阿里&amp;巴巴</company>
+```
+
+对于含大量特殊字符的内容（SQL、HTML 片段、代码），用 CDATA：
+
+```xml
+<script><![CDATA[
+  SELECT * FROM users WHERE name = '张三' AND age > 18;
+]]></script>
+```
+
+### 属性值必须加引号
+
+```xml
+<!-- 错误 -->
+<item id=42>
+
+<!-- 正确 -->
+<item id="42">
+```
+
+## 常见 XML 错误及排查
+
+**错误 1：标签未闭合**
+
+```xml
+<!-- 解析器报错：Expected closing tag for 'name' -->
+<customer>
+  <name>张三
+  <age>30</age>
+</customer>
+```
+
+**错误 2：编码声明与实际编码不一致**
+
+文件实际是 GBK 编码，但声明了 `encoding="UTF-8"`，解析器会报错或产生乱码。解决方案：统一使用 UTF-8 保存文件。
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+```
+
+**错误 3：`&` 未转义**
+
+这是国内开发者最常踩的坑，尤其在 URL 拼接或公司名中：
+
+```xml
+<!-- 错误：& 直接出现在内容中 -->
+<url>https://example.com/api?a=1&b=2</url>
+
+<!-- 正确 -->
+<url>https://example.com/api?a=1&amp;b=2</url>
+```
+
+**错误 4：BOM 头导致解析失败**
+
+Windows 记事本保存 UTF-8 文件时可能带 BOM（字节顺序标记），会导致 XML 解析器报"Content is not allowed in prolog"错误。用专业编辑器（VS Code、IDEA）保存为 UTF-8 without BOM。
+
+## 用代码解析 XML
+
+### Python
+
+```python
+import xml.etree.ElementTree as ET
+
+# 解析文件
+tree = ET.parse('config.xml')
+root = tree.getroot()
+
+# 读取子元素文本
+name = root.find('customer/name').text
+print(name)  # 张三
+
+# 读取属性
+amount_elem = root.find('amount')
+print(amount_elem.get('currency'))  # CNY
+print(amount_elem.text)  # 299.00
+
+# 遍历所有同名元素
+for item in root.findall('items/item'):
+    print(item.get('sku'), item.find('price').text)
+```
+
+处理微信支付 XML 回调时：
+
+```python
+def parse_wx_xml(xml_str: str) -> dict:
+    root = ET.fromstring(xml_str)
+    return {child.tag: child.text for child in root}
+```
+
+### Java
+
+```java
+import javax.xml.parsers.*;
+import org.w3c.dom.*;
+
+DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+DocumentBuilder builder = factory.newDocumentBuilder();
+Document doc = builder.parse(new File("order.xml"));
+doc.getDocumentElement().normalize();
+
+// 读取元素
+NodeList nameList = doc.getElementsByTagName("name");
+String name = nameList.item(0).getTextContent(); // 张三
+
+// 读取属性
+Element amount = (Element) doc.getElementsByTagName("amount").item(0);
+String currency = amount.getAttribute("currency"); // CNY
+```
+
+## XML 与 JSON 的选择
+
+| 场景 | 推荐格式 |
+|------|----------|
+| REST API 接口 | JSON |
+| 微信支付 V2 接口 | XML（接口规定） |
+| Maven/Gradle 构建配置 | XML（Maven）/ Groovy/Kotlin（Gradle）|
+| Android Manifest | XML（Android 规定）|
+| Spring Bean 配置 | 注解（新项目）/ XML（遗留项目）|
+| SOAP Web Service | XML |
+| RSS/Atom 订阅源 | XML |
+| 需要注释的配置文件 | XML 或 YAML |
+
+核心原则：你通常没有选择权——对接系统决定了格式。重要的是能快速读懂和排查 XML，而不是选择它。
+
+## 在线格式化和验证 XML
+
+接到一段压缩成一行的 XML 报文，或者排查一个"invalid XML"错误时，[ZeroTool XML 格式化工具](/tools/xml-formatter) 能立即帮你：
+
+- **格式化**：将压缩的 XML 展开为带缩进的可读格式
+- **验证**：检测未闭合标签、非法字符、多根节点等结构错误
+- **高亮错误位置**：精确指出问题在哪一行
+
+完全在浏览器本地运行，不上传数据——处理包含业务数据的微信支付报文时也可以放心使用。
+
+**[立即格式化 XML →](/tools/xml-formatter)**

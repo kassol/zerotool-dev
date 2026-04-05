@@ -1,0 +1,206 @@
+---
+title: "ASCII 编码完全指南：字符、编码与 Unicode 的关系"
+description: "深入理解 ASCII 编码表，掌握字符与十进制/十六进制码的转换，了解 ASCII、Unicode 与 UTF-8 的区别，附代码示例。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "ascii-converter-guide"
+tags: ["ASCII编码", "字符编码", "Unicode", "UTF-8", "开发工具"]
+---
+
+你打出"你好"两个字，计算机存储的是什么？是一串数字。字符和数字之间的映射关系，就是"字符编码"。ASCII 是一切字符编码的起点，而乱码问题——每个中文开发者都踩过的坑——几乎都源于对编码的理解不清晰。
+
+[在线 ASCII 转换工具 →](/tools/ascii-converter)
+
+## ASCII 是什么？
+
+ASCII（美国信息交换标准代码）发布于 1963 年，用 7 位二进制数（0–127）表示 128 个字符，涵盖：
+
+- 英文大小写字母（A–Z, a–z）
+- 阿拉伯数字（0–9）
+- 常见标点符号
+- 控制字符（换行、制表符、退格等）
+
+ASCII 只有 128 个字符，完全不含任何非拉丁文字。这就是为什么中文需要另外的编码标准。
+
+## ASCII 编码表速查
+
+### 控制字符（0–31）
+
+这些字符不可打印，用于控制设备行为：
+
+| 十进制 | 缩写 | 含义 |
+|--------|------|------|
+| 0  | NUL | 空字符（C 语言字符串结尾） |
+| 9  | HT  | 水平制表符 `\t` |
+| 10 | LF  | 换行 `\n`（Unix/Linux/macOS 行尾） |
+| 13 | CR  | 回车 `\r` |
+| 27 | ESC | 转义（终端控制序列起始） |
+
+Windows 系统的行尾是 CRLF（`\r\n`，即 13+10），Unix/macOS 只用 LF（`\n`，10）。这是跨平台文本文件中最常见的兼容性问题之一。
+
+### 可打印字符（32–126）关键值
+
+记住这几个数字，能帮你快速看懂代码中的字符比较逻辑：
+
+| 字符 | 十进制 | 十六进制 |
+|------|--------|----------|
+| 空格 | 32 | 0x20 |
+| `0`  | 48 | 0x30 |
+| `9`  | 57 | 0x39 |
+| `A`  | 65 | 0x41 |
+| `Z`  | 90 | 0x5A |
+| `a`  | 97 | 0x61 |
+| `z`  | 122| 0x7A |
+
+两个规律很实用：
+1. **大小写字母相差 32**：`'a' - 'A' = 32`，这就是为什么很多代码用 XOR `^ 32` 来切换大小写。
+2. **数字字符减 48 得整数值**：`'5' - 48 = 5`，ASCII 数字到整数的转换原理。
+
+## ASCII、Unicode 与 UTF-8 的关系
+
+这三个概念经常被混淆，理清楚它们对排查编码问题至关重要。
+
+**ASCII** 是一个 7 位编码，128 个字符，仅覆盖英文。
+
+**Unicode** 是一个字符集标准，给世界上所有语言的所有字符各分配一个唯一编号（码位，Code Point），写作 `U+XXXX`。例如"中"的 Unicode 码位是 `U+4E2D`，"A"是 `U+0041`。Unicode 本身不规定字节存储方式，它只是一张"字符↔编号"的对照表。
+
+**UTF-8** 是 Unicode 的一种变长字节编码方案：
+- U+0000 到 U+007F（即 ASCII 范围）：**1 字节**，与 ASCII 完全相同
+- U+0080 到 U+07FF：2 字节
+- U+0800 到 U+FFFF（含大部分中文）：**3 字节**
+- U+10000 以上（emoji 等）：4 字节
+
+关键结论：**UTF-8 是 ASCII 的超集**。纯 ASCII 文本在 UTF-8 下字节完全相同，这也是 UTF-8 能在互联网上统一所有编码的原因。
+
+## ASCII 与中文编码的关系
+
+ASCII 不包含汉字，中文字符编码经历了以下演变：
+
+### GB2312 / GBK / GB18030
+
+**GB2312**（1981年）是第一个中文字符集标准，收录 6763 个汉字，用 2 字节表示每个汉字。
+
+**GBK**（1993年）是 GB2312 的扩展，收录 21003 个汉字，同样兼容 ASCII（ASCII 字符仍为 1 字节）。Windows 简体中文系统的默认编码就是 GBK（代码页 936）。
+
+**GB18030**（2000年，2022年最新版）是国家强制标准，收录所有 Unicode 字符，用 1/2/4 字节变长编码。
+
+### 乱码的根源
+
+乱码几乎总是由于**发送方和接收方使用了不同的编码解释同一段字节**。
+
+**常见场景 1：GBK 当 UTF-8 读**
+
+"你好"用 GBK 编码是 `C4 E3 BA C3`（4 字节）。如果用 UTF-8 解码这 4 个字节，会得到无法识别的乱码——因为这些字节序列在 UTF-8 中不合法或对应不同字符。
+
+**常见场景 2：UTF-8 当 GBK 读**
+
+"你好"用 UTF-8 编码是 `E4 BD A0 E5 A5 BD`（6 字节）。如果用 GBK 解码，每 2 字节被识别为一个 GBK 汉字，输出"浣犲ソ"这样的乱码。
+
+**常见场景 3：Windows 记事本 BOM 问题**
+
+Windows 记事本保存 UTF-8 文件时默认添加 BOM（字节顺序标记）：`EF BB BF`。很多 Linux 程序不认识 BOM，导致文件开头出现乱字符。用 VS Code 或 IDEA 另存为"UTF-8 without BOM"即可解决。
+
+## 用代码操作 ASCII
+
+### Python
+
+```python
+# 字符转 ASCII 码
+ord('A')    # 65
+ord('a')    # 97
+ord(' ')    # 32
+
+# ASCII 码转字符
+chr(65)     # 'A'
+chr(97)     # 'a'
+
+# 字符串转 ASCII 码列表
+[ord(c) for c in 'Hello']  # [72, 101, 108, 108, 111]
+
+# 检查是否为纯 ASCII
+'Hello'.isascii()   # True
+'你好'.isascii()    # False
+
+# Python 3 默认字符串为 Unicode
+# 显式编解码
+'你好'.encode('utf-8')      # b'\xe4\xbd\xa0\xe5\xa5\xbd'
+'你好'.encode('gbk')        # b'\xc4\xe3\xba\xc3'
+
+# 排查乱码：指定正确编码
+b'\xc4\xe3\xba\xc3'.decode('gbk')    # '你好'
+b'\xe4\xbd\xa0\xe5\xa5\xbd'.decode('utf-8')  # '你好'
+```
+
+### JavaScript
+
+```javascript
+// 字符转 Unicode 码位
+'A'.charCodeAt(0);   // 65
+'你'.charCodeAt(0);  // 20320 (Unicode 码位，不是 UTF-8 字节)
+
+// 码位转字符
+String.fromCharCode(65);     // 'A'
+String.fromCharCode(20320);  // '你'
+
+// ES6+ codePointAt（支持 emoji 等 4 字节字符）
+'😀'.codePointAt(0);         // 128512
+String.fromCodePoint(128512); // '😀'
+
+// 字符串转 ASCII/Unicode 码数组
+function toCodeArray(str) {
+  return [...str].map(c => c.codePointAt(0));
+}
+toCodeArray('Hello');  // [72, 101, 108, 108, 111]
+toCodeArray('你好');   // [20320, 22909]
+```
+
+### Java
+
+```java
+// 字符转 ASCII/Unicode 码
+char c = 'A';
+int code = (int) c;  // 65
+
+// 整数转字符
+char ch = (char) 65;  // 'A'
+
+// 字符串按 UTF-8 编码为字节
+byte[] utf8Bytes = "你好".getBytes(StandardCharsets.UTF_8);
+// [E4, BD, A0, E5, A5, BD]
+
+// 字节按 GBK 解码
+byte[] gbkBytes = {(byte)0xC4, (byte)0xE3, (byte)0xBA, (byte)0xC3};
+String str = new String(gbkBytes, "GBK");  // "你好"
+```
+
+## 乱码排查思路
+
+遇到乱码，按以下步骤排查：
+
+1. **确认原始字节** — 用 hex dump 查看文件或网络数据的原始字节
+2. **猜测编码** — 中文环境常见：UTF-8、GBK、GB18030；老系统可能是 GB2312
+3. **尝试解码** — Python `b'...'.decode('gbk')` 或 `b'...'.decode('utf-8')`
+4. **定位不一致点** — 找到发送方和接收方编码声明不一致的地方
+5. **统一为 UTF-8** — 长期解决方案：全链路统一使用 UTF-8
+
+一个简单的 Python 排查脚本：
+
+```python
+def detect_encoding(data: bytes):
+    for encoding in ['utf-8', 'gbk', 'gb18030', 'latin-1']:
+        try:
+            text = data.decode(encoding)
+            print(f"{encoding}: {text[:50]}")
+        except UnicodeDecodeError:
+            print(f"{encoding}: 解码失败")
+
+# 用法
+with open('mystery.txt', 'rb') as f:
+    detect_encoding(f.read())
+```
+
+## 在线 ASCII 转换
+
+[ZeroTool ASCII 转换工具](/tools/ascii-converter) 支持文本与 ASCII 码（十进制、十六进制、二进制）之间的即时互转，并提供完整字符表供查阅。在浏览器本地运行，不上传任何数据。
+
+**[立即使用 ASCII 转换工具 →](/tools/ascii-converter)**

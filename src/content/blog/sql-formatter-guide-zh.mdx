@@ -1,0 +1,268 @@
+---
+title: "SQL 格式化指南：让你的查询语句一目了然"
+description: "SQL 可读性差？本文介绍 SQL 格式化规范、常用工具和代码示例，帮助你写出整洁、易维护的数据库查询语句。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "sql-formatter-guide"
+tags: ["SQL格式化", "数据库", "SQL优化", "开发工具"]
+---
+
+每个开发者都见过这样的代码：一条 200 行的 SQL 查询，关键字大小写混乱，所有 JOIN 挤在一行，WHERE 条件没有换行。这类 SQL 不仅难以阅读，更难以 Code Review，出了 Bug 也难以定位。SQL 格式化不是风格偏好问题，而是团队效率的直接影响因素。
+
+[在线 SQL 格式化工具 →](/tools/sql-formatter)
+
+## 格式化到底有多重要
+
+先看一个反例：
+
+```sql
+select u.id,u.name,o.total from users u inner join orders o on u.id=o.user_id where o.status='completed' and o.total>100 order by o.total desc limit 50;
+```
+
+格式化之后：
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  o.total
+FROM users u
+INNER JOIN orders o ON u.id = o.user_id
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+ORDER BY o.total DESC
+LIMIT 50;
+```
+
+同样的逻辑，格式化版本让你一眼看清：查哪些字段、来自哪张表、关联条件是什么、过滤条件是什么、排序规则是什么。阅读时间从分钟级降到秒级。
+
+在 Code Review 中，格式化 SQL 更是刚需。Reviewer 需要快速判断 JOIN 条件是否正确、索引是否能命中、有没有漏掉过滤条件——格式混乱的 SQL 让这些判断成本极高。
+
+## SQL 格式化规范
+
+### 关键字大写
+
+所有 SQL 保留字（`SELECT`、`FROM`、`WHERE`、`JOIN`、`GROUP BY`、`ORDER BY`、`HAVING`、`LIMIT`、`INSERT INTO` 等）统一大写，表名和字段名沿用数据库命名规范（通常是小写加下划线）。
+
+```sql
+-- 不规范
+select id, created_at from users where active = 1;
+
+-- 规范
+SELECT id, created_at FROM users WHERE active = 1;
+```
+
+MySQL 对关键字大小写不敏感，PostgreSQL 也一样，但统一大写是行业通行约定，能让 SQL 结构一目了然。
+
+### SELECT 字段每行一个
+
+字段列表每行一个，便于增删改和对齐：
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  u.email,
+  u.created_at,
+  COUNT(o.id) AS order_count
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+GROUP BY u.id, u.name, u.email, u.created_at;
+```
+
+这样的格式，增加或删除一列只需改一行，git diff 干净，Code Review 时变化一目了然。
+
+### JOIN 对齐
+
+每个 JOIN 独占一行，ON 条件紧跟其后：
+
+```sql
+SELECT
+  u.name,
+  p.title,
+  c.name AS category_name
+FROM users u
+INNER JOIN posts p ON p.author_id = u.id
+INNER JOIN categories c ON c.id = p.category_id
+LEFT JOIN tags t ON t.post_id = p.id
+WHERE u.active = 1
+  AND p.published = 1;
+```
+
+多表关联时，对齐的 JOIN 格式让外键关系清晰可读。
+
+### WHERE 条件换行
+
+多个过滤条件时，每个条件独占一行，AND/OR 写在行首（便于注释掉单个条件调试）：
+
+```sql
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+  AND o.created_at >= '2025-01-01'
+  AND u.country IN ('CN', 'TW', 'HK')
+```
+
+AND 写在行首的好处：调试时可以直接在整行前加 `--` 注释掉某个条件，不会破坏语法。
+
+## 编辑器中格式化 SQL
+
+### VS Code
+
+安装 **SQLTools** 扩展或 **sql-formatter** 插件。安装后：
+
+- 格式化选中内容：`Cmd+K Cmd+F`（Mac）/ `Ctrl+K Ctrl+F`（Windows）
+- 格式化整个文件：`Shift+Alt+F`
+
+如果项目用 Prettier，可以加 `prettier-plugin-sql`：
+
+```json
+// .prettierrc
+{
+  "plugins": ["prettier-plugin-sql"],
+  "language": "sql",
+  "keywordCase": "upper",
+  "indentStyle": "standard",
+  "logicalOperatorNewline": "before"
+}
+```
+
+### DataGrip / JetBrains
+
+DataGrip、IntelliJ、PyCharm 内置 SQL 格式化，快捷键 `Cmd+Alt+L`（Mac）/ `Ctrl+Alt+L`（Windows）。DataGrip 还支持按方言（MySQL/PostgreSQL/Oracle）区分格式化规则。
+
+### 命令行批量格式化
+
+```bash
+npm install -g sql-formatter
+
+# 格式化文件
+sql-formatter -l mysql -o query.sql query.sql
+
+# 从 stdin 读取
+cat migrations/*.sql | sql-formatter -l postgresql
+```
+
+CI 流水线里可以加一步格式检查，保证入库的 SQL 都符合规范。
+
+## 典型 SQL 格式化示例
+
+### MySQL 实际查询（电商场景）
+
+**格式化前（常见的写法）：**
+
+```sql
+select u.name,sum(o.total) as total_amount,count(o.id) as order_cnt from users u join orders o on u.id=o.user_id where o.created_at between '2025-01-01' and '2025-12-31' and o.status!='cancelled' group by u.id,u.name having sum(o.total)>1000 order by total_amount desc limit 20;
+```
+
+**格式化后：**
+
+```sql
+SELECT
+  u.name,
+  SUM(o.total) AS total_amount,
+  COUNT(o.id) AS order_cnt
+FROM users u
+JOIN orders o ON u.id = o.user_id
+WHERE
+  o.created_at BETWEEN '2025-01-01' AND '2025-12-31'
+  AND o.status != 'cancelled'
+GROUP BY
+  u.id,
+  u.name
+HAVING SUM(o.total) > 1000
+ORDER BY total_amount DESC
+LIMIT 20;
+```
+
+差异显而易见：GROUP BY 的字段、HAVING 的聚合条件、JOIN 条件都清晰可见。
+
+### PostgreSQL CTE（公共表表达式）
+
+CTE 在 PostgreSQL 中极为常见，格式化后结构更清晰：
+
+```sql
+WITH monthly_sales AS (
+  SELECT
+    DATE_TRUNC('month', created_at) AS month,
+    SUM(amount) AS revenue
+  FROM orders
+  WHERE status = 'paid'
+  GROUP BY 1
+),
+growth AS (
+  SELECT
+    month,
+    revenue,
+    LAG(revenue) OVER (ORDER BY month) AS prev_revenue
+  FROM monthly_sales
+)
+SELECT
+  TO_CHAR(month, 'YYYY-MM') AS month,
+  revenue,
+  ROUND(
+    (revenue - prev_revenue) / prev_revenue * 100,
+    2
+  ) AS growth_pct
+FROM growth
+ORDER BY month DESC;
+```
+
+每个 CTE 独立缩进，`AS (` 与 CTE 名同行，结尾 `)` 单独一行，整体层次分明。
+
+### INSERT INTO ... SELECT
+
+```sql
+INSERT INTO order_archive (
+  id,
+  user_id,
+  total,
+  status,
+  created_at
+)
+SELECT
+  id,
+  user_id,
+  total,
+  status,
+  created_at
+FROM orders
+WHERE created_at < '2024-01-01'
+  AND status IN ('completed', 'cancelled');
+```
+
+INSERT 的列列表和 SELECT 的列列表上下对齐，可以直接核对列是否一一对应，避免顺序错乱。
+
+### CASE 表达式
+
+```sql
+SELECT
+  id,
+  order_no,
+  CASE
+    WHEN total < 100 THEN '小额'
+    WHEN total BETWEEN 100 AND 999 THEN '中额'
+    WHEN total >= 1000 THEN '大额'
+    ELSE '未知'
+  END AS amount_level
+FROM orders;
+```
+
+## 团队 SQL 规范建议
+
+建议在项目的开发规范文档中明确以下几点：
+
+1. **关键字大写**，标识符小写下划线
+2. **缩进用 2 或 4 空格**，禁止 Tab
+3. **表别名命名规则**（如取表名首字母，或取有意义的缩写）
+4. **WHERE 条件 AND/OR 写行首还是行尾**（建议行首）
+5. **是否所有 SELECT 列都加别名**
+
+引入自动格式化工具（sql-formatter、Prettier + 插件）后，这些规则由工具强制执行，不再依赖人工检查。
+
+## 在线 SQL 格式化
+
+无需安装任何工具，[ZeroTool SQL 格式化工具](/tools/sql-formatter) 支持 MySQL、PostgreSQL、SQLite 等主流方言，粘贴 SQL 即时输出格式化结果，完全在浏览器本地运行，不上传数据。
+
+**[立即格式化你的 SQL →](/tools/sql-formatter)**
