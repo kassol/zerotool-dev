@@ -1,0 +1,336 @@
+---
+title: "CSV 转 JSON 完整指南：从表格数据到 API 就绪格式"
+description: "详解 CSV 转 JSON 的方法、边界情况处理（含引号、换行、缺失值），提供 JavaScript、Python 代码示例与在线工具。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "csv-json-guide"
+tags: ["csv", "json", "csv转json", "数据处理", "开发工具"]
+---
+
+CSV 无处不在——Excel 导出、数据库备份、埋点平台报表、遗留系统接口，默认格式几乎都是 CSV。但你的 API 通常只认 JSON。CSV→JSON 是现代开发中最高频的数据处理任务之一，而且坑比想象中多。
+
+[在线 CSV↔JSON 转换工具 →](/tools/csv-json)
+
+## 为什么要把 CSV 转成 JSON？
+
+| 场景 | 原因 |
+|---|---|
+| REST API 请求体 | 绝大多数 API 只接受/返回 JSON |
+| NoSQL 数据库导入 | MongoDB、DynamoDB 使用 JSON 文档格式 |
+| 前端 JavaScript 处理 | `JSON.parse()` 原生支持；CSV 需要额外解析器 |
+| 数据管道 ETL | JSON 是现代数据流转的通用格式 |
+| 从 Excel 管理配置 | 运营团队用表格维护配置，程序消费 JSON |
+
+## CSV 结构基础
+
+CSV（逗号分隔值）文件由两部分组成：
+
+1. **表头行**（可选但强烈建议保留）：列名
+2. **数据行**：每行一条记录，值之间用分隔符隔开
+
+```csv
+id,name,email,age,active
+1,张三,zhangsan@example.com,30,true
+2,李四,lisi@example.com,25,false
+3,王五,wangwu@example.com,35,true
+```
+
+转换后的 JSON 数组：
+
+```json
+[
+  { "id": "1", "name": "张三", "email": "zhangsan@example.com", "age": "30", "active": "true" },
+  { "id": "2", "name": "李四", "email": "lisi@example.com", "age": "25", "active": "false" },
+  { "id": "3", "name": "王五", "email": "wangwu@example.com", "age": "35", "active": "true" }
+]
+```
+
+注意：默认情况下所有值都是字符串。类型推断（把 `"30"` 转成数字 `30`）是可选行为，取决于工具配置。
+
+## 常见转换场景
+
+### 基础平铺转换
+
+最简单的情况：表头直接映射为 JSON 键名。
+
+```csv
+product_id,name,price,in_stock
+P001,Widget,9.99,true
+P002,Gadget,24.99,false
+```
+
+转换结果：
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": "9.99", "in_stock": "true" },
+  { "product_id": "P002", "name": "Gadget", "price": "24.99", "in_stock": "false" }
+]
+```
+
+### 带类型推断的转换
+
+给 API 用时，通常需要数字是数字、布尔值是布尔值：
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": 9.99, "in_stock": true },
+  { "product_id": "P002", "name": "Gadget", "price": 24.99, "in_stock": false }
+]
+```
+
+大多数转换工具（包括 ZeroTool）都提供"解析类型"选项。
+
+### 含逗号的字段
+
+CSV 通过引号处理包含逗号的值：
+
+```csv
+city,description
+上海,"中国最大城市，金融中心"
+北京,"中国首都，政治文化中心"
+```
+
+正确的 JSON 输出：
+
+```json
+[
+  { "city": "上海", "description": "中国最大城市，金融中心" },
+  { "city": "北京", "description": "中国首都，政治文化中心" }
+]
+```
+
+用简单的字符串 split 按逗号切割会把这类字段打烂。务必用专业 CSV 解析器。
+
+### 含换行符的字段
+
+被引号包裹的字段可以跨行：
+
+```csv
+id,notes
+1,"第一行
+第二行"
+2,"单行内容"
+```
+
+这是合法的 CSV，但解析器必须支持多行字段。
+
+### 制表符分隔（TSV）
+
+部分系统导出使用 Tab 而非逗号分隔：
+
+```tsv
+name	score	grade
+张三	95	A
+李四	82	B
+```
+
+转换时指定分隔符为 `\t`，大多数工具都支持自定义分隔符。
+
+## 边界情况处理
+
+### 缺失值
+
+```csv
+id,name,email
+1,张三,zhangsan@example.com
+2,李四,
+3,,wangwu@example.com
+```
+
+缺失值可以转为空字符串 `""` 或 `null`，取决于工具设置：
+
+```json
+[
+  { "id": "1", "name": "张三", "email": "zhangsan@example.com" },
+  { "id": "2", "name": "李四", "email": "" },
+  { "id": "3", "name": "", "email": "wangwu@example.com" }
+]
+```
+
+### 无表头行
+
+CSV 没有表头时可以：
+- 自动生成列名：`col1`、`col2`、`col3`
+- 手动指定列名后再转换
+
+### 重复列名
+
+```csv
+value,value,value
+1,2,3
+```
+
+不同工具处理方式不同：有的会加后缀（`value`、`value_1`、`value_2`），有的直接覆盖。建议在转换前先处理重复列名。
+
+## 代码实现
+
+### JavaScript（Papa Parse）
+
+[Papa Parse](https://www.papaparse.com/) 是 JavaScript 生态中最成熟的 CSV 库：
+
+```bash
+npm install papaparse
+```
+
+```javascript
+const Papa = require('papaparse');
+const fs = require('fs');
+
+const csv = fs.readFileSync('data.csv', 'utf8');
+const result = Papa.parse(csv, {
+  header: true,         // 第一行作为键名
+  dynamicTyping: true,  // 自动转换数字和布尔值
+  skipEmptyLines: true,
+});
+
+console.log(JSON.stringify(result.data, null, 2));
+```
+
+### Python（标准库 csv 模块）
+
+```python
+import csv
+import json
+
+with open('data.csv', newline='', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    rows = list(reader)
+
+print(json.dumps(rows, indent=2, ensure_ascii=False))
+```
+
+需要类型推断时，手动转换每行的值：
+
+```python
+def coerce(value):
+    if value.lower() in ('true', 'false'):
+        return value.lower() == 'true'
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+rows = [{k: coerce(v) for k, v in row.items()} for row in rows]
+```
+
+### 命令行（csvkit）
+
+```bash
+# 安装
+pip install csvkit
+
+# CSV 转 JSON
+csvjson data.csv
+
+# 美化输出
+csvjson data.csv | jq .
+```
+
+### Miller（mlr）
+
+Miller 是功能强大的数据流处理工具，支持多种格式互转：
+
+```bash
+# macOS 安装
+brew install miller
+
+# CSV 转 JSON
+mlr --csv --ojson cat data.csv
+```
+
+## JSON 转回 CSV
+
+有时需要把 JSON 数组转成 CSV，方便在 Excel 或 Google Sheets 里分析：
+
+```json
+[
+  { "id": 1, "name": "张三", "score": 95 },
+  { "id": 2, "name": "李四", "score": 82 }
+]
+```
+
+期望的 CSV：
+
+```csv
+id,name,score
+1,张三,95
+2,李四,82
+```
+
+嵌套对象是难点——大多数转换工具会把嵌套键用分隔符展平：`user.name`、`user.email`。ZeroTool 的转换器自动处理这种情况。
+
+## 大文件性能建议
+
+处理百万行级别的 CSV 时：
+
+- **流式处理**：逐行处理而非一次性加载全部内容到内存
+- **NDJSON 输出**：换行符分隔的 JSON（每行一个对象）比单个超大数组更适合流式传输
+- **关闭类型推断**：对已知 schema 的数据禁用类型推断可显著降低 CPU 开销
+
+```javascript
+// Papa Parse 流式输出 NDJSON
+Papa.parse(stream, {
+  header: true,
+  step: (row) => process.stdout.write(JSON.stringify(row.data) + '\n'),
+  complete: () => console.error('完成'),
+});
+```
+
+## 在线转换工具
+
+不想写代码？[ZeroTool 的 CSV↔JSON 在线转换器](/tools/csv-json)完全在浏览器内运行，支持粘贴文本或上传文件，可调整分隔符、类型解析、表头处理等选项，转换结果可直接下载。不上传任何数据到服务器。
+
+**[立即使用 CSV↔JSON 转换器 →](/tools/csv-json)**
+
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "如何在线将 CSV 转换为 JSON？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "访问 zerotool.dev/tools/csv-json，将 CSV 内容粘贴到输入框，点击转换即可。转换在浏览器本地运行，不上传任何数据，支持自定义分隔符和类型解析。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "为什么 CSV 转 JSON 后所有值都是字符串？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "CSV 本身没有类型系统，所有值都是文本。转换工具默认输出字符串。需要数字和布尔值的原生类型，请开启"解析类型"或"动态类型"选项。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "CSV 中包含逗号的字段如何处理？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "包含逗号的字段需要用双引号包裹，如：\"上海，金融中心\"。专业 CSV 解析器会正确处理这种情况。不要用简单的字符串 split 来解析 CSV，会导致字段错误切割。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "CSV 没有表头行怎么转 JSON？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "大多数工具支持指定"无表头"模式，会自动生成列名（如 col1、col2）或允许手动输入列名后再转换。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "JavaScript 中最好用的 CSV 解析库是哪个？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Papa Parse 是 JavaScript 生态中最主流的 CSV 库，支持引号字段、嵌入换行符、自定义分隔符和类型推断，通过 npm 安装：`npm install papaparse`。"
+      }
+    }
+  ]
+}</script>

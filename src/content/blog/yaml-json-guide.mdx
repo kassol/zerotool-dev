@@ -1,0 +1,366 @@
+---
+title: "YAML to JSON: The Developer's Complete Guide"
+description: "Learn how to convert YAML to JSON online, understand YAML syntax, and handle K8s configs, Docker Compose files, and GitHub Actions workflows."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "yaml-json-guide-zh"
+tags: ["yaml", "json", "yaml-to-json", "devops", "developer-tools"]
+---
+
+YAML and JSON are both data serialization formats, but they serve different roles in a developer's workflow. YAML is human-readable config — the language of Kubernetes manifests, Docker Compose files, and CI/CD pipelines. JSON is the lingua franca of APIs and structured data interchange. Knowing how to convert between them reliably saves time and prevents subtle bugs.
+
+[Convert YAML to JSON instantly →](/tools/yaml-json)
+
+## What Is YAML?
+
+YAML (YAML Ain't Markup Language) is a superset of JSON with a syntax designed for humans. Where JSON relies on braces and quotes, YAML uses indentation and minimal punctuation.
+
+```yaml
+# YAML
+server:
+  host: localhost
+  port: 8080
+  tls: true
+  tags:
+    - web
+    - production
+```
+
+The equivalent JSON:
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": true,
+    "tags": ["web", "production"]
+  }
+}
+```
+
+YAML is a strict superset of JSON — every valid JSON document is also valid YAML, but not the reverse.
+
+## Core YAML Syntax
+
+### Scalars
+
+YAML infers types from context unless you quote them:
+
+```yaml
+name: Alice          # string
+age: 30              # integer
+ratio: 1.5           # float
+active: true         # boolean
+nothing: null        # null
+version: "1.0"       # forced string (quotes prevent type inference)
+```
+
+Gotcha: `yes`, `no`, `on`, `off` are parsed as booleans in YAML 1.1 (the version used by most tools). Wrap them in quotes if you mean the string `"yes"`.
+
+### Mappings (Objects)
+
+```yaml
+database:
+  host: db.example.com
+  port: 5432
+  credentials:
+    user: admin
+    password: secret
+```
+
+### Sequences (Arrays)
+
+```yaml
+services:
+  - nginx
+  - postgres
+  - redis
+```
+
+Or inline form (flow style):
+
+```yaml
+services: [nginx, postgres, redis]
+```
+
+### Multi-line Strings
+
+YAML has two multi-line string operators:
+
+```yaml
+# Literal block (|): preserves newlines
+script: |
+  npm install
+  npm run build
+  npm test
+
+# Folded block (>): newlines become spaces
+description: >
+  This is a long description
+  that wraps across multiple lines.
+```
+
+### Anchors and Aliases
+
+YAML supports reuse via anchors (`&`) and aliases (`*`):
+
+```yaml
+defaults: &defaults
+  timeout: 30
+  retries: 3
+
+production:
+  <<: *defaults
+  host: prod.example.com
+
+staging:
+  <<: *defaults
+  host: staging.example.com
+```
+
+**Note:** Anchors and aliases do not survive conversion to JSON — they get expanded into their full values. This is expected behavior.
+
+## YAML to JSON Conversion: Common Scenarios
+
+### Kubernetes ConfigMap
+
+YAML manifest:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: default
+data:
+  DATABASE_URL: "postgres://db:5432/app"
+  REDIS_URL: "redis://cache:6379"
+  LOG_LEVEL: "info"
+```
+
+Converted to JSON:
+
+```json
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "app-config",
+    "namespace": "default"
+  },
+  "data": {
+    "DATABASE_URL": "postgres://db:5432/app",
+    "REDIS_URL": "redis://cache:6379",
+    "LOG_LEVEL": "info"
+  }
+}
+```
+
+Use case: Kubernetes API calls that require JSON request bodies, or scripting with `kubectl` output piped to `jq`.
+
+### Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - db
+  db:
+    image: postgres:15
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```
+
+Converting Docker Compose to JSON is useful when writing tooling that parses compose files programmatically — many JSON libraries are more available than YAML libraries in certain environments.
+
+### GitHub Actions Workflow
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: npm test
+```
+
+GitHub Actions YAML→JSON conversion is common when building tooling to analyze or generate workflows programmatically.
+
+## Conversion Rules to Know
+
+| YAML Feature | JSON Behavior |
+|---|---|
+| `true`/`false` | `true`/`false` (boolean) |
+| `null`/`~` | `null` |
+| Integers | Numbers without quotes |
+| Floats | Numbers with decimal point |
+| Multi-line strings | Single string with `\n` |
+| Anchors/aliases | Expanded inline |
+| Comments (`#`) | Stripped (JSON has no comments) |
+| Ordered keys | Preserved in output |
+
+## Command-Line Conversion
+
+### Using `yq`
+
+[`yq`](https://github.com/mikefarah/yq) is the de facto YAML CLI tool:
+
+```bash
+# YAML to JSON
+yq -o=json input.yaml
+
+# Pretty-print with jq
+yq -o=json input.yaml | jq .
+
+# JSON to YAML
+yq -p=json -o=yaml input.json
+```
+
+### Using Python
+
+Python's standard library handles JSON; YAML requires `pyyaml`:
+
+```bash
+pip install pyyaml
+```
+
+```python
+import yaml
+import json
+
+with open("config.yaml") as f:
+    data = yaml.safe_load(f)
+
+print(json.dumps(data, indent=2))
+```
+
+Always use `yaml.safe_load()`, not `yaml.load()` — the latter allows arbitrary Python object deserialization, which is a security risk.
+
+### Using Node.js
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+const data = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+console.log(JSON.stringify(data, null, 2));
+```
+
+## JSON to YAML Conversion
+
+The reverse direction is equally common — you might have a JSON API response that you want to store as a YAML config.
+
+```json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.18.0",
+    "axios": "^1.6.0"
+  }
+}
+```
+
+Converted to YAML:
+
+```yaml
+name: my-app
+version: 1.0.0
+dependencies:
+  express: ^4.18.0
+  axios: ^1.6.0
+```
+
+Note that YAML output will not include comments — those must be added manually after conversion.
+
+## Common Pitfalls
+
+**Indentation errors**: YAML uses spaces only (never tabs). A single tab character causes a parse error.
+
+**Boolean ambiguity**: In YAML 1.1, `yes`/`no`/`on`/`off` are booleans. In YAML 1.2 (used by newer tools), only `true`/`false` are booleans. Always quote these values in config files to be safe.
+
+**Octal numbers**: `0777` in YAML 1.1 parses as octal 511. Chmod values and similar numbers need quoting: `"0777"`.
+
+**Duplicate keys**: YAML allows duplicate keys; JSON does not. When converting, the last value wins (behavior varies by parser).
+
+**Special characters in strings**: Colons followed by a space (`: `) must be quoted in YAML values:
+
+```yaml
+# Wrong
+url: http://example.com  # parses incorrectly
+
+# Correct
+url: "http://example.com"
+```
+
+## Online YAML↔JSON Converter
+
+For quick conversions without installing tooling, [ZeroTool's YAML↔JSON converter](/tools/yaml-json) handles the conversion entirely in your browser — no data is sent to any server. Paste YAML on the left, get JSON on the right (or vice versa), with live validation and error highlighting.
+
+**[Try the YAML↔JSON converter →](/tools/yaml-json)**
+
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I convert YAML to JSON online?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Paste your YAML into ZeroTool's YAML to JSON converter at zerotool.dev/tools/yaml-json. The conversion happens instantly in your browser with no data sent to any server."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is every valid JSON file also valid YAML?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. YAML is a superset of JSON, so all valid JSON is valid YAML. However, YAML supports features that JSON does not, such as comments, anchors, and multi-line strings."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why do YAML comments disappear when converting to JSON?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "JSON has no comment syntax. When converting YAML to JSON, all comment lines (starting with #) are stripped because there is no equivalent representation in JSON."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What happens to YAML anchors and aliases when converting to JSON?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "YAML anchors (&) and aliases (*) are expanded inline during conversion. The resulting JSON contains the full duplicated values rather than references, since JSON has no reference syntax."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I convert YAML to JSON from the command line?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Use the yq tool: `yq -o=json input.yaml`. Alternatively, use Python: `python3 -c \"import yaml,json,sys; print(json.dumps(yaml.safe_load(sys.stdin), indent=2))\" < input.yaml`"
+      }
+    }
+  ]
+}</script>

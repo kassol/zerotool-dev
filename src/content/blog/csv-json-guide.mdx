@@ -1,0 +1,339 @@
+---
+title: "CSV to JSON Converter: From Spreadsheet to API-Ready Data"
+description: "Learn how to convert CSV to JSON online, handle headers, nested structures, and common formatting issues when transforming spreadsheet data for APIs."
+pubDate: 2026-04-05
+lang: "en"
+translationSlug: "csv-json-guide-zh"
+tags: ["csv", "json", "csv-to-json", "data-processing", "developer-tools"]
+---
+
+CSV is everywhere — exports from spreadsheets, database dumps, analytics platforms, and legacy systems all default to it. But your API probably expects JSON. Converting CSV to JSON is one of the most common data-wrangling tasks in modern development, and there are enough edge cases to trip up a naive implementation.
+
+[Convert CSV to JSON instantly →](/tools/csv-json)
+
+## Why Convert CSV to JSON?
+
+| Scenario | Why JSON is needed |
+|---|---|
+| REST API payload | Most APIs accept/return JSON |
+| NoSQL database import | MongoDB, DynamoDB use JSON documents |
+| JavaScript frontend | `JSON.parse()` is native; CSV needs a parser |
+| Data transformation pipeline | JSON is the common interchange in modern ETL |
+| Configuration from spreadsheet | Teams manage config in sheets, apps consume JSON |
+
+## CSV Structure Basics
+
+A CSV (Comma-Separated Values) file has two parts:
+
+1. **Header row** (optional but strongly recommended): column names
+2. **Data rows**: one record per line, values separated by a delimiter
+
+```csv
+id,name,email,age,active
+1,Alice,alice@example.com,30,true
+2,Bob,bob@example.com,25,false
+3,Charlie,charlie@example.com,35,true
+```
+
+Converted to JSON array:
+
+```json
+[
+  { "id": "1", "name": "Alice", "email": "alice@example.com", "age": "30", "active": "true" },
+  { "id": "2", "name": "Bob", "email": "bob@example.com", "age": "25", "active": "false" },
+  { "id": "3", "name": "Charlie", "email": "charlie@example.com", "age": "35", "active": "true" }
+]
+```
+
+Note that all values are strings by default. Type inference (converting `"30"` to `30`) is optional and depends on your tool.
+
+## Common Conversion Scenarios
+
+### Basic Flat Conversion
+
+The simplest case: a header row maps directly to JSON keys.
+
+```csv
+product_id,name,price,in_stock
+P001,Widget,9.99,true
+P002,Gadget,24.99,false
+```
+
+Result:
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": "9.99", "in_stock": "true" },
+  { "product_id": "P002", "name": "Gadget", "price": "24.99", "in_stock": "false" }
+]
+```
+
+### Type-Coerced Conversion
+
+For API use, you usually want numbers as numbers and booleans as booleans:
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": 9.99, "in_stock": true },
+  { "product_id": "P002", "name": "Gadget", "price": 24.99, "in_stock": false }
+]
+```
+
+Most converters (including ZeroTool) offer a "parse types" option for this.
+
+### Quoted Fields with Commas
+
+CSV handles commas inside values by quoting:
+
+```csv
+city,description
+New York,"Large city, financial hub"
+London,"Historic city, capital of UK"
+```
+
+Correct JSON output:
+
+```json
+[
+  { "city": "New York", "description": "Large city, financial hub" },
+  { "city": "London", "description": "Historic city, capital of UK" }
+]
+```
+
+A naive string-split on commas will break this. Always use a proper CSV parser.
+
+### Embedded Newlines
+
+Values can span multiple lines when quoted:
+
+```csv
+id,notes
+1,"First line
+Second line"
+2,"Single line"
+```
+
+This is valid CSV but requires a parser that handles multi-line fields.
+
+### Tab-Separated Values (TSV)
+
+Some exports use tabs instead of commas:
+
+```tsv
+name	score	grade
+Alice	95	A
+Bob	82	B
+```
+
+Specify the delimiter when converting — most tools support custom delimiters.
+
+## Handling Edge Cases
+
+### Missing Values
+
+```csv
+id,name,email
+1,Alice,alice@example.com
+2,Bob,
+3,,charlie@example.com
+```
+
+Missing values can become `""` (empty string) or `null` depending on the tool:
+
+```json
+[
+  { "id": "1", "name": "Alice", "email": "alice@example.com" },
+  { "id": "2", "name": "Bob", "email": "" },
+  { "id": "3", "name": "", "email": "charlie@example.com" }
+]
+```
+
+### No Header Row
+
+When the CSV has no header, you can either:
+- Auto-generate column names: `col1`, `col2`, `col3`
+- Provide column names manually before converting
+
+### Duplicate Column Names
+
+```csv
+value,value,value
+1,2,3
+```
+
+Behavior varies: some converters suffix duplicates (`value`, `value_1`, `value_2`), others overwrite. Deduplicate your headers before converting.
+
+## Converting CSV to JSON: Code Examples
+
+### JavaScript (Papa Parse)
+
+[Papa Parse](https://www.papaparse.com/) is the standard CSV library for JavaScript:
+
+```bash
+npm install papaparse
+```
+
+```javascript
+const Papa = require('papaparse');
+const fs = require('fs');
+
+const csv = fs.readFileSync('data.csv', 'utf8');
+const result = Papa.parse(csv, {
+  header: true,        // use first row as keys
+  dynamicTyping: true, // auto-convert numbers and booleans
+  skipEmptyLines: true,
+});
+
+console.log(JSON.stringify(result.data, null, 2));
+```
+
+### Python (csv module)
+
+```python
+import csv
+import json
+
+with open('data.csv', newline='', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    rows = list(reader)
+
+print(json.dumps(rows, indent=2, ensure_ascii=False))
+```
+
+For type coercion, iterate rows and convert values:
+
+```python
+def coerce(value):
+    if value.lower() in ('true', 'false'):
+        return value.lower() == 'true'
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+rows = [{k: coerce(v) for k, v in row.items()} for row in rows]
+```
+
+### Command Line (jq + csvkit)
+
+```bash
+# Install csvkit
+pip install csvkit
+
+# Convert to JSON
+csvjson data.csv
+
+# Pretty-print
+csvjson data.csv | jq .
+```
+
+### Using `mlr` (Miller)
+
+Miller is a versatile data processing tool:
+
+```bash
+# Install: brew install miller
+mlr --csv --ojson cat data.csv
+```
+
+## JSON to CSV: The Reverse Direction
+
+Sometimes you need to go the other way — flatten a JSON array to CSV for analysis in Excel or Google Sheets.
+
+```json
+[
+  { "id": 1, "name": "Alice", "score": 95 },
+  { "id": 2, "name": "Bob", "score": 82 }
+]
+```
+
+Expected CSV:
+
+```csv
+id,name,score
+1,Alice,95
+2,Bob,82
+```
+
+Nested objects are the challenge:
+
+```json
+{ "id": 1, "user": { "name": "Alice", "email": "alice@example.com" } }
+```
+
+Most converters flatten nested keys with a separator: `user.name`, `user.email`. ZeroTool's converter handles this automatically.
+
+## Performance Considerations
+
+For large CSV files (millions of rows):
+
+- **Streaming**: process row-by-row rather than loading the whole file into memory
+- **NDJSON output**: newline-delimited JSON (one JSON object per line) is easier to stream than a single large array
+- **Type inference overhead**: auto-detecting types on every cell adds CPU cost; disable it for known schemas
+
+```javascript
+// NDJSON streaming with Papa Parse
+Papa.parse(stream, {
+  header: true,
+  step: (row) => process.stdout.write(JSON.stringify(row.data) + '\n'),
+  complete: () => console.error('Done'),
+});
+```
+
+## Online CSV↔JSON Converter
+
+For quick ad-hoc conversions, [ZeroTool's CSV↔JSON converter](/tools/csv-json) runs entirely in your browser. Paste or upload a CSV, adjust options (delimiter, type parsing, header row), and download the JSON. No file is sent to any server.
+
+**[Try the CSV↔JSON converter →](/tools/csv-json)**
+
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I convert CSV to JSON online?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Paste your CSV into ZeroTool's CSV to JSON converter at zerotool.dev/tools/csv-json. The conversion runs in your browser with no data uploaded to any server. Supports custom delimiters, type parsing, and header options."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why are all my CSV values converted to strings in JSON?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "CSV has no type system — every value is text. Converters output strings by default. Enable 'parse types' or 'dynamic typing' to auto-convert numbers and booleans to their native JSON types."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does CSV handle values that contain commas?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Values containing commas must be wrapped in double quotes in CSV: \"New York, NY\". A proper CSV parser handles this correctly. Never split CSV on commas with a simple string split — it will break quoted fields."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I convert a CSV without a header row to JSON?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Most converters let you specify that the first row is data (not headers) and either auto-generate column names (col1, col2...) or let you define them manually."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What is the best JavaScript library for CSV to JSON conversion?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Papa Parse is the most widely used CSV library for JavaScript. It handles quoted fields, embedded newlines, custom delimiters, and optional type coercion. Available via npm: `npm install papaparse`."
+      }
+    }
+  ]
+}</script>

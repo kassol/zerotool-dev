@@ -1,0 +1,328 @@
+---
+title: "YAML 转 JSON 完整指南：语法、工具与实战场景"
+description: "深度解析 YAML 与 JSON 互转方法，涵盖 K8s 配置、Docker Compose、GitHub Actions 场景，附命令行与在线工具用法。"
+pubDate: 2026-04-05
+lang: "zh"
+translationSlug: "yaml-json-guide"
+tags: ["yaml", "json", "yaml转json", "devops", "开发工具"]
+---
+
+YAML 和 JSON 是后端开发者每天都要打交道的两种格式。YAML 是人类友好的配置语言——Kubernetes 清单、Docker Compose、GitHub Actions 全靠它；JSON 是 API 和数据交换的通用语。两者之间的转换需求几乎无处不在，掌握转换规则能省去大量调试时间。
+
+[在线 YAML↔JSON 转换工具 →](/tools/yaml-json)
+
+## YAML 是什么？
+
+YAML（YAML Ain't Markup Language）在设计上以可读性为第一目标。它用缩进表示层级，去掉了 JSON 里大量的花括号和引号。
+
+```yaml
+# YAML
+server:
+  host: localhost
+  port: 8080
+  tls: true
+  tags:
+    - web
+    - production
+```
+
+对应的 JSON：
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": true,
+    "tags": ["web", "production"]
+  }
+}
+```
+
+YAML 是 JSON 的超集——所有合法的 JSON 也是合法的 YAML，反之则不然。
+
+## YAML 核心语法速览
+
+### 标量类型
+
+YAML 会根据上下文自动推断类型：
+
+```yaml
+name: 张三          # 字符串
+age: 28             # 整数
+ratio: 1.5          # 浮点数
+active: true        # 布尔值
+nothing: null       # 空值
+version: "1.0"      # 强制字符串（加引号阻止类型推断）
+```
+
+**常见坑**：YAML 1.1 中 `yes`、`no`、`on`、`off` 会被解析为布尔值，而不是字符串。如果你的配置里有这些词，务必加引号。
+
+### 映射（对象）
+
+```yaml
+database:
+  host: db.example.com
+  port: 5432
+  credentials:
+    user: admin
+    password: secret
+```
+
+### 序列（数组）
+
+```yaml
+services:
+  - nginx
+  - postgres
+  - redis
+```
+
+内联写法（flow style）：
+
+```yaml
+services: [nginx, postgres, redis]
+```
+
+### 多行字符串
+
+YAML 提供两种多行字符串写法：
+
+```yaml
+# 字面量块（|）：保留换行符
+script: |
+  npm install
+  npm run build
+  npm test
+
+# 折叠块（>）：换行符替换为空格
+description: >
+  这是一段很长的描述，
+  跨越了多行。
+```
+
+### 锚点与引用
+
+YAML 支持内容复用，通过锚点（`&`）定义，通过别名（`*`）引用：
+
+```yaml
+defaults: &defaults
+  timeout: 30
+  retries: 3
+
+production:
+  <<: *defaults
+  host: prod.example.com
+
+staging:
+  <<: *defaults
+  host: staging.example.com
+```
+
+**注意**：锚点转换为 JSON 时会被展开为完整值，JSON 没有引用语法。
+
+## 常见场景：YAML 转 JSON
+
+### Kubernetes ConfigMap
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: default
+data:
+  DATABASE_URL: "postgres://db:5432/app"
+  LOG_LEVEL: "info"
+```
+
+转换结果：
+
+```json
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "app-config",
+    "namespace": "default"
+  },
+  "data": {
+    "DATABASE_URL": "postgres://db:5432/app",
+    "LOG_LEVEL": "info"
+  }
+}
+```
+
+**使用场景**：直接调用 Kubernetes REST API 时需要 JSON 请求体；或将 `kubectl get -o yaml` 输出转为 JSON 后用 `jq` 提取字段。
+
+### Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    depends_on:
+      - db
+  db:
+    image: postgres:15
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```
+
+将 Compose 文件转为 JSON 后，可以用标准 JSON 库做程序化分析，比如自动检查镜像版本、生成服务拓扑图等。
+
+### GitHub Actions 工作流
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 运行测试
+        run: npm test
+```
+
+构建 Actions 工作流分析或生成工具时，JSON 格式更便于用脚本处理。
+
+## 转换规则对照表
+
+| YAML 特性 | JSON 行为 |
+|---|---|
+| `true`/`false` | `true`/`false`（布尔值） |
+| `null`/`~` | `null` |
+| 整数 | 无引号数字 |
+| 浮点数 | 带小数点的数字 |
+| 多行字符串 | 包含 `\n` 的单行字符串 |
+| 锚点/引用 | 展开为完整值 |
+| 注释（`#`） | 删除（JSON 不支持注释） |
+| 有序键 | 保留顺序 |
+
+## 命令行转换方案
+
+### 使用 `yq`
+
+[`yq`](https://github.com/mikefarah/yq) 是处理 YAML 的标准 CLI 工具：
+
+```bash
+# YAML 转 JSON
+yq -o=json input.yaml
+
+# 配合 jq 美化输出
+yq -o=json input.yaml | jq .
+
+# JSON 转 YAML
+yq -p=json -o=yaml input.json
+```
+
+### 使用 Python
+
+```bash
+pip install pyyaml
+```
+
+```python
+import yaml
+import json
+
+with open("config.yaml") as f:
+    data = yaml.safe_load(f)  # 不要用 yaml.load()，有安全风险
+
+print(json.dumps(data, indent=2, ensure_ascii=False))
+```
+
+### 使用 Node.js
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+const data = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+console.log(JSON.stringify(data, null, 2));
+```
+
+## 常见坑与注意事项
+
+**缩进只能用空格**：YAML 严格禁止 Tab 字符作为缩进，一个 Tab 就会导致解析报错。编辑器务必配置"将 Tab 替换为空格"。
+
+**布尔值陷阱**：`yes`/`no`/`on`/`off` 在 YAML 1.1（PyYAML 等大多数库使用的版本）中是布尔值。国内 CI 平台配置里这个问题很常见——比如环境变量值为 `"on"` 时必须加引号。
+
+**八进制数字**：`0777` 在 YAML 1.1 中会被解析为八进制数 511，chmod 值等需要加引号：`"0777"`。
+
+**冒号后跟空格**：YAML 中值里包含 `: ` 时必须加引号，否则解析器会把它当作键值分隔符：
+
+```yaml
+# 错误写法
+url: http://example.com
+
+# 正确写法
+url: "http://example.com"
+```
+
+**重复键**：YAML 允许重复键（后者覆盖前者），JSON 不允许。转换后重复键会被合并，只保留最后一个值。
+
+## 在线转换工具
+
+不想安装命令行工具？[ZeroTool 的 YAML↔JSON 在线转换器](/tools/yaml-json)完全在浏览器内运行，不上传任何数据，支持实时预览和错误提示。
+
+**[立即使用 YAML↔JSON 转换器 →](/tools/yaml-json)**
+
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "YAML 和 JSON 哪个更好？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "取决于场景。YAML 适合人工编写的配置文件（可读性强、支持注释）；JSON 适合 API 数据交换（解析器支持更广、格式更严格）。两者各有擅长领域，开发中经常需要互转。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "YAML 转 JSON 后注释会保留吗？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "不会。JSON 没有注释语法，YAML 中所有以 # 开头的注释在转换时都会被丢弃，无法恢复。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "为什么 YAML 中的 yes 变成了布尔值 true？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "YAML 1.1 规范将 yes、no、on、off 定义为布尔值。大多数 YAML 库（如 PyYAML）默认遵循 YAML 1.1。如果需要字符串 yes，请加引号：\"yes\"。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "如何用命令行将 YAML 转换为 JSON？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "推荐使用 yq 工具：`yq -o=json input.yaml`。也可以用 Python：`python3 -c \"import yaml,json,sys; print(json.dumps(yaml.safe_load(sys.stdin), indent=2, ensure_ascii=False))\" < input.yaml`"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "YAML 锚点和引用转换成 JSON 后是什么样的？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "YAML 的锚点（&）和引用（*）在转换为 JSON 时会被完全展开，引用的内容会在每个使用位置重复出现。JSON 没有引用或复用语法。"
+      }
+    }
+  ]
+}</script>
