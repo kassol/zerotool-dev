@@ -28,8 +28,8 @@ export default defineConfig({
       i18n: {
         defaultLocale: 'en',
         locales: {
-          en: 'en-US',
-          zh: 'zh-CN',
+          en: 'en',
+          zh: 'zh',
         },
       },
       serialize(item) {
@@ -42,8 +42,8 @@ export default defineConfig({
           const zhSlug = `${slug}-zh`;
           if (blogSlugs.has(zhSlug)) {
             item.links = [
-              { url: `${SITE}/blog/${slug}/`, lang: 'en-US' },
-              { url: `${SITE}/zh/blog/${zhSlug}/`, lang: 'zh-CN' },
+              { url: `${SITE}/blog/${slug}/`, lang: 'en' },
+              { url: `${SITE}/zh/blog/${zhSlug}/`, lang: 'zh' },
             ];
           }
           return item;
@@ -56,8 +56,8 @@ export default defineConfig({
           const enSlug = zhSlug.slice(0, -3);
           if (blogSlugs.has(enSlug)) {
             item.links = [
-              { url: `${SITE}/blog/${enSlug}/`, lang: 'en-US' },
-              { url: `${SITE}/zh/blog/${zhSlug}/`, lang: 'zh-CN' },
+              { url: `${SITE}/blog/${enSlug}/`, lang: 'en' },
+              { url: `${SITE}/zh/blog/${zhSlug}/`, lang: 'zh' },
             ];
           }
           return item;
