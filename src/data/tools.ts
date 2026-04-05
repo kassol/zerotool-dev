@@ -21,6 +21,11 @@ export const allTools: ToolInfo[] = [
   { slug: 'password-generator', name: 'Password Generator', description: 'Generate strong random passwords', category: 'security' },
   { slug: 'qr-code-generator', name: 'QR Code Generator', description: 'Generate QR codes from text or URLs', category: 'dev' },
   { slug: 'cron-parser', name: 'Cron Expression Parser', description: 'Parse and explain cron expressions', category: 'dev' },
+  { slug: 'lorem-ipsum', name: 'Lorem Ipsum Generator', description: 'Generate placeholder text instantly', category: 'text' },
+  { slug: 'word-counter', name: 'Word & Character Counter', description: 'Count words, characters, sentences', category: 'text' },
+  { slug: 'chmod-calculator', name: 'Chmod Calculator', description: 'Calculate Linux file permissions', category: 'dev' },
+  { slug: 'csv-json', name: 'CSV to JSON Converter', description: 'Convert between CSV and JSON formats', category: 'data' },
+  { slug: 'html-entity', name: 'HTML Entity Encoder/Decoder', description: 'Encode and decode HTML entities', category: 'encoding' },
 ];
 
 /** Return related tools for a given slug: same category first, then others. */

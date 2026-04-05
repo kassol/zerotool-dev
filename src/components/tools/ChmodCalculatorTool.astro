@@ -1,0 +1,251 @@
+---
+// ChmodCalculatorTool — interactive chmod permission calculator widget
+---
+<div>
+  <div class="chmod-wrap">
+    <div class="chmod-grid">
+      <div class="chmod-grid-header"></div>
+      <div class="chmod-grid-header">Read</div>
+      <div class="chmod-grid-header">Write</div>
+      <div class="chmod-grid-header">Execute</div>
+
+      <div class="chmod-grid-label">Owner</div>
+      <label class="chmod-cb"><input type="checkbox" data-who="owner" data-perm="r" checked /><span></span></label>
+      <label class="chmod-cb"><input type="checkbox" data-who="owner" data-perm="w" checked /><span></span></label>
+      <label class="chmod-cb"><input type="checkbox" data-who="owner" data-perm="x" checked /><span></span></label>
+
+      <div class="chmod-grid-label">Group</div>
+      <label class="chmod-cb"><input type="checkbox" data-who="group" data-perm="r" checked /><span></span></label>
+      <label class="chmod-cb"><input type="checkbox" data-who="group" data-perm="w" /><span></span></label>
+      <label class="chmod-cb"><input type="checkbox" data-who="group" data-perm="x" checked /><span></span></label>
+
+      <div class="chmod-grid-label">Others</div>
+      <label class="chmod-cb"><input type="checkbox" data-who="others" data-perm="r" checked /><span></span></label>
+      <label class="chmod-cb"><input type="checkbox" data-who="others" data-perm="w" /><span></span></label>
+      <label class="chmod-cb"><input type="checkbox" data-who="others" data-perm="x" checked /><span></span></label>
+    </div>
+
+    <div class="chmod-results">
+      <div class="chmod-result-row">
+        <label class="chmod-result-label" for="chmod-numeric">Numeric</label>
+        <div class="chmod-result-value">
+          <input type="text" id="chmod-numeric" class="chmod-numeric-input" value="755" maxlength="4" inputmode="numeric" spellcheck="false" />
+          <button id="chmod-copy-numeric" class="btn-copy" type="button">Copy</button>
+        </div>
+      </div>
+
+      <div class="chmod-result-row">
+        <label class="chmod-result-label">Symbolic</label>
+        <div class="chmod-result-value">
+          <code id="chmod-symbolic" class="chmod-output">rwxr-xr-x</code>
+          <button id="chmod-copy-symbolic" class="btn-copy" type="button">Copy</button>
+        </div>
+      </div>
+
+      <div class="chmod-result-row">
+        <label class="chmod-result-label">Command</label>
+        <div class="chmod-result-value">
+          <code id="chmod-command" class="chmod-output">chmod 755 filename</code>
+          <button id="chmod-copy-command" class="btn-copy" type="button">Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var PERM_MAP = { r: 4, w: 2, x: 1 };
+      var WHO_ORDER = ['owner', 'group', 'others'];
+
+      function getCheckbox(who, perm) {
+        return document.querySelector('input[data-who="' + who + '"][data-perm="' + perm + '"]');
+      }
+
+      function calcFromCheckboxes() {
+        var digits = '';
+        var symbolic = '';
+        for (var i = 0; i < WHO_ORDER.length; i++) {
+          var who = WHO_ORDER[i];
+          var val = 0;
+          var sym = '';
+          ['r', 'w', 'x'].forEach(function (p) {
+            var cb = getCheckbox(who, p);
+            if (cb.checked) {
+              val += PERM_MAP[p];
+              sym += p;
+            } else {
+              sym += '-';
+            }
+          });
+          digits += val;
+          symbolic += sym;
+        }
+        return { numeric: digits, symbolic: symbolic };
+      }
+
+      function updateOutputs() {
+        var result = calcFromCheckboxes();
+        document.getElementById('chmod-numeric').value = result.numeric;
+        document.getElementById('chmod-symbolic').textContent = result.symbolic;
+        document.getElementById('chmod-command').textContent = 'chmod ' + result.numeric + ' filename';
+      }
+
+      function setCheckboxesFromNumeric(val) {
+        var str = String(val).replace(/[^0-7]/g, '');
+        if (str.length < 3 || str.length > 4) return false;
+        // Take last 3 digits (support 4-digit like 0755)
+        var digits = str.slice(-3);
+        for (var i = 0; i < 3; i++) {
+          var d = parseInt(digits[i], 10);
+          if (d < 0 || d > 7) return false;
+          var who = WHO_ORDER[i];
+          getCheckbox(who, 'r').checked = !!(d & 4);
+          getCheckbox(who, 'w').checked = !!(d & 2);
+          getCheckbox(who, 'x').checked = !!(d & 1);
+        }
+        return true;
+      }
+
+      // Checkbox → outputs
+      document.querySelectorAll('.chmod-grid input[type="checkbox"]').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+          updateOutputs();
+          window.trackTool && window.trackTool('chmod_calculator', 'toggle');
+        });
+      });
+
+      // Numeric input → checkboxes
+      var numericInput = document.getElementById('chmod-numeric');
+      numericInput.addEventListener('input', function () {
+        var raw = this.value.replace(/[^0-7]/g, '');
+        this.value = raw;
+        if (raw.length >= 3 && raw.length <= 4) {
+          setCheckboxesFromNumeric(raw);
+          var result = calcFromCheckboxes();
+          document.getElementById('chmod-symbolic').textContent = result.symbolic;
+          document.getElementById('chmod-command').textContent = 'chmod ' + result.numeric + ' filename';
+          window.trackTool && window.trackTool('chmod_calculator', 'numeric_input');
+        }
+      });
+
+      // Copy helpers
+      function bindCopy(btnId, getText) {
+        document.getElementById(btnId).addEventListener('click', function () {
+          var text = getText();
+          if (!text) return;
+          var btn = this;
+          navigator.clipboard.writeText(text).then(function () {
+            btn.textContent = 'Copied!';
+            setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+          });
+        });
+      }
+
+      bindCopy('chmod-copy-numeric', function () {
+        return document.getElementById('chmod-numeric').value;
+      });
+      bindCopy('chmod-copy-symbolic', function () {
+        return document.getElementById('chmod-symbolic').textContent;
+      });
+      bindCopy('chmod-copy-command', function () {
+        return document.getElementById('chmod-command').textContent;
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .chmod-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .chmod-grid {
+    display: grid;
+    grid-template-columns: auto repeat(3, 1fr);
+    gap: 0.5rem 1rem;
+    align-items: center;
+  }
+
+  .chmod-grid-header {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-align: center;
+  }
+
+  .chmod-grid-label {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .chmod-cb {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .chmod-cb input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    accent-color: var(--color-primary);
+    cursor: pointer;
+  }
+
+  .chmod-results { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .chmod-result-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .chmod-result-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    min-width: 5.5rem;
+    flex-shrink: 0;
+  }
+
+  .chmod-result-value {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .chmod-numeric-input {
+    width: 5rem;
+    padding: 0.4rem 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    text-align: center;
+  }
+
+  .chmod-numeric-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .chmod-output {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    color: var(--color-text);
+    user-select: all;
+    word-break: break-all;
+  }
+
+  @media (max-width: 480px) {
+    .chmod-grid { gap: 0.35rem 0.6rem; }
+    .chmod-result-row { flex-wrap: wrap; gap: 0.35rem; }
+    .chmod-result-label { min-width: auto; width: 100%; }
+  }
+</style>

@@ -1,0 +1,274 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="cj-wrap">
+    <div class="cj-panels">
+      <div class="cj-panel">
+        <label for="cj-csv">
+          <span>CSV</span>
+          <button id="cj-copy-csv" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="cj-csv"
+          placeholder="name,age,city&#10;Alice,30,&quot;New York&quot;&#10;Bob,25,London"
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="cj-panel">
+        <label for="cj-json">
+          <span>JSON</span>
+          <button id="cj-copy-json" class="btn-copy" type="button">Copy</button>
+        </label>
+        <textarea
+          id="cj-json"
+          placeholder='[{"name":"Alice","age":"30","city":"New York"}]'
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="cj-actions">
+      <button id="cj-to-json" class="btn-primary">CSV → JSON</button>
+      <button id="cj-to-csv" class="btn-primary">JSON → CSV</button>
+      <button id="cj-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="cj-status" class="cj-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var csvEl = document.getElementById('cj-csv');
+      var jsonEl = document.getElementById('cj-json');
+      var statusEl = document.getElementById('cj-status');
+      var copyCsvBtn = document.getElementById('cj-copy-csv');
+      var copyJsonBtn = document.getElementById('cj-copy-json');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'cj-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'cj-status';
+      }
+
+      /* ── CSV parser: handles quoted fields with commas, newlines in quotes ── */
+      function parseCsv(text) {
+        var rows = [];
+        var row = [];
+        var field = '';
+        var inQuote = false;
+        var i = 0;
+        var len = text.length;
+
+        while (i < len) {
+          var ch = text[i];
+          if (inQuote) {
+            if (ch === '"') {
+              if (i + 1 < len && text[i + 1] === '"') {
+                field += '"';
+                i += 2;
+              } else {
+                inQuote = false;
+                i++;
+              }
+            } else {
+              field += ch;
+              i++;
+            }
+          } else {
+            if (ch === '"') {
+              inQuote = true;
+              i++;
+            } else if (ch === ',') {
+              row.push(field);
+              field = '';
+              i++;
+            } else if (ch === '\r') {
+              row.push(field);
+              field = '';
+              rows.push(row);
+              row = [];
+              i++;
+              if (i < len && text[i] === '\n') i++;
+            } else if (ch === '\n') {
+              row.push(field);
+              field = '';
+              rows.push(row);
+              row = [];
+              i++;
+            } else {
+              field += ch;
+              i++;
+            }
+          }
+        }
+
+        /* last field / row */
+        if (field || row.length > 0) {
+          row.push(field);
+          rows.push(row);
+        }
+
+        /* drop trailing empty row */
+        if (rows.length > 0) {
+          var last = rows[rows.length - 1];
+          if (last.length === 1 && last[0] === '') rows.pop();
+        }
+
+        return rows;
+      }
+
+      /* ── CSV → JSON ── */
+      document.getElementById('cj-to-json').addEventListener('click', function () {
+        var raw = csvEl.value.trim();
+        if (!raw) { clearStatus(); jsonEl.value = ''; return; }
+
+        try {
+          var rows = parseCsv(raw);
+          if (rows.length < 2) throw new Error('CSV must have at least a header row and one data row.');
+
+          var headers = rows[0];
+          var result = [];
+          for (var r = 1; r < rows.length; r++) {
+            var obj = {};
+            for (var c = 0; c < headers.length; c++) {
+              obj[headers[c]] = rows[r][c] !== undefined ? rows[r][c] : '';
+            }
+            result.push(obj);
+          }
+
+          jsonEl.value = JSON.stringify(result, null, 2);
+          setStatus('Converted ' + result.length + ' row' + (result.length === 1 ? '' : 's') + ' to JSON.', false);
+          window.trackTool && window.trackTool('csv_json', 'csv_to_json');
+        } catch (e) {
+          jsonEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      /* ── JSON → CSV ── */
+      document.getElementById('cj-to-csv').addEventListener('click', function () {
+        var raw = jsonEl.value.trim();
+        if (!raw) { clearStatus(); csvEl.value = ''; return; }
+
+        try {
+          var data = JSON.parse(raw);
+          if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
+          if (data.length === 0) throw new Error('JSON array is empty.');
+          if (typeof data[0] !== 'object' || data[0] === null || Array.isArray(data[0])) {
+            throw new Error('Each item must be a plain object.');
+          }
+
+          var headers = Object.keys(data[0]);
+          var lines = [];
+
+          lines.push(headers.map(escapeCsvField).join(','));
+
+          for (var i = 0; i < data.length; i++) {
+            var row = [];
+            for (var h = 0; h < headers.length; h++) {
+              var val = data[i][headers[h]];
+              row.push(escapeCsvField(val == null ? '' : String(val)));
+            }
+            lines.push(row.join(','));
+          }
+
+          csvEl.value = lines.join('\n');
+          setStatus('Converted ' + data.length + ' row' + (data.length === 1 ? '' : 's') + ' to CSV.', false);
+          window.trackTool && window.trackTool('csv_json', 'json_to_csv');
+        } catch (e) {
+          csvEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      function escapeCsvField(val) {
+        if (val.indexOf(',') !== -1 || val.indexOf('"') !== -1 || val.indexOf('\n') !== -1) {
+          return '"' + val.replace(/"/g, '""') + '"';
+        }
+        return val;
+      }
+
+      /* ── Clear ── */
+      document.getElementById('cj-clear').addEventListener('click', function () {
+        csvEl.value = '';
+        jsonEl.value = '';
+        clearStatus();
+      });
+
+      /* ── Copy buttons ── */
+      copyCsvBtn.addEventListener('click', function () {
+        if (!csvEl.value) return;
+        navigator.clipboard.writeText(csvEl.value).then(function () {
+          copyCsvBtn.textContent = 'Copied!';
+          setTimeout(function () { copyCsvBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      copyJsonBtn.addEventListener('click', function () {
+        if (!jsonEl.value) return;
+        navigator.clipboard.writeText(jsonEl.value).then(function () {
+          copyJsonBtn.textContent = 'Copied!';
+          setTimeout(function () { copyJsonBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .cj-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cj-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .cj-panels { grid-template-columns: 1fr; }
+  }
+
+  .cj-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .cj-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .cj-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .cj-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .cj-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .cj-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .cj-status.success { color: #057a55; }
+  .cj-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .cj-status.success { color: #34d399; }
+    .cj-status.error { color: #f87171; }
+  }
+</style>

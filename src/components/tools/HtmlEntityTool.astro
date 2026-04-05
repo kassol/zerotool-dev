@@ -1,0 +1,240 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="he-wrap">
+    <div class="he-row">
+      <label for="he-input"><span>Input</span></label>
+      <textarea
+        id="he-input"
+        placeholder="Enter text to encode or encoded text to decode..."
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="he-actions">
+      <button id="he-encode" class="btn-primary">Encode</button>
+      <button id="he-decode" class="btn-secondary">Decode</button>
+      <button id="he-clear" class="btn-ghost">Clear</button>
+    </div>
+
+    <div id="he-status" class="he-status" aria-live="polite"></div>
+
+    <div class="he-row">
+      <label for="he-output">
+        <span>Output</span>
+        <button id="he-copy" class="btn-copy" type="button">Copy</button>
+      </label>
+      <textarea
+        id="he-output"
+        placeholder="Result appears here..."
+        readonly
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <details class="he-ref">
+      <summary>Quick Reference — Common HTML Entities</summary>
+      <div class="he-ref-table-wrap">
+        <table class="he-ref-table">
+          <thead>
+            <tr><th>Character</th><th>Name</th><th>Entity</th><th>Decimal</th><th>Hex</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>&amp;</td><td>Ampersand</td><td>&amp;amp;</td><td>&amp;#38;</td><td>&amp;#x26;</td></tr>
+            <tr><td>&lt;</td><td>Less-than</td><td>&amp;lt;</td><td>&amp;#60;</td><td>&amp;#x3C;</td></tr>
+            <tr><td>&gt;</td><td>Greater-than</td><td>&amp;gt;</td><td>&amp;#62;</td><td>&amp;#x3E;</td></tr>
+            <tr><td>"</td><td>Double quote</td><td>&amp;quot;</td><td>&amp;#34;</td><td>&amp;#x22;</td></tr>
+            <tr><td>'</td><td>Apostrophe</td><td>&amp;apos;</td><td>&amp;#39;</td><td>&amp;#x27;</td></tr>
+            <tr><td> </td><td>Non-breaking space</td><td>&amp;nbsp;</td><td>&amp;#160;</td><td>&amp;#xA0;</td></tr>
+            <tr><td>&copy;</td><td>Copyright</td><td>&amp;copy;</td><td>&amp;#169;</td><td>&amp;#xA9;</td></tr>
+            <tr><td>&reg;</td><td>Registered</td><td>&amp;reg;</td><td>&amp;#174;</td><td>&amp;#xAE;</td></tr>
+            <tr><td>&trade;</td><td>Trademark</td><td>&amp;trade;</td><td>&amp;#8482;</td><td>&amp;#x2122;</td></tr>
+            <tr><td>&mdash;</td><td>Em dash</td><td>&amp;mdash;</td><td>&amp;#8212;</td><td>&amp;#x2014;</td></tr>
+            <tr><td>&ndash;</td><td>En dash</td><td>&amp;ndash;</td><td>&amp;#8211;</td><td>&amp;#x2013;</td></tr>
+            <tr><td>&laquo;</td><td>Left guillemet</td><td>&amp;laquo;</td><td>&amp;#171;</td><td>&amp;#xAB;</td></tr>
+            <tr><td>&raquo;</td><td>Right guillemet</td><td>&amp;raquo;</td><td>&amp;#187;</td><td>&amp;#xBB;</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('he-input');
+      var outputEl = document.getElementById('he-output');
+      var statusEl = document.getElementById('he-status');
+      var encodeBtn = document.getElementById('he-encode');
+      var decodeBtn = document.getElementById('he-decode');
+      var copyBtn = document.getElementById('he-copy');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'he-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'he-status';
+      }
+
+      function encodeHtml(str) {
+        var count = 0;
+        var result = '';
+        for (var i = 0; i < str.length; i++) {
+          var ch = str[i];
+          var code = str.charCodeAt(i);
+          if (ch === '&') { result += '&amp;'; count++; }
+          else if (ch === '<') { result += '&lt;'; count++; }
+          else if (ch === '>') { result += '&gt;'; count++; }
+          else if (ch === '"') { result += '&quot;'; count++; }
+          else if (ch === "'") { result += '&#39;'; count++; }
+          else if (code > 127) { result += '&#' + code + ';'; count++; }
+          else { result += ch; }
+        }
+        return { text: result, count: count };
+      }
+
+      function decodeHtml(str) {
+        var ta = document.createElement('textarea');
+        ta.innerHTML = str;
+        var decoded = ta.value;
+        var count = 0;
+        var re = /&(?:#x[0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/g;
+        var m;
+        while ((m = re.exec(str)) !== null) { count++; }
+        return { text: decoded, count: count };
+      }
+
+      encodeBtn.addEventListener('click', function () {
+        var val = inputEl.value;
+        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        try {
+          var r = encodeHtml(val);
+          outputEl.value = r.text;
+          setStatus('Encoded — ' + r.count + ' character' + (r.count !== 1 ? 's' : '') + ' converted.', false);
+          window.trackTool && window.trackTool('html_entity', 'encode');
+        } catch (e) {
+          outputEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      decodeBtn.addEventListener('click', function () {
+        var val = inputEl.value;
+        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        try {
+          var r = decodeHtml(val);
+          outputEl.value = r.text;
+          setStatus('Decoded — ' + r.count + ' entit' + (r.count !== 1 ? 'ies' : 'y') + ' converted.', false);
+          window.trackTool && window.trackTool('html_entity', 'decode');
+        } catch (e) {
+          outputEl.value = '';
+          setStatus('Error: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('he-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputEl.value = '';
+        clearStatus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        if (!outputEl.value) return;
+        navigator.clipboard.writeText(outputEl.value).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .he-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .he-row { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .he-row label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .he-row textarea {
+    width: 100%;
+    min-height: 140px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .he-row textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .he-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .he-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .he-status.success { color: #057a55; }
+  .he-status.error { color: #c0392b; }
+
+  .he-ref {
+    margin-top: 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .he-ref summary {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .he-ref-table-wrap {
+    overflow-x: auto;
+    padding: 0 0.75rem 0.75rem;
+  }
+
+  .he-ref-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    font-family: var(--font-mono);
+  }
+
+  .he-ref-table th,
+  .he-ref-table td {
+    padding: 0.35rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .he-ref-table th {
+    font-family: inherit;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .he-ref-table tbody tr:last-child td { border-bottom: none; }
+
+  @media (prefers-color-scheme: dark) {
+    .he-status.success { color: #34d399; }
+    .he-status.error { color: #f87171; }
+  }
+</style>
