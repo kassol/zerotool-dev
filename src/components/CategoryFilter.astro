@@ -1,0 +1,118 @@
+---
+import { t } from '../i18n/utils';
+
+interface Props {
+  lang: 'en' | 'zh' | 'ja' | 'ko';
+}
+const { lang } = Astro.props;
+
+const categories = ['all', 'data', 'encoding', 'text', 'security', 'dev'] as const;
+const labels = Object.fromEntries(
+  categories.map(c => [c, t(lang, `category.${c}`)])
+);
+---
+
+<div class="category-filter" role="group" aria-label={labels.all}>
+  {categories.map(cat => (
+    <button
+      class={`chip${cat === 'all' ? ' chip--active' : ''}`}
+      data-cat={cat}
+      type="button"
+    >
+      {labels[cat]}
+    </button>
+  ))}
+</div>
+
+<script is:inline>
+  (function () {
+    // Shared filter state — written by both CategoryFilter and ToolSearchBar
+    window.__ztSearch = window.__ztSearch || '';
+    window.__ztCat = window.__ztCat || 'all';
+
+    // Shared apply function — called by both components
+    window.__ztApply = function () {
+      var q = window.__ztSearch || '';
+      var cat = window.__ztCat || 'all';
+      var cards = document.querySelectorAll('.tool-card');
+      var visible = 0;
+      for (var i = 0; i < cards.length; i++) {
+        var kw = cards[i].getAttribute('data-keywords') || '';
+        var cardCat = cards[i].getAttribute('data-category') || '';
+        var matchSearch = !q || kw.indexOf(q) !== -1;
+        var matchCat = cat === 'all' || cardCat === cat;
+        if (matchSearch && matchCat) {
+          cards[i].style.display = '';
+          visible++;
+        } else {
+          cards[i].style.display = 'none';
+        }
+      }
+      var noResults = document.getElementById('no-results');
+      if (noResults) noResults.hidden = visible > 0;
+    };
+
+    // Category chip click handler
+    var filter = document.querySelector('.category-filter');
+    if (!filter) return;
+    filter.addEventListener('click', function (e) {
+      var btn = e.target;
+      if (!btn || btn.tagName !== 'BUTTON') return;
+      var cat = btn.getAttribute('data-cat');
+      if (!cat) return;
+      window.__ztCat = cat;
+      // Update active chip
+      var chips = filter.querySelectorAll('.chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].classList.toggle('chip--active', chips[i].getAttribute('data-cat') === cat);
+      }
+      window.__ztApply();
+    });
+  })();
+</script>
+
+<style>
+  .category-filter {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+    margin-bottom: 1.25rem;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .category-filter::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chip {
+    flex-shrink: 0;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .chip:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  .chip--active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+  }
+
+  .chip--active:hover {
+    color: #fff;
+  }
+</style>
