@@ -31,29 +31,39 @@ const adsenseId = import.meta.env.PUBLIC_ADSENSE_PUBLISHER_ID ?? '';
 const ga4Id = import.meta.env.PUBLIC_GA4_MEASUREMENT_ID ?? '';
 
 const isZh = lang === 'zh';
-const toolBase = isZh ? '/zh/tools' : '/tools';
+const isJa = lang === 'ja';
+const toolBase = isZh ? '/zh/tools' : isJa ? '/ja/tools' : '/tools';
 const featuredSlugs = ['json-formatter', 'base64', 'uuid-generator', 'url-encode', 'text-case'];
 const tools = featuredSlugs.map(slug => {
   const tool = allTools.find(t => t.slug === slug)!;
   return { href: `${toolBase}/${slug}`, label: getToolName(tool, lang) };
 });
 const pathname = Astro.url.pathname;
-const langSwitchHref = (() => {
-  if (translationSlug) {
-    // Blog post with known translation — link to counterpart slug
-    return isZh ? `/blog/${translationSlug}/` : `/zh/blog/${translationSlug}/`;
+const isBlogPost = /^\/(zh\/|ja\/)?blog\/[^/]+/.test(pathname);
+
+// Language switch hrefs
+const getLangHref = (targetLang: string) => {
+  if (targetLang === 'en') {
+    if (translationSlug && isZh) return `/blog/${translationSlug}/`;
+    if (isBlogPost && isZh) return '/blog/';
+    if (isBlogPost && isJa) return '/blog/';
+    if (isZh) return pathname.replace(/^\/zh(\/|$)/, '/') || '/';
+    if (isJa) return pathname.replace(/^\/ja(\/|$)/, '/') || '/';
+    return pathname;
   }
-  // Blog post without translation — link to blog index
-  const isBlogPost = /^\/(zh\/)?blog\/.+/.test(pathname);
-  if (isBlogPost) {
-    return isZh ? '/blog/' : '/zh/blog/';
+  if (targetLang === 'zh') {
+    if (translationSlug && !isZh) return `/zh/blog/${translationSlug}/`;
+    if (isBlogPost) return '/zh/blog/';
+    const base = isZh ? pathname : isJa ? pathname.replace(/^\/ja(\/|$)/, '/') || '/' : pathname;
+    return '/zh' + (base === '/' ? '' : base);
   }
-  // General pages: swap /zh prefix
-  return isZh
-    ? (pathname.replace(/^\/zh(\/|$)/, '/'))
-    : ('/zh' + (pathname === '/' ? '' : pathname));
-})();
-const langSwitch = { href: langSwitchHref, label: t(lang, 'nav.langSwitch') };
+  if (targetLang === 'ja') {
+    if (isBlogPost) return '/ja/';
+    const base = isJa ? pathname : isZh ? pathname.replace(/^\/zh(\/|$)/, '/') || '/' : pathname;
+    return '/ja' + (base === '/' ? '' : base);
+  }
+  return pathname;
+};
 ---
 
 <!doctype html>
@@ -121,13 +131,17 @@ const langSwitch = { href: langSwitchHref, label: t(lang, 'nav.langSwitch') };
   <body>
     <header class="site-header">
       <nav class="site-nav">
-        <a href={isZh ? '/zh' : '/'} class="site-brand">ZeroTool</a>
+        <a href={isZh ? '/zh' : isJa ? '/ja' : '/'} class="site-brand">ZeroTool</a>
         <div class="nav-tools">
           {tools.map(tool => (
             <a href={tool.href}>{tool.label}</a>
           ))}
         </div>
-        <a href={langSwitch.href} class="lang-switch">{langSwitch.label}</a>
+        <div class="lang-switcher">
+          {lang !== 'en' && <a href={getLangHref('en')} class="lang-switch">English</a>}
+          {lang !== 'zh' && <a href={getLangHref('zh')} class="lang-switch">中文</a>}
+          {lang !== 'ja' && <a href={getLangHref('ja')} class="lang-switch">日本語</a>}
+        </div>
         <button class="nav-hamburger" aria-label="Menu" aria-expanded="false">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
@@ -137,7 +151,7 @@ const langSwitch = { href: langSwitchHref, label: t(lang, 'nav.langSwitch') };
           {tools.map(tool => (
             <a href={tool.href}>{tool.label}</a>
           ))}
-          <a href={isZh ? '/zh/blog' : '/blog'}>{t(lang, 'nav.blog')}</a>
+          <a href={isZh ? '/zh/blog' : isJa ? '/blog' : '/blog'}>{t(lang, 'nav.blog')}</a>
         </div>
       </div>
     </header>
@@ -166,7 +180,7 @@ const langSwitch = { href: langSwitchHref, label: t(lang, 'nav.langSwitch') };
 
     <footer class="site-footer">
       <p>
-        &copy; {new Date().getFullYear()} <a href={isZh ? '/zh' : '/'}>ZeroTool</a> — {t(lang, 'footer.tagline')}
+        &copy; {new Date().getFullYear()} <a href={isZh ? '/zh' : isJa ? '/ja' : '/'}>ZeroTool</a> — {t(lang, 'footer.tagline')}
       </p>
     </footer>
   </body>
@@ -275,15 +289,20 @@ const langSwitch = { href: langSwitchHref, label: t(lang, 'nav.langSwitch') };
 
   .nav-tools a:hover { color: var(--color-primary); }
 
-  .lang-switch {
+  .lang-switcher {
     margin-left: auto;
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+  }
+
+  .lang-switch {
     font-size: 0.85rem;
     color: var(--color-text-secondary);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     padding: 0.2rem 0.6rem;
     white-space: nowrap;
-    flex-shrink: 0;
   }
 
   .lang-switch:hover {

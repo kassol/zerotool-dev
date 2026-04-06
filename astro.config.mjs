@@ -43,6 +43,7 @@ export default defineConfig({
         locales: {
           en: 'en',
           zh: 'zh',
+          ja: 'ja',
         },
       },
       serialize(item) {
@@ -95,7 +96,7 @@ export default defineConfig({
 
   i18n: {
     defaultLocale: 'en',
-    locales: ['en', 'zh'],
+    locales: ['en', 'zh', 'ja'],
     routing: {
       prefixDefaultLocale: false,  // English at root path
     },
