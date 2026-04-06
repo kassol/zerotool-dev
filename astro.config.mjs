@@ -34,6 +34,7 @@ export default defineConfig({
   site: SITE,
   output: 'static',
   adapter: cloudflare(),
+  trailingSlash: 'always',
 
   integrations: [
     mdx(),
