@@ -38,6 +38,7 @@ export const allTools: ToolInfo[] = [
   { slug: 'toml-json', name: 'TOML to JSON Converter', nameZh: 'TOML JSON 转换器', description: 'Convert between TOML and JSON formats instantly with validation.', descriptionZh: '即时进行 TOML 与 JSON 格式互转，带格式校验。', category: 'data' },
   { slug: 'image-to-base64', name: 'Image to Base64 Converter', nameZh: '图片转 Base64 工具', description: 'Convert images to Base64 strings and Data URIs. Supports PNG, JPEG, GIF, and more.', descriptionZh: '将图片转换为 Base64 字符串和 Data URI，支持 PNG、JPEG、GIF 等格式。', category: 'encoding' },
   { slug: 'css-to-tailwind', name: 'CSS to Tailwind Converter', nameZh: 'CSS 转 Tailwind 工具', description: 'Convert CSS properties to Tailwind utility classes instantly.', descriptionZh: '即时将 CSS 属性转换为 Tailwind 工具类。', category: 'dev' },
+  { slug: 'markdown-table-generator', name: 'Markdown Table Generator', nameZh: 'Markdown 表格生成器', description: 'Build Markdown tables visually — add rows and columns, paste CSV or JSON, then copy the formatted table.', descriptionZh: '可视化构建 Markdown 表格，支持 CSV 和 JSON 导入，一键复制格式化表格。', category: 'text' },
 ];
 
 /** Return related tools for a given slug: same category first, then others. */

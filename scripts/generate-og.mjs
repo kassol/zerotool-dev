@@ -42,7 +42,8 @@ const tools = [
   { slug: 'sql-formatter',        name: 'SQL Formatter',                 description: 'Format, beautify, and minify SQL queries' },
   { slug: 'aspect-ratio',         name: 'Aspect Ratio Calculator',       description: 'Calculate and resize aspect ratios' },
   { slug: 'xml-formatter',        name: 'XML Formatter',                 description: 'Format, beautify, and minify XML documents' },
-  { slug: 'ascii-converter',      name: 'ASCII Converter',               description: 'Convert between text and ASCII codes' },
+  { slug: 'ascii-converter',           name: 'ASCII Converter',               description: 'Convert between text and ASCII codes' },
+  { slug: 'markdown-table-generator', name: 'Markdown Table Generator',      description: 'Build Markdown tables visually with CSV & JSON import' },
 ];
 
 /** Escape XML special chars so SVG stays valid. */

@@ -1,0 +1,592 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="mtg-wrap">
+
+    <!-- Tab Bar -->
+    <div class="mtg-tabs" role="tablist">
+      <button class="mtg-tab active" data-tab="manual" role="tab" aria-selected="true">Manual Editor</button>
+      <button class="mtg-tab" data-tab="csv" role="tab" aria-selected="false">CSV Paste</button>
+      <button class="mtg-tab" data-tab="json" role="tab" aria-selected="false">JSON Paste</button>
+    </div>
+
+    <!-- Manual Editor Tab -->
+    <div class="mtg-tabpanel" id="mtg-panel-manual">
+      <div class="mtg-toolbar">
+        <button id="mtg-add-row" class="btn-ghost" type="button">+ Row</button>
+        <button id="mtg-add-col" class="btn-ghost" type="button">+ Column</button>
+        <button id="mtg-remove-row" class="btn-ghost" type="button">− Row</button>
+        <button id="mtg-remove-col" class="btn-ghost" type="button">− Column</button>
+      </div>
+      <div class="mtg-table-wrap">
+        <table class="mtg-table" id="mtg-table" aria-label="Editable table">
+          <thead id="mtg-thead"></thead>
+          <tbody id="mtg-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- CSV Paste Tab -->
+    <div class="mtg-tabpanel hidden" id="mtg-panel-csv">
+      <label for="mtg-csv-input" class="mtg-label">Paste CSV (comma, tab, or semicolon separated):</label>
+      <textarea
+        id="mtg-csv-input"
+        class="mtg-textarea"
+        placeholder="name,age,city&#10;Alice,30,New York&#10;Bob,25,London"
+        spellcheck="false"
+        rows="8"
+      ></textarea>
+    </div>
+
+    <!-- JSON Paste Tab -->
+    <div class="mtg-tabpanel hidden" id="mtg-panel-json">
+      <label for="mtg-json-input" class="mtg-label">Paste JSON array of objects:</label>
+      <textarea
+        id="mtg-json-input"
+        class="mtg-textarea"
+        placeholder='[{"name":"Alice","age":30},{"name":"Bob","age":25}]'
+        spellcheck="false"
+        rows="8"
+      ></textarea>
+    </div>
+
+    <!-- Markdown Output -->
+    <div class="mtg-output-section">
+      <label class="mtg-label" for="mtg-output">
+        <span>Markdown Output</span>
+        <button id="mtg-copy" class="btn-copy" type="button">Copy</button>
+      </label>
+      <textarea
+        id="mtg-output"
+        class="mtg-textarea mtg-output"
+        readonly
+        spellcheck="false"
+        rows="6"
+        placeholder="Markdown table will appear here..."
+      ></textarea>
+    </div>
+
+    <div id="mtg-status" class="mtg-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      /* ── State ── */
+      var COLS = 3;
+      var ROWS = 3;
+      var alignments = []; // 'left' | 'center' | 'right' per column
+
+      var thead = document.getElementById('mtg-thead');
+      var tbody = document.getElementById('mtg-tbody');
+      var outputEl = document.getElementById('mtg-output');
+      var statusEl = document.getElementById('mtg-status');
+      var copyBtn = document.getElementById('mtg-copy');
+
+      /* ── Helpers ── */
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'mtg-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'mtg-status';
+      }
+
+      function getCellText(td) {
+        return td.textContent.trim();
+      }
+
+      function escapePipe(str) {
+        return str.replace(/\|/g, '\\|');
+      }
+
+      /* ── Build markdown from the editor table ── */
+      function generateMarkdown() {
+        var headers = [];
+        var ths = thead.querySelectorAll('th.mtg-cell');
+        for (var i = 0; i < ths.length; i++) {
+          headers.push(escapePipe(getCellText(ths[i])));
+        }
+
+        if (headers.length === 0) { outputEl.value = ''; return; }
+
+        var sep = [];
+        for (var c = 0; c < headers.length; c++) {
+          var al = alignments[c] || 'left';
+          if (al === 'center') sep.push(':---:');
+          else if (al === 'right') sep.push('---:');
+          else sep.push('---');
+        }
+
+        var lines = [];
+        lines.push('| ' + headers.join(' | ') + ' |');
+        lines.push('| ' + sep.join(' | ') + ' |');
+
+        var trs = tbody.querySelectorAll('tr');
+        for (var r = 0; r < trs.length; r++) {
+          var tds = trs[r].querySelectorAll('td.mtg-cell');
+          var cells = [];
+          for (var ci = 0; ci < tds.length; ci++) {
+            cells.push(escapePipe(getCellText(tds[ci])));
+          }
+          lines.push('| ' + cells.join(' | ') + ' |');
+        }
+
+        outputEl.value = lines.join('\n');
+      }
+
+      /* ── Alignment selector in each header ── */
+      function buildAlignSelect(colIdx) {
+        var wrap = document.createElement('span');
+        wrap.className = 'mtg-align-wrap';
+
+        var options = [
+          { val: 'left', label: '⇤' },
+          { val: 'center', label: '⇔' },
+          { val: 'right', label: '⇥' },
+        ];
+
+        options.forEach(function (opt) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.alignVal = opt.val;
+          btn.className = 'mtg-align-btn' + (alignments[colIdx] === opt.val ? ' active' : '');
+          btn.title = opt.val;
+          btn.textContent = opt.label;
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            alignments[colIdx] = opt.val;
+            // update active state for siblings
+            var siblings = wrap.querySelectorAll('.mtg-align-btn');
+            siblings.forEach(function (s) {
+              s.classList.toggle('active', s.dataset.alignVal === opt.val);
+            });
+            generateMarkdown();
+            window.trackTool && window.trackTool('markdown_table_generator', 'align_' + opt.val);
+          });
+          wrap.appendChild(btn);
+        });
+
+        return wrap;
+      }
+
+      /* ── Build/rebuild the editor table ── */
+      function buildTable(data) {
+        // data: { headers: string[], rows: string[][] }
+        COLS = data.headers.length;
+        ROWS = data.rows.length;
+
+        // Ensure alignments array is correct length
+        while (alignments.length < COLS) alignments.push('left');
+        alignments.length = COLS;
+
+        // Build header row
+        thead.innerHTML = '';
+        var trHead = document.createElement('tr');
+
+        data.headers.forEach(function (h, ci) {
+          var th = document.createElement('th');
+          th.className = 'mtg-cell';
+          th.contentEditable = 'true';
+          th.spellcheck = false;
+          th.textContent = h;
+          th.addEventListener('input', function () { generateMarkdown(); });
+
+          var alignWrap = buildAlignSelect(ci);
+          th.appendChild(alignWrap);
+
+          trHead.appendChild(th);
+        });
+
+        thead.appendChild(trHead);
+
+        // Build body rows
+        tbody.innerHTML = '';
+        data.rows.forEach(function (row) {
+          var tr = document.createElement('tr');
+          for (var ci = 0; ci < COLS; ci++) {
+            var td = document.createElement('td');
+            td.className = 'mtg-cell';
+            td.contentEditable = 'true';
+            td.spellcheck = false;
+            td.textContent = row[ci] !== undefined ? row[ci] : '';
+            td.addEventListener('input', function () { generateMarkdown(); });
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        });
+
+        generateMarkdown();
+      }
+
+      function defaultHeaders(n) {
+        var h = [];
+        for (var i = 1; i <= n; i++) h.push('Header ' + i);
+        return h;
+      }
+
+      function defaultRows(r, c) {
+        var rows = [];
+        for (var i = 0; i < r; i++) {
+          var row = [];
+          for (var j = 0; j < c; j++) row.push('');
+          rows.push(row);
+        }
+        return rows;
+      }
+
+      /* ── Init with default 3×3 ── */
+      alignments = ['left', 'left', 'left'];
+      buildTable({ headers: defaultHeaders(3), rows: defaultRows(3, 3) });
+
+      /* ── Toolbar actions ── */
+      document.getElementById('mtg-add-row').addEventListener('click', function () {
+        var tr = document.createElement('tr');
+        for (var ci = 0; ci < COLS; ci++) {
+          var td = document.createElement('td');
+          td.className = 'mtg-cell';
+          td.contentEditable = 'true';
+          td.spellcheck = false;
+          td.addEventListener('input', function () { generateMarkdown(); });
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+        ROWS++;
+        generateMarkdown();
+      });
+
+      document.getElementById('mtg-remove-row').addEventListener('click', function () {
+        if (ROWS <= 1) return;
+        tbody.removeChild(tbody.lastElementChild);
+        ROWS--;
+        generateMarkdown();
+      });
+
+      document.getElementById('mtg-add-col').addEventListener('click', function () {
+        alignments.push('left');
+        COLS++;
+
+        // Add header cell
+        var trHead = thead.querySelector('tr');
+        var th = document.createElement('th');
+        th.className = 'mtg-cell';
+        th.contentEditable = 'true';
+        th.spellcheck = false;
+        th.textContent = 'Header ' + COLS;
+        th.addEventListener('input', function () { generateMarkdown(); });
+        th.appendChild(buildAlignSelect(COLS - 1));
+        trHead.appendChild(th);
+
+        // Add body cells
+        var trs = tbody.querySelectorAll('tr');
+        trs.forEach(function (tr) {
+          var td = document.createElement('td');
+          td.className = 'mtg-cell';
+          td.contentEditable = 'true';
+          td.spellcheck = false;
+          td.addEventListener('input', function () { generateMarkdown(); });
+          tr.appendChild(td);
+        });
+
+        generateMarkdown();
+      });
+
+      document.getElementById('mtg-remove-col').addEventListener('click', function () {
+        if (COLS <= 1) return;
+        alignments.pop();
+        COLS--;
+
+        var trHead = thead.querySelector('tr');
+        if (trHead.lastElementChild) trHead.removeChild(trHead.lastElementChild);
+
+        var trs = tbody.querySelectorAll('tr');
+        trs.forEach(function (tr) {
+          if (tr.lastElementChild) tr.removeChild(tr.lastElementChild);
+        });
+
+        generateMarkdown();
+      });
+
+      /* ── Tabs ── */
+      var tabs = document.querySelectorAll('.mtg-tab');
+      var panels = document.querySelectorAll('.mtg-tabpanel');
+
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          var target = tab.dataset.tab;
+
+          tabs.forEach(function (t) {
+            t.classList.toggle('active', t.dataset.tab === target);
+            t.setAttribute('aria-selected', t.dataset.tab === target ? 'true' : 'false');
+          });
+
+          panels.forEach(function (p) {
+            p.classList.toggle('hidden', p.id !== 'mtg-panel-' + target);
+          });
+
+          clearStatus();
+        });
+      });
+
+      /* ── Auto-detect delimiter for CSV ── */
+      function detectDelimiter(text) {
+        var firstLine = text.split('\n')[0];
+        var counts = {
+          ',': (firstLine.match(/,/g) || []).length,
+          '\t': (firstLine.match(/\t/g) || []).length,
+          ';': (firstLine.match(/;/g) || []).length,
+        };
+        if (counts['\t'] >= counts[','] && counts['\t'] >= counts[';']) return '\t';
+        if (counts[';'] > counts[',']) return ';';
+        return ',';
+      }
+
+      /* ── Simple CSV parser supporting quoted fields ── */
+      function parseCsv(text, delim) {
+        var rows = [];
+        var row = [];
+        var field = '';
+        var inQuote = false;
+        var i = 0;
+        var len = text.length;
+
+        while (i < len) {
+          var ch = text[i];
+          if (inQuote) {
+            if (ch === '"') {
+              if (i + 1 < len && text[i + 1] === '"') { field += '"'; i += 2; }
+              else { inQuote = false; i++; }
+            } else { field += ch; i++; }
+          } else {
+            if (ch === '"') { inQuote = true; i++; }
+            else if (ch === delim) { row.push(field); field = ''; i++; }
+            else if (ch === '\r') {
+              row.push(field); field = ''; rows.push(row); row = []; i++;
+              if (i < len && text[i] === '\n') i++;
+            } else if (ch === '\n') {
+              row.push(field); field = ''; rows.push(row); row = []; i++;
+            } else { field += ch; i++; }
+          }
+        }
+        if (field || row.length > 0) { row.push(field); rows.push(row); }
+        if (rows.length > 0) {
+          var last = rows[rows.length - 1];
+          if (last.length === 1 && last[0] === '') rows.pop();
+        }
+        return rows;
+      }
+
+      /* ── CSV Paste: parse on input ── */
+      document.getElementById('mtg-csv-input').addEventListener('input', function () {
+        var raw = this.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          var delim = detectDelimiter(raw);
+          var parsed = parseCsv(raw, delim);
+          if (parsed.length < 1) throw new Error('No data found.');
+
+          var headers = parsed[0].map(function (h) { return h.trim(); });
+          var rows = parsed.slice(1).map(function (r) {
+            return r.map(function (c) { return c.trim(); });
+          });
+
+          alignments = headers.map(function () { return 'left'; });
+          buildTable({ headers: headers, rows: rows });
+          setStatus('Imported ' + rows.length + ' row(s) from CSV.', false);
+          window.trackTool && window.trackTool('markdown_table_generator', 'csv_import');
+        } catch (e) {
+          setStatus('CSV error: ' + e.message, true);
+        }
+      });
+
+      /* ── JSON Paste: parse on input ── */
+      document.getElementById('mtg-json-input').addEventListener('input', function () {
+        var raw = this.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          var data = JSON.parse(raw);
+          if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
+          if (data.length === 0) throw new Error('JSON array is empty.');
+          if (typeof data[0] !== 'object' || data[0] === null || Array.isArray(data[0])) {
+            throw new Error('Each item must be a plain object.');
+          }
+
+          var headers = Object.keys(data[0]);
+          var rows = data.map(function (obj) {
+            return headers.map(function (k) {
+              var v = obj[k];
+              return v == null ? '' : String(v);
+            });
+          });
+
+          alignments = headers.map(function () { return 'left'; });
+          buildTable({ headers: headers, rows: rows });
+          setStatus('Imported ' + rows.length + ' row(s) from JSON.', false);
+          window.trackTool && window.trackTool('markdown_table_generator', 'json_import');
+        } catch (e) {
+          setStatus('JSON error: ' + e.message, true);
+        }
+      });
+
+      /* ── Copy button ── */
+      copyBtn.addEventListener('click', function () {
+        if (!outputEl.value) return;
+        navigator.clipboard.writeText(outputEl.value).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+          window.trackTool && window.trackTool('markdown_table_generator', 'copy');
+        });
+      });
+
+    })();
+  </script>
+</div>
+
+<style>
+  .mtg-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  /* ── Tabs ── */
+  .mtg-tabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 0;
+  }
+
+  .mtg-tab {
+    padding: 0.4rem 0.9rem;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    background: none;
+    color: var(--color-text-secondary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    position: relative;
+    bottom: -1px;
+  }
+
+  .mtg-tab:hover { color: var(--color-text); }
+
+  .mtg-tab.active {
+    background: var(--color-bg);
+    border-color: var(--color-border);
+    border-bottom-color: var(--color-bg);
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  /* ── Tab panels ── */
+  .mtg-tabpanel { display: flex; flex-direction: column; gap: 0.5rem; }
+  .mtg-tabpanel.hidden { display: none; }
+
+  /* ── Toolbar ── */
+  .mtg-toolbar { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+  /* ── Editable table ── */
+  .mtg-table-wrap { overflow-x: auto; }
+
+  .mtg-table {
+    border-collapse: collapse;
+    min-width: 100%;
+    font-size: 0.88rem;
+  }
+
+  .mtg-table thead tr { background: var(--color-bg-secondary); }
+
+  .mtg-cell {
+    border: 1px solid var(--color-border);
+    padding: 0.4rem 0.6rem;
+    min-width: 80px;
+    vertical-align: top;
+    white-space: pre-wrap;
+    word-break: break-word;
+    position: relative;
+  }
+
+  th.mtg-cell {
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    justify-content: space-between;
+  }
+
+  .mtg-cell[contenteditable]:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -1px;
+  }
+
+  tr:hover td.mtg-cell { background: var(--color-bg-secondary); }
+
+  /* ── Alignment buttons ── */
+  .mtg-align-wrap {
+    display: inline-flex;
+    gap: 1px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .mtg-align-btn {
+    padding: 0 4px;
+    font-size: 0.7rem;
+    border: 1px solid var(--color-border);
+    border-radius: 3px;
+    background: var(--color-bg);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    line-height: 1.4;
+  }
+
+  .mtg-align-btn.active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .mtg-align-btn:hover:not(.active) { background: var(--color-bg-secondary); }
+
+  /* ── Label row ── */
+  .mtg-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  /* ── Textareas ── */
+  .mtg-textarea {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .mtg-textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .mtg-output { background: var(--color-bg-secondary); }
+
+  /* ── Output section ── */
+  .mtg-output-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  /* ── Status ── */
+  .mtg-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .mtg-status.success { color: #057a55; }
+  .mtg-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    .mtg-status.success { color: #34d399; }
+    .mtg-status.error { color: #f87171; }
+  }
+</style>

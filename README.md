@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 30 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 31 tools and growing.
 
 ## Tools
 
@@ -38,6 +38,7 @@
 | TOML to JSON Converter | [/tools/toml-json](https://zerotool.dev/tools/toml-json) |
 | Image to Base64 Converter | [/tools/image-to-base64](https://zerotool.dev/tools/image-to-base64) |
 | CSS to Tailwind Converter | [/tools/css-to-tailwind](https://zerotool.dev/tools/css-to-tailwind) |
+| Markdown Table Generator | [/tools/markdown-table-generator](https://zerotool.dev/tools/markdown-table-generator) |
 
 ## Why ZeroTool?
 
