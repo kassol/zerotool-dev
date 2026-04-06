@@ -1,5 +1,5 @@
 ---
-// DiffCheckerTool — line-level text diff widget
+// DiffCheckerTool — line-level text diff widget with unified + side-by-side views
 ---
 <div>
   <div class="diff-wrap">
@@ -15,38 +15,59 @@
     </div>
 
     <div class="diff-actions">
-      <button id="diff-compare" class="btn-primary">Compare</button>
-      <button id="diff-swap" class="btn-secondary">Swap</button>
-      <button id="diff-clear" class="btn-ghost">Clear</button>
+      <button id="diff-compare" class="btn-primary" data-i18n="compare">Compare</button>
+      <button id="diff-swap" class="btn-secondary" data-i18n="swap">Swap</button>
+      <button id="diff-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+      <div class="diff-view-toggle" role="group" aria-label="View mode">
+        <button id="diff-view-unified" class="diff-view-btn active" data-i18n="unified">Unified</button>
+        <button id="diff-view-side" class="diff-view-btn" data-i18n="side_by_side">Side-by-Side</button>
+      </div>
     </div>
 
     <div id="diff-status" class="diff-status" aria-live="polite"></div>
 
-    <div id="diff-output" class="diff-output"></div>
+    <div id="diff-output" class="diff-output" data-view="unified"></div>
   </div>
 
   <script is:inline>
     (function () {
+      var STRINGS = {
+        en: { compare: 'Compare', swap: 'Swap', clear: 'Clear', unified: 'Unified', side_by_side: 'Side-by-Side', identical: 'Files are identical.', swapped: 'Swapped.', empty: 'Please enter text in at least one panel.', no_diff: 'No differences found.' },
+        zh: { compare: '比较', swap: '互换', clear: '清除', unified: '合并视图', side_by_side: '双栏视图', identical: '两侧内容完全相同。', swapped: '已互换。', empty: '请至少在一侧输入内容。', no_diff: '未发现差异。' },
+        ja: { compare: '比較', swap: '入れ替え', clear: 'クリア', unified: '統合表示', side_by_side: '並列表示', identical: '内容は同一です。', swapped: '入れ替えました。', empty: 'いずれかのパネルにテキストを入力してください。', no_diff: '差分はありません。' },
+        ko: { compare: '비교', swap: '교체', clear: '지우기', unified: '통합 보기', side_by_side: '나란히 보기', identical: '내용이 동일합니다.', swapped: '교체되었습니다.', empty: '최소 한 쪽에 텍스트를 입력해 주세요.', no_diff: '차이점이 없습니다.' }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      // Apply i18n to static buttons
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+
+      // LCS diff
       function lcs(a, b) {
         var m = a.length, n = b.length;
         var dp = [];
         for (var i = 0; i <= m; i++) { dp[i] = []; for (var j = 0; j <= n; j++) dp[i][j] = 0; }
         for (var i = 1; i <= m; i++) {
           for (var j = 1; j <= n; j++) {
-            dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+            dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
           }
         }
         var result = [];
         var i = m, j = n;
         while (i > 0 || j > 0) {
-          if (i > 0 && j > 0 && a[i-1] === b[j-1]) {
-            result.unshift({ type: 'equal', val: a[i-1] });
+          if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+            result.unshift({ type: 'equal', val: a[i - 1] });
             i--; j--;
-          } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
-            result.unshift({ type: 'add', val: b[j-1] });
+          } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            result.unshift({ type: 'add', val: b[j - 1] });
             j--;
           } else {
-            result.unshift({ type: 'del', val: a[i-1] });
+            result.unshift({ type: 'del', val: a[i - 1] });
             i--;
           }
         }
@@ -57,48 +78,157 @@
         return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       }
 
-      function compare() {
-        var origLines = document.getElementById('diff-original').value.split('\n');
-        var modLines = document.getElementById('diff-modified').value.split('\n');
-        var statusEl = document.getElementById('diff-status');
-        var outputEl = document.getElementById('diff-output');
-        outputEl.innerHTML = '';
+      function ln(n) {
+        return n == null ? '' : String(n);
+      }
 
-        if (!document.getElementById('diff-original').value && !document.getElementById('diff-modified').value) {
-          statusEl.textContent = 'Please enter text in at least one panel.';
+      var currentView = 'unified';
+      var lastDiff = null;
+      var lastAddCount = 0, lastDelCount = 0;
+
+      function renderUnified(diff) {
+        var html = '';
+        var origLn = 0, modLn = 0;
+        diff.forEach(function (op) {
+          if (op.type === 'equal') {
+            origLn++; modLn++;
+            html += '<div class="diff-line diff-equal">'
+              + '<span class="diff-ln diff-ln-orig">' + origLn + '</span>'
+              + '<span class="diff-ln diff-ln-mod">' + modLn + '</span>'
+              + '<span class="diff-marker"> </span>'
+              + '<span class="diff-text">' + esc(op.val) + '</span></div>';
+          } else if (op.type === 'del') {
+            origLn++;
+            html += '<div class="diff-line diff-del">'
+              + '<span class="diff-ln diff-ln-orig">' + origLn + '</span>'
+              + '<span class="diff-ln diff-ln-mod"></span>'
+              + '<span class="diff-marker">-</span>'
+              + '<span class="diff-text">' + esc(op.val) + '</span></div>';
+          } else {
+            modLn++;
+            html += '<div class="diff-line diff-add">'
+              + '<span class="diff-ln diff-ln-orig"></span>'
+              + '<span class="diff-ln diff-ln-mod">' + modLn + '</span>'
+              + '<span class="diff-marker">+</span>'
+              + '<span class="diff-text">' + esc(op.val) + '</span></div>';
+          }
+        });
+        return html || '<div class="diff-empty">' + t.no_diff + '</div>';
+      }
+
+      function renderSideBySide(diff) {
+        // Build left (original) and right (modified) line arrays with pairing
+        var left = [], right = [];
+        var origLn = 0, modLn = 0;
+        var i = 0;
+        while (i < diff.length) {
+          var op = diff[i];
+          if (op.type === 'equal') {
+            origLn++; modLn++;
+            left.push({ type: 'equal', ln: origLn, val: op.val });
+            right.push({ type: 'equal', ln: modLn, val: op.val });
+            i++;
+          } else if (op.type === 'del') {
+            // Peek ahead: if next is 'add', pair them as change
+            if (i + 1 < diff.length && diff[i + 1].type === 'add') {
+              origLn++; modLn++;
+              left.push({ type: 'del', ln: origLn, val: op.val });
+              right.push({ type: 'add', ln: modLn, val: diff[i + 1].val });
+              i += 2;
+            } else {
+              origLn++;
+              left.push({ type: 'del', ln: origLn, val: op.val });
+              right.push({ type: 'empty', ln: null, val: '' });
+              i++;
+            }
+          } else {
+            // standalone add
+            modLn++;
+            left.push({ type: 'empty', ln: null, val: '' });
+            right.push({ type: 'add', ln: modLn, val: op.val });
+            i++;
+          }
+        }
+
+        var leftHtml = '', rightHtml = '';
+        for (var k = 0; k < left.length; k++) {
+          var l = left[k], r = right[k];
+          var lcls = l.type === 'del' ? 'diff-del' : l.type === 'empty' ? 'diff-empty-row' : 'diff-equal';
+          var rcls = r.type === 'add' ? 'diff-add' : r.type === 'empty' ? 'diff-empty-row' : 'diff-equal';
+          leftHtml += '<div class="diff-sbs-line ' + lcls + '">'
+            + '<span class="diff-ln">' + ln(l.ln) + '</span>'
+            + '<span class="diff-marker">' + (l.type === 'del' ? '-' : ' ') + '</span>'
+            + '<span class="diff-text">' + esc(l.val) + '</span></div>';
+          rightHtml += '<div class="diff-sbs-line ' + rcls + '">'
+            + '<span class="diff-ln">' + ln(r.ln) + '</span>'
+            + '<span class="diff-marker">' + (r.type === 'add' ? '+' : ' ') + '</span>'
+            + '<span class="diff-text">' + esc(r.val) + '</span></div>';
+        }
+        if (!leftHtml) {
+          leftHtml = '<div class="diff-empty">' + t.no_diff + '</div>';
+          rightHtml = '<div class="diff-empty"></div>';
+        }
+        return '<div class="diff-sbs">'
+          + '<div class="diff-sbs-panel diff-sbs-orig"><div class="diff-sbs-header">Original</div>' + leftHtml + '</div>'
+          + '<div class="diff-sbs-panel diff-sbs-mod"><div class="diff-sbs-header">Modified</div>' + rightHtml + '</div>'
+          + '</div>';
+      }
+
+      function renderOutput() {
+        var outputEl = document.getElementById('diff-output');
+        if (!lastDiff) { outputEl.innerHTML = ''; return; }
+        outputEl.setAttribute('data-view', currentView);
+        if (currentView === 'unified') {
+          outputEl.innerHTML = renderUnified(lastDiff);
+        } else {
+          outputEl.innerHTML = renderSideBySide(lastDiff);
+        }
+      }
+
+      function compare() {
+        var origVal = document.getElementById('diff-original').value;
+        var modVal = document.getElementById('diff-modified').value;
+        var statusEl = document.getElementById('diff-status');
+
+        if (!origVal && !modVal) {
+          statusEl.textContent = t.empty;
           statusEl.className = 'diff-status error';
+          lastDiff = null;
+          document.getElementById('diff-output').innerHTML = '';
           return;
         }
 
-        var diff = lcs(origLines, modLines);
-        var addCount = 0, delCount = 0;
-        var html = '';
-        var lineNum = 0;
-
-        diff.forEach(function (op) {
-          if (op.type === 'equal') {
-            lineNum++;
-            html += '<div class="diff-line diff-equal"><span class="diff-ln">' + lineNum + '</span><span class="diff-marker"> </span><span class="diff-text">' + esc(op.val) + '</span></div>';
-          } else if (op.type === 'del') {
-            html += '<div class="diff-line diff-del"><span class="diff-ln">-</span><span class="diff-marker">-</span><span class="diff-text">' + esc(op.val) + '</span></div>';
-            delCount++;
-          } else {
-            html += '<div class="diff-line diff-add"><span class="diff-ln">+</span><span class="diff-marker">+</span><span class="diff-text">' + esc(op.val) + '</span></div>';
-            addCount++;
-          }
+        var origLines = origVal.split('\n');
+        var modLines = modVal.split('\n');
+        lastDiff = lcs(origLines, modLines);
+        lastAddCount = 0; lastDelCount = 0;
+        lastDiff.forEach(function (op) {
+          if (op.type === 'add') lastAddCount++;
+          else if (op.type === 'del') lastDelCount++;
         });
 
-        outputEl.innerHTML = html || '<div class="diff-empty">No differences found.</div>';
+        renderOutput();
 
-        if (addCount === 0 && delCount === 0) {
-          statusEl.textContent = 'Files are identical.';
+        if (lastAddCount === 0 && lastDelCount === 0) {
+          statusEl.textContent = t.identical;
           statusEl.className = 'diff-status success';
         } else {
-          statusEl.textContent = '+' + addCount + ' additions, -' + delCount + ' deletions.';
+          statusEl.textContent = '+' + lastAddCount + ' / -' + lastDelCount;
           statusEl.className = 'diff-status info';
         }
         window.trackTool && window.trackTool('diff_checker', 'compare');
       }
+
+      // Auto-resize textarea
+      function autoResize(ta) {
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(500, Math.max(160, ta.scrollHeight)) + 'px';
+      }
+
+      ['diff-original', 'diff-modified'].forEach(function (id) {
+        var ta = document.getElementById(id);
+        ta.addEventListener('input', function () { autoResize(ta); });
+      });
 
       document.getElementById('diff-compare').addEventListener('click', compare);
 
@@ -108,17 +238,36 @@
         var tmp = orig.value;
         orig.value = mod.value;
         mod.value = tmp;
+        autoResize(orig); autoResize(mod);
+        lastDiff = null;
         document.getElementById('diff-output').innerHTML = '';
-        document.getElementById('diff-status').textContent = 'Swapped.';
+        document.getElementById('diff-status').textContent = t.swapped;
         document.getElementById('diff-status').className = 'diff-status';
       });
 
       document.getElementById('diff-clear').addEventListener('click', function () {
-        document.getElementById('diff-original').value = '';
-        document.getElementById('diff-modified').value = '';
+        var orig = document.getElementById('diff-original');
+        var mod = document.getElementById('diff-modified');
+        orig.value = ''; mod.value = '';
+        autoResize(orig); autoResize(mod);
+        lastDiff = null;
         document.getElementById('diff-output').innerHTML = '';
         document.getElementById('diff-status').textContent = '';
         document.getElementById('diff-status').className = 'diff-status';
+      });
+
+      document.getElementById('diff-view-unified').addEventListener('click', function () {
+        currentView = 'unified';
+        document.getElementById('diff-view-unified').classList.add('active');
+        document.getElementById('diff-view-side').classList.remove('active');
+        renderOutput();
+      });
+
+      document.getElementById('diff-view-side').addEventListener('click', function () {
+        currentView = 'side';
+        document.getElementById('diff-view-side').classList.add('active');
+        document.getElementById('diff-view-unified').classList.remove('active');
+        renderOutput();
       });
     })();
   </script>
@@ -148,24 +297,55 @@
   .diff-panel textarea {
     width: 100%;
     min-height: 160px;
+    max-height: 500px;
     font-family: var(--font-mono);
     font-size: 0.82rem;
     padding: 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    resize: vertical;
+    resize: none;
+    overflow-y: auto;
     background: var(--color-bg-secondary);
     color: var(--color-text);
+    transition: border-color 0.15s;
   }
   .diff-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
 
-  .diff-actions { display: flex; gap: 0.5rem; }
+  .diff-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+  .diff-view-toggle {
+    display: flex;
+    margin-left: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .diff-view-btn {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.82rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .diff-view-btn:not(:last-child) { border-right: 1px solid var(--color-border); }
+  .diff-view-btn.active {
+    background: var(--color-primary);
+    color: #fff;
+  }
+  .diff-view-btn:hover:not(.active) {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
 
   .diff-status { font-size: 0.85rem; min-height: 1.2rem; }
   .diff-status.success { color: #057a55; }
   .diff-status.error { color: #c0392b; }
   .diff-status.info { color: var(--color-primary); }
 
+  /* ── Unified output ── */
   .diff-output {
     font-family: var(--font-mono);
     font-size: 0.82rem;
@@ -179,9 +359,7 @@
     display: flex;
     align-items: flex-start;
     min-height: 1.6rem;
-    padding: 0.15rem 0;
   }
-
   .diff-line:not(:last-child) { border-bottom: 1px solid var(--color-bg-secondary); }
 
   .diff-equal { background: var(--color-bg); }
@@ -189,11 +367,11 @@
   .diff-add { background: #f0fff4; }
 
   .diff-ln {
-    min-width: 38px;
+    min-width: 36px;
     text-align: right;
-    padding: 0 0.5rem;
+    padding: 0 0.4rem;
     color: var(--color-text-muted);
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     user-select: none;
     flex-shrink: 0;
     line-height: 1.6rem;
@@ -201,7 +379,7 @@
   }
 
   .diff-marker {
-    width: 20px;
+    width: 18px;
     text-align: center;
     flex-shrink: 0;
     font-weight: 700;
@@ -215,24 +393,87 @@
     padding: 0 0.5rem;
     white-space: pre;
     line-height: 1.6rem;
+    overflow-x: auto;
   }
   .diff-del .diff-text { color: #c0392b; }
   .diff-add .diff-text { color: #057a55; }
 
   .diff-empty { padding: 1.5rem; text-align: center; color: var(--color-text-muted); }
 
+  /* ── Side-by-Side output ── */
+  .diff-sbs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-width: 0;
+  }
+
+  .diff-sbs-panel {
+    overflow-x: auto;
+    min-width: 0;
+  }
+  .diff-sbs-orig { border-right: 1px solid var(--color-border); }
+
+  .diff-sbs-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.3rem 0.5rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    border-bottom: 1px solid var(--color-border);
+    position: sticky;
+    top: 0;
+  }
+
+  .diff-sbs-line {
+    display: flex;
+    align-items: flex-start;
+    min-height: 1.6rem;
+  }
+  .diff-sbs-line:not(:last-child) { border-bottom: 1px solid var(--color-bg-secondary); }
+  .diff-sbs-line.diff-equal { background: var(--color-bg); }
+  .diff-sbs-line.diff-del { background: #fff0f0; }
+  .diff-sbs-line.diff-add { background: #f0fff4; }
+  .diff-sbs-line.diff-empty-row { background: var(--color-bg-secondary); opacity: 0.5; }
+  .diff-sbs-line.diff-del .diff-marker { color: #c0392b; }
+  .diff-sbs-line.diff-add .diff-marker { color: #057a55; }
+  .diff-sbs-line.diff-del .diff-text { color: #c0392b; }
+  .diff-sbs-line.diff-add .diff-text { color: #057a55; }
+
+  @media (max-width: 640px) {
+    .diff-sbs { grid-template-columns: 1fr; }
+    .diff-sbs-orig { border-right: none; border-bottom: 1px solid var(--color-border); }
+    .diff-view-toggle { margin-left: 0; }
+  }
+
+  /* ── Dark mode ── */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .diff-status.success { color: #34d399; }
     :root:not([data-theme="light"]) .diff-status.error { color: #f87171; }
-    :root:not([data-theme="light"]) .diff-del { background: rgba(239, 68, 68, 0.15); }
-    :root:not([data-theme="light"]) .diff-add { background: rgba(34, 197, 94, 0.15); }
-    :root:not([data-theme="light"]) .diff-del .diff-marker, :root:not([data-theme="light"]) .diff-del .diff-text { color: #f87171; }
-    :root:not([data-theme="light"]) .diff-add .diff-marker, :root:not([data-theme="light"]) .diff-add .diff-text { color: #34d399; }
+    :root:not([data-theme="light"]) .diff-del,
+    :root:not([data-theme="light"]) .diff-sbs-line.diff-del { background: rgba(239, 68, 68, 0.15); }
+    :root:not([data-theme="light"]) .diff-add,
+    :root:not([data-theme="light"]) .diff-sbs-line.diff-add { background: rgba(34, 197, 94, 0.15); }
+    :root:not([data-theme="light"]) .diff-del .diff-marker,
+    :root:not([data-theme="light"]) .diff-del .diff-text,
+    :root:not([data-theme="light"]) .diff-sbs-line.diff-del .diff-marker,
+    :root:not([data-theme="light"]) .diff-sbs-line.diff-del .diff-text { color: #f87171; }
+    :root:not([data-theme="light"]) .diff-add .diff-marker,
+    :root:not([data-theme="light"]) .diff-add .diff-text,
+    :root:not([data-theme="light"]) .diff-sbs-line.diff-add .diff-marker,
+    :root:not([data-theme="light"]) .diff-sbs-line.diff-add .diff-text { color: #34d399; }
   }
   [data-theme="dark"] .diff-status.success { color: #34d399; }
   [data-theme="dark"] .diff-status.error { color: #f87171; }
-  [data-theme="dark"] .diff-del { background: rgba(239, 68, 68, 0.15); }
-  [data-theme="dark"] .diff-add { background: rgba(34, 197, 94, 0.15); }
-  [data-theme="dark"] .diff-del .diff-marker, [data-theme="dark"] .diff-del .diff-text { color: #f87171; }
-  [data-theme="dark"] .diff-add .diff-marker, [data-theme="dark"] .diff-add .diff-text { color: #34d399; }
+  [data-theme="dark"] .diff-del,
+  [data-theme="dark"] .diff-sbs-line.diff-del { background: rgba(239, 68, 68, 0.15); }
+  [data-theme="dark"] .diff-add,
+  [data-theme="dark"] .diff-sbs-line.diff-add { background: rgba(34, 197, 94, 0.15); }
+  [data-theme="dark"] .diff-del .diff-marker,
+  [data-theme="dark"] .diff-del .diff-text,
+  [data-theme="dark"] .diff-sbs-line.diff-del .diff-marker,
+  [data-theme="dark"] .diff-sbs-line.diff-del .diff-text { color: #f87171; }
+  [data-theme="dark"] .diff-add .diff-marker,
+  [data-theme="dark"] .diff-add .diff-text,
+  [data-theme="dark"] .diff-sbs-line.diff-add .diff-marker,
+  [data-theme="dark"] .diff-sbs-line.diff-add .diff-text { color: #34d399; }
 </style>
