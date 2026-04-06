@@ -1,0 +1,193 @@
+---
+title: "在线 URL 解析器：一键拆解 URL 结构，解码查询参数"
+description: "在线解析任意 URL，拆分协议、域名、端口、路径、查询参数、Fragment，百分比编码自动解码。API 调试、重定向排查必备工具。"
+pubDate: 2026-04-06
+lang: "zh"
+translationSlug: "url-parser-guide"
+tags: ["url解析", "url parser", "查询参数", "百分比编码", "开发工具"]
+ogImage: /og/blog-url-parser-guide-zh.png
+---
+
+URL 看起来简单，直到你遇到这种：`https://api.example.com:8443/v2/search?q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid#results`。你需要知道每个部分在干什么，而在脑子里手动解码百分比编码根本不现实。URL 解析器把它拆开，让你清楚看到每一个组件。
+
+## URL 结构解析
+
+每个 URL 都遵循 RFC 3986 定义的标准结构：
+
+```
+scheme://[userinfo@]host[:port]/path[?query][#fragment]
+```
+
+以上面的例子为例，各组件对应关系：
+
+| 组件 | 值 |
+|------|-----|
+| Scheme（协议） | `https` |
+| Host（主机） | `api.example.com` |
+| Port（端口） | `8443` |
+| Path（路径） | `/v2/search` |
+| Query string（查询字符串） | `q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid` |
+| Fragment（片段） | `results` |
+
+**[使用 ZeroTool URL 解析器 →](/tools/url-parser)**
+
+粘贴任意 URL，立即看到每个组件的解析结果：协议、主机、端口、路径段、解码后的查询参数、Fragment。百分比编码自动解码，无需手动换算。
+
+## 各组件详解
+
+### Scheme（协议）
+
+常用协议：
+
+| Scheme | 用途 |
+|--------|------|
+| `https` | 加密 HTTP |
+| `http` | 明文 HTTP（生产环境避免使用） |
+| `ws` / `wss` | WebSocket |
+| `ftp` | 文件传输 |
+| `mailto` | 邮件链接 |
+| `data` | 内联数据 URI |
+| `blob` | 浏览器对象 URL |
+
+### Authority：userinfo、host、port
+
+Authority 格式：`[userinfo@]host[:port]`
+
+**Userinfo**（`user:password@host`）现代 URL 中几乎不用，且有安全风险——凭证写在 URL 里会被记录进服务器日志。
+
+**Host** 可以是域名、IPv4 地址，或 IPv6 地址（需要中括号：`[::1]`）。解析器会分解子域名结构——`api.v2.example.com` 的子域名是 `api.v2`，主域名是 `example.com`，TLD 是 `.com`。
+
+**Port** 可省略。省略时使用默认端口：HTTPS 为 443，HTTP 为 80。显式写出默认端口（HTTPS 上的 `:443`）合法但冗余。
+
+### Path（路径）
+
+路径标识资源，以 `/` 分隔各段。末尾斜杠有意义——`/api/users` 和 `/api/users/` 在某些框架里路由结果不同。
+
+路径参数（如 `/users/:id` 里的 `:id`）不是 URL 规范的一部分，而是路由层的约定。URL 解析器显示的是字面路径，路由器负责解释模式。
+
+### Query String（查询字符串）
+
+`?` 之后、`#` 之前的所有内容，是 `key=value` 对的序列，以 `&` 分隔。
+
+**百分比编码**：URL 中不允许出现的字符用 `%XX` 编码，`XX` 是十六进制码值：
+
+| 字符 | 编码 |
+|------|------|
+| 空格 | `%20` 或 `+` |
+| `[` | `%5B` |
+| `]` | `%5D` |
+| `#` | `%23` |
+| `@` | `%40` |
+| `/` | `%2F` |
+
+空格用 `+` 编码是 HTML 表单（`application/x-www-form-urlencoded`）的历史遗留；现代 API 推荐统一用 `%20`。
+
+**重复键**：`filter%5B%5D=active&filter%5B%5D=paid` 解码后是 `filter[]=active&filter[]=paid`。PHP、Rails 等框架把重复键解释为数组。好的解析器会把同名键的所有值都列出来。
+
+### Fragment（片段）
+
+Fragment（`#results`）**不会发送到服务器**，完全由浏览器处理，通常用于滚动到页面中对应 ID 的元素。SPA 使用 Hash 路由时，Fragment 承担前端路由功能。
+
+## 什么时候需要 URL 解析器
+
+### API 调试
+
+从 Network Inspector 复制了一个 URL，查询参数带编码，还有个不常见的端口，最后的 `#` 不确定是 Fragment 还是手滑多打了一个字符。粘贴进解析器，一目了然。
+
+### 重定向链分析
+
+排查重定向链时，每个 URL 都有参数，需要逐一比对。解析每个 URL 让差异立刻变得显眼。
+
+### 安全审查
+
+长 URL 里有时藏着凭证、内部主机名或编码后的 payload。解析后可以直接看到查询参数里的 `token=eyJ...` 或 userinfo 里的 `admin:password@internal.host`。
+
+### 代码里构造 URL
+
+理解各组件的正确编码方式，避免拼接 URL 时出 bug：
+
+```javascript
+// 错误——查询值需要编码
+const url = `https://api.example.com/search?q=${userInput}`;
+
+// 正确——URL API 自动处理编码
+const url = new URL('https://api.example.com/search');
+url.searchParams.set('q', userInput);
+```
+
+## 代码里解析 URL
+
+### JavaScript（浏览器 + Node.js）
+
+现代环境都内置了 `URL` API：
+
+```javascript
+const url = new URL('https://api.example.com:8443/v2/search?q=hello+world&page=1#results');
+
+console.log(url.protocol);   // "https:"
+console.log(url.hostname);   // "api.example.com"
+console.log(url.port);       // "8443"
+console.log(url.pathname);   // "/v2/search"
+console.log(url.hash);       // "#results"
+
+// 查询参数
+url.searchParams.get('q');           // "hello world"（已解码）
+url.searchParams.get('page');        // "1"
+url.searchParams.getAll('filter[]'); // ["active", "paid"]
+```
+
+### Python
+
+```python
+from urllib.parse import urlparse, parse_qs
+
+raw = "https://api.example.com:8443/v2/search?q=hello+world&page=1&filter[]=active&filter[]=paid#results"
+
+parsed = urlparse(raw)
+print(parsed.scheme)    # https
+print(parsed.hostname)  # api.example.com
+print(parsed.port)      # 8443
+print(parsed.path)      # /v2/search
+print(parsed.fragment)  # results
+
+params = parse_qs(parsed.query)
+print(params['q'])          # ['hello world']
+print(params['filter[]'])   # ['active', 'paid']
+```
+
+### Go
+
+```go
+import (
+    "fmt"
+    "net/url"
+)
+
+func main() {
+    raw := "https://api.example.com:8443/v2/search?q=hello+world&page=1#results"
+    u, _ := url.Parse(raw)
+
+    fmt.Println(u.Scheme)          // https
+    fmt.Println(u.Hostname())      // api.example.com
+    fmt.Println(u.Port())          // 8443
+    fmt.Println(u.Path)            // /v2/search
+    fmt.Println(u.Fragment)        // results
+    fmt.Println(u.Query().Get("q")) // hello world
+}
+```
+
+## 常见 URL 错误
+
+**二次编码**：对已经编码的 URL 再编码。`%20` 变成 `%2520`（`%25` 是 `%`，所以 `%2520` 解码后是 `%20` 而非空格）。永远对原始值编码，不要对已经编码的字符串再编码。
+
+**以为 Fragment 会到达服务器**：Fragment 是纯客户端的，服务器永远看不到它。
+
+**假设查询参数有顺序**：URL 规范不保证查询参数的顺序。不要编写依赖 `a=1&b=2` vs `b=2&a=1` 顺序的逻辑。
+
+**端口比较遗漏**：`https://example.com` 和 `https://example.com:443` 是同一个 URL，但字符串比较显示不同。
+
+## 小结
+
+URL 解析是 API 对接、调试和安全审查中的高频需求。理解各组件的结构——协议、主机、路径、查询、Fragment——以及它们各自的编码规则，能有效预防 bug，节省排查时间。
+
+**[在线解析 URL，拆解每个组件，百分比编码自动解码 →](/tools/url-parser)**

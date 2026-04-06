@@ -1,0 +1,199 @@
+---
+title: "URL Parser Online: Decode and Inspect Any URL Instantly"
+description: "Parse any URL into its components — protocol, host, path, query params, and fragment. Free online URL parser for API debugging, redirect tracing, and web development."
+pubDate: 2026-04-06
+lang: "en"
+translationSlug: "url-parser-guide-zh"
+tags: ["url parser", "parse url", "url decoder", "query string", "developer-tools"]
+ogImage: /og/blog-url-parser-guide.png
+---
+
+A URL looks simple. Then you see one like `https://api.example.com:8443/v2/search?q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid#results` and suddenly you need to know exactly what each part is doing. A URL parser breaks it apart so you can inspect every component without manually decoding percent-encoding in your head.
+
+## URL Anatomy
+
+Every URL follows a standard structure defined by RFC 3986:
+
+```
+scheme://[userinfo@]host[:port]/path[?query][#fragment]
+```
+
+Breaking down our example:
+
+| Component | Value |
+|-----------|-------|
+| Scheme | `https` |
+| Host | `api.example.com` |
+| Port | `8443` |
+| Path | `/v2/search` |
+| Query string | `q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid` |
+| Fragment | `results` |
+
+**[Parse any URL instantly with ZeroTool →](/tools/url-parser)**
+
+Paste a URL and see every component broken out: scheme, authority, host, port, path segments, decoded query parameters, and fragment. Query parameters with percent-encoding are decoded automatically.
+
+## Component Deep Dive
+
+### Scheme
+
+The scheme specifies the protocol. Common schemes:
+
+| Scheme | Usage |
+|--------|-------|
+| `https` | Secure HTTP |
+| `http` | Unencrypted HTTP (avoid in production) |
+| `ws` / `wss` | WebSocket |
+| `ftp` | File transfer |
+| `mailto` | Email links |
+| `data` | Inline data URIs |
+| `blob` | Browser object URLs |
+
+### Authority: userinfo, host, port
+
+The authority component is `[userinfo@]host[:port]`.
+
+**Userinfo** (`user:password@host`) is rarely used in modern URLs and considered a security risk — credentials in URLs end up in server logs.
+
+**Host** can be a domain name, an IPv4 address, or an IPv6 address (brackets required: `[::1]`). The parser resolves subdomain structure — `api.v2.example.com` has subdomain `api.v2`, domain `example.com`, TLD `.com`.
+
+**Port** is optional. When omitted, the default is implied: 443 for HTTPS, 80 for HTTP. Explicitly specifying the default port (`:443` on HTTPS) is valid but redundant.
+
+### Path
+
+The path identifies the resource. Path segments are separated by `/`. Leading and trailing slashes are significant — `/api/users` and `/api/users/` may route differently in some frameworks.
+
+Path parameters (`:id` in `/users/:id`) are not part of the URL spec — they are routing conventions. A URL parser shows the literal path; your router interprets the pattern.
+
+### Query String
+
+The query string is everything after `?` and before `#`. It is a sequence of `key=value` pairs separated by `&`.
+
+**Percent-encoding**: characters not allowed in URLs are encoded as `%XX` where `XX` is the hex code. Common examples:
+
+| Character | Encoded |
+|-----------|---------|
+| space | `%20` or `+` |
+| `[` | `%5B` |
+| `]` | `%5D` |
+| `#` | `%23` |
+| `@` | `%40` |
+| `/` | `%2F` |
+| `=` | `%3D` |
+
+The `+` encoding for space is specific to the `application/x-www-form-urlencoded` format (HTML forms). In modern APIs, `%20` is preferred.
+
+**Repeated keys**: `filter%5B%5D=active&filter%5B%5D=paid` decodes to `filter[]=active&filter[]=paid`. PHP, Rails, and many frameworks interpret repeated keys as arrays. A good URL parser surfaces all values for duplicate keys.
+
+### Fragment
+
+The fragment (`#results`) is never sent to the server. It is handled entirely by the browser, typically to scroll to an element with that ID. SPAs use fragments for client-side routing in hash-based routers.
+
+## When You Actually Need a URL Parser
+
+### API Debugging
+
+You copied a URL from a network inspector. It has encoded query params, an unusual port, and you cannot tell if the `#` at the end is a fragment or a typo. Paste it into the parser and see every component clearly.
+
+### Redirect Chain Analysis
+
+You are tracing a redirect chain. Each URL in the chain has parameters and you need to compare them. Parsing each URL makes the differences obvious.
+
+### Security Review
+
+Long URLs sometimes contain credentials, internal hostnames, or encoded payloads in query parameters. Parsing a URL into components makes these visible — you can spot `token=eyJ...` in a query param or `admin:password@internal.host` in the userinfo.
+
+### Building URLs Programmatically
+
+When you need to construct a URL in code, understanding the correct encoding for each component prevents bugs:
+
+```javascript
+// Wrong — query values need encoding
+const url = `https://api.example.com/search?q=${userInput}`;
+
+// Right
+const url = new URL('https://api.example.com/search');
+url.searchParams.set('q', userInput);  // encodes automatically
+```
+
+## URL Parsing in Code
+
+### JavaScript (Browser + Node.js)
+
+The `URL` API is available in all modern environments:
+
+```javascript
+const url = new URL('https://api.example.com:8443/v2/search?q=hello+world&page=1#results');
+
+console.log(url.protocol);   // "https:"
+console.log(url.hostname);   // "api.example.com"
+console.log(url.port);       // "8443"
+console.log(url.pathname);   // "/v2/search"
+console.log(url.hash);       // "#results"
+
+// Query params
+url.searchParams.get('q');           // "hello world" (decoded)
+url.searchParams.get('page');        // "1"
+url.searchParams.getAll('filter[]'); // ["active", "paid"]
+
+// Iterate all params
+for (const [key, value] of url.searchParams) {
+  console.log(key, value);
+}
+```
+
+### Python
+
+```python
+from urllib.parse import urlparse, parse_qs
+
+raw = "https://api.example.com:8443/v2/search?q=hello+world&page=1&filter[]=active&filter[]=paid#results"
+
+parsed = urlparse(raw)
+print(parsed.scheme)    # https
+print(parsed.hostname)  # api.example.com
+print(parsed.port)      # 8443
+print(parsed.path)      # /v2/search
+print(parsed.fragment)  # results
+
+params = parse_qs(parsed.query)
+print(params['q'])       # ['hello world']
+print(params['filter[]']) # ['active', 'paid']
+```
+
+### Go
+
+```go
+import (
+    "fmt"
+    "net/url"
+)
+
+func main() {
+    raw := "https://api.example.com:8443/v2/search?q=hello+world&page=1#results"
+    u, _ := url.Parse(raw)
+
+    fmt.Println(u.Scheme)     // https
+    fmt.Println(u.Hostname()) // api.example.com
+    fmt.Println(u.Port())     // 8443
+    fmt.Println(u.Path)       // /v2/search
+    fmt.Println(u.Fragment)   // results
+    fmt.Println(u.Query().Get("q")) // hello world
+}
+```
+
+## Common URL Mistakes
+
+**Double-encoding**: encoding an already-encoded URL. `%20` becomes `%2520` (`%25` is `%`, so `%2520` decodes to `%20`, not a space). Always encode the raw value, never the already-encoded string.
+
+**Forgetting fragment exclusion**: if your server looks for `#fragment` in the request, it will never find it — fragments are client-only.
+
+**Assuming order**: query parameter order is not guaranteed. Do not build logic that depends on `a=1&b=2` vs `b=2&a=1`.
+
+**Missing port in comparisons**: `https://example.com` and `https://example.com:443` are the same URL, but string comparison says they differ.
+
+## Summary
+
+URL parsing is a frequent need in API work, debugging, and security review. Understanding the structure — scheme, authority, path, query, fragment — and how each component is encoded prevents bugs and saves debugging time.
+
+**[Parse and decode any URL — see every component instantly →](/tools/url-parser)**

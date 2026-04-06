@@ -1,0 +1,231 @@
+---
+title: "JSON to TypeScript Interface Generator: Stop Writing Types by Hand"
+description: "Automatically generate TypeScript interfaces from JSON. Learn how JSON-to-TypeScript tools work, edge cases to watch for, and best practices for type-safe APIs."
+pubDate: 2026-04-06
+lang: "en"
+translationSlug: "json-to-typescript-guide-zh"
+tags: ["typescript", "json to typescript", "typescript interface", "type generation", "developer-tools"]
+ogImage: /og/blog-json-to-typescript-guide.png
+---
+
+You just got a new API response. It's 200 lines of JSON. Now you need TypeScript interfaces so your code is type-safe. You could write them by hand — or you could paste the JSON and get the interfaces generated in two seconds.
+
+## The Problem with Hand-Writing Interfaces
+
+TypeScript interfaces for API responses are tedious to write and easy to get wrong:
+
+- Nested objects require nested interfaces
+- Arrays need correct element typing
+- Optional fields (`?`) are easy to miss
+- You have to guess at `null` vs `undefined` vs missing field behavior
+- When the API changes, you have to update types manually
+
+For a simple response this is manageable. For a response with deeply nested objects, arrays of objects, and nullable fields, it becomes a significant time sink.
+
+## What a JSON-to-TypeScript Generator Does
+
+The generator reads your JSON and produces TypeScript interfaces. Given this JSON:
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "roles": ["admin", "editor"],
+    "preferences": {
+      "theme": "dark",
+      "notifications": true
+    },
+    "lastLogin": null
+  },
+  "pagination": {
+    "page": 1,
+    "perPage": 20,
+    "total": 143
+  }
+}
+```
+
+It generates:
+
+```typescript
+interface Preferences {
+  theme: string;
+  notifications: boolean;
+}
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  roles: string[];
+  preferences: Preferences;
+  lastLogin: null;
+}
+
+interface Pagination {
+  page: number;
+  perPage: number;
+  total: number;
+}
+
+interface Root {
+  user: User;
+  pagination: Pagination;
+}
+```
+
+**[Try the ZeroTool JSON to TypeScript Generator →](/tools/json-to-typescript)**
+
+Paste your JSON, get TypeScript interfaces instantly. No install required — everything runs in your browser, so sensitive API responses stay private.
+
+## How Type Inference Works
+
+The generator maps JSON types to TypeScript types:
+
+| JSON | TypeScript |
+|------|-----------|
+| `"string"` | `string` |
+| `42` | `number` |
+| `true` / `false` | `boolean` |
+| `null` | `null` (or `T \| null` with context) |
+| `[1, 2, 3]` | `number[]` |
+| `[{…}, {…}]` | `InterfaceName[]` |
+| `{}` | Named interface |
+
+### Handling Arrays
+
+For arrays of objects, the generator unions all keys across every element to ensure no field is missed. If element 0 has `name` but element 1 does not, the generated interface marks `name` as optional:
+
+```typescript
+interface Item {
+  id: number;
+  name?: string;   // not present in all elements
+}
+```
+
+### Handling null and Mixed Types
+
+`null` values are tricky — the generator does not know if a field is always nullable or sometimes has a value. Two common strategies:
+
+**Conservative**: mark as `T | null` when the sample value is `null`.
+
+**Optimistic**: mark as `string | null` if the field name suggests a string type.
+
+Our generator uses the conservative approach: `lastLogin: null`. You can refine to `lastLogin: string | null` after reviewing the API docs.
+
+## Edge Cases to Watch For
+
+### Date Strings
+
+JSON has no native date type. Timestamps come as strings (`"2026-04-06T09:10:00Z"`) or numbers (Unix epoch). The generator types these as `string` or `number`. If you want proper Date typing:
+
+```typescript
+// Generated
+lastLogin: string;
+
+// Refined
+lastLogin: string;  // ISO 8601 — convert with new Date(lastLogin)
+```
+
+### Discriminated Unions
+
+If your API returns polymorphic shapes based on a `type` field:
+
+```json
+{"type": "text", "content": "hello"}
+{"type": "image", "url": "...", "alt": "..."}
+```
+
+The generator produces a union of all possible keys — you will want to refine this into a proper discriminated union:
+
+```typescript
+type Message =
+  | { type: "text"; content: string }
+  | { type: "image"; url: string; alt: string };
+```
+
+### Empty Arrays
+
+`[]` in JSON gives no element type information. The generator produces `unknown[]` or `any[]`. You will need to supply the element type manually.
+
+## Integration Patterns
+
+### From a Live API Endpoint
+
+```bash
+curl https://api.example.com/users/1 | pbcopy
+# Then paste into the generator
+```
+
+Or fetch directly in Node.js and log the response for copying.
+
+### From Swagger / OpenAPI
+
+If your API has an OpenAPI spec, use `openapi-typescript` for production-grade type generation with full schema support:
+
+```bash
+npx openapi-typescript https://petstore.swagger.io/v2/swagger.json -o ./types/petstore.ts
+```
+
+The browser generator is ideal for quick exploration, prototyping, and one-off API integrations. For production codebases with a stable API contract, consider schema-driven generation.
+
+### zod Schema Generation
+
+If you prefer runtime validation alongside TypeScript types, paste the JSON into the generator and then adapt the output for Zod:
+
+```typescript
+// From generator
+interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+// Manual Zod adaptation
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+type User = z.infer<typeof UserSchema>;
+```
+
+## TypeScript Interface vs Type Alias
+
+Both work for describing object shapes:
+
+```typescript
+// Interface
+interface User {
+  id: number;
+  name: string;
+}
+
+// Type alias
+type User = {
+  id: number;
+  name: string;
+};
+```
+
+Interfaces support declaration merging (you can reopen them in multiple files). Type aliases are more flexible for unions and computed types. For simple API response shapes, either works; the generator uses `interface` by default.
+
+## Privacy Note
+
+Many JSON payloads contain sensitive data — API keys, PII, internal IDs. The ZeroTool JSON-to-TypeScript generator runs entirely in your browser. Your data is never sent to a server. You can verify this by checking the network tab — no requests are made when you click Generate.
+
+## Summary
+
+Hand-writing TypeScript interfaces from JSON is repetitive work that a tool should do. The generator handles nested objects, arrays, and nullable fields accurately. After generating, review and refine:
+
+- Change `null` types to `T | null` where appropriate
+- Replace `unknown[]` with the correct element type
+- Add discriminated unions for polymorphic responses
+- Annotate date strings with comments
+
+**[Generate TypeScript interfaces from JSON instantly →](/tools/json-to-typescript)**

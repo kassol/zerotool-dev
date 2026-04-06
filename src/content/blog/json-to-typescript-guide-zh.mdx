@@ -1,0 +1,213 @@
+---
+title: "JSON 转 TypeScript 接口生成器：告别手写类型"
+description: "一键将 JSON 转换为 TypeScript 接口，深度讲解类型推断原理、边界情况处理和生产环境最佳实践。免安装，数据不离开浏览器。"
+pubDate: 2026-04-06
+lang: "zh"
+translationSlug: "json-to-typescript-guide"
+tags: ["typescript", "json转typescript", "typescript接口", "类型生成", "开发工具"]
+ogImage: /og/blog-json-to-typescript-guide-zh.png
+---
+
+对接新的 API，拿到 200 行 JSON。下一步：写 TypeScript 接口，让代码有类型保护。手写？或者粘贴进去，两秒出结果。
+
+## 为什么手写接口是个坑
+
+API 响应的 TypeScript 接口手写起来既枯燥又容易出错：
+
+- 嵌套对象需要嵌套接口
+- 数组要写对元素类型
+- 可选字段（`?`）容易遗漏
+- `null` 和 `undefined` 难以区分
+- API 变更后要同步更新类型，靠人工维护
+
+结构简单的响应还好说。一旦遇到深层嵌套、对象数组、nullable 字段同时存在的场景，手写类型就成了真正的时间黑洞。
+
+## 生成器做了什么
+
+生成器读取你的 JSON，自动推导并输出 TypeScript 接口。以这段 JSON 为例：
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "张三",
+    "email": "zhangsan@example.com",
+    "roles": ["admin", "editor"],
+    "preferences": {
+      "theme": "dark",
+      "notifications": true
+    },
+    "lastLogin": null
+  },
+  "pagination": {
+    "page": 1,
+    "perPage": 20,
+    "total": 143
+  }
+}
+```
+
+生成结果：
+
+```typescript
+interface Preferences {
+  theme: string;
+  notifications: boolean;
+}
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  roles: string[];
+  preferences: Preferences;
+  lastLogin: null;
+}
+
+interface Pagination {
+  page: number;
+  perPage: number;
+  total: number;
+}
+
+interface Root {
+  user: User;
+  pagination: Pagination;
+}
+```
+
+**[使用 ZeroTool JSON 转 TypeScript 生成器 →](/tools/json-to-typescript)**
+
+粘贴 JSON，立即得到 TypeScript 接口。所有计算在浏览器本地完成，敏感的 API 响应数据不会上传到任何服务器。
+
+## 类型推断逻辑
+
+生成器按如下规则映射 JSON 类型：
+
+| JSON 值 | TypeScript 类型 |
+|---------|----------------|
+| `"字符串"` | `string` |
+| `42` | `number` |
+| `true` / `false` | `boolean` |
+| `null` | `null` |
+| `[1, 2, 3]` | `number[]` |
+| `[{…}, {…}]` | `InterfaceName[]` |
+| `{}` | 命名接口 |
+
+### 数组对象的处理
+
+生成器会合并数组中所有元素的字段。如果第 0 个元素有 `name` 字段，第 1 个没有，生成的接口会将 `name` 标记为可选：
+
+```typescript
+interface Item {
+  id: number;
+  name?: string;   // 不是所有元素都有此字段
+}
+```
+
+### null 值的处理
+
+`null` 值是个难题——生成器无法从样本数据判断该字段是否"有时为 null，有时有值"。生成器采用保守策略，直接标注为 `null` 类型，你可以根据 API 文档手动调整为 `string | null`。
+
+## 常见边界情况
+
+### 日期字符串
+
+JSON 没有原生日期类型。时间戳通常是字符串（`"2026-04-06T09:10:00Z"`）或数字（Unix 时间戳）。生成器会推断为 `string` 或 `number`——在代码中使用时记得转换：
+
+```typescript
+// 生成结果
+lastLogin: string;
+
+// 使用时
+const date = new Date(user.lastLogin);
+```
+
+### 多态响应（Discriminated Union）
+
+如果 API 根据 `type` 字段返回不同结构：
+
+```json
+{"type": "text", "content": "hello"}
+{"type": "image", "url": "...", "alt": "..."}
+```
+
+生成器会把所有字段合并，你需要手动改写为判别联合类型：
+
+```typescript
+type Message =
+  | { type: "text"; content: string }
+  | { type: "image"; url: string; alt: string };
+```
+
+### 空数组
+
+`[]` 没有元素信息，生成器输出 `unknown[]`，需要手动补充元素类型。
+
+## 集成实践
+
+### 从线上 API 获取
+
+```bash
+curl https://api.example.com/users/1 | pbcopy
+# 粘贴到生成器
+```
+
+### 生产环境：OpenAPI 驱动
+
+如果 API 有 OpenAPI/Swagger 规格文档，使用 `openapi-typescript` 做生产级类型生成：
+
+```bash
+npx openapi-typescript https://api.example.com/openapi.json -o ./types/api.ts
+```
+
+浏览器生成器适合快速探索和一次性集成；稳定的生产 API 建议走 schema 驱动的自动化方案。
+
+### 配合 Zod 做运行时校验
+
+生成接口后，可以改写为 Zod schema 同时获得运行时校验能力：
+
+```typescript
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+type User = z.infer<typeof UserSchema>;
+```
+
+这样类型定义和运行时校验共用同一份代码，改一处全部更新。
+
+## interface 还是 type？
+
+两者都能描述对象结构：
+
+```typescript
+// Interface（可重新声明合并）
+interface User {
+  id: number;
+  name: string;
+}
+
+// Type alias（支持联合类型等高级用法）
+type User = {
+  id: number;
+  name: string;
+};
+```
+
+对于 API 响应这类简单对象，两者没有本质区别。生成器默认使用 `interface`，符合 TypeScript 官方推荐。
+
+## 小结
+
+手写 JSON 类型是重复劳动，让工具来做。生成器能处理嵌套对象、对象数组和 nullable 字段。生成后记得审查并完善：
+
+- 将 `null` 类型改为 `T | null`
+- 补充空数组的元素类型
+- 日期字符串加注释说明格式
+- 多态响应改写为判别联合类型
+
+**[在线生成 TypeScript 接口，数据不离开浏览器 →](/tools/json-to-typescript)**
