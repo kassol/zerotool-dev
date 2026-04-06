@@ -1,0 +1,169 @@
+---
+title: "URL Slug Generator: How to Slugify Strings for SEO-Friendly URLs"
+description: "Learn what URL slugs are, why they matter for SEO, and how to slugify any string online — including Unicode, spaces, and special characters."
+pubDate: 2026-04-06
+lang: "en"
+translationSlug: "slugify-guide-zh"
+tags: ["slugify", "url-slug", "seo", "developer-tools"]
+ogImage: /og/blog-slugify-guide.png
+---
+
+A URL slug is the human-readable part of a URL that identifies a specific page. Getting slugs right matters for SEO, readability, and link stability. This guide explains how slug generation works, covers edge cases like Unicode characters, and shows you how to slugify strings programmatically.
+
+## What Is a URL Slug?
+
+In a URL like `https://example.com/blog/how-to-slugify-a-string`, the slug is `how-to-slugify-a-string`. Slugs are:
+
+- Lowercase
+- Hyphen-separated (no spaces or underscores)
+- Free of special characters (`!`, `@`, `#`, etc.)
+- Short and descriptive
+
+Good slugs improve click-through rates because they signal relevance before a user even visits the page.
+
+## Why Slugs Matter for SEO
+
+Search engines read URL structure. A URL like `/product/1234` tells Google nothing; `/product/mechanical-keyboard-rgb` tells it the page is about a specific product. Key rules:
+
+- **Include the primary keyword** in the slug when possible
+- **Keep it short** — Google truncates long URLs in search results
+- **Avoid stop words** like "a", "the", "and" when they add no meaning
+- **Use hyphens, not underscores** — Google treats hyphens as word separators; underscores are treated as word joiners (`this_is_one_word` vs `this-is-two-words`)
+- **Never change slugs after publishing** without a 301 redirect — broken links lose SEO equity
+
+## How Slugification Works
+
+A standard slugify pipeline:
+
+1. **Lowercase** — `"Hello World"` → `"hello world"`
+2. **Normalize Unicode** — decompose characters to base form (`é` → `e` + combining accent)
+3. **Strip non-ASCII or transliterate** — `"café"` → `"cafe"`, `"über"` → `"uber"`
+4. **Replace spaces and separators** with hyphens
+5. **Remove remaining special characters** — only `[a-z0-9-]` survives
+6. **Collapse multiple hyphens** — `"hello--world"` → `"hello-world"`
+7. **Trim leading/trailing hyphens** — `"-hello-"` → `"hello"`
+
+### Example Transformations
+
+| Input | Output |
+|-------|--------|
+| `Hello World` | `hello-world` |
+| `What's New in 2024?` | `whats-new-in-2024` |
+| `café au lait` | `cafe-au-lait` |
+| `C++ Programming` | `c-programming` |
+| `  spaces   everywhere  ` | `spaces-everywhere` |
+| `日本語` | *(removed — no ASCII equivalent)* |
+
+Chinese, Japanese, and other CJK characters are typically removed in basic ASCII-only slugify. For multilingual content, include the language prefix in the URL structure (`/ja/tools/slugify`) rather than trying to romanize CJK.
+
+## Slugify in Code
+
+### JavaScript
+
+```js
+function slugify(text) {
+  return text
+    .normalize('NFD')                         // decompose accented chars
+    .replace(/[\u0300-\u036f]/g, '')          // strip combining accents
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')            // remove non-alphanumeric
+    .replace(/[\s_-]+/g, '-')                 // collapse spaces/hyphens
+    .replace(/^-+|-+$/g, '');                 // trim hyphens
+}
+
+slugify('Hello, World!')        // "hello-world"
+slugify('café au lait')        // "cafe-au-lait"
+slugify('  extra  spaces  ')   // "extra-spaces"
+```
+
+For production use, consider the [`slugify`](https://www.npmjs.com/package/slugify) npm package, which handles a wider range of Unicode transliterations.
+
+### Python
+
+```python
+import re
+import unicodedata
+
+def slugify(text: str) -> str:
+    text = unicodedata.normalize('NFD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_-]+', '-', text)
+    text = re.sub(r'^-+|-+$', '', text)
+    return text
+
+print(slugify('Hello, World!'))   # hello-world
+print(slugify('café au lait'))    # cafe-au-lait
+```
+
+Django ships its own version: `from django.utils.text import slugify`.
+
+### Go
+
+```go
+import (
+    "regexp"
+    "strings"
+    "golang.org/x/text/unicode/norm"
+    "golang.org/x/text/transform"
+)
+
+func slugify(s string) string {
+    // Normalize and strip accents
+    t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
+        return r >= '\u0300' && r <= '\u036f'
+    }))
+    result, _, _ := transform.String(t, s)
+
+    result = strings.ToLower(result)
+    re := regexp.MustCompile(`[^a-z0-9\s-]`)
+    result = re.ReplaceAllString(result, "")
+    re2 := regexp.MustCompile(`[\s-]+`)
+    result = re2.ReplaceAllString(result, "-")
+    return strings.Trim(result, "-")
+}
+```
+
+## Using the Online Slugify Tool
+
+**[Try ZeroTool Slugify →](/tools/slugify)**
+
+Paste any text and get the URL-safe slug instantly. Useful for:
+
+- Generating slugs for blog posts or product pages before publishing
+- Batch-cleaning imported content that has inconsistent naming
+- Verifying that your CMS or framework's built-in slugifier matches your expected output
+- Quick sanity checks during content migrations
+
+No signup, no rate limits — computation runs in the browser.
+
+## Common Edge Cases
+
+### Apostrophes and Possessives
+
+`"John's Guide"` → should become `"johns-guide"`, not `"john-s-guide"`. Strip apostrophes before replacing word separators.
+
+### Numbers and Versions
+
+`"Node.js 20.0"` → `"nodejs-200"` (the dot is stripped). If version numbers matter, use `"node-js-v20"` as your input, or handle dots specially.
+
+### All-Unicode Input
+
+If the entire input is CJK or Arabic, the output will be an empty string after stripping. Always validate that your slug generator produces a non-empty result, and fall back to a numeric ID if needed.
+
+### Trailing Slashes
+
+Some frameworks add trailing slashes (`/blog/my-post/`). Decide on a convention early and enforce it with 301 redirects to avoid duplicate content indexing.
+
+## Slug Best Practices Checklist
+
+- Lowercase, hyphen-separated only
+- Primary keyword included (but not keyword-stuffed)
+- Under 75 characters total
+- No stop words unless they're part of the keyword phrase
+- No dates in slugs (they age poorly and create maintenance burden)
+- 301 redirect any slug changes immediately
+
+**[Generate URL-safe slugs instantly with ZeroTool →](/tools/slugify)**

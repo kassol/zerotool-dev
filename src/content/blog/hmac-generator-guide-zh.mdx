@@ -1,0 +1,213 @@
+---
+title: "HMAC 生成器：SHA-256 消息认证码原理与实战指南"
+description: "深入讲解 HMAC 工作原理、与普通哈希的本质区别，覆盖 Webhook 签名验证、JWT、API 签名等场景，附 Python/JS/Go 代码示例。"
+pubDate: 2026-04-06
+lang: "zh"
+translationSlug: "hmac-generator-guide"
+tags: ["hmac", "hmac-sha256", "消息认证码", "密码学", "开发工具"]
+ogImage: /og/blog-hmac-generator-guide-zh.png
+---
+
+HMAC（基于哈希的消息认证码）解决了普通哈希函数无法解决的问题：同时证明消息**来自可信发送方**且**未被篡改**。调试 Webhook 签名、实现 API 请求签名——这些场景背后都是 HMAC。这篇文章从原理到代码，带你彻底搞清楚 HMAC。
+
+## HMAC 是什么？
+
+HMAC 是将密码学哈希函数与密钥结合的构造方案。给定消息 `M` 和密钥 `K`：
+
+```
+HMAC(K, M) = H((K ⊕ opad) || H((K ⊕ ipad) || M))
+```
+
+其中 `H` 是哈希函数（SHA-256 等），`opad` 和 `ipad` 是固定填充常量，`||` 表示拼接。
+
+通俗来说：**HMAC 把哈希与密钥绑定**。没有密钥就无法重现相同的输出。这是 HMAC 与普通哈希的本质区别：
+
+| | 普通哈希 | HMAC |
+|---|---|---|
+| 需要密钥 | 否 | 是 |
+| 检测篡改 | 是 | 是 |
+| 证明发送方身份 | 否 | 是 |
+| 任何人都能伪造 | 是 | 否 |
+
+## 主要使用场景
+
+### Webhook 签名验证
+
+GitHub、Stripe、微信支付等平台发送 Webhook 时，会用 HMAC-SHA256 对请求体签名。你的服务器收到请求后，用共享密钥重新计算 HMAC，与请求头中的签名对比——匹配则说明消息真实且未被篡改。
+
+```
+X-Hub-Signature-256: sha256=3d23ab...
+```
+
+微信支付的签名验签、支付宝回调签名，本质上都是同一套逻辑的变体。
+
+### API 请求签名（AWS Signature V4）
+
+AWS 用 HMAC-SHA256 对 API 请求签名，将请求绑定到区域、服务、日期和密钥。这防止了请求重放攻击，并确保授权无法伪造。
+
+### JWT 签名（HS256）
+
+使用 `HS256` 算法签名的 JWT，底层就是 HMAC-SHA256。服务端用密钥对 `header.payload` 签名；客户端携带 JWT 请求时，服务端重新计算并验证签名，不匹配则拒绝。
+
+### Cookie 和 Session 完整性
+
+签名 Cookie 使用 HMAC 防止客户端篡改。服务端在 Cookie 值后附加 `HMAC(secret, cookie_value)`，收到请求时重新验证，防止用户伪造权限字段。
+
+## HMAC vs 普通哈希
+
+普通哈希如 `SHA256("hello")` 是公开的——任何人都能计算。HMAC 需要知道密钥，这一点在以下场景中至关重要：
+
+- **Webhook 验证**：没有 HMAC，攻击者可以构造任意内容并让哈希值合法
+- **Token 签名**：没有 HMAC，客户端可以篡改 JWT payload 后重新计算哈希
+
+凡是需要"只有持有密钥的人才能生成"的场景，都应该用 HMAC，而不是普通哈希。性能开销可以忽略不计。
+
+## 支持的算法
+
+| 算法 | 输出长度 | 说明 |
+|------|---------|------|
+| HMAC-SHA-256 | 256 位（64 个十六进制字符） | 绝大多数场景的默认选择 |
+| HMAC-SHA-384 | 384 位（96 个十六进制字符） | 更高安全裕量，稍慢 |
+| HMAC-SHA-512 | 512 位（128 个十六进制字符） | 64 位平台性能更优 |
+
+**避免使用 HMAC-MD5 和 HMAC-SHA1**——虽然 HMAC 构造一定程度上缓解了底层哈希的碰撞漏洞，但这两个算法已被很多合规框架明确禁止，新项目不应使用。
+
+## 输出格式
+
+HMAC 输出是原始字节，通常编码为：
+
+- **十六进制（Hex）** — `3d23ab4f...` — 每字节 2 个字符，绝大多数 API 的标准格式
+- **Base64** — `PSOrT...` — 更紧凑，常用于 HTTP 头和 JWT
+
+两种格式编码的是相同字节。手动调试时用 Hex（可读性好）；注重字节效率时用 Base64。
+
+## 代码实现
+
+### Python
+
+```python
+import hmac
+import hashlib
+
+key = b'my-secret-key'
+message = b'hello world'
+
+# Hex 格式
+signature_hex = hmac.new(key, message, hashlib.sha256).hexdigest()
+print(signature_hex)
+# b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+
+# Base64 格式
+import base64
+signature_b64 = base64.b64encode(hmac.new(key, message, hashlib.sha256).digest()).decode()
+print(signature_b64)
+```
+
+### Node.js
+
+```js
+const crypto = require('crypto');
+
+const signature = crypto.createHmac('sha256', 'my-secret-key')
+  .update('hello world')
+  .digest('hex');
+
+console.log(signature);
+// b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+```
+
+### 浏览器（Web Crypto API）
+
+```js
+async function hmacSha256(key, message) {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
+  return Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+const sig = await hmacSha256('my-secret-key', 'hello world');
+```
+
+### Go
+
+```go
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+)
+
+func main() {
+    mac := hmac.New(sha256.New, []byte("my-secret-key"))
+    mac.Write([]byte("hello world"))
+    fmt.Println(hex.EncodeToString(mac.Sum(nil)))
+}
+```
+
+## Webhook 签名验证的正确姿势
+
+### 用常量时间比较
+
+比较 HMAC 签名时，**必须用常量时间比较函数**，不能用普通的 `==`。普通字符串比较在第一个不匹配字节处短路，会泄露时序信息，可被时序攻击利用。
+
+```python
+# 错误 — 泄露时序信息
+if received_sig == expected_sig:
+    ...
+
+# 正确 — 常量时间比较
+import hmac
+if hmac.compare_digest(received_sig, expected_sig):
+    ...
+```
+
+```js
+// Node.js 正确方式
+const crypto = require('crypto');
+if (crypto.timingSafeEqual(Buffer.from(received), Buffer.from(expected))) {
+    ...
+}
+```
+
+### 加入时间戳防重放
+
+合法的签名可以被截获并重放。在签名负载中包含时间戳，并拒绝超时的请求：
+
+```python
+payload = f"{timestamp}.{body}"
+signature = hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+```
+
+收到请求时验证时间戳在合理范围内（通常 ±5 分钟）。GitHub Webhook 就使用这种模式。
+
+## 在线 HMAC 生成工具
+
+**[使用 ZeroTool HMAC 生成器 →](/tools/hmac-generator)**
+
+输入消息和密钥，选择算法（SHA-256、SHA-384、SHA-512），即时生成 Hex 或 Base64 格式的 HMAC。适用场景：
+
+- 调试 Webhook 签名不匹配，通过复现预期值找到问题所在
+- 验证自己的实现是否与已知测试向量一致
+- 开发时快速生成 API 签名，无需写测试代码
+- 学习和探索 HMAC 的行为特征
+
+所有计算在浏览器本地通过 Web Crypto API 完成，密钥和消息不会离开你的设备。
+
+## 密钥管理要点
+
+- **最小密钥长度**：HMAC-SHA256 至少使用 32 字节（256 位）的密钥。密钥越短，安全性越低。
+- **定期轮换密钥**：很多平台支持短暂的双密钥过渡期，便于无缝轮换。
+- **永远不要记录密钥**：HMAC 密钥是秘密，排除在应用日志和错误报告之外。
+- **不同用途用不同密钥**：Webhook 签名密钥和 JWT 签名密钥应该分开。
+
+**[在线生成和验证 HMAC 签名，浏览器本地运算 →](/tools/hmac-generator)**

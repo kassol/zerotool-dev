@@ -1,0 +1,152 @@
+---
+title: "URL Slug 生成工具：字符串转 SEO 友好链接完全指南"
+description: "深入讲解 URL slug 的生成规则、SEO 意义与中文处理策略，附 Python/JS 代码示例，在线 slugify 工具即用。"
+pubDate: 2026-04-06
+lang: "zh"
+translationSlug: "slugify-guide"
+tags: ["slugify", "url优化", "seo", "开发工具"]
+ogImage: /og/blog-slugify-guide-zh.png
+---
+
+URL slug 是链接中标识页面内容的可读部分。`https://example.com/blog/url-slug-guide` 里的 `url-slug-guide` 就是 slug。一个好的 slug 对 SEO、分享传播和链接维护都有直接影响。这篇文章从规则到代码，帮你彻底搞清楚 slugify。
+
+## 什么是 URL Slug？
+
+Slug 是 URL 路径的最后一段，通常用来描述页面内容。标准 slug 的特征：
+
+- 全小写
+- 单词之间用连字符（`-`）分隔
+- 不含空格、中文、特殊符号
+- 简短且具描述性
+
+和数字 ID（`/product/1234`）相比，语义化 slug（`/product/mechanical-keyboard-rgb`）让搜索引擎和用户都能在点击前就预判页面内容。
+
+## Slug 对 SEO 的意义
+
+Google 会读取 URL 结构作为相关性信号。几条关键原则：
+
+- **在 slug 里包含核心关键词**，但不要堆砌
+- **保持简短** — 超过 75 个字符后 Google 会在搜索结果中截断 URL
+- **用连字符，不用下划线** — Google 把连字符当词语分隔符，把下划线当词语连接符（`two_words` 等同于一个词 `twowords`）
+- **发布后不要随意修改 slug** — 必须改时立即做 301 重定向，否则会损失外链权重
+
+## Slugify 的处理流程
+
+标准 slugify 管道分七步：
+
+1. **转小写** — `"Hello World"` → `"hello world"`
+2. **Unicode 规范化** — 把带重音字符分解为基础字符+组合符（`é` → `e` + 组合符）
+3. **去除非 ASCII 或音译** — `"café"` → `"cafe"`，`"über"` → `"uber"`
+4. **空格和分隔符替换为连字符**
+5. **去除剩余特殊字符** — 只保留 `[a-z0-9-]`
+6. **合并连续连字符** — `"hello--world"` → `"hello-world"`
+7. **去除首尾连字符** — `"-hello-"` → `"hello"`
+
+### 转换示例
+
+| 输入 | 输出 |
+|------|------|
+| `Hello World` | `hello-world` |
+| `What's New in 2024?` | `whats-new-in-2024` |
+| `café au lait` | `cafe-au-lait` |
+| `C++ Programming` | `c-programming` |
+| `  多余空格  ` | *(取决于 Unicode 处理策略)* |
+| `日本語` | *(纯 ASCII 模式下被移除)* |
+
+**中文和 CJK 字符**：基础 slugify 实现通常直接移除中文字符（无法音译为有意义的 ASCII）。处理中文内容的正确策略是在 URL 结构中通过语言前缀区分（`/zh/tools/slugify`），而不是强行把中文转成拼音。
+
+## 代码实现
+
+### JavaScript
+
+```js
+function slugify(text) {
+  return text
+    .normalize('NFD')                         // 分解重音字符
+    .replace(/[\u0300-\u036f]/g, '')          // 去除组合音调符
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')            // 移除非字母数字
+    .replace(/[\s_-]+/g, '-')                 // 合并空格/连字符
+    .replace(/^-+|-+$/g, '');                 // 去除首尾连字符
+}
+
+slugify('Hello, World!')        // "hello-world"
+slugify('café au lait')        // "cafe-au-lait"
+slugify('  多余空格  ')         // "" （中文被移除）
+```
+
+生产环境建议使用 [`slugify`](https://www.npmjs.com/package/slugify) npm 包，对更多 Unicode 字符有音译支持（如德语、法语、俄语等）。
+
+### Python
+
+```python
+import re
+import unicodedata
+
+def slugify(text: str) -> str:
+    text = unicodedata.normalize('NFD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_-]+', '-', text)
+    text = re.sub(r'^-+|-+$', '', text)
+    return text
+
+print(slugify('Hello, World!'))   # hello-world
+print(slugify('café au lait'))    # cafe-au-lait
+```
+
+Django 内置了 `from django.utils.text import slugify`，行为与上面类似。
+
+### PHP（Laravel）
+
+```php
+use Illuminate\Support\Str;
+
+Str::slug('Hello World')        // "hello-world"
+Str::slug('café au lait')      // "cafe-au-lait"
+Str::slug('C++ Programming')   // "c-programming"
+```
+
+## 在线 Slugify 工具
+
+**[使用 ZeroTool Slugify 工具 →](/tools/slugify)**
+
+粘贴任意文本，即时生成 URL 安全的 slug。适用场景：
+
+- 写博客/做电商前快速生成文章或产品 slug
+- 内容迁移时批量校验旧链接的命名规范
+- 验证 CMS 内置 slugify 行为是否符合预期
+- 排查因 slug 规则不一致导致的 404 问题
+
+浏览器本地运算，无需上传数据。
+
+## 常见边界情况
+
+### 撇号和所有格
+
+`"John's Guide"` 应该变成 `"johns-guide"` 而不是 `"john-s-guide"`。处理方式：在替换词语分隔符之前先去掉撇号。
+
+### 版本号中的点
+
+`"Node.js 20.0"` → `"nodejs-200"`（点被去掉了）。如果版本号很重要，建议在输入时就用 `"node-js-v20"` 这样的格式，或者对点做特殊处理保留为连字符。
+
+### 全 Unicode 输入导致空 slug
+
+如果输入全是中文或其他非 ASCII 字符，经过 ASCII 化处理后结果可能是空字符串。务必对 slug 生成结果做非空校验，为空时降级到数字 ID。
+
+### 重复 slug 处理
+
+同一个站点里如果有多篇文章标题相同，会产生重复 slug。通常的解决方案是追加数字后缀：`my-post`、`my-post-2`、`my-post-3`。
+
+## Slug 最佳实践清单
+
+- 全小写、只用连字符分隔
+- 包含核心关键词，但不堆砌
+- 总长度控制在 75 字符以内
+- 不加日期（会随时间失效，增加维护成本）
+- 发布后变更 slug 必须配合 301 重定向
+- 中文站点：URL 路径用语言前缀（`/zh/`）隔离，slug 保持英文或拼音
+
+**[在线转换 URL Slug，浏览器本地运行 →](/tools/slugify)**

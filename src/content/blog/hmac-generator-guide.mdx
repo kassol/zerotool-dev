@@ -1,0 +1,200 @@
+---
+title: "HMAC Generator Online: SHA-256 Message Authentication Explained"
+description: "Learn how HMAC works, when to use HMAC-SHA256 vs plain hashing, and how to generate and verify HMAC signatures in the browser and in code."
+pubDate: 2026-04-06
+lang: "en"
+translationSlug: "hmac-generator-guide-zh"
+tags: ["hmac", "hmac-sha256", "message-authentication", "cryptography", "developer-tools"]
+ogImage: /og/blog-hmac-generator-guide.png
+---
+
+HMAC (Hash-based Message Authentication Code) solves a problem that plain hash functions cannot: proving that a message both came from a trusted sender and has not been tampered with. If you have ever debugged a webhook signature or implemented API request signing, you have worked with HMAC. This guide explains how it works, when to use it, and how to generate HMAC values without writing code.
+
+## What Is HMAC?
+
+HMAC is a construction that combines a cryptographic hash function with a secret key to produce a message authentication code. Given a message `M` and a key `K`:
+
+```
+HMAC(K, M) = H((K ⊕ opad) || H((K ⊕ ipad) || M))
+```
+
+Where `H` is a hash function (SHA-256, SHA-512, etc.), `opad` and `ipad` are fixed padding constants, and `||` is concatenation.
+
+In plain terms: **HMAC binds a hash to a secret key**. Without the key, you cannot reproduce the same output. This makes HMAC fundamentally different from a plain hash:
+
+| | Plain Hash | HMAC |
+|---|---|---|
+| Requires secret key | No | Yes |
+| Detects tampering | Yes | Yes |
+| Proves sender identity | No | Yes |
+| Can be forged by anyone | Yes | No |
+
+## Common Use Cases
+
+### Webhook Signature Verification
+
+Services like GitHub, Stripe, and Twilio sign their webhook payloads using HMAC-SHA256. When a webhook arrives, you compute the HMAC of the request body using the shared secret and compare it to the signature in the header.
+
+```
+X-Hub-Signature-256: sha256=3d23ab...
+```
+
+If the signatures match, the payload is authentic and unmodified.
+
+### API Request Signing (AWS Signature V4)
+
+AWS signs API requests using HMAC-SHA256. The signature chains several HMAC operations, binding the request to a region, service, date, and secret key. This prevents request replay attacks and ensures authorization cannot be forged.
+
+### JWT Signature (HS256)
+
+JSON Web Tokens signed with the `HS256` algorithm use HMAC-SHA256. The server signs `header.payload` with a secret key. Clients include the JWT in requests; the server re-computes the HMAC and rejects any token where the signature does not match.
+
+### Cookie and Session Integrity
+
+Signed cookies use HMAC to prevent tampering. The server appends `HMAC(secret, cookie_value)` to the cookie. On subsequent requests, the server re-computes and verifies the HMAC before trusting the cookie contents.
+
+## HMAC vs Plain Hashing
+
+A plain hash like `SHA256("hello")` is public — anyone can compute it. HMAC requires knowing the secret key. This matters for:
+
+- **Webhook verification**: without HMAC, an attacker could forge payloads that hash to any value
+- **Token signing**: without HMAC, clients could modify JWT payloads and re-compute the hash
+
+Never use plain SHA256 where HMAC is needed. The overhead is negligible and the security difference is significant.
+
+## Supported Algorithms
+
+Most HMAC implementations support:
+
+| Algorithm | Output Length | Notes |
+|-----------|--------------|-------|
+| HMAC-SHA-256 | 256 bits (64 hex chars) | Default choice for most use cases |
+| HMAC-SHA-384 | 384 bits (96 hex chars) | Higher security margin, slower |
+| HMAC-SHA-512 | 512 bits (128 hex chars) | Preferred on 64-bit platforms |
+
+**Avoid HMAC-MD5 and HMAC-SHA1** for new implementations — while HMAC somewhat mitigates the collision vulnerabilities of the underlying hash, these algorithms are considered legacy and are prohibited in many compliance frameworks.
+
+## Output Formats
+
+HMAC output is raw bytes that can be encoded as:
+
+- **Hex** — `3d23ab4f...` — 2 characters per byte, standard for most APIs
+- **Base64** — `PSOrT...` — more compact, used in HTTP headers and JWT
+
+Both encode the same underlying bytes. Use hex when debugging manually (easier to read); use Base64 when byte-efficiency matters (HTTP headers, tokens).
+
+## HMAC in Code
+
+### JavaScript (Web Crypto API)
+
+```js
+async function hmacSha256(key, message) {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
+  return Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+const sig = await hmacSha256('my-secret-key', 'hello world');
+// → "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+```
+
+### Node.js
+
+```js
+const crypto = require('crypto');
+
+const hmac = crypto.createHmac('sha256', 'my-secret-key')
+  .update('hello world')
+  .digest('hex');
+
+console.log(hmac);
+// b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+```
+
+### Python
+
+```python
+import hmac
+import hashlib
+
+key = b'my-secret-key'
+message = b'hello world'
+
+signature = hmac.new(key, message, hashlib.sha256).hexdigest()
+print(signature)
+# b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+```
+
+### Go
+
+```go
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+)
+
+func main() {
+    mac := hmac.New(sha256.New, []byte("my-secret-key"))
+    mac.Write([]byte("hello world"))
+    signature := hex.EncodeToString(mac.Sum(nil))
+    fmt.Println(signature)
+}
+```
+
+## Verifying Webhooks Correctly
+
+### Use Constant-Time Comparison
+
+When comparing HMAC signatures, always use a constant-time comparison function. A naive `==` comparison short-circuits on the first mismatched byte, leaking timing information that can be exploited in timing attacks.
+
+```js
+// WRONG — leaks timing information
+if (receivedSig === expectedSig) { ... }
+
+// CORRECT — constant-time comparison
+const crypto = require('crypto');
+if (crypto.timingSafeEqual(Buffer.from(receivedSig), Buffer.from(expectedSig))) { ... }
+```
+
+### Include a Timestamp
+
+Replay attacks reuse a valid signed request. Include a timestamp in the signed payload and reject requests older than a few minutes:
+
+```
+HMAC-SHA256(secret, timestamp + "." + body)
+```
+
+GitHub webhooks use this pattern with a 5-minute tolerance window.
+
+## Using the Online HMAC Generator
+
+**[Try ZeroTool HMAC Generator →](/tools/hmac-generator)**
+
+Enter your message and secret key, select the algorithm (SHA-256, SHA-384, SHA-512), and get the HMAC instantly in hex or Base64. Useful for:
+
+- Debugging webhook signature mismatches by reproducing the expected value
+- Verifying your implementation matches a known test vector
+- Generating API signatures during development without writing test code
+- Teaching and exploring HMAC behavior
+
+All computation runs in the browser using the Web Crypto API — the key and message never leave your device.
+
+## Key Length and Key Management
+
+- **Minimum key length**: use at least 32 bytes (256 bits) for HMAC-SHA256. Shorter keys reduce security.
+- **Key rotation**: rotate HMAC keys periodically. Many platforms support multiple active keys with a short overlap window.
+- **Never log keys**: HMAC keys are secrets. Exclude them from application logs and error reports.
+- **Separate keys per purpose**: do not use the same key for webhook signatures and JWT signing.
+
+**[Generate and verify HMAC signatures instantly →](/tools/hmac-generator)**

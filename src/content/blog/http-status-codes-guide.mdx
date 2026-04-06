@@ -1,0 +1,231 @@
+---
+title: "HTTP Status Codes: The Complete Developer Reference"
+description: "A complete reference for all HTTP status codes — 1xx to 5xx. Understand what each code means, when servers return it, and how to handle it in your code."
+pubDate: 2026-04-06
+lang: "en"
+translationSlug: "http-status-codes-guide-zh"
+tags: ["http-status-codes", "http", "rest-api", "developer-tools"]
+ogImage: /og/blog-http-status-codes-guide.png
+---
+
+HTTP status codes are the language servers use to tell clients what happened with a request. If you have ever stared at a cryptic `422` or wondered whether to return `401` or `403`, this guide is for you. It covers every status class, the codes you will actually encounter in production, and how to handle them in client and server code.
+
+## How Status Codes Are Structured
+
+Status codes are three-digit integers grouped into five classes:
+
+| Class | Range | Meaning |
+|-------|-------|---------|
+| 1xx | 100–199 | Informational — request received, continue processing |
+| 2xx | 200–299 | Success — request received, understood, and accepted |
+| 3xx | 300–399 | Redirection — further action needed to complete the request |
+| 4xx | 400–499 | Client error — request has a problem (bad syntax, unauthorized, etc.) |
+| 5xx | 500–599 | Server error — server failed to fulfill a valid request |
+
+The first digit determines the class; the remaining two digits indicate the specific condition.
+
+## 1xx: Informational
+
+Rarely seen in application-level code. The server sends these before the final response.
+
+### 100 Continue
+
+The server has received the request headers. The client should proceed to send the request body. Used with `Expect: 100-continue` for large uploads — the client checks before sending the payload.
+
+### 101 Switching Protocols
+
+The server is switching to a different protocol as requested (e.g., upgrading HTTP/1.1 to WebSocket). After this, the connection operates under the new protocol.
+
+## 2xx: Success
+
+### 200 OK
+
+The request succeeded. The response body contains the requested resource. Default success code for `GET`, `POST`, `PUT`, and `PATCH`.
+
+### 201 Created
+
+A new resource was created. Use this for successful `POST` requests that create an entity. The response should include a `Location` header pointing to the new resource.
+
+```
+HTTP/1.1 201 Created
+Location: /api/users/456
+```
+
+### 204 No Content
+
+The request succeeded but there is no response body. Use this for `DELETE` operations or `PUT`/`PATCH` when you do not return the updated resource.
+
+```
+HTTP/1.1 204 No Content
+```
+
+### 206 Partial Content
+
+The server is delivering part of the resource (range request). Used by video streaming and resumable downloads. Requires `Content-Range` header.
+
+## 3xx: Redirection
+
+### 301 Moved Permanently
+
+The resource has moved to a new URL permanently. Clients and search engines should update their bookmarks. Pass SEO equity to the new URL. Use this when renaming routes in a stable API.
+
+### 302 Found (Temporary Redirect)
+
+The resource is temporarily at a different URL. Clients should not update bookmarks. Do **not** use 302 when you mean permanent — Google does not pass full PageRank through 302.
+
+### 304 Not Modified
+
+The cached version is still valid. Used with `ETag` / `Last-Modified` conditional requests. The server sends no body — the client uses its cache. Critical for API and CDN performance.
+
+### 307 Temporary Redirect / 308 Permanent Redirect
+
+Like 302/301, but the HTTP method is preserved. A `POST` to a 307-redirected URL stays a `POST` to the new URL. Use these instead of 302/301 when method preservation matters (e.g., form submissions).
+
+## 4xx: Client Errors
+
+### 400 Bad Request
+
+The request is malformed. The server cannot parse it. Use this for syntax errors, invalid JSON, missing required fields, or type mismatches.
+
+```json
+HTTP/1.1 400 Bad Request
+{ "error": "Invalid JSON body" }
+```
+
+### 401 Unauthorized
+
+Authentication is required and has not been provided, or the credentials are invalid. The response should include a `WWW-Authenticate` header. The name is misleading — this really means "unauthenticated".
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="api"
+```
+
+### 403 Forbidden
+
+The server understood the request but refuses to authorize it. The client is authenticated (or authentication is irrelevant) but lacks permission. Return 403 when the user is logged in but does not have the right role.
+
+**401 vs 403:** 401 = "who are you?", 403 = "I know who you are, but you cannot do this."
+
+### 404 Not Found
+
+The resource does not exist. Also use this to hide the existence of resources from unauthorized users (instead of 403) when revealing that the resource exists would be a security issue.
+
+### 405 Method Not Allowed
+
+The HTTP method is not supported for this endpoint. Always include an `Allow` header listing valid methods.
+
+```
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, POST
+```
+
+### 409 Conflict
+
+The request conflicts with the current state of the resource. Classic use case: creating a user with an email that already exists, or concurrent edits to the same record.
+
+### 410 Gone
+
+The resource existed but has been permanently deleted. Unlike 404, 410 tells clients and search engines not to bother requesting this URL again.
+
+### 422 Unprocessable Entity
+
+The request was well-formed but failed semantic validation. Use 422 when the JSON parses correctly but the business rules are violated (e.g., end date before start date, negative quantity).
+
+### 429 Too Many Requests
+
+Rate limit exceeded. Include `Retry-After` header to tell the client when it can try again.
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+```
+
+## 5xx: Server Errors
+
+### 500 Internal Server Error
+
+The server encountered an unexpected condition. The catch-all for unhandled exceptions. Log the details server-side; never expose stack traces to clients.
+
+### 502 Bad Gateway
+
+A gateway or proxy received an invalid response from an upstream server. Common when your load balancer cannot reach your application servers.
+
+### 503 Service Unavailable
+
+The server is temporarily unable to handle requests — overload, maintenance, or circuit-breaker open. Use `Retry-After` header when the downtime is planned.
+
+### 504 Gateway Timeout
+
+A gateway or proxy did not receive a timely response from the upstream. Common cause: slow database queries, downstream API timeouts.
+
+## Choosing the Right Status Code
+
+A decision tree for common API scenarios:
+
+| Scenario | Code |
+|----------|------|
+| `GET` returns resource | 200 |
+| `POST` creates resource | 201 |
+| `DELETE` succeeds (no body) | 204 |
+| Invalid request body / syntax error | 400 |
+| Missing or invalid auth token | 401 |
+| Valid token but insufficient permission | 403 |
+| Resource not found | 404 |
+| Email already registered (duplicate) | 409 |
+| Validation failed (semantics) | 422 |
+| Unhandled exception | 500 |
+
+## Handling Status Codes in Code
+
+### JavaScript (fetch)
+
+```js
+async function apiRequest(url, options) {
+  const res = await fetch(url, options);
+
+  if (res.ok) {
+    return res.json();          // 200–299
+  }
+
+  if (res.status === 401) {
+    redirectToLogin();
+    return;
+  }
+
+  if (res.status === 429) {
+    const retryAfter = res.headers.get('Retry-After');
+    throw new Error(`Rate limited. Retry after ${retryAfter}s`);
+  }
+
+  const error = await res.json().catch(() => ({}));
+  throw new Error(error.message ?? `HTTP ${res.status}`);
+}
+```
+
+### Python (httpx / requests)
+
+```python
+import httpx
+
+with httpx.Client() as client:
+    r = client.get("https://api.example.com/resource")
+
+    if r.status_code == 200:
+        data = r.json()
+    elif r.status_code == 404:
+        raise ValueError("Resource not found")
+    elif r.status_code == 429:
+        retry_after = r.headers.get("Retry-After", "60")
+        raise Exception(f"Rate limited, retry in {retry_after}s")
+    else:
+        r.raise_for_status()
+```
+
+## Quick Reference
+
+**[Look up any HTTP status code with ZeroTool →](/tools/http-status-codes)**
+
+Search by code number or keyword, browse by class (1xx–5xx), and get the description and common use cases without leaving your browser. Faster than opening MDN in a separate tab when you are in the middle of debugging an API response.

@@ -1,0 +1,230 @@
+---
+title: "HTTP 状态码完全参考手册：从 1xx 到 5xx 逐一讲解"
+description: "系统梳理所有 HTTP 状态码的含义、触发场景和处理策略，含 401 vs 403、400 vs 422 等经典混淆点，附代码示例。"
+pubDate: 2026-04-06
+lang: "zh"
+translationSlug: "http-status-codes-guide"
+tags: ["http状态码", "http", "rest-api", "开发工具"]
+ogImage: /og/blog-http-status-codes-guide-zh.png
+---
+
+HTTP 状态码是服务器告知客户端"请求结果如何"的标准语言。看着陌生的 `422`、纠结该返回 `401` 还是 `403`——这些问题几乎每个后端开发者都遇到过。这篇文章把五大状态码类别逐一讲清楚，重点覆盖高频混淆点，附代码示例。
+
+## 状态码结构
+
+状态码是三位整数，按百位分为五类：
+
+| 类别 | 范围 | 含义 |
+|------|------|------|
+| 1xx | 100–199 | 信息性 — 请求已收到，继续处理 |
+| 2xx | 200–299 | 成功 — 请求已被接收、理解和处理 |
+| 3xx | 300–399 | 重定向 — 需要进一步操作才能完成请求 |
+| 4xx | 400–499 | 客户端错误 — 请求有问题（格式错误、未授权等） |
+| 5xx | 500–599 | 服务端错误 — 服务器无法完成有效请求 |
+
+## 1xx：信息性
+
+应用层代码中极少主动处理，由底层协议处理。
+
+### 100 Continue
+
+服务器已收到请求头，通知客户端可以继续发送请求体。常见于大文件上传时配合 `Expect: 100-continue` 使用——客户端先确认服务器愿意接收，再发送实际数据，避免无效传输。
+
+### 101 Switching Protocols
+
+服务器同意切换协议（如从 HTTP/1.1 升级到 WebSocket）。之后连接按新协议工作。
+
+## 2xx：成功
+
+### 200 OK
+
+请求成功，响应体包含请求的资源。`GET`、`POST`、`PUT`、`PATCH` 的默认成功码。
+
+### 201 Created
+
+新资源已创建。用于成功的 `POST` 请求，响应应包含 `Location` 头指向新资源。
+
+```
+HTTP/1.1 201 Created
+Location: /api/users/456
+```
+
+### 204 No Content
+
+请求成功，但无响应体。适用于 `DELETE` 操作，或 `PUT`/`PATCH` 不需要返回更新后资源的场景。
+
+### 206 Partial Content
+
+服务器返回资源的部分内容（范围请求）。视频流播放、断点续传下载依赖此状态码。响应需包含 `Content-Range` 头。
+
+## 3xx：重定向
+
+### 301 Moved Permanently
+
+资源已永久迁移到新 URL。客户端和搜索引擎应更新书签，SEO 权重随之转移。API 重命名路由时使用。
+
+### 302 Found（临时重定向）
+
+资源临时在另一个 URL。客户端不应更新书签。**注意**：302 不是永久重定向，Google 对 302 传递的 PageRank 权重不如 301 充分，不要用 302 代替 301。
+
+### 304 Not Modified
+
+缓存仍然有效，响应体为空，客户端使用本地缓存。配合 `ETag`/`Last-Modified` 条件请求使用，对 API 和 CDN 性能优化至关重要。
+
+### 307 / 308：保留方法的重定向
+
+307 是保留 HTTP 方法的临时重定向，308 是永久版本。对 307 地址发出的 `POST` 请求，重定向后仍会 `POST` 到新地址（而 302/301 通常被客户端改为 `GET`）。表单提交场景建议使用 307/308。
+
+## 4xx：客户端错误
+
+### 400 Bad Request
+
+请求格式错误，服务器无法解析。用于语法错误、JSON 格式错误、缺少必填字段或类型不匹配。
+
+```json
+HTTP/1.1 400 Bad Request
+{ "error": "Invalid JSON body" }
+```
+
+### 401 Unauthorized
+
+未提供身份认证，或认证凭证无效。响应应包含 `WWW-Authenticate` 头。名字有点误导——这个码实际上表示"**未认证**"而非"未授权"。
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="api"
+```
+
+### 403 Forbidden
+
+服务器理解请求，但拒绝执行。客户端已认证（或认证与此无关），但权限不足。用户已登录但没有对应角色权限时返回 403。
+
+**401 vs 403 的核心区别：**
+- 401 = "你是谁？"（未认证）
+- 403 = "我知道你是谁，但你没权限做这件事"（已认证，权限不足）
+
+### 404 Not Found
+
+资源不存在。也可以用来隐藏资源的存在感——当暴露资源是否存在本身就是安全隐患时，即使资源存在也返回 404（而非 403）。
+
+### 405 Method Not Allowed
+
+该端点不支持此 HTTP 方法。必须包含 `Allow` 头列出支持的方法。
+
+```
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, POST
+```
+
+### 409 Conflict
+
+请求与资源当前状态冲突。典型场景：注册时邮箱已存在、并发编辑同一条记录。
+
+### 410 Gone
+
+资源曾存在，但已被永久删除。与 404 的区别：410 明确告知客户端和搜索引擎不要再请求此 URL。
+
+### 422 Unprocessable Entity
+
+请求格式正确，但业务逻辑校验失败。**400 vs 422 的区别**：
+
+- 400：JSON 本身无法解析（语法错误）
+- 422：JSON 能解析，但内容违反业务规则（如结束日期早于开始日期、负数数量）
+
+### 429 Too Many Requests
+
+超出请求频率限制。应包含 `Retry-After` 头，告知客户端何时可以重试。
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+```
+
+## 5xx：服务端错误
+
+### 500 Internal Server Error
+
+服务器遇到未预期的情况。未处理异常的兜底状态码。服务端详细记录日志，但**绝不**向客户端暴露堆栈信息。
+
+### 502 Bad Gateway
+
+网关或代理从上游服务器收到了无效响应。常见于负载均衡器无法连接到应用服务器时。
+
+### 503 Service Unavailable
+
+服务器临时无法处理请求——过载、维护中、熔断器触发等。计划内停机时使用 `Retry-After` 头告知恢复时间。
+
+### 504 Gateway Timeout
+
+网关或代理等待上游响应超时。常见原因：慢查询、下游 API 超时。
+
+## 场景速查表
+
+| 场景 | 返回码 |
+|------|--------|
+| `GET` 成功返回资源 | 200 |
+| `POST` 成功创建资源 | 201 |
+| `DELETE` 成功，无响应体 | 204 |
+| 请求体格式错误 / 语法错误 | 400 |
+| 缺少或无效的认证 token | 401 |
+| 已认证但权限不足 | 403 |
+| 资源不存在 | 404 |
+| 邮箱已注册（重复冲突） | 409 |
+| 业务规则校验失败 | 422 |
+| 未处理的异常 | 500 |
+
+## 客户端代码处理示例
+
+### JavaScript (fetch)
+
+```js
+async function apiRequest(url, options) {
+  const res = await fetch(url, options);
+
+  if (res.ok) {
+    return res.json();          // 200–299
+  }
+
+  if (res.status === 401) {
+    redirectToLogin();
+    return;
+  }
+
+  if (res.status === 429) {
+    const retryAfter = res.headers.get('Retry-After');
+    throw new Error(`请求频率超限，请 ${retryAfter} 秒后重试`);
+  }
+
+  const error = await res.json().catch(() => ({}));
+  throw new Error(error.message ?? `HTTP ${res.status}`);
+}
+```
+
+### Python (httpx)
+
+```python
+import httpx
+
+with httpx.Client() as client:
+    r = client.get("https://api.example.com/resource")
+
+    if r.status_code == 200:
+        data = r.json()
+    elif r.status_code == 404:
+        raise ValueError("资源不存在")
+    elif r.status_code == 429:
+        retry_after = r.headers.get("Retry-After", "60")
+        raise Exception(f"请求频率超限，{retry_after} 秒后重试")
+    else:
+        r.raise_for_status()
+```
+
+国内常见问题：某些老系统把所有 HTTP 响应都返回 200，通过响应体里的 `code` 字段区分成功/失败。这是反模式，破坏了 HTTP 语义，让监控和排错变得困难。
+
+## 在线 HTTP 状态码查询
+
+**[用 ZeroTool 查询 HTTP 状态码 →](/tools/http-status-codes)**
+
+按状态码编号或关键词搜索，按分类（1xx–5xx）浏览，即时获取含义和使用场景说明。调试 API 时比切换 MDN 标签页快得多。
