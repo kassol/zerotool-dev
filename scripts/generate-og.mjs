@@ -51,6 +51,9 @@ const tools = [
   { slug: 'json-to-typescript',      name: 'JSON to TypeScript Generator',  description: 'Generate TypeScript interfaces from JSON' },
   { slug: 'fake-data-generator',     name: 'Fake Data Generator',           description: 'Generate realistic test data instantly' },
   { slug: 'url-parser',              name: 'URL Parser',                    description: 'Parse any URL into its components' },
+  { slug: 'slugify',                 name: 'Slugify String',                description: 'Convert text to URL-friendly slugs' },
+  { slug: 'http-status-codes',       name: 'HTTP Status Codes',             description: 'Searchable reference for all HTTP status codes' },
+  { slug: 'hmac-generator',          name: 'HMAC Generator',                description: 'Generate HMAC-SHA256/384/512 signatures' },
 ];
 
 /** Escape XML special chars so SVG stays valid. */

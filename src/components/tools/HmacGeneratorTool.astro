@@ -1,0 +1,290 @@
+---
+// HmacGeneratorTool — Web Crypto HMAC generator, client-side only
+---
+<div>
+  <div class="hm-wrap">
+    <div class="hm-row">
+      <div class="hm-field">
+        <label for="hm-message">Message</label>
+        <textarea
+          id="hm-message"
+          placeholder="Enter the message to sign..."
+          spellcheck="false"
+        ></textarea>
+      </div>
+
+      <div class="hm-field">
+        <label for="hm-key">Secret Key</label>
+        <input
+          id="hm-key"
+          type="text"
+          placeholder="Enter the secret key..."
+          spellcheck="false"
+          autocomplete="off"
+        />
+      </div>
+    </div>
+
+    <div class="hm-controls">
+      <div class="hm-algo-wrap">
+        <span class="hm-ctrl-label">Algorithm</span>
+        <div class="hm-algo-btns">
+          <button class="hm-algo-btn active" data-algo="SHA-256">SHA-256</button>
+          <button class="hm-algo-btn" data-algo="SHA-384">SHA-384</button>
+          <button class="hm-algo-btn" data-algo="SHA-512">SHA-512</button>
+        </div>
+      </div>
+
+      <div class="hm-fmt-wrap">
+        <span class="hm-ctrl-label">Output</span>
+        <div class="hm-algo-btns">
+          <button class="hm-fmt-btn active" data-fmt="hex">Hex</button>
+          <button class="hm-fmt-btn" data-fmt="base64">Base64</button>
+        </div>
+      </div>
+
+      <button id="hm-generate" class="btn-primary">Generate HMAC</button>
+    </div>
+
+    <div id="hm-status" class="hm-status" aria-live="polite"></div>
+
+    <div id="hm-result-wrap" class="hm-result-wrap" style="display:none">
+      <div class="hm-result-hdr">
+        <span class="hm-result-label" id="hm-result-label">HMAC-SHA256 (Hex)</span>
+        <button id="hm-copy" class="btn-copy">Copy</button>
+      </div>
+      <code id="hm-result" class="hm-result"></code>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var messageEl = document.getElementById('hm-message');
+      var keyEl = document.getElementById('hm-key');
+      var statusEl = document.getElementById('hm-status');
+      var resultWrap = document.getElementById('hm-result-wrap');
+      var resultEl = document.getElementById('hm-result');
+      var resultLabel = document.getElementById('hm-result-label');
+      var copyBtn = document.getElementById('hm-copy');
+      var generateBtn = document.getElementById('hm-generate');
+
+      var algo = 'SHA-256';
+      var fmt = 'hex';
+
+      document.querySelectorAll('.hm-algo-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('.hm-algo-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          algo = btn.getAttribute('data-algo');
+        });
+      });
+
+      document.querySelectorAll('.hm-fmt-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('.hm-fmt-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          fmt = btn.getAttribute('data-fmt');
+        });
+      });
+
+      function bufToHex(buf) {
+        return Array.from(new Uint8Array(buf)).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+      }
+
+      function bufToBase64(buf) {
+        var bytes = new Uint8Array(buf);
+        var str = '';
+        bytes.forEach(function (b) { str += String.fromCharCode(b); });
+        return btoa(str);
+      }
+
+      generateBtn.addEventListener('click', async function () {
+        var message = messageEl.value;
+        var key = keyEl.value;
+
+        if (!message) {
+          statusEl.textContent = 'Please enter a message.';
+          statusEl.className = 'hm-status error';
+          return;
+        }
+        if (!key) {
+          statusEl.textContent = 'Please enter a secret key.';
+          statusEl.className = 'hm-status error';
+          return;
+        }
+
+        statusEl.textContent = 'Computing HMAC...';
+        statusEl.className = 'hm-status';
+        resultWrap.style.display = 'none';
+
+        try {
+          var enc = new TextEncoder();
+          var cryptoKey = await crypto.subtle.importKey(
+            'raw',
+            enc.encode(key),
+            { name: 'HMAC', hash: algo },
+            false,
+            ['sign']
+          );
+          var sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
+
+          var output = fmt === 'base64' ? bufToBase64(sig) : bufToHex(sig);
+          var fmtLabel = fmt === 'base64' ? 'Base64' : 'Hex';
+          resultLabel.textContent = 'HMAC-' + algo.replace('-', '') + ' (' + fmtLabel + ')';
+          resultEl.textContent = output;
+          resultWrap.style.display = '';
+          statusEl.textContent = 'HMAC generated.';
+          statusEl.className = 'hm-status success';
+          window.trackTool && window.trackTool('hmac-generator', 'generate');
+        } catch (e) {
+          statusEl.textContent = 'Error: ' + e.message;
+          statusEl.className = 'hm-status error';
+          resultWrap.style.display = 'none';
+        }
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var val = resultEl.textContent;
+        if (!val) return;
+        navigator.clipboard.writeText(val).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .hm-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .hm-row { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .hm-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .hm-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .hm-field textarea {
+    width: 100%;
+    min-height: 80px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .hm-field input[type="text"] {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    box-sizing: border-box;
+  }
+
+  .hm-field textarea:focus,
+  .hm-field input[type="text"]:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .hm-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .hm-ctrl-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin-right: 0.25rem;
+  }
+
+  .hm-algo-wrap,
+  .hm-fmt-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+
+  .hm-algo-btns { display: flex; gap: 0.25rem; }
+
+  .hm-algo-btn,
+  .hm-fmt-btn {
+    font-size: 0.8rem;
+    padding: 0.25rem 0.55rem;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    cursor: pointer;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .hm-algo-btn.active,
+  .hm-fmt-btn.active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .hm-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .hm-status.success { color: #057a55; }
+  .hm-status.error { color: #c0392b; }
+
+  .hm-result-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+  }
+
+  .hm-result-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .hm-result-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .hm-result {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .hm-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .hm-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .hm-status.success { color: #34d399; }
+  [data-theme="dark"] .hm-status.error { color: #f87171; }
+</style>

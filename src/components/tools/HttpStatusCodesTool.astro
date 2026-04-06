@@ -1,0 +1,245 @@
+---
+// HttpStatusCodesTool — searchable HTTP status codes reference
+---
+<div>
+  <div class="hs-wrap">
+    <div class="hs-search-row">
+      <input
+        id="hs-search"
+        type="search"
+        placeholder="Search by code or description… e.g. 404, redirect, server"
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </div>
+
+    <div id="hs-list" class="hs-list"></div>
+    <div id="hs-empty" class="hs-empty" style="display:none">No matching status codes.</div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var CODES = [
+        // 1xx Informational
+        { code: 100, name: 'Continue', desc: 'The server has received the request headers; client should proceed to send the body.' },
+        { code: 101, name: 'Switching Protocols', desc: 'Server agrees to switch protocols as requested in the Upgrade header (e.g. WebSocket).' },
+        { code: 102, name: 'Processing', desc: 'Server has received and is processing the request, but no response is available yet (WebDAV).' },
+        { code: 103, name: 'Early Hints', desc: 'Used to return preliminary response headers before the final HTTP message.' },
+        // 2xx Success
+        { code: 200, name: 'OK', desc: 'Standard response for successful HTTP requests.' },
+        { code: 201, name: 'Created', desc: 'Request succeeded and a new resource was created.' },
+        { code: 202, name: 'Accepted', desc: 'Request accepted for processing but not yet completed.' },
+        { code: 203, name: 'Non-Authoritative Information', desc: 'Request was successful but the returned data may be from a third-party source.' },
+        { code: 204, name: 'No Content', desc: 'Request succeeded but no content is returned (common for DELETE or PUT).' },
+        { code: 205, name: 'Reset Content', desc: 'Server fulfilled the request; client should reset the document view.' },
+        { code: 206, name: 'Partial Content', desc: 'Server delivers only part of the resource due to a Range header in the request.' },
+        { code: 207, name: 'Multi-Status', desc: 'Multiple status codes for multiple operations (WebDAV).' },
+        { code: 208, name: 'Already Reported', desc: 'Members of a DAV binding already enumerated in a previous reply (WebDAV).' },
+        { code: 226, name: 'IM Used', desc: 'Server fulfilled a GET request and the response is a result of instance manipulations.' },
+        // 3xx Redirection
+        { code: 300, name: 'Multiple Choices', desc: 'Multiple options for the resource; the client may select one.' },
+        { code: 301, name: 'Moved Permanently', desc: 'Resource has been permanently moved to a new URL. Update bookmarks and links.' },
+        { code: 302, name: 'Found', desc: 'Resource temporarily moved. Client should continue using the original URL.' },
+        { code: 303, name: 'See Other', desc: 'Response to a POST; use GET to retrieve the response at another URL.' },
+        { code: 304, name: 'Not Modified', desc: 'Resource has not been modified since last requested (ETag/If-Modified-Since).' },
+        { code: 307, name: 'Temporary Redirect', desc: 'Like 302 but method must not change. Client should repeat the request at the new URL.' },
+        { code: 308, name: 'Permanent Redirect', desc: 'Like 301 but method must not change. Resource permanently moved.' },
+        // 4xx Client Errors
+        { code: 400, name: 'Bad Request', desc: 'Server cannot process the request due to malformed syntax or invalid parameters.' },
+        { code: 401, name: 'Unauthorized', desc: 'Authentication is required and has failed or not yet been provided.' },
+        { code: 402, name: 'Payment Required', desc: 'Reserved for future use; sometimes used by digital content providers.' },
+        { code: 403, name: 'Forbidden', desc: 'Server understood the request but refuses to authorize it.' },
+        { code: 404, name: 'Not Found', desc: 'The requested resource could not be found on the server.' },
+        { code: 405, name: 'Method Not Allowed', desc: 'The HTTP method used is not allowed for the requested resource.' },
+        { code: 406, name: 'Not Acceptable', desc: 'Server cannot produce a response matching the Accept headers in the request.' },
+        { code: 407, name: 'Proxy Authentication Required', desc: 'Client must authenticate with the proxy before proceeding.' },
+        { code: 408, name: 'Request Timeout', desc: 'Server timed out waiting for the request.' },
+        { code: 409, name: 'Conflict', desc: 'Request conflicts with current state of the server (e.g. edit conflict).' },
+        { code: 410, name: 'Gone', desc: 'Resource is permanently gone and will not return. Use 404 if uncertain.' },
+        { code: 411, name: 'Length Required', desc: 'Content-Length header is required but not provided.' },
+        { code: 412, name: 'Precondition Failed', desc: 'A precondition header field evaluated to false.' },
+        { code: 413, name: 'Payload Too Large', desc: 'Request body exceeds the size limit the server is willing to process.' },
+        { code: 414, name: 'URI Too Long', desc: 'The URI provided was too long for the server to process.' },
+        { code: 415, name: 'Unsupported Media Type', desc: 'Server does not support the media type of the requested data.' },
+        { code: 416, name: 'Range Not Satisfiable', desc: 'Client requested a range that cannot be satisfied for this resource.' },
+        { code: 417, name: 'Expectation Failed', desc: 'Server cannot meet the requirements in the Expect header.' },
+        { code: 418, name: "I'm a Teapot", desc: 'April Fools joke from RFC 2324. A teapot should not be asked to brew coffee.' },
+        { code: 421, name: 'Misdirected Request', desc: 'Request was directed at a server that cannot produce a response for that combination.' },
+        { code: 422, name: 'Unprocessable Entity', desc: 'Request is well-formed but contains semantic errors (e.g. validation failures).' },
+        { code: 423, name: 'Locked', desc: 'The resource is locked (WebDAV).' },
+        { code: 424, name: 'Failed Dependency', desc: 'Request failed because a previous request it depends on failed (WebDAV).' },
+        { code: 425, name: 'Too Early', desc: 'Server is unwilling to process a request that might be replayed.' },
+        { code: 426, name: 'Upgrade Required', desc: 'Client should switch to a different protocol (e.g. TLS/1.0).' },
+        { code: 428, name: 'Precondition Required', desc: 'Origin server requires the request to be conditional.' },
+        { code: 429, name: 'Too Many Requests', desc: 'User has sent too many requests in a given amount of time (rate limiting).' },
+        { code: 431, name: 'Request Header Fields Too Large', desc: 'Server is unwilling to process the request because its headers are too large.' },
+        { code: 451, name: 'Unavailable For Legal Reasons', desc: 'Resource access denied for legal reasons (e.g. censorship, court order).' },
+        // 5xx Server Errors
+        { code: 500, name: 'Internal Server Error', desc: 'Generic error when the server encounters an unexpected condition.' },
+        { code: 501, name: 'Not Implemented', desc: 'Server does not support the functionality required to fulfill the request.' },
+        { code: 502, name: 'Bad Gateway', desc: 'Server received an invalid response from an upstream server.' },
+        { code: 503, name: 'Service Unavailable', desc: 'Server is temporarily unable to handle the request (overloaded or down for maintenance).' },
+        { code: 504, name: 'Gateway Timeout', desc: 'Server did not receive a timely response from an upstream server.' },
+        { code: 505, name: 'HTTP Version Not Supported', desc: 'Server does not support the HTTP protocol version used in the request.' },
+        { code: 506, name: 'Variant Also Negotiates', desc: 'Circular reference in content negotiation configuration (RFC 2295).' },
+        { code: 507, name: 'Insufficient Storage', desc: 'Server is unable to store the representation needed to complete the request (WebDAV).' },
+        { code: 508, name: 'Loop Detected', desc: 'Server detected an infinite loop while processing the request (WebDAV).' },
+        { code: 510, name: 'Not Extended', desc: 'Further extensions required for the server to fulfill the request.' },
+        { code: 511, name: 'Network Authentication Required', desc: 'Client must authenticate to gain network access.' },
+      ];
+
+      var CLASSES = {
+        1: { label: '1xx Informational', cls: 'hs-cat-1xx' },
+        2: { label: '2xx Success', cls: 'hs-cat-2xx' },
+        3: { label: '3xx Redirection', cls: 'hs-cat-3xx' },
+        4: { label: '4xx Client Error', cls: 'hs-cat-4xx' },
+        5: { label: '5xx Server Error', cls: 'hs-cat-5xx' },
+      };
+
+      var listEl = document.getElementById('hs-list');
+      var emptyEl = document.getElementById('hs-empty');
+      var searchEl = document.getElementById('hs-search');
+
+      function badgeCls(code) {
+        var d = Math.floor(code / 100);
+        return CLASSES[d] ? CLASSES[d].cls : '';
+      }
+
+      function render(items) {
+        listEl.innerHTML = '';
+        if (!items.length) {
+          emptyEl.style.display = '';
+          return;
+        }
+        emptyEl.style.display = 'none';
+
+        var currentCat = null;
+        items.forEach(function (item) {
+          var d = Math.floor(item.code / 100);
+          var cat = CLASSES[d];
+          if (cat && cat.label !== currentCat) {
+            currentCat = cat.label;
+            var hdr = document.createElement('div');
+            hdr.className = 'hs-cat-hdr';
+            hdr.textContent = cat.label;
+            listEl.appendChild(hdr);
+          }
+          var row = document.createElement('div');
+          row.className = 'hs-row';
+          row.innerHTML =
+            '<span class="hs-code ' + badgeCls(item.code) + '">' + item.code + '</span>' +
+            '<div class="hs-body"><strong class="hs-name">' + item.name + '</strong>' +
+            '<span class="hs-desc">' + item.desc + '</span></div>';
+          listEl.appendChild(row);
+        });
+      }
+
+      render(CODES);
+
+      searchEl.addEventListener('input', function () {
+        var q = searchEl.value.trim().toLowerCase();
+        if (!q) { render(CODES); return; }
+        var filtered = CODES.filter(function (c) {
+          return String(c.code).includes(q) ||
+            c.name.toLowerCase().includes(q) ||
+            c.desc.toLowerCase().includes(q);
+        });
+        render(filtered);
+        window.trackTool && window.trackTool('http-status-codes', 'search');
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .hs-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .hs-search-row input {
+    width: 100%;
+    font-size: 0.9rem;
+    padding: 0.6rem 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .hs-search-row input:focus { border-color: var(--color-primary); background: var(--color-bg); }
+
+  .hs-list { display: flex; flex-direction: column; gap: 0; }
+
+  .hs-cat-hdr {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-secondary);
+    padding: 0.6rem 0 0.3rem;
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: 0.25rem;
+  }
+
+  .hs-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 0.5rem 0.5rem 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .hs-row:last-child { border-bottom: none; }
+
+  .hs-code {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 700;
+    min-width: 40px;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .hs-cat-1xx { background: #e0f2fe; color: #0369a1; }
+  .hs-cat-2xx { background: #dcfce7; color: #15803d; }
+  .hs-cat-3xx { background: #fef9c3; color: #a16207; }
+  .hs-cat-4xx { background: #fee2e2; color: #b91c1c; }
+  .hs-cat-5xx { background: #fae8ff; color: #a21caf; }
+
+  .hs-body { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+
+  .hs-name {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .hs-desc {
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    line-height: 1.4;
+  }
+
+  .hs-empty {
+    font-size: 0.88rem;
+    color: var(--color-text-secondary);
+    padding: 1rem 0;
+    text-align: center;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .hs-cat-1xx { background: #0c3044; color: #7dd3fc; }
+    :root:not([data-theme="light"]) .hs-cat-2xx { background: #052e16; color: #86efac; }
+    :root:not([data-theme="light"]) .hs-cat-3xx { background: #2d2006; color: #fcd34d; }
+    :root:not([data-theme="light"]) .hs-cat-4xx { background: #2d0808; color: #fca5a5; }
+    :root:not([data-theme="light"]) .hs-cat-5xx { background: #2e0d36; color: #e879f9; }
+  }
+
+  [data-theme="dark"] .hs-cat-1xx { background: #0c3044; color: #7dd3fc; }
+  [data-theme="dark"] .hs-cat-2xx { background: #052e16; color: #86efac; }
+  [data-theme="dark"] .hs-cat-3xx { background: #2d2006; color: #fcd34d; }
+  [data-theme="dark"] .hs-cat-4xx { background: #2d0808; color: #fca5a5; }
+  [data-theme="dark"] .hs-cat-5xx { background: #2e0d36; color: #e879f9; }
+</style>

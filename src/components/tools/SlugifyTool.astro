@@ -1,0 +1,219 @@
+---
+// SlugifyTool — converts text to URL-friendly slug
+---
+<div>
+  <div class="sl-wrap">
+    <div class="sl-field">
+      <label for="sl-input">Input Text</label>
+      <textarea
+        id="sl-input"
+        placeholder="Hello World! This is an Example..."
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="sl-options">
+      <label class="sl-opt">
+        <input type="checkbox" id="sl-lowercase" checked /> Lowercase
+      </label>
+      <label class="sl-opt">
+        <input type="checkbox" id="sl-trim" checked /> Trim
+      </label>
+      <label class="sl-sep-wrap">
+        <span class="sl-sep-label">Separator</span>
+        <select id="sl-separator">
+          <option value="-">Hyphen (-)</option>
+          <option value="_">Underscore (_)</option>
+          <option value=".">Dot (.)</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="sl-result-wrap" class="sl-result-wrap">
+      <span class="sl-result-label">Slug</span>
+      <code id="sl-result" class="sl-result"></code>
+      <button id="sl-copy" class="btn-copy" disabled>Copy</button>
+    </div>
+
+    <div id="sl-status" class="sl-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('sl-input');
+      var resultEl = document.getElementById('sl-result');
+      var copyBtn = document.getElementById('sl-copy');
+      var statusEl = document.getElementById('sl-status');
+      var lowercaseEl = document.getElementById('sl-lowercase');
+      var trimEl = document.getElementById('sl-trim');
+      var separatorEl = document.getElementById('sl-separator');
+
+      // Transliteration map for common non-ASCII characters
+      var charMap = {
+        'à':'a','á':'a','â':'a','ã':'a','ä':'a','å':'a','æ':'ae',
+        'ç':'c','è':'e','é':'e','ê':'e','ë':'e','ì':'i','í':'i',
+        'î':'i','ï':'i','ð':'d','ñ':'n','ò':'o','ó':'o','ô':'o',
+        'õ':'o','ö':'o','ø':'o','ù':'u','ú':'u','û':'u','ü':'u',
+        'ý':'y','þ':'th','ß':'ss','À':'A','Á':'A','Â':'A','Ã':'A',
+        'Ä':'A','Å':'A','Æ':'AE','Ç':'C','È':'E','É':'E','Ê':'E',
+        'Ë':'E','Ì':'I','Í':'I','Î':'I','Ï':'I','Ð':'D','Ñ':'N',
+        'Ò':'O','Ó':'O','Ô':'O','Õ':'O','Ö':'O','Ø':'O','Ù':'U',
+        'Ú':'U','Û':'U','Ü':'U','Ý':'Y','Þ':'TH',
+        '&':'and','@':'at','#':'hash','%':'percent','+':'plus',
+        '©':'c','®':'r','™':'tm','€':'euro','£':'pound','¥':'yen',
+        '°':'deg','×':'x','÷':'div',
+      };
+
+      function slugify(text) {
+        var sep = separatorEl.value;
+        var lower = lowercaseEl.checked;
+        var trim = trimEl.checked;
+
+        // Replace known chars
+        var result = text.replace(/[^\u0000-\u007E]/g, function(c) {
+          return charMap[c] || '';
+        });
+
+        // Replace special chars with separator
+        result = result
+          .replace(/[^a-zA-Z0-9\s\-_\.]/g, ' ')
+          .replace(/[\s]+/g, sep)
+          .replace(/[\-_\.]+/g, sep);
+
+        if (lower) result = result.toLowerCase();
+        if (trim) result = result.replace(new RegExp('^[' + sep + ']+|[' + sep + ']+$', 'g'), '');
+
+        return result;
+      }
+
+      function update() {
+        var text = inputEl.value;
+        if (!text) {
+          resultEl.textContent = '';
+          copyBtn.disabled = true;
+          statusEl.textContent = '';
+          return;
+        }
+        var slug = slugify(text);
+        resultEl.textContent = slug;
+        copyBtn.disabled = !slug;
+        statusEl.textContent = slug ? '' : 'Result is empty — all characters were removed.';
+        statusEl.className = slug ? 'sl-status' : 'sl-status warn';
+        window.trackTool && window.trackTool('slugify', 'convert');
+      }
+
+      inputEl.addEventListener('input', update);
+      lowercaseEl.addEventListener('change', update);
+      trimEl.addEventListener('change', update);
+      separatorEl.addEventListener('change', update);
+
+      copyBtn.addEventListener('click', function () {
+        var val = resultEl.textContent;
+        if (!val) return;
+        navigator.clipboard.writeText(val).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .sl-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .sl-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .sl-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .sl-field textarea {
+    width: 100%;
+    min-height: 80px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .sl-field textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .sl-options {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.85rem;
+  }
+
+  .sl-opt {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+  }
+
+  .sl-sep-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--color-text-secondary);
+  }
+
+  .sl-sep-label { font-size: 0.85rem; }
+
+  .sl-sep-wrap select {
+    font-size: 0.82rem;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .sl-result-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    flex-wrap: wrap;
+  }
+
+  .sl-result-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    min-width: 36px;
+    letter-spacing: 0.04em;
+  }
+
+  .sl-result {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    color: var(--color-text);
+    word-break: break-all;
+    min-width: 0;
+  }
+
+  .sl-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .sl-status.warn { color: #b45309; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .sl-status.warn { color: #fbbf24; }
+  }
+  [data-theme="dark"] .sl-status.warn { color: #fbbf24; }
+</style>
