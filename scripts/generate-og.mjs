@@ -7,7 +7,7 @@
  */
 
 import sharp from 'sharp';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -86,9 +86,10 @@ function wrapText(text, maxCharsPerLine, x, yStart, lineHeight) {
     .join('');
 }
 
-function buildSvg(name, description) {
+function buildSvg(name, description, type = 'tool') {
   const W = 1200;
   const H = 630;
+  const isBlog = type === 'blog';
 
   // Brand accent gradient stops
   const gradient = `
@@ -98,8 +99,8 @@ function buildSvg(name, description) {
         <stop offset="100%" stop-color="#161b22"/>
       </linearGradient>
       <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0%" stop-color="#0070f3"/>
-        <stop offset="100%" stop-color="#00b4ff"/>
+        <stop offset="0%" stop-color="${isBlog ? '#7c3aed' : '#0070f3'}"/>
+        <stop offset="100%" stop-color="${isBlog ? '#a855f7' : '#00b4ff'}"/>
       </linearGradient>
     </defs>
   `;
@@ -114,10 +115,10 @@ function buildSvg(name, description) {
   const brand = `
     <text x="72" y="80"
       font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-      font-size="28" font-weight="700" fill="#3b9eff" letter-spacing="0.5">ZeroTool</text>
+      font-size="28" font-weight="700" fill="${isBlog ? '#a855f7' : '#3b9eff'}" letter-spacing="0.5">ZeroTool</text>
   `;
 
-  // Tool name — large, white
+  // Tool/post name — large, white
   const titleTspans = wrapText(name, 26, 72, 220, 78);
   const title = `
     <text
@@ -137,11 +138,12 @@ function buildSvg(name, description) {
     </text>
   `;
 
-  // Bottom badge: free · browser-based · no sign-up
+  // Bottom badge
+  const badgeText = isBlog ? 'Blog · ZeroTool' : 'Free · Browser-based · No Sign-up';
   const badge = `
     <text x="72" y="${H - 52}"
       font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-      font-size="22" fill="#484f58" font-weight="400">Free · Browser-based · No Sign-up</text>
+      font-size="22" fill="#484f58" font-weight="400">${badgeText}</text>
   `;
 
   // Bottom-right domain
@@ -152,9 +154,10 @@ function buildSvg(name, description) {
   `;
 
   // Decorative circle (top-right)
+  const decoColor = isBlog ? '#7c3aed' : '#0070f3';
   const deco = `
-    <circle cx="${W - 80}" cy="80" r="180" fill="none" stroke="#0070f3" stroke-width="1.5" opacity="0.12"/>
-    <circle cx="${W - 80}" cy="80" r="120" fill="none" stroke="#0070f3" stroke-width="1" opacity="0.08"/>
+    <circle cx="${W - 80}" cy="80" r="180" fill="none" stroke="${decoColor}" stroke-width="1.5" opacity="0.12"/>
+    <circle cx="${W - 80}" cy="80" r="120" fill="none" stroke="${decoColor}" stroke-width="1" opacity="0.08"/>
   `;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -175,6 +178,8 @@ async function main() {
   await mkdir(outputDir, { recursive: true });
 
   let generated = 0;
+
+  // Generate tool OG images
   for (const tool of tools) {
     const svg = buildSvg(tool.name, tool.description);
     const outPath = join(outputDir, `${tool.slug}.png`);
@@ -184,7 +189,30 @@ async function main() {
       .toFile(outPath);
 
     generated++;
-    process.stdout.write(`  [${generated}/${tools.length}] ${tool.slug}.png\n`);
+    process.stdout.write(`  [tool] ${tool.slug}.png\n`);
+  }
+
+  // Generate blog OG images
+  const blogContentDir = join(projectRoot, 'src', 'content', 'blog');
+  const blogFiles = (await readdir(blogContentDir)).filter(f => /\.mdx?$/.test(f));
+
+  for (const file of blogFiles) {
+    const content = await readFile(join(blogContentDir, file), 'utf-8');
+    const titleMatch = content.match(/^title:\s*['"](.*?)['"]?\s*$/m)
+      || content.match(/^title:\s*(.+?)\s*$/m);
+    const descMatch = content.match(/^description:\s*['"](.*?)['"]?\s*$/m)
+      || content.match(/^description:\s*(.+?)\s*$/m);
+    if (!titleMatch) continue;
+
+    const slug = file.replace(/\.mdx?$/, '');
+    const name = titleMatch[1].replace(/^['"]|['"]$/g, '');
+    const description = descMatch ? descMatch[1].replace(/^['"]|['"]$/g, '') : '';
+
+    const svg = buildSvg(name, description, 'blog');
+    const outPath = join(outputDir, `blog-${slug}.png`);
+    await sharp(Buffer.from(svg)).png({ compressionLevel: 9, palette: false }).toFile(outPath);
+    generated++;
+    process.stdout.write(`  [blog] blog-${slug}.png\n`);
   }
 
   console.log(`\nOG images generated: ${generated} files → public/og/`);
