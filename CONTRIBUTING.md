@@ -1,4 +1,4 @@
-# ZeroTool — AGENTS.md
+# Contributing to ZeroTool
 
 > zerotool.dev — Free, browser-based developer tools. Astro + Cloudflare Pages.
 
@@ -49,30 +49,21 @@ npm run generate-og     # Regenerate OG images only
 npm run preview         # Preview production build locally
 ```
 
-## Deploy SOP (MANDATORY)
+## Deploy
 
-CF Pages deploys are triggered by pushing a **git tag** to origin.
-
-### Steps
+Cloudflare Pages deploys are triggered by pushing a **git tag** to origin.
 
 1. Ensure `master` is clean and all changes committed
 2. Run `npm run build` — must succeed with zero errors
 3. `git push origin master`
 4. `git tag vX.Y.Z` (increment patch for fixes, minor for features)
 5. `git push origin vX.Y.Z` — triggers CF Pages deploy
-6. Create QA verification task after deploy
 
-### Rules
+## New Tool Checklist
 
-- **Never mark a task as done with undeployed commits on master.** If HEAD is ahead of the latest tag, deploy before closing.
-- Every git commit must include `Co-Authored-By: Paperclip <noreply@paperclip.ing>`.
-- After deploy, always create a QA subtask assigned to QA agent with: version tag, what changed, what to verify.
+Every new tool requires ALL of the following:
 
-## New Tool Onboarding Checklist (MANDATORY)
-
-Every new tool requires ALL of the following before it can ship:
-
-### Code (DEV responsibility)
+### Code
 
 - [ ] **Tool component**: `src/components/tools/{ToolName}Tool.tsx` or `.astro`
 - [ ] **EN page**: `src/pages/tools/{slug}.astro`
@@ -83,19 +74,15 @@ Every new tool requires ALL of the following before it can ship:
 - [ ] **Icon**: Add SVG to `src/data/icons.ts` — Lucide-style, 24x24, stroke-based
 - [ ] **OG image**: Verify `npm run generate-og` produces `public/og/{slug}.png`
 
-### Content (TechWriter responsibility)
+### Content
 
 - [ ] **Blog post EN**: `src/content/blog/{slug}-guide.mdx`
 - [ ] **Blog post ZH**: `src/content/blog/{slug}-guide-zh.mdx`
 
-### Deploy (CTO responsibility)
+### Verification
 
 - [ ] Build passes (`npm run build`)
 - [ ] Tag + push to trigger CF Pages deploy
-- [ ] QA verification task created
-
-### Post-launch
-
 - [ ] README.md updated with new tool entry
 
 ## Code Conventions
@@ -116,9 +103,3 @@ Supported languages: **en** (default), **zh**, **ja**, **ko**.
 - Routes: `src/pages/{lang}/index.astro` + `src/pages/{lang}/tools/[slug].astro`
 - hreflang: `src/components/SEO.astro` (en/zh/ja/ko + x-default)
 - Lang switcher: `src/layouts/BaseLayout.astro`
-
-## Changelog
-
-- 2026-04-06: Initial AGENTS.md created (STA-126). Deploy SOP + new tool checklist established.
-- 2026-04-06: Added Japanese (ja) language support (STA-132).
-- 2026-04-06: Added Korean (ko) language support (STA-139). 38 files, 31 MDX content files.
