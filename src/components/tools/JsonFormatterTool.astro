@@ -27,21 +27,54 @@
         Output
         <button id="jf-copy" class="btn-copy" type="button">Copy</button>
       </label>
-      <textarea
-        id="jf-output"
-        placeholder="Formatted JSON appears here..."
-        readonly
-        spellcheck="false"
-      ></textarea>
+      <pre id="jf-output" class="jf-output" aria-label="Formatted JSON output"><code id="jf-output-code">Formatted JSON appears here...</code></pre>
     </div>
   </div>
 
   <script is:inline>
     (function () {
       var input = document.getElementById('jf-input');
-      var output = document.getElementById('jf-output');
+      var outputPre = document.getElementById('jf-output');
+      var outputCode = document.getElementById('jf-output-code');
       var status = document.getElementById('jf-status');
       var copyBtn = document.getElementById('jf-copy');
+      var plainText = '';
+
+      function highlightJson(jsonStr) {
+        // Escape HTML first to prevent injection
+        var escaped = jsonStr
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+        return escaped.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g, function (match) {
+          var cls = 'jv-num';
+          if (/^"/.test(match)) {
+            cls = /:$/.test(match) ? 'jv-key' : 'jv-str';
+          } else if (/true|false/.test(match)) {
+            cls = 'jv-bool';
+          } else if (/null/.test(match)) {
+            cls = 'jv-null';
+          }
+          return '<span class="' + cls + '">' + match + '</span>';
+        });
+      }
+
+      function setOutput(jsonStr, isError) {
+        plainText = jsonStr;
+        if (isError) {
+          outputCode.className = 'jf-output-error';
+          outputCode.textContent = jsonStr;
+        } else {
+          outputCode.className = '';
+          outputCode.innerHTML = highlightJson(jsonStr);
+        }
+      }
+
+      function clearOutput() {
+        plainText = '';
+        outputCode.className = '';
+        outputCode.textContent = 'Formatted JSON appears here...';
+      }
 
       function setStatus(msg, isError) {
         status.textContent = msg;
@@ -53,28 +86,60 @@
         status.className = 'jf-status';
       }
 
+      function setInputError(hasError) {
+        if (hasError) {
+          input.classList.add('jf-input-error');
+        } else {
+          input.classList.remove('jf-input-error');
+        }
+      }
+
+      // Real-time error detection on input
+      input.addEventListener('input', function () {
+        var raw = input.value.trim();
+        if (!raw) {
+          setInputError(false);
+          clearStatus();
+          return;
+        }
+        try {
+          JSON.parse(raw);
+          setInputError(false);
+          clearStatus();
+        } catch (e) {
+          setInputError(true);
+          setStatus('Invalid JSON: ' + e.message, true);
+        }
+      });
+
       document.getElementById('jf-format').addEventListener('click', function () {
         var raw = input.value.trim();
-        if (!raw) { clearStatus(); output.value = ''; return; }
+        if (!raw) { clearStatus(); clearOutput(); return; }
         try {
-          output.value = JSON.stringify(JSON.parse(raw), null, 2);
+          var formatted = JSON.stringify(JSON.parse(raw), null, 2);
+          setOutput(formatted, false);
+          setInputError(false);
           setStatus('Valid JSON — formatted.', false);
           window.trackTool && window.trackTool('json_formatter', 'format');
         } catch (e) {
-          output.value = '';
+          clearOutput();
+          setInputError(true);
           setStatus('Invalid JSON: ' + e.message, true);
         }
       });
 
       document.getElementById('jf-minify').addEventListener('click', function () {
         var raw = input.value.trim();
-        if (!raw) { clearStatus(); output.value = ''; return; }
+        if (!raw) { clearStatus(); clearOutput(); return; }
         try {
-          output.value = JSON.stringify(JSON.parse(raw));
+          var minified = JSON.stringify(JSON.parse(raw));
+          setOutput(minified, false);
+          setInputError(false);
           setStatus('Minified.', false);
           window.trackTool && window.trackTool('json_formatter', 'minify');
         } catch (e) {
-          output.value = '';
+          clearOutput();
+          setInputError(true);
           setStatus('Invalid JSON: ' + e.message, true);
         }
       });
@@ -84,23 +149,25 @@
         if (!raw) { clearStatus(); return; }
         try {
           JSON.parse(raw);
+          setInputError(false);
           setStatus('Valid JSON.', false);
           window.trackTool && window.trackTool('json_formatter', 'validate');
         } catch (e) {
+          setInputError(true);
           setStatus('Invalid JSON: ' + e.message, true);
         }
       });
 
       document.getElementById('jf-clear').addEventListener('click', function () {
         input.value = '';
-        output.value = '';
+        clearOutput();
         clearStatus();
+        setInputError(false);
       });
 
       copyBtn.addEventListener('click', function () {
-        var text = output.value;
-        if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        if (!plainText) return;
+        navigator.clipboard.writeText(plainText).then(function () {
           var prev = copyBtn.textContent;
           copyBtn.textContent = 'Copied!';
           setTimeout(function () { copyBtn.textContent = prev; }, 1500);
@@ -140,16 +207,63 @@
 
   .jf-row textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
 
+  .jf-row textarea.jf-input-error { border-color: var(--color-error, #c0392b); }
+
+  /* Output pre block — matches textarea appearance */
+  .jf-output {
+    width: 100%;
+    min-height: 160px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    line-height: 1.5;
+    color: var(--color-text-secondary);
+    overflow: auto;
+    white-space: pre;
+    margin: 0;
+    box-sizing: border-box;
+  }
+
+  .jf-output code {
+    font-family: inherit;
+    font-size: inherit;
+    background: none;
+    padding: 0;
+  }
+
+  .jf-output-error { color: var(--color-error, #c0392b); }
+
   .jf-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
   .jf-status { font-size: 0.85rem; min-height: 1.2rem; }
   .jf-status.success { color: #057a55; }
   .jf-status.error { color: #c0392b; }
 
+  /* Syntax highlight colours — light */
+  .jv-key  { color: #6366f1; }
+  .jv-str  { color: #e67e22; }
+  .jv-num  { color: #27ae60; }
+  .jv-bool { color: #8e44ad; }
+  .jv-null { color: #95a5a6; }
+
+  /* Dark mode */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .jf-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .jf-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jf-status.error   { color: #f87171; }
+    :root:not([data-theme="light"]) .jv-key  { color: #818cf8; }
+    :root:not([data-theme="light"]) .jv-str  { color: #fb923c; }
+    :root:not([data-theme="light"]) .jv-num  { color: #4ade80; }
+    :root:not([data-theme="light"]) .jv-bool { color: #c084fc; }
+    :root:not([data-theme="light"]) .jv-null { color: #94a3b8; }
   }
   [data-theme="dark"] .jf-status.success { color: #34d399; }
-  [data-theme="dark"] .jf-status.error { color: #f87171; }
+  [data-theme="dark"] .jf-status.error   { color: #f87171; }
+  [data-theme="dark"] .jv-key  { color: #818cf8; }
+  [data-theme="dark"] .jv-str  { color: #fb923c; }
+  [data-theme="dark"] .jv-num  { color: #4ade80; }
+  [data-theme="dark"] .jv-bool { color: #c084fc; }
+  [data-theme="dark"] .jv-null { color: #94a3b8; }
 </style>
