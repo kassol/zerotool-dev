@@ -28,10 +28,12 @@ src/
 ├── pages/
 │   ├── tools/          # EN tool pages (one .astro per tool)
 │   ├── zh/tools/       # ZH tool pages
+│   ├── ja/tools/       # JA tool pages
+│   ├── ko/tools/       # KO tool pages
 │   ├── blog/           # Blog routes
 │   └── zh/             # ZH blog + index
 ├── styles/             # Global CSS
-└── i18n/               # i18n utility (getStaticPaths, translations)
+└── i18n/               # i18n utility + translations (en/zh/ja/ko JSON)
 public/
 └── og/                 # Generated OG images (PNG)
 scripts/
@@ -75,7 +77,9 @@ Every new tool requires ALL of the following before it can ship:
 - [ ] **Tool component**: `src/components/tools/{ToolName}Tool.tsx` or `.astro`
 - [ ] **EN page**: `src/pages/tools/{slug}.astro`
 - [ ] **ZH page**: `src/pages/zh/tools/{slug}.astro`
-- [ ] **Registry entry**: Add to `src/data/tools.ts` — slug, translations (en + zh), category
+- [ ] **JA page**: `src/pages/ja/tools/{slug}.astro`
+- [ ] **KO page**: `src/pages/ko/tools/{slug}.astro`
+- [ ] **Registry entry**: Add to `src/data/tools.ts` — slug, translations (en + zh + ja + ko), category
 - [ ] **Icon**: Add SVG to `src/data/icons.ts` — Lucide-style, 24x24, stroke-based
 - [ ] **OG image**: Verify `npm run generate-og` produces `public/og/{slug}.png`
 
@@ -101,6 +105,20 @@ Every new tool requires ALL of the following before it can ship:
 - **Blog**: MDX with frontmatter: `title`, `description`, `pubDate`, `updatedDate`, `heroImage`, `lang`, `canonicalSlug`.
 - **No external icon libraries** — all icons are inlined for zero network deps.
 
+## i18n Architecture
+
+Supported languages: **en** (default), **zh**, **ja**, **ko**.
+
+- Translation strings: `src/i18n/{lang}.json`
+- Locale registration: `src/i18n/utils.ts`
+- Tool name/description: `src/data/tools.ts` per-lang `translations` object
+- Tool content (SEO + FAQ + body): `src/content/tools/{slug}/{lang}.mdx`
+- Routes: `src/pages/{lang}/index.astro` + `src/pages/{lang}/tools/[slug].astro`
+- hreflang: `src/components/SEO.astro` (en/zh/ja/ko + x-default)
+- Lang switcher: `src/layouts/BaseLayout.astro`
+
 ## Changelog
 
 - 2026-04-06: Initial AGENTS.md created (STA-126). Deploy SOP + new tool checklist established.
+- 2026-04-06: Added Japanese (ja) language support (STA-132).
+- 2026-04-06: Added Korean (ko) language support (STA-139). 38 files, 31 MDX content files.
