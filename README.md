@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 27 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 30 tools and growing.
 
 ## Tools
 
@@ -35,6 +35,9 @@
 | Aspect Ratio Calculator | [/tools/aspect-ratio](https://zerotool.dev/tools/aspect-ratio) |
 | XML Formatter | [/tools/xml-formatter](https://zerotool.dev/tools/xml-formatter) |
 | ASCII Converter | [/tools/ascii-converter](https://zerotool.dev/tools/ascii-converter) |
+| TOML to JSON Converter | [/tools/toml-json](https://zerotool.dev/tools/toml-json) |
+| Image to Base64 Converter | [/tools/image-to-base64](https://zerotool.dev/tools/image-to-base64) |
+| CSS to Tailwind Converter | [/tools/css-to-tailwind](https://zerotool.dev/tools/css-to-tailwind) |
 
 ## Why ZeroTool?
 
