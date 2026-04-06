@@ -80,6 +80,15 @@ const getLangHref = (targetLang: string) => {
 <!doctype html>
 <html lang={lang}>
   <head>
+    <!-- Anti-FOUC: apply stored theme before first paint -->
+    <script is:inline>
+      (function() {
+        var t = localStorage.getItem('theme');
+        if (t === 'dark' || t === 'light') {
+          document.documentElement.setAttribute('data-theme', t);
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -148,6 +157,11 @@ const getLangHref = (targetLang: string) => {
             <a href={tool.href}>{tool.label}</a>
           ))}
         </div>
+        <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+          <svg class="theme-icon theme-icon--light" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="theme-icon theme-icon--dark" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="theme-icon theme-icon--system" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </button>
         <div class="lang-switcher">
           <button class="lang-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Select language">
             <svg class="lang-globe" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
@@ -211,6 +225,30 @@ const getLangHref = (targetLang: string) => {
           if (e.key === 'Escape') close();
         });
       })();
+      (function() {
+        var btn = document.getElementById('theme-toggle');
+        if (!btn) return;
+        var MODES = ['system', 'light', 'dark'];
+        function getMode() { return localStorage.getItem('theme') || 'system'; }
+        function applyMode(mode) {
+          if (mode === 'system') {
+            document.documentElement.removeAttribute('data-theme');
+          } else {
+            document.documentElement.setAttribute('data-theme', mode);
+          }
+          btn.setAttribute('data-mode', mode);
+        }
+        applyMode(getMode());
+        btn.addEventListener('click', function() {
+          var cur = getMode();
+          var next = MODES[(MODES.indexOf(cur) + 1) % MODES.length];
+          localStorage.setItem('theme', next);
+          applyMode(next);
+        });
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+          if (getMode() === 'system') applyMode('system');
+        });
+      })();
     </script>
 
     <main>
@@ -254,7 +292,7 @@ const getLangHref = (targetLang: string) => {
   }
 
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --color-primary: #3b9eff;
       --color-primary-hover: #5aafff;
       --color-primary-light: rgba(59, 158, 255, 0.12);
@@ -269,6 +307,22 @@ const getLangHref = (targetLang: string) => {
       --shadow-card: 0 1px 3px rgba(0,0,0,0.2);
       --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.3);
     }
+  }
+
+  [data-theme="dark"] {
+    --color-primary: #3b9eff;
+    --color-primary-hover: #5aafff;
+    --color-primary-light: rgba(59, 158, 255, 0.12);
+    --color-bg: #0f1117;
+    --color-bg-secondary: #1a1d27;
+    --color-bg-icon: #1e2536;
+    --color-text: #e4e4e7;
+    --color-text-secondary: #a1a1aa;
+    --color-text-muted: #71717a;
+    --color-border: #2e3039;
+    --color-border-light: #23252e;
+    --shadow-card: 0 1px 3px rgba(0,0,0,0.2);
+    --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.3);
   }
 
   /* ── Reset ── */
@@ -333,8 +387,27 @@ const getLangHref = (targetLang: string) => {
 
   .nav-tools a:hover { color: var(--color-primary); }
 
+  /* ── Theme Toggle ── */
+  .theme-toggle {
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.35rem;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+  .theme-toggle:hover { color: var(--color-primary); border-color: var(--color-primary); }
+  .theme-icon { display: none; }
+  .theme-toggle[data-mode="light"] .theme-icon--light { display: block; }
+  .theme-toggle[data-mode="dark"] .theme-icon--dark { display: block; }
+  .theme-toggle[data-mode="system"] .theme-icon--system,
+  .theme-toggle:not([data-mode]) .theme-icon--system { display: block; }
+
   .lang-switcher {
-    margin-left: auto;
     flex-shrink: 0;
     position: relative;
   }
