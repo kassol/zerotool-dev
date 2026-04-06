@@ -43,7 +43,7 @@
 ## Why ZeroTool?
 
 - **Private by design** — everything runs in your browser, nothing is sent to a server
-- **No friction** — no account, no ads, no paywalls
+- **No friction** — no account, no paywalls
 - **Offline-capable** — works without internet after first load
 - **Fast** — static site on Cloudflare edge, global CDN
 
