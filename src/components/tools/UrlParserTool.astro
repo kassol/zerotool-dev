@@ -1,0 +1,294 @@
+---
+// UrlParserTool — URL structure parser using browser built-in URL API
+---
+<div>
+  <div class="up-wrap">
+    <div class="up-input-section">
+      <label for="up-input">Enter a URL</label>
+      <input
+        id="up-input"
+        type="text"
+        placeholder="https://example.com:8080/path/to/page?key=value&foo=bar#section"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <div class="up-actions">
+        <button id="up-example" class="btn-ghost">Load Example</button>
+        <button id="up-clear" class="btn-ghost">Clear</button>
+      </div>
+    </div>
+
+    <div id="up-status" class="up-status" aria-live="polite"></div>
+
+    <div id="up-results" class="up-results"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var EXAMPLE_URL = 'https://user:pass@example.com:8080/path/to/page?key=value&foo=bar#section';
+
+      var FIELDS = [
+        { key: 'protocol',  label: 'Protocol' },
+        { key: 'username',  label: 'Username' },
+        { key: 'password',  label: 'Password' },
+        { key: 'host',      label: 'Host' },
+        { key: 'hostname',  label: 'Hostname' },
+        { key: 'port',      label: 'Port' },
+        { key: 'pathname',  label: 'Pathname' },
+        { key: 'search',    label: 'Search' },
+        { key: 'hash',      label: 'Hash' },
+        { key: 'origin',    label: 'Origin' },
+        { key: 'href',      label: 'Full URL' },
+      ];
+
+      function copyText(text, btn) {
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+        });
+      }
+
+      function buildTable(parsed) {
+        var table = document.createElement('table');
+        table.className = 'up-table';
+
+        var thead = document.createElement('thead');
+        thead.innerHTML = '<tr><th>Field</th><th>Value</th><th></th></tr>';
+        table.appendChild(thead);
+
+        var tbody = document.createElement('tbody');
+
+        FIELDS.forEach(function (f) {
+          var val = parsed[f.key] || '';
+          var isEmpty = val === '' || val === null;
+
+          var tr = document.createElement('tr');
+          if (isEmpty) tr.className = 'up-row-empty';
+
+          var tdLabel = document.createElement('td');
+          tdLabel.className = 'up-field';
+          tdLabel.textContent = f.label;
+          tr.appendChild(tdLabel);
+
+          var tdVal = document.createElement('td');
+          tdVal.className = 'up-value' + (isEmpty ? ' up-empty' : '');
+          tdVal.textContent = isEmpty ? '—' : val;
+          tr.appendChild(tdVal);
+
+          var tdCopy = document.createElement('td');
+          tdCopy.className = 'up-copy-cell';
+          if (!isEmpty) {
+            var btn = document.createElement('button');
+            btn.className = 'btn-copy';
+            btn.textContent = 'Copy';
+            btn.addEventListener('click', function () { copyText(val, btn); });
+            tdCopy.appendChild(btn);
+          }
+          tr.appendChild(tdCopy);
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        return table;
+      }
+
+      function buildQueryTable(parsed) {
+        var entries = [];
+        parsed.searchParams.forEach(function (v, k) {
+          entries.push([k, v]);
+        });
+        if (entries.length === 0) return null;
+
+        var section = document.createElement('div');
+        section.className = 'up-query-section';
+
+        var h = document.createElement('div');
+        h.className = 'up-section-title';
+        h.textContent = 'Query Parameters (' + entries.length + ')';
+        section.appendChild(h);
+
+        var table = document.createElement('table');
+        table.className = 'up-table';
+
+        var thead = document.createElement('thead');
+        thead.innerHTML = '<tr><th>Key</th><th>Value</th><th></th></tr>';
+        table.appendChild(thead);
+
+        var tbody = document.createElement('tbody');
+        entries.forEach(function (pair) {
+          var tr = document.createElement('tr');
+
+          var tdKey = document.createElement('td');
+          tdKey.className = 'up-field';
+          tdKey.textContent = pair[0];
+          tr.appendChild(tdKey);
+
+          var tdVal = document.createElement('td');
+          tdVal.className = 'up-value';
+          tdVal.textContent = pair[1];
+          tr.appendChild(tdVal);
+
+          var tdCopy = document.createElement('td');
+          tdCopy.className = 'up-copy-cell';
+          var btn = document.createElement('button');
+          btn.className = 'btn-copy';
+          btn.textContent = 'Copy';
+          btn.addEventListener('click', (function (v) {
+            return function () { copyText(v, btn); };
+          })(pair[1]));
+          tdCopy.appendChild(btn);
+          tr.appendChild(tdCopy);
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        section.appendChild(table);
+        return section;
+      }
+
+      function parse() {
+        var raw = document.getElementById('up-input').value.trim();
+        var statusEl = document.getElementById('up-status');
+        var resultsEl = document.getElementById('up-results');
+        resultsEl.innerHTML = '';
+
+        if (!raw) {
+          statusEl.textContent = '';
+          statusEl.className = 'up-status';
+          return;
+        }
+
+        var parsed;
+        try {
+          parsed = new URL(raw);
+        } catch (e) {
+          statusEl.textContent = 'Invalid URL. Make sure it includes a scheme (e.g. https://).';
+          statusEl.className = 'up-status error';
+          return;
+        }
+
+        statusEl.textContent = 'Parsed successfully.';
+        statusEl.className = 'up-status success';
+
+        resultsEl.appendChild(buildTable(parsed));
+
+        var querySection = buildQueryTable(parsed);
+        if (querySection) resultsEl.appendChild(querySection);
+
+        window.trackTool && window.trackTool('url-parser', 'parse');
+      }
+
+      document.getElementById('up-input').addEventListener('input', parse);
+
+      document.getElementById('up-example').addEventListener('click', function () {
+        document.getElementById('up-input').value = EXAMPLE_URL;
+        parse();
+      });
+
+      document.getElementById('up-clear').addEventListener('click', function () {
+        document.getElementById('up-input').value = '';
+        document.getElementById('up-status').textContent = '';
+        document.getElementById('up-status').className = 'up-status';
+        document.getElementById('up-results').innerHTML = '';
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .up-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .up-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .up-input-section label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .up-input-section input {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  .up-input-section input:focus { outline: none; border-color: #6366f1; background: var(--color-bg); }
+
+  .up-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+
+  .up-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .up-status.success { color: #057a55; }
+  .up-status.error { color: #c0392b; }
+
+  .up-results { display: flex; flex-direction: column; gap: 1rem; }
+
+  .up-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .up-table thead tr {
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .up-table th {
+    text-align: left;
+    padding: 0.45rem 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .up-table td {
+    padding: 0.4rem 0.75rem;
+    border-top: 1px solid var(--color-border);
+    vertical-align: middle;
+  }
+
+  .up-field {
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    width: 110px;
+    white-space: nowrap;
+  }
+
+  .up-value {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    word-break: break-all;
+  }
+
+  .up-empty { color: var(--color-text-muted); font-family: inherit; font-size: 0.85rem; }
+
+  .up-row-empty td { opacity: 0.55; }
+
+  .up-copy-cell { width: 64px; text-align: right; }
+
+  .up-section-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    margin-bottom: 0.4rem;
+  }
+
+  .up-query-section { display: flex; flex-direction: column; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .up-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .up-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .up-status.success { color: #34d399; }
+  [data-theme="dark"] .up-status.error { color: #f87171; }
+</style>
