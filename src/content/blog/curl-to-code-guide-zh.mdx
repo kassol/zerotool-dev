@@ -1,0 +1,238 @@
+---
+title: "cURL 转代码：一键将 curl 命令转为 Python、JavaScript、Go 等语言"
+description: "粘贴 curl 命令，立即获得 Python requests、JavaScript fetch、Go net/http 等可运行代码。告别手动翻译，彻底搞清 curl 参数到库调用的映射关系。"
+pubDate: 2026-04-06
+lang: "zh"
+translationSlug: "curl-to-code-guide"
+tags: ["curl", "curl转python", "curl转代码", "接口调试", "开发工具"]
+ogImage: /og/blog-curl-to-code-guide-zh.png
+---
+
+接口文档、Postman、Chrome 开发者工具——这些地方复制出来的永远是 curl 命令。但你的项目用的是 Python、JavaScript 或 Go。每次手动把 curl 参数翻译成库调用，既费时又容易出错，尤其是遇到带鉴权、自定义 Header、表单上传的复杂请求。cURL 转代码工具解决的就是这个问题。
+
+## 工具做了什么
+
+工具解析 curl 命令，输出你选择语言的等价代码：
+
+- **Python** — `requests` 或 `httpx`
+- **JavaScript** — `fetch` 或 `axios`
+- **Node.js** — `node-fetch` 或原生 `https` 模块
+- **Go** — `net/http`
+- **PHP** — `curl` 扩展或 `GuzzleHttp`
+- **Ruby** — `net/http` 或 `Faraday`
+- **Java** — `HttpClient` 或 `OkHttp`
+
+粘贴命令，选语言，拿走代码。
+
+## 常用 curl 参数的映射关系
+
+### `-X` / `--request` — HTTP 方法
+
+```bash
+curl -X POST https://api.example.com/users
+```
+
+```python
+import requests
+response = requests.post('https://api.example.com/users')
+```
+
+```js
+fetch('https://api.example.com/users', { method: 'POST' })
+```
+
+### `-H` / `--header` — 请求头
+
+```bash
+curl -H "Content-Type: application/json" \
+     -H "Authorization: Bearer eyJhbGci..." \
+     https://api.example.com/users
+```
+
+```python
+import requests
+headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer eyJhbGci...'
+}
+response = requests.get('https://api.example.com/users', headers=headers)
+```
+
+实际场景：对接微信支付、支付宝、阿里云 OpenAPI 时，Authorization 头的格式千变万化，转换工具能忠实还原。
+
+### `-d` / `--data` — 请求体
+
+```bash
+curl -X POST https://api.example.com/users \
+     -H "Content-Type: application/json" \
+     -d '{"name": "张三", "email": "zhangsan@example.com"}'
+```
+
+```python
+import requests
+data = {"name": "张三", "email": "zhangsan@example.com"}
+response = requests.post(
+    'https://api.example.com/users',
+    headers={'Content-Type': 'application/json'},
+    json=data
+)
+```
+
+```go
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "net/http"
+)
+
+func main() {
+    data := map[string]string{"name": "张三", "email": "zhangsan@example.com"}
+    body, _ := json.Marshal(data)
+    req, _ := http.NewRequest("POST", "https://api.example.com/users", bytes.NewBuffer(body))
+    req.Header.Set("Content-Type", "application/json")
+    client := &http.Client{}
+    client.Do(req)
+}
+```
+
+### `-F` / `--form` — 文件上传（multipart）
+
+```bash
+curl -F "file=@/path/to/report.pdf" \
+     -F "title=季度报告" \
+     https://api.example.com/upload
+```
+
+```python
+import requests
+with open('/path/to/report.pdf', 'rb') as f:
+    files = {'file': f}
+    data = {'title': '季度报告'}
+    response = requests.post('https://api.example.com/upload', files=files, data=data)
+```
+
+### `-u` / `--user` — HTTP Basic 认证
+
+```bash
+curl -u username:password https://api.example.com/protected
+```
+
+```python
+import requests
+response = requests.get(
+    'https://api.example.com/protected',
+    auth=('username', 'password')
+)
+```
+
+### `-b` / `--cookie` — Cookie
+
+```bash
+curl -b "session=abc123; theme=dark" https://app.example.com/dashboard
+```
+
+```python
+import requests
+cookies = {'session': 'abc123', 'theme': 'dark'}
+response = requests.get('https://app.example.com/dashboard', cookies=cookies)
+```
+
+### `-k` / `--insecure` — 跳过 TLS 校验
+
+```bash
+curl -k https://localhost:8443/api/health
+```
+
+```python
+import requests
+response = requests.get('https://localhost:8443/api/health', verify=False)
+```
+
+仅用于本地开发和内网环境，生产环境绝不应跳过 TLS 校验。
+
+## 最典型的使用场景：浏览器抓包转代码
+
+1. 打开 Chrome / Firefox 开发者工具 → **Network** 面板
+2. 找到你需要重现的请求
+3. 右键 → **复制** → **复制为 cURL（bash）**
+4. 粘贴到转换工具
+5. 选择目标语言
+
+这个流程特别适合：
+
+- 逆向分析第三方平台 API（无官方文档的情况）
+- 在自动化测试中复现浏览器行为
+- 把浏览器里能正常跑的请求迁移到后端服务
+
+## 对接国内 API 的典型例子
+
+对接微信公众号、小程序、支付宝等平台时，官方文档通常提供 curl 示例：
+
+```bash
+curl -X POST https://api.weixin.qq.com/cgi-bin/token \
+  -d "grant_type=client_credential&appid=YOUR_APPID&secret=YOUR_SECRET"
+```
+
+```python
+import requests
+params = {
+    'grant_type': 'client_credential',
+    'appid': 'YOUR_APPID',
+    'secret': 'YOUR_SECRET'
+}
+response = requests.post('https://api.weixin.qq.com/cgi-bin/token', data=params)
+token = response.json()['access_token']
+```
+
+转换后即可直接集成到 Django、FastAPI、Flask 项目中。
+
+## 处理复杂 curl 命令
+
+### 多个 `-d` 参数
+
+curl 会将多个 `-d` 合并为 URL 编码字符串，转换工具会正确处理：
+
+```bash
+curl -X POST https://api.example.com/form \
+     -d "field1=value1" \
+     -d "field2=value2"
+# 等价于 body: field1=value1&field2=value2
+```
+
+### `--data-binary` vs `--data`
+
+`--data` 去除换行；`--data-binary` 保留原始字节。对于包含换行的 JSON 请求体，这个区别很重要。转换工具会根据实际使用的 flag 输出对应调用。
+
+### 跟随重定向（`-L`）
+
+```bash
+curl -L https://short.url/abc123
+```
+
+```python
+# requests 默认跟随重定向
+response = requests.get('https://short.url/abc123', allow_redirects=True)
+```
+
+### 压缩响应（`--compressed`）
+
+```bash
+curl --compressed https://api.example.com/large-response
+```
+
+Python `requests` 自动处理 gzip/brotli 解压，无需额外代码。
+
+## 使用工具
+
+**[在线 cURL 转代码工具 →](/tools/curl-to-code)**
+
+粘贴任意 curl 命令，选择 Python、JavaScript、Go、PHP 等目标语言，秒级生成可运行代码。适用场景：
+
+- 将 API 文档示例转换为项目语言
+- 把 Shell 脚本中的 curl 调用迁移到应用代码
+- 跨语言分享 API 调用示例
+- 对比 curl 直接输出与库调用行为，辅助调试
+
+转换完全在浏览器本地运行，命令内容不上传服务器。

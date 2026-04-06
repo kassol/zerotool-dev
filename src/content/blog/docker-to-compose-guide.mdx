@@ -1,0 +1,289 @@
+---
+title: "Docker Run to Docker Compose Converter: Stop Repeating Long Docker Commands"
+description: "Paste a docker run command and instantly get a docker-compose.yml. Understand which flags map to which Compose fields, and when to use Compose over raw docker run."
+pubDate: 2026-04-06
+lang: "en"
+translationSlug: "docker-to-compose-guide-zh"
+tags: ["docker compose", "docker run to compose", "docker-compose.yml", "container orchestration", "developer-tools"]
+ogImage: /og/blog-docker-to-compose-guide.png
+---
+
+A `docker run` command that starts a database with a dozen flags is fine to type once. Sharing it with teammates, re-running it after a system wipe, or adding a second service turns it into a maintenance problem. Docker Compose solves this by putting everything in a versioned YAML file. Converting an existing `docker run` command to Compose is mechanical work—let a tool do it.
+
+## What the Converter Does
+
+Paste a `docker run` command, get a ready-to-use `docker-compose.yml`. The converter maps every flag to its Compose equivalent and formats the output correctly.
+
+**Input:**
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=myapp \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5432:5432 \
+  -v pgdata:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  postgres:16-alpine
+```
+
+**Output:**
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+```
+
+## Flag-to-Compose Field Mapping
+
+### Core Identity
+
+| docker run flag | Compose field | Notes |
+|----------------|--------------|-------|
+| `IMAGE[:TAG]` | `image:` | Required |
+| `--name NAME` | `container_name:` | Optional but recommended |
+| `-d` | (implicit in `docker compose up -d`) | Detach mode is a CLI flag in Compose |
+
+### Environment Variables
+
+```bash
+# Single -e flags
+docker run -e KEY=value -e OTHER=val image
+
+# .env file
+docker run --env-file .env image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    environment:
+      KEY: value
+      OTHER: val
+    # or reference a file:
+    env_file:
+      - .env
+```
+
+For production, use `env_file` with a `.env` that is in `.gitignore`. Never commit credentials into `docker-compose.yml`.
+
+### Port Mapping
+
+```bash
+docker run -p 8080:80 -p 443:443 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    ports:
+      - "8080:80"
+      - "443:443"
+```
+
+Use quoted strings for ports to avoid YAML treating values like `80:80` as a base-60 number.
+
+### Volumes
+
+```bash
+# Named volume
+docker run -v mydata:/data/db image
+
+# Bind mount
+docker run -v /host/path:/container/path image
+
+# Read-only bind mount
+docker run -v /host/config:/etc/config:ro image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    volumes:
+      - mydata:/data/db
+      - /host/path:/container/path
+      - /host/config:/etc/config:ro
+
+volumes:
+  mydata:  # declare named volumes at top level
+```
+
+Named volumes must be declared at the top-level `volumes:` key. Bind mounts (absolute host paths) do not.
+
+### Networking
+
+```bash
+docker run --network my-network --network-alias myapp image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    networks:
+      - my-network
+    network_mode: bridge  # default
+
+networks:
+  my-network:
+    driver: bridge
+```
+
+### Restart Policy
+
+```bash
+docker run --restart always image
+docker run --restart unless-stopped image
+docker run --restart on-failure:3 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    restart: always
+    # or:
+    restart: unless-stopped
+    # or:
+    restart: on-failure
+```
+
+`unless-stopped` is the most common for production: the container restarts after crashes and after host reboots, but stays stopped if you explicitly stopped it.
+
+### Resource Limits
+
+```bash
+docker run --memory 512m --cpus 1.5 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.5'
+```
+
+### Entrypoint and Command
+
+```bash
+docker run --entrypoint /bin/sh image -c "echo hello"
+```
+
+```yaml
+services:
+  app:
+    image: image
+    entrypoint: /bin/sh
+    command: ["-c", "echo hello"]
+```
+
+### Privileged and Capabilities
+
+```bash
+docker run --privileged image
+docker run --cap-add SYS_PTRACE --cap-drop NET_ADMIN image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    privileged: true
+    # or more precise:
+    cap_add:
+      - SYS_PTRACE
+    cap_drop:
+      - NET_ADMIN
+```
+
+Avoid `privileged: true` unless absolutely necessary. Use specific `cap_add` entries instead.
+
+## Multi-Service Compose from Multiple docker run Commands
+
+The real power of Compose emerges when combining services. A typical Node.js + PostgreSQL + Redis stack:
+
+```bash
+# Three separate docker run commands
+docker run -d --name postgres -e POSTGRES_DB=app -p 5432:5432 -v pgdata:/var/lib/postgresql/data postgres:16
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+docker run -d --name api -p 3000:3000 -e DATABASE_URL=postgres://postgres@postgres:5432/app -e REDIS_URL=redis://redis:6379 --link postgres --link redis myapp:latest
+```
+
+Converted to Compose, with `--link` replaced by the default service network:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+
+  api:
+    image: myapp:latest
+    container_name: api
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres@postgres:5432/app
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:
+```
+
+Note: `--link` is legacy. In Compose, all services on the same network can reach each other by service name. The `api` service reaches `postgres` at the hostname `postgres`.
+
+## When to Prefer docker run
+
+Compose is better for multi-service stacks, development environments, and anything you want to version-control. Stick with `docker run` for:
+
+- One-off debugging containers (`docker run --rm -it image sh`)
+- Quick tests of a single image without persistence
+- CI steps where the pipeline already manages orchestration
+
+## Try the Tool
+
+**[Convert docker run to Compose instantly →](/tools/docker-to-compose)**
+
+Paste any `docker run` command—however long—and get a valid `docker-compose.yml`. Works with all standard flags: environment variables, volumes, port mappings, restart policies, resource limits, entrypoints, and networking options.
+
+The output follows current Compose v2 syntax (no `version:` field required). Copy it directly into your project or use it as a base for a multi-service stack.

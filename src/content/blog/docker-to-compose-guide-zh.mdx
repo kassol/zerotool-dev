@@ -1,0 +1,263 @@
+---
+title: "Docker Run 转 Docker Compose：告别一大串 docker 命令"
+description: "粘贴 docker run 命令，立即生成 docker-compose.yml。了解各参数到 Compose 字段的映射关系，掌握多服务编排的正确写法。"
+pubDate: 2026-04-06
+lang: "zh"
+translationSlug: "docker-to-compose-guide"
+tags: ["docker compose", "docker run转compose", "容器编排", "docker-compose.yml", "开发工具"]
+ogImage: /og/blog-docker-to-compose-guide-zh.png
+---
+
+启动一个带十几个参数的数据库容器，第一次手打没问题。但要把这个命令分享给同事、系统重装后重新执行、或者再加第二个服务——维护成本就来了。Docker Compose 把所有配置放进一个可版本化的 YAML 文件，解决这个问题。把现有的 `docker run` 命令转换成 Compose 是机械工作，用工具来做。
+
+## 工具做了什么
+
+粘贴 `docker run` 命令，得到可直接使用的 `docker-compose.yml`。工具将每个参数映射到对应的 Compose 字段并格式化输出。
+
+**输入：**
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=myapp \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5432:5432 \
+  -v pgdata:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  postgres:16-alpine
+```
+
+**输出：**
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+```
+
+## 参数到 Compose 字段的映射
+
+### 基本标识
+
+| docker run 参数 | Compose 字段 | 备注 |
+|----------------|-------------|------|
+| `IMAGE[:TAG]` | `image:` | 必填 |
+| `--name NAME` | `container_name:` | 推荐填写 |
+| `-d` | （Compose 在 `docker compose up -d` 时指定） | 后台模式是 CLI 参数 |
+
+### 环境变量
+
+```bash
+# 单独 -e 参数
+docker run -e KEY=value -e OTHER=val image
+
+# .env 文件
+docker run --env-file .env image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    environment:
+      KEY: value
+      OTHER: val
+    # 或者引用文件
+    env_file:
+      - .env
+```
+
+生产环境用 `env_file` 引用加入 `.gitignore` 的 `.env` 文件，不要把密码明文写进 `docker-compose.yml` 提交到仓库。
+
+### 端口映射
+
+```bash
+docker run -p 8080:80 -p 443:443 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    ports:
+      - "8080:80"
+      - "443:443"
+```
+
+端口值用引号包裹，避免 YAML 把 `80:80` 解析为 base-60 数字。
+
+### 数据卷
+
+```bash
+# 命名卷
+docker run -v mydata:/data/db image
+
+# 绑定挂载
+docker run -v /host/path:/container/path image
+
+# 只读挂载
+docker run -v /host/config:/etc/config:ro image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    volumes:
+      - mydata:/data/db
+      - /host/path:/container/path
+      - /host/config:/etc/config:ro
+
+volumes:
+  mydata:  # 命名卷必须在顶层 volumes: 声明
+```
+
+命名卷需要在顶层 `volumes:` 中声明；绑定挂载（绝对路径）不需要。
+
+### 网络
+
+```bash
+docker run --network my-network --network-alias myapp image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    networks:
+      - my-network
+
+networks:
+  my-network:
+    driver: bridge
+```
+
+### 重启策略
+
+```bash
+docker run --restart always image
+docker run --restart unless-stopped image
+docker run --restart on-failure:3 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    restart: unless-stopped
+```
+
+生产环境推荐 `unless-stopped`：容器崩溃或主机重启后自动重启，但手动停止后保持停止状态。
+
+### 资源限制
+
+```bash
+docker run --memory 512m --cpus 1.5 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.5'
+```
+
+### 启动命令
+
+```bash
+docker run --entrypoint /bin/sh image -c "echo hello"
+```
+
+```yaml
+services:
+  app:
+    image: image
+    entrypoint: /bin/sh
+    command: ["-c", "echo hello"]
+```
+
+## 多服务编排：从多个 docker run 到一个 Compose 文件
+
+Compose 真正的价值在多服务场景。以常见的 Node.js + PostgreSQL + Redis 为例：
+
+```bash
+# 原来三条分散的命令
+docker run -d --name postgres -e POSTGRES_DB=app -p 5432:5432 -v pgdata:/var/lib/postgresql/data postgres:16
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+docker run -d --name api -p 3000:3000 -e DATABASE_URL=postgres://postgres@postgres:5432/app -e REDIS_URL=redis://redis:6379 myapp:latest
+```
+
+转换为 Compose，用 `depends_on` 代替过时的 `--link`：
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+
+  api:
+    image: myapp:latest
+    container_name: api
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres@postgres:5432/app
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:
+```
+
+同一 Compose 网络中的服务可以通过服务名互相访问，`api` 直接用 `postgres` 作为数据库主机名。`--link` 是旧版语法，Compose 中已无需使用。
+
+## 什么时候继续用 docker run
+
+Compose 适合多服务编排、开发环境和需要版本控制的场景。这些情况保留 `docker run` 即可：
+
+- 临时调试容器（`docker run --rm -it image sh`）
+- 快速测试单个镜像且不需要持久化
+- CI 流水线中已经有编排工具管理容器生命周期
+
+## 使用工具
+
+**[在线 Docker Run 转 Compose →](/tools/docker-to-compose)**
+
+粘贴任意 `docker run` 命令，获得有效的 `docker-compose.yml`。支持所有标准参数：环境变量、数据卷、端口映射、重启策略、资源限制、启动命令和网络配置。
+
+输出遵循当前 Compose v2 语法（无需 `version:` 字段）。可直接复制到项目使用，也可作为多服务编排的基础。

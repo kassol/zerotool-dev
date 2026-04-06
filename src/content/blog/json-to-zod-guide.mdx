@@ -1,0 +1,281 @@
+---
+title: "JSON to Zod Schema Generator: Auto-Generate TypeScript Validation from JSON"
+description: "Paste any JSON object and instantly generate a Zod schema for TypeScript runtime validation. Learn how Zod schemas work and when to use them in your API and form handling code."
+pubDate: 2026-04-06
+lang: "en"
+translationSlug: "json-to-zod-guide-zh"
+tags: ["zod", "json to zod", "typescript validation", "zod schema", "developer-tools"]
+ogImage: /og/blog-json-to-zod-guide.png
+---
+
+TypeScript's type system catches errors at compile time, but API responses arrive at runtime. Zod bridges the gap: it validates the shape and types of runtime data and infers TypeScript types from the same schema. Writing Zod schemas by hand for complex JSON structures is slow. A JSON to Zod generator turns any JSON sample into a complete, editable schema in seconds.
+
+## What Is Zod?
+
+Zod is a TypeScript-first schema declaration and validation library. Unlike `JSON.parse()` which returns `any`, Zod:
+
+- Validates that data matches an expected shape
+- Infers TypeScript types from schemas (no duplicate type definitions)
+- Produces detailed, structured error messages
+- Runs in both Node.js and the browser
+
+```ts
+import { z } from 'zod'
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+  role: z.enum(['admin', 'user', 'guest'])
+})
+
+type User = z.infer<typeof UserSchema>
+// Equivalent to: { id: number; name: string; email: string; role: 'admin' | 'user' | 'guest' }
+
+const result = UserSchema.safeParse(apiResponse)
+if (result.success) {
+  console.log(result.data.name) // typed as string
+} else {
+  console.error(result.error.issues)
+}
+```
+
+## JSON to Zod: How the Conversion Works
+
+Given a JSON sample:
+
+```json
+{
+  "id": 42,
+  "name": "Alice",
+  "email": "alice@example.com",
+  "age": 28,
+  "active": true,
+  "tags": ["admin", "beta"],
+  "address": {
+    "street": "123 Main St",
+    "city": "Portland",
+    "zip": "97201"
+  },
+  "metadata": null
+}
+```
+
+The generator produces:
+
+```ts
+import { z } from 'zod'
+
+const Schema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+  age: z.number(),
+  active: z.boolean(),
+  tags: z.array(z.string()),
+  address: z.object({
+    street: z.string(),
+    city: z.string(),
+    zip: z.string()
+  }),
+  metadata: z.null()
+})
+
+export type Schema = z.infer<typeof Schema>
+```
+
+The schema is a starting point. Refine it based on your actual business rules (see the section below).
+
+## Where to Use Zod Validation
+
+### API Response Validation
+
+```ts
+// Without Zod — any typing, no runtime guarantees
+const user = (await fetch('/api/user').then(r => r.json())) as User
+
+// With Zod — validated and typed
+const UserSchema = z.object({ id: z.number(), name: z.string() })
+
+async function fetchUser(id: number) {
+  const raw = await fetch(`/api/users/${id}`).then(r => r.json())
+  return UserSchema.parse(raw) // throws ZodError if shape doesn't match
+}
+```
+
+### tRPC and Next.js API Routes
+
+```ts
+// tRPC procedure input validation
+import { z } from 'zod'
+import { publicProcedure } from '../trpc'
+
+const createUserInput = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
+  role: z.enum(['admin', 'user']).default('user')
+})
+
+export const createUser = publicProcedure
+  .input(createUserInput)
+  .mutation(async ({ input }) => {
+    // input is typed as { name: string; email: string; role: 'admin' | 'user' }
+    return db.users.create(input)
+  })
+```
+
+### Form Validation with React Hook Form
+
+```ts
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+
+const formSchema = z.object({
+  username: z.string().min(3, 'At least 3 characters'),
+  password: z.string().min(8, 'At least 8 characters'),
+  confirmPassword: z.string()
+}).refine(data => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ['confirmPassword']
+})
+
+type FormData = z.infer<typeof formSchema>
+
+function SignupForm() {
+  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+    resolver: zodResolver(formSchema)
+  })
+  // ...
+}
+```
+
+### Environment Variable Validation
+
+```ts
+import { z } from 'zod'
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().url(),
+  PORT: z.coerce.number().int().positive().default(3000),
+  NODE_ENV: z.enum(['development', 'production', 'test']),
+  API_SECRET: z.string().min(32)
+})
+
+export const env = envSchema.parse(process.env)
+// Crashes at startup with a clear error if required env vars are missing or malformed
+```
+
+## Refining Generated Schemas
+
+The generator infers types from JSON values, but JSON can't express all Zod constraints. Add these manually:
+
+### String Formats
+
+```ts
+// Generated
+email: z.string()
+
+// Refined
+email: z.string().email()
+url: z.string().url()
+uuid: z.string().uuid()
+isoDate: z.string().datetime()
+```
+
+### Numeric Constraints
+
+```ts
+// Generated
+age: z.number()
+
+// Refined
+age: z.number().int().min(0).max(150)
+price: z.number().positive()
+quantity: z.number().int().nonnegative()
+```
+
+### Optional vs Required Fields
+
+JSON samples only show values that exist. If a field can be absent:
+
+```ts
+// Generated (field existed in sample)
+nickname: z.string()
+
+// Refined
+nickname: z.string().optional()        // undefined is allowed
+nickname: z.string().nullable()        // null is allowed
+nickname: z.string().nullish()         // null or undefined allowed
+```
+
+### Unions and Enums
+
+When a field can hold multiple types:
+
+```ts
+// status was "active" in the sample
+status: z.string()
+
+// Refined after examining all possible values
+status: z.enum(['active', 'inactive', 'pending', 'archived'])
+
+// Or a union with different shapes
+result: z.union([
+  z.object({ success: z.literal(true), data: DataSchema }),
+  z.object({ success: z.literal(false), error: z.string() })
+])
+```
+
+### Array Items with Mixed Types
+
+```ts
+// Mixed array like [1, "hello", true]
+items: z.array(z.union([z.number(), z.string(), z.boolean()]))
+```
+
+## Handling `null` Values in JSON Samples
+
+When a JSON field is `null`, the generator produces `z.null()`. In practice, `null` usually means the field is nullable, not always-null:
+
+```ts
+// Generated
+metadata: z.null()
+
+// More useful
+metadata: z.string().nullable()        // string | null
+metadata: z.record(z.unknown()).nullable()  // object | null
+```
+
+## parse vs safeParse
+
+Zod provides two parse methods with different error handling:
+
+| Method | On failure | Returns |
+|--------|-----------|---------|
+| `.parse(data)` | Throws `ZodError` | The validated data |
+| `.safeParse(data)` | Returns `{ success: false, error }` | `{ success, data \| error }` |
+
+Use `.parse()` at startup (env vars, config) where failure should crash. Use `.safeParse()` for API responses and user input where you want to handle errors gracefully.
+
+```ts
+// parse — throws on failure
+const config = ConfigSchema.parse(process.env)
+
+// safeParse — handle the error
+const result = UserSchema.safeParse(apiResponse)
+if (!result.success) {
+  // result.error.issues contains structured error details
+  return { error: result.error.format() }
+}
+// result.data is fully typed
+return result.data
+```
+
+## Try the Tool
+
+**[Generate Zod schemas from JSON instantly →](/tools/json-to-zod)**
+
+Paste any JSON object—from an API response, a Postman collection, a Swagger example—and get a working Zod schema. Use it as a starting point, then add constraints specific to your domain.
+
+Works with nested objects, arrays, null values, and mixed-type arrays. Output includes the `z.infer` type export so you have a TypeScript type without writing a separate interface.
