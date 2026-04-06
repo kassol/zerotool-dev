@@ -54,6 +54,9 @@ const tools = [
   { slug: 'slugify',                 name: 'Slugify String',                description: 'Convert text to URL-friendly slugs' },
   { slug: 'http-status-codes',       name: 'HTTP Status Codes',             description: 'Searchable reference for all HTTP status codes' },
   { slug: 'hmac-generator',          name: 'HMAC Generator',                description: 'Generate HMAC-SHA256/384/512 signatures' },
+  { slug: 'curl-to-code',            name: 'cURL to Code Converter',        description: 'Convert cURL commands to Python, JavaScript, Go, PHP, and Node.js code instantly.' },
+  { slug: 'json-to-zod',             name: 'JSON to Zod Schema',            description: 'Generate Zod validation schemas from JSON data. Handles nested objects, arrays, and optional properties.' },
+  { slug: 'docker-to-compose',       name: 'Docker Run to Compose',         description: 'Convert docker run commands to docker-compose.yml. Supports ports, volumes, env vars, networks, and more.' },
 ];
 
 /** Escape XML special chars so SVG stays valid. */
