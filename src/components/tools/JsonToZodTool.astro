@@ -1,0 +1,471 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    rootName: 'Root schema name',
+    strictMode: 'Strict mode (no extra keys)',
+    jsonInput: 'JSON Input',
+    zodOutput: 'Zod Schema Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    generate: 'Generate Zod Schema',
+    msgInvalidJson: 'Invalid JSON: ',
+    msgGenerated: 'Generated.',
+  },
+  zh: {
+    rootName: '根 Schema 名称',
+    strictMode: '严格模式（不允许多余字段）',
+    jsonInput: 'JSON 输入',
+    zodOutput: 'Zod Schema 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    generate: '生成 Zod Schema',
+    msgInvalidJson: 'JSON 格式错误：',
+    msgGenerated: '已生成。',
+  },
+  ja: {
+    rootName: 'ルートスキーマ名',
+    strictMode: 'ストリクトモード（余分なキーを禁止）',
+    jsonInput: 'JSON 入力',
+    zodOutput: 'Zod スキーマ出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    generate: 'Zod スキーマを生成',
+    msgInvalidJson: '無効なJSON：',
+    msgGenerated: '生成しました。',
+  },
+  ko: {
+    rootName: '루트 스키마 이름',
+    strictMode: '엄격 모드(추가 키 불허)',
+    jsonInput: 'JSON 입력',
+    zodOutput: 'Zod 스키마 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    generate: 'Zod 스키마 생성',
+    msgInvalidJson: '잘못된 JSON: ',
+    msgGenerated: '생성 완료.',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="jtz-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-generated={L.msgGenerated}
+>
+  <div class="jtz-config">
+    <div class="jtz-config-row">
+      <label for="jtz-root-name">{L.rootName}</label>
+      <input id="jtz-root-name" type="text" value="User" spellcheck="false" />
+    </div>
+    <div class="jtz-config-row">
+      <label>
+        <input id="jtz-strict" type="checkbox" />
+        {L.strictMode}
+      </label>
+    </div>
+  </div>
+
+  <div class="jtz-panels">
+    <div class="jtz-panel">
+      <div class="jtz-panel-header">
+        <span>{L.jsonInput}</span>
+        <div class="jtz-panel-actions">
+          <button id="jtz-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="jtz-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea
+        id="jtz-input"
+        placeholder='{"name": "Alice", "age": 30, "active": true}'
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="jtz-panel">
+      <div class="jtz-panel-header">
+        <span>{L.zodOutput}</span>
+        <button id="jtz-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+      </div>
+      <pre id="jtz-output" class="jtz-output"><code id="jtz-output-code"></code></pre>
+    </div>
+  </div>
+
+  <div class="jtz-actions">
+    <button id="jtz-convert" class="btn-primary" type="button">{L.generate}</button>
+  </div>
+
+  <div id="jtz-status" class="jtz-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.jtz-wrap')
+        : document.querySelector('.jtz-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
+
+      var inputEl = document.getElementById('jtz-input');
+      var outputCodeEl = document.getElementById('jtz-output-code');
+      var statusEl = document.getElementById('jtz-status');
+      var rootNameEl = document.getElementById('jtz-root-name');
+      var strictEl = document.getElementById('jtz-strict');
+
+      var EXAMPLE = JSON.stringify({
+        id: 1,
+        name: "Alice",
+        isActive: true,
+        score: 9.5,
+        tags: ["typescript", "json"],
+        address: {
+          city: "London",
+          zip: "EC1A 1BB"
+        },
+        friends: [
+          { id: 2, name: "Bob" },
+          { id: 3, name: "Carol" }
+        ],
+        metadata: null
+      }, null, 2);
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jtz-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jtz-status';
+      }
+
+      /* ── PascalCase helper ── */
+      function toPascalCase(str) {
+        return str
+          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+      }
+
+      /* ── Zod type inference ── */
+      // Returns a string like "z.string()" or a multi-line object block
+      function inferZod(value, key, strict, indent) {
+        if (value === null) return 'z.null()';
+        if (typeof value === 'undefined') return 'z.unknown()';
+        if (typeof value === 'string') return 'z.string()';
+        if (typeof value === 'boolean') return 'z.boolean()';
+        if (typeof value === 'number') {
+          return Number.isInteger(value) ? 'z.number().int()' : 'z.number()';
+        }
+
+        if (Array.isArray(value)) {
+          if (value.length === 0) return 'z.array(z.unknown())';
+
+          // Collect object items separately
+          var objItems = value.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          var nonObjItems = value.filter(function (v) {
+            return !(v !== null && typeof v === 'object' && !Array.isArray(v));
+          });
+
+          var elementTypes = [];
+
+          nonObjItems.forEach(function (v) {
+            var t = inferZod(v, key + 'Item', strict, indent);
+            if (elementTypes.indexOf(t) === -1) elementTypes.push(t);
+          });
+
+          if (objItems.length > 0) {
+            var mergedType = buildMergedObjectZod(objItems, strict, indent);
+            if (elementTypes.indexOf(mergedType) === -1) elementTypes.push(mergedType);
+          }
+
+          var inner = elementTypes.length === 1 ? elementTypes[0] : 'z.union([' + elementTypes.join(', ') + '])';
+          return 'z.array(' + inner + ')';
+        }
+
+        if (typeof value === 'object') {
+          return buildObjectZod(value, strict, indent);
+        }
+
+        return 'z.unknown()';
+      }
+
+      function buildObjectZod(obj, strict, indent) {
+        var keys = Object.keys(obj);
+        if (keys.length === 0) {
+          var base = 'z.record(z.string(), z.unknown())';
+          return base;
+        }
+
+        var nextIndent = indent + '  ';
+        var fields = keys.map(function (k) {
+          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+          var zodType = inferZod(obj[k], k, strict, nextIndent);
+          return nextIndent + safeKey + ': ' + zodType + ',';
+        });
+
+        var closing = indent + '})' + (strict ? '.strict()' : '');
+        return 'z.object({\n' + fields.join('\n') + '\n' + closing;
+      }
+
+      function buildMergedObjectZod(objects, strict, indent) {
+        // Collect all keys and their presence count
+        var allKeys = {};
+        objects.forEach(function (obj) {
+          Object.keys(obj).forEach(function (k) {
+            if (!allKeys[k]) allKeys[k] = 0;
+            allKeys[k]++;
+          });
+        });
+
+        var keyList = Object.keys(allKeys);
+        var nextIndent = indent + '  ';
+
+        var fields = keyList.map(function (k) {
+          var presentInAll = allKeys[k] === objects.length;
+          // Collect distinct types for this key
+          var types = [];
+          objects.forEach(function (obj) {
+            if (obj.hasOwnProperty(k)) {
+              var t = inferZod(obj[k], k, strict, nextIndent + '  ');
+              if (types.indexOf(t) === -1) types.push(t);
+            }
+          });
+          var zodType = types.length === 1 ? types[0] : 'z.union([' + types.join(', ') + '])';
+          if (!presentInAll) zodType = zodType + '.optional()';
+          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+          return nextIndent + safeKey + ': ' + zodType + ',';
+        });
+
+        var closing = indent + '})' + (strict ? '.strict()' : '');
+        return 'z.object({\n' + fields.join('\n') + '\n' + closing;
+      }
+
+      /* ── Main generate ── */
+      function generate() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+
+        inputEl.classList.remove('error');
+
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          inputEl.classList.add('error');
+          outputCodeEl.textContent = '';
+          setStatus(MSG_INVALID + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+
+        var rootName = (rootNameEl.value.trim() || 'Root');
+        var strict = strictEl.checked;
+        var schemaName = toPascalCase(rootName) + 'Schema';
+        var typeName = toPascalCase(rootName);
+
+        var zodExpr;
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          zodExpr = buildObjectZod(parsed, strict, '');
+        } else if (Array.isArray(parsed)) {
+          var objItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (objItems.length > 0) {
+            zodExpr = 'z.array(' + buildMergedObjectZod(objItems, strict, '  ') + ')';
+          } else {
+            zodExpr = inferZod(parsed, rootName, strict, '');
+          }
+        } else {
+          zodExpr = inferZod(parsed, rootName, strict, '');
+        }
+
+        var lines = [];
+        lines.push('import { z } from "zod";');
+        lines.push('');
+        lines.push('const ' + schemaName + ' = ' + zodExpr + ';');
+        lines.push('');
+        lines.push('export type ' + typeName + ' = z.infer<typeof ' + schemaName + '>;');
+
+        outputCodeEl.textContent = lines.join('\n');
+        setStatus(MSG_GENERATED, false);
+        window.trackTool && window.trackTool('json-to-zod', 'generate');
+      }
+
+      /* ── Real-time input validation ── */
+      inputEl.addEventListener('input', function () {
+        var raw = inputEl.value.trim();
+        if (!raw) { inputEl.classList.remove('error'); clearStatus(); return; }
+        try {
+          JSON.parse(raw);
+          inputEl.classList.remove('error');
+          clearStatus();
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus(MSG_INVALID + e.message, true);
+        }
+      });
+
+      document.getElementById('jtz-convert').addEventListener('click', generate);
+
+      document.getElementById('jtz-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        generate();
+      });
+
+      document.getElementById('jtz-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputCodeEl.textContent = '';
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('jtz-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('jtz-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = COPIED;
+          setTimeout(function () { btn.textContent = COPY; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jtz-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jtz-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .jtz-config-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jtz-config-row label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .jtz-config-row input[type="text"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .jtz-config-row input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jtz-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .jtz-panels { grid-template-columns: 1fr; }
+  }
+
+  .jtz-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jtz-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jtz-panel-actions { display: flex; gap: 0.3rem; }
+
+  .jtz-panel textarea {
+    width: 100%;
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .jtz-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jtz-panel textarea.error { border-color: #c0392b; }
+
+  .jtz-output {
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.78rem;
+  }
+
+  .jtz-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .jtz-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jtz-status.success { color: #057a55; }
+  .jtz-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jtz-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jtz-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jtz-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .jtz-status.success { color: #34d399; }
+  [data-theme="dark"] .jtz-status.error { color: #f87171; }
+  [data-theme="dark"] .jtz-panel textarea.error { border-color: #f87171; }
+</style>
