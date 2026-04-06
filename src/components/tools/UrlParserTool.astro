@@ -1,10 +1,20 @@
 ---
-// UrlParserTool — URL structure parser using browser built-in URL API
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: { label: 'Enter a URL', example: 'Load Example', clear: 'Clear' },
+  zh: { label: '输入 URL', example: '加载示例', clear: '清空' },
+  ja: { label: 'URLを入力', example: 'サンプルを読み込む', clear: 'クリア' },
+  ko: { label: 'URL 입력', example: '예시 불러오기', clear: '지우기' },
+};
+
+const L = labels[lang];
 ---
 <div>
-  <div class="up-wrap">
+  <div class="up-wrap" data-lang={lang}>
     <div class="up-input-section">
-      <label for="up-input">Enter a URL</label>
+      <label for="up-input">{L.label}</label>
       <input
         id="up-input"
         type="text"
@@ -13,8 +23,8 @@
         autocomplete="off"
       />
       <div class="up-actions">
-        <button id="up-example" class="btn-ghost">Load Example</button>
-        <button id="up-clear" class="btn-ghost">Clear</button>
+        <button id="up-example" class="btn-ghost">{L.example}</button>
+        <button id="up-clear" class="btn-ghost">{L.clear}</button>
       </div>
     </div>
 
@@ -25,26 +35,114 @@
 
   <script is:inline>
     (function () {
+      var wrap = document.querySelector('.up-wrap');
+      var lang = wrap ? (wrap.dataset.lang || 'en') : 'en';
+
+      var i18n = {
+        en: {
+          invalidUrl: 'Invalid URL. Make sure it includes a scheme (e.g. https://).',
+          parsedOk: 'Parsed successfully.',
+          queryParams: 'Query Parameters',
+          copy: 'Copy',
+          copied: 'Copied!',
+          thField: 'Field',
+          thValue: 'Value',
+          thKey: 'Key',
+          fields: {
+            protocol: 'Protocol',
+            username: 'Username',
+            password: 'Password',
+            host: 'Host',
+            hostname: 'Hostname',
+            port: 'Port',
+            pathname: 'Pathname',
+            search: 'Search',
+            hash: 'Hash',
+            origin: 'Origin',
+            href: 'Full URL',
+          },
+        },
+        zh: {
+          invalidUrl: 'URL 格式无效。请确保包含协议（如 https://）。',
+          parsedOk: '解析成功。',
+          queryParams: '查询参数',
+          copy: '复制',
+          copied: '已复制！',
+          thField: '字段',
+          thValue: '值',
+          thKey: '键',
+          fields: {
+            protocol: '协议',
+            username: '用户名',
+            password: '密码',
+            host: '主机',
+            hostname: '主机名',
+            port: '端口',
+            pathname: '路径',
+            search: '查询字符串',
+            hash: '哈希',
+            origin: '来源',
+            href: '完整 URL',
+          },
+        },
+        ja: {
+          invalidUrl: 'URLが無効です。スキームを含めてください（例：https://）。',
+          parsedOk: '解析しました。',
+          queryParams: 'クエリパラメータ',
+          copy: 'コピー',
+          copied: 'コピーしました！',
+          thField: 'フィールド',
+          thValue: '値',
+          thKey: 'キー',
+          fields: {
+            protocol: 'プロトコル',
+            username: 'ユーザー名',
+            password: 'パスワード',
+            host: 'ホスト',
+            hostname: 'ホスト名',
+            port: 'ポート',
+            pathname: 'パス',
+            search: 'クエリ文字列',
+            hash: 'ハッシュ',
+            origin: 'オリジン',
+            href: '完全なURL',
+          },
+        },
+        ko: {
+          invalidUrl: '잘못된 URL입니다. 스키마를 포함했는지 확인하세요 (예: https://).',
+          parsedOk: '파싱 완료.',
+          queryParams: '쿼리 파라미터',
+          copy: '복사',
+          copied: '복사됨!',
+          thField: '필드',
+          thValue: '값',
+          thKey: '키',
+          fields: {
+            protocol: '프로토콜',
+            username: '사용자명',
+            password: '비밀번호',
+            host: '호스트',
+            hostname: '호스트명',
+            port: '포트',
+            pathname: '경로',
+            search: '쿼리 문자열',
+            hash: '해시',
+            origin: '오리진',
+            href: '전체 URL',
+          },
+        },
+      };
+
+      var T = i18n[lang] || i18n.en;
+
       var EXAMPLE_URL = 'https://user:pass@example.com:8080/path/to/page?key=value&foo=bar#section';
 
-      var FIELDS = [
-        { key: 'protocol',  label: 'Protocol' },
-        { key: 'username',  label: 'Username' },
-        { key: 'password',  label: 'Password' },
-        { key: 'host',      label: 'Host' },
-        { key: 'hostname',  label: 'Hostname' },
-        { key: 'port',      label: 'Port' },
-        { key: 'pathname',  label: 'Pathname' },
-        { key: 'search',    label: 'Search' },
-        { key: 'hash',      label: 'Hash' },
-        { key: 'origin',    label: 'Origin' },
-        { key: 'href',      label: 'Full URL' },
-      ];
+      var FIELD_KEYS = ['protocol','username','password','host','hostname','port','pathname','search','hash','origin','href'];
 
       function copyText(text, btn) {
         navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = 'Copied!';
-          setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+          btn.textContent = T.copied;
+          setTimeout(function () { btn.textContent = T.copy; }, 1500);
         });
       }
 
@@ -53,13 +151,19 @@
         table.className = 'up-table';
 
         var thead = document.createElement('thead');
-        thead.innerHTML = '<tr><th>Field</th><th>Value</th><th></th></tr>';
+        var thRow = document.createElement('tr');
+        [T.thField, T.thValue, ''].forEach(function(h) {
+          var th = document.createElement('th');
+          th.textContent = h;
+          thRow.appendChild(th);
+        });
+        thead.appendChild(thRow);
         table.appendChild(thead);
 
         var tbody = document.createElement('tbody');
 
-        FIELDS.forEach(function (f) {
-          var val = parsed[f.key] || '';
+        FIELD_KEYS.forEach(function (key) {
+          var val = parsed[key] || '';
           var isEmpty = val === '' || val === null;
 
           var tr = document.createElement('tr');
@@ -67,7 +171,7 @@
 
           var tdLabel = document.createElement('td');
           tdLabel.className = 'up-field';
-          tdLabel.textContent = f.label;
+          tdLabel.textContent = T.fields[key] || key;
           tr.appendChild(tdLabel);
 
           var tdVal = document.createElement('td');
@@ -80,7 +184,7 @@
           if (!isEmpty) {
             var btn = document.createElement('button');
             btn.className = 'btn-copy';
-            btn.textContent = 'Copy';
+            btn.textContent = T.copy;
             btn.addEventListener('click', function () { copyText(val, btn); });
             tdCopy.appendChild(btn);
           }
@@ -105,14 +209,20 @@
 
         var h = document.createElement('div');
         h.className = 'up-section-title';
-        h.textContent = 'Query Parameters (' + entries.length + ')';
+        h.textContent = T.queryParams + ' (' + entries.length + ')';
         section.appendChild(h);
 
         var table = document.createElement('table');
         table.className = 'up-table';
 
         var thead = document.createElement('thead');
-        thead.innerHTML = '<tr><th>Key</th><th>Value</th><th></th></tr>';
+        var thRow = document.createElement('tr');
+        [T.thKey, T.thValue, ''].forEach(function(label) {
+          var th = document.createElement('th');
+          th.textContent = label;
+          thRow.appendChild(th);
+        });
+        thead.appendChild(thRow);
         table.appendChild(thead);
 
         var tbody = document.createElement('tbody');
@@ -133,7 +243,7 @@
           tdCopy.className = 'up-copy-cell';
           var btn = document.createElement('button');
           btn.className = 'btn-copy';
-          btn.textContent = 'Copy';
+          btn.textContent = T.copy;
           btn.addEventListener('click', (function (v) {
             return function () { copyText(v, btn); };
           })(pair[1]));
@@ -164,12 +274,12 @@
         try {
           parsed = new URL(raw);
         } catch (e) {
-          statusEl.textContent = 'Invalid URL. Make sure it includes a scheme (e.g. https://).';
+          statusEl.textContent = T.invalidUrl;
           statusEl.className = 'up-status error';
           return;
         }
 
-        statusEl.textContent = 'Parsed successfully.';
+        statusEl.textContent = T.parsedOk;
         statusEl.className = 'up-status success';
 
         resultsEl.appendChild(buildTable(parsed));
