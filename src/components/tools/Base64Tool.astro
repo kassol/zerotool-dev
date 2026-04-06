@@ -4,14 +4,39 @@
 
 <div>
   <div class="b64-wrap">
-    <div class="b64-mode">
-      <label>
-        <input type="radio" name="b64mode" value="encode" checked /> Encode
-      </label>
-      <label>
-        <input type="radio" name="b64mode" value="decode" /> Decode
-      </label>
+    <!-- Mode + variant row -->
+    <div class="b64-controls">
+      <div class="b64-mode">
+        <label>
+          <input type="radio" name="b64mode" value="encode" checked /> Encode
+        </label>
+        <label>
+          <input type="radio" name="b64mode" value="decode" /> Decode
+        </label>
+      </div>
+      <div class="b64-variant">
+        <label>
+          <input type="radio" name="b64variant" value="standard" checked /> Standard
+        </label>
+        <label>
+          <input type="radio" name="b64variant" value="urlsafe" /> URL-safe
+        </label>
+      </div>
     </div>
+
+    <!-- File drop zone (encode mode only) -->
+    <div id="b64-drop" class="b64-drop" role="button" tabindex="0" aria-label="Drop file here or click to select">
+      <div class="b64-drop-inner">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <span>Drop any file here, or <strong>click to select</strong></span>
+      </div>
+      <input type="file" id="b64-file" class="b64-file-input" aria-label="Select file" />
+    </div>
+
+    <!-- File info (shown after file dropped) -->
+    <div id="b64-file-info" class="b64-file-info" hidden></div>
 
     <div class="b64-row">
       <label for="b64-input" id="b64-input-label"><span>Plain Text</span></label>
@@ -53,7 +78,11 @@
       var copyBtn = document.getElementById('b64-copy');
       var inputLabel = document.getElementById('b64-input-label');
       var outputLabel = document.getElementById('b64-output-label');
+      var dropEl = document.getElementById('b64-drop');
+      var fileInput = document.getElementById('b64-file');
+      var fileInfoEl = document.getElementById('b64-file-info');
       var mode = 'encode';
+      var variant = 'standard';
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -65,6 +94,51 @@
         statusEl.className = 'b64-status';
       }
 
+      function toUrlSafe(b64) {
+        return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      function fromUrlSafe(b64url) {
+        var b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+        // restore padding
+        var pad = b64.length % 4;
+        if (pad === 2) b64 += '==';
+        else if (pad === 3) b64 += '=';
+        return b64;
+      }
+
+      function encodeText(text) {
+        var b64 = btoa(unescape(encodeURIComponent(text)));
+        return variant === 'urlsafe' ? toUrlSafe(b64) : b64;
+      }
+
+      function decodeText(input) {
+        var b64 = variant === 'urlsafe' ? fromUrlSafe(input.trim()) : input.trim();
+        return decodeURIComponent(escape(atob(b64)));
+      }
+
+      function arrayBufferToBase64(buffer) {
+        var bytes = new Uint8Array(buffer);
+        var binary = '';
+        var chunk = 8192;
+        for (var i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      }
+
+      function formatBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1048576).toFixed(2) + ' MB';
+      }
+
+      function esc(s) {
+        var d = document.createElement('span');
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
       function updateLabels() {
         if (mode === 'encode') {
           inputLabel.querySelector('span').textContent = 'Plain Text';
@@ -72,13 +146,36 @@
           inputEl.placeholder = 'Enter text to encode...';
           outputEl.placeholder = 'Base64 output appears here...';
           runBtn.textContent = 'Encode';
+          dropEl.hidden = false;
         } else {
           inputLabel.querySelector('span').textContent = 'Base64';
           outputLabel.querySelector('span').textContent = 'Plain Text';
           inputEl.placeholder = 'Enter Base64 string to decode...';
           outputEl.placeholder = 'Decoded text appears here...';
           runBtn.textContent = 'Decode';
+          dropEl.hidden = true;
+          fileInfoEl.hidden = true;
         }
+      }
+
+      function processFile(file) {
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          var b64 = arrayBufferToBase64(e.target.result);
+          if (variant === 'urlsafe') b64 = toUrlSafe(b64);
+          outputEl.value = b64;
+          inputEl.value = '';
+          inputEl.placeholder = 'File loaded — text input cleared';
+          fileInfoEl.innerHTML =
+            '<strong>' + esc(file.name) + '</strong> &mdash; ' + formatBytes(file.size);
+          fileInfoEl.hidden = false;
+          setStatus('File encoded.', false);
+          window.trackTool && window.trackTool('base64', 'encode_file');
+        };
+        reader.onerror = function () {
+          setStatus('Failed to read file.', true);
+        };
+        reader.readAsArrayBuffer(file);
       }
 
       document.querySelectorAll('input[name="b64mode"]').forEach(function (radio) {
@@ -90,16 +187,22 @@
         });
       });
 
+      document.querySelectorAll('input[name="b64variant"]').forEach(function (radio) {
+        radio.addEventListener('change', function () {
+          variant = this.value;
+        });
+      });
+
       runBtn.addEventListener('click', function () {
         var val = inputEl.value;
         if (!val) { clearStatus(); outputEl.value = ''; return; }
         try {
           if (mode === 'encode') {
-            outputEl.value = btoa(unescape(encodeURIComponent(val)));
+            outputEl.value = encodeText(val);
             setStatus('Encoded.', false);
             window.trackTool && window.trackTool('base64', 'encode');
           } else {
-            outputEl.value = decodeURIComponent(escape(atob(val.trim())));
+            outputEl.value = decodeText(val);
             setStatus('Decoded.', false);
             window.trackTool && window.trackTool('base64', 'decode');
           }
@@ -113,12 +216,17 @@
         var tmp = inputEl.value;
         inputEl.value = outputEl.value;
         outputEl.value = tmp;
+        fileInfoEl.hidden = true;
+        inputEl.placeholder = mode === 'encode' ? 'Enter text to encode...' : 'Enter Base64 string to decode...';
         clearStatus();
       });
 
       document.getElementById('b64-clear').addEventListener('click', function () {
         inputEl.value = '';
         outputEl.value = '';
+        fileInput.value = '';
+        fileInfoEl.hidden = true;
+        inputEl.placeholder = mode === 'encode' ? 'Enter text to encode...' : 'Enter Base64 string to decode...';
         clearStatus();
       });
 
@@ -129,6 +237,35 @@
           setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
         });
       });
+
+      /* ── Drop zone ── */
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+
+      fileInput.addEventListener('change', function () {
+        if (this.files && this.files[0]) processFile(this.files[0]);
+      });
+
+      dropEl.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        dropEl.classList.add('drag-over');
+      });
+
+      dropEl.addEventListener('dragleave', function (e) {
+        if (!dropEl.contains(e.relatedTarget)) dropEl.classList.remove('drag-over');
+      });
+
+      dropEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        var file = e.dataTransfer.files[0];
+        if (file) processFile(file);
+      });
     })();
   </script>
 </div>
@@ -136,8 +273,65 @@
 <style>
   .b64-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  .b64-mode { display: flex; gap: 1.5rem; font-size: 0.95rem; }
-  .b64-mode label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+  .b64-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .b64-mode,
+  .b64-variant { display: flex; gap: 1.25rem; font-size: 0.95rem; }
+  .b64-mode label,
+  .b64-variant label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+
+  .b64-variant {
+    font-size: 0.88rem;
+    color: var(--color-text-secondary);
+  }
+
+  /* Drop zone */
+  .b64-drop {
+    position: relative;
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 1rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--color-bg-secondary);
+  }
+
+  .b64-drop:hover,
+  .b64-drop.drag-over {
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .b64-drop-inner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text-secondary);
+    font-size: 0.88rem;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .b64-file-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .b64-file-info {
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    padding: 0.25rem 0;
+  }
 
   .b64-row { display: flex; flex-direction: column; gap: 0.4rem; }
 
