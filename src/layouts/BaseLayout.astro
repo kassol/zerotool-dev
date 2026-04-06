@@ -42,6 +42,9 @@ const tools = featuredSlugs.map(slug => {
 const pathname = Astro.url.pathname;
 const isBlogPost = /^\/(zh\/|ja\/|ko\/)?blog\/[^/]+/.test(pathname);
 
+const langNames: Record<string, string> = { en: 'English', zh: '中文', ja: '日本語', ko: '한국어' };
+const currentLangName = langNames[lang] ?? 'English';
+
 // Language switch hrefs
 const getLangHref = (targetLang: string) => {
   if (targetLang === 'en') {
@@ -146,10 +149,16 @@ const getLangHref = (targetLang: string) => {
           ))}
         </div>
         <div class="lang-switcher">
-          {lang !== 'en' && <a href={getLangHref('en')} class="lang-switch">English</a>}
-          {lang !== 'zh' && <a href={getLangHref('zh')} class="lang-switch">中文</a>}
-          {lang !== 'ja' && <a href={getLangHref('ja')} class="lang-switch">日本語</a>}
-          {lang !== 'ko' && <a href={getLangHref('ko')} class="lang-switch">한국어</a>}
+          <button class="lang-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Select language">
+            <svg class="lang-globe" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            <span class="lang-current">{currentLangName}</span>
+            <svg class="lang-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="lang-menu" role="listbox" hidden>
+            {(['en', 'zh', 'ja', 'ko'] as const).map(l => (
+              <a href={getLangHref(l)} class={`lang-option${l === lang ? ' lang-option--active' : ''}`} role="option" aria-selected={l === lang}>{langNames[l]}</a>
+            ))}
+          </div>
         </div>
         <button class="nav-hamburger" aria-label="Menu" aria-expanded="false">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -180,6 +189,27 @@ const getLangHref = (targetLang: string) => {
         }
         btn.addEventListener('click', function() { toggle(); });
         overlay.addEventListener('click', function() { toggle(false); });
+      })();
+      (function() {
+        var trigger = document.querySelector('.lang-trigger');
+        var menu = document.querySelector('.lang-menu');
+        if (!trigger || !menu) return;
+        function close() {
+          menu.hidden = true;
+          trigger.setAttribute('aria-expanded', 'false');
+        }
+        function open() {
+          menu.hidden = false;
+          trigger.setAttribute('aria-expanded', 'true');
+        }
+        trigger.addEventListener('click', function(e) {
+          e.stopPropagation();
+          menu.hidden ? open() : close();
+        });
+        document.addEventListener('click', function() { close(); });
+        document.addEventListener('keydown', function(e) {
+          if (e.key === 'Escape') close();
+        });
       })();
     </script>
 
@@ -305,24 +335,78 @@ const getLangHref = (targetLang: string) => {
 
   .lang-switcher {
     margin-left: auto;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .lang-trigger {
     display: flex;
-    gap: 0.4rem;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+    font-family: var(--font-sans);
+    color: var(--color-text-secondary);
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.55rem;
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .lang-trigger:hover,
+  .lang-trigger[aria-expanded="true"] {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .lang-chevron {
+    transition: transform var(--transition-fast);
     flex-shrink: 0;
   }
 
-  .lang-switch {
-    font-size: 0.85rem;
-    color: var(--color-text-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    padding: 0.2rem 0.6rem;
-    white-space: nowrap;
+  .lang-trigger[aria-expanded="true"] .lang-chevron {
+    transform: rotate(180deg);
   }
 
-  .lang-switch:hover {
-    color: var(--color-primary);
-    border-color: var(--color-primary);
+  .lang-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 130px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+    overflow: hidden;
+    z-index: 200;
+  }
+
+  .lang-option {
+    display: block;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
     text-decoration: none;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+
+  .lang-option:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .lang-option--active {
+    color: var(--color-primary);
+    font-weight: 600;
+    background: var(--color-primary-light);
+  }
+
+  .lang-option--active:hover {
+    background: var(--color-primary-light);
   }
 
   /* ── Hamburger (mobile only) ── */
