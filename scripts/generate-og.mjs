@@ -44,6 +44,13 @@ const tools = [
   { slug: 'xml-formatter',        name: 'XML Formatter',                 description: 'Format, beautify, and minify XML documents' },
   { slug: 'ascii-converter',           name: 'ASCII Converter',               description: 'Convert between text and ASCII codes' },
   { slug: 'markdown-table-generator', name: 'Markdown Table Generator',      description: 'Build Markdown tables visually with CSV & JSON import' },
+  { slug: 'toml-json',               name: 'TOML to JSON Converter',        description: 'Convert between TOML and JSON formats instantly' },
+  { slug: 'image-to-base64',         name: 'Image to Base64 Converter',     description: 'Convert images to Base64 strings and Data URIs' },
+  { slug: 'css-to-tailwind',         name: 'CSS to Tailwind Converter',     description: 'Convert CSS properties to Tailwind utility classes' },
+  { slug: 'css-unit-converter',      name: 'CSS Unit Converter',            description: 'Convert between px, rem, em, and vw CSS units' },
+  { slug: 'json-to-typescript',      name: 'JSON to TypeScript Generator',  description: 'Generate TypeScript interfaces from JSON' },
+  { slug: 'fake-data-generator',     name: 'Fake Data Generator',           description: 'Generate realistic test data instantly' },
+  { slug: 'url-parser',              name: 'URL Parser',                    description: 'Parse any URL into its components' },
 ];
 
 /** Escape XML special chars so SVG stays valid. */
