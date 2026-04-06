@@ -1,0 +1,275 @@
+---
+// CssUnitConverterTool — CSS unit conversion, no props needed
+---
+<div>
+  <div class="cu-wrap">
+    <div class="cu-input-section">
+      <div class="cu-row">
+        <div class="cu-field cu-field-value">
+          <label for="cu-value">Value</label>
+          <input
+            id="cu-value"
+            type="number"
+            placeholder="Enter value..."
+            step="any"
+            autocomplete="off"
+          />
+        </div>
+        <div class="cu-field cu-field-unit">
+          <label for="cu-unit">Unit</label>
+          <select id="cu-unit">
+            <option value="px">px</option>
+            <option value="rem">rem</option>
+            <option value="em">em</option>
+            <option value="vw">vw</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="cu-config">
+        <div class="cu-field">
+          <label for="cu-root-size">Root Font Size (px)</label>
+          <input id="cu-root-size" type="number" value="16" min="1" step="1" autocomplete="off" />
+        </div>
+        <div class="cu-field">
+          <label for="cu-viewport">Viewport Width (px)</label>
+          <input id="cu-viewport" type="number" value="1920" min="1" step="1" autocomplete="off" />
+        </div>
+      </div>
+    </div>
+
+    <div id="cu-status" class="cu-status" aria-live="polite"></div>
+
+    <div class="cu-results">
+      <div class="cu-result">
+        <label for="cu-out-px">px</label>
+        <div class="cu-input-row">
+          <input id="cu-out-px" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="cu-out-px">Copy</button>
+        </div>
+      </div>
+      <div class="cu-result">
+        <label for="cu-out-rem">rem</label>
+        <div class="cu-input-row">
+          <input id="cu-out-rem" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="cu-out-rem">Copy</button>
+        </div>
+      </div>
+      <div class="cu-result">
+        <label for="cu-out-em">em</label>
+        <div class="cu-input-row">
+          <input id="cu-out-em" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="cu-out-em">Copy</button>
+        </div>
+      </div>
+      <div class="cu-result">
+        <label for="cu-out-vw">vw</label>
+        <div class="cu-input-row">
+          <input id="cu-out-vw" type="text" readonly spellcheck="false" />
+          <button class="btn-copy" data-copy="cu-out-vw">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="cu-actions">
+      <button id="cu-clear" class="btn-ghost">Clear</button>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var valueEl = document.getElementById('cu-value');
+      var unitEl = document.getElementById('cu-unit');
+      var rootSizeEl = document.getElementById('cu-root-size');
+      var viewportEl = document.getElementById('cu-viewport');
+      var statusEl = document.getElementById('cu-status');
+      var outPx = document.getElementById('cu-out-px');
+      var outRem = document.getElementById('cu-out-rem');
+      var outEm = document.getElementById('cu-out-em');
+      var outVw = document.getElementById('cu-out-vw');
+
+      function fmt(n) {
+        // Round to 6 significant digits, strip trailing zeros
+        if (n === 0) return '0';
+        var s = parseFloat(n.toPrecision(6)).toString();
+        return s;
+      }
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'cu-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'cu-status';
+      }
+
+      function clearOutputs() {
+        outPx.value = '';
+        outRem.value = '';
+        outEm.value = '';
+        outVw.value = '';
+      }
+
+      function highlightActive(unit) {
+        document.querySelectorAll('.cu-result').forEach(function (el) {
+          var label = el.querySelector('label');
+          el.classList.toggle('cu-active', label && label.textContent === unit);
+        });
+      }
+
+      function convert() {
+        var raw = valueEl.value.trim();
+        if (raw === '' || raw === '-') {
+          clearOutputs();
+          clearStatus();
+          return;
+        }
+
+        var val = parseFloat(raw);
+        if (isNaN(val)) {
+          clearOutputs();
+          setStatus('Invalid number.', true);
+          return;
+        }
+
+        var rootSize = parseFloat(rootSizeEl.value) || 16;
+        var viewport = parseFloat(viewportEl.value) || 1920;
+        var unit = unitEl.value;
+
+        // Convert to px first
+        var px;
+        if (unit === 'px') {
+          px = val;
+        } else if (unit === 'rem' || unit === 'em') {
+          px = val * rootSize;
+        } else if (unit === 'vw') {
+          px = (val / 100) * viewport;
+        }
+
+        outPx.value = fmt(px) + 'px';
+        outRem.value = fmt(px / rootSize) + 'rem';
+        outEm.value = fmt(px / rootSize) + 'em';
+        outVw.value = fmt((px / viewport) * 100) + 'vw';
+
+        setStatus('Converted.', false);
+        window.trackTool && window.trackTool('css-unit-converter', 'convert');
+      }
+
+      valueEl.addEventListener('input', convert);
+      unitEl.addEventListener('change', function () {
+        highlightActive(unitEl.value);
+        convert();
+      });
+      rootSizeEl.addEventListener('input', convert);
+      viewportEl.addEventListener('input', convert);
+
+      document.getElementById('cu-clear').addEventListener('click', function () {
+        valueEl.value = '';
+        clearOutputs();
+        clearStatus();
+        valueEl.focus();
+      });
+
+      document.querySelectorAll('.cu-wrap .btn-copy[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-copy');
+          var val = document.getElementById(id).value;
+          if (!val) return;
+          navigator.clipboard.writeText(val).then(function () {
+            btn.textContent = 'Copied!';
+            setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+          });
+          window.trackTool && window.trackTool('css-unit-converter', 'copy');
+        });
+      });
+
+      // Init
+      highlightActive(unitEl.value);
+    })();
+  </script>
+</div>
+
+<style>
+  .cu-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .cu-input-section { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cu-row { display: flex; gap: 0.75rem; }
+
+  .cu-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .cu-field-value { flex: 2; }
+  .cu-field-unit { flex: 1; }
+
+  .cu-config { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .cu-config .cu-field { flex: 1; min-width: 130px; }
+
+  .cu-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .cu-field input,
+  .cu-field select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .cu-field input:focus,
+  .cu-field select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .cu-results { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cu-result { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .cu-result label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .cu-result.cu-active label { color: var(--color-primary); }
+
+  .cu-input-row { display: flex; gap: 0.5rem; }
+
+  .cu-input-row input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .cu-result.cu-active .cu-input-row input { border-color: var(--color-primary); }
+
+  .cu-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .cu-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .cu-status.success { color: #057a55; }
+  .cu-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cu-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .cu-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .cu-status.success { color: #34d399; }
+  [data-theme="dark"] .cu-status.error { color: #f87171; }
+</style>
