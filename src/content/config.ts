@@ -19,6 +19,19 @@ const blogCollection = defineCollection({
   }),
 });
 
+const toolsCollection = defineCollection({
+  type: 'content',
+  schema: z.object({
+    seoTitle: z.string(),
+    seoDescription: z.string(),
+    faqItems: z.array(z.object({
+      question: z.string(),
+      answer: z.string(),
+    })).default([]),
+  }),
+});
+
 export const collections = {
   blog: blogCollection,
+  tools: toolsCollection,
 };
