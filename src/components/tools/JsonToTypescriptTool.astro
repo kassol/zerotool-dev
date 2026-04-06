@@ -1,0 +1,456 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="jtt-wrap">
+    <div class="jtt-config">
+      <div class="jtt-config-row">
+        <label for="jtt-root-name">Root interface name</label>
+        <input id="jtt-root-name" type="text" value="RootObject" spellcheck="false" />
+      </div>
+      <div class="jtt-config-row">
+        <label>
+          <input id="jtt-optional" type="checkbox" />
+          Make properties optional
+        </label>
+        <label>
+          <input id="jtt-use-type" type="checkbox" />
+          Use <code>type</code> instead of <code>interface</code>
+        </label>
+      </div>
+    </div>
+
+    <div class="jtt-panels">
+      <div class="jtt-panel">
+        <div class="jtt-panel-header">
+          <span>JSON Input</span>
+          <div class="jtt-panel-actions">
+            <button id="jtt-example" class="btn-ghost btn-sm" type="button">Example</button>
+            <button id="jtt-clear" class="btn-ghost btn-sm" type="button">Clear</button>
+          </div>
+        </div>
+        <textarea
+          id="jtt-input"
+          placeholder='{"name": "Alice", "age": 30, "address": {"city": "London"}}'
+          spellcheck="false"
+        ></textarea>
+      </div>
+
+      <div class="jtt-panel">
+        <div class="jtt-panel-header">
+          <span>TypeScript Output</span>
+          <button id="jtt-copy" class="btn-ghost btn-sm" type="button">Copy</button>
+        </div>
+        <pre id="jtt-output" class="jtt-output"><code id="jtt-output-code"></code></pre>
+      </div>
+    </div>
+
+    <div class="jtt-actions">
+      <button id="jtt-convert" class="btn-primary" type="button">Generate TypeScript</button>
+    </div>
+
+    <div id="jtt-status" class="jtt-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('jtt-input');
+      var outputCodeEl = document.getElementById('jtt-output-code');
+      var statusEl = document.getElementById('jtt-status');
+      var rootNameEl = document.getElementById('jtt-root-name');
+      var optionalEl = document.getElementById('jtt-optional');
+      var useTypeEl = document.getElementById('jtt-use-type');
+
+      var EXAMPLE = JSON.stringify({
+        id: 1,
+        name: "Alice",
+        isActive: true,
+        score: 9.5,
+        tags: ["typescript", "json"],
+        address: {
+          city: "London",
+          zip: "EC1A 1BB"
+        },
+        friends: [
+          { id: 2, name: "Bob" },
+          { id: 3, name: "Carol" }
+        ],
+        metadata: null
+      }, null, 2);
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jtt-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jtt-status';
+      }
+
+      /* ── PascalCase helper ── */
+      function toPascalCase(str) {
+        return str
+          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+      }
+
+      /* ── Type inference engine ── */
+      function inferType(value, key, interfaces, optional) {
+        if (value === null) return 'null';
+        if (typeof value === 'string') return 'string';
+        if (typeof value === 'number') return 'number';
+        if (typeof value === 'boolean') return 'boolean';
+
+        if (Array.isArray(value)) {
+          if (value.length === 0) return 'unknown[]';
+          var elementTypes = [];
+          var objectItems = [];
+
+          for (var i = 0; i < value.length; i++) {
+            var item = value[i];
+            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+              objectItems.push(item);
+            } else {
+              var t = inferType(item, key + 'Item', interfaces, optional);
+              if (elementTypes.indexOf(t) === -1) elementTypes.push(t);
+            }
+          }
+
+          if (objectItems.length > 0) {
+            var mergedInterfaceName = toPascalCase(key) + 'Item';
+            mergeObjectsToInterface(objectItems, mergedInterfaceName, interfaces, optional);
+            if (elementTypes.indexOf(mergedInterfaceName) === -1) {
+              elementTypes.push(mergedInterfaceName);
+            }
+          }
+
+          if (elementTypes.length === 1) return elementTypes[0] + '[]';
+          return '(' + elementTypes.join(' | ') + ')[]';
+        }
+
+        if (typeof value === 'object') {
+          var interfaceName = toPascalCase(key);
+          buildInterface(value, interfaceName, interfaces, optional);
+          return interfaceName;
+        }
+
+        return 'unknown';
+      }
+
+      /* ── Build interface for a single object ── */
+      function buildInterface(obj, name, interfaces, optional) {
+        if (interfaces[name]) return; // already built
+        // Reserve slot to avoid infinite recursion
+        interfaces[name] = null;
+
+        var fields = [];
+        var keys = Object.keys(obj);
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var v = obj[k];
+          var typeName = inferType(v, k, interfaces, optional);
+          var fieldOptional = optional || v === null ? '?' : '';
+          // Quote key if not a valid identifier
+          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+          fields.push('  ' + safeKey + fieldOptional + ': ' + typeName + ';');
+        }
+
+        interfaces[name] = fields;
+      }
+
+      /* ── Merge multiple objects into one interface (for typed arrays) ── */
+      function mergeObjectsToInterface(objects, name, interfaces, optional) {
+        if (interfaces[name]) return;
+        interfaces[name] = null;
+
+        // Collect all keys across all objects; track which are in all vs some
+        var allKeys = {};
+        for (var i = 0; i < objects.length; i++) {
+          var keys = Object.keys(objects[i]);
+          for (var j = 0; j < keys.length; j++) {
+            if (!allKeys[keys[j]]) allKeys[keys[j]] = 0;
+            allKeys[keys[j]]++;
+          }
+        }
+
+        var fields = [];
+        var keyList = Object.keys(allKeys);
+        for (var ki = 0; ki < keyList.length; ki++) {
+          var k = keyList[ki];
+          var presentInAll = allKeys[k] === objects.length;
+          // Collect distinct types for this key
+          var types = [];
+          for (var oi = 0; oi < objects.length; oi++) {
+            if (objects[oi].hasOwnProperty(k)) {
+              var t = inferType(objects[oi][k], k, interfaces, optional);
+              if (types.indexOf(t) === -1) types.push(t);
+            }
+          }
+          var typeStr = types.length === 1 ? types[0] : '(' + types.join(' | ') + ')';
+          var fieldOptional = (!presentInAll || optional) ? '?' : '';
+          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+          fields.push('  ' + safeKey + fieldOptional + ': ' + typeStr + ';');
+        }
+
+        interfaces[name] = fields;
+      }
+
+      /* ── Render interfaces to TypeScript string ── */
+      function renderInterfaces(interfaces, useType) {
+        var lines = [];
+        var names = Object.keys(interfaces);
+
+        // Root interface (the last one added is root — we reverse so root is last rendered first)
+        // Actually we'll render in reverse insertion order so root appears at bottom
+        // and dependencies at top. We use a dependency-aware sort.
+        // Simple approach: render in the order they were added (Map order-like using array).
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          var fields = interfaces[name];
+          if (fields === null) continue; // shouldn't happen
+
+          if (useType) {
+            lines.push('type ' + name + ' = {');
+          } else {
+            lines.push('interface ' + name + ' {');
+          }
+          for (var j = 0; j < fields.length; j++) {
+            lines.push(fields[j]);
+          }
+          lines.push('}');
+          lines.push('');
+        }
+
+        return lines.join('\n').trimEnd();
+      }
+
+      /* ── Main convert function ── */
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+
+        // Real-time error highlighting
+        inputEl.classList.remove('error');
+
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          inputEl.classList.add('error');
+          outputCodeEl.textContent = '';
+          setStatus('Invalid JSON: ' + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+
+        var rootName = (rootNameEl.value.trim() || 'RootObject');
+        var optional = optionalEl.checked;
+        var useType = useTypeEl.checked;
+
+        // Use an ordered object (insertion order)
+        var interfaces = {};
+
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildInterface(parsed, rootName, interfaces, optional);
+        } else if (Array.isArray(parsed)) {
+          // If root is an array of objects, merge them
+          var objectItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (objectItems.length > 0) {
+            mergeObjectsToInterface(objectItems, rootName, interfaces, optional);
+          } else {
+            // Array of primitives
+            var ts = inferType(parsed, rootName, interfaces, optional);
+            outputCodeEl.textContent = 'type ' + rootName + ' = ' + ts + ';';
+            setStatus('Generated.', false);
+            window.trackTool && window.trackTool('json-to-typescript', 'generate');
+            return;
+          }
+        } else {
+          // Primitive root
+          var ts2 = inferType(parsed, rootName, interfaces, optional);
+          outputCodeEl.textContent = 'type ' + rootName + ' = ' + ts2 + ';';
+          setStatus('Generated.', false);
+          window.trackTool && window.trackTool('json-to-typescript', 'generate');
+          return;
+        }
+
+        var result = renderInterfaces(interfaces, useType);
+        outputCodeEl.textContent = result;
+        var count = Object.keys(interfaces).length;
+        setStatus('Generated ' + count + ' interface' + (count === 1 ? '' : 's') + '.', false);
+        window.trackTool && window.trackTool('json-to-typescript', 'generate');
+      }
+
+      /* ── Real-time input validation ── */
+      inputEl.addEventListener('input', function () {
+        var raw = inputEl.value.trim();
+        if (!raw) { inputEl.classList.remove('error'); clearStatus(); return; }
+        try {
+          JSON.parse(raw);
+          inputEl.classList.remove('error');
+          clearStatus();
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus('Invalid JSON: ' + e.message, true);
+        }
+      });
+
+      document.getElementById('jtt-convert').addEventListener('click', convert);
+
+      document.getElementById('jtt-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        convert();
+      });
+
+      document.getElementById('jtt-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputCodeEl.textContent = '';
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('jtt-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('jtt-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jtt-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jtt-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .jtt-config-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jtt-config-row label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .jtt-config-row input[type="text"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .jtt-config-row input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jtt-config-row code {
+    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    padding: 0.1rem 0.3rem;
+    background: var(--color-bg);
+    border-radius: 3px;
+  }
+
+  .jtt-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .jtt-panels { grid-template-columns: 1fr; }
+  }
+
+  .jtt-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jtt-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jtt-panel-actions { display: flex; gap: 0.3rem; }
+
+  .jtt-panel textarea {
+    width: 100%;
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .jtt-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jtt-panel textarea.error { border-color: #c0392b; }
+
+  .jtt-output {
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.78rem;
+  }
+
+  .jtt-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .jtt-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jtt-status.success { color: #057a55; }
+  .jtt-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jtt-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jtt-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jtt-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .jtt-status.success { color: #34d399; }
+  [data-theme="dark"] .jtt-status.error { color: #f87171; }
+  [data-theme="dark"] .jtt-panel textarea.error { border-color: #f87171; }
+</style>
