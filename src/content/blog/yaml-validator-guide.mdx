@@ -1,0 +1,391 @@
+---
+title: "YAML Validator Online: Check YAML Syntax and Structure Instantly"
+description: "Validate YAML syntax online with line-by-line error reporting. Catch indentation errors, duplicate keys, and type issues before they hit production."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "yaml-validator-guide-zh"
+tags: ["yaml validator", "yaml syntax", "yaml lint", "developer-tools", "yaml"]
+---
+
+YAML is everywhere in modern infrastructure: Kubernetes manifests, GitHub Actions workflows, Docker Compose files, Ansible playbooks, Helm charts. It is also one of the easiest formats to break silently — a two-space indent that becomes three spaces, a missing colon, or a bare string that gets coerced to a boolean. A **YAML validator online** catches these issues at the source, before they cause a failed deployment or a cryptic runtime error.
+
+[Validate your YAML now →](/tools/yaml-validator)
+
+## Why YAML Validation Matters
+
+YAML parsers are famously lenient. A malformed YAML file often parses without error but produces unexpected data structures. Consider:
+
+```yaml
+# Intended: a list of two strings
+fruits:
+  - apple
+  - orange
+  
+vegetables:
+- carrot  # Accidentally de-indented — still valid YAML but wrong structure
+  - spinach
+```
+
+This parses without throwing an error in many parsers, but the resulting structure is not what you intended. Validation tools that perform structural analysis — not just syntax checking — catch this class of bug.
+
+The more dangerous case is YAML's infamous implicit type coercion in YAML 1.1 (used by PyYAML and many Kubernetes tools until recently):
+
+```yaml
+settings:
+  debug: yes        # parsed as boolean true, not string "yes"
+  version: 1.0      # parsed as float, not string
+  country: NO       # Norway's country code — parsed as boolean false!
+  octal: 0777       # parsed as octal integer 511, not string "0777"
+```
+
+A validator with type preview shows you exactly what type each value resolves to, eliminating surprises.
+
+## YAML Syntax Fundamentals
+
+### Scalars
+
+```yaml
+string: Hello World
+quoted_string: "Hello\nWorld"  # supports escape sequences
+single_quoted: 'No escape \n here'  # literal backslash
+integer: 42
+float: 3.14
+boolean_true: true
+boolean_false: false
+null_value: null
+multiline: |
+  Line one
+  Line two
+  Line three
+folded: >
+  These lines
+  will be joined
+  into one.
+```
+
+The `|` (literal block) preserves newlines. The `>` (folded block) replaces newlines with spaces.
+
+### Sequences (Lists)
+
+```yaml
+# Block style (most common)
+fruits:
+  - apple
+  - banana
+  - cherry
+
+# Flow style (compact)
+colors: [red, green, blue]
+```
+
+### Mappings (Objects)
+
+```yaml
+# Block style
+server:
+  host: localhost
+  port: 8080
+  tls: true
+
+# Flow style
+point: {x: 1, y: 2}
+```
+
+### Nested Structures
+
+```yaml
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - NGINX_HOST=example.com
+      - NGINX_PORT=80
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+```
+
+### Anchors and Aliases
+
+YAML supports DRY through anchors (`&`) and aliases (`*`):
+
+```yaml
+defaults: &defaults
+  adapter: postgres
+  encoding: utf8
+  pool: 5
+
+development:
+  <<: *defaults
+  database: myapp_development
+
+production:
+  <<: *defaults
+  database: myapp_production
+  pool: 20
+```
+
+The `<<:` merge key expands the referenced anchor into the current mapping.
+
+### Multi-Document Files
+
+A single YAML file can contain multiple documents separated by `---`:
+
+```yaml
+---
+kind: Deployment
+metadata:
+  name: web
+---
+kind: Service
+metadata:
+  name: web-svc
+```
+
+## Common YAML Errors
+
+### Indentation Errors
+
+YAML uses spaces (never tabs) for indentation, and the indent level must be consistent:
+
+```yaml
+# Wrong — mixed indentation
+server:
+  host: localhost
+    port: 8080  # over-indented; parser error
+
+# Correct
+server:
+  host: localhost
+  port: 8080
+```
+
+### Missing Colon After Key
+
+```yaml
+# Wrong
+server
+  host: localhost
+
+# Correct
+server:
+  host: localhost
+```
+
+### Colon in Unquoted String
+
+```yaml
+# Wrong — parser treats this as a key-value pair
+message: Error: something went wrong
+
+# Correct
+message: "Error: something went wrong"
+```
+
+### Tab Characters
+
+```yaml
+# Wrong — YAML forbids tabs for indentation
+server:
+	host: localhost  # tab character causes parse error
+```
+
+### Duplicate Keys
+
+```yaml
+# Technically invalid but silently accepted by many parsers
+config:
+  timeout: 30
+  timeout: 60  # overwrites the first value
+```
+
+### YAML 1.1 Boolean Trap
+
+```yaml
+# These are all booleans in YAML 1.1 (PyYAML, Ruby Psych < 4.0):
+# true: true, True, TRUE, yes, Yes, YES, on, On, ON
+# false: false, False, FALSE, no, No, NO, off, Off, OFF
+
+country_code: NO   # Parses as false, not the string "NO"
+enabled: yes       # Parses as true — usually fine, but surprising
+
+# Safe: always quote ambiguous values
+country_code: "NO"
+```
+
+YAML 1.2 (used by newer tools) eliminated most of these coercions. Know which version your parser uses.
+
+## Validating YAML in CI/CD
+
+### yamllint
+
+[`yamllint`](https://github.com/adrienverge/yamllint) is the standard Python-based YAML linter:
+
+```bash
+pip install yamllint
+yamllint config.yaml
+```
+
+With a custom config (`.yamllint`):
+
+```yaml
+extends: default
+rules:
+  line-length:
+    max: 120
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+```
+
+```bash
+yamllint -c .yamllint .  # lint all YAML files in the repo
+```
+
+### GitHub Actions Integration
+
+```yaml
+name: Lint YAML
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Lint YAML files
+        run: yamllint .
+```
+
+### Pre-commit Hook
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [-c=.yamllint]
+```
+
+## Parsing YAML in Code
+
+### Python
+
+```bash
+pip install pyyaml
+```
+
+```python
+import yaml
+
+# Load (use safe_load to prevent arbitrary code execution)
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+
+print(config['server']['host'])
+
+# Validate by catching exceptions
+try:
+    with open('config.yaml', 'r') as f:
+        data = yaml.safe_load(f)
+    print("Valid YAML")
+except yaml.YAMLError as e:
+    print(f"Invalid YAML: {e}")
+```
+
+### Node.js
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+try {
+  const config = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+  console.log(config);
+} catch (e) {
+  console.error('Invalid YAML:', e.message);
+}
+```
+
+### Go
+
+```bash
+go get gopkg.in/yaml.v3
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+
+    "gopkg.in/yaml.v3"
+)
+
+type Config struct {
+    Server struct {
+        Host string `yaml:"host"`
+        Port int    `yaml:"port"`
+    } `yaml:"server"`
+}
+
+func main() {
+    data, err := os.ReadFile("config.yaml")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    var config Config
+    if err := yaml.Unmarshal(data, &config); err != nil {
+        log.Fatalf("Invalid YAML: %v", err)
+    }
+
+    fmt.Printf("Host: %s, Port: %d\n", config.Server.Host, config.Server.Port)
+}
+```
+
+## YAML vs JSON vs TOML
+
+| Feature | YAML | JSON | TOML |
+|---|---|---|---|
+| Comments | Yes (`#`) | No | Yes (`#`) |
+| Multiline strings | Yes (`|`, `>`) | Escaped `\n` | Yes |
+| Anchors/aliases | Yes | No | No |
+| Type inference | Implicit (dangerous) | Explicit | Strict |
+| Indentation-based | Yes | No | No |
+| Tabs allowed | No | N/A | No |
+| Parse ambiguity | High (1.1) / Low (1.2) | Low | Low |
+| Verbosity | Low | Medium | Low |
+
+YAML's primary advantage is human readability and low verbosity. Its primary risk is implicit type coercion and indentation-sensitive parsing. For machine-generated config (API responses, build artifacts), prefer JSON. For human-authored config with comments, YAML or TOML are both good choices — TOML is strictly less ambiguous.
+
+## Online YAML Validator
+
+For quick syntax checking and structure inspection without running any tools locally, [ZeroTool's YAML validator](/tools/yaml-validator) runs entirely in your browser:
+
+- Validates YAML syntax with line and column error reporting
+- Shows the parsed structure as a tree
+- Exports validated YAML as JSON
+- 100% local processing — no data is sent to any server
+
+**[Try the YAML validator →](/tools/yaml-validator)**
+
+{/* FAQ structured data is rendered via ToolLayout on the tool page */}
