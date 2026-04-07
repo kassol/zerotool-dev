@@ -10,9 +10,22 @@ const categories = ['all', 'data', 'encoding', 'text', 'security', 'dev'] as con
 const labels = Object.fromEntries(
   categories.map(c => [c, t(lang, `category.${c}`)])
 );
+const recentLabel = t(lang, 'category.recent');
 ---
 
 <div class="category-filter" role="group" aria-label={t(lang, 'category.filterLabel')}>
+  <!-- Recently Used chip: hidden until localStorage has entries (JS unhides it) -->
+  <button
+    id="chip-recent"
+    class="chip chip--recent"
+    data-cat="recent"
+    type="button"
+    aria-pressed="false"
+    hidden
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    {recentLabel}
+  </button>
   {categories.map(cat => (
     <button
       class={`chip${cat === 'all' ? ' chip--active' : ''}`}
@@ -31,17 +44,33 @@ const labels = Object.fromEntries(
     window.__ztSearch = window.__ztSearch || '';
     window.__ztCat = window.__ztCat || 'all';
 
+    // Read recently-used list from localStorage
+    function getRecent() {
+      try {
+        return JSON.parse(localStorage.getItem('zt-recent') || '[]');
+      } catch (e) {
+        return [];
+      }
+    }
+
     // Shared apply function — called by both components
     window.__ztApply = function () {
       var q = window.__ztSearch || '';
       var cat = window.__ztCat || 'all';
+      var recent = cat === 'recent' ? getRecent() : null;
       var cards = document.querySelectorAll('.tool-card');
       var visible = 0;
       for (var i = 0; i < cards.length; i++) {
         var kw = cards[i].getAttribute('data-keywords') || '';
         var cardCat = cards[i].getAttribute('data-category') || '';
+        var cardSlug = cards[i].getAttribute('data-slug') || '';
         var matchSearch = !q || kw.indexOf(q) !== -1;
-        var matchCat = cat === 'all' || cardCat === cat;
+        var matchCat;
+        if (cat === 'recent') {
+          matchCat = recent.indexOf(cardSlug) !== -1;
+        } else {
+          matchCat = cat === 'all' || cardCat === cat;
+        }
         if (matchSearch && matchCat) {
           cards[i].style.display = '';
           visible++;
@@ -53,12 +82,21 @@ const labels = Object.fromEntries(
       if (noResults) noResults.hidden = visible > 0;
     };
 
+    // Show Recently Used chip if localStorage has entries
+    var recentChip = document.getElementById('chip-recent');
+    if (recentChip) {
+      var recentList = getRecent();
+      if (recentList.length > 0) {
+        recentChip.hidden = false;
+      }
+    }
+
     // Category chip click handler
     var filter = document.querySelector('.category-filter');
     if (!filter) return;
     filter.addEventListener('click', function (e) {
-      var btn = e.target;
-      if (!btn || btn.tagName !== 'BUTTON') return;
+      var btn = e.target.closest('button[data-cat]');
+      if (!btn) return;
       var cat = btn.getAttribute('data-cat');
       if (!cat) return;
       window.__ztCat = cat;

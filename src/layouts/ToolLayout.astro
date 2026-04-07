@@ -148,10 +148,44 @@ const faqJsonLd = faqItems.length > 0 ? {
     <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_BOTTOM ?? ''} format="rectangle" />
   </div>
 
-  <!-- Tool UX enhancements: keyboard shortcuts + copy feedback -->
+  <!-- Tool UX enhancements: keyboard shortcuts + copy feedback + localStorage utilities -->
   <script is:inline>
     (function() {
-      // Keyboard shortcuts: Ctrl/Cmd+Enter = primary action, Ctrl/Cmd+L = clear
+      // ── localStorage input memory ──────────────────────────────────────────
+      var _slug = (function() {
+        var parts = location.pathname.replace(/\/$/, '').split('/');
+        return parts[parts.length - 1];
+      })();
+
+      window.__ztSaveInput = function(slug, key, value) {
+        try {
+          var stored = JSON.parse(localStorage.getItem('zt-input:' + slug) || '{}');
+          stored[key] = value;
+          localStorage.setItem('zt-input:' + slug, JSON.stringify(stored));
+        } catch (e) {}
+      };
+
+      window.__ztLoadInput = function(slug, key) {
+        try {
+          var stored = JSON.parse(localStorage.getItem('zt-input:' + slug) || '{}');
+          return stored[key] !== undefined ? stored[key] : null;
+        } catch (e) { return null; }
+      };
+
+      window.__ztClearInput = function(slug) {
+        try { localStorage.removeItem('zt-input:' + slug); } catch (e) {}
+      };
+
+      // ── Record visit in zt-recent ──────────────────────────────────────────
+      try {
+        var recent = JSON.parse(localStorage.getItem('zt-recent') || '[]');
+        recent = recent.filter(function(s) { return s !== _slug; });
+        recent.unshift(_slug);
+        if (recent.length > 10) recent = recent.slice(0, 10);
+        localStorage.setItem('zt-recent', JSON.stringify(recent));
+      } catch (e) {}
+
+      // ── Keyboard shortcuts: Ctrl/Cmd+Enter = primary action, Ctrl/Cmd+L = clear ──
       document.addEventListener('keydown', function(e) {
         var mod = e.metaKey || e.ctrlKey;
         if (!mod) return;
@@ -164,11 +198,12 @@ const faqJsonLd = faqItems.length > 0 ? {
           if (widget && document.activeElement && widget.contains(document.activeElement)) {
             e.preventDefault();
             widget.querySelectorAll('textarea, input[type="text"]').forEach(function(el) { el.value = ''; });
+            window.__ztClearInput(_slug);
           }
         }
       });
 
-      // Copy button visual feedback: add .copied class for animation
+      // ── Copy button visual feedback ────────────────────────────────────────
       document.addEventListener('click', function(e) {
         var btn = e.target.closest('.btn-copy, .btn-secondary');
         if (!btn) return;
