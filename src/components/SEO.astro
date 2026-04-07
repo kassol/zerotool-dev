@@ -64,35 +64,32 @@ const blogSlugs = new Set(blogEntries.map((e) => e.slug));
   const pathname = Astro.url.pathname;
   const isBlogPost = /^\/(zh|ja|ko)\/blog\/[^/]+/.test(pathname) || /^\/blog\/[^/]+/.test(pathname);
 
-  if (isBlogPost && translationSlug) {
-    // Derive the EN base slug from translationSlug
-    // EN posts: translationSlug = "<base>-zh", so base = translationSlug without -zh
-    // ZH/JA/KO posts: translationSlug = EN base slug directly
-    const enBaseSlug = lang === 'en' ? translationSlug.replace(/-zh$/, '') : translationSlug;
+  if (isBlogPost) {
+    // Extract slug from pathname: strip /zh/blog/, /ja/blog/, /ko/blog/, or /blog/ prefix
+    const pathSlug = pathname
+      .replace(/^\/(zh|ja|ko)\/blog\//, '')
+      .replace(/^\/blog\//, '')
+      .replace(/\/$/, '');
+    // Derive base slug by stripping language suffix
+    const baseSlug = pathSlug.replace(/-(zh|ja|ko)$/, '');
 
-    // Convention-based slug map
-    const candidates = [
-      { hreflang: 'en', slug: enBaseSlug, prefix: '/blog' },
-      { hreflang: 'zh', slug: enBaseSlug + '-zh', prefix: '/zh/blog' },
-      { hreflang: 'ja', slug: enBaseSlug + '-ja', prefix: '/ja/blog' },
-      { hreflang: 'ko', slug: enBaseSlug + '-ko', prefix: '/ko/blog' },
+    const langVariants = [
+      { hreflang: 'en', slug: baseSlug, prefix: '' },
+      { hreflang: 'zh', slug: `${baseSlug}-zh`, prefix: '/zh' },
+      { hreflang: 'ja', slug: `${baseSlug}-ja`, prefix: '/ja' },
+      { hreflang: 'ko', slug: `${baseSlug}-ko`, prefix: '/ko' },
     ];
 
-    const links: any[] = [];
-    for (const c of candidates) {
-      if (blogSlugs.has(c.slug)) {
-        links.push(<link rel="alternate" hreflang={c.hreflang} href={new URL(c.prefix + '/' + c.slug + '/', siteUrl).toString()} />);
-      }
-    }
+    const links: any[] = langVariants
+      .filter(({ slug }) => blogSlugs.has(slug))
+      .map(({ hreflang: l, slug, prefix }) =>
+        <link rel="alternate" hreflang={l} href={new URL(`${prefix}/blog/${slug}/`, siteUrl).toString()} />
+      );
     // x-default always points to EN if it exists
-    if (blogSlugs.has(enBaseSlug)) {
-      links.push(<link rel="alternate" hreflang="x-default" href={new URL('/blog/' + enBaseSlug + '/', siteUrl).toString()} />);
+    if (blogSlugs.has(baseSlug)) {
+      links.push(<link rel="alternate" hreflang="x-default" href={new URL(`/blog/${baseSlug}/`, siteUrl).toString()} />);
     }
     return links;
-  } else if (isBlogPost) {
-    // Blog post without translation — self-referencing only
-    const selfUrl = new URL(pathname, siteUrl).toString();
-    return <link rel="alternate" hreflang={lang} href={selfUrl} />;
   } else {
     // Non-blog pages: path-based swap works correctly
     const strippedPath = pathname.replace(/^\/(zh|ja|ko)(\/|$)/, '/') || '/';
