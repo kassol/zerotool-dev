@@ -76,6 +76,60 @@ const faqJsonLd = faqItems.length > 0 ? {
     {faqJsonLd && (
       <script type="application/ld+json" set:html={JSON.stringify(faqJsonLd)} />
     )}
+    <!-- ztPersist must be defined before any tool body scripts run -->
+    <script is:inline>
+      (function() {
+        var MAX_ENTRY = 50 * 1024;       // 50 KB per tool
+        var MAX_TOTAL = 2 * 1024 * 1024; // 2 MB total
+
+        function _ztEvictIfNeeded(savingSlug, incomingLen) {
+          try {
+            var recent = JSON.parse(localStorage.getItem('zt-recent') || '[]');
+            var keys = [];
+            for (var i = 0; i < localStorage.length; i++) {
+              var k = localStorage.key(i);
+              if (k && k.indexOf('zt-input-') === 0 && k !== 'zt-input-' + savingSlug) {
+                keys.push(k);
+              }
+            }
+            var total = incomingLen;
+            keys.forEach(function(k) { total += (localStorage.getItem(k) || '').length; });
+            if (total <= MAX_TOTAL) return;
+            keys.sort(function(a, b) {
+              var aIdx = recent.indexOf(a.replace('zt-input-', ''));
+              var bIdx = recent.indexOf(b.replace('zt-input-', ''));
+              if (aIdx === -1) aIdx = 9999;
+              if (bIdx === -1) bIdx = 9999;
+              return bIdx - aIdx;
+            });
+            while (total > MAX_TOTAL && keys.length > 0) {
+              var evict = keys.shift();
+              total -= (localStorage.getItem(evict) || '').length;
+              localStorage.removeItem(evict);
+            }
+          } catch (e) {}
+        }
+
+        window.ztPersist = {
+          save: function(slug, data) {
+            try {
+              var json = JSON.stringify(data);
+              if (json.length > MAX_ENTRY) return;
+              _ztEvictIfNeeded(slug, json.length);
+              localStorage.setItem('zt-input-' + slug, json);
+            } catch (e) {}
+          },
+          load: function(slug) {
+            try {
+              return JSON.parse(localStorage.getItem('zt-input-' + slug) || '{}');
+            } catch (e) { return {}; }
+          },
+          clear: function(slug) {
+            try { localStorage.removeItem('zt-input-' + slug); } catch (e) {}
+          }
+        };
+      })();
+    </script>
   </Fragment>
 
   <div class="tool-page">
@@ -148,65 +202,13 @@ const faqJsonLd = faqItems.length > 0 ? {
     <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_BOTTOM ?? ''} format="rectangle" />
   </div>
 
-  <!-- Tool UX enhancements: keyboard shortcuts + copy feedback + localStorage utilities -->
+  <!-- Tool UX enhancements: keyboard shortcuts + copy feedback + zt-recent tracking -->
   <script is:inline>
     (function() {
-      // ── localStorage input persistence (window.ztPersist) ─────────────────
       var _slug = (function() {
         var parts = location.pathname.replace(/\/$/, '').split('/');
         return parts[parts.length - 1];
       })();
-
-      var MAX_ENTRY = 50 * 1024;       // 50 KB per tool
-      var MAX_TOTAL = 2 * 1024 * 1024; // 2 MB total
-
-      function _ztEvictIfNeeded(savingSlug, incomingLen) {
-        try {
-          var recent = JSON.parse(localStorage.getItem('zt-recent') || '[]');
-          var keys = [];
-          for (var i = 0; i < localStorage.length; i++) {
-            var k = localStorage.key(i);
-            if (k && k.indexOf('zt-input-') === 0 && k !== 'zt-input-' + savingSlug) {
-              keys.push(k);
-            }
-          }
-          var total = incomingLen;
-          keys.forEach(function(k) { total += (localStorage.getItem(k) || '').length; });
-          if (total <= MAX_TOTAL) return;
-          // Sort by LRU: least recently used (high index = older) evicted first
-          keys.sort(function(a, b) {
-            var aIdx = recent.indexOf(a.replace('zt-input-', ''));
-            var bIdx = recent.indexOf(b.replace('zt-input-', ''));
-            if (aIdx === -1) aIdx = 9999;
-            if (bIdx === -1) bIdx = 9999;
-            return bIdx - aIdx; // evict highest index first
-          });
-          while (total > MAX_TOTAL && keys.length > 0) {
-            var evict = keys.shift();
-            total -= (localStorage.getItem(evict) || '').length;
-            localStorage.removeItem(evict);
-          }
-        } catch (e) {}
-      }
-
-      window.ztPersist = {
-        save: function(slug, data) {
-          try {
-            var json = JSON.stringify(data);
-            if (json.length > MAX_ENTRY) return; // skip oversized entries
-            _ztEvictIfNeeded(slug, json.length);
-            localStorage.setItem('zt-input-' + slug, json);
-          } catch (e) {}
-        },
-        load: function(slug) {
-          try {
-            return JSON.parse(localStorage.getItem('zt-input-' + slug) || '{}');
-          } catch (e) { return {}; }
-        },
-        clear: function(slug) {
-          try { localStorage.removeItem('zt-input-' + slug); } catch (e) {}
-        }
-      };
 
       // ── Record visit in zt-recent ──────────────────────────────────────────
       try {
