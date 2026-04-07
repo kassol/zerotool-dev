@@ -1,0 +1,308 @@
+---
+// YamlValidatorTool — validate YAML syntax with detailed error messages and structure preview
+---
+
+<div>
+  <div class="yv-wrap">
+    <div class="yv-input-section">
+      <label for="yv-input">
+        <span>YAML Input</span>
+        <button id="yv-clear" class="btn-ghost" type="button">Clear</button>
+      </label>
+      <textarea
+        id="yv-input"
+        placeholder={"name: Alice\nage: 30\naddress:\n  city: Wonderland\n  zip: '00000'\nhobbies:\n  - reading\n  - hiking"}
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="yv-actions">
+      <button id="yv-validate" class="btn-primary" type="button">Validate</button>
+    </div>
+
+    <div id="yv-status" class="yv-status" aria-live="polite"></div>
+
+    <div id="yv-error-box" class="yv-error-box" style="display:none"></div>
+
+    <div id="yv-preview" class="yv-preview" style="display:none">
+      <div class="yv-preview-header">
+        <span>Parsed Structure</span>
+        <button id="yv-copy-preview" class="btn-copy" type="button">Copy JSON</button>
+      </div>
+      <pre id="yv-preview-content" class="yv-preview-content"></pre>
+    </div>
+  </div>
+
+  <!-- js-yaml via CDN (same version as yaml-json tool) -->
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js" is:inline></script>
+
+  <script is:inline>
+    (function () {
+      var inputEl   = document.getElementById('yv-input');
+      var statusEl  = document.getElementById('yv-status');
+      var errorBox  = document.getElementById('yv-error-box');
+      var previewEl = document.getElementById('yv-preview');
+      var previewContent = document.getElementById('yv-preview-content');
+      var validateBtn    = document.getElementById('yv-validate');
+      var clearBtn       = document.getElementById('yv-clear');
+      var copyPreviewBtn = document.getElementById('yv-copy-preview');
+
+      var lastParsed = null;
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg;
+        statusEl.className = 'yv-status ' + (type || '');
+      }
+
+      function clearAll() {
+        setStatus('', '');
+        errorBox.style.display = 'none';
+        errorBox.innerHTML = '';
+        previewEl.style.display = 'none';
+        previewContent.textContent = '';
+        lastParsed = null;
+      }
+
+      /**
+       * Parse a YAMLException message from js-yaml into structured parts.
+       * js-yaml error format: "<reason> at line <n>, column <c>:\n<snippet>"
+       */
+      function parseYamlError(e) {
+        var msg = e.message || String(e);
+        // Extract reason before " at line"
+        var reasonMatch = msg.match(/^([^\n]+?)(?:\s+at line\s+(\d+),\s+column\s+(\d+))?[:\n]/);
+        var reason = reasonMatch ? reasonMatch[1].trim() : msg.split('\n')[0].trim();
+        var line   = e.mark && e.mark.line   != null ? e.mark.line + 1   : null;
+        var col    = e.mark && e.mark.column != null ? e.mark.column + 1 : null;
+
+        // Try to extract the snippet from the error message (after first newline)
+        var snippet = null;
+        var nlIdx = msg.indexOf('\n');
+        if (nlIdx !== -1) {
+          snippet = msg.slice(nlIdx + 1).trim();
+        }
+
+        return { reason: reason, line: line, col: col, snippet: snippet };
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      }
+
+      function buildErrorHtml(info) {
+        var html = '<div class="yv-err-title">Syntax Error</div>';
+        html += '<div class="yv-err-reason">' + escapeHtml(info.reason) + '</div>';
+        if (info.line != null) {
+          html += '<div class="yv-err-location">Line ' + info.line;
+          if (info.col != null) html += ', Column ' + info.col;
+          html += '</div>';
+        }
+        if (info.snippet) {
+          html += '<pre class="yv-err-snippet">' + escapeHtml(info.snippet) + '</pre>';
+        }
+        return html;
+      }
+
+      validateBtn.addEventListener('click', function () {
+        var text = inputEl.value;
+        if (!text.trim()) {
+          clearAll();
+          setStatus('Paste YAML above and click Validate.', '');
+          return;
+        }
+
+        if (typeof jsyaml === 'undefined') {
+          setStatus('YAML library not loaded. Please check your network connection.', 'error');
+          return;
+        }
+
+        try {
+          var parsed = jsyaml.load(text);
+          lastParsed = parsed;
+
+          errorBox.style.display = 'none';
+          errorBox.innerHTML = '';
+
+          // Show preview
+          var jsonStr = JSON.stringify(parsed, null, 2);
+          previewContent.textContent = jsonStr;
+          previewEl.style.display = '';
+
+          setStatus('Valid YAML \u2014 no errors found.', 'success');
+          window.trackTool && window.trackTool('yaml-validator', 'validate_success');
+        } catch (e) {
+          lastParsed = null;
+          previewEl.style.display = 'none';
+          previewContent.textContent = '';
+
+          var info = parseYamlError(e);
+          errorBox.innerHTML = buildErrorHtml(info);
+          errorBox.style.display = '';
+
+          setStatus('Invalid YAML \u2014 see error details below.', 'error');
+          window.trackTool && window.trackTool('yaml-validator', 'validate_error');
+        }
+      });
+
+      clearBtn.addEventListener('click', function () {
+        inputEl.value = '';
+        clearAll();
+      });
+
+      copyPreviewBtn.addEventListener('click', function () {
+        if (!previewContent.textContent) return;
+        navigator.clipboard.writeText(previewContent.textContent).then(function () {
+          copyPreviewBtn.textContent = 'Copied!';
+          setTimeout(function () { copyPreviewBtn.textContent = 'Copy JSON'; }, 1500);
+        });
+      });
+
+      /* Keyboard shortcut: Ctrl/Cmd+Enter */
+      inputEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          validateBtn.click();
+        }
+      });
+
+      /* Auto-validate on load if pre-filled */
+      if (inputEl.value.trim()) {
+        validateBtn.click();
+      }
+    })();
+  </script>
+</div>
+
+<style>
+  .yv-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .yv-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .yv-input-section label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #yv-input {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  #yv-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .yv-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .yv-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .yv-status.success { color: #057a55; }
+  .yv-status.error   { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .yv-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .yv-status.error   { color: #f87171; }
+  }
+  [data-theme="dark"] .yv-status.success { color: #34d399; }
+  [data-theme="dark"] .yv-status.error   { color: #f87171; }
+
+  /* Error box */
+  .yv-error-box {
+    border: 1px solid rgba(192, 57, 43, 0.4);
+    border-left: 3px solid #c0392b;
+    border-radius: var(--radius-sm);
+    background: rgba(192, 57, 43, 0.05);
+    padding: 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  [data-theme="dark"] .yv-error-box,
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .yv-error-box {
+      border-color: rgba(248, 113, 113, 0.3);
+      border-left-color: #f87171;
+      background: rgba(248, 113, 113, 0.07);
+    }
+  }
+  [data-theme="dark"] .yv-error-box {
+    border-color: rgba(248, 113, 113, 0.3);
+    border-left-color: #f87171;
+    background: rgba(248, 113, 113, 0.07);
+  }
+
+  .yv-err-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #c0392b;
+  }
+
+  [data-theme="dark"] .yv-err-title { color: #f87171; }
+
+  .yv-err-reason { font-size: 0.88rem; font-weight: 600; color: var(--color-text); }
+
+  .yv-err-location {
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+  }
+
+  .yv-err-snippet {
+    margin: 0.25rem 0 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--color-text-secondary);
+    background: transparent;
+    padding: 0;
+    border: none;
+  }
+
+  /* Preview */
+  .yv-preview {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .yv-preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.4rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .yv-preview-content {
+    margin: 0;
+    padding: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--color-text);
+    background: var(--color-bg);
+    overflow-x: auto;
+    max-height: 320px;
+    white-space: pre;
+  }
+</style>
