@@ -1,0 +1,250 @@
+---
+title: "JSON Diff 在线对比：比较 JSON 结构差异，检测配置漂移"
+description: "在线对比两份 JSON 文档，精准定位新增、删除、修改的字段。讲清树形 diff 与文本 diff 的区别、RFC 6902 JSON Patch 标准，附 API 测试和配置审计实战用法。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "json-diff-guide"
+tags: ["json", "diff", "json-patch", "接口测试", "开发工具"]
+ogImage: /og/blog-json-diff-guide-zh.png
+---
+
+JSON 在现代开发中无处不在——API 响应、配置文件、特性开关、数据库记录。当两份 JSON 文档出现差异时，靠肉眼找不同既容易出错又效率低下。JSON Diff 工具理解数据的结构，精确告诉你哪些字段新增了、哪些删除了、哪些值变了。
+
+## JSON Diff 和文本 Diff 的区别
+
+标准文本 diff（如 `git diff`）逐行比较文件。对 JSON 来说，这会产生大量噪音，掩盖真正的语义变化：
+
+**文本 diff 输出：**
+
+```diff
+-  "timeout": 30,
+-  "retries": 3
++  "timeout": 60,
++  "retries": 3
+```
+
+这能用，但文本 diff 在 JSON 被压缩、重新格式化或键顺序变化时会失效。如果工具以不同的键顺序序列化 JSON，文本 diff 会显示每个键都发生了变化，即使值根本没变。
+
+**JSON 语义 diff 输出：**
+
+```
+~ timeout: 30 → 60
+```
+
+JSON Diff 理解文档结构，在比较前先规范化空白字符和键顺序，只展示真正的语义变化。
+
+## 在线对比 JSON 文档
+
+**[在线 JSON Diff 工具 →](/tools/json-diff)**
+
+粘贴两份 JSON 文档，立即得到结构化差异报告：
+- 新增字段用绿色高亮
+- 删除字段用红色高亮
+- 修改的值并排展示新旧对比
+
+所有计算在浏览器中完成，数据不上传服务器。
+
+## 可以检测哪些变化
+
+JSON Diff 识别三种变化类型：
+
+**新增：** 新文档有但旧文档没有的字段。
+```json
+// 旧
+{ "name": "张三" }
+
+// 新
+{ "name": "张三", "role": "admin" }
+
+// Diff: + role: "admin"
+```
+
+**删除：** 旧文档有但新文档没有的字段。
+```json
+// 旧
+{ "name": "张三", "legacy_id": 12345 }
+
+// 新
+{ "name": "张三" }
+
+// Diff: - legacy_id: 12345
+```
+
+**修改：** 两份文档都有该字段，但值不同。
+```json
+// 旧
+{ "status": "pending" }
+
+// 新
+{ "status": "active" }
+
+// Diff: ~ status: "pending" → "active"
+```
+
+嵌套对象和数组内部的变化会被递归检测。
+
+## 实战场景
+
+### API 响应对比
+
+调试接口回归问题时，对比修复前后的响应：
+
+```bash
+# 保存修复前的响应
+curl https://api.example.com/users/1 > before.json
+
+# 部署修复后，保存响应
+curl https://api.example.com/users/1 > after.json
+
+# 用 jq 快速判断是否相同
+jq --argjson a "$(cat before.json)" --argjson b "$(cat after.json)" \
+  -n '$a == $b'
+```
+
+JSON Diff 工具直观地展示结构差异，帮助判断接口变更是否意外删除了字段或改变了类型。
+
+### 配置漂移检测
+
+基础设施管理中，运行中的配置很容易偏离预期状态。将 Git 里的期望配置与从 API 或 CLI 导出的线上配置进行对比，可以发现漂移：
+
+```bash
+# 导出当前 Kubernetes ConfigMap
+kubectl get configmap my-app -o json | jq '.data' > live.json
+
+# 与版本控制中的配置对比
+# JSON diff: live.json vs config/my-app.json
+```
+
+### 特性开关审计
+
+特性开关系统以 JSON 存储开关状态，每次切换都会改变。对比不同环境（测试 vs 生产）或不同时间点的开关状态，有助于审计发布前的变更情况。
+
+### 数据库记录变更日志
+
+实现审计日志时，可以存储每次记录更新的 JSON Diff，而不是复制整个文档。这样更节省空间，审计查询也更高效。
+
+## RFC 6902：JSON Patch 标准
+
+RFC 6902 定义了用操作序列表示 JSON 变更的标准格式。JSON Patch 文档是一个数组：
+
+```json
+[
+  { "op": "replace", "path": "/status", "value": "active" },
+  { "op": "add", "path": "/role", "value": "admin" },
+  { "op": "remove", "path": "/legacy_id" }
+]
+```
+
+操作类型：
+- `add` — 添加字段或向数组插入元素
+- `remove` — 删除字段或数组元素
+- `replace` — 修改已有值
+- `move` — 将值移动到不同路径
+- `copy` — 将值复制到不同路径
+- `test` — 断言某个值（用于条件性 patch）
+
+JSON Patch 常用于 HTTP `PATCH` 请求，客户端描述局部更新：
+
+```http
+PATCH /api/users/123
+Content-Type: application/json-patch+json
+
+[
+  { "op": "replace", "path": "/email", "value": "newemail@example.com" }
+]
+```
+
+比 `PUT` 发送整个文档更高效。
+
+### 代码中应用 JSON Patch
+
+```js
+// Node.js — 使用 fast-json-patch 库
+import jsonpatch from 'fast-json-patch';
+
+const doc = { name: "张三", status: "pending" };
+const patch = [
+  { op: "replace", path: "/status", value: "active" },
+  { op: "add", path: "/role", value: "admin" }
+];
+
+const result = jsonpatch.applyPatch(doc, patch).newDocument;
+// { name: "张三", status: "active", role: "admin" }
+```
+
+```python
+# Python — 使用 jsonpatch 库
+import jsonpatch
+
+doc = {"name": "张三", "status": "pending"}
+patch = jsonpatch.JsonPatch([
+    {"op": "replace", "path": "/status", "value": "active"},
+    {"op": "add", "path": "/role", "value": "admin"}
+])
+
+result = patch.apply(doc)
+# {"name": "张三", "status": "active", "role": "admin"}
+```
+
+## 从 Diff 生成 JSON Patch
+
+可以根据两个文档自动计算最小 patch：
+
+```js
+import jsonpatch from 'fast-json-patch';
+
+const before = { name: "张三", status: "pending", legacy_id: 12345 };
+const after  = { name: "张三", status: "active", role: "admin" };
+
+const patch = jsonpatch.compare(before, after);
+// [
+//   { op: "replace", path: "/status", value: "active" },
+//   { op: "remove", path: "/legacy_id" },
+//   { op: "add", path: "/role", value: "admin" }
+// ]
+```
+
+适用于生成审计日志、实现乐观并发控制或构建协同编辑系统。
+
+## 数组的 Diff 语义
+
+JSON 中的数组是有序的，这给 diff 带来了歧义。考虑：
+
+```json
+// 旧：["a", "b", "c"]
+// 新：["a", "c", "d"]
+```
+
+是 `"b"` 被删除、`"d"` 被添加？还是 `"b"` 被改成 `"c"`、`"c"` 被改成 `"d"`？取决于 diff 算法的语义：
+
+**基于位置的 diff：** 按索引比较数组元素。索引 1 从 `"b"` 变为 `"c"`，索引 2 从 `"c"` 变为 `"d"`。
+
+**基于集合的 diff：** 将数组视为集合。`"b"` 被删除，`"d"` 被添加，`"a"` 和 `"c"` 不变。
+
+对于带标识符的对象数组（如 `[{"id": 1, ...}, {"id": 2, ...}]`），优秀的 diff 工具会按 ID 匹配而非按位置，生成更清晰、更有意义的差异结果。
+
+## 命令行 JSON Diff
+
+终端里快速对比两份文件：
+
+```bash
+# 使用 jq + diff（-S 按键排序，规范化键顺序后比较）
+diff <(jq -S . before.json) <(jq -S . after.json)
+
+# 使用 Python
+python3 -c "
+import json, sys
+a = json.load(open('before.json'))
+b = json.load(open('after.json'))
+print('相同' if a == b else '不同')
+"
+```
+
+需要更深的结构化 diff：
+
+```bash
+npm install -g json-diff
+json-diff before.json after.json
+```
+
+**[立即在线对比你的 JSON 文档 →](/tools/json-diff)**

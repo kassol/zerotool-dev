@@ -1,0 +1,251 @@
+---
+title: "JSON Diff Online: Compare JSON Structures and Detect Config Drift"
+description: "Compare two JSON objects online and see exactly what changed — added, removed, and modified keys. Learn tree diff vs text diff, RFC 6902 JSON Patch, and real-world use cases."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "json-diff-guide-zh"
+tags: ["json", "diff", "json-patch", "api-testing", "developer-tools"]
+ogImage: /og/blog-json-diff-guide.png
+---
+
+JSON is everywhere in modern development — API responses, configuration files, feature flags, database records. When two JSON documents diverge, spotting the differences with your eyes is error-prone and slow. A JSON diff tool understands the structure of your data and shows you exactly what changed: added keys, removed keys, and modified values.
+
+## JSON Diff vs Text Diff
+
+A standard text diff (like `git diff`) compares files line by line. For JSON, this produces noise that obscures the semantic change:
+
+**Text diff output:**
+
+```diff
+-  "timeout": 30,
+-  "retries": 3
++  "timeout": 60,
++  "retries": 3
+```
+
+This works, but text diffs break down when JSON is minified, reformatted, or when keys are reordered. If a tool serializes JSON with keys in a different order, a text diff will show every key as changed even if no values changed.
+
+**JSON-aware diff output:**
+
+```
+~ timeout: 30 → 60
+```
+
+A JSON diff understands the document structure. It normalizes whitespace and key order before comparing, so you see only the actual semantic changes.
+
+## Compare JSON Structures Online
+
+**[Try the ZeroTool JSON Diff →](/tools/json-diff)**
+
+Paste two JSON documents and get a structured diff instantly:
+- Added keys highlighted in green
+- Removed keys highlighted in red  
+- Modified values shown with old and new values side by side
+
+No data is sent to a server. The comparison runs entirely in your browser.
+
+## What Changes Are Detectable
+
+A JSON diff identifies three types of changes:
+
+**Addition:** A key exists in the new document but not the old.
+```json
+// Old
+{ "name": "Alice" }
+
+// New
+{ "name": "Alice", "role": "admin" }
+
+// Diff: + role: "admin"
+```
+
+**Removal:** A key exists in the old document but not the new.
+```json
+// Old
+{ "name": "Alice", "legacy_id": 12345 }
+
+// New
+{ "name": "Alice" }
+
+// Diff: - legacy_id: 12345
+```
+
+**Modification:** A key exists in both but the value changed.
+```json
+// Old
+{ "status": "pending" }
+
+// New
+{ "status": "active" }
+
+// Diff: ~ status: "pending" → "active"
+```
+
+Changes inside nested objects and arrays are recursively detected.
+
+## Real-World Use Cases
+
+### API Response Comparison
+
+When debugging an API regression, compare the response before and after the fix:
+
+```bash
+# Save before
+curl https://api.example.com/users/1 > before.json
+
+# Deploy fix, then save after
+curl https://api.example.com/users/1 > after.json
+
+# Compare
+jq --argjson a "$(cat before.json)" --argjson b "$(cat after.json)" \
+  -n '$a == $b'
+```
+
+A JSON diff tool shows the structural difference clearly — useful when reviewing whether an API change introduced unintended field removals or type changes.
+
+### Configuration Drift Detection
+
+In infrastructure management, configuration drift is a common problem: the running configuration diverges from the desired state. Comparing the intended config (from Git) against the live config (from an API or CLI export) reveals drift:
+
+```bash
+# Export current Kubernetes ConfigMap
+kubectl get configmap my-app -o json | jq '.data' > live.json
+
+# Compare against version-controlled config
+# JSON diff: live.json vs config/my-app.json
+```
+
+### Feature Flag Auditing
+
+Feature flag systems store JSON payloads that change as flags are toggled. Diffing the flag state between environments (staging vs production) or across time helps audit what changed before a release.
+
+### Database Record Changes
+
+When implementing audit logging, store a JSON diff of what changed in each record update rather than copying the entire document. This is more space-efficient and makes audit queries faster.
+
+## RFC 6902: JSON Patch
+
+RFC 6902 defines a standardized format for representing JSON diffs as a sequence of operations. A JSON Patch document is an array:
+
+```json
+[
+  { "op": "replace", "path": "/status", "value": "active" },
+  { "op": "add", "path": "/role", "value": "admin" },
+  { "op": "remove", "path": "/legacy_id" }
+]
+```
+
+Operations:
+- `add` — add a key or insert into an array
+- `remove` — delete a key or array element
+- `replace` — change an existing value
+- `move` — relocate a value to a different path
+- `copy` — duplicate a value to a different path
+- `test` — assert a value (used for conditional patches)
+
+JSON Patch is used in HTTP `PATCH` requests when a client wants to describe partial updates:
+
+```http
+PATCH /api/users/123
+Content-Type: application/json-patch+json
+
+[
+  { "op": "replace", "path": "/email", "value": "newemail@example.com" }
+]
+```
+
+This is more efficient than sending the entire document in a `PUT` request.
+
+### Applying JSON Patch in Code
+
+```js
+// Node.js — using the 'jsonpatch' library
+import jsonpatch from 'fast-json-patch';
+
+const doc = { name: "Alice", status: "pending" };
+const patch = [
+  { op: "replace", path: "/status", value: "active" },
+  { op: "add", path: "/role", value: "admin" }
+];
+
+const result = jsonpatch.applyPatch(doc, patch).newDocument;
+// { name: "Alice", status: "active", role: "admin" }
+```
+
+```python
+# Python — using jsonpatch
+import jsonpatch
+
+doc = {"name": "Alice", "status": "pending"}
+patch = jsonpatch.JsonPatch([
+    {"op": "replace", "path": "/status", "value": "active"},
+    {"op": "add", "path": "/role", "value": "admin"}
+])
+
+result = patch.apply(doc)
+# {"name": "Alice", "status": "active", "role": "admin"}
+```
+
+## Generating a JSON Patch from a Diff
+
+You can compute the minimal patch between two documents:
+
+```js
+import jsonpatch from 'fast-json-patch';
+
+const before = { name: "Alice", status: "pending", legacy_id: 12345 };
+const after  = { name: "Alice", status: "active", role: "admin" };
+
+const patch = jsonpatch.compare(before, after);
+// [
+//   { op: "replace", path: "/status", value: "active" },
+//   { op: "remove", path: "/legacy_id" },
+//   { op: "add", path: "/role", value: "admin" }
+// ]
+```
+
+This is useful for generating audit logs, implementing optimistic concurrency control, or building collaborative editing systems.
+
+## Tree Diff vs Structural Diff for Arrays
+
+Arrays in JSON are ordered, which creates an ambiguity for diffing. Consider:
+
+```json
+// Before: ["a", "b", "c"]
+// After:  ["a", "c", "d"]
+```
+
+Was `"b"` removed and `"d"` added? Or was `"b"` changed to `"c"` and `"c"` changed to `"d"`? The answer depends on the diff algorithm's semantics.
+
+**Position-based diffing** treats array elements by index. Element at index 1 changed from `"b"` to `"c"`, and element at index 2 changed from `"c"` to `"d"`.
+
+**Set-based diffing** treats arrays as sets. `"b"` was removed, `"d"` was added, and `"a"` and `"c"` are unchanged.
+
+For arrays of objects with identifiers (e.g., `[{"id": 1, ...}, {"id": 2, ...}]`), good diff tools match by ID rather than position, producing cleaner, more meaningful diffs.
+
+## Command-Line JSON Diff
+
+For quick comparisons in the terminal:
+
+```bash
+# Using jq + diff
+diff <(jq -S . before.json) <(jq -S . after.json)
+# -S sorts keys, normalizing key order before comparison
+
+# Using Python
+python3 -c "
+import json, sys
+a = json.load(open('before.json'))
+b = json.load(open('after.json'))
+print('equal' if a == b else 'different')
+"
+```
+
+For deeper structural diff:
+
+```bash
+npm install -g json-diff
+json-diff before.json after.json
+```
+
+**[Compare your JSON documents instantly →](/tools/json-diff)**

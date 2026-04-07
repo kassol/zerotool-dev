@@ -1,0 +1,172 @@
+---
+title: "RSA 密钥对生成器：在线生成 2048/4096 位密钥，无需安装"
+description: "在浏览器中即时生成 RSA 密钥对（PEM、JWK 格式），私钥不上传服务器。讲清密钥大小选择、格式区别和 SSH/TLS/JWT 实战用法。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "rsa-key-generator-guide"
+tags: ["rsa", "密钥对", "非对称加密", "pem", "jwk", "开发工具"]
+ogImage: /og/blog-rsa-key-generator-guide-zh.png
+---
+
+RSA 密钥对是非对称加密的基础——SSH 登录、TLS 证书、JWT 签名、代码签名，背后都是它。这篇文章讲清 RSA 的原理、密钥大小怎么选、PEM 和 JWK 格式有什么区别，以及如何在浏览器里安全生成密钥，私钥全程不离开本机。
+
+## RSA 密钥对怎么工作
+
+RSA 是非对称算法：一对密钥由两把数学上关联的钥匙组成。
+
+- **公钥** — 可以公开分发。任何人都能用它加密数据或验证签名。
+- **私钥** — 必须保密。用于解密数据或创建签名。
+
+安全性依赖大半素数分解的计算困难性。给定一个公钥，要还原私钥就需要对一个几百位的数进行因式分解——以现有算力无法实现。
+
+密钥对由两个大质数 `p` 和 `q` 共同生成。公钥包含模数 `n = p × q` 和公开指数（通常是 65537）。私钥包含 `p`、`q` 及用于高效解密的派生值。
+
+## 密钥大小怎么选
+
+| 大小 | 安全强度 | 适用场景 |
+|------|----------|----------|
+| 1024 位 | 已被破解，禁止使用 | 仅限遗留系统 |
+| 2048 位 | 约 112 位安全强度 | 通用、TLS、SSH |
+| 4096 位 | 约 140 位安全强度 | 高安全要求、长期证书 |
+
+**2048 位是安全的默认选择。** 它对当前几乎所有应用场景都足够，GitHub SSH、Let's Encrypt、AWS KMS 均接受。
+
+**4096 位**适合保护使用周期超过 10 年的数据，或组织安全策略有明确要求的场景。代价是运算开销更大——4096 位的 RSA 签名/验签大约比 2048 位慢 4 倍。
+
+NIST 建议 2048 位 RSA 至少用到 2030 年。如果新系统设计周期较长，3072 位是折中选择。
+
+## 密钥格式详解
+
+### PEM 格式
+
+最常见的格式——DER 结构经 Base64 编码后加 ASCII 头尾：
+
+```
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
+-----END PUBLIC KEY-----
+```
+
+```
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEA...
+-----END PRIVATE KEY-----
+```
+
+PEM 文件使用 `.pem`、`.key`、`.crt` 或 `.pub` 扩展名，视用途而定。OpenSSL、nginx、大多数 SSH 客户端和 AWS Certificate Manager 都接受此格式。
+
+### JWK 格式（JSON Web Key）
+
+Web 场景专用的 JSON 表示，主要用于 OAuth 2.0 和 JOSE（JSON 对象签名与加密）：
+
+```json
+{
+  "kty": "RSA",
+  "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFb...",
+  "e": "AQAB",
+  "alg": "RS256",
+  "use": "sig"
+}
+```
+
+OIDC 身份提供商通过 JWKS 端点发布公钥，客户端用这些公钥验证 JWT。如果你在构建一个用 RSA 签发 JWT 的 API，就需要暴露 JWKS 端点。
+
+### PKCS#1 vs PKCS#8
+
+旧工具生成的私钥头部是 `-----BEGIN RSA PRIVATE KEY-----`（PKCS#1 格式），现代工具倾向于使用 `-----BEGIN PRIVATE KEY-----`（PKCS#8 格式，与算法无关的封装）。两者都包含 RSA 密钥材料，区别只在封装格式。大多数现代库两者都接受。
+
+## 在浏览器中生成 RSA 密钥
+
+**[在线 RSA 密钥对生成器 →](/tools/rsa-key-generator)**
+
+所有计算在浏览器中通过 Web Crypto API 完成。私钥从不离开你的机器——没有服务器接收它，页面加载后甚至可以离线使用。
+
+操作步骤：
+1. 选择密钥大小（2048 或 4096 位）
+2. 选择输出格式（PEM 或 JWK）
+3. 点击生成——密钥对立即出现
+4. 分别复制并妥善保存
+
+**安全提示：** 永远不要把生成的私钥粘贴到任何表单、Web 服务或云控制台。私钥应该存储在密钥链、密钥管理服务或 HSM 中。
+
+## 实战场景
+
+### SSH 密钥认证
+
+用 `ssh-keygen` 生成 SSH 密钥对：
+
+```bash
+ssh-keygen -t rsa -b 4096 -C "your@email.com"
+```
+
+公钥放到服务器的 `~/.ssh/authorized_keys`，私钥留在本地 `~/.ssh/id_rsa`。
+
+CI/CD 流水线、Deploy Key 等程序化访问场景通常使用 RSA 2048。GitHub、GitLab、Bitbucket 均支持 RSA Deploy Key。
+
+### TLS 证书
+
+TLS 证书是包含公钥的签名文档。向 CA 申请证书的流程：
+
+```bash
+# 生成私钥
+openssl genrsa -out private.key 2048
+
+# 生成 CSR（证书签名请求）
+openssl req -new -key private.key -out request.csr
+
+# CA 签名 CSR 后返回证书
+```
+
+私钥留在服务器，证书（含公钥）发送给浏览器。
+
+### JWT 签名（RS256）
+
+RS256（RSA + SHA-256）是常用的 JWT 签名算法。API 服务器用私钥签发 token，客户端用公钥验证：
+
+```js
+// Node.js — 签发
+import jwt from 'jsonwebtoken';
+import fs from 'fs';
+
+const privateKey = fs.readFileSync('private.key');
+const token = jwt.sign({ sub: 'user123', role: 'admin' }, privateKey, {
+  algorithm: 'RS256',
+  expiresIn: '1h'
+});
+
+// 验证（使用公钥或 JWKS 端点）
+const publicKey = fs.readFileSync('public.key');
+const payload = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+```
+
+当多个服务需要独立验证 token 时，RS256 比 HS256（共享密钥）更合适——每个服务只需要公钥，不需要知道签名密钥。
+
+### 软件签名
+
+包管理器和更新系统用 RSA 签名构件，用户安装前验证签名：
+
+```bash
+# 签名
+openssl dgst -sha256 -sign private.key -out signature.bin artifact.tar.gz
+
+# 验证
+openssl dgst -sha256 -verify public.key -signature signature.bin artifact.tar.gz
+```
+
+## 为什么浏览器端生成更安全
+
+很多在线工具在服务器上生成密钥对再通过 HTTPS 传给你，这有安全隐患：
+
+1. 服务器持有你的私钥副本
+2. 私钥在网络上传输
+3. 你无法验证服务器是否记录了日志
+
+基于浏览器 Web Crypto API 的生成器完全规避了这三个问题。密钥对在你的 JavaScript 运行时中生成——私钥在浏览器内计算，从不传输。
+
+## 私钥的安全存储
+
+- **开发环境：** 存在 `~/.ssh/` 或本地 secrets 文件，通过 `.gitignore` 排除在 git 之外
+- **生产环境：** 使用托管密钥服务——AWS Secrets Manager、HashiCorp Vault、Azure Key Vault
+- **高安全要求：** 硬件安全模块（HSM）或云 KMS（AWS KMS、GCP Cloud KMS）——密钥从不离开硬件边界
+
+**[立即在浏览器中安全生成 RSA 密钥对 →](/tools/rsa-key-generator)**

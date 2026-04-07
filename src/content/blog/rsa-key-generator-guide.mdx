@@ -1,0 +1,172 @@
+---
+title: "RSA Key Pair Generator Online: Generate 2048 & 4096-bit Keys in Your Browser"
+description: "Generate RSA key pairs (PEM, JWK) instantly in your browser — no server, no upload. Learn key sizes, formats, and real-world use cases for SSH, TLS, and JWT."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "rsa-key-generator-guide-zh"
+tags: ["rsa", "key-pair", "cryptography", "public-key", "pem", "jwk", "developer-tools"]
+ogImage: /og/blog-rsa-key-generator-guide.png
+---
+
+RSA key pairs are the foundation of asymmetric cryptography — used in SSH access, TLS certificates, JWT signing, and code signing. This guide explains how RSA works, how to choose the right key size and format, and how to generate keys entirely in your browser without sending any data to a server.
+
+## How RSA Key Pairs Work
+
+RSA is an asymmetric algorithm: a **key pair** consists of two mathematically linked keys.
+
+- **Public key** — share freely. Anyone can use it to encrypt data or verify a signature.
+- **Private key** — keep secret. Used to decrypt data or create a signature.
+
+The security relies on the difficulty of factoring large semiprime numbers. Given a public key, recovering the private key would require factoring a number hundreds of digits long — computationally infeasible with current hardware.
+
+The pair is generated together from two large primes `p` and `q`. The public key contains the modulus `n = p × q` and a public exponent (typically 65537). The private key contains `p`, `q`, and derived values used for efficient decryption.
+
+## Choosing a Key Size
+
+| Size | Security Level | Use Case |
+|------|----------------|----------|
+| 1024-bit | Broken — do not use | Legacy only |
+| 2048-bit | ~112-bit security | General purpose, TLS, SSH |
+| 4096-bit | ~140-bit security | High-security systems, long-lived certs |
+
+**2048-bit is the safe default.** It offers enough security for virtually all applications today and is accepted by all major systems (GitHub SSH, Let's Encrypt, AWS KMS).
+
+**4096-bit** is appropriate when the key protects data for 10+ years, or when organizational policy requires it. The trade-off is slower cryptographic operations — RSA sign/verify with a 4096-bit key takes roughly 4× longer than 2048-bit.
+
+NIST recommends 2048-bit RSA through at least 2030. For new systems being designed with a long horizon, 3072-bit is a reasonable middle ground.
+
+## Key Formats Explained
+
+### PEM (Privacy Enhanced Mail)
+
+The most common format — a Base64-encoded DER structure wrapped in ASCII headers:
+
+```
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
+-----END PUBLIC KEY-----
+```
+
+```
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEA...
+-----END PRIVATE KEY-----
+```
+
+PEM files use `.pem`, `.key`, `.crt`, or `.pub` extensions depending on context. This is the format expected by OpenSSL, nginx, most SSH clients, and AWS Certificate Manager.
+
+### JWK (JSON Web Key)
+
+A JSON representation used in web contexts, particularly with OAuth 2.0 and JOSE (JSON Object Signing and Encryption):
+
+```json
+{
+  "kty": "RSA",
+  "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFb...",
+  "e": "AQAB",
+  "alg": "RS256",
+  "use": "sig"
+}
+```
+
+JWK sets (JWKS) are used by OIDC identity providers to publish their public keys for JWT verification. If you're building an API that issues JWTs signed with RSA, you'll publish a JWKS endpoint that clients use to verify tokens.
+
+### PKCS#1 vs PKCS#8
+
+Older tools emit `-----BEGIN RSA PRIVATE KEY-----` (PKCS#1 format). Modern tools prefer `-----BEGIN PRIVATE KEY-----` (PKCS#8 format, algorithm-agnostic wrapper). Both contain RSA key material; the difference is in the encoding wrapper. Most modern libraries accept both.
+
+## Generate RSA Keys in Your Browser
+
+**[Try the ZeroTool RSA Key Pair Generator →](/tools/rsa-key-generator)**
+
+All computation runs in your browser using the Web Crypto API. The private key never leaves your machine — no server receives it, and the page works offline after loading.
+
+Steps:
+1. Select key size (2048 or 4096 bit)
+2. Choose output format (PEM or JWK)
+3. Click Generate — key pair appears instantly
+4. Copy and save each key securely
+
+**Security note:** Never paste a generated private key into a form, web service, or cloud console. Private keys should be stored in a keychain, secrets manager, or HSM.
+
+## Real-World Use Cases
+
+### SSH Key Authentication
+
+Convert the generated private key to OpenSSH format (if your tool supports it), or generate directly with `ssh-keygen`:
+
+```bash
+ssh-keygen -t rsa -b 4096 -C "your@email.com"
+```
+
+The public key goes in `~/.ssh/authorized_keys` on the server. The private key stays at `~/.ssh/id_rsa`.
+
+For programmatic access (CI/CD, deploy keys), RSA 2048 is standard. GitHub, GitLab, and Bitbucket all support RSA deploy keys.
+
+### TLS Certificates
+
+A TLS certificate is a signed document containing a public key. To get a certificate from a CA:
+
+```bash
+# Generate private key
+openssl genrsa -out private.key 2048
+
+# Generate CSR (Certificate Signing Request)
+openssl req -new -key private.key -out request.csr
+
+# The CA signs the CSR and returns the certificate
+```
+
+The private key stays on your server. The certificate (with the public key) is sent to browsers.
+
+### JWT Signing with RSA
+
+RS256 (RSA + SHA-256) is a common JWT signing algorithm. The API server signs tokens with the private key; clients verify using the public key:
+
+```js
+// Node.js — sign
+import jwt from 'jsonwebtoken';
+import fs from 'fs';
+
+const privateKey = fs.readFileSync('private.key');
+const token = jwt.sign({ sub: 'user123', role: 'admin' }, privateKey, {
+  algorithm: 'RS256',
+  expiresIn: '1h'
+});
+
+// Verify (with public key or JWKS endpoint)
+const publicKey = fs.readFileSync('public.key');
+const payload = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+```
+
+RS256 is preferred over HS256 (shared secret) when multiple services need to verify tokens independently — each service only needs the public key.
+
+### Code Signing
+
+Package registries and update systems use RSA to sign artifacts. Users verify signatures before installing:
+
+```bash
+# Sign a file
+openssl dgst -sha256 -sign private.key -out signature.bin artifact.tar.gz
+
+# Verify
+openssl dgst -sha256 -verify public.key -signature signature.bin artifact.tar.gz
+```
+
+## Why Client-Side Generation Matters
+
+Many online tools generate key pairs on their server and send the private key to you over HTTPS. This is a security problem:
+
+1. The server has a copy of your private key
+2. Your private key traverses a network
+3. You cannot verify what the server logged
+
+A browser-based generator using the Web Crypto API avoids all three problems. The key pair is generated entirely in your JavaScript runtime — the private key is computed in your browser and never transmitted.
+
+## Storing Private Keys Safely
+
+- **Development:** Store in `~/.ssh/` or a local secrets file, excluded from git via `.gitignore`
+- **Production:** Use a managed secrets service — AWS Secrets Manager, HashiCorp Vault, Azure Key Vault
+- **High security:** Hardware Security Module (HSM) or cloud KMS (AWS KMS, GCP Cloud KMS) — the key never leaves the hardware boundary
+
+**[Generate your RSA key pair securely in-browser →](/tools/rsa-key-generator)**

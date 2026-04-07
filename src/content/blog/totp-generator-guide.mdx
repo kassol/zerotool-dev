@@ -1,0 +1,186 @@
+---
+title: "TOTP Generator & 2FA Explained: How Time-Based One-Time Passwords Work"
+description: "Learn how TOTP and 2FA work under RFC 6238. Generate test TOTP codes online, understand HMAC + time steps, and implement 2FA in your app."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "totp-generator-guide-zh"
+tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238", "developer-tools"]
+ogImage: /og/blog-totp-generator-guide.png
+---
+
+Two-factor authentication (2FA) has become standard practice for securing accounts. The most common 2FA mechanism — the six-digit code in your authenticator app — is defined by TOTP: Time-Based One-Time Password. This guide explains how TOTP works internally, how to implement it in your application, and how to generate test codes without an authenticator app.
+
+## What Is TOTP?
+
+TOTP (Time-Based One-Time Password) is defined in [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238). It generates a short numeric code (typically 6 digits) that:
+
+- Changes every 30 seconds
+- Can only be used once
+- Requires a shared secret known to both the server and the authenticator
+
+The algorithm is deterministic — given the same secret and the same time window, it always produces the same code. "One-time" means each code is only valid for its 30-second window, preventing replay attacks.
+
+## How TOTP Works: The Math
+
+TOTP is built on HOTP (HMAC-Based One-Time Password, RFC 4226). The core algorithm:
+
+```
+T = floor(current_unix_time / 30)    # time counter
+TOTP = HOTP(secret, T)
+HOTP = Truncate(HMAC-SHA1(secret, T))
+```
+
+Step by step:
+
+1. **Time counter:** Divide the current Unix timestamp by the time step (30 seconds by default). `floor(1712500000 / 30) = 57083333`
+
+2. **HMAC:** Compute HMAC-SHA1 of the secret key and the time counter. This produces a 20-byte hash.
+
+3. **Dynamic truncation:** Take the last byte of the hash. Its low-order 4 bits determine an offset. Extract 4 bytes starting at that offset and mask the high bit to get a 31-bit integer.
+
+4. **Modulo:** Compute `integer mod 10^6` (for 6 digits) to get the final OTP.
+
+The result is a 6-digit code. The server performs the same computation and accepts the code if it matches (usually checking one time step before and after to account for clock drift).
+
+## The Shared Secret
+
+The secret is a base32-encoded random value, typically 160 bits (20 bytes). When you scan a QR code in an authenticator app, the QR code contains a URI like:
+
+```
+otpauth://totp/Service:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Service&algorithm=SHA1&digits=6&period=30
+```
+
+The `secret` parameter is the base32-encoded shared secret. Your app generates it once during 2FA enrollment and stores it (encrypted) in your database. The user stores it in their authenticator app (Google Authenticator, Authy, 1Password, etc.).
+
+**The secret must be kept confidential.** Anyone with the secret can generate valid codes for that account.
+
+## Generate Test TOTP Codes Online
+
+**[Try the ZeroTool TOTP Generator →](/tools/totp-generator)**
+
+Enter a base32 secret and get the current valid TOTP code instantly — useful for:
+- Testing 2FA implementations during development
+- Verifying that your secret is configured correctly
+- Debugging time sync issues
+
+No data is sent to a server. Computation runs in your browser.
+
+## Implementing TOTP in Your Application
+
+### Enrollment Flow
+
+1. Generate a random 20-byte secret
+2. Encode it as base32
+3. Build an `otpauth://` URI with your service name and user identifier
+4. Display as a QR code for the user to scan
+5. Ask the user to enter the current code to verify enrollment
+6. Store the secret (encrypted) in your database
+
+### Node.js Implementation
+
+```js
+import { authenticator } from 'otplib';
+
+// Enrollment
+const secret = authenticator.generateSecret(); // e.g. "JBSWY3DPEHPK3PXP"
+const otpauthUrl = authenticator.keyuri('user@example.com', 'MyApp', secret);
+
+// Generate QR code (using qrcode library)
+import qrcode from 'qrcode';
+const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
+
+// Verification (at login)
+const isValid = authenticator.verify({ token: userCode, secret });
+```
+
+### Python Implementation
+
+```python
+import pyotp
+import qrcode
+
+# Enrollment
+secret = pyotp.random_base32()
+totp = pyotp.TOTP(secret)
+
+# OTPAuth URI for QR code
+uri = totp.provisioning_uri(name="user@example.com", issuer_name="MyApp")
+img = qrcode.make(uri)
+img.save("qr.png")
+
+# Verification
+is_valid = totp.verify(user_code)  # accepts current ±1 time step
+```
+
+### Go Implementation
+
+```go
+import "github.com/pquerna/otp/totp"
+
+// Enrollment
+key, err := totp.Generate(totp.GenerateOpts{
+    Issuer:      "MyApp",
+    AccountName: "user@example.com",
+})
+secret := key.Secret()
+
+// Display key.URL() as a QR code
+
+// Verification
+valid := totp.Validate(userCode, secret)
+```
+
+## TOTP Parameters
+
+RFC 6238 allows varying the defaults. Most authenticator apps support all standard variations:
+
+| Parameter | Default | Common Alternatives |
+|-----------|---------|---------------------|
+| Algorithm | SHA-1 | SHA-256, SHA-512 |
+| Digits | 6 | 8 |
+| Period | 30 seconds | 60 seconds |
+
+**Stick to defaults (SHA-1, 6 digits, 30s)** unless you have a specific requirement. Non-standard settings can cause compatibility issues with some authenticator apps, and SHA-1 is not a security concern here — HMAC-SHA1 with a 160-bit secret key provides 80 bits of security, which is sufficient for OTP generation (brute-forcing 6 digits in 30 seconds is already infeasible).
+
+## Clock Synchronization and Drift
+
+TOTP requires that the server and client clocks are reasonably synchronized. Most implementations accept codes from `T-1`, `T`, and `T+1` (i.e., ±30 seconds around the current time step) to handle clock drift.
+
+If a user's device clock is significantly off (several minutes), TOTP will fail. This is rare on modern smartphones but worth noting for embedded devices or custom implementations.
+
+Server clocks should use NTP. On Linux:
+
+```bash
+timedatectl status        # check current NTP sync status
+timedatectl set-ntp true  # enable NTP synchronization
+```
+
+## TOTP vs Other 2FA Methods
+
+| Method | Security | Phishing Resistant | No External Dependency |
+|--------|----------|-------------------|----------------------|
+| TOTP | High | No | Yes |
+| SMS OTP | Low | No | No (carrier) |
+| Push notification | Medium | No | No (app server) |
+| FIDO2 / Passkey | Very High | Yes | Yes |
+| Hardware token (TOTP) | High | No | Yes |
+
+TOTP is vulnerable to real-time phishing (attacker tricks user into entering their code on a fake site and immediately relays it). For highest security, FIDO2/WebAuthn hardware keys are phishing-resistant. TOTP remains a major improvement over passwords alone and is the practical 2FA standard for most applications.
+
+## Recovery Codes
+
+Always implement recovery codes alongside TOTP. If a user loses their authenticator device, they need a way to regain access:
+
+- Generate 8–10 single-use recovery codes at enrollment
+- Store them hashed (bcrypt or Argon2)
+- Display them once and instruct users to save them offline
+- Each code is invalidated after use
+
+```python
+import secrets
+
+def generate_recovery_codes(count=10):
+    return [secrets.token_hex(10) for _ in range(count)]
+```
+
+**[Generate and test TOTP codes instantly →](/tools/totp-generator)**
