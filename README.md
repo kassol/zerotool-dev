@@ -2,10 +2,11 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 44 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 52 tools and growing.
 
 ## Tools
 
+<!-- TOOLS-START -->
 | Tool | URL |
 |------|-----|
 | JSON Formatter | [/tools/json-formatter](https://zerotool.dev/tools/json-formatter) |
@@ -24,11 +25,11 @@
 | QR Code Generator | [/tools/qr-code-generator](https://zerotool.dev/tools/qr-code-generator) |
 | Cron Expression Parser | [/tools/cron-parser](https://zerotool.dev/tools/cron-parser) |
 | Lorem Ipsum Generator | [/tools/lorem-ipsum](https://zerotool.dev/tools/lorem-ipsum) |
-| Word Counter | [/tools/word-counter](https://zerotool.dev/tools/word-counter) |
+| Word & Character Counter | [/tools/word-counter](https://zerotool.dev/tools/word-counter) |
 | Chmod Calculator | [/tools/chmod-calculator](https://zerotool.dev/tools/chmod-calculator) |
-| CSV ↔ JSON Converter | [/tools/csv-json](https://zerotool.dev/tools/csv-json) |
-| HTML Entity Encoder | [/tools/html-entity](https://zerotool.dev/tools/html-entity) |
-| YAML ↔ JSON Converter | [/tools/yaml-json](https://zerotool.dev/tools/yaml-json) |
+| CSV to JSON Converter | [/tools/csv-json](https://zerotool.dev/tools/csv-json) |
+| HTML Entity Encoder / Decoder | [/tools/html-entity](https://zerotool.dev/tools/html-entity) |
+| YAML to JSON Converter | [/tools/yaml-json](https://zerotool.dev/tools/yaml-json) |
 | Line Tools | [/tools/line-tools](https://zerotool.dev/tools/line-tools) |
 | Number Base Converter | [/tools/number-base](https://zerotool.dev/tools/number-base) |
 | SQL Formatter | [/tools/sql-formatter](https://zerotool.dev/tools/sql-formatter) |
@@ -52,6 +53,15 @@
 | RSA Key Pair Generator | [/tools/rsa-key-generator](https://zerotool.dev/tools/rsa-key-generator) |
 | TOTP Generator | [/tools/totp-generator](https://zerotool.dev/tools/totp-generator) |
 | JSON Diff | [/tools/json-diff](https://zerotool.dev/tools/json-diff) |
+| Env File Parser | [/tools/env-file-parser](https://zerotool.dev/tools/env-file-parser) |
+| YAML Validator | [/tools/yaml-validator](https://zerotool.dev/tools/yaml-validator) |
+| JSON Schema Validator | [/tools/json-schema-validator](https://zerotool.dev/tools/json-schema-validator) |
+| .htaccess Generator | [/tools/htaccess-generator](https://zerotool.dev/tools/htaccess-generator) |
+| Robots.txt Generator | [/tools/robots-txt-generator](https://zerotool.dev/tools/robots-txt-generator) |
+| SVG to PNG Converter | [/tools/svg-to-png-converter](https://zerotool.dev/tools/svg-to-png-converter) |
+| WebP Converter | [/tools/webp-converter](https://zerotool.dev/tools/webp-converter) |
+| CSS Variables Generator | [/tools/css-variables-generator](https://zerotool.dev/tools/css-variables-generator) |
+<!-- TOOLS-END -->
 
 ## Why ZeroTool?
 
