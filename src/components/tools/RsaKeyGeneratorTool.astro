@@ -1,0 +1,297 @@
+---
+// RsaKeyGeneratorTool — generates RSA key pairs using Web Crypto API (100% client-side)
+---
+<div>
+  <div class="rkg-wrap">
+    <!-- Privacy badge -->
+    <div class="rkg-badge">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+      Your keys never leave this browser
+    </div>
+
+    <!-- Options row -->
+    <div class="rkg-options">
+      <div class="rkg-opt">
+        <label for="rkg-keysize">Key Size</label>
+        <select id="rkg-keysize">
+          <option value="2048" selected>2048-bit</option>
+          <option value="4096">4096-bit</option>
+        </select>
+      </div>
+      <div class="rkg-opt">
+        <label for="rkg-algo">Algorithm</label>
+        <select id="rkg-algo">
+          <option value="RSA-OAEP" selected>RSA-OAEP (encryption)</option>
+          <option value="RSASSA-PKCS1-v1_5">RSASSA-PKCS1-v1_5 (signing)</option>
+        </select>
+      </div>
+      <div class="rkg-opt">
+        <label for="rkg-format">Format</label>
+        <select id="rkg-format">
+          <option value="pem" selected>PEM</option>
+          <option value="jwk">JWK</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="rkg-actions">
+      <button id="rkg-generate" class="btn-primary">Generate Key Pair</button>
+    </div>
+
+    <div id="rkg-status" class="rkg-status" aria-live="polite"></div>
+
+    <!-- Public Key -->
+    <div class="rkg-key-block" id="rkg-pub-block" style="display:none">
+      <div class="rkg-key-label">
+        <span>Public Key</span>
+        <div class="rkg-key-actions">
+          <button id="rkg-pub-copy" class="btn-copy" type="button">Copy</button>
+          <button id="rkg-pub-dl" class="btn-secondary" type="button">Download</button>
+        </div>
+      </div>
+      <textarea id="rkg-pub-out" class="rkg-output" readonly spellcheck="false" rows="8"></textarea>
+    </div>
+
+    <!-- Private Key -->
+    <div class="rkg-key-block" id="rkg-priv-block" style="display:none">
+      <div class="rkg-key-label">
+        <span>Private Key <span class="rkg-private-tag">Keep secret</span></span>
+        <div class="rkg-key-actions">
+          <button id="rkg-priv-copy" class="btn-copy" type="button">Copy</button>
+          <button id="rkg-priv-dl" class="btn-secondary" type="button">Download</button>
+        </div>
+      </div>
+      <textarea id="rkg-priv-out" class="rkg-output" readonly spellcheck="false" rows="12"></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var statusEl = document.getElementById('rkg-status');
+      var pubBlock = document.getElementById('rkg-pub-block');
+      var privBlock = document.getElementById('rkg-priv-block');
+      var pubOut = document.getElementById('rkg-pub-out');
+      var privOut = document.getElementById('rkg-priv-out');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'rkg-status ' + (isError ? 'error' : 'success');
+      }
+
+      function ab2b64(buf) {
+        var bytes = new Uint8Array(buf);
+        var binary = '';
+        var chunk = 8192;
+        for (var i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      }
+
+      function wrapPem(b64, label) {
+        var lines = b64.match(/.{1,64}/g) || [];
+        return '-----BEGIN ' + label + '-----\n' + lines.join('\n') + '\n-----END ' + label + '-----';
+      }
+
+      function download(filename, content) {
+        var blob = new Blob([content], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      }
+
+      function copyBtn(btn, text) {
+        navigator.clipboard.writeText(text).then(function () {
+          var prev = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = prev; }, 1500);
+        });
+      }
+
+      document.getElementById('rkg-generate').addEventListener('click', async function () {
+        var keysize = parseInt(document.getElementById('rkg-keysize').value);
+        var algo = document.getElementById('rkg-algo').value;
+        var format = document.getElementById('rkg-format').value;
+
+        var btn = this;
+        btn.disabled = true;
+        btn.textContent = 'Generating…';
+        setStatus('Generating ' + keysize + '-bit key pair…', false);
+        statusEl.className = 'rkg-status';
+        pubBlock.style.display = 'none';
+        privBlock.style.display = 'none';
+
+        try {
+          var hashAlgo = 'SHA-256';
+          var usages;
+          if (algo === 'RSA-OAEP') {
+            usages = ['encrypt', 'decrypt'];
+          } else {
+            usages = ['sign', 'verify'];
+          }
+
+          var keyPair = await crypto.subtle.generateKey(
+            { name: algo, modulusLength: keysize, publicExponent: new Uint8Array([1, 0, 1]), hash: hashAlgo },
+            true,
+            usages
+          );
+
+          var pubText, privText;
+
+          if (format === 'pem') {
+            var pubDer = await crypto.subtle.exportKey('spki', keyPair.publicKey);
+            var privDer = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
+            pubText = wrapPem(ab2b64(pubDer), 'PUBLIC KEY');
+            privText = wrapPem(ab2b64(privDer), 'PRIVATE KEY');
+          } else {
+            var pubJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+            var privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+            pubText = JSON.stringify(pubJwk, null, 2);
+            privText = JSON.stringify(privJwk, null, 2);
+          }
+
+          pubOut.value = pubText;
+          privOut.value = privText;
+          pubBlock.style.display = '';
+          privBlock.style.display = '';
+          setStatus('Key pair generated successfully.', false);
+
+          window.trackTool && window.trackTool('rsa-key-generator', 'generate');
+        } catch (e) {
+          setStatus('Error: ' + e.message, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Generate Key Pair';
+        }
+      });
+
+      document.getElementById('rkg-pub-copy').addEventListener('click', function () {
+        copyBtn(this, pubOut.value);
+      });
+
+      document.getElementById('rkg-priv-copy').addEventListener('click', function () {
+        copyBtn(this, privOut.value);
+      });
+
+      document.getElementById('rkg-pub-dl').addEventListener('click', function () {
+        var fmt = document.getElementById('rkg-format').value;
+        download('public-key.' + (fmt === 'pem' ? 'pem' : 'json'), pubOut.value);
+      });
+
+      document.getElementById('rkg-priv-dl').addEventListener('click', function () {
+        var fmt = document.getElementById('rkg-format').value;
+        download('private-key.' + (fmt === 'pem' ? 'pem' : 'json'), privOut.value);
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .rkg-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .rkg-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #057a55;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    align-self: flex-start;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .rkg-badge { color: #34d399; background: #064e3b22; border-color: #065f4622; }
+  }
+  [data-theme="dark"] .rkg-badge { color: #34d399; background: #064e3b22; border-color: #065f4622; }
+
+  .rkg-options {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .rkg-opt {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .rkg-opt label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .rkg-opt select {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    font-size: 0.88rem;
+  }
+
+  .rkg-actions { display: flex; gap: 0.5rem; }
+
+  .rkg-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .rkg-status.success { color: #057a55; }
+  .rkg-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .rkg-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .rkg-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .rkg-status.success { color: #34d399; }
+  [data-theme="dark"] .rkg-status.error { color: #f87171; }
+
+  .rkg-key-block { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .rkg-key-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .rkg-key-actions { display: flex; gap: 0.4rem; }
+
+  .rkg-private-tag {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #b45309;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
+    margin-left: 0.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .rkg-private-tag { color: #fbbf24; background: #78350f22; border-color: #92400e22; }
+  }
+  [data-theme="dark"] .rkg-private-tag { color: #fbbf24; background: #78350f22; border-color: #92400e22; }
+
+  .rkg-output {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    word-break: break-all;
+  }
+
+  .rkg-output:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+</style>

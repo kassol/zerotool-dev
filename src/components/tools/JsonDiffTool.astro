@@ -1,0 +1,343 @@
+---
+// JsonDiffTool — deep JSON comparison producing RFC 6902 JSON Patch + visual diff
+---
+<div>
+  <div class="jd-wrap">
+    <!-- Input panels -->
+    <div class="jd-inputs">
+      <div class="jd-panel">
+        <label for="jd-left">Before (JSON)</label>
+        <textarea id="jd-left" placeholder='{"name": "Alice", "age": 30}' spellcheck="false"></textarea>
+      </div>
+      <div class="jd-panel">
+        <label for="jd-right">After (JSON)</label>
+        <textarea id="jd-right" placeholder='{"name": "Alice", "age": 31, "city": "Tokyo"}' spellcheck="false"></textarea>
+      </div>
+    </div>
+
+    <div class="jd-actions">
+      <button id="jd-run" class="btn-primary">Compare</button>
+      <button id="jd-clear" class="btn-ghost">Clear</button>
+      <button id="jd-swap" class="btn-secondary">Swap</button>
+    </div>
+
+    <div id="jd-status" class="jd-status" aria-live="polite"></div>
+
+    <!-- JSON Patch output -->
+    <div id="jd-patch-block" class="jd-output-block" style="display:none">
+      <div class="jd-out-label">
+        <span>JSON Patch (RFC 6902)</span>
+        <button id="jd-copy-patch" class="btn-copy" type="button">Copy</button>
+      </div>
+      <textarea id="jd-patch-out" class="jd-out-area" readonly spellcheck="false" rows="6"></textarea>
+    </div>
+
+    <!-- Visual diff -->
+    <div id="jd-visual-block" class="jd-output-block" style="display:none">
+      <div class="jd-out-label"><span>Visual Diff</span></div>
+      <div id="jd-visual" class="jd-visual"></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      // Deep diff: returns RFC 6902 JSON Patch ops
+      function diff(before, after, path) {
+        path = path || '';
+        var ops = [];
+
+        if (before === after) return ops;
+
+        if (typeof before !== typeof after ||
+            (before === null) !== (after === null) ||
+            Array.isArray(before) !== Array.isArray(after)) {
+          ops.push({ op: 'replace', path: path || '/', value: after });
+          return ops;
+        }
+
+        if (before !== null && typeof before === 'object') {
+          var keysB = Object.keys(before);
+          var keysA = Object.keys(after);
+          var allKeys = Array.from(new Set(keysB.concat(keysA)));
+
+          allKeys.forEach(function (k) {
+            var childPath = path + '/' + k.replace(/~/g, '~0').replace(/\//g, '~1');
+            if (!(k in before)) {
+              ops.push({ op: 'add', path: childPath, value: after[k] });
+            } else if (!(k in after)) {
+              ops.push({ op: 'remove', path: childPath });
+            } else {
+              ops = ops.concat(diff(before[k], after[k], childPath));
+            }
+          });
+          return ops;
+        }
+
+        // Primitives that differ
+        if (path === '') {
+          ops.push({ op: 'replace', path: '/', value: after });
+        } else {
+          ops.push({ op: 'replace', path: path, value: after });
+        }
+        return ops;
+      }
+
+      // Build visual diff tree lines
+      function buildVisual(before, after, path) {
+        path = path || '';
+        var lines = [];
+
+        if (JSON.stringify(before) === JSON.stringify(after)) return lines;
+
+        if (before !== null && typeof before === 'object' && after !== null && typeof after === 'object' &&
+            Array.isArray(before) === Array.isArray(after)) {
+          var keysB = Object.keys(before);
+          var keysA = Object.keys(after);
+          var allKeys = Array.from(new Set(keysB.concat(keysA)));
+
+          allKeys.forEach(function (k) {
+            var childPath = (path ? path + '.' : '') + k;
+            if (!(k in before)) {
+              lines.push({ type: 'add', path: childPath, value: after[k] });
+            } else if (!(k in after)) {
+              lines.push({ type: 'remove', path: childPath, value: before[k] });
+            } else if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) {
+              if (before[k] !== null && typeof before[k] === 'object' &&
+                  after[k] !== null && typeof after[k] === 'object') {
+                lines = lines.concat(buildVisual(before[k], after[k], childPath));
+              } else {
+                lines.push({ type: 'change', path: childPath, before: before[k], after: after[k] });
+              }
+            }
+          });
+        } else {
+          lines.push({ type: 'change', path: path || '(root)', before: before, after: after });
+        }
+        return lines;
+      }
+
+      function esc(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function renderValue(v) {
+        return '<code>' + esc(JSON.stringify(v)) + '</code>';
+      }
+
+      var statusEl = document.getElementById('jd-status');
+      var patchBlock = document.getElementById('jd-patch-block');
+      var visualBlock = document.getElementById('jd-visual-block');
+      var patchOut = document.getElementById('jd-patch-out');
+      var visualEl = document.getElementById('jd-visual');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jd-status ' + (isError ? 'error' : 'success');
+      }
+
+      document.getElementById('jd-run').addEventListener('click', function () {
+        var leftVal = document.getElementById('jd-left').value.trim();
+        var rightVal = document.getElementById('jd-right').value.trim();
+
+        if (!leftVal || !rightVal) {
+          setStatus('Both panels must contain valid JSON.', true);
+          return;
+        }
+
+        var before, after;
+        try { before = JSON.parse(leftVal); } catch (e) { setStatus('Before JSON parse error: ' + e.message, true); return; }
+        try { after = JSON.parse(rightVal); } catch (e) { setStatus('After JSON parse error: ' + e.message, true); return; }
+
+        var ops = diff(before, after, '');
+        var visual = buildVisual(before, after, '');
+
+        if (ops.length === 0) {
+          setStatus('No differences found — the JSON values are identical.', false);
+          patchBlock.style.display = 'none';
+          visualBlock.style.display = 'none';
+          return;
+        }
+
+        patchOut.value = JSON.stringify(ops, null, 2);
+        patchBlock.style.display = '';
+
+        var html = '';
+        visual.forEach(function (line) {
+          if (line.type === 'add') {
+            html += '<div class="jd-line jd-add"><span class="jd-op">+</span><span class="jd-path">' + esc(line.path) + '</span><span class="jd-val">' + renderValue(line.value) + '</span></div>';
+          } else if (line.type === 'remove') {
+            html += '<div class="jd-line jd-remove"><span class="jd-op">−</span><span class="jd-path">' + esc(line.path) + '</span><span class="jd-val">' + renderValue(line.value) + '</span></div>';
+          } else {
+            html += '<div class="jd-line jd-change"><span class="jd-op">~</span><span class="jd-path">' + esc(line.path) + '</span><span class="jd-val jd-before">' + renderValue(line.before) + '</span><span class="jd-arrow">→</span><span class="jd-val jd-after">' + renderValue(line.after) + '</span></div>';
+          }
+        });
+        visualEl.innerHTML = html;
+        visualBlock.style.display = '';
+
+        setStatus(ops.length + ' change' + (ops.length === 1 ? '' : 's') + ' detected.', false);
+
+        window.trackTool && window.trackTool('json-diff', 'diff');
+      });
+
+      document.getElementById('jd-copy-patch').addEventListener('click', function () {
+        var btn = this;
+        navigator.clipboard.writeText(patchOut.value).then(function () {
+          var prev = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = prev; }, 1500);
+        });
+      });
+
+      document.getElementById('jd-clear').addEventListener('click', function () {
+        document.getElementById('jd-left').value = '';
+        document.getElementById('jd-right').value = '';
+        patchBlock.style.display = 'none';
+        visualBlock.style.display = 'none';
+        statusEl.textContent = '';
+        statusEl.className = 'jd-status';
+      });
+
+      document.getElementById('jd-swap').addEventListener('click', function () {
+        var l = document.getElementById('jd-left');
+        var r = document.getElementById('jd-right');
+        var tmp = l.value;
+        l.value = r.value;
+        r.value = tmp;
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jd-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jd-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .jd-inputs { grid-template-columns: 1fr; }
+  }
+
+  .jd-panel { display: flex; flex-direction: column; gap: 0.3rem; }
+  .jd-panel label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+
+  .jd-panel textarea {
+    width: 100%;
+    min-height: 140px;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  .jd-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .jd-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .jd-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jd-status.success { color: #057a55; }
+  .jd-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jd-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jd-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .jd-status.success { color: #34d399; }
+  [data-theme="dark"] .jd-status.error { color: #f87171; }
+
+  .jd-output-block { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jd-out-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jd-out-area {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .jd-visual {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .jd-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    flex-wrap: wrap;
+  }
+
+  .jd-add { background: #ecfdf5; }
+  .jd-remove { background: #fef2f2; }
+  .jd-change { background: #fffbeb; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jd-add { background: #064e3b22; }
+    :root:not([data-theme="light"]) .jd-remove { background: #7f1d1d22; }
+    :root:not([data-theme="light"]) .jd-change { background: #78350f22; }
+  }
+  [data-theme="dark"] .jd-add { background: #064e3b22; }
+  [data-theme="dark"] .jd-remove { background: #7f1d1d22; }
+  [data-theme="dark"] .jd-change { background: #78350f22; }
+
+  .jd-op {
+    font-weight: 700;
+    min-width: 16px;
+    text-align: center;
+  }
+  .jd-add .jd-op { color: #059669; }
+  .jd-remove .jd-op { color: #dc2626; }
+  .jd-change .jd-op { color: #d97706; }
+
+  .jd-path {
+    color: var(--color-text-secondary);
+    min-width: 80px;
+  }
+
+  .jd-val code {
+    background: transparent;
+    color: var(--color-text);
+  }
+
+  .jd-before code { text-decoration: line-through; opacity: 0.6; }
+  .jd-after code { color: #059669; }
+  [data-theme="dark"] .jd-after code { color: #34d399; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jd-after code { color: #34d399; }
+  }
+
+  .jd-arrow {
+    color: var(--color-text-secondary);
+    align-self: center;
+  }
+</style>

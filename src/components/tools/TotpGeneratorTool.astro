@@ -1,0 +1,401 @@
+---
+// TotpGeneratorTool — RFC 6238 TOTP generator using Web Crypto API (100% client-side)
+---
+<div>
+  <div class="totp-wrap">
+    <!-- Secret row -->
+    <div class="totp-field">
+      <label for="totp-secret">Secret (Base32)</label>
+      <div class="totp-secret-row">
+        <input
+          type="text"
+          id="totp-secret"
+          placeholder="e.g. JBSWY3DPEHPK3PXP"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <button id="totp-gen-secret" class="btn-secondary" type="button">Random</button>
+      </div>
+    </div>
+
+    <!-- Options -->
+    <div class="totp-options">
+      <div class="totp-opt">
+        <label for="totp-digits">Digits</label>
+        <select id="totp-digits">
+          <option value="6" selected>6</option>
+          <option value="8">8</option>
+        </select>
+      </div>
+      <div class="totp-opt">
+        <label for="totp-period">Period</label>
+        <select id="totp-period">
+          <option value="30" selected>30 s</option>
+          <option value="60">60 s</option>
+        </select>
+      </div>
+      <div class="totp-opt">
+        <label for="totp-algo">Algorithm</label>
+        <select id="totp-algo">
+          <option value="SHA-1" selected>SHA-1</option>
+          <option value="SHA-256">SHA-256</option>
+          <option value="SHA-512">SHA-512</option>
+        </select>
+      </div>
+      <div class="totp-opt">
+        <label for="totp-issuer">Issuer (optional)</label>
+        <input type="text" id="totp-issuer" placeholder="My App" />
+      </div>
+      <div class="totp-opt">
+        <label for="totp-account">Account (optional)</label>
+        <input type="text" id="totp-account" placeholder="user@example.com" />
+      </div>
+    </div>
+
+    <div id="totp-status" class="totp-status" aria-live="polite"></div>
+
+    <!-- Live OTP display -->
+    <div id="totp-display" class="totp-display" style="display:none">
+      <div class="totp-code-wrap">
+        <span id="totp-code" class="totp-code">------</span>
+        <button id="totp-copy-code" class="btn-copy" type="button">Copy</button>
+      </div>
+      <div class="totp-timer-wrap">
+        <div class="totp-bar-bg">
+          <div id="totp-bar" class="totp-bar"></div>
+        </div>
+        <span id="totp-countdown" class="totp-countdown">30s</span>
+      </div>
+    </div>
+
+    <!-- URI + QR -->
+    <div id="totp-uri-block" class="totp-uri-block" style="display:none">
+      <div class="totp-uri-label">
+        <span>otpauth:// URI</span>
+        <button id="totp-copy-uri" class="btn-copy" type="button">Copy</button>
+      </div>
+      <input type="text" id="totp-uri" class="totp-uri-input" readonly />
+    </div>
+
+    <div id="totp-qr-block" class="totp-qr-block" style="display:none">
+      <div class="totp-qr-label">QR Code (scan with authenticator app)</div>
+      <div id="totp-qr-canvas-wrap"></div>
+    </div>
+  </div>
+
+  <!-- qrcode.js (same vendor file as QR code generator tool) -->
+  <script src="/vendor/qrcode.min.js" is:inline></script>
+
+  <script is:inline>
+    (function () {
+      // Base32 alphabet
+      var B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+      function base32Decode(input) {
+        var s = input.toUpperCase().replace(/=+$/, '').replace(/[^A-Z2-7]/g, '');
+        var bits = 0, val = 0;
+        var out = [];
+        for (var i = 0; i < s.length; i++) {
+          val = (val << 5) | B32.indexOf(s[i]);
+          bits += 5;
+          if (bits >= 8) { bits -= 8; out.push((val >>> bits) & 0xff); }
+        }
+        return new Uint8Array(out);
+      }
+
+      function base32Encode(bytes) {
+        var bits = 0, val = 0, out = '';
+        for (var i = 0; i < bytes.length; i++) {
+          val = (val << 8) | bytes[i];
+          bits += 8;
+          while (bits >= 5) { bits -= 5; out += B32[(val >>> bits) & 31]; }
+        }
+        if (bits > 0) out += B32[(val << (5 - bits)) & 31];
+        return out;
+      }
+
+      function genRandomSecret(byteLen) {
+        byteLen = byteLen || 20;
+        var buf = new Uint8Array(byteLen);
+        crypto.getRandomValues(buf);
+        return base32Encode(buf);
+      }
+
+      function intToBytes(n) {
+        var arr = new Uint8Array(8);
+        var tmp = n;
+        for (var i = 7; i >= 0; i--) {
+          arr[i] = tmp & 0xff;
+          tmp = Math.floor(tmp / 256);
+        }
+        return arr;
+      }
+
+      async function computeTotp(secret, algo, period, digits) {
+        var keyBytes = base32Decode(secret);
+        if (keyBytes.length === 0) throw new Error('Invalid Base32 secret');
+        var counter = Math.floor(Date.now() / 1000 / period);
+        var counterBytes = intToBytes(counter);
+        var cryptoAlgo = algo === 'SHA-1' ? 'SHA-1' : (algo === 'SHA-256' ? 'SHA-256' : 'SHA-512');
+        var key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: cryptoAlgo }, false, ['sign']);
+        var sig = await crypto.subtle.sign('HMAC', key, counterBytes);
+        var hmac = new Uint8Array(sig);
+        var offset = hmac[hmac.length - 1] & 0x0f;
+        var code = ((hmac[offset] & 0x7f) << 24) |
+                   ((hmac[offset + 1] & 0xff) << 16) |
+                   ((hmac[offset + 2] & 0xff) << 8) |
+                    (hmac[offset + 3] & 0xff);
+        code = code % Math.pow(10, digits);
+        return String(code).padStart(digits, '0');
+      }
+
+      function buildUri(secret, issuer, account, algo, period, digits) {
+        var label = account ? encodeURIComponent(account) : 'Account';
+        if (issuer) label = encodeURIComponent(issuer) + ':' + label;
+        var algoMap = { 'SHA-1': 'SHA1', 'SHA-256': 'SHA256', 'SHA-512': 'SHA512' };
+        var params = 'secret=' + encodeURIComponent(secret) +
+          '&algorithm=' + (algoMap[algo] || 'SHA1') +
+          '&digits=' + digits +
+          '&period=' + period;
+        if (issuer) params += '&issuer=' + encodeURIComponent(issuer);
+        return 'otpauth://totp/' + label + '?' + params;
+      }
+
+      var statusEl = document.getElementById('totp-status');
+      var displayEl = document.getElementById('totp-display');
+      var codeEl = document.getElementById('totp-code');
+      var countdownEl = document.getElementById('totp-countdown');
+      var barEl = document.getElementById('totp-bar');
+      var uriBlock = document.getElementById('totp-uri-block');
+      var uriInput = document.getElementById('totp-uri');
+      var qrBlock = document.getElementById('totp-qr-block');
+      var qrWrap = document.getElementById('totp-qr-canvas-wrap');
+      var secretInput = document.getElementById('totp-secret');
+      var intervalId = null;
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'totp-status ' + (isError ? 'error' : 'success');
+      }
+
+      document.getElementById('totp-gen-secret').addEventListener('click', function () {
+        secretInput.value = genRandomSecret(20);
+        startTotp();
+      });
+
+      async function startTotp() {
+        var secret = secretInput.value.trim();
+        if (!secret) { setStatus('Enter or generate a Base32 secret first.', true); return; }
+        var algo = document.getElementById('totp-algo').value;
+        var period = parseInt(document.getElementById('totp-period').value);
+        var digits = parseInt(document.getElementById('totp-digits').value);
+        var issuer = document.getElementById('totp-issuer').value.trim();
+        var account = document.getElementById('totp-account').value.trim();
+
+        try {
+          var code = await computeTotp(secret, algo, period, digits);
+          codeEl.textContent = code;
+          displayEl.style.display = '';
+          setStatus('', false);
+
+          var uri = buildUri(secret, issuer, account, algo, period, digits);
+          uriInput.value = uri;
+          uriBlock.style.display = '';
+
+          // QR code
+          qrWrap.innerHTML = '';
+          if (typeof QRCode !== 'undefined') {
+            var canvas = document.createElement('canvas');
+            qrWrap.appendChild(canvas);
+            QRCode.toCanvas(canvas, uri, { width: 192, margin: 1 }, function (err) {
+              if (!err) qrBlock.style.display = '';
+            });
+          }
+
+          window.trackTool && window.trackTool('totp-generator', 'generate');
+        } catch (e) {
+          setStatus('Error: ' + e.message, true);
+          displayEl.style.display = 'none';
+        }
+
+        // Live countdown + refresh
+        if (intervalId) clearInterval(intervalId);
+        intervalId = setInterval(async function () {
+          var now = Math.floor(Date.now() / 1000);
+          var remaining = period - (now % period);
+          countdownEl.textContent = remaining + 's';
+          var pct = remaining / period * 100;
+          barEl.style.width = pct + '%';
+          barEl.className = 'totp-bar' + (remaining <= 5 ? ' urgent' : '');
+          if (remaining === period) {
+            try {
+              codeEl.textContent = await computeTotp(secret, algo, period, digits);
+            } catch (_) {}
+          }
+        }, 500);
+      }
+
+      document.getElementById('totp-copy-code').addEventListener('click', function () {
+        var btn = this;
+        navigator.clipboard.writeText(codeEl.textContent).then(function () {
+          var prev = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = prev; }, 1500);
+        });
+      });
+
+      document.getElementById('totp-copy-uri').addEventListener('click', function () {
+        var btn = this;
+        navigator.clipboard.writeText(uriInput.value).then(function () {
+          var prev = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = prev; }, 1500);
+        });
+      });
+
+      secretInput.addEventListener('change', startTotp);
+      document.getElementById('totp-digits').addEventListener('change', startTotp);
+      document.getElementById('totp-period').addEventListener('change', startTotp);
+      document.getElementById('totp-algo').addEventListener('change', startTotp);
+      document.getElementById('totp-issuer').addEventListener('change', startTotp);
+      document.getElementById('totp-account').addEventListener('change', startTotp);
+    })();
+  </script>
+</div>
+
+<style>
+  .totp-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .totp-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .totp-field label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+
+  .totp-secret-row { display: flex; gap: 0.5rem; }
+
+  .totp-secret-row input {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    padding: 0.45rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  .totp-secret-row input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .totp-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .totp-opt { display: flex; flex-direction: column; gap: 0.3rem; }
+  .totp-opt label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .totp-opt select,
+  .totp-opt input[type="text"] {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    font-size: 0.88rem;
+  }
+  .totp-opt input[type="text"]:focus,
+  .totp-opt select:focus { outline: none; border-color: var(--color-primary); }
+
+  .totp-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .totp-status.success { color: #057a55; }
+  .totp-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .totp-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .totp-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .totp-status.success { color: #34d399; }
+  [data-theme="dark"] .totp-status.error { color: #f87171; }
+
+  .totp-display {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+  }
+
+  .totp-code-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .totp-code {
+    font-family: var(--font-mono);
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: 0.25em;
+    color: var(--color-primary);
+  }
+
+  .totp-timer-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .totp-bar-bg {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--color-border);
+    overflow: hidden;
+  }
+
+  .totp-bar {
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: 3px;
+    transition: width 0.4s linear, background 0.3s;
+  }
+
+  .totp-bar.urgent { background: #ef4444; }
+
+  .totp-countdown {
+    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    color: var(--color-text-secondary);
+    min-width: 28px;
+    text-align: right;
+  }
+
+  .totp-uri-block { display: flex; flex-direction: column; gap: 0.4rem; }
+  .totp-uri-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .totp-uri-input {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+  }
+
+  .totp-qr-block { display: flex; flex-direction: column; gap: 0.4rem; }
+  .totp-qr-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+
+  #totp-qr-canvas-wrap canvas {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    display: block;
+  }
+</style>
