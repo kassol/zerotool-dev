@@ -1,0 +1,426 @@
+---
+// RobotsTxtGeneratorTool — generates robots.txt from form inputs
+---
+<div>
+  <div class="rt-wrap">
+
+    <!-- User-agent block controls -->
+    <div id="rt-blocks"></div>
+
+    <button id="rt-add-block" class="rt-add-btn">+ Add User-agent Block</button>
+
+    <!-- Sitemap -->
+    <div class="rt-field">
+      <label for="rt-sitemap">Sitemap URL <span class="rt-optional">(optional)</span></label>
+      <input
+        id="rt-sitemap"
+        type="url"
+        placeholder="https://example.com/sitemap.xml"
+        spellcheck="false"
+      />
+    </div>
+
+    <!-- Output -->
+    <div class="rt-output-wrap">
+      <div class="rt-output-header">
+        <span class="rt-output-label">robots.txt</span>
+        <button id="rt-copy" class="btn-copy" disabled>Copy</button>
+      </div>
+      <pre id="rt-output" class="rt-output"></pre>
+    </div>
+
+    <div id="rt-status" class="rt-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var blocksEl = document.getElementById('rt-blocks');
+      var addBlockBtn = document.getElementById('rt-add-block');
+      var sitemapEl = document.getElementById('rt-sitemap');
+      var outputEl = document.getElementById('rt-output');
+      var copyBtn = document.getElementById('rt-copy');
+      var statusEl = document.getElementById('rt-status');
+
+      var PRESET_AGENTS = ['*', 'Googlebot', 'Bingbot'];
+      var blockCount = 0;
+
+      function createBlock() {
+        blockCount++;
+        var id = 'rt-block-' + blockCount;
+        var wrap = document.createElement('div');
+        wrap.className = 'rt-block';
+        wrap.dataset.blockId = id;
+
+        wrap.innerHTML = [
+          '<div class="rt-block-header">',
+          '  <span class="rt-block-title">User-agent Block</span>',
+          '  <button class="rt-remove-block" aria-label="Remove block">&#x2715;</button>',
+          '</div>',
+          '<div class="rt-block-body">',
+          '  <div class="rt-inline-field">',
+          '    <label>User-agent</label>',
+          '    <select class="rt-ua-select">',
+          '      <option value="*">* (all bots)</option>',
+          '      <option value="Googlebot">Googlebot</option>',
+          '      <option value="Bingbot">Bingbot</option>',
+          '      <option value="__custom__">Custom...</option>',
+          '    </select>',
+          '    <input class="rt-ua-custom" type="text" placeholder="MyBot" style="display:none" spellcheck="false" />',
+          '  </div>',
+          '  <div class="rt-rules">',
+          '    <div class="rt-rules-list"></div>',
+          '    <div class="rt-rules-actions">',
+          '      <button class="rt-add-rule rt-add-allow">+ Allow</button>',
+          '      <button class="rt-add-rule rt-add-disallow">+ Disallow</button>',
+          '    </div>',
+          '  </div>',
+          '</div>',
+        ].join('');
+
+        var removeBtn = wrap.querySelector('.rt-remove-block');
+        var uaSelect = wrap.querySelector('.rt-ua-select');
+        var uaCustom = wrap.querySelector('.rt-ua-custom');
+        var rulesList = wrap.querySelector('.rt-rules-list');
+        var addAllowBtn = wrap.querySelector('.rt-add-allow');
+        var addDisallowBtn = wrap.querySelector('.rt-add-disallow');
+
+        removeBtn.addEventListener('click', function () {
+          wrap.remove();
+          generate();
+        });
+
+        uaSelect.addEventListener('change', function () {
+          var isCustom = uaSelect.value === '__custom__';
+          uaCustom.style.display = isCustom ? 'block' : 'none';
+          generate();
+        });
+
+        uaCustom.addEventListener('input', generate);
+
+        addAllowBtn.addEventListener('click', function () { addRule(rulesList, 'Allow'); });
+        addDisallowBtn.addEventListener('click', function () { addRule(rulesList, 'Disallow'); });
+
+        blocksEl.appendChild(wrap);
+        generate();
+        return wrap;
+      }
+
+      function addRule(rulesList, type) {
+        var row = document.createElement('div');
+        row.className = 'rt-rule-row';
+        row.innerHTML = [
+          '<span class="rt-rule-type rt-rule-type-' + type.toLowerCase() + '">' + type + '</span>',
+          '<input class="rt-rule-path" type="text" placeholder="/' + (type === 'Disallow' ? 'private/' : 'public/') + '" spellcheck="false" />',
+          '<button class="rt-remove-rule" aria-label="Remove rule">&#x2715;</button>',
+        ].join('');
+
+        var removeBtn = row.querySelector('.rt-remove-rule');
+        var pathInput = row.querySelector('.rt-rule-path');
+
+        removeBtn.addEventListener('click', function () {
+          row.remove();
+          generate();
+        });
+
+        pathInput.addEventListener('input', generate);
+
+        rulesList.appendChild(row);
+        pathInput.focus();
+        generate();
+      }
+
+      function getBlockData(blockEl) {
+        var uaSelect = blockEl.querySelector('.rt-ua-select');
+        var uaCustom = blockEl.querySelector('.rt-ua-custom');
+        var ua = uaSelect.value === '__custom__' ? uaCustom.value.trim() : uaSelect.value;
+        var rules = [];
+        blockEl.querySelectorAll('.rt-rule-row').forEach(function (row) {
+          var type = row.querySelector('.rt-rule-type').textContent.trim();
+          var path = row.querySelector('.rt-rule-path').value.trim();
+          rules.push({ type: type, path: path });
+        });
+        return { ua: ua, rules: rules };
+      }
+
+      function generate() {
+        var blocks = blocksEl.querySelectorAll('.rt-block');
+        if (blocks.length === 0) {
+          outputEl.textContent = '';
+          copyBtn.disabled = true;
+          statusEl.textContent = '';
+          return;
+        }
+
+        var lines = [];
+        blocks.forEach(function (blockEl, idx) {
+          if (idx > 0) lines.push('');
+          var data = getBlockData(blockEl);
+          var ua = data.ua || '*';
+          lines.push('User-agent: ' + ua);
+          if (data.rules.length === 0) {
+            lines.push('Disallow:');
+          } else {
+            data.rules.forEach(function (r) {
+              lines.push(r.type + ': ' + r.path);
+            });
+          }
+        });
+
+        var sitemap = sitemapEl.value.trim();
+        if (sitemap) {
+          lines.push('');
+          lines.push('Sitemap: ' + sitemap);
+        }
+
+        var result = lines.join('\n');
+        outputEl.textContent = result;
+        copyBtn.disabled = false;
+        statusEl.textContent = '';
+
+        window.trackTool && window.trackTool('robots-txt-generator', 'generate');
+      }
+
+      addBlockBtn.addEventListener('click', function () { createBlock(); });
+      sitemapEl.addEventListener('input', generate);
+
+      copyBtn.addEventListener('click', function () {
+        var val = outputEl.textContent;
+        if (!val) return;
+        navigator.clipboard.writeText(val).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        });
+      });
+
+      // Initialize with one default block (all bots, one Disallow: /)
+      var firstBlock = createBlock();
+      var firstRulesList = firstBlock.querySelector('.rt-rules-list');
+      addRule(firstRulesList, 'Disallow');
+      var firstPathInput = firstRulesList.querySelector('.rt-rule-path');
+      firstPathInput.value = '/';
+      generate();
+    })();
+  </script>
+</div>
+
+<style>
+  .rt-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  /* Block */
+  .rt-block {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .rt-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .rt-block-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .rt-remove-block {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    font-size: 0.85rem;
+    padding: 0 0.2rem;
+    line-height: 1;
+  }
+  .rt-remove-block:hover { color: #ef4444; }
+
+  .rt-block-body { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem; }
+
+  /* Inline field */
+  .rt-inline-field {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .rt-inline-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    min-width: 80px;
+  }
+
+  .rt-ua-select,
+  .rt-ua-custom {
+    font-size: 0.85rem;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .rt-ua-custom { flex: 1; min-width: 120px; }
+  .rt-ua-custom:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* Rules */
+  .rt-rules { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .rt-rules-list { display: flex; flex-direction: column; gap: 0.35rem; }
+
+  .rt-rule-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .rt-rule-type {
+    font-size: 0.78rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    min-width: 68px;
+    text-align: right;
+    padding: 0.25rem 0.4rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .rt-rule-type-allow { color: #15803d; background: #dcfce7; }
+  .rt-rule-type-disallow { color: #b91c1c; background: #fee2e2; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .rt-rule-type-allow { color: #4ade80; background: #14532d44; }
+    :root:not([data-theme="light"]) .rt-rule-type-disallow { color: #f87171; background: #7f1d1d44; }
+  }
+  [data-theme="dark"] .rt-rule-type-allow { color: #4ade80; background: #14532d44; }
+  [data-theme="dark"] .rt-rule-type-disallow { color: #f87171; background: #7f1d1d44; }
+
+  .rt-rule-path {
+    flex: 1;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  .rt-rule-path:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .rt-remove-rule {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+    padding: 0 0.2rem;
+  }
+  .rt-remove-rule:hover { color: #ef4444; }
+
+  .rt-rules-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .rt-add-rule {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-weight: 600;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    transition: background 0.15s;
+  }
+  .rt-add-rule:hover { background: var(--color-bg); color: var(--color-text); }
+
+  /* Add block btn */
+  .rt-add-btn {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.9rem;
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    background: transparent;
+    color: var(--color-text-secondary);
+    align-self: flex-start;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .rt-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+
+  /* Sitemap field */
+  .rt-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .rt-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .rt-optional {
+    font-weight: 400;
+    font-size: 0.78rem;
+    color: var(--color-text-secondary);
+    opacity: 0.7;
+  }
+
+  .rt-field input {
+    font-size: 0.88rem;
+    padding: 0.45rem 0.65rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    font-family: var(--font-mono);
+  }
+  .rt-field input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* Output */
+  .rt-output-wrap {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .rt-output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .rt-output-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .rt-output {
+    margin: 0;
+    padding: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--color-text);
+    white-space: pre;
+    overflow-x: auto;
+    min-height: 80px;
+    background: var(--color-bg);
+  }
+
+  .rt-status { font-size: 0.85rem; min-height: 1.2rem; color: var(--color-text-secondary); }
+</style>

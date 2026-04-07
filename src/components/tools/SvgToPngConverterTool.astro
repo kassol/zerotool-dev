@@ -1,0 +1,544 @@
+---
+// SvgToPngConverterTool — converts SVG to PNG using Canvas API
+---
+
+<div>
+  <div class="s2p-wrap">
+
+    <!-- Tabs: upload file vs paste code -->
+    <div class="s2p-tabs" role="tablist">
+      <button id="s2p-tab-file" class="s2p-tab s2p-tab--active" role="tab" aria-selected="true" aria-controls="s2p-panel-file">Upload File</button>
+      <button id="s2p-tab-code" class="s2p-tab" role="tab" aria-selected="false" aria-controls="s2p-panel-code">Paste SVG Code</button>
+    </div>
+
+    <!-- Panel: file upload -->
+    <div id="s2p-panel-file" class="s2p-panel" role="tabpanel">
+      <div id="s2p-drop" class="s2p-drop" role="button" tabindex="0" aria-label="Drop SVG file here or click to select">
+        <div class="s2p-drop-inner">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+          </svg>
+          <p>Drop an SVG file here, or <strong>click to select</strong></p>
+          <p class="s2p-hint">Supports .svg files only</p>
+        </div>
+        <input type="file" id="s2p-file" accept=".svg,image/svg+xml" class="s2p-file-input" aria-label="Select SVG file" />
+      </div>
+    </div>
+
+    <!-- Panel: paste code -->
+    <div id="s2p-panel-code" class="s2p-panel" hidden role="tabpanel">
+      <div class="s2p-field">
+        <label for="s2p-code-input">SVG Code</label>
+        <textarea
+          id="s2p-code-input"
+          placeholder="<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; ...>...</svg>"
+          spellcheck="false"
+          rows="8"
+        ></textarea>
+      </div>
+      <button id="s2p-load-code" class="btn-primary s2p-load-btn">Load SVG</button>
+    </div>
+
+    <!-- Options -->
+    <div id="s2p-options" class="s2p-options" hidden>
+      <div class="s2p-options-row">
+        <!-- Scale / size -->
+        <div class="s2p-opt-group">
+          <label for="s2p-scale">Output Size</label>
+          <select id="s2p-scale">
+            <option value="1">Original (1x)</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+            <option value="custom">Custom px</option>
+          </select>
+        </div>
+
+        <div id="s2p-custom-wrap" class="s2p-opt-group" hidden>
+          <label for="s2p-custom-w">Width (px)</label>
+          <input type="number" id="s2p-custom-w" min="1" max="8192" placeholder="auto" class="s2p-num-input" />
+        </div>
+        <div id="s2p-custom-h-wrap" class="s2p-opt-group" hidden>
+          <label for="s2p-custom-h">Height (px)</label>
+          <input type="number" id="s2p-custom-h" min="1" max="8192" placeholder="auto" class="s2p-num-input" />
+        </div>
+
+        <!-- Background -->
+        <div class="s2p-opt-group">
+          <label for="s2p-bg">Background</label>
+          <select id="s2p-bg">
+            <option value="transparent">Transparent</option>
+            <option value="white">White</option>
+            <option value="custom">Custom color</option>
+          </select>
+        </div>
+
+        <div id="s2p-bg-color-wrap" class="s2p-opt-group" hidden>
+          <label for="s2p-bg-color">Color</label>
+          <input type="color" id="s2p-bg-color" value="#ffffff" class="s2p-color-input" />
+        </div>
+      </div>
+
+      <button id="s2p-convert" class="btn-primary">Convert to PNG</button>
+    </div>
+
+    <!-- Preview -->
+    <div id="s2p-result" class="s2p-result" hidden>
+      <div class="s2p-preview-header">
+        <span class="s2p-preview-label">Preview</span>
+        <span id="s2p-dims" class="s2p-dims"></span>
+        <button id="s2p-download" class="btn-primary s2p-dl-btn">Download PNG</button>
+      </div>
+      <div class="s2p-preview-box">
+        <img id="s2p-preview" class="s2p-preview-img" src="" alt="PNG preview" />
+      </div>
+    </div>
+
+    <div id="s2p-status" class="s2p-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      /* ── element refs ── */
+      var tabFile    = document.getElementById('s2p-tab-file');
+      var tabCode    = document.getElementById('s2p-tab-code');
+      var panelFile  = document.getElementById('s2p-panel-file');
+      var panelCode  = document.getElementById('s2p-panel-code');
+      var dropEl     = document.getElementById('s2p-drop');
+      var fileInput  = document.getElementById('s2p-file');
+      var codeInput  = document.getElementById('s2p-code-input');
+      var loadCodeBtn= document.getElementById('s2p-load-code');
+      var optionsEl  = document.getElementById('s2p-options');
+      var scaleEl    = document.getElementById('s2p-scale');
+      var customWrap = document.getElementById('s2p-custom-wrap');
+      var customHWrap= document.getElementById('s2p-custom-h-wrap');
+      var customW    = document.getElementById('s2p-custom-w');
+      var customH    = document.getElementById('s2p-custom-h');
+      var bgEl       = document.getElementById('s2p-bg');
+      var bgColorWrap= document.getElementById('s2p-bg-color-wrap');
+      var bgColorEl  = document.getElementById('s2p-bg-color');
+      var convertBtn = document.getElementById('s2p-convert');
+      var resultEl   = document.getElementById('s2p-result');
+      var dimsEl     = document.getElementById('s2p-dims');
+      var previewImg = document.getElementById('s2p-preview');
+      var downloadBtn= document.getElementById('s2p-download');
+      var statusEl   = document.getElementById('s2p-status');
+
+      var svgText = '';        // current SVG source
+      var pngBlobUrl = '';     // current output blob URL
+
+      /* ── status helper ── */
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 's2p-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 's2p-status';
+      }
+
+      /* ── tab switching ── */
+      function activateTab(tab) {
+        var isFile = (tab === 'file');
+        tabFile.classList.toggle('s2p-tab--active', isFile);
+        tabCode.classList.toggle('s2p-tab--active', !isFile);
+        tabFile.setAttribute('aria-selected', isFile ? 'true' : 'false');
+        tabCode.setAttribute('aria-selected', isFile ? 'false' : 'true');
+        panelFile.hidden = !isFile;
+        panelCode.hidden = isFile;
+        clearStatus();
+      }
+      tabFile.addEventListener('click', function () { activateTab('file'); });
+      tabCode.addEventListener('click', function () { activateTab('code'); });
+
+      /* ── options visibility ── */
+      scaleEl.addEventListener('change', function () {
+        var isCustom = scaleEl.value === 'custom';
+        customWrap.hidden = !isCustom;
+        customHWrap.hidden = !isCustom;
+      });
+
+      bgEl.addEventListener('change', function () {
+        bgColorWrap.hidden = bgEl.value !== 'custom';
+      });
+
+      /* ── load SVG text → show options ── */
+      function loadSvg(text) {
+        if (!text || text.trim() === '') {
+          setStatus('SVG content is empty.', true);
+          return;
+        }
+        if (!/<svg[\s>]/i.test(text)) {
+          setStatus('Does not look like valid SVG markup.', true);
+          return;
+        }
+        svgText = text;
+        optionsEl.hidden = false;
+        resultEl.hidden = true;
+        clearStatus();
+        setStatus('SVG loaded. Configure options and click Convert.', false);
+      }
+
+      /* ── file input / drag-drop ── */
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+      fileInput.addEventListener('change', function () {
+        if (this.files && this.files[0]) readFile(this.files[0]);
+      });
+      dropEl.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        dropEl.classList.add('drag-over');
+      });
+      dropEl.addEventListener('dragleave', function () {
+        dropEl.classList.remove('drag-over');
+      });
+      dropEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        var file = e.dataTransfer.files[0];
+        if (file) readFile(file);
+      });
+
+      function readFile(file) {
+        if (!file.name.toLowerCase().endsWith('.svg') && file.type !== 'image/svg+xml') {
+          setStatus('Please select a valid .svg file.', true);
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function (e) { loadSvg(e.target.result); };
+        reader.onerror = function () { setStatus('Failed to read file.', true); };
+        reader.readAsText(file);
+      }
+
+      /* ── paste code ── */
+      loadCodeBtn.addEventListener('click', function () {
+        loadSvg(codeInput.value);
+      });
+
+      /* ── convert ── */
+      convertBtn.addEventListener('click', function () {
+        if (!svgText) { setStatus('No SVG loaded.', true); return; }
+        clearStatus();
+        convertToPng();
+      });
+
+      function getSvgDimensions(svgStr) {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(svgStr, 'image/svg+xml');
+        var svgEl = doc.querySelector('svg');
+        if (!svgEl) return { w: 300, h: 150 };
+
+        var vb = svgEl.getAttribute('viewBox');
+        var wAttr = svgEl.getAttribute('width');
+        var hAttr = svgEl.getAttribute('height');
+
+        function parseLen(val) {
+          if (!val) return null;
+          var n = parseFloat(val);
+          return isNaN(n) ? null : n;
+        }
+
+        var w = parseLen(wAttr);
+        var h = parseLen(hAttr);
+
+        if (w && h) return { w: w, h: h };
+
+        if (vb) {
+          var parts = vb.trim().split(/[\s,]+/);
+          if (parts.length === 4) {
+            var vw = parseFloat(parts[2]);
+            var vh = parseFloat(parts[3]);
+            if (!isNaN(vw) && !isNaN(vh)) return { w: vw, h: vh };
+          }
+        }
+
+        return { w: w || 300, h: h || 150 };
+      }
+
+      function convertToPng() {
+        var dims = getSvgDimensions(svgText);
+        var scale = scaleEl.value;
+        var outW, outH;
+
+        if (scale === 'custom') {
+          outW = parseInt(customW.value) || dims.w;
+          outH = parseInt(customH.value) || dims.h;
+        } else {
+          var factor = parseFloat(scale) || 1;
+          outW = Math.round(dims.w * factor);
+          outH = Math.round(dims.h * factor);
+        }
+
+        // Ensure at least 1px
+        outW = Math.max(1, outW);
+        outH = Math.max(1, outH);
+
+        var canvas = document.createElement('canvas');
+        canvas.width = outW;
+        canvas.height = outH;
+        var ctx = canvas.getContext('2d');
+
+        // Background
+        var bgVal = bgEl.value;
+        if (bgVal === 'transparent') {
+          ctx.clearRect(0, 0, outW, outH);
+        } else {
+          ctx.fillStyle = bgVal === 'custom' ? bgColorEl.value : '#ffffff';
+          ctx.fillRect(0, 0, outW, outH);
+        }
+
+        // Build a data URI from SVG text
+        var svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+        var url = URL.createObjectURL(svgBlob);
+        var img = new Image();
+
+        img.onload = function () {
+          ctx.drawImage(img, 0, 0, outW, outH);
+          URL.revokeObjectURL(url);
+
+          canvas.toBlob(function (blob) {
+            if (!blob) { setStatus('Failed to generate PNG.', true); return; }
+            if (pngBlobUrl) URL.revokeObjectURL(pngBlobUrl);
+            pngBlobUrl = URL.createObjectURL(blob);
+
+            previewImg.src = pngBlobUrl;
+            dimsEl.textContent = outW + ' × ' + outH + ' px';
+            resultEl.hidden = false;
+
+            setStatus('PNG generated successfully.', false);
+            window.trackTool && window.trackTool('svg-to-png-converter', 'convert');
+          }, 'image/png');
+        };
+
+        img.onerror = function () {
+          URL.revokeObjectURL(url);
+          setStatus('Failed to render SVG. Make sure it is valid.', true);
+        };
+
+        img.src = url;
+      }
+
+      /* ── download ── */
+      downloadBtn.addEventListener('click', function () {
+        if (!pngBlobUrl) return;
+        var a = document.createElement('a');
+        a.href = pngBlobUrl;
+        a.download = 'image.png';
+        a.click();
+      });
+
+    })();
+  </script>
+</div>
+
+<style>
+  .s2p-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  /* ── Tabs ── */
+  .s2p-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--color-border);
+  }
+
+  .s2p-tab {
+    padding: 0.5rem 1.1rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .s2p-tab:hover { color: var(--color-text); }
+
+  .s2p-tab--active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+    font-weight: 600;
+  }
+
+  /* ── Drop zone ── */
+  .s2p-drop {
+    position: relative;
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 2rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--color-bg-secondary);
+  }
+
+  .s2p-drop:hover,
+  .s2p-drop.drag-over {
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .s2p-drop-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text-secondary);
+    pointer-events: none;
+  }
+
+  .s2p-drop-inner p { margin: 0; font-size: 0.95rem; }
+  .s2p-hint { font-size: 0.8rem; opacity: 0.7; }
+
+  .s2p-file-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  /* ── Paste panel ── */
+  .s2p-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .s2p-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .s2p-field textarea {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .s2p-field textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .s2p-load-btn { margin-top: 0.25rem; }
+
+  /* ── Options ── */
+  .s2p-options { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .s2p-options-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+  }
+
+  .s2p-opt-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .s2p-opt-group label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .s2p-opt-group select,
+  .s2p-num-input {
+    font-size: 0.85rem;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    min-width: 130px;
+  }
+
+  .s2p-num-input { width: 100px; min-width: unset; }
+
+  .s2p-color-input {
+    width: 48px;
+    height: 34px;
+    padding: 2px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    cursor: pointer;
+  }
+
+  /* ── Result / preview ── */
+  .s2p-result { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .s2p-preview-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .s2p-preview-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .s2p-dims {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    flex: 1;
+  }
+
+  .s2p-dl-btn { font-size: 0.85rem; padding: 0.35rem 0.9rem; }
+
+  .s2p-preview-box {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: repeating-conic-gradient(#ccc 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 80px;
+    padding: 0.5rem;
+  }
+
+  .s2p-preview-img {
+    max-width: 100%;
+    max-height: 300px;
+    object-fit: contain;
+    display: block;
+  }
+
+  /* ── Status ── */
+  .s2p-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .s2p-status.success { color: #057a55; }
+  .s2p-status.error   { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .s2p-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .s2p-status.error   { color: #f87171; }
+    :root:not([data-theme="light"]) .s2p-preview-box {
+      background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 16px 16px;
+    }
+  }
+  [data-theme="dark"] .s2p-status.success { color: #34d399; }
+  [data-theme="dark"] .s2p-status.error   { color: #f87171; }
+  [data-theme="dark"] .s2p-preview-box {
+    background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 16px 16px;
+  }
+</style>

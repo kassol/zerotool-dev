@@ -1,0 +1,528 @@
+---
+// CssVariablesGeneratorTool — generates CSS custom properties from design tokens
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    prefix: 'Variable Prefix',
+    prefixPlaceholder: '--',
+    colors: 'Colors',
+    typography: 'Typography',
+    spacing: 'Spacing',
+    borderRadius: 'Border Radius',
+    addToken: '+ Add Token',
+    varName: 'Variable Name',
+    value: 'Value',
+    outputLabel: 'Generated CSS',
+    copy: 'Copy',
+    copied: 'Copied!',
+    remove: '×',
+  },
+  zh: {
+    prefix: '变量前缀',
+    prefixPlaceholder: '--',
+    colors: '颜色',
+    typography: '字体排版',
+    spacing: '间距',
+    borderRadius: '圆角',
+    addToken: '+ 添加 Token',
+    varName: '变量名',
+    value: '值',
+    outputLabel: '生成的 CSS',
+    copy: '复制',
+    copied: '已复制！',
+    remove: '×',
+  },
+  ja: {
+    prefix: '変数プレフィックス',
+    prefixPlaceholder: '--',
+    colors: 'カラー',
+    typography: 'タイポグラフィ',
+    spacing: 'スペーシング',
+    borderRadius: '角丸',
+    addToken: '+ トークン追加',
+    varName: '変数名',
+    value: '値',
+    outputLabel: '生成された CSS',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    remove: '×',
+  },
+  ko: {
+    prefix: '변수 접두사',
+    prefixPlaceholder: '--',
+    colors: '색상',
+    typography: '타이포그래피',
+    spacing: '간격',
+    borderRadius: '테두리 반경',
+    addToken: '+ 토큰 추가',
+    varName: '변수명',
+    value: '값',
+    outputLabel: '생성된 CSS',
+    copy: '복사',
+    copied: '복사됨!',
+    remove: '×',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="cvg-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-label-colors={L.colors}
+  data-label-typography={L.typography}
+  data-label-spacing={L.spacing}
+  data-label-radius={L.borderRadius}
+  data-label-varname={L.varName}
+  data-label-value={L.value}
+  data-label-add={L.addToken}
+  data-label-remove={L.remove}
+>
+  <!-- Prefix row -->
+  <div class="cvg-prefix-row">
+    <label class="cvg-field-label" for="cvg-prefix">{L.prefix}</label>
+    <input
+      id="cvg-prefix"
+      class="cvg-prefix-input"
+      type="text"
+      value="--"
+      spellcheck="false"
+      autocomplete="off"
+    />
+  </div>
+
+  <!-- Token groups -->
+  <div id="cvg-groups" class="cvg-groups"></div>
+
+  <!-- CSS Output -->
+  <div class="cvg-output-section">
+    <div class="cvg-output-header">
+      <span class="cvg-output-label">{L.outputLabel}</span>
+      <button id="cvg-copy" class="btn-copy" type="button">{L.copy}</button>
+    </div>
+    <pre id="cvg-pre" class="cvg-pre"><code id="cvg-code" class="cvg-code"></code></pre>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.cvg-wrap')
+        : document.querySelector('.cvg-wrap');
+
+      /* ── Labels from data attributes ── */
+      var COPY_LABEL    = wrap.dataset.copy;
+      var COPIED_LABEL  = wrap.dataset.copied;
+      var ADD_LABEL     = wrap.dataset.labelAdd;
+      var REMOVE_LABEL  = wrap.dataset.labelRemove;
+      var VARNAME_LABEL = wrap.dataset.labelVarname;
+      var VALUE_LABEL   = wrap.dataset.labelValue;
+
+      /* ── Group definitions ── */
+      var GROUPS = [
+        {
+          id: 'colors',
+          label: wrap.dataset.labelColors,
+          type: 'color',
+          defaults: [
+            { name: 'primary', value: '#3b82f6' },
+            { name: 'secondary', value: '#6366f1' },
+            { name: 'bg', value: '#ffffff' },
+            { name: 'text', value: '#111827' },
+          ],
+        },
+        {
+          id: 'typography',
+          label: wrap.dataset.labelTypography,
+          type: 'text',
+          defaults: [
+            { name: 'font-sans', value: 'Inter, system-ui, sans-serif' },
+            { name: 'font-mono', value: '"Fira Code", monospace' },
+            { name: 'font-size-base', value: '16px' },
+            { name: 'font-size-lg', value: '18px' },
+          ],
+        },
+        {
+          id: 'spacing',
+          label: wrap.dataset.labelSpacing,
+          type: 'text',
+          defaults: [
+            { name: 'space-1', value: '4px' },
+            { name: 'space-2', value: '8px' },
+            { name: 'space-4', value: '16px' },
+            { name: 'space-8', value: '32px' },
+          ],
+        },
+        {
+          id: 'radius',
+          label: wrap.dataset.labelRadius,
+          type: 'text',
+          defaults: [
+            { name: 'radius-sm', value: '4px' },
+            { name: 'radius-md', value: '8px' },
+            { name: 'radius-lg', value: '16px' },
+            { name: 'radius-full', value: '9999px' },
+          ],
+        },
+      ];
+
+      var prefixEl = document.getElementById('cvg-prefix');
+      var groupsEl = document.getElementById('cvg-groups');
+      var codeEl   = document.getElementById('cvg-code');
+      var copyBtn  = document.getElementById('cvg-copy');
+
+      /* ── Build token row ── */
+      function buildRow(groupEl, type, name, value) {
+        var row = document.createElement('div');
+        row.className = 'cvg-token-row';
+
+        /* Color swatch + input */
+        if (type === 'color') {
+          var swatch = document.createElement('input');
+          swatch.type = 'color';
+          swatch.className = 'cvg-swatch';
+          swatch.value = value || '#000000';
+          row.appendChild(swatch);
+        }
+
+        /* Variable name input */
+        var nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'cvg-token-name';
+        nameInput.placeholder = VARNAME_LABEL;
+        nameInput.value = name || '';
+        nameInput.spellcheck = false;
+        nameInput.autocomplete = 'off';
+        row.appendChild(nameInput);
+
+        /* Value input */
+        var valueInput = document.createElement('input');
+        valueInput.type = 'text';
+        valueInput.className = 'cvg-token-value';
+        valueInput.placeholder = VALUE_LABEL;
+        valueInput.value = value || '';
+        valueInput.spellcheck = false;
+        valueInput.autocomplete = 'off';
+        row.appendChild(valueInput);
+
+        /* Remove button */
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'cvg-remove-btn';
+        removeBtn.textContent = REMOVE_LABEL;
+        removeBtn.title = 'Remove';
+        row.appendChild(removeBtn);
+
+        /* Sync color swatch ↔ value input */
+        if (type === 'color') {
+          swatch.addEventListener('input', function () {
+            valueInput.value = swatch.value;
+            generate();
+          });
+          valueInput.addEventListener('input', function () {
+            var v = valueInput.value.trim();
+            if (/^#[0-9a-fA-F]{3,6}$/.test(v)) swatch.value = v;
+            generate();
+          });
+        } else {
+          valueInput.addEventListener('input', generate);
+        }
+
+        nameInput.addEventListener('input', generate);
+        removeBtn.addEventListener('click', function () {
+          row.parentNode.removeChild(row);
+          generate();
+        });
+
+        groupEl.querySelector('.cvg-token-list').appendChild(row);
+      }
+
+      /* ── Build group ── */
+      function buildGroup(g) {
+        var section = document.createElement('div');
+        section.className = 'cvg-group';
+        section.dataset.groupId = g.id;
+        section.dataset.groupType = g.type;
+
+        var header = document.createElement('div');
+        header.className = 'cvg-group-header';
+
+        var title = document.createElement('span');
+        title.className = 'cvg-group-title';
+        title.textContent = g.label;
+        header.appendChild(title);
+
+        var addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'btn-ghost cvg-add-btn';
+        addBtn.textContent = ADD_LABEL;
+        header.appendChild(addBtn);
+
+        section.appendChild(header);
+
+        var list = document.createElement('div');
+        list.className = 'cvg-token-list';
+        section.appendChild(list);
+
+        g.defaults.forEach(function (d) {
+          buildRow(section, g.type, d.name, d.value);
+        });
+
+        addBtn.addEventListener('click', function () {
+          buildRow(section, g.type, '', '');
+          generate();
+          window.trackTool && window.trackTool('css-variables-generator', 'add_token');
+        });
+
+        groupsEl.appendChild(section);
+      }
+
+      GROUPS.forEach(buildGroup);
+
+      /* ── CSS generation ── */
+      function escapeHtml(str) {
+        return str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      }
+
+      function generate() {
+        var prefix = prefixEl.value || '--';
+        var lines = [':root {'];
+
+        var groups = groupsEl.querySelectorAll('.cvg-group');
+        groups.forEach(function (group) {
+          var groupId = group.dataset.groupId;
+          var rows = group.querySelectorAll('.cvg-token-row');
+          var hasContent = false;
+
+          rows.forEach(function (row) {
+            var nameEl  = row.querySelector('.cvg-token-name');
+            var valueEl = row.querySelector('.cvg-token-value');
+            var name  = nameEl  ? nameEl.value.trim()  : '';
+            var value = valueEl ? valueEl.value.trim() : '';
+            if (!name) return;
+            lines.push('  ' + prefix + name + ': ' + (value || '') + ';');
+            hasContent = true;
+          });
+        });
+
+        lines.push('}');
+
+        var raw = lines.join('\n');
+        /* Syntax highlighting via innerHTML */
+        var highlighted = raw
+          .replace(/(:root)/g, '<span class="cvg-hl-sel">$1</span>')
+          .replace(/(\{|\})/g, '<span class="cvg-hl-brace">$1</span>')
+          .replace(/(--[\w-]+)/g, '<span class="cvg-hl-var">$1</span>')
+          .replace(/(:)(\s*)([^;{}\n]+)(;)/g, '<span class="cvg-hl-colon">$1</span>$2<span class="cvg-hl-val">$3</span><span class="cvg-hl-semi">$4</span>');
+
+        codeEl.innerHTML = highlighted;
+
+        copyBtn.disabled = lines.length <= 2;
+        window.trackTool && window.trackTool('css-variables-generator', 'generate');
+      }
+
+      prefixEl.addEventListener('input', generate);
+
+      /* ── Copy ── */
+      copyBtn.addEventListener('click', function () {
+        var text = codeEl.textContent;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = COPIED_LABEL;
+          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          window.trackTool && window.trackTool('css-variables-generator', 'copy');
+        });
+      });
+
+      /* ── Initial render ── */
+      generate();
+    })();
+  </script>
+</div>
+
+<style>
+  .cvg-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  /* ── Prefix row ── */
+  .cvg-prefix-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .cvg-field-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .cvg-prefix-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .cvg-prefix-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* ── Groups ── */
+  .cvg-groups { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cvg-group {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .cvg-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.45rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .cvg-group-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-primary);
+  }
+
+  /* ── Token list ── */
+  .cvg-token-list { display: flex; flex-direction: column; gap: 0; }
+
+  .cvg-token-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .cvg-token-row:last-child { border-bottom: none; }
+
+  .cvg-token-row:hover { background: var(--color-bg-secondary); }
+
+  .cvg-swatch {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 1px;
+    cursor: pointer;
+    background: none;
+    flex-shrink: 0;
+  }
+
+  .cvg-token-name {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+    flex-shrink: 0;
+  }
+
+  .cvg-token-value {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    flex: 1;
+    min-width: 0;
+  }
+
+  .cvg-token-name:focus,
+  .cvg-token-value:focus { outline: none; border-color: var(--color-primary); }
+
+  .cvg-remove-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0 0.25rem;
+    line-height: 1;
+    flex-shrink: 0;
+    border-radius: 3px;
+  }
+
+  .cvg-remove-btn:hover { color: #c0392b; background: #fee2e2; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cvg-remove-btn:hover { color: #fca5a5; background: #450a0a; }
+  }
+  [data-theme="dark"] .cvg-remove-btn:hover { color: #fca5a5; background: #450a0a; }
+
+  /* ── Output section ── */
+  .cvg-output-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .cvg-output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .cvg-output-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .cvg-pre {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+
+  .cvg-code { font-family: inherit; }
+
+  /* ── Syntax highlighting ── */
+  .cvg-hl-sel   { color: #7c3aed; font-weight: 600; }
+  .cvg-hl-brace { color: var(--color-text-secondary); }
+  .cvg-hl-var   { color: #0369a1; }
+  .cvg-hl-colon { color: var(--color-text-secondary); }
+  .cvg-hl-val   { color: #057a55; }
+  .cvg-hl-semi  { color: var(--color-text-secondary); }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cvg-hl-sel  { color: #a78bfa; }
+    :root:not([data-theme="light"]) .cvg-hl-var  { color: #38bdf8; }
+    :root:not([data-theme="light"]) .cvg-hl-val  { color: #34d399; }
+  }
+  [data-theme="dark"] .cvg-hl-sel  { color: #a78bfa; }
+  [data-theme="dark"] .cvg-hl-var  { color: #38bdf8; }
+  [data-theme="dark"] .cvg-hl-val  { color: #34d399; }
+
+  /* ── Responsive ── */
+  @media (max-width: 480px) {
+    .cvg-token-name { width: 100px; }
+  }
+</style>
