@@ -1,0 +1,273 @@
+---
+title: "SQLフォーマッター完全ガイド：クエリを読みやすく整形する方法"
+description: "SQLクエリを自動整形して可読性を上げる方法を解説。SELECT・JOIN・CTEの書き方、VS Code設定、オンラインツールの使い方まで実践的に説明します。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "sql-formatter-guide"
+tags: ["sql", "sql-formatter", "sql-beautifier", "database", "developer-tools"]
+---
+
+整形されていないSQLは生産性を下げます。インデントなし・大文字小文字混在・JOINが1行に詰め込まれた200行のクエリは、整形されたSQLの3倍の時間がかかります。SQLの整形は見た目の問題ではなく、バグの発見速度・コードレビューの効率・チームへのオンボーディングに直結します。
+
+[SQLをすぐに整形する →](/tools/sql-formatter)
+
+## SQLを整形する理由
+
+### 可読性
+
+データベースは空白を気にしません。人間は気にします。比較してみましょう：
+
+```sql
+select u.id,u.name,o.total from users u inner join orders o on u.id=o.user_id where o.status='completed' and o.total>100 order by o.total desc limit 50;
+```
+
+vs.
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  o.total
+FROM users u
+INNER JOIN orders o ON u.id = o.user_id
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+ORDER BY o.total DESC
+LIMIT 50;
+```
+
+2番目のクエリは意図が伝わります。カラムリスト・JOIN条件・フィルター・ソート順がそれぞれ視覚的に区別されており、バグの発見や正確性の確認が数分から数秒に短縮されます。
+
+### コードレビュー
+
+SQLはアプリケーションコード内に文字列リテラル・ORMの生クエリ・マイグレーションファイルとして存在することが多いです。コードレビューでは、JOIN条件の検証・インデックスの確認・N+1パターンの発見が必要です。未整形のSQLをdiffで見るのはほぼ不可能です。整形されたSQLにより、レビュアーはロジックに集中できます。
+
+### チームコラボレーション
+
+一貫した整形はdiffを意味のあるものにします。2人の開発者が同じストアドプロシージャを編集するとき、スタイルが統一されていれば意図した変更のみがdiffに表れます。SQLフォーマットの標準化はスタイル議論の時間を減らし、データベース設計に集中させます。
+
+## SQL整形の規約
+
+### キーワード：常に大文字
+
+SQLキーワード（`SELECT`・`FROM`・`WHERE`・`JOIN`・`GROUP BY`・`ORDER BY`・`HAVING`・`LIMIT`）は大文字にします。識別子（テーブル名・カラム名）はデータベースの慣習に合わせます（一般的に小文字＋アンダースコア）。
+
+```sql
+-- 悪い例
+select id, created_at from users where active = true;
+
+-- 良い例
+SELECT id, created_at FROM users WHERE active = TRUE;
+```
+
+### 1カラム1行
+
+`SELECT`句では、各カラムを一貫したインデントで独立した行に書きます。カラムの追加・削除・並び替えが容易になり、diffもきれいになります。
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  u.email,
+  u.created_at
+FROM users u
+```
+
+### サブクエリのインデント
+
+ネストされたクエリは親クエリから2〜4スペースでインデントします：
+
+```sql
+SELECT
+  id,
+  name,
+  (
+    SELECT COUNT(*)
+    FROM orders
+    WHERE orders.user_id = users.id
+  ) AS order_count
+FROM users;
+```
+
+### JOINの整列
+
+各JOINを独立した行に書き、ON条件はインデントまたは整列させます：
+
+```sql
+SELECT
+  u.name,
+  p.title,
+  c.name AS category
+FROM users u
+INNER JOIN posts p ON p.author_id = u.id
+INNER JOIN categories c ON c.id = p.category_id
+WHERE u.active = TRUE;
+```
+
+### 長いWHERE句
+
+複数条件でフィルターする場合、各条件を新しい行にし、論理演算子（`AND`/`OR`）を行頭に置きます：
+
+```sql
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+  AND o.created_at >= '2025-01-01'
+  AND u.country IN ('US', 'CA', 'GB')
+```
+
+先頭の`AND`/`OR`（末尾ではなく）にすることで、デバッグ中に個別の条件をコメントアウトしやすくなります。
+
+## エディタでSQLを整形する
+
+### VS Code
+
+マーケットプレイスから**SQLTools**拡張または**sql-formatter**をインストールします：
+
+- 選択範囲の整形：`Cmd+K Cmd+F`（Mac）/ `Ctrl+K Ctrl+F`（Windows）
+- ファイル全体の整形：`Shift+Alt+F`
+
+プロジェクト全体の一貫性には、Prettierと`prettier-plugin-sql`を設定します：
+
+```json
+// .prettierrc
+{
+  "plugins": ["prettier-plugin-sql"],
+  "language": "sql",
+  "keywordCase": "upper",
+  "indentStyle": "standard",
+  "logicalOperatorNewline": "before"
+}
+```
+
+### JetBrains（DataGrip、IntelliJ、PyCharm）
+
+JetBrains IDEはSQL整形機能を内蔵しています。コードの整形：`Cmd+Alt+L`（Mac）/ `Ctrl+Alt+L`（Windows）。**Settings → Editor → Code Style → SQL**で設定できます。
+
+DataGripはMySQL・PostgreSQL・Oracleの方言ごとの整形もサポートしています。
+
+### コマンドライン
+
+スクリプトやCIパイプラインでは`sql-formatter-cli`でバッチ整形できます：
+
+```bash
+npm install -g sql-formatter
+
+# ファイルを上書き整形
+sql-formatter -l postgresql -o query.sql query.sql
+
+# 標準入力から整形
+cat query.sql | sql-formatter -l mysql
+```
+
+## オンラインでSQLを整形する
+
+何もインストールせずにアドホックな整形をするには、[ZeroToolのSQLフォーマッター](/tools/sql-formatter)がブラウザ内で処理します。任意のSQL（`SELECT`・`INSERT`・`CREATE TABLE`・ストアドプロシージャ・複雑なマルチJOINクエリ）を貼り付けるだけで整形結果が得られます。
+
+機能：
+- キーワードの大文字化
+- 一貫したインデント
+- JOINの整列
+- サブクエリのネスト
+- MySQL・PostgreSQL・SQLite・標準SQL構文に対応
+
+**[SQLをすぐに整形する →](/tools/sql-formatter)**
+
+## よく使うSQLパターン
+
+### CTE（共通テーブル式）
+
+CTEは名前・カラムリスト（あれば）・本体がすべて読みやすいよう整形します：
+
+```sql
+WITH monthly_revenue AS (
+  SELECT
+    DATE_TRUNC('month', created_at) AS month,
+    SUM(amount) AS revenue
+  FROM orders
+  WHERE status = 'completed'
+  GROUP BY 1
+),
+previous_month AS (
+  SELECT
+    month,
+    revenue,
+    LAG(revenue) OVER (ORDER BY month) AS prev_revenue
+  FROM monthly_revenue
+)
+SELECT
+  month,
+  revenue,
+  prev_revenue,
+  ROUND((revenue - prev_revenue) / prev_revenue * 100, 2) AS growth_pct
+FROM previous_month
+ORDER BY month DESC;
+```
+
+### FROM句のサブクエリ
+
+```sql
+SELECT
+  dept,
+  avg_salary
+FROM (
+  SELECT
+    department AS dept,
+    AVG(salary) AS avg_salary
+  FROM employees
+  GROUP BY department
+) AS dept_stats
+WHERE avg_salary > 75000
+ORDER BY avg_salary DESC;
+```
+
+### CASE式
+
+複数分岐のCASE文は一貫した整列が重要です：
+
+```sql
+SELECT
+  id,
+  name,
+  CASE
+    WHEN age < 18 THEN 'minor'
+    WHEN age BETWEEN 18 AND 64 THEN 'adult'
+    ELSE 'senior'
+  END AS age_group
+FROM users;
+```
+
+### INSERT ... SELECT
+
+```sql
+INSERT INTO order_archive (
+  id,
+  user_id,
+  total,
+  created_at
+)
+SELECT
+  id,
+  user_id,
+  total,
+  created_at
+FROM orders
+WHERE created_at < '2024-01-01';
+```
+
+INSERTのカラムリストとSELECTのカラムリストを整列させることで、対応関係をすぐに確認できます。
+
+## チームのSQLスタイルガイドを作る
+
+チームでは、SQLスタイルを短いドキュメントにまとめることで曖昧さをなくせます。標準化すべき主な決定事項：
+
+- キーワードのケース（ほぼ全員が大文字）
+- インデントサイズ（2スペースまたは4スペース）
+- テーブルエイリアスの戦略（イニシャルか短縮名か）
+- カンマの位置（行頭か行末か）
+- SELECTで全カラムにエイリアスをつけるかどうか
+
+多くのチームはフォーマッターを採用してコンフィグで定義します。CIで自動的に一貫性を保証できるためです。
+
+**[SQLをすぐに整形する →](/tools/sql-formatter)**

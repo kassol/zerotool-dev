@@ -1,0 +1,273 @@
+---
+title: "SQL 포매터 완전 가이드: 쿼리를 읽기 쉽게 정렬하는 방법"
+description: "SQL 쿼리를 자동 포매팅하여 가독성을 높이는 방법을 설명합니다. SELECT·JOIN·CTE 작성법, VS Code 설정, 온라인 도구 사용법까지 실무 중심으로 안내합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "sql-formatter-guide"
+tags: ["sql", "sql-formatter", "sql-beautifier", "database", "developer-tools"]
+---
+
+포매팅되지 않은 SQL은 생산성을 떨어뜨립니다. 들여쓰기 없이 대소문자가 뒤섞이고 JOIN이 한 줄에 몰려 있는 200줄짜리 쿼리는 잘 포매팅된 SQL보다 읽고 디버깅하는 데 세 배나 더 오래 걸립니다. SQL 포매팅은 단순한 미관 문제가 아니라 쿼리 로직 파악 속도, 코드 리뷰 효율성, 팀 온보딩에 직접 영향을 미칩니다.
+
+[SQL 즉시 포매팅하기 →](/tools/sql-formatter)
+
+## SQL 포매팅이 중요한 이유
+
+### 가독성
+
+데이터베이스는 공백을 신경 쓰지 않습니다. 사람은 신경 씁니다. 비교해보겠습니다:
+
+```sql
+select u.id,u.name,o.total from users u inner join orders o on u.id=o.user_id where o.status='completed' and o.total>100 order by o.total desc limit 50;
+```
+
+vs.
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  o.total
+FROM users u
+INNER JOIN orders o ON u.id = o.user_id
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+ORDER BY o.total DESC
+LIMIT 50;
+```
+
+두 번째 쿼리는 의도가 명확하게 드러납니다. 컬럼 목록, JOIN 조건, 필터, 정렬 순서가 각각 시각적으로 구분되어 버그를 찾거나 정확성을 확인하는 데 몇 분이 아닌 몇 초면 됩니다.
+
+### 코드 리뷰
+
+SQL은 애플리케이션 코드 안에 문자열 리터럴, ORM 원시 쿼리, 마이그레이션 파일로 존재하는 경우가 많습니다. 코드 리뷰에서는 JOIN 조건 검증, 인덱스 확인, N+1 패턴 발견이 필요합니다. 포매팅되지 않은 SQL이 포함된 diff는 제대로 리뷰하기가 사실상 불가능합니다. 포매팅된 SQL은 리뷰어가 구문 분석 대신 로직에 집중할 수 있게 해줍니다.
+
+### 팀 협업
+
+일관된 포매팅은 diff를 유의미하게 만듭니다. 두 개발자가 같은 스토어드 프로시저를 수정할 때 스타일이 통일되어 있으면 의도한 변경사항만 diff에 나타납니다. SQL 포매팅을 표준화한 팀은 스타일 논쟁에 드는 시간을 줄이고 실제 데이터베이스 설계에 집중할 수 있습니다.
+
+## SQL 포매팅 규칙
+
+### 키워드: 항상 대문자
+
+SQL 키워드(`SELECT`, `FROM`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `HAVING`, `LIMIT`)는 대문자로 작성합니다. 식별자(테이블명, 컬럼명)는 데이터베이스 관례에 맞춥니다(일반적으로 소문자 + 언더스코어).
+
+```sql
+-- 잘못된 예
+select id, created_at from users where active = true;
+
+-- 올바른 예
+SELECT id, created_at FROM users WHERE active = TRUE;
+```
+
+### 컬럼당 한 줄
+
+`SELECT` 절에서는 각 컬럼을 일관된 들여쓰기로 별도 줄에 작성합니다. 컬럼 추가·삭제·순서 변경이 쉬워지고 diff도 깔끔해집니다.
+
+```sql
+SELECT
+  u.id,
+  u.name,
+  u.email,
+  u.created_at
+FROM users u
+```
+
+### 서브쿼리 들여쓰기
+
+중첩 쿼리는 부모 쿼리로부터 2~4 스페이스 들여씁니다:
+
+```sql
+SELECT
+  id,
+  name,
+  (
+    SELECT COUNT(*)
+    FROM orders
+    WHERE orders.user_id = users.id
+  ) AS order_count
+FROM users;
+```
+
+### JOIN 정렬
+
+각 JOIN을 별도 줄에 작성하고, ON 조건은 들여쓰거나 정렬합니다:
+
+```sql
+SELECT
+  u.name,
+  p.title,
+  c.name AS category
+FROM users u
+INNER JOIN posts p ON p.author_id = u.id
+INNER JOIN categories c ON c.id = p.category_id
+WHERE u.active = TRUE;
+```
+
+### 긴 WHERE 절
+
+여러 조건으로 필터링할 때는 각 조건을 새 줄에 작성하고 논리 연산자(`AND`/`OR`)를 줄 앞에 놓습니다:
+
+```sql
+WHERE
+  o.status = 'completed'
+  AND o.total > 100
+  AND o.created_at >= '2025-01-01'
+  AND u.country IN ('US', 'CA', 'GB')
+```
+
+`AND`/`OR`를 줄 끝이 아닌 줄 앞에 두면 디버깅 중 개별 조건을 주석 처리하기 쉽습니다.
+
+## 에디터에서 SQL 포매팅하기
+
+### VS Code
+
+마켓플레이스에서 **SQLTools** 확장 또는 **sql-formatter**를 설치합니다:
+
+- 선택 영역 포매팅: `Cmd+K Cmd+F`(Mac) / `Ctrl+K Ctrl+F`(Windows)
+- 전체 파일 포매팅: `Shift+Alt+F`
+
+프로젝트 전체 일관성을 위해 Prettier와 `prettier-plugin-sql`을 설정합니다:
+
+```json
+// .prettierrc
+{
+  "plugins": ["prettier-plugin-sql"],
+  "language": "sql",
+  "keywordCase": "upper",
+  "indentStyle": "standard",
+  "logicalOperatorNewline": "before"
+}
+```
+
+### JetBrains(DataGrip, IntelliJ, PyCharm)
+
+JetBrains IDE는 SQL 포매팅 기능이 내장되어 있습니다. 코드 재포매팅: `Cmd+Alt+L`(Mac) / `Ctrl+Alt+L`(Windows). **Settings → Editor → Code Style → SQL**에서 설정할 수 있습니다.
+
+DataGrip은 MySQL·PostgreSQL·Oracle 방언별 포매팅도 지원합니다.
+
+### 커맨드라인
+
+스크립팅이나 CI 파이프라인에서는 `sql-formatter-cli`로 일괄 포매팅할 수 있습니다:
+
+```bash
+npm install -g sql-formatter
+
+# 파일을 제자리에서 포매팅
+sql-formatter -l postgresql -o query.sql query.sql
+
+# stdin에서 포매팅
+cat query.sql | sql-formatter -l mysql
+```
+
+## 온라인에서 SQL 포매팅하기
+
+아무것도 설치하지 않고 즉석 포매팅이 필요할 때는 [ZeroTool의 SQL 포매터](/tools/sql-formatter)가 브라우저 안에서 처리합니다. SQL(`SELECT`, `INSERT`, `CREATE TABLE`, 스토어드 프로시저, 복잡한 멀티 JOIN 쿼리)을 붙여넣으면 바로 포매팅된 결과를 얻을 수 있습니다.
+
+기능:
+- 키워드 대문자 변환
+- 일관된 들여쓰기
+- JOIN 정렬
+- 서브쿼리 중첩
+- MySQL, PostgreSQL, SQLite, 표준 SQL 구문 지원
+
+**[SQL 즉시 포매팅하기 →](/tools/sql-formatter)**
+
+## 자주 사용하는 SQL 패턴
+
+### CTE(공통 테이블 표현식)
+
+CTE는 이름, 컬럼 목록(있는 경우), 본문이 모두 읽기 쉽도록 포매팅합니다:
+
+```sql
+WITH monthly_revenue AS (
+  SELECT
+    DATE_TRUNC('month', created_at) AS month,
+    SUM(amount) AS revenue
+  FROM orders
+  WHERE status = 'completed'
+  GROUP BY 1
+),
+previous_month AS (
+  SELECT
+    month,
+    revenue,
+    LAG(revenue) OVER (ORDER BY month) AS prev_revenue
+  FROM monthly_revenue
+)
+SELECT
+  month,
+  revenue,
+  prev_revenue,
+  ROUND((revenue - prev_revenue) / prev_revenue * 100, 2) AS growth_pct
+FROM previous_month
+ORDER BY month DESC;
+```
+
+### FROM 절의 서브쿼리
+
+```sql
+SELECT
+  dept,
+  avg_salary
+FROM (
+  SELECT
+    department AS dept,
+    AVG(salary) AS avg_salary
+  FROM employees
+  GROUP BY department
+) AS dept_stats
+WHERE avg_salary > 75000
+ORDER BY avg_salary DESC;
+```
+
+### CASE 표현식
+
+여러 분기가 있는 CASE 문은 일관된 정렬이 중요합니다:
+
+```sql
+SELECT
+  id,
+  name,
+  CASE
+    WHEN age < 18 THEN 'minor'
+    WHEN age BETWEEN 18 AND 64 THEN 'adult'
+    ELSE 'senior'
+  END AS age_group
+FROM users;
+```
+
+### INSERT ... SELECT
+
+```sql
+INSERT INTO order_archive (
+  id,
+  user_id,
+  total,
+  created_at
+)
+SELECT
+  id,
+  user_id,
+  total,
+  created_at
+FROM orders
+WHERE created_at < '2024-01-01';
+```
+
+INSERT 컬럼 목록과 SELECT 컬럼 목록을 정렬하면 대응 관계를 바로 확인할 수 있습니다.
+
+## 팀 SQL 스타일 가이드 만들기
+
+팀에서는 SQL 스타일을 짧은 문서로 정리하면 모호함을 없앨 수 있습니다. 표준화할 주요 결정 사항:
+
+- 키워드 케이스(거의 모든 팀이 대문자 사용)
+- 들여쓰기 크기(2스페이스 또는 4스페이스)
+- 테이블 별칭 전략(이니셜 vs 약식 이름)
+- 쉼표 위치(줄 앞 vs 줄 끝)
+- SELECT에서 모든 컬럼에 별칭을 붙일지 여부
+
+대부분의 팀은 포매터를 도입하고 설정 파일로 규칙을 정의합니다. CI에서 자동으로 일관성을 보장할 수 있기 때문입니다.
+
+**[SQL 즉시 포매팅하기 →](/tools/sql-formatter)**

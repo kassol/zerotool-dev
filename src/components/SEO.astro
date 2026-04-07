@@ -1,4 +1,6 @@
 ---
+import { getCollection } from 'astro:content';
+
 interface Props {
   title: string;
   description: string;
@@ -28,6 +30,10 @@ const canonical = canonicalUrl ?? new URL(Astro.url.pathname, siteUrl).toString(
 const ogImageUrl = ogImage
   ? new URL(ogImage, siteUrl).toString()
   : new URL('/og-default.png', siteUrl).toString();
+
+// Build a set of existing blog slugs for hreflang existence checks
+const blogEntries = await getCollection('blog');
+const blogSlugs = new Set(blogEntries.map((e) => e.slug));
 ---
 
 <!-- Primary Meta -->
@@ -56,18 +62,33 @@ const ogImageUrl = ogImage
 <!-- hreflang alternates for i18n -->
 {(() => {
   const pathname = Astro.url.pathname;
-  const isBlogPost = /^\/(zh\/|ja\/)?blog\/[^/]+/.test(pathname);
-  const isZh = lang === 'zh';
+  const isBlogPost = /^\/(zh|ja|ko)\/blog\/[^/]+/.test(pathname) || /^\/blog\/[^/]+/.test(pathname);
 
   if (isBlogPost && translationSlug) {
-    // Blog post with a known translation counterpart
-    const enUrl = new URL(`/blog/${isZh ? translationSlug : pathname.replace(/^\/(zh\/)?blog\//, '').replace(/\/$/, '')}/`, siteUrl).toString();
-    const zhUrl = new URL(`/zh/blog/${isZh ? pathname.replace(/^\/zh\/blog\//, '').replace(/\/$/, '') : translationSlug}/`, siteUrl).toString();
-    return [
-      <link rel="alternate" hreflang="en" href={enUrl} />,
-      <link rel="alternate" hreflang="zh" href={zhUrl} />,
-      <link rel="alternate" hreflang="x-default" href={enUrl} />,
-    ];
+    // Derive the EN base slug from translationSlug
+    // EN posts: translationSlug = "<base>-zh", so base = translationSlug without -zh
+    // ZH/JA/KO posts: translationSlug = EN base slug directly
+    const enBaseSlug = lang === 'en' ? translationSlug.replace(/-zh$/, '') : translationSlug;
+
+    // Convention-based slug map
+    const slugMap: Record<string, { slug: string; prefix: string }> = {
+      en: { slug: enBaseSlug, prefix: '/blog' },
+      zh: { slug: `${enBaseSlug}-zh`, prefix: '/zh/blog' },
+      ja: { slug: `${enBaseSlug}-ja`, prefix: '/ja/blog' },
+      ko: { slug: `${enBaseSlug}-ko`, prefix: '/ko/blog' },
+    };
+
+    const links: any[] = [];
+    for (const [hreflang, { slug, prefix }] of Object.entries(slugMap)) {
+      if (blogSlugs.has(slug)) {
+        links.push(<link rel="alternate" hreflang={hreflang} href={new URL(`${prefix}/${slug}/`, siteUrl).toString()} />);
+      }
+    }
+    // x-default always points to EN if it exists
+    if (blogSlugs.has(enBaseSlug)) {
+      links.push(<link rel="alternate" hreflang="x-default" href={new URL(`/blog/${enBaseSlug}/`, siteUrl).toString()} />);
+    }
+    return links;
   } else if (isBlogPost) {
     // Blog post without translation — self-referencing only
     const selfUrl = new URL(pathname, siteUrl).toString();
