@@ -1,0 +1,291 @@
+---
+title: "XML 포매터 완전 가이드: XML 정렬·검증 방법"
+description: "XML 문서를 정렬·검증하는 방법을 설명합니다. XML 구문·네임스페이스·CDATA·SOAP 디버깅부터 코드에서의 XML 처리까지 실무 중심으로 안내합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "xml-formatter-guide"
+tags: ["xml", "xml-formatter", "xml-validator", "developer-tools"]
+---
+
+XML은 어디에나 있습니다. SOAP 웹 서비스, Android 매니페스트, Maven 빌드 설정, RSS 피드, SVG 그래픽, 수많은 레거시 엔터프라이즈 시스템을 구동합니다. 새로운 API에서는 JSON이 주류이지만, XML은 구조화된 문서, 주석이 필요한 설정 파일, 공식 스키마가 중요한 시스템에서는 여전히 선택받는 포맷입니다.
+
+[XML 즉시 정렬·검증하기 →](/tools/xml-formatter)
+
+## XML이란
+
+XML(eXtensible Markup Language)은 중첩된 태그를 사용하여 구조화된 데이터를 표현하는 텍스트 기반 포맷입니다. HTML과 달리 XML에는 미리 정의된 태그가 없으며 자체 스키마를 정의합니다.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<order id="12345">
+  <customer>
+    <name>Alice Zhao</name>
+    <email>alice@example.com</email>
+  </customer>
+  <items>
+    <item sku="A001" qty="2">
+      <name>Mechanical Keyboard</name>
+      <price currency="USD">149.99</price>
+    </item>
+  </items>
+  <status>shipped</status>
+</order>
+```
+
+**XML vs JSON 한눈에 비교:**
+
+| 기능 | XML | JSON |
+|---------|-----|------|
+| 사람이 읽기 | 장황하지만 읽을 수 있음 | 간결함 |
+| 주석 | 지원(`<!-- -->`) | 미지원 |
+| 속성 | 있음(요소에 부여) | 없음(키만 있음) |
+| 스키마 검증 | XSD, DTD, RelaxNG | JSON Schema |
+| 네임스페이스 | 내장 | 내장 아님 |
+| 바이너리 데이터 | Base64 / CDATA | 문자열로 |
+| 일반적인 용도 | 문서, 설정, SOAP | REST API, 설정 |
+
+XML은 JSON보다 장황하지만 그 장황함이 메타데이터를 담습니다. 속성, 네임스페이스, 주석은 JSON으로 네이티브하게 표현할 수 없습니다.
+
+## XML 구문 규칙
+
+### 요소와 태그
+
+모든 XML 문서는 정확히 하나의 루트 요소를 가져야 합니다. 태그는 대소문자를 구분합니다. 모든 여는 태그에는 대응하는 닫는 태그가 필요합니다.
+
+```xml
+<!-- 올바름 -->
+<root>
+  <child>value</child>
+</root>
+
+<!-- 잘못됨: 여러 루트 요소 -->
+<root1></root1>
+<root2></root2>
+```
+
+### 속성
+
+속성은 여는 태그 내부에 있으며 따옴표로 묶어야 합니다(작은따옴표 또는 큰따옴표, 일관되게 사용):
+
+```xml
+<element id="42" class="primary" visible="true" />
+```
+
+빈 요소의 자기 닫힘 태그(`/>`)는 유효합니다.
+
+### 특수 문자와 CDATA
+
+요소 내용과 속성 값에서 이스케이프가 필요한 다섯 가지 문자:
+
+| 문자 | 이스케이프 시퀀스 |
+|-----------|----------------|
+| `<`       | `&lt;`          |
+| `>`       | `&gt;`          |
+| `&`       | `&amp;`         |
+| `"`       | `&quot;`        |
+| `'`       | `&apos;`        |
+
+특수 문자가 많은 블록(SQL, 코드, HTML 조각)에는 CDATA 섹션을 사용합니다:
+
+```xml
+<query><![CDATA[
+  SELECT * FROM users WHERE name = 'Alice' AND age > 18;
+]]></query>
+```
+
+`<![CDATA[`와 `]]>` 사이의 모든 것은 마크업이 아닌 리터럴 텍스트로 처리됩니다.
+
+### 네임스페이스
+
+네임스페이스는 XML 어휘를 결합할 때 요소 이름 충돌을 방지합니다. `xmlns`로 선언합니다:
+
+```xml
+<root
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Envelope>
+    <soap:Body>...</soap:Body>
+  </soap:Envelope>
+</root>
+```
+
+네임스페이스 URI는 단순한 고유 식별자로, 실제로 접근 가능한 URL일 필요는 없습니다.
+
+### XML 선언
+
+XML 파일 맨 위의 선택적이지만 권장되는 프롤로그:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+```
+
+문서에 비 ASCII 문자가 포함된 경우 반드시 `encoding="UTF-8"`을 선언하세요.
+
+## 자주 발생하는 XML 오류
+
+### 닫힌 태그 누락
+
+```xml
+<!-- 오류: <name>이 닫히지 않음 -->
+<person>
+  <name>Alice
+  <age>30</age>
+</person>
+```
+
+### 태그 불일치
+
+```xml
+<!-- 오류: <b>를 열고 </i>로 닫음 -->
+<b>bold text</i>
+```
+
+### 불법 문자
+
+요소 내용에 있는 `<`와 `&`는 XML 파서를 중단시킵니다:
+
+```xml
+<!-- 오류: &를 &amp;로 해야 함 -->
+<company>AT&T</company>
+
+<!-- 올바름 -->
+<company>AT&amp;T</company>
+```
+
+### 여러 루트 요소
+
+```xml
+<!-- 오류: 두 개의 루트 레벨 요소 -->
+<record>...</record>
+<record>...</record>
+```
+
+수정: 부모 요소로 감싸거나 `<records>`를 루트로 사용하세요.
+
+### 인용 부호 없는 속성 값
+
+```xml
+<!-- 오류 -->
+<element id=42>
+
+<!-- 올바름 -->
+<element id="42">
+```
+
+## XML vs JSON
+
+둘 다 널리 사용되지만 각기 다른 강점이 있습니다:
+
+**XML을 선택할 때:**
+- 설정 파일에 인라인 주석이 필요할 때
+- 레거시 시스템(SOAP, EDI, SAP)을 다룰 때
+- 공식 스키마 검증(XSD)이 필요할 때
+- 문서에 혼합 콘텐츠가 있을 때(XHTML 같은 텍스트 + 인라인 마크업)
+- SVG, RSS/Atom 피드, Office Open XML 문서를 생성할 때
+
+**JSON을 선택할 때:**
+- REST API를 구축할 때
+- 소비자가 JavaScript 프런트엔드일 때
+- 페이로드 크기를 최소화하고 싶을 때
+- 스키마 검증이 선택 사항이거나 앱 레이어에서 처리할 때
+
+많은 모던 시스템은 둘 다 허용합니다. Kubernetes는 YAML/JSON을 지원하고, 일부 엔터프라이즈 API는 SOAP(XML)와 REST(JSON) 엔드포인트를 모두 제공합니다.
+
+## 코드에서 XML 다루기
+
+### JavaScript(브라우저와 Node.js)
+
+```javascript
+// XML 문자열 파싱
+const parser = new DOMParser();
+const doc = parser.parseFromString(xmlString, 'application/xml');
+
+// 파싱 오류 확인
+const error = doc.querySelector('parsererror');
+if (error) {
+  console.error('XML parse error:', error.textContent);
+}
+
+// 요소 읽기
+const name = doc.querySelector('customer name')?.textContent;
+const price = doc.querySelector('price')?.textContent;
+
+// XPath로 탐색
+const result = doc.evaluate(
+  '//item[@sku="A001"]/price',
+  doc,
+  null,
+  XPathResult.STRING_TYPE,
+  null
+);
+console.log(result.stringValue); // "149.99"
+```
+
+Node.js에서는 `fast-xml-parser`나 `xml2js` 패키지를 사용합니다:
+
+```javascript
+import { XMLParser } from 'fast-xml-parser';
+
+const parser = new XMLParser({ ignoreAttributes: false });
+const result = parser.parse(xmlString);
+console.log(result.order.customer.name); // "Alice Zhao"
+```
+
+### Python
+
+Python 표준 라이브러리에는 `xml.etree.ElementTree`가 포함되어 있습니다:
+
+```python
+import xml.etree.ElementTree as ET
+
+tree = ET.parse('order.xml')
+root = tree.getroot()
+
+# 요소 찾기
+customer = root.find('customer')
+print(customer.find('name').text)  # Alice Zhao
+
+# 아이템 순회
+for item in root.findall('items/item'):
+    print(item.get('sku'), item.find('price').text)
+
+# XPath 유사 쿼리
+prices = root.findall('.//price[@currency="USD"]')
+```
+
+대용량 파일에서는 iterparse 방식을 사용하여 전체 문서를 메모리에 로드하는 것을 피합니다:
+
+```python
+for event, elem in ET.iterparse('large.xml', events=('end',)):
+    if elem.tag == 'record':
+        process(elem)
+        elem.clear()  # 메모리 해제
+```
+
+### Java
+
+```java
+DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+factory.setNamespaceAware(true);
+DocumentBuilder builder = factory.newDocumentBuilder();
+Document doc = builder.parse(new File("order.xml"));
+
+// XPath
+XPath xpath = XPathFactory.newInstance().newXPath();
+String name = xpath.evaluate("//customer/name", doc); // Alice Zhao
+
+// 네임스페이스 인식 팩토리로 네임스페이스 안전 처리
+NodeList items = doc.getElementsByTagNameNS("*", "item");
+```
+
+## XML을 온라인에서 정렬·검증하기
+
+축소되거나 손으로 작성된 XML은 읽기 어렵고 디버깅하기 힘듭니다. [ZeroTool의 XML 포매터](/tools/xml-formatter)는 적절한 들여쓰기로 XML을 보기 좋게 출력하고, 구문 오류를 강조하며 구조적 문제를 잡아냅니다. 데이터는 어디에도 전송되지 않습니다.
+
+활용 사례:
+- API에서 받은 잘못된 SOAP 응답 디버깅
+- 버전 관리에 커밋하기 전 축소된 XML 설정 보기 좋게 출력
+- IDE 없이 Android 매니페스트나 Maven `pom.xml` 빠른 검증
+- RSS 피드나 Atom 내보내기 검사
+
+**[XML 즉시 정렬하기 →](/tools/xml-formatter)**

@@ -1,0 +1,168 @@
+---
+title: "URLスラッグジェネレーター：SEOフレンドリーなスラッグの作り方と注意点"
+description: "URLスラッグとは何か、SEOへの影響、Unicode・スペース・特殊文字を含む文字列のスラッグ化をオンラインで行う方法を解説。プログラムでの実装も紹介。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "slugify-guide"
+tags: ["slugify", "url-slug", "seo", "developer-tools"]
+---
+
+URLスラッグは特定のページを識別するURLの人間が読める部分です。スラッグを正しく設定することはSEO、可読性、リンクの安定性にとって重要です。このガイドでは、スラッグの生成の仕組み、Unicodeのようなエッジケース、プログラムで文字列をスラッグ化する方法を解説します。
+
+## URLスラッグとは
+
+`https://example.com/blog/how-to-slugify-a-string` というURLの場合、スラッグは `how-to-slugify-a-string` です。スラッグは：
+
+- 小文字
+- ハイフン区切り（スペースやアンダースコアは不使用）
+- 特殊文字なし（`!`、`@`、`#` など）
+- 短く説明的
+
+優れたスラッグはユーザーがページを訪れる前にその関連性を伝えるため、クリック率が向上します。
+
+## スラッグがSEOに重要な理由
+
+検索エンジンはURL構造を読みます。`/product/1234` はGoogleに何も伝えませんが、`/product/mechanical-keyboard-rgb` はそのページが特定の製品についてだと伝えます。主要なルール：
+
+- 可能であれば**プライマリキーワードをスラッグに含める**
+- **短くする** — Googleは検索結果で長いURLを切り詰める
+- **a、the、andのような機能語を避ける** — 意味を追加しない場合
+- **アンダースコアではなくハイフンを使う** — Googleはハイフンを単語区切りとして扱い、アンダースコアは単語結合として扱います（`this_is_one_word` vs `this-is-two-words`）
+- **公開後は301リダイレクトなしにスラッグを変更しない** — 壊れたリンクはSEO価値を失います
+
+## スラッグ化の仕組み
+
+標準的なスラッグ化パイプライン：
+
+1. **小文字化** — `"Hello World"` → `"hello world"`
+2. **Unicode正規化** — 文字を基本形に分解（`é` → `e` + 結合アクセント）
+3. **非ASCIIの除去または音訳** — `"café"` → `"cafe"`、`"über"` → `"uber"`
+4. **スペースとセパレーターをハイフンに置換**
+5. **残りの特殊文字を削除** — `[a-z0-9-]` のみ残す
+6. **複数のハイフンを折りたたむ** — `"hello--world"` → `"hello-world"`
+7. **先頭と末尾のハイフンを削除** — `"-hello-"` → `"hello"`
+
+### 変換例
+
+| 入力 | 出力 |
+|-------|--------|
+| `Hello World` | `hello-world` |
+| `What's New in 2024?` | `whats-new-in-2024` |
+| `café au lait` | `cafe-au-lait` |
+| `C++ Programming` | `c-programming` |
+| `  spaces   everywhere  ` | `spaces-everywhere` |
+| `日本語` | *（削除 — ASCII相当なし）* |
+
+中国語、日本語、その他のCJK文字は基本的なASCIIのみスラッグ化では通常削除されます。多言語コンテンツには、CJKをローマ字化しようとするのではなく、URL構造に言語プレフィックスを含めてください（`/ja/tools/slugify`）。
+
+## コードでスラッグ化する
+
+### JavaScript
+
+```js
+function slugify(text) {
+  return text
+    .normalize('NFD')                         // アクセント文字を分解
+    .replace(/[\u0300-\u036f]/g, '')          // 結合アクセントを削除
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')            // 英数字以外を削除
+    .replace(/[\s_-]+/g, '-')                 // スペース/ハイフンを折りたたむ
+    .replace(/^-+|-+$/g, '');                 // ハイフンをトリム
+}
+
+slugify('Hello, World!')        // "hello-world"
+slugify('café au lait')        // "cafe-au-lait"
+slugify('  extra  spaces  ')   // "extra-spaces"
+```
+
+本番環境では、より広いUnicode音訳を処理する [`slugify`](https://www.npmjs.com/package/slugify) npmパッケージの使用を検討してください。
+
+### Python
+
+```python
+import re
+import unicodedata
+
+def slugify(text: str) -> str:
+    text = unicodedata.normalize('NFD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_-]+', '-', text)
+    text = re.sub(r'^-+|-+$', '', text)
+    return text
+
+print(slugify('Hello, World!'))   # hello-world
+print(slugify('café au lait'))    # cafe-au-lait
+```
+
+Djangoには独自バージョンが含まれています：`from django.utils.text import slugify`。
+
+### Go
+
+```go
+import (
+    "regexp"
+    "strings"
+    "golang.org/x/text/unicode/norm"
+    "golang.org/x/text/transform"
+)
+
+func slugify(s string) string {
+    // アクセントを正規化して削除
+    t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
+        return r >= '\u0300' && r <= '\u036f'
+    }))
+    result, _, _ := transform.String(t, s)
+
+    result = strings.ToLower(result)
+    re := regexp.MustCompile(`[^a-z0-9\s-]`)
+    result = re.ReplaceAllString(result, "")
+    re2 := regexp.MustCompile(`[\s-]+`)
+    result = re2.ReplaceAllString(result, "-")
+    return strings.Trim(result, "-")
+}
+```
+
+## オンラインスラッグツールの使い方
+
+**[ZeroTool スラッグ化ツールを試す →](/tools/slugify)**
+
+任意のテキストを貼り付けると、即座にURL安全なスラッグが得られます。役立つ場面：
+
+- 公開前のブログ記事や製品ページのスラッグ生成
+- 不一致な命名を持つインポートコンテンツのバッチクリーニング
+- CMSやフレームワークの組み込みスラッグ化が期待する出力と一致するか確認
+- コンテンツ移行中の素早いサニティチェック
+
+サインアップ不要、レート制限なし — 計算はブラウザで実行されます。
+
+## 一般的なエッジケース
+
+### アポストロフィと所有格
+
+`"John's Guide"` → `"john-s-guide"` ではなく `"johns-guide"` になるべきです。単語セパレーターを置換する前にアポストロフィを削除してください。
+
+### 数値とバージョン
+
+`"Node.js 20.0"` → `"nodejs-200"` （ドットが削除される）。バージョン番号が重要な場合は、入力に `"node-js-v20"` を使用するか、ドットを特別に処理してください。
+
+### 全Unicode入力
+
+入力全体がCJKやアラビア語の場合、除去後に出力は空文字列になります。スラッグジェネレーターが空でない結果を生成することを常に検証し、必要に応じて数値IDにフォールバックしてください。
+
+### 末尾スラッシュ
+
+一部のフレームワークは末尾スラッシュを追加します（`/blog/my-post/`）。早い段階で規約を決め、重複コンテンツのインデックスを避けるために301リダイレクトで強制してください。
+
+## スラッグのベストプラクティスチェックリスト
+
+- 小文字、ハイフン区切りのみ
+- プライマリキーワードを含める（ただしキーワードの詰め込みはしない）
+- 合計75文字以内
+- キーワードフレーズの一部でない限り機能語を除く
+- スラッグに日付を含めない（時間が経つと古くなり、管理の負担が増える）
+- スラッグを変更したら即座に301リダイレクト
+
+**[ZeroToolで即座にURL安全なスラッグを生成 →](/tools/slugify)**

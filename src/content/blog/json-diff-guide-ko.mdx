@@ -1,0 +1,250 @@
+---
+title: "JSON Diff 온라인: 두 JSON을 비교하여 변경 사항을 즉시 파악"
+description: "JSON 차이점을 브라우저에서 즉시 확인. 텍스트 diff와의 차이·RFC 6902 JSON Patch·설정 드리프트 감지·API 응답 비교 등 실용적인 사용 사례를 코드 예제와 함께 설명합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "json-diff-guide"
+tags: ["json", "diff", "json-patch", "api-testing", "developer-tools"]
+---
+
+JSON은 현대 개발 어디에나 존재합니다. API 응답·설정 파일·기능 플래그·데이터베이스 레코드. 두 JSON 문서가 달라졌을 때 눈으로 차이를 찾는 것은 오류가 생기기 쉽고 시간도 많이 걸립니다. JSON diff 도구는 데이터의 구조를 이해하고 무엇이 바뀌었는지 정확하게 보여줍니다. 추가된 키·제거된 키·변경된 값.
+
+## JSON Diff와 텍스트 Diff의 차이
+
+표준 텍스트 diff(`git diff` 등)는 파일을 줄 단위로 비교합니다. JSON에서는 의미 변경을 가리는 노이즈가 발생합니다:
+
+**텍스트 diff 출력:**
+
+```diff
+-  "timeout": 30,
+-  "retries": 3
++  "timeout": 60,
++  "retries": 3
+```
+
+작동은 하지만, JSON이 최소화되거나 재포맷되거나 키 순서가 바뀌면 텍스트 diff는 무용지물이 됩니다. 도구가 다른 키 순서로 JSON을 직렬화하면, 값이 변한 것이 없어도 모든 키가 변경된 것으로 표시됩니다.
+
+**JSON 인식 diff 출력:**
+
+```
+~ timeout: 30 → 60
+```
+
+JSON diff는 문서 구조를 이해합니다. 비교 전에 공백과 키 순서를 정규화하므로 실제 의미 변경만 표시됩니다.
+
+## JSON 구조를 온라인으로 비교하기
+
+**[ZeroTool JSON Diff 사용해보기 →](/tools/json-diff)**
+
+두 JSON 문서를 붙여 넣으면 구조화된 diff를 즉시 얻을 수 있습니다:
+- 추가된 키는 초록색으로 하이라이트
+- 제거된 키는 빨간색으로 하이라이트
+- 변경된 값은 이전 값과 새 값을 나란히 표시
+
+데이터가 서버로 전송되지 않습니다. 비교는 완전히 브라우저 내에서 실행됩니다.
+
+## 감지할 수 있는 변경 유형
+
+JSON diff는 세 가지 유형의 변경을 식별합니다:
+
+**추가:** 새 문서에는 있지만 이전 문서에는 없는 키.
+```json
+// 이전
+{ "name": "Alice" }
+
+// 이후
+{ "name": "Alice", "role": "admin" }
+
+// 차이: + role: "admin"
+```
+
+**제거:** 이전 문서에는 있지만 새 문서에는 없는 키.
+```json
+// 이전
+{ "name": "Alice", "legacy_id": 12345 }
+
+// 이후
+{ "name": "Alice" }
+
+// 차이: - legacy_id: 12345
+```
+
+**변경:** 둘 다에 있지만 값이 바뀐 키.
+```json
+// 이전
+{ "status": "pending" }
+
+// 이후
+{ "status": "active" }
+
+// 차이: ~ status: "pending" → "active"
+```
+
+중첩된 객체와 배열 내부의 변경도 재귀적으로 감지됩니다.
+
+## 실용적인 사용 사례
+
+### API 응답 비교
+
+API 회귀를 디버깅할 때, 수정 전후의 응답을 비교합니다:
+
+```bash
+# 수정 전 저장
+curl https://api.example.com/users/1 > before.json
+
+# 수정 배포 후 저장
+curl https://api.example.com/users/1 > after.json
+
+# 비교
+jq --argjson a "$(cat before.json)" --argjson b "$(cat after.json)" \
+  -n '$a == $b'
+```
+
+JSON diff 도구는 구조적 차이를 명확하게 보여줍니다. API 변경으로 의도하지 않은 필드 제거나 타입 변경이 발생하지 않았는지 검토하는 데 유용합니다.
+
+### 설정 드리프트 감지
+
+인프라 관리에서 설정 드리프트는 흔한 문제입니다. 실행 중인 설정이 원하는 상태에서 벗어납니다. 의도한 설정(Git에서)과 실제 설정(API나 CLI 내보내기에서)을 비교하면 드리프트가 드러납니다:
+
+```bash
+# 현재 Kubernetes ConfigMap 내보내기
+kubectl get configmap my-app -o json | jq '.data' > live.json
+
+# 버전 관리된 설정과 비교
+# JSON diff: live.json과 config/my-app.json
+```
+
+### 기능 플래그 감사
+
+기능 플래그 시스템은 플래그가 전환될 때마다 변하는 JSON 페이로드를 저장합니다. 환경 간(스테이징과 프로덕션) 또는 시간을 걸쳐 플래그 상태를 diff하면 릴리스 전에 무엇이 바뀌었는지 감사할 수 있습니다.
+
+### 데이터베이스 레코드 변경
+
+감사 로그를 구현할 때, 전체 문서를 복사하는 대신 각 레코드 업데이트에서 변경된 부분의 JSON diff를 저장합니다. 이렇게 하면 공간 효율이 높아지고 감사 쿼리가 빨라집니다.
+
+## RFC 6902: JSON Patch
+
+RFC 6902는 JSON diff를 작업 시퀀스로 표현하는 표준 형식을 정의합니다. JSON Patch 문서는 배열입니다:
+
+```json
+[
+  { "op": "replace", "path": "/status", "value": "active" },
+  { "op": "add", "path": "/role", "value": "admin" },
+  { "op": "remove", "path": "/legacy_id" }
+]
+```
+
+작업 종류:
+- `add` — 키 추가 또는 배열에 삽입
+- `remove` — 키 또는 배열 요소 삭제
+- `replace` — 기존 값 변경
+- `move` — 값을 다른 경로로 이동
+- `copy` — 값을 다른 경로에 복사
+- `test` — 값 어서트(조건부 패치에 사용)
+
+JSON Patch는 클라이언트가 부분 업데이트를 설명하려는 경우 HTTP `PATCH` 요청에서 사용됩니다:
+
+```http
+PATCH /api/users/123
+Content-Type: application/json-patch+json
+
+[
+  { "op": "replace", "path": "/email", "value": "newemail@example.com" }
+]
+```
+
+이것은 `PUT` 요청으로 전체 문서를 보내는 것보다 효율적입니다.
+
+### 코드로 JSON Patch 적용하기
+
+```js
+// Node.js — 'jsonpatch' 라이브러리 사용
+import jsonpatch from 'fast-json-patch';
+
+const doc = { name: "Alice", status: "pending" };
+const patch = [
+  { op: "replace", path: "/status", value: "active" },
+  { op: "add", path: "/role", value: "admin" }
+];
+
+const result = jsonpatch.applyPatch(doc, patch).newDocument;
+// { name: "Alice", status: "active", role: "admin" }
+```
+
+```python
+# Python — jsonpatch 사용
+import jsonpatch
+
+doc = {"name": "Alice", "status": "pending"}
+patch = jsonpatch.JsonPatch([
+    {"op": "replace", "path": "/status", "value": "active"},
+    {"op": "add", "path": "/role", "value": "admin"}
+])
+
+result = patch.apply(doc)
+# {"name": "Alice", "status": "active", "role": "admin"}
+```
+
+## Diff에서 JSON Patch 생성하기
+
+두 문서 간의 최소 패치를 계산할 수 있습니다:
+
+```js
+import jsonpatch from 'fast-json-patch';
+
+const before = { name: "Alice", status: "pending", legacy_id: 12345 };
+const after  = { name: "Alice", status: "active", role: "admin" };
+
+const patch = jsonpatch.compare(before, after);
+// [
+//   { op: "replace", path: "/status", value: "active" },
+//   { op: "remove", path: "/legacy_id" },
+//   { op: "add", path: "/role", value: "admin" }
+// ]
+```
+
+감사 로그 생성·낙관적 동시성 제어 구현·협업 편집 시스템 구축에 유용합니다.
+
+## 배열의 Diff
+
+JSON의 배열은 순서가 있어 diff에 모호함이 생깁니다. 다음 예시를 생각해봅시다:
+
+```json
+// 이전: ["a", "b", "c"]
+// 이후:  ["a", "c", "d"]
+```
+
+`"b"`가 제거되고 `"d"`가 추가된 것일까요? 아니면 `"b"`가 `"c"`로 바뀌고 `"c"`가 `"d"`로 바뀐 것일까요? 답은 diff 알고리즘의 의미론에 따라 다릅니다.
+
+**위치 기반 diff**는 배열 요소를 인덱스로 처리합니다. 인덱스 1의 요소가 `"b"`에서 `"c"`로, 인덱스 2가 `"c"`에서 `"d"`로 바뀌었습니다.
+
+**집합 기반 diff**는 배열을 집합으로 처리합니다. `"b"`가 제거되고, `"d"`가 추가되었으며, `"a"`와 `"c"`는 변하지 않았습니다.
+
+식별자가 있는 객체 배열(`[{"id": 1, ...}, {"id": 2, ...}]`)의 경우, 좋은 diff 도구는 위치가 아닌 ID로 매칭하여 더 깔끔하고 의미 있는 diff를 생성합니다.
+
+## 커맨드라인 JSON Diff
+
+터미널에서 빠르게 비교하려면:
+
+```bash
+# jq + diff 사용
+diff <(jq -S . before.json) <(jq -S . after.json)
+# -S는 키를 정렬하여 비교 전에 키 순서를 정규화
+
+# Python 사용
+python3 -c "
+import json, sys
+a = json.load(open('before.json'))
+b = json.load(open('after.json'))
+print('equal' if a == b else 'different')
+"
+```
+
+더 깊은 구조적 diff의 경우:
+
+```bash
+npm install -g json-diff
+json-diff before.json after.json
+```
+
+**[JSON 문서를 즉시 비교하기 →](/tools/json-diff)**

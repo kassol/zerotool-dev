@@ -1,0 +1,198 @@
+---
+title: "URLパーサー完全ガイド：URLを構成要素に分解して理解する"
+description: "URLをプロトコル・ホスト・パス・クエリパラメーター・フラグメントに分解する方法を解説。APIデバッグ・リダイレクト追跡・セキュリティレビューへの実践的な活用法も紹介。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "url-parser-guide"
+tags: ["url parser", "parse url", "url decoder", "query string", "developer-tools"]
+---
+
+URLは一見シンプルに見えます。しかし`https://api.example.com:8443/v2/search?q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid#results`のようなURLを目にすると、各部分が何をしているのか正確に把握したくなります。URLパーサーはURLを分解し、パーセントエンコーディングを頭の中でデコードする必要なく、各コンポーネントを検査できます。
+
+## URLの解剖
+
+すべてのURLはRFC 3986で定義された標準的な構造に従います：
+
+```
+scheme://[userinfo@]host[:port]/path[?query][#fragment]
+```
+
+上記の例を分解すると：
+
+| コンポーネント | 値 |
+|-----------|-------|
+| スキーム | `https` |
+| ホスト | `api.example.com` |
+| ポート | `8443` |
+| パス | `/v2/search` |
+| クエリ文字列 | `q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid` |
+| フラグメント | `results` |
+
+**[ZeroToolでURLをすぐに解析する →](/tools/url-parser)**
+
+URLを貼り付けると、スキーム・オーソリティ・ホスト・ポート・パスセグメント・デコードされたクエリパラメーター・フラグメントがすべて分かれて表示されます。パーセントエンコードされたクエリパラメーターは自動的にデコードされます。
+
+## コンポーネントの詳細
+
+### スキーム
+
+スキームはプロトコルを指定します。主なスキーム：
+
+| スキーム | 用途 |
+|--------|-------|
+| `https` | セキュアHTTP |
+| `http` | 非暗号化HTTP（本番環境では非推奨） |
+| `ws` / `wss` | WebSocket |
+| `ftp` | ファイル転送 |
+| `mailto` | メールリンク |
+| `data` | インラインデータURI |
+| `blob` | ブラウザオブジェクトURL |
+
+### オーソリティ：ユーザー情報・ホスト・ポート
+
+オーソリティコンポーネントは`[userinfo@]host[:port]`です。
+
+**ユーザー情報**（`user:password@host`）は現代のURLではほとんど使われず、セキュリティリスクとして扱われています。URLの認証情報はサーバーログに記録されてしまいます。
+
+**ホスト**はドメイン名・IPv4アドレス・IPv6アドレス（角括弧必須：`[::1]`）になります。パーサーはサブドメイン構造を解決します。`api.v2.example.com`のサブドメインは`api.v2`、ドメインは`example.com`、TLDは`.com`です。
+
+**ポート**はオプションです。省略した場合、デフォルトが使われます。HTTPSは443、HTTPは80。明示的にデフォルトポートを指定することは（HTTPSで`:443`）有効ですが冗長です。
+
+### パス
+
+パスはリソースを識別します。パスセグメントは`/`で区切られます。先頭と末尾のスラッシュは意味を持ちます。`/api/users`と`/api/users/`はフレームワークによって異なるルーティングになる場合があります。
+
+パスパラメーター（`/users/:id`の`:id`）はURL仕様の一部ではなく、ルーティングの慣習です。URLパーサーはリテラルのパスを表示し、ルーターがパターンを解釈します。
+
+### クエリ文字列
+
+クエリ文字列は`?`以降`#`以前のすべてです。`&`で区切られた`key=value`ペアの列です。
+
+**パーセントエンコーディング**：URLで許可されていない文字は`%XX`（`XX`は16進コード）としてエンコードされます。主な例：
+
+| 文字 | エンコード |
+|-----------|---------|
+| スペース | `%20`または`+` |
+| `[` | `%5B` |
+| `]` | `%5D` |
+| `#` | `%23` |
+| `@` | `%40` |
+| `/` | `%2F` |
+| `=` | `%3D` |
+
+スペースを`+`でエンコードするのは`application/x-www-form-urlencoded`形式（HTMLフォーム）に特有です。モダンなAPIでは`%20`が推奨されます。
+
+**繰り返しキー**：`filter%5B%5D=active&filter%5B%5D=paid`は`filter[]=active&filter[]=paid`にデコードされます。PHP・Rails・多くのフレームワークは繰り返しキーを配列として解釈します。
+
+### フラグメント
+
+フラグメント（`#results`）はサーバーに送信されません。ブラウザだけが処理し、通常はそのIDを持つ要素にスクロールします。SPAはハッシュベースルーターでクライアントサイドルーティングにフラグメントを使用します。
+
+## URLパーサーが実際に必要な場面
+
+### APIデバッグ
+
+ネットワークインスペクターからURLをコピーしてきました。エンコードされたクエリパラメーター・珍しいポートがあり、末尾の`#`がフラグメントなのかタイポなのか分かりません。パーサーに貼り付けると各コンポーネントが明確になります。
+
+### リダイレクトチェーンの分析
+
+リダイレクトチェーンを追跡しています。チェーン内の各URLにパラメーターがあり、それらを比較する必要があります。各URLをパースすることで差異が明確になります。
+
+### セキュリティレビュー
+
+長いURLにはクエリパラメーターに認証情報・内部ホスト名・エンコードされたペイロードが含まれていることがあります。URLをコンポーネントに分解することでこれらが見えやすくなります。クエリパラメーターの`token=eyJ...`やユーザー情報の`admin:password@internal.host`を発見できます。
+
+### プログラムによるURL構築
+
+コードでURLを構築する際、各コンポーネントの正しいエンコーディングを理解することでバグを防げます：
+
+```javascript
+// 誤り — クエリ値はエンコードが必要
+const url = `https://api.example.com/search?q=${userInput}`;
+
+// 正しい
+const url = new URL('https://api.example.com/search');
+url.searchParams.set('q', userInput);  // 自動でエンコード
+```
+
+## コードでのURL解析
+
+### JavaScript（ブラウザ + Node.js）
+
+`URL` APIはすべてのモダン環境で利用可能です：
+
+```javascript
+const url = new URL('https://api.example.com:8443/v2/search?q=hello+world&page=1#results');
+
+console.log(url.protocol);   // "https:"
+console.log(url.hostname);   // "api.example.com"
+console.log(url.port);       // "8443"
+console.log(url.pathname);   // "/v2/search"
+console.log(url.hash);       // "#results"
+
+// クエリパラメーター
+url.searchParams.get('q');           // "hello world"（デコード済み）
+url.searchParams.get('page');        // "1"
+url.searchParams.getAll('filter[]'); // ["active", "paid"]
+
+// 全パラメーターを反復
+for (const [key, value] of url.searchParams) {
+  console.log(key, value);
+}
+```
+
+### Python
+
+```python
+from urllib.parse import urlparse, parse_qs
+
+raw = "https://api.example.com:8443/v2/search?q=hello+world&page=1&filter[]=active&filter[]=paid#results"
+
+parsed = urlparse(raw)
+print(parsed.scheme)    # https
+print(parsed.hostname)  # api.example.com
+print(parsed.port)      # 8443
+print(parsed.path)      # /v2/search
+print(parsed.fragment)  # results
+
+params = parse_qs(parsed.query)
+print(params['q'])       # ['hello world']
+print(params['filter[]']) # ['active', 'paid']
+```
+
+### Go
+
+```go
+import (
+    "fmt"
+    "net/url"
+)
+
+func main() {
+    raw := "https://api.example.com:8443/v2/search?q=hello+world&page=1#results"
+    u, _ := url.Parse(raw)
+
+    fmt.Println(u.Scheme)     // https
+    fmt.Println(u.Hostname()) // api.example.com
+    fmt.Println(u.Port())     // 8443
+    fmt.Println(u.Path)       // /v2/search
+    fmt.Println(u.Fragment)   // results
+    fmt.Println(u.Query().Get("q")) // hello world
+}
+```
+
+## よくあるURLのミス
+
+**二重エンコード**：すでにエンコードされたURLを再度エンコードしてしまう。`%20`が`%2520`になります（`%25`は`%`なので、`%2520`はスペースではなく`%20`にデコードされます）。常に生の値をエンコードし、すでにエンコードされた文字列は再エンコードしないでください。
+
+**フラグメントの除外を忘れる**：サーバーがリクエストで`#fragment`を探しても見つかりません。フラグメントはクライアント専用です。
+
+**順序の前提**：クエリパラメーターの順序は保証されていません。`a=1&b=2`と`b=2&a=1`の順序に依存するロジックは作らないでください。
+
+**比較でのポートの欠落**：`https://example.com`と`https://example.com:443`は同じURLですが、文字列比較では異なります。
+
+## まとめ
+
+URLの解析はAPI作業・デバッグ・セキュリティレビューで頻繁に必要になります。構造（スキーム・オーソリティ・パス・クエリ・フラグメント）と各コンポーネントのエンコーディングを理解することで、バグを防ぎデバッグ時間を節約できます。
+
+**[URLをすぐに解析・デコードする — 各コンポーネントを即座に確認 →](/tools/url-parser)**

@@ -1,0 +1,189 @@
+---
+title: "テキスト差分チェック完全ガイド：diffの仕組みとオンラインツールの使い分け"
+description: "2つのテキスト・ファイル・コードスニペットを即座に比較。diffアルゴリズムの仕組み、unified diff形式の読み方、コードレビューでの活用法をわかりやすく解説。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "diff-checker-guide"
+tags: ["diff", "compare-text", "code-review", "developer-tools", "text-diff"]
+---
+
+テキストの比較は開発者の日常業務です——2つの設定ファイルの変更点を探す、コミット前のコードをレビューする、シリアライズされたペイロードが期待値と一致しない理由を調査する。このガイドでは、diffの仕組み・その出力の読み方・オンラインdiffチェッカーがコマンドラインより優れている場面を解説します。
+
+## テキストdiffとは
+
+diff（differenceの略）は、一方のテキストをもう一方に変換するために必要な最小限の変更セットを示します。結果は追加・削除・変更なしの行をハイライトします。
+
+標準的な形式は**unified diff**で、Gitが `git diff` に使用しています：
+
+```diff
+--- a/config.yaml
++++ b/config.yaml
+@@ -3,7 +3,7 @@
+ server:
+   host: localhost
+-  port: 8080
++  port: 9090
+   debug: false
+```
+
+`-` で始まる行は削除された行、`+` の行は追加された行、マークなしの行はコンテキストです。
+
+## diffアルゴリズムの仕組み
+
+ほとんどのdiffツールは**Myersのdiffアルゴリズム**（1986年）の変種を使用します。これは2つのシーケンス間の最短編集スクリプトを見つけるアルゴリズムです。最長共通部分列（LCS）問題を解くことで——共通の部分列が長いほど必要な編集が少なくなります。
+
+実際には：
+
+```
+テキストA: "the quick brown fox"
+テキストB: "the slow brown dog"
+
+LCS: "the brown"   (両方に共通)
+Diff:
+  the          (変更なし)
+- quick        (削除)
++ slow         (追加)
+  brown        (変更なし)
+- fox          (削除)
++ dog          (追加)
+```
+
+Gitはファイル比較にデフォルトで**histogram diff**という変種を使用します。ユニークな行をアンカーとして優先するため、コードに対してより読みやすい出力を生成します。
+
+## コマンドラインでのdiff
+
+### diff
+
+`diff` コマンドはLinux/macOSの任意のシステムで使えます：
+
+```bash
+diff file1.txt file2.txt
+
+# unified形式（git diffと同じ）
+diff -u file1.txt file2.txt
+
+# 空白の違いを無視
+diff -w file1.txt file2.txt
+
+# 並べて比較
+diff -y file1.txt file2.txt
+```
+
+### git diff
+
+gitリポジトリ内のコードには：
+
+```bash
+# ステージされていない変更
+git diff
+
+# ステージされた変更（コミットされるもの）
+git diff --staged
+
+# 2つのコミット間のdiff
+git diff abc123 def456
+
+# ブランチ間のdiff
+git diff main..feature-branch
+
+# 変更ファイル名のみ表示
+git diff --name-only
+
+# 単語レベルのdiff（行ではなく個々の単語をハイライト）
+git diff --word-diff
+```
+
+## unified diff形式の読み方
+
+unified diff形式はコンパクトですが、ヘッダーの解析方法を知る必要があります：
+
+```diff
+--- a/src/app.js          # 元のファイル
++++ b/src/app.js          # 変更後のファイル
+@@ -10,6 +10,8 @@        # ハンクヘッダー
+ function init() {        # コンテキスト行（変更なし）
+   const config = load(); # コンテキスト行
+-  start(config);         # 削除された行
++  validate(config);      # 追加された行
++  start(config);         # 追加された行
+ }                        # コンテキスト行
+```
+
+ハンクヘッダー `@@ -10,6 +10,8 @@` の意味：
+- `-10,6` — 元のファイルの10行目から6行を表示
+- `+10,8` — 変更後のファイルの10行目から8行を表示
+
+`+` カウントが `-` カウントより大きければ行が追加された、小さければ削除されたことを意味します。
+
+## オンラインdiffチェッカーを使う場面
+
+コマンドラインは強力ですが、特定のタスクでは摩擦があります：
+
+**設定ファイルの比較：** 異なる環境からコピーされたYAMLまたはJSONの設定ファイルが2つある。両方をブラウザに貼り付けるほうが、一時ファイルを作って `diff` を実行するより速いです。
+
+**APIレスポンスの確認：** JSONレスポンスが参照値と一致するか確認したい。両方をdiffチェッカーに貼り付けると、不一致をすぐに特定できます——不足フィールド・型の不一致・余分な空白。
+
+**ログのレビュー：** タイムスタンプやトレースIDがわずかに異なる2つのログファイルは、目視での行ごとの比較が困難です。ビジュアルdiffが意味的な違いをハイライトします。
+
+**非開発者との差分の共有：** `git diff` の出力は読めますが見た目が悪い。並列サイドバイサイド比較はミーティングでの説明が楽です。
+
+**[ZeroToolのオンラインdiffチェッカーを試す →](/tools/diff-checker)**
+
+サイドバイサイドのパネルに2つのテキストを貼り付けると、差分がインラインでハイライトされます——追加は緑、削除は赤。サインアップ不要、データはサーバーに送信されません。
+
+## コードレビューワークフローでのdiff
+
+プルリクエストレビューでdiffがどう使われるかを理解することで、クリーンなdiffを書けるようになります：
+
+**空白のノイズを減らす：** フォーマット変更のコミットとロジック変更を分けてください。インデント修正とロジック変更が混在したdiffはレビューが困難です。
+
+**アトミックなコミット：** 各コミットは1つの論理的なことを変更すべきです。適切にスコープされたdiffは明確なストーリーを伝えます——レビュアーは意図を再構築するのではなく、それに従うことができます。
+
+**大きなdiffの分割：** PRに40ファイルの変更がある場合、一部の変更が独立して別のPRにできないか検討してください。
+
+## プログラムによるdiff
+
+アプリケーション内にdiff出力が必要な場合：
+
+### JavaScript（diffライブラリ）
+
+```js
+import { diffWords, diffLines } from 'diff';
+
+const a = 'The quick brown fox';
+const b = 'The slow brown dog';
+
+const result = diffWords(a, b);
+result.forEach(part => {
+  const color = part.added ? 'green' : part.removed ? 'red' : 'grey';
+  console.log(`[${color}] ${part.value}`);
+});
+```
+
+### Python（difflib）
+
+```python
+import difflib
+
+a = ['line 1\n', 'line 2\n', 'line 3\n']
+b = ['line 1\n', 'line 2 changed\n', 'line 3\n']
+
+diff = difflib.unified_diff(a, b, fromfile='before.txt', tofile='after.txt')
+print(''.join(diff))
+```
+
+### Go（go-diff）
+
+```go
+import "github.com/sergi/go-diff/diffmatchpatch"
+
+dmp := diffmatchpatch.New()
+diffs := dmp.DiffMain("Hello World", "Hello Go", false)
+fmt.Println(dmp.DiffPrettyText(diffs))
+```
+
+## まとめ
+
+Diffはソフトウェア開発で最も基本的な操作の一つです。コマンドラインでは `git diff` と `diff -u` がほとんどのニーズをカバーします。ターミナルを開かずにクイックなビジュアル比較には、オンラインdiffチェッカーが最速の手段です。
+
+**[ZeroToolで2つのテキストを即座に比較 →](/tools/diff-checker)** — サイドバイサイド・シンタックスハイライト・アカウント不要。

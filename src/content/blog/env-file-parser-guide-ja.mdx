@@ -1,0 +1,288 @@
+---
+title: ".envファイルをオンラインで解析・検証する完全ガイド"
+description: ".envファイルの構文ルール・よくあるミス・各言語でのパース方法を解説。ブラウザ上でキーバリュー確認・構文チェック・JSON変換まで即座に実行できます。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "env-file-parser-guide"
+tags: ["env file", "dotenv", "environment variables", "developer-tools", "env file parser"]
+---
+
+`.env` ファイルはモダン開発で最も広く使われるファイルの一つです。Twelve-Factor App に従うほぼすべてのプロジェクトが利用しています。ただし `.env` には正式な仕様がなく、クォートの漏れ・余分なスペース・重複キーといった微妙な構文ミスは、実行時エラーが発生するまで気づきにくいものです。**オンライン env ファイルパーサー**を使えば、サーバーへのアップロードもツールのセットアップも不要でファイルを即座に検証できます。
+
+[今すぐ .env ファイルを解析する →](/tools/env-file-parser)
+
+## .env ファイルとは
+
+`.env` ファイルはプレーンテキストのキーバリューペアとして環境変数を保存します。この慣習は Node.js 向け [dotenv](https://github.com/motdotla/dotenv) ライブラリが普及させたもので、現在はほぼすべての言語エコシステムに広がっています。
+
+```bash
+# アプリケーション設定
+APP_NAME=MyApp
+APP_ENV=production
+APP_PORT=3000
+
+# データベース
+DATABASE_URL=postgres://user:password@localhost:5432/mydb
+DATABASE_POOL_SIZE=10
+
+# API キー
+STRIPE_SECRET_KEY=sk_live_...
+SENDGRID_API_KEY=SG.xxxxxxxx
+```
+
+`python-dotenv`・`godotenv`・`dotenv-java` などのライブラリは起動時にこれらの値を読み込み、`process.env`（Node.js）や `os.environ`（Python）に注入します。
+
+## .env の構文ルール
+
+シンプルに見えますが、`.env` には実装によって異なる複数の構文ルールがあります。
+
+### 基本のキーバリュー
+
+```bash
+KEY=value
+```
+
+`=` の前後にスペースを入れません。キーは慣例的に `UPPER_SNAKE_CASE` ですが、小文字も有効です。
+
+### クォート付きの値
+
+スペース・特殊文字を含む値や、前後の空白を保持したい場合はクォートを使います。
+
+```bash
+APP_DESCRIPTION="My awesome application"
+GREETING='Hello, World!'
+```
+
+シングルクォートとダブルクォートはどちらも有効です。ダブルクォートは `\n`・`\t`・`\"` などのエスケープシーケンスをサポートします。
+
+### 複数行の値
+
+ダブルクォートで囲んだ値は複数行にまたがれます。
+
+```bash
+PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA...
+-----END RSA PRIVATE KEY-----"
+```
+
+### コメント
+
+`#` で始まる行はコメントです。インラインコメントは一部の実装でサポートされています。
+
+```bash
+# これはコメント
+PORT=8080  # このインラインコメントは一部のライブラリで解析される
+```
+
+### 変数展開
+
+一部の dotenv ライブラリは変数展開をサポートしています。
+
+```bash
+BASE_URL=https://api.example.com
+API_ENDPOINT=${BASE_URL}/v1
+```
+
+### export 構文
+
+シェル互換のための `export` プレフィックスはほとんどのパーサーでサポートされています。
+
+```bash
+export DATABASE_URL=postgres://localhost/mydb
+```
+
+## よくある .env の構文ミス
+
+テキストエディタでは見えないにもかかわらず、実行時エラーを引き起こすミスです。
+
+**= の前後にスペースを入れる**
+
+```bash
+# NG — ほとんどのパーサーが "KEY " をキー名として扱う
+KEY = value
+
+# OK
+KEY=value
+```
+
+**特殊文字を含む値をクォートしない**
+
+```bash
+# NG — # がコメントの開始と見なされ値が途中で切れる
+PASSWORD=abc#123
+
+# OK
+PASSWORD="abc#123"
+```
+
+**重複キー**
+
+```bash
+DATABASE_URL=postgres://dev-host/mydb
+DATABASE_URL=postgres://prod-host/mydb  # 最初の値が警告なしに上書きされる
+```
+
+**Windows スタイルの改行コード（CRLF）**
+
+Windows で作成した `.env` ファイルは `\r\n` 改行を含むことがあります。対応していないパーサーでは `KEY\r` というキー名になり、`KEY\r !== KEY` の比較ミスが起きます。
+
+**= を含む値をクォートしない**
+
+```bash
+# NG — パーサーによっては2つ目の = で値が切れる
+API_KEY=abc=def=ghi
+
+# OK
+API_KEY="abc=def=ghi"
+```
+
+## コードで .env をパースする
+
+### Node.js（dotenv）
+
+```bash
+npm install dotenv
+```
+
+```javascript
+require('dotenv').config();
+
+// process.env.KEY として利用可能
+console.log(process.env.DATABASE_URL);
+```
+
+ES モジュールの場合：
+
+```javascript
+import 'dotenv/config';
+console.log(process.env.DATABASE_URL);
+```
+
+### Python（python-dotenv）
+
+```bash
+pip install python-dotenv
+```
+
+```python
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # カレントディレクトリの .env を読み込む
+
+database_url = os.getenv('DATABASE_URL')
+```
+
+環境変数に読み込まず、プログラム的にパースするには：
+
+```python
+from dotenv import dotenv_values
+
+config = dotenv_values(".env")
+print(config)  # OrderedDict のキーバリューペア
+```
+
+### Go（godotenv）
+
+```bash
+go get github.com/joho/godotenv
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/joho/godotenv"
+)
+
+func main() {
+    err := godotenv.Load()
+    if err != nil {
+        log.Fatal("Error loading .env file")
+    }
+    fmt.Println(os.Getenv("DATABASE_URL"))
+}
+```
+
+### Shell（bash）
+
+```bash
+# .env のすべての変数を現在のシェルにエクスポート
+set -a
+source .env
+set +a
+```
+
+## .env のベストプラクティス
+
+**`.env` をバージョン管理にコミットしない。** すぐに `.gitignore` に追加し、代わりにプレースホルダー値を含む `.env.example` をコミットします。
+
+```bash
+# .gitignore
+.env
+.env.local
+.env.production
+```
+
+**環境ごとにファイルを分ける。** 多くのフレームワークは `.env.development`・`.env.production`・`.env.test` をサポートし、`NODE_ENV` に基づいて自動読み込みします。
+
+**起動時に必須変数を検証する。** [envalid](https://github.com/af/envalid)（Node.js）や [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)（Python）のようなライブラリで環境変数のスキーマを定義し、必須値が欠けている場合に早期にクラッシュさせます。
+
+```javascript
+// envalid の例
+import { cleanEnv, str, port, url } from 'envalid';
+
+const env = cleanEnv(process.env, {
+  DATABASE_URL: url(),
+  APP_PORT: port({ default: 3000 }),
+  NODE_ENV: str({ choices: ['development', 'test', 'production'] }),
+});
+```
+
+**シークレットを定期的にローテーションする。** `.env` には API キーや DB 認証情報が含まれます。機密情報として扱い、特にチームメンバーが離れる際に定期的にローテーションしてください。
+
+## .env を JSON にエクスポートする
+
+`.env` を JSON に変換すると便利な場面：
+
+- JSON を期待するツールへの設定渡し（AWS Lambda、Terraform `var-file`）
+- 環境間の設定比較
+- CI/CD パイプラインでの設定ドキュメント化
+
+```python
+from dotenv import dotenv_values
+import json
+
+config = dotenv_values(".env")
+print(json.dumps(dict(config), indent=2))
+```
+
+出力例：
+
+```json
+{
+  "APP_NAME": "MyApp",
+  "APP_ENV": "production",
+  "APP_PORT": "3000",
+  "DATABASE_URL": "postgres://user:password@localhost:5432/mydb"
+}
+```
+
+すべての値は JSON 文字列として出力されます。`.env` には型システムがなく、型の変換はアプリケーション層で行います。
+
+## オンライン .env ファイルパーサー
+
+コードを書かずに素早く確認・デバッグ・変換したい場合、[ZeroTool の env ファイルパーサー](/tools/env-file-parser)はすべてブラウザ内で動作します。`.env` の内容を貼り付けるだけで：
+
+- キーバリューペアをクリーンなテーブルで視覚化
+- 行単位のハイライトで構文エラーを検出
+- 重複キーを検出
+- 解析データを JSON にエクスポート
+
+データはいかなるサーバーにも送信されず、すべてクライアントサイドで処理されます。
+
+**[env ファイルパーサーを試す →](/tools/env-file-parser)**

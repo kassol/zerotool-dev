@@ -1,0 +1,291 @@
+---
+title: "XMLフォーマッター完全ガイド：XMLを整形・検証する方法"
+description: "XMLドキュメントを整形・バリデーションする方法を解説。XML構文・名前空間・CDATA・SOAPデバッグからコードでの操作まで実践的に説明します。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "xml-formatter-guide"
+tags: ["xml", "xml-formatter", "xml-validator", "developer-tools"]
+---
+
+XMLはあらゆる場所に存在します。SOAPウェブサービス・Androidマニフェスト・Mavenのビルド設定・RSSフィード・SVGグラフィックス・多くのレガシーエンタープライズシステムを動かしています。新しいAPIではJSONが主流ですが、XMLは構造化ドキュメント・コメントが必要な設定ファイル・フォーマルなスキーマが重要なシステムでは依然として選ばれるフォーマットです。
+
+[XMLをすぐに整形・検証する →](/tools/xml-formatter)
+
+## XMLとは
+
+XML（eXtensible Markup Language）はネストされたタグを使って構造化データを表現するテキストベースのフォーマットです。HTMLとは異なり、XMLには事前定義されたタグはなく、独自のスキーマを定義します。
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<order id="12345">
+  <customer>
+    <name>Alice Zhao</name>
+    <email>alice@example.com</email>
+  </customer>
+  <items>
+    <item sku="A001" qty="2">
+      <name>Mechanical Keyboard</name>
+      <price currency="USD">149.99</price>
+    </item>
+  </items>
+  <status>shipped</status>
+</order>
+```
+
+**XML vs JSON の概観：**
+
+| 機能 | XML | JSON |
+|---------|-----|------|
+| 人間による可読性 | 冗長だが読める | 簡潔 |
+| コメント | サポートあり（`<!-- -->`） | サポートなし |
+| 属性 | あり（要素に付加） | なし（キーのみ） |
+| スキーマ検証 | XSD・DTD・RelaxNG | JSON Schema |
+| 名前空間 | 組み込み | 組み込みなし |
+| バイナリデータ | Base64 / CDATAを使用 | 文字列として |
+| 典型的な用途 | ドキュメント・設定・SOAP | REST API・設定 |
+
+XMLはJSONより冗長ですが、その冗長さがメタデータを運びます。属性・名前空間・コメントはJSONでネイティブに表現できません。
+
+## XMLの構文ルール
+
+### 要素とタグ
+
+すべてのXMLドキュメントはちょうど1つのルート要素を持たなければなりません。タグは大文字小文字を区別します。すべての開始タグには対応する終了タグが必要です。
+
+```xml
+<!-- 正しい -->
+<root>
+  <child>value</child>
+</root>
+
+<!-- 誤り: 複数のルート要素 -->
+<root1></root1>
+<root2></root2>
+```
+
+### 属性
+
+属性は開始タグの内部にあり、引用符で囲む必要があります（シングルまたはダブルクォート、一貫して使用）：
+
+```xml
+<element id="42" class="primary" visible="true" />
+```
+
+空要素の自己閉じタグ（`/>`）は有効です。
+
+### 特殊文字とCDATA
+
+要素の内容と属性値の中でエスケープが必要な5つの文字：
+
+| 文字 | エスケープシーケンス |
+|-----------|----------------|
+| `<`       | `&lt;`          |
+| `>`       | `&gt;`          |
+| `&`       | `&amp;`         |
+| `"`       | `&quot;`        |
+| `'`       | `&apos;`        |
+
+特殊文字が多いブロック（SQL・コード・HTMLフラグメント）にはCDATAセクションを使用します：
+
+```xml
+<query><![CDATA[
+  SELECT * FROM users WHERE name = 'Alice' AND age > 18;
+]]></query>
+```
+
+`<![CDATA[`と`]]>`の間はすべてマークアップではなくリテラルテキストとして扱われます。
+
+### 名前空間
+
+名前空間はXML語彙を組み合わせる際の要素名の衝突を防ぎます。`xmlns`で宣言します：
+
+```xml
+<root
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Envelope>
+    <soap:Body>...</soap:Body>
+  </soap:Envelope>
+</root>
+```
+
+名前空間のURIは単なる一意識別子で、解決可能なURLである必要はありません。
+
+### XML宣言
+
+XMLファイルの先頭にあるオプションだが推奨されるプロローグ：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+```
+
+ドキュメントに非ASCII文字が含まれる場合は必ず`encoding="UTF-8"`を宣言してください。
+
+## よくあるXMLエラー
+
+### 閉じタグの欠落
+
+```xml
+<!-- エラー: <name>が閉じられていない -->
+<person>
+  <name>Alice
+  <age>30</age>
+</person>
+```
+
+### タグの不一致
+
+```xml
+<!-- エラー: <b>を開いて</i>で閉じている -->
+<b>bold text</i>
+```
+
+### 不正な文字
+
+生の`<`と`&`は要素内容の中でXMLパーサーを壊します：
+
+```xml
+<!-- エラー: &を&amp;にする必要がある -->
+<company>AT&T</company>
+
+<!-- 正しい -->
+<company>AT&amp;T</company>
+```
+
+### 複数のルート要素
+
+```xml
+<!-- エラー: 2つのルートレベルの要素 -->
+<record>...</record>
+<record>...</record>
+```
+
+修正：親要素で包むか`<records>`をルートとして使用します。
+
+### 引用符なしの属性値
+
+```xml
+<!-- エラー -->
+<element id=42>
+
+<!-- 正しい -->
+<element id="42">
+```
+
+## XML vs JSON
+
+どちらも広く使われていますが、異なる強みを持ちます：
+
+**XMLを選ぶ場面：**
+- 設定ファイルにインラインコメントが必要
+- レガシーシステム（SOAP・EDI・SAP）を扱っている
+- フォーマルなスキーマ検証（XSD）が必要
+- ドキュメントに混在コンテンツがある（XHTML等のテキスト+インラインマークアップ）
+- SVG・RSS/Atomフィード・Office Open XMLドキュメントを生成している
+
+**JSONを選ぶ場面：**
+- REST APIを構築している
+- コンシューマーがJavaScriptフロントエンド
+- ペイロードサイズを最小化したい
+- スキーマ検証はオプションまたはアプリ層で処理
+
+多くのモダンシステムは両方を受け入れます。KubernetesはYAML/JSONをサポートし、一部のエンタープライズAPIはSOAP（XML）とREST（JSON）の両方のエンドポイントを提供しています。
+
+## コードでXMLを扱う
+
+### JavaScript（ブラウザとNode.js）
+
+```javascript
+// XML文字列のパース
+const parser = new DOMParser();
+const doc = parser.parseFromString(xmlString, 'application/xml');
+
+// パースエラーの確認
+const error = doc.querySelector('parsererror');
+if (error) {
+  console.error('XML parse error:', error.textContent);
+}
+
+// 要素の読み取り
+const name = doc.querySelector('customer name')?.textContent;
+const price = doc.querySelector('price')?.textContent;
+
+// XPathでのナビゲーション
+const result = doc.evaluate(
+  '//item[@sku="A001"]/price',
+  doc,
+  null,
+  XPathResult.STRING_TYPE,
+  null
+);
+console.log(result.stringValue); // "149.99"
+```
+
+Node.jsでは`fast-xml-parser`や`xml2js`パッケージを使用します：
+
+```javascript
+import { XMLParser } from 'fast-xml-parser';
+
+const parser = new XMLParser({ ignoreAttributes: false });
+const result = parser.parse(xmlString);
+console.log(result.order.customer.name); // "Alice Zhao"
+```
+
+### Python
+
+Pythonの標準ライブラリには`xml.etree.ElementTree`が含まれています：
+
+```python
+import xml.etree.ElementTree as ET
+
+tree = ET.parse('order.xml')
+root = tree.getroot()
+
+# 要素の検索
+customer = root.find('customer')
+print(customer.find('name').text)  # Alice Zhao
+
+# アイテムの反復
+for item in root.findall('items/item'):
+    print(item.get('sku'), item.find('price').text)
+
+# XPath的なクエリ
+prices = root.findall('.//price[@currency="USD"]')
+```
+
+大容量ファイルにはitersparseアプローチを使い、ドキュメント全体のメモリロードを避けます：
+
+```python
+for event, elem in ET.iterparse('large.xml', events=('end',)):
+    if elem.tag == 'record':
+        process(elem)
+        elem.clear()  # メモリを解放
+```
+
+### Java
+
+```java
+DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+factory.setNamespaceAware(true);
+DocumentBuilder builder = factory.newDocumentBuilder();
+Document doc = builder.parse(new File("order.xml"));
+
+// XPath
+XPath xpath = XPathFactory.newInstance().newXPath();
+String name = xpath.evaluate("//customer/name", doc); // Alice Zhao
+
+// 名前空間対応のファクトリで名前空間を安全に処理
+NodeList items = doc.getElementsByTagNameNS("*", "item");
+```
+
+## XMLをオンラインで整形・検証する
+
+ミニファイされたXMLや手書きのXMLは読みにくくデバッグしにくいです。[ZeroToolのXMLフォーマッター](/tools/xml-formatter)は適切なインデントでXMLをプリティプリントし、構文エラーをハイライトして構造的な問題を検出します。データはどこにも送信されません。
+
+活用場面：
+- APIからの不正なSOAPレスポンスのデバッグ
+- バージョン管理にコミットする前にミニファイされたXML設定をプリティプリント
+- IDEを開かずにAndroidマニフェストやMavenの`pom.xml`を素早く検証
+- RSSフィードやAtomエクスポートの確認
+
+**[XMLをすぐに整形する →](/tools/xml-formatter)**

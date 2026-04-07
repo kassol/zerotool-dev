@@ -1,0 +1,280 @@
+---
+title: "JSONからZodスキーマを自動生成：TypeScriptランタイムバリデーションの実践"
+description: "JSONを貼り付けてZodスキーマを即生成。Zodの仕組み・parse vs safeParse・APIレスポンス検証・tRPC・React Hook Form・環境変数バリデーションの実装パターンを解説。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "json-to-zod-guide"
+tags: ["zod", "json to zod", "typescript validation", "zod schema", "developer-tools"]
+---
+
+TypeScript の型システムはコンパイル時にエラーを検出しますが、API レスポンスはランタイムに届きます。Zod はその橋渡しをします。ランタイムデータの形状と型を検証し、同じスキーマから TypeScript の型を推論します。複雑な JSON 構造の Zod スキーマを手書きするのは時間がかかります。JSON to Zod ジェネレーターは任意の JSON サンプルから完全な編集可能なスキーマを数秒で生成します。
+
+## Zod とは
+
+Zod は TypeScript ファーストのスキーマ宣言・バリデーションライブラリです。`any` を返す `JSON.parse()` とは異なり、Zod は：
+
+- データが期待される形状にマッチするか検証する
+- スキーマから TypeScript の型を推論する（型定義の重複なし）
+- 詳細な構造化されたエラーメッセージを生成する
+- Node.js とブラウザの両方で動作する
+
+```ts
+import { z } from 'zod'
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+  role: z.enum(['admin', 'user', 'guest'])
+})
+
+type User = z.infer<typeof UserSchema>
+// 等価: { id: number; name: string; email: string; role: 'admin' | 'user' | 'guest' }
+
+const result = UserSchema.safeParse(apiResponse)
+if (result.success) {
+  console.log(result.data.name) // string として型付けされている
+} else {
+  console.error(result.error.issues)
+}
+```
+
+## JSON to Zod：変換の仕組み
+
+次の JSON サンプルを与えると：
+
+```json
+{
+  "id": 42,
+  "name": "Alice",
+  "email": "alice@example.com",
+  "age": 28,
+  "active": true,
+  "tags": ["admin", "beta"],
+  "address": {
+    "street": "123 Main St",
+    "city": "Portland",
+    "zip": "97201"
+  },
+  "metadata": null
+}
+```
+
+ジェネレーターは次を生成します：
+
+```ts
+import { z } from 'zod'
+
+const Schema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+  age: z.number(),
+  active: z.boolean(),
+  tags: z.array(z.string()),
+  address: z.object({
+    street: z.string(),
+    city: z.string(),
+    zip: z.string()
+  }),
+  metadata: z.null()
+})
+
+export type Schema = z.infer<typeof Schema>
+```
+
+このスキーマは出発点です。実際のビジネスルールに基づいて洗練させましょう（後のセクションを参照）。
+
+## Zod バリデーションの使いどころ
+
+### API レスポンスバリデーション
+
+```ts
+// Zod なし — any 型付け、ランタイム保証なし
+const user = (await fetch('/api/user').then(r => r.json())) as User
+
+// Zod あり — 検証済みかつ型付け済み
+const UserSchema = z.object({ id: z.number(), name: z.string() })
+
+async function fetchUser(id: number) {
+  const raw = await fetch(`/api/users/${id}`).then(r => r.json())
+  return UserSchema.parse(raw) // 形状が合わない場合は ZodError をスロー
+}
+```
+
+### tRPC と Next.js API ルート
+
+```ts
+// tRPC プロシージャの入力バリデーション
+import { z } from 'zod'
+import { publicProcedure } from '../trpc'
+
+const createUserInput = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
+  role: z.enum(['admin', 'user']).default('user')
+})
+
+export const createUser = publicProcedure
+  .input(createUserInput)
+  .mutation(async ({ input }) => {
+    // input は { name: string; email: string; role: 'admin' | 'user' } として型付けされている
+    return db.users.create(input)
+  })
+```
+
+### React Hook Form でのフォームバリデーション
+
+```ts
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+
+const formSchema = z.object({
+  username: z.string().min(3, '3文字以上必要'),
+  password: z.string().min(8, '8文字以上必要'),
+  confirmPassword: z.string()
+}).refine(data => data.password === data.confirmPassword, {
+  message: "パスワードが一致しません",
+  path: ['confirmPassword']
+})
+
+type FormData = z.infer<typeof formSchema>
+
+function SignupForm() {
+  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+    resolver: zodResolver(formSchema)
+  })
+  // ...
+}
+```
+
+### 環境変数バリデーション
+
+```ts
+import { z } from 'zod'
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().url(),
+  PORT: z.coerce.number().int().positive().default(3000),
+  NODE_ENV: z.enum(['development', 'production', 'test']),
+  API_SECRET: z.string().min(32)
+})
+
+export const env = envSchema.parse(process.env)
+// 必須の環境変数が欠落または不正な場合、起動時に明確なエラーでクラッシュ
+```
+
+## 生成されたスキーマの洗練
+
+ジェネレーターは JSON の値から型を推論しますが、JSON ではすべての Zod の制約を表現できません。以下のものは手動で追加してください：
+
+### 文字列フォーマット
+
+```ts
+// 生成されたもの
+email: z.string()
+
+// 洗練させたもの
+email: z.string().email()
+url: z.string().url()
+uuid: z.string().uuid()
+isoDate: z.string().datetime()
+```
+
+### 数値制約
+
+```ts
+// 生成されたもの
+age: z.number()
+
+// 洗練させたもの
+age: z.number().int().min(0).max(150)
+price: z.number().positive()
+quantity: z.number().int().nonnegative()
+```
+
+### オプショナルと必須フィールド
+
+JSON サンプルは存在する値のみを示します。フィールドが欠如する可能性がある場合：
+
+```ts
+// 生成されたもの（サンプルに存在するフィールド）
+nickname: z.string()
+
+// 洗練させたもの
+nickname: z.string().optional()        // undefined を許可
+nickname: z.string().nullable()        // null を許可
+nickname: z.string().nullish()         // null または undefined を許可
+```
+
+### ユニオンと列挙型
+
+フィールドが複数の型を持てる場合：
+
+```ts
+// サンプルでの status は "active"
+status: z.string()
+
+// すべての可能な値を確認してから洗練
+status: z.enum(['active', 'inactive', 'pending', 'archived'])
+
+// または異なる形状のユニオン
+result: z.union([
+  z.object({ success: z.literal(true), data: DataSchema }),
+  z.object({ success: z.literal(false), error: z.string() })
+])
+```
+
+### 混合型の配列
+
+```ts
+// [1, "hello", true] のような混合配列
+items: z.array(z.union([z.number(), z.string(), z.boolean()]))
+```
+
+## JSON サンプルの `null` 値の処理
+
+JSON フィールドが `null` のとき、ジェネレーターは `z.null()` を生成します。実際には `null` はフィールドが nullable であることを意味することが多く、常に null という意味ではありません：
+
+```ts
+// 生成されたもの
+metadata: z.null()
+
+// より実用的
+metadata: z.string().nullable()        // string | null
+metadata: z.record(z.unknown()).nullable()  // object | null
+```
+
+## parse と safeParse
+
+Zod は異なるエラー処理で2つのパースメソッドを提供します：
+
+| メソッド | 失敗時 | 戻り値 |
+|--------|-------|------|
+| `.parse(data)` | `ZodError` をスロー | バリデート済みデータ |
+| `.safeParse(data)` | `{ success: false, error }` を返す | `{ success, data \| error }` |
+
+起動時（環境変数・設定）には`.parse()` を使い、失敗でクラッシュさせます。API レスポンスやユーザー入力にはエラーを適切に処理したい `.safeParse()` を使います。
+
+```ts
+// parse — 失敗時にスロー
+const config = ConfigSchema.parse(process.env)
+
+// safeParse — エラーを処理
+const result = UserSchema.safeParse(apiResponse)
+if (!result.success) {
+  // result.error.issues に構造化されたエラー詳細が含まれる
+  return { error: result.error.format() }
+}
+// result.data は完全に型付けされている
+return result.data
+```
+
+## ツールを使う
+
+**[JSONからZodスキーマを即座に生成する →](/tools/json-to-zod)**
+
+API レスポンス・Postman コレクション・Swagger のサンプルなど、任意の JSON オブジェクトを貼り付けると動作する Zod スキーマが生成されます。それを出発点として、ドメイン固有の制約を追加してください。
+
+ネストされたオブジェクト・配列・null 値・混合型配列に対応しています。出力には `z.infer` 型エクスポートが含まれているため、別途インターフェースを書かなくても TypeScript の型が得られます。

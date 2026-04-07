@@ -1,0 +1,270 @@
+---
+title: "CSS変数ジェネレーター完全ガイド：カスタムプロパティでテーマシステムを構築"
+description: "CSSカスタムプロパティの構文・スコープ・ダークモード実装・JavaScriptからのアクセスを解説。デザイントークンシステムの構築とオンラインCSS変数ジェネレーターの使い方。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "css-variables-generator-guide"
+tags: ["css variables", "css custom properties", "css variables generator", "css", "developer-tools"]
+---
+
+**オンラインCSS変数ジェネレーター**を使うと、繰り返しの宣言を手で書くことなく、カラー・スペーシング・タイポグラフィなどのデザイントークン用のカスタムプロパティを定義できます。CSSカスタムプロパティ——一般的に「CSS変数」と呼ばれます——はすべてのモダンブラウザでネイティブサポートされており、テーマ対応でメンテナブルなスタイルシートを構築する現代の標準手法となっています。
+
+## CSSカスタムプロパティの構文
+
+構文には「宣言」と「使用」の2つがあります。
+
+**宣言** — ダブルハイフンプレフィックスでプロパティを定義：
+
+```css
+:root {
+  --color-primary: #3b82f6;
+  --color-primary-dark: #2563eb;
+  --spacing-base: 16px;
+  --font-size-lg: 1.125rem;
+  --border-radius: 6px;
+}
+```
+
+**使用** — `var()` でプロパティを参照：
+
+```css
+.button {
+  background-color: var(--color-primary);
+  padding: var(--spacing-base);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-lg);
+}
+```
+
+`var()` 関数は第2引数としてオプションのフォールバックを受け付けます——カスタムプロパティが未定義の場合に使用されます：
+
+```css
+.button {
+  color: var(--color-text, #111827);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+```
+
+フォールバックはチェーンできます（最後の値が静的なフォールバック）：
+
+```css
+.button {
+  color: var(--button-color, var(--color-primary, #3b82f6));
+}
+```
+
+## :rootスコープ vs コンポーネントスコープ
+
+CSSカスタムプロパティは他のCSSプロパティと同様にカスケードと継承が機能します。`:root` はグローバル変数の最高優先度セレクターですが、任意のスコープで変数を定義できます。
+
+### :rootでのグローバルデザイントークン
+
+```css
+:root {
+  /* カラーパレット */
+  --blue-50: #eff6ff;
+  --blue-500: #3b82f6;
+  --blue-900: #1e3a8a;
+
+  /* セマンティックカラートークン */
+  --color-primary: var(--blue-500);
+  --color-background: #ffffff;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+
+  /* スペーシングスケール */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-4: 1rem;
+  --space-8: 2rem;
+
+  /* タイポグラフィ */
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-xl: 1.25rem;
+}
+```
+
+### コンポーネントスコープ変数
+
+コンポーネント内でグローバルをオーバーライドまたは拡張します：
+
+```css
+.card {
+  --card-padding: var(--space-4);
+  --card-radius: 8px;
+  --card-shadow: var(--shadow-md);
+
+  padding: var(--card-padding);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+}
+
+/* コンパクトカードバリアント — 変更部分だけオーバーライド */
+.card--compact {
+  --card-padding: var(--space-2);
+}
+```
+
+このパターンにより、`.card--compact` はすべてのプロパティを再宣言せず1行だけで済みます。
+
+## CSS変数でのダークモード実装
+
+CSS変数はダークモードの実装をクリーンで保守しやすくします。セレクターを複製するのではなく、テーマセレクターの下でトークン値を再定義します。
+
+### `prefers-color-scheme` を使用
+
+```css
+:root {
+  --color-background: #ffffff;
+  --color-surface: #f9fafb;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-primary: #3b82f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: #0f172a;
+    --color-surface: #1e293b;
+    --color-text: #f1f5f9;
+    --color-text-muted: #94a3b8;
+    --color-border: #334155;
+    --color-primary: #60a5fa;
+  }
+}
+```
+
+`var(--color-background)` を使うすべての要素が追加のCSSなしで自動的に切り替わります。
+
+### data属性を使用（ユーザー切り替えテーマ）
+
+```css
+:root,
+[data-theme="light"] {
+  --color-background: #ffffff;
+  --color-text: #111827;
+}
+
+[data-theme="dark"] {
+  --color-background: #0f172a;
+  --color-text: #f1f5f9;
+}
+```
+
+JavaScriptで切り替え：
+
+```javascript
+const toggleTheme = () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  document.documentElement.setAttribute(
+    'data-theme',
+    current === 'dark' ? 'light' : 'dark'
+  );
+};
+```
+
+## JavaScriptからCSS変数へのアクセス
+
+CSSカスタムプロパティはCSSOMを使ってJavaScriptから読み書きでき、実行時の動的テーミングが可能になります。
+
+### CSS変数を読み取る
+
+```javascript
+// :root（または任意の要素）から読み取る
+const root = document.documentElement;
+const primaryColor = getComputedStyle(root)
+  .getPropertyValue('--color-primary')
+  .trim();
+
+console.log(primaryColor); // "#3b82f6"
+```
+
+### CSS変数を書き込む
+
+```javascript
+// :rootに設定 — この変数を使うすべての要素に影響
+document.documentElement.style.setProperty('--color-primary', '#8b5cf6');
+
+// 特定の要素に設定 — その要素とその子要素のみに影響
+const card = document.querySelector('.card');
+card.style.setProperty('--card-padding', '2rem');
+```
+
+## CSS変数 vs Sass変数
+
+Sass変数（`$variable`）とCSSカスタムプロパティ（`--variable`）は異なる問題を解決しており、よく一緒に使われます。
+
+| 機能 | CSSカスタムプロパティ | Sass変数 |
+|------|----------------------|----------|
+| JSからの実行時アクセス | 可 | 不可（コンパイル時に消える） |
+| コンパイル後に変更可能 | 可 | 不可 |
+| DOMを通じて継承 | 可 | 概念なし |
+| `calc()` 内で動作 | 可 | 可（コンパイル時） |
+| ブラウザDevToolsで見える | 可 | 不可 |
+| ビルドステップなしで動作 | 可 | 不可 |
+
+**両方使う：** Sass変数は実行時に変わらない値（ブレークポイント・zインデックス）に有用。CSSカスタムプロパティはテーマ・コンポーネント状態・ユーザー設定に基づいて変わりうるものすべてに。
+
+## デザイントークンパターン
+
+デザイントークンはデザイン上の決定——カラー・スペーシング・タイポグラフィ・シャドウ・ボーダー半径——を表す名前付き値です。CSSカスタムプロパティはブラウザでのデザイントークンのネイティブ実装レイヤーです。
+
+### 3層トークンシステム
+
+```css
+:root {
+  /* 第1層：プリミティブトークン — 生の値 */
+  --color-blue-500: #3b82f6;
+  --color-blue-700: #1d4ed8;
+  --color-gray-900: #111827;
+
+  /* 第2層：セマンティックトークン — 値でなく意味 */
+  --color-action: var(--color-blue-500);
+  --color-action-hover: var(--color-blue-700);
+  --color-text-primary: var(--color-gray-900);
+
+  /* 第3層：コンポーネントトークン — 最も具体的 */
+  --button-bg: var(--color-action);
+  --button-bg-hover: var(--color-action-hover);
+  --button-text: #ffffff;
+}
+```
+
+これにより、コンポーネントトークンに触れずにセマンティックレベル（`--color-action` を変更）で再テーマ設定できます。
+
+### `calc()` 内での変数使用
+
+CSS変数は `calc()` 内で動作し、レスポンシブな計算が可能になります：
+
+```css
+:root {
+  --container-padding: 1rem;
+  --sidebar-width: 280px;
+}
+
+.main-content {
+  /* サイドバーとギャップを総幅から引く */
+  width: calc(100% - var(--sidebar-width) - var(--container-padding) * 2);
+}
+```
+
+## ブラウザサポート
+
+CSSカスタムプロパティは2016年からすべての主要ブラウザでサポートされています：
+
+- Chrome 49+
+- Firefox 31+
+- Safari 9.1+
+- Edge 15+
+
+グローバルサポートは96%以上です。
+
+## 今すぐトークンシステムを構築
+
+セマンティックな命名・フォールバック値・ダークモードバリアントを含む完全なデザイントークンセットをゼロから定義するには時間がかかります。ジェネレーターを使えば、カラーパレット・スペーシングスケール・タイポグラフィ設定を構成し、スタイルシートにそのまま貼り付けられる `:root {}` ブロックを出力できます。
+
+[CSS変数ジェネレーターを試す →](/tools/css-variables-generator)
+
+ブランドカラー・スペーシングスケール・フォントサイズを設定し、プロダクションレディなCSSカスタムプロパティブロックをエクスポート。デザインシステムの基盤として、または既存プロジェクトでハードコードされた値の整理を始めるために活用してください。

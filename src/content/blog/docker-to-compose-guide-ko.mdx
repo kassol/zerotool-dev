@@ -1,0 +1,262 @@
+---
+title: "docker run → Docker Compose 변환 가이드: 긴 명령을 YAML로 관리"
+description: "docker run 명령을 docker-compose.yml로 즉시 변환. 플래그와 Compose 필드 매핑, 멀티 서비스 구성, 프로덕션 환경에서의 선택 기준을 실무 중심으로 설명합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "docker-to-compose-guide"
+tags: ["docker compose", "docker run to compose", "docker-compose.yml", "container orchestration", "developer-tools"]
+---
+
+수십 개의 플래그가 있는 `docker run` 명령은 한 번 입력하는 것으로는 괜찮습니다. 하지만 팀원과 공유하거나, 시스템 재설치 후 다시 실행하거나, 두 번째 서비스를 추가하면 유지 보수 문제가 됩니다. Docker Compose는 모든 것을 버전 관리된 YAML 파일에 담아 해결합니다. 기존 `docker run` 명령을 Compose로 변환하는 것은 기계적인 작업——도구에 맡기세요.
+
+## 변환기 기능
+
+`docker run` 명령을 붙여 넣으면 바로 사용할 수 있는 `docker-compose.yml`이 생성됩니다. 변환기는 모든 플래그를 Compose 해당 필드에 매핑하고 출력을 올바르게 형식화합니다.
+
+**입력:**
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=myapp \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5432:5432 \
+  -v pgdata:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  postgres:16-alpine
+```
+
+**출력:**
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+```
+
+## 플래그와 Compose 필드 매핑
+
+### 핵심 식별 정보
+
+| docker run 플래그 | Compose 필드 | 비고 |
+|----------------|--------------|-------|
+| `IMAGE[:TAG]` | `image:` | 필수 |
+| `--name NAME` | `container_name:` | 선택이지만 권장 |
+| `-d` | (`docker compose up -d`의 CLI 플래그) | Compose에서 분리 모드는 클라이언트 플래그 |
+
+### 환경 변수
+
+```bash
+# 단일 -e 플래그
+docker run -e KEY=value -e OTHER=val image
+
+# .env 파일
+docker run --env-file .env image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    environment:
+      KEY: value
+      OTHER: val
+    # 또는 파일 참조:
+    env_file:
+      - .env
+```
+
+프로덕션에서는 `.gitignore`에 포함된 `.env`와 함께 `env_file`을 사용하세요. `docker-compose.yml`에 직접 자격 증명을 커밋하지 마세요.
+
+### 포트 매핑
+
+```bash
+docker run -p 8080:80 -p 443:443 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    ports:
+      - "8080:80"
+      - "443:443"
+```
+
+YAML이 `80:80` 같은 값을 60진수로 해석하는 것을 방지하기 위해 포트에는 따옴표를 사용하세요.
+
+### 볼륨
+
+```bash
+# 명명된 볼륨
+docker run -v mydata:/data/db image
+
+# 바인드 마운트
+docker run -v /host/path:/container/path image
+
+# 읽기 전용 바인드 마운트
+docker run -v /host/config:/etc/config:ro image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    volumes:
+      - mydata:/data/db
+      - /host/path:/container/path
+      - /host/config:/etc/config:ro
+
+volumes:
+  mydata:  # 최상위에서 명명된 볼륨 선언
+```
+
+명명된 볼륨은 최상위 `volumes:` 키에서 선언해야 합니다. 바인드 마운트(절대 호스트 경로)는 불필요합니다.
+
+### 네트워킹
+
+```bash
+docker run --network my-network --network-alias myapp image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    networks:
+      - my-network
+
+networks:
+  my-network:
+    driver: bridge
+```
+
+### 재시작 정책
+
+```bash
+docker run --restart always image
+docker run --restart unless-stopped image
+docker run --restart on-failure:3 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    restart: unless-stopped
+```
+
+`unless-stopped`가 프로덕션에서 가장 많이 사용됩니다: 충돌 후와 호스트 재부팅 후에 재시작하지만, 명시적으로 중지하면 중지된 상태를 유지합니다.
+
+### 리소스 제한
+
+```bash
+docker run --memory 512m --cpus 1.5 image
+```
+
+```yaml
+services:
+  app:
+    image: image
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.5'
+```
+
+### 엔트리포인트와 명령
+
+```bash
+docker run --entrypoint /bin/sh image -c "echo hello"
+```
+
+```yaml
+services:
+  app:
+    image: image
+    entrypoint: /bin/sh
+    command: ["-c", "echo hello"]
+```
+
+## 여러 docker run 명령에서 멀티 서비스 Compose 구성
+
+Compose의 진정한 힘은 서비스를 조합할 때 나타납니다. 일반적인 Node.js + PostgreSQL + Redis 스택:
+
+```bash
+# 세 개의 별도 docker run 명령
+docker run -d --name postgres -e POSTGRES_DB=app -p 5432:5432 -v pgdata:/var/lib/postgresql/data postgres:16
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+docker run -d --name api -p 3000:3000 -e DATABASE_URL=postgres://postgres@postgres:5432/app -e REDIS_URL=redis://redis:6379 --link postgres --link redis myapp:latest
+```
+
+`--link`를 기본 서비스 네트워크로 교체하여 Compose로 변환:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+
+  api:
+    image: myapp:latest
+    container_name: api
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres@postgres:5432/app
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:
+```
+
+참고: `--link`는 레거시입니다. Compose에서 같은 네트워크의 모든 서비스는 서비스 이름으로 서로에게 접근할 수 있습니다. `api` 서비스는 호스트명 `postgres`로 `postgres`에 접근합니다.
+
+## docker run을 계속 사용해야 하는 경우
+
+Compose는 멀티 서비스 스택, 개발 환경, 버전 관리가 필요한 것에 더 적합합니다. 다음 경우에는 `docker run`을 사용하세요:
+
+- 일회성 디버깅 컨테이너 (`docker run --rm -it image sh`)
+- 영속성 없이 단일 이미지를 빠르게 테스트
+- 파이프라인이 이미 오케스트레이션을 관리하는 CI 단계
+
+## 도구 사용해보기
+
+**[docker run을 Compose로 즉시 변환 →](/tools/docker-to-compose)**
+
+어떤 길이의 `docker run` 명령이든 붙여 넣으면 유효한 `docker-compose.yml`이 생성됩니다. 모든 표준 플래그 지원: 환경 변수, 볼륨, 포트 매핑, 재시작 정책, 리소스 제한, 엔트리포인트, 네트워킹.
+
+출력은 현재 Compose v2 문법을 따릅니다(`version:` 필드 불필요). 프로젝트에 직접 복사하거나 멀티 서비스 스택의 기반으로 사용하세요.

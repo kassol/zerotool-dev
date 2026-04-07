@@ -1,0 +1,315 @@
+---
+title: "TOML to JSON 완전 가이드: 변환 방법과 코드 구현"
+description: "TOML을 JSON으로 변환하는 방법을 설명합니다. TOML 구문 기초, JSON 비교, Rust/Python/Go 구현 예시, 온라인 도구 사용법까지 총망라합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "toml-json-guide"
+tags: ["toml", "json", "toml-to-json", "config", "developer-tools"]
+---
+
+TOML(Tom's Obvious, Minimal Language)은 Rust 프로젝트, Python의 `pyproject.toml`, 그리고 점점 더 많은 모던 도구에서 채택하는 설정 파일 형식입니다. JSON은 API와 구조화된 데이터 교환을 위한 범용 데이터 형식입니다. Cargo 설정을 JSON 인식 도구로 검사하거나 TOML 값을 JSON API에 전달해야 할 때 신뢰할 수 있는 변환이 필요합니다.
+
+[TOML을 JSON으로 즉시 변환하기 →](/tools/toml-json)
+
+## TOML이란
+
+TOML은 GitHub 공동 창업자인 Tom Preston-Werner가 만들었습니다. 목표는 명확합니다: 사람이 읽기 쉽고 모호하지 않게 파싱할 수 있는 설정 파일 형식을 만드는 것입니다. YAML과 달리 TOML은 엄격한 타입 규칙이 있고 들여쓰기 기반 구조도 없습니다. JSON과 달리 주석을 지원합니다.
+
+```toml
+# TOML
+[server]
+host = "localhost"
+port = 8080
+tls = true
+tags = ["web", "production"]
+```
+
+동등한 JSON:
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": true,
+    "tags": ["web", "production"]
+  }
+}
+```
+
+TOML은 해시 테이블(중첩된 키-값 쌍)에 명확하게 매핑되므로 JSON으로의 변환이 직관적이고 무손실입니다.
+
+## TOML 구문 기초
+
+### 기본 키-값 쌍
+
+```toml
+name = "Alice"
+age = 30
+ratio = 1.5
+active = true
+nothing = ""          # TOML에는 null이 없음. 빈 문자열을 사용하거나 키를 생략
+version = "1.0.0"
+```
+
+TOML 타입은 JSON에 직접 매핑됩니다: 문자열→문자열, 정수→숫자, 부동소수점→숫자, 불리언→불리언.
+
+### 테이블(오브젝트)
+
+대괄호로 테이블을 정의합니다(JSON 오브젝트에 해당):
+
+```toml
+[database]
+host = "db.example.com"
+port = 5432
+name = "myapp"
+```
+
+변환된 JSON:
+
+```json
+{
+  "database": {
+    "host": "db.example.com",
+    "port": 5432,
+    "name": "myapp"
+  }
+}
+```
+
+### 중첩 테이블(점 키)
+
+```toml
+[database.credentials]
+user = "admin"
+password = "secret"
+```
+
+또는 점 키를 사용한 동등한 표현:
+
+```toml
+database.credentials.user = "admin"
+database.credentials.password = "secret"
+```
+
+### 배열
+
+```toml
+ports = [8080, 8081, 8082]
+hosts = ["web1", "web2", "web3"]
+```
+
+### 테이블 배열
+
+오브젝트 배열을 표현하는 TOML 고유의 `[[이중 괄호]]` 구문:
+
+```toml
+[[servers]]
+name = "alpha"
+ip = "10.0.0.1"
+role = "primary"
+
+[[servers]]
+name = "beta"
+ip = "10.0.0.2"
+role = "replica"
+```
+
+변환된 JSON:
+
+```json
+{
+  "servers": [
+    { "name": "alpha", "ip": "10.0.0.1", "role": "primary" },
+    { "name": "beta", "ip": "10.0.0.2", "role": "replica" }
+  ]
+}
+```
+
+### 날짜와 시간
+
+TOML에는 JSON에 없는 일급 시민 날짜/시간 지원이 있습니다:
+
+```toml
+created_at = 2024-01-15T10:30:00Z
+release_date = 2024-06-01
+```
+
+JSON으로 변환 시 날짜시간은 ISO 8601 문자열이 됩니다:
+
+```json
+{
+  "created_at": "2024-01-15T10:30:00Z",
+  "release_date": "2024-06-01"
+}
+```
+
+## 실제 TOML 파일과 JSON 변환 예시
+
+### Rust: Cargo.toml
+
+```toml
+[package]
+name = "my-crate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+```
+
+JSON으로 변환(패키지 메타데이터를 파싱하는 스크립팅이나 CI 도구에 유용):
+
+```json
+{
+  "package": {
+    "name": "my-crate",
+    "version": "0.1.0",
+    "edition": "2021"
+  },
+  "dependencies": {
+    "serde": { "version": "1.0", "features": ["derive"] },
+    "tokio": { "version": "1", "features": ["full"] }
+  },
+  "dev-dependencies": {
+    "assert_cmd": "2"
+  }
+}
+```
+
+### Python: pyproject.toml
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "my-package"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "pydantic>=2.0",
+]
+
+[project.scripts]
+my-cli = "my_package.cli:main"
+```
+
+TOML 파서 없이 Python 프로젝트 메타데이터를 프로그래밍 방식으로 읽어야 할 때 자주 사용하는 변환 대상입니다.
+
+## TOML vs JSON vs YAML
+
+| 기능 | TOML | JSON | YAML |
+|---|---|---|---|
+| 주석 | 있음(`#`) | 없음 | 있음(`#`) |
+| 데이터 타입 | 풍부(datetime 등) | 기본적 | 암묵적 |
+| 여러 줄 문자열 | 있음 | 이스케이프 `\n` | 있음(`|`, `>`) |
+| 오브젝트 배열 | `[[table]]` 구문 | 네이티브 | `- key: val` |
+| null 값 | 내장 없음 | `null` | `null`/`~` |
+| 가독성 | 높음 | 중간 | 높음 |
+| 파싱 모호성 | 낮음 | 낮음 | 높음 |
+
+YAML에 대한 TOML의 가장 큰 장점은 모호성이 없다는 점입니다. YAML의 유명한 불리언 함정(`yes`/`no`/`on`/`off`가 불리언으로 해석되는 것)은 TOML에 존재하지 않습니다.
+
+## 코드로 TOML을 JSON으로 변환하기
+
+### Python
+
+```bash
+pip install tomllib  # Python 3.11+에서 내장
+```
+
+```python
+import tomllib
+import json
+
+with open("config.toml", "rb") as f:
+    data = tomllib.load(f)
+
+print(json.dumps(data, indent=2, default=str))  # default=str로 날짜시간 처리
+```
+
+Python 3.10 이하의 경우:
+
+```bash
+pip install tomli
+```
+
+```python
+import tomli
+import json
+
+with open("config.toml", "rb") as f:
+    data = tomli.load(f)
+
+print(json.dumps(data, indent=2, default=str))
+```
+
+### Node.js
+
+```bash
+npm install @iarna/toml
+```
+
+```javascript
+const TOML = require('@iarna/toml');
+const fs = require('fs');
+
+const data = TOML.parse(fs.readFileSync('config.toml', 'utf8'));
+console.log(JSON.stringify(data, null, 2));
+```
+
+### Rust
+
+```toml
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+```
+
+```rust
+use serde_json;
+use toml;
+
+fn main() {
+    let toml_str = std::fs::read_to_string("config.toml").unwrap();
+    let value: toml::Value = toml::from_str(&toml_str).unwrap();
+    println!("{}", serde_json::to_string_pretty(&value).unwrap());
+}
+```
+
+### 커맨드라인(`dasel`)
+
+```bash
+# 설치
+brew install dasel
+
+# TOML to JSON
+dasel -f config.toml -r toml -w json
+
+# 특정 필드 읽기
+dasel -f config.toml select -s '.server.port'
+```
+
+## 자주 발생하는 변환 문제
+
+**TOML null vs JSON null**: TOML에는 네이티브 null이 없습니다. 부재를 표현하려면 빈 문자열을 사용하거나 키를 생략합니다.
+
+**날짜시간 직렬화**: TOML의 날짜시간은 JSON에서 문자열이 됩니다. Python에서는 `default=str` 패턴으로 처리합니다.
+
+**정수 오버플로우**: TOML 정수는 64비트 부호 있는 정수입니다. JSON에는 정수 타입이 없어(숫자는 IEEE 754 배정밀도 부동소수점) 매우 큰 정수(2^53 초과)에서 정밀도를 잃을 수 있습니다.
+
+**키 순서**: TOML은 키 순서를 보장하지 않습니다. JSON 출력 순서는 파서 구현에 따라 다릅니다.
+
+## 온라인 TOML↔JSON 변환기
+
+도구를 설치하지 않고 빠르게 변환하려면 [ZeroTool의 TOML↔JSON 변환기](/tools/toml-json)가 브라우저 안에서 처리합니다. TOML을 붙여넣으면 JSON이 나옵니다. 데이터는 서버로 전송되지 않습니다.
+
+**[TOML↔JSON 변환기 사용해보기 →](/tools/toml-json)**

@@ -1,0 +1,168 @@
+---
+title: "URL 슬러그 생성기: SEO 친화적인 슬러그 만들기와 주의 사항"
+description: "URL 슬러그의 정의, SEO에 미치는 영향, Unicode·공백·특수 문자가 포함된 문자열을 온라인으로 슬러그화하는 방법. 프로그래밍 구현 예제 포함."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "slugify-guide"
+tags: ["slugify", "url-slug", "seo", "developer-tools"]
+---
+
+URL 슬러그는 특정 페이지를 식별하는 URL의 사람이 읽을 수 있는 부분입니다. 슬러그를 올바르게 설정하는 것은 SEO, 가독성, 링크 안정성에 중요합니다. 이 가이드에서는 슬러그 생성의 원리, Unicode와 같은 엣지 케이스, 프로그래밍으로 문자열을 슬러그화하는 방법을 설명합니다.
+
+## URL 슬러그란?
+
+`https://example.com/blog/how-to-slugify-a-string`와 같은 URL에서 슬러그는 `how-to-slugify-a-string`입니다. 슬러그는:
+
+- 소문자
+- 하이픈 구분 (공백이나 밑줄 없음)
+- 특수 문자 없음 (`!`, `@`, `#` 등)
+- 짧고 설명적
+
+좋은 슬러그는 사용자가 페이지를 방문하기 전에 관련성을 전달하여 클릭률을 높입니다.
+
+## 슬러그가 SEO에 중요한 이유
+
+검색 엔진은 URL 구조를 읽습니다. `/product/1234`는 Google에 아무것도 전달하지 않지만, `/product/mechanical-keyboard-rgb`는 페이지가 특정 제품에 관한 것임을 알려줍니다. 주요 규칙:
+
+- 가능하면 슬러그에 **기본 키워드 포함**
+- **짧게 유지** — Google은 검색 결과에서 긴 URL을 잘라냄
+- 의미를 추가하지 않는 "a", "the", "and" 같은 **불용어 피하기**
+- **밑줄이 아닌 하이픈 사용** — Google은 하이픈을 단어 구분자로, 밑줄을 단어 결합자로 취급합니다(`this_is_one_word` vs `this-is-two-words`)
+- **301 리디렉션 없이 공개 후 슬러그 변경 금지** — 깨진 링크는 SEO 가치를 잃습니다
+
+## 슬러그화의 원리
+
+표준 슬러그화 파이프라인:
+
+1. **소문자화** — `"Hello World"` → `"hello world"`
+2. **Unicode 정규화** — 문자를 기본 형태로 분해 (`é` → `e` + 결합 억양)
+3. **비ASCII 제거 또는 음역** — `"café"` → `"cafe"`, `"über"` → `"uber"`
+4. **공백과 구분자를 하이픈으로 교체**
+5. **나머지 특수 문자 제거** — `[a-z0-9-]`만 남김
+6. **여러 하이픈 접기** — `"hello--world"` → `"hello-world"`
+7. **앞뒤 하이픈 제거** — `"-hello-"` → `"hello"`
+
+### 변환 예시
+
+| 입력 | 출력 |
+|-------|--------|
+| `Hello World` | `hello-world` |
+| `What's New in 2024?` | `whats-new-in-2024` |
+| `café au lait` | `cafe-au-lait` |
+| `C++ Programming` | `c-programming` |
+| `  spaces   everywhere  ` | `spaces-everywhere` |
+| `한국어` | *(제거됨 — ASCII 상당어 없음)* |
+
+한국어, 중국어, 일본어 등 CJK 문자는 기본 ASCII 전용 슬러그화에서 보통 제거됩니다. 다국어 콘텐츠의 경우 CJK를 로마자화하려 하기보다는 URL 구조에 언어 접두사를 포함시키세요 (`/ko/tools/slugify`).
+
+## 코드로 슬러그화하기
+
+### JavaScript
+
+```js
+function slugify(text) {
+  return text
+    .normalize('NFD')                         // 악센트 문자 분해
+    .replace(/[\u0300-\u036f]/g, '')          // 결합 악센트 제거
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')            // 영숫자 외 제거
+    .replace(/[\s_-]+/g, '-')                 // 공백/하이픈 접기
+    .replace(/^-+|-+$/g, '');                 // 하이픈 트림
+}
+
+slugify('Hello, World!')        // "hello-world"
+slugify('café au lait')        // "cafe-au-lait"
+slugify('  extra  spaces  ')   // "extra-spaces"
+```
+
+프로덕션 환경에서는 더 넓은 범위의 Unicode 음역을 처리하는 [`slugify`](https://www.npmjs.com/package/slugify) npm 패키지 사용을 고려하세요.
+
+### Python
+
+```python
+import re
+import unicodedata
+
+def slugify(text: str) -> str:
+    text = unicodedata.normalize('NFD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_-]+', '-', text)
+    text = re.sub(r'^-+|-+$', '', text)
+    return text
+
+print(slugify('Hello, World!'))   # hello-world
+print(slugify('café au lait'))    # cafe-au-lait
+```
+
+Django에는 자체 버전이 포함되어 있습니다: `from django.utils.text import slugify`.
+
+### Go
+
+```go
+import (
+    "regexp"
+    "strings"
+    "golang.org/x/text/unicode/norm"
+    "golang.org/x/text/transform"
+)
+
+func slugify(s string) string {
+    // 악센트 정규화 및 제거
+    t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
+        return r >= '\u0300' && r <= '\u036f'
+    }))
+    result, _, _ := transform.String(t, s)
+
+    result = strings.ToLower(result)
+    re := regexp.MustCompile(`[^a-z0-9\s-]`)
+    result = re.ReplaceAllString(result, "")
+    re2 := regexp.MustCompile(`[\s-]+`)
+    result = re2.ReplaceAllString(result, "-")
+    return strings.Trim(result, "-")
+}
+```
+
+## 온라인 슬러그 도구 사용법
+
+**[ZeroTool 슬러그화 도구 사용해보기 →](/tools/slugify)**
+
+어떤 텍스트든 붙여넣으면 즉시 URL 안전한 슬러그를 얻을 수 있습니다. 유용한 경우:
+
+- 공개 전 블로그 게시물이나 제품 페이지의 슬러그 생성
+- 일관성 없는 명명을 가진 가져온 콘텐츠의 일괄 정리
+- CMS나 프레임워크의 내장 슬러그화가 예상 출력과 일치하는지 확인
+- 콘텐츠 마이그레이션 중 빠른 검증
+
+가입 불필요, 속도 제한 없음 — 계산은 브라우저에서 실행됩니다.
+
+## 일반적인 엣지 케이스
+
+### 아포스트로피와 소유격
+
+`"John's Guide"` → `"john-s-guide"`가 아닌 `"johns-guide"`가 되어야 합니다. 단어 구분자를 교체하기 전에 아포스트로피를 제거하세요.
+
+### 숫자와 버전
+
+`"Node.js 20.0"` → `"nodejs-200"` (점이 제거됨). 버전 번호가 중요하면 입력에 `"node-js-v20"`을 사용하거나 점을 특별히 처리하세요.
+
+### 전체 Unicode 입력
+
+전체 입력이 CJK나 아랍어인 경우 제거 후 출력은 빈 문자열이 됩니다. 슬러그 생성기가 비어있지 않은 결과를 생성하는지 항상 검증하고, 필요하면 숫자 ID로 대체하세요.
+
+### 후행 슬래시
+
+일부 프레임워크는 후행 슬래시를 추가합니다 (`/blog/my-post/`). 초기에 규칙을 결정하고 중복 콘텐츠 인덱싱을 피하기 위해 301 리디렉션으로 강제하세요.
+
+## 슬러그 모범 사례 체크리스트
+
+- 소문자, 하이픈 구분만 사용
+- 기본 키워드 포함 (하지만 키워드 채우기 금지)
+- 총 75자 이내
+- 키워드 구문의 일부가 아닌 한 불용어 제외
+- 슬러그에 날짜 포함 금지 (시간이 지나면 낡아지고 관리 부담 증가)
+- 슬러그 변경 즉시 301 리디렉션 설정
+
+**[ZeroTool로 즉시 URL 안전한 슬러그 생성 →](/tools/slugify)**

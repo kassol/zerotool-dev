@@ -1,0 +1,185 @@
+---
+title: "TOTP・2FA完全ガイド：時刻ベースワンタイムパスワードの仕組みと実装"
+description: "TOTPとRFC 6238の仕組みを解説。テストコードのオンライン生成、HMAC+タイムステップの原理、Node.js/Python/GoでのTOTP実装方法まで説明します。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "totp-generator-guide"
+tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238", "developer-tools"]
+---
+
+二要素認証（2FA）はアカウントを保護するための標準的な手法になっています。最も一般的な2FAメカニズム、つまり認証アプリに表示される6桁のコードは、TOTP（時刻ベースワンタイムパスワード）によって定義されています。このガイドでは、TOTPの内部動作・アプリへの実装方法・認証アプリなしでテストコードを生成する方法を解説します。
+
+## TOTPとは
+
+TOTP（Time-Based One-Time Password）は[RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238)で定義されています。短い数値コード（通常6桁）を生成します：
+
+- 30秒ごとに変わる
+- 一度しか使えない
+- サーバーと認証アプリの両方が知っている共有シークレットを必要とする
+
+アルゴリズムは決定論的です。同じシークレットと同じタイムウィンドウであれば、常に同じコードが生成されます。「ワンタイム」とは各コードが30秒のウィンドウ内でのみ有効であることを意味し、リプレイ攻撃を防ぎます。
+
+## TOTPの仕組み：数学的な原理
+
+TOTPはHOTP（HMACベースワンタイムパスワード、RFC 4226）の上に構築されています。コアアルゴリズム：
+
+```
+T = floor(current_unix_time / 30)    # タイムカウンター
+TOTP = HOTP(secret, T)
+HOTP = Truncate(HMAC-SHA1(secret, T))
+```
+
+ステップごとの説明：
+
+1. **タイムカウンター**：現在のUnixタイムスタンプをタイムステップ（デフォルト30秒）で割ります。`floor(1712500000 / 30) = 57083333`
+
+2. **HMAC**：シークレットキーとタイムカウンターでHMAC-SHA1を計算します。20バイトのハッシュが生成されます。
+
+3. **動的切り詰め**：ハッシュの最後のバイトを取ります。下位4ビットがオフセットを決定します。そのオフセットから4バイトを取り出し、最上位ビットをマスクして31ビット整数を得ます。
+
+4. **剰余**：`整数 mod 10^6`（6桁の場合）を計算して最終OTPを得ます。
+
+結果は6桁のコードです。サーバーは同じ計算を行い、コードが一致する場合に受け入れます（クロックドリフトを考慮して、通常は前後1タイムステップも受け入れます）。
+
+## 共有シークレット
+
+シークレットはbase32エンコードされたランダム値で、通常160ビット（20バイト）です。認証アプリでQRコードをスキャンするとき、QRコードには次のようなURIが含まれています：
+
+```
+otpauth://totp/Service:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Service&algorithm=SHA1&digits=6&period=30
+```
+
+`secret`パラメーターがbase32エンコードされた共有シークレットです。アプリは2FAの登録時に一度生成し、（暗号化した上で）データベースに保存します。ユーザーは認証アプリ（Google Authenticator、Authy、1Passwordなど）に保存します。
+
+**シークレットは機密情報です。** シークレットを持っている人は誰でもそのアカウントの有効なコードを生成できます。
+
+## オンラインでTOTPテストコードを生成する
+
+**[ZeroTool TOTPジェネレーターを試す →](/tools/totp-generator)**
+
+base32シークレットを入力すると、現在の有効なTOTPコードが即座に得られます。以下の用途に便利です：
+- 開発中の2FA実装のテスト
+- シークレットが正しく設定されているかの確認
+- 時刻同期の問題のデバッグ
+
+データはサーバーに送信されず、計算はブラウザ内で行われます。
+
+## アプリケーションへのTOTP実装
+
+### 登録フロー
+
+1. ランダムな20バイトシークレットを生成する
+2. base32エンコードする
+3. サービス名とユーザー識別子を含む`otpauth://` URIを構築する
+4. QRコードとして表示し、ユーザーがスキャンできるようにする
+5. 現在のコードを入力してもらい登録を確認する
+6. シークレットを（暗号化して）データベースに保存する
+
+### Node.js実装
+
+```js
+import { authenticator } from 'otplib';
+
+// 登録
+const secret = authenticator.generateSecret(); // 例: "JBSWY3DPEHPK3PXP"
+const otpauthUrl = authenticator.keyuri('user@example.com', 'MyApp', secret);
+
+// QRコード生成（qrcodeライブラリを使用）
+import qrcode from 'qrcode';
+const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
+
+// 検証（ログイン時）
+const isValid = authenticator.verify({ token: userCode, secret });
+```
+
+### Python実装
+
+```python
+import pyotp
+import qrcode
+
+# 登録
+secret = pyotp.random_base32()
+totp = pyotp.TOTP(secret)
+
+# QRコード用のOTPAuth URI
+uri = totp.provisioning_uri(name="user@example.com", issuer_name="MyApp")
+img = qrcode.make(uri)
+img.save("qr.png")
+
+# 検証
+is_valid = totp.verify(user_code)  # 現在±1タイムステップを受け入れる
+```
+
+### Go実装
+
+```go
+import "github.com/pquerna/otp/totp"
+
+// 登録
+key, err := totp.Generate(totp.GenerateOpts{
+    Issuer:      "MyApp",
+    AccountName: "user@example.com",
+})
+secret := key.Secret()
+
+// key.URL() をQRコードとして表示
+
+// 検証
+valid := totp.Validate(userCode, secret)
+```
+
+## TOTPパラメーター
+
+RFC 6238ではデフォルト値を変更できます。ほとんどの認証アプリは標準的なバリエーションすべてをサポートしています：
+
+| パラメーター | デフォルト | よくある代替値 |
+|-----------|---------|---------------------|
+| アルゴリズム | SHA-1 | SHA-256、SHA-512 |
+| 桁数 | 6 | 8 |
+| 期間 | 30秒 | 60秒 |
+
+特別な要件がない限り、**デフォルト（SHA-1、6桁、30秒）を使用してください**。非標準の設定は一部の認証アプリとの互換性問題を引き起こす可能性があります。SHA-1はここではセキュリティ上の問題ではありません。160ビットシークレットキーでのHMAC-SHA1は80ビットのセキュリティを提供し、30秒以内に6桁をブルートフォースするのは実質不可能です。
+
+## クロック同期とドリフト
+
+TOTPはサーバーとクライアントのクロックが適切に同期していることを要求します。ほとんどの実装では、クロックドリフトを考慮してT-1、T、T+1（現在のタイムステップの前後±30秒）のコードを受け入れます。
+
+ユーザーのデバイスのクロックが大幅にずれている（数分）と、TOTPは失敗します。モダンなスマートフォンでは稀ですが、組み込みデバイスやカスタム実装では注意が必要です。
+
+サーバーのクロックはNTPを使用してください。Linuxでは：
+
+```bash
+timedatectl status        # 現在のNTP同期状態を確認
+timedatectl set-ntp true  # NTP同期を有効化
+```
+
+## TOTP vs 他の2FA方式
+
+| 方式 | セキュリティ | フィッシング耐性 | 外部依存なし |
+|--------|----------|-------------------|----------------------|
+| TOTP | 高 | なし | あり |
+| SMS OTP | 低 | なし | なし（通信キャリア） |
+| プッシュ通知 | 中 | なし | なし（アプリサーバー） |
+| FIDO2 / パスキー | 非常に高 | あり | あり |
+| ハードウェアトークン（TOTP） | 高 | なし | あり |
+
+TOTPはリアルタイムフィッシングに脆弱です（攻撃者がユーザーをだまして偽サイトでコードを入力させ、即座に中継する）。最高のセキュリティにはFIDO2/WebAuthnハードウェアキーがフィッシング耐性を持ちます。TOTPはパスワード単独に比べて大幅なセキュリティ向上であり、ほとんどのアプリケーションで実用的な2FA標準です。
+
+## リカバリーコード
+
+TOTPと並行して必ずリカバリーコードを実装してください。ユーザーが認証デバイスを紛失した場合、アクセスを回復する手段が必要です：
+
+- 登録時に8〜10個の使い切りリカバリーコードを生成する
+- bcryptまたはArgon2でハッシュ化して保存する
+- 一度だけ表示し、オフラインで保存するよう指示する
+- 各コードは使用後に無効化する
+
+```python
+import secrets
+
+def generate_recovery_codes(count=10):
+    return [secrets.token_hex(10) for _ in range(count)]
+```
+
+**[TOTPコードを即座に生成・テストする →](/tools/totp-generator)**

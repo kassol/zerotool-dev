@@ -1,0 +1,319 @@
+---
+title: "YAML to JSON 完全ガイド：変換の落とし穴と実践的な使い方"
+description: "YAMLをJSONに変換する方法を解説。YAML構文・K8s設定・Docker Compose・GitHub Actionsの実例から、yq/Python/Node.jsでの変換コードまで説明します。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "yaml-json-guide"
+tags: ["yaml", "json", "yaml-to-json", "devops", "developer-tools"]
+---
+
+YAMLとJSONはどちらもデータシリアライズフォーマットですが、開発者のワークフローでは異なる役割を担っています。YAMLは人間が読みやすい設定の言語です。Kubernetesマニフェスト・Docker Composeファイル・CI/CDパイプラインの言語です。JSONはAPIと構造化データ交換の共通語です。両者間を確実に変換する方法を知ることで、時間を節約し微妙なバグを防げます。
+
+[YAMLをJSONに即時変換する →](/tools/yaml-json)
+
+## YAMLとは
+
+YAML（YAML Ain't Markup Language）は人間向けに設計された構文を持つJSONのスーパーセットです。JSONが波括弧と引用符に依存するのに対し、YAMLはインデントと最小限の句読点を使います。
+
+```yaml
+# YAML
+server:
+  host: localhost
+  port: 8080
+  tls: true
+  tags:
+    - web
+    - production
+```
+
+対応するJSON：
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": true,
+    "tags": ["web", "production"]
+  }
+}
+```
+
+YAMLはJSONの厳格なスーパーセットです。すべての有効なJSONドキュメントは有効なYAMLでもありますが、逆は成立しません。
+
+## YAMLの基本構文
+
+### スカラー
+
+YAMLは引用符なしでコンテキストから型を推論します：
+
+```yaml
+name: Alice          # 文字列
+age: 30              # 整数
+ratio: 1.5           # 浮動小数点
+active: true         # 真偽値
+nothing: null        # null
+version: "1.0"       # 強制的に文字列（引用符で型推論を防ぐ）
+```
+
+注意：`yes`・`no`・`on`・`off`はYAML 1.1（多くのツールで使用されているバージョン）では真偽値として解析されます。文字列の`"yes"`が必要な場合は引用符で囲んでください。
+
+### マッピング（オブジェクト）
+
+```yaml
+database:
+  host: db.example.com
+  port: 5432
+  credentials:
+    user: admin
+    password: secret
+```
+
+### シーケンス（配列）
+
+```yaml
+services:
+  - nginx
+  - postgres
+  - redis
+```
+
+またはインライン形式（フロースタイル）：
+
+```yaml
+services: [nginx, postgres, redis]
+```
+
+### 複数行文字列
+
+YAMLには2種類の複数行文字列演算子があります：
+
+```yaml
+# リテラルブロック（|）: 改行を保持
+script: |
+  npm install
+  npm run build
+  npm test
+
+# フォールドブロック（>）: 改行がスペースになる
+description: >
+  This is a long description
+  that wraps across multiple lines.
+```
+
+### アンカーとエイリアス
+
+YAMLはアンカー（`&`）とエイリアス（`*`）で再利用をサポートします：
+
+```yaml
+defaults: &defaults
+  timeout: 30
+  retries: 3
+
+production:
+  <<: *defaults
+  host: prod.example.com
+
+staging:
+  <<: *defaults
+  host: staging.example.com
+```
+
+**注意：** アンカーとエイリアスはJSONへの変換後に残りません。完全な値に展開されます。これは期待される動作です。
+
+## YAML to JSON変換：よくあるシナリオ
+
+### KubernetesのConfigMap
+
+YAMLマニフェスト：
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: default
+data:
+  DATABASE_URL: "postgres://db:5432/app"
+  REDIS_URL: "redis://cache:6379"
+  LOG_LEVEL: "info"
+```
+
+JSON変換後：
+
+```json
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "app-config",
+    "namespace": "default"
+  },
+  "data": {
+    "DATABASE_URL": "postgres://db:5432/app",
+    "REDIS_URL": "redis://cache:6379",
+    "LOG_LEVEL": "info"
+  }
+}
+```
+
+ユースケース：JSONリクエストボディが必要なKubernetes APIコール、`kubectl`の出力を`jq`にパイプするスクリプト。
+
+### Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - db
+  db:
+    image: postgres:15
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```
+
+Docker ComposeをJSONに変換するのは、composeファイルをプログラム的に解析するツールを書く場合に便利です。
+
+### GitHub Actionsワークフロー
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: npm test
+```
+
+GitHub ActionsのYAML→JSON変換は、ワークフローをプログラム的に分析・生成するツールを構築する際によく使われます。
+
+## 知っておくべき変換ルール
+
+| YAML機能 | JSONでの動作 |
+|---|---|
+| `true`/`false` | `true`/`false`（真偽値） |
+| `null`/`~` | `null` |
+| 整数 | 引用符なしの数値 |
+| 浮動小数点 | 小数点ありの数値 |
+| 複数行文字列 | `\n`を含む単一文字列 |
+| アンカー/エイリアス | インラインに展開 |
+| コメント（`#`） | 削除（JSONにコメントはない） |
+| キーの順序 | 出力に保持 |
+
+## コマンドラインでの変換
+
+### `yq`の使用
+
+`yq`はデファクトのYAML CLIツールです：
+
+```bash
+# YAML to JSON
+yq -o=json input.yaml
+
+# jqでプリティプリント
+yq -o=json input.yaml | jq .
+
+# JSON to YAML
+yq -p=json -o=yaml input.json
+```
+
+### Pythonの使用
+
+Pythonの標準ライブラリはJSONを処理します。YAMLには`pyyaml`が必要です：
+
+```bash
+pip install pyyaml
+```
+
+```python
+import yaml
+import json
+
+with open("config.yaml") as f:
+    data = yaml.safe_load(f)
+
+print(json.dumps(data, indent=2))
+```
+
+`yaml.load()`ではなく**必ず`yaml.safe_load()`を使ってください**。前者は任意のPythonオブジェクトのデシリアライズを許可するセキュリティリスクがあります。
+
+### Node.jsの使用
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+const data = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+console.log(JSON.stringify(data, null, 2));
+```
+
+## JSON to YAML変換
+
+逆方向の変換も同様によくあります。JSONのAPIレスポンスをYAML設定として保存したい場合など：
+
+```json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.18.0",
+    "axios": "^1.6.0"
+  }
+}
+```
+
+YAML変換後：
+
+```yaml
+name: my-app
+version: 1.0.0
+dependencies:
+  express: ^4.18.0
+  axios: ^1.6.0
+```
+
+YAMLの出力にコメントは含まれません。変換後に手動で追加する必要があります。
+
+## よくある落とし穴
+
+**インデントエラー**：YAMLはスペースのみ使用します（タブは禁止）。1文字のタブ文字がパースエラーを引き起こします。
+
+**真偽値の曖昧さ**：YAML 1.1では`yes`/`no`/`on`/`off`は真偽値です。YAML 1.2（新しいツールで使用）では`true`/`false`のみが真偽値です。設定ファイルでは安全のためこれらの値を引用符で囲んでください。
+
+**8進数**：YAML 1.1の`0777`は8進数の511として解析されます。chmod値などは引用符が必要：`"0777"`。
+
+**重複キー**：YAMLは重複キーを許可しますが、JSONは許可しません。変換時は最後の値が勝ちます（パーサーによって動作が異なる）。
+
+**文字列内の特殊文字**：スペースに続くコロン（`: `）はYAMLの値では引用符が必要：
+
+```yaml
+# 誤り
+url: http://example.com  # 正しくパースされない
+
+# 正しい
+url: "http://example.com"
+```
+
+## オンラインYAML↔JSONコンバーター
+
+ツールをインストールせずに素早く変換するには、[ZeroToolのYAML↔JSONコンバーター](/tools/yaml-json)がブラウザ内で変換を完結させます。データはサーバーに送信されません。左にYAMLを貼り付けると右にJSONが表示されます（逆も可能）。ライブバリデーションとエラーハイライト付き。
+
+**[YAML↔JSONコンバーターを試す →](/tools/yaml-json)**

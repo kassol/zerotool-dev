@@ -1,0 +1,198 @@
+---
+title: "URL 파서 완전 가이드: URL을 구성 요소로 분해하여 이해하기"
+description: "URL을 프로토콜·호스트·경로·쿼리 파라미터·프래그먼트로 분해하는 방법을 설명합니다. API 디버깅·리다이렉트 추적·보안 리뷰에 활용하는 실무 가이드입니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "url-parser-guide"
+tags: ["url parser", "parse url", "url decoder", "query string", "developer-tools"]
+---
+
+URL은 단순해 보입니다. 그러다 `https://api.example.com:8443/v2/search?q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid#results` 같은 URL을 마주하면 각 부분이 무엇을 하는지 정확히 알고 싶어집니다. URL 파서는 URL을 분해하여 퍼센트 인코딩을 머릿속에서 디코딩하지 않고도 각 컴포넌트를 검사할 수 있게 해줍니다.
+
+## URL 구조
+
+모든 URL은 RFC 3986에서 정의한 표준 구조를 따릅니다:
+
+```
+scheme://[userinfo@]host[:port]/path[?query][#fragment]
+```
+
+위 예시를 분해하면:
+
+| 컴포넌트 | 값 |
+|-----------|-------|
+| 스킴 | `https` |
+| 호스트 | `api.example.com` |
+| 포트 | `8443` |
+| 경로 | `/v2/search` |
+| 쿼리 문자열 | `q=hello+world&page=1&sort=desc&filter%5B%5D=active&filter%5B%5D=paid` |
+| 프래그먼트 | `results` |
+
+**[ZeroTool로 URL 즉시 파싱하기 →](/tools/url-parser)**
+
+URL을 붙여넣으면 스킴, 권한, 호스트, 포트, 경로 세그먼트, 디코딩된 쿼리 파라미터, 프래그먼트가 모두 분리되어 표시됩니다. 퍼센트 인코딩된 쿼리 파라미터는 자동으로 디코딩됩니다.
+
+## 컴포넌트 상세 분석
+
+### 스킴
+
+스킴은 프로토콜을 지정합니다. 주요 스킴:
+
+| 스킴 | 용도 |
+|--------|-------|
+| `https` | 보안 HTTP |
+| `http` | 비암호화 HTTP(프로덕션에서는 지양) |
+| `ws` / `wss` | WebSocket |
+| `ftp` | 파일 전송 |
+| `mailto` | 이메일 링크 |
+| `data` | 인라인 데이터 URI |
+| `blob` | 브라우저 오브젝트 URL |
+
+### 권한: 사용자 정보·호스트·포트
+
+권한 컴포넌트는 `[userinfo@]host[:port]`입니다.
+
+**사용자 정보**(`user:password@host`)는 현대 URL에서 거의 사용되지 않으며 보안 위험으로 간주됩니다. URL의 자격 증명은 서버 로그에 남습니다.
+
+**호스트**는 도메인 이름, IPv4 주소, IPv6 주소(대괄호 필수: `[::1]`)가 될 수 있습니다. 파서는 서브도메인 구조를 분석합니다. `api.v2.example.com`의 서브도메인은 `api.v2`, 도메인은 `example.com`, TLD는 `.com`입니다.
+
+**포트**는 선택 사항입니다. 생략하면 기본값이 사용됩니다. HTTPS는 443, HTTP는 80. 기본 포트를 명시적으로 지정하는 것(HTTPS에서 `:443`)은 유효하지만 중복입니다.
+
+### 경로
+
+경로는 리소스를 식별합니다. 경로 세그먼트는 `/`로 구분됩니다. 앞뒤 슬래시는 의미가 있습니다. `/api/users`와 `/api/users/`는 일부 프레임워크에서 다른 라우팅이 될 수 있습니다.
+
+경로 파라미터(`/users/:id`의 `:id`)는 URL 명세의 일부가 아니라 라우팅 관례입니다. URL 파서는 리터럴 경로를 표시하고, 라우터가 패턴을 해석합니다.
+
+### 쿼리 문자열
+
+쿼리 문자열은 `?` 이후 `#` 이전의 모든 것입니다. `&`로 구분된 `key=value` 쌍의 연속입니다.
+
+**퍼센트 인코딩**: URL에서 허용되지 않는 문자는 `%XX`(`XX`는 16진 코드)로 인코딩됩니다. 주요 예시:
+
+| 문자 | 인코딩 |
+|-----------|---------|
+| 공백 | `%20` 또는 `+` |
+| `[` | `%5B` |
+| `]` | `%5D` |
+| `#` | `%23` |
+| `@` | `%40` |
+| `/` | `%2F` |
+| `=` | `%3D` |
+
+공백을 `+`로 인코딩하는 것은 `application/x-www-form-urlencoded` 형식(HTML 폼)에 특화됩니다. 모던 API에서는 `%20`이 선호됩니다.
+
+**반복 키**: `filter%5B%5D=active&filter%5B%5D=paid`는 `filter[]=active&filter[]=paid`로 디코딩됩니다. PHP, Rails, 많은 프레임워크는 반복 키를 배열로 해석합니다.
+
+### 프래그먼트
+
+프래그먼트(`#results`)는 서버로 전송되지 않습니다. 브라우저만 처리하며, 일반적으로 해당 ID를 가진 요소로 스크롤합니다. SPA는 해시 기반 라우터에서 클라이언트 사이드 라우팅에 프래그먼트를 사용합니다.
+
+## URL 파서가 실제로 필요한 상황
+
+### API 디버깅
+
+네트워크 인스펙터에서 URL을 복사했습니다. 인코딩된 쿼리 파라미터, 특이한 포트가 있고 끝의 `#`가 프래그먼트인지 오타인지 구분이 안 됩니다. 파서에 붙여넣으면 각 컴포넌트가 명확해집니다.
+
+### 리다이렉트 체인 분석
+
+리다이렉트 체인을 추적하고 있습니다. 체인의 각 URL에 파라미터가 있고 비교가 필요합니다. 각 URL을 파싱하면 차이점이 명확해집니다.
+
+### 보안 리뷰
+
+긴 URL에는 쿼리 파라미터에 자격 증명, 내부 호스트명, 인코딩된 페이로드가 포함되어 있을 수 있습니다. URL을 컴포넌트로 분해하면 이것들이 드러납니다. 쿼리 파라미터의 `token=eyJ...`나 사용자 정보의 `admin:password@internal.host`를 발견할 수 있습니다.
+
+### 프로그래밍 방식 URL 구성
+
+코드에서 URL을 구성할 때 각 컴포넌트의 올바른 인코딩을 이해하면 버그를 방지할 수 있습니다:
+
+```javascript
+// 잘못됨 — 쿼리 값은 인코딩이 필요
+const url = `https://api.example.com/search?q=${userInput}`;
+
+// 올바름
+const url = new URL('https://api.example.com/search');
+url.searchParams.set('q', userInput);  // 자동으로 인코딩
+```
+
+## 코드에서 URL 파싱하기
+
+### JavaScript(브라우저 + Node.js)
+
+`URL` API는 모든 모던 환경에서 사용 가능합니다:
+
+```javascript
+const url = new URL('https://api.example.com:8443/v2/search?q=hello+world&page=1#results');
+
+console.log(url.protocol);   // "https:"
+console.log(url.hostname);   // "api.example.com"
+console.log(url.port);       // "8443"
+console.log(url.pathname);   // "/v2/search"
+console.log(url.hash);       // "#results"
+
+// 쿼리 파라미터
+url.searchParams.get('q');           // "hello world" (디코딩됨)
+url.searchParams.get('page');        // "1"
+url.searchParams.getAll('filter[]'); // ["active", "paid"]
+
+// 모든 파라미터 순회
+for (const [key, value] of url.searchParams) {
+  console.log(key, value);
+}
+```
+
+### Python
+
+```python
+from urllib.parse import urlparse, parse_qs
+
+raw = "https://api.example.com:8443/v2/search?q=hello+world&page=1&filter[]=active&filter[]=paid#results"
+
+parsed = urlparse(raw)
+print(parsed.scheme)    # https
+print(parsed.hostname)  # api.example.com
+print(parsed.port)      # 8443
+print(parsed.path)      # /v2/search
+print(parsed.fragment)  # results
+
+params = parse_qs(parsed.query)
+print(params['q'])       # ['hello world']
+print(params['filter[]']) # ['active', 'paid']
+```
+
+### Go
+
+```go
+import (
+    "fmt"
+    "net/url"
+)
+
+func main() {
+    raw := "https://api.example.com:8443/v2/search?q=hello+world&page=1#results"
+    u, _ := url.Parse(raw)
+
+    fmt.Println(u.Scheme)     // https
+    fmt.Println(u.Hostname()) // api.example.com
+    fmt.Println(u.Port())     // 8443
+    fmt.Println(u.Path)       // /v2/search
+    fmt.Println(u.Fragment)   // results
+    fmt.Println(u.Query().Get("q")) // hello world
+}
+```
+
+## 자주 발생하는 URL 실수
+
+**이중 인코딩**: 이미 인코딩된 URL을 다시 인코딩합니다. `%20`이 `%2520`이 됩니다(`%25`는 `%`이므로 `%2520`은 공백이 아닌 `%20`으로 디코딩됩니다). 항상 원시 값을 인코딩하고, 이미 인코딩된 문자열은 재인코딩하지 마세요.
+
+**프래그먼트 제외 망각**: 서버가 요청에서 `#fragment`를 찾아도 찾을 수 없습니다. 프래그먼트는 클라이언트 전용입니다.
+
+**순서 가정**: 쿼리 파라미터 순서는 보장되지 않습니다. `a=1&b=2` vs `b=2&a=1` 순서에 의존하는 로직은 만들지 마세요.
+
+**비교 시 포트 누락**: `https://example.com`과 `https://example.com:443`은 같은 URL이지만 문자열 비교에서는 다릅니다.
+
+## 요약
+
+URL 파싱은 API 작업, 디버깅, 보안 리뷰에서 자주 필요합니다. 구조(스킴, 권한, 경로, 쿼리, 프래그먼트)와 각 컴포넌트의 인코딩 방식을 이해하면 버그를 방지하고 디버깅 시간을 절약할 수 있습니다.
+
+**[URL 즉시 파싱·디코딩 — 모든 컴포넌트 즉시 확인 →](/tools/url-parser)**

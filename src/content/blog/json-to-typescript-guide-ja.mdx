@@ -1,0 +1,228 @@
+---
+title: "JSONからTypeScriptインターフェースを自動生成：手書き不要の型安全API開発"
+description: "JSONを貼り付けるだけでTypeScriptのinterface・型を自動生成。ネスト・配列・null値の処理方法、よくあるエッジケースとOpenAPI連携パターンをわかりやすく解説。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "json-to-typescript-guide"
+tags: ["typescript", "json to typescript", "typescript interface", "type generation", "developer-tools"]
+---
+
+新しい API レスポンスを受け取りました。200 行の JSON です。型安全なコードを書くために TypeScript のインターフェースが必要です。手で書くこともできますが、JSON を貼り付けて2秒でインターフェースを生成する方法があります。
+
+## インターフェースを手書きする問題
+
+API レスポンス用の TypeScript インターフェースを手書きするのは面倒で間違いを起こしやすいです：
+
+- ネストされたオブジェクトにはネストされたインターフェースが必要
+- 配列には正しい要素の型付けが必要
+- オプショナルフィールド（`?`）を見落としやすい
+- `null` と `undefined` とフィールド欠落の動作を推測しなければならない
+- API が変更されると型を手動で更新しなければならない
+
+シンプルなレスポンスなら対処できますが、深くネストされたオブジェクト・オブジェクトの配列・nullable なフィールドを持つレスポンスでは相当な時間が取られます。
+
+## JSON to TypeScript ジェネレーターが行うこと
+
+ジェネレーターは JSON を読み込んで TypeScript インターフェースを生成します。次の JSON を与えると：
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "roles": ["admin", "editor"],
+    "preferences": {
+      "theme": "dark",
+      "notifications": true
+    },
+    "lastLogin": null
+  },
+  "pagination": {
+    "page": 1,
+    "perPage": 20,
+    "total": 143
+  }
+}
+```
+
+次のものが生成されます：
+
+```typescript
+interface Preferences {
+  theme: string;
+  notifications: boolean;
+}
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  roles: string[];
+  preferences: Preferences;
+  lastLogin: null;
+}
+
+interface Pagination {
+  page: number;
+  perPage: number;
+  total: number;
+}
+
+interface Root {
+  user: User;
+  pagination: Pagination;
+}
+```
+
+**[ZeroTool JSON to TypeScript ジェネレーターを試す →](/tools/json-to-typescript)**
+
+JSON を貼り付けると TypeScript インターフェースが即座に生成されます。インストール不要。すべてブラウザ内で動作するため、機密性の高い API レスポンスもプライベートに保たれます。
+
+## 型推論の仕組み
+
+ジェネレーターは JSON の型を TypeScript の型にマッピングします：
+
+| JSON | TypeScript |
+|------|-----------|
+| `"string"` | `string` |
+| `42` | `number` |
+| `true` / `false` | `boolean` |
+| `null` | `null`（またはコンテキスト付きで `T \| null`） |
+| `[1, 2, 3]` | `number[]` |
+| `[{…}, {…}]` | `InterfaceName[]` |
+| `{}` | 名前付きインターフェース |
+
+### 配列の処理
+
+オブジェクトの配列の場合、ジェネレーターはすべての要素にわたるすべてのキーをユニオンして、フィールドの漏れを防ぎます。要素0に `name` があって要素1にない場合、生成されたインターフェースは `name` をオプショナルとしてマークします：
+
+```typescript
+interface Item {
+  id: number;
+  name?: string;   // すべての要素に存在しない
+}
+```
+
+### null と混合型の処理
+
+`null` 値は扱いが難しいです。ジェネレーターはフィールドが常に nullable なのか場合によって値を持つのかを判断できません。2つの一般的な戦略があります：
+
+**保守的**：サンプル値が `null` のとき `T | null` とマークする。
+
+**楽観的**：フィールド名が文字列型を示唆する場合は `string | null` とマークする。
+
+このジェネレーターは保守的なアプローチを使用します：`lastLogin: null`。API ドキュメントを確認してから `lastLogin: string | null` に洗練させることができます。
+
+## 注意すべきエッジケース
+
+### 日付文字列
+
+JSON にはネイティブの日付型がありません。タイムスタンプは文字列（`"2026-04-06T09:10:00Z"`）または数値（Unix エポック）として来ます。ジェネレーターはこれらを `string` または `number` として型付けします。適切な Date の型付けが必要な場合：
+
+```typescript
+// 生成されたもの
+lastLogin: string;
+
+// 洗練させたもの
+lastLogin: string;  // ISO 8601 — new Date(lastLogin) で変換
+```
+
+### 判別共用体
+
+API が `type` フィールドに基づいてポリモーフィックな形状を返す場合：
+
+```json
+{"type": "text", "content": "hello"}
+{"type": "image", "url": "...", "alt": "..."}
+```
+
+ジェネレーターはすべての可能なキーのユニオンを生成します。適切な判別共用体に洗練させることが必要です：
+
+```typescript
+type Message =
+  | { type: "text"; content: string }
+  | { type: "image"; url: string; alt: string };
+```
+
+### 空の配列
+
+JSON の `[]` には要素の型情報がありません。ジェネレーターは `unknown[]` または `any[]` を生成します。要素の型を手動で指定する必要があります。
+
+## 統合パターン
+
+### ライブ API エンドポイントから
+
+```bash
+curl https://api.example.com/users/1 | pbcopy
+# ジェネレーターに貼り付ける
+```
+
+### Swagger / OpenAPI から
+
+API に OpenAPI スペックがある場合は、完全なスキーマサポートによる本格的な型生成に `openapi-typescript` を使います：
+
+```bash
+npx openapi-typescript https://petstore.swagger.io/v2/swagger.json -o ./types/petstore.ts
+```
+
+ブラウザジェネレーターはクイックな探索・プロトタイピング・単発の API 統合に最適です。安定した API コントラクトを持つプロダクションコードベースにはスキーマ駆動の生成を検討してください。
+
+### Zod スキーマ生成
+
+TypeScript の型と並行してランタイムバリデーションが必要な場合は、JSON をジェネレーターに貼り付けて出力を Zod 用に適応させます：
+
+```typescript
+// ジェネレーターから
+interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+// 手動で Zod に適応
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+type User = z.infer<typeof UserSchema>;
+```
+
+## TypeScript Interface と Type Alias
+
+どちらもオブジェクトの形状を記述するのに使えます：
+
+```typescript
+// Interface
+interface User {
+  id: number;
+  name: string;
+}
+
+// Type alias
+type User = {
+  id: number;
+  name: string;
+};
+```
+
+Interface は宣言マージをサポートします（複数のファイルで再オープンできます）。Type alias はユニオンと計算型に対してより柔軟です。シンプルな API レスポンスの形状にはどちらも機能します。ジェネレーターはデフォルトで `interface` を使用します。
+
+## プライバシーについて
+
+多くの JSON ペイロードには機密データが含まれています。API キー・PII・内部 ID など。ZeroTool の JSON to TypeScript ジェネレーターは完全にブラウザ内で動作します。データはサーバーに送信されません。ネットワークタブを確認することで検証できます。「生成」をクリックしてもリクエストは行われません。
+
+## まとめ
+
+JSON から TypeScript インターフェースを手書きするのは繰り返しの作業で、ツールがやるべきことです。ジェネレーターはネストされたオブジェクト・配列・nullable なフィールドを正確に処理します。生成後にレビューして洗練させましょう：
+
+- 適切な場所で `null` 型を `T | null` に変更する
+- `unknown[]` を正しい要素の型に置き換える
+- ポリモーフィックなレスポンスに判別共用体を追加する
+- 日付文字列にコメントを追加する
+
+**[JSONから TypeScript インターフェースを即座に生成する →](/tools/json-to-typescript)**

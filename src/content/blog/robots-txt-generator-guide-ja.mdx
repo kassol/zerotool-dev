@@ -1,0 +1,237 @@
+---
+title: "robots.txtジェネレーター完全ガイド：クローラー制御とSEOへの影響"
+description: "オンラインrobots.txtジェネレーターで検索エンジンクローラーを制御。ディレクティブの解説、よくある設定パターン、SEOに悪影響を与えるミスの回避法を解説。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "robots-txt-generator-guide"
+tags: ["robots.txt", "robots-txt-generator", "seo", "web-crawlers", "developer-tools"]
+---
+
+**オンラインrobots.txtジェネレーター**を使えば、ディレクティブを暗記したりサイト全体をサイレントにブロックする構文エラーのリスクを冒したりせずに、数秒で有効な `robots.txt` ファイルを作成できます。このファイルはドメインのルートに置かれ、他のURLに触れる前に検索エンジンクローラーが最初に読むものです。
+
+## robots.txtが実際にすること
+
+`robots.txt` は[Robots Exclusion Protocol](https://www.rfc-editor.org/rfc/rfc9309)を実装したプレーンテキストファイルです。すべての準拠クローラーはクロール前に `https://yourdomain.com/robots.txt` を取得します。パスをブロックすると、行儀の良いボットはそれをスキップします。悪意のあるスクレイパーは完全に無視します — そのため `robots.txt` はセキュリティメカニズムではありません。
+
+このファイルには2つの役割があります：
+
+1. **クロールバジェットの保護** — 管理パネル、重複コンテンツ、検索結果ページを無駄にしないようクローラーに伝える。
+2. **サイトマップの指示** — `Sitemap:` ディレクティブで手動送信なしにGoogleとBingにサイトマップの場所を正確に伝える。
+
+`robots.txt` が*しない*こと：他の場所からリンクされているページが検索結果に表示されるのを防ぐことはできません。ページのインデックス除外にはHTMLのmetaタグの `noindex` か `X-Robots-Tag` ヘッダーを使ってください。
+
+## コアディレクティブの解説
+
+### User-agent
+
+次のルールを適用するクローラーを指定します。`*` はすべてのクローラーにマッチします。
+
+```
+User-agent: *
+```
+
+現実のボット一覧：
+
+| ボット | 運営者 |
+|-----|----------|
+| `Googlebot` | Google（一般） |
+| `Googlebot-Image` | Google画像 |
+| `Googlebot-Video` | Google動画 |
+| `Bingbot` | Microsoft Bing |
+| `Slurp` | Yahoo Search |
+| `DuckDuckBot` | DuckDuckGo |
+| `facebookexternalhit` | Facebookリンクプレビュー |
+| `Twitterbot` | Twitter/Xカード |
+| `GPTBot` | OpenAIトレーニングクローラー |
+| `Claude-Web` | Anthropic Webクローラー |
+
+### Disallow
+
+パスプレフィックスをブロックします。空の `Disallow:` 値は「すべてを許可」を意味します。
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /private/
+Disallow: /search?
+```
+
+ディレクトリの末尾スラッシュに注意 — なければ `/admin` が `/administrator` にもマッチします。
+
+### Allow
+
+より具体的なパスのために `Disallow` を上書きします。ディレクトリをブロックしながら内部の1ファイルを公開したい場合に便利です。
+
+```
+User-agent: *
+Disallow: /wp-admin/
+Allow: /wp-admin/admin-ajax.php
+```
+
+### Sitemap
+
+元の仕様にはありませんが、主要クローラーすべてがサポートしています。ファイルの末尾に置いてください。
+
+```
+Sitemap: https://yourdomain.com/sitemap.xml
+Sitemap: https://yourdomain.com/news-sitemap.xml
+```
+
+### Crawl-delay
+
+クローラーにリクエスト間のN秒待機を依頼します。Googleはこのディレクティブを無視します（代わりにSearch Consoleでクロールレートを設定）。BingなどはBlacklistします。
+
+```
+User-agent: Bingbot
+Crawl-delay: 5
+```
+
+## よくあるrobots.txtパターン
+
+### すべてを許可（デフォルトの健全な設定）
+
+```
+User-agent: *
+Disallow:
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+空の `Disallow` は「自由にクロールしてください」というシグナルです。ほとんどのマーケティングサイトの正しい出発点です。
+
+### 管理・ステージングパスをブロック
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /staging/
+Disallow: /internal/
+Disallow: /?preview=true
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### Eコマース：ファセットナビゲーションをブロック
+
+`/shop?color=red&size=M` のようなファセットURLは、クロールバジェットを消耗する何千もの準重複ページを作ります。
+
+```
+User-agent: *
+Disallow: /search
+Disallow: /cart
+Disallow: /checkout
+Disallow: /account
+Disallow: /wishlist
+Allow: /search/landing-page
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### AIトレーニングクローラーをブロック
+
+コンテンツをモデルトレーニングに使わせたくない場合：
+
+```
+User-agent: GPTBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: *
+Disallow:
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### WordPress固有のルール
+
+```
+User-agent: *
+Disallow: /wp-admin/
+Disallow: /wp-login.php
+Disallow: /xmlrpc.php
+Disallow: /wp-json/
+Allow: /wp-admin/admin-ajax.php
+
+Sitemap: https://yourdomain.com/sitemap.xml
+Sitemap: https://yourdomain.com/post-sitemap.xml
+Sitemap: https://yourdomain.com/page-sitemap.xml
+```
+
+## robots.txtの検証
+
+### Google Search Console
+
+Search Consoleの**設定 → robots.txt**に移動します。内蔵テスターは入力したURLにどのルールが適用されるかを表示し、構文エラーをフラグします。URLを送信すると、Googlebotがクロールするかどうかを教えてくれます。
+
+### 手動チェック
+
+```bash
+curl -I https://yourdomain.com/robots.txt
+# 期待値: HTTP/2 200 と Content-Type: text/plain
+```
+
+404が返る場合、Googleはサイトを完全にクロール可能として扱います。5xxが返る場合、Googleはリトライし、クロールを一時停止する可能性があります。
+
+### ルールに対する特定URLのテスト
+
+```bash
+# ファイルを取得して手動で確認
+curl https://yourdomain.com/robots.txt
+```
+
+プログラムによるテストには、Googleが提供する[robots.txtパーサーライブラリ](https://github.com/google/robotstxt)（Go製）を使ってください。これがGooglebotが実際に使用する実装です。
+
+## SEOを傷つける一般的なミス
+
+**1. CSSとJavaScriptをブロックする**
+
+古いSEOアドバイスではクロールバジェットを保護するために `/wp-content/` をブロックすることを推奨していました。しかし現在GoogleはページのJavaScriptとCSSをレンダリングしてコンテンツを理解する*必要*があります。これらのファイルをブロックするとGooglebotは壊れたページを見ることになります。
+
+**2. ローンチ前にサイト全体をdisallowする**
+
+多くのCMSツールは開発モードで `Disallow: /` を含む状態で出荷されます。開発者はローンチ時に変更するのを忘れます。サイトが公開され、リンクされても、Googleがクロールできないためランキングされません。
+
+**3. 機密データを隠すのにrobots.txtを使う**
+
+`robots.txt` に記載されたディレクトリは公開されています。セキュリティ研究者や悪意のある人物は積極的に `robots.txt` を読んで隠れたパスを探しています。機密ルートはクローラーのルールではなく認証で保護してください。
+
+**4. ディレクトリの末尾スラッシュがない**
+
+`Disallow: /admin` は `/admin` と `/administrator` の両方をブロックします。`Disallow: /admin/` を使ってルールを正確にスコープしてください。
+
+**5. サイトマップURLをブロックする**
+
+```
+# 間違い — サイトマップ自体をブロックしてしまう
+User-agent: *
+Disallow: /sitemap.xml
+```
+
+**6. 間違ったContent-Type**
+
+ファイルは `text/plain` として配信される必要があります。一部のサーバーは `text/html` として配信しており、一部のクローラーはこれを拒否します。
+
+## 覚えておく構文ルール
+
+- 1行に1ディレクティブ
+- `#` で始まる行はコメント
+- 空行が異なる `User-agent` 値のルールグループを区切る
+- ディレクティブは大文字小文字を区別しない。パスはLinuxサーバーでは大文字小文字を区別する
+- 推奨される最大ファイルサイズは500KB（Googleの実際の制限）
+- UTF-8エンコーディングのみ
+
+## 推測なしでファイルを作成
+
+手動で `robots.txt` を書くとエラーが起きやすいです。スラッシュの欠落や `Allow`/`Disallow` ルールの順序の間違いが予期しない結果を生みます。同じパスに `Allow` と `Disallow` の両方がマッチする場合の正しいルールは、**長い方のマッチが勝つ** — ファイル内の順序ではありません。
+
+[robots.txtジェネレーターを試す →](/tools/robots-txt-generator)
+
+ジェネレーターを使えば、設定するボットを選択し、ブロックしたいパスにチェックを入れ、サイトマップURLを切り替えるだけで、正しい構文の即デプロイ可能なファイルが出力されます。サイトのルートに貼り付けて、5分以内にSearch Consoleで確認できます。

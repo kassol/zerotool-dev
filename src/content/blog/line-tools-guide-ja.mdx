@@ -1,0 +1,219 @@
+---
+title: "テキスト行操作ツール：行のソート・重複削除・変換をブラウザで完結"
+description: "テキストの行をアルファベット順にソート、重複行の削除、順序の反転、空白トリムをオンラインで実行。ログ解析やデータクリーニングに役立つ実践ガイド。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "line-tools-guide"
+tags: ["sort-lines", "remove-duplicates", "text-tools", "developer-tools", "data-cleaning"]
+---
+
+テキストを行単位で処理する場面は開発中に頻繁に訪れます。エクスポートしたデータのクリーニング、ドメインリストの重複排除、ログエントリのソート、スタックトレースの逆順表示など。ターミナルでは `sort`、`uniq`、`awk` が役立ちますが、ブラウザだけで作業したい場合はオンラインの行ツールが最速の選択肢です。
+
+**[行のソート・重複削除・クリーニングをオンラインで →](/tools/line-tools)**
+
+## 主な行操作
+
+### アルファベット順にソート
+
+リストのソートは最もよくあるテキスト操作の一つです。使用場面：
+
+- コードレビュー前にインポートや依存関係リストを正規化
+- `.gitignore` や `hosts` ファイルを読みやすいようにソート
+- 単語リストや用語集のアルファベット順整理
+- `.env` ファイルの環境変数名を整列
+
+シェルの等価コマンド：
+
+```bash
+sort input.txt
+```
+
+大文字小文字を区別しないソート：
+
+```bash
+sort -f input.txt
+```
+
+逆順ソート：
+
+```bash
+sort -r input.txt
+```
+
+### 重複行の削除
+
+複数のリストをマージしたり、ログに追記したり、複数のソースからエクスポートすると重複行が自然に蓄積します。重複削除はデータクリーニングの最初のステップです。
+
+シェル等価コマンド（`awk` で順序を保持）：
+
+```bash
+# 隣接する重複のみ削除（ソート済みの入力が必要）
+sort input.txt | uniq
+
+# すべての重複を削除し、最初の出現を保持（順序保持）
+awk '!seen[$0]++' input.txt
+```
+
+`awk` バージョンはソートステップ不要で最初の出現順序を保持するため、実用的には有用です。
+
+### 行の逆順
+
+行の逆順は、時系列ログの最新エントリを先頭に表示したいときや、スタックトレースを下から上に読みたいときに便利です。
+
+```bash
+# macOS
+tail -r input.txt
+
+# Linux
+tac input.txt
+```
+
+### 空白行の削除
+
+PDFやHTML、CSVからテキストを抽出すると空白行が頻繁に現れます。除去することでクリーンなデータセットが得られます。
+
+```bash
+grep -v '^$' input.txt
+```
+
+`sed` を使う場合：
+
+```bash
+sed '/^[[:space:]]*$/d' input.txt
+```
+
+### 前後の空白を削除
+
+リスト内の行頭・行末の空白は見えない問題を引き起こします。見た目が同じでも結合・重複削除・ルックアップでマッチしない場合があります。
+
+```bash
+sed 's/^[[:space:]]*//;s/[[:space:]]*$//' input.txt
+```
+
+## 実際の開発での使用例
+
+### 依存関係リストの重複排除
+
+複数のコントリビューターから requirements をマージした後、重複はよくある問題です：
+
+```
+Before:
+requests==2.31.0
+numpy==1.26.0
+requests==2.31.0
+pandas==2.1.0
+numpy==1.26.0
+
+After deduplication:
+requests==2.31.0
+numpy==1.26.0
+pandas==2.1.0
+```
+
+### hosts ファイルエントリのソート
+
+何千ものエントリを持つ `hosts` ファイルや DNS ブロックリストはソートされていると管理しやすくなります：
+
+```
+0.0.0.0 ads.example.com
+0.0.0.0 analytics.example.com
+0.0.0.0 tracking.example.com
+```
+
+ソートされたエントリは重複を見つけやすく、特定のドメインを探しやすくなります。
+
+### ログエクスポートのクリーニング
+
+Datadog、Grafana Loki、Splunk などからログをエクスポートしてテキストエディタに貼り付けると、時間窓の重複により重複行や余分な空白行が発生することがあります。重複削除＋空白行削除でクリーンなデータセットを得られます。
+
+### APIテストデータの正規化
+
+時間の経過とともに蓄積されたテストIDやテストエンドポイントのリストは、重複や不規則な順序を持ちがちです。バージョン管理にチェックインする前にソート＋重複削除で一貫性を保てます。
+
+### クリップボードデータの処理
+
+スプレッドシートの列、DBクエリ結果のIDリスト、PDFからのテキストブロックをコピーした場合、生のペーストにはたいてい以下の処理が必要です：
+1. 空白をトリム（列の値にパディングがある可能性）
+2. 空白行を削除（選択範囲の空行）
+3. 重複を排除（ピボットテーブルが値を繰り返している可能性）
+4. ソート（可読性や比較のため）
+
+## コマンドラインリファレンス
+
+ターミナルを好む方のための行操作リファレンス：
+
+| 操作 | コマンド |
+|-----------|---------|
+| アルファベット順ソート | `sort file.txt` |
+| 大文字小文字を区別しないソート | `sort -f file.txt` |
+| 逆順ソート | `sort -r file.txt` |
+| 数値ソート | `sort -n file.txt` |
+| 隣接する重複を削除 | `sort file.txt \| uniq` |
+| すべての重複を削除（順序保持） | `awk '!seen[$0]++' file.txt` |
+| 重複をカウント | `sort file.txt \| uniq -c \| sort -rn` |
+| 行の逆順 | `tac file.txt`（Linux） / `tail -r file.txt`（macOS） |
+| 空白行を削除 | `grep -v '^$' file.txt` |
+| 空白をトリム | `sed 's/^[[:space:]]*//;s/[[:space:]]*$//' file.txt` |
+| 行数をカウント | `wc -l file.txt` |
+
+## ブラウザツール vs ターミナル：使い分け
+
+ターミナルは大きなファイルや自動化に強みがあります。ブラウザツールが有利な場面：
+
+- ターミナルが使えないマシン（WSLなしのWindows、リモートデスクトップ）
+- データがブラウザ文脈から来ている（Webページのコピー、フォーム出力、APIレスポンス）
+- ターミナルを開かずに素早く一回限りの操作をしたい
+- テクニカルでないチームメンバーが同じ作業をする必要がある
+
+同じデータパイプラインへの繰り返し操作はスクリプト化してください。一回限りのクリーンアップならブラウザツールに貼り付けて終わりにするのが効率的です。
+
+## コードで行を処理する
+
+### JavaScript
+
+```js
+const text = `apple\nbanana\napple\ncherry\nbanana`;
+
+const lines = text.split('\n');
+const sorted = [...lines].sort();
+const unique = [...new Set(lines)];
+const reversed = [...lines].reverse();
+const noBlank = lines.filter(line => line.trim() !== '');
+```
+
+### Python
+
+```python
+text = "apple\nbanana\napple\ncherry\nbanana"
+
+lines = text.splitlines()
+sorted_lines = sorted(lines)
+unique_lines = list(dict.fromkeys(lines))  # preserves order
+reversed_lines = list(reversed(lines))
+no_blank = [l for l in lines if l.strip()]
+```
+
+### Go
+
+```go
+lines := strings.Split(text, "\n")
+
+// Sort
+sort.Strings(lines)
+
+// Deduplicate (preserving order)
+seen := make(map[string]bool)
+unique := []string{}
+for _, line := range lines {
+    if !seen[line] {
+        seen[line] = true
+        unique = append(unique, line)
+    }
+}
+```
+
+## ターミナル不要でテキスト行をクリーニング
+
+ブラウザ上で素早くテキスト行操作を行うなら：
+
+**[行ツールを開く →](/tools/line-tools)** — テキストを貼り付けて、ソート・重複削除・逆順・トリムを選択し、結果をコピーするだけです。

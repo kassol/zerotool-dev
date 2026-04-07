@@ -1,0 +1,171 @@
+---
+title: "RSA鍵ペアジェネレーター：ブラウザで2048・4096ビット鍵を安全に生成"
+description: "RSA鍵ペア（PEM・JWK）をブラウザ内で即座に生成 — サーバーなし、アップロードなし。鍵サイズ・フォーマット・SSH・TLS・JWTへの実際の応用を解説。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "rsa-key-generator-guide"
+tags: ["rsa", "key-pair", "cryptography", "public-key", "pem", "jwk", "developer-tools"]
+---
+
+RSA鍵ペアは非対称暗号の基盤です — SSHアクセス、TLS証明書、JWT署名、コード署名に使用されます。このガイドでは、RSAの仕組み・適切な鍵サイズとフォーマットの選び方・データをサーバーに送信せずにブラウザ内で完全に鍵を生成する方法を解説します。
+
+## RSA鍵ペアの仕組み
+
+RSAは非対称アルゴリズムです：**鍵ペア**は数学的に連結された2つの鍵で構成されます。
+
+- **公開鍵** — 自由に共有できます。誰でもデータの暗号化や署名の検証に使えます。
+- **秘密鍵** — 秘密にしてください。データの復号や署名の作成に使います。
+
+セキュリティは大きな半素数の因数分解の困難さに依存しています。公開鍵から秘密鍵を復元するには、数百桁の数を因数分解する必要があり、現在のハードウェアでは計算上不可能です。
+
+鍵ペアは2つの大きな素数 `p` と `q` から一緒に生成されます。公開鍵には剰余 `n = p × q` と公開指数（通常65537）が含まれます。秘密鍵には `p`、`q`、効率的な復号に使用される導出値が含まれます。
+
+## 鍵サイズの選び方
+
+| サイズ | セキュリティレベル | 使用例 |
+|------|----------------|----------|
+| 1024ビット | 破られています — 使用しないでください | レガシーのみ |
+| 2048ビット | 約112ビットセキュリティ | 汎用、TLS、SSH |
+| 4096ビット | 約140ビットセキュリティ | 高セキュリティシステム、長期証明書 |
+
+**2048ビットが安全なデフォルトです。** 今日の実質的にすべてのアプリケーションに十分なセキュリティを提供し、主要なすべてのシステム（GitHub SSH、Let's Encrypt、AWS KMS）で受け入れられます。
+
+**4096ビット**は、鍵が10年以上データを保護する場合や、組織のポリシーで必要な場合に適しています。トレードオフは遅い暗号操作です — 4096ビット鍵でのRSA署名/検証は2048ビットの約4倍の時間がかかります。
+
+NISTは少なくとも2030年まで2048ビットRSAを推奨しています。長期的な視点で設計される新しいシステムには、3072ビットが合理的な中間点です。
+
+## 鍵フォーマットの解説
+
+### PEM（Privacy Enhanced Mail）
+
+最も一般的なフォーマット — ASCIIヘッダーでラップされたBase64エンコードのDER構造：
+
+```
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
+-----END PUBLIC KEY-----
+```
+
+```
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEA...
+-----END PRIVATE KEY-----
+```
+
+PEMファイルはコンテキストによって `.pem`、`.key`、`.crt`、`.pub` の拡張子を使います。OpenSSL、nginx、ほとんどのSSHクライアント、AWS Certificate Managerが期待するフォーマットです。
+
+### JWK（JSON Web Key）
+
+主にOAuth 2.0とJOSE（JSON Object Signing and Encryption）でWebコンテキストで使われるJSON表現：
+
+```json
+{
+  "kty": "RSA",
+  "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFb...",
+  "e": "AQAB",
+  "alg": "RS256",
+  "use": "sig"
+}
+```
+
+JWKセット（JWKS）はOIDCアイデンティティプロバイダーがJWT検証用の公開鍵を公開するのに使います。RSAで署名されたJWTを発行するAPIを構築する場合、クライアントがトークン検証に使うJWKSエンドポイントを公開します。
+
+### PKCS#1 vs PKCS#8
+
+古いツールは `-----BEGIN RSA PRIVATE KEY-----`（PKCS#1フォーマット）を出力します。モダンなツールは `-----BEGIN PRIVATE KEY-----`（PKCS#8フォーマット、アルゴリズム非依存ラッパー）を好みます。両方ともRSA鍵素材を含んでいます。違いはエンコーディングラッパーです。ほとんどのモダンライブラリは両方を受け入れます。
+
+## ブラウザでRSA鍵を生成
+
+**[ZeroTool RSA鍵ペアジェネレーターを試す →](/tools/rsa-key-generator)**
+
+すべての計算はWeb Crypto APIを使用してブラウザで実行されます。秘密鍵はマシンから外に出ません — サーバーが受信することはなく、ページのロード後はオフラインでも動作します。
+
+手順：
+1. 鍵サイズを選択（2048または4096ビット）
+2. 出力フォーマットを選択（PEMまたはJWK）
+3. 生成をクリック — 鍵ペアが即座に表示
+4. 各鍵をコピーして安全に保存
+
+**セキュリティ上の注意：** 生成された秘密鍵をフォーム、Webサービス、クラウドコンソールに絶対に貼り付けないでください。秘密鍵はキーチェーン、シークレットマネージャー、またはHSMに保存してください。
+
+## 実際の使用例
+
+### SSH鍵認証
+
+生成された秘密鍵をOpenSSHフォーマットに変換するか（ツールがサポートしている場合）、`ssh-keygen` で直接生成します：
+
+```bash
+ssh-keygen -t rsa -b 4096 -C "your@email.com"
+```
+
+公開鍵はサーバーの `~/.ssh/authorized_keys` に入ります。秘密鍵は `~/.ssh/id_rsa` に保存します。
+
+プログラムによるアクセス（CI/CD、デプロイキー）にはRSA 2048が標準です。GitHub、GitLab、BitbucketはすべてRSAデプロイキーをサポートしています。
+
+### TLS証明書
+
+TLS証明書は公開鍵を含む署名済みドキュメントです。CAから証明書を取得するには：
+
+```bash
+# 秘密鍵を生成
+openssl genrsa -out private.key 2048
+
+# CSR（証明書署名要求）を生成
+openssl req -new -key private.key -out request.csr
+
+# CAがCSRに署名して証明書を返す
+```
+
+秘密鍵はサーバーに残ります。証明書（公開鍵を含む）はブラウザに送信されます。
+
+### RSAによるJWT署名
+
+RS256（RSA + SHA-256）は一般的なJWT署名アルゴリズムです。APIサーバーは秘密鍵でトークンに署名し、クライアントは公開鍵で検証します：
+
+```js
+// Node.js — 署名
+import jwt from 'jsonwebtoken';
+import fs from 'fs';
+
+const privateKey = fs.readFileSync('private.key');
+const token = jwt.sign({ sub: 'user123', role: 'admin' }, privateKey, {
+  algorithm: 'RS256',
+  expiresIn: '1h'
+});
+
+// 検証（公開鍵またはJWKSエンドポイントで）
+const publicKey = fs.readFileSync('public.key');
+const payload = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+```
+
+RS256は、複数のサービスがトークンを独立して検証する必要がある場合にHS256（共有秘密）より好まれます — 各サービスには公開鍵だけが必要です。
+
+### コード署名
+
+パッケージレジストリとアップデートシステムはRSAでアーティファクトに署名します。ユーザーはインストール前に署名を検証します：
+
+```bash
+# ファイルに署名
+openssl dgst -sha256 -sign private.key -out signature.bin artifact.tar.gz
+
+# 検証
+openssl dgst -sha256 -verify public.key -signature signature.bin artifact.tar.gz
+```
+
+## クライアントサイド生成が重要な理由
+
+多くのオンラインツールはサーバーで鍵ペアを生成し、HTTPS経由で秘密鍵を送信します。これはセキュリティ上の問題です：
+
+1. サーバーが秘密鍵のコピーを持つ
+2. 秘密鍵がネットワークを経由する
+3. サーバーが何をログに記録したか検証できない
+
+Web Crypto APIを使ったブラウザベースのジェネレーターはこれら3つの問題をすべて回避します。鍵ペアはJavaScriptランタイムで完全に生成され、秘密鍵はブラウザで計算されて送信されることはありません。
+
+## 秘密鍵の安全な保存
+
+- **開発環境：** `~/.ssh/` またはローカルのシークレットファイルに保存し、`.gitignore` でgitから除外
+- **本番環境：** マネージドシークレットサービスを使用 — AWS Secrets Manager、HashiCorp Vault、Azure Key Vault
+- **高セキュリティ：** ハードウェアセキュリティモジュール（HSM）またはクラウドKMS（AWS KMS、GCP Cloud KMS） — 鍵はハードウェア境界から外に出ない
+
+**[ブラウザ内で安全にRSA鍵ペアを生成 →](/tools/rsa-key-generator)**

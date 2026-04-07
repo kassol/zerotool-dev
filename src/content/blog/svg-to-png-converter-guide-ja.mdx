@@ -1,0 +1,216 @@
+---
+title: "SVG to PNG 変換完全ガイド：ベクター画像をラスター画像に変換する方法"
+description: "SVGをPNGに変換する方法を解説。解像度・透過背景・DPI設定からコマンドライン変換、アプリアイコン用サイズ一覧まで実践的に説明します。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "svg-to-png-converter-guide"
+tags: ["svg to png", "svg converter", "image converter", "svg", "developer-tools"]
+---
+
+**SVG to PNG 変換**は、スケーラブルなベクターソースから任意の解像度でラスター画像を生成する作業です。SVGをサポートしないプラットフォームや、正確なピクセル寸法が必要な場面で欠かせません。SVGはウェブに最適なフォーマットですが、ソーシャルメディアのプロフィール画像やメール内の画像、App Storeへのアイコン提出が必要になったときはPNGが求められます。
+
+## SVG vs PNG：それぞれの使いどき
+
+トレードオフを理解することで、変換が必要なタイミングと重要な設定がわかります。
+
+**SVG（Scalable Vector Graphics）**
+
+- XMLベース・解像度非依存 — どんなサイズでも鮮明
+- アイコン・ロゴ・イラストのファイルサイズが小さい
+- テキストエディタやCSSで編集可能、アニメーション対応
+- モダンブラウザすべてで`<img>`・`<object>`・インラインとして表示可能
+- ほとんどのメールクライアント・アプリストアの送信フォーム・ソーシャルメディアのOpen Graph メタデータには非対応
+
+**PNG（Portable Network Graphics）**
+
+- ラスターフォーマット — 実際のピクセルを格納
+- 非可逆圧縮なし（保存しても品質が劣化しない）
+- フルアルファチャンネル（透明な背景）
+- メール・ソーシャルメディア・印刷・モバイルアプリなどあらゆる環境でサポート
+- ファイルサイズは解像度に比例して増加、解像度非依存ではない
+
+変換は実質的に一方通行です。SVGからどんなサイズでもPNGを生成できますが、PNGからベクターデータを復元することはできません。
+
+## プラットフォームのSVG/PNG対応状況
+
+| 用途 | SVG | PNG |
+|---------|-----|-----|
+| モダンブラウザ（imgタグ） | 対応 | 対応 |
+| HTMLインライン | 対応 | 非対応 |
+| メールクライアント（Gmail、Outlook） | 非対応 | 対応 |
+| Twitter/X Open Graph | 非対応 | 対応 |
+| Facebook Open Graph | 非対応 | 対応 |
+| LinkedInカバー/ロゴ | 非対応 | 対応 |
+| Apple App Storeアイコン | 非対応 | 対応 |
+| Google Play Storeアイコン | 非対応 | 対応 |
+| CSS `background-image` | 対応 | 対応 |
+| Canvas API | 部分対応 | 対応 |
+
+## 用途別の解像度とDPI
+
+PNGは解像度依存のため、変換前に出力サイズを決める必要があります。
+
+### 画面表示（72〜96 PPI）
+
+表示サイズがわかっているウェブ用途では、1xと2x（Retina）でエクスポートします：
+
+- 48pxアイコン：48×48（1x）と96×96（2x）でエクスポート
+- OGイメージ：1200×630（72 PPI）
+- Twitterカード：1200×628
+
+### モバイルアプリアイコン
+
+AppleとGoogleは複数サイズを要求します。SVGから一度にすべてエクスポートしましょう：
+
+**iOS（App Store）**
+
+| サイズ | 用途 |
+|------|-----|
+| 1024×1024 | App Storeリスティング |
+| 180×180 | iPhoneホーム画面 @3x |
+| 120×120 | iPhoneホーム画面 @2x |
+| 87×87 | 設定 @3x |
+| 60×60 | Spotlight @3x |
+
+**Android（Google Play）**
+
+| サイズ | 用途 |
+|------|-----|
+| 512×512 | Playストアリスティング |
+| 192×192 | xxxhdpiランチャー |
+| 144×144 | xxhdpiランチャー |
+| 96×96 | xhdpiランチャー |
+| 72×72 | hdpiランチャー |
+
+### 印刷（300 PPI）
+
+印刷用PNGは、物理サイズに300（または高品質印刷なら600）を掛けます：
+
+- 幅2インチのロゴ（300 DPI）= 最低600×600 px
+- 名刺（3.5×2インチ、300 DPI）= 1050×600 px
+
+## 透明な背景
+
+最もよくある変換要件のひとつが、SVGの透明背景をPNGに保持することです。PNGはアルファチャンネルでネイティブにサポートしています。
+
+変換時の注意点：
+
+1. SVGのルート`<svg>`要素に明示的な`background`や`fill`がないことを確認する
+2. コンバーターがデフォルトで白背景を追加しないか確認する
+3. PNGとしてエクスポートする（JPEGには透過機能がない）
+
+確認方法：変換後のPNGを暗い背景に置いてみてください。背景が透明ではなく白い場合、コンバーターが塗りつぶしを追加しています。
+
+## コマンドラインでの変換
+
+バッチ変換やCIパイプラインには、2つのツールが標準です：
+
+### Inkscape
+
+InkscapeのヘッドレスモードはGUIと同じレンダリングエンジンを使うため、最高品質のSVG→PNG変換が可能です：
+
+```bash
+# 300 DPIでエクスポート
+inkscape --export-type=png --export-dpi=300 logo.svg
+
+# 指定ピクセルサイズでエクスポート
+inkscape --export-type=png --export-width=1024 --export-height=1024 icon.svg
+
+# ディレクトリ内の全SVGをバッチ変換
+for f in *.svg; do
+  inkscape --export-type=png --export-width=512 "$f"
+done
+```
+
+### ImageMagick
+
+ImageMagickは広く利用可能でシンプルな変換を処理します：
+
+```bash
+# 基本的な変換
+convert icon.svg icon.png
+
+# 出力サイズを指定
+convert -size 512x512 icon.svg icon.png
+
+# 高密度（DPIに相当）
+convert -density 300 logo.svg logo.png
+
+# 透明背景を明示的に保持
+convert icon.svg -background none icon.png
+```
+
+### Sharp（Node.js）
+
+Node.jsのワークフローやビルドスクリプトで使う場合：
+
+```javascript
+import sharp from 'sharp';
+
+await sharp('icon.svg')
+  .resize(512, 512)
+  .png()
+  .toFile('icon.png');
+```
+
+### svgexport（npm）
+
+スケールファクターを指定したSVG→PNG変換専用ツール：
+
+```bash
+npm install -g svgexport
+
+# 2xスケールでエクスポート
+svgexport icon.svg icon.png 2x
+
+# 正確なサイズでエクスポート
+svgexport icon.svg icon.png 512:512
+```
+
+## ファビコンのワークフロー
+
+モダンなファビコン設定には複数のフォーマットが必要です。推奨アプローチ：
+
+1. ロゴをSVGで用意する
+2. 32×32 PNGをエクスポート（レガシーブラウザ用）
+3. 180×180 PNGをエクスポート（Apple touch icon用）
+4. 512×512 PNGをエクスポート（PWAマニフェスト用）
+5. 32×32 PNGを`.ico`に変換（IEフォールバック用）
+
+```html
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+```
+
+モダンブラウザでは最初にSVGファビコンが読み込まれ、古いブラウザではPNGフォールバックが使われます。
+
+## OGイメージのワークフロー
+
+Twitter・Facebook・LinkedIn用のOpen Graph画像（og:image）はPNGまたはJPEGでなければなりません。SVGは主要ソーシャルプラットフォームのクローラーには非対応です。
+
+要件：
+
+- Twitter/X：1200×628 px、5 MB未満、PNGまたはJPEG
+- Facebook：1200×630 px、最低600×315 px
+- LinkedIn：1200×627 px
+
+ソーシャルカードをSVGで管理している（テキスト編集が容易）なら、デプロイ前に1200×630でエクスポートしてください。
+
+## よくある変換の問題
+
+**テキストのレンダリングが異なる** — SVGのテキストはインストール済みフォントを使用しますが、PNG変換時にフォントが埋め込まれていないとシステムフォントにフォールバックします。対処法：SVGエディタでテキストをパスに変換してからエクスポートするか、`font-face`で埋め込みフォントを使用する。
+
+**端が切れる** — 一部のコンバーターはSVGのviewBoxをクロップします。SVGの`viewBox`属性が実際のコンテンツの境界と一致していること、オーバーフロークリッピングがないことを確認してください。
+
+**ピクセレートされた出力** — 解像度の指定が低すぎます。Retinaディスプレイ用には常にCSS表示サイズの2xでエクスポートしてください。
+
+**透過が消える** — コンバーターが白塗りをデフォルトにしています。「背景色」や「透明背景」のオプションを探してください。
+
+## 今すぐSVGを変換する
+
+一度限りの変換なら、InkscapeをインストールしたりNode.jsのパイプラインを設定したりするよりも、ブラウザベースのツールの方が速く、透過処理も追加オプションなしで正しく行われます。
+
+[SVG to PNG コンバーターを試す →](/tools/svg-to-png-converter)
+
+SVGを貼り付けるかアップロードして、出力サイズ（またはスケールファクター）を設定し、透明背景を保持するかどうか選択して、PNGをダウンロードするだけです。アプリストアやソーシャルメディアにすぐに使えます。

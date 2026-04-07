@@ -1,0 +1,310 @@
+---
+title: "画像をBase64に変換：CSS埋め込み・API送信・メール添付の完全ガイド"
+description: "画像をBase64エンコードしてCSSデータURI・HTMLインライン・JSON API・メール添付に活用する方法を解説。JavaScript・Python・Node.jsのコード例とCORSの落とし穴も網羅。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "image-to-base64-guide"
+tags: ["base64", "image", "data-uri", "encoding", "developer-tools"]
+---
+
+画像を Base64 に変換する作業は開発者が常に遭遇するタスクです。HTTP リクエストを減らすためにアイコンを CSS に直接埋め込む、JSON API ペイロードに画像を添付する、HTML メールにロゴを含める、データベースフィールドに画像データを保存するなどの用途があります。Base64 エンコーディングはバイナリ画像データを印刷可能な ASCII 文字列に変換し、テキストベースのプロトコルを安全に通過できるようにします。
+
+[今すぐ画像を Base64 に変換する →](/tools/image-to-base64)
+
+## Base64 画像エンコーディングとは
+
+Base64 は 64 個の印刷可能な ASCII 文字（A〜Z・a〜z・0〜9・`+`・`/`）を使ってバイナリデータを表現するエンコーディングスキームです。画像ファイルはバイナリデータ（ピクセル値・圧縮テーブル・メタデータを表すバイト列）です。Base64 はそれらのバイトをテキストが有効な場所にどこでも埋め込めるテキスト文字列に変換します。
+
+トレードオフ：Base64 エンコードされたデータは元のバイナリより約 33% 大きくなります。100 KB の PNG は Base64 文字列として約 133 KB になります。
+
+## データ URI の構文
+
+Web での Base64 画像の最も一般的な用途は**データ URI スキーム**です：
+
+```
+data:[<mediatype>][;base64],<data>
+```
+
+実際の例：
+
+```html
+<!-- PNG 画像を HTML に直接埋め込む -->
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="1px dot">
+
+<!-- CSS で SVG アイコンをデータ URI として使用 -->
+.icon {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01eiIvPjwvc3ZnPg==");
+}
+```
+
+メディアタイプはブラウザにデータの解釈方法を伝えます：`image/png`・`image/jpeg`・`image/svg+xml`・`image/webp`・`image/gif`。
+
+## Base64 画像を使うべき場面
+
+### 適切な使用例
+
+**CSS のアイコンとロゴ（小さいもの）**：2〜3 KB の SVG や PNG をデータ URI として埋め込むと HTTP リクエストが1回減ります。すべてのページで使用される小さなアセットには体感パフォーマンスの改善効果があります。
+
+**HTML メールテンプレート**：メールクライアントは通常外部画像リクエストをブロックします。画像を Base64 として埋め込めば、ネットワークアクセスやユーザーの許可なしに表示されます。
+
+**JSON API ペイロード**：コンピュータービジョン API・ドキュメント処理サービス・サムネイルアップロードエンドポイントなど、一部の API は JSON リクエストボディで Base64 エンコードされた文字列として画像を受け付けます。
+
+**オフライン/自己完結型 HTML**：ネットワーク接続なしで動作する HTML レポートや文書を作成する場合、Base64 で埋め込まれた画像はすべてのアセットがファイルに付随することを保証します。
+
+**Canvas と WebGL**：JavaScript の `drawImage()` などの API は Base64 データ URI を直接扱えます。
+
+### Base64 を使うべきでない場面
+
+**大きな画像**：10〜20 KB を超える画像では 33% のサイズオーバーヘッドは大きいです。ファイル参照を使いましょう。
+
+**複数ページで使用される画像**：Base64 画像はブラウザで独立してキャッシュできません。外部画像 URL は一度キャッシュされますが、10 ページに埋め込まれた同じ Base64 文字列は 10 回デコードされます。
+
+**パフォーマンスクリティカルなページ**：大きな Base64 文字列のパースはメインスレッドをブロックします。外部画像は並行ダウンロードされ、ブラウザがオフスレッドでデコードします。
+
+## コードで画像を Base64 に変換する
+
+### JavaScript（ブラウザ）
+
+`<input>` 要素からファイルを読み込む：
+
+```javascript
+const input = document.getElementById('fileInput');
+
+input.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = (event) => {
+    const base64 = event.target.result;
+    // base64 = "data:image/png;base64,iVBORw0KGgo..."
+    console.log(base64);
+
+    // データ URI プレフィックスを除去して純粋な Base64 文字列を取得:
+    const base64Data = base64.split(',')[1];
+    console.log(base64Data);
+  };
+
+  reader.readAsDataURL(file);
+});
+```
+
+Canvas を使って画像 URL を Base64 に変換する：
+
+```javascript
+async function imageUrlToBase64(url) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+
+  return new Promise((resolve, reject) => {
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+```
+
+#### CORS の落とし穴：汚染されたキャンバスエラー
+
+クロスオリジンの画像をキャンバスに描画して `canvas.toDataURL()` を呼び出すと次のエラーが発生することがあります：
+
+```
+SecurityError: The operation is insecure.
+```
+
+ブラウザは異なるオリジンのピクセルを含むキャンバスを「汚染」としてマークし、クロスオリジンのデータ漏洩を防ぐために `toDataURL()` をブロックします。
+
+**解決策1 — `crossOrigin = "anonymous"` + サーバーの CORS ヘッダー**
+
+画像サーバーが CORS をサポートしている場合は、`src` を割り当てる前に `crossOrigin` を設定し、サーバーが `Access-Control-Allow-Origin: *` で応答することを確認します：
+
+```javascript
+const img = new Image();
+img.crossOrigin = 'anonymous'; // .src の前に設定が必要
+img.onload = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  console.log(canvas.toDataURL()); // サーバーが CORS ヘッダーを送信する場合のみ動作
+};
+img.src = 'https://external-server.com/image.png';
+```
+
+`crossOrigin = "anonymous"` を設定するだけでは不十分で、サーバーも `Access-Control-Allow-Origin` レスポンスヘッダーを送信する必要があります。
+
+**解決策2 — `fetch()` + Blob + FileReader（Canvas を完全に回避）**
+
+CORS をサポートするサーバーなら、Canvas をスキップして `fetch()` を使います：
+
+```javascript
+async function imageUrlToBase64(url) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+```
+
+汚染キャンバスの制限を完全に回避できます。同一オリジン URL と、サーバーが CORS ヘッダーを送信するクロスオリジン URL の両方で機能します。
+
+> **注**：[ZeroTool の画像コンバーター](/tools/image-to-base64)はローカルファイルに `FileReader` を使用します。外部リクエストなし、CORS の問題なし。
+
+### JavaScript（Node.js）
+
+```javascript
+const fs = require('fs');
+
+// ファイルを Base64 に変換
+const imageBuffer = fs.readFileSync('./image.png');
+const base64 = imageBuffer.toString('base64');
+const dataUri = `data:image/png;base64,${base64}`;
+
+console.log(dataUri);
+```
+
+拡張子からメディアタイプを検出する：
+
+```javascript
+const fs = require('fs');
+const path = require('path');
+
+function imageToDataUri(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mimeTypes = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+  };
+  const mime = mimeTypes[ext] || 'application/octet-stream';
+  const data = fs.readFileSync(filePath).toString('base64');
+  return `data:${mime};base64,${data}`;
+}
+```
+
+### Python
+
+```python
+import base64
+from pathlib import Path
+
+def image_to_base64(file_path: str) -> str:
+    """画像ファイルの Base64 エンコードされたコンテンツを返す"""
+    return base64.b64encode(Path(file_path).read_bytes()).decode('utf-8')
+
+def image_to_data_uri(file_path: str, mime_type: str = 'image/png') -> str:
+    """HTML や CSS への埋め込みに適したデータ URI を返す"""
+    b64 = image_to_base64(file_path)
+    return f"data:{mime_type};base64,{b64}"
+
+# 使用例
+print(image_to_data_uri('logo.png', 'image/png'))
+```
+
+### コマンドライン
+
+```bash
+# macOS / Linux
+base64 -i image.png
+base64 -i image.png | tr -d '\n'  # 改行なしの1行
+
+# データ URI を作成
+echo "data:image/png;base64,$(base64 -i image.png | tr -d '\n')"
+```
+
+## Base64 文字列の操作
+
+### Base64 を画像にデコードする
+
+```javascript
+// Node.js: Base64 文字列 → ファイル
+const fs = require('fs');
+
+const base64Data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA...';
+const buffer = Buffer.from(base64Data, 'base64');
+fs.writeFileSync('output.png', buffer);
+```
+
+```python
+# Python: Base64 文字列 → ファイル
+import base64
+from pathlib import Path
+
+base64_data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...'
+Path('output.png').write_bytes(base64.b64decode(base64_data))
+```
+
+### データ URI プレフィックスの追加・除去
+
+```javascript
+// プレフィックスを追加
+const withPrefix = `data:image/png;base64,${base64String}`;
+
+// プレフィックスを除去
+const withoutPrefix = dataUri.replace(/^data:image\/\w+;base64,/, '');
+```
+
+## API への画像送信
+
+多くのコンピュータービジョン API（OpenAI Vision・Google Cloud Vision・AWS Rekognition）は Base64 エンコードされた画像を受け付けます：
+
+```python
+import base64
+import httpx
+
+with open('photo.jpg', 'rb') as f:
+    image_b64 = base64.b64encode(f.read()).decode('utf-8')
+
+response = httpx.post(
+    'https://api.example.com/analyze',
+    json={
+        'image': {
+            'type': 'base64',
+            'media_type': 'image/jpeg',
+            'data': image_b64,
+        }
+    }
+)
+```
+
+## 画像フォーマットリファレンス
+
+| フォーマット | MIME タイプ | 用途 | Base64 の使用 |
+|-----------|-----------|-----|-------------|
+| PNG | `image/png` | アイコン・スクリーンショット・ロゴ | よく使う |
+| JPEG | `image/jpeg` | 写真 | あまり使わない（大きい） |
+| SVG | `image/svg+xml` | ベクターアイコン・ロゴ | 非常によく使う |
+| WebP | `image/webp` | より良い圧縮の写真 | 増加中 |
+| GIF | `image/gif` | アニメーション画像 | まれ |
+| ICO | `image/x-icon` | ファビコン | よく使う |
+
+SVG は特別な言及に値します：SVG は XML（テキスト）なので、Base64 エンコードなしに生の SVG 文字列を URL エンコードして埋め込むこともできます。これにより 33% のサイズオーバーヘッドを回避できます：
+
+```css
+/* Base64 アプローチ */
+background-image: url("data:image/svg+xml;base64,PHN2Zy4uLg==");
+
+/* URL エンコードアプローチ（より小さく、読みやすい） */
+background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'...%3E%3C/svg%3E");
+```
+
+## オンライン画像 Base64 コンバーター
+
+コードを書かずに素早く変換したい場合、[ZeroTool の画像 Base64 コンバーター](/tools/image-to-base64)は完全にブラウザ内で動作します。画像ファイルをドラッグ＆ドロップするか選択するだけで、Base64 文字列またはデータ URI を即座に取得できます。ファイルはいかなるサーバーにもアップロードされません。
+
+**[画像 Base64 コンバーターを試す →](/tools/image-to-base64)**

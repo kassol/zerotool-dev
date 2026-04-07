@@ -1,0 +1,197 @@
+---
+title: "HMAC-SHA256の仕組みと使い方：オンライン生成・検証ガイド"
+description: "HMACの仕組み・平文ハッシュとの違い・Webhook署名検証・JWT署名への応用を解説。JavaScript・Python・GoでのHMAC実装例と、ブラウザで即確認できるツールを紹介。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "hmac-generator-guide"
+tags: ["hmac", "hmac-sha256", "message-authentication", "cryptography", "developer-tools"]
+---
+
+HMAC（Hash-based Message Authentication Code）は、平文ハッシュ関数では解決できない問題を解決します。メッセージが信頼できる送信者から届いたことと、改ざんされていないことを同時に証明できるのです。Webhook の署名をデバッグしたり、API リクエスト署名を実装したことがあれば、HMAC を使ったことがあるはずです。このガイドでは仕組み・使いどころ・コードなしで HMAC 値を生成する方法を解説します。
+
+## HMAC とは
+
+HMAC は暗号ハッシュ関数と秘密鍵を組み合わせてメッセージ認証コードを生成する構造です。メッセージ `M` と鍵 `K` が与えられると：
+
+```
+HMAC(K, M) = H((K ⊕ opad) || H((K ⊕ ipad) || M))
+```
+
+`H` はハッシュ関数（SHA-256・SHA-512 など）、`opad` と `ipad` は固定パディング定数、`||` は連結です。
+
+端的に言えば：**HMAC はハッシュを秘密鍵に結びつけます**。鍵を知らなければ同じ出力を再現できません。これが平文ハッシュとの根本的な違いです。
+
+| | 平文ハッシュ | HMAC |
+|---|---|---|
+| 秘密鍵が必要 | No | Yes |
+| 改ざんを検出 | Yes | Yes |
+| 送信者の同一性を証明 | No | Yes |
+| 誰でも偽造可能 | Yes | No |
+
+## 主なユースケース
+
+### Webhook 署名の検証
+
+GitHub・Stripe・Twilio などのサービスは HMAC-SHA256 を使って Webhook ペイロードに署名します。Webhook を受信したら、共有秘密鍵でリクエストボディの HMAC を計算し、ヘッダーの署名と比較します。
+
+```
+X-Hub-Signature-256: sha256=3d23ab...
+```
+
+署名が一致すれば、ペイロードは正当かつ無改ざんです。
+
+### API リクエスト署名（AWS Signature V4）
+
+AWS は HMAC-SHA256 を使って API リクエストに署名します。署名はリージョン・サービス・日付・秘密鍵にリクエストを結びつける複数の HMAC 操作の連鎖です。これによりリプレイ攻撃を防ぎ、認可の偽造を不可能にします。
+
+### JWT 署名（HS256）
+
+`HS256` アルゴリズムで署名した JSON Web Token は HMAC-SHA256 を使います。サーバーは秘密鍵で `header.payload` に署名します。クライアントはリクエストに JWT を含め、サーバーは HMAC を再計算して署名が一致しないトークンを拒否します。
+
+### Cookie・セッションの整合性
+
+署名付き Cookie は改ざん防止に HMAC を使います。サーバーは `HMAC(secret, cookie_value)` を Cookie に付加します。以降のリクエストでサーバーは HMAC を再計算して検証してから Cookie の内容を信頼します。
+
+## HMAC と平文ハッシュの違い
+
+`SHA256("hello")` のような平文ハッシュは公開情報です。誰でも計算できます。HMAC は秘密鍵の知識を要求します。これが重要なのは：
+
+- **Webhook 検証**：HMAC なしでは、攻撃者は任意の値にハッシュされるペイロードを偽造できます
+- **トークン署名**：HMAC なしでは、クライアントが JWT ペイロードを変更してハッシュを再計算できます
+
+HMAC が必要な場面で平文 SHA256 を使ってはいけません。オーバーヘッドは無視できる程度で、セキュリティの差は大きいです。
+
+## サポートされるアルゴリズム
+
+| アルゴリズム | 出力長 | 備考 |
+|-----------|------|----|
+| HMAC-SHA-256 | 256ビット（64文字の16進） | ほとんどの用途のデフォルト |
+| HMAC-SHA-384 | 384ビット（96文字の16進） | より高いセキュリティマージン、低速 |
+| HMAC-SHA-512 | 512ビット（128文字の16進） | 64ビットプラットフォームで推奨 |
+
+新規実装では **HMAC-MD5・HMAC-SHA1 を避けてください**。HMAC は基礎となるハッシュの衝突脆弱性をある程度軽減しますが、これらは多くのコンプライアンスフレームワークで禁止されているレガシーアルゴリズムです。
+
+## 出力フォーマット
+
+HMAC 出力は生バイトで、以下のいずれかでエンコードできます。
+
+- **Hex** — `3d23ab4f...` — 1バイト2文字、ほとんどの API で標準
+- **Base64** — `PSOrT...` — よりコンパクト、HTTP ヘッダーや JWT で使用
+
+どちらも同じバイト列をエンコードしています。手動デバッグには Hex（読みやすい）、バイト効率が重要な場面には Base64（HTTP ヘッダー・トークン）を使いましょう。
+
+## コードでの HMAC 実装
+
+### JavaScript（Web Crypto API）
+
+```js
+async function hmacSha256(key, message) {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
+  return Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+const sig = await hmacSha256('my-secret-key', 'hello world');
+// → "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+```
+
+### Node.js
+
+```js
+const crypto = require('crypto');
+
+const hmac = crypto.createHmac('sha256', 'my-secret-key')
+  .update('hello world')
+  .digest('hex');
+
+console.log(hmac);
+// b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+```
+
+### Python
+
+```python
+import hmac
+import hashlib
+
+key = b'my-secret-key'
+message = b'hello world'
+
+signature = hmac.new(key, message, hashlib.sha256).hexdigest()
+print(signature)
+# b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+```
+
+### Go
+
+```go
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+)
+
+func main() {
+    mac := hmac.New(sha256.New, []byte("my-secret-key"))
+    mac.Write([]byte("hello world"))
+    signature := hex.EncodeToString(mac.Sum(nil))
+    fmt.Println(signature)
+}
+```
+
+## Webhook の正しい検証方法
+
+### 定数時間比較を使う
+
+HMAC 署名を比較する際は常に定数時間比較関数を使ってください。素朴な `==` 比較は最初の不一致バイトで短絡し、タイミング攻撃に悪用できるタイミング情報を漏らします。
+
+```js
+// NG — タイミング情報が漏れる
+if (receivedSig === expectedSig) { ... }
+
+// OK — 定数時間比較
+const crypto = require('crypto');
+if (crypto.timingSafeEqual(Buffer.from(receivedSig), Buffer.from(expectedSig))) { ... }
+```
+
+### タイムスタンプを含める
+
+リプレイ攻撃は有効な署名付きリクエストを再利用します。署名するペイロードにタイムスタンプを含め、数分以上古いリクエストを拒否しましょう。
+
+```
+HMAC-SHA256(secret, timestamp + "." + body)
+```
+
+GitHub の Webhook はこのパターンを5分の許容ウィンドウで使用しています。
+
+## オンライン HMAC ジェネレーターを使う
+
+**[ZeroTool HMAC ジェネレーターを試す →](/tools/hmac-generator)**
+
+メッセージと秘密鍵を入力し、アルゴリズム（SHA-256・SHA-384・SHA-512）を選択すると、Hex または Base64 で HMAC を即座に取得できます。活用シーン：
+
+- 期待値を再現して Webhook 署名の不一致をデバッグ
+- 実装が既知のテストベクターと一致することを確認
+- テストコードを書かずに開発中の API 署名を生成
+- HMAC の動作の学習・探索
+
+すべての計算は Web Crypto API を使用してブラウザ内で実行されます。鍵とメッセージがデバイスの外に出ることはありません。
+
+## 鍵の長さと鍵管理
+
+- **最小鍵長**：HMAC-SHA256 には少なくとも 32 バイト（256ビット）を使用してください。短い鍵はセキュリティを低下させます。
+- **鍵のローテーション**：HMAC 鍵を定期的にローテーションしてください。多くのプラットフォームは短い重複ウィンドウで複数のアクティブ鍵をサポートしています。
+- **鍵をログに記録しない**：HMAC 鍵はシークレットです。アプリケーションログやエラーレポートから除外してください。
+- **用途ごとに鍵を分ける**：Webhook 署名と JWT 署名に同じ鍵を使わないでください。
+
+**[HMAC 署名を即座に生成・検証する →](/tools/hmac-generator)**

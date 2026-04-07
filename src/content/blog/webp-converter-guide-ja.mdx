@@ -1,0 +1,244 @@
+---
+title: "WebP変換完全ガイド：画像を圧縮してWebパフォーマンスを改善する"
+description: "WebPコンバーターを使ってPNG・JPEGのファイルサイズを25〜35%削減する方法を解説。ブラウザサポート・フォールバックパターン・Next.js最適化・cwebp CLIの使い方まで紹介。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "webp-converter-guide"
+tags: ["webp converter", "webp", "image optimization", "web performance", "developer-tools"]
+---
+
+**WebPコンバーター**は、PNG・JPEGをWebP形式に変換します。GoogleのオープンなWebP形式は、同等の画質で約25〜35%小さいファイルサイズを実現し、ページロード時間とCore Web Vitalsのスコアを直接改善します。WebPはiOS Safari 14（2020年）を含むすべての主要ブラウザでサポートされており、注意事項なしに本番環境で使用できます。
+
+## WebPとは、なぜパフォーマンスに重要なのか
+
+WebPはGoogleが2010年にVP8ビデオコーデックをベースに開発しました。サポートする機能：
+
+- **非可逆圧縮** — JPEGと同様、より高い効率
+- **可逆圧縮** — PNGと同様、約26%小さいファイル
+- **透過（アルファチャンネル）** — JPEGにはない機能
+- **アニメーション** — GIFと同様、ただしはるかに小さい
+
+同等の画質での実際のサイズ比較：
+
+| 画像タイプ | JPEG | PNG | WebP（非可逆） | WebP（可逆） |
+|-----------|------|-----|------------|---------------|
+| 写真 | 100 KB | 400 KB | 約70 KB | 約280 KB |
+| 透過ロゴ | — | 50 KB | — | 約38 KB |
+| スクリーンショット | 200 KB | 600 KB | 約130 KB | 約420 KB |
+
+Googleのベンチマークによると、WebP（非可逆）はJPEGより25〜34%小さく、WebP（可逆）は同じSSIM品質スコアでPNGより26%小さいです。
+
+## ブラウザサポート
+
+WebPは現在すべてのブラウザで対応しています：
+
+| ブラウザ | WebPサポート開始 |
+|---------|--------------------|
+| Chrome | バージョン23（2012年） |
+| Firefox | バージョン65（2019年） |
+| Edge | バージョン18（2018年） |
+| Safari | バージョン14 / iOS 14（2020年） |
+| Samsung Internet | バージョン4（2016年） |
+| Opera | バージョン12.1（2012年） |
+
+2025年時点でグローバルなブラウザサポートは97%以上です。フォールバックが必要なのはIE11や非常に古いiOSデバイス（iOS 14以前）をサポートする場合のみです。
+
+## PNGとJPEGをWebPに変換する
+
+### `<picture>`要素によるフォールバックパターン
+
+WebPを提供しつつ、非対応ブラウザへのフォールバックを行う最もクリーンな方法：
+
+```html
+<picture>
+  <source srcset="/images/hero.webp" type="image/webp">
+  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
+</picture>
+```
+
+ブラウザは最初にサポートする`<source>`を読み込み、残りを無視します。`<img>`タグが最後のフォールバックで、`alt`・`width`・`height`属性も提供します。これらは常に含めてレイアウトシフト（CLS）を防ぎましょう。
+
+複数サイズのレスポンシブ画像の場合：
+
+```html
+<picture>
+  <source
+    type="image/webp"
+    srcset="/images/hero-480.webp 480w, /images/hero-800.webp 800w, /images/hero-1200.webp 1200w"
+    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
+  >
+  <img
+    src="/images/hero-1200.jpg"
+    srcset="/images/hero-480.jpg 480w, /images/hero-800.jpg 800w, /images/hero-1200.jpg 1200w"
+    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
+    alt="Hero image"
+    width="1200"
+    height="600"
+  >
+</picture>
+```
+
+### CSSの背景画像
+
+背景画像にはCSSの`image-set()`関数でWebPを提供できます：
+
+```css
+.hero {
+  background-image: url('/images/hero.jpg');
+  background-image: image-set(
+    url('/images/hero.webp') type('image/webp'),
+    url('/images/hero.jpg') type('image/jpeg')
+  );
+}
+```
+
+## フレームワーク統合
+
+### Next.js
+
+Next.jsは`next/image`コンポーネントを使うと自動的に画像をWebP（およびAVIF）に変換します。手動での変換は不要です：
+
+```jsx
+import Image from 'next/image';
+
+export default function Hero() {
+  return (
+    <Image
+      src="/images/hero.jpg"
+      alt="Hero image"
+      width={1200}
+      height={600}
+      priority
+    />
+  );
+}
+```
+
+Next.jsは`Accept`リクエストヘッダーでフォーマットのネゴシエーションを行い、サポートされているブラウザにはWebPを提供し、変換された画像をキャッシュします。ソースにはJPEGまたはPNGを保持できます。
+
+`next.config.js`での品質とフォーマットの設定：
+
+```javascript
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  images: {
+    formats: ['image/avif', 'image/webp'],
+    minimumCacheTTL: 31536000,
+  },
+};
+
+export default nextConfig;
+```
+
+### Astro
+
+Astroの組み込み`<Image>`コンポーネントも同様の機能を持ちます：
+
+```astro
+---
+import { Image } from 'astro:assets';
+import heroImage from '../assets/hero.jpg';
+---
+
+<Image src={heroImage} alt="Hero image" format="webp" quality={80} />
+```
+
+複数フォーマットの場合：
+
+```astro
+---
+import { Picture } from 'astro:assets';
+import heroImage from '../assets/hero.jpg';
+---
+
+<Picture
+  src={heroImage}
+  formats={['avif', 'webp']}
+  alt="Hero image"
+/>
+```
+
+### Vite / ビルドパイプライン
+
+Viteを使用した静的サイトでは、`vite-imagetools`プラグインがビルド時に画像を変換します：
+
+```javascript
+// vite.config.js
+import { imagetools } from 'vite-imagetools';
+
+export default {
+  plugins: [imagetools()],
+};
+```
+
+```html
+<!-- HTMLまたはJSXで -->
+<img src="./hero.jpg?format=webp&width=1200" alt="Hero">
+```
+
+## cwebp CLI
+
+Googleの`cwebp`コマンドラインエンコーダーがリファレンス実装です：
+
+```bash
+# macOSにインストール
+brew install webp
+
+# Ubuntu/Debianにインストール
+sudo apt-get install webp
+
+# 基本的な変換（品質80、良いデフォルト）
+cwebp -q 80 input.jpg -o output.webp
+
+# 可逆（透過PNGの場合）
+cwebp -lossless input.png -o output.webp
+
+# 高品質（90）で重要な画像
+cwebp -q 90 input.jpg -o output.webp
+
+# ディレクトリ内の全JPEGをバッチ変換
+for f in *.jpg; do
+  cwebp -q 80 "$f" -o "${f%.jpg}.webp"
+done
+
+# 圧縮統計の表示
+cwebp -q 80 -v input.jpg -o output.webp
+```
+
+品質80は写真のデフォルトとして適切です。品質90以上は細部が重要な画像（商品写真・医療画像）向けです。可逆はスクリーンショット・図・テキストを含む画像向けです。
+
+## Core Web Vitalsへの影響
+
+WebPはCore Web Vitalsの2つの指標に直接影響します：
+
+**Largest Contentful Paint（LCP）** — LCP要素は通常ヒーロー画像です。ファイルサイズを30%削減することで、特にモバイル接続でのLCP時間が直接短縮されます。
+
+**Total Blocking Time / First Contentful Paint** — 画像が小さければ初期ページロードの総データ量が減ります。
+
+Google PageSpeed Insightsは変換されていないJPEGとPNGを「次世代フォーマットで画像を配信する」監査として指摘します。一般的なコンテンツサイトで最も効果的な改善の一つです。
+
+大まかな計算：ホームページが500KBの画像を読み込み、すべてWebPに変換すると約150〜175KBを節約できます。4G接続（20Mbps）では約60msの節約になります。低速な接続では効果はさらに大きくなります。
+
+## AVIF：次のステップ
+
+AVIF（AV1 Image File Format）はWebPよりさらに新しく、同じ品質でWebPより約20%小さいです。2024年時点でブラウザサポートは約90%に達しています（Chrome・Firefox・Safari 16+・Edge）。
+
+3種類すべてのフォーマットをカスケードした`<source>`要素で提供できます：
+
+```html
+<picture>
+  <source srcset="/images/hero.avif" type="image/avif">
+  <source srcset="/images/hero.webp" type="image/webp">
+  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
+</picture>
+```
+
+AVIFのエンコードはWebPより大幅に遅いため、オンザフライではなくビルド時の変換に向いています。
+
+## 今すぐ画像を変換する
+
+CMSへのアップロード前の素早い変換、プロトタイプの共有、特定の画像にWebPが適しているか確認したい場合には、ブラウザベースのツールがcwebpのインストールやビルドパイプラインの設定より速い選択肢です。
+
+[WebPコンバーターを試す →](/tools/webp-converter)
+
+PNG・JPEGをアップロードし、品質レベルを設定してWebP版をダウンロードするだけです。並べて表示されるファイルサイズ比較で、フォーマット採用前にどれだけ節約できるか確認できます。

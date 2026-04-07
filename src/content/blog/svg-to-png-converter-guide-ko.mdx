@@ -1,0 +1,216 @@
+---
+title: "SVG to PNG 변환 완전 가이드: 벡터 이미지를 래스터 이미지로 변환하는 방법"
+description: "SVG를 PNG로 변환하는 방법을 설명합니다. 해상도·투명 배경·DPI 설정부터 커맨드라인 변환, 앱 아이콘 사이즈 표까지 실무 중심으로 안내합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "svg-to-png-converter-guide"
+tags: ["svg to png", "svg converter", "image converter", "svg", "developer-tools"]
+---
+
+**SVG to PNG 변환**은 확장 가능한 벡터 소스에서 임의의 해상도로 래스터 이미지를 생성하는 작업입니다. 플랫폼이 SVG를 지원하지 않거나 정확한 픽셀 크기가 필요할 때 반드시 필요합니다. SVG는 웹에 최적화된 포맷이지만, 소셜 미디어 프로필 이미지 제출, 이메일 내 이미지, App Store 아이콘 업로드가 필요해지면 PNG가 요구됩니다.
+
+## SVG vs PNG: 각각의 사용 시점
+
+트레이드오프를 이해하면 변환이 필요한 시점과 중요한 설정을 파악할 수 있습니다.
+
+**SVG(Scalable Vector Graphics)**
+
+- XML 기반, 해상도 무관 — 어떤 크기에서도 선명함
+- 아이콘, 로고, 일러스트의 파일 크기가 작음
+- 텍스트 에디터나 CSS로 편집 가능, 애니메이션 지원
+- 모든 모던 브라우저에서 `<img>`, `<object>`, 인라인으로 표시 가능
+- 대부분의 이메일 클라이언트, 앱 스토어 업로드 폼, 소셜 미디어 Open Graph 메타데이터는 미지원
+
+**PNG(Portable Network Graphics)**
+
+- 래스터 포맷 — 실제 픽셀을 저장
+- 무손실 압축(저장 시 품질 저하 없음)
+- 전체 알파 채널(투명 배경)
+- 이메일, 소셜 미디어, 인쇄, 모바일 앱 등 모든 환경에서 지원
+- 파일 크기가 해상도에 비례해 커짐, 해상도 무관이 아님
+
+변환은 실질적으로 단방향입니다. SVG에서 언제든 원하는 크기의 PNG를 생성할 수 있지만, PNG에서 벡터 데이터를 복원할 수는 없습니다.
+
+## 플랫폼별 SVG/PNG 지원 현황
+
+| 용도 | SVG | PNG |
+|---------|-----|-----|
+| 모던 브라우저(img 태그) | 지원 | 지원 |
+| HTML 인라인 | 지원 | 미지원 |
+| 이메일 클라이언트(Gmail, Outlook) | 미지원 | 지원 |
+| Twitter/X Open Graph | 미지원 | 지원 |
+| Facebook Open Graph | 미지원 | 지원 |
+| LinkedIn 커버/로고 | 미지원 | 지원 |
+| Apple App Store 아이콘 | 미지원 | 지원 |
+| Google Play Store 아이콘 | 미지원 | 지원 |
+| CSS `background-image` | 지원 | 지원 |
+| Canvas API | 부분 지원 | 지원 |
+
+## 용도별 해상도와 DPI
+
+PNG는 해상도 의존적이므로 변환 전에 출력 크기를 결정해야 합니다.
+
+### 화면 표시(72~96 PPI)
+
+표시 크기를 알고 있는 웹 용도라면 1x와 2x(레티나)로 내보냅니다:
+
+- 48px 아이콘: 48×48(1x)과 96×96(2x)로 내보내기
+- OG 이미지: 1200×630(72 PPI)
+- Twitter 카드: 1200×628
+
+### 모바일 앱 아이콘
+
+Apple과 Google은 여러 크기를 요구합니다. SVG에서 한 번에 모두 내보내세요:
+
+**iOS(App Store)**
+
+| 크기 | 용도 |
+|------|-----|
+| 1024×1024 | App Store 리스팅 |
+| 180×180 | iPhone 홈 화면 @3x |
+| 120×120 | iPhone 홈 화면 @2x |
+| 87×87 | 설정 @3x |
+| 60×60 | Spotlight @3x |
+
+**Android(Google Play)**
+
+| 크기 | 용도 |
+|------|-----|
+| 512×512 | Play 스토어 리스팅 |
+| 192×192 | xxxhdpi 런처 |
+| 144×144 | xxhdpi 런처 |
+| 96×96 | xhdpi 런처 |
+| 72×72 | hdpi 런처 |
+
+### 인쇄(300 PPI)
+
+인쇄용 PNG는 물리적 크기에 300(고품질 인쇄는 600)을 곱합니다:
+
+- 2인치 너비 로고(300 DPI) = 최소 600×600 px
+- 명함(3.5×2인치, 300 DPI) = 1050×600 px
+
+## 투명 배경
+
+가장 흔한 변환 요구사항 중 하나는 SVG의 투명 배경을 PNG에 보존하는 것입니다. PNG는 알파 채널을 통해 네이티브로 지원합니다.
+
+변환 시 주의 사항:
+
+1. SVG의 루트 `<svg>` 요소에 명시적인 `background`나 `fill`이 없는지 확인
+2. 변환 도구가 기본으로 흰 배경을 추가하지 않는지 확인
+3. PNG로 내보내기(JPEG는 투명도 미지원)
+
+확인 방법: 변환된 PNG를 어두운 배경 위에 놓아보세요. 배경이 투명이 아닌 흰색이라면 변환 도구가 채우기를 추가한 것입니다.
+
+## 커맨드라인 변환
+
+일괄 변환이나 CI 파이프라인에는 두 가지 도구가 표준입니다:
+
+### Inkscape
+
+Inkscape의 헤드리스 모드는 GUI와 같은 렌더링 엔진을 사용하므로 가장 높은 품질의 SVG→PNG 변환이 가능합니다:
+
+```bash
+# 300 DPI로 내보내기
+inkscape --export-type=png --export-dpi=300 logo.svg
+
+# 지정 픽셀 크기로 내보내기
+inkscape --export-type=png --export-width=1024 --export-height=1024 icon.svg
+
+# 디렉토리 내 모든 SVG 일괄 변환
+for f in *.svg; do
+  inkscape --export-type=png --export-width=512 "$f"
+done
+```
+
+### ImageMagick
+
+ImageMagick은 널리 사용되며 간단한 변환을 처리합니다:
+
+```bash
+# 기본 변환
+convert icon.svg icon.png
+
+# 출력 크기 지정
+convert -size 512x512 icon.svg icon.png
+
+# 높은 밀도(DPI에 상당)
+convert -density 300 logo.svg logo.png
+
+# 투명 배경 명시적으로 보존
+convert icon.svg -background none icon.png
+```
+
+### Sharp(Node.js)
+
+Node.js 워크플로우나 빌드 스크립트에서:
+
+```javascript
+import sharp from 'sharp';
+
+await sharp('icon.svg')
+  .resize(512, 512)
+  .png()
+  .toFile('icon.png');
+```
+
+### svgexport(npm)
+
+스케일 팩터를 지정하는 SVG→PNG 전용 도구:
+
+```bash
+npm install -g svgexport
+
+# 2x 스케일로 내보내기
+svgexport icon.svg icon.png 2x
+
+# 정확한 크기로 내보내기
+svgexport icon.svg icon.png 512:512
+```
+
+## 파비콘 워크플로우
+
+모던한 파비콘 설정에는 여러 포맷이 필요합니다. 권장 접근법:
+
+1. 로고를 SVG로 준비
+2. 32×32 PNG 내보내기(레거시 브라우저용)
+3. 180×180 PNG 내보내기(Apple touch icon용)
+4. 512×512 PNG 내보내기(PWA 매니페스트용)
+5. 32×32 PNG를 `.ico`로 변환(IE 폴백용)
+
+```html
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+```
+
+모던 브라우저는 SVG 파비콘을 먼저 로드하고, 구형 브라우저는 PNG 폴백을 사용합니다.
+
+## OG 이미지 워크플로우
+
+Twitter·Facebook·LinkedIn의 Open Graph 이미지(og:image)는 PNG 또는 JPEG여야 합니다. 주요 소셜 플랫폼 크롤러는 SVG를 지원하지 않습니다.
+
+요구 사항:
+
+- Twitter/X: 1200×628 px, 5MB 미만, PNG 또는 JPEG
+- Facebook: 1200×630 px, 최소 600×315 px
+- LinkedIn: 1200×627 px
+
+소셜 카드를 SVG로 관리(텍스트 편집이 편리)하는 경우, 배포 전에 1200×630으로 내보내세요.
+
+## 자주 발생하는 변환 문제
+
+**텍스트 렌더링이 다름** — SVG 텍스트는 설치된 폰트를 사용하지만, PNG 변환 시 폰트가 임베드되어 있지 않으면 시스템 폰트로 대체됩니다. 해결법: SVG 편집기에서 텍스트를 패스로 변환한 후 내보내거나, `font-face`로 임베드된 폰트를 사용하세요.
+
+**가장자리가 잘림** — 일부 변환 도구는 SVG viewBox를 잘라냅니다. SVG의 `viewBox` 속성이 실제 콘텐츠 경계와 일치하고 오버플로우 클리핑이 없는지 확인하세요.
+
+**픽셀화된 출력** — 해상도 지정이 너무 낮습니다. 레티나 디스플레이용으로는 항상 CSS 표시 크기의 2x로 내보내세요.
+
+**투명도 소실** — 변환 도구가 기본으로 흰색 채우기를 적용했습니다. "배경색" 또는 "투명 배경" 옵션을 찾아보세요.
+
+## 지금 SVG를 변환하세요
+
+단발성 변환이라면 Inkscape를 설치하거나 Node.js 파이프라인을 구성하는 것보다 브라우저 기반 도구가 더 빠르고, 추가 옵션 없이도 투명도를 올바르게 처리합니다.
+
+[SVG to PNG 변환기 사용해보기 →](/tools/svg-to-png-converter)
+
+SVG를 붙여넣거나 업로드하고, 출력 크기(또는 스케일 팩터)를 설정하고, 투명 배경 보존 여부를 선택한 후 PNG를 다운로드하세요. 앱 스토어, 소셜 미디어 등 어디서든 바로 사용할 수 있습니다.

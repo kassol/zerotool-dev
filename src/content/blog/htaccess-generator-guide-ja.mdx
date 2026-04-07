@@ -1,0 +1,272 @@
+---
+title: ".htaccessジェネレーター：mod_rewriteを暗記せずにApache設定を生成"
+description: "HTTPSリダイレクト・CORS・キャッシュ・Basic認証など.htaccessの主要ルールを解説。よくあるミスと、オンラインで正確な.htaccessを即生成する方法を紹介します。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "htaccess-generator-guide"
+tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tools"]
+---
+
+**.htaccess ジェネレーター**を使えば、mod_rewrite の構文を覚えたり括弧の位置ミスで 500 エラーを出したりすることなく、有効な Apache `.htaccess` 設定を生成できます。`.htaccess`（"hypertext access" の略）はディレクトリごとの設定ファイルで、Apache がリクエストのたびに読み込みます。メインのサーバー設定を触らずにリダイレクト・ヘッダー・認証・圧縮を制御できます。
+
+## .htaccess の用途と使うべき場面
+
+`.htaccess` は `AllowOverride` が有効な Apache サーバーでのみ動作します。Nginx・LiteSpeed・CDN のみの構成では使えません。Nginx にはディレクトリごとの設定ファイルに相当するものがなく、ルールは `server {}` ブロックに書きます。
+
+`.htaccess` が適切な場面：
+
+- `httpd.conf` を編集できない共有ホスティング
+- WordPress・Joomla・Drupal（すべてパーマリンクに `.htaccess` を使用）
+- サーバーの再起動なしに素早くルールを適用したい場合
+
+メインのサーバー設定や Nginx を選ぶべき場面：
+
+- 高トラフィックのサイト（`.htaccess` はリクエストのたびに再読み込みされるためレイテンシが増加）
+- コンテナやサーバーレス環境
+- すべての仮想ホストにまたがってグローバルに適用する必要があるルール
+
+## 必須の .htaccess ルール
+
+### HTTPS 強制（HTTP から HTTPS へのリダイレクト）
+
+最もよく使われる `.htaccess` ルールです。すべての HTTP トラフィックを HTTPS にリダイレクトします。Google のランキングシグナルにもなります。
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+```
+
+SSL を終端するロードバランサーの背後にある場合は、転送ヘッダーを使います：
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+```
+
+### WWW あり/なしの統一
+
+どちらか一方を正規の形式として、他方をリダイレクトします：
+
+```apache
+# WWW なしを正規形式に
+RewriteEngine On
+RewriteCond %{HTTP_HOST} ^www\.(.*)$ [NC]
+RewriteRule ^(.*)$ https://%1/$1 [R=301,L]
+```
+
+```apache
+# WWW ありを正規形式に
+RewriteEngine On
+RewriteCond %{HTTP_HOST} !^www\. [NC]
+RewriteRule ^(.*)$ https://www.%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+```
+
+### 301 恒久リダイレクト
+
+特定のページを新しい URL に移動します：
+
+```apache
+Redirect 301 /old-page https://yourdomain.com/new-page
+```
+
+正規表現を使ったパターンマッチングのリダイレクト：
+
+```apache
+RewriteEngine On
+RewriteRule ^blog/(.+)$ /articles/$1 [R=301,L]
+```
+
+### カスタム 404 エラーページ
+
+```apache
+ErrorDocument 404 /404.html
+ErrorDocument 500 /500.html
+ErrorDocument 403 /403.html
+```
+
+### CORS ヘッダー
+
+特定ドメインまたはすべてのオリジンからのクロスオリジンリクエストを許可します：
+
+```apache
+# 特定のオリジンを許可
+<IfModule mod_headers.c>
+  Header set Access-Control-Allow-Origin "https://app.yourdomain.com"
+  Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+  Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+</IfModule>
+```
+
+```apache
+# すべてのオリジンを許可（公開 API やフォント配信）
+<IfModule mod_headers.c>
+  Header set Access-Control-Allow-Origin "*"
+</IfModule>
+```
+
+### Basic 認証（パスワード保護）
+
+ディレクトリをユーザー名とパスワードで保護します：
+
+```apache
+AuthType Basic
+AuthName "Restricted Area"
+AuthUserFile /path/to/.htpasswd
+Require valid-user
+```
+
+`.htpasswd` ファイルの生成：
+
+```bash
+htpasswd -c /path/to/.htpasswd username
+# パスワードの入力を求められます
+```
+
+ディレクトリ全体でなく特定のファイルを保護する場合：
+
+```apache
+<Files "admin.php">
+  AuthType Basic
+  AuthName "Admin"
+  AuthUserFile /path/to/.htpasswd
+  Require valid-user
+</Files>
+```
+
+### Gzip 圧縮
+
+テキストベースのレスポンスを圧縮して転送サイズを削減します。HTML・CSS・JavaScript で通常 60〜80% の削減効果があります：
+
+```apache
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css
+  AddOutputFilterByType DEFLATE application/javascript application/json
+  AddOutputFilterByType DEFLATE application/xml image/svg+xml
+  AddOutputFilterByType DEFLATE font/woff2 font/woff
+</IfModule>
+```
+
+### ブラウザキャッシュヘッダー
+
+静的アセットのキャッシュ期間をブラウザに伝えます：
+
+```apache
+<IfModule mod_expires.c>
+  ExpiresActive On
+
+  # 画像
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 month"
+  ExpiresByType image/x-icon "access plus 1 year"
+
+  # CSS と JavaScript
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+
+  # フォント
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/woff "access plus 1 year"
+
+  # HTML — 長くキャッシュしない
+  ExpiresByType text/html "access plus 0 seconds"
+</IfModule>
+```
+
+Vite・webpack・Next.js のようにファイル名にコンテンツハッシュを使う場合は `immutable` を使って最大限のキャッシュ効率を得られます：
+
+```apache
+<FilesMatch "\.[0-9a-f]{8,}\.(js|css|woff2)$">
+  Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+```
+
+### ホットリンク防止
+
+他のサイトが画像を埋め込んで帯域幅を消費することを防ぎます：
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTP_REFERER} !^$
+RewriteCond %{HTTP_REFERER} !^https?://(www\.)?yourdomain\.com/ [NC]
+RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,L]
+```
+
+### セキュリティヘッダー
+
+```apache
+<IfModule mod_headers.c>
+  # クリックジャッキングを防止
+  Header always set X-Frame-Options "SAMEORIGIN"
+
+  # MIME タイプスニッフィングを防止
+  Header always set X-Content-Type-Options "nosniff"
+
+  # 古いブラウザの XSS フィルターを有効化
+  Header always set X-XSS-Protection "1; mode=block"
+
+  # リファラーポリシー
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+  # サーバーシグネチャを削除
+  Header always unset X-Powered-By
+  Header always unset Server
+</IfModule>
+```
+
+## .htaccess ルールのテスト
+
+### curl — リダイレクトの確認
+
+```bash
+# リダイレクトをたどって最終 URL を表示
+curl -L -I https://yourdomain.com/old-page
+
+# すべてのリダイレクトのホップを表示
+curl -v https://yourdomain.com/old-page 2>&1 | grep -E "< HTTP|Location:"
+```
+
+### CORS ヘッダーのテスト
+
+```bash
+curl -H "Origin: https://other.com" \
+     -H "Access-Control-Request-Method: GET" \
+     -I https://yourdomain.com/api/resource
+```
+
+### Gzip のテスト
+
+```bash
+curl -H "Accept-Encoding: gzip" -I https://yourdomain.com/
+# 確認事項: Content-Encoding: gzip
+```
+
+### キャッシュヘッダーの確認
+
+```bash
+curl -I https://yourdomain.com/static/app.js
+# 確認事項: Cache-Control と Expires ヘッダー
+```
+
+## よくあるミス
+
+**1. `RewriteEngine On` の漏れ** — `RewriteRule` を使うすべてのブロックの先頭にこの行が必要です。忘れると 500 エラーになります。
+
+**2. ルールの順序** — Apache はルールを上から下に処理し、`[L]` が付いた最初のマッチで停止します。広いルールより前に特定のルールを置いてください。
+
+**3. 無限リダイレクトループ** — HTTPS リダイレクトが既に HTTPS の場合にも実行されるとループになります。必ず `%{HTTPS} off` または `%{HTTP:X-Forwarded-Proto} !https` を確認してください。
+
+**4. .htpasswd へのパス** — 相対 URL ではなく絶対サーバーパスを使ってください。相対パスはほとんどの設定で機能しません。
+
+**5. `mod_rewrite` が有効になっていない** — Ubuntu/Debian では `sudo a2enmod rewrite && sudo systemctl restart apache2` を実行してください。
+
+## 推測なしで .htaccess を構築する
+
+上記のルールは実際のユースケースの 90% をカバーしますが、リダイレクト・認証・キャッシュルールを正しく組み合わせるには、慎重な順序付けと構文が必要です。
+
+[htaccess ジェネレーターを試す →](/tools/htaccess-generator)
+
+必要なルールを選択し、ドメインとパスを入力するだけで、正しい順序・構文エラーなし・各ブロックの説明コメント付きのプロダクション対応 `.htaccess` ファイルが生成されます。

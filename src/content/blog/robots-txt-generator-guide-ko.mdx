@@ -1,0 +1,237 @@
+---
+title: "robots.txt 생성기 완전 가이드: 웹 크롤러 제어와 SEO 영향"
+description: "온라인 robots.txt 생성기로 검색 엔진 크롤러를 제어하세요. 디렉티브 설명, 일반적인 설정 패턴, SEO에 악영향을 주는 실수 방지 방법까지 상세 안내."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "robots-txt-generator-guide"
+tags: ["robots.txt", "robots-txt-generator", "seo", "web-crawlers", "developer-tools"]
+---
+
+**온라인 robots.txt 생성기**를 사용하면 디렉티브를 외울 필요 없이, 전체 사이트를 조용히 차단하는 구문 오류의 위험 없이 몇 초 만에 유효한 `robots.txt` 파일을 만들 수 있습니다. 이 파일은 도메인 루트에 위치하며 다른 URL에 접근하기 전에 검색 엔진 크롤러가 가장 먼저 읽는 것입니다.
+
+## robots.txt가 실제로 하는 일
+
+`robots.txt`는 [Robots Exclusion Protocol](https://www.rfc-editor.org/rfc/rfc9309)을 구현한 일반 텍스트 파일입니다. 모든 준수 크롤러는 크롤링 전에 `https://yourdomain.com/robots.txt`를 가져옵니다. 경로를 차단하면 예의 바른 봇은 건너뜁니다. 악의적인 스크레이퍼는 완전히 무시합니다 — 따라서 `robots.txt`는 보안 메커니즘이 아닙니다.
+
+이 파일에는 두 가지 역할이 있습니다:
+
+1. **크롤 예산 보호** — 관리 패널, 중복 콘텐츠, 검색 결과 페이지를 낭비하지 않도록 크롤러에게 알림.
+2. **사이트맵 안내** — `Sitemap:` 디렉티브로 수동 제출 없이 Google과 Bing에 사이트맵 위치를 정확히 알림.
+
+`robots.txt`가 *하지 않는 것*: 다른 곳에서 링크된 페이지가 검색 결과에 나타나는 것을 막을 수 없습니다. 페이지를 색인 제외하려면 HTML 메타 태그의 `noindex`나 `X-Robots-Tag` 헤더를 사용하세요.
+
+## 핵심 디렉티브 설명
+
+### User-agent
+
+다음 규칙을 적용할 크롤러를 지정합니다. `*`는 모든 크롤러에 매칭됩니다.
+
+```
+User-agent: *
+```
+
+실제로 접하게 될 봇들:
+
+| 봇 | 운영자 |
+|-----|----------|
+| `Googlebot` | Google (일반) |
+| `Googlebot-Image` | Google 이미지 |
+| `Googlebot-Video` | Google 동영상 |
+| `Bingbot` | Microsoft Bing |
+| `Slurp` | Yahoo Search |
+| `DuckDuckBot` | DuckDuckGo |
+| `facebookexternalhit` | Facebook 링크 미리보기 |
+| `Twitterbot` | Twitter/X 카드 |
+| `GPTBot` | OpenAI 학습 크롤러 |
+| `Claude-Web` | Anthropic 웹 크롤러 |
+
+### Disallow
+
+경로 접두사를 차단합니다. 빈 `Disallow:` 값은 "모든 것을 허용"을 의미합니다.
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /private/
+Disallow: /search?
+```
+
+디렉토리의 후행 슬래시에 주의하세요 — 없으면 `/admin`이 `/administrator`에도 매칭됩니다.
+
+### Allow
+
+더 구체적인 경로에 대해 `Disallow`를 재정의합니다. 디렉토리를 차단하면서 그 안의 한 파일을 노출하고 싶을 때 유용합니다.
+
+```
+User-agent: *
+Disallow: /wp-admin/
+Allow: /wp-admin/admin-ajax.php
+```
+
+### Sitemap
+
+원래 명세에는 없지만 모든 주요 크롤러가 지원합니다. 파일 끝에 위치시키세요.
+
+```
+Sitemap: https://yourdomain.com/sitemap.xml
+Sitemap: https://yourdomain.com/news-sitemap.xml
+```
+
+### Crawl-delay
+
+크롤러에게 요청 간 N초 대기를 요청합니다. Google은 이 디렉티브를 무시합니다(대신 Search Console에서 크롤 속도 설정). Bing 등 일부는 존중합니다.
+
+```
+User-agent: Bingbot
+Crawl-delay: 5
+```
+
+## 일반적인 robots.txt 패턴
+
+### 모든 것 허용 (기본 건전한 설정)
+
+```
+User-agent: *
+Disallow:
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+빈 `Disallow`는 "자유롭게 크롤하세요"라는 신호입니다. 대부분의 마케팅 사이트에 올바른 시작점입니다.
+
+### 관리·스테이징 경로 차단
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /staging/
+Disallow: /internal/
+Disallow: /?preview=true
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### 이커머스: 패싯 네비게이션 차단
+
+`/shop?color=red&size=M` 같은 패싯 URL은 크롤 예산을 소진하는 수천 개의 준중복 페이지를 만듭니다.
+
+```
+User-agent: *
+Disallow: /search
+Disallow: /cart
+Disallow: /checkout
+Disallow: /account
+Disallow: /wishlist
+Allow: /search/landing-page
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### AI 학습 크롤러 차단
+
+콘텐츠를 모델 학습에 사용하지 않게 하려면:
+
+```
+User-agent: GPTBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: *
+Disallow:
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### WordPress 전용 규칙
+
+```
+User-agent: *
+Disallow: /wp-admin/
+Disallow: /wp-login.php
+Disallow: /xmlrpc.php
+Disallow: /wp-json/
+Allow: /wp-admin/admin-ajax.php
+
+Sitemap: https://yourdomain.com/sitemap.xml
+Sitemap: https://yourdomain.com/post-sitemap.xml
+Sitemap: https://yourdomain.com/page-sitemap.xml
+```
+
+## robots.txt 검증
+
+### Google Search Console
+
+Search Console의 **설정 → robots.txt**로 이동합니다. 내장 테스터는 입력한 URL에 어떤 규칙이 적용되는지 표시하고 구문 오류를 표시합니다. URL을 제출하면 Googlebot이 크롤할지 알려줍니다.
+
+### 수동 확인
+
+```bash
+curl -I https://yourdomain.com/robots.txt
+# 기대값: HTTP/2 200과 Content-Type: text/plain
+```
+
+404가 반환되면 Google은 사이트를 완전히 크롤 가능으로 취급합니다. 5xx가 반환되면 Google은 재시도하고 크롤을 일시 중지할 수 있습니다.
+
+### 규칙에 대해 특정 URL 테스트
+
+```bash
+# 파일을 가져와서 수동으로 검사
+curl https://yourdomain.com/robots.txt
+```
+
+프로그래밍 방식 테스트에는 Google이 제공하는 [robots.txt 파서 라이브러리](https://github.com/google/robotstxt)(Go)를 사용하세요. 이것이 Googlebot이 실제로 사용하는 구현입니다.
+
+## SEO를 해치는 일반적인 실수
+
+**1. CSS와 JavaScript 차단**
+
+오래된 SEO 조언은 크롤 예산 보호를 위해 `/wp-content/`를 차단하라고 했습니다. 하지만 Google은 이제 페이지를 이해하기 위해 JavaScript와 CSS를 *렌더링해야* 합니다. 이 파일들을 차단하면 Googlebot은 깨진 페이지를 보게 됩니다.
+
+**2. 런칭 전 전체 사이트 비허용**
+
+많은 CMS 도구는 개발 모드에서 `Disallow: /`를 포함한 채 출시됩니다. 개발자가 런칭 시 변경하는 것을 잊습니다. 사이트가 공개되고 링크되어도 Google이 크롤할 수 없어 순위에 오르지 못합니다.
+
+**3. 민감한 데이터를 숨기는 데 robots.txt 사용**
+
+`robots.txt`에 나열된 디렉토리는 공개적으로 볼 수 있습니다. 보안 연구자와 악의적인 행위자들은 숨겨진 경로를 찾기 위해 적극적으로 `robots.txt`를 읽습니다. 민감한 경로는 크롤러 규칙이 아닌 인증으로 보호하세요.
+
+**4. 디렉토리에 후행 슬래시 누락**
+
+`Disallow: /admin`은 `/admin`뿐만 아니라 `/administrator`도 차단합니다. `Disallow: /admin/`을 사용하여 규칙의 범위를 정확하게 지정하세요.
+
+**5. 사이트맵 URL 차단**
+
+```
+# 잘못됨 — 사이트맵 자체를 차단
+User-agent: *
+Disallow: /sitemap.xml
+```
+
+**6. 잘못된 Content-Type**
+
+파일은 `text/plain`으로 제공되어야 합니다. 일부 서버는 `text/html`로 제공하며, 일부 크롤러는 이를 거부합니다.
+
+## 기억해야 할 문법 규칙
+
+- 줄당 하나의 디렉티브
+- `#`으로 시작하는 줄은 주석
+- 빈 줄이 다른 `User-agent` 값의 규칙 그룹을 구분
+- 디렉티브는 대소문자를 구분하지 않음; 경로는 Linux 서버에서 대소문자를 구분
+- 권장 최대 파일 크기는 500KB (Google의 실제 제한)
+- UTF-8 인코딩만 허용
+
+## 추측 없이 파일 만들기
+
+`robots.txt`를 수동으로 작성하면 오류가 발생하기 쉽습니다. 슬래시 누락이나 `Allow`/`Disallow` 규칙의 잘못된 순서가 예상치 못한 결과를 만듭니다. 같은 경로에 `Allow`와 `Disallow` 둘 다 매칭될 때 올바른 규칙은 **더 긴 매칭이 이긴다** — 파일 내 순서가 아닙니다.
+
+[robots.txt 생성기 사용해보기 →](/tools/robots-txt-generator)
+
+생성기를 사용하면 구성할 봇을 선택하고, 차단할 경로에 체크하고, 사이트맵 URL을 토글하면 올바른 구문의 바로 배포 가능한 파일이 출력됩니다. 사이트 루트에 붙여넣고 5분 이내에 Search Console로 확인하세요.

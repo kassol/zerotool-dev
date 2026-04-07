@@ -1,0 +1,189 @@
+---
+title: "텍스트 차이 비교 완벽 가이드: diff 동작 원리와 온라인 도구 활용법"
+description: "두 텍스트, 파일, 코드 스니펫을 즉시 비교. diff 알고리즘 동작 원리, unified diff 형식 읽는 법, 코드 리뷰 워크플로에서의 활용법을 설명합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "diff-checker-guide"
+tags: ["diff", "compare-text", "code-review", "developer-tools", "text-diff"]
+---
+
+텍스트 비교는 개발자의 일상 업무입니다——두 설정 파일 사이의 변경 사항 파악, 커밋 전 코드 리뷰, 직렬화된 페이로드가 예상 값과 일치하지 않는 이유 디버깅. 이 가이드에서는 diff의 동작 원리, 출력 읽는 방법, 온라인 diff 체커가 커맨드라인보다 유리한 상황을 설명합니다.
+
+## 텍스트 diff란?
+
+diff(difference의 약자)는 한 텍스트를 다른 텍스트로 변환하는 데 필요한 최소한의 변경 세트를 보여줍니다. 결과는 추가, 제거, 변경 없는 부분을 강조 표시합니다.
+
+표준 형식은 **unified diff**로, Git이 `git diff`에 사용합니다:
+
+```diff
+--- a/config.yaml
++++ b/config.yaml
+@@ -3,7 +3,7 @@
+ server:
+   host: localhost
+-  port: 8080
++  port: 9090
+   debug: false
+```
+
+`-`로 시작하는 줄은 제거된 줄, `+` 줄은 추가된 줄, 표시가 없는 줄은 컨텍스트입니다.
+
+## diff 알고리즘 동작 원리
+
+대부분의 diff 도구는 **Myers diff 알고리즘**(1986)의 변형을 사용합니다. 두 시퀀스 사이의 최단 편집 스크립트를 찾는 알고리즘입니다. 최장 공통 부분 수열(LCS) 문제를 해결합니다——공통 부분 수열이 길수록 필요한 편집이 줄어듭니다.
+
+실제 예:
+
+```
+텍스트 A: "the quick brown fox"
+텍스트 B: "the slow brown dog"
+
+LCS: "the brown"   (공통)
+Diff:
+  the          (변경 없음)
+- quick        (제거)
++ slow         (추가)
+  brown        (변경 없음)
+- fox          (제거)
++ dog          (추가)
+```
+
+Git은 파일 비교에 기본적으로 **histogram diff**라는 변형을 사용합니다. 고유한 줄을 앵커로 선호하기 때문에 코드에 대해 더 읽기 쉬운 출력을 생성합니다.
+
+## 커맨드라인에서의 diff
+
+### diff
+
+`diff` 명령은 Linux/macOS 어디서나 사용 가능합니다:
+
+```bash
+diff file1.txt file2.txt
+
+# unified 형식 (git diff와 동일)
+diff -u file1.txt file2.txt
+
+# 공백 차이 무시
+diff -w file1.txt file2.txt
+
+# 나란히 비교
+diff -y file1.txt file2.txt
+```
+
+### git diff
+
+git 저장소 내 코드:
+
+```bash
+# 스테이징되지 않은 변경 사항
+git diff
+
+# 스테이징된 변경 사항 (커밋될 내용)
+git diff --staged
+
+# 두 커밋 간 diff
+git diff abc123 def456
+
+# 브랜치 간 diff
+git diff main..feature-branch
+
+# 변경된 파일명만 표시
+git diff --name-only
+
+# 단어 수준 diff (줄이 아닌 개별 단어 강조)
+git diff --word-diff
+```
+
+## unified diff 형식 읽기
+
+unified diff 형식은 간결하지만 헤더 파싱 방법을 알아야 합니다:
+
+```diff
+--- a/src/app.js          # 원본 파일
++++ b/src/app.js          # 수정된 파일
+@@ -10,6 +10,8 @@        # 헝크 헤더
+ function init() {        # 컨텍스트 줄 (변경 없음)
+   const config = load(); # 컨텍스트 줄
+-  start(config);         # 제거된 줄
++  validate(config);      # 추가된 줄
++  start(config);         # 추가된 줄
+ }                        # 컨텍스트 줄
+```
+
+헝크 헤더 `@@ -10,6 +10,8 @@`의 의미:
+- `-10,6` — 원본 파일 10번째 줄부터 6줄 표시
+- `+10,8` — 수정 파일 10번째 줄부터 8줄 표시
+
+`+` 카운트가 `-` 카운트보다 크면 줄이 추가됨, 작으면 줄이 제거됨.
+
+## 온라인 diff 체커를 사용하는 경우
+
+커맨드라인은 강력하지만 특정 작업에서는 마찰이 있습니다:
+
+**설정 파일 비교:** 다른 환경에서 복사한 YAML 또는 JSON 설정 파일 두 개가 있습니다. 둘 다 브라우저에 붙여 넣는 것이 임시 파일을 만들어 `diff` 실행하는 것보다 빠릅니다.
+
+**API 응답 확인:** JSON 응답이 참조 값과 일치하는지 확인하고 싶습니다. 둘 다 diff 체커에 붙여 넣으면 불일치를 즉시 찾아낼 수 있습니다——누락된 필드, 타입 불일치, 여분의 공백.
+
+**로그 리뷰:** 타임스탬프나 트레이스 ID가 약간 다른 두 로그 파일은 눈으로 줄별 비교가 어렵습니다. 시각적 diff가 의미론적 차이를 강조 표시합니다.
+
+**비개발자와 diff 공유:** `git diff` 출력은 읽을 수 있지만 보기가 좋지 않습니다. 렌더링된 나란히 비교가 회의에서 설명하기 더 쉽습니다.
+
+**[ZeroTool 온라인 diff 체커 사용해보기 →](/tools/diff-checker)**
+
+나란히 놓인 패널에 두 텍스트를 붙여 넣으면 차이가 인라인으로 강조 표시됩니다——추가는 녹색, 제거는 빨간색. 회원가입 불필요, 서버로 전송되는 것 없음.
+
+## 코드 리뷰 워크플로에서의 diff
+
+PR 리뷰에서 diff가 어떻게 사용되는지 이해하면 더 깔끔한 diff를 작성하는 데 도움이 됩니다:
+
+**공백 노이즈 줄이기:** 포맷 변경 커밋을 로직 변경과 분리하세요. 들여쓰기 수정과 로직 변경이 섞인 diff는 리뷰하기 어렵습니다.
+
+**원자적 커밋:** 각 커밋은 하나의 논리적인 것을 변경해야 합니다. 잘 범위가 정해진 diff는 명확한 이야기를 전달합니다——리뷰어가 의도를 재구성하지 않고 따라갈 수 있습니다.
+
+**큰 diff 분할:** PR에 40개 파일 변경이 있다면 일부 변경이 별도 PR로 독립될 수 있는지 검토하세요.
+
+## 프로그래밍 방식의 diff
+
+애플리케이션 내에 diff 출력이 필요한 경우:
+
+### JavaScript (diff 라이브러리)
+
+```js
+import { diffWords, diffLines } from 'diff';
+
+const a = 'The quick brown fox';
+const b = 'The slow brown dog';
+
+const result = diffWords(a, b);
+result.forEach(part => {
+  const color = part.added ? 'green' : part.removed ? 'red' : 'grey';
+  console.log(`[${color}] ${part.value}`);
+});
+```
+
+### Python (difflib)
+
+```python
+import difflib
+
+a = ['line 1\n', 'line 2\n', 'line 3\n']
+b = ['line 1\n', 'line 2 changed\n', 'line 3\n']
+
+diff = difflib.unified_diff(a, b, fromfile='before.txt', tofile='after.txt')
+print(''.join(diff))
+```
+
+### Go (go-diff)
+
+```go
+import "github.com/sergi/go-diff/diffmatchpatch"
+
+dmp := diffmatchpatch.New()
+diffs := dmp.DiffMain("Hello World", "Hello Go", false)
+fmt.Println(dmp.DiffPrettyText(diffs))
+```
+
+## 요약
+
+Diff는 소프트웨어 개발에서 가장 기본적인 연산 중 하나입니다. 커맨드라인에서는 `git diff`와 `diff -u`가 대부분의 필요를 충족합니다. 터미널을 열지 않고 빠른 시각적 비교에는 온라인 diff 체커가 가장 빠른 방법입니다.
+
+**[ZeroTool로 두 텍스트 즉시 비교 →](/tools/diff-checker)** — 나란히 보기, 구문 강조, 계정 불필요.

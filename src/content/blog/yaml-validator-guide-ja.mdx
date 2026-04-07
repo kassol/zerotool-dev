@@ -1,0 +1,389 @@
+---
+title: "YAMLバリデーター完全ガイド：構文エラーを本番前に検出する方法"
+description: "YAMLの構文をオンラインで検証する方法を解説。インデントエラー・重複キー・型の問題を行単位で報告。CI/CDへのyamllint統合方法も説明します。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "yaml-validator-guide"
+tags: ["yaml validator", "yaml syntax", "yaml lint", "developer-tools", "yaml"]
+---
+
+YAMLはモダンインフラのあらゆる場所に存在します。Kubernetesマニフェスト・GitHub Actionsワークフロー・Docker Composeファイル・Ansibleプレイブック・Helmチャート。また、最も壊れやすいフォーマットのひとつでもあります。2スペースのインデントが3スペースになったり、コロンが欠けたり、クォートなしの文字列が真偽値に変換されたり。**YAMLバリデーター**はこれらの問題をソースで検出し、デプロイ失敗や謎のランタイムエラーを未然に防ぎます。
+
+[YAMLを今すぐ検証する →](/tools/yaml-validator)
+
+## YAMLの検証が重要な理由
+
+YAMLパーサーは悪名高いほど寛大です。不正なYAMLファイルがエラーなくパースされても、意図しないデータ構造を生成することがよくあります。例えば：
+
+```yaml
+# 目的：2つの文字列のリスト
+fruits:
+  - apple
+  - orange
+  
+vegetables:
+- carrot  # 誤って逆インデントされた — 有効なYAMLだが構造が間違っている
+  - spinach
+```
+
+多くのパーサーはエラーを投げずにパースしますが、結果の構造は意図したものではありません。構文チェックだけでなく構造分析を行う検証ツールが、このクラスのバグを検出します。
+
+より危険なのはYAML 1.1（PyYAMLと多くのKubernetesツールで最近まで使用されていたバージョン）における暗黙の型強制です：
+
+```yaml
+settings:
+  debug: yes        # 文字列"yes"ではなく真偽値trueとして解析される
+  version: 1.0      # 文字列ではなく浮動小数点として解析される
+  country: NO       # ノルウェーの国コード — 真偽値falseとして解析される！
+  octal: 0777       # 文字列"0777"ではなく8進数整数511として解析される
+```
+
+型プレビュー付きのバリデーターは各値がどの型に解決されるかを正確に表示し、驚きを排除します。
+
+## YAMLの基本構文
+
+### スカラー
+
+```yaml
+string: Hello World
+quoted_string: "Hello\nWorld"  # エスケープシーケンスをサポート
+single_quoted: 'No escape \n here'  # リテラルのバックスラッシュ
+integer: 42
+float: 3.14
+boolean_true: true
+boolean_false: false
+null_value: null
+multiline: |
+  Line one
+  Line two
+  Line three
+folded: >
+  These lines
+  will be joined
+  into one.
+```
+
+`|`（リテラルブロック）は改行を保持します。`>`（フォールドブロック）は改行をスペースに置き換えます。
+
+### シーケンス（リスト）
+
+```yaml
+# ブロックスタイル（最も一般的）
+fruits:
+  - apple
+  - banana
+  - cherry
+
+# フロースタイル（コンパクト）
+colors: [red, green, blue]
+```
+
+### マッピング（オブジェクト）
+
+```yaml
+# ブロックスタイル
+server:
+  host: localhost
+  port: 8080
+  tls: true
+
+# フロースタイル
+point: {x: 1, y: 2}
+```
+
+### ネストされた構造
+
+```yaml
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - NGINX_HOST=example.com
+      - NGINX_PORT=80
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+```
+
+### アンカーとエイリアス
+
+YAMLはアンカー（`&`）とエイリアス（`*`）でDRYをサポートします：
+
+```yaml
+defaults: &defaults
+  adapter: postgres
+  encoding: utf8
+  pool: 5
+
+development:
+  <<: *defaults
+  database: myapp_development
+
+production:
+  <<: *defaults
+  database: myapp_production
+  pool: 20
+```
+
+`<<:`マージキーは参照したアンカーを現在のマッピングに展開します。
+
+### マルチドキュメントファイル
+
+1つのYAMLファイルに`---`で区切った複数のドキュメントを含めることができます：
+
+```yaml
+---
+kind: Deployment
+metadata:
+  name: web
+---
+kind: Service
+metadata:
+  name: web-svc
+```
+
+## よくあるYAMLエラー
+
+### インデントエラー
+
+YAMLはインデントにスペースのみ使用します（タブ禁止）。インデントレベルは一貫していなければなりません：
+
+```yaml
+# 誤り — インデントが混在
+server:
+  host: localhost
+    port: 8080  # 過剰インデント；パーサーエラー
+
+# 正しい
+server:
+  host: localhost
+  port: 8080
+```
+
+### キーの後のコロン欠落
+
+```yaml
+# 誤り
+server
+  host: localhost
+
+# 正しい
+server:
+  host: localhost
+```
+
+### クォートなしの文字列内のコロン
+
+```yaml
+# 誤り — パーサーがキーバリューペアとして解釈する
+message: Error: something went wrong
+
+# 正しい
+message: "Error: something went wrong"
+```
+
+### タブ文字
+
+```yaml
+# 誤り — YAMLはインデントにタブを禁止
+server:
+	host: localhost  # タブ文字がパースエラーを引き起こす
+```
+
+### 重複キー
+
+```yaml
+# 技術的には無効だが多くのパーサーで静かに受け入れられる
+config:
+  timeout: 30
+  timeout: 60  # 最初の値を上書きする
+```
+
+### YAML 1.1の真偽値の罠
+
+```yaml
+# YAML 1.1ではこれらはすべて真偽値（PyYAML、Ruby Psych < 4.0）：
+# true: true, True, TRUE, yes, Yes, YES, on, On, ON
+# false: false, False, FALSE, no, No, NO, off, Off, OFF
+
+country_code: NO   # 文字列"NO"ではなくfalseとして解析される
+enabled: yes       # trueとして解析される — 通常は問題ないが予想外
+
+# 安全策：曖昧な値は常に引用符で囲む
+country_code: "NO"
+```
+
+YAML 1.2（新しいツールで使用）はこれらの強制のほとんどを排除しました。使用しているパーサーのバージョンを把握してください。
+
+## CI/CDでのYAML検証
+
+### yamllint
+
+`yamllint`は標準的なPythonベースのYAMLリンターです：
+
+```bash
+pip install yamllint
+yamllint config.yaml
+```
+
+カスタム設定（`.yamllint`）を使う場合：
+
+```yaml
+extends: default
+rules:
+  line-length:
+    max: 120
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+```
+
+```bash
+yamllint -c .yamllint .  # リポジトリ内の全YAMLファイルをlint
+```
+
+### GitHub Actions連携
+
+```yaml
+name: Lint YAML
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Lint YAML files
+        run: yamllint .
+```
+
+### pre-commitフック
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [-c=.yamllint]
+```
+
+## コードでのYAMLのパース
+
+### Python
+
+```bash
+pip install pyyaml
+```
+
+```python
+import yaml
+
+# ロード（任意のコード実行を防ぐためsafe_loadを使用）
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+
+print(config['server']['host'])
+
+# 例外をキャッチして検証する
+try:
+    with open('config.yaml', 'r') as f:
+        data = yaml.safe_load(f)
+    print("Valid YAML")
+except yaml.YAMLError as e:
+    print(f"Invalid YAML: {e}")
+```
+
+### Node.js
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+try {
+  const config = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+  console.log(config);
+} catch (e) {
+  console.error('Invalid YAML:', e.message);
+}
+```
+
+### Go
+
+```bash
+go get gopkg.in/yaml.v3
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+
+    "gopkg.in/yaml.v3"
+)
+
+type Config struct {
+    Server struct {
+        Host string `yaml:"host"`
+        Port int    `yaml:"port"`
+    } `yaml:"server"`
+}
+
+func main() {
+    data, err := os.ReadFile("config.yaml")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    var config Config
+    if err := yaml.Unmarshal(data, &config); err != nil {
+        log.Fatalf("Invalid YAML: %v", err)
+    }
+
+    fmt.Printf("Host: %s, Port: %d\n", config.Server.Host, config.Server.Port)
+}
+```
+
+## YAML vs JSON vs TOML
+
+| 機能 | YAML | JSON | TOML |
+|---|---|---|---|
+| コメント | あり（`#`） | なし | あり（`#`） |
+| 複数行文字列 | あり（`|`、`>`） | エスケープ`\n` | あり |
+| アンカー/エイリアス | あり | なし | なし |
+| 型推論 | 暗黙的（危険） | 明示的 | 厳格 |
+| インデントベース | あり | なし | なし |
+| タブ許容 | なし | 該当なし | なし |
+| 解析の曖昧さ | 高（1.1）/ 低（1.2） | 低 | 低 |
+| 冗長性 | 低 | 中 | 低 |
+
+YAMLの主な利点は人間の可読性と低い冗長性です。主なリスクは暗黙の型強制とインデント依存のパースです。機械生成された設定（APIレスポンス・ビルドアーティファクト）にはJSONを推奨します。コメント付きの人間が書く設定にはYAMLまたはTOMLが適しています。TOMLは曖昧さが少ないという点で優れています。
+
+## オンラインYAMLバリデーター
+
+ローカルでツールを実行せずに素早い構文チェックと構造検査を行うには、[ZeroToolのYAMLバリデーター](/tools/yaml-validator)がブラウザ内で完結します：
+
+- 行・列のエラー報告付きYAML構文の検証
+- ツリーとして解析構造を表示
+- 検証済みYAMLをJSONとしてエクスポート
+- 100%ローカル処理 — データはサーバーに送信されない
+
+**[YAMLバリデーターを試す →](/tools/yaml-validator)**

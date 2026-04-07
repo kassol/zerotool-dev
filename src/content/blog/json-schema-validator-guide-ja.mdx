@@ -1,0 +1,382 @@
+---
+title: "JSON Schema バリデーター：スキーマ検証の仕組みと実践ガイド"
+description: "JSON Schemaの主要キーワード・ドラフトバージョン・AJV/Python/GoでのバリデーションAPIを解説。オンラインバリデーターでスキーマとデータを即座にテストする方法も紹介。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "json-schema-validator-guide"
+tags: ["json schema validator", "json schema", "json validation", "developer-tools", "api validation"]
+---
+
+JSON Schema は JSON データ構造の記述と検証の業界標準です。API リクエストペイロードの強制・設定ファイルの検証・フォームバリデーションロジックの構築など、あらゆる場面で**オンライン JSON Schema バリデーター**を使えば、ライブラリのインストールもテストハーネスも不要でスキーマとサンプルデータを即座にテストできます。
+
+[今すぐ JSON をスキーマでバリデートする →](/tools/json-schema-validator)
+
+## JSON Schema とは
+
+JSON Schema は JSON ドキュメントに注釈を付けて検証するための宣言的な語彙です。スキーマ自体も JSON（または YAML）ドキュメントで、データの期待される形状・型・制約を記述します。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "email", "role"],
+  "properties": {
+    "id": { "type": "integer", "minimum": 1 },
+    "email": { "type": "string", "format": "email" },
+    "role": { "type": "string", "enum": ["admin", "editor", "viewer"] },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}
+```
+
+このスキーマは検証する JSON オブジェクトに3つの必須フィールドがあること、`id` が正の整数、`email` が有効なメールアドレス、`role` が3つの許可された値のいずれかであることを保証します。
+
+## JSON Schema ドラフトバージョン
+
+仕様は大きく進化しています。バージョンの全体像を理解することで、スキーマが予期しない動作をするときの混乱を防げます：
+
+| ドラフト | リリース | 主な追加機能 |
+|--------|--------|------------|
+| Draft-04 | 2013 | コア語彙、`$ref`、`allOf`/`anyOf`/`oneOf` |
+| Draft-06 | 2017 | `const`、`contains`、`propertyNames`、`readOnly` |
+| Draft-07 | 2019 | `if`/`then`/`else`、`writeOnly`、`$comment` |
+| 2019-09 | 2019 | `$defs`、`unevaluatedProperties`、`$anchor` |
+| 2020-12 | 2021 | Prefix items、`$dynamicRef`、改善された `$ref` |
+
+常に `$schema` でドラフトを宣言してください。宣言がないとバリデーターが異なるデフォルトを適用することがあります。現在のプロダクション利用の多くは draft-07 または 2020-12 です。
+
+## コアスキーマキーワード
+
+### 型制約
+
+```json
+{ "type": "string" }
+{ "type": "integer" }
+{ "type": "number" }
+{ "type": "boolean" }
+{ "type": "null" }
+{ "type": "array" }
+{ "type": "object" }
+
+// 複数の型を許可:
+{ "type": ["string", "null"] }
+```
+
+### オブジェクト制約
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "age": { "type": "integer", "minimum": 0 }
+  },
+  "required": ["name"],
+  "additionalProperties": false,
+  "minProperties": 1,
+  "maxProperties": 10
+}
+```
+
+`additionalProperties: false` は最も効果的な安全制約です。`properties` に列挙されていないキーをすべて拒否し、タイポや予期しないフィールドを検出します。
+
+### 文字列制約
+
+```json
+{
+  "type": "string",
+  "minLength": 3,
+  "maxLength": 100,
+  "pattern": "^[a-z][a-z0-9_]*$",
+  "format": "email"
+}
+```
+
+一般的な `format` 値：`email`・`uri`・`date`・`date-time`・`time`・`ipv4`・`ipv6`・`uuid`。注意：フォーマット検証はデフォルトでオプションです。バリデーターで明示的に有効化する必要があります。
+
+### 配列制約
+
+```json
+{
+  "type": "array",
+  "items": { "type": "string" },
+  "minItems": 1,
+  "maxItems": 50,
+  "uniqueItems": true
+}
+```
+
+draft 2020-12 では、タプル検証のために `items` が `prefixItems` に名称変更されました。均質な配列には `items`、位置指定のタプルには `prefixItems` を使います。
+
+### 数値制約
+
+```json
+{
+  "type": "number",
+  "minimum": 0,
+  "maximum": 100,
+  "exclusiveMinimum": 0,
+  "multipleOf": 0.5
+}
+```
+
+### 列挙と const
+
+```json
+// 許可された値のいずれか:
+{ "enum": ["draft", "published", "archived"] }
+
+// ちょうど1つの値（判別共用体に便利）:
+{ "const": "v2" }
+```
+
+### 組み合わせキーワード
+
+```json
+// すべてのサブスキーマにマッチする必要がある:
+{ "allOf": [{ "type": "string" }, { "minLength": 1 }] }
+
+// 少なくとも1つのサブスキーマにマッチする必要がある:
+{ "anyOf": [{ "type": "string" }, { "type": "number" }] }
+
+// ちょうど1つのサブスキーマにマッチする必要がある:
+{ "oneOf": [
+  { "type": "string", "format": "email" },
+  { "type": "string", "format": "uri" }
+] }
+
+// サブスキーマにマッチしてはならない:
+{ "not": { "type": "null" } }
+```
+
+### 条件付きバリデーション（Draft-07 以降）
+
+```json
+{
+  "if": { "properties": { "type": { "const": "company" } } },
+  "then": { "required": ["companyName", "taxId"] },
+  "else": { "required": ["firstName", "lastName"] }
+}
+```
+
+これは JSON Schema の最も強力な機能の一つです。別のフィールドの値に基づいて異なる必須フィールドを強制できます。
+
+### スキーマ参照と再利用
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "address": {
+      "type": "object",
+      "required": ["street", "city", "country"],
+      "properties": {
+        "street": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string", "minLength": 2, "maxLength": 2 }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "billingAddress": { "$ref": "#/$defs/address" },
+    "shippingAddress": { "$ref": "#/$defs/address" }
+  }
+}
+```
+
+`$defs`（古いドラフトでは `definitions`）はスキーマを DRY に保ちます。`$ref` はローカル（`#/...`）とリモート（`https://...`）参照の両方をサポートします。
+
+## コードでの JSON Schema バリデーション
+
+### Node.js（AJV）
+
+[AJV](https://ajv.js.org/) は最速かつ最も広く使われている JavaScript JSON Schema バリデーターです：
+
+```bash
+npm install ajv ajv-formats
+```
+
+```javascript
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+
+const ajv = new Ajv({ allErrors: true });
+addFormats(ajv);
+
+const schema = {
+  type: 'object',
+  required: ['email', 'age'],
+  properties: {
+    email: { type: 'string', format: 'email' },
+    age: { type: 'integer', minimum: 18 },
+  },
+  additionalProperties: false,
+};
+
+const validate = ajv.compile(schema);
+const data = { email: 'user@example.com', age: 25 };
+
+if (validate(data)) {
+  console.log('Valid');
+} else {
+  console.log('Errors:', validate.errors);
+}
+```
+
+AJV はスキーマを最適化された JavaScript 関数にコンパイルするため、非常に高速で、ホットリクエストパスにも適しています。
+
+### Python（jsonschema）
+
+```bash
+pip install jsonschema
+```
+
+```python
+import jsonschema
+from jsonschema import validate, ValidationError
+
+schema = {
+    "type": "object",
+    "required": ["email", "age"],
+    "properties": {
+        "email": {"type": "string", "format": "email"},
+        "age": {"type": "integer", "minimum": 18},
+    },
+    "additionalProperties": False,
+}
+
+data = {"email": "user@example.com", "age": 25}
+
+try:
+    validate(instance=data, schema=schema)
+    print("Valid")
+except ValidationError as e:
+    print(f"Invalid: {e.message}")
+    print(f"Path: {list(e.absolute_path)}")
+```
+
+すべてのエラー（最初のものだけでなく）を取得するには `jsonschema.Draft202012Validator` を使います：
+
+```python
+from jsonschema import Draft202012Validator
+
+validator = Draft202012Validator(schema)
+errors = list(validator.iter_errors(data))
+for error in errors:
+    print(f"{'.'.join(str(p) for p in error.path)}: {error.message}")
+```
+
+### Go（santhosh-tekuri）
+
+```bash
+go get github.com/santhosh-tekuri/jsonschema/v6
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+
+    "github.com/santhosh-tekuri/jsonschema/v6"
+)
+
+func main() {
+    schemaJSON := `{
+        "type": "object",
+        "required": ["email", "age"],
+        "properties": {
+            "email": {"type": "string", "format": "email"},
+            "age": {"type": "integer", "minimum": 18}
+        }
+    }`
+
+    compiler := jsonschema.NewCompiler()
+    compiler.AddResource("schema.json", strings.NewReader(schemaJSON))
+    schema, err := compiler.Compile("schema.json")
+    if err != nil {
+        panic(err)
+    }
+
+    data := map[string]any{"email": "user@example.com", "age": 25}
+    if err := schema.Validate(data); err != nil {
+        fmt.Println("Invalid:", err)
+    } else {
+        fmt.Println("Valid")
+    }
+}
+```
+
+## 実践的なユースケース
+
+### API リクエストバリデーション
+
+ビジネスロジックに到達する前に、ゲートウェイやミドルウェア層で API ペイロードを検証します：
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateOrderRequest",
+  "type": "object",
+  "required": ["customerId", "items", "shippingAddress"],
+  "properties": {
+    "customerId": { "type": "string", "format": "uuid" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["productId", "quantity"],
+        "properties": {
+          "productId": { "type": "string" },
+          "quantity": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "couponCode": { "type": "string", "pattern": "^[A-Z0-9]{6,12}$" }
+  }
+}
+```
+
+### 設定ファイルのバリデーション
+
+起動時にアプリケーション設定を検証し、謎めいたランタイムエラーの代わりに明確なエラーメッセージで早期に失敗させます。
+
+## JSON Schema vs ランタイムバリデーションライブラリ
+
+| アプローチ | 可搬性 | 言語サポート | 学習曲線 | ツール |
+|----------|--------|------------|--------|------|
+| JSON Schema | 高（言語中立） | 主要言語すべて | 中 | 優秀 |
+| TypeScript（Zod/Yup） | TypeScript のみ | TypeScript/JS | 低 | 良好 |
+| Pydantic（Python） | Python のみ | Python | 低 | 良好 |
+| Protobuf/gRPC | 高（バイナリ） | すべて | 高 | 優秀 |
+| OpenAPI spec | 高 | すべて | 中 | 優秀 |
+
+JSON Schema は、ポリグロットスタック全体で共有される単一の正規スキーマが必要な場合に勝ります。一度定義すれば、どの言語でも検証できます。
+
+## よくあるミス
+
+**`additionalProperties: false` を設定しない** — スキーマが余分なフィールドを受け入れ、クライアントが予期しないデータを渡すことが容易になります。
+
+**バリデーターの設定なしに `format` を使う** — `format: "email"` はアノテーションであり、バリデーターでフォーマット検証を明示的に有効化しない限り制約ではありません。
+
+**ドラフトバージョンを混在させる** — `$schema` で draft-07 を宣言しながら `$defs`（2019-09 以降）を使うと未定義の動作が生じます。
+
+**`required` を忘れる** — `required` がなければすべての `properties` はデフォルトでオプションです。properties はあるが `required` 配列がないスキーマは `{}` に対してバリデーションが通ります。
+
+**DB の ID に `type: "integer"` を使う** — 大きな整数 ID（64ビット）は JavaScript の安全な整数の範囲を超える場合があります。`"type": "string"` を検討するか `"maximum": 9007199254740991` を追加してください。
+
+## オンライン JSON Schema バリデーター
+
+スキーマをサンプルデータに対してローカルでテストするには、バリデーターのセットアップ・ファイルの読み込み・コードの実行が必要です。[ZeroTool の JSON Schema バリデーター](/tools/json-schema-validator)はそのすべての手間をなくします：
+
+- JSON Schema とサンプル JSON を並べて貼り付ける
+- エラーパスをハイライトした即座の検証
+- draft-04・draft-06・draft-07・2019-09・2020-12 に対応
+- 100% ローカル処理 — データはブラウザの外に出ない
+
+**[JSON Schema バリデーターを試す →](/tools/json-schema-validator)**

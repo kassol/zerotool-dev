@@ -1,0 +1,319 @@
+---
+title: "YAML to JSON 완전 가이드: 변환 함정과 실무 활용법"
+description: "YAML을 JSON으로 변환하는 방법을 설명합니다. YAML 구문·K8s 설정·Docker Compose·GitHub Actions 실예시, yq/Python/Node.js 변환 코드까지 총망라합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "yaml-json-guide"
+tags: ["yaml", "json", "yaml-to-json", "devops", "developer-tools"]
+---
+
+YAML과 JSON은 모두 데이터 직렬화 포맷이지만 개발자 워크플로우에서 서로 다른 역할을 합니다. YAML은 사람이 읽기 편한 설정의 언어입니다. Kubernetes 매니페스트, Docker Compose 파일, CI/CD 파이프라인의 언어입니다. JSON은 API와 구조화된 데이터 교환의 공용어입니다. 두 포맷 간을 안정적으로 변환하는 방법을 알면 시간을 절약하고 미묘한 버그를 방지할 수 있습니다.
+
+[YAML을 JSON으로 즉시 변환하기 →](/tools/yaml-json)
+
+## YAML이란
+
+YAML(YAML Ain't Markup Language)은 사람을 위해 설계된 구문을 가진 JSON의 슈퍼셋입니다. JSON이 중괄호와 따옴표에 의존하는 반면, YAML은 들여쓰기와 최소한의 구두점을 사용합니다.
+
+```yaml
+# YAML
+server:
+  host: localhost
+  port: 8080
+  tls: true
+  tags:
+    - web
+    - production
+```
+
+동등한 JSON:
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "tls": true,
+    "tags": ["web", "production"]
+  }
+}
+```
+
+YAML은 JSON의 엄격한 슈퍼셋입니다. 모든 유효한 JSON 문서는 유효한 YAML이지만 역은 성립하지 않습니다.
+
+## YAML 핵심 구문
+
+### 스칼라
+
+YAML은 따옴표 없이 컨텍스트로부터 타입을 추론합니다:
+
+```yaml
+name: Alice          # 문자열
+age: 30              # 정수
+ratio: 1.5           # 부동소수점
+active: true         # 불리언
+nothing: null        # null
+version: "1.0"       # 강제 문자열(따옴표가 타입 추론 방지)
+```
+
+주의: `yes`, `no`, `on`, `off`는 YAML 1.1(대부분의 도구에서 사용하는 버전)에서 불리언으로 파싱됩니다. 문자열 `"yes"`가 필요하다면 따옴표로 묶으세요.
+
+### 매핑(오브젝트)
+
+```yaml
+database:
+  host: db.example.com
+  port: 5432
+  credentials:
+    user: admin
+    password: secret
+```
+
+### 시퀀스(배열)
+
+```yaml
+services:
+  - nginx
+  - postgres
+  - redis
+```
+
+또는 인라인 형식(플로우 스타일):
+
+```yaml
+services: [nginx, postgres, redis]
+```
+
+### 여러 줄 문자열
+
+YAML에는 두 가지 여러 줄 문자열 연산자가 있습니다:
+
+```yaml
+# 리터럴 블록(|): 줄바꿈 보존
+script: |
+  npm install
+  npm run build
+  npm test
+
+# 폴드 블록(>): 줄바꿈이 공백이 됨
+description: >
+  This is a long description
+  that wraps across multiple lines.
+```
+
+### 앵커와 앨리어스
+
+YAML은 앵커(`&`)와 앨리어스(`*`)로 재사용을 지원합니다:
+
+```yaml
+defaults: &defaults
+  timeout: 30
+  retries: 3
+
+production:
+  <<: *defaults
+  host: prod.example.com
+
+staging:
+  <<: *defaults
+  host: staging.example.com
+```
+
+**참고:** 앵커와 앨리어스는 JSON으로 변환 시 남지 않습니다. 전체 값으로 확장됩니다. 이는 예상된 동작입니다.
+
+## YAML to JSON 변환: 일반적인 시나리오
+
+### Kubernetes ConfigMap
+
+YAML 매니페스트:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: default
+data:
+  DATABASE_URL: "postgres://db:5432/app"
+  REDIS_URL: "redis://cache:6379"
+  LOG_LEVEL: "info"
+```
+
+JSON으로 변환:
+
+```json
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "app-config",
+    "namespace": "default"
+  },
+  "data": {
+    "DATABASE_URL": "postgres://db:5432/app",
+    "REDIS_URL": "redis://cache:6379",
+    "LOG_LEVEL": "info"
+  }
+}
+```
+
+활용 사례: JSON 요청 바디가 필요한 Kubernetes API 호출, `kubectl` 출력을 `jq`에 파이프하는 스크립팅.
+
+### Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - db
+  db:
+    image: postgres:15
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```
+
+Docker Compose를 JSON으로 변환하면 compose 파일을 프로그래밍 방식으로 파싱하는 도구를 만들 때 유용합니다.
+
+### GitHub Actions 워크플로우
+
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: npm test
+```
+
+GitHub Actions YAML→JSON 변환은 워크플로우를 프로그래밍 방식으로 분석하거나 생성하는 도구를 구축할 때 자주 사용됩니다.
+
+## 알아야 할 변환 규칙
+
+| YAML 기능 | JSON 동작 |
+|---|---|
+| `true`/`false` | `true`/`false`(불리언) |
+| `null`/`~` | `null` |
+| 정수 | 따옴표 없는 숫자 |
+| 부동소수점 | 소수점 있는 숫자 |
+| 여러 줄 문자열 | `\n` 포함 단일 문자열 |
+| 앵커/앨리어스 | 인라인으로 확장 |
+| 주석(`#`) | 삭제(JSON에 주석 없음) |
+| 키 순서 | 출력에 보존 |
+
+## 커맨드라인 변환
+
+### `yq` 사용
+
+`yq`는 사실상 표준 YAML CLI 도구입니다:
+
+```bash
+# YAML to JSON
+yq -o=json input.yaml
+
+# jq로 보기 좋게 출력
+yq -o=json input.yaml | jq .
+
+# JSON to YAML
+yq -p=json -o=yaml input.json
+```
+
+### Python 사용
+
+Python 표준 라이브러리는 JSON을 처리합니다. YAML은 `pyyaml`이 필요합니다:
+
+```bash
+pip install pyyaml
+```
+
+```python
+import yaml
+import json
+
+with open("config.yaml") as f:
+    data = yaml.safe_load(f)
+
+print(json.dumps(data, indent=2))
+```
+
+`yaml.load()` 대신 **반드시 `yaml.safe_load()`를 사용하세요**. 전자는 임의의 Python 오브젝트 역직렬화를 허용하는 보안 위험이 있습니다.
+
+### Node.js 사용
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+const data = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+console.log(JSON.stringify(data, null, 2));
+```
+
+## JSON to YAML 변환
+
+반대 방향도 자주 필요합니다. JSON API 응답을 YAML 설정으로 저장하고 싶을 때 등:
+
+```json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.18.0",
+    "axios": "^1.6.0"
+  }
+}
+```
+
+YAML로 변환:
+
+```yaml
+name: my-app
+version: 1.0.0
+dependencies:
+  express: ^4.18.0
+  axios: ^1.6.0
+```
+
+YAML 출력에는 주석이 포함되지 않습니다. 변환 후 수동으로 추가해야 합니다.
+
+## 자주 발생하는 함정
+
+**들여쓰기 오류**: YAML은 공백만 사용합니다(탭 금지). 탭 문자 하나가 파싱 오류를 일으킵니다.
+
+**불리언 모호성**: YAML 1.1에서 `yes`/`no`/`on`/`off`는 불리언입니다. YAML 1.2(최신 도구에서 사용)에서는 `true`/`false`만 불리언입니다. 설정 파일에서는 안전을 위해 이 값들을 따옴표로 묶으세요.
+
+**8진수**: YAML 1.1의 `0777`은 8진수 511로 파싱됩니다. chmod 값 등은 따옴표가 필요합니다: `"0777"`.
+
+**중복 키**: YAML은 중복 키를 허용하지만 JSON은 허용하지 않습니다. 변환 시 마지막 값이 우선합니다(파서에 따라 동작이 다름).
+
+**문자열의 특수 문자**: 공백 뒤에 오는 콜론(`: `)은 YAML 값에서 따옴표가 필요합니다:
+
+```yaml
+# 잘못됨
+url: http://example.com  # 올바르게 파싱되지 않음
+
+# 올바름
+url: "http://example.com"
+```
+
+## 온라인 YAML↔JSON 변환기
+
+도구를 설치하지 않고 빠르게 변환하려면 [ZeroTool의 YAML↔JSON 변환기](/tools/yaml-json)가 브라우저 안에서 처리합니다. 데이터는 서버로 전송되지 않습니다. 왼쪽에 YAML을 붙여넣으면 오른쪽에 JSON이 표시됩니다(반대도 가능). 실시간 검증과 오류 하이라이트 포함.
+
+**[YAML↔JSON 변환기 사용해보기 →](/tools/yaml-json)**

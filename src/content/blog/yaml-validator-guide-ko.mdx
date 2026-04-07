@@ -1,0 +1,389 @@
+---
+title: "YAML 검증기 완전 가이드: 구문 오류를 프로덕션 전에 잡는 방법"
+description: "YAML 구문을 온라인에서 검증하는 방법을 설명합니다. 들여쓰기 오류·중복 키·타입 문제를 줄 단위로 보고. CI/CD에 yamllint 통합하는 방법도 안내합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "yaml-validator-guide"
+tags: ["yaml validator", "yaml syntax", "yaml lint", "developer-tools", "yaml"]
+---
+
+YAML은 모던 인프라 어디에나 있습니다. Kubernetes 매니페스트, GitHub Actions 워크플로우, Docker Compose 파일, Ansible 플레이북, Helm 차트. 또한 가장 깨지기 쉬운 포맷 중 하나이기도 합니다. 2스페이스 들여쓰기가 3스페이스가 되거나, 콜론이 빠지거나, 따옴표 없는 문자열이 불리언으로 강제 변환될 수 있습니다. **YAML 검증기**는 이러한 문제를 소스에서 잡아내어 배포 실패나 이해하기 어려운 런타임 오류를 예방합니다.
+
+[YAML 지금 검증하기 →](/tools/yaml-validator)
+
+## YAML 검증이 중요한 이유
+
+YAML 파서는 악명 높을 정도로 관대합니다. 잘못된 YAML 파일이 오류 없이 파싱되어도 의도하지 않은 데이터 구조를 생성하는 경우가 많습니다. 예를 들어:
+
+```yaml
+# 의도: 두 문자열의 리스트
+fruits:
+  - apple
+  - orange
+  
+vegetables:
+- carrot  # 실수로 역들여쓰기됨 — 유효한 YAML이지만 잘못된 구조
+  - spinach
+```
+
+많은 파서에서 오류 없이 파싱되지만 결과 구조는 의도와 다릅니다. 구문 검사뿐만 아니라 구조 분석을 수행하는 검증 도구가 이 종류의 버그를 잡아냅니다.
+
+더 위험한 경우는 YAML 1.1(PyYAML과 많은 Kubernetes 도구에서 최근까지 사용된 버전)의 암묵적 타입 강제입니다:
+
+```yaml
+settings:
+  debug: yes        # 문자열 "yes"가 아닌 불리언 true로 파싱됨
+  version: 1.0      # 문자열이 아닌 부동소수점으로 파싱됨
+  country: NO       # 노르웨이 국가 코드 — 불리언 false로 파싱됨!
+  octal: 0777       # 문자열 "0777"이 아닌 8진수 정수 511로 파싱됨
+```
+
+타입 미리보기가 있는 검증기는 각 값이 어떤 타입으로 해석되는지 정확히 보여주어 놀라움을 없애줍니다.
+
+## YAML 구문 기초
+
+### 스칼라
+
+```yaml
+string: Hello World
+quoted_string: "Hello\nWorld"  # 이스케이프 시퀀스 지원
+single_quoted: 'No escape \n here'  # 리터럴 백슬래시
+integer: 42
+float: 3.14
+boolean_true: true
+boolean_false: false
+null_value: null
+multiline: |
+  Line one
+  Line two
+  Line three
+folded: >
+  These lines
+  will be joined
+  into one.
+```
+
+`|`(리터럴 블록)은 줄바꿈을 보존합니다. `>`(폴드 블록)은 줄바꿈을 공백으로 바꿉니다.
+
+### 시퀀스(리스트)
+
+```yaml
+# 블록 스타일(가장 일반적)
+fruits:
+  - apple
+  - banana
+  - cherry
+
+# 플로우 스타일(컴팩트)
+colors: [red, green, blue]
+```
+
+### 매핑(오브젝트)
+
+```yaml
+# 블록 스타일
+server:
+  host: localhost
+  port: 8080
+  tls: true
+
+# 플로우 스타일
+point: {x: 1, y: 2}
+```
+
+### 중첩 구조
+
+```yaml
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - NGINX_HOST=example.com
+      - NGINX_PORT=80
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+```
+
+### 앵커와 앨리어스
+
+YAML은 앵커(`&`)와 앨리어스(`*`)로 DRY를 지원합니다:
+
+```yaml
+defaults: &defaults
+  adapter: postgres
+  encoding: utf8
+  pool: 5
+
+development:
+  <<: *defaults
+  database: myapp_development
+
+production:
+  <<: *defaults
+  database: myapp_production
+  pool: 20
+```
+
+`<<:` 병합 키는 참조된 앵커를 현재 매핑으로 확장합니다.
+
+### 멀티 문서 파일
+
+단일 YAML 파일에 `---`로 구분된 여러 문서를 포함할 수 있습니다:
+
+```yaml
+---
+kind: Deployment
+metadata:
+  name: web
+---
+kind: Service
+metadata:
+  name: web-svc
+```
+
+## 자주 발생하는 YAML 오류
+
+### 들여쓰기 오류
+
+YAML은 들여쓰기에 공백만 사용합니다(탭 금지). 들여쓰기 레벨은 일관되어야 합니다:
+
+```yaml
+# 잘못됨 — 들여쓰기 혼재
+server:
+  host: localhost
+    port: 8080  # 과도한 들여쓰기; 파서 오류
+
+# 올바름
+server:
+  host: localhost
+  port: 8080
+```
+
+### 키 뒤 콜론 누락
+
+```yaml
+# 잘못됨
+server
+  host: localhost
+
+# 올바름
+server:
+  host: localhost
+```
+
+### 따옴표 없는 문자열의 콜론
+
+```yaml
+# 잘못됨 — 파서가 키-값 쌍으로 해석
+message: Error: something went wrong
+
+# 올바름
+message: "Error: something went wrong"
+```
+
+### 탭 문자
+
+```yaml
+# 잘못됨 — YAML은 들여쓰기에 탭 금지
+server:
+	host: localhost  # 탭 문자가 파싱 오류를 일으킴
+```
+
+### 중복 키
+
+```yaml
+# 기술적으로 무효하지만 많은 파서에서 조용히 허용됨
+config:
+  timeout: 30
+  timeout: 60  # 첫 번째 값을 덮어씀
+```
+
+### YAML 1.1 불리언 함정
+
+```yaml
+# YAML 1.1에서 이것들은 모두 불리언(PyYAML, Ruby Psych < 4.0):
+# true: true, True, TRUE, yes, Yes, YES, on, On, ON
+# false: false, False, FALSE, no, No, NO, off, Off, OFF
+
+country_code: NO   # 문자열 "NO"가 아닌 false로 파싱됨
+enabled: yes       # true로 파싱됨 — 보통 괜찮지만 의외임
+
+# 안전책: 모호한 값은 항상 따옴표로 묶기
+country_code: "NO"
+```
+
+YAML 1.2(최신 도구에서 사용)는 이 강제 변환 대부분을 제거했습니다. 사용하는 파서의 버전을 파악하세요.
+
+## CI/CD에서 YAML 검증하기
+
+### yamllint
+
+`yamllint`는 표준 Python 기반 YAML 린터입니다:
+
+```bash
+pip install yamllint
+yamllint config.yaml
+```
+
+커스텀 설정(`.yamllint`) 사용:
+
+```yaml
+extends: default
+rules:
+  line-length:
+    max: 120
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+```
+
+```bash
+yamllint -c .yamllint .  # 저장소의 모든 YAML 파일 린트
+```
+
+### GitHub Actions 통합
+
+```yaml
+name: Lint YAML
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Lint YAML files
+        run: yamllint .
+```
+
+### pre-commit 훅
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [-c=.yamllint]
+```
+
+## 코드에서 YAML 파싱하기
+
+### Python
+
+```bash
+pip install pyyaml
+```
+
+```python
+import yaml
+
+# 로드(임의 코드 실행 방지를 위해 safe_load 사용)
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+
+print(config['server']['host'])
+
+# 예외를 잡아 검증
+try:
+    with open('config.yaml', 'r') as f:
+        data = yaml.safe_load(f)
+    print("Valid YAML")
+except yaml.YAMLError as e:
+    print(f"Invalid YAML: {e}")
+```
+
+### Node.js
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+try {
+  const config = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+  console.log(config);
+} catch (e) {
+  console.error('Invalid YAML:', e.message);
+}
+```
+
+### Go
+
+```bash
+go get gopkg.in/yaml.v3
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+
+    "gopkg.in/yaml.v3"
+)
+
+type Config struct {
+    Server struct {
+        Host string `yaml:"host"`
+        Port int    `yaml:"port"`
+    } `yaml:"server"`
+}
+
+func main() {
+    data, err := os.ReadFile("config.yaml")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    var config Config
+    if err := yaml.Unmarshal(data, &config); err != nil {
+        log.Fatalf("Invalid YAML: %v", err)
+    }
+
+    fmt.Printf("Host: %s, Port: %d\n", config.Server.Host, config.Server.Port)
+}
+```
+
+## YAML vs JSON vs TOML
+
+| 기능 | YAML | JSON | TOML |
+|---|---|---|---|
+| 주석 | 있음(`#`) | 없음 | 있음(`#`) |
+| 여러 줄 문자열 | 있음(`|`, `>`) | 이스케이프 `\n` | 있음 |
+| 앵커/앨리어스 | 있음 | 없음 | 없음 |
+| 타입 추론 | 암묵적(위험) | 명시적 | 엄격 |
+| 들여쓰기 기반 | 있음 | 없음 | 없음 |
+| 탭 허용 | 없음 | 해당 없음 | 없음 |
+| 파싱 모호성 | 높음(1.1) / 낮음(1.2) | 낮음 | 낮음 |
+| 장황함 | 낮음 | 중간 | 낮음 |
+
+YAML의 주요 장점은 사람이 읽기 편하고 장황함이 낮다는 점입니다. 주요 위험은 암묵적 타입 강제와 들여쓰기 민감한 파싱입니다. 기계 생성 설정(API 응답, 빌드 아티팩트)에는 JSON을 추천합니다. 주석이 있는 사람이 작성하는 설정에는 YAML이나 TOML이 모두 좋은 선택입니다. TOML은 모호성이 더 적다는 점에서 엄격히 우월합니다.
+
+## 온라인 YAML 검증기
+
+로컬에서 도구를 실행하지 않고 빠른 구문 검사와 구조 검사를 원한다면 [ZeroTool의 YAML 검증기](/tools/yaml-validator)가 브라우저 안에서 처리합니다:
+
+- 줄·열 오류 보고가 있는 YAML 구문 검증
+- 파싱된 구조를 트리로 표시
+- 검증된 YAML을 JSON으로 내보내기
+- 100% 로컬 처리 — 데이터는 서버로 전송되지 않음
+
+**[YAML 검증기 사용해보기 →](/tools/yaml-validator)**
