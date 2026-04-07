@@ -1,86 +1,157 @@
 ---
 // TotpGeneratorTool — RFC 6238 TOTP generator using Web Crypto API (100% client-side)
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    secretLabel: 'Secret (Base32)',
+    random: 'Random',
+    digits: 'Digits',
+    period: 'Period',
+    algorithm: 'Algorithm',
+    issuer: 'Issuer (optional)',
+    account: 'Account (optional)',
+    copy: 'Copy',
+    copied: 'Copied!',
+    uriLabel: 'otpauth:// URI',
+    qrLabel: 'QR Code (scan with authenticator app)',
+    msgEnterSecret: 'Enter or generate a Base32 secret first.',
+    msgError: 'Error: ',
+  },
+  zh: {
+    secretLabel: '密钥（Base32）',
+    random: '随机生成',
+    digits: '位数',
+    period: '周期',
+    algorithm: '算法',
+    issuer: '发行方（可选）',
+    account: '账户（可选）',
+    copy: '复制',
+    copied: '已复制！',
+    uriLabel: 'otpauth:// URI',
+    qrLabel: '二维码（用验证器 App 扫描）',
+    msgEnterSecret: '请先输入或生成 Base32 密钥。',
+    msgError: '错误：',
+  },
+  ja: {
+    secretLabel: 'シークレット（Base32）',
+    random: 'ランダム生成',
+    digits: '桁数',
+    period: '周期',
+    algorithm: 'アルゴリズム',
+    issuer: '発行者（任意）',
+    account: 'アカウント（任意）',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    uriLabel: 'otpauth:// URI',
+    qrLabel: 'QRコード（認証アプリでスキャン）',
+    msgEnterSecret: 'Base32シークレットを入力または生成してください。',
+    msgError: 'エラー：',
+  },
+  ko: {
+    secretLabel: '시크릿 (Base32)',
+    random: '랜덤 생성',
+    digits: '자릿수',
+    period: '주기',
+    algorithm: '알고리즘',
+    issuer: '발급자 (선택)',
+    account: '계정 (선택)',
+    copy: '복사',
+    copied: '복사됨!',
+    uriLabel: 'otpauth:// URI',
+    qrLabel: 'QR 코드 (인증 앱으로 스캔)',
+    msgEnterSecret: 'Base32 시크릿을 입력하거나 생성하세요.',
+    msgError: '오류: ',
+  },
+};
+
+const L = labels[lang];
 ---
-<div>
-  <div class="totp-wrap">
-    <!-- Secret row -->
-    <div class="totp-field">
-      <label for="totp-secret">Secret (Base32)</label>
-      <div class="totp-secret-row">
-        <input
-          type="text"
-          id="totp-secret"
-          placeholder="e.g. JBSWY3DPEHPK3PXP"
-          spellcheck="false"
-          autocomplete="off"
-        />
-        <button id="totp-gen-secret" class="btn-secondary" type="button">Random</button>
-      </div>
+<div
+  class="totp-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-msg-enter-secret={L.msgEnterSecret}
+  data-msg-error={L.msgError}
+>
+  <!-- Secret row -->
+  <div class="totp-field">
+    <label for="totp-secret">{L.secretLabel}</label>
+    <div class="totp-secret-row">
+      <input
+        type="text"
+        id="totp-secret"
+        placeholder="e.g. JBSWY3DPEHPK3PXP"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <button id="totp-gen-secret" class="btn-secondary" type="button">{L.random}</button>
     </div>
+  </div>
 
-    <!-- Options -->
-    <div class="totp-options">
-      <div class="totp-opt">
-        <label for="totp-digits">Digits</label>
-        <select id="totp-digits">
-          <option value="6" selected>6</option>
-          <option value="8">8</option>
-        </select>
-      </div>
-      <div class="totp-opt">
-        <label for="totp-period">Period</label>
-        <select id="totp-period">
-          <option value="30" selected>30 s</option>
-          <option value="60">60 s</option>
-        </select>
-      </div>
-      <div class="totp-opt">
-        <label for="totp-algo">Algorithm</label>
-        <select id="totp-algo">
-          <option value="SHA-1" selected>SHA-1</option>
-          <option value="SHA-256">SHA-256</option>
-          <option value="SHA-512">SHA-512</option>
-        </select>
-      </div>
-      <div class="totp-opt">
-        <label for="totp-issuer">Issuer (optional)</label>
-        <input type="text" id="totp-issuer" placeholder="My App" />
-      </div>
-      <div class="totp-opt">
-        <label for="totp-account">Account (optional)</label>
-        <input type="text" id="totp-account" placeholder="user@example.com" />
-      </div>
+  <!-- Options -->
+  <div class="totp-options">
+    <div class="totp-opt">
+      <label for="totp-digits">{L.digits}</label>
+      <select id="totp-digits">
+        <option value="6" selected>6</option>
+        <option value="8">8</option>
+      </select>
     </div>
-
-    <div id="totp-status" class="totp-status" aria-live="polite"></div>
-
-    <!-- Live OTP display -->
-    <div id="totp-display" class="totp-display" style="display:none">
-      <div class="totp-code-wrap">
-        <span id="totp-code" class="totp-code">------</span>
-        <button id="totp-copy-code" class="btn-copy" type="button">Copy</button>
-      </div>
-      <div class="totp-timer-wrap">
-        <div class="totp-bar-bg">
-          <div id="totp-bar" class="totp-bar"></div>
-        </div>
-        <span id="totp-countdown" class="totp-countdown">30s</span>
-      </div>
+    <div class="totp-opt">
+      <label for="totp-period">{L.period}</label>
+      <select id="totp-period">
+        <option value="30" selected>30 s</option>
+        <option value="60">60 s</option>
+      </select>
     </div>
+    <div class="totp-opt">
+      <label for="totp-algo">{L.algorithm}</label>
+      <select id="totp-algo">
+        <option value="SHA-1" selected>SHA-1</option>
+        <option value="SHA-256">SHA-256</option>
+        <option value="SHA-512">SHA-512</option>
+      </select>
+    </div>
+    <div class="totp-opt">
+      <label for="totp-issuer">{L.issuer}</label>
+      <input type="text" id="totp-issuer" placeholder="My App" />
+    </div>
+    <div class="totp-opt">
+      <label for="totp-account">{L.account}</label>
+      <input type="text" id="totp-account" placeholder="user@example.com" />
+    </div>
+  </div>
 
-    <!-- URI + QR -->
-    <div id="totp-uri-block" class="totp-uri-block" style="display:none">
-      <div class="totp-uri-label">
-        <span>otpauth:// URI</span>
-        <button id="totp-copy-uri" class="btn-copy" type="button">Copy</button>
+  <div id="totp-status" class="totp-status" aria-live="polite"></div>
+
+  <!-- Live OTP display -->
+  <div id="totp-display" class="totp-display" style="display:none">
+    <div class="totp-code-wrap">
+      <span id="totp-code" class="totp-code">------</span>
+      <button id="totp-copy-code" class="btn-copy" type="button">{L.copy}</button>
+    </div>
+    <div class="totp-timer-wrap">
+      <div class="totp-bar-bg">
+        <div id="totp-bar" class="totp-bar"></div>
       </div>
-      <input type="text" id="totp-uri" class="totp-uri-input" readonly />
+      <span id="totp-countdown" class="totp-countdown">30s</span>
     </div>
+  </div>
 
-    <div id="totp-qr-block" class="totp-qr-block" style="display:none">
-      <div class="totp-qr-label">QR Code (scan with authenticator app)</div>
-      <div id="totp-qr-canvas-wrap"></div>
+  <!-- URI + QR -->
+  <div id="totp-uri-block" class="totp-uri-block" style="display:none">
+    <div class="totp-uri-label">
+      <span>{L.uriLabel}</span>
+      <button id="totp-copy-uri" class="btn-copy" type="button">{L.copy}</button>
     </div>
+    <input type="text" id="totp-uri" class="totp-uri-input" readonly />
+  </div>
+
+  <div id="totp-qr-block" class="totp-qr-block" style="display:none">
+    <div class="totp-qr-label">{L.qrLabel}</div>
+    <div id="totp-qr-canvas-wrap"></div>
   </div>
 
   <!-- qrcode.js (same vendor file as QR code generator tool) -->
@@ -88,6 +159,15 @@
 
   <script is:inline>
     (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.totp-wrap')
+        : document.querySelector('.totp-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var MSG_ENTER_SECRET = wrap ? wrap.dataset.msgEnterSecret : 'Enter or generate a Base32 secret first.';
+      var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Error: ';
+
       // Base32 alphabet
       var B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -185,7 +265,7 @@
 
       async function startTotp() {
         var secret = secretInput.value.trim();
-        if (!secret) { setStatus('Enter or generate a Base32 secret first.', true); return; }
+        if (!secret) { setStatus(MSG_ENTER_SECRET, true); return; }
         var algo = document.getElementById('totp-algo').value;
         var period = parseInt(document.getElementById('totp-period').value);
         var digits = parseInt(document.getElementById('totp-digits').value);
@@ -214,7 +294,7 @@
 
           window.trackTool && window.trackTool('totp-generator', 'generate');
         } catch (e) {
-          setStatus('Error: ' + e.message, true);
+          setStatus(MSG_ERROR + e.message, true);
           displayEl.style.display = 'none';
         }
 
@@ -239,7 +319,7 @@
         var btn = this;
         navigator.clipboard.writeText(codeEl.textContent).then(function () {
           var prev = btn.textContent;
-          btn.textContent = 'Copied!';
+          btn.textContent = COPIED;
           setTimeout(function () { btn.textContent = prev; }, 1500);
         });
       });
@@ -248,7 +328,7 @@
         var btn = this;
         navigator.clipboard.writeText(uriInput.value).then(function () {
           var prev = btn.textContent;
-          btn.textContent = 'Copied!';
+          btn.textContent = COPIED;
           setTimeout(function () { btn.textContent = prev; }, 1500);
         });
       });
