@@ -38,6 +38,14 @@
     <!-- File info (shown after file dropped) -->
     <div id="b64-file-info" class="b64-file-info" hidden></div>
 
+    <!-- Data URI toggle (encode mode + file loaded only) -->
+    <div id="b64-uri-row" class="b64-uri-row" hidden>
+      <label>
+        <input type="checkbox" id="b64-uri-toggle" />
+        Include Data URI prefix (<code>data:&lt;mime&gt;;base64,…</code>)
+      </label>
+    </div>
+
     <div class="b64-row">
       <label for="b64-input" id="b64-input-label"><span>Plain Text</span></label>
       <textarea
@@ -81,8 +89,12 @@
       var dropEl = document.getElementById('b64-drop');
       var fileInput = document.getElementById('b64-file');
       var fileInfoEl = document.getElementById('b64-file-info');
+      var uriRowEl = document.getElementById('b64-uri-row');
+      var uriToggle = document.getElementById('b64-uri-toggle');
       var mode = 'encode';
       var variant = 'standard';
+      var rawB64 = '';
+      var currentMime = '';
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -158,17 +170,30 @@
         }
       }
 
+      function applyUriPrefix(b64) {
+        return uriToggle.checked && currentMime
+          ? 'data:' + currentMime + ';base64,' + b64
+          : b64;
+      }
+
       function processFile(file) {
+        if (file.size > 5 * 1024 * 1024) {
+          setStatus('Large file — encoding may take a few seconds', false);
+        }
         var reader = new FileReader();
         reader.onload = function (e) {
           var b64 = arrayBufferToBase64(e.target.result);
           if (variant === 'urlsafe') b64 = toUrlSafe(b64);
-          outputEl.value = b64;
+          rawB64 = b64;
+          currentMime = file.type || 'application/octet-stream';
+          outputEl.value = applyUriPrefix(b64);
           inputEl.value = '';
           inputEl.placeholder = 'File loaded — text input cleared';
           fileInfoEl.innerHTML =
-            '<strong>' + esc(file.name) + '</strong> &mdash; ' + formatBytes(file.size);
+            '<strong>' + esc(file.name) + '</strong> &mdash; ' +
+            esc(currentMime) + ' &mdash; ' + formatBytes(file.size);
           fileInfoEl.hidden = false;
+          uriRowEl.hidden = false;
           setStatus('File encoded.', false);
           window.trackTool && window.trackTool('base64', 'encode_file');
         };
@@ -178,12 +203,20 @@
         reader.readAsArrayBuffer(file);
       }
 
+      uriToggle.addEventListener('change', function () {
+        if (rawB64) outputEl.value = applyUriPrefix(rawB64);
+      });
+
       document.querySelectorAll('input[name="b64mode"]').forEach(function (radio) {
         radio.addEventListener('change', function () {
           mode = this.value;
           updateLabels();
           clearStatus();
           outputEl.value = '';
+          rawB64 = '';
+          currentMime = '';
+          uriRowEl.hidden = true;
+          uriToggle.checked = false;
         });
       });
 
@@ -217,6 +250,10 @@
         inputEl.value = outputEl.value;
         outputEl.value = tmp;
         fileInfoEl.hidden = true;
+        uriRowEl.hidden = true;
+        uriToggle.checked = false;
+        rawB64 = '';
+        currentMime = '';
         inputEl.placeholder = mode === 'encode' ? 'Enter text to encode...' : 'Enter Base64 string to decode...';
         clearStatus();
       });
@@ -226,6 +263,10 @@
         outputEl.value = '';
         fileInput.value = '';
         fileInfoEl.hidden = true;
+        uriRowEl.hidden = true;
+        uriToggle.checked = false;
+        rawB64 = '';
+        currentMime = '';
         inputEl.placeholder = mode === 'encode' ? 'Enter text to encode...' : 'Enter Base64 string to decode...';
         clearStatus();
       });
@@ -331,6 +372,23 @@
     font-size: 0.82rem;
     color: var(--color-text-secondary);
     padding: 0.25rem 0;
+  }
+
+  .b64-uri-row {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+  }
+
+  .b64-uri-row label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+  }
+
+  .b64-uri-row code {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
   }
 
   .b64-row { display: flex; flex-direction: column; gap: 0.4rem; }
