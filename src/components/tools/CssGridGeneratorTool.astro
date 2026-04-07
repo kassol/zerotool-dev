@@ -1,0 +1,325 @@
+---
+// CssGridGeneratorTool — visual CSS Grid layout builder
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    columns: 'Columns',
+    rows: 'Rows',
+    columnGap: 'Column Gap',
+    rowGap: 'Row Gap',
+    templateColumns: 'grid-template-columns',
+    templateRows: 'grid-template-rows',
+    preview: 'Preview',
+    outputLabel: 'Generated CSS',
+    copy: 'Copy',
+    copied: 'Copied!',
+  },
+  zh: {
+    columns: '列数',
+    rows: '行数',
+    columnGap: '列间距',
+    rowGap: '行间距',
+    templateColumns: 'grid-template-columns',
+    templateRows: 'grid-template-rows',
+    preview: '预览',
+    outputLabel: '生成的 CSS',
+    copy: '复制',
+    copied: '已复制！',
+  },
+  ja: {
+    columns: '列数',
+    rows: '行数',
+    columnGap: '列ギャップ',
+    rowGap: '行ギャップ',
+    templateColumns: 'grid-template-columns',
+    templateRows: 'grid-template-rows',
+    preview: 'プレビュー',
+    outputLabel: '生成された CSS',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+  },
+  ko: {
+    columns: '열 수',
+    rows: '행 수',
+    columnGap: '열 간격',
+    rowGap: '행 간격',
+    templateColumns: 'grid-template-columns',
+    templateRows: 'grid-template-rows',
+    preview: '미리보기',
+    outputLabel: '생성된 CSS',
+    copy: '복사',
+    copied: '복사됨!',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="cgg-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-label-preview={L.preview}
+>
+  <!-- Controls -->
+  <div class="cgg-controls">
+    <!-- Columns -->
+    <div class="cgg-field">
+      <label class="cgg-label" for="cgg-cols">{L.columns}</label>
+      <input id="cgg-cols" class="cgg-num-input" type="number" min="1" max="12" value="3" />
+    </div>
+    <!-- Rows -->
+    <div class="cgg-field">
+      <label class="cgg-label" for="cgg-rows">{L.rows}</label>
+      <input id="cgg-rows" class="cgg-num-input" type="number" min="1" max="8" value="2" />
+    </div>
+    <!-- Column gap -->
+    <div class="cgg-field">
+      <label class="cgg-label" for="cgg-col-gap">{L.columnGap}</label>
+      <input id="cgg-col-gap" class="cgg-text-input" type="text" value="1rem" spellcheck="false" autocomplete="off" />
+    </div>
+    <!-- Row gap -->
+    <div class="cgg-field">
+      <label class="cgg-label" for="cgg-row-gap">{L.rowGap}</label>
+      <input id="cgg-row-gap" class="cgg-text-input" type="text" value="1rem" spellcheck="false" autocomplete="off" />
+    </div>
+    <!-- Template columns -->
+    <div class="cgg-field cgg-field-wide">
+      <label class="cgg-label" for="cgg-tmpl-cols">{L.templateColumns}</label>
+      <input id="cgg-tmpl-cols" class="cgg-text-input" type="text" value="repeat(3, 1fr)" spellcheck="false" autocomplete="off" />
+    </div>
+    <!-- Template rows -->
+    <div class="cgg-field cgg-field-wide">
+      <label class="cgg-label" for="cgg-tmpl-rows">{L.templateRows}</label>
+      <input id="cgg-tmpl-rows" class="cgg-text-input" type="text" value="repeat(2, 1fr)" spellcheck="false" autocomplete="off" />
+    </div>
+  </div>
+
+  <!-- Preview -->
+  <div class="cgg-section">
+    <div class="cgg-section-label">{L.preview}</div>
+    <div id="cgg-preview" class="cgg-preview"></div>
+  </div>
+
+  <!-- CSS Output -->
+  <div class="cgg-section">
+    <div class="cgg-output-header">
+      <span class="cgg-section-label">{L.outputLabel}</span>
+      <button id="cgg-copy" class="btn-copy" type="button">{L.copy}</button>
+    </div>
+    <pre id="cgg-pre" class="cgg-pre"><code id="cgg-code" class="cgg-code"></code></pre>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.cgg-wrap')
+        : document.querySelector('.cgg-wrap');
+
+      var COPY_LABEL   = wrap.dataset.copy;
+      var COPIED_LABEL = wrap.dataset.copied;
+
+      var colsEl     = document.getElementById('cgg-cols');
+      var rowsEl     = document.getElementById('cgg-rows');
+      var colGapEl   = document.getElementById('cgg-col-gap');
+      var rowGapEl   = document.getElementById('cgg-row-gap');
+      var tmplColsEl = document.getElementById('cgg-tmpl-cols');
+      var tmplRowsEl = document.getElementById('cgg-tmpl-rows');
+      var previewEl  = document.getElementById('cgg-preview');
+      var codeEl     = document.getElementById('cgg-code');
+      var copyBtn    = document.getElementById('cgg-copy');
+
+      var CELL_COLORS = [
+        '#bfdbfe','#bbf7d0','#fde68a','#fecaca',
+        '#ddd6fe','#fed7aa','#a7f3d0','#e9d5ff',
+        '#fef08a','#bae6fd','#d9f99d','#fecdd3',
+      ];
+
+      function update() {
+        var cols    = Math.max(1, Math.min(12, parseInt(colsEl.value) || 3));
+        var rows    = Math.max(1, Math.min(8,  parseInt(rowsEl.value) || 2));
+        var colGap  = colGapEl.value.trim()   || '1rem';
+        var rowGap  = rowGapEl.value.trim()   || '1rem';
+
+        /* Sync template inputs if user hasn't manually overridden */
+        if (tmplColsEl.dataset.manual !== '1') {
+          tmplColsEl.value = 'repeat(' + cols + ', 1fr)';
+        }
+        if (tmplRowsEl.dataset.manual !== '1') {
+          tmplRowsEl.value = 'repeat(' + rows + ', 1fr)';
+        }
+
+        var tmplCols = tmplColsEl.value.trim() || 'repeat(' + cols + ', 1fr)';
+        var tmplRows = tmplRowsEl.value.trim() || 'repeat(' + rows + ', 1fr)';
+
+        /* Build preview */
+        previewEl.innerHTML = '';
+        previewEl.style.display         = 'grid';
+        previewEl.style.gridTemplateColumns = tmplCols;
+        previewEl.style.gridTemplateRows    = tmplRows;
+        previewEl.style.gap = rowGap + ' ' + colGap;
+
+        var total = cols * rows;
+        for (var i = 0; i < total; i++) {
+          var cell = document.createElement('div');
+          cell.className = 'cgg-cell';
+          cell.style.background = CELL_COLORS[i % CELL_COLORS.length];
+          previewEl.appendChild(cell);
+        }
+
+        /* Build CSS output */
+        var lines = [
+          '.container {',
+          '  display: grid;',
+          '  grid-template-columns: ' + tmplCols + ';',
+          '  grid-template-rows: ' + tmplRows + ';',
+          '  column-gap: ' + colGap + ';',
+          '  row-gap: ' + rowGap + ';',
+          '}',
+        ];
+        var raw = lines.join('\n');
+        var highlighted = raw
+          .replace(/(\{|\})/g,          '<span class="cgg-hl-brace">$1</span>')
+          .replace(/(\.container)/g,    '<span class="cgg-hl-sel">$1</span>')
+          .replace(/([\w-]+)(\s*:)/g,   '<span class="cgg-hl-prop">$1</span>$2')
+          .replace(/(:)(\s*)([^;{}\n]+)(;)/g, '$1$2<span class="cgg-hl-val">$3</span><span class="cgg-hl-semi">$4</span>');
+        codeEl.innerHTML = highlighted;
+
+        window.trackTool && window.trackTool('css-grid-generator', 'generate');
+      }
+
+      colsEl.addEventListener('input', function () {
+        tmplColsEl.dataset.manual = '';
+        update();
+      });
+      rowsEl.addEventListener('input', function () {
+        tmplRowsEl.dataset.manual = '';
+        update();
+      });
+      colGapEl.addEventListener('input', update);
+      rowGapEl.addEventListener('input', update);
+      tmplColsEl.addEventListener('input', function () {
+        tmplColsEl.dataset.manual = '1';
+        update();
+      });
+      tmplRowsEl.addEventListener('input', function () {
+        tmplRowsEl.dataset.manual = '1';
+        update();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = codeEl.textContent;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = COPIED_LABEL;
+          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          window.trackTool && window.trackTool('css-grid-generator', 'copy');
+        });
+      });
+
+      update();
+    })();
+  </script>
+</div>
+
+<style>
+  .cgg-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* Controls grid */
+  .cgg-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .cgg-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .cgg-field-wide { grid-column: span 2; }
+
+  .cgg-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .cgg-num-input,
+  .cgg-text-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .cgg-num-input:focus,
+  .cgg-text-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* Section */
+  .cgg-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .cgg-section-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .cgg-output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  /* Preview */
+  .cgg-preview {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    min-height: 120px;
+  }
+
+  .cgg-cell {
+    border-radius: 4px;
+    min-height: 40px;
+  }
+
+  /* Code output */
+  .cgg-pre {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+
+  .cgg-code { font-family: inherit; }
+
+  .cgg-hl-sel   { color: #7c3aed; font-weight: 600; }
+  .cgg-hl-brace { color: var(--color-text-secondary); }
+  .cgg-hl-prop  { color: #0369a1; }
+  .cgg-hl-val   { color: #057a55; }
+  .cgg-hl-semi  { color: var(--color-text-secondary); }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cgg-hl-sel  { color: #a78bfa; }
+    :root:not([data-theme="light"]) .cgg-hl-prop { color: #38bdf8; }
+    :root:not([data-theme="light"]) .cgg-hl-val  { color: #34d399; }
+  }
+  [data-theme="dark"] .cgg-hl-sel  { color: #a78bfa; }
+  [data-theme="dark"] .cgg-hl-prop { color: #38bdf8; }
+  [data-theme="dark"] .cgg-hl-val  { color: #34d399; }
+
+  @media (max-width: 480px) {
+    .cgg-field-wide { grid-column: span 1; }
+  }
+</style>

@@ -1,0 +1,476 @@
+---
+// JsonpathTesterTool — test JSONPath expressions against JSON data
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    jsonInput: 'JSON Input',
+    expression: 'JSONPath Expression',
+    examples: 'Examples',
+    results: 'Results',
+    matchCount: (n: number) => `${n} match${n === 1 ? '' : 'es'}`,
+    copy: 'Copy',
+    copied: 'Copied!',
+    invalidJson: 'Invalid JSON',
+    noMatch: 'No matches found',
+    errorLabel: 'Error',
+  },
+  zh: {
+    jsonInput: 'JSON 输入',
+    expression: 'JSONPath 表达式',
+    examples: '示例',
+    results: '结果',
+    matchCount: (n: number) => `${n} 条匹配`,
+    copy: '复制',
+    copied: '已复制！',
+    invalidJson: 'JSON 格式无效',
+    noMatch: '未找到匹配项',
+    errorLabel: '错误',
+  },
+  ja: {
+    jsonInput: 'JSON 入力',
+    expression: 'JSONPath 式',
+    examples: '例',
+    results: '結果',
+    matchCount: (n: number) => `${n} 件マッチ`,
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    invalidJson: '無効な JSON',
+    noMatch: 'マッチなし',
+    errorLabel: 'エラー',
+  },
+  ko: {
+    jsonInput: 'JSON 입력',
+    expression: 'JSONPath 표현식',
+    examples: '예시',
+    results: '결과',
+    matchCount: (n: number) => `${n}개 매칭`,
+    copy: '복사',
+    copied: '복사됨!',
+    invalidJson: '유효하지 않은 JSON',
+    noMatch: '매칭 없음',
+    errorLabel: '오류',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+
+const SAMPLE_JSON = `{
+  "store": {
+    "book": [
+      {"category": "reference", "author": "Nigel Rees", "title": "Sayings of the Century", "price": 8.95},
+      {"category": "fiction", "author": "Evelyn Waugh", "title": "Sword of Honour", "price": 12.99},
+      {"category": "fiction", "author": "Herman Melville", "title": "Moby Dick", "price": 8.99},
+      {"category": "fiction", "author": "J. R. R. Tolkien", "title": "The Lord of the Rings", "price": 22.99}
+    ],
+    "bicycle": {"color": "red", "price": 19.95}
+  }
+}`;
+---
+
+<div
+  class="jpt-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-invalid-json={L.invalidJson}
+  data-no-match={L.noMatch}
+  data-error-label={L.errorLabel}
+>
+  <div class="jpt-layout">
+    <!-- Left: JSON input -->
+    <div class="jpt-panel">
+      <label class="jpt-label" for="jpt-json">{L.jsonInput}</label>
+      <textarea id="jpt-json" class="jpt-textarea" spellcheck="false" autocomplete="off">{SAMPLE_JSON}</textarea>
+    </div>
+
+    <!-- Right: expression + results -->
+    <div class="jpt-panel">
+      <!-- Expression input -->
+      <label class="jpt-label" for="jpt-expr">{L.expression}</label>
+      <input id="jpt-expr" class="jpt-expr-input" type="text" value="$.store.book[*].author" spellcheck="false" autocomplete="off" />
+
+      <!-- Example pills -->
+      <div class="jpt-examples-label">{L.examples}</div>
+      <div class="jpt-pills">
+        <button class="jpt-pill" type="button" data-expr="$">$</button>
+        <button class="jpt-pill" type="button" data-expr="$.store.book[*]">$.store.book[*]</button>
+        <button class="jpt-pill" type="button" data-expr="$.store.book[0].title">$.store.book[0].title</button>
+        <button class="jpt-pill" type="button" data-expr="$.store.book[*].author">$.store.book[*].author</button>
+        <button class="jpt-pill" type="button" data-expr="$.store.book[?(@.price < 10)]">$.store.book[?(@.price &lt; 10)]</button>
+        <button class="jpt-pill" type="button" data-expr="$..author">$..author</button>
+        <button class="jpt-pill" type="button" data-expr="$.store.bicycle.color">$.store.bicycle.color</button>
+      </div>
+
+      <!-- Results -->
+      <div class="jpt-results-header">
+        <span class="jpt-label">{L.results}</span>
+        <span id="jpt-count" class="jpt-count"></span>
+        <button id="jpt-copy" class="btn-copy" type="button">{L.copy}</button>
+      </div>
+      <pre id="jpt-pre" class="jpt-pre"><code id="jpt-code" class="jpt-code"></code></pre>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.jpt-wrap')
+        : document.querySelector('.jpt-wrap');
+
+      var COPY_LABEL     = wrap.dataset.copy;
+      var COPIED_LABEL   = wrap.dataset.copied;
+      var INVALID_JSON   = wrap.dataset.invalidJson;
+      var NO_MATCH       = wrap.dataset.noMatch;
+      var ERROR_LABEL    = wrap.dataset.errorLabel;
+
+      var jsonEl   = document.getElementById('jpt-json');
+      var exprEl   = document.getElementById('jpt-expr');
+      var codeEl   = document.getElementById('jpt-code');
+      var countEl  = document.getElementById('jpt-count');
+      var copyBtn  = document.getElementById('jpt-copy');
+
+      /* ── Minimal JSONPath evaluator ── */
+      function jsonpath(data, expr) {
+        if (!expr || expr === '$') return [data];
+
+        // Tokenize the path after $
+        var path = expr.trim();
+        if (!path.startsWith('$')) throw new Error('Expression must start with $');
+        path = path.slice(1);
+
+        return evaluate([data], path);
+      }
+
+      function evaluate(nodes, path) {
+        if (!path) return nodes;
+
+        // Recursive descent: ..key
+        if (path.startsWith('..')) {
+          var rest = path.slice(2);
+          // Extract next key/selector
+          var m = rest.match(/^([\w*]+)(.*)/);
+          if (!m) return nodes;
+          var key = m[1], remaining = m[2];
+          var results = [];
+          nodes.forEach(function (node) {
+            descend(node, key, results);
+          });
+          return evaluate(results, remaining);
+        }
+
+        // Dot notation: .key or .*
+        if (path.startsWith('.')) {
+          var rest2 = path.slice(1);
+          // Check for another dot (prevent eating ..)
+          var m2 = rest2.match(/^([\w*]+)(.*)/);
+          if (!m2) return nodes;
+          var key2 = m2[1], remaining2 = m2[2];
+          var results2 = [];
+          nodes.forEach(function (node) {
+            if (key2 === '*') {
+              if (Array.isArray(node)) {
+                node.forEach(function (v) { results2.push(v); });
+              } else if (node && typeof node === 'object') {
+                Object.values(node).forEach(function (v) { results2.push(v); });
+              }
+            } else {
+              if (node && typeof node === 'object' && !Array.isArray(node) && key2 in node) {
+                results2.push(node[key2]);
+              }
+            }
+          });
+          return evaluate(results2, remaining2);
+        }
+
+        // Bracket notation: [n], [*], [?(...)]
+        if (path.startsWith('[')) {
+          var close = path.indexOf(']');
+          if (close === -1) return nodes;
+          var inner = path.slice(1, close);
+          var remaining3 = path.slice(close + 1);
+          var results3 = [];
+
+          if (inner === '*') {
+            nodes.forEach(function (node) {
+              if (Array.isArray(node)) {
+                node.forEach(function (v) { results3.push(v); });
+              } else if (node && typeof node === 'object') {
+                Object.values(node).forEach(function (v) { results3.push(v); });
+              }
+            });
+          } else if (/^\d+$/.test(inner)) {
+            var idx = parseInt(inner);
+            nodes.forEach(function (node) {
+              if (Array.isArray(node) && idx < node.length) results3.push(node[idx]);
+            });
+          } else if (inner.startsWith('?(') && inner.endsWith(')')) {
+            var filterExpr = inner.slice(2, -1).trim();
+            nodes.forEach(function (node) {
+              if (Array.isArray(node)) {
+                node.forEach(function (item) {
+                  if (evalFilter(item, filterExpr)) results3.push(item);
+                });
+              }
+            });
+          } else {
+            // string key: ['key']
+            var strKey = inner.replace(/^['"]|['"]$/g, '');
+            nodes.forEach(function (node) {
+              if (node && typeof node === 'object' && strKey in node) results3.push(node[strKey]);
+            });
+          }
+
+          return evaluate(results3, remaining3);
+        }
+
+        return nodes;
+      }
+
+      function descend(node, key, results) {
+        if (node === null || typeof node !== 'object') return;
+        if (key === '*') {
+          var vals = Array.isArray(node) ? node : Object.values(node);
+          vals.forEach(function (v) { results.push(v); descend(v, key, results); });
+        } else {
+          if (!Array.isArray(node) && key in node) results.push(node[key]);
+          var children = Array.isArray(node) ? node : Object.values(node);
+          children.forEach(function (v) { descend(v, key, results); });
+        }
+      }
+
+      function evalFilter(item, expr) {
+        // Match patterns like @.prop OP value or @.prop (existence)
+        var m = expr.match(/^@\.([\w]+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/);
+        if (!m) {
+          // Existence check: @.prop
+          var em = expr.match(/^@\.([\w]+)$/);
+          if (em) return item && em[1] in item;
+          return false;
+        }
+        var prop = m[1], op = m[2], rawVal = m[3].trim();
+        if (!(item && prop in item)) return false;
+        var itemVal = item[prop];
+        var cmpVal = rawVal === 'true' ? true : rawVal === 'false' ? false :
+                     rawVal.startsWith('"') || rawVal.startsWith("'") ? rawVal.slice(1, -1) :
+                     parseFloat(rawVal);
+        switch (op) {
+          case '==': return itemVal == cmpVal;
+          case '!=': return itemVal != cmpVal;
+          case '<':  return itemVal <  cmpVal;
+          case '>':  return itemVal >  cmpVal;
+          case '<=': return itemVal <= cmpVal;
+          case '>=': return itemVal >= cmpVal;
+        }
+        return false;
+      }
+
+      /* ── Syntax highlight JSON ── */
+      function highlightJson(str) {
+        return str
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (m) {
+            if (/^"/.test(m)) {
+              if (/:$/.test(m)) return '<span class="jpt-hl-key">' + m + '</span>';
+              return '<span class="jpt-hl-str">' + m + '</span>';
+            }
+            if (/true|false/.test(m)) return '<span class="jpt-hl-bool">' + m + '</span>';
+            if (/null/.test(m)) return '<span class="jpt-hl-null">' + m + '</span>';
+            return '<span class="jpt-hl-num">' + m + '</span>';
+          });
+      }
+
+      function run() {
+        var jsonText = jsonEl.value.trim();
+        var expr     = exprEl.value.trim();
+
+        var data;
+        try {
+          data = JSON.parse(jsonText);
+        } catch (e) {
+          codeEl.innerHTML = '<span class="jpt-error">' + INVALID_JSON + ': ' + e.message + '</span>';
+          countEl.textContent = '';
+          copyBtn.disabled = true;
+          return;
+        }
+
+        if (!expr) {
+          codeEl.innerHTML = '';
+          countEl.textContent = '';
+          copyBtn.disabled = true;
+          return;
+        }
+
+        try {
+          var results = jsonpath(data, expr);
+          if (!results || results.length === 0) {
+            codeEl.innerHTML = '<span class="jpt-no-match">' + NO_MATCH + '</span>';
+            countEl.textContent = '';
+            copyBtn.disabled = true;
+          } else {
+            var output = results.length === 1
+              ? JSON.stringify(results[0], null, 2)
+              : JSON.stringify(results, null, 2);
+            codeEl.innerHTML = highlightJson(output);
+            countEl.textContent = results.length + ' match' + (results.length === 1 ? '' : 'es');
+            copyBtn.disabled = false;
+          }
+        } catch (e) {
+          codeEl.innerHTML = '<span class="jpt-error">' + ERROR_LABEL + ': ' + e.message + '</span>';
+          countEl.textContent = '';
+          copyBtn.disabled = true;
+        }
+
+        window.trackTool && window.trackTool('jsonpath-tester', 'run');
+      }
+
+      jsonEl.addEventListener('input', run);
+      exprEl.addEventListener('input', run);
+
+      document.querySelectorAll('.jpt-pill').forEach(function (pill) {
+        pill.addEventListener('click', function () {
+          exprEl.value = pill.dataset.expr;
+          run();
+          window.trackTool && window.trackTool('jsonpath-tester', 'example');
+        });
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = codeEl.textContent;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = COPIED_LABEL;
+          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          window.trackTool && window.trackTool('jsonpath-tester', 'copy');
+        });
+      });
+
+      run();
+    })();
+  </script>
+</div>
+
+<style>
+  .jpt-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .jpt-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  @media (max-width: 700px) {
+    .jpt-layout { grid-template-columns: 1fr; }
+  }
+
+  .jpt-panel { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .jpt-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jpt-textarea {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    resize: vertical;
+    min-height: 260px;
+    line-height: 1.5;
+  }
+
+  .jpt-textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .jpt-expr-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .jpt-expr-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .jpt-examples-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .jpt-pills { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+  .jpt-pill {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .jpt-pill:hover { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+
+  .jpt-results-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .jpt-count {
+    font-size: 0.75rem;
+    color: var(--color-primary);
+    font-weight: 600;
+    flex: 1;
+  }
+
+  .jpt-pre {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 0.9rem;
+    overflow-x: auto;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.55;
+    flex: 1;
+    min-height: 140px;
+  }
+
+  .jpt-code { font-family: inherit; }
+
+  /* Syntax highlight */
+  .jpt-hl-key  { color: #0369a1; }
+  .jpt-hl-str  { color: #057a55; }
+  .jpt-hl-num  { color: #9a3412; }
+  .jpt-hl-bool { color: #7c3aed; }
+  .jpt-hl-null { color: var(--color-text-secondary); }
+
+  .jpt-error    { color: #dc2626; }
+  .jpt-no-match { color: var(--color-text-secondary); font-style: italic; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jpt-hl-key  { color: #38bdf8; }
+    :root:not([data-theme="light"]) .jpt-hl-str  { color: #34d399; }
+    :root:not([data-theme="light"]) .jpt-hl-num  { color: #fb923c; }
+    :root:not([data-theme="light"]) .jpt-hl-bool { color: #a78bfa; }
+  }
+  [data-theme="dark"] .jpt-hl-key  { color: #38bdf8; }
+  [data-theme="dark"] .jpt-hl-str  { color: #34d399; }
+  [data-theme="dark"] .jpt-hl-num  { color: #fb923c; }
+  [data-theme="dark"] .jpt-hl-bool { color: #a78bfa; }
+</style>
