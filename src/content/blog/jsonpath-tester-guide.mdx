@@ -1,0 +1,268 @@
+---
+title: "JSONPath Tester Online: Query JSON Data Without Writing Code"
+description: "Learn JSONPath syntax and test JSON path expressions online. Covers $ root, dot notation, filters, wildcards, and recursive descent with real examples."
+pubDate: 2026-04-08
+lang: "en"
+translationSlug: "jsonpath-tester-guide-zh"
+tags: ["jsonpath", "json", "data", "query", "developer-tools"]
+ogImage: /og/blog-jsonpath-tester-guide.png
+---
+
+JSONPath is a query language for JSON, similar to XPath for XML. It lets you extract specific values from deeply nested JSON structures using a compact expression syntax. A **JSONPath tester online** lets you paste your JSON, write expressions, and instantly see the matched results — without running any code.
+
+[Try our JSONPath Tester →](/tools/jsonpath-tester)
+
+## JSONPath Syntax Basics
+
+Every JSONPath expression starts from the root `$` and navigates the structure using operators.
+
+### Root and Dot Notation
+
+```json
+{
+  "store": {
+    "name": "Tech Books",
+    "inventory": [
+      { "title": "JavaScript: The Good Parts", "price": 29.99, "inStock": true },
+      { "title": "Clean Code", "price": 34.99, "inStock": false },
+      { "title": "The Pragmatic Programmer", "price": 39.99, "inStock": true }
+    ]
+  }
+}
+```
+
+| Expression | Result |
+|---|---|
+| `$.store.name` | `"Tech Books"` |
+| `$.store.inventory[0].title` | `"JavaScript: The Good Parts"` |
+| `$.store.inventory[2].price` | `39.99` |
+
+### Bracket Notation
+
+Equivalent to dot notation, but required when keys contain spaces or special characters:
+
+```
+$.store['name']             → "Tech Books"
+$.store.inventory[0]        → first book object
+$.store.inventory[-1]       → last book object (negative indexing)
+```
+
+### Wildcard `*`
+
+Match all children of an object or all elements of an array:
+
+```
+$.store.inventory[*].title
+→ ["JavaScript: The Good Parts", "Clean Code", "The Pragmatic Programmer"]
+
+$.store.*
+→ ["Tech Books", [...inventory array...]]
+```
+
+### Array Slices
+
+Python-style slice syntax `[start:end:step]`:
+
+```
+$.store.inventory[0:2]          → first two books
+$.store.inventory[::2]          → every other book (indices 0, 2, 4...)
+$.store.inventory[-1:]          → last book only
+```
+
+### Recursive Descent `..`
+
+The double-dot operator searches the entire tree for matching keys, regardless of nesting depth:
+
+```json
+{
+  "orders": [
+    { "id": 1, "customer": { "name": "Alice" } },
+    { "id": 2, "customer": { "name": "Bob" } }
+  ]
+}
+```
+
+```
+$..name
+→ ["Alice", "Bob"]
+
+$..id
+→ [1, 2]
+```
+
+This is especially useful for navigating deeply nested or inconsistently structured JSON responses from APIs.
+
+### Filter Expressions `?()`
+
+Filter expressions select elements that match a condition. Use `@` to refer to the current element:
+
+```
+$.store.inventory[?(@.inStock == true)].title
+→ ["JavaScript: The Good Parts", "The Pragmatic Programmer"]
+
+$.store.inventory[?(@.price < 35)].title
+→ ["JavaScript: The Good Parts", "Clean Code"]
+
+$.store.inventory[?(@.price >= 35)]
+→ [{ "title": "Clean Code", ...}, { "title": "The Pragmatic Programmer", ...}]
+```
+
+Supported comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`.
+
+Some implementations also support:
+- `=~` for regex matching: `[?(@.title =~ /Code/i)]`
+- `in` for membership: `[?(@.category in ['tech', 'science'])]`
+
+## Real-World JSONPath Examples
+
+### API Response Navigation
+
+REST APIs often return deeply nested data. JSONPath cuts straight to what you need:
+
+```json
+{
+  "data": {
+    "users": [
+      { "id": 1, "profile": { "email": "alice@example.com", "role": "admin" } },
+      { "id": 2, "profile": { "email": "bob@example.com", "role": "user" } }
+    ]
+  },
+  "meta": { "total": 2 }
+}
+```
+
+```
+$.data.users[*].profile.email
+→ ["alice@example.com", "bob@example.com"]
+
+$.data.users[?(@.profile.role == "admin")].id
+→ [1]
+
+$.meta.total
+→ 2
+```
+
+### Config File Queries
+
+JSON config files are common in Node.js and Python projects:
+
+```json
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "credentials": { "username": "app", "password": "secret" }
+  },
+  "cache": {
+    "host": "redis-host",
+    "port": 6379
+  }
+}
+```
+
+```
+$..host
+→ ["localhost", "redis-host"]
+
+$..port
+→ [5432, 6379]
+
+$.database.credentials.username
+→ "app"
+```
+
+### AWS / Cloud API Responses
+
+Cloud APIs return complex JSON. JSONPath helps extract specific fields:
+
+```
+$.Reservations[*].Instances[*].InstanceId
+$.Items[?(@.Status == "ACTIVE")].ResourceArn
+$..Tags[?(@.Key == "Environment")].Value
+```
+
+## JSONPath in Different Languages
+
+JSONPath is not a standard built into JSON itself — it's implemented separately in each language ecosystem.
+
+### JavaScript
+
+```javascript
+// Using jsonpath-plus
+import { JSONPath } from 'jsonpath-plus';
+
+const result = JSONPath({ path: '$.store.inventory[*].title', json: data });
+```
+
+### Python
+
+```python
+from jsonpath_ng import parse
+
+expr = parse('$.store.inventory[*].title')
+matches = [match.value for match in expr.find(data)]
+```
+
+### Java
+
+```java
+// Using Jayway JsonPath
+import com.jayway.jsonpath.JsonPath;
+
+List<String> titles = JsonPath.read(json, "$.store.inventory[*].title");
+```
+
+### Go
+
+```go
+// Using gjson
+import "github.com/tidwall/gjson"
+
+result := gjson.Get(json, "store.inventory.#.title")
+```
+
+### Command Line (jq)
+
+`jq` uses its own syntax but serves a similar purpose:
+
+```bash
+# JSONPath equivalent: $.store.inventory[*].title
+echo "$json" | jq '.store.inventory[].title'
+
+# Filter equivalent: $.store.inventory[?(@.inStock == true)]
+echo "$json" | jq '.store.inventory[] | select(.inStock == true)'
+```
+
+## JSONPath vs jq vs XPath
+
+| Feature | JSONPath | jq | XPath |
+|---|---|---|---|
+| Input format | JSON | JSON | XML |
+| Recursive descent | `..` | `..` | `//` |
+| Filter expressions | `?(@.x > 5)` | `select(.x > 5)` | `[@x > 5]` |
+| Transforms | No | Yes (full pipeline) | Limited |
+| Standard | RFC draft | None | W3C standard |
+| CLI tool | No | Yes | xmllint, xmlstarlet |
+
+JSONPath is the right choice when you need a **query** — extracting values from JSON without transforming them. Use `jq` when you need to transform or reshape data. Use XPath only for XML.
+
+## Common JSONPath Mistakes
+
+**Forgetting `$` at the start**: Every expression must begin with `$`. `store.name` is invalid; `$.store.name` is correct.
+
+**Off-by-one with array indices**: JSONPath arrays are zero-indexed. `[0]` is the first element, not `[1]`.
+
+**Confusing `.` and `..`**: A single dot navigates one level. A double dot `..` descends recursively through all levels. Using `..key` when you mean `.key` will still return results but may match unexpected nested keys.
+
+**Filter syntax variation**: `?()` filter syntax varies between implementations. Always test your expressions against your specific library.
+
+## Online JSONPath Tester
+
+Testing JSONPath expressions by running code — loading a library, parsing JSON, writing the query — takes time. Our [JSONPath Tester](/tools/jsonpath-tester) runs entirely in the browser:
+
+- Paste any JSON in the left panel
+- Write a JSONPath expression and see matches instantly
+- Results are highlighted in the original JSON tree
+- No installation, no backend, no API calls
+
+**[Try the JSONPath Tester →](/tools/jsonpath-tester)**

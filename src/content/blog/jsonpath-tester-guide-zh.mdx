@@ -1,0 +1,239 @@
+---
+title: "JSONPath 在线测试工具：不写代码也能查询 JSON 数据"
+description: "学习 JSONPath 语法，用在线测试工具即时验证表达式。涵盖 $ 根节点、点号语法、过滤器、通配符、递归下降等核心用法。"
+pubDate: 2026-04-08
+lang: "zh"
+translationSlug: "jsonpath-tester-guide"
+tags: ["jsonpath", "json", "数据查询", "开发工具"]
+ogImage: /og/blog-jsonpath-tester-guide-zh.png
+---
+
+JSONPath 是 JSON 的查询语言，相当于 XML 的 XPath。它用一套简洁的表达式语法，从嵌套的 JSON 结构中精确提取目标值。**JSONPath 在线测试工具**让你粘贴 JSON、写表达式，立即看到匹配结果——不需要安装任何依赖，不需要写代码。
+
+[立即使用 JSONPath 测试工具 →](/tools/jsonpath-tester)
+
+## JSONPath 基本语法
+
+每个 JSONPath 表达式从根节点 `$` 出发，通过一系列操作符导航 JSON 树。
+
+### 根节点与点号语法
+
+```json
+{
+  "store": {
+    "name": "技术书店",
+    "inventory": [
+      { "title": "JavaScript 精粹", "price": 59.9, "inStock": true },
+      { "title": "代码整洁之道", "price": 69.9, "inStock": false },
+      { "title": "程序员修炼之道", "price": 79.9, "inStock": true }
+    ]
+  }
+}
+```
+
+| 表达式 | 结果 |
+|---|---|
+| `$.store.name` | `"技术书店"` |
+| `$.store.inventory[0].title` | `"JavaScript 精粹"` |
+| `$.store.inventory[2].price` | `79.9` |
+
+### 方括号语法
+
+与点号等价，当键名包含空格或特殊字符时必须用方括号：
+
+```
+$.store['name']           → "技术书店"
+$.store.inventory[0]      → 第一本书的对象
+$.store.inventory[-1]     → 最后一本书（支持负索引）
+```
+
+### 通配符 `*`
+
+匹配对象的所有属性或数组的所有元素：
+
+```
+$.store.inventory[*].title
+→ ["JavaScript 精粹", "代码整洁之道", "程序员修炼之道"]
+```
+
+### 数组切片
+
+类似 Python 的 `[start:end:step]` 语法：
+
+```
+$.store.inventory[0:2]     → 前两本书
+$.store.inventory[-1:]     → 仅最后一本书
+$.store.inventory[::2]     → 每隔一本取一本
+```
+
+### 递归下降 `..`
+
+双点号在整棵树中递归搜索匹配的键名，无论嵌套多深：
+
+```json
+{
+  "orders": [
+    { "id": 1, "customer": { "name": "张三" } },
+    { "id": 2, "customer": { "name": "李四" } }
+  ]
+}
+```
+
+```
+$..name
+→ ["张三", "李四"]
+
+$..id
+→ [1, 2]
+```
+
+处理来自第三方 API 的深层嵌套数据时，`..` 非常好用。
+
+### 过滤表达式 `?()`
+
+过滤器选取满足条件的元素，`@` 代表当前元素：
+
+```
+$.store.inventory[?(@.inStock == true)].title
+→ ["JavaScript 精粹", "程序员修炼之道"]
+
+$.store.inventory[?(@.price < 65)].title
+→ ["JavaScript 精粹"]
+
+$.store.inventory[?(@.price >= 70)]
+→ [{"title": "代码整洁之道", ...}, {"title": "程序员修炼之道", ...}]
+```
+
+支持的比较运算符：`==`、`!=`、`<`、`<=`、`>`、`>=`。部分实现还支持正则匹配 `=~` 和 `in` 运算符。
+
+## 实战场景
+
+### API 响应数据提取
+
+后端接口常返回多层嵌套的 JSON，JSONPath 可以直接提取目标字段：
+
+```json
+{
+  "data": {
+    "users": [
+      { "id": 1, "profile": { "email": "zhangsan@example.com", "role": "admin" } },
+      { "id": 2, "profile": { "email": "lisi@example.com", "role": "user" } }
+    ]
+  },
+  "meta": { "total": 2 }
+}
+```
+
+```
+$.data.users[*].profile.email
+→ ["zhangsan@example.com", "lisi@example.com"]
+
+$.data.users[?(@.profile.role == "admin")].id
+→ [1]
+
+$.meta.total
+→ 2
+```
+
+### 配置文件查询
+
+Node.js 和 Python 项目中配置文件通常是 JSON 格式：
+
+```
+$..host          → 提取所有 host 字段
+$..port          → 提取所有 port 字段
+$.database.credentials.username  → 提取特定路径
+```
+
+### 云平台 API 响应
+
+AWS、阿里云等平台的 API 返回结构复杂，JSONPath 可以快速定位：
+
+```
+$.Reservations[*].Instances[*].InstanceId
+$.Items[?(@.Status == "ACTIVE")].ResourceArn
+$..Tags[?(@.Key == "Env")].Value
+```
+
+## 各语言中的 JSONPath 实现
+
+JSONPath 不是 JSON 规范的一部分，各语言有独立实现：
+
+### JavaScript
+
+```javascript
+import { JSONPath } from 'jsonpath-plus';
+
+const result = JSONPath({ path: '$.store.inventory[*].title', json: data });
+```
+
+### Python
+
+```python
+from jsonpath_ng import parse
+
+expr = parse('$.store.inventory[*].title')
+matches = [match.value for match in expr.find(data)]
+```
+
+### Java
+
+```java
+// 使用 Jayway JsonPath
+import com.jayway.jsonpath.JsonPath;
+
+List<String> titles = JsonPath.read(json, "$.store.inventory[*].title");
+```
+
+### Go
+
+```go
+// 使用 gjson
+import "github.com/tidwall/gjson"
+
+result := gjson.Get(json, "store.inventory.#.title")
+```
+
+### 命令行（jq）
+
+`jq` 有自己的语法，功能类似但更强大：
+
+```bash
+# 等价于 $.store.inventory[*].title
+echo "$json" | jq '.store.inventory[].title'
+
+# 等价于 $.store.inventory[?(@.inStock == true)]
+echo "$json" | jq '.store.inventory[] | select(.inStock == true)'
+```
+
+## JSONPath vs jq vs XPath
+
+| 特性 | JSONPath | jq | XPath |
+|---|---|---|---|
+| 输入格式 | JSON | JSON | XML |
+| 递归下降 | `..` | `..` | `//` |
+| 过滤器 | `?(@.x > 5)` | `select(.x > 5)` | `[@x > 5]` |
+| 数据变换 | 不支持 | 支持（完整管道） | 有限支持 |
+| 命令行工具 | 无 | 有 | xmllint |
+
+**JSONPath 适合纯查询场景**——从 JSON 中提取值但不做变换。需要对数据进行处理和重组时用 `jq`。
+
+## 常见错误
+
+**忘记写 `$`**：每个表达式必须以 `$` 开头。`store.name` 是无效写法，正确写法是 `$.store.name`。
+
+**数组下标从 0 开始**：`[0]` 是第一个元素，不是 `[1]`。
+
+**`.` 和 `..` 混淆**：单点号导航一层；双点号递归搜索整棵树。误用 `..key` 代替 `.key` 可能匹配到意外的深层键。
+
+**过滤器语法差异**：不同库的 `?()` 实现有细微差别，建议用在线工具测试后再写入代码。
+
+## 在线 JSONPath 测试工具
+
+每次测试都要加载库、解析 JSON、写查询代码——效率很低。[JSONPath 测试工具](/tools/jsonpath-tester) 完全在浏览器中运行：
+
+- 左侧粘贴 JSON，右侧输入表达式，结果即时显示
+- 在原始 JSON 树中高亮匹配节点
+- 无需安装，无需后端，无需登录
+
+**[立即体验 JSONPath 测试工具 →](/tools/jsonpath-tester)**
