@@ -1,0 +1,335 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="efp-wrap">
+    <div class="efp-input-section">
+      <label for="efp-input">
+        <span>.env Content</span>
+        <button id="efp-clear" class="btn-ghost" type="button">Clear</button>
+      </label>
+      <textarea
+        id="efp-input"
+        placeholder={"# Comment\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nAPI_KEY=\"secret-key\"\nDEBUG="}
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="efp-actions">
+      <button id="efp-parse" class="btn-primary" type="button">Parse</button>
+      <button id="efp-export-json" class="btn-ghost" type="button">Export JSON</button>
+    </div>
+
+    <div id="efp-status" class="efp-status" aria-live="polite"></div>
+
+    <div id="efp-result" class="efp-result" style="display:none">
+      <div class="efp-table-wrap">
+        <table class="efp-table" id="efp-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Key</th>
+              <th>Value</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="efp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var inputEl = document.getElementById('efp-input');
+      var statusEl = document.getElementById('efp-status');
+      var resultEl = document.getElementById('efp-result');
+      var tbodyEl = document.getElementById('efp-tbody');
+      var parseBtn = document.getElementById('efp-parse');
+      var exportBtn = document.getElementById('efp-export-json');
+      var clearBtn = document.getElementById('efp-clear');
+
+      var lastParsed = [];
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg;
+        statusEl.className = 'efp-status ' + (type || '');
+      }
+
+      function stripQuotes(val) {
+        if (
+          (val.startsWith('"') && val.endsWith('"')) ||
+          (val.startsWith("'") && val.endsWith("'"))
+        ) {
+          return val.slice(1, -1);
+        }
+        return val;
+      }
+
+      function parseEnv(text) {
+        var lines = text.split(/\r?\n/);
+        var entries = [];
+        var seenKeys = {};
+
+        for (var i = 0; i < lines.length; i++) {
+          var raw = lines[i];
+          var lineNo = i + 1;
+          var trimmed = raw.trim();
+
+          if (trimmed === '') continue;
+          if (trimmed.startsWith('#')) {
+            entries.push({ lineNo: lineNo, type: 'comment', raw: trimmed });
+            continue;
+          }
+
+          var eqIdx = trimmed.indexOf('=');
+          if (eqIdx === -1) {
+            entries.push({ lineNo: lineNo, type: 'error', raw: trimmed, error: 'Missing = sign' });
+            continue;
+          }
+
+          var key = trimmed.slice(0, eqIdx).trim();
+          var rawVal = trimmed.slice(eqIdx + 1);
+          var value = stripQuotes(rawVal.trim());
+
+          var notes = [];
+          if (!key) {
+            entries.push({ lineNo: lineNo, type: 'error', raw: trimmed, error: 'Empty key' });
+            continue;
+          }
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+            notes.push('Non-standard key name');
+          }
+          if (value === '') {
+            notes.push('Empty value');
+          }
+          if (seenKeys[key]) {
+            notes.push('Duplicate key');
+          } else {
+            seenKeys[key] = true;
+          }
+
+          entries.push({
+            lineNo: lineNo,
+            type: notes.length > 0 ? 'warn' : 'ok',
+            key: key,
+            value: value,
+            notes: notes
+          });
+        }
+
+        return entries;
+      }
+
+      function escapeHtml(str) {
+        return str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function render(entries) {
+        tbodyEl.innerHTML = '';
+        var validCount = 0;
+        var errorCount = 0;
+        var warnCount = 0;
+
+        for (var i = 0; i < entries.length; i++) {
+          var e = entries[i];
+          if (e.type === 'comment') continue;
+
+          var tr = document.createElement('tr');
+          tr.className = 'efp-row-' + e.type;
+
+          if (e.type === 'error') {
+            errorCount++;
+            tr.innerHTML =
+              '<td>' + e.lineNo + '</td>' +
+              '<td colspan="2" class="efp-raw"><code>' + escapeHtml(e.raw) + '</code></td>' +
+              '<td class="efp-note error">' + escapeHtml(e.error) + '</td>';
+          } else {
+            if (e.notes && e.notes.length > 0) warnCount++;
+            else validCount++;
+            tr.innerHTML =
+              '<td>' + e.lineNo + '</td>' +
+              '<td><code class="efp-key">' + escapeHtml(e.key) + '</code></td>' +
+              '<td><code class="efp-val">' + escapeHtml(e.value) + '</code></td>' +
+              '<td class="efp-note ' + (e.notes && e.notes.length ? 'warn' : '') + '">' +
+              (e.notes && e.notes.length ? escapeHtml(e.notes.join(', ')) : '') + '</td>';
+          }
+
+          tbodyEl.appendChild(tr);
+        }
+
+        return { validCount: validCount, errorCount: errorCount, warnCount: warnCount };
+      }
+
+      parseBtn.addEventListener('click', function () {
+        var text = inputEl.value;
+        if (!text.trim()) {
+          setStatus('Paste .env content above and click Parse.', '');
+          resultEl.style.display = 'none';
+          return;
+        }
+
+        lastParsed = parseEnv(text);
+        var counts = render(lastParsed);
+
+        resultEl.style.display = '';
+
+        var parts = [];
+        parts.push(counts.validCount + ' valid');
+        if (counts.warnCount > 0) parts.push(counts.warnCount + ' warning' + (counts.warnCount !== 1 ? 's' : ''));
+        if (counts.errorCount > 0) parts.push(counts.errorCount + ' error' + (counts.errorCount !== 1 ? 's' : ''));
+
+        var type = counts.errorCount > 0 ? 'error' : counts.warnCount > 0 ? 'warn' : 'success';
+        setStatus(parts.join(', ') + '.', type);
+
+        window.trackTool && window.trackTool('env-file-parser', 'parse');
+      });
+
+      exportBtn.addEventListener('click', function () {
+        var validEntries = lastParsed.filter(function (e) {
+          return e.type === 'ok' || e.type === 'warn';
+        });
+        if (validEntries.length === 0) {
+          setStatus('Parse a .env file first.', 'error');
+          return;
+        }
+
+        var obj = {};
+        for (var i = 0; i < validEntries.length; i++) {
+          obj[validEntries[i].key] = validEntries[i].value;
+        }
+
+        var json = JSON.stringify(obj, null, 2);
+        var blob = new Blob([json], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'env.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        setStatus('Exported ' + validEntries.length + ' key' + (validEntries.length !== 1 ? 's' : '') + ' to env.json.', 'success');
+        window.trackTool && window.trackTool('env-file-parser', 'export_json');
+      });
+
+      clearBtn.addEventListener('click', function () {
+        inputEl.value = '';
+        tbodyEl.innerHTML = '';
+        resultEl.style.display = 'none';
+        setStatus('', '');
+        lastParsed = [];
+      });
+
+      /* Auto-parse on load if content is pre-filled (e.g. from persistence) */
+      if (inputEl.value.trim()) {
+        parseBtn.click();
+      }
+    })();
+  </script>
+</div>
+
+<style>
+  .efp-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .efp-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .efp-input-section label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #efp-input {
+    width: 100%;
+    min-height: 180px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  #efp-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .efp-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .efp-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .efp-status.success { color: #057a55; }
+  .efp-status.warn    { color: #b45309; }
+  .efp-status.error   { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .efp-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .efp-status.warn    { color: #fbbf24; }
+    :root:not([data-theme="light"]) .efp-status.error   { color: #f87171; }
+  }
+  [data-theme="dark"] .efp-status.success { color: #34d399; }
+  [data-theme="dark"] .efp-status.warn    { color: #fbbf24; }
+  [data-theme="dark"] .efp-status.error   { color: #f87171; }
+
+  .efp-result { margin-top: 0.25rem; }
+
+  .efp-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .efp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.83rem;
+  }
+
+  .efp-table th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    font-weight: 600;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+  }
+
+  .efp-table th:first-child { width: 2.5rem; }
+
+  .efp-table td {
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+  }
+
+  .efp-table tr:last-child td { border-bottom: none; }
+
+  .efp-table tr:hover td { background: var(--color-bg-secondary); }
+
+  .efp-row-error td { background: rgba(192, 57, 43, 0.05); }
+  .efp-row-warn  td { background: rgba(180, 83, 9,  0.05); }
+
+  [data-theme="dark"] .efp-row-error td { background: rgba(248, 113, 113, 0.08); }
+  [data-theme="dark"] .efp-row-warn  td { background: rgba(251, 191, 36,  0.08); }
+
+  .efp-key { color: var(--color-primary); }
+  .efp-val { color: var(--color-text); }
+  .efp-raw { font-family: var(--font-mono); }
+
+  code { font-family: var(--font-mono); font-size: 0.82rem; }
+
+  .efp-note { font-size: 0.78rem; white-space: nowrap; }
+  .efp-note.warn  { color: #b45309; }
+  .efp-note.error { color: #c0392b; }
+
+  [data-theme="dark"] .efp-note.warn  { color: #fbbf24; }
+  [data-theme="dark"] .efp-note.error { color: #f87171; }
+</style>

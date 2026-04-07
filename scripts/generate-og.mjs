@@ -60,6 +60,7 @@ const tools = [
   { slug: 'rsa-key-generator',      name: 'RSA Key Pair Generator',        description: 'Generate RSA key pairs (2048/4096-bit) in PEM or JWK format. 100% client-side.' },
   { slug: 'totp-generator',         name: 'TOTP Generator',                description: 'Generate RFC 6238 TOTP codes with live countdown. Includes QR code.' },
   { slug: 'json-diff',              name: 'JSON Diff',                     description: 'Compare two JSON objects and visualize differences as RFC 6902 JSON Patch.' },
+  { slug: 'env-file-parser',       name: 'Env File Parser',               description: 'Parse .env files online — visualize key-value pairs and export to JSON.' },
 ];
 
 /** Escape XML special chars so SVG stays valid. */
