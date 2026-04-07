@@ -7,7 +7,7 @@ const blogCollection = defineCollection({
     description: z.string(),
     pubDate: z.coerce.date(),
     updatedDate: z.coerce.date().optional(),
-    lang: z.enum(['en', 'zh']).default('en'),
+    lang: z.enum(['en', 'zh', 'ja', 'ko']).default('en'),
     tags: z.array(z.string()).default([]),
     draft: z.boolean().default(false),
     // i18n: slug of the translated counterpart (e.g. en post → zh slug)
