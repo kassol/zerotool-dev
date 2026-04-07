@@ -1,0 +1,187 @@
+---
+title: "UUID 생성기 완벽 가이드: UUID 버전별 차이와 실전 활용"
+description: "UUID 형식, 버전별 차이(v1~v7), JavaScript·Python·Go·SQL에서 생성하는 방법, 데이터베이스 기본키로 쓸 때 주의사항까지 정리합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "uuid-generator-guide"
+tags: ["uuid", "unique-identifier", "developer-tools"]
+---
+
+UUID(Universally Unique Identifier)는 분산 시스템, 데이터베이스, API에서 고유 ID를 생성하는 표준 방식입니다. 중앙 조정 없이도 전 세계적으로 고유성이 보장됩니다.
+
+**[UUID 생성하기 →](/tools/uuid-generator)**
+
+## UUID란?
+
+UUID는 128비트 숫자이며, 일반적으로 하이픈으로 구분된 5개 그룹의 16진수로 표현됩니다:
+
+```
+550e8400-e29b-41d4-a716-446655440000
+xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
+```
+
+- `M` — 버전 번호 (1, 3, 4, 또는 5)
+- `N` — 변형 비트 (8, 9, a, 또는 b)
+
+표준 형식은 8-4-4-4-12로 총 36자(하이픈 포함), 32개의 16진수 문자입니다.
+
+## UUID 버전별 비교
+
+| 버전 | 생성 방식 | 사용 사례 |
+|------|----------|----------|
+| v1 | 타임스탬프 + MAC 주소 | 시간 정렬 가능, MAC 주소 노출 위험 |
+| v3 | 네임스페이스 + 이름 (MD5) | 결정론적 — 동일 입력은 항상 동일 UUID |
+| v4 | 무작위 | **가장 일반적** — 순수 랜덤, 정보 노출 없음 |
+| v5 | 네임스페이스 + 이름 (SHA-1) | v3보다 안전한 결정론적 ID |
+
+**대부분의 경우 v4가 올바른 선택입니다.**
+
+## UUID v4 충돌 확률
+
+초당 10억 개의 UUID를 생성해도 충돌 확률이 50%에 도달하는 데 약 **85년**이 걸립니다. 실용적인 목적에서 UUID는 사실상 무한히 고유합니다.
+
+## 온라인 UUID 생성기
+
+**[ZeroTool UUID 생성기 →](/tools/uuid-generator)**
+
+- 단일 또는 일괄 생성
+- 원클릭 복사
+- 브라우저에서 완전히 실행 — 서버로 아무것도 전송되지 않음
+
+## 코드에서 UUID 생성하기
+
+### JavaScript (Node.js 18+)
+
+```js
+import { randomUUID } from 'crypto';
+
+const id = randomUUID();
+// 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+```
+
+Node.js 14.17+에서는 `crypto.randomUUID()`로도 사용 가능합니다.
+
+### JavaScript (브라우저)
+
+```js
+const id = crypto.randomUUID();
+// 모든 최신 브라우저 지원 (Chrome 92+, Firefox 95+, Safari 15.4+)
+```
+
+### uuid 라이브러리 사용 (하위 호환)
+
+```bash
+npm install uuid
+```
+
+```js
+import { v4 as uuidv4 } from 'uuid';
+
+const id = uuidv4();
+```
+
+### Python
+
+```python
+import uuid
+
+# v4 (무작위)
+id = uuid.uuid4()
+print(str(id))  # 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+
+# v5 (네임스페이스 기반, 결정론적)
+id = uuid.uuid5(uuid.NAMESPACE_URL, 'https://zerotool.dev')
+```
+
+### Go
+
+```go
+import "github.com/google/uuid"
+
+id := uuid.New()
+fmt.Println(id.String())
+```
+
+### SQL (PostgreSQL)
+
+```sql
+-- UUID 생성
+SELECT gen_random_uuid();
+
+-- UUID를 기본키로 사용
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL
+);
+```
+
+## 데이터베이스 기본키로서의 UUID
+
+### 장점
+
+- **전 세계적 고유성** — 여러 서비스나 데이터베이스에서도 충돌 없음
+- **중앙 시퀀스 불필요** — 클라이언트가 DB에 쓰기 전에 ID를 생성 가능
+- **정보 노출 없음** — 자동 증가 ID와 달리 행 수가 드러나지 않음
+
+### 단점
+
+- **인덱스 단편화** — 무작위 UUID는 B-트리 단편화를 유발해 순차 정수보다 삽입이 느림
+- **스토리지 크기** — 정수(4~8바이트) 대비 16바이트
+- **자연 정렬 불가** — v4 UUID는 시간 기반 정렬 순서가 없음
+
+### 해결책: UUID v7 (드래프트)
+
+UUID v7은 상위 비트에 타임스탬프를 배치해 고유성과 단조 증가 순서를 결합합니다. 데이터베이스 기본키에 이상적입니다. 일부 라이브러리에서 이미 지원합니다:
+
+```js
+// Node.js
+import { v7 as uuidv7 } from 'uuid';
+const id = uuidv7();
+// '017f22e2-79b0-7cc3-98c4-dc0c0c07398f'
+// 앞 부분이 밀리초 정밀도 타임스탬프 — 자연스럽게 정렬 가능
+```
+
+## 형식 변형
+
+```
+표준:       550e8400-e29b-41d4-a716-446655440000
+하이픈 없음: 550e8400e29b41d4a716446655440000
+대문자:     550E8400-E29B-41D4-A716-446655440000
+URN:        urn:uuid:550e8400-e29b-41d4-a716-446655440000
+```
+
+데이터베이스에 저장할 때는 VARCHAR 대신 네이티브 UUID 타입(PostgreSQL, MySQL 8.0+)을 사용하는 것이 스토리지를 절약하고 비교를 빠르게 합니다.
+
+## UUID 유효성 검사
+
+```js
+// JavaScript
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+UUID_REGEX.test('550e8400-e29b-41d4-a716-446655440000'); // true
+```
+
+```python
+# Python
+import uuid
+
+def is_valid_uuid(val):
+    try:
+        uuid.UUID(str(val))
+        return True
+    except ValueError:
+        return False
+```
+
+## 요약
+
+| 필요 사항 | 권장 방법 |
+|----------|----------|
+| 빠른 생성 | [ZeroTool UUID 생성기](/tools/uuid-generator) |
+| 브라우저 / Node.js | `crypto.randomUUID()` |
+| Python | `uuid.uuid4()` |
+| DB 기본키 (순서 필요) | UUID v7 또는 ULID |
+| 결정론적 ID | UUID v5 |
+
+UUID v4는 대부분의 사용 사례에 충분합니다. DB 친화적인 순차 ID가 필요하다면 UUID v7이나 ULID를 고려하세요.
+
+**[ZeroTool UUID 생성기로 바로 시작하기 →](/tools/uuid-generator)**

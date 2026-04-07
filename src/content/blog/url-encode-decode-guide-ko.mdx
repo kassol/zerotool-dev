@@ -1,0 +1,207 @@
+---
+title: "URL 인코딩·디코딩 완벽 가이드: 퍼센트 인코딩 원리와 실전"
+description: "URL 퍼센트 인코딩이 무엇인지, encodeURI와 encodeURIComponent의 차이, 쿼리 스트링을 올바르게 구성하는 방법과 흔한 실수를 정리합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "url-encode-decode-guide"
+tags: ["url-encoding", "percent-encoding", "encodeURIComponent", "developer-tools"]
+---
+
+공백이나 특수문자가 포함된 URL을 브라우저에 붙여넣고 깨지는 것을 보는 경험은 개발자라면 누구나 겪습니다. URL 인코딩 — 또는 퍼센트 인코딩 — 은 임의의 데이터를 URL에 안전하게 포함시키는 방법입니다. 정확한 작동 원리와 적용 시점을 설명합니다.
+
+## URL에 인코딩이 필요한 이유
+
+URL은 제한된 문자 집합만 사용할 수 있습니다: 문자(`A-Z`, `a-z`), 숫자(`0-9`), 그리고 소수의 특수문자(`-`, `_`, `.`, `~`). 이외의 모든 문자는 **퍼센트 인코딩**이 필요합니다: `%`에 2자리 16진수 ASCII 코드를 붙인 형태로 대체됩니다.
+
+```
+공백  →  %20
+#     →  %23
+?     →  %3F
+=     →  %3D
+&     →  %26
+/     →  %2F
++     →  %2B
+```
+
+인코딩 없이는 쿼리 파라미터 안의 공백이 파라미터를 끊어버리고, `&`는 구분자로 해석됩니다. 인코딩이 구조를 명확하게 만들어줍니다.
+
+## 온라인 URL 인코더/디코더
+
+**[ZeroTool URL 인코더/디코더 →](/tools/url-encode-decode)**
+
+텍스트나 URL을 붙여넣고 즉시 인코딩 또는 디코딩하세요. API 호출 디버깅, 리다이렉트 URL 구성, 난독화된 쿼리 스트링 디코딩에 유용합니다.
+
+## encodeURI vs encodeURIComponent
+
+JavaScript에는 URL 인코딩을 위한 두 가지 내장 함수가 있습니다. 잘못 선택하면 버그의 원인이 됩니다.
+
+### `encodeURI(url)`
+
+**완전한 URL**을 인코딩합니다. URL에서 구조적 의미를 가진 문자는 보존합니다: `:`, `/`, `?`, `#`, `[`, `]`, `@`, `!`, `$`, `&`, `'`, `(`, `)`, `*`, `+`, `,`, `;`, `=`.
+
+```js
+encodeURI("https://example.com/search?q=hello world&lang=en")
+// "https://example.com/search?q=hello%20world&lang=en"
+```
+
+공백은 `%20`이 되지만 `?`, `=`, `&`는 URL 구조의 일부이므로 그대로 유지됩니다.
+
+### `encodeURIComponent(value)`
+
+쿼리 파라미터나 경로 세그먼트로 사용할 **단일 값**을 인코딩합니다. `encodeURI`가 보존하는 것을 포함해 `?`, `#`, `&`, `/`, `=`까지 모두 인코딩합니다.
+
+```js
+const query = encodeURIComponent("C++ 는 훌륭하고 빠릅니다");
+const url = `https://example.com/search?q=${query}`;
+// https://example.com/search?q=C%2B%2B%20%EB%8A%94%20%ED%9B%8C%EB%A5%AD%ED%95%98%EA%B3%A0%20%EB%B9%A0%EB%A6%85%EB%8B%88%EB%8B%A4
+```
+
+**경험 법칙:** 각 쿼리 파라미터 값을 포함해 URL을 부분별로 구성할 때는 `encodeURIComponent`를 사용하세요. 이미 구조화된 전체 URL 문자열을 인코딩할 때는 `encodeURI`를 사용하세요.
+
+### `+` vs `%20` 차이
+
+HTML 폼 제출은 전통적으로 공백을 `%20` 대신 `+`로 인코딩합니다. 이를 **application/x-www-form-urlencoded** 인코딩이라고 합니다. 쿼리 스트링을 파싱할 때 둘 다 공백으로 처리해야 하지만, 기술적으로 다른 인코딩입니다. 섞어 쓰면 미묘한 버그가 발생할 수 있습니다.
+
+```js
+// x-www-form-urlencoded 방식 (폼 제출)
+"hello world" → "hello+world"
+
+// RFC 3986 퍼센트 인코딩 (현대 표준)
+"hello world" → "hello%20world"
+```
+
+## URL 디코딩
+
+역방향 연산:
+
+```js
+decodeURI("https://example.com/search?q=hello%20world")
+// "https://example.com/search?q=hello world"
+
+decodeURIComponent("C%2B%2B%20%EB%8A%94%20%ED%9B%8C%EB%A5%AD%ED%95%A9%EB%8B%88%EB%8B%A4")
+// "C++ 는 훌륭합니다"
+```
+
+Python에서:
+
+```python
+from urllib.parse import quote, unquote, urlencode, parse_qs
+
+# 값 인코딩
+encoded = quote("C++ 는 훌륭하고 빠릅니다")
+# "C%2B%2B%20%EB%8A%94%20%ED%9B%8C%EB%A5%AD%ED%95%98%EA%B3%A0%20%EB%B9%A0%EB%A6%85%EB%8B%88%EB%8B%A4"
+
+# 디코딩
+decoded = unquote("C%2B%2B%20is%20great%20%26%20fast")
+# "C++ is great & fast"
+```
+
+## 쿼리 스트링을 올바르게 구성하기
+
+문자열 연결로 쿼리 스트링을 직접 만들지 마세요. 플랫폼의 내장 유틸리티를 사용하세요.
+
+### JavaScript (브라우저)
+
+```js
+const params = new URLSearchParams({
+  q: "C++ 는 훌륭하고 빠릅니다",
+  lang: "ko",
+  page: 1
+});
+
+const url = `https://example.com/search?${params}`;
+// https://example.com/search?q=C%2B%2B+%EB%8A%94+%ED%9B%8C%EB%A5%AD%ED%95%98%EA%B3%A0+%EB%B9%A0%EB%A6%85%EB%8B%88%EB%8B%A4&lang=ko&page=1
+```
+
+주의: `URLSearchParams`는 공백에 `%20` 대신 `+`(폼 인코딩)를 사용합니다.
+
+### Python
+
+```python
+from urllib.parse import urlencode
+
+params = {
+    "q": "C++ is great & fast",
+    "lang": "ko",
+    "page": 1
+}
+
+query_string = urlencode(params)
+url = f"https://example.com/search?{query_string}"
+```
+
+### Go
+
+```go
+import "net/url"
+
+params := url.Values{}
+params.Set("q", "C++ is great & fast")
+params.Set("lang", "ko")
+url := "https://example.com/search?" + params.Encode()
+```
+
+## 경로 세그먼트 vs 쿼리 파라미터
+
+인코딩 규칙이 경로 세그먼트와 쿼리 파라미터 사이에 약간 다릅니다. 경로 세그먼트의 `/`는 "디렉토리 구분자"를 의미합니다. 경로 세그먼트 값에 리터럴 `/`를 포함하려면 `%2F`로 인코딩해야 합니다.
+
+```
+/files/2024/report.pdf        →  세 개의 경로 세그먼트
+/files/2024%2Freport.pdf      →  두 개의 경로 세그먼트, 두 번째에 슬래시 포함
+```
+
+## 국제 문자 처리
+
+현대 URL은 **국제화 자원 식별자(IRI)**를 통해 유니코드를 지원합니다. 브라우저는 ASCII가 아닌 문자를 UTF-8 바이트 표현으로 자동 퍼센트 인코딩합니다:
+
+```
+https://example.com/search?q=한국어
+→ https://example.com/search?q=%ED%95%9C%EA%B5%AD%EC%96%B4
+```
+
+```python
+from urllib.parse import quote
+
+quote("한국어", safe="")
+# "%ED%95%9C%EA%B5%AD%EC%96%B4"
+```
+
+## 흔한 실수
+
+### 이중 인코딩
+
+이미 인코딩된 문자열을 다시 인코딩하면 잘못된 출력이 됩니다:
+
+```js
+// 잘못된 방법: 이미 인코딩된 값을 다시 인코딩
+encodeURIComponent("hello%20world")
+// "hello%2520world"  — %25는 %를 인코딩한 것
+```
+
+값이 이미 인코딩된 것인지 확실하지 않으면 먼저 디코딩하세요.
+
+### 리다이렉트 URL 인코딩 누락
+
+쿼리 파라미터에 임베드된 리다이렉트 대상은 완전히 인코딩되어야 합니다:
+
+```
+# 잘못된 방법 — 외부 ?next= 파서가 리다이렉트 URL의 끝을 알 수 없음
+https://auth.example.com/login?next=https://app.example.com/page?id=1&view=full
+
+# 올바른 방법
+https://auth.example.com/login?next=https%3A%2F%2Fapp.example.com%2Fpage%3Fid%3D1%26view%3Dfull
+```
+
+## 요약
+
+| 상황 | 사용 방법 |
+|------|---------|
+| 쿼리 파라미터 값 인코딩 | `encodeURIComponent` |
+| 전체 URL 문자열 인코딩 | `encodeURI` |
+| 쿼리 스트링 구성 | `URLSearchParams` / `urlencode` |
+| URL 또는 컴포넌트 디코딩 | `decodeURIComponent` / `unquote` |
+| 빠른 수동 인코딩/디코딩 | [ZeroTool URL 인코더](/tools/url-encode-decode) |
+
+URL 인코딩은 세부 사항을 알면 재현하기 어려운 버그 전체를 예방할 수 있는 주제입니다. 의심스러울 때는 인코딩하세요 — 그리고 문자열 연결이 아닌 언어의 내장 유틸리티를 사용하세요.
+
+**[ZeroTool로 URL을 즉시 인코딩·디코딩하기 →](/tools/url-encode-decode)**

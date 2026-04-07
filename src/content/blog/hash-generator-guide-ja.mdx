@@ -1,0 +1,206 @@
+---
+title: "SHA-256ハッシュ生成完全ガイド：アルゴリズムの選び方と使い方"
+description: "SHA-256・MD5・SHA-1などのハッシュ関数の仕組みと使い分けを解説。ファイル整合性検証からパスワードハッシュ化まで、実践的なコード例付き。無料ツール付き。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "hash-generator-guide"
+tags: ["hash", "sha256", "md5", "cryptography", "developer-tools"]
+---
+
+ハッシュはソフトウェアエンジニアリングで最もよく使われるプリミティブの一つです。ファイルの整合性検証・パスワード保存・チェックサムのすべてがハッシュに依存しています。このガイドでは、ハッシュ関数の仕組み・各アルゴリズムの使い分け・ブラウザを離れずにハッシュを生成する方法を解説します。
+
+## ハッシュ関数とは
+
+ハッシュ関数は任意の入力（文字列・ファイル・バイト）を受け取り、**ダイジェスト**（またはハッシュ）と呼ばれる固定長の出力を生成します。主な特性：
+
+- **決定論的**：同じ入力は常に同じハッシュを生成する
+- **一方向性**：ハッシュから入力を逆算できない
+- **雪崩効果**：1文字の変化で出力が完全に変わる
+- **固定長**：SHA-256は入力サイズにかかわらず常に64文字の16進数を出力
+
+```
+入力:  "hello"
+SHA-256: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+
+入力:  "Hello"  (大文字のH)
+SHA-256: 185f8db32921bd46d35cc06fbf3a8a26d2c25e5b7cb1f21edf4e5e523f3b8a4f
+```
+
+1文字の変化で出力が完全に変わります。
+
+## 主なハッシュアルゴリズム
+
+### MD5
+
+出力：128ビット（32文字の16進数）
+
+MD5はかつてチェックサムとパスワードハッシュの標準でした。現在は**暗号学的に破られており**、衝突攻撃が実用的に可能です。セキュリティ目的での使用は禁物です。
+
+**まだ許容できる用途：** 非セキュリティ用チェックサム（偶発的なファイル破損の検出）、衝突耐性が不要なコンテンツアドレスキャッシュ。
+
+```bash
+echo -n "hello" | md5sum
+# 5d41402abc4b2a76b9719d911017c592
+```
+
+### SHA-1
+
+出力：160ビット（40文字の16進数）
+
+SHA-1もセキュリティ目的では破られています（Googleが2017年に実用的な衝突攻撃を実証）。Gitは以前SHA-1をコミットハッシュに使用していましたが、SHA-256への移行を進めています。
+
+**避けるべき用途：** TLS証明書、デジタル署名、パスワードハッシュ化。
+
+### SHA-256
+
+出力：256ビット（64文字の16進数）
+
+SHA-2ファミリーの一部であるSHA-256は、ほとんどのセキュリティ重視アプリケーションの現行標準です。BitcoinはプルーフオブワークにSHA-256を使用しており、TLS証明書の署名にも使われています。
+
+```bash
+echo -n "hello" | sha256sum
+# 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+```
+
+### SHA-512
+
+出力：512ビット（128文字の16進数）
+
+SHA-256より遅いですが、より大きなダイジェストを持ちます。64ビットワード演算でパフォーマンス上の利点がある64ビットシステムで好まれます。
+
+### SHA-3（Keccak）
+
+SHA-2の拡張版ではなく、根本的に異なるアルゴリズムです。独立したセキュリティ基盤を提供しており、SHA-2が破られたとしてもSHA-3には自動的に影響しません。
+
+## オンラインでハッシュを生成する
+
+**[ZeroTool ハッシュジェネレーター →](/tools/hash-generator)**
+
+テキストを貼り付け、アルゴリズム（MD5、SHA-1、SHA-256、SHA-512）を選択すると即座にハッシュが得られます。データはサーバーに送信されず、計算はブラウザ内で完結します。
+
+活用シーン：
+- ダウンロードしたファイルが公開チェックサムと一致するか検証
+- キャッシュバスティングURLのコンテンツハッシュ生成
+- 元のデータを明かさずに2つの文字列が同一かチェック
+- デバッグ中の素早いフィンガープリント計算
+
+## コードでハッシュ化する
+
+### JavaScript / Node.js
+
+```js
+const crypto = require('crypto');
+
+const hash = crypto.createHash('sha256')
+  .update('hello world')
+  .digest('hex');
+
+console.log(hash);
+// b94d27b9934d3e08a52e52d7da7dabfac484efe04294e576f3b5380e7f09ed66
+```
+
+Node.jsなしのブラウザ環境では：
+
+```js
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+const hash = await sha256('hello world');
+```
+
+### Python
+
+```python
+import hashlib
+
+text = "hello world"
+
+md5    = hashlib.md5(text.encode()).hexdigest()
+sha256 = hashlib.sha256(text.encode()).hexdigest()
+sha512 = hashlib.sha512(text.encode()).hexdigest()
+
+print(f"MD5:    {md5}")
+print(f"SHA256: {sha256}")
+print(f"SHA512: {sha512}")
+```
+
+### Go
+
+```go
+import (
+    "crypto/sha256"
+    "fmt"
+)
+
+func main() {
+    h := sha256.Sum256([]byte("hello world"))
+    fmt.Printf("%x\n", h)
+}
+```
+
+## ファイルのハッシュ化
+
+### ダウンロードの検証
+
+多くのソフトウェア配布物はダウンロードとともにSHA-256チェックサムを公開しています：
+
+```bash
+# ダウンロードしたファイルのハッシュを計算
+sha256sum archive.tar.gz
+
+# 公開されているハッシュと照合
+echo "expected-hash-here  archive.tar.gz" | sha256sum --check
+```
+
+### HMAC：鍵付きハッシュ
+
+普通のハッシュには秘密がありません — 誰でも`SHA256("hello")`を計算できます。HMAC（Hash-based Message Authentication Code）は秘密鍵を追加し、鍵を知る当事者だけが出力を検証できるようにします：
+
+```js
+const hmac = crypto.createHmac('sha256', 'my-secret-key')
+  .update('hello world')
+  .digest('hex');
+```
+
+これがWebhook署名の仕組みです（例：GitHubのWebhookはリクエストボディに対してHMAC-SHA256で計算された`X-Hub-Signature-256`ヘッダーを含みます）。
+
+## パスワードのハッシュ化：SHA-256を使ってはいけない
+
+SHA-256はパスワード保存には速すぎます。GPUを持つ攻撃者は毎秒何十億ものSHA-256ハッシュを計算でき、ブルートフォース攻撃やレインボーテーブル攻撃が現実的になります。
+
+パスワードには、この目的のために設計された**低速ハッシュアルゴリズム**を使用してください：
+
+| アルゴリズム | 使用場面 |
+|------------|---------|
+| bcrypt | 最も広くサポートされている、安全なデフォルト |
+| Argon2id | Password Hashing Competitionの優勝者、新システムに推奨 |
+| scrypt | メモリハード、Argon2の良い代替 |
+
+```python
+# Python — bcrypt
+import bcrypt
+
+hashed = bcrypt.hashpw(b"my-password", bcrypt.gensalt())
+bcrypt.checkpw(b"my-password", hashed)  # True
+```
+
+## アルゴリズムの選び方
+
+| ユースケース | アルゴリズム |
+|------------|------------|
+| ファイル整合性チェック | SHA-256 |
+| デジタル署名 / TLS | SHA-256 または SHA-384 |
+| パスワード保存 | Argon2id または bcrypt |
+| HMAC / Webhook署名 | HMAC-SHA256 |
+| レガシーチェックサム互換 | MD5（非セキュリティ用のみ） |
+| 非暗号ハッシュ（ハッシュテーブル） | xxHash、MurmurHash3 |
+
+## まとめ
+
+SHA-256は今日ほぼすべての暗号ニーズに対して実用的なデフォルト選択肢です — パスワード以外のユースケースには十分に速く、標準化されており、十分に監査されています。MD5とSHA-1はセキュリティ関連用途では避けてください。パスワードには常にArgon2idのような専用の低速アルゴリズムを使用してください。
+
+**[ZeroTool でSHA-256・MD5などのハッシュを即座に生成 →](/tools/hash-generator)**

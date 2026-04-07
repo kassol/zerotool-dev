@@ -1,0 +1,171 @@
+---
+title: "Base64 인코딩 완벽 해설: 원리부터 실전 코드까지"
+description: "Base64가 무엇인지, 왜 필요한지, JavaScript·Python·커맨드라인에서 인코딩·디코딩하는 방법과 Base64URL 차이점까지 한 번에 정리합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "base64-encoding-explained"
+tags: ["base64", "encoding", "developer-tools"]
+---
+
+이메일, JWT, 데이터 URI, HTTP Basic 인증 — Base64는 생각보다 훨씬 자주 등장합니다. 그런데 정확히 무엇이고, 언제 써야 할까요?
+
+## Base64란?
+
+Base64는 바이너리 데이터를 64개의 출력 가능한 ASCII 문자로 변환하는 인코딩 방식입니다. 사용하는 문자셋은 다음과 같습니다.
+
+```
+A–Z  (26개)
+a–z  (26개)
+0–9  (10개)
++  /  (2개)
+=    (패딩)
+```
+
+중요한 점: Base64는 **암호화가 아닙니다**. 누구든 디코딩할 수 있습니다.
+
+## Base64가 필요한 이유
+
+이미지, 파일, 임의의 바이트 같은 바이너리 데이터는 텍스트만 처리하는 시스템(이메일 프로토콜, XML, JSON, HTTP 헤더)을 안전하게 통과할 수 없습니다. Base64는 바이너리를 일반 텍스트로 표현해 이 문제를 해결합니다.
+
+**주요 사용 사례:**
+
+- **HTML/CSS에 이미지 임베딩**: `src="data:image/png;base64,..."`
+- **JWT 토큰**: 헤더와 페이로드는 Base64URL로 인코딩
+- **HTTP Basic Auth**: `Authorization: Basic dXNlcjpwYXNz`
+- **이메일 첨부파일**: MIME 인코딩
+- **JSON에 바이너리 저장**: Base64 문자열로 이미지를 반환하는 API
+
+## Base64 인코딩 원리
+
+Base64는 3바이트(24비트)를 한 번에 처리해 4개의 6비트 그룹으로 분할합니다. 각 6비트 값은 64개 문자 알파벳의 한 문자에 매핑됩니다.
+
+```
+입력:   M  a  n
+바이트: 77 97 110
+이진:   01001101 01100001 01101110
+분할:   010011 010110 000101 101110
+인덱스: 19     22     5      46
+출력:   T      W      F      u
+```
+
+입력이 3의 배수가 아니면 출력 길이를 4의 배수로 맞추기 위해 `=` 패딩이 추가됩니다.
+
+## 온라인 Base64 인코더/디코더
+
+브라우저에서 Base64를 즉시 인코딩·디코딩하려면:
+
+**[ZeroTool Base64 인코더/디코더 →](/tools/base64)**
+
+텍스트나 URL을 붙여넣고 바로 인코딩 또는 디코딩하세요. 클릭 한 번으로 복사, 설치 불필요.
+
+## 코드에서 인코딩·디코딩하기
+
+### JavaScript (브라우저)
+
+```js
+// 인코딩
+const encoded = btoa('Hello, World!');
+// SGVsbG8sIFdvcmxkIQ==
+
+// 디코딩
+const decoded = atob('SGVsbG8sIFdvcmxkIQ==');
+// Hello, World!
+```
+
+**주의:** `btoa` / `atob`는 Latin-1만 지원합니다. 한국어 등 유니코드 문자는 별도 처리가 필요합니다.
+
+```js
+// 유니코드 인코딩
+const encoded = btoa(unescape(encodeURIComponent('안녕하세요')));
+
+// 유니코드 디코딩
+const decoded = decodeURIComponent(escape(atob(encoded)));
+```
+
+### JavaScript (Node.js)
+
+```js
+// 인코딩
+const encoded = Buffer.from('Hello, World!').toString('base64');
+
+// 디코딩
+const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
+```
+
+### Python
+
+```python
+import base64
+
+# 인코딩
+encoded = base64.b64encode(b'Hello, World!').decode('utf-8')
+# SGVsbG8sIFdvcmxkIQ==
+
+# 디코딩
+decoded = base64.b64decode('SGVsbG8sIFdvcmxkIQ==').decode('utf-8')
+# Hello, World!
+```
+
+### 커맨드라인
+
+```bash
+# 인코딩
+echo -n 'Hello, World!' | base64
+# SGVsbG8sIFdvcmxkIQ==
+
+# 디코딩
+echo 'SGVsbG8sIFdvcmxkIQ==' | base64 --decode
+# Hello, World!
+```
+
+macOS에서는 `--decode` 대신 `-D`를 사용하세요.
+
+## Base64URL: URL 안전 변형
+
+표준 Base64의 `+`와 `/`는 URL에서 특별한 의미를 가집니다. **Base64URL**은 이를 대체합니다.
+
+| 표준 Base64 | Base64URL |
+|------------|-----------|
+| `+`        | `-`       |
+| `/`        | `_`       |
+| `=` 패딩   | 생략 가능  |
+
+JWT는 Base64URL을 사용합니다. `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.xxx` 같은 JWT에서 `.`으로 구분된 각 섹션이 Base64URL 인코딩 문자열입니다.
+
+```js
+// Node.js Base64URL 인코딩
+const encoded = Buffer.from(data).toString('base64url');
+```
+
+## 크기 오버헤드
+
+Base64는 데이터 크기를 약 **33% 증가**시킵니다(3바이트 → 4문자). 이미지, 동영상 같은 대용량 파일에서는 이 오버헤드가 중요합니다.
+
+| 원본 크기 | Base64 크기 |
+|----------|------------|
+| 1 KB     | ~1.37 KB   |
+| 1 MB     | ~1.37 MB   |
+| 10 MB    | ~13.7 MB   |
+
+직접 바이너리 전송이나 URL 참조가 가능한 경우에는 Base64를 쓰지 마세요.
+
+## Base64를 쓰면 안 되는 경우
+
+- **파일 다운로드** — 파일을 직접 서빙하세요. JSON에 Base64로 넣으면 낭비
+- **비밀번호** — Base64는 암호화가 아닙니다. bcrypt나 argon2로 해시하세요
+- **대용량 바이너리 전송** — multipart form data나 바이너리 프로토콜이 적합
+
+## 요약
+
+| 작업 | 방법 |
+|------|------|
+| 빠른 인코딩/디코딩 | [ZeroTool Base64 도구](/tools/base64) |
+| 브라우저 JS | `btoa()` / `atob()` |
+| Node.js | `Buffer.from(...).toString('base64')` |
+| Python | `base64.b64encode()` / `base64.b64decode()` |
+| CLI | `base64` / `base64 --decode` |
+| URL 안전 변형 | Base64URL (`+` → `-`, `/` → `_`) |
+
+Base64는 개발자 필수 도구입니다. 언제, 어떻게 사용하는지 이해하면 API, 인증 헤더, 데이터 파이프라인에서 발생하는 미묘한 버그를 예방할 수 있습니다.
+
+**[ZeroTool Base64 도구로 바로 인코딩/디코딩하기 →](/tools/base64)**

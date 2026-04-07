@@ -1,0 +1,279 @@
+---
+title: "CSVからJSONへの変換ガイド：スプレッドシートデータをAPI対応形式に"
+description: "CSVをJSONに変換する方法とよくあるエッジケースを解説。JavaScript（Papa Parse）・Python・コマンドラインでの実装例と、区切り文字・型変換・欠損値の扱い方も紹介。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "csv-json-guide"
+tags: ["csv", "json", "csv-to-json", "data-processing", "developer-tools"]
+---
+
+CSVはあらゆる場所にあります — スプレッドシートのエクスポート、データベースダンプ、分析プラットフォーム、レガシーシステムがすべてデフォルトでCSVを出力します。しかし、APIはおそらくJSONを期待しています。CSVをJSONに変換することは現代開発で最もよくあるデータ処理タスクの一つであり、単純な実装では引っかかるエッジケースも多数あります。
+
+[今すぐCSVをJSONに変換 →](/tools/csv-json)
+
+## なぜCSVをJSONに変換するのか
+
+| シナリオ | JSONが必要な理由 |
+|---------|---------------|
+| REST APIペイロード | ほとんどのAPIはJSONを受け入れ/返す |
+| NoSQLデータベースインポート | MongoDB、DynamoDBはJSONドキュメントを使用 |
+| JavaScriptフロントエンド | `JSON.parse()`はネイティブ；CSVにはパーサーが必要 |
+| データ変換パイプライン | JSONは現代ETLの共通交換フォーマット |
+| スプレッドシートからの設定 | チームはシートで設定管理、アプリはJSONを消費 |
+
+## CSVの基本構造
+
+CSV（Comma-Separated Values）ファイルは2つの部分から成ります：
+
+1. **ヘッダー行**（省略可能だが強く推奨）：列名
+2. **データ行**：1レコード1行、値は区切り文字で分離
+
+```csv
+id,name,email,age,active
+1,Alice,alice@example.com,30,true
+2,Bob,bob@example.com,25,false
+3,Charlie,charlie@example.com,35,true
+```
+
+JSON配列への変換結果：
+
+```json
+[
+  { "id": "1", "name": "Alice", "email": "alice@example.com", "age": "30", "active": "true" },
+  { "id": "2", "name": "Bob", "email": "bob@example.com", "age": "25", "active": "false" },
+  { "id": "3", "name": "Charlie", "email": "charlie@example.com", "age": "35", "active": "true" }
+]
+```
+
+デフォルトでは全ての値が文字列になります。型変換（`"30"`を`30`に変換）はオプションです。
+
+## よくある変換シナリオ
+
+### 基本的なフラット変換
+
+最もシンプルなケース：ヘッダー行がJSONキーに直接マッピングされます。
+
+```csv
+product_id,name,price,in_stock
+P001,Widget,9.99,true
+P002,Gadget,24.99,false
+```
+
+結果：
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": "9.99", "in_stock": "true" },
+  { "product_id": "P002", "name": "Gadget", "price": "24.99", "in_stock": "false" }
+]
+```
+
+### 型変換付き変換
+
+API用途では通常、数値は数値として、ブール値はブール値として扱いたいです：
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": 9.99, "in_stock": true },
+  { "product_id": "P002", "name": "Gadget", "price": 24.99, "in_stock": false }
+]
+```
+
+ZeroToolを含むほとんどのコンバーターには「型を解析する」オプションがあります。
+
+### カンマを含むクォートされたフィールド
+
+CSVは値の中のカンマをクォートで処理します：
+
+```csv
+city,description
+New York,"Large city, financial hub"
+London,"Historic city, capital of UK"
+```
+
+正しいJSON出力：
+
+```json
+[
+  { "city": "New York", "description": "Large city, financial hub" },
+  { "city": "London", "description": "Historic city, capital of UK" }
+]
+```
+
+カンマで単純に文字列分割すると壊れます。常に適切なCSVパーサーを使用してください。
+
+### タブ区切り値（TSV）
+
+一部のエクスポートはカンマの代わりにタブを使用します：
+
+```tsv
+name	score	grade
+Alice	95	A
+Bob	82	B
+```
+
+変換時に区切り文字を指定してください — ほとんどのツールはカスタム区切り文字に対応しています。
+
+## エッジケースの処理
+
+### 欠損値
+
+```csv
+id,name,email
+1,Alice,alice@example.com
+2,Bob,
+3,,charlie@example.com
+```
+
+欠損値はツールによって`""`（空文字列）か`null`になります：
+
+```json
+[
+  { "id": "1", "name": "Alice", "email": "alice@example.com" },
+  { "id": "2", "name": "Bob", "email": "" },
+  { "id": "3", "name": "", "email": "charlie@example.com" }
+]
+```
+
+### ヘッダー行がない場合
+
+CSVにヘッダーがない場合：
+- 列名を自動生成：`col1`、`col2`、`col3`
+- 変換前に手動で列名を指定する
+
+### 重複した列名
+
+```csv
+value,value,value
+1,2,3
+```
+
+動作はコンバーターによって異なります：重複に接尾辞を付ける（`value`、`value_1`、`value_2`）か上書きするかです。変換前にヘッダーの重複を排除してください。
+
+## CSVからJSONへの変換コード例
+
+### JavaScript（Papa Parse）
+
+[Papa Parse](https://www.papaparse.com/)はJavaScript向けの標準CSVライブラリです：
+
+```bash
+npm install papaparse
+```
+
+```javascript
+const Papa = require('papaparse');
+const fs = require('fs');
+
+const csv = fs.readFileSync('data.csv', 'utf8');
+const result = Papa.parse(csv, {
+  header: true,        // 最初の行をキーとして使用
+  dynamicTyping: true, // 数値とブール値を自動変換
+  skipEmptyLines: true,
+});
+
+console.log(JSON.stringify(result.data, null, 2));
+```
+
+### Python（csvモジュール）
+
+```python
+import csv
+import json
+
+with open('data.csv', newline='', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    rows = list(reader)
+
+print(json.dumps(rows, indent=2, ensure_ascii=False))
+```
+
+型変換には値を個別に処理します：
+
+```python
+def coerce(value):
+    if value.lower() in ('true', 'false'):
+        return value.lower() == 'true'
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+rows = [{k: coerce(v) for k, v in row.items()} for row in rows]
+```
+
+### コマンドライン（jq + csvkit）
+
+```bash
+# csvkitをインストール
+pip install csvkit
+
+# JSONに変換
+csvjson data.csv
+
+# 整形して出力
+csvjson data.csv | jq .
+```
+
+### mlr（Miller）を使う
+
+Millerは多機能なデータ処理ツールです：
+
+```bash
+# インストール: brew install miller
+mlr --csv --ojson cat data.csv
+```
+
+## JSONからCSVへの逆変換
+
+ExcelやGoogleスプレッドシートで分析するためにJSON配列をCSVにフラット化する場合もあります。
+
+```json
+[
+  { "id": 1, "name": "Alice", "score": 95 },
+  { "id": 2, "name": "Bob", "score": 82 }
+]
+```
+
+期待するCSV：
+
+```csv
+id,name,score
+1,Alice,95
+2,Bob,82
+```
+
+ネストしたオブジェクトが課題になります：
+
+```json
+{ "id": 1, "user": { "name": "Alice", "email": "alice@example.com" } }
+```
+
+ほとんどのコンバーターはネストしたキーをセパレータで結合してフラット化します：`user.name`、`user.email`。ZeroToolのコンバーターはこれを自動的に処理します。
+
+## 大きなCSVファイルのパフォーマンス
+
+大規模なCSVファイル（数百万行）の場合：
+
+- **ストリーミング**：ファイル全体をメモリに読み込まず行ごとに処理
+- **NDJSON出力**：改行区切りJSON（1行1JSONオブジェクト）は単一の大きな配列よりストリームしやすい
+- **型推論のオーバーヘッド**：すべてのセルの型を自動検出するとCPUコストが高くなる；既知のスキーマでは無効化する
+
+```javascript
+// Papa Parse でNDJSONストリーミング
+Papa.parse(stream, {
+  header: true,
+  step: (row) => process.stdout.write(JSON.stringify(row.data) + '\n'),
+  complete: () => console.error('完了'),
+});
+```
+
+## オンラインCSV↔JSONコンバーター
+
+クイックなアドホック変換には、[ZeroToolのCSV↔JSONコンバーター](/tools/csv-json)がブラウザ上で完全動作します。CSVを貼り付けるかアップロードし、オプション（区切り文字・型解析・ヘッダー行）を調整してJSONをダウンロード。ファイルはサーバーに送信されません。
+
+**[CSV↔JSONコンバーターを今すぐ試す →](/tools/csv-json)**

@@ -1,0 +1,279 @@
+---
+title: "CSV to JSON 변환기 완벽 가이드: 스프레드시트에서 API 데이터로"
+description: "CSV를 JSON으로 변환하는 방법, 헤더 처리, 타입 추론, 엣지 케이스, JavaScript·Python·CLI 코드 예제, 그리고 역방향 JSON to CSV 변환까지 정리합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "csv-json-guide"
+tags: ["csv", "json", "csv-to-json", "data-processing", "developer-tools"]
+---
+
+CSV는 어디서나 볼 수 있습니다 — 스프레드시트 내보내기, 데이터베이스 덤프, 분석 플랫폼, 레거시 시스템 모두 기본적으로 CSV를 사용합니다. 하지만 여러분의 API는 아마 JSON을 원할 것입니다. CSV를 JSON으로 변환하는 것은 현대 개발에서 가장 흔한 데이터 가공 작업 중 하나입니다.
+
+[CSV를 JSON으로 즉시 변환하기 →](/tools/csv-json)
+
+## CSV를 JSON으로 변환해야 하는 이유
+
+| 시나리오 | JSON이 필요한 이유 |
+|---------|----------------|
+| REST API 페이로드 | 대부분의 API는 JSON을 수신/반환 |
+| NoSQL 데이터베이스 가져오기 | MongoDB, DynamoDB는 JSON 문서 사용 |
+| JavaScript 프론트엔드 | `JSON.parse()`는 기본 지원; CSV는 파서 필요 |
+| 데이터 변환 파이프라인 | JSON은 현대 ETL의 공통 교환 형식 |
+| 스프레드시트에서 설정 관리 | 팀이 시트로 설정을 관리하고 앱이 JSON으로 소비 |
+
+## CSV 구조 기초
+
+CSV(Comma-Separated Values) 파일은 두 부분으로 구성됩니다:
+
+1. **헤더 행** (선택적이지만 강력히 권장): 열 이름
+2. **데이터 행**: 한 줄에 하나의 레코드, 구분자로 값을 분리
+
+```csv
+id,name,email,age,active
+1,Alice,alice@example.com,30,true
+2,Bob,bob@example.com,25,false
+3,Charlie,charlie@example.com,35,true
+```
+
+JSON 배열로 변환:
+
+```json
+[
+  { "id": "1", "name": "Alice", "email": "alice@example.com", "age": "30", "active": "true" },
+  { "id": "2", "name": "Bob", "email": "bob@example.com", "age": "25", "active": "false" },
+  { "id": "3", "name": "Charlie", "email": "charlie@example.com", "age": "35", "active": "true" }
+]
+```
+
+기본적으로 모든 값은 문자열입니다. 타입 추론(`"30"` → `30` 변환)은 도구에 따라 선택 사항입니다.
+
+## 일반적인 변환 시나리오
+
+### 기본 플랫 변환
+
+가장 단순한 경우: 헤더 행이 JSON 키에 직접 매핑됩니다.
+
+```csv
+product_id,name,price,in_stock
+P001,Widget,9.99,true
+P002,Gadget,24.99,false
+```
+
+결과:
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": "9.99", "in_stock": "true" },
+  { "product_id": "P002", "name": "Gadget", "price": "24.99", "in_stock": "false" }
+]
+```
+
+### 타입 추론 변환
+
+API 활용을 위해 숫자는 숫자로, 불리언은 불리언으로 변환합니다:
+
+```json
+[
+  { "product_id": "P001", "name": "Widget", "price": 9.99, "in_stock": true },
+  { "product_id": "P002", "name": "Gadget", "price": 24.99, "in_stock": false }
+]
+```
+
+ZeroTool을 포함한 대부분의 변환기는 이를 위한 "타입 파싱" 옵션을 제공합니다.
+
+### 쉼표가 포함된 따옴표 처리 필드
+
+CSV는 값 내부의 쉼표를 따옴표로 처리합니다:
+
+```csv
+city,description
+New York,"대도시, 금융 허브"
+London,"역사적인 도시, 영국 수도"
+```
+
+올바른 JSON 출력:
+
+```json
+[
+  { "city": "New York", "description": "대도시, 금융 허브" },
+  { "city": "London", "description": "역사적인 도시, 영국 수도" }
+]
+```
+
+단순히 쉼표로 split하면 이 케이스가 깨집니다. 항상 제대로 된 CSV 파서를 사용하세요.
+
+### 탭 구분 값 (TSV)
+
+일부 내보내기는 쉼표 대신 탭을 사용합니다:
+
+```tsv
+name	score	grade
+Alice	95	A
+Bob	82	B
+```
+
+변환할 때 구분자를 지정하세요 — 대부분의 도구가 커스텀 구분자를 지원합니다.
+
+## 엣지 케이스 처리
+
+### 빈 값
+
+```csv
+id,name,email
+1,Alice,alice@example.com
+2,Bob,
+3,,charlie@example.com
+```
+
+빈 값은 도구에 따라 `""`(빈 문자열) 또는 `null`이 됩니다:
+
+```json
+[
+  { "id": "1", "name": "Alice", "email": "alice@example.com" },
+  { "id": "2", "name": "Bob", "email": "" },
+  { "id": "3", "name": "", "email": "charlie@example.com" }
+]
+```
+
+### 헤더 행이 없는 경우
+
+CSV에 헤더가 없으면:
+- 열 이름 자동 생성: `col1`, `col2`, `col3`
+- 또는 변환 전 열 이름을 수동으로 지정
+
+### 중복 열 이름
+
+```csv
+value,value,value
+1,2,3
+```
+
+동작은 변환기마다 다릅니다: 접미사 추가(`value`, `value_1`, `value_2`) 또는 덮어쓰기. 변환 전에 헤더를 중복 제거하세요.
+
+## 코드에서 CSV를 JSON으로 변환하기
+
+### JavaScript (Papa Parse)
+
+[Papa Parse](https://www.papaparse.com/)는 JavaScript의 표준 CSV 라이브러리입니다:
+
+```bash
+npm install papaparse
+```
+
+```javascript
+const Papa = require('papaparse');
+const fs = require('fs');
+
+const csv = fs.readFileSync('data.csv', 'utf8');
+const result = Papa.parse(csv, {
+  header: true,        // 첫 행을 키로 사용
+  dynamicTyping: true, // 숫자와 불리언 자동 변환
+  skipEmptyLines: true,
+});
+
+console.log(JSON.stringify(result.data, null, 2));
+```
+
+### Python (csv 모듈)
+
+```python
+import csv
+import json
+
+with open('data.csv', newline='', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    rows = list(reader)
+
+print(json.dumps(rows, indent=2, ensure_ascii=False))
+```
+
+타입 추론을 위해:
+
+```python
+def coerce(value):
+    if value.lower() in ('true', 'false'):
+        return value.lower() == 'true'
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+rows = [{k: coerce(v) for k, v in row.items()} for row in rows]
+```
+
+### 커맨드라인 (csvkit)
+
+```bash
+# csvkit 설치
+pip install csvkit
+
+# JSON으로 변환
+csvjson data.csv
+
+# 보기 좋게 출력
+csvjson data.csv | jq .
+```
+
+### Miller 사용
+
+Miller는 다양한 데이터 처리 도구입니다:
+
+```bash
+# 설치: brew install miller
+mlr --csv --ojson cat data.csv
+```
+
+## JSON to CSV: 역방향 변환
+
+때로는 반대 방향이 필요합니다 — JSON 배열을 CSV로 평탄화해 Excel이나 Google Sheets에서 분석하는 것입니다.
+
+```json
+[
+  { "id": 1, "name": "Alice", "score": 95 },
+  { "id": 2, "name": "Bob", "score": 82 }
+]
+```
+
+예상 CSV:
+
+```csv
+id,name,score
+1,Alice,95
+2,Bob,82
+```
+
+중첩된 객체가 도전 과제입니다:
+
+```json
+{ "id": 1, "user": { "name": "Alice", "email": "alice@example.com" } }
+```
+
+대부분의 변환기는 중첩 키를 구분자로 평탄화합니다: `user.name`, `user.email`. ZeroTool 변환기는 이를 자동으로 처리합니다.
+
+## 대용량 CSV 성능 고려사항
+
+수백만 행의 대용량 CSV 파일:
+
+- **스트리밍**: 전체 파일을 메모리에 로드하지 않고 행 단위로 처리
+- **NDJSON 출력**: 줄 구분 JSON(한 줄에 JSON 객체 하나)은 단일 대용량 배열보다 스트리밍이 쉬움
+- **타입 추론 오버헤드**: 모든 셀의 타입 자동 감지는 CPU 비용 추가; 알려진 스키마에서는 비활성화
+
+```javascript
+// Papa Parse로 NDJSON 스트리밍
+Papa.parse(stream, {
+  header: true,
+  step: (row) => process.stdout.write(JSON.stringify(row.data) + '\n'),
+  complete: () => console.error('완료'),
+});
+```
+
+## 온라인 CSV↔JSON 변환기
+
+빠른 임시 변환을 위해 [ZeroTool의 CSV↔JSON 변환기](/tools/csv-json)는 브라우저에서 완전히 실행됩니다. CSV를 붙여넣거나 업로드하고, 옵션(구분자, 타입 파싱, 헤더 행)을 조정한 후 JSON을 다운로드하세요. 파일은 서버로 전송되지 않습니다.
+
+**[CSV↔JSON 변환기 사용해보기 →](/tools/csv-json)**

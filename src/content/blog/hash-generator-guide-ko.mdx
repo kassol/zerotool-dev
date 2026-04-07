@@ -1,0 +1,206 @@
+---
+title: "SHA256 해시 생성기 완벽 가이드: MD5·SHA-1·SHA-256 비교"
+description: "해시 함수 원리, MD5·SHA-1·SHA-256·SHA-512 차이점, 파일 무결성 검증과 비밀번호 저장에서 올바른 알고리즘 선택 방법을 정리합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "hash-generator-guide"
+tags: ["hash", "sha256", "md5", "cryptography", "developer-tools"]
+---
+
+해시는 소프트웨어 엔지니어링에서 가장 유용한 기본 요소 중 하나입니다. 파일 무결성 검증, 비밀번호 저장, 체크섬 생성 모두 해시에 의존합니다. 이 글에서는 해시 함수의 작동 원리, 알고리즘별 용도, 그리고 브라우저를 떠나지 않고 해시를 생성하는 방법을 설명합니다.
+
+## 해시 함수란?
+
+해시 함수는 임의의 입력(문자열, 파일, 바이트)을 받아 **다이제스트** 또는 **해시**라고 불리는 고정 길이 출력을 생성합니다. 핵심 특성:
+
+- **결정론적**: 동일한 입력은 항상 동일한 해시를 생성
+- **단방향**: 해시에서 입력을 역산할 수 없음
+- **눈사태 효과**: 문자 하나 변경으로 출력이 완전히 달라짐
+- **고정 길이**: SHA-256은 입력 크기와 무관하게 항상 64개의 16진수 문자 출력
+
+```
+입력:    "hello"
+SHA-256: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+
+입력:    "Hello"  (대문자 H)
+SHA-256: 185f8db32921bd46d35cc06fbf3a8a26d2c25e5b7cb1f21edf4e5e523f3b8a4f
+```
+
+문자 하나 변경으로 완전히 다른 다이제스트가 생성됩니다.
+
+## 주요 해시 알고리즘
+
+### MD5
+
+출력: 128비트 (32개 16진수)
+
+한때 체크섬과 비밀번호 해싱의 표준이었습니다. 현재는 **암호학적으로 취약**합니다 — 서로 다른 두 입력이 동일한 해시를 생성하는 충돌 공격이 실용적입니다. 보안 목적으로 MD5를 사용하지 마세요.
+
+**여전히 허용되는 용도:** 보안과 무관한 체크섬(우발적 파일 손상 감지), 충돌 저항이 중요하지 않은 콘텐츠 주소 지정 캐싱.
+
+```bash
+echo -n "hello" | md5sum
+# 5d41402abc4b2a76b9719d911017c592
+```
+
+### SHA-1
+
+출력: 160비트 (40개 16진수)
+
+SHA-1도 보안 목적으로는 취약합니다(Google이 2017년에 실용적인 충돌 공격을 시연). Git은 역사적으로 커밋 해시에 SHA-1을 사용했지만 SHA-256으로 전환 중입니다.
+
+**피해야 할 용도:** TLS 인증서, 디지털 서명, 비밀번호 해싱.
+
+### SHA-256
+
+출력: 256비트 (64개 16진수)
+
+SHA-2 패밀리의 일부로, 대부분의 보안 민감 애플리케이션의 현재 표준입니다. 비트코인은 작업 증명에 SHA-256을 사용하고, TLS 인증서는 서명에 사용합니다.
+
+```bash
+echo -n "hello" | sha256sum
+# 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+```
+
+### SHA-512
+
+출력: 512비트 (128개 16진수)
+
+SHA-256보다 느리지만 더 큰 다이제스트를 생성합니다. 64비트 시스템에서 64비트 워드 연산의 성능 이점이 있어 선호됩니다.
+
+### SHA-3 (Keccak)
+
+SHA-2와 근본적으로 다른 알고리즘입니다. SHA-3은 독립적인 보안 기반을 제공합니다. SHA-2가 취약해지더라도 SHA-3에는 자동으로 영향을 미치지 않습니다.
+
+## 온라인 해시 생성기
+
+**[ZeroTool 해시 생성기 →](/tools/hash-generator)**
+
+텍스트를 붙여넣고 알고리즘(MD5, SHA-1, SHA-256, SHA-512)을 선택하면 즉시 해시를 확인할 수 있습니다. 데이터는 서버로 전송되지 않으며 브라우저에서 완전히 실행됩니다.
+
+주요 사용 사례:
+- 다운로드한 파일이 공개된 체크섬과 일치하는지 검증
+- 캐시 버스팅 URL용 콘텐츠 해시 생성
+- 원본을 노출하지 않고 두 문자열이 동일한지 확인
+- 디버깅 중 빠른 지문 생성
+
+## 코드에서 해시 생성하기
+
+### JavaScript / Node.js
+
+```js
+const crypto = require('crypto');
+
+const hash = crypto.createHash('sha256')
+  .update('hello world')
+  .digest('hex');
+
+console.log(hash);
+// b94d27b9934d3e08a52e52d7da7dabfac484efe04294e576f3b5380e7f09ed66
+```
+
+Node.js 없는 브라우저 환경에서:
+
+```js
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+const hash = await sha256('hello world');
+```
+
+### Python
+
+```python
+import hashlib
+
+text = "hello world"
+
+md5    = hashlib.md5(text.encode()).hexdigest()
+sha256 = hashlib.sha256(text.encode()).hexdigest()
+sha512 = hashlib.sha512(text.encode()).hexdigest()
+
+print(f"MD5:    {md5}")
+print(f"SHA256: {sha256}")
+print(f"SHA512: {sha512}")
+```
+
+### Go
+
+```go
+import (
+    "crypto/sha256"
+    "fmt"
+)
+
+func main() {
+    h := sha256.Sum256([]byte("hello world"))
+    fmt.Printf("%x\n", h)
+}
+```
+
+## 파일 해시 처리
+
+### 다운로드 검증
+
+대부분의 소프트웨어 배포판은 다운로드와 함께 SHA-256 체크섬을 공개합니다:
+
+```bash
+# 다운로드한 파일의 해시 계산
+sha256sum archive.tar.gz
+
+# 공개된 해시와 비교
+echo "expected-hash-here  archive.tar.gz" | sha256sum --check
+```
+
+### HMAC: 키가 있는 해싱
+
+일반 해시에는 비밀이 없습니다 — 누구든 `SHA256("hello")`를 계산할 수 있습니다. HMAC(Hash-based Message Authentication Code)는 비밀 키를 추가해 키를 아는 당사자만 출력을 검증할 수 있게 합니다:
+
+```js
+const hmac = crypto.createHmac('sha256', 'my-secret-key')
+  .update('hello world')
+  .digest('hex');
+```
+
+이것이 웹훅 서명의 작동 방식입니다(예: GitHub 웹훅은 요청 본문에 HMAC-SHA256을 계산한 `X-Hub-Signature-256` 헤더를 포함).
+
+## 비밀번호 해싱: SHA-256을 쓰면 안 됩니다
+
+SHA-256은 비밀번호 저장에는 너무 빠릅니다. GPU를 가진 공격자는 초당 수십억 개의 SHA-256 해시를 계산할 수 있어 무차별 대입과 레인보우 테이블 공격이 실용적입니다.
+
+비밀번호에는 목적에 맞게 설계된 **느린 해싱 알고리즘**을 사용하세요:
+
+| 알고리즘 | 사용 시기 |
+|---------|---------|
+| bcrypt | 가장 널리 지원됨, 안전한 기본 선택 |
+| Argon2id | 비밀번호 해싱 경쟁 우승자, 신규 시스템에 권장 |
+| scrypt | 메모리 집약적, Argon2의 좋은 대안 |
+
+```python
+# Python — bcrypt
+import bcrypt
+
+hashed = bcrypt.hashpw(b"my-password", bcrypt.gensalt())
+bcrypt.checkpw(b"my-password", hashed)  # True
+```
+
+## 알고리즘 선택 가이드
+
+| 사용 사례 | 알고리즘 |
+|---------|---------|
+| 파일 무결성 검사 | SHA-256 |
+| 디지털 서명 / TLS | SHA-256 또는 SHA-384 |
+| 비밀번호 저장 | Argon2id 또는 bcrypt |
+| HMAC / 웹훅 서명 | HMAC-SHA256 |
+| 레거시 체크섬 호환 | MD5 (비보안 용도만) |
+| 비암호화 해시 (해시테이블) | xxHash, MurmurHash3 |
+
+## 요약
+
+SHA-256은 오늘날 거의 모든 암호화 요구 사항에 실용적인 기본 선택입니다. 충분히 빠르고, 표준화되어 있으며, 철저히 감사되었습니다. 보안 관련 용도에는 MD5와 SHA-1을 피하세요. 비밀번호에는 항상 Argon2id 같은 전용 느린 알고리즘을 사용하세요.
+
+**[ZeroTool로 SHA-256, MD5 등 해시를 즉시 생성하기 →](/tools/hash-generator)**

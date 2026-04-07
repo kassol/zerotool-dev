@@ -1,0 +1,196 @@
+---
+title: "JWT 디코더 완벽 가이드: JSON Web Token 구조와 보안"
+description: "JWT가 무엇인지, 클레임 해석 방법, 서명 알고리즘 차이, 그리고 개발자가 자주 빠지는 보안 함정까지 실전 중심으로 정리합니다."
+pubDate: 2026-04-07
+lang: "ko"
+translationSlug: "jwt-decoder-guide"
+tags: ["jwt", "json-web-token", "authentication", "developer-tools"]
+---
+
+JSON Web Token(JWT)은 현대 인증의 핵심입니다. API와 서비스 간에 사용자 신원과 권한을 전달하는 역할을 합니다. 하지만 원시 JWT는 무작위 문자열처럼 보입니다. 이 글에서는 JWT 내부 구조, 디코딩 방법, 그리고 보안 함정을 정리합니다.
+
+## JWT란?
+
+JWT는 **클레임**(키-값 쌍)을 인코딩하고 선택적으로 **암호화 서명**을 포함하는 컴팩트하고 URL 안전한 문자열입니다. 당사자 간에 신원과 권한 데이터를 전달하는 데 사용됩니다.
+
+JWT는 이렇게 생겼습니다:
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+```
+
+`.`으로 구분된 세 개의 Base64URL 인코딩 파트:
+
+1. **헤더** — 알고리즘과 토큰 유형
+2. **페이로드** — 클레임(사용자 데이터)
+3. **서명** — 진위를 증명하는 암호화 값
+
+## JWT 디코딩하기
+
+**[ZeroTool JWT 디코더 →](/tools/jwt-decoder)**
+
+JWT를 붙여넣으면 헤더, 페이로드, 서명 상세를 즉시 확인할 수 있습니다. 브라우저에서 완전히 실행되므로 토큰이 서버로 전송되지 않습니다.
+
+### 디코딩 결과
+
+위 예시 토큰을 디코딩하면:
+
+**헤더:**
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+**페이로드:**
+```json
+{
+  "sub": "1234567890",
+  "name": "Alice",
+  "iat": 1516239022
+}
+```
+
+디코딩은 비밀 없이 Base64URL 디코딩만으로 가능합니다. 즉, **페이로드는 암호화되지 않으며 비밀이 아닙니다**. JWT 페이로드에 비밀번호, 결제 정보, 개인 API 키를 절대 넣지 마세요.
+
+## 표준 클레임
+
+JWT 명세는 여러 등록 클레임을 정의합니다:
+
+| 클레임 | 의미 |
+|--------|------|
+| `sub` | Subject — 토큰 대상 (보통 사용자 ID) |
+| `iss` | Issuer — 토큰 발급자 |
+| `aud` | Audience — 토큰 수신 대상 |
+| `exp` | 만료 시간 (Unix 타임스탬프) |
+| `iat` | 발급 시간 (Unix 타임스탬프) |
+| `nbf` | Not before — 이 시간 이전에는 유효하지 않음 |
+| `jti` | JWT ID — 토큰 고유 식별자 |
+
+`exp`는 매우 중요합니다. 반드시 확인하세요. 토큰은 `nbf`(또는 `iat`)부터 `exp` 사이에만 유효합니다.
+
+## 서명 알고리즘
+
+### HMAC (HS256, HS384, HS512)
+
+동일한 비밀 키로 서명과 검증을 모두 수행합니다. 간단하지만 발급자와 검증자가 같은 비밀을 공유해야 합니다.
+
+```
+서명 = HMAC-SHA256(base64url(헤더) + "." + base64url(페이로드), 비밀키)
+```
+
+비밀이 약하면(`"secret"`, `"123456"` 등) 토큰을 무차별 대입으로 위조할 수 있습니다.
+
+### RSA / ECDSA (RS256, RS384, ES256, ES384)
+
+비대칭 알고리즘입니다. 발급자는 **개인 키**로 서명하고, 검증자는 **공개 키**로 서명을 확인합니다. 공개 키는 자유롭게 배포할 수 있으며, 개인 키 보유자만 유효한 토큰을 생성할 수 있습니다.
+
+여러 서비스가 토큰을 검증해야 하지만 한 서비스만 발급해야 하는 멀티서비스 아키텍처에 적합한 선택입니다.
+
+## 코드에서 JWT 검증하기
+
+### Node.js (jsonwebtoken)
+
+```js
+const jwt = require('jsonwebtoken');
+
+// 대칭 비밀로 검증
+try {
+  const decoded = jwt.verify(token, 'your-secret-key');
+  console.log(decoded.sub); // 사용자 ID
+} catch (err) {
+  // TokenExpiredError, JsonWebTokenError 등
+  console.error('유효하지 않은 토큰:', err.message);
+}
+```
+
+### Python (PyJWT)
+
+```python
+import jwt
+
+try:
+    payload = jwt.decode(token, "your-secret-key", algorithms=["HS256"])
+    print(payload["sub"])
+except jwt.ExpiredSignatureError:
+    print("토큰이 만료되었습니다")
+except jwt.InvalidTokenError as e:
+    print(f"유효하지 않은 토큰: {e}")
+```
+
+### Go (golang-jwt/jwt)
+
+```go
+import "github.com/golang-jwt/jwt/v5"
+
+token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+    if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+        return nil, fmt.Errorf("예상치 못한 서명 방식: %v", token.Header["alg"])
+    }
+    return []byte("your-secret-key"), nil
+})
+
+if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+    fmt.Println(claims["sub"])
+}
+```
+
+## `alg: none` 취약점
+
+일부 초기 JWT 라이브러리에는 치명적인 결함이 있었습니다. `alg` 헤더가 `"none"`으로 설정되면 서명 검증 없이 토큰을 수락했습니다. 누구든 임의의 토큰을 만들 수 있었습니다.
+
+**검증 시 항상 예상 알고리즘을 명시하세요:**
+
+```python
+# 잘못된 방법 — "none"을 포함한 모든 알고리즘 허용
+jwt.decode(token, key)
+
+# 올바른 방법 — HS256만 허용
+jwt.decode(token, key, algorithms=["HS256"])
+```
+
+검증 코드에서 `"none"`을 절대 허용하지 마세요.
+
+## 브라우저에서 JWT 저장 위치
+
+| 저장소 | XSS 위험 | CSRF 위험 | 비고 |
+|--------|---------|---------|------|
+| `localStorage` | 높음 | 없음 | XSS로 토큰 탈취 가능; 완화 방법 없음 |
+| `sessionStorage` | 높음 | 없음 | localStorage와 동일 |
+| `HttpOnly` 쿠키 | 낮음 | 중간 | XSS로 읽을 수 없음; `SameSite=Strict`로 CSRF 완화 |
+
+가장 안전한 옵션은 `HttpOnly; Secure; SameSite=Strict` 쿠키입니다. `localStorage`의 JWT는 페이지 내 모든 JavaScript에서 접근 가능하므로, 단 하나의 XSS 취약점이 모든 토큰을 노출시킵니다.
+
+## JWT vs 세션 토큰
+
+JWT는 스테이트리스(stateless)입니다. 서버가 모든 요청마다 데이터베이스를 조회할 필요가 없어 확장성이 좋습니다. 하지만 이 때문에 **만료 전에 JWT를 취소할 수 없습니다**.
+
+즉각적인 취소가 필요한 경우(로그아웃, 계정 정지, 비밀번호 변경) 두 가지 옵션이 있습니다:
+
+1. JWT를 단기간(5~15분)으로 유지하고 리프레시 토큰을 사용
+2. 서버 측 취소 목록(denylist) 유지 — 사실상 스테이트풀이 됨
+
+## 디버깅 팁
+
+운영 환경에서 JWT 관련 오류가 발생하면:
+
+1. **토큰 디코딩** — [ZeroTool JWT 디코더](/tools/jwt-decoder)로 `exp`, `iss`, `aud` 확인
+2. **클락 스큐 확인** — 서버 시계가 발급자와 다르면 `exp` 확인이 불안정하게 실패
+3. **알고리즘 검증** — 토큰의 `alg`가 코드에서 기대하는 값과 일치하는지 확인
+4. **audience 확인** — `aud`가 설정된 경우 검증 시 기대 audience를 전달해야 함
+
+## 요약
+
+| 작업 | 도구/방법 |
+|------|---------|
+| JWT 페이로드 확인 | [ZeroTool JWT 디코더](/tools/jwt-decoder) |
+| Node.js 검증 | `jsonwebtoken` 라이브러리 |
+| Python 검증 | `PyJWT` 라이브러리 |
+| 신규 시스템 알고리즘 | RS256(비대칭) 또는 강력한 비밀의 HS256(대칭) |
+| 토큰 저장 | `HttpOnly` 쿠키 |
+| 취소 전략 | 짧은 만료 + 리프레시 토큰 |
+
+JWT는 강력하고 널리 지원되지만, 불투명한 문자열로 취급하는 개발자를 위협하는 미묘한 보안 위험이 있습니다. 내부 구조와 검증의 의미를 이해하는 것이 안전한 인증과 취약한 인증의 차이를 만듭니다.
+
+**[ZeroTool로 JWT를 즉시 디코딩하기 →](/tools/jwt-decoder)**

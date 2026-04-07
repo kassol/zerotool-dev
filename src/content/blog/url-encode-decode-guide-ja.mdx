@@ -1,0 +1,209 @@
+---
+title: "URLエンコード・デコード完全ガイド：パーセントエンコーディングの仕組み"
+description: "URLエンコード（パーセントエンコーディング）の仕組みを解説。encodeURIとencodeURIComponentの使い分け、よくある落とし穴、JavaScript・Python・Goでの実装方法を紹介。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "url-encode-decode-guide"
+tags: ["url-encoding", "percent-encoding", "encodeURIComponent", "developer-tools"]
+---
+
+スペースや特殊文字を含むURLをブラウザに貼り付けてエラーになる — これは多くの開発者が経験する洗礼です。URLエンコーディング（パーセントエンコーディング）は、任意のデータをURLに安全に含めるための仕組みです。このガイドでは仕組みと適切な使い方を詳しく説明します。
+
+## なぜURLにはエンコーディングが必要か
+
+URLに使用できる文字は限られています：英字（`A-Z`、`a-z`）、数字（`0-9`）、ごく一部の特殊文字（`-`、`_`、`.`、`~`）。その他の文字はすべて**パーセントエンコード**が必要です：`%`の後に2桁の16進数ASCIIコードで表現します。
+
+```
+スペース  →  %20
+#         →  %23
+?         →  %3F
+=         →  %3D
+&         →  %26
+/         →  %2F
++         →  %2B
+```
+
+エンコードしなければ、クエリパラメータ内のスペースはパラメータを終了させてしまいます。パラメータ値内の`&`は区切り文字として解釈されます。エンコーディングによって構造が明確になります。
+
+## オンラインでURLをエンコード・デコードする
+
+**[ZeroTool URL エンコーダー/デコーダー →](/tools/url-encode-decode)**
+
+テキストやURLを貼り付けて即座にエンコード・デコード。API呼び出しのデバッグ、リダイレクトURLの構築、難読化されたクエリ文字列のデコードに便利です。
+
+## encodeURI と encodeURIComponent の違い
+
+JavaScriptにはURLエンコード用の組み込み関数が2つあります。誤った使い方は頻繁なバグの原因になります。
+
+### `encodeURI(url)`
+
+**完全なURL**をエンコードします。URLの構造上の意味を持つ文字を保持します：`:`、`/`、`?`、`#`、`[`、`]`、`@`、`!`、`$`、`&`、`'`、`(`、`)`、`*`、`+`、`,`、`;`、`=`。
+
+```js
+encodeURI("https://example.com/search?q=hello world&lang=en")
+// "https://example.com/search?q=hello%20world&lang=en"
+```
+
+スペースは`%20`になりますが、`?`、`=`、`&`はURL構造の一部なので保持されます。
+
+### `encodeURIComponent(value)`
+
+クエリパラメータやパスセグメントとして使用される**単一の値**をエンコードします。`encodeURI`が保持する`?`、`#`、`&`、`/`、`=`も含めてすべてエンコードします。
+
+```js
+const query = encodeURIComponent("C++ is great & fast");
+const url = `https://example.com/search?q=${query}`;
+// https://example.com/search?q=C%2B%2B%20is%20great%20%26%20fast
+```
+
+**経験則：** URLをパーツから組み立てる場合は各クエリパラメータ値に`encodeURIComponent`を使用。既に構造化されたURL文字列全体をエンコードする場合は`encodeURI`を使用。
+
+### `+` と `%20` の違い
+
+HTMLフォームの送信は伝統的にスペースを`%20`ではなく`+`でエンコードします。これは**application/x-www-form-urlencoded**エンコーディングと呼ばれます。クエリ文字列のパース時、どちらもスペースとして扱われるべきですが、技術的には異なるエンコーディングです。混在させると微妙なバグを引き起こします。
+
+```js
+// x-www-form-urlencoded形式（フォーム送信）
+"hello world" → "hello+world"
+
+// RFC 3986パーセントエンコーディング（現代の標準）
+"hello world" → "hello%20world"
+```
+
+## URLのデコード
+
+逆操作：
+
+```js
+decodeURI("https://example.com/search?q=hello%20world")
+// "https://example.com/search?q=hello world"
+
+decodeURIComponent("C%2B%2B%20is%20great%20%26%20fast")
+// "C++ is great & fast"
+```
+
+Pythonの場合：
+
+```python
+from urllib.parse import quote, unquote, urlencode, parse_qs
+
+# 値をエンコード
+encoded = quote("C++ is great & fast")
+# "C%2B%2B%20is%20great%20%26%20fast"
+
+# デコード
+decoded = unquote("C%2B%2B%20is%20great%20%26%20fast")
+# "C++ is great & fast"
+```
+
+## クエリ文字列を正しく構築する
+
+クエリ文字列を文字列連結で手作りしてはいけません。各言語の組み込みユーティリティを使いましょう：
+
+### JavaScript（ブラウザ）
+
+```js
+const params = new URLSearchParams({
+  q: "C++ is great & fast",
+  lang: "en",
+  page: 1
+});
+
+const url = `https://example.com/search?${params}`;
+// https://example.com/search?q=C%2B%2B+is+great+%26+fast&lang=en&page=1
+```
+
+注意：`URLSearchParams`はスペースに`%20`ではなく`+`（フォームエンコーディング）を使用します。
+
+### Python
+
+```python
+from urllib.parse import urlencode
+
+params = {
+    "q": "C++ is great & fast",
+    "lang": "en",
+    "page": 1
+}
+
+query_string = urlencode(params)
+url = f"https://example.com/search?{query_string}"
+```
+
+### Go
+
+```go
+import "net/url"
+
+params := url.Values{}
+params.Set("q", "C++ is great & fast")
+params.Set("lang", "en")
+url := "https://example.com/search?" + params.Encode()
+```
+
+## パスセグメントとクエリパラメータの違い
+
+エンコードルールはパスセグメントとクエリパラメータで微妙に異なります。パスセグメントの`/`文字はディレクトリ区切りを意味します。パスセグメント値にリテラルの`/`を含める場合は`%2F`としてエンコードする必要があります。
+
+```
+/files/2024/report.pdf        →  3つのパスセグメント
+/files/2024%2Freport.pdf      →  2つのパスセグメント、2番目にスラッシュを含む
+```
+
+ほとんどのWebフレームワークはルーティングレベルでこれを正しく処理しますが、URLを手動で構築したり、パスにIDを埋め込むREST APIを扱う際には重要です。
+
+## 国際文字（日本語など）
+
+現代のURLは**国際化リソース識別子（IRI）**を通じてUnicodeをサポートしています。ブラウザはUTF-8バイト表現を使ってASCII以外の文字を自動的にパーセントエンコードします：
+
+```
+https://example.com/search?q=日本語
+→ https://example.com/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E
+```
+
+```python
+from urllib.parse import quote
+
+quote("日本語", safe="")
+# "%E6%97%A5%E6%9C%AC%E8%AA%9E"
+```
+
+## よくある落とし穴
+
+### 二重エンコード
+
+すでにエンコードされた文字列を再エンコードすると壊れた出力が生成されます：
+
+```js
+// 誤り：既にエンコードされた値を再エンコード
+encodeURIComponent("hello%20world")
+// "hello%2520world"  — %25は%のエンコード
+```
+
+値がすでにエンコードされているか不明な場合は、先にデコードしてください。
+
+### リダイレクトURLのエンコード忘れ
+
+クエリパラメータに埋め込まれたリダイレクト先URLは完全にエンコードする必要があります：
+
+```
+# 壊れている — 外側の?next=パーサーがリダイレクトURLの終わりを判断できない
+https://auth.example.com/login?next=https://app.example.com/page?id=1&view=full
+
+# 正しい
+https://auth.example.com/login?next=https%3A%2F%2Fapp.example.com%2Fpage%3Fid%3D1%26view%3Dfull
+```
+
+## まとめ
+
+| 状況 | 使うべきもの |
+|------|------------|
+| クエリパラメータ値をエンコード | `encodeURIComponent` |
+| URL文字列全体をエンコード | `encodeURI` |
+| クエリ文字列を構築 | `URLSearchParams` / `urlencode` |
+| URLまたはコンポーネントをデコード | `decodeURIComponent` / `unquote` |
+| 手動でのクイックエンコード・デコード | [ZeroTool URL エンコーダー](/tools/url-encode-decode) |
+
+URLエンコーディングは、詳細を知ることで再現困難なバグを丸ごと防ぐことができるトピックです。不確かな場合はエンコードし、文字列連結ではなく言語組み込みのユーティリティを使いましょう。
+
+**[ZeroTool で今すぐURLをエンコード・デコード →](/tools/url-encode-decode)**

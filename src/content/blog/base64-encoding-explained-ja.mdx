@@ -1,0 +1,169 @@
+---
+title: "Base64エンコードとは何か：仕組みと使い方を徹底解説"
+description: "Base64エンコードの仕組み、使いどころ、JavaScript・Python・コマンドラインでのエンコード・デコード方法をわかりやすく解説。無料オンラインツール付き。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "base64-encoding-explained"
+tags: ["base64", "encoding", "developer-tools"]
+---
+
+Base64はメール、JWT、データURI、HTTP Basic認証など、多くの場面で登場します。しかし「Base64とは何か」「いつ使うべきか」を正確に理解している開発者は少ないかもしれません。このガイドで基礎から実践まで解説します。
+
+## Base64とは
+
+Base64は、バイナリデータを64種類の印字可能なASCII文字に変換するエンコード方式です。使用する文字セットは以下の通りです：
+
+```
+A–Z  (26文字)
+a–z  (26文字)
+0–9  (10文字)
++  /  (2文字)
+=    (パディング)
+```
+
+**Base64は暗号化ではありません** — エンコードです。誰でも簡単にデコードできます。
+
+## Base64が必要な理由
+
+画像やファイルなどのバイナリデータは、テキストしか扱えないシステム（メールプロトコル、XML、JSON、HTTPヘッダー）を安全に通過できません。Base64はバイナリをプレーンテキストとして表現することで、この問題を解決します。
+
+**主な用途：**
+
+- **HTML/CSSへの画像埋め込み**：`src="data:image/png;base64,..."`
+- **JWTトークン**：ヘッダーとペイロードはBase64URLエンコードされている
+- **HTTP Basic認証**：`Authorization: Basic dXNlcjpwYXNz`
+- **メール添付ファイル**：MIMEエンコーディング
+- **JSONへのバイナリ保存**：Base64文字列として画像を返すAPI
+
+## Base64エンコードの仕組み
+
+Base64は3バイト（24ビット）を一度に処理し、4つの6ビットグループに分割します。各6ビット値が64文字のアルファベットの1文字に対応します。
+
+```
+入力:   M  a  n
+バイト: 77 97 110
+2進数:  01001101 01100001 01101110
+分割:   010011 010110 000101 101110
+インデックス: 19  22   5     46
+出力:   T      W      F      u
+```
+
+入力が3の倍数でない場合、出力長が4の倍数になるよう`=`でパディングされます。
+
+## オンラインでBase64エンコード・デコード
+
+ブラウザ上で最も手軽に操作できます：
+
+**[ZeroTool Base64 エンコーダー/デコーダー →](/tools/base64)**
+
+テキストやURLを貼り付けて即座にエンコード・デコード。ワンクリックでコピー。インストール不要です。
+
+## コードでエンコード・デコードする
+
+### JavaScript（ブラウザ）
+
+```js
+// エンコード
+const encoded = btoa('Hello, World!');
+// SGVsbG8sIFdvcmxkIQ==
+
+// デコード
+const decoded = atob('SGVsbG8sIFdvcmxkIQ==');
+// Hello, World!
+```
+
+**注意：** `btoa` / `atob` はLatin-1のみ対応です。日本語などUnicode文字列には以下を使います：
+
+```js
+// Unicodeをエンコード
+const encoded = btoa(unescape(encodeURIComponent('こんにちは')));
+
+// デコード
+const decoded = decodeURIComponent(escape(atob(encoded)));
+```
+
+### JavaScript（Node.js）
+
+```js
+// エンコード
+const encoded = Buffer.from('Hello, World!').toString('base64');
+
+// デコード
+const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
+```
+
+### Python
+
+```python
+import base64
+
+# エンコード
+encoded = base64.b64encode(b'Hello, World!').decode('utf-8')
+# SGVsbG8sIFdvcmxkIQ==
+
+# デコード
+decoded = base64.b64decode('SGVsbG8sIFdvcmxkIQ==').decode('utf-8')
+# Hello, World!
+```
+
+### コマンドライン
+
+```bash
+# エンコード
+echo -n 'Hello, World!' | base64
+# SGVsbG8sIFdvcmxkIQ==
+
+# デコード
+echo 'SGVsbG8sIFdvcmxkIQ==' | base64 --decode
+# Hello, World!
+```
+
+macOSでは`--decode`の代わりに`-D`を使います。
+
+## Base64URL：URLセーフな変種
+
+標準Base64では`+`と`/`を使いますが、これらはURLで特殊な意味を持ちます。**Base64URL**はこれらを置き換えます：
+
+| 標準Base64 | Base64URL |
+|------------|-----------|
+| `+`        | `-`       |
+| `/`        | `_`       |
+| `=` パディング | 省略（任意） |
+
+JWTはBase64URLを使用します。`eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.xxx`のようなJWTで、`.`区切りの各セクションがBase64URLエンコードされた文字列です。
+
+```js
+// Node.js でBase64URLエンコード
+const encoded = Buffer.from(data).toString('base64url');
+```
+
+## データサイズの増加
+
+Base64はデータサイズを約33%増加させます（3バイト→4文字）。大きなファイル（画像、動画）では無視できないオーバーヘッドです。
+
+| 元のサイズ | Base64後のサイズ |
+|------------|-----------------|
+| 1 KB       | 約1.37 KB       |
+| 1 MB       | 約1.37 MB       |
+| 10 MB      | 約13.7 MB       |
+
+## Base64を使わないべきケース
+
+- **ファイルダウンロード** — ファイルを直接配信する方が効率的
+- **パスワード** — Base64は暗号化ではない。適切なハッシュ化（bcrypt、argon2）を使うこと
+- **大容量バイナリ転送** — マルチパートフォームデータやバイナリプロトコルを優先
+
+## まとめ
+
+| タスク | 方法 |
+|--------|------|
+| 素早くエンコード・デコード | [ZeroTool Base64 ツール](/tools/base64) |
+| ブラウザJS | `btoa()` / `atob()` |
+| Node.js | `Buffer.from(...).toString('base64')` |
+| Python | `base64.b64encode()` / `base64.b64decode()` |
+| CLI | `base64` / `base64 --decode` |
+| URLセーフ版 | Base64URL（`+`→`-`、`/`→`_`） |
+
+Base64は開発者にとって基本的なツールです。いつ、どのように使うかを理解しておくことで、API・認証ヘッダー・データパイプラインの微妙なバグを防ぐことができます。
+
+**[ZeroTool Base64 ツールで今すぐエンコード・デコード →](/tools/base64)**

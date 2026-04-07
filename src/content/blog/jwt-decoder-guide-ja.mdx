@@ -1,0 +1,196 @@
+---
+title: "JWTデコード完全ガイド：JSON Web Tokenの仕組みとセキュリティ"
+description: "JWTの構造・クレーム・署名アルゴリズムをわかりやすく解説。Node.js・Python・Goでの検証方法と、開発者が陥りがちなセキュリティの落とし穴も網羅。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "jwt-decoder-guide"
+tags: ["jwt", "json-web-token", "authentication", "developer-tools"]
+---
+
+JSON Web Token（JWT）は現代の認証基盤として広く使われており、ユーザーのアイデンティティや権限をAPIとサービス間で伝達します。しかし生のJWTは暗号のような文字列に見えます。このガイドではJWTの中身、デコード方法、そして開発者が陥りがちなセキュリティの落とし穴を解説します。
+
+## JWTとは
+
+JWTは**クレーム**（キーと値のペア）をエンコードし、オプションで**暗号署名**を含む、コンパクトでURLセーフな文字列です。当事者間でアイデンティティと認可情報を渡すために使用されます。
+
+JWTはこのような形をしています：
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+```
+
+ドット（`.`）で区切られた3つのBase64URLエンコード部分：
+
+1. **ヘッダー** — アルゴリズムとトークンタイプ
+2. **ペイロード** — クレーム（ユーザーデータ）
+3. **署名** — 真正性を証明する暗号署名
+
+## JWTをデコードする
+
+**[ZeroTool JWT デコーダー →](/tools/jwt-decoder)**
+
+JWTを貼り付けると、デコードされたヘッダー・ペイロード・署名の詳細を即座に確認できます。ツールはブラウザ上で完全に動作し、トークンがサーバーに送信されることはありません。
+
+### デコードで何がわかるか
+
+上記のサンプルトークンをデコードすると：
+
+**ヘッダー：**
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+**ペイロード：**
+```json
+{
+  "sub": "1234567890",
+  "name": "Alice",
+  "iat": 1516239022
+}
+```
+
+デコード自体は単純なBase64URLデコードであり、秘密鍵は不要です。つまり**ペイロードは暗号化されておらず、秘密でもありません**。パスワード・決済情報・プライベートAPIキーなどの機密データをJWTペイロードに入れてはいけません。
+
+## 標準クレーム
+
+JWT仕様で定義されている登録済みクレーム：
+
+| クレーム | 意味 |
+|---------|------|
+| `sub` | Subject — トークンの対象（通常はユーザーID） |
+| `iss` | Issuer — トークンの発行者 |
+| `aud` | Audience — トークンの受け取り手 |
+| `exp` | 有効期限（Unixタイムスタンプ） |
+| `iat` | 発行時刻（Unixタイムスタンプ） |
+| `nbf` | Not before — この時刻以前は無効 |
+| `jti` | JWT ID — トークンの一意識別子 |
+
+`exp`は最重要です。常に確認してください。トークンは`nbf`（または`iat`）から`exp`の間のみ有効です。
+
+## 署名アルゴリズム
+
+### HMAC（HS256、HS384、HS512）
+
+署名と検証の両方に共有秘密鍵を使用します。シンプルですが、発行者と検証者が同じ秘密鍵を共有する必要があります。
+
+```
+署名 = HMAC-SHA256(base64url(ヘッダー) + "." + base64url(ペイロード), 秘密鍵)
+```
+
+秘密鍵が弱い場合（例：`"secret"`や`"123456"`）、ブルートフォース攻撃を受ける可能性があります。
+
+### RSA / ECDSA（RS256、RS384、ES256、ES384）
+
+非対称アルゴリズム：発行者が**秘密鍵**で署名し、検証者は**公開鍵**で署名を確認します。公開鍵は自由に配布でき、秘密鍵を持つ者だけが有効なトークンを作成できます。
+
+複数のサービスがトークンを検証する必要があるが、1つのサービスだけが発行すべきマルチサービスアーキテクチャに最適です。
+
+## コードでJWTを検証する
+
+### Node.js（jsonwebtoken）
+
+```js
+const jwt = require('jsonwebtoken');
+
+// 対称秘密鍵で検証
+try {
+  const decoded = jwt.verify(token, 'your-secret-key');
+  console.log(decoded.sub); // ユーザーID
+} catch (err) {
+  // TokenExpiredError、JsonWebTokenError など
+  console.error('無効なトークン:', err.message);
+}
+```
+
+### Python（PyJWT）
+
+```python
+import jwt
+
+try:
+    payload = jwt.decode(token, "your-secret-key", algorithms=["HS256"])
+    print(payload["sub"])
+except jwt.ExpiredSignatureError:
+    print("トークンが期限切れです")
+except jwt.InvalidTokenError as e:
+    print(f"無効なトークン: {e}")
+```
+
+### Go（golang-jwt/jwt）
+
+```go
+import "github.com/golang-jwt/jwt/v5"
+
+token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+    if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+        return nil, fmt.Errorf("予期しない署名アルゴリズム: %v", token.Header["alg"])
+    }
+    return []byte("your-secret-key"), nil
+})
+
+if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+    fmt.Println(claims["sub"])
+}
+```
+
+## `alg: none` 脆弱性
+
+初期のJWTライブラリには致命的な欠陥がありました：`alg`ヘッダーが`"none"`に設定されていると、署名を検証せずにトークンを受け入れてしまい、誰でも任意のトークンを作成できました。
+
+**検証時は常に期待するアルゴリズムを明示的に指定してください：**
+
+```python
+# 誤り — "none"を含む任意のアルゴリズムを受け入れてしまう
+jwt.decode(token, key)
+
+# 正しい — HS256のみ受け入れる
+jwt.decode(token, key, algorithms=["HS256"])
+```
+
+`"none"`を有効なアルゴリズムとして許可しないようにしましょう。
+
+## ブラウザでのJWT保存場所
+
+| 保存場所 | XSSリスク | CSRFリスク | 備考 |
+|---------|----------|-----------|------|
+| `localStorage` | 高 | なし | XSSでトークンを盗まれる危険性がある |
+| `sessionStorage` | 高 | なし | localStorageと同様 |
+| `HttpOnly` Cookie | 低 | 中 | XSSで読み取り不可；`SameSite=Strict`でCSRF対策 |
+
+最も安全な選択肢は`HttpOnly; Secure; SameSite=Strict`のCookieです。`localStorage`に保存したJWTはページ上のすべてのJavaScriptからアクセス可能で、XSS脆弱性が1つあるだけで全トークンが漏洩します。
+
+## JWTとセッショントークンの違い
+
+JWTはステートレス：サーバーはリクエストごとにデータベースを検索する必要がなく、スケールしやすいです。ただし、**JWTは有効期限前に失効できません**。
+
+即座の失効が必要な場合（ログアウト、アカウントBANなど）、2つの選択肢があります：
+
+1. JWTを短命（5〜15分）にしてリフレッシュトークンを使う
+2. サーバーサイドの失効リスト（拒否リスト）を維持する — これはJWTを事実上ステートフルにします
+
+## デバッグのヒント
+
+本番環境でJWT関連のエラーが発生したとき：
+
+1. [ZeroTool JWT デコーダー](/tools/jwt-decoder)でトークンをデコードし、`exp`・`iss`・`aud`を確認
+2. **クロックスキューを確認** — サーバーと発行者の時刻がずれていると、`exp`チェックが断続的に失敗します
+3. **アルゴリズムを確認** — トークンの`alg`がコードの期待値と一致しているか
+4. **オーディエンスを確認** — `aud`が設定されている場合、検証時に期待するオーディエンスを渡す必要があります
+
+## まとめ
+
+| タスク | ツール / アプローチ |
+|--------|-----------------|
+| JWTペイロードを確認 | [ZeroTool JWT デコーダー](/tools/jwt-decoder) |
+| Node.jsで検証 | `jsonwebtoken`ライブラリ |
+| Pythonで検証 | `PyJWT`ライブラリ |
+| 新システムのアルゴリズム | RS256（非対称）またはHS256（強い秘密鍵で対称） |
+| トークンの保存 | `HttpOnly` Cookie |
+| 失効対策 | 短い有効期限＋リフレッシュトークン |
+
+JWTは強力で広くサポートされていますが、「不透明なBlob」として扱う開発者を罠にかける微妙なセキュリティリスクがあります。中身を理解し、検証の意味を正確に把握することが、安全な認証と壊れた認証の分かれ目です。
+
+**[ZeroTool JWT デコーダーで今すぐデコード →](/tools/jwt-decoder)**

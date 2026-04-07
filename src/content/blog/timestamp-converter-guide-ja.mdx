@@ -1,0 +1,232 @@
+---
+title: "Unixタイムスタンプ変換ガイド：エポック時刻の仕組みと扱い方"
+description: "Unixタイムスタンプの仕組み、秒とミリ秒の違い、JavaScript・Python・Go・SQLでの変換方法を解説。タイムゾーン処理と2038年問題も網羅。無料オンラインツール付き。"
+pubDate: 2026-04-07
+lang: "ja"
+translationSlug: "timestamp-converter-guide"
+tags: ["timestamp", "unix-timestamp", "epoch", "datetime", "developer-tools"]
+---
+
+ログファイルで`1712265600`のような数値を見て「これは実際に何時なんだろう？」と思った経験は誰にでもあるはずです。Unixタイムスタンプはソフトウェアにおける時刻の共通言語です — コンパクトで、曖昧さがなく、タイムゾーンに依存しません。このガイドでは仕組みと変換方法を解説します。
+
+## Unixタイムスタンプとは
+
+Unixタイムスタンプ（エポック時刻とも呼ぶ）は、**1970年1月1日 00:00:00 UTC（Unixエポック）からの経過秒数**です。この基準点はUNIX設計時にやや恣意的に選ばれましたが、コンピュータシステムで時刻を表現する際の普遍的な標準となっています。
+
+```
+0          → 1970-01-01 00:00:00 UTC
+1712265600 → 2024-04-05 00:00:00 UTC
+```
+
+主な特性：
+- **タイムゾーン非依存**：タイムスタンプは常にUTC。ローカル時刻への変換にはタイムゾーンが必要
+- **単調増加**：大きい数値 = より後の時刻
+- **整数演算**：タイムスタンプの比較は単純な整数比較
+
+## タイムスタンプを即座に変換する
+
+**[ZeroTool タイムスタンプコンバーター →](/tools/timestamp-converter)**
+
+Unixタイムスタンプを入力するとUTCとローカル時刻の両方を表示。日付を入力すると対応するタイムスタンプを取得。ミリ秒・秒・相対オフセットに対応しています。
+
+## 秒とミリ秒の違い
+
+APIによって扱いが異なります。JavaScriptは**ミリ秒**（`Date.now()`はms返す）を使用します。Unixコマンドラインツールとほとんどのデータベースタイムスタンプは**秒**を使用します。Redis・MongoDB・多くのREST APIはミリ秒を使用します。
+
+```
+秒単位のタイムスタンプ:      1712265600
+ミリ秒単位のタイムスタンプ:  1712265600000
+```
+
+タイムスタンプを受け取ったとき、現在時刻と大まかに比較してみてください — 期待値より1000倍大きければミリ秒です。ZeroToolのコンバーターは両方のフォーマットに対応しています。
+
+## 現在のタイムスタンプを取得する
+
+```bash
+# Bash — 秒
+date +%s
+
+# Bash — ミリ秒（GNU date）
+date +%s%3N
+```
+
+```js
+// JavaScript — ミリ秒
+Date.now()
+
+// JavaScript — 秒
+Math.floor(Date.now() / 1000)
+```
+
+```python
+# Python — 秒（浮動小数点）
+import time
+time.time()
+
+# Python — 秒（整数）
+int(time.time())
+```
+
+## コードでタイムスタンプを変換する
+
+### JavaScript
+
+```js
+// タイムスタンプ → 日時
+const ts = 1712265600;  // 秒
+const date = new Date(ts * 1000);  // ミリ秒のために1000を掛ける
+
+console.log(date.toISOString());
+// "2024-04-05T00:00:00.000Z"
+
+console.log(date.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+// "2024/4/5 9:00:00"
+
+// 日時 → タイムスタンプ
+const timestamp = Math.floor(new Date('2024-04-05').getTime() / 1000);
+console.log(timestamp);  // 1712275200
+```
+
+### Python
+
+```python
+from datetime import datetime, timezone
+
+# タイムスタンプ → datetime（UTC）
+ts = 1712265600
+dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+print(dt.isoformat())
+# 2024-04-05 00:00:00+00:00
+
+# タイムスタンプ → datetime（ローカルタイムゾーン）
+dt_local = datetime.fromtimestamp(ts)
+print(dt_local)
+
+# datetime → タイムスタンプ
+from datetime import datetime, timezone
+dt = datetime(2024, 4, 5, 0, 0, 0, tzinfo=timezone.utc)
+print(int(dt.timestamp()))  # 1712265600
+```
+
+### Go
+
+```go
+import (
+    "fmt"
+    "time"
+)
+
+// タイムスタンプ → time.Time
+ts := int64(1712265600)
+t := time.Unix(ts, 0).UTC()
+fmt.Println(t.Format(time.RFC3339))
+// 2024-04-05T00:00:00Z
+
+// time.Time → タイムスタンプ
+timestamp := t.Unix()
+fmt.Println(timestamp)  // 1712265600
+```
+
+### SQL
+
+```sql
+-- PostgreSQL: タイムスタンプ → 人間が読める形式
+SELECT to_timestamp(1712265600) AT TIME ZONE 'UTC';
+-- 2024-04-05 00:00:00+00
+
+-- MySQL: タイムスタンプ → 人間が読める形式
+SELECT FROM_UNIXTIME(1712265600);
+-- 2024-04-05 00:00:00
+
+-- 現在のタイムスタンプ
+SELECT EXTRACT(EPOCH FROM now())::int;  -- PostgreSQL
+SELECT UNIX_TIMESTAMP();               -- MySQL
+```
+
+## タイムゾーンの扱い方
+
+Unixタイムスタンプは常にUTCです。ローカル時刻への変換にはタイムゾーン識別子が必要です：
+
+```python
+from datetime import datetime
+import zoneinfo
+
+ts = 1712265600
+# 東京時間（UTC+9）
+dt = datetime.fromtimestamp(ts, tz=zoneinfo.ZoneInfo("Asia/Tokyo"))
+print(dt.isoformat())
+# 2024-04-05T09:00:00+09:00
+
+# ニューヨーク時間
+dt = datetime.fromtimestamp(ts, tz=zoneinfo.ZoneInfo("America/New_York"))
+print(dt.isoformat())
+# 2024-04-04T20:00:00-04:00
+```
+
+**よくある間違い：** タイムゾーンなしの`datetime.fromtimestamp(ts)`はサーバーのローカルタイムゾーンを使用します。本番環境では非決定論的な動作になります。常にタイムゾーンを明示的に指定してください。
+
+## 2038年問題
+
+32ビット符号付き整数として保存されたUnixタイムスタンプは、**2038年1月19日 03:14:07 UTC**に最大値（`2,147,483,647`）を超えてオーバーフローします。
+
+現代のシステムは64ビット整数を使用しており、数十億年はオーバーフローしません。しかし、組み込みシステム・レガシーデータベース・一部のCコードでは32ビットタイムスタンプを使用している可能性があります。長期運用のシステムを扱う場合は、タイムスタンプフィールドが64ビットであることを確認してください。
+
+## ISO 8601：人間が読める代替フォーマット
+
+ISO 8601は日付と時刻を文字列として表現する国際標準です：
+
+```
+2024-04-05T00:00:00Z          UTC
+2024-04-05T09:00:00+09:00     東京
+2024-04-05T00:00:00.000Z      ミリ秒精度
+```
+
+ISO 8601文字列は辞書順ソートで正しい順序になり、ロケールをまたいで曖昧さがありません。ログ・API・ユーザー向けの時刻表示にはUnixタイムスタンプよりISO 8601を優先してください。
+
+```js
+new Date().toISOString()
+// "2024-04-05T00:00:00.000Z"
+```
+
+```python
+from datetime import datetime, timezone
+datetime.now(timezone.utc).isoformat()
+# "2024-04-05T00:00:00.000000+00:00"
+```
+
+## 時間の計算
+
+```js
+const ONE_HOUR = 3600;    // 秒
+const ONE_DAY  = 86400;
+const ONE_WEEK = 604800;
+
+// 1週間後
+const nextWeek = Math.floor(Date.now() / 1000) + ONE_WEEK;
+
+// 2つのタイムスタンプ間の日数
+const diff = Math.abs(ts2 - ts1);
+const days = Math.floor(diff / 86400);
+```
+
+## 主なタイムスタンプフォーマット
+
+| フォーマット | 例 | 備考 |
+|-----------|-----|------|
+| Unix秒 | `1712265600` | 10桁（2286年まで） |
+| Unixミリ秒 | `1712265600000` | 13桁 |
+| ISO 8601 UTC | `2024-04-05T00:00:00Z` | APIに最適 |
+| ISO 8601 オフセット付き | `2024-04-05T09:00:00+09:00` | タイムゾーン含む |
+| RFC 2822 | `Fri, 05 Apr 2024 00:00:00 +0000` | メールヘッダーで使用 |
+
+## まとめ
+
+Unixタイムスタンプはソフトウェアにおける時刻の基盤です。重要なルール：
+
+1. **常にUTCで処理する** — ローカル時刻への変換は表示レイヤーでのみ行う
+2. **APIが秒かミリ秒かを把握する**
+3. **タイムスタンプには64ビット整数を使用する**（32ビットは2038年にオーバーフロー）
+4. **タイムゾーンは明示的に指定する** — サーバーのローカルタイムゾーンに依存しない
+5. **APIとログには ISO 8601を優先する**
+
+**[ZeroTool でUnixタイムスタンプを今すぐ変換 →](/tools/timestamp-converter)**
