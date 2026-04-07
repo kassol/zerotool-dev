@@ -57,6 +57,9 @@ const tools = [
   { slug: 'curl-to-code',            name: 'cURL to Code Converter',        description: 'Convert cURL commands to Python, JavaScript, Go, PHP, and Node.js code instantly.' },
   { slug: 'json-to-zod',             name: 'JSON to Zod Schema',            description: 'Generate Zod validation schemas from JSON data. Handles nested objects, arrays, and optional properties.' },
   { slug: 'docker-to-compose',       name: 'Docker Run to Compose',         description: 'Convert docker run commands to docker-compose.yml. Supports ports, volumes, env vars, networks, and more.' },
+  { slug: 'rsa-key-generator',      name: 'RSA Key Pair Generator',        description: 'Generate RSA key pairs (2048/4096-bit) in PEM or JWK format. 100% client-side.' },
+  { slug: 'totp-generator',         name: 'TOTP Generator',                description: 'Generate RFC 6238 TOTP codes with live countdown. Includes QR code.' },
+  { slug: 'json-diff',              name: 'JSON Diff',                     description: 'Compare two JSON objects and visualize differences as RFC 6902 JSON Patch.' },
 ];
 
 /** Escape XML special chars so SVG stays valid. */
