@@ -51,34 +51,39 @@ export default defineConfig({
       serialize(item) {
         const { pathname } = new URL(item.url);
 
-        // EN blog post: /blog/{slug}/
-        const enMatch = pathname.match(/^\/blog\/([^/]+)\/$/);
-        if (enMatch) {
-          const slug = enMatch[1];
-          const zhSlug = `${slug}-zh`;
-          if (blogSlugs.has(zhSlug)) {
-            item.links = [
-              { url: `${SITE}/blog/${slug}/`, lang: 'en' },
-              { url: `${SITE}/zh/blog/${zhSlug}/`, lang: 'zh' },
-            ];
+        // Language configs: regex, url builder, slug builder (base → lang slug)
+        const LANGS = [
+          { lang: 'en', re: /^\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/blog/${s}/`, slug: (b) => b },
+          { lang: 'zh', re: /^\/zh\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/zh/blog/${s}/`, slug: (b) => `${b}-zh` },
+          { lang: 'ja', re: /^\/ja\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/ja/blog/${s}/`, slug: (b) => `${b}-ja` },
+          { lang: 'ko', re: /^\/ko\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/ko/blog/${s}/`, slug: (b) => `${b}-ko` },
+        ];
+
+        // Detect which language this URL belongs to and derive base slug
+        let baseSlug = null;
+        let currentLang = null;
+        for (const { lang, re } of LANGS) {
+          const m = pathname.match(re);
+          if (m) {
+            const suffix = lang === 'en' ? '' : `-${lang}`;
+            if (suffix && !m[1].endsWith(suffix)) break;
+            baseSlug = suffix ? m[1].slice(0, -suffix.length) : m[1];
+            currentLang = lang;
+            break;
           }
-          const date = blogDates.get(slug);
-          if (date) item.lastmod = date;
-          return item;
         }
 
-        // ZH blog post: /zh/blog/{slug-zh}/
-        const zhMatch = pathname.match(/^\/zh\/blog\/([^/]+)\/$/);
-        if (zhMatch && zhMatch[1].endsWith('-zh')) {
-          const zhSlug = zhMatch[1];
-          const enSlug = zhSlug.slice(0, -3);
-          if (blogSlugs.has(enSlug)) {
-            item.links = [
-              { url: `${SITE}/blog/${enSlug}/`, lang: 'en' },
-              { url: `${SITE}/zh/blog/${zhSlug}/`, lang: 'zh' },
-            ];
-          }
-          const date = blogDates.get(zhSlug) || blogDates.get(enSlug);
+        if (baseSlug) {
+          // Build hreflang links for all language variants that exist on disk
+          const links = LANGS
+            .map(({ lang, url, slug }) => ({ lang, url: url(slug(baseSlug)), slug: slug(baseSlug) }))
+            .filter(({ slug }) => blogSlugs.has(slug))
+            .map(({ lang, url }) => ({ url, lang }));
+          if (links.length > 1) item.links = links;
+
+          // lastmod: prefer current lang's date, fall back to EN
+          const currentSlug = currentLang === 'en' ? baseSlug : `${baseSlug}-${currentLang}`;
+          const date = blogDates.get(currentSlug) || blogDates.get(baseSlug);
           if (date) item.lastmod = date;
           return item;
         }
