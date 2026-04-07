@@ -62,6 +62,7 @@ const tools = [
   { slug: 'json-diff',              name: 'JSON Diff',                     description: 'Compare two JSON objects and visualize differences as RFC 6902 JSON Patch.' },
   { slug: 'env-file-parser',       name: 'Env File Parser',               description: 'Parse .env files online — visualize key-value pairs and export to JSON.' },
   { slug: 'yaml-validator',        name: 'YAML Validator',                description: 'Validate YAML syntax online with line and column error details.' },
+  { slug: 'json-schema-validator', name: 'JSON Schema Validator',         description: 'Validate JSON data against a JSON Schema (Draft-07, Draft 2020-12).' },
 ];
 
 /** Escape XML special chars so SVG stays valid. */
