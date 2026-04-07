@@ -1,0 +1,413 @@
+---
+title: "JSON Schema 在线验证：即时校验 JSON 数据结构与类型约束"
+description: "在线验证 JSON 是否符合 JSON Schema，支持 draft-07 和 2020-12，精确定位错误路径，覆盖 API 合约、配置文件、表单校验等场景，全程本地处理。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "json-schema-validator-guide"
+tags: ["json schema验证", "json schema", "json校验", "开发工具", "api合约"]
+---
+
+JSON Schema 是描述和校验 JSON 数据结构的工业标准。无论是 API 请求体的合约约束、配置文件的格式校验，还是前端表单的数据验证，**在线 JSON Schema 验证工具**都能让你即时测试 Schema 与样本数据——无需安装依赖，无需搭建测试环境。
+
+[立即验证 JSON Schema →](/tools/json-schema-validator)
+
+## 什么是 JSON Schema？
+
+JSON Schema 是一套用于注释和验证 JSON 文档的声明式规范。Schema 本身也是一个 JSON（或 YAML）文档，描述数据的预期结构、类型和约束条件。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "email", "role"],
+  "properties": {
+    "id": { "type": "integer", "minimum": 1 },
+    "email": { "type": "string", "format": "email" },
+    "role": { "type": "string", "enum": ["admin", "editor", "viewer"] },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}
+```
+
+这个 Schema 确保：被验证的 JSON 对象包含三个必填字段，`id` 是正整数，`email` 是合法邮箱，`role` 只能是三个允许值之一，且不允许出现未声明的额外字段。
+
+## JSON Schema 草案版本
+
+规范经历了多次演进，了解版本差异能避免行为不符合预期的困惑：
+
+| 版本 | 发布时间 | 重要新增 |
+|---|---|---|
+| Draft-04 | 2013 | 核心词汇表、`$ref`、`allOf`/`anyOf`/`oneOf` |
+| Draft-06 | 2017 | `const`、`contains`、`propertyNames`、`readOnly` |
+| Draft-07 | 2019 | `if`/`then`/`else`、`writeOnly`、`$comment` |
+| 2019-09 | 2019 | `$defs`、`unevaluatedProperties`、`$anchor` |
+| 2020-12 | 2021 | Prefix items、`$dynamicRef`、改进的 `$ref` |
+
+始终用 `$schema` 声明版本。缺少 `$schema` 时，各验证器可能应用不同的默认行为。目前生产环境主流是 draft-07 和 2020-12。
+
+## 核心 Schema 关键词
+
+### 类型约束
+
+```json
+{ "type": "string" }
+{ "type": "integer" }
+{ "type": "number" }
+{ "type": "boolean" }
+{ "type": "null" }
+{ "type": "array" }
+{ "type": "object" }
+
+// 允许多种类型：
+{ "type": ["string", "null"] }
+```
+
+### 对象约束
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "age": { "type": "integer", "minimum": 0 }
+  },
+  "required": ["name"],
+  "additionalProperties": false,
+  "minProperties": 1,
+  "maxProperties": 10
+}
+```
+
+`additionalProperties: false` 是最有效的单一安全约束——它拒绝 `properties` 中未声明的任何键，能直接捕获字段拼写错误和意外字段。
+
+### 字符串约束
+
+```json
+{
+  "type": "string",
+  "minLength": 3,
+  "maxLength": 100,
+  "pattern": "^[a-z][a-z0-9_]*$",
+  "format": "email"
+}
+```
+
+常用 `format` 值：`email`、`uri`、`date`、`date-time`、`time`、`ipv4`、`ipv6`、`uuid`。注意：`format` 默认只是注释，验证器需要显式开启 format 校验才会强制执行。
+
+### 数组约束
+
+```json
+{
+  "type": "array",
+  "items": { "type": "string" },
+  "minItems": 1,
+  "maxItems": 50,
+  "uniqueItems": true
+}
+```
+
+在 2020-12 版本中，用于元组验证的 `items` 更名为 `prefixItems`。同类型数组继续用 `items`，位置敏感的元组用 `prefixItems`。
+
+### 数值约束
+
+```json
+{
+  "type": "number",
+  "minimum": 0,
+  "maximum": 100,
+  "exclusiveMinimum": 0,
+  "multipleOf": 0.5
+}
+```
+
+### 枚举与常量
+
+```json
+// 允许值列表：
+{ "enum": ["draft", "published", "archived"] }
+
+// 精确匹配单一值（适合区分联合类型）：
+{ "const": "v2" }
+```
+
+### 组合关键词
+
+```json
+// 必须同时满足所有子 Schema：
+{ "allOf": [{ "type": "string" }, { "minLength": 1 }] }
+
+// 满足至少一个子 Schema：
+{ "anyOf": [{ "type": "string" }, { "type": "number" }] }
+
+// 恰好满足一个子 Schema：
+{ "oneOf": [
+  { "type": "string", "format": "email" },
+  { "type": "string", "format": "uri" }
+] }
+
+// 不满足子 Schema：
+{ "not": { "type": "null" } }
+```
+
+### 条件校验（Draft-07+）
+
+```json
+{
+  "if": { "properties": { "type": { "const": "company" } } },
+  "then": { "required": ["companyName", "taxId"] },
+  "else": { "required": ["firstName", "lastName"] }
+}
+```
+
+这是 JSON Schema 最强大的特性之一——根据某个字段的值动态决定其他字段是否必填，非常适合多类型表单的后端校验。
+
+### Schema 引用与复用
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "address": {
+      "type": "object",
+      "required": ["street", "city", "country"],
+      "properties": {
+        "street": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string", "minLength": 2, "maxLength": 2 }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "billingAddress": { "$ref": "#/$defs/address" },
+    "shippingAddress": { "$ref": "#/$defs/address" }
+  }
+}
+```
+
+`$defs`（旧版草案用 `definitions`）保持 Schema 的 DRY 原则。`$ref` 支持本地引用（`#/...`）和远程引用（`https://...`）。
+
+## 各语言校验 JSON Schema
+
+### Node.js（AJV）
+
+[AJV](https://ajv.js.org/) 是最快、最广泛使用的 JavaScript JSON Schema 验证库：
+
+```bash
+npm install ajv ajv-formats
+```
+
+```javascript
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+
+const ajv = new Ajv({ allErrors: true });
+addFormats(ajv);
+
+const schema = {
+  type: 'object',
+  required: ['email', 'age'],
+  properties: {
+    email: { type: 'string', format: 'email' },
+    age: { type: 'integer', minimum: 18 },
+  },
+  additionalProperties: false,
+};
+
+const validate = ajv.compile(schema);
+const data = { email: 'user@example.com', age: 25 };
+
+if (validate(data)) {
+  console.log('校验通过');
+} else {
+  console.log('校验错误：', validate.errors);
+}
+```
+
+AJV 将 Schema 编译为优化后的 JavaScript 函数，性能极高，适合高频请求路径。
+
+### Python（jsonschema）
+
+```bash
+pip install jsonschema
+```
+
+```python
+import jsonschema
+from jsonschema import validate, ValidationError
+
+schema = {
+    "type": "object",
+    "required": ["email", "age"],
+    "properties": {
+        "email": {"type": "string", "format": "email"},
+        "age": {"type": "integer", "minimum": 18},
+    },
+    "additionalProperties": False,
+}
+
+data = {"email": "user@example.com", "age": 25}
+
+try:
+    validate(instance=data, schema=schema)
+    print("校验通过")
+except ValidationError as e:
+    print(f"校验失败：{e.message}")
+    print(f"错误路径：{list(e.absolute_path)}")
+```
+
+要获取所有错误（而非第一个），使用 `Draft202012Validator`：
+
+```python
+from jsonschema import Draft202012Validator
+
+validator = Draft202012Validator(schema)
+errors = list(validator.iter_errors(data))
+for error in errors:
+    print(f"{'.'.join(str(p) for p in error.path)}: {error.message}")
+```
+
+### Go（santhosh-tekuri/jsonschema）
+
+```bash
+go get github.com/santhosh-tekuri/jsonschema/v6
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+
+    "github.com/santhosh-tekuri/jsonschema/v6"
+)
+
+func main() {
+    schemaJSON := `{
+        "type": "object",
+        "required": ["email", "age"],
+        "properties": {
+            "email": {"type": "string", "format": "email"},
+            "age": {"type": "integer", "minimum": 18}
+        }
+    }`
+
+    compiler := jsonschema.NewCompiler()
+    compiler.AddResource("schema.json", strings.NewReader(schemaJSON))
+    schema, err := compiler.Compile("schema.json")
+    if err != nil {
+        panic(err)
+    }
+
+    data := map[string]any{"email": "user@example.com", "age": 25}
+    if err := schema.Validate(data); err != nil {
+        fmt.Println("校验失败：", err)
+    } else {
+        fmt.Println("校验通过")
+    }
+}
+```
+
+## 实际应用场景
+
+### API 请求合约校验
+
+在网关或中间件层校验入站 API 数据，在业务逻辑执行前拦截格式错误：
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateOrderRequest",
+  "type": "object",
+  "required": ["customerId", "items"],
+  "properties": {
+    "customerId": { "type": "string", "format": "uuid" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["productId", "quantity"],
+        "properties": {
+          "productId": { "type": "string" },
+          "quantity": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "couponCode": { "type": "string", "pattern": "^[A-Z0-9]{6,12}$" }
+  }
+}
+```
+
+### 配置文件启动校验
+
+在程序启动时校验配置，出现格式错误时立即 panic 并打印清晰的错误信息，而非在运行时崩溃：
+
+```json
+{
+  "type": "object",
+  "required": ["server", "database"],
+  "properties": {
+    "server": {
+      "type": "object",
+      "required": ["port"],
+      "properties": {
+        "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+        "host": { "type": "string", "default": "0.0.0.0" }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "poolSize": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    }
+  }
+}
+```
+
+### OpenAPI 集成
+
+OpenAPI 3.x 用 JSON Schema 的子集定义请求体和响应体。维护独立的 Schema 文件与 OpenAPI 规范保持同步，能有效防止接口合约漂移。
+
+## JSON Schema 与运行时校验库对比
+
+| 方案 | 可移植性 | 语言支持 | 学习曲线 | 生态工具 |
+|---|---|---|---|---|
+| JSON Schema | 高（语言无关） | 所有主流语言 | 中 | 优秀 |
+| TypeScript（Zod/Yup） | 仅 TypeScript | TypeScript/JS | 低 | 良好 |
+| Pydantic（Python） | 仅 Python | Python | 低 | 良好 |
+| Protobuf/gRPC | 高（二进制） | 全部 | 高 | 优秀 |
+| OpenAPI 规范 | 高 | 全部 | 中 | 优秀 |
+
+当你需要跨语言技术栈共享一份统一 Schema 时，JSON Schema 是最佳选择——定义一次，在任何语言中验证。
+
+## 常见错误
+
+**未设置 `additionalProperties: false`** — Schema 会接受任意额外字段，客户端传入意外数据时无法被拦截。
+
+**依赖 `format` 但未配置验证器** — `format: "email"` 默认只是注释，不是强制约束，必须在验证器中显式启用 format 校验。
+
+**混用草案版本** — 在 `$schema` 声明 draft-07 的同时使用 `$defs`（属于 2019-09+），会产生未定义行为。
+
+**忘记 `required`** — 不加 `required` 时，所有 `properties` 默认可选。一个有属性但无 `required` 的 Schema 可以验证通过 `{}`。
+
+**数据库大整数 ID 用 `type: "integer"`** — 64 位整数 ID 可能超出 JavaScript 的安全整数范围，考虑改用 `"type": "string"` 或添加 `"maximum": 9007199254740991`。
+
+## 在线 JSON Schema 验证工具
+
+本地测试 Schema 需要安装验证库、加载文件、运行代码，流程繁琐。[ZeroTool 的 JSON Schema 验证器](/tools/json-schema-validator)消除了所有这些摩擦：
+
+- Schema 与样本 JSON 并排输入，即时得到验证结果
+- 精确定位错误路径
+- 支持 draft-04、draft-06、draft-07、2019-09 和 2020-12
+- 100% 本地处理，数据不离开浏览器
+
+**[立即使用 JSON Schema 验证器 →](/tools/json-schema-validator)**
+
+{/* FAQ structured data is rendered via ToolLayout on the tool page */}

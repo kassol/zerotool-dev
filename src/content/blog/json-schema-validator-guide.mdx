@@ -1,0 +1,454 @@
+---
+title: "JSON Schema Validator Online: Validate JSON Data Against Schemas Instantly"
+description: "Validate JSON against JSON Schema online. Learn schema keywords, draft versions, validation in Python/Node.js/Go, and catch data contract bugs before they hit production."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "json-schema-validator-guide-zh"
+tags: ["json schema validator", "json schema", "json validation", "developer-tools", "api validation"]
+---
+
+JSON Schema is the industry standard for describing and validating JSON data structures. Whether you're enforcing API request payloads, validating configuration files, or building form validation logic, a **JSON schema validator online** lets you test schemas and sample data instantly — no library installation, no test harness required.
+
+[Validate your JSON against a schema now →](/tools/json-schema-validator)
+
+## What Is JSON Schema?
+
+JSON Schema is a declarative vocabulary for annotating and validating JSON documents. A schema is itself a JSON (or YAML) document that describes the expected shape, types, and constraints of data.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "email", "role"],
+  "properties": {
+    "id": { "type": "integer", "minimum": 1 },
+    "email": { "type": "string", "format": "email" },
+    "role": { "type": "string", "enum": ["admin", "editor", "viewer"] },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}
+```
+
+This schema ensures any validated JSON object has the three required fields, that `id` is a positive integer, `email` is a valid email address, and `role` is one of the three allowed values.
+
+## JSON Schema Draft Versions
+
+The specification has evolved significantly. Understanding the version landscape prevents confusion when schemas behave unexpectedly:
+
+| Draft | Released | Key Additions |
+|---|---|---|
+| Draft-04 | 2013 | Core vocabulary, `$ref`, `allOf`/`anyOf`/`oneOf` |
+| Draft-06 | 2017 | `const`, `contains`, `propertyNames`, `readOnly` |
+| Draft-07 | 2019 | `if`/`then`/`else`, `writeOnly`, `$comment` |
+| 2019-09 | 2019 | `$defs`, `unevaluatedProperties`, `$anchor` |
+| 2020-12 | 2021 | Prefix items, `$dynamicRef`, improved `$ref` |
+
+Always declare the draft with `$schema`. Without it, validators may apply different defaults. Most production use today is on draft-07 or 2020-12.
+
+## Core Schema Keywords
+
+### Type Constraints
+
+```json
+{ "type": "string" }
+{ "type": "integer" }
+{ "type": "number" }
+{ "type": "boolean" }
+{ "type": "null" }
+{ "type": "array" }
+{ "type": "object" }
+
+// Multiple allowed types:
+{ "type": ["string", "null"] }
+```
+
+### Object Constraints
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "age": { "type": "integer", "minimum": 0 }
+  },
+  "required": ["name"],
+  "additionalProperties": false,
+  "minProperties": 1,
+  "maxProperties": 10
+}
+```
+
+`additionalProperties: false` is the single most effective safety constraint — it rejects any key not listed in `properties`, catching typos and unexpected fields.
+
+### String Constraints
+
+```json
+{
+  "type": "string",
+  "minLength": 3,
+  "maxLength": 100,
+  "pattern": "^[a-z][a-z0-9_]*$",
+  "format": "email"
+}
+```
+
+Common `format` values: `email`, `uri`, `date`, `date-time`, `time`, `ipv4`, `ipv6`, `uuid`. Note that format validation is optional by default — validators must be configured to enforce it.
+
+### Array Constraints
+
+```json
+{
+  "type": "array",
+  "items": { "type": "string" },
+  "minItems": 1,
+  "maxItems": 50,
+  "uniqueItems": true
+}
+```
+
+In draft 2020-12, `items` was renamed to `prefixItems` for tuple validation. Use `items` for homogeneous arrays, `prefixItems` for positional tuples.
+
+### Numeric Constraints
+
+```json
+{
+  "type": "number",
+  "minimum": 0,
+  "maximum": 100,
+  "exclusiveMinimum": 0,
+  "multipleOf": 0.5
+}
+```
+
+### Enumeration and Const
+
+```json
+// One of several allowed values:
+{ "enum": ["draft", "published", "archived"] }
+
+// Exactly one value (useful for discriminated unions):
+{ "const": "v2" }
+```
+
+### Composition Keywords
+
+```json
+// Must match ALL subschemas:
+{ "allOf": [{ "type": "string" }, { "minLength": 1 }] }
+
+// Must match AT LEAST ONE subschema:
+{ "anyOf": [{ "type": "string" }, { "type": "number" }] }
+
+// Must match EXACTLY ONE subschema:
+{ "oneOf": [
+  { "type": "string", "format": "email" },
+  { "type": "string", "format": "uri" }
+] }
+
+// Must NOT match the subschema:
+{ "not": { "type": "null" } }
+```
+
+### Conditional Validation (Draft-07+)
+
+```json
+{
+  "if": { "properties": { "type": { "const": "company" } } },
+  "then": { "required": ["companyName", "taxId"] },
+  "else": { "required": ["firstName", "lastName"] }
+}
+```
+
+This is one of JSON Schema's most powerful features — enforcing different required fields based on the value of another field.
+
+### Schema References and Reuse
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "address": {
+      "type": "object",
+      "required": ["street", "city", "country"],
+      "properties": {
+        "street": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string", "minLength": 2, "maxLength": 2 }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "billingAddress": { "$ref": "#/$defs/address" },
+    "shippingAddress": { "$ref": "#/$defs/address" }
+  }
+}
+```
+
+`$defs` (or `definitions` in older drafts) keeps schemas DRY. `$ref` supports both local (`#/...`) and remote (`https://...`) references.
+
+## Validating JSON Schema in Code
+
+### Node.js (AJV)
+
+[AJV](https://ajv.js.org/) is the fastest and most widely used JavaScript JSON Schema validator:
+
+```bash
+npm install ajv ajv-formats
+```
+
+```javascript
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+
+const ajv = new Ajv({ allErrors: true });
+addFormats(ajv);
+
+const schema = {
+  type: 'object',
+  required: ['email', 'age'],
+  properties: {
+    email: { type: 'string', format: 'email' },
+    age: { type: 'integer', minimum: 18 },
+  },
+  additionalProperties: false,
+};
+
+const validate = ajv.compile(schema);
+const data = { email: 'user@example.com', age: 25 };
+
+if (validate(data)) {
+  console.log('Valid');
+} else {
+  console.log('Errors:', validate.errors);
+}
+```
+
+AJV compiles schemas to optimized JavaScript functions, making validation extremely fast — suitable for hot request paths.
+
+### Python (jsonschema)
+
+```bash
+pip install jsonschema
+```
+
+```python
+import jsonschema
+from jsonschema import validate, ValidationError
+
+schema = {
+    "type": "object",
+    "required": ["email", "age"],
+    "properties": {
+        "email": {"type": "string", "format": "email"},
+        "age": {"type": "integer", "minimum": 18},
+    },
+    "additionalProperties": False,
+}
+
+data = {"email": "user@example.com", "age": 25}
+
+try:
+    validate(instance=data, schema=schema)
+    print("Valid")
+except ValidationError as e:
+    print(f"Invalid: {e.message}")
+    print(f"Path: {list(e.absolute_path)}")
+```
+
+For all errors (not just the first), use `jsonschema.Draft202012Validator`:
+
+```python
+from jsonschema import Draft202012Validator
+
+validator = Draft202012Validator(schema)
+errors = list(validator.iter_errors(data))
+for error in errors:
+    print(f"{'.'.join(str(p) for p in error.path)}: {error.message}")
+```
+
+### Go (gojsonschema / santhosh-tekuri)
+
+```bash
+go get github.com/santhosh-tekuri/jsonschema/v6
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+
+    "github.com/santhosh-tekuri/jsonschema/v6"
+)
+
+func main() {
+    schemaJSON := `{
+        "type": "object",
+        "required": ["email", "age"],
+        "properties": {
+            "email": {"type": "string", "format": "email"},
+            "age": {"type": "integer", "minimum": 18}
+        }
+    }`
+
+    compiler := jsonschema.NewCompiler()
+    compiler.AddResource("schema.json", strings.NewReader(schemaJSON))
+    schema, err := compiler.Compile("schema.json")
+    if err != nil {
+        panic(err)
+    }
+
+    data := map[string]any{"email": "user@example.com", "age": 25}
+    if err := schema.Validate(data); err != nil {
+        fmt.Println("Invalid:", err)
+    } else {
+        fmt.Println("Valid")
+    }
+}
+```
+
+### Java (networknt/json-schema-validator)
+
+```xml
+<dependency>
+  <groupId>com.networknt</groupId>
+  <artifactId>json-schema-validator</artifactId>
+  <version>1.5.3</version>
+</dependency>
+```
+
+```java
+import com.networknt.schema.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Set;
+
+ObjectMapper mapper = new ObjectMapper();
+JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012);
+
+String schemaJson = """
+    {
+      "type": "object",
+      "required": ["email"],
+      "properties": {
+        "email": {"type": "string", "format": "email"}
+      }
+    }
+    """;
+
+JsonSchema schema = factory.getSchema(schemaJson);
+JsonNode data = mapper.readTree("{\"email\": \"user@example.com\"}");
+
+Set<ValidationMessage> errors = schema.validate(data);
+if (errors.isEmpty()) {
+    System.out.println("Valid");
+} else {
+    errors.forEach(e -> System.out.println(e.getMessage()));
+}
+```
+
+## Real-World Use Cases
+
+### API Request Validation
+
+Validate incoming API payloads at the gateway or middleware layer before they reach business logic:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateOrderRequest",
+  "type": "object",
+  "required": ["customerId", "items", "shippingAddress"],
+  "properties": {
+    "customerId": { "type": "string", "format": "uuid" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["productId", "quantity"],
+        "properties": {
+          "productId": { "type": "string" },
+          "quantity": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "couponCode": { "type": "string", "pattern": "^[A-Z0-9]{6,12}$" }
+  }
+}
+```
+
+### Configuration File Validation
+
+Validate application configs at startup and fail fast with clear error messages instead of cryptic runtime errors:
+
+```json
+{
+  "type": "object",
+  "required": ["server", "database"],
+  "properties": {
+    "server": {
+      "type": "object",
+      "required": ["port"],
+      "properties": {
+        "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+        "host": { "type": "string", "default": "0.0.0.0" },
+        "tls": { "type": "boolean", "default": false }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "poolSize": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 }
+      }
+    }
+  }
+}
+```
+
+### OpenAPI Integration
+
+OpenAPI 3.x uses a JSON Schema subset to define request/response bodies. Keeping standalone schemas in sync with your OpenAPI spec prevents contract drift.
+
+## JSON Schema vs Runtime Validation Libraries
+
+| Approach | Portability | Language Support | Learning Curve | Tooling |
+|---|---|---|---|---|
+| JSON Schema | High (language-neutral) | All major languages | Medium | Excellent |
+| TypeScript (Zod/Yup) | TypeScript only | TypeScript/JS | Low | Good |
+| Pydantic (Python) | Python only | Python | Low | Good |
+| Protobuf/gRPC | High (binary) | All | High | Excellent |
+| OpenAPI spec | High | All | Medium | Excellent |
+
+JSON Schema wins when you need a single canonical schema shared across a polyglot stack — define once, validate in any language.
+
+## Common Mistakes
+
+**Not setting `additionalProperties: false`** — your schema accepts any extra field, making it trivial for clients to pass unexpected data.
+
+**Relying on `format` without configuring the validator** — `format: "email"` is an annotation, not a constraint, unless you explicitly enable format validation in your validator.
+
+**Mixing draft versions** — using `$defs` (2019-09+) while declaring `draft-07` in `$schema` causes undefined behavior.
+
+**Forgetting `required`** — without `required`, all `properties` are optional by default. A schema with properties but no `required` array validates against `{}`.
+
+**Using `type: "integer"` for IDs from databases** — large integer IDs (64-bit) can exceed JavaScript's safe integer range. Consider `"type": "string"` or add `"maximum": 9007199254740991`.
+
+## Online JSON Schema Validator
+
+Testing schemas against sample data locally requires setting up a validator, loading files, and running code. [ZeroTool's JSON Schema validator](/tools/json-schema-validator) eliminates all that friction:
+
+- Paste your JSON Schema and sample JSON side by side
+- Instant validation with error paths highlighted
+- Supports draft-04, draft-06, draft-07, 2019-09, and 2020-12
+- 100% local processing — no data leaves your browser
+
+**[Try the JSON Schema validator →](/tools/json-schema-validator)**
+
+{/* FAQ structured data is rendered via ToolLayout on the tool page */}
