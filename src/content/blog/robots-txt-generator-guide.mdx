@@ -1,0 +1,238 @@
+---
+title: "Robots.txt Generator Online: Complete Guide to Web Crawler Control"
+description: "Use a robots.txt generator online to control search engine crawlers. Learn directives, common rules, and avoid costly mistakes that hurt SEO."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "robots-txt-generator-guide-zh"
+tags: ["robots.txt", "robots-txt-generator", "seo", "web-crawlers", "developer-tools"]
+ogImage: /og/blog-robots-txt-generator-guide.png
+---
+
+A **robots.txt generator online** lets you build a valid `robots.txt` file in seconds without memorizing directives or risking syntax errors that silently block your entire site from Google. The file sits at your domain root and is the first thing search engine crawlers read before touching any other URL.
+
+## What robots.txt Actually Does
+
+`robots.txt` is a plain-text file that implements the [Robots Exclusion Protocol](https://www.rfc-editor.org/rfc/rfc9309). Every compliant crawler fetches `https://yourdomain.com/robots.txt` before crawling. If you block a path, well-behaved bots skip it. Malicious scrapers ignore it entirely — so `robots.txt` is not a security mechanism.
+
+The file has two jobs:
+
+1. **Protect crawl budget** — tell crawlers not to waste time on admin panels, duplicate content, or search result pages.
+2. **Point to your sitemap** — the `Sitemap:` directive tells Google and Bing exactly where to find your sitemap without submitting it manually.
+
+What it does *not* do: prevent a page from appearing in search results if it is linked from elsewhere. To deindex a page, use `noindex` in the HTML meta tag or `X-Robots-Tag` header.
+
+## Core Directives Explained
+
+### User-agent
+
+Specifies which crawler the following rules apply to. `*` matches all crawlers.
+
+```
+User-agent: *
+```
+
+Named bots you will encounter in the wild:
+
+| Bot | Operator |
+|-----|----------|
+| `Googlebot` | Google (general) |
+| `Googlebot-Image` | Google Images |
+| `Googlebot-Video` | Google Video |
+| `Bingbot` | Microsoft Bing |
+| `Slurp` | Yahoo Search |
+| `DuckDuckBot` | DuckDuckGo |
+| `facebookexternalhit` | Facebook link previews |
+| `Twitterbot` | Twitter/X cards |
+| `GPTBot` | OpenAI training crawler |
+| `Claude-Web` | Anthropic web crawler |
+
+### Disallow
+
+Blocks a path prefix. An empty `Disallow:` value means "allow everything".
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /private/
+Disallow: /search?
+```
+
+Note the trailing slash on directories — without it, `/admin` also matches `/administrator`.
+
+### Allow
+
+Overrides a `Disallow` for a more specific path. Useful when you want to block a directory but expose one file inside it.
+
+```
+User-agent: *
+Disallow: /wp-admin/
+Allow: /wp-admin/admin-ajax.php
+```
+
+### Sitemap
+
+Not part of the original spec but supported by all major crawlers. Place it at the end of the file.
+
+```
+Sitemap: https://yourdomain.com/sitemap.xml
+Sitemap: https://yourdomain.com/news-sitemap.xml
+```
+
+### Crawl-delay
+
+Asks the crawler to wait N seconds between requests. Google ignores this directive (configure crawl rate in Search Console instead). Bing and some others respect it.
+
+```
+User-agent: Bingbot
+Crawl-delay: 5
+```
+
+## Common robots.txt Patterns
+
+### Allow everything (default sane config)
+
+```
+User-agent: *
+Disallow:
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+An empty `Disallow` signals "crawl freely." This is the right starting point for most marketing sites.
+
+### Block admin and staging paths
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /staging/
+Disallow: /internal/
+Disallow: /?preview=true
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### E-commerce: block faceted navigation
+
+Faceted URLs like `/shop?color=red&size=M` create thousands of near-duplicate pages that drain crawl budget.
+
+```
+User-agent: *
+Disallow: /search
+Disallow: /cart
+Disallow: /checkout
+Disallow: /account
+Disallow: /wishlist
+Allow: /search/landing-page
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### Block AI training crawlers
+
+If you do not want your content used for model training:
+
+```
+User-agent: GPTBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: *
+Disallow:
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### WordPress-specific rules
+
+```
+User-agent: *
+Disallow: /wp-admin/
+Disallow: /wp-login.php
+Disallow: /xmlrpc.php
+Disallow: /wp-json/
+Allow: /wp-admin/admin-ajax.php
+
+Sitemap: https://yourdomain.com/sitemap.xml
+Sitemap: https://yourdomain.com/post-sitemap.xml
+Sitemap: https://yourdomain.com/page-sitemap.xml
+```
+
+## Verifying Your robots.txt
+
+### Google Search Console
+
+Go to **Settings → robots.txt** in Search Console. The built-in tester shows which rules match any URL you enter and flags syntax errors. Submit a URL and it tells you whether Googlebot would crawl it.
+
+### Manual check
+
+```bash
+curl -I https://yourdomain.com/robots.txt
+# Expect: HTTP/2 200 and Content-Type: text/plain
+```
+
+If you get a 404, Google treats the site as fully crawlable. If you get a 5xx, Google will retry and may pause crawling temporarily.
+
+### Testing a specific URL against your rules
+
+```bash
+# Fetch the file and inspect manually
+curl https://yourdomain.com/robots.txt
+```
+
+For programmatic testing, Google provides the [robots.txt parser library](https://github.com/google/robotstxt) in Go, which is the exact implementation Googlebot uses.
+
+## Common Mistakes That Hurt SEO
+
+**1. Blocking CSS and JavaScript**
+
+Old SEO advice said to block `/wp-content/` to protect crawl budget. Google now *needs* to render JavaScript and CSS to understand your pages. Blocking these files causes Googlebot to see a broken page.
+
+**2. Disallowing your entire site before launch**
+
+Many CMS tools ship with `Disallow: /` in development mode. Developers forget to change it on launch. The site goes live, gets linked, but never ranks because Google cannot crawl it.
+
+**3. Using robots.txt to hide sensitive data**
+
+Directories listed in `robots.txt` are publicly visible. Security researchers and bad actors actively read `robots.txt` looking for hidden paths. Protect sensitive routes with authentication, not crawler rules.
+
+**4. Missing trailing slash on directories**
+
+`Disallow: /admin` blocks `/admin` but also `/administrator`. Use `Disallow: /admin/` to scope the rule precisely.
+
+**5. Blocking the Sitemap URL**
+
+```
+# Wrong — blocks the sitemap itself
+User-agent: *
+Disallow: /sitemap.xml
+```
+
+**6. Wrong Content-Type**
+
+The file must be served as `text/plain`. Some servers serve it as `text/html`, which some crawlers reject.
+
+## Syntax Rules to Remember
+
+- One directive per line
+- Lines starting with `#` are comments
+- Blank line separates rule groups for different `User-agent` values
+- Directives are case-insensitive; paths are case-sensitive on Linux servers
+- Maximum recommended file size is 500 KB (Google's actual limit)
+- UTF-8 encoding only
+
+## Build Your File Without the Guesswork
+
+Writing `robots.txt` by hand is error-prone. A missed slash or wrong order of `Allow`/`Disallow` rules produces unexpected results. The correct rule when you have both `Allow` and `Disallow` matching the same path is that the **longer match wins** — not the order in the file.
+
+[Try our Robots.txt Generator →](/tools/robots-txt-generator)
+
+The generator lets you pick which bots to configure, check the paths you want to block, and toggle the sitemap URL — then outputs a ready-to-deploy file with correct syntax. Paste it into your site root and verify with Search Console in under five minutes.

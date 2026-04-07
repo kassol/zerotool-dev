@@ -1,0 +1,233 @@
+---
+title: ".htaccess 配置生成器：Apache 规则在线生成"
+description: "htaccess 在线生成指南，涵盖301重定向、HTTP转HTTPS、自定义404、GZIP压缩、防盗链、CORS头等常用规则，附与Nginx配置对比。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "htaccess-generator-guide"
+tags: ["htaccess", "Apache", "服务器配置", "URL重写", "开发工具"]
+ogImage: /og/blog-htaccess-generator-guide-zh.png
+---
+
+.htaccess 是 Apache 服务器的分布式配置文件，放在目录中即可覆盖服务器全局配置，无需重启 Apache 即可生效。通过 htaccess 在线生成工具，可以快速配置重定向、HTTPS 强制跳转、缓存策略等常见规则。
+
+## .htaccess 是什么
+
+`.htaccess`（Hypertext Access）允许在目录级别配置 Apache 行为。与 Nginx 的集中式配置不同，.htaccess 文件放在哪个目录，规则就作用于那个目录及其子目录。
+
+**适用场景**：
+- 共享主机环境（无法修改主配置文件）
+- 需要按目录灵活配置的应用
+- WordPress、Laravel 等依赖 .htaccess 的框架
+
+**不适用场景**：国内服务器生产环境大量使用 Nginx，Nginx 本身不支持 .htaccess。如果你的服务器是 Nginx，下文也提供了等效的 Nginx 配置供参考。
+
+## 常用规则详解
+
+### 301 永久重定向
+
+迁移域名或更换 URL 结构时必用：
+
+```apache
+# 单个 URL 重定向
+Redirect 301 /old-page.html /new-page
+
+# 整个目录重定向
+RedirectMatch 301 ^/blog/(.*)$ /articles/$1
+
+# 旧域名跳转到新域名
+RewriteEngine On
+RewriteCond %{HTTP_HOST} ^old-domain\.com$ [NC]
+RewriteRule ^(.*)$ https://new-domain.com/$1 [R=301,L]
+```
+
+**Nginx 等效配置**：
+
+```nginx
+return 301 https://new-domain.com$request_uri;
+```
+
+### HTTP 强制跳转 HTTPS
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+```
+
+**Nginx 等效配置**：
+
+```nginx
+server {
+    listen 80;
+    return 301 https://$host$request_uri;
+}
+```
+
+### 自定义错误页面
+
+```apache
+ErrorDocument 404 /404.html
+ErrorDocument 403 /403.html
+ErrorDocument 500 /500.html
+```
+
+### GZIP 压缩
+
+压缩 HTML、CSS、JS 可显著减小传输体积，通常减少 60-80%：
+
+```apache
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html
+    AddOutputFilterByType DEFLATE text/css
+    AddOutputFilterByType DEFLATE application/javascript
+    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+```
+
+**Nginx 等效配置**：
+
+```nginx
+gzip on;
+gzip_types text/html text/css application/javascript application/json image/svg+xml;
+```
+
+### 浏览器缓存控制
+
+```apache
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 year"
+    ExpiresByType application/javascript "access plus 1 year"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/webp "access plus 1 month"
+</IfModule>
+```
+
+### 图片防盗链
+
+防止其他网站直接引用你的图片资源，消耗你的带宽：
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTP_REFERER} !^$
+RewriteCond %{HTTP_REFERER} !^https://(www\.)?yourdomain\.com/ [NC]
+RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,L]
+```
+
+**Nginx 等效配置**：
+
+```nginx
+location ~* \.(jpg|jpeg|png|gif|webp|svg)$ {
+    valid_referers none blocked yourdomain.com *.yourdomain.com;
+    if ($invalid_referer) {
+        return 403;
+    }
+}
+```
+
+### CORS 跨域头
+
+字体文件或 API 资源需要跨域访问时：
+
+```apache
+<FilesMatch "\.(ttf|otf|woff|woff2|eot)$">
+    Header set Access-Control-Allow-Origin "*"
+</FilesMatch>
+
+# 或针对特定来源
+Header set Access-Control-Allow-Origin "https://app.yourdomain.com"
+Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+```
+
+### 目录列表禁止
+
+防止目录内容被浏览器直接列出：
+
+```apache
+Options -Indexes
+```
+
+### 安全头
+
+```apache
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set X-XSS-Protection "1; mode=block"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+```
+
+### PHP 文件保护（敏感目录）
+
+```apache
+<Files "*.php">
+    Order Deny,Allow
+    Deny from all
+</Files>
+```
+
+## .htaccess 与 Nginx 配置对比
+
+| 特性 | .htaccess | Nginx |
+|------|-----------|-------|
+| 配置粒度 | 目录级别 | 集中式 |
+| 生效方式 | 立即生效 | 需 reload |
+| 性能 | 每次请求读取文件，有开销 | 启动时加载，性能更好 |
+| 国内使用比例 | 共享主机 / cPanel | 生产服务器主流 |
+| WordPress 支持 | 原生支持 | 需手动配置 try_files |
+
+国内云服务器（阿里云、腾讯云）预装 Nginx 的比例远高于 Apache。如果你用的是 Nginx，.htaccess 文件不会被读取，需要将规则写入 `nginx.conf` 或对应的 server block。
+
+## 验证配置是否生效
+
+### 检查语法
+
+```bash
+apachectl configtest
+# 或
+apache2ctl -t
+```
+
+### 检查模块是否启用
+
+```bash
+apache2ctl -M | grep rewrite
+apache2ctl -M | grep deflate
+apache2ctl -M | grep expires
+```
+
+如果 `mod_rewrite` 未启用，URL 重写规则会静默失效：
+
+```bash
+a2enmod rewrite
+service apache2 restart
+```
+
+### 使用 curl 验证
+
+```bash
+# 验证重定向
+curl -I http://yourdomain.com/old-page
+
+# 验证 HTTPS 强制跳转
+curl -I http://yourdomain.com
+
+# 验证响应头
+curl -I https://yourdomain.com | grep -E "(Cache-Control|Content-Encoding|X-Frame)"
+```
+
+### 常见排错
+
+- 规则不生效：先确认 `AllowOverride All` 已在主配置中启用
+- 重定向循环：检查 RewriteCond 条件是否完整
+- 403 错误：检查文件权限，.htaccess 应为 644
+
+## 在线生成 .htaccess 配置
+
+手写 Apache 规则语法繁琐，且容易遗漏 `[L]`、`[NC]` 等标志位。使用在线工具通过可视化界面选择规则，自动生成无误的配置内容。
+
+[使用在线工具 →](/zh/tools/htaccess-generator)
+
+支持重定向、HTTPS 跳转、安全头、压缩、缓存、防盗链等常用规则，生成后直接复制到服务器目录即可。

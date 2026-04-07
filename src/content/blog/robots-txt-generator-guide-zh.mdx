@@ -1,0 +1,205 @@
+---
+title: "robots.txt 生成器：在线配置爬虫规则"
+description: "robots.txt 在线生成指南，涵盖 User-agent、Disallow、Allow 指令，以及百度/Google 爬虫配置、常见错误和验证方法。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "robots-txt-generator-guide"
+tags: ["robots.txt", "爬虫规则", "SEO", "搜索引擎优化", "开发工具"]
+ogImage: /og/blog-robots-txt-generator-guide-zh.png
+---
+
+robots.txt 是网站根目录下的一个纯文本文件，用于告诉搜索引擎爬虫哪些页面可以抓取、哪些应当跳过。正确配置 robots.txt 在线生成规则，可以避免管理后台被索引、节省爬虫配额，并提升核心页面的排名权重。
+
+## robots.txt 的作用
+
+爬虫在抓取网站之前，会优先请求 `https://yourdomain.com/robots.txt`。这份文件相当于给爬虫的"通行证"清单。需要明确的是：robots.txt 是**协议性规范**，不是技术拦截手段。遵守与否取决于爬虫自身，Googlebot 和百度蜘蛛都会遵守，但恶意爬虫不会。
+
+对安全敏感的资源（如管理后台接口），应当同时使用登录鉴权，不能仅依赖 robots.txt。
+
+## 核心指令说明
+
+### User-agent
+
+指定规则适用的爬虫。`*` 表示所有爬虫：
+
+```
+User-agent: *
+```
+
+针对特定爬虫：
+
+```
+User-agent: Baiduspider
+User-agent: Googlebot
+```
+
+### Disallow
+
+禁止爬取的路径。路径区分大小写，支持前缀匹配：
+
+```
+Disallow: /admin/
+Disallow: /api/internal/
+Disallow: /user/settings
+```
+
+留空表示不禁止任何路径：
+
+```
+User-agent: *
+Disallow:
+```
+
+### Allow
+
+在 Disallow 范围内显式允许某些子路径。例如，禁止整个 `/account/` 目录，但允许登录页面被索引：
+
+```
+User-agent: Googlebot
+Disallow: /account/
+Allow: /account/login
+```
+
+### Sitemap
+
+声明站点地图位置，帮助爬虫发现页面：
+
+```
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+一个文件中可以声明多个 Sitemap。
+
+## 中文开发者常见场景
+
+### 场景一：禁止管理后台被索引
+
+国内 SaaS 产品通常有 `/admin` 或 `/dashboard` 后台，不应出现在搜索结果中：
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /dashboard/
+Disallow: /internal/
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+### 场景二：允许百度爬取、屏蔽其他爬虫
+
+部分面向国内用户的站点希望只让百度蜘蛛抓取，屏蔽其他爬虫以节省带宽：
+
+```
+User-agent: Baiduspider
+Disallow:
+
+User-agent: *
+Disallow: /
+```
+
+注意：此配置会屏蔽 Googlebot。如果同时需要 Google 流量，需单独放行：
+
+```
+User-agent: Baiduspider
+Disallow:
+
+User-agent: Googlebot
+Disallow:
+
+User-agent: *
+Disallow: /
+```
+
+### 场景三：禁止爬取动态搜索结果页
+
+搜索结果页往往是"软重复"内容，大量被抓取会浪费爬虫配额：
+
+```
+User-agent: *
+Disallow: /search?
+Disallow: /s?
+```
+
+### 场景四：API 接口保护
+
+API 路径不需要被搜索引擎收录：
+
+```
+User-agent: *
+Disallow: /api/
+Disallow: /v1/
+Disallow: /v2/
+```
+
+### 场景五：屏蔽 AI 训练爬虫
+
+近年来有开发者希望阻止 AI 公司抓取内容用于训练：
+
+```
+User-agent: GPTBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+```
+
+## 完整示例
+
+```
+User-agent: *
+Disallow: /admin/
+Disallow: /api/
+Disallow: /search?
+Allow: /
+
+User-agent: Baiduspider
+Crawl-delay: 1
+
+Sitemap: https://yourdomain.com/sitemap.xml
+```
+
+`Crawl-delay` 指定爬虫请求间隔（秒），可减轻服务器压力，百度蜘蛛支持此指令。
+
+## 验证 robots.txt 是否生效
+
+### Google Search Console
+
+1. 进入 Google Search Console → "robots.txt 测试工具"（旧版）
+2. 或直接访问 `https://search.google.com/search-console/robots-testing-tool`
+3. 粘贴规则，输入要测试的 URL，点击测试
+
+### 百度站长工具
+
+1. 登录 [百度站长平台](https://ziyuan.baidu.com/)
+2. 进入"网页抓取" → "robots检测"
+3. 支持检测特定 URL 是否会被百度蜘蛛爬取
+
+### 命令行验证
+
+```bash
+curl https://yourdomain.com/robots.txt
+```
+
+确认文件可正常访问，HTTP 状态码为 200，Content-Type 为 `text/plain`。
+
+## 常见错误
+
+| 错误 | 说明 | 修复 |
+|------|------|------|
+| 路径不以 `/` 开头 | `Disallow: admin/` | 改为 `Disallow: /admin/` |
+| 使用通配符位置错误 | `Disallow: *.pdf` | 应写 `Disallow: /*.pdf$` |
+| Disallow 后无换行 | 多条规则连写 | 每条规则独占一行 |
+| 文件放错位置 | 放在子目录下 | 必须在根目录 `/robots.txt` |
+| 大小写错误 | `disallow:` | 指令首字母大写 |
+| 编码问题 | 含 BOM 或非 UTF-8 | 保存为 UTF-8 无 BOM |
+
+## 快速生成 robots.txt
+
+手工编写 robots.txt 容易出现格式错误。使用在线工具可以通过可视化界面配置规则，自动生成符合规范的文件内容。
+
+[使用在线工具 →](/zh/tools/robots-txt-generator)
+
+支持多爬虫规则、Sitemap 声明、实时预览，生成后直接复制到服务器根目录即可。

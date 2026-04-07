@@ -1,0 +1,247 @@
+---
+title: "WebP Converter Online: Shrink Images Without Losing Quality"
+description: "Use a WebP converter online to reduce PNG and JPEG file sizes by 25-35%. Learn browser support, fallback patterns, Next.js optimization, and cwebp CLI usage."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "webp-converter-guide-zh"
+tags: ["webp converter", "webp", "image optimization", "web performance", "developer-tools"]
+ogImage: /og/blog-webp-converter-guide.png
+---
+
+A **WebP converter online** turns your PNG or JPEG images into WebP format — Google's open image format that delivers the same visual quality at roughly 25-35% smaller file sizes, directly improving your page load times and Core Web Vitals scores. WebP is now supported by every major browser, including iOS Safari since version 14 (2020), making it safe to use in production without caveats.
+
+## What Is WebP and Why It Matters for Performance
+
+WebP was developed by Google and released in 2010, based on the VP8 video codec. It supports:
+
+- **Lossy compression** — like JPEG, with better efficiency
+- **Lossless compression** — like PNG, with ~26% smaller files
+- **Transparency (alpha channel)** — unlike JPEG
+- **Animation** — like GIF, but far smaller
+
+Real-world size comparisons at equivalent visual quality:
+
+| Image type | JPEG | PNG | WebP lossy | WebP lossless |
+|-----------|------|-----|------------|---------------|
+| Photograph | 100 KB | 400 KB | ~70 KB | ~280 KB |
+| Logo with transparency | — | 50 KB | — | ~38 KB |
+| Screenshot | 200 KB | 600 KB | ~130 KB | ~420 KB |
+
+Google's own benchmarks show WebP lossy is 25-34% smaller than JPEG and WebP lossless is 26% smaller than PNG at the same SSIM quality score.
+
+## Browser Support
+
+WebP is now universally supported:
+
+| Browser | WebP support since |
+|---------|--------------------|
+| Chrome | Version 23 (2012) |
+| Firefox | Version 65 (2019) |
+| Edge | Version 18 (2018) |
+| Safari | Version 14 / iOS 14 (2020) |
+| Samsung Internet | Version 4 (2016) |
+| Opera | Version 12.1 (2012) |
+
+Global browser support is above 97% as of 2025. The only scenario where you need a fallback is if you must support IE11 or very old iOS devices (pre-iOS 14).
+
+## Converting PNG and JPEG to WebP
+
+### The `<picture>` Element Fallback Pattern
+
+The cleanest way to serve WebP with a fallback to browsers that do not support it:
+
+```html
+<picture>
+  <source srcset="/images/hero.webp" type="image/webp">
+  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
+</picture>
+```
+
+The browser loads the first `<source>` it supports and ignores the rest. The `<img>` tag is the final fallback and also provides `alt`, `width`, and `height` attributes — always include these to prevent layout shift (CLS).
+
+For responsive images with multiple sizes:
+
+```html
+<picture>
+  <source
+    type="image/webp"
+    srcset="/images/hero-480.webp 480w, /images/hero-800.webp 800w, /images/hero-1200.webp 1200w"
+    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
+  >
+  <img
+    src="/images/hero-1200.jpg"
+    srcset="/images/hero-480.jpg 480w, /images/hero-800.jpg 800w, /images/hero-1200.jpg 1200w"
+    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
+    alt="Hero image"
+    width="1200"
+    height="600"
+  >
+</picture>
+```
+
+### CSS Background Images
+
+For background images, WebP can be served using the `image-set()` function:
+
+```css
+.hero {
+  background-image: url('/images/hero.jpg');
+  background-image: image-set(
+    url('/images/hero.webp') type('image/webp'),
+    url('/images/hero.jpg') type('image/jpeg')
+  );
+}
+```
+
+Browser support for `image-set()` is broad but lags slightly behind `<picture>` — check if you need IE11 support before using it.
+
+## Framework Integration
+
+### Next.js
+
+Next.js automatically converts images to WebP (and AVIF) when you use the `next/image` component. No manual conversion needed:
+
+```jsx
+import Image from 'next/image';
+
+export default function Hero() {
+  return (
+    <Image
+      src="/images/hero.jpg"
+      alt="Hero image"
+      width={1200}
+      height={600}
+      priority
+    />
+  );
+}
+```
+
+Next.js handles format negotiation via the `Accept` request header, serves WebP to supported browsers, and caches the converted image. You keep JPEG or PNG as the source.
+
+To configure quality and formats in `next.config.js`:
+
+```javascript
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  images: {
+    formats: ['image/avif', 'image/webp'],
+    minimumCacheTTL: 31536000,
+  },
+};
+
+export default nextConfig;
+```
+
+### Astro
+
+Astro's built-in `<Image>` component does the same:
+
+```astro
+---
+import { Image } from 'astro:assets';
+import heroImage from '../assets/hero.jpg';
+---
+
+<Image src={heroImage} alt="Hero image" format="webp" quality={80} />
+```
+
+For multiple formats:
+
+```astro
+---
+import { Picture } from 'astro:assets';
+import heroImage from '../assets/hero.jpg';
+---
+
+<Picture
+  src={heroImage}
+  formats={['avif', 'webp']}
+  alt="Hero image"
+/>
+```
+
+### Vite / Build Pipeline
+
+For static sites using Vite, the `vite-imagetools` plugin converts images at build time:
+
+```javascript
+// vite.config.js
+import { imagetools } from 'vite-imagetools';
+
+export default {
+  plugins: [imagetools()],
+};
+```
+
+```html
+<!-- In your HTML or JSX -->
+<img src="./hero.jpg?format=webp&width=1200" alt="Hero">
+```
+
+## cwebp CLI
+
+Google's `cwebp` command-line encoder is the reference implementation:
+
+```bash
+# Install on macOS
+brew install webp
+
+# Install on Ubuntu/Debian
+sudo apt-get install webp
+
+# Basic conversion (quality 80, good default)
+cwebp -q 80 input.jpg -o output.webp
+
+# Lossless (for PNG with transparency)
+cwebp -lossless input.png -o output.webp
+
+# Higher quality (90) for important images
+cwebp -q 90 input.jpg -o output.webp
+
+# Batch convert all JPEGs in a directory
+for f in *.jpg; do
+  cwebp -q 80 "$f" -o "${f%.jpg}.webp"
+done
+
+# Show compression stats
+cwebp -q 80 -v input.jpg -o output.webp
+```
+
+Quality 80 is a good starting point for photographs. Quality 90+ is for images where fine detail matters (product photography, medical images). Lossless is for screenshots, diagrams, and images with text.
+
+## Impact on Core Web Vitals
+
+WebP directly affects two Core Web Vitals metrics:
+
+**Largest Contentful Paint (LCP)** — The LCP element is usually a hero image. Reducing its file size by 30% directly reduces LCP time, especially on mobile connections.
+
+**Total Blocking Time / First Contentful Paint** — Smaller images mean less total data on initial page load.
+
+Google PageSpeed Insights will flag unconverted JPEGs and PNGs under the "Serve images in next-gen formats" audit, and converting them is one of the highest-impact single changes you can make for a typical content site.
+
+A rough calculation: if your homepage loads 500 KB of images and you convert them all to WebP, you save ~150-175 KB. On a 4G connection at 20 Mbps, that is ~60ms saved. On a slower connection, the impact is proportionally larger.
+
+## AVIF: The Next Step
+
+AVIF (AV1 Image File Format) is even newer than WebP — roughly 20% smaller than WebP at the same quality. Browser support reached ~90% in 2024 (Chrome, Firefox, Safari 16+, Edge).
+
+You can serve all three formats with cascading `<source>` elements:
+
+```html
+<picture>
+  <source srcset="/images/hero.avif" type="image/avif">
+  <source srcset="/images/hero.webp" type="image/webp">
+  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
+</picture>
+```
+
+AVIF encoding is significantly slower than WebP, making it better suited for build-time conversion rather than on-the-fly.
+
+## Convert Your Images Now
+
+For a quick conversion before uploading to a CMS, sharing a prototype, or testing whether WebP is appropriate for a specific image, a browser-based tool is faster than installing cwebp or setting up a build pipeline.
+
+[Try our WebP Converter →](/tools/webp-converter)
+
+Upload your PNG or JPEG, set the quality level, and download the WebP version — with a side-by-side file size comparison so you can see exactly how much you saved before committing to the format.

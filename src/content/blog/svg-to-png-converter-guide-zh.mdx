@@ -1,0 +1,208 @@
+---
+title: "SVG 转 PNG：在线无损转换工具"
+description: "SVG 转 PNG 在线转换详解，涵盖格式对比、分辨率/DPI设置、透明背景保留、命令行方案及微信/小程序等国内场景下的最佳实践。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "svg-to-png-converter-guide"
+tags: ["SVG转PNG", "图片格式转换", "SVG", "图像处理", "开发工具"]
+ogImage: /og/blog-svg-to-png-converter-guide-zh.png
+---
+
+SVG 转 PNG 在线工具解决的核心问题是：SVG 是矢量格式，可以无限缩放，但许多场景不支持 SVG 输入——微信分享卡片、小程序图标、邮件模板、打印稿都需要光栅化的 PNG 文件。本文介绍什么情况下需要转换、如何保证转换质量，以及命令行批量转换方案。
+
+## SVG 与 PNG 的本质区别
+
+| 特性 | SVG | PNG |
+|------|-----|-----|
+| 类型 | 矢量（基于路径和形状） | 光栅（像素网格） |
+| 缩放 | 任意缩放不失真 | 放大会模糊 |
+| 透明度 | 支持 | 支持 Alpha 通道 |
+| 文件体积 | 简单图形更小 | 复杂图形可能更小 |
+| 浏览器支持 | 现代浏览器全支持 | 全平台通用 |
+| 适合场景 | 图标、Logo、插图、动画 | 截图、照片衍生图、需要兼容的图标 |
+
+SVG 是代码，PNG 是像素。转换过程是"渲染"——将矢量路径按指定分辨率绘制成像素网格，这个过程不可逆。
+
+## 何时需要将 SVG 转为 PNG
+
+### 微信/社交平台分享图
+
+微信分享卡片要求图片为 JPEG 或 PNG，且有尺寸限制（通常 300×300 或 500×400）。直接提交 SVG URL 会导致预览失败，需提前转换为 PNG。
+
+### 微信小程序图标
+
+小程序 `app.json` 中的 tabBar 图标只支持 PNG 格式，分辨率推荐 81×81 像素（实际渲染约 27pt）：
+
+```json
+{
+  "tabBar": {
+    "list": [
+      {
+        "iconPath": "images/home.png",
+        "selectedIconPath": "images/home-active.png",
+        "text": "首页"
+      }
+    ]
+  }
+}
+```
+
+### 邮件模板
+
+邮件客户端（尤其是 Outlook）对 SVG 支持极差。邮件中的图片应统一使用 PNG 或 JPEG。
+
+### 打印和印刷稿
+
+部分设计工具和印刷商接受 SVG，但大多数工作流更可靠地处理 PNG（需要设置高 DPI）。
+
+### Markdown 文档和 README
+
+GitHub 的 Markdown 渲染器支持 SVG，但部分平台（如某些内网 Wiki、钉钉文档）不支持内联 SVG，需要转为 PNG。
+
+## 分辨率和 DPI 设置
+
+### 理解 viewBox 与输出尺寸的关系
+
+SVG 本身没有固定像素尺寸，由 `viewBox` 和 `width`/`height` 属性决定"逻辑尺寸"。转换时需要指定**输出像素尺寸**：
+
+- 网页 1x 图标：按 SVG 逻辑尺寸 1:1 输出
+- Retina 屏幕（2x）：输出尺寸 × 2
+- 印刷用途（300 DPI）：如需 5cm × 5cm 印刷图，需输出约 590×590 像素（5cm × 300DPI / 2.54）
+
+### 实际建议
+
+| 用途 | 推荐输出尺寸 |
+|------|------------|
+| 小程序图标 | 81×81 或 162×162（2x） |
+| 微信分享图 | 500×500 或 800×600 |
+| 网页 favicon | 32×32、64×64 |
+| 高清打印 | 原始逻辑尺寸 × 4 以上 |
+
+## 透明背景保留
+
+PNG 支持 Alpha 通道，转换时默认应保留 SVG 的透明区域。常见问题是工具将透明背景填充为白色——这在深色界面上会产生白色色块。
+
+选择工具时确认：输出 PNG 是否保留透明度（`rgba` 通道）。在线工具通常提供"透明背景"选项，命令行工具默认保留。
+
+## 命令行方案
+
+### Inkscape（推荐）
+
+Inkscape 是最精确的 SVG 渲染器之一，输出结果与浏览器渲染高度一致：
+
+```bash
+# 安装
+brew install inkscape  # macOS
+apt install inkscape   # Ubuntu/Debian
+
+# 基本转换，输出 512×512
+inkscape input.svg --export-type=png --export-filename=output.png -w 512 -h 512
+
+# 批量转换当前目录所有 SVG
+for f in *.svg; do
+  inkscape "$f" --export-type=png --export-filename="${f%.svg}.png" -w 512 -h 512
+done
+```
+
+### ImageMagick
+
+适合批处理和脚本集成：
+
+```bash
+# 安装
+brew install imagemagick  # macOS
+
+# 转换（-density 控制渲染质量，-resize 控制输出尺寸）
+convert -density 300 -background transparent input.svg output.png
+
+# 指定输出尺寸
+convert -density 300 -resize 512x512 input.svg output.png
+```
+
+### Node.js（sharp）
+
+适合 CI/CD 流程中的自动化转换：
+
+```bash
+npm install sharp
+```
+
+```js
+const sharp = require('sharp');
+
+sharp('input.svg')
+  .resize(512, 512)
+  .png()
+  .toFile('output.png')
+  .then(info => console.log('转换完成', info));
+```
+
+### 前端代码（Canvas API）
+
+在浏览器中动态转换 SVG：
+
+```js
+function svgToPng(svgString, width, height) {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    const blob = new Blob([svgString], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.src = url;
+  });
+}
+
+// 使用
+const pngDataUrl = await svgToPng('<svg>...</svg>', 512, 512);
+```
+
+## 前端框架中的 SVG 处理
+
+### React / Next.js
+
+Next.js 可以将 SVG 导入为 React 组件（使用 `@svgr/webpack`），或作为静态资源：
+
+```jsx
+// 作为组件（可控制颜色、尺寸）
+import Logo from './logo.svg';
+<Logo width={48} height={48} fill="currentColor" />
+
+// 作为静态图片（无法控制内部样式）
+import logoSrc from './logo.svg';
+<img src={logoSrc} width={48} height={48} alt="Logo" />
+```
+
+### Vite + Vue
+
+```js
+// vite.config.js
+import svgr from 'vite-plugin-svgr';
+export default { plugins: [svgr()] };
+```
+
+```vue
+<template>
+  <IconHome class="w-6 h-6 text-primary" />
+</template>
+<script setup>
+import IconHome from './home.svg?component';
+</script>
+```
+
+## 在线转换工具
+
+无需安装 Inkscape 或 ImageMagick，直接在浏览器中完成 SVG 转 PNG，支持自定义分辨率和透明背景选项。
+
+[使用在线工具 →](/zh/tools/svg-to-png-converter)
+
+适合单文件快速转换。批量转换建议使用上文的命令行方案。

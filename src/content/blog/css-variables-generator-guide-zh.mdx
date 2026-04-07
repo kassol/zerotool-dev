@@ -1,0 +1,282 @@
+---
+title: "CSS 变量生成器：在线创建 CSS 自定义属性"
+description: "CSS 变量在线生成详解，涵盖自定义属性语法、:root全局变量、暗黑模式实现、JavaScript读写、与Sass变量的区别及设计Token实践。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "css-variables-generator-guide"
+tags: ["CSS变量", "CSS自定义属性", "CSS变量生成器", "前端开发", "开发工具"]
+ogImage: /og/blog-css-variables-generator-guide-zh.png
+---
+
+CSS 变量（CSS 自定义属性）让你在 CSS 中定义可复用的值，通过 `var()` 函数引用。CSS 变量在线生成工具可以帮你快速构建设计系统的变量集合，统一管理颜色、间距、字体等设计决策。
+
+## CSS 自定义属性基础语法
+
+CSS 自定义属性以两个连字符 `--` 开头，区分大小写：
+
+```css
+/* 声明变量 */
+:root {
+  --color-primary: #3b82f6;
+  --color-text: #1a1a1a;
+  --spacing-base: 16px;
+  --font-size-lg: 1.125rem;
+  --border-radius: 8px;
+  --transition-speed: 200ms;
+}
+
+/* 使用变量 */
+.button {
+  background-color: var(--color-primary);
+  padding: var(--spacing-base);
+  border-radius: var(--border-radius);
+  transition: opacity var(--transition-speed) ease;
+}
+```
+
+`var()` 函数接受第二个参数作为回退值：
+
+```css
+.card {
+  /* 如果 --card-bg 未定义，使用 white */
+  background: var(--card-bg, white);
+  
+  /* 回退值也可以是另一个变量 */
+  color: var(--card-text, var(--color-text, #333));
+}
+```
+
+## `:root` 全局变量 vs 组件级变量
+
+`:root` 是 HTML 文档的根元素，在此定义的变量全局可用。但 CSS 变量遵循**级联和继承**规则，可以在任何元素上声明，只作用于该元素及其子元素：
+
+```css
+/* 全局变量（所有元素可用） */
+:root {
+  --color-primary: #3b82f6;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+}
+
+/* 组件级变量（只在 .card 范围内生效） */
+.card {
+  --card-padding: var(--spacing-md);
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  
+  padding: var(--card-padding);
+  box-shadow: var(--card-shadow);
+}
+
+/* 变体：覆盖组件变量 */
+.card--large {
+  --card-padding: var(--spacing-lg);
+}
+```
+
+这种模式比修改具体属性更清晰，组件内部的变化只需修改变量值。
+
+## 主题系统与暗黑模式
+
+CSS 变量是实现暗黑模式最简洁的方案，无需 JavaScript 切换类名即可响应系统偏好：
+
+```css
+/* 亮色主题（默认） */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b7280;
+  --border-color: #e5e7eb;
+  --shadow-color: rgba(0, 0, 0, 0.1);
+}
+
+/* 暗色主题（系统偏好） */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --border-color: #334155;
+    --shadow-color: rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* 组件不需要改动，自动适应主题 */
+.card {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+```
+
+### 手动切换主题（用户控制）
+
+通过 `data-theme` 属性允许用户手动选择主题：
+
+```css
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --text-primary: #1a1a1a;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0f172a;
+  --text-primary: #f1f5f9;
+}
+```
+
+```js
+// 切换主题
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+}
+
+// 初始化时读取用户偏好
+const savedTheme = localStorage.getItem('theme') || 'light';
+setTheme(savedTheme);
+```
+
+## JavaScript 读写 CSS 变量
+
+CSS 变量可以通过 JavaScript 动态读取和修改，无需操作 class：
+
+```js
+// 读取 CSS 变量值
+const root = document.documentElement;
+const primaryColor = getComputedStyle(root).getPropertyValue('--color-primary').trim();
+console.log(primaryColor); // "#3b82f6"
+
+// 读取元素上的变量（会继承父元素）
+const card = document.querySelector('.card');
+const cardPadding = getComputedStyle(card).getPropertyValue('--card-padding').trim();
+
+// 写入（修改）CSS 变量
+root.style.setProperty('--color-primary', '#10b981');
+
+// 删除（恢复为继承值）
+root.style.removeProperty('--color-primary');
+```
+
+### 实际应用：动态主题色
+
+```js
+// 用户选择主题色后实时预览
+document.querySelector('#color-picker').addEventListener('input', (e) => {
+  const color = e.target.value;
+  document.documentElement.style.setProperty('--color-primary', color);
+  
+  // 根据主色生成辅助色（简化版）
+  document.documentElement.style.setProperty(
+    '--color-primary-hover',
+    adjustBrightness(color, -10)
+  );
+});
+```
+
+## CSS 变量 vs Sass 变量
+
+| 特性 | CSS 变量 | Sass 变量 |
+|------|---------|----------|
+| 运行时 | 浏览器运行时 | 编译时（构建产物为静态值） |
+| 动态修改 | 可以通过 JS 修改 | 不可以，编译后固定 |
+| 响应 `@media` | 不能在 `@media` 内声明（只能读取） | 可以 |
+| 继承 | 遵循 CSS 级联 | 无级联，全局作用域 |
+| 回退值 | `var(--x, fallback)` | `$x or fallback` |
+| 浏览器支持 | 所有现代浏览器 | 需要 Sass 编译器 |
+| 适合场景 | 主题、运行时动态值 | 构建时计算、mixin |
+
+实践建议：**两者结合使用**。用 Sass 变量做构建时的计算（如生成颜色阶梯），用 CSS 变量暴露设计 Token 供运行时使用：
+
+```scss
+// Sass 计算
+$blue-500: #3b82f6;
+
+// 生成 CSS 变量
+:root {
+  --color-primary: #{$blue-500};
+}
+```
+
+## 设计 Token 实践
+
+设计 Token 是设计系统中最小的设计决策单元——颜色、间距、字体大小等。CSS 变量是实现设计 Token 的标准方案。
+
+### Token 分层结构
+
+```css
+:root {
+  /* 原始 Token（不直接使用） */
+  --blue-400: #60a5fa;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+  --gray-100: #f3f4f6;
+  --gray-900: #111827;
+
+  /* 语义 Token（组件和页面使用这层） */
+  --color-primary: var(--blue-500);
+  --color-primary-hover: var(--blue-600);
+  --color-background: var(--gray-100);
+  --color-text: var(--gray-900);
+
+  /* 组件 Token */
+  --button-bg: var(--color-primary);
+  --button-bg-hover: var(--color-primary-hover);
+  --button-text: white;
+  --button-radius: 6px;
+  --button-padding-x: 16px;
+  --button-padding-y: 8px;
+}
+```
+
+### Figma Tokens 同步
+
+使用 [Tokens Studio for Figma](https://tokens.studio/) 插件，可以将 Figma 中的设计决策导出为 JSON，再通过工具转换为 CSS 变量：
+
+```json
+// tokens.json（Figma Token Studio 导出）
+{
+  "color": {
+    "primary": { "value": "#3b82f6", "type": "color" },
+    "text": { "value": "#1a1a1a", "type": "color" }
+  },
+  "spacing": {
+    "sm": { "value": "8px", "type": "spacing" },
+    "md": { "value": "16px", "type": "spacing" }
+  }
+}
+```
+
+```js
+// 转换脚本
+const tokens = require('./tokens.json');
+
+function tokensToCSS(obj, prefix = '') {
+  let css = '';
+  for (const [key, value] of Object.entries(obj)) {
+    const varName = prefix ? `${prefix}-${key}` : key;
+    if (value.value !== undefined) {
+      css += `  --${varName}: ${value.value};\n`;
+    } else {
+      css += tokensToCSS(value, varName);
+    }
+  }
+  return css;
+}
+
+console.log(`:root {\n${tokensToCSS(tokens)}}`);
+```
+
+## 浏览器兼容性
+
+CSS 自定义属性支持所有现代浏览器（Chrome 49+、Firefox 31+、Safari 9.1+、Edge 16+），全球支持率约 97%。IE 11 不支持，如需兼容可使用 PostCSS `postcss-custom-properties` 插件将变量编译为静态值。
+
+## 在线生成 CSS 变量
+
+手工整理完整的设计 Token 集合繁琐且容易遗漏。使用在线工具可以可视化配置颜色、间距、字体等变量，自动生成规范的 CSS 变量代码。
+
+[使用在线工具 →](/zh/tools/css-variables-generator)
+
+生成后直接复制到项目的全局 CSS 文件，作为设计系统的基础层。

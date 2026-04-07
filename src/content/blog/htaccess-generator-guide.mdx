@@ -1,0 +1,273 @@
+---
+title: "Htaccess Generator Online: Apache Rules Without the Manual"
+description: "Use an htaccess generator online to create 301 redirects, HTTPS rewrites, CORS headers, and caching rules for Apache without memorizing mod_rewrite syntax."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "htaccess-generator-guide-zh"
+tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tools"]
+ogImage: /og/blog-htaccess-generator-guide.png
+---
+
+An **htaccess generator online** produces valid Apache `.htaccess` configuration without requiring you to memorize mod_rewrite syntax or risk a 500 error from a misplaced bracket. The `.htaccess` file (short for "hypertext access") is a per-directory configuration file that Apache reads on every request, letting you control redirects, headers, authentication, and compression without touching the main server config.
+
+## What .htaccess Does and When to Use It
+
+`.htaccess` only works on Apache servers with `AllowOverride` enabled. If you are on Nginx, LiteSpeed, or a CDN-only setup, these rules do not apply — Nginx has no equivalent per-directory config file; its rules go in `server {}` blocks.
+
+When `.htaccess` is the right tool:
+
+- Shared hosting where you cannot edit `httpd.conf`
+- WordPress, Joomla, or Drupal sites (all use `.htaccess` for pretty URLs)
+- Rapid rule deployment without a server restart
+
+When to prefer the main server config or Nginx:
+
+- High-traffic sites (`.htaccess` is re-read on *every* request, adding latency)
+- Container or serverless environments
+- Rules that need to apply globally across vhosts
+
+## Essential .htaccess Rules
+
+### Force HTTPS (HTTP to HTTPS redirect)
+
+The most common `.htaccess` rule — redirect all HTTP traffic to HTTPS. This is also a Google ranking signal.
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+```
+
+If you are behind a load balancer that terminates SSL, use the forwarded header instead:
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+```
+
+### WWW to non-WWW (or reverse)
+
+Pick one canonical form and redirect the other:
+
+```apache
+# Non-WWW canonical
+RewriteEngine On
+RewriteCond %{HTTP_HOST} ^www\.(.*)$ [NC]
+RewriteRule ^(.*)$ https://%1/$1 [R=301,L]
+```
+
+```apache
+# WWW canonical
+RewriteEngine On
+RewriteCond %{HTTP_HOST} !^www\. [NC]
+RewriteRule ^(.*)$ https://www.%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+```
+
+### 301 Permanent Redirect
+
+Move a specific page to a new URL:
+
+```apache
+Redirect 301 /old-page https://yourdomain.com/new-page
+```
+
+For a pattern-based redirect using regex:
+
+```apache
+RewriteEngine On
+RewriteRule ^blog/(.+)$ /articles/$1 [R=301,L]
+```
+
+### Custom 404 Error Page
+
+```apache
+ErrorDocument 404 /404.html
+ErrorDocument 500 /500.html
+ErrorDocument 403 /403.html
+```
+
+### CORS Headers
+
+Allow cross-origin requests for a specific domain or all origins:
+
+```apache
+# Allow specific origin
+<IfModule mod_headers.c>
+  Header set Access-Control-Allow-Origin "https://app.yourdomain.com"
+  Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+  Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+</IfModule>
+```
+
+```apache
+# Allow all origins (public API or font serving)
+<IfModule mod_headers.c>
+  Header set Access-Control-Allow-Origin "*"
+</IfModule>
+```
+
+### Basic Authentication (Password Protection)
+
+Protect a directory with a username and password:
+
+```apache
+AuthType Basic
+AuthName "Restricted Area"
+AuthUserFile /path/to/.htpasswd
+Require valid-user
+```
+
+Generate the `.htpasswd` file:
+
+```bash
+htpasswd -c /path/to/.htpasswd username
+# You will be prompted for a password
+```
+
+To protect a single file instead of the whole directory:
+
+```apache
+<Files "admin.php">
+  AuthType Basic
+  AuthName "Admin"
+  AuthUserFile /path/to/.htpasswd
+  Require valid-user
+</Files>
+```
+
+### Gzip Compression
+
+Compress text-based responses to reduce transfer size — typically 60-80% for HTML, CSS, and JavaScript:
+
+```apache
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css
+  AddOutputFilterByType DEFLATE application/javascript application/json
+  AddOutputFilterByType DEFLATE application/xml image/svg+xml
+  AddOutputFilterByType DEFLATE font/woff2 font/woff
+</IfModule>
+```
+
+### Browser Cache Headers
+
+Tell browsers how long to cache static assets:
+
+```apache
+<IfModule mod_expires.c>
+  ExpiresActive On
+
+  # Images
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 month"
+  ExpiresByType image/x-icon "access plus 1 year"
+
+  # CSS and JavaScript
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+
+  # Fonts
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/woff "access plus 1 year"
+
+  # HTML — don't cache long
+  ExpiresByType text/html "access plus 0 seconds"
+</IfModule>
+```
+
+If you use content hashing in filenames (as Vite, webpack, and Next.js do), use `immutable` for maximum cache efficiency:
+
+```apache
+<FilesMatch "\.[0-9a-f]{8,}\.(js|css|woff2)$">
+  Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+```
+
+### Block Hotlinking
+
+Prevent other sites from embedding your images and consuming your bandwidth:
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTP_REFERER} !^$
+RewriteCond %{HTTP_REFERER} !^https?://(www\.)?yourdomain\.com/ [NC]
+RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,L]
+```
+
+### Security Headers
+
+```apache
+<IfModule mod_headers.c>
+  # Prevent clickjacking
+  Header always set X-Frame-Options "SAMEORIGIN"
+
+  # Prevent MIME type sniffing
+  Header always set X-Content-Type-Options "nosniff"
+
+  # Enable XSS filter in older browsers
+  Header always set X-XSS-Protection "1; mode=block"
+
+  # Referrer policy
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+  # Remove server signature
+  Header always unset X-Powered-By
+  Header always unset Server
+</IfModule>
+```
+
+## Testing Your .htaccess Rules
+
+### curl — verify redirects
+
+```bash
+# Follow redirects and show final URL
+curl -L -I https://yourdomain.com/old-page
+
+# See all redirect hops
+curl -v https://yourdomain.com/old-page 2>&1 | grep -E "< HTTP|Location:"
+```
+
+### Test CORS headers
+
+```bash
+curl -H "Origin: https://other.com" \
+     -H "Access-Control-Request-Method: GET" \
+     -I https://yourdomain.com/api/resource
+```
+
+### Test gzip
+
+```bash
+curl -H "Accept-Encoding: gzip" -I https://yourdomain.com/
+# Look for: Content-Encoding: gzip
+```
+
+### Check cache headers
+
+```bash
+curl -I https://yourdomain.com/static/app.js
+# Look for: Cache-Control and Expires headers
+```
+
+## Common Mistakes
+
+**1. Missing `RewriteEngine On`** — Every block using `RewriteRule` needs this line first. Forgetting it produces a 500 error.
+
+**2. Rule order matters** — Apache processes rules top to bottom and stops at the first match with `[L]`. Put more specific rules before broad ones.
+
+**3. Infinite redirect loops** — If your HTTPS redirect runs even when already on HTTPS, you get a redirect loop. Always check `%{HTTPS} off` or `%{HTTP:X-Forwarded-Proto} !https`.
+
+**4. Path to .htpasswd** — Use an absolute server path, not a relative URL. Relative paths break on most setups.
+
+**5. `mod_rewrite` not enabled** — On Ubuntu/Debian, run `sudo a2enmod rewrite && sudo systemctl restart apache2`.
+
+## Build Your .htaccess Without Guesswork
+
+The rules above cover 90% of real-world use cases, but combining them correctly — especially when mixing redirects, authentication, and cache rules — requires careful ordering and syntax.
+
+[Try our Htaccess Generator →](/tools/htaccess-generator)
+
+Select the rules you need, fill in your domain and paths, and get a production-ready `.htaccess` file with correct ordering, no syntax errors, and comments explaining each block.

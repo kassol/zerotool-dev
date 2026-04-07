@@ -1,0 +1,325 @@
+---
+title: "CSS Variables Generator Online: Master Custom Properties for Theming"
+description: "Use a CSS variables generator online to build design token systems, dark mode themes, and component styles. Learn syntax, scope, JS access, and Sass comparison."
+pubDate: 2026-04-07
+lang: "en"
+translationSlug: "css-variables-generator-guide-zh"
+tags: ["css variables", "css custom properties", "css variables generator", "css", "developer-tools"]
+ogImage: /og/blog-css-variables-generator-guide.png
+---
+
+A **CSS variables generator online** helps you define custom properties for colors, spacing, typography, and other design tokens without writing repetitive declarations by hand. CSS custom properties — commonly called CSS variables — are natively supported in every modern browser and have become the standard way to build themeable, maintainable stylesheets. Understanding how they work and where to use them is one of the highest-leverage CSS skills you can have.
+
+## CSS Custom Properties Syntax
+
+The syntax has two parts: declaration and usage.
+
+**Declaration** — define a property with a double-hyphen prefix:
+
+```css
+:root {
+  --color-primary: #3b82f6;
+  --color-primary-dark: #2563eb;
+  --spacing-base: 16px;
+  --font-size-lg: 1.125rem;
+  --border-radius: 6px;
+}
+```
+
+**Usage** — reference the property with `var()`:
+
+```css
+.button {
+  background-color: var(--color-primary);
+  padding: var(--spacing-base);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-lg);
+}
+```
+
+The `var()` function accepts an optional fallback as a second argument — used if the custom property is undefined:
+
+```css
+.button {
+  color: var(--color-text, #111827);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+```
+
+Fallbacks can be chained (the last value is a static fallback):
+
+```css
+.button {
+  color: var(--button-color, var(--color-primary, #3b82f6));
+}
+```
+
+## :root Scope vs Component Scope
+
+CSS custom properties cascade and inherit like any other CSS property. `:root` is the highest-specificity selector for globals, but you can define variables at any scope.
+
+### Global design tokens in :root
+
+```css
+:root {
+  /* Color palette */
+  --blue-50: #eff6ff;
+  --blue-500: #3b82f6;
+  --blue-900: #1e3a8a;
+
+  /* Semantic color tokens */
+  --color-primary: var(--blue-500);
+  --color-background: #ffffff;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+
+  /* Spacing scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-4: 1rem;
+  --space-8: 2rem;
+
+  /* Typography */
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-xl: 1.25rem;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+}
+```
+
+### Component-scoped variables
+
+Override or extend globals within a component:
+
+```css
+.card {
+  --card-padding: var(--space-4);
+  --card-radius: 8px;
+  --card-shadow: var(--shadow-md);
+
+  padding: var(--card-padding);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+}
+
+/* Compact card variant — only override what changes */
+.card--compact {
+  --card-padding: var(--space-2);
+}
+```
+
+This pattern means a `.card--compact` only needs one line instead of redeclaring all properties.
+
+## Dark Mode with CSS Variables
+
+CSS variables make dark mode implementation clean and maintainable. Instead of duplicating selectors, you redefine token values under a theme selector.
+
+### Using `prefers-color-scheme`
+
+```css
+:root {
+  --color-background: #ffffff;
+  --color-surface: #f9fafb;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-primary: #3b82f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: #0f172a;
+    --color-surface: #1e293b;
+    --color-text: #f1f5f9;
+    --color-text-muted: #94a3b8;
+    --color-border: #334155;
+    --color-primary: #60a5fa;
+  }
+}
+```
+
+Every element using `var(--color-background)` automatically switches without additional CSS.
+
+### Using a data attribute (user-toggled theme)
+
+```css
+:root,
+[data-theme="light"] {
+  --color-background: #ffffff;
+  --color-text: #111827;
+}
+
+[data-theme="dark"] {
+  --color-background: #0f172a;
+  --color-text: #f1f5f9;
+}
+```
+
+Toggle in JavaScript:
+
+```javascript
+const toggleTheme = () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  document.documentElement.setAttribute(
+    'data-theme',
+    current === 'dark' ? 'light' : 'dark'
+  );
+};
+```
+
+## JavaScript Access to CSS Variables
+
+CSS custom properties can be read and written from JavaScript using the CSSOM, enabling dynamic theming at runtime.
+
+### Reading a CSS variable
+
+```javascript
+// Read from :root (or any element)
+const root = document.documentElement;
+const primaryColor = getComputedStyle(root)
+  .getPropertyValue('--color-primary')
+  .trim();
+
+console.log(primaryColor); // "#3b82f6"
+```
+
+### Writing a CSS variable
+
+```javascript
+// Set on :root — affects all elements using this variable
+document.documentElement.style.setProperty('--color-primary', '#8b5cf6');
+
+// Set on a specific element — only affects that element and its children
+const card = document.querySelector('.card');
+card.style.setProperty('--card-padding', '2rem');
+```
+
+### Dynamic theming example
+
+```javascript
+// Apply a user-selected accent color across the entire UI
+function setAccentColor(hex) {
+  const root = document.documentElement;
+  root.style.setProperty('--color-primary', hex);
+
+  // Derive darker variant for hover states
+  // (or precompute a set of shades)
+  root.style.setProperty('--color-primary-dark', darken(hex, 10));
+}
+
+// Reset to stylesheet default
+function resetAccentColor() {
+  document.documentElement.style.removeProperty('--color-primary');
+  document.documentElement.style.removeProperty('--color-primary-dark');
+}
+```
+
+## CSS Variables vs Sass Variables
+
+Sass variables (`$variable`) and CSS custom properties (`--variable`) solve different problems and are often used together.
+
+| Feature | CSS Custom Properties | Sass Variables |
+|---------|----------------------|----------------|
+| Runtime access from JS | Yes | No (compiled away) |
+| Can be changed after compile | Yes | No |
+| Inherits through DOM | Yes | No concept |
+| Works in calc() | Yes | Yes (at compile time) |
+| Browser DevTools visibility | Yes | No |
+| Works without a build step | Yes | No |
+| Conditional via media query | Yes | Limited |
+
+**Use both:** Sass variables are useful for values that never change at runtime (breakpoints, z-index scales, font stacks). CSS custom properties are for anything that might change based on theme, component state, or user preference.
+
+```scss
+// Sass: compile-time constants
+$breakpoint-md: 768px;
+$z-modal: 1000;
+
+// These become CSS variables at runtime
+:root {
+  --color-primary: #{$brand-blue};
+  --font-size-base: 1rem;
+}
+```
+
+## Design Token Patterns
+
+Design tokens are named values that represent design decisions — color, spacing, typography, shadow, border radius. CSS custom properties are the native implementation layer for design tokens in the browser.
+
+### Three-tier token system
+
+```css
+:root {
+  /* Tier 1: Primitive tokens — raw values */
+  --color-blue-500: #3b82f6;
+  --color-blue-700: #1d4ed8;
+  --color-gray-900: #111827;
+
+  /* Tier 2: Semantic tokens — meaning, not value */
+  --color-action: var(--color-blue-500);
+  --color-action-hover: var(--color-blue-700);
+  --color-text-primary: var(--color-gray-900);
+
+  /* Tier 3: Component tokens — most specific */
+  --button-bg: var(--color-action);
+  --button-bg-hover: var(--color-action-hover);
+  --button-text: #ffffff;
+}
+```
+
+This lets you retheme at the semantic level (change `--color-action`) without touching component tokens.
+
+### Spacing scale
+
+```css
+:root {
+  --space-px: 1px;
+  --space-0: 0;
+  --space-1: 0.25rem;   /* 4px */
+  --space-2: 0.5rem;    /* 8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-8: 2rem;      /* 32px */
+  --space-12: 3rem;     /* 48px */
+  --space-16: 4rem;     /* 64px */
+}
+```
+
+### Using variables in calc()
+
+CSS variables work inside `calc()`, enabling responsive calculations:
+
+```css
+:root {
+  --container-padding: 1rem;
+  --sidebar-width: 280px;
+}
+
+.main-content {
+  /* Subtract sidebar and gap from total width */
+  width: calc(100% - var(--sidebar-width) - var(--container-padding) * 2);
+}
+```
+
+## Browser Support
+
+CSS custom properties have been supported in all major browsers since 2016:
+
+- Chrome 49+
+- Firefox 31+
+- Safari 9.1+
+- Edge 15+
+
+Global support is above 96%. IE11 does not support CSS custom properties — use a PostCSS fallback or accept the degraded experience for IE11 users (at this point, a very small minority).
+
+## Build Your Token System Now
+
+Defining a complete set of design tokens from scratch — with semantic naming, fallback values, and dark mode variants — takes time to do correctly. A generator lets you configure your color palette, spacing scale, and typography settings and outputs a `:root {}` block ready to paste into your stylesheet.
+
+[Try our CSS Variables Generator →](/tools/css-variables-generator)
+
+Configure your brand colors, spacing scale, and font sizes, then export a production-ready CSS custom properties block. Use it as the foundation of your design system or drop it into an existing project to start consolidating hardcoded values.

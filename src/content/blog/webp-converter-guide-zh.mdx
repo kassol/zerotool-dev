@@ -1,0 +1,249 @@
+---
+title: "WebP 转换器：图片转 WebP 减小体积 30%"
+description: "图片转 WebP 在线指南，涵盖WebP格式介绍、国内平台现状、浏览器兼容性、picture降级方案、Next.js/Nuxt自动优化及cwebp命令行用法。"
+pubDate: 2026-04-07
+lang: "zh"
+translationSlug: "webp-converter-guide"
+tags: ["WebP转换", "WebP", "图片优化", "网页性能", "开发工具"]
+ogImage: /og/blog-webp-converter-guide-zh.png
+---
+
+图片转 WebP 在线工具可以将 JPEG、PNG、GIF 等格式转换为 WebP，平均减小体积 25-35%，同等视觉质量下加载更快。这不只是性能优化——对 Core Web Vitals 中的 LCP（最大内容绘制）评分有直接影响。
+
+## WebP 是什么
+
+WebP 是 Google 于 2010 年发布的现代图像格式，同时支持：
+
+- **有损压缩**：类似 JPEG，体积比同质量 JPEG 小约 25-34%
+- **无损压缩**：类似 PNG，体积比同质量 PNG 小约 26%
+- **透明度**：支持 Alpha 通道（JPEG 不支持）
+- **动画**：支持动态图（类似 GIF，但体积更小）
+
+核心优势是在视觉质量无明显损失的情况下大幅减小文件体积。
+
+## 国内平台早已大规模使用 WebP
+
+WebP 在国内早就不是"新技术"：
+
+- **微信**：聊天图片、朋友圈图片均使用 WebP 格式存储和传输
+- **抖音/TikTok**：视频封面图使用 WebP
+- **淘宝/天猫**：商品主图在支持 WebP 的浏览器上自动下发 WebP
+- **微博**：头像和配图使用 WebP
+- **阿里 CDN / 腾讯云 CDN**：支持"图片自适应"功能，自动识别客户端能力并下发 WebP
+
+如果你在做面向国内用户的产品，用户设备基本已经支持 WebP，可以放心使用。
+
+## 浏览器兼容性
+
+截至 2026 年，WebP 的全球支持率约为 97%：
+
+| 浏览器 | 支持版本 |
+|--------|---------|
+| Chrome | 17+ |
+| Firefox | 65+ |
+| Edge | 18+ |
+| Safari | 14+（macOS 11 Big Sur / iOS 14） |
+| 微信内置浏览器 | 基于 Chrome，全支持 |
+| 华为浏览器 | 全支持 |
+
+主要注意点：iOS 13 及以下不支持 WebP。如果你的用户中有较多 iOS 老设备（可通过 Analytics 确认），需要提供降级方案。
+
+## `<picture>` 降级方案
+
+标准做法是使用 `<picture>` 元素，浏览器按顺序尝试，取第一个支持的格式：
+
+```html
+<picture>
+  <source srcset="/images/hero.webp" type="image/webp" />
+  <source srcset="/images/hero.jpg" type="image/jpeg" />
+  <img src="/images/hero.jpg" alt="Hero image" width="800" height="600" />
+</picture>
+```
+
+浏览器支持 WebP 则加载 `.webp`，否则回退到 `.jpg`。`<img>` 标签是必须的，作为最终兜底。
+
+### 响应式 + WebP 降级
+
+```html
+<picture>
+  <source
+    media="(min-width: 768px)"
+    srcset="/images/hero-lg.webp"
+    type="image/webp"
+  />
+  <source
+    media="(min-width: 768px)"
+    srcset="/images/hero-lg.jpg"
+    type="image/jpeg"
+  />
+  <source srcset="/images/hero-sm.webp" type="image/webp" />
+  <img
+    src="/images/hero-sm.jpg"
+    alt="Hero image"
+    loading="lazy"
+    width="400"
+    height="300"
+  />
+</picture>
+```
+
+## 现代框架的自动优化
+
+### Next.js
+
+Next.js 的 `<Image>` 组件自动处理 WebP 转换和响应式图片，无需手动操作：
+
+```jsx
+import Image from 'next/image';
+
+export default function Hero() {
+  return (
+    <Image
+      src="/images/hero.jpg"  // 原始 JPEG
+      alt="Hero"
+      width={800}
+      height={600}
+      // Next.js 自动：
+      // - 转换为 WebP（浏览器支持时）
+      // - 生成多尺寸响应式版本
+      // - 添加 loading="lazy"
+      // - 生成 blur placeholder
+      placeholder="blur"
+      blurDataURL="data:image/jpeg;base64,..."
+    />
+  );
+}
+```
+
+`next.config.js` 中可以配置图片优化行为：
+
+```js
+module.exports = {
+  images: {
+    formats: ['image/webp'],
+    minimumCacheTTL: 60 * 60 * 24 * 30, // 30天
+    domains: ['cdn.yourdomain.com'],
+  },
+};
+```
+
+### Astro
+
+Astro 内置图片优化，`<Image>` 组件自动输出 WebP：
+
+```astro
+---
+import { Image } from 'astro:assets';
+import heroImg from '../assets/hero.jpg';
+---
+
+<Image src={heroImg} alt="Hero" width={800} format="webp" quality={80} />
+```
+
+### Nuxt 3
+
+```vue
+<template>
+  <NuxtImg
+    src="/images/hero.jpg"
+    format="webp"
+    width="800"
+    height="600"
+    loading="lazy"
+  />
+</template>
+```
+
+需安装 `@nuxt/image` 模块。
+
+## cwebp 命令行转换
+
+### 安装
+
+```bash
+# macOS
+brew install webp
+
+# Ubuntu/Debian
+apt install webp
+
+# Windows（Scoop）
+scoop install libwebp
+```
+
+### 基本用法
+
+```bash
+# JPEG 转 WebP，质量 80（默认）
+cwebp input.jpg -o output.webp
+
+# 指定质量（0-100，推荐 75-85）
+cwebp -q 80 input.jpg -o output.webp
+
+# PNG 转 WebP（无损）
+cwebp -lossless input.png -o output.webp
+
+# 查看转换信息
+cwebp -q 80 input.jpg -o output.webp -v
+```
+
+### 批量转换脚本
+
+```bash
+#!/bin/bash
+# 将当前目录所有 JPEG 和 PNG 转为 WebP
+for img in *.{jpg,jpeg,png}; do
+  [ -f "$img" ] || continue
+  output="${img%.*}.webp"
+  cwebp -q 80 "$img" -o "$output"
+  echo "转换完成: $img -> $output"
+done
+```
+
+### Node.js（sharp 库）
+
+```bash
+npm install sharp
+```
+
+```js
+const sharp = require('sharp');
+const path = require('path');
+const fs = require('fs');
+
+async function convertToWebP(inputPath, quality = 80) {
+  const outputPath = inputPath.replace(/\.(jpg|jpeg|png)$/i, '.webp');
+  
+  const info = await sharp(inputPath)
+    .webp({ quality })
+    .toFile(outputPath);
+  
+  const inputSize = fs.statSync(inputPath).size;
+  const saved = ((inputSize - info.size) / inputSize * 100).toFixed(1);
+  
+  console.log(`${path.basename(inputPath)} -> ${path.basename(outputPath)}`);
+  console.log(`体积: ${(inputSize/1024).toFixed(0)}KB -> ${(info.size/1024).toFixed(0)}KB (节省 ${saved}%)`);
+  
+  return outputPath;
+}
+
+convertToWebP('hero.jpg');
+```
+
+## 对 Core Web Vitals 的影响
+
+WebP 优化直接影响 **LCP（Largest Contentful Paint）**，因为首屏最大元素通常是图片。
+
+- 图片体积减小 30% → 传输时间减少 30% → LCP 改善
+- Google PageSpeed Insights 会明确提示"使用新一代图片格式"，采用 WebP 可消除此项警告
+- LCP < 2.5s 是 Google 搜索排名的正向信号
+
+实际案例：将首页 Hero 图从 480KB JPEG 转为 320KB WebP，在 4G 网络下 LCP 可改善约 150-300ms。
+
+## 在线转换工具
+
+无需安装任何工具，直接在浏览器中将 JPEG/PNG 转换为 WebP，支持质量调节和批量转换。
+
+[使用在线工具 →](/zh/tools/webp-converter)
+
+转换在本地浏览器完成，图片不会上传到服务器，适合处理敏感业务图片。
