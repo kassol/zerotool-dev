@@ -53,11 +53,40 @@ const recentLabel = t(lang, 'category.recent');
       }
     }
 
+    // Cache original card order on first call so we can restore it later
+    var _ztOriginalOrder = null;
+    function ensureOriginalOrder() {
+      if (_ztOriginalOrder) return;
+      var cards = document.querySelectorAll('.tool-card');
+      _ztOriginalOrder = Array.prototype.slice.call(cards);
+    }
+
     // Shared apply function — called by both components
     window.__ztApply = function () {
       var q = window.__ztSearch || '';
       var cat = window.__ztCat || 'all';
       var recent = cat === 'recent' ? getRecent() : null;
+
+      ensureOriginalOrder();
+      var grid = _ztOriginalOrder && _ztOriginalOrder.length > 0 ? _ztOriginalOrder[0].parentNode : null;
+
+      if (grid) {
+        if (cat === 'recent' && !q) {
+          // Reorder cards by recency (most recent first)
+          var sorted = _ztOriginalOrder.slice().sort(function(a, b) {
+            var aIdx = recent.indexOf(a.getAttribute('data-slug') || '');
+            var bIdx = recent.indexOf(b.getAttribute('data-slug') || '');
+            if (aIdx === -1) aIdx = 9999;
+            if (bIdx === -1) bIdx = 9999;
+            return aIdx - bIdx;
+          });
+          sorted.forEach(function(card) { grid.appendChild(card); });
+        } else {
+          // Restore original DOM order
+          _ztOriginalOrder.forEach(function(card) { grid.appendChild(card); });
+        }
+      }
+
       var cards = document.querySelectorAll('.tool-card');
       var visible = 0;
       for (var i = 0; i < cards.length; i++) {
