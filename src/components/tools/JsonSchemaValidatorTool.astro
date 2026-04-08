@@ -3,30 +3,37 @@
 ---
 
 <div>
-  <div class="jsv-wrap">
+  <div class="jsv-wrap"
+    data-msg-paste=""
+    data-msg-invalid-schema=""
+    data-msg-invalid-data=""
+    data-msg-valid=""
+    data-msg-invalid=""
+    data-msg-schema-error=""
+  >
 
     <div class="jsv-toolbar">
-      <label for="jsv-draft-select" class="jsv-label">Schema Draft:</label>
+      <label for="jsv-draft-select" class="jsv-label" data-i18n="schemaDraft">Schema Draft:</label>
       <select id="jsv-draft-select" class="jsv-select">
         <option value="07" selected>Draft-07 (most common)</option>
         <option value="2020">Draft 2020-12</option>
       </select>
-      <button id="jsv-load-example" class="btn-ghost" type="button">Load Example</button>
-      <button id="jsv-validate" class="btn-primary" type="button">Validate</button>
+      <button id="jsv-load-example" class="btn-ghost" type="button" data-i18n="loadExample">Load Example</button>
+      <button id="jsv-validate" class="btn-primary" type="button" data-i18n="validate">Validate</button>
     </div>
 
     <div class="jsv-panels">
       <div class="jsv-panel">
         <label for="jsv-schema">
-          <span>JSON Schema</span>
-          <button id="jsv-clear-schema" class="btn-ghost btn-xs" type="button">Clear</button>
+          <span data-i18n="jsonSchema">JSON Schema</span>
+          <button id="jsv-clear-schema" class="btn-ghost btn-xs" type="button" data-i18n="clear">Clear</button>
         </label>
         <textarea id="jsv-schema" spellcheck="false" placeholder='{"type":"object","properties":{"name":{"type":"string"}}}' ></textarea>
       </div>
       <div class="jsv-panel">
         <label for="jsv-data">
-          <span>JSON Data</span>
-          <button id="jsv-clear-data" class="btn-ghost btn-xs" type="button">Clear</button>
+          <span data-i18n="jsonData">JSON Data</span>
+          <button id="jsv-clear-data" class="btn-ghost btn-xs" type="button" data-i18n="clear">Clear</button>
         </label>
         <textarea id="jsv-data" spellcheck="false" placeholder='{"name":"Alice"}'></textarea>
       </div>
@@ -38,6 +45,31 @@
 
   </div>
 </div>
+
+<script is:inline>
+  (function () {
+    var STRINGS = {
+      en: { schemaDraft: 'Schema Draft:', loadExample: 'Load Example', validate: 'Validate', jsonSchema: 'JSON Schema', jsonData: 'JSON Data', clear: 'Clear', msgPaste: 'Paste a JSON Schema and JSON Data, then click Validate.', msgInvalidSchema: 'Invalid JSON Schema: ', msgInvalidData: 'Invalid JSON Data: ', msgValid: 'Valid \u2014 JSON data matches the schema.', msgInvalid: 'Invalid \u2014 JSON data does not match the schema.', msgSchemaError: 'Schema compilation error: ' },
+      zh: { schemaDraft: 'Schema 草案：', loadExample: '加载示例', validate: '验证', jsonSchema: 'JSON Schema', jsonData: 'JSON 数据', clear: '清除', msgPaste: '粘贴 JSON Schema 和 JSON 数据，然后点击验证。', msgInvalidSchema: '无效 JSON Schema：', msgInvalidData: '无效 JSON 数据：', msgValid: '有效 \u2014 JSON 数据符合 Schema。', msgInvalid: '无效 \u2014 JSON 数据不符合 Schema。', msgSchemaError: 'Schema 编译错误：' },
+      ja: { schemaDraft: 'Schema ドラフト：', loadExample: '例を読み込む', validate: '検証', jsonSchema: 'JSON Schema', jsonData: 'JSON データ', clear: 'クリア', msgPaste: 'JSON Schema と JSON データを貼り付けて検証をクリックしてください。', msgInvalidSchema: '無効な JSON Schema：', msgInvalidData: '無効な JSON データ：', msgValid: '有効 \u2014 JSON データは Schema に適合します。', msgInvalid: '無効 \u2014 JSON データは Schema に適合しません。', msgSchemaError: 'Schema コンパイルエラー：' },
+      ko: { schemaDraft: 'Schema 초안:', loadExample: '예제 불러오기', validate: '검증', jsonSchema: 'JSON Schema', jsonData: 'JSON 데이터', clear: '지우기', msgPaste: 'JSON Schema와 JSON 데이터를 붙여넣고 검증을 클릭하세요.', msgInvalidSchema: '유효하지 않은 JSON Schema: ', msgInvalidData: '유효하지 않은 JSON 데이터: ', msgValid: '유효 \u2014 JSON 데이터가 Schema에 적합합니다.', msgInvalid: '유효하지 않음 \u2014 JSON 데이터가 Schema에 적합하지 않습니다.', msgSchemaError: 'Schema 컴파일 오류: ' }
+    };
+    var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+    var t = STRINGS[pageLang] || STRINGS.en;
+    document.querySelectorAll('.jsv-wrap [data-i18n]').forEach(function(el) {
+      var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+    });
+    var wrap = document.querySelector('.jsv-wrap');
+    if (wrap) {
+      wrap.dataset.msgPaste = t.msgPaste;
+      wrap.dataset.msgInvalidSchema = t.msgInvalidSchema;
+      wrap.dataset.msgInvalidData = t.msgInvalidData;
+      wrap.dataset.msgValid = t.msgValid;
+      wrap.dataset.msgInvalid = t.msgInvalid;
+      wrap.dataset.msgSchemaError = t.msgSchemaError;
+    }
+  })();
+</script>
 
 <script>
   import Ajv from 'ajv';
@@ -52,6 +84,14 @@
   const loadExBtn    = document.getElementById('jsv-load-example')!;
   const clearSchBtn  = document.getElementById('jsv-clear-schema')!;
   const clearDataBtn = document.getElementById('jsv-clear-data')!;
+
+  const jsvWrap = document.querySelector('.jsv-wrap') as HTMLElement;
+  const MSG_PASTE          = jsvWrap?.dataset.msgPaste          || 'Paste a JSON Schema and JSON Data, then click Validate.';
+  const MSG_INVALID_SCHEMA = jsvWrap?.dataset.msgInvalidSchema  || 'Invalid JSON Schema: ';
+  const MSG_INVALID_DATA   = jsvWrap?.dataset.msgInvalidData    || 'Invalid JSON Data: ';
+  const MSG_VALID          = jsvWrap?.dataset.msgValid          || 'Valid \u2014 JSON data matches the schema.';
+  const MSG_INVALID        = jsvWrap?.dataset.msgInvalid        || 'Invalid \u2014 JSON data does not match the schema.';
+  const MSG_SCHEMA_ERROR   = jsvWrap?.dataset.msgSchemaError    || 'Schema compilation error: ';
 
   const EXAMPLE_SCHEMA = JSON.stringify({
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -122,7 +162,7 @@
     const dataRaw   = dataEl.value.trim();
 
     if (!schemaRaw || !dataRaw) {
-      setStatus('Paste a JSON Schema and JSON Data, then click Validate.', '');
+      setStatus(MSG_PASTE, '');
       errorsEl.style.display = 'none';
       return;
     }
@@ -131,14 +171,14 @@
     try {
       schema = JSON.parse(schemaRaw);
     } catch (e: any) {
-      setStatus('Invalid JSON Schema: ' + e.message, 'error');
+      setStatus(MSG_INVALID_SCHEMA + e.message, 'error');
       errorsEl.style.display = 'none';
       return;
     }
     try {
       data = JSON.parse(dataRaw);
     } catch (e: any) {
-      setStatus('Invalid JSON Data: ' + e.message, 'error');
+      setStatus(MSG_INVALID_DATA + e.message, 'error');
       errorsEl.style.display = 'none';
       return;
     }
@@ -156,15 +196,15 @@
 
       if (valid) {
         errorsEl.style.display = 'none';
-        setStatus('Valid \u2014 JSON data matches the schema.', 'success');
+        setStatus(MSG_VALID, 'success');
         window.trackTool?.('json-schema-validator', 'validate_success');
       } else {
         renderErrors(validateFn.errors ?? []);
-        setStatus('Invalid \u2014 JSON data does not match the schema.', 'error');
+        setStatus(MSG_INVALID, 'error');
         window.trackTool?.('json-schema-validator', 'validate_error');
       }
     } catch (e: any) {
-      setStatus('Schema compilation error: ' + e.message, 'error');
+      setStatus(MSG_SCHEMA_ERROR + e.message, 'error');
       errorsEl.style.display = 'none';
     }
   }

@@ -16,9 +16,10 @@
     </div>
 
     <div class="rt-field">
-      <label for="rt-test">Test String</label>
+      <label for="rt-test" data-i18n="testString">Test String</label>
       <textarea
         id="rt-test"
+        data-i18n-ph="testPlaceholder"
         placeholder="Paste your text here..."
         spellcheck="false"
       ></textarea>
@@ -27,7 +28,7 @@
     <div id="rt-status" class="rt-status" aria-live="polite"></div>
 
     <div class="rt-field">
-      <label>Highlighted Matches</label>
+      <label data-i18n="highlightedMatches">Highlighted Matches</label>
       <div id="rt-highlight" class="rt-highlight"></div>
     </div>
 
@@ -36,6 +37,38 @@
 
   <script is:inline>
     (function () {
+      var STRINGS = {
+        en: {
+          testString: 'Test String', testPlaceholder: 'Paste your text here...', highlightedMatches: 'Highlighted Matches',
+          noMatches: 'No matches.', matchFound: function(n) { return n + ' match' + (n > 1 ? 'es' : '') + ' found.'; },
+          invalidRegex: 'Invalid regex: ', matchLabel: 'Match', groupLabel: 'Group', andMore: function(n) { return '... and ' + n + ' more matches.'; }
+        },
+        zh: {
+          testString: '测试字符串', testPlaceholder: '在此粘贴文本...', highlightedMatches: '高亮匹配',
+          noMatches: '无匹配项。', matchFound: function(n) { return '找到 ' + n + ' 个匹配项。'; },
+          invalidRegex: '无效的正则表达式：', matchLabel: '匹配', groupLabel: '组', andMore: function(n) { return '... 还有 ' + n + ' 个匹配项。'; }
+        },
+        ja: {
+          testString: 'テスト文字列', testPlaceholder: 'テキストを貼り付け...', highlightedMatches: 'マッチのハイライト',
+          noMatches: 'マッチなし。', matchFound: function(n) { return n + ' 件マッチしました。'; },
+          invalidRegex: '無効な正規表現：', matchLabel: 'マッチ', groupLabel: 'グループ', andMore: function(n) { return '... 他 ' + n + ' 件のマッチ。'; }
+        },
+        ko: {
+          testString: '테스트 문자열', testPlaceholder: '텍스트를 붙여넣으세요...', highlightedMatches: '일치 항목 강조',
+          noMatches: '일치하는 항목이 없습니다.', matchFound: function(n) { return n + '개 일치 항목을 찾았습니다.'; },
+          invalidRegex: '유효하지 않은 정규식: ', matchLabel: '일치', groupLabel: '그룹', andMore: function(n) { return '... 외 ' + n + '개 일치 항목.'; }
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
+      });
+
       var patternEl = document.getElementById('rt-pattern');
       var testEl = document.getElementById('rt-test');
       var statusEl = document.getElementById('rt-status');
@@ -76,7 +109,7 @@
         try {
           re = new RegExp(pattern, flags.includes('g') ? flags : flags + 'g');
         } catch (e) {
-          statusEl.textContent = 'Invalid regex: ' + e.message;
+          statusEl.textContent = t.invalidRegex + e.message;
           statusEl.className = 'rt-status error';
           highlightEl.textContent = text;
           return;
@@ -92,7 +125,7 @@
         }
 
         var count = allMatches.length;
-        statusEl.textContent = count === 0 ? 'No matches.' : count + ' match' + (count > 1 ? 'es' : '') + ' found.';
+        statusEl.textContent = count === 0 ? t.noMatches : t.matchFound(count);
         statusEl.className = 'rt-status ' + (count > 0 ? 'success' : 'none');
         if (count > 0 && !rtTracked) { rtTracked = true; window.trackTool && window.trackTool('regex_tester', 'match'); }
 
@@ -113,10 +146,10 @@
           ul.className = 'rt-match-list';
           allMatches.slice(0, 100).forEach(function (match, i) {
             var li = document.createElement('li');
-            var header = '<strong>Match ' + (i + 1) + ':</strong> <code>' + escapeHtml(match.match) + '</code> <span class="rt-pos">(index ' + match.index + ')</span>';
+            var header = '<strong>' + t.matchLabel + ' ' + (i + 1) + ':</strong> <code>' + escapeHtml(match.match) + '</code> <span class="rt-pos">(index ' + match.index + ')</span>';
             if (match.groups.length > 0 && match.groups.some(function(g){ return g !== undefined; })) {
               header += '<ul class="rt-groups">' + match.groups.map(function(g, j) {
-                return '<li>Group ' + (j+1) + ': <code>' + (g !== undefined ? escapeHtml(g) : '<em>undefined</em>') + '</code></li>';
+                return '<li>' + t.groupLabel + ' ' + (j+1) + ': <code>' + (g !== undefined ? escapeHtml(g) : '<em>undefined</em>') + '</code></li>';
               }).join('') + '</ul>';
             }
             li.innerHTML = header;
@@ -124,7 +157,7 @@
           });
           if (count > 100) {
             var more = document.createElement('li');
-            more.textContent = '... and ' + (count - 100) + ' more matches.';
+            more.textContent = t.andMore(count - 100);
             ul.appendChild(more);
           }
           matchesEl.appendChild(ul);

@@ -3,12 +3,20 @@
 ---
 
 <div>
-  <div class="tj-wrap">
+  <div class="tj-wrap"
+    data-msg-toml-to-json=""
+    data-msg-json-to-toml=""
+    data-msg-invalid-toml=""
+    data-msg-invalid-json=""
+    data-msg-error=""
+    data-copy=""
+    data-copied=""
+  >
     <div class="tj-panels">
       <div class="tj-panel">
         <label for="tj-toml">
           <span>TOML</span>
-          <button id="tj-copy-toml" class="btn-copy" type="button">Copy</button>
+          <button id="tj-copy-toml" class="btn-copy" type="button" data-i18n="copy">Copy</button>
         </label>
         <textarea
           id="tj-toml"
@@ -19,7 +27,7 @@
       <div class="tj-panel">
         <label for="tj-json">
           <span>JSON</span>
-          <button id="tj-copy-json" class="btn-copy" type="button">Copy</button>
+          <button id="tj-copy-json" class="btn-copy" type="button" data-i18n="copy">Copy</button>
         </label>
         <textarea
           id="tj-json"
@@ -30,13 +38,39 @@
     </div>
 
     <div class="tj-actions">
-      <button id="tj-to-json" class="btn-primary">TOML → JSON</button>
-      <button id="tj-to-toml" class="btn-primary">JSON → TOML</button>
-      <button id="tj-clear" class="btn-ghost">Clear</button>
+      <button id="tj-to-json" class="btn-primary" data-i18n="tomlToJson">TOML → JSON</button>
+      <button id="tj-to-toml" class="btn-primary" data-i18n="jsonToToml">JSON → TOML</button>
+      <button id="tj-clear" class="btn-ghost" data-i18n="clear">Clear</button>
     </div>
 
     <div id="tj-status" class="tj-status" aria-live="polite"></div>
   </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'Converted TOML to JSON.', msgJsonToToml: 'Converted JSON to TOML.', msgInvalidToml: 'Invalid TOML', msgInvalidJson: 'Invalid JSON', msgError: 'Error' },
+        zh: { copy: '复制', copied: '已复制！', clear: '清除', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: '已将 TOML 转换为 JSON。', msgJsonToToml: '已将 JSON 转换为 TOML。', msgInvalidToml: '无效 TOML', msgInvalidJson: '无效 JSON', msgError: '错误' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'TOML を JSON に変換しました。', msgJsonToToml: 'JSON を TOML に変換しました。', msgInvalidToml: '無効な TOML', msgInvalidJson: '無効な JSON', msgError: 'エラー' },
+        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'TOML을 JSON으로 변환했습니다.', msgJsonToToml: 'JSON을 TOML로 변환했습니다.', msgInvalidToml: '유효하지 않은 TOML', msgInvalidJson: '유효하지 않은 JSON', msgError: '오류' }
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('.tj-wrap [data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      var wrap = document.querySelector('.tj-wrap');
+      if (wrap) {
+        wrap.dataset.msgTomlToJson = t.msgTomlToJson;
+        wrap.dataset.msgJsonToToml = t.msgJsonToToml;
+        wrap.dataset.msgInvalidToml = t.msgInvalidToml;
+        wrap.dataset.msgInvalidJson = t.msgInvalidJson;
+        wrap.dataset.msgError = t.msgError;
+        wrap.dataset.copy = t.copy;
+        wrap.dataset.copied = t.copied;
+      }
+    })();
+  </script>
 
   <script>
     import { parse, stringify } from 'smol-toml';
@@ -48,6 +82,15 @@
     const copyJsonBtn = document.getElementById('tj-copy-json') as HTMLButtonElement;
     let lastValidJsonOutput = '';
     let lastValidTomlOutput = '';
+
+    const tjWrap = document.querySelector('.tj-wrap') as HTMLElement;
+    const MSG_TOML_TO_JSON  = tjWrap?.dataset.msgTomlToJson  || 'Converted TOML to JSON.';
+    const MSG_JSON_TO_TOML  = tjWrap?.dataset.msgJsonToToml  || 'Converted JSON to TOML.';
+    const MSG_INVALID_TOML  = tjWrap?.dataset.msgInvalidToml || 'Invalid TOML';
+    const MSG_INVALID_JSON  = tjWrap?.dataset.msgInvalidJson || 'Invalid JSON';
+    const MSG_ERROR         = tjWrap?.dataset.msgError       || 'Error';
+    const COPY_LABEL        = tjWrap?.dataset.copy           || 'Copy';
+    const COPIED_LABEL      = tjWrap?.dataset.copied         || 'Copied!';
 
     function setStatus(msg: string, isError: boolean) {
       statusEl.textContent = msg;
@@ -70,9 +113,9 @@
           const data = parse(raw);
           jsonEl.value = JSON.stringify(data, null, 2);
           lastValidJsonOutput = jsonEl.value;
-          setStatus('Converted TOML to JSON.', false);
+          setStatus(MSG_TOML_TO_JSON, false);
         } catch (e: any) {
-          setStatus('Invalid TOML: ' + e.message, true);
+          setStatus(MSG_INVALID_TOML + ': ' + e.message, true);
         }
       }, 300);
     });
@@ -88,9 +131,9 @@
           const data = JSON.parse(raw);
           tomlEl.value = stringify(data);
           lastValidTomlOutput = tomlEl.value;
-          setStatus('Converted JSON to TOML.', false);
+          setStatus(MSG_JSON_TO_TOML, false);
         } catch (e: any) {
-          setStatus('Error: ' + e.message, true);
+          setStatus(MSG_ERROR + ': ' + e.message, true);
         }
       }, 300);
     });
@@ -103,10 +146,10 @@
         const data = parse(raw);
         jsonEl.value = JSON.stringify(data, null, 2);
         lastValidJsonOutput = jsonEl.value;
-        setStatus('Converted TOML to JSON.', false);
+        setStatus(MSG_TOML_TO_JSON, false);
         (window as any).trackTool && (window as any).trackTool('toml_json', 'toml_to_json');
       } catch (e: any) {
-        setStatus('Invalid TOML: ' + e.message, true);
+        setStatus(MSG_INVALID_TOML + ': ' + e.message, true);
       }
     });
 
@@ -118,10 +161,10 @@
         const data = JSON.parse(raw);
         tomlEl.value = stringify(data);
         lastValidTomlOutput = tomlEl.value;
-        setStatus('Converted JSON to TOML.', false);
+        setStatus(MSG_JSON_TO_TOML, false);
         (window as any).trackTool && (window as any).trackTool('toml_json', 'json_to_toml');
       } catch (e: any) {
-        setStatus('Error: ' + e.message, true);
+        setStatus(MSG_ERROR + ': ' + e.message, true);
       }
     });
 
@@ -136,16 +179,16 @@
     copyTomlBtn.addEventListener('click', () => {
       if (!tomlEl.value) return;
       navigator.clipboard.writeText(tomlEl.value).then(() => {
-        copyTomlBtn.textContent = 'Copied!';
-        setTimeout(() => { copyTomlBtn.textContent = 'Copy'; }, 1500);
+        copyTomlBtn.textContent = COPIED_LABEL;
+        setTimeout(() => { copyTomlBtn.textContent = COPY_LABEL; }, 1500);
       });
     });
 
     copyJsonBtn.addEventListener('click', () => {
       if (!jsonEl.value) return;
       navigator.clipboard.writeText(jsonEl.value).then(() => {
-        copyJsonBtn.textContent = 'Copied!';
-        setTimeout(() => { copyJsonBtn.textContent = 'Copy'; }, 1500);
+        copyJsonBtn.textContent = COPIED_LABEL;
+        setTimeout(() => { copyJsonBtn.textContent = COPY_LABEL; }, 1500);
       });
     });
 
