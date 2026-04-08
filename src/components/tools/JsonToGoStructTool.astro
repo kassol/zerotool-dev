@@ -1,0 +1,477 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    rootName: 'Root struct name',
+    jsonInput: 'JSON Input',
+    goOutput: 'Go Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    generate: 'Generate Go Struct',
+    msgInvalidJson: 'Invalid JSON: ',
+    msgGenerated: 'Generated.',
+    msgGenOne: 'Generated 1 struct.',
+    msgGenMany: 'Generated {n} structs.',
+  },
+  zh: {
+    rootName: '根结构体名称',
+    jsonInput: 'JSON 输入',
+    goOutput: 'Go 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    generate: '生成 Go Struct',
+    msgInvalidJson: 'JSON 格式错误：',
+    msgGenerated: '已生成。',
+    msgGenOne: '已生成 1 个 struct。',
+    msgGenMany: '已生成 {n} 个 struct。',
+  },
+  ja: {
+    rootName: 'ルート構造体名',
+    jsonInput: 'JSON 入力',
+    goOutput: 'Go 出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    generate: 'Go Struct を生成',
+    msgInvalidJson: '無効なJSON：',
+    msgGenerated: '生成しました。',
+    msgGenOne: '1 個の構造体を生成しました。',
+    msgGenMany: '{n} 個の構造体を生成しました。',
+  },
+  ko: {
+    rootName: '루트 구조체 이름',
+    jsonInput: 'JSON 입력',
+    goOutput: 'Go 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    generate: 'Go Struct 생성',
+    msgInvalidJson: '잘못된 JSON: ',
+    msgGenerated: '생성 완료.',
+    msgGenOne: '구조체 1개를 생성했습니다.',
+    msgGenMany: '구조체 {n}개를 생성했습니다.',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="jgs-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-generated={L.msgGenerated}
+  data-msg-gen-one={L.msgGenOne}
+  data-msg-gen-many={L.msgGenMany}
+>
+  <div class="jgs-config">
+    <div class="jgs-config-row">
+      <label for="jgs-root-name">{L.rootName}</label>
+      <input id="jgs-root-name" type="text" value="RootObject" spellcheck="false" />
+    </div>
+  </div>
+
+  <div class="jgs-panels">
+    <div class="jgs-panel">
+      <div class="jgs-panel-header">
+        <span>{L.jsonInput}</span>
+        <div class="jgs-panel-actions">
+          <button id="jgs-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="jgs-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea
+        id="jgs-input"
+        placeholder='{"name": "Alice", "age": 30}'
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="jgs-panel">
+      <div class="jgs-panel-header">
+        <span>{L.goOutput}</span>
+        <button id="jgs-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+      </div>
+      <pre id="jgs-output" class="jgs-output"><code id="jgs-output-code"></code></pre>
+    </div>
+  </div>
+
+  <div class="jgs-actions">
+    <button id="jgs-convert" class="btn-primary" type="button">{L.generate}</button>
+  </div>
+
+  <div id="jgs-status" class="jgs-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.jgs-wrap')
+        : document.querySelector('.jgs-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
+      var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 struct.';
+      var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} structs.';
+
+      var inputEl = document.getElementById('jgs-input');
+      var outputCodeEl = document.getElementById('jgs-output-code');
+      var statusEl = document.getElementById('jgs-status');
+      var rootNameEl = document.getElementById('jgs-root-name');
+
+      var EXAMPLE = JSON.stringify({
+        id: 1,
+        name: "Alice",
+        isActive: true,
+        score: 9.5,
+        tags: ["go", "json"],
+        address: {
+          city: "London",
+          zip: "EC1A 1BB"
+        },
+        friends: [
+          { id: 2, name: "Bob" },
+          { id: 3, name: "Carol" }
+        ],
+        metadata: null
+      }, null, 2);
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jgs-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jgs-status';
+      }
+
+      /* Convert snake_case or camelCase to PascalCase for Go exported names */
+      function toPascalCase(str) {
+        return str
+          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+      }
+
+      /* Infer Go type from a JS value. nullable=true wraps in pointer. */
+      function inferGoType(value, key, structs, nullable) {
+        if (value === null) return 'interface{}';
+        if (typeof value === 'boolean') return nullable ? '*bool' : 'bool';
+        if (typeof value === 'number') {
+          var base = Number.isInteger(value) ? 'int' : 'float64';
+          return nullable ? '*' + base : base;
+        }
+        if (typeof value === 'string') return nullable ? '*string' : 'string';
+
+        if (Array.isArray(value)) {
+          if (value.length === 0) return '[]interface{}';
+          var objectItems = [];
+          var primitiveTypes = [];
+          for (var i = 0; i < value.length; i++) {
+            var item = value[i];
+            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+              objectItems.push(item);
+            } else {
+              var t = inferGoType(item, key + 'Item', structs, item === null);
+              if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
+            }
+          }
+          if (objectItems.length > 0) {
+            var itemName = toPascalCase(key) + 'Item';
+            mergeObjectsToStruct(objectItems, itemName, structs);
+            if (primitiveTypes.indexOf(itemName) === -1) primitiveTypes.push(itemName);
+          }
+          var elType = primitiveTypes.length === 1 ? primitiveTypes[0] : 'interface{}';
+          return '[]' + elType;
+        }
+
+        if (typeof value === 'object') {
+          var structName = toPascalCase(key);
+          buildStruct(value, structName, structs);
+          return nullable ? '*' + structName : structName;
+        }
+
+        return 'interface{}';
+      }
+
+      function buildStruct(obj, name, structs) {
+        if (structs[name]) return;
+        structs[name] = null;
+
+        var fields = [];
+        var keys = Object.keys(obj);
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var v = obj[k];
+          var goType = inferGoType(v, k, structs, v === null);
+          var fieldName = toPascalCase(k);
+          fields.push('\t' + fieldName + ' ' + goType + ' `json:"' + k + '"`');
+        }
+        structs[name] = fields;
+      }
+
+      function mergeObjectsToStruct(objects, name, structs) {
+        if (structs[name]) return;
+        structs[name] = null;
+
+        var allKeys = {};
+        for (var i = 0; i < objects.length; i++) {
+          var ks = Object.keys(objects[i]);
+          for (var j = 0; j < ks.length; j++) {
+            if (!allKeys[ks[j]]) allKeys[ks[j]] = { count: 0, hasNull: false };
+            allKeys[ks[j]].count++;
+          }
+          // check for null values
+          for (var kk in objects[i]) {
+            if (objects[i][kk] === null) allKeys[kk].hasNull = true;
+          }
+        }
+
+        var fields = [];
+        var keyList = Object.keys(allKeys);
+        for (var ki = 0; ki < keyList.length; ki++) {
+          var k = keyList[ki];
+          var presentInAll = allKeys[k].count === objects.length;
+          var nullable = !presentInAll || allKeys[k].hasNull;
+          var types = [];
+          for (var oi = 0; oi < objects.length; oi++) {
+            if (objects[oi].hasOwnProperty(k)) {
+              var t = inferGoType(objects[oi][k], k, structs, nullable);
+              if (types.indexOf(t) === -1) types.push(t);
+            }
+          }
+          var goType = types.length === 1 ? types[0] : 'interface{}';
+          // If not present in all, wrap in pointer if not already
+          if (!presentInAll && !goType.startsWith('*') && !goType.startsWith('[]') && goType !== 'interface{}') {
+            goType = '*' + goType;
+          }
+          var fieldName = toPascalCase(k);
+          // omitempty for optional fields
+          var tag = presentInAll ? '`json:"' + k + '"`' : '`json:"' + k + ',omitempty"`';
+          fields.push('\t' + fieldName + ' ' + goType + ' ' + tag);
+        }
+        structs[name] = fields;
+      }
+
+      function renderStructs(structs) {
+        var lines = [];
+        var names = Object.keys(structs);
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          var fields = structs[name];
+          if (fields === null) continue;
+          lines.push('type ' + name + ' struct {');
+          for (var j = 0; j < fields.length; j++) {
+            lines.push(fields[j]);
+          }
+          lines.push('}');
+          lines.push('');
+        }
+        return lines.join('\n').trimEnd();
+      }
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+        inputEl.classList.remove('error');
+
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus(MSG_INVALID + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+        var rootName = rootNameEl.value.trim() || 'RootObject';
+        var structs = {};
+
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildStruct(parsed, rootName, structs);
+        } else if (Array.isArray(parsed)) {
+          var objectItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (objectItems.length > 0) {
+            mergeObjectsToStruct(objectItems, rootName, structs);
+          } else {
+            var t = inferGoType(parsed, rootName, structs, false);
+            outputCodeEl.textContent = 'type ' + rootName + ' = ' + t;
+            setStatus(MSG_GENERATED, false);
+            window.trackTool && window.trackTool('json-to-go-struct', 'generate');
+            return;
+          }
+        } else {
+          var t2 = inferGoType(parsed, rootName, structs, parsed === null);
+          outputCodeEl.textContent = 'type ' + rootName + ' = ' + t2;
+          setStatus(MSG_GENERATED, false);
+          window.trackTool && window.trackTool('json-to-go-struct', 'generate');
+          return;
+        }
+
+        var result = renderStructs(structs);
+        outputCodeEl.textContent = result;
+        var count = Object.keys(structs).length;
+        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
+        setStatus(msg, false);
+        window.trackTool && window.trackTool('json-to-go-struct', 'generate');
+      }
+
+      var _liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+
+      document.getElementById('jgs-convert').addEventListener('click', convert);
+
+      document.getElementById('jgs-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        convert();
+      });
+
+      document.getElementById('jgs-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputCodeEl.textContent = '';
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('jgs-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('jgs-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = COPIED;
+          setTimeout(function () { btn.textContent = COPY; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jgs-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jgs-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .jgs-config-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jgs-config-row label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .jgs-config-row input[type="text"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .jgs-config-row input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jgs-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .jgs-panels { grid-template-columns: 1fr; }
+  }
+
+  .jgs-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jgs-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jgs-panel-actions { display: flex; gap: 0.3rem; }
+
+  .jgs-panel textarea {
+    width: 100%;
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .jgs-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jgs-panel textarea.error { border-color: #c0392b; }
+
+  .jgs-output {
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+  .jgs-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .jgs-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jgs-status.success { color: #057a55; }
+  .jgs-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jgs-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jgs-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jgs-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .jgs-status.success { color: #34d399; }
+  [data-theme="dark"] .jgs-status.error { color: #f87171; }
+  [data-theme="dark"] .jgs-panel textarea.error { border-color: #f87171; }
+</style>

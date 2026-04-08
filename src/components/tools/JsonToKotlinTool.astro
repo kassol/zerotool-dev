@@ -1,0 +1,492 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    rootName: 'Root class name',
+    jsonInput: 'JSON Input',
+    kotlinOutput: 'Kotlin Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    generate: 'Generate Kotlin',
+    msgInvalidJson: 'Invalid JSON: ',
+    msgGenerated: 'Generated.',
+    msgGenOne: 'Generated 1 data class.',
+    msgGenMany: 'Generated {n} data classes.',
+  },
+  zh: {
+    rootName: '根类名称',
+    jsonInput: 'JSON 输入',
+    kotlinOutput: 'Kotlin 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    generate: '生成 Kotlin',
+    msgInvalidJson: 'JSON 格式错误：',
+    msgGenerated: '已生成。',
+    msgGenOne: '已生成 1 个 data class。',
+    msgGenMany: '已生成 {n} 个 data class。',
+  },
+  ja: {
+    rootName: 'ルートクラス名',
+    jsonInput: 'JSON 入力',
+    kotlinOutput: 'Kotlin 出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    generate: 'Kotlin を生成',
+    msgInvalidJson: '無効なJSON：',
+    msgGenerated: '生成しました。',
+    msgGenOne: '1 個のデータクラスを生成しました。',
+    msgGenMany: '{n} 個のデータクラスを生成しました。',
+  },
+  ko: {
+    rootName: '루트 클래스 이름',
+    jsonInput: 'JSON 입력',
+    kotlinOutput: 'Kotlin 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    generate: 'Kotlin 생성',
+    msgInvalidJson: '잘못된 JSON: ',
+    msgGenerated: '생성 완료.',
+    msgGenOne: '데이터 클래스 1개를 생성했습니다.',
+    msgGenMany: '데이터 클래스 {n}개를 생성했습니다.',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="jkt-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-generated={L.msgGenerated}
+  data-msg-gen-one={L.msgGenOne}
+  data-msg-gen-many={L.msgGenMany}
+>
+  <div class="jkt-config">
+    <div class="jkt-config-row">
+      <label for="jkt-root-name">{L.rootName}</label>
+      <input id="jkt-root-name" type="text" value="RootObject" spellcheck="false" />
+    </div>
+  </div>
+
+  <div class="jkt-panels">
+    <div class="jkt-panel">
+      <div class="jkt-panel-header">
+        <span>{L.jsonInput}</span>
+        <div class="jkt-panel-actions">
+          <button id="jkt-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="jkt-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea
+        id="jkt-input"
+        placeholder='{"name": "Alice", "age": 30}'
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="jkt-panel">
+      <div class="jkt-panel-header">
+        <span>{L.kotlinOutput}</span>
+        <button id="jkt-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+      </div>
+      <pre id="jkt-output" class="jkt-output"><code id="jkt-output-code"></code></pre>
+    </div>
+  </div>
+
+  <div class="jkt-actions">
+    <button id="jkt-convert" class="btn-primary" type="button">{L.generate}</button>
+  </div>
+
+  <div id="jkt-status" class="jkt-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.jkt-wrap')
+        : document.querySelector('.jkt-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
+      var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 data class.';
+      var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} data classes.';
+
+      var inputEl = document.getElementById('jkt-input');
+      var outputCodeEl = document.getElementById('jkt-output-code');
+      var statusEl = document.getElementById('jkt-status');
+      var rootNameEl = document.getElementById('jkt-root-name');
+
+      var EXAMPLE = JSON.stringify({
+        id: 1,
+        name: "Alice",
+        isActive: true,
+        score: 9.5,
+        tags: ["kotlin", "json"],
+        address: {
+          city: "London",
+          zip: "EC1A 1BB"
+        },
+        friends: [
+          { id: 2, name: "Bob" },
+          { id: 3, name: "Carol" }
+        ],
+        metadata: null
+      }, null, 2);
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jkt-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jkt-status';
+      }
+
+      function toPascalCase(str) {
+        return str
+          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+      }
+
+      function toCamelCase(str) {
+        var pascal = toPascalCase(str);
+        return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+      }
+
+      /* Infer Kotlin type from a JS value */
+      function inferKotlinType(value, key, classes) {
+        if (value === null) return 'Any?';
+        if (typeof value === 'boolean') return 'Boolean';
+        if (typeof value === 'number') {
+          return Number.isInteger(value) ? 'Int' : 'Double';
+        }
+        if (typeof value === 'string') return 'String';
+
+        if (Array.isArray(value)) {
+          if (value.length === 0) return 'List<Any>';
+          var objectItems = [];
+          var primitiveTypes = [];
+          for (var i = 0; i < value.length; i++) {
+            var item = value[i];
+            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+              objectItems.push(item);
+            } else {
+              var t = inferKotlinType(item, key + 'Item', classes);
+              if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
+            }
+          }
+          if (objectItems.length > 0) {
+            var itemClassName = toPascalCase(key) + 'Item';
+            mergeObjectsToClass(objectItems, itemClassName, classes);
+            if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
+          }
+          var elType = primitiveTypes.length === 1 ? primitiveTypes[0] : 'Any';
+          return 'List<' + elType + '>';
+        }
+
+        if (typeof value === 'object') {
+          var className = toPascalCase(key);
+          buildClass(value, className, classes);
+          return className;
+        }
+
+        return 'Any';
+      }
+
+      function buildClass(obj, name, classes) {
+        if (classes[name]) return;
+        classes[name] = null; // reserve
+
+        var fields = [];
+        var keys = Object.keys(obj);
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var v = obj[k];
+          var typeName = inferKotlinType(v, k, classes);
+          var isNullable = v === null;
+          if (isNullable && typeName === 'Any?') { /* already nullable */ }
+          else if (isNullable) { typeName = typeName + '?'; }
+          var fieldName = toCamelCase(k);
+          // add @SerialName if key differs
+          var annotation = fieldName !== k ? '    @SerialName("' + k + '")\n' : '';
+          fields.push(annotation + '    val ' + fieldName + ': ' + typeName + ' = ' + defaultValue(typeName));
+        }
+        classes[name] = fields;
+      }
+
+      function mergeObjectsToClass(objects, name, classes) {
+        if (classes[name]) return;
+        classes[name] = null;
+
+        var allKeys = {};
+        for (var i = 0; i < objects.length; i++) {
+          var ks = Object.keys(objects[i]);
+          for (var j = 0; j < ks.length; j++) {
+            if (!allKeys[ks[j]]) allKeys[ks[j]] = 0;
+            allKeys[ks[j]]++;
+          }
+        }
+
+        var fields = [];
+        var keyList = Object.keys(allKeys);
+        for (var ki = 0; ki < keyList.length; ki++) {
+          var k = keyList[ki];
+          var presentInAll = allKeys[k] === objects.length;
+          var types = [];
+          for (var oi = 0; oi < objects.length; oi++) {
+            if (objects[oi].hasOwnProperty(k)) {
+              var t = inferKotlinType(objects[oi][k], k, classes);
+              if (types.indexOf(t) === -1) types.push(t);
+            }
+          }
+          var typeName = types.length === 1 ? types[0] : 'Any';
+          if (!presentInAll && !typeName.endsWith('?')) typeName = typeName + '?';
+          var fieldName = toCamelCase(k);
+          var annotation = fieldName !== k ? '    @SerialName("' + k + '")\n' : '';
+          fields.push(annotation + '    val ' + fieldName + ': ' + typeName + ' = ' + defaultValue(typeName));
+        }
+        classes[name] = fields;
+      }
+
+      function defaultValue(type) {
+        if (type.endsWith('?')) return 'null';
+        if (type === 'Boolean') return 'false';
+        if (type === 'Int') return '0';
+        if (type === 'Double') return '0.0';
+        if (type === 'String') return '""';
+        if (type.startsWith('List<')) return 'emptyList()';
+        return type + '()';
+      }
+
+      function renderClasses(classes) {
+        var lines = [];
+        var names = Object.keys(classes);
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          var fields = classes[name];
+          if (fields === null) continue;
+          lines.push('@Serializable');
+          if (fields.length === 0) {
+            lines.push('data class ' + name + '()');
+          } else {
+            lines.push('data class ' + name + '(');
+            for (var j = 0; j < fields.length; j++) {
+              var comma = j < fields.length - 1 ? ',' : '';
+              lines.push(fields[j] + comma);
+            }
+            lines.push(')');
+          }
+          lines.push('');
+        }
+        return lines.join('\n').trimEnd();
+      }
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+        inputEl.classList.remove('error');
+
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus(MSG_INVALID + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+        var rootName = rootNameEl.value.trim() || 'RootObject';
+        var classes = {};
+
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildClass(parsed, rootName, classes);
+        } else if (Array.isArray(parsed)) {
+          var objectItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (objectItems.length > 0) {
+            mergeObjectsToClass(objectItems, rootName, classes);
+          } else {
+            var t = inferKotlinType(parsed, rootName, classes);
+            outputCodeEl.textContent = 'typealias ' + rootName + ' = ' + t;
+            setStatus(MSG_GENERATED, false);
+            window.trackTool && window.trackTool('json-to-kotlin', 'generate');
+            return;
+          }
+        } else {
+          var t2 = inferKotlinType(parsed, rootName, classes);
+          outputCodeEl.textContent = 'typealias ' + rootName + ' = ' + t2;
+          setStatus(MSG_GENERATED, false);
+          window.trackTool && window.trackTool('json-to-kotlin', 'generate');
+          return;
+        }
+
+        var result = renderClasses(classes);
+        outputCodeEl.textContent = result;
+        var count = Object.keys(classes).length;
+        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
+        setStatus(msg, false);
+        window.trackTool && window.trackTool('json-to-kotlin', 'generate');
+      }
+
+      var _liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+
+      document.getElementById('jkt-convert').addEventListener('click', convert);
+
+      document.getElementById('jkt-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        convert();
+      });
+
+      document.getElementById('jkt-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputCodeEl.textContent = '';
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('jkt-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('jkt-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = COPIED;
+          setTimeout(function () { btn.textContent = COPY; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jkt-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jkt-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .jkt-config-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jkt-config-row label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .jkt-config-row input[type="text"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .jkt-config-row input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jkt-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .jkt-panels { grid-template-columns: 1fr; }
+  }
+
+  .jkt-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jkt-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jkt-panel-actions { display: flex; gap: 0.3rem; }
+
+  .jkt-panel textarea {
+    width: 100%;
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .jkt-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jkt-panel textarea.error { border-color: #c0392b; }
+
+  .jkt-output {
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+  .jkt-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .jkt-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jkt-status.success { color: #057a55; }
+  .jkt-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jkt-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jkt-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jkt-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .jkt-status.success { color: #34d399; }
+  [data-theme="dark"] .jkt-status.error { color: #f87171; }
+  [data-theme="dark"] .jkt-panel textarea.error { border-color: #f87171; }
+</style>

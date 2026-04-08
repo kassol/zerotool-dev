@@ -1,0 +1,380 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    inputLabel: 'Input Text',
+    inputPlaceholder: 'Type or paste your text here...',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    styles: 'Converted Styles',
+    noOutput: 'Enter text above to see all Unicode styles.',
+  },
+  zh: {
+    inputLabel: '输入文本',
+    inputPlaceholder: '在此输入或粘贴文本…',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    styles: '转换样式',
+    noOutput: '请在上方输入文本以查看所有 Unicode 样式。',
+  },
+  ja: {
+    inputLabel: '入力テキスト',
+    inputPlaceholder: 'テキストを入力または貼り付けてください…',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    styles: '変換スタイル',
+    noOutput: '上にテキストを入力するとすべてのUnicodeスタイルが表示されます。',
+  },
+  ko: {
+    inputLabel: '입력 텍스트',
+    inputPlaceholder: '텍스트를 입력하거나 붙여넣으세요...',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    styles: '변환 스타일',
+    noOutput: '위에 텍스트를 입력하면 모든 Unicode 스타일이 표시됩니다.',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="utc-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-no-output={L.noOutput}
+>
+  <div class="utc-input-section">
+    <div class="utc-input-header">
+      <label for="utc-input" class="utc-label">{L.inputLabel}</label>
+      <button id="utc-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+    </div>
+    <textarea
+      id="utc-input"
+      placeholder={L.inputPlaceholder}
+      spellcheck="false"
+      rows="3"
+    ></textarea>
+  </div>
+
+  <div class="utc-styles-section">
+    <div class="utc-styles-label">{L.styles}</div>
+    <div id="utc-styles-grid" class="utc-styles-grid">
+      <p id="utc-empty" class="utc-empty">{L.noOutput}</p>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.utc-wrap')
+        : document.querySelector('.utc-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var NO_OUTPUT = wrap ? wrap.dataset.noOutput : 'Enter text above to see all Unicode styles.';
+
+      var inputEl = document.getElementById('utc-input');
+      var gridEl = document.getElementById('utc-styles-grid');
+      var emptyEl = document.getElementById('utc-empty');
+
+      /* ── Unicode character maps ── */
+      var MAPS = {
+        'Bold': {
+          name: 'Bold',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+            '𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗'
+          )
+        },
+        'Italic': {
+          name: 'Italic',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+            '𝐴𝐵𝐶𝐷𝐸𝐹𝐺𝐻𝐼𝐽𝐾𝐿𝑀𝑁𝑂𝑃𝑄𝑅𝑆𝑇𝑈𝑉𝑊𝑋𝑌𝑍𝑎𝑏𝑐𝑑𝑒𝑓𝑔ℎ𝑖𝑗𝑘𝑙𝑚𝑛𝑜𝑝𝑞𝑟𝑠𝑡𝑢𝑣𝑤𝑥𝑦𝑧'
+          )
+        },
+        'Bold Italic': {
+          name: 'Bold Italic',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+            '𝑨𝑩𝑪𝑫𝑬𝑭𝑮𝑯𝑰𝑱𝑲𝑳𝑴𝑵𝑶𝑷𝑸𝑹𝑺𝑻𝑼𝑽𝑾𝑿𝒀𝒁𝒂𝒃𝒄𝒅𝒆𝒇𝒈𝒉𝒊𝒋𝒌𝒍𝒎𝒏𝒐𝒑𝒒𝒓𝒔𝒕𝒖𝒗𝒘𝒙𝒚𝒛'
+          )
+        },
+        'Script': {
+          name: 'Script',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+            '𝒜ℬ𝒞𝒟ℰℱ𝒢ℋℐ𝒥𝒦ℒℳ𝒩𝒪𝒫𝒬ℛ𝒮𝒯𝒰𝒱𝒲𝒳𝒴𝒵𝒶𝒷𝒸𝒹ℯ𝒻ℊ𝒽𝒾𝒿𝓀𝓁𝓂𝓃ℴ𝓅𝓆𝓇𝓈𝓉𝓊𝓋𝓌𝓍𝓎𝓏'
+          )
+        },
+        'Bold Script': {
+          name: 'Bold Script',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+            '𝓐𝓑𝓒𝓓𝓔𝓕𝓖𝓗𝓘𝓙𝓚𝓛𝓜𝓝𝓞𝓟𝓠𝓡𝓢𝓣𝓤𝓥𝓦𝓧𝓨𝓩𝓪𝓫𝓬𝓭𝓮𝓯𝓰𝓱𝓲𝓳𝓴𝓵𝓶𝓷𝓸𝓹𝓺𝓻𝓼𝓽𝓾𝓿𝔀𝔁𝔂𝔃'
+          )
+        },
+        'Fraktur': {
+          name: 'Fraktur',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+            '𝔄𝔅ℭ𝔇𝔈𝔉𝔊ℌℑ𝔍𝔎𝔏𝔐𝔑𝔒𝔓𝔔ℜ𝔖𝔗𝔘𝔙𝔚𝔛𝔜ℨ𝔞𝔟𝔠𝔡𝔢𝔣𝔤𝔥𝔦𝔧𝔨𝔩𝔪𝔫𝔬𝔭𝔮𝔯𝔰𝔱𝔲𝔳𝔴𝔵𝔶𝔷'
+          )
+        },
+        'Double-Struck': {
+          name: 'Double-Struck',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+            '𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄ℕ𝕆ℙℚℝ𝕊𝕋𝕌𝕍𝕎𝕏𝕐ℤ𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛𝕜𝕝𝕞𝕟𝕠𝕡𝕢𝕣𝕤𝕥𝕦𝕧𝕨𝕩𝕪𝕫𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡'
+          )
+        },
+        'Monospace': {
+          name: 'Monospace',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+            '𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿'
+          )
+        },
+        'Fullwidth': {
+          name: 'Fullwidth',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+            'ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ０１２３４５６７８９'
+          )
+        },
+        'Circled': {
+          name: 'Circled',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+            'ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏ⓪①②③④⑤⑥⑦⑧⑨'
+          )
+        },
+        'Squared': {
+          name: 'Squared',
+          map: buildMap(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+            '🅰🅱🅲🅳🅴🅵🅶🅷🅸🅹🅺🅻🅼🅽🅾🅿🆀🆁🆂🆃🆄🆅🆆🆇🆈🆉🅰🅱🅲🅳🅴🅵🅶🅷🅸🅹🅺🅻🅼🅽🅾🅿🆀🆁🆂🆃🆄🆅🆆🆇🆈🆉'
+          )
+        },
+        'Small Caps': {
+          name: 'Small Caps',
+          map: buildMap(
+            'abcdefghijklmnopqrstuvwxyz',
+            'ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ'
+          )
+        },
+        'Superscript': {
+          name: 'Superscript',
+          map: buildMap(
+            'abcdefghijklmnoprstuvwxyz0123456789',
+            'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹'
+          )
+        },
+        'Subscript': {
+          name: 'Subscript',
+          map: buildMap(
+            'abcdefghijklmnoprstuvwxyz0123456789',
+            'ₐᵦ꜀ᵈₑ꜁ᵍₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥᵥₓ𝓎𝓏₀₁₂₃₄₅₆₇₈₉'
+          )
+        },
+        'Strikethrough': {
+          name: 'Strikethrough',
+          fn: function(text) {
+            return text.split('').map(function(c) { return c + '\u0336'; }).join('');
+          }
+        },
+        'Underline': {
+          name: 'Underline',
+          fn: function(text) {
+            return text.split('').map(function(c) { return c + '\u0332'; }).join('');
+          }
+        },
+      };
+
+      function buildMap(from, to) {
+        var map = {};
+        // to contains multi-codepoint chars (emoji/math), split by grapheme
+        var toChars = Array.from(to);
+        var fromChars = Array.from(from);
+        for (var i = 0; i < fromChars.length; i++) {
+          map[fromChars[i]] = toChars[i] || fromChars[i];
+        }
+        return map;
+      }
+
+      function applyMap(text, map) {
+        return Array.from(text).map(function(c) { return map[c] || c; }).join('');
+      }
+
+      function convertText(text) {
+        var keys = Object.keys(MAPS);
+        var results = {};
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          var style = MAPS[key];
+          if (style.fn) {
+            results[key] = style.fn(text);
+          } else {
+            results[key] = applyMap(text, style.map);
+          }
+        }
+        return results;
+      }
+
+      function render(text) {
+        if (!text) {
+          gridEl.innerHTML = '';
+          emptyEl = document.getElementById('utc-empty');
+          if (!emptyEl) {
+            emptyEl = document.createElement('p');
+            emptyEl.id = 'utc-empty';
+            emptyEl.className = 'utc-empty';
+            emptyEl.textContent = NO_OUTPUT;
+          }
+          gridEl.appendChild(emptyEl);
+          return;
+        }
+
+        var results = convertText(text);
+        var keys = Object.keys(results);
+        var html = '';
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          var converted = results[key];
+          var styleName = MAPS[key].name;
+          html += '<div class="utc-style-card">' +
+            '<div class="utc-style-name">' + styleName + '</div>' +
+            '<div class="utc-style-text" data-value="' + converted.replace(/"/g, '&quot;') + '">' + converted + '</div>' +
+            '<button class="utc-copy-btn btn-ghost btn-sm" type="button" data-value="' + converted.replace(/"/g, '&quot;') + '">' + COPY + '</button>' +
+            '</div>';
+        }
+        gridEl.innerHTML = html;
+
+        // Attach copy handlers
+        var btns = gridEl.querySelectorAll('.utc-copy-btn');
+        for (var j = 0; j < btns.length; j++) {
+          (function(btn) {
+            btn.addEventListener('click', function () {
+              var val = btn.dataset.value;
+              navigator.clipboard.writeText(val).then(function () {
+                var orig = btn.textContent;
+                btn.textContent = COPIED;
+                setTimeout(function () { btn.textContent = orig; }, 1500);
+              });
+            });
+          })(btns[j]);
+        }
+      }
+
+      var _liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(function () { render(inputEl.value); }, 150);
+      });
+
+      document.getElementById('utc-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        render('');
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .utc-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .utc-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .utc-input-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .utc-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .utc-input-section textarea {
+    width: 100%;
+    font-family: var(--font-sans, sans-serif);
+    font-size: 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .utc-input-section textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .utc-styles-section { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .utc-styles-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .utc-styles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.6rem;
+  }
+
+  .utc-empty {
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
+  .utc-style-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+  }
+
+  .utc-style-name {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-secondary);
+  }
+
+  .utc-style-text {
+    font-size: 1rem;
+    word-break: break-all;
+    line-height: 1.4;
+    color: var(--color-text);
+    min-height: 1.4em;
+  }
+
+  .utc-copy-btn {
+    align-self: flex-end;
+    margin-top: 0.1rem;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+</style>
