@@ -1,0 +1,268 @@
+---
+title: "JSONPathテスターオンライン：コードなしでJSONデータをクエリする"
+description: "JSONPath構文を学んでオンラインでJSONパス式をテスト。$ルート、ドット記法、フィルター、ワイルドカード、再帰的降下を実例で解説。無料ツール付き。"
+pubDate: 2026-04-08
+lang: "ja"
+translationSlug: "jsonpath-tester-guide"
+tags: ["jsonpath", "json", "data", "query", "developer-tools"]
+ogImage: /og/blog-jsonpath-tester-guide-ja.png
+---
+
+JSONPathはJSON用のクエリ言語で、XMLに対するXPathに相当します。コンパクトな式構文を使って、深くネストされたJSON構造から特定の値を抽出できます。**JSONPathテスターオンライン**を使えば、JSONを貼り付けて式を書くだけで、コードを実行せず即座にマッチした結果を確認できます。
+
+[JSONPathテスターを試す →](/tools/jsonpath-tester)
+
+## JSONPath構文の基礎
+
+すべてのJSONPath式はルート `$` から始まり、演算子を使って構造を辿ります。
+
+### ルートとドット記法
+
+```json
+{
+  "store": {
+    "name": "Tech Books",
+    "inventory": [
+      { "title": "JavaScript: The Good Parts", "price": 29.99, "inStock": true },
+      { "title": "Clean Code", "price": 34.99, "inStock": false },
+      { "title": "The Pragmatic Programmer", "price": 39.99, "inStock": true }
+    ]
+  }
+}
+```
+
+| 式 | 結果 |
+|---|---|
+| `$.store.name` | `"Tech Books"` |
+| `$.store.inventory[0].title` | `"JavaScript: The Good Parts"` |
+| `$.store.inventory[2].price` | `39.99` |
+
+### ブラケット記法
+
+ドット記法と同等ですが、キーにスペースや特殊文字が含まれる場合に必要です：
+
+```
+$.store['name']             → "Tech Books"
+$.store.inventory[0]        → 最初の書籍オブジェクト
+$.store.inventory[-1]       → 最後の書籍オブジェクト（負のインデックス）
+```
+
+### ワイルドカード `*`
+
+オブジェクトのすべての子またはすべての配列要素にマッチ：
+
+```
+$.store.inventory[*].title
+→ ["JavaScript: The Good Parts", "Clean Code", "The Pragmatic Programmer"]
+
+$.store.*
+→ ["Tech Books", [...inventory配列...]]
+```
+
+### 配列スライス
+
+Pythonスタイルのスライス構文 `[start:end:step]`：
+
+```
+$.store.inventory[0:2]          → 最初の2冊
+$.store.inventory[::2]          → 1つおきの書籍（インデックス0, 2, 4...）
+$.store.inventory[-1:]          → 最後の1冊のみ
+```
+
+### 再帰的降下 `..`
+
+ダブルドット演算子はネストの深さに関わらず、ツリー全体から一致するキーを検索します：
+
+```json
+{
+  "orders": [
+    { "id": 1, "customer": { "name": "Alice" } },
+    { "id": 2, "customer": { "name": "Bob" } }
+  ]
+}
+```
+
+```
+$..name
+→ ["Alice", "Bob"]
+
+$..id
+→ [1, 2]
+```
+
+これはAPIからの深くネストされた、または一貫性のない構造のJSONレスポンスを辿るときに特に便利です。
+
+### フィルター式 `?()`
+
+フィルター式は条件にマッチする要素を選択します。`@` は現在の要素を参照します：
+
+```
+$.store.inventory[?(@.inStock == true)].title
+→ ["JavaScript: The Good Parts", "The Pragmatic Programmer"]
+
+$.store.inventory[?(@.price < 35)].title
+→ ["JavaScript: The Good Parts", "Clean Code"]
+
+$.store.inventory[?(@.price >= 35)]
+→ [{ "title": "Clean Code", ...}, { "title": "The Pragmatic Programmer", ...}]
+```
+
+サポートされる比較演算子：`==`、`!=`、`<`、`<=`、`>`、`>=`。
+
+実装によっては以下もサポートします：
+- 正規表現マッチング `=~`：`[?(@.title =~ /Code/i)]`
+- メンバーシップ `in`：`[?(@.category in ['tech', 'science'])]`
+
+## JSONPathの実践的な例
+
+### APIレスポンスのナビゲーション
+
+REST APIは深くネストされたデータを返すことがよくあります。JSONPathで必要な情報に直接アクセスできます：
+
+```json
+{
+  "data": {
+    "users": [
+      { "id": 1, "profile": { "email": "alice@example.com", "role": "admin" } },
+      { "id": 2, "profile": { "email": "bob@example.com", "role": "user" } }
+    ]
+  },
+  "meta": { "total": 2 }
+}
+```
+
+```
+$.data.users[*].profile.email
+→ ["alice@example.com", "bob@example.com"]
+
+$.data.users[?(@.profile.role == "admin")].id
+→ [1]
+
+$.meta.total
+→ 2
+```
+
+### 設定ファイルのクエリ
+
+JSONの設定ファイルはNode.jsやPythonプロジェクトで一般的です：
+
+```json
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "credentials": { "username": "app", "password": "secret" }
+  },
+  "cache": {
+    "host": "redis-host",
+    "port": 6379
+  }
+}
+```
+
+```
+$..host
+→ ["localhost", "redis-host"]
+
+$..port
+→ [5432, 6379]
+
+$.database.credentials.username
+→ "app"
+```
+
+### AWS / クラウドAPIレスポンス
+
+クラウドAPIは複雑なJSONを返します。JSONPathで特定フィールドを抽出：
+
+```
+$.Reservations[*].Instances[*].InstanceId
+$.Items[?(@.Status == "ACTIVE")].ResourceArn
+$..Tags[?(@.Key == "Environment")].Value
+```
+
+## 各言語でのJSONPath
+
+JSONPathはJSONの標準機能ではなく、各言語エコシステムで個別に実装されています。
+
+### JavaScript
+
+```javascript
+// jsonpath-plusを使用
+import { JSONPath } from 'jsonpath-plus';
+
+const result = JSONPath({ path: '$.store.inventory[*].title', json: data });
+```
+
+### Python
+
+```python
+from jsonpath_ng import parse
+
+expr = parse('$.store.inventory[*].title')
+matches = [match.value for match in expr.find(data)]
+```
+
+### Java
+
+```java
+// Jayway JsonPathを使用
+import com.jayway.jsonpath.JsonPath;
+
+List<String> titles = JsonPath.read(json, "$.store.inventory[*].title");
+```
+
+### Go
+
+```go
+// gjsonを使用
+import "github.com/tidwall/gjson"
+
+result := gjson.Get(json, "store.inventory.#.title")
+```
+
+### コマンドライン（jq）
+
+`jq` は独自の構文を使いますが、同様の目的を果たします：
+
+```bash
+# JSONPath相当: $.store.inventory[*].title
+echo "$json" | jq '.store.inventory[].title'
+
+# フィルター相当: $.store.inventory[?(@.inStock == true)]
+echo "$json" | jq '.store.inventory[] | select(.inStock == true)'
+```
+
+## JSONPath vs jq vs XPath
+
+| 機能 | JSONPath | jq | XPath |
+|---|---|---|---|
+| 入力形式 | JSON | JSON | XML |
+| 再帰的降下 | `..` | `..` | `//` |
+| フィルター式 | `?(@.x > 5)` | `select(.x > 5)` | `[@x > 5]` |
+| 変換 | なし | あり（フルパイプライン） | 限定的 |
+| 標準 | RFCドラフト | なし | W3C標準 |
+| CLIツール | なし | あり | xmllint, xmlstarlet |
+
+JSONPathはデータを変換せずに抽出する**クエリ**が必要なときに適しています。データの変換や整形が必要なら`jq`を使います。XPathはXMLのときだけ使います。
+
+## よくあるJSONPathのミス
+
+**`$`の省略**: すべての式は`$`で始まる必要があります。`store.name`は無効で、`$.store.name`が正しいです。
+
+**配列インデックスのずれ**: JSONPathの配列はゼロインデックスです。`[0]`が最初の要素であり、`[1]`ではありません。
+
+**`.`と`..`の混同**: 単一ドットは1レベルを辿ります。ダブルドット`..`はすべてのレベルを再帰的に降下します。`.key`の意図で`..key`を使うと結果は返りますが、予期しないネストされたキーにマッチする可能性があります。
+
+**フィルター構文のばらつき**: `?()`フィルター構文は実装によって異なります。使用するライブラリで必ず式をテストしてください。
+
+## オンラインJSONPathテスター
+
+JSONPath式のテストのためにコードを実行する——ライブラリの読み込み、JSONのパース、クエリの記述——には時間がかかります。[JSONPathテスター](/tools/jsonpath-tester)はすべてブラウザ上で動作します：
+
+- 左パネルに任意のJSONを貼り付け
+- JSONPath式を書いて即座にマッチを確認
+- 元のJSONツリーでマッチ箇所がハイライト表示
+- インストール不要、バックエンドなし、API呼び出しなし
+
+**[JSONPathテスターを試す →](/tools/jsonpath-tester)**
