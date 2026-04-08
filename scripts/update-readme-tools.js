@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Reads tool slugs + EN names from src/data/tools.ts and regenerates
 // the <!-- TOOLS-START --> ... <!-- TOOLS-END --> section in README.md.
-// Exits with code 1 if README was changed (so CI can commit); 0 if no change.
+// Exits with code 0 always; CI uses git diff to detect changes.
 
 import fs from 'fs';
 import path from 'path';
@@ -57,4 +57,3 @@ if (readme === before) {
 
 fs.writeFileSync(README, readme, 'utf8');
 console.log(`README updated: ${count} tools.`);
-process.exit(1); // signal to CI that a commit is needed
