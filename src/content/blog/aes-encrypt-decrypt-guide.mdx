@@ -1,0 +1,239 @@
+---
+title: "AES Encryption Tool Online: Encrypt and Decrypt Text in the Browser"
+description: "Encrypt and decrypt text with AES-GCM directly in your browser. Learn how AES works, key sizes, modes, and why client-side encryption matters for privacy."
+pubDate: 2026-04-08
+lang: "en"
+translationSlug: "aes-encrypt-decrypt-guide-zh"
+tags: ["aes-encryption", "aes-encrypt-decrypt", "cryptography", "aes-gcm", "developer-tools"]
+ogImage: /og/blog-aes-encrypt-decrypt-guide.png
+---
+
+AES (Advanced Encryption Standard) is the symmetric encryption algorithm that secures HTTPS traffic, encrypted filesystems, and password managers. This guide explains how AES works, why AES-GCM is the right mode for most use cases, and how to use our browser-based AES tool for client-side encryption without sending your data anywhere.
+
+[Encrypt text with AES in the browser →](/tools/aes-encrypt-decrypt)
+
+## What Is AES?
+
+AES is a symmetric block cipher standardized by NIST in 2001. "Symmetric" means the same key is used for both encryption and decryption. "Block cipher" means it encrypts fixed-size chunks (128-bit blocks) of data.
+
+AES replaced DES (Data Encryption Standard), which became vulnerable as hardware improved and key sizes stayed at 56 bits. AES supports three key sizes:
+
+| Key size | Security level | Common use |
+|----------|---------------|------------|
+| AES-128 | ~128 bits | General purpose, fast |
+| AES-192 | ~192 bits | Intermediate, rarely used |
+| AES-256 | ~256 bits | High security, government/financial |
+
+For most applications, AES-256 is the right choice — the performance difference from AES-128 is negligible on modern hardware, and the extra margin is free.
+
+## How AES Works (Without the Math)
+
+AES operates in rounds. AES-256 uses 14 rounds; AES-128 uses 10. Each round applies four transformations to the 128-bit block:
+
+1. **SubBytes** — each byte is replaced using a fixed lookup table (S-box), introducing non-linearity
+2. **ShiftRows** — rows of the 4×4 state matrix are rotated left by 0, 1, 2, 3 positions
+3. **MixColumns** — columns are multiplied in GF(2⁸), mixing bytes within each column
+4. **AddRoundKey** — the block is XORed with a round-specific subkey derived from the main key
+
+These four steps together achieve confusion (obscuring the relationship between plaintext and ciphertext) and diffusion (spreading the influence of each plaintext bit across the ciphertext). After 14 rounds of AES-256, the output is indistinguishable from random noise — even if you know the algorithm and 255 bits of the key.
+
+## AES Modes of Operation
+
+AES encrypts 128-bit blocks. For longer messages, you need a "mode" that chains blocks together. The mode choice is critical:
+
+### ECB (Electronic Codebook) — Never Use This
+
+ECB encrypts each block independently. The same 16-byte plaintext block always produces the same ciphertext block. This is catastrophic for any structured data — patterns in plaintext are visible in ciphertext.
+
+The canonical demonstration is encrypting a bitmap image with ECB: the encrypted image still shows the shape of the original, because repeating blocks of pixels produce repeating blocks of ciphertext.
+
+### CBC (Cipher Block Chaining) — Old Standard
+
+CBC XORs each plaintext block with the previous ciphertext block before encrypting. This breaks ECB's pattern problem — identical plaintext blocks produce different ciphertext. Requires an IV (initialization vector) that must be unique per message.
+
+Weakness: CBC requires padding, and padding oracles (POODLE, BEAST) have compromised many CBC implementations. Also no built-in authentication — you need a separate MAC.
+
+### GCM (Galois/Counter Mode) — Use This
+
+AES-GCM is an authenticated encryption mode. It combines AES-CTR (counter mode) for encryption with GHASH for authentication, producing both ciphertext and a 128-bit authentication tag.
+
+The tag is the critical advantage: if anyone modifies the ciphertext (even a single bit), decryption fails with an authentication error. This means AES-GCM provides:
+- **Confidentiality**: only the key holder can read the message
+- **Integrity**: any tampering is detected
+- **Authenticity**: the message genuinely came from someone with the key
+
+AES-GCM requires a 96-bit nonce (number used once). The nonce must never repeat for the same key — GCM security collapses catastrophically if the same key+nonce combination is reused.
+
+## Encryption in the Browser
+
+Modern browsers expose the **Web Crypto API**, a native cryptographic implementation that runs in the JavaScript engine. It uses hardware acceleration where available and never exposes raw key material to JavaScript code.
+
+```javascript
+// Encrypt a message with AES-GCM (Web Crypto API)
+async function encrypt(plaintext, password) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+
+  // Derive a key from the password using PBKDF2
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 200_000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+
+  // Generate a random nonce
+  const nonce = crypto.getRandomValues(new Uint8Array(12)); // 96 bits
+
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    data
+  );
+
+  // Return salt + nonce + ciphertext as base64
+  const combined = new Uint8Array([
+    ...salt,
+    ...nonce,
+    ...new Uint8Array(ciphertext)
+  ]);
+  return btoa(String.fromCharCode(...combined));
+}
+
+// Decrypt
+async function decrypt(base64, password) {
+  const encoder = new TextEncoder();
+  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+  const salt = combined.slice(0, 16);
+  const nonce = combined.slice(16, 28);
+  const ciphertext = combined.slice(28);
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 200_000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    ciphertext
+  );
+
+  return new TextDecoder().decode(plaintext);
+}
+```
+
+### Why PBKDF2?
+
+Raw passwords are not suitable AES keys — they are short, low-entropy strings. PBKDF2 (Password-Based Key Derivation Function 2) stretches a password into a cryptographic key:
+
+1. Combines the password with a random salt (prevents precomputed rainbow table attacks)
+2. Runs the combination through SHA-256 hundreds of thousands of times (slows down brute force)
+3. Outputs a 256-bit key suitable for AES-256
+
+The 200,000 iterations above take ~100ms on a modern CPU — acceptable for a legitimate user, but expensive for an attacker trying millions of passwords.
+
+## Python Encryption with cryptography Library
+
+```python
+import os
+import base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+def derive_key(password: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,           # 256 bits
+        salt=salt,
+        iterations=200_000,
+    )
+    return kdf.derive(password.encode())
+
+def encrypt(plaintext: str, password: str) -> str:
+    salt = os.urandom(16)
+    nonce = os.urandom(12)  # 96-bit nonce for GCM
+    key = derive_key(password, salt)
+
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
+
+    payload = salt + nonce + ciphertext
+    return base64.b64encode(payload).decode()
+
+def decrypt(encoded: str, password: str) -> str:
+    payload = base64.b64decode(encoded)
+    salt = payload[:16]
+    nonce = payload[16:28]
+    ciphertext = payload[28:]
+
+    key = derive_key(password, salt)
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, None).decode()
+
+# Usage
+encrypted = encrypt("Secret message", "my-password")
+print(encrypted)  # base64-encoded salt+nonce+ciphertext+tag
+
+decrypted = decrypt(encrypted, "my-password")
+print(decrypted)  # Secret message
+```
+
+## Key Management: The Hard Part
+
+AES-256 with GCM is computationally secure — breaking it by brute force is not feasible. But the key is the weak point. Common mistakes:
+
+**Hardcoded keys**: Never embed encryption keys in source code. Keys end up in git history, log files, and build artifacts. Use environment variables or a secrets manager (AWS Secrets Manager, HashiCorp Vault, etc.).
+
+**Key reuse across environments**: Use separate keys for development, staging, and production. A key compromise in dev should not compromise prod.
+
+**No key rotation**: Plan for key rotation. If a key is compromised, you need a way to re-encrypt existing data with a new key.
+
+**Weak passwords for PBKDF2**: If you use password-based key derivation, the security is limited by the password strength. Use long, random passphrases or a dedicated KDF with hardware keys.
+
+## Why Client-Side Encryption Matters
+
+When encryption happens in the browser, the server never sees the plaintext. This is the architecture of tools like Bitwarden's browser extension: your vault is encrypted on your device before it leaves. The server stores ciphertext it cannot read.
+
+This is in contrast to server-side encryption (SSE), where the server encrypts and decrypts on your behalf — which protects against storage theft but not against a compromised or malicious server.
+
+For sensitive personal data, prefer client-side encryption with keys that never leave the device.
+
+## Encrypt Text with AES Online
+
+[ZeroTool's AES Encrypt/Decrypt tool](/tools/aes-encrypt-decrypt) uses AES-256-GCM via the Web Crypto API, running entirely in your browser. Your plaintext and keys are never sent to any server. Paste your text, set a password, and get the encrypted output instantly.
+
+**[Try the AES Encryption Tool →](/tools/aes-encrypt-decrypt)**

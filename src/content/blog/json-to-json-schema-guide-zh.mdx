@@ -1,0 +1,242 @@
+---
+title: "JSON Schema 生成工具：从 JSON 数据一键推断 Schema"
+description: "将任意 JSON 对象转换为 JSON Schema draft-07。深入讲解类型推断、必填字段、嵌套结构处理，附 Python/JavaScript 验证代码示例。"
+pubDate: 2026-04-08
+lang: "zh"
+translationSlug: "json-to-json-schema-guide"
+tags: ["JSON Schema", "schema生成", "数据验证", "API设计", "开发工具"]
+ogImage: /og/blog-json-to-json-schema-guide-zh.png
+---
+
+有一个 JSON 样本，但不知道怎么写对应的 Schema？把它粘进去，Schema 自动生成。这篇文章讲清楚工具是怎么推断的、哪些地方需要你手动调整，以及如何把生成结果用在实际项目里。
+
+[在线 JSON to JSON Schema 生成工具 →](/tools/json-to-json-schema)
+
+## JSON Schema 是什么？
+
+JSON Schema 是描述 JSON 数据结构的一套规范。它回答这些问题：这个对象有哪些字段？哪些是必填的？允许什么类型？值范围是什么？
+
+一个最简单的例子：
+
+```json
+// 输入 JSON
+{
+  "userId": 42,
+  "email": "alice@example.com",
+  "active": true
+}
+
+// 生成的 JSON Schema（draft-07）
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": { "type": "integer" },
+    "email": { "type": "string" },
+    "active": { "type": "boolean" }
+  },
+  "required": ["userId", "email", "active"]
+}
+```
+
+Schema 描述了数据的"形状"，不包含具体值。有了 Schema，就可以用它验证其他 JSON 对象是否符合同样的结构。
+
+## 类型推断规则
+
+工具检查每个值，按以下规则映射到 JSON Schema 类型：
+
+| JSON 值示例 | 推断类型 |
+|-------------|---------|
+| `42` | `"integer"` |
+| `3.14` | `"number"` |
+| `"hello"` | `"string"` |
+| `true` / `false` | `"boolean"` |
+| `null` | `"null"` |
+| `[...]` | `"array"` |
+| `{...}` | `"object"` |
+
+**integer vs number**：JSON 本身不区分整数和浮点数，但 JSON Schema 区分。工具检查值是否有小数部分：整数用 `"integer"`，小数用 `"number"`。如果你的字段可能出现 `1.5` 这样的值，把 `"integer"` 改成 `"number"`。
+
+**null 的处理**：样本中的 `null` 会被推断为 `"type": "null"`。如果该字段有时是字符串、有时是 null，需要手动改成 `"type": ["string", "null"]`——单一样本无法推断出这种联合类型。
+
+## 必填字段（required）
+
+工具默认把样本中出现的所有字段都加入 `required` 数组。这是保守策略——工具不知道你的业务里哪些字段可以缺失。
+
+**需要手动检查**：把你系统中确实可以省略的字段从 `required` 里删掉。比如 `middleName` 不是每个用户都有，就从 `required` 中移除即可。不要用 `"nullable": true`——那是 OpenAPI 的扩展写法，不是标准 JSON Schema。
+
+## 嵌套对象和数组
+
+工具支持任意深度的嵌套：
+
+```json
+// 输入
+{
+  "user": {
+    "name": "张三",
+    "address": {
+      "city": "深圳",
+      "zip": "518000"
+    }
+  },
+  "roles": ["admin", "editor"]
+}
+
+// 生成的 Schema（节选）
+{
+  "type": "object",
+  "properties": {
+    "user": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" },
+            "zip": { "type": "string" }
+          },
+          "required": ["city", "zip"]
+        }
+      },
+      "required": ["name", "address"]
+    },
+    "roles": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["user", "roles"]
+}
+```
+
+**数组元素类型**：工具取数组第一个元素的类型作为 `items` 类型。如果数组为空（`[]`），`items` 会被省略，需要手动补充。如果数组包含混合类型，只有第一个元素的类型会被采用。
+
+## 在项目中使用生成的 Schema
+
+### JavaScript —— 用 Ajv 验证
+
+```javascript
+import Ajv from 'ajv';
+
+const ajv = new Ajv();
+const schema = {
+  type: 'object',
+  properties: {
+    userId: { type: 'integer' },
+    email: { type: 'string', format: 'email' },
+    active: { type: 'boolean' }
+  },
+  required: ['userId', 'email', 'active'],
+  additionalProperties: false  // 拒绝多余字段
+};
+
+const validate = ajv.compile(schema);
+
+const data = { userId: 1, email: 'alice@example.com', active: true };
+if (!validate(data)) {
+  console.error(validate.errors);
+}
+```
+
+`additionalProperties: false` 工具不会自动加，但在接口验证场景中很有用——可以拒绝带有意外字段的请求。
+
+### Python —— 用 jsonschema 验证
+
+```python
+from jsonschema import validate, ValidationError
+
+schema = {
+    "type": "object",
+    "properties": {
+        "userId": {"type": "integer"},
+        "email": {"type": "string"},
+        "active": {"type": "boolean"}
+    },
+    "required": ["userId", "email", "active"]
+}
+
+data = {"userId": 1, "email": "alice@example.com", "active": True}
+
+try:
+    validate(instance=data, schema=schema)
+    print("校验通过")
+except ValidationError as e:
+    print(f"校验失败: {e.message}")
+```
+
+### 配合 FastAPI 使用
+
+FastAPI 使用 Pydantic 定义请求体，底层导出的也是 JSON Schema。你可以把 API 返回的响应样本粘贴进工具，快速推断出对应的 Pydantic 模型结构：
+
+```python
+from pydantic import BaseModel
+from typing import Optional
+
+class UserResponse(BaseModel):
+    userId: int
+    email: str
+    active: bool
+    middleName: Optional[str] = None  # 可选字段，不在 required 里
+```
+
+用 JSON to JSON Schema 工具生成初稿，再对照 Pydantic 模型调整类型和约束，效率比手写高很多。
+
+## 补充约束：让 Schema 真正可用
+
+工具生成的是结构骨架，要让 Schema 发挥验证作用，需要手动添加约束：
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "maxLength": 254
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 150
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "inactive", "pending"]
+    }
+  },
+  "required": ["userId", "email"]
+}
+```
+
+常用约束：
+- `"format": "email"` / `"format": "uri"` / `"format": "date-time"` — 字符串语义约束
+- `"minimum"` / `"maximum"` — 数值范围
+- `"minLength"` / `"maxLength"` — 字符串长度限制
+- `"pattern"` — 正则约束
+- `"enum"` — 枚举值限制
+
+## JSON Schema 各版本对比
+
+工具输出 **draft-07** 格式，这是兼容性最广的版本。各版本主要区别：
+
+| 版本 | 主要变化 |
+|------|---------|
+| draft-04 | 基础版本，所有验证库都支持 |
+| draft-06 | 新增 `const`、`contains`、`propertyNames` |
+| draft-07 | 新增 `if`/`then`/`else` 条件验证 |
+| draft-2019-09 | 词汇表系统，`$recursiveRef` |
+| draft-2020-12 | `prefixItems`，`unevaluatedProperties` |
+
+Python 的 `jsonschema` 库 4.0 以下版本默认支持到 draft-04；Ajv 8.x 默认使用 draft-2020-12。根据你的验证库版本选择合适的 draft。
+
+## 立即生成 JSON Schema
+
+[ZeroTool JSON to JSON Schema 工具](/tools/json-to-json-schema) 支持从任意 JSON 对象实时推断完整的 draft-07 Schema。粘贴 JSON，复制 Schema，直接用于验证。无需注册，全部在浏览器本地运行。
+
+**[立即使用 JSON Schema 生成工具 →](/tools/json-to-json-schema)**

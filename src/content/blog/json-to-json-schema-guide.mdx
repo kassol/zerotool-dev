@@ -1,0 +1,242 @@
+---
+title: "JSON to JSON Schema Generator: Infer Schemas from Real Data"
+description: "Generate JSON Schema draft-07 from any JSON object instantly. Learn how type inference, required fields, and nested structures work — with code examples."
+pubDate: 2026-04-08
+lang: "en"
+translationSlug: "json-to-json-schema-guide-zh"
+tags: ["json-schema", "json-to-json-schema", "schema-validation", "api-design", "developer-tools"]
+ogImage: /og/blog-json-to-json-schema-guide.png
+---
+
+Paste a JSON object, get a JSON Schema back. That is the whole pitch — but the details matter. This guide explains what the schema generator infers, where it makes decisions you should review, and how to use the output in real projects.
+
+[Generate JSON Schema from your JSON →](/tools/json-to-json-schema)
+
+## What Is JSON Schema?
+
+JSON Schema is a vocabulary for describing the structure of JSON documents. It answers questions like: what properties does this object have? Which are required? What types are allowed? What are the valid value ranges?
+
+A simple example:
+
+```json
+// Input JSON
+{
+  "userId": 42,
+  "email": "alice@example.com",
+  "active": true
+}
+
+// Generated JSON Schema (draft-07)
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": { "type": "integer" },
+    "email": { "type": "string" },
+    "active": { "type": "boolean" }
+  },
+  "required": ["userId", "email", "active"]
+}
+```
+
+The schema captures the shape of the data without hardcoding specific values. You can then use it to validate other JSON objects against the same structure.
+
+## How Type Inference Works
+
+The generator inspects each value in your JSON and maps it to a JSON Schema type:
+
+| JSON value | JSON Schema type |
+|------------|-----------------|
+| `42` | `"integer"` |
+| `3.14` | `"number"` |
+| `"hello"` | `"string"` |
+| `true` / `false` | `"boolean"` |
+| `null` | `"null"` |
+| `[...]` | `"array"` |
+| `{...}` | `"object"` |
+
+**Integer vs number**: JSON does not distinguish integers from floats — both are just "number" in JSON syntax. The generator checks whether the value has a fractional part and uses `"integer"` for whole numbers and `"number"` for decimals. This matches the common case, but if your field can be either (e.g., a quantity that might become `1.5`), change it to `"number"` manually.
+
+**Null handling**: A `null` value in your sample produces `"type": "null"`. If the field is sometimes null and sometimes a string, you'll want `"type": ["string", "null"]`. The generator cannot infer this from a single sample — you need to edit the schema by hand or provide a sample with multiple records.
+
+## Required Fields
+
+Every property present in your input JSON is marked as `required` by default. This is the conservative choice: the generator does not know which fields are optional in your system.
+
+Review the `required` array and remove any fields that are genuinely optional. For example, if `middleName` may be absent in some records, remove it from `required` — do not add `"nullable": true` (that is an OpenAPI extension, not standard JSON Schema).
+
+## Nested Objects and Arrays
+
+The generator handles arbitrary nesting:
+
+```json
+// Input
+{
+  "user": {
+    "name": "Alice",
+    "address": {
+      "city": "Berlin",
+      "zip": "10115"
+    }
+  },
+  "tags": ["developer", "admin"]
+}
+
+// Generated schema (excerpt)
+{
+  "type": "object",
+  "properties": {
+    "user": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" },
+            "zip": { "type": "string" }
+          },
+          "required": ["city", "zip"]
+        }
+      },
+      "required": ["name", "address"]
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["user", "tags"]
+}
+```
+
+**Array item type**: When your array contains elements, the generator inspects the first element and uses that type for `items`. If your array is empty (`[]`), `items` is omitted — you'll need to add it yourself. If your array is heterogeneous (mixed types), the output will reflect only the first element's type.
+
+## Using the Schema in Practice
+
+### Validation with Ajv (JavaScript)
+
+```javascript
+import Ajv from 'ajv';
+
+const ajv = new Ajv();
+const schema = {
+  type: 'object',
+  properties: {
+    userId: { type: 'integer' },
+    email: { type: 'string', format: 'email' },
+    active: { type: 'boolean' }
+  },
+  required: ['userId', 'email', 'active'],
+  additionalProperties: false
+};
+
+const validate = ajv.compile(schema);
+
+const data = { userId: 1, email: 'alice@example.com', active: true };
+if (!validate(data)) {
+  console.error(validate.errors);
+}
+```
+
+Note `additionalProperties: false` — the generator does not add this, but it is useful when you want to reject objects with unexpected keys.
+
+### Validation with jsonschema (Python)
+
+```python
+from jsonschema import validate, ValidationError
+
+schema = {
+    "type": "object",
+    "properties": {
+        "userId": {"type": "integer"},
+        "email": {"type": "string"},
+        "active": {"type": "boolean"}
+    },
+    "required": ["userId", "email", "active"]
+}
+
+data = {"userId": 1, "email": "alice@example.com", "active": True}
+
+try:
+    validate(instance=data, schema=schema)
+    print("Valid")
+except ValidationError as e:
+    print(f"Invalid: {e.message}")
+```
+
+### FastAPI Request Body Validation
+
+FastAPI uses Pydantic for validation but exports JSON Schema. If you generate a schema from a sample API response, you can cross-check it against FastAPI's auto-generated OpenAPI schema:
+
+```python
+from pydantic import BaseModel
+from typing import Optional
+
+class UserResponse(BaseModel):
+    userId: int
+    email: str
+    active: bool
+    middleName: Optional[str] = None  # not required
+```
+
+FastAPI generates an OpenAPI/JSON Schema compatible spec — you can paste a response sample into the JSON to JSON Schema generator to quickly prototype the Pydantic model.
+
+## Enriching the Generated Schema
+
+The raw output is a structural skeleton. Add constraints to make it useful for validation:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "maxLength": 254
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 150
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "inactive", "pending"]
+    }
+  },
+  "required": ["userId", "email"]
+}
+```
+
+Common additions:
+- `"format": "email"` / `"format": "uri"` / `"format": "date-time"` — semantic string constraints
+- `"minimum"` / `"maximum"` — numeric bounds
+- `"minLength"` / `"maxLength"` — string length limits
+- `"pattern"` — regex constraint on strings
+- `"enum"` — restrict to a set of allowed values
+
+## JSON Schema Drafts
+
+The generator targets **draft-07**, which is the most widely supported version. The differences between drafts matter when using validators:
+
+| Draft | Notes |
+|-------|-------|
+| draft-04 | Baseline. Supported everywhere. |
+| draft-06 | Added `const`, `contains`, `propertyNames`. |
+| draft-07 | Added `if`/`then`/`else`, `readOnly`, `writeOnly`. |
+| draft-2019-09 | Vocabulary system, `$recursiveRef`. |
+| draft-2020-12 | `prefixItems`, `unevaluatedProperties`. |
+
+If your validator is older (e.g., Python's `jsonschema` < 4.0), stick to draft-04 or draft-06. Ajv 8.x defaults to draft-2020-12.
+
+## Generate JSON Schema Instantly
+
+[ZeroTool's JSON to JSON Schema generator](/tools/json-to-json-schema) infers a complete draft-07 schema from any JSON object in real time. Paste your JSON, copy the schema, and start validating. No signup required, everything runs in the browser.
+
+**[Try the JSON to JSON Schema Generator →](/tools/json-to-json-schema)**

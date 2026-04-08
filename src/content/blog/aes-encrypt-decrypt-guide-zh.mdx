@@ -1,0 +1,221 @@
+---
+title: "AES 在线加密解密工具：浏览器端 AES-GCM 加密完全指南"
+description: "在浏览器中直接使用 AES-GCM 加密解密文本，数据不上传服务器。深入讲解 AES 工作原理、密钥管理、GCM 认证加密，附 Python/JS 代码示例。"
+pubDate: 2026-04-08
+lang: "zh"
+translationSlug: "aes-encrypt-decrypt-guide"
+tags: ["AES加密", "AES-GCM", "对称加密", "浏览器加密", "开发工具"]
+ogImage: /og/blog-aes-encrypt-decrypt-guide-zh.png
+---
+
+AES（高级加密标准）是保护 HTTPS 流量、加密文件系统和密码管理器的对称加密算法。它安全、快速，是现代密码学的基础设施。这篇文章讲清楚 AES 的工作原理、为什么 GCM 模式是首选、客户端加密的意义，以及如何在代码里实现。
+
+[在浏览器中使用 AES 加密 →](/tools/aes-encrypt-decrypt)
+
+## AES 是什么？
+
+AES 是由 NIST 于 2001 年标准化的**对称块加密算法**。"对称"意味着加密和解密使用同一个密钥；"块加密"意味着它每次处理固定大小（128 位）的数据块。
+
+AES 支持三种密钥长度：
+
+| 密钥长度 | 安全级别 | 典型用途 |
+|----------|---------|---------|
+| AES-128 | ~128 位 | 通用场景，速度快 |
+| AES-192 | ~192 位 | 较少使用 |
+| AES-256 | ~256 位 | 高安全要求，政府/金融 |
+
+现代硬件上 AES-256 和 AES-128 的性能差距可以忽略不计，直接选 AES-256。
+
+## AES 的工作原理（不涉及数学）
+
+AES 分多轮处理数据。AES-256 使用 14 轮，AES-128 使用 10 轮。每轮对 128 位数据块执行四个变换：
+
+1. **字节替换（SubBytes）**：每个字节通过 S 盒查表替换，引入非线性
+2. **行移位（ShiftRows）**：4×4 状态矩阵各行分别循环左移 0、1、2、3 位
+3. **列混合（MixColumns）**：在 GF(2⁸) 上对每列进行矩阵乘法，混合列内各字节
+4. **轮密钥加（AddRoundKey）**：将当前块与从主密钥派生的轮密钥进行异或
+
+这四步共同实现了**混淆**（模糊明文和密文的关系）和**扩散**（每个明文位的影响扩散到整个密文）。经过 14 轮之后，输出与随机噪声在统计上无法区分。
+
+## AES 的工作模式
+
+AES 一次只加密 128 位。对于更长的消息，需要选择一种"工作模式"来连接多个数据块。模式选择至关重要。
+
+### ECB 模式（电子码本）—— 绝对不要用
+
+ECB 独立加密每个数据块。同样的 16 字节明文块永远产生同样的密文块。这对任何结构化数据都是灾难性的——明文中的规律会直接反映在密文中。
+
+最直观的演示：用 ECB 模式加密位图图片，加密后的图片仍然能看出原始图形的轮廓，因为相同的像素块产生相同的密文块。
+
+### CBC 模式（密码块链接）—— 旧标准
+
+CBC 在加密前，将每个明文块与上一个密文块进行异或。这解决了 ECB 的模式泄露问题。需要一个每次加密唯一的初始向量（IV）。
+
+弱点：CBC 需要填充（padding），历史上 POODLE、BEAST 等填充预言攻击（Padding Oracle Attack）导致大量 CBC 实现被破解。另外 CBC 没有内置认证，需要额外的 MAC。
+
+### GCM 模式（伽罗瓦/计数器模式）—— 首选
+
+AES-GCM 是认证加密模式，将 AES-CTR 加密与 GHASH 认证结合，加密时同时生成密文和一个 128 位认证标签（Tag）。
+
+认证标签是核心优势：如果任何人修改了密文（哪怕一位），解密时就会产生认证错误，无法得到任何明文。AES-GCM 同时提供：
+- **保密性**：只有持有密钥的人才能读取消息
+- **完整性**：任何篡改都会被检测到
+- **真实性**：消息确实来自持有密钥的人
+
+AES-GCM 需要一个 96 位的随机数（Nonce）。Nonce 在同一密钥下**绝对不能重复**——密钥+Nonce 的组合如果被复用，GCM 的安全性会灾难性崩溃。
+
+## 在浏览器中加密（Web Crypto API）
+
+现代浏览器内置 **Web Crypto API**，提供硬件加速的原生密码学实现，私钥材料不会暴露给 JavaScript 代码。
+
+```javascript
+// AES-GCM 加密（Web Crypto API）
+async function encrypt(plaintext, password) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+
+  // 用 PBKDF2 从密码派生密钥
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 200_000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+
+  const nonce = crypto.getRandomValues(new Uint8Array(12)); // 96 位
+
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    data
+  );
+
+  // 将 salt + nonce + 密文打包成 Base64
+  const combined = new Uint8Array([
+    ...salt, ...nonce, ...new Uint8Array(ciphertext)
+  ]);
+  return btoa(String.fromCharCode(...combined));
+}
+
+// AES-GCM 解密
+async function decrypt(base64, password) {
+  const encoder = new TextEncoder();
+  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+  const salt = combined.slice(0, 16);
+  const nonce = combined.slice(16, 28);
+  const ciphertext = combined.slice(28);
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']
+  );
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: nonce }, key, ciphertext
+  );
+  return new TextDecoder().decode(plaintext);
+}
+```
+
+### 为什么要用 PBKDF2？
+
+原始密码不适合直接作为 AES 密钥——密码短、熵值低。PBKDF2（基于密码的密钥派生函数 2）将密码"拉伸"成密码学密钥：
+
+1. 将密码与随机盐值组合（防止彩虹表攻击）
+2. 将组合通过 SHA-256 迭代 20 万次（让暴力破解变慢）
+3. 输出 256 位密钥
+
+20 万次迭代在现代 CPU 上约需 100ms——合法用户可以接受，但对攻击者来说尝试数百万个密码的成本极高。
+
+## Python 实现
+
+```python
+import os
+import base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+def derive_key(password: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,           # 256 位
+        salt=salt,
+        iterations=200_000,
+    )
+    return kdf.derive(password.encode())
+
+def encrypt(plaintext: str, password: str) -> str:
+    salt = os.urandom(16)
+    nonce = os.urandom(12)  # GCM 需要 96 位随机数
+    key = derive_key(password, salt)
+
+    aesgcm = AESGCM(key)
+    # 加密结果自动附带认证标签
+    ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
+
+    payload = salt + nonce + ciphertext
+    return base64.b64encode(payload).decode()
+
+def decrypt(encoded: str, password: str) -> str:
+    payload = base64.b64decode(encoded)
+    salt, nonce, ciphertext = payload[:16], payload[16:28], payload[28:]
+    key = derive_key(password, salt)
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, None).decode()
+
+# 使用
+encrypted = encrypt("机密消息", "强密码123")
+print(encrypted)                      # Base64 编码的 salt+nonce+密文+标签
+
+decrypted = decrypt(encrypted, "强密码123")
+print(decrypted)                      # 机密消息
+```
+
+## 密钥管理：真正的难点
+
+AES-256-GCM 在计算上是安全的——暴力破解不可行。但密钥是最薄弱的环节。常见错误：
+
+**密钥硬编码**：不要把密钥写进源代码。代码会进入 git 历史、日志文件、构建产物。使用环境变量或密钥管理服务（AWS Secrets Manager、HashiCorp Vault、阿里云 KMS）。
+
+**环境间密钥复用**：开发、测试、生产使用不同的密钥。开发环境密钥泄露不应该影响生产数据。
+
+**没有密钥轮换计划**：提前规划密钥轮换。密钥泄露后需要有办法用新密钥重新加密现有数据。
+
+**PBKDF2 密码强度不足**：如果用密码派生密钥，安全性上限就是密码强度。使用足够长的随机密码短语或配合硬件密钥使用。
+
+## 为什么客户端加密重要？
+
+当加密在浏览器中发生时，服务器永远看不到明文。这是 Bitwarden 等密码管理器的架构：你的密码库在设备上加密后再上传，服务器存储的是它无法读取的密文。
+
+这与服务端加密（SSE）不同——SSE 由服务器代你加解密，保护存储层安全，但不能防止被攻破或不诚实的服务器。
+
+对于敏感个人数据，优先选择客户端加密，密钥不离开设备。
+
+## 在线 AES 加密解密
+
+[ZeroTool AES 加密工具](/tools/aes-encrypt-decrypt) 使用 AES-256-GCM 通过 Web Crypto API 在浏览器本地加解密，明文和密钥不上传任何服务器。粘贴文本，设置密码，立即得到加密结果。
+
+**[立即使用 AES 加密工具 →](/tools/aes-encrypt-decrypt)**
