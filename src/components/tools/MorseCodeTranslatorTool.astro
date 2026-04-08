@@ -1,0 +1,210 @@
+---
+// MorseCodeTranslatorTool — bidirectional text ↔ Morse code
+---
+
+<div class="mct-wrap">
+  <div class="mct-panes">
+    <div class="mct-pane">
+      <div class="mct-pane-header">
+        <span class="mct-pane-label">Text</span>
+        <div class="mct-actions">
+          <button id="mct-text-to-morse" class="btn-primary mct-btn-sm" type="button">→ Morse</button>
+          <button id="mct-clear-text" class="btn-ghost mct-btn-sm" type="button">Clear</button>
+        </div>
+      </div>
+      <textarea id="mct-text" class="mct-textarea" spellcheck="false" placeholder="Type text here…"></textarea>
+    </div>
+    <div class="mct-pane">
+      <div class="mct-pane-header">
+        <span class="mct-pane-label">Morse Code (· and −, spaces between letters)</span>
+        <div class="mct-actions">
+          <button id="mct-morse-to-text" class="btn-primary mct-btn-sm" type="button">← Text</button>
+          <button id="mct-copy-morse" class="btn-ghost mct-btn-sm" type="button">Copy</button>
+        </div>
+      </div>
+      <textarea id="mct-morse" class="mct-textarea" spellcheck="false" placeholder="·− −··· −·−· ···· ·−−− ··−−··"></textarea>
+    </div>
+  </div>
+  <div id="mct-error" class="mct-error" hidden></div>
+
+  <script is:inline>
+    (function () {
+      var textEl     = document.getElementById('mct-text');
+      var morseEl    = document.getElementById('mct-morse');
+      var errorEl    = document.getElementById('mct-error');
+      var t2mBtn     = document.getElementById('mct-text-to-morse');
+      var m2tBtn     = document.getElementById('mct-morse-to-text');
+      var clearBtn   = document.getElementById('mct-clear-text');
+      var copyBtn    = document.getElementById('mct-copy-morse');
+
+      var CHAR_TO_MORSE = {
+        'A': '·−', 'B': '−···', 'C': '−·−·', 'D': '−··',
+        'E': '·', 'F': '··−·', 'G': '−−·', 'H': '····',
+        'I': '··', 'J': '·−−−', 'K': '−·−', 'L': '·−··',
+        'M': '−−', 'N': '−·', 'O': '−−−', 'P': '·−−·',
+        'Q': '−−·−', 'R': '·−·', 'S': '···', 'T': '−',
+        'U': '··−', 'V': '···−', 'W': '·−−', 'X': '−··−',
+        'Y': '−·−−', 'Z': '−−··',
+        '0': '−−−−−', '1': '·−−−−', '2': '··−−−', '3': '···−−',
+        '4': '····−', '5': '·····', '6': '−····', '7': '−−···',
+        '8': '−−−··', '9': '−−−−·',
+        '.': '·−·−·−', ',': '−−··−−', '?': '··−−··', "'": '·−−−−·',
+        '!': '−·−·−−', '/': '−··−·', '(': '−·−−·', ')': '−·−−·−',
+        '&': '·−···', ':': '−−−···', ';': '−·−·−·', '=': '−···−',
+        '+': '·−·−·', '-': '−····−', '_': '··−−·−', '"': '·−··−·',
+        '$': '···−··−', '@': '·−−·−·',
+      };
+
+      var MORSE_TO_CHAR = {};
+      Object.keys(CHAR_TO_MORSE).forEach(function (c) {
+        MORSE_TO_CHAR[CHAR_TO_MORSE[c]] = c;
+      });
+
+      function textToMorse(text) {
+        var words = text.toUpperCase().split(/\s+/);
+        var morseWords = words.map(function (word) {
+          var letters = word.split('');
+          var morseCodes = [];
+          for (var i = 0; i < letters.length; i++) {
+            var ch = letters[i];
+            if (CHAR_TO_MORSE[ch]) {
+              morseCodes.push(CHAR_TO_MORSE[ch]);
+            } else if (ch === ' ') {
+              morseCodes.push('/');
+            }
+            // silently skip unknown chars
+          }
+          return morseCodes.join(' ');
+        });
+        return morseWords.filter(function (w) { return w.length > 0; }).join(' / ');
+      }
+
+      function morseToText(morse) {
+        var wordGroups = morse.trim().split(/\s*\/\s*/);
+        var result = [];
+        for (var wi = 0; wi < wordGroups.length; wi++) {
+          var group = wordGroups[wi].trim();
+          if (!group) continue;
+          var codes = group.split(/\s+/);
+          var word = '';
+          for (var ci = 0; ci < codes.length; ci++) {
+            var code = codes[ci];
+            if (!code) continue;
+            if (MORSE_TO_CHAR[code]) {
+              word += MORSE_TO_CHAR[code];
+            } else {
+              word += '?';
+            }
+          }
+          result.push(word);
+        }
+        return result.join(' ');
+      }
+
+      t2mBtn.addEventListener('click', function () {
+        var text = textEl.value;
+        if (!text.trim()) return;
+        morseEl.value = textToMorse(text);
+        errorEl.hidden = true;
+        window.trackTool && window.trackTool('morse-code-translator', 'text-to-morse');
+      });
+
+      m2tBtn.addEventListener('click', function () {
+        var morse = morseEl.value;
+        if (!morse.trim()) return;
+        textEl.value = morseToText(morse);
+        errorEl.hidden = true;
+        window.trackTool && window.trackTool('morse-code-translator', 'morse-to-text');
+      });
+
+      clearBtn.addEventListener('click', function () {
+        textEl.value = '';
+        morseEl.value = '';
+        errorEl.hidden = true;
+        textEl.focus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = morseEl.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      // seed example
+      textEl.value = 'Hello World';
+      morseEl.value = textToMorse('Hello World');
+    })();
+  </script>
+</div>
+
+<style>
+  .mct-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .mct-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 680px) {
+    .mct-panes { grid-template-columns: 1fr; }
+  }
+
+  .mct-pane { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .mct-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .mct-pane-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .mct-actions { display: flex; gap: 0.35rem; }
+
+  .mct-btn-sm {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.55rem;
+  }
+
+  .mct-textarea {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+    min-height: 220px;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+
+  .mct-error {
+    font-size: 0.82rem;
+    color: #ef4444;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #fca5a5;
+    border-radius: var(--radius-sm);
+    background: #fef2f2;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .mct-error {
+      background: #2d1515;
+      border-color: #7f1d1d;
+      color: #fca5a5;
+    }
+  }
+</style>

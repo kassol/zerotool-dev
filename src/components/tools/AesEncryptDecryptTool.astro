@@ -1,0 +1,272 @@
+---
+// AesEncryptDecryptTool — AES-GCM encrypt/decrypt via Web Crypto API
+---
+
+<div class="aes-wrap">
+  <div class="aes-field">
+    <label class="aes-label" for="aes-password">Password</label>
+    <div class="aes-pw-row">
+      <input type="password" id="aes-password" class="aes-input" placeholder="Enter a strong password…" autocomplete="off" />
+      <button id="aes-toggle-pw" class="btn-ghost aes-btn-sm" type="button" title="Show / hide password">Show</button>
+    </div>
+  </div>
+
+  <div class="aes-panes">
+    <div class="aes-pane">
+      <div class="aes-pane-header">
+        <span class="aes-pane-label">Plaintext</span>
+        <button id="aes-encrypt" class="btn-primary aes-btn-sm" type="button">Encrypt →</button>
+      </div>
+      <textarea id="aes-plaintext" class="aes-textarea" spellcheck="false" placeholder="Enter text to encrypt…"></textarea>
+    </div>
+    <div class="aes-pane">
+      <div class="aes-pane-header">
+        <span class="aes-pane-label">Ciphertext (Base64)</span>
+        <div class="aes-actions">
+          <button id="aes-decrypt" class="btn-primary aes-btn-sm" type="button">← Decrypt</button>
+          <button id="aes-copy" class="btn-ghost aes-btn-sm" type="button">Copy</button>
+        </div>
+      </div>
+      <textarea id="aes-ciphertext" class="aes-textarea" spellcheck="false" placeholder="Paste ciphertext here to decrypt…"></textarea>
+    </div>
+  </div>
+  <div id="aes-status" class="aes-status" hidden></div>
+
+  <div class="aes-note">
+    AES-256-GCM · PBKDF2 key derivation · random salt + IV per encryption · runs entirely in your browser
+  </div>
+
+  <script is:inline>
+    (function () {
+      var pwEl        = document.getElementById('aes-password');
+      var togglePwBtn = document.getElementById('aes-toggle-pw');
+      var encBtn      = document.getElementById('aes-encrypt');
+      var decBtn      = document.getElementById('aes-decrypt');
+      var copyBtn     = document.getElementById('aes-copy');
+      var plainEl     = document.getElementById('aes-plaintext');
+      var cipherEl    = document.getElementById('aes-ciphertext');
+      var statusEl    = document.getElementById('aes-status');
+
+      togglePwBtn.addEventListener('click', function () {
+        if (pwEl.type === 'password') {
+          pwEl.type = 'text';
+          togglePwBtn.textContent = 'Hide';
+        } else {
+          pwEl.type = 'password';
+          togglePwBtn.textContent = 'Show';
+        }
+      });
+
+      function showStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'aes-status' + (isError ? ' aes-status-error' : ' aes-status-ok');
+        statusEl.hidden = false;
+        setTimeout(function () { statusEl.hidden = true; }, 3000);
+      }
+
+      function getPassword() {
+        var pw = pwEl.value;
+        if (!pw) { showStatus('Please enter a password.', true); return null; }
+        return pw;
+      }
+
+      async function deriveKey(password, salt) {
+        var enc = new TextEncoder();
+        var keyMaterial = await crypto.subtle.importKey(
+          'raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']
+        );
+        return crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: 200000, hash: 'SHA-256' },
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt', 'decrypt']
+        );
+      }
+
+      function bufToBase64(buf) {
+        var bytes = new Uint8Array(buf);
+        var bin = '';
+        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+      }
+
+      function base64ToBuf(b64) {
+        var bin = atob(b64);
+        var buf = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        return buf;
+      }
+
+      encBtn.addEventListener('click', async function () {
+        var pw = getPassword();
+        if (!pw) return;
+        var text = plainEl.value;
+        if (!text) { showStatus('Plaintext is empty.', true); return; }
+        try {
+          var salt = crypto.getRandomValues(new Uint8Array(16));
+          var iv   = crypto.getRandomValues(new Uint8Array(12));
+          var key  = await deriveKey(pw, salt);
+          var enc  = new TextEncoder();
+          var cipherBuf = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: iv }, key, enc.encode(text)
+          );
+          // Pack: [salt(16)] [iv(12)] [ciphertext]
+          var combined = new Uint8Array(16 + 12 + cipherBuf.byteLength);
+          combined.set(salt, 0);
+          combined.set(iv, 16);
+          combined.set(new Uint8Array(cipherBuf), 28);
+          cipherEl.value = bufToBase64(combined);
+          showStatus('Encrypted successfully.', false);
+          window.trackTool && window.trackTool('aes-encrypt-decrypt', 'encrypt');
+        } catch (e) {
+          showStatus('Encryption failed: ' + e.message, true);
+        }
+      });
+
+      decBtn.addEventListener('click', async function () {
+        var pw = getPassword();
+        if (!pw) return;
+        var b64 = cipherEl.value.trim();
+        if (!b64) { showStatus('Ciphertext is empty.', true); return; }
+        try {
+          var combined = base64ToBuf(b64);
+          if (combined.length < 29) throw new Error('Ciphertext too short.');
+          var salt      = combined.slice(0, 16);
+          var iv        = combined.slice(16, 28);
+          var cipherBuf = combined.slice(28);
+          var key       = await deriveKey(pw, salt);
+          var plainBuf  = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: iv }, key, cipherBuf
+          );
+          plainEl.value = new TextDecoder().decode(plainBuf);
+          showStatus('Decrypted successfully.', false);
+          window.trackTool && window.trackTool('aes-encrypt-decrypt', 'decrypt');
+        } catch (e) {
+          showStatus('Decryption failed — wrong password or corrupted ciphertext.', true);
+        }
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = cipherEl.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .aes-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  .aes-field { display: flex; flex-direction: column; gap: 0.35rem; }
+
+  .aes-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .aes-pw-row { display: flex; gap: 0.5rem; align-items: center; }
+
+  .aes-input {
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.4rem 0.65rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    flex: 1;
+  }
+
+  .aes-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 680px) {
+    .aes-panes { grid-template-columns: 1fr; }
+  }
+
+  .aes-pane { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .aes-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .aes-pane-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .aes-actions { display: flex; gap: 0.35rem; }
+
+  .aes-btn-sm {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.55rem;
+  }
+
+  .aes-textarea {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+    min-height: 200px;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+
+  .aes-status {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.65rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .aes-status-ok {
+    color: #059669;
+    background: #ecfdf5;
+    border: 1px solid #6ee7b7;
+  }
+
+  .aes-status-error {
+    color: #ef4444;
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .aes-status-ok {
+      background: #052e1c;
+      border-color: #065f46;
+      color: #6ee7b7;
+    }
+    :root:not([data-theme="light"]) .aes-status-error {
+      background: #2d1515;
+      border-color: #7f1d1d;
+      color: #fca5a5;
+    }
+  }
+
+  .aes-note {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+  }
+</style>

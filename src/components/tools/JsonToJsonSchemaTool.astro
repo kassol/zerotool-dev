@@ -1,0 +1,200 @@
+---
+// JsonToJsonSchemaTool — paste JSON, get JSON Schema draft-07
+---
+
+<div class="jjs-wrap">
+  <div class="jjs-panes">
+    <div class="jjs-pane">
+      <div class="jjs-pane-header">
+        <span class="jjs-pane-label">JSON Input</span>
+        <button id="jjs-clear" class="btn-ghost jjs-btn-sm" type="button">Clear</button>
+      </div>
+      <textarea id="jjs-input" class="jjs-textarea" spellcheck="false" placeholder='{"name":"Alice","age":30,"active":true}'></textarea>
+    </div>
+    <div class="jjs-pane">
+      <div class="jjs-pane-header">
+        <span class="jjs-pane-label">JSON Schema (draft-07)</span>
+        <button id="jjs-copy" class="btn-ghost jjs-btn-sm" type="button">Copy</button>
+      </div>
+      <textarea id="jjs-output" class="jjs-textarea jjs-output-area" spellcheck="false" readonly></textarea>
+    </div>
+  </div>
+  <div id="jjs-error" class="jjs-error" hidden></div>
+
+  <script is:inline>
+    (function () {
+      var inputEl  = document.getElementById('jjs-input');
+      var outputEl = document.getElementById('jjs-output');
+      var errorEl  = document.getElementById('jjs-error');
+      var clearBtn = document.getElementById('jjs-clear');
+      var copyBtn  = document.getElementById('jjs-copy');
+
+      function inferSchema(value) {
+        if (value === null) return { type: 'null' };
+        var t = typeof value;
+        if (t === 'boolean') return { type: 'boolean' };
+        if (t === 'number') {
+          return Number.isInteger(value) ? { type: 'integer' } : { type: 'number' };
+        }
+        if (t === 'string') return { type: 'string' };
+        if (Array.isArray(value)) {
+          if (value.length === 0) return { type: 'array', items: {} };
+          // merge all item schemas
+          var itemSchemas = value.map(inferSchema);
+          var merged = mergeSchemas(itemSchemas);
+          return { type: 'array', items: merged };
+        }
+        if (t === 'object') {
+          var props = {};
+          var required = [];
+          var keys = Object.keys(value);
+          for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            props[k] = inferSchema(value[k]);
+            if (value[k] !== null && value[k] !== undefined) required.push(k);
+          }
+          var schema = {
+            type: 'object',
+            properties: props,
+          };
+          if (required.length > 0) schema.required = required;
+          return schema;
+        }
+        return {};
+      }
+
+      function mergeSchemas(schemas) {
+        if (schemas.length === 1) return schemas[0];
+        var types = [];
+        for (var i = 0; i < schemas.length; i++) {
+          var s = schemas[i];
+          if (s.type && types.indexOf(s.type) === -1) types.push(s.type);
+        }
+        if (types.length === 1) return schemas[0];
+        return { type: types };
+      }
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) {
+          outputEl.value = '';
+          errorEl.hidden = true;
+          return;
+        }
+        try {
+          var parsed = JSON.parse(raw);
+          var schema = Object.assign(
+            { '$schema': 'http://json-schema.org/draft-07/schema#' },
+            inferSchema(parsed)
+          );
+          outputEl.value = JSON.stringify(schema, null, 2);
+          errorEl.hidden = true;
+        } catch (e) {
+          outputEl.value = '';
+          errorEl.textContent = 'Invalid JSON: ' + e.message;
+          errorEl.hidden = false;
+        }
+        window.trackTool && window.trackTool('json-to-json-schema', 'convert');
+      }
+
+      inputEl.addEventListener('input', convert);
+
+      clearBtn.addEventListener('click', function () {
+        inputEl.value = '';
+        outputEl.value = '';
+        errorEl.hidden = true;
+        inputEl.focus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = outputEl.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+          window.trackTool && window.trackTool('json-to-json-schema', 'copy');
+        });
+      });
+
+      // seed example
+      inputEl.value = JSON.stringify({
+        "name": "Alice",
+        "age": 30,
+        "active": true,
+        "scores": [95, 87, 92],
+        "address": {
+          "street": "123 Main St",
+          "city": "Wonderland"
+        }
+      }, null, 2);
+      convert();
+    })();
+  </script>
+</div>
+
+<style>
+  .jjs-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jjs-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 680px) {
+    .jjs-panes { grid-template-columns: 1fr; }
+  }
+
+  .jjs-pane { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jjs-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .jjs-pane-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jjs-btn-sm {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+  }
+
+  .jjs-textarea {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+    min-height: 300px;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+
+  .jjs-output-area { color: var(--color-text-secondary); }
+
+  .jjs-error {
+    font-size: 0.82rem;
+    color: #ef4444;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #fca5a5;
+    border-radius: var(--radius-sm);
+    background: #fef2f2;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jjs-error {
+      background: #2d1515;
+      border-color: #7f1d1d;
+      color: #fca5a5;
+    }
+  }
+</style>
