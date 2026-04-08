@@ -1,0 +1,208 @@
+---
+title: "JSON을 Kotlin Data Class로 자동 변환: 직접 작성 그만하기"
+description: "JSON을 붙여 넣으면 Kotlin data class를 자동 생성. nullable 처리·중첩 객체·리스트 타입 추론부터 Gson·Moshi·kotlinx.serialization 연동까지 설명합니다."
+pubDate: 2026-04-08
+lang: "ko"
+translationSlug: "json-to-kotlin-guide"
+tags: ["kotlin", "json to kotlin", "kotlin data class", "android development", "developer-tools"]
+ogImage: /og/blog-json-to-kotlin-guide-ko.png
+---
+
+API 응답 JSON이 왔습니다. 타입 안전한 코드를 위해 Kotlin data class가 필요합니다. 직접 작성할 수도 있지만, JSON을 붙여 넣고 몇 초 만에 클래스를 생성하는 방법이 있습니다.
+
+## Kotlin Data Class를 직접 작성할 때의 문제
+
+API 응답용 Kotlin data class를 손으로 작성하면:
+
+- 모든 필드에 올바른 타입 필요: `String`, `Int`, `Boolean`, `List<T>`, 중첩 클래스
+- nullable 필드에 `?` 누락 시 런타임 NullPointerException 발생
+- 중첩 객체마다 별도의 클래스 정의 필요
+- JSON은 snake_case, Kotlin은 camelCase → `@SerializedName` 어노테이션 필요
+- API 변경 시 클래스를 일일이 수동 수정
+
+간단한 JSON이라면 괜찮지만, 여러 단계의 중첩과 객체 배열이 있으면 상당한 시간이 걸립니다.
+
+## JSON to Kotlin 생성기의 동작 방식
+
+생성기는 JSON을 읽고 올바른 타입과 nullable 정보를 가진 Kotlin data class를 생성합니다. 다음 JSON을 입력하면:
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "isActive": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "서울",
+      "country": "KR"
+    },
+    "lastLogin": null
+  }
+}
+```
+
+다음 클래스가 생성됩니다:
+
+```kotlin
+data class Address(
+    val city: String,
+    val country: String
+)
+
+data class User(
+    val id: Int,
+    val name: String,
+    val email: String,
+    val isActive: Boolean,
+    val roles: List<String>,
+    val address: Address,
+    val lastLogin: String?
+)
+
+data class Root(
+    val user: User
+)
+```
+
+**[ZeroTool JSON to Kotlin 생성기 사용하기 →](/tools/json-to-kotlin)**
+
+JSON을 붙여 넣으면 즉시 Kotlin data class가 생성됩니다. 설치 불필요, 브라우저에서 모두 실행되어 민감한 데이터가 서버로 전송되지 않습니다.
+
+## 타입 추론 규칙
+
+| JSON 값 | Kotlin 타입 |
+|--------|-----------|
+| `"string"` | `String` |
+| `42` | `Int` |
+| `3.14` | `Double` |
+| `true` / `false` | `Boolean` |
+| `null` | `T?` (nullable) |
+| `[1, 2, 3]` | `List<Int>` |
+| `[{…}, {…}]` | `List<ClassName>` |
+| `{}` | 이름 있는 data class |
+
+### Nullable 처리
+
+샘플 JSON에서 필드 값이 `null`이면 생성기가 nullable로 표시합니다 (예: `lastLogin: String?`). API가 non-null을 보장하는 경우 `?`를 제거할 수 있습니다.
+
+### 네이밍 컨벤션 변환
+
+JSON 키가 snake_case(`first_name`, `created_at`)인 경우 Kotlin camelCase로 변환하고 `@SerializedName` 어노테이션을 자동으로 추가합니다:
+
+```kotlin
+data class User(
+    @SerializedName("first_name")
+    val firstName: String,
+    @SerializedName("created_at")
+    val createdAt: String
+)
+```
+
+## 주의해야 할 엣지 케이스
+
+### 큰 ID 값 (Long vs Int)
+
+JSON 숫자는 기본적으로 `Int`로 추론됩니다. Snowflake ID 등 21억을 초과하는 경우 `Long`으로 변경해야 합니다:
+
+```kotlin
+// 생성된 결과
+val id: Int
+
+// 올바른 타입
+val id: Long
+```
+
+### 빈 배열
+
+`[]`는 요소 타입 정보가 없어 `List<Any>`가 생성됩니다. API 문서를 확인해 올바른 요소 타입을 지정하세요.
+
+### 날짜·시간 필드
+
+JSON에는 네이티브 날짜 타입이 없습니다. 타임스탬프는 문자열(`"2026-04-08T10:00:00Z"`)로 전달됩니다. 생성기는 `String`으로 추론하며, Gson TypeAdapter로 자동 변환할 수 있습니다:
+
+```kotlin
+// TypeAdapter로 자동 변환
+val createdAt: Date
+
+// String으로 유지하고 사용 시 파싱
+val createdAt: String
+```
+
+## 통합 패턴
+
+### Android + Gson
+
+```kotlin
+// build.gradle.kts
+implementation("com.google.code.gson:gson:2.10.1")
+
+// 역직렬화
+val user = Gson().fromJson(jsonString, Root::class.java)
+```
+
+### Android + Moshi
+
+```kotlin
+implementation("com.squareup.moshi:moshi-kotlin:1.15.0")
+
+val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+val adapter = moshi.adapter(Root::class.java)
+val user = adapter.fromJson(jsonString)
+```
+
+### Kotlin Multiplatform + kotlinx.serialization
+
+```kotlin
+implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+@Serializable
+data class User(
+    val id: Int,
+    val name: String
+)
+
+val user = Json.decodeFromString<User>(jsonString)
+```
+
+kotlinx.serialization 사용 시 각 data class에 `@Serializable`을 추가합니다.
+
+### Ktor 백엔드
+
+```kotlin
+install(ContentNegotiation) {
+    json()
+}
+
+get("/user") {
+    call.respond(User(id = 1, name = "Alice"))
+}
+```
+
+data class가 도메인 모델과 API 응답 본문을 겸합니다.
+
+## data class vs 일반 class
+
+Kotlin data class는 `equals()`, `hashCode()`, `toString()`, `copy()`를 자동으로 생성합니다. API 응답 모델에 딱 맞는 기능입니다:
+
+```kotlin
+val user1 = User(id = 1, name = "Alice")
+val user2 = user1.copy(name = "Bob")  // 필드를 변경한 새 인스턴스
+
+println(user1 == user2)  // false — 값 기반 동등 비교
+println(user1)           // User(id=1, name=Alice)
+```
+
+상속이 필요하거나 data class 시맨틱과 충돌하는 경우에만 일반 class를 사용합니다.
+
+## 정리
+
+JSON to Kotlin data class 생성기로 반복 작업을 없애고 nullable 누락 버그를 줄일 수 있습니다. 생성 후 확인 사항:
+
+- 큰 ID 필드는 `Long`으로 변경
+- kotlinx.serialization 사용 시 `@Serializable` 추가
+- API가 non-null을 보장하는 필드의 `?` 제거
+- 날짜 필드는 사용하는 직렬화 라이브러리에 맞게 타입 조정
+
+**[JSON에서 Kotlin data class를 즉시 생성하기 →](/tools/json-to-kotlin)**

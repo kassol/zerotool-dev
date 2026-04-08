@@ -1,0 +1,208 @@
+---
+title: "JSON 转 Kotlin 数据类生成器：告别手写 data class"
+description: "一键将 JSON 转换为 Kotlin data class，自动处理可空类型、嵌套对象和列表。支持 Gson、Moshi、kotlinx.serialization，适用于 Android 和后端开发。"
+pubDate: 2026-04-08
+lang: "zh"
+translationSlug: "json-to-kotlin-guide"
+tags: ["kotlin", "json转kotlin", "kotlin数据类", "android开发", "开发工具"]
+ogImage: /og/blog-json-to-kotlin-guide-zh.png
+---
+
+对接新 API，拿到一段 JSON。下一步：写 Kotlin data class，让代码有类型保护。手写？稍微复杂一点的响应就要花不少时间，还容易漏掉可空标注。把 JSON 粘贴进去，几秒出结果。
+
+## 手写 Kotlin 数据类的痛点
+
+Kotlin data class 对类型和可空性要求严格：
+
+- 每个字段都要写对类型：`String`、`Int`、`Boolean`、`List<T>`、嵌套类
+- 可空字段要加 `?`，漏了就是运行时 NullPointerException
+- 嵌套对象需要分别定义多个 data class
+- JSON 用 snake_case，Kotlin 用 camelCase，需要加 `@SerializedName` 注解
+- API 变更后，所有相关类都要手动同步
+
+结构简单的 JSON 还好应付。一旦遇到多层嵌套加对象数组，手写就成了真正的时间黑洞。
+
+## 生成器的工作原理
+
+生成器读取 JSON，自动推导出带正确类型和可空标注的 Kotlin data class。以这段 JSON 为例：
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "张三",
+    "email": "zhangsan@example.com",
+    "isActive": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "北京",
+      "country": "CN"
+    },
+    "lastLogin": null
+  }
+}
+```
+
+生成结果：
+
+```kotlin
+data class Address(
+    val city: String,
+    val country: String
+)
+
+data class User(
+    val id: Int,
+    val name: String,
+    val email: String,
+    val isActive: Boolean,
+    val roles: List<String>,
+    val address: Address,
+    val lastLogin: String?
+)
+
+data class Root(
+    val user: User
+)
+```
+
+**[使用 ZeroTool JSON 转 Kotlin 生成器 →](/tools/json-to-kotlin)**
+
+粘贴 JSON，立即得到 Kotlin data class。所有运算在浏览器本地完成，数据不上传任何服务器。
+
+## 类型推断规则
+
+| JSON 值 | Kotlin 类型 |
+|---------|------------|
+| `"字符串"` | `String` |
+| `42` | `Int` |
+| `3.14` | `Double` |
+| `true` / `false` | `Boolean` |
+| `null` | `T?`（可空） |
+| `[1, 2, 3]` | `List<Int>` |
+| `[{…}, {…}]` | `List<ClassName>` |
+| `{}` | 命名 data class |
+
+### 可空性处理
+
+样本 JSON 中值为 `null` 的字段，生成器会标注为可空类型（如 `lastLogin: String?`）。这是保守但安全的做法——如果 API 保证该字段永不为 null，可以手动去掉 `?`。
+
+### 命名风格转换
+
+JSON 通常用 snake_case（`first_name`、`created_at`），Kotlin 惯例是 camelCase。生成器自动转换并加上对应的 `@SerializedName` 注解（Gson 风格）：
+
+```kotlin
+data class User(
+    @SerializedName("first_name")
+    val firstName: String,
+    @SerializedName("created_at")
+    val createdAt: String
+)
+```
+
+## 常见边界情况
+
+### 超大 ID（Long vs Int）
+
+JSON 数字默认推断为 `Int`。如果 API 返回雪花算法 ID（超过 21 亿），需要手动改为 `Long`：
+
+```kotlin
+// 生成结果
+val id: Int
+
+// 正确类型
+val id: Long
+```
+
+### 空数组
+
+`[]` 无法推断元素类型，生成器输出 `List<Any>`。查阅 API 文档后手动补充正确类型。
+
+### 日期字段
+
+JSON 没有原生日期类型，时间戳通常是字符串（`"2026-04-08T10:00:00Z"`）。生成器推断为 `String`，在 Android 中可用 Gson 的 TypeAdapter 进一步处理：
+
+```kotlin
+// 用 Gson TypeAdapter 自动转换
+val createdAt: Date
+
+// 或保留 String，在使用时手动解析
+val createdAt: String
+```
+
+## 集成实践
+
+### Android + Gson
+
+```kotlin
+// build.gradle.kts
+implementation("com.google.code.gson:gson:2.10.1")
+
+// 反序列化
+val user = Gson().fromJson(jsonString, Root::class.java)
+```
+
+### Android + Moshi
+
+```kotlin
+implementation("com.squareup.moshi:moshi-kotlin:1.15.0")
+
+val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+val adapter = moshi.adapter(Root::class.java)
+val user = adapter.fromJson(jsonString)
+```
+
+### Kotlin Multiplatform + kotlinx.serialization
+
+```kotlin
+implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+@Serializable
+data class User(
+    val id: Int,
+    val name: String
+)
+
+val user = Json.decodeFromString<User>(jsonString)
+```
+
+使用 kotlinx.serialization 时，每个 data class 需加 `@Serializable` 注解。
+
+### Ktor 后端
+
+```kotlin
+install(ContentNegotiation) {
+    json()
+}
+
+get("/user") {
+    call.respond(User(id = 1, name = "张三"))
+}
+```
+
+data class 同时作为领域模型和 API 响应结构，一份代码两用。
+
+## data class 还是普通 class？
+
+Kotlin data class 自动生成 `equals()`、`hashCode()`、`toString()`、`copy()`，对 API 响应模型来说恰到好处：
+
+```kotlin
+val user1 = User(id = 1, name = "张三")
+val user2 = user1.copy(name = "李四")  // 基于原实例创建新对象
+
+println(user1 == user2)  // false — 值相等比较
+println(user1)           // User(id=1, name=张三)
+```
+
+只有在需要继承或 data class 语义冲突时才考虑普通 class。
+
+## 小结
+
+JSON 转 Kotlin data class 的生成器消除了重复劳动，避免手写时漏掉可空标注或写错类型。生成后记得检查以下几点：
+
+- 超大 ID 字段改为 `Long`
+- 使用 kotlinx.serialization 时加 `@Serializable`
+- API 保证非空的字段可去掉 `?`
+- 日期字段根据序列化库选择合适的处理方式
+
+**[在线生成 Kotlin data class，数据不离开浏览器 →](/tools/json-to-kotlin)**

@@ -1,0 +1,227 @@
+---
+title: "JSONからGo構造体を自動生成：json タグ付きStructを即座に作成"
+description: "JSONを貼り付けるだけでGoのstructとjsonタグを自動生成。ネスト・スライス・null値の処理方法、net/http・Gin・ECHOとの連携パターンを解説。"
+pubDate: 2026-04-08
+lang: "ja"
+translationSlug: "json-to-go-struct-guide"
+tags: ["golang", "json to go", "go struct", "json tags", "developer-tools"]
+ogImage: /og/blog-json-to-go-struct-guide-ja.png
+---
+
+JSON ペイロードがあります。アンマーシャルするために Go の struct が必要です。手で書くとフィールドの型を一つずつ確認して `json:"..."` タグを追加してネストされたオブジェクトを処理する必要があります。JSON を貼り付けて数秒で struct を生成する方法があります。
+
+## Go Struct を手書きする面倒さ
+
+Go ではタグ付きの struct フィールドを明示的に定義する必要があります：
+
+- すべてのフィールドに正しい型が必要：`string`、`int`、`float64`、`bool`、`[]T`、ネスト struct
+- フィールド名が一致しない場合は `json:"..."` タグが必要
+- JSON の snake_case キーには Go の CamelCase フィールドに `json` タグが必要
+- オプショナルフィールドにはポインタ型（`*string`）や `omitempty` が必要
+- ネストされたオブジェクトごとに別の struct 定義が必要
+- 機械的な作業でスケールするとミスが起きやすい
+
+5 フィールドのシンプルなオブジェクトなら素早くできます。10 個のネストオブジェクトと配列を持つレスポンスでは相当な手間になります。
+
+## JSON to Go Struct ジェネレーターの動作
+
+ジェネレーターは JSON を読み込み、正しい型と `json` タグを持つ Go struct を生成します。次の JSON を入力すると：
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "東京",
+      "country": "JP",
+      "zip_code": "100-0001"
+    },
+    "last_login": null
+  }
+}
+```
+
+次の struct が生成されます：
+
+```go
+type Address struct {
+    City    string `json:"city"`
+    Country string `json:"country"`
+    ZipCode string `json:"zip_code"`
+}
+
+type User struct {
+    ID        int      `json:"id"`
+    Name      string   `json:"name"`
+    Email     string   `json:"email"`
+    IsActive  bool     `json:"is_active"`
+    Roles     []string `json:"roles"`
+    Address   Address  `json:"address"`
+    LastLogin *string  `json:"last_login"`
+}
+
+type Root struct {
+    User User `json:"user"`
+}
+```
+
+**[ZeroTool JSON to Go Struct ジェネレーターを試す →](/tools/json-to-go-struct)**
+
+JSON を貼り付けると即座に Go struct が生成されます。ブラウザ内ですべて動作するため、データはサーバーに送信されません。
+
+## 型推論のルール
+
+| JSON の値 | Go の型 |
+|----------|--------|
+| `"string"` | `string` |
+| `42` | `int` |
+| `3.14` | `float64` |
+| `true` / `false` | `bool` |
+| `null` | `*T`（ポインタ、nil 可） |
+| `[1, 2, 3]` | `[]int` |
+| `[{…}, {…}]` | `[]StructName` |
+| `{}` | 名前付き struct |
+
+### null の処理
+
+Go では `null` は自然にポインタ型にマッピングされます。JSON の `null` 値は `*string`、`*int` などになります。JSON 値が `null` のとき、ポインタは `nil` になります：
+
+```go
+LastLogin *string `json:"last_login"` // null のとき nil
+```
+
+API が非 null を保証している場合は、仕様確認後に値型に変更できます。
+
+### snake_case から CamelCase へ
+
+Go のエクスポートフィールドは CamelCase を使います。ジェネレーターは JSON の snake_case キーを変換して適切な `json` タグを追加します：
+
+```go
+// JSON キー：zip_code
+ZipCode string `json:"zip_code"`
+```
+
+タグなしでは、`encoding/json` は JSON に `ZipCode` があることを期待します。
+
+## 注意すべきエッジケース
+
+### 数値型
+
+JSON には単一の `number` 型しかありません。ジェネレーターの推論：
+- 小数点なし → `int`
+- 小数点あり → `float64`
+
+大きな ID（Snowflake ID など）には `int64` が必要です：
+
+```go
+// 生成されたもの
+ID int `json:"id"`
+
+// 大きな ID 用
+ID int64 `json:"id"`
+```
+
+### 空の配列
+
+`[]` は要素の型情報がないため `[]interface{}` が生成されます。API ドキュメントを確認して正しい要素の型に置き換えてください。
+
+### オプショナルフィールド
+
+JSON に存在しない（null ではなく省略される）フィールドには `omitempty` を手動で追加します：
+
+```go
+Email string `json:"email,omitempty"`
+```
+
+## 生成した struct の使い方
+
+### アンマーシャル
+
+```go
+import "encoding/json"
+
+var root Root
+if err := json.Unmarshal([]byte(jsonString), &root); err != nil {
+    log.Fatal(err)
+}
+fmt.Println(root.User.Name) // Alice
+```
+
+### net/http と組み合わせる
+
+```go
+resp, err := http.Get("https://api.example.com/users/1")
+if err != nil {
+    log.Fatal(err)
+}
+defer resp.Body.Close()
+
+var root Root
+if err := json.NewDecoder(resp.Body).Decode(&root); err != nil {
+    log.Fatal(err)
+}
+```
+
+### JSON にマーシャル
+
+```go
+output, err := json.MarshalIndent(root.User, "", "  ")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(string(output))
+```
+
+### Gin フレームワークとの統合
+
+```go
+func GetUser(c *gin.Context) {
+    var user User
+    if err := c.ShouldBindJSON(&user); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(200, user)
+}
+```
+
+## json タグ以外のタグ
+
+ジェネレーターは `json` タグを追加します。スタックに応じて他のタグも必要になる場合があります：
+
+```go
+// GORM によるデータベースマッピング
+type User struct {
+    ID   int    `json:"id" gorm:"primaryKey"`
+    Name string `json:"name" gorm:"column:name"`
+}
+
+// go-playground/validator によるバリデーション
+type User struct {
+    Email string `json:"email" validate:"required,email"`
+}
+
+// MongoDB 用 BSON
+type User struct {
+    ID   primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+    Name string             `json:"name" bson:"name"`
+}
+```
+
+ベースの struct を生成した後に手動で追加します。
+
+## まとめ
+
+JSON から Go struct を自動生成することで、型とタグを手書きする機械的な作業をなくせます。生成後の確認ポイント：
+
+- 大きな数値 ID を `int64` に変更
+- オプショナルフィールドに `omitempty` を追加
+- `[]interface{}` を正しい要素の型に置き換え
+- validate・gorm・bson タグを必要に応じて追加
+- null が発生しないフィールドをポインタから値型に変更
+
+**[JSONからGo structを即座に生成する →](/tools/json-to-go-struct)**

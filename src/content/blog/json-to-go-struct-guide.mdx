@@ -1,0 +1,245 @@
+---
+title: "JSON to Go Struct Generator: Instant Typed Structs from JSON"
+description: "Convert JSON to Go structs instantly with correct field types and JSON tags. Learn how the generator handles nested objects, slices, and null values for production Go code."
+pubDate: 2026-04-08
+lang: "en"
+translationSlug: "json-to-go-struct-guide-zh"
+tags: ["golang", "json to go", "go struct", "json tags", "developer-tools"]
+ogImage: /og/blog-json-to-go-struct-guide.png
+---
+
+You have a JSON payload. You need Go structs to unmarshal it correctly. Writing them by hand means figuring out every field type, adding `json:"..."` tags, and handling nested objects — all of which takes time and introduces mistakes. Paste the JSON and get the structs generated in seconds.
+
+## Why Hand-Writing Go Structs Is Tedious
+
+Go requires explicit struct definitions with tagged fields:
+
+- Every field needs the right type: `string`, `int`, `float64`, `bool`, `[]T`, nested struct
+- JSON tags are required when field names don't match Go's exported naming convention
+- `snake_case` JSON keys need `json:"snake_case"` tags on `CamelCase` struct fields
+- `omitempty` and pointer types (`*string`) for optional fields
+- Nested objects require separate struct definitions
+- The whole process is mechanical and error-prone at scale
+
+For a simple 5-field object, this is quick. For a response with 10 nested objects and arrays, it becomes a substantial investment.
+
+## What the JSON to Go Struct Generator Does
+
+The generator reads your JSON and produces Go structs with correct types and `json` tags. Given this JSON:
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "New York",
+      "country": "US",
+      "zip_code": "10001"
+    },
+    "last_login": null
+  }
+}
+```
+
+It generates:
+
+```go
+type Address struct {
+    City    string `json:"city"`
+    Country string `json:"country"`
+    ZipCode string `json:"zip_code"`
+}
+
+type User struct {
+    ID        int      `json:"id"`
+    Name      string   `json:"name"`
+    Email     string   `json:"email"`
+    IsActive  bool     `json:"is_active"`
+    Roles     []string `json:"roles"`
+    Address   Address  `json:"address"`
+    LastLogin *string  `json:"last_login"`
+}
+
+type Root struct {
+    User User `json:"user"`
+}
+```
+
+**[Try the ZeroTool JSON to Go Struct Generator →](/tools/json-to-go-struct)**
+
+Paste your JSON, get Go structs instantly. Everything runs in your browser — no data is sent to a server.
+
+## How Type Inference Works
+
+| JSON value | Go type |
+|-----------|---------|
+| `"string"` | `string` |
+| `42` | `int` |
+| `3.14` | `float64` |
+| `true` / `false` | `bool` |
+| `null` | `*T` (pointer, nullable) |
+| `[1, 2, 3]` | `[]int` |
+| `[{…}, {…}]` | `[]StructName` |
+| `{}` | Named struct |
+
+### Null Handling
+
+In Go, `null` maps naturally to pointer types. A `null` JSON value becomes `*string`, `*int`, etc. — the pointer can be `nil` when the JSON value is `null`:
+
+```go
+LastLogin *string `json:"last_login"` // nil when null
+```
+
+When you know a field will always have a value, you can change the pointer to a value type after reviewing the API spec.
+
+### snake_case to CamelCase
+
+Go exported fields use `CamelCase`. The generator converts JSON `snake_case` keys and adds the appropriate `json` tag:
+
+```go
+// JSON key: "zip_code"
+ZipCode string `json:"zip_code"`
+```
+
+Without the tag, the `encoding/json` package would expect `ZipCode` in the JSON.
+
+## Edge Cases to Watch For
+
+### Number Types
+
+JSON has a single `number` type. The generator infers:
+- Integers (no decimal point) → `int`
+- Floats → `float64`
+
+For IDs or counters, `int` is usually correct. For monetary values or scientific data, `float64` is appropriate. If you need `int64` for large values:
+
+```go
+// Generated
+ID int `json:"id"`
+
+// For very large IDs (64-bit)
+ID int64 `json:"id"`
+```
+
+### Arrays of Mixed Types
+
+```json
+{"values": [1, "two", true]}
+```
+
+The generator produces `[]interface{}`. Use a custom `json.Unmarshaler` to handle this at the application level.
+
+### Empty Arrays
+
+`[]` has no element type information. The generator produces `[]interface{}`. Replace with the correct element type after reviewing the API.
+
+### Omitempty Fields
+
+If a field is optional in the API (can be absent from the JSON entirely), add `omitempty`:
+
+```go
+// Field may not appear in the JSON
+Email string `json:"email,omitempty"`
+```
+
+The generator marks fields with `null` values as pointer types but doesn't add `omitempty` — you should add it manually for optional fields.
+
+## Using the Generated Structs
+
+### Unmarshal
+
+```go
+import "encoding/json"
+
+var root Root
+if err := json.Unmarshal([]byte(jsonString), &root); err != nil {
+    log.Fatal(err)
+}
+fmt.Println(root.User.Name) // Alice
+```
+
+### With net/http
+
+```go
+resp, err := http.Get("https://api.example.com/users/1")
+if err != nil {
+    log.Fatal(err)
+}
+defer resp.Body.Close()
+
+var root Root
+if err := json.NewDecoder(resp.Body).Decode(&root); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Marshaling Back to JSON
+
+```go
+output, err := json.MarshalIndent(root.User, "", "  ")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(string(output))
+```
+
+### With Popular Libraries
+
+For HTTP clients like [resty](https://github.com/go-resty/resty) or frameworks like Gin and Echo, the same structs work directly:
+
+```go
+// Gin
+func GetUser(c *gin.Context) {
+    var user User
+    if err := c.ShouldBindJSON(&user); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(200, user)
+}
+```
+
+## Struct Tags Beyond json
+
+The generator adds `json` tags. Depending on your stack, you may also want:
+
+```go
+// Database mapping with GORM
+type User struct {
+    ID    int    `json:"id" gorm:"primaryKey"`
+    Name  string `json:"name" gorm:"column:name"`
+}
+
+// Validation with go-playground/validator
+type User struct {
+    Email string `json:"email" validate:"required,email"`
+}
+
+// BSON for MongoDB
+type User struct {
+    ID   primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+    Name string             `json:"name" bson:"name"`
+}
+```
+
+Add these manually after generating the base struct.
+
+## Privacy Note
+
+JSON payloads often contain sensitive data. The ZeroTool JSON to Go Struct Generator runs entirely in your browser — no data is transmitted to any server.
+
+## Summary
+
+Generating Go structs from JSON eliminates the mechanical work of writing types and tags. After generating:
+
+- Change `int` to `int64` for large numeric IDs
+- Add `omitempty` for optional fields
+- Replace `[]interface{}` with the correct element type
+- Add validation or ORM tags as needed
+- Change pointer types to value types where null is not possible
+
+**[Generate Go structs from JSON instantly →](/tools/json-to-go-struct)**

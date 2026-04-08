@@ -1,0 +1,225 @@
+---
+title: "JSON to Kotlin Data Class Generator: Instant Type-Safe Models"
+description: "Convert JSON to Kotlin data classes instantly. Learn how the generator handles nullability, nested objects, and lists — plus best practices for Android and backend Kotlin."
+pubDate: 2026-04-08
+lang: "en"
+translationSlug: "json-to-kotlin-guide-zh"
+tags: ["kotlin", "json to kotlin", "kotlin data class", "android development", "developer-tools"]
+ogImage: /og/blog-json-to-kotlin-guide.png
+---
+
+You get a JSON payload from an API. You need Kotlin data classes so your code is type-safe and serializable. Writing them by hand is error-prone and slow — especially for deeply nested responses. Paste the JSON and get the classes generated in seconds.
+
+## Why Hand-Writing Kotlin Data Classes Is Painful
+
+Kotlin data classes for API responses require precision:
+
+- Every field needs the right type: `String`, `Int`, `Boolean`, `List<T>`, nested class
+- Nullable fields need `?` — miss one and you get a NullPointerException at runtime
+- Nested objects require separate data class definitions
+- `@SerializedName` annotations are needed when JSON keys use snake_case but Kotlin uses camelCase
+- When the API changes, you update every class manually
+
+For a flat JSON object this is manageable. For a response with 5 levels of nesting and arrays of objects, it becomes a significant time investment.
+
+## What the JSON to Kotlin Generator Does
+
+The generator reads your JSON and produces Kotlin data classes with correct types and nullability. Given this JSON:
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "isActive": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "Tokyo",
+      "country": "JP"
+    },
+    "lastLogin": null
+  }
+}
+```
+
+It generates:
+
+```kotlin
+data class Address(
+    val city: String,
+    val country: String
+)
+
+data class User(
+    val id: Int,
+    val name: String,
+    val email: String,
+    val isActive: Boolean,
+    val roles: List<String>,
+    val address: Address,
+    val lastLogin: String?
+)
+
+data class Root(
+    val user: User
+)
+```
+
+**[Try the ZeroTool JSON to Kotlin Generator →](/tools/json-to-kotlin)**
+
+Paste your JSON, get Kotlin data classes instantly. Runs entirely in your browser — no data is sent to a server.
+
+## How Type Inference Works
+
+| JSON value | Kotlin type |
+|-----------|------------|
+| `"string"` | `String` |
+| `42` | `Int` |
+| `3.14` | `Double` |
+| `true` / `false` | `Boolean` |
+| `null` | `T?` (nullable) |
+| `[1, 2, 3]` | `List<Int>` |
+| `[{…}, {…}]` | `List<ClassName>` |
+| `{}` | Named data class |
+
+### Nullability
+
+When a field value is `null` in your sample JSON, the generator marks it nullable: `lastLogin: String?`. This is the correct conservative approach — you can tighten it to `lastLogin: String` if the API guarantees a non-null value.
+
+### Naming Convention
+
+JSON keys often use snake_case (`first_name`, `created_at`). Kotlin convention is camelCase. The generator converts automatically and adds `@SerializedName` annotations for Gson, or maps correctly for kotlinx.serialization:
+
+```kotlin
+// Gson style
+data class User(
+    @SerializedName("first_name")
+    val firstName: String,
+    @SerializedName("created_at")
+    val createdAt: String
+)
+```
+
+## Edge Cases to Watch For
+
+### Mixed-Type Arrays
+
+If your JSON array contains mixed types:
+
+```json
+{"values": [1, "two", true]}
+```
+
+The generator produces `List<Any>`. You will need to handle deserialization manually with a custom type adapter.
+
+### Empty Arrays
+
+`[]` yields no element type. The generator produces `List<Any>`. Provide the correct element type after reviewing the API documentation.
+
+### Long vs Int
+
+JSON numbers are parsed as `Int` by default. If your API returns IDs larger than 2,147,483,647 (common for Snowflake IDs), change the type to `Long`:
+
+```kotlin
+// Generated
+val id: Int
+
+// Correct for large IDs
+val id: Long
+```
+
+### Date and Time Fields
+
+JSON has no native date type. Date fields arrive as strings (`"2026-04-08T10:00:00Z"`). The generator types these as `String`. In Android with Gson:
+
+```kotlin
+// With Gson + a type adapter
+val createdAt: Date
+
+// Or keep as String and parse in your model
+val createdAt: String
+```
+
+## Integration Patterns
+
+### Android with Gson
+
+```kotlin
+// build.gradle.kts
+implementation("com.google.code.gson:gson:2.10.1")
+
+// Deserialize
+val user = Gson().fromJson(jsonString, Root::class.java)
+```
+
+### Android with Moshi
+
+```kotlin
+implementation("com.squareup.moshi:moshi-kotlin:1.15.0")
+
+val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+val adapter = moshi.adapter(Root::class.java)
+val user = adapter.fromJson(jsonString)
+```
+
+### Kotlin Multiplatform with kotlinx.serialization
+
+```kotlin
+implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+@Serializable
+data class User(
+    val id: Int,
+    val name: String
+)
+
+val user = Json.decodeFromString<User>(jsonString)
+```
+
+When using kotlinx.serialization, add `@Serializable` to each data class. The generator can optionally include these annotations.
+
+### Ktor Backend
+
+For Ktor with Content Negotiation:
+
+```kotlin
+install(ContentNegotiation) {
+    json()
+}
+
+get("/user") {
+    call.respond(User(id = 1, name = "Alice"))
+}
+```
+
+The data class is both your domain model and your API response shape.
+
+## Data Class vs Regular Class
+
+Kotlin data classes give you `equals()`, `hashCode()`, `toString()`, and `copy()` for free. For API response models, these are exactly what you want:
+
+```kotlin
+val user1 = User(id = 1, name = "Alice")
+val user2 = user1.copy(name = "Bob")  // New instance with modified field
+
+println(user1 == user2)  // false — value equality
+println(user1)           // User(id=1, name=Alice)
+```
+
+Use a regular class only if you need inheritance or custom behavior that conflicts with data class semantics.
+
+## Privacy Note
+
+Many JSON payloads contain sensitive data. The ZeroTool JSON to Kotlin Generator runs entirely in your browser. No data is transmitted — you can verify this in the network tab.
+
+## Summary
+
+JSON to Kotlin data class generation eliminates repetitive work and reduces bugs from incorrect types or missing nullability. After generating:
+
+- Change `Int` to `Long` for large IDs
+- Add `@Serializable` if using kotlinx.serialization
+- Tighten nullable types where the API guarantees non-null values
+- Add custom type adapters for date fields if needed
+
+**[Generate Kotlin data classes from JSON instantly →](/tools/json-to-kotlin)**

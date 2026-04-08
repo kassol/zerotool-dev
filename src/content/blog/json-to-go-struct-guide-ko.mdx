@@ -1,0 +1,227 @@
+---
+title: "JSON을 Go Struct로 자동 변환: json 태그 포함 구조체 즉시 생성"
+description: "JSON을 붙여 넣으면 Go struct와 json 태그를 자동 생성. 중첩 구조체·슬라이스·null 처리부터 net/http·Gin·Echo 연동 패턴까지 설명합니다."
+pubDate: 2026-04-08
+lang: "ko"
+translationSlug: "json-to-go-struct-guide"
+tags: ["golang", "json to go", "go struct", "json tags", "developer-tools"]
+ogImage: /og/blog-json-to-go-struct-guide-ko.png
+---
+
+JSON 페이로드가 있습니다. Go에서 언마샬하려면 struct 정의가 필요합니다. 직접 작성하면 필드 타입 확인, `json:"..."` 태그 추가, 중첩 객체 처리를 일일이 해야 합니다. JSON을 붙여 넣고 몇 초 만에 struct를 생성하세요.
+
+## Go Struct를 직접 작성할 때의 번거로움
+
+Go는 태그가 있는 struct 필드를 명시적으로 정의해야 합니다:
+
+- 모든 필드에 올바른 타입 필요: `string`, `int`, `float64`, `bool`, `[]T`, 중첩 struct
+- 필드명이 일치하지 않으면 `json:"..."` 태그 필요
+- JSON snake_case 키 → Go CamelCase 필드에 모두 태그 추가 필요
+- 선택적 필드에는 포인터 타입(`*string`)이나 `omitempty` 필요
+- 중첩 객체마다 별도의 struct 정의 필요
+- 규모가 커지면 기계적 작업에서 실수 발생 가능
+
+5개 필드짜리 단순 객체라면 빠르게 할 수 있지만, 10개 중첩 객체와 배열이 있으면 상당한 시간이 소요됩니다.
+
+## JSON to Go Struct 생성기의 동작 방식
+
+생성기는 JSON을 읽고 올바른 타입과 `json` 태그를 가진 Go struct를 생성합니다. 다음 JSON을 입력하면:
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "서울",
+      "country": "KR",
+      "zip_code": "04524"
+    },
+    "last_login": null
+  }
+}
+```
+
+다음 struct가 생성됩니다:
+
+```go
+type Address struct {
+    City    string `json:"city"`
+    Country string `json:"country"`
+    ZipCode string `json:"zip_code"`
+}
+
+type User struct {
+    ID        int      `json:"id"`
+    Name      string   `json:"name"`
+    Email     string   `json:"email"`
+    IsActive  bool     `json:"is_active"`
+    Roles     []string `json:"roles"`
+    Address   Address  `json:"address"`
+    LastLogin *string  `json:"last_login"`
+}
+
+type Root struct {
+    User User `json:"user"`
+}
+```
+
+**[ZeroTool JSON to Go Struct 생성기 사용하기 →](/tools/json-to-go-struct)**
+
+JSON을 붙여 넣으면 즉시 Go struct가 생성됩니다. 브라우저에서 모두 실행되어 데이터가 서버로 전송되지 않습니다.
+
+## 타입 추론 규칙
+
+| JSON 값 | Go 타입 |
+|--------|--------|
+| `"string"` | `string` |
+| `42` | `int` |
+| `3.14` | `float64` |
+| `true` / `false` | `bool` |
+| `null` | `*T` (포인터, nil 가능) |
+| `[1, 2, 3]` | `[]int` |
+| `[{…}, {…}]` | `[]StructName` |
+| `{}` | 이름 있는 struct |
+
+### null 처리
+
+Go에서 `null`은 자연스럽게 포인터 타입으로 매핑됩니다. JSON의 `null` 값은 `*string`, `*int` 등이 되며, JSON 값이 `null`일 때 포인터는 `nil`입니다:
+
+```go
+LastLogin *string `json:"last_login"` // null일 때 nil
+```
+
+API가 non-null을 보장하면 사양 확인 후 값 타입으로 변경할 수 있습니다.
+
+### snake_case에서 CamelCase로
+
+Go의 익스포트 필드는 CamelCase를 사용합니다. 생성기는 JSON의 snake_case 키를 변환하고 적절한 `json` 태그를 추가합니다:
+
+```go
+// JSON 키: zip_code
+ZipCode string `json:"zip_code"`
+```
+
+태그 없이는 `encoding/json`이 JSON에서 `ZipCode`를 찾으려고 합니다.
+
+## 주의해야 할 엣지 케이스
+
+### 숫자 타입
+
+JSON에는 단일 `number` 타입만 있습니다. 생성기의 추론 규칙:
+- 소수점 없음 → `int`
+- 소수점 있음 → `float64`
+
+Snowflake ID 등 큰 값에는 `int64`가 필요합니다:
+
+```go
+// 생성된 결과
+ID int `json:"id"`
+
+// 큰 ID용
+ID int64 `json:"id"`
+```
+
+### 빈 배열
+
+`[]`는 요소 타입 정보가 없어 `[]interface{}`가 생성됩니다. API 문서를 확인해 올바른 요소 타입으로 교체하세요.
+
+### 선택적 필드
+
+JSON에서 아예 존재하지 않을 수 있는 필드에는 `omitempty`를 수동으로 추가합니다:
+
+```go
+Email string `json:"email,omitempty"`
+```
+
+## 생성된 struct 사용하기
+
+### 언마샬
+
+```go
+import "encoding/json"
+
+var root Root
+if err := json.Unmarshal([]byte(jsonString), &root); err != nil {
+    log.Fatal(err)
+}
+fmt.Println(root.User.Name) // Alice
+```
+
+### net/http와 함께
+
+```go
+resp, err := http.Get("https://api.example.com/users/1")
+if err != nil {
+    log.Fatal(err)
+}
+defer resp.Body.Close()
+
+var root Root
+if err := json.NewDecoder(resp.Body).Decode(&root); err != nil {
+    log.Fatal(err)
+}
+```
+
+### JSON으로 마샬
+
+```go
+output, err := json.MarshalIndent(root.User, "", "  ")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(string(output))
+```
+
+### Gin 프레임워크 통합
+
+```go
+func GetUser(c *gin.Context) {
+    var user User
+    if err := c.ShouldBindJSON(&user); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(200, user)
+}
+```
+
+## json 태그 외 다른 태그
+
+생성기는 `json` 태그를 추가합니다. 스택에 따라 추가 태그가 필요할 수 있습니다:
+
+```go
+// GORM 데이터베이스 매핑
+type User struct {
+    ID   int    `json:"id" gorm:"primaryKey"`
+    Name string `json:"name" gorm:"column:name"`
+}
+
+// go-playground/validator 유효성 검사
+type User struct {
+    Email string `json:"email" validate:"required,email"`
+}
+
+// MongoDB용 BSON
+type User struct {
+    ID   primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+    Name string             `json:"name" bson:"name"`
+}
+```
+
+기본 struct 생성 후 수동으로 추가합니다.
+
+## 정리
+
+JSON to Go Struct 생성기로 타입과 태그를 직접 작성하는 기계적인 작업을 없앨 수 있습니다. 생성 후 확인 사항:
+
+- 큰 숫자 ID를 `int64`로 변경
+- 선택적 필드에 `omitempty` 추가
+- `[]interface{}`를 올바른 요소 타입으로 교체
+- 필요에 따라 validate·gorm·bson 태그 추가
+- null이 발생하지 않는 필드를 포인터에서 값 타입으로 변경
+
+**[JSON에서 Go struct를 즉시 생성하기 →](/tools/json-to-go-struct)**

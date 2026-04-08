@@ -1,0 +1,232 @@
+---
+title: "JSON 转 Go Struct 生成器：自动生成带标签的结构体"
+description: "一键将 JSON 转换为 Go struct，自动推断字段类型并添加 json 标签。支持嵌套对象、切片和 null 值处理，适合生产环境直接使用。"
+pubDate: 2026-04-08
+lang: "zh"
+translationSlug: "json-to-go-struct-guide"
+tags: ["golang", "json转go", "go结构体", "json标签", "开发工具"]
+ogImage: /og/blog-json-to-go-struct-guide-zh.png
+---
+
+拿到一段 JSON，需要写 Go struct 来反序列化。手写意味着要逐个确定字段类型、添加 `json:"..."` 标签、处理嵌套对象——机械且容易出错。把 JSON 粘贴进去，几秒出结构体定义。
+
+## 手写 Go Struct 的麻烦
+
+Go 要求明确定义带标签的结构体字段：
+
+- 每个字段需要写对类型：`string`、`int`、`float64`、`bool`、`[]T`、嵌套结构体
+- 字段名不匹配时需要 `json:"..."` 标签
+- JSON snake_case 键对应 Go CamelCase 字段，每个都要手动加标签
+- 可选字段需要指针类型（`*string`）或 `omitempty`
+- 嵌套对象需要分别定义多个结构体
+- 规模稍大就容易出错
+
+一个 5 个字段的对象还好。10 个嵌套对象加数组，手写就是实实在在的负担。
+
+## 生成器的工作原理
+
+生成器读取 JSON，自动生成带正确类型和 `json` 标签的 Go struct。以这段 JSON 为例：
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "张三",
+    "email": "zhangsan@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "上海",
+      "country": "CN",
+      "zip_code": "200000"
+    },
+    "last_login": null
+  }
+}
+```
+
+生成结果：
+
+```go
+type Address struct {
+    City    string `json:"city"`
+    Country string `json:"country"`
+    ZipCode string `json:"zip_code"`
+}
+
+type User struct {
+    ID        int      `json:"id"`
+    Name      string   `json:"name"`
+    Email     string   `json:"email"`
+    IsActive  bool     `json:"is_active"`
+    Roles     []string `json:"roles"`
+    Address   Address  `json:"address"`
+    LastLogin *string  `json:"last_login"`
+}
+
+type Root struct {
+    User User `json:"user"`
+}
+```
+
+**[使用 ZeroTool JSON 转 Go Struct 生成器 →](/tools/json-to-go-struct)**
+
+粘贴 JSON，立即得到 Go struct。所有计算在浏览器本地完成，数据不离开你的机器。
+
+## 类型推断规则
+
+| JSON 值 | Go 类型 |
+|--------|--------|
+| `"字符串"` | `string` |
+| `42` | `int` |
+| `3.14` | `float64` |
+| `true` / `false` | `bool` |
+| `null` | `*T`（指针，可为 nil） |
+| `[1, 2, 3]` | `[]int` |
+| `[{…}, {…}]` | `[]StructName` |
+| `{}` | 命名结构体 |
+
+### null 值处理
+
+Go 中 `null` 自然映射到指针类型。JSON 中的 `null` 值变为 `*string`、`*int` 等——JSON 为 null 时指针为 `nil`：
+
+```go
+LastLogin *string `json:"last_login"` // JSON 为 null 时值为 nil
+```
+
+如果 API 保证字段永不为 null，可以在审查文档后改为值类型。
+
+### snake_case 到 CamelCase
+
+Go 导出字段使用 CamelCase。生成器自动转换 JSON snake_case 键并添加对应的 `json` 标签：
+
+```go
+// JSON 键：zip_code
+ZipCode string `json:"zip_code"`
+```
+
+没有标签，`encoding/json` 会在 JSON 中查找 `ZipCode` 而不是 `zip_code`。
+
+## 常见边界情况
+
+### 数字类型精度
+
+JSON 只有一种数字类型。生成器推断规则：
+- 无小数点 → `int`
+- 有小数点 → `float64`
+
+对于超过 32 位整数范围的大 ID（如雪花算法 ID），需要改为 `int64`：
+
+```go
+// 生成结果
+ID int `json:"id"`
+
+// 超大 ID
+ID int64 `json:"id"`
+```
+
+### 空数组
+
+`[]` 没有元素类型信息，生成器输出 `[]interface{}`。查阅 API 文档后替换为正确的元素类型。
+
+### 可选字段
+
+字段在 JSON 中可能不存在（而不是为 null）时，手动加 `omitempty`：
+
+```go
+Email string `json:"email,omitempty"`
+```
+
+生成器为 null 值字段生成指针类型，但不会自动加 `omitempty`，需要手动补充。
+
+## 使用生成的结构体
+
+### 反序列化
+
+```go
+import "encoding/json"
+
+var root Root
+if err := json.Unmarshal([]byte(jsonString), &root); err != nil {
+    log.Fatal(err)
+}
+fmt.Println(root.User.Name)
+```
+
+### 配合 net/http
+
+```go
+resp, err := http.Get("https://api.example.com/users/1")
+if err != nil {
+    log.Fatal(err)
+}
+defer resp.Body.Close()
+
+var root Root
+if err := json.NewDecoder(resp.Body).Decode(&root); err != nil {
+    log.Fatal(err)
+}
+```
+
+### 序列化
+
+```go
+output, err := json.MarshalIndent(root.User, "", "  ")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(string(output))
+```
+
+### 配合主流框架
+
+Gin、Echo、Fiber 等框架可以直接使用同一套结构体：
+
+```go
+// Gin
+func GetUser(c *gin.Context) {
+    var user User
+    if err := c.ShouldBindJSON(&user); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(200, user)
+}
+```
+
+## 扩展标签
+
+生成器默认只添加 `json` 标签。根据技术栈，可能还需要：
+
+```go
+// GORM 数据库映射
+type User struct {
+    ID   int    `json:"id" gorm:"primaryKey"`
+    Name string `json:"name" gorm:"column:name"`
+}
+
+// go-playground/validator 校验
+type User struct {
+    Email string `json:"email" validate:"required,email"`
+}
+
+// MongoDB BSON
+type User struct {
+    ID   primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+    Name string             `json:"name" bson:"name"`
+}
+```
+
+在生成基础结构体后手动添加这些标签。
+
+## 小结
+
+JSON 转 Go Struct 生成器省去了机械性的类型推断和标签编写工作。生成后的检查清单：
+
+- 超大数字 ID 改为 `int64`
+- 可选字段加 `omitempty`
+- `[]interface{}` 替换为正确的元素类型
+- 按需添加 validate、gorm、bson 等标签
+- API 保证非 null 的字段改为值类型（去掉指针 `*`）
+
+**[在线生成 Go Struct，数据不离开浏览器 →](/tools/json-to-go-struct)**
