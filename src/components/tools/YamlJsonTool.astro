@@ -48,6 +48,8 @@
       var statusEl = document.getElementById('yj-status');
       var copyYamlBtn = document.getElementById('yj-copy-yaml');
       var copyJsonBtn = document.getElementById('yj-copy-json');
+      var lastValidJsonOutput = '';
+      var lastValidYamlOutput = '';
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -59,10 +61,48 @@
         statusEl.className = 'yj-status';
       }
 
-      /* ── YAML → JSON ── */
+      /* ── Real-time YAML → JSON (debounced 300ms) ── */
+      var _yjYamlTimer = null;
+      yamlEl.addEventListener('input', function () {
+        clearTimeout(_yjYamlTimer);
+        _yjYamlTimer = setTimeout(function () {
+          var raw = yamlEl.value.trim();
+          if (!raw) { clearStatus(); return; }
+          if (typeof jsyaml === 'undefined') { return; }
+          try {
+            var data = jsyaml.load(raw);
+            jsonEl.value = JSON.stringify(data, null, 2);
+            lastValidJsonOutput = jsonEl.value;
+            setStatus('Converted YAML to JSON.', false);
+          } catch (e) {
+            setStatus('Invalid YAML: ' + e.message, true);
+          }
+        }, 300);
+      });
+
+      /* ── Real-time JSON → YAML (debounced 300ms) ── */
+      var _yjJsonTimer = null;
+      jsonEl.addEventListener('input', function () {
+        clearTimeout(_yjJsonTimer);
+        _yjJsonTimer = setTimeout(function () {
+          var raw = jsonEl.value.trim();
+          if (!raw) { clearStatus(); return; }
+          if (typeof jsyaml === 'undefined') { return; }
+          try {
+            var data = JSON.parse(raw);
+            yamlEl.value = jsyaml.dump(data, { indent: 2, lineWidth: -1, noRefs: true });
+            lastValidYamlOutput = yamlEl.value;
+            setStatus('Converted JSON to YAML.', false);
+          } catch (e) {
+            setStatus('Invalid JSON: ' + e.message, true);
+          }
+        }, 300);
+      });
+
+      /* ── YAML → JSON button ── */
       document.getElementById('yj-to-json').addEventListener('click', function () {
         var raw = yamlEl.value.trim();
-        if (!raw) { clearStatus(); jsonEl.value = ''; return; }
+        if (!raw) { clearStatus(); return; }
 
         if (typeof jsyaml === 'undefined') {
           setStatus('YAML library not loaded. Please check your network connection.', true);
@@ -72,18 +112,18 @@
         try {
           var data = jsyaml.load(raw);
           jsonEl.value = JSON.stringify(data, null, 2);
+          lastValidJsonOutput = jsonEl.value;
           setStatus('Converted YAML to JSON.', false);
           window.trackTool && window.trackTool('yaml_json', 'yaml_to_json');
         } catch (e) {
-          jsonEl.value = '';
           setStatus('Invalid YAML: ' + e.message, true);
         }
       });
 
-      /* ── JSON → YAML ── */
+      /* ── JSON → YAML button ── */
       document.getElementById('yj-to-yaml').addEventListener('click', function () {
         var raw = jsonEl.value.trim();
-        if (!raw) { clearStatus(); yamlEl.value = ''; return; }
+        if (!raw) { clearStatus(); return; }
 
         if (typeof jsyaml === 'undefined') {
           setStatus('YAML library not loaded. Please check your network connection.', true);
@@ -93,10 +133,10 @@
         try {
           var data = JSON.parse(raw);
           yamlEl.value = jsyaml.dump(data, { indent: 2, lineWidth: -1, noRefs: true });
+          lastValidYamlOutput = yamlEl.value;
           setStatus('Converted JSON to YAML.', false);
           window.trackTool && window.trackTool('yaml_json', 'json_to_yaml');
         } catch (e) {
-          yamlEl.value = '';
           setStatus('Invalid JSON: ' + e.message, true);
         }
       });

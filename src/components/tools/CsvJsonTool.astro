@@ -45,6 +45,15 @@
       var statusEl = document.getElementById('cj-status');
       var copyCsvBtn = document.getElementById('cj-copy-csv');
       var copyJsonBtn = document.getElementById('cj-copy-json');
+      var lastValidJsonOutput = '';
+      var lastValidCsvOutput = '';
+
+      function escapeCsvField(val) {
+        if (val.indexOf(',') !== -1 || val.indexOf('"') !== -1 || val.indexOf('\n') !== -1) {
+          return '"' + val.replace(/"/g, '""') + '"';
+        }
+        return val;
+      }
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -123,10 +132,72 @@
         return rows;
       }
 
-      /* ── CSV → JSON ── */
+      /* ── Real-time CSV → JSON (debounced 300ms) ── */
+      var _csvLiveTimer = null;
+      csvEl.addEventListener('input', function () {
+        clearTimeout(_csvLiveTimer);
+        _csvLiveTimer = setTimeout(function () {
+          var raw = csvEl.value.trim();
+          if (!raw) { clearStatus(); return; }
+          try {
+            var rows = parseCsv(raw);
+            if (rows.length < 2) throw new Error('CSV must have at least a header row and one data row.');
+            var headers = rows[0];
+            var result = [];
+            for (var r = 1; r < rows.length; r++) {
+              var obj = {};
+              for (var c = 0; c < headers.length; c++) {
+                obj[headers[c]] = rows[r][c] !== undefined ? rows[r][c] : '';
+              }
+              result.push(obj);
+            }
+            jsonEl.value = JSON.stringify(result, null, 2);
+            lastValidJsonOutput = jsonEl.value;
+            setStatus('Converted ' + result.length + ' row' + (result.length === 1 ? '' : 's') + ' to JSON.', false);
+          } catch (e) {
+            setStatus('Error: ' + e.message, true);
+          }
+        }, 300);
+      });
+
+      /* ── Real-time JSON → CSV (debounced 300ms) ── */
+      var _jsonLiveTimer = null;
+      jsonEl.addEventListener('input', function () {
+        clearTimeout(_jsonLiveTimer);
+        _jsonLiveTimer = setTimeout(function () {
+          var raw = jsonEl.value.trim();
+          if (!raw) { clearStatus(); return; }
+          try {
+            var data = JSON.parse(raw);
+            if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
+            if (data.length === 0) throw new Error('JSON array is empty.');
+            if (typeof data[0] !== 'object' || data[0] === null || Array.isArray(data[0])) {
+              throw new Error('Each item must be a plain object.');
+            }
+            var headers = Object.keys(data[0]);
+            var lines = [];
+            lines.push(headers.map(escapeCsvField).join(','));
+            for (var i = 0; i < data.length; i++) {
+              var row = [];
+              for (var h = 0; h < headers.length; h++) {
+                var val = data[i][headers[h]];
+                row.push(escapeCsvField(val == null ? '' : String(val)));
+              }
+              lines.push(row.join(','));
+            }
+            csvEl.value = lines.join('\n');
+            lastValidCsvOutput = csvEl.value;
+            setStatus('Converted ' + data.length + ' row' + (data.length === 1 ? '' : 's') + ' to CSV.', false);
+          } catch (e) {
+            setStatus('Error: ' + e.message, true);
+          }
+        }, 300);
+      });
+
+      /* ── CSV → JSON button ── */
       document.getElementById('cj-to-json').addEventListener('click', function () {
         var raw = csvEl.value.trim();
-        if (!raw) { clearStatus(); jsonEl.value = ''; return; }
+        if (!raw) { clearStatus(); return; }
 
         try {
           var rows = parseCsv(raw);
@@ -143,18 +214,18 @@
           }
 
           jsonEl.value = JSON.stringify(result, null, 2);
+          lastValidJsonOutput = jsonEl.value;
           setStatus('Converted ' + result.length + ' row' + (result.length === 1 ? '' : 's') + ' to JSON.', false);
           window.trackTool && window.trackTool('csv_json', 'csv_to_json');
         } catch (e) {
-          jsonEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });
 
-      /* ── JSON → CSV ── */
+      /* ── JSON → CSV button ── */
       document.getElementById('cj-to-csv').addEventListener('click', function () {
         var raw = jsonEl.value.trim();
-        if (!raw) { clearStatus(); csvEl.value = ''; return; }
+        if (!raw) { clearStatus(); return; }
 
         try {
           var data = JSON.parse(raw);
@@ -179,20 +250,13 @@
           }
 
           csvEl.value = lines.join('\n');
+          lastValidCsvOutput = csvEl.value;
           setStatus('Converted ' + data.length + ' row' + (data.length === 1 ? '' : 's') + ' to CSV.', false);
           window.trackTool && window.trackTool('csv_json', 'json_to_csv');
         } catch (e) {
-          csvEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });
-
-      function escapeCsvField(val) {
-        if (val.indexOf(',') !== -1 || val.indexOf('"') !== -1 || val.indexOf('\n') !== -1) {
-          return '"' + val.replace(/"/g, '""') + '"';
-        }
-        return val;
-      }
 
       /* ── Clear ── */
       document.getElementById('cj-clear').addEventListener('click', function () {

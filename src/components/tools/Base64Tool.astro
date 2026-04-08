@@ -95,6 +95,7 @@
       var variant = 'standard';
       var rawB64 = '';
       var currentMime = '';
+      var lastValidB64Output = '';
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -213,10 +214,29 @@
         if (_b64Saved) inputEl.value = _b64Saved;
       }
 
-      // Save input on change (debounced 500ms)
+      // Real-time encode/decode on input (debounced 300ms) + save at 500ms
+      var _b64LiveTimer = null;
       var _b64SaveTimer = null;
       inputEl.addEventListener('input', function () {
+        clearTimeout(_b64LiveTimer);
         clearTimeout(_b64SaveTimer);
+        _b64LiveTimer = setTimeout(function () {
+          var val = inputEl.value;
+          if (!val) { clearStatus(); return; }
+          try {
+            if (mode === 'encode') {
+              outputEl.value = encodeText(val);
+              lastValidB64Output = outputEl.value;
+              setStatus('Encoded.', false);
+            } else {
+              outputEl.value = decodeText(val);
+              lastValidB64Output = outputEl.value;
+              setStatus('Decoded.', false);
+            }
+          } catch (e) {
+            setStatus('Error: ' + e.message, true);
+          }
+        }, 300);
         _b64SaveTimer = setTimeout(function () {
           if (window.ztPersist) window.ztPersist.save('base64', { input: inputEl.value });
         }, 500);
@@ -230,6 +250,7 @@
           outputEl.value = '';
           rawB64 = '';
           currentMime = '';
+          lastValidB64Output = '';
           uriRowEl.hidden = true;
           uriToggle.checked = false;
         });
@@ -243,19 +264,20 @@
 
       runBtn.addEventListener('click', function () {
         var val = inputEl.value;
-        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        if (!val) { clearStatus(); return; }
         try {
           if (mode === 'encode') {
             outputEl.value = encodeText(val);
+            lastValidB64Output = outputEl.value;
             setStatus('Encoded.', false);
             window.trackTool && window.trackTool('base64', 'encode');
           } else {
             outputEl.value = decodeText(val);
+            lastValidB64Output = outputEl.value;
             setStatus('Decoded.', false);
             window.trackTool && window.trackTool('base64', 'decode');
           }
         } catch (e) {
-          outputEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });

@@ -69,6 +69,8 @@
       var encodeBtn = document.getElementById('he-encode');
       var decodeBtn = document.getElementById('he-decode');
       var copyBtn = document.getElementById('he-copy');
+      var lastValidHtmlOutput = '';
+      var heMode = 'encode'; // tracks last used direction
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -108,30 +110,57 @@
         return { text: decoded, count: count };
       }
 
+      /* ── Real-time encode/decode (debounced 300ms, uses last direction) ── */
+      var _heLiveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_heLiveTimer);
+        _heLiveTimer = setTimeout(function () {
+          var val = inputEl.value;
+          if (!val) { clearStatus(); return; }
+          try {
+            if (heMode === 'encode') {
+              var r = encodeHtml(val);
+              outputEl.value = r.text;
+              lastValidHtmlOutput = r.text;
+              setStatus('Encoded — ' + r.count + ' character' + (r.count !== 1 ? 's' : '') + ' converted.', false);
+            } else {
+              var r = decodeHtml(val);
+              outputEl.value = r.text;
+              lastValidHtmlOutput = r.text;
+              setStatus('Decoded — ' + r.count + ' entit' + (r.count !== 1 ? 'ies' : 'y') + ' converted.', false);
+            }
+          } catch (e) {
+            setStatus('Error: ' + e.message, true);
+          }
+        }, 300);
+      });
+
       encodeBtn.addEventListener('click', function () {
+        heMode = 'encode';
         var val = inputEl.value;
-        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        if (!val) { clearStatus(); return; }
         try {
           var r = encodeHtml(val);
           outputEl.value = r.text;
+          lastValidHtmlOutput = r.text;
           setStatus('Encoded — ' + r.count + ' character' + (r.count !== 1 ? 's' : '') + ' converted.', false);
           window.trackTool && window.trackTool('html_entity', 'encode');
         } catch (e) {
-          outputEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });
 
       decodeBtn.addEventListener('click', function () {
+        heMode = 'decode';
         var val = inputEl.value;
-        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        if (!val) { clearStatus(); return; }
         try {
           var r = decodeHtml(val);
           outputEl.value = r.text;
+          lastValidHtmlOutput = r.text;
           setStatus('Decoded — ' + r.count + ' entit' + (r.count !== 1 ? 'ies' : 'y') + ' converted.', false);
           window.trackTool && window.trackTool('html_entity', 'decode');
         } catch (e) {
-          outputEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });

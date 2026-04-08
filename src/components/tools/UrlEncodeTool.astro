@@ -52,6 +52,7 @@
       var runBtn = document.getElementById('url-run');
       var copyBtn = document.getElementById('url-copy');
       var mode = 'encode';
+      var lastValidUrlOutput = '';
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -83,10 +84,26 @@
         if (_urlSaved) inputEl.value = _urlSaved;
       }
 
-      // Save input on change (debounced 500ms)
+      // Real-time encode/decode (debounced 300ms) + save at 500ms
+      var _urlLiveTimer = null;
       var _urlSaveTimer = null;
       inputEl.addEventListener('input', function () {
+        clearTimeout(_urlLiveTimer);
         clearTimeout(_urlSaveTimer);
+        _urlLiveTimer = setTimeout(function () {
+          var val = inputEl.value;
+          if (!val) { clearStatus(); return; }
+          try {
+            var result = mode === 'encode'
+              ? encodeURIComponent(val)
+              : decodeURIComponent(val);
+            outputEl.value = result;
+            lastValidUrlOutput = result;
+            setStatus(mode === 'encode' ? 'Encoded.' : 'Decoded.', false);
+          } catch (e) {
+            setStatus('Error: ' + e.message, true);
+          }
+        }, 300);
         _urlSaveTimer = setTimeout(function () {
           if (window.ztPersist) window.ztPersist.save('url-encode', { input: inputEl.value });
         }, 500);
@@ -98,20 +115,21 @@
           updateUI();
           clearStatus();
           outputEl.value = '';
+          lastValidUrlOutput = '';
         });
       });
 
       runBtn.addEventListener('click', function () {
         var val = inputEl.value;
-        if (!val) { clearStatus(); outputEl.value = ''; return; }
+        if (!val) { clearStatus(); return; }
         try {
           outputEl.value = mode === 'encode'
             ? encodeURIComponent(val)
             : decodeURIComponent(val);
+          lastValidUrlOutput = outputEl.value;
           setStatus(mode === 'encode' ? 'Encoded.' : 'Decoded.', false);
           window.trackTool && window.trackTool('url_encode', mode);
         } catch (e) {
-          outputEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });

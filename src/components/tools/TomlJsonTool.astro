@@ -46,6 +46,8 @@
     const statusEl = document.getElementById('tj-status') as HTMLElement;
     const copyTomlBtn = document.getElementById('tj-copy-toml') as HTMLButtonElement;
     const copyJsonBtn = document.getElementById('tj-copy-json') as HTMLButtonElement;
+    let lastValidJsonOutput = '';
+    let lastValidTomlOutput = '';
 
     function setStatus(msg: string, isError: boolean) {
       statusEl.textContent = msg;
@@ -57,32 +59,68 @@
       statusEl.className = 'tj-status';
     }
 
-    /* ── TOML → JSON ── */
+    /* ── Real-time TOML → JSON (debounced 300ms) ── */
+    let _tjTomlTimer: ReturnType<typeof setTimeout> | null = null;
+    tomlEl.addEventListener('input', () => {
+      if (_tjTomlTimer) clearTimeout(_tjTomlTimer);
+      _tjTomlTimer = setTimeout(() => {
+        const raw = tomlEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          const data = parse(raw);
+          jsonEl.value = JSON.stringify(data, null, 2);
+          lastValidJsonOutput = jsonEl.value;
+          setStatus('Converted TOML to JSON.', false);
+        } catch (e: any) {
+          setStatus('Invalid TOML: ' + e.message, true);
+        }
+      }, 300);
+    });
+
+    /* ── Real-time JSON → TOML (debounced 300ms) ── */
+    let _tjJsonTimer: ReturnType<typeof setTimeout> | null = null;
+    jsonEl.addEventListener('input', () => {
+      if (_tjJsonTimer) clearTimeout(_tjJsonTimer);
+      _tjJsonTimer = setTimeout(() => {
+        const raw = jsonEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          const data = JSON.parse(raw);
+          tomlEl.value = stringify(data);
+          lastValidTomlOutput = tomlEl.value;
+          setStatus('Converted JSON to TOML.', false);
+        } catch (e: any) {
+          setStatus('Error: ' + e.message, true);
+        }
+      }, 300);
+    });
+
+    /* ── TOML → JSON button ── */
     document.getElementById('tj-to-json')!.addEventListener('click', () => {
       const raw = tomlEl.value.trim();
-      if (!raw) { clearStatus(); jsonEl.value = ''; return; }
+      if (!raw) { clearStatus(); return; }
       try {
         const data = parse(raw);
         jsonEl.value = JSON.stringify(data, null, 2);
+        lastValidJsonOutput = jsonEl.value;
         setStatus('Converted TOML to JSON.', false);
         (window as any).trackTool && (window as any).trackTool('toml_json', 'toml_to_json');
       } catch (e: any) {
-        jsonEl.value = '';
         setStatus('Invalid TOML: ' + e.message, true);
       }
     });
 
-    /* ── JSON → TOML ── */
+    /* ── JSON → TOML button ── */
     document.getElementById('tj-to-toml')!.addEventListener('click', () => {
       const raw = jsonEl.value.trim();
-      if (!raw) { clearStatus(); tomlEl.value = ''; return; }
+      if (!raw) { clearStatus(); return; }
       try {
         const data = JSON.parse(raw);
         tomlEl.value = stringify(data);
+        lastValidTomlOutput = tomlEl.value;
         setStatus('Converted JSON to TOML.', false);
         (window as any).trackTool && (window as any).trackTool('toml_json', 'json_to_toml');
       } catch (e: any) {
-        tomlEl.value = '';
         setStatus('Error: ' + e.message, true);
       }
     });

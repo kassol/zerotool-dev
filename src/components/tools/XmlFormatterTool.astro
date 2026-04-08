@@ -55,6 +55,7 @@
       var copyInputBtn = document.getElementById('xf-copy-input');
       var copyOutputBtn = document.getElementById('xf-copy-output');
       var indentEl = document.getElementById('xf-indent');
+      var lastValidXmlOutput = '';
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -225,19 +226,39 @@
         return parts.join('');
       }
 
+      /* ── Real-time format on input (debounced 300ms) ── */
+      var _xfLiveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_xfLiveTimer);
+        _xfLiveTimer = setTimeout(function () {
+          var raw = inputEl.value.trim();
+          if (!raw) { clearStatus(); return; }
+          try {
+            var doc = parseXml(raw);
+            var indent = getIndent();
+            var result = prettyPrint(doc, indent);
+            outputEl.value = result;
+            lastValidXmlOutput = result;
+            setStatus('Formatted.', false);
+          } catch (e) {
+            setStatus('Error: ' + e.message, true);
+          }
+        }, 300);
+      });
+
       /* ── Format button ── */
       document.getElementById('xf-format').addEventListener('click', function () {
         var raw = inputEl.value.trim();
-        if (!raw) { clearStatus(); outputEl.value = ''; return; }
+        if (!raw) { clearStatus(); return; }
 
         try {
           var doc = parseXml(raw);
           var indent = getIndent();
           outputEl.value = prettyPrint(doc, indent);
+          lastValidXmlOutput = outputEl.value;
           setStatus('Formatted successfully.', false);
           window.trackTool && window.trackTool('xml_formatter', 'format');
         } catch (e) {
-          outputEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });
@@ -245,15 +266,15 @@
       /* ── Minify button ── */
       document.getElementById('xf-minify').addEventListener('click', function () {
         var raw = inputEl.value.trim();
-        if (!raw) { clearStatus(); outputEl.value = ''; return; }
+        if (!raw) { clearStatus(); return; }
 
         try {
           var doc = parseXml(raw);
           outputEl.value = minify(doc);
+          lastValidXmlOutput = outputEl.value;
           setStatus('Minified successfully.', false);
           window.trackTool && window.trackTool('xml_formatter', 'minify');
         } catch (e) {
-          outputEl.value = '';
           setStatus('Error: ' + e.message, true);
         }
       });
