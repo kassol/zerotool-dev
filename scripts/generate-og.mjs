@@ -7,7 +7,7 @@
  */
 
 import sharp from 'sharp';
-import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,55 +15,27 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..');
 const outputDir = join(projectRoot, 'public', 'og');
 
-const tools = [
-  { slug: 'json-formatter',       name: 'JSON Formatter',               description: 'Format and validate JSON instantly' },
-  { slug: 'base64',               name: 'Base64 Encoder/Decoder',        description: 'Encode or decode Base64 strings' },
-  { slug: 'uuid-generator',       name: 'UUID Generator',                description: 'Generate UUIDs v1, v4, and v7' },
-  { slug: 'url-encode',           name: 'URL Encoder/Decoder',           description: 'Encode or decode URL components' },
-  { slug: 'text-case',            name: 'Text Case Converter',           description: 'Convert text between cases' },
-  { slug: 'markdown-preview',     name: 'Markdown Preview',              description: 'Live preview Markdown rendering' },
-  { slug: 'color-converter',      name: 'Color Converter',               description: 'Convert between HEX, RGB, HSL' },
-  { slug: 'regex-tester',         name: 'Regex Tester',                  description: 'Test regular expressions with live matching' },
-  { slug: 'hash-generator',       name: 'Hash Generator',                description: 'Generate MD5, SHA-1, SHA-256 hashes' },
-  { slug: 'timestamp-converter',  name: 'Timestamp Converter',           description: 'Convert Unix timestamps to dates' },
-  { slug: 'jwt-decoder',          name: 'JWT Decoder',                   description: 'Decode and inspect JWT tokens' },
-  { slug: 'diff-checker',         name: 'Diff Checker',                  description: 'Compare two texts side by side' },
-  { slug: 'password-generator',   name: 'Password Generator',            description: 'Generate strong random passwords' },
-  { slug: 'qr-code-generator',    name: 'QR Code Generator',             description: 'Generate QR codes from text or URLs' },
-  { slug: 'cron-parser',          name: 'Cron Expression Parser',        description: 'Parse and explain cron expressions' },
-  { slug: 'lorem-ipsum',          name: 'Lorem Ipsum Generator',         description: 'Generate placeholder text instantly' },
-  { slug: 'word-counter',         name: 'Word & Character Counter',      description: 'Count words, characters, sentences' },
-  { slug: 'chmod-calculator',     name: 'Chmod Calculator',              description: 'Calculate Linux file permissions' },
-  { slug: 'csv-json',             name: 'CSV to JSON Converter',         description: 'Convert between CSV and JSON formats' },
-  { slug: 'html-entity',          name: 'HTML Entity Encoder/Decoder',   description: 'Encode and decode HTML entities' },
-  { slug: 'yaml-json',            name: 'YAML to JSON Converter',        description: 'Convert between YAML and JSON formats' },
-  { slug: 'line-tools',           name: 'Line Tools',                    description: 'Remove duplicates, sort, transform text lines' },
-  { slug: 'number-base',          name: 'Number Base Converter',         description: 'Convert between binary, octal, decimal, hex' },
-  { slug: 'sql-formatter',        name: 'SQL Formatter',                 description: 'Format, beautify, and minify SQL queries' },
-  { slug: 'aspect-ratio',         name: 'Aspect Ratio Calculator',       description: 'Calculate and resize aspect ratios' },
-  { slug: 'xml-formatter',        name: 'XML Formatter',                 description: 'Format, beautify, and minify XML documents' },
-  { slug: 'ascii-converter',           name: 'ASCII Converter',               description: 'Convert between text and ASCII codes' },
-  { slug: 'markdown-table-generator', name: 'Markdown Table Generator',      description: 'Build Markdown tables visually with CSV & JSON import' },
-  { slug: 'toml-json',               name: 'TOML to JSON Converter',        description: 'Convert between TOML and JSON formats instantly' },
-  { slug: 'image-to-base64',         name: 'Image to Base64 Converter',     description: 'Convert images to Base64 strings and Data URIs' },
-  { slug: 'css-to-tailwind',         name: 'CSS to Tailwind Converter',     description: 'Convert CSS properties to Tailwind utility classes' },
-  { slug: 'css-unit-converter',      name: 'CSS Unit Converter',            description: 'Convert between px, rem, em, and vw CSS units' },
-  { slug: 'json-to-typescript',      name: 'JSON to TypeScript Generator',  description: 'Generate TypeScript interfaces from JSON' },
-  { slug: 'fake-data-generator',     name: 'Fake Data Generator',           description: 'Generate realistic test data instantly' },
-  { slug: 'url-parser',              name: 'URL Parser',                    description: 'Parse any URL into its components' },
-  { slug: 'slugify',                 name: 'Slugify String',                description: 'Convert text to URL-friendly slugs' },
-  { slug: 'http-status-codes',       name: 'HTTP Status Codes',             description: 'Searchable reference for all HTTP status codes' },
-  { slug: 'hmac-generator',          name: 'HMAC Generator',                description: 'Generate HMAC-SHA256/384/512 signatures' },
-  { slug: 'curl-to-code',            name: 'cURL to Code Converter',        description: 'Convert cURL commands to Python, JavaScript, Go, PHP, and Node.js code instantly.' },
-  { slug: 'json-to-zod',             name: 'JSON to Zod Schema',            description: 'Generate Zod validation schemas from JSON data. Handles nested objects, arrays, and optional properties.' },
-  { slug: 'docker-to-compose',       name: 'Docker Run to Compose',         description: 'Convert docker run commands to docker-compose.yml. Supports ports, volumes, env vars, networks, and more.' },
-  { slug: 'rsa-key-generator',      name: 'RSA Key Pair Generator',        description: 'Generate RSA key pairs (2048/4096-bit) in PEM or JWK format. 100% client-side.' },
-  { slug: 'totp-generator',         name: 'TOTP Generator',                description: 'Generate RFC 6238 TOTP codes with live countdown. Includes QR code.' },
-  { slug: 'json-diff',              name: 'JSON Diff',                     description: 'Compare two JSON objects and visualize differences as RFC 6902 JSON Patch.' },
-  { slug: 'env-file-parser',       name: 'Env File Parser',               description: 'Parse .env files online — visualize key-value pairs and export to JSON.' },
-  { slug: 'yaml-validator',        name: 'YAML Validator',                description: 'Validate YAML syntax online with line and column error details.' },
-  { slug: 'json-schema-validator', name: 'JSON Schema Validator',         description: 'Validate JSON data against a JSON Schema (Draft-07, Draft 2020-12).' },
-];
+/**
+ * Parse tool list from src/data/tools.ts using regex.
+ * Extracts slug and English name/description for each tool.
+ * Each tool occupies a single line in tools.ts.
+ */
+async function parseToolsFromSource() {
+  const source = await readFile(join(projectRoot, 'src', 'data', 'tools.ts'), 'utf-8');
+  const tools = [];
+  for (const line of source.split('\n')) {
+    const slugMatch = line.match(/slug:\s*'([^']+)'/);
+    if (!slugMatch) continue;
+    const slug = slugMatch[1];
+
+    // Extract English name and description from the `en: { name: '...', description: '...' }` block
+    const enMatch = line.match(/en:\s*\{\s*name:\s*'([^']+)',\s*description:\s*'([^']+)'/);
+    if (!enMatch) continue;
+
+    tools.push({ slug, name: enMatch[1], description: enMatch[2] });
+  }
+  return tools;
+}
 
 /** Escape XML special chars so SVG stays valid. */
 function esc(str) {
@@ -196,6 +168,7 @@ function buildSvg(name, description, type = 'tool') {
 async function main() {
   await mkdir(outputDir, { recursive: true });
 
+  const tools = await parseToolsFromSource();
   let generated = 0;
 
   // Generate tool OG images
