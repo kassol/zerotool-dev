@@ -1,0 +1,388 @@
+---
+// CssSpecificityCalculatorTool — pure client-side CSS specificity calculator
+---
+<div>
+  <div class="csc-wrap">
+    <div class="csc-field">
+      <label for="csc-input" data-i18n="inputLabel">CSS Selector(s)</label>
+      <input
+        id="csc-input"
+        type="text"
+        data-i18n-ph="inputPlaceholder"
+        placeholder="#nav .item:hover, h1.title"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <span class="csc-hint" data-i18n="hint">Comma-separate multiple selectors to compare</span>
+    </div>
+
+    <div id="csc-results" class="csc-results" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'CSS Selector(s)',
+          inputPlaceholder: '#nav .item:hover, h1.title',
+          hint: 'Comma-separate multiple selectors to compare',
+          id: 'ID', cls: 'Class / Attr / Pseudo-class', elem: 'Element / Pseudo-element',
+          specificity: 'Specificity', noInput: 'Enter a CSS selector above.',
+          copyBtn: 'Copy', copied: 'Copied!',
+          note: 'Note: :not(), :is(), :has() use their argument\'s specificity — simplified here.'
+        },
+        zh: {
+          inputLabel: 'CSS 选择器',
+          inputPlaceholder: '#nav .item:hover, h1.title',
+          hint: '用逗号分隔多个选择器以对比优先级',
+          id: 'ID', cls: '类 / 属性 / 伪类', elem: '元素 / 伪元素',
+          specificity: '优先级', noInput: '请在上方输入 CSS 选择器。',
+          copyBtn: '复制', copied: '已复制!',
+          note: '注意：:not()、:is()、:has() 使用参数的优先级 — 此处为简化计算。'
+        },
+        ja: {
+          inputLabel: 'CSS セレクター',
+          inputPlaceholder: '#nav .item:hover, h1.title',
+          hint: 'カンマ区切りで複数のセレクターを比較',
+          id: 'ID', cls: 'クラス / 属性 / 疑似クラス', elem: '要素 / 疑似要素',
+          specificity: '詳細度', noInput: '上にCSSセレクターを入力してください。',
+          copyBtn: 'コピー', copied: 'コピー済み!',
+          note: '注意: :not()・:is()・:has() は引数の詳細度を使用 — ここでは簡略化しています。'
+        },
+        ko: {
+          inputLabel: 'CSS 선택자',
+          inputPlaceholder: '#nav .item:hover, h1.title',
+          hint: '쉼표로 구분하여 여러 선택자 비교',
+          id: 'ID', cls: '클래스 / 속성 / 가상 클래스', elem: '요소 / 가상 요소',
+          specificity: '명시도', noInput: '위에 CSS 선택자를 입력하세요.',
+          copyBtn: '복사', copied: '복사됨!',
+          note: '참고: :not(), :is(), :has()는 인수의 명시도를 사용 — 여기서는 단순화됨.'
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.csc-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.csc-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl = document.getElementById('csc-input');
+      var resultsEl = document.getElementById('csc-results');
+
+      // Parse specificity: returns {a, b, c}
+      function parseSpec(raw) {
+        var s = raw.trim();
+        var a = 0, b = 0, c = 0;
+
+        // Remove pseudo-elements (::xxx) — count as element (c)
+        s = s.replace(/::[\w-]+/g, function () { c++; return ' '; });
+
+        // Legacy single-colon pseudo-elements
+        s = s.replace(/:(?:first-line|first-letter|before|after)\b/g, function () { c++; return ' '; });
+
+        // ID selectors
+        s = s.replace(/#[\w-]+/g, function () { a++; return ' '; });
+
+        // Attribute selectors [...]
+        s = s.replace(/\[[^\]]*\]/g, function () { b++; return ' '; });
+
+        // Class selectors
+        s = s.replace(/\.[\w-]+/g, function () { b++; return ' '; });
+
+        // Functional pseudo-classes with parens (:not(), :is(), :has(), :nth-child(), etc.)
+        // Recursively parse inner selector for specificity pseudo-classes
+        s = s.replace(/:[\w-]+\(([^)]*)\)/g, function (_match, inner) {
+          // :where() has 0 specificity
+          if (/^:where\(/.test(_match)) return ' ';
+          // For :not(), :is(), :has() — use argument specificity (simplified: single simple selector)
+          var innerSpec = parseSpec(inner);
+          a += innerSpec.a;
+          b += innerSpec.b;
+          c += innerSpec.c;
+          return ' ';
+        });
+
+        // Remaining pseudo-classes (:hover, :focus, :nth-child without parens already removed above)
+        s = s.replace(/:[\w-]+/g, function () { b++; return ' '; });
+
+        // Remove combinators and universal selector
+        s = s.replace(/[>~+*&|]/g, ' ');
+
+        // Count remaining element type selectors
+        var elems = s.match(/[a-zA-Z][\w-]*/g);
+        c += (elems || []).length;
+
+        return { a: a, b: b, c: c };
+      }
+
+      function specValue(spec) {
+        return spec.a * 10000 + spec.b * 100 + spec.c;
+      }
+
+      function escHtml(str) {
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function renderResults(selectors) {
+        if (!selectors.length) {
+          resultsEl.innerHTML = '<p class="csc-empty">' + t.noInput + '</p>';
+          return;
+        }
+
+        var specs = selectors.map(function (sel) {
+          return { sel: sel, spec: parseSpec(sel) };
+        });
+
+        var maxVal = Math.max.apply(null, specs.map(function (s) { return specValue(s.spec); })) || 1;
+        var maxA = Math.max.apply(null, specs.map(function (s) { return s.spec.a; })) || 1;
+        var maxB = Math.max.apply(null, specs.map(function (s) { return s.spec.b; })) || 1;
+        var maxC = Math.max.apply(null, specs.map(function (s) { return s.spec.c; })) || 1;
+
+        var html = '';
+        specs.forEach(function (item) {
+          var s = item.spec;
+          var tupleStr = '(' + s.a + ', ' + s.b + ', ' + s.c + ')';
+          var barPct = maxVal > 0 ? Math.round((specValue(s) / (maxVal * 1.2 || 1)) * 100) : 0;
+
+          html += '<div class="csc-result-card">';
+          html += '<div class="csc-result-header">';
+          html += '<code class="csc-selector">' + escHtml(item.sel) + '</code>';
+          html += '<span class="csc-tuple">' + tupleStr + '</span>';
+          html += '</div>';
+
+          // Breakdown badges
+          html += '<div class="csc-badges">';
+          html += '<span class="csc-badge csc-badge-id" title="' + t.id + '">';
+          html += '<span class="csc-badge-label">a</span><span class="csc-badge-val">' + s.a + '</span>';
+          html += '</span>';
+          html += '<span class="csc-badge csc-badge-cls" title="' + t.cls + '">';
+          html += '<span class="csc-badge-label">b</span><span class="csc-badge-val">' + s.b + '</span>';
+          html += '</span>';
+          html += '<span class="csc-badge csc-badge-elem" title="' + t.elem + '">';
+          html += '<span class="csc-badge-label">c</span><span class="csc-badge-val">' + s.c + '</span>';
+          html += '</span>';
+          html += '</div>';
+
+          // Visual bar
+          html += '<div class="csc-bar-wrap">';
+          html += '<div class="csc-bar-track">';
+          var aPct = maxA > 0 ? Math.round((s.a / maxA) * 100) : 0;
+          var bPct = maxB > 0 ? Math.round((s.b / maxB) * 100) : 0;
+          var cPct = maxC > 0 ? Math.round((s.c / maxC) * 100) : 0;
+          html += '<div class="csc-bar-seg csc-bar-a" style="width:' + aPct + '%" title="' + t.id + ': ' + s.a + '"></div>';
+          html += '<div class="csc-bar-seg csc-bar-b" style="width:' + bPct + '%" title="' + t.cls + ': ' + s.b + '"></div>';
+          html += '<div class="csc-bar-seg csc-bar-c" style="width:' + cPct + '%" title="' + t.elem + ': ' + s.c + '"></div>';
+          html += '</div>';
+          html += '</div>';
+
+          // Copy button
+          html += '<button class="csc-copy-btn" data-val="' + escHtml(tupleStr) + '">' + t.copyBtn + '</button>';
+          html += '</div>';
+        });
+
+        if (specs.length > 1) {
+          html += '<p class="csc-note">' + t.note + '</p>';
+        }
+
+        resultsEl.innerHTML = html;
+
+        // Copy handlers
+        resultsEl.querySelectorAll('.csc-copy-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var val = btn.getAttribute('data-val');
+            navigator.clipboard.writeText(val).then(function () {
+              btn.textContent = t.copied;
+              setTimeout(function () { btn.textContent = t.copyBtn; }, 1500);
+            });
+            window.trackTool && window.trackTool('css-specificity-calculator', 'copy');
+          });
+        });
+      }
+
+      var _timer = null;
+      function onInput() {
+        clearTimeout(_timer);
+        _timer = setTimeout(function () {
+          var raw = inputEl.value;
+          var parts = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+          renderResults(parts);
+          if (parts.length) window.trackTool && window.trackTool('css-specificity-calculator', 'calc');
+        }, 200);
+      }
+
+      inputEl.addEventListener('input', onInput);
+
+      // Initial render
+      renderResults([]);
+    })();
+  </script>
+</div>
+
+<style>
+  .csc-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .csc-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .csc-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .csc-field input {
+    padding: 0.6rem 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+  }
+
+  .csc-field input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .csc-hint {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+  }
+
+  .csc-results { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .csc-empty {
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+    margin: 0;
+  }
+
+  .csc-result-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1rem;
+    background: var(--color-bg-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .csc-result-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .csc-selector {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--color-text);
+    background: var(--color-bg-icon);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    word-break: break-all;
+  }
+
+  .csc-tuple {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    white-space: nowrap;
+  }
+
+  .csc-badges {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .csc-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: help;
+  }
+
+  .csc-badge-label {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    opacity: 0.75;
+  }
+
+  .csc-badge-val {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+  }
+
+  .csc-badge-id   { background: #ede9fe; color: #5b21b6; }
+  .csc-badge-cls  { background: #dbeafe; color: #1d4ed8; }
+  .csc-badge-elem { background: #dcfce7; color: #166534; }
+
+  .csc-bar-wrap { width: 100%; }
+
+  .csc-bar-track {
+    display: flex;
+    gap: 3px;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--color-border);
+  }
+
+  .csc-bar-seg {
+    border-radius: 4px;
+    min-width: 0;
+    transition: width 0.2s ease;
+  }
+
+  .csc-bar-a { background: #7c3aed; }
+  .csc-bar-b { background: #2563eb; }
+  .csc-bar-c { background: #16a34a; }
+
+  .csc-copy-btn {
+    align-self: flex-start;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.82rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .csc-copy-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+
+  .csc-note {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .csc-badge-id   { background: #3b1f6b; color: #c4b5fd; }
+    :root:not([data-theme="light"]) .csc-badge-cls  { background: #1e3a6b; color: #93c5fd; }
+    :root:not([data-theme="light"]) .csc-badge-elem { background: #14432a; color: #86efac; }
+  }
+
+  [data-theme="dark"] .csc-badge-id   { background: #3b1f6b; color: #c4b5fd; }
+  [data-theme="dark"] .csc-badge-cls  { background: #1e3a6b; color: #93c5fd; }
+  [data-theme="dark"] .csc-badge-elem { background: #14432a; color: #86efac; }
+</style>
