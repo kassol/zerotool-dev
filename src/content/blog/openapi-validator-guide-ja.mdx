@@ -1,0 +1,243 @@
+---
+title: "OpenAPI バリデーター：OpenAPI 3 仕様をオンラインで即時検証"
+description: "OpenAPI 仕様をオンラインで検証。必須フィールドの欠落・無効な $ref・型エラーをブラウザ内で発見。スペックファイルはサーバーに送信されません。"
+pubDate: 2026-04-09
+lang: "ja"
+translationSlug: "openapi-validator-guide"
+tags: ["openapi", "openapi-validator", "api-design", "developer-tools"]
+ogImage: /og/blog-openapi-validator-guide-ja.png
+---
+
+無効な OpenAPI 仕様は、コード生成・ドキュメントのレンダリング・SDK ツールチェーンを本番環境に届く前に壊します。このガイドでは、OpenAPI 3.x の正しい構造、開発者がよく踏むバリデーションエラー、そしてスペックをどこにも送信せずブラウザで検証する方法を説明します。
+
+[OpenAPI 仕様をオンラインで検証 →](/tools/openapi-validator)
+
+## OpenAPI 3.x の必須フィールド
+
+OpenAPI ドキュメント（JSON または YAML）には、3 つのトップレベル必須フィールドがあります：
+
+```yaml
+openapi: "3.0.3"   # 必須 — 仕様バージョン
+info:               # 必須 — API メタデータ
+  title: My API
+  version: "1.0.0"
+paths: {}           # 必須 — エンドポイント定義（空でも可）
+```
+
+`components`、`tags`、`servers`、`security` はすべてオプションです。ただし、オプションでも無視できません。`components` 内の未解決の `$ref` は最も多いバリデーション失敗の原因です。
+
+## OpenAPI 3.x ドキュメント構造
+
+```
+openapi.yaml
+├── openapi         （バージョン文字列）
+├── info            （title、version、description、contact、license）
+├── servers[]       （API のベース URL）
+├── paths           （エンドポイントマップ：/users → GET、POST …）
+│   └── {path}
+│       └── {method}
+│           ├── parameters[]
+│           ├── requestBody
+│           └── responses
+│               └── {statusCode}
+│                   └── content
+│                       └── {mediaType}
+│                           └── schema   （← $ref をよく使う）
+├── components      （再利用可能なスキーマ・レスポンス・パラメーター）
+│   ├── schemas
+│   ├── responses
+│   ├── parameters
+│   └── securitySchemes
+└── security[]      （グローバルセキュリティ要件）
+```
+
+## よくあるバリデーションエラー
+
+### 1. `info` の必須フィールド欠落
+
+`title` と `version` は `info` 内で両方必須です。どちらが欠けていても即座に検証失敗します：
+
+```yaml
+# 無効 — version がない
+info:
+  title: My API
+
+# 有効
+info:
+  title: My API
+  version: "1.0.0"
+```
+
+### 2. 未解決の `$ref`
+
+`$ref` ポインターは実在するものを参照しなければなりません。パスのタイポ、`#` プレフィックスの欠落、削除済みスキーマへの参照は未解決参照になります：
+
+```yaml
+# 無効 — components/schemas に UserProfile が存在しない
+schema:
+  $ref: "#/components/schemas/UserProfile"
+
+# components/schemas には "User" しかない
+# → Unresolved $ref: #/components/schemas/UserProfile
+```
+
+修正方法：大文字小文字を含めパスを正確に確認します。バリデーターで即座に検出できます。
+
+### 3. スキーマプロパティの型エラー
+
+OpenAPI 3 は JSON Schema 型を使います。よくある間違い：
+
+```yaml
+# 無効 — "date" は JSON Schema の有効な型ではない
+properties:
+  createdAt:
+    type: date    # ✗
+    # 正しい書き方：type: string + format: date
+```
+
+有効なプリミティブ型：`string`、`number`、`integer`、`boolean`、`array`、`object`、`null`（OAS 3.1+ のみ）。
+
+### 4. `required` が未定義プロパティを参照
+
+スキーマ内の `required` 配列は `properties` に実際に定義されたフィールド名のみ列挙できます：
+
+```yaml
+# 無効
+properties:
+  name:
+    type: string
+  email:
+    type: string
+required:
+  - name
+  - email
+  - phone   # ✗ "phone" は properties にない
+```
+
+### 5. `parameters` に `in` または `name` がない
+
+すべてのパラメーターオブジェクトに `name` と `in` が必須です。`in` の値は `path`、`query`、`header`、`cookie` のいずれかでなければなりません：
+
+```yaml
+# 無効 — "in" がない
+parameters:
+  - name: userId
+    schema:
+      type: string
+
+# 有効
+parameters:
+  - name: userId
+    in: path
+    required: true
+    schema:
+      type: string
+```
+
+### 6. パスパラメーターが宣言されていない
+
+パスに `{variable}` が含まれる場合、その変数は操作またはパスアイテムで `path` パラメーターとして宣言する必要があります：
+
+```yaml
+# {userId} を使っているがパラメーターが宣言されていない
+/users/{userId}:
+  get:
+    responses:
+      "200":
+        description: OK
+# → Missing path parameter definition for "userId"
+```
+
+### 7. レスポンスに `description` がない
+
+すべてのレスポンスオブジェクトに `description` が必須です。空文字列でも省略よりはマシです：
+
+```yaml
+# 無効
+responses:
+  "200":
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+
+# 有効
+responses:
+  "200":
+    description: "ユーザーオブジェクトを返す"
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+```
+
+## クライアントサイドで検証する理由
+
+API 仕様には機密情報が含まれることが多いです：内部エンドポイント名、認証スキーム、独自のデータモデル。サードパーティサービスにスペックをアップロードすると、そのデータが環境外に出ます。
+
+[ZeroTool OpenAPI バリデーター](/tools/openapi-validator) はサーバーサイドツールと同じ検証ロジックを使い、完全にブラウザ内で動作します。スペックは手元から離れません。
+
+## バリデーションとリンティングの違い
+
+| | バリデーション | リンティング |
+|---|---|---|
+| **確認内容** | OAS 仕様に対するスキーマ正確性 | スタイルルール・ベストプラクティス・一貫性 |
+| **出力** | 合格 / 失敗 + エラー位置 | 警告と提案 |
+| **例** | レスポンスの必須 `description` 欠落 | description は完全な文にすべき |
+
+まずバリデーションを実行してください。無効な仕様に対するリント結果は誤解を招くことがあります。
+
+## YAML と JSON のどちらを使うか
+
+OpenAPI 仕様は YAML または JSON で書けます。どちらも有効です。YAML は人手で書くスペックに多く、JSON はコード生成で多く見られます。
+
+バリデーターは両方の形式に対応しています。YAML スペックは [YAML Validator](/tools/yaml-validator) で構文エラーを先にチェックしておくと効果的です。JSON スペックは [JSON Formatter](/tools/json-formatter) で構造を確認できます。
+
+## `$ref` と `components` の使い方
+
+`$ref` は OpenAPI の再利用メカニズムです。スキーマ・パラメーター・レスポンスを `components` に一度定義し、ドキュメント全体から参照できます：
+
+```yaml
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
+paths:
+  /users/{userId}:
+    get:
+      responses:
+        "200":
+          description: "ユーザーが見つかりました"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+```
+
+バリデーターはすべての `$ref` ポインターを解決し、未解決のものをフラグで示します。コンポーネントの名前変更や削除後に残った古い参照を見つけるのに役立ちます。
+
+## OpenAPI における JSON Schema
+
+OpenAPI 3.0 は JSON Schema Draft 7 のサブセットを使用します。OpenAPI 3.1 は JSON Schema Draft 2020-12 と完全に一致します。よく使うキーワード：
+
+- `type`、`format`、`enum`、`const`
+- `properties`、`required`、`additionalProperties`
+- `items`（配列）、`minItems`、`maxItems`
+- `oneOf`、`anyOf`、`allOf`、`not`
+- `minimum`、`maximum`、`pattern`
+
+より詳細なスキーマ検証には [JSON Schema Validator](/tools/json-schema-validator) を組み合わせて使用できます。
+
+## 今すぐスペックを検証する
+
+[ZeroTool OpenAPI バリデーター](/tools/openapi-validator) は YAML と JSON に対応し、OpenAPI 3.0 と 3.1 をサポート、行番号付きでエラーを表示し、完全にブラウザ内で動作します。アップロード不要・アカウント登録不要。
+
+**[OpenAPI バリデーターを開く →](/tools/openapi-validator)**

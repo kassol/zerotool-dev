@@ -1,0 +1,245 @@
+---
+title: "OpenAPI 校验工具：在线验证 OpenAPI 3 规范，浏览器内运行"
+description: "用免费的在线 OpenAPI 校验工具验证你的 API 规范，发现缺少必填字段、无效 $ref 和类型错误——规范文件不会上传到服务器。"
+pubDate: 2026-04-09
+lang: "zh"
+translationSlug: "openapi-validator-guide"
+tags: ["openapi", "openapi-validator", "api-design", "developer-tools"]
+ogImage: /og/blog-openapi-validator-guide-zh.png
+---
+
+一个有问题的 OpenAPI 规范会在代码生成、文档渲染和 SDK 工具链里埋下隐患，往往等到上线前才爆出来。本文讲清楚 OpenAPI 3.x 的结构要求、开发者最常踩的验证错误，以及如何在浏览器里验证规范而不把文件传到外部服务器。
+
+[在线验证 OpenAPI 规范 →](/tools/openapi-validator)
+
+## OpenAPI 3.x 的必填字段
+
+一个 OpenAPI 文档（JSON 或 YAML）有三个顶级必填字段：
+
+```yaml
+openapi: "3.0.3"   # 必填 — 规范版本
+info:               # 必填 — API 元信息
+  title: My API
+  version: "1.0.0"
+paths: {}           # 必填 — 接口定义（可以为空）
+```
+
+其他字段如 `components`、`tags`、`servers`、`security` 都是可选的。但可选不代表不重要——`components` 里一个悬空的 `$ref` 是最常见的验证失败原因之一。
+
+## OpenAPI 3.x 文档结构
+
+```
+openapi.yaml
+├── openapi         （版本字符串）
+├── info            （title、version、description、contact、license）
+├── servers[]       （API 的基础 URL）
+├── paths           （接口映射：/users → GET、POST …）
+│   └── {path}
+│       └── {method}
+│           ├── parameters[]
+│           ├── requestBody
+│           └── responses
+│               └── {statusCode}
+│                   └── content
+│                       └── {mediaType}
+│                           └── schema   （← 常用 $ref）
+├── components      （可复用的 schema、response、parameter）
+│   ├── schemas
+│   ├── responses
+│   ├── parameters
+│   └── securitySchemes
+└── security[]      （全局安全要求）
+```
+
+## 常见验证错误
+
+### 1. `info` 缺少必填字段
+
+`title` 和 `version` 在 `info` 里都是必填项，缺任何一个都会立刻验证失败：
+
+```yaml
+# 无效 — 缺少 version
+info:
+  title: My API
+
+# 有效
+info:
+  title: My API
+  version: "1.0.0"
+```
+
+### 2. `$ref` 无法解析
+
+`$ref` 指针必须指向真实存在的内容。路径拼写错误、缺少 `#` 前缀、或者引用了已删除的 schema，都会产生悬空引用：
+
+```yaml
+# 无效 — components/schemas 里没有 UserProfile
+schema:
+  $ref: "#/components/schemas/UserProfile"
+
+# components/schemas 里只有 "User"，没有 "UserProfile"
+# → Unresolved $ref: #/components/schemas/UserProfile
+```
+
+修复方法：逐字核对路径（大小写敏感），用校验工具可以立刻定位。
+
+### 3. Schema 属性类型错误
+
+OpenAPI 3 使用 JSON Schema 类型。常见错误：
+
+```yaml
+# 无效 — "date" 不是 JSON Schema 的有效类型
+properties:
+  createdAt:
+    type: date    # ✗
+    # 正确写法：type: string + format: date
+```
+
+有效的基本类型：`string`、`number`、`integer`、`boolean`、`array`、`object`、`null`（仅 OAS 3.1+）。
+
+### 4. `required` 引用了未定义的属性
+
+`required` 数组只能列出 `properties` 里实际定义过的字段名：
+
+```yaml
+# 无效
+properties:
+  name:
+    type: string
+  email:
+    type: string
+required:
+  - name
+  - email
+  - phone   # ✗ "phone" 不在 properties 里
+```
+
+### 5. `parameters` 缺少 `in` 或 `name`
+
+每个 parameter 对象都必须有 `name` 和 `in`。`in` 的值只能是 `path`、`query`、`header`、`cookie` 之一：
+
+```yaml
+# 无效 — 缺少 "in"
+parameters:
+  - name: userId
+    schema:
+      type: string
+
+# 有效
+parameters:
+  - name: userId
+    in: path
+    required: true
+    schema:
+      type: string
+```
+
+### 6. 路径参数未声明
+
+路径里有 `{variable}` 占位符，就必须在操作或路径项里声明对应的 `path` 参数：
+
+```yaml
+# 路径用了 {userId} 但没有声明对应参数
+/users/{userId}:
+  get:
+    responses:
+      "200":
+        description: OK
+# → Missing path parameter definition for "userId"
+```
+
+### 7. Response 缺少 `description`
+
+每个 response 对象都必须有 `description`，空字符串也比不写强：
+
+```yaml
+# 无效
+responses:
+  "200":
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+
+# 有效
+responses:
+  "200":
+    description: "返回用户对象"
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+```
+
+## 为什么要在客户端验证
+
+API 规范里往往包含敏感信息：内部接口名、认证方案、专有数据模型。把规范上传到第三方服务，就意味着这些数据离开了你的环境。
+
+[ZeroTool OpenAPI 校验工具](/tools/openapi-validator) 完全在浏览器里运行，使用与服务端工具相同的验证逻辑。规范文件始终留在你本地，不上传，不注册。
+
+## 校验 vs. 代码检查（Lint）
+
+两者不同：
+
+| | 校验（Validation） | 代码检查（Linting） |
+|---|---|---|
+| **检查内容** | 是否符合 OAS 规范定义 | 风格规范、最佳实践、一致性 |
+| **输出** | 通过 / 失败 + 错误位置 | 警告和建议 |
+| **示例错误** | Response 缺少必填 `description` | description 应该是完整句子 |
+
+先跑校验，再跑 lint。一个不合法的规范跑出来的 lint 结果可能有误导性。
+
+## YAML 还是 JSON？
+
+OpenAPI 规范可以用 YAML 或 JSON 编写，两者都合法。YAML 更适合手写，JSON 多见于代码生成。
+
+校验工具支持两种格式。YAML 规范可以先用 [YAML Validator](/tools/yaml-validator) 检查语法，再做 OpenAPI 校验。JSON 规范可以先用 [JSON Formatter](/tools/json-formatter) 验证结构。
+
+## `$ref` 与 `components` 的最佳实践
+
+`$ref` 是 OpenAPI 的复用机制，允许在 `components` 里定义一次，到处引用：
+
+```yaml
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
+paths:
+  /users/{userId}:
+    get:
+      responses:
+        "200":
+          description: "找到用户"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+```
+
+校验器会解析所有 `$ref` 指针，标记无法解析的引用——这能帮你发现 schema 改名或删除后遗留的旧引用。
+
+## JSON Schema 与 OpenAPI 的关系
+
+OpenAPI 3.0 使用 JSON Schema Draft 7 的子集；OpenAPI 3.1 与 JSON Schema Draft 2020-12 完全对齐。常用关键字：
+
+- `type`、`format`、`enum`、`const`
+- `properties`、`required`、`additionalProperties`
+- `items`（数组）、`minItems`、`maxItems`
+- `oneOf`、`anyOf`、`allOf`、`not`
+- `minimum`、`maximum`、`pattern`
+
+需要更深入的 Schema 验证，可以结合 [JSON Schema Validator](/tools/json-schema-validator) 使用。
+
+## 现在就验证你的规范
+
+[ZeroTool OpenAPI 校验工具](/tools/openapi-validator) 支持 YAML 和 JSON，覆盖 OpenAPI 3.0 和 3.1，显示带行号的错误位置，完全在浏览器内运行。
+
+**[打开 OpenAPI 校验工具 →](/tools/openapi-validator)**

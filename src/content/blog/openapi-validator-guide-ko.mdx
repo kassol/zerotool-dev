@@ -1,0 +1,243 @@
+---
+title: "OpenAPI 검증기: OpenAPI 3 스펙을 온라인으로 즉시 검증"
+description: "OpenAPI 스펙을 온라인으로 검증하세요. 필수 필드 누락, 잘못된 $ref, 타입 오류를 브라우저에서 발견 — 스펙 파일은 서버로 전송되지 않습니다."
+pubDate: 2026-04-09
+lang: "ko"
+translationSlug: "openapi-validator-guide"
+tags: ["openapi", "openapi-validator", "api-design", "developer-tools"]
+ogImage: /og/blog-openapi-validator-guide-ko.png
+---
+
+잘못된 OpenAPI 스펙은 코드 생성, 문서 렌더링, SDK 툴체인에서 프로덕션에 닿기도 전에 문제를 일으킵니다. 이 가이드에서는 OpenAPI 3.x의 올바른 구조, 개발자가 자주 마주치는 검증 오류, 그리고 스펙을 어디에도 업로드하지 않고 브라우저에서 검증하는 방법을 설명합니다.
+
+[OpenAPI 스펙 온라인 검증 →](/tools/openapi-validator)
+
+## OpenAPI 3.x의 필수 필드
+
+OpenAPI 문서(JSON 또는 YAML)에는 세 가지 최상위 필수 필드가 있습니다:
+
+```yaml
+openapi: "3.0.3"   # 필수 — 스펙 버전
+info:               # 필수 — API 메타데이터
+  title: My API
+  version: "1.0.0"
+paths: {}           # 필수 — 엔드포인트 정의 (비어도 됨)
+```
+
+`components`, `tags`, `servers`, `security`는 모두 선택 사항입니다. 하지만 선택 사항이라고 무시해도 된다는 뜻은 아닙니다. `components` 안의 해결되지 않은 `$ref`는 가장 흔한 검증 실패 원인입니다.
+
+## OpenAPI 3.x 문서 구조
+
+```
+openapi.yaml
+├── openapi         （버전 문자열）
+├── info            （title、version、description、contact、license）
+├── servers[]       （API의 기본 URL）
+├── paths           （엔드포인트 맵: /users → GET、POST …）
+│   └── {path}
+│       └── {method}
+│           ├── parameters[]
+│           ├── requestBody
+│           └── responses
+│               └── {statusCode}
+│                   └── content
+│                       └── {mediaType}
+│                           └── schema   （← $ref를 자주 사용）
+├── components      （재사용 가능한 스키마、응답、파라미터）
+│   ├── schemas
+│   ├── responses
+│   ├── parameters
+│   └── securitySchemes
+└── security[]      （전역 보안 요구사항）
+```
+
+## 자주 발생하는 검증 오류
+
+### 1. `info` 필수 필드 누락
+
+`title`과 `version`은 `info` 내에서 모두 필수입니다. 하나라도 빠지면 즉시 검증에 실패합니다:
+
+```yaml
+# 잘못됨 — version 없음
+info:
+  title: My API
+
+# 올바름
+info:
+  title: My API
+  version: "1.0.0"
+```
+
+### 2. 해결되지 않는 `$ref`
+
+`$ref` 포인터는 실제로 존재하는 대상을 참조해야 합니다. 경로 오타, `#` 프리픽스 누락, 삭제된 스키마 참조는 모두 끊어진 참조를 만듭니다:
+
+```yaml
+# 잘못됨 — components/schemas에 UserProfile이 없음
+schema:
+  $ref: "#/components/schemas/UserProfile"
+
+# components/schemas에는 "User"만 있고 "UserProfile"은 없음
+# → Unresolved $ref: #/components/schemas/UserProfile
+```
+
+수정 방법: 대소문자를 포함해 경로를 정확히 확인하세요. 검증기로 즉시 찾아낼 수 있습니다.
+
+### 3. 스키마 프로퍼티 타입 오류
+
+OpenAPI 3는 JSON Schema 타입을 사용합니다. 흔한 실수:
+
+```yaml
+# 잘못됨 — "date"는 JSON Schema의 유효한 타입이 아님
+properties:
+  createdAt:
+    type: date    # ✗
+    # 올바른 방법: type: string + format: date
+```
+
+유효한 기본 타입: `string`, `number`, `integer`, `boolean`, `array`, `object`, `null`(OAS 3.1+ 전용).
+
+### 4. `required`가 정의되지 않은 프로퍼티 참조
+
+스키마 내 `required` 배열은 `properties`에 실제로 정의된 필드명만 나열할 수 있습니다:
+
+```yaml
+# 잘못됨
+properties:
+  name:
+    type: string
+  email:
+    type: string
+required:
+  - name
+  - email
+  - phone   # ✗ "phone"은 properties에 없음
+```
+
+### 5. `parameters`에 `in` 또는 `name` 없음
+
+모든 파라미터 객체에는 `name`과 `in`이 필수입니다. `in`의 값은 `path`, `query`, `header`, `cookie` 중 하나여야 합니다:
+
+```yaml
+# 잘못됨 — "in" 없음
+parameters:
+  - name: userId
+    schema:
+      type: string
+
+# 올바름
+parameters:
+  - name: userId
+    in: path
+    required: true
+    schema:
+      type: string
+```
+
+### 6. 경로 파라미터 미선언
+
+경로에 `{variable}`이 포함된 경우 해당 변수를 오퍼레이션 또는 경로 아이템에서 `path` 파라미터로 선언해야 합니다:
+
+```yaml
+# {userId}를 사용하지만 파라미터가 선언되지 않음
+/users/{userId}:
+  get:
+    responses:
+      "200":
+        description: OK
+# → Missing path parameter definition for "userId"
+```
+
+### 7. 응답에 `description` 없음
+
+모든 응답 객체에는 `description`이 필수입니다. 빈 문자열이라도 없는 것보다는 낫습니다:
+
+```yaml
+# 잘못됨
+responses:
+  "200":
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+
+# 올바름
+responses:
+  "200":
+    description: "사용자 객체 반환"
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+```
+
+## 클라이언트 사이드 검증이 중요한 이유
+
+API 스펙에는 종종 민감한 정보가 포함됩니다: 내부 엔드포인트 이름, 인증 방식, 독점적 데이터 모델. 서드파티 서비스에 스펙을 업로드하면 그 데이터가 내 환경을 벗어납니다.
+
+[ZeroTool OpenAPI 검증기](/tools/openapi-validator)는 서버 사이드 도구와 동일한 검증 로직을 사용하되 완전히 브라우저 내에서 실행됩니다. 스펙은 내 컴퓨터를 떠나지 않습니다.
+
+## 검증과 린팅의 차이
+
+| | 검증 (Validation) | 린팅 (Linting) |
+|---|---|---|
+| **확인 내용** | OAS 스펙 기준 스키마 정확성 | 스타일 규칙, 모범 사례, 일관성 |
+| **출력** | 통과 / 실패 + 오류 위치 | 경고 및 제안 |
+| **예시** | 응답의 필수 `description` 누락 | description은 완전한 문장이어야 함 |
+
+항상 검증을 먼저 실행하세요. 유효하지 않은 스펙에 대한 린트 결과는 오해를 불러일으킬 수 있습니다.
+
+## YAML과 JSON 중 어떤 것을 쓸까
+
+OpenAPI 스펙은 YAML 또는 JSON으로 작성할 수 있으며 둘 다 유효합니다. YAML은 사람이 직접 작성하는 스펙에 많이 쓰이고, JSON은 코드 생성 결과물에서 자주 보입니다.
+
+검증기는 두 형식 모두 지원합니다. YAML 스펙은 [YAML Validator](/tools/yaml-validator)로 구문 오류를 먼저 확인하면 효과적입니다. JSON 스펙은 [JSON Formatter](/tools/json-formatter)로 구조를 검토할 수 있습니다.
+
+## `$ref`와 `components` 활용법
+
+`$ref`는 OpenAPI의 재사용 메커니즘입니다. `components`에 한 번 정의하고 문서 전체에서 참조할 수 있습니다:
+
+```yaml
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
+paths:
+  /users/{userId}:
+    get:
+      responses:
+        "200":
+          description: "사용자를 찾았습니다"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+```
+
+검증기는 모든 `$ref` 포인터를 해결하고 해결되지 않는 것들을 표시합니다. 컴포넌트 이름 변경이나 삭제 후 남은 오래된 참조를 찾는 데 도움이 됩니다.
+
+## OpenAPI에서 JSON Schema
+
+OpenAPI 3.0은 JSON Schema Draft 7의 서브셋을 사용합니다. OpenAPI 3.1은 JSON Schema Draft 2020-12와 완전히 정렬됩니다. 자주 사용하는 키워드:
+
+- `type`, `format`, `enum`, `const`
+- `properties`, `required`, `additionalProperties`
+- `items`(배열), `minItems`, `maxItems`
+- `oneOf`, `anyOf`, `allOf`, `not`
+- `minimum`, `maximum`, `pattern`
+
+더 깊은 스키마 검증이 필요하면 [JSON Schema Validator](/tools/json-schema-validator)를 함께 사용하세요.
+
+## 지금 바로 스펙 검증하기
+
+[ZeroTool OpenAPI 검증기](/tools/openapi-validator)는 YAML과 JSON을 지원하고, OpenAPI 3.0과 3.1을 커버하며, 오류를 줄 번호와 함께 표시하고, 완전히 브라우저 내에서 실행됩니다. 업로드 없음, 계정 없음.
+
+**[OpenAPI 검증기 열기 →](/tools/openapi-validator)**

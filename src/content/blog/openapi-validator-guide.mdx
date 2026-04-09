@@ -1,0 +1,247 @@
+---
+title: "OpenAPI Validator: Validate Your OpenAPI 3 Spec Online, Instantly"
+description: "Validate OpenAPI spec online with our free client-side OpenAPI 3 validator. Catch missing required fields, invalid $ref, and type errors without uploading your spec."
+pubDate: 2026-04-09
+lang: "en"
+translationSlug: "openapi-validator-guide-zh"
+tags: ["openapi", "openapi-validator", "api-design", "developer-tools"]
+ogImage: /og/blog-openapi-validator-guide.png
+---
+
+An invalid OpenAPI spec breaks code generation, documentation rendering, and SDK tooling long before it reaches production. This guide covers the OpenAPI 3.x structure you need to get right, the validation errors developers hit most often, and how to validate your spec in the browser without sending it to any server.
+
+[Validate OpenAPI spec online →](/tools/openapi-validator)
+
+## What OpenAPI 3.x Requires
+
+An OpenAPI document is a JSON or YAML file that describes your API surface. The spec has three required top-level fields:
+
+```yaml
+openapi: "3.0.3"   # required — spec version
+info:               # required — API metadata
+  title: My API
+  version: "1.0.0"
+paths: {}           # required — endpoint definitions (can be empty)
+```
+
+Everything else — `components`, `tags`, `servers`, `security` — is optional. But optional doesn't mean unimportant: a missing `$ref` target inside `components` is one of the most common validation failures.
+
+## OpenAPI 3.x Document Structure
+
+```
+openapi.yaml
+├── openapi         (version string)
+├── info            (title, version, description, contact, license)
+├── servers[]       (base URLs for the API)
+├── paths           (endpoint map: /users → GET, POST …)
+│   └── {path}
+│       └── {method}
+│           ├── parameters[]
+│           ├── requestBody
+│           └── responses
+│               └── {statusCode}
+│                   └── content
+│                       └── {mediaType}
+│                           └── schema   (← often uses $ref)
+├── components      (reusable schemas, responses, parameters)
+│   ├── schemas
+│   ├── responses
+│   ├── parameters
+│   └── securitySchemes
+└── security[]      (global security requirements)
+```
+
+## Common Validation Errors
+
+### 1. Missing Required Fields in `info`
+
+`title` and `version` are both required inside `info`. Leaving either out causes an immediate validation failure:
+
+```yaml
+# Invalid — missing version
+info:
+  title: My API
+
+# Valid
+info:
+  title: My API
+  version: "1.0.0"
+```
+
+### 2. Unresolved `$ref`
+
+`$ref` pointers must resolve to something that actually exists. A typo in the path, a missing `#` prefix, or a deleted schema leaves a dangling reference:
+
+```yaml
+# Invalid — schema doesn't exist in components
+schema:
+  $ref: "#/components/schemas/UserProfile"
+
+# components/schemas only has "User", not "UserProfile"
+# → Unresolved $ref: #/components/schemas/UserProfile
+```
+
+Fix: verify the path matches exactly, including case. Use the validator to spot these immediately.
+
+### 3. Wrong Data Type for a Schema Property
+
+OpenAPI 3 uses JSON Schema types. Common mismatches:
+
+```yaml
+# Invalid — "integer" is not a valid JSON Schema type alone without format
+properties:
+  count:
+    type: integer   # ✓ this is fine in OpenAPI 3
+  createdAt:
+    type: date      # ✗ "date" is not a valid type
+    # Fix: use type: string + format: date
+```
+
+Valid primitive types: `string`, `number`, `integer`, `boolean`, `array`, `object`, `null` (OAS 3.1+).
+
+### 4. `required` Array References Undefined Properties
+
+The `required` array inside a schema must only list property names that are actually defined in `properties`:
+
+```yaml
+# Invalid
+properties:
+  name:
+    type: string
+  email:
+    type: string
+required:
+  - name
+  - email
+  - phone   # ✗ "phone" is not in properties
+```
+
+### 5. `parameters` Missing `in` or `name`
+
+Every parameter object requires both `name` and `in`. The `in` value must be one of `path`, `query`, `header`, or `cookie`:
+
+```yaml
+# Invalid — missing "in"
+parameters:
+  - name: userId
+    schema:
+      type: string
+
+# Valid
+parameters:
+  - name: userId
+    in: path
+    required: true
+    schema:
+      type: string
+```
+
+### 6. Path Parameters Not Declared
+
+If a path contains a `{variable}`, that variable must be declared as a `path` parameter somewhere in the operation or path item:
+
+```yaml
+# Path uses {userId} but no matching parameter is declared
+/users/{userId}:
+  get:
+    responses:
+      "200":
+        description: OK
+# → Missing path parameter definition for "userId"
+```
+
+### 7. Response Without `description`
+
+Every response object requires a `description`. Even an empty string is better than omitting it:
+
+```yaml
+# Invalid
+responses:
+  "200":
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+
+# Valid
+responses:
+  "200":
+    description: "Returns the user object"
+    content:
+      application/json:
+        schema:
+          $ref: "#/components/schemas/User"
+```
+
+## Why Client-Side Validation Matters
+
+API specifications often contain sensitive information: internal endpoint names, authentication schemes, proprietary data models. Uploading your spec to a third-party service means that data leaves your environment.
+
+The [ZeroTool OpenAPI Validator](/tools/openapi-validator) runs entirely in the browser using the same validation logic as server-side tools. Your spec never leaves your machine.
+
+## Validation vs. Linting
+
+Validation and linting are different:
+
+| | Validation | Linting |
+|---|---|---|
+| **What it checks** | Schema correctness against the OAS specification | Style rules, best practices, consistency |
+| **Output** | Pass / Fail with error locations | Warnings and suggestions |
+| **Example error** | Missing required `description` on response | Response description should be a complete sentence |
+
+Always run validation first. A spec that fails validation may also have linting warnings, but lint results on an invalid spec can be misleading.
+
+## Validating YAML vs. JSON Specs
+
+OpenAPI specs can be written in either YAML or JSON. Both are valid. YAML is more common for human-authored specs; JSON is common for generated specs.
+
+The validator handles both formats. If you have a YAML spec, you can also cross-check it with the [YAML Validator](/tools/yaml-validator) to catch syntax errors before running OpenAPI validation. For JSON specs, use the [JSON Formatter](/tools/json-formatter) to verify the structure.
+
+## Working with `$ref` and `components`
+
+`$ref` is OpenAPI's mechanism for reuse. It allows schemas, parameters, and responses to be defined once in `components` and referenced anywhere in the document:
+
+```yaml
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
+paths:
+  /users/{userId}:
+    get:
+      responses:
+        "200":
+          description: "User found"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+```
+
+The validator resolves all `$ref` pointers and flags any that cannot be resolved. This catches schema drift — when a component is renamed or deleted but references to the old name remain.
+
+## JSON Schema Inside OpenAPI
+
+OpenAPI 3.0 uses a subset of JSON Schema Draft 7. OpenAPI 3.1 aligns fully with JSON Schema Draft 2020-12. Common keywords:
+
+- `type`, `format`, `enum`, `const`
+- `properties`, `required`, `additionalProperties`
+- `items` (for arrays), `minItems`, `maxItems`
+- `oneOf`, `anyOf`, `allOf`, `not`
+- `minimum`, `maximum`, `pattern`
+
+For deeper schema validation, use the [JSON Schema Validator](/tools/json-schema-validator) alongside the OpenAPI validator.
+
+## Validate Your OpenAPI Spec Now
+
+The [ZeroTool OpenAPI Validator](/tools/openapi-validator) accepts YAML and JSON, supports OpenAPI 3.0 and 3.1, highlights errors with line numbers, and runs entirely in your browser. No upload, no account.
+
+**[Open the OpenAPI Validator →](/tools/openapi-validator)**
