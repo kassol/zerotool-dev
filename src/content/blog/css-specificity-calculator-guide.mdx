@@ -1,0 +1,171 @@
+---
+title: "CSS Specificity Calculator: Check and Debug Selector Weights Online"
+description: "Use our CSS specificity calculator online to check selector weights instantly. Understand the 0-0-0 notation, avoid common gotchas, and fix cascade conflicts."
+pubDate: 2026-04-09
+lang: "en"
+translationSlug: "css-specificity-calculator-guide-zh"
+tags: ["css-specificity", "css-specificity-calculator", "css", "developer-tools"]
+ogImage: /og/blog-css-specificity-calculator-guide.png
+---
+
+CSS specificity decides which rule wins when two selectors target the same element. Get it wrong and you end up fighting your own stylesheet, adding `!important` everywhere, or wondering why a rule refuses to apply. This guide explains how specificity is calculated, the common traps, and how to use the calculator to debug conflicts fast.
+
+[Check CSS specificity online →](/tools/css-specificity-calculator)
+
+## How Specificity Is Calculated
+
+Specificity is a three-number score written as `(a, b, c)`:
+
+| Column | What counts |
+|--------|-------------|
+| `a` | Inline styles (`style=""`) |
+| `b` | IDs (`#id`) |
+| `c` | Classes (`.class`), attributes (`[type]`), pseudo-classes (`:hover`) |
+| *(ignored)* | Elements (`div`, `p`) and pseudo-elements (`::before`) — these are a fourth column sometimes shown as `(a, b, c, d)` |
+
+> **Note:** Different references use 3-column vs 4-column notation. The W3C spec uses four columns `(0,0,0,0)` — the first column is reserved for inline styles. Most tools use the three-column shorthand and treat inline styles separately.
+
+### Examples
+
+```css
+/* Specificity: (0, 0, 1) — one element */
+p { color: red; }
+
+/* Specificity: (0, 1, 0) — one class */
+.intro { color: blue; }
+
+/* Specificity: (0, 1, 1) — one class + one element */
+p.intro { color: green; }
+
+/* Specificity: (1, 0, 0) — one ID */
+#header { color: purple; }
+
+/* Specificity: (1, 1, 0) — one ID + one class */
+#header .nav { color: orange; }
+```
+
+When two rules conflict, the higher score wins. `(1, 0, 0)` beats `(0, 9, 9)` — IDs always outweigh any number of classes.
+
+## Specificity Comparison Rules
+
+Compare left to right:
+
+1. Compare `a`. Higher wins. If equal, move to `b`.
+2. Compare `b`. Higher wins. If equal, move to `c`.
+3. Compare `c`. Higher wins. If still equal, **source order** decides — the last rule in the stylesheet wins.
+
+```css
+/* (0, 2, 0) vs (0, 1, 3) */
+/* a: equal (0 vs 0) */
+/* b: 2 > 1 — first rule wins */
+.nav .link { color: red; }     /* (0,2,0) — wins */
+.nav li span { color: blue; }  /* (0,1,2) */
+```
+
+## The Specificity Hierarchy
+
+From lowest to highest:
+
+```
+Element/pseudo-element  →  Class/attribute/pseudo-class  →  ID  →  Inline style  →  !important
+    (0,0,0,1)                       (0,0,1,0)               (0,1,0,0)   (1,0,0,0)
+```
+
+`!important` overrides everything but is not a specificity value — it escalates a declaration outside the normal cascade. Overriding an `!important` requires another `!important` with equal or higher specificity.
+
+## Common Gotchas
+
+### The Universal Selector Has Zero Specificity
+
+`*` contributes nothing to specificity. `* .active` is `(0,1,0)`, not `(0,1,1)`.
+
+### `:not()` Is Transparent, Its Argument Is Not
+
+`:not(p)` contributes zero specificity, but `p` inside it contributes `(0,0,1)`. So `div:not(.hidden)` is `(0,1,1)`.
+
+### `:is()`, `:where()`, and `:has()`
+
+- `:is()` — takes the highest specificity of its argument list
+- `:where()` — always contributes zero specificity (useful for resets)
+- `:has()` — takes the highest specificity of its argument list
+
+```css
+/* (0, 1, 0) — :is() takes specificity of .active */
+:is(.active, p) { color: red; }
+
+/* (0, 0, 0) — :where() always zero */
+:where(.active, p) { color: red; }
+```
+
+### CSS Variables Do Not Affect Specificity
+
+The specificity of a property using `var()` is determined by the selector, not the variable origin.
+
+### Inherited Properties Are Not Specificity-Dependent
+
+If a child inherits a property (like `color`) from a parent, any explicit rule on the child wins regardless of how specific the parent rule is.
+
+## Debugging a Specificity Conflict
+
+The typical workflow when a style refuses to apply:
+
+1. Open DevTools → inspect the element → look at the Styles panel
+2. Struck-through rules are overridden — hover to see which rule wins
+3. Copy the winning selector and the losing selector into the [CSS Specificity Calculator](/tools/css-specificity-calculator)
+4. Compare scores — the losing selector needs a higher score or restructuring
+
+### Example Fix
+
+```css
+/* Problem: this rule is not applying */
+.card p { font-size: 14px; }  /* (0,1,1) */
+
+/* This rule is winning */
+#content p { font-size: 16px; }  /* (1,0,1) */
+
+/* Fix options: */
+/* 1. Add an ID to match */
+#content .card p { font-size: 14px; }  /* (1,1,1) */
+
+/* 2. Restructure to avoid ID specificity */
+.card p { font-size: 14px !important; }  /* avoid if possible */
+
+/* 3. Better: refactor #content to a class */
+.content .card p { font-size: 14px; }  /* (0,2,1) — keep it flat */
+```
+
+The cleaner long-term fix is usually to reduce reliance on ID selectors in stylesheets.
+
+## Practical Specificity Strategy
+
+**Keep specificity flat.** Flat specificity scales better. Aim to write selectors at `(0,1,0)` or `(0,1,1)` — one class, maybe one element.
+
+**Avoid ID selectors in CSS.** Use IDs for JavaScript hooks only. Replace `#header nav` with `.site-header .nav` — same styling, easier to override.
+
+**Layer your styles.** CSS `@layer` lets you control cascade order independently of specificity. Low-specificity rules in a `utilities` layer can still override high-specificity rules in a `base` layer.
+
+```css
+@layer base, components, utilities;
+
+@layer base {
+  #header { color: black; }  /* (1,0,0) */
+}
+
+@layer utilities {
+  .text-white { color: white; }  /* (0,1,0) — still wins over base */
+}
+```
+
+**Avoid `!important` as a first resort.** Once you start using `!important`, you need `!important` to override `!important`. Refactor the selector instead.
+
+## Related CSS Tools
+
+- [CSS Unit Converter](/tools/css-unit-converter) — convert between px, rem, em, vw, and more
+- [CSS Variables Generator](/tools/css-variables-generator) — generate and manage design tokens
+- [CSS Grid Generator](/tools/css-grid-generator) — build grid layouts visually
+
+## Check Specificity Without Counting by Hand
+
+The [ZeroTool CSS Specificity Calculator](/tools/css-specificity-calculator) parses any selector and returns the exact `(a, b, c)` score, highlights each contributing part, and compares multiple selectors side-by-side. No sign-up, runs in the browser.
+
+**[Open the CSS Specificity Calculator →](/tools/css-specificity-calculator)**

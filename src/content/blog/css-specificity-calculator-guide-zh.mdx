@@ -1,0 +1,159 @@
+---
+title: "CSS 优先级计算器：在线检查选择器权重，快速调试样式冲突"
+description: "用 CSS 优先级计算器在线检查选择器权重，理解 0-0-0 三列记法、常见坑点和层叠规则，告别乱用 !important。"
+pubDate: 2026-04-09
+lang: "zh"
+translationSlug: "css-specificity-calculator-guide"
+tags: ["css-specificity", "css-specificity-calculator", "css", "developer-tools"]
+ogImage: /og/blog-css-specificity-calculator-guide-zh.png
+---
+
+两条规则同时作用于同一元素，谁赢谁输？答案是 CSS 优先级（Specificity）。搞不清楚优先级，你就会陷入疯狂堆 `!important` 的泥潭，或者反复在 DevTools 里调试"为什么样式不生效"。本文讲清楚计算规则、常见陷阱，以及如何用计算器快速定位冲突。
+
+[在线检查 CSS 优先级 →](/tools/css-specificity-calculator)
+
+## 优先级怎么算
+
+优先级用三列数字表示 `(a, b, c)`：
+
+| 列 | 计什么 |
+|----|--------|
+| `a` | ID 选择器（`#id`） |
+| `b` | 类（`.class`）、属性（`[type]`）、伪类（`:hover`） |
+| `c` | 元素（`div`、`p`）、伪元素（`::before`） |
+
+内联样式（`style=""`）在三列之上，权重最高，单独处理。
+
+### 示例
+
+```css
+/* 优先级：(0, 0, 1) — 一个元素 */
+p { color: red; }
+
+/* 优先级：(0, 1, 0) — 一个类 */
+.intro { color: blue; }
+
+/* 优先级：(0, 1, 1) — 一个类 + 一个元素 */
+p.intro { color: green; }
+
+/* 优先级：(1, 0, 0) — 一个 ID */
+#header { color: purple; }
+
+/* 优先级：(1, 1, 0) — 一个 ID + 一个类 */
+#header .nav { color: orange; }
+```
+
+两条规则冲突时，数字更大的胜出。`(1, 0, 0)` 比 `(0, 99, 99)` 高——一个 ID 能击败任意数量的类。
+
+## 比较规则：从左往右
+
+1. 先比 `a`，大的赢；相等则比 `b`
+2. 再比 `b`，大的赢；相等则比 `c`
+3. 再比 `c`，大的赢；还相等则**源码顺序**决定——后声明的规则胜出
+
+```css
+/* (0,2,0) vs (0,1,2) */
+/* a 相等；b: 2 > 1，第一条赢 */
+.nav .link { color: red; }    /* (0,2,0) — 胜 */
+.nav li span { color: blue; } /* (0,1,2) */
+```
+
+## 优先级层级
+
+从低到高：
+
+```
+元素/伪元素  →  类/属性/伪类  →  ID  →  内联样式  →  !important
+  (0,0,1)        (0,1,0)      (1,0,0)   内联最高
+```
+
+`!important` 不是优先级值，它把声明"提出"正常层叠之外。要覆盖 `!important`，只能用同等或更高优先级的另一条 `!important`——这就是为什么一旦开始用就停不下来。
+
+## 常见坑
+
+### 通配符 `*` 优先级为零
+
+`*` 不贡献任何数字。`*.active` 等于 `.active`，优先级是 `(0,1,0)`。
+
+### `:not()` 本身为零，但参数有优先级
+
+`:not(p)` 贡献零，但括号里的 `p` 贡献 `(0,0,1)`。所以 `div:not(.hidden)` 是 `(0,1,1)`。
+
+### `:is()`、`:where()`、`:has()`
+
+- `:is()` — 取参数列表中**最高**的优先级
+- `:where()` — 始终贡献**零**（适合写重置样式）
+- `:has()` — 同 `:is()`，取最高优先级
+
+```css
+/* (0,1,0) — :is() 取 .active 的优先级 */
+:is(.active, p) { color: red; }
+
+/* (0,0,0) — :where() 永远为零 */
+:where(.active, p) { color: red; }
+```
+
+### CSS 变量不影响优先级
+
+使用 `var()` 的属性，优先级由选择器决定，与变量定义位置无关。
+
+## 调试优先级冲突的流程
+
+样式"不生效"时：
+
+1. DevTools → 检查元素 → Styles 面板
+2. 被划线的规则表示被覆盖——鼠标悬停可查看赢家
+3. 把两个选择器复制到 [CSS 优先级计算器](/tools/css-specificity-calculator) 对比分数
+4. 判断输家是否需要提高优先级，或者重构选择器
+
+### 修复示例
+
+```css
+/* 问题：这条规则没有生效 */
+.card p { font-size: 14px; }   /* (0,1,1) */
+
+/* 这条赢了 */
+#content p { font-size: 16px; } /* (1,0,1) */
+
+/* 方案一：提升优先级 */
+#content .card p { font-size: 14px; }  /* (1,1,1) */
+
+/* 方案二（推荐）：把 ID 改成类，保持扁平 */
+.content .card p { font-size: 14px; }  /* (0,2,1) */
+```
+
+长期最优解通常是在样式表中避免使用 ID 选择器。
+
+## 优先级实践原则
+
+**保持扁平。** 把选择器控制在 `(0,1,0)` 到 `(0,2,1)` 的范围内，项目越大越受益。
+
+**ID 只留给 JS。** CSS 中用类替代 ID，方便后续覆盖。`#header nav` → `.site-header .nav`。
+
+**用 `@layer` 管理层叠。** CSS `@layer` 可以独立于优先级控制层叠顺序——`utilities` 层里低优先级的规则可以覆盖 `base` 层里的高优先级规则。
+
+```css
+@layer base, components, utilities;
+
+@layer base {
+  #header { color: black; }   /* (1,0,0) */
+}
+
+@layer utilities {
+  .text-white { color: white; } /* (0,1,0) — 仍然胜出 */
+}
+```
+
+**`!important` 是最后手段。** 先尝试重构选择器，实在不行再用。
+
+## 相关 CSS 工具
+
+- [CSS 单位转换器](/tools/css-unit-converter) — px、rem、em、vw 互转
+- [CSS 变量生成器](/tools/css-variables-generator) — 管理设计 token
+- [CSS Grid 生成器](/tools/css-grid-generator) — 可视化构建网格布局
+
+## 不用手算，直接上计算器
+
+[ZeroTool CSS 优先级计算器](/tools/css-specificity-calculator) 解析任意选择器，给出精确的 `(a, b, c)` 分数，并高亮显示每个贡献部分，支持多个选择器并排比较。无需注册，在浏览器中运行。
+
+**[打开 CSS 优先级计算器 →](/tools/css-specificity-calculator)**
