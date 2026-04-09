@@ -1,0 +1,229 @@
+---
+title: "AES 암호화 도구: 브라우저에서 텍스트를 안전하게 암호화·복호화"
+description: "AES-GCM으로 브라우저에서 텍스트를 암호화·복호화하세요. AES 동작 원리·키 크기·모드 선택 방법과 Web Crypto API 구현 예제를 설명합니다."
+pubDate: 2026-04-09
+lang: "ko"
+translationSlug: "aes-encrypt-decrypt-guide"
+tags: ["aes-encryption", "aes-encrypt-decrypt", "cryptography", "aes-gcm", "developer-tools"]
+ogImage: /og/blog-aes-encrypt-decrypt-guide-ko.png
+---
+
+AES(Advanced Encryption Standard)는 HTTPS 통신, 암호화 파일시스템, 패스워드 매니저를 지탱하는 대칭 암호화 알고리즘입니다. 이 가이드에서는 AES의 기본 원리, AES-GCM이 대부분의 상황에서 최선인 이유, 그리고 브라우저에서 동작하는 클라이언트사이드 암호화 구현 방법을 설명합니다.
+
+[브라우저에서 AES로 텍스트 암호화하기 →](/tools/aes-encrypt-decrypt)
+
+## AES란?
+
+AES는 2001년 NIST가 표준화한 대칭 블록 암호입니다. "대칭"은 암호화와 복호화에 동일한 키를 사용한다는 의미이고, "블록 암호"는 128비트 고정 크기 블록 단위로 데이터를 처리한다는 의미입니다.
+
+AES는 56비트 키를 사용하는 DES를 대체하기 위해 등장했습니다. 지원하는 키 크기는 세 가지입니다:
+
+| 키 크기 | 보안 수준 | 주요 용도 |
+|--------|---------|---------|
+| AES-128 | 약 128비트 | 범용·고속 |
+| AES-192 | 약 192비트 | 중간 (거의 사용 안 함) |
+| AES-256 | 약 256비트 | 고보안·금융·공공기관 |
+
+현대 하드웨어에서 AES-128과 AES-256의 성능 차이는 무시할 수준이므로 특별한 이유가 없으면 **AES-256**을 선택합니다.
+
+## AES 동작 원리 (수학 없이)
+
+AES-256은 14라운드의 변환을 반복합니다. 각 라운드에서 4가지 연산을 수행합니다:
+
+1. **SubBytes** — 고정 S-Box(치환표)로 각 바이트를 치환해 비선형성을 도입
+2. **ShiftRows** — 4×4 상태 행렬의 각 행을 0~3바이트씩 좌측으로 순환 이동
+3. **MixColumns** — GF(2⁸) 위의 곱셈으로 각 열의 바이트를 혼합
+4. **AddRoundKey** — 마스터 키에서 파생된 라운드 키를 XOR
+
+이 4단계가 "혼돈(Confusion)"과 "확산(Diffusion)"을 실현합니다. AES-256의 14라운드 이후 출력은 완전한 난수와 구별되지 않습니다.
+
+## 동작 모드 선택
+
+AES는 128비트 블록 암호입니다. 더 긴 메시지를 처리하려면 블록을 연결하는 "모드"가 필요합니다:
+
+### ECB (전자 코드북 모드) — 절대 사용 금지
+
+ECB는 각 블록을 독립적으로 암호화합니다. 동일한 16바이트 블록은 항상 동일한 암호문이 됩니다. 따라서 평문의 패턴이 암호문에 그대로 드러납니다. BMP 이미지를 ECB로 암호화하면 원본 형태가 보이는 'ECB 펭귄'이 유명한 사례입니다.
+
+### CBC (암호 블록 체이닝) — 구형 표준
+
+각 블록을 암호화하기 전에 이전 암호문 블록과 XOR합니다. ECB의 문제를 해결하지만 패딩 오라클 공격(POODLE, BEAST)에 취약합니다. 또한 인증 태그가 없어 위변조를 탐지할 수 없습니다.
+
+### GCM (갈루아/카운터 모드) — 이걸 쓰세요
+
+AES-GCM은 인증 암호화(AEAD) 모드입니다. 암호화에 AES-CTR을 사용하면서 128비트 인증 태그(GHASH)를 생성합니다. 태그가 핵심 장점입니다:
+
+- **기밀성**: 키 소지자만 내용을 읽을 수 있음
+- **무결성**: 1비트라도 변조되면 복호화 실패
+- **인증**: 메시지가 실제로 키 소지자로부터 왔음을 보장
+
+AES-GCM은 96비트 논스(nonce)가 필요합니다. **같은 키로 같은 논스를 재사용하면 보안이 완전히 무너집니다** — 매번 랜덤하게 생성해야 합니다.
+
+## 브라우저 구현 (Web Crypto API)
+
+현대 브라우저는 **Web Crypto API**를 기본 지원합니다. 하드웨어 가속을 활용하고 원시 키 재료를 JavaScript에 노출하지 않습니다.
+
+```javascript
+// AES-GCM으로 텍스트 암호화 (Web Crypto API)
+async function encrypt(plaintext, password) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+
+  // PBKDF2로 패스워드에서 키 도출
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 200_000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+
+  // 랜덤 논스 생성
+  const nonce = crypto.getRandomValues(new Uint8Array(12)); // 96비트
+
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    data
+  );
+
+  // salt + nonce + 암호문을 base64로 반환
+  const combined = new Uint8Array([
+    ...salt,
+    ...nonce,
+    ...new Uint8Array(ciphertext)
+  ]);
+  return btoa(String.fromCharCode(...combined));
+}
+
+// 복호화
+async function decrypt(base64, password) {
+  const encoder = new TextEncoder();
+  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+  const salt       = combined.slice(0, 16);
+  const nonce      = combined.slice(16, 28);
+  const ciphertext = combined.slice(28);
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    ciphertext
+  );
+
+  return new TextDecoder().decode(plaintext);
+}
+```
+
+### PBKDF2가 필요한 이유
+
+패스워드는 짧고 엔트로피가 낮아 AES 키로 직접 사용할 수 없습니다. PBKDF2는:
+
+1. 패스워드와 랜덤 솔트를 결합 (레인보우 테이블 공격 방어)
+2. SHA-256을 20만 번 반복 (브루트 포스 공격 비용 증가)
+3. 256비트의 암호학적으로 안전한 키를 출력
+
+20만 번 반복은 정상 사용자에게 약 100ms가 걸리지만, 공격자가 수백만 개의 패스워드를 시도하는 비용을 크게 높입니다.
+
+## Python 구현
+
+```python
+import os
+import base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+def derive_key(password: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,           # 256비트
+        salt=salt,
+        iterations=200_000,
+    )
+    return kdf.derive(password.encode())
+
+def encrypt(plaintext: str, password: str) -> str:
+    salt  = os.urandom(16)
+    nonce = os.urandom(12)  # GCM용 96비트 논스
+    key   = derive_key(password, salt)
+
+    aesgcm     = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
+
+    payload = salt + nonce + ciphertext
+    return base64.b64encode(payload).decode()
+
+def decrypt(encoded: str, password: str) -> str:
+    payload    = base64.b64decode(encoded)
+    salt       = payload[:16]
+    nonce      = payload[16:28]
+    ciphertext = payload[28:]
+
+    key    = derive_key(password, salt)
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, None).decode()
+
+# 사용 예
+encrypted = encrypt("비밀 메시지", "my-password")
+print(encrypted)  # base64 인코딩된 salt+nonce+암호문+태그
+
+decrypted = decrypt(encrypted, "my-password")
+print(decrypted)  # 비밀 메시지
+```
+
+## 키 관리 함정
+
+AES-256-GCM은 계산상 안전합니다. 실제 약점은 구현과 키 관리에 있습니다:
+
+**하드코딩된 키**: 소스 코드에 키를 넣지 마세요. git 히스토리·로그·빌드 아티팩트에 남습니다. 환경변수 또는 AWS Secrets Manager·HashiCorp Vault를 사용하세요.
+
+**환경 간 키 공유**: 개발·스테이징·프로덕션에서 별도의 키를 사용하세요. 개발 환경의 키 유출이 프로덕션에 영향을 주어서는 안 됩니다.
+
+**키 순환 계획 없음**: 키가 유출되었을 때 기존 데이터를 새 키로 재암호화할 수 있는 메커니즘을 미리 설계하세요.
+
+**약한 패스워드**: PBKDF2 기반 암호화의 보안은 패스워드 강도에 의존합니다. 길고 랜덤한 패스프레이즈를 사용하세요.
+
+## 클라이언트사이드 암호화의 장점
+
+브라우저에서 암호화하면 서버는 평문을 볼 수 없습니다. Bitwarden이 바로 이 구조입니다: Vault는 기기에서 암호화된 후 서버로 전송됩니다. 서버는 읽을 수 없는 암호문만 보관합니다.
+
+이는 서버사이드 암호화(SSE)와 대조적입니다. SSE는 서버가 암호화·복호화를 수행하므로 스토리지 도난에는 강하지만 서버 자체가 침해될 경우 대응할 수 없습니다.
+
+민감한 개인 데이터에는 키가 기기를 떠나지 않는 클라이언트사이드 암호화를 우선 고려하세요.
+
+## 온라인 AES 암호화 도구
+
+[ZeroTool AES Encrypt/Decrypt 도구](/tools/aes-encrypt-decrypt)는 Web Crypto API를 사용한 AES-256-GCM을 브라우저에서 실행합니다. 평문도 키도 서버로 전송되지 않습니다. 텍스트를 붙여 넣고 패스워드를 입력하면 즉시 암호화·복호화 결과를 얻을 수 있습니다.
+
+**[AES 암호화 도구 사용하기 →](/tools/aes-encrypt-decrypt)**

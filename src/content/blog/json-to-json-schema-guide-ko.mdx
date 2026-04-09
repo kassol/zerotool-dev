@@ -1,0 +1,242 @@
+---
+title: "JSON to JSON Schema 생성기: 실제 데이터에서 스키마 자동 생성"
+description: "JSON을 붙여 넣으면 JSON Schema draft-07을 즉시 생성. 타입 추론·required 필드·중첩 구조 처리 방법과 Ajv·jsonschema 활용 예제를 설명합니다."
+pubDate: 2026-04-09
+lang: "ko"
+translationSlug: "json-to-json-schema-guide"
+tags: ["json-schema", "json-to-json-schema", "schema-validation", "api-design", "developer-tools"]
+ogImage: /og/blog-json-to-json-schema-guide-ko.png
+---
+
+JSON을 붙여 넣으면 JSON Schema가 반환됩니다. 간단한 기능이지만 세부사항이 중요합니다. 이 가이드에서는 스키마 생성기가 무엇을 추론하는지, 어디서 수동 검토가 필요한지, 실제 프로젝트에서 어떻게 활용하는지 설명합니다.
+
+[JSON에서 JSON Schema 생성하기 →](/tools/json-to-json-schema)
+
+## JSON Schema란?
+
+JSON Schema는 JSON 문서의 구조를 설명하는 어휘입니다. "이 객체에는 어떤 속성이 있는가", "어떤 것이 필수인가", "어떤 타입이 허용되는가"와 같은 질문에 답합니다.
+
+간단한 예:
+
+```json
+// 입력 JSON
+{
+  "userId": 42,
+  "email": "alice@example.com",
+  "active": true
+}
+
+// 생성된 JSON Schema (draft-07)
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": { "type": "integer" },
+    "email": { "type": "string" },
+    "active": { "type": "boolean" }
+  },
+  "required": ["userId", "email", "active"]
+}
+```
+
+스키마는 구체적인 값을 하드코딩하지 않고 데이터의 형태를 표현합니다. 이를 사용해 동일한 구조에 대해 다른 JSON 객체를 검증할 수 있습니다.
+
+## 타입 추론 방식
+
+생성기는 JSON의 각 값을 검사해 JSON Schema 타입에 매핑합니다:
+
+| JSON 값 | JSON Schema 타입 |
+|--------|---------------|
+| `42` | `"integer"` |
+| `3.14` | `"number"` |
+| `"hello"` | `"string"` |
+| `true` / `false` | `"boolean"` |
+| `null` | `"null"` |
+| `[...]` | `"array"` |
+| `{...}` | `"object"` |
+
+**integer vs number**: JSON은 정수와 소수를 구분하지 않습니다. 생성기는 소수 부분이 있으면 `"number"`, 정수면 `"integer"`로 추론합니다. 필드가 나중에 `1.5`가 될 수 있다면 `"number"`로 수동 변경하세요.
+
+**null 처리**: `null` 값은 `"type": "null"`이 됩니다. 필드가 문자열일 수도 null일 수도 있다면 `"type": ["string", "null"]`로 수동 편집이 필요합니다. 단일 샘플로는 추론할 수 없습니다.
+
+## required 필드
+
+입력 JSON에 있는 모든 속성은 기본적으로 `required`로 표시됩니다. 생성기는 어떤 필드가 시스템상 선택적인지 알 수 없기 때문입니다.
+
+`required` 배열을 검토하고 실제로 선택적인 필드를 제거하세요. 예를 들어 `middleName`이 없을 수 있다면 `required`에서 제거합니다. `"nullable": true`는 OpenAPI 확장이며 표준 JSON Schema가 아닙니다.
+
+## 중첩 객체와 배열
+
+생성기는 임의 깊이의 중첩을 처리합니다:
+
+```json
+// 입력
+{
+  "user": {
+    "name": "Alice",
+    "address": {
+      "city": "서울",
+      "zip": "04524"
+    }
+  },
+  "tags": ["developer", "admin"]
+}
+
+// 생성된 스키마 (발췌)
+{
+  "type": "object",
+  "properties": {
+    "user": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" },
+            "zip": { "type": "string" }
+          },
+          "required": ["city", "zip"]
+        }
+      },
+      "required": ["name", "address"]
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["user", "tags"]
+}
+```
+
+**배열 요소 타입**: 요소가 있는 경우 첫 번째 요소의 타입으로 `items`를 설정합니다. 빈 배열(`[]`)이면 `items`가 생략됩니다. 다양한 타입이 섞인 배열이면 첫 번째 요소의 타입만 반영됩니다.
+
+## 실제 프로젝트에서 활용하기
+
+### Ajv로 검증 (JavaScript)
+
+```javascript
+import Ajv from 'ajv';
+
+const ajv = new Ajv();
+const schema = {
+  type: 'object',
+  properties: {
+    userId: { type: 'integer' },
+    email: { type: 'string', format: 'email' },
+    active: { type: 'boolean' }
+  },
+  required: ['userId', 'email', 'active'],
+  additionalProperties: false  // 생성기는 추가하지 않지만 유용함
+};
+
+const validate = ajv.compile(schema);
+
+const data = { userId: 1, email: 'alice@example.com', active: true };
+if (!validate(data)) {
+  console.error(validate.errors);
+}
+```
+
+`additionalProperties: false`를 추가하면 스키마에 정의되지 않은 키를 가진 객체를 거부할 수 있습니다. API 검증에 유용합니다.
+
+### jsonschema로 검증 (Python)
+
+```python
+from jsonschema import validate, ValidationError
+
+schema = {
+    "type": "object",
+    "properties": {
+        "userId": {"type": "integer"},
+        "email": {"type": "string"},
+        "active": {"type": "boolean"}
+    },
+    "required": ["userId", "email", "active"]
+}
+
+data = {"userId": 1, "email": "alice@example.com", "active": True}
+
+try:
+    validate(instance=data, schema=schema)
+    print("Valid")
+except ValidationError as e:
+    print(f"Invalid: {e.message}")
+```
+
+### FastAPI에서의 활용
+
+FastAPI는 Pydantic으로 검증하지만 JSON Schema도 출력합니다. API 응답 샘플을 생성기에 넣으면 Pydantic 모델을 빠르게 프로토타입할 수 있습니다:
+
+```python
+from pydantic import BaseModel
+from typing import Optional
+
+class UserResponse(BaseModel):
+    userId: int
+    email: str
+    active: bool
+    middleName: Optional[str] = None  # required 아님
+```
+
+FastAPI가 생성하는 OpenAPI/JSON Schema 호환 스펙과 교차 검증할 수 있습니다.
+
+## 스키마에 제약 조건 추가하기
+
+생성된 출력은 구조적 뼈대입니다. 실제 검증에 유용하게 만들려면 제약 조건을 추가합니다:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "maxLength": 254
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 150
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "inactive", "pending"]
+    }
+  },
+  "required": ["userId", "email"]
+}
+```
+
+자주 추가하는 제약 조건:
+- `"format": "email"` / `"format": "uri"` / `"format": "date-time"` — 의미론적 문자열 제약
+- `"minimum"` / `"maximum"` — 숫자 범위
+- `"minLength"` / `"maxLength"` — 문자열 길이 제한
+- `"pattern"` — 정규식 기반 문자열 제약
+- `"enum"` — 허용 값 목록 지정
+
+## JSON Schema 드래프트
+
+생성기는 가장 널리 지원되는 **draft-07**을 기준으로 합니다:
+
+| 드래프트 | 특징 |
+|--------|------|
+| draft-04 | 기본값. 어디서나 동작 |
+| draft-06 | `const`·`contains`·`propertyNames` 추가 |
+| draft-07 | `if`/`then`/`else`·`readOnly`·`writeOnly` 추가 |
+| draft-2019-09 | 어휘 시스템·`$recursiveRef` |
+| draft-2020-12 | `prefixItems`·`unevaluatedProperties` |
+
+오래된 검증기(Python `jsonschema` 4.0 미만 등)를 사용하는 경우 draft-04나 draft-06을 사용하세요. Ajv 8.x는 기본적으로 draft-2020-12를 사용합니다.
+
+## JSON Schema 즉시 생성하기
+
+[ZeroTool JSON to JSON Schema 생성기](/tools/json-to-json-schema)는 임의의 JSON 객체에서 완전한 draft-07 스키마를 실시간으로 추론합니다. JSON을 붙여 넣고 스키마를 복사해 검증을 시작하세요. 가입 불필요, 브라우저에서 모두 실행됩니다.
+
+**[JSON to JSON Schema 생성기 사용하기 →](/tools/json-to-json-schema)**

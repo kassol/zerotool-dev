@@ -1,0 +1,227 @@
+---
+title: "AES 暗号化ツール：ブラウザでテキストを安全に暗号化・復号"
+description: "AES-GCM を使ってブラウザ内でテキストを暗号化・復号。AES の仕組み・鍵サイズ・動作モードの選び方と Web Crypto API の実装例を解説します。"
+pubDate: 2026-04-09
+lang: "ja"
+translationSlug: "aes-encrypt-decrypt-guide"
+tags: ["aes-encryption", "aes-encrypt-decrypt", "cryptography", "aes-gcm", "developer-tools"]
+ogImage: /og/blog-aes-encrypt-decrypt-guide-ja.png
+---
+
+AES（Advanced Encryption Standard）は、HTTPS通信・暗号化ファイルシステム・パスワードマネージャーを支える対称暗号アルゴリズムです。このガイドでは、AES の基本原理・AES-GCM が標準的な選択肢である理由・ブラウザだけで動くクライアントサイド暗号化の実装方法を解説します。
+
+[ブラウザでテキストを AES 暗号化する →](/tools/aes-encrypt-decrypt)
+
+## AES とは
+
+AES は 2001 年に NIST が標準化した対称ブロック暗号です。「対称」とは暗号化と復号に同じ鍵を使うことを意味します。「ブロック暗号」とは 128 ビットの固定長ブロック単位でデータを処理することを意味します。
+
+AES は 56 ビット鍵の DES を置き換える形で登場しました。鍵サイズは 3 種類：
+
+| 鍵サイズ | セキュリティレベル | 用途 |
+|---------|-----------------|------|
+| AES-128 | 約 128 ビット | 汎用・高速 |
+| AES-192 | 約 192 ビット | 中間（ほぼ使われない） |
+| AES-256 | 約 256 ビット | 高セキュリティ・金融・政府系 |
+
+現代のハードウェアでは AES-128 と AES-256 の速度差はほぼ無視できるため、特別な理由がなければ **AES-256** を選びます。
+
+## AES の動作原理（数学なし版）
+
+AES-256 は 14 ラウンドの変換を繰り返します。各ラウンドで 4 つの操作を実行します：
+
+1. **SubBytes** — 固定の S-Box（置換表）で各バイトを置換し、非線形性を導入
+2. **ShiftRows** — 4×4 状態行列の各行を 0〜3 バイトずつ左シフト
+3. **MixColumns** — GF(2⁸) 上の乗算で各列のバイトを混合
+4. **AddRoundKey** — 主鍵から派生したラウンド鍵を XOR
+
+この 4 ステップが「混乱（Confusion）」と「拡散（Diffusion）」を実現します。14 ラウンド後の出力は乱数と区別がつきません。
+
+## 動作モードの選び方
+
+AES は 128 ビットのブロック暗号です。長いメッセージを処理するにはブロックを連鎖させる「モード」が必要です：
+
+### ECB（電子符号帳モード）— 絶対に使わない
+
+ECB は各ブロックを独立して暗号化します。同じ 16 バイトのブロックは常に同じ暗号文になるため、平文のパターンが暗号文に透けて見えます。BMP 画像を ECB で暗号化すると、暗号化後も輪郭が残る「ECBペンギン」が有名な例です。
+
+### CBC（暗号ブロック連鎖）— 旧標準
+
+各ブロックを暗号化する前に前のブロックの暗号文と XOR します。ECB の問題を解決しますが、パディングオラクル攻撃（POODLE、BEAST）の影響を受けます。また認証タグがないため、改ざんを検出できません。
+
+### GCM（ガロア/カウンタモード）— これを使う
+
+AES-GCM は認証付き暗号化（AEAD）モードです。暗号化に AES-CTR を使いながら、128 ビットの認証タグ（GHASH）を生成します。タグが鍵の優位性です：
+
+- **機密性**：鍵を持つ者だけが内容を読める
+- **完全性**：1 ビットでも改ざんされると復号が失敗する
+- **認証**：メッセージが本当に鍵所持者から送られたことを保証
+
+AES-GCM には 96 ビットのノンス（nonce）が必要です。**同じ鍵で同じノンスを再利用すると安全性が完全に崩壊**するため、毎回ランダムに生成します。
+
+## ブラウザでの実装（Web Crypto API）
+
+現代のブラウザは **Web Crypto API** を標準実装しています。ハードウェアアクセラレーションを活用し、生の鍵素材を JavaScript に露出させません。
+
+```javascript
+// AES-GCM でテキストを暗号化（Web Crypto API）
+async function encrypt(plaintext, password) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+
+  // PBKDF2 でパスワードから鍵を導出
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 200_000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+
+  // ランダムなノンスを生成
+  const nonce = crypto.getRandomValues(new Uint8Array(12)); // 96 ビット
+
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    data
+  );
+
+  // salt + nonce + 暗号文 を base64 で返す
+  const combined = new Uint8Array([
+    ...salt,
+    ...nonce,
+    ...new Uint8Array(ciphertext)
+  ]);
+  return btoa(String.fromCharCode(...combined));
+}
+
+// 復号
+async function decrypt(base64, password) {
+  const encoder = new TextEncoder();
+  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+  const salt     = combined.slice(0, 16);
+  const nonce    = combined.slice(16, 28);
+  const ciphertext = combined.slice(28);
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: nonce },
+    key,
+    ciphertext
+  );
+
+  return new TextDecoder().decode(plaintext);
+}
+```
+
+### なぜ PBKDF2 が必要か
+
+パスワードは短くエントロピーが低いため、そのまま AES 鍵に使えません。PBKDF2 は：
+
+1. ランダムなソルトとパスワードを組み合わせる（レインボーテーブル対策）
+2. SHA-256 を 20 万回繰り返す（ブルートフォース対策）
+3. 256 ビットの暗号学的に安全な鍵を出力する
+
+20 万回のイテレーションは正規ユーザーに約 100ms かかりますが、攻撃者が数百万のパスワードを試すコストを大幅に引き上げます。
+
+## Python 実装
+
+```python
+import os
+import base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+def derive_key(password: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,           # 256 ビット
+        salt=salt,
+        iterations=200_000,
+    )
+    return kdf.derive(password.encode())
+
+def encrypt(plaintext: str, password: str) -> str:
+    salt  = os.urandom(16)
+    nonce = os.urandom(12)  # GCM 用 96 ビットノンス
+    key   = derive_key(password, salt)
+
+    aesgcm     = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
+
+    payload = salt + nonce + ciphertext
+    return base64.b64encode(payload).decode()
+
+def decrypt(encoded: str, password: str) -> str:
+    payload    = base64.b64decode(encoded)
+    salt       = payload[:16]
+    nonce      = payload[16:28]
+    ciphertext = payload[28:]
+
+    key    = derive_key(password, salt)
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, None).decode()
+
+# 使用例
+encrypted = encrypt("秘密のメッセージ", "my-password")
+print(encrypted)  # base64 エンコードされた salt+nonce+暗号文+タグ
+
+decrypted = decrypt(encrypted, "my-password")
+print(decrypted)  # 秘密のメッセージ
+```
+
+## 鍵管理の落とし穴
+
+AES-256-GCM は計算上安全です。破るべき弱点は実装と鍵管理にあります：
+
+**ハードコードされた鍵**：ソースコードに鍵を埋め込まないでください。git 履歴・ログ・ビルド成果物に残ります。環境変数や AWS Secrets Manager・HashiCorp Vault を使いましょう。
+
+**環境間での鍵共有**：開発・ステージング・本番で別の鍵を使います。開発環境の鍵漏洩が本番に影響してはなりません。
+
+**鍵ローテーション計画なし**：鍵が漏洩したとき、既存データを新しい鍵で再暗号化できる仕組みを事前に設計します。
+
+**弱いパスワード**：PBKDF2 ベースの暗号化のセキュリティはパスワード強度に依存します。長くランダムなパスフレーズを使いましょう。
+
+## クライアントサイド暗号化の利点
+
+ブラウザで暗号化する場合、サーバーは平文を見ません。Bitwarden の構造がまさにこれです：Vault はデバイス上で暗号化されてからサーバーに送られます。サーバーが読めない暗号文しか保持しません。
+
+これはサーバーサイド暗号化（SSE）とは対照的です。SSE はサーバーが暗号化・復号を行うため、ストレージ盗難には強いですが、サーバー自体が侵害された場合に対処できません。
+
+## AES 暗号化をオンラインで試す
+
+[ZeroTool の AES Encrypt/Decrypt ツール](/tools/aes-encrypt-decrypt)は、Web Crypto API を使った AES-256-GCM をブラウザ内で実行します。平文も鍵もサーバーに送られません。テキストを貼り付けてパスワードを設定するだけで即座に暗号化・復号できます。
+
+**[AES 暗号化ツールを試す →](/tools/aes-encrypt-decrypt)**

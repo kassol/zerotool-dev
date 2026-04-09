@@ -1,0 +1,240 @@
+---
+title: "JSON to JSON Schema ジェネレーター：実データからスキーマを自動生成"
+description: "JSON を貼り付けるだけで JSON Schema draft-07 を即座に生成。型推論・required フィールド・ネスト構造の仕組みと Ajv・jsonschema での活用方法を解説します。"
+pubDate: 2026-04-09
+lang: "ja"
+translationSlug: "json-to-json-schema-guide"
+tags: ["json-schema", "json-to-json-schema", "schema-validation", "api-design", "developer-tools"]
+ogImage: /og/blog-json-to-json-schema-guide-ja.png
+---
+
+JSON を貼り付けると JSON Schema が返ってくる。シンプルな機能ですが、詳細が重要です。このガイドでは、スキーマジェネレーターが何を推論するか、どこで判断が必要か、実プロジェクトでの使い方を解説します。
+
+[JSON から JSON Schema を生成する →](/tools/json-to-json-schema)
+
+## JSON Schema とは
+
+JSON Schema は JSON ドキュメントの構造を記述するための語彙です。「このオブジェクトにはどんなプロパティがあるか」「どれが必須か」「どんな型が許可されているか」といった問いに答えます。
+
+シンプルな例：
+
+```json
+// 入力 JSON
+{
+  "userId": 42,
+  "email": "alice@example.com",
+  "active": true
+}
+
+// 生成された JSON Schema（draft-07）
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": { "type": "integer" },
+    "email": { "type": "string" },
+    "active": { "type": "boolean" }
+  },
+  "required": ["userId", "email", "active"]
+}
+```
+
+スキーマは具体的な値をハードコードせずにデータの形状を表現します。他の JSON オブジェクトを同じ構造に対してバリデーションするために使用できます。
+
+## 型推論のしくみ
+
+ジェネレーターは JSON の各値を検査して JSON Schema の型にマッピングします：
+
+| JSON の値 | JSON Schema の型 |
+|----------|----------------|
+| `42` | `"integer"` |
+| `3.14` | `"number"` |
+| `"hello"` | `"string"` |
+| `true` / `false` | `"boolean"` |
+| `null` | `"null"` |
+| `[...]` | `"array"` |
+| `{...}` | `"object"` |
+
+**integer vs number**：JSON は整数と小数を区別しません。ジェネレーターは小数部分があれば `"number"`、整数なら `"integer"` として推論します。フィールドが将来 `1.5` になる可能性があるなら手動で `"number"` に変更してください。
+
+**null の扱い**：`null` 値は `"type": "null"` になります。フィールドが文字列にも null にもなりうる場合は `"type": ["string", "null"]` と手動で編集が必要です。単一サンプルからは推論できません。
+
+## required フィールド
+
+入力 JSON に存在するすべてのプロパティはデフォルトで `required` になります。ジェネレーターはどのフィールドがシステム上省略可能かを知らないためです。
+
+`required` 配列を見直して、本当にオプションのフィールドを削除してください。たとえば `middleName` が省略できる場合、`required` から削除します（`"nullable": true` は OpenAPI の拡張であり、標準の JSON Schema ではありません）。
+
+## ネストされたオブジェクトと配列
+
+ジェネレーターは任意の深さのネストを処理します：
+
+```json
+// 入力
+{
+  "user": {
+    "name": "Alice",
+    "address": {
+      "city": "東京",
+      "zip": "100-0001"
+    }
+  },
+  "tags": ["developer", "admin"]
+}
+
+// 生成スキーマ（抜粋）
+{
+  "type": "object",
+  "properties": {
+    "user": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" },
+            "zip": { "type": "string" }
+          },
+          "required": ["city", "zip"]
+        }
+      },
+      "required": ["name", "address"]
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["user", "tags"]
+}
+```
+
+**配列の要素型**：要素がある場合、ジェネレーターは先頭の要素の型を使って `items` を設定します。空配列（`[]`）の場合、`items` は省略されます。異なる型が混在する配列の場合、先頭の要素の型のみが反映されます。
+
+## 実プロジェクトでの使い方
+
+### Ajv でバリデーション（JavaScript）
+
+```javascript
+import Ajv from 'ajv';
+
+const ajv = new Ajv();
+const schema = {
+  type: 'object',
+  properties: {
+    userId: { type: 'integer' },
+    email: { type: 'string', format: 'email' },
+    active: { type: 'boolean' }
+  },
+  required: ['userId', 'email', 'active'],
+  additionalProperties: false  // ジェネレーターは追加しないが有用
+};
+
+const validate = ajv.compile(schema);
+
+const data = { userId: 1, email: 'alice@example.com', active: true };
+if (!validate(data)) {
+  console.error(validate.errors);
+}
+```
+
+`additionalProperties: false` を追加することで、スキーマに定義されていないキーを持つオブジェクトを拒否できます。ジェネレーターはこれを追加しませんが、API バリデーションには便利です。
+
+### jsonschema でバリデーション（Python）
+
+```python
+from jsonschema import validate, ValidationError
+
+schema = {
+    "type": "object",
+    "properties": {
+        "userId": {"type": "integer"},
+        "email": {"type": "string"},
+        "active": {"type": "boolean"}
+    },
+    "required": ["userId", "email", "active"]
+}
+
+data = {"userId": 1, "email": "alice@example.com", "active": True}
+
+try:
+    validate(instance=data, schema=schema)
+    print("Valid")
+except ValidationError as e:
+    print(f"Invalid: {e.message}")
+```
+
+### FastAPI でのスキーマ活用
+
+FastAPI は Pydantic を使ってバリデーションしますが、JSON Schema も出力します。API レスポンスのサンプルをジェネレーターに通すと、Pydantic モデルのプロトタイプを素早く作れます：
+
+```python
+from pydantic import BaseModel
+from typing import Optional
+
+class UserResponse(BaseModel):
+    userId: int
+    email: str
+    active: bool
+    middleName: Optional[str] = None  # required ではない
+```
+
+## スキーマに制約を追加する
+
+生成された出力は構造的な骨格です。バリデーションに役立てるには制約を追加します：
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "maxLength": 254
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 150
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "inactive", "pending"]
+    }
+  },
+  "required": ["userId", "email"]
+}
+```
+
+よく使う追加制約：
+- `"format": "email"` / `"format": "uri"` / `"format": "date-time"` — セマンティック制約
+- `"minimum"` / `"maximum"` — 数値の範囲
+- `"minLength"` / `"maxLength"` — 文字列長の制限
+- `"pattern"` — 正規表現による文字列制約
+- `"enum"` — 許可する値を列挙
+
+## JSON Schema のドラフト
+
+ジェネレーターは最も広くサポートされている **draft-07** を対象としています：
+
+| ドラフト | 特徴 |
+|--------|------|
+| draft-04 | ベースライン。どこでも動く |
+| draft-06 | `const`・`contains`・`propertyNames` 追加 |
+| draft-07 | `if`/`then`/`else`・`readOnly`・`writeOnly` 追加 |
+| draft-2019-09 | 語彙システム・`$recursiveRef` |
+| draft-2020-12 | `prefixItems`・`unevaluatedProperties` |
+
+古いバリデーター（Python の `jsonschema` 4.0 未満など）を使う場合は draft-04 か draft-06 を使います。Ajv 8.x はデフォルトで draft-2020-12 です。
+
+## JSON Schema を即座に生成する
+
+[ZeroTool の JSON to JSON Schema ジェネレーター](/tools/json-to-json-schema)は、任意の JSON オブジェクトから完全な draft-07 スキーマをリアルタイムで推論します。JSON を貼り付けてスキーマをコピーし、バリデーションを開始できます。サインアップ不要で、すべてブラウザ内で動作します。
+
+**[JSON to JSON Schema ジェネレーターを試す →](/tools/json-to-json-schema)**
