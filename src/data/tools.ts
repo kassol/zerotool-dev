@@ -6,7 +6,7 @@ export interface ToolTranslation {
 export interface ToolInfo {
   slug: string;
   translations: Record<string, ToolTranslation>;
-  category: 'data' | 'encoding' | 'text' | 'security' | 'dev';
+  category: 'data' | 'encoding' | 'text' | 'security' | 'dev' | 'api';
 }
 
 export function getToolName(tool: ToolInfo, lang: string): string {
@@ -79,6 +79,7 @@ export const allTools: ToolInfo[] = [
   { slug: 'json-to-kotlin', translations: { en: { name: 'JSON to Kotlin Data Class', description: 'Generate Kotlin data classes from JSON. Handles nested objects, arrays, and nullable fields. Supports custom root class name.' }, zh: { name: 'JSON 转 Kotlin 数据类', description: '从 JSON 生成 Kotlin data class，支持嵌套对象、数组和可空字段，可自定义根类名。' }, ja: { name: 'JSON → Kotlin データクラス', description: 'JSONからKotlin data classを生成。ネストオブジェクト・配列・Nullable対応。ルートクラス名設定可能。' }, ko: { name: 'JSON → Kotlin 데이터 클래스', description: 'JSON에서 Kotlin data class 생성. 중첩 객체, 배열, nullable 필드 지원. 루트 클래스 이름 설정 가능.' } }, category: 'dev' },
   { slug: 'json-to-go-struct', translations: { en: { name: 'JSON to Go Struct', description: 'Generate Go structs with json tags from JSON. Handles nested objects, arrays, and nullable fields as pointers.' }, zh: { name: 'JSON 转 Go Struct', description: '从 JSON 生成带 json tag 的 Go struct，支持嵌套对象、数组和指针类型的可空字段。' }, ja: { name: 'JSON → Go 構造体', description: 'JSONからjsonタグ付きGo構造体を生成。ネストオブジェクト・配列・ポインタNullable対応。' }, ko: { name: 'JSON → Go 구조체', description: 'JSON에서 json 태그가 있는 Go 구조체 생성. 중첩 객체, 배열, 포인터 nullable 필드 지원.' } }, category: 'dev' },
   { slug: 'unicode-text-converter', translations: { en: { name: 'Unicode Text Converter', description: 'Convert text to Unicode decorative styles: Bold, Italic, Script, Fraktur, Double-Struck, Circled, and more. One-click copy for each style.' }, zh: { name: 'Unicode 文字转换器', description: '将文本转换为多种 Unicode 装饰样式：粗体、斜体、手写体、哥特体、空心字、圆圈字等，一键复制。' }, ja: { name: 'Unicode テキスト変換', description: 'テキストをUnicode装飾スタイルに変換：太字・斜体・筆記体・ゴシック・中空文字・丸囲みなど。ワンクリックでコピー。' }, ko: { name: 'Unicode 텍스트 변환기', description: '텍스트를 다양한 Unicode 장식 스타일로 변환: 굵게, 기울임, 스크립트, 프락투르, 이중선, 동그라미 등. 한 번 클릭으로 복사.' } }, category: 'text' },
+  { slug: 'openapi-validator', translations: { en: { name: 'OpenAPI Validator', description: 'Validate OpenAPI 3.0 and 3.1 specs (YAML or JSON) online. Shows validation errors with paths, spec info, and endpoint counts. 100% client-side.' }, zh: { name: 'OpenAPI 验证器', description: '在线验证 OpenAPI 3.0 和 3.1 规范（YAML 或 JSON），显示带路径的错误信息、规范摘要和接口数量。纯浏览器端运行。' }, ja: { name: 'OpenAPI バリデーター', description: 'OpenAPI 3.0・3.1仕様（YAML/JSON）をオンラインで検証。パス付きエラー・仕様情報・エンドポイント数を表示。完全ブラウザ完結。' }, ko: { name: 'OpenAPI 유효성 검사기', description: 'OpenAPI 3.0 및 3.1 스펙(YAML 또는 JSON)을 온라인으로 검사. 경로가 있는 오류, 스펙 정보, 엔드포인트 수 표시. 100% 클라이언트사이드.' } }, category: 'api' },
 ];
 
 /** Return related tools for a given slug: same category first, then others. */
