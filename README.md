@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 52 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 63 tools and growing.
 
 ## Tools
 
@@ -40,6 +40,7 @@
 | Image to Base64 Converter | [/tools/image-to-base64](https://zerotool.dev/tools/image-to-base64) |
 | CSS to Tailwind Converter | [/tools/css-to-tailwind](https://zerotool.dev/tools/css-to-tailwind) |
 | CSS Unit Converter | [/tools/css-unit-converter](https://zerotool.dev/tools/css-unit-converter) |
+| CSS Specificity Calculator | [/tools/css-specificity-calculator](https://zerotool.dev/tools/css-specificity-calculator) |
 | Markdown Table Generator | [/tools/markdown-table-generator](https://zerotool.dev/tools/markdown-table-generator) |
 | JSON to TypeScript Generator | [/tools/json-to-typescript](https://zerotool.dev/tools/json-to-typescript) |
 | Fake Data Generator | [/tools/fake-data-generator](https://zerotool.dev/tools/fake-data-generator) |
@@ -61,6 +62,16 @@
 | SVG to PNG Converter | [/tools/svg-to-png-converter](https://zerotool.dev/tools/svg-to-png-converter) |
 | WebP Converter | [/tools/webp-converter](https://zerotool.dev/tools/webp-converter) |
 | CSS Variables Generator | [/tools/css-variables-generator](https://zerotool.dev/tools/css-variables-generator) |
+| CSS Grid Generator | [/tools/css-grid-generator](https://zerotool.dev/tools/css-grid-generator) |
+| JSONPath Tester | [/tools/jsonpath-tester](https://zerotool.dev/tools/jsonpath-tester) |
+| CSS Flexbox Generator | [/tools/css-flexbox-generator](https://zerotool.dev/tools/css-flexbox-generator) |
+| JSON to JSON Schema | [/tools/json-to-json-schema](https://zerotool.dev/tools/json-to-json-schema) |
+| Morse Code Translator | [/tools/morse-code-translator](https://zerotool.dev/tools/morse-code-translator) |
+| AES Encrypt / Decrypt | [/tools/aes-encrypt-decrypt](https://zerotool.dev/tools/aes-encrypt-decrypt) |
+| JSON to Kotlin Data Class | [/tools/json-to-kotlin](https://zerotool.dev/tools/json-to-kotlin) |
+| JSON to Go Struct | [/tools/json-to-go-struct](https://zerotool.dev/tools/json-to-go-struct) |
+| Unicode Text Converter | [/tools/unicode-text-converter](https://zerotool.dev/tools/unicode-text-converter) |
+| OpenAPI Validator | [/tools/openapi-validator](https://zerotool.dev/tools/openapi-validator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
