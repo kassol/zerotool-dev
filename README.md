@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 63 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 65 tools and growing.
 
 ## Tools
 
@@ -72,6 +72,8 @@
 | JSON to Go Struct | [/tools/json-to-go-struct](https://zerotool.dev/tools/json-to-go-struct) |
 | Unicode Text Converter | [/tools/unicode-text-converter](https://zerotool.dev/tools/unicode-text-converter) |
 | OpenAPI Validator | [/tools/openapi-validator](https://zerotool.dev/tools/openapi-validator) |
+| CSV to Markdown Table | [/tools/csv-to-markdown](https://zerotool.dev/tools/csv-to-markdown) |
+| Text to Binary Converter | [/tools/text-to-binary](https://zerotool.dev/tools/text-to-binary) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
