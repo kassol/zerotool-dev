@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 65 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 61 tools and growing.
 
 ## Tools
 
@@ -40,7 +40,6 @@
 | Image to Base64 Converter | [/tools/image-to-base64](https://zerotool.dev/tools/image-to-base64) |
 | CSS to Tailwind Converter | [/tools/css-to-tailwind](https://zerotool.dev/tools/css-to-tailwind) |
 | CSS Unit Converter | [/tools/css-unit-converter](https://zerotool.dev/tools/css-unit-converter) |
-| CSS Specificity Calculator | [/tools/css-specificity-calculator](https://zerotool.dev/tools/css-specificity-calculator) |
 | Markdown Table Generator | [/tools/markdown-table-generator](https://zerotool.dev/tools/markdown-table-generator) |
 | JSON to TypeScript Generator | [/tools/json-to-typescript](https://zerotool.dev/tools/json-to-typescript) |
 | Fake Data Generator | [/tools/fake-data-generator](https://zerotool.dev/tools/fake-data-generator) |
@@ -71,9 +70,6 @@
 | JSON to Kotlin Data Class | [/tools/json-to-kotlin](https://zerotool.dev/tools/json-to-kotlin) |
 | JSON to Go Struct | [/tools/json-to-go-struct](https://zerotool.dev/tools/json-to-go-struct) |
 | Unicode Text Converter | [/tools/unicode-text-converter](https://zerotool.dev/tools/unicode-text-converter) |
-| OpenAPI Validator | [/tools/openapi-validator](https://zerotool.dev/tools/openapi-validator) |
-| CSV to Markdown Table | [/tools/csv-to-markdown](https://zerotool.dev/tools/csv-to-markdown) |
-| Text to Binary Converter | [/tools/text-to-binary](https://zerotool.dev/tools/text-to-binary) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
