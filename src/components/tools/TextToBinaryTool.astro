@@ -1,0 +1,256 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="tb-wrap">
+    <div class="tb-options">
+      <label class="tb-opt-label" data-i18n="formatLabel">Format</label>
+      <div class="tb-format-btns">
+        <button id="tb-fmt-spaced" class="tb-fmt-btn active" data-fmt="spaced" type="button" data-i18n="fmtSpaced">Spaced</button>
+        <button id="tb-fmt-continuous" class="tb-fmt-btn" data-fmt="continuous" type="button" data-i18n="fmtContinuous">Continuous</button>
+      </div>
+    </div>
+
+    <div class="tb-panels">
+      <div class="tb-panel">
+        <label for="tb-text">
+          <span data-i18n="labelText">Text</span>
+          <button id="tb-copy-text" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="tb-text"
+          placeholder="Hello"
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="tb-panel">
+        <label for="tb-binary">
+          <span data-i18n="labelBinary">Binary</span>
+          <button id="tb-copy-binary" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="tb-binary"
+          placeholder="01001000 01100101 01101100 01101100 01101111"
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="tb-actions">
+      <button id="tb-to-binary" class="btn-primary" data-i18n="toBinary">Text → Binary</button>
+      <button id="tb-to-text" class="btn-primary" data-i18n="toText">Binary → Text</button>
+      <button id="tb-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="tb-status" class="tb-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', toBinary: 'Text \u2192 Binary', toText: 'Binary \u2192 Text', formatLabel: 'Format', fmtSpaced: 'Spaced', fmtContinuous: 'Continuous', labelText: 'Text', labelBinary: 'Binary', convertedToBin: 'Converted {n} character{s} to binary.', convertedToText: 'Converted binary to {n} character{s}.', errorPrefix: 'Error: ' },
+        zh: { copy: '复制', copied: '已复制！', clear: '清除', toBinary: '文本 \u2192 二进制', toText: '二进制 \u2192 文本', formatLabel: '格式', fmtSpaced: '空格分隔', fmtContinuous: '连续', labelText: '文本', labelBinary: '二进制', convertedToBin: '已将 {n} 个字符转换为二进制。', convertedToText: '已将二进制转换为 {n} 个字符。', errorPrefix: '错误：' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', toBinary: 'テキスト \u2192 バイナリ', toText: 'バイナリ \u2192 テキスト', formatLabel: 'フォーマット', fmtSpaced: 'スペース区切り', fmtContinuous: '連続', labelText: 'テキスト', labelBinary: 'バイナリ', convertedToBin: '{n} 文字をバイナリに変換しました。', convertedToText: 'バイナリを {n} 文字に変換しました。', errorPrefix: 'エラー：' },
+        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', toBinary: '텍스트 \u2192 바이너리', toText: '바이너리 \u2192 텍스트', formatLabel: '형식', fmtSpaced: '공백 구분', fmtContinuous: '연속', labelText: '텍스트', labelBinary: '바이너리', convertedToBin: '{n}자를 바이너리로 변환했습니다.', convertedToText: '바이너리를 {n}자로 변환했습니다.', errorPrefix: '오류: ' }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.tb-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+
+      var textEl = document.getElementById('tb-text');
+      var binEl = document.getElementById('tb-binary');
+      var statusEl = document.getElementById('tb-status');
+      var copyTextBtn = document.getElementById('tb-copy-text');
+      var copyBinBtn = document.getElementById('tb-copy-binary');
+      var currentFmt = 'spaced';
+
+      /* ── Format buttons ── */
+      document.querySelectorAll('.tb-fmt-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('.tb-fmt-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentFmt = btn.getAttribute('data-fmt');
+          if (textEl.value.trim()) doTextToBinary();
+        });
+      });
+
+      function charMsg(tmpl, n) {
+        return tmpl.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+      }
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tb-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'tb-status';
+      }
+
+      /* ── Text → Binary ── */
+      function doTextToBinary() {
+        var text = textEl.value;
+        if (!text) { clearStatus(); return; }
+        try {
+          var encoder = new TextEncoder();
+          var bytes = encoder.encode(text);
+          var parts = [];
+          for (var i = 0; i < bytes.length; i++) {
+            parts.push(bytes[i].toString(2).padStart(8, '0'));
+          }
+          binEl.value = currentFmt === 'spaced' ? parts.join(' ') : parts.join('');
+          setStatus(charMsg(t.convertedToBin, [...text].length), false);
+          window.trackTool && window.trackTool('text_to_binary', 'text_to_binary');
+        } catch (e) {
+          setStatus(t.errorPrefix + e.message, true);
+        }
+      }
+
+      /* ── Binary → Text ── */
+      function doBinaryToText() {
+        var raw = binEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          /* strip all whitespace to normalise both spaced and continuous input */
+          var bits = raw.replace(/\s+/g, '');
+          if (bits.length % 8 !== 0) throw new Error('Binary length must be a multiple of 8.');
+          if (!/^[01]+$/.test(bits)) throw new Error('Input must contain only 0 and 1.');
+          var bytes = [];
+          for (var i = 0; i < bits.length; i += 8) {
+            bytes.push(parseInt(bits.slice(i, i + 8), 2));
+          }
+          var decoder = new TextDecoder('utf-8', { fatal: true });
+          var result = decoder.decode(new Uint8Array(bytes));
+          textEl.value = result;
+          setStatus(charMsg(t.convertedToText, [...result].length), false);
+          window.trackTool && window.trackTool('text_to_binary', 'binary_to_text');
+        } catch (e) {
+          setStatus(t.errorPrefix + e.message, true);
+        }
+      }
+
+      /* ── Real-time text → binary (debounced 300ms) ── */
+      var _textTimer = null;
+      textEl.addEventListener('input', function () {
+        clearTimeout(_textTimer);
+        _textTimer = setTimeout(doTextToBinary, 300);
+      });
+
+      /* ── Buttons ── */
+      document.getElementById('tb-to-binary').addEventListener('click', doTextToBinary);
+      document.getElementById('tb-to-text').addEventListener('click', doBinaryToText);
+
+      document.getElementById('tb-clear').addEventListener('click', function () {
+        textEl.value = '';
+        binEl.value = '';
+        clearStatus();
+      });
+
+      /* ── Copy buttons ── */
+      copyTextBtn.addEventListener('click', function () {
+        if (!textEl.value) return;
+        navigator.clipboard.writeText(textEl.value).then(function () {
+          copyTextBtn.textContent = t.copied;
+          setTimeout(function () { copyTextBtn.textContent = t.copy; }, 1500);
+        });
+      });
+
+      copyBinBtn.addEventListener('click', function () {
+        if (!binEl.value) return;
+        navigator.clipboard.writeText(binEl.value).then(function () {
+          copyBinBtn.textContent = t.copied;
+          setTimeout(function () { copyBinBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .tb-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .tb-options {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .tb-opt-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .tb-format-btns { display: flex; gap: 0.35rem; }
+
+  .tb-fmt-btn {
+    padding: 0.25rem 0.65rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .tb-fmt-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .tb-fmt-btn.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+
+  .tb-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .tb-panels { grid-template-columns: 1fr; }
+  }
+
+  .tb-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .tb-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .tb-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .tb-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .tb-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .tb-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .tb-status.success { color: #057a55; }
+  .tb-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .tb-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .tb-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .tb-status.success { color: #34d399; }
+  [data-theme="dark"] .tb-status.error { color: #f87171; }
+</style>

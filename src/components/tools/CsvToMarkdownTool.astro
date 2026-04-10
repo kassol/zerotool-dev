@@ -1,0 +1,308 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="cm-wrap">
+    <div class="cm-options">
+      <label class="cm-opt-label">
+        <span data-i18n="alignment">Column Alignment</span>
+      </label>
+      <div class="cm-align-btns">
+        <button id="cm-align-left" class="cm-align-btn active" data-align="left" type="button" data-i18n="alignLeft">Left</button>
+        <button id="cm-align-center" class="cm-align-btn" data-align="center" type="button" data-i18n="alignCenter">Center</button>
+        <button id="cm-align-right" class="cm-align-btn" data-align="right" type="button" data-i18n="alignRight">Right</button>
+      </div>
+    </div>
+
+    <div class="cm-panels">
+      <div class="cm-panel">
+        <label for="cm-csv">
+          <span>CSV</span>
+          <button id="cm-copy-csv" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="cm-csv"
+          placeholder="name,age,city&#10;Alice,30,&quot;New York&quot;&#10;Bob,25,London"
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="cm-panel">
+        <label for="cm-md">
+          <span>Markdown</span>
+          <button id="cm-copy-md" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="cm-md"
+          placeholder="| name  | age | city     |&#10;| :---- | :-- | :------- |&#10;| Alice | 30  | New York |&#10;| Bob   | 25  | London   |"
+          spellcheck="false"
+          readonly
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="cm-actions">
+      <button id="cm-convert" class="btn-primary" data-i18n="convert">CSV → Markdown</button>
+      <button id="cm-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="cm-status" class="cm-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', convert: 'CSV \u2192 Markdown', alignment: 'Column Alignment', alignLeft: 'Left', alignCenter: 'Center', alignRight: 'Right', converted: 'Converted {n} row{s} to Markdown table.', errorPrefix: 'Error: ' },
+        zh: { copy: '复制', copied: '已复制！', clear: '清除', convert: 'CSV \u2192 Markdown', alignment: '列对齐', alignLeft: '左对齐', alignCenter: '居中', alignRight: '右对齐', converted: '已将 {n} 行转换为 Markdown 表格。', errorPrefix: '错误：' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', convert: 'CSV \u2192 Markdown', alignment: '列の配置', alignLeft: '左揃え', alignCenter: '中央揃え', alignRight: '右揃え', converted: '{n} 行を Markdown テーブルに変換しました。', errorPrefix: 'エラー：' },
+        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', convert: 'CSV \u2192 Markdown', alignment: '열 정렬', alignLeft: '왼쪽', alignCenter: '가운데', alignRight: '오른쪽', converted: '{n}행을 Markdown 표로 변환했습니다.', errorPrefix: '오류: ' }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.cm-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+
+      var csvEl = document.getElementById('cm-csv');
+      var mdEl = document.getElementById('cm-md');
+      var statusEl = document.getElementById('cm-status');
+      var copyCsvBtn = document.getElementById('cm-copy-csv');
+      var copyMdBtn = document.getElementById('cm-copy-md');
+      var currentAlign = 'left';
+
+      /* ── Alignment buttons ── */
+      document.querySelectorAll('.cm-align-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('.cm-align-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentAlign = btn.getAttribute('data-align');
+          if (csvEl.value.trim()) doConvert();
+        });
+      });
+
+      function rowMsg(n) {
+        return t.converted.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+      }
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'cm-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'cm-status';
+      }
+
+      /* ── CSV parser: handles quoted fields ── */
+      function parseCsv(text) {
+        var rows = [];
+        var row = [];
+        var field = '';
+        var inQuote = false;
+        var i = 0;
+        var len = text.length;
+
+        while (i < len) {
+          var ch = text[i];
+          if (inQuote) {
+            if (ch === '"') {
+              if (i + 1 < len && text[i + 1] === '"') { field += '"'; i += 2; }
+              else { inQuote = false; i++; }
+            } else { field += ch; i++; }
+          } else {
+            if (ch === '"') { inQuote = true; i++; }
+            else if (ch === ',') { row.push(field); field = ''; i++; }
+            else if (ch === '\r') {
+              row.push(field); field = ''; rows.push(row); row = []; i++;
+              if (i < len && text[i] === '\n') i++;
+            } else if (ch === '\n') { row.push(field); field = ''; rows.push(row); row = []; i++; }
+            else { field += ch; i++; }
+          }
+        }
+        if (field || row.length > 0) { row.push(field); rows.push(row); }
+        if (rows.length > 0) { var last = rows[rows.length - 1]; if (last.length === 1 && last[0] === '') rows.pop(); }
+        return rows;
+      }
+
+      /* ── Escape Markdown pipe chars ── */
+      function escapeMd(val) {
+        return val.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+      }
+
+      /* ── Build separator line based on alignment ── */
+      function sepCell(width, align) {
+        if (align === 'center') return ':' + '-'.repeat(Math.max(width - 2, 1)) + ':';
+        if (align === 'right') return '-'.repeat(Math.max(width - 1, 1)) + ':';
+        return ':' + '-'.repeat(Math.max(width - 1, 1));
+      }
+
+      function doConvert() {
+        var raw = csvEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          var rows = parseCsv(raw);
+          if (rows.length < 1) throw new Error('No data found.');
+
+          var headers = rows[0];
+          var dataRows = rows.slice(1);
+
+          /* compute column widths */
+          var widths = headers.map(function (h) { return Math.max(escapeMd(h).length, 3); });
+          dataRows.forEach(function (row) {
+            for (var c = 0; c < headers.length; c++) {
+              var cell = row[c] !== undefined ? escapeMd(row[c]) : '';
+              if (cell.length > widths[c]) widths[c] = cell.length;
+            }
+          });
+
+          /* header row */
+          var headerLine = '| ' + headers.map(function (h, i) {
+            return escapeMd(h).padEnd(widths[i]);
+          }).join(' | ') + ' |';
+
+          /* separator row */
+          var sepLine = '| ' + widths.map(function (w) {
+            return sepCell(w + 2, currentAlign);
+          }).join(' | ') + ' |';
+
+          /* data rows */
+          var lines = [headerLine, sepLine];
+          dataRows.forEach(function (row) {
+            var line = '| ' + headers.map(function (_, c) {
+              var cell = row[c] !== undefined ? escapeMd(row[c]) : '';
+              return cell.padEnd(widths[c]);
+            }).join(' | ') + ' |';
+            lines.push(line);
+          });
+
+          mdEl.value = lines.join('\n');
+          setStatus(rowMsg(dataRows.length), false);
+          window.trackTool && window.trackTool('csv_to_markdown', 'convert');
+        } catch (e) {
+          setStatus(t.errorPrefix + e.message, true);
+        }
+      }
+
+      /* ── Real-time conversion (debounced 300ms) ── */
+      var _liveTimer = null;
+      csvEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(doConvert, 300);
+      });
+
+      /* ── Convert button ── */
+      document.getElementById('cm-convert').addEventListener('click', doConvert);
+
+      /* ── Clear ── */
+      document.getElementById('cm-clear').addEventListener('click', function () {
+        csvEl.value = '';
+        mdEl.value = '';
+        clearStatus();
+      });
+
+      /* ── Copy buttons ── */
+      copyCsvBtn.addEventListener('click', function () {
+        if (!csvEl.value) return;
+        navigator.clipboard.writeText(csvEl.value).then(function () {
+          copyCsvBtn.textContent = t.copied;
+          setTimeout(function () { copyCsvBtn.textContent = t.copy; }, 1500);
+        });
+      });
+
+      copyMdBtn.addEventListener('click', function () {
+        if (!mdEl.value) return;
+        navigator.clipboard.writeText(mdEl.value).then(function () {
+          copyMdBtn.textContent = t.copied;
+          setTimeout(function () { copyMdBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .cm-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cm-options {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .cm-opt-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .cm-align-btns { display: flex; gap: 0.35rem; }
+
+  .cm-align-btn {
+    padding: 0.25rem 0.65rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .cm-align-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .cm-align-btn.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+
+  .cm-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .cm-panels { grid-template-columns: 1fr; }
+  }
+
+  .cm-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .cm-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .cm-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .cm-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .cm-panel textarea[readonly] { cursor: default; }
+
+  .cm-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .cm-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .cm-status.success { color: #057a55; }
+  .cm-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cm-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .cm-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .cm-status.success { color: #34d399; }
+  [data-theme="dark"] .cm-status.error { color: #f87171; }
+</style>
