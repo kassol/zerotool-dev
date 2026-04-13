@@ -1,0 +1,449 @@
+---
+// SvgToJsxTool — SVG to React JSX component converter, pure JS, zero deps
+---
+<div class="stj-wrap">
+  <div class="stj-options">
+    <div class="stj-opt-row">
+      <label class="stj-opt-label" for="stj-name" data-i18n="componentName">Component name</label>
+      <input id="stj-name" class="stj-name-input" type="text" value="MyIcon" spellcheck="false" autocomplete="off" />
+    </div>
+    <div class="stj-opt-row">
+      <label class="stj-checkbox-label">
+        <input type="checkbox" id="stj-typescript" />
+        <span data-i18n="typescript">TypeScript (React.FC)</span>
+      </label>
+      <label class="stj-checkbox-label">
+        <input type="checkbox" id="stj-forwardref" />
+        <span data-i18n="forwardRef">forwardRef</span>
+      </label>
+      <label class="stj-checkbox-label">
+        <input type="checkbox" id="stj-memo" />
+        <span data-i18n="memo">memo</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="stj-panes">
+    <div class="stj-pane">
+      <label class="stj-label" for="stj-input" data-i18n="inputLabel">SVG Input</label>
+      <textarea
+        id="stj-input"
+        class="stj-textarea"
+        spellcheck="false"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        data-i18n-ph="placeholder"
+        placeholder="<!-- paste your SVG here -->"
+      ></textarea>
+    </div>
+    <div class="stj-pane">
+      <div class="stj-pane-header">
+        <label class="stj-label" for="stj-output" data-i18n="outputLabel">JSX Output</label>
+        <button id="stj-copy" class="stj-copy-btn" data-i18n="copy">Copy</button>
+      </div>
+      <textarea
+        id="stj-output"
+        class="stj-textarea stj-textarea--output"
+        spellcheck="false"
+        readonly
+      ></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'SVG Input',
+          outputLabel: 'JSX Output',
+          copy: 'Copy',
+          copied: 'Copied!',
+          placeholder: '<!-- paste your SVG here -->',
+          componentName: 'Component name',
+          typescript: 'TypeScript (React.FC)',
+          forwardRef: 'forwardRef',
+          memo: 'memo',
+        },
+        zh: {
+          inputLabel: 'SVG 输入',
+          outputLabel: 'JSX 输出',
+          copy: '复制',
+          copied: '已复制！',
+          placeholder: '<!-- 粘贴 SVG 到这里 -->',
+          componentName: '组件名称',
+          typescript: 'TypeScript (React.FC)',
+          forwardRef: 'forwardRef 包裹',
+          memo: 'memo 包裹',
+        },
+        ja: {
+          inputLabel: 'SVG 入力',
+          outputLabel: 'JSX 出力',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          placeholder: '<!-- SVGをここに貼り付け -->',
+          componentName: 'コンポーネント名',
+          typescript: 'TypeScript (React.FC)',
+          forwardRef: 'forwardRef ラップ',
+          memo: 'memo ラップ',
+        },
+        ko: {
+          inputLabel: 'SVG 입력',
+          outputLabel: 'JSX 출력',
+          copy: '복사',
+          copied: '복사됨!',
+          placeholder: '<!-- SVG를 여기에 붙여넣기 -->',
+          componentName: '컴포넌트 이름',
+          typescript: 'TypeScript (React.FC)',
+          forwardRef: 'forwardRef 래핑',
+          memo: 'memo 래핑',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.stj-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.stj-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl  = document.getElementById('stj-input');
+      var outputEl = document.getElementById('stj-output');
+      var copyBtn  = document.getElementById('stj-copy');
+      var nameEl   = document.getElementById('stj-name');
+      var tsEl     = document.getElementById('stj-typescript');
+      var frEl     = document.getElementById('stj-forwardref');
+      var memoEl   = document.getElementById('stj-memo');
+
+      // SVG attribute → JSX camelCase map
+      var SVG_ATTR_MAP = {
+        'stroke-width':          'strokeWidth',
+        'stroke-linecap':        'strokeLinecap',
+        'stroke-linejoin':       'strokeLinejoin',
+        'stroke-dasharray':      'strokeDasharray',
+        'stroke-dashoffset':     'strokeDashoffset',
+        'stroke-miterlimit':     'strokeMiterlimit',
+        'stroke-opacity':        'strokeOpacity',
+        'fill-rule':             'fillRule',
+        'fill-opacity':          'fillOpacity',
+        'clip-rule':             'clipRule',
+        'clip-path':             'clipPath',
+        'color-interpolation':   'colorInterpolation',
+        'color-rendering':       'colorRendering',
+        'dominant-baseline':     'dominantBaseline',
+        'enable-background':     'enableBackground',
+        'flood-color':           'floodColor',
+        'flood-opacity':         'floodOpacity',
+        'font-family':           'fontFamily',
+        'font-size':             'fontSize',
+        'font-size-adjust':      'fontSizeAdjust',
+        'font-stretch':          'fontStretch',
+        'font-style':            'fontStyle',
+        'font-variant':          'fontVariant',
+        'font-weight':           'fontWeight',
+        'glyph-orientation-horizontal': 'glyphOrientationHorizontal',
+        'glyph-orientation-vertical':   'glyphOrientationVertical',
+        'image-rendering':       'imageRendering',
+        'letter-spacing':        'letterSpacing',
+        'lighting-color':        'lightingColor',
+        'marker-end':            'markerEnd',
+        'marker-mid':            'markerMid',
+        'marker-start':          'markerStart',
+        'overline-position':     'overlinePosition',
+        'overline-thickness':    'overlineThickness',
+        'paint-order':           'paintOrder',
+        'pointer-events':        'pointerEvents',
+        'shape-rendering':       'shapeRendering',
+        'stop-color':            'stopColor',
+        'stop-opacity':          'stopOpacity',
+        'strikethrough-position':   'strikethroughPosition',
+        'strikethrough-thickness':  'strikethroughThickness',
+        'text-anchor':           'textAnchor',
+        'text-decoration':       'textDecoration',
+        'text-rendering':        'textRendering',
+        'underline-position':    'underlinePosition',
+        'underline-thickness':   'underlineThickness',
+        'unicode-bidi':          'unicodeBidi',
+        'vector-effect':         'vectorEffect',
+        'word-spacing':          'wordSpacing',
+        'writing-mode':          'writingMode',
+        // HTML attrs also valid in SVG
+        'class':                 'className',
+        'tabindex':              'tabIndex',
+        'crossorigin':           'crossOrigin',
+      };
+
+      // Generic camelCase converter for any remaining hyphenated attrs
+      function toCamelCase(attr) {
+        return attr.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+      }
+
+      // Process a single attribute string inside a tag
+      function processAttrs(attrStr) {
+        if (!attrStr) return '';
+        // Apply known map first
+        Object.keys(SVG_ATTR_MAP).forEach(function (from) {
+          var to = SVG_ATTR_MAP[from];
+          var re = new RegExp('(?<![\\w-])' + from.replace(/-/g, '\\-') + '(?=[\\s=>/]|$)', 'gi');
+          attrStr = attrStr.replace(re, to);
+        });
+        // Camel-case any remaining hyphenated attributes (data-*, aria-* excluded)
+        attrStr = attrStr.replace(/\b([a-z]+(?:-[a-z]+)+)(?=\s*=)/g, function (match) {
+          // Skip data-*, aria-*
+          if (/^(data|aria)-/.test(match)) return match;
+          return toCamelCase(match);
+        });
+        return attrStr;
+      }
+
+      // Remove xmlns attribute (not needed in JSX)
+      function removeXmlns(str) {
+        return str.replace(/\s+xmlns(?::[a-z]+)?="[^"]*"/g, '');
+      }
+
+      // Indent all lines by N spaces (for wrapping)
+      function indent(str, spaces) {
+        var pad = new Array(spaces + 1).join(' ');
+        return str.split('\n').map(function (l) { return l ? pad + l : l; }).join('\n');
+      }
+
+      // Main: convert SVG string to JSX component
+      function svgToJsx(svgStr, compName, useTs, useForwardRef, useMemo) {
+        if (!svgStr.trim()) return '';
+
+        // 1. Remove XML declaration
+        var result = svgStr.replace(/<\?xml[^?]*\?>/g, '').trim();
+
+        // 2. Remove xmlns (clean SVG for JSX)
+        result = removeXmlns(result);
+
+        // 3. Transform all tags: process attrs, ensure self-closing
+        result = result.replace(/<([a-zA-Z][a-zA-Z0-9.-]*)(\s[^>]*)?(\/?)>/g, function (match, tag, attrs, selfClose) {
+          var processed = processAttrs(attrs || '');
+          return '<' + tag + processed + (selfClose ? ' />' : '>');
+        });
+
+        // 4. Indent the SVG body
+        result = indent(result, 4);
+
+        // 5. Build component
+        var nl = '\n';
+        var propsType = useTs ? ': React.SVGProps<SVGSVGElement>' : '';
+        var fcType    = useTs ? ': React.FC<React.SVGProps<SVGSVGElement>>' : '';
+
+        var importLine = useTs ? "import React from 'react';" : "import React from 'react';";
+        var memoImport = useMemo    ? ', memo'       : '';
+        var frImport   = useForwardRef ? ', forwardRef' : '';
+
+        // Build imports
+        var imports;
+        if (useMemo || useForwardRef) {
+          imports = "import React" + (useForwardRef || useMemo ? ', { ' + [useForwardRef && 'forwardRef', useMemo && 'memo'].filter(Boolean).join(', ') + ' }' : '') + " from 'react';";
+        } else {
+          imports = "import React from 'react';";
+        }
+
+        var innerFn;
+        if (useForwardRef) {
+          if (useTs) {
+            innerFn = 'const ' + compName + ' = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function ' + compName + '(props, ref) {' + nl
+              + '  return (' + nl + result + nl + '  );' + nl + '});';
+          } else {
+            innerFn = 'const ' + compName + ' = forwardRef(function ' + compName + '(props, ref) {' + nl
+              + '  return (' + nl + result + nl + '  );' + nl + '});';
+          }
+        } else {
+          if (useTs) {
+            innerFn = 'const ' + compName + fcType + ' = function(props) {' + nl
+              + '  return (' + nl + result + nl + '  );' + nl + '};';
+          } else {
+            innerFn = 'function ' + compName + '(props) {' + nl
+              + '  return (' + nl + result + nl + '  );' + nl + '}';
+          }
+        }
+
+        var exportLine;
+        if (useMemo) {
+          exportLine = nl + nl + 'export default memo(' + compName + ');';
+        } else {
+          exportLine = nl + nl + 'export default ' + compName + ';';
+        }
+
+        return imports + nl + nl + innerFn + exportLine;
+      }
+
+      function convert() {
+        var svg   = inputEl.value;
+        var name  = (nameEl.value.trim() || 'MyIcon').replace(/[^a-zA-Z0-9_$]/g, '');
+        // Ensure component name starts with uppercase
+        if (name && name[0] >= 'a' && name[0] <= 'z') name = name[0].toUpperCase() + name.slice(1);
+        var useTs = tsEl.checked;
+        var useFr = frEl.checked;
+        var useMemo = memoEl.checked;
+        outputEl.value = svg ? svgToJsx(svg, name || 'MyIcon', useTs, useFr, useMemo) : '';
+        if (svg) {
+          window.trackTool && window.trackTool('svg_to_jsx', 'convert');
+        }
+      }
+
+      var _debounce;
+      function debounced() {
+        clearTimeout(_debounce);
+        _debounce = setTimeout(convert, 200);
+      }
+
+      inputEl.addEventListener('input', debounced);
+      nameEl.addEventListener('input', debounced);
+      tsEl.addEventListener('change', convert);
+      frEl.addEventListener('change', convert);
+      memoEl.addEventListener('change', convert);
+
+      copyBtn.addEventListener('click', function () {
+        var text = outputEl.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .stj-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .stj-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.65rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .stj-opt-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .stj-opt-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .stj-name-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 10rem;
+  }
+
+  .stj-name-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+
+  .stj-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .stj-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .stj-panes {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .stj-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .stj-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .stj-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .stj-textarea {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.55;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    resize: vertical;
+    min-height: 320px;
+    width: 100%;
+    box-sizing: border-box;
+    tab-size: 2;
+  }
+
+  .stj-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .stj-textarea--output {
+    color: var(--color-text-secondary);
+    cursor: default;
+  }
+
+  .stj-copy-btn {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .stj-copy-btn:hover {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+</style>
