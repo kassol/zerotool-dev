@@ -1,0 +1,158 @@
+---
+title: "HTML to JSX 변환 가이드: React 마이그레이션에서 알아야 할 모든 속성 규칙"
+description: "HTML을 JSX로 변환하는 완전 가이드. className, htmlFor, 인라인 스타일 객체, camelCase 이벤트, 자기 닫기 태그를 총망라. 무료 온라인 컨버터 포함."
+pubDate: 2026-04-13
+lang: "ko"
+translationSlug: "html-to-jsx-guide"
+tags: ["html-to-jsx", "react", "jsx", "html", "developer-tools"]
+ogImage: /og/blog-html-to-jsx-guide-ko.png
+---
+
+HTML을 React 컴포넌트에 붙여넣으면 거의 반드시 에러가 납니다. `class`는 문법 오류를 일으키고, 인라인 스타일은 형식이 맞지 않고, 자기 닫기 슬래시가 없는 빈 요소는 파서를 망가뜨립니다. HTML에서 JSX로의 변환은 기계적이지만 실수하기 쉬운 작업입니다. 이 가이드에서 모든 변환 규칙을 체계적으로 정리했습니다. 수동 작업을 건너뛰고 싶다면 [HTML to JSX 온라인 컨버터](/tools/html-to-jsx)를 바로 사용하세요.
+
+## HTML과 JSX가 다른 이유
+
+JSX는 HTML처럼 보이지만 `React.createElement()` 호출로 컴파일됩니다. JSX는 JavaScript 안에 존재하기 때문에 일부 HTML 속성은 JS 예약어와 충돌하고, 나머지 속성들은 HTML 규칙이 아닌 JavaScript 명명 규칙을 따릅니다.
+
+차이점은 다섯 가지 카테고리로 나뉩니다:
+
+1. **예약어 이름 변경** — `class` → `className`, `for` → `htmlFor`
+2. **camelCase 속성명** — `onclick` → `onClick`, `tabindex` → `tabIndex`
+3. **인라인 스타일의 객체화** — `style="color:red"` → `style={{ color: 'red' }}`
+4. **빈 요소 자기 닫기** — `<br>` → `<br />`, `<img src="...">` → `<img src="..." />`
+5. **주석 문법 변경** — `<!-- ... -->` → `{/* ... */}`
+
+## 속성 변환 대조표
+
+| HTML | JSX | 이유 |
+|------|-----|------|
+| `class="btn"` | `className="btn"` | `class`는 JS 예약어 |
+| `for="email"` | `htmlFor="email"` | `for`는 JS 예약어 |
+| `onclick="fn()"` | `onClick={fn}` | JS 이벤트 명명 규칙 |
+| `onchange={...}` | `onChange={...}` | camelCase |
+| `tabindex="0"` | `tabIndex={0}` | camelCase |
+| `readonly` | `readOnly` | camelCase |
+| `maxlength="10"` | `maxLength={10}` | camelCase |
+| `colspan="2"` | `colSpan={2}` | camelCase |
+| `rowspan="3"` | `rowSpan={3}` | camelCase |
+| `crossorigin` | `crossOrigin` | camelCase |
+| `contenteditable` | `contentEditable` | camelCase |
+| `<br>` | `<br />` | JSX는 명시적 닫기 필요 |
+| `<img src="...">` | `<img src="..." />` | JSX는 명시적 닫기 필요 |
+| `<input type="text">` | `<input type="text" />` | JSX는 명시적 닫기 필요 |
+| `<!-- 주석 -->` | `{/* 주석 */}` | JSX 표현식의 JS 블록 주석 |
+
+## 인라인 스타일
+
+가장 흔한 혼란의 원인입니다. HTML 인라인 스타일은 문자열이지만, JSX 인라인 스타일은 JavaScript 객체입니다.
+
+```html
+<!-- HTML -->
+<div style="color: red; font-size: 14px; background-color: #fff;"></div>
+```
+
+```jsx
+// JSX
+<div style={{ color: 'red', fontSize: '14px', backgroundColor: '#fff' }}></div>
+```
+
+세 가지 핵심 규칙:
+- 값은 문자열이 아닌 **객체**입니다(이중 중괄호: 바깥쪽은 JSX 표현식, 안쪽은 객체 리터럴).
+- 속성명은 **camelCase**로 변환합니다(`font-size` → `fontSize`, `background-color` → `backgroundColor`).
+- `opacity`, `zIndex` 같은 단위 없는 값은 숫자 그대로 사용. 픽셀 값은 문자열(`'14px'`)이 필요합니다.
+
+## 빈 요소 자기 닫기
+
+HTML5에서 `<br>`, `<hr>`, `<img>`, `<input>`, `<link>`, `<meta>` 같은 빈 요소는 닫기 태그가 필요 없습니다. 하지만 JSX에서는 명시적으로 자기 닫기를 해야 합니다:
+
+```html
+<!-- HTML — 유효함 -->
+<img src="photo.jpg" alt="사진">
+<br>
+<input type="text" name="email">
+<hr>
+```
+
+```jsx
+// JSX — 필수
+<img src="photo.jpg" alt="사진" />
+<br />
+<input type="text" name="email" />
+<hr />
+```
+
+## 주석
+
+HTML 주석은 파서가 무시하며 DOM에 나타나지 않습니다. JSX 주석은 JavaScript 표현식으로 감싸야 합니다:
+
+```html
+<!-- HTML 주석 -->
+<p>내용</p>
+```
+
+```jsx
+{/* JSX 주석 */}
+<p>내용</p>
+```
+
+## 주요 마이그레이션 시나리오
+
+### 정적 HTML 템플릿을 React 컴포넌트로 전환
+
+전체 HTML 문서에서 외부 구조를 제거합니다:
+
+```html
+<!-- HTML -->
+<div class="container">
+  <header class="header">
+    <nav>
+      <a href="/" class="logo">브랜드</a>
+      <ul class="nav-list">
+        <li><a href="/about">소개</a></li>
+      </ul>
+    </nav>
+  </header>
+</div>
+```
+
+```jsx
+// React 컴포넌트
+export function Layout() {
+  return (
+    <div className="container">
+      <header className="header">
+        <nav>
+          <a href="/" className="logo">브랜드</a>
+          <ul className="nav-list">
+            <li><a href="/about">소개</a></li>
+          </ul>
+        </nav>
+      </header>
+    </div>
+  );
+}
+```
+
+### Figma 또는 Webflow에서 복사한 코드
+
+디자인 툴은 보통 `class` 기반의 HTML을 내보냅니다. 변환은 간단합니다. `class`를 `className`으로 전체 치환하고, 이벤트 속성을 camelCase로 바꾸고, 빈 요소에 자기 닫기 슬래시를 추가하면 됩니다.
+
+### 이메일 HTML을 React Email로 변환
+
+이메일 HTML은 테이블 레이아웃과 대량의 인라인 스타일로 구성된 경우가 많습니다. 주요 작업은 인라인 스타일 변환으로, 모든 `style="..."` 문자열을 `style={{ ... }}` 객체로 바꿉니다. 변환 후 `react-email`, `jsx-email` 등의 라이브러리에서 바로 사용할 수 있습니다.
+
+## 주의해야 할 함정
+
+**Boolean 속성** — HTML에서 `disabled`, `checked`, `selected`는 값 없이 쓰는 속성입니다. JSX에서는 `disabled={true}` 또는 약식으로 `disabled`를 사용합니다. 컨버터가 두 형태를 자동으로 처리합니다.
+
+**`data-*`와 `aria-*` 속성** — 이 속성들은 JSX에서도 하이픈 구분 형태를 유지합니다. `data-testid="btn"`과 `aria-label="닫기"`는 camelCase로 바꾸지 않습니다.
+
+**SVG 속성** — SVG는 고유한 속성 명명 규칙이 있습니다. `viewBox`는 JSX에서 camelCase로 사용하고, `stroke-width`는 `strokeWidth`로 변환됩니다. SVG 전용 변환이 필요하다면 [SVG to JSX 컨버터](/tools/svg-to-jsx)를 사용하세요.
+
+**숫자 속성값** — HTML에서 `tabindex="0"`은 문자열입니다. JSX에서는 숫자 형태 `tabIndex={0}`을 권장합니다. 대부분의 컨버터가 자동으로 처리합니다.
+
+## 온라인 HTML to JSX 컨버터
+
+[ZeroTool의 HTML to JSX 컨버터](/tools/html-to-jsx)는 위의 모든 규칙을 브라우저에서 즉시 적용합니다. 어떤 HTML 스니펫이든 붙여넣으면 유효한 JSX 출력을 바로 얻을 수 있습니다. 서버 없음, 회원가입 없음, 데이터 전송 없음.
+
+**[HTML to JSX 컨버터 바로 사용하기 →](/tools/html-to-jsx)**

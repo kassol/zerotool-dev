@@ -1,0 +1,158 @@
+---
+title: "HTML 转 JSX 完整指南：React 迁移必知的属性规则与转换方法"
+description: "系统讲解 HTML 转 JSX 的核心规则：className、htmlFor、行内样式对象、驼峰事件、自闭合标签，附实战案例与在线转换工具。"
+pubDate: 2026-04-13
+lang: "zh"
+translationSlug: "html-to-jsx-guide"
+tags: ["html转jsx", "react", "jsx", "html", "开发工具"]
+ogImage: /og/blog-html-to-jsx-guide-zh.png
+---
+
+把 HTML 粘贴进 React 组件时，代码几乎必然报错。`class` 触发语法错误，行内样式格式不对，缺少自闭合斜杠的空元素让解析器崩溃。HTML 转 JSX 是一个机械但容易出错的过程——本文系统梳理所有转换规则，也可以直接用 [HTML 转 JSX 在线工具](/tools/html-to-jsx) 跳过手动转换。
+
+## 为什么 HTML 和 JSX 不一样
+
+JSX 看起来像 HTML，但它会编译成 `React.createElement()` 调用。因为 JSX 本质上是 JavaScript，部分 HTML 属性与 JS 保留字冲突，其余属性则遵循 JavaScript 的命名规范而非 HTML 规范。
+
+差异主要体现在五个方面：
+
+1. **保留字重命名** — `class` → `className`，`for` → `htmlFor`
+2. **驼峰属性名** — `onclick` → `onClick`，`tabindex` → `tabIndex`
+3. **行内样式变对象** — `style="color:red"` → `style={{ color: 'red' }}`
+4. **空元素必须自闭合** — `<br>` → `<br />`，`<img src="...">` → `<img src="..." />`
+5. **注释语法不同** — `<!-- ... -->` → `{/* ... */}`
+
+## 属性对照表
+
+| HTML | JSX | 原因 |
+|------|-----|------|
+| `class="btn"` | `className="btn"` | `class` 是 JS 保留字 |
+| `for="email"` | `htmlFor="email"` | `for` 是 JS 保留字 |
+| `onclick="fn()"` | `onClick={fn}` | JS 事件命名规范 |
+| `onchange={...}` | `onChange={...}` | 驼峰命名 |
+| `tabindex="0"` | `tabIndex={0}` | 驼峰命名 |
+| `readonly` | `readOnly` | 驼峰命名 |
+| `maxlength="10"` | `maxLength={10}` | 驼峰命名 |
+| `colspan="2"` | `colSpan={2}` | 驼峰命名 |
+| `rowspan="3"` | `rowSpan={3}` | 驼峰命名 |
+| `crossorigin` | `crossOrigin` | 驼峰命名 |
+| `contenteditable` | `contentEditable` | 驼峰命名 |
+| `<br>` | `<br />` | JSX 要求显式闭合 |
+| `<img src="...">` | `<img src="..." />` | JSX 要求显式闭合 |
+| `<input type="text">` | `<input type="text" />` | JSX 要求显式闭合 |
+| `<!-- 注释 -->` | `{/* 注释 */}` | JSX 表达式中的 JS 块注释 |
+
+## 行内样式
+
+这是最常见的踩坑点。HTML 行内样式是字符串，JSX 行内样式是 JavaScript 对象。
+
+```html
+<!-- HTML -->
+<div style="color: red; font-size: 14px; background-color: #fff;"></div>
+```
+
+```jsx
+// JSX
+<div style={{ color: 'red', fontSize: '14px', backgroundColor: '#fff' }}></div>
+```
+
+三条核心规则：
+- 值是**对象**而非字符串（双层花括号：外层是 JSX 表达式，内层是对象字面量）。
+- 属性名用**驼峰命名**（`font-size` → `fontSize`，`background-color` → `backgroundColor`）。
+- `opacity`、`zIndex` 等无单位属性可以直接用数字；像素值需要带单位的字符串（`'14px'`）。
+
+## 空元素自闭合
+
+HTML5 中，`<br>`、`<hr>`、`<img>`、`<input>`、`<link>`、`<meta>` 这类空元素不需要闭合标签。但在 JSX 中，它们必须显式自闭合：
+
+```html
+<!-- HTML — 合法 -->
+<img src="photo.jpg" alt="照片">
+<br>
+<input type="text" name="email">
+<hr>
+```
+
+```jsx
+// JSX — 必须如此
+<img src="photo.jpg" alt="照片" />
+<br />
+<input type="text" name="email" />
+<hr />
+```
+
+## 注释
+
+HTML 注释由解析器忽略，不出现在 DOM 中。JSX 注释必须包裹在 JavaScript 表达式中：
+
+```html
+<!-- 这是 HTML 注释 -->
+<p>内容</p>
+```
+
+```jsx
+{/* 这是 JSX 注释 */}
+<p>内容</p>
+```
+
+## 常见迁移场景
+
+### 将静态 HTML 模板迁移为 React 组件
+
+从完整 HTML 文档开始，去掉外层结构：
+
+```html
+<!-- HTML -->
+<div class="container">
+  <header class="header">
+    <nav>
+      <a href="/" class="logo">品牌</a>
+      <ul class="nav-list">
+        <li><a href="/about">关于</a></li>
+      </ul>
+    </nav>
+  </header>
+</div>
+```
+
+```jsx
+// React 组件
+export function Layout() {
+  return (
+    <div className="container">
+      <header className="header">
+        <nav>
+          <a href="/" className="logo">品牌</a>
+          <ul className="nav-list">
+            <li><a href="/about">关于</a></li>
+          </ul>
+        </nav>
+      </header>
+    </div>
+  );
+}
+```
+
+### 从 Figma 或 Webflow 复制代码
+
+设计工具通常导出基于 `class` 的 HTML。转换很直接：全局把 `class` 改为 `className`，事件属性驼峰化，空元素加上自闭合斜杠。
+
+### 将邮件 HTML 转换为 React Email
+
+邮件 HTML 通常充斥着表格布局和大量行内样式。主要工作是行内样式转换：每一条 `style="..."` 字符串都要变成 `style={{ ... }}` 对象。转换完成后直接用于 `react-email`、`jsx-email` 等邮件库。
+
+## 常见坑点
+
+**布尔属性** — HTML 里 `disabled`、`checked`、`selected` 是裸属性。JSX 写成 `disabled={true}` 或简写为 `disabled`，在线工具会自动处理两种形式。
+
+**`data-*` 和 `aria-*` 属性** — 这两类属性在 JSX 中保持连字符格式，不做驼峰化。`data-testid="btn"` 和 `aria-label="关闭"` 原样保留。
+
+**SVG 属性** — SVG 有自己的属性命名规则。`viewBox` 在 JSX 中是驼峰，`stroke-width` 变为 `strokeWidth`。如果你专门需要转换 SVG，[SVG 转 JSX 工具](/tools/svg-to-jsx) 能正确处理这些规则。
+
+**数字属性值** — HTML 中 `tabindex="0"` 是字符串。在 JSX 中推荐用数字形式：`tabIndex={0}`。大多数转换工具会自动处理。
+
+## 在线 HTML 转 JSX 工具
+
+[ZeroTool 的 HTML 转 JSX 工具](/tools/html-to-jsx) 在浏览器端即时应用上述所有规则。粘贴任意 HTML 片段，立即获得合法的 JSX 输出——无服务器、无需注册、数据不上传。
+
+**[立即使用 HTML 转 JSX 工具 →](/tools/html-to-jsx)**
