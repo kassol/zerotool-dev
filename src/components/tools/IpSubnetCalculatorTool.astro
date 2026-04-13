@@ -1,0 +1,402 @@
+---
+// IpSubnetCalculatorTool — IPv4 subnet calculator, pure JS bit ops, zero deps
+---
+<div class="isc-wrap">
+  <div class="isc-inputs">
+    <div class="isc-field isc-field--wide">
+      <label for="isc-input" data-i18n="inputLabel">IP Address / CIDR</label>
+      <input
+        id="isc-input"
+        type="text"
+        placeholder="192.168.1.0/24"
+        data-i18n-ph="placeholder"
+        spellcheck="false"
+        autocomplete="off"
+      />
+    </div>
+    <div class="isc-field">
+      <label for="isc-prefix" data-i18n="prefixLabel">Prefix Length</label>
+      <select id="isc-prefix">
+        <!-- filled by JS -->
+      </select>
+    </div>
+  </div>
+
+  <div id="isc-error" class="isc-error" hidden></div>
+
+  <div id="isc-results" class="isc-results" hidden>
+    <div class="isc-results-header">
+      <span class="isc-results-label" data-i18n="resultsLabel">Results</span>
+      <button id="isc-copy" class="btn-copy" data-i18n="copy">Copy</button>
+    </div>
+    <table class="isc-table">
+      <tbody>
+        <tr><th data-i18n="networkAddress">Network Address</th><td id="isc-network"></td></tr>
+        <tr><th data-i18n="broadcastAddress">Broadcast Address</th><td id="isc-broadcast"></td></tr>
+        <tr><th data-i18n="subnetMask">Subnet Mask</th><td id="isc-mask"></td></tr>
+        <tr><th data-i18n="wildcardMask">Wildcard Mask</th><td id="isc-wildcard"></td></tr>
+        <tr><th data-i18n="firstHost">First Usable Host</th><td id="isc-first"></td></tr>
+        <tr><th data-i18n="lastHost">Last Usable Host</th><td id="isc-last"></td></tr>
+        <tr><th data-i18n="usableHosts">Usable Hosts</th><td id="isc-hosts"></td></tr>
+        <tr><th data-i18n="cidr">CIDR Notation</th><td id="isc-cidr"></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'IP Address / CIDR',
+          placeholder: '192.168.1.0/24',
+          prefixLabel: 'Prefix Length',
+          resultsLabel: 'Results',
+          copy: 'Copy',
+          copied: 'Copied!',
+          networkAddress: 'Network Address',
+          broadcastAddress: 'Broadcast Address',
+          subnetMask: 'Subnet Mask',
+          wildcardMask: 'Wildcard Mask',
+          firstHost: 'First Usable Host',
+          lastHost: 'Last Usable Host',
+          usableHosts: 'Usable Hosts',
+          cidr: 'CIDR Notation',
+          errInvalidIp: 'Invalid IPv4 address.',
+          errInvalidCidr: 'CIDR prefix must be 0–32.',
+          errFormat: 'Enter an IP address (e.g. 192.168.1.0) and select a prefix, or use CIDR notation (e.g. 192.168.1.0/24).',
+        },
+        zh: {
+          inputLabel: 'IP 地址 / CIDR',
+          placeholder: '192.168.1.0/24',
+          prefixLabel: '前缀长度',
+          resultsLabel: '结果',
+          copy: '复制',
+          copied: '已复制！',
+          networkAddress: '网络地址',
+          broadcastAddress: '广播地址',
+          subnetMask: '子网掩码',
+          wildcardMask: '通配符掩码',
+          firstHost: '第一个可用主机',
+          lastHost: '最后一个可用主机',
+          usableHosts: '可用主机数',
+          cidr: 'CIDR 表示法',
+          errInvalidIp: '无效的 IPv4 地址。',
+          errInvalidCidr: 'CIDR 前缀必须在 0–32 之间。',
+          errFormat: '请输入 IP 地址（如 192.168.1.0）并选择前缀，或使用 CIDR 表示法（如 192.168.1.0/24）。',
+        },
+        ja: {
+          inputLabel: 'IPアドレス / CIDR',
+          placeholder: '192.168.1.0/24',
+          prefixLabel: 'プレフィックス長',
+          resultsLabel: '結果',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          networkAddress: 'ネットワークアドレス',
+          broadcastAddress: 'ブロードキャストアドレス',
+          subnetMask: 'サブネットマスク',
+          wildcardMask: 'ワイルドカードマスク',
+          firstHost: '最初の使用可能ホスト',
+          lastHost: '最後の使用可能ホスト',
+          usableHosts: '使用可能ホスト数',
+          cidr: 'CIDR表記',
+          errInvalidIp: '無効なIPv4アドレスです。',
+          errInvalidCidr: 'CIDRプレフィックスは0〜32の範囲で指定してください。',
+          errFormat: 'IPアドレス（例: 192.168.1.0）を入力してプレフィックスを選択するか、CIDR表記（例: 192.168.1.0/24）を使用してください。',
+        },
+        ko: {
+          inputLabel: 'IP 주소 / CIDR',
+          placeholder: '192.168.1.0/24',
+          prefixLabel: '프리픽스 길이',
+          resultsLabel: '결과',
+          copy: '복사',
+          copied: '복사됨!',
+          networkAddress: '네트워크 주소',
+          broadcastAddress: '브로드캐스트 주소',
+          subnetMask: '서브넷 마스크',
+          wildcardMask: '와일드카드 마스크',
+          firstHost: '첫 번째 사용 가능한 호스트',
+          lastHost: '마지막 사용 가능한 호스트',
+          usableHosts: '사용 가능한 호스트 수',
+          cidr: 'CIDR 표기법',
+          errInvalidIp: '유효하지 않은 IPv4 주소입니다.',
+          errInvalidCidr: 'CIDR 프리픽스는 0–32 사이여야 합니다.',
+          errFormat: 'IP 주소(예: 192.168.1.0)를 입력하고 프리픽스를 선택하거나, CIDR 표기법(예: 192.168.1.0/24)을 사용하세요.',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      // Apply i18n text
+      document.querySelectorAll('.isc-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.isc-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl    = document.getElementById('isc-input');
+      var prefixEl   = document.getElementById('isc-prefix');
+      var errorEl    = document.getElementById('isc-error');
+      var resultsEl  = document.getElementById('isc-results');
+      var copyBtn    = document.getElementById('isc-copy');
+
+      var cellNetwork   = document.getElementById('isc-network');
+      var cellBroadcast = document.getElementById('isc-broadcast');
+      var cellMask      = document.getElementById('isc-mask');
+      var cellWildcard  = document.getElementById('isc-wildcard');
+      var cellFirst     = document.getElementById('isc-first');
+      var cellLast      = document.getElementById('isc-last');
+      var cellHosts     = document.getElementById('isc-hosts');
+      var cellCidr      = document.getElementById('isc-cidr');
+
+      // Build prefix dropdown
+      for (var i = 0; i <= 32; i++) {
+        var opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = '/' + i;
+        if (i === 24) opt.selected = true;
+        prefixEl.appendChild(opt);
+      }
+
+      // ---- Pure JS IPv4 bit ops ----
+      function ipToInt(ip) {
+        var parts = ip.split('.');
+        if (parts.length !== 4) return null;
+        var n = 0;
+        for (var i = 0; i < 4; i++) {
+          var b = parseInt(parts[i], 10);
+          if (isNaN(b) || b < 0 || b > 255) return null;
+          n = (n * 256 + b) >>> 0;
+        }
+        return n;
+      }
+
+      function intToIp(n) {
+        return [
+          (n >>> 24) & 0xff,
+          (n >>> 16) & 0xff,
+          (n >>> 8) & 0xff,
+          n & 0xff,
+        ].join('.');
+      }
+
+      function prefixToMask(prefix) {
+        if (prefix === 0) return 0;
+        return (0xffffffff << (32 - prefix)) >>> 0;
+      }
+
+      function calculate(ipStr, prefix) {
+        var ipInt = ipToInt(ipStr);
+        if (ipInt === null) return null;
+
+        var mask = prefixToMask(prefix);
+        var network = (ipInt & mask) >>> 0;
+        var broadcast = (network | (~mask >>> 0)) >>> 0;
+        var wildcard = (~mask) >>> 0;
+
+        var first, last, usable;
+        if (prefix >= 31) {
+          // /31 point-to-point, /32 host route
+          first = network;
+          last = broadcast;
+          usable = prefix === 32 ? 1 : 2;
+        } else {
+          first = (network + 1) >>> 0;
+          last = (broadcast - 1) >>> 0;
+          usable = broadcast - network - 1;
+        }
+
+        return {
+          network: intToIp(network),
+          broadcast: intToIp(broadcast),
+          mask: intToIp(mask),
+          wildcard: intToIp(wildcard),
+          first: intToIp(first),
+          last: intToIp(last),
+          usable: usable.toLocaleString(),
+          cidr: intToIp(network) + '/' + prefix,
+        };
+      }
+
+      function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.hidden = false;
+        resultsEl.hidden = true;
+      }
+
+      function clearError() {
+        errorEl.hidden = true;
+        errorEl.textContent = '';
+      }
+
+      function render() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearError(); resultsEl.hidden = true; return; }
+
+        var ipStr, prefix;
+
+        // Check for CIDR notation
+        var slashIdx = raw.indexOf('/');
+        if (slashIdx !== -1) {
+          ipStr = raw.slice(0, slashIdx).trim();
+          var prefixRaw = parseInt(raw.slice(slashIdx + 1).trim(), 10);
+          if (isNaN(prefixRaw) || prefixRaw < 0 || prefixRaw > 32) {
+            showError(t.errInvalidCidr); return;
+          }
+          prefix = prefixRaw;
+          // Sync dropdown
+          prefixEl.value = String(prefix);
+        } else {
+          ipStr = raw;
+          prefix = parseInt(prefixEl.value, 10);
+        }
+
+        if (!ipStr || ipToInt(ipStr) === null) {
+          showError(t.errInvalidIp); return;
+        }
+
+        var result = calculate(ipStr, prefix);
+        if (!result) { showError(t.errInvalidIp); return; }
+
+        clearError();
+        cellNetwork.textContent   = result.network;
+        cellBroadcast.textContent = result.broadcast;
+        cellMask.textContent      = result.mask;
+        cellWildcard.textContent  = result.wildcard;
+        cellFirst.textContent     = result.first;
+        cellLast.textContent      = result.last;
+        cellHosts.textContent     = result.usable;
+        cellCidr.textContent      = result.cidr;
+        resultsEl.hidden = false;
+
+        window.trackTool && window.trackTool('ip_subnet_calculator', 'calculate');
+      }
+
+      var _debounce;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_debounce);
+        _debounce = setTimeout(render, 250);
+      });
+      prefixEl.addEventListener('change', render);
+
+      copyBtn.addEventListener('click', function () {
+        var rows = [
+          t.networkAddress + ': ' + cellNetwork.textContent,
+          t.broadcastAddress + ': ' + cellBroadcast.textContent,
+          t.subnetMask + ': ' + cellMask.textContent,
+          t.wildcardMask + ': ' + cellWildcard.textContent,
+          t.firstHost + ': ' + cellFirst.textContent,
+          t.lastHost + ': ' + cellLast.textContent,
+          t.usableHosts + ': ' + cellHosts.textContent,
+          t.cidr + ': ' + cellCidr.textContent,
+        ];
+        navigator.clipboard.writeText(rows.join('\n')).then(function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+
+      // Boot with default
+      inputEl.value = '192.168.1.0/24';
+      render();
+    })();
+  </script>
+</div>
+
+<style>
+  .isc-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .isc-inputs { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+
+  .isc-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .isc-field--wide { flex: 1; min-width: 200px; }
+
+  .isc-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .isc-field input,
+  .isc-field select {
+    font-size: 0.9rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .isc-field input:focus,
+  .isc-field select:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .isc-error {
+    font-size: 0.85rem;
+    color: #b45309;
+    padding: 0.5rem 0.75rem;
+    background: #fef3c7;
+    border-radius: var(--radius-sm);
+    border: 1px solid #fcd34d;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .isc-error { background: #1c1a0e; color: #fbbf24; border-color: #78350f; }
+  }
+  [data-theme="dark"] .isc-error { background: #1c1a0e; color: #fbbf24; border-color: #78350f; }
+
+  .isc-results {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--color-bg-secondary);
+  }
+
+  .isc-results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+  }
+
+  .isc-results-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .isc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+
+  .isc-table th,
+  .isc-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .isc-table tr:last-child th,
+  .isc-table tr:last-child td { border-bottom: none; }
+
+  .isc-table th {
+    width: 55%;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+  }
+
+  .isc-table td {
+    font-family: var(--font-mono);
+    color: var(--color-text);
+    word-break: break-all;
+  }
+</style>
