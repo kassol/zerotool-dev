@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 68 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 71 tools and growing.
 
 ## Tools
 
@@ -77,6 +77,9 @@
 | NATO Phonetic Alphabet | [/tools/nato-phonetic-alphabet](https://zerotool.dev/tools/nato-phonetic-alphabet) |
 | String to Slug | [/tools/string-to-slug](https://zerotool.dev/tools/string-to-slug) |
 | Text to ASCII Art | [/tools/text-to-ascii-art](https://zerotool.dev/tools/text-to-ascii-art) |
+| IP Subnet Calculator | [/tools/ip-subnet-calculator](https://zerotool.dev/tools/ip-subnet-calculator) |
+| HTML to JSX Converter | [/tools/html-to-jsx](https://zerotool.dev/tools/html-to-jsx) |
+| CSV to SQL Converter | [/tools/csv-to-sql](https://zerotool.dev/tools/csv-to-sql) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
