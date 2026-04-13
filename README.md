@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 67 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 68 tools and growing.
 
 ## Tools
 
@@ -76,6 +76,7 @@
 | Text to Binary Converter | [/tools/text-to-binary](https://zerotool.dev/tools/text-to-binary) |
 | NATO Phonetic Alphabet | [/tools/nato-phonetic-alphabet](https://zerotool.dev/tools/nato-phonetic-alphabet) |
 | String to Slug | [/tools/string-to-slug](https://zerotool.dev/tools/string-to-slug) |
+| Text to ASCII Art | [/tools/text-to-ascii-art](https://zerotool.dev/tools/text-to-ascii-art) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
