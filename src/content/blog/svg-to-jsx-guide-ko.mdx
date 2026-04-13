@@ -1,0 +1,202 @@
+---
+title: "SVG to JSX 변환 가이드: React에서 SVG 아이콘 바로 사용하기"
+description: "SVG를 JSX로 변환하는 완전 가이드. 속성 camelCase화, TypeScript 타입, forwardRef, props 스프레드 완전 지원. 무료 브라우저 기반 컨버터 포함."
+pubDate: 2026-04-13
+lang: "ko"
+translationSlug: "svg-to-jsx-guide"
+tags: ["svg-to-jsx", "react", "svg", "jsx", "developer-tools"]
+ogImage: /og/blog-svg-to-jsx-guide-ko.png
+---
+
+Figma에서 SVG를 내보내 React 컴포넌트에 붙여넣으면 거의 반드시 에러가 납니다. `stroke-width`는 유효하지 않은 JSX 속성이고, `class`는 JavaScript 예약어와 충돌하며, `xmlns:xlink` 선언은 경고를 발생시킵니다. SVG를 JSX로 수동 변환하는 작업은 번거롭고 실수하기 쉽습니다. 이 가이드에서 모든 변환 규칙을 정리하고, [SVG to JSX 컨버터](/tools/svg-to-jsx)로 한 번에 해결하는 방법을 소개합니다.
+
+## 원시 SVG가 React에서 작동하지 않는 이유
+
+SVG 마크업은 XML 속성 명명 규칙을 사용합니다. JSX는 컴파일되는 JavaScript입니다. React 컴포넌트 안에서 두 가지가 만나면 여러 가지 문제가 발생합니다:
+
+- `stroke-width`, `fill-opacity`, `stroke-linecap` 같은 **하이픈 속성**은 JavaScript 식별자로 유효하지 않습니다. JSX는 camelCase를 요구합니다: `strokeWidth`, `fillOpacity`, `strokeLinecap`.
+- **`class` 속성**은 JavaScript의 `class` 키워드와 충돌하여 `className`으로 변경해야 합니다.
+- **`xmlns`와 `xmlns:xlink` 선언**은 React 컴포넌트 트리 내에서 불필요하며 콘솔 경고를 발생시킵니다.
+- **`xlink:href`**는 SVG 1.1의 레거시 속성입니다. 현대 SVG와 JSX에서는 `href`를 사용합니다.
+- **style 속성** — 인라인 `style="fill: red"`는 JSX 객체 형식 `style={{ fill: 'red' }}`으로 변경해야 합니다.
+
+## SVG 속성 변환 대조표
+
+| SVG / HTML | JSX | 비고 |
+|------------|-----|------|
+| `stroke-width="2"` | `strokeWidth={2}` | camelCase |
+| `fill-opacity="0.5"` | `fillOpacity={0.5}` | camelCase |
+| `stroke-linecap="round"` | `strokeLinecap="round"` | camelCase |
+| `stroke-linejoin="round"` | `strokeLinejoin="round"` | camelCase |
+| `stroke-dasharray="4 2"` | `strokeDasharray="4 2"` | camelCase |
+| `clip-path="url(#c)"` | `clipPath="url(#c)"` | camelCase |
+| `fill-rule="evenodd"` | `fillRule="evenodd"` | camelCase |
+| `clip-rule="evenodd"` | `clipRule="evenodd"` | camelCase |
+| `color-interpolation-filters` | `colorInterpolationFilters` | camelCase |
+| `class="icon"` | `className="icon"` | JS 예약어 |
+| `xlink:href="#id"` | `href="#id"` | 레거시 속성 제거 |
+| `xmlns:xlink="..."` | *(삭제)* | JSX 내에서 불필요 |
+| `style="fill:red"` | `style={{ fill: 'red' }}` | JS 객체 |
+| `tabindex="0"` | `tabIndex={0}` | camelCase + 숫자 |
+
+**`viewBox`는 변경 없음** — 이미 camelCase 호환이며 React가 그대로 처리합니다.
+
+**`data-*`와 `aria-*` 속성** — HTML과 마찬가지로 JSX에서도 하이픈 형태를 유지합니다. camelCase로 변환하지 않습니다.
+
+## SVG를 React 컴포넌트로 감싸기
+
+속성을 수정한 후 SVG에 컴포넌트 껍데기가 필요합니다. 최소 형태:
+
+```jsx
+export function IconStar() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### Props 스프레드로 유연성 확보
+
+실제 프로젝트의 아이콘 컴포넌트는 `className`, `aria-label`, `onClick`, 커스텀 `width`/`height` 등 임의의 props를 받을 수 있어야 합니다:
+
+```jsx
+export function IconStar(props) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### TypeScript 버전
+
+TypeScript에서는 `React.SVGProps<SVGSVGElement>`를 사용하면 호출자가 완전한 타입 추론을 받을 수 있습니다:
+
+```tsx
+import type { SVGProps } from 'react';
+
+export function IconStar(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### forwardRef 버전
+
+애니메이션, 크기 측정, 포커스 관리를 위해 SVG 요소에 DOM ref를 연결해야 할 때는 `forwardRef`를 사용합니다:
+
+```tsx
+import { forwardRef } from 'react';
+import type { SVGProps, Ref } from 'react';
+
+export const IconStar = forwardRef(
+  (props: SVGProps<SVGSVGElement>, ref: Ref<SVGSVGElement>) => (
+    <svg
+      ref={ref}
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  )
+);
+IconStar.displayName = 'IconStar';
+```
+
+## 주요 워크플로우
+
+### Figma에서 내보내기
+
+1. Figma에서 벡터 레이어 또는 컴포넌트를 선택합니다.
+2. 오른쪽 패널 → **Export** → **SVG** 선택.
+3. 애니메이션에서 id 참조가 필요한 경우에만 **Include "id" Attribute** 체크, 그 외에는 비활성화.
+4. 내보낸 SVG 마크업을 복사합니다.
+5. [SVG to JSX 컨버터](/tools/svg-to-jsx)에 붙여넣고 React 컴포넌트 출력을 복사합니다.
+
+Figma SVG에는 보통 패스에 `fill="black"`이 포함됩니다. 아이콘이 부모 요소의 텍스트 색상을 상속하길 원한다면 하드코딩된 `fill` 값을 `fill="currentColor"`로 교체하거나, 컨버터의 해당 옵션을 활성화하세요.
+
+### Adobe Illustrator에서 내보내기
+
+1. **파일 → 내보내기 → 다른 형식으로 내보내기 → SVG**.
+2. SVG 옵션에서 **스타일링**을 **프레젠테이션 속성**으로 설정 (CSS는 변환이 어려운 `<style>` 블록을 생성하므로 피합니다).
+3. SVG 소스를 복사해서 컨버터에 붙여넣습니다.
+
+Illustrator는 보통 `<defs>`와 그라데이션 정의가 포함된 상세한 SVG를 출력합니다. 컨버터는 이 구조를 유지하면서 모든 속성 이름을 수정합니다.
+
+## 다중 패스 SVG 처리
+
+복잡한 아이콘에는 여러 `<path>`, `<circle>`, `<rect>`, `<g>` 요소가 포함됩니다. 컨버터는 루트 요소뿐만 아니라 전체 SVG 트리를 처리하여 모든 자식 요소의 모든 속성을 올바르게 변환합니다.
+
+```svg
+<!-- 입력 SVG -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g fill="none" stroke-width="1.5" stroke="currentColor">
+    <circle cx="12" cy="12" r="10"/>
+    <path stroke-linecap="round" d="M8 12h8M12 8v8"/>
+  </g>
+</svg>
+```
+
+```jsx
+// 출력 JSX 컴포넌트
+export function IconCirclePlus(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" {...props}>
+      <g fill="none" strokeWidth={1.5} stroke="currentColor">
+        <circle cx={12} cy={12} r={10} />
+        <path strokeLinecap="round" d="M8 12h8M12 8v8" />
+      </g>
+    </svg>
+  );
+}
+```
+
+## 개인정보 보호 및 보안
+
+[zerotool.dev의 SVG to JSX 컨버터](/tools/svg-to-jsx)는 완전히 브라우저에서 실행됩니다. SVG 코드는 어떤 서버에도 전송되지 않습니다. 미공개 제품 아이콘이나 독점 디자인 시스템 자산을 다루는 팀에게 특히 중요한 점으로, 변환이 로컬에서 완료되며 어떤 데이터도 외부로 나가지 않습니다.
+
+## 온라인 SVG to JSX 컨버터
+
+[ZeroTool의 SVG to JSX 컨버터](/tools/svg-to-jsx)는 위의 모든 규칙을 한 번의 붙여넣기로 처리합니다:
+
+- 하이픈 SVG 속성을 camelCase로 변환
+- `class`를 `className`으로 교체
+- `xmlns:xlink` 제거, `xlink:href`를 `href`로 재작성
+- 함수형 React 컴포넌트로 출력을 감쌈
+- TypeScript 타입(`SVGProps<SVGSVGElement>`) 옵션 지원
+- `forwardRef` 래퍼 옵션 지원
+- 루트 요소에 `{...props}` 스프레드 옵션 지원
+
+SVG 외 HTML을 JSX로 변환하려면 [HTML to JSX 컨버터](/tools/html-to-jsx)를 사용하세요.
+
+**[SVG to JSX 컨버터 바로 사용하기 →](/tools/svg-to-jsx)**

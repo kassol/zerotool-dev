@@ -1,0 +1,207 @@
+---
+title: "SVG to JSX Converter: Use SVG Icons Directly in React"
+description: "Learn how to convert SVG to JSX for React. Covers attribute renaming, TypeScript types, forwardRef, prop spreading, and a free browser-based SVG to JSX converter."
+pubDate: 2026-04-13
+lang: "en"
+translationSlug: "svg-to-jsx-guide-zh"
+tags: ["svg-to-jsx", "react", "svg", "jsx", "developer-tools"]
+ogImage: /og/blog-svg-to-jsx-guide.png
+---
+
+Exporting an SVG from Figma and dropping it into a React component works — until it doesn't. `stroke-width` is not valid JSX, `class` clashes with JavaScript's reserved word, and `xmlns:xlink` declarations cause warnings. Converting SVG to JSX by hand is tedious and error-prone. This guide explains every transformation rule, then shows how to skip all of it with our [SVG to JSX converter](/tools/svg-to-jsx).
+
+## Why Raw SVG Doesn't Work in React
+
+SVG markup uses XML attribute naming conventions. JSX is compiled JavaScript. When the two meet inside a React component, several things break:
+
+- **Hyphenated attributes** like `stroke-width`, `fill-opacity`, `stroke-linecap` are invalid JavaScript identifiers. JSX requires camelCase: `strokeWidth`, `fillOpacity`, `strokeLinecap`.
+- **`class` attribute** collides with the JavaScript `class` keyword and must become `className`.
+- **`xmlns` and `xmlns:xlink` declarations** are redundant inside a React component tree and generate console warnings.
+- **`xlink:href`** is the legacy SVG 1.1 attribute for referencing resources. Modern SVG and JSX use plain `href`.
+- **Style attributes** — inline `style="fill: red"` must become the JSX object form `style={{ fill: 'red' }}`.
+
+## SVG Attribute Conversion Reference
+
+| SVG / HTML | JSX | Note |
+|------------|-----|------|
+| `stroke-width="2"` | `strokeWidth={2}` | camelCase |
+| `fill-opacity="0.5"` | `fillOpacity={0.5}` | camelCase |
+| `stroke-linecap="round"` | `strokeLinecap="round"` | camelCase |
+| `stroke-linejoin="round"` | `strokeLinejoin="round"` | camelCase |
+| `stroke-dasharray="4 2"` | `strokeDasharray="4 2"` | camelCase |
+| `clip-path="url(#c)"` | `clipPath="url(#c)"` | camelCase |
+| `fill-rule="evenodd"` | `fillRule="evenodd"` | camelCase |
+| `clip-rule="evenodd"` | `clipRule="evenodd"` | camelCase |
+| `color-interpolation-filters` | `colorInterpolationFilters` | camelCase |
+| `class="icon"` | `className="icon"` | JS reserved word |
+| `xlink:href="#id"` | `href="#id"` | legacy attr removed |
+| `xmlns:xlink="..."` | *(remove)* | redundant in JSX |
+| `style="fill:red"` | `style={{ fill: 'red' }}` | JS object |
+| `tabindex="0"` | `tabIndex={0}` | camelCase + number |
+
+**`viewBox` stays unchanged** — it is already camelCase-compatible and React accepts it as-is.
+
+**`data-*` and `aria-*` attributes** — these keep their hyphenated form in JSX, just like in HTML.
+
+## Wrapping the SVG as a React Component
+
+Once the attributes are corrected, the SVG needs a component shell. The minimal form:
+
+```jsx
+export function IconStar() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### Forwarding Props for Flexibility
+
+Production icon components accept arbitrary props — `className`, `aria-label`, `onClick`, custom `width`/`height` — so callers can customize them without workarounds:
+
+```jsx
+export function IconStar(props) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### TypeScript Version
+
+The TypeScript-idiomatic approach uses `React.SVGProps<SVGSVGElement>` so callers get full type inference:
+
+```tsx
+import type { SVGProps } from 'react';
+
+export function IconStar(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### forwardRef Version
+
+When you need to attach a DOM ref to the SVG element — for animations, measurements, or imperative focus — use `forwardRef`:
+
+```tsx
+import { forwardRef } from 'react';
+import type { SVGProps, Ref } from 'react';
+
+export const IconStar = forwardRef(
+  (props: SVGProps<SVGSVGElement>, ref: Ref<SVGSVGElement>) => (
+    <svg
+      ref={ref}
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  )
+);
+IconStar.displayName = 'IconStar';
+```
+
+## Common Workflows
+
+### Exporting from Figma
+
+1. Select a vector layer or component in Figma.
+2. In the right panel → **Export** → choose **SVG**.
+3. Check **Include "id" Attribute** only if you need named elements for animation; otherwise leave it off.
+4. Copy the exported SVG markup.
+5. Paste into the [SVG to JSX converter](/tools/svg-to-jsx) and copy the React component output.
+
+Figma SVG often includes `fill="black"` on paths. If you want the icon to inherit the parent's text color, replace hardcoded `fill` values with `fill="currentColor"` — or enable the option in the converter.
+
+### Exporting from Adobe Illustrator
+
+1. **File → Export → Export As → SVG**.
+2. In the SVG Options dialog, set **Styling** to **Presentation Attributes** (not CSS, which generates `<style>` blocks that are harder to convert).
+3. Copy the SVG source.
+4. Paste into the converter.
+
+Illustrator tends to output verbose SVG with `<defs>` and gradient definitions. The converter preserves these but corrects all attribute names.
+
+### Exporting from Icon Libraries
+
+Libraries like Heroicons, Lucide, Phosphor, and Tabler already ship pre-built React components, so you rarely need to convert them manually. However, if you have custom icons from a design library or an SVG pack, the converter handles them correctly.
+
+## Handling Multi-Path SVGs
+
+Complex icons often contain multiple `<path>`, `<circle>`, `<rect>`, and `<g>` elements. The converter handles the entire SVG tree — not just the root element. Every attribute on every child element gets converted.
+
+```svg
+<!-- Input SVG -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g fill="none" stroke-width="1.5" stroke="currentColor">
+    <circle cx="12" cy="12" r="10"/>
+    <path stroke-linecap="round" d="M8 12h8M12 8v8"/>
+  </g>
+</svg>
+```
+
+```jsx
+// Output JSX component
+export function IconCirclePlus(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" {...props}>
+      <g fill="none" strokeWidth={1.5} stroke="currentColor">
+        <circle cx={12} cy={12} r={10} />
+        <path strokeLinecap="round" d="M8 12h8M12 8v8" />
+      </g>
+    </svg>
+  );
+}
+```
+
+## Privacy and Security
+
+The [SVG to JSX converter at zerotool.dev](/tools/svg-to-jsx) runs entirely in your browser. Your SVG code is never sent to any server. This matters for icon sets that are part of unreleased products or proprietary design systems — the conversion happens locally, and nothing leaves your machine.
+
+## Convert SVG to JSX Online
+
+[ZeroTool's SVG to JSX converter](/tools/svg-to-jsx) handles all the rules above in one paste:
+
+- Converts all hyphenated SVG attributes to camelCase
+- Replaces `class` with `className`
+- Removes `xmlns:xlink` and rewrites `xlink:href` to `href`
+- Wraps output in a functional React component
+- Optional TypeScript types (`SVGProps<SVGSVGElement>`)
+- Optional `forwardRef` wrapper
+- Optional `{...props}` spreading on the root element
+
+For HTML-to-JSX conversions outside of SVG, see our [HTML to JSX converter](/tools/html-to-jsx).
+
+**[Try the SVG to JSX Converter →](/tools/svg-to-jsx)**

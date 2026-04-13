@@ -1,0 +1,206 @@
+---
+title: "SVG 转 JSX 完整指南：在 React 中直接使用 SVG 图标"
+description: "系统讲解 SVG 转 JSX 的核心规则：属性驼峰化、TypeScript 类型、forwardRef、props 展开，附隐私安全说明与在线转换工具。"
+pubDate: 2026-04-13
+lang: "zh"
+translationSlug: "svg-to-jsx-guide"
+tags: ["svg转jsx", "react", "svg", "jsx", "开发工具"]
+ogImage: /og/blog-svg-to-jsx-guide-zh.png
+---
+
+从 Figma 导出 SVG 直接丢进 React 组件，看起来没问题——直到报错为止。`stroke-width` 不是合法的 JSX 属性，`class` 与 JavaScript 保留字冲突，`xmlns:xlink` 声明触发警告。手动转换 SVG 到 JSX 既繁琐又容易出错。本文梳理所有转换规则，最后介绍如何用 [SVG 转 JSX 工具](/tools/svg-to-jsx) 一步到位。
+
+## 为什么原始 SVG 在 React 中用不了
+
+SVG 使用 XML 属性命名规范，而 JSX 本质上是 JavaScript。两者混用时会出现几个典型问题：
+
+- **连字符属性**如 `stroke-width`、`fill-opacity`、`stroke-linecap` 不是合法的 JavaScript 标识符，JSX 要求驼峰命名：`strokeWidth`、`fillOpacity`、`strokeLinecap`。
+- **`class` 属性**与 JavaScript 的 `class` 关键字冲突，必须改为 `className`。
+- **`xmlns` 和 `xmlns:xlink` 声明**在 React 组件树中是多余的，会产生控制台警告。
+- **`xlink:href`** 是 SVG 1.1 的遗留属性。现代 SVG 和 JSX 直接用 `href`。
+- **style 属性** — 行内 `style="fill: red"` 必须改为 JSX 对象形式 `style={{ fill: 'red' }}`。
+
+## SVG 属性转换对照表
+
+| SVG / HTML | JSX | 说明 |
+|------------|-----|------|
+| `stroke-width="2"` | `strokeWidth={2}` | 驼峰命名 |
+| `fill-opacity="0.5"` | `fillOpacity={0.5}` | 驼峰命名 |
+| `stroke-linecap="round"` | `strokeLinecap="round"` | 驼峰命名 |
+| `stroke-linejoin="round"` | `strokeLinejoin="round"` | 驼峰命名 |
+| `stroke-dasharray="4 2"` | `strokeDasharray="4 2"` | 驼峰命名 |
+| `clip-path="url(#c)"` | `clipPath="url(#c)"` | 驼峰命名 |
+| `fill-rule="evenodd"` | `fillRule="evenodd"` | 驼峰命名 |
+| `clip-rule="evenodd"` | `clipRule="evenodd"` | 驼峰命名 |
+| `color-interpolation-filters` | `colorInterpolationFilters` | 驼峰命名 |
+| `class="icon"` | `className="icon"` | JS 保留字 |
+| `xlink:href="#id"` | `href="#id"` | 去除遗留属性 |
+| `xmlns:xlink="..."` | *(删除)* | 在 JSX 中多余 |
+| `style="fill:red"` | `style={{ fill: 'red' }}` | JS 对象 |
+| `tabindex="0"` | `tabIndex={0}` | 驼峰 + 数字 |
+
+**`viewBox` 不变** — 它已经符合驼峰规范，React 原生支持。
+
+**`data-*` 和 `aria-*` 属性** — 与 HTML 一样，这两类属性在 JSX 中保持连字符格式，不做驼峰化。
+
+## 将 SVG 封装为 React 组件
+
+属性修正后，还需要给 SVG 加上组件外壳。最简形式：
+
+```jsx
+export function IconStar() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### 展开 Props 提升灵活性
+
+实际项目中，图标组件需要接受 `className`、`aria-label`、`onClick`、自定义 `width`/`height` 等任意属性：
+
+```jsx
+export function IconStar(props) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### TypeScript 版本
+
+TypeScript 项目推荐使用 `React.SVGProps<SVGSVGElement>`，调用方可以获得完整的类型推断：
+
+```tsx
+import type { SVGProps } from 'react';
+
+export function IconStar(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  );
+}
+```
+
+### forwardRef 版本
+
+需要对 SVG 元素附加 DOM ref（动画、尺寸测量、焦点管理）时，使用 `forwardRef`：
+
+```tsx
+import { forwardRef } from 'react';
+import type { SVGProps, Ref } from 'react';
+
+export const IconStar = forwardRef(
+  (props: SVGProps<SVGSVGElement>, ref: Ref<SVGSVGElement>) => (
+    <svg
+      ref={ref}
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={24}
+      height={24}
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87..." />
+    </svg>
+  )
+);
+IconStar.displayName = 'IconStar';
+```
+
+## 常见工作流
+
+### 从 Figma 导出
+
+1. 在 Figma 中选中矢量图层或组件。
+2. 右侧面板 → **Export** → 选择 **SVG**。
+3. 仅在需要通过 id 引用元素时勾选 **Include "id" Attribute**，否则关闭。
+4. 复制导出的 SVG 代码。
+5. 粘贴到 [SVG 转 JSX 工具](/tools/svg-to-jsx)，复制 React 组件输出。
+
+Figma 导出的 SVG 通常路径上有 `fill="black"`。如果希望图标颜色继承父元素的文字颜色，将硬编码的 `fill` 值替换为 `fill="currentColor"`——或在转换工具中开启对应选项。
+
+### 从 Adobe Illustrator 导出
+
+1. **文件 → 导出 → 导出为 → SVG**。
+2. 在 SVG 选项对话框中，将 **样式** 设为 **表示属性**（而非 CSS，否则会生成难以转换的 `<style>` 块）。
+3. 复制 SVG 源代码，粘贴到转换工具。
+
+Illustrator 导出的 SVG 通常包含 `<defs>` 和渐变定义，转换工具会保留这些结构并修正所有属性名。
+
+### 从图标库导出
+
+Heroicons、Lucide、Phosphor、Tabler 等主流图标库已经提供了现成的 React 组件，通常无需手动转换。但如果你使用的是公司设计系统的自定义图标或 SVG 图标包，这个工具完全可以处理。
+
+## 多路径 SVG 的处理
+
+复杂图标通常包含多个 `<path>`、`<circle>`、`<rect>`、`<g>` 元素。转换工具处理完整的 SVG 树，不只是根元素——每个子元素的每个属性都会被正确转换。
+
+```svg
+<!-- 输入 SVG -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g fill="none" stroke-width="1.5" stroke="currentColor">
+    <circle cx="12" cy="12" r="10"/>
+    <path stroke-linecap="round" d="M8 12h8M12 8v8"/>
+  </g>
+</svg>
+```
+
+```jsx
+// 输出 JSX 组件
+export function IconCirclePlus(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" {...props}>
+      <g fill="none" strokeWidth={1.5} stroke="currentColor">
+        <circle cx={12} cy={12} r={10} />
+        <path strokeLinecap="round" d="M8 12h8M12 8v8" />
+      </g>
+    </svg>
+  );
+}
+```
+
+## 隐私与安全
+
+[zerotool.dev 的 SVG 转 JSX 工具](/tools/svg-to-jsx) 完全在浏览器端运行，SVG 代码不会发送到任何服务器。这对包含未发布产品图标或专有设计系统素材的团队尤为重要——转换在本地完成，任何数据都不会离开你的设备。
+
+## 在线 SVG 转 JSX 工具
+
+[ZeroTool 的 SVG 转 JSX 工具](/tools/svg-to-jsx) 一次性处理上述所有规则：
+
+- 将所有连字符 SVG 属性转换为驼峰命名
+- 将 `class` 替换为 `className`
+- 删除 `xmlns:xlink`，将 `xlink:href` 改写为 `href`
+- 将输出包装为函数式 React 组件
+- 可选：添加 TypeScript 类型（`SVGProps<SVGSVGElement>`）
+- 可选：添加 `forwardRef` 包装
+- 可选：在根元素上展开 `{...props}`
+
+如需转换 SVG 以外的 HTML 代码，请使用 [HTML 转 JSX 工具](/tools/html-to-jsx)。
+
+**[立即使用 SVG 转 JSX 工具 →](/tools/svg-to-jsx)**
