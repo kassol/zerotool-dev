@@ -1,0 +1,281 @@
+---
+// StringToSlugTool — converts any string to a URL-friendly slug
+---
+<div class="sts-wrap">
+  <div class="sts-field">
+    <label for="sts-input" data-i18n="inputLabel">Input Text</label>
+    <textarea
+      id="sts-input"
+      placeholder="Hello World! This is an Example..."
+      data-i18n-ph="placeholder"
+      spellcheck="false"
+    ></textarea>
+  </div>
+
+  <div class="sts-options">
+    <label class="sts-opt">
+      <input type="checkbox" id="sts-lowercase" checked />
+      <span data-i18n="lowercase">Lowercase</span>
+    </label>
+    <label class="sts-sep-wrap">
+      <span class="sts-sep-label" data-i18n="separator">Separator</span>
+      <select id="sts-separator">
+        <option value="-" data-i18n="sepHyphen">Hyphen (-)</option>
+        <option value="_" data-i18n="sepUnderscore">Underscore (_)</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="sts-result-wrap" class="sts-result-wrap">
+    <span class="sts-result-label" data-i18n="slugLabel">Slug</span>
+    <code id="sts-result" class="sts-result"></code>
+    <button id="sts-copy" class="btn-copy" disabled data-i18n="copy">Copy</button>
+  </div>
+
+  <div id="sts-status" class="sts-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'Input Text',
+          placeholder: 'Hello World! This is an Example...',
+          lowercase: 'Lowercase',
+          separator: 'Separator',
+          sepHyphen: 'Hyphen (-)',
+          sepUnderscore: 'Underscore (_)',
+          slugLabel: 'Slug',
+          copy: 'Copy',
+          copied: 'Copied!',
+          emptyResult: 'Result is empty — all characters were removed.',
+        },
+        zh: {
+          inputLabel: '输入文本',
+          placeholder: 'Hello World! This is an Example...',
+          lowercase: '小写',
+          separator: '分隔符',
+          sepHyphen: '连字符 (-)',
+          sepUnderscore: '下划线 (_)',
+          slugLabel: 'Slug',
+          copy: '复制',
+          copied: '已复制！',
+          emptyResult: '结果为空 — 所有字符已被移除。',
+        },
+        ja: {
+          inputLabel: '入力テキスト',
+          placeholder: 'Hello World! This is an Example...',
+          lowercase: '小文字',
+          separator: '区切り文字',
+          sepHyphen: 'ハイフン (-)',
+          sepUnderscore: 'アンダースコア (_)',
+          slugLabel: 'スラグ',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          emptyResult: '結果が空です — すべての文字が削除されました。',
+        },
+        ko: {
+          inputLabel: '입력 텍스트',
+          placeholder: 'Hello World! This is an Example...',
+          lowercase: '소문자',
+          separator: '구분자',
+          sepHyphen: '하이픈 (-)',
+          sepUnderscore: '밑줄 (_)',
+          slugLabel: '슬러그',
+          copy: '복사',
+          copied: '복사됨!',
+          emptyResult: '결과가 비어 있습니다 — 모든 문자가 제거되었습니다.',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.sts-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.sts-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl    = document.getElementById('sts-input');
+      var resultEl   = document.getElementById('sts-result');
+      var copyBtn    = document.getElementById('sts-copy');
+      var statusEl   = document.getElementById('sts-status');
+      var lowercaseEl = document.getElementById('sts-lowercase');
+      var separatorEl = document.getElementById('sts-separator');
+
+      var charMap = {
+        'à':'a','á':'a','â':'a','ã':'a','ä':'a','å':'a','æ':'ae',
+        'ç':'c','è':'e','é':'e','ê':'e','ë':'e','ì':'i','í':'i',
+        'î':'i','ï':'i','ð':'d','ñ':'n','ò':'o','ó':'o','ô':'o',
+        'õ':'o','ö':'o','ø':'o','ù':'u','ú':'u','û':'u','ü':'u',
+        'ý':'y','þ':'th','ß':'ss','À':'A','Á':'A','Â':'A','Ã':'A',
+        'Ä':'A','Å':'A','Æ':'AE','Ç':'C','È':'E','É':'E','Ê':'E',
+        'Ë':'E','Ì':'I','Í':'I','Î':'I','Ï':'I','Ð':'D','Ñ':'N',
+        'Ò':'O','Ó':'O','Ô':'O','Õ':'O','Ö':'O','Ø':'O','Ù':'U',
+        'Ú':'U','Û':'U','Ü':'U','Ý':'Y','Þ':'TH',
+        '&':'and','@':'at','#':'hash','%':'percent','+':'plus',
+        '©':'c','®':'r','™':'tm','€':'euro','£':'pound','¥':'yen',
+        '°':'deg','×':'x','÷':'div',
+      };
+
+      function toSlug(text) {
+        var sep = separatorEl.value;
+        var lower = lowercaseEl.checked;
+
+        var result = text.replace(/[^\u0000-\u007E]/g, function (c) {
+          return charMap[c] || '';
+        });
+
+        result = result
+          .replace(/[^a-zA-Z0-9\s\-_]/g, ' ')
+          .replace(/[\s]+/g, sep)
+          .replace(/[\-_]+/g, sep);
+
+        if (lower) result = result.toLowerCase();
+
+        // trim leading/trailing separators
+        var escaped = sep.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+        result = result.replace(new RegExp('^' + escaped + '+|' + escaped + '+$', 'g'), '');
+
+        return result;
+      }
+
+      function update() {
+        var text = inputEl.value;
+        if (!text) {
+          resultEl.textContent = '';
+          copyBtn.disabled = true;
+          statusEl.textContent = '';
+          return;
+        }
+        var slug = toSlug(text);
+        resultEl.textContent = slug;
+        copyBtn.disabled = !slug;
+        statusEl.textContent = slug ? '' : t.emptyResult;
+        statusEl.className = slug ? 'sts-status' : 'sts-status sts-warn';
+      }
+
+      var _trackTimer;
+      function trackOnce() {
+        clearTimeout(_trackTimer);
+        _trackTimer = setTimeout(function () {
+          window.trackTool && window.trackTool('string_to_slug', 'convert');
+        }, 500);
+      }
+
+      inputEl.addEventListener('input', function () { update(); trackOnce(); });
+      lowercaseEl.addEventListener('change', update);
+      separatorEl.addEventListener('change', update);
+
+      copyBtn.addEventListener('click', function () {
+        var val = resultEl.textContent;
+        if (!val) return;
+        navigator.clipboard.writeText(val).then(function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .sts-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .sts-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .sts-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .sts-field textarea {
+    width: 100%;
+    min-height: 80px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .sts-field textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .sts-options {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.85rem;
+  }
+
+  .sts-opt {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+  }
+
+  .sts-sep-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--color-text-secondary);
+  }
+
+  .sts-sep-label { font-size: 0.85rem; }
+
+  .sts-sep-wrap select {
+    font-size: 0.82rem;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .sts-result-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    flex-wrap: wrap;
+  }
+
+  .sts-result-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    min-width: 36px;
+    letter-spacing: 0.04em;
+  }
+
+  .sts-result {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    color: var(--color-text);
+    word-break: break-all;
+    min-width: 0;
+  }
+
+  .sts-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .sts-status.sts-warn { color: #b45309; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .sts-status.sts-warn { color: #fbbf24; }
+  }
+  [data-theme="dark"] .sts-status.sts-warn { color: #fbbf24; }
+</style>
