@@ -1,0 +1,314 @@
+---
+// TextToAsciiArtTool — converts text to ASCII art using figlet.js fonts
+---
+<div class="taa-wrap">
+  <div class="taa-inputs">
+    <div class="taa-field">
+      <label for="taa-input" data-i18n="inputLabel">Input Text</label>
+      <input
+        id="taa-input"
+        type="text"
+        maxlength="80"
+        placeholder="Hello World"
+        data-i18n-ph="placeholder"
+        spellcheck="false"
+        autocomplete="off"
+      />
+    </div>
+
+    <div class="taa-field">
+      <label for="taa-font" data-i18n="fontLabel">Font</label>
+      <select id="taa-font">
+        <option value="Standard">Standard</option>
+        <option value="Banner">Banner</option>
+        <option value="Big">Big</option>
+        <option value="Block">Block</option>
+        <option value="Doom">Doom</option>
+        <option value="Lean">Lean</option>
+        <option value="Mini">Mini</option>
+        <option value="Script">Script</option>
+        <option value="Shadow">Shadow</option>
+        <option value="Slant">Slant</option>
+        <option value="Small">Small</option>
+        <option value="3D-ASCII">3D-ASCII</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="taa-output-wrap">
+    <div class="taa-output-header">
+      <span class="taa-output-label" data-i18n="outputLabel">Output</span>
+      <button id="taa-copy" class="btn-copy" disabled data-i18n="copy">Copy</button>
+    </div>
+    <div id="taa-loading" class="taa-loading" hidden>
+      <span data-i18n="loading">Loading font…</span>
+    </div>
+    <pre id="taa-output" class="taa-output" aria-live="polite"></pre>
+  </div>
+
+  <div id="taa-status" class="taa-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'Input Text',
+          placeholder: 'Hello World',
+          fontLabel: 'Font',
+          outputLabel: 'Output',
+          copy: 'Copy',
+          copied: 'Copied!',
+          loading: 'Loading font…',
+          errorLoad: 'Failed to load figlet library. Check your connection.',
+          errorFont: 'Failed to load font.',
+          errorRender: 'Render error.',
+          empty: 'Type something above to generate ASCII art.',
+        },
+        zh: {
+          inputLabel: '输入文字',
+          placeholder: 'Hello World',
+          fontLabel: '字体',
+          outputLabel: '输出',
+          copy: '复制',
+          copied: '已复制！',
+          loading: '正在加载字体…',
+          errorLoad: '无法加载 figlet 库，请检查网络连接。',
+          errorFont: '字体加载失败。',
+          errorRender: '渲染错误。',
+          empty: '在上方输入文字以生成 ASCII 艺术。',
+        },
+        ja: {
+          inputLabel: '入力テキスト',
+          placeholder: 'Hello World',
+          fontLabel: 'フォント',
+          outputLabel: '出力',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          loading: 'フォント読み込み中…',
+          errorLoad: 'figlet ライブラリの読み込みに失敗しました。接続を確認してください。',
+          errorFont: 'フォントの読み込みに失敗しました。',
+          errorRender: 'レンダリングエラー。',
+          empty: '上にテキストを入力するとASCIIアートが生成されます。',
+        },
+        ko: {
+          inputLabel: '입력 텍스트',
+          placeholder: 'Hello World',
+          fontLabel: '글꼴',
+          outputLabel: '출력',
+          copy: '복사',
+          copied: '복사됨!',
+          loading: '글꼴 로드 중…',
+          errorLoad: 'figlet 라이브러리 로드 실패. 연결을 확인하세요.',
+          errorFont: '글꼴 로드 실패.',
+          errorRender: '렌더링 오류.',
+          empty: '위에 텍스트를 입력하면 ASCII 아트가 생성됩니다.',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      // Apply i18n
+      document.querySelectorAll('.taa-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.taa-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl   = document.getElementById('taa-input');
+      var fontEl    = document.getElementById('taa-font');
+      var outputEl  = document.getElementById('taa-output');
+      var copyBtn   = document.getElementById('taa-copy');
+      var statusEl  = document.getElementById('taa-status');
+      var loadingEl = document.getElementById('taa-loading');
+
+      var figletReady = false;
+      var renderPending = false;
+
+      function showStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'taa-status' + (isError ? ' taa-error' : '');
+      }
+
+      function setLoading(on) {
+        loadingEl.hidden = !on;
+        outputEl.style.display = on ? 'none' : '';
+      }
+
+      function render() {
+        var text = inputEl.value.trim();
+        var font = fontEl.value;
+
+        if (!text) {
+          outputEl.textContent = '';
+          copyBtn.disabled = true;
+          showStatus(t.empty, false);
+          return;
+        }
+
+        if (!figletReady) {
+          renderPending = true;
+          return;
+        }
+
+        setLoading(true);
+        showStatus('', false);
+
+        window.figlet.text(text, { font: font }, function (err, result) {
+          setLoading(false);
+          if (err) {
+            showStatus(t.errorRender, true);
+            outputEl.textContent = '';
+            copyBtn.disabled = true;
+            return;
+          }
+          outputEl.textContent = result;
+          copyBtn.disabled = false;
+          showStatus('', false);
+        });
+      }
+
+      function loadFiglet() {
+        var script = document.createElement('script');
+        script.src = 'https://unpkg.com/figlet@1.8.0/lib/figlet.js';
+        script.onload = function () {
+          if (!window.figlet) {
+            showStatus(t.errorLoad, true);
+            return;
+          }
+          window.figlet.defaults({
+            fontPath: 'https://unpkg.com/figlet@1.8.0/fonts',
+          });
+          figletReady = true;
+          if (renderPending) {
+            renderPending = false;
+            render();
+          }
+        };
+        script.onerror = function () {
+          showStatus(t.errorLoad, true);
+          setLoading(false);
+        };
+        document.head.appendChild(script);
+      }
+
+      var _debounce;
+      function scheduleRender() {
+        clearTimeout(_debounce);
+        _debounce = setTimeout(render, 300);
+      }
+
+      function trackOnce() {
+        window.trackTool && window.trackTool('text_to_ascii_art', 'generate');
+      }
+
+      inputEl.addEventListener('input', function () {
+        scheduleRender();
+        trackOnce();
+      });
+      fontEl.addEventListener('change', function () {
+        render();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var val = outputEl.textContent;
+        if (!val) return;
+        navigator.clipboard.writeText(val).then(function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+
+      // Boot
+      showStatus(t.empty, false);
+      loadFiglet();
+    })();
+  </script>
+</div>
+
+<style>
+  .taa-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .taa-inputs { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+
+  .taa-field { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; min-width: 180px; }
+
+  .taa-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .taa-field input,
+  .taa-field select {
+    width: 100%;
+    font-size: 0.9rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .taa-field input:focus,
+  .taa-field select:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .taa-output-wrap {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    overflow: hidden;
+  }
+
+  .taa-output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+  }
+
+  .taa-output-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .taa-loading {
+    padding: 1.5rem;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+  }
+
+  .taa-output {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    line-height: 1.2;
+    padding: 0.75rem;
+    margin: 0;
+    white-space: pre;
+    overflow-x: auto;
+    min-height: 100px;
+    color: var(--color-text);
+  }
+
+  .taa-status {
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    min-height: 1.2rem;
+  }
+
+  .taa-status.taa-error { color: #b45309; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .taa-status.taa-error { color: #fbbf24; }
+  }
+  [data-theme="dark"] .taa-status.taa-error { color: #fbbf24; }
+</style>
