@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 71 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 73 tools and growing.
 
 ## Tools
 
@@ -80,6 +80,8 @@
 | IP Subnet Calculator | [/tools/ip-subnet-calculator](https://zerotool.dev/tools/ip-subnet-calculator) |
 | HTML to JSX Converter | [/tools/html-to-jsx](https://zerotool.dev/tools/html-to-jsx) |
 | CSV to SQL Converter | [/tools/csv-to-sql](https://zerotool.dev/tools/csv-to-sql) |
+| SVG to JSX Converter | [/tools/svg-to-jsx](https://zerotool.dev/tools/svg-to-jsx) |
+| htpasswd Generator | [/tools/htpasswd-generator](https://zerotool.dev/tools/htpasswd-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
