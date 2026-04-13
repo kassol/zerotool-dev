@@ -1,0 +1,158 @@
+---
+title: "HTML to JSX 変換ガイド：Reactマイグレーションで知っておくべき属性ルールと変換方法"
+description: "HTMLをJSXに変換するための全ルールを解説。className・htmlFor・インラインスタイルオブジェクト・camelCaseイベント・自己終了タグを網羅。無料オンラインコンバーター付き。"
+pubDate: 2026-04-13
+lang: "ja"
+translationSlug: "html-to-jsx-guide"
+tags: ["html-to-jsx", "react", "jsx", "html", "developer-tools"]
+ogImage: /og/blog-html-to-jsx-guide-ja.png
+---
+
+HTMLをReactコンポーネントに貼り付けると、ほぼ確実にエラーが発生します。`class`は構文エラーになり、インラインスタイルはフォーマットが合わず、自己終了スラッシュがない空要素はパーサーを壊します。HTMLからJSXへの変換は機械的ですが、ミスが起きやすい作業です。このガイドでは全ての変換ルールを体系的に解説します。手作業を省きたい場合は[HTML to JSXコンバーター](/tools/html-to-jsx)を使ってください。
+
+## HTMLとJSXが異なる理由
+
+JSXはHTMLに見えますが、`React.createElement()`呼び出しにコンパイルされます。JSXはJavaScriptの中に存在するため、一部のHTML属性はJSの予約語と衝突し、その他の属性はHTML規約ではなくJavaScriptの命名規約に従います。
+
+違いは主に5つのカテゴリに分けられます：
+
+1. **予約語のリネーム** — `class` → `className`、`for` → `htmlFor`
+2. **camelCase属性名** — `onclick` → `onClick`、`tabindex` → `tabIndex`
+3. **インラインスタイルのオブジェクト化** — `style="color:red"` → `style={{ color: 'red' }}`
+4. **空要素の自己終了** — `<br>` → `<br />`、`<img src="...">` → `<img src="..." />`
+5. **コメント構文の変化** — `<!-- ... -->` → `{/* ... */}`
+
+## 属性変換対照表
+
+| HTML | JSX | 理由 |
+|------|-----|------|
+| `class="btn"` | `className="btn"` | `class`はJS予約語 |
+| `for="email"` | `htmlFor="email"` | `for`はJS予約語 |
+| `onclick="fn()"` | `onClick={fn}` | JSイベント命名規則 |
+| `onchange={...}` | `onChange={...}` | camelCase |
+| `tabindex="0"` | `tabIndex={0}` | camelCase |
+| `readonly` | `readOnly` | camelCase |
+| `maxlength="10"` | `maxLength={10}` | camelCase |
+| `colspan="2"` | `colSpan={2}` | camelCase |
+| `rowspan="3"` | `rowSpan={3}` | camelCase |
+| `crossorigin` | `crossOrigin` | camelCase |
+| `contenteditable` | `contentEditable` | camelCase |
+| `<br>` | `<br />` | JSXは明示的な閉じタグが必要 |
+| `<img src="...">` | `<img src="..." />` | JSXは明示的な閉じタグが必要 |
+| `<input type="text">` | `<input type="text" />` | JSXは明示的な閉じタグが必要 |
+| `<!-- コメント -->` | `{/* コメント */}` | JSX式の中のJSブロックコメント |
+
+## インラインスタイル
+
+最も混乱しやすい点です。HTMLのインラインスタイルは文字列ですが、JSXのインラインスタイルはJavaScriptオブジェクトです。
+
+```html
+<!-- HTML -->
+<div style="color: red; font-size: 14px; background-color: #fff;"></div>
+```
+
+```jsx
+// JSX
+<div style={{ color: 'red', fontSize: '14px', backgroundColor: '#fff' }}></div>
+```
+
+3つのルールがあります：
+- 値は文字列ではなく**オブジェクト**（二重の波括弧：外側はJSX式、内側はオブジェクトリテラル）。
+- プロパティ名は**camelCase**（`font-size` → `fontSize`、`background-color` → `backgroundColor`）。
+- `opacity`や`zIndex`のような単位なし数値はそのまま数値で書けます。ピクセル値は文字列（`'14px'`）が必要です。
+
+## 空要素の自己終了
+
+HTML5では、`<br>`・`<hr>`・`<img>`・`<input>`・`<link>`・`<meta>`などの空要素は閉じタグ不要です。しかしJSXでは明示的な自己終了が必須です：
+
+```html
+<!-- HTML — 有効 -->
+<img src="photo.jpg" alt="写真">
+<br>
+<input type="text" name="email">
+<hr>
+```
+
+```jsx
+// JSX — 必須
+<img src="photo.jpg" alt="写真" />
+<br />
+<input type="text" name="email" />
+<hr />
+```
+
+## コメント
+
+HTMLコメントはパーサーが無視し、DOMには現れません。JSXのコメントはJavaScript式でラップする必要があります：
+
+```html
+<!-- HTMLコメント -->
+<p>コンテンツ</p>
+```
+
+```jsx
+{/* JSXコメント */}
+<p>コンテンツ</p>
+```
+
+## よくある移行シナリオ
+
+### 静的HTMLテンプレートをReactコンポーネントに移行する
+
+完全なHTMLドキュメントから外側の構造を取り除きます：
+
+```html
+<!-- HTML -->
+<div class="container">
+  <header class="header">
+    <nav>
+      <a href="/" class="logo">ブランド</a>
+      <ul class="nav-list">
+        <li><a href="/about">About</a></li>
+      </ul>
+    </nav>
+  </header>
+</div>
+```
+
+```jsx
+// Reactコンポーネント
+export function Layout() {
+  return (
+    <div className="container">
+      <header className="header">
+        <nav>
+          <a href="/" className="logo">ブランド</a>
+          <ul className="nav-list">
+            <li><a href="/about">About</a></li>
+          </ul>
+        </nav>
+      </header>
+    </div>
+  );
+}
+```
+
+### FigmaやWebflowからのコピー
+
+デザインツールは通常`class`ベースのHTMLをエクスポートします。変換は単純で、`class`を`className`に全置換し、イベント属性をcamelCaseにして、空要素に自己終了スラッシュを追加するだけです。
+
+### メールHTMLをReact Emailに変換する
+
+メールHTMLはテーブルレイアウトと大量のインラインスタイルで構成されていることが多いです。主な作業はインラインスタイルの変換で、すべての`style="..."`文字列を`style={{ ... }}`オブジェクトに書き換えます。変換後は`react-email`や`jsx-email`でそのまま使えます。
+
+## よくある落とし穴
+
+**Boolean属性** — HTMLでは`disabled`・`checked`・`selected`は裸の属性です。JSXでは`disabled={true}`または省略形の`disabled`を使います。コンバーターはどちらの形式も自動処理します。
+
+**`data-*`と`aria-*`属性** — これらはJSXでもハイフン区切りのままです。`data-testid="btn"`と`aria-label="閉じる"`はcamelCaseにしません。
+
+**SVG属性** — SVGには独自の属性命名ルールがあります。`viewBox`はJSXでcamelCaseのまま使用し、`stroke-width`は`strokeWidth`に変換されます。SVGの変換が目的なら、[SVG to JSXコンバーター](/tools/svg-to-jsx)がこれらのルールを正しく処理します。
+
+**数値属性** — HTMLでは`tabindex="0"`は文字列です。JSXでは数値形式`tabIndex={0}`が推奨されます。ほとんどのコンバーターが自動で処理します。
+
+## オンラインHTML to JSXコンバーター
+
+[ZeroToolのHTML to JSXコンバーター](/tools/html-to-jsx)は、上記のすべてのルールをブラウザ内で即座に適用します。任意のHTMLスニペットを貼り付けると、有効なJSX出力がすぐに得られます。サーバー不要・サインアップ不要・データ送信なし。
+
+**[HTML to JSXコンバーターを試す →](/tools/html-to-jsx)**
