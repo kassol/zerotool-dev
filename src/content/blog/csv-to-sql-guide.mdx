@@ -1,0 +1,154 @@
+---
+title: "CSV to SQL Converter: Generate INSERT Statements and CREATE TABLE from CSV"
+description: "Learn how to convert CSV files to SQL INSERT and CREATE TABLE statements. Covers header handling, type detection, MySQL, PostgreSQL, and SQLite dialects."
+pubDate: 2026-04-13
+lang: "en"
+translationSlug: "csv-to-sql-guide-zh"
+tags: ["csv-to-sql", "sql", "csv", "database", "developer-tools"]
+ogImage: /og/blog-csv-to-sql-guide.png
+---
+
+Importing a CSV file into a database should be simple. In practice you spend time writing INSERT statements by hand, guessing column types, and wrestling with dialect differences between MySQL, PostgreSQL, and SQLite. This guide explains every step of CSV-to-SQL conversion so you can do it correctly — or skip the manual work entirely with our [CSV to SQL converter](/tools/csv-to-sql).
+
+## What CSV to SQL Conversion Produces
+
+A CSV file has two logical parts: a header row that names the columns, and data rows that hold values. Converting to SQL means generating:
+
+1. A `CREATE TABLE` statement that declares column names and types.
+2. One or more `INSERT INTO` statements that load the data.
+
+Given this CSV:
+
+```
+id,name,email,age,active
+1,Alice,alice@example.com,30,true
+2,Bob,bob@example.com,25,false
+```
+
+The converter produces:
+
+```sql
+CREATE TABLE data (
+  id INTEGER,
+  name TEXT,
+  email TEXT,
+  age INTEGER,
+  active BOOLEAN
+);
+
+INSERT INTO data (id, name, email, age, active) VALUES
+  (1, 'Alice', 'alice@example.com', 30, TRUE),
+  (2, 'Bob', 'bob@example.com', 25, FALSE);
+```
+
+## How Header Detection Works
+
+The first row of a CSV file is assumed to be a header. Headers become column names in the SQL schema. A good converter sanitizes these names:
+
+- Replaces spaces and special characters with underscores (`order date` → `order_date`)
+- Lowercases the names for consistency
+- Avoids reserved SQL keywords as column names (renames `order` to `order_col`, for example)
+
+If your CSV has no header row, the converter should offer numeric column names (`col1`, `col2`, …) or let you enter column names manually.
+
+## Data Type Detection
+
+Automatic type inference scans the values in each column and picks the most appropriate SQL type:
+
+| Detected pattern | SQL type |
+|---|---|
+| All values are whole numbers | `INTEGER` |
+| Values contain decimals | `FLOAT` / `NUMERIC` |
+| Values are `true`/`false` (case-insensitive) | `BOOLEAN` |
+| Values match ISO 8601 date (`2024-01-15`) | `DATE` |
+| Values match ISO 8601 datetime | `TIMESTAMP` |
+| Mixed or unparseable | `TEXT` / `VARCHAR` |
+
+Type inference is best-effort. It scans every row, so a column is only typed as `INTEGER` if every non-empty cell is an integer. A single non-numeric value causes the column to fall back to `TEXT`.
+
+## Dialect Differences
+
+### MySQL
+
+MySQL uses `INT` instead of `INTEGER`, requires backtick quoting for reserved-word identifiers, and uses `TINYINT(1)` for booleans in older versions.
+
+```sql
+CREATE TABLE `users` (
+  `id` INT,
+  `name` VARCHAR(255),
+  `active` TINYINT(1)
+);
+```
+
+### PostgreSQL
+
+PostgreSQL is strict about types. Use `SERIAL` or `BIGSERIAL` for auto-increment primary keys. Boolean literals are `TRUE`/`FALSE`. Text columns default to `TEXT` with no length limit.
+
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  name TEXT,
+  active BOOLEAN
+);
+```
+
+### SQLite
+
+SQLite uses dynamic typing. It accepts `INTEGER`, `REAL`, `TEXT`, `BLOB`, and `NUMERIC`. There is no native boolean — use `INTEGER` with values 0 and 1. SQLite also ignores column width declarations, so `VARCHAR(255)` and `TEXT` behave identically.
+
+```sql
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  active INTEGER
+);
+```
+
+## Handling Common CSV Problems
+
+**Quoted fields** — CSV values wrapped in double quotes can contain commas and newlines. A correct parser handles `"Smith, John"` as a single field, not two.
+
+**Missing values** — Empty cells become `NULL` in SQL. The converter should emit `NULL` explicitly rather than an empty string.
+
+**Large files** — Batch INSERTs perform better than one statement per row. The converter should group rows:
+
+```sql
+INSERT INTO data (id, name) VALUES
+  (1, 'Alice'),
+  (2, 'Bob'),
+  (3, 'Carol');
+```
+
+**Encoding** — CSVs from Excel often use Windows-1252 encoding. If you see garbled characters, save the file as UTF-8 before converting.
+
+**Numeric strings** — Zip codes, phone numbers, and product codes look like integers but must stay as text. A converter that detects leading zeros (`07700`) or phone format (`+44-7911-123456`) should leave these as `TEXT`.
+
+## Using the zerotool.dev CSV to SQL Converter
+
+1. Go to [zerotool.dev/tools/csv-to-sql](/tools/csv-to-sql).
+2. Paste your CSV or upload a file.
+3. Choose your target dialect: MySQL, PostgreSQL, or SQLite.
+4. Review the detected column types — you can override them before generating.
+5. Copy the `CREATE TABLE` and `INSERT INTO` statements and run them in your database client.
+
+No data is sent to any server. The conversion runs entirely in your browser.
+
+## When to Use CREATE TABLE vs INSERT Only
+
+If the table already exists in your database, skip the `CREATE TABLE` statement and run only the `INSERT INTO` block. Most converters let you toggle this. If you are building a new table from scratch, generate both.
+
+For large-scale imports, consider your database's native bulk-load utilities instead:
+
+- MySQL: `LOAD DATA INFILE`
+- PostgreSQL: `COPY FROM`
+- SQLite: `.import` command in the CLI
+
+These are faster than INSERT statements for millions of rows. For hundreds to thousands of rows, generated SQL works fine.
+
+## Related Tools
+
+- [CSV to JSON](/tools/csv-json) — convert CSV to a JSON array
+- [CSV to Markdown](/tools/csv-to-markdown) — turn tabular data into Markdown tables
+- [JSON Formatter](/tools/json-formatter) — validate and pretty-print JSON
+
+**[Try the CSV to SQL Converter →](/tools/csv-to-sql)**

@@ -1,0 +1,154 @@
+---
+title: "CSV to SQL 変換ガイド：INSERT文とCREATE TABLEを自動生成する方法"
+description: "CSVファイルからSQLのINSERT文とCREATE TABLE文を生成する方法を解説。ヘッダー処理、型推論、MySQL・PostgreSQL・SQLite対応。無料オンラインツール付き。"
+pubDate: 2026-04-13
+lang: "ja"
+translationSlug: "csv-to-sql-guide"
+tags: ["csv-to-sql", "sql", "csv", "database", "developer-tools"]
+ogImage: /og/blog-csv-to-sql-guide-ja.png
+---
+
+CSVファイルをデータベースにインポートする作業は単純に見えますが、実際にはINSERT文を手書きし、カラムの型を推測し、MySQL・PostgreSQL・SQLiteのSQL方言の違いに悩まされることになります。このガイドではCSVからSQLへの変換に必要な知識をすべて解説します。手作業を省略したい場合は[CSV to SQLコンバーター](/tools/csv-to-sql)をご利用ください。
+
+## CSV to SQL変換で生成されるもの
+
+CSVファイルは論理的に2つの部分で構成されます。カラム名を定義するヘッダー行と、データを保持するデータ行です。SQLへの変換では次の2種類の文を生成します。
+
+1. カラム名と型を宣言する`CREATE TABLE`文
+2. データを格納する`INSERT INTO`文
+
+以下のCSVがあるとします：
+
+```
+id,name,email,age,active
+1,田中太郎,tanaka@example.com,30,true
+2,山田花子,yamada@example.com,25,false
+```
+
+変換結果は以下のようになります：
+
+```sql
+CREATE TABLE data (
+  id INTEGER,
+  name TEXT,
+  email TEXT,
+  age INTEGER,
+  active BOOLEAN
+);
+
+INSERT INTO data (id, name, email, age, active) VALUES
+  (1, '田中太郎', 'tanaka@example.com', 30, TRUE),
+  (2, '山田花子', 'yamada@example.com', 25, FALSE);
+```
+
+## ヘッダーの処理
+
+CSVの1行目はヘッダーとみなされ、SQLスキーマのカラム名になります。適切なコンバーターは以下のサニタイズを行います：
+
+- スペースや特殊文字をアンダースコアに置換（`注文日` → `注文日`、`order date` → `order_date`）
+- 一貫性のために小文字化
+- SQLの予約語をカラム名に使用しないよう回避（`order` → `order_col` など）
+
+ヘッダー行がないCSVの場合、数値のカラム名（`col1`、`col2`…）を使用するか、手動入力オプションを提供する必要があります。
+
+## データ型の自動推論
+
+自動型推論は各カラムのすべての値をスキャンし、最も適切なSQLの型を選択します：
+
+| 検出パターン | SQLの型 |
+|---|---|
+| すべて整数 | `INTEGER` |
+| 小数を含む | `FLOAT` / `NUMERIC` |
+| `true`/`false`（大文字小文字を問わず） | `BOOLEAN` |
+| ISO 8601日付（`2024-01-15`） | `DATE` |
+| ISO 8601日時 | `TIMESTAMP` |
+| 混在または解析不可 | `TEXT` / `VARCHAR` |
+
+型推論はベストエフォートです。空でないセルがすべて整数の場合のみ`INTEGER`と判定され、1つでも非数値の値があれば`TEXT`にフォールバックします。
+
+## SQL方言の違い
+
+### MySQL
+
+MySQLでは`INTEGER`の代わりに`INT`を使用し、予約語の識別子にはバッククォートが必要です。古いバージョンではbooleanに`TINYINT(1)`を使用します。
+
+```sql
+CREATE TABLE `users` (
+  `id` INT,
+  `name` VARCHAR(255),
+  `active` TINYINT(1)
+);
+```
+
+### PostgreSQL
+
+PostgreSQLは型に厳格です。オートインクリメントの主キーには`SERIAL`または`BIGSERIAL`を使用します。booleanリテラルは`TRUE`/`FALSE`、テキストカラムはデフォルトで長さ制限のない`TEXT`です。
+
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  name TEXT,
+  active BOOLEAN
+);
+```
+
+### SQLite
+
+SQLiteは動的型付けを採用しており、`INTEGER`・`REAL`・`TEXT`・`BLOB`・`NUMERIC`をサポートします。ネイティブのboolean型はなく、0/1の`INTEGER`で代替します。カラム幅の宣言は無視されるため、`VARCHAR(255)`と`TEXT`は同じ動作をします。
+
+```sql
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  active INTEGER
+);
+```
+
+## よくあるCSVの問題への対処
+
+**クォートされたフィールド** — ダブルクォートで囲まれたフィールドはカンマや改行を含むことができます。正しいパーサーは`"田中, 太郎"`を2つではなく1つのフィールドとして処理します。
+
+**欠損値** — 空セルはSQLで`NULL`になるべきで、空文字列ではありません。
+
+**大きなファイル** — バッチINSERTは1行ずつの文よりはるかに高速です。コンバーターは行をまとめるべきです：
+
+```sql
+INSERT INTO data (id, name) VALUES
+  (1, '田中太郎'),
+  (2, '山田花子'),
+  (3, '鈴木一郎');
+```
+
+**エンコーディング** — ExcelからのCSVはShift-JISやWindows-1252エンコーディングの場合があります。文字化けが発生したら、変換前にファイルをUTF-8で保存してください。
+
+**数値形式の文字列** — 郵便番号、電話番号、製品コードは整数のように見えますが、テキストとして保持する必要があります。先頭ゼロ（`100-0001`）や特定の形式（`090-1234-5678`）が検出された場合は数値型に推論しません。
+
+## zerotool.devのCSV to SQLコンバーターの使い方
+
+1. [zerotool.dev/tools/csv-to-sql](/tools/csv-to-sql)を開きます。
+2. CSVを貼り付けるかファイルをアップロードします。
+3. ターゲットの方言を選択します：MySQL・PostgreSQL・SQLite。
+4. 検出されたカラムの型を確認し、生成前に上書きできます。
+5. `CREATE TABLE`と`INSERT INTO`文をコピーし、データベースクライアントで実行します。
+
+変換はすべてブラウザ内で完結します。データはどのサーバーにも送信されません。
+
+## CREATE TABLEとINSERTのみ使い分け
+
+テーブルがすでに存在する場合は`CREATE TABLE`をスキップし、`INSERT INTO`のみ実行してください。ほとんどのコンバーターはこれを切り替えられます。新規テーブルを作成する場合は両方を生成します。
+
+数百万行以上の大規模インポートには、INSERT文ではなくデータベース固有の一括ロードユーティリティを使用することをお勧めします：
+
+- MySQL：`LOAD DATA INFILE`
+- PostgreSQL：`COPY FROM`
+- SQLite：CLIの`.import`コマンド
+
+数百〜数千行であれば、生成されたSQLで十分です。
+
+## 関連ツール
+
+- [CSV to JSON](/tools/csv-json) — CSVをJSON配列に変換
+- [CSV to Markdown](/tools/csv-to-markdown) — 表データをMarkdownテーブルに変換
+- [JSONフォーマッター](/tools/json-formatter) — JSONを検証して整形
+
+**[CSV to SQLコンバーターを試す →](/tools/csv-to-sql)**

@@ -1,0 +1,154 @@
+---
+title: "CSV to SQL 변환 가이드：INSERT 문과 CREATE TABLE 자동 생성하기"
+description: "CSV 파일을 SQL INSERT 문과 CREATE TABLE 문으로 변환하는 방법. 헤더 처리, 타입 감지, MySQL·PostgreSQL·SQLite 방언 차이 완벽 정리. 무료 온라인 도구 제공."
+pubDate: 2026-04-13
+lang: "ko"
+translationSlug: "csv-to-sql-guide"
+tags: ["csv-to-sql", "sql", "csv", "database", "developer-tools"]
+ogImage: /og/blog-csv-to-sql-guide-ko.png
+---
+
+CSV 파일을 데이터베이스에 임포트하는 작업은 간단해 보이지만, 실제로는 INSERT 문을 손으로 작성하고 컬럼 타입을 추측하며 MySQL, PostgreSQL, SQLite 간의 방언 차이를 해결해야 합니다. 이 가이드에서는 CSV to SQL 변환의 모든 단계를 설명합니다. 수작업을 건너뛰고 싶다면 [CSV to SQL 변환 도구](/tools/csv-to-sql)를 바로 사용해 보세요.
+
+## CSV to SQL 변환으로 생성되는 것
+
+CSV 파일은 두 가지 논리적 부분으로 구성됩니다. 컬럼 이름을 정의하는 헤더 행과 데이터를 담는 데이터 행입니다. SQL로 변환하면 다음 두 가지가 생성됩니다:
+
+1. 컬럼 이름과 타입을 선언하는 `CREATE TABLE` 문
+2. 데이터를 삽입하는 `INSERT INTO` 문
+
+다음 CSV를 예로 들어보겠습니다:
+
+```
+id,name,email,age,active
+1,김철수,kim@example.com,30,true
+2,이영희,lee@example.com,25,false
+```
+
+변환 결과:
+
+```sql
+CREATE TABLE data (
+  id INTEGER,
+  name TEXT,
+  email TEXT,
+  age INTEGER,
+  active BOOLEAN
+);
+
+INSERT INTO data (id, name, email, age, active) VALUES
+  (1, '김철수', 'kim@example.com', 30, TRUE),
+  (2, '이영희', 'lee@example.com', 25, FALSE);
+```
+
+## 헤더 처리
+
+CSV의 첫 번째 행은 헤더로 간주되어 SQL 스키마의 컬럼 이름이 됩니다. 좋은 변환 도구는 다음과 같이 정제합니다:
+
+- 공백과 특수문자를 언더스코어로 대체 (`주문 날짜` → `주문_날짜`, `order date` → `order_date`)
+- 일관성을 위해 소문자로 변환
+- SQL 예약어를 컬럼 이름으로 사용하지 않도록 처리 (`order` → `order_col` 등)
+
+헤더 행이 없는 CSV는 숫자 컬럼 이름(`col1`, `col2`…)을 사용하거나 직접 입력할 수 있는 옵션을 제공해야 합니다.
+
+## 데이터 타입 자동 감지
+
+자동 타입 추론은 각 컬럼의 모든 값을 스캔하여 가장 적합한 SQL 타입을 선택합니다:
+
+| 감지된 패턴 | SQL 타입 |
+|---|---|
+| 모두 정수 | `INTEGER` |
+| 소수 포함 | `FLOAT` / `NUMERIC` |
+| `true`/`false`(대소문자 무관) | `BOOLEAN` |
+| ISO 8601 날짜 (`2024-01-15`) | `DATE` |
+| ISO 8601 날짜시간 | `TIMESTAMP` |
+| 혼합 또는 파싱 불가 | `TEXT` / `VARCHAR` |
+
+타입 추론은 최선 추정 방식입니다. 비어 있지 않은 셀이 모두 정수인 경우에만 `INTEGER`로 추론되며, 하나라도 숫자가 아닌 값이 있으면 `TEXT`로 폴백됩니다.
+
+## SQL 방언 차이
+
+### MySQL
+
+MySQL은 `INTEGER` 대신 `INT`를 사용하며, 예약어 식별자에는 백틱이 필요합니다. 구버전에서는 불리언에 `TINYINT(1)`을 사용합니다.
+
+```sql
+CREATE TABLE `users` (
+  `id` INT,
+  `name` VARCHAR(255),
+  `active` TINYINT(1)
+);
+```
+
+### PostgreSQL
+
+PostgreSQL은 타입에 엄격합니다. 자동 증가 기본키에는 `SERIAL` 또는 `BIGSERIAL`을 사용합니다. 불리언 리터럴은 `TRUE`/`FALSE`이며, 텍스트 컬럼은 기본적으로 길이 제한이 없는 `TEXT`입니다.
+
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  name TEXT,
+  active BOOLEAN
+);
+```
+
+### SQLite
+
+SQLite는 동적 타입 시스템을 사용하여 `INTEGER`, `REAL`, `TEXT`, `BLOB`, `NUMERIC`을 지원합니다. 네이티브 불리언 타입이 없어 0/1의 `INTEGER`로 대체합니다. 컬럼 너비 선언은 무시되므로 `VARCHAR(255)`와 `TEXT`는 동일하게 동작합니다.
+
+```sql
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  active INTEGER
+);
+```
+
+## 흔한 CSV 문제 처리
+
+**인용된 필드** — 큰따옴표로 감싸진 필드는 쉼표와 줄바꿈을 포함할 수 있습니다. 올바른 파서는 `"김철수, 엔지니어"`를 두 개가 아닌 하나의 필드로 처리합니다.
+
+**누락된 값** — 빈 셀은 SQL에서 빈 문자열이 아닌 `NULL`이 되어야 합니다.
+
+**큰 파일** — 일괄 INSERT는 행별 문보다 훨씬 빠릅니다. 변환기는 행을 묶어서 처리해야 합니다:
+
+```sql
+INSERT INTO data (id, name) VALUES
+  (1, '김철수'),
+  (2, '이영희'),
+  (3, '박민준');
+```
+
+**인코딩** — 한국어 Excel 파일은 EUC-KR 인코딩을 사용하는 경우가 많습니다. 문자 깨짐이 발생하면 변환 전에 파일을 UTF-8로 저장하세요.
+
+**숫자 형태의 문자열** — 우편번호, 전화번호, 제품 코드는 정수처럼 보이지만 텍스트로 유지해야 합니다. 앞에 오는 0(`06000`)이나 전화번호 형식(`010-1234-5678`)이 감지되면 숫자 타입으로 추론하지 않아야 합니다.
+
+## zerotool.dev CSV to SQL 변환기 사용법
+
+1. [zerotool.dev/tools/csv-to-sql](/tools/csv-to-sql)로 이동합니다.
+2. CSV를 붙여넣거나 파일을 업로드합니다.
+3. 대상 방언을 선택합니다: MySQL, PostgreSQL, 또는 SQLite.
+4. 감지된 컬럼 타입을 검토하고 생성 전에 수정할 수 있습니다.
+5. `CREATE TABLE`과 `INSERT INTO` 문을 복사하여 데이터베이스 클라이언트에서 실행합니다.
+
+변환은 완전히 브라우저에서 실행됩니다. 데이터는 어떤 서버에도 전송되지 않습니다.
+
+## CREATE TABLE vs INSERT만 사용하는 경우
+
+테이블이 이미 존재하는 경우 `CREATE TABLE`을 건너뛰고 `INSERT INTO`만 실행하면 됩니다. 대부분의 변환기에서 이를 전환할 수 있습니다. 새 테이블을 처음부터 만들 때는 둘 다 생성합니다.
+
+수백만 행 이상의 대규모 임포트에는 INSERT 문 대신 데이터베이스 전용 대량 로드 도구를 사용하는 것이 좋습니다:
+
+- MySQL: `LOAD DATA INFILE`
+- PostgreSQL: `COPY FROM`
+- SQLite: CLI의 `.import` 명령
+
+수백~수천 행이라면 생성된 SQL로 충분합니다.
+
+## 관련 도구
+
+- [CSV to JSON](/tools/csv-json) — CSV를 JSON 배열로 변환
+- [CSV to Markdown](/tools/csv-to-markdown) — 표 데이터를 Markdown 표로 변환
+- [JSON 포매터](/tools/json-formatter) — JSON 유효성 검사 및 보기 좋게 정리
+
+**[CSV to SQL 변환기 사용해보기 →](/tools/csv-to-sql)**
