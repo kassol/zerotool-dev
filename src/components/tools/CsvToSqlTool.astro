@@ -1,0 +1,445 @@
+---
+// CsvToSqlTool — CSV to SQL INSERT converter, pure JS, zero deps
+---
+<div class="cts-wrap">
+  <!-- Controls row -->
+  <div class="cts-controls">
+    <div class="cts-field">
+      <label for="cts-dialect" data-i18n="dialectLabel">SQL Dialect</label>
+      <select id="cts-dialect">
+        <option value="mysql">MySQL</option>
+        <option value="postgresql">PostgreSQL</option>
+        <option value="sqlite">SQLite</option>
+      </select>
+    </div>
+    <div class="cts-field cts-field--wide">
+      <label for="cts-table" data-i18n="tableNameLabel">Table Name</label>
+      <input id="cts-table" type="text" value="my_table" spellcheck="false" autocomplete="off" />
+    </div>
+    <div class="cts-field">
+      <label for="cts-mode" data-i18n="insertModeLabel">Insert Mode</label>
+      <select id="cts-mode">
+        <option value="batch" data-i18n="batchMode">Batch INSERT</option>
+        <option value="individual" data-i18n="individualMode">Individual INSERT</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- CSV input -->
+  <div class="cts-panel">
+    <div class="cts-panel-header">
+      <span data-i18n="csvLabel">CSV Input</span>
+      <label class="btn-upload" for="cts-file-input" data-i18n="uploadBtn">Upload CSV</label>
+      <input id="cts-file-input" type="file" accept=".csv,text/csv" style="display:none" />
+    </div>
+    <textarea
+      id="cts-csv"
+      spellcheck="false"
+      placeholder="name,age,city&#10;Alice,30,New York&#10;Bob,25,London"
+    ></textarea>
+  </div>
+
+  <!-- SQL output -->
+  <div class="cts-panel">
+    <div class="cts-panel-header">
+      <span data-i18n="sqlLabel">SQL Output</span>
+      <button id="cts-copy" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+    </div>
+    <textarea id="cts-sql" spellcheck="false" readonly></textarea>
+  </div>
+
+  <div id="cts-status" class="cts-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          csvLabel: 'CSV Input',
+          sqlLabel: 'SQL Output',
+          uploadBtn: 'Upload CSV',
+          tableNameLabel: 'Table Name',
+          dialectLabel: 'SQL Dialect',
+          insertModeLabel: 'Insert Mode',
+          batchMode: 'Batch INSERT',
+          individualMode: 'Individual INSERT',
+          copy: 'Copy',
+          copied: 'Copied!',
+          placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
+          errNoData: 'No valid data found. Please check your CSV input.',
+          errNoHeader: 'CSV must have a header row.',
+        },
+        zh: {
+          csvLabel: 'CSV \u8f93\u5165',
+          sqlLabel: 'SQL \u8f93\u51fa',
+          uploadBtn: '\u4e0a\u4f20 CSV',
+          tableNameLabel: '\u8868\u540d',
+          dialectLabel: 'SQL \u65b9\u8a00',
+          insertModeLabel: '\u63d2\u5165\u6a21\u5f0f',
+          batchMode: '\u6279\u91cf INSERT',
+          individualMode: '\u9010\u884c INSERT',
+          copy: '\u590d\u5236',
+          copied: '\u5df2\u590d\u5236\uff01',
+          placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
+          errNoData: '\u672a\u627e\u5230\u6709\u6548\u6570\u636e\uff0c\u8bf7\u68c0\u67e5 CSV \u8f93\u5165\u3002',
+          errNoHeader: 'CSV \u5fc5\u987b\u5305\u542b\u8868\u5934\u884c\u3002',
+        },
+        ja: {
+          csvLabel: 'CSV \u5165\u529b',
+          sqlLabel: 'SQL \u51fa\u529b',
+          uploadBtn: 'CSV \u30a2\u30c3\u30d7\u30ed\u30fc\u30c9',
+          tableNameLabel: '\u30c6\u30fc\u30d6\u30eb\u540d',
+          dialectLabel: 'SQL \u65b9\u8a00',
+          insertModeLabel: '\u633f\u5165\u30e2\u30fc\u30c9',
+          batchMode: '\u30d0\u30c3\u30c1 INSERT',
+          individualMode: '\u500b\u5225 INSERT',
+          copy: '\u30b3\u30d4\u30fc',
+          copied: '\u30b3\u30d4\u30fc\u6e08\u307f\uff01',
+          placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
+          errNoData: '\u30c7\u30fc\u30bf\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002CSV\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+          errNoHeader: 'CSV\u306b\u306f\u30d8\u30c3\u30c0\u30fc\u884c\u304c\u5fc5\u8981\u3067\u3059\u3002',
+        },
+        ko: {
+          csvLabel: 'CSV \uc785\ub825',
+          sqlLabel: 'SQL \ucd9c\ub825',
+          uploadBtn: 'CSV \uc5c5\ub85c\ub4dc',
+          tableNameLabel: '\ud14c\uc774\ube14\uba85',
+          dialectLabel: 'SQL \ubc29\uc5b8',
+          insertModeLabel: '\uc0bd\uc785 \ubaa8\ub4dc',
+          batchMode: '\ubc30\uce58 INSERT',
+          individualMode: '\uac1c\ubcc4 INSERT',
+          copy: '\ubcf5\uc0ac',
+          copied: '\ubcf5\uc0ac\ub428!',
+          placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
+          errNoData: '\uc720\ud6a8\ud55c \ub370\uc774\ud130\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4. CSV\ub97c \ud655\uc778\ud558\uc138\uc694.',
+          errNoHeader: 'CSV\uc5d0\ub294 \ud5e4\ub354 \ud589\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      // Apply i18n
+      document.querySelectorAll('.cts-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+
+      var csvEl      = document.getElementById('cts-csv');
+      var sqlEl      = document.getElementById('cts-sql');
+      var dialectEl  = document.getElementById('cts-dialect');
+      var tableEl    = document.getElementById('cts-table');
+      var modeEl     = document.getElementById('cts-mode');
+      var copyBtn    = document.getElementById('cts-copy');
+      var fileInput  = document.getElementById('cts-file-input');
+      var statusEl   = document.getElementById('cts-status');
+
+      csvEl.placeholder = t.placeholder;
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'cts-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'cts-status';
+      }
+
+      /* ── CSV parser (same logic as CsvJsonTool) ── */
+      function parseCsv(text) {
+        var rows = [];
+        var row = [];
+        var field = '';
+        var inQuote = false;
+        var i = 0;
+        var len = text.length;
+
+        while (i < len) {
+          var ch = text[i];
+          if (inQuote) {
+            if (ch === '"') {
+              if (i + 1 < len && text[i + 1] === '"') {
+                field += '"';
+                i += 2;
+              } else {
+                inQuote = false;
+                i++;
+              }
+            } else {
+              field += ch;
+              i++;
+            }
+          } else {
+            if (ch === '"') {
+              inQuote = true;
+              i++;
+            } else if (ch === ',') {
+              row.push(field);
+              field = '';
+              i++;
+            } else if (ch === '\r') {
+              row.push(field);
+              field = '';
+              rows.push(row);
+              row = [];
+              i++;
+              if (i < len && text[i] === '\n') i++;
+            } else if (ch === '\n') {
+              row.push(field);
+              field = '';
+              rows.push(row);
+              row = [];
+              i++;
+            } else {
+              field += ch;
+              i++;
+            }
+          }
+        }
+
+        if (field || row.length > 0) {
+          row.push(field);
+          rows.push(row);
+        }
+
+        if (rows.length > 0) {
+          var last = rows[rows.length - 1];
+          if (last.length === 1 && last[0] === '') rows.pop();
+        }
+
+        return rows;
+      }
+
+      /* ── SQL quoting helpers ── */
+      function quoteIdent(name, dialect) {
+        if (dialect === 'mysql') {
+          return '`' + name.replace(/`/g, '``') + '`';
+        }
+        return '"' + name.replace(/"/g, '""') + '"';
+      }
+
+      function quoteValue(val) {
+        // empty string → NULL
+        if (val === '') return 'NULL';
+        // pure numeric (int or float) → no quotes
+        if (/^-?\d+(\.\d+)?$/.test(val)) return val;
+        // string → single-quote, escape single quotes as ''
+        return "'" + val.replace(/'/g, "''") + "'";
+      }
+
+      /* ── Main conversion ── */
+      function convert() {
+        var raw = csvEl.value.trim();
+        if (!raw) {
+          sqlEl.value = '';
+          clearStatus();
+          return;
+        }
+
+        var rows = parseCsv(raw);
+
+        // Filter completely empty rows
+        rows = rows.filter(function (r) {
+          return r.some(function (c) { return c !== ''; });
+        });
+
+        if (rows.length === 0) {
+          setStatus(t.errNoData, true);
+          sqlEl.value = '';
+          return;
+        }
+        if (rows.length < 1) {
+          setStatus(t.errNoHeader, true);
+          sqlEl.value = '';
+          return;
+        }
+
+        var headers = rows[0];
+        if (headers.length === 0 || headers.every(function (h) { return h === ''; })) {
+          setStatus(t.errNoHeader, true);
+          sqlEl.value = '';
+          return;
+        }
+
+        var dataRows = rows.slice(1).filter(function (r) {
+          return r.some(function (c) { return c !== ''; });
+        });
+
+        if (dataRows.length === 0) {
+          setStatus(t.errNoData, true);
+          sqlEl.value = '';
+          return;
+        }
+
+        var dialect  = dialectEl.value;
+        var table    = tableEl.value.trim() || 'my_table';
+        var mode     = modeEl.value;
+
+        var qTable   = quoteIdent(table, dialect);
+        var qCols    = headers.map(function (h) { return quoteIdent(h, dialect); }).join(', ');
+        var lines    = [];
+
+        if (mode === 'batch') {
+          var valueSets = dataRows.map(function (row) {
+            var vals = headers.map(function (_, ci) {
+              var cell = row[ci] !== undefined ? row[ci] : '';
+              return quoteValue(cell);
+            });
+            return '  (' + vals.join(', ') + ')';
+          });
+          lines.push('INSERT INTO ' + qTable + ' (' + qCols + ') VALUES');
+          lines.push(valueSets.join(',\n') + ';');
+        } else {
+          for (var ri = 0; ri < dataRows.length; ri++) {
+            var row = dataRows[ri];
+            var vals = headers.map(function (_, ci) {
+              var cell = row[ci] !== undefined ? row[ci] : '';
+              return quoteValue(cell);
+            });
+            lines.push('INSERT INTO ' + qTable + ' (' + qCols + ') VALUES (' + vals.join(', ') + ');');
+          }
+        }
+
+        sqlEl.value = lines.join('\n');
+        clearStatus();
+        window.trackTool && window.trackTool('csv_to_sql', 'convert');
+      }
+
+      /* ── Debounced live convert ── */
+      var _timer = null;
+      function scheduleConvert() {
+        clearTimeout(_timer);
+        _timer = setTimeout(convert, 300);
+      }
+
+      csvEl.addEventListener('input', scheduleConvert);
+      dialectEl.addEventListener('change', convert);
+      tableEl.addEventListener('input', scheduleConvert);
+      modeEl.addEventListener('change', convert);
+
+      /* ── File upload ── */
+      fileInput.addEventListener('change', function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          csvEl.value = e.target.result;
+          convert();
+        };
+        reader.readAsText(file, 'UTF-8');
+        fileInput.value = '';
+      });
+
+      /* ── Copy ── */
+      copyBtn.addEventListener('click', function () {
+        if (!sqlEl.value) return;
+        navigator.clipboard.writeText(sqlEl.value).then(function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .cts-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cts-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+  }
+
+  .cts-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .cts-field--wide { flex: 1; min-width: 140px; }
+
+  .cts-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .cts-field input,
+  .cts-field select {
+    font-size: 0.9rem;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .cts-field input:focus,
+  .cts-field select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .cts-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .cts-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .cts-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .cts-panel textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .cts-panel textarea[readonly] {
+    cursor: default;
+  }
+
+  .btn-upload {
+    display: inline-block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.28rem 0.65rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .btn-upload:hover { border-color: var(--color-primary); color: var(--color-primary); }
+
+  .cts-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .cts-status.success { color: #057a55; }
+  .cts-status.error   { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cts-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .cts-status.error   { color: #f87171; }
+  }
+  [data-theme="dark"] .cts-status.success { color: #34d399; }
+  [data-theme="dark"] .cts-status.error   { color: #f87171; }
+
+  @media (max-width: 600px) {
+    .cts-controls { flex-direction: column; }
+    .cts-field--wide { min-width: 0; }
+  }
+</style>
