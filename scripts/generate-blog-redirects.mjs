@@ -37,6 +37,7 @@ async function main() {
     if (baseSlug === langSlug) continue;
 
     lines.push(`/${lang}/blog/${baseSlug}/ /${lang}/blog/${langSlug}/ 301`);
+    lines.push(`/${lang}/blog/${baseSlug} /${lang}/blog/${langSlug}/ 301`);
   }
 
   if (lines.length === 0) {
