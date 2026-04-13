@@ -1,0 +1,301 @@
+---
+// NatoPhoneticAlphabetTool — text → NATO phonetic alphabet codes
+---
+
+<div class="nato-wrap">
+  <div class="nato-panels">
+    <div class="nato-panel">
+      <label for="nato-input">
+        <span data-i18n="labelInput">Text</span>
+        <button id="nato-clear" class="btn-ghost nato-btn-sm" type="button" data-i18n="clear">Clear</button>
+      </label>
+      <textarea
+        id="nato-input"
+        spellcheck="false"
+        placeholder="Hello"
+        data-i18n-ph="placeholder"
+      ></textarea>
+    </div>
+    <div class="nato-panel">
+      <label for="nato-output">
+        <span data-i18n="labelOutput">NATO Codes</span>
+        <button id="nato-copy" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+      </label>
+      <textarea
+        id="nato-output"
+        readonly
+        spellcheck="false"
+        placeholder="Hotel Echo Lima Lima Oscar"
+        data-i18n-ph="outputPlaceholder"
+      ></textarea>
+    </div>
+  </div>
+
+  <div class="nato-options">
+    <label class="nato-opt-label" data-i18n="modeLabel">Output Mode</label>
+    <div class="nato-mode-btns">
+      <button class="nato-mode-btn active" data-mode="word" type="button" data-i18n="modeWord">Word</button>
+      <button class="nato-mode-btn" data-mode="table" type="button" data-i18n="modeTable">Table</button>
+    </div>
+  </div>
+
+  <div id="nato-table-wrap" class="nato-table-wrap" hidden>
+    <table id="nato-table" class="nato-table">
+      <thead>
+        <tr>
+          <th data-i18n="thChar">Char</th>
+          <th data-i18n="thCode">NATO Code</th>
+        </tr>
+      </thead>
+      <tbody id="nato-table-body"></tbody>
+    </table>
+  </div>
+
+  <div id="nato-status" class="nato-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var NATO = {
+        A:'Alpha', B:'Bravo', C:'Charlie', D:'Delta', E:'Echo', F:'Foxtrot',
+        G:'Golf', H:'Hotel', I:'India', J:'Juliet', K:'Kilo', L:'Lima',
+        M:'Mike', N:'November', O:'Oscar', P:'Papa', Q:'Quebec', R:'Romeo',
+        S:'Sierra', T:'Tango', U:'Uniform', V:'Victor', W:'Whiskey',
+        X:'X-ray', Y:'Yankee', Z:'Zulu',
+        '0':'Zero', '1':'One', '2':'Two', '3':'Three', '4':'Four',
+        '5':'Five', '6':'Six', '7':'Seven', '8':'Eight', '9':'Niner'
+      };
+
+      var STRINGS = {
+        en: { labelInput:'Text', labelOutput:'NATO Codes', clear:'Clear', copy:'Copy', copied:'Copied!', modeLabel:'Output Mode', modeWord:'Word', modeTable:'Table', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'Char', thCode:'NATO Code', converted:'Converted {n} character{s}.', unknown:'[?]' },
+        zh: { labelInput:'文本', labelOutput:'NATO 音标', clear:'清除', copy:'复制', copied:'已复制！', modeLabel:'输出模式', modeWord:'单词', modeTable:'表格', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'字符', thCode:'NATO 代号', converted:'已转换 {n} 个字符。', unknown:'[?]' },
+        ja: { labelInput:'テキスト', labelOutput:'NATO コード', clear:'クリア', copy:'コピー', copied:'コピー済み！', modeLabel:'出力モード', modeWord:'単語', modeTable:'テーブル', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'文字', thCode:'NATOコード', converted:'{n} 文字を変換しました。', unknown:'[?]' },
+        ko: { labelInput:'텍스트', labelOutput:'NATO 코드', clear:'지우기', copy:'복사', copied:'복사됨!', modeLabel:'출력 모드', modeWord:'단어', modeTable:'표', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'문자', thCode:'NATO 코드', converted:'{n}자를 변환했습니다.', unknown:'[?]' }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.nato-wrap [data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.nato-wrap [data-i18n-ph]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl   = document.getElementById('nato-input');
+      var outputEl  = document.getElementById('nato-output');
+      var statusEl  = document.getElementById('nato-status');
+      var tableWrap = document.getElementById('nato-table-wrap');
+      var tableBody = document.getElementById('nato-table-body');
+      var copyBtn   = document.getElementById('nato-copy');
+      var currentMode = 'word';
+
+      function convert(text) {
+        var rows = [];
+        var codes = [];
+        for (var i = 0; i < text.length; i++) {
+          var ch = text[i];
+          var upper = ch.toUpperCase();
+          if (ch === ' ') {
+            rows.push({ ch: '(space)', code: '—' });
+            codes.push('/');
+          } else if (NATO[upper]) {
+            rows.push({ ch: ch, code: NATO[upper] });
+            codes.push(NATO[upper]);
+          } else {
+            rows.push({ ch: ch, code: t.unknown });
+            codes.push(t.unknown);
+          }
+        }
+        return { rows: rows, codes: codes };
+      }
+
+      function charMsg(n) {
+        return t.converted.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+      }
+
+      function render() {
+        var text = inputEl.value;
+        if (!text) {
+          outputEl.value = '';
+          tableBody.innerHTML = '';
+          statusEl.textContent = '';
+          return;
+        }
+        var result = convert(text);
+        outputEl.value = result.codes.join(' ');
+
+        tableBody.innerHTML = '';
+        result.rows.forEach(function(row) {
+          var tr = document.createElement('tr');
+          var td1 = document.createElement('td');
+          td1.className = 'nato-char';
+          td1.textContent = row.ch;
+          var td2 = document.createElement('td');
+          td2.textContent = row.code;
+          tr.appendChild(td1);
+          tr.appendChild(td2);
+          tableBody.appendChild(tr);
+        });
+
+        var count = text.replace(/ /g, '').length;
+        statusEl.textContent = charMsg(count);
+        window.trackTool && window.trackTool('nato_phonetic_alphabet', 'convert');
+      }
+
+      /* mode toggle */
+      document.querySelectorAll('.nato-mode-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          document.querySelectorAll('.nato-mode-btn').forEach(function(b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentMode = btn.getAttribute('data-mode');
+          if (currentMode === 'table') {
+            outputEl.closest('.nato-panel').hidden = true;
+            tableWrap.hidden = false;
+          } else {
+            outputEl.closest('.nato-panel').hidden = false;
+            tableWrap.hidden = true;
+          }
+        });
+      });
+
+      /* realtime */
+      var _timer = null;
+      inputEl.addEventListener('input', function() {
+        clearTimeout(_timer);
+        _timer = setTimeout(render, 200);
+      });
+
+      document.getElementById('nato-clear').addEventListener('click', function() {
+        inputEl.value = '';
+        render();
+      });
+
+      copyBtn.addEventListener('click', function() {
+        var text = currentMode === 'table'
+          ? Array.from(tableBody.querySelectorAll('tr')).map(function(tr) {
+              return tr.cells[0].textContent + ' = ' + tr.cells[1].textContent;
+            }).join('\n')
+          : outputEl.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function() {
+          copyBtn.textContent = t.copied;
+          setTimeout(function() { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .nato-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .nato-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .nato-panels { grid-template-columns: 1fr; }
+  }
+
+  .nato-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .nato-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .nato-panel textarea {
+    width: 100%;
+    min-height: 180px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.6;
+  }
+
+  .nato-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .nato-btn-sm {
+    padding: 0.2rem 0.55rem;
+    font-size: 0.78rem;
+  }
+
+  .nato-options {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .nato-opt-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .nato-mode-btns { display: flex; gap: 0.35rem; }
+
+  .nato-mode-btn {
+    padding: 0.25rem 0.65rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .nato-mode-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .nato-mode-btn.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+
+  .nato-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .nato-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+
+  .nato-table th, .nato-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .nato-table th {
+    background: var(--color-bg-secondary);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .nato-table tbody tr:last-child td { border-bottom: none; }
+  .nato-table tbody tr:hover td { background: var(--color-bg-secondary); }
+
+  .nato-char {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--color-primary);
+  }
+
+  .nato-status { font-size: 0.85rem; min-height: 1.2rem; color: var(--color-text-secondary); }
+</style>
