@@ -1,0 +1,291 @@
+---
+// HtmlToJsxTool — HTML to JSX converter, pure JS, zero deps
+---
+<div class="htj-wrap">
+  <div class="htj-panes">
+    <div class="htj-pane">
+      <label class="htj-label" for="htj-input" data-i18n="inputLabel">HTML Input</label>
+      <textarea
+        id="htj-input"
+        class="htj-textarea"
+        spellcheck="false"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        data-i18n-ph="placeholder"
+        placeholder="<!-- paste your HTML here -->"
+      ></textarea>
+    </div>
+    <div class="htj-pane">
+      <div class="htj-pane-header">
+        <label class="htj-label" for="htj-output" data-i18n="outputLabel">JSX Output</label>
+        <button id="htj-copy" class="htj-copy-btn" data-i18n="copy">Copy</button>
+      </div>
+      <textarea
+        id="htj-output"
+        class="htj-textarea htj-textarea--output"
+        spellcheck="false"
+        readonly
+      ></textarea>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'HTML Input',
+          outputLabel: 'JSX Output',
+          copy: 'Copy',
+          copied: 'Copied!',
+          placeholder: '<!-- paste your HTML here -->',
+        },
+        zh: {
+          inputLabel: 'HTML 输入',
+          outputLabel: 'JSX 输出',
+          copy: '复制',
+          copied: '已复制！',
+          placeholder: '<!-- 粘贴 HTML 到这里 -->',
+        },
+        ja: {
+          inputLabel: 'HTML 入力',
+          outputLabel: 'JSX 出力',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          placeholder: '<!-- HTMLをここに貼り付け -->',
+        },
+        ko: {
+          inputLabel: 'HTML 입력',
+          outputLabel: 'JSX 출력',
+          copy: '복사',
+          copied: '복사됨!',
+          placeholder: '<!-- HTML을 여기에 붙여넣기 -->',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.htj-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.htj-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl  = document.getElementById('htj-input');
+      var outputEl = document.getElementById('htj-output');
+      var copyBtn  = document.getElementById('htj-copy');
+
+      // ---- Void elements that need explicit self-closing slash ----
+      var VOID_TAGS = [
+        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+        'link', 'meta', 'param', 'source', 'track', 'wbr',
+      ];
+      var VOID_RE = new RegExp(
+        '<(' + VOID_TAGS.join('|') + ')(\\s[^>]*)?>(?!\\s*</)',
+        'gi'
+      );
+
+      // ---- Attribute rename map ----
+      var ATTR_MAP = {
+        'class':           'className',
+        'for':             'htmlFor',
+        'tabindex':        'tabIndex',
+        'readonly':        'readOnly',
+        'maxlength':       'maxLength',
+        'minlength':       'minLength',
+        'colspan':         'colSpan',
+        'rowspan':         'rowSpan',
+        'crossorigin':     'crossOrigin',
+        'contenteditable': 'contentEditable',
+        'autofocus':       'autoFocus',
+        'accesskey':       'accessKey',
+        'enctype':         'encType',
+        'usemap':          'useMap',
+        'frameborder':     'frameBorder',
+        'allowfullscreen': 'allowFullScreen',
+      };
+
+      // ---- Event attributes: on* → camelCase ----
+      function camelCaseEvent(name) {
+        // e.g. onclick → onClick, onmouseover → onMouseOver
+        return name.replace(/^on([a-z])/, function (_, c) { return 'on' + c.toUpperCase(); })
+                   .replace(/([a-z])([A-Z])/g, function (_, a, b) { return a + b; });
+      }
+
+      // ---- Style string → JSX object ----
+      function styleStringToObject(styleStr) {
+        var pairs = styleStr.split(';');
+        var props = [];
+        pairs.forEach(function (pair) {
+          var idx = pair.indexOf(':');
+          if (idx === -1) return;
+          var prop = pair.slice(0, idx).trim();
+          var val  = pair.slice(idx + 1).trim();
+          if (!prop || !val) return;
+          // camelCase CSS property
+          var jsProp = prop.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+          // vendor prefix: first letter uppercase
+          if (/^(webkit|moz|ms|o)[A-Z]/.test(jsProp)) {
+            jsProp = jsProp.charAt(0).toUpperCase() + jsProp.slice(1);
+          }
+          props.push(jsProp + ": '" + val.replace(/'/g, "\\'") + "'");
+        });
+        return '{{ ' + props.join(', ') + ' }}';
+      }
+
+      // ---- Process a single tag's attributes ----
+      function processAttrs(attrStr) {
+        if (!attrStr) return '';
+        // Replace style="..." first (complex substitution)
+        attrStr = attrStr.replace(/style\s*=\s*"([^"]*)"/gi, function (_, val) {
+          return 'style=' + styleStringToObject(val);
+        });
+        attrStr = attrStr.replace(/style\s*=\s*'([^']*)'/gi, function (_, val) {
+          return 'style=' + styleStringToObject(val);
+        });
+
+        // Rename known attributes (whole-word match on attr name)
+        Object.keys(ATTR_MAP).forEach(function (from) {
+          var to = ATTR_MAP[from];
+          var re = new RegExp('(?<![\\w-])' + from + '(?=[\\s=>/]|$)', 'gi');
+          attrStr = attrStr.replace(re, to);
+        });
+
+        // Event attributes on* → camelCase
+        attrStr = attrStr.replace(/\bon([a-z]+)(?=\s*=)/gi, function (match) {
+          return camelCaseEvent(match.toLowerCase());
+        });
+
+        return attrStr;
+      }
+
+      // ---- Main conversion function ----
+      function htmlToJsx(html) {
+        // 1. HTML comments → JSX comments
+        var result = html.replace(/<!--([\s\S]*?)-->/g, function (_, content) {
+          return '{/*' + content + '*/}';
+        });
+
+        // 2. Process tags: find opening tags and transform attributes
+        result = result.replace(/<([a-zA-Z][a-zA-Z0-9-]*)(\s[^>]*)?(\/?)>/g, function (match, tag, attrs, selfClose) {
+          var processedAttrs = processAttrs(attrs || '');
+          var isVoid = VOID_TAGS.indexOf(tag.toLowerCase()) !== -1;
+          var close = (isVoid || selfClose) ? ' />' : '>';
+          return '<' + tag + processedAttrs + close;
+        });
+
+        return result;
+      }
+
+      function convert() {
+        var html = inputEl.value;
+        outputEl.value = html ? htmlToJsx(html) : '';
+        if (html) {
+          window.trackTool && window.trackTool('html_to_jsx', 'convert');
+        }
+      }
+
+      var _debounce;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_debounce);
+        _debounce = setTimeout(convert, 200);
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = outputEl.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .htj-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .htj-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .htj-panes {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .htj-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .htj-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .htj-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .htj-textarea {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.55;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    resize: vertical;
+    min-height: 320px;
+    width: 100%;
+    box-sizing: border-box;
+    tab-size: 2;
+  }
+
+  .htj-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .htj-textarea--output {
+    color: var(--color-text-secondary);
+    cursor: default;
+  }
+
+  .htj-copy-btn {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .htj-copy-btn:hover {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+</style>
