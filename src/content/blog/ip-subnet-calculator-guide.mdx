@@ -1,0 +1,215 @@
+---
+title: "IP Subnet Calculator Online: CIDR, Subnetting, and Host Ranges Explained"
+description: "Calculate IPv4 subnets instantly online. Enter any CIDR notation and get network address, broadcast, host range, and usable hosts. Free subnet calculator with no signup."
+pubDate: 2026-04-13
+lang: "en"
+translationSlug: "ip-subnet-calculator-guide-zh"
+tags: ["subnet-calculator", "cidr", "ipv4", "networking", "developer-tools"]
+ogImage: /og/blog-ip-subnet-calculator-guide.png
+---
+
+IP subnetting is one of those topics every developer and sysadmin eventually has to understand. Whether you're configuring VPCs in AWS, splitting a corporate network, or debugging why two hosts can't reach each other, subnet math comes up constantly. This guide explains CIDR notation, subnet masks, and how to calculate network parameters — with an online tool that does the math for you.
+
+## What Is Subnetting?
+
+A subnet (subnetwork) is a logical subdivision of an IP network. Subnetting allows you to divide a large IP address block into smaller, manageable segments. Benefits include:
+
+- **Isolation** — traffic within a subnet stays local; inter-subnet traffic routes through a gateway
+- **Security** — firewalls and ACLs can enforce rules at subnet boundaries
+- **Efficiency** — smaller broadcast domains reduce unnecessary traffic
+- **Address management** — allocate just enough addresses to each segment
+
+## CIDR Notation Explained
+
+CIDR (Classless Inter-Domain Routing) notation expresses an IP address and its routing prefix together:
+
+```
+192.168.1.0/24
+│           │
+└─ Network  └─ Prefix length (bits)
+   address
+```
+
+The `/24` means the first 24 bits are the **network portion**; the remaining 8 bits are the **host portion**. This determines how many hosts can exist in the subnet.
+
+### Prefix Length to Host Count
+
+| CIDR | Subnet Mask | Usable Hosts | Common Use |
+|------|-------------|--------------|------------|
+| `/8` | 255.0.0.0 | 16,777,214 | Large ISP blocks |
+| `/16` | 255.255.0.0 | 65,534 | Corporate networks |
+| `/24` | 255.255.255.0 | 254 | Typical office LAN |
+| `/25` | 255.255.255.128 | 126 | Split a /24 in half |
+| `/26` | 255.255.255.192 | 62 | Small segment |
+| `/27` | 255.255.255.224 | 30 | VLAN segment |
+| `/28` | 255.255.255.240 | 14 | Small team |
+| `/29` | 255.255.255.248 | 6 | Point-to-point link |
+| `/30` | 255.255.255.252 | 2 | Router-to-router |
+| `/31` | 255.255.255.254 | 0 (special) | Point-to-point (RFC 3021) |
+| `/32` | 255.255.255.255 | 1 | Host route |
+
+**Usable hosts = 2^(32 - prefix) - 2** (subtract network and broadcast addresses)
+
+## Key Subnet Parameters
+
+Given `192.168.10.64/26`:
+
+| Parameter | Value | How It's Calculated |
+|-----------|-------|---------------------|
+| Network Address | `192.168.10.64` | IP AND subnet mask |
+| Subnet Mask | `255.255.255.192` | 26 ones, 6 zeros in binary |
+| Broadcast Address | `192.168.10.127` | All host bits set to 1 |
+| First Usable Host | `192.168.10.65` | Network + 1 |
+| Last Usable Host | `192.168.10.126` | Broadcast - 1 |
+| Usable Hosts | `62` | 2^6 - 2 |
+| Wildcard Mask | `0.0.0.63` | Inverted subnet mask |
+
+### Binary Breakdown
+
+```
+IP:      11000000.10101000.00001010.01000000  (192.168.10.64)
+Mask:    11111111.11111111.11111111.11000000  (255.255.255.192)
+Network: 11000000.10101000.00001010.01000000  (192.168.10.64)
+Bcast:   11000000.10101000.00001010.01111111  (192.168.10.127)
+```
+
+The first 26 bits are fixed (network); the last 6 bits vary (host space).
+
+## Subnetting in Practice
+
+### AWS VPC Design
+
+AWS requires you to specify a CIDR block for each VPC and subnet. A typical setup:
+
+```
+VPC:          10.0.0.0/16    (65,536 addresses)
+├─ Public:    10.0.1.0/24    (254 usable — internet-facing)
+├─ Private:   10.0.2.0/24    (254 usable — app tier)
+└─ Database:  10.0.3.0/24    (254 usable — RDS, isolated)
+```
+
+AWS reserves 5 addresses per subnet (first 4 + broadcast), leaving 251 usable per `/24`.
+
+### Kubernetes Pod CIDR
+
+K8s clusters require non-overlapping CIDRs for nodes, pods, and services:
+
+```yaml
+# kubeadm config snippet
+networking:
+  podSubnet: 10.244.0.0/16      # Pod IPs
+  serviceSubnet: 10.96.0.0/12   # ClusterIP services
+```
+
+Ensure these don't overlap with your node network or VPC CIDR.
+
+### Docker Networks
+
+```bash
+# Create a custom bridge network
+docker network create \
+  --driver bridge \
+  --subnet 172.20.0.0/24 \
+  --gateway 172.20.0.1 \
+  my-network
+```
+
+Check for overlap with existing networks using `docker network ls` and `ip route`.
+
+## Subnet Math Without a Calculator
+
+### Finding the Network Address
+
+```python
+def network_address(ip: str, prefix: int) -> str:
+    parts = [int(x) for x in ip.split('.')]
+    mask = [(0xFF << (8 - max(min(prefix - i * 8, 8), 0))) & 0xFF 
+            for i in range(4)]
+    return '.'.join(str(p & m) for p, m in zip(parts, mask))
+
+print(network_address('192.168.10.100', 26))  # 192.168.10.64
+```
+
+### Python `ipaddress` Module
+
+Python's stdlib handles all subnet math:
+
+```python
+import ipaddress
+
+net = ipaddress.IPv4Network('192.168.10.64/26', strict=False)
+
+print(net.network_address)    # 192.168.10.64
+print(net.broadcast_address)  # 192.168.10.127
+print(net.netmask)            # 255.255.255.192
+print(net.num_addresses)      # 64
+print(list(net.hosts())[:3])  # [192.168.10.65, .66, .67]
+
+# Check if an IP is in the subnet
+ip = ipaddress.IPv4Address('192.168.10.80')
+print(ip in net)  # True
+
+# Subdivide into /28 subnets
+for subnet in net.subnets(new_prefix=28):
+    print(subnet)
+# 192.168.10.64/28
+# 192.168.10.80/28
+# 192.168.10.96/28
+# 192.168.10.112/28
+```
+
+### Go `net` Package
+
+```go
+import "net"
+
+_, ipNet, err := net.ParseCIDR("192.168.10.64/26")
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(ipNet.IP)     // 192.168.10.64 (network address)
+fmt.Println(ipNet.Mask)   // ffffff c0 (hex mask)
+
+// Check containment
+testIP := net.ParseIP("192.168.10.80")
+fmt.Println(ipNet.Contains(testIP))  // true
+```
+
+## Private IP Address Ranges
+
+These ranges are reserved for internal use (RFC 1918):
+
+| Range | CIDR | Size |
+|-------|------|------|
+| 10.0.0.0 – 10.255.255.255 | `10.0.0.0/8` | ~16M addresses |
+| 172.16.0.0 – 172.31.255.255 | `172.16.0.0/12` | ~1M addresses |
+| 192.168.0.0 – 192.168.255.255 | `192.168.0.0/16` | 65,536 addresses |
+
+Always use private ranges for internal infrastructure. Public IPs route on the internet; private IPs do not.
+
+## Common Subnetting Mistakes
+
+**Forgetting reserved addresses**: Every subnet loses 2 addresses (network + broadcast). A `/29` has 8 addresses total but only 6 usable.
+
+**Overlapping subnets**: `10.0.1.0/24` and `10.0.0.0/16` overlap — every address in the /24 is also in the /16. This causes routing ambiguity.
+
+**Off-by-one on host ranges**: First usable host is network+1, last is broadcast-1. A `/24` has hosts `.1` through `.254`, not `.0` through `.255`.
+
+**CIDR alignment**: A subnet must start on a boundary aligned to its prefix length. `10.0.0.1/24` is not valid CIDR (the host bit is set); the correct form is `10.0.0.0/24`.
+
+## Using the Online Subnet Calculator
+
+**[Try ZeroTool IP Subnet Calculator →](/tools/ip-subnet-calculator)**
+
+Enter any IPv4 address with CIDR notation and instantly get:
+
+- Network address and broadcast address
+- Subnet mask and wildcard mask
+- First and last usable host
+- Total hosts and usable host count
+- Binary representation of all fields
+
+No signup, no ads, runs in the browser. Useful for quick VPC planning, network debugging, and subnet allocation during architecture reviews.
+
+**[Calculate IPv4 subnets instantly →](/tools/ip-subnet-calculator)**
