@@ -1,0 +1,255 @@
+---
+title: "From Messy JSON to Clean APIs: A Real-World Debugging Story"
+description: "A walkthrough of a realistic API debugging session — using browser tools to decode tokens, diff responses, format payloads, and finally fix the bug."
+pubDate: 2026-04-14
+lang: "en"
+tags: ["api-debugging", "json", "developer-workflow", "debugging-story", "web-development"]
+ogImage: /og/blog-messy-json-debugging-story.png
+---
+
+It started, as these things often do, with a Slack message that said almost nothing useful.
+
+"Hey, the order sync is broken. Orders placed in the last hour aren't showing up."
+
+No stack trace. No error code. No indication of whether it was broken on the inbound side, the outbound side, or somewhere in the middle. Just: orders aren't showing up.
+
+This is a composite of several real debugging sessions — names changed, domain simplified. But the workflow is real, and so are the tools. Walk through it with me.
+
+---
+
+## Step 1: Establish What "Broken" Actually Means
+
+The first instinct of most developers is to go straight to the code. Don't. The first instinct should be to establish **where** in the pipeline the problem is.
+
+The system in question had three main stages:
+
+1. An external payment provider posts an order webhook to our endpoint
+2. Our backend processes the webhook and writes to the database  
+3. A frontend dashboard reads from the database and displays orders
+
+"Not showing up" could mean the webhook was never received, received but failed silently, processed but written incorrectly, or written correctly but displayed incorrectly. These are four completely different bugs requiring four different fixes.
+
+Start at the beginning. Check the logs for inbound webhooks in the relevant time window.
+
+```
+[2024-01-15 14:32:18] POST /webhooks/orders — 200 OK — 23ms
+[2024-01-15 14:33:45] POST /webhooks/orders — 200 OK — 18ms
+[2024-01-15 14:34:02] POST /webhooks/orders — 200 OK — 31ms
+```
+
+Three webhooks received and acknowledged. The endpoint returned 200. So far, so good — except the orders aren't in the database. The problem is in step 2: the webhook was received but processing failed silently.
+
+A 200 response was sent before processing completed. Classic. Webhook handlers that acknowledge receipt before doing the actual work will swallow processing errors from the webhook provider's perspective. You've solved their retry problem while creating your own silent failure mode.
+
+---
+
+## Step 2: Read the Actual Payload
+
+The next question is: what was in those webhooks? Pull one from the log storage.
+
+Here's the raw payload (slightly simplified):
+
+```
+{"event":"order.completed","data":{"id":"ord_8842","customer":{"id":"cus_2291","email":"alice@example.com","metadata":{"tier":"premium","signup_source":"organic","feature_flags":{"beta_checkout":true,"legacy_discount":false}}},"items":[{"sku":"PRD-001","qty":2,"price":4999},{"sku":"PRD-007","qty":1,"price":1299}],"total":11297,"currency":"USD","created_at":1705332738,"payment_intent":"pi_3OT4h2LkZbh90","status":"paid","shipping":{"method":"express","address":{"line1":"123 Main St","city":"Portland","state":"OR","zip":"97201","country":"US"}}}}
+```
+
+This is unreadable as a single line. The first thing to do — always — is run it through a [JSON Formatter](/tools/json-formatter). Formatted:
+
+```json
+{
+  "event": "order.completed",
+  "data": {
+    "id": "ord_8842",
+    "customer": {
+      "id": "cus_2291",
+      "email": "alice@example.com",
+      "metadata": {
+        "tier": "premium",
+        "signup_source": "organic",
+        "feature_flags": {
+          "beta_checkout": true,
+          "legacy_discount": false
+        }
+      }
+    },
+    "items": [
+      { "sku": "PRD-001", "qty": 2, "price": 4999 },
+      { "sku": "PRD-007", "qty": 1, "price": 1299 }
+    ],
+    "total": 11297,
+    "currency": "USD",
+    "created_at": 1705332738,
+    "payment_intent": "pi_3OT4h2LkZbh90",
+    "status": "paid",
+    "shipping": {
+      "method": "express",
+      "address": {
+        "line1": "123 Main St",
+        "city": "Portland",
+        "state": "OR",
+        "zip": "97201",
+        "country": "US"
+      }
+    }
+  }
+}
+```
+
+Now I can actually think. A few things immediately stand out:
+
+- `created_at` is a Unix timestamp (1705332738). That's expected — but let me verify. Paste it into a [Timestamp Converter](/tools/timestamp-converter): **Jan 15, 2024, 14:32:18 UTC**. Matches the log entry. Good.
+- `total` is in cents (11297 = $112.97). That's consistent with the item prices (4999 = $49.99, 1299 = $12.99, 2×4999+1299 = 11297). Good.
+- There's a `metadata` field nested inside `customer`. This is worth noting — it's non-standard structure that a schema validation step might choke on.
+
+---
+
+## Step 3: Check the Auth Token
+
+The webhook handler validates an authorization header to confirm the payload came from the payment provider. Pull the auth header from the log:
+
+```
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3aH...
+```
+
+Paste into the [JWT Decoder](/tools/jwt-decoder):
+
+```json
+{
+  "header": {
+    "alg": "RS256",
+    "typ": "JWT"
+  },
+  "payload": {
+    "sub": "webhook_processor",
+    "iss": "payments.provider.com",
+    "aud": "api.ourapp.com",
+    "iat": 1705332735,
+    "exp": 1705332795,
+    "scope": "webhook:orders"
+  }
+}
+```
+
+Token is valid. Issuer is correct. Audience is `api.ourapp.com`. Expiry is `exp: 1705332795` — 60 seconds after issue. The webhook was received at 1705332738, token issued at 1705332735. Three seconds in — well within the window.
+
+Token auth isn't the problem.
+
+---
+
+## Step 4: Look at What the Handler Actually Received vs. Expected
+
+At this point I knew the problem was in the processing logic. Time to compare what the handler expected against what it actually got.
+
+Pull the JSON schema the handler validates against:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "type": "object",
+  "required": ["event", "data"],
+  "properties": {
+    "event": { "type": "string" },
+    "data": {
+      "type": "object",
+      "required": ["id", "customer", "items", "total", "status"],
+      "properties": {
+        "customer": {
+          "type": "object",
+          "required": ["id", "email"],
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}
+```
+
+There it is. The `customer` object in the schema has `"additionalProperties": false`. The actual payload has a `metadata` field on the customer object. Schema validation is rejecting the payload — but the error was being swallowed in the webhook handler instead of surfaced.
+
+Running the actual payload through a [JSON Schema Validator](/tools/json-schema-validator) with this schema confirms: validation fails with `Additional properties are not allowed ('metadata' was unexpected)`.
+
+Two bugs:
+1. The payment provider updated their webhook format to include customer metadata, and nobody updated the schema
+2. The validation error was being caught and discarded silently instead of logged
+
+---
+
+## Step 5: Diff to Confirm the Schema Changed
+
+To be sure this was a recent change and not a pre-existing issue, compare the current webhook payload against a payload from last week (still in log storage):
+
+Last week's customer object:
+```json
+{
+  "id": "cus_1987",
+  "email": "bob@example.com"
+}
+```
+
+Today's customer object:
+```json
+{
+  "id": "cus_2291",
+  "email": "alice@example.com",
+  "metadata": {
+    "tier": "premium",
+    "signup_source": "organic",
+    "feature_flags": {
+      "beta_checkout": true,
+      "legacy_discount": false
+    }
+  }
+}
+```
+
+Run them through a [Diff Checker](/tools/diff-checker). The diff is unambiguous: `metadata` is new. The payment provider added it without a version bump and without notifying integrators. (This happens more often than you'd like to admit in production integrations.)
+
+---
+
+## Step 6: The Fix
+
+Two-part fix:
+
+**Part 1: Fix the schema.** Remove `"additionalProperties": false` from the customer object, or add `metadata` as an explicitly allowed optional property. The former is simpler and more robust against future provider changes.
+
+**Part 2: Fix the error handling.** The webhook handler's catch block was logging to a metrics sink that wasn't monitored. Move the error log to the application log and add an alert trigger on processing errors above a threshold.
+
+The fix took about 20 minutes to write and test. The debugging took about 45. Which is actually a pretty good ratio for a silent failure with no error messages.
+
+---
+
+## What the Toolbox Contributed
+
+Let me annotate where the browser tools shortened this session:
+
+| Step | Tool Used | Time Saved |
+|------|-----------|------------|
+| Read the payload | [JSON Formatter](/tools/json-formatter) | ~8 minutes vs. manual parsing |
+| Verify timestamp | [Timestamp Converter](/tools/timestamp-converter) | ~2 minutes vs. writing a conversion |
+| Inspect auth token | [JWT Decoder](/tools/jwt-decoder) | ~5 minutes vs. base64 decode + parse |
+| Validate payload against schema | [JSON Schema Validator](/tools/json-schema-validator) | ~10 minutes vs. writing a test script |
+| Confirm schema change | [Diff Checker](/tools/diff-checker) | ~5 minutes vs. manual comparison |
+
+Total: roughly 30 minutes of tool-assisted acceleration in a 45-minute debugging session. The non-tool parts — reading logs, forming hypotheses, writing the fix — can't be automated. The structured data inspection can.
+
+---
+
+## The Pattern That Always Works
+
+Looking back at how this debugging session unfolded, there's a pattern that generalizes:
+
+1. **Establish the pipeline stage.** Don't assume where the problem is. Eliminate stages methodically from the entry point forward.
+
+2. **Read the actual data.** Don't reason about what the data "should" look like. Fetch the actual payload and read it with proper tooling.
+
+3. **Inspect the auth.** A surprising number of "processing failures" are actually auth failures that got swallowed. Check the token before debugging the logic.
+
+4. **Validate against the schema.** If your handler validates incoming data, test the actual input against the actual schema. Don't do this by eye.
+
+5. **Diff against known-good.** When you suspect something changed, prove it with a diff instead of relying on memory or blame.
+
+This sequence works for most API debugging scenarios. The tools change depending on the payload format and auth mechanism. The mental model stays the same.
+
+The silent failure mode in this case was particularly frustrating because a 200 was returned — everything looked fine from the outside. When you're integrating with external webhooks, make sure your error handling makes noise. Silent failures in integrations are slow to surface and expensive to debug.
+
+And when you do debug them: format the payload first. Always.

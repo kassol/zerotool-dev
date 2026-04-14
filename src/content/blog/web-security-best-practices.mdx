@@ -1,0 +1,212 @@
+---
+title: "Security Best Practices Every Web Developer Should Know"
+description: "A practical guide to web security fundamentals — hashing, HMAC, JWT, TOTP, and password storage — with hands-on browser tools for every concept."
+pubDate: 2026-04-14
+lang: "en"
+tags: ["web-security", "developer-tools", "authentication", "cryptography", "best-practices"]
+ogImage: /og/blog-web-security-best-practices.png
+---
+
+Security is one of those topics that most developers agree is important and very few feel they fully understand. This is partly because the vocabulary is intimidating — cryptography, salting, HMAC, TOTP, asymmetric keys — and partly because the consequences of getting it wrong aren't usually visible until something bad happens.
+
+This guide cuts through the vocabulary and focuses on the practical decisions you make as a web developer: how to store passwords, how to sign data, how to authenticate users, how to generate and verify tokens. For each concept, there's a working browser tool you can use to test your understanding and verify your implementations.
+
+This won't make you a cryptographer. But it will give you a working model of the security primitives that matter most in day-to-day web development.
+
+---
+
+## Hashing: The Foundation of Everything
+
+A hash function takes an input of arbitrary length and produces a fixed-length output. The same input always produces the same output. Different inputs (almost always) produce different outputs. And — critically — you cannot reverse a hash to get the original input.
+
+This one-way property is what makes hashing useful for security.
+
+**What hashing is for:**
+- Storing passwords (never store plaintext passwords — store hashes)
+- Verifying file integrity (compare the hash of a downloaded file against a known-good hash)
+- Generating deterministic identifiers (hash a structured input to get a consistent ID)
+- Detecting data tampering (if the hash of received data matches the hash of expected data, the data wasn't modified)
+
+**Common hash algorithms:**
+
+| Algorithm | Output Length | Use Today? |
+|-----------|--------------|------------|
+| MD5 | 128 bits | No — collisions found, don't use for security |
+| SHA-1 | 160 bits | No — deprecated for cryptographic use |
+| SHA-256 | 256 bits | Yes — solid for most uses |
+| SHA-512 | 512 bits | Yes — larger output, marginally harder to brute-force |
+| bcrypt | variable | Yes — specifically designed for passwords |
+
+Try computing hashes with the [Hash Generator](/tools/hash-generator). Paste the same input into MD5 and SHA-256 and compare the outputs. Then change one character in the input and observe how completely different the hash becomes (this is called the avalanche effect, and it's intentional).
+
+**Important caveat on password hashing:** Never use plain SHA-256 or MD5 to hash passwords. These algorithms are fast, which is exactly what you don't want for passwords — fast hashing means attackers can try billions of passwords per second with commodity hardware. Use bcrypt, scrypt, or Argon2 for passwords. These are designed to be deliberately slow and computationally expensive.
+
+---
+
+## Salting: Why Hashing Passwords Isn't Enough by Itself
+
+If you hash the same password with the same algorithm, you always get the same hash. This means an attacker who steals your hashed password database can use precomputed tables (rainbow tables) to look up common passwords. `password123` always hashes to the same SHA-256 value, so if that value appears in the database, the attacker knows the password without doing any per-user computation.
+
+A **salt** is a random value that's added to the password before hashing. Each user gets a unique salt, stored alongside their hash. Now two users with the same password get different hashes. Rainbow tables don't help because they'd need a separate table for every possible salt value.
+
+Concretely:
+```
+# Without salt — same password, same hash
+sha256("password123") → a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3
+
+# With salt — same password, different hash per user
+sha256("password123" + "user_alice_salt_xyz") → different hash
+sha256("password123" + "user_bob_salt_abc") → different hash again
+```
+
+Modern password hashing libraries (bcrypt, Argon2) handle salt generation automatically. You don't manage it manually — but understanding why it exists helps you evaluate whether a library is doing it correctly.
+
+---
+
+## HMAC: Signing Data to Prove It Hasn't Changed
+
+A hash alone tells you that a piece of data maps to a specific output. But it doesn't tell you who created that data or whether it came from someone you trust.
+
+**HMAC (Hash-based Message Authentication Code)** combines a hash with a secret key. The output is a signature that proves two things simultaneously: the data's content (like a regular hash) and that the person who created it had the secret key.
+
+This is used extensively in web APIs:
+
+- Webhook signatures (Stripe, GitHub, and others sign their webhook payloads with HMAC so you can verify the payload came from them)
+- API request signing (AWS Signature Version 4 uses HMAC to sign API requests)
+- Cookie tampering prevention (sign the cookie content with HMAC, verify on each request)
+
+Try it with the [HMAC Generator](/tools/hmac-generator). Generate the HMAC of a message with a secret key, then modify one character in the message and regenerate. The HMAC changes completely. Now try regenerating the original HMAC without knowing the secret key — you can't.
+
+**How webhook verification works in practice:**
+
+```python
+import hmac
+import hashlib
+
+def verify_webhook(payload: bytes, signature: str, secret: str) -> bool:
+    expected = hmac.new(
+        secret.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    # Use hmac.compare_digest to prevent timing attacks
+    return hmac.compare_digest(expected, signature)
+```
+
+Note `hmac.compare_digest` instead of `==`. Timing attacks are real: a naive string comparison returns early as soon as it finds a mismatch, leaking information about how many characters matched. `compare_digest` runs in constant time regardless of where the mismatch occurs.
+
+---
+
+## JWT: Compact Claims Tokens
+
+JSON Web Tokens are the dominant format for carrying authentication claims in modern web applications. A JWT consists of three base64url-encoded JSON objects separated by dots: a header, a payload, and a signature.
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+```
+
+The header contains the algorithm. The payload contains claims. The signature (computed using the secret or private key) prevents tampering.
+
+Use the [JWT Decoder](/tools/jwt-decoder) to inspect any JWT. The decoder shows you the header and payload without needing the secret.
+
+**Critical security rules for JWTs:**
+
+**1. Always validate the signature.** Decode ≠ validate. Any library can decode a JWT without knowing the secret — the claims in an unvalidated JWT tell you nothing about authenticity. Your backend must verify the signature against the expected secret or public key on every request.
+
+**2. Check the `exp` (expiry) claim.** A JWT with a past expiry date should be rejected, even if the signature is valid. Many bugs look like "why is this user authenticated after logout?" — check whether your validation path actually enforces `exp`.
+
+**3. Be careful with `alg: none`.** Some JWT libraries historically accepted tokens with `"alg": "none"` in the header, bypassing signature verification entirely. Make sure your library rejects `none` explicitly.
+
+**4. Don't store JWTs in localStorage for sensitive applications.** localStorage is accessible from JavaScript, which means an XSS vulnerability can steal all tokens. HttpOnly cookies are better for high-value authentication tokens — JavaScript can't read them.
+
+**5. Keep the payload minimal.** Everything in the JWT payload is base64-encoded, not encrypted. Anyone who has the token can read the claims. Don't put secrets, passwords, or sensitive PII in the payload.
+
+---
+
+## TOTP: Time-Based One-Time Passwords (How Authenticator Apps Work)
+
+Two-factor authentication is now a basic security requirement for any application with user accounts. Understanding how it works under the hood helps you implement it correctly and debug it when it breaks.
+
+**TOTP (Time-Based One-Time Password, RFC 6238)** works as follows:
+
+1. During setup, the server generates a secret (usually 20 random bytes, encoded as base32)
+2. That secret is shared with the user's authenticator app (via QR code)
+3. Both the server and the authenticator app now share the same secret
+4. To generate a code, both sides compute `HMAC-SHA1(secret, floor(current_time / 30))`
+5. The result is truncated to a 6-digit number
+6. Since both sides use the same secret and the same current 30-second window, they get the same 6-digit code
+
+The QR code is just a URI encoding of the secret and some metadata: `otpauth://totp/Issuer:user@example.com?secret=BASE32SECRET&issuer=Issuer&algorithm=SHA1&digits=6&period=30`
+
+Test TOTP generation with the [TOTP Generator](/tools/totp-generator). Generate a secret, then watch the code change every 30 seconds. This is exactly what happens inside your Google Authenticator or Authy app.
+
+**Common TOTP implementation mistakes:**
+
+- Not allowing a small time window (±1 period) to account for clock drift between client and server
+- Not preventing code reuse within the same 30-second window
+- Storing the TOTP secret in plaintext (encrypt it or store it in a secrets manager)
+- Using a very long period (300 seconds instead of 30) — more convenient but a much larger attack window
+
+---
+
+## Asymmetric Cryptography: RSA Keys for Signatures and Encryption
+
+All the primitives above use symmetric cryptography — the same secret is used to both create and verify. Asymmetric cryptography uses two mathematically linked keys: a public key and a private key. What one encrypts, only the other can decrypt. What one signs, the other can verify.
+
+**RSA** is the most widely used asymmetric algorithm. Common uses:
+
+- **TLS certificates** (the certificate your server presents contains a public key; the browser uses it to establish an encrypted connection without knowing your private key)
+- **JWT with RS256** (the server signs JWTs with its private key; clients verify with the public key, allowing them to verify tokens without being trusted with the signing secret)
+- **SSH keys** (your `~/.ssh/id_rsa.pub` is a public key; the private key stays on your machine; the server stores the public key and can authenticate you without your private key ever leaving your machine)
+- **Code signing** (a software publisher signs releases with their private key; users verify with the public key)
+
+Generate an RSA key pair with the [RSA Key Generator](/tools/rsa-key-generator). Note how the public key is derived from the private key — they're not independent; they're two sides of the same mathematical object.
+
+**Private key handling — non-negotiable rules:**
+
+- Never commit private keys to version control. Not even temporarily. Not even in a private repository.
+- Never send private keys through plaintext channels (email, Slack, etc.)
+- Store private keys in a secrets manager (AWS Secrets Manager, HashiCorp Vault, Google Secret Manager)
+- Rotate keys when any person who had access leaves the organization
+
+The asymmetry that makes public-key cryptography powerful is also what makes it unforgiving. You can share the public key freely — post it on your website, include it in API responses, hardcode it in client apps. But compromise the private key and you've invalidated all the security guarantees that depended on it.
+
+---
+
+## Password Generation: What "Strong" Actually Means
+
+The weakest link in most security systems is user-chosen passwords. When you give users the option to choose their own password, a substantial portion will choose `password123`, their dog's name, or their birth year. When you generate passwords for them or enforce complexity requirements, the results are usually better but not always what you'd want.
+
+What makes a password strong?
+
+**Length is the primary factor.** An 8-character password from a 95-character alphabet has about 53 bits of entropy. A 16-character password from the same alphabet has about 105 bits. The attacker's cost doubles for every bit of entropy. Length is the most effective lever.
+
+**Randomness matters more than complexity.** A random 12-character password of lowercase letters is stronger than a predictably "complex" password like `P@ssw0rd!1`. Password complexity requirements often make passwords harder to remember without making them harder to guess, because humans create predictable patterns.
+
+**Use the [Password Generator](/tools/password-generator)** when you need to generate credentials: temporary passwords, API keys, service account credentials, recovery codes. Cryptographically random generation from a browser-based tool is reliable and doesn't expose the generated values to a third-party server.
+
+For the passwords your users create, use a strong password hashing function (bcrypt with cost factor ≥ 12, or Argon2id) and check passwords against a breached password database (Have I Been Pwned's API supports this as a range query that preserves privacy).
+
+---
+
+## Putting It Together: A Secure Authentication Checklist
+
+For any web application with user authentication, verify:
+
+- [ ] Passwords stored as bcrypt/Argon2id hashes with per-user salts (never plaintext or plain SHA-256)
+- [ ] JWTs validated on every request (signature + expiry + issuer + audience)
+- [ ] Webhook payloads verified with HMAC before processing
+- [ ] TOTP or other 2FA available (required for admin accounts)
+- [ ] RSA or ECDSA private keys stored in a secrets manager, never in source code
+- [ ] HTTPS enforced everywhere (no mixed content, HSTS header set)
+- [ ] Sensitive cookies set with HttpOnly and Secure flags
+- [ ] Password reset tokens are single-use and short-lived (≤15 minutes)
+- [ ] Rate limiting on authentication endpoints
+
+Security is not a feature you add at the end. It's a set of decisions made at every step of design and implementation. The primitives — hashing, HMAC, JWT, TOTP, RSA — are well understood, well documented, and available in every major language's standard library.
+
+The main source of security vulnerabilities in web applications isn't a lack of cryptographic knowledge. It's misapplication of correct primitives: using a fast hash where a slow one is needed, forgetting to validate a JWT signature, storing a secret in an environment that's too accessible.
+
+Understanding the primitives deeply enough to apply them correctly is the practical goal. The tools above help you build and verify that understanding. Use them — and when something looks wrong, format it, decode it, and read the actual values before you assume anything.
+
+Security is always in the details.
