@@ -1,0 +1,234 @@
+---
+title: "String to Slug Converter Online: Generate Clean URL Slugs Instantly"
+description: "Convert any string to a URL-friendly slug online. Handles spaces, accented characters, and symbols. Free, instant, supports hyphen or underscore separators."
+pubDate: 2026-04-14
+lang: "en"
+translationSlug: "string-to-slug-guide-zh"
+tags: ["slug", "url-slug", "seo", "url-friendly", "developer-tools"]
+ogImage: /og/blog-string-to-slug-guide.png
+---
+
+A slug is the part of a URL that identifies a page in human-readable form. In `https://example.com/blog/how-to-deploy-to-production`, the slug is `how-to-deploy-to-production`. Slugs are lowercase, use hyphens instead of spaces, and contain only ASCII-safe characters. Getting slugs right matters for SEO, link stability, and user experience.
+
+[Convert any string to a URL slug instantly →](/tools/string-to-slug)
+
+## What Makes a Valid Slug
+
+URL slugs must satisfy these constraints:
+
+1. **Lowercase only** — `My-Post` and `my-post` are treated as different paths by most web servers; always lowercase
+2. **No spaces** — spaces in URLs become `%20` encoding; use hyphens instead
+3. **ASCII characters only** — accented letters (`é`, `ö`, `ñ`) break URLs in older systems; transliterate them
+4. **No special characters** — `!`, `@`, `#`, `?`, `&` are reserved in URLs; strip them
+5. **Consistent separator** — use hyphens (recommended by Google for SEO) or underscores consistently
+6. **No leading or trailing separators** — `/blog/-my-post-` is malformed; strip separators from both ends
+7. **No consecutive separators** — `my--post` suggests a processing bug; collapse to single separator
+
+### Hyphens vs. Underscores
+
+Google's own documentation states that hyphens are the preferred word separator in URLs. Underscores exist as a convention in some communities (Python packages, some CMS systems). Unless you have a specific reason otherwise, use hyphens.
+
+## How Slug Conversion Works
+
+### Step 1: Transliterate Accented Characters
+
+Before removing characters, map accented and special characters to their ASCII equivalents:
+
+```
+café   → cafe
+naïve  → naive
+résumé → resume
+Ñoño   → Nono
+Ångström → Angstrom
+```
+
+Skipping this step loses information — `café` becomes `caf` (the `é` is stripped entirely).
+
+### Step 2: Replace Symbols with Words
+
+Certain symbols have meaningful English equivalents:
+
+```
+AT&T  → at-and-t   (& → and)
+C@t   → cat         (@ → at)
+100%  → 100percent  (% → percent)
+```
+
+### Step 3: Strip Remaining Non-ASCII Characters
+
+After transliteration, strip anything that isn't a letter, digit, space, hyphen, or underscore.
+
+### Step 4: Normalize Whitespace and Separators
+
+Replace all whitespace runs with the chosen separator, then collapse consecutive separators:
+
+```
+"Hello   World" → "hello-world"  (not "hello---world")
+```
+
+### Step 5: Trim Separators from Ends
+
+```
+"-hello-world-" → "hello-world"
+```
+
+## Common Slug Patterns
+
+### Blog Posts and Articles
+
+```
+"How to Deploy a Django App to AWS" → how-to-deploy-a-django-app-to-aws
+"10 Things I Learned About Go" → 10-things-i-learned-about-go
+"Introduction: Getting Started" → introduction-getting-started
+```
+
+### Product and Package Names
+
+```
+"React Query" → react-query
+"@tanstack/react-query" → tanstack-react-query
+"node-fetch v3" → node-fetch-v3
+```
+
+### File System Paths
+
+```
+"My Documents/Project Notes" → my-documents/project-notes
+"API Documentation (v2)" → api-documentation-v2
+```
+
+## Implementing Slug Generation in Code
+
+### JavaScript / TypeScript
+
+A production-ready slugify function:
+
+```typescript
+function toSlug(input: string, separator = '-'): string {
+  const charMap: Record<string, string> = {
+    à: 'a', á: 'a', â: 'a', ä: 'a', å: 'a', æ: 'ae',
+    ç: 'c', è: 'e', é: 'e', ê: 'e', ë: 'e',
+    ì: 'i', í: 'i', î: 'i', ï: 'i',
+    ñ: 'n', ò: 'o', ó: 'o', ô: 'o', ö: 'o', ø: 'o',
+    ù: 'u', ú: 'u', û: 'u', ü: 'u', ý: 'y', ß: 'ss',
+    '&': 'and', '@': 'at', '%': 'percent',
+  };
+
+  return input
+    .toLowerCase()
+    .replace(/[^\u0000-\u007E]/g, c => charMap[c] ?? '')
+    .replace(/[^a-z0-9\s\-_]/g, ' ')
+    .replace(/[\s]+/g, separator)
+    .replace(/[\-_]+/g, separator)
+    .replace(new RegExp(`^${separator}+|${separator}+$`, 'g'), '');
+}
+```
+
+### Python
+
+```python
+import re
+import unicodedata
+
+def to_slug(text: str, separator: str = '-') -> str:
+    # Normalize unicode and transliterate
+    text = unicodedata.normalize('NFKD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.lower()
+    # Replace special chars with separator
+    text = re.sub(r'[^a-z0-9\s\-_]', ' ', text)
+    text = re.sub(r'[\s]+', separator, text)
+    text = re.sub(r'[\-_]+', separator, text)
+    text = text.strip(separator)
+    return text
+```
+
+### Go
+
+```go
+import (
+    "regexp"
+    "strings"
+    "unicode"
+    "golang.org/x/text/transform"
+    "golang.org/x/text/unicode/norm"
+)
+
+func toSlug(input, separator string) string {
+    // Normalize unicode
+    t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
+        return unicode.Is(unicode.Mn, r)
+    }), norm.NFC)
+    result, _, _ := transform.String(t, input)
+
+    result = strings.ToLower(result)
+    re := regexp.MustCompile(`[^a-z0-9\s\-_]`)
+    result = re.ReplaceAllString(result, " ")
+    ws := regexp.MustCompile(`[\s]+`)
+    result = ws.ReplaceAllString(result, separator)
+    sep := regexp.MustCompile(`[\-_]+`)
+    result = sep.ReplaceAllString(result, separator)
+    result = strings.Trim(result, separator)
+    return result
+}
+```
+
+### Ruby on Rails
+
+Rails has `parameterize` built in:
+
+```ruby
+"Hello World!".parameterize           # => "hello-world"
+"Hello World!".parameterize(separator: "_")  # => "hello_world"
+"naïve café".parameterize             # => "naive-cafe"
+```
+
+## SEO Considerations for URL Slugs
+
+**Keep slugs short and descriptive.** Google recommends URLs that reflect the page content. `how-to-build-a-rest-api` is better than `how-to-build-a-restful-api-from-scratch-for-beginners-step-by-step`.
+
+**Include the primary keyword.** The slug is a ranking signal. If your target keyword is "deploy docker container", the slug `deploy-docker-container` helps.
+
+**Avoid stop words unless necessary.** Articles like "a", "the", "to" add length without SEO value. `build-rest-api` is acceptable over `how-to-build-a-rest-api`.
+
+**Never change slugs after publishing.** A changed slug breaks all existing backlinks and causes 404s unless you set up 301 redirects. Plan slugs before publishing.
+
+**Use a canonical URL if you have duplicate content.** If the same content is accessible at multiple paths, use the `<link rel="canonical">` tag to tell search engines which slug is authoritative.
+
+## When Slugs Go Wrong
+
+### Empty Result
+
+All characters were stripped — usually because the input contained only symbols or non-ASCII characters without transliteration mappings:
+
+```
+"!!!" → ""          (all stripped)
+"中文" → ""         (no transliteration configured)
+```
+
+Fix: extend the character map for CJK characters, or use a specialized library like `limax` for multilingual slugs.
+
+### Duplicate Slugs
+
+Two different titles produce the same slug:
+
+```
+"API Design"  → api-design
+"API Design!" → api-design
+```
+
+In database-backed systems, enforce a unique index on the slug column and append a numeric suffix for duplicates: `api-design-2`.
+
+### Separator Inconsistency
+
+Mixing hyphens and underscores across your URL schema confuses crawlers and users. Pick one and enforce it at the application level.
+
+## Using the Online Slug Generator
+
+**[Generate URL slugs from any string →](/tools/string-to-slug)**
+
+Paste any text — article titles, product names, file names — and get a clean URL slug instantly. Toggle lowercase and choose between hyphen or underscore separators. The converter handles accented characters, special symbols, and whitespace normalization automatically.
+
+No signup, no rate limits, runs entirely in your browser.
+
+**[Open String to Slug Converter →](/tools/string-to-slug)**

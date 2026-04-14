@@ -1,0 +1,174 @@
+---
+title: "문자열을 슬러그로 변환: URL 슬러그 온라인 생성기 완전 가이드"
+description: "임의의 문자열을 URL 친화적인 슬러그로 변환. 공백, 악센트 문자, 특수기호 자동 처리. 하이픈 또는 밑줄 지원. 무료, 가입 불필요."
+pubDate: 2026-04-14
+lang: "ko"
+translationSlug: "string-to-slug-guide"
+tags: ["슬러그생성", "url-slug", "seo", "개발도구"]
+ogImage: /og/blog-string-to-slug-guide-ko.png
+---
+
+슬러그는 URL에서 페이지를 사람이 읽을 수 있는 형태로 식별하는 부분입니다. `https://example.com/blog/how-to-deploy-to-production`에서 슬러그는 `how-to-deploy-to-production`입니다. 슬러그는 소문자로만 구성되고, 공백 대신 하이픈을 사용하며, ASCII 안전 문자만 포함합니다. 슬러그를 올바르게 처리하는 것은 SEO, 링크 안정성, 사용자 경험에 직접적인 영향을 미칩니다.
+
+[문자열을 URL 슬러그로 즉시 변환하기 →](/tools/string-to-slug)
+
+## 유효한 슬러그의 조건
+
+URL 슬러그는 다음 조건을 충족해야 합니다:
+
+1. **소문자만 사용** — 대부분의 웹 서버는 `My-Post`와 `my-post`를 다른 경로로 처리합니다
+2. **공백 없음** — URL의 공백은 `%20`으로 인코딩됩니다; 하이픈을 사용하세요
+3. **ASCII 문자만** — 악센트 문자(`é`, `ö`, `ñ`)는 오래된 시스템에서 URL을 깨뜨립니다; 변환이 필요합니다
+4. **특수문자 없음** — `!`, `@`, `#`, `?`, `&`는 URL 예약 문자입니다; 제거해야 합니다
+5. **구분자 일관성** — 하이픈(Google SEO 권장) 또는 밑줄을 일관되게 사용
+6. **앞뒤 구분자 없음** — `/blog/-my-post-`는 잘못된 형식입니다; 양쪽 끝의 구분자를 제거
+7. **연속 구분자 없음** — `my--post`는 처리 오류를 시사합니다; 단일 구분자로 합치기
+
+### 하이픈 vs 밑줄
+
+Google 공식 문서에서는 URL의 단어 구분자로 하이픈을 권장합니다. 밑줄은 Python 패키지나 일부 CMS 시스템에서 관례적으로 사용됩니다. 특별한 이유가 없다면 하이픈을 사용하세요.
+
+## 슬러그 변환 방법
+
+### 1단계: 악센트 문자 변환
+
+문자를 제거하기 전에 악센트 문자와 특수 문자를 ASCII 등가 형태로 매핑합니다:
+
+```
+café   → cafe
+naïve  → naive
+résumé → resume
+```
+
+이 단계를 건너뛰면 정보가 손실됩니다 — `café`는 `caf`가 됩니다(`é`가 완전히 제거됨).
+
+### 2단계: 기호를 단어로 치환
+
+일부 기호에는 의미 있는 영어 대응어가 있습니다:
+
+```
+AT&T  → at-and-t   (& → and)
+100%  → 100percent  (% → percent)
+```
+
+### 3단계: 나머지 비ASCII 문자 제거
+
+변환 후 문자·숫자·공백·하이픈·밑줄이 아닌 모든 것을 제거합니다.
+
+### 4단계: 공백과 구분자 정규화
+
+모든 연속된 공백을 선택한 구분자로 교체하고, 연속된 구분자를 합칩니다:
+
+```
+"Hello   World" → "hello-world"  ("hello---world"가 아님)
+```
+
+### 5단계: 양쪽 끝 구분자 제거
+
+```
+"-hello-world-" → "hello-world"
+```
+
+## 코드 구현
+
+### JavaScript / TypeScript
+
+```typescript
+function toSlug(input: string, separator = '-'): string {
+  const charMap: Record<string, string> = {
+    à: 'a', á: 'a', â: 'a', ä: 'a', å: 'a', æ: 'ae',
+    ç: 'c', è: 'e', é: 'e', ê: 'e', ë: 'e',
+    ì: 'i', í: 'i', î: 'i', ï: 'i',
+    ñ: 'n', ò: 'o', ó: 'o', ô: 'o', ö: 'o', ø: 'o',
+    ù: 'u', ú: 'u', û: 'u', ü: 'u', ý: 'y', ß: 'ss',
+    '&': 'and', '@': 'at', '%': 'percent',
+  };
+
+  return input
+    .toLowerCase()
+    .replace(/[^\u0000-\u007E]/g, c => charMap[c] ?? '')
+    .replace(/[^a-z0-9\s\-_]/g, ' ')
+    .replace(/[\s]+/g, separator)
+    .replace(/[\-_]+/g, separator)
+    .replace(new RegExp(`^${separator}+|${separator}+$`, 'g'), '');
+}
+
+// 사용 예
+toSlug('Hello World!')  // → 'hello-world'
+toSlug('café au lait')  // → 'cafe-au-lait'
+toSlug('AT&T Corp.')    // → 'at-and-t-corp'
+```
+
+### Python
+
+```python
+import re
+import unicodedata
+
+def to_slug(text: str, separator: str = '-') -> str:
+    text = unicodedata.normalize('NFKD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9\s\-_]', ' ', text)
+    text = re.sub(r'[\s]+', separator, text)
+    text = re.sub(r'[\-_]+', separator, text)
+    text = text.strip(separator)
+    return text
+
+# 사용 예
+to_slug('Hello World!')   # → 'hello-world'
+to_slug('café résumé')    # → 'cafe-resume'
+```
+
+### Ruby on Rails
+
+Rails에는 `parameterize` 메서드가 내장되어 있습니다:
+
+```ruby
+"Hello World!".parameterize           # => "hello-world"
+"naïve café".parameterize             # => "naive-cafe"
+```
+
+## 슬러그의 SEO 고려사항
+
+**짧고 설명적인 슬러그를 사용하세요.** Google은 URL이 페이지 내용을 반영하도록 권장합니다. `how-to-build-a-rest-api`가 `how-to-build-a-restful-api-from-scratch-for-beginners-step-by-step`보다 좋습니다.
+
+**주요 키워드를 포함하세요.** 슬러그는 순위 신호입니다. 타겟 키워드가 "deploy docker container"라면 슬러그 `deploy-docker-container`가 효과적입니다.
+
+**불필요한 불용어를 피하세요.** "a", "the", "to" 같은 관사는 길이만 늘릴 뿐 SEO 가치는 없습니다.
+
+**발행 후 슬러그를 변경하지 마세요.** 슬러그를 변경하면 모든 기존 백링크가 무효화되고 301 리다이렉트 없이 404가 발생합니다. 발행 전에 슬러그를 계획하세요.
+
+## 자주 발생하는 문제
+
+### 빈 결과
+
+모든 문자가 제거된 경우 — 보통 입력이 기호만으로 구성되거나 변환 매핑이 없는 비ASCII 문자인 경우:
+
+```
+"!!!" → ""      (모두 제거됨)
+"한글" → ""     (변환 설정 없음)
+```
+
+해결책: CJK 문자용 문자 매핑을 확장하거나 다국어를 지원하는 `limax` 같은 전문 라이브러리를 사용하세요.
+
+### 중복 슬러그
+
+두 개의 다른 제목이 같은 슬러그를 생성하는 경우:
+
+```
+"API Design"  → api-design
+"API Design!" → api-design
+```
+
+데이터베이스 기반 시스템에서는 slug 컬럼에 유니크 인덱스를 설정하고 중복에는 숫자 접미사를 추가하세요: `api-design-2`.
+
+## 온라인 슬러그 생성기 사용하기
+
+**[문자열에서 URL 슬러그 생성하기 →](/tools/string-to-slug)**
+
+임의의 텍스트(기사 제목, 제품명, 파일명)를 붙여넣으면 즉시 깔끔한 URL 슬러그가 생성됩니다. 소문자 전환과 하이픈/밑줄 선택이 가능하며, 악센트 문자·특수기호·공백 정규화를 자동으로 처리합니다.
+
+가입 불필요·사용 제한 없음·브라우저에서 완전 실행.
+
+**[문자열에서 슬러그로 변환기 열기 →](/tools/string-to-slug)**
