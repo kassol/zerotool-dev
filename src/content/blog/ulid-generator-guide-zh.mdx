@@ -1,0 +1,177 @@
+---
+title: "ULID 生成器：比 UUID 更好排序的分布式 ID 方案"
+description: "深入理解 ULID 的结构与优势，对比 UUID v4、UUID v7，讲清楚 ULID 在数据库索引、分页、日志系统中的实际价值，附代码示例。"
+pubDate: 2026-04-15
+lang: "zh"
+translationSlug: "ulid-generator-guide"
+tags: ["ulid", "uuid", "distributed-systems", "developer-tools", "database"]
+ogImage: /og/blog-ulid-generator-guide.png
+---
+
+UUID v4 是分布式系统里最常见的主键方案，但它有一个被忽视的缺陷：完全随机，没有时序。大量随机主键插入数据库，B 树索引会持续分裂，写入性能随数据量劣化。**ULID** 就是为了解决这个问题而生的。
+
+**[生成 ULID →](/tools/ulid-generator)**
+
+## ULID 长什么样
+
+```
+01HQ7V5J3Z2QK8MNRPXTYW9E4B
+```
+
+26 个字符，使用 [Crockford Base32](https://www.crockford.com/base32.html) 编码（去掉了视觉上易混淆的 I、L、O、U）。
+
+### 结构拆解
+
+```
+ 01HQ7V5J3Z  2QK8MNRPXTYW9E4B
+|-----------|-----------------|
+   时间戳        随机数
+   48 位          80 位
+```
+
+- **时间戳（48 位）**：毫秒级 Unix 时间戳，有效期到公元 10895 年。
+- **随机数（80 位）**：密码学安全随机，每毫秒约 1.2 × 10²⁴ 种可能，碰撞概率极低。
+
+关键性质：**同一毫秒内生成的 ULID，随机部分单调递增**（规范要求），因此字典序 = 时间序。
+
+## ULID vs UUID 对比
+
+| 特性 | UUID v4 | ULID |
+|---|---|---|
+| 长度 | 36 字符（含连字符） | 26 字符 |
+| 有序性 | 无 | 字典序 = 时间序 |
+| 时间戳 | 无 | 有（毫秒级） |
+| URL 安全 | 否（含 `-`） | 是 |
+| 碰撞概率 | 极低 | 极低 |
+| 规范 | RFC 4122 | ULID spec |
+
+### 为什么有序性对数据库很重要
+
+MySQL InnoDB 和 PostgreSQL 的主键索引都是 B 树结构。用 UUID v4 做主键时，每条新记录的 ID 在整个键空间中是随机位置，B 树节点频繁分裂，产生大量碎片。当表到千万行级别，写入吞吐下降、磁盘空间膨胀会很明显。
+
+用 ULID 做主键，新记录的 ID 总是大于前一条（时间推进），B 树的插入始终在右侧叶子节点，索引紧凑，写性能与有序整数主键接近。
+
+### 游标分页的额外好处
+
+有了时序 ID，你不再需要单独的 `created_at` 字段做游标分页：
+
+```sql
+-- 基于 ULID 的游标翻页，直接用 ID 排序
+SELECT * FROM events
+WHERE id > '01HQ7V5J3Z2QK8MNRPXTYW9E4B'
+ORDER BY id ASC
+LIMIT 20;
+```
+
+比 `OFFSET` 分页快，也不会因为并发插入而漏数据。
+
+## ULID vs UUID v7
+
+UUID v7（RFC 9562，2024 年正式发布）同样在前 48 位嵌入毫秒时间戳，解决了 UUID v4 的排序问题：
+
+| 特性 | ULID | UUID v7 |
+|---|---|---|
+| 格式 | 26 字符 Base32 | 36 字符十六进制 |
+| RFC 标准 | 否 | 是（RFC 9562） |
+| PostgreSQL 原生类型 | TEXT | `uuid` |
+| 数据库存储 | TEXT / BYTEA | 16 字节 |
+
+**怎么选**：PostgreSQL 用户且不在意 ID 格式，用 UUID v7 更合适——原生 `uuid` 类型 16 字节存储，索引更紧凑。其他场景（多语言栈、字符串友好系统、需要短 ID）选 ULID。
+
+## 各语言生成代码
+
+### JavaScript / TypeScript
+
+```bash
+npm install ulid
+```
+
+```ts
+import { ulid, decodeTime } from 'ulid';
+
+const id = ulid();
+// "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+
+// 从 ULID 解出时间戳
+const ts = decodeTime(id);
+console.log(new Date(ts)); // 2026-04-15T...
+```
+
+### Go
+
+```bash
+go get github.com/oklog/ulid/v2
+```
+
+```go
+import (
+    "crypto/rand"
+    "time"
+    "github.com/oklog/ulid/v2"
+)
+
+id := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader)
+fmt.Println(id.String())
+```
+
+### Python
+
+```bash
+pip install python-ulid
+```
+
+```python
+from ulid import ULID
+
+id = ULID()
+print(str(id))          # "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+print(id.datetime)      # datetime 对象，不用另存 created_at
+```
+
+### Java / Kotlin
+
+```kotlin
+// JVM 生态推荐 de.huxhorn.sulky:de.huxhorn.sulky.ulid
+implementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
+```
+
+```kotlin
+val generator = ULID()
+val id = generator.nextULID()
+```
+
+## 数据库存储建议
+
+### PostgreSQL
+
+```sql
+-- 存为 TEXT，26 字节，简单直接
+CREATE TABLE events (
+  id   TEXT PRIMARY KEY,
+  data JSONB
+);
+
+INSERT INTO events VALUES (generate_ulid(), '{}');
+```
+
+PostgreSQL 没有内置的 ULID 类型，但 [pgulid](https://github.com/geckoboard/pgulid) 扩展提供 `generate_ulid()` 函数，可以用于默认值。
+
+### MySQL
+
+```sql
+CREATE TABLE events (
+  id   CHAR(26) PRIMARY KEY,
+  data JSON
+);
+```
+
+`CHAR(26)` 固定长度，存储比 `VARCHAR(36)` 略高效。
+
+## 适合用 ULID 的场景
+
+- 写入量大、对索引性能敏感的表（订单、事件、日志）
+- 需要基于 ID 做游标分页
+- 需要从 ID 还原创建时间，不想额外维护 `created_at`
+- 对外暴露 ID，希望 URL 友好且比 UUID 更短
+
+**[立即生成 ULID →](/tools/ulid-generator)**

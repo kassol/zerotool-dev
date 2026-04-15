@@ -1,0 +1,181 @@
+---
+title: "ULID Generator: What Is a ULID and Why It Beats UUID for Sorting"
+description: "ULID vs UUID — understand the difference, when to use a ULID, how to generate one, and how ULIDs solve ordering problems in distributed systems."
+pubDate: 2026-04-15
+lang: "en"
+translationSlug: "ulid-generator-guide-zh"
+tags: ["ulid", "uuid", "distributed-systems", "developer-tools", "database"]
+ogImage: /og/blog-ulid-generator-guide.png
+---
+
+UUID is the default unique identifier for most applications. But UUID v4 — random by design — is unordered. Rows inserted into a database aren't stored in insertion order. Indexes fragment. Queries slow down. **ULID** was designed to fix exactly this problem.
+
+**[Generate a ULID →](/tools/ulid-generator)**
+
+## What Is a ULID?
+
+ULID stands for **Universally Unique Lexicographically Sortable Identifier**. It was created by Alizain Feerasta in 2016 and is defined in a public spec.
+
+A ULID looks like this:
+
+```
+01HQ7V5J3Z2QK8MNRPXTYW9E4B
+```
+
+26 characters, uppercase, using [Crockford's Base32](https://www.crockford.com/base32.html) alphabet (excludes I, L, O, U to avoid visual ambiguity).
+
+### The structure
+
+```
+ 01HQ7V5J3Z  2QK8MNRPXTYW9E4B
+|-----------|-----------------|
+  timestamp     randomness
+  48 bits         80 bits
+```
+
+- **Timestamp (48 bits)**: milliseconds since Unix epoch. Good until the year 10895.
+- **Randomness (80 bits)**: cryptographically random. ~1.2 × 10²⁴ possible values per millisecond.
+
+## ULID vs UUID: Key Differences
+
+| Feature | UUID v4 | ULID |
+|---|---|---|
+| Length | 36 chars (with hyphens) | 26 chars |
+| Sortable | No | Yes (lexicographic) |
+| Timestamp embedded | No | Yes |
+| Collision probability | Extremely low | Extremely low |
+| URL-safe | No (contains hyphens) | Yes |
+| Case-sensitive | No | Yes (by spec, case-insensitive decoders exist) |
+| Spec | RFC 4122 | ULID spec |
+
+The critical difference: ULIDs sort by creation time. Insert 1000 rows in a ULID-keyed table and the primary key index stays sequential. This matters for:
+
+- **B-tree indexes**: Sequential inserts hit the same page, reducing fragmentation.
+- **Pagination**: You can use `WHERE id > :cursor` as an efficient cursor without a separate `created_at` column.
+- **Log files**: Sorted by filename = sorted by time.
+- **Message queues**: Natural ordering without a separate sequence number.
+
+## ULID vs UUID v7
+
+UUID v7 (RFC 9562, finalized 2024) also embeds a millisecond timestamp in the first 48 bits — making it sortable. It's a direct response to ULID's success.
+
+| Feature | ULID | UUID v7 |
+|---|---|---|
+| Format | 26-char Base32 | 36-char hex with hyphens |
+| RFC standard | No | Yes (RFC 9562) |
+| DB native type | TEXT or BINARY | UUID type (PostgreSQL) |
+| Spec maturity | Stable community spec | New RFC |
+
+If your database has native UUID support (PostgreSQL's `uuid` type), UUID v7 may be more convenient — it stores in 16 bytes natively. If you're working with string-based systems or want shorter IDs, ULID is still the better choice.
+
+## Monotonicity Within the Same Millisecond
+
+When multiple ULIDs are generated in the same millisecond, the timestamp portion is identical. The ULID spec defines a monotonicity extension: increment the random component by 1 for each subsequent ULID within the same millisecond. This guarantees ordering even at high throughput (millions of inserts per second).
+
+## Generating ULIDs in Code
+
+### JavaScript / TypeScript
+
+```bash
+npm install ulid
+```
+
+```ts
+import { ulid } from 'ulid';
+
+const id = ulid();
+// "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+
+// With a custom timestamp
+const id2 = ulid(Date.now());
+```
+
+### Go
+
+```bash
+go get github.com/oklog/ulid/v2
+```
+
+```go
+import (
+    "math/rand"
+    "time"
+    "github.com/oklog/ulid/v2"
+)
+
+ms := ulid.Timestamp(time.Now())
+entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
+id := ulid.MustNew(ms, entropy)
+fmt.Println(id) // "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+```
+
+### Python
+
+```bash
+pip install python-ulid
+```
+
+```python
+from ulid import ULID
+
+id = ULID()
+print(str(id))  # "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+print(id.timestamp())  # datetime object
+```
+
+### Rust
+
+```toml
+[dependencies]
+ulid = "1"
+```
+
+```rust
+use ulid::Ulid;
+
+let id = Ulid::new();
+println!("{}", id); // "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+```
+
+## Storing ULIDs in a Database
+
+### PostgreSQL
+
+```sql
+-- As text (26 bytes)
+CREATE TABLE events (
+  id TEXT PRIMARY KEY DEFAULT gen_ulid(),
+  ...
+);
+
+-- As UUID (16 bytes, loses the string format)
+-- Requires a conversion function
+```
+
+PostgreSQL doesn't natively understand ULID, but you can store as `TEXT` or convert to `BYTEA`. Many teams use `TEXT` for clarity; the 26-byte cost is negligible compared to the query simplicity.
+
+### MySQL / SQLite
+
+Same approach — store as `CHAR(26)` or `VARCHAR(26)`. It's a fixed-width string, so `CHAR(26)` is slightly more efficient.
+
+## Decoding a ULID
+
+The timestamp is embedded in the first 10 characters. You can extract it:
+
+```ts
+import { decodeTime } from 'ulid';
+
+const ts = decodeTime('01HQ7V5J3Z2QK8MNRPXTYW9E4B');
+console.log(new Date(ts)); // Wed Apr 15 2026 ...
+```
+
+This is useful for debugging: you can tell exactly when a record was created from its ID alone, without querying `created_at`.
+
+## When to Use ULID
+
+- Any table with high insert rates where index fragmentation is a concern
+- Event logs, audit trails, or any append-heavy workload
+- Systems where you need time-ordered IDs without a separate timestamp column
+- APIs where you want URL-safe, human-readable IDs shorter than UUID
+
+**[Generate a ULID now →](/tools/ulid-generator)**
