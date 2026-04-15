@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 75 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 76 tools and growing.
 
 ## Tools
 
@@ -84,6 +84,7 @@
 | SVG to JSX Converter | [/tools/svg-to-jsx](https://zerotool.dev/tools/svg-to-jsx) |
 | Protobuf to JSON | [/tools/protobuf-to-json](https://zerotool.dev/tools/protobuf-to-json) |
 | htpasswd Generator | [/tools/htpasswd-generator](https://zerotool.dev/tools/htpasswd-generator) |
+| CSS Box Shadow Generator | [/tools/box-shadow-generator](https://zerotool.dev/tools/box-shadow-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
