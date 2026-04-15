@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 73 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 75 tools and growing.
 
 ## Tools
 
@@ -15,6 +15,7 @@
 | URL Encode / Decode | [/tools/url-encode](https://zerotool.dev/tools/url-encode) |
 | Text Case Converter | [/tools/text-case](https://zerotool.dev/tools/text-case) |
 | Markdown Preview | [/tools/markdown-preview](https://zerotool.dev/tools/markdown-preview) |
+| Markdown Linter | [/tools/markdown-linter](https://zerotool.dev/tools/markdown-linter) |
 | Color Converter | [/tools/color-converter](https://zerotool.dev/tools/color-converter) |
 | Regex Tester | [/tools/regex-tester](https://zerotool.dev/tools/regex-tester) |
 | Hash Generator | [/tools/hash-generator](https://zerotool.dev/tools/hash-generator) |
@@ -81,6 +82,7 @@
 | HTML to JSX Converter | [/tools/html-to-jsx](https://zerotool.dev/tools/html-to-jsx) |
 | CSV to SQL Converter | [/tools/csv-to-sql](https://zerotool.dev/tools/csv-to-sql) |
 | SVG to JSX Converter | [/tools/svg-to-jsx](https://zerotool.dev/tools/svg-to-jsx) |
+| Protobuf to JSON | [/tools/protobuf-to-json](https://zerotool.dev/tools/protobuf-to-json) |
 | htpasswd Generator | [/tools/htpasswd-generator](https://zerotool.dev/tools/htpasswd-generator) |
 <!-- TOOLS-END -->
 
