@@ -1,0 +1,253 @@
+---
+title: "Protobuf 转 JSON 在线工具：解析 .proto 文件与二进制消息"
+description: "在线将 Protobuf schema 生成示例 JSON，或将二进制 Protobuf 消息解码为 JSON。隐私优先，基于 protobufjs 完全在浏览器运行。"
+pubDate: 2026-04-15
+lang: "zh"
+translationSlug: "protobuf-to-json-guide"
+tags: ["protobuf转json", "protobuf在线解析", "proto文件解析", "开发工具", "gRPC调试"]
+---
+
+Protocol Buffers（Protobuf）速度快、体积小、语言无关——但它是二进制的，人眼无法直接阅读。当你需要排查 API 问题、生成测试 Fixture 或确认序列化结果时，**Protobuf 转 JSON 在线工具**是从 `.proto` 文件（或二进制消息）到可读 JSON 最快的路径，不需要 gRPC 服务器，不需要代码生成，不需要本地环境。
+
+[立即使用 Protobuf 转 JSON 工具 →](/tools/protobuf-to-json)
+
+## 什么是 Protocol Buffers？
+
+Protocol Buffers 是 Google 设计的二进制序列化格式。与 JSON 相比：
+
+- **更小的体积：** 序列化后的 Protobuf 消息通常比 JSON 小 3–10 倍
+- **更快的解析速度：** 二进制编码跳过了字符串解析开销
+- **强类型：** `.proto` 文件明确定义每个字段的名称和类型
+- **语言无关：** Go、Python、Java、TypeScript、Rust 等都有成熟的代码生成器
+
+代价是不透明性——没有对应的 schema 就无法读取 Protobuf 二进制，调试必须依赖工具。
+
+## 两种转换模式
+
+### 模式一：Schema 生成示例 JSON
+
+粘贴 `.proto` 文件，工具自动生成一个包含所有字段的示例 JSON 对象，字段值填入合理的占位内容。适合：
+
+- **编写测试：** 不用手写 JSON Fixture，直接从 Schema 生成
+- **API 文档：** 告诉接入方响应数据的结构长什么样
+- **前端 Mock：** 在后端还在开发时，前端基于稳定的 JSON 结构开发
+
+示例输入（`.proto` 文件）：
+
+```protobuf
+syntax = "proto3";
+
+message UserProfile {
+  string user_id = 1;
+  string display_name = 2;
+  string email = 3;
+  int64 created_at = 4;
+  repeated string roles = 5;
+  Address address = 6;
+}
+
+message Address {
+  string street = 1;
+  string city = 2;
+  string country_code = 3;
+  string postal_code = 4;
+}
+```
+
+示例输出（示例 JSON）：
+
+```json
+{
+  "userId": "string",
+  "displayName": "string",
+  "email": "string",
+  "createdAt": "0",
+  "roles": ["string"],
+  "address": {
+    "street": "string",
+    "city": "string",
+    "countryCode": "string",
+    "postalCode": "string"
+  }
+}
+```
+
+注意 `user_id` 变成了 `userId`——Protobuf 的 JSON 序列化规范默认使用驼峰命名，与 JSON 惯例一致。
+
+### 模式二：二进制消息解码为 JSON
+
+粘贴十六进制编码的二进制 Protobuf 消息和对应的 Schema，工具将二进制解码为可读 JSON。适合：
+
+- 检查从网络抓包工具（Wireshark、mitmproxy）捕获的消息体
+- 在没有完整客户端的情况下调试 gRPC 接口
+- 验证一个服务序列化的消息能否被另一个服务正确解析
+
+示例十六进制输入：
+
+```
+0a 07 75 73 65 72 2d 31 32 33 12 05 41 6c 69 63 65
+```
+
+结合上面的 `UserProfile` Schema 解码后得到：
+
+```json
+{
+  "userId": "user-123",
+  "displayName": "Alice"
+}
+```
+
+二进制中未设置的字段（或设为零值的字段）在 JSON 输出中会被省略。
+
+## .proto 语法速览
+
+如果你刚开始接触 Protobuf，以下是读懂 Schema 必须了解的核心语法。
+
+### 消息定义
+
+```protobuf
+syntax = "proto3";
+
+message SearchRequest {
+  string query = 1;           // 字段名、类型、字段编号
+  int32 page_number = 2;
+  int32 results_per_page = 3;
+}
+```
+
+字段编号（1、2、3）是 Protobuf 在二进制编码中识别字段的方式，不是字段的值。字段编号 1–15 在 wire format 中只占 1 个字节，16–2047 占 2 个字节，高频字段应使用小编号。
+
+### 标量类型
+
+| proto3 类型 | JSON 类型 | 备注 |
+|---|---|---|
+| `string` | 字符串 | UTF-8 编码 |
+| `bytes` | base64 字符串 | 二进制数据 |
+| `bool` | 布尔值 | |
+| `int32`, `sint32` | 数字 | |
+| `int64`, `sint64` | **字符串** | JSON 数字精度不足以表示 64 位整数 |
+| `float`, `double` | 数字 | |
+| `uint32`, `uint64` | 数字 / 字符串 | |
+
+`int64` 在 JSON 中序列化为**字符串**，这是 Protobuf JSON 映射规范的强制要求。JavaScript 的 `Number` 类型无法精确表示超过 53 位的整数，用字符串避免精度丢失。
+
+### 枚举
+
+```protobuf
+enum Status {
+  STATUS_UNKNOWN = 0;    // proto3：第一个值必须为 0
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+  STATUS_SUSPENDED = 3;
+}
+
+message User {
+  string user_id = 1;
+  Status status = 2;
+}
+```
+
+枚举在 JSON 中默认序列化为**字符串名称**（`"STATUS_ACTIVE"`），而非整数，可读性更好。
+
+### Repeated 字段（数组）
+
+```protobuf
+message Order {
+  string order_id = 1;
+  repeated LineItem items = 2;
+  repeated string tags = 3;
+}
+```
+
+`repeated` 对应 JSON 数组。空的 repeated 字段序列化为 `[]` 或直接省略（取决于序列化器配置）。
+
+### oneofs
+
+```protobuf
+message Notification {
+  string id = 1;
+  oneof content {
+    EmailNotification email = 2;
+    PushNotification push = 3;
+    SMSNotification sms = 4;
+  }
+}
+```
+
+`oneof` 表示同时只能设置其中一个字段。在 JSON 中，只有被设置的字段会出现。
+
+### Well-known Types
+
+```protobuf
+import "google/protobuf/timestamp.proto";
+
+message Event {
+  string event_id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+}
+```
+
+Well-known Types（`Timestamp`、`Duration`、`Struct`、`Any`、`FieldMask`）在 Protobuf JSON 映射规范中有特殊的表示方式。
+
+## Protobuf JSON 映射规则
+
+| 场景 | JSON 表示 |
+|---|---|
+| `int64`/`uint64` | 十进制字符串（`"9007199254740993"`） |
+| `bytes` | base64 字符串 |
+| `enum` | 字符串名称（未知枚举值用整数） |
+| `Timestamp` | RFC 3339 字符串（`"2026-04-15T10:00:00Z"`） |
+| `Duration` | 带 `s` 后缀的字符串（`"3.5s"`） |
+| `FieldMask` | 驼峰点分隔字符串 |
+| `Any` | `{"@type": "...", ...字段}` |
+| 零值字段 | 默认省略（proto3 行为） |
+
+最后一条最容易踩坑：proto3 中，设为零值（空字符串、`0`、`false`、空数组）的字段**默认从 JSON 输出中省略**。如果你需要输出所有字段，需要在序列化器中开启 `EmitUnpopulated`（Go）或等效配置。
+
+## 调试 gRPC 流量
+
+gRPC 基于 HTTP/2 传输 Protobuf 消息。调试时经常需要解析原始二进制响应：
+
+1. 从网络工具或日志中获取十六进制转储
+2. 去掉 gRPC framing（5 字节头部：1 字节压缩标志 + 4 字节消息长度）
+3. 将剩余字节粘贴到工具，配合 `.proto` Schema 解码
+
+如果服务器开启了 reflection，也可以直接用 grpcurl：
+
+```bash
+# 列出服务
+grpcurl -plaintext localhost:50051 list
+
+# 调用方法
+grpcurl -plaintext -d '{"userId": "123"}' localhost:50051 user.UserService/GetUser
+```
+
+没有 reflection 时，传入 `.proto` 文件：
+
+```bash
+grpcurl -plaintext -proto user.proto -d '{"userId": "123"}' localhost:50051 user.UserService/GetUser
+```
+
+## 典型使用场景
+
+### 生成测试 Fixture
+
+不用手写 JSON，直接从 Schema 生成 Fixture。Schema 更新时重新生成，保持一致性。
+
+### 编写 API 文档
+
+粘贴响应消息的 Schema，复制生成的示例 JSON 到文档里。Schema 变更时重新生成，比手写更不容易出现文档与实现不同步的问题。
+
+### 排查序列化 Bug
+
+当某个字段在 JSON 输出中缺失时，通常意味着它被设为了零值。用二进制解码模式确认 wire format 中实际传输的内容。
+
+## 隐私
+
+工具基于 [protobufjs](https://github.com/protobufjs/protobuf.js) 完全在浏览器内运行。你的 `.proto` Schema 和二进制消息数据不会发送到任何服务器。对于描述内部 API 的 Schema 或包含用户数据的消息，可以放心使用。
+
+## 立即试用
+
+粘贴你的 `.proto` Schema 生成示例 JSON 结构，或将 Schema 与十六进制编码的二进制消息一起粘贴，解码为可读 JSON。
+
+**[打开 Protobuf 转 JSON 工具 →](/tools/protobuf-to-json)**

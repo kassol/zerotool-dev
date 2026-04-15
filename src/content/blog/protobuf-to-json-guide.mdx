@@ -1,0 +1,255 @@
+---
+title: "Protobuf to JSON Converter Online: Decode .proto Schemas and Binary Messages"
+description: "Convert Protobuf schemas to sample JSON and decode binary Protobuf messages to JSON online. Privacy-first, runs entirely in your browser using protobufjs."
+pubDate: 2026-04-15
+lang: "en"
+translationSlug: "protobuf-to-json-guide-zh"
+tags: ["protobuf to json converter", "protobuf to json online", "proto to json", "developer-tools", "protobuf"]
+---
+
+Protocol Buffers (Protobuf) are fast, compact, and language-neutral — but they are also binary and opaque. When you need to inspect a message, debug an API, or generate test fixtures, a **Protobuf to JSON converter** is the quickest path from a `.proto` schema (or a raw binary blob) to readable JSON. No gRPC server, no generated code, no local setup.
+
+[Try the Protobuf to JSON Converter →](/tools/protobuf-to-json)
+
+## What is Protocol Buffers?
+
+Protocol Buffers is Google's binary serialization format. Compared to JSON:
+
+- **Smaller on the wire:** A serialized Protobuf message is typically 3–10× smaller than its JSON equivalent
+- **Faster to serialize/deserialize:** Binary encoding skips string parsing
+- **Strongly typed:** The schema (`.proto` file) defines every field name and type
+- **Language-neutral:** Code generators exist for Go, Python, Java, TypeScript, Rust, and more
+
+The tradeoff is opacity — you cannot read a Protobuf binary without the corresponding schema, and debugging requires tooling.
+
+## Two Conversion Modes
+
+### Mode 1: Schema to Sample JSON
+
+Paste a `.proto` schema and get a sample JSON object with all fields populated with realistic placeholder values. This is useful for:
+
+- **Writing tests:** Generate fixture files without hand-crafting JSON
+- **API documentation:** Show consumers what a response looks like
+- **Frontend mocking:** Build UI against a stable JSON shape while the backend is still in development
+
+Example input (`.proto`):
+
+```protobuf
+syntax = "proto3";
+
+message UserProfile {
+  string user_id = 1;
+  string display_name = 2;
+  string email = 3;
+  int64 created_at = 4;
+  repeated string roles = 5;
+  Address address = 6;
+}
+
+message Address {
+  string street = 1;
+  string city = 2;
+  string country_code = 3;
+  string postal_code = 4;
+}
+```
+
+Example output (sample JSON):
+
+```json
+{
+  "userId": "string",
+  "displayName": "string",
+  "email": "string",
+  "createdAt": "0",
+  "roles": ["string"],
+  "address": {
+    "street": "string",
+    "city": "string",
+    "countryCode": "string",
+    "postalCode": "string"
+  }
+}
+```
+
+Notice that `user_id` becomes `userId` — Protobuf JSON serialization uses camelCase by default, which is the standard JSON convention.
+
+### Mode 2: Binary Message to JSON
+
+Paste a hex-encoded binary Protobuf message along with its schema, and the tool decodes the binary into human-readable JSON. This is the mode you want when:
+
+- Inspecting payloads captured from a network trace (Wireshark, mitmproxy)
+- Debugging a gRPC endpoint without access to a full client
+- Verifying that a serialized message from one service matches what another service expects
+
+Example hex input:
+
+```
+0a 07 75 73 65 72 2d 31 32 33 12 05 41 6c 69 63 65
+```
+
+With the `UserProfile` schema above, this decodes to:
+
+```json
+{
+  "userId": "user-123",
+  "displayName": "Alice"
+}
+```
+
+Fields absent from the binary (not set or set to their zero values) are omitted from the JSON output.
+
+## .proto Syntax Primer
+
+If you are new to Protobuf, here is the essential syntax to understand the schemas you will be pasting into the converter.
+
+### Message Definition
+
+```protobuf
+syntax = "proto3";
+
+message SearchRequest {
+  string query = 1;       // field name, type, field number
+  int32 page_number = 2;
+  int32 results_per_page = 3;
+}
+```
+
+Field numbers (1, 2, 3) are how Protobuf identifies fields in the binary wire format — they are not the values. Field numbers 1–15 use one byte in the encoding; 16–2047 use two bytes. High-frequency fields should use low numbers.
+
+### Scalar Types
+
+| proto3 type | JSON type | Notes |
+|---|---|---|
+| `string` | string | UTF-8 encoded |
+| `bytes` | base64 string | Binary data |
+| `bool` | boolean | |
+| `int32`, `sint32` | number | |
+| `int64`, `sint64` | string | JSON numbers lose precision for large int64 |
+| `float`, `double` | number | |
+| `uint32`, `uint64` | number / string | |
+
+`int64` becomes a **string** in JSON — this is intentional and specified by the Protobuf JSON mapping. JavaScript's `Number` type cannot represent 64-bit integers precisely.
+
+### Enums
+
+```protobuf
+enum Status {
+  STATUS_UNKNOWN = 0;    // proto3: first value must be 0
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+  STATUS_SUSPENDED = 3;
+}
+
+message User {
+  string user_id = 1;
+  Status status = 2;
+}
+```
+
+In JSON output, enums serialize as their **string name** by default (`"STATUS_ACTIVE"`), not as integers. This makes JSON output much more readable.
+
+### Repeated Fields (Arrays)
+
+```protobuf
+message Order {
+  string order_id = 1;
+  repeated LineItem items = 2;
+  repeated string tags = 3;
+}
+```
+
+`repeated` maps to a JSON array. An empty repeated field serializes as `[]` or is omitted (depending on the serializer).
+
+### Nested Messages and oneofs
+
+```protobuf
+message Notification {
+  string id = 1;
+  oneof content {
+    EmailNotification email = 2;
+    PushNotification push = 3;
+    SMSNotification sms = 4;
+  }
+}
+```
+
+`oneof` means exactly one of the listed fields can be set at a time. In JSON, only the set field appears.
+
+### Imports
+
+```protobuf
+import "google/protobuf/timestamp.proto";
+
+message Event {
+  string event_id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+}
+```
+
+The well-known types (`Timestamp`, `Duration`, `Struct`, `Any`, `FieldMask`) have special JSON representations defined in the Protobuf specification.
+
+## Protobuf JSON Mapping Rules
+
+The official JSON mapping defines how each proto3 type appears in JSON:
+
+| Scenario | JSON representation |
+|---|---|
+| `int64`/`uint64` | decimal string (`"9007199254740993"`) |
+| `bytes` | base64 string |
+| `enum` | string name (or integer if unknown) |
+| `Timestamp` | RFC 3339 string (`"2026-04-15T10:00:00Z"`) |
+| `Duration` | string with `s` suffix (`"3.5s"`) |
+| `FieldMask` | camelCase dot-separated string |
+| `Any` | `{"@type": "...", ...fields}` |
+| `Struct` | JSON object |
+| `ListValue` | JSON array |
+| `NullValue` | JSON `null` |
+| Field with default value | Omitted (proto3 default behavior) |
+
+The last point is worth emphasizing: in proto3, fields set to their zero values (empty string, `0`, `false`, empty array) are **omitted** from JSON output by default. Set `EmitUnpopulated` (Go) or equivalent in your language's serializer to include them.
+
+## Decoding gRPC Traffic
+
+gRPC uses Protobuf over HTTP/2. When debugging with tools like grpcurl or grpc-gateway, you often get raw binary responses. The workflow:
+
+1. Capture the hex dump from your network tool or log
+2. Strip the gRPC framing (5-byte header: 1 byte compressed flag + 4 bytes message length)
+3. Paste the remaining bytes into the converter with your `.proto` schema
+
+Alternatively, `grpcurl` handles schema resolution automatically if you have server reflection enabled:
+
+```bash
+grpcurl -plaintext localhost:50051 list
+grpcurl -plaintext -d '{"userId": "123"}' localhost:50051 user.UserService/GetUser
+```
+
+For services without reflection, pass the `.proto` file directly:
+
+```bash
+grpcurl -plaintext -proto user.proto -d '{"userId": "123"}' localhost:50051 user.UserService/GetUser
+```
+
+## Common Use Cases
+
+### Generating Test Fixtures
+
+Instead of hand-writing JSON test fixtures, generate them from the schema. This ensures fixtures stay in sync with the schema definition.
+
+### Documenting API Responses
+
+Paste the response message definition and copy the generated JSON into your API docs. When the schema changes, regenerate the sample.
+
+### Debugging Serialization Bugs
+
+If a field is missing from the JSON output when you expect it to be present, it was set to its zero value. Use the binary decode mode to confirm what was actually serialized.
+
+## Privacy
+
+The converter runs entirely in your browser using [protobufjs](https://github.com/protobufjs/protobuf.js). Your `.proto` files and binary message data are never transmitted to a server. This matters when your schemas describe internal APIs or your messages contain user data.
+
+## Try It Now
+
+Paste your `.proto` schema to generate a sample JSON structure, or combine a schema with a hex-encoded binary message to decode it.
+
+**[Open the Protobuf to JSON Converter →](/tools/protobuf-to-json)**

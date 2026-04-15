@@ -1,0 +1,218 @@
+---
+title: "Markdown 在线 Lint 检查：提交前发现格式问题"
+description: "在线检测 Markdown 格式问题，实时显示规则 ID、行号和修复建议。支持 markdownlint 全部规则，浏览器本地运行，无需安装。"
+pubDate: 2026-04-15
+lang: "zh"
+translationSlug: "markdown-linter-guide"
+tags: ["markdown lint", "markdown格式检查", "markdownlint", "开发工具", "文档规范"]
+---
+
+**Markdown 在线 Lint 检查**能在文档进入代码库之前，把标题层级跳跃、超长行、多余空格这类问题全部揪出来——不需要 Node.js、不需要装 CLI、不需要等 CI 流水线。粘贴内容，秒出结果。
+
+[立即检查 Markdown →](/tools/markdown-linter)
+
+## 为什么要 Lint Markdown？
+
+Markdown 渲染器很宽容，格式有问题也能显示出来。这种宽容正是文档质量悄悄劣化的原因：
+
+- 标题跳级：`# 一级` 后面直接 `### 三级`，中间缺了 `## 二级`
+- 单行超过 200 字符，导致 diff 难以阅读
+- 混入了 Tab 字符，不同渲染器显示效果不一致
+- 行尾多余空格，在部分渲染器中触发不必要的换行
+- 裸 URL 缺少可访问的链接文本
+
+这些问题不会让构建失败，所以容易积累。加一个 lint 步骤，无论本地还是 CI，都能保持多人协作下的文档一致性。
+
+## 常见 markdownlint 规则解析
+
+在线工具基于 [markdownlint](https://github.com/DavidAnson/markdownlint)，这是 Markdown 生态中事实上的标准规则集，纯浏览器运行。以下是开发者最常遇到的规则。
+
+### MD001 — 标题级别每次只能递增一级
+
+```markdown
+<!-- 错误：从 H1 直接跳到 H3 -->
+# 我的文档
+
+### 快速开始
+
+<!-- 正确 -->
+# 我的文档
+
+## 快速开始
+```
+
+标题层级对屏幕阅读器、目录生成工具和文档索引系统都有意义。H1 到 H3 的跳跃意味着结构上存在一个"幽灵章节"，这在文档里几乎总是笔误。
+
+### MD013 — 行长度限制
+
+默认上限是 80 字符，可配置，纯文章类内容通常调到 120 或直接关闭。代码文档里保持短行能让代码评审的并排 diff 更可读。
+
+中文内容单字符较宽，建议把 `line_length` 设为 120 以上，或对正文禁用此规则。
+
+### MD022 — 标题前后需要空行
+
+```markdown
+<!-- 错误 -->
+这是一段正文。
+## 标题
+更多内容。
+
+<!-- 正确 -->
+这是一段正文。
+
+## 标题
+
+更多内容。
+```
+
+### MD031 — 代码块前后需要空行
+
+````markdown
+<!-- 错误 -->
+下面是一段代码：
+```bash
+echo "hello"
+```
+紧跟着更多文字。
+
+<!-- 正确 -->
+下面是一段代码：
+
+```bash
+echo "hello"
+```
+
+紧跟着更多文字。
+````
+
+### MD041 — 文件第一行应为顶级标题
+
+独立文档应以 `# 一级标题` 开头。对于被引用到更大文档中的片段，通常需要关闭此规则：`"MD041": false`。
+
+### MD049 / MD050 — 强调符号风格统一
+
+强制使用统一的 `*斜体*` 或 `_斜体_`，以及 `**粗体**` 或 `__粗体__`。多人协作时混用风格是最常见的问题之一。
+
+## 真实项目中的典型 Lint 违规
+
+### README 文件
+
+```markdown
+#快速开始     <!-- MD018：# 后面没有空格 -->
+运行 `npm install`。
+运行 `npm start`。  <!-- MD032：被文字围绕的列表项需要空行 -->
+- 构建：`npm run build`
+- 测试：`npm test`
+```
+
+### API 文档
+
+```markdown
+| 参数 | 类型 | 是否必填 | 说明 |
+|---|---|---|---|
+| `userId` | `string` | 是 | 用户账户在系统中的唯一标识符，由 UUID v4 生成 |
+```
+
+表格行很容易超过 80 字符。对于 API 文档，建议在 `.markdownlint.json` 中设置 `"tables": false` 关闭表格行的长度检查。
+
+### CHANGELOG 文件
+
+```markdown
+## [1.2.0] - 2026-04-01
+### 新增
+- 功能 X
+### 修复
+- Bug Y
+
+## [1.1.0] - 2026-03-01  <!-- MD024：出现了重复标题内容"新增"、"修复" -->
+### 新增
+- 功能 Z
+```
+
+MD024（禁止重复标题）与 CHANGELOG 的惯用格式冲突。解决方案是在配置中设置 `"allow_different_nesting": true`。
+
+## 配置 markdownlint
+
+### 项目配置文件
+
+在仓库根目录创建 `.markdownlint.json`：
+
+```json
+{
+  "default": true,
+  "MD013": {
+    "line_length": 120,
+    "tables": false,
+    "code_blocks": false
+  },
+  "MD024": {
+    "allow_different_nesting": true
+  },
+  "MD041": false
+}
+```
+
+常见的针对中文技术文档的调整：
+- 长篇文章关闭行长度检查：`"MD013": false`
+- 文档片段关闭首行 H1 要求：`"MD041": false`
+- CHANGELOG 允许同名标题：`"MD024": { "allow_different_nesting": true }`
+
+### CLI 集成
+
+```bash
+npm install -g markdownlint-cli2
+markdownlint-cli2 "**/*.md" "#node_modules"
+```
+
+### Pre-commit Hook
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/DavidAnson/markdownlint-cli2-action
+    rev: v16
+    hooks:
+      - id: markdownlint-cli2
+        args: ["--config", ".markdownlint.json"]
+```
+
+### GitHub Actions
+
+```yaml
+name: Lint Markdown
+on: [push, pull_request]
+
+jobs:
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查 Markdown 格式
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: "**/*.md"
+          config: ".markdownlint.json"
+```
+
+## Lint 与预览的区别
+
+两个工具解决不同的问题：
+
+| | Markdown Lint 检查 | Markdown 预览 |
+|---|---|---|
+| 目的 | 规范与结构规则 | 可视化渲染效果 |
+| 输出 | 规则违规 + 行号 | 渲染后的 HTML |
+| 适合 | CI 检查、多人协作一致性 | 确认最终显示效果 |
+| 能发现 | 标题层级、行长、强调风格 | 图片失效、渲染差异 |
+
+两者配合使用效果最好：CI 中 lint 保证规范，本地用预览确认效果。[Markdown 预览工具](/tools/markdown-preview)与 lint 检查互为补充。
+
+## 隐私
+
+在线 lint 工具完全在浏览器内运行，所有处理均为本地计算，你粘贴的 Markdown 内容不会发送到任何服务器。对于包含内部信息的文档、私有 API 说明或保密内容，可以放心使用。
+
+## 立即试用
+
+粘贴任意 Markdown 文件——README、CHANGELOG、API 文档、博客草稿——立即获得带行号的规则反馈。点击任意违规条目可直接跳转到对应行。
+
+**[打开 Markdown Lint 检查工具 →](/tools/markdown-linter)**

@@ -1,0 +1,227 @@
+---
+title: "Markdown Linter Online: Catch Formatting Errors Before They Ship"
+description: "Lint Markdown files online with instant rule-by-rule feedback. Catch MD001, MD013, MD041 and 40+ other markdownlint rules directly in your browser."
+pubDate: 2026-04-15
+lang: "en"
+translationSlug: "markdown-linter-guide-zh"
+tags: ["markdown linter online", "markdown lint checker", "markdownlint", "developer-tools", "markdown"]
+---
+
+A **markdown linter online** catches formatting inconsistencies, broken heading hierarchies, and style violations before your documentation hits the repository — no Node.js, no CLI, no CI pipeline required for a quick check. Paste your Markdown and get line-by-line feedback in seconds.
+
+[Try the Markdown Linter →](/tools/markdown-linter)
+
+## Why Lint Markdown?
+
+Markdown is forgiving by design. Most renderers will display something even when the source is malformed. That flexibility is also why Markdown quality silently degrades over time:
+
+- Headings skip levels (`# H1` followed by `### H3` — no `## H2` in between)
+- Lines grow to 200+ characters, making diffs unreadable
+- Hard tabs sneak in and cause inconsistent rendering
+- Trailing spaces trigger unintended line breaks in some renderers
+- Bare URLs lack accessible link text
+
+These issues rarely break a build, so they accumulate. A lint step — local or CI — keeps documentation consistent across contributors.
+
+## markdownlint Rules Explained
+
+The browser-based linter uses [markdownlint](https://github.com/DavidAnson/markdownlint), the industry-standard rule set for Markdown. Here are the rules developers encounter most often.
+
+### MD001 — Heading Levels Should Only Increment by One
+
+```markdown
+<!-- Wrong: jumps from H1 to H3 -->
+# My Document
+
+### Getting Started
+
+<!-- Correct -->
+# My Document
+
+## Getting Started
+```
+
+Heading hierarchy matters for screen readers, table-of-contents generators, and documentation indexing tools. A document that jumps from H1 to H3 implies a structural gap that probably doesn't exist.
+
+### MD013 — Line Length
+
+By default markdownlint flags lines over 80 characters. This is configurable and often relaxed to 120 or disabled entirely for prose. For code documentation, shorter lines make side-by-side diffs readable.
+
+```markdown
+<!-- Flagged at default 80-char limit -->
+This is a very long line that explains something in great detail and will be flagged by the line length rule.
+
+<!-- Split for readability -->
+This is a shorter line that explains something in great detail
+and wraps cleanly at a reasonable column width.
+```
+
+### MD022 — Headings Should Be Surrounded by Blank Lines
+
+```markdown
+<!-- Wrong -->
+Some paragraph text.
+## Heading
+More text here.
+
+<!-- Correct -->
+Some paragraph text.
+
+## Heading
+
+More text here.
+```
+
+### MD031 — Fenced Code Blocks Should Be Surrounded by Blank Lines
+
+````markdown
+<!-- Wrong -->
+Here is some code:
+```bash
+echo "hello"
+```
+And here is more text.
+
+<!-- Correct -->
+Here is some code:
+
+```bash
+echo "hello"
+```
+
+And here is more text.
+````
+
+### MD041 — First Line Should Be a Top-Level Heading
+
+Files intended to be standalone documents should start with an `# H1`. This rule is commonly disabled for README fragments or documentation partials that are included into larger documents.
+
+### MD049 / MD050 — Emphasis Style
+
+Enforces consistent use of `*italic*` vs `_italic_` and `**bold**` vs `__bold__`. Mixing styles within a project is a common issue when multiple contributors edit the same docs.
+
+## Common markdownlint Violations in Real Projects
+
+### README Files
+
+```markdown
+<!-- Typical README issues -->
+#Getting Started     <!-- MD018: no space after hash -->
+Run `npm install`.
+Run `npm start`.    <!-- MD032: list items should be surrounded by blank lines when preceded by text -->
+- Build: `npm run build`
+- Test: `npm test`
+```
+
+### API Documentation
+
+```markdown
+<!-- API docs often have long lines -->
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `userId` | `string` | Yes | The unique identifier for the user account in the system |
+```
+
+The table row above likely exceeds 80 characters. For API tables, disable MD013 or set a higher limit.
+
+### CHANGELOG Files
+
+```markdown
+## [1.2.0] - 2026-04-01
+### Added
+- New feature X
+### Fixed
+- Bug in Y
+
+## [1.1.0] - 2026-03-01  <!-- MD024: multiple headings with same content ("Added", "Fixed") -->
+### Added
+- Feature Z
+```
+
+MD024 (no duplicate heading content) often conflicts with conventional CHANGELOG format. The solution is to configure `allow_different_nesting: true` for MD024 in your `.markdownlint.json`.
+
+## Configuring markdownlint
+
+### Project Configuration File
+
+Create `.markdownlint.json` at the repo root:
+
+```json
+{
+  "default": true,
+  "MD013": {
+    "line_length": 120,
+    "tables": false,
+    "code_blocks": false
+  },
+  "MD024": {
+    "allow_different_nesting": true
+  },
+  "MD041": false
+}
+```
+
+Common per-project overrides:
+- Disable MD013 entirely for prose-heavy docs: `"MD013": false`
+- Allow H1 anywhere: `"MD041": false`
+- Permit duplicate headings at different levels: `"MD024": { "allow_different_nesting": true }`
+
+### CLI Integration
+
+```bash
+npm install -g markdownlint-cli2
+markdownlint-cli2 "**/*.md" "#node_modules"
+```
+
+### Pre-commit Hook
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/DavidAnson/markdownlint-cli2-action
+    rev: v16
+    hooks:
+      - id: markdownlint-cli2
+        args: ["--config", ".markdownlint.json"]
+```
+
+### GitHub Actions
+
+```yaml
+name: Lint Markdown
+on: [push, pull_request]
+
+jobs:
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: "**/*.md"
+          config: ".markdownlint.json"
+```
+
+## Markdown Linter vs Markdown Preview
+
+Linting and previewing address different concerns:
+
+| | Markdown Linter | Markdown Preview |
+|---|---|---|
+| Purpose | Style and structure rules | Visual rendering |
+| Output | Rule violations + line numbers | Rendered HTML |
+| Best for | CI checks, consistency | Checking how output looks |
+| Catches | Heading hierarchy, line length, style | Broken images, rendering quirks |
+
+Use both: lint in CI to enforce rules, preview locally to verify the output looks right. The [Markdown Preview tool](/tools/markdown-preview) complements the linter by showing you exactly how your Markdown renders.
+
+## Privacy
+
+The online linter processes your Markdown entirely in the browser. No text is sent to any server. This makes it safe for linting internal documentation, private specs, or anything containing sensitive content.
+
+## Try It Now
+
+Paste any Markdown file — a README, a CHANGELOG, API docs, or a blog post draft — and get immediate rule-by-rule feedback with line numbers. Click any violation to jump to the offending line.
+
+**[Open the Markdown Linter →](/tools/markdown-linter)**
