@@ -1,0 +1,121 @@
+---
+title: "色阶生成器：如何为 UI 构建一套好用的颜色系统"
+description: "从单个品牌色生成完整的明暗色阶，理解 HSL 原理、对比度要求与 Tailwind 兼容输出，配合在线工具快速落地颜色规范。"
+pubDate: 2026-04-15
+lang: "zh"
+translationSlug: "color-shades-generator-guide"
+tags: ["color", "design", "css", "developer-tools", "ui"]
+ogImage: /og/blog-color-shades-generator-guide.png
+---
+
+挑一个品牌色不难，难的是把这个颜色展开成完整的色板——背景要浅，文字要深，中间还要有足够多的层级给悬停、禁用、激活等状态用。靠感觉手调既慢又不一致。**色阶生成器**替你把数学做完，你只需要选一个基色。
+
+**[打开色阶生成器 →](/tools/color-shades-generator)**
+
+## 色阶是什么
+
+色阶是从单个色相派生的一组颜色，从接近白色到接近黑色，色相保持一致。Tailwind CSS、Ant Design、Material Design 都采用这种结构：
+
+| 编号 | 用途 |
+|---|---|
+| 50 / 100 | 页面背景、卡片底色 |
+| 200 / 300 | 边框、分割线 |
+| 400 / 500 | 主色调、图标 |
+| 600 / 700 | 主按钮、强调文字 |
+| 800 / 900 | 深色文字、暗色主题底色 |
+| 950 | 极深，接近黑色 |
+
+## 为什么用 HSL 而不是 RGB
+
+在 RGB 空间里，没有单一的"亮度"维度可以调。`#0000ff`（纯蓝）和 `#ffffff`（白色）在 B 通道上都是最大值，但感知亮度完全不同。
+
+HSL 把颜色拆成三个维度：
+
+- **H（色相）**：0°–360°，决定是红还是蓝
+- **S（饱和度）**：0–100%，决定有多"鲜艳"
+- **L（亮度）**：0–100%，0% 是黑，100% 是白
+
+生成色阶时，H 固定不动，L 从高到低逐步递减，S 在两端微调以避免过洗或过暗。这就是生成器背后的核心逻辑。
+
+### 更精准的选择：OKLCH
+
+如果你对色彩科学有要求，OKLCH 比 HSL 更接近人眼感知——同一 `L` 值在不同色相下看起来明暗相近。Tailwind v4 已切换到 OKLCH。不过 HSL 更直观，对大多数产品场景已经足够。
+
+## 生成 Tailwind 兼容色板
+
+以品牌蓝 `#0ea5e9` 为例，生成器输出 CSS 自定义属性：
+
+```css
+:root {
+  --color-brand-50: #f0f9ff;
+  --color-brand-100: #e0f2fe;
+  --color-brand-200: #bae6fd;
+  --color-brand-300: #7dd3fc;
+  --color-brand-400: #38bdf8;
+  --color-brand-500: #0ea5e9;
+  --color-brand-600: #0284c7;
+  --color-brand-700: #0369a1;
+  --color-brand-800: #075985;
+  --color-brand-900: #0c4a6e;
+  --color-brand-950: #082f49;
+}
+```
+
+粘贴进 `tailwind.config.js`：
+
+```js
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          50: 'var(--color-brand-50)',
+          // ...
+          950: 'var(--color-brand-950)',
+        },
+      },
+    },
+  },
+}
+```
+
+你就有了 `bg-brand-500`、`text-brand-700`、`border-brand-200` 等完整的 Tailwind 原子类。
+
+## 对比度：可访问性的底线
+
+色阶好看不够，还要能用。WCAG 2.1 要求：
+
+- **AA 正文**：前景色/背景色对比度 ≥ 4.5:1
+- **AA 大文字/UI 组件**：对比度 ≥ 3:1
+- **AAA 正文**：对比度 ≥ 7:1
+
+实用经验：
+- 白底上写正文：用 600 或更深
+- 深色底上写正文：用 200 或更浅
+- 按钮背景（600）配白色文字：大多数颜色能过 AA
+
+国内出海产品面向欧美市场时，可访问性是必须满足的合规要求，不是可选项。
+
+## 色调、深色调、柔和色的区别
+
+| 术语 | 做法 | 视觉效果 |
+|---|---|---|
+| Tint（淡色） | 基色 + 白 | 更浅更亮 |
+| Shade（深色） | 基色 + 黑 | 更深更暗 |
+| Tone（柔和色） | 基色 + 灰 | 降低饱和，更沉稳 |
+
+一套完整的 UI 色板三者都有：浅端是 Tint，深端是 Shade，中段可能混入 Tone 避免过饱和刺眼。
+
+## 实际工作流
+
+1. 确定品牌色（通常对应 500 附近的步骤）
+2. 输入生成器，导出完整色阶
+3. 命名语义 token：`--color-primary`、`--color-surface`、`--color-text`
+4. 验证关键配对的对比度
+5. 输出 CSS 变量或 Tailwind 配置
+
+**[生成你的颜色系统 →](/tools/color-shades-generator)**
+
+## 与 Ant Design 色板对齐
+
+如果你的项目用 Ant Design，它的 `@ant-design/colors` 包基于同样的 HSL 算法生成 10 步色阶。你可以用我们的生成器检验自定义品牌色是否与 Ant Design 的规律一致，或者导出相同格式的 JSON 覆盖 Ant Design 默认主题变量。
