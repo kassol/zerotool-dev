@@ -1,0 +1,472 @@
+---
+// BoxShadowGeneratorTool — CSS box-shadow visual generator
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    hOffset: 'Horizontal Offset',
+    vOffset: 'Vertical Offset',
+    blur: 'Blur Radius',
+    spread: 'Spread Radius',
+    opacity: 'Opacity',
+    color: 'Shadow Color',
+    inset: 'Inset',
+    preview: 'Preview',
+    outputLabel: 'Generated CSS',
+    copy: 'Copy',
+    copied: 'Copied!',
+    px: 'px',
+    pct: '%',
+  },
+  zh: {
+    hOffset: '水平偏移',
+    vOffset: '垂直偏移',
+    blur: '模糊半径',
+    spread: '扩散半径',
+    opacity: '不透明度',
+    color: '阴影颜色',
+    inset: '内阴影',
+    preview: '预览',
+    outputLabel: '生成的 CSS',
+    copy: '复制',
+    copied: '已复制！',
+    px: 'px',
+    pct: '%',
+  },
+  ja: {
+    hOffset: '水平オフセット',
+    vOffset: '垂直オフセット',
+    blur: 'ブラー半径',
+    spread: 'スプレッド半径',
+    opacity: '不透明度',
+    color: 'シャドウカラー',
+    inset: 'インセット',
+    preview: 'プレビュー',
+    outputLabel: '生成された CSS',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    px: 'px',
+    pct: '%',
+  },
+  ko: {
+    hOffset: '수평 오프셋',
+    vOffset: '수직 오프셋',
+    blur: '블러 반경',
+    spread: '스프레드 반경',
+    opacity: '불투명도',
+    color: '그림자 색상',
+    inset: '인셋',
+    preview: '미리보기',
+    outputLabel: '생성된 CSS',
+    copy: '복사',
+    copied: '복사됨!',
+    px: 'px',
+    pct: '%',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="bsg-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+>
+  <!-- Controls column -->
+  <div class="bsg-controls">
+
+    <!-- H Offset -->
+    <div class="bsg-field">
+      <div class="bsg-field-header">
+        <label class="bsg-label" for="bsg-h">{L.hOffset}</label>
+        <span class="bsg-val" id="bsg-h-val">5px</span>
+      </div>
+      <input id="bsg-h" class="bsg-slider" type="range" min="-50" max="50" value="5" />
+    </div>
+
+    <!-- V Offset -->
+    <div class="bsg-field">
+      <div class="bsg-field-header">
+        <label class="bsg-label" for="bsg-v">{L.vOffset}</label>
+        <span class="bsg-val" id="bsg-v-val">5px</span>
+      </div>
+      <input id="bsg-v" class="bsg-slider" type="range" min="-50" max="50" value="5" />
+    </div>
+
+    <!-- Blur -->
+    <div class="bsg-field">
+      <div class="bsg-field-header">
+        <label class="bsg-label" for="bsg-blur">{L.blur}</label>
+        <span class="bsg-val" id="bsg-blur-val">10px</span>
+      </div>
+      <input id="bsg-blur" class="bsg-slider" type="range" min="0" max="100" value="10" />
+    </div>
+
+    <!-- Spread -->
+    <div class="bsg-field">
+      <div class="bsg-field-header">
+        <label class="bsg-label" for="bsg-spread">{L.spread}</label>
+        <span class="bsg-val" id="bsg-spread-val">0px</span>
+      </div>
+      <input id="bsg-spread" class="bsg-slider" type="range" min="-50" max="50" value="0" />
+    </div>
+
+    <!-- Opacity -->
+    <div class="bsg-field">
+      <div class="bsg-field-header">
+        <label class="bsg-label" for="bsg-opacity">{L.opacity}</label>
+        <span class="bsg-val" id="bsg-opacity-val">30%</span>
+      </div>
+      <input id="bsg-opacity" class="bsg-slider" type="range" min="0" max="100" value="30" />
+    </div>
+
+    <!-- Color + Inset row -->
+    <div class="bsg-color-row">
+      <div class="bsg-field bsg-field-color">
+        <label class="bsg-label" for="bsg-color">{L.color}</label>
+        <div class="bsg-color-input-wrap">
+          <input id="bsg-color" class="bsg-swatch" type="color" value="#000000" />
+          <input id="bsg-color-hex" class="bsg-hex-input" type="text" value="#000000" spellcheck="false" autocomplete="off" maxlength="7" />
+        </div>
+      </div>
+      <div class="bsg-field bsg-field-inset">
+        <label class="bsg-label" for="bsg-inset">{L.inset}</label>
+        <label class="bsg-toggle">
+          <input id="bsg-inset" type="checkbox" class="bsg-toggle-input" />
+          <span class="bsg-toggle-track"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview -->
+  <div class="bsg-preview-section">
+    <span class="bsg-section-label">{L.preview}</span>
+    <div class="bsg-preview-canvas">
+      <div id="bsg-preview-box" class="bsg-preview-box"></div>
+    </div>
+  </div>
+
+  <!-- Output -->
+  <div class="bsg-output-section">
+    <div class="bsg-output-header">
+      <span class="bsg-section-label">{L.outputLabel}</span>
+      <button id="bsg-copy" class="btn-copy" type="button">{L.copy}</button>
+    </div>
+    <pre class="bsg-pre"><code id="bsg-code" class="bsg-code"></code></pre>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.bsg-wrap')
+        : document.querySelector('.bsg-wrap');
+
+      var COPY_LABEL   = wrap.dataset.copy;
+      var COPIED_LABEL = wrap.dataset.copied;
+
+      var hEl       = document.getElementById('bsg-h');
+      var vEl       = document.getElementById('bsg-v');
+      var blurEl    = document.getElementById('bsg-blur');
+      var spreadEl  = document.getElementById('bsg-spread');
+      var opacityEl = document.getElementById('bsg-opacity');
+      var colorEl   = document.getElementById('bsg-color');
+      var hexEl     = document.getElementById('bsg-color-hex');
+      var insetEl   = document.getElementById('bsg-inset');
+      var previewEl = document.getElementById('bsg-preview-box');
+      var codeEl    = document.getElementById('bsg-code');
+      var copyBtn   = document.getElementById('bsg-copy');
+
+      var hValEl       = document.getElementById('bsg-h-val');
+      var vValEl       = document.getElementById('bsg-v-val');
+      var blurValEl    = document.getElementById('bsg-blur-val');
+      var spreadValEl  = document.getElementById('bsg-spread-val');
+      var opacityValEl = document.getElementById('bsg-opacity-val');
+
+      function hexToRgb(hex) {
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        return { r: r, g: g, b: b };
+      }
+
+      function generate() {
+        var h       = parseInt(hEl.value);
+        var v       = parseInt(vEl.value);
+        var blur    = parseInt(blurEl.value);
+        var spread  = parseInt(spreadEl.value);
+        var opacity = parseInt(opacityEl.value) / 100;
+        var hex     = colorEl.value;
+        var inset   = insetEl.checked;
+
+        hValEl.textContent       = h + 'px';
+        vValEl.textContent       = v + 'px';
+        blurValEl.textContent    = blur + 'px';
+        spreadValEl.textContent  = spread + 'px';
+        opacityValEl.textContent = Math.round(opacity * 100) + '%';
+
+        var rgb = hexToRgb(hex);
+        var shadow = (inset ? 'inset ' : '') +
+          h + 'px ' +
+          v + 'px ' +
+          blur + 'px ' +
+          spread + 'px ' +
+          'rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', ' + opacity.toFixed(2) + ')';
+
+        previewEl.style.boxShadow = shadow;
+
+        var css = 'box-shadow: ' + shadow + ';';
+        codeEl.innerHTML =
+          '<span class="bsg-hl-prop">box-shadow</span>' +
+          '<span class="bsg-hl-colon">: </span>' +
+          (inset ? '<span class="bsg-hl-kw">inset </span>' : '') +
+          '<span class="bsg-hl-num">' + h + 'px ' + v + 'px ' + blur + 'px ' + spread + 'px</span> ' +
+          '<span class="bsg-hl-color">rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', ' + opacity.toFixed(2) + ')</span>' +
+          '<span class="bsg-hl-semi">;</span>';
+
+        copyBtn.disabled = false;
+        window.trackTool && window.trackTool('box-shadow-generator', 'generate');
+      }
+
+      /* Sync color swatch <-> hex input */
+      colorEl.addEventListener('input', function () {
+        hexEl.value = colorEl.value;
+        generate();
+      });
+
+      hexEl.addEventListener('input', function () {
+        var v = hexEl.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+          colorEl.value = v;
+        }
+        generate();
+      });
+
+      [hEl, vEl, blurEl, spreadEl, opacityEl].forEach(function (el) {
+        el.addEventListener('input', generate);
+      });
+
+      insetEl.addEventListener('change', generate);
+
+      copyBtn.addEventListener('click', function () {
+        var text = codeEl.textContent;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = COPIED_LABEL;
+          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          window.trackTool && window.trackTool('box-shadow-generator', 'copy');
+        });
+      });
+
+      generate();
+    })();
+  </script>
+</div>
+
+<style>
+  .bsg-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* ── Controls ── */
+  .bsg-controls { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .bsg-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .bsg-field-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .bsg-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .bsg-val {
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    color: var(--color-primary);
+    min-width: 3.5rem;
+    text-align: right;
+  }
+
+  /* ── Slider ── */
+  .bsg-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-border);
+    outline: none;
+    cursor: pointer;
+  }
+
+  .bsg-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    cursor: pointer;
+    border: 2px solid var(--color-bg);
+    box-shadow: 0 0 0 1px var(--color-primary);
+  }
+
+  .bsg-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    cursor: pointer;
+    border: 2px solid var(--color-bg);
+    box-shadow: 0 0 0 1px var(--color-primary);
+  }
+
+  /* ── Color + Inset row ── */
+  .bsg-color-row {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .bsg-field-color { flex: 1; min-width: 160px; }
+  .bsg-field-inset { flex-shrink: 0; }
+
+  .bsg-color-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .bsg-swatch {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    cursor: pointer;
+    background: none;
+    flex-shrink: 0;
+  }
+
+  .bsg-hex-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100px;
+  }
+
+  .bsg-hex-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* ── Toggle switch ── */
+  .bsg-toggle { display: flex; align-items: center; cursor: pointer; }
+
+  .bsg-toggle-input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+  .bsg-toggle-track {
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    background: var(--color-border);
+    border-radius: 11px;
+    position: relative;
+    transition: background 0.2s;
+  }
+
+  .bsg-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  .bsg-toggle-input:checked + .bsg-toggle-track { background: var(--color-primary); }
+  .bsg-toggle-input:checked + .bsg-toggle-track::after { transform: translateX(18px); }
+
+  /* ── Preview ── */
+  .bsg-section-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .bsg-preview-canvas {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: repeating-conic-gradient(var(--color-bg-secondary) 0% 25%, var(--color-bg) 0% 50%) 0 0 / 20px 20px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 2.5rem;
+    min-height: 140px;
+  }
+
+  .bsg-preview-box {
+    width: 80px;
+    height: 80px;
+    background: var(--color-bg);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    transition: box-shadow 0.1s;
+  }
+
+  /* ── Output ── */
+  .bsg-output-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .bsg-output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .bsg-pre {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+
+  .bsg-code { font-family: inherit; }
+
+  /* ── Syntax highlighting ── */
+  .bsg-hl-prop  { color: #0369a1; }
+  .bsg-hl-colon { color: var(--color-text-secondary); }
+  .bsg-hl-kw    { color: #7c3aed; font-style: italic; }
+  .bsg-hl-num   { color: #b45309; }
+  .bsg-hl-color { color: #057a55; }
+  .bsg-hl-semi  { color: var(--color-text-secondary); }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .bsg-hl-prop  { color: #38bdf8; }
+    :root:not([data-theme="light"]) .bsg-hl-kw    { color: #a78bfa; }
+    :root:not([data-theme="light"]) .bsg-hl-num   { color: #fbbf24; }
+    :root:not([data-theme="light"]) .bsg-hl-color { color: #34d399; }
+  }
+  [data-theme="dark"] .bsg-hl-prop  { color: #38bdf8; }
+  [data-theme="dark"] .bsg-hl-kw    { color: #a78bfa; }
+  [data-theme="dark"] .bsg-hl-num   { color: #fbbf24; }
+  [data-theme="dark"] .bsg-hl-color { color: #34d399; }
+</style>
