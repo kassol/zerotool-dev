@@ -1,0 +1,420 @@
+---
+// MarkdownLinterTool — browser-side Markdown lint checker using markdownlint
+---
+<div>
+  <div class="ml-wrap">
+    <div class="ml-toolbar">
+      <button id="ml-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+      <button id="ml-copy" class="btn-secondary" data-i18n="copyResults">Copy Results</button>
+      <span id="ml-summary" class="ml-summary" aria-live="polite"></span>
+    </div>
+    <div class="ml-panes">
+      <div class="ml-pane ml-editor-pane">
+        <div class="ml-pane-label" data-i18n="inputLabel">Markdown Input</div>
+        <textarea
+          id="ml-editor"
+          spellcheck="false"
+          data-i18n-ph="placeholder"
+          placeholder="# Hello World&#10;&#10;Paste your Markdown here to lint it..."
+        ></textarea>
+      </div>
+      <div class="ml-pane ml-results-pane">
+        <div class="ml-pane-label" data-i18n="resultsLabel">Lint Results</div>
+        <div id="ml-results" class="ml-results">
+          <div class="ml-placeholder" data-i18n="resultsPlaceholder">Results will appear here as you type.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load markdownlint via Astro module bundling; attach to window for inline script -->
+  <script>
+    import { lint } from 'markdownlint/promise';
+    (window as any).__mlLint = lint;
+    // Dispatch event so inline script can start linting if already pending
+    window.dispatchEvent(new CustomEvent('ml-ready'));
+  </script>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          clear: 'Clear',
+          copyResults: 'Copy Results',
+          inputLabel: 'Markdown Input',
+          resultsLabel: 'Lint Results',
+          resultsPlaceholder: 'Results will appear here as you type.',
+          placeholder: '# Hello World\n\nPaste your Markdown here to lint it...',
+          copied: 'Copied!',
+          noIssues: 'No issues found',
+          issueCount: function(n) { return n + ' issue' + (n === 1 ? '' : 's') + ' found'; },
+          loading: 'Linting...',
+          libPending: 'Loading linter...',
+          line: 'L',
+        },
+        zh: {
+          clear: '清除',
+          copyResults: '复制结果',
+          inputLabel: 'Markdown 输入',
+          resultsLabel: '检查结果',
+          resultsPlaceholder: '输入内容后结果将显示在此处。',
+          placeholder: '# 你好\n\n在此处粘贴 Markdown 内容进行检查...',
+          copied: '已复制！',
+          noIssues: '未发现问题',
+          issueCount: function(n) { return '发现 ' + n + ' 个问题'; },
+          loading: '检查中...',
+          libPending: '加载检查器...',
+          line: '行',
+        },
+        ja: {
+          clear: 'クリア',
+          copyResults: '結果をコピー',
+          inputLabel: 'Markdown 入力',
+          resultsLabel: 'Lint 結果',
+          resultsPlaceholder: '入力すると結果が表示されます。',
+          placeholder: '# こんにちは\n\nMarkdownをここに貼り付けてLintします...',
+          copied: 'コピー済み！',
+          noIssues: '問題なし',
+          issueCount: function(n) { return n + ' 件の問題'; },
+          loading: 'チェック中...',
+          libPending: '読み込み中...',
+          line: '行',
+        },
+        ko: {
+          clear: '지우기',
+          copyResults: '결과 복사',
+          inputLabel: 'Markdown 입력',
+          resultsLabel: 'Lint 결과',
+          resultsPlaceholder: '입력하면 결과가 여기에 표시됩니다.',
+          placeholder: '# 안녕하세요\n\nMarkdown을 여기에 붙여넣어 검사하세요...',
+          copied: '복사됨!',
+          noIssues: '문제 없음',
+          issueCount: function(n) { return n + '개 문제 발견'; },
+          loading: '검사 중...',
+          libPending: '로드 중...',
+          line: '줄',
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      // Apply i18n
+      document.querySelectorAll('[data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key] && typeof t[key] === 'string') el.textContent = t[key];
+      });
+      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key] && typeof t[key] === 'string') el.placeholder = t[key];
+      });
+
+      var editor    = document.getElementById('ml-editor');
+      var results   = document.getElementById('ml-results');
+      var summary   = document.getElementById('ml-summary');
+      var clearBtn  = document.getElementById('ml-clear');
+      var copyBtn   = document.getElementById('ml-copy');
+      var _timer    = null;
+      var _pending  = false;
+
+      // Severity color map
+      var severityClass = { error: 'ml-err', warning: 'ml-warn' };
+
+      function escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
+      function scrollToLine(lineNum) {
+        var lines = editor.value.split('\n');
+        var pos = 0;
+        for (var i = 0; i < lineNum - 1 && i < lines.length; i++) {
+          pos += lines[i].length + 1;
+        }
+        var lineEnd = pos + (lines[lineNum - 1] ? lines[lineNum - 1].length : 0);
+        editor.focus();
+        editor.setSelectionRange(pos, lineEnd);
+        // Estimate scroll position
+        var lh = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+        var pt = parseFloat(getComputedStyle(editor).paddingTop) || 0;
+        var targetScroll = (lineNum - 1) * lh + pt - editor.clientHeight / 2;
+        editor.scrollTop = Math.max(0, targetScroll);
+      }
+
+      function renderResults(issues) {
+        if (!issues || issues.length === 0) {
+          summary.textContent = t.noIssues;
+          summary.className = 'ml-summary ml-ok';
+          results.innerHTML = '<div class="ml-empty-ok">' + escHtml(t.noIssues) + ' ✓</div>';
+          return;
+        }
+
+        summary.textContent = t.issueCount(issues.length);
+        summary.className = 'ml-summary ml-issues';
+
+        var html = '';
+        for (var i = 0; i < issues.length; i++) {
+          var issue = issues[i];
+          var ruleId = issue.ruleNames[0] || '';
+          var ruleAlias = issue.ruleNames[1] || '';
+          var sev = issue.severity || 'error';
+          var sevCls = severityClass[sev] || 'ml-err';
+          var detail = issue.errorDetail ? ' — ' + issue.errorDetail : '';
+          var ctx = issue.errorContext ? ' [' + escHtml(issue.errorContext) + ']' : '';
+          html += '<div class="ml-issue ' + sevCls + '" data-line="' + issue.lineNumber + '">';
+          html += '<span class="ml-rule">' + escHtml(ruleId) + '</span>';
+          html += '<span class="ml-linenum">' + t.line + ' ' + issue.lineNumber + '</span>';
+          html += '<span class="ml-desc">' + escHtml(issue.ruleDescription) + escHtml(detail) + escHtml(ctx) + '</span>';
+          if (ruleAlias) {
+            html += '<span class="ml-alias">' + escHtml(ruleAlias) + '</span>';
+          }
+          html += '</div>';
+        }
+        results.innerHTML = html;
+
+        // Click handler: scroll to line
+        results.querySelectorAll('.ml-issue').forEach(function(el) {
+          el.addEventListener('click', function() {
+            var ln = parseInt(el.getAttribute('data-line'), 10);
+            if (!isNaN(ln)) scrollToLine(ln);
+          });
+        });
+      }
+
+      function runLint() {
+        var content = editor.value;
+        if (!content.trim()) {
+          summary.textContent = '';
+          summary.className = 'ml-summary';
+          results.innerHTML = '<div class="ml-placeholder">' + escHtml(t.resultsPlaceholder) + '</div>';
+          return;
+        }
+
+        var lintFn = window.__mlLint;
+        if (!lintFn) {
+          // Library not ready yet — will be triggered by ml-ready event
+          _pending = true;
+          summary.textContent = t.libPending;
+          summary.className = 'ml-summary';
+          return;
+        }
+
+        _pending = false;
+        summary.textContent = t.loading;
+        summary.className = 'ml-summary';
+
+        lintFn({ strings: { content: content } }).then(function(res) {
+          var issues = res && res.content ? res.content : [];
+          renderResults(issues);
+        }).catch(function(err) {
+          results.innerHTML = '<div class="ml-placeholder">Error: ' + escHtml(String(err)) + '</div>';
+          summary.textContent = '';
+          summary.className = 'ml-summary';
+        });
+      }
+
+      // Debounced input handler
+      editor.addEventListener('input', function() {
+        clearTimeout(_timer);
+        _timer = setTimeout(runLint, 300);
+      });
+
+      // When library becomes ready, re-run if pending
+      window.addEventListener('ml-ready', function() {
+        if (_pending) runLint();
+      });
+
+      clearBtn.addEventListener('click', function() {
+        editor.value = '';
+        summary.textContent = '';
+        summary.className = 'ml-summary';
+        results.innerHTML = '<div class="ml-placeholder">' + escHtml(t.resultsPlaceholder) + '</div>';
+        editor.focus();
+      });
+
+      copyBtn.addEventListener('click', function() {
+        var issues = results.querySelectorAll('.ml-issue');
+        if (!issues.length) return;
+        var lines = [];
+        issues.forEach(function(el) {
+          var rule = el.querySelector('.ml-rule').textContent;
+          var line = el.querySelector('.ml-linenum').textContent;
+          var desc = el.querySelector('.ml-desc').textContent;
+          lines.push(line + ' [' + rule + '] ' + desc);
+        });
+        navigator.clipboard.writeText(lines.join('\n')).then(function() {
+          copyBtn.textContent = t.copied;
+          setTimeout(function() { copyBtn.textContent = t.copyResults; }, 1500);
+        });
+        window.trackTool && window.trackTool('markdown_linter', 'copy_results');
+      });
+
+      // Default sample with intentional issues
+      editor.value = [
+        '# Main Heading',
+        '',
+        'Welcome to the Markdown Linter. This tool checks your Markdown for common style issues.',
+        '',
+        '### Skipped Heading Level',
+        '',
+        'The heading above skipped H2, which violates MD001.',
+        '',
+        'This line has trailing spaces.   ',
+        '',
+        '',
+        '',
+        'Three blank lines above violate MD012.',
+        '',
+        'Visit https://zerotool.dev for more tools.',
+        '',
+        '- List item one',
+        '- List item two',
+      ].join('\n');
+
+      runLint();
+    })();
+  </script>
+</div>
+
+<style>
+  .ml-wrap { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .ml-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .ml-summary {
+    margin-left: auto;
+    font-size: 0.82rem;
+    font-weight: 500;
+  }
+  .ml-summary.ml-ok   { color: var(--color-success, #22c55e); }
+  .ml-summary.ml-issues { color: var(--color-warning, #f59e0b); }
+
+  .ml-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    min-height: 340px;
+  }
+
+  @media (max-width: 640px) {
+    .ml-panes { grid-template-columns: 1fr; }
+  }
+
+  .ml-pane { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .ml-pane-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .ml-editor-pane textarea {
+    flex: 1;
+    width: 100%;
+    min-height: 320px;
+    font-family: var(--font-mono);
+    font-size: 0.86rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.6;
+    box-sizing: border-box;
+    tab-size: 4;
+  }
+
+  .ml-editor-pane textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .ml-results-pane { overflow: hidden; }
+
+  .ml-results {
+    flex: 1;
+    min-height: 320px;
+    max-height: 480px;
+    overflow-y: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+  }
+
+  .ml-placeholder {
+    padding: 1.25rem;
+    color: var(--color-text-muted);
+    font-size: 0.88rem;
+  }
+
+  .ml-empty-ok {
+    padding: 1.25rem;
+    color: var(--color-success, #22c55e);
+    font-size: 0.92rem;
+    font-weight: 500;
+  }
+
+  .ml-issue {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 0.2rem 0.5rem;
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--color-border-light, var(--color-border));
+    cursor: pointer;
+    transition: background 0.12s;
+    align-items: start;
+  }
+
+  .ml-issue:last-child { border-bottom: none; }
+
+  .ml-issue:hover { background: var(--color-bg-secondary); }
+
+  .ml-issue.ml-err  { border-left: 3px solid #ef4444; }
+  .ml-issue.ml-warn { border-left: 3px solid #f59e0b; }
+
+  .ml-rule {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    background: var(--color-bg-icon, var(--color-bg-secondary));
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    align-self: center;
+  }
+
+  .ml-linenum {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    align-self: center;
+  }
+
+  .ml-desc {
+    font-size: 0.84rem;
+    color: var(--color-text);
+    line-height: 1.4;
+    grid-column: 3;
+    align-self: center;
+  }
+
+  .ml-alias {
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+    grid-column: 1 / -1;
+    font-family: var(--font-mono);
+    margin-top: -0.1rem;
+    padding-left: 0.15rem;
+  }
+</style>
