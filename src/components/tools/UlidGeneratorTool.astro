@@ -1,0 +1,538 @@
+---
+// UlidGeneratorTool — ULID generator and decoder (Crockford Base32, no deps)
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    generate: 'Generate',
+    batchLabel: 'Batch Count',
+    copy: 'Copy',
+    copied: 'Copied!',
+    copyAll: 'Copy All',
+    copyAllDone: 'Copied!',
+    clear: 'Clear',
+    colUlid: 'ULID',
+    colTimestamp: 'Timestamp (UTC)',
+    colRandom: 'Random Component',
+    decoderLabel: 'ULID Decoder',
+    decoderPlaceholder: 'Paste a ULID to decode…',
+    decodedTimestamp: 'Timestamp',
+    decodedMs: 'Milliseconds (epoch)',
+    invalidUlid: 'Invalid ULID',
+  },
+  zh: {
+    generate: '生成',
+    batchLabel: '批量数量',
+    copy: '复制',
+    copied: '已复制！',
+    copyAll: '复制全部',
+    copyAllDone: '已复制！',
+    clear: '清空',
+    colUlid: 'ULID',
+    colTimestamp: '时间戳（UTC）',
+    colRandom: '随机部分',
+    decoderLabel: 'ULID 解码器',
+    decoderPlaceholder: '粘贴 ULID 进行解码…',
+    decodedTimestamp: '时间戳',
+    decodedMs: '毫秒（epoch）',
+    invalidUlid: '无效的 ULID',
+  },
+  ja: {
+    generate: '生成',
+    batchLabel: 'バッチ数',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    copyAll: 'すべてコピー',
+    copyAllDone: 'コピーしました！',
+    clear: 'クリア',
+    colUlid: 'ULID',
+    colTimestamp: 'タイムスタンプ（UTC）',
+    colRandom: 'ランダム部分',
+    decoderLabel: 'ULIDデコーダー',
+    decoderPlaceholder: 'デコードするULIDを貼り付け…',
+    decodedTimestamp: 'タイムスタンプ',
+    decodedMs: 'ミリ秒（epoch）',
+    invalidUlid: '無効なULID',
+  },
+  ko: {
+    generate: '생성',
+    batchLabel: '일괄 수',
+    copy: '복사',
+    copied: '복사됨!',
+    copyAll: '모두 복사',
+    copyAllDone: '복사됨!',
+    clear: '지우기',
+    colUlid: 'ULID',
+    colTimestamp: '타임스탬프 (UTC)',
+    colRandom: '랜덤 컴포넌트',
+    decoderLabel: 'ULID 디코더',
+    decoderPlaceholder: 'ULID를 붙여넣어 디코딩…',
+    decodedTimestamp: '타임스탬프',
+    decodedMs: '밀리초 (epoch)',
+    invalidUlid: '유효하지 않은 ULID',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="ulid-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-copy-all={L.copyAll}
+  data-copy-all-done={L.copyAllDone}
+  data-col-ulid={L.colUlid}
+  data-col-ts={L.colTimestamp}
+  data-col-rand={L.colRandom}
+  data-decoded-ts={L.decodedTimestamp}
+  data-decoded-ms={L.decodedMs}
+  data-invalid={L.invalidUlid}
+>
+  <!-- Controls -->
+  <div class="ulid-controls">
+    <div class="ulid-batch-row">
+      <label class="ulid-label" for="ulid-count">{L.batchLabel}</label>
+      <input id="ulid-count" class="ulid-count-input" type="number" min="1" max="100" value="1" />
+    </div>
+    <div class="ulid-btn-row">
+      <button id="ulid-generate" class="btn-primary" type="button">{L.generate}</button>
+      <button id="ulid-copy-all" class="btn-copy" type="button" disabled>{L.copyAll}</button>
+      <button id="ulid-clear" class="btn-ghost" type="button" disabled>{L.clear}</button>
+    </div>
+  </div>
+
+  <!-- Results table -->
+  <div id="ulid-results" class="ulid-results" style="display:none;">
+    <table class="ulid-table">
+      <thead>
+        <tr>
+          <th class="ulid-th-ulid">{L.colUlid}</th>
+          <th class="ulid-th-ts">{L.colTimestamp}</th>
+          <th class="ulid-th-rand">{L.colRandom}</th>
+          <th class="ulid-th-act"></th>
+        </tr>
+      </thead>
+      <tbody id="ulid-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- Decoder -->
+  <div class="ulid-decoder-section">
+    <label class="ulid-label" for="ulid-decode-input">{L.decoderLabel}</label>
+    <input
+      id="ulid-decode-input"
+      class="ulid-decode-input"
+      type="text"
+      placeholder={L.decoderPlaceholder}
+      spellcheck="false"
+      autocomplete="off"
+      maxlength="26"
+    />
+    <div id="ulid-decode-result" class="ulid-decode-result" style="display:none;"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.ulid-wrap')
+        : document.querySelector('.ulid-wrap');
+
+      var COPY_LABEL     = wrap.dataset.copy;
+      var COPIED_LABEL   = wrap.dataset.copied;
+      var COPY_ALL_LABEL = wrap.dataset.copyAll;
+      var COPY_ALL_DONE  = wrap.dataset.copyAllDone;
+      var INVALID_LABEL  = wrap.dataset.invalid;
+      var LABEL_TS       = wrap.dataset.decodedTs;
+      var LABEL_MS       = wrap.dataset.decodedMs;
+
+      var countEl    = document.getElementById('ulid-count');
+      var genBtn     = document.getElementById('ulid-generate');
+      var copyAllBtn = document.getElementById('ulid-copy-all');
+      var clearBtn   = document.getElementById('ulid-clear');
+      var resultsEl  = document.getElementById('ulid-results');
+      var tbodyEl    = document.getElementById('ulid-tbody');
+      var decodeInput = document.getElementById('ulid-decode-input');
+      var decodeResult = document.getElementById('ulid-decode-result');
+
+      /* ── Crockford Base32 ── */
+      var ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+      function encodeBase32(n, len) {
+        var s = '';
+        for (var i = 0; i < len; i++) {
+          s = ENCODING[n & 31] + s;
+          n = Math.floor(n / 32);
+        }
+        return s;
+      }
+
+      function encodeTime(ms) {
+        /* 48-bit timestamp → 10 chars */
+        var hi = Math.floor(ms / 0x100000000);
+        var lo = ms >>> 0;
+        var s = '';
+        /* Build 10 groups of 5 bits from the 48-bit value */
+        var chars = [];
+        for (var i = 0; i < 10; i++) {
+          /* shift 5 bits out from the right of the 48-bit number */
+          var shift = (9 - i) * 5;
+          var idx;
+          if (shift >= 32) {
+            idx = (hi >>> (shift - 32)) & 31;
+          } else if (shift >= 0) {
+            if (shift > 0) {
+              idx = ((lo >>> shift) | (hi << (32 - shift))) & 31;
+            } else {
+              idx = lo & 31;
+            }
+          }
+          s += ENCODING[idx];
+        }
+        return s;
+      }
+
+      function encodeRandom(bytes) {
+        /* 10 bytes (80 bits) → 16 chars */
+        /* Treat as 80-bit big-endian integer, encode 5 bits at a time */
+        var s = '';
+        /* Simple: loop through 16 5-bit groups from 80 bits */
+        for (var i = 0; i < 16; i++) {
+          var byteIdx = Math.floor((i * 5) / 8);
+          var bitOff  = (i * 5) % 8;
+          var b0 = bytes[byteIdx] || 0;
+          var b1 = bytes[byteIdx + 1] || 0;
+          /* Extract 5 bits starting at bitOff across b0 and b1 */
+          var combined = (b0 << 8) | b1;
+          var val = (combined >>> (11 - bitOff)) & 31;
+          s += ENCODING[val];
+        }
+        return s;
+      }
+
+      function generateUlid() {
+        var ms = Date.now();
+        var tsStr = encodeTime(ms);
+        var randBytes = new Uint8Array(10);
+        crypto.getRandomValues(randBytes);
+        var randStr = encodeRandom(randBytes);
+        var ulid = tsStr + randStr;
+        return { ulid: ulid, ms: ms, randStr: randStr };
+      }
+
+      /* ── Decode ── */
+      function decodeTime(ulidStr) {
+        /* First 10 chars = timestamp */
+        var ts = ulidStr.slice(0, 10).toUpperCase();
+        var ms = 0;
+        for (var i = 0; i < 10; i++) {
+          var c = ts[i];
+          var idx = ENCODING.indexOf(c);
+          if (idx === -1) return null;
+          ms = ms * 32 + idx;
+        }
+        return ms;
+      }
+
+      function isValidUlid(s) {
+        if (!s || s.length !== 26) return false;
+        return /^[0-9A-HJKMNP-TV-Z]{26}$/i.test(s);
+      }
+
+      /* ── Format timestamp ── */
+      function formatMs(ms) {
+        try {
+          return new Date(ms).toISOString().replace('T', ' ').replace('.', '.').slice(0, 23) + ' UTC';
+        } catch (e) {
+          return String(ms);
+        }
+      }
+
+      /* ── Render row ── */
+      function buildRow(item) {
+        var tr = document.createElement('tr');
+        tr.className = 'ulid-row';
+
+        var tdUlid = document.createElement('td');
+        tdUlid.className = 'ulid-td ulid-td-ulid';
+        tdUlid.textContent = item.ulid;
+        tr.appendChild(tdUlid);
+
+        var tdTs = document.createElement('td');
+        tdTs.className = 'ulid-td ulid-td-ts';
+        tdTs.textContent = formatMs(item.ms);
+        tr.appendChild(tdTs);
+
+        var tdRand = document.createElement('td');
+        tdRand.className = 'ulid-td ulid-td-rand';
+        tdRand.textContent = item.randStr;
+        tr.appendChild(tdRand);
+
+        var tdAct = document.createElement('td');
+        tdAct.className = 'ulid-td ulid-td-act';
+        var copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'ulid-copy-btn btn-ghost';
+        copyBtn.textContent = COPY_LABEL;
+        copyBtn.addEventListener('click', function () {
+          navigator.clipboard.writeText(item.ulid).then(function () {
+            copyBtn.textContent = COPIED_LABEL;
+            setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1200);
+            window.trackTool && window.trackTool('ulid-generator', 'copy_single');
+          });
+        });
+        tdAct.appendChild(copyBtn);
+        tr.appendChild(tdAct);
+
+        return tr;
+      }
+
+      /* ── Store generated ULIDs ── */
+      var generated = [];
+
+      /* ── Generate ── */
+      genBtn.addEventListener('click', function () {
+        var count = Math.max(1, Math.min(100, parseInt(countEl.value) || 1));
+        var newItems = [];
+        for (var i = 0; i < count; i++) {
+          newItems.push(generateUlid());
+        }
+        generated = newItems;
+        tbodyEl.innerHTML = '';
+        generated.forEach(function (item) {
+          tbodyEl.appendChild(buildRow(item));
+        });
+        resultsEl.style.display = '';
+        copyAllBtn.disabled = false;
+        clearBtn.disabled = false;
+        window.trackTool && window.trackTool('ulid-generator', 'generate');
+      });
+
+      /* ── Copy All ── */
+      copyAllBtn.addEventListener('click', function () {
+        var text = generated.map(function (item) { return item.ulid; }).join('\n');
+        navigator.clipboard.writeText(text).then(function () {
+          copyAllBtn.textContent = COPY_ALL_DONE;
+          setTimeout(function () { copyAllBtn.textContent = COPY_ALL_LABEL; }, 1500);
+          window.trackTool && window.trackTool('ulid-generator', 'copy_all');
+        });
+      });
+
+      /* ── Clear ── */
+      clearBtn.addEventListener('click', function () {
+        generated = [];
+        tbodyEl.innerHTML = '';
+        resultsEl.style.display = 'none';
+        copyAllBtn.disabled = true;
+        clearBtn.disabled = true;
+      });
+
+      /* ── Decoder ── */
+      decodeInput.addEventListener('input', function () {
+        var val = decodeInput.value.trim().toUpperCase();
+        decodeResult.innerHTML = '';
+        if (!val) { decodeResult.style.display = 'none'; return; }
+        decodeResult.style.display = '';
+        if (!isValidUlid(val)) {
+          decodeResult.innerHTML = '<span class="ulid-decode-error">' + INVALID_LABEL + '</span>';
+          return;
+        }
+        var ms = decodeTime(val);
+        if (ms === null) {
+          decodeResult.innerHTML = '<span class="ulid-decode-error">' + INVALID_LABEL + '</span>';
+          return;
+        }
+        var rows = [
+          [LABEL_TS, formatMs(ms)],
+          [LABEL_MS, String(ms)],
+        ];
+        var table = document.createElement('table');
+        table.className = 'ulid-decode-table';
+        rows.forEach(function (r) {
+          var tr = document.createElement('tr');
+          var th = document.createElement('th');
+          th.textContent = r[0];
+          var td = document.createElement('td');
+          td.textContent = r[1];
+          tr.appendChild(th);
+          tr.appendChild(td);
+          table.appendChild(tr);
+        });
+        decodeResult.appendChild(table);
+        window.trackTool && window.trackTool('ulid-generator', 'decode');
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .ulid-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* ── Controls ── */
+  .ulid-controls { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
+
+  .ulid-batch-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .ulid-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .ulid-count-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 72px;
+    text-align: center;
+  }
+
+  .ulid-count-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .ulid-btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+  /* ── Results table ── */
+  .ulid-results {
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .ulid-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+
+  .ulid-table thead tr {
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .ulid-table th {
+    padding: 0.45rem 0.75rem;
+    text-align: left;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .ulid-th-ulid { width: 45%; }
+  .ulid-th-ts   { width: 30%; }
+  .ulid-th-rand { width: 20%; }
+  .ulid-th-act  { width: 5%; }
+
+  .ulid-row { border-bottom: 1px solid var(--color-border); }
+  .ulid-row:last-child { border-bottom: none; }
+  .ulid-row:hover { background: var(--color-bg-secondary); }
+
+  .ulid-td {
+    padding: 0.4rem 0.75rem;
+    vertical-align: middle;
+  }
+
+  .ulid-td-ulid {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    word-break: break-all;
+  }
+
+  .ulid-td-ts {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .ulid-td-rand {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--color-primary);
+    word-break: break-all;
+  }
+
+  .ulid-td-act { white-space: nowrap; }
+
+  .ulid-copy-btn {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+  }
+
+  /* ── Decoder ── */
+  .ulid-decoder-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border-top: 1px solid var(--color-border);
+    padding-top: 1rem;
+  }
+
+  .ulid-decode-input {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+    max-width: 340px;
+    letter-spacing: 0.05em;
+  }
+
+  .ulid-decode-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .ulid-decode-result {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    padding: 0.6rem 0.75rem;
+    max-width: 420px;
+  }
+
+  .ulid-decode-error {
+    color: #c0392b;
+    font-size: 0.82rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .ulid-decode-error { color: #fca5a5; }
+  }
+  [data-theme="dark"] .ulid-decode-error { color: #fca5a5; }
+
+  .ulid-decode-table { border-collapse: collapse; font-size: 0.82rem; }
+
+  .ulid-decode-table th {
+    text-align: left;
+    padding: 0.2rem 1rem 0.2rem 0;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .ulid-decode-table td {
+    font-family: var(--font-mono);
+    color: var(--color-text);
+    padding: 0.2rem 0;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 600px) {
+    .ulid-th-rand, .ulid-td-rand { display: none; }
+    .ulid-th-ts, .ulid-td-ts { display: none; }
+  }
+</style>
