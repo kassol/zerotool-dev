@@ -1,0 +1,617 @@
+---
+// ProtobufToJsonTool — Protobuf schema/binary → JSON converter using protobufjs
+---
+<div>
+  <!-- Load protobufjs pre-built browser bundle (80KB / ~24KB gzipped) -->
+  <script is:inline src="/vendor/protobuf.min.js"></script>
+
+  <div class="pb-wrap">
+    <!-- Mode toggle -->
+    <div class="pb-toolbar">
+      <div class="pb-mode-toggle" role="group">
+        <button id="pb-mode-sample" class="pb-mode-btn pb-mode-active" data-i18n="modeSample">Schema → Sample JSON</button>
+        <button id="pb-mode-binary" class="pb-mode-btn" data-i18n="modeBinary">Binary → JSON</button>
+      </div>
+      <button id="pb-copy" class="btn-secondary" data-i18n="copy">Copy JSON</button>
+      <button id="pb-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <div class="pb-panes">
+      <!-- Left panel -->
+      <div class="pb-left">
+        <div class="pb-field">
+          <label class="pb-label" for="pb-schema" data-i18n="schemaLabel">Proto Schema</label>
+          <textarea
+            id="pb-schema"
+            spellcheck="false"
+            class="pb-textarea pb-schema-ta"
+            data-i18n-ph="schemaPlaceholder"
+            placeholder='syntax = "proto3"; message Person { string name = 1; }'
+          ></textarea>
+        </div>
+
+        <!-- Binary input (hidden in sample mode) -->
+        <div id="pb-binary-section" class="pb-field pb-hidden">
+          <label class="pb-label" for="pb-binary" data-i18n="binaryLabel">Binary Data (hex or base64)</label>
+          <textarea
+            id="pb-binary"
+            spellcheck="false"
+            class="pb-textarea pb-binary-ta"
+            data-i18n-ph="binaryPlaceholder"
+            placeholder="0a 05 41 6c 69 63 65 10 1e"
+          ></textarea>
+        </div>
+
+        <!-- Message type selector -->
+        <div class="pb-field">
+          <label class="pb-label" for="pb-msgtype" data-i18n="msgTypeLabel">Message Type</label>
+          <select id="pb-msgtype" class="pb-select">
+            <option value="" data-i18n="msgTypePlaceholder">— parse schema first —</option>
+          </select>
+        </div>
+
+        <button id="pb-run" class="btn-primary" data-i18n="runBtn">Generate JSON</button>
+      </div>
+
+      <!-- Right panel: output -->
+      <div class="pb-right">
+        <div class="pb-field" style="flex:1">
+          <div class="pb-label-row">
+            <span class="pb-label" data-i18n="outputLabel">JSON Output</span>
+            <span id="pb-status" class="pb-status" aria-live="polite"></span>
+          </div>
+          <pre id="pb-output" class="pb-output"><span class="pb-hint" data-i18n="outputHint">JSON output will appear here.</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          modeSample: 'Schema → Sample JSON',
+          modeBinary: 'Binary → JSON',
+          copy: 'Copy JSON',
+          clear: 'Clear',
+          copied: 'Copied!',
+          schemaLabel: 'Proto Schema',
+          binaryLabel: 'Binary Data (hex or base64)',
+          msgTypeLabel: 'Message Type',
+          outputLabel: 'JSON Output',
+          runBtn: 'Generate JSON',
+          decodeBtnLabel: 'Decode Binary',
+          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
+          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\nor Base64: CgVBbGljZRAe',
+          msgTypePlaceholder: '— parse schema first —',
+          outputHint: 'JSON output will appear here.',
+          errNoLib: 'protobufjs not loaded.',
+          errNoSchema: 'Paste a .proto schema first.',
+          errNoType: 'Select a message type.',
+          errNoBinary: 'Paste binary data (hex or base64).',
+          errParse: 'Schema error: ',
+          errDecode: 'Decode error: ',
+          statusSample: 'Sample JSON generated',
+          statusDecoded: 'Binary decoded',
+          noMessages: 'No message types found in schema.',
+        },
+        zh: {
+          modeSample: 'Schema → 示例 JSON',
+          modeBinary: '二进制 → JSON',
+          copy: '复制 JSON',
+          clear: '清除',
+          copied: '已复制！',
+          schemaLabel: 'Proto Schema',
+          binaryLabel: '二进制数据（hex 或 base64）',
+          msgTypeLabel: '消息类型',
+          outputLabel: 'JSON 输出',
+          runBtn: '生成 JSON',
+          decodeBtnLabel: '解码二进制',
+          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
+          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\n或 Base64: CgVBbGljZRAe',
+          msgTypePlaceholder: '— 请先解析 Schema —',
+          outputHint: 'JSON 输出将显示在此处。',
+          errNoLib: 'protobufjs 未加载。',
+          errNoSchema: '请先粘贴 .proto Schema。',
+          errNoType: '请选择消息类型。',
+          errNoBinary: '请粘贴二进制数据（hex 或 base64）。',
+          errParse: 'Schema 错误：',
+          errDecode: '解码错误：',
+          statusSample: '示例 JSON 已生成',
+          statusDecoded: '二进制已解码',
+          noMessages: 'Schema 中未找到消息类型。',
+        },
+        ja: {
+          modeSample: 'Schema → サンプルJSON',
+          modeBinary: 'バイナリ → JSON',
+          copy: 'JSONをコピー',
+          clear: 'クリア',
+          copied: 'コピー済み！',
+          schemaLabel: 'Proto Schema',
+          binaryLabel: 'バイナリデータ（hexまたはbase64）',
+          msgTypeLabel: 'メッセージタイプ',
+          outputLabel: 'JSON 出力',
+          runBtn: 'JSONを生成',
+          decodeBtnLabel: 'バイナリをデコード',
+          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
+          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\nまたはBase64: CgVBbGljZRAe',
+          msgTypePlaceholder: '— まずSchemaをパース —',
+          outputHint: 'JSON出力はここに表示されます。',
+          errNoLib: 'protobufjsが読み込まれていません。',
+          errNoSchema: 'まず.proto Schemaを貼り付けてください。',
+          errNoType: 'メッセージタイプを選択してください。',
+          errNoBinary: 'バイナリデータを貼り付けてください。',
+          errParse: 'Schemaエラー：',
+          errDecode: 'デコードエラー：',
+          statusSample: 'サンプルJSON生成完了',
+          statusDecoded: 'バイナリデコード完了',
+          noMessages: 'Schemaにメッセージタイプが見つかりません。',
+        },
+        ko: {
+          modeSample: 'Schema → 샘플 JSON',
+          modeBinary: '바이너리 → JSON',
+          copy: 'JSON 복사',
+          clear: '지우기',
+          copied: '복사됨!',
+          schemaLabel: 'Proto Schema',
+          binaryLabel: '바이너리 데이터 (hex 또는 base64)',
+          msgTypeLabel: '메시지 타입',
+          outputLabel: 'JSON 출력',
+          runBtn: 'JSON 생성',
+          decodeBtnLabel: '바이너리 디코드',
+          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
+          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\n또는 Base64: CgVBbGljZRAe',
+          msgTypePlaceholder: '— 먼저 Schema를 파싱하세요 —',
+          outputHint: 'JSON 출력이 여기에 표시됩니다.',
+          errNoLib: 'protobufjs가 로드되지 않았습니다.',
+          errNoSchema: '먼저 .proto Schema를 붙여넣으세요.',
+          errNoType: '메시지 타입을 선택하세요.',
+          errNoBinary: '바이너리 데이터를 붙여넣으세요.',
+          errParse: 'Schema 오류: ',
+          errDecode: '디코딩 오류: ',
+          statusSample: '샘플 JSON 생성됨',
+          statusDecoded: '바이너리 디코딩됨',
+          noMessages: 'Schema에서 메시지 타입을 찾을 수 없습니다.',
+        }
+      };
+
+      var lang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[lang] || STRINGS.en;
+
+      // Apply i18n
+      document.querySelectorAll('[data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key] && typeof t[key] === 'string') el.textContent = t[key];
+      });
+      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key] && typeof t[key] === 'string') el.placeholder = t[key];
+      });
+      // Update the select placeholder
+      var placeholderOpt = document.querySelector('#pb-msgtype option[value=""]');
+      if (placeholderOpt) placeholderOpt.textContent = t.msgTypePlaceholder;
+      // Update output hint
+      var hint = document.querySelector('.pb-hint');
+      if (hint) hint.textContent = t.outputHint;
+
+      var schemaEl  = document.getElementById('pb-schema');
+      var binaryEl  = document.getElementById('pb-binary');
+      var msgSel    = document.getElementById('pb-msgtype');
+      var runBtn    = document.getElementById('pb-run');
+      var copyBtn   = document.getElementById('pb-copy');
+      var clearBtn  = document.getElementById('pb-clear');
+      var outputEl  = document.getElementById('pb-output');
+      var statusEl  = document.getElementById('pb-status');
+      var binSection = document.getElementById('pb-binary-section');
+      var modeSampleBtn = document.getElementById('pb-mode-sample');
+      var modeBinaryBtn = document.getElementById('pb-mode-binary');
+
+      var mode = 'sample'; // 'sample' | 'binary'
+      var currentRoot = null;
+      var parseTimer = null;
+
+      function setStatus(msg, isErr) {
+        statusEl.textContent = msg;
+        statusEl.className = isErr ? 'pb-status pb-status-err' : 'pb-status pb-status-ok';
+      }
+
+      function escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
+      function syntaxHighlight(json) {
+        return json
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+            function(match) {
+              var cls = 'pb-num';
+              if (/^"/.test(match)) {
+                cls = /:$/.test(match) ? 'pb-key' : 'pb-str';
+              } else if (/true|false/.test(match)) {
+                cls = 'pb-bool';
+              } else if (/null/.test(match)) {
+                cls = 'pb-null';
+              }
+              return '<span class="' + cls + '">' + match + '</span>';
+            });
+      }
+
+      function showJson(obj) {
+        var json = JSON.stringify(obj, null, 2);
+        outputEl.innerHTML = syntaxHighlight(json);
+      }
+
+      function showError(msg) {
+        outputEl.innerHTML = '<span class="pb-error">' + escHtml(msg) + '</span>';
+      }
+
+      // Mode switching
+      modeSampleBtn.addEventListener('click', function() {
+        mode = 'sample';
+        modeSampleBtn.classList.add('pb-mode-active');
+        modeBinaryBtn.classList.remove('pb-mode-active');
+        binSection.classList.add('pb-hidden');
+        runBtn.textContent = t.runBtn;
+      });
+
+      modeBinaryBtn.addEventListener('click', function() {
+        mode = 'binary';
+        modeBinaryBtn.classList.add('pb-mode-active');
+        modeSampleBtn.classList.remove('pb-mode-active');
+        binSection.classList.remove('pb-hidden');
+        runBtn.textContent = t.decodeBtnLabel;
+      });
+
+      // Collect all message type names from a parsed root
+      function collectMessageNames(ns, prefix) {
+        var names = [];
+        if (!ns || !ns.nestedArray) return names;
+        ns.nestedArray.forEach(function(item) {
+          var fullName = prefix ? prefix + '.' + item.name : item.name;
+          if (item.constructor && item.constructor.name === 'Type') {
+            names.push(fullName);
+          }
+          // Recurse into namespaces/messages
+          if (item.nestedArray) {
+            names = names.concat(collectMessageNames(item, fullName));
+          }
+        });
+        return names;
+      }
+
+      // Parse schema and populate dropdown
+      function parseSchema(schemaText) {
+        var pb = window.protobuf;
+        if (!pb) { setStatus(t.errNoLib, true); return; }
+        if (!schemaText.trim()) {
+          currentRoot = null;
+          msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
+          return;
+        }
+        try {
+          var result = pb.parse(schemaText, { keepCase: true });
+          currentRoot = result.root;
+          var names = collectMessageNames(currentRoot, '');
+          if (names.length === 0) {
+            msgSel.innerHTML = '<option value="">' + escHtml(t.noMessages) + '</option>';
+            setStatus(t.noMessages, true);
+            return;
+          }
+          var prevSelected = msgSel.value;
+          msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
+          names.forEach(function(n) {
+            var opt = document.createElement('option');
+            opt.value = n;
+            opt.textContent = n;
+            msgSel.appendChild(opt);
+          });
+          // Restore or auto-select first
+          if (prevSelected && names.indexOf(prevSelected) !== -1) {
+            msgSel.value = prevSelected;
+          } else {
+            msgSel.value = names[0];
+          }
+          setStatus('', false);
+        } catch(e) {
+          currentRoot = null;
+          msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
+          setStatus(t.errParse + e.message, true);
+        }
+      }
+
+      // Auto-parse on schema change (debounced 400ms)
+      schemaEl.addEventListener('input', function() {
+        clearTimeout(parseTimer);
+        parseTimer = setTimeout(function() {
+          parseSchema(schemaEl.value);
+        }, 400);
+      });
+
+      // Generate sample JSON from message type
+      function generateSample() {
+        var pb = window.protobuf;
+        if (!pb) { showError(t.errNoLib); return; }
+        if (!schemaEl.value.trim()) { showError(t.errNoSchema); return; }
+        if (!currentRoot) {
+          try { parseSchema(schemaEl.value); } catch(e) {}
+          if (!currentRoot) return;
+        }
+        var typeName = msgSel.value;
+        if (!typeName) { showError(t.errNoType); return; }
+        try {
+          var MsgType = currentRoot.lookupType(typeName);
+          var sample = MsgType.toObject(MsgType.create({}), {
+            defaults: true,
+            longs: String,
+            enums: String,
+            bytes: String,
+            arrays: true,
+            objects: true,
+            oneofs: true
+          });
+          showJson(sample);
+          setStatus(t.statusSample, false);
+          window.trackTool && window.trackTool('protobuf_to_json', 'generate_sample');
+        } catch(e) {
+          showError(t.errParse + e.message);
+          setStatus(t.errParse + e.message, true);
+        }
+      }
+
+      // Decode binary data
+      function decodeBinary() {
+        var pb = window.protobuf;
+        if (!pb) { showError(t.errNoLib); return; }
+        if (!schemaEl.value.trim()) { showError(t.errNoSchema); return; }
+        if (!currentRoot) {
+          try { parseSchema(schemaEl.value); } catch(e) {}
+          if (!currentRoot) return;
+        }
+        var typeName = msgSel.value;
+        if (!typeName) { showError(t.errNoType); return; }
+        var rawBinary = binaryEl.value.trim();
+        if (!rawBinary) { showError(t.errNoBinary); return; }
+        try {
+          var buf;
+          // Detect hex vs base64
+          var hexStr = rawBinary.replace(/[\s:]/g, '');
+          if (/^[0-9a-fA-F]+$/.test(hexStr) && hexStr.length % 2 === 0) {
+            // Hex input
+            var bytes = new Uint8Array(hexStr.length / 2);
+            for (var i = 0; i < hexStr.length; i += 2) {
+              bytes[i / 2] = parseInt(hexStr.substr(i, 2), 16);
+            }
+            buf = bytes;
+          } else {
+            // Base64 input
+            var b64 = rawBinary.replace(/\s/g, '');
+            var binary = atob(b64);
+            buf = new Uint8Array(binary.length);
+            for (var j = 0; j < binary.length; j++) {
+              buf[j] = binary.charCodeAt(j);
+            }
+          }
+          var MsgType = currentRoot.lookupType(typeName);
+          var msg = MsgType.decode(buf);
+          var obj = MsgType.toObject(msg, {
+            defaults: false,
+            longs: String,
+            enums: String,
+            bytes: String
+          });
+          showJson(obj);
+          setStatus(t.statusDecoded, false);
+          window.trackTool && window.trackTool('protobuf_to_json', 'decode_binary');
+        } catch(e) {
+          showError(t.errDecode + e.message);
+          setStatus(t.errDecode + e.message, true);
+        }
+      }
+
+      runBtn.addEventListener('click', function() {
+        if (mode === 'sample') generateSample();
+        else decodeBinary();
+      });
+
+      // Copy output JSON
+      copyBtn.addEventListener('click', function() {
+        var text = outputEl.textContent;
+        if (!text || text === t.outputHint) return;
+        navigator.clipboard.writeText(text).then(function() {
+          copyBtn.textContent = t.copied;
+          setTimeout(function() { copyBtn.textContent = t.copy; }, 1500);
+        });
+        window.trackTool && window.trackTool('protobuf_to_json', 'copy_json');
+      });
+
+      clearBtn.addEventListener('click', function() {
+        schemaEl.value = '';
+        binaryEl.value = '';
+        currentRoot = null;
+        msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
+        outputEl.innerHTML = '<span class="pb-hint">' + escHtml(t.outputHint) + '</span>';
+        setStatus('', false);
+      });
+
+      // Default schema example
+      schemaEl.value = [
+        'syntax = "proto3";',
+        '',
+        'package demo;',
+        '',
+        'message Person {',
+        '  string name = 1;',
+        '  int32 age = 2;',
+        '  repeated string emails = 3;',
+        '  Address address = 4;',
+        '  Status status = 5;',
+        '}',
+        '',
+        'message Address {',
+        '  string street = 1;',
+        '  string city = 2;',
+        '  string country = 3;',
+        '}',
+        '',
+        'enum Status {',
+        '  UNKNOWN = 0;',
+        '  ACTIVE = 1;',
+        '  INACTIVE = 2;',
+        '}',
+      ].join('\n');
+
+      // Parse default schema after load
+      setTimeout(function() {
+        parseSchema(schemaEl.value);
+        if (window.protobuf) generateSample();
+      }, 100);
+    })();
+  </script>
+</div>
+
+<style>
+  .pb-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .pb-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .pb-mode-toggle {
+    display: flex;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .pb-mode-btn {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    background: var(--color-bg);
+    color: var(--color-text-muted);
+    border: none;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+  }
+
+  .pb-mode-btn:first-child { border-right: 1px solid var(--color-border); }
+  .pb-mode-btn:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+  .pb-mode-btn.pb-mode-active { background: var(--color-primary); color: #fff; }
+
+  .pb-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+  }
+
+  @media (max-width: 640px) {
+    .pb-panes { grid-template-columns: 1fr; }
+  }
+
+  .pb-left, .pb-right { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .pb-field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .pb-field.pb-hidden { display: none; }
+
+  .pb-label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .pb-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .pb-textarea {
+    font-family: var(--font-mono);
+    font-size: 0.83rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.55;
+    box-sizing: border-box;
+    width: 100%;
+  }
+
+  .pb-schema-ta { min-height: 220px; }
+  .pb-binary-ta { min-height: 80px; }
+
+  .pb-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .pb-select {
+    font-size: 0.86rem;
+    padding: 0.4rem 0.65rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+  }
+
+  .pb-select:focus { outline: none; border-color: var(--color-primary); }
+
+  .pb-status {
+    font-size: 0.78rem;
+    font-weight: 500;
+    margin-left: auto;
+  }
+  .pb-status-ok   { color: var(--color-success, #22c55e); }
+  .pb-status-err  { color: #ef4444; }
+
+  .pb-output {
+    min-height: 280px;
+    max-height: 460px;
+    overflow: auto;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    line-height: 1.55;
+    white-space: pre;
+    margin: 0;
+    color: var(--color-text);
+  }
+
+  .pb-hint  { color: var(--color-text-muted); font-style: italic; }
+  .pb-error { color: #ef4444; white-space: pre-wrap; }
+
+  /* JSON syntax highlighting */
+  .pb-key   { color: #7dd3fc; }
+  .pb-str   { color: #86efac; }
+  .pb-num   { color: #fca5a5; }
+  .pb-bool  { color: #c4b5fd; }
+  .pb-null  { color: #94a3b8; }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) .pb-key  { color: #0369a1; }
+    :root:not([data-theme="dark"]) .pb-str  { color: #15803d; }
+    :root:not([data-theme="dark"]) .pb-num  { color: #b91c1c; }
+    :root:not([data-theme="dark"]) .pb-bool { color: #7c3aed; }
+    :root:not([data-theme="dark"]) .pb-null { color: #64748b; }
+  }
+  [data-theme="light"] .pb-key  { color: #0369a1; }
+  [data-theme="light"] .pb-str  { color: #15803d; }
+  [data-theme="light"] .pb-num  { color: #b91c1c; }
+  [data-theme="light"] .pb-bool { color: #7c3aed; }
+  [data-theme="light"] .pb-null { color: #64748b; }
+</style>
