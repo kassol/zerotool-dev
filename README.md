@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 76 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 78 tools and growing.
 
 ## Tools
 
@@ -85,6 +85,8 @@
 | Protobuf to JSON | [/tools/protobuf-to-json](https://zerotool.dev/tools/protobuf-to-json) |
 | htpasswd Generator | [/tools/htpasswd-generator](https://zerotool.dev/tools/htpasswd-generator) |
 | CSS Box Shadow Generator | [/tools/box-shadow-generator](https://zerotool.dev/tools/box-shadow-generator) |
+| Color Shades Generator | [/tools/color-shades-generator](https://zerotool.dev/tools/color-shades-generator) |
+| ULID Generator | [/tools/ulid-generator](https://zerotool.dev/tools/ulid-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
