@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 78 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 79 tools and growing.
 
 ## Tools
 
@@ -87,6 +87,7 @@
 | CSS Box Shadow Generator | [/tools/box-shadow-generator](https://zerotool.dev/tools/box-shadow-generator) |
 | Color Shades Generator | [/tools/color-shades-generator](https://zerotool.dev/tools/color-shades-generator) |
 | ULID Generator | [/tools/ulid-generator](https://zerotool.dev/tools/ulid-generator) |
+| QR Code Decoder | [/tools/qr-code-decoder](https://zerotool.dev/tools/qr-code-decoder) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
