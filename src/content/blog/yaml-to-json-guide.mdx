@@ -1,0 +1,277 @@
+---
+title: "YAML to JSON Converter: Convert Config Files to JSON Online"
+description: "Convert YAML to JSON online instantly — Kubernetes manifests, Docker Compose, GitHub Actions. Free browser-based converter with live validation and no data upload."
+pubDate: 2026-04-17
+lang: "en"
+translationSlug: "yaml-to-json-guide-zh"
+tags: ["yaml to json", "yaml converter", "json", "devops", "developer-tools"]
+ogImage: /og/blog-yaml-to-json-guide.png
+---
+
+YAML is the language of infrastructure — Kubernetes manifests, Docker Compose files, GitHub Actions workflows, Helm charts, Ansible playbooks. But when you need to call APIs, write scripts, or use tooling that speaks JSON, you have to convert. A reliable YAML to JSON converter eliminates that manual step.
+
+[Convert YAML to JSON free →](/tools/yaml-to-json)
+
+## Why Convert YAML to JSON?
+
+YAML is designed for humans to write and read. JSON is designed for machines to parse and exchange. The two formats serve different contexts, and moving data between them is a regular part of DevOps and backend work:
+
+| Scenario | Why JSON is needed |
+|---|---|
+| `kubectl` API calls | Kubernetes REST API requires JSON request bodies |
+| Terraform data sources | Some providers accept JSON but not YAML |
+| `jq` processing | `jq` operates on JSON — convert YAML first |
+| SDK configuration | Many SDKs read JSON config files natively |
+| Debugging YAML parsing | See the exact parsed structure in unambiguous JSON |
+
+## How to Convert YAML to JSON Online
+
+No installation, no command line:
+
+1. Open the [YAML to JSON converter](/tools/yaml-to-json)
+2. Paste your YAML directly or upload a `.yaml` / `.yml` file
+3. The JSON output appears instantly with live validation
+4. Copy the JSON or download it as a `.json` file
+
+Syntax errors in the YAML are highlighted immediately so you can fix them before conversion.
+
+## Conversion by Example
+
+### Kubernetes ConfigMap
+
+A typical Kubernetes manifest in YAML:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: production
+data:
+  DATABASE_URL: "postgres://db.internal:5432/app"
+  LOG_LEVEL: "info"
+  FEATURE_FLAGS: "new-ui,beta-api"
+```
+
+Converted to JSON:
+
+```json
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "app-config",
+    "namespace": "production"
+  },
+  "data": {
+    "DATABASE_URL": "postgres://db.internal:5432/app",
+    "LOG_LEVEL": "info",
+    "FEATURE_FLAGS": "new-ui,beta-api"
+  }
+}
+```
+
+Use this when scripting Kubernetes API calls directly:
+
+```bash
+curl -X POST https://k8s.api/v1/namespaces/production/configmaps \
+  -H "Content-Type: application/json" \
+  -d @configmap.json
+```
+
+### Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  api:
+    image: myapp:latest
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://db:5432/app
+    depends_on:
+      - db
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```
+
+Converting Docker Compose to JSON is useful when building tooling that analyzes or validates compose files programmatically — most JSON parsing libraries have broader language support than YAML libraries.
+
+### GitHub Actions Workflow
+
+```yaml
+name: Deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: npm run build
+      - name: Deploy to production
+        run: ./scripts/deploy.sh
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+```
+
+Convert to JSON to inspect the parsed structure or build tooling that generates workflows.
+
+## What Changes During Conversion
+
+| YAML feature | JSON equivalent |
+|---|---|
+| `true` / `false` | `true` / `false` |
+| `null` or `~` | `null` |
+| Integers | Numbers without decimal point |
+| Floats | Numbers with decimal point |
+| Multi-line strings (`\|` or `>`) | Single string, newlines as `\n` |
+| Anchors and aliases | Expanded inline |
+| Comments (`#`) | Removed |
+| Indentation | Replaced by `{}` and `[]` |
+
+## Common Conversion Gotchas
+
+### Boolean String Trap
+
+In YAML 1.1 (used by most current tools), `yes`, `no`, `on`, `off` are booleans, not strings:
+
+```yaml
+# This YAML
+feature_enabled: yes
+notifications: on
+debug_mode: off
+```
+
+Converts to:
+
+```json
+{
+  "feature_enabled": true,
+  "notifications": true,
+  "debug_mode": false
+}
+```
+
+If you meant the string `"yes"`, quote it in your YAML: `feature_enabled: "yes"`.
+
+### URLs Need Quoting
+
+A colon followed by a space (`: `) is a key-value separator in YAML. URLs break this:
+
+```yaml
+# Wrong — parser sees "http" as a key
+endpoint: http://api.example.com/v1
+
+# Correct
+endpoint: "http://api.example.com/v1"
+```
+
+### Octal Numbers
+
+`0777` in YAML 1.1 parses as the integer 511 (octal). For file permissions or other octal values, always quote:
+
+```yaml
+# Wrong
+chmod_value: 0755
+
+# Correct
+chmod_value: "0755"
+```
+
+### Anchors Don't Survive
+
+YAML anchors (`&`) and aliases (`*`) are useful for DRY configs, but they get fully expanded in JSON:
+
+```yaml
+defaults: &defaults
+  timeout: 30
+  retries: 3
+
+service_a:
+  <<: *defaults
+  host: a.example.com
+```
+
+Converts to:
+
+```json
+{
+  "defaults": { "timeout": 30, "retries": 3 },
+  "service_a": { "timeout": 30, "retries": 3, "host": "a.example.com" }
+}
+```
+
+The anchor is gone; all values are inlined. This is expected.
+
+## Convert YAML to JSON in Code
+
+### Using `yq` (CLI)
+
+```bash
+# Install (macOS)
+brew install yq
+
+# YAML to JSON
+yq -o=json input.yaml > output.json
+
+# Pipe directly to jq for querying
+yq -o=json input.yaml | jq '.metadata.name'
+```
+
+### Python
+
+```python
+import yaml
+import json
+
+with open("config.yaml") as f:
+    data = yaml.safe_load(f)  # always safe_load, not load
+
+with open("config.json", "w") as f:
+    json.dump(data, f, indent=2)
+```
+
+### Node.js
+
+```bash
+npm install js-yaml
+```
+
+```javascript
+const yaml = require('js-yaml');
+const fs = require('fs');
+
+const data = yaml.load(fs.readFileSync('config.yaml', 'utf8'));
+fs.writeFileSync('config.json', JSON.stringify(data, null, 2));
+```
+
+### One-liner in bash (Python)
+
+```bash
+python3 -c "import yaml,json,sys; print(json.dumps(yaml.safe_load(sys.stdin), indent=2))" < config.yaml
+```
+
+## Validating Your YAML Before Converting
+
+Invalid YAML is the most common cause of failed conversions. Common mistakes:
+
+- **Tabs instead of spaces**: YAML requires spaces. A single tab causes a parse error.
+- **Inconsistent indentation**: Two spaces throughout is the standard.
+- **Missing quotes around special characters**: Colons, brackets, and braces need quoting inside values.
+
+The online converter shows inline error messages pointing to the exact line where parsing fails.
+
+## Online YAML to JSON Converter
+
+For one-off conversions, [ZeroTool's YAML to JSON converter](/tools/yaml-to-json) runs 100% in your browser. Paste any YAML — Kubernetes manifests, Docker Compose files, CI configs — and get clean JSON instantly. No data sent to any server, no login required.
+
+**[Try the YAML to JSON converter →](/tools/yaml-to-json)**

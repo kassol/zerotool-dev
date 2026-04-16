@@ -1,0 +1,203 @@
+---
+title: "CSV 转 JSON 在线工具：免安装快速转换表格数据"
+description: "在线把 CSV 文件转换为 JSON，无需安装。含分隔符配置、类型解析、缺失值处理的完整操作指南，附 Python/Node.js 代码示例。"
+pubDate: 2026-04-17
+lang: "zh"
+translationSlug: "csv-to-json-guide"
+tags: ["csv转json", "csv转换器", "json", "数据处理", "开发工具"]
+ogImage: /og/blog-csv-to-json-guide-zh.png
+---
+
+CSV 是数据导出的默认格式——Excel、Google Sheets、MySQL Workbench、Mixpanel 的导出都是 CSV。但你的 API、NoSQL 数据库和前端框架几乎都只认 JSON。每次手写解析代码既耗时又容易出错，用在线工具直接转换是更合理的选择。
+
+[在线 CSV 转 JSON →](/tools/csv-to-json)
+
+## 什么时候需要把 CSV 转成 JSON？
+
+- **向 REST API 批量导入数据**：数据源导出 CSV，但接口只接受 JSON 请求体
+- **MongoDB / DynamoDB 初始化**：导入测试数据或种子数据，需要 JSON 文档格式
+- **前端直接消费**：浏览器原生支持 `JSON.parse()`，解析 CSV 需要额外引入解析库
+- **Kafka / 消息队列入队**：事件驱动系统普遍使用 JSON 格式的事件
+- **运营配置迁移**：运营团队在 Excel 里维护配置，程序消费 JSON 文件
+
+## 如何使用在线工具转换
+
+完全不需要写代码：
+
+1. 打开 [CSV 转 JSON 工具](/tools/csv-to-json)
+2. 粘贴 CSV 文本或上传 `.csv` 文件
+3. 按需调整选项（分隔符、表头处理、类型解析）
+4. 点击**转换**，JSON 结果立即出现
+5. 复制 JSON 或下载为 `.json` 文件
+
+所有操作在浏览器内完成，不向服务器发送任何数据。
+
+## 转换原理：一个完整示例
+
+典型的人员数据 CSV：
+
+```csv
+id,name,department,salary,active
+1,张三,工程部,95000,true
+2,李四,市场部,72000,true
+3,王五,工程部,102000,false
+```
+
+转换后得到 JSON 数组，每行变为一个对象：
+
+```json
+[
+  { "id": "1", "name": "张三", "department": "工程部", "salary": "95000", "active": "true" },
+  { "id": "2", "name": "李四", "department": "市场部", "salary": "72000", "active": "true" },
+  { "id": "3", "name": "王五", "department": "工程部", "salary": "102000", "active": "false" }
+]
+```
+
+默认所有值都是字符串。如果 API 要求数字和布尔值，开启**类型解析**选项：
+
+```json
+[
+  { "id": 1, "name": "张三", "department": "工程部", "salary": 95000, "active": true },
+  { "id": 2, "name": "李四", "department": "市场部", "salary": 72000, "active": true },
+  { "id": 3, "name": "王五", "department": "工程部", "salary": 102000, "active": false }
+]
+```
+
+## 常见 CSV 格式问题处理
+
+### 值中含有逗号
+
+CSV 规范用双引号包裹含逗号的字段：
+
+```csv
+product,description,price
+Widget,"小型便携设备，即插即用",9.99
+Gadget,"大型工业工具，耐用防水",49.99
+```
+
+务必用专业解析器处理，不要直接用 `.split(",")` 手动分割——这会把引号内的逗号也切开。
+
+### 缺失值处理
+
+```csv
+id,name,email,phone
+1,张三,zhangsan@example.com,
+2,李四,,lisi@example.com
+```
+
+缺失值默认转为空字符串 `""`。如果要转为 `null`（更符合 JSON 语义），在工具里勾选"空值转 null"：
+
+```json
+[
+  { "id": "1", "name": "张三", "email": "zhangsan@example.com", "phone": null },
+  { "id": "2", "name": "李四", "email": null, "phone": "lisi@example.com" }
+]
+```
+
+### 自定义分隔符（TSV 等）
+
+数据库导出经常用制表符（Tab）代替逗号：
+
+```tsv
+name	score	level
+张三	95	高级
+李四	82	中级
+```
+
+把分隔符设置为 `\t` 后再转换。工具也支持分号（`;`）、管道符（`|`）等自定义字符，适配各种系统导出。
+
+### 没有表头行
+
+部分导出文件不含表头，可以选择：
+- 自动生成列名：`col1`、`col2`、`col3`
+- 手动在工具里指定列名
+
+## 典型应用场景
+
+### 从飞书/Excel 表格初始化数据库
+
+运营团队用飞书多维表格维护商品数据，导出 CSV 后转换为 JSON，直接作为种子数据导入：
+
+```javascript
+const products = JSON.parse(fs.readFileSync('products.json', 'utf8'));
+for (const product of products) {
+  await db.collection('products').insertOne(product);
+}
+```
+
+### 批量调用接口导入数据
+
+很多业务接口支持 JSON 数组批量导入。把 CSV 转好后直接 POST：
+
+```javascript
+const payload = { records: csvData };
+await fetch('/api/v1/import', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
+```
+
+### 处理埋点平台数据导出
+
+从神策数据、GrowingIO、Google Analytics 导出 CSV 事件日志，转为 JSON 后用 `jq` 过滤分析：
+
+```bash
+cat events.csv | csvjson | jq '[.[] | select(.event == "purchase")]'
+```
+
+## 代码实现
+
+如果需要在流程中自动化，可以用脚本处理。
+
+### Python（标准库，一行解决）
+
+```python
+import csv, json, sys
+reader = csv.DictReader(sys.stdin)
+json.dump(list(reader), sys.stdout, indent=2, ensure_ascii=False)
+```
+
+执行：
+
+```bash
+python convert.py < data.csv > data.json
+```
+
+### Node.js（Papa Parse）
+
+```bash
+npm install papaparse
+```
+
+```javascript
+const Papa = require('papaparse');
+const fs = require('fs');
+
+const result = Papa.parse(fs.readFileSync('data.csv', 'utf8'), {
+  header: true,
+  dynamicTyping: true,
+  skipEmptyLines: true,
+});
+
+fs.writeFileSync('data.json', JSON.stringify(result.data, null, 2));
+```
+
+### 命令行（csvkit）
+
+```bash
+pip install csvkit
+csvjson data.csv > data.json
+```
+
+## 提升 JSON 输出质量的建议
+
+- **去除 BOM**：Excel 导出的 CSV 有时带有 UTF-8 BOM（`\ufeff`），会导致第一个键名出现乱码。在线工具会自动去除。
+- **规范化列名**：含空格的列名（如 `First Name`）会变成尴尬的 JSON 键。转换前最好统一处理为驼峰或下划线命名。
+- **验证输出结构**：转换完成后，用 [JSON 格式化工具](/tools/json-formatter) 检查一遍，确认结构正确后再用于生产。
+
+## 在线 CSV 转 JSON 工具
+
+不想写代码？[ZeroTool 的 CSV 转 JSON 工具](/tools/csv-to-json) 完全在浏览器内运行，支持文本粘贴或文件上传，可配置分隔符和类型解析，结果可直接下载。全程不上传数据到服务器。
+
+**[立即使用 CSV 转 JSON →](/tools/csv-to-json)**
