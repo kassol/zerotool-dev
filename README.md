@@ -29,8 +29,10 @@
 | Word & Character Counter | [/tools/word-counter](https://zerotool.dev/tools/word-counter) |
 | Chmod Calculator | [/tools/chmod-calculator](https://zerotool.dev/tools/chmod-calculator) |
 | CSV to JSON Converter | [/tools/csv-json](https://zerotool.dev/tools/csv-json) |
+| CSV to JSON | [/tools/csv-to-json](https://zerotool.dev/tools/csv-to-json) |
 | HTML Entity Encoder / Decoder | [/tools/html-entity](https://zerotool.dev/tools/html-entity) |
 | YAML to JSON Converter | [/tools/yaml-json](https://zerotool.dev/tools/yaml-json) |
+| YAML to JSON | [/tools/yaml-to-json](https://zerotool.dev/tools/yaml-to-json) |
 | Line Tools | [/tools/line-tools](https://zerotool.dev/tools/line-tools) |
 | Number Base Converter | [/tools/number-base](https://zerotool.dev/tools/number-base) |
 | SQL Formatter | [/tools/sql-formatter](https://zerotool.dev/tools/sql-formatter) |
