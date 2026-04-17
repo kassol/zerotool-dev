@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 83 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 84 tools and growing.
 
 ## Tools
 
@@ -92,6 +92,7 @@
 | ULID Generator | [/tools/ulid-generator](https://zerotool.dev/tools/ulid-generator) |
 | QR Code Decoder | [/tools/qr-code-decoder](https://zerotool.dev/tools/qr-code-decoder) |
 | TypeScript to Zod Schema | [/tools/typescript-to-zod](https://zerotool.dev/tools/typescript-to-zod) |
+| JSON to Python Dataclass | [/tools/json-to-python-dataclass](https://zerotool.dev/tools/json-to-python-dataclass) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
