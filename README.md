@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 79 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 83 tools and growing.
 
 ## Tools
 
@@ -72,6 +72,7 @@
 | Morse Code Translator | [/tools/morse-code-translator](https://zerotool.dev/tools/morse-code-translator) |
 | AES Encrypt / Decrypt | [/tools/aes-encrypt-decrypt](https://zerotool.dev/tools/aes-encrypt-decrypt) |
 | JSON to Kotlin Data Class | [/tools/json-to-kotlin](https://zerotool.dev/tools/json-to-kotlin) |
+| JSON to Java POJO | [/tools/json-to-java-pojo](https://zerotool.dev/tools/json-to-java-pojo) |
 | JSON to Go Struct | [/tools/json-to-go-struct](https://zerotool.dev/tools/json-to-go-struct) |
 | Unicode Text Converter | [/tools/unicode-text-converter](https://zerotool.dev/tools/unicode-text-converter) |
 | OpenAPI Validator | [/tools/openapi-validator](https://zerotool.dev/tools/openapi-validator) |
@@ -90,6 +91,7 @@
 | Color Shades Generator | [/tools/color-shades-generator](https://zerotool.dev/tools/color-shades-generator) |
 | ULID Generator | [/tools/ulid-generator](https://zerotool.dev/tools/ulid-generator) |
 | QR Code Decoder | [/tools/qr-code-decoder](https://zerotool.dev/tools/qr-code-decoder) |
+| TypeScript to Zod Schema | [/tools/typescript-to-zod](https://zerotool.dev/tools/typescript-to-zod) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
