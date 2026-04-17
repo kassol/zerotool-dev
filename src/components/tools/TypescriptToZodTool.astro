@@ -1,0 +1,782 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    tsInput: 'TypeScript Input',
+    zodOutput: 'Zod Schema Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    generate: 'Generate Zod Schema',
+    msgNoDecl: 'No interface or type declarations found.',
+    msgGenOne: 'Generated 1 schema.',
+    msgGenMany: 'Generated {n} schemas.',
+    msgError: 'Parse error: ',
+  },
+  zh: {
+    tsInput: 'TypeScript 输入',
+    zodOutput: 'Zod Schema 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    generate: '生成 Zod Schema',
+    msgNoDecl: '未找到 interface 或 type 声明。',
+    msgGenOne: '已生成 1 个 schema。',
+    msgGenMany: '已生成 {n} 个 schema。',
+    msgError: '解析错误：',
+  },
+  ja: {
+    tsInput: 'TypeScript 入力',
+    zodOutput: 'Zod スキーマ出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    generate: 'Zod スキーマを生成',
+    msgNoDecl: 'interface または type 宣言が見つかりません。',
+    msgGenOne: '1 個のスキーマを生成しました。',
+    msgGenMany: '{n} 個のスキーマを生成しました。',
+    msgError: '解析エラー：',
+  },
+  ko: {
+    tsInput: 'TypeScript 입력',
+    zodOutput: 'Zod 스키마 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    generate: 'Zod 스키마 생성',
+    msgNoDecl: 'interface 또는 type 선언을 찾을 수 없습니다.',
+    msgGenOne: '스키마 1개를 생성했습니다.',
+    msgGenMany: '스키마 {n}개를 생성했습니다.',
+    msgError: '파싱 오류: ',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="ttz-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-msg-no-decl={L.msgNoDecl}
+  data-msg-gen-one={L.msgGenOne}
+  data-msg-gen-many={L.msgGenMany}
+  data-msg-error={L.msgError}
+>
+  <div class="ttz-panels">
+    <div class="ttz-panel">
+      <div class="ttz-panel-header">
+        <span>{L.tsInput}</span>
+        <div class="ttz-panel-actions">
+          <button id="ttz-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="ttz-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea
+        id="ttz-input"
+        placeholder={`interface User {\n  name: string;\n  age?: number;\n}`}
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="ttz-panel">
+      <div class="ttz-panel-header">
+        <span>{L.zodOutput}</span>
+        <button id="ttz-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+      </div>
+      <pre id="ttz-output" class="ttz-output"><code id="ttz-output-code"></code></pre>
+    </div>
+  </div>
+
+  <div class="ttz-actions">
+    <button id="ttz-convert" class="btn-primary" type="button">{L.generate}</button>
+  </div>
+
+  <div id="ttz-status" class="ttz-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.ttz-wrap')
+        : document.querySelector('.ttz-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var MSG_NO_DECL = wrap ? wrap.dataset.msgNoDecl : 'No declarations found.';
+      var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 schema.';
+      var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} schemas.';
+      var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Parse error: ';
+
+      var inputEl = document.getElementById('ttz-input');
+      var outputCodeEl = document.getElementById('ttz-output-code');
+      var statusEl = document.getElementById('ttz-status');
+
+      var EXAMPLE = [
+        'interface Address {',
+        '  street: string;',
+        '  city: string;',
+        '  zipCode?: string;',
+        '}',
+        '',
+        'export interface User {',
+        '  id: number;',
+        '  name: string;',
+        '  email: string;',
+        '  role: "admin" | "user" | "guest";',
+        '  age?: number;',
+        '  isActive: boolean;',
+        '  tags: string[];',
+        '  address: Address;',
+        '}',
+        '',
+        'export type Status = "active" | "inactive" | "pending";',
+      ].join('\n');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'ttz-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'ttz-status';
+      }
+
+      /* ── TOKENIZER ── */
+
+      var KEYWORDS = {
+        'interface': 1, 'type': 1, 'export': 1, 'readonly': 1,
+        'extends': 1, 'implements': 1, 'class': 1, 'enum': 1,
+        'import': 1, 'from': 1, 'declare': 1, 'abstract': 1,
+        'namespace': 1, 'module': 1, 'const': 1, 'let': 1, 'var': 1,
+        'function': 1, 'return': 1, 'keyof': 1, 'typeof': 1, 'infer': 1,
+        'in': 1, 'is': 1, 'as': 1,
+      };
+
+      function tokenize(src) {
+        var tokens = [];
+        var i = 0;
+        var n = src.length;
+
+        while (i < n) {
+          var ch = src[i];
+
+          /* whitespace */
+          if (ch <= ' ') { i++; continue; }
+
+          /* single-line comment */
+          if (ch === '/' && src[i + 1] === '/') {
+            while (i < n && src[i] !== '\n') i++;
+            continue;
+          }
+
+          /* multi-line comment */
+          if (ch === '/' && src[i + 1] === '*') {
+            i += 2;
+            while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++;
+            i += 2;
+            continue;
+          }
+
+          /* string literal */
+          if (ch === '"' || ch === "'") {
+            var q = ch, j = i + 1;
+            while (j < n && src[j] !== q) {
+              if (src[j] === '\\') j++;
+              j++;
+            }
+            tokens.push({ t: 'STRING', v: src.slice(i + 1, j), p: i });
+            i = j + 1;
+            continue;
+          }
+
+          /* template literal — treat content as opaque string */
+          if (ch === '`') {
+            var j = i + 1;
+            while (j < n && src[j] !== '`') {
+              if (src[j] === '\\') j++;
+              j++;
+            }
+            tokens.push({ t: 'TEMPLATE', v: src.slice(i + 1, j), p: i });
+            i = j + 1;
+            continue;
+          }
+
+          /* number literal */
+          if (ch >= '0' && ch <= '9') {
+            var j = i;
+            while (j < n && (src[j] >= '0' && src[j] <= '9' || src[j] === '.')) j++;
+            tokens.push({ t: 'NUMBER', v: src.slice(i, j), p: i });
+            i = j;
+            continue;
+          }
+
+          /* identifier / keyword */
+          if (ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch === '_' || ch === '$') {
+            var j = i;
+            while (j < n && (src[j] >= 'a' && src[j] <= 'z' || src[j] >= 'A' && src[j] <= 'Z' ||
+                   src[j] >= '0' && src[j] <= '9' || src[j] === '_' || src[j] === '$')) j++;
+            var word = src.slice(i, j);
+            tokens.push({ t: KEYWORDS[word] ? 'KW' : 'IDENT', v: word, p: i });
+            i = j;
+            continue;
+          }
+
+          /* ellipsis */
+          if (src[i] === '.' && src[i + 1] === '.' && src[i + 2] === '.') {
+            tokens.push({ t: 'PUNCT', v: '...', p: i });
+            i += 3;
+            continue;
+          }
+
+          /* single-char punctuation */
+          if ('{}[](),;:?|&=<>!'.indexOf(ch) !== -1) {
+            tokens.push({ t: 'PUNCT', v: ch, p: i });
+            i++;
+            continue;
+          }
+
+          /* skip unknown (decorators @, etc.) */
+          i++;
+        }
+
+        tokens.push({ t: 'EOF', v: '', p: i });
+        return tokens;
+      }
+
+      /* ── PARSER ── */
+
+      function P(tokens) {
+        return {
+          tok: tokens,
+          pos: 0,
+          peek: function () { return this.tok[this.pos]; },
+          pv: function () { return this.tok[this.pos].v; },
+          pt: function () { return this.tok[this.pos].t; },
+          next: function () { return this.tok[this.pos++]; },
+          eat: function (v) {
+            if (this.pv() !== v) throw new Error('Expected "' + v + '" got "' + this.pv() + '"');
+            return this.next();
+          },
+          maybe: function (v) {
+            if (this.pv() === v) { this.next(); return true; }
+            return false;
+          },
+          isKW: function (kw) { return this.pt() === 'KW' && this.pv() === kw; },
+        };
+      }
+
+      function parse(tokens) {
+        var p = P(tokens);
+        var decls = [];
+
+        while (p.pt() !== 'EOF') {
+          /* skip export */
+          if (p.isKW('export')) p.next();
+          /* skip declare */
+          if (p.isKW('declare')) { p.next(); if (p.isKW('export')) p.next(); }
+
+          if (p.isKW('interface')) {
+            decls.push(parseInterface(p));
+          } else if (p.isKW('type')) {
+            decls.push(parseTypeAlias(p));
+          } else if (p.isKW('import') || p.isKW('const') || p.isKW('let') ||
+                     p.isKW('var') || p.isKW('function') || p.isKW('class') ||
+                     p.isKW('enum') || p.isKW('namespace') || p.isKW('module')) {
+            /* skip to next top-level — consume until '{' and balance, or until ';' */
+            skipStatement(p);
+          } else if (p.pt() !== 'EOF') {
+            p.next();
+          }
+        }
+
+        return { decls: decls };
+      }
+
+      function skipStatement(p) {
+        /* rough skip: consume tokens until we see a top-level keyword or EOF */
+        while (p.pt() !== 'EOF') {
+          var v = p.pv();
+          if (p.pt() === 'KW' && (v === 'interface' || v === 'type' || v === 'export' || v === 'declare')) break;
+          if (v === '{') { skipBlock(p); continue; }
+          p.next();
+          if (v === ';') break;
+        }
+      }
+
+      function skipBlock(p) {
+        p.eat('{');
+        var depth = 1;
+        while (p.pt() !== 'EOF' && depth > 0) {
+          var v = p.pv();
+          p.next();
+          if (v === '{') depth++;
+          else if (v === '}') depth--;
+        }
+      }
+
+      function parseInterface(p) {
+        p.next(); /* interface */
+        var name = expectIdent(p);
+        /* skip type params */
+        if (p.pv() === '<') skipAngle(p);
+        /* skip extends */
+        if (p.isKW('extends')) { p.next(); while (p.pv() !== '{' && p.pt() !== 'EOF') p.next(); }
+        p.eat('{');
+        var members = parseMembers(p);
+        p.eat('}');
+        return { kind: 'interface', name: name, members: members };
+      }
+
+      function parseTypeAlias(p) {
+        p.next(); /* type */
+        var name = expectIdent(p);
+        /* skip type params */
+        if (p.pv() === '<') skipAngle(p);
+        p.eat('=');
+        var te = parseTypeExpr(p);
+        p.maybe(';');
+        return { kind: 'type', name: name, te: te };
+      }
+
+      function expectIdent(p) {
+        var t = p.peek();
+        if (t.t !== 'IDENT' && t.t !== 'KW') throw new Error('Expected identifier, got "' + t.v + '"');
+        p.next();
+        return t.v;
+      }
+
+      function skipAngle(p) {
+        /* skip <...> balanced */
+        p.eat('<');
+        var d = 1;
+        while (p.pt() !== 'EOF' && d > 0) {
+          if (p.pv() === '<') d++;
+          else if (p.pv() === '>') d--;
+          p.next();
+        }
+      }
+
+      function parseMembers(p) {
+        var members = [];
+        while (p.pv() !== '}' && p.pt() !== 'EOF') {
+          /* index / mapped type signature: [key: T]: V */
+          if (p.pv() === '[') {
+            p.next(); /* [ */
+            /* distinguish index sig vs computed property vs mapped type */
+            var t1 = p.peek();
+            var t2 = p.pos + 1 < p.tok.length ? p.tok[p.pos + 1] : null;
+            if ((t1.t === 'IDENT' || t1.t === 'KW') && t2 && t2.v === ':') {
+              /* index signature: [key: string]: value */
+              p.next(); /* key name */
+              p.eat(':');
+              p.next(); /* key type */
+              p.eat(']');
+              p.eat(':');
+              var vte = parseTypeExpr(p);
+              p.maybe(';'); p.maybe(',');
+              members.push({ kind: 'index', vte: vte });
+            } else {
+              /* computed / mapped — skip until ]: */
+              var d = 1;
+              while (p.pt() !== 'EOF' && d > 0) {
+                if (p.pv() === '[') d++;
+                else if (p.pv() === ']') d--;
+                p.next();
+              }
+              if (p.pv() === ':') {
+                p.next();
+                parseTypeExpr(p);
+              }
+              p.maybe(';'); p.maybe(',');
+            }
+            continue;
+          }
+
+          /* skip readonly */
+          if (p.isKW('readonly')) p.next();
+
+          /* property key */
+          var kt = p.peek();
+          if (kt.t !== 'IDENT' && kt.t !== 'KW' && kt.t !== 'STRING' && kt.t !== 'NUMBER') {
+            p.next(); continue;
+          }
+          var key = p.next().v;
+          if (kt.t === 'STRING') key = '"' + key + '"';
+
+          /* optional */
+          var opt = p.maybe('?');
+
+          /* method signature: foo(args): ReturnType — skip */
+          if (p.pv() === '(') {
+            skipParens(p);
+            if (p.pv() === ':') { p.next(); parseTypeExpr(p); }
+            p.maybe(';'); p.maybe(',');
+            continue;
+          }
+
+          if (!p.maybe(':')) { p.maybe(';'); p.maybe(','); continue; }
+
+          var te = parseTypeExpr(p);
+          p.maybe(';'); p.maybe(',');
+          members.push({ kind: 'prop', key: key, opt: opt, te: te });
+        }
+        return members;
+      }
+
+      function skipParens(p) {
+        p.eat('(');
+        var d = 1;
+        while (p.pt() !== 'EOF' && d > 0) {
+          if (p.pv() === '(') d++;
+          else if (p.pv() === ')') d--;
+          p.next();
+        }
+      }
+
+      function parseTypeExpr(p) { return parseUnion(p); }
+
+      function parseUnion(p) {
+        p.maybe('|'); /* leading | */
+        var types = [parseIntersection(p)];
+        while (p.pv() === '|') { p.next(); types.push(parseIntersection(p)); }
+        return types.length === 1 ? types[0] : { kind: 'union', types: types };
+      }
+
+      function parseIntersection(p) {
+        var types = [parseArray(p)];
+        while (p.pv() === '&') { p.next(); types.push(parseArray(p)); }
+        return types.length === 1 ? types[0] : { kind: 'inter', types: types };
+      }
+
+      function parseArray(p) {
+        var base = parsePrimary(p);
+        while (p.pv() === '[' && p.pos + 1 < p.tok.length && p.tok[p.pos + 1].v === ']') {
+          p.next(); p.next(); /* [ ] */
+          base = { kind: 'array', elem: base };
+        }
+        return base;
+      }
+
+      function parsePrimary(p) {
+        var t = p.peek();
+
+        /* parenthesized */
+        if (t.v === '(') { p.next(); var inner = parseTypeExpr(p); p.maybe(')'); return inner; }
+
+        /* tuple */
+        if (t.v === '[') {
+          p.next();
+          var items = [];
+          while (p.pv() !== ']' && p.pt() !== 'EOF') {
+            items.push(parseTypeExpr(p));
+            p.maybe(',');
+          }
+          p.maybe(']');
+          return { kind: 'tuple', items: items };
+        }
+
+        /* inline object */
+        if (t.v === '{') {
+          p.next();
+          var members = parseMembers(p);
+          p.maybe('}');
+          return { kind: 'obj', members: members };
+        }
+
+        /* string literal */
+        if (t.t === 'STRING') { p.next(); return { kind: 'lit', v: JSON.stringify(t.v), lt: 's' }; }
+
+        /* number literal */
+        if (t.t === 'NUMBER') { p.next(); return { kind: 'lit', v: t.v, lt: 'n' }; }
+
+        /* template literal → treat as string */
+        if (t.t === 'TEMPLATE') { p.next(); return { kind: 'prim', n: 'string' }; }
+
+        /* identifier or keyword */
+        if (t.t === 'IDENT' || t.t === 'KW') {
+          var nm = p.next().v;
+
+          if (nm === 'true')  return { kind: 'lit', v: 'true', lt: 'b' };
+          if (nm === 'false') return { kind: 'lit', v: 'false', lt: 'b' };
+
+          var PRIMS = { string:1, number:1, boolean:1, null:1, undefined:1,
+                        any:1, unknown:1, void:1, never:1, object:1, bigint:1, symbol:1 };
+          if (PRIMS[nm]) return { kind: 'prim', n: nm };
+
+          /* generic */
+          if (p.pv() === '<') {
+            if (nm === 'Array' || nm === 'ReadonlyArray') {
+              p.next(); /* < */
+              var elem = parseTypeExpr(p);
+              while (p.pv() === ',') { p.next(); parseTypeExpr(p); }
+              p.maybe('>');
+              return { kind: 'array', elem: elem };
+            }
+            if (nm === 'Partial') {
+              p.next();
+              var inner = parseTypeExpr(p);
+              p.maybe('>');
+              return { kind: 'partial', inner: inner };
+            }
+            if (nm === 'Required') {
+              p.next();
+              var inner = parseTypeExpr(p);
+              p.maybe('>');
+              return inner;
+            }
+            if (nm === 'Promise') {
+              p.next();
+              var inner = parseTypeExpr(p);
+              p.maybe('>');
+              return { kind: 'promise', inner: inner };
+            }
+            if (nm === 'Record') {
+              p.next();
+              var ktype = parseTypeExpr(p);
+              p.maybe(',');
+              var vtype = parseTypeExpr(p);
+              p.maybe('>');
+              return { kind: 'record', kt: ktype, vt: vtype };
+            }
+            /* other generics — skip params, return typeref */
+            skipAngle(p);
+            return { kind: 'ref', name: nm };
+          }
+
+          return { kind: 'ref', name: nm };
+        }
+
+        /* fallback */
+        if (t.t !== 'EOF') p.next();
+        return { kind: 'prim', n: 'unknown' };
+      }
+
+      /* ── CODE GENERATOR ── */
+
+      function generate(ast) {
+        if (ast.decls.length === 0) throw new Error(MSG_NO_DECL);
+
+        var names = {};
+        ast.decls.forEach(function (d) { names[d.name] = 1; });
+
+        var parts = ['import { z } from "zod";'];
+
+        ast.decls.forEach(function (d, i) {
+          parts.push('');
+          var expr = d.kind === 'interface'
+            ? genObj(d.members, '', names)
+            : genType(d.te, '', names);
+          parts.push('export const ' + d.name + 'Schema = ' + expr + ';');
+          parts.push('export type ' + d.name + ' = z.infer<typeof ' + d.name + 'Schema>;');
+        });
+
+        return parts.join('\n');
+      }
+
+      function genObj(members, ind, names) {
+        var pi = ind + '  ';
+        var lines = ['z.object({'];
+        members.forEach(function (m) {
+          if (m.kind === 'index') return;
+          if (m.kind !== 'prop') return;
+          var expr = genType(m.te, pi + '  ', names);
+          if (m.opt) expr += '.optional()';
+          lines.push(pi + m.key + ': ' + expr + ',');
+        });
+        lines.push(ind + '})');
+        return lines.join('\n');
+      }
+
+      function genType(node, ind, names) {
+        if (!node) return 'z.unknown()';
+        switch (node.kind) {
+          case 'prim': return genPrim(node.n);
+          case 'lit':
+            return 'z.literal(' + node.v + ')';
+          case 'union': {
+            var allStrLit = node.types.every(function (t) { return t.kind === 'lit' && t.lt === 's'; });
+            if (allStrLit && node.types.length >= 2) {
+              return 'z.enum([' + node.types.map(function (t) { return t.v; }).join(', ') + '])';
+            }
+            var exprs = node.types.map(function (t) { return genType(t, ind + '  ', names); });
+            if (exprs.join(', ').length < 80) return 'z.union([' + exprs.join(', ') + '])';
+            return 'z.union([\n' + exprs.map(function (e) { return ind + '  ' + e; }).join(',\n') + ',\n' + ind + '])';
+          }
+          case 'inter': {
+            if (node.types.length === 2) {
+              return 'z.intersection(' + genType(node.types[0], ind, names) + ', ' + genType(node.types[1], ind, names) + ')';
+            }
+            var r = genType(node.types[0], ind, names);
+            for (var i = 1; i < node.types.length; i++) r = 'z.intersection(' + r + ', ' + genType(node.types[i], ind, names) + ')';
+            return r;
+          }
+          case 'array': return 'z.array(' + genType(node.elem, ind, names) + ')';
+          case 'obj': return genObj(node.members, ind, names);
+          case 'tuple': return 'z.tuple([' + node.items.map(function (t) { return genType(t, ind, names); }).join(', ') + '])';
+          case 'ref':
+            return names[node.name] ? node.name + 'Schema' : 'z.unknown() /* ' + node.name + ' */';
+          case 'partial': return genType(node.inner, ind, names) + '.partial()';
+          case 'record': return 'z.record(' + genType(node.vt, ind, names) + ')';
+          case 'promise': return 'z.promise(' + genType(node.inner, ind, names) + ')';
+          default: return 'z.unknown()';
+        }
+      }
+
+      function genPrim(n) {
+        var map = {
+          string: 'z.string()', number: 'z.number()', boolean: 'z.boolean()',
+          null: 'z.null()', undefined: 'z.undefined()', any: 'z.any()',
+          unknown: 'z.unknown()', void: 'z.void()', never: 'z.never()',
+          object: 'z.object({})', bigint: 'z.bigint()', symbol: 'z.symbol()',
+        };
+        return map[n] || 'z.unknown()';
+      }
+
+      /* ── MAIN CONVERT ── */
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+
+        inputEl.classList.remove('error');
+
+        var result;
+        try {
+          var tokens = tokenize(raw);
+          var ast = parse(tokens);
+          var code = generate(ast);
+          result = { code: code, count: ast.decls.length };
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus(MSG_ERROR + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+        outputCodeEl.textContent = result.code;
+        var n = result.count;
+        var msg = n === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', n);
+        setStatus(msg, false);
+        window.trackTool && window.trackTool('typescript-to-zod', 'generate');
+      }
+
+      /* ── EVENTS ── */
+
+      var _liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+
+      document.getElementById('ttz-convert').addEventListener('click', convert);
+
+      document.getElementById('ttz-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        convert();
+      });
+
+      document.getElementById('ttz-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputCodeEl.textContent = '';
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('ttz-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('ttz-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = COPIED;
+          setTimeout(function () { btn.textContent = COPY; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .ttz-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .ttz-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .ttz-panels { grid-template-columns: 1fr; }
+  }
+
+  .ttz-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .ttz-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .ttz-panel-actions { display: flex; gap: 0.3rem; }
+
+  .ttz-panel textarea {
+    width: 100%;
+    min-height: 300px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .ttz-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .ttz-panel textarea.error { border-color: #c0392b; }
+
+  .ttz-output {
+    min-height: 300px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+
+  .ttz-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .ttz-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .ttz-status.success { color: #057a55; }
+  .ttz-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .ttz-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .ttz-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .ttz-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .ttz-status.success { color: #34d399; }
+  [data-theme="dark"] .ttz-status.error { color: #f87171; }
+  [data-theme="dark"] .ttz-panel textarea.error { border-color: #f87171; }
+</style>

@@ -1,0 +1,85 @@
+---
+seoTitle: "TypeScript 转 Zod Schema 生成器 | ZeroTool"
+seoDescription: "在线将 TypeScript interface 和 type 声明转换为 Zod 验证 schema，支持联合类型、可选属性、数组、枚举、嵌套对象及类型交叉引用。免费，纯浏览器端运行。"
+faqItems:
+  - question: "支持哪些 TypeScript 语法结构？"
+    answer: "支持 interface 和 type alias 声明，包括基础类型（string、number、boolean、null、undefined、any、unknown）、可选属性（?）、联合类型（A | B）、字符串枚举（字面量联合）、数组（T[] 和 Array<T>）、嵌套内联对象、声明类型间的交叉引用，以及 Partial<T>、Record<K, V>、Array<T>、Promise<T> 等泛型工具类型。"
+  - question: "类型间的交叉引用如何处理？"
+    answer: "如果输入中声明了多个 interface 或 type alias，对某个已声明类型名称的引用会被替换为对应的 Schema 常量。例如，字段类型为 Address 的会在输出中变为 AddressSchema。输入中未声明的类型则变为 z.unknown()（附带注释）。"
+  - question: "生成的 Schema 兼容哪个版本的 Zod？"
+    answer: "生成的 schema 与 Zod v3 和 Zod v4 均兼容。输出使用标准 API：z.object()、z.string()、z.union()、z.enum()、z.array()、z.optional()、z.literal()、z.record() 和 z.infer<>。"
+  - question: "字符串联合类型如何处理？"
+    answer: "字符串字面量联合（如 \"admin\" | \"user\" | \"guest\"）会自动转换为 z.enum([\"admin\", \"user\", \"guest\"]) 以保持简洁。混合联合类型（如 string | null）则使用 z.union([z.string(), z.null()])。"
+  - question: "可以转换 TypeScript class 或泛型类型吗？"
+    answer: "class 和泛型类型定义超出当前支持范围。工具专注于 interface 和 type alias 的转换。应用于具体类型的泛型工具类型（Array<string>、Record<string, number>）是支持的。"
+  - question: "代码会被发送到服务器吗？"
+    answer: "不会。TypeScript 解析器和 Zod 代码生成器完全在浏览器中运行，源代码不会离开你的设备。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>将 TypeScript <code>interface</code> 或 <code>type</code> 声明粘贴到左侧输入框。</li>
+  <li>工具会实时验证并转换（停止输入 300 毫秒后自动触发）。</li>
+  <li>点击 <strong>生成 Zod Schema</strong> 强制执行转换。</li>
+  <li>点击 <strong>复制</strong> 将 Zod 输出复制到剪贴板。</li>
+  <li>将结果粘贴到项目中——输出已包含 <code>import</code> 语句和 <code>export type</code> 类型推断行。</li>
+</ol>
+
+<h2>支持的 TypeScript 特性</h2>
+<ul>
+  <li><strong>基础类型</strong>：<code>string</code>、<code>number</code>、<code>boolean</code>、<code>null</code>、<code>undefined</code>、<code>any</code>、<code>unknown</code>、<code>void</code>、<code>never</code>、<code>bigint</code>、<code>symbol</code></li>
+  <li><strong>可选属性</strong>：<code>prop?: type</code> → <code>.optional()</code></li>
+  <li><strong>联合类型</strong>：<code>A | B</code> → <code>z.union([A, B])</code></li>
+  <li><strong>字符串枚举</strong>：<code>"a" | "b" | "c"</code> → <code>z.enum(["a", "b", "c"])</code></li>
+  <li><strong>数组</strong>：<code>T[]</code> / <code>Array&lt;T&gt;</code> → <code>z.array(T)</code></li>
+  <li><strong>嵌套对象</strong>：内联对象类型 → <code>z.object(&#123;&#125;)</code></li>
+  <li><strong>交叉引用</strong>：命名类型间相互引用 → Schema 常量</li>
+  <li><strong>readonly</strong>：接受 <code>readonly</code> 修饰符，转换时忽略（Zod schema 默认不可变）</li>
+  <li><strong>工具类型</strong>：<code>Partial&lt;T&gt;</code>、<code>Record&lt;K, V&gt;</code>、<code>Promise&lt;T&gt;</code></li>
+  <li><strong>交叉类型</strong>：<code>A &amp; B</code> → <code>z.intersection(A, B)</code></li>
+  <li><strong>元组</strong>：<code>[A, B]</code> → <code>z.tuple([A, B])</code></li>
+  <li><strong>字面量类型</strong>：<code>"value"</code>、<code>42</code>、<code>true</code> → <code>z.literal()</code></li>
+</ul>
+
+<h2>示例</h2>
+<p>给定以下 TypeScript 输入：</p>
+<pre><code>{`interface Address {
+  street: string;
+  city: string;
+  zipCode?: string;
+}
+
+export interface User {
+  id: number;
+  name: string;
+  role: "admin" | "user" | "guest";
+  age?: number;
+  isActive: boolean;
+  tags: string[];
+  address: Address;
+}
+
+export type Status = "active" | "inactive" | "pending";`}</code></pre>
+<p>工具生成：</p>
+<pre><code>{`import { z } from "zod";
+
+export const AddressSchema = z.object({
+  street: z.string(),
+  city: z.string(),
+  zipCode: z.string().optional(),
+});
+export type Address = z.infer<typeof AddressSchema>;
+
+export const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  role: z.enum(["admin", "user", "guest"]),
+  age: z.number().optional(),
+  isActive: z.boolean(),
+  tags: z.array(z.string()),
+  address: AddressSchema,
+});
+export type User = z.infer<typeof UserSchema>;
+
+export const StatusSchema = z.enum(["active", "inactive", "pending"]);
+export type Status = z.infer<typeof StatusSchema>;`}</code></pre>

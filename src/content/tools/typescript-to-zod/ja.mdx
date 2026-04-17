@@ -1,0 +1,85 @@
+---
+seoTitle: "TypeScript → Zod スキーマ生成器 | ZeroTool"
+seoDescription: "TypeScriptのinterfaceとtype宣言をZodバリデーションスキーマに即座に変換。Union型・省略可能フィールド・配列・enum・ネストオブジェクト・型参照に対応。無料、完全ブラウザ完結。"
+faqItems:
+  - question: "どのようなTypeScript構文をサポートしていますか？"
+    answer: "interfaceとtype alias宣言をサポートし、基本型（string、number、boolean、null、undefined、any、unknown）、省略可能プロパティ（?）、Union型（A | B）、文字列enum（リテラルUnion）、配列（T[]、Array<T>）、インラインネストオブジェクト、宣言済み型間の相互参照、Partial<T>・Record<K, V>・Array<T>・Promise<T>などのユーティリティ型に対応しています。"
+  - question: "型間の相互参照はどのように処理されますか？"
+    answer: "入力に複数のinterfaceまたはtype aliasが宣言されている場合、宣言済み型名への参照は対応するSchemaの定数に変換されます。例えばAddress型のフィールドはAddressSchemaになります。入力で宣言されていない型はz.unknown()（コメント付き）になります。"
+  - question: "生成されるスキーマはどのZodバージョンに対応していますか？"
+    answer: "生成されるスキーマはZod v3とZod v4の両方に対応しています。出力はz.object()、z.string()、z.union()、z.enum()、z.array()、z.optional()、z.literal()、z.record()、z.infer<>などの標準APIを使用します。"
+  - question: "文字列Union型はどのように変換されますか？"
+    answer: "文字列リテラルのUnion（例：\"admin\" | \"user\" | \"guest\"）は簡潔にするためz.enum([\"admin\", \"user\", \"guest\"])に自動変換されます。混合Union（例：string | null）はz.union([z.string(), z.null()])を使用します。"
+  - question: "TypeScriptのclassやジェネリック型定義は変換できますか？"
+    answer: "classとジェネリック型はサポート範囲外です。このツールはinterfaceとtype aliasの変換に特化しています。具体的な型に適用されたユーティリティ型（Array<string>、Record<string, number>）はサポートされています。"
+  - question: "コードはサーバーに送信されますか？"
+    answer: "いいえ。TypeScriptパーサーとZodコードジェネレーターはすべてブラウザ内で動作します。ソースコードはお使いの端末から送信されません。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>TypeScriptの<code>interface</code>または<code>type</code>宣言を左のパネルに貼り付けます。</li>
+  <li>入力停止から300ms後に自動でバリデーションと変換が行われます。</li>
+  <li><strong>Zodスキーマを生成</strong>ボタンで強制変換できます。</li>
+  <li><strong>コピー</strong>ボタンでZod出力をクリップボードにコピーします。</li>
+  <li>結果をプロジェクトに貼り付けます。出力には<code>import</code>文と<code>export type</code>の型推論行がすでに含まれています。</li>
+</ol>
+
+<h2>対応TypeScript機能</h2>
+<ul>
+  <li><strong>基本型</strong>：<code>string</code>、<code>number</code>、<code>boolean</code>、<code>null</code>、<code>undefined</code>、<code>any</code>、<code>unknown</code>、<code>void</code>、<code>never</code>、<code>bigint</code>、<code>symbol</code></li>
+  <li><strong>省略可能プロパティ</strong>：<code>prop?: type</code> → <code>.optional()</code></li>
+  <li><strong>Union型</strong>：<code>A | B</code> → <code>z.union([A, B])</code></li>
+  <li><strong>文字列enum</strong>：<code>"a" | "b" | "c"</code> → <code>z.enum(["a", "b", "c"])</code></li>
+  <li><strong>配列</strong>：<code>T[]</code> / <code>Array&lt;T&gt;</code> → <code>z.array(T)</code></li>
+  <li><strong>ネストオブジェクト</strong>：インラインオブジェクト型 → <code>z.object(&#123;&#125;)</code></li>
+  <li><strong>相互参照</strong>：宣言済み型間の参照 → Schemaの定数</li>
+  <li><strong>readonly</strong>：<code>readonly</code>修飾子を受け入れ、変換時に無視（ZodスキーマはデフォルトでImmutable）</li>
+  <li><strong>ユーティリティ型</strong>：<code>Partial&lt;T&gt;</code>、<code>Record&lt;K, V&gt;</code>、<code>Promise&lt;T&gt;</code></li>
+  <li><strong>交差型</strong>：<code>A &amp; B</code> → <code>z.intersection(A, B)</code></li>
+  <li><strong>タプル</strong>：<code>[A, B]</code> → <code>z.tuple([A, B])</code></li>
+  <li><strong>リテラル型</strong>：<code>"value"</code>、<code>42</code>、<code>true</code> → <code>z.literal()</code></li>
+</ul>
+
+<h2>サンプル</h2>
+<p>以下のTypeScriptを入力すると：</p>
+<pre><code>{`interface Address {
+  street: string;
+  city: string;
+  zipCode?: string;
+}
+
+export interface User {
+  id: number;
+  name: string;
+  role: "admin" | "user" | "guest";
+  age?: number;
+  isActive: boolean;
+  tags: string[];
+  address: Address;
+}
+
+export type Status = "active" | "inactive" | "pending";`}</code></pre>
+<p>このように生成されます：</p>
+<pre><code>{`import { z } from "zod";
+
+export const AddressSchema = z.object({
+  street: z.string(),
+  city: z.string(),
+  zipCode: z.string().optional(),
+});
+export type Address = z.infer<typeof AddressSchema>;
+
+export const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  role: z.enum(["admin", "user", "guest"]),
+  age: z.number().optional(),
+  isActive: z.boolean(),
+  tags: z.array(z.string()),
+  address: AddressSchema,
+});
+export type User = z.infer<typeof UserSchema>;
+
+export const StatusSchema = z.enum(["active", "inactive", "pending"]);
+export type Status = z.infer<typeof StatusSchema>;`}</code></pre>

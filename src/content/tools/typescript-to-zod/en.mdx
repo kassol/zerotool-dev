@@ -1,0 +1,85 @@
+---
+seoTitle: "TypeScript to Zod Schema Generator | ZeroTool"
+seoDescription: "Convert TypeScript interfaces and type aliases to Zod validation schemas instantly. Handles unions, optional fields, arrays, enums, nested objects, and cross-references. Free, runs in your browser."
+faqItems:
+  - question: "What TypeScript constructs does this tool support?"
+    answer: "It supports interface and type alias declarations, including basic types (string, number, boolean, null, undefined, any, unknown), optional properties (?), union types (A | B), string enums (literal unions), arrays (T[] and Array<T>), nested inline objects, cross-references between declared types, and generic utilities like Partial<T>, Record<K, V>, Array<T>, and Promise<T>."
+  - question: "How are cross-references between types handled?"
+    answer: "If you declare multiple interfaces or type aliases in the input, any reference to a declared type by name is replaced with its Schema constant. For example, a field typed as Address becomes AddressSchema in the output. Types not declared in the input become z.unknown() with a comment."
+  - question: "What Zod version does the output target?"
+    answer: "The generated schemas are compatible with Zod v3 and Zod v4. The output uses standard APIs: z.object(), z.string(), z.union(), z.enum(), z.array(), z.optional(), z.literal(), z.record(), and z.infer<>."
+  - question: "How does the tool handle string union types?"
+    answer: "A union of string literals like \"admin\" | \"user\" | \"guest\" is automatically converted to z.enum([\"admin\", \"user\", \"guest\"]) for conciseness. Mixed unions (e.g. string | null) use z.union([z.string(), z.null()])."
+  - question: "Can I convert TypeScript class or generic type definitions?"
+    answer: "Classes and generics are outside the MVP scope. The tool focuses on interface and type alias conversions. Generic type parameters (like T in Partial<T>) in the declared types' own signature are not expanded. Generic utility types applied to concrete types (Array<string>, Record<string, number>) are supported."
+  - question: "Is my code sent to a server?"
+    answer: "No. The entire TypeScript parser and Zod code generator run in your browser. No source code leaves your machine."
+---
+
+<h2>How to Use</h2>
+<ol>
+  <li>Paste your TypeScript <code>interface</code> or <code>type</code> declarations into the left panel.</li>
+  <li>The tool validates and converts in real time (300 ms debounce after typing stops).</li>
+  <li>Click <strong>Generate Zod Schema</strong> to force a conversion.</li>
+  <li>Click <strong>Copy</strong> to copy the Zod output to your clipboard.</li>
+  <li>Paste the result into your project — the output already includes the <code>import</code> statement and <code>export type</code> inference lines.</li>
+</ol>
+
+<h2>Supported TypeScript Features</h2>
+<ul>
+  <li><strong>Basic types</strong>: <code>string</code>, <code>number</code>, <code>boolean</code>, <code>null</code>, <code>undefined</code>, <code>any</code>, <code>unknown</code>, <code>void</code>, <code>never</code>, <code>bigint</code>, <code>symbol</code></li>
+  <li><strong>Optional properties</strong>: <code>prop?: type</code> → <code>.optional()</code></li>
+  <li><strong>Union types</strong>: <code>A | B</code> → <code>z.union([A, B])</code></li>
+  <li><strong>String enums</strong>: <code>"a" | "b" | "c"</code> → <code>z.enum(["a", "b", "c"])</code></li>
+  <li><strong>Arrays</strong>: <code>T[]</code> / <code>Array&lt;T&gt;</code> → <code>z.array(T)</code></li>
+  <li><strong>Nested objects</strong>: inline object types → <code>z.object(&#123;&#125;)</code></li>
+  <li><strong>Cross-references</strong>: named types reference each other → Schema constants</li>
+  <li><strong>Readonly</strong>: <code>readonly</code> modifier is accepted and ignored (Zod schemas are immutable by default)</li>
+  <li><strong>Utility types</strong>: <code>Partial&lt;T&gt;</code>, <code>Record&lt;K, V&gt;</code>, <code>Promise&lt;T&gt;</code></li>
+  <li><strong>Intersection types</strong>: <code>A &amp; B</code> → <code>z.intersection(A, B)</code></li>
+  <li><strong>Tuples</strong>: <code>[A, B]</code> → <code>z.tuple([A, B])</code></li>
+  <li><strong>Literal types</strong>: <code>"value"</code>, <code>42</code>, <code>true</code> → <code>z.literal()</code></li>
+</ul>
+
+<h2>Example</h2>
+<p>Given this TypeScript input:</p>
+<pre><code>{`interface Address {
+  street: string;
+  city: string;
+  zipCode?: string;
+}
+
+export interface User {
+  id: number;
+  name: string;
+  role: "admin" | "user" | "guest";
+  age?: number;
+  isActive: boolean;
+  tags: string[];
+  address: Address;
+}
+
+export type Status = "active" | "inactive" | "pending";`}</code></pre>
+<p>The tool generates:</p>
+<pre><code>{`import { z } from "zod";
+
+export const AddressSchema = z.object({
+  street: z.string(),
+  city: z.string(),
+  zipCode: z.string().optional(),
+});
+export type Address = z.infer<typeof AddressSchema>;
+
+export const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  role: z.enum(["admin", "user", "guest"]),
+  age: z.number().optional(),
+  isActive: z.boolean(),
+  tags: z.array(z.string()),
+  address: AddressSchema,
+});
+export type User = z.infer<typeof UserSchema>;
+
+export const StatusSchema = z.enum(["active", "inactive", "pending"]);
+export type Status = z.infer<typeof StatusSchema>;`}</code></pre>
