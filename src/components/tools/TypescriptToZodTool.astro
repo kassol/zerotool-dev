@@ -78,11 +78,14 @@ const L = labels[lang];
           <button id="ttz-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
         </div>
       </div>
-      <textarea
-        id="ttz-input"
-        placeholder={`interface User {\n  name: string;\n  age?: number;\n}`}
-        spellcheck="false"
-      ></textarea>
+      <div class="ttz-input-wrap">
+        <pre class="ttz-input-hl" aria-hidden="true"><code id="ttz-input-hl-code" class="language-typescript"></code></pre>
+        <textarea
+          id="ttz-input"
+          placeholder={`interface User {\n  name: string;\n  age?: number;\n}`}
+          spellcheck="false"
+        ></textarea>
+      </div>
     </div>
 
     <div class="ttz-panel">
@@ -100,11 +103,13 @@ const L = labels[lang];
 
   <div id="ttz-status" class="ttz-status" aria-live="polite"></div>
 
-  <script is:inline>
+  <script>
+    import hljs from 'highlight.js/lib/core';
+    import typescript from 'highlight.js/lib/languages/typescript';
+    hljs.registerLanguage('typescript', typescript);
+
     (function () {
-      var wrap = document.currentScript
-        ? document.currentScript.closest('.ttz-wrap')
-        : document.querySelector('.ttz-wrap');
+      var wrap = document.querySelector('.ttz-wrap');
 
       var COPY = wrap ? wrap.dataset.copy : 'Copy';
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
@@ -114,8 +119,16 @@ const L = labels[lang];
       var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Parse error: ';
 
       var inputEl = document.getElementById('ttz-input');
+      var hlInputCodeEl = document.getElementById('ttz-input-hl-code');
       var outputCodeEl = document.getElementById('ttz-output-code');
       var statusEl = document.getElementById('ttz-status');
+
+      var _hlInputTimer = null;
+      function syncInputHL() {
+        hlInputCodeEl.textContent = inputEl.value + '\n';
+        hlInputCodeEl.removeAttribute('data-highlighted');
+        hljs.highlightElement(hlInputCodeEl);
+      }
 
       var EXAMPLE = [
         'interface Address {',
@@ -661,6 +674,9 @@ const L = labels[lang];
 
         inputEl.classList.remove('error');
         outputCodeEl.textContent = result.code;
+        outputCodeEl.removeAttribute('data-highlighted');
+        outputCodeEl.className = 'language-typescript';
+        hljs.highlightElement(outputCodeEl);
         var n = result.count;
         var msg = n === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', n);
         setStatus(msg, false);
@@ -673,6 +689,14 @@ const L = labels[lang];
       inputEl.addEventListener('input', function () {
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
+        clearTimeout(_hlInputTimer);
+        _hlInputTimer = setTimeout(syncInputHL, 80);
+      });
+
+      inputEl.addEventListener('scroll', function () {
+        var pre = hlInputCodeEl.parentElement;
+        pre.scrollTop = inputEl.scrollTop;
+        pre.scrollLeft = inputEl.scrollLeft;
       });
 
       document.getElementById('ttz-convert').addEventListener('click', convert);
@@ -681,12 +705,14 @@ const L = labels[lang];
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
+        syncInputHL();
         convert();
       });
 
       document.getElementById('ttz-clear').addEventListener('click', function () {
         inputEl.value = '';
         outputCodeEl.textContent = '';
+        hlInputCodeEl.textContent = '';
         inputEl.classList.remove('error');
         clearStatus();
       });
@@ -747,6 +773,52 @@ const L = labels[lang];
 
   .ttz-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
   .ttz-panel textarea.error { border-color: #c0392b; }
+
+  .ttz-input-wrap {
+    position: relative;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+  }
+
+  .ttz-input-wrap textarea {
+    position: relative;
+    z-index: 1;
+    color: transparent;
+    background: transparent;
+    caret-color: var(--color-text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .ttz-input-wrap textarea:focus { background: transparent; }
+
+  .ttz-input-hl {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    pointer-events: none;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: transparent;
+    z-index: 0;
+  }
+
+  .ttz-input-hl code {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    background: none;
+    padding: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 
   .ttz-output {
     min-height: 300px;
