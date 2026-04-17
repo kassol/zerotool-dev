@@ -1,0 +1,305 @@
+---
+title: "JSON 转 Java POJO 生成器：告别手写 Java 模型类"
+description: "粘贴 JSON 即可生成带 Jackson 注解的 Java POJO。自动处理嵌套对象、null 值和 snake_case 转换，支持 Lombok，适配 Spring Boot 项目。"
+pubDate: 2026-04-17
+lang: "zh"
+translationSlug: "json-to-java-pojo-guide"
+tags: ["java", "json转java", "pojo", "jackson", "spring boot", "developer-tools"]
+ogImage: /og/blog-json-to-java-pojo-guide-zh.png
+---
+
+调用接口拿到一段 JSON，下一步要写 Java 类。字段声明、getter/setter、嵌套对象、`@JsonProperty` 注解……一套写下来既繁琐又容易出错。用生成器把 JSON 粘进去，几秒钟得到完整的 POJO 类。
+
+## 手写 Java POJO 的痛点
+
+为 API 响应手写 Java 类，通常需要：
+
+- 为每个 JSON 字段声明正确类型的成员变量
+- 为每个字段写 getter 和 setter（或用 Lombok）
+- JSON 用 snake_case、Java 用 camelCase 时，手动加 `@JsonProperty` 映射
+- 每个嵌套对象单独定义一个类
+- 处理 null 字段，避免 NullPointerException
+- 保留无参构造函数，满足 Jackson/Gson 反序列化要求
+
+字段少还好说，碰到三层嵌套、多个数组、混合命名风格的响应，时间成本立刻上去。
+
+## 生成器的工作原理
+
+把 JSON 粘进去，生成器自动推断类型并输出带 Jackson 注解的 Java 类。以这段 JSON 为例：
+
+```json
+{
+  "order": {
+    "order_id": 10086,
+    "user_name": "张三",
+    "total_amount": 299.00,
+    "is_paid": true,
+    "items": [
+      { "sku": "PHONE-128G", "qty": 1, "price": 299.00 }
+    ],
+    "shipping_address": {
+      "province": "湖北",
+      "city": "武汉",
+      "detail": "光谷大道 88 号"
+    },
+    "paid_at": null
+  }
+}
+```
+
+生成结果：
+
+```java
+public class Item {
+    @JsonProperty("sku")
+    private String sku;
+
+    @JsonProperty("qty")
+    private Integer qty;
+
+    @JsonProperty("price")
+    private Double price;
+
+    // getters and setters
+}
+
+public class ShippingAddress {
+    @JsonProperty("province")
+    private String province;
+
+    @JsonProperty("city")
+    private String city;
+
+    @JsonProperty("detail")
+    private String detail;
+
+    // getters and setters
+}
+
+public class Order {
+    @JsonProperty("order_id")
+    private Integer orderId;
+
+    @JsonProperty("user_name")
+    private String userName;
+
+    @JsonProperty("total_amount")
+    private Double totalAmount;
+
+    @JsonProperty("is_paid")
+    private Boolean isPaid;
+
+    @JsonProperty("items")
+    private List<Item> items;
+
+    @JsonProperty("shipping_address")
+    private ShippingAddress shippingAddress;
+
+    @JsonProperty("paid_at")
+    private Object paidAt;
+
+    // getters and setters
+}
+
+public class Root {
+    @JsonProperty("order")
+    private Order order;
+
+    // getters and setters
+}
+```
+
+**[立即试用 ZeroTool JSON 转 Java POJO →](/tools/json-to-java-pojo)**
+
+所有操作在浏览器本地完成，JSON 数据不会发送到任何服务器，放心粘贴包含敏感信息的接口响应。
+
+## 类型推断规则
+
+| JSON 值类型 | Java 类型 |
+|-----------|-----------|
+| `"string"` | `String` |
+| `42` | `Integer` |
+| `3.14` | `Double` |
+| `true` / `false` | `Boolean` |
+| `null` | `Object` |
+| `[1, 2, 3]` | `List<Integer>` |
+| `[{…}, {…}]` | `List<ClassName>` |
+| `{}` | 命名类 |
+
+生成器统一使用包装类型（`Integer`、`Boolean`、`Double`）而非基本类型，这样字段可以正常持有 `null` 值。
+
+### snake_case 自动转 camelCase
+
+JSON 字段名 `order_id` 在 Java 中变成 `orderId`，并自动加上 `@JsonProperty("order_id")` 注解。Jackson 在反序列化时通过注解找到对应字段，无需额外配置。
+
+## 配合 Lombok 消除模板代码
+
+生成的类默认包含 getter 和 setter。引入 Lombok 后可以大幅简化：
+
+```java
+import lombok.Data;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Data
+public class Order {
+    @JsonProperty("order_id")
+    private Integer orderId;
+
+    @JsonProperty("user_name")
+    private String userName;
+
+    @JsonProperty("total_amount")
+    private Double totalAmount;
+
+    @JsonProperty("is_paid")
+    private Boolean isPaid;
+}
+```
+
+`@Data` 自动生成 `equals()`、`hashCode()`、`toString()`、全部 getter 和 setter。如果模型是只读的（如 API 响应），用 `@Value` 代替 `@Data` 生成不可变对象。
+
+## Spring Boot 集成
+
+### RestTemplate（同步）
+
+```java
+RestTemplate restTemplate = new RestTemplate();
+Root root = restTemplate.getForObject(
+    "https://api.example.com/orders/10086",
+    Root.class
+);
+String city = root.getOrder().getShippingAddress().getCity();
+```
+
+Spring Boot 默认集成 Jackson，直接使用生成的类作为目标类型即可。
+
+### WebClient（响应式）
+
+```java
+WebClient client = WebClient.create("https://api.example.com");
+Mono<Root> result = client.get()
+    .uri("/orders/10086")
+    .retrieve()
+    .bodyToMono(Root.class);
+```
+
+### ObjectMapper（手动解析）
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+Root root = mapper.readValue(jsonString, Root.class);
+```
+
+### MyBatis 场景
+
+MyBatis 不直接负责 JSON 反序列化，但如果数据库字段存的是 JSON 字符串，可以用 Jackson 在 TypeHandler 里转换：
+
+```java
+@MappedTypes(Order.class)
+public class JsonTypeHandler extends BaseTypeHandler<Order> {
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    @Override
+    public Order getNullableResult(ResultSet rs, String col) throws SQLException {
+        String json = rs.getString(col);
+        if (json == null) return null;
+        try {
+            return mapper.readValue(json, Order.class);
+        } catch (JsonProcessingException e) {
+            throw new SQLException("JSON parse error", e);
+        }
+    }
+    // ... 其他方法
+}
+```
+
+## 生成后需要手动调整的地方
+
+### 超大 ID 用 Long 而非 Integer
+
+`Integer` 最大值约 21 亿。订单号、雪花 ID、部分数据库主键可能超过这个范围，需要改成 `Long`：
+
+```java
+// 生成的
+private Integer orderId;
+
+// 正确
+private Long orderId;
+```
+
+### 空数组的元素类型
+
+`[]` 没有元素类型信息，生成器会输出 `List<Object>`。根据接口文档替换成正确的泛型类型：
+
+```java
+// 生成的
+private List<Object> items;
+
+// 修正后
+private List<Item> items;
+```
+
+### 日期时间字段
+
+JSON 里的时间戳通常是字符串（`"2026-04-17T10:00:00+08:00"`）或 Unix 时间戳（整数）。生成器输出 `String` 或 `Long`。如果需要直接反序列化为 `LocalDateTime`：
+
+```java
+// pom.xml 引入
+<dependency>
+    <groupId>com.fasterxml.jackson.datatype</groupId>
+    <artifactId>jackson-datatype-jsr310</artifactId>
+</dependency>
+```
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+mapper.registerModule(new JavaTimeModule());
+mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+```
+
+然后将字段类型改为：
+
+```java
+@JsonProperty("paid_at")
+@JsonDeserialize(using = LocalDateTimeDeserializer.class)
+private LocalDateTime paidAt;
+```
+
+### null 字段的实际类型
+
+样本 JSON 中值为 `null` 的字段，生成器无法推断类型，统一输出 `Object`。对照接口文档替换为实际类型：
+
+```java
+// 生成的（样本中为 null）
+private Object paidAt;
+
+// 修正后
+private LocalDateTime paidAt;
+```
+
+## Java 16+ Record 替代方案
+
+如果项目使用 Java 16 或更高版本，可以用 Record 替代 POJO：
+
+```java
+public record Order(
+    @JsonProperty("order_id") Integer orderId,
+    @JsonProperty("user_name") String userName,
+    @JsonProperty("total_amount") Double totalAmount,
+    @JsonProperty("is_paid") Boolean isPaid
+) {}
+```
+
+Record 自动生成 `equals()`、`hashCode()`、`toString()` 和访问器方法，且是不可变的。Jackson 2.12+ 支持 Record 的序列化和反序列化。对于只读的 API 响应模型，Record 比传统 POJO 更简洁。
+
+## 总结
+
+手写 Java POJO 是工具应该做的事，不是开发者的时间该花的地方。生成器处理嵌套类、类型推断、snake_case 转换和 Jackson 注解。生成后检查以下几点：
+
+- 超大 ID 字段改为 `Long`
+- `List<Object>` 替换为正确的泛型参数
+- `null` 字段根据文档补上实际类型
+- 日期字段按需添加 `@JsonDeserialize`
+- 引入 Lombok `@Data` 消除 getter/setter 模板
+
+**[立即生成 Java POJO →](/tools/json-to-java-pojo)**

@@ -1,0 +1,266 @@
+---
+title: "JSON에서 Java POJO 자동 생성: 모델 클래스 직접 작성 그만하기"
+description: "JSON을 붙여 넣으면 Jackson 어노테이션이 있는 Java POJO를 자동 생성. 중첩 객체·null 처리·snake_case 변환 지원. Lombok·Spring Boot 연동 패턴 포함."
+pubDate: 2026-04-17
+lang: "ko"
+translationSlug: "json-to-java-pojo-guide"
+tags: ["java", "json to java", "pojo", "jackson", "spring boot", "developer-tools"]
+ogImage: /og/blog-json-to-java-pojo-guide-ko.png
+---
+
+API에서 JSON 응답을 받았습니다. 이제 Java 클래스로 역직렬화해야 합니다. 필드 선언, getter/setter, 중첩 클래스, `@JsonProperty` 어노테이션을 모두 직접 작성하면 시간이 걸리고 실수하기 쉽습니다. JSON을 생성기에 붙여 넣으면 몇 초 만에 완성된 POJO 클래스를 얻을 수 있습니다.
+
+## Java POJO를 직접 작성할 때의 문제
+
+API 응답용 Java POJO를 손으로 작성하면:
+
+- 모든 JSON 키에 대해 올바른 타입의 필드를 선언해야 함
+- 각 필드에 getter와 setter를 작성해야 함 (Lombok 미사용 시)
+- snake_case JSON 키를 camelCase Java 필드에 매핑하는 `@JsonProperty`를 추가해야 함
+- 중첩된 객체마다 별도의 클래스를 정의해야 함
+- NullPointerException을 피하기 위해 null 가능 필드를 신중하게 처리해야 함
+- Jackson/Gson 역직렬화에 필요한 기본 생성자를 유지해야 함
+
+필드가 적은 단순한 객체라면 감당할 수 있지만, 3단계 중첩·배열·혼합 케이싱이 있는 응답이라면 상당한 시간이 소모됩니다.
+
+## JSON to Java POJO 생성기의 동작 방식
+
+JSON을 입력하면 올바른 타입과 Jackson 어노테이션이 있는 Java 클래스가 생성됩니다. 아래 JSON을 예로 들면:
+
+```json
+{
+  "user": {
+    "id": 42,
+    "user_name": "김철수",
+    "email": "chulsoo@example.kr",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "서울",
+      "district": "강남구"
+    },
+    "last_login": null
+  }
+}
+```
+
+생성되는 클래스:
+
+```java
+public class Address {
+    @JsonProperty("city")
+    private String city;
+
+    @JsonProperty("district")
+    private String district;
+
+    // getters and setters
+}
+
+public class User {
+    @JsonProperty("id")
+    private Integer id;
+
+    @JsonProperty("user_name")
+    private String userName;
+
+    @JsonProperty("email")
+    private String email;
+
+    @JsonProperty("is_active")
+    private Boolean isActive;
+
+    @JsonProperty("roles")
+    private List<String> roles;
+
+    @JsonProperty("address")
+    private Address address;
+
+    @JsonProperty("last_login")
+    private Object lastLogin;
+
+    // getters and setters
+}
+
+public class Root {
+    @JsonProperty("user")
+    private User user;
+
+    // getters and setters
+}
+```
+
+**[ZeroTool JSON to Java POJO 생성기 사용하기 →](/tools/json-to-java-pojo)**
+
+JSON을 붙여 넣으면 즉시 Java 클래스가 생성됩니다. 설치 불필요 — 모든 동작이 브라우저 내에서 이루어지므로 민감한 API 응답이 서버로 전송되지 않습니다.
+
+## 타입 추론 규칙
+
+| JSON 값 | Java 타입 |
+|--------|----------|
+| `"string"` | `String` |
+| `42` | `Integer` |
+| `3.14` | `Double` |
+| `true` / `false` | `Boolean` |
+| `null` | `Object` |
+| `[1, 2, 3]` | `List<Integer>` |
+| `[{…}, {…}]` | `List<ClassName>` |
+| `{}` | 명명된 클래스 |
+
+기본 타입(`int`, `boolean`) 대신 박싱 타입(`Integer`, `Boolean`)을 사용해 필드가 `null`을 정상적으로 보유할 수 있게 합니다.
+
+### snake_case에서 camelCase로 자동 변환
+
+`user_name` JSON 키는 Java 필드 `userName`으로 변환되고, `@JsonProperty("user_name")`이 자동으로 추가됩니다. Jackson은 역직렬화 시 이 어노테이션으로 JSON 키와 Java 필드를 대응시킵니다.
+
+## Lombok으로 보일러플레이트 제거
+
+생성된 클래스에는 기본적으로 getter/setter가 포함됩니다. Lombok을 사용하면 크게 줄일 수 있습니다:
+
+```java
+import lombok.Data;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Data
+public class User {
+    @JsonProperty("id")
+    private Integer id;
+
+    @JsonProperty("user_name")
+    private String userName;
+
+    @JsonProperty("email")
+    private String email;
+
+    @JsonProperty("is_active")
+    private Boolean isActive;
+}
+```
+
+`@Data`는 `equals()`, `hashCode()`, `toString()`, 모든 getter/setter를 자동 생성합니다. 읽기 전용 모델에는 `@Value`를 사용해 불변 객체를 만드세요.
+
+## 통합 패턴
+
+### Spring Boot + Jackson (RestTemplate)
+
+```java
+RestTemplate restTemplate = new RestTemplate();
+Root root = restTemplate.getForObject(
+    "https://api.example.com/users/1",
+    Root.class
+);
+String city = root.getUser().getAddress().getCity();
+```
+
+Spring Boot는 기본적으로 Jackson을 사용합니다. 생성된 클래스를 타입 파라미터로 직접 지정하면 됩니다.
+
+### Spring Boot + WebClient (리액티브)
+
+```java
+WebClient client = WebClient.create("https://api.example.com");
+Mono<Root> result = client.get()
+    .uri("/users/1")
+    .retrieve()
+    .bodyToMono(Root.class);
+```
+
+### ObjectMapper (수동 파싱)
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+Root root = mapper.readValue(jsonString, Root.class);
+```
+
+### Gson
+
+Jackson 대신 Gson을 사용하는 경우:
+
+```java
+Gson gson = new GsonBuilder()
+    .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+    .create();
+Root root = gson.fromJson(jsonString, Root.class);
+```
+
+`LOWER_CASE_WITH_UNDERSCORES` 정책을 설정하면 snake_case JSON 키가 camelCase Java 필드에 자동으로 매핑됩니다.
+
+## 생성 후 수동으로 확인할 사항
+
+### 큰 ID 값은 Long으로 변경
+
+`Integer.MAX_VALUE`는 약 21억입니다. 데이터베이스 시퀀스나 Snowflake ID는 이를 초과할 수 있습니다:
+
+```java
+// 생성된 코드
+private Integer id;
+
+// 올바른 타입
+private Long id;
+```
+
+### 빈 배열의 요소 타입
+
+`[]`는 요소 타입 정보가 없어 `List<Object>`가 생성됩니다. API 문서를 확인하고 올바른 제네릭 타입으로 변경하세요:
+
+```java
+// 생성된 코드
+private List<Object> items;
+
+// 수정 후
+private List<OrderItem> items;
+```
+
+### 날짜·시간 필드
+
+JSON에는 네이티브 날짜 타입이 없습니다. 타임스탬프는 문자열(`"2026-04-17T10:00:00+09:00"`) 또는 Unix 에폭 정수로 전달됩니다. `LocalDateTime`으로 직접 역직렬화하려면:
+
+```java
+// pom.xml
+<dependency>
+    <groupId>com.fasterxml.jackson.datatype</groupId>
+    <artifactId>jackson-datatype-jsr310</artifactId>
+</dependency>
+```
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+mapper.registerModule(new JavaTimeModule());
+mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+```
+
+```java
+@JsonProperty("last_login")
+@JsonDeserialize(using = LocalDateTimeDeserializer.class)
+private LocalDateTime lastLogin;
+```
+
+### null 필드의 실제 타입
+
+샘플 JSON에서 `null`인 필드는 타입 정보가 없어 `Object`로 생성됩니다. API 문서를 참조해 실제 타입으로 교체하세요.
+
+## Java 16+ Record 대안
+
+Java 16 이상을 사용하는 경우, POJO 대신 Record를 사용할 수 있습니다:
+
+```java
+public record User(
+    @JsonProperty("id") Integer id,
+    @JsonProperty("user_name") String userName,
+    @JsonProperty("email") String email,
+    @JsonProperty("is_active") Boolean isActive
+) {}
+```
+
+Record는 불변이며 `equals()`, `hashCode()`, `toString()`, 접근자 메서드를 자동 생성합니다. Jackson 2.12 이상에서 Record 직렬화/역직렬화를 지원합니다. API 응답처럼 읽기만 하는 모델에서는 POJO보다 Record가 더 간결합니다.
+
+## 요약
+
+Java POJO를 손으로 작성하는 것은 도구에 맡겨야 할 반복 작업입니다. 생성기는 중첩 클래스, 타입 추론, snake_case 변환, Jackson 어노테이션을 모두 처리합니다. 생성 후 확인할 사항:
+
+- 큰 ID 필드는 `Long`으로 변경
+- `List<Object>`는 올바른 제네릭 타입으로 교체
+- `null` 필드는 API 문서 기준 실제 타입으로 수정
+- 날짜 필드에 `@JsonDeserialize` 추가
+- Lombok `@Data`로 getter/setter 제거
+
+**[JSON에서 Java POJO 즉시 생성하기 →](/tools/json-to-java-pojo)**

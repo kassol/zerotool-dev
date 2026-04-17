@@ -1,0 +1,265 @@
+---
+title: "JSONからJava POJOを自動生成：手書き不要のモデルクラス"
+description: "JSONを貼り付けるだけでJacksonアノテーション付きJava POJOを自動生成。ネスト・null・snake_case変換に対応。Lombok・Spring Boot連携パターンも解説。"
+pubDate: 2026-04-17
+lang: "ja"
+translationSlug: "json-to-java-pojo-guide"
+tags: ["java", "json to java", "pojo", "jackson", "spring boot", "developer-tools"]
+ogImage: /og/blog-json-to-java-pojo-guide-ja.png
+---
+
+APIからJSONレスポンスを受け取り、Javaクラスにデシリアライズする必要があります。フィールド宣言、getter/setter、ネストクラス、`@JsonProperty`アノテーション——手書きは時間がかかり、ミスも起きやすい。JSONを貼り付けるだけで、数秒でPOJOクラスが生成できます。
+
+## Java POJOを手書きする手間
+
+APIレスポンス用のJava POJOを手書きするには：
+
+- すべてのJSONキーに対して正しい型のフィールドを宣言する
+- フィールドごとにgetterとsetterを書く（Lombokを使わない場合）
+- snake_caseのJSONキーをcamelCaseのJavaフィールドにマッピングする`@JsonProperty`を追加する
+- ネストされたオブジェクトごとに別のクラスを定義する
+- NullPointerExceptionを避けるためnullableフィールドを慎重に処理する
+- JacksonやGsonのデシリアライズに必要な引数なしコンストラクタを保持する
+
+フラットなオブジェクトならまだ良いですが、3段ネスト・配列・混在したケーシングがあるレスポンスでは、かなりの工数になります。
+
+## JSON to Java POJOジェネレーターの動作
+
+JSONを入力すると、正しい型とJacksonアノテーション付きのJavaクラスが生成されます。次のJSONを例にすると：
+
+```json
+{
+  "user": {
+    "id": 42,
+    "user_name": "田中太郎",
+    "email": "tanaka@example.jp",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "prefecture": "東京都",
+      "city": "渋谷区"
+    },
+    "last_login": null
+  }
+}
+```
+
+生成されるクラス：
+
+```java
+public class Address {
+    @JsonProperty("prefecture")
+    private String prefecture;
+
+    @JsonProperty("city")
+    private String city;
+
+    // getters and setters
+}
+
+public class User {
+    @JsonProperty("id")
+    private Integer id;
+
+    @JsonProperty("user_name")
+    private String userName;
+
+    @JsonProperty("email")
+    private String email;
+
+    @JsonProperty("is_active")
+    private Boolean isActive;
+
+    @JsonProperty("roles")
+    private List<String> roles;
+
+    @JsonProperty("address")
+    private Address address;
+
+    @JsonProperty("last_login")
+    private Object lastLogin;
+
+    // getters and setters
+}
+
+public class Root {
+    @JsonProperty("user")
+    private User user;
+
+    // getters and setters
+}
+```
+
+**[ZeroTool JSON to Java POJOジェネレーターを試す →](/tools/json-to-java-pojo)**
+
+JSONを貼り付けると即座にJavaクラスが生成されます。インストール不要、ブラウザ内ですべて動作するため、機密データもサーバーに送信されません。
+
+## 型推論のルール
+
+| JSONの値 | Javaの型 |
+|---------|---------|
+| `"string"` | `String` |
+| `42` | `Integer` |
+| `3.14` | `Double` |
+| `true` / `false` | `Boolean` |
+| `null` | `Object` |
+| `[1, 2, 3]` | `List<Integer>` |
+| `[{…}, {…}]` | `List<ClassName>` |
+| `{}` | 名前付きクラス |
+
+プリミティブ型（`int`、`boolean`）ではなくボックス型（`Integer`、`Boolean`）を使うことで、フィールドが`null`を保持できます。
+
+### snake_caseからcamelCaseへの変換
+
+`user_name`というJSONキーはJavaフィールド`userName`に変換され、`@JsonProperty("user_name")`が自動的に追加されます。Jacksonはこのアノテーションを使ってデシリアライズ時にフィールドを対応付けます。
+
+## Lombokでボイラープレートを削除
+
+生成されたクラスにはデフォルトでgetter/setterが含まれます。Lombokを使えば大幅に簡略化できます：
+
+```java
+import lombok.Data;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Data
+public class User {
+    @JsonProperty("id")
+    private Integer id;
+
+    @JsonProperty("user_name")
+    private String userName;
+
+    @JsonProperty("email")
+    private String email;
+
+    @JsonProperty("is_active")
+    private Boolean isActive;
+}
+```
+
+`@Data`は`equals()`、`hashCode()`、`toString()`、すべてのgetter/setterを自動生成します。読み取り専用のモデルには`@Value`を使うとフィールドがfinalになります。
+
+## 統合パターン
+
+### Spring Boot + Jackson（RestTemplate）
+
+```java
+RestTemplate restTemplate = new RestTemplate();
+Root root = restTemplate.getForObject(
+    "https://api.example.com/users/1",
+    Root.class
+);
+String city = root.getUser().getAddress().getCity();
+```
+
+Spring BootはデフォルトでJacksonを使用します。生成したクラスをそのまま型パラメータとして指定できます。
+
+### Spring Boot + WebClient（リアクティブ）
+
+```java
+WebClient client = WebClient.create("https://api.example.com");
+Mono<Root> result = client.get()
+    .uri("/users/1")
+    .retrieve()
+    .bodyToMono(Root.class);
+```
+
+### ObjectMapper（手動）
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+Root root = mapper.readValue(jsonString, Root.class);
+```
+
+### Gson
+
+GsonをJacksonの代わりに使う場合：
+
+```java
+Gson gson = new GsonBuilder()
+    .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+    .create();
+Root root = gson.fromJson(jsonString, Root.class);
+```
+
+`LOWER_CASE_WITH_UNDERSCORES`を指定することで、snake_caseのJSONキーをcamelCaseのJavaフィールドに自動マッピングします。
+
+## 生成後に確認すべきポイント
+
+### 大きなIDはLongに変更
+
+`Integer.MAX_VALUE`は約21億です。データベースのシーケンスやTwitter/雪花IDはこれを超える場合があります：
+
+```java
+// 生成されたもの
+private Integer id;
+
+// 正しい型
+private Long id;
+```
+
+### 空の配列の要素型
+
+`[]`は要素の型情報を持たないため、`List<Object>`が生成されます。APIドキュメントを確認して正しい型に変更してください：
+
+```java
+// 生成されたもの
+private List<Object> items;
+
+// 修正後
+private List<OrderItem> items;
+```
+
+### 日付・時刻フィールド
+
+JSONにはネイティブの日付型がありません。タイムスタンプは文字列（`"2026-04-17T10:00:00+09:00"`）または数値（Unixエポック）で渡されます。`LocalDateTime`に直接デシリアライズする場合：
+
+```java
+// pom.xmlに追加
+<dependency>
+    <groupId>com.fasterxml.jackson.datatype</groupId>
+    <artifactId>jackson-datatype-jsr310</artifactId>
+</dependency>
+```
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+mapper.registerModule(new JavaTimeModule());
+```
+
+```java
+@JsonProperty("last_login")
+@JsonDeserialize(using = LocalDateTimeDeserializer.class)
+private LocalDateTime lastLogin;
+```
+
+### nullフィールドの実際の型
+
+サンプルJSONで`null`のフィールドは、型情報がないため`Object`で生成されます。APIドキュメントを参照して実際の型に書き換えてください。
+
+## Java 16+ Recordという選択肢
+
+Java 16以降を使用している場合、POJOの代わりにRecordを使えます：
+
+```java
+public record User(
+    @JsonProperty("id") Integer id,
+    @JsonProperty("user_name") String userName,
+    @JsonProperty("email") String email,
+    @JsonProperty("is_active") Boolean isActive
+) {}
+```
+
+Recordは不変でコンパクト、かつ`equals()`・`hashCode()`・`toString()`・アクセサメソッドを自動生成します。Jackson 2.12以降でRecordのシリアライズ/デシリアライズに対応しています。
+
+## まとめ
+
+Java POJOを手書きするのは、ツールに任せるべき繰り返し作業です。ジェネレーターはネストクラス、型推論、snake_case変換、Jacksonアノテーションをすべて処理します。生成後に確認するポイント：
+
+- 大きなIDフィールドを`Long`に変更
+- `List<Object>`を正しいジェネリクス型に変更
+- `null`フィールドを実際の型に書き換え
+- 日付フィールドに`@JsonDeserialize`を追加
+- Lombokの`@Data`でgetter/setterを削除
+
+**[JSONからJava POJOを即座に生成する →](/tools/json-to-java-pojo)**

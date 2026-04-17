@@ -1,0 +1,288 @@
+---
+title: "JSON to Java POJO Generator: Auto-Generate Java Classes from JSON"
+description: "Paste JSON and instantly get Java POJOs with Jackson or Gson annotations. Stop writing boilerplate — generate nested classes, handle nulls, and add Lombok support in seconds."
+pubDate: 2026-04-17
+lang: "en"
+translationSlug: "json-to-java-pojo-guide-zh"
+tags: ["java", "json to java", "pojo", "jackson", "spring boot", "developer-tools"]
+ogImage: /og/blog-json-to-java-pojo-guide.png
+---
+
+You got a JSON response from an API. You need a Java class to deserialize it. Writing the class by hand means declaring every field, adding getters and setters, handling nested objects, and getting all the types right. Paste the JSON into a generator and get the class in seconds.
+
+## The Problem with Hand-Writing Java POJOs
+
+A Java POJO (Plain Old Java Object) for an API response needs:
+
+- A field declaration for every JSON key with the correct type
+- Getters and setters for each field (unless using Lombok)
+- `@JsonProperty` annotations when JSON keys use snake_case and Java uses camelCase
+- Separate class definitions for every nested object
+- Careful handling of nullable fields to avoid NullPointerExceptions
+- A no-arg constructor for most JSON libraries
+
+For a flat object with five fields, this is tedious but fast. For a response with three levels of nesting, arrays of objects, and mixed casing, it takes real time and is easy to get wrong.
+
+## What the JSON to Java POJO Generator Does
+
+The generator reads your JSON and produces Java classes with correct field types and Jackson annotations. Given this JSON:
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": {
+      "city": "San Francisco",
+      "country": "US"
+    },
+    "last_login": null
+  }
+}
+```
+
+It generates:
+
+```java
+public class Address {
+    @JsonProperty("city")
+    private String city;
+
+    @JsonProperty("country")
+    private String country;
+
+    // getters and setters
+}
+
+public class User {
+    @JsonProperty("id")
+    private Integer id;
+
+    @JsonProperty("name")
+    private String name;
+
+    @JsonProperty("email")
+    private String email;
+
+    @JsonProperty("is_active")
+    private Boolean isActive;
+
+    @JsonProperty("roles")
+    private List<String> roles;
+
+    @JsonProperty("address")
+    private Address address;
+
+    @JsonProperty("last_login")
+    private String lastLogin;
+
+    // getters and setters
+}
+
+public class Root {
+    @JsonProperty("user")
+    private User user;
+
+    // getters and setters
+}
+```
+
+**[Try the ZeroTool JSON to Java POJO Generator →](/tools/json-to-java-pojo)**
+
+Paste your JSON, get Java classes instantly. No install required — everything runs in your browser, so sensitive API responses never leave your machine.
+
+## Type Inference Rules
+
+The generator maps JSON value types to Java types:
+
+| JSON value | Java type |
+|-----------|-----------|
+| `"string"` | `String` |
+| `42` | `Integer` |
+| `3.14` | `Double` |
+| `true` / `false` | `Boolean` |
+| `null` | `Object` (or `String` by field name heuristic) |
+| `[1, 2, 3]` | `List<Integer>` |
+| `[{…}, {…}]` | `List<ClassName>` |
+| `{}` | Named class |
+
+The generator uses boxed types (`Integer`, `Boolean`, `Double`) rather than primitives (`int`, `boolean`, `double`) so that fields can hold `null` without special handling.
+
+### snake_case to camelCase
+
+When JSON keys use snake_case (`first_name`, `created_at`), the generator creates a camelCase Java field name and adds `@JsonProperty` to map the original JSON key:
+
+```java
+@JsonProperty("first_name")
+private String firstName;
+
+@JsonProperty("created_at")
+private String createdAt;
+```
+
+Jackson uses `@JsonProperty` to match the JSON key to the Java field during deserialization.
+
+## Using Lombok to Remove Boilerplate
+
+The generated classes include getters and setters by default. If you use Lombok, you can replace all of that with annotations:
+
+```java
+import lombok.Data;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Data
+public class User {
+    @JsonProperty("id")
+    private Integer id;
+
+    @JsonProperty("name")
+    private String name;
+
+    @JsonProperty("is_active")
+    private Boolean isActive;
+}
+```
+
+`@Data` generates `equals()`, `hashCode()`, `toString()`, all getters, and all setters. For immutable models, use `@Value` instead — it makes all fields final and generates only getters.
+
+## Integration Patterns
+
+### Spring Boot + Jackson (RestTemplate)
+
+```java
+RestTemplate restTemplate = new RestTemplate();
+Root root = restTemplate.getForObject(
+    "https://api.example.com/users/1",
+    Root.class
+);
+String name = root.getUser().getName();
+```
+
+Jackson is Spring Boot's default JSON library. No extra configuration needed — just use the generated class as the target type.
+
+### Spring Boot + WebClient (reactive)
+
+```java
+WebClient client = WebClient.create("https://api.example.com");
+Mono<Root> result = client.get()
+    .uri("/users/1")
+    .retrieve()
+    .bodyToMono(Root.class);
+```
+
+### Spring Boot + ObjectMapper (manual)
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+Root root = mapper.readValue(jsonString, Root.class);
+```
+
+### Gson
+
+If you use Gson instead of Jackson:
+
+```java
+implementation 'com.google.code.gson:gson:2.10.1'
+```
+
+```java
+Gson gson = new Gson();
+Root root = gson.fromJson(jsonString, Root.class);
+```
+
+Gson does not require annotations for camelCase fields — it handles snake_case automatically if you configure a `FieldNamingPolicy`:
+
+```java
+Gson gson = new GsonBuilder()
+    .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+    .create();
+```
+
+## Edge Cases to Handle After Generation
+
+### Large IDs Need Long, Not Integer
+
+Snowflake IDs, database sequences over 2 billion, and some API identifiers exceed `Integer.MAX_VALUE` (2,147,483,647). Change the field type after generation:
+
+```java
+// Generated
+private Integer id;
+
+// Correct for large IDs
+private Long id;
+```
+
+### Empty Arrays
+
+`[]` in JSON provides no element type. The generator produces `List<Object>`. Check the API documentation and replace `Object` with the actual element type:
+
+```java
+// Generated
+private List<Object> items;
+
+// Corrected
+private List<OrderItem> items;
+```
+
+### Date and Timestamp Fields
+
+JSON has no native date type. Timestamps come as strings (`"2026-04-17T10:00:00Z"`) or Unix epoch integers. The generator types these as `String` or `Long`. To deserialize directly to `LocalDateTime` with Jackson:
+
+```java
+@JsonProperty("created_at")
+@JsonDeserialize(using = LocalDateTimeDeserializer.class)
+@JsonSerialize(using = LocalDateTimeSerializer.class)
+private LocalDateTime createdAt;
+```
+
+Or register a `JavaTimeModule`:
+
+```java
+ObjectMapper mapper = new ObjectMapper();
+mapper.registerModule(new JavaTimeModule());
+```
+
+### Null Handling
+
+The generator marks `null` fields as `Object` because the sample JSON provides no type information. Once you know the actual type from API documentation, update the field:
+
+```java
+// Generated (null in sample JSON)
+private Object lastLogin;
+
+// Corrected
+private String lastLogin; // or LocalDateTime, Long, etc.
+```
+
+## POJO vs Record (Java 16+)
+
+Java records are an alternative for immutable data models:
+
+```java
+public record User(
+    @JsonProperty("id") Integer id,
+    @JsonProperty("name") String name,
+    @JsonProperty("email") String email
+) {}
+```
+
+Records are immutable and automatically generate `equals()`, `hashCode()`, `toString()`, and accessors. Jackson supports records with `jackson-databind` 2.12+. For API response models where you only need to read data, records are a cleaner option than POJOs with getters and setters.
+
+## Privacy
+
+Many API responses contain sensitive data — tokens, PII, internal IDs. The ZeroTool JSON to Java POJO generator runs entirely in your browser. No JSON is sent to any server. You can verify this by checking the browser network tab — no requests are made when you click Generate.
+
+## Summary
+
+Hand-writing Java POJOs from JSON is repetitive work that belongs to a tool. The generator handles nested classes, type inference, snake_case conversion, and Jackson annotations. After generating:
+
+- Replace `Integer` with `Long` for fields that may exceed 2 billion
+- Replace `List<Object>` with the correct element type
+- Replace `Object` on null fields with the real type from API docs
+- Add `@JsonDeserialize` for date fields if you need native Java date types
+- Add `@Data` or `@Value` from Lombok to eliminate getters and setters
+
+**[Generate Java POJOs from JSON instantly →](/tools/json-to-java-pojo)**
