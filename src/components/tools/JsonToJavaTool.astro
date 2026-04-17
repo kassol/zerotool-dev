@@ -1,0 +1,623 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    rootName: 'Root class name',
+    annotation: 'Annotation',
+    jsonInput: 'JSON Input',
+    javaOutput: 'Java Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    generate: 'Generate Java',
+    msgInvalidJson: 'Invalid JSON: ',
+    msgGenerated: 'Generated.',
+    msgGenOne: 'Generated 1 class.',
+    msgGenMany: 'Generated {n} classes.',
+    annNone: 'None',
+    annJackson: 'Jackson',
+    annGson: 'Gson',
+    annLombok: 'Lombok (@Data)',
+  },
+  zh: {
+    rootName: '根类名称',
+    annotation: '注解',
+    jsonInput: 'JSON 输入',
+    javaOutput: 'Java 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    generate: '生成 Java',
+    msgInvalidJson: 'JSON 格式错误：',
+    msgGenerated: '已生成。',
+    msgGenOne: '已生成 1 个类。',
+    msgGenMany: '已生成 {n} 个类。',
+    annNone: '无注解',
+    annJackson: 'Jackson',
+    annGson: 'Gson',
+    annLombok: 'Lombok (@Data)',
+  },
+  ja: {
+    rootName: 'ルートクラス名',
+    annotation: 'アノテーション',
+    jsonInput: 'JSON 入力',
+    javaOutput: 'Java 出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    generate: 'Java を生成',
+    msgInvalidJson: '無効なJSON：',
+    msgGenerated: '生成しました。',
+    msgGenOne: '1 個のクラスを生成しました。',
+    msgGenMany: '{n} 個のクラスを生成しました。',
+    annNone: 'なし',
+    annJackson: 'Jackson',
+    annGson: 'Gson',
+    annLombok: 'Lombok (@Data)',
+  },
+  ko: {
+    rootName: '루트 클래스 이름',
+    annotation: '어노테이션',
+    jsonInput: 'JSON 입력',
+    javaOutput: 'Java 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    generate: 'Java 생성',
+    msgInvalidJson: '잘못된 JSON: ',
+    msgGenerated: '생성 완료.',
+    msgGenOne: '클래스 1개를 생성했습니다.',
+    msgGenMany: '클래스 {n}개를 생성했습니다.',
+    annNone: '없음',
+    annJackson: 'Jackson',
+    annGson: 'Gson',
+    annLombok: 'Lombok (@Data)',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="jjp-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-generated={L.msgGenerated}
+  data-msg-gen-one={L.msgGenOne}
+  data-msg-gen-many={L.msgGenMany}
+>
+  <div class="jjp-config">
+    <div class="jjp-config-row">
+      <label for="jjp-root-name">{L.rootName}</label>
+      <input id="jjp-root-name" type="text" value="RootObject" spellcheck="false" />
+    </div>
+    <div class="jjp-config-row">
+      <span class="jjp-label">{L.annotation}</span>
+      <div class="jjp-tabs" id="jjp-ann-tabs">
+        <button type="button" class="jjp-tab active" data-ann="none">{L.annNone}</button>
+        <button type="button" class="jjp-tab" data-ann="jackson">{L.annJackson}</button>
+        <button type="button" class="jjp-tab" data-ann="gson">{L.annGson}</button>
+        <button type="button" class="jjp-tab" data-ann="lombok">{L.annLombok}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="jjp-panels">
+    <div class="jjp-panel">
+      <div class="jjp-panel-header">
+        <span>{L.jsonInput}</span>
+        <div class="jjp-panel-actions">
+          <button id="jjp-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="jjp-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea
+        id="jjp-input"
+        placeholder='{"name": "Alice", "age": 30}'
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="jjp-panel">
+      <div class="jjp-panel-header">
+        <span>{L.javaOutput}</span>
+        <button id="jjp-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+      </div>
+      <pre id="jjp-output" class="jjp-output"><code id="jjp-output-code"></code></pre>
+    </div>
+  </div>
+
+  <div class="jjp-actions">
+    <button id="jjp-convert" class="btn-primary" type="button">{L.generate}</button>
+  </div>
+
+  <div id="jjp-status" class="jjp-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.jjp-wrap')
+        : document.querySelector('.jjp-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
+      var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 class.';
+      var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} classes.';
+
+      var inputEl = document.getElementById('jjp-input');
+      var outputCodeEl = document.getElementById('jjp-output-code');
+      var statusEl = document.getElementById('jjp-status');
+      var rootNameEl = document.getElementById('jjp-root-name');
+
+      var currentAnn = 'none';
+
+      var EXAMPLE = JSON.stringify({
+        id: 1,
+        name: "Alice",
+        is_active: true,
+        score: 9.5,
+        tags: ["java", "json"],
+        address: {
+          city: "London",
+          zip_code: "EC1A 1BB"
+        },
+        friends: [
+          { id: 2, name: "Bob" },
+          { id: 3, name: "Carol" }
+        ],
+        metadata: null
+      }, null, 2);
+
+      var tabs = wrap ? wrap.querySelectorAll('.jjp-tab') : [];
+      for (var ti = 0; ti < tabs.length; ti++) {
+        (function (tab) {
+          tab.addEventListener('click', function () {
+            for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
+            tab.classList.add('active');
+            currentAnn = tab.dataset.ann;
+            convert();
+          });
+        })(tabs[ti]);
+      }
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jjp-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jjp-status';
+      }
+
+      function toPascalCase(str) {
+        return str
+          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+      }
+
+      function toCamelCase(str) {
+        var pascal = toPascalCase(str);
+        return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+      }
+
+      function capitalize(str) {
+        return str.charAt(0).toUpperCase() + str.slice(1);
+      }
+
+      function inferJavaType(value, key, classes) {
+        if (value === null) return 'Object';
+        if (typeof value === 'boolean') return 'boolean';
+        if (typeof value === 'number') {
+          return Number.isInteger(value) ? 'int' : 'double';
+        }
+        if (typeof value === 'string') return 'String';
+
+        if (Array.isArray(value)) {
+          if (value.length === 0) return 'List<Object>';
+          var objectItems = [];
+          var primitiveTypes = [];
+          for (var i = 0; i < value.length; i++) {
+            var item = value[i];
+            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+              objectItems.push(item);
+            } else {
+              var t = inferJavaType(item, key + 'Item', classes);
+              if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
+            }
+          }
+          if (objectItems.length > 0) {
+            var itemClassName = toPascalCase(key) + 'Item';
+            mergeObjectsToClass(objectItems, itemClassName, classes);
+            if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
+          }
+          var elType = primitiveTypes.length === 1 ? primitiveTypes[0] : 'Object';
+          return 'List<' + elType + '>';
+        }
+
+        if (typeof value === 'object') {
+          var className = toPascalCase(key);
+          buildClass(value, className, classes);
+          return className;
+        }
+
+        return 'Object';
+      }
+
+      function buildClass(obj, name, classes) {
+        if (classes[name] !== undefined) return;
+        classes[name] = null;
+
+        var fields = [];
+        var keys = Object.keys(obj);
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var v = obj[k];
+          var type = inferJavaType(v, k, classes);
+          var fieldName = toCamelCase(k);
+          fields.push({ key: k, fieldName: fieldName, type: type });
+        }
+        classes[name] = fields;
+      }
+
+      function mergeObjectsToClass(objects, name, classes) {
+        if (classes[name] !== undefined) return;
+        classes[name] = null;
+
+        var allKeys = {};
+        for (var i = 0; i < objects.length; i++) {
+          var ks = Object.keys(objects[i]);
+          for (var j = 0; j < ks.length; j++) {
+            if (!allKeys[ks[j]]) allKeys[ks[j]] = 0;
+            allKeys[ks[j]]++;
+          }
+        }
+
+        var fields = [];
+        var keyList = Object.keys(allKeys);
+        for (var ki = 0; ki < keyList.length; ki++) {
+          var k = keyList[ki];
+          var types = [];
+          for (var oi = 0; oi < objects.length; oi++) {
+            if (objects[oi].hasOwnProperty(k)) {
+              var t = inferJavaType(objects[oi][k], k, classes);
+              if (types.indexOf(t) === -1) types.push(t);
+            }
+          }
+          var type = types.length === 1 ? types[0] : 'Object';
+          var fieldName = toCamelCase(k);
+          fields.push({ key: k, fieldName: fieldName, type: type });
+        }
+        classes[name] = fields;
+      }
+
+      function hasListType(classes) {
+        var names = Object.keys(classes);
+        for (var i = 0; i < names.length; i++) {
+          var fields = classes[names[i]];
+          if (!fields) continue;
+          for (var j = 0; j < fields.length; j++) {
+            if (fields[j].type && fields[j].type.indexOf('List<') === 0) return true;
+          }
+        }
+        return false;
+      }
+
+      function renderGetterSetter(field) {
+        var f = field.fieldName;
+        var t = field.type;
+        var cap = capitalize(f);
+        var getterName = (t === 'boolean') ? 'is' + cap : 'get' + cap;
+        return (
+          '    public ' + t + ' ' + getterName + '() {\n' +
+          '        return ' + f + ';\n' +
+          '    }\n' +
+          '\n' +
+          '    public void set' + cap + '(' + t + ' ' + f + ') {\n' +
+          '        this.' + f + ' = ' + f + ';\n' +
+          '    }'
+        );
+      }
+
+      function renderClass(name, fields, mode) {
+        if (!fields) return '';
+        var lines = [];
+
+        if (mode === 'lombok') lines.push('@Data');
+        lines.push('public class ' + name + ' {');
+
+        for (var i = 0; i < fields.length; i++) {
+          var f = fields[i];
+          if (mode === 'jackson' && f.fieldName !== f.key) {
+            lines.push('    @JsonProperty("' + f.key + '")');
+          } else if (mode === 'gson' && f.fieldName !== f.key) {
+            lines.push('    @SerializedName("' + f.key + '")');
+          }
+          lines.push('    private ' + f.type + ' ' + f.fieldName + ';');
+        }
+
+        if (mode !== 'lombok' && fields.length > 0) {
+          lines.push('');
+          for (var i = 0; i < fields.length; i++) {
+            lines.push(renderGetterSetter(fields[i]));
+            if (i < fields.length - 1) lines.push('');
+          }
+        }
+
+        lines.push('}');
+        return lines.join('\n');
+      }
+
+      function renderClasses(classes, mode) {
+        var names = Object.keys(classes);
+        var importLines = [];
+
+        if (hasListType(classes)) importLines.push('import java.util.List;');
+
+        if (mode === 'jackson') {
+          var need = false;
+          outer: for (var i = 0; i < names.length; i++) {
+            var flds = classes[names[i]];
+            if (!flds) continue;
+            for (var j = 0; j < flds.length; j++) {
+              if (flds[j].fieldName !== flds[j].key) { need = true; break outer; }
+            }
+          }
+          if (need) importLines.push('import com.fasterxml.jackson.annotation.JsonProperty;');
+        } else if (mode === 'gson') {
+          var need = false;
+          outer: for (var i = 0; i < names.length; i++) {
+            var flds = classes[names[i]];
+            if (!flds) continue;
+            for (var j = 0; j < flds.length; j++) {
+              if (flds[j].fieldName !== flds[j].key) { need = true; break outer; }
+            }
+          }
+          if (need) importLines.push('import com.google.gson.annotations.SerializedName;');
+        } else if (mode === 'lombok') {
+          importLines.push('import lombok.Data;');
+        }
+
+        var blocks = [];
+        for (var i = 0; i < names.length; i++) {
+          var rendered = renderClass(names[i], classes[names[i]], mode);
+          if (rendered) blocks.push(rendered);
+        }
+
+        var result = importLines.length > 0 ? importLines.join('\n') + '\n\n' : '';
+        result += blocks.join('\n\n');
+        return result;
+      }
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+        inputEl.classList.remove('error');
+
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus(MSG_INVALID + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+        var rootName = rootNameEl.value.trim() || 'RootObject';
+        var classes = {};
+
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildClass(parsed, rootName, classes);
+        } else if (Array.isArray(parsed)) {
+          var objectItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (objectItems.length > 0) {
+            mergeObjectsToClass(objectItems, rootName, classes);
+          } else {
+            outputCodeEl.textContent = '// Array of primitives — no class to generate';
+            setStatus(MSG_GENERATED, false);
+            window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
+            return;
+          }
+        } else {
+          outputCodeEl.textContent = '// Primitive value — no class to generate';
+          setStatus(MSG_GENERATED, false);
+          window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
+          return;
+        }
+
+        var result = renderClasses(classes, currentAnn);
+        outputCodeEl.textContent = result;
+        var count = Object.keys(classes).length;
+        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
+        setStatus(msg, false);
+        window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
+      }
+
+      var _liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+      rootNameEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+
+      document.getElementById('jjp-convert').addEventListener('click', convert);
+
+      document.getElementById('jjp-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        convert();
+      });
+
+      document.getElementById('jjp-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputCodeEl.textContent = '';
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('jjp-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('jjp-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = COPIED;
+          setTimeout(function () { btn.textContent = COPY; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jjp-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jjp-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .jjp-config-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jjp-config-row label,
+  .jjp-label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+  }
+
+  .jjp-config-row input[type="text"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .jjp-config-row input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jjp-tabs {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+
+  .jjp-tab {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.78rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+
+  .jjp-tab:hover { border-color: var(--color-primary); color: var(--color-text); }
+  .jjp-tab.active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .jjp-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .jjp-panels { grid-template-columns: 1fr; }
+  }
+
+  .jjp-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jjp-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jjp-panel-actions { display: flex; gap: 0.3rem; }
+
+  .jjp-panel textarea {
+    width: 100%;
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .jjp-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jjp-panel textarea.error { border-color: #c0392b; }
+
+  .jjp-output {
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+  .jjp-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .jjp-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jjp-status.success { color: #057a55; }
+  .jjp-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jjp-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jjp-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jjp-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .jjp-status.success { color: #34d399; }
+  [data-theme="dark"] .jjp-status.error { color: #f87171; }
+  [data-theme="dark"] .jjp-panel textarea.error { border-color: #f87171; }
+</style>
