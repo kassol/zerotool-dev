@@ -41,446 +41,465 @@
 
   <div id="ctc-status" class="ctc-status" aria-live="polite"></div>
 
-  <script is:inline>
-    (function () {
-      var STRINGS = {
-        en: { curlInput: 'cURL Command', output: 'Generated Code', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', convert: 'Convert', msgInvalidCurl: 'Invalid cURL command', msgConverted: 'Converted.' },
-        zh: { curlInput: 'cURL 命令', output: '生成代码', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', convert: '转换', msgInvalidCurl: '无效的 cURL 命令', msgConverted: '已转换。' },
-        ja: { curlInput: 'cURL コマンド', output: '生成コード', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', convert: '変換', msgInvalidCurl: '無効なcURLコマンド', msgConverted: '変換しました。' },
-        ko: { curlInput: 'cURL 명령어', output: '생성 코드', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', convert: '변환', msgInvalidCurl: '잘못된 cURL 명령어', msgConverted: '변환 완료.' }
+  <script>
+    import hljs from 'highlight.js/lib/core';
+    import javascript from 'highlight.js/lib/languages/javascript';
+    import python from 'highlight.js/lib/languages/python';
+    import go from 'highlight.js/lib/languages/go';
+    import php from 'highlight.js/lib/languages/php';
+
+    hljs.registerLanguage('javascript', javascript);
+    hljs.registerLanguage('python', python);
+    hljs.registerLanguage('go', go);
+    hljs.registerLanguage('php', php);
+
+    var STRINGS = {
+      en: { curlInput: 'cURL Command', output: 'Generated Code', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', convert: 'Convert', msgInvalidCurl: 'Invalid cURL command', msgConverted: 'Converted.' },
+      zh: { curlInput: 'cURL 命令', output: '生成代码', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', convert: '转换', msgInvalidCurl: '无效的 cURL 命令', msgConverted: '已转换。' },
+      ja: { curlInput: 'cURL コマンド', output: '生成コード', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', convert: '変換', msgInvalidCurl: '無効なcURLコマンド', msgConverted: '変換しました。' },
+      ko: { curlInput: 'cURL 명령어', output: '생성 코드', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', convert: '변환', msgInvalidCurl: '잘못된 cURL 명령어', msgConverted: '변환 완료.' }
+    };
+
+    var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+    var t = STRINGS[pageLang] || STRINGS.en;
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
+      var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
+    });
+
+    var inputEl = document.getElementById('ctc-input') as HTMLTextAreaElement;
+    var outputCodeEl = document.getElementById('ctc-output-code') as HTMLElement;
+    var statusEl = document.getElementById('ctc-status') as HTMLElement;
+    var currentLang = 'python';
+    var lastParsed: any = null;
+
+    var EXAMPLE = 'curl -X POST https://api.example.com/data \\\n' +
+      '  -H "Content-Type: application/json" \\\n' +
+      '  -H "Authorization: Bearer token123" \\\n' +
+      '  -d \'{"name": "Alice", "age": 30}\'';
+
+    /* ── Status helpers ── */
+    function setStatus(msg: string, isError: boolean) {
+      statusEl.textContent = msg;
+      statusEl.className = 'ctc-status ' + (isError ? 'error' : 'success');
+    }
+    function clearStatus() {
+      statusEl.textContent = '';
+      statusEl.className = 'ctc-status';
+    }
+
+    /* ── Tokenizer ── */
+    function tokenize(cmd: string) {
+      var tokens: string[] = [];
+      var i = 0;
+      // Collapse line continuations
+      cmd = cmd.replace(/\\\n/g, ' ');
+      while (i < cmd.length) {
+        // Skip whitespace
+        while (i < cmd.length && /\s/.test(cmd[i])) i++;
+        if (i >= cmd.length) break;
+
+        var ch = cmd[i];
+        if (ch === '"' || ch === "'") {
+          var quote = ch;
+          i++;
+          var buf = '';
+          while (i < cmd.length && cmd[i] !== quote) {
+            if (cmd[i] === '\\' && quote === '"') {
+              i++;
+              if (i < cmd.length) { buf += cmd[i]; i++; }
+            } else {
+              buf += cmd[i++];
+            }
+          }
+          i++; // closing quote
+          tokens.push(buf);
+        } else {
+          var start = i;
+          while (i < cmd.length && !/\s/.test(cmd[i])) i++;
+          tokens.push(cmd.slice(start, i));
+        }
+      }
+      return tokens;
+    }
+
+    /* ── Parser ── */
+    function parseCurl(cmd: string) {
+      var tokens = tokenize(cmd.trim());
+      if (!tokens.length || tokens[0] !== 'curl') return null;
+
+      var result: any = {
+        method: null,
+        url: '',
+        headers: [],
+        body: null,
+        followRedirects: false,
+        isForm: false,
+        formFields: [],
       };
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
+      var i = 1; // skip 'curl'
+      while (i < tokens.length) {
+        var tok = tokens[i];
 
-      var inputEl = document.getElementById('ctc-input');
-      var outputCodeEl = document.getElementById('ctc-output-code');
-      var statusEl = document.getElementById('ctc-status');
-      var currentLang = 'python';
-      var lastParsed = null;
-
-      var EXAMPLE = 'curl -X POST https://api.example.com/data \\\n' +
-        '  -H "Content-Type: application/json" \\\n' +
-        '  -H "Authorization: Bearer token123" \\\n' +
-        '  -d \'{"name": "Alice", "age": 30}\'';
-
-      /* ── Status helpers ── */
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'ctc-status ' + (isError ? 'error' : 'success');
-      }
-      function clearStatus() {
-        statusEl.textContent = '';
-        statusEl.className = 'ctc-status';
-      }
-
-      /* ── Tokenizer ── */
-      function tokenize(cmd) {
-        var tokens = [];
-        var i = 0;
-        // Collapse line continuations
-        cmd = cmd.replace(/\\\n/g, ' ');
-        while (i < cmd.length) {
-          // Skip whitespace
-          while (i < cmd.length && /\s/.test(cmd[i])) i++;
-          if (i >= cmd.length) break;
-
-          var ch = cmd[i];
-          if (ch === '"' || ch === "'") {
-            var quote = ch;
-            i++;
-            var buf = '';
-            while (i < cmd.length && cmd[i] !== quote) {
-              if (cmd[i] === '\\' && quote === '"') {
-                i++;
-                if (i < cmd.length) { buf += cmd[i]; i++; }
-              } else {
-                buf += cmd[i++];
-              }
-            }
-            i++; // closing quote
-            tokens.push(buf);
-          } else {
-            var start = i;
-            while (i < cmd.length && !/\s/.test(cmd[i])) i++;
-            tokens.push(cmd.slice(start, i));
-          }
-        }
-        return tokens;
-      }
-
-      /* ── Parser ── */
-      function parseCurl(cmd) {
-        var tokens = tokenize(cmd.trim());
-        if (!tokens.length || tokens[0] !== 'curl') return null;
-
-        var result = {
-          method: null,
-          url: '',
-          headers: [],
-          body: null,
-          followRedirects: false,
-          isForm: false,
-          formFields: [],
-        };
-
-        var i = 1; // skip 'curl'
-        while (i < tokens.length) {
-          var tok = tokens[i];
-
-          if (tok === '-X' || tok === '--request') {
-            i++;
-            result.method = tokens[i] ? tokens[i].toUpperCase() : 'GET';
-          } else if (tok === '-H' || tok === '--header') {
-            i++;
-            if (tokens[i]) result.headers.push(tokens[i]);
-          } else if (tok === '-d' || tok === '--data' || tok === '--data-raw' || tok === '--data-ascii') {
-            i++;
-            if (tokens[i]) result.body = tokens[i];
-          } else if (tok === '--data-binary') {
-            i++;
-            if (tokens[i]) result.body = tokens[i];
-          } else if (tok === '-u' || tok === '--user') {
-            i++;
-            if (tokens[i]) {
-              var encoded = btoa(tokens[i]);
-              result.headers.push('Authorization: Basic ' + encoded);
-            }
-          } else if (tok === '-L' || tok === '--location') {
-            result.followRedirects = true;
-          } else if (tok === '--cookie' || tok === '-b') {
-            i++;
-            if (tokens[i]) result.headers.push('Cookie: ' + tokens[i]);
-          } else if (tok === '-F' || tok === '--form') {
-            i++;
-            if (tokens[i]) {
-              result.isForm = true;
-              result.formFields.push(tokens[i]);
-            }
-          } else if (tok === '--compressed' || tok === '-s' || tok === '-S' || tok === '-i' || tok === '-v' || tok === '-k' || tok === '--insecure' || tok === '--silent' || tok === '--show-error' || tok === '--include' || tok === '--verbose') {
-            // ignore
-          } else if (tok === '--url') {
-            i++;
-            if (tokens[i] && !result.url) result.url = tokens[i];
-          } else if (!tok.startsWith('-')) {
-            if (!result.url) result.url = tok;
-          }
+        if (tok === '-X' || tok === '--request') {
           i++;
-        }
-
-        if (!result.url) return null;
-
-        // Determine method
-        if (!result.method) {
-          result.method = (result.body || result.isForm) ? 'POST' : 'GET';
-        }
-
-        // Form data sets Content-Type if not already set
-        if (result.isForm) {
-          var hasContentType = result.headers.some(function (h) {
-            return h.toLowerCase().startsWith('content-type');
-          });
-          if (!hasContentType) {
-            result.headers.push('Content-Type: multipart/form-data');
+          result.method = tokens[i] ? tokens[i].toUpperCase() : 'GET';
+        } else if (tok === '-H' || tok === '--header') {
+          i++;
+          if (tokens[i]) result.headers.push(tokens[i]);
+        } else if (tok === '-d' || tok === '--data' || tok === '--data-raw' || tok === '--data-ascii') {
+          i++;
+          if (tokens[i]) result.body = tokens[i];
+        } else if (tok === '--data-binary') {
+          i++;
+          if (tokens[i]) result.body = tokens[i];
+        } else if (tok === '-u' || tok === '--user') {
+          i++;
+          if (tokens[i]) {
+            var encoded = btoa(tokens[i]);
+            result.headers.push('Authorization: Basic ' + encoded);
           }
+        } else if (tok === '-L' || tok === '--location') {
+          result.followRedirects = true;
+        } else if (tok === '--cookie' || tok === '-b') {
+          i++;
+          if (tokens[i]) result.headers.push('Cookie: ' + tokens[i]);
+        } else if (tok === '-F' || tok === '--form') {
+          i++;
+          if (tokens[i]) {
+            result.isForm = true;
+            result.formFields.push(tokens[i]);
+          }
+        } else if (tok === '--compressed' || tok === '-s' || tok === '-S' || tok === '-i' || tok === '-v' || tok === '-k' || tok === '--insecure' || tok === '--silent' || tok === '--show-error' || tok === '--include' || tok === '--verbose') {
+          // ignore
+        } else if (tok === '--url') {
+          i++;
+          if (tokens[i] && !result.url) result.url = tokens[i];
+        } else if (!tok.startsWith('-')) {
+          if (!result.url) result.url = tok;
         }
-
-        return result;
+        i++;
       }
 
-      /* ── Header parsing ── */
-      function parseHeaders(headerStrings) {
-        return headerStrings.map(function (h) {
-          var idx = h.indexOf(':');
-          if (idx === -1) return { name: h, value: '' };
-          return { name: h.slice(0, idx).trim(), value: h.slice(idx + 1).trim() };
+      if (!result.url) return null;
+
+      // Determine method
+      if (!result.method) {
+        result.method = (result.body || result.isForm) ? 'POST' : 'GET';
+      }
+
+      // Form data sets Content-Type if not already set
+      if (result.isForm) {
+        var hasContentType = result.headers.some(function (h: string) {
+          return h.toLowerCase().startsWith('content-type');
         });
+        if (!hasContentType) {
+          result.headers.push('Content-Type: multipart/form-data');
+        }
       }
 
-      /* ── String escaping ── */
-      function esc(str, quote) {
-        if (quote === "'") return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      }
+      return result;
+    }
 
-      /* ── Code generators ── */
-      function genPython(p) {
-        var lines = [];
-        lines.push('import requests');
-        lines.push('');
+    /* ── Header parsing ── */
+    function parseHeaders(headerStrings: string[]) {
+      return headerStrings.map(function (h) {
+        var idx = h.indexOf(':');
+        if (idx === -1) return { name: h, value: '' };
+        return { name: h.slice(0, idx).trim(), value: h.slice(idx + 1).trim() };
+      });
+    }
 
-        var headers = parseHeaders(p.headers);
-        if (headers.length) {
-          lines.push('headers = {');
-          headers.forEach(function (h) {
-            lines.push('    "' + esc(h.name, '"') + '": "' + esc(h.value, '"') + '",');
-          });
-          lines.push('}');
-          lines.push('');
-        }
+    /* ── String escaping ── */
+    function esc(str: string, quote: string) {
+      if (quote === "'") return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    }
 
-        var callArgs = ['    "' + esc(p.url, '"') + '"'];
-        if (headers.length) callArgs.push('    headers=headers');
+    /* ── Code generators ── */
+    function genPython(p: any) {
+      var lines: string[] = [];
+      lines.push('import requests');
+      lines.push('');
 
-        if (p.isForm && p.formFields.length) {
-          lines.push('files = {');
-          p.formFields.forEach(function (f) {
-            var eq = f.indexOf('=');
-            var k = eq >= 0 ? f.slice(0, eq) : f;
-            var v = eq >= 0 ? f.slice(eq + 1) : '';
-            lines.push('    "' + esc(k, '"') + '": "' + esc(v, '"') + '",');
-          });
-          lines.push('}');
-          lines.push('');
-          callArgs.push('    files=files');
-        } else if (p.body) {
-          lines.push('data = \'' + esc(p.body, "'") + '\'');
-          lines.push('');
-          callArgs.push('    data=data');
-        }
-
-        if (p.followRedirects) callArgs.push('    allow_redirects=True');
-
-        var method = p.method.toLowerCase();
-        lines.push('response = requests.' + method + '(');
-        lines.push(callArgs.join(',\n'));
-        lines.push(')');
-        lines.push('print(response.text)');
-        return lines.join('\n');
-      }
-
-      function genJavaScript(p) {
-        var lines = [];
-        var opts = [];
-        opts.push('  method: "' + p.method + '"');
-
-        var headers = parseHeaders(p.headers);
-        if (headers.length) {
-          var headerLines = ['  headers: {'];
-          headers.forEach(function (h) {
-            headerLines.push('    "' + esc(h.name, '"') + '": "' + esc(h.value, '"') + '",');
-          });
-          headerLines.push('  }');
-          opts.push(headerLines.join('\n'));
-        }
-
-        if (p.body) {
-          opts.push('  body: \'' + esc(p.body, "'") + '\'');
-        }
-
-        if (p.followRedirects) {
-          opts.push('  redirect: "follow"');
-        }
-
-        lines.push('const response = await fetch("' + esc(p.url, '"') + '", {');
-        lines.push(opts.join(',\n'));
-        lines.push('});');
-        lines.push('const data = await response.text();');
-        lines.push('console.log(data);');
-        return lines.join('\n');
-      }
-
-      function genGo(p) {
-        var lines = [];
-        var headers = parseHeaders(p.headers);
-        var hasBody = !!p.body;
-
-        lines.push('package main');
-        lines.push('');
-        lines.push('import (');
-        lines.push('\t"fmt"');
-        lines.push('\t"io"');
-        lines.push('\t"net/http"');
-        if (hasBody) lines.push('\t"strings"');
-        lines.push(')');
-        lines.push('');
-        lines.push('func main() {');
-
-        if (hasBody) {
-          lines.push('\tbody := strings.NewReader("' + esc(p.body, '"').replace(/\n/g, '\\n') + '")');
-          lines.push('\treq, _ := http.NewRequest("' + p.method + '", "' + esc(p.url, '"') + '", body)');
-        } else {
-          lines.push('\treq, _ := http.NewRequest("' + p.method + '", "' + esc(p.url, '"') + '", nil)');
-        }
-
+      var headers = parseHeaders(p.headers);
+      if (headers.length) {
+        lines.push('headers = {');
         headers.forEach(function (h) {
-          lines.push('\treq.Header.Set("' + esc(h.name, '"') + '", "' + esc(h.value, '"') + '")');
+          lines.push('    "' + esc(h.name, '"') + '": "' + esc(h.value, '"') + '",');
         });
-
-        if (p.followRedirects) {
-          lines.push('');
-          lines.push('\tclient := &http.Client{');
-          lines.push('\t\tCheckRedirect: func(req *http.Request, via []*http.Request) error {');
-          lines.push('\t\t\treturn nil');
-          lines.push('\t\t},');
-          lines.push('\t}');
-        } else {
-          lines.push('');
-          lines.push('\tclient := &http.Client{}');
-        }
-
-        lines.push('\tresp, _ := client.Do(req)');
-        lines.push('\tdefer resp.Body.Close()');
-        lines.push('');
-        lines.push('\trespBody, _ := io.ReadAll(resp.Body)');
-        lines.push('\tfmt.Println(string(respBody))');
         lines.push('}');
-        return lines.join('\n');
-      }
-
-      function genPhp(p) {
-        var lines = [];
-        var headers = parseHeaders(p.headers);
-
-        lines.push('<?php');
-        lines.push('$ch = curl_init();');
-        lines.push('curl_setopt($ch, CURLOPT_URL, "' + esc(p.url, '"') + '");');
-        lines.push('curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);');
-
-        if (p.method !== 'GET') {
-          lines.push('curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "' + p.method + '");');
-        }
-
-        if (p.body) {
-          lines.push('curl_setopt($ch, CURLOPT_POSTFIELDS, \'' + esc(p.body, "'") + '\');');
-        } else if (p.isForm && p.formFields.length) {
-          lines.push('curl_setopt($ch, CURLOPT_POSTFIELDS, [');
-          p.formFields.forEach(function (f) {
-            var eq = f.indexOf('=');
-            var k = eq >= 0 ? f.slice(0, eq) : f;
-            var v = eq >= 0 ? f.slice(eq + 1) : '';
-            lines.push('    "' + esc(k, '"') + '" => "' + esc(v, '"') + '",');
-          });
-          lines.push(']);');
-        }
-
-        if (headers.length) {
-          lines.push('curl_setopt($ch, CURLOPT_HTTPHEADER, [');
-          headers.forEach(function (h) {
-            lines.push('    "' + esc(h.name, '"') + ': ' + esc(h.value, '"') + '",');
-          });
-          lines.push(']);');
-        }
-
-        if (p.followRedirects) {
-          lines.push('curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);');
-        }
-
-        lines.push('$response = curl_exec($ch);');
-        lines.push('curl_close($ch);');
-        lines.push('echo $response;');
-        lines.push('?>');
-        return lines.join('\n');
-      }
-
-      function genNodejs(p) {
-        var lines = [];
-        var headers = parseHeaders(p.headers);
-
-        lines.push("const axios = require('axios');");
         lines.push('');
-
-        var opts = [];
-        opts.push("  method: '" + p.method.toLowerCase() + "'");
-        opts.push("  url: '" + esc(p.url, "'") + "'");
-
-        if (headers.length) {
-          var hLines = ['  headers: {'];
-          headers.forEach(function (h) {
-            hLines.push("    '" + esc(h.name, "'") + "': '" + esc(h.value, "'") + "',");
-          });
-          hLines.push('  }');
-          opts.push(hLines.join('\n'));
-        }
-
-        if (p.body) {
-          opts.push("  data: '" + esc(p.body, "'") + "'");
-        }
-
-        if (p.followRedirects) {
-          opts.push('  maxRedirects: 5');
-        }
-
-        lines.push('const response = await axios({');
-        lines.push(opts.join(',\n'));
-        lines.push('});');
-        lines.push('console.log(response.data);');
-        return lines.join('\n');
       }
 
-      /* ── Tab switching ── */
-      var tabBtns = document.querySelectorAll('.ctc-tab');
-      tabBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          tabBtns.forEach(function (b) { b.classList.remove('ctc-tab-active'); });
-          btn.classList.add('ctc-tab-active');
-          currentLang = btn.dataset.lang;
-          if (lastParsed) {
-            outputCodeEl.textContent = getCode(lastParsed, currentLang);
-          }
+      var callArgs = ['    "' + esc(p.url, '"') + '"'];
+      if (headers.length) callArgs.push('    headers=headers');
+
+      if (p.isForm && p.formFields.length) {
+        lines.push('files = {');
+        p.formFields.forEach(function (f: string) {
+          var eq = f.indexOf('=');
+          var k = eq >= 0 ? f.slice(0, eq) : f;
+          var v = eq >= 0 ? f.slice(eq + 1) : '';
+          lines.push('    "' + esc(k, '"') + '": "' + esc(v, '"') + '",');
         });
-      });
-
-      function getCode(p, lang) {
-        if (lang === 'python') return genPython(p);
-        if (lang === 'javascript') return genJavaScript(p);
-        if (lang === 'go') return genGo(p);
-        if (lang === 'php') return genPhp(p);
-        if (lang === 'nodejs') return genNodejs(p);
-        return '';
+        lines.push('}');
+        lines.push('');
+        callArgs.push('    files=files');
+      } else if (p.body) {
+        lines.push('data = \'' + esc(p.body, "'") + '\'');
+        lines.push('');
+        callArgs.push('    data=data');
       }
 
-      /* ── Main convert ── */
-      function convert() {
-        var raw = inputEl.value.trim();
-        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; lastParsed = null; return; }
+      if (p.followRedirects) callArgs.push('    allow_redirects=True');
 
-        var parsed = parseCurl(raw);
-        if (!parsed) {
-          outputCodeEl.textContent = '';
-          lastParsed = null;
-          setStatus(t.msgInvalidCurl, true);
-          return;
+      var method = p.method.toLowerCase();
+      lines.push('response = requests.' + method + '(');
+      lines.push(callArgs.join(',\n'));
+      lines.push(')');
+      lines.push('print(response.text)');
+      return lines.join('\n');
+    }
+
+    function genJavaScript(p: any) {
+      var lines: string[] = [];
+      var opts: string[] = [];
+      opts.push('  method: "' + p.method + '"');
+
+      var headers = parseHeaders(p.headers);
+      if (headers.length) {
+        var headerLines = ['  headers: {'];
+        headers.forEach(function (h) {
+          headerLines.push('    "' + esc(h.name, '"') + '": "' + esc(h.value, '"') + '",');
+        });
+        headerLines.push('  }');
+        opts.push(headerLines.join('\n'));
+      }
+
+      if (p.body) {
+        opts.push('  body: \'' + esc(p.body, "'") + '\'');
+      }
+
+      if (p.followRedirects) {
+        opts.push('  redirect: "follow"');
+      }
+
+      lines.push('const response = await fetch("' + esc(p.url, '"') + '", {');
+      lines.push(opts.join(',\n'));
+      lines.push('});');
+      lines.push('const data = await response.text();');
+      lines.push('console.log(data);');
+      return lines.join('\n');
+    }
+
+    function genGo(p: any) {
+      var lines: string[] = [];
+      var headers = parseHeaders(p.headers);
+      var hasBody = !!p.body;
+
+      lines.push('package main');
+      lines.push('');
+      lines.push('import (');
+      lines.push('\t"fmt"');
+      lines.push('\t"io"');
+      lines.push('\t"net/http"');
+      if (hasBody) lines.push('\t"strings"');
+      lines.push(')');
+      lines.push('');
+      lines.push('func main() {');
+
+      if (hasBody) {
+        lines.push('\tbody := strings.NewReader("' + esc(p.body, '"').replace(/\n/g, '\\n') + '")');
+        lines.push('\treq, _ := http.NewRequest("' + p.method + '", "' + esc(p.url, '"') + '", body)');
+      } else {
+        lines.push('\treq, _ := http.NewRequest("' + p.method + '", "' + esc(p.url, '"') + '", nil)');
+      }
+
+      headers.forEach(function (h) {
+        lines.push('\treq.Header.Set("' + esc(h.name, '"') + '", "' + esc(h.value, '"') + '")');
+      });
+
+      if (p.followRedirects) {
+        lines.push('');
+        lines.push('\tclient := &http.Client{');
+        lines.push('\t\tCheckRedirect: func(req *http.Request, via []*http.Request) error {');
+        lines.push('\t\t\treturn nil');
+        lines.push('\t\t},');
+        lines.push('\t}');
+      } else {
+        lines.push('');
+        lines.push('\tclient := &http.Client{}');
+      }
+
+      lines.push('\tresp, _ := client.Do(req)');
+      lines.push('\tdefer resp.Body.Close()');
+      lines.push('');
+      lines.push('\trespBody, _ := io.ReadAll(resp.Body)');
+      lines.push('\tfmt.Println(string(respBody))');
+      lines.push('}');
+      return lines.join('\n');
+    }
+
+    function genPhp(p: any) {
+      var lines: string[] = [];
+      var headers = parseHeaders(p.headers);
+
+      lines.push('<?php');
+      lines.push('$ch = curl_init();');
+      lines.push('curl_setopt($ch, CURLOPT_URL, "' + esc(p.url, '"') + '");');
+      lines.push('curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);');
+
+      if (p.method !== 'GET') {
+        lines.push('curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "' + p.method + '");');
+      }
+
+      if (p.body) {
+        lines.push('curl_setopt($ch, CURLOPT_POSTFIELDS, \'' + esc(p.body, "'") + '\');');
+      } else if (p.isForm && p.formFields.length) {
+        lines.push('curl_setopt($ch, CURLOPT_POSTFIELDS, [');
+        p.formFields.forEach(function (f: string) {
+          var eq = f.indexOf('=');
+          var k = eq >= 0 ? f.slice(0, eq) : f;
+          var v = eq >= 0 ? f.slice(eq + 1) : '';
+          lines.push('    "' + esc(k, '"') + '" => "' + esc(v, '"') + '",');
+        });
+        lines.push(']);');
+      }
+
+      if (headers.length) {
+        lines.push('curl_setopt($ch, CURLOPT_HTTPHEADER, [');
+        headers.forEach(function (h) {
+          lines.push('    "' + esc(h.name, '"') + ': ' + esc(h.value, '"') + '",');
+        });
+        lines.push(']);');
+      }
+
+      if (p.followRedirects) {
+        lines.push('curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);');
+      }
+
+      lines.push('$response = curl_exec($ch);');
+      lines.push('curl_close($ch);');
+      lines.push('echo $response;');
+      lines.push('?>');
+      return lines.join('\n');
+    }
+
+    function genNodejs(p: any) {
+      var lines: string[] = [];
+      var headers = parseHeaders(p.headers);
+
+      lines.push("const axios = require('axios');");
+      lines.push('');
+
+      var opts: string[] = [];
+      opts.push("  method: '" + p.method.toLowerCase() + "'");
+      opts.push("  url: '" + esc(p.url, "'") + "'");
+
+      if (headers.length) {
+        var hLines = ['  headers: {'];
+        headers.forEach(function (h) {
+          hLines.push("    '" + esc(h.name, "'") + "': '" + esc(h.value, "'") + "',");
+        });
+        hLines.push('  }');
+        opts.push(hLines.join('\n'));
+      }
+
+      if (p.body) {
+        opts.push("  data: '" + esc(p.body, "'") + "'");
+      }
+
+      if (p.followRedirects) {
+        opts.push('  maxRedirects: 5');
+      }
+
+      lines.push('const response = await axios({');
+      lines.push(opts.join(',\n'));
+      lines.push('});');
+      lines.push('console.log(response.data);');
+      return lines.join('\n');
+    }
+
+    /* ── Syntax highlighting ── */
+    function applyHighlight(lang: string) {
+      var hljsLang = (lang === 'nodejs') ? 'javascript' : lang;
+      outputCodeEl.removeAttribute('data-highlighted');
+      outputCodeEl.className = 'language-' + hljsLang;
+      hljs.highlightElement(outputCodeEl);
+    }
+
+    /* ── Tab switching ── */
+    var tabBtns = document.querySelectorAll('.ctc-tab');
+    tabBtns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        tabBtns.forEach(function (b) { b.classList.remove('ctc-tab-active'); });
+        btn.classList.add('ctc-tab-active');
+        currentLang = (btn as HTMLElement).dataset.lang!;
+        if (lastParsed) {
+          outputCodeEl.textContent = getCode(lastParsed, currentLang);
+          applyHighlight(currentLang);
         }
-
-        lastParsed = parsed;
-        outputCodeEl.textContent = getCode(parsed, currentLang);
-        setStatus(t.msgConverted, false);
-        window.trackTool && window.trackTool('curl-to-code', 'convert');
-      }
-
-      /* ── Events ── */
-      document.getElementById('ctc-convert').addEventListener('click', convert);
-
-      document.getElementById('ctc-example').addEventListener('click', function () {
-        inputEl.value = EXAMPLE;
-        clearStatus();
-        convert();
       });
+    });
 
-      document.getElementById('ctc-clear').addEventListener('click', function () {
-        inputEl.value = '';
+    function getCode(p: any, lang: string) {
+      if (lang === 'python') return genPython(p);
+      if (lang === 'javascript') return genJavaScript(p);
+      if (lang === 'go') return genGo(p);
+      if (lang === 'php') return genPhp(p);
+      if (lang === 'nodejs') return genNodejs(p);
+      return '';
+    }
+
+    /* ── Main convert ── */
+    function convert() {
+      var raw = inputEl.value.trim();
+      if (!raw) { clearStatus(); outputCodeEl.textContent = ''; lastParsed = null; return; }
+
+      var parsed = parseCurl(raw);
+      if (!parsed) {
         outputCodeEl.textContent = '';
         lastParsed = null;
-        clearStatus();
-      });
+        setStatus(t.msgInvalidCurl, true);
+        return;
+      }
 
-      document.getElementById('ctc-copy').addEventListener('click', function () {
-        var text = outputCodeEl.textContent;
-        if (!text) return;
-        var btn = document.getElementById('ctc-copy');
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t.copy; }, 1500);
-        });
+      lastParsed = parsed;
+      outputCodeEl.textContent = getCode(parsed, currentLang);
+      applyHighlight(currentLang);
+      setStatus(t.msgConverted, false);
+      (window as any).trackTool && (window as any).trackTool('curl-to-code', 'convert');
+    }
+
+    /* ── Events ── */
+    document.getElementById('ctc-convert')!.addEventListener('click', convert);
+
+    document.getElementById('ctc-example')!.addEventListener('click', function () {
+      inputEl.value = EXAMPLE;
+      clearStatus();
+      convert();
+    });
+
+    document.getElementById('ctc-clear')!.addEventListener('click', function () {
+      inputEl.value = '';
+      outputCodeEl.textContent = '';
+      lastParsed = null;
+      clearStatus();
+    });
+
+    document.getElementById('ctc-copy')!.addEventListener('click', function () {
+      var text = outputCodeEl.textContent;
+      if (!text) return;
+      var btn = document.getElementById('ctc-copy') as HTMLElement;
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = t.copied;
+        setTimeout(function () { btn.textContent = t.copy; }, 1500);
       });
-    })();
+    });
   </script>
 </div>
 
@@ -557,17 +576,28 @@
     min-height: 260px;
     font-family: var(--font-mono);
     font-size: 0.82rem;
-    padding: 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
+    background: #ffffff;
     margin: 0;
     overflow: auto;
-    white-space: pre;
     flex: 1;
+    padding: 0;
   }
+
+  .ctc-output code.hljs {
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    border-radius: var(--radius-sm);
+    box-sizing: border-box;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .ctc-output { background: #0d1117; }
+  }
+  [data-theme="dark"] .ctc-output { background: #0d1117; }
 
   .btn-sm {
     padding: 0.2rem 0.5rem;
