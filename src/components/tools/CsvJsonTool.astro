@@ -35,16 +35,27 @@
       <button id="cj-clear" class="btn-ghost" data-i18n="clear">Clear</button>
     </div>
 
+    <div class="cj-options">
+      <label class="cj-checkbox-label">
+        <input type="checkbox" id="cj-parse-types" checked />
+        <span data-i18n="parseTypes">Parse numbers &amp; booleans</span>
+      </label>
+      <label class="cj-checkbox-label">
+        <input type="checkbox" id="cj-empty-null" />
+        <span data-i18n="emptyNull">Empty → null</span>
+      </label>
+    </div>
+
     <div id="cj-status" class="cj-status" aria-live="polite"></div>
   </div>
 
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: 'Converted {n} row{s} to JSON.', convertedToCsv: 'Converted {n} row{s} to CSV.', errorPrefix: 'Error: ' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '已将 {n} 行转换为 JSON。', convertedToCsv: '已将 {n} 行转换为 CSV。', errorPrefix: '错误：' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n} 行を JSON に変換しました。', convertedToCsv: '{n} 行を CSV に変換しました。', errorPrefix: 'エラー：' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n}행을 JSON으로 변환했습니다.', convertedToCsv: '{n}행을 CSV로 변환했습니다.', errorPrefix: '오류: ' }
+        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: 'Converted {n} row{s} to JSON.', convertedToCsv: 'Converted {n} row{s} to CSV.', errorPrefix: 'Error: ', parseTypes: 'Parse numbers & booleans', emptyNull: 'Empty \u2192 null' },
+        zh: { copy: '复制', copied: '已复制！', clear: '清除', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '已将 {n} 行转换为 JSON。', convertedToCsv: '已将 {n} 行转换为 CSV。', errorPrefix: '错误：', parseTypes: '推断数字和布尔值', emptyNull: '空字段 \u2192 null' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n} 行を JSON に変換しました。', convertedToCsv: '{n} 行を CSV に変換しました。', errorPrefix: 'エラー：', parseTypes: '数値・真偽値を自動変換', emptyNull: '空フィールド \u2192 null' },
+        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n}행을 JSON으로 변환했습니다.', convertedToCsv: '{n}행을 CSV로 변환했습니다.', errorPrefix: '오류: ', parseTypes: '숫자 및 불리언 추론', emptyNull: '빈 필드 \u2192 null' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -63,6 +74,8 @@
       var statusEl = document.getElementById('cj-status');
       var copyCsvBtn = document.getElementById('cj-copy-csv');
       var copyJsonBtn = document.getElementById('cj-copy-json');
+      var parseTypesEl = document.getElementById('cj-parse-types');
+      var emptyNullEl = document.getElementById('cj-empty-null');
       var lastValidJsonOutput = '';
       var lastValidCsvOutput = '';
 
@@ -83,21 +96,34 @@
         statusEl.className = 'cj-status';
       }
 
-      /* ── Type inference: convert strings to number / boolean / null ── */
-      function inferType(val) {
-        if (val === '' || val.toLowerCase() === 'null') return null;
-        if (val.toLowerCase() === 'true') return true;
-        if (val.toLowerCase() === 'false') return false;
-        var n = Number(val);
-        if (val.trim() !== '' && isFinite(n) && !isNaN(n)) return n;
-        return val;
+      /* ── Type inference for a single CSV field value ── */
+      function inferValue(raw, quoted, parseTypes, emptyNull) {
+        if (quoted) return raw;
+        if (raw === '') return emptyNull ? null : raw;
+        if (!parseTypes) return raw;
+        var lo = raw.toLowerCase();
+        if (lo === 'null') return null;
+        if (lo === 'true') return true;
+        if (lo === 'false') return false;
+        /* number: reject leading-zero strings (e.g. "007", "0123") */
+        if (raw.length > 1 && raw[0] === '0' && raw[1] !== '.' && raw[1] !== 'e' && raw[1] !== 'E') return raw;
+        var n = Number(raw);
+        if (!isNaN(n) && isFinite(n) && raw.trim() !== '') {
+          /* reject integers that exceed safe range to avoid precision loss */
+          if (Number.isInteger(n) && !Number.isSafeInteger(n)) return raw;
+          return n;
+        }
+        return raw;
       }
 
-      /* ── CSV parser: handles quoted fields with commas, newlines in quotes ── */
+      /* ── CSV parser: handles quoted fields; tracks per-field quoted status ── */
       function parseCsv(text) {
         var rows = [];
+        var quotedFlags = []; /* parallel array: quotedFlags[r][c] === true when field was quoted */
         var row = [];
+        var rowQ = [];
         var field = '';
+        var wasQuoted = false;
         var inQuote = false;
         var i = 0;
         var len = text.length;
@@ -120,23 +146,34 @@
           } else {
             if (ch === '"') {
               inQuote = true;
+              wasQuoted = true;
               i++;
             } else if (ch === ',') {
               row.push(field);
+              rowQ.push(wasQuoted);
               field = '';
+              wasQuoted = false;
               i++;
             } else if (ch === '\r') {
               row.push(field);
+              rowQ.push(wasQuoted);
               field = '';
+              wasQuoted = false;
               rows.push(row);
+              quotedFlags.push(rowQ);
               row = [];
+              rowQ = [];
               i++;
               if (i < len && text[i] === '\n') i++;
             } else if (ch === '\n') {
               row.push(field);
+              rowQ.push(wasQuoted);
               field = '';
+              wasQuoted = false;
               rows.push(row);
+              quotedFlags.push(rowQ);
               row = [];
+              rowQ = [];
               i++;
             } else {
               field += ch;
@@ -148,16 +185,42 @@
         /* last field / row */
         if (field || row.length > 0) {
           row.push(field);
+          rowQ.push(wasQuoted);
           rows.push(row);
+          quotedFlags.push(rowQ);
         }
 
         /* drop trailing empty row */
         if (rows.length > 0) {
           var last = rows[rows.length - 1];
-          if (last.length === 1 && last[0] === '') rows.pop();
+          if (last.length === 1 && last[0] === '') {
+            rows.pop();
+            quotedFlags.pop();
+          }
         }
 
-        return rows;
+        return { rows: rows, quotedFlags: quotedFlags };
+      }
+
+      function buildJsonFromCsv(raw) {
+        var parsed = parseCsv(raw);
+        var rows = parsed.rows;
+        var quotedFlags = parsed.quotedFlags;
+        if (rows.length < 2) throw new Error('CSV must have at least a header row and one data row.');
+        var headers = rows[0];
+        var parseTypes = parseTypesEl.checked;
+        var emptyNull = emptyNullEl.checked;
+        var result = [];
+        for (var r = 1; r < rows.length; r++) {
+          var obj = {};
+          for (var c = 0; c < headers.length; c++) {
+            var rawVal = rows[r][c] !== undefined ? rows[r][c] : '';
+            var isQuoted = quotedFlags[r] ? !!quotedFlags[r][c] : false;
+            obj[headers[c]] = inferValue(rawVal, isQuoted, parseTypes, emptyNull);
+          }
+          result.push(obj);
+        }
+        return result;
       }
 
       /* ── Real-time CSV → JSON (debounced 300ms) ── */
@@ -168,17 +231,7 @@
           var raw = csvEl.value.trim();
           if (!raw) { clearStatus(); return; }
           try {
-            var rows = parseCsv(raw);
-            if (rows.length < 2) throw new Error('CSV must have at least a header row and one data row.');
-            var headers = rows[0];
-            var result = [];
-            for (var r = 1; r < rows.length; r++) {
-              var obj = {};
-              for (var c = 0; c < headers.length; c++) {
-                obj[headers[c]] = inferType(rows[r][c] !== undefined ? rows[r][c] : '');
-              }
-              result.push(obj);
-            }
+            var result = buildJsonFromCsv(raw);
             jsonEl.value = JSON.stringify(result, null, 2);
             lastValidJsonOutput = jsonEl.value;
             setStatus(rowMsg(t.convertedToJson, result.length), false);
@@ -186,6 +239,14 @@
             setStatus(t.errorPrefix + e.message, true);
           }
         }, 300);
+      });
+
+      /* re-run live conversion when options change */
+      parseTypesEl.addEventListener('change', function () {
+        if (csvEl.value.trim()) csvEl.dispatchEvent(new Event('input'));
+      });
+      emptyNullEl.addEventListener('change', function () {
+        if (csvEl.value.trim()) csvEl.dispatchEvent(new Event('input'));
       });
 
       /* ── Real-time JSON → CSV (debounced 300ms) ── */
@@ -226,21 +287,8 @@
       document.getElementById('cj-to-json').addEventListener('click', function () {
         var raw = csvEl.value.trim();
         if (!raw) { clearStatus(); return; }
-
         try {
-          var rows = parseCsv(raw);
-          if (rows.length < 2) throw new Error('CSV must have at least a header row and one data row.');
-
-          var headers = rows[0];
-          var result = [];
-          for (var r = 1; r < rows.length; r++) {
-            var obj = {};
-            for (var c = 0; c < headers.length; c++) {
-              obj[headers[c]] = inferType(rows[r][c] !== undefined ? rows[r][c] : '');
-            }
-            result.push(obj);
-          }
-
+          var result = buildJsonFromCsv(raw);
           jsonEl.value = JSON.stringify(result, null, 2);
           lastValidJsonOutput = jsonEl.value;
           setStatus(rowMsg(t.convertedToJson, result.length), false);
@@ -354,6 +402,30 @@
   .cj-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
 
   .cj-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .cj-options {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .cj-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .cj-checkbox-label input[type="checkbox"] {
+    accent-color: var(--color-primary);
+    width: 0.9rem;
+    height: 0.9rem;
+    cursor: pointer;
+  }
 
   .cj-status { font-size: 0.85rem; min-height: 1.2rem; }
   .cj-status.success { color: #057a55; }
