@@ -1,0 +1,682 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    rootName: 'Root class name',
+    mode: 'Mode',
+    modeDataclass: '@dataclass',
+    modePydantic: 'Pydantic v2',
+    modeTypedDict: 'TypedDict',
+    jsonInput: 'JSON Input',
+    pythonOutput: 'Python Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    download: 'Download .py',
+    generate: 'Generate Python',
+    msgInvalidJson: 'Invalid JSON: ',
+    msgGenerated: 'Generated.',
+    msgGenOne: 'Generated 1 class.',
+    msgGenMany: 'Generated {n} classes.',
+  },
+  zh: {
+    rootName: '根类名称',
+    mode: '模式',
+    modeDataclass: '@dataclass',
+    modePydantic: 'Pydantic v2',
+    modeTypedDict: 'TypedDict',
+    jsonInput: 'JSON 输入',
+    pythonOutput: 'Python 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    download: '下载 .py',
+    generate: '生成 Python',
+    msgInvalidJson: 'JSON 格式错误：',
+    msgGenerated: '已生成。',
+    msgGenOne: '已生成 1 个类。',
+    msgGenMany: '已生成 {n} 个类。',
+  },
+  ja: {
+    rootName: 'ルートクラス名',
+    mode: 'モード',
+    modeDataclass: '@dataclass',
+    modePydantic: 'Pydantic v2',
+    modeTypedDict: 'TypedDict',
+    jsonInput: 'JSON 入力',
+    pythonOutput: 'Python 出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    download: '.py ダウンロード',
+    generate: 'Python を生成',
+    msgInvalidJson: '無効なJSON：',
+    msgGenerated: '生成しました。',
+    msgGenOne: '1 個のクラスを生成しました。',
+    msgGenMany: '{n} 個のクラスを生成しました。',
+  },
+  ko: {
+    rootName: '루트 클래스 이름',
+    mode: '모드',
+    modeDataclass: '@dataclass',
+    modePydantic: 'Pydantic v2',
+    modeTypedDict: 'TypedDict',
+    jsonInput: 'JSON 입력',
+    pythonOutput: 'Python 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    download: '.py 다운로드',
+    generate: 'Python 생성',
+    msgInvalidJson: '잘못된 JSON: ',
+    msgGenerated: '생성 완료.',
+    msgGenOne: '클래스 1개를 생성했습니다.',
+    msgGenMany: '클래스 {n}개를 생성했습니다.',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="jpdc-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-download={L.download}
+  data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-generated={L.msgGenerated}
+  data-msg-gen-one={L.msgGenOne}
+  data-msg-gen-many={L.msgGenMany}
+>
+  <div class="jpdc-config">
+    <div class="jpdc-config-row">
+      <label for="jpdc-root-name">{L.rootName}</label>
+      <input id="jpdc-root-name" type="text" value="Root" spellcheck="false" />
+    </div>
+    <div class="jpdc-config-row">
+      <span class="jpdc-label">{L.mode}</span>
+      <div class="jpdc-tabs" id="jpdc-mode-tabs">
+        <button type="button" class="jpdc-tab active" data-mode="dataclass">{L.modeDataclass}</button>
+        <button type="button" class="jpdc-tab" data-mode="pydantic">{L.modePydantic}</button>
+        <button type="button" class="jpdc-tab" data-mode="typeddict">{L.modeTypedDict}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="jpdc-panels">
+    <div class="jpdc-panel">
+      <div class="jpdc-panel-header">
+        <span>{L.jsonInput}</span>
+        <div class="jpdc-panel-actions">
+          <button id="jpdc-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="jpdc-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea
+        id="jpdc-input"
+        placeholder='{"name": "Alice", "age": 30}'
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="jpdc-panel">
+      <div class="jpdc-panel-header">
+        <span>{L.pythonOutput}</span>
+        <div class="jpdc-panel-actions">
+          <button id="jpdc-download" class="btn-ghost btn-sm" type="button">{L.download}</button>
+          <button id="jpdc-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+        </div>
+      </div>
+      <pre id="jpdc-output" class="jpdc-output"><code id="jpdc-output-code"></code></pre>
+    </div>
+  </div>
+
+  <div class="jpdc-actions">
+    <button id="jpdc-convert" class="btn-primary" type="button">{L.generate}</button>
+  </div>
+
+  <div id="jpdc-status" class="jpdc-status" aria-live="polite"></div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.jpdc-wrap')
+        : document.querySelector('.jpdc-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var DOWNLOAD = wrap ? wrap.dataset.download : 'Download .py';
+      var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
+      var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 class.';
+      var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} classes.';
+
+      var inputEl = document.getElementById('jpdc-input');
+      var outputCodeEl = document.getElementById('jpdc-output-code');
+      var statusEl = document.getElementById('jpdc-status');
+      var rootNameEl = document.getElementById('jpdc-root-name');
+
+      var currentMode = 'dataclass';
+
+      var EXAMPLE = JSON.stringify({
+        id: 1,
+        name: "Alice",
+        is_active: true,
+        score: 9.5,
+        tags: ["python", "json"],
+        address: {
+          city: "London",
+          zip_code: "EC1A 1BB"
+        },
+        friends: [
+          { id: 2, name: "Bob" },
+          { id: 3, name: "Carol" }
+        ],
+        metadata: null
+      }, null, 2);
+
+      var tabs = wrap ? wrap.querySelectorAll('.jpdc-tab') : [];
+      for (var ti = 0; ti < tabs.length; ti++) {
+        (function (tab) {
+          tab.addEventListener('click', function () {
+            for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
+            tab.classList.add('active');
+            currentMode = tab.dataset.mode;
+            convert();
+          });
+        })(tabs[ti]);
+      }
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jpdc-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jpdc-status';
+      }
+
+      function toPascalCase(str) {
+        return str
+          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+      }
+
+      function inferPythonType(value, key, classes, imp) {
+        if (value === null) {
+          imp.any = true;
+          return 'Any';
+        }
+        if (typeof value === 'boolean') return 'bool';
+        if (typeof value === 'number') {
+          return Number.isInteger(value) ? 'int' : 'float';
+        }
+        if (typeof value === 'string') return 'str';
+
+        if (Array.isArray(value)) {
+          imp.list = true;
+          if (value.length === 0) {
+            imp.any = true;
+            return 'List[Any]';
+          }
+          var objectItems = [];
+          var primitiveTypes = [];
+          for (var i = 0; i < value.length; i++) {
+            var item = value[i];
+            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+              objectItems.push(item);
+            } else {
+              var t = inferPythonType(item, key + 'Item', classes, imp);
+              if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
+            }
+          }
+          if (objectItems.length > 0) {
+            var itemClassName = toPascalCase(key) + 'Item';
+            mergeObjectsToClass(objectItems, itemClassName, classes, imp);
+            if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
+          }
+          if (primitiveTypes.length === 0) {
+            imp.any = true;
+            return 'List[Any]';
+          }
+          if (primitiveTypes.length === 1) return 'List[' + primitiveTypes[0] + ']';
+          imp.union = true;
+          return 'List[Union[' + primitiveTypes.join(', ') + ']]';
+        }
+
+        if (typeof value === 'object') {
+          var className = toPascalCase(key);
+          buildClass(value, className, classes, imp);
+          return className;
+        }
+
+        imp.any = true;
+        return 'Any';
+      }
+
+      function buildClass(obj, name, classes, imp) {
+        if (Object.prototype.hasOwnProperty.call(classes, name)) return;
+        classes[name] = null;
+
+        var fields = [];
+        var keys = Object.keys(obj);
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var v = obj[k];
+          var type = inferPythonType(v, k, classes, imp);
+          var optional = (v === null);
+          if (optional) imp.optional = true;
+          fields.push({ key: k, type: type, optional: optional });
+        }
+        classes[name] = fields;
+      }
+
+      function mergeObjectsToClass(objects, name, classes, imp) {
+        if (Object.prototype.hasOwnProperty.call(classes, name)) return;
+        classes[name] = null;
+
+        var totalCount = objects.length;
+        var allKeys = {};
+        for (var i = 0; i < objects.length; i++) {
+          var ks = Object.keys(objects[i]);
+          for (var j = 0; j < ks.length; j++) {
+            if (!allKeys[ks[j]]) allKeys[ks[j]] = [];
+            allKeys[ks[j]].push(objects[i][ks[j]]);
+          }
+        }
+
+        var fields = [];
+        var keyList = Object.keys(allKeys);
+        for (var ki = 0; ki < keyList.length; ki++) {
+          var k = keyList[ki];
+          var vals = allKeys[k];
+          var optional = vals.length < totalCount;
+
+          var types = [];
+          for (var vi = 0; vi < vals.length; vi++) {
+            if (vals[vi] === null) { optional = true; continue; }
+            var t = inferPythonType(vals[vi], k, classes, imp);
+            if (types.indexOf(t) === -1) types.push(t);
+          }
+
+          if (types.length === 0) {
+            imp.any = true;
+            types = ['Any'];
+          }
+
+          var type;
+          if (types.length === 1) {
+            type = types[0];
+          } else {
+            imp.union = true;
+            type = 'Union[' + types.join(', ') + ']';
+          }
+
+          if (optional) imp.optional = true;
+          fields.push({ key: k, type: type, optional: optional });
+        }
+        classes[name] = fields;
+      }
+
+      function renderClass(name, fields, mode) {
+        if (!fields) return '';
+        var required = fields.filter(function (f) { return !f.optional; });
+        var optional = fields.filter(function (f) { return f.optional; });
+        var ordered = required.concat(optional);
+
+        var lines = [];
+
+        if (mode === 'dataclass') {
+          lines.push('@dataclass');
+          lines.push('class ' + name + ':');
+          if (ordered.length === 0) {
+            lines.push('    pass');
+          } else {
+            for (var i = 0; i < ordered.length; i++) {
+              var f = ordered[i];
+              if (f.optional) {
+                lines.push('    ' + f.key + ': Optional[' + f.type + '] = None');
+              } else {
+                lines.push('    ' + f.key + ': ' + f.type);
+              }
+            }
+          }
+        } else if (mode === 'pydantic') {
+          lines.push('class ' + name + '(BaseModel):');
+          if (ordered.length === 0) {
+            lines.push('    pass');
+          } else {
+            for (var i = 0; i < ordered.length; i++) {
+              var f = ordered[i];
+              if (f.optional) {
+                lines.push('    ' + f.key + ': Optional[' + f.type + '] = None');
+              } else {
+                lines.push('    ' + f.key + ': ' + f.type);
+              }
+            }
+          }
+        } else {
+          lines.push('class ' + name + '(TypedDict):');
+          if (ordered.length === 0) {
+            lines.push('    pass');
+          } else {
+            for (var i = 0; i < ordered.length; i++) {
+              var f = ordered[i];
+              if (f.optional) {
+                lines.push('    ' + f.key + ': Optional[' + f.type + ']');
+              } else {
+                lines.push('    ' + f.key + ': ' + f.type);
+              }
+            }
+          }
+        }
+        return lines.join('\n');
+      }
+
+      function renderAll(classes, mode) {
+        var imp = {};
+
+        // Re-scan classes to collect imports (already set during build, but
+        // we reference the global imp object from buildClass/merge calls,
+        // so we pass the same one here)
+        var needDataclass = mode === 'dataclass';
+        var needPydantic = mode === 'pydantic';
+        var needTypedDict = mode === 'typeddict';
+
+        var names = Object.keys(classes);
+        var importLines = [];
+
+        if (needDataclass) importLines.push('from dataclasses import dataclass');
+        if (needPydantic) importLines.push('from pydantic import BaseModel');
+
+        // Collect typing imports by scanning classes
+        var hasOptional = false, hasList = false, hasAny = false, hasUnion = false, hasTypedDict = needTypedDict;
+        for (var i = 0; i < names.length; i++) {
+          var fields = classes[names[i]];
+          if (!fields) continue;
+          for (var j = 0; j < fields.length; j++) {
+            var f = fields[j];
+            if (f.optional) hasOptional = true;
+            var t = f.type;
+            if (t.indexOf('List[') !== -1) hasList = true;
+            if (t.indexOf('Any') !== -1) hasAny = true;
+            if (t.indexOf('Union[') !== -1) hasUnion = true;
+          }
+        }
+        // Also check for Optional usage from optional fields
+        if (!hasOptional) {
+          for (var i = 0; i < names.length; i++) {
+            var fields = classes[names[i]];
+            if (!fields) continue;
+            for (var j = 0; j < fields.length; j++) {
+              if (fields[j].optional) { hasOptional = true; break; }
+            }
+            if (hasOptional) break;
+          }
+        }
+
+        var typingParts = [];
+        if (hasAny) typingParts.push('Any');
+        if (hasList) typingParts.push('List');
+        if (hasOptional) typingParts.push('Optional');
+        if (hasTypedDict) typingParts.push('TypedDict');
+        if (hasUnion) typingParts.push('Union');
+        typingParts.sort();
+        if (typingParts.length > 0) {
+          importLines.push('from typing import ' + typingParts.join(', '));
+        }
+
+        var blocks = [];
+        for (var i = 0; i < names.length; i++) {
+          var rendered = renderClass(names[i], classes[names[i]], mode);
+          if (rendered) blocks.push(rendered);
+        }
+
+        var result = importLines.length > 0 ? importLines.join('\n') + '\n\n' : '';
+        result += blocks.join('\n\n');
+        return result;
+      }
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+        inputEl.classList.remove('error');
+
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus(MSG_INVALID + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+        var rootName = rootNameEl.value.trim() || 'Root';
+        var classes = {};
+        var imp = {};
+
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildClass(parsed, rootName, classes, imp);
+        } else if (Array.isArray(parsed)) {
+          var objectItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (objectItems.length > 0) {
+            mergeObjectsToClass(objectItems, rootName, classes, imp);
+          } else {
+            outputCodeEl.textContent = '# Array of primitives — no class to generate';
+            setStatus(MSG_GENERATED, false);
+            window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
+            return;
+          }
+        } else {
+          outputCodeEl.textContent = '# Primitive value — no class to generate';
+          setStatus(MSG_GENERATED, false);
+          window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
+          return;
+        }
+
+        var result = renderAll(classes, currentMode);
+        outputCodeEl.textContent = result;
+        var count = Object.keys(classes).length;
+        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
+        setStatus(msg, false);
+        window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
+      }
+
+      var _liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+      rootNameEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+
+      document.getElementById('jpdc-convert').addEventListener('click', convert);
+
+      document.getElementById('jpdc-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        convert();
+      });
+
+      document.getElementById('jpdc-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputCodeEl.textContent = '';
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('jpdc-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('jpdc-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = COPIED;
+          setTimeout(function () { btn.textContent = COPY; }, 1500);
+        });
+      });
+
+      document.getElementById('jpdc-download').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var blob = new Blob([text], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = (rootNameEl.value.trim() || 'root').toLowerCase().replace(/[^a-z0-9_]/g, '_') + '.py';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jpdc-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jpdc-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .jpdc-config-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jpdc-config-row label,
+  .jpdc-label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+  }
+
+  .jpdc-config-row input[type="text"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .jpdc-config-row input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jpdc-tabs {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+
+  .jpdc-tab {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.78rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+
+  .jpdc-tab:hover { border-color: var(--color-primary); color: var(--color-text); }
+  .jpdc-tab.active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .jpdc-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .jpdc-panels { grid-template-columns: 1fr; }
+  }
+
+  .jpdc-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jpdc-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jpdc-panel-actions { display: flex; gap: 0.3rem; }
+
+  .jpdc-panel textarea {
+    width: 100%;
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .jpdc-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jpdc-panel textarea.error { border-color: #c0392b; }
+
+  .jpdc-output {
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+  .jpdc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .jpdc-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jpdc-status.success { color: #057a55; }
+  .jpdc-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jpdc-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jpdc-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jpdc-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .jpdc-status.success { color: #34d399; }
+  [data-theme="dark"] .jpdc-status.error { color: #f87171; }
+  [data-theme="dark"] .jpdc-panel textarea.error { border-color: #f87171; }
+</style>
