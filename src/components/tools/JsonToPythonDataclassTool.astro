@@ -381,6 +381,68 @@ const L = labels[lang];
         return lines.join('\n');
       }
 
+      function topoSort(classes) {
+        var names = Object.keys(classes);
+        var nameSet = {};
+        for (var i = 0; i < names.length; i++) nameSet[names[i]] = true;
+
+        var deps = {};
+        var identRe = /[A-Za-z_][A-Za-z0-9_]*/g;
+        for (var i = 0; i < names.length; i++) {
+          var n = names[i];
+          deps[n] = [];
+          var fields = classes[n];
+          if (!fields) continue;
+          for (var j = 0; j < fields.length; j++) {
+            identRe.lastIndex = 0;
+            var m;
+            while ((m = identRe.exec(fields[j].type)) !== null) {
+              var dep = m[0];
+              if (dep !== n && nameSet[dep] && deps[n].indexOf(dep) === -1) {
+                deps[n].push(dep);
+              }
+            }
+          }
+        }
+
+        var inDegree = {};
+        var rev = {};
+        for (var i = 0; i < names.length; i++) {
+          inDegree[names[i]] = 0;
+          rev[names[i]] = [];
+        }
+        for (var i = 0; i < names.length; i++) {
+          var n = names[i];
+          var d = deps[n];
+          for (var j = 0; j < d.length; j++) {
+            inDegree[n]++;
+            rev[d[j]].push(n);
+          }
+        }
+
+        var queue = [];
+        for (var i = 0; i < names.length; i++) {
+          if (inDegree[names[i]] === 0) queue.push(names[i]);
+        }
+
+        var ordered = [];
+        while (queue.length > 0) {
+          var cur = queue.shift();
+          ordered.push(cur);
+          var dependents = rev[cur];
+          for (var i = 0; i < dependents.length; i++) {
+            if (--inDegree[dependents[i]] === 0) queue.push(dependents[i]);
+          }
+        }
+
+        // Cycle fallback: append remaining in insertion order
+        for (var i = 0; i < names.length; i++) {
+          if (ordered.indexOf(names[i]) === -1) ordered.push(names[i]);
+        }
+
+        return ordered;
+      }
+
       function renderAll(classes, mode) {
         var imp = {};
 
@@ -434,9 +496,10 @@ const L = labels[lang];
           importLines.push('from typing import ' + typingParts.join(', '));
         }
 
+        var orderedNames = topoSort(classes);
         var blocks = [];
-        for (var i = 0; i < names.length; i++) {
-          var rendered = renderClass(names[i], classes[names[i]], mode);
+        for (var i = 0; i < orderedNames.length; i++) {
+          var rendered = renderClass(orderedNames[i], classes[orderedNames[i]], mode);
           if (rendered) blocks.push(rendered);
         }
 
