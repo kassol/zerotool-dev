@@ -1,0 +1,435 @@
+---
+// JwtGeneratorTool — client-side JWT signing via Web Crypto API (HS256/HS384/HS512)
+---
+<div>
+  <div class="jg-wrap">
+    <!-- Algorithm row -->
+    <div class="jg-row jg-algo-row">
+      <span class="jg-label" data-i18n="algorithm">Algorithm</span>
+      <div class="jg-algo-btns">
+        <button class="jg-algo-btn active" data-algo="HS256">HS256</button>
+        <button class="jg-algo-btn" data-algo="HS384">HS384</button>
+        <button class="jg-algo-btn" data-algo="HS512">HS512</button>
+      </div>
+    </div>
+
+    <!-- Header + Payload -->
+    <div class="jg-editors">
+      <div class="jg-field">
+        <label for="jg-header" data-i18n="headerLabel">Header</label>
+        <textarea id="jg-header" spellcheck="false" rows="4"></textarea>
+        <div id="jg-header-err" class="jg-field-err" aria-live="polite"></div>
+      </div>
+      <div class="jg-field">
+        <label for="jg-payload" data-i18n="payloadLabel">Payload</label>
+        <textarea id="jg-payload" spellcheck="false" rows="6"></textarea>
+        <div id="jg-payload-err" class="jg-field-err" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <!-- Secret -->
+    <div class="jg-field">
+      <div class="jg-secret-hdr">
+        <label for="jg-secret" data-i18n="secretLabel">Secret</label>
+        <div class="jg-secret-fmt">
+          <label class="jg-radio"><input type="radio" name="jg-fmt" value="utf8" checked /> UTF-8</label>
+          <label class="jg-radio"><input type="radio" name="jg-fmt" value="base64" /> Base64</label>
+        </div>
+      </div>
+      <input id="jg-secret" type="text" placeholder="your-256-bit-secret" data-i18n-ph="secretPlaceholder" spellcheck="false" autocomplete="off" />
+      <div id="jg-secret-warn" class="jg-secret-warn" aria-live="polite"></div>
+    </div>
+
+    <div id="jg-status" class="jg-status" aria-live="polite"></div>
+
+    <!-- Result -->
+    <div id="jg-result-wrap" class="jg-result-wrap" style="display:none">
+      <div class="jg-result-hdr">
+        <span class="jg-result-label" data-i18n="generatedToken">Generated Token</span>
+        <button id="jg-copy" class="btn-copy" data-i18n="copy">Copy</button>
+      </div>
+      <code id="jg-result" class="jg-result"></code>
+    </div>
+
+    <!-- Privacy notice -->
+    <p class="jg-privacy" data-i18n="privacyNote">All processing is done locally in your browser.</p>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          algorithm: 'Algorithm', headerLabel: 'Header', payloadLabel: 'Payload',
+          secretLabel: 'Secret', secretPlaceholder: 'your-256-bit-secret',
+          generatedToken: 'Generated Token', copy: 'Copy', copied: 'Copied!',
+          generating: 'Generating token...', generated: 'Token generated.',
+          errHeaderJson: 'Header is not valid JSON.', errPayloadJson: 'Payload is not valid JSON.',
+          errBase64Secret: 'Secret is not valid Base64.',
+          warnEmptySecret: 'Secret is empty \u2014 token will be unsigned.',
+          privacyNote: 'All processing is done locally in your browser.'
+        },
+        zh: {
+          algorithm: '算法', headerLabel: 'Header', payloadLabel: 'Payload',
+          secretLabel: '密钥', secretPlaceholder: '你的 256 位密钥',
+          generatedToken: '生成的 Token', copy: '复制', copied: '已复制！',
+          generating: '正在生成...', generated: 'Token 已生成。',
+          errHeaderJson: 'Header 不是有效的 JSON。', errPayloadJson: 'Payload 不是有效的 JSON。',
+          errBase64Secret: '密钥不是有效的 Base64。',
+          warnEmptySecret: '密钥为空 \u2014 Token 将不带签名。',
+          privacyNote: '所有处理均在浏览器本地完成。'
+        },
+        ja: {
+          algorithm: 'アルゴリズム', headerLabel: 'ヘッダー', payloadLabel: 'ペイロード',
+          secretLabel: '秘密鍵', secretPlaceholder: '256ビットの秘密鍵',
+          generatedToken: '生成されたトークン', copy: 'コピー', copied: 'コピー済み！',
+          generating: '生成中...', generated: 'トークンが生成されました。',
+          errHeaderJson: 'ヘッダーが有効なJSONではありません。', errPayloadJson: 'ペイロードが有効なJSONではありません。',
+          errBase64Secret: '秘密鍵が有効なBase64ではありません。',
+          warnEmptySecret: '秘密鍵が空です \u2014 署名なしのトークンが生成されます。',
+          privacyNote: 'すべての処理はブラウザ内でローカルに行われます。'
+        },
+        ko: {
+          algorithm: '알고리즘', headerLabel: '헤더', payloadLabel: '페이로드',
+          secretLabel: '비밀 키', secretPlaceholder: '256비트 비밀 키',
+          generatedToken: '생성된 토큰', copy: '복사', copied: '복사됨!',
+          generating: '생성 중...', generated: '토큰이 생성되었습니다.',
+          errHeaderJson: '헤더가 유효한 JSON이 아닙니다.', errPayloadJson: '페이로드가 유효한 JSON이 아닙니다.',
+          errBase64Secret: '비밀 키가 유효한 Base64가 아닙니다.',
+          warnEmptySecret: '비밀 키가 비어 있습니다 \u2014 서명 없는 토큰이 생성됩니다.',
+          privacyNote: '모든 처리는 브라우저에서 로컬로 수행됩니다.'
+        }
+      };
+
+      var DEFAULT_HEADER = JSON.stringify({ alg: 'HS256', typ: 'JWT' }, null, 2);
+      var DEFAULT_PAYLOAD = JSON.stringify({
+        sub: '1234567890',
+        name: 'John Doe',
+        iat: 1516239022
+      }, null, 2);
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.jg-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.jg-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
+      });
+
+      var headerEl = document.getElementById('jg-header');
+      var payloadEl = document.getElementById('jg-payload');
+      var secretEl = document.getElementById('jg-secret');
+      var statusEl = document.getElementById('jg-status');
+      var resultWrap = document.getElementById('jg-result-wrap');
+      var resultEl = document.getElementById('jg-result');
+      var copyBtn = document.getElementById('jg-copy');
+      var headerErrEl = document.getElementById('jg-header-err');
+      var payloadErrEl = document.getElementById('jg-payload-err');
+      var secretWarnEl = document.getElementById('jg-secret-warn');
+
+      headerEl.value = DEFAULT_HEADER;
+      payloadEl.value = DEFAULT_PAYLOAD;
+
+      var currentAlgo = 'HS256';
+      var currentFmt = 'utf8';
+
+      document.querySelectorAll('.jg-algo-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('.jg-algo-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          currentAlgo = btn.getAttribute('data-algo');
+          syncHeaderAlg(currentAlgo);
+          scheduleGenerate();
+        });
+      });
+
+      document.querySelectorAll('input[name="jg-fmt"]').forEach(function (radio) {
+        radio.addEventListener('change', function () {
+          currentFmt = radio.value;
+          scheduleGenerate();
+        });
+      });
+
+      function syncHeaderAlg(algo) {
+        try {
+          var obj = JSON.parse(headerEl.value);
+          obj.alg = algo;
+          headerEl.value = JSON.stringify(obj, null, 2);
+        } catch (e) { /* leave as-is if invalid JSON */ }
+      }
+
+      function base64url(str) {
+        return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      function base64urlFromBuf(buf) {
+        var bytes = new Uint8Array(buf);
+        var str = '';
+        bytes.forEach(function (b) { str += String.fromCharCode(b); });
+        return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      function algoToWebCrypto(algo) {
+        return { 'HS256': 'SHA-256', 'HS384': 'SHA-384', 'HS512': 'SHA-512' }[algo] || 'SHA-256';
+      }
+
+      var debounceTimer = null;
+
+      function scheduleGenerate() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(generate, 500);
+      }
+
+      async function generate() {
+        headerErrEl.textContent = '';
+        payloadErrEl.textContent = '';
+        secretWarnEl.textContent = '';
+        statusEl.textContent = '';
+        statusEl.className = 'jg-status';
+
+        var headerStr = headerEl.value.trim();
+        var payloadStr = payloadEl.value.trim();
+        var secretStr = secretEl.value;
+
+        var headerOk = true, payloadOk = true;
+        try { JSON.parse(headerStr); } catch (e) { headerErrEl.textContent = t.errHeaderJson; headerOk = false; }
+        try { JSON.parse(payloadStr); } catch (e) { payloadErrEl.textContent = t.errPayloadJson; payloadOk = false; }
+        if (!headerOk || !payloadOk) {
+          resultWrap.style.display = 'none';
+          return;
+        }
+
+        statusEl.textContent = t.generating;
+
+        var enc = new TextEncoder();
+        var headerB64 = base64url(unescape(encodeURIComponent(headerStr)));
+        var payloadB64 = base64url(unescape(encodeURIComponent(payloadStr)));
+        var signingInput = headerB64 + '.' + payloadB64;
+
+        if (!secretStr) {
+          secretWarnEl.textContent = t.warnEmptySecret;
+          resultEl.textContent = signingInput + '.';
+          resultWrap.style.display = '';
+          statusEl.textContent = t.generated;
+          statusEl.className = 'jg-status success';
+          window.trackTool && window.trackTool('jwt-generator', 'generate');
+          return;
+        }
+
+        try {
+          var keyBytes;
+          if (currentFmt === 'base64') {
+            try {
+              var b64 = secretStr.replace(/-/g, '+').replace(/_/g, '/');
+              while (b64.length % 4) b64 += '=';
+              var bStr = atob(b64);
+              keyBytes = new Uint8Array(bStr.length);
+              for (var i = 0; i < bStr.length; i++) keyBytes[i] = bStr.charCodeAt(i);
+            } catch (e) {
+              secretWarnEl.textContent = t.errBase64Secret;
+              resultWrap.style.display = 'none';
+              statusEl.textContent = '';
+              return;
+            }
+          } else {
+            keyBytes = enc.encode(secretStr);
+          }
+
+          var cryptoKey = await crypto.subtle.importKey(
+            'raw', keyBytes,
+            { name: 'HMAC', hash: algoToWebCrypto(currentAlgo) },
+            false, ['sign']
+          );
+          var sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(signingInput));
+          var sigB64 = base64urlFromBuf(sigBuf);
+
+          resultEl.textContent = signingInput + '.' + sigB64;
+          resultWrap.style.display = '';
+          statusEl.textContent = t.generated;
+          statusEl.className = 'jg-status success';
+          window.trackTool && window.trackTool('jwt-generator', 'generate');
+        } catch (e) {
+          statusEl.textContent = 'Error: ' + e.message;
+          statusEl.className = 'jg-status error';
+          resultWrap.style.display = 'none';
+        }
+      }
+
+      headerEl.addEventListener('input', scheduleGenerate);
+      payloadEl.addEventListener('input', scheduleGenerate);
+      secretEl.addEventListener('input', scheduleGenerate);
+
+      copyBtn.addEventListener('click', function () {
+        var val = resultEl.textContent;
+        if (!val) return;
+        navigator.clipboard.writeText(val).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        });
+      });
+
+      // Auto-generate on load
+      generate();
+    })();
+  </script>
+</div>
+
+<style>
+  .jg-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jg-algo-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jg-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jg-algo-btns { display: flex; gap: 0.25rem; }
+
+  .jg-algo-btn {
+    font-size: 0.8rem;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    cursor: pointer;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .jg-algo-btn.active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .jg-editors { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .jg-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .jg-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jg-field textarea,
+  .jg-field input[type="text"] {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    box-sizing: border-box;
+  }
+
+  .jg-field textarea {
+    resize: vertical;
+    min-height: 90px;
+  }
+
+  .jg-field textarea:focus,
+  .jg-field input[type="text"]:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+  }
+
+  .jg-field-err {
+    font-size: 0.8rem;
+    color: #c0392b;
+    min-height: 1rem;
+  }
+
+  .jg-secret-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jg-secret-fmt { display: flex; gap: 0.75rem; }
+
+  .jg-radio {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-weight: 500;
+  }
+
+  .jg-secret-warn {
+    font-size: 0.8rem;
+    color: #b7791f;
+    min-height: 1rem;
+  }
+
+  .jg-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jg-status.success { color: #057a55; }
+  .jg-status.error { color: #c0392b; }
+
+  .jg-result-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+  }
+
+  .jg-result-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .jg-result-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .jg-result {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--color-text);
+    word-break: break-all;
+    line-height: 1.55;
+  }
+
+  .jg-privacy {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin: 0;
+    text-align: center;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jg-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jg-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jg-field-err { color: #f87171; }
+    :root:not([data-theme="light"]) .jg-secret-warn { color: #f6ad55; }
+  }
+  [data-theme="dark"] .jg-status.success { color: #34d399; }
+  [data-theme="dark"] .jg-status.error { color: #f87171; }
+  [data-theme="dark"] .jg-field-err { color: #f87171; }
+  [data-theme="dark"] .jg-secret-warn { color: #f6ad55; }
+</style>
