@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 83 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 85 tools and growing.
 
 ## Tools
 
@@ -92,6 +92,8 @@
 | TypeScript to Zod Schema | [/tools/typescript-to-zod](https://zerotool.dev/tools/typescript-to-zod) |
 | JSON to Python Dataclass | [/tools/json-to-python-dataclass](https://zerotool.dev/tools/json-to-python-dataclass) |
 | JWT Generator / Signer | [/tools/jwt-generator](https://zerotool.dev/tools/jwt-generator) |
+| JSON to Mongoose Schema | [/tools/json-to-mongoose](https://zerotool.dev/tools/json-to-mongoose) |
+| YAML to TOML Converter | [/tools/yaml-toml](https://zerotool.dev/tools/yaml-toml) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
