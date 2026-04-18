@@ -9,6 +9,7 @@
     data-msg-invalid-yaml=""
     data-msg-invalid-toml=""
     data-msg-error=""
+    data-msg-null-warning=""
     data-copy=""
     data-copied=""
   >
@@ -37,9 +38,10 @@
       </div>
     </div>
 
+    <div id="yt-warning" class="yt-warning" aria-live="polite"></div>
+
     <div class="yt-actions">
-      <button id="yt-to-toml" class="btn-primary" data-i18n="yamlToToml">YAML → TOML</button>
-      <button id="yt-to-yaml" class="btn-primary" data-i18n="tomlToYaml">TOML → YAML</button>
+      <button id="yt-swap" class="btn-primary" data-i18n="swap">Swap</button>
       <button id="yt-clear" class="btn-ghost" data-i18n="clear">Clear</button>
     </div>
 
@@ -49,10 +51,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: 'Converted YAML to TOML.', msgTomlToYaml: 'Converted TOML to YAML.', msgInvalidYaml: 'Invalid YAML', msgInvalidToml: 'Invalid TOML', msgError: 'Error' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: '已将 YAML 转换为 TOML。', msgTomlToYaml: '已将 TOML 转换为 YAML。', msgInvalidYaml: '无效 YAML', msgInvalidToml: '无效 TOML', msgError: '错误' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: 'YAML を TOML に変換しました。', msgTomlToYaml: 'TOML を YAML に変換しました。', msgInvalidYaml: '無効な YAML', msgInvalidToml: '無効な TOML', msgError: 'エラー' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: 'YAML을 TOML로 변환했습니다.', msgTomlToYaml: 'TOML을 YAML로 변환했습니다.', msgInvalidYaml: '유효하지 않은 YAML', msgInvalidToml: '유효하지 않은 TOML', msgError: '오류' }
+        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', swap: 'Swap', msgYamlToToml: 'Converted YAML to TOML.', msgTomlToYaml: 'Converted TOML to YAML.', msgInvalidYaml: 'Invalid YAML', msgInvalidToml: 'Invalid TOML', msgError: 'Error', msgNullWarning: 'TOML does not support null values \u2014 converted to empty string' },
+        zh: { copy: '复制', copied: '已复制！', clear: '清除', swap: '交换', msgYamlToToml: '已将 YAML 转换为 TOML。', msgTomlToYaml: '已将 TOML 转换为 YAML。', msgInvalidYaml: '无效 YAML', msgInvalidToml: '无效 TOML', msgError: '错误', msgNullWarning: 'TOML 不支持 null 值 \u2014\u2014 已转换为空字符串' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', swap: '入れ替え', msgYamlToToml: 'YAML を TOML に変換しました。', msgTomlToYaml: 'TOML を YAML に変換しました。', msgInvalidYaml: '無効な YAML', msgInvalidToml: '無効な TOML', msgError: 'エラー', msgNullWarning: 'TOML は null 値をサポートしていません \u2014 空文字列に変換されました' },
+        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', swap: '바꾸기', msgYamlToToml: 'YAML을 TOML로 변환했습니다.', msgTomlToYaml: 'TOML을 YAML로 변환했습니다.', msgInvalidYaml: '유효하지 않은 YAML', msgInvalidToml: '유효하지 않은 TOML', msgError: '오류', msgNullWarning: 'TOML은 null 값을 지원하지 않습니다 \u2014 빈 문자열로 변환되었습니다' }
       };
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
       var t = STRINGS[pageLang] || STRINGS.en;
@@ -66,6 +68,7 @@
         wrap.dataset.msgInvalidYaml = t.msgInvalidYaml;
         wrap.dataset.msgInvalidToml = t.msgInvalidToml;
         wrap.dataset.msgError = t.msgError;
+        wrap.dataset.msgNullWarning = t.msgNullWarning;
         wrap.dataset.copy = t.copy;
         wrap.dataset.copied = t.copied;
       }
@@ -79,6 +82,7 @@
     const yamlEl = document.getElementById('yt-yaml') as HTMLTextAreaElement;
     const tomlEl = document.getElementById('yt-toml') as HTMLTextAreaElement;
     const statusEl = document.getElementById('yt-status') as HTMLElement;
+    const warningEl = document.getElementById('yt-warning') as HTMLElement;
     const copyYamlBtn = document.getElementById('yt-copy-yaml') as HTMLButtonElement;
     const copyTomlBtn = document.getElementById('yt-copy-toml') as HTMLButtonElement;
 
@@ -88,6 +92,7 @@
     const MSG_INVALID_YAML  = ytWrap?.dataset.msgInvalidYaml || 'Invalid YAML';
     const MSG_INVALID_TOML  = ytWrap?.dataset.msgInvalidToml || 'Invalid TOML';
     const MSG_ERROR         = ytWrap?.dataset.msgError       || 'Error';
+    const MSG_NULL_WARNING  = ytWrap?.dataset.msgNullWarning || 'TOML does not support null values \u2014 converted to empty string';
     const COPY_LABEL        = ytWrap?.dataset.copy           || 'Copy';
     const COPIED_LABEL      = ytWrap?.dataset.copied         || 'Copied!';
 
@@ -101,17 +106,54 @@
       statusEl.className = 'yt-status';
     }
 
+    function clearWarning() {
+      warningEl.textContent = '';
+      warningEl.className = 'yt-warning';
+    }
+
+    function sanitizeNulls(obj: unknown): { data: unknown; hadNull: boolean } {
+      if (obj === null) return { data: '', hadNull: true };
+      if (Array.isArray(obj)) {
+        let hadNull = false;
+        const data = obj.map(item => {
+          const r = sanitizeNulls(item);
+          if (r.hadNull) hadNull = true;
+          return r.data;
+        });
+        return { data, hadNull };
+      }
+      if (typeof obj === 'object') {
+        let hadNull = false;
+        const data: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+          const r = sanitizeNulls(v);
+          if (r.hadNull) hadNull = true;
+          data[k] = r.data;
+        }
+        return { data, hadNull };
+      }
+      return { data: obj, hadNull: false };
+    }
+
     function convertYamlToToml(raw: string): void {
-      const data = jsyaml.load(raw);
-      if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) {
+      const parsed = jsyaml.load(raw);
+      if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error('YAML root must be a mapping (object), not a scalar or sequence.');
       }
+      const { data, hadNull } = sanitizeNulls(parsed);
       tomlEl.value = tomlStringify(data as Record<string, unknown>);
+      if (hadNull) {
+        warningEl.textContent = MSG_NULL_WARNING;
+        warningEl.className = 'yt-warning visible';
+      } else {
+        clearWarning();
+      }
     }
 
     function convertTomlToYaml(raw: string): void {
       const data = tomlParse(raw);
       yamlEl.value = jsyaml.dump(data, { indent: 2, lineWidth: -1, noRefs: true });
+      clearWarning();
     }
 
     /* ── Real-time YAML → TOML (debounced 300ms) ── */
@@ -120,12 +162,13 @@
       if (_ytYamlTimer) clearTimeout(_ytYamlTimer);
       _ytYamlTimer = setTimeout(() => {
         const raw = yamlEl.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { clearStatus(); clearWarning(); return; }
         try {
           convertYamlToToml(raw);
           setStatus(MSG_YAML_TO_TOML, false);
         } catch (e: any) {
           tomlEl.value = '';
+          clearWarning();
           setStatus(MSG_INVALID_YAML + ': ' + e.message, true);
         }
       }, 300);
@@ -148,31 +191,21 @@
       }, 300);
     });
 
-    /* ── YAML → TOML button ── */
-    document.getElementById('yt-to-toml')!.addEventListener('click', () => {
+    /* ── Swap button ── */
+    document.getElementById('yt-swap')!.addEventListener('click', () => {
+      const tmp = yamlEl.value;
+      yamlEl.value = tomlEl.value;
+      tomlEl.value = tmp;
+      clearWarning();
       const raw = yamlEl.value.trim();
       if (!raw) { clearStatus(); return; }
       try {
         convertYamlToToml(raw);
         setStatus(MSG_YAML_TO_TOML, false);
-        (window as any).trackTool && (window as any).trackTool('yaml_toml', 'yaml_to_toml');
+        (window as any).trackTool && (window as any).trackTool('yaml_toml', 'swap');
       } catch (e: any) {
         tomlEl.value = '';
         setStatus(MSG_INVALID_YAML + ': ' + e.message, true);
-      }
-    });
-
-    /* ── TOML → YAML button ── */
-    document.getElementById('yt-to-yaml')!.addEventListener('click', () => {
-      const raw = tomlEl.value.trim();
-      if (!raw) { clearStatus(); return; }
-      try {
-        convertTomlToYaml(raw);
-        setStatus(MSG_TOML_TO_YAML, false);
-        (window as any).trackTool && (window as any).trackTool('yaml_toml', 'toml_to_yaml');
-      } catch (e: any) {
-        yamlEl.value = '';
-        setStatus(MSG_INVALID_TOML + ': ' + e.message, true);
       }
     });
 
@@ -181,6 +214,7 @@
       yamlEl.value = '';
       tomlEl.value = '';
       clearStatus();
+      clearWarning();
     });
 
     /* ── Copy buttons ── */
@@ -203,15 +237,42 @@
     /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
     yamlEl.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        document.getElementById('yt-to-toml')!.click();
+        const raw = yamlEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          convertYamlToToml(raw);
+          setStatus(MSG_YAML_TO_TOML, false);
+        } catch (e2: any) {
+          tomlEl.value = '';
+          clearWarning();
+          setStatus(MSG_INVALID_YAML + ': ' + e2.message, true);
+        }
       }
     });
 
     tomlEl.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        document.getElementById('yt-to-yaml')!.click();
+        const raw = tomlEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          convertTomlToYaml(raw);
+          setStatus(MSG_TOML_TO_YAML, false);
+        } catch (e2: any) {
+          yamlEl.value = '';
+          setStatus(MSG_INVALID_TOML + ': ' + e2.message, true);
+        }
       }
     });
+
+    /* ── Page load: pre-fill example ── */
+    const EXAMPLE_YAML = 'database:\n  host: localhost\n  port: 5432\n  enabled: true';
+    yamlEl.value = EXAMPLE_YAML;
+    try {
+      convertYamlToToml(EXAMPLE_YAML);
+      setStatus(MSG_YAML_TO_TOML, false);
+    } catch {
+      // example is always valid — this branch should never run
+    }
   </script>
 </div>
 
@@ -256,6 +317,14 @@
   .yt-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
 
   .yt-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .yt-warning { font-size: 0.85rem; display: none; }
+  .yt-warning.visible { display: block; color: #b45309; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .yt-warning.visible { color: #fbbf24; }
+  }
+  [data-theme="dark"] .yt-warning.visible { color: #fbbf24; }
 
   .yt-status { font-size: 0.85rem; min-height: 1.2rem; }
   .yt-status.success { color: #057a55; }
