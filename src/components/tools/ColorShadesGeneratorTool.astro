@@ -13,6 +13,8 @@ const labels = {
     hex: 'HEX',
     hsl: 'HSL',
     rgb: 'RGB',
+    invalidHex: 'Invalid hex color',
+    copy: 'Copy',
   },
   zh: {
     baseColor: '基础颜色',
@@ -23,6 +25,8 @@ const labels = {
     hex: 'HEX',
     hsl: 'HSL',
     rgb: 'RGB',
+    invalidHex: '无效的 hex 颜色',
+    copy: '复制',
   },
   ja: {
     baseColor: 'ベースカラー',
@@ -33,6 +37,8 @@ const labels = {
     hex: 'HEX',
     hsl: 'HSL',
     rgb: 'RGB',
+    invalidHex: '無効な HEX カラー',
+    copy: 'コピー',
   },
   ko: {
     baseColor: '기본 색상',
@@ -43,6 +49,8 @@ const labels = {
     hex: 'HEX',
     hsl: 'HSL',
     rgb: 'RGB',
+    invalidHex: '잘못된 HEX 색상',
+    copy: '복사',
   },
 };
 
@@ -56,21 +64,27 @@ const L = labels[lang] ?? labels['en'];
   data-label-hex={L.hex}
   data-label-hsl={L.hsl}
   data-label-rgb={L.rgb}
+  data-label-invalid-hex={L.invalidHex}
+  data-label-copy={L.copy}
 >
   <!-- Input row -->
   <div class="csg-input-row">
     <label class="csg-label" for="csg-hex-input">{L.baseColor}</label>
     <div class="csg-color-input-wrap">
       <input id="csg-color-picker" class="csg-swatch" type="color" value="#3b82f6" />
-      <input
-        id="csg-hex-input"
-        class="csg-hex-input"
-        type="text"
-        value="#3b82f6"
-        spellcheck="false"
-        autocomplete="off"
-        maxlength="7"
-      />
+      <div class="csg-hex-input-wrap">
+        <input
+          id="csg-hex-input"
+          class="csg-hex-input"
+          type="text"
+          value="#3b82f6"
+          spellcheck="false"
+          autocomplete="off"
+          maxlength="7"
+          aria-describedby="csg-hex-error"
+        />
+        <span id="csg-hex-error" class="csg-hex-error" role="alert" aria-live="polite"></span>
+      </div>
     </div>
     <span class="csg-hint">{L.clickCopy}</span>
   </div>
@@ -94,9 +108,12 @@ const L = labels[lang] ?? labels['en'];
       var LABEL_HEX       = wrap.dataset.labelHex;
       var LABEL_HSL       = wrap.dataset.labelHsl;
       var LABEL_RGB       = wrap.dataset.labelRgb;
+      var LABEL_INVALID_HEX = wrap.dataset.labelInvalidHex;
+      var LABEL_COPY      = wrap.dataset.labelCopy;
 
       var pickerEl  = document.getElementById('csg-color-picker');
       var hexInputEl = document.getElementById('csg-hex-input');
+      var hexErrorEl = document.getElementById('csg-hex-error');
       var gridEl    = document.getElementById('csg-grid');
       var copyAllBtn = document.getElementById('csg-copy-all');
 
@@ -193,9 +210,11 @@ const L = labels[lang] ?? labels['en'];
         gridEl.innerHTML = '';
 
         shades.forEach(function (shade) {
-          var card = document.createElement('div');
+          var card = document.createElement('button');
+          card.type = 'button';
           card.className = 'csg-card';
           card.title = shade.hex;
+          card.setAttribute('aria-label', LABEL_COPY + ' ' + shade.hex.toUpperCase());
 
           var swatch = document.createElement('div');
           swatch.className = 'csg-shade-swatch';
@@ -213,6 +232,7 @@ const L = labels[lang] ?? labels['en'];
 
           var hexLine = document.createElement('span');
           hexLine.className = 'csg-shade-hex';
+          hexLine.setAttribute('aria-live', 'polite');
           hexLine.textContent = shade.hex.toUpperCase();
           info.appendChild(hexLine);
 
@@ -271,8 +291,19 @@ const L = labels[lang] ?? labels['en'];
       hexInputEl.addEventListener('input', function () {
         var v = hexInputEl.value.trim();
         if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+          hexInputEl.classList.remove('csg-error');
+          hexInputEl.removeAttribute('aria-invalid');
+          hexErrorEl.textContent = '';
           pickerEl.value = v;
           render(v);
+        } else if (v.length === 7) {
+          hexInputEl.classList.add('csg-error');
+          hexInputEl.setAttribute('aria-invalid', 'true');
+          hexErrorEl.textContent = LABEL_INVALID_HEX;
+        } else {
+          hexInputEl.classList.remove('csg-error');
+          hexInputEl.removeAttribute('aria-invalid');
+          hexErrorEl.textContent = '';
         }
       });
 
@@ -317,6 +348,8 @@ const L = labels[lang] ?? labels['en'];
     flex-shrink: 0;
   }
 
+  .csg-hex-input-wrap { display: flex; flex-direction: column; gap: 0.2rem; }
+
   .csg-hex-input {
     font-family: var(--font-mono);
     font-size: 0.85rem;
@@ -329,6 +362,15 @@ const L = labels[lang] ?? labels['en'];
   }
 
   .csg-hex-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .csg-hex-input.csg-error { border-color: #ef4444; }
+  .csg-hex-input.csg-error:focus { border-color: #ef4444; }
+
+  .csg-hex-error {
+    font-size: 0.73rem;
+    color: #ef4444;
+    min-height: 1em;
+    line-height: 1.2;
+  }
 
   .csg-hint {
     font-size: 0.78rem;
@@ -351,6 +393,10 @@ const L = labels[lang] ?? labels['en'];
     overflow: hidden;
     cursor: pointer;
     transition: transform 0.1s, box-shadow 0.1s;
+    font: inherit;
+    text-align: left;
+    background: none;
+    padding: 0;
   }
 
   .csg-card:hover {
