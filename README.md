@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 85 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 82 tools and growing.
 
 ## Tools
 
@@ -30,10 +30,8 @@
 | Word & Character Counter | [/tools/word-counter](https://zerotool.dev/tools/word-counter) |
 | Chmod Calculator | [/tools/chmod-calculator](https://zerotool.dev/tools/chmod-calculator) |
 | CSV to JSON Converter | [/tools/csv-json](https://zerotool.dev/tools/csv-json) |
-| CSV to JSON | [/tools/csv-to-json](https://zerotool.dev/tools/csv-to-json) |
 | HTML Entity Encoder / Decoder | [/tools/html-entity](https://zerotool.dev/tools/html-entity) |
 | YAML to JSON Converter | [/tools/yaml-json](https://zerotool.dev/tools/yaml-json) |
-| YAML to JSON | [/tools/yaml-to-json](https://zerotool.dev/tools/yaml-to-json) |
 | Line Tools | [/tools/line-tools](https://zerotool.dev/tools/line-tools) |
 | Number Base Converter | [/tools/number-base](https://zerotool.dev/tools/number-base) |
 | SQL Formatter | [/tools/sql-formatter](https://zerotool.dev/tools/sql-formatter) |
@@ -80,7 +78,6 @@
 | CSV to Markdown Table | [/tools/csv-to-markdown](https://zerotool.dev/tools/csv-to-markdown) |
 | Text to Binary Converter | [/tools/text-to-binary](https://zerotool.dev/tools/text-to-binary) |
 | NATO Phonetic Alphabet | [/tools/nato-phonetic-alphabet](https://zerotool.dev/tools/nato-phonetic-alphabet) |
-| String to Slug | [/tools/string-to-slug](https://zerotool.dev/tools/string-to-slug) |
 | Text to ASCII Art | [/tools/text-to-ascii-art](https://zerotool.dev/tools/text-to-ascii-art) |
 | IP Subnet Calculator | [/tools/ip-subnet-calculator](https://zerotool.dev/tools/ip-subnet-calculator) |
 | HTML to JSX Converter | [/tools/html-to-jsx](https://zerotool.dev/tools/html-to-jsx) |
