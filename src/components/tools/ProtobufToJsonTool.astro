@@ -268,7 +268,10 @@
         if (!ns || !ns.nestedArray) return names;
         ns.nestedArray.forEach(function(item) {
           var fullName = prefix ? prefix + '.' + item.name : item.name;
-          if (item.constructor && item.constructor.name === 'Type') {
+          var pb = window.protobuf;
+          var isType = (pb && pb.Type && item instanceof pb.Type) ||
+            (Array.isArray(item.fieldsArray) && item.fields !== null && typeof item.fields === 'object');
+          if (isType) {
             names.push(fullName);
           }
           // Recurse into namespaces/messages
@@ -424,17 +427,7 @@
         window.trackTool && window.trackTool('protobuf_to_json', 'copy_json');
       });
 
-      clearBtn.addEventListener('click', function() {
-        schemaEl.value = '';
-        binaryEl.value = '';
-        currentRoot = null;
-        msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
-        outputEl.innerHTML = '<span class="pb-hint">' + escHtml(t.outputHint) + '</span>';
-        setStatus('', false);
-      });
-
-      // Default schema example
-      schemaEl.value = [
+      var DEFAULT_SCHEMA = [
         'syntax = "proto3";',
         '',
         'package demo;',
@@ -459,6 +452,19 @@
         '  INACTIVE = 2;',
         '}',
       ].join('\n');
+
+      clearBtn.addEventListener('click', function() {
+        schemaEl.value = DEFAULT_SCHEMA;
+        binaryEl.value = '';
+        currentRoot = null;
+        outputEl.innerHTML = '<span class="pb-hint">' + escHtml(t.outputHint) + '</span>';
+        setStatus('', false);
+        parseSchema(DEFAULT_SCHEMA);
+        if (window.protobuf) generateSample();
+      });
+
+      // Default schema example
+      schemaEl.value = DEFAULT_SCHEMA;
 
       // Parse default schema after load
       setTimeout(function() {
