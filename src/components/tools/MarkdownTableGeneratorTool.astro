@@ -214,11 +214,7 @@ const L = labels[lang] ?? labels['en'];
       }
 
       function getCellText(td) {
-        var text = '';
-        td.childNodes.forEach(function(node) {
-          if (node.nodeType === 3) text += node.textContent;
-        });
-        return text.trim();
+        return td.textContent.trim();
       }
 
       function escapePipe(str) {
@@ -305,10 +301,21 @@ const L = labels[lang] ?? labels['en'];
         while (alignments.length < COLS) alignments.push('left');
         alignments.length = COLS;
 
-        // Build header row
+        // Build header: row 1 = alignment controls, row 2 = editable text
         thead.innerHTML = '';
-        var trHead = document.createElement('tr');
 
+        var trAlign = document.createElement('tr');
+        trAlign.className = 'mtg-align-row';
+        data.headers.forEach(function (h, ci) {
+          var thAlign = document.createElement('th');
+          thAlign.className = 'mtg-align-cell';
+          thAlign.appendChild(buildAlignSelect(ci));
+          trAlign.appendChild(thAlign);
+        });
+        thead.appendChild(trAlign);
+
+        var trHead = document.createElement('tr');
+        trHead.className = 'mtg-header-row';
         data.headers.forEach(function (h, ci) {
           var th = document.createElement('th');
           th.className = 'mtg-cell';
@@ -316,13 +323,8 @@ const L = labels[lang] ?? labels['en'];
           th.spellcheck = false;
           th.textContent = h;
           th.addEventListener('input', function () { generateMarkdown(); });
-
-          var alignWrap = buildAlignSelect(ci);
-          th.appendChild(alignWrap);
-
           trHead.appendChild(th);
         });
-
         thead.appendChild(trHead);
 
         // Build body rows
@@ -391,15 +393,21 @@ const L = labels[lang] ?? labels['en'];
         alignments.push('left');
         COLS++;
 
-        // Add header cell
-        var trHead = thead.querySelector('tr');
+        // Add align cell to the align row
+        var trAlign = thead.querySelector('tr.mtg-align-row');
+        var thAlign = document.createElement('th');
+        thAlign.className = 'mtg-align-cell';
+        thAlign.appendChild(buildAlignSelect(COLS - 1));
+        trAlign.appendChild(thAlign);
+
+        // Add header text cell to the header row
+        var trHead = thead.querySelector('tr.mtg-header-row');
         var th = document.createElement('th');
         th.className = 'mtg-cell';
         th.contentEditable = 'true';
         th.spellcheck = false;
         th.textContent = HEADER_LABEL + ' ' + COLS;
         th.addEventListener('input', function () { generateMarkdown(); });
-        th.appendChild(buildAlignSelect(COLS - 1));
         trHead.appendChild(th);
 
         // Add body cells
@@ -421,8 +429,11 @@ const L = labels[lang] ?? labels['en'];
         alignments.pop();
         COLS--;
 
-        var trHead = thead.querySelector('tr');
-        if (trHead.lastElementChild) trHead.removeChild(trHead.lastElementChild);
+        var trAlign = thead.querySelector('tr.mtg-align-row');
+        if (trAlign && trAlign.lastElementChild) trAlign.removeChild(trAlign.lastElementChild);
+
+        var trHead = thead.querySelector('tr.mtg-header-row');
+        if (trHead && trHead.lastElementChild) trHead.removeChild(trHead.lastElementChild);
 
         var trs = tbody.querySelectorAll('tr');
         trs.forEach(function (tr) {
@@ -619,6 +630,15 @@ const L = labels[lang] ?? labels['en'];
 
   .mtg-table thead tr { background: var(--color-bg-secondary); }
 
+  .mtg-align-row { background: var(--color-bg); }
+
+  .mtg-align-cell {
+    border: 1px solid var(--color-border);
+    padding: 0.2rem 0.4rem;
+    text-align: center;
+    white-space: nowrap;
+  }
+
   .mtg-cell {
     border: 1px solid var(--color-border);
     padding: 0.4rem 0.6rem;
@@ -631,10 +651,6 @@ const L = labels[lang] ?? labels['en'];
 
   th.mtg-cell {
     font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    justify-content: space-between;
   }
 
   .mtg-cell[contenteditable]:focus {
