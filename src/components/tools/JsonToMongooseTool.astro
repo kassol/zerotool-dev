@@ -1,0 +1,643 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    modelName: 'Model name',
+    language: 'Language',
+    timestamps: 'timestamps',
+    jsonInput: 'JSON Input',
+    mongooseOutput: 'Mongoose Schema Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    generate: 'Generate Schema',
+    msgInvalidJson: 'Invalid JSON: ',
+    msgGenOne: 'Generated 1 schema.',
+    msgGenMany: 'Generated {n} schemas.',
+    langJs: 'JavaScript',
+    langTs: 'TypeScript',
+    on: 'On',
+    off: 'Off',
+  },
+  zh: {
+    modelName: '模型名称',
+    language: '语言',
+    timestamps: 'timestamps',
+    jsonInput: 'JSON 输入',
+    mongooseOutput: 'Mongoose Schema 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    generate: '生成 Schema',
+    msgInvalidJson: 'JSON 格式错误：',
+    msgGenOne: '已生成 1 个 Schema。',
+    msgGenMany: '已生成 {n} 个 Schema。',
+    langJs: 'JavaScript',
+    langTs: 'TypeScript',
+    on: '开启',
+    off: '关闭',
+  },
+  ja: {
+    modelName: 'モデル名',
+    language: '言語',
+    timestamps: 'timestamps',
+    jsonInput: 'JSON 入力',
+    mongooseOutput: 'Mongoose スキーマ出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    generate: 'スキーマを生成',
+    msgInvalidJson: '無効なJSON：',
+    msgGenOne: '1 個のスキーマを生成しました。',
+    msgGenMany: '{n} 個のスキーマを生成しました。',
+    langJs: 'JavaScript',
+    langTs: 'TypeScript',
+    on: 'オン',
+    off: 'オフ',
+  },
+  ko: {
+    modelName: '모델 이름',
+    language: '언어',
+    timestamps: 'timestamps',
+    jsonInput: 'JSON 입력',
+    mongooseOutput: 'Mongoose 스키마 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    generate: '스키마 생성',
+    msgInvalidJson: '잘못된 JSON: ',
+    msgGenOne: '스키마 1개를 생성했습니다.',
+    msgGenMany: '스키마 {n}개를 생성했습니다.',
+    langJs: 'JavaScript',
+    langTs: 'TypeScript',
+    on: '켜짐',
+    off: '꺼짐',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="jtm-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-gen-one={L.msgGenOne}
+  data-msg-gen-many={L.msgGenMany}
+>
+  <div class="jtm-config">
+    <div class="jtm-config-row">
+      <label for="jtm-model-name">{L.modelName}</label>
+      <input id="jtm-model-name" type="text" value="User" spellcheck="false" />
+    </div>
+    <div class="jtm-config-row">
+      <span class="jtm-label">{L.language}</span>
+      <div class="jtm-tabs" id="jtm-lang-tabs">
+        <button type="button" class="jtm-tab active" data-lang="javascript">{L.langJs}</button>
+        <button type="button" class="jtm-tab" data-lang="typescript">{L.langTs}</button>
+      </div>
+    </div>
+    <div class="jtm-config-row">
+      <span class="jtm-label">{L.timestamps}</span>
+      <div class="jtm-tabs" id="jtm-ts-tabs">
+        <button type="button" class="jtm-tab active" data-ts="true">{L.on}</button>
+        <button type="button" class="jtm-tab" data-ts="false">{L.off}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="jtm-panels">
+    <div class="jtm-panel">
+      <div class="jtm-panel-header">
+        <span>{L.jsonInput}</span>
+        <div class="jtm-panel-actions">
+          <button id="jtm-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="jtm-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea
+        id="jtm-input"
+        placeholder='{"name": "Alice", "age": 30}'
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="jtm-panel">
+      <div class="jtm-panel-header">
+        <span>{L.mongooseOutput}</span>
+        <button id="jtm-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+      </div>
+      <pre id="jtm-output" class="jtm-output"><code id="jtm-output-code"></code></pre>
+    </div>
+  </div>
+
+  <div class="jtm-actions">
+    <button id="jtm-convert" class="btn-primary" type="button">{L.generate}</button>
+  </div>
+
+  <div id="jtm-status" class="jtm-status" aria-live="polite"></div>
+
+  <script>
+    import hljs from 'highlight.js/lib/core';
+    import javascript from 'highlight.js/lib/languages/javascript';
+    hljs.registerLanguage('javascript', javascript);
+
+    (function () {
+      var wrap = document.querySelector('.jtm-wrap');
+
+      var COPY = wrap ? wrap.dataset.copy : 'Copy';
+      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 schema.';
+      var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} schemas.';
+
+      var inputEl = document.getElementById('jtm-input');
+      var outputCodeEl = document.getElementById('jtm-output-code');
+      var statusEl = document.getElementById('jtm-status');
+      var modelNameEl = document.getElementById('jtm-model-name');
+
+      var currentLang = 'javascript';
+      var currentTimestamps = true;
+
+      var EXAMPLE = JSON.stringify({
+        id: 1,
+        username: "alice",
+        email: "alice@example.com",
+        isActive: true,
+        score: 4.8,
+        tags: ["admin", "user"],
+        address: {
+          city: "London",
+          zip: "EC1A 1BB"
+        },
+        friends: [
+          { userId: "b2c3d4", name: "Bob" },
+          { userId: "e5f6a7", name: "Carol" }
+        ],
+        metadata: null
+      }, null, 2);
+
+      var langTabs = wrap ? wrap.querySelectorAll('#jtm-lang-tabs .jtm-tab') : [];
+      for (var ti = 0; ti < langTabs.length; ti++) {
+        (function (tab) {
+          tab.addEventListener('click', function () {
+            for (var j = 0; j < langTabs.length; j++) langTabs[j].classList.remove('active');
+            tab.classList.add('active');
+            currentLang = tab.dataset.lang;
+            convert();
+          });
+        })(langTabs[ti]);
+      }
+
+      var tsTabs = wrap ? wrap.querySelectorAll('#jtm-ts-tabs .jtm-tab') : [];
+      for (var ti2 = 0; ti2 < tsTabs.length; ti2++) {
+        (function (tab) {
+          tab.addEventListener('click', function () {
+            for (var j = 0; j < tsTabs.length; j++) tsTabs[j].classList.remove('active');
+            tab.classList.add('active');
+            currentTimestamps = tab.dataset.ts === 'true';
+            convert();
+          });
+        })(tsTabs[ti2]);
+      }
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jtm-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jtm-status';
+      }
+
+      function toCamelCase(str) {
+        return str
+          .replace(/[_\-\s]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/^(.)/, function (_, ch) { return ch.toLowerCase(); });
+      }
+
+      function toPascalCase(str) {
+        var c = toCamelCase(str);
+        return c.charAt(0).toUpperCase() + c.slice(1);
+      }
+
+      function mergeObjects(objs) {
+        var result = {};
+        for (var i = 0; i < objs.length; i++) {
+          var keys = Object.keys(objs[i]);
+          for (var j = 0; j < keys.length; j++) {
+            if (!Object.prototype.hasOwnProperty.call(result, keys[j])) {
+              result[keys[j]] = objs[i][keys[j]];
+            }
+          }
+        }
+        return result;
+      }
+
+      // TypeInfo kinds:
+      // { kind: 'primitive', mongooseType: 'String'|'Number'|'Boolean' }
+      // { kind: 'mixed' }
+      // { kind: 'ref', schemaName, interfaceName }
+      // { kind: 'array-primitive', mongooseType: 'String'|'Number'|'Boolean'|'Mixed' }
+      // { kind: 'array-ref', schemaName, interfaceName }
+
+      function inferTypeInfo(value, key, schemas) {
+        if (value === null) return { kind: 'mixed' };
+        if (typeof value === 'string') return { kind: 'primitive', mongooseType: 'String' };
+        if (typeof value === 'number') return { kind: 'primitive', mongooseType: 'Number' };
+        if (typeof value === 'boolean') return { kind: 'primitive', mongooseType: 'Boolean' };
+
+        if (Array.isArray(value)) {
+          if (value.length === 0) return { kind: 'array-primitive', mongooseType: 'Mixed' };
+
+          var nonNull = value.filter(function (v) { return v !== null; });
+          if (nonNull.length === 0) return { kind: 'array-primitive', mongooseType: 'Mixed' };
+
+          var objItems = nonNull.filter(function (v) {
+            return typeof v === 'object' && !Array.isArray(v);
+          });
+
+          if (objItems.length > 0) {
+            var subSchemaName = toCamelCase(key) + 'Schema';
+            var subInterfaceName = 'I' + toPascalCase(key);
+            buildSchemaFromObj(mergeObjects(objItems), subSchemaName, subInterfaceName, schemas);
+            return { kind: 'array-ref', schemaName: subSchemaName, interfaceName: subInterfaceName };
+          }
+
+          var types = [];
+          for (var i = 0; i < nonNull.length; i++) {
+            var v = nonNull[i];
+            var t;
+            if (typeof v === 'string') t = 'String';
+            else if (typeof v === 'number') t = 'Number';
+            else if (typeof v === 'boolean') t = 'Boolean';
+            else t = 'Mixed';
+            if (types.indexOf(t) === -1) types.push(t);
+          }
+          return { kind: 'array-primitive', mongooseType: types.length === 1 ? types[0] : 'Mixed' };
+        }
+
+        if (typeof value === 'object') {
+          var subSchemaName2 = toCamelCase(key) + 'Schema';
+          var subInterfaceName2 = 'I' + toPascalCase(key);
+          buildSchemaFromObj(value, subSchemaName2, subInterfaceName2, schemas);
+          return { kind: 'ref', schemaName: subSchemaName2, interfaceName: subInterfaceName2 };
+        }
+
+        return { kind: 'mixed' };
+      }
+
+      function buildSchemaFromObj(obj, schemaName, interfaceName, schemas) {
+        for (var i = 0; i < schemas.length; i++) {
+          if (schemas[i].name === schemaName) return;
+        }
+
+        var fields = [];
+        var keys = Object.keys(obj);
+        for (var i = 0; i < keys.length; i++) {
+          var typeInfo = inferTypeInfo(obj[keys[i]], keys[i], schemas);
+          fields.push({ key: keys[i], typeInfo: typeInfo });
+        }
+
+        schemas.push({ name: schemaName, interfaceName: interfaceName, fields: fields });
+      }
+
+      function getMongooseFieldType(typeInfo) {
+        switch (typeInfo.kind) {
+          case 'primitive': return '{ type: ' + typeInfo.mongooseType + ' }';
+          case 'mixed': return '{ type: mongoose.Schema.Types.Mixed }';
+          case 'ref': return typeInfo.schemaName;
+          case 'array-primitive':
+            if (typeInfo.mongooseType === 'Mixed') return '[mongoose.Schema.Types.Mixed]';
+            return '[' + typeInfo.mongooseType + ']';
+          case 'array-ref': return '[' + typeInfo.schemaName + ']';
+          default: return '{ type: mongoose.Schema.Types.Mixed }';
+        }
+      }
+
+      function getTsFieldType(typeInfo) {
+        switch (typeInfo.kind) {
+          case 'primitive': {
+            var map = { String: 'string', Number: 'number', Boolean: 'boolean' };
+            return map[typeInfo.mongooseType] || 'any';
+          }
+          case 'mixed': return 'any';
+          case 'ref': return typeInfo.interfaceName;
+          case 'array-primitive': {
+            var map2 = { String: 'string', Number: 'number', Boolean: 'boolean', Mixed: 'any' };
+            return (map2[typeInfo.mongooseType] || 'any') + '[]';
+          }
+          case 'array-ref': return typeInfo.interfaceName + '[]';
+          default: return 'any';
+        }
+      }
+
+      function renderOutput(schemas, modelName, mode, useTimestamps) {
+        var lines = [];
+        var rootSchema = schemas[schemas.length - 1];
+        var subSchemas = schemas.slice(0, -1);
+
+        if (mode === 'javascript') {
+          lines.push("const mongoose = require('mongoose');");
+          lines.push("const { Schema } = mongoose;");
+        } else {
+          lines.push("import mongoose, { Document, Schema } from 'mongoose';");
+        }
+        lines.push('');
+
+        if (mode === 'typescript') {
+          for (var i = 0; i < subSchemas.length; i++) {
+            var s = subSchemas[i];
+            lines.push('export interface ' + s.interfaceName + ' {');
+            for (var j = 0; j < s.fields.length; j++) {
+              lines.push('  ' + s.fields[j].key + ': ' + getTsFieldType(s.fields[j].typeInfo) + ';');
+            }
+            lines.push('}');
+            lines.push('');
+          }
+          lines.push('export interface ' + rootSchema.interfaceName + ' extends Document {');
+          for (var j = 0; j < rootSchema.fields.length; j++) {
+            lines.push('  ' + rootSchema.fields[j].key + ': ' + getTsFieldType(rootSchema.fields[j].typeInfo) + ';');
+          }
+          lines.push('}');
+          lines.push('');
+        }
+
+        for (var i = 0; i < schemas.length; i++) {
+          var schema = schemas[i];
+          var isRoot = i === schemas.length - 1;
+          var generic = (mode === 'typescript' && isRoot) ? '<' + schema.interfaceName + '>' : '';
+          lines.push('const ' + schema.name + ' = new Schema' + generic + '({');
+          for (var j = 0; j < schema.fields.length; j++) {
+            lines.push('  ' + schema.fields[j].key + ': ' + getMongooseFieldType(schema.fields[j].typeInfo) + ',');
+          }
+          if (isRoot) {
+            lines.push('}, { timestamps: ' + useTimestamps + ' });');
+          } else {
+            lines.push('});');
+          }
+          lines.push('');
+        }
+
+        var pascalModelName = toPascalCase(modelName);
+        if (mode === 'javascript') {
+          lines.push("module.exports = mongoose.model('" + pascalModelName + "', " + rootSchema.name + ");");
+        } else {
+          lines.push("export default mongoose.model<" + rootSchema.interfaceName + ">('" + pascalModelName + "', " + rootSchema.name + ");");
+        }
+
+        return lines.join('\n');
+      }
+
+      function clearOutput() {
+        outputCodeEl.textContent = '';
+        outputCodeEl.removeAttribute('data-highlighted');
+        outputCodeEl.className = '';
+      }
+
+      function convert() {
+        var raw = inputEl.value.trim();
+        if (!raw) { clearStatus(); clearOutput(); return; }
+        inputEl.classList.remove('error');
+
+        var parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          inputEl.classList.add('error');
+          setStatus(MSG_INVALID + e.message, true);
+          return;
+        }
+
+        inputEl.classList.remove('error');
+        var rawModelName = modelNameEl.value.trim() || 'User';
+        var schemaVarName = toCamelCase(rawModelName) + 'Schema';
+        var interfaceName = 'I' + toPascalCase(rawModelName);
+
+        var schemas = [];
+
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildSchemaFromObj(parsed, schemaVarName, interfaceName, schemas);
+        } else if (Array.isArray(parsed)) {
+          var objItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (objItems.length > 0) {
+            buildSchemaFromObj(mergeObjects(objItems), schemaVarName, interfaceName, schemas);
+          } else {
+            outputCodeEl.textContent = '// Array of primitives — no schema to generate';
+            outputCodeEl.removeAttribute('data-highlighted');
+            outputCodeEl.className = 'language-javascript';
+            hljs.highlightElement(outputCodeEl);
+            setStatus(MSG_GEN_ONE, false);
+            window.trackTool && window.trackTool('json-to-mongoose', 'generate');
+            return;
+          }
+        } else {
+          outputCodeEl.textContent = '// Primitive value — no schema to generate';
+          outputCodeEl.removeAttribute('data-highlighted');
+          outputCodeEl.className = 'language-javascript';
+          hljs.highlightElement(outputCodeEl);
+          setStatus(MSG_GEN_ONE, false);
+          window.trackTool && window.trackTool('json-to-mongoose', 'generate');
+          return;
+        }
+
+        var result = renderOutput(schemas, rawModelName, currentLang, currentTimestamps);
+        outputCodeEl.textContent = result;
+        outputCodeEl.removeAttribute('data-highlighted');
+        outputCodeEl.className = 'language-javascript';
+        hljs.highlightElement(outputCodeEl);
+        var count = schemas.length;
+        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', String(count));
+        setStatus(msg, false);
+        window.trackTool && window.trackTool('json-to-mongoose', 'generate');
+      }
+
+      var _liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+      modelNameEl.addEventListener('input', function () {
+        clearTimeout(_liveTimer);
+        _liveTimer = setTimeout(convert, 300);
+      });
+
+      document.getElementById('jtm-convert').addEventListener('click', convert);
+
+      document.getElementById('jtm-example').addEventListener('click', function () {
+        inputEl.value = EXAMPLE;
+        inputEl.classList.remove('error');
+        clearStatus();
+        convert();
+      });
+
+      document.getElementById('jtm-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        clearOutput();
+        inputEl.classList.remove('error');
+        clearStatus();
+      });
+
+      document.getElementById('jtm-copy').addEventListener('click', function () {
+        var text = outputCodeEl.textContent;
+        if (!text) return;
+        var btn = document.getElementById('jtm-copy');
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = COPIED;
+          setTimeout(function () { btn.textContent = COPY; }, 1500);
+        });
+      });
+
+      inputEl.value = EXAMPLE;
+      convert();
+    })();
+  </script>
+</div>
+
+<style>
+  .jtm-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jtm-config {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .jtm-config-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .jtm-config-row label,
+  .jtm-label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+  }
+
+  .jtm-config-row input[type="text"] {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    width: 160px;
+  }
+
+  .jtm-config-row input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jtm-tabs {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+
+  .jtm-tab {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.78rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+
+  .jtm-tab:hover { border-color: var(--color-primary); color: var(--color-text); }
+  .jtm-tab.active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .jtm-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .jtm-panels { grid-template-columns: 1fr; }
+  }
+
+  .jtm-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jtm-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .jtm-panel-actions { display: flex; gap: 0.3rem; }
+
+  .jtm-panel textarea {
+    width: 100%;
+    min-height: 280px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+
+  .jtm-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jtm-panel textarea.error { border-color: #c0392b; }
+
+  .jtm-output {
+    min-height: 280px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    margin: 0;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+  .jtm-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .jtm-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jtm-status.success { color: #057a55; }
+  .jtm-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jtm-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jtm-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jtm-panel textarea.error { border-color: #f87171; }
+  }
+  [data-theme="dark"] .jtm-status.success { color: #34d399; }
+  [data-theme="dark"] .jtm-status.error { color: #f87171; }
+  [data-theme="dark"] .jtm-panel textarea.error { border-color: #f87171; }
+</style>
