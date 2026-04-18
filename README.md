@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 82 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 83 tools and growing.
 
 ## Tools
 
@@ -91,6 +91,7 @@
 | QR Code Decoder | [/tools/qr-code-decoder](https://zerotool.dev/tools/qr-code-decoder) |
 | TypeScript to Zod Schema | [/tools/typescript-to-zod](https://zerotool.dev/tools/typescript-to-zod) |
 | JSON to Python Dataclass | [/tools/json-to-python-dataclass](https://zerotool.dev/tools/json-to-python-dataclass) |
+| JWT Generator / Signer | [/tools/jwt-generator](https://zerotool.dev/tools/jwt-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
