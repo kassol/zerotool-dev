@@ -1,0 +1,270 @@
+---
+// YamlTomlTool — bidirectional YAML ↔ TOML converter (uses js-yaml + smol-toml via Astro bundle)
+---
+
+<div>
+  <div class="yt-wrap"
+    data-msg-yaml-to-toml=""
+    data-msg-toml-to-yaml=""
+    data-msg-invalid-yaml=""
+    data-msg-invalid-toml=""
+    data-msg-error=""
+    data-copy=""
+    data-copied=""
+  >
+    <div class="yt-panels">
+      <div class="yt-panel">
+        <label for="yt-yaml">
+          <span>YAML</span>
+          <button id="yt-copy-yaml" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="yt-yaml"
+          placeholder={"database:\n  host: localhost\n  port: 5432\n  enabled: true"}
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="yt-panel">
+        <label for="yt-toml">
+          <span>TOML</span>
+          <button id="yt-copy-toml" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="yt-toml"
+          placeholder={"[database]\nhost = \"localhost\"\nport = 5432\nenabled = true"}
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="yt-actions">
+      <button id="yt-to-toml" class="btn-primary" data-i18n="yamlToToml">YAML → TOML</button>
+      <button id="yt-to-yaml" class="btn-primary" data-i18n="tomlToYaml">TOML → YAML</button>
+      <button id="yt-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="yt-status" class="yt-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: 'Converted YAML to TOML.', msgTomlToYaml: 'Converted TOML to YAML.', msgInvalidYaml: 'Invalid YAML', msgInvalidToml: 'Invalid TOML', msgError: 'Error' },
+        zh: { copy: '复制', copied: '已复制！', clear: '清除', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: '已将 YAML 转换为 TOML。', msgTomlToYaml: '已将 TOML 转换为 YAML。', msgInvalidYaml: '无效 YAML', msgInvalidToml: '无效 TOML', msgError: '错误' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: 'YAML を TOML に変換しました。', msgTomlToYaml: 'TOML を YAML に変換しました。', msgInvalidYaml: '無効な YAML', msgInvalidToml: '無効な TOML', msgError: 'エラー' },
+        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', yamlToToml: 'YAML \u2192 TOML', tomlToYaml: 'TOML \u2192 YAML', msgYamlToToml: 'YAML을 TOML로 변환했습니다.', msgTomlToYaml: 'TOML을 YAML로 변환했습니다.', msgInvalidYaml: '유효하지 않은 YAML', msgInvalidToml: '유효하지 않은 TOML', msgError: '오류' }
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('.yt-wrap [data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      var wrap = document.querySelector('.yt-wrap');
+      if (wrap) {
+        wrap.dataset.msgYamlToToml = t.msgYamlToToml;
+        wrap.dataset.msgTomlToYaml = t.msgTomlToYaml;
+        wrap.dataset.msgInvalidYaml = t.msgInvalidYaml;
+        wrap.dataset.msgInvalidToml = t.msgInvalidToml;
+        wrap.dataset.msgError = t.msgError;
+        wrap.dataset.copy = t.copy;
+        wrap.dataset.copied = t.copied;
+      }
+    })();
+  </script>
+
+  <script>
+    import jsyaml from 'js-yaml';
+    import { parse as tomlParse, stringify as tomlStringify } from 'smol-toml';
+
+    const yamlEl = document.getElementById('yt-yaml') as HTMLTextAreaElement;
+    const tomlEl = document.getElementById('yt-toml') as HTMLTextAreaElement;
+    const statusEl = document.getElementById('yt-status') as HTMLElement;
+    const copyYamlBtn = document.getElementById('yt-copy-yaml') as HTMLButtonElement;
+    const copyTomlBtn = document.getElementById('yt-copy-toml') as HTMLButtonElement;
+
+    const ytWrap = document.querySelector('.yt-wrap') as HTMLElement;
+    const MSG_YAML_TO_TOML  = ytWrap?.dataset.msgYamlToToml  || 'Converted YAML to TOML.';
+    const MSG_TOML_TO_YAML  = ytWrap?.dataset.msgTomlToYaml  || 'Converted TOML to YAML.';
+    const MSG_INVALID_YAML  = ytWrap?.dataset.msgInvalidYaml || 'Invalid YAML';
+    const MSG_INVALID_TOML  = ytWrap?.dataset.msgInvalidToml || 'Invalid TOML';
+    const MSG_ERROR         = ytWrap?.dataset.msgError       || 'Error';
+    const COPY_LABEL        = ytWrap?.dataset.copy           || 'Copy';
+    const COPIED_LABEL      = ytWrap?.dataset.copied         || 'Copied!';
+
+    function setStatus(msg: string, isError: boolean) {
+      statusEl.textContent = msg;
+      statusEl.className = 'yt-status ' + (isError ? 'error' : 'success');
+    }
+
+    function clearStatus() {
+      statusEl.textContent = '';
+      statusEl.className = 'yt-status';
+    }
+
+    function convertYamlToToml(raw: string): void {
+      const data = jsyaml.load(raw);
+      if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('YAML root must be a mapping (object), not a scalar or sequence.');
+      }
+      tomlEl.value = tomlStringify(data as Record<string, unknown>);
+    }
+
+    function convertTomlToYaml(raw: string): void {
+      const data = tomlParse(raw);
+      yamlEl.value = jsyaml.dump(data, { indent: 2, lineWidth: -1, noRefs: true });
+    }
+
+    /* ── Real-time YAML → TOML (debounced 300ms) ── */
+    let _ytYamlTimer: ReturnType<typeof setTimeout> | null = null;
+    yamlEl.addEventListener('input', () => {
+      if (_ytYamlTimer) clearTimeout(_ytYamlTimer);
+      _ytYamlTimer = setTimeout(() => {
+        const raw = yamlEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          convertYamlToToml(raw);
+          setStatus(MSG_YAML_TO_TOML, false);
+        } catch (e: any) {
+          tomlEl.value = '';
+          setStatus(MSG_INVALID_YAML + ': ' + e.message, true);
+        }
+      }, 300);
+    });
+
+    /* ── Real-time TOML → YAML (debounced 300ms) ── */
+    let _ytTomlTimer: ReturnType<typeof setTimeout> | null = null;
+    tomlEl.addEventListener('input', () => {
+      if (_ytTomlTimer) clearTimeout(_ytTomlTimer);
+      _ytTomlTimer = setTimeout(() => {
+        const raw = tomlEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        try {
+          convertTomlToYaml(raw);
+          setStatus(MSG_TOML_TO_YAML, false);
+        } catch (e: any) {
+          yamlEl.value = '';
+          setStatus(MSG_INVALID_TOML + ': ' + e.message, true);
+        }
+      }, 300);
+    });
+
+    /* ── YAML → TOML button ── */
+    document.getElementById('yt-to-toml')!.addEventListener('click', () => {
+      const raw = yamlEl.value.trim();
+      if (!raw) { clearStatus(); return; }
+      try {
+        convertYamlToToml(raw);
+        setStatus(MSG_YAML_TO_TOML, false);
+        (window as any).trackTool && (window as any).trackTool('yaml_toml', 'yaml_to_toml');
+      } catch (e: any) {
+        tomlEl.value = '';
+        setStatus(MSG_INVALID_YAML + ': ' + e.message, true);
+      }
+    });
+
+    /* ── TOML → YAML button ── */
+    document.getElementById('yt-to-yaml')!.addEventListener('click', () => {
+      const raw = tomlEl.value.trim();
+      if (!raw) { clearStatus(); return; }
+      try {
+        convertTomlToYaml(raw);
+        setStatus(MSG_TOML_TO_YAML, false);
+        (window as any).trackTool && (window as any).trackTool('yaml_toml', 'toml_to_yaml');
+      } catch (e: any) {
+        yamlEl.value = '';
+        setStatus(MSG_INVALID_TOML + ': ' + e.message, true);
+      }
+    });
+
+    /* ── Clear ── */
+    document.getElementById('yt-clear')!.addEventListener('click', () => {
+      yamlEl.value = '';
+      tomlEl.value = '';
+      clearStatus();
+    });
+
+    /* ── Copy buttons ── */
+    copyYamlBtn.addEventListener('click', () => {
+      if (!yamlEl.value) return;
+      navigator.clipboard.writeText(yamlEl.value).then(() => {
+        copyYamlBtn.textContent = COPIED_LABEL;
+        setTimeout(() => { copyYamlBtn.textContent = COPY_LABEL; }, 1500);
+      });
+    });
+
+    copyTomlBtn.addEventListener('click', () => {
+      if (!tomlEl.value) return;
+      navigator.clipboard.writeText(tomlEl.value).then(() => {
+        copyTomlBtn.textContent = COPIED_LABEL;
+        setTimeout(() => { copyTomlBtn.textContent = COPY_LABEL; }, 1500);
+      });
+    });
+
+    /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
+    yamlEl.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        document.getElementById('yt-to-toml')!.click();
+      }
+    });
+
+    tomlEl.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        document.getElementById('yt-to-yaml')!.click();
+      }
+    });
+  </script>
+</div>
+
+<style>
+  .yt-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .yt-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .yt-panels { grid-template-columns: 1fr; }
+  }
+
+  .yt-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .yt-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .yt-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .yt-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .yt-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .yt-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .yt-status.success { color: #057a55; }
+  .yt-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .yt-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .yt-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .yt-status.success { color: #34d399; }
+  [data-theme="dark"] .yt-status.error { color: #f87171; }
+</style>
