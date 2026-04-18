@@ -208,7 +208,7 @@ const L = labels[lang];
           .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
       }
 
-      function inferPythonType(value, key, classes, imp) {
+      function inferPythonType(value, key, classes, visiting, imp) {
         if (value === null) {
           imp.any = true;
           return 'Any';
@@ -232,13 +232,13 @@ const L = labels[lang];
             if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
               objectItems.push(item);
             } else {
-              var t = inferPythonType(item, key + 'Item', classes, imp);
+              var t = inferPythonType(item, key + 'Item', classes, visiting, imp);
               if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
             }
           }
           if (objectItems.length > 0) {
             var itemClassName = toPascalCase(key) + 'Item';
-            mergeObjectsToClass(objectItems, itemClassName, classes, imp);
+            mergeObjectsToClass(objectItems, itemClassName, classes, visiting, imp);
             if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
           }
           if (primitiveTypes.length === 0) {
@@ -252,7 +252,7 @@ const L = labels[lang];
 
         if (typeof value === 'object') {
           var className = toPascalCase(key);
-          buildClass(value, className, classes, imp);
+          buildClass(value, className, classes, visiting, imp);
           return className;
         }
 
@@ -260,26 +260,27 @@ const L = labels[lang];
         return 'Any';
       }
 
-      function buildClass(obj, name, classes, imp) {
-        if (Object.prototype.hasOwnProperty.call(classes, name)) return;
-        classes[name] = null;
+      function buildClass(obj, name, classes, visiting, imp) {
+        if (Object.prototype.hasOwnProperty.call(classes, name) || visiting[name]) return;
+        visiting[name] = true;
 
         var fields = [];
         var keys = Object.keys(obj);
         for (var i = 0; i < keys.length; i++) {
           var k = keys[i];
           var v = obj[k];
-          var type = inferPythonType(v, k, classes, imp);
+          var type = inferPythonType(v, k, classes, visiting, imp);
           var optional = (v === null);
           if (optional) imp.optional = true;
           fields.push({ key: k, type: type, optional: optional });
         }
+        // Insert AFTER children so child classes appear first in output
         classes[name] = fields;
       }
 
-      function mergeObjectsToClass(objects, name, classes, imp) {
-        if (Object.prototype.hasOwnProperty.call(classes, name)) return;
-        classes[name] = null;
+      function mergeObjectsToClass(objects, name, classes, visiting, imp) {
+        if (Object.prototype.hasOwnProperty.call(classes, name) || visiting[name]) return;
+        visiting[name] = true;
 
         var totalCount = objects.length;
         var allKeys = {};
@@ -301,7 +302,7 @@ const L = labels[lang];
           var types = [];
           for (var vi = 0; vi < vals.length; vi++) {
             if (vals[vi] === null) { optional = true; continue; }
-            var t = inferPythonType(vals[vi], k, classes, imp);
+            var t = inferPythonType(vals[vi], k, classes, visiting, imp);
             if (types.indexOf(t) === -1) types.push(t);
           }
 
@@ -321,6 +322,7 @@ const L = labels[lang];
           if (optional) imp.optional = true;
           fields.push({ key: k, type: type, optional: optional });
         }
+        // Insert AFTER children so child classes appear first in output
         classes[name] = fields;
       }
 
@@ -460,16 +462,17 @@ const L = labels[lang];
         inputEl.classList.remove('error');
         var rootName = rootNameEl.value.trim() || 'Root';
         var classes = {};
+        var visiting = {};
         var imp = {};
 
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildClass(parsed, rootName, classes, imp);
+          buildClass(parsed, rootName, classes, visiting, imp);
         } else if (Array.isArray(parsed)) {
           var objectItems = parsed.filter(function (v) {
             return v !== null && typeof v === 'object' && !Array.isArray(v);
           });
           if (objectItems.length > 0) {
-            mergeObjectsToClass(objectItems, rootName, classes, imp);
+            mergeObjectsToClass(objectItems, rootName, classes, visiting, imp);
           } else {
             outputCodeEl.textContent = '# Array of primitives — no class to generate';
             setStatus(MSG_GENERATED, false);
