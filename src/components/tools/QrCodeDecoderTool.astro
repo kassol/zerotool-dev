@@ -10,6 +10,16 @@
     <input type="file" id="qrd-file" accept="image/*" hidden />
   </div>
 
+  <!-- URL decode row -->
+  <div id="qrd-url-row" class="qrd-url-row">
+    <span class="qrd-url-label" data-i18n="urlLabel">Or decode from URL</span>
+    <div class="qrd-url-input-group">
+      <input type="url" id="qrd-url-input" class="qrd-url-input" data-i18n-placeholder="urlPlaceholder" placeholder="https://example.com/qr.png" />
+      <button id="qrd-url-decode" class="btn-primary qrd-url-btn" data-i18n="urlDecodeBtn">Decode</button>
+    </div>
+    <p id="qrd-url-error" class="qrd-url-error" style="display:none"></p>
+  </div>
+
   <!-- Preview + result -->
   <div id="qrd-result-area" class="qrd-result-area" style="display:none">
     <div class="qrd-preview-col">
@@ -101,6 +111,10 @@
           errNoLib: 'jsQR library not loaded. Please check your network connection.',
           errRead: 'Could not read image. Please try a different file.',
           decoding: 'Decoding…',
+          urlLabel: 'Or decode from URL',
+          urlPlaceholder: 'https://example.com/qr.png',
+          urlDecodeBtn: 'Decode',
+          errUrlFetch: 'Could not fetch image from URL (CORS or network error). Download the image and upload it instead.',
         },
         zh: {
           dropHint: '拖拽图片到此处、点击上传，或粘贴 (Ctrl+V)',
@@ -123,6 +137,10 @@
           errNoLib: 'jsQR 库未加载，请检查网络连接。',
           errRead: '无法读取图片，请尝试其他文件。',
           decoding: '解码中…',
+          urlLabel: '或从 URL 解码',
+          urlPlaceholder: 'https://example.com/qr.png',
+          urlDecodeBtn: '解码',
+          errUrlFetch: '无法从 URL 获取图片（跨域或网络错误），请下载后再上传。',
         },
         ja: {
           dropHint: '画像をドロップ、クリックしてアップロード、またはペースト (Ctrl+V)',
@@ -145,6 +163,10 @@
           errNoLib: 'jsQRライブラリを読み込めませんでした。',
           errRead: '画像を読み込めませんでした。別のファイルをお試しください。',
           decoding: 'デコード中…',
+          urlLabel: 'URLから解読する',
+          urlPlaceholder: 'https://example.com/qr.png',
+          urlDecodeBtn: '解読',
+          errUrlFetch: 'URLから画像を取得できませんでした（CORSまたはネットワークエラー）。画像をダウンロードしてからアップロードしてください。',
         },
         ko: {
           dropHint: '이미지를 드롭하거나 클릭해서 업로드, 또는 붙여넣기 (Ctrl+V)',
@@ -167,6 +189,10 @@
           errNoLib: 'jsQR 라이브러리를 불러올 수 없습니다.',
           errRead: '이미지를 읽을 수 없습니다. 다른 파일을 시도해 주세요.',
           decoding: '디코딩 중…',
+          urlLabel: 'URL로 디코딩',
+          urlPlaceholder: 'https://example.com/qr.png',
+          urlDecodeBtn: '디코딩',
+          errUrlFetch: 'URL에서 이미지를 가져올 수 없습니다(CORS 또는 네트워크 오류). 이미지를 다운로드하여 업로드하세요.',
         },
       };
 
@@ -178,6 +204,10 @@
         var key = el.getAttribute('data-i18n');
         if (t[key]) el.textContent = t[key];
       });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-placeholder');
+        if (t[key]) el.placeholder = t[key];
+      });
 
       /* Override cross-link href based on lang */
       var crosslinkAnchor = document.querySelector('.qrd-crosslink a');
@@ -186,6 +216,10 @@
       }
 
       /* Element refs */
+      var urlRow       = document.getElementById('qrd-url-row');
+      var urlInput     = document.getElementById('qrd-url-input');
+      var urlDecodeBtn = document.getElementById('qrd-url-decode');
+      var urlError     = document.getElementById('qrd-url-error');
       var dropzone   = document.getElementById('qrd-dropzone');
       var fileInput  = document.getElementById('qrd-file');
       var resultArea = document.getElementById('qrd-result-area');
@@ -338,6 +372,44 @@
         reader.readAsDataURL(file);
       }
 
+      /* ── Decode from URL ── */
+      function decodeFromUrl() {
+        var url = urlInput.value.trim();
+        if (!url) return;
+        urlError.style.display = 'none';
+        urlDecodeBtn.disabled = true;
+        fetch(url)
+          .then(function (response) {
+            if (!response.ok) throw new Error('fetch failed');
+            return response.blob();
+          })
+          .then(function (blob) {
+            urlDecodeBtn.disabled = false;
+            if (!blob.type.startsWith('image/')) throw new Error('not an image');
+            var reader = new FileReader();
+            reader.onload = function (e) {
+              var dataUrl = e.target.result;
+              previewImg.src = dataUrl;
+              dropzone.style.display = 'none';
+              urlRow.style.display = 'none';
+              resultArea.style.display = '';
+              decodeImage(dataUrl);
+              window.trackTool && window.trackTool('qr-code-decoder', 'decode_from_url');
+            };
+            reader.readAsDataURL(blob);
+          })
+          .catch(function () {
+            urlDecodeBtn.disabled = false;
+            urlError.textContent = t.errUrlFetch;
+            urlError.style.display = '';
+          });
+      }
+
+      urlDecodeBtn.addEventListener('click', decodeFromUrl);
+      urlInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') decodeFromUrl();
+      });
+
       /* ── Events ── */
       dropzone.addEventListener('click', function () { fileInput.click(); });
       dropzone.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
@@ -377,6 +449,9 @@
       resetBtn.addEventListener('click', function () {
         resultArea.style.display = 'none';
         dropzone.style.display   = '';
+        urlRow.style.display     = '';
+        urlInput.value = '';
+        urlError.style.display = 'none';
         previewImg.src = '';
         statusEl.textContent = '';
         statusEl.className = 'qrd-status';
@@ -542,6 +617,48 @@
     color: var(--color-text-secondary);
     width: 110px;
     background: var(--color-bg-secondary);
+  }
+
+  /* ── URL decode row ── */
+  .qrd-url-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .qrd-url-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .qrd-url-input-group {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .qrd-url-input {
+    flex: 1;
+    padding: 0.4rem 0.65rem;
+    font-size: 0.88rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    outline: none;
+    min-width: 0;
+  }
+  .qrd-url-input:focus {
+    border-color: var(--color-primary);
+  }
+  .qrd-url-btn { font-size: 0.85rem; padding: 0.4rem 0.85rem; white-space: nowrap; }
+  .qrd-url-error {
+    font-size: 0.82rem;
+    color: #c0392b;
+    margin: 0;
+  }
+  [data-theme="dark"] .qrd-url-error { color: #f87171; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .qrd-url-error { color: #f87171; }
   }
 
   /* ── Privacy + cross-link ── */
