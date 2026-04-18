@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 84 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 85 tools and growing.
 
 ## Tools
 
@@ -16,6 +16,7 @@
 | Text Case Converter | [/tools/text-case](https://zerotool.dev/tools/text-case) |
 | Markdown Preview | [/tools/markdown-preview](https://zerotool.dev/tools/markdown-preview) |
 | Markdown Linter | [/tools/markdown-linter](https://zerotool.dev/tools/markdown-linter) |
+| Markdown to Word Converter | [/tools/markdown-to-word](https://zerotool.dev/tools/markdown-to-word) |
 | Color Converter | [/tools/color-converter](https://zerotool.dev/tools/color-converter) |
 | Regex Tester | [/tools/regex-tester](https://zerotool.dev/tools/regex-tester) |
 | Hash Generator | [/tools/hash-generator](https://zerotool.dev/tools/hash-generator) |
