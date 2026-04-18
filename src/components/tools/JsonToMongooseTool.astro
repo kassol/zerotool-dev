@@ -7,6 +7,7 @@ const labels = {
     modelName: 'Model name',
     language: 'Language',
     timestamps: 'timestamps',
+    required: 'required',
     jsonInput: 'JSON Input',
     mongooseOutput: 'Mongoose Schema Output',
     example: 'Example',
@@ -26,6 +27,7 @@ const labels = {
     modelName: '模型名称',
     language: '语言',
     timestamps: 'timestamps',
+    required: '必填字段',
     jsonInput: 'JSON 输入',
     mongooseOutput: 'Mongoose Schema 输出',
     example: '示例',
@@ -45,6 +47,7 @@ const labels = {
     modelName: 'モデル名',
     language: '言語',
     timestamps: 'timestamps',
+    required: '必須フィールド',
     jsonInput: 'JSON 入力',
     mongooseOutput: 'Mongoose スキーマ出力',
     example: 'サンプル',
@@ -64,6 +67,7 @@ const labels = {
     modelName: '모델 이름',
     language: '언어',
     timestamps: 'timestamps',
+    required: '필수 필드',
     jsonInput: 'JSON 입력',
     mongooseOutput: 'Mongoose 스키마 출력',
     example: '예시',
@@ -109,6 +113,13 @@ const L = labels[lang];
       <div class="jtm-tabs" id="jtm-ts-tabs">
         <button type="button" class="jtm-tab active" data-ts="true">{L.on}</button>
         <button type="button" class="jtm-tab" data-ts="false">{L.off}</button>
+      </div>
+    </div>
+    <div class="jtm-config-row">
+      <span class="jtm-label">{L.required}</span>
+      <div class="jtm-tabs" id="jtm-req-tabs">
+        <button type="button" class="jtm-tab" data-req="true">{L.on}</button>
+        <button type="button" class="jtm-tab active" data-req="false">{L.off}</button>
       </div>
     </div>
   </div>
@@ -165,6 +176,7 @@ const L = labels[lang];
 
       var currentLang = 'javascript';
       var currentTimestamps = true;
+      var currentRequired = false;
 
       var EXAMPLE = JSON.stringify({
         id: 1,
@@ -172,6 +184,7 @@ const L = labels[lang];
         email: "alice@example.com",
         isActive: true,
         score: 4.8,
+        createdAt: "2024-01-01T00:00:00.000Z",
         tags: ["admin", "user"],
         address: {
           city: "London",
@@ -206,6 +219,18 @@ const L = labels[lang];
             convert();
           });
         })(tsTabs[ti2]);
+      }
+
+      var reqTabs = wrap ? wrap.querySelectorAll('#jtm-req-tabs .jtm-tab') : [];
+      for (var ti3 = 0; ti3 < reqTabs.length; ti3++) {
+        (function (tab) {
+          tab.addEventListener('click', function () {
+            for (var j = 0; j < reqTabs.length; j++) reqTabs[j].classList.remove('active');
+            tab.classList.add('active');
+            currentRequired = tab.dataset.req === 'true';
+            convert();
+          });
+        })(reqTabs[ti3]);
       }
 
       function setStatus(msg, isError) {
@@ -243,14 +268,20 @@ const L = labels[lang];
 
       // TypeInfo kinds:
       // { kind: 'primitive', mongooseType: 'String'|'Number'|'Boolean' }
+      // { kind: 'date' }
       // { kind: 'mixed' }
       // { kind: 'ref', schemaName, interfaceName }
       // { kind: 'array-primitive', mongooseType: 'String'|'Number'|'Boolean'|'Mixed' }
       // { kind: 'array-ref', schemaName, interfaceName }
 
+      var ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
       function inferTypeInfo(value, key, schemas) {
         if (value === null) return { kind: 'mixed' };
-        if (typeof value === 'string') return { kind: 'primitive', mongooseType: 'String' };
+        if (typeof value === 'string') {
+          if (ISO_DATE_RE.test(value)) return { kind: 'date' };
+          return { kind: 'primitive', mongooseType: 'String' };
+        }
         if (typeof value === 'number') return { kind: 'primitive', mongooseType: 'Number' };
         if (typeof value === 'boolean') return { kind: 'primitive', mongooseType: 'Boolean' };
 
@@ -309,16 +340,23 @@ const L = labels[lang];
         schemas.push({ name: schemaName, interfaceName: interfaceName, fields: fields });
       }
 
-      function getMongooseFieldType(typeInfo) {
+      // required is applied to primitive/date/mixed/array-primitive fields only (not ref/array-ref)
+      function getMongooseFieldType(typeInfo, required) {
+        var req = required ? ', required: true' : '';
         switch (typeInfo.kind) {
-          case 'primitive': return '{ type: ' + typeInfo.mongooseType + ' }';
-          case 'mixed': return '{ type: mongoose.Schema.Types.Mixed }';
+          case 'primitive': return '{ type: ' + typeInfo.mongooseType + req + ' }';
+          case 'date': return '{ type: Date' + req + ' }';
+          case 'mixed': return '{ type: mongoose.Schema.Types.Mixed' + req + ' }';
           case 'ref': return typeInfo.schemaName;
           case 'array-primitive':
+            if (required) {
+              if (typeInfo.mongooseType === 'Mixed') return '{ type: [mongoose.Schema.Types.Mixed], required: true }';
+              return '{ type: [' + typeInfo.mongooseType + '], required: true }';
+            }
             if (typeInfo.mongooseType === 'Mixed') return '[mongoose.Schema.Types.Mixed]';
             return '[' + typeInfo.mongooseType + ']';
           case 'array-ref': return '[' + typeInfo.schemaName + ']';
-          default: return '{ type: mongoose.Schema.Types.Mixed }';
+          default: return '{ type: mongoose.Schema.Types.Mixed' + req + ' }';
         }
       }
 
@@ -328,6 +366,7 @@ const L = labels[lang];
             var map = { String: 'string', Number: 'number', Boolean: 'boolean' };
             return map[typeInfo.mongooseType] || 'any';
           }
+          case 'date': return 'Date';
           case 'mixed': return 'any';
           case 'ref': return typeInfo.interfaceName;
           case 'array-primitive': {
@@ -339,7 +378,11 @@ const L = labels[lang];
         }
       }
 
-      function renderOutput(schemas, modelName, mode, useTimestamps) {
+      function isRefKind(kind) {
+        return kind === 'ref' || kind === 'array-ref';
+      }
+
+      function renderOutput(schemas, modelName, mode, useTimestamps, useRequired) {
         var lines = [];
         var rootSchema = schemas[schemas.length - 1];
         var subSchemas = schemas.slice(0, -1);
@@ -376,7 +419,9 @@ const L = labels[lang];
           var generic = (mode === 'typescript' && isRoot) ? '<' + schema.interfaceName + '>' : '';
           lines.push('const ' + schema.name + ' = new Schema' + generic + '({');
           for (var j = 0; j < schema.fields.length; j++) {
-            lines.push('  ' + schema.fields[j].key + ': ' + getMongooseFieldType(schema.fields[j].typeInfo) + ',');
+            var field = schema.fields[j];
+            var applyReq = useRequired && !isRefKind(field.typeInfo.kind);
+            lines.push('  ' + field.key + ': ' + getMongooseFieldType(field.typeInfo, applyReq) + ',');
           }
           if (isRoot) {
             lines.push('}, { timestamps: ' + useTimestamps + ' });');
@@ -450,7 +495,7 @@ const L = labels[lang];
           return;
         }
 
-        var result = renderOutput(schemas, rawModelName, currentLang, currentTimestamps);
+        var result = renderOutput(schemas, rawModelName, currentLang, currentTimestamps, currentRequired);
         outputCodeEl.textContent = result;
         outputCodeEl.removeAttribute('data-highlighted');
         outputCodeEl.className = 'language-javascript';
