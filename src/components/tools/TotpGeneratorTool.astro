@@ -18,6 +18,7 @@ const labels = {
     qrLabel: 'QR Code (scan with authenticator app)',
     msgEnterSecret: 'Enter or generate a Base32 secret first.',
     msgError: 'Error: ',
+    msgInvalidChars: 'Secret contains invalid Base32 characters (allowed: A-Z, 2-7).',
   },
   zh: {
     secretLabel: '密钥（Base32）',
@@ -33,6 +34,7 @@ const labels = {
     qrLabel: '二维码（用验证器 App 扫描）',
     msgEnterSecret: '请先输入或生成 Base32 密钥。',
     msgError: '错误：',
+    msgInvalidChars: '密钥包含非法 Base32 字符（允许：A-Z、2-7）。',
   },
   ja: {
     secretLabel: 'シークレット（Base32）',
@@ -48,6 +50,7 @@ const labels = {
     qrLabel: 'QRコード（認証アプリでスキャン）',
     msgEnterSecret: 'Base32シークレットを入力または生成してください。',
     msgError: 'エラー：',
+    msgInvalidChars: 'シークレットに無効な Base32 文字が含まれています（使用可能：A-Z、2-7）。',
   },
   ko: {
     secretLabel: '시크릿 (Base32)',
@@ -63,6 +66,7 @@ const labels = {
     qrLabel: 'QR 코드 (인증 앱으로 스캔)',
     msgEnterSecret: 'Base32 시크릿을 입력하거나 생성하세요.',
     msgError: '오류: ',
+    msgInvalidChars: '시크릿에 유효하지 않은 Base32 문자가 포함되어 있습니다 (허용: A-Z, 2-7).',
   },
 };
 
@@ -74,6 +78,7 @@ const L = labels[lang];
   data-copied={L.copied}
   data-msg-enter-secret={L.msgEnterSecret}
   data-msg-error={L.msgError}
+  data-msg-invalid-chars={L.msgInvalidChars}
 >
   <!-- Secret row -->
   <div class="totp-field">
@@ -167,6 +172,7 @@ const L = labels[lang];
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
       var MSG_ENTER_SECRET = wrap ? wrap.dataset.msgEnterSecret : 'Enter or generate a Base32 secret first.';
       var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Error: ';
+      var MSG_INVALID_CHARS = wrap ? wrap.dataset.msgInvalidChars : 'Secret contains invalid Base32 characters (allowed: A-Z, 2-7).';
 
       // Base32 alphabet
       var B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -263,9 +269,22 @@ const L = labels[lang];
         startTotp();
       });
 
+      function isValidBase32(raw) {
+        var stripped = raw.toUpperCase().replace(/[\s\-=]/g, '');
+        return stripped.length > 0 && /^[A-Z2-7]+$/.test(stripped);
+      }
+
       async function startTotp() {
         var secret = secretInput.value.trim();
         if (!secret) { setStatus(MSG_ENTER_SECRET, true); return; }
+        if (!isValidBase32(secret)) {
+          setStatus(MSG_INVALID_CHARS, true);
+          displayEl.style.display = 'none';
+          uriBlock.style.display = 'none';
+          qrBlock.style.display = 'none';
+          if (intervalId) { clearInterval(intervalId); intervalId = null; }
+          return;
+        }
         var algo = document.getElementById('totp-algo').value;
         var period = parseInt(document.getElementById('totp-period').value);
         var digits = parseInt(document.getElementById('totp-digits').value);
@@ -333,7 +352,7 @@ const L = labels[lang];
         });
       });
 
-      secretInput.addEventListener('change', startTotp);
+      secretInput.addEventListener('input', startTotp);
       document.getElementById('totp-digits').addEventListener('change', startTotp);
       document.getElementById('totp-period').addEventListener('change', startTotp);
       document.getElementById('totp-algo').addEventListener('change', startTotp);
