@@ -98,153 +98,119 @@ const L = labels[lang];
 
   <script>
     import jsyaml from 'js-yaml';
-    (window as any).jsyaml = jsyaml;
-  </script>
 
-  <script is:inline>
-    (function () {
-      var inputEl   = document.getElementById('yv-input');
-      var statusEl  = document.getElementById('yv-status');
-      var errorBox  = document.getElementById('yv-error-box');
-      var previewEl = document.getElementById('yv-preview');
-      var previewContent = document.getElementById('yv-preview-content');
-      var validateBtn    = document.getElementById('yv-validate');
-      var clearBtn       = document.getElementById('yv-clear');
-      var copyPreviewBtn = document.getElementById('yv-copy-preview');
-      var wrapEl = document.querySelector('.yv-wrap');
+    const inputEl   = document.getElementById('yv-input') as HTMLTextAreaElement;
+    const statusEl  = document.getElementById('yv-status')!;
+    const errorBox  = document.getElementById('yv-error-box')!;
+    const previewEl = document.getElementById('yv-preview')!;
+    const previewContent = document.getElementById('yv-preview-content')!;
+    const validateBtn    = document.getElementById('yv-validate')!;
+    const clearBtn       = document.getElementById('yv-clear')!;
+    const copyPreviewBtn = document.getElementById('yv-copy-preview')!;
+    const wrapEl = document.querySelector('.yv-wrap') as HTMLElement;
 
-      var MSG_EMPTY      = wrapEl.dataset.msgEmpty;
-      var MSG_LIB        = wrapEl.dataset.msgLibMissing;
-      var MSG_VALID      = wrapEl.dataset.msgValid;
-      var MSG_INVALID    = wrapEl.dataset.msgInvalid;
-      var COPY_JSON      = wrapEl.dataset.copyJson;
-      var COPIED         = wrapEl.dataset.copied;
+    const MSG_EMPTY   = wrapEl.dataset.msgEmpty!;
+    const MSG_VALID   = wrapEl.dataset.msgValid!;
+    const MSG_INVALID = wrapEl.dataset.msgInvalid!;
+    const COPY_JSON   = wrapEl.dataset.copyJson!;
+    const COPIED      = wrapEl.dataset.copied!;
 
-      var lastParsed = null;
+    function setStatus(msg: string, type: string) {
+      statusEl.textContent = msg;
+      statusEl.className = 'yv-status ' + (type || '');
+    }
 
-      function setStatus(msg, type) {
-        statusEl.textContent = msg;
-        statusEl.className = 'yv-status ' + (type || '');
+    function clearAll() {
+      setStatus('', '');
+      errorBox.style.display = 'none';
+      errorBox.innerHTML = '';
+      previewEl.style.display = 'none';
+      previewContent.textContent = '';
+    }
+
+    function parseYamlError(e: any) {
+      const msg = e.message || String(e);
+      const reasonMatch = msg.match(/^([^\n]+?)(?:\s+at line\s+(\d+),\s+column\s+(\d+))?[:\n]/);
+      const reason = reasonMatch ? reasonMatch[1].trim() : msg.split('\n')[0].trim();
+      const line   = e.mark && e.mark.line   != null ? e.mark.line + 1   : null;
+      const col    = e.mark && e.mark.column != null ? e.mark.column + 1 : null;
+      const nlIdx  = msg.indexOf('\n');
+      const snippet = nlIdx !== -1 ? msg.slice(nlIdx + 1).trim() : null;
+      return { reason, line, col, snippet };
+    }
+
+    function escapeHtml(str: string) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function buildErrorHtml(info: { reason: string; line: number | null; col: number | null; snippet: string | null }) {
+      let html = '<div class="yv-err-title">Syntax Error</div>';
+      html += '<div class="yv-err-reason">' + escapeHtml(info.reason) + '</div>';
+      if (info.line != null) {
+        html += '<div class="yv-err-location">Line ' + info.line;
+        if (info.col != null) html += ', Column ' + info.col;
+        html += '</div>';
       }
+      if (info.snippet) {
+        html += '<pre class="yv-err-snippet">' + escapeHtml(info.snippet) + '</pre>';
+      }
+      return html;
+    }
 
-      function clearAll() {
-        setStatus('', '');
+    function doValidate() {
+      const text = inputEl.value;
+      if (!text.trim()) {
+        clearAll();
+        setStatus(MSG_EMPTY, '');
+        return;
+      }
+      try {
+        const parsed = jsyaml.load(text);
         errorBox.style.display = 'none';
         errorBox.innerHTML = '';
+        const jsonStr = JSON.stringify(parsed, null, 2);
+        previewContent.textContent = jsonStr;
+        previewEl.style.display = '';
+        setStatus(MSG_VALID, 'success');
+        (window as any).trackTool?.('yaml-validator', 'validate_success');
+      } catch (e) {
         previewEl.style.display = 'none';
         previewContent.textContent = '';
-        lastParsed = null;
+        const info = parseYamlError(e);
+        errorBox.innerHTML = buildErrorHtml(info);
+        errorBox.style.display = '';
+        setStatus(MSG_INVALID, 'error');
+        (window as any).trackTool?.('yaml-validator', 'validate_error');
       }
+    }
 
-      /**
-       * Parse a YAMLException message from js-yaml into structured parts.
-       * js-yaml error format: "<reason> at line <n>, column <c>:\n<snippet>"
-       */
-      function parseYamlError(e) {
-        var msg = e.message || String(e);
-        // Extract reason before " at line"
-        var reasonMatch = msg.match(/^([^\n]+?)(?:\s+at line\s+(\d+),\s+column\s+(\d+))?[:\n]/);
-        var reason = reasonMatch ? reasonMatch[1].trim() : msg.split('\n')[0].trim();
-        var line   = e.mark && e.mark.line   != null ? e.mark.line + 1   : null;
-        var col    = e.mark && e.mark.column != null ? e.mark.column + 1 : null;
+    /* Prevent textarea blur before click fires (eliminates first-click race) */
+    validateBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    validateBtn.addEventListener('click', doValidate);
 
-        // Try to extract the snippet from the error message (after first newline)
-        var snippet = null;
-        var nlIdx = msg.indexOf('\n');
-        if (nlIdx !== -1) {
-          snippet = msg.slice(nlIdx + 1).trim();
-        }
+    clearBtn.addEventListener('click', () => {
+      inputEl.value = '';
+      clearAll();
+    });
 
-        return { reason: reason, line: line, col: col, snippet: snippet };
-      }
-
-      function escapeHtml(str) {
-        return String(str)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-      }
-
-      function buildErrorHtml(info) {
-        var html = '<div class="yv-err-title">Syntax Error</div>';
-        html += '<div class="yv-err-reason">' + escapeHtml(info.reason) + '</div>';
-        if (info.line != null) {
-          html += '<div class="yv-err-location">Line ' + info.line;
-          if (info.col != null) html += ', Column ' + info.col;
-          html += '</div>';
-        }
-        if (info.snippet) {
-          html += '<pre class="yv-err-snippet">' + escapeHtml(info.snippet) + '</pre>';
-        }
-        return html;
-      }
-
-      validateBtn.addEventListener('click', function () {
-        var text = inputEl.value;
-        if (!text.trim()) {
-          clearAll();
-          setStatus(MSG_EMPTY, '');
-          return;
-        }
-
-        if (typeof jsyaml === 'undefined') {
-          setStatus(MSG_LIB, 'error');
-          return;
-        }
-
-        try {
-          var parsed = jsyaml.load(text);
-          lastParsed = parsed;
-
-          errorBox.style.display = 'none';
-          errorBox.innerHTML = '';
-
-          // Show preview
-          var jsonStr = JSON.stringify(parsed, null, 2);
-          previewContent.textContent = jsonStr;
-          previewEl.style.display = '';
-
-          setStatus(MSG_VALID, 'success');
-          window.trackTool && window.trackTool('yaml-validator', 'validate_success');
-        } catch (e) {
-          lastParsed = null;
-          previewEl.style.display = 'none';
-          previewContent.textContent = '';
-
-          var info = parseYamlError(e);
-          errorBox.innerHTML = buildErrorHtml(info);
-          errorBox.style.display = '';
-
-          setStatus(MSG_INVALID, 'error');
-          window.trackTool && window.trackTool('yaml-validator', 'validate_error');
-        }
+    copyPreviewBtn.addEventListener('click', () => {
+      if (!previewContent.textContent) return;
+      navigator.clipboard.writeText(previewContent.textContent).then(() => {
+        copyPreviewBtn.textContent = COPIED;
+        setTimeout(() => { copyPreviewBtn.textContent = COPY_JSON; }, 1500);
       });
+    });
 
-      clearBtn.addEventListener('click', function () {
-        inputEl.value = '';
-        clearAll();
-      });
+    /* Keyboard shortcut: Ctrl/Cmd+Enter */
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doValidate();
+    });
 
-      copyPreviewBtn.addEventListener('click', function () {
-        if (!previewContent.textContent) return;
-        navigator.clipboard.writeText(previewContent.textContent).then(function () {
-          copyPreviewBtn.textContent = COPIED;
-          setTimeout(function () { copyPreviewBtn.textContent = COPY_JSON; }, 1500);
-        });
-      });
-
-      /* Keyboard shortcut: Ctrl/Cmd+Enter */
-      inputEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-          validateBtn.click();
-        }
-      });
-
-      /* Auto-validate on load if pre-filled */
-      if (inputEl.value.trim()) {
-        validateBtn.click();
-      }
-    })();
+    /* Auto-validate on load if pre-filled */
+    if (inputEl.value.trim()) doValidate();
   </script>
 </div>
 
