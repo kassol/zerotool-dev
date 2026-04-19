@@ -3,6 +3,15 @@
 ---
 <div>
   <div class="chmod-wrap">
+    <div class="chmod-special-section">
+      <div class="chmod-section-label" data-i18n="specialBits">Special Bits</div>
+      <div class="chmod-special-row">
+        <label class="chmod-special-label"><input type="checkbox" id="chmod-setuid" /><span data-i18n="setuid">Setuid (4000)</span></label>
+        <label class="chmod-special-label"><input type="checkbox" id="chmod-setgid" /><span data-i18n="setgid">Setgid (2000)</span></label>
+        <label class="chmod-special-label"><input type="checkbox" id="chmod-sticky" /><span data-i18n="sticky">Sticky (1000)</span></label>
+      </div>
+    </div>
+
     <div class="chmod-grid">
       <div class="chmod-grid-header"></div>
       <div class="chmod-grid-header" data-i18n="read">Read</div>
@@ -25,21 +34,29 @@
       <label class="chmod-cb"><input type="checkbox" data-who="others" data-perm="x" checked /><span></span></label>
     </div>
 
+    <div id="chmod-description" class="chmod-description"></div>
+
     <div class="chmod-results">
-      <div class="chmod-result-row">
-        <label class="chmod-result-label" for="chmod-numeric" data-i18n="numeric">Numeric</label>
-        <div class="chmod-result-value">
-          <input type="text" id="chmod-numeric" class="chmod-numeric-input" value="755" maxlength="4" inputmode="numeric" spellcheck="false" />
-          <button id="chmod-copy-numeric" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+      <div class="chmod-result-group">
+        <div class="chmod-result-row">
+          <label class="chmod-result-label" for="chmod-numeric" data-i18n="numeric">Numeric</label>
+          <div class="chmod-result-value">
+            <input type="text" id="chmod-numeric" class="chmod-numeric-input" value="755" maxlength="4" inputmode="numeric" spellcheck="false" autocomplete="off" />
+            <button id="chmod-copy-numeric" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+          </div>
         </div>
+        <div id="chmod-numeric-error" class="chmod-error" aria-live="polite"></div>
       </div>
 
-      <div class="chmod-result-row">
-        <label class="chmod-result-label" data-i18n="symbolic">Symbolic</label>
-        <div class="chmod-result-value">
-          <code id="chmod-symbolic" class="chmod-output">rwxr-xr-x</code>
-          <button id="chmod-copy-symbolic" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+      <div class="chmod-result-group">
+        <div class="chmod-result-row">
+          <label class="chmod-result-label" for="chmod-symbolic" data-i18n="symbolic">Symbolic</label>
+          <div class="chmod-result-value">
+            <input type="text" id="chmod-symbolic" class="chmod-symbolic-input" value="rwxr-xr-x" maxlength="9" spellcheck="false" autocomplete="off" />
+            <button id="chmod-copy-symbolic" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+          </div>
         </div>
+        <div id="chmod-symbolic-error" class="chmod-error" aria-live="polite"></div>
       </div>
 
       <div class="chmod-result-row">
@@ -49,98 +66,328 @@
           <button id="chmod-copy-command" class="btn-copy" type="button" data-i18n="copy">Copy</button>
         </div>
       </div>
+
+      <div class="chmod-result-row">
+        <label class="chmod-result-label" data-i18n="commandSym">Symbolic cmd</label>
+        <div class="chmod-result-value">
+          <code id="chmod-command-sym" class="chmod-output">chmod u=rwx,g=rx,o=rx filename</code>
+          <button id="chmod-copy-command-sym" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </div>
+      </div>
+
+      <div class="chmod-result-row">
+        <label class="chmod-result-label" data-i18n="findPerm">find -perm</label>
+        <div class="chmod-result-value">
+          <code id="chmod-find-perm" class="chmod-output">find . -type f -perm 0755</code>
+          <button id="chmod-copy-find-perm" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </div>
+      </div>
     </div>
   </div>
 
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { read: 'Read', write: 'Write', execute: 'Execute', owner: 'Owner', group: 'Group', others: 'Others', numeric: 'Numeric', symbolic: 'Symbolic', command: 'Command', copy: 'Copy', copied: 'Copied!' },
-        zh: { read: '读', write: '写', execute: '执行', owner: '所有者', group: '用户组', others: '其他', numeric: '数字', symbolic: '符号', command: '命令', copy: '复制', copied: '已复制！' },
-        ja: { read: '読取', write: '書込', execute: '実行', owner: 'オーナー', group: 'グループ', others: 'その他', numeric: '数値', symbolic: 'シンボル', command: 'コマンド', copy: 'コピー', copied: 'コピー済み！' },
-        ko: { read: '읽기', write: '쓰기', execute: '실행', owner: '소유자', group: '그룹', others: '기타', numeric: '숫자', symbolic: '기호', command: '명령어', copy: '복사', copied: '복사됨!' }
+        en: {
+          read: 'Read', write: 'Write', execute: 'Execute',
+          owner: 'Owner', group: 'Group', others: 'Others',
+          numeric: 'Numeric', symbolic: 'Symbolic',
+          command: 'Command', commandSym: 'Symbolic cmd', findPerm: 'find -perm',
+          copy: 'Copy', copied: 'Copied!',
+          specialBits: 'Special Bits',
+          setuid: 'Setuid (4000)', setgid: 'Setgid (2000)', sticky: 'Sticky (1000)',
+          errInvalidOctal: 'Invalid octal (use digits 0–7, up to 4 chars)',
+          errInvalidSymbolic: 'Invalid symbolic (must be 9 chars: rwxr-xr-x)',
+          permNone: 'none',
+          descRead: 'read', descWrite: 'write', descExecute: 'execute',
+        },
+        zh: {
+          read: '读', write: '写', execute: '执行',
+          owner: '所有者', group: '用户组', others: '其他',
+          numeric: '数字', symbolic: '符号', command: '命令', commandSym: '符号命令', findPerm: 'find -perm',
+          copy: '复制', copied: '已复制！',
+          specialBits: '特殊位',
+          setuid: 'Setuid (4000)', setgid: 'Setgid (2000)', sticky: '粘滞位 (1000)',
+          errInvalidOctal: '无效八进制（0–7 数字，最多 4 位）',
+          errInvalidSymbolic: '无效符号串（需恰好 9 位，如 rwxr-xr-x）',
+          permNone: '无',
+          descRead: '读', descWrite: '写', descExecute: '执行',
+        },
+        ja: {
+          read: '読取', write: '書込', execute: '実行',
+          owner: 'オーナー', group: 'グループ', others: 'その他',
+          numeric: '数値', symbolic: 'シンボル', command: 'コマンド', commandSym: 'シンボルコマンド', findPerm: 'find -perm',
+          copy: 'コピー', copied: 'コピー済み！',
+          specialBits: '特殊ビット',
+          setuid: 'SUID (4000)', setgid: 'SGID (2000)', sticky: 'スティッキー (1000)',
+          errInvalidOctal: '無効な8進数（0〜7の数字、最大4桁）',
+          errInvalidSymbolic: '無効なシンボル（9文字が必要、例: rwxr-xr-x）',
+          permNone: 'なし',
+          descRead: '読取', descWrite: '書込', descExecute: '実行',
+        },
+        ko: {
+          read: '읽기', write: '쓰기', execute: '실행',
+          owner: '소유자', group: '그룹', others: '기타',
+          numeric: '숫자', symbolic: '기호', command: '명령어', commandSym: '기호 명령어', findPerm: 'find -perm',
+          copy: '복사', copied: '복사됨!',
+          specialBits: '특수 비트',
+          setuid: 'SUID (4000)', setgid: 'SGID (2000)', sticky: '스티키 (1000)',
+          errInvalidOctal: '잘못된 8진수 (0–7 숫자, 최대 4자리)',
+          errInvalidSymbolic: '잘못된 기호 (9자리 필요, 예: rwxr-xr-x)',
+          permNone: '없음',
+          descRead: '읽기', descWrite: '쓰기', descExecute: '실행',
+        }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
       var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
+
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
       });
 
-      var PERM_MAP = { r: 4, w: 2, x: 1 };
       var WHO_ORDER = ['owner', 'group', 'others'];
+      var PERM_MAP = { r: 4, w: 2, x: 1 };
 
       function getCheckbox(who, perm) {
         return document.querySelector('input[data-who="' + who + '"][data-perm="' + perm + '"]');
       }
 
-      function calcFromCheckboxes() {
-        var digits = '';
-        var symbolic = '';
+      function getSpecialBits() {
+        return (
+          (document.getElementById('chmod-setuid').checked ? 4 : 0) +
+          (document.getElementById('chmod-setgid').checked ? 2 : 0) +
+          (document.getElementById('chmod-sticky').checked ? 1 : 0)
+        );
+      }
+
+      function calcDigits() {
+        var digits = [];
         for (var i = 0; i < WHO_ORDER.length; i++) {
           var who = WHO_ORDER[i];
           var val = 0;
-          var sym = '';
           ['r', 'w', 'x'].forEach(function (p) {
-            var cb = getCheckbox(who, p);
-            if (cb.checked) {
-              val += PERM_MAP[p];
-              sym += p;
-            } else {
-              sym += '-';
-            }
+            if (getCheckbox(who, p).checked) val += PERM_MAP[p];
           });
-          digits += val;
-          symbolic += sym;
+          digits.push(val);
         }
-        return { numeric: digits, symbolic: symbolic };
+        return digits;
       }
 
-      function updateOutputs() {
-        var result = calcFromCheckboxes();
-        document.getElementById('chmod-numeric').value = result.numeric;
-        document.getElementById('chmod-symbolic').textContent = result.symbolic;
-        document.getElementById('chmod-command').textContent = 'chmod ' + result.numeric + ' filename';
-      }
+      function buildSymbolic(digits, special) {
+        // special: digit 0-7 (4=setuid, 2=setgid, 1=sticky)
+        var sym = '';
+        var xChars = ['s', 's', 't'];
+        var XChars = ['S', 'S', 'T'];
+        var specialFlags = [!!(special & 4), !!(special & 2), !!(special & 1)];
 
-      function setCheckboxesFromNumeric(val) {
-        var str = String(val).replace(/[^0-7]/g, '');
-        if (str.length < 3 || str.length > 4) return false;
-        // Take last 3 digits (support 4-digit like 0755)
-        var digits = str.slice(-3);
         for (var i = 0; i < 3; i++) {
-          var d = parseInt(digits[i], 10);
-          if (d < 0 || d > 7) return false;
+          var d = digits[i];
+          sym += (d & 4) ? 'r' : '-';
+          sym += (d & 2) ? 'w' : '-';
+          if (specialFlags[i]) {
+            sym += (d & 1) ? xChars[i] : XChars[i];
+          } else {
+            sym += (d & 1) ? 'x' : '-';
+          }
+        }
+        return sym;
+      }
+
+      function buildNumericStr(digits, special) {
+        var base = digits.join('');
+        return special > 0 ? (special + '' + base) : base;
+      }
+
+      function buildSymCmd(digits) {
+        var classes = ['u', 'g', 'o'];
+        var perms = ['r', 'w', 'x'];
+        var parts = [];
+        for (var i = 0; i < 3; i++) {
+          var d = digits[i];
+          var p = '';
+          if (d & 4) p += 'r';
+          if (d & 2) p += 'w';
+          if (d & 1) p += 'x';
+          parts.push(classes[i] + '=' + p);
+        }
+        return 'chmod ' + parts.join(',') + ' filename';
+      }
+
+      function buildDescription(digits, special) {
+        var classNames = [t.owner, t.group, t.others];
+        var permNames = [t.descRead, t.descWrite, t.descExecute];
+        var specialFlags = [!!(special & 4), !!(special & 2), !!(special & 1)];
+        var specialLabels = ['setuid', 'setgid', 'sticky'];
+        var parts = [];
+
+        for (var i = 0; i < 3; i++) {
+          var d = digits[i];
+          var perms = [];
+          if (d & 4) perms.push(permNames[0]);
+          if (d & 2) perms.push(permNames[1]);
+          if (d & 1) perms.push(permNames[2]);
+          if (specialFlags[i]) perms.push(specialLabels[i]);
+          parts.push(classNames[i] + ': ' + (perms.length ? perms.join(', ') : t.permNone));
+        }
+        return parts.join('; ');
+      }
+
+      function updateOutputsFromState() {
+        var digits = calcDigits();
+        var special = getSpecialBits();
+        var numeric = buildNumericStr(digits, special);
+        var symbolic = buildSymbolic(digits, special);
+
+        document.getElementById('chmod-numeric').value = numeric;
+        document.getElementById('chmod-symbolic').value = symbolic;
+        document.getElementById('chmod-command').textContent = 'chmod ' + numeric + ' filename';
+        document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits);
+        document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? numeric : ('0' + numeric));
+        document.getElementById('chmod-description').textContent = buildDescription(digits, special);
+
+        setError('chmod-numeric', '');
+        setError('chmod-symbolic', '');
+      }
+
+      function setError(fieldId, msg) {
+        var input = document.getElementById(fieldId);
+        var errEl = document.getElementById(fieldId + '-error');
+        if (msg) {
+          input.classList.add('chmod-input-error');
+          errEl.textContent = msg;
+        } else {
+          input.classList.remove('chmod-input-error');
+          if (errEl) errEl.textContent = '';
+        }
+      }
+
+      function applyNumericToState(raw) {
+        if (!/^[0-7]{1,4}$/.test(raw)) return false;
+        var len = raw.length;
+        var special = 0;
+        var base;
+        if (len === 4) {
+          special = parseInt(raw[0], 8);
+          base = raw.slice(1);
+        } else if (len === 3) {
+          base = raw;
+        } else {
+          return false;
+        }
+        for (var i = 0; i < 3; i++) {
+          var d = parseInt(base[i], 8);
           var who = WHO_ORDER[i];
           getCheckbox(who, 'r').checked = !!(d & 4);
           getCheckbox(who, 'w').checked = !!(d & 2);
           getCheckbox(who, 'x').checked = !!(d & 1);
         }
+        document.getElementById('chmod-setuid').checked = !!(special & 4);
+        document.getElementById('chmod-setgid').checked = !!(special & 2);
+        document.getElementById('chmod-sticky').checked = !!(special & 1);
         return true;
       }
 
-      // Checkbox → outputs
+      function applySymbolicToState(sym) {
+        if (sym.length !== 9) return false;
+        // Validate each position
+        var pos = [
+          /^[r\-]$/, /^[w\-]$/, /^[xsS\-]$/,
+          /^[r\-]$/, /^[w\-]$/, /^[xsS\-]$/,
+          /^[r\-]$/, /^[w\-]$/, /^[xtT\-]$/
+        ];
+        for (var i = 0; i < 9; i++) {
+          if (!pos[i].test(sym[i])) return false;
+        }
+        // Decode
+        var groups = [sym.slice(0, 3), sym.slice(3, 6), sym.slice(6, 9)];
+        var special = 0;
+        for (var g = 0; g < 3; g++) {
+          var chars = groups[g];
+          var who = WHO_ORDER[g];
+          getCheckbox(who, 'r').checked = chars[0] === 'r';
+          getCheckbox(who, 'w').checked = chars[1] === 'w';
+          var xc = chars[2];
+          if (g < 2) { // owner or group: s/S = setuid/setgid
+            if (xc === 's') { getCheckbox(who, 'x').checked = true; special += (g === 0 ? 4 : 2); }
+            else if (xc === 'S') { getCheckbox(who, 'x').checked = false; special += (g === 0 ? 4 : 2); }
+            else { getCheckbox(who, 'x').checked = xc === 'x'; }
+          } else { // others: t/T = sticky
+            if (xc === 't') { getCheckbox(who, 'x').checked = true; special += 1; }
+            else if (xc === 'T') { getCheckbox(who, 'x').checked = false; special += 1; }
+            else { getCheckbox(who, 'x').checked = xc === 'x'; }
+          }
+        }
+        document.getElementById('chmod-setuid').checked = !!(special & 4);
+        document.getElementById('chmod-setgid').checked = !!(special & 2);
+        document.getElementById('chmod-sticky').checked = !!(special & 1);
+        return true;
+      }
+
+      // Checkbox + special bit → update all outputs
       document.querySelectorAll('.chmod-grid input[type="checkbox"]').forEach(function (cb) {
         cb.addEventListener('change', function () {
-          updateOutputs();
+          updateOutputsFromState();
           window.trackTool && window.trackTool('chmod_calculator', 'toggle');
         });
       });
+      ['chmod-setuid', 'chmod-setgid', 'chmod-sticky'].forEach(function (id) {
+        document.getElementById(id).addEventListener('change', function () {
+          updateOutputsFromState();
+          window.trackTool && window.trackTool('chmod_calculator', 'special_bit');
+        });
+      });
 
-      // Numeric input → checkboxes
+      // Numeric input
       var numericInput = document.getElementById('chmod-numeric');
       numericInput.addEventListener('input', function () {
         var raw = this.value.replace(/[^0-7]/g, '');
         this.value = raw;
         if (raw.length >= 3 && raw.length <= 4) {
-          setCheckboxesFromNumeric(raw);
-          var result = calcFromCheckboxes();
-          document.getElementById('chmod-symbolic').textContent = result.symbolic;
-          document.getElementById('chmod-command').textContent = 'chmod ' + result.numeric + ' filename';
-          window.trackTool && window.trackTool('chmod_calculator', 'numeric_input');
+          if (applyNumericToState(raw)) {
+            var digits = calcDigits();
+            var special = getSpecialBits();
+            document.getElementById('chmod-symbolic').value = buildSymbolic(digits, special);
+            document.getElementById('chmod-command').textContent = 'chmod ' + raw + ' filename';
+            document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits);
+            document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? raw : ('0' + raw));
+            document.getElementById('chmod-description').textContent = buildDescription(digits, special);
+            setError('chmod-numeric', '');
+            setError('chmod-symbolic', '');
+            window.trackTool && window.trackTool('chmod_calculator', 'numeric_input');
+          }
+        } else if (raw.length > 0 && raw.length < 3) {
+          setError('chmod-numeric', t.errInvalidOctal);
+        } else if (raw.length === 0) {
+          setError('chmod-numeric', '');
+        }
+      });
+
+      // Symbolic input
+      var symbolicInput = document.getElementById('chmod-symbolic');
+      symbolicInput.addEventListener('input', function () {
+        var raw = this.value;
+        if (raw.length === 9) {
+          if (applySymbolicToState(raw)) {
+            var digits = calcDigits();
+            var special = getSpecialBits();
+            var numeric = buildNumericStr(digits, special);
+            document.getElementById('chmod-numeric').value = numeric;
+            document.getElementById('chmod-command').textContent = 'chmod ' + numeric + ' filename';
+            document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits);
+            document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? numeric : ('0' + numeric));
+            document.getElementById('chmod-description').textContent = buildDescription(digits, special);
+            setError('chmod-symbolic', '');
+            setError('chmod-numeric', '');
+            window.trackTool && window.trackTool('chmod_calculator', 'symbolic_input');
+          } else {
+            setError('chmod-symbolic', t.errInvalidSymbolic);
+          }
+        } else if (raw.length > 0) {
+          setError('chmod-symbolic', t.errInvalidSymbolic);
+        } else {
+          setError('chmod-symbolic', '');
         }
       });
 
@@ -152,26 +399,62 @@
           var btn = this;
           navigator.clipboard.writeText(text).then(function () {
             btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = t.copy; }, 1500);
+            setTimeout(function () { btn.textContent = t.copy; }, 2000);
           });
         });
       }
 
-      bindCopy('chmod-copy-numeric', function () {
-        return document.getElementById('chmod-numeric').value;
-      });
-      bindCopy('chmod-copy-symbolic', function () {
-        return document.getElementById('chmod-symbolic').textContent;
-      });
-      bindCopy('chmod-copy-command', function () {
-        return document.getElementById('chmod-command').textContent;
-      });
+      bindCopy('chmod-copy-numeric', function () { return document.getElementById('chmod-numeric').value; });
+      bindCopy('chmod-copy-symbolic', function () { return document.getElementById('chmod-symbolic').value; });
+      bindCopy('chmod-copy-command', function () { return document.getElementById('chmod-command').textContent; });
+      bindCopy('chmod-copy-command-sym', function () { return document.getElementById('chmod-command-sym').textContent; });
+      bindCopy('chmod-copy-find-perm', function () { return document.getElementById('chmod-find-perm').textContent; });
+
+      // Init
+      updateOutputsFromState();
     })();
   </script>
 </div>
 
 <style>
   .chmod-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .chmod-special-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .chmod-section-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .chmod-special-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+  }
+
+  .chmod-special-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    font-size: 0.88rem;
+    color: var(--color-text);
+  }
+
+  .chmod-special-label input[type="checkbox"] {
+    width: 1.1rem;
+    height: 1.1rem;
+    accent-color: var(--color-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
 
   .chmod-grid {
     display: grid;
@@ -207,7 +490,16 @@
     cursor: pointer;
   }
 
-  .chmod-results { display: flex; flex-direction: column; gap: 0.6rem; }
+  .chmod-description {
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    font-style: italic;
+    min-height: 1.2em;
+  }
+
+  .chmod-results { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .chmod-result-group { display: flex; flex-direction: column; gap: 0.15rem; }
 
   .chmod-result-row {
     display: flex;
@@ -219,7 +511,7 @@
     font-size: 0.82rem;
     font-weight: 600;
     color: var(--color-text-secondary);
-    min-width: 5.5rem;
+    min-width: 7rem;
     flex-shrink: 0;
   }
 
@@ -231,13 +523,13 @@
     min-width: 0;
   }
 
-  .chmod-numeric-input {
-    width: 5rem;
+  .chmod-numeric-input,
+  .chmod-symbolic-input {
     padding: 0.4rem 0.6rem;
     font-family: var(--font-mono);
-    font-size: 1.05rem;
+    font-size: 1rem;
     font-weight: 600;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.1em;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: var(--color-bg-secondary);
@@ -245,23 +537,40 @@
     text-align: center;
   }
 
-  .chmod-numeric-input:focus {
+  .chmod-numeric-input { width: 5rem; }
+  .chmod-symbolic-input { width: 8rem; }
+
+  .chmod-numeric-input:focus,
+  .chmod-symbolic-input:focus {
     outline: none;
     border-color: var(--color-primary);
     background: var(--color-bg);
   }
 
+  .chmod-input-error {
+    border-color: var(--color-error, #e53e3e) !important;
+  }
+
+  .chmod-error {
+    font-size: 0.75rem;
+    color: var(--color-error, #e53e3e);
+    padding-left: 7.75rem;
+    min-height: 1em;
+  }
+
   .chmod-output {
     font-family: var(--font-mono);
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: var(--color-text);
     user-select: all;
     word-break: break-all;
   }
 
-  @media (max-width: 480px) {
+  @media (max-width: 520px) {
     .chmod-grid { gap: 0.35rem 0.6rem; }
     .chmod-result-row { flex-wrap: wrap; gap: 0.35rem; }
     .chmod-result-label { min-width: auto; width: 100%; }
+    .chmod-error { padding-left: 0; }
+    .chmod-special-row { gap: 0.5rem 1rem; }
   }
 </style>

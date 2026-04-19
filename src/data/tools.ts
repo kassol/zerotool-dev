@@ -7,6 +7,7 @@ export interface ToolInfo {
   slug: string;
   translations: Record<string, ToolTranslation>;
   category: 'data' | 'encoding' | 'text' | 'security' | 'dev' | 'api';
+  relatedSlugs?: string[];
 }
 
 export function getToolName(tool: ToolInfo, lang: string): string {
@@ -36,7 +37,7 @@ export const allTools: ToolInfo[] = [
   { slug: 'cron-parser', translations: { en: { name: 'Cron Expression Parser', description: 'Parse and explain cron expressions in plain English. Preview next 10 scheduled run times.' }, zh: { name: 'Cron 表达式解析器', description: '用自然语言解释 Cron 表达式，预览最近 10 次执行时间。' }, ja: { name: 'Cron 式パーサー', description: 'Cron式を自然言語で解説。次回10回の実行予定時刻をプレビュー。' }, ko: { name: 'Cron 표현식 파서', description: 'Cron 표현식을 자연어로 설명. 다음 10번의 실행 예정 시간 미리보기.' } }, category: 'dev' },
   { slug: 'lorem-ipsum', translations: { en: { name: 'Lorem Ipsum Generator', description: 'Generate Lorem Ipsum placeholder text instantly. Choose paragraph count and copy to clipboard.' }, zh: { name: 'Lorem Ipsum 生成器', description: '即时生成 Lorem Ipsum 占位文本，可选段落数量，一键复制。' }, ja: { name: 'Lorem Ipsum ジェネレーター', description: 'Lorem Ipsumダミーテキストを即座に生成。段落数を指定してクリップボードにコピー。' }, ko: { name: 'Lorem Ipsum 생성기', description: 'Lorem Ipsum 자리 표시 텍스트를 즉시 생성. 단락 수 선택 및 클립보드 복사.' } }, category: 'text' },
   { slug: 'word-counter', translations: { en: { name: 'Word & Character Counter', description: 'Count words, characters, sentences, and paragraphs. Estimate reading and speaking time.' }, zh: { name: '字数统计工具', description: '即时统计字数、字符数、句子数和段落数，估算阅读和演讲时间。' }, ja: { name: '単語・文字数カウンター', description: '単語数・文字数・文数・段落数を即座にカウント。読み上げ・スピーチ時間を推定。' }, ko: { name: '단어 및 문자 카운터', description: '단어, 문자, 문장, 단락 수 계산. 읽기 및 말하기 시간 추정.' } }, category: 'text' },
-  { slug: 'chmod-calculator', translations: { en: { name: 'Chmod Calculator', description: 'Calculate Linux file permissions interactively. Convert between numeric and symbolic notation.' }, zh: { name: 'Chmod 权限计算器', description: '交互式计算 Linux 文件权限，在数字和符号表示法之间转换。' }, ja: { name: 'Chmod 計算機', description: 'Linuxファイルパーミッションをインタラクティブに計算。数値表記と記号表記を相互変換。' }, ko: { name: 'Chmod 계산기', description: 'Linux 파일 권한을 대화형으로 계산. 숫자와 기호 표기법 간 변환.' } }, category: 'dev' },
+  { slug: 'chmod-calculator', translations: { en: { name: 'Chmod Calculator', description: 'Calculate Linux file permissions interactively. Convert between numeric and symbolic notation.' }, zh: { name: 'Chmod 权限计算器', description: '交互式计算 Linux 文件权限，在数字和符号表示法之间转换。' }, ja: { name: 'Chmod 計算機', description: 'Linuxファイルパーミッションをインタラクティブに計算。数値表記と記号表記を相互変換。' }, ko: { name: 'Chmod 계산기', description: 'Linux 파일 권한을 대화형으로 계산. 숫자와 기호 표기법 간 변환.' } }, category: 'dev', relatedSlugs: ['htpasswd-generator'] },
   { slug: 'csv-json', translations: { en: { name: 'CSV to JSON Converter', description: 'Convert CSV to JSON and JSON to CSV instantly. Handles quoted fields, auto-detects headers.' }, zh: { name: 'CSV JSON 转换器', description: '即时进行 CSV 与 JSON 格式互转，支持引号字段，自动识别表头。' }, ja: { name: 'CSV JSON 変換器', description: 'CSVとJSONを即座に相互変換。引用符付きフィールド対応、ヘッダー自動検出。' }, ko: { name: 'CSV JSON 변환기', description: 'CSV와 JSON 형식을 즉시 상호 변환. 따옴표 필드 처리, 헤더 자동 감지.' } }, category: 'data' },
   { slug: 'html-entity', translations: { en: { name: 'HTML Entity Encoder / Decoder', description: 'Encode and decode HTML entities. Supports named, decimal, and hex entities.' }, zh: { name: 'HTML 实体编码 / 解码', description: '编码和解码 HTML 实体，支持命名实体、十进制和十六进制编码。' }, ja: { name: 'HTML エンティティ エンコーダー / デコーダー', description: 'HTMLエンティティのエンコード・デコード。名前付き・10進数・16進数エンティティ対応。' }, ko: { name: 'HTML 엔티티 인코더 / 디코더', description: 'HTML 엔티티 인코딩 및 디코딩. 이름, 10진수, 16진수 엔티티 지원.' } }, category: 'encoding' },
   { slug: 'yaml-json', translations: { en: { name: 'YAML to JSON Converter', description: 'Convert YAML to JSON and JSON to YAML instantly. Supports nested objects, arrays, and all YAML 1.2 features.' }, zh: { name: 'YAML JSON 转换器', description: '即时进行 YAML 与 JSON 格式互转，支持嵌套对象、数组及所有 YAML 1.2 特性。' }, ja: { name: 'YAML JSON 変換器', description: 'YAMLとJSONを即座に相互変換。ネストオブジェクト・配列・YAML 1.2全機能対応。' }, ko: { name: 'YAML JSON 변환기', description: 'YAML과 JSON을 즉시 상호 변환. 중첩 객체, 배열 및 모든 YAML 1.2 기능 지원.' } }, category: 'data' },
@@ -112,7 +113,12 @@ export function getRelatedTools(currentSlug: string, count = 4): ToolInfo[] {
   const current = allTools.find(t => t.slug === currentSlug);
   if (!current) return allTools.filter(t => t.slug !== currentSlug).slice(0, count);
 
-  const sameCategory = allTools.filter(t => t.slug !== currentSlug && t.category === current.category);
-  const otherCategory = allTools.filter(t => t.slug !== currentSlug && t.category !== current.category);
-  return [...sameCategory, ...otherCategory].slice(0, count);
+  const pinned = (current.relatedSlugs ?? [])
+    .map(s => allTools.find(t => t.slug === s))
+    .filter((t): t is ToolInfo => !!t);
+  const pinnedSlugs = new Set(pinned.map(t => t.slug));
+
+  const sameCategory = allTools.filter(t => t.slug !== currentSlug && !pinnedSlugs.has(t.slug) && t.category === current.category);
+  const otherCategory = allTools.filter(t => t.slug !== currentSlug && !pinnedSlugs.has(t.slug) && t.category !== current.category);
+  return [...pinned, ...sameCategory, ...otherCategory].slice(0, count);
 }
