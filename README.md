@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 89 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 90 tools and growing.
 
 ## Tools
 
@@ -98,6 +98,7 @@
 | Bcrypt Generator | [/tools/bcrypt-generator](https://zerotool.dev/tools/bcrypt-generator) |
 | HTML to Markdown Converter | [/tools/html-to-markdown](https://zerotool.dev/tools/html-to-markdown) |
 | Glassmorphism CSS Generator | [/tools/glassmorphism-generator](https://zerotool.dev/tools/glassmorphism-generator) |
+| CSS Triangle Generator | [/tools/css-triangle-generator](https://zerotool.dev/tools/css-triangle-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
