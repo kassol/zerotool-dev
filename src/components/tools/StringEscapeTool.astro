@@ -1,0 +1,388 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="se-wrap">
+    <!-- Mode tabs -->
+    <div class="se-tabs" role="tablist">
+      <button class="se-tab se-tab-active" id="se-tab-js" role="tab" data-mode="js">JavaScript</button>
+      <button class="se-tab" id="se-tab-json" role="tab" data-mode="json">JSON</button>
+      <button class="se-tab" id="se-tab-html" role="tab" data-mode="html" data-i18n="tabHtml">HTML Entities</button>
+    </div>
+
+    <!-- Direction toggle -->
+    <div class="se-direction">
+      <label>
+        <input type="radio" name="sedir" value="escape" checked />
+        <span data-i18n="escape">Escape</span>
+      </label>
+      <label>
+        <input type="radio" name="sedir" value="unescape" />
+        <span data-i18n="unescape">Unescape</span>
+      </label>
+    </div>
+
+    <!-- Two-column IO -->
+    <div class="se-io">
+      <div class="se-col">
+        <label for="se-input" class="se-label" data-i18n="inputLabel">Input</label>
+        <textarea
+          id="se-input"
+          class="se-textarea"
+          spellcheck="false"
+          placeholder="Enter text to escape..."
+          data-i18n-ph="inputPh"
+        ></textarea>
+      </div>
+      <div class="se-col">
+        <label for="se-output" class="se-label se-label-right">
+          <span data-i18n="outputLabel">Output</span>
+          <button id="se-copy" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="se-output"
+          class="se-textarea"
+          spellcheck="false"
+          readonly
+          placeholder="Result appears here..."
+          data-i18n-ph="outputPh"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="se-actions">
+      <button id="se-swap" class="btn-secondary" type="button" data-i18n="swap">Swap</button>
+      <button id="se-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="se-status" class="se-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          escape: 'Escape', unescape: 'Unescape', swap: 'Swap', clear: 'Clear',
+          copy: 'Copy', copied: 'Copied!', tabHtml: 'HTML Entities',
+          inputLabel: 'Input', outputLabel: 'Output',
+          inputPh: 'Enter text to escape...', outputPh: 'Result appears here...',
+          unescapeInputPh: 'Enter escaped text to unescape...',
+          done: 'Done.', error: 'Error: ',
+        },
+        zh: {
+          escape: '转义', unescape: '反转义', swap: '交换', clear: '清除',
+          copy: '复制', copied: '已复制！', tabHtml: 'HTML 实体',
+          inputLabel: '输入', outputLabel: '输出',
+          inputPh: '输入要转义的文本...', outputPh: '结果显示在这里...',
+          unescapeInputPh: '输入要反转义的文本...',
+          done: '完成。', error: '错误：',
+        },
+        ja: {
+          escape: 'エスケープ', unescape: 'アンエスケープ', swap: '入れ替え', clear: 'クリア',
+          copy: 'コピー', copied: 'コピー済み！', tabHtml: 'HTML エンティティ',
+          inputLabel: '入力', outputLabel: '出力',
+          inputPh: 'エスケープするテキストを入力...', outputPh: '結果がここに表示されます...',
+          unescapeInputPh: 'アンエスケープするテキストを入力...',
+          done: '完了。', error: 'エラー：',
+        },
+        ko: {
+          escape: '이스케이프', unescape: '언이스케이프', swap: '교체', clear: '지우기',
+          copy: '복사', copied: '복사됨!', tabHtml: 'HTML 엔티티',
+          inputLabel: '입력', outputLabel: '출력',
+          inputPh: '이스케이프할 텍스트 입력...', outputPh: '결과가 여기에 표시됩니다...',
+          unescapeInputPh: '언이스케이프할 텍스트 입력...',
+          done: '완료.', error: '오류: ',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.se-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.se-wrap [data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl = document.getElementById('se-input');
+      var outputEl = document.getElementById('se-output');
+      var statusEl = document.getElementById('se-status');
+      var copyBtn = document.getElementById('se-copy');
+      var mode = 'js';
+      var direction = 'escape';
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'se-status ' + (isError ? 'error' : 'success');
+      }
+
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'se-status';
+      }
+
+      // ── JS escape / unescape ──────────────────────────────────────────────
+
+      function jsEscape(str) {
+        var out = '';
+        for (var i = 0; i < str.length; i++) {
+          var ch = str[i];
+          var code = str.charCodeAt(i);
+          if (ch === '\\') out += '\\\\';
+          else if (ch === '"') out += '\\"';
+          else if (ch === "'") out += "\\'";
+          else if (ch === '\n') out += '\\n';
+          else if (ch === '\r') out += '\\r';
+          else if (ch === '\t') out += '\\t';
+          else if (ch === '\0') out += '\\0';
+          else if (code < 32 || code === 127) out += '\\x' + ('0' + code.toString(16)).slice(-2);
+          else if (code > 127) out += '\\u' + ('000' + code.toString(16)).slice(-4);
+          else out += ch;
+        }
+        return out;
+      }
+
+      function jsUnescape(str) {
+        return str.replace(/\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[0nrtv'"\\])/g, function (m, seq) {
+          switch (seq[0]) {
+            case 'n': return '\n';
+            case 'r': return '\r';
+            case 't': return '\t';
+            case '0': return '\0';
+            case 'v': return '\v';
+            case "'": return "'";
+            case '"': return '"';
+            case '\\': return '\\';
+            case 'u': return String.fromCharCode(parseInt(seq.slice(1), 16));
+            case 'x': return String.fromCharCode(parseInt(seq.slice(1), 16));
+            default: return m;
+          }
+        });
+      }
+
+      // ── JSON escape / unescape ────────────────────────────────────────────
+
+      function jsonEscape(str) {
+        // JSON.stringify gives us the full JSON string including outer quotes — strip them
+        return JSON.stringify(str).slice(1, -1);
+      }
+
+      function jsonUnescape(str) {
+        // Wrap in quotes and parse as a JSON string value
+        return JSON.parse('"' + str.replace(/"/g, '\\"') + '"');
+      }
+
+      // ── HTML escape / unescape ────────────────────────────────────────────
+
+      var HTML_NAMED = {
+        '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"',
+        '&apos;': "'", '&#39;': "'", '&nbsp;': '\u00a0',
+        '&copy;': '\u00a9', '&reg;': '\u00ae', '&trade;': '\u2122',
+        '&mdash;': '\u2014', '&ndash;': '\u2013',
+        '&laquo;': '\u00ab', '&raquo;': '\u00bb',
+      };
+
+      function htmlEscape(str) {
+        var out = '';
+        for (var i = 0; i < str.length; i++) {
+          var ch = str[i];
+          var code = str.charCodeAt(i);
+          if (ch === '&') out += '&amp;';
+          else if (ch === '<') out += '&lt;';
+          else if (ch === '>') out += '&gt;';
+          else if (ch === '"') out += '&quot;';
+          else if (ch === "'") out += '&#39;';
+          else if (code === 0xa0) out += '&nbsp;';
+          else if (code > 127) out += '&#' + code + ';';
+          else out += ch;
+        }
+        return out;
+      }
+
+      function htmlUnescape(str) {
+        return str
+          .replace(/&(?:#x[0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/g, function (entity) {
+            if (HTML_NAMED[entity]) return HTML_NAMED[entity];
+            if (entity.charAt(1) === '#') {
+              var code = entity.charAt(2) === 'x' || entity.charAt(2) === 'X'
+                ? parseInt(entity.slice(3, -1), 16)
+                : parseInt(entity.slice(2, -1), 10);
+              return isNaN(code) ? entity : String.fromCharCode(code);
+            }
+            // Unknown named entity — use textarea DOM trick
+            var ta = document.createElement('textarea');
+            ta.innerHTML = entity;
+            return ta.value;
+          });
+      }
+
+      // ── Core process ──────────────────────────────────────────────────────
+
+      function process() {
+        var val = inputEl.value;
+        if (!val) { outputEl.value = ''; clearStatus(); return; }
+        try {
+          var result;
+          if (mode === 'js') {
+            result = direction === 'escape' ? jsEscape(val) : jsUnescape(val);
+          } else if (mode === 'json') {
+            result = direction === 'escape' ? jsonEscape(val) : jsonUnescape(val);
+          } else {
+            result = direction === 'escape' ? htmlEscape(val) : htmlUnescape(val);
+          }
+          outputEl.value = result;
+          setStatus(t.done, false);
+        } catch (e) {
+          outputEl.value = '';
+          setStatus(t.error + e.message, true);
+        }
+      }
+
+      // ── Tab switching ─────────────────────────────────────────────────────
+
+      document.querySelectorAll('.se-tab').forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          document.querySelectorAll('.se-tab').forEach(function (t) {
+            t.classList.remove('se-tab-active');
+          });
+          tab.classList.add('se-tab-active');
+          mode = tab.getAttribute('data-mode');
+          inputEl.value = '';
+          outputEl.value = '';
+          clearStatus();
+        });
+      });
+
+      // ── Direction toggle ──────────────────────────────────────────────────
+
+      document.querySelectorAll('input[name="sedir"]').forEach(function (r) {
+        r.addEventListener('change', function () {
+          direction = this.value;
+          inputEl.placeholder = direction === 'escape' ? t.inputPh : t.unescapeInputPh;
+          outputEl.value = '';
+          clearStatus();
+          if (inputEl.value) process();
+        });
+      });
+
+      // ── Real-time processing (debounced 300ms) ───────────────────────────
+
+      var _seTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(_seTimer);
+        _seTimer = setTimeout(process, 300);
+      });
+
+      // ── Actions ───────────────────────────────────────────────────────────
+
+      document.getElementById('se-swap').addEventListener('click', function () {
+        var tmp = inputEl.value;
+        inputEl.value = outputEl.value;
+        outputEl.value = tmp;
+        clearStatus();
+      });
+
+      document.getElementById('se-clear').addEventListener('click', function () {
+        inputEl.value = '';
+        outputEl.value = '';
+        clearStatus();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        if (!outputEl.value) return;
+        navigator.clipboard.writeText(outputEl.value).then(function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        });
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .se-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  /* Tabs */
+  .se-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .se-tab {
+    padding: 0.45rem 1rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+
+  .se-tab:hover { color: var(--color-text); }
+  .se-tab-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+
+  /* Direction */
+  .se-direction { display: flex; gap: 1.5rem; font-size: 0.95rem; }
+  .se-direction label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+
+  /* Two-column IO */
+  .se-io {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .se-io { grid-template-columns: 1fr; }
+  }
+
+  .se-col { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .se-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .se-label-right {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .se-textarea {
+    width: 100%;
+    min-height: 160px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .se-textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .se-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .se-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .se-status.success { color: #057a55; }
+  .se-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .se-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .se-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .se-status.success { color: #34d399; }
+  [data-theme="dark"] .se-status.error { color: #f87171; }
+</style>
