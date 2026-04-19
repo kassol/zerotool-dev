@@ -586,6 +586,15 @@ const L = labels[lang] ?? labels['en'];
   }
 
   // ---------- Next Runs ----------
+  // Returns the first value in sorted arr strictly greater than val,
+  // or null if none (caller must wrap to the next cycle).
+  function nextAbove(arr, val) {
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i] > val) return arr[i];
+    }
+    return null;
+  }
+
   function nextRuns(fields, count, utc) {
     var minVals = parseField(fields[0], 0, 59, null, 0);
     var hrVals = parseField(fields[1], 0, 23, null, 0);
@@ -600,19 +609,52 @@ const L = labels[lang] ?? labels['en'];
     var d = new Date();
     if (utc) d.setUTCSeconds(0, 0); else d.setSeconds(0, 0);
     d = new Date(d.getTime() + 60000);
+    // Safety cap; field-aware skips mean each iteration advances at minimum
+    // one minute but typically jumps days/months — 100 000 is ample.
     var limit = 100000;
     while (runs.length < count && limit-- > 0) {
-      var ok = utc
-        ? (monVals.indexOf(d.getUTCMonth() + 1) !== -1 &&
-           domVals.indexOf(d.getUTCDate()) !== -1 &&
-           hrVals.indexOf(d.getUTCHours()) !== -1 &&
-           minVals.indexOf(d.getUTCMinutes()) !== -1)
-        : (monVals.indexOf(d.getMonth() + 1) !== -1 &&
-           domVals.indexOf(d.getDate()) !== -1 &&
-           hrVals.indexOf(d.getHours()) !== -1 &&
-           minVals.indexOf(d.getMinutes()) !== -1);
-      if (dowSet) ok = ok && !!(utc ? dowSet[d.getUTCDay()] : dowSet[d.getDay()]);
-      if (ok) runs.push(new Date(d));
+      var mon = utc ? d.getUTCMonth() + 1 : d.getMonth() + 1;
+      if (monVals.indexOf(mon) === -1) {
+        var nm = nextAbove(monVals, mon);
+        var yr = utc ? d.getUTCFullYear() : d.getFullYear();
+        d = nm !== null
+          ? (utc ? new Date(Date.UTC(yr, nm - 1, 1, 0, 0, 0)) : new Date(yr, nm - 1, 1, 0, 0, 0))
+          : (utc ? new Date(Date.UTC(yr + 1, monVals[0] - 1, 1, 0, 0, 0)) : new Date(yr + 1, monVals[0] - 1, 1, 0, 0, 0));
+        continue;
+      }
+      var dom = utc ? d.getUTCDate() : d.getDate();
+      var dow = utc ? d.getUTCDay() : d.getDay();
+      if (domVals.indexOf(dom) === -1 || (dowSet && !dowSet[dow])) {
+        var yr2 = utc ? d.getUTCFullYear() : d.getFullYear();
+        var mo2 = utc ? d.getUTCMonth() : d.getMonth();
+        var dy2 = dom + 1;
+        d = utc ? new Date(Date.UTC(yr2, mo2, dy2, 0, 0, 0)) : new Date(yr2, mo2, dy2, 0, 0, 0);
+        continue;
+      }
+      var hr = utc ? d.getUTCHours() : d.getHours();
+      if (hrVals.indexOf(hr) === -1) {
+        var nh = nextAbove(hrVals, hr);
+        var yr3 = utc ? d.getUTCFullYear() : d.getFullYear();
+        var mo3 = utc ? d.getUTCMonth() : d.getMonth();
+        var dy3 = utc ? d.getUTCDate() : d.getDate();
+        d = nh !== null
+          ? (utc ? new Date(Date.UTC(yr3, mo3, dy3, nh, 0, 0)) : new Date(yr3, mo3, dy3, nh, 0, 0))
+          : (utc ? new Date(Date.UTC(yr3, mo3, dy3 + 1, 0, 0, 0)) : new Date(yr3, mo3, dy3 + 1, 0, 0, 0));
+        continue;
+      }
+      var min = utc ? d.getUTCMinutes() : d.getMinutes();
+      if (minVals.indexOf(min) === -1) {
+        var nmin = nextAbove(minVals, min);
+        var yr4 = utc ? d.getUTCFullYear() : d.getFullYear();
+        var mo4 = utc ? d.getUTCMonth() : d.getMonth();
+        var dy4 = utc ? d.getUTCDate() : d.getDate();
+        var hr4 = utc ? d.getUTCHours() : d.getHours();
+        d = nmin !== null
+          ? (utc ? new Date(Date.UTC(yr4, mo4, dy4, hr4, nmin, 0)) : new Date(yr4, mo4, dy4, hr4, nmin, 0))
+          : (utc ? new Date(Date.UTC(yr4, mo4, dy4, hr4 + 1, 0, 0)) : new Date(yr4, mo4, dy4, hr4 + 1, 0, 0));
+        continue;
+      }
+      runs.push(new Date(d));
       d = new Date(d.getTime() + 60000);
     }
     return runs;
