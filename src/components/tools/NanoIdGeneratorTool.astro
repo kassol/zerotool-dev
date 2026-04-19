@@ -1,0 +1,446 @@
+---
+// NanoIdGeneratorTool — Nano ID generator with custom alphabet and size (uses nanoid 3.x vendor)
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    generate: 'Generate',
+    batchLabel: 'Batch Count',
+    sizeLabel: 'Size',
+    alphabetLabel: 'Alphabet',
+    alphabetUrlSafe: 'URL-safe (default)',
+    alphabetAlphanumeric: 'Alphanumeric',
+    alphabetNumbers: 'Numbers only',
+    alphabetHex: 'Lowercase hex',
+    alphabetCustom: 'Custom…',
+    customAlphabetLabel: 'Custom Alphabet',
+    customAlphabetPlaceholder: 'Enter characters…',
+    customAlphabetTooShort: 'Alphabet must have at least 2 characters',
+    copy: 'Copy',
+    copied: 'Copied!',
+    copyAll: 'Copy All',
+    copyAllDone: 'Copied!',
+    clear: 'Clear',
+    colId: 'Nano ID',
+    colAlphabet: 'Alphabet',
+    colSize: 'Size',
+  },
+  zh: {
+    generate: '生成',
+    batchLabel: '批量数量',
+    sizeLabel: '长度',
+    alphabetLabel: '字符集',
+    alphabetUrlSafe: 'URL 安全（默认）',
+    alphabetAlphanumeric: '字母数字',
+    alphabetNumbers: '纯数字',
+    alphabetHex: '十六进制小写',
+    alphabetCustom: '自定义…',
+    customAlphabetLabel: '自定义字符集',
+    customAlphabetPlaceholder: '输入字符…',
+    customAlphabetTooShort: '字符集至少需要 2 个字符',
+    copy: '复制',
+    copied: '已复制！',
+    copyAll: '复制全部',
+    copyAllDone: '已复制！',
+    clear: '清空',
+    colId: 'Nano ID',
+    colAlphabet: '字符集',
+    colSize: '长度',
+  },
+  ja: {
+    generate: '生成',
+    batchLabel: 'バッチ数',
+    sizeLabel: 'サイズ',
+    alphabetLabel: 'アルファベット',
+    alphabetUrlSafe: 'URLセーフ（デフォルト）',
+    alphabetAlphanumeric: '英数字',
+    alphabetNumbers: '数字のみ',
+    alphabetHex: '16進数小文字',
+    alphabetCustom: 'カスタム…',
+    customAlphabetLabel: 'カスタムアルファベット',
+    customAlphabetPlaceholder: '文字を入力…',
+    customAlphabetTooShort: 'アルファベットは2文字以上必要です',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    copyAll: 'すべてコピー',
+    copyAllDone: 'コピーしました！',
+    clear: 'クリア',
+    colId: 'Nano ID',
+    colAlphabet: 'アルファベット',
+    colSize: 'サイズ',
+  },
+  ko: {
+    generate: '생성',
+    batchLabel: '일괄 수',
+    sizeLabel: '크기',
+    alphabetLabel: '알파벳',
+    alphabetUrlSafe: 'URL 안전 (기본)',
+    alphabetAlphanumeric: '영숫자',
+    alphabetNumbers: '숫자만',
+    alphabetHex: '소문자 16진수',
+    alphabetCustom: '사용자 정의…',
+    customAlphabetLabel: '사용자 정의 알파벳',
+    customAlphabetPlaceholder: '문자 입력…',
+    customAlphabetTooShort: '알파벳은 최소 2자 이상이어야 합니다',
+    copy: '복사',
+    copied: '복사됨!',
+    copyAll: '모두 복사',
+    copyAllDone: '복사됨!',
+    clear: '지우기',
+    colId: 'Nano ID',
+    colAlphabet: '알파벳',
+    colSize: '크기',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="nanoid-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-copy-all={L.copyAll}
+  data-copy-all-done={L.copyAllDone}
+  data-col-id={L.colId}
+  data-col-alphabet={L.colAlphabet}
+  data-col-size={L.colSize}
+  data-too-short={L.customAlphabetTooShort}
+>
+  <!-- Controls -->
+  <div class="nanoid-controls">
+    <div class="nanoid-row">
+      <label class="nanoid-label" for="nanoid-count">{L.batchLabel}</label>
+      <input id="nanoid-count" class="nanoid-num-input" type="number" min="1" max="100" value="1" />
+    </div>
+    <div class="nanoid-row">
+      <label class="nanoid-label" for="nanoid-size">{L.sizeLabel}</label>
+      <input id="nanoid-size" class="nanoid-num-input" type="number" min="1" max="128" value="21" />
+    </div>
+    <div class="nanoid-row">
+      <label class="nanoid-label" for="nanoid-alphabet">{L.alphabetLabel}</label>
+      <select id="nanoid-alphabet" class="nanoid-select">
+        <option value="url-safe">{L.alphabetUrlSafe}</option>
+        <option value="alphanumeric">{L.alphabetAlphanumeric}</option>
+        <option value="numbers">{L.alphabetNumbers}</option>
+        <option value="hex">{L.alphabetHex}</option>
+        <option value="custom">{L.alphabetCustom}</option>
+      </select>
+    </div>
+    <div id="nanoid-custom-row" class="nanoid-row" style="display:none;">
+      <label class="nanoid-label" for="nanoid-custom-alphabet">{L.customAlphabetLabel}</label>
+      <input
+        id="nanoid-custom-alphabet"
+        class="nanoid-text-input"
+        type="text"
+        placeholder={L.customAlphabetPlaceholder}
+        spellcheck="false"
+        autocomplete="off"
+        maxlength="256"
+      />
+    </div>
+  </div>
+
+  <div class="nanoid-err" id="nanoid-err" style="display:none;"></div>
+
+  <div class="nanoid-btn-row">
+    <button id="nanoid-generate" class="btn-primary" type="button">{L.generate}</button>
+    <button id="nanoid-copy-all" class="btn-copy" type="button" disabled>{L.copyAll}</button>
+    <button id="nanoid-clear" class="btn-ghost" type="button" disabled>{L.clear}</button>
+  </div>
+
+  <!-- Results -->
+  <div id="nanoid-results" class="nanoid-results" style="display:none;">
+    <table class="nanoid-table">
+      <thead>
+        <tr>
+          <th class="nanoid-th-id">{L.colId}</th>
+          <th class="nanoid-th-act"></th>
+        </tr>
+      </thead>
+      <tbody id="nanoid-tbody"></tbody>
+    </table>
+  </div>
+
+  <script src="/vendor/nanoid.min.js" is:inline></script>
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.nanoid-wrap')
+        : document.querySelector('.nanoid-wrap');
+
+      var COPY_LABEL     = wrap.dataset.copy;
+      var COPIED_LABEL   = wrap.dataset.copied;
+      var COPY_ALL_LABEL = wrap.dataset.copyAll;
+      var COPY_ALL_DONE  = wrap.dataset.copyAllDone;
+      var TOO_SHORT      = wrap.dataset.tooShort;
+
+      var countEl      = document.getElementById('nanoid-count');
+      var sizeEl       = document.getElementById('nanoid-size');
+      var alphabetEl   = document.getElementById('nanoid-alphabet');
+      var customRow    = document.getElementById('nanoid-custom-row');
+      var customAlphaEl = document.getElementById('nanoid-custom-alphabet');
+      var genBtn       = document.getElementById('nanoid-generate');
+      var copyAllBtn   = document.getElementById('nanoid-copy-all');
+      var clearBtn     = document.getElementById('nanoid-clear');
+      var resultsEl    = document.getElementById('nanoid-results');
+      var tbodyEl      = document.getElementById('nanoid-tbody');
+      var errEl        = document.getElementById('nanoid-err');
+
+      var PRESETS = {
+        'url-safe':     'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict',
+        'alphanumeric': 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+        'numbers':      '0123456789',
+        'hex':          '0123456789abcdef',
+      };
+
+      /* ── Alphabet selector ── */
+      alphabetEl.addEventListener('change', function () {
+        customRow.style.display = alphabetEl.value === 'custom' ? '' : 'none';
+      });
+
+      /* ── Generate ── */
+      function getAlphabet() {
+        var preset = alphabetEl.value;
+        if (preset === 'custom') {
+          var chars = customAlphaEl.value;
+          /* deduplicate */
+          var seen = {};
+          var deduped = '';
+          for (var i = 0; i < chars.length; i++) {
+            if (!seen[chars[i]]) { seen[chars[i]] = true; deduped += chars[i]; }
+          }
+          return deduped;
+        }
+        return PRESETS[preset] || PRESETS['url-safe'];
+      }
+
+      function showError(msg) {
+        errEl.textContent = msg;
+        errEl.style.display = '';
+      }
+
+      function hideError() {
+        errEl.style.display = 'none';
+        errEl.textContent = '';
+      }
+
+      var generated = [];
+
+      genBtn.addEventListener('click', function () {
+        hideError();
+        var count = Math.max(1, Math.min(100, parseInt(countEl.value) || 1));
+        var size  = Math.max(1, Math.min(128, parseInt(sizeEl.value) || 21));
+        var alpha = getAlphabet();
+
+        if (alpha.length < 2) {
+          showError(TOO_SHORT);
+          return;
+        }
+
+        var gen = alpha === PRESETS['url-safe']
+          ? function () { return window.__nanoid.nanoid(size); }
+          : window.__nanoid.customAlphabet(alpha, size);
+
+        var newItems = [];
+        for (var i = 0; i < count; i++) {
+          newItems.push(alpha === PRESETS['url-safe'] ? gen() : gen());
+        }
+        generated = newItems;
+
+        tbodyEl.innerHTML = '';
+        generated.forEach(function (id) {
+          tbodyEl.appendChild(buildRow(id));
+        });
+        resultsEl.style.display = '';
+        copyAllBtn.disabled = false;
+        clearBtn.disabled = false;
+        window.trackTool && window.trackTool('nano-id-generator', 'generate');
+      });
+
+      /* ── Build row ── */
+      function buildRow(id) {
+        var tr = document.createElement('tr');
+        tr.className = 'nanoid-row';
+
+        var tdId = document.createElement('td');
+        tdId.className = 'nanoid-td nanoid-td-id';
+        tdId.textContent = id;
+        tr.appendChild(tdId);
+
+        var tdAct = document.createElement('td');
+        tdAct.className = 'nanoid-td nanoid-td-act';
+        var copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'nanoid-copy-btn btn-ghost';
+        copyBtn.textContent = COPY_LABEL;
+        copyBtn.addEventListener('click', function () {
+          navigator.clipboard.writeText(id).then(function () {
+            copyBtn.textContent = COPIED_LABEL;
+            setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1200);
+            window.trackTool && window.trackTool('nano-id-generator', 'copy_single');
+          });
+        });
+        tdAct.appendChild(copyBtn);
+        tr.appendChild(tdAct);
+
+        return tr;
+      }
+
+      /* ── Copy All ── */
+      copyAllBtn.addEventListener('click', function () {
+        var text = generated.join('\n');
+        navigator.clipboard.writeText(text).then(function () {
+          copyAllBtn.textContent = COPY_ALL_DONE;
+          setTimeout(function () { copyAllBtn.textContent = COPY_ALL_LABEL; }, 1500);
+          window.trackTool && window.trackTool('nano-id-generator', 'copy_all');
+        });
+      });
+
+      /* ── Clear ── */
+      clearBtn.addEventListener('click', function () {
+        generated = [];
+        tbodyEl.innerHTML = '';
+        resultsEl.style.display = 'none';
+        copyAllBtn.disabled = true;
+        clearBtn.disabled = true;
+        hideError();
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .nanoid-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* ── Controls ── */
+  .nanoid-controls { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .nanoid-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .nanoid-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    min-width: 110px;
+  }
+
+  .nanoid-num-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 80px;
+    text-align: center;
+  }
+
+  .nanoid-num-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .nanoid-select {
+    font-family: var(--font-sans, inherit);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    min-width: 180px;
+  }
+
+  .nanoid-select:focus { outline: none; border-color: var(--color-primary); }
+
+  .nanoid-text-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100%;
+    max-width: 340px;
+    letter-spacing: 0.03em;
+  }
+
+  .nanoid-text-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* ── Error ── */
+  .nanoid-err {
+    font-size: 0.82rem;
+    color: #c0392b;
+    padding: 0.4rem 0;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .nanoid-err { color: #fca5a5; }
+  }
+  [data-theme="dark"] .nanoid-err { color: #fca5a5; }
+
+  /* ── Button row ── */
+  .nanoid-btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+  /* ── Results table ── */
+  .nanoid-results {
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .nanoid-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+
+  .nanoid-table thead tr {
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .nanoid-table th {
+    padding: 0.45rem 0.75rem;
+    text-align: left;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .nanoid-th-id  { width: 90%; }
+  .nanoid-th-act { width: 10%; }
+
+  .nanoid-row { border-bottom: 1px solid var(--color-border); }
+  .nanoid-row:last-child { border-bottom: none; }
+  .nanoid-row:hover { background: var(--color-bg-secondary); }
+
+  .nanoid-td {
+    padding: 0.4rem 0.75rem;
+    vertical-align: middle;
+  }
+
+  .nanoid-td-id {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    word-break: break-all;
+  }
+
+  .nanoid-td-act { white-space: nowrap; }
+
+  .nanoid-copy-btn {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+  }
+</style>
