@@ -1,0 +1,222 @@
+---
+title: "JSONからPythonデータクラスへ：APIレスポンスを型付きPythonコードに変換"
+description: "任意のJSONからPythonのdataclass、Pydantic v2モデル、TypedDictを生成。ネストされたオブジェクト、配列、オプションフィールドに対応。無料、ブラウザで動作。"
+pubDate: 2026-04-19
+lang: "ja"
+translationSlug: "json-to-python-dataclass-guide"
+tags: ["python", "dataclass", "pydantic", "json to python", "developer-tools"]
+ogImage: /og/blog-json-to-python-dataclass-guide-ja.png
+---
+
+JSONを返すAPIを使っていますか？ドキュメントからフィールドの型を推測しながら手でPythonクラスを書く代わりに、レスポンスを貼り付けるだけで型付きデータクラスが即座に生成されます。
+
+**[JSONからPythonデータクラスを生成する →](/tools/json-to-python-dataclass)**
+
+## 型付きPythonクラスが重要な理由
+
+APIレスポンスに生の辞書を使う古いパターンは脆弱です：
+
+```python
+# 辞書アクセス——型ヒントなし、オートコンプリートなし、ランタイムKeyErrorのリスク
+user = response.json()
+print(user['profile']['name'])   # 'profile'がNoneだったら？
+print(user['age'] + 1)           # 'age'が文字列だったら？
+```
+
+Pythonのdataclass、Pydanticモデル、TypedDictはいずれもこれを解決します：
+- IDEでのオートコンプリート
+- 型チェッカーのサポート（mypy、pyright）
+- データシェイプの明確なドキュメント
+- オプションフィールドの明示的な処理
+
+## 3つの出力モード
+
+ツールは用途に合わせた3つの出力フォーマットをサポートします。
+
+### @dataclass（標準ライブラリ、デフォルト）
+
+標準ライブラリで依存関係なし。内部データ構造、設定、オーバーヘッドをゼロにしたい場合に最適：
+
+```python
+from dataclasses import dataclass
+from typing import List, Optional, Any
+
+@dataclass
+class Address:
+    street: str
+    city: str
+    zip_code: Optional[str] = None
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+    address: Address
+    tags: List[str]
+    avatar: Optional[Any] = None
+```
+
+### Pydantic v2 BaseModel
+
+APIバリデーション、設定管理、ランタイムバリデーションとシリアライゼーションが必要な場面に最適。FastAPIアプリケーションの標準的な選択：
+
+```python
+from pydantic import BaseModel
+from typing import List, Optional, Any
+
+class Address(BaseModel):
+    street: str
+    city: str
+    zip_code: Optional[str] = None
+
+class User(BaseModel):
+    id: int
+    name: str
+    email: str
+    address: Address
+    tags: List[str]
+    avatar: Optional[Any] = None
+```
+
+Pydanticではインスタンス化時にバリデーションが行われ、`.model_dump()`でシリアライゼーション、`.model_validate()`で辞書の解析ができます。
+
+### TypedDict（Python 3.8+）
+
+ランタイム動作を変えずに辞書を型チェックするのに最適。プレーンな辞書を期待するライブラリと組み合わせて使う場合に有用：
+
+```python
+from typing import List, Optional, Any, TypedDict
+
+class Address(TypedDict):
+    street: str
+    city: str
+    zip_code: Optional[str]
+
+class User(TypedDict):
+    id: int
+    name: str
+    email: str
+    address: Address
+    tags: List[str]
+    avatar: Optional[Any]
+```
+
+## JSONの型からPythonの型へのマッピング
+
+| JSON | Python |
+|------|--------|
+| `"string"` | `str` |
+| `42` | `int` |
+| `3.14` | `float` |
+| `true` / `false` | `bool` |
+| `null` | `Optional[Any] = None` |
+| `["a", "b"]` | `List[str]` |
+| `[1, "a", true]` 混合 | `List[Union[int, str, bool]]` |
+| `{}` ネストされたオブジェクト | 別クラス |
+
+## ネストされたオブジェクトの処理
+
+各ネストされたオブジェクトはフィールド名から派生したPascalCaseの独立したクラスになります。クラスは常に依存関係の順に出力されます——子が親より先——ので、生成されたコードはそのまま使えます：
+
+**入力JSON：**
+```json
+{
+  "user": {
+    "profile": {
+      "bio": "Developer",
+      "location": "Tokyo"
+    },
+    "name": "田中太郎",
+    "age": 30
+  },
+  "timestamp": 1713456789
+}
+```
+
+**生成された@dataclass：**
+```python
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass
+class Profile:
+    bio: str
+    location: str
+
+@dataclass
+class User:
+    profile: Profile
+    name: str
+    age: int
+
+@dataclass
+class Root:
+    user: User
+    timestamp: int
+```
+
+## FastAPI + Pydanticでの実用例
+
+最も一般的なユースケースはFastAPIエンドポイントレスポンスの解析です：
+
+```python
+import httpx
+from pydantic import BaseModel
+from typing import List
+
+class Post(BaseModel):
+    id: int
+    title: str
+    body: str
+    userId: int
+
+# APIレスポンスを型付きモデルで解析
+async with httpx.AsyncClient() as client:
+    resp = await client.get('https://api.example.com/posts/1')
+    post = Post.model_validate(resp.json())
+    print(post.title)  # 完全に型付き
+```
+
+## 標準@dataclassとdacite
+
+標準ライブラリのdataclassを好むが、辞書→dataclassの変換も欲しい場合：
+
+```python
+from dacite import from_dict
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+
+data = {"id": 1, "name": "田中太郎", "email": "tanaka@example.com"}
+user = from_dict(User, data)
+print(user.name)  # 田中太郎
+```
+
+## ルートクラス名のカスタマイズ
+
+デフォルトのトップレベルクラス名は`Root`です。ドメインに合わせて変更してください：
+
+- APIレスポンス → `ApiResponse`、`SearchResult`、`UserProfile`
+- 設定ファイル → `AppConfig`、`DatabaseConfig`
+- Webhookペイロード → `WebhookEvent`、`PaymentNotification`
+
+## 知っておくべき制限事項
+
+**JSONはスキーマではなくサンプルです。** フィールドが実際には複数の型になり得る場合でも、ツールはサンプルの型しか見えません。本番環境で使用する前に必ずOptionalフィールドとunion型を確認してください。
+
+**ネストが深いと多くのクラスが生成されます。** 深くネストされたJSONは同じ深さのクラス階層を生成します。これは正しい動作であり、バグではありません。
+
+## 関連ツール
+
+- [JSON to TypeScript →](/tools/json-to-typescript) — JSONからTypeScriptインターフェースを生成
+- [JSON to Go Struct →](/tools/json-to-go-struct) — JSONからGoの構造体を生成
+- [JSON Formatter →](/tools/json-formatter) — 変換前にJSONを整形・検証する
+
+---
+
+JSONを貼り付けて出力フォーマットを選ぶだけ。**[JSONからPythonデータクラスジェネレーターを開く →](/tools/json-to-python-dataclass)**

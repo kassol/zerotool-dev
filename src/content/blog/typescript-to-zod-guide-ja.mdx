@@ -1,0 +1,189 @@
+---
+title: "TypeScript to Zodスキーマジェネレーター：インターフェースをランタイムバリデーションに変換"
+description: "TypeScriptのインターフェースや型エイリアスをZodスキーマに即座に変換。変換の仕組みを理解し、エッジケースを処理してAPIコードにランタイムバリデーションを追加。"
+pubDate: 2026-04-19
+lang: "ja"
+translationSlug: "typescript-to-zod-guide"
+tags: ["typescript", "zod", "typescript to zod", "type validation", "developer-tools"]
+ogImage: /og/blog-typescript-to-zod-guide-ja.png
+---
+
+TypeScriptはコンパイル時の型安全性を提供します。Zodは同じ型エルゴノミクスでランタイムバリデーションを提供します。欠けているのは既存のTypeScriptインターフェースをZodスキーマに変換すること——すべてのフィールドを手動で書き直すのは退屈でエラーが起きやすい作業です。
+
+**[TypeScript to Zodに変換する →](/tools/typescript-to-zod)**
+
+## TypeScript単体では解決できない問題
+
+TypeScriptの型はエディターとコンパイル時にのみ存在します。コードがトランスパイルされて実行されると、型は消えてしまいます。`User`と型付けされたAPIレスポンスは、ランタイムでは依然として`unknown`です——TypeScriptはあなたを信頼するだけで、検証はしません。
+
+```ts
+interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+  email?: string
+}
+
+// TypeScriptはこれを受け入れる——しかしキャストは嘘
+const user = response.data as User
+console.log(user.role.toUpperCase()) // roleが欠けているか型が違えばランタイムでエラー
+```
+
+Zodは信頼されていないデータがシステムに入る境界でバリデーションを行うことでこれを解決します。
+
+## TypeScript→Zod変換の仕組み
+
+ツールはTypeScriptの`interface`と`type`宣言を解析し、同等のZodスキーマコードを生成します。
+
+**入力：**
+
+```ts
+interface Address {
+  street: string
+  city: string
+  zipCode?: string
+}
+
+export interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+  age?: number
+  isActive: boolean
+  tags: string[]
+  address: Address
+}
+
+export type Status = 'active' | 'inactive' | 'pending'
+```
+
+**出力：**
+
+```ts
+import { z } from 'zod'
+
+export const AddressSchema = z.object({
+  street: z.string(),
+  city: z.string(),
+  zipCode: z.string().optional(),
+})
+export type Address = z.infer<typeof AddressSchema>
+
+export const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  role: z.enum(['admin', 'user', 'guest']),
+  age: z.number().optional(),
+  isActive: z.boolean(),
+  tags: z.array(z.string()),
+  address: AddressSchema,
+})
+export type User = z.infer<typeof UserSchema>
+
+export const StatusSchema = z.enum(['active', 'inactive', 'pending'])
+export type Status = z.infer<typeof StatusSchema>
+```
+
+クロスリファレンスは自動的に処理されます：`User`内の`Address`は出力で`AddressSchema`になります。`z.infer<>`エクスポートはスキーマから派生したTypeScript型を提供します——制約を追加したら元のインターフェースを削除できます。
+
+## サポートされるTypeScript構造
+
+| TypeScript | Zod |
+|-----------|-----|
+| `string` | `z.string()` |
+| `number` | `z.number()` |
+| `boolean` | `z.boolean()` |
+| `null` | `z.null()` |
+| `undefined` | `z.undefined()` |
+| `any` / `unknown` | `z.unknown()` |
+| `prop?: T` | `.optional()` |
+| `A \| B` | `z.union([A, B])` |
+| `'a' \| 'b'` | `z.enum(['a', 'b'])` |
+| `T[]` / `Array<T>` | `z.array(T)` |
+| `{ key: T }` | `z.object({ key: T })` |
+| `A & B` | `z.intersection(A, B)` |
+| `[A, B]` | `z.tuple([A, B])` |
+| `Partial<T>` | `.partial()` |
+| `Record<K, V>` | `z.record(K, V)` |
+
+## 変換後：ジェネレーターが推論できない制約を追加する
+
+ジェネレーターは構造的に正しいスキーマを作成しますが、JSONの型は意味的な制約を持ちません。TypeScriptの`string`フィールドが実際にはメールアドレス、URLである必要があったり、最小長が必要だったりするかもしれません。生成後にこれらを追加してください：
+
+```ts
+// 生成済み
+email: z.string()
+age: z.number()
+password: z.string()
+
+// 精緻化後
+email: z.string().email()
+age: z.number().int().min(0).max(150)
+password: z.string().min(8).max(128)
+```
+
+Zodが標準でサポートする文字列フォーマット：
+- `.email()` — メールフォーマットを検証
+- `.url()` — URLフォーマットを検証
+- `.uuid()` — UUIDフォーマットを検証
+- `.datetime()` — ISO 8601日時を検証
+- `.ip()` — IPv4またはIPv6を検証
+
+## 実践ワークフロー：TypeScript優先、その後Zod
+
+コードベース全体にTypeScriptインターフェースが既に存在する場合、Zodへの移行は一度にすべてを書き直す必要はありません。この段階的アプローチを使用してください：
+
+1. **境界を特定する** — APIレスポンスの解析、フォーム送信ハンドラー、環境変数の読み込み
+2. **ツールを使って境界型のスキーマを生成する**
+3. **境界の解析を`schema.safeParse()`や`schema.parse()`でラップする**
+4. **重複する`as TypeName`キャストを削除する** — 適切に検証されたデータで置き換える
+
+```ts
+// 変換前：暗黙の信頼
+async function getUser(id: string): Promise<User> {
+  const res = await fetch(`/api/users/${id}`)
+  return res.json() as User
+}
+
+// 変換後：ランタイムバリデーション
+const UserSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  role: z.enum(['admin', 'user', 'guest']),
+  email: z.string().email().optional(),
+})
+
+async function getUser(id: string) {
+  const res = await fetch(`/api/users/${id}`)
+  return UserSchema.parse(await res.json())
+}
+```
+
+## スキーマを解析以外に活用する
+
+Zodスキーマが揃えば、データの解析以上のことができます：
+
+```ts
+// モックデータを生成する（zod-mockや@anatine/zod-mockを使って）
+import { generateMock } from '@anatine/zod-mock'
+const mockUser = generateMock(UserSchema)
+
+// OpenAPIドキュメント用のJSONスキーマを生成する（zod-to-json-schemaを使って）
+import { zodToJsonSchema } from 'zod-to-json-schema'
+const jsonSchema = zodToJsonSchema(UserSchema, 'UserSchema')
+
+// 解析時にデータを変換する
+const UserSchema = z.object({
+  name: z.string().transform(s => s.trim()),
+  createdAt: z.string().datetime().transform(s => new Date(s)),
+})
+```
+
+## 関連ツール
+
+- [JSON to Zod →](/tools/json-to-zod) — JSONデータサンプルからスキーマを生成（型ではなくデータがある場合）
+- [JSON to TypeScript →](/tools/json-to-typescript) — JSONからTypeScriptインターフェースを生成（逆方向）
+
+---
+
+TypeScriptインターフェースを貼り付けると、数秒で動作するZodスキーマが得られます。**[TypeScript to Zodコンバーターを開く →](/tools/typescript-to-zod)**

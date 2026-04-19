@@ -1,0 +1,149 @@
+---
+title: "JWT 생성기: 브라우저에서 JWT 토큰을 생성하고 서명하기"
+description: "HS256/384/512로 브라우저에서 JWT 토큰을 생성하고 서명. 헤더·페이로드 편집, 시크릿 설정, 복사 완료. 서버로 데이터가 전송되지 않음."
+pubDate: 2026-04-19
+lang: "ko"
+translationSlug: "jwt-generator-guide"
+tags: ["jwt", "jwt generator", "json web token", "authentication", "developer-tools"]
+ogImage: /og/blog-jwt-generator-guide-ko.png
+---
+
+인증 플로우를 구현하면서 테스트용 토큰이 필요합니다. API 문서에 JWT 예시를 추가하고 싶습니다. 백엔드가 올바른 클레임을 수락하는지 검증하고 싶습니다. **JWT 생성기**를 사용하면 서버를 실행하지 않고도 서명된 토큰을 즉시 생성할 수 있습니다.
+
+**[JWT 토큰 생성하기 →](/tools/jwt-generator)**
+
+## JWT란 무엇인가
+
+JSON Web Token(JWT)은 [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519)에서 정의된 컴팩트한 URL-안전 문자열입니다. 당사자 간에 검증 가능한 클레임을 전달합니다.
+
+모든 JWT는 점으로 구분된 세 부분으로 구성됩니다:
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzEyMyIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTcxMzQ1Njc4OX0.xK8vP2mQ4nR7sT1uVwXyZa3bCdEfGhIjKlMnOpQrStU
+```
+
+- **헤더** (첫 번째 부분): 알고리즘과 토큰 타입
+- **페이로드** (두 번째 부분): 클레임 — 데이터 본체
+- **서명** (세 번째 부분): 시크릿을 사용한 헤더 + 페이로드의 HMAC
+
+각 부분은 Base64URL로 인코딩됩니다. 서명이 토큰의 검증을 가능하게 합니다 — 시크릿을 가진 사람이라면 누구든 토큰이 변조되지 않았음을 확인할 수 있습니다.
+
+## JWT 생성기 사용 방법
+
+1. [JWT 생성기](/tools/jwt-generator)를 엽니다
+2. 서명 알고리즘 선택 (HS256, HS384, HS512)
+3. 페이로드 JSON에 클레임 입력
+4. 시크릿 키 입력
+5. 결과에서 생성된 토큰 복사
+
+알고리즘을 변경하면 헤더가 자동으로 업데이트됩니다. 편집할 때마다 토큰이 실시간으로 재생성됩니다.
+
+## HMAC 알고리즘 비교
+
+도구가 지원하는 세 알고리즘은 모두 대칭키 방식 — 같은 시크릿으로 서명과 검증을 수행합니다.
+
+| 알고리즘 | 해시 | 서명 길이 | 사용 사례 |
+|---------|------|---------|---------|
+| HS256 | SHA-256 | 256비트 | 기본값. 거의 모든 사용 사례에 적합. |
+| HS384 | SHA-384 | 384비트 | 추가 보안 마진, 토큰이 약간 커짐. |
+| HS512 | SHA-512 | 512비트 | 최대 HMAC 강도. 64바이트 이상의 시크릿과 함께 사용. |
+
+**대부분의 애플리케이션에서 HS256이 올바른 선택입니다.** HS256과 HS512의 보안 마진 차이는 실제로는 무시할 수 있는 수준입니다 — 둘 다 암호학적으로 강력한 것으로 간주됩니다. 컴플라이언스 요구사항에서 HS512를 의무화하는 경우에만 사용하세요.
+
+## 자주 사용되는 JWT 클레임
+
+페이로드는 임의의 키를 가진 JSON 객체입니다. 표준 등록 클레임 (모두 선택사항):
+
+| 클레임 | 이름 | 설명 |
+|-------|------|------|
+| `iss` | 발급자 | 토큰을 발급한 주체 |
+| `sub` | 주제 | 토큰의 주체 (사용자 ID 등) |
+| `aud` | 대상 | 토큰을 수락해야 하는 주체 |
+| `exp` | 만료 | 토큰이 만료되는 Unix 타임스탬프 |
+| `nbf` | 유효 시작 | 이 전에는 토큰이 무효인 Unix 타임스탬프 |
+| `iat` | 발급 시간 | 토큰이 생성된 Unix 타임스탬프 |
+| `jti` | JWT ID | 고유 토큰 식별자 (폐지를 위해) |
+
+일반적인 인증 페이로드:
+
+```json
+{
+  "sub": "user_123",
+  "iss": "https://api.example.com",
+  "aud": "https://app.example.com",
+  "role": "admin",
+  "iat": 1713456789,
+  "exp": 1713460389
+}
+```
+
+`role`, `email`, `permissions` 같은 커스텀 클레임을 자유롭게 추가할 수 있습니다.
+
+## JWT 생성기 사용 사례
+
+### 로컬 개발
+
+가장 일반적인 용도. 백엔드가 JWT를 검증하지만 매번 로그인 플로우를 거치지 않고 API 엔드포인트를 테스트하기 위한 토큰이 필요할 때:
+
+```bash
+# 생성한 토큰을 curl에서 사용
+curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...." \
+  https://api.localhost:8000/admin/users
+```
+
+### API 문서
+
+README나 API 문서의 생성된 토큰은 유효한 토큰이 어떻게 보이는지 정확하게 보여줍니다. 독자는 클레임 구조를 즉시 이해할 수 있습니다.
+
+### 통합 테스트
+
+자동화된 테스트를 위해 특정 클레임을 가진 토큰 생성:
+
+```python
+# 백엔드가 올바른 클레임을 수락하는지 검증
+def test_admin_endpoint_requires_admin_role():
+    # user 역할 토큰 — 거부되어야 함
+    user_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    response = client.get('/admin/settings', headers={
+        'Authorization': f'Bearer {user_token}'
+    })
+    assert response.status_code == 403
+
+    # admin 역할 토큰 — 수락되어야 함
+    admin_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    response = client.get('/admin/settings', headers={
+        'Authorization': f'Bearer {admin_token}'
+    })
+    assert response.status_code == 200
+```
+
+### 학습과 디버깅
+
+JWT의 동작 방식을 이해하려면 실제 바이트를 보는 것이 중요합니다. 생성기가 보여주는 것:
+- 헤더 JSON이 어떻게 Base64URL 문자열로 매핑되는지
+- 클레임이 페이로드 세그먼트에 어떻게 나타나는지
+- 시크릿을 변경하면 서명 세그먼트 전체가 어떻게 바뀌는지
+
+## Base64 시크릿 옵션
+
+일부 ID 프로바이더는 Base64 또는 Base64URL 형식으로 인코딩된 시크릿을 제공합니다. 시크릿이 `secretkey` 대신 `c2VjcmV0a2V5`처럼 보인다면 Base64 옵션을 활성화하세요. 도구가 서명 전에 디코딩하여 올바른 서명을 생성합니다.
+
+## 생성된 토큰 검증
+
+생성한 토큰이 유효한지 확인하려면 같은 시크릿과 알고리즘과 함께 토큰을 [JWT 디코더](/tools/jwt-decoder)에 붙여넣으세요. 디코더가 디코딩된 헤더와 페이로드를 표시하고 서명이 유효함을 확인합니다.
+
+## 보안: 클라이언트 사이드 서명이 중요한 이유
+
+zerotool.dev의 JWT 생성기는 모든 서명 작업에 브라우저 내장 **Web Crypto API** (`SubtleCrypto`)를 사용합니다. 헤더, 페이로드, 시크릿 키가 **브라우저 밖으로 나가지 않습니다**.
+
+DevTools → Network 탭을 열고 토큰을 생성하면 확인할 수 있습니다. 아웃바운드 요청이 전혀 발생하지 않습니다. 프로덕션 시크릿에는 클라이언트 사이드 생성이 온라인 도구를 사용할 때 유일한 안전한 선택입니다.
+
+## 관련 도구
+
+- [JWT 디코더 →](/tools/jwt-decoder) — 기존 JWT 토큰을 디코딩하고 검사하기
+- [HMAC 생성기 →](/tools/hmac-generator) — HMAC 서명 직접 계산하기
+- [해시 생성기 →](/tools/hash-generator) — SHA-256 등 해시 생성하기
+
+---
+
+서버 없이 몇 초 만에 서명된 JWT 생성. **[JWT 생성기 열기 →](/tools/jwt-generator)**

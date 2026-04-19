@@ -1,0 +1,189 @@
+---
+title: "TypeScript to Zod 스키마 생성기: 인터페이스를 런타임 유효성 검사로 변환"
+description: "TypeScript 인터페이스와 타입 별칭을 Zod 스키마로 즉시 변환. 변환 원리 이해, 엣지 케이스 처리, API 코드에 런타임 유효성 검사 추가."
+pubDate: 2026-04-19
+lang: "ko"
+translationSlug: "typescript-to-zod-guide"
+tags: ["typescript", "zod", "typescript to zod", "type validation", "developer-tools"]
+ogImage: /og/blog-typescript-to-zod-guide-ko.png
+---
+
+TypeScript는 컴파일 시간 타입 안전성을 제공합니다. Zod는 같은 타입 에르고노믹스로 런타임 유효성 검사를 제공합니다. 빠져 있는 것은 기존 TypeScript 인터페이스를 Zod 스키마로 변환하는 것 — 모든 필드를 수동으로 다시 작성하는 것은 지루하고 오류가 발생하기 쉽습니다.
+
+**[TypeScript to Zod 변환하기 →](/tools/typescript-to-zod)**
+
+## TypeScript 단독으로는 해결할 수 없는 문제
+
+TypeScript 타입은 에디터와 컴파일 시간에만 존재합니다. 코드가 트랜스파일되어 실행되면 타입은 사라집니다. `User`로 타입이 지정된 API 응답은 런타임에서 여전히 `unknown`입니다 — TypeScript는 당신을 신뢰하지만 검증하지는 않습니다.
+
+```ts
+interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+  email?: string
+}
+
+// TypeScript는 이것을 허용 — 하지만 캐스트는 거짓말
+const user = response.data as User
+console.log(user.role.toUpperCase()) // role이 없거나 타입이 다르면 런타임 오류
+```
+
+Zod는 신뢰할 수 없는 데이터가 시스템에 진입하는 경계에서 유효성 검사를 수행함으로써 이를 해결합니다.
+
+## TypeScript→Zod 변환 원리
+
+도구는 TypeScript의 `interface`와 `type` 선언을 파싱하여 동등한 Zod 스키마 코드를 생성합니다.
+
+**입력:**
+
+```ts
+interface Address {
+  street: string
+  city: string
+  zipCode?: string
+}
+
+export interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+  age?: number
+  isActive: boolean
+  tags: string[]
+  address: Address
+}
+
+export type Status = 'active' | 'inactive' | 'pending'
+```
+
+**출력:**
+
+```ts
+import { z } from 'zod'
+
+export const AddressSchema = z.object({
+  street: z.string(),
+  city: z.string(),
+  zipCode: z.string().optional(),
+})
+export type Address = z.infer<typeof AddressSchema>
+
+export const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  role: z.enum(['admin', 'user', 'guest']),
+  age: z.number().optional(),
+  isActive: z.boolean(),
+  tags: z.array(z.string()),
+  address: AddressSchema,
+})
+export type User = z.infer<typeof UserSchema>
+
+export const StatusSchema = z.enum(['active', 'inactive', 'pending'])
+export type Status = z.infer<typeof StatusSchema>
+```
+
+교차 참조는 자동으로 처리됩니다: `User` 내의 `Address`는 출력에서 `AddressSchema`가 됩니다. `z.infer<>` 내보내기는 스키마에서 파생된 TypeScript 타입을 제공합니다 — 제약 조건을 추가한 후 원본 인터페이스를 삭제할 수 있습니다.
+
+## 지원되는 TypeScript 구조
+
+| TypeScript | Zod |
+|-----------|-----|
+| `string` | `z.string()` |
+| `number` | `z.number()` |
+| `boolean` | `z.boolean()` |
+| `null` | `z.null()` |
+| `undefined` | `z.undefined()` |
+| `any` / `unknown` | `z.unknown()` |
+| `prop?: T` | `.optional()` |
+| `A \| B` | `z.union([A, B])` |
+| `'a' \| 'b'` | `z.enum(['a', 'b'])` |
+| `T[]` / `Array<T>` | `z.array(T)` |
+| `{ key: T }` | `z.object({ key: T })` |
+| `A & B` | `z.intersection(A, B)` |
+| `[A, B]` | `z.tuple([A, B])` |
+| `Partial<T>` | `.partial()` |
+| `Record<K, V>` | `z.record(K, V)` |
+
+## 변환 후: 생성기가 추론할 수 없는 제약 조건 추가
+
+생성기는 구조적으로 올바른 스키마를 만들지만 JSON 타입은 의미론적 제약을 담지 않습니다. TypeScript `string` 필드가 실제로는 이메일, URL이어야 하거나 최소 길이가 필요할 수도 있습니다. 생성 후 이것들을 추가하세요:
+
+```ts
+// 생성됨
+email: z.string()
+age: z.number()
+password: z.string()
+
+// 정제 후
+email: z.string().email()
+age: z.number().int().min(0).max(150)
+password: z.string().min(8).max(128)
+```
+
+Zod가 기본으로 지원하는 문자열 형식:
+- `.email()` — 이메일 형식 검증
+- `.url()` — URL 형식 검증
+- `.uuid()` — UUID 형식 검증
+- `.datetime()` — ISO 8601 날짜시간 검증
+- `.ip()` — IPv4 또는 IPv6 검증
+
+## 실용적인 워크플로: TypeScript 우선, 그 다음 Zod
+
+코드베이스 전체에 이미 TypeScript 인터페이스가 있다면 Zod로 마이그레이션할 때 한 번에 모든 것을 다시 작성할 필요는 없습니다. 이 점진적 접근 방식을 사용하세요:
+
+1. **경계를 식별한다** — API 응답 파싱, 폼 제출 핸들러, 환경 변수 로딩
+2. **도구를 사용하여 경계 타입의 스키마를 생성한다**
+3. **경계 파싱을 `schema.safeParse()`나 `schema.parse()`로 감싼다**
+4. **중복되는 `as TypeName` 캐스트를 삭제한다** — 올바르게 검증된 데이터로 교체
+
+```ts
+// 변환 전: 암묵적 신뢰
+async function getUser(id: string): Promise<User> {
+  const res = await fetch(`/api/users/${id}`)
+  return res.json() as User
+}
+
+// 변환 후: 런타임 유효성 검사
+const UserSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  role: z.enum(['admin', 'user', 'guest']),
+  email: z.string().email().optional(),
+})
+
+async function getUser(id: string) {
+  const res = await fetch(`/api/users/${id}`)
+  return UserSchema.parse(await res.json())
+}
+```
+
+## 스키마를 파싱 이외에도 활용하기
+
+Zod 스키마를 갖추면 데이터 파싱 이상을 할 수 있습니다:
+
+```ts
+// 목 데이터 생성 (zod-mock 또는 @anatine/zod-mock 사용)
+import { generateMock } from '@anatine/zod-mock'
+const mockUser = generateMock(UserSchema)
+
+// OpenAPI 문서용 JSON Schema 생성 (zod-to-json-schema 사용)
+import { zodToJsonSchema } from 'zod-to-json-schema'
+const jsonSchema = zodToJsonSchema(UserSchema, 'UserSchema')
+
+// 파싱 중 데이터 변환
+const UserSchema = z.object({
+  name: z.string().transform(s => s.trim()),
+  createdAt: z.string().datetime().transform(s => new Date(s)),
+})
+```
+
+## 관련 도구
+
+- [JSON to Zod →](/tools/json-to-zod) — JSON 데이터 샘플에서 스키마 생성 (타입이 아닌 데이터가 있을 때)
+- [JSON to TypeScript →](/tools/json-to-typescript) — JSON에서 TypeScript 인터페이스 생성 (반대 방향)
+
+---
+
+TypeScript 인터페이스를 붙여넣으면 몇 초 만에 동작하는 Zod 스키마를 얻을 수 있습니다. **[TypeScript to Zod 컨버터 열기 →](/tools/typescript-to-zod)**
