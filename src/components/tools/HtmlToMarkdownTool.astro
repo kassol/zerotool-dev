@@ -1,0 +1,264 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    htmlInput: 'HTML Input',
+    mdOutput: 'Markdown Output',
+    example: 'Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    download: 'Download .md',
+    largInput: 'Input is very large — conversion may be slow.',
+  },
+  zh: {
+    htmlInput: 'HTML 输入',
+    mdOutput: 'Markdown 输出',
+    example: '示例',
+    clear: '清空',
+    copy: '复制',
+    copied: '已复制！',
+    download: '下载 .md',
+    largInput: '输入内容过大，转换可能较慢。',
+  },
+  ja: {
+    htmlInput: 'HTML 入力',
+    mdOutput: 'Markdown 出力',
+    example: 'サンプル',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    download: '.md をダウンロード',
+    largInput: '入力が非常に大きいため、変換に時間がかかる場合があります。',
+  },
+  ko: {
+    htmlInput: 'HTML 입력',
+    mdOutput: 'Markdown 출력',
+    example: '예시',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    download: '.md 다운로드',
+    largInput: '입력이 매우 크면 변환이 느릴 수 있습니다.',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="htm-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-larg-input={L.largInput}
+>
+  <div class="htm-panels">
+    <div class="htm-panel">
+      <div class="htm-panel-header">
+        <span>{L.htmlInput}</span>
+        <div class="htm-panel-actions">
+          <button id="htm-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+          <button id="htm-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
+        </div>
+      </div>
+      <textarea id="htm-input" spellcheck="false" placeholder="<h1>Hello, World</h1>"></textarea>
+    </div>
+
+    <div class="htm-panel">
+      <div class="htm-panel-header">
+        <span>{L.mdOutput}</span>
+        <div class="htm-panel-actions">
+          <button id="htm-download" class="btn-ghost btn-sm" type="button">{L.download}</button>
+          <button id="htm-copy" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+        </div>
+      </div>
+      <textarea id="htm-output" spellcheck="false" readonly></textarea>
+    </div>
+  </div>
+
+  <div id="htm-status" class="htm-status" aria-live="polite"></div>
+</div>
+
+<script src="/vendor/turndown.umd.js" is:inline></script>
+<script src="/vendor/turndown-plugin-gfm.js" is:inline></script>
+<script is:inline>
+(function () {
+  var wrap = document.querySelector('.htm-wrap');
+  if (!wrap) return;
+
+  var COPY = wrap.dataset.copy || 'Copy';
+  var COPIED = wrap.dataset.copied || 'Copied!';
+  var LARG_INPUT = wrap.dataset.largInput || 'Input is very large — conversion may be slow.';
+
+  var inputEl = document.getElementById('htm-input');
+  var outputEl = document.getElementById('htm-output');
+  var statusEl = document.getElementById('htm-status');
+
+  var td = new TurndownService({
+    headingStyle: 'atx',
+    bulletListMarker: '-',
+    codeBlockStyle: 'fenced',
+    fence: '```',
+    emDelimiter: '*',
+    strongDelimiter: '**',
+  });
+
+  td.use(turndownPluginGfm.tables);
+
+  td.addRule('fencedCodeBlockWithLang', {
+    filter: function (node) {
+      return (
+        node.nodeName === 'PRE' &&
+        node.firstChild &&
+        node.firstChild.nodeName === 'CODE'
+      );
+    },
+    replacement: function (_content, node) {
+      var code = node.firstChild;
+      var className = code.getAttribute('class') || '';
+      var langMatch = className.match(/language-(\S+)/);
+      var lang = langMatch ? langMatch[1] : '';
+      var text = code.textContent || '';
+      if (text.charAt(text.length - 1) === '\n') text = text.slice(0, -1);
+      return '\n\n```' + lang + '\n' + text + '\n```\n\n';
+    },
+  });
+
+  var EXAMPLE = [
+    '<h1>HTML to Markdown Example</h1>',
+    '<p>This converter supports <strong>bold</strong>, <em>italic</em>, and <a href="https://zerotool.dev">links</a>.</p>',
+    '<h2>Code Blocks</h2>',
+    '<pre><code class="language-javascript">const greeting = "Hello, World!";\nconsole.log(greeting);</code></pre>',
+    '<h2>Lists</h2>',
+    '<ul><li>Unordered item 1</li><li>Unordered item 2<ul><li>Nested item</li></ul></li></ul>',
+    '<ol><li>Ordered item 1</li><li>Ordered item 2</li></ol>',
+    '<h2>Table</h2>',
+    '<table><thead><tr><th>Name</th><th>Role</th><th>Language</th></tr></thead><tbody><tr><td>Alice</td><td>Engineer</td><td>TypeScript</td></tr><tr><td>Bob</td><td>Designer</td><td>CSS</td></tr></tbody></table>',
+    '<blockquote><p>Good tools make hard problems easy.</p></blockquote>',
+  ].join('\n');
+
+  function convert() {
+    var raw = inputEl.value;
+    if (!raw.trim()) {
+      outputEl.value = '';
+      statusEl.textContent = '';
+      statusEl.className = 'htm-status';
+      return;
+    }
+    if (raw.length > 1024 * 1024) {
+      statusEl.textContent = LARG_INPUT;
+      statusEl.className = 'htm-status warn';
+    } else {
+      statusEl.textContent = '';
+      statusEl.className = 'htm-status';
+    }
+    try {
+      outputEl.value = td.turndown(raw);
+      window.trackTool && window.trackTool('html-to-markdown', 'convert');
+    } catch (e) {
+      outputEl.value = '';
+    }
+  }
+
+  var _timer = null;
+  inputEl.addEventListener('input', function () {
+    clearTimeout(_timer);
+    _timer = setTimeout(convert, 300);
+  });
+
+  document.getElementById('htm-example').addEventListener('click', function () {
+    inputEl.value = EXAMPLE;
+    convert();
+  });
+
+  document.getElementById('htm-clear').addEventListener('click', function () {
+    inputEl.value = '';
+    outputEl.value = '';
+    statusEl.textContent = '';
+    statusEl.className = 'htm-status';
+  });
+
+  document.getElementById('htm-copy').addEventListener('click', function () {
+    var text = outputEl.value;
+    if (!text) return;
+    var btn = document.getElementById('htm-copy');
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = COPIED;
+      setTimeout(function () { btn.textContent = COPY; }, 1500);
+    });
+  });
+
+  document.getElementById('htm-download').addEventListener('click', function () {
+    var text = outputEl.value;
+    if (!text) return;
+    var blob = new Blob([text], { type: 'text/markdown;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'output.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  inputEl.value = EXAMPLE;
+  convert();
+})();
+</script>
+
+<style>
+  .htm-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .htm-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .htm-panels { grid-template-columns: 1fr; }
+  }
+
+  .htm-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .htm-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .htm-panel-actions { display: flex; gap: 0.3rem; }
+
+  .htm-panel textarea {
+    width: 100%;
+    min-height: 320px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+  }
+
+  .htm-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .htm-panel textarea[readonly] { cursor: default; }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+
+  .htm-status { font-size: 0.82rem; min-height: 1.1rem; }
+  .htm-status.warn { color: #d97706; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .htm-status.warn { color: #fbbf24; }
+  }
+  [data-theme="dark"] .htm-status.warn { color: #fbbf24; }
+</style>
