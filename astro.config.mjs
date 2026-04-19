@@ -7,6 +7,15 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
+// Parse _redirects source paths so CF Worker skips them (lets _redirects do 301)
+const redirectsFile = fileURLToPath(new URL('./public/_redirects', import.meta.url));
+const redirectExcludePatterns = fs.readFileSync(redirectsFile, 'utf-8')
+  .split('\n')
+  .filter(line => line.trim() && !line.trim().startsWith('#'))
+  .map(line => line.trim().split(/\s+/)[0])
+  .filter(path => path.startsWith('/'))
+  .map(pattern => ({ pattern }));
+
 // Build blog slug set for hreflang pairing in sitemap
 const blogDir = fileURLToPath(new URL('./src/content/blog', import.meta.url));
 const blogSlugs = new Set(
@@ -33,7 +42,13 @@ const SITE = 'https://zerotool.dev';
 export default defineConfig({
   site: SITE,
   output: 'static',
-  adapter: cloudflare(),
+  adapter: cloudflare({
+    routes: {
+      extend: {
+        exclude: redirectExcludePatterns,
+      },
+    },
+  }),
   trailingSlash: 'always',
 
   integrations: [
