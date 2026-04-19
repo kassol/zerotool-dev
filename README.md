@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 92 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 93 tools and growing.
 
 ## Tools
 
@@ -101,6 +101,7 @@
 | CSS Triangle Generator | [/tools/css-triangle-generator](https://zerotool.dev/tools/css-triangle-generator) |
 | CSS Gradient Generator | [/tools/css-gradient-generator](https://zerotool.dev/tools/css-gradient-generator) |
 | Nano ID Generator | [/tools/nano-id-generator](https://zerotool.dev/tools/nano-id-generator) |
+| Cookie String Parser | [/tools/cookie-parser](https://zerotool.dev/tools/cookie-parser) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
