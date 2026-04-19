@@ -1,0 +1,467 @@
+---
+// No props needed — tool widget is language-independent
+---
+
+<div>
+  <div class="cp-wrap">
+    <div class="cp-input-section">
+      <label for="cp-input">
+        <span data-i18n="cookieHeader">Cookie Header</span>
+        <button id="cp-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      </label>
+      <textarea
+        id="cp-input"
+        placeholder={"session=abc123; user=admin; theme=dark; Path=/; HttpOnly; Secure"}
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="cp-options">
+      <label class="cp-checkbox-label">
+        <input type="checkbox" id="cp-url-decode" checked />
+        <span data-i18n="urlDecode">URL Decode values</span>
+      </label>
+    </div>
+
+    <div class="cp-actions">
+      <button id="cp-parse" class="btn-primary" type="button" data-i18n="parse">Parse</button>
+      <button id="cp-copy-json" class="btn-ghost" type="button" data-i18n="copyJson">Copy JSON</button>
+    </div>
+
+    <div id="cp-status" class="cp-status" aria-live="polite"></div>
+
+    <div id="cp-result" class="cp-result" style="display:none">
+      <div class="cp-tabs" role="tablist">
+        <button class="cp-tab cp-tab-active" id="cp-tab-table" role="tab" data-i18n="tabTable">Table</button>
+        <button class="cp-tab" id="cp-tab-json" role="tab" data-i18n="tabJson">JSON</button>
+      </div>
+
+      <div id="cp-panel-table" class="cp-panel">
+        <div class="cp-table-wrap">
+          <table class="cp-table" id="cp-table">
+            <thead>
+              <tr>
+                <th data-i18n="colName">Name</th>
+                <th data-i18n="colValue">Value</th>
+                <th data-i18n="colFlags">Flags</th>
+              </tr>
+            </thead>
+            <tbody id="cp-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="cp-panel-json" class="cp-panel" style="display:none">
+        <pre id="cp-json-output" class="cp-json-pre"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          cookieHeader: 'Cookie Header', clear: 'Clear', parse: 'Parse', copyJson: 'Copy JSON',
+          urlDecode: 'URL Decode values', tabTable: 'Table', tabJson: 'JSON',
+          colName: 'Name', colValue: 'Value', colFlags: 'Flags',
+          pastePrompt: 'Paste a Cookie header string above and click Parse.',
+          copied: 'JSON copied to clipboard.',
+          copyFailed: 'Copy failed.',
+          parseFirst: 'Parse cookies first.',
+          parsed: '{n} cookie{s} parsed.',
+        },
+        zh: {
+          cookieHeader: 'Cookie 字符串', clear: '清除', parse: '解析', copyJson: '复制 JSON',
+          urlDecode: 'URL 解码值', tabTable: '表格', tabJson: 'JSON',
+          colName: '名称', colValue: '值', colFlags: '标志',
+          pastePrompt: '请粘贴 Cookie 字符串后点击解析。',
+          copied: 'JSON 已复制到剪贴板。',
+          copyFailed: '复制失败。',
+          parseFirst: '请先解析 Cookie。',
+          parsed: '已解析 {n} 个 Cookie{s}。',
+        },
+        ja: {
+          cookieHeader: 'Cookie ヘッダー', clear: 'クリア', parse: '解析', copyJson: 'JSON コピー',
+          urlDecode: 'URL デコード', tabTable: 'テーブル', tabJson: 'JSON',
+          colName: '名前', colValue: '値', colFlags: 'フラグ',
+          pastePrompt: 'Cookieヘッダー文字列を貼り付けて解析をクリックしてください。',
+          copied: 'JSONをクリップボードにコピーしました。',
+          copyFailed: 'コピー失敗。',
+          parseFirst: 'まずCookieを解析してください。',
+          parsed: '{n}件のCookieを解析しました。',
+        },
+        ko: {
+          cookieHeader: 'Cookie 헤더', clear: '지우기', parse: '파싱', copyJson: 'JSON 복사',
+          urlDecode: 'URL 디코딩', tabTable: '표', tabJson: 'JSON',
+          colName: '이름', colValue: '값', colFlags: '플래그',
+          pastePrompt: 'Cookie 헤더 문자열을 붙여넣고 파싱을 클릭하세요.',
+          copied: 'JSON이 클립보드에 복사되었습니다.',
+          copyFailed: '복사 실패.',
+          parseFirst: '먼저 쿠키를 파싱하세요.',
+          parsed: '{n}개의 쿠키{s}를 파싱했습니다.',
+        }
+      };
+
+      var FLAG_ATTRS = ['httponly', 'secure', 'samesite', 'path', 'domain', 'expires', 'max-age'];
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+
+      var inputEl = document.getElementById('cp-input');
+      var statusEl = document.getElementById('cp-status');
+      var resultEl = document.getElementById('cp-result');
+      var tbodyEl = document.getElementById('cp-tbody');
+      var jsonOutputEl = document.getElementById('cp-json-output');
+      var parseBtn = document.getElementById('cp-parse');
+      var copyJsonBtn = document.getElementById('cp-copy-json');
+      var clearBtn = document.getElementById('cp-clear');
+      var urlDecodeCheckbox = document.getElementById('cp-url-decode');
+      var tabTable = document.getElementById('cp-tab-table');
+      var tabJson = document.getElementById('cp-tab-json');
+      var panelTable = document.getElementById('cp-panel-table');
+      var panelJson = document.getElementById('cp-panel-json');
+
+      var lastParsed = [];
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg;
+        statusEl.className = 'cp-status ' + (type || '');
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function tryUrlDecode(val) {
+        try { return decodeURIComponent(val); } catch (e) { return val; }
+      }
+
+      function parseCookies(text, urlDecode) {
+        var parts = text.split(';');
+        var cookies = [];
+        var flags = [];
+
+        for (var i = 0; i < parts.length; i++) {
+          var part = parts[i].trim();
+          if (!part) continue;
+
+          var eqIdx = part.indexOf('=');
+
+          if (eqIdx === -1) {
+            var lower = part.toLowerCase();
+            var matched = false;
+            for (var f = 0; f < FLAG_ATTRS.length; f++) {
+              if (lower === FLAG_ATTRS[f] || lower.startsWith(FLAG_ATTRS[f] + '=') || lower.startsWith(FLAG_ATTRS[f])) {
+                flags.push(part);
+                matched = true;
+                break;
+              }
+            }
+            if (!matched) {
+              /* skip invalid token with no '=' and not a known flag */
+            }
+            continue;
+          }
+
+          var name = part.slice(0, eqIdx).trim();
+          var value = part.slice(eqIdx + 1).trim();
+
+          if (!name) continue;
+
+          var lowerName = name.toLowerCase();
+          var isFlag = false;
+          for (var f = 0; f < FLAG_ATTRS.length; f++) {
+            if (lowerName === FLAG_ATTRS[f]) { isFlag = true; break; }
+          }
+
+          if (isFlag) {
+            flags.push(part);
+            continue;
+          }
+
+          cookies.push({
+            name: name,
+            rawValue: value,
+            value: urlDecode ? tryUrlDecode(value) : value,
+            flags: []
+          });
+
+          flags = [];
+        }
+
+        return cookies;
+      }
+
+      function renderTable(cookies) {
+        tbodyEl.innerHTML = '';
+        for (var i = 0; i < cookies.length; i++) {
+          var c = cookies[i];
+          var tr = document.createElement('tr');
+          var flagHtml = c.flags.map(function (f) {
+            return '<span class="cp-flag">' + escapeHtml(f) + '</span>';
+          }).join(' ');
+          tr.innerHTML =
+            '<td><code class="cp-name">' + escapeHtml(c.name) + '</code></td>' +
+            '<td><code class="cp-val">' + escapeHtml(c.value) + '</code></td>' +
+            '<td class="cp-flags-cell">' + flagHtml + '</td>';
+          tbodyEl.appendChild(tr);
+        }
+      }
+
+      function renderJson(cookies) {
+        var obj = {};
+        for (var i = 0; i < cookies.length; i++) {
+          obj[cookies[i].name] = cookies[i].value;
+        }
+        jsonOutputEl.textContent = JSON.stringify(obj, null, 2);
+      }
+
+      function parse() {
+        var text = inputEl.value;
+        if (!text.trim()) {
+          setStatus(t.pastePrompt, '');
+          resultEl.style.display = 'none';
+          lastParsed = [];
+          return;
+        }
+
+        var urlDecode = urlDecodeCheckbox.checked;
+        lastParsed = parseCookies(text, urlDecode);
+
+        renderTable(lastParsed);
+        renderJson(lastParsed);
+
+        resultEl.style.display = '';
+
+        var n = lastParsed.length;
+        var s = n !== 1 ? 's' : '';
+        setStatus(t.parsed.replace('{n}', n).replace('{s}', s), 'success');
+
+        window.trackTool && window.trackTool('cookie-parser', 'parse');
+      }
+
+      parseBtn.addEventListener('click', parse);
+
+      urlDecodeCheckbox.addEventListener('change', function () {
+        if (lastParsed.length > 0) parse();
+      });
+
+      copyJsonBtn.addEventListener('click', function () {
+        if (lastParsed.length === 0) {
+          setStatus(t.parseFirst, 'error');
+          return;
+        }
+        var obj = {};
+        for (var i = 0; i < lastParsed.length; i++) {
+          obj[lastParsed[i].name] = lastParsed[i].value;
+        }
+        var json = JSON.stringify(obj, null, 2);
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(json).then(function () {
+            setStatus(t.copied, 'success');
+          }).catch(function () {
+            setStatus(t.copyFailed, 'error');
+          });
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = json;
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+            setStatus(t.copied, 'success');
+          } catch (e) {
+            setStatus(t.copyFailed, 'error');
+          }
+          document.body.removeChild(ta);
+        }
+        window.trackTool && window.trackTool('cookie-parser', 'copy_json');
+      });
+
+      clearBtn.addEventListener('click', function () {
+        inputEl.value = '';
+        tbodyEl.innerHTML = '';
+        jsonOutputEl.textContent = '';
+        resultEl.style.display = 'none';
+        setStatus('', '');
+        lastParsed = [];
+      });
+
+      tabTable.addEventListener('click', function () {
+        tabTable.classList.add('cp-tab-active');
+        tabJson.classList.remove('cp-tab-active');
+        panelTable.style.display = '';
+        panelJson.style.display = 'none';
+      });
+
+      tabJson.addEventListener('click', function () {
+        tabJson.classList.add('cp-tab-active');
+        tabTable.classList.remove('cp-tab-active');
+        panelJson.style.display = '';
+        panelTable.style.display = 'none';
+      });
+
+      if (inputEl.value.trim()) {
+        parse();
+      }
+    })();
+  </script>
+</div>
+
+<style>
+  .cp-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .cp-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .cp-input-section label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #cp-input {
+    width: 100%;
+    min-height: 120px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  #cp-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .cp-options { display: flex; gap: 1rem; align-items: center; }
+
+  .cp-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .cp-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .cp-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .cp-status.success { color: #057a55; }
+  .cp-status.error   { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cp-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .cp-status.error   { color: #f87171; }
+  }
+  [data-theme="dark"] .cp-status.success { color: #34d399; }
+  [data-theme="dark"] .cp-status.error   { color: #f87171; }
+
+  .cp-result { margin-top: 0.25rem; }
+
+  .cp-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: 0.5rem;
+  }
+
+  .cp-tab {
+    padding: 0.4rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .cp-tab:hover { color: var(--color-text); }
+
+  .cp-tab.cp-tab-active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+  }
+
+  .cp-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .cp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.83rem;
+  }
+
+  .cp-table th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    font-weight: 600;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+  }
+
+  .cp-table td {
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+  }
+
+  .cp-table tr:last-child td { border-bottom: none; }
+
+  .cp-table tr:hover td { background: var(--color-bg-secondary); }
+
+  .cp-name { color: var(--color-primary); }
+  .cp-val  { color: var(--color-text); }
+
+  code { font-family: var(--font-mono); font-size: 0.82rem; }
+
+  .cp-flags-cell { font-size: 0.78rem; }
+
+  .cp-flag {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 3px;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    margin-right: 0.25rem;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .cp-json-pre {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--color-text);
+    margin: 0;
+  }
+</style>
