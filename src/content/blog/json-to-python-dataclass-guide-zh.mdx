@@ -1,0 +1,274 @@
+---
+title: "JSON 转 Python Dataclass：一键生成 dataclass、Pydantic 或 TypedDict"
+description: "将 JSON 数据转换为 Python dataclass、Pydantic v2 BaseModel 或 TypedDict 定义。支持嵌套对象、数组、可选字段和自定义根类名。纯浏览器运行，数据不上传。"
+pubDate: 2026-04-19
+lang: "zh"
+translationSlug: "json-to-python-dataclass-guide"
+tags: ["python", "dataclass", "pydantic", "json转python", "developer-tools"]
+ogImage: /og/blog-json-to-python-dataclass-guide-zh.png
+---
+
+拿到 API 返回的 JSON，手写 Python 类既繁琐又容易漏字段。把 JSON 粘贴进工具，立刻得到带完整类型注解的 Python 类定义。
+
+**[立即生成 Python Dataclass →](/tools/json-to-python-dataclass)**
+
+## 为什么不用裸字典
+
+用字典直接访问 API 响应有三个明显痛点：
+
+```python
+# 字典访问 —— 没有类型提示，没有补全，运行时 KeyError 风险高
+user = response.json()
+print(user['profile']['name'])   # profile 是 None 时直接报错
+print(user['age'] + 1)           # age 是 string 时类型错误
+```
+
+用 dataclass 或 Pydantic 模型后：
+- IDE 有自动补全
+- mypy / pyright 能做静态检查
+- 代码即文档，字段一目了然
+- Optional 字段显式处理，不再靠运气
+
+## 三种输出模式
+
+### @dataclass（标准库）
+
+零依赖，适合内部数据结构、配置类、不需要运行时验证的场景：
+
+```python
+from dataclasses import dataclass
+from typing import List, Optional, Any
+
+@dataclass
+class Address:
+    street: str
+    city: str
+    zip_code: Optional[str] = None
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+    address: Address
+    tags: List[str]
+    avatar: Optional[Any] = None
+```
+
+### Pydantic v2 BaseModel
+
+FastAPI 的标配，适合 API 校验、配置管理、需要序列化/反序列化的场景：
+
+```python
+from pydantic import BaseModel
+from typing import List, Optional, Any
+
+class Address(BaseModel):
+    street: str
+    city: str
+    zip_code: Optional[str] = None
+
+class User(BaseModel):
+    id: int
+    name: str
+    email: str
+    address: Address
+    tags: List[str]
+    avatar: Optional[Any] = None
+
+# 解析 API 响应
+user = User.model_validate(response.json())
+print(user.name)  # 完整类型支持
+
+# 序列化回 dict / JSON
+payload = user.model_dump()
+```
+
+### TypedDict（Python 3.8+）
+
+适合需要字典接口但想要类型检查的场景（如传给第三方库）：
+
+```python
+from typing import List, Optional, Any, TypedDict
+
+class Address(TypedDict):
+    street: str
+    city: str
+    zip_code: Optional[str]
+
+class User(TypedDict):
+    id: int
+    name: str
+    email: str
+    address: Address
+    tags: List[str]
+    avatar: Optional[Any]
+```
+
+## JSON 类型到 Python 类型的映射
+
+| JSON | Python |
+|------|--------|
+| `"string"` | `str` |
+| `42` | `int` |
+| `3.14` | `float` |
+| `true` / `false` | `bool` |
+| `null` | `Optional[Any] = None` |
+| `["a", "b"]` | `List[str]` |
+| `[1, "a"]` 混合类型 | `List[Union[int, str]]` |
+| `{}` 嵌套对象 | 单独的类 |
+
+## 嵌套对象的处理方式
+
+每个嵌套对象生成独立的类，类名取自字段名的 PascalCase 转换。输出顺序保证子类在父类之前定义，复制即可用：
+
+**输入 JSON：**
+```json
+{
+  "order": {
+    "item": {
+      "sku": "ABC-123",
+      "price": 29.99
+    },
+    "quantity": 2,
+    "total": 59.98
+  },
+  "user_id": 1001
+}
+```
+
+**生成的 @dataclass：**
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Item:
+    sku: str
+    price: float
+
+@dataclass
+class Order:
+    item: Item
+    quantity: int
+    total: float
+
+@dataclass
+class Root:
+    order: Order
+    user_id: int
+```
+
+## Optional 字段的判断规则
+
+两种情况下字段被标记为 `Optional`：
+1. 该字段的值在 JSON 样本中是 `null`
+2. 处理 JSON 数组时，某字段只在部分对象中出现
+
+```python
+# JSON: {"score": null, "grade": "A"}
+# score 是 null → Optional
+
+@dataclass
+class Result:
+    grade: str
+    score: Optional[Any] = None
+```
+
+## 实际使用场景
+
+### FastAPI + Pydantic 接收 webhook
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import Optional
+
+class PaymentEvent(BaseModel):
+    event_type: str
+    payment_id: str
+    amount: float
+    currency: str
+    status: str
+    metadata: Optional[dict] = None
+
+app = FastAPI()
+
+@app.post('/webhook/payment')
+async def handle_payment(event: PaymentEvent):
+    if event.event_type == 'payment.success':
+        await process_payment(event.payment_id, event.amount)
+    return {'received': True}
+```
+
+### 解析配置文件
+
+```python
+import json
+from dataclasses import dataclass
+from dacite import from_dict
+
+@dataclass
+class DatabaseConfig:
+    host: str
+    port: int
+    name: str
+
+@dataclass
+class AppConfig:
+    database: DatabaseConfig
+    debug: bool
+    secret_key: str
+
+with open('config.json') as f:
+    config = from_dict(AppConfig, json.load(f))
+    print(config.database.host)  # 完整类型支持
+```
+
+### 调用第三方 API
+
+```python
+import httpx
+from pydantic import BaseModel
+from typing import List
+
+class Repo(BaseModel):
+    id: int
+    name: str
+    full_name: str
+    private: bool
+    html_url: str
+    stargazers_count: int
+
+async with httpx.AsyncClient() as client:
+    resp = await client.get(
+        'https://api.github.com/users/octocat/repos',
+        headers={'Authorization': 'token YOUR_TOKEN'}
+    )
+    repos = [Repo.model_validate(r) for r in resp.json()]
+    for repo in repos:
+        print(f'{repo.full_name}: ⭐ {repo.stargazers_count}')
+```
+
+## 自定义根类名
+
+默认根类名为 `Root`。建议根据业务语义改成有意义的名称：
+
+- API 响应 → `SearchResult`、`UserProfile`、`OrderDetail`
+- 配置文件 → `AppConfig`、`DatabaseSettings`
+- Webhook 载荷 → `WebhookEvent`、`PaymentNotification`
+
+## 使用注意事项
+
+**JSON 是样本，不是 Schema。** 工具只能看到样本中出现的类型。如果某字段在实际 API 中可能是多种类型，需要手动添加 `Union` 或调整为 `Optional`。
+
+**类名从字段名推断。** `snake_case`、`camelCase`、`kebab-case` 键名都会转换为 PascalCase 类名。如果转换结果不符合预期，直接在输出中重命名。
+
+## 相关工具
+
+- [JSON 转 TypeScript →](/tools/json-to-typescript) — 生成 TypeScript interface
+- [JSON 转 Go Struct →](/tools/json-to-go-struct) — 生成 Go 结构体
+- [JSON Formatter →](/tools/json-formatter) — 格式化和验证 JSON
+
+---
+
+粘贴 JSON，选择输出模式，立即得到可用的 Python 类定义。**[打开 JSON 转 Python Dataclass 工具 →](/tools/json-to-python-dataclass)**

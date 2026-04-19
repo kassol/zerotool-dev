@@ -1,0 +1,217 @@
+---
+title: "TypeScript to Zod Schema Generator: Convert Interfaces to Runtime Validation"
+description: "Convert TypeScript interfaces and type aliases to Zod schemas instantly. Understand how the conversion works, handle edge cases, and add runtime validation to your API code."
+pubDate: 2026-04-19
+lang: "en"
+translationSlug: "typescript-to-zod-guide-zh"
+tags: ["typescript", "zod", "typescript to zod", "type validation", "developer-tools"]
+ogImage: /og/blog-typescript-to-zod-guide.png
+---
+
+TypeScript gives you compile-time type safety. Zod gives you runtime validation with the same type ergonomics. The missing link is converting your existing TypeScript interfaces into Zod schemas — manually rewriting every field is tedious and error-prone.
+
+**[Convert TypeScript to Zod →](/tools/typescript-to-zod)**
+
+## The Problem TypeScript Can't Solve Alone
+
+TypeScript types exist only in your editor and at compile time. Once the code is transpiled and running, the types are gone. An API response typed as `User` is still just `unknown` at runtime — TypeScript trusts you, it doesn't verify.
+
+Consider this:
+
+```ts
+interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+  email?: string
+}
+
+// TypeScript accepts this — but the cast is a lie
+const user = response.data as User
+console.log(user.role.toUpperCase()) // may throw at runtime if role is missing or wrong type
+```
+
+Zod solves this by validating at the boundary where untrusted data enters your system.
+
+## How TypeScript-to-Zod Conversion Works
+
+The tool parses your TypeScript `interface` and `type` declarations and generates equivalent Zod schema code.
+
+**Input:**
+
+```ts
+interface Address {
+  street: string
+  city: string
+  zipCode?: string
+}
+
+export interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+  age?: number
+  isActive: boolean
+  tags: string[]
+  address: Address
+}
+
+export type Status = 'active' | 'inactive' | 'pending'
+```
+
+**Output:**
+
+```ts
+import { z } from 'zod'
+
+export const AddressSchema = z.object({
+  street: z.string(),
+  city: z.string(),
+  zipCode: z.string().optional(),
+})
+export type Address = z.infer<typeof AddressSchema>
+
+export const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  role: z.enum(['admin', 'user', 'guest']),
+  age: z.number().optional(),
+  isActive: z.boolean(),
+  tags: z.array(z.string()),
+  address: AddressSchema,
+})
+export type User = z.infer<typeof UserSchema>
+
+export const StatusSchema = z.enum(['active', 'inactive', 'pending'])
+export type Status = z.infer<typeof StatusSchema>
+```
+
+Note that cross-references are handled automatically: `Address` inside `User` becomes `AddressSchema` in the output. The `z.infer<>` exports give you TypeScript types derived from the schemas — so you can delete your original interfaces once you've added constraints.
+
+## Supported TypeScript Constructs
+
+| TypeScript | Zod |
+|-----------|-----|
+| `string` | `z.string()` |
+| `number` | `z.number()` |
+| `boolean` | `z.boolean()` |
+| `null` | `z.null()` |
+| `undefined` | `z.undefined()` |
+| `any` / `unknown` | `z.unknown()` |
+| `prop?: T` | `.optional()` |
+| `A \| B` | `z.union([A, B])` |
+| `'a' \| 'b' \| 'c'` | `z.enum(['a', 'b', 'c'])` |
+| `T[]` / `Array<T>` | `z.array(T)` |
+| `{ key: T }` | `z.object({ key: T })` |
+| `A & B` | `z.intersection(A, B)` |
+| `[A, B]` | `z.tuple([A, B])` |
+| `Partial<T>` | `.partial()` |
+| `Record<K, V>` | `z.record(K, V)` |
+
+## After Conversion: Adding Constraints the Generator Can't Infer
+
+The generator creates structurally correct schemas, but JSON types don't carry semantic constraints. A TypeScript `string` field might actually need to be an email, a URL, or have a minimum length. Add these after generating:
+
+```ts
+// Generated
+email: z.string()
+age: z.number()
+password: z.string()
+
+// After refinement
+email: z.string().email()
+age: z.number().int().min(0).max(150)
+password: z.string().min(8).max(128)
+```
+
+String formats Zod supports out of the box:
+- `.email()` — validates email format
+- `.url()` — validates URL format
+- `.uuid()` — validates UUID format
+- `.datetime()` — validates ISO 8601 datetime
+- `.ip()` — validates IPv4 or IPv6
+
+## Practical Workflow: TypeScript First, Then Zod
+
+If you already have TypeScript interfaces throughout your codebase, migrating to Zod doesn't require rewriting everything at once. Use this incremental approach:
+
+1. **Identify your boundaries** — API response parsing, form submission handlers, environment variable loading
+2. **Generate schemas for those boundary types** using the tool
+3. **Wrap boundary parsing** with `schema.safeParse()` or `schema.parse()`
+4. **Delete duplicate `as TypeName` casts** — replace them with properly validated data
+
+```ts
+// Before: implicit trust
+async function getUser(id: string): Promise<User> {
+  const res = await fetch(`/api/users/${id}`)
+  return res.json() as User
+}
+
+// After: runtime validation
+const UserSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  role: z.enum(['admin', 'user', 'guest']),
+  email: z.string().email().optional(),
+})
+
+async function getUser(id: string) {
+  const res = await fetch(`/api/users/${id}`)
+  return UserSchema.parse(await res.json())
+}
+```
+
+## Handling `null` vs `optional` in Generated Schemas
+
+TypeScript distinguishes between three nullable states:
+
+```ts
+interface Example {
+  required: string        // must be present and a string
+  optional?: string       // may be absent (undefined)
+  nullable: string | null // present but may be null
+  nullish?: string | null // may be absent OR null
+}
+```
+
+The generator maps these correctly:
+
+```ts
+const ExampleSchema = z.object({
+  required: z.string(),
+  optional: z.string().optional(),
+  nullable: z.union([z.string(), z.null()]),
+  nullish: z.string().nullish(),
+})
+```
+
+In Zod v3, you can also write `z.string().nullable()` for `string | null` — both are equivalent.
+
+## Using Schemas for More Than Parsing
+
+Once you have Zod schemas, they can do more than just parse data:
+
+```ts
+// Generate mock data (with zod-mock or @anatine/zod-mock)
+import { generateMock } from '@anatine/zod-mock'
+const mockUser = generateMock(UserSchema)
+
+// Generate JSON Schema for OpenAPI docs (with zod-to-json-schema)
+import { zodToJsonSchema } from 'zod-to-json-schema'
+const jsonSchema = zodToJsonSchema(UserSchema, 'UserSchema')
+
+// Transform data during parsing
+const UserSchema = z.object({
+  name: z.string().transform(s => s.trim()),
+  createdAt: z.string().datetime().transform(s => new Date(s)),
+})
+```
+
+## Related Tools
+
+- [JSON to Zod →](/tools/json-to-zod) — generate schemas from JSON data samples (when you have data, not types)
+- [JSON to TypeScript →](/tools/json-to-typescript) — generate TypeScript interfaces from JSON (the reverse direction)
+
+---
+
+Paste your TypeScript interfaces and get working Zod schemas in seconds. **[Open the TypeScript to Zod converter →](/tools/typescript-to-zod)**

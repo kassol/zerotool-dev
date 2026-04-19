@@ -1,0 +1,191 @@
+---
+title: "JWT Generator Online: Create and Sign JWT Tokens in Your Browser"
+description: "Generate and sign JWT tokens with HS256, HS384, or HS512 directly in your browser. Edit header and payload claims, set your secret, and copy the signed token. No data sent to servers."
+pubDate: 2026-04-19
+lang: "en"
+translationSlug: "jwt-generator-guide-zh"
+tags: ["jwt", "jwt generator", "json web token", "authentication", "developer-tools"]
+ogImage: /og/blog-jwt-generator-guide.png
+---
+
+Writing an authentication flow and need a test token? Documenting an API and need an example JWT? Building an integration and want to verify your backend accepts the right claims? A JWT generator lets you create signed tokens instantly without spinning up a server.
+
+**[Generate a JWT token →](/tools/jwt-generator)**
+
+## What Is a JWT?
+
+A JSON Web Token (JWT) is a compact, URL-safe string defined in [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519). It carries verifiable claims between parties.
+
+Every JWT has three parts separated by dots:
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzEyMyIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTcxMzQ1Njc4OX0.xK8vP2mQ4nR7sT1uVwXyZa3bCdEfGhIjKlMnOpQrStU
+```
+
+- **Header** (first part): algorithm and token type
+- **Payload** (second part): the claims — your data
+- **Signature** (third part): HMAC of header + payload using your secret
+
+Each part is Base64URL encoded. The signature is what makes the token verifiable — anyone with the secret can confirm the token wasn't tampered with.
+
+## How to Use the JWT Generator
+
+1. Open the [JWT Generator](/tools/jwt-generator)
+2. Select your signing algorithm (HS256, HS384, or HS512)
+3. Edit the payload JSON with your claims
+4. Enter your secret key
+5. Copy the generated token from the result
+
+The header updates automatically when you change the algorithm. The token regenerates in real time as you edit.
+
+## HMAC Algorithm Comparison
+
+All three algorithms supported by the tool are symmetric — the same secret signs and verifies the token.
+
+| Algorithm | Hash | Signature Length | Use Case |
+|-----------|------|-----------------|----------|
+| HS256 | SHA-256 | 256 bits | Default. Suitable for almost all use cases. |
+| HS384 | SHA-384 | 384 bits | Extra security margin, slightly larger tokens. |
+| HS512 | SHA-512 | 512 bits | Maximum HMAC strength. Use with 64-byte+ secrets. |
+
+**HS256 is the right choice for most applications.** The difference in security margin between HS256 and HS512 is negligible in practice — both are considered cryptographically strong. Use HS512 if you're following a compliance requirement that mandates it.
+
+## Common JWT Claims
+
+The payload is a JSON object with arbitrary keys. Standard registered claims (all optional):
+
+| Claim | Name | Description |
+|-------|------|-------------|
+| `iss` | Issuer | Who issued the token |
+| `sub` | Subject | Who the token is about (user ID, etc.) |
+| `aud` | Audience | Who should accept the token |
+| `exp` | Expiration | Unix timestamp when token expires |
+| `nbf` | Not Before | Unix timestamp before which token is invalid |
+| `iat` | Issued At | Unix timestamp when token was created |
+| `jti` | JWT ID | Unique token identifier (for revocation) |
+
+A typical authentication payload:
+
+```json
+{
+  "sub": "user_123",
+  "iss": "https://api.example.com",
+  "aud": "https://app.example.com",
+  "role": "admin",
+  "iat": 1713456789,
+  "exp": 1713460389
+}
+```
+
+Custom claims like `role`, `email`, `permissions` can be added freely.
+
+## Use Cases for a JWT Generator
+
+### Local Development
+
+The most common use. Your backend validates JWTs, but you need tokens to test API endpoints without going through your login flow every time.
+
+```bash
+# Use the generated token in curl
+curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...." \
+  https://api.localhost:8000/admin/users
+```
+
+### API Documentation
+
+Generated tokens in your README or API docs show exactly what a valid token looks like. Readers understand the claim structure immediately.
+
+```yaml
+# OpenAPI example
+securitySchemes:
+  bearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+
+# Example token in docs
+# eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+### Integration Testing
+
+Create tokens with specific claims for automated tests:
+
+```python
+# In your test, verify your backend accepts the right claims
+def test_admin_endpoint_requires_admin_role():
+    # Token with user role — should be rejected
+    user_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    response = client.get('/admin/settings', headers={
+        'Authorization': f'Bearer {user_token}'
+    })
+    assert response.status_code == 403
+
+    # Token with admin role — should be accepted
+    admin_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    response = client.get('/admin/settings', headers={
+        'Authorization': f'Bearer {admin_token}'
+    })
+    assert response.status_code == 200
+```
+
+### Learning and Debugging
+
+Understanding how JWTs work requires seeing the actual bytes. The generator shows you:
+- How the header JSON maps to the Base64URL string
+- How claims appear in the payload segment
+- How changing the secret changes the entire signature segment
+
+## The Base64 Secret Option
+
+Some identity providers give you secrets pre-encoded in Base64 or Base64URL format. If your secret looks like `c2VjcmV0a2V5` instead of `secretkey`, enable the Base64 option. The tool decodes it before signing, producing the correct signature.
+
+This matters because:
+- `secretkey` signed with the raw bytes produces one signature
+- `c2VjcmV0a2V5` (Base64 of `secretkey`) signed as a string produces a different signature
+- Using the Base64 option for a Base64-encoded secret ensures the tool signs with the same key as your server
+
+## Verifying Generated Tokens
+
+To confirm the generated token is valid, paste it into [JWT Decoder](/tools/jwt-decoder) along with the same secret and algorithm. The decoder will show the decoded header and payload and confirm the signature is valid.
+
+You can also verify on jwt.io — paste the token, enter the secret, select the algorithm.
+
+## Security: Why Client-Side Signing Matters
+
+The JWT Generator on zerotool.dev uses the browser's built-in **Web Crypto API** (`SubtleCrypto`) for all signing operations. Your header, payload, and secret key **never leave your browser**.
+
+This is verifiable: open DevTools → Network tab → generate a token. No outbound requests are made. Compare this to server-side JWT generators, where your secret key is transmitted over HTTPS to an external server on every request.
+
+For production secrets, client-side generation is the only safe option when using online tools.
+
+## What the Generator Is Not For
+
+**Don't use this for production token generation in your application.** Applications should generate JWTs in backend code using battle-tested libraries:
+
+```javascript
+// Node.js — use jsonwebtoken
+import jwt from 'jsonwebtoken'
+const token = jwt.sign({ sub: userId, role: 'user' }, process.env.JWT_SECRET, {
+  expiresIn: '1h',
+  issuer: 'https://api.example.com'
+})
+```
+
+```python
+# Python — use python-jose or PyJWT
+import jwt
+token = jwt.encode({'sub': user_id, 'role': 'user'}, settings.SECRET_KEY, algorithm='HS256')
+```
+
+The online generator is for testing, documentation, and learning — not for production token issuance.
+
+## Related Tools
+
+- [JWT Decoder →](/tools/jwt-decoder) — decode and inspect existing JWT tokens
+- [HMAC Generator →](/tools/hmac-generator) — compute HMAC signatures directly
+- [Hash Generator →](/tools/hash-generator) — generate SHA-256 and other hashes
+
+---
+
+Generate a signed JWT in seconds, no server needed. **[Open the JWT Generator →](/tools/jwt-generator)**

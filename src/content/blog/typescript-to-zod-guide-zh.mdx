@@ -1,0 +1,210 @@
+---
+title: "TypeScript 转 Zod Schema：一键生成运行时类型校验代码"
+description: "将 TypeScript interface 和 type 定义转换为 Zod schema，实现 API 响应的运行时类型验证。支持联合类型、可选字段、嵌套对象与交叉引用。"
+pubDate: 2026-04-19
+lang: "zh"
+translationSlug: "typescript-to-zod-guide"
+tags: ["typescript", "zod", "类型校验", "运行时验证", "developer-tools"]
+ogImage: /og/blog-typescript-to-zod-guide-zh.png
+---
+
+TypeScript 提供编译期类型检查，Zod 提供运行时数据校验，两者结合才是完整的类型安全解决方案。把已有的 TypeScript interface 手写成 Zod schema 既耗时又容易出错——用工具自动转换更实际。
+
+**[立即转换 TypeScript → Zod →](/tools/typescript-to-zod)**
+
+## TypeScript 类型安全的盲点
+
+TypeScript 的类型在编译后全部消失。运行时接收到的 API 响应依然是 `unknown`，强制转型 `as User` 只是欺骗编译器：
+
+```ts
+interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+}
+
+// 编译通过，但运行时毫无保障
+const user = response.data as User
+// 如果 API 返回的 role 是 null，下一行会 throw
+console.log(user.role.toUpperCase())
+```
+
+Zod 在数据进入系统的边界处做显式校验，把运行时错误转化为可处理的结构化异常。
+
+## 转换效果示例
+
+**输入的 TypeScript：**
+
+```ts
+interface Address {
+  street: string
+  city: string
+  zipCode?: string
+}
+
+export interface User {
+  id: number
+  name: string
+  role: 'admin' | 'user' | 'guest'
+  age?: number
+  isActive: boolean
+  tags: string[]
+  address: Address
+}
+
+export type Status = 'active' | 'inactive' | 'pending'
+```
+
+**生成的 Zod schema：**
+
+```ts
+import { z } from 'zod'
+
+export const AddressSchema = z.object({
+  street: z.string(),
+  city: z.string(),
+  zipCode: z.string().optional(),
+})
+export type Address = z.infer<typeof AddressSchema>
+
+export const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  role: z.enum(['admin', 'user', 'guest']),
+  age: z.number().optional(),
+  isActive: z.boolean(),
+  tags: z.array(z.string()),
+  address: AddressSchema,
+})
+export type User = z.infer<typeof UserSchema>
+
+export const StatusSchema = z.enum(['active', 'inactive', 'pending'])
+export type Status = z.infer<typeof StatusSchema>
+```
+
+跨类型引用自动处理：`User.address` 的类型 `Address` 在输出中变成 `AddressSchema`。`z.infer<>` 导出的类型与原 interface 完全等价，迁移后可以删掉原始 interface。
+
+## TypeScript 语法到 Zod 的映射关系
+
+| TypeScript | Zod |
+|-----------|-----|
+| `string` | `z.string()` |
+| `number` | `z.number()` |
+| `boolean` | `z.boolean()` |
+| `null` | `z.null()` |
+| `undefined` | `z.undefined()` |
+| `any` / `unknown` | `z.unknown()` |
+| `prop?: T` | `.optional()` |
+| `A \| B` | `z.union([A, B])` |
+| `'a' \| 'b'` 字符串字面量联合 | `z.enum(['a', 'b'])` |
+| `T[]` / `Array<T>` | `z.array(T)` |
+| `{ key: T }` | `z.object({ key: T })` |
+| `A & B` | `z.intersection(A, B)` |
+| `[A, B]` 元组 | `z.tuple([A, B])` |
+| `Partial<T>` | `.partial()` |
+| `Record<K, V>` | `z.record(K, V)` |
+
+## 生成后需要手动补充的约束
+
+工具从结构推断类型，但 TypeScript 无法表达语义约束。生成之后根据业务需求添加：
+
+```ts
+// 生成结果
+email: z.string()
+age: z.number()
+password: z.string()
+slug: z.string()
+
+// 补充约束
+email: z.string().email()
+age: z.number().int().min(0).max(150)
+password: z.string().min(8).max(128)
+slug: z.string().regex(/^[a-z0-9-]+$/)
+```
+
+Zod 内置的字符串格式验证：`.email()` `.url()` `.uuid()` `.datetime()` `.ip()`
+
+## 渐进式迁移策略
+
+不需要一次重写所有类型。优先处理数据边界：
+
+**第一步：识别边界点**
+- API 响应解析
+- 表单提交处理
+- 环境变量读取
+- 外部配置文件加载
+
+**第二步：用工具生成 schema**
+
+**第三步：替换 `as TypeName` 强制转型**
+
+```ts
+// 迁移前
+async function getUser(id: string): Promise<User> {
+  const res = await fetch(`/api/users/${id}`)
+  return res.json() as User  // 不安全
+}
+
+// 迁移后
+const UserSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  role: z.enum(['admin', 'user', 'guest']),
+})
+
+async function getUser(id: string) {
+  const res = await fetch(`/api/users/${id}`)
+  return UserSchema.parse(await res.json()) // 校验失败则 throw ZodError
+}
+```
+
+## null / optional / nullish 三者的区别
+
+TypeScript 中三种可空状态在 Zod 中有精确对应：
+
+```ts
+// TypeScript
+interface Example {
+  required: string        // 必须存在
+  optional?: string       // 可以不存在（undefined）
+  nullable: string | null // 存在但可以是 null
+  nullish?: string | null // 可以不存在也可以是 null
+}
+
+// 对应的 Zod schema
+const ExampleSchema = z.object({
+  required: z.string(),
+  optional: z.string().optional(),
+  nullable: z.string().nullable(),
+  nullish: z.string().nullish(),
+})
+```
+
+## Schema 的延伸用途
+
+有了 Zod schema，可以做的远不止解析：
+
+```ts
+// 配合 zod-mock 生成测试数据
+import { generateMock } from '@anatine/zod-mock'
+const mockUser = generateMock(UserSchema)
+
+// 配合 zod-to-json-schema 生成 OpenAPI 文档
+import { zodToJsonSchema } from 'zod-to-json-schema'
+const openApiSchema = zodToJsonSchema(UserSchema, 'UserSchema')
+
+// 解析时做数据转换
+const UserSchema = z.object({
+  name: z.string().transform(s => s.trim()),
+  createdAt: z.string().datetime().transform(s => new Date(s)),
+})
+```
+
+## 相关工具
+
+- [JSON 转 Zod →](/tools/json-to-zod) — 从 JSON 数据样本生成 schema（适合有数据但没有类型定义的场景）
+- [JSON 转 TypeScript →](/tools/json-to-typescript) — 反向：从 JSON 生成 TypeScript interface
+
+---
+
+粘贴 TypeScript interface，立即得到可用的 Zod schema。**[打开 TypeScript 转 Zod 工具 →](/tools/typescript-to-zod)**
