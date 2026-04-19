@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 88 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 89 tools and growing.
 
 ## Tools
 
@@ -97,6 +97,7 @@
 | YAML to TOML Converter | [/tools/yaml-toml](https://zerotool.dev/tools/yaml-toml) |
 | Bcrypt Generator | [/tools/bcrypt-generator](https://zerotool.dev/tools/bcrypt-generator) |
 | HTML to Markdown Converter | [/tools/html-to-markdown](https://zerotool.dev/tools/html-to-markdown) |
+| Glassmorphism CSS Generator | [/tools/glassmorphism-generator](https://zerotool.dev/tools/glassmorphism-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
