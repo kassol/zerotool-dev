@@ -1,0 +1,507 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    baseColor: 'Base Color',
+    complementary: 'Complementary',
+    complementaryDesc: 'Base + opposite (180°)',
+    analogous: 'Analogous',
+    analogousDesc: 'Neighboring hues (±30°)',
+    triadic: 'Triadic',
+    triadicDesc: 'Three evenly spaced hues (120°)',
+    tetradic: 'Tetradic',
+    tetradicDesc: 'Four evenly spaced hues (90°)',
+    copyAll: 'Copy All',
+    copied: 'Copied!',
+    copyAllDone: 'Copied!',
+    invalidHex: 'Invalid hex color',
+  },
+  zh: {
+    baseColor: '基础颜色',
+    complementary: '互补色',
+    complementaryDesc: '基色 + 对角（180°）',
+    analogous: '类比色',
+    analogousDesc: '相邻色相（±30°）',
+    triadic: '三角配色',
+    triadicDesc: '三等分色环（120°）',
+    tetradic: '四方配色',
+    tetradicDesc: '四等分色环（90°）',
+    copyAll: '复制全部',
+    copied: '已复制！',
+    copyAllDone: '已复制！',
+    invalidHex: '无效的 hex 颜色',
+  },
+  ja: {
+    baseColor: 'ベースカラー',
+    complementary: '補色',
+    complementaryDesc: 'ベース + 反対色（180°）',
+    analogous: '類似色',
+    analogousDesc: '隣接する色相（±30°）',
+    triadic: 'トライアド配色',
+    triadicDesc: '3等分色相環（120°）',
+    tetradic: 'テトラッド配色',
+    tetradicDesc: '4等分色相環（90°）',
+    copyAll: 'すべてコピー',
+    copied: 'コピーしました！',
+    copyAllDone: 'コピーしました！',
+    invalidHex: '無効な HEX カラー',
+  },
+  ko: {
+    baseColor: '기본 색상',
+    complementary: '보색',
+    complementaryDesc: '기본색 + 반대색 (180°)',
+    analogous: '유사색',
+    analogousDesc: '인접 색조 (±30°)',
+    triadic: '삼각 배색',
+    triadicDesc: '색상환 3등분 (120°)',
+    tetradic: '사각 배색',
+    tetradicDesc: '색상환 4등분 (90°)',
+    copyAll: '모두 복사',
+    copied: '복사됨!',
+    copyAllDone: '복사됨!',
+    invalidHex: '잘못된 HEX 색상',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="cpg-wrap"
+  data-copied={L.copied}
+  data-copy-all-done={L.copyAllDone}
+  data-invalid-hex={L.invalidHex}
+  data-label-copy-all={L.copyAll}
+  data-label-complementary={L.complementary}
+  data-label-complementary-desc={L.complementaryDesc}
+  data-label-analogous={L.analogous}
+  data-label-analogous-desc={L.analogousDesc}
+  data-label-triadic={L.triadic}
+  data-label-triadic-desc={L.triadicDesc}
+  data-label-tetradic={L.tetradic}
+  data-label-tetradic-desc={L.tetradicDesc}
+>
+  <!-- Input row -->
+  <div class="cpg-input-row">
+    <label class="cpg-label" for="cpg-hex-input">{L.baseColor}</label>
+    <div class="cpg-color-input-wrap">
+      <input id="cpg-color-picker" class="cpg-swatch" type="color" value="#3b82f6" />
+      <div class="cpg-hex-input-wrap">
+        <input
+          id="cpg-hex-input"
+          class="cpg-hex-input"
+          type="text"
+          value="#3b82f6"
+          spellcheck="false"
+          autocomplete="off"
+          maxlength="7"
+          aria-describedby="cpg-hex-error"
+        />
+        <span id="cpg-hex-error" class="cpg-hex-error" role="alert" aria-live="polite"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Palettes -->
+  <div id="cpg-palettes" class="cpg-palettes"></div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.cpg-wrap')
+        : document.querySelector('.cpg-wrap');
+
+      var COPIED_LABEL    = wrap.dataset.copied;
+      var COPY_ALL_DONE   = wrap.dataset.copyAllDone;
+      var INVALID_HEX     = wrap.dataset.invalidHex;
+      var LABEL_COPY_ALL  = wrap.dataset.labelCopyAll;
+
+      var PALETTES = [
+        {
+          key: 'complementary',
+          label:    wrap.dataset.labelComplementary,
+          desc:     wrap.dataset.labelComplementaryDesc,
+          offsets:  [0, 180],
+        },
+        {
+          key: 'analogous',
+          label:    wrap.dataset.labelAnalogous,
+          desc:     wrap.dataset.labelAnalogousDesc,
+          offsets:  [-30, 0, 30],
+        },
+        {
+          key: 'triadic',
+          label:    wrap.dataset.labelTriadic,
+          desc:     wrap.dataset.labelTriadicDesc,
+          offsets:  [0, 120, 240],
+        },
+        {
+          key: 'tetradic',
+          label:    wrap.dataset.labelTetradic,
+          desc:     wrap.dataset.labelTetradicDesc,
+          offsets:  [0, 90, 180, 270],
+        },
+      ];
+
+      var pickerEl   = document.getElementById('cpg-color-picker');
+      var hexInputEl = document.getElementById('cpg-hex-input');
+      var hexErrorEl = document.getElementById('cpg-hex-error');
+      var palettesEl = document.getElementById('cpg-palettes');
+
+      /* ── Color utilities ── */
+      function hexToRgb(hex) {
+        return {
+          r: parseInt(hex.slice(1, 3), 16),
+          g: parseInt(hex.slice(3, 5), 16),
+          b: parseInt(hex.slice(5, 7), 16),
+        };
+      }
+
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        var max = Math.max(r, g, b), min = Math.min(r, g, b);
+        var h = 0, s = 0, l = (max + min) / 2;
+        if (max !== min) {
+          var d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+            case g: h = ((b - r) / d + 2) / 6; break;
+            case b: h = ((r - g) / d + 4) / 6; break;
+          }
+        }
+        return { h: h * 360, s: s * 100, l: l * 100 };
+      }
+
+      function hslToRgb(h, s, l) {
+        h /= 360; s /= 100; l /= 100;
+        var r, g, b;
+        if (s === 0) {
+          r = g = b = l;
+        } else {
+          var hue2rgb = function (p, q, t) {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+          };
+          var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          var p = 2 * l - q;
+          r = hue2rgb(p, q, h + 1/3);
+          g = hue2rgb(p, q, h);
+          b = hue2rgb(p, q, h - 1/3);
+        }
+        return {
+          r: Math.round(r * 255),
+          g: Math.round(g * 255),
+          b: Math.round(b * 255),
+        };
+      }
+
+      function rgbToHex(r, g, b) {
+        return '#' + [r, g, b].map(function (v) {
+          return ('0' + v.toString(16)).slice(-2);
+        }).join('');
+      }
+
+      function hue2hex(h, s, l) {
+        h = ((h % 360) + 360) % 360;
+        var rgb = hslToRgb(h, s, l);
+        return rgbToHex(rgb.r, rgb.g, rgb.b);
+      }
+
+      function textColor(r, g, b) {
+        return (0.299 * r + 0.587 * g + 0.114 * b) > 140 ? '#1f2937' : '#f9fafb';
+      }
+
+      /* ── Render ── */
+      function render(hex) {
+        var rgb = hexToRgb(hex);
+        var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+
+        palettesEl.innerHTML = '';
+
+        PALETTES.forEach(function (palette) {
+          var colors = palette.offsets.map(function (offset) {
+            return hue2hex(hsl.h + offset, hsl.s, hsl.l);
+          });
+
+          /* Card */
+          var card = document.createElement('div');
+          card.className = 'cpg-card';
+
+          /* Header */
+          var header = document.createElement('div');
+          header.className = 'cpg-card-header';
+
+          var titleWrap = document.createElement('div');
+          titleWrap.className = 'cpg-card-title-wrap';
+
+          var title = document.createElement('span');
+          title.className = 'cpg-card-title';
+          title.textContent = palette.label;
+          titleWrap.appendChild(title);
+
+          var desc = document.createElement('span');
+          desc.className = 'cpg-card-desc';
+          desc.textContent = palette.desc;
+          titleWrap.appendChild(desc);
+
+          header.appendChild(titleWrap);
+
+          var copyAllBtn = document.createElement('button');
+          copyAllBtn.type = 'button';
+          copyAllBtn.className = 'cpg-copy-all-btn';
+          copyAllBtn.textContent = LABEL_COPY_ALL;
+          copyAllBtn.dataset.colors = colors.join(' ');
+          header.appendChild(copyAllBtn);
+
+          card.appendChild(header);
+
+          /* Swatches */
+          var swatchRow = document.createElement('div');
+          swatchRow.className = 'cpg-swatch-row';
+
+          colors.forEach(function (hexVal) {
+            var rgb2 = hexToRgb(hexVal);
+            var swatch = document.createElement('button');
+            swatch.type = 'button';
+            swatch.className = 'cpg-color-swatch';
+            swatch.style.background = hexVal;
+            swatch.setAttribute('aria-label', 'Copy ' + hexVal.toUpperCase());
+
+            var hexLabel = document.createElement('span');
+            hexLabel.className = 'cpg-swatch-hex';
+            hexLabel.style.color = textColor(rgb2.r, rgb2.g, rgb2.b);
+            hexLabel.textContent = hexVal.toUpperCase();
+            swatch.appendChild(hexLabel);
+
+            swatch.addEventListener('click', function () {
+              navigator.clipboard.writeText(hexVal.toUpperCase()).then(function () {
+                var orig = hexLabel.textContent;
+                hexLabel.textContent = COPIED_LABEL;
+                setTimeout(function () { hexLabel.textContent = orig; }, 1200);
+                window.trackTool && window.trackTool('color-palette-generator', 'copy_swatch');
+              });
+            });
+
+            swatchRow.appendChild(swatch);
+          });
+
+          card.appendChild(swatchRow);
+          palettesEl.appendChild(card);
+
+          /* Copy All handler */
+          copyAllBtn.addEventListener('click', function () {
+            var text = copyAllBtn.dataset.colors.split(' ').join(' ');
+            navigator.clipboard.writeText(text).then(function () {
+              var orig = copyAllBtn.textContent;
+              copyAllBtn.textContent = COPY_ALL_DONE;
+              setTimeout(function () { copyAllBtn.textContent = orig; }, 1400);
+              window.trackTool && window.trackTool('color-palette-generator', 'copy_all_' + palette.key);
+            });
+          });
+        });
+
+        window.trackTool && window.trackTool('color-palette-generator', 'generate');
+      }
+
+      /* ── Sync picker <-> hex input ── */
+      pickerEl.addEventListener('input', function () {
+        hexInputEl.value = pickerEl.value;
+        hexInputEl.classList.remove('cpg-error');
+        hexErrorEl.textContent = '';
+        render(pickerEl.value);
+      });
+
+      hexInputEl.addEventListener('input', function () {
+        var v = hexInputEl.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+          hexInputEl.classList.remove('cpg-error');
+          hexInputEl.removeAttribute('aria-invalid');
+          hexErrorEl.textContent = '';
+          pickerEl.value = v;
+          render(v);
+        } else if (v.length === 7) {
+          hexInputEl.classList.add('cpg-error');
+          hexInputEl.setAttribute('aria-invalid', 'true');
+          hexErrorEl.textContent = INVALID_HEX;
+        } else {
+          hexInputEl.classList.remove('cpg-error');
+          hexInputEl.removeAttribute('aria-invalid');
+          hexErrorEl.textContent = '';
+        }
+      });
+
+      render(pickerEl.value);
+    })();
+  </script>
+</div>
+
+<style>
+  .cpg-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* ── Input row ── */
+  .cpg-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .cpg-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .cpg-color-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .cpg-swatch {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    cursor: pointer;
+    background: none;
+    flex-shrink: 0;
+  }
+
+  .cpg-hex-input-wrap { display: flex; flex-direction: column; gap: 0.2rem; }
+
+  .cpg-hex-input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100px;
+  }
+
+  .cpg-hex-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .cpg-hex-input.cpg-error { border-color: #ef4444; }
+  .cpg-hex-input.cpg-error:focus { border-color: #ef4444; }
+
+  .cpg-hex-error {
+    font-size: 0.73rem;
+    color: #ef4444;
+    min-height: 1em;
+    line-height: 1.2;
+  }
+
+  /* ── Palettes grid ── */
+  .cpg-palettes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  /* ── Card ── */
+  .cpg-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--color-bg);
+  }
+
+  .cpg-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    gap: 0.5rem;
+  }
+
+  .cpg-card-title-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  .cpg-card-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--color-text);
+    line-height: 1.2;
+  }
+
+  .cpg-card-desc {
+    font-size: 0.72rem;
+    color: var(--color-text-secondary);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .cpg-copy-all-btn {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.25rem 0.55rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .cpg-copy-all-btn:hover {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  /* ── Swatch row ── */
+  .cpg-swatch-row {
+    display: flex;
+    height: 96px;
+  }
+
+  .cpg-color-swatch {
+    flex: 1;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0.35rem 0.2rem;
+    transition: filter 0.1s;
+    font: inherit;
+  }
+
+  .cpg-color-swatch:hover { filter: brightness(0.92); }
+
+  .cpg-swatch-hex {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    line-height: 1;
+    pointer-events: none;
+    text-align: center;
+    word-break: break-all;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 600px) {
+    .cpg-palettes { grid-template-columns: 1fr; }
+    .cpg-card-desc { display: none; }
+  }
+</style>
