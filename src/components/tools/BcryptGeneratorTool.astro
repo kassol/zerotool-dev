@@ -1,0 +1,484 @@
+---
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    modeGenerate: 'Generate',
+    modeVerify: 'Verify',
+    password: 'Password',
+    passwordPh: 'Enter plaintext password',
+    costFactor: 'Cost Factor',
+    timeEst: 'Estimated time',
+    generate: 'Generate Hash',
+    generating: 'Generating…',
+    hashOutput: 'Hash',
+    copy: 'Copy',
+    copied: 'Copied!',
+    hashInput: 'Hash to Verify',
+    hashInputPh: 'Enter bcrypt hash ($2b$…)',
+    verify: 'Verify',
+    verifying: 'Verifying…',
+    resultMatch: 'Match',
+    resultNoMatch: 'No Match',
+    errEmpty: 'Password is required',
+    errInvalidHash: 'Invalid hash format',
+    privacy: 'All hashing is done 100% in your browser. Passwords never leave this page.',
+  },
+  zh: {
+    modeGenerate: '生成',
+    modeVerify: '验证',
+    password: '明文密码',
+    passwordPh: '输入明文密码',
+    costFactor: '计算轮次',
+    timeEst: '预估耗时',
+    generate: '生成 Hash',
+    generating: '生成中…',
+    hashOutput: 'Hash 值',
+    copy: '复制',
+    copied: '已复制！',
+    hashInput: '待验证的 Hash',
+    hashInputPh: '输入 bcrypt hash（$2b$…）',
+    verify: '验证',
+    verifying: '验证中…',
+    resultMatch: '匹配',
+    resultNoMatch: '不匹配',
+    errEmpty: '请输入密码',
+    errInvalidHash: 'Hash 格式无效',
+    privacy: '所有哈希计算在浏览器中完成，密码不离开本页。',
+  },
+  ja: {
+    modeGenerate: '生成',
+    modeVerify: '検証',
+    password: 'パスワード',
+    passwordPh: '平文パスワードを入力',
+    costFactor: 'コストファクター',
+    timeEst: '推定処理時間',
+    generate: 'ハッシュ生成',
+    generating: '生成中…',
+    hashOutput: 'ハッシュ',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    hashInput: '検証するハッシュ',
+    hashInputPh: 'bcrypt ハッシュを入力（$2b$…）',
+    verify: '検証',
+    verifying: '検証中…',
+    resultMatch: '一致',
+    resultNoMatch: '不一致',
+    errEmpty: 'パスワードを入力してください',
+    errInvalidHash: 'ハッシュ形式が無効です',
+    privacy: 'すべてのハッシュ計算はブラウザ内で完結します。パスワードはこのページを離れません。',
+  },
+  ko: {
+    modeGenerate: '생성',
+    modeVerify: '검증',
+    password: '비밀번호',
+    passwordPh: '평문 비밀번호 입력',
+    costFactor: '비용 계수',
+    timeEst: '예상 처리 시간',
+    generate: '해시 생성',
+    generating: '생성 중…',
+    hashOutput: '해시',
+    copy: '복사',
+    copied: '복사됨!',
+    hashInput: '검증할 해시',
+    hashInputPh: 'bcrypt 해시 입력 ($2b$…)',
+    verify: '검증',
+    verifying: '검증 중…',
+    resultMatch: '일치',
+    resultNoMatch: '불일치',
+    errEmpty: '비밀번호를 입력하세요',
+    errInvalidHash: '잘못된 해시 형식',
+    privacy: '모든 해시 계산은 브라우저에서 처리됩니다. 비밀번호는 이 페이지를 벗어나지 않습니다.',
+  },
+};
+
+const L = labels[lang];
+---
+
+<div
+  class="bcg-wrap"
+  data-l-copy={L.copy}
+  data-l-copied={L.copied}
+  data-l-generating={L.generating}
+  data-l-generate={L.generate}
+  data-l-verifying={L.verifying}
+  data-l-verify={L.verify}
+  data-l-match={L.resultMatch}
+  data-l-no-match={L.resultNoMatch}
+  data-l-err-empty={L.errEmpty}
+  data-l-err-hash={L.errInvalidHash}
+>
+  <!-- Privacy badge -->
+  <div class="bcg-privacy">
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+    <span>{L.privacy}</span>
+  </div>
+
+  <!-- Mode tabs -->
+  <div class="bcg-mode-tabs" role="tablist">
+    <button type="button" class="bcg-mode-tab active" data-mode="generate" role="tab" aria-selected="true">{L.modeGenerate}</button>
+    <button type="button" class="bcg-mode-tab" data-mode="verify" role="tab" aria-selected="false">{L.modeVerify}</button>
+  </div>
+
+  <!-- Generate panel -->
+  <div id="bcg-panel-generate" class="bcg-panel" role="tabpanel">
+    <div class="bcg-field">
+      <label class="bcg-label" for="bcg-gen-pw">{L.password}</label>
+      <input id="bcg-gen-pw" class="bcg-input" type="text" spellcheck="false" autocomplete="off" placeholder={L.passwordPh} />
+    </div>
+
+    <div class="bcg-field">
+      <div class="bcg-slider-header">
+        <label class="bcg-label" for="bcg-rounds">{L.costFactor}: <strong id="bcg-rounds-val">12</strong></label>
+        <span class="bcg-time-est">{L.timeEst}: <span id="bcg-time-est">~250 ms</span></span>
+      </div>
+      <input id="bcg-rounds" class="bcg-slider" type="range" min="4" max="14" value="12" />
+      <div class="bcg-slider-labels">
+        <span>4 (fast)</span>
+        <span>12 (default)</span>
+        <span>14 (high security)</span>
+      </div>
+    </div>
+
+    <button id="bcg-gen-btn" class="btn-primary" type="button">{L.generate}</button>
+
+    <div id="bcg-gen-error" class="bcg-error" aria-live="polite"></div>
+
+    <div id="bcg-gen-output-wrap" class="bcg-output-wrap" style="display:none">
+      <div class="bcg-output-header">
+        <label class="bcg-label">{L.hashOutput}</label>
+        <button id="bcg-copy-btn" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+      </div>
+      <input id="bcg-gen-output" class="bcg-output-input" type="text" readonly spellcheck="false" />
+    </div>
+  </div>
+
+  <!-- Verify panel -->
+  <div id="bcg-panel-verify" class="bcg-panel" role="tabpanel" style="display:none">
+    <div class="bcg-field">
+      <label class="bcg-label" for="bcg-ver-pw">{L.password}</label>
+      <input id="bcg-ver-pw" class="bcg-input" type="text" spellcheck="false" autocomplete="off" placeholder={L.passwordPh} />
+    </div>
+
+    <div class="bcg-field">
+      <label class="bcg-label" for="bcg-ver-hash">{L.hashInput}</label>
+      <input id="bcg-ver-hash" class="bcg-input" type="text" spellcheck="false" autocomplete="off" placeholder={L.hashInputPh} />
+    </div>
+
+    <button id="bcg-ver-btn" class="btn-primary" type="button">{L.verify}</button>
+
+    <div id="bcg-ver-error" class="bcg-error" aria-live="polite"></div>
+
+    <div id="bcg-ver-result" class="bcg-ver-result" aria-live="polite" style="display:none"></div>
+  </div>
+</div>
+
+<script is:inline>
+(function () {
+  var wrap = document.querySelector('.bcg-wrap');
+  if (!wrap) return;
+
+  var L = {
+    copy: wrap.dataset.lCopy,
+    copied: wrap.dataset.lCopied,
+    generating: wrap.dataset.lGenerating,
+    generate: wrap.dataset.lGenerate,
+    verifying: wrap.dataset.lVerifying,
+    verify: wrap.dataset.lVerify,
+    match: wrap.dataset.lMatch,
+    noMatch: wrap.dataset.lNoMatch,
+    errEmpty: wrap.dataset.lErrEmpty,
+    errHash: wrap.dataset.lErrHash,
+  };
+
+  var worker = new Worker('/vendor/bcrypt-worker.js');
+  var pendingId = 0;
+  var pendingResolve = null;
+
+  worker.onmessage = function (e) {
+    if (pendingResolve && e.data.id === pendingId) {
+      pendingResolve(e.data);
+      pendingResolve = null;
+    }
+  };
+
+  function callWorker(msg) {
+    return new Promise(function (resolve) {
+      pendingId = Date.now() + Math.random();
+      msg.id = pendingId;
+      pendingResolve = resolve;
+      worker.postMessage(msg);
+    });
+  }
+
+  // Mode switching
+  var modeTabs = wrap.querySelectorAll('.bcg-mode-tab');
+  var panels = { generate: document.getElementById('bcg-panel-generate'), verify: document.getElementById('bcg-panel-verify') };
+
+  modeTabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      modeTabs.forEach(function (t) { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+      var mode = tab.dataset.mode;
+      panels.generate.style.display = mode === 'generate' ? '' : 'none';
+      panels.verify.style.display = mode === 'verify' ? '' : 'none';
+    });
+  });
+
+  // Rounds slider
+  var roundsEl = document.getElementById('bcg-rounds');
+  var roundsValEl = document.getElementById('bcg-rounds-val');
+  var timeEstEl = document.getElementById('bcg-time-est');
+
+  function estimateTime(rounds) {
+    var ms = 250 * Math.pow(2, rounds - 12);
+    if (ms < 1000) return '~' + Math.round(ms) + ' ms';
+    return '~' + (ms / 1000).toFixed(1) + ' s';
+  }
+
+  roundsEl.addEventListener('input', function () {
+    roundsValEl.textContent = roundsEl.value;
+    timeEstEl.textContent = estimateTime(parseInt(roundsEl.value, 10));
+  });
+
+  // Generate
+  var genBtn = document.getElementById('bcg-gen-btn');
+  var genPwEl = document.getElementById('bcg-gen-pw');
+  var genOutputWrap = document.getElementById('bcg-gen-output-wrap');
+  var genOutputEl = document.getElementById('bcg-gen-output');
+  var genErrorEl = document.getElementById('bcg-gen-error');
+  var copyBtn = document.getElementById('bcg-copy-btn');
+
+  function setGenError(msg) {
+    genErrorEl.textContent = msg;
+    genOutputWrap.style.display = 'none';
+  }
+
+  function clearGenError() { genErrorEl.textContent = ''; }
+
+  genBtn.addEventListener('click', async function () {
+    var pw = genPwEl.value;
+    if (!pw) { setGenError(L.errEmpty); return; }
+    clearGenError();
+    genBtn.disabled = true;
+    genBtn.textContent = L.generating;
+    genOutputWrap.style.display = 'none';
+
+    var result = await callWorker({ type: 'generate', password: pw, rounds: parseInt(roundsEl.value, 10) });
+
+    genBtn.disabled = false;
+    genBtn.textContent = L.generate;
+
+    if (result.type === 'error') {
+      setGenError(result.message);
+    } else {
+      genOutputEl.value = result.hash;
+      genOutputWrap.style.display = '';
+      window.trackTool && window.trackTool('bcrypt-generator', 'generate');
+    }
+  });
+
+  copyBtn.addEventListener('click', function () {
+    var text = genOutputEl.value;
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(function () {
+      copyBtn.textContent = L.copied;
+      setTimeout(function () { copyBtn.textContent = L.copy; }, 1500);
+    });
+  });
+
+  // Verify
+  var verBtn = document.getElementById('bcg-ver-btn');
+  var verPwEl = document.getElementById('bcg-ver-pw');
+  var verHashEl = document.getElementById('bcg-ver-hash');
+  var verErrorEl = document.getElementById('bcg-ver-error');
+  var verResultEl = document.getElementById('bcg-ver-result');
+
+  var BCRYPT_RE = /^\$2[abxy]\$\d{2}\$.{53}$/;
+
+  function setVerError(msg) {
+    verErrorEl.textContent = msg;
+    verResultEl.style.display = 'none';
+  }
+
+  function clearVerError() { verErrorEl.textContent = ''; }
+
+  verBtn.addEventListener('click', async function () {
+    var pw = verPwEl.value;
+    var hash = verHashEl.value.trim();
+    if (!pw) { setVerError(L.errEmpty); return; }
+    if (!BCRYPT_RE.test(hash)) { setVerError(L.errHash); return; }
+    clearVerError();
+    verBtn.disabled = true;
+    verBtn.textContent = L.verifying;
+    verResultEl.style.display = 'none';
+
+    var result = await callWorker({ type: 'verify', password: pw, hash: hash });
+
+    verBtn.disabled = false;
+    verBtn.textContent = L.verify;
+
+    if (result.type === 'error') {
+      setVerError(result.message);
+    } else {
+      verResultEl.style.display = '';
+      verResultEl.textContent = result.match ? L.match : L.noMatch;
+      verResultEl.className = 'bcg-ver-result ' + (result.match ? 'match' : 'no-match');
+      window.trackTool && window.trackTool('bcrypt-generator', 'verify');
+    }
+  });
+})();
+</script>
+
+<style>
+  .bcg-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .bcg-privacy {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+  }
+
+  .bcg-mode-tabs {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    width: fit-content;
+  }
+
+  .bcg-mode-tab {
+    padding: 0.4rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: none;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .bcg-mode-tab:not(:last-child) { border-right: 1px solid var(--color-border); }
+  .bcg-mode-tab.active { background: var(--color-primary); color: #fff; }
+  .bcg-mode-tab:not(.active):hover { background: var(--color-bg); color: var(--color-text); }
+
+  .bcg-panel { display: flex; flex-direction: column; gap: 0.875rem; }
+
+  .bcg-field { display: flex; flex-direction: column; gap: 0.35rem; }
+
+  .bcg-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .bcg-input {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+  }
+
+  .bcg-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .bcg-slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .bcg-time-est {
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+  }
+
+  .bcg-slider {
+    width: 100%;
+    accent-color: var(--color-primary);
+    cursor: pointer;
+  }
+
+  .bcg-slider-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    margin-top: -0.25rem;
+  }
+
+  .bcg-error {
+    font-size: 0.85rem;
+    color: #c0392b;
+    min-height: 1.2rem;
+  }
+
+  .bcg-output-wrap { display: flex; flex-direction: column; gap: 0.35rem; }
+
+  .bcg-output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .bcg-output-input {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    cursor: default;
+    box-sizing: border-box;
+  }
+
+  .bcg-ver-result {
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-sm);
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    border: 2px solid transparent;
+  }
+
+  .bcg-ver-result.match {
+    background: #f0fdf4;
+    border-color: #22c55e;
+    color: #15803d;
+  }
+
+  .bcg-ver-result.no-match {
+    background: #fef2f2;
+    border-color: #ef4444;
+    color: #dc2626;
+  }
+
+  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .bcg-error { color: #f87171; }
+    :root:not([data-theme="light"]) .bcg-ver-result.match { background: #052e16; border-color: #22c55e; color: #4ade80; }
+    :root:not([data-theme="light"]) .bcg-ver-result.no-match { background: #2d0000; border-color: #ef4444; color: #f87171; }
+  }
+  [data-theme="dark"] .bcg-error { color: #f87171; }
+  [data-theme="dark"] .bcg-ver-result.match { background: #052e16; border-color: #22c55e; color: #4ade80; }
+  [data-theme="dark"] .bcg-ver-result.no-match { background: #2d0000; border-color: #ef4444; color: #f87171; }
+</style>
