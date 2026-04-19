@@ -1,0 +1,826 @@
+---
+// CronJobGeneratorTool — visual cron expression builder with field-by-field schedule controls
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    presets: 'Presets:',
+    fieldMinute: 'Minute', fieldMinuteRange: '0–59',
+    fieldHour: 'Hour', fieldHourRange: '0–23',
+    fieldDay: 'Day', fieldDayRange: '1–31',
+    fieldMonth: 'Month', fieldMonthRange: '1–12',
+    fieldWeekday: 'Weekday', fieldWeekdayRange: '0–6',
+    modeEvery: 'Every', modeStep: 'Every N', modeRange: 'Range', modeSpecific: 'Specific',
+    stepLabel: 'Step:', rangeFrom: 'From', rangeTo: 'To',
+    specificHint: 'Comma-separated values (e.g. 0,15,30,45)',
+    outputLabel: 'Cron Expression', copy: 'Copy', copied: 'Copied!',
+    descLabel: 'Description', nextLabel: 'Next 10 scheduled runs (local time)',
+    pEveryMinute: 'Every minute', pEveryHour: 'Every hour',
+    pDailyMidnight: 'Daily midnight', pWeekdays9am: 'Weekdays 9 AM',
+    pWeeklySunday: 'Weekly Sunday', pMonthly1st: 'Monthly 1st',
+    pEvery5min: 'Every 5 min', pYearlyJan1: 'Yearly Jan 1',
+  },
+  zh: {
+    presets: '预设：',
+    fieldMinute: '分钟', fieldMinuteRange: '0–59',
+    fieldHour: '小时', fieldHourRange: '0–23',
+    fieldDay: '日', fieldDayRange: '1–31',
+    fieldMonth: '月', fieldMonthRange: '1–12',
+    fieldWeekday: '星期', fieldWeekdayRange: '0–6',
+    modeEvery: '每个', modeStep: '每 N 个', modeRange: '范围', modeSpecific: '指定值',
+    stepLabel: '步长：', rangeFrom: '从', rangeTo: '到',
+    specificHint: '逗号分隔的值（例如 0,15,30,45）',
+    outputLabel: 'Cron 表达式', copy: '复制', copied: '已复制！',
+    descLabel: '说明', nextLabel: '接下来 10 次执行时间（本地时间）',
+    pEveryMinute: '每分钟', pEveryHour: '每小时',
+    pDailyMidnight: '每天午夜', pWeekdays9am: '工作日早 9 点',
+    pWeeklySunday: '每周日', pMonthly1st: '每月 1 日',
+    pEvery5min: '每 5 分钟', pYearlyJan1: '每年 1 月 1 日',
+  },
+  ja: {
+    presets: 'プリセット：',
+    fieldMinute: '分', fieldMinuteRange: '0–59',
+    fieldHour: '時', fieldHourRange: '0–23',
+    fieldDay: '日', fieldDayRange: '1–31',
+    fieldMonth: '月', fieldMonthRange: '1–12',
+    fieldWeekday: '曜日', fieldWeekdayRange: '0–6',
+    modeEvery: '毎', modeStep: 'N ごと', modeRange: '範囲', modeSpecific: '指定',
+    stepLabel: 'ステップ：', rangeFrom: '開始', rangeTo: '終了',
+    specificHint: 'カンマ区切りの値（例: 0,15,30,45）',
+    outputLabel: 'Cron 式', copy: 'コピー', copied: 'コピー済み！',
+    descLabel: '説明', nextLabel: '次の 10 回の実行時刻（ローカル時間）',
+    pEveryMinute: '毎分', pEveryHour: '毎時',
+    pDailyMidnight: '毎日 0 時', pWeekdays9am: '平日 9 時',
+    pWeeklySunday: '毎週日曜', pMonthly1st: '毎月 1 日',
+    pEvery5min: '5 分ごと', pYearlyJan1: '毎年 1 月 1 日',
+  },
+  ko: {
+    presets: '프리셋:',
+    fieldMinute: '분', fieldMinuteRange: '0–59',
+    fieldHour: '시', fieldHourRange: '0–23',
+    fieldDay: '일', fieldDayRange: '1–31',
+    fieldMonth: '월', fieldMonthRange: '1–12',
+    fieldWeekday: '요일', fieldWeekdayRange: '0–6',
+    modeEvery: '매', modeStep: 'N마다', modeRange: '범위', modeSpecific: '지정',
+    stepLabel: '단계:', rangeFrom: '시작', rangeTo: '끝',
+    specificHint: '쉼표로 구분된 값 (예: 0,15,30,45)',
+    outputLabel: 'Cron 표현식', copy: '복사', copied: '복사됨!',
+    descLabel: '설명', nextLabel: '다음 10번 실행 시간 (현지 시간)',
+    pEveryMinute: '매분', pEveryHour: '매시',
+    pDailyMidnight: '매일 자정', pWeekdays9am: '평일 오전 9시',
+    pWeeklySunday: '매주 일요일', pMonthly1st: '매월 1일',
+    pEvery5min: '5분마다', pYearlyJan1: '매년 1월 1일',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div class="cjg-wrap">
+
+  <!-- Presets -->
+  <div class="cjg-presets">
+    <span class="cjg-preset-label" data-i18n="presets">{L.presets}</span>
+    <button class="cjg-btn-preset" data-expr="* * * * *" data-i18n="pEveryMinute">{L.pEveryMinute}</button>
+    <button class="cjg-btn-preset" data-expr="0 * * * *" data-i18n="pEveryHour">{L.pEveryHour}</button>
+    <button class="cjg-btn-preset" data-expr="0 0 * * *" data-i18n="pDailyMidnight">{L.pDailyMidnight}</button>
+    <button class="cjg-btn-preset" data-expr="0 9 * * 1-5" data-i18n="pWeekdays9am">{L.pWeekdays9am}</button>
+    <button class="cjg-btn-preset" data-expr="0 0 * * 0" data-i18n="pWeeklySunday">{L.pWeeklySunday}</button>
+    <button class="cjg-btn-preset" data-expr="0 0 1 * *" data-i18n="pMonthly1st">{L.pMonthly1st}</button>
+    <button class="cjg-btn-preset" data-expr="*/5 * * * *" data-i18n="pEvery5min">{L.pEvery5min}</button>
+    <button class="cjg-btn-preset" data-expr="0 0 1 1 *" data-i18n="pYearlyJan1">{L.pYearlyJan1}</button>
+  </div>
+
+  <!-- Field Rows -->
+  <div class="cjg-fields">
+
+    <!-- Minute -->
+    <div class="cjg-field" data-field="minute" data-min="0" data-max="59">
+      <div class="cjg-field-header">
+        <span class="cjg-field-label">
+          <span data-i18n="fieldMinute">{L.fieldMinute}</span>
+          <span class="cjg-field-range" data-i18n="fieldMinuteRange">{L.fieldMinuteRange}</span>
+        </span>
+        <div class="cjg-modes" role="group">
+          <button class="cjg-mode-btn active" data-mode="every" data-i18n="modeEvery">{L.modeEvery}</button>
+          <button class="cjg-mode-btn" data-mode="step" data-i18n="modeStep">{L.modeStep}</button>
+          <button class="cjg-mode-btn" data-mode="range" data-i18n="modeRange">{L.modeRange}</button>
+          <button class="cjg-mode-btn" data-mode="specific" data-i18n="modeSpecific">{L.modeSpecific}</button>
+        </div>
+      </div>
+      <div class="cjg-field-body">
+        <div class="cjg-mode-panel" data-panel="every"><span class="cjg-expr-badge">*</span></div>
+        <div class="cjg-mode-panel hidden" data-panel="step">
+          <label class="cjg-inline-label" data-i18n="stepLabel">{L.stepLabel}</label>
+          <input type="number" class="cjg-num" data-role="step" min="1" max="59" value="5" />
+          <span class="cjg-expr-badge cjg-preview">*/5</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="range">
+          <label class="cjg-inline-label" data-i18n="rangeFrom">{L.rangeFrom}</label>
+          <input type="number" class="cjg-num" data-role="from" min="0" max="59" value="0" />
+          <label class="cjg-inline-label" data-i18n="rangeTo">{L.rangeTo}</label>
+          <input type="number" class="cjg-num" data-role="to" min="0" max="59" value="30" />
+          <span class="cjg-expr-badge cjg-preview">0-30</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="specific">
+          <input type="text" class="cjg-text" data-role="values" placeholder="0,15,30,45" value="0,15,30,45" />
+          <span class="cjg-expr-badge cjg-preview">0,15,30,45</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hour -->
+    <div class="cjg-field" data-field="hour" data-min="0" data-max="23">
+      <div class="cjg-field-header">
+        <span class="cjg-field-label">
+          <span data-i18n="fieldHour">{L.fieldHour}</span>
+          <span class="cjg-field-range" data-i18n="fieldHourRange">{L.fieldHourRange}</span>
+        </span>
+        <div class="cjg-modes" role="group">
+          <button class="cjg-mode-btn active" data-mode="every" data-i18n="modeEvery">{L.modeEvery}</button>
+          <button class="cjg-mode-btn" data-mode="step" data-i18n="modeStep">{L.modeStep}</button>
+          <button class="cjg-mode-btn" data-mode="range" data-i18n="modeRange">{L.modeRange}</button>
+          <button class="cjg-mode-btn" data-mode="specific" data-i18n="modeSpecific">{L.modeSpecific}</button>
+        </div>
+      </div>
+      <div class="cjg-field-body">
+        <div class="cjg-mode-panel" data-panel="every"><span class="cjg-expr-badge">*</span></div>
+        <div class="cjg-mode-panel hidden" data-panel="step">
+          <label class="cjg-inline-label" data-i18n="stepLabel">{L.stepLabel}</label>
+          <input type="number" class="cjg-num" data-role="step" min="1" max="23" value="2" />
+          <span class="cjg-expr-badge cjg-preview">*/2</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="range">
+          <label class="cjg-inline-label" data-i18n="rangeFrom">{L.rangeFrom}</label>
+          <input type="number" class="cjg-num" data-role="from" min="0" max="23" value="9" />
+          <label class="cjg-inline-label" data-i18n="rangeTo">{L.rangeTo}</label>
+          <input type="number" class="cjg-num" data-role="to" min="0" max="23" value="17" />
+          <span class="cjg-expr-badge cjg-preview">9-17</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="specific">
+          <div class="cjg-chips" data-count="24" data-offset="0" data-names=""></div>
+          <span class="cjg-expr-badge cjg-preview">9</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Day -->
+    <div class="cjg-field" data-field="day" data-min="1" data-max="31">
+      <div class="cjg-field-header">
+        <span class="cjg-field-label">
+          <span data-i18n="fieldDay">{L.fieldDay}</span>
+          <span class="cjg-field-range" data-i18n="fieldDayRange">{L.fieldDayRange}</span>
+        </span>
+        <div class="cjg-modes" role="group">
+          <button class="cjg-mode-btn active" data-mode="every" data-i18n="modeEvery">{L.modeEvery}</button>
+          <button class="cjg-mode-btn" data-mode="step" data-i18n="modeStep">{L.modeStep}</button>
+          <button class="cjg-mode-btn" data-mode="range" data-i18n="modeRange">{L.modeRange}</button>
+          <button class="cjg-mode-btn" data-mode="specific" data-i18n="modeSpecific">{L.modeSpecific}</button>
+        </div>
+      </div>
+      <div class="cjg-field-body">
+        <div class="cjg-mode-panel" data-panel="every"><span class="cjg-expr-badge">*</span></div>
+        <div class="cjg-mode-panel hidden" data-panel="step">
+          <label class="cjg-inline-label" data-i18n="stepLabel">{L.stepLabel}</label>
+          <input type="number" class="cjg-num" data-role="step" min="1" max="31" value="7" />
+          <span class="cjg-expr-badge cjg-preview">*/7</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="range">
+          <label class="cjg-inline-label" data-i18n="rangeFrom">{L.rangeFrom}</label>
+          <input type="number" class="cjg-num" data-role="from" min="1" max="31" value="1" />
+          <label class="cjg-inline-label" data-i18n="rangeTo">{L.rangeTo}</label>
+          <input type="number" class="cjg-num" data-role="to" min="1" max="31" value="15" />
+          <span class="cjg-expr-badge cjg-preview">1-15</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="specific">
+          <div class="cjg-chips" data-count="31" data-offset="1" data-names=""></div>
+          <span class="cjg-expr-badge cjg-preview">1</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Month -->
+    <div class="cjg-field" data-field="month" data-min="1" data-max="12">
+      <div class="cjg-field-header">
+        <span class="cjg-field-label">
+          <span data-i18n="fieldMonth">{L.fieldMonth}</span>
+          <span class="cjg-field-range" data-i18n="fieldMonthRange">{L.fieldMonthRange}</span>
+        </span>
+        <div class="cjg-modes" role="group">
+          <button class="cjg-mode-btn active" data-mode="every" data-i18n="modeEvery">{L.modeEvery}</button>
+          <button class="cjg-mode-btn" data-mode="step" data-i18n="modeStep">{L.modeStep}</button>
+          <button class="cjg-mode-btn" data-mode="range" data-i18n="modeRange">{L.modeRange}</button>
+          <button class="cjg-mode-btn" data-mode="specific" data-i18n="modeSpecific">{L.modeSpecific}</button>
+        </div>
+      </div>
+      <div class="cjg-field-body">
+        <div class="cjg-mode-panel" data-panel="every"><span class="cjg-expr-badge">*</span></div>
+        <div class="cjg-mode-panel hidden" data-panel="step">
+          <label class="cjg-inline-label" data-i18n="stepLabel">{L.stepLabel}</label>
+          <input type="number" class="cjg-num" data-role="step" min="1" max="12" value="3" />
+          <span class="cjg-expr-badge cjg-preview">*/3</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="range">
+          <label class="cjg-inline-label" data-i18n="rangeFrom">{L.rangeFrom}</label>
+          <input type="number" class="cjg-num" data-role="from" min="1" max="12" value="1" />
+          <label class="cjg-inline-label" data-i18n="rangeTo">{L.rangeTo}</label>
+          <input type="number" class="cjg-num" data-role="to" min="1" max="12" value="6" />
+          <span class="cjg-expr-badge cjg-preview">1-6</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="specific">
+          <div class="cjg-chips" data-count="12" data-offset="1" data-names="Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"></div>
+          <span class="cjg-expr-badge cjg-preview">1</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Weekday -->
+    <div class="cjg-field" data-field="weekday" data-min="0" data-max="6">
+      <div class="cjg-field-header">
+        <span class="cjg-field-label">
+          <span data-i18n="fieldWeekday">{L.fieldWeekday}</span>
+          <span class="cjg-field-range" data-i18n="fieldWeekdayRange">{L.fieldWeekdayRange}</span>
+        </span>
+        <div class="cjg-modes" role="group">
+          <button class="cjg-mode-btn active" data-mode="every" data-i18n="modeEvery">{L.modeEvery}</button>
+          <button class="cjg-mode-btn" data-mode="step" data-i18n="modeStep">{L.modeStep}</button>
+          <button class="cjg-mode-btn" data-mode="range" data-i18n="modeRange">{L.modeRange}</button>
+          <button class="cjg-mode-btn" data-mode="specific" data-i18n="modeSpecific">{L.modeSpecific}</button>
+        </div>
+      </div>
+      <div class="cjg-field-body">
+        <div class="cjg-mode-panel" data-panel="every"><span class="cjg-expr-badge">*</span></div>
+        <div class="cjg-mode-panel hidden" data-panel="step">
+          <label class="cjg-inline-label" data-i18n="stepLabel">{L.stepLabel}</label>
+          <input type="number" class="cjg-num" data-role="step" min="1" max="6" value="2" />
+          <span class="cjg-expr-badge cjg-preview">*/2</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="range">
+          <label class="cjg-inline-label" data-i18n="rangeFrom">{L.rangeFrom}</label>
+          <input type="number" class="cjg-num" data-role="from" min="0" max="6" value="1" />
+          <label class="cjg-inline-label" data-i18n="rangeTo">{L.rangeTo}</label>
+          <input type="number" class="cjg-num" data-role="to" min="0" max="6" value="5" />
+          <span class="cjg-expr-badge cjg-preview">1-5</span>
+        </div>
+        <div class="cjg-mode-panel hidden" data-panel="specific">
+          <div class="cjg-chips" data-count="7" data-offset="0" data-names="Sun,Mon,Tue,Wed,Thu,Fri,Sat"></div>
+          <span class="cjg-expr-badge cjg-preview">1</span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.cjg-fields -->
+
+  <!-- Output -->
+  <div class="cjg-output">
+    <div class="cjg-output-row">
+      <label class="cjg-output-label" data-i18n="outputLabel">{L.outputLabel}</label>
+      <div class="cjg-expr-wrap">
+        <input id="cjg-expr" type="text" class="cjg-expr-input" spellcheck="false" autocomplete="off" readonly value="* * * * *" />
+        <button id="cjg-copy" class="cjg-btn-copy" data-i18n-copy="{L.copy}" data-i18n-copied="{L.copied}">{L.copy}</button>
+      </div>
+    </div>
+    <div class="cjg-desc-row">
+      <span class="cjg-desc-label" data-i18n="descLabel">{L.descLabel}</span>
+      <span id="cjg-desc" class="cjg-desc-text"></span>
+    </div>
+    <div class="cjg-next-section">
+      <div class="cjg-next-label" data-i18n="nextLabel">{L.nextLabel}</div>
+      <ol id="cjg-next-list" class="cjg-next-list"></ol>
+    </div>
+  </div>
+
+</div>
+
+<script is:inline>
+(function () {
+  var STRINGS = {
+    en: { presets: 'Presets:', fieldMinute: 'Minute', fieldHour: 'Hour', fieldDay: 'Day', fieldMonth: 'Month', fieldWeekday: 'Weekday', modeEvery: 'Every', modeStep: 'Every N', modeRange: 'Range', modeSpecific: 'Specific', stepLabel: 'Step:', rangeFrom: 'From', rangeTo: 'To', outputLabel: 'Cron Expression', copy: 'Copy', copied: 'Copied!', descLabel: 'Description', nextLabel: 'Next 10 scheduled runs (local time)', pEveryMinute: 'Every minute', pEveryHour: 'Every hour', pDailyMidnight: 'Daily midnight', pWeekdays9am: 'Weekdays 9 AM', pWeeklySunday: 'Weekly Sunday', pMonthly1st: 'Monthly 1st', pEvery5min: 'Every 5 min', pYearlyJan1: 'Yearly Jan 1' },
+    zh: { presets: '预设：', fieldMinute: '分钟', fieldHour: '小时', fieldDay: '日', fieldMonth: '月', fieldWeekday: '星期', modeEvery: '每个', modeStep: '每 N 个', modeRange: '范围', modeSpecific: '指定值', stepLabel: '步长：', rangeFrom: '从', rangeTo: '到', outputLabel: 'Cron 表达式', copy: '复制', copied: '已复制！', descLabel: '说明', nextLabel: '接下来 10 次执行时间（本地时间）', pEveryMinute: '每分钟', pEveryHour: '每小时', pDailyMidnight: '每天午夜', pWeekdays9am: '工作日早 9 点', pWeeklySunday: '每周日', pMonthly1st: '每月 1 日', pEvery5min: '每 5 分钟', pYearlyJan1: '每年 1 月 1 日' },
+    ja: { presets: 'プリセット：', fieldMinute: '分', fieldHour: '時', fieldDay: '日', fieldMonth: '月', fieldWeekday: '曜日', modeEvery: '毎', modeStep: 'N ごと', modeRange: '範囲', modeSpecific: '指定', stepLabel: 'ステップ：', rangeFrom: '開始', rangeTo: '終了', outputLabel: 'Cron 式', copy: 'コピー', copied: 'コピー済み！', descLabel: '説明', nextLabel: '次の 10 回の実行時刻（ローカル時間）', pEveryMinute: '毎分', pEveryHour: '毎時', pDailyMidnight: '毎日 0 時', pWeekdays9am: '平日 9 時', pWeeklySunday: '毎週日曜', pMonthly1st: '毎月 1 日', pEvery5min: '5 分ごと', pYearlyJan1: '毎年 1 月 1 日' },
+    ko: { presets: '프리셋:', fieldMinute: '분', fieldHour: '시', fieldDay: '일', fieldMonth: '월', fieldWeekday: '요일', modeEvery: '매', modeStep: 'N마다', modeRange: '범위', modeSpecific: '지정', stepLabel: '단계:', rangeFrom: '시작', rangeTo: '끝', outputLabel: 'Cron 표현식', copy: '복사', copied: '복사됨!', descLabel: '설명', nextLabel: '다음 10번 실행 시간 (현지 시간)', pEveryMinute: '매분', pEveryHour: '매시', pDailyMidnight: '매일 자정', pWeekdays9am: '평일 오전 9시', pWeeklySunday: '매주 일요일', pMonthly1st: '매월 1일', pEvery5min: '5분마다', pYearlyJan1: '매년 1월 1일' }
+  };
+
+  var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+  var t = STRINGS[pageLang] || STRINGS.en;
+
+  // Apply i18n strings
+  document.querySelectorAll('[data-i18n]').forEach(function (el) {
+    var key = el.getAttribute('data-i18n');
+    if (t[key] !== undefined) el.textContent = t[key];
+  });
+
+  var copyBtn = document.getElementById('cjg-copy');
+  if (copyBtn) {
+    copyBtn.textContent = t.copy;
+    copyBtn.setAttribute('data-copy', t.copy);
+    copyBtn.setAttribute('data-copied', t.copied);
+  }
+
+  // Chip builders: for fields with named values or compact ranges
+  document.querySelectorAll('.cjg-chips').forEach(function (container) {
+    var count = parseInt(container.getAttribute('data-count') || '0');
+    var offset = parseInt(container.getAttribute('data-offset') || '0');
+    var namesStr = container.getAttribute('data-names') || '';
+    var names = namesStr ? namesStr.split(',') : [];
+    for (var i = 0; i < count; i++) {
+      var val = i + offset;
+      var btn = document.createElement('button');
+      btn.className = 'cjg-chip';
+      btn.setAttribute('data-val', String(val));
+      btn.textContent = names.length ? names[i] : String(val);
+      btn.setAttribute('aria-pressed', 'false');
+      container.appendChild(btn);
+    }
+    // Default: first chip selected
+    if (container.firstElementChild) {
+      container.firstElementChild.setAttribute('aria-pressed', 'true');
+      container.firstElementChild.classList.add('active');
+    }
+  });
+
+  // Chip toggle
+  document.querySelectorAll('.cjg-chips').forEach(function (container) {
+    container.addEventListener('click', function (e) {
+      var chip = e.target.closest('.cjg-chip');
+      if (!chip) return;
+      var pressed = chip.getAttribute('aria-pressed') === 'true';
+      // Prevent deselecting the last chip
+      var activeChips = container.querySelectorAll('.cjg-chip.active');
+      if (pressed && activeChips.length <= 1) return;
+      chip.setAttribute('aria-pressed', pressed ? 'false' : 'true');
+      chip.classList.toggle('active', !pressed);
+      updateFieldPreview(container.closest('.cjg-field'));
+      rebuildExpression();
+    });
+  });
+
+  // Mode switching
+  document.querySelectorAll('.cjg-field').forEach(function (field) {
+    field.querySelectorAll('.cjg-mode-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var mode = btn.getAttribute('data-mode');
+        field.querySelectorAll('.cjg-mode-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        field.querySelectorAll('.cjg-mode-panel').forEach(function (panel) {
+          panel.classList.toggle('hidden', panel.getAttribute('data-panel') !== mode);
+        });
+        updateFieldPreview(field);
+        rebuildExpression();
+      });
+    });
+  });
+
+  // Input change → preview + expression
+  document.querySelectorAll('.cjg-field .cjg-num, .cjg-field .cjg-text').forEach(function (input) {
+    input.addEventListener('input', function () {
+      updateFieldPreview(input.closest('.cjg-field'));
+      rebuildExpression();
+    });
+  });
+
+  function getActiveMode(field) {
+    var btn = field.querySelector('.cjg-mode-btn.active');
+    return btn ? btn.getAttribute('data-mode') : 'every';
+  }
+
+  function getFieldExpr(field) {
+    var mode = getActiveMode(field);
+    var min = parseInt(field.getAttribute('data-min') || '0');
+    var max = parseInt(field.getAttribute('data-max') || '59');
+
+    if (mode === 'every') return '*';
+
+    if (mode === 'step') {
+      var stepInput = field.querySelector('[data-role="step"]');
+      var step = stepInput ? parseInt(stepInput.value) : 1;
+      if (isNaN(step) || step < 1) step = 1;
+      if (step > max) step = max;
+      return '*/' + step;
+    }
+
+    if (mode === 'range') {
+      var fromInput = field.querySelector('[data-role="from"]');
+      var toInput = field.querySelector('[data-role="to"]');
+      var from = fromInput ? parseInt(fromInput.value) : min;
+      var to = toInput ? parseInt(toInput.value) : max;
+      if (isNaN(from) || from < min) from = min;
+      if (isNaN(to) || to > max) to = max;
+      if (from > to) { var tmp = from; from = to; to = tmp; }
+      if (from === min && to === max) return '*';
+      return from + '-' + to;
+    }
+
+    if (mode === 'specific') {
+      var chips = field.querySelectorAll('.cjg-chip.active');
+      if (chips.length > 0) {
+        var vals = [];
+        chips.forEach(function (c) { vals.push(parseInt(c.getAttribute('data-val'))); });
+        vals.sort(function (a, b) { return a - b; });
+        // If all selected
+        var total = field.querySelectorAll('.cjg-chip').length;
+        if (chips.length === total) return '*';
+        return vals.join(',');
+      }
+      var textInput = field.querySelector('[data-role="values"]');
+      if (textInput) {
+        var raw = textInput.value.trim();
+        if (!raw) return '*';
+        return raw;
+      }
+      return '*';
+    }
+
+    return '*';
+  }
+
+  function updateFieldPreview(field) {
+    if (!field) return;
+    var mode = getActiveMode(field);
+    var expr = getFieldExpr(field);
+    var preview = field.querySelector('.cjg-mode-panel:not(.hidden) .cjg-preview');
+    if (preview) preview.textContent = expr;
+
+    // Sync chip preview for specific mode
+    if (mode === 'specific') {
+      var chipsPreview = field.querySelector('[data-panel="specific"] .cjg-preview');
+      if (chipsPreview) chipsPreview.textContent = expr;
+    }
+  }
+
+  function rebuildExpression() {
+    var fields = ['minute', 'hour', 'day', 'month', 'weekday'];
+    var parts = [];
+    fields.forEach(function (name) {
+      var field = document.querySelector('.cjg-field[data-field="' + name + '"]');
+      parts.push(field ? getFieldExpr(field) : '*');
+    });
+    var expr = parts.join(' ');
+    var exprInput = document.getElementById('cjg-expr');
+    if (exprInput) exprInput.value = expr;
+    updateDescription(parts);
+    updateNextRuns(parts);
+    window.trackTool && window.trackTool('cron_job_generator', 'update');
+  }
+
+  // ---------- Description / Humanizer ----------
+  var MONTHS_EN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var WDAYS_EN = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var MONTH_ABBR = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  var WDAY_ABBR = ['sun','mon','tue','wed','thu','fri','sat'];
+
+  function replaceNames(s, names, offset) {
+    return s.toLowerCase().replace(new RegExp(names.join('|'), 'g'), function (m) {
+      return names.indexOf(m) + offset;
+    });
+  }
+
+  function parseField(field, min, max, names, nameOffset) {
+    if (names) field = replaceNames(field, names, nameOffset);
+    var result = [];
+    var parts = field.split(',');
+    for (var p = 0; p < parts.length; p++) {
+      var part = parts[p].trim();
+      var step = 1;
+      if (part.indexOf('/') !== -1) {
+        var sp = part.split('/');
+        step = parseInt(sp[1]);
+        if (isNaN(step) || step < 1) return null;
+        part = sp[0];
+      }
+      var lo, hi;
+      if (part === '*') { lo = min; hi = max; }
+      else if (part.indexOf('-') !== -1) {
+        var rp = part.split('-');
+        lo = parseInt(rp[0]); hi = parseInt(rp[1]);
+        if (isNaN(lo) || isNaN(hi)) return null;
+      } else {
+        var v = parseInt(part);
+        if (isNaN(v)) return null;
+        lo = hi = v;
+      }
+      if (lo < min || hi > max || lo > hi) return null;
+      for (var i = lo; i <= hi; i += step) result.push(i);
+    }
+    var seen = {};
+    return result.filter(function (v) { return seen[v] ? false : (seen[v] = true); }).sort(function (a, b) { return a - b; });
+  }
+
+  function humanizeField(expr, min, max, names, nameOffset, singular, plural) {
+    if (expr === '*') return 'every ' + singular;
+    var vals = parseField(expr, min, max, names, nameOffset);
+    if (!vals) return expr;
+    if (expr.indexOf('*/') === 0) {
+      var step = parseInt(expr.slice(2));
+      return 'every ' + step + ' ' + (step === 1 ? singular : plural);
+    }
+    if (/^\d+-\d+$/.test(expr)) {
+      var rp2 = expr.split('-');
+      var lo2 = parseInt(rp2[0]), hi2 = parseInt(rp2[1]);
+      var loName = names ? (names[lo2 - nameOffset] || lo2) : lo2;
+      var hiName = names ? (names[hi2 - nameOffset] || hi2) : hi2;
+      return loName + ' through ' + hiName;
+    }
+    return vals.map(function (v) { return names ? (names[v - nameOffset] || v) : v; }).join(', ');
+  }
+
+  function humanizeCron(fields) {
+    var min = fields[0], hr = fields[1], dom = fields[2], mon = fields[3], dow = fields[4];
+    var minH = humanizeField(min, 0, 59, null, 0, 'minute', 'minutes');
+    var hrH = humanizeField(hr, 0, 23, null, 0, 'hour', 'hours');
+    var domH = humanizeField(dom, 1, 31, null, 0, 'day', 'days');
+    var monH = humanizeField(mon, 1, 12, MONTH_ABBR, 1, 'month', 'months');
+    var dowH = humanizeField(dow, 0, 7, WDAY_ABBR, 0, 'day of week', 'days of week');
+
+    var when = '';
+    if (min === '0' && hr === '0') when = 'At midnight';
+    else if (min === '0') when = 'At ' + hrH + (hr.indexOf('*') === -1 ? ':00' : '');
+    else if (hr === '*') when = 'At ' + minH + ' past every hour';
+    else when = 'At ' + minH + ' past ' + hrH;
+
+    if (dom !== '*' && dow !== '*') when += ', on ' + domH + ' of the month and on ' + dowH;
+    else if (dom !== '*') when += ', on day ' + domH + ' of the month';
+    else if (dow !== '*') when += ', on ' + dowH;
+    if (mon !== '*') when += ', in ' + monH;
+    return when;
+  }
+
+  function updateDescription(fields) {
+    var desc = document.getElementById('cjg-desc');
+    if (!desc) return;
+    try {
+      var human = humanizeCron(fields);
+      desc.textContent = human;
+    } catch (e) {
+      desc.textContent = '';
+    }
+  }
+
+  // ---------- Next Runs ----------
+  function nextRuns(fields, count) {
+    var minVals = parseField(fields[0], 0, 59, null, 0);
+    var hrVals = parseField(fields[1], 0, 23, null, 0);
+    var domVals = parseField(fields[2], 1, 31, null, 0);
+    var monVals = parseField(fields[3], 1, 12, MONTH_ABBR, 1);
+    var dowVals = parseField(fields[4], 0, 7, WDAY_ABBR, 0);
+    if (dowVals) dowVals = dowVals.map(function (v) { return v === 7 ? 0 : v; });
+    var dowSet = dowVals ? {} : null;
+    if (dowVals) dowVals.forEach(function (v) { dowSet[v] = true; });
+    if (!minVals || !hrVals || !domVals || !monVals) return null;
+    var runs = [];
+    var d = new Date();
+    d.setSeconds(0, 0);
+    d = new Date(d.getTime() + 60000);
+    var limit = 100000;
+    while (runs.length < count && limit-- > 0) {
+      var ok = monVals.indexOf(d.getMonth() + 1) !== -1 &&
+        domVals.indexOf(d.getDate()) !== -1 &&
+        hrVals.indexOf(d.getHours()) !== -1 &&
+        minVals.indexOf(d.getMinutes()) !== -1;
+      if (dowSet) ok = ok && !!dowSet[d.getDay()];
+      if (ok) runs.push(new Date(d));
+      d = new Date(d.getTime() + 60000);
+    }
+    return runs;
+  }
+
+  function updateNextRuns(fields) {
+    var list = document.getElementById('cjg-next-list');
+    if (!list) return;
+    var runs = nextRuns(fields, 10);
+    if (!runs || !runs.length) { list.innerHTML = ''; return; }
+    var html = '';
+    runs.forEach(function (d) { html += '<li>' + d.toLocaleString() + '</li>'; });
+    list.innerHTML = html;
+  }
+
+  // ---------- Preset loading ----------
+  function loadPreset(expr) {
+    var parts = expr.trim().split(/\s+/);
+    if (parts.length !== 5) return;
+    var fieldNames = ['minute', 'hour', 'day', 'month', 'weekday'];
+    var fieldMins = [0, 0, 1, 1, 0];
+    var fieldMaxs = [59, 23, 31, 12, 6];
+    var fieldNames2 = [null, null, null, MONTH_ABBR, WDAY_ABBR];
+    var fieldOffsets = [0, 0, 0, 1, 0];
+
+    for (var i = 0; i < 5; i++) {
+      var field = document.querySelector('.cjg-field[data-field="' + fieldNames[i] + '"]');
+      if (!field) continue;
+      var part = parts[i];
+      var mode;
+
+      if (part === '*') {
+        mode = 'every';
+      } else if (/^\*\/\d+$/.test(part)) {
+        mode = 'step';
+        var step = parseInt(part.slice(2));
+        var stepInput = field.querySelector('[data-role="step"]');
+        if (stepInput) stepInput.value = step;
+      } else if (/^\d+-\d+$/.test(part)) {
+        mode = 'range';
+        var rp = part.split('-');
+        var fromInput = field.querySelector('[data-role="from"]');
+        var toInput = field.querySelector('[data-role="to"]');
+        if (fromInput) fromInput.value = rp[0];
+        if (toInput) toInput.value = rp[1];
+      } else {
+        mode = 'specific';
+        // Parse values and set chips/text
+        var chips = field.querySelectorAll('.cjg-chip');
+        if (chips.length > 0) {
+          // Deselect all
+          chips.forEach(function (c) { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+          // Parse and select matching
+          var vals = parseField(part, fieldMins[i], fieldMaxs[i], fieldNames2[i], fieldOffsets[i]);
+          if (vals) {
+            vals.forEach(function (v) {
+              var chip = field.querySelector('.cjg-chip[data-val="' + v + '"]');
+              if (chip) { chip.classList.add('active'); chip.setAttribute('aria-pressed', 'true'); }
+            });
+          }
+          // Ensure at least one selected
+          var anyActive = field.querySelector('.cjg-chip.active');
+          if (!anyActive && chips.length > 0) {
+            chips[0].classList.add('active'); chips[0].setAttribute('aria-pressed', 'true');
+          }
+        } else {
+          var textInput = field.querySelector('[data-role="values"]');
+          if (textInput) textInput.value = part;
+        }
+      }
+
+      // Switch to mode
+      field.querySelectorAll('.cjg-mode-btn').forEach(function (b) { b.classList.remove('active'); });
+      var modeBtn = field.querySelector('.cjg-mode-btn[data-mode="' + mode + '"]');
+      if (modeBtn) modeBtn.classList.add('active');
+      field.querySelectorAll('.cjg-mode-panel').forEach(function (panel) {
+        panel.classList.toggle('hidden', panel.getAttribute('data-panel') !== mode);
+      });
+      updateFieldPreview(field);
+    }
+    rebuildExpression();
+  }
+
+  // Preset buttons
+  document.querySelectorAll('.cjg-btn-preset').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      loadPreset(btn.getAttribute('data-expr'));
+    });
+  });
+
+  // Copy
+  var copyTimeout;
+  document.getElementById('cjg-copy').addEventListener('click', function () {
+    var val = document.getElementById('cjg-expr').value;
+    var btn = document.getElementById('cjg-copy');
+    navigator.clipboard.writeText(val).then(function () {
+      btn.textContent = t.copied;
+      clearTimeout(copyTimeout);
+      copyTimeout = setTimeout(function () { btn.textContent = t.copy; }, 1800);
+    });
+    window.trackTool && window.trackTool('cron_job_generator', 'copy');
+  });
+
+  // Initialize all field previews and build initial expression
+  document.querySelectorAll('.cjg-field').forEach(function (field) {
+    updateFieldPreview(field);
+  });
+  rebuildExpression();
+
+  // Load default preset
+  loadPreset('0 9 * * 1-5');
+})();
+</script>
+
+<style>
+  .cjg-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  /* Presets */
+  .cjg-presets { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+  .cjg-preset-label { font-size: 0.78rem; color: var(--color-text-muted); font-weight: 600; }
+  .cjg-btn-preset {
+    padding: 0.2rem 0.65rem; font-size: 0.78rem;
+    background: var(--color-bg-icon); color: var(--color-primary);
+    border: 1px solid #c7d7ff; border-radius: 4px; cursor: pointer;
+  }
+  .cjg-btn-preset:hover { background: #dbe6ff; }
+
+  /* Fields container */
+  .cjg-fields {
+    border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden;
+  }
+  .cjg-field { border-bottom: 1px solid var(--color-border); }
+  .cjg-field:last-child { border-bottom: none; }
+
+  .cjg-field-header {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: 0.5rem; padding: 0.55rem 0.75rem;
+    background: var(--color-bg-secondary);
+  }
+  .cjg-field-label {
+    display: flex; align-items: baseline; gap: 0.4rem;
+    font-size: 0.82rem; font-weight: 700; color: var(--color-text-secondary);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    min-width: 80px;
+  }
+  .cjg-field-range { font-size: 0.72rem; font-weight: 400; color: var(--color-text-muted); text-transform: none; letter-spacing: 0; }
+
+  /* Mode tabs */
+  .cjg-modes { display: flex; gap: 0; border: 1px solid var(--color-border); border-radius: 5px; overflow: hidden; }
+  .cjg-mode-btn {
+    padding: 0.22rem 0.6rem; font-size: 0.75rem; cursor: pointer;
+    background: var(--color-bg); color: var(--color-text-secondary);
+    border: none; border-right: 1px solid var(--color-border);
+  }
+  .cjg-mode-btn:last-child { border-right: none; }
+  .cjg-mode-btn:hover { background: var(--color-bg-icon); }
+  .cjg-mode-btn.active { background: var(--color-primary); color: #fff; }
+
+  /* Field body */
+  .cjg-field-body { padding: 0.55rem 0.75rem; display: flex; align-items: center; gap: 0; min-height: 2.5rem; }
+  .hidden { display: none !important; }
+
+  .cjg-mode-panel { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; width: 100%; }
+
+  .cjg-expr-badge {
+    font-family: var(--font-mono); font-size: 0.85rem;
+    background: var(--color-bg-secondary); color: var(--color-primary);
+    padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid #c7d7ff;
+    min-width: 3rem; text-align: center;
+  }
+
+  .cjg-inline-label { font-size: 0.78rem; color: var(--color-text-muted); }
+
+  .cjg-num {
+    width: 4rem; font-family: var(--font-mono); font-size: 0.9rem;
+    padding: 0.25rem 0.4rem; border: 1px solid var(--color-border);
+    border-radius: 4px; background: var(--color-bg); color: var(--color-text);
+    text-align: center;
+  }
+  .cjg-num:focus { outline: none; border-color: var(--color-primary); }
+
+  .cjg-text {
+    flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 0.85rem;
+    padding: 0.28rem 0.5rem; border: 1px solid var(--color-border);
+    border-radius: 4px; background: var(--color-bg); color: var(--color-text);
+  }
+  .cjg-text:focus { outline: none; border-color: var(--color-primary); }
+
+  /* Chips */
+  .cjg-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; flex: 1; }
+  .cjg-chip {
+    padding: 0.15rem 0.45rem; font-size: 0.78rem; cursor: pointer;
+    border: 1px solid var(--color-border); border-radius: 4px;
+    background: var(--color-bg); color: var(--color-text-secondary);
+  }
+  .cjg-chip:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .cjg-chip.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+
+  /* Output */
+  .cjg-output { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .cjg-output-row { display: flex; flex-direction: column; gap: 0.3rem; }
+  .cjg-output-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+
+  .cjg-expr-wrap { display: flex; gap: 0.5rem; }
+  .cjg-expr-input {
+    flex: 1; font-family: var(--font-mono); font-size: 1rem;
+    padding: 0.5rem 0.75rem; border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm); background: var(--color-bg-secondary);
+    color: var(--color-text); letter-spacing: 0.08em;
+    cursor: default;
+  }
+
+  .cjg-btn-copy {
+    padding: 0.4rem 1rem; font-size: 0.85rem; cursor: pointer;
+    background: var(--color-primary); color: #fff;
+    border: none; border-radius: var(--radius-sm); white-space: nowrap;
+  }
+  .cjg-btn-copy:hover { opacity: 0.9; }
+
+  .cjg-desc-row { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+  .cjg-desc-label { font-size: 0.78rem; font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  .cjg-desc-text { font-size: 0.95rem; color: var(--color-text); font-weight: 500; }
+
+  .cjg-next-section { display: flex; flex-direction: column; gap: 0.3rem; }
+  .cjg-next-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .cjg-next-list {
+    margin: 0; padding: 0 0 0 1.4rem;
+    font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.8;
+    color: var(--color-text);
+  }
+
+  /* Dark mode */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cjg-btn-preset { border-color: #4b5e8a; }
+    :root:not([data-theme="light"]) .cjg-btn-preset:hover { background: rgba(99,102,241,0.15); }
+    :root:not([data-theme="light"]) .cjg-expr-badge { border-color: #4b5e8a; }
+    :root:not([data-theme="light"]) .cjg-chip { border-color: #3a4a6a; }
+  }
+  [data-theme="dark"] .cjg-btn-preset { border-color: #4b5e8a; }
+  [data-theme="dark"] .cjg-btn-preset:hover { background: rgba(99,102,241,0.15); }
+  [data-theme="dark"] .cjg-expr-badge { border-color: #4b5e8a; }
+  [data-theme="dark"] .cjg-chip { border-color: #3a4a6a; }
+</style>
