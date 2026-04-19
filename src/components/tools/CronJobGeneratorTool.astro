@@ -605,53 +605,52 @@ const L = labels[lang] ?? labels['en'];
     var dowSet = dowVals ? {} : null;
     if (dowVals) dowVals.forEach(function (v) { dowSet[v] = true; });
     if (!minVals || !hrVals || !domVals || !monVals) return null;
+    // POSIX: when both dom and dow are explicitly constrained (non-wildcard), use OR semantics.
+    var posixOr = fields[2] !== '*' && fields[4] !== '*' && fields[4] !== '?' && dowSet !== null;
     var runs = [];
     var d = new Date();
     if (utc) d.setUTCSeconds(0, 0); else d.setSeconds(0, 0);
     d = new Date(d.getTime() + 60000);
-    // Safety cap; field-aware skips mean each iteration advances at minimum
-    // one minute but typically jumps days/months — 100 000 is ample.
     var limit = 100000;
     while (runs.length < count && limit-- > 0) {
-      var mon = utc ? d.getUTCMonth() + 1 : d.getMonth() + 1;
+      var yr = utc ? d.getUTCFullYear() : d.getFullYear();
+      var mo = utc ? d.getUTCMonth() : d.getMonth();
+      var mon = mo + 1;
+      var dom = utc ? d.getUTCDate() : d.getDate();
+      var dow = utc ? d.getUTCDay() : d.getDay();
+      var hr = utc ? d.getUTCHours() : d.getHours();
+      var min = utc ? d.getUTCMinutes() : d.getMinutes();
       if (monVals.indexOf(mon) === -1) {
         var nm = nextAbove(monVals, mon);
-        var yr = utc ? d.getUTCFullYear() : d.getFullYear();
         d = nm !== null
           ? (utc ? new Date(Date.UTC(yr, nm - 1, 1, 0, 0, 0)) : new Date(yr, nm - 1, 1, 0, 0, 0))
           : (utc ? new Date(Date.UTC(yr + 1, monVals[0] - 1, 1, 0, 0, 0)) : new Date(yr + 1, monVals[0] - 1, 1, 0, 0, 0));
         continue;
       }
-      var dom = utc ? d.getUTCDate() : d.getDate();
-      var dow = utc ? d.getUTCDay() : d.getDay();
-      if (domVals.indexOf(dom) === -1 || (dowSet && !dowSet[dow])) {
-        var yr2 = utc ? d.getUTCFullYear() : d.getFullYear();
-        var mo2 = utc ? d.getUTCMonth() : d.getMonth();
-        var dy2 = dom + 1;
-        d = utc ? new Date(Date.UTC(yr2, mo2, dy2, 0, 0, 0)) : new Date(yr2, mo2, dy2, 0, 0, 0);
+      var domOk = domVals.indexOf(dom) !== -1;
+      var dowOk = !dowSet || dowSet[dow];
+      // POSIX OR: accept if either dom or dow matches when both are constrained;
+      // otherwise require both available constraints to pass.
+      var dayOk = posixOr ? (domOk || dowOk) : (domOk && dowOk);
+      if (!dayOk) {
+        var nd = (!posixOr && fields[2] !== '*') ? nextAbove(domVals, dom) : null;
+        d = nd !== null
+          ? (utc ? new Date(Date.UTC(yr, mo, nd, 0, 0, 0)) : new Date(yr, mo, nd, 0, 0, 0))
+          : (utc ? new Date(Date.UTC(yr, mo, dom + 1, 0, 0, 0)) : new Date(yr, mo, dom + 1, 0, 0, 0));
         continue;
       }
-      var hr = utc ? d.getUTCHours() : d.getHours();
       if (hrVals.indexOf(hr) === -1) {
         var nh = nextAbove(hrVals, hr);
-        var yr3 = utc ? d.getUTCFullYear() : d.getFullYear();
-        var mo3 = utc ? d.getUTCMonth() : d.getMonth();
-        var dy3 = utc ? d.getUTCDate() : d.getDate();
         d = nh !== null
-          ? (utc ? new Date(Date.UTC(yr3, mo3, dy3, nh, 0, 0)) : new Date(yr3, mo3, dy3, nh, 0, 0))
-          : (utc ? new Date(Date.UTC(yr3, mo3, dy3 + 1, 0, 0, 0)) : new Date(yr3, mo3, dy3 + 1, 0, 0, 0));
+          ? (utc ? new Date(Date.UTC(yr, mo, dom, nh, 0, 0)) : new Date(yr, mo, dom, nh, 0, 0))
+          : (utc ? new Date(Date.UTC(yr, mo, dom + 1, 0, 0, 0)) : new Date(yr, mo, dom + 1, 0, 0, 0));
         continue;
       }
-      var min = utc ? d.getUTCMinutes() : d.getMinutes();
       if (minVals.indexOf(min) === -1) {
         var nmin = nextAbove(minVals, min);
-        var yr4 = utc ? d.getUTCFullYear() : d.getFullYear();
-        var mo4 = utc ? d.getUTCMonth() : d.getMonth();
-        var dy4 = utc ? d.getUTCDate() : d.getDate();
-        var hr4 = utc ? d.getUTCHours() : d.getHours();
         d = nmin !== null
-          ? (utc ? new Date(Date.UTC(yr4, mo4, dy4, hr4, nmin, 0)) : new Date(yr4, mo4, dy4, hr4, nmin, 0))
-          : (utc ? new Date(Date.UTC(yr4, mo4, dy4, hr4 + 1, 0, 0)) : new Date(yr4, mo4, dy4, hr4 + 1, 0, 0));
+          ? (utc ? new Date(Date.UTC(yr, mo, dom, hr, nmin, 0)) : new Date(yr, mo, dom, hr, nmin, 0))
+          : (utc ? new Date(Date.UTC(yr, mo, dom, hr + 1, 0, 0)) : new Date(yr, mo, dom, hr + 1, 0, 0));
         continue;
       }
       runs.push(new Date(d));
