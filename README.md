@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 93 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 94 tools and growing.
 
 ## Tools
 
@@ -102,6 +102,7 @@
 | CSS Gradient Generator | [/tools/css-gradient-generator](https://zerotool.dev/tools/css-gradient-generator) |
 | Nano ID Generator | [/tools/nano-id-generator](https://zerotool.dev/tools/nano-id-generator) |
 | Cookie String Parser | [/tools/cookie-parser](https://zerotool.dev/tools/cookie-parser) |
+| CSS Clip-Path Generator | [/tools/css-clip-path-generator](https://zerotool.dev/tools/css-clip-path-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
