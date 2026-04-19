@@ -89,6 +89,7 @@ const icons: Record<string, string> = {
   'bcrypt-generator': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1" fill="currentColor" stroke="none"/></svg>',
   'html-to-markdown': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 4-4 4 4"/><path d="M7 5v14"/><rect x="13" y="5" width="8" height="4" rx="1"/><path d="M13 13h4"/><path d="M13 17h6"/></svg>',
   'glassmorphism-generator': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><rect x="7" y="7" width="10" height="10" rx="2" stroke-opacity="0.4"/><path d="M3 9h18" stroke-opacity="0.3"/></svg>',
+  'css-triangle-generator': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 22 21H2z"/></svg>',
 };
 
 export function getToolIcon(slug: string): string {

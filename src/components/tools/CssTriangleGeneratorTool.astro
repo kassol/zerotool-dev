@@ -1,0 +1,480 @@
+---
+// CssTriangleGeneratorTool — CSS triangle via border hack
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    direction: 'Direction',
+    width: 'Width (px)',
+    height: 'Height (px)',
+    color: 'Color',
+    preview: 'Preview',
+    outputLabel: 'Generated CSS',
+    htmlLabel: 'HTML Usage',
+    copy: 'Copy',
+    copied: 'Copied!',
+    top: 'Top', right: 'Right', bottom: 'Bottom', left: 'Left',
+    topLeft: 'Top-Left', topRight: 'Top-Right',
+    bottomLeft: 'Bottom-Left', bottomRight: 'Bottom-Right',
+  },
+  zh: {
+    direction: '方向',
+    width: '宽度 (px)',
+    height: '高度 (px)',
+    color: '颜色',
+    preview: '预览',
+    outputLabel: '生成的 CSS',
+    htmlLabel: 'HTML 用法',
+    copy: '复制',
+    copied: '已复制！',
+    top: '上', right: '右', bottom: '下', left: '左',
+    topLeft: '左上', topRight: '右上',
+    bottomLeft: '左下', bottomRight: '右下',
+  },
+  ja: {
+    direction: '方向',
+    width: '幅 (px)',
+    height: '高さ (px)',
+    color: '色',
+    preview: 'プレビュー',
+    outputLabel: '生成された CSS',
+    htmlLabel: 'HTML 使用例',
+    copy: 'コピー',
+    copied: 'コピーしました！',
+    top: '上', right: '右', bottom: '下', left: '左',
+    topLeft: '左上', topRight: '右上',
+    bottomLeft: '左下', bottomRight: '右下',
+  },
+  ko: {
+    direction: '방향',
+    width: '너비 (px)',
+    height: '높이 (px)',
+    color: '색상',
+    preview: '미리보기',
+    outputLabel: '생성된 CSS',
+    htmlLabel: 'HTML 사용법',
+    copy: '복사',
+    copied: '복사됨!',
+    top: '위', right: '오른쪽', bottom: '아래', left: '왼쪽',
+    topLeft: '왼쪽 위', topRight: '오른쪽 위',
+    bottomLeft: '왼쪽 아래', bottomRight: '오른쪽 아래',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="ctg-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+>
+  <!-- Controls -->
+  <div class="ctg-controls">
+    <!-- Direction -->
+    <div class="ctg-field ctg-field--dir">
+      <label class="ctg-label">{L.direction}</label>
+      <div class="ctg-dir-grid">
+        <button class="ctg-dir-btn" data-dir="top-left" type="button" title={L.topLeft}>◤</button>
+        <button class="ctg-dir-btn ctg-dir-btn--active" data-dir="top" type="button" title={L.top}>▲</button>
+        <button class="ctg-dir-btn" data-dir="top-right" type="button" title={L.topRight}>◥</button>
+        <button class="ctg-dir-btn" data-dir="left" type="button" title={L.left}>◀</button>
+        <div class="ctg-dir-center"></div>
+        <button class="ctg-dir-btn" data-dir="right" type="button" title={L.right}>▶</button>
+        <button class="ctg-dir-btn" data-dir="bottom-left" type="button" title={L.bottomLeft}>◣</button>
+        <button class="ctg-dir-btn" data-dir="bottom" type="button" title={L.bottom}>▼</button>
+        <button class="ctg-dir-btn" data-dir="bottom-right" type="button" title={L.bottomRight}>◢</button>
+      </div>
+    </div>
+
+    <div class="ctg-fields-right">
+      <!-- Width -->
+      <div class="ctg-field">
+        <label class="ctg-label" for="ctg-width">{L.width}</label>
+        <input id="ctg-width" class="ctg-num-input" type="number" min="1" max="500" value="100" />
+      </div>
+      <!-- Height -->
+      <div class="ctg-field">
+        <label class="ctg-label" for="ctg-height">{L.height}</label>
+        <input id="ctg-height" class="ctg-num-input" type="number" min="1" max="500" value="100" />
+      </div>
+      <!-- Color -->
+      <div class="ctg-field">
+        <label class="ctg-label" for="ctg-hex">{L.color}</label>
+        <div class="ctg-color-row">
+          <input id="ctg-picker" class="ctg-color-picker" type="color" value="#3b82f6" />
+          <input id="ctg-hex" class="ctg-hex-input" type="text" value="#3b82f6" maxlength="7" spellcheck="false" autocomplete="off" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview -->
+  <div class="ctg-section">
+    <div class="ctg-section-label">{L.preview}</div>
+    <div class="ctg-preview-wrap">
+      <div id="ctg-preview" class="ctg-preview-el"></div>
+    </div>
+  </div>
+
+  <!-- CSS Output -->
+  <div class="ctg-section">
+    <div class="ctg-output-header">
+      <span class="ctg-section-label">{L.outputLabel}</span>
+      <button id="ctg-copy-css" class="btn-copy" type="button" aria-label={L.copy}>{L.copy}</button>
+    </div>
+    <pre id="ctg-pre-css" class="ctg-pre"><code id="ctg-code-css" class="ctg-code"></code></pre>
+  </div>
+
+  <!-- HTML Usage -->
+  <div class="ctg-section">
+    <div class="ctg-output-header">
+      <span class="ctg-section-label">{L.htmlLabel}</span>
+      <button id="ctg-copy-html" class="btn-copy" type="button" aria-label={L.copy}>{L.copy}</button>
+    </div>
+    <pre class="ctg-pre"><code id="ctg-code-html" class="ctg-code">&lt;div class="triangle"&gt;&lt;/div&gt;</code></pre>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var wrap = document.currentScript
+        ? document.currentScript.closest('.ctg-wrap')
+        : document.querySelector('.ctg-wrap');
+
+      var COPY_LABEL   = wrap.dataset.copy;
+      var COPIED_LABEL = wrap.dataset.copied;
+
+      var widthEl   = document.getElementById('ctg-width');
+      var heightEl  = document.getElementById('ctg-height');
+      var pickerEl  = document.getElementById('ctg-picker');
+      var hexEl     = document.getElementById('ctg-hex');
+      var previewEl = document.getElementById('ctg-preview');
+      var codeCssEl = document.getElementById('ctg-code-css');
+      var copyCssBtn  = document.getElementById('ctg-copy-css');
+      var copyHtmlBtn = document.getElementById('ctg-copy-html');
+
+      var currentDir = 'top';
+
+      /* Direction buttons */
+      var dirBtns = wrap.querySelectorAll('.ctg-dir-btn');
+      dirBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          dirBtns.forEach(function (b) { b.classList.remove('ctg-dir-btn--active'); });
+          btn.classList.add('ctg-dir-btn--active');
+          currentDir = btn.dataset.dir;
+          update();
+        });
+      });
+
+      /* Color sync */
+      pickerEl.addEventListener('input', function () {
+        hexEl.value = pickerEl.value;
+        update();
+      });
+      hexEl.addEventListener('input', function () {
+        var v = hexEl.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+          pickerEl.value = v;
+          update();
+        }
+      });
+
+      widthEl.addEventListener('input', update);
+      heightEl.addEventListener('input', update);
+
+      function computeBorders(dir, w, h, color) {
+        var half_w = Math.round(w / 2);
+        var half_h = Math.round(h / 2);
+        switch (dir) {
+          case 'top':
+            return [
+              'border-left: ' + half_w + 'px solid transparent',
+              'border-right: ' + half_w + 'px solid transparent',
+              'border-bottom: ' + h + 'px solid ' + color,
+            ];
+          case 'bottom':
+            return [
+              'border-left: ' + half_w + 'px solid transparent',
+              'border-right: ' + half_w + 'px solid transparent',
+              'border-top: ' + h + 'px solid ' + color,
+            ];
+          case 'left':
+            return [
+              'border-top: ' + half_h + 'px solid transparent',
+              'border-bottom: ' + half_h + 'px solid transparent',
+              'border-right: ' + w + 'px solid ' + color,
+            ];
+          case 'right':
+            return [
+              'border-top: ' + half_h + 'px solid transparent',
+              'border-bottom: ' + half_h + 'px solid transparent',
+              'border-left: ' + w + 'px solid ' + color,
+            ];
+          case 'top-left':
+            return [
+              'border-top: ' + h + 'px solid ' + color,
+              'border-right: ' + w + 'px solid transparent',
+            ];
+          case 'top-right':
+            return [
+              'border-top: ' + h + 'px solid ' + color,
+              'border-left: ' + w + 'px solid transparent',
+            ];
+          case 'bottom-left':
+            return [
+              'border-bottom: ' + h + 'px solid ' + color,
+              'border-right: ' + w + 'px solid transparent',
+            ];
+          case 'bottom-right':
+            return [
+              'border-bottom: ' + h + 'px solid ' + color,
+              'border-left: ' + w + 'px solid transparent',
+            ];
+          default:
+            return [];
+        }
+      }
+
+      function update() {
+        var w     = Math.max(1, parseInt(widthEl.value) || 100);
+        var h     = Math.max(1, parseInt(heightEl.value) || 100);
+        var color = pickerEl.value;
+        var borders = computeBorders(currentDir, w, h, color);
+
+        /* Apply to preview */
+        previewEl.style.width  = '0';
+        previewEl.style.height = '0';
+        previewEl.style.borderTop    = '';
+        previewEl.style.borderBottom = '';
+        previewEl.style.borderLeft   = '';
+        previewEl.style.borderRight  = '';
+        borders.forEach(function (rule) {
+          var parts = rule.split(':');
+          var prop  = parts[0].trim();
+          var val   = parts.slice(1).join(':').trim();
+          var camel = prop.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+          previewEl.style[camel] = val;
+        });
+
+        /* Build CSS text */
+        var lines = ['.triangle {'];
+        lines.push('  width: 0;');
+        lines.push('  height: 0;');
+        borders.forEach(function (b) { lines.push('  ' + b + ';'); });
+        lines.push('}');
+        var raw = lines.join('\n');
+
+        var highlighted = raw
+          .replace(/(\{|\})/g,         '<span class="ctg-hl-brace">$1</span>')
+          .replace(/(\.triangle)/g,     '<span class="ctg-hl-sel">$1</span>')
+          .replace(/([\w-]+)(\s*:)/g,   '<span class="ctg-hl-prop">$1</span>$2')
+          .replace(/(:)(\s*)([^;{}\n]+)(;)/g, '$1$2<span class="ctg-hl-val">$3</span><span class="ctg-hl-semi">$4</span>');
+        codeCssEl.innerHTML = highlighted;
+
+        window.trackTool && window.trackTool('css-triangle-generator', 'generate');
+      }
+
+      function makeCopyHandler(btn, getTextFn) {
+        btn.addEventListener('click', function () {
+          var text = getTextFn();
+          if (!text) return;
+          navigator.clipboard.writeText(text).then(function () {
+            btn.textContent = COPIED_LABEL;
+            btn.setAttribute('aria-label', COPIED_LABEL);
+            setTimeout(function () {
+              btn.textContent = COPY_LABEL;
+              btn.setAttribute('aria-label', COPY_LABEL);
+            }, 1500);
+          });
+        });
+      }
+
+      makeCopyHandler(copyCssBtn, function () { return codeCssEl.textContent; });
+      makeCopyHandler(copyHtmlBtn, function () { return '<div class="triangle"></div>'; });
+
+      update();
+    })();
+  </script>
+</div>
+
+<style>
+  .ctg-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .ctg-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .ctg-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .ctg-field--dir { flex-shrink: 0; }
+
+  .ctg-fields-right {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    flex: 1;
+    align-items: flex-start;
+  }
+
+  .ctg-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .ctg-num-input,
+  .ctg-hex-input {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 100px;
+    box-sizing: border-box;
+  }
+
+  .ctg-num-input:focus,
+  .ctg-hex-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* Direction grid */
+  .ctg-dir-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 36px);
+    grid-template-rows: repeat(3, 36px);
+    gap: 3px;
+  }
+
+  .ctg-dir-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+  }
+
+  .ctg-dir-btn:hover {
+    background: var(--color-bg);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  .ctg-dir-btn--active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+  }
+
+  .ctg-dir-center {
+    width: 36px;
+    height: 36px;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+  }
+
+  /* Color row */
+  .ctg-color-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .ctg-color-picker {
+    width: 36px;
+    height: 32px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    background: var(--color-bg-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  /* Preview */
+  .ctg-section { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .ctg-section-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .ctg-output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .ctg-preview-wrap {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  /* dark mode preview */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .ctg-preview-wrap {
+      background: #1e2128;
+    }
+  }
+  [data-theme="dark"] .ctg-preview-wrap { background: #1e2128; }
+
+  .ctg-preview-el {
+    width: 0;
+    height: 0;
+  }
+
+  /* Code output */
+  .ctg-pre {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+
+  .ctg-code { font-family: inherit; }
+
+  .ctg-hl-sel   { color: #7c3aed; font-weight: 600; }
+  .ctg-hl-brace { color: var(--color-text-secondary); }
+  .ctg-hl-prop  { color: #0369a1; }
+  .ctg-hl-val   { color: #057a55; }
+  .ctg-hl-semi  { color: var(--color-text-secondary); }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .ctg-hl-sel  { color: #a78bfa; }
+    :root:not([data-theme="light"]) .ctg-hl-prop { color: #38bdf8; }
+    :root:not([data-theme="light"]) .ctg-hl-val  { color: #34d399; }
+  }
+  [data-theme="dark"] .ctg-hl-sel  { color: #a78bfa; }
+  [data-theme="dark"] .ctg-hl-prop { color: #38bdf8; }
+  [data-theme="dark"] .ctg-hl-val  { color: #34d399; }
+
+  @media (max-width: 480px) {
+    .ctg-controls { flex-direction: column; }
+    .ctg-preview-wrap { min-height: 120px; }
+  }
+</style>
