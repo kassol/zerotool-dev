@@ -1,0 +1,167 @@
+---
+title: "ULIDジェネレーター：ULIDとは何か、ソートでUUIDより優れている理由"
+description: "ULID vs UUID——違いを理解し、ULIDをいつ使うか、生成方法、分散システムにおけるULIDの順序付け問題の解決方法を解説。"
+pubDate: 2026-04-19
+lang: "ja"
+translationSlug: "ulid-generator-guide"
+tags: ["ulid", "uuid", "distributed-systems", "developer-tools", "database"]
+ogImage: /og/blog-ulid-generator-guide-ja.png
+---
+
+UUIDはほとんどのアプリケーションのデフォルトの一意識別子です。しかしUUID v4は——ランダム設計上——順序付けされていません。データベースに挿入された行は挿入順に保存されません。インデックスが断片化します。クエリが遅くなります。**ULID**はまさにこの問題を解決するために設計されました。
+
+**[ULIDを生成する →](/tools/ulid-generator)**
+
+## ULIDとは何か
+
+ULIDは**Universally Unique Lexicographically Sortable Identifier**（汎用一意辞書順ソート可能識別子）の略です。2016年にAlizain Feerastaによって作成され、公開仕様で定義されています。
+
+ULIDはこのようなものです：
+
+```
+01HQ7V5J3Z2QK8MNRPXTYW9E4B
+```
+
+26文字、大文字、[Crockfordのbase32](https://www.crockford.com/base32.html)アルファベットを使用（視覚的な曖昧さを避けるためI、L、O、Uを除外）。
+
+### 構造
+
+```
+ 01HQ7V5J3Z  2QK8MNRPXTYW9E4B
+|-----------|-----------------|
+  タイムスタンプ    ランダム性
+  48ビット         80ビット
+```
+
+- **タイムスタンプ（48ビット）**：Unixエポックからのミリ秒。西暦10895年まで有効。
+- **ランダム性（80ビット）**：暗号論的にランダム。1ミリ秒あたり約1.2×10²⁴の可能な値。
+
+## ULID vs UUID：主な違い
+
+| 特徴 | UUID v4 | ULID |
+|---|---|---|
+| 長さ | 36文字（ハイフンあり） | 26文字 |
+| ソート可能 | いいえ | はい（辞書順） |
+| タイムスタンプ埋め込み | いいえ | はい |
+| 衝突確率 | 極めて低い | 極めて低い |
+| URLセーフ | いいえ（ハイフンを含む） | はい |
+| 仕様 | RFC 4122 | ULID仕様 |
+
+重要な違い：ULIDは作成時刻でソートされます。ULIDキーのテーブルに1000行挿入すると、プライマリキーインデックスがシーケンシャルに保たれます。これが重要な場面：
+
+- **Bツリーインデックス**：シーケンシャルな挿入は同じページにヒットし、断片化を減らす。
+- **ページネーション**：別の`created_at`カラムなしに効率的なカーソルとして`WHERE id > :cursor`が使える。
+- **ログファイル**：ファイル名でソート = 時刻でソート。
+- **メッセージキュー**：別のシーケンス番号なしに自然な順序付け。
+
+## ULID vs UUID v7
+
+UUID v7（RFC 9562、2024年確定）も最初の48ビットにミリ秒タイムスタンプを埋め込んでいます——ソート可能にするために。これはULIDの成功への直接的な対応です。
+
+| 特徴 | ULID | UUID v7 |
+|---|---|---|
+| フォーマット | 26文字Base32 | 36文字16進数（ハイフンあり） |
+| RFC標準 | いいえ | はい（RFC 9562） |
+| DBネイティブ型 | TEXTまたはBINARY | UUID型（PostgreSQL） |
+
+データベースにネイティブのUUIDサポートがある場合（PostgreSQLの`uuid`型）、UUID v7の方が便利かもしれません。文字列ベースのシステムで作業する場合や短いIDが必要な場合、ULIDは依然として良い選択です。
+
+## 同一ミリ秒内のモノトニシティ
+
+同一ミリ秒内に複数のULIDが生成された場合、タイムスタンプ部分は同じになります。ULID仕様はモノトニシティ拡張を定義しています：同一ミリ秒内の後続のULIDごとにランダムコンポーネントを1ずつインクリメントします。これにより高スループット（毎秒数百万の挿入）でも順序付けが保証されます。
+
+## コードでのULID生成
+
+### JavaScript / TypeScript
+
+```bash
+npm install ulid
+```
+
+```ts
+import { ulid } from 'ulid';
+
+const id = ulid();
+// "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+
+// カスタムタイムスタンプを使用
+const id2 = ulid(Date.now());
+```
+
+### Go
+
+```bash
+go get github.com/oklog/ulid/v2
+```
+
+```go
+import (
+    "math/rand"
+    "time"
+    "github.com/oklog/ulid/v2"
+)
+
+ms := ulid.Timestamp(time.Now())
+entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
+id := ulid.MustNew(ms, entropy)
+fmt.Println(id) // "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+```
+
+### Python
+
+```bash
+pip install python-ulid
+```
+
+```python
+from ulid import ULID
+
+id = ULID()
+print(str(id))  # "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
+print(id.timestamp())  # datetimeオブジェクト
+```
+
+## データベースへのULIDの保存
+
+### PostgreSQL
+
+```sql
+-- テキストとして（26バイト）
+CREATE TABLE events (
+  id TEXT PRIMARY KEY,
+  ...
+);
+```
+
+PostgreSQLはULIDをネイティブに理解しませんが、`TEXT`または`BYTEA`として保存できます。多くのチームはわかりやすさのために`TEXT`を使用します。26バイトのコストはクエリのシンプルさと比べると無視できます。
+
+### MySQL / SQLite
+
+同じアプローチ——`CHAR(26)`または`VARCHAR(26)`として保存します。固定幅文字列なので`CHAR(26)`の方がわずかに効率的です。
+
+## ULIDのデコード
+
+タイムスタンプは最初の10文字に埋め込まれています。抽出できます：
+
+```ts
+import { decodeTime } from 'ulid';
+
+const ts = decodeTime('01HQ7V5J3Z2QK8MNRPXTYW9E4B');
+console.log(new Date(ts)); // 作成日時
+```
+
+これはデバッグに有用です：`created_at`を照会せずにIDだけからレコードがいつ作成されたかを正確に確認できます。
+
+## ULIDをいつ使うか
+
+- 高挿入レートのテーブルでインデックス断片化が懸念される場合
+- イベントログ、監査証跡、または追記が多いワークロード
+- 別のタイムスタンプカラムなしに時刻順のIDが必要なシステム
+- UUIDより短いURL安全で人間が読めるIDが必要なAPI
+
+**[ULIDを今すぐ生成する →](/tools/ulid-generator)**
+
+## 関連ツール
+
+- [UUIDジェネレーター →](/tools/uuid-generator) — UUID v1/v4/v7を生成する
+- [タイムスタンプコンバーター →](/tools/timestamp-converter) — Unix タイムスタンプを変換する
