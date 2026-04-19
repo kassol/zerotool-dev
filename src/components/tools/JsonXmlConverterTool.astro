@@ -1,0 +1,382 @@
+---
+// JsonXmlConverterTool — bidirectional JSON ↔ XML converter (pure browser, no deps)
+---
+
+<div>
+  <div class="jx-wrap">
+    <div class="jx-panels">
+      <div class="jx-panel">
+        <label for="jx-json">
+          <span>JSON</span>
+          <button id="jx-copy-json" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="jx-json"
+          placeholder='{"name":"Alice","age":30,"hobbies":["reading","hiking"]}'
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="jx-panel">
+        <label for="jx-xml">
+          <span>XML</span>
+          <button id="jx-copy-xml" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="jx-xml"
+          placeholder="<root><name>Alice</name><age>30</age></root>"
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="jx-options">
+      <label class="jx-option-label">
+        <span data-i18n="rootElement">Root element</span>
+        <input id="jx-root" type="text" value="root" maxlength="64" spellcheck="false" />
+      </label>
+      <label class="jx-option-label jx-option-check">
+        <input id="jx-pretty" type="checkbox" checked />
+        <span data-i18n="prettyPrint">Pretty print</span>
+      </label>
+    </div>
+
+    <div class="jx-actions">
+      <button id="jx-to-xml" class="btn-primary" data-i18n="jsonToXml">JSON → XML</button>
+      <button id="jx-to-json" class="btn-primary" data-i18n="xmlToJson">XML → JSON</button>
+      <button id="jx-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="jx-status" class="jx-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          copy: 'Copy', copied: 'Copied!', clear: 'Clear',
+          jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
+          rootElement: 'Root element', prettyPrint: 'Pretty print',
+          convertedToXml: 'Converted JSON to XML.',
+          convertedToJson: 'Converted XML to JSON.',
+          invalidJson: 'Invalid JSON',
+          invalidXml: 'Invalid XML',
+          emptyInput: 'Input is empty.',
+          rootRequired: 'Root element name cannot be empty.'
+        },
+        zh: {
+          copy: '复制', copied: '已复制！', clear: '清除',
+          jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
+          rootElement: '根元素名', prettyPrint: '格式化输出',
+          convertedToXml: '已将 JSON 转换为 XML。',
+          convertedToJson: '已将 XML 转换为 JSON。',
+          invalidJson: '无效 JSON',
+          invalidXml: '无效 XML',
+          emptyInput: '输入为空。',
+          rootRequired: '根元素名不能为空。'
+        },
+        ja: {
+          copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
+          jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
+          rootElement: 'ルート要素', prettyPrint: '整形出力',
+          convertedToXml: 'JSONをXMLに変換しました。',
+          convertedToJson: 'XMLをJSONに変換しました。',
+          invalidJson: '無効なJSON',
+          invalidXml: '無効なXML',
+          emptyInput: '入力が空です。',
+          rootRequired: 'ルート要素名は空にできません。'
+        },
+        ko: {
+          copy: '복사', copied: '복사됨!', clear: '지우기',
+          jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
+          rootElement: '루트 요소', prettyPrint: '보기 좋게 출력',
+          convertedToXml: 'JSON을 XML로 변환했습니다.',
+          convertedToJson: 'XML을 JSON으로 변환했습니다.',
+          invalidJson: '유효하지 않은 JSON',
+          invalidXml: '유효하지 않은 XML',
+          emptyInput: '입력이 비어 있습니다.',
+          rootRequired: '루트 요소 이름은 비울 수 없습니다.'
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.jx-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+
+      var jsonEl = document.getElementById('jx-json');
+      var xmlEl = document.getElementById('jx-xml');
+      var rootEl = document.getElementById('jx-root');
+      var prettyEl = document.getElementById('jx-pretty');
+      var statusEl = document.getElementById('jx-status');
+      var copyJsonBtn = document.getElementById('jx-copy-json');
+      var copyXmlBtn = document.getElementById('jx-copy-xml');
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'jx-status ' + (isError ? 'error' : 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'jx-status';
+      }
+
+      /* ── JSON → XML ── */
+      function jsonToXml(val, tagName, indent, pretty) {
+        var pad = pretty ? indent : '';
+        var nl = pretty ? '\n' : '';
+        var childIndent = pretty ? indent + '  ' : '';
+        var open = '<' + tagName + '>';
+        var close = '</' + tagName + '>';
+
+        if (val === null || val === undefined) {
+          return pad + open + close;
+        }
+        if (Array.isArray(val)) {
+          return val.map(function (item) {
+            return jsonToXml(item, tagName, indent, pretty);
+          }).join(nl);
+        }
+        if (typeof val === 'object') {
+          var children = Object.keys(val).map(function (key) {
+            var safeName = key.replace(/[^a-zA-Z0-9_\-\.]/g, '_') || '_key';
+            return jsonToXml(val[key], safeName, childIndent, pretty);
+          }).join(nl);
+          return pad + open + nl + children + nl + pad + close;
+        }
+        return pad + open + String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + close;
+      }
+
+      function convertJsonToXml() {
+        var raw = jsonEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        var rootName = (rootEl.value.trim() || 'root').replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+        if (!rootName) { setStatus(t.rootRequired, true); return; }
+        var pretty = prettyEl.checked;
+        try {
+          var data = JSON.parse(raw);
+          var inner;
+          var nl = pretty ? '\n' : '';
+          if (Array.isArray(data)) {
+            inner = data.map(function (item) {
+              return jsonToXml(item, 'item', pretty ? '  ' : '', pretty);
+            }).join(nl);
+          } else if (typeof data === 'object' && data !== null) {
+            inner = Object.keys(data).map(function (key) {
+              var safeName = key.replace(/[^a-zA-Z0-9_\-\.]/g, '_') || '_key';
+              return jsonToXml(data[key], safeName, pretty ? '  ' : '', pretty);
+            }).join(nl);
+          } else {
+            inner = (pretty ? '  ' : '') + String(data).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          }
+          var decl = '<?xml version="1.0" encoding="UTF-8"?>' + nl;
+          xmlEl.value = decl + '<' + rootName + '>' + nl + inner + nl + '</' + rootName + '>';
+          setStatus(t.convertedToXml, false);
+        } catch (e) {
+          setStatus(t.invalidJson + ': ' + e.message, true);
+        }
+      }
+
+      /* ── XML → JSON ── */
+      function xmlNodeToJson(node) {
+        if (node.nodeType === 3) { // Text node
+          var text = node.nodeValue.trim();
+          return text === '' ? undefined : text;
+        }
+        if (node.nodeType !== 1) return undefined; // Not element
+
+        var obj = {};
+        var children = Array.from(node.childNodes).filter(function (n) {
+          return n.nodeType === 1 || (n.nodeType === 3 && n.nodeValue.trim() !== '');
+        });
+
+        if (children.length === 0) {
+          return node.textContent;
+        }
+
+        var elemChildren = children.filter(function (n) { return n.nodeType === 1; });
+        var textChildren = children.filter(function (n) { return n.nodeType === 3; });
+
+        if (elemChildren.length === 0 && textChildren.length > 0) {
+          return node.textContent;
+        }
+
+        elemChildren.forEach(function (child) {
+          var childVal = xmlNodeToJson(child);
+          var tag = child.tagName;
+          if (obj.hasOwnProperty(tag)) {
+            if (!Array.isArray(obj[tag])) obj[tag] = [obj[tag]];
+            obj[tag].push(childVal);
+          } else {
+            obj[tag] = childVal;
+          }
+        });
+
+        return obj;
+      }
+
+      function convertXmlToJson() {
+        var raw = xmlEl.value.trim();
+        if (!raw) { clearStatus(); return; }
+        var pretty = prettyEl.checked;
+        try {
+          var parser = new DOMParser();
+          var doc = parser.parseFromString(raw, 'application/xml');
+          var parseErr = doc.querySelector('parsererror');
+          if (parseErr) throw new Error(parseErr.textContent.split('\n')[0]);
+          var root = doc.documentElement;
+          var result = {};
+          result[root.tagName] = xmlNodeToJson(root);
+          jsonEl.value = JSON.stringify(result, null, pretty ? 2 : undefined);
+          setStatus(t.convertedToJson, false);
+        } catch (e) {
+          setStatus(t.invalidXml + ': ' + e.message, true);
+        }
+      }
+
+      /* ── Real-time (debounced 400ms) ── */
+      var _jxJsonTimer = null;
+      jsonEl.addEventListener('input', function () {
+        clearTimeout(_jxJsonTimer);
+        _jxJsonTimer = setTimeout(convertJsonToXml, 400);
+      });
+
+      var _jxXmlTimer = null;
+      xmlEl.addEventListener('input', function () {
+        clearTimeout(_jxXmlTimer);
+        _jxXmlTimer = setTimeout(convertXmlToJson, 400);
+      });
+
+      /* ── Buttons ── */
+      document.getElementById('jx-to-xml').addEventListener('click', function () {
+        convertJsonToXml();
+        window.trackTool && window.trackTool('json-xml-converter', 'json_to_xml');
+      });
+
+      document.getElementById('jx-to-json').addEventListener('click', function () {
+        convertXmlToJson();
+        window.trackTool && window.trackTool('json-xml-converter', 'xml_to_json');
+      });
+
+      document.getElementById('jx-clear').addEventListener('click', function () {
+        jsonEl.value = '';
+        xmlEl.value = '';
+        clearStatus();
+      });
+
+      copyJsonBtn.addEventListener('click', function () {
+        if (!jsonEl.value) return;
+        navigator.clipboard.writeText(jsonEl.value).then(function () {
+          copyJsonBtn.textContent = t.copied;
+          setTimeout(function () { copyJsonBtn.textContent = t.copy; }, 1500);
+        });
+      });
+
+      copyXmlBtn.addEventListener('click', function () {
+        if (!xmlEl.value) return;
+        navigator.clipboard.writeText(xmlEl.value).then(function () {
+          copyXmlBtn.textContent = t.copied;
+          setTimeout(function () { copyXmlBtn.textContent = t.copy; }, 1500);
+        });
+      });
+
+      /* ── Keyboard shortcuts ── */
+      jsonEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          document.getElementById('jx-to-xml').click();
+        }
+      });
+      xmlEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          document.getElementById('jx-to-json').click();
+        }
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .jx-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .jx-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .jx-panels { grid-template-columns: 1fr; }
+  }
+
+  .jx-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .jx-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .jx-panel textarea {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .jx-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .jx-options {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .jx-option-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+  }
+
+  .jx-option-label input[type="text"] {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    width: 8rem;
+  }
+
+  .jx-option-label input[type="text"]:focus { outline: none; border-color: var(--color-primary); }
+
+  .jx-option-check { cursor: pointer; }
+
+  .jx-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .jx-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jx-status.success { color: #057a55; }
+  .jx-status.error { color: #c0392b; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .jx-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .jx-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .jx-status.success { color: #34d399; }
+  [data-theme="dark"] .jx-status.error { color: #f87171; }
+</style>
