@@ -1,12 +1,26 @@
 ---
 import { t } from '../i18n/utils';
+import { allTools, getToolName } from '../data/tools';
 
 interface Props {
   lang: 'en' | 'zh' | 'ja' | 'ko';
 }
 const { lang } = Astro.props;
 const placeholder = t(lang, 'search.placeholder');
-const noResultsText = t(lang, 'search.noResults');
+const noResultsPrefix = t(lang, 'search.noResultsPrefix');
+const tryKeyword = t(lang, 'search.tryKeyword');
+const clearSearch = t(lang, 'search.clearSearch');
+
+const toolBase = lang === 'en' ? '/tools/' : `/${lang}/tools/`;
+const popularSlugs = ['json-formatter', 'base64', 'uuid-generator', 'url-encode', 'password-generator'];
+const suggestions = popularSlugs.map(slug => {
+  const tool = allTools.find(t => t.slug === slug);
+  return {
+    slug,
+    name: tool ? getToolName(tool, lang) : slug,
+    href: `${toolBase}${slug}/`,
+  };
+});
 ---
 
 <div class="search-wrap">
@@ -23,7 +37,20 @@ const noResultsText = t(lang, 'search.noResults');
       spellcheck="false"
     />
   </div>
-  <p id="no-results" class="no-results" hidden>{noResultsText}</p>
+  <div id="no-results" class="no-results" hidden>
+    <svg class="no-results-icon" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      <line x1="8" y1="11" x2="14" y2="11"/>
+    </svg>
+    <p class="no-results-title">{noResultsPrefix} &ldquo;<span id="no-results-query"></span>&rdquo;</p>
+    <p class="no-results-sub">{tryKeyword}</p>
+    <ul class="no-results-suggestions">
+      {suggestions.map(s => (
+        <li><a href={s.href}>{s.name}</a></li>
+      ))}
+    </ul>
+    <button id="clear-search" class="no-results-clear" type="button">{clearSearch}</button>
+  </div>
 </div>
 
 <script is:inline>
@@ -31,6 +58,25 @@ const noResultsText = t(lang, 'search.noResults');
     var input = document.getElementById('tool-search');
     var noResults = document.getElementById('no-results');
     if (!input || !noResults) return;
+
+    function setQuery(q) {
+      var el = document.getElementById('no-results-query');
+      if (el) el.textContent = q;
+    }
+
+    var clearBtn = document.getElementById('clear-search');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function () {
+        input.value = '';
+        window.__ztSearch = '';
+        if (typeof window.__ztApply === 'function') {
+          window.__ztApply();
+        } else {
+          filter();
+        }
+        input.focus();
+      });
+    }
 
     var timer;
     input.addEventListener('input', function () {
@@ -59,6 +105,7 @@ const noResultsText = t(lang, 'search.noResults');
         }
       }
       noResults.hidden = visible > 0;
+      if (visible === 0) setQuery(q);
     }
   })();
 </script>
@@ -110,9 +157,75 @@ const noResultsText = t(lang, 'search.noResults');
   }
 
   .no-results {
-    margin: 2rem 0 0;
+    margin: 2.5rem 0 0;
     text-align: center;
+    padding: 0 1rem;
+  }
+
+  .no-results-icon {
+    color: var(--color-text-muted);
+    margin-bottom: 0.75rem;
+  }
+
+  .no-results-title {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--color-text);
+    margin: 0 0 0.4rem;
+  }
+
+  .no-results-sub {
+    font-size: 0.875rem;
     color: var(--color-text-secondary);
-    font-size: 0.95rem;
+    margin: 0 0 1rem;
+  }
+
+  .no-results-suggestions {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .no-results-suggestions a {
+    display: inline-block;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-primary);
+    text-decoration: none;
+    background: var(--color-bg);
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .no-results-suggestions a:hover {
+    border-color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    text-decoration: none;
+  }
+
+  .no-results-clear {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.45rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .no-results-clear:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 5%, transparent);
   }
 </style>
