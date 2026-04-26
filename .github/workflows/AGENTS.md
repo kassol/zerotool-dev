@@ -8,8 +8,19 @@ GitHub Actions 工作流。两条 pipeline，目标分离明确。
 
 | 文件 | 触发 | 作用 | 写权限 |
 |------|------|------|--------|
+| `ci.yml` | PR 到 `master` + push 到 `master` | audit job → build job，PR 阻塞合并 | 默认 read |
 | `deploy.yml` | push tag `v*` | 构建并部署到 Cloudflare Pages | `deployments: write` |
 | `update-readme.yml` | push 到 `master` 且 `src/data/tools.ts` 变化 | 自动重写 README 工具表并 commit 回 master | `contents: write` |
+
+## ci.yml 详解
+
+**触发**：`pull_request.branches: [master]` 与 `push.branches: [master]`。配 `concurrency.cancel-in-progress` 取消同 ref 上的旧 run。
+
+**两个 job 串行**：
+1. `audit` — `node scripts/audit.mjs`，覆盖 13 维度（tools schema / icons / route / content/tools / category 对齐 / base pages / i18n / blog 命名 / blog frontmatter / blog EN baseline / blog 多语言 / redirects 格式 / 组件孤儿）。任何 FAIL 退出 1
+2. `build` — `npm run build`，依赖 audit 通过。注入空字符串到 PUBLIC_* env（生产值仅 deploy.yml 使用）。失败时上传 `dist/` artifact 便于排查
+
+**新增检查维度**：只改 `scripts/audit.mjs`，不需要动 workflow。CI 自动覆盖。
 
 ## deploy.yml 详解
 
@@ -50,3 +61,4 @@ CF Pages dashboard 也有同名 env 副本（用于 preview 部署）。改 secr
 ## 变更日志
 
 - 2026-04-26 — 初版
+- 2026-04-26 — 加入 `ci.yml`（audit + build 双 job），覆盖 PR 与 master push

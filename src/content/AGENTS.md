@@ -1,0 +1,110 @@
+# AGENTS.md — src/content/
+
+## 职责
+
+Astro Content Collections 的根目录。包含两个 collection：`blog` 与 `tools`。Schema 由 `config.ts` 定义。
+
+> **位置说明**：本文件位于 `src/content/`（collection 根目录的父级）而非 `src/content/blog/`。原因：`type: 'content'` collection 默认收录目录内所有 `.md/.mdx`，把 AGENTS.md 放进去会被当成博客条目导致 schema 校验失败。AGENTS.md 必须留在 `src/content/` 这一级，按内容覆盖到所有子 collection。
+
+## 子 collection 概览
+
+| Collection | 路径 | 文件数 | 用途 |
+|------------|------|--------|------|
+| `blog` | `src/content/blog/*.mdx` | 多语言文章 | 博客内容（4 语言） |
+| `tools` | `src/content/tools/{slug}/{lang}.mdx` | 99 工具 × 4 语言 | 每个工具页面的 SEO 文案 + FAQ + 正文 |
+
+## blog collection
+
+### 命名约定（关键）
+
+| 语言 | 文件名格式 | 示例 |
+|------|-----------|------|
+| EN（默认） | `{base-slug}.mdx` 或 `{base-slug}-guide.mdx` | `csv-json-guide.mdx` |
+| ZH | `{base-slug}-zh.mdx` 或 `{base-slug}-guide-zh.mdx` | `csv-json-guide-zh.mdx` |
+| JA | `{base-slug}-ja.mdx` 或 `{base-slug}-guide-ja.mdx` | `csv-json-guide-ja.mdx` |
+| KO | `{base-slug}-ko.mdx` 或 `{base-slug}-guide-ko.mdx` | `csv-json-guide-ko.mdx` |
+
+构建时 `scripts/generate-blog-redirects.mjs` 扫描所有 `*-{zh|ja|ko}.mdx`，向 `dist/_redirects` 追加：
+
+```
+/{lang}/blog/{base-slug}/ /{lang}/blog/{base-slug}-{lang}/ 301
+/{lang}/blog/{base-slug}  /{lang}/blog/{base-slug}-{lang}/ 301
+```
+
+文件名错了 → redirect 链路断、hreflang 失效、Search Console 报「无替代页面」。
+
+### Frontmatter 约定
+
+```yaml
+---
+title: "..."
+description: "..."
+pubDate: 2026-04-20
+updatedDate: 2026-04-25      # 可选，sitemap lastmod 优先用这个
+heroImage: "/og/{slug}.png"  # 可选
+lang: "en"                   # en/zh/ja/ko，必须与文件名后缀一致
+canonicalSlug: "csv-json-guide"  # 可选，跨语言变体组的根 slug
+---
+```
+
+`pubDate` 与 `updatedDate` 是 `astro.config.mjs` 中 sitemap `serialize()` 提取 `lastmod` 的来源，缺失会回落到当前时间。
+
+### blog 模块规范
+
+- 跨语言一致性：每篇 EN 文章应有对应的 ZH/JA/KO 版本（至少 ZH）。`src/components/SEO.astro` 会按磁盘存在性输出 hreflang，缺哪个就少哪个
+- slug 唯一性：`base-slug` 在所有语言间共享；新增前先 grep 全目录避免冲突
+- MDX 内嵌组件：可以 `{import Component from '...'}`，但避免运行时依赖
+- 图片：放 `public/og/` 或 `public/`，文章中用绝对路径
+
+## tools collection
+
+每个工具一个目录，目录下有 4 个语言版本的 `.mdx`：
+
+```
+src/content/tools/{slug}/
+├── en.mdx
+├── zh.mdx
+├── ja.mdx
+└── ko.mdx
+```
+
+### Frontmatter 约定
+
+```yaml
+---
+seoTitle: "..."          # 必填，工具页 <title>
+seoDescription: "..."    # 必填，工具页 <meta description>
+faqItems:                # 可选，结构化 FAQ
+  - question: "..."
+    answer: "..."
+---
+```
+
+正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。
+
+### tools 模块规范
+
+- 4 语言强制齐全：缺任一语言 `[slug].astro` 会在 `getEntry('tools', '${slug}/${lang}')` 处 throw error，build 直接挂
+- 正文要原创，避免 4 语言间机翻雷同（影响 hreflang 评估）
+- FAQ 数量建议 3-5 条，太少 SEO 弱，太多挤占阅读
+
+## 共同约束
+
+- **不要在 `src/content/blog/` 或 `src/content/tools/` 下放 `.md/.mdx` 之外的辅助文件**：会被 collection 当成数据条目，schema 校验失败 build 挂掉
+- 若需要补充元数据/工具脚本，放 `scripts/` 或更上层目录
+- Astro 5 的 `type: 'content'` 是 legacy API，未来可能迁移到 `loader: glob({ pattern: '**/*.mdx' })`，迁移时需把所有 `entry.slug` 改为 `entry.id`
+
+## 依赖关系
+
+- 上游：`config.ts`（schema 定义 + collection 注册）
+- 下游：
+  - `src/pages/blog/[slug].astro` 等 8 个 blog 路由
+  - `src/pages/{lang}/tools/[slug].astro` 4 个 tool 路由
+  - `src/components/SEO.astro` 用 blog collection 算 hreflang
+  - `astro.config.mjs` sitemap `serialize()` 用 frontmatter 日期
+  - `scripts/generate-blog-redirects.mjs` 用文件名生成 redirect
+  - `scripts/audit.mjs` 静态校验文件命名 + frontmatter + 多语言齐全
+
+## 变更日志
+
+- 2026-04-26 — 初版（合并自 `src/content/blog/AGENTS.md`，迁移到此处规避 Astro collection schema 冲突）

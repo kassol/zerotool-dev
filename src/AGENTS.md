@@ -9,9 +9,9 @@
 ```
 src/
 ├── components/         通用组件（顶层）+ tools/（每个工具的交互组件）
-├── content/
-│   ├── blog/           MDX 博客文章（多语言后缀文件）→ 见子 AGENTS.md
-│   ├── tools/          工具内容集合（当前未启用，预留扩展）
+├── content/            Content Collections（blog + tools），见 content/AGENTS.md
+│   ├── blog/           MDX 博客文章（多语言后缀文件）
+│   ├── tools/          工具内容（每 slug × 4 lang）
 │   └── config.ts       Content Collections schema
 ├── data/               tools.ts 注册表 + icons.ts → 见子 AGENTS.md
 ├── i18n/               UI 文案 JSON（en/zh/ja/ko）+ utils.ts
