@@ -375,41 +375,52 @@ function checkI18nKeys() {
 }
 
 function checkBlog() {
+  // After B-migration: src/content/blog/{baseSlug}/{lang}.mdx
   const dir = 'src/content/blog';
-  const files = listFiles(dir).filter(f => f.endsWith('.mdx') || f.endsWith('.md'));
-
+  const baseSlugs = new Map();   // baseSlug → Set of langs
   const namingIssues = [];
   const frontmatterIssues = [];
-  const baseSlugs = new Map();   // baseSlug → Set of langs
+  let totalFiles = 0;
 
-  for (const file of files) {
-    const m = file.match(/^(.+?)(?:-(zh|ja|ko))?\.mdx?$/);
-    if (!m) {
-      namingIssues.push(`${file}: unrecognized name`);
+  for (const entry of listFiles(dir)) {
+    const abs = join(ROOT, dir, entry);
+    if (!statSync(abs).isDirectory()) {
+      namingIssues.push(`${entry}: loose file at blog root (must live in {baseSlug}/{lang}.mdx structure)`);
       continue;
     }
-    const baseSlug = m[1];
-    const lang = m[2] || 'en';
+    const baseSlug = entry;
+    const langs = new Set();
 
-    if (!baseSlugs.has(baseSlug)) baseSlugs.set(baseSlug, new Set());
-    baseSlugs.get(baseSlug).add(lang);
+    for (const file of listFiles(`${dir}/${entry}`)) {
+      if (!/\.mdx?$/.test(file)) continue;
+      totalFiles++;
+      const m = file.match(/^(en|zh|ja|ko)\.mdx?$/);
+      if (!m) {
+        namingIssues.push(`${entry}/${file}: filename must be {en|zh|ja|ko}.mdx`);
+        continue;
+      }
+      const lang = m[1];
+      langs.add(lang);
 
-    // Frontmatter check
-    const src = read(`${dir}/${file}`);
-    const fm = parseFrontmatter(src);
-    if (!fm) {
-      frontmatterIssues.push(`${file}: missing or malformed frontmatter`);
-      continue;
+      const src = read(`${dir}/${entry}/${file}`);
+      const fm = parseFrontmatter(src);
+      if (!fm) {
+        frontmatterIssues.push(`${entry}/${file}: missing or malformed frontmatter`);
+        continue;
+      }
+      if (!fm.title) frontmatterIssues.push(`${entry}/${file}: missing title`);
+      if (!fm.description) frontmatterIssues.push(`${entry}/${file}: missing description`);
+      if (!fm.pubDate) frontmatterIssues.push(`${entry}/${file}: missing pubDate`);
+
+      const fmLang = fm.lang || 'en';
+      if (fmLang !== lang) {
+        frontmatterIssues.push(`${entry}/${file}: frontmatter lang="${fmLang}" but filename implies "${lang}"`);
+      }
     }
-    if (!fm.title) frontmatterIssues.push(`${file}: missing title`);
-    if (!fm.description) frontmatterIssues.push(`${file}: missing description`);
-    if (!fm.pubDate) frontmatterIssues.push(`${file}: missing pubDate`);
-
-    const fmLang = fm.lang || 'en';
-    if (fmLang !== lang) {
-      frontmatterIssues.push(`${file}: frontmatter lang="${fmLang}" but filename suffix implies "${lang}"`);
-    }
+    baseSlugs.set(baseSlug, langs);
   }
+  // Provide a synthetic file count for downstream PASS message
+  const files = { length: totalFiles };
 
   if (namingIssues.length === 0) pass('blog_naming', `blog file naming (${files.length} files)`);
   else fail('blog_naming', 'blog file naming convention', namingIssues);

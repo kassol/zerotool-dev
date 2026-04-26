@@ -7,23 +7,25 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-// Build blog slug set for hreflang pairing in sitemap
+// Build blog slug + date maps from new structure: {baseSlug}/{lang}.mdx
+// Keys are `{baseSlug}/{lang}` to match Astro Content Collection entry slugs.
 const blogDir = fileURLToPath(new URL('./src/content/blog', import.meta.url));
-const blogSlugs = new Set(
-  fs.readdirSync(blogDir)
-    .filter(f => /\.mdx?$/.test(f))
-    .map(f => f.replace(/\.mdx?$/, ''))
-);
-
-// Build blog date map for sitemap lastmod
+const blogSlugs = new Set();
 const blogDates = new Map();
-for (const file of fs.readdirSync(blogDir).filter(f => /\.mdx?$/.test(f))) {
-  const content = fs.readFileSync(join(blogDir, file), 'utf-8');
-  const match = content.match(/updatedDate:\s*([\d-]+)/)
-    || content.match(/pubDate:\s*([\d-]+)/);
-  if (match) {
-    const slug = file.replace(/\.mdx?$/, '');
-    blogDates.set(slug, new Date(match[1]));
+for (const dirent of fs.readdirSync(blogDir, { withFileTypes: true })) {
+  if (!dirent.isDirectory()) continue;
+  const baseSlug = dirent.name;
+  const subDir = join(blogDir, baseSlug);
+  for (const file of fs.readdirSync(subDir)) {
+    if (!/\.mdx?$/.test(file)) continue;
+    const lang = file.replace(/\.mdx?$/, '');
+    const key = `${baseSlug}/${lang}`;
+    blogSlugs.add(key);
+
+    const content = fs.readFileSync(join(subDir, file), 'utf-8');
+    const match = content.match(/updatedDate:\s*([\d-]+)/)
+      || content.match(/pubDate:\s*([\d-]+)/);
+    if (match) blogDates.set(key, new Date(match[1]));
   }
 }
 
@@ -51,44 +53,36 @@ export default defineConfig({
       serialize(item) {
         const { pathname } = new URL(item.url);
 
-        // Language configs: regex, url builder, slug builder (base → lang slug)
+        // Each blog URL is `/{lang?}/blog/{baseSlug}/`. Collection entry keys are `{baseSlug}/{lang}`.
         const LANGS = [
-          { lang: 'en', re: /^\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/blog/${s}/`, slug: (b) => b },
-          { lang: 'zh', re: /^\/zh\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/zh/blog/${s}/`, slug: (b) => `${b}-zh` },
-          { lang: 'ja', re: /^\/ja\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/ja/blog/${s}/`, slug: (b) => `${b}-ja` },
-          { lang: 'ko', re: /^\/ko\/blog\/([^/]+)\/$/, url: (s) => `${SITE}/ko/blog/${s}/`, slug: (b) => `${b}-ko` },
+          { lang: 'en', re: /^\/blog\/([^/]+)\/$/, urlPrefix: '' },
+          { lang: 'zh', re: /^\/zh\/blog\/([^/]+)\/$/, urlPrefix: '/zh' },
+          { lang: 'ja', re: /^\/ja\/blog\/([^/]+)\/$/, urlPrefix: '/ja' },
+          { lang: 'ko', re: /^\/ko\/blog\/([^/]+)\/$/, urlPrefix: '/ko' },
         ];
 
-        // Detect which language this URL belongs to and derive base slug
         let baseSlug = null;
         let currentLang = null;
         for (const { lang, re } of LANGS) {
           const m = pathname.match(re);
           if (m) {
-            const suffix = lang === 'en' ? '' : `-${lang}`;
-            if (suffix && !m[1].endsWith(suffix)) break;
-            baseSlug = suffix ? m[1].slice(0, -suffix.length) : m[1];
+            baseSlug = m[1];
             currentLang = lang;
             break;
           }
         }
 
         if (baseSlug) {
-          // Build hreflang links for all language variants that exist on disk
           const links = LANGS
-            .map(({ lang, url, slug }) => ({ lang, url: url(slug(baseSlug)), slug: slug(baseSlug) }))
-            .filter(({ slug }) => blogSlugs.has(slug))
-            .map(({ lang, url }) => ({ url, lang }));
+            .filter(({ lang }) => blogSlugs.has(`${baseSlug}/${lang}`))
+            .map(({ lang, urlPrefix }) => ({ url: `${SITE}${urlPrefix}/blog/${baseSlug}/`, lang }));
           if (links.length > 1) item.links = links;
 
-          // lastmod: prefer current lang's date, fall back to EN
-          const currentSlug = currentLang === 'en' ? baseSlug : `${baseSlug}-${currentLang}`;
-          const date = blogDates.get(currentSlug) || blogDates.get(baseSlug);
+          const date = blogDates.get(`${baseSlug}/${currentLang}`) || blogDates.get(`${baseSlug}/en`);
           if (date) item.lastmod = date;
           return item;
         }
 
-        // Non-blog pages: use build date
         item.lastmod = new Date();
         return item;
       },

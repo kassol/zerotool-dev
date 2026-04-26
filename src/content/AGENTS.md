@@ -10,28 +10,32 @@ Astro Content Collections 的根目录。包含两个 collection：`blog` 与 `t
 
 | Collection | 路径 | 文件数 | 用途 |
 |------------|------|--------|------|
-| `blog` | `src/content/blog/*.mdx` | 多语言文章 | 博客内容（4 语言） |
+| `blog` | `src/content/blog/{base-slug}/{lang}.mdx` | 多语言文章（每篇一目录） | 博客内容（4 语言） |
 | `tools` | `src/content/tools/{slug}/{lang}.mdx` | 99 工具 × 4 语言 | 每个工具页面的 SEO 文案 + FAQ + 正文 |
 
 ## blog collection
 
 ### 命名约定（关键）
 
-| 语言 | 文件名格式 | 示例 |
-|------|-----------|------|
-| EN（默认） | `{base-slug}.mdx` 或 `{base-slug}-guide.mdx` | `csv-json-guide.mdx` |
-| ZH | `{base-slug}-zh.mdx` 或 `{base-slug}-guide-zh.mdx` | `csv-json-guide-zh.mdx` |
-| JA | `{base-slug}-ja.mdx` 或 `{base-slug}-guide-ja.mdx` | `csv-json-guide-ja.mdx` |
-| KO | `{base-slug}-ko.mdx` 或 `{base-slug}-guide-ko.mdx` | `csv-json-guide-ko.mdx` |
-
-构建时 `scripts/generate-blog-redirects.mjs` 扫描所有 `*-{zh|ja|ko}.mdx`，向 `dist/_redirects` 追加：
+每篇文章一个目录，目录名是 base slug；目录下放 4 个语言文件：
 
 ```
-/{lang}/blog/{base-slug}/ /{lang}/blog/{base-slug}-{lang}/ 301
-/{lang}/blog/{base-slug}  /{lang}/blog/{base-slug}-{lang}/ 301
+src/content/blog/csv-json-guide/
+├── en.mdx
+├── zh.mdx
+├── ja.mdx
+└── ko.mdx
 ```
 
-文件名错了 → redirect 链路断、hreflang 失效、Search Console 报「无替代页面」。
+URL 由 base slug 决定：
+- `/blog/csv-json-guide/` → en.mdx
+- `/zh/blog/csv-json-guide/` → zh.mdx
+- `/ja/blog/csv-json-guide/` → ja.mdx
+- `/ko/blog/csv-json-guide/` → ko.mdx
+
+> 历史：迁移前曾用平铺命名 `{base-slug}-{lang}.mdx`（如 `csv-json-guide-zh.mdx`），URL 是 `/zh/blog/csv-json-guide-zh/`。`scripts/generate-blog-redirects.mjs` 现在生成反向 301（旧 URL → 新 URL）兼容已索引外链；几个月后可移除。
+
+迁移驱动因素：旧设计需要每篇 × 3 lang × 2 trailing variants ≈ 540 条 base→lang `_redirects` 规则，叠加工具 alias 后总数突破 CF Pages 2100 条上限，导致末尾规则被截断 → 已索引 URL 404。新设计把这部分结构化到路由层，`_redirects` 只剩兼容层。
 
 ### Frontmatter 约定
 
@@ -42,8 +46,8 @@ description: "..."
 pubDate: 2026-04-20
 updatedDate: 2026-04-25      # 可选，sitemap lastmod 优先用这个
 heroImage: "/og/{slug}.png"  # 可选
-lang: "en"                   # en/zh/ja/ko，必须与文件名后缀一致
-canonicalSlug: "csv-json-guide"  # 可选，跨语言变体组的根 slug
+lang: "en"                   # en/zh/ja/ko，必须与文件名（en.mdx/zh.mdx/...）一致
+canonicalSlug: "csv-json-guide"  # 可选，仅用于跨语言关联标记；URL 已由目录名决定
 ---
 ```
 
@@ -108,3 +112,4 @@ faqItems:                # 可选，结构化 FAQ
 ## 变更日志
 
 - 2026-04-26 — 初版（合并自 `src/content/blog/AGENTS.md`，迁移到此处规避 Astro collection schema 冲突）
+- 2026-04-27 — 博客结构 B-migration：平铺 `{slug}-{lang}.mdx` → 目录 `{slug}/{lang}.mdx`，对齐 tools collection 风格；`_redirects` 大幅瘦身（~2470 → ~1100 条），脱离 CF Pages 2100 限制
