@@ -259,6 +259,11 @@ function checkRouteRegistration(toolSlugs) {
       if (!imports.has(comp)) issues.push(`${slug}: maps to "${comp}" which is not imported`);
     }
 
+    // Every map key must correspond to a real tool slug (catches alias dead code)
+    for (const slug of map.keys()) {
+      if (!toolSlugs.has(slug)) issues.push(`${slug}: map entry has no matching slug in tools.ts (dead alias — handle aliases via _redirects instead)`);
+    }
+
     if (issues.length === 0) pass(`route:${route}`, route);
     else fail(`route:${route}`, route, issues);
   }
