@@ -1,0 +1,230 @@
+---
+title: "Markdown オンライン Lint：コミット前にフォーマットエラーを潰す"
+description: "ブラウザ上でMarkdownをLint。MD001・MD013・MD041など40以上のmarkdownlintルールに対応し、ルールIDと行番号付きで即座にフィードバック。"
+pubDate: 2026-04-15
+lang: "ja"
+translationSlug: "markdown-linter-guide"
+tags: ["markdown lint", "markdown フォーマット検査", "markdownlint", "developer-tools", "markdown"]
+ogImage: /og/blog-markdown-linter-guide-ja.png
+---
+
+**Markdown オンライン Lint** を使えば、見出しレベルの飛び、長すぎる行、行末の余分な空白といったフォーマット問題を、ドキュメントがリポジトリに入る前に洗い出せます。Node.jsもCLIもCIパイプラインも不要、貼り付けて秒で結果が出ます。
+
+[Markdown Linter を試す →](/tools/markdown-linter)
+
+## なぜ Markdown を Lint するのか
+
+Markdownのレンダラーは寛容に作られていて、ソースが多少壊れていても何かしら表示してくれます。この寛容さこそが、Markdownの品質が時間とともに静かに劣化していく原因です：
+
+- 見出しが飛ぶ：`# H1` の直後に `### H3`、間の `## H2` が抜けている
+- 行が200文字以上に伸びてdiffが読めなくなる
+- ハードタブが混入し、レンダラーごとに表示がぶれる
+- 行末の空白が一部レンダラーで意図しない改行を引き起こす
+- 裸URLにアクセシブルなリンクテキストがない
+
+これらはビルドを壊さないので積み重なります。ローカルでもCIでもいいのでLintステップを挟むと、複数人で書くドキュメントの一貫性が保てます。
+
+## markdownlint の主要ルール
+
+このオンラインツールは [markdownlint](https://github.com/DavidAnson/markdownlint) をベースにしています。Markdownエコシステムの事実上の標準ルールセットです。開発者がよく当たるルールを順に見ていきます。
+
+### MD001 — 見出しレベルは1段ずつしか上げられない
+
+```markdown
+<!-- 誤り: H1 から H3 にジャンプ -->
+# My Document
+
+### Getting Started
+
+<!-- 正しい -->
+# My Document
+
+## Getting Started
+```
+
+見出しの階層はスクリーンリーダー、目次生成ツール、ドキュメント検索インデックスのいずれにとっても意味を持ちます。H1からH3への飛びは存在しないはずの構造ギャップを示してしまい、ほぼ確実に書き間違いです。
+
+### MD013 — 行長制限
+
+デフォルトの上限は80文字。設定可能で、散文中心のドキュメントでは120に緩めるか丸ごと無効化されることが多いです。コードドキュメントでは短い行を保つほど、サイドバイサイドのdiffが読みやすくなります。
+
+```markdown
+<!-- デフォルト80文字でフラグ -->
+This is a very long line that explains something in great detail and will be flagged by the line length rule.
+
+<!-- 可読性のため分割 -->
+This is a shorter line that explains something in great detail
+and wraps cleanly at a reasonable column width.
+```
+
+日本語は1文字あたりの幅が広いので、`line_length` を120以上に設定するか、本文には無効化しておくのが現実的です。
+
+### MD022 — 見出しの前後には空行が必要
+
+```markdown
+<!-- 誤り -->
+Some paragraph text.
+## Heading
+More text here.
+
+<!-- 正しい -->
+Some paragraph text.
+
+## Heading
+
+More text here.
+```
+
+### MD031 — フェンス付きコードブロックの前後には空行が必要
+
+````markdown
+<!-- 誤り -->
+Here is some code:
+```bash
+echo "hello"
+```
+And here is more text.
+
+<!-- 正しい -->
+Here is some code:
+
+```bash
+echo "hello"
+```
+
+And here is more text.
+````
+
+### MD041 — 最初の行はトップレベル見出しであるべき
+
+独立したドキュメントとして扱われるファイルは `# H1` で始めるべきです。READMEの断片や他ドキュメントに取り込まれる部分テンプレートでは、このルールを無効化するのが一般的です。
+
+### MD049 / MD050 — 強調記号スタイルの統一
+
+`*italic*` と `_italic_`、`**bold**` と `__bold__` のいずれかに統一させるルール。複数人で同じドキュメントを編集するプロジェクトで混在しがちな問題です。
+
+## 実プロジェクトでよく出る違反
+
+### README ファイル
+
+```markdown
+<!-- README にありがちな問題 -->
+#Getting Started     <!-- MD018: # の後ろにスペースがない -->
+Run `npm install`.
+Run `npm start`.    <!-- MD032: テキストに挟まれたリストは前後に空行が必要 -->
+- Build: `npm run build`
+- Test: `npm test`
+```
+
+### API ドキュメント
+
+```markdown
+<!-- API ドキュメントは行が長くなりがち -->
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `userId` | `string` | Yes | The unique identifier for the user account in the system |
+```
+
+上のテーブル行は80文字を超える可能性が高いです。APIテーブルではMD013を無効化するか、上限を引き上げてください。
+
+### CHANGELOG ファイル
+
+```markdown
+## [1.2.0] - 2026-04-01
+### Added
+- New feature X
+### Fixed
+- Bug in Y
+
+## [1.1.0] - 2026-03-01  <!-- MD024: 同じ見出し内容が複数回出現 ("Added", "Fixed") -->
+### Added
+- Feature Z
+```
+
+MD024（重複見出し禁止）はCHANGELOGの慣用フォーマットと衝突します。解決策は `.markdownlint.json` でMD024に `allow_different_nesting: true` を設定することです。
+
+## markdownlint の設定
+
+### プロジェクト設定ファイル
+
+リポジトリのルートに `.markdownlint.json` を作成します：
+
+```json
+{
+  "default": true,
+  "MD013": {
+    "line_length": 120,
+    "tables": false,
+    "code_blocks": false
+  },
+  "MD024": {
+    "allow_different_nesting": true
+  },
+  "MD041": false
+}
+```
+
+プロジェクトごとによくある調整：
+- 散文中心のドキュメントではMD013を完全に無効化：`"MD013": false`
+- どこでもH1を許容：`"MD041": false`
+- 異なるネストレベルでの重複見出しを許可：`"MD024": { "allow_different_nesting": true }`
+
+### CLI 連携
+
+```bash
+npm install -g markdownlint-cli2
+markdownlint-cli2 "**/*.md" "#node_modules"
+```
+
+### Pre-commit フック
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/DavidAnson/markdownlint-cli2-action
+    rev: v16
+    hooks:
+      - id: markdownlint-cli2
+        args: ["--config", ".markdownlint.json"]
+```
+
+### GitHub Actions
+
+```yaml
+name: Lint Markdown
+on: [push, pull_request]
+
+jobs:
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: "**/*.md"
+          config: ".markdownlint.json"
+```
+
+## Markdown Linter とプレビューの違い
+
+Lintとプレビューはそれぞれ別の問題を扱います：
+
+| | Markdown Linter | Markdown プレビュー |
+|---|---|---|
+| 目的 | スタイルと構造のルール | 視覚的なレンダリング |
+| 出力 | ルール違反 + 行番号 | レンダリング済みHTML |
+| 向いている用途 | CIチェック、一貫性確保 | 出力の見た目確認 |
+| 検出できるもの | 見出し階層、行長、スタイル | 画像切れ、レンダリング差異 |
+
+両方使うのが正解です。CIでLintを回してルールを強制し、ローカルでプレビューを使って表示を確認する。[Markdown プレビューツール](/tools/markdown-preview) はLinterと相互補完になります。
+
+## プライバシー
+
+このオンラインLinterはMarkdownを完全にブラウザ内で処理します。テキストはどのサーバーにも送信されません。社内ドキュメント、非公開仕様書、機密内容を含む文書のLintにも安心して使えます。
+
+## 今すぐ試す
+
+README、CHANGELOG、APIドキュメント、ブログ記事の下書き、どんなMarkdownでも貼り付けてください。行番号付きでルールごとのフィードバックが即座に返ります。違反項目をクリックすれば該当行にジャンプします。
+
+**[Markdown Linter を開く →](/tools/markdown-linter)**

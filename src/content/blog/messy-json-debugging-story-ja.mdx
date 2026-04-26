@@ -1,0 +1,259 @@
+---
+title: "散らかったJSONからクリーンなAPIへ：実録デバッグ物語"
+description: "本番webhookの「サイレント失敗」を45分で追い詰めた実話。ブラウザツールでトークンを解読し、payloadをdiffし、フォーマットし、ついにバグを掴むまで。"
+pubDate: 2026-04-14
+lang: "ja"
+translationSlug: "messy-json-debugging-story"
+tags: ["api-debugging", "json", "developer-workflow", "debugging-story", "web-development"]
+ogImage: /og/blog-messy-json-debugging-story-ja.png
+---
+
+物語の幕開けは、いつものように、ほぼ何の情報もないSlackメッセージだった。
+
+> 「ねえ、注文同期が壊れてる。直近1時間の注文が出てこない」
+
+スタックトレースなし。エラーコードなし。インバウンドが死んだのか、アウトバウンドが死んだのか、その間で消えたのかも分からない。ただ一言、「注文が出てこない」。
+
+これは複数の実体験を合成したものだ — 名前は変え、ドメインも単純化してある。だがワークフローも、登場するツールも、現実そのもの。一緒に追体験してほしい。
+
+---
+
+## ステップ1：「壊れている」とは具体的に何か
+
+多くの開発者の最初の衝動はコードに飛び込むことだ。やめておこう。最初にやるべきは、**パイプラインのどこ**で問題が起きているかを特定することだ。
+
+問題のシステムは3段構成だった：
+
+1. 外部の決済プロバイダーがオーダーwebhookをこちらのエンドポイントへPOSTする
+2. バックエンドがwebhookを処理してDBに書き込む
+3. フロントエンドのダッシュボードがDBから読み出して注文を表示する
+
+「出てこない」が指しうるのは：webhookが届いていない、届いたがサイレントに失敗した、処理されたが書き込みが間違っている、書き込みは正しいが表示が間違っている、の4通り。それぞれまったく別のバグで、修正方法も別物だ。
+
+最初から行こう。該当時間帯のインバウンドwebhookログを当たる。
+
+```
+[2024-01-15 14:32:18] POST /webhooks/orders — 200 OK — 23ms
+[2024-01-15 14:33:45] POST /webhooks/orders — 200 OK — 18ms
+[2024-01-15 14:34:02] POST /webhooks/orders — 200 OK — 31ms
+```
+
+3件のwebhookを受信、ack済み。エンドポイントは200を返している。表面上は問題なし — ただし注文はDBに無い。問題はステップ2だ：受信はしたが、処理が黙って失敗している。
+
+200は処理完了の**前**に返されていた。お決まりのパターン。先にackしてから本処理に入るwebhookハンドラは、プロバイダー側から見れば常に健全に見える。彼らの再送問題を解決する代わりに、自分の側にサイレント失敗モードを丁寧に作り込んだことになる。
+
+---
+
+## ステップ2：実際のpayloadを読む
+
+次の問いはこうだ：そのwebhookに何が入っていたのか？ ログストレージから1件取り出す。
+
+生のpayload（多少簡略化）：
+
+```
+{"event":"order.completed","data":{"id":"ord_8842","customer":{"id":"cus_2291","email":"alice@example.com","metadata":{"tier":"premium","signup_source":"organic","feature_flags":{"beta_checkout":true,"legacy_discount":false}}},"items":[{"sku":"PRD-001","qty":2,"price":4999},{"sku":"PRD-007","qty":1,"price":1299}],"total":11297,"currency":"USD","created_at":1705332738,"payment_intent":"pi_3OT4h2LkZbh90","status":"paid","shipping":{"method":"express","address":{"line1":"123 Main St","city":"Portland","state":"OR","zip":"97201","country":"US"}}}}
+```
+
+一行のままでは読めない。最初にやることは、いつでも変わらない — [JSON フォーマッター](/tools/json-formatter)に通す。整形後：
+
+```json
+{
+  "event": "order.completed",
+  "data": {
+    "id": "ord_8842",
+    "customer": {
+      "id": "cus_2291",
+      "email": "alice@example.com",
+      "metadata": {
+        "tier": "premium",
+        "signup_source": "organic",
+        "feature_flags": {
+          "beta_checkout": true,
+          "legacy_discount": false
+        }
+      }
+    },
+    "items": [
+      { "sku": "PRD-001", "qty": 2, "price": 4999 },
+      { "sku": "PRD-007", "qty": 1, "price": 1299 }
+    ],
+    "total": 11297,
+    "currency": "USD",
+    "created_at": 1705332738,
+    "payment_intent": "pi_3OT4h2LkZbh90",
+    "status": "paid",
+    "shipping": {
+      "method": "express",
+      "address": {
+        "line1": "123 Main St",
+        "city": "Portland",
+        "state": "OR",
+        "zip": "97201",
+        "country": "US"
+      }
+    }
+  }
+}
+```
+
+これでようやく頭が回り出す。すぐ目に留まったのは：
+
+- `created_at`はUnixタイムスタンプ（1705332738）。想定通りだが念のため検証する。[タイムスタンプ変換器](/tools/timestamp-converter)に貼り付け：**Jan 15, 2024, 14:32:18 UTC**。ログの時刻と一致。OK。
+- `total`はセント単位（11297 = $112.97）。アイテム価格と整合（4999 = $49.99、1299 = $12.99、2×4999+1299 = 11297）。OK。
+- `customer`内に`metadata`フィールドがある。これは要メモ — 非標準構造で、スキーマ検証段階で詰まる可能性がある。
+
+---
+
+## ステップ3：認証トークンを確認する
+
+webhookハンドラは決済プロバイダーからのpayloadであることをAuthorizationヘッダで確認する。ログからauthヘッダを抽出：
+
+```
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3aH...
+```
+
+[JWT デコーダー](/tools/jwt-decoder)に貼る：
+
+```json
+{
+  "header": {
+    "alg": "RS256",
+    "typ": "JWT"
+  },
+  "payload": {
+    "sub": "webhook_processor",
+    "iss": "payments.provider.com",
+    "aud": "api.ourapp.com",
+    "iat": 1705332735,
+    "exp": 1705332795,
+    "scope": "webhook:orders"
+  }
+}
+```
+
+トークンは有効。issuerも正しい。audienceは`api.ourapp.com`。`exp: 1705332795` — 発行から60秒で失効。webhook受信は1705332738、トークン発行は1705332735。3秒経過、ウィンドウ内に余裕で収まる。
+
+トークン認証は犯人ではない。
+
+---
+
+## ステップ4：ハンドラの「期待」と「現実」を突き合わせる
+
+ここで処理ロジックに問題があることがほぼ確定した。ハンドラが期待しているものと、実際に受け取ったものを並べて見る時間だ。
+
+ハンドラが検証に使っているJSON Schemaを引っ張り出す：
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "type": "object",
+  "required": ["event", "data"],
+  "properties": {
+    "event": { "type": "string" },
+    "data": {
+      "type": "object",
+      "required": ["id", "customer", "items", "total", "status"],
+      "properties": {
+        "customer": {
+          "type": "object",
+          "required": ["id", "email"],
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}
+```
+
+これだ。スキーマの`customer`オブジェクトに`"additionalProperties": false`が指定されている。実際のpayloadではcustomerに`metadata`フィールドが付いている。スキーマ検証はpayloadを拒否している — だがそのエラーはwebhookハンドラ内で握り潰されていて、表に出てこなかった。
+
+実際のpayloadをこのスキーマと一緒に[JSON Schema バリデーター](/tools/json-schema-validator)に通すと裏付けが取れる：`Additional properties are not allowed ('metadata' was unexpected)`。
+
+バグは2つあった：
+
+1. 決済プロバイダーがwebhookフォーマットを変更してcustomer metadataを追加したのに、誰もスキーマを更新していなかった
+2. 検証エラーがcatchで捕まえられ、ログにも残らずサイレントに捨てられていた
+
+---
+
+## ステップ5：diffで「スキーマが変わった」ことを裏付ける
+
+これが既存の問題ではなく直近の変更であることを確実にするため、現在のwebhook payloadと先週のpayload（ログストレージにまだ残っている）を比較する。
+
+先週のcustomerオブジェクト：
+
+```json
+{
+  "id": "cus_1987",
+  "email": "bob@example.com"
+}
+```
+
+今日のcustomerオブジェクト：
+
+```json
+{
+  "id": "cus_2291",
+  "email": "alice@example.com",
+  "metadata": {
+    "tier": "premium",
+    "signup_source": "organic",
+    "feature_flags": {
+      "beta_checkout": true,
+      "legacy_discount": false
+    }
+  }
+}
+```
+
+[テキスト差分チェッカー](/tools/diff-checker)に放り込む。diffは一目瞭然 — `metadata`は新規追加だ。決済プロバイダーがバージョンも上げず、インテグレーターへの通知もなしに追加していた。（プロダクション統合では、認めたくないほど頻繁に起きる。）
+
+---
+
+## ステップ6：修正
+
+修正は2段階だ：
+
+**Part 1：スキーマを直す。** customerオブジェクトから`"additionalProperties": false`を外すか、`metadata`を明示的に許可する任意プロパティとして追加する。前者のほうがシンプルで、今後のプロバイダー側変更にも頑健だ。
+
+**Part 2：エラーハンドリングを直す。** webhookハンドラのcatchブロックは、誰も監視していないメトリクスsinkにエラーを書いていた。アプリケーションログに移し、処理エラーが閾値を超えた時のアラートを仕込む。
+
+修正は実装とテストで20分程度。デバッグは45分程度。エラーメッセージのないサイレント失敗としては、悪くない比率だ。
+
+---
+
+## ツールボックスが効いた場面
+
+ブラウザツールがこのセッションをどれだけ短縮してくれたかを表にする：
+
+| ステップ | 使ったツール | 節約時間 |
+|---------|-------------|---------|
+| payloadを読む | [JSON フォーマッター](/tools/json-formatter) | 手動パース比 ~8分 |
+| タイムスタンプ検証 | [タイムスタンプ変換器](/tools/timestamp-converter) | 変換コードを書く比 ~2分 |
+| 認証トークン検査 | [JWT デコーダー](/tools/jwt-decoder) | base64デコード+解析比 ~5分 |
+| スキーマ検証 | [JSON Schema バリデーター](/tools/json-schema-validator) | テストスクリプトを書く比 ~10分 |
+| スキーマ変更の確認 | [テキスト差分チェッカー](/tools/diff-checker) | 目視比較比 ~5分 |
+
+合計：45分のデバッグセッションのうち、約30分がツールによる加速分。ツール化できない部分 — ログを読む、仮説を立てる、修正を書く — は自動化できない。だが構造化データの検査は別だ。
+
+---
+
+## いつでも効くパターン
+
+このデバッグセッションを振り返ると、一般化できるパターンが見えてくる：
+
+1. **パイプラインのステージを特定する。** 問題の場所を仮定しない。エントリポイントから順に、ステージを系統的に潰していく。
+
+2. **実データを読む。** データが「こうあるべき」と理屈で考えない。実際のpayloadを取得し、適切なツールで読む。
+
+3. **認証を確認する。** 「処理失敗」と分類されているものの少なからぬ部分は、握り潰された認証失敗だ。ロジックをデバッグする前にトークンを確認する。
+
+4. **スキーマで検証する。** ハンドラが受信データを検証しているなら、実際の入力を実際のスキーマに対してテストする。目視で済ませない。
+
+5. **既知の正常版とdiffを取る。** 何かが変わったと疑うなら、記憶や責任追及ではなく、diffで証明する。
+
+このシーケンスは大半のAPIデバッグで効く。payloadフォーマットや認証メカニズムが変わればツールは変わる。だがメンタルモデルは不変だ。
+
+今回のサイレント失敗が特に厄介だったのは、200が返っていたこと — 外側からは万事順調に見えていた。外部webhookと統合する時は、エラーハンドリングに音を立てさせること。統合のサイレント失敗は表面化が遅く、デバッグが高くつく。
+
+そして実際にデバッグする時 — 最初にpayloadをフォーマットすること。常に。

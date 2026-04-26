@@ -1,0 +1,256 @@
+---
+title: "Protobuf to JSON 変換ツール：.proto スキーマとバイナリメッセージをオンラインでデコード"
+description: "Protobuf スキーマからサンプル JSON を生成、または十六進バイナリメッセージを JSON にデコード。protobufjs を用いてブラウザ内で完結する、プライバシー優先のオンラインツール。"
+pubDate: 2026-04-15
+lang: "ja"
+translationSlug: "protobuf-to-json-guide"
+tags: ["protobuf to json", "protobuf オンライン", "proto デコード", "developer-tools", "gRPC"]
+ogImage: /og/blog-protobuf-to-json-guide-ja.png
+---
+
+Protocol Buffers（Protobuf）は高速・コンパクト・言語中立ですが、バイナリ形式ゆえに人間の目には不透明です。メッセージを覗き見る、API をデバッグする、テスト用フィクスチャを生成する — そんなときに**Protobuf to JSON 変換ツール**を使えば、`.proto` スキーマ（あるいは生のバイナリ）から読める JSON へ最短距離でたどり着けます。gRPC サーバーも、コード生成も、ローカル環境構築も不要です。
+
+[Protobuf to JSON 変換ツールを試す →](/tools/protobuf-to-json)
+
+## Protocol Buffers とは
+
+Protocol Buffers は Google が設計したバイナリシリアライゼーション形式です。JSON との比較：
+
+- **ワイヤサイズが小さい：** シリアライズ済み Protobuf は同等の JSON より概ね 3〜10 倍小さい
+- **シリアライズ/デシリアライズが速い：** バイナリエンコーディングは文字列パースを省略
+- **強い型付け：** `.proto` ファイルが各フィールドの名前と型を厳密に定義
+- **言語中立：** Go・Python・Java・TypeScript・Rust 等のコードジェネレータが揃う
+
+代償は不透明性です。対応するスキーマがなければ Protobuf バイナリは読めず、デバッグには専用ツールが必要になります。
+
+## 2 つの変換モード
+
+### モード 1：スキーマからサンプル JSON を生成
+
+`.proto` スキーマを貼り付けると、全フィールドにそれらしいプレースホルダ値が入ったサンプル JSON オブジェクトが出力されます。用途：
+
+- **テスト作成：** JSON フィクスチャを手書きせずスキーマから生成
+- **API ドキュメント：** レスポンスの形を利用者に見せる
+- **フロントエンドのモック：** バックエンド開発中でも安定した JSON 形状で UI を組める
+
+入力例（`.proto`）：
+
+```protobuf
+syntax = "proto3";
+
+message UserProfile {
+  string user_id = 1;
+  string display_name = 2;
+  string email = 3;
+  int64 created_at = 4;
+  repeated string roles = 5;
+  Address address = 6;
+}
+
+message Address {
+  string street = 1;
+  string city = 2;
+  string country_code = 3;
+  string postal_code = 4;
+}
+```
+
+出力例（サンプル JSON）：
+
+```json
+{
+  "userId": "string",
+  "displayName": "string",
+  "email": "string",
+  "createdAt": "0",
+  "roles": ["string"],
+  "address": {
+    "street": "string",
+    "city": "string",
+    "countryCode": "string",
+    "postalCode": "string"
+  }
+}
+```
+
+`user_id` が `userId` になっている点に注目してください。Protobuf の JSON シリアライゼーションは既定で camelCase を使い、これは JSON の慣例とも一致します。
+
+### モード 2：バイナリメッセージを JSON にデコード
+
+十六進エンコードされた Protobuf バイナリと対応するスキーマを貼り付けると、ツールがバイナリを人間に読める JSON にデコードします。次のような場面で重宝します：
+
+- ネットワークキャプチャ（Wireshark、mitmproxy）で取得したペイロードの確認
+- 完全なクライアントなしで gRPC エンドポイントをデバッグ
+- あるサービスが出したシリアライズ結果を、別サービスが期待どおり受け取れるかの検証
+
+十六進入力例：
+
+```
+0a 07 75 73 65 72 2d 31 32 33 12 05 41 6c 69 63 65
+```
+
+上記の `UserProfile` スキーマと組み合わせると、こうデコードされます：
+
+```json
+{
+  "userId": "user-123",
+  "displayName": "Alice"
+}
+```
+
+バイナリに含まれない（あるいはゼロ値が設定された）フィールドは JSON 出力から省かれます。
+
+## .proto 構文ミニ入門
+
+Protobuf 初心者向けに、変換ツールに貼り付けるスキーマを読み解くのに必要な構文を押さえておきます。
+
+### メッセージ定義
+
+```protobuf
+syntax = "proto3";
+
+message SearchRequest {
+  string query = 1;       // フィールド名・型・フィールド番号
+  int32 page_number = 2;
+  int32 results_per_page = 3;
+}
+```
+
+フィールド番号（1, 2, 3）は Protobuf がバイナリのワイヤフォーマット上でフィールドを識別する手段で、値ではありません。番号 1〜15 はエンコーディングで 1 バイト、16〜2047 は 2 バイトを使うため、頻出フィールドには小さい番号を割り当てます。
+
+### スカラ型
+
+| proto3 型 | JSON 型 | 備考 |
+|---|---|---|
+| `string` | string | UTF-8 エンコード |
+| `bytes` | base64 文字列 | バイナリデータ |
+| `bool` | boolean | |
+| `int32`, `sint32` | number | |
+| `int64`, `sint64` | string | JSON の number は大きな int64 で精度を失う |
+| `float`, `double` | number | |
+| `uint32`, `uint64` | number / string | |
+
+`int64` は JSON で**文字列**になります。これは Protobuf の JSON マッピング仕様による意図的な仕様で、JavaScript の `Number` 型は 64 ビット整数を正確に表現できないためです。
+
+### 列挙型
+
+```protobuf
+enum Status {
+  STATUS_UNKNOWN = 0;    // proto3：先頭値は 0 必須
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+  STATUS_SUSPENDED = 3;
+}
+
+message User {
+  string user_id = 1;
+  Status status = 2;
+}
+```
+
+JSON 出力では列挙型は既定で**文字列名**（`"STATUS_ACTIVE"`）として直列化され、整数にはなりません。これにより JSON の可読性が大きく向上します。
+
+### Repeated フィールド（配列）
+
+```protobuf
+message Order {
+  string order_id = 1;
+  repeated LineItem items = 2;
+  repeated string tags = 3;
+}
+```
+
+`repeated` は JSON 配列に対応します。空の repeated フィールドは `[]` としてシリアライズされるか省略されます（シリアライザの挙動次第）。
+
+### ネストメッセージと oneof
+
+```protobuf
+message Notification {
+  string id = 1;
+  oneof content {
+    EmailNotification email = 2;
+    PushNotification push = 3;
+    SMSNotification sms = 4;
+  }
+}
+```
+
+`oneof` は列挙されたフィールドのうち同時に 1 つだけが設定可能であることを示します。JSON では設定されたフィールドのみが現れます。
+
+### import
+
+```protobuf
+import "google/protobuf/timestamp.proto";
+
+message Event {
+  string event_id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+}
+```
+
+Well-Known Types（`Timestamp`、`Duration`、`Struct`、`Any`、`FieldMask`）には Protobuf 仕様で定義された専用の JSON 表現があります。
+
+## Protobuf JSON マッピングルール
+
+公式の JSON マッピングは proto3 の各型を JSON でどう表現するかを定めています：
+
+| シナリオ | JSON 表現 |
+|---|---|
+| `int64`/`uint64` | 十進文字列（`"9007199254740993"`） |
+| `bytes` | base64 文字列 |
+| `enum` | 文字列名（未知の値は整数） |
+| `Timestamp` | RFC 3339 文字列（`"2026-04-15T10:00:00Z"`） |
+| `Duration` | `s` サフィックス付き文字列（`"3.5s"`） |
+| `FieldMask` | camelCase ドット区切り文字列 |
+| `Any` | `{"@type": "...", ...フィールド}` |
+| `Struct` | JSON オブジェクト |
+| `ListValue` | JSON 配列 |
+| `NullValue` | JSON `null` |
+| デフォルト値のフィールド | 省略（proto3 既定挙動） |
+
+最後の項目は要注意です。proto3 ではゼロ値（空文字列、`0`、`false`、空配列）が設定されたフィールドは既定で JSON 出力から**省かれます**。すべて出力したい場合は、Go なら `EmitUnpopulated`、他言語なら同等のオプションをシリアライザで有効にしてください。
+
+## gRPC トラフィックのデコード
+
+gRPC は HTTP/2 上で Protobuf を運びます。grpcurl や grpc-gateway でデバッグするとき、生のバイナリレスポンスが返ってくることがあります。手順：
+
+1. ネットワークツールやログから十六進ダンプを取得
+2. gRPC のフレーミング（5 バイトヘッダ：圧縮フラグ 1 バイト + メッセージ長 4 バイト）を取り除く
+3. 残りのバイトを `.proto` スキーマと一緒に変換ツールへ貼り付ける
+
+サーバーリフレクションが有効なら、`grpcurl` がスキーマ解決を自動でやってくれます：
+
+```bash
+grpcurl -plaintext localhost:50051 list
+grpcurl -plaintext -d '{"userId": "123"}' localhost:50051 user.UserService/GetUser
+```
+
+リフレクションがないサービスでは `.proto` ファイルを直接渡します：
+
+```bash
+grpcurl -plaintext -proto user.proto -d '{"userId": "123"}' localhost:50051 user.UserService/GetUser
+```
+
+## よくあるユースケース
+
+### テストフィクスチャの生成
+
+JSON フィクスチャを手で書く代わりにスキーマから生成しておくと、フィクスチャがスキーマ定義から乖離しません。
+
+### API レスポンスのドキュメント化
+
+レスポンスメッセージの定義を貼り付け、生成された JSON を API ドキュメントにコピーします。スキーマが変わったらサンプルを再生成すれば済みます。
+
+### シリアライゼーションのバグ調査
+
+「あるはずのフィールドが JSON 出力に存在しない」場合、ゼロ値が設定されている可能性が高いです。バイナリデコードモードで実際にシリアライズされた内容を確認しましょう。
+
+## プライバシー
+
+このツールは [protobufjs](https://github.com/protobufjs/protobuf.js) を使ってブラウザ内で完結します。`.proto` ファイルやバイナリメッセージがサーバーに送信されることはありません。社内 API のスキーマやユーザーデータを含むメッセージを扱う際にも安心です。
+
+## 今すぐ試す
+
+`.proto` スキーマを貼り付けてサンプル JSON 構造を生成、あるいはスキーマと十六進バイナリメッセージを組み合わせてデコードしてみてください。
+
+**[Protobuf to JSON 変換ツールを開く →](/tools/protobuf-to-json)**

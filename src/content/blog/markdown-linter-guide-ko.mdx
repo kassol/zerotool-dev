@@ -1,0 +1,230 @@
+---
+title: "Markdown 온라인 Lint: 커밋 전에 포맷 오류 잡기"
+description: "브라우저에서 Markdown을 Lint합니다. MD001, MD013, MD041 등 40개 이상의 markdownlint 규칙을 규칙 ID와 줄 번호로 즉시 피드백."
+pubDate: 2026-04-15
+lang: "ko"
+translationSlug: "markdown-linter-guide"
+tags: ["markdown lint", "markdown 포맷 검사", "markdownlint", "developer-tools", "markdown"]
+ogImage: /og/blog-markdown-linter-guide-ko.png
+---
+
+**Markdown 온라인 Lint**는 문서가 저장소로 들어가기 전에 제목 레벨 점프, 너무 긴 줄, 줄 끝 공백 같은 포맷 문제를 잡아냅니다. Node.js, CLI, CI 파이프라인 없이 붙여넣으면 즉시 결과가 나옵니다.
+
+[Markdown Linter 열기 →](/tools/markdown-linter)
+
+## 왜 Markdown을 Lint해야 하는가
+
+Markdown 렌더러는 관대합니다. 소스가 약간 깨져도 어떻게든 보여줍니다. 그 관대함이 바로 Markdown 품질이 시간이 지나며 조용히 망가지는 이유입니다:
+
+- 제목이 건너뜁니다: `# H1` 다음에 바로 `### H3`, 중간 `## H2`가 빠짐
+- 한 줄이 200자 이상으로 늘어나 diff가 읽기 어려워짐
+- 하드 탭이 섞여 들어가 렌더러마다 표시가 다름
+- 줄 끝 공백이 일부 렌더러에서 의도하지 않은 줄바꿈을 유발
+- 맨 URL에 접근성 있는 링크 텍스트가 없음
+
+빌드를 깨뜨리지 않으니 계속 쌓입니다. 로컬이든 CI든 Lint 단계를 하나 두면 여러 명이 쓰는 문서의 일관성을 유지할 수 있습니다.
+
+## 자주 만나는 markdownlint 규칙
+
+이 온라인 도구는 [markdownlint](https://github.com/DavidAnson/markdownlint)를 기반으로 합니다. Markdown 생태계의 사실상 표준 규칙 세트입니다. 개발자가 가장 자주 마주치는 규칙들을 살펴봅니다.
+
+### MD001 — 제목 레벨은 한 번에 하나씩만 올라감
+
+```markdown
+<!-- 잘못됨: H1에서 H3로 점프 -->
+# My Document
+
+### Getting Started
+
+<!-- 올바름 -->
+# My Document
+
+## Getting Started
+```
+
+제목 계층은 스크린 리더, 목차 생성 도구, 문서 색인 시스템 모두에 의미가 있습니다. H1에서 H3로 점프하면 존재하지 않는 구조적 공백을 시사하게 되고, 거의 항상 실수입니다.
+
+### MD013 — 줄 길이 제한
+
+기본값은 80자입니다. 설정 가능하며 산문 위주 문서에서는 120으로 완화하거나 아예 비활성화하는 경우가 많습니다. 코드 문서에서는 줄을 짧게 유지해야 사이드바이사이드 diff가 읽기 좋습니다.
+
+```markdown
+<!-- 기본 80자 제한에서 플래그 -->
+This is a very long line that explains something in great detail and will be flagged by the line length rule.
+
+<!-- 가독성을 위해 분할 -->
+This is a shorter line that explains something in great detail
+and wraps cleanly at a reasonable column width.
+```
+
+한국어는 한 글자가 차지하는 폭이 넓으므로 `line_length`를 120 이상으로 설정하거나 본문에는 비활성화하는 것이 현실적입니다.
+
+### MD022 — 제목 앞뒤에는 빈 줄이 있어야 함
+
+```markdown
+<!-- 잘못됨 -->
+Some paragraph text.
+## Heading
+More text here.
+
+<!-- 올바름 -->
+Some paragraph text.
+
+## Heading
+
+More text here.
+```
+
+### MD031 — 펜스 코드 블록 앞뒤에는 빈 줄이 있어야 함
+
+````markdown
+<!-- 잘못됨 -->
+Here is some code:
+```bash
+echo "hello"
+```
+And here is more text.
+
+<!-- 올바름 -->
+Here is some code:
+
+```bash
+echo "hello"
+```
+
+And here is more text.
+````
+
+### MD041 — 첫 줄은 최상위 제목이어야 함
+
+독립 문서로 다뤄지는 파일은 `# H1`으로 시작해야 합니다. README 조각이나 다른 문서에 포함되는 부분 템플릿에서는 보통 이 규칙을 비활성화합니다.
+
+### MD049 / MD050 — 강조 스타일 일관성
+
+`*italic*`과 `_italic_`, `**bold**`와 `__bold__` 중 하나로 통일하도록 강제하는 규칙입니다. 여러 명이 같은 문서를 편집하는 프로젝트에서 흔히 섞이는 문제입니다.
+
+## 실제 프로젝트에서 자주 발견되는 위반
+
+### README 파일
+
+```markdown
+<!-- README에서 흔한 문제 -->
+#Getting Started     <!-- MD018: # 뒤에 공백 없음 -->
+Run `npm install`.
+Run `npm start`.    <!-- MD032: 텍스트에 둘러싸인 리스트는 앞뒤 빈 줄 필요 -->
+- Build: `npm run build`
+- Test: `npm test`
+```
+
+### API 문서
+
+```markdown
+<!-- API 문서는 줄이 길어지기 쉬움 -->
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `userId` | `string` | Yes | The unique identifier for the user account in the system |
+```
+
+위 테이블 행은 80자를 넘기 쉽습니다. API 테이블에는 MD013을 비활성화하거나 상한을 올리세요.
+
+### CHANGELOG 파일
+
+```markdown
+## [1.2.0] - 2026-04-01
+### Added
+- New feature X
+### Fixed
+- Bug in Y
+
+## [1.1.0] - 2026-03-01  <!-- MD024: 같은 제목 내용이 반복됨 ("Added", "Fixed") -->
+### Added
+- Feature Z
+```
+
+MD024(중복 제목 금지)는 관용적인 CHANGELOG 형식과 충돌합니다. 해결책은 `.markdownlint.json`에서 MD024에 `allow_different_nesting: true`를 설정하는 것입니다.
+
+## markdownlint 설정
+
+### 프로젝트 설정 파일
+
+저장소 루트에 `.markdownlint.json`을 만듭니다:
+
+```json
+{
+  "default": true,
+  "MD013": {
+    "line_length": 120,
+    "tables": false,
+    "code_blocks": false
+  },
+  "MD024": {
+    "allow_different_nesting": true
+  },
+  "MD041": false
+}
+```
+
+프로젝트별로 자주 쓰는 조정:
+- 산문 위주 문서에서 MD013 완전 비활성화: `"MD013": false`
+- 어디서든 H1 허용: `"MD041": false`
+- 다른 중첩 레벨에서 중복 제목 허용: `"MD024": { "allow_different_nesting": true }`
+
+### CLI 통합
+
+```bash
+npm install -g markdownlint-cli2
+markdownlint-cli2 "**/*.md" "#node_modules"
+```
+
+### Pre-commit 훅
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/DavidAnson/markdownlint-cli2-action
+    rev: v16
+    hooks:
+      - id: markdownlint-cli2
+        args: ["--config", ".markdownlint.json"]
+```
+
+### GitHub Actions
+
+```yaml
+name: Lint Markdown
+on: [push, pull_request]
+
+jobs:
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: "**/*.md"
+          config: ".markdownlint.json"
+```
+
+## Markdown Linter vs Markdown 미리보기
+
+Lint와 미리보기는 서로 다른 문제를 다룹니다:
+
+| | Markdown Linter | Markdown 미리보기 |
+|---|---|---|
+| 목적 | 스타일과 구조 규칙 | 시각적 렌더링 |
+| 출력 | 규칙 위반 + 줄 번호 | 렌더링된 HTML |
+| 적합한 용도 | CI 검사, 일관성 확보 | 출력 모양 확인 |
+| 잡아내는 것 | 제목 계층, 줄 길이, 스타일 | 깨진 이미지, 렌더링 차이 |
+
+둘 다 쓰는 게 정답입니다. CI에서 Lint로 규칙을 강제하고, 로컬에서 미리보기로 표시를 확인하세요. [Markdown 미리보기 도구](/tools/markdown-preview)는 Linter와 상호 보완 관계입니다.
+
+## 프라이버시
+
+이 온라인 Linter는 Markdown을 전적으로 브라우저 안에서 처리합니다. 텍스트가 어떤 서버로도 전송되지 않습니다. 내부 문서, 비공개 스펙, 민감한 내용이 포함된 자료를 Lint하기에 안전합니다.
+
+## 지금 사용해보기
+
+README, CHANGELOG, API 문서, 블로그 초안 — 어떤 Markdown이든 붙여넣으세요. 줄 번호와 함께 규칙별 피드백이 즉시 표시됩니다. 위반 항목을 클릭하면 해당 줄로 바로 이동합니다.
+
+**[Markdown Linter 열기 →](/tools/markdown-linter)**
