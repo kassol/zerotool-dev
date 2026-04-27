@@ -1,0 +1,810 @@
+---
+import { getCollection } from 'astro:content';
+import ToolSearchBar from './ToolSearchBar.astro';
+import CategoryFilter from './CategoryFilter.astro';
+import { getToolIcon } from '../data/icons';
+import { allTools, getToolName, getToolDescription } from '../data/tools';
+import { t } from '../i18n/utils';
+
+type Lang = 'en' | 'zh' | 'ja' | 'ko';
+type Mode = 'home' | 'tools';
+
+interface Props {
+  lang: Lang;
+  mode?: Mode;
+}
+
+const { lang, mode = 'home' } = Astro.props;
+
+const basePrefix = lang === 'en' ? '' : `/${lang}`;
+const toolBase = `${basePrefix}/tools`;
+const blogBase = `${basePrefix}/blog`;
+const toolCount = allTools.length;
+
+const copy = {
+  en: {
+    eyebrow: 'ZeroTool Workbench',
+    homeTitle: 'ZeroTool',
+    homeLead: 'Private browser tools for everyday development.',
+    toolsTitle: 'All Developer Tools',
+    toolsLead: 'Search, filter, and launch the full ZeroTool catalog.',
+    sub: 'Format JSON, decode tokens, generate keys, compare text, transform data, and keep every byte on your device.',
+    claims: [`${toolCount} browser tools`, 'Client-side processing', 'Four languages'],
+    panelTitle: 'Quick launch',
+    panelCaption: 'A quiet workspace for quick, single-purpose utilities.',
+    directoryTitle: 'Tool directory',
+    directoryHint: 'Type a task, format, protocol, or file type.',
+    whyTitle: 'Built for local, fast work',
+    why: [
+      ['Private by default', 'Inputs are processed in your browser, so sensitive snippets stay on the machine in front of you.'],
+      ['Fast to reach', 'Static Astro pages, tiny interactions, and direct routes keep each tool one click away.'],
+      ['Made for teams', 'English, Chinese, Japanese, and Korean pages share one catalog and one predictable layout.'],
+    ],
+    latest: 'Latest Articles',
+    viewAll: 'View all articles',
+  },
+  zh: {
+    eyebrow: 'ZeroTool 工作台',
+    homeTitle: 'ZeroTool',
+    homeLead: '日常开发用的私密浏览器工具。',
+    toolsTitle: '全部开发者工具',
+    toolsLead: '搜索、筛选并打开完整 ZeroTool 工具目录。',
+    sub: '格式化 JSON、解码 Token、生成密钥、对比文本、转换数据，所有内容都留在你的设备上。',
+    claims: [`${toolCount} 个浏览器工具`, '本地处理', '四种语言'],
+    panelTitle: '快速入口',
+    panelCaption: '为高频小任务准备的安静工作区。',
+    directoryTitle: '工具目录',
+    directoryHint: '输入任务、格式、协议或文件类型。',
+    whyTitle: '为本地快速工作而设计',
+    why: [
+      ['默认私密', '输入内容在浏览器中处理，敏感片段留在你面前这台设备上。'],
+      ['直达工具', '静态 Astro 页面、轻量交互、直接路由，让每个工具都能快速打开。'],
+      ['团队可用', '英文、中文、日文、韩文共享同一套目录和可预期布局。'],
+    ],
+    latest: '最新文章',
+    viewAll: '查看所有文章',
+  },
+  ja: {
+    eyebrow: 'ZeroTool ワークベンチ',
+    homeTitle: 'ZeroTool',
+    homeLead: '日々の開発に使うプライベートなブラウザツール。',
+    toolsTitle: '開発者ツール一覧',
+    toolsLead: 'ZeroTool の全カタログを検索・絞り込み・起動できます。',
+    sub: 'JSON整形、トークン解析、キー生成、テキスト比較、データ変換を端末上で完結できます。',
+    claims: [`${toolCount} 個のブラウザツール`, 'クライアント処理', '4言語対応'],
+    panelTitle: 'クイック起動',
+    panelCaption: '小さな開発タスクに集中できる静かな作業面。',
+    directoryTitle: 'ツールディレクトリ',
+    directoryHint: 'タスク、形式、プロトコル、ファイル種別で検索。',
+    whyTitle: 'ローカルで素早い作業のために設計',
+    why: [
+      ['プライバシー標準', '入力はブラウザ内で処理され、機密スニペットは手元の端末に残ります。'],
+      ['すぐ届く導線', '静的 Astro ページ、軽い操作、直接ルートで各ツールへ素早く移動できます。'],
+      ['チームで使える', '英語・中国語・日本語・韓国語が同じカタログと予測しやすい配置を共有します。'],
+    ],
+    latest: '最新記事',
+    viewAll: '記事一覧を見る',
+  },
+  ko: {
+    eyebrow: 'ZeroTool 워크벤치',
+    homeTitle: 'ZeroTool',
+    homeLead: '일상 개발을 위한 개인 브라우저 도구.',
+    toolsTitle: '개발자 도구 전체 목록',
+    toolsLead: 'ZeroTool 전체 카탈로그를 검색하고 필터링해 바로 실행합니다.',
+    sub: 'JSON 정리, 토큰 해석, 키 생성, 텍스트 비교, 데이터 변환을 모두 기기 안에서 처리합니다.',
+    claims: [`${toolCount}개 브라우저 도구`, '클라이언트 처리', '4개 언어'],
+    panelTitle: '빠른 실행',
+    panelCaption: '짧은 개발 작업에 집중하는 조용한 작업 공간.',
+    directoryTitle: '도구 디렉터리',
+    directoryHint: '작업, 형식, 프로토콜, 파일 타입으로 검색하세요.',
+    whyTitle: '로컬의 빠른 작업을 위해 설계',
+    why: [
+      ['기본 개인 정보 보호', '입력은 브라우저에서 처리되어 민감한 조각이 현재 기기에 머뭅니다.'],
+      ['빠른 접근', '정적 Astro 페이지, 가벼운 상호작용, 직접 라우트로 각 도구에 빠르게 도달합니다.'],
+      ['팀 사용성', '영어, 중국어, 일본어, 한국어가 하나의 카탈로그와 예측 가능한 레이아웃을 공유합니다.'],
+    ],
+    latest: '최신 글',
+    viewAll: '모든 글 보기',
+  },
+}[lang];
+
+const localeMap = { en: 'en-US', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR' } as const;
+const tools = allTools.map(tool => ({
+  href: `${toolBase}/${tool.slug}/`,
+  slug: tool.slug,
+  name: getToolName(tool, lang),
+  description: getToolDescription(tool, lang),
+  category: tool.category,
+}));
+const featuredTools = tools.slice(0, 5);
+
+const posts = mode === 'home'
+  ? (await getCollection('blog', ({ data }) => !data.draft && data.lang === lang))
+      .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf())
+      .slice(0, 3)
+  : [];
+
+const title = mode === 'home' ? copy.homeTitle : copy.toolsTitle;
+const lead = mode === 'home' ? copy.homeLead : copy.toolsLead;
+---
+
+<div class="directory-page" data-mode={mode}>
+  <section class="directory-hero">
+    <div class="hero-copy">
+      <p class="hero-eyebrow">{copy.eyebrow}</p>
+      <h1>{title}</h1>
+      <p class="hero-lead">{lead}</p>
+      <p class="hero-sub">{copy.sub}</p>
+      <div class="hero-claims" aria-label="ZeroTool facts">
+        {copy.claims.map(item => <span>{item}</span>)}
+      </div>
+    </div>
+
+    <div class="hero-panel" aria-label={copy.panelTitle}>
+      <div class="panel-head">
+        <span>{copy.panelTitle}</span>
+        <strong>{toolCount}</strong>
+      </div>
+      <div class="panel-list">
+        {featuredTools.map((tool, index) => (
+          <a href={tool.href} class="panel-tool" data-category={tool.category} style={`--delay: ${index * 70}ms`}>
+            <span class="panel-tool-icon" set:html={getToolIcon(tool.slug)} />
+            <span>
+              <strong>{tool.name}</strong>
+              <small>{tool.category}</small>
+            </span>
+          </a>
+        ))}
+      </div>
+      <p>{copy.panelCaption}</p>
+    </div>
+  </section>
+
+  <section class="directory-controls" aria-labelledby="tool-directory-title">
+    <div class="directory-heading">
+      <div>
+        <p>{copy.directoryHint}</p>
+        <h2 id="tool-directory-title">{copy.directoryTitle}</h2>
+      </div>
+      <span>{toolCount}</span>
+    </div>
+    <ToolSearchBar lang={lang} />
+    <CategoryFilter lang={lang} />
+  </section>
+
+  <section class="tools-grid" aria-label={copy.directoryTitle}>
+    {tools.map(tool => (
+      <a href={tool.href} class="tool-card" data-keywords={`${tool.slug} ${tool.name.toLowerCase()} ${tool.description.toLowerCase()}`} data-category={tool.category} data-slug={tool.slug}>
+        <span class="tool-card-top">
+          <span class="tool-icon" set:html={getToolIcon(tool.slug)} />
+          <span class="tool-category">{t(lang, `category.${tool.category}`)}</span>
+        </span>
+        <span class="tool-info">
+          <span class="tool-title">{tool.name}</span>
+          <span class="tool-description">{tool.description}</span>
+        </span>
+      </a>
+    ))}
+  </section>
+
+  {mode === 'home' && (
+    <section class="why-section" aria-labelledby="why-title">
+      <div class="section-kicker"></div>
+      <h2 id="why-title">{copy.whyTitle}</h2>
+      <div class="why-grid">
+        {copy.why.map(([heading, body]) => (
+          <article class="why-card">
+            <h3>{heading}</h3>
+            <p>{body}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  )}
+
+  {posts.length > 0 && (
+    <section class="blog-section" aria-labelledby="latest-title">
+      <div class="section-head">
+        <h2 id="latest-title">{copy.latest}</h2>
+        <a href={`${blogBase}/`}>{copy.viewAll}</a>
+      </div>
+      <ul class="posts-list">
+        {posts.map((post) => (
+          <li>
+            <a href={`${blogBase}/${post.slug.replace(/\/(en|zh|ja|ko)$/, '')}/`} class="post-link">
+              <span>
+                <strong>{post.data.title}</strong>
+                <small>{post.data.description}</small>
+              </span>
+              <time datetime={post.data.pubDate.toISOString()}>
+                {post.data.pubDate.toLocaleDateString(localeMap[lang], {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                })}
+              </time>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+</div>
+
+<style>
+  .directory-page {
+    width: min(100% - 2rem, 1180px);
+    margin: 0 auto;
+    padding: clamp(2rem, 4vw, 4.75rem) 0 5rem;
+  }
+
+  .directory-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.75fr);
+    gap: clamp(1.5rem, 5vw, 4rem);
+    align-items: end;
+    margin-bottom: clamp(2rem, 4vw, 3.5rem);
+  }
+
+  .hero-copy {
+    max-width: 720px;
+  }
+
+  .hero-eyebrow,
+  .directory-heading p,
+  .section-kicker {
+    margin: 0 0 0.75rem;
+    color: var(--color-accent);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .section-kicker::before {
+    content: "";
+    display: block;
+    width: 34px;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--color-accent);
+  }
+
+  .hero-copy h1 {
+    margin: 0;
+    color: var(--color-text);
+    font-family: var(--font-display);
+    font-size: clamp(3.8rem, 10vw, 8.5rem);
+    font-weight: 600;
+    line-height: 0.86;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+  }
+
+  .hero-lead {
+    max-width: 680px;
+    margin: 1.35rem 0 0;
+    color: var(--color-text);
+    font-family: var(--font-display);
+    font-size: clamp(1.6rem, 3.4vw, 3rem);
+    font-weight: 500;
+    line-height: 1.02;
+    letter-spacing: -0.024em;
+    text-wrap: balance;
+  }
+
+  .hero-sub {
+    max-width: 650px;
+    margin: 1rem 0 0;
+    color: var(--color-text-secondary);
+    font-size: clamp(1rem, 1.6vw, 1.18rem);
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+
+  .hero-claims {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-top: 1.35rem;
+  }
+
+  .hero-claims span {
+    display: inline-flex;
+    min-height: 34px;
+    align-items: center;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    padding: 0.38rem 0.8rem;
+    font-size: 0.86rem;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .hero-panel {
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    padding: 1rem;
+    box-shadow: var(--shadow-panel);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+
+  .panel-head,
+  .directory-heading,
+  .section-head,
+  .post-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .panel-head {
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .panel-head strong,
+  .directory-heading > span {
+    color: var(--color-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .panel-list {
+    display: grid;
+    gap: 0.55rem;
+    margin-top: 1rem;
+  }
+
+  .panel-tool {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: center;
+    min-height: 58px;
+    padding: 0.65rem;
+    border-radius: var(--radius-md);
+    background: color-mix(in oklch, var(--color-surface) 70%, var(--category-color, var(--color-primary)) 6%);
+    color: inherit;
+    text-decoration: none;
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--category-color, var(--color-primary)) 18%, transparent);
+    animation: panel-in 420ms var(--ease-out) both;
+    animation-delay: var(--delay);
+  }
+
+  .panel-tool:hover {
+    text-decoration: none;
+  }
+
+  .panel-tool-icon {
+    display: grid;
+    width: 38px;
+    height: 38px;
+    place-items: center;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--category-color, var(--color-primary));
+    box-shadow: var(--shadow-subtle);
+  }
+
+  .panel-tool-icon :global(svg) {
+    width: 19px;
+    height: 19px;
+  }
+
+  .panel-tool strong,
+  .panel-tool small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .panel-tool strong {
+    color: var(--color-text);
+    font-size: 0.92rem;
+    line-height: 1.25;
+  }
+
+  .panel-tool small {
+    margin-top: 0.1rem;
+    color: var(--color-text-muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  .hero-panel p {
+    margin: 0.9rem 0 0;
+    color: var(--color-text-muted);
+    font-size: 0.83rem;
+    line-height: 1.5;
+  }
+
+  .directory-controls {
+    position: relative;
+    z-index: 1;
+    margin-bottom: 1.25rem;
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    padding: clamp(1rem, 2vw, 1.25rem);
+    box-shadow: var(--shadow-card);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+
+  .directory-heading {
+    margin-bottom: 1rem;
+  }
+
+  .directory-heading h2,
+  .why-section h2,
+  .blog-section h2 {
+    margin: 0;
+    color: var(--color-text);
+    font-family: var(--font-display);
+    font-size: clamp(1.5rem, 2.4vw, 2rem);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.022em;
+  }
+
+  .directory-heading p {
+    margin-bottom: 0.25rem;
+  }
+
+  .directory-heading > span {
+    display: grid;
+    min-width: 54px;
+    height: 54px;
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--color-primary-light);
+    font-size: 1.12rem;
+    font-weight: 800;
+  }
+
+  .tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+    gap: 0.9rem;
+  }
+
+  .tool-card {
+    --category-color: var(--color-primary);
+    display: flex;
+    min-height: 172px;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 1rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: inherit;
+    padding: 1rem;
+    text-decoration: none;
+    box-shadow: var(--shadow-card);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+    transition: transform 180ms var(--ease-out), box-shadow 180ms var(--ease-out), background-color 180ms var(--ease-out);
+  }
+
+  @media (hover: hover) {
+    .tool-card:hover {
+      background: color-mix(in oklch, var(--color-surface) 90%, var(--category-color) 5%);
+      box-shadow: var(--shadow-card-hover);
+      text-decoration: none;
+      transform: translateY(-2px);
+    }
+  }
+
+  .tool-card:active {
+    transform: scale(0.98);
+  }
+
+  .tool-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .tool-icon {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklch, var(--category-color) 13%, var(--color-surface));
+    color: var(--category-color);
+  }
+
+  .tool-icon :global(svg) {
+    width: 21px;
+    height: 21px;
+  }
+
+  .tool-category {
+    display: inline-flex;
+    max-width: 11rem;
+    min-height: 28px;
+    align-items: center;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    color: var(--color-text-muted);
+    padding: 0.25rem 0.55rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .tool-info {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .tool-title {
+    color: var(--color-text);
+    font-size: 1.02rem;
+    font-weight: 720;
+    line-height: 1.25;
+    text-wrap: balance;
+  }
+
+  .tool-description {
+    color: var(--color-text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+
+  .why-section,
+  .blog-section {
+    margin-top: clamp(2.75rem, 5vw, 4.5rem);
+  }
+
+  .why-section h2 {
+    margin-top: 0.7rem;
+    max-width: 580px;
+  }
+
+  .why-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 0.95fr 0.95fr;
+    gap: 0.9rem;
+    margin-top: 1.25rem;
+  }
+
+  .why-card {
+    min-height: 170px;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    padding: 1.15rem;
+    box-shadow: var(--shadow-card);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+
+  .why-card h3 {
+    margin: 0 0 0.65rem;
+    color: var(--color-text);
+    font-size: 1rem;
+    line-height: 1.2;
+  }
+
+  .why-card p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: 0.91rem;
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+
+  .section-head {
+    margin-bottom: 1rem;
+  }
+
+  .section-head a {
+    color: var(--color-primary);
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+
+  .posts-list {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .post-link {
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: inherit;
+    padding: 1rem 1.1rem;
+    text-decoration: none;
+    box-shadow: var(--shadow-card);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+    transition: transform 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
+  }
+
+  @media (hover: hover) {
+    .post-link:hover {
+      box-shadow: var(--shadow-card-hover);
+      text-decoration: none;
+      transform: translateY(-1px);
+    }
+  }
+
+  .post-link strong,
+  .post-link small {
+    display: block;
+  }
+
+  .post-link strong {
+    color: var(--color-text);
+    font-size: 0.98rem;
+    line-height: 1.35;
+  }
+
+  .post-link small {
+    margin-top: 0.25rem;
+    color: var(--color-text-secondary);
+    font-size: 0.86rem;
+    line-height: 1.5;
+  }
+
+  .post-link time {
+    flex: 0 0 auto;
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tool-card[data-category="data"],
+  .panel-tool[data-category="data"] { --category-color: var(--color-cat-data); }
+  .tool-card[data-category="color"],
+  .panel-tool[data-category="color"] { --category-color: var(--color-cat-color); }
+  .tool-card[data-category="encoding"],
+  .panel-tool[data-category="encoding"] { --category-color: var(--color-cat-encoding); }
+  .tool-card[data-category="text"],
+  .panel-tool[data-category="text"] { --category-color: var(--color-cat-text); }
+  .tool-card[data-category="security"],
+  .panel-tool[data-category="security"] { --category-color: var(--color-cat-security); }
+  .tool-card[data-category="dev"],
+  .panel-tool[data-category="dev"] { --category-color: var(--color-cat-dev); }
+  .tool-card[data-category="api"],
+  .panel-tool[data-category="api"] { --category-color: var(--color-cat-api); }
+  .tool-card[data-category="image"],
+  .panel-tool[data-category="image"] { --category-color: var(--color-cat-image); }
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (max-width: 900px) {
+    .directory-hero {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+
+    .hero-panel {
+      max-width: 620px;
+    }
+
+    .why-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .directory-page {
+      width: min(100% - 1rem, 1180px);
+      padding-top: 1.35rem;
+    }
+
+    .directory-hero {
+      gap: 1.4rem;
+      margin-bottom: 1.6rem;
+    }
+
+    .hero-copy h1 {
+      font-size: clamp(3.2rem, 18vw, 4.8rem);
+    }
+
+    .hero-lead {
+      margin-top: 0.85rem;
+      font-size: 1.28rem;
+    }
+
+    .hero-sub {
+      margin-top: 0.75rem;
+      line-height: 1.55;
+    }
+
+    .hero-claims {
+      gap: 0.45rem;
+      margin-top: 1rem;
+    }
+
+    .hero-panel,
+    .directory-controls,
+    .tool-card,
+    .why-card,
+    .post-link {
+      border-radius: var(--radius-md);
+    }
+
+    .directory-heading {
+      align-items: flex-start;
+    }
+
+    .directory-heading > span {
+      min-width: 46px;
+      height: 46px;
+    }
+
+    .panel-list {
+      gap: 0.45rem;
+    }
+
+    .panel-tool {
+      min-height: 52px;
+      grid-template-columns: 34px minmax(0, 1fr);
+      padding: 0.55rem;
+    }
+
+    .panel-tool:nth-child(n+4),
+    .hero-panel p {
+      display: none;
+    }
+
+    .panel-tool-icon {
+      width: 34px;
+      height: 34px;
+    }
+
+    .panel-tool-icon :global(svg) {
+      width: 17px;
+      height: 17px;
+    }
+
+    .tools-grid {
+      gap: 0.65rem;
+    }
+
+    .tool-card {
+      min-height: 146px;
+      padding: 0.9rem;
+    }
+
+    .post-link {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel-tool,
+    .tool-card,
+    .post-link {
+      animation: none;
+      transition-duration: 1ms;
+    }
+  }
+</style>
