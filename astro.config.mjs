@@ -30,6 +30,33 @@ for (const dirent of fs.readdirSync(blogDir, { withFileTypes: true })) {
 }
 
 const SITE = 'https://zerotool.dev';
+const pagePathRe = /^\/(?:(?:zh|ja|ko)(?:\/|$))?(?:tools|blog|about|privacy|terms|contact)(?:\/|$)|^\/(?:zh|ja|ko)$/;
+
+function withTrailingSlashHref(href) {
+  if (typeof href !== 'string' || !href.startsWith('/') || href.startsWith('//')) return href;
+  const hashIndex = href.indexOf('#');
+  const beforeHash = hashIndex >= 0 ? href.slice(0, hashIndex) : href;
+  const hash = hashIndex >= 0 ? href.slice(hashIndex) : '';
+  const queryIndex = beforeHash.indexOf('?');
+  const path = queryIndex >= 0 ? beforeHash.slice(0, queryIndex) : beforeHash;
+  const query = queryIndex >= 0 ? beforeHash.slice(queryIndex) : '';
+  const lastSegment = path.split('/').pop() ?? '';
+
+  if (path === '/' || path.endsWith('/') || lastSegment.includes('.') || !pagePathRe.test(path)) return href;
+  return `${path}/${query}${hash}`;
+}
+
+function rehypeTrailingSlashLinks() {
+  return (tree) => {
+    const visit = (node) => {
+      if (node?.type === 'element' && node.properties && typeof node.properties.href === 'string') {
+        node.properties.href = withTrailingSlashHref(node.properties.href);
+      }
+      if (Array.isArray(node?.children)) node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
 
 // https://astro.build/config
 export default defineConfig({
@@ -39,7 +66,9 @@ export default defineConfig({
   trailingSlash: 'always',
 
   integrations: [
-    mdx(),
+    mdx({
+      rehypePlugins: [rehypeTrailingSlashLinks],
+    }),
     sitemap({
       i18n: {
         defaultLocale: 'en',
