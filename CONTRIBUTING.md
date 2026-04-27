@@ -81,6 +81,7 @@ Every new tool requires ALL of the following:
 
 ### Verification
 
+- [ ] Design review passes against `DESIGN.md` on desktop/mobile and light/dark
 - [ ] Build passes (`npm run build`)
 - [ ] Tag + push to trigger CF Pages deploy
 - [ ] README.md updated with new tool entry
@@ -88,6 +89,7 @@ Every new tool requires ALL of the following:
 ## Code Conventions
 
 - **i18n**: All user-facing strings in `tools.ts` translations object. Use `getToolName(tool, lang)` / `getToolDescription(tool, lang)`.
+- **Design**: Follow `DESIGN.md` for tokens, tool layout, form styling, dark mode, dynamic DOM styling, and visual QA.
 - **Icons**: Inline SVG in `icons.ts`. Must be Lucide-compatible: 24x24 viewBox, `stroke="currentColor"`, stroke-width 2.
 - **Blog**: MDX with frontmatter: `title`, `description`, `pubDate`, `updatedDate`, `heroImage`, `lang`, `canonicalSlug`.
 - **No external icon libraries** — all icons are inlined for zero network deps.
