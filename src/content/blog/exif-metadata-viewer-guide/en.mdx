@@ -1,0 +1,252 @@
+---
+title: "EXIF Metadata Viewer: Strip GPS and Camera Info from Photos in Your Browser"
+description: "View EXIF metadata and strip EXIF, XMP, and IPTC marker segments from JPEG photos client-side. Covers the JPEG marker layout, GPS coordinate decoding, and what social platforms actually strip."
+pubDate: 2026-04-28
+lang: "en"
+translationSlug: "exif-metadata-viewer-guide"
+tags: ["exif", "image-privacy", "jpeg", "developer-tools"]
+ogImage: /og/blog-exif-metadata-viewer-guide.png
+---
+
+You post a photo of your cat to a forum. Twenty minutes later, a stranger replies naming the apartment complex. They did not stalk you — they just dropped your image into one of dozens of free EXIF viewers. The phone that took the picture wrote the GPS coordinates, accurate to a few meters, into the file. The forum forwarded the bytes unchanged. Anyone with a browser tab could read them.
+
+[Open the EXIF Metadata Viewer →](/tools/exif-metadata-viewer)
+
+EXIF is the side of digital photography most people never see. This guide covers what is actually in the metadata block, why it is there, what social platforms do or do not strip on upload, and how to inspect and remove it without uploading anything to a server.
+
+## What EXIF Actually Contains
+
+EXIF (Exchangeable Image File Format) is a CIPA-maintained standard ([DC-008-Translation-2023, "EXIF 2.32"](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E)) that defines how cameras and phones embed structured metadata into image files. It started in 1995 and is now embedded in nearly every JPEG produced by a consumer device.
+
+A typical phone-camera photo carries far more than a date stamp:
+
+| Field | Example | Why it is there | Privacy risk |
+|-------|---------|-----------------|--------------|
+| `Make` / `Model` | Apple / iPhone 15 Pro | Camera identification | Low — common across millions of devices |
+| `LensModel` | iPhone 15 Pro back camera 6.86mm f/1.78 | Optical info for editors | Low |
+| `DateTimeOriginal` | 2024-08-12 14:32:08 | Sorting and album organization | Medium — reveals when you were where |
+| `FNumber` / `ExposureTime` / `ISO` / `FocalLength` | f/1.8, 1/120s, ISO 80, 24mm | Reproducing exposure in editors | None |
+| `GPSLatitude` / `GPSLongitude` | 31.230556° N, 121.473611° E | Geotagging for maps and search | High — pinpoints location to a few meters |
+| `GPSAltitude` | 15 m | Altitude above sea level | Medium |
+| `Software` | iOS 18.1, Photoshop 25.4 | Edit history | Low to medium — leaks workflow |
+| `SerialNumber` (some bodies) | E.g. Sony / Canon DSLR | Camera-body identity | High for journalists |
+| `ImageUniqueID` | UUID per shutter press | Deduplication | Medium |
+
+Two other metadata standards commonly travel inside JPEG application marker segments:
+
+- **XMP** (Adobe's XML metadata) — captures Lightroom edit history, ratings, captions, copyright fields. Stored in an `APP1` segment alongside or instead of EXIF.
+- **IPTC** — older newsroom standard for caption, author, and copyright. Stored in an `APP13` segment.
+
+A photo from a phone often has all three: EXIF for capture parameters in `APP1`, XMP for any editing in another `APP1`, and sometimes IPTC stamped into `APP13` by a desktop tool.
+
+## The JPEG Layout — Why Strip Mode Does Not Re-encode
+
+A JPEG is not one continuous blob. It is a stream of marker segments, each starting with `0xFF` followed by a marker byte:
+
+```
+0xFFD8           SOI    Start of Image
+0xFFE0           APP0   JFIF density and aspect
+0xFFE1           APP1   EXIF or XMP   ← personal data lives here
+0xFFE1           APP1   XMP (a second one is common)
+0xFFE2           APP2   ICC color profile
+0xFFED           APP13  Photoshop / IPTC
+0xFFEE           APP14  Adobe color transform marker
+0xFFDB × 2       DQT    Quantization tables
+0xFFC0           SOF    Start of Frame (image dimensions)
+0xFFC4 × 4       DHT    Huffman tables
+0xFFDA           SOS    Start of Scan (compressed pixel data follows)
+...              compressed entropy-coded image data
+0xFFD9           EOI    End of Image
+```
+
+The pixel data lives between the SOS marker and the EOI marker. Everything before SOS is metadata or decoder configuration. To strip metadata, you do not need to touch pixels at all — you walk the marker stream and drop the segments that carry personal data, then concatenate what is left.
+
+The ZeroTool stripper drops three markers:
+
+- `APP1` (0xFFE1) — EXIF and XMP
+- `APP13` (0xFFED) — Photoshop / IPTC
+- `APP14` (0xFFEE) — Adobe color transform
+
+It keeps SOI, APP0 (JFIF), APP2 (ICC color profile, so colors render the same), all DQT / SOF / DHT segments, the SOS marker, the compressed image bytes, and EOI.
+
+The result is **byte-identical to the original on the pixel side**. No quality loss. No re-encoding. Compare this to the common "drop EXIF by re-encoding through Canvas" pattern:
+
+```javascript
+// LOSSY — re-encodes JPEG through Canvas, quality drops
+canvas.getContext('2d').drawImage(img, 0, 0);
+canvas.toBlob(blob => save(blob), 'image/jpeg', 0.95);
+```
+
+Canvas re-encoding is one line and works in any browser, but every save is a fresh JPEG quantization. After three round-trips, edges visibly soften and chroma blocks show up in flat colors. The byte-level approach has none of that — the cleaned file is the same compressed pixels, just with the personal-data segments cut out.
+
+## GPS Coordinates — From Rationals to Decimal Degrees
+
+The EXIF spec stores GPS coordinates in a peculiar format: three rational numbers (degrees, minutes, seconds), each itself a numerator-denominator pair, plus a one-character reference (`N`, `S`, `E`, `W`).
+
+A real example:
+
+```
+GPSLatitudeRef:  N
+GPSLatitude:     31/1, 13/1, 50/1
+GPSLongitudeRef: E
+GPSLongitude:    121/1, 28/1, 25/1
+```
+
+Decoded:
+
+```
+latitude  = 31 + 13/60 + 50/3600 = 31.230556° N
+longitude = 121 + 28/60 + 25/3600 = 121.473611° E
+```
+
+Real-world precision depends on two things: the rational denominators the camera writes (a denominator of 1 means whole-second resolution, around 30 m at the equator; phones often use much larger denominators for sub-second precision) and the underlying GPS fix quality. Phones writing high-denominator rationals on a clean sky-view fix can encode coordinates accurate to a few meters. The viewer only converts what is in the file — it cannot improve or worsen the underlying fix.
+
+The viewer decodes both axes, applies the `S` / `W` sign flip, and constructs a Google Maps URL locally. The link only fires a request when you click it — until then no third party sees the coordinate.
+
+## What Social Platforms Actually Strip
+
+A common assumption is "I posted on Twitter, the photo is safe." It depends on the platform and the path. Public statements and reverse-engineering reports vary, and platforms do change their handling. As of late 2025 the rough picture:
+
+| Platform | Default upload behavior | Caveats |
+|----------|-------------------------|---------|
+| **Twitter / X** | Strips EXIF for public images | Direct messages may keep more; original-quality uploads through some clients can preserve metadata |
+| **Facebook** | Strips most EXIF on display; keeps a copy server-side | Internal API can return original on certain queries |
+| **Instagram** | Strips EXIF | Re-encodes images aggressively, also removes GPS |
+| **Reddit (i.redd.it)** | Strips EXIF | But links to off-site image hosts (imgur, external) follow that host's policy |
+| **WeChat / 微信** | Strips EXIF for chat images sent at "compressed" mode | Sending as "original file" preserves EXIF in full |
+| **WhatsApp** | Strips EXIF on standard send | Sending as "document" preserves it |
+| **Discord** | Behavior varies by upload path and file type | Audit your specific path or strip locally before posting |
+| **Email attachments** | Pass through | EXIF is preserved unless the client re-encodes |
+| **GitHub / GitLab issue images** | Pass through | EXIF preserved |
+
+The take-away: do not rely on the platform. Strip locally before posting and the question disappears.
+
+## Common Edge Cases
+
+### "No EXIF found" on a phone photo
+
+If the photo has been screenshotted, exported through certain edit apps, or converted from HEIC to JPEG by some pipelines, the EXIF block can be entirely missing. The viewer will say "No EXIF metadata found" — which is the desired state. You can still run the strip pass to remove any XMP or IPTC blocks the editor added.
+
+### EXIF still present after Photoshop "Save for Web"
+
+"Save for Web" with metadata set to `None` removes EXIF but typically leaves the ICC profile and may add an XMP block describing the export. The ZeroTool viewer reads EXIF only; to inspect XMP contents use an XMP-aware tool such as `exiftool -xmp:all`. The strip pass still removes the XMP APP1 segment regardless.
+
+### HEIC / HEIF photos
+
+HEIC is the default container on iPhone since 2017. HEIC carries EXIF in a different (ISOBMFF) structure, not as a JPEG marker. The current ZeroTool tool focuses on JPEG. To strip HEIC EXIF, use `exiftool -all= file.heic` locally, or convert HEIC to JPEG first and then strip.
+
+### TIFF, HEIC, PNG files
+
+TIFF stores EXIF in IFD trees similar to the EXIF block inside a JPEG, but the file is not a JPEG marker stream. PNG can carry an `eXIf` chunk per the 2017 spec extension. The current ZeroTool tool accepts JPEG only — for other formats use `exiftool -all=` locally or convert to JPEG first.
+
+### Files larger than 25 MB
+
+Browsers can usually parse and strip files up to 100 MB without trouble on a modern laptop. Phones may get tight on RAM. The tool warns at 25 MB and refuses above 100 MB to avoid OOM crashes. For batch jobs over many large files, a local CLI like `exiftool -all=` or `mat2` is the right tool.
+
+## Reproducing the Strip with Other Tools
+
+The ZeroTool strip is a JavaScript implementation of a 30-line algorithm. Here is the same operation in three other environments.
+
+**Bash with exiftool** — the canonical command-line tool, written in Perl and distributed under Perl's own license (dual Artistic / GPL):
+
+```bash
+# Remove ALL metadata (EXIF, XMP, IPTC, ICC) — note: removing ICC may shift colors
+exiftool -all= photo.jpg
+
+# Keep ICC color profile, drop EXIF / XMP / IPTC only
+exiftool -all= --icc_profile:all photo.jpg
+
+# Verify the targeted tags are gone (ICC profile and JFIF marker
+# are intentionally kept so colors render correctly)
+exiftool photo.jpg
+```
+
+**Python with Pillow** (re-encodes):
+
+```python
+from PIL import Image
+
+# This re-encodes — minor quality loss
+img = Image.open("photo.jpg")
+img.save("photo-clean.jpg", "JPEG", quality=95, optimize=True)
+```
+
+**Python with piexif** (no re-encode):
+
+```python
+import piexif
+
+# Walks the marker stream, removes EXIF only
+piexif.remove("photo.jpg")
+```
+
+**Browser JavaScript** — what the ZeroTool tool does internally:
+
+```javascript
+async function stripJpegMetadata(file) {
+  const buf = await file.arrayBuffer();
+  const view = new DataView(buf);
+  if (view.getUint16(0) !== 0xFFD8) throw new Error("not a JPEG");
+
+  const keep = [[0, 2]];                  // SOI
+  let pos = 2;
+  while (pos < view.byteLength - 1) {
+    const marker = view.getUint16(pos);
+    if (marker === 0xFFDA || marker === 0xFFD9) {
+      keep.push([pos, view.byteLength]);  // SOS through EOI
+      break;
+    }
+    if ((marker & 0xFF00) !== 0xFF00) break;
+    const segLen = view.getUint16(pos + 2);
+    const segEnd = pos + 2 + segLen;
+    if (marker !== 0xFFE1 && marker !== 0xFFED && marker !== 0xFFEE) {
+      keep.push([pos, segEnd]);
+    }
+    pos = segEnd;
+  }
+
+  const total = keep.reduce((s, r) => s + r[1] - r[0], 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const [a, b] of keep) {
+    out.set(new Uint8Array(buf, a, b - a), off);
+    off += b - a;
+  }
+  return new Blob([out.buffer], { type: "image/jpeg" });
+}
+```
+
+That snippet is the entire algorithm. The rest of the tool is the EXIF reader for the inspection panel.
+
+## How the ZeroTool Tool Compares
+
+ZeroTool is one of many EXIF tools — what is different here:
+
+| Capability | ZeroTool | exifremover.com | metadata2go.com | exifcleaner (desktop) |
+|------------|----------|-----------------|-----------------|----------------------|
+| 100% in-browser | Yes | Yes (claims) | No (server upload) | Yes |
+| Byte-level strip (no re-encode) | Yes | Unclear from docs | N/A | Yes |
+| Free, no sign-up | Yes | Yes | Yes | Yes |
+| Open-source code | Yes ([repo](https://github.com/kassolzx/zerotool-dev)) | No | No | Yes |
+| Inline GPS map link | Yes | No | Some | No |
+| HEIC / TIFF | JPEG only (current) | Some | Yes | Yes |
+| Batch | No (single-file) | Yes (up to 20 per browser session) | Some paid | Yes |
+
+The honest framing: for one-off "is there EXIF in this and can I strip it" the in-browser tools all do the job. For batch jobs, the desktop `exifcleaner` or CLI `exiftool` is faster and supports HEIC. ZeroTool's edge is the byte-level guarantee, transparent open source, and the multilingual documentation that covers what the strip actually does.
+
+## Privacy Notes
+
+- The page does not upload your photos. Photo bytes stay in the browser tab. Site-level analytics events (a page view, a "parsed" event, a "download_cleaned" event) fire to ZeroTool's analytics, but they carry no file content — they only count that an action happened, like every other page on the site.
+- The Google Maps deep link is constructed locally. It does not fire a request until you click it.
+- The cleaned-file download is a Blob URL revoked after a second to avoid leaks in the page memory.
+
+## Further Reading
+
+- [CIPA EXIF 2.32 specification (PDF)](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E) — the authoritative spec
+- [JPEG file structure](https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format) — Wikipedia's overview of marker segments
+- [MDN: FileReader](https://developer.mozilla.org/en-US/docs/Web/API/FileReader) — the browser API used to read the bytes
+- [MDN: DataView](https://developer.mozilla.org/en-US/docs/Web/API/DataView) — endian-aware reads for binary parsing
+- [exiftool by Phil Harvey](https://exiftool.org/) — the canonical command-line metadata tool
+- ZeroTool tools that pair well: [Image to Base64](/tools/image-to-base64), [WebP Converter](/tools/webp-converter), [SVG to PNG Converter](/tools/svg-to-png-converter), [QR Code Decoder](/tools/qr-code-decoder)
+
+[Strip EXIF from a photo now →](/tools/exif-metadata-viewer)

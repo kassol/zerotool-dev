@@ -1,0 +1,253 @@
+---
+title: "EXIF 元数据查看器：在浏览器里剥离照片的 GPS 与相机信息"
+description: "在浏览器端查看 EXIF 元数据，并剥离 JPEG 照片的 EXIF / XMP / IPTC 标记段。覆盖 JPEG marker 布局、GPS 坐标解码以及社交平台到底剥不剥。"
+pubDate: 2026-04-28
+lang: "zh"
+translationSlug: "exif-metadata-viewer-guide"
+sourceTitle: "EXIF Metadata Viewer: Strip GPS and Camera Info from Photos in Your Browser"
+tags: ["exif", "image-privacy", "jpeg", "developer-tools"]
+ogImage: /og/blog-exif-metadata-viewer-guide.png
+---
+
+你在论坛发了一张猫的照片。二十分钟后，一个陌生人留言报出了你家小区的名字。这不是被人跟踪——他只是把图片丢进了几十个免费的 EXIF 查看器里。给猫拍照的那部手机把 GPS 坐标精确到几米写进了文件，论坛把字节原样转发，任何人开个浏览器标签页就能读到。
+
+[打开 EXIF 元数据查看器 →](/tools/exif-metadata-viewer)
+
+EXIF 是数字摄影里大多数人从来没看过的那一面。这篇指南讲清楚元数据块里到底有什么、为什么会写进去、社交平台上传时到底剥不剥，以及如何在不上传到任何服务器的前提下查看与移除它。
+
+## EXIF 实际包含什么
+
+EXIF（Exchangeable Image File Format，可交换图像文件格式）是由 CIPA 维护的标准（[DC-008-Translation-2023, "EXIF 2.32"](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E)），定义了相机和手机如何把结构化元数据嵌入图片文件。它从 1995 年起逐步成为事实标准，今天几乎所有消费级设备产出的 JPEG 里都有它。
+
+一张普通的手机照片携带的远不止时间戳：
+
+| 字段 | 示例 | 写入原因 | 隐私风险 |
+|------|------|----------|----------|
+| `Make` / `Model` | Apple / iPhone 15 Pro | 相机识别 | 低 — 千万级设备共享 |
+| `LensModel` | iPhone 15 Pro back camera 6.86mm f/1.78 | 编辑软件需要的光学信息 | 低 |
+| `DateTimeOriginal` | 2024-08-12 14:32:08 | 排序与相册整理 | 中 — 暴露何时何地 |
+| `FNumber` / `ExposureTime` / `ISO` / `FocalLength` | f/1.8、1/120s、ISO 80、24mm | 编辑软件复现曝光 | 无 |
+| `GPSLatitude` / `GPSLongitude` | 31.230556° N、121.473611° E | 地图标注与搜索 | 高 — 精度可达几米 |
+| `GPSAltitude` | 15 m | 海拔信息 | 中 |
+| `Software` | iOS 18.1、Photoshop 25.4 | 编辑历史 | 低-中 — 泄露工作流 |
+| `SerialNumber`（部分机身） | Sony / Canon DSLR | 机身身份 | 对记者属高风险 |
+| `ImageUniqueID` | 每次按快门一个 UUID | 去重 | 中 |
+
+JPEG 的 application marker 段里通常还有另外两个标准：
+
+- **XMP**（Adobe 的 XML 元数据）—— 记录 Lightroom 编辑历史、评分、标题、版权字段。和 EXIF 共存于 `APP1`，或单独占一个 `APP1`。
+- **IPTC** —— 更老的新闻编辑室标准，记录说明、作者、版权。存于 `APP13` 段。
+
+一张手机照片三者都常见：`APP1` 里放 EXIF 拍摄参数、再来一个 `APP1` 放 XMP 编辑信息，桌面工具有时还会在 `APP13` 里盖一个 IPTC 章。
+
+## JPEG 的结构 —— 为什么剥离不需要重编码
+
+JPEG 不是一整团连续字节，而是一连串以 `0xFF` 开头的 marker 段：
+
+```
+0xFFD8           SOI    Start of Image（图像起始）
+0xFFE0           APP0   JFIF 密度与宽高比
+0xFFE1           APP1   EXIF 或 XMP   ← 个人数据藏在这里
+0xFFE1           APP1   XMP（再来一个很常见）
+0xFFE2           APP2   ICC 色彩配置
+0xFFED           APP13  Photoshop / IPTC
+0xFFEE           APP14  Adobe 色彩变换标记
+0xFFDB × 2       DQT    量化表
+0xFFC0           SOF    Start of Frame（图像尺寸）
+0xFFC4 × 4       DHT    霍夫曼表
+0xFFDA           SOS    Start of Scan（压缩像素数据从此开始）
+...              熵编码后的压缩图像数据
+0xFFD9           EOI    End of Image（图像结束）
+```
+
+像素数据存在 SOS 与 EOI 之间，SOS 之前全是元数据或解码器配置。要剥离元数据根本不用碰像素 —— 走一遍 marker 流，丢掉带个人数据的段，剩下的拼起来就行。
+
+ZeroTool 的剥离器丢三类 marker：
+
+- `APP1`（0xFFE1）—— EXIF 与 XMP
+- `APP13`（0xFFED）—— Photoshop / IPTC
+- `APP14`（0xFFEE）—— Adobe 色彩变换
+
+保留的有：SOI、APP0（JFIF）、APP2（ICC 色彩配置，让颜色显示一致）、所有 DQT / SOF / DHT 段、SOS 标记、压缩像素数据，以及 EOI。
+
+结果是 **像素侧字节级一致**，零损耗，零重编码。对比一种常见的"用 Canvas 重画来去 EXIF"模式：
+
+```javascript
+// 有损 —— 通过 Canvas 重新编码，画质会下降
+canvas.getContext('2d').drawImage(img, 0, 0);
+canvas.toBlob(blob => save(blob), 'image/jpeg', 0.95);
+```
+
+Canvas 重编码只要一行，所有浏览器都跑得起来，但每存一次就是一次 JPEG 量化。来回三次，边缘明显软化，平滑色块里能看到色度块。字节级方案没有这个问题 —— 干净后的文件还是同样的压缩像素，只是把个人数据段切掉了。
+
+## GPS 坐标 —— 从 rational 到十进制度数
+
+EXIF 把 GPS 坐标存成一种很特别的格式：三个 rational（度、分、秒），每个都是分子-分母对，再加一个表示半球的字符（`N` / `S` / `E` / `W`）。
+
+实际例子：
+
+```
+GPSLatitudeRef:  N
+GPSLatitude:     31/1, 13/1, 50/1
+GPSLongitudeRef: E
+GPSLongitude:    121/1, 28/1, 25/1
+```
+
+解码：
+
+```
+纬度 = 31 + 13/60 + 50/3600 = 31.230556° N
+经度 = 121 + 28/60 + 25/3600 = 121.473611° E
+```
+
+实际精度取决于两件事：相机写入的 rational 分母（分母为 1 表示秒级整数精度，赤道附近约 30 m；手机为了亚秒精度通常用大得多的分母）和底层 GPS 定位质量。手机在天空开阔的环境下用大分母 rational 写出的坐标可以精确到几米。查看器只做单位换算 —— 既不能改善也不会恶化原始定位。
+
+查看器解出两个轴的十进制度数，按 `S` / `W` 翻转正负号，并在本地拼出 Google Maps URL。链接只在你点击的时候才发请求 —— 在那之前没有任何第三方看到坐标。
+
+## 社交平台到底剥不剥
+
+很多人有个朴素假设："我发到 Twitter 了，应该没事吧？"。答案要看平台、要看具体路径，公开声明和逆向报告口径也不一致，平台还会改策略。截至 2025 年下半年的大致情况：
+
+| 平台 | 默认上传行为 | 注意事项 |
+|------|--------------|----------|
+| **Twitter / X** | 公开图片剥 EXIF | DM 可能保留更多；某些客户端的"原画质"上传会保留 |
+| **Facebook** | 显示侧剥大部分 EXIF；服务端保留一份原图 | 内部 API 在某些查询下能拿回原图 |
+| **Instagram** | 剥 EXIF | 重编码图片很激进，GPS 一并剥掉 |
+| **Reddit (i.redd.it)** | 剥 EXIF | 但跳转到 imgur 等外部图床的链接走该图床的策略 |
+| **微信** | 聊天图选"压缩模式"会剥 EXIF | 选"原文件"则完整保留 EXIF |
+| **WhatsApp** | 普通发送会剥 EXIF | 选"以文件发送"则保留 |
+| **Discord** | 行为按上传路径与文件类型不同而异 | 自查具体路径或在本地先剥 |
+| **邮件附件** | 直通 | 除非客户端重编码，否则 EXIF 原样 |
+| **GitHub / GitLab issue 图片** | 直通 | EXIF 保留 |
+
+结论：不要赌平台。本地剥完再发，问题就不存在了。
+
+## 常见边界情况
+
+### 手机照片显示"未找到 EXIF"
+
+如果照片是截图来的、经过某些编辑应用导出，或者从 HEIC 转码成 JPEG 时被某些管线吃掉了元数据，EXIF 块就可能完全缺失。查看器会显示"该照片未包含 EXIF 元数据" —— 这其实是想要的状态。剥离按钮仍然会移除编辑器加进来的 XMP / IPTC 段。
+
+### Photoshop"存储为 Web 所用格式"后 EXIF 还在
+
+"存储为 Web 所用格式"把 Metadata 设为 `None` 时会去掉 EXIF，但通常会保留 ICC profile，并可能新增一个描述导出过程的 XMP 段。ZeroTool 查看器只解析 EXIF；要看 XMP 内容请用支持 XMP 的工具，例如 `exiftool -xmp:all`。剥离按钮仍然会移除 XMP 所在的 APP1 段。
+
+### HEIC / HEIF 照片
+
+HEIC 是 iPhone 自 2017 年起的默认容器。HEIC 用的是 ISOBMFF 结构而不是 JPEG marker，EXIF 的存放方式完全不一样。当前 ZeroTool 工具只针对 JPEG。要剥 HEIC 的 EXIF，本地用 `exiftool -all= file.heic`，或者先把 HEIC 转成 JPEG 再剥。
+
+### TIFF、HEIC、PNG 文件
+
+TIFF 用 IFD 树存 EXIF，结构和 JPEG 内的 EXIF 相似，但文件本身不是 JPEG marker 流。PNG 按 2017 年的扩展规范可以带 `eXIf` chunk。当前 ZeroTool 工具仅接受 JPEG —— 其他格式请本地用 `exiftool -all=` 或先转成 JPEG。
+
+### 大于 25 MB 的文件
+
+现代笔记本上浏览器解析与剥离 100 MB 以内的文件通常没问题，手机 RAM 可能吃紧。工具在 25 MB 给警告，超过 100 MB 直接拒绝以避免 OOM 崩溃。批量处理多个大文件时，本地 CLI 工具如 `exiftool -all=` 或 `mat2` 才是合适的方案。
+
+## 用其他工具复现剥离
+
+ZeroTool 的剥离是一段 30 行的 JavaScript 算法。下面是同一操作在另外三个环境里的写法。
+
+**Bash + exiftool** —— 业界标准命令行工具，Phil Harvey 用 Perl 写，按 Perl 自身的双协议（Artistic / GPL）发布：
+
+```bash
+# 移除全部元数据（EXIF、XMP、IPTC、ICC）—— 注意：移除 ICC 可能引起色彩偏移
+exiftool -all= photo.jpg
+
+# 保留 ICC 色彩配置，仅丢 EXIF / XMP / IPTC
+exiftool -all= --icc_profile:all photo.jpg
+
+# 验证目标 tag 已被移除（ICC profile 与 JFIF marker
+# 是有意保留的，否则颜色会变）
+exiftool photo.jpg
+```
+
+**Python + Pillow**（重编码）：
+
+```python
+from PIL import Image
+
+# 重编码 —— 有轻微画质损失
+img = Image.open("photo.jpg")
+img.save("photo-clean.jpg", "JPEG", quality=95, optimize=True)
+```
+
+**Python + piexif**（不重编码）：
+
+```python
+import piexif
+
+# 走一遍 marker 流，仅移除 EXIF
+piexif.remove("photo.jpg")
+```
+
+**浏览器 JavaScript** —— ZeroTool 工具内部的实现：
+
+```javascript
+async function stripJpegMetadata(file) {
+  const buf = await file.arrayBuffer();
+  const view = new DataView(buf);
+  if (view.getUint16(0) !== 0xFFD8) throw new Error("not a JPEG");
+
+  const keep = [[0, 2]];                  // SOI
+  let pos = 2;
+  while (pos < view.byteLength - 1) {
+    const marker = view.getUint16(pos);
+    if (marker === 0xFFDA || marker === 0xFFD9) {
+      keep.push([pos, view.byteLength]);  // SOS 直到 EOI
+      break;
+    }
+    if ((marker & 0xFF00) !== 0xFF00) break;
+    const segLen = view.getUint16(pos + 2);
+    const segEnd = pos + 2 + segLen;
+    if (marker !== 0xFFE1 && marker !== 0xFFED && marker !== 0xFFEE) {
+      keep.push([pos, segEnd]);
+    }
+    pos = segEnd;
+  }
+
+  const total = keep.reduce((s, r) => s + r[1] - r[0], 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const [a, b] of keep) {
+    out.set(new Uint8Array(buf, a, b - a), off);
+    off += b - a;
+  }
+  return new Blob([out.buffer], { type: "image/jpeg" });
+}
+```
+
+这段代码就是整个剥离算法。工具其余部分是给查看面板用的 EXIF 解析器。
+
+## ZeroTool 工具的差异
+
+EXIF 工具不少 —— ZeroTool 的差异在哪里：
+
+| 能力 | ZeroTool | exifremover.com | metadata2go.com | exifcleaner（桌面） |
+|------|----------|-----------------|-----------------|--------------------|
+| 100% 浏览器端 | 是 | 是（自述） | 否（上传到服务端） | 是 |
+| 字节级剥离（不重编码） | 是 | 文档不明确 | 不适用 | 是 |
+| 免费、免注册 | 是 | 是 | 是 | 是 |
+| 开源 | 是（[仓库](https://github.com/kassolzx/zerotool-dev)） | 否 | 否 | 是 |
+| 内嵌 GPS 地图链接 | 是 | 否 | 部分 | 否 |
+| HEIC / TIFF | 当前仅 JPEG | 部分 | 是 | 是 |
+| 批量 | 否（单文件） | 是（每会话最多 20 张） | 部分付费 | 是 |
+
+实话实说：单次"看看里面有没有 EXIF、能不能剥掉"这种需求，浏览器端工具都够用。批量场景下，桌面 `exifcleaner` 或命令行 `exiftool` 更快、还支持 HEIC。ZeroTool 的优势在于字节级保证、透明开源，以及多语言文档把"剥离到底做了什么"讲清楚。
+
+## 隐私说明
+
+- 页面不会上传你的照片。照片字节始终在浏览器标签页内。站点级别的统计事件（一次页面浏览、一次"已解析"事件、一次"download_cleaned"事件）会发到 ZeroTool 的统计后台，但事件不携带任何文件内容 —— 只是和站内其他页面一样记录"某个动作发生过"。
+- Google 地图深链在本地拼接，点击之前不会发请求。
+- 剥离后的下载用 Blob URL，1 秒后 revoke，避免内存里残留。
+
+## 延伸阅读
+
+- [CIPA EXIF 2.32 规范（PDF）](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E) —— 权威规范
+- [JPEG 文件结构](https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format) —— 维基百科的 marker 段总览
+- [MDN: FileReader](https://developer.mozilla.org/zh-CN/docs/Web/API/FileReader) —— 读取字节用的浏览器 API
+- [MDN: DataView](https://developer.mozilla.org/zh-CN/docs/Web/API/DataView) —— 二进制解析用的字节序感知读取
+- [exiftool（Phil Harvey）](https://exiftool.org/) —— 业界标准的命令行元数据工具
+- 与本工具搭配的 ZeroTool 工具：[图片转 Base64](/tools/image-to-base64)、[WebP 转换器](/tools/webp-converter)、[SVG 转 PNG](/tools/svg-to-png-converter)、[二维码解码器](/tools/qr-code-decoder)
+
+[现在就剥一张照片的 EXIF →](/tools/exif-metadata-viewer)

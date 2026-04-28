@@ -1,0 +1,253 @@
+---
+title: "EXIF メタデータビューアー：ブラウザで写真の GPS とカメラ情報を取り除く"
+description: "ブラウザ上で EXIF メタデータを確認し、JPEG 写真から EXIF / XMP / IPTC マーカーセグメントを除去する。JPEG マーカーレイアウト、GPS 座標のデコード、SNS の実際の挙動まで網羅。"
+pubDate: 2026-04-28
+lang: "ja"
+translationSlug: "exif-metadata-viewer-guide"
+sourceTitle: "EXIF Metadata Viewer: Strip GPS and Camera Info from Photos in Your Browser"
+tags: ["exif", "image-privacy", "jpeg", "developer-tools"]
+ogImage: /og/blog-exif-metadata-viewer-guide.png
+---
+
+掲示板に飼い猫の写真を投稿する。20 分後、見知らぬ人がコメント欄であなたの住むマンション名を当ててみせる。ストーカー行為ではない —— 写真を無料の EXIF ビューアーに放り込んだだけだ。撮影に使ったスマホは、数メートル単位の GPS 座標をファイルに書き込んでいた。掲示板はバイトをそのまま転送し、ブラウザのタブを開ける人なら誰でも読み取れる状態になっていた。
+
+[EXIF メタデータビューアーを開く →](/tools/exif-metadata-viewer)
+
+EXIF はデジタル写真の中で、ほとんどの人が一度も覗いたことがない側面だ。本記事ではメタデータブロックの中身、なぜそれが入っているのか、各 SNS のアップロード時の挙動、そしてサーバーに何もアップロードせずに確認・削除する方法までを通して解説する。
+
+## EXIF に実際に含まれるもの
+
+EXIF（Exchangeable Image File Format、交換可能画像ファイル形式）は CIPA が維持する規格（[DC-008-Translation-2023, "EXIF 2.32"](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E)）で、カメラやスマートフォンが構造化メタデータを画像ファイルに埋め込む方法を定めている。1995 年に始まり、現在では民生機器が出力するほぼすべての JPEG に組み込まれている。
+
+スマートフォンのカメラで撮った 1 枚は、撮影日時よりはるかに多くの情報を運ぶ：
+
+| フィールド | 例 | 書き込まれる理由 | プライバシーリスク |
+|------|------|------|------|
+| `Make` / `Model` | Apple / iPhone 15 Pro | カメラ識別 | 低 — 数千万台で共通 |
+| `LensModel` | iPhone 15 Pro back camera 6.86mm f/1.78 | 編集ソフトのための光学情報 | 低 |
+| `DateTimeOriginal` | 2024-08-12 14:32:08 | 並び替え・アルバム整理 | 中 — いつどこにいたかが分かる |
+| `FNumber` / `ExposureTime` / `ISO` / `FocalLength` | f/1.8、1/120s、ISO 80、24mm | 編集ソフトでの露出再現 | なし |
+| `GPSLatitude` / `GPSLongitude` | 31.230556° N、121.473611° E | 地図表示・検索のジオタグ | 高 — 数メートル単位で位置特定 |
+| `GPSAltitude` | 15 m | 海抜情報 | 中 |
+| `Software` | iOS 18.1、Photoshop 25.4 | 編集履歴 | 低〜中 — ワークフローが漏れる |
+| `SerialNumber`（一部の機種） | Sony / Canon DSLR など | 機体個体識別 | 記者には高リスク |
+| `ImageUniqueID` | シャッターごとの UUID | 重複排除 | 中 |
+
+JPEG の application マーカーセグメントには、もう 2 つのメタデータ規格がよく同居している：
+
+- **XMP**（Adobe の XML メタデータ）—— Lightroom の編集履歴、評価、キャプション、著作権フィールドを記録。EXIF と同じ `APP1` セグメント、または別の `APP1` に格納される。
+- **IPTC** —— より古い報道室発のキャプション・著者・著作権規格。`APP13` セグメントに格納される。
+
+スマートフォンの写真では 3 つすべてが揃っていることが多い：撮影パラメータの EXIF が `APP1` に、編集情報の XMP がもう 1 つの `APP1` に、そして場合によってはデスクトップ製ソフトが `APP13` に IPTC を押印している。
+
+## JPEG のレイアウト —— 除去で再エンコードが不要な理由
+
+JPEG は連続した 1 つのブロブではない。それぞれ `0xFF` で始まるマーカーセグメントの並びだ：
+
+```
+0xFFD8           SOI    Start of Image（画像開始）
+0xFFE0           APP0   JFIF 解像度・縦横比
+0xFFE1           APP1   EXIF または XMP   ← 個人データはここ
+0xFFE1           APP1   XMP（2 つ目もよくある）
+0xFFE2           APP2   ICC カラープロファイル
+0xFFED           APP13  Photoshop / IPTC
+0xFFEE           APP14  Adobe カラー変換マーカー
+0xFFDB × 2       DQT    量子化テーブル
+0xFFC0           SOF    Start of Frame（画像サイズ）
+0xFFC4 × 4       DHT    ハフマンテーブル
+0xFFDA           SOS    Start of Scan（圧縮ピクセルデータ開始）
+...              エントロピー符号化された圧縮画像データ
+0xFFD9           EOI    End of Image（画像終了）
+```
+
+ピクセルデータは SOS と EOI の間にあり、SOS より前はすべてメタデータかデコーダー設定だ。メタデータ除去にピクセルを触る必要はない —— マーカーストリームを歩いて個人データを持つセグメントを落とし、残りを連結すれば終わりだ。
+
+ZeroTool の除去ツールが落とすマーカーは 3 種類：
+
+- `APP1`（0xFFE1）—— EXIF と XMP
+- `APP13`（0xFFED）—— Photoshop / IPTC
+- `APP14`（0xFFEE）—— Adobe カラー変換
+
+保持されるもの：SOI、APP0（JFIF）、APP2（ICC カラープロファイル、色味を維持）、すべての DQT / SOF / DHT セグメント、SOS マーカー、圧縮ピクセルデータ、EOI。
+
+結果は **ピクセル側でバイト単位で同一**。劣化なし、再エンコードなし。よくある「Canvas で再描画して EXIF を落とす」パターンと比較すると：
+
+```javascript
+// 劣化あり —— Canvas で再エンコード、画質が落ちる
+canvas.getContext('2d').drawImage(img, 0, 0);
+canvas.toBlob(blob => save(blob), 'image/jpeg', 0.95);
+```
+
+Canvas 再エンコードは 1 行でどのブラウザでも動くが、保存のたびに新しい JPEG 量子化が走る。3 周もすればエッジが目に見えて柔らかくなり、平坦な色面に色度ブロックが現れる。バイトレベル方式にはそれがない —— クリーンになったファイルは同じ圧縮ピクセルのまま、個人データのセグメントだけが切り取られている。
+
+## GPS 座標 —— rational から十進度数へ
+
+EXIF 規格は GPS 座標を独特な形式で保存する：3 つの rational 数（度、分、秒）—— それぞれが分子と分母のペア —— と、半球を表す 1 文字（`N` / `S` / `E` / `W`）。
+
+実例：
+
+```
+GPSLatitudeRef:  N
+GPSLatitude:     31/1, 13/1, 50/1
+GPSLongitudeRef: E
+GPSLongitude:    121/1, 28/1, 25/1
+```
+
+デコード結果：
+
+```
+緯度  = 31 + 13/60 + 50/3600 = 31.230556° N
+経度  = 121 + 28/60 + 25/3600 = 121.473611° E
+```
+
+実際の精度は 2 つの要素で決まる：カメラが書き込んだ rational の分母（分母 1 は秒単位の整数解像度で赤道付近で約 30 m。スマートフォンはサブ秒精度のためにずっと大きな分母を使うことが多い）と、元になる GPS フィックスの品質。空が開けた場所で大きな分母の rational を書き込むスマートフォンは、数メートル精度の座標をエンコードできる。ビューアーは単に単位変換をするだけ —— フィックスの品質を改善も悪化もさせない。
+
+ビューアーは両軸を十進度数にデコードし、`S` / `W` の符号反転を適用し、ローカルで Google マップの URL を組み立てる。リンクはクリックするまでリクエストを発しない —— その時点まで第三者は座標を見ない。
+
+## SNS は実際に何を取り除いているのか
+
+「Twitter に投稿したから写真は安全」という素朴な仮定は、プラットフォームと送信経路に依存する。公式声明とリバースエンジニアリングの報告は食い違うことがあり、プラットフォームは方針を変える。2025 年下半期時点のおおまかな状況：
+
+| プラットフォーム | デフォルトのアップロード挙動 | 注意点 |
+|----------|-------------------------|---------|
+| **Twitter / X** | 公開画像から EXIF を除去 | DM は残ることがある。一部クライアントの「オリジナル画質」アップロードでは保持されることも |
+| **Facebook** | 表示時に EXIF の大半を除去、サーバー側にはコピーを保持 | 一部の API クエリでオリジナルが返ることがある |
+| **Instagram** | EXIF を除去 | 画像を強めに再エンコード、GPS も削除 |
+| **Reddit (i.redd.it)** | EXIF を除去 | 外部画像ホスト（imgur など）へのリンクはホスト側のポリシー次第 |
+| **LINE / WeChat** | チャット画像が「圧縮」モードのとき EXIF を除去 | 「オリジナル」送信では EXIF を完全保持 |
+| **WhatsApp** | 通常送信時に EXIF を除去 | 「ドキュメントとして送信」では保持 |
+| **Discord** | アップロード経路とファイル種別で挙動が変わる | 自分の経路を確認するか、ローカルで先に除去 |
+| **メール添付** | 素通り | クライアントが再エンコードしない限り EXIF はそのまま |
+| **GitHub / GitLab issue 画像** | 素通り | EXIF 保持 |
+
+教訓：プラットフォームを当てにしない。投稿前にローカルで除去すれば、この問題は消える。
+
+## よくあるエッジケース
+
+### スマートフォンの写真で「EXIF が見つかりません」
+
+写真がスクリーンショット、特定の編集アプリでの書き出し、HEIC から JPEG への変換でメタデータが落ちている経路を経た場合、EXIF ブロックが完全に欠落することがある。ビューアーは「No EXIF metadata found」と表示する —— これはむしろ望ましい状態だ。除去パスは編集ソフトが追加した XMP / IPTC を取り除くために走らせる価値がある。
+
+### Photoshop「Web 用に保存」後も EXIF が残る
+
+メタデータを `None` に設定した「Web 用に保存」は EXIF を除去するが、ICC profile は通常残し、エクスポート過程を記述する XMP ブロックを追加することがある。ZeroTool ビューアーは EXIF のみ読み取る；XMP の中身を確認するには `exiftool -xmp:all` のような XMP 対応ツールを使う。除去パス自体は XMP の APP1 セグメントも取り除く。
+
+### HEIC / HEIF 写真
+
+HEIC は 2017 年以降の iPhone の既定コンテナだ。HEIC は JPEG マーカーではなく ISOBMFF 構造で EXIF を持つ。現行 ZeroTool ツールは JPEG に絞っている。HEIC の EXIF を取り除くには、ローカルで `exiftool -all= file.heic` を使うか、HEIC を JPEG に変換してから除去する。
+
+### TIFF / HEIC / PNG ファイル
+
+TIFF は IFD ツリーで EXIF を持ち、JPEG 内部の EXIF と構造が似ているが、ファイルそのものは JPEG マーカーストリームではない。PNG は 2017 年の規格拡張により `eXIf` チャンクを持てる。現行 ZeroTool ツールは JPEG のみ受け付ける —— 他形式はローカルで `exiftool -all=` を使うか、JPEG に変換してから処理する。
+
+### 25 MB を超えるファイル
+
+最近のラップトップでは 100 MB 以下のファイルなら問題なくブラウザで解析・除去できる。スマートフォンは RAM が厳しい場合がある。ツールは 25 MB で警告を出し、100 MB を超えると OOM クラッシュを避けるため拒否する。多数の大ファイルをバッチ処理するなら、ローカル CLI の `exiftool -all=` や `mat2` が適切なツールだ。
+
+## 他のツールで同じ除去を再現する
+
+ZeroTool の除去処理は 30 行ほどの JavaScript アルゴリズムだ。同じ操作を他の 3 環境で書くと以下のようになる。
+
+**Bash + exiftool** —— 業界標準の CLI。Phil Harvey による Perl 製で、Perl 自身のライセンス（Artistic / GPL のデュアル）で配布されている：
+
+```bash
+# すべてのメタデータを削除（EXIF、XMP、IPTC、ICC）—— ICC を消すと色味がずれる可能性
+exiftool -all= photo.jpg
+
+# ICC カラープロファイルを残し、EXIF / XMP / IPTC のみ削除
+exiftool -all= --icc_profile:all photo.jpg
+
+# 対象タグが消えていることを確認（ICC profile と JFIF マーカーは
+# 色を正しく再現するため意図的に残している）
+exiftool photo.jpg
+```
+
+**Python + Pillow**（再エンコード）：
+
+```python
+from PIL import Image
+
+# 再エンコード —— わずかな画質劣化あり
+img = Image.open("photo.jpg")
+img.save("photo-clean.jpg", "JPEG", quality=95, optimize=True)
+```
+
+**Python + piexif**（再エンコードなし）：
+
+```python
+import piexif
+
+# マーカーストリームを歩いて EXIF のみ削除
+piexif.remove("photo.jpg")
+```
+
+**ブラウザ JavaScript** —— ZeroTool ツールが内部で行っている処理：
+
+```javascript
+async function stripJpegMetadata(file) {
+  const buf = await file.arrayBuffer();
+  const view = new DataView(buf);
+  if (view.getUint16(0) !== 0xFFD8) throw new Error("not a JPEG");
+
+  const keep = [[0, 2]];                  // SOI
+  let pos = 2;
+  while (pos < view.byteLength - 1) {
+    const marker = view.getUint16(pos);
+    if (marker === 0xFFDA || marker === 0xFFD9) {
+      keep.push([pos, view.byteLength]);  // SOS から EOI まで
+      break;
+    }
+    if ((marker & 0xFF00) !== 0xFF00) break;
+    const segLen = view.getUint16(pos + 2);
+    const segEnd = pos + 2 + segLen;
+    if (marker !== 0xFFE1 && marker !== 0xFFED && marker !== 0xFFEE) {
+      keep.push([pos, segEnd]);
+    }
+    pos = segEnd;
+  }
+
+  const total = keep.reduce((s, r) => s + r[1] - r[0], 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const [a, b] of keep) {
+    out.set(new Uint8Array(buf, a, b - a), off);
+    off += b - a;
+  }
+  return new Blob([out.buffer], { type: "image/jpeg" });
+}
+```
+
+このスニペットがアルゴリズムの全体だ。残りは確認パネル用の EXIF リーダーである。
+
+## ZeroTool ツールとの比較
+
+EXIF ツールは数多くあるが、ZeroTool で何が違うのか：
+
+| 機能 | ZeroTool | exifremover.com | metadata2go.com | exifcleaner（デスクトップ） |
+|------|----------|-----------------|-----------------|--------------------|
+| 100% ブラウザ完結 | はい | はい（自称） | いいえ（サーバーアップロード） | はい |
+| バイトレベル除去（再エンコードなし） | はい | ドキュメント不明 | 該当なし | はい |
+| 無料・登録不要 | はい | はい | はい | はい |
+| オープンソース | はい（[リポジトリ](https://github.com/kassolzx/zerotool-dev)） | いいえ | いいえ | はい |
+| GPS マップリンク内蔵 | はい | いいえ | 一部 | いいえ |
+| HEIC / TIFF | 現状 JPEG のみ | 一部 | はい | はい |
+| バッチ処理 | なし（単一ファイル） | あり（セッションあたり最大 20 枚） | 一部有料 | はい |
+
+率直に言って：「この写真に EXIF があるか、削除できるか」を 1 度確認したいだけなら、ブラウザ系ツールはどれも仕事をこなす。バッチ処理ならデスクトップの `exifcleaner` や CLI の `exiftool` のほうが速く、HEIC にも対応する。ZeroTool の強みはバイトレベルの保証、透明なオープンソース、そして「除去が実際に何をしているか」を多言語ドキュメントで説明していることだ。
+
+## プライバシーに関する注記
+
+- ページは写真をアップロードしない。写真のバイトはブラウザタブ内に留まる。サイト全体のアナリティクスイベント（ページビュー、parsed イベント、download_cleaned イベント）は ZeroTool の集計に送られるが、ファイル内容は一切含まない —— サイト内の他のページと同じく「動作が起きた」事実だけを記録する。
+- Google マップディープリンクはローカルで生成される。クリックするまでリクエストは発しない。
+- 除去後のダウンロードは Blob URL で、メモリ残留を避けるため 1 秒後に revoke される。
+
+## 関連資料
+
+- [CIPA EXIF 2.32 規格（PDF）](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E) —— 公式規格
+- [JPEG ファイル構造](https://ja.wikipedia.org/wiki/JPEG_File_Interchange_Format) —— Wikipedia によるマーカーセグメント概観
+- [MDN: FileReader](https://developer.mozilla.org/ja/docs/Web/API/FileReader) —— バイト読み取りに使うブラウザ API
+- [MDN: DataView](https://developer.mozilla.org/ja/docs/Web/API/DataView) —— バイナリ解析向けのエンディアン対応リード
+- [exiftool（Phil Harvey）](https://exiftool.org/) —— 業界標準のコマンドライン メタデータツール
+- 相性の良い ZeroTool ツール：[Image to Base64](/tools/image-to-base64)、[WebP コンバーター](/tools/webp-converter)、[SVG to PNG コンバーター](/tools/svg-to-png-converter)、[QR コードデコーダー](/tools/qr-code-decoder)
+
+[今すぐ写真の EXIF を除去 →](/tools/exif-metadata-viewer)
