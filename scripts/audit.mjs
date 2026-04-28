@@ -446,6 +446,47 @@ function checkBlog() {
     `${langGaps.length} translation gaps across ${baseSlugs.size} base slugs`);
 }
 
+// Layouts that render markdown/MDX must override Shiki's inline `style="..."`
+// on <pre> and <span> with !important — otherwise the default github-dark
+// theme bleeds dark backgrounds into light-mode pages and text becomes
+// unreadable. ToolLayout had this for tool pages; ArticleLayout was missing
+// it (2026-04-28 incident on blog pages).
+function checkLayoutShikiOverride() {
+  const issues = [];
+  const layoutDir = 'src/layouts';
+  const layoutPath = join(ROOT, layoutDir);
+  if (!existsSync(layoutPath)) {
+    pass('layout_shiki_override', 'layout Shiki override (no layouts dir)');
+    return;
+  }
+  for (const file of readdirSync(layoutPath)) {
+    if (!file.endsWith('.astro')) continue;
+    const text = read(`${layoutDir}/${file}`);
+    if (!/:global\(pre\)/.test(text)) continue;
+
+    const preBlock = text.match(/:global\(pre\)\s*\{[^}]*\}/);
+    if (preBlock && !/background[^;}]*!important/.test(preBlock[0])) {
+      issues.push(`${file}: :global(pre) background lacks !important — Shiki inline style will win in light mode`);
+    }
+
+    const preCodeBlock = text.match(/:global\(pre code\)\s*\{[^}]*\}/);
+    if (preCodeBlock) {
+      if (!/background[^;}]*!important/.test(preCodeBlock[0])) {
+        issues.push(`${file}: :global(pre code) background lacks !important`);
+      }
+      if (!/color[^;}]*!important/.test(preCodeBlock[0])) {
+        issues.push(`${file}: :global(pre code) color lacks !important`);
+      }
+    }
+
+    if (!/:global\(pre code \*\)/.test(text)) {
+      issues.push(`${file}: missing :global(pre code *) selector — Shiki span colors will leak through`);
+    }
+  }
+  if (issues.length === 0) pass('layout_shiki_override', 'layout Shiki override (pre/code !important guard)');
+  else fail('layout_shiki_override', 'layout Shiki override missing', issues);
+}
+
 function checkRedirects() {
   const issues = [];
   const path = 'public/_redirects';
@@ -487,6 +528,7 @@ try {
   checkBasePages();
   checkI18nKeys();
   checkBlog();
+  checkLayoutShikiOverride();
   checkRedirects();
 } catch (e) {
   fail('fatal', 'audit setup', [e.message, e.stack].filter(Boolean));
