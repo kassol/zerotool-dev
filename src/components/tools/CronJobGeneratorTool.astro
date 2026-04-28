@@ -327,10 +327,10 @@ const L = labels[lang] ?? labels['en'];
   // Timezone state — default UTC
   var useUtc = true;
   var localTzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  try {
-    var savedTz = localStorage.getItem('cjg_tz');
-    if (savedTz === 'local') useUtc = false;
-  } catch (e) {}
+  if (window.ztPersist) {
+    var _tzPref = window.ztPersist.load('cron-job-generator').tz;
+    if (_tzPref === 'local') useUtc = false;
+  }
 
   // Apply i18n strings
   document.querySelectorAll('[data-i18n]').forEach(function (el) {
@@ -763,21 +763,19 @@ const L = labels[lang] ?? labels['en'];
   var FIELD_OFFSETS = [0, 0, 0, 1, 0];
   var isUserEditing = false;
 
-  var LS_KEY = 'cron-job-generator';
-
   function saveState(expr) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ expression: expr })); } catch (e) {}
+    if (!window.ztPersist) return;
+    var prev = window.ztPersist.load('cron-job-generator');
+    prev.expression = expr;
+    window.ztPersist.save('cron-job-generator', prev);
   }
 
   function loadState() {
-    try {
-      var raw = localStorage.getItem(LS_KEY);
-      if (!raw) return null;
-      var data = JSON.parse(raw);
-      if (typeof data.expression === 'string' && data.expression.trim().split(/\s+/).length === 5) {
-        return data.expression.trim();
-      }
-    } catch (e) {}
+    if (!window.ztPersist) return null;
+    var data = window.ztPersist.load('cron-job-generator');
+    if (typeof data.expression === 'string' && data.expression.trim().split(/\s+/).length === 5) {
+      return data.expression.trim();
+    }
     return null;
   }
 
@@ -846,7 +844,11 @@ const L = labels[lang] ?? labels['en'];
       });
       updateNextLabel();
       rebuildExpression();
-      try { localStorage.setItem('cjg_tz', useUtc ? 'utc' : 'local'); } catch (e) {}
+      if (window.ztPersist) {
+        var _cronPrev = window.ztPersist.load('cron-job-generator');
+        _cronPrev.tz = useUtc ? 'utc' : 'local';
+        window.ztPersist.save('cron-job-generator', _cronPrev);
+      }
     });
   });
 
