@@ -1,0 +1,138 @@
+---
+title: "WiFi QR 코드 생성기: 손님이 한 번 스캔으로 Wi-Fi 에 연결되게 하기"
+description: "Wi-Fi 자동 연결용 QR 코드를 온라인으로 생성. WIFI: 문자열 형식, 이스케이프 규칙, 암호화 방식, 단말 호환성까지 다룹니다."
+pubDate: 2026-04-28
+lang: "ko"
+translationSlug: "wifi-qr-code-generator-guide"
+tags: ["wifi-qr-code", "qr-code-generator", "wifi", "developer-tools"]
+ogImage: /og/blog-wifi-qr-code-generator-guide-ko.png
+---
+
+카운터에 인쇄해 둔 카드 한 장, 회의실 벽에 붙인 스티커, 휴대폰에 저장해 둔 이미지 — 손님이 카메라를 들이대면 곧바로 연결됩니다. SSID 의 철자를 부르지 않아도 되고, 비밀번호 안의 특수문자를 두 번 읽어 줄 필요도 없으며, 호스트가 메모를 뒤지는 동안 어색하게 기다릴 일도 없습니다. Wi-Fi QR 코드 한 장으로 끝납니다.
+
+[Wi-Fi QR 코드 생성하기 →](/ko/tools/wifi-qr-code-generator)
+
+## Wi-Fi QR 코드의 실체
+
+Wi-Fi QR 코드는 정해진 포맷의 평문 문자열일 뿐입니다. iOS Camera (iOS 11 이상) 와 Android 기본 카메라 (Android 10 이상) 가 이 포맷을 기본 인식해서, 한 번 탭으로 네트워크에 가입할지 묻습니다.
+
+포맷:
+
+```
+WIFI:T:WPA;S:YourNetworkName;P:YourPassword;;
+```
+
+필드별 의미:
+
+| 필드 | 의미 | 값 |
+|------|------|-----|
+| `T` | 암호화 방식 | `WPA`, `WEP`, `nopass` |
+| `S` | SSID (네트워크 이름) | UTF-8 자유 문자열 |
+| `P` | 비밀번호 | UTF-8 자유 문자열 (`T` 가 `nopass` 일 때 생략) |
+| `H` | 숨김 네트워크 플래그 | `true` (그 외 생략) |
+| `;;` | 종료 마커 | 필수 |
+
+`T:` 이후 필드 순서는 대부분의 파서에서 상관없지만, Wi-Fi Alliance 표준 순서 (`T`, `S`, `P`, `H`) 가 모든 카메라 앱이 가정하는 순서입니다.
+
+## 예약 문자 이스케이프
+
+이 포맷에는 예약 문자 5 개가 있습니다. SSID 또는 비밀번호에 포함될 경우 반드시 백슬래시로 이스케이프해야 합니다.
+
+```
+\   ;   ,   "   :
+```
+
+예를 들어 비밀번호 `pa;ss\word` 는 payload 에서 `pa\;ss\\word` 가 됩니다. ZeroTool 생성기는 이를 자동 처리하므로, 비밀번호를 그대로 붙여 넣으면 됩니다.
+
+이스케이프를 빼먹으면 파서는 처음 만난 이스케이프 안 된 `;` 를 필드 종료로 인식하고, 휴대폰은 잘려 나간 비밀번호로 접속을 시도하거나 (반드시 실패), QR 자체 파싱을 포기합니다.
+
+## 암호화 방식 고르기
+
+2026 년 시점, 가정용·사무용 라우터 대부분은 WPA2 또는 WPA3 으로 동작합니다. 둘 다 QR 문자열에서는 `T:WPA` 로 매핑됩니다 — 포맷 자체가 WPA3 보다 오래되어 둘을 구분하지 않습니다. 실제 핸드셰이크는 휴대폰과 액세스 포인트 사이에서 협상됩니다.
+
+| 라우터 설정 | QR 필드 | 비고 |
+|--------------|---------|------|
+| WPA-Personal / WPA2 / WPA3 | `T:WPA` | 일반 가정·사무 환경 기본 |
+| WEP | `T:WEP` | 구형 장비에만 |
+| 개방 (비밀번호 없음) | `T:nopass` | `P` 필드 자체를 생략 |
+| 엔터프라이즈 (802.1X / RADIUS) | 미지원 | 카메라 스캔으로 인증서 전달 불가 |
+
+엔터프라이즈 Wi-Fi (회사 SSID 가 인증서 + 계정을 요구하는 경우) 에는 이 포맷이 맞지 않습니다. MDM 이나 `.mobileconfig` 프로파일로 배포하세요.
+
+## 숨김 SSID
+
+라우터가 SSID 를 브로드캐스트하지 않는다면 payload 에 `H:true;` 를 추가해야 합니다. 이 플래그가 없으면 카메라에 가입 안내는 떠도, 휴대폰이 네트워크 자체를 발견하지 못해 OS Wi-Fi 설정에서 "숨김 네트워크 추가" 를 직접 체크해야 합니다.
+
+참고로 숨김 SSID 는 보안 기능이 아닙니다. 패킷 스니퍼만 있으면 누구나 probe response 에서 SSID 를 빼낼 수 있습니다. Wi-Fi 목록 정리 효과는 있지만 방어 수단이 되지는 않습니다.
+
+## 기기 호환성
+
+| 플랫폼 | 기본 지원 시작 | 비고 |
+|--------|----------------|------|
+| iOS Camera | iOS 11 (2017) | 탭으로 연결 |
+| Android Camera | Android 10 (2019) | 탭으로 연결 |
+| Android 9 이하 | Google Lens 또는 QR 앱 필요 | 문자열 포맷은 동일 |
+| 네이버·카카오톡 코드 스캐너 | 지원 | 화이트리스트 확인이 한 단계 들어감 |
+| Windows Camera | 미지원 | QR 앱 사용 |
+| 구형 피처폰 | 모델별 상이 | `;;` 종료 마커에서 조용히 실패하는 경우 다수 |
+
+최대 호환을 노린다면, 인쇄해 라미네이팅할 계획이라면 오류 수정 등급을 **H (30%)** 로 — 스티커 덮임, 오염, 종이 휨에도 인식됩니다. 화면 표시용은 **M (15%)** 으로 충분 — QR 이 더 조밀해지고 렌더링이 빨라집니다.
+
+## 자주 막히는 지점
+
+**비밀번호 안 백슬래시를 이스케이프하지 않음.** 원본의 모든 `\` 는 payload 에서 `\\` 가 되어야 합니다. 생성기는 자동 처리하지만, 직접 만들 때는 반드시 확인하세요.
+
+**SSID 에 이모지 포함.** 대부분 카메라는 UTF-8 을 처리하지만, 일부 Android OEM 스캐너는 ASCII 외 문자를 거부합니다. 출시 전 실기로 검증.
+
+**라우터는 5 GHz 전용, 손님 휴대폰은 2.4 GHz 전용.** 스캔은 성공, 연결은 실패. QR 문제는 아니지만 그렇게 보입니다.
+
+**액세스 포인트 두 대가 같은 SSID 공유.** 휴대폰은 신호가 강한 쪽에 붙습니다. 신구 장비 혼용으로 두 AP 의 비밀번호가 다르면 "한 곳은 연결되고 다른 곳은 안 됨" 현상이 생깁니다 — 별도 SSID 로 나누세요.
+
+**비밀번호가 63 자 초과.** Wi-Fi WPA 표준 상한은 63 자입니다. 초과하면 payload 는 파싱되지만 핸드셰이크가 조용히 실패합니다.
+
+## payload 직접 만들기
+
+Wi-Fi QR 생성을 자체 앱에 넣어야 한다면 로직이 작아 함수 하나로 끝납니다. JavaScript:
+
+```javascript
+function wifiPayload({ ssid, password, encryption = 'WPA', hidden = false }) {
+  const esc = (s) => s.replace(/([\\;,":])/g, '\\$1');
+  let out = `WIFI:T:${encryption};S:${esc(ssid)};`;
+  if (password && encryption !== 'nopass') {
+    out += `P:${esc(password)};`;
+  }
+  if (hidden) out += 'H:true;';
+  return out + ';';
+}
+```
+
+Python:
+
+```python
+def wifi_payload(ssid: str, password: str, encryption: str = "WPA", hidden: bool = False) -> str:
+    esc = lambda s: "".join("\\" + c if c in r'\;,":' else c for c in s)
+    out = f"WIFI:T:{encryption};S:{esc(ssid)};"
+    if password and encryption != "nopass":
+        out += f"P:{esc(password)};"
+    if hidden:
+        out += "H:true;"
+    return out + ";"
+```
+
+이 문자열을 어떤 QR 라이브러리에 넣어도 동작합니다 — 브라우저의 `qrcode.js`, PyPI 의 `qrcode`, Go 의 `go-qrcode`. 생성 로직은 언어를 가리지 않고 동일합니다.
+
+## 인쇄물의 프라이버시
+
+벽에 붙은 Wi-Fi QR 코드는 평문 비밀번호와 같습니다. 지나가는 누구든 카메라만 들면 읽을 수 있고, 나중에 스캔할 수 있고, 호스트에게 묻지 않아도 외부에서 다시 접속할 수 있습니다. 게스트 네트워크라면 괜찮습니다 — 원래 그 용도이니까요. 하지만 사내 리소스에 접근 가능한 네트워크라면, 인쇄된 QR 을 "벽에 적은 비밀번호" 로 취급하고 같은 주기로 교체하세요.
+
+## 관련 도구
+
+- [QR 코드 생성기](/ko/tools/qr-code-generator) — URL, 텍스트, vCard 용 일반 QR 코드
+- [QR 코드 디코더](/ko/tools/qr-code-decoder) — 이미지나 카메라에서 기존 QR 코드 읽기
+- [비밀번호 생성기](/ko/tools/password-generator) — 인코딩 전에 강한 비밀번호 만들기
+
+## 참고 자료
+
+- [Wi-Fi Alliance — Easy Connect](https://www.wi-fi.org/discover-wi-fi/wi-fi-easy-connect)
+- [Zxing wiki — Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents) — `WIFI:` URI 스킴의 원본 명세
+- [Apple — iPhone 으로 QR 코드 스캔하기](https://support.apple.com/ko-kr/guide/iphone/scan-a-qr-code-iphd96fe1f81/ios)

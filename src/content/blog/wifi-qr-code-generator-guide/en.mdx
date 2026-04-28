@@ -1,0 +1,137 @@
+---
+title: "WiFi QR Code Generator: Let Guests Join Your Network in One Scan"
+description: "Generate Wi-Fi QR codes that phones scan to join automatically. Covers the WIFI: format, escaping rules, encryption types, and device compatibility."
+pubDate: 2026-04-28
+lang: "en"
+translationSlug: "wifi-qr-code-generator-guide"
+tags: ["wifi-qr-code", "qr-code-generator", "wifi", "developer-tools"]
+ogImage: /og/blog-wifi-qr-code-generator-guide.png
+---
+
+A printed card on the counter, a sticker on the conference-room wall, a saved image on your phone — guests point their camera and they're online. No typing the SSID, no spelling out the special character in the password, no asking the host to read it out twice. A Wi-Fi QR code does that in one scan.
+
+[Generate a Wi-Fi QR code now →](/tools/wifi-qr-code-generator)
+
+## What's Actually Inside a Wi-Fi QR Code
+
+A Wi-Fi QR code is just a plain-text string in a specific format. iOS Camera (since iOS 11) and Android camera apps (since Android 10) read this format natively and offer to join the network on tap.
+
+The format:
+
+```
+WIFI:T:WPA;S:YourNetworkName;P:YourPassword;;
+```
+
+Field by field:
+
+| Field | Meaning | Values |
+|-------|---------|--------|
+| `T` | Encryption type | `WPA`, `WEP`, or `nopass` |
+| `S` | SSID (network name) | Free text, UTF-8 |
+| `P` | Password | Free text, UTF-8 (omit when `T` is `nopass`) |
+| `H` | Hidden network flag | `true` (omit otherwise) |
+| `;;` | Closing terminator | Required |
+
+The order of fields after `T:` doesn't matter to most parsers, but the Wi-Fi Alliance reference order (`T`, `S`, `P`, `H`) is what every camera app expects.
+
+## Escaping Special Characters
+
+Five characters are reserved by the format and must be escaped with a leading backslash when they appear in the SSID or password:
+
+```
+\   ;   ,   "   :
+```
+
+So a password like `pa;ss\word` becomes `pa\;ss\\word` in the payload. The ZeroTool generator handles escaping automatically — you can paste the password as-is.
+
+If you skip escaping, the parser will read the first unescaped `;` as the end of the field, and the phone will try to join with a truncated password (or fail to parse the code at all).
+
+## Picking the Right Encryption
+
+Most home and office routers in 2026 use WPA2 or WPA3. Both map to `T:WPA` in the QR string — the format predates WPA3 and treats them identically. The phone negotiates the actual handshake with the access point.
+
+| Router setting | QR field | Notes |
+|----------------|----------|-------|
+| WPA-Personal / WPA2 / WPA3 | `T:WPA` | Default for consumer Wi-Fi |
+| WEP | `T:WEP` | Legacy, only on very old gear |
+| Open (no password) | `T:nopass` | Omit the `P` field entirely |
+| Enterprise (802.1X / RADIUS) | not supported | Camera scanners can't carry credentials |
+
+Enterprise Wi-Fi (corporate SSIDs that prompt for username + cert) doesn't fit in this format. Provision those via MDM or a `.mobileconfig` profile instead.
+
+## Hidden SSIDs
+
+If your router doesn't broadcast the SSID, add `H:true;` to the payload. Without that flag the camera shows the join prompt but the phone can't actually find the network until you also tick "Join hidden network" in the OS Wi-Fi settings.
+
+A hidden SSID is not a security feature — anyone with a packet sniffer can pull it out of probe responses. Use it for clutter, not protection.
+
+## Device Compatibility
+
+| Platform | Native support since | Notes |
+|----------|---------------------|-------|
+| iOS Camera | iOS 11 (2017) | Joins on tap |
+| Android Camera | Android 10 (2019) | Joins on tap |
+| Android 9 and earlier | Need Google Lens or a QR app | Same string format |
+| Windows Camera | Not supported | Use a QR scanner app |
+| Older feature phones | Varies | Many fail silently on the `;;` terminator |
+
+For maximum reach, set the QR error correction level to **H (30%)** if you plan to print and laminate the code — partial coverage by stickers, dirt, or curling paper still scans. For digital display, **M (15%)** keeps the code denser and faster to render.
+
+## Common Pitfalls
+
+**The password contains a backslash that wasn't escaped.** Every `\` in the source must become `\\` in the payload. The generator does this; if you build the string by hand, double-check.
+
+**The SSID contains an emoji.** Most cameras handle UTF-8, but some Android OEM scanners reject anything outside ASCII. Test the QR with the actual phones you expect guests to use.
+
+**The router uses 5 GHz only and the guest's phone is 2.4 GHz only.** The QR scan succeeds, the join fails. Not a QR problem, but it looks like one.
+
+**Two access points share the SSID.** The phone joins the strongest one. If they have different passwords (mixed-old-and-new gear), the QR works for one and not the other — give them different SSIDs.
+
+**Password longer than 63 characters.** The Wi-Fi standard caps WPA passphrases at 63. Anything longer parses but the join silently fails.
+
+## Building the Payload Yourself
+
+If you're embedding Wi-Fi QR generation in another app, the logic is small enough to write inline. JavaScript:
+
+```javascript
+function wifiPayload({ ssid, password, encryption = 'WPA', hidden = false }) {
+  const esc = (s) => s.replace(/([\\;,":])/g, '\\$1');
+  let out = `WIFI:T:${encryption};S:${esc(ssid)};`;
+  if (password && encryption !== 'nopass') {
+    out += `P:${esc(password)};`;
+  }
+  if (hidden) out += 'H:true;';
+  return out + ';';
+}
+```
+
+Python:
+
+```python
+def wifi_payload(ssid: str, password: str, encryption: str = "WPA", hidden: bool = False) -> str:
+    esc = lambda s: "".join("\\" + c if c in r'\;,":' else c for c in s)
+    out = f"WIFI:T:{encryption};S:{esc(ssid)};"
+    if password and encryption != "nopass":
+        out += f"P:{esc(password)};"
+    if hidden:
+        out += "H:true;"
+    return out + ";"
+```
+
+Pipe that string into any QR library — `qrcode.js` in the browser, `qrcode` on PyPI, `go-qrcode` in Go. The encoding logic is identical across languages.
+
+## Privacy Note for Printed Codes
+
+A Wi-Fi QR code on the wall is the password in plain text. Anyone who walks past with a camera can read it, scan it later, and rejoin from outside without asking. For a guest network this is usually fine — that's the point. For a network with access to internal resources, treat the printed QR like a posted password and rotate it on the same schedule.
+
+## Related Tools
+
+- [QR Code Generator](/tools/qr-code-generator) — generic QR codes for URLs, text, vCards
+- [QR Code Decoder](/tools/qr-code-decoder) — read existing QR codes from images or your camera
+- [Password Generator](/tools/password-generator) — generate a strong Wi-Fi password before encoding it
+
+## References
+
+- [Wi-Fi Alliance — Easy Connect](https://www.wi-fi.org/discover-wi-fi/wi-fi-easy-connect)
+- [Zxing wiki — Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents) — the original spec for the `WIFI:` URI scheme
+- [Apple — QR codes and the Camera app](https://support.apple.com/guide/iphone/scan-a-qr-code-iphd96fe1f81/ios)

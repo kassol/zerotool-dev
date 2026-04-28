@@ -1,0 +1,138 @@
+---
+title: "WiFi QRコードジェネレーター：ゲストがワンスキャンで Wi-Fi に繋がる"
+description: "Wi-Fi 接続用 QR コードをオンライン生成。WIFI: 文字列フォーマット・エスケープルール・暗号化方式・端末互換性まで解説。"
+pubDate: 2026-04-28
+lang: "ja"
+translationSlug: "wifi-qr-code-generator-guide"
+tags: ["wifi-qr-code", "qr-code-generator", "wifi", "developer-tools"]
+ogImage: /og/blog-wifi-qr-code-generator-guide-ja.png
+---
+
+カウンターに置いた一枚のカード、会議室の壁に貼った一枚のステッカー、スマホに保存した一枚の画像——ゲストはカメラを向けるだけで Wi-Fi に繋がります。SSID をタイプする必要も、パスワード中の特殊文字を二度言わせる必要も、ホストに「もう一回読み上げてください」と頼む必要もありません。Wi-Fi QR コード一枚で全部済みます。
+
+[Wi-Fi QR コードを生成する →](/ja/tools/wifi-qr-code-generator)
+
+## Wi-Fi QR コードの中身
+
+Wi-Fi QR コードは、特定フォーマットのプレーンテキスト文字列に過ぎません。iOS Camera（iOS 11 以降）と Android 標準カメラ（Android 10 以降）はこのフォーマットをネイティブ解釈し、タップひとつで接続候補を提示します。
+
+フォーマット:
+
+```
+WIFI:T:WPA;S:YourNetworkName;P:YourPassword;;
+```
+
+フィールドごとの意味:
+
+| フィールド | 意味 | 値 |
+|------------|------|-----|
+| `T` | 暗号化方式 | `WPA`、`WEP`、`nopass` |
+| `S` | SSID（ネットワーク名） | UTF-8 自由文字列 |
+| `P` | パスワード | UTF-8 自由文字列（`T` が `nopass` のとき省略） |
+| `H` | ステルス SSID フラグ | `true`（それ以外は省略） |
+| `;;` | 終端記号 | 必須 |
+
+`T:` 以降のフィールド順序はほとんどのパーサーで問題になりませんが、Wi-Fi Alliance のリファレンス順 (`T`, `S`, `P`, `H`) が全てのカメラアプリで前提とされています。
+
+## 予約文字のエスケープ
+
+フォーマットには予約文字が 5 つあります。SSID やパスワードに含まれる場合、必ずバックスラッシュでエスケープします。
+
+```
+\   ;   ,   "   :
+```
+
+例えばパスワード `pa;ss\word` は payload 上で `pa\;ss\\word` になります。ZeroTool ジェネレーターはこの処理を自動化しているので、パスワードをそのまま貼り付ければ動作します。
+
+エスケープを省略するとパーサーは最初の未エスケープ `;` をフィールド終端とみなし、スマホは切り詰められたパスワードで接続を試みる（必ず失敗）か、QR の解析自体を諦めます。
+
+## 暗号化方式の選び方
+
+2026 年現在、家庭用・オフィス用ルーターのほとんどは WPA2 か WPA3 で動いています。両者とも QR 文字列上では `T:WPA` にマップされます——フォーマット自体が WPA3 より古く、両者を同じものとして扱うためです。実際のハンドシェイクはスマホとアクセスポイントが交渉します。
+
+| ルーター設定 | QR フィールド | 備考 |
+|--------------|---------------|------|
+| WPA-Personal / WPA2 / WPA3 | `T:WPA` | 一般的な家庭・オフィス用 |
+| WEP | `T:WEP` | レガシー機器のみ |
+| 開放（パスワードなし） | `T:nopass` | `P` フィールドを省略 |
+| エンタープライズ（802.1X / RADIUS） | 非対応 | カメラスキャンでは証明書を運べない |
+
+エンタープライズ Wi-Fi（社内 SSID で証明書 + アカウントを要求するもの）はこのフォーマットでは扱えません。MDM や `.mobileconfig` プロファイルで配布してください。
+
+## ステルス（非公開）SSID
+
+ルーターが SSID をブロードキャストしない設定なら、payload に `H:true;` を追加します。これがないとカメラに接続候補は出ますが、スマホはネットワークを発見できず、OS の Wi-Fi 設定で「非公開ネットワークを追加」に手動でチェックする必要が出ます。
+
+ちなみにステルス SSID はセキュリティ機能ではありません。パケットスニッファを持っていれば誰でも probe response から SSID を読み取れます。Wi-Fi リストの整理目的にはなっても、防御策にはなりません。
+
+## 端末互換性
+
+| プラットフォーム | ネイティブ対応開始 | 備考 |
+|------------------|---------------------|------|
+| iOS Camera | iOS 11（2017） | タップで接続 |
+| Android Camera | Android 10（2019） | タップで接続 |
+| Android 9 以前 | Google Lens か QR アプリが必要 | 文字列フォーマットは同じ |
+| LINE のコードリーダー | 対応済み | ホワイトリスト確認が一段挟まる |
+| Windows Camera | 非対応 | QR アプリを使用 |
+| ガラケー世代 | 機種依存 | `;;` 終端記号で無言で失敗するモデル多数 |
+
+最大限の互換性を狙うなら、印刷してラミネート加工する場合は誤り訂正レベルを **H（30%）** に。ステッカーの上貼り、汚れ、紙の反りに耐えても読み取れます。デジタル表示用なら **M（15%）** で十分——QR が高密度になり読み込みが速くなります。
+
+## よくあるハマりどころ
+
+**パスワードのバックスラッシュをエスケープし忘れる。** ソース中のすべての `\` は payload では `\\` にする必要があります。ジェネレーターは自動処理しますが、手書きする場合は要チェック。
+
+**SSID に絵文字が入っている。** ほとんどのカメラは UTF-8 を扱えますが、一部 Android OEM のスキャナーは ASCII 以外を弾きます。本番投入前に実機で確認を。
+
+**ルーターが 5 GHz 専用、ゲストのスマホが 2.4 GHz 専用。** スキャンは成功、接続は失敗。QR 側の問題ではないが、QR の不具合に見えます。
+
+**2 台のアクセスポイントが同じ SSID を共有。** スマホは強い方に繋ぎます。新旧混在で両者のパスワードが違うと、「片方では繋がる、もう片方では繋がらない」という現象が出ます——別 SSID を割り振ってください。
+
+**パスワードが 63 文字を超えている。** Wi-Fi の WPA 規格上限は 63 文字。超えると payload は解析できますが、ハンドシェイクが無言で失敗します。
+
+## 自前で payload を組み立てる
+
+Wi-Fi QR 生成を自分のアプリに組み込みたい場合、ロジックは小さく、関数一つで書けます。Qiita や Zenn の記事を参考に書く前に、まず公式仕様の意味を押さえておきましょう。JavaScript:
+
+```javascript
+function wifiPayload({ ssid, password, encryption = 'WPA', hidden = false }) {
+  const esc = (s) => s.replace(/([\\;,":])/g, '\\$1');
+  let out = `WIFI:T:${encryption};S:${esc(ssid)};`;
+  if (password && encryption !== 'nopass') {
+    out += `P:${esc(password)};`;
+  }
+  if (hidden) out += 'H:true;';
+  return out + ';';
+}
+```
+
+Python:
+
+```python
+def wifi_payload(ssid: str, password: str, encryption: str = "WPA", hidden: bool = False) -> str:
+    esc = lambda s: "".join("\\" + c if c in r'\;,":' else c for c in s)
+    out = f"WIFI:T:{encryption};S:{esc(ssid)};"
+    if password and encryption != "nopass":
+        out += f"P:{esc(password)};"
+    if hidden:
+        out += "H:true;"
+    return out + ";"
+```
+
+この文字列を任意の QR ライブラリに渡せばよく——ブラウザの `qrcode.js`、PyPI の `qrcode`、Go の `go-qrcode`——生成ロジックは言語をまたいで同一です。
+
+## 印刷した場合のプライバシー
+
+壁に貼った Wi-Fi QR コードは、平文パスワードと同じ意味を持ちます。通りすがりの誰かがカメラを向けただけで読み取れ、後でスキャンし、外からも何も聞かずに繋ぎ直せます。ゲストネットワークなら、それで構いません——元々そういう用途です。社内リソースにアクセスできるネットワークなら、印刷した QR は「壁に貼った付箋に書いたパスワード」と同じ扱いをし、同じサイクルでローテーションしてください。
+
+## 関連ツール
+
+- [QR コードジェネレーター](/ja/tools/qr-code-generator) — URL・テキスト・vCard 用の汎用 QR コード
+- [QR コードデコーダー](/ja/tools/qr-code-decoder) — 画像やカメラから既存の QR コードを読む
+- [パスワードジェネレーター](/ja/tools/password-generator) — エンコード前に強パスワードを生成
+
+## 参考資料
+
+- [Wi-Fi Alliance — Easy Connect](https://www.wi-fi.org/discover-wi-fi/wi-fi-easy-connect)
+- [Zxing wiki — Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents) — `WIFI:` URI スキームの原典仕様
+- [Apple — iPhone で QR コードをスキャンする](https://support.apple.com/ja-jp/guide/iphone/scan-a-qr-code-iphd96fe1f81/ios)

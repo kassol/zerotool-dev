@@ -1,0 +1,138 @@
+---
+title: "WiFi 二维码生成器：让访客一扫即连，不用再念密码"
+description: "在线生成可一扫即连的 Wi-Fi 二维码，覆盖 WIFI: 字符串格式、转义规则、加密类型与设备兼容性。"
+pubDate: 2026-04-28
+lang: "zh"
+translationSlug: "wifi-qr-code-generator-guide"
+tags: ["wifi-qr-code", "qr-code-generator", "wifi", "开发工具"]
+ogImage: /og/blog-wifi-qr-code-generator-guide-zh.png
+---
+
+吧台上贴一张卡片，会议室墙上贴一张贴纸，手机相册里存一张图——访客掏出相机一扫，直接联网。不用问 SSID 怎么拼，不用让你把密码里的下划线和感叹号读两遍，不用客客气气地等你从印象笔记里翻出 Wi-Fi 信息。一张 Wi-Fi 二维码就能解决。
+
+[立刻生成 Wi-Fi 二维码 →](/tools/wifi-qr-code-generator)
+
+## Wi-Fi 二维码里到底装了什么
+
+Wi-Fi 二维码本质就是一段固定格式的纯文本字符串。iPhone 自带相机（iOS 11 起）、Android 原生相机（Android 10 起）、华为/小米/OPPO 的相机和扫一扫——都能原生识别这个格式，扫到后会直接弹出"连接到 XXX 网络"的提示。
+
+格式：
+
+```
+WIFI:T:WPA;S:YourNetworkName;P:YourPassword;;
+```
+
+字段含义：
+
+| 字段 | 含义 | 取值 |
+|------|------|------|
+| `T` | 加密类型 | `WPA`、`WEP`、`nopass` |
+| `S` | SSID（网络名称） | UTF-8 自由文本 |
+| `P` | 密码 | UTF-8 自由文本（`T` 为 `nopass` 时省略） |
+| `H` | 隐藏网络标记 | `true`（其它情况省略） |
+| `;;` | 结尾终止符 | 必填 |
+
+`T:` 之后字段顺序对大多数解析器来说无所谓，但 Wi-Fi 联盟官方建议的顺序是 `T、S、P、H`，所有相机 App 都按这个顺序兼容。
+
+## 转义保留字符
+
+格式里有 5 个保留字符，出现在 SSID 或密码中时必须用反斜杠转义：
+
+```
+\   ;   ,   "   :
+```
+
+举例：密码 `pa;ss\word` 在 payload 里要写成 `pa\;ss\\word`。ZeroTool 工具里这一步是自动的，把原始密码粘进去就行。
+
+如果忘了转义，解析器会把第一个未转义的 `;` 当作字段结束符，手机要么用截断后的密码尝试连接（必然失败），要么直接拒绝整个二维码。
+
+## 怎么选加密类型
+
+2026 年大部分家用与办公路由器跑的是 WPA2 或 WPA3。这两种在二维码字符串里都映射成 `T:WPA`——这个格式比 WPA3 还早，所以两者一视同仁。真正的握手协议是手机和无线接入点之间协商的，二维码不参与。
+
+| 路由器设置 | 二维码字段 | 备注 |
+|------------|------------|------|
+| WPA-Personal / WPA2 / WPA3 | `T:WPA` | 家用与办公默认 |
+| WEP | `T:WEP` | 仅老旧设备，不推荐 |
+| 开放（无密码） | `T:nopass` | 直接省略 `P` 字段 |
+| 企业网（802.1X / RADIUS） | 不支持 | 相机扫码不能携带证书凭证 |
+
+企业 Wi-Fi（公司内 SSID 要求账号 + 证书）这套不适用，要靠 MDM 或 `.mobileconfig` 配置文件下发。
+
+## 隐藏 SSID 怎么处理
+
+如果路由器关闭了 SSID 广播，必须在 payload 里加 `H:true;`。少这一句，相机能弹出连接提示，但手机找不到网络，要进系统 Wi-Fi 设置再勾"加入隐藏网络"才行。
+
+顺带一句：隐藏 SSID 不是安全功能。任何抓包工具都能从 probe response 里把 SSID 抠出来，只是让 Wi-Fi 列表清爽点而已，别拿它当防护。
+
+## 设备兼容性
+
+| 平台 | 原生支持起始版本 | 备注 |
+|------|------------------|------|
+| iOS 自带相机 | iOS 11（2017） | 一扫即连 |
+| Android 原生相机 | Android 10（2019） | 一扫即连 |
+| Android 9 及更早 | 需 Google Lens 或扫码 App | 字符串格式相同 |
+| 微信 / 支付宝扫一扫 | 已支持 | 体验略差异，会先弹白名单确认 |
+| Windows 自带相机 | 不支持 | 用扫码 App |
+| 老式功能机 | 看品牌 | 不少机型遇到 `;;` 终止符直接静默失败 |
+
+要追求最大覆盖率，二维码纠错等级建议设到 **H（30%）**，方便打印贴墙后即使被贴纸覆盖、被茶水溅到、纸边卷曲也能扫出来。纯数字屏幕展示用 **M（15%）** 即可，码更密、加载更快。
+
+## 常见坑
+
+**密码里的反斜杠没转义。** 源串里每个 `\` 在 payload 里必须变成 `\\`。工具会自动处理；自己拼字符串时务必检查。
+
+**SSID 里有 emoji。** 大部分相机能处理 UTF-8，但部分国产 Android OEM 扫码模块对非 ASCII 直接拒绝。上线前用真机过一遍。
+
+**路由器只开 5 GHz，访客手机只支持 2.4 GHz。** 扫码成功，连接失败。这不是二维码问题，但看起来像。
+
+**两个接入点共用同一 SSID。** 手机会连信号最强的那个。如果两台 AP 是新老混搭、密码不一样，会出现"对一台 AP 能连，对另一台不能连"的怪现象——给它们起不同 SSID 即可。
+
+**密码超过 63 个字符。** Wi-Fi WPA 标准上限就是 63 字符，超了字符串能解析，但握手会静默失败。
+
+## 自己写一个 payload 生成器
+
+如果要把 Wi-Fi 二维码生成嵌进自己的 App，逻辑非常小，一段函数就能写完。JavaScript：
+
+```javascript
+function wifiPayload({ ssid, password, encryption = 'WPA', hidden = false }) {
+  const esc = (s) => s.replace(/([\\;,":])/g, '\\$1');
+  let out = `WIFI:T:${encryption};S:${esc(ssid)};`;
+  if (password && encryption !== 'nopass') {
+    out += `P:${esc(password)};`;
+  }
+  if (hidden) out += 'H:true;';
+  return out + ';';
+}
+```
+
+Python：
+
+```python
+def wifi_payload(ssid: str, password: str, encryption: str = "WPA", hidden: bool = False) -> str:
+    esc = lambda s: "".join("\\" + c if c in r'\;,":' else c for c in s)
+    out = f"WIFI:T:{encryption};S:{esc(ssid)};"
+    if password and encryption != "nopass":
+        out += f"P:{esc(password)};"
+    if hidden:
+        out += "H:true;"
+    return out + ";"
+```
+
+把这串字符串喂给任何 QR 库都行——浏览器里的 `qrcode.js`、PyPI 上的 `qrcode`、Go 里的 `go-qrcode`。生成逻辑跨语言完全一致。
+
+## 打印出来意味着什么
+
+贴在墙上的 Wi-Fi 二维码 = 明文密码。任何路过的人举起相机就能读出来、留作以后扫、不用问任何人就能从外面连进来。访客网络这样做没问题——本来就是这个目的。但如果这张网络能访问内部资源，就把那张打印的二维码当成"贴在墙上的密码"对待，按同样周期轮换。
+
+## 相关工具
+
+- [二维码生成器](/zh/tools/qr-code-generator) — 通用二维码（URL、文本、vCard）
+- [二维码解码器](/zh/tools/qr-code-decoder) — 从图片或摄像头识别已有二维码
+- [密码生成器](/zh/tools/password-generator) — 编码前先生成一个强密码
+
+## 延伸阅读
+
+- [Wi-Fi 联盟 — Easy Connect](https://www.wi-fi.org/discover-wi-fi/wi-fi-easy-connect)
+- [Zxing wiki — Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents) — `WIFI:` URI scheme 的原始规范
+- [Apple — 用相机扫描二维码](https://support.apple.com/zh-cn/guide/iphone/scan-a-qr-code-iphd96fe1f81/ios)
