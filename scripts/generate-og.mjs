@@ -186,25 +186,43 @@ async function main() {
 
   // Generate blog OG images
   const blogContentDir = join(projectRoot, 'src', 'content', 'blog');
-  const blogFiles = (await readdir(blogContentDir)).filter(f => /\.mdx?$/.test(f));
+  const blogEntries = await readdir(blogContentDir, { withFileTypes: true });
 
-  for (const file of blogFiles) {
-    const content = await readFile(join(blogContentDir, file), 'utf-8');
+  async function emitBlogOg(content, ogSlug) {
     const titleMatch = content.match(/^title:\s*['"](.*?)['"]?\s*$/m)
       || content.match(/^title:\s*(.+?)\s*$/m);
     const descMatch = content.match(/^description:\s*['"](.*?)['"]?\s*$/m)
       || content.match(/^description:\s*(.+?)\s*$/m);
-    if (!titleMatch) continue;
-
-    const slug = file.replace(/\.mdx?$/, '');
+    if (!titleMatch) return false;
     const name = titleMatch[1].replace(/^['"]|['"]$/g, '');
     const description = descMatch ? descMatch[1].replace(/^['"]|['"]$/g, '') : '';
-
     const svg = buildSvg(name, description, 'blog');
-    const outPath = join(outputDir, `blog-${slug}.png`);
+    const outPath = join(outputDir, `blog-${ogSlug}.png`);
     await sharp(Buffer.from(svg)).png({ compressionLevel: 9, palette: false }).toFile(outPath);
-    generated++;
-    process.stdout.write(`  [blog] blog-${slug}.png\n`);
+    process.stdout.write(`  [blog] blog-${ogSlug}.png\n`);
+    return true;
+  }
+
+  // Flat layout: src/content/blog/{slug}.mdx
+  for (const entry of blogEntries) {
+    if (!entry.isFile() || !/\.mdx?$/.test(entry.name)) continue;
+    const content = await readFile(join(blogContentDir, entry.name), 'utf-8');
+    const slug = entry.name.replace(/\.mdx?$/, '');
+    if (await emitBlogOg(content, slug)) generated++;
+  }
+
+  // Directory layout: src/content/blog/{slug}/{lang}.mdx
+  // EN gets blog-{slug}.png; other locales get blog-{slug}-{lang}.png to match existing convention.
+  for (const entry of blogEntries) {
+    if (!entry.isDirectory()) continue;
+    const subDir = join(blogContentDir, entry.name);
+    const langFiles = (await readdir(subDir)).filter(f => /^(en|zh|ja|ko)\.mdx?$/.test(f));
+    for (const langFile of langFiles) {
+      const lang = langFile.replace(/\.mdx?$/, '');
+      const content = await readFile(join(subDir, langFile), 'utf-8');
+      const ogSlug = lang === 'en' ? entry.name : `${entry.name}-${lang}`;
+      if (await emitBlogOg(content, ogSlug)) generated++;
+    }
   }
 
   console.log(`\nOG images generated: ${generated} files → public/og/`);
