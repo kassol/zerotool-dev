@@ -10,8 +10,6 @@ const blogCollection = defineCollection({
     lang: z.enum(['en', 'zh', 'ja', 'ko']).default('en'),
     tags: z.array(z.string()).default([]),
     draft: z.boolean().default(false),
-    // i18n: slug of the translated counterpart (e.g. en post → zh slug)
-    translationSlug: z.string().optional(),
     // SEO overrides
     canonicalUrl: z.string().url().optional(),
     ogImage: z.string().optional(),

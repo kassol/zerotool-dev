@@ -1,3 +1,5 @@
+export type Lang = 'en' | 'zh' | 'ja' | 'ko';
+
 export interface ToolTranslation {
   name: string;
   description: string;
@@ -5,16 +7,16 @@ export interface ToolTranslation {
 
 export interface ToolInfo {
   slug: string;
-  translations: Record<string, ToolTranslation>;
+  translations: Record<Lang, ToolTranslation>;
   category: 'data' | 'encoding' | 'text' | 'security' | 'dev' | 'api' | 'color' | 'image';
   relatedSlugs?: string[];
 }
 
 export function getToolName(tool: ToolInfo, lang: string): string {
-  return tool.translations[lang]?.name ?? tool.translations.en.name;
+  return tool.translations[lang as Lang]?.name ?? tool.translations.en.name;
 }
 export function getToolDescription(tool: ToolInfo, lang: string): string {
-  return tool.translations[lang]?.description ?? tool.translations.en.description;
+  return tool.translations[lang as Lang]?.description ?? tool.translations.en.description;
 }
 
 export const allTools: ToolInfo[] = [

@@ -115,16 +115,17 @@ function parseIcons() {
   return new Set(matches.map(m => m[1]));
 }
 
-function parseToolComponentMap(routePath) {
-  const src = read(routePath);
-  // imports
+function parseToolComponentMap(filePath) {
+  const src = read(filePath);
+  // Imports: tolerant to either route-relative paths (`../../components/tools/X.astro`)
+  // or registry-relative paths (`./X.astro`).
   const imports = new Set();
-  for (const m of src.matchAll(/^import\s+(\w+)\s+from\s+'\.\.\/(?:\.\.\/)*components\/tools\/(\w+)\.astro'/gm)) {
+  for (const m of src.matchAll(/^import\s+(\w+)\s+from\s+['"](?:[^'"]*\/)?(\w+)\.astro['"]/gm)) {
     imports.add(m[2]);
   }
-  // map keys + component refs (non-greedy across the type annotation that may contain `=>`)
-  const mapMatch = src.match(/const\s+toolComponentMap\b[\s\S]*?=\s*\{([\s\S]*?)\n\};/);
-  if (!mapMatch) throw new Error(`No toolComponentMap in ${routePath}`);
+  // map keys + component refs (`export const toolComponentMap` in registry.ts).
+  const mapMatch = src.match(/(?:export\s+)?const\s+toolComponentMap\b[\s\S]*?=\s*\{([\s\S]*?)\n\};/);
+  if (!mapMatch) throw new Error(`No toolComponentMap in ${filePath}`);
   const entries = [...mapMatch[1].matchAll(/'([^']+)':\s*(\w+)/g)];
   const map = new Map();
   for (const m of entries) map.set(m[1], m[2]);
@@ -226,6 +227,12 @@ function checkRouteRegistration(toolSlugs) {
     'src/pages/ja/tools/[slug].astro',
     'src/pages/ko/tools/[slug].astro',
   ];
+  const registryPath = 'src/components/tools/registry.ts';
+
+  if (!existsSync(join(ROOT, registryPath))) {
+    fail('registry', 'shared toolComponentMap registry', [`${registryPath} does not exist`]);
+    return;
+  }
 
   const allComponents = new Set(
     listFiles('src/components/tools')
@@ -233,45 +240,43 @@ function checkRouteRegistration(toolSlugs) {
       .map(f => f.replace(/\.astro$/, ''))
   );
 
-  const usedComponents = new Set();
+  const { imports, map } = parseToolComponentMap(registryPath);
 
+  const registryIssues = [];
+  for (const slug of toolSlugs) {
+    if (!map.has(slug)) registryIssues.push(`${slug}: missing in toolComponentMap`);
+  }
+  for (const comp of imports) {
+    if (!allComponents.has(comp)) registryIssues.push(`import target missing: ${comp}.astro`);
+  }
+  for (const [slug, comp] of map) {
+    if (!imports.has(comp)) registryIssues.push(`${slug}: maps to "${comp}" which is not imported`);
+  }
+  for (const slug of map.keys()) {
+    if (!toolSlugs.has(slug)) registryIssues.push(`${slug}: map entry has no matching slug in tools.ts (dead alias — handle aliases via _redirects instead)`);
+  }
+  if (registryIssues.length === 0) pass('registry', `${registryPath} (${map.size} mappings)`);
+  else fail('registry', registryPath, registryIssues);
+
+  // Each route must import the shared registry rather than maintain its own map.
   for (const route of routes) {
     if (!existsSync(join(ROOT, route))) {
       fail(`route_${route}`, `route file ${route}`, ['file does not exist']);
       continue;
     }
-    const issues = [];
-    const { imports, map } = parseToolComponentMap(route);
-
-    // Every tool slug must have a map entry
-    for (const slug of toolSlugs) {
-      if (!map.has(slug)) issues.push(`${slug}: missing in toolComponentMap`);
+    const src = read(route);
+    if (!/from\s+['"][^'"]*components\/tools\/registry['"]/.test(src)) {
+      fail(`route:${route}`, route, ['does not import { toolComponentMap } from the shared registry']);
+    } else {
+      pass(`route:${route}`, route);
     }
-
-    // Every imported component file must exist
-    for (const comp of imports) {
-      if (!allComponents.has(comp)) issues.push(`import target missing: ${comp}.astro`);
-      usedComponents.add(comp);
-    }
-
-    // Every map entry must reference an imported component
-    for (const [slug, comp] of map) {
-      if (!imports.has(comp)) issues.push(`${slug}: maps to "${comp}" which is not imported`);
-    }
-
-    // Every map key must correspond to a real tool slug (catches alias dead code)
-    for (const slug of map.keys()) {
-      if (!toolSlugs.has(slug)) issues.push(`${slug}: map entry has no matching slug in tools.ts (dead alias — handle aliases via _redirects instead)`);
-    }
-
-    if (issues.length === 0) pass(`route:${route}`, route);
-    else fail(`route:${route}`, route, issues);
   }
 
-  // Orphan components: present in src/components/tools/ but not used by any route
-  const orphans = [...allComponents].filter(c => !usedComponents.has(c));
+  // Orphan components: present in src/components/tools/ but not used by registry.
+  // `registry` is a .ts file (not an .astro component), so exclude it from the set.
+  const orphans = [...allComponents].filter(c => !imports.has(c));
   if (orphans.length === 0) pass('component_orphans', `component orphan check (${allComponents.size} components, all used)`);
-  else fail('component_orphans', 'orphan components in src/components/tools/', orphans.map(o => `${o}.astro: not referenced by any [slug].astro route`));
+  else fail('component_orphans', 'orphan components in src/components/tools/', orphans.map(o => `${o}.astro: not referenced in registry.ts`));
 }
 
 function checkContentTools(toolSlugs) {
@@ -487,6 +492,64 @@ function checkLayoutShikiOverride() {
   else fail('layout_shiki_override', 'layout Shiki override missing', issues);
 }
 
+function checkPersistencePolicy() {
+  const issues = [];
+
+  const layoutSrc = read('src/layouts/ToolLayout.astro');
+  const policyMatch = layoutSrc.match(/var POLICY\s*=\s*\{([\s\S]*?)\};/);
+  if (!policyMatch) {
+    fail('persist_policy', 'ztPersist policy', ['Cannot find POLICY object in ToolLayout.astro']);
+    return;
+  }
+  const policy = {};
+  const entryRegex = /'([^']+)':\s*'(input|preference|disabled)'/g;
+  let em;
+  while ((em = entryRegex.exec(policyMatch[1])) !== null) {
+    policy[em[1]] = em[2];
+  }
+
+  const toolDir = join(ROOT, 'src/components/tools');
+  const files = readdirSync(toolDir).filter(f => f.endsWith('.astro'));
+
+  for (const file of files) {
+    const src = read(`src/components/tools/${file}`);
+
+    const directLs = src.match(/localStorage\.(setItem|getItem|removeItem)\s*\(/g);
+    if (directLs && directLs.length > 0) {
+      issues.push(`${file}: ${directLs.length} direct localStorage call(s); use window.ztPersist instead`);
+    }
+
+    const saveLits = [...src.matchAll(/ztPersist\.save\s*\(\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+    const loadLits = [...src.matchAll(/ztPersist\.load\s*\(\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+    // Tools that hold the slug in a variable (e.g. `var _slug = 'json-formatter'`)
+    // — capture those bindings so policy lookup still works.
+    const varBindings = [...src.matchAll(/\b(?:var|let|const)\s+(?:_slug|SLUG|slug)\s*=\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+    const literalSlugs = [...new Set([...saveLits, ...loadLits, ...varBindings])];
+
+    for (const slug of literalSlugs) {
+      if (policy[slug] === 'disabled') {
+        issues.push(`${file}: slug "${slug}" is policy=disabled but ztPersist.save/load is wired`);
+      }
+    }
+
+    const hasSave = /ztPersist\.save\s*\(/.test(src);
+    const hasClear = /ztPersist\.clear\s*\(/.test(src);
+    if (hasSave && !hasClear) {
+      const isAllPreference = literalSlugs.length > 0 && literalSlugs.every(s => policy[s] === 'preference');
+      if (!isAllPreference) {
+        const slugStr = literalSlugs.length > 0 ? `slug(s) "${literalSlugs.join(', ')}"` : 'unknown slug (variable)';
+        issues.push(`${file}: ztPersist.save without ztPersist.clear (${slugStr}); Clear button should sync-clear`);
+      }
+    }
+  }
+
+  if (issues.length === 0) {
+    pass('persist_policy', `ztPersist policy compliance (${Object.keys(policy).length} slugs declared, ${files.length} components scanned)`);
+  } else {
+    fail('persist_policy', 'ztPersist policy violations', issues);
+  }
+}
+
 function checkRedirects() {
   const issues = [];
   const path = 'public/_redirects';
@@ -529,6 +592,7 @@ try {
   checkI18nKeys();
   checkBlog();
   checkLayoutShikiOverride();
+  checkPersistencePolicy();
   checkRedirects();
 } catch (e) {
   fail('fatal', 'audit setup', [e.message, e.stack].filter(Boolean));
