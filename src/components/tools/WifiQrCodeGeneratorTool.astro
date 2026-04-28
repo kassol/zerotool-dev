@@ -1,0 +1,373 @@
+---
+// WifiQrCodeGeneratorTool — Generate WiFi-formatted QR codes that phones scan to join a network.
+// Reuses /vendor/qrcode.min.js shipped for QrCodeGeneratorTool.
+---
+<div>
+  <div class="wqg-wrap">
+    <div class="wqg-left">
+      <div class="wqg-field">
+        <label for="wqg-ssid" data-i18n="ssid">Network Name (SSID)</label>
+        <input
+          id="wqg-ssid"
+          type="text"
+          placeholder="My Home Wi-Fi"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <div class="wqg-field">
+        <label for="wqg-password" data-i18n="password">Password</label>
+        <div class="wqg-pwd-row">
+          <input
+            id="wqg-password"
+            type="password"
+            placeholder="••••••••"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button type="button" id="wqg-pwd-toggle" class="wqg-pwd-btn" aria-label="Toggle password visibility">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="wqg-options">
+        <div class="wqg-opt-row">
+          <label for="wqg-enc" data-i18n="encryption">Encryption:</label>
+          <select id="wqg-enc">
+            <option value="WPA" selected>WPA / WPA2 / WPA3</option>
+            <option value="WEP">WEP</option>
+            <option value="nopass">None (open)</option>
+          </select>
+        </div>
+
+        <div class="wqg-opt-row">
+          <label class="wqg-checkbox-label">
+            <input type="checkbox" id="wqg-hidden" />
+            <span data-i18n="hiddenNetwork">Hidden network</span>
+          </label>
+        </div>
+
+        <div class="wqg-opt-row">
+          <label for="wqg-size" data-i18n="size">Size:</label>
+          <select id="wqg-size">
+            <option value="128">128 px</option>
+            <option value="192">192 px</option>
+            <option value="256" selected>256 px</option>
+            <option value="384">384 px</option>
+            <option value="512">512 px</option>
+          </select>
+        </div>
+
+        <div class="wqg-opt-row">
+          <label for="wqg-ecl" data-i18n="errorCorrection">Error Correction:</label>
+          <select id="wqg-ecl">
+            <option value="L">Low (L — 7%)</option>
+            <option value="M" selected>Medium (M — 15%)</option>
+            <option value="Q">Quartile (Q — 25%)</option>
+            <option value="H">High (H — 30%)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="wqg-actions">
+        <button id="wqg-generate" class="btn-primary" data-i18n="generateQr">Generate QR Code</button>
+        <button id="wqg-copy-string" class="btn-secondary" data-i18n="copyString">Copy Wi-Fi String</button>
+      </div>
+
+      <div id="wqg-status" class="wqg-status" aria-live="polite"></div>
+    </div>
+
+    <div class="wqg-right">
+      <div id="wqg-preview" class="wqg-preview">
+        <span class="wqg-placeholder" data-i18n="qrPlaceholder">QR code appears here</span>
+      </div>
+      <button id="wqg-download" class="btn-secondary" style="display:none" data-i18n="downloadPng">Download PNG</button>
+    </div>
+  </div>
+
+  <p class="wqg-crosslink" id="wqg-crosslink"></p>
+
+  <script src="/vendor/qrcode.min.js" is:inline></script>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: { ssid: 'Network Name (SSID)', password: 'Password', encryption: 'Encryption:', hiddenNetwork: 'Hidden network', size: 'Size:', errorCorrection: 'Error Correction:', generateQr: 'Generate QR Code', copyString: 'Copy Wi-Fi String', downloadPng: 'Download PNG', qrPlaceholder: 'QR code appears here', errEmptySsid: 'Please enter a network name (SSID).', errLib: 'QR library not loaded. Please check your network connection.', generated: 'Generated.', copied: 'Wi-Fi string copied.', generationFailed: 'Generation failed', warnLongSsid: 'SSID exceeds 32 characters (Wi-Fi standard maximum).' },
+        zh: { ssid: '网络名称 (SSID)', password: '密码', encryption: '加密方式：', hiddenNetwork: '隐藏网络', size: '尺寸：', errorCorrection: '纠错等级：', generateQr: '生成二维码', copyString: '复制 Wi-Fi 字符串', downloadPng: '下载 PNG', qrPlaceholder: '二维码显示在这里', errEmptySsid: '请填写网络名称 (SSID)。', errLib: 'QR 库未加载，请检查网络连接。', generated: '已生成。', copied: 'Wi-Fi 字符串已复制。', generationFailed: '生成失败', warnLongSsid: 'SSID 超过 32 个字符（Wi-Fi 标准上限）。' },
+        ja: { ssid: 'ネットワーク名 (SSID)', password: 'パスワード', encryption: '暗号化方式：', hiddenNetwork: 'ステルス（非公開）SSID', size: 'サイズ：', errorCorrection: 'エラー訂正：', generateQr: 'QR コード生成', copyString: 'Wi-Fi 文字列をコピー', downloadPng: 'PNG をダウンロード', qrPlaceholder: 'QR コードがここに表示されます', errEmptySsid: 'ネットワーク名 (SSID) を入力してください。', errLib: 'QR ライブラリが読み込まれていません。', generated: '生成しました。', copied: 'Wi-Fi 文字列をコピーしました。', generationFailed: '生成に失敗しました', warnLongSsid: 'SSID が 32 文字を超えています（Wi-Fi 規格上限）。' },
+        ko: { ssid: '네트워크 이름 (SSID)', password: '비밀번호', encryption: '암호화 방식:', hiddenNetwork: '숨김 네트워크', size: '크기:', errorCorrection: '오류 수정:', generateQr: 'QR 코드 생성', copyString: 'Wi-Fi 문자열 복사', downloadPng: 'PNG 다운로드', qrPlaceholder: 'QR 코드가 여기에 표시됩니다', errEmptySsid: '네트워크 이름(SSID)을 입력해 주세요.', errLib: 'QR 라이브러리를 불러올 수 없습니다.', generated: '생성되었습니다.', copied: 'Wi-Fi 문자열이 복사되었습니다.', generationFailed: '생성 실패', warnLongSsid: 'SSID가 32자를 초과했습니다(Wi-Fi 표준 한도).' },
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+
+      var ssidEl = document.getElementById('wqg-ssid');
+      var pwdEl = document.getElementById('wqg-password');
+      var encEl = document.getElementById('wqg-enc');
+      var hiddenEl = document.getElementById('wqg-hidden');
+      var sizeEl = document.getElementById('wqg-size');
+      var eclEl = document.getElementById('wqg-ecl');
+      var statusEl = document.getElementById('wqg-status');
+      var preview = document.getElementById('wqg-preview');
+      var dlBtn = document.getElementById('wqg-download');
+      var pwdToggle = document.getElementById('wqg-pwd-toggle');
+      var canvas = null;
+      var lastPayload = '';
+
+      function escapeWifiField(s) {
+        return s.replace(/([\\;,":])/g, '\\$1');
+      }
+
+      function buildPayload() {
+        var ssid = ssidEl.value;
+        var pass = pwdEl.value;
+        var enc = encEl.value;
+        var hidden = hiddenEl.checked;
+        if (!ssid) return '';
+        var payload = 'WIFI:T:' + enc + ';S:' + escapeWifiField(ssid) + ';';
+        if (enc !== 'nopass' && pass) {
+          payload += 'P:' + escapeWifiField(pass) + ';';
+        }
+        if (hidden) payload += 'H:true;';
+        return payload + ';';
+      }
+
+      function syncPasswordState() {
+        var open = encEl.value === 'nopass';
+        pwdEl.disabled = open;
+        if (open) pwdEl.value = '';
+        pwdEl.parentElement.style.opacity = open ? '0.5' : '1';
+      }
+
+      function generate() {
+        var ssid = ssidEl.value;
+        if (!ssid) {
+          statusEl.textContent = t.errEmptySsid;
+          statusEl.className = 'wqg-status error';
+          return;
+        }
+        if (typeof QRCode === 'undefined') {
+          statusEl.textContent = t.errLib;
+          statusEl.className = 'wqg-status error';
+          return;
+        }
+
+        lastPayload = buildPayload();
+        var size = parseInt(sizeEl.value, 10) || 256;
+        var ecl = eclEl.value;
+
+        preview.innerHTML = '';
+        canvas = document.createElement('canvas');
+        preview.appendChild(canvas);
+
+        QRCode.toCanvas(canvas, lastPayload, {
+          width: size,
+          margin: 2,
+          color: { dark: '#000000', light: '#ffffff' },
+          errorCorrectionLevel: ecl,
+        }, function (err) {
+          if (err) {
+            statusEl.textContent = 'Error: ' + err.message;
+            statusEl.className = 'wqg-status error';
+            preview.innerHTML = '<span class="wqg-placeholder">' + t.generationFailed + '</span>';
+            dlBtn.style.display = 'none';
+            canvas = null;
+            return;
+          }
+          if (ssid.length > 32) {
+            statusEl.textContent = t.warnLongSsid;
+            statusEl.className = 'wqg-status warn';
+          } else {
+            statusEl.textContent = t.generated;
+            statusEl.className = 'wqg-status success';
+          }
+          dlBtn.style.display = 'block';
+          window.trackTool && window.trackTool('wifi_qr_code_generator', 'generate');
+        });
+      }
+
+      document.getElementById('wqg-generate').addEventListener('click', generate);
+
+      document.getElementById('wqg-copy-string').addEventListener('click', function () {
+        var payload = buildPayload();
+        if (!payload) {
+          statusEl.textContent = t.errEmptySsid;
+          statusEl.className = 'wqg-status error';
+          return;
+        }
+        navigator.clipboard.writeText(payload).then(function () {
+          statusEl.textContent = t.copied;
+          statusEl.className = 'wqg-status success';
+        });
+      });
+
+      dlBtn.addEventListener('click', function () {
+        if (!canvas) return;
+        var link = document.createElement('a');
+        link.download = 'wifi-qrcode.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      });
+
+      pwdToggle.addEventListener('click', function () {
+        pwdEl.type = pwdEl.type === 'password' ? 'text' : 'password';
+      });
+
+      encEl.addEventListener('change', syncPasswordState);
+
+      [ssidEl, pwdEl].forEach(function (el) {
+        el.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') generate();
+        });
+      });
+
+      var CROSS = {
+        en: { text: 'Need a generic QR code?', link: 'QR Code Generator →', href: '/tools/qr-code-generator' },
+        zh: { text: '需要通用二维码？', link: '二维码生成器 →', href: '/zh/tools/qr-code-generator' },
+        ja: { text: '汎用QRコードが必要？', link: 'QRコードジェネレーター →', href: '/ja/tools/qr-code-generator' },
+        ko: { text: '일반 QR 코드가 필요하신가요?', link: 'QR 코드 생성기 →', href: '/ko/tools/qr-code-generator' },
+      };
+      var cl = CROSS[pageLang] || CROSS.en;
+      document.getElementById('wqg-crosslink').innerHTML = cl.text + ' <a href="' + cl.href + '">' + cl.link + '</a>';
+
+      syncPasswordState();
+      ssidEl.value = 'My Home Wi-Fi';
+      pwdEl.value = 'demo-password';
+      generate();
+    })();
+  </script>
+</div>
+
+<style>
+  .wqg-wrap {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  @media (max-width: 600px) {
+    .wqg-wrap { grid-template-columns: 1fr; }
+    .wqg-right { display: flex; flex-direction: column; align-items: center; }
+  }
+
+  .wqg-left { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .wqg-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .wqg-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .wqg-field input[type="text"],
+  .wqg-field input[type="password"] {
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.9rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  .wqg-field input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  .wqg-pwd-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .wqg-pwd-row input { padding-right: 2.5rem; }
+  .wqg-pwd-btn {
+    position: absolute;
+    right: 0.5rem;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: var(--color-text-muted);
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .wqg-pwd-btn:hover { color: var(--color-text); }
+
+  .wqg-options { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .wqg-opt-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.88rem;
+  }
+
+  .wqg-opt-row > label:not(.wqg-checkbox-label) {
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    min-width: 130px;
+  }
+
+  .wqg-opt-row select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 5px;
+    font-size: 0.88rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  .wqg-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+  }
+  .wqg-checkbox-label input { cursor: pointer; }
+
+  .wqg-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .wqg-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .wqg-status.success { color: #057a55; }
+  .wqg-status.error { color: #c0392b; }
+  .wqg-status.warn { color: #b45309; }
+
+  .wqg-right { display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
+
+  .wqg-preview {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.75rem;
+    background: #ffffff;
+    min-width: 160px;
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .wqg-preview canvas { display: block; max-width: 100%; height: auto; }
+
+  .wqg-placeholder { font-size: 0.82rem; color: var(--color-text-muted); text-align: center; }
+
+  .wqg-crosslink {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    margin-top: 0.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .wqg-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .wqg-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .wqg-status.warn { color: #fbbf24; }
+  }
+  [data-theme="dark"] .wqg-status.success { color: #34d399; }
+  [data-theme="dark"] .wqg-status.error { color: #f87171; }
+  [data-theme="dark"] .wqg-status.warn { color: #fbbf24; }
+</style>
