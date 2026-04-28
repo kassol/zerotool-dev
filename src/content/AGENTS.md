@@ -11,7 +11,7 @@ Astro Content Collections 的根目录。包含两个 collection：`blog` 与 `t
 | Collection | 路径 | 文件数 | 用途 |
 |------------|------|--------|------|
 | `blog` | `src/content/blog/{base-slug}/{lang}.mdx` | 多语言文章（每篇一目录） | 博客内容（4 语言） |
-| `tools` | `src/content/tools/{slug}/{lang}.mdx` | 99 工具 × 4 语言 | 每个工具页面的 SEO 文案 + FAQ + 正文 |
+| `tools` | `src/content/tools/{slug}/{lang}.mdx` | 100+ 工具 × 4 语言 | 每个工具页面的 SEO 文案 + FAQ + 正文 |
 
 ## blog collection
 
