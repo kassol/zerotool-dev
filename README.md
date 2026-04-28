@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 99 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 100 tools and growing.
 
 ## Tools
 
@@ -108,6 +108,7 @@
 | JSON to XML Converter | [/tools/json-xml-converter](https://zerotool.dev/tools/json-xml-converter) |
 | CSS Filter Generator | [/tools/css-filter-generator](https://zerotool.dev/tools/css-filter-generator) |
 | Cron Job Generator | [/tools/cron-job-generator](https://zerotool.dev/tools/cron-job-generator) |
+| WiFi QR Code Generator | [/tools/wifi-qr-code-generator](https://zerotool.dev/tools/wifi-qr-code-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
