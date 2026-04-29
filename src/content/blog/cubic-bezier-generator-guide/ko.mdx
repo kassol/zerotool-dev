@@ -1,0 +1,252 @@
+---
+title: "Cubic Bezier 생성기: CSS 이징 곡선을 감으로 짜지 마세요"
+description: "컨트롤 포인트 두 개를 드래그하고, 애니메이션을 재생하고, CSS / SCSS / Tailwind를 복사하세요. 더해 cubic-bezier 뒤의 수학, 디자인 시스템 표준 곡선, 운영 환경까지 새어 나가는 흔한 함정도 정리."
+pubDate: 2026-04-29
+lang: "ko"
+tags: ["css", "animation", "easing", "cubic-bezier", "developer-tools"]
+ogImage: /og/blog-cubic-bezier-generator-guide.png
+---
+
+`transition: transform 0.25s cubic-bezier(0.42, 0, 0.58, 1)`라고 작성했습니다. 모달이 슬라이드되어 나옵니다. 뭔가 어색합니다. `0.42`를 `0.5`로 바꿉니다. 더 안 좋아집니다. 다시 `0.42`로 되돌리고 `0`을 `0.1`로. 약간 다르지만 여전히 어색합니다. 10분이 지나면 포기하고 `ease-in-out`을 붙입니다—적어도 예측 가능하니까요. 동작은 여전히 평범합니다. 디자인 리더가 모달이 왜 Figma 프로토타입과 다른 느낌인지 묻습니다. 제대로 답할 말이 없습니다.
+
+[Cubic Bezier 생성기 열기 →](/ko/tools/cubic-bezier-generator/)
+
+이 글은 「이징이 어색하다」와 「올바른 곡선을 배포했다」 사이의 간극을 메우기 위한 안내서입니다. cubic-bezier 곡선을 정의하는 4개의 숫자, 그것을 가리는 CSS 키워드 별칭, 이미 사용하고 있어야 할 디자인 시스템 표준 곡선, 팀을 놀라게 하는 함정, 그리고 편집기 뒤의 수학을 다룹니다—곡선은 CSS에서 선언하는 데 그치지 않고 코드로 계산해야 할 때도 있기 때문입니다.
+
+## 4개의 숫자가 정확히 의미하는 것
+
+CSS의 `cubic-bezier(x1, y1, x2, y2)`는 단위 정사각형 위 `(0, 0)`에서 `(1, 1)`까지의 곡선을 정의합니다. X축은 정규화된 시간—`0`은 트랜지션의 시작, `1`은 종료. Y축은 정규화된 진행도—`0`은 시작 상태, `1`은 종료 상태. 곡선은 두 모서리에 고정되며, 두 개의 내부 컨트롤 포인트로 모양이 결정됩니다: 시작 근처의 `P1 = (x1, y1)`과 종료 근처의 `P2 = (x2, y2)`.
+
+```
+y (진행도)
+1 ──────────────●(1,1) 종료
+│           ╱
+│        ╱
+│     ╱P2(x2,y2)
+│  ╱P1(x1,y1)
+●(0,0) 시작 ─────── x (시간)
+0                   1
+```
+
+유효성 규칙은 두 개입니다.
+
+1. **`x1`과 `x2`는 `[0, 1]` 범위 안에 있어야 한다.** P1, P2가 시간축의 어디에 있는지 나타내는 값입니다. 시간은 거꾸로 흐를 수 없고 duration을 넘어갈 수도 없으므로, 명세는 범위 밖 X를 거부합니다.
+2. **`y1`과 `y2`는 범위 제약이 없다.** Y는 진행도이고, 진행도는 overshoot할 수 있습니다—백아웃 스프링은 1을 넘어 안착하고, anticipation 곡선은 0 아래로 내려갔다가 올라옵니다. Y의 합법 범위는 시각 디자인이 어디까지 허용하느냐가 결정합니다.
+
+편집기에서 두 개의 채워진 원을 드래그하면 4개 숫자가 실시간으로 갱신됩니다. 숫자를 입력하면 원이 움직입니다. 어느 워크플로우든 결과는 그대로 붙여 넣을 수 있는 `cubic-bezier(...)` 스니펫입니다.
+
+## CSS 키워드 별칭(과 그것이 숨기는 것)
+
+CSS 명세에는 5개의 명명된 이징이 있습니다. 마법이 아니라, 각각이 고정된 cubic-bezier입니다.
+
+| 키워드 | 등가의 cubic-bezier |
+|--------|---------------------|
+| `linear` | `cubic-bezier(0, 0, 1, 1)` |
+| `ease` | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| `ease-in` | `cubic-bezier(0.42, 0, 1, 1)` |
+| `ease-out` | `cubic-bezier(0, 0, 0.58, 1)` |
+| `ease-in-out` | `cubic-bezier(0.42, 0, 0.58, 1)` |
+
+사용 방식을 바꾸는 관찰 세 가지.
+
+1. **`ease`는 비대칭이다.** 가속이 감속보다 강합니다: `(0.25, 0.1, 0.25, 1)`은 P2를 위쪽 가장자리에 바짝 붙입니다. 많은 팀이 `ease`를 「부드러운 기본값」으로 여기며 손을 뻗지만, 사실은 균형 잡힌 곡선보다 `ease-out`에 가깝습니다.
+2. **`ease-in`과 `ease-out`은 거울상이다.** `ease-in`은 P2를 오른쪽 위 모서리에 고정해 후반부를 직선으로 만들고, `ease-out`은 P1을 왼쪽 아래 모서리에 고정해 초반부를 직선으로 만듭니다. 양쪽 모두 곡선이 필요하면 `ease-in-out`이나 커스텀 곡선이 답입니다.
+3. **`linear`는 거의 원하는 답이 아니다.** 물리적인 비유가 있는 동작(슬라이드, 펼침, 페이드)에 선형을 쓰면 기계적으로 느껴집니다. `linear`는 진짜 무한 루프나 실제 진척도를 반영하는 프로그레스 바를 위해 남겨두세요.
+
+키워드는 4개 형태만 다룹니다. 커스텀 `cubic-bezier()`는 단위 정사각형의 나머지 모든 영역을 열어줍니다.
+
+## 이미 사용하고 있어야 할 디자인 시스템 표준 곡선
+
+주요 디자인 언어들은 각자 자신만의 정전 곡선을 출고합니다. 이를 건너뛰고 `ease-in-out`만 쓰는 것은 UI를 「우리 브랜드 같지 않은」 느낌으로 만드는 가장 빠른 방법이고, 게다가 누구도 어디가 잘못됐다고 짚지 못합니다.
+
+| 시스템 | 표준 / 흔한 사용 | 곡선 |
+|--------|-------------------|------|
+| Material 3 | Standard(범용 트랜지션) | `cubic-bezier(0.2, 0, 0, 1)` |
+| Material 3 | Standard decelerate(요소 입장) | `cubic-bezier(0, 0, 0, 1)` |
+| Material 3 | Standard accelerate(요소 퇴장) | `cubic-bezier(0.3, 0, 1, 1)` |
+| Material 2(레거시) | Standard | `cubic-bezier(0.4, 0, 0.2, 1)` |
+| iOS / UIKit | 기본 이징(`UIView` 블록 기반 애니메이션) | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| Tailwind CSS | `transition-timing-function: ease-in-out` 기본값 | `cubic-bezier(0.4, 0, 0.2, 1)` |
+
+내재화할 패턴 세 가지.
+
+- **비대칭 in/out이 대칭 in-out을 이긴다.** Material의 3곡선 체계(standard / decelerate / accelerate)는 UI 요소가 하는 세 가지 일—머무름, 입장, 퇴장—에 매핑됩니다. 대칭 `ease-in-out`은 입장하는 토스트에는 잘못된 도구—사용자에겐 「둥둥 떠 있다」고 읽힙니다.
+- **도착에는 감속, 퇴장에는 가속.** 패널이 슬라이드해 들어올 때 사용자는 최종 상태를 읽을 시간이 필요—끝은 느리게. 슬라이드해 사라질 때 사용자는 이미 다음으로 옮겨갔습니다—끝은 빠르게.
+- **스프링(`Back`) 곡선은 구두점이지, 글자가 아니다.** `cubic-bezier(0.68, -0.55, 0.265, 1.55)` 같은 곡선은 overshoot 후 안착합니다. 일회성 주의 환기(배지 팝업)에는 훌륭하지만, 반복되는 트랜지션(매번 스프링하는 버튼 hover)에는 좋지 않습니다.
+
+편집기에서 preset을 클릭하면 곡선, 라이브 공 애니메이션, 일치하는 CSS가 한꺼번에 보입니다. 클릭하며 비교해 보세요—종이 위에서는 미묘한 차이가, 움직임에서는 분명히 보입니다.
+
+## 운영 환경까지 새어 나가는 함정
+
+제가 본 모든 팀이 최소 한 번은 아래 중 하나를 배포한 적이 있습니다.
+
+### 1. 「중립적인」 동작에 `linear` 쓰기
+
+200 ms 선형 곡선은 대부분의 UI 모션에서 끊겨 보입니다—눈은 도착 지점에서 감속을 기대하기 때문입니다. 수정은 거의 항상 `cubic-bezier(0, 0, 0.2, 1)`(Material decelerate)나 동등한 곡선입니다. `linear`는 진짜 연속 운동(회전 스피너, 마퀴, 실제 진척을 반영하는 프로그레스 바)을 위해 남겨두세요.
+
+### 2. `ease-in-out`을 설정하고 끝내기
+
+`ease-in-out`은 대칭—초반이 느리고 후반도 느립니다. 대부분의 UI 모션에서 그건 잘못된 선택입니다. 모달 팝인, 드로어 슬라이드, 아코디언 펼침은 모두 「도착에서 감속」을 원합니다. 그건 평평한 시작과 곡선 끝을 가진 곡선입니다. `ease-in-out`은 양쪽 끝을 모두 곡선으로 만들어, duration이 정확해도 애니메이션이 더 길게 느껴지게 합니다.
+
+### 3. `cubic-bezier(0.4, 0, 0.2, 1)`을 어디에나 붙이기
+
+Material의 standard 곡선은 CSS에서 가장 많이 복사된 스니펫이 되었지만, 이는 *범용* 곡선입니다. Material 가이드는 입장에는 decelerate, 퇴장에는 accelerate를 명시했지만 많은 팀은 「standard」에서 읽기를 멈추고 모든 트랜지션에 적용합니다. 결과는 「쓸 만한데 인상에 안 남는」 모션. 수정은 작습니다—입장은 `0, 0, 0.2, 1`, 퇴장은 `0.4, 0, 1, 1`, `0.4, 0, 0.2, 1`은 입장도 퇴장도 아닌 것에만.
+
+### 4. 일상 트랜지션에 음수 또는 1 초과의 Y
+
+`cubic-bezier(0.68, -0.55, 0.265, 1.55)`는 한 번 팝업되는 배지에 완벽한 아름다운 스프링입니다. 그러나 이걸 모든 버튼 hover에 적용하면 UI는 쇼핑몰 에스컬레이터처럼 느껴집니다—매 인터랙션이 「뒤로 당겼다 지나쳤다 안착한다」. 스프링은 구두점, 절제해서 쓰세요.
+
+### 5. duration을 늘려서 잘못된 이징을 「고치기」
+
+동작이 느리게 느껴지면 본능적으로 duration을 줄이고, 급해 보이면 늘립니다. 기저 곡선이 잘못되었다면 두 방향 모두 틀렸습니다. 올바르게 이징된 250 ms 애니메이션은 올바르게 느껴집니다. 잘못된 이징의 250 ms는 어떤 duration을 골라도 어색합니다. 출고할 duration에서 곡선을 조정하세요. 곡선을 손대지 않고 duration만 만지는 것은 침몰하는 배의 갑판 의자를 다시 정렬하는 것과 같습니다.
+
+### 6. 이징이 「체감 성능」을 바꾼다는 사실 잊기
+
+사용자는 감속을 「시스템이 일을 끝냈다」로 읽습니다. `ease-out` 스타일 곡선은 300 ms 트랜지션을 300 ms `linear`보다 더 산뜻하게 느끼게 만듭니다—시각적 진행이 타이머보다 앞서가기 때문입니다. 같은 트릭이 스켈레톤 로더, 점진적 이미지 로딩, 라우트 전환에도 적용됩니다—곡선은 시각적 광택만이 아니라 사용자 경험의 일을 하고 있습니다.
+
+## 수학: x로부터 t를 풀기
+
+편집기가 곡선을 그리고 공을 애니메이션할 때 사소하지 않은 문제를 풀어야 합니다. X(0-1로 정규화된 경과 시간)가 주어졌을 때 Y(진행도)는 무엇일까요? CSS는 사용자에게 4개의 숫자를 주지만 cubic-bezier 곡선은 *세 번째* 변수 `t`(역시 `[0, 1]`)로 매개변수화됩니다. 관계식:
+
+```
+x(t) = 3(1-t)² · t · x1 + 3(1-t) · t² · x2 + t³
+y(t) = 3(1-t)² · t · y1 + 3(1-t) · t² · y2 + t³
+```
+
+`t`는 `x`와 같지 않습니다. 주어진 시간에서 진행도를 구하려면:
+
+1. `x(t) = X`를 `t`에 대해 풀어야 합니다. 닫힌 형식 해(Cardano의 삼차 공식)가 존재하지만, 엔진은 수치 솔버를 선택합니다—전체 곡선 공간에서 안정적이고 빠르며, 닫힌 해가 손으로 처리해야 하는 거의 퇴화된 모서리에서도 잘 동작합니다.
+2. 그 `t`를 `y(t)`에 대입하면 진행도입니다.
+
+업계 표준 접근(이 페이지의 편집기 그리고 Blink, WebKit, Gecko 같은 주류 브라우저 엔진)은 Newton 방법과 이분법 폴백입니다.
+
+```js
+function solveT(targetX, x1, x2) {
+  let t = targetX;                   // 초깃값: 시간 자체
+  for (let i = 0; i < 8; i++) {      // Newton 반복
+    const x  = bezier(t, x1, x2);
+    const dx = bezierDeriv(t, x1, x2);
+    if (Math.abs(dx) < 1e-6) break;  // 접선이 거의 수평, 포기
+    t = t - (x - targetX) / dx;
+    t = Math.max(0, Math.min(1, t));
+  }
+  // 이분 정련
+  let lo = 0, hi = 1;
+  for (let j = 0; j < 20; j++) {
+    const mid = (lo + hi) / 2;
+    const mx  = bezier(mid, x1, x2);
+    if (mx < targetX) lo = mid; else hi = mid;
+    t = mid;
+  }
+  return t;
+}
+```
+
+도함수가 잘 동작할 때 Newton 단계는 이차 수렴, 이분 정리는 곡선이 거의 수평인 구간이 있는 소수의 까다로운 사례를 처리합니다. Newton 8회 반복 + 이분 20단계는 `requestAnimationFrame` 콜백 안에서 60 fps을 유지할 만큼 빠릅니다.
+
+CSS를 위해 이걸 직접 작성할 필요는 없습니다—브라우저가 합니다. JavaScript에서 이징을 구현할 때 필요해집니다—`requestAnimationFrame`으로 Canvas를 애니메이션하기, CSS 트랜지션과 동기화된 비-CSS 속성을 움직이기, 커스텀 물리 시뮬레이션을 위한 중간값을 계산하기 등.
+
+## CSS를 넘어선 사용 사례
+
+cubic-bezier는 의외의 곳에 등장합니다.
+
+### Web Animations API
+
+`cubic-bezier()` 구문은 `Element.animate`에서 그대로 동작합니다.
+
+```js
+modal.animate(
+  [{ transform: 'translateY(20px)', opacity: 0 },
+   { transform: 'translateY(0)',    opacity: 1 }],
+  {
+    duration: 250,
+    easing: 'cubic-bezier(0, 0, 0.2, 1)',
+    fill: 'forwards'
+  }
+);
+```
+
+WAAPI는 CSS와 같은 곡선 문자열을 받습니다. 편집기에서 만든 동일한 문자열을, CSS와 JS 양쪽 모두에 번역 없이 사용할 수 있습니다.
+
+### Framer Motion / GSAP / Anime.js
+
+JavaScript 애니메이션 라이브러리들은 4개 숫자를 받는 방식이 각자 다르지만, 내부 수학은 같습니다.
+
+```js
+// Framer Motion / Motion: 4개 컨트롤 포인트를 배열로 전달
+<motion.div
+  animate={{ scale: 1 }}
+  transition={{ duration: 0.25, ease: [0, 0, 0.2, 1] }}
+/>
+
+// GSAP: CustomEase를 등록한 뒤 이름으로 참조
+import { gsap } from 'gsap';
+import { CustomEase } from 'gsap/CustomEase';
+gsap.registerPlugin(CustomEase);
+CustomEase.create('enter', 'M0,0 C0,0 0.2,1 1,1');
+gsap.to('.modal', { y: 0, duration: 0.25, ease: 'enter' });
+
+// Anime.js: cubicBezier라는 JS 함수로 전달
+import anime from 'animejs';
+anime({
+  targets: '.modal',
+  translateY: [20, 0],
+  duration: 250,
+  easing: anime.cubicBezier(0, 0, 0.2, 1)
+});
+```
+
+시각 결과는 CSS 미리보기와 일치합니다—수학이 동일하기 때문입니다. 편집기는 곡선 생성기이고, 어떤 런타임이 출력을 소비하는지 신경 쓰지 않습니다—단, 4개의 숫자를 각 라이브러리의 표면 구문으로 옮기는 일은 당신의 몫입니다.
+
+### Tailwind CSS theme 확장
+
+Tailwind는 클래스 이름에 인라인 `cubic-bezier()`를 허용하지 않습니다(`ease-[cubic-bezier(0.4,0,0.2,1)]`은 JIT 모드에서 동작하지만 가독성이 떨어집니다). 깔끔한 패턴은 theme을 확장하는 것입니다.
+
+```js
+// tailwind.config.js
+module.exports = {
+  theme: {
+    extend: {
+      transitionTimingFunction: {
+        'enter':  'cubic-bezier(0, 0, 0.2, 1)',
+        'exit':   'cubic-bezier(0.4, 0, 1, 1)',
+        'smooth': 'cubic-bezier(0.4, 0, 0.2, 1)',
+        'spring': 'cubic-bezier(0.68, -0.55, 0.265, 1.55)',
+      },
+    },
+  },
+};
+```
+
+그 후 `ease-enter`, `ease-exit` 등을 사용합니다. 편집기의 Tailwind 출력 모드는 현재 곡선을 단일 `'custom'` 항목으로 출력합니다—설정 파일에 붙여 넣기 전에 프로젝트에 맞게 이름을 바꾸어 (`'enter'` / `'exit'` / `'smooth'`) 여러 곡선이 공존할 수 있도록 하세요.
+
+### After Effects, Figma, Lottie
+
+모션 디자이너는 After Effects에서 cubic-bezier 핸들로 애니메이션을 만들고, Lottie JSON으로 내보내 엔지니어에게 넘깁니다. After Effects의 핸들은 `(x1, y1, x2, y2)`에 매핑되지만, Lottie의 저장은 단일 CSS 문자열보다 더 세밀합니다: 각 keyframe은 `o`(이전 keyframe을 떠나는 out 접선)와 `i`(다음 keyframe에 도착하는 in 접선) 두 객체를 가지며, 각각 `x` / `y` 배열을 갖습니다. opacity 같은 스칼라 속성은 단일 요소 배열을 가지고 `cubic-bezier(o.x[0], o.y[0], i.x[0], i.y[0])`로 깔끔하게 왕복합니다. position, scale 같은 벡터 속성은 성분별 배열을 가져서 각 축이 자체 곡선을 가질 수 있습니다. 인계 파이프라인에 Figma 프로토타입이 포함된다면, 디자이너에게 속성별 bezier 값을 공유받고 편집기에서 운영 CSS가 가장 중요한 축(슬라이드 입장/퇴장이라면 보통 Y)에서 Figma 타이밍과 일치하는지 확인하세요.
+
+## 이 편집기가 다른 도구들과 다른 점
+
+[`cubic-bezier.com`](https://cubic-bezier.com/)은 이 분야의 정전입니다—Lea Verou가 2014년에 작성한 이래로 기본 참고 자료가 되어왔습니다. 한 가지 일을 완벽하게 합니다: 두 핸들을 드래그하고, 곡선을 보고, 4개 숫자를 복사. 본 편집기는 같은 일을 하면서 다음을 더합니다.
+
+- **디자인 시스템 preset 11종**—Material의 `(0.4, 0, 0.2, 1)`을 기억에서 다시 입력하거나 Stack Overflow에서 붙여 넣을 필요가 없습니다.
+- **3가지 출력 형식**(CSS / SCSS / Tailwind 설정)—타이밍 함수를 소비하는 스택의 어느 층으로든 동일한 곡선을 보낼 수 있습니다.
+- **실시간 애니메이션 미리보기**(duration 조절 가능)—곡선 모양뿐 아니라 실제로 움직이는 손맛까지 비교할 수 있습니다.
+- **로컬 영속화**—어제 조정 중이던 곡선이 오늘 탭을 열어도 그대로 있습니다(Reset으로 즉시 초기화).
+- **4개 언어**(영어 / 중국어 / 일본어 / 한국어)—작업 언어가 다른 팀에서도 사용할 수 있습니다.
+
+모든 것이 브라우저 안에서 실행됩니다: 업로드 없음, 계정 없음, 곡선 값 자체에 대한 분석 없음. 도구 전체는 HTML 1개 파일 + 인라인 JS—소스 보기로 수학을 확인할 수 있습니다.
+
+## 추가 자료
+
+- [MDN: `<easing-function>`](https://developer.mozilla.org/ko/docs/Web/CSS/easing-function) — CSS 명세의 정전 참고서.
+- [W3C CSS Easing Functions Level 1](https://www.w3.org/TR/css-easing-1/) — 형식 정의. 알고리즘의 모든 모서리까지 명세됨.
+- [Material Design Motion: Easing](https://m3.material.io/styles/motion/easing-and-duration/tokens-specs) — Google의 3곡선 체계와 그 근거.
+- [iOS Human Interface Guidelines: Motion](https://developer.apple.com/design/human-interface-guidelines/motion) — Apple의 「자연스러운」 애니메이션 프레임워크.
+- [Tailwind: `transitionTimingFunction`](https://tailwindcss.com/docs/transition-timing-function) — 공식 theme 확장 참고서.
+
+## ZeroTool의 관련 도구
+
+- [CSS Clip Path 생성기](/ko/tools/css-clip-path-generator/) — 드래그 핸들로 `clip-path: polygon()` 등을 편집.
+- [CSS 필터 생성기](/ko/tools/css-filter-generator/) — blur, brightness, hue-rotate, saturate를 슬라이더로 조정.
+- [글래스모피즘 생성기](/ko/tools/glassmorphism-generator/) — 실시간 미리보기가 있는 프로스트 글래스 UI 생성기.
+- [CSS 변수 생성기](/ko/tools/css-variables-generator/) — 원시 색상 토큰을 즉시 붙여 넣을 수 있는 `:root` 블록으로.

@@ -1,0 +1,252 @@
+---
+title: "Cubic Bezier 生成器：别再瞎猜 CSS 缓动曲线"
+description: "拖拽两个控制点、看动画跑起来，复制 CSS / SCSS / Tailwind。附 cubic-bezier 背后的数学、设计系统标准曲线，以及那些会写到生产环境里的踩坑姿势。"
+pubDate: 2026-04-29
+lang: "zh"
+tags: ["css", "animation", "easing", "cubic-bezier", "developer-tools"]
+ogImage: /og/blog-cubic-bezier-generator-guide.png
+---
+
+你写下 `transition: transform 0.25s cubic-bezier(0.42, 0, 0.58, 1)`。modal 滑出来了，感觉不对。把 `0.42` 改成 `0.5`，更糟。改回 `0.42`，再把 `0` 改成 `0.1`。略有不同，仍然不对。十分钟过去，你放弃了，贴上 `ease-in-out`——至少它的表现是可预期的。但动效仍然没了灵魂。设计 leader 问你为什么这个 modal 跟 Figma 原型里看到的感觉不一样。你给不出像样的答案。
+
+[打开 Cubic Bezier 生成器 →](/zh/tools/cubic-bezier-generator/)
+
+这篇文章要解决的就是「缓动手感不对」与「我把对的曲线发上线了」之间的那道鸿沟。我们会讲清楚定义一条 cubic-bezier 曲线的四个数字、它们如何被 CSS 关键字隐藏、你应该早就在用的设计系统标准曲线、那些常见的踩坑场景，以及编辑器背后的数学——因为有时候曲线不是写在 CSS 里就完事了，还要在代码里实时算出来。
+
+## 四个数字到底意味着什么
+
+CSS 的 `cubic-bezier(x1, y1, x2, y2)` 描述的是单位正方形内、从 `(0, 0)` 到 `(1, 1)` 的一条曲线。X 轴是归一化时间——`0` 是过渡开始，`1` 是过渡结束；Y 轴是归一化进度——`0` 是起始状态，`1` 是终态。曲线两端固定锚定在这两个角，由两个内部控制点决定形状：起点附近的 `P1 = (x1, y1)`，终点附近的 `P2 = (x2, y2)`。
+
+```
+y (进度)
+1 ──────────────●(1,1) 终点
+│           ╱
+│        ╱
+│     ╱P2(x2,y2)
+│  ╱P1(x1,y1)
+●(0,0) 起点 ─────── x (时间)
+0                   1
+```
+
+合法性受两条约束：
+
+1. **`x1` 和 `x2` 必须落在 `[0, 1]` 区间内。** 它们代表 P1、P2 在时间轴上的位置。时间不能倒流也不能超出 duration，所以规范拒绝越界的 X。
+2. **`y1` 和 `y2` 不受边界约束。** Y 是进度，进度可以过冲——回弹型曲线会越过 1 再稳定，预拉型曲线会先低于 0 再爬升。Y 的合法范围只看你视觉设计能容忍多大。
+
+在编辑器里拖动两个实心圆点，四个数字会实时更新；输入数字，圆点会跟着移动。两条路径最终都会给你一段可粘贴的 `cubic-bezier(...)`。
+
+## CSS 关键字别名（以及它们藏起来的东西）
+
+CSS 规范定义了五个命名缓动。它们没什么神奇的——每个都是一条固定的 cubic-bezier：
+
+| 关键字 | 等价的 cubic-bezier |
+|--------|---------------------|
+| `linear` | `cubic-bezier(0, 0, 1, 1)` |
+| `ease` | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| `ease-in` | `cubic-bezier(0.42, 0, 1, 1)` |
+| `ease-out` | `cubic-bezier(0, 0, 0.58, 1)` |
+| `ease-in-out` | `cubic-bezier(0.42, 0, 0.58, 1)` |
+
+三个会改变你用法的观察：
+
+1. **`ease` 是不对称的。** 它加速的程度比减速更猛：`(0.25, 0.1, 0.25, 1)` 把 P2 顶到了上边缘。多数团队用 `ease` 时以为它是个温和的默认值，实际它更接近 `ease-out` 而不是真正平衡的曲线。
+2. **`ease-in` 和 `ease-out` 是镜像。** `ease-in` 把 P2 钉在右上角，所以末段是直线；`ease-out` 把 P1 钉在左下角，所以前段是直线。如果你的动画两端都需要曲线，要用 `ease-in-out`（或者自定义曲线）。
+3. **`linear` 多数时候不是你想要的。** 任何有物理类比的运动（滑动、展开、淡入）用线性都会显得机械。把 `linear` 留给真正的无限循环，或者要表达「匀速进度」的进度条。
+
+关键字覆盖了四种形状。自定义 `cubic-bezier()` 解锁的是单位正方形里其余的所有可能。
+
+## 你应该早就在用的设计系统标准曲线
+
+每个主流设计语言都自带一套经典曲线。绕开它们直接用 `ease-in-out`，是把 UI 做成「不像我们品牌的样子」最快的方法——而且别人还说不出哪里不对。
+
+| 系统 | 标准 / 常见用法 | 曲线 |
+|------|-----------------|------|
+| Material 3 | Standard（通用过渡） | `cubic-bezier(0.2, 0, 0, 1)` |
+| Material 3 | Standard decelerate（元素入场） | `cubic-bezier(0, 0, 0, 1)` |
+| Material 3 | Standard accelerate（元素离场） | `cubic-bezier(0.3, 0, 1, 1)` |
+| Material 2（旧版） | Standard | `cubic-bezier(0.4, 0, 0.2, 1)` |
+| iOS / UIKit | 默认缓动（`UIView` 块式动画） | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| Tailwind CSS | `transition-timing-function: ease-in-out` 默认值 | `cubic-bezier(0.4, 0, 0.2, 1)` |
+
+三条要内化的模式：
+
+- **不对称 in/out 比对称 in-out 好用。** Material 的三条曲线（standard / decelerate / accelerate）对应的是 UI 元素做的三件事：保持、入场、离场。对称的 `ease-in-out` 用在入场 toast 上是错的——用户读出来是「飘忽」。
+- **入场用减速，离场用加速。** 面板滑入时，用户需要时间看清终态——结尾要慢；面板滑出时，用户已经在看下一屏——结尾要快。
+- **回弹（`Back`）曲线是标点，不是字。** `cubic-bezier(0.68, -0.55, 0.265, 1.55)` 这类曲线会过冲再回稳。它们适合一次性的注意力提示（徽章弹出），不适合反复触发的过渡（每次按钮 hover 都弹一下）。
+
+在编辑器里点任意一个 preset，会同时看到曲线、动效小球和对应的 CSS。点几次对比一下——纸面上看似差别不大，跑起来差异立刻显形。
+
+## 那些会写进生产环境的踩坑
+
+我见过的每个团队，至少都踩过下面其中一个。
+
+### 1. 用 `linear` 表达「中性」运动
+
+200 ms 的线性曲线在多数 UI 动效里都会显得卡——眼睛默认在到达点上看到减速。修法几乎永远是 `cubic-bezier(0, 0, 0.2, 1)`（Material decelerate）或类似的曲线。把 `linear` 留给真正的连续运动：旋转 spinner、跑马灯、能反映真实进度的 progress bar。
+
+### 2. 把 `ease-in-out` 设上去就收工
+
+`ease-in-out` 是对称的：起始慢、结尾也慢。多数 UI 动效都不该用它。Modal 弹出、抽屉滑入、手风琴展开——它们都需要「到达时减速」，意味着曲线要前段平、后段弯。`ease-in-out` 两端都弯，让动画感觉比实际时长更久，哪怕你 duration 设的是对的。
+
+### 3. 把 `cubic-bezier(0.4, 0, 0.2, 1)` 当万能药
+
+Material 的 standard 曲线一度是 CSS 里被复制最多的片段，但它是个*通用*曲线。Material 自己的指引明确说入场用 decelerate、离场用 accelerate——多数团队只看到「standard」这个词就停下，把它套到所有过渡上。结果是「能用但平庸」的动效。修法很小：入场用 `0, 0, 0.2, 1`、离场用 `0.4, 0, 1, 1`、`0.4, 0, 0.2, 1` 只用在那些既不入场也不离场的过渡上。
+
+### 4. 日常过渡用了负值或 > 1 的 Y
+
+`cubic-bezier(0.68, -0.55, 0.265, 1.55)` 是条漂亮的回弹曲线，用来让一个徽章弹出一次特别合适。但你把它套到每个按钮 hover 上，UI 就会像商场里的电动扶梯——每次交互都先撅一下、过冲、再稳住。回弹是标点，要节制使用。
+
+### 5. 用「拉长 duration」修缓动错误
+
+动效感觉慢，本能是缩短 duration；感觉急促，就拉长。如果底层曲线是错的，两个方向都不对。一条正确缓动的 250 ms 动画感觉就是对的；一条错误缓动的 250 ms 动画，无论你怎么调 duration 都还是别扭。在你打算上线的 duration 下调曲线；不调曲线只调 duration，等于在沉船甲板上重新摆椅子。
+
+### 6. 忘了缓动会改变「感知性能」
+
+用户把减速读作「系统把活做完了」。`ease-out` 风格的曲线会让一段 300 ms 的过渡比 300 ms 的 `linear` 感觉更利落，因为视觉进度跑在计时器前面。同样的把戏适用于骨架屏、渐进图片加载、路由过渡——曲线在做用户体验的活，不只是视觉点缀。
+
+## 数学：从 x 反求 t
+
+编辑器画曲线、让小球跑起来时，要解一个不平凡的问题：给定 X（归一化的已经过时间，0-1），Y（进度）是多少？CSS 给用户的是四个数字，但 cubic-bezier 曲线是用*第三个*变量 `t` 参数化的，`t` 也在 `[0, 1]`。关系是：
+
+```
+x(t) = 3(1-t)² · t · x1 + 3(1-t) · t² · x2 + t³
+y(t) = 3(1-t)² · t · y1 + 3(1-t) · t² · y2 + t³
+```
+
+`t` 不等于 `x`。要在给定时间下拿到进度，必须：
+
+1. 解 `x(t) = X` 求 `t`。三次方程是有闭式解的（Cardano 公式），但引擎选择数值解法是因为它在整个曲线空间都稳定且快——尤其是闭式解需要手动处理那些近似退化的角落情况。
+2. 把得到的 `t` 代入 `y(t)`，就是进度。
+
+业界标准做法（本编辑器以及 Blink、WebKit、Gecko 等主流浏览器引擎都用）是 Newton 法 + 二分法兜底：
+
+```js
+function solveT(targetX, x1, x2) {
+  let t = targetX;                   // 初值：直接拿 x 当 t
+  for (let i = 0; i < 8; i++) {      // Newton 迭代
+    const x  = bezier(t, x1, x2);
+    const dx = bezierDeriv(t, x1, x2);
+    if (Math.abs(dx) < 1e-6) break;  // 切线近水平，跳过
+    t = t - (x - targetX) / dx;
+    t = Math.max(0, Math.min(1, t));
+  }
+  // 二分细化
+  let lo = 0, hi = 1;
+  for (let j = 0; j < 20; j++) {
+    const mid = (lo + hi) / 2;
+    const mx  = bezier(mid, x1, x2);
+    if (mx < targetX) lo = mid; else hi = mid;
+    t = mid;
+  }
+  return t;
+}
+```
+
+导数表现良好时，Newton 阶段是平方收敛；二分兜底处理曲线接近水平段那几个棘手情况。八次 Newton 迭代加二十次二分，跑在 `requestAnimationFrame` 回调里能稳稳达到 60 fps。
+
+写 CSS 你不必自己实现这套——浏览器会做。但当你在 JavaScript 里实现缓动时就需要它——比如用 `requestAnimationFrame` 驱动 Canvas 动画、把非 CSS 属性同步到 CSS 过渡上、为自定义物理仿真算中间值。
+
+## CSS 之外的用例
+
+cubic-bezier 出现的地方比想象的多。
+
+### Web Animations API
+
+`cubic-bezier()` 语法可以直接用在 `Element.animate` 里：
+
+```js
+modal.animate(
+  [{ transform: 'translateY(20px)', opacity: 0 },
+   { transform: 'translateY(0)',    opacity: 1 }],
+  {
+    duration: 250,
+    easing: 'cubic-bezier(0, 0, 0.2, 1)',
+    fill: 'forwards'
+  }
+);
+```
+
+WAAPI 接受跟 CSS 一样的曲线字符串。你在编辑器里生成的同一段字符串，能无缝塞进 CSS 和 JS 两侧。
+
+### Framer Motion / GSAP / Anime.js
+
+JavaScript 动画库各有各的传参方式，但底层数学是一样的。
+
+```js
+// Framer Motion / Motion：传四个控制点的数组
+<motion.div
+  animate={{ scale: 1 }}
+  transition={{ duration: 0.25, ease: [0, 0, 0.2, 1] }}
+/>
+
+// GSAP：先注册 CustomEase，再按名引用
+import { gsap } from 'gsap';
+import { CustomEase } from 'gsap/CustomEase';
+gsap.registerPlugin(CustomEase);
+CustomEase.create('enter', 'M0,0 C0,0 0.2,1 1,1');
+gsap.to('.modal', { y: 0, duration: 0.25, ease: 'enter' });
+
+// Anime.js：用 cubicBezier 这个 JS 函数
+import anime from 'animejs';
+anime({
+  targets: '.modal',
+  translateY: [20, 0],
+  duration: 250,
+  easing: anime.cubicBezier(0, 0, 0.2, 1)
+});
+```
+
+视觉效果跟 CSS 预览一致，因为数学完全相同。编辑器是个曲线生成器，不在乎哪个 runtime 来消费输出——但你要负责把那四个数字翻译成各自库的表面语法。
+
+### Tailwind CSS theme 扩展
+
+Tailwind 不允许你在 class 名里写内联 `cubic-bezier()`（`ease-[cubic-bezier(0.4,0,0.2,1)]` 在 JIT 模式下能用，但难读）。干净的写法是扩展 theme：
+
+```js
+// tailwind.config.js
+module.exports = {
+  theme: {
+    extend: {
+      transitionTimingFunction: {
+        'enter':  'cubic-bezier(0, 0, 0.2, 1)',
+        'exit':   'cubic-bezier(0.4, 0, 1, 1)',
+        'smooth': 'cubic-bezier(0.4, 0, 0.2, 1)',
+        'spring': 'cubic-bezier(0.68, -0.55, 0.265, 1.55)',
+      },
+    },
+  },
+};
+```
+
+之后用 `ease-enter`、`ease-exit` 等。编辑器的 Tailwind 输出模式会为当前曲线生成一个名为 `'custom'` 的 entry——粘到配置文件之前先按你项目的语义改名（`'enter'` / `'exit'` / `'smooth'`），多条曲线才能并存。
+
+### After Effects、Figma、Lottie
+
+动效设计师在 After Effects 里用 cubic-bezier 控制点做动画，导出 Lottie JSON，把文件交给工程师。After Effects 的控制点直接对应 `(x1, y1, x2, y2)`，但 Lottie 的存储比单条 CSS 字符串更细：每个 keyframe 带 `o`（离开上一关键帧的 out 切线）和 `i`（到达下一关键帧的 in 切线）两个对象，每个对象各有 `x` / `y` 数组。像 opacity 这种标量属性，数组只有一个元素，能干净地往返成 `cubic-bezier(o.x[0], o.y[0], i.x[0], i.y[0])`；像 position、scale 这种矢量属性，每个分量带一组数组，所以每个轴可以有自己的曲线。如果你的交付管线里有 Figma 原型，可以让设计师按属性导出 bezier 数值，用编辑器确认上线 CSS 在最关键的那一维（滑入/滑出通常是 Y）跟 Figma 时序一致。
+
+## 这个编辑器跟同类工具的区别
+
+[`cubic-bezier.com`](https://cubic-bezier.com/) 是这个领域的标杆——Lea Verou 在 2014 年写下这个工具，从此它一直是默认参考。它把一件事做到了极致：拖两个把手、看曲线、复制四个数字。本编辑器做同样的事，再补上几件：
+
+- **十一组设计系统 preset**，所以你不必凭记忆默写 Material 的 `(0.4, 0, 0.2, 1)` 或者从 Stack Overflow 复制粘贴。
+- **三种输出格式**（CSS / SCSS / Tailwind 配置），所以同一条曲线可以发到栈里任何消费 timing function 的层。
+- **实时动画预览**，可以调 duration——你比对的不只是曲线形状，还有真实跑起来的手感。
+- **本地持久化**——昨天调到一半的曲线明天打开标签页还在（Reset 按钮一键复位）。
+- **四语言**（英文 / 中文 / 日文 / 韩文），让工作语言不一致的团队也能用。
+
+整个工具运行在浏览器里：不上传、不登录、不对曲线参数本身做埋点。整个工具就是一份 HTML + 内联 JS——view-source 看就是数学。
+
+## 延伸阅读
+
+- [MDN: `<easing-function>`](https://developer.mozilla.org/zh-CN/docs/Web/CSS/easing-function) — CSS 规范的标准参考。
+- [W3C CSS Easing Functions Level 1](https://www.w3.org/TR/css-easing-1/) — 形式定义，把算法的所有边角情况写清楚。
+- [Material Design Motion: Easing](https://m3.material.io/styles/motion/easing-and-duration/tokens-specs) — Google 三曲线体系的依据。
+- [iOS Human Interface Guidelines: Motion](https://developer.apple.com/design/human-interface-guidelines/motion) — Apple 对「自然」动效的框架。
+- [Tailwind: `transitionTimingFunction`](https://tailwindcss.com/docs/transition-timing-function) — 官方 theme 扩展参考。
+
+## ZeroTool 上的相关工具
+
+- [CSS Clip Path 生成器](/zh/tools/css-clip-path-generator/) — 拖拽控制点编辑 `clip-path: polygon()` 等形状。
+- [CSS Filter 生成器](/zh/tools/css-filter-generator/) — 滑块驱动的 blur、brightness、hue-rotate、saturate 编辑器。
+- [毛玻璃生成器](/zh/tools/glassmorphism-generator/) — 实时预览的玻璃拟态参数面板。
+- [CSS Variables 生成器](/zh/tools/css-variables-generator/) — 把原始色值变成可粘贴的 `:root` 块。

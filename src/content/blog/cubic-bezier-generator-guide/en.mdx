@@ -1,0 +1,252 @@
+---
+title: "Cubic Bezier Generator: Stop Guessing CSS Easing Curves"
+description: "Drag two control points, see the animation run, and copy CSS / SCSS / Tailwind. Plus: the math behind cubic-bezier, design system presets, and failure modes that ship to production."
+pubDate: 2026-04-29
+lang: "en"
+tags: ["css", "animation", "easing", "cubic-bezier", "developer-tools"]
+ogImage: /og/blog-cubic-bezier-generator-guide.png
+---
+
+You wrote `transition: transform 0.25s cubic-bezier(0.42, 0, 0.58, 1)`. The modal slides in. It feels wrong. You change `0.42` to `0.5`. Worse. You change it back to `0.42`, change `0` to `0.1`. Slightly different, still wrong. After ten minutes you give up and paste `ease-in-out` because at least it's predictable. The motion still feels generic. The design lead asks why the modal doesn't feel like the Figma prototype. You don't have a good answer.
+
+[Open the Cubic Bezier Generator →](/tools/cubic-bezier-generator/)
+
+This guide is about closing the gap between "the easing feels off" and "I shipped the right curve." It covers the four numbers that define a cubic-bezier curve, the keyword aliases that hide them, the design system presets you should already be using, the failure modes that surprise teams, and the math behind the editor — because sometimes the curve has to be computed in code, not just declared in CSS.
+
+## What the four numbers actually mean
+
+A CSS `cubic-bezier(x1, y1, x2, y2)` describes a curve from `(0, 0)` to `(1, 1)` on a unit square. The X axis is normalized time — `0` at the start of the transition, `1` at the end. The Y axis is normalized progress — `0` is the starting state, `1` is the finished state. The curve is anchored at those two corners and shaped by two interior control points: `P1 = (x1, y1)` near the start, `P2 = (x2, y2)` near the end.
+
+```
+y (progress)
+1 ──────────────●(1,1) end
+│           ╱
+│        ╱
+│     ╱P2(x2,y2)
+│  ╱P1(x1,y1)
+●(0,0) start ─────── x (time)
+0                   1
+```
+
+Two rules govern what's legal:
+
+1. **`x1` and `x2` must be inside `[0, 1]`.** They represent the time at which P1 and P2 sit. Time can't go backwards or past the duration, so the spec rejects out-of-range X.
+2. **`y1` and `y2` are unbounded.** Y is progress, and progress can overshoot — a back-out spring goes past 1 and settles, an anticipation curve dips below 0 before climbing. The legal Y range is whatever your visual design tolerates.
+
+Drag the two filled circles in the editor and the four numbers update live. Type the numbers and the circles move. Either workflow ends with the same `cubic-bezier(...)` snippet ready to paste.
+
+## CSS keyword aliases (and what they hide)
+
+The CSS spec defines five named easings. They're not magic — each one is a fixed cubic-bezier:
+
+| Keyword | Equivalent cubic-bezier |
+|---------|-------------------------|
+| `linear` | `cubic-bezier(0, 0, 1, 1)` |
+| `ease` | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| `ease-in` | `cubic-bezier(0.42, 0, 1, 1)` |
+| `ease-out` | `cubic-bezier(0, 0, 0.58, 1)` |
+| `ease-in-out` | `cubic-bezier(0.42, 0, 0.58, 1)` |
+
+Three observations that change how you use them:
+
+1. **`ease` is asymmetric.** It accelerates more than it decelerates: `(0.25, 0.1, 0.25, 1)` puts P2 hard against the top edge. Most teams reach for `ease` thinking it's a gentle default, but it's actually closer to `ease-out` than to a balanced curve.
+2. **`ease-in` and `ease-out` are mirrors.** `ease-in` keeps P2 at the top-right corner so the late phase is linear; `ease-out` keeps P1 at the bottom-left corner so the early phase is linear. If your animation needs both halves curved, `ease-in-out` (or a custom curve) is the answer.
+3. **`linear` is rarely what you want.** It feels mechanical for any motion that has a physical analogue (sliding, opening, fading). Reserve `linear` for true infinite loops or progress bars where uniform speed is the intent.
+
+The keywords cover four shapes. The custom `cubic-bezier()` opens up the rest of the unit square.
+
+## Design system presets you should already be using
+
+Each major design language ships its own canonical curve. Skipping them in favour of `ease-in-out` is the fastest way to make a UI feel "off-brand" without anyone being able to point to why.
+
+| System | Standard / common usage | Curve |
+|--------|------------------------|-------|
+| Material 3 | Standard (general transitions) | `cubic-bezier(0.2, 0, 0, 1)` |
+| Material 3 | Standard decelerate (entering elements) | `cubic-bezier(0, 0, 0, 1)` |
+| Material 3 | Standard accelerate (leaving elements) | `cubic-bezier(0.3, 0, 1, 1)` |
+| Material 2 (legacy) | Standard | `cubic-bezier(0.4, 0, 0.2, 1)` |
+| iOS / UIKit | Default ease (`UIView` block-based animation) | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| Tailwind CSS | `transition-timing-function: ease-in-out` default | `cubic-bezier(0.4, 0, 0.2, 1)` |
+
+Three patterns to internalize:
+
+- **Asymmetric in/out beats symmetric in-out.** Material's three-curve system (standard / decelerate / accelerate) maps to the three things UI elements do: stay, enter, leave. Symmetric `ease-in-out` is the wrong tool for an entering toast — the user reads it as floaty.
+- **Decelerate for arrivals, accelerate for departures.** When a panel slides in, the user needs time to read the final state — slow at the end. When it slides out, the user has already moved on — fast at the end.
+- **Spring (`Back`) curves are punctuation, not punctuation marks.** Curves like `cubic-bezier(0.68, -0.55, 0.265, 1.55)` overshoot and settle. They're great for one-off attention nudges (a badge popping in) and bad for repeated transitions (a button hover that springs every time).
+
+Click any preset in the editor to see the curve, the live ball animation, and the matching CSS. Compare them by clicking through — the differences are subtle on paper, obvious in motion.
+
+## Failure modes that ship to production
+
+Every team I've seen has shipped at least one of these.
+
+### 1. Reaching for `linear` for "neutral" motion
+
+A linear curve with a 200 ms duration feels janky on most UI motion because the eye expects deceleration on arrival. The fix is almost always `cubic-bezier(0, 0, 0.2, 1)` (Material decelerate) or its equivalent. Reserve `linear` for true continuous motion (rotating spinners, marquee tickers, progress bars that report real progress).
+
+### 2. Setting `ease-in-out` and calling it a day
+
+`ease-in-out` is symmetric: slow at the start, slow at the end. For most UI motion that's the wrong call. Modal pop-ins, drawer slides, accordion expansions all want decelerate-on-arrival, which means a curve with a flat start and a curved end. `ease-in-out` puts a curve at both ends, making the animation feel longer than it is even when the duration is correct.
+
+### 3. Cargo-culting `cubic-bezier(0.4, 0, 0.2, 1)` everywhere
+
+Material's standard curve became the most copied snippet in CSS, but it's a *general-purpose* curve. The standard guide explicitly says to use decelerate for enter and accelerate for exit — most teams stop reading at "standard" and apply it to every transition. The result is acceptable but unremarkable motion. The fix is small: `0, 0, 0.2, 1` for enter, `0.4, 0, 1, 1` for exit, `0.4, 0, 0.2, 1` only for things that don't enter or exit.
+
+### 4. Negative or > 1 Y for everyday transitions
+
+`cubic-bezier(0.68, -0.55, 0.265, 1.55)` is a beautiful spring, perfect for a badge popping in once. Apply it to every button hover and your UI feels like a mall escalator — every interaction nudges, overshoots, settles. Spring curves are punctuation; use them sparingly.
+
+### 5. Long duration to "fix" wrong easing
+
+If the motion feels slow, the instinct is to shorten the duration. If it feels rushed, lengthen. Both are wrong if the underlying curve is wrong. A correctly-eased 250 ms animation feels right; a poorly-eased 250 ms animation feels off no matter what duration you pick. Test the curve at the duration you're going to ship; tuning duration without tuning curve is rearranging deck chairs.
+
+### 6. Forgetting that easing affects perceived performance
+
+Users perceive deceleration as "the system finished its work." `ease-out` style curves make a 300 ms transition feel snappier than a 300 ms `linear` because the visual progress runs ahead of the timer. The same trick applies to skeleton loaders, progressive image loads, and route transitions — the curve is doing user-experience work, not just visual polish.
+
+## The math: solving x for t
+
+When the editor draws the curve and animates the ball, it has to solve a non-trivial problem: given an X (elapsed time normalized to 0-1), what is the Y (progress)? CSS gives the user four numbers, but cubic-bezier curves are parameterized by a *third* variable `t`, also in `[0, 1]`. The relationship is:
+
+```
+x(t) = 3(1-t)² · t · x1 + 3(1-t) · t² · x2 + t³
+y(t) = 3(1-t)² · t · y1 + 3(1-t) · t² · y2 + t³
+```
+
+`t` is not the same as `x`. To find the progress at a given time, you must:
+
+1. Solve `x(t) = X` for `t`. A closed-form solution exists (Cardano's cubic formula), but engines reach for a numerical solver because it stays stable and fast across the full curve space — including the corners where the closed form has to handle near-degenerate cases by hand.
+2. Plug that `t` into `y(t)` to get the progress.
+
+The standard approach (used by the editor on this page and by mainstream browser engines such as Blink, WebKit, and Gecko) is Newton's method with a binary search fallback:
+
+```js
+function solveT(targetX, x1, x2) {
+  let t = targetX;                   // initial guess: time itself
+  for (let i = 0; i < 8; i++) {      // Newton iterations
+    const x  = bezier(t, x1, x2);
+    const dx = bezierDeriv(t, x1, x2);
+    if (Math.abs(dx) < 1e-6) break;  // flat tangent, give up
+    t = t - (x - targetX) / dx;
+    t = Math.max(0, Math.min(1, t));
+  }
+  // Bisection refinement
+  let lo = 0, hi = 1;
+  for (let j = 0; j < 20; j++) {
+    const mid = (lo + hi) / 2;
+    const mx  = bezier(mid, x1, x2);
+    if (mx < targetX) lo = mid; else hi = mid;
+    t = mid;
+  }
+  return t;
+}
+```
+
+The Newton phase converges quadratically when the derivative is well-behaved; the bisection cleanup handles the few cases where the curve has a near-flat segment. Eight Newton iterations plus twenty bisection steps is fast enough to run inside a `requestAnimationFrame` callback at 60 fps.
+
+You don't need to write this yourself for CSS — the browser does it. You need it when you implement easing in JavaScript (e.g. animating a Canvas with `requestAnimationFrame`, syncing a non-CSS prop with a CSS transition, or computing intermediate values for a custom physics simulation).
+
+## Use cases beyond CSS
+
+Cubic-bezier shows up in surprising places.
+
+### Web Animations API
+
+The `cubic-bezier()` syntax works directly in `Element.animate`:
+
+```js
+modal.animate(
+  [{ transform: 'translateY(20px)', opacity: 0 },
+   { transform: 'translateY(0)',    opacity: 1 }],
+  {
+    duration: 250,
+    easing: 'cubic-bezier(0, 0, 0.2, 1)',
+    fill: 'forwards'
+  }
+);
+```
+
+WAAPI accepts the same curve string CSS does. If you generate a curve in the editor, the same string drops into both layers without translation.
+
+### Framer Motion / GSAP / Anime.js
+
+JavaScript animation libraries each take the four numbers in their own way; the underlying math is the same.
+
+```js
+// Framer Motion / Motion: pass the four control points as an array
+<motion.div
+  animate={{ scale: 1 }}
+  transition={{ duration: 0.25, ease: [0, 0, 0.2, 1] }}
+/>
+
+// GSAP: register a CustomEase, then reference it by name
+import { gsap } from 'gsap';
+import { CustomEase } from 'gsap/CustomEase';
+gsap.registerPlugin(CustomEase);
+CustomEase.create('enter', 'M0,0 C0,0 0.2,1 1,1');
+gsap.to('.modal', { y: 0, duration: 0.25, ease: 'enter' });
+
+// Anime.js: pass cubicBezier as a JS function
+import anime from 'animejs';
+anime({
+  targets: '.modal',
+  translateY: [20, 0],
+  duration: 250,
+  easing: anime.cubicBezier(0, 0, 0.2, 1)
+});
+```
+
+The visual result matches the CSS preview because the math is identical. The editor is a curve generator; it doesn't care which runtime consumes the output — but you do have to translate the four numbers into each library's surface syntax.
+
+### Tailwind CSS theme extension
+
+Tailwind doesn't let you write inline `cubic-bezier()` in the class name (`ease-[cubic-bezier(0.4,0,0.2,1)]` works in JIT mode but is unreadable). The clean pattern is to extend the theme:
+
+```js
+// tailwind.config.js
+module.exports = {
+  theme: {
+    extend: {
+      transitionTimingFunction: {
+        'enter':  'cubic-bezier(0, 0, 0.2, 1)',
+        'exit':   'cubic-bezier(0.4, 0, 1, 1)',
+        'smooth': 'cubic-bezier(0.4, 0, 0.2, 1)',
+        'spring': 'cubic-bezier(0.68, -0.55, 0.265, 1.55)',
+      },
+    },
+  },
+};
+```
+
+Then use `ease-enter`, `ease-exit`, etc. The Tailwind output mode of the editor emits a single `'custom'` entry for the current curve — rename it (`'enter'`, `'exit'`, `'smooth'`) before pasting into your config so multiple curves can coexist.
+
+### After Effects, Figma, Lottie
+
+Motion designers build animations with cubic-bezier handles in After Effects, export Lottie JSON, and hand the file to engineering. The handles in After Effects map onto `(x1, y1, x2, y2)`, but Lottie's storage is more granular than a single CSS string: each keyframe carries `o` (out tangent leaving the previous keyframe) and `i` (in tangent arriving at the next keyframe) objects, each with `x` / `y` arrays. Scalar properties like opacity have one-element arrays that round-trip cleanly to `cubic-bezier(o.x[0], o.y[0], i.x[0], i.y[0])`; vector properties (position, scale) carry per-component arrays so each axis can have its own curve. If your hand-off pipeline includes a Figma prototype, ask the designer to share the bezier values per property and use the editor to confirm the production CSS matches the Figma timing on the dimension that matters most (typically Y for slide-in / slide-out).
+
+## How this editor differs from the alternatives
+
+[`cubic-bezier.com`](https://cubic-bezier.com/) is the canonical tool — Lea Verou wrote it in 2014 and it has been the default reference ever since. It does one job perfectly: drag two handles, see the curve, copy the four numbers. This editor does the same job and adds:
+
+- **Eleven design-system presets** so you don't retype Material's `(0.4, 0, 0.2, 1)` from memory or paste it from Stack Overflow.
+- **Three output formats** (CSS / SCSS / Tailwind config) so you can ship the same curve to whichever layer of your stack consumes timing functions.
+- **Live animation preview** with adjustable duration so you compare not just the curve shape but the felt motion.
+- **Local persistence** so the curve you were tuning yesterday is still there when you open the tab today (Reset wipes it instantly).
+- **Four languages** (English, Chinese, Japanese, Korean) so the tool is usable in teams that don't share a working language.
+
+Everything runs in the browser, no upload, no account, no analytics on the curve values themselves. The whole tool is one HTML file plus inline JS — view-source it to see the math.
+
+## Further reading
+
+- [MDN: `<easing-function>`](https://developer.mozilla.org/en-US/docs/Web/CSS/easing-function) — the canonical CSS spec reference.
+- [W3C CSS Easing Functions Level 1](https://www.w3.org/TR/css-easing-1/) — the formal definition, with all of the algorithm corners spelled out.
+- [Material Design Motion: Easing](https://m3.material.io/styles/motion/easing-and-duration/tokens-specs) — Google's three-curve system with rationale.
+- [iOS Human Interface Guidelines: Motion](https://developer.apple.com/design/human-interface-guidelines/motion) — Apple's framework for "natural" animation.
+- [Tailwind: `transitionTimingFunction`](https://tailwindcss.com/docs/transition-timing-function) — official theme extension reference.
+
+## Related tools on ZeroTool
+
+- [CSS Clip Path Generator](/tools/css-clip-path-generator/) — drag-handle editor for `clip-path: polygon()` and friends.
+- [CSS Filter Generator](/tools/css-filter-generator/) — slider-driven editor for blur, brightness, hue-rotate, saturate.
+- [Glassmorphism Generator](/tools/glassmorphism-generator/) — frosted-glass surface tokens with live preview.
+- [CSS Variables Generator](/tools/css-variables-generator/) — turn raw color tokens into ready-to-paste `:root` blocks.

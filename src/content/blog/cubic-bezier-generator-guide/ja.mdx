@@ -1,0 +1,252 @@
+---
+title: "Cubic Bezier ジェネレーター: CSS イージング曲線を勘で書くのをやめよう"
+description: "コントロールポイントを 2 つドラッグし、アニメーションを再生して CSS / SCSS / Tailwind をコピー。さらに cubic-bezier の数学、デザインシステムの標準曲線、本番にそのまま出てしまう典型的な落とし穴も解説。"
+pubDate: 2026-04-29
+lang: "ja"
+tags: ["css", "animation", "easing", "cubic-bezier", "developer-tools"]
+ogImage: /og/blog-cubic-bezier-generator-guide.png
+---
+
+`transition: transform 0.25s cubic-bezier(0.42, 0, 0.58, 1)` と書いた。モーダルがスライドしてくる。何かおかしい。`0.42` を `0.5` にしてみる。もっと悪くなる。`0.42` に戻して `0` を `0.1` に。少し違うが、まだしっくり来ない。10 分悩んで諦め、`ease-in-out` を貼る——少なくとも挙動は読める。動きはやはり没個性。デザインリーダーから「なぜ Figma のプロトタイプと違うのか」と聞かれる。まともに答えられない。
+
+[Cubic Bezier ジェネレーターを開く →](/ja/tools/cubic-bezier-generator/)
+
+このガイドが埋めるのは「イージングが何かおかしい」と「正しい曲線を出荷した」のあいだの溝です。cubic-bezier 曲線を定義する 4 つの数値、それを覆い隠している CSS キーワード、すでに使うべきデザインシステムの標準曲線、チームを驚かせる落とし穴、そしてエディタの裏側にある数学を扱います——曲線は CSS で宣言するだけでなく、コードでリアルタイムに計算しなければならない場面もあるからです。
+
+## 4 つの数値の意味
+
+CSS の `cubic-bezier(x1, y1, x2, y2)` は単位正方形上の `(0, 0)` から `(1, 1)` までの曲線を表します。X 軸は正規化された時間——`0` がトランジションの開始、`1` が終了。Y 軸は正規化された進捗——`0` が初期状態、`1` が最終状態。曲線は両端の角に固定され、内側の 2 つのコントロールポイントで形が決まります。開始側に近い `P1 = (x1, y1)` と終了側に近い `P2 = (x2, y2)` です。
+
+```
+y (進捗)
+1 ──────────────●(1,1) 終点
+│           ╱
+│        ╱
+│     ╱P2(x2,y2)
+│  ╱P1(x1,y1)
+●(0,0) 起点 ─────── x (時間)
+0                   1
+```
+
+合法性のルールは 2 つだけです。
+
+1. **`x1` と `x2` は `[0, 1]` の範囲内でなければならない。** P1 と P2 が時間軸上のどこにあるかを示す値です。時間は逆流もできず、duration を超えることもできないので、仕様は範囲外の X を拒否します。
+2. **`y1` と `y2` には範囲制限がない。** Y は進捗で、進捗は overshoot し得るからです——バックアウトのスプリングは 1 を超えてから落ち着き、anticipation 曲線は 0 を下回ってから上がる。Y の合法な範囲は、あなたのビジュアルデザインがどこまで許容するかで決まります。
+
+エディタで 2 つの塗りつぶし円をドラッグすると 4 つの数値がリアルタイムで更新されます。数値を入力すれば円が動きます。どちらのワークフローも最終的には貼り付け可能な `cubic-bezier(...)` のスニペットになります。
+
+## CSS キーワード別名（とそれが隠しているもの）
+
+CSS 仕様には命名済みのイージングが 5 つあります。魔法ではなく、それぞれが固定された cubic-bezier です。
+
+| キーワード | 等価な cubic-bezier |
+|------------|---------------------|
+| `linear` | `cubic-bezier(0, 0, 1, 1)` |
+| `ease` | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| `ease-in` | `cubic-bezier(0.42, 0, 1, 1)` |
+| `ease-out` | `cubic-bezier(0, 0, 0.58, 1)` |
+| `ease-in-out` | `cubic-bezier(0.42, 0, 0.58, 1)` |
+
+使い方を変える観察が 3 つ。
+
+1. **`ease` は非対称。** 加速のほうが減速より強い。`(0.25, 0.1, 0.25, 1)` は P2 を上端ぎりぎりに置いている。多くのチームは `ease` を「優しいデフォルト」だと思って手を伸ばすが、実際にはバランス型の曲線というよりも `ease-out` 寄り。
+2. **`ease-in` と `ease-out` は鏡像。** `ease-in` は P2 を右上の角に固定して終盤を直線にし、`ease-out` は P1 を左下の角に固定して序盤を直線にする。両端に曲がりが必要なら `ease-in-out` か、カスタム曲線。
+3. **`linear` を選ぶ場面はほぼない。** 物理的なアナロジーがある動き（スライド、開閉、フェード）で線形を使うと機械的に感じる。`linear` は本物の無限ループや、本物の進捗を表すプログレスバーのために取っておく。
+
+キーワードがカバーするのは 4 つの形だけ。カスタム `cubic-bezier()` は単位正方形のそれ以外すべてを開放します。
+
+## すでに使うべきデザインシステムの標準曲線
+
+主要なデザイン言語はそれぞれ独自の正典曲線を出荷しています。これを飛ばして `ease-in-out` で済ますのは、UI を「ブランドっぽくない」感じにする一番手軽な方法です——しかも誰もどこが悪いか指せない。
+
+| 体系 | 標準 / よく使われる用途 | 曲線 |
+|------|--------------------------|------|
+| Material 3 | Standard（汎用トランジション） | `cubic-bezier(0.2, 0, 0, 1)` |
+| Material 3 | Standard decelerate（要素の入場） | `cubic-bezier(0, 0, 0, 1)` |
+| Material 3 | Standard accelerate（要素の退場） | `cubic-bezier(0.3, 0, 1, 1)` |
+| Material 2（旧版） | Standard | `cubic-bezier(0.4, 0, 0.2, 1)` |
+| iOS / UIKit | デフォルトイージング（`UIView` ブロック式アニメーション） | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| Tailwind CSS | `transition-timing-function: ease-in-out` のデフォルト値 | `cubic-bezier(0.4, 0, 0.2, 1)` |
+
+身に付けたいパターンが 3 つ。
+
+- **非対称 in/out が対称 in-out に勝つ。** Material の 3 曲線体系（standard / decelerate / accelerate）は UI 要素がやる 3 つのこと——とどまる、入る、抜ける——に対応している。対称な `ease-in-out` は入場するトーストには間違った道具——ユーザーには「ふわっとし過ぎ」に映る。
+- **到着には減速、退場には加速。** パネルがスライドしてくるとき、ユーザーは終端の状態を読み取る時間が必要——終わりは遅く。スライドして消えるときは、ユーザーは既に次へ意識が移っている——終わりは速く。
+- **スプリング（`Back`）曲線は句読点で、文字ではない。** `cubic-bezier(0.68, -0.55, 0.265, 1.55)` のような曲線は overshoot して落ち着く。一回限りの注意喚起（バッジのポップ）にはぴったり、繰り返すトランジション（毎回スプリングするボタン hover）には向かない。
+
+エディタで preset をクリックすれば、曲線とアニメーション、対応する CSS が同時に出ます。クリックで切り替えながら比べてみてください——紙の上ではわずかな違いが、動かすとはっきり見えます。
+
+## 本番に出ていく落とし穴
+
+私が見てきたチームは、最低でも一つは下記のどれかを本番にデプロイしています。
+
+### 1.「ニュートラル」な動きに `linear` を使う
+
+200 ms の線形曲線は多くの UI モーションでカクついて見えます。目は到着点で減速を期待しているからです。修正はほぼ常に `cubic-bezier(0, 0, 0.2, 1)`（Material decelerate）か同等のもの。`linear` は本物の連続運動（回転スピナー、マーキー、本物の進捗を反映するバー）に取っておきます。
+
+### 2. `ease-in-out` を設定して終わりにする
+
+`ease-in-out` は対称——序盤が遅く、終盤も遅い。多くの UI モーションではそれが間違いです。モーダルのポップイン、ドロワーのスライド、アコーディオンの展開はすべて「到着で減速」を望んでいて、それは「序盤が平らで終盤が曲がっている」曲線です。`ease-in-out` は両端を曲げるので、duration が正しくてもアニメーションが実際より長く感じられます。
+
+### 3. `cubic-bezier(0.4, 0, 0.2, 1)` をどこにでも貼る
+
+Material の standard 曲線は CSS 史上もっともコピペされたスニペットになりましたが、これは*汎用*曲線です。Material 自身のガイドが入場には decelerate、退場には accelerate と明確に書いているのに、多くのチームは「standard」で読むのをやめてあらゆるトランジションに当てます。結果は「使えるけど印象に残らない」モーション。修正は小さい——入場は `0, 0, 0.2, 1`、退場は `0.4, 0, 1, 1`、`0.4, 0, 0.2, 1` は入場でも退場でもないものだけ。
+
+### 4. 日常的なトランジションで Y を負や 1 超えに
+
+`cubic-bezier(0.68, -0.55, 0.265, 1.55)` は美しいスプリングで、バッジが一度ポップするのには完璧。ただし、これをすべてのボタン hover に適用すると、UI はモールのエスカレーターのよう——どの操作も「タメて、行き過ぎて、戻る」。スプリングは句読点。控えめに。
+
+### 5. duration を伸ばしてイージングの間違いを「直す」
+
+動きが遅く感じたら反射的に duration を縮める。急ぎすぎなら伸ばす。下層の曲線が間違っていたら、どちらの方向も間違いです。正しくイージングされた 250 ms のアニメーションは正しく感じる。間違ってイージングされた 250 ms は duration をいくら触っても違和感が残る。出荷予定の duration の上で曲線を調整してください。曲線を触らずに duration だけ動かすのは沈む船で椅子を並べ替えるようなものです。
+
+### 6. イージングが「体感性能」に効くことを忘れる
+
+ユーザーは減速を「システムが仕事を終えた」と読みます。`ease-out` 風の曲線は 300 ms のトランジションを 300 ms の `linear` よりキビキビ感じさせます——視覚進捗がタイマーより先に進むからです。同じトリックがスケルトンローダー、漸進的画像読み込み、ルート遷移にも効きます——曲線はビジュアル装飾だけでなく、ユーザー体験の仕事をしています。
+
+## 数学：x から t を解く
+
+エディタが曲線を描画して小球をアニメーションさせるとき、平凡ではない問題を解く必要があります。X（0-1 に正規化された経過時間）を与えて、Y（進捗）はいくつになるか? CSS はユーザーに 4 つの数値を渡しますが、cubic-bezier 曲線は*第三の*変数 `t`（同じく `[0, 1]`）でパラメータ化されています。関係式は次のとおり。
+
+```
+x(t) = 3(1-t)² · t · x1 + 3(1-t) · t² · x2 + t³
+y(t) = 3(1-t)² · t · y1 + 3(1-t) · t² · y2 + t³
+```
+
+`t` は `x` と同じではありません。ある時点での進捗を求めるには、
+
+1. `x(t) = X` を `t` について解く。三次方程式には閉じた形の解（Cardano の三次公式）が存在するが、エンジンは数値ソルバを選ぶ——曲線空間全体で安定し、速い、特に閉式解が手で扱う必要がある退化に近い隅でも。
+2. その `t` を `y(t)` に代入すれば進捗が出る。
+
+業界標準のアプローチ（このページのエディタおよび Blink、WebKit、Gecko などの主流ブラウザエンジンが採用）は、Newton 法と二分法のフォールバック組み合わせ：
+
+```js
+function solveT(targetX, x1, x2) {
+  let t = targetX;                   // 初期値: 時間そのもの
+  for (let i = 0; i < 8; i++) {      // Newton 反復
+    const x  = bezier(t, x1, x2);
+    const dx = bezierDeriv(t, x1, x2);
+    if (Math.abs(dx) < 1e-6) break;  // 接線がほぼ水平、諦める
+    t = t - (x - targetX) / dx;
+    t = Math.max(0, Math.min(1, t));
+  }
+  // 二分による絞り込み
+  let lo = 0, hi = 1;
+  for (let j = 0; j < 20; j++) {
+    const mid = (lo + hi) / 2;
+    const mx  = bezier(mid, x1, x2);
+    if (mx < targetX) lo = mid; else hi = mid;
+    t = mid;
+  }
+  return t;
+}
+```
+
+導関数が素直な範囲では Newton 段は二次収束、二分のクリーンアップは曲線がほぼ水平な区間を含む数少ない難所をさばきます。Newton 8 反復＋二分 20 ステップは、`requestAnimationFrame` のコールバックで 60 fps を維持できる速度。
+
+CSS のためにこれを自分で書く必要はありません——ブラウザがやってくれる。必要になるのは JavaScript でイージングを実装するときです——`requestAnimationFrame` で Canvas をアニメーションする、CSS トランジションと同期した非 CSS プロパティを動かす、独自の物理シミュレーション用に中間値を計算する——など。
+
+## CSS 以外の用途
+
+cubic-bezier は意外な場所に出てきます。
+
+### Web Animations API
+
+`cubic-bezier()` 構文は `Element.animate` でそのまま使えます。
+
+```js
+modal.animate(
+  [{ transform: 'translateY(20px)', opacity: 0 },
+   { transform: 'translateY(0)',    opacity: 1 }],
+  {
+    duration: 250,
+    easing: 'cubic-bezier(0, 0, 0.2, 1)',
+    fill: 'forwards'
+  }
+);
+```
+
+WAAPI は CSS と同じ曲線文字列を受け取ります。エディタで作ったその文字列を、CSS 側にも JS 側にも翻訳なしで貼り付けられます。
+
+### Framer Motion / GSAP / Anime.js
+
+JavaScript アニメーションライブラリは 4 つの数値の渡し方がそれぞれ違いますが、裏の数学は同じです。
+
+```js
+// Framer Motion / Motion: 4 つのコントロールポイントを配列で渡す
+<motion.div
+  animate={{ scale: 1 }}
+  transition={{ duration: 0.25, ease: [0, 0, 0.2, 1] }}
+/>
+
+// GSAP: CustomEase を登録してから名前で参照する
+import { gsap } from 'gsap';
+import { CustomEase } from 'gsap/CustomEase';
+gsap.registerPlugin(CustomEase);
+CustomEase.create('enter', 'M0,0 C0,0 0.2,1 1,1');
+gsap.to('.modal', { y: 0, duration: 0.25, ease: 'enter' });
+
+// Anime.js: cubicBezier という JS 関数で渡す
+import anime from 'animejs';
+anime({
+  targets: '.modal',
+  translateY: [20, 0],
+  duration: 250,
+  easing: anime.cubicBezier(0, 0, 0.2, 1)
+});
+```
+
+ビジュアルの結果は CSS プレビューと一致します——数学が同じなので。エディタは曲線ジェネレーターで、ランタイムを問いません——ただ、4 つの数値をそれぞれのライブラリの表面構文に翻訳するのはあなたの責任です。
+
+### Tailwind CSS の theme 拡張
+
+Tailwind はクラス名にインラインの `cubic-bezier()` を許しません（`ease-[cubic-bezier(0.4,0,0.2,1)]` は JIT モードで動きますが読みにくい）。きれいなのは theme を拡張する書き方：
+
+```js
+// tailwind.config.js
+module.exports = {
+  theme: {
+    extend: {
+      transitionTimingFunction: {
+        'enter':  'cubic-bezier(0, 0, 0.2, 1)',
+        'exit':   'cubic-bezier(0.4, 0, 1, 1)',
+        'smooth': 'cubic-bezier(0.4, 0, 0.2, 1)',
+        'spring': 'cubic-bezier(0.68, -0.55, 0.265, 1.55)',
+      },
+    },
+  },
+};
+```
+
+そのあと `ease-enter`、`ease-exit` などを使います。エディタの Tailwind 出力モードは現在の曲線を `'custom'` という単一エントリで出力します——設定に貼り付ける前にプロジェクトに合わせて改名（`'enter'` / `'exit'` / `'smooth'`）して、複数の曲線が共存できるようにしてください。
+
+### After Effects、Figma、Lottie
+
+モーションデザイナーは After Effects で cubic-bezier ハンドルを使ってアニメーションを作り、Lottie JSON にエクスポートしてエンジニアに渡します。After Effects のハンドルは `(x1, y1, x2, y2)` に対応していますが、Lottie のストレージは単一の CSS 文字列より細かい。各 keyframe に `o`（前の keyframe を出る out 切線）と `i`（次の keyframe へ入る in 切線）の 2 つのオブジェクトがあり、それぞれ `x` / `y` 配列を持ちます。opacity のようなスカラープロパティは要素一つの配列で、`cubic-bezier(o.x[0], o.y[0], i.x[0], i.y[0])` にきれいに往復できます。position、scale のようなベクトルプロパティは成分ごとの配列を持ち、各軸が独自の曲線を持てます。引き継ぎパイプラインに Figma プロトタイプが含まれるなら、デザイナーにプロパティ別の bezier 値を共有してもらい、エディタで本番 CSS が最も重要な軸（スライド入場/退場なら通常 Y）で Figma のタイミングと一致しているかを確認しましょう。
+
+## このエディタが他ツールと違うところ
+
+[`cubic-bezier.com`](https://cubic-bezier.com/) はこの分野の正典——Lea Verou が 2014 年に書いて以来、ずっと参照のデフォルト。一つの仕事を完璧にこなします: 2 つのハンドルをドラッグし、曲線を見て、4 つの数値をコピー。本エディタは同じ仕事に加えて、
+
+- **デザインシステムの preset 11 種類**——Material の `(0.4, 0, 0.2, 1)` を記憶から打ち直したり、Stack Overflow から貼り付けたりせずに済みます。
+- **3 つの出力フォーマット**（CSS / SCSS / Tailwind 設定）——スタックのどの層がタイミング関数を消費するにも、同じ曲線を出荷できます。
+- **リアルタイムアニメーションプレビュー**（duration 調整可）——曲線の形だけでなく、実際に動いたときの手触りも比較できます。
+- **ローカル保存**——昨日途中まで詰めた曲線が、今日タブを開いたら残っています（Reset で即リセット）。
+- **4 言語**（英語 / 中国語 / 日本語 / 韓国語）——作業言語が異なるチームでも使えます。
+
+すべてブラウザ内で動作: アップロードなし、アカウントなし、曲線値そのものへの計測なし。ツール全体は HTML 1 ファイル＋インライン JS——ソースを表示すれば数学が見えます。
+
+## 関連リンク
+
+- [MDN: `<easing-function>`](https://developer.mozilla.org/ja/docs/Web/CSS/easing-function) — CSS 仕様の正典リファレンス。
+- [W3C CSS Easing Functions Level 1](https://www.w3.org/TR/css-easing-1/) — 形式定義。アルゴリズムの隅まで書かれている。
+- [Material Design Motion: Easing](https://m3.material.io/styles/motion/easing-and-duration/tokens-specs) — Google の三曲線体系の根拠。
+- [iOS Human Interface Guidelines: Motion](https://developer.apple.com/design/human-interface-guidelines/motion) — Apple の「自然な」アニメーションのフレームワーク。
+- [Tailwind: `transitionTimingFunction`](https://tailwindcss.com/docs/transition-timing-function) — 公式の theme 拡張リファレンス。
+
+## ZeroTool の関連ツール
+
+- [CSS Clip Path ジェネレーター](/ja/tools/css-clip-path-generator/) — `clip-path: polygon()` などをドラッグハンドルで編集。
+- [CSS フィルタージェネレーター](/ja/tools/css-filter-generator/) — blur、brightness、hue-rotate、saturate をスライダーで。
+- [グラスモーフィズム ジェネレーター](/ja/tools/glassmorphism-generator/) — フロストガラス UI のリアルタイムプレビュー。
+- [CSS 変数ジェネレーター](/ja/tools/css-variables-generator/) — 生のカラー値を貼り付け可能な `:root` ブロックに。
