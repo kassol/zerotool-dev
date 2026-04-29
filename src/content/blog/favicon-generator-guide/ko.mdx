@@ -1,0 +1,200 @@
+---
+title: "Favicon 생성기: 브라우저에서 모던 멀티 파일 세트 만들기"
+description: "ICO, 멀티 사이즈 PNG, apple-touch-icon, manifest로 구성된 모던 favicon 세트를 업로드 없이 생성. ICO 파일 형식, PWA maskable 아이콘, 그리고 각 브라우저가 실제 요청하는 파일을 다룹니다."
+pubDate: 2026-04-29
+lang: "ko"
+translationSlug: "favicon-generator-guide"
+tags: ["favicon", "favicon-generator", "pwa", "web-manifest", "developer-tools"]
+ogImage: /og/blog-favicon-generator-guide.png
+---
+
+데스크톱 브라우저에서 Google을 열고 어떤 기술 주제든 검색해, 결과 왼쪽 열을 보세요. 도메인 이름 옆 작은 아이콘이 favicon입니다. Google은 2019년부터 모바일 SERP에서, 2024년부터 데스크톱 SERP에서 이를 표시해 왔습니다. 거기서 알아볼 수 있는 favicon이 없는 사이트는 방치된 듯 보이고, 선명하고 브랜드에 어울리는 favicon을 가진 사이트는 정돈되어 보입니다. 그 마크는 16픽셀 너비로, 사용자가 클릭할지 결정하는 바로 그 자리, 도메인 옆에 나타납니다.
+
+[Favicon 생성기 열기 →](/tools/favicon-generator)
+
+이 16픽셀짜리 마크는 브라우저 탭, 즐겨찾기 바, OS 작업 표시줄, iOS 홈 화면, Android PWA 설치, RSS 리더, 바로가기 타일을 횡단하며 살아남는 몇 안 되는 시각 요소 중 하나입니다. 각 자리는 조금씩 다른 파일을 원합니다 — 크기가 다르고, 가끔 형식이 다르고, 가끔 자기만의 manifest 항목을 요구합니다. 이 글은 모던 favicon 세트가 실제로 어떻게 생겼는지, 왜 단일 `favicon.ico`로는 더 이상 충분하지 않은지, 런타임에 각 파일이 어떤 역할을 맡는지, 그리고 ZeroTool 생성기가 어떻게 바이트를 업로드하지 않고 브라우저 안에서 패키지를 만드는지를 다룹니다.
+
+## 모던 브라우저가 실제로 요청하는 파일
+
+자기 사이트에서 DevTools를 열고 새로고침한 다음 Network 패널을 보세요. 깔끔한 Chrome 요청은 최소 이 세 가지를 친다는 것을 알 수 있습니다:
+
+| 요청 | 사용처 | 비고 |
+|---|---|---|
+| `/favicon.ico` | 규범적 파일명을 먼저 찾는 구형 브라우저와 즐겨찾기 매니저의 폴백 | 멀티 사이즈 컨테이너; 모던 브라우저도 호환을 위해 계속 요청 |
+| `<link rel="icon" type="image/png">`의 href가 가리키는 PNG | 모던 브라우저는 sizes가 일치하는 PNG를 우선 | Chrome, Firefox, Safari가 디바이스 픽셀 비율에 가장 가까운 크기를 선택 |
+| `<link rel="apple-touch-icon">`의 href가 가리키는 이미지 | iOS Safari, 주소창과 「홈 화면에 추가」 양쪽 모두 | 표준 크기 180×180 |
+
+Android Chrome에서 PWA로 설치하면 그림이 더 커집니다:
+
+| 요청 | 사용처 |
+|---|---|
+| `/site.webmanifest` (또는 `manifest.json`) | Chrome, Edge, Brave, Samsung Internet — PWA를 설치할 수 있는 어디든 |
+| manifest의 `icons` 배열에 선언된 192×192와 512×512 PNG | Android 홈 화면 아이콘, 스플래시 화면, Android 공유 시트 |
+
+이 manifest 항목들에 `purpose: "any maskable"`을 추가하면, Android는 런처 테마에 따라 원형이나 둥근 모서리 사각형 마스크를 적용해 아이콘이 런처 그리드에서 네이티브처럼 보이게 합니다. Maskable 아이콘은 보이는 마크 주위에 약 10%의 안전 영역 여백이 필요하며, 그렇지 않으면 런처 마스크가 가장자리를 잘라냅니다.
+
+그리고 긴 꼬리가 있습니다. Windows 타일은 한때 `browserconfig.xml`을 요구했지만, Microsoft가 Windows 10에서 이를 폐기했고 이제는 필요하지 않습니다. Safari 핀 탭은 `<link rel="mask-icon">`을 통한 단색 SVG를 사용합니다. PWA 이전 옛 Android Chrome은 `apple-touch-icon`을 폴백으로 사용했습니다. 어느 것도 2026년에는 주류 수요가 아니지만, 왜 옛 생성기들이 20개가 넘는 파일을 토해내는데 정작 우리가 원하는 건 11개인지 설명해 줍니다.
+
+## 왜 단일 `favicon.ico`로는 충분하지 않은가
+
+역사적 기본은 ICO 하나를 사이트 루트에 두고 브라우저가 알아서 하게 두는 것이었습니다. 모니터가 1280×1024이 한계이고 탭이 16픽셀 정사각형이던 시절에는 그것으로 충분했습니다. 두 가지가 그 균형을 깨뜨렸습니다:
+
+1. **Retina 디스플레이.** 브라우저가 2× 디스플레이에서 16×16 ICO를 32 논리 픽셀로 확대해 표시하면 흐릿해집니다. `<link rel="icon" type="image/png" sizes="32x32">` 태그가 디바이스 픽셀 비율에 맞는 정확한 리소스를 선택하게 합니다.
+2. **탭 너머의 운영체제 표면들.** iOS dock 아이콘, Android 홈 화면 타일, PWA 스플래시 화면, Windows Edge 타일 — 각 표면은 특정 크기를 샘플링하며 어느 곳도 16픽셀 ICO를 원하지 않습니다. 그들이 원하는 건 180, 192, 512와, 어떤 게 무엇인지 알려주는 manifest입니다.
+
+해결은 모던 세트입니다: 호환을 위한 작은 ICO, 모던 `<link rel="icon">` 체인을 위한 몇 가지 PNG 크기, iOS용 apple-touch-icon, maskable PWA 아이콘을 포함한 webmanifest.
+
+## 전체 파일 목록과 런타임 역할
+
+ZeroTool 생성기가 출력하는 파일과 런타임에 누가 사용하는지 정리:
+
+| 파일 | 크기 | 사용처 |
+|---|---|---|
+| `favicon.ico` | 16+32+48 멀티 사이즈 | 구형 브라우저, 즐겨찾기 매니저, 「규범 이름 먼저 요청」 코드 경로 |
+| `favicon-16.png` | 16×16 | 표준 DPI 모니터의 브라우저 탭 |
+| `favicon-32.png` | 32×32 | Retina 모니터의 탭, 일부 즐겨찾기 UI |
+| `favicon-48.png` | 48×48 | Windows 사이트 바로가기, 일부 SERP 미리보기 |
+| `favicon-64.png` | 64×64 | 더 조밀한 마크가 필요한 일부 주소창 UI |
+| `favicon-96.png` | 96×96 | manifest 설치 없는 Android Chrome 바로가기 |
+| `favicon-128.png` | 128×128 | 옛 Chrome web app 바로가기 |
+| `apple-touch-icon.png` | 180×180 | iOS Safari 「홈 화면에 추가」, iPad dock |
+| `android-chrome-192.png` | 192×192 | PWA 설치를 통한 Android 홈 화면 (manifest icon) |
+| `android-chrome-512.png` | 512×512 | Android 스플래시 화면, 공유 시트, Play Store 스타일 카드 |
+| `site.webmanifest` | text | 192/512 PNG, 테마 색상, `purpose: any maskable`을 선언 |
+
+11개 파일입니다. 소스가 이모지나 단순 SVG라면 패키지 전체가 약 25 KB, 4K 사진을 512×512로 축소해 넣으면 약 200 KB가 됩니다.
+
+## ICO 형식의 동작 방식
+
+`favicon.ico`는 세트에서 가장 묘한 파일입니다. PNG보다 먼저 태어났기 때문이죠 — Windows 3.0에서 태어났고 원래 Device-Independent Bitmap (DIB / BMP) 프레임을 운반했습니다. 오늘날 대부분의 생성기는 PNG 압축 항목을 출력하며, Windows Vista 이후의 셸, IE 11, 그 후 모든 브라우저가 네이티브로 지원합니다. PNG 압축 항목은 더 작고, 알파를 보존하며, 형식도 직관적입니다.
+
+ICO 파일의 구조는 이렇습니다:
+
+```text
+ICONDIR (6 바이트)
+├── reserved (2 바이트, 영)
+├── type (2 바이트, 1 = ICO, 2 = CUR)
+└── count (2 바이트)
+
+ICONDIRENTRY × count (각 16 바이트)
+├── width (1 바이트, 0은 256을 의미)
+├── height (1 바이트, 0은 256을 의미)
+├── colorCount (1 바이트, 32-bit에선 영)
+├── reserved (1 바이트, 영)
+├── colorPlanes (2 바이트, 1)
+├── bitsPerPixel (2 바이트, 32)
+├── imageSize (4 바이트)
+└── imageOffset (4 바이트 — ICO 파일 내 절대 오프셋)
+
+(이미지 페이로드는 디렉터리 뒤에 연결)
+```
+
+PNG 항목의 경우, imageSize는 완전한 PNG 파일(자체 IHDR / IDAT / IEND 청크 포함) 크기이며, imageOffset은 그 PNG의 첫 바이트를 가리킵니다. ICONDIRENTRY의 width/height는 PNG 자체의 너비·높이와 일치하지 않을 수 있고 — OS가 표시하는 크기는 PNG의 고유 크기이므로 ICONDIRENTRY 값은 권고값에 가깝습니다. 일치시켜 두면 모든 셸이 만족합니다.
+
+ZeroTool 생성기는 16, 32, 48의 PNG를 ICO에 담지만, 그보다 큰 크기는 넣지 않습니다. Windows 도구가 레거시 ICO 컨테이너에서 48을 넘는 이미지를 고르는 일이 거의 없고, 더 큰 PNG는 이미 모던 `<link rel="icon">` 체인과 manifest를 통해 노출되기 때문입니다. 256×256을 ICO에 넣는 옛 레시피는 `apple-touch-icon` 등장 이전 시절의 것입니다. 2026년에는 apple-touch-icon과 android-chrome PNG가 그 영역을 인계받았습니다.
+
+## ZIP 컨테이너의 동작 방식
+
+브라우저는 11개 다운로드를 발생시키지 않고 한 번의 클릭으로 11개 파일을 사용자에게 전달할 방법이 필요해서, 생성기는 그것들을 ZIP으로 묶습니다. ZIP은 모든 운영체제가 서드파티 도구 없이 열 수 있어 수십 년간 기본 컨테이너였습니다. 내부는 계층 구조입니다: 각각 페이로드가 따라오는 local file header의 시퀀스, 그다음 모든 항목을 나열하는 「central directory」, 마지막으로 리더에게 central directory 시작 위치를 알려주는 「end-of-central-directory」 레코드.
+
+각 항목의 페이로드 인코딩 방법은 둘입니다: STORED (압축 안 함) 또는 DEFLATE. PNG는 이미 압축되어 있어 DEFLATE를 한 번 더 돌려도 약 0.5–1%만 줄어듭니다 — 페이지 번들에 deflate 구현을 포함시킬 가치가 없죠. ZeroTool 생성기는 모든 항목에 STORED를 사용해, DEFLATE가 추가했을 약 5킬로바이트의 코드를 절약합니다.
+
+CRC-32는 ZIP 사양에서 건너뛸 수 없는 유일한 부분입니다. 모든 항목은 비압축 바이트의 32-bit CRC를 가져야 합니다. 생성기는 스크립트 시작 시 256개 항목 룩업 테이블을 미리 계산하고, 파일별로 바이트를 한 번 훑습니다. 파일 이름은 General Purpose Bit Field의 비트 11에서 UTF-8로 표시되어, macOS Finder, Windows Explorer, 7-Zip에서 비 ASCII 이름이 깨지지 않고 읽힙니다.
+
+## Canvas 파이프라인
+
+각 PNG 그리기는 같은 5단계를 따릅니다:
+
+```javascript
+// 한 타깃 크기에 대한 의사코드
+const canvas = createCanvas(size, size);
+const ctx = canvas.getContext('2d');
+
+if (shape !== 'square') {
+  drawShapePath(ctx, shape, size);
+  ctx.clip();           // 둥근 / 원형의 알파 마스크
+}
+if (bgMode === 'color') {
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, size, size);
+}
+const inner = size * (1 - padding * 2);
+drawSourceCentered(ctx, source, size, inner);  // emoji / text / image / svg
+const pngArrayBuffer = await canvasToPng(canvas);
+```
+
+`canvas.toBlob('image/png')`이 무거운 일을 합니다 — 리샘플링, 디더링, 알파 인코딩. 출력은 완전한 PNG 페이로드로, `IHDR`, 하나 이상의 `IDAT` 청크, `IEND`를 포함합니다. 대부분의 모던 브라우저는 IDAT 안에서 합리적인 zlib 압축 수준을 기본으로 하며, 16×16 마크라면 보통 파일당 200–400 바이트에 들어옵니다.
+
+명시적으로 다뤄야 할 실패 모드 셋:
+
+1. **교차 출처 SVG 콘텐츠로 인한 canvas 오염.** 사용자가 붙여 넣은 SVG가 `<image href="https://example.com/x.png">`를 로드하면, 브라우저는 픽셀을 blob으로 다시 읽기를 거부합니다. `canvas.toBlob`을 try/catch로 감싸고 명확한 메시지를 표시하세요: 「SVG가 외부 리소스를 참조합니다. 먼저 이미지를 인라인하세요.」
+2. **이모지 글꼴 부재.** 일부 IT 관리 Linux 배포판에는 컬러 이모지 글꼴이 없습니다. Canvas가 빈 직사각형을 렌더링하고, 결과 PNG는 빈 사각형이 됩니다. `ctx.measureText('🚀').width === 0`으로 감지해 Image나 SVG 입력으로 전환하도록 안내하세요.
+3. **4K 이미지와 9개 타깃 크기로 인한 메모리 압력.** 순차적으로 생성하고, 각 `toBlob`을 await하며, 바이트를 읽자마자 object URL을 revoke하세요. 9개의 고해상도 canvas를 동시에 메모리에 들고 있으면 iPad의 Safari가 다운됩니다.
+
+## SVG, 이모지, 그리고 크로스 플랫폼 일관성 문제
+
+가장 미묘한 출력 차이는 컬러 이모지 글꼴에서 옵니다. macOS는 Apple Color Emoji, Windows는 Segoe UI Emoji, Android와 Linux 데스크톱은 Noto Color Emoji를 가장 자주 함께 출시합니다. 같은 유니코드 코드 포인트가 의미 있게 다른 모양 셋으로 렌더링됩니다:
+
+- 🚀는 Apple Color Emoji에서 얇은 흰색 창을 가진 노란 로켓
+- 🚀는 Segoe UI Emoji에서 더 평평한 로켓이고 창이 더 어두움
+- 🚀는 Noto Color Emoji에서 가장자리가 더 둥글고 그림자도 다름
+
+macOS에서 favicon을 생성한 뒤 누군가 Windows에서 사이트를 방문해도, 그들은 여전히 당신이 생성한 favicon을 봅니다 — 바이트는 이미 PNG에 구워졌습니다. Canvas 렌더러는 개발자의 머신에서 그려진 모습 그대로 이모지를 캡처해 그 픽셀을 모든 방문자에게 배달합니다. 그러므로 한 머신을 골라 한 번 생성하면, 그 후 모든 방문자에게 결과는 일관됩니다. 일관성이 정말 문제 되는 곳은 개발자 자신의 반복 작업입니다: 6개월 뒤 다른 OS에서 재생성하면 약간 다른 favicon이 만들어집니다.
+
+머신 간 픽셀 동일성을 원한다면 Image 또는 SVG 입력으로 전환하세요. SVG 벡터 마크는 OS 글꼴 스택이 아니라 SVG 자체에 따라 결정론적으로 비트맵화됩니다. 단, SVG는 자기 완결적이어야 합니다 — 원격 리소스를 참조하는 `<image href>` 불가, 외부 `<use>` 조각 불가, 원격 `@font-face` URL 불가. 붙여 넣기 전에 모든 외부 의존을 인라인 처리하세요.
+
+## HTML 스니펫이 해 주는 일
+
+생성기는 다음 스니펫을 출력하며, 이를 `<head>` 안에 둡니다:
+
+```html
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#ffffff">
+```
+
+몇 가지 미묘한 점:
+
+- 순서는 생각보다 덜 중요합니다 — 모던 브라우저는 모든 `<link rel="icon">` 후보를 파싱하고 `sizes`와 `type`으로 최적 매치를 선택합니다. ICO를 먼저 두는 건 관습일 뿐 요건이 아닙니다.
+- `<meta name="theme-color">`는 모바일 Safari와 Chrome의 주소창과, 설치된 PWA의 타이틀 바 색상을 제어합니다. favicon은 아니지만 같은 head 섹션에 거주하고 브랜드 색상 결정을 공유하기에 favicon 세트와 함께 다닙니다.
+- 파일 이름 `site.webmanifest`는 관습이며, 많은 튜토리얼은 `manifest.json`을 씁니다. 둘 다 동작합니다. 프로젝트 다른 부분이 쓰는 쪽에 맞추는 게 편합니다.
+- iOS는 manifest icons를 읽지 않습니다 — 항상 `apple-touch-icon`을 선택합니다. Android Chrome은 둘 다 있을 때 manifest icons를 우선합니다.
+
+## 다른 생성기와 비교한 ZeroTool
+
+[RealFaviconGenerator](https://realfavicongenerator.net/)는 오래된 표준입니다. 소스 이미지를 서버에 업로드해 더 광범위한 레거시 형식(Microsoft tile, Safari pinned-tab SVG, Windows 8 metro)까지 포함한 패키지를 서버에서 생성하고 약 25개 파일을 출력합니다. 트레이드오프는 업로드 단계와 더 큰 출력 크기입니다.
+
+[favicon.io](https://favicon.io/)는 정신적으로 ZeroTool에 가장 가깝습니다: 단순한 입력(이모지, 텍스트, 이미지), 작은 패키지, 업로드 없음. webmanifest는 현재 출력하지 않습니다.
+
+ZeroTool 생성기는 2026년 베이스라인을 지향합니다: 11개 파일, maskable PWA 아이콘을 포함한 webmanifest, 서버 업로드 없음, 복사–붙여넣기 가능한 HTML 스니펫. Microsoft Tile 지원이나 Safari pinned-tab SVG가 필요하면 RealFaviconGenerator가 여전히 정답입니다. 개인 사이트나 사내 대시보드용 이모지 기반 favicon이라면 ZeroTool이 더 빠릅니다.
+
+## 배포 전 체크리스트
+
+패키지를 배포하기 전, 다음을 점검하세요:
+
+1. **11개 파일을 사이트 루트에 두세요.** 대부분의 호스트는 `<link>` 태그가 없어도 `/favicon.ico`를 200으로 응답하므로, `/assets/icons/` 아래가 아니라 루트에 두세요.
+2. **HTML 스니펫을 `<head>` 안에 붙여 넣으세요.** ICO는 암묵적으로 페치되지만, PNG와 apple-touch-icon은 명시적인 `<link>` 태그가 필요합니다.
+3. **`site.webmanifest`의 `name`과 `short_name`을 갱신하세요.** 자리 표시자 이름으로 배포하지 않도록 생성기는 그 둘을 비워 둡니다.
+4. **DevTools의 Application 패널에서 테스트하세요.** Application → Manifest는 파싱된 manifest, 해석된 아이콘, 모든 오류를 표시합니다. Chrome의 「Show maskable icon」 토글로 maskable 렌더링을 시험하세요.
+5. **iOS 경로를 확인하세요.** 실제 iPhone(또는 iOS 시뮬레이터)에서 「홈 화면에 추가」를 하고, apple-touch-icon이 얇은 흰색 테두리 없이 표시되는지 확인하세요. iOS는 둥근 모서리는 자동 적용하지만 배경은 자동 적용하지 않습니다 — 배경이 투명한 아이콘은 iOS가 흰색으로 채워, 어두운 벽지 위에서 어색해 보일 수 있습니다.
+6. **Google SERP favicon을 검증하세요.** Google은 최소 8×8을 요구하고 최소 48×48을 권장합니다. 멀티 사이즈 ICO는 둘 다 커버합니다. Search Console (Coverage → Favicons 보고서)에서 확인하세요.
+7. **브랜드가 바뀌면 다시 만드세요.** favicon 세트를 일회성 자산이 아니라 빌드 산출물로 다루세요. 소스 파일(생성기에 넣은 SVG 또는 고해상도 PNG)을 버전 관리에 두고, 마크나 테마 색이 바뀔 때 같은 소스에서 다시 생성하세요.
+
+## 개인정보 메모
+
+전체 파이프라인이 브라우저 안에서 동작하기 때문에, 소스 이미지의 어떤 버전도 머신을 떠나지 않습니다. 이 사실은 들리는 것보다 중요합니다: 미공개 제품의 favicon을 생성할 때, 사용한 생성기에 브랜드 마크가 새는 셈이니까요. RealFaviconGenerator의 개인정보 정책은 솔직하지만 업로드는 여전히 발생합니다. ZeroTool은 이미지를 로컬에 둡니다. DevTools → Network를 열고 Generate를 누르면 — 정확히 한 건의 외부 요청이 있고, 그것은 비차단 분석 핑이며 페이로드에는 도구 이름만 담깁니다.
+
+## 더 읽기
+
+- [Apple의 「Configuring web content」 가이드: apple-touch-icon 사이징](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/ConfiguringWebApplications/ConfiguringWebApplications.html)
+- [W3C Web App Manifest 사양](https://www.w3.org/TR/appmanifest/) — manifest icon `purpose` 값의 사실 출처
+- [web.dev: PWA의 Maskable 아이콘](https://web.dev/articles/maskable-icon)
+- [Microsoft의 `browserconfig.xml` 폐기 안내](https://learn.microsoft.com/en-us/previous-versions/windows/internet-explorer/ie-developer/) — 더 이상 MS Tile 자산이 필요 없음을 확인
+- [Google Search Central: 검색 결과에 표시할 favicon 정의](https://developers.google.com/search/docs/appearance/favicon-in-search)
+- [Apache ZIP 파일 형식 사양 (PKZIP APPNOTE.TXT)](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT) — 전체 ZIP 레이아웃을 읽고 싶은 이를 위해
+
+ZeroTool 관련 도구: [SVG → PNG 변환기](/tools/svg-to-png-converter), [WebP 변환기](/tools/webp-converter), [이미지 Base64 변환기](/tools/image-to-base64), [QR 코드 생성기](/tools/qr-code-generator).
