@@ -118,13 +118,17 @@ function parseIcons() {
 function parseToolComponentMap(filePath) {
   const src = read(filePath);
   // Imports: tolerant to either route-relative paths (`../../components/tools/X.astro`)
-  // or registry-relative paths (`./X.astro`).
-  const imports = new Set();
+  // or registry-relative paths (`./X.astro`). We store identifier -> filename so
+  // downstream checks can validate component references without assuming the
+  // identifier and the file basename are spelled identically.
+  const imports = new Map();
   for (const m of src.matchAll(/^import\s+(\w+)\s+from\s+['"](?:[^'"]*\/)?(\w+)\.astro['"]/gm)) {
-    imports.add(m[2]);
+    imports.set(m[1], m[2]);
   }
-  // map keys + component refs (`export const toolComponentMap` in registry.ts).
-  const mapMatch = src.match(/(?:export\s+)?const\s+toolComponentMap\b[\s\S]*?=\s*\{([\s\S]*?)\n\};/);
+  // Map keys + component refs (`export const toolComponentMap` in registry.ts).
+  // Closing `};` may appear with or without a trailing newline depending on
+  // formatting, so tolerate both.
+  const mapMatch = src.match(/(?:export\s+)?const\s+toolComponentMap\b[\s\S]*?=\s*\{([\s\S]*?)\};/);
   if (!mapMatch) throw new Error(`No toolComponentMap in ${filePath}`);
   const entries = [...mapMatch[1].matchAll(/'([^']+)':\s*(\w+)/g)];
   const map = new Map();
@@ -246,8 +250,8 @@ function checkRouteRegistration(toolSlugs) {
   for (const slug of toolSlugs) {
     if (!map.has(slug)) registryIssues.push(`${slug}: missing in toolComponentMap`);
   }
-  for (const comp of imports) {
-    if (!allComponents.has(comp)) registryIssues.push(`import target missing: ${comp}.astro`);
+  for (const [, filename] of imports) {
+    if (!allComponents.has(filename)) registryIssues.push(`import target missing: ${filename}.astro`);
   }
   for (const [slug, comp] of map) {
     if (!imports.has(comp)) registryIssues.push(`${slug}: maps to "${comp}" which is not imported`);
@@ -272,9 +276,11 @@ function checkRouteRegistration(toolSlugs) {
     }
   }
 
-  // Orphan components: present in src/components/tools/ but not used by registry.
-  // `registry` is a .ts file (not an .astro component), so exclude it from the set.
-  const orphans = [...allComponents].filter(c => !imports.has(c));
+  // Orphan components: present in src/components/tools/ but not pulled into the
+  // registry. Compare against imported filenames (not identifiers), so a future
+  // mismatch between the two also surfaces here.
+  const importedFilenames = new Set(imports.values());
+  const orphans = [...allComponents].filter(c => !importedFilenames.has(c));
   if (orphans.length === 0) pass('component_orphans', `component orphan check (${allComponents.size} components, all used)`);
   else fail('component_orphans', 'orphan components in src/components/tools/', orphans.map(o => `${o}.astro: not referenced in registry.ts`));
 }
