@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 101 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 102 tools and growing.
 
 ## Tools
 
@@ -110,13 +110,14 @@
 | Cron Job Generator | [/tools/cron-job-generator](https://zerotool.dev/tools/cron-job-generator) |
 | WiFi QR Code Generator | [/tools/wifi-qr-code-generator](https://zerotool.dev/tools/wifi-qr-code-generator) |
 | EXIF Metadata Viewer | [/tools/exif-metadata-viewer](https://zerotool.dev/tools/exif-metadata-viewer) |
+| Favicon Generator | [/tools/favicon-generator](https://zerotool.dev/tools/favicon-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
 
 - **Private by design** — everything runs in your browser, nothing is sent to a server
 - **No friction** — no account, no paywalls
-- **Offline-capable** — works without internet after first load
+- **Local execution** — once a tool page is loaded, every operation runs in your browser; no further requests are made for the tool itself
 - **Fast** — static site on Cloudflare edge, global CDN
 
 ## Stack
@@ -137,7 +138,14 @@ npm run build     # production build → dist/
 
 Tool requests and bug reports welcome via [GitHub Issues](https://github.com/kassol/zerotool-dev/issues).
 
-For new tool PRs: each tool should be self-contained in a single `.astro` file under `src/pages/tools/`, with all logic in an inline `<script>` tag. No external dependencies.
+For new tool PRs:
+
+- Add the tool's interactive widget under `src/components/tools/{ToolName}Tool.astro` with all logic in an inline `<script>` tag — no client framework, no runtime deps.
+- Register it in `src/data/tools.ts` (slug, 4-language `translations`, `category`) and add a Lucide-style icon to `src/data/icons.ts`.
+- Provide 4 SEO content files at `src/content/tools/{slug}/{en,zh,ja,ko}.mdx` with `seoTitle` / `seoDescription` / optional `faqItems` / a body for the long-tail content.
+- The dynamic routes at `src/pages/tools/[slug].astro` (and the `zh/`, `ja/`, `ko/` siblings) pick the component up automatically once the entry exists in `tools.ts`.
+
+See `CONTRIBUTING.md` for the full checklist.
 
 ## License
 

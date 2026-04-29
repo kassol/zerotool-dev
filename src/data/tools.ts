@@ -1,3 +1,5 @@
+export type Lang = 'en' | 'zh' | 'ja' | 'ko';
+
 export interface ToolTranslation {
   name: string;
   description: string;
@@ -5,16 +7,16 @@ export interface ToolTranslation {
 
 export interface ToolInfo {
   slug: string;
-  translations: Record<string, ToolTranslation>;
+  translations: Record<Lang, ToolTranslation>;
   category: 'data' | 'encoding' | 'text' | 'security' | 'dev' | 'api' | 'color' | 'image';
   relatedSlugs?: string[];
 }
 
 export function getToolName(tool: ToolInfo, lang: string): string {
-  return tool.translations[lang]?.name ?? tool.translations.en.name;
+  return tool.translations[lang as Lang]?.name ?? tool.translations.en.name;
 }
 export function getToolDescription(tool: ToolInfo, lang: string): string {
-  return tool.translations[lang]?.description ?? tool.translations.en.description;
+  return tool.translations[lang as Lang]?.description ?? tool.translations.en.description;
 }
 
 export const allTools: ToolInfo[] = [
@@ -119,6 +121,7 @@ export const allTools: ToolInfo[] = [
   { slug: 'cron-job-generator', translations: { en: { name: 'Cron Job Generator', description: 'Build cron expressions visually with field-by-field controls. Choose every, every-N, range, or specific values for minute, hour, day, month, and weekday. Shows human-readable description and next 10 run times.' }, zh: { name: 'Cron 任务生成器', description: '通过字段控件可视化构建 cron 表达式，支持每个、每 N 个、范围和指定值模式，覆盖分钟、小时、日、月、星期五个字段，显示人类可读描述和最近 10 次执行时间。' }, ja: { name: 'Cron ジョブジェネレーター', description: 'フィールドごとのコントロールで cron 式をビジュアルに構築。分・時・日・月・曜日に対して every/N ごと/範囲/指定を選択可能。人間が読める説明と次の 10 回の実行時刻を表示。' }, ko: { name: 'Cron 작업 생성기', description: '필드별 컨트롤로 cron 표현식을 시각적으로 빌드. 분·시·일·월·요일에 대해 매번/N마다/범위/지정 값 선택 가능. 사람이 읽을 수 있는 설명과 다음 10번 실행 시간 표시.' } }, category: 'dev', relatedSlugs: ['cron-parser', 'timestamp-converter'] },
   { slug: 'wifi-qr-code-generator', translations: { en: { name: 'WiFi QR Code Generator', description: 'Generate QR codes that connect devices to your Wi-Fi instantly. Enter SSID, password, and encryption — guests scan to join. 100% client-side.' }, zh: { name: 'WiFi 二维码生成器', description: '生成可一键连接 Wi-Fi 的二维码，填入 SSID、密码和加密方式，访客扫码即连。完全在浏览器中运行。' }, ja: { name: 'WiFi QRコードジェネレーター', description: 'Wi-Fiに即接続できるQRコードを生成。SSID・パスワード・暗号化方式を入力すれば、スキャンするだけで接続。完全ブラウザ完結。' }, ko: { name: 'WiFi QR 코드 생성기', description: 'Wi-Fi에 즉시 연결되는 QR 코드 생성. SSID, 비밀번호, 암호화 방식 입력 후 스캔만으로 연결. 100% 클라이언트사이드.' } }, category: 'dev', relatedSlugs: ['qr-code-generator', 'qr-code-decoder', 'password-generator'] },
   { slug: 'exif-metadata-viewer', translations: { en: { name: 'EXIF Metadata Viewer', description: 'View and remove EXIF metadata from JPEG photos online — strip GPS, camera info, and timestamps in your browser. 100% client-side, no upload.' }, zh: { name: 'EXIF 元数据查看器', description: '在线查看并移除 JPEG 照片的 EXIF 元数据——一键剥离 GPS 位置、相机信息和时间戳。纯浏览器端运行，零上传。' }, ja: { name: 'EXIF メタデータビューアー', description: 'JPEG 写真の EXIF メタデータをオンラインで確認・削除 — GPS、カメラ情報、タイムスタンプを一括除去。完全ブラウザ完結、アップロード不要。' }, ko: { name: 'EXIF 메타데이터 뷰어', description: 'JPEG 사진의 EXIF 메타데이터를 온라인으로 확인하고 제거 — GPS, 카메라 정보, 타임스탬프 일괄 정리. 100% 브라우저 처리, 업로드 없음.' } }, category: 'image', relatedSlugs: ['image-to-base64', 'webp-converter', 'svg-to-png-converter'] },
+  { slug: 'favicon-generator', translations: { en: { name: 'Favicon Generator', description: 'Generate a complete favicon set from emoji, text, image, or SVG. Outputs ICO, multi-size PNGs, apple-touch-icon, and manifest. 100% client-side, no upload.' }, zh: { name: 'Favicon 生成器', description: '从 emoji、文字、图片或 SVG 一键生成完整网站图标包：ICO、多尺寸 PNG、apple-touch-icon、site.webmanifest。纯浏览器端，零上传。' }, ja: { name: 'Favicon ジェネレーター', description: '絵文字・テキスト・画像・SVGから完全なファビコンセットを生成。ICO・複数サイズPNG・apple-touch-icon・webmanifestを一括出力。完全ブラウザ完結。' }, ko: { name: 'Favicon 생성기', description: '이모지, 텍스트, 이미지, SVG에서 완전한 파비콘 세트 생성. ICO, 멀티 사이즈 PNG, apple-touch-icon, webmanifest 출력. 100% 클라이언트사이드.' } }, category: 'image', relatedSlugs: ['svg-to-png-converter', 'webp-converter', 'image-to-base64'] },
   { slug: 'color-contrast-checker', translations: { en: { name: 'Color Contrast Checker', description: 'Check WCAG color contrast ratio for any foreground and background. Get AA/AAA pass-fail for body text, large text, and UI components, plus a one-click "keep hue, fix lightness" suggestion when contrast is too low.' }, zh: { name: '颜色对比度检测器', description: '检测任意前景与背景色的 WCAG 对比度。按正文、大号文字、UI 组件分别给出 AA/AAA 通过状态；不达标时一键给出「保留色相、调整亮度」的修正建议。' }, ja: { name: 'カラーコントラストチェッカー', description: '任意の前景色と背景色の WCAG コントラスト比をチェック。本文・大きな文字・UI コンポーネントごとに AA/AAA 合否を表示。不足時は「色相を保ったまま明度を調整」する修正案をワンクリックで提示。' }, ko: { name: '색상 명도 대비 검사기', description: '임의의 전경색과 배경색의 WCAG 대비비를 검사합니다. 본문/큰 글자/UI 구성요소별 AA/AAA 통과 여부를 표시하고, 미달 시 색상은 유지하고 명도만 조정한 자동 수정 제안을 한 번에 제공합니다.' } }, category: 'color', relatedSlugs: ['color-palette-generator', 'color-converter', 'color-shades-generator'] },
 ];
 

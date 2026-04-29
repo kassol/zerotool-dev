@@ -11,7 +11,7 @@ Astro Content Collections 的根目录。包含两个 collection：`blog` 与 `t
 | Collection | 路径 | 文件数 | 用途 |
 |------------|------|--------|------|
 | `blog` | `src/content/blog/{base-slug}/{lang}.mdx` | 多语言文章（每篇一目录） | 博客内容（4 语言） |
-| `tools` | `src/content/tools/{slug}/{lang}.mdx` | 99 工具 × 4 语言 | 每个工具页面的 SEO 文案 + FAQ + 正文 |
+| `tools` | `src/content/tools/{slug}/{lang}.mdx` | 100+ 工具 × 4 语言 | 每个工具页面的 SEO 文案 + FAQ + 正文 |
 
 ## blog collection
 
@@ -45,9 +45,10 @@ title: "..."
 description: "..."
 pubDate: 2026-04-20
 updatedDate: 2026-04-25      # 可选，sitemap lastmod 优先用这个
-heroImage: "/og/{slug}.png"  # 可选
+ogImage: "/og/{slug}.png"    # 可选；heroImage 也可以
 lang: "en"                   # en/zh/ja/ko，必须与文件名（en.mdx/zh.mdx/...）一致
-canonicalSlug: "csv-json-guide"  # 可选，仅用于跨语言关联标记；URL 已由目录名决定
+tags: ["..."]                # 可选；用于"相关文章"模块
+draft: false                 # 可选；为 true 时不会进入路由生成、hreflang 与语言切换
 ---
 ```
 
