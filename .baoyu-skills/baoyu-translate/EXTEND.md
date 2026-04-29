@@ -36,3 +36,16 @@ glossary:
       zh: 开发者
       ja: 開発者
       ko: 개발자
+
+# Internal link handling
+# Markdown links to ZeroTool's own pages MUST gain a language prefix matching
+# the target translation. Slug字面 stays unchanged; only the path prefix shifts.
+#
+#   en source:                ](/tools/json-formatter)
+#   zh translation output:    ](/zh/tools/json-formatter/)
+#   ja translation output:    ](/ja/tools/json-formatter/)
+#   ko translation output:    ](/ko/tools/json-formatter/)
+#
+# Same rule applies to /category/, /blog/ paths. External URLs and code
+# blocks are left untouched. scripts/audit.mjs `checkBlogInternalLinks`
+# enforces this — missing the rewrite is a build-blocking FAIL.

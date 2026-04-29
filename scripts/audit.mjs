@@ -457,6 +457,66 @@ function checkBlog() {
     `${langGaps.length} translation gaps across ${baseSlugs.size} base slugs`);
 }
 
+// Internal links inside blog mdx must match the file's own language. A zh.mdx
+// linking `](/tools/foo)` ships readers to the EN tool page, breaking site
+// language continuity and weakening hreflang signals. Rules:
+//   zh|ja|ko.mdx ─ ](/tools|/category|/blog/...)              → FAIL (no prefix)
+//   zh|ja|ko.mdx ─ ](/<other-lang>/...)                       → FAIL (wrong prefix)
+//   zh|ja|ko.mdx ─ ](/<own-lang>/...)  but no trailing slash  → FAIL (site is trailingSlash:'always')
+//   en.mdx       ─ ](/zh|/ja|/ko/...)                         → FAIL (reverse)
+// Correct form: ](/{lang}/tools/{slug}/) for non-EN; ](/tools/{slug}/) for EN.
+// Code fences are skipped so doc snippets that demonstrate raw markdown
+// don't trip the audit. EN trailing-slash is handled by the rehype plugin
+// at build time and is intentionally not enforced here.
+function checkBlogInternalLinks() {
+  const dir = 'src/content/blog';
+  const issues = [];
+  const internalLinkRe = /\]\((\/(?:tools|category|blog|zh|ja|ko)(?:\/[^\s)]*)?)\)/g;
+
+  for (const entry of listFiles(dir)) {
+    const abs = join(ROOT, dir, entry);
+    if (!statSync(abs).isDirectory()) continue;
+
+    for (const file of listFiles(`${dir}/${entry}`)) {
+      const fm = file.match(/^(en|zh|ja|ko)\.mdx?$/);
+      if (!fm) continue;
+      const lang = fm[1];
+      const relPath = `${dir}/${entry}/${file}`;
+      const lines = read(relPath).split('\n');
+
+      let inFence = false;
+      lines.forEach((line, idx) => {
+        if (/^\s{0,3}```/.test(line)) { inFence = !inFence; return; }
+        if (inFence) return;
+
+        for (const mm of line.matchAll(internalLinkRe)) {
+          const url = mm[1];
+          const pathOnly = url.split(/[?#]/)[0];
+          const hasTrailing = pathOnly.endsWith('/');
+          const langPrefix = pathOnly.match(/^\/(zh|ja|ko)(?:\/|$)/);
+
+          if (lang === 'en') {
+            if (langPrefix) {
+              issues.push(`${relPath}:${idx + 1}: en mdx must not link to localized path ${url}`);
+            }
+            // EN trailing-slash deferred to rehypeTrailingSlashLinks; out of scope here.
+          } else if (!langPrefix) {
+            const expected = `/${lang}${pathOnly}${hasTrailing ? '' : '/'}`;
+            issues.push(`${relPath}:${idx + 1}: ${lang} mdx links to ${url} (should be ${expected})`);
+          } else if (langPrefix[1] !== lang) {
+            issues.push(`${relPath}:${idx + 1}: ${lang} mdx links to wrong-language path ${url} (must use /${lang}/...)`);
+          } else if (!hasTrailing) {
+            issues.push(`${relPath}:${idx + 1}: ${lang} mdx link ${url} missing trailing slash`);
+          }
+        }
+      });
+    }
+  }
+
+  if (issues.length === 0) pass('blog_internal_links', 'blog internal links language-prefix check');
+  else fail('blog_internal_links', 'blog internal links integrity', issues);
+}
+
 // Layouts that render markdown/MDX must override Shiki's inline `style="..."`
 // on <pre> and <span> with !important — otherwise the default github-dark
 // theme bleeds dark backgrounds into light-mode pages and text becomes
@@ -606,6 +666,7 @@ try {
   checkBasePages();
   checkI18nKeys();
   checkBlog();
+  checkBlogInternalLinks();
   checkLayoutShikiOverride();
   checkPersistencePolicy();
   checkRedirects();
