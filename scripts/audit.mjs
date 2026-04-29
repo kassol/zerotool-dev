@@ -501,10 +501,10 @@ function checkLayoutShikiOverride() {
 function checkPersistencePolicy() {
   const issues = [];
 
-  const layoutSrc = read('src/layouts/ToolLayout.astro');
-  const policyMatch = layoutSrc.match(/var POLICY\s*=\s*\{([\s\S]*?)\};/);
+  const policySrc = read('src/data/persistence.ts');
+  const policyMatch = policySrc.match(/export const toolPersistencePolicy\s*=\s*\{([\s\S]*?)\}\s+as const/);
   if (!policyMatch) {
-    fail('persist_policy', 'ztPersist policy', ['Cannot find POLICY object in ToolLayout.astro']);
+    fail('persist_policy', 'ztPersist policy', ['Cannot find toolPersistencePolicy object in src/data/persistence.ts']);
     return;
   }
   const policy = {};
@@ -512,6 +512,15 @@ function checkPersistencePolicy() {
   let em;
   while ((em = entryRegex.exec(policyMatch[1])) !== null) {
     policy[em[1]] = em[2];
+  }
+
+  const baseLayoutSrc = read('src/layouts/BaseLayout.astro');
+  const toolLayoutSrc = read('src/layouts/ToolLayout.astro');
+  if (!baseLayoutSrc.includes('disabledPersistenceSlugs')) {
+    issues.push('BaseLayout.astro: early privacy wipe must use disabledPersistenceSlugs from src/data/persistence.ts');
+  }
+  if (!toolLayoutSrc.includes('toolPersistencePolicy')) {
+    issues.push('ToolLayout.astro: ztPersist must use toolPersistencePolicy from src/data/persistence.ts');
   }
 
   const toolDir = join(ROOT, 'src/components/tools');

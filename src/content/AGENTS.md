@@ -45,7 +45,7 @@ title: "..."
 description: "..."
 pubDate: 2026-04-20
 updatedDate: 2026-04-25      # 可选，sitemap lastmod 优先用这个
-ogImage: "/og/{slug}.png"    # 可选；heroImage 也可以
+ogImage: "/og/{slug}.png"    # 可选
 lang: "en"                   # en/zh/ja/ko，必须与文件名（en.mdx/zh.mdx/...）一致
 tags: ["..."]                # 可选；用于"相关文章"模块
 draft: false                 # 可选；为 true 时不会进入路由生成、hreflang 与语言切换

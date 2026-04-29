@@ -4,7 +4,7 @@
 
 ## Tech Stack
 
-- **Framework**: Astro 5 (SSG + SSR hybrid via `@astrojs/cloudflare`)
+- **Framework**: Astro 5 static output (`output: 'static'`) with the `@astrojs/cloudflare` adapter
 - **Language**: TypeScript
 - **Styling**: Hand-rolled CSS in `src/styles/` plus per-component styles in each `.astro` file. CSS custom properties drive the theme tokens. No Tailwind, no design framework.
 - **Content**: MDX via Astro Content Collections (`blog` + `tools`)
@@ -72,7 +72,7 @@ Every new tool requires ALL of the following:
 
 ### Code
 
-- [ ] **Tool component**: `src/components/tools/{ToolName}Tool.astro` — single-file widget with inline `<script>` and scoped `<style>`. No client framework, no runtime dependencies.
+- [ ] **Tool component**: `src/components/tools/{ToolName}Tool.astro` — single-file widget with inline `<script>` and scoped `<style>`. No client framework; avoid new npm runtime dependencies unless browser-native APIs are insufficient.
 - [ ] **Registry entry**: Append to `src/data/tools.ts` — `slug`, full 4-language `translations` (`en`/`zh`/`ja`/`ko`), `category`, optional `relatedSlugs`.
 - [ ] **Component map**: Add the import and `'{slug}': {ToolName}Tool` entry to `src/components/tools/registry.ts` — this single registry is consumed by all four `[slug].astro` routes, so you only edit it once.
 - [ ] **Icon**: Add a Lucide-style inline SVG to `src/data/icons.ts` (24×24 viewBox, `stroke="currentColor"`, stroke-width 2).
@@ -96,8 +96,8 @@ Every new tool requires ALL of the following:
 - **i18n strings**: User-facing UI strings live in `src/i18n/{lang}.json` (looked up via `t(lang, key)`). Per-tool name and description live in `src/data/tools.ts` `translations` (read with `getToolName(tool, lang)` / `getToolDescription(tool, lang)`).
 - **Design tokens**: Use the CSS custom properties defined in `BaseLayout.astro` global styles (`--color-primary`, `--radius-md`, etc.). Do not hardcode hex colors in component styles. See `DESIGN.md`.
 - **Icons**: All icons are inline SVG in `src/data/icons.ts` — no external icon libraries, zero network dependencies.
-- **Persistence**: Use the global `window.ztPersist` API (`save` / `load` / `clear`). Direct `localStorage.setItem` is forbidden — `audit.mjs` will FAIL the build. Per-slug policy lives in `ToolLayout.astro`'s `POLICY` map: `input` (default; Clear must sync), `preference` (Clear leaves it alone), or `disabled` (never persisted; historical values are wiped on every load).
-- **Blog frontmatter**: `title`, `description`, `pubDate`, `updatedDate?`, `heroImage?` (alias for `ogImage`), `lang`, `tags?`, `draft?`, `canonicalUrl?`, `noindex?`. The URL slug is the directory name; there is no per-language slug field.
+- **Persistence**: Use the global `window.ztPersist` API (`save` / `load` / `clear`). Direct `localStorage.setItem` is forbidden — `audit.mjs` will FAIL the build. Per-slug policy lives in `src/data/persistence.ts`: `input` (default; Clear must sync), `preference` (Clear leaves it alone), or `disabled` (never persisted; historical values are wiped on every load).
+- **Blog frontmatter**: `title`, `description`, `pubDate`, `updatedDate?`, `ogImage?`, `lang`, `tags?`, `draft?`, `canonicalUrl?`, `noindex?`. The URL slug is the directory name; there is no per-language slug field.
 
 ## i18n Architecture
 

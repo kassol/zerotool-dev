@@ -33,15 +33,15 @@ src/
 
 ## 依赖关系
 
-- `pages/tools/[slug].astro` ↔ `components/tools/{Name}Tool.astro` 一对一
-- `pages/{lang}/tools/[slug].astro` 复用同一组件，传 `lang` prop
+- `pages/tools/[slug].astro` 与 `pages/{lang}/tools/[slug].astro` → `components/tools/registry.ts` → `components/tools/{Name}Tool.astro`
+- 4 个工具动态路由共用同一 registry；非 EN 路由向组件传 `lang` prop
 - `BaseLayout.astro` → `i18n/utils.t()`（导航 / footer）
 - `components/SEO.astro` → `getCollection('blog')` 列出存在的语言变体，过滤无效 hreflang
 - 工具页 → `data/tools.ts` 取元数据，`data/icons.ts` 取 SVG
 
 ## 新增/重命名约束
 
-- 新增工具 slug：必须同步 `data/tools.ts` + `data/icons.ts` + `pages/tools/{slug}.astro` + 3 个语言镜像页面
+- 新增工具 slug：必须同步 `components/tools/{Name}Tool.astro` + `components/tools/registry.ts` + `data/tools.ts` + `data/icons.ts` + `content/tools/{slug}/{en,zh,ja,ko}.mdx`
 - 重命名 slug：必须在 `public/_redirects` 加 301 规则，避免老链接 404 影响 SEO
 - 新增 i18n 文案 key：4 个 JSON 文件同步加，避免运行时回退到 key 字符串
 
