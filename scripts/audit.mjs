@@ -457,6 +457,49 @@ function checkBlog() {
     `${langGaps.length} translation gaps across ${baseSlugs.size} base slugs`);
 }
 
+// Internal links inside blog mdx must match the file's own language. A zh.mdx
+// linking `](/tools/foo)` ships readers to the EN tool page, breaking site
+// language continuity and weakening hreflang signals. Rule:
+//   zh|ja|ko.mdx ─ ](/tools|/category|/blog/...)            → FAIL
+//   en.mdx       ─ ](/zh|/ja|/ko/...)                       → FAIL (reverse)
+// Correct form: ](/{lang}/tools/{slug}/) for non-EN; ](/tools/{slug}/) for EN.
+function checkBlogInternalLinks() {
+  const dir = 'src/content/blog';
+  const issues = [];
+  const wrongInNonEn = /\]\((\/(?:tools|category|blog)\/[^)]+)\)/g;
+  const wrongInEn = /\]\((\/(?:zh|ja|ko)\/[^)]+)\)/g;
+
+  for (const entry of listFiles(dir)) {
+    const abs = join(ROOT, dir, entry);
+    if (!statSync(abs).isDirectory()) continue;
+
+    for (const file of listFiles(`${dir}/${entry}`)) {
+      const fm = file.match(/^(en|zh|ja|ko)\.mdx?$/);
+      if (!fm) continue;
+      const lang = fm[1];
+      const relPath = `${dir}/${entry}/${file}`;
+      const lines = read(relPath).split('\n');
+      const re = lang === 'en' ? wrongInEn : wrongInNonEn;
+
+      lines.forEach((line, idx) => {
+        const lineRe = new RegExp(re.source, 'g');
+        let mm;
+        while ((mm = lineRe.exec(line)) !== null) {
+          const url = mm[1];
+          if (lang === 'en') {
+            issues.push(`${relPath}:${idx + 1}: en file links to ${url} (en mdx must not point to /zh|/ja|/ko paths)`);
+          } else {
+            issues.push(`${relPath}:${idx + 1}: ${lang} file links to ${url} (should be /${lang}${url}/)`);
+          }
+        }
+      });
+    }
+  }
+
+  if (issues.length === 0) pass('blog_internal_links', 'blog internal links language-prefix check');
+  else fail('blog_internal_links', 'blog internal links missing language prefix', issues);
+}
+
 // Layouts that render markdown/MDX must override Shiki's inline `style="..."`
 // on <pre> and <span> with !important — otherwise the default github-dark
 // theme bleeds dark backgrounds into light-mode pages and text becomes
@@ -606,6 +649,7 @@ try {
   checkBasePages();
   checkI18nKeys();
   checkBlog();
+  checkBlogInternalLinks();
   checkLayoutShikiOverride();
   checkPersistencePolicy();
   checkRedirects();
