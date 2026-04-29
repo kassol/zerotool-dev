@@ -1,0 +1,887 @@
+---
+// CubicBezierGeneratorTool — Visual editor for CSS cubic-bezier() easing curves.
+// Drag two control points on an SVG canvas, preview a live animation, copy CSS / SCSS / Tailwind.
+// Pure browser-side: SVG + Pointer Events + requestAnimationFrame. Zero dependencies.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    presets: 'Presets',
+    curveLabel: 'Curve Editor',
+    previewLabel: 'Animation Preview',
+    p1: 'P1',
+    p2: 'P2',
+    duration: 'Duration',
+    ms: 'ms',
+    play: 'Play',
+    pause: 'Pause',
+    loop: 'Loop',
+    output: 'Output',
+    formatCss: 'CSS',
+    formatScss: 'SCSS',
+    formatTailwind: 'Tailwind',
+    copy: 'Copy',
+    copied: 'Copied!',
+    reset: 'Reset to ease-in-out',
+    rangeWarn: 'P1.x / P2.x must be inside 0–1; clamped automatically.',
+    presetLinear: 'Linear',
+    presetEase: 'Ease',
+    presetEaseIn: 'Ease-In',
+    presetEaseOut: 'Ease-Out',
+    presetEaseInOut: 'Ease-In-Out',
+    presetMatStd: 'Material Std',
+    presetMatDecel: 'Material Decel',
+    presetMatAccel: 'Material Accel',
+    presetIos: 'iOS Default',
+    presetTwInOut: 'Tailwind In-Out',
+    presetBack: 'Back (overshoot)',
+    dragHint: 'Drag the two filled circles. Numbers update live.',
+  },
+  zh: {
+    presets: '预设',
+    curveLabel: '曲线编辑器',
+    previewLabel: '动画预览',
+    p1: 'P1',
+    p2: 'P2',
+    duration: '时长',
+    ms: '毫秒',
+    play: '播放',
+    pause: '暂停',
+    loop: '循环',
+    output: '输出',
+    formatCss: 'CSS',
+    formatScss: 'SCSS',
+    formatTailwind: 'Tailwind',
+    copy: '复制',
+    copied: '已复制！',
+    reset: '重置为 ease-in-out',
+    rangeWarn: 'P1.x / P2.x 必须在 0-1 区间内，已自动夹紧。',
+    presetLinear: '线性',
+    presetEase: 'Ease',
+    presetEaseIn: 'Ease-In',
+    presetEaseOut: 'Ease-Out',
+    presetEaseInOut: 'Ease-In-Out',
+    presetMatStd: 'Material 标准',
+    presetMatDecel: 'Material 减速',
+    presetMatAccel: 'Material 加速',
+    presetIos: 'iOS 默认',
+    presetTwInOut: 'Tailwind In-Out',
+    presetBack: 'Back（回弹）',
+    dragHint: '拖拽两个实心圆点，数值实时更新。',
+  },
+  ja: {
+    presets: 'プリセット',
+    curveLabel: 'カーブエディタ',
+    previewLabel: 'アニメーションプレビュー',
+    p1: 'P1',
+    p2: 'P2',
+    duration: '時間',
+    ms: 'ミリ秒',
+    play: '再生',
+    pause: '一時停止',
+    loop: 'ループ',
+    output: '出力',
+    formatCss: 'CSS',
+    formatScss: 'SCSS',
+    formatTailwind: 'Tailwind',
+    copy: 'コピー',
+    copied: 'コピー済み！',
+    reset: 'ease-in-out にリセット',
+    rangeWarn: 'P1.x / P2.x は 0-1 の範囲内である必要があります。自動的にクランプしました。',
+    presetLinear: 'Linear',
+    presetEase: 'Ease',
+    presetEaseIn: 'Ease-In',
+    presetEaseOut: 'Ease-Out',
+    presetEaseInOut: 'Ease-In-Out',
+    presetMatStd: 'Material 標準',
+    presetMatDecel: 'Material Decel',
+    presetMatAccel: 'Material Accel',
+    presetIos: 'iOS デフォルト',
+    presetTwInOut: 'Tailwind In-Out',
+    presetBack: 'Back（オーバーシュート）',
+    dragHint: '塗りつぶしの 2 つの円をドラッグ。値はリアルタイムで更新。',
+  },
+  ko: {
+    presets: '프리셋',
+    curveLabel: '곡선 편집기',
+    previewLabel: '애니메이션 미리보기',
+    p1: 'P1',
+    p2: 'P2',
+    duration: '지속 시간',
+    ms: '밀리초',
+    play: '재생',
+    pause: '일시정지',
+    loop: '반복',
+    output: '출력',
+    formatCss: 'CSS',
+    formatScss: 'SCSS',
+    formatTailwind: 'Tailwind',
+    copy: '복사',
+    copied: '복사됨!',
+    reset: 'ease-in-out으로 재설정',
+    rangeWarn: 'P1.x / P2.x는 반드시 0-1 범위 안에 있어야 합니다. 자동으로 보정되었습니다.',
+    presetLinear: 'Linear',
+    presetEase: 'Ease',
+    presetEaseIn: 'Ease-In',
+    presetEaseOut: 'Ease-Out',
+    presetEaseInOut: 'Ease-In-Out',
+    presetMatStd: 'Material 표준',
+    presetMatDecel: 'Material Decel',
+    presetMatAccel: 'Material Accel',
+    presetIos: 'iOS 기본',
+    presetTwInOut: 'Tailwind In-Out',
+    presetBack: 'Back (오버슈트)',
+    dragHint: '두 개의 채워진 원을 드래그하세요. 숫자가 실시간 갱신됩니다.',
+  },
+};
+
+const L = labels[lang] ?? labels['en'];
+---
+
+<div
+  class="cbg-wrap"
+  data-copy={L.copy}
+  data-copied={L.copied}
+  data-play={L.play}
+  data-pause={L.pause}
+  data-warn={L.rangeWarn}
+>
+  <!-- Presets row -->
+  <div class="cbg-presets">
+    <span class="cbg-section-label">{L.presets}</span>
+    <div class="cbg-preset-btns">
+      <button class="cbg-preset" data-p="0,0,1,1" type="button">{L.presetLinear}</button>
+      <button class="cbg-preset" data-p="0.25,0.1,0.25,1" type="button">{L.presetEase}</button>
+      <button class="cbg-preset" data-p="0.42,0,1,1" type="button">{L.presetEaseIn}</button>
+      <button class="cbg-preset" data-p="0,0,0.58,1" type="button">{L.presetEaseOut}</button>
+      <button class="cbg-preset" data-p="0.42,0,0.58,1" type="button">{L.presetEaseInOut}</button>
+      <button class="cbg-preset" data-p="0.4,0,0.2,1" type="button">{L.presetMatStd}</button>
+      <button class="cbg-preset" data-p="0,0,0.2,1" type="button">{L.presetMatDecel}</button>
+      <button class="cbg-preset" data-p="0.4,0,1,1" type="button">{L.presetMatAccel}</button>
+      <button class="cbg-preset" data-p="0.25,0.1,0.25,1" type="button">{L.presetIos}</button>
+      <button class="cbg-preset" data-p="0.4,0,0.2,1" type="button">{L.presetTwInOut}</button>
+      <button class="cbg-preset" data-p="0.68,-0.55,0.265,1.55" type="button">{L.presetBack}</button>
+    </div>
+  </div>
+
+  <!-- Main: editor + preview -->
+  <div class="cbg-main">
+
+    <!-- Curve editor -->
+    <div class="cbg-card">
+      <div class="cbg-card-head">
+        <span class="cbg-section-label">{L.curveLabel}</span>
+      </div>
+      <div class="cbg-canvas-wrap">
+        <svg id="cbg-canvas" class="cbg-canvas" viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg" aria-label={L.curveLabel}>
+          <!-- Grid -->
+          <g class="cbg-grid" stroke="currentColor" stroke-opacity="0.12" stroke-width="1">
+            <line x1="0" y1="80" x2="320" y2="80"/>
+            <line x1="0" y1="160" x2="320" y2="160"/>
+            <line x1="0" y1="240" x2="320" y2="240"/>
+            <line x1="80" y1="0" x2="80" y2="320"/>
+            <line x1="160" y1="0" x2="160" y2="320"/>
+            <line x1="240" y1="0" x2="240" y2="320"/>
+          </g>
+          <!-- Diagonal reference -->
+          <line x1="0" y1="320" x2="320" y2="0" class="cbg-diag" stroke="currentColor" stroke-opacity="0.18" stroke-dasharray="3 3"/>
+          <!-- Bezier curve -->
+          <path id="cbg-curve" class="cbg-curve" d="" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <!-- Control lines -->
+          <line id="cbg-line1" class="cbg-ctrl-line" x1="0" y1="320" x2="0" y2="0" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5"/>
+          <line id="cbg-line2" class="cbg-ctrl-line" x1="320" y1="0" x2="320" y2="320" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5"/>
+          <!-- Anchor points (fixed) -->
+          <circle cx="0" cy="320" r="4" class="cbg-anchor" fill="currentColor"/>
+          <circle cx="320" cy="0" r="4" class="cbg-anchor" fill="currentColor"/>
+          <!-- Draggable handles -->
+          <circle id="cbg-h1" class="cbg-handle" cx="0" cy="0" r="9"/>
+          <circle id="cbg-h2" class="cbg-handle" cx="0" cy="0" r="9"/>
+        </svg>
+        <p class="cbg-hint">{L.dragHint}</p>
+      </div>
+    </div>
+
+    <!-- Animation preview -->
+    <div class="cbg-card">
+      <div class="cbg-card-head">
+        <span class="cbg-section-label">{L.previewLabel}</span>
+      </div>
+      <div class="cbg-preview">
+        <div class="cbg-track">
+          <div id="cbg-ball" class="cbg-ball" aria-hidden="true"></div>
+        </div>
+        <div class="cbg-preview-controls">
+          <label class="tool-label cbg-duration-label" for="cbg-duration">{L.duration}</label>
+          <div class="cbg-duration-row">
+            <input id="cbg-duration" class="tool-input cbg-duration" type="number" min="100" max="10000" step="50" value="1500"/>
+            <span class="cbg-unit">{L.ms}</span>
+          </div>
+          <div class="cbg-action-row">
+            <button id="cbg-play" class="btn-secondary cbg-play" type="button">{L.play}</button>
+            <label class="cbg-loop-toggle">
+              <input id="cbg-loop" type="checkbox" checked/>
+              <span>{L.loop}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Numeric inputs -->
+  <div class="cbg-numbers">
+    <div class="cbg-num-group">
+      <span class="cbg-section-label">{L.p1}</span>
+      <div class="cbg-num-row">
+        <label class="cbg-num-label">x<input id="cbg-p1x" class="tool-input cbg-num" type="number" step="0.01" min="0" max="1" value="0.42"/></label>
+        <label class="cbg-num-label">y<input id="cbg-p1y" class="tool-input cbg-num" type="number" step="0.01" value="0"/></label>
+      </div>
+    </div>
+    <div class="cbg-num-group">
+      <span class="cbg-section-label">{L.p2}</span>
+      <div class="cbg-num-row">
+        <label class="cbg-num-label">x<input id="cbg-p2x" class="tool-input cbg-num" type="number" step="0.01" min="0" max="1" value="0.58"/></label>
+        <label class="cbg-num-label">y<input id="cbg-p2y" class="tool-input cbg-num" type="number" step="0.01" value="1"/></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Output -->
+  <div class="cbg-output">
+    <div class="cbg-output-head">
+      <span class="cbg-section-label">{L.output}</span>
+      <div class="cbg-format-tabs">
+        <button class="cbg-format cbg-format--active" data-fmt="css" type="button">{L.formatCss}</button>
+        <button class="cbg-format" data-fmt="scss" type="button">{L.formatScss}</button>
+        <button class="cbg-format" data-fmt="tailwind" type="button">{L.formatTailwind}</button>
+      </div>
+    </div>
+    <pre class="cbg-output-pre"><code id="cbg-output-text">transition-timing-function: cubic-bezier(0.42, 0, 0.58, 1);</code></pre>
+    <div class="cbg-output-actions">
+      <button id="cbg-copy" class="btn-copy cbg-copy" type="button">{L.copy}</button>
+      <button id="cbg-reset" class="btn-ghost cbg-reset" type="button">{L.reset}</button>
+      <span id="cbg-status" class="tool-status none"></span>
+    </div>
+  </div>
+</div>
+
+<script is:inline>
+  (function() {
+    'use strict';
+
+    var SLUG = 'cubic-bezier-generator';
+    var SIZE = 320;
+    var DEFAULT = { p1x: 0.42, p1y: 0, p2x: 0.58, p2y: 1, duration: 1500, format: 'css' };
+
+    var wrap = document.querySelector('.cbg-wrap');
+    if (!wrap) return;
+
+    var copyText = wrap.dataset.copy;
+    var copiedText = wrap.dataset.copied;
+    var playText = wrap.dataset.play;
+    var pauseText = wrap.dataset.pause;
+    var warnText = wrap.dataset.warn;
+
+    var $ = function(id) { return document.getElementById(id); };
+    var canvas = $('cbg-canvas');
+    var curve = $('cbg-curve');
+    var line1 = $('cbg-line1');
+    var line2 = $('cbg-line2');
+    var h1 = $('cbg-h1');
+    var h2 = $('cbg-h2');
+    var ball = $('cbg-ball');
+    var p1xInput = $('cbg-p1x');
+    var p1yInput = $('cbg-p1y');
+    var p2xInput = $('cbg-p2x');
+    var p2yInput = $('cbg-p2y');
+    var durationInput = $('cbg-duration');
+    var playBtn = $('cbg-play');
+    var loopChk = $('cbg-loop');
+    var outputText = $('cbg-output-text');
+    var copyBtn = $('cbg-copy');
+    var resetBtn = $('cbg-reset');
+    var statusEl = $('cbg-status');
+    var presetBtns = wrap.querySelectorAll('.cbg-preset');
+    var formatBtns = wrap.querySelectorAll('.cbg-format');
+
+    // ── State ──────────────────────────────────────────────────────────────
+    var state = Object.assign({}, DEFAULT);
+    try {
+      var saved = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+      if (typeof saved.p1x === 'number') state.p1x = saved.p1x;
+      if (typeof saved.p1y === 'number') state.p1y = saved.p1y;
+      if (typeof saved.p2x === 'number') state.p2x = saved.p2x;
+      if (typeof saved.p2y === 'number') state.p2y = saved.p2y;
+      if (typeof saved.duration === 'number') state.duration = saved.duration;
+      if (saved.format === 'css' || saved.format === 'scss' || saved.format === 'tailwind') state.format = saved.format;
+    } catch (e) {}
+
+    var animTimer = null;
+    var animStart = 0;
+    var playing = false;
+
+    // ── Bezier math ────────────────────────────────────────────────────────
+    function bezierAxis(t, a1, a2) {
+      var u = 1 - t;
+      return 3 * u * u * t * a1 + 3 * u * t * t * a2 + t * t * t;
+    }
+    function bezierAxisDeriv(t, a1, a2) {
+      var u = 1 - t;
+      return 3 * u * u * a1 + 6 * u * t * (a2 - a1) + 3 * t * t * (1 - a2);
+    }
+    function solveT(targetX, x1, x2) {
+      var t = targetX;
+      for (var i = 0; i < 8; i++) {
+        var x = bezierAxis(t, x1, x2);
+        var dx = bezierAxisDeriv(t, x1, x2);
+        if (Math.abs(dx) < 1e-6) break;
+        var nt = t - (x - targetX) / dx;
+        if (nt < 0) nt = 0;
+        else if (nt > 1) nt = 1;
+        if (Math.abs(nt - t) < 1e-6) { t = nt; break; }
+        t = nt;
+      }
+      var lo = 0, hi = 1;
+      for (var j = 0; j < 20; j++) {
+        var mid = (lo + hi) / 2;
+        var mx = bezierAxis(mid, x1, x2);
+        if (Math.abs(mx - targetX) < 1e-5) { t = mid; break; }
+        if (mx < targetX) lo = mid; else hi = mid;
+        t = mid;
+      }
+      return t;
+    }
+    function progressAt(elapsed01, s) {
+      var t = solveT(elapsed01, s.p1x, s.p2x);
+      return bezierAxis(t, s.p1y, s.p2y);
+    }
+
+    // ── Coord helpers (curve math 0-1 → SVG 320×320, y flipped) ────────────
+    function toSvgX(x) { return x * SIZE; }
+    function toSvgY(y) { return SIZE - y * SIZE; }
+    function fromSvgX(sx) { return sx / SIZE; }
+    function fromSvgY(sy) { return (SIZE - sy) / SIZE; }
+
+    // ── Render ─────────────────────────────────────────────────────────────
+    function fmtNum(n) {
+      var v = Math.round(n * 100) / 100;
+      var s = v.toFixed(2);
+      if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+      return s;
+    }
+    function render() {
+      var x1 = state.p1x, y1 = state.p1y, x2 = state.p2x, y2 = state.p2y;
+      curve.setAttribute('d',
+        'M 0 ' + SIZE +
+        ' C ' + toSvgX(x1) + ' ' + toSvgY(y1) +
+        ' ' + toSvgX(x2) + ' ' + toSvgY(y2) +
+        ' ' + SIZE + ' 0'
+      );
+      line1.setAttribute('x1', '0'); line1.setAttribute('y1', String(SIZE));
+      line1.setAttribute('x2', String(toSvgX(x1))); line1.setAttribute('y2', String(toSvgY(y1)));
+      line2.setAttribute('x1', String(SIZE)); line2.setAttribute('y1', '0');
+      line2.setAttribute('x2', String(toSvgX(x2))); line2.setAttribute('y2', String(toSvgY(y2)));
+      h1.setAttribute('cx', String(toSvgX(x1))); h1.setAttribute('cy', String(toSvgY(y1)));
+      h2.setAttribute('cx', String(toSvgX(x2))); h2.setAttribute('cy', String(toSvgY(y2)));
+      p1xInput.value = fmtNum(x1);
+      p1yInput.value = fmtNum(y1);
+      p2xInput.value = fmtNum(x2);
+      p2yInput.value = fmtNum(y2);
+      durationInput.value = String(state.duration);
+      renderOutput();
+      updateActiveFormat();
+      updatePresetActive();
+      // Reset ball at start when not playing
+      if (!playing) {
+        ball.style.transform = 'translateX(0px)';
+      }
+    }
+    function renderOutput() {
+      var x1 = fmtNum(state.p1x), y1 = fmtNum(state.p1y), x2 = fmtNum(state.p2x), y2 = fmtNum(state.p2y);
+      var bezier = 'cubic-bezier(' + x1 + ', ' + y1 + ', ' + x2 + ', ' + y2 + ')';
+      var out;
+      if (state.format === 'scss') {
+        out = '$ease-custom: ' + bezier + ';';
+      } else if (state.format === 'tailwind') {
+        out = '// tailwind.config.js\nmodule.exports = {\n  theme: {\n    extend: {\n      transitionTimingFunction: {\n        \'custom\': \'' + bezier + '\',\n      },\n    },\n  },\n};';
+      } else {
+        out = 'transition-timing-function: ' + bezier + ';';
+      }
+      outputText.textContent = out;
+    }
+    function updateActiveFormat() {
+      formatBtns.forEach(function(btn) {
+        if (btn.dataset.fmt === state.format) btn.classList.add('cbg-format--active');
+        else btn.classList.remove('cbg-format--active');
+      });
+    }
+    function updatePresetActive() {
+      presetBtns.forEach(function(btn) {
+        var p = btn.dataset.p.split(',').map(Number);
+        var match = Math.abs(p[0] - state.p1x) < 0.001
+          && Math.abs(p[1] - state.p1y) < 0.001
+          && Math.abs(p[2] - state.p2x) < 0.001
+          && Math.abs(p[3] - state.p2y) < 0.001;
+        if (match) btn.classList.add('cbg-preset--active');
+        else btn.classList.remove('cbg-preset--active');
+      });
+    }
+
+    function persist() {
+      try {
+        if (window.ztPersist) window.ztPersist.save(SLUG, {
+          p1x: state.p1x, p1y: state.p1y, p2x: state.p2x, p2y: state.p2y,
+          duration: state.duration, format: state.format
+        });
+      } catch (e) {}
+    }
+
+    function setStatus(kind, msg) {
+      statusEl.className = 'tool-status ' + (kind || 'none');
+      statusEl.textContent = msg || '';
+    }
+
+    // ── Drag handles via Pointer Events ────────────────────────────────────
+    function clientToCurve(evt) {
+      var rect = canvas.getBoundingClientRect();
+      var sx = (evt.clientX - rect.left) * (SIZE / rect.width);
+      var sy = (evt.clientY - rect.top) * (SIZE / rect.height);
+      return { x: fromSvgX(sx), y: fromSvgY(sy) };
+    }
+    function clamp01(n) { return n < 0 ? 0 : n > 1 ? 1 : n; }
+    function clampY(n) { return n < -2 ? -2 : n > 2 ? 2 : n; }
+    function attachDrag(handle, isP1) {
+      handle.addEventListener('pointerdown', function(e) {
+        e.preventDefault();
+        handle.setPointerCapture(e.pointerId);
+        handle.classList.add('cbg-handle--active');
+      });
+      handle.addEventListener('pointermove', function(e) {
+        if (!handle.hasPointerCapture(e.pointerId)) return;
+        var pt = clientToCurve(e);
+        var x = clamp01(pt.x);
+        var y = clampY(pt.y);
+        if (isP1) { state.p1x = x; state.p1y = y; }
+        else { state.p2x = x; state.p2y = y; }
+        render();
+        persist();
+      });
+      handle.addEventListener('pointerup', function(e) {
+        try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+        handle.classList.remove('cbg-handle--active');
+      });
+      handle.addEventListener('pointercancel', function() {
+        handle.classList.remove('cbg-handle--active');
+      });
+    }
+    attachDrag(h1, true);
+    attachDrag(h2, false);
+
+    // ── Numeric input sync ─────────────────────────────────────────────────
+    function bindNumInput(el, get, set, isX) {
+      el.addEventListener('input', function() {
+        var v = parseFloat(el.value);
+        if (isNaN(v)) return;
+        if (isX) {
+          if (v < 0 || v > 1) {
+            v = clamp01(v);
+            setStatus('error', warnText);
+            setTimeout(function() { setStatus('none', ''); }, 2400);
+          }
+        } else {
+          v = clampY(v);
+        }
+        set(v);
+        render();
+        persist();
+      });
+    }
+    bindNumInput(p1xInput, function() { return state.p1x; }, function(v) { state.p1x = v; }, true);
+    bindNumInput(p1yInput, function() { return state.p1y; }, function(v) { state.p1y = v; }, false);
+    bindNumInput(p2xInput, function() { return state.p2x; }, function(v) { state.p2x = v; }, true);
+    bindNumInput(p2yInput, function() { return state.p2y; }, function(v) { state.p2y = v; }, false);
+
+    durationInput.addEventListener('input', function() {
+      var v = parseInt(durationInput.value, 10);
+      if (isNaN(v) || v < 100) v = 100;
+      if (v > 10000) v = 10000;
+      state.duration = v;
+      persist();
+    });
+
+    // ── Presets ────────────────────────────────────────────────────────────
+    presetBtns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var p = btn.dataset.p.split(',').map(Number);
+        state.p1x = p[0]; state.p1y = p[1]; state.p2x = p[2]; state.p2y = p[3];
+        render();
+        persist();
+      });
+    });
+
+    // ── Format tabs ────────────────────────────────────────────────────────
+    formatBtns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        state.format = btn.dataset.fmt;
+        render();
+        persist();
+      });
+    });
+
+    // ── Copy ───────────────────────────────────────────────────────────────
+    copyBtn.addEventListener('click', function() {
+      var text = outputText.textContent || '';
+      var done = function() {
+        copyBtn.classList.add('copied');
+        copyBtn.textContent = copiedText;
+        setTimeout(function() {
+          copyBtn.classList.remove('copied');
+          copyBtn.textContent = copyText;
+        }, 1500);
+        if (window.trackTool) window.trackTool(SLUG, 'copy_' + state.format);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta);
+        ta.select(); try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+        done();
+      }
+    });
+
+    // ── Animation preview ──────────────────────────────────────────────────
+    function tick(now) {
+      if (!playing) return;
+      if (!animStart) animStart = now;
+      var elapsed = (now - animStart) / state.duration;
+      if (elapsed >= 1) {
+        if (loopChk.checked) {
+          animStart = now;
+          elapsed = 0;
+        } else {
+          elapsed = 1;
+          stop();
+          ball.style.transform = 'translateX(100%)';
+          return;
+        }
+      }
+      var progress = progressAt(elapsed, state);
+      var track = ball.parentElement;
+      var trackWidth = track ? (track.clientWidth - ball.clientWidth) : 240;
+      ball.style.transform = 'translateX(' + (progress * trackWidth) + 'px)';
+      animTimer = requestAnimationFrame(tick);
+    }
+    function start() {
+      if (playing) return;
+      playing = true;
+      animStart = 0;
+      playBtn.textContent = pauseText;
+      animTimer = requestAnimationFrame(tick);
+    }
+    function stop() {
+      playing = false;
+      playBtn.textContent = playText;
+      if (animTimer) cancelAnimationFrame(animTimer);
+      animTimer = null;
+    }
+    playBtn.addEventListener('click', function() {
+      if (playing) stop(); else start();
+    });
+
+    // ── Reset button: restore defaults and clear persisted state ──────────
+    resetBtn.addEventListener('click', function() {
+      try { if (window.ztPersist) window.ztPersist.clear(SLUG); } catch (e) {}
+      Object.assign(state, DEFAULT);
+      stop();
+      render();
+    });
+
+    // ── Listen for global Ctrl+L clear → reset to defaults ─────────────────
+    window.addEventListener('storage', function(e) {
+      if (e.key === 'zt-input-' + SLUG && e.newValue === null) {
+        Object.assign(state, DEFAULT);
+        render();
+      }
+    });
+
+    // ── Initial paint ──────────────────────────────────────────────────────
+    render();
+  })();
+</script>
+
+<style is:global>
+  .cbg-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+  .cbg-section-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .cbg-presets {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .cbg-preset-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .cbg-preset {
+    min-height: 32px;
+    padding: 0.32rem 0.78rem;
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    border: 0;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 700;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+  }
+  @media (hover: hover) {
+    .cbg-preset:hover {
+      color: var(--color-primary);
+      background: var(--color-surface);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+    }
+  }
+  .cbg-preset:active { transform: scale(0.96); }
+  .cbg-preset--active {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 60%, transparent);
+  }
+
+  .cbg-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+  }
+  .cbg-card {
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card), inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.95rem 1rem 1.05rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+  .cbg-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .cbg-canvas-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .cbg-canvas {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    color: var(--color-primary);
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    touch-action: none;
+    overflow: visible;
+  }
+  .cbg-curve {
+    stroke: var(--color-primary);
+    transition: d 0.06s linear;
+  }
+  .cbg-handle {
+    fill: var(--color-primary);
+    stroke: var(--color-bg);
+    stroke-width: 2;
+    cursor: grab;
+    transition: r 0.12s ease, fill 0.12s ease;
+  }
+  .cbg-handle:hover { r: 11; }
+  .cbg-handle--active { cursor: grabbing; r: 11; fill: var(--color-primary-hover); }
+  .cbg-anchor { fill: var(--color-text-muted); }
+  .cbg-hint {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
+  .cbg-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    flex: 1;
+  }
+  .cbg-track {
+    position: relative;
+    width: 100%;
+    height: 90px;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    padding: 0 1rem;
+  }
+  .cbg-ball {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    box-shadow: 0 2px 6px rgba(75, 54, 33, 0.22), inset 0 1px 0 rgba(255,255,255,0.2);
+    transform: translateX(0);
+    flex-shrink: 0;
+  }
+  .cbg-preview-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .cbg-duration-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .cbg-duration { max-width: 130px; }
+  .cbg-unit {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+  .cbg-action-row {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+  }
+  .cbg-play { min-width: 96px; }
+  .cbg-loop-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .cbg-loop-toggle input { accent-color: var(--color-primary); }
+
+  .cbg-numbers {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.85rem;
+  }
+  .cbg-num-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.65rem 0.85rem;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .cbg-num-row {
+    display: flex;
+    gap: 0.6rem;
+  }
+  .cbg-num-label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+  .cbg-num {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .cbg-output {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .cbg-output-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .cbg-format-tabs {
+    display: inline-flex;
+    gap: 0.3rem;
+    padding: 0.18rem;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-pill);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .cbg-format {
+    min-height: 28px;
+    padding: 0.2rem 0.85rem;
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 0;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 700;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+  .cbg-format--active {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  }
+  .cbg-output-pre {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-text);
+    overflow: auto;
+  }
+  .cbg-output-pre code {
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .cbg-output-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+  }
+
+  /* Mobile */
+  @media (max-width: 720px) {
+    .cbg-main {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .cbg-numbers {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .cbg-track {
+      height: 80px;
+    }
+    .cbg-ball {
+      width: 32px;
+      height: 32px;
+    }
+  }
+</style>
