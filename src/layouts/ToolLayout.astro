@@ -198,11 +198,23 @@ const breadcrumbJsonLd = {
           try {
             var legacyKey = LEGACY[legacySlug];
             var newKey = 'zt-input-' + legacySlug;
-            var existing = localStorage.getItem(legacyKey);
-            if (existing && !localStorage.getItem(newKey)) {
-              localStorage.setItem(newKey, existing);
+            var legacyRaw = localStorage.getItem(legacyKey);
+            if (legacyRaw) {
+              // Field-level merge: another tab may have already written newKey
+              // with a fresher payload. Preserve every field from both, with
+              // the new key winning on conflicts.
+              var legacyData = {};
+              try { legacyData = JSON.parse(legacyRaw); } catch (e) {}
+              var newData = {};
+              try { newData = JSON.parse(localStorage.getItem(newKey) || '{}'); } catch (e) {}
+              if (typeof legacyData !== 'object' || legacyData === null) legacyData = {};
+              if (typeof newData !== 'object' || newData === null) newData = {};
+              var merged = {};
+              for (var lk in legacyData) merged[lk] = legacyData[lk];
+              for (var nk in newData) merged[nk] = newData[nk];
+              localStorage.setItem(newKey, JSON.stringify(merged));
+              if (legacyKey !== newKey) localStorage.removeItem(legacyKey);
             }
-            if (legacyKey !== newKey) localStorage.removeItem(legacyKey);
           } catch (e) {}
         }
         // Cron's tz preference used a separate key — fold it into the slug payload.
@@ -273,6 +285,10 @@ const breadcrumbJsonLd = {
             } catch (e) { return {}; }
           },
           clear: function(slug) {
+            // 'preference' policy keeps user settings (e.g. UUID count, Cron
+            // expression) across the global Ctrl+L shortcut. Only 'input'
+            // (and the no-op-anyway 'disabled') slugs may be wiped via clear().
+            if (policyFor(slug) === 'preference') return;
             try { localStorage.removeItem('zt-input-' + slug); } catch (e) {}
           }
         };
