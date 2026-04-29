@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 103 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 104 tools and growing.
 
 ## Tools
 
@@ -112,6 +112,7 @@
 | EXIF Metadata Viewer | [/tools/exif-metadata-viewer](https://zerotool.dev/tools/exif-metadata-viewer) |
 | Favicon Generator | [/tools/favicon-generator](https://zerotool.dev/tools/favicon-generator) |
 | Color Contrast Checker | [/tools/color-contrast-checker](https://zerotool.dev/tools/color-contrast-checker) |
+| Cubic Bezier Generator | [/tools/cubic-bezier-generator](https://zerotool.dev/tools/cubic-bezier-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
