@@ -1,0 +1,200 @@
+---
+title: "색상 명도 대비 검사기: 브랜드 컬러를 죽이지 않고 WCAG AA 통과하기"
+description: "전경/배경에서 WCAG 2.x 비율, 본문/큰 글자/UI 세 단계의 AA/AAA 통과 여부, 미달 시 색상은 유지하고 명도만 조정하는 수정 제안을 한 번에 얻습니다."
+pubDate: 2026-04-28
+lang: "ko"
+tags: ["accessibility", "wcag", "color", "developer-tools"]
+ogImage: /og/blog-color-contrast-checker-guide.png
+---
+
+브랜드 컬러로 `#B45309`를 골랐다. 마케팅 팀도 좋아하고 CEO도 좋아했다. `#FFF7ED` 위에 `#B45309`를 올린 랜딩 페이지를 배포하고 끝났다고 생각했지만, 두 주 뒤 접근성 감사 결과가 도착했다. 모든 본문 단락이 WCAG AA 미달. 대비비는 3.86 : 1, 임계값은 4.5 : 1. 이제 어쩐다——평범한 검정으로 바꾸고 브랜드 정체성을 포기해야 하나?
+
+[색상 명도 대비 검사기 열기 →](/ko/tools/color-contrast-checker)
+
+이 가이드가 다루는 것은 「감사가 떨어졌다」와 「수정안을 출시했다」 사이의 몇 시간이다. WCAG 2.x 대비 공식, 실제로 통과해야 할 세 단계의 임계값, 현장에서 빠지기 쉬운 실패 모드, 그리고 **브랜드 색상은 유지하고 명도만 최소한으로 조정해 AA를 통과시키는** 구체적인 알고리즘——순서대로 풀어 본다.
+
+## WCAG가 실제로 측정하는 것
+
+WCAG 2.x의 대비는 *상대 휘도*(relative luminance) 비율이며, 사람이 느끼는 「밝기」 그 자체가 아니다. 공식은 세 단계:
+
+1. 각 sRGB 채널 `c`를 gamma 디코딩:
+   - `c / 255 ≤ 0.03928`이면 `c_lin = (c / 255) / 12.92`
+   - 그 외에는 `c_lin = ((c / 255 + 0.055) / 1.055) ^ 2.4`
+2. 선형화된 채널을 단일 휘도로 가중 합성:
+   - `L = 0.2126 * R_lin + 0.7152 * G_lin + 0.0722 * B_lin`
+3. 더 밝은 쪽을 분자로 두고 비율을 구한다:
+   - `ratio = (L_max + 0.05) / (L_min + 0.05)`
+
+`+ 0.05`는 flare offset으로, 한쪽 휘도가 0에 근접할 때 비율이 발산하지 않도록 막는다. 결과는 1(대비 없음)부터 21(순수 검정 / 순수 흰색) 사이. AA/AAA의 모든 임계값——4.5, 7, 3——은 이 단일 숫자에 대한 컷오프일 뿐이다.
+
+휘도 가중치 `0.2126 / 0.7152 / 0.0722`는 ITU-R BT.709 sRGB 사양에서 왔고, 물리적 사실을 부호화한다: 사람의 눈은 녹색에 가장 민감하고 파랑에 가장 둔감하다. 동일한 RGB 강도의 순적, 순녹, 순청은 휘도가 크게 다르며, 녹색이 지각되는 빛의 대부분을 차지한다.
+
+## 실제로 통과해야 할 세 단계 임계값
+
+WCAG는 텍스트와 비텍스트를 세 단계로 나누고, 각 단계마다 AA / AAA 목표를 둔다:
+
+| 요소 | AA | AAA | 적용 |
+|------|---:|----:|------|
+| 본문(1.4.3) | 4.5 : 1 | 7 : 1 | 18&nbsp;px 보통 미만 또는 14&nbsp;px 굵게 미만 |
+| 큰 글자 | 3 : 1 | 4.5 : 1 | 18.66&nbsp;px 굵게 이상 또는 24&nbsp;px 보통 이상 |
+| UI 구성요소 및 그래픽(1.4.11) | 3 : 1 | — | 테두리, 포커스 링, 아이콘, 차트 선 |
+
+자주 놓치는 세 가지:
+
+1. **AAA가 「있으면 좋고」 수준만은 아니다**. WCAG는 AAA를 확장 목표로 두지만, 특정 산업(미국 Section 508 연방 조달, EU 일부 공공기관)에서는 제품의 특정 부분에서 AAA를 요구한다. 디자인과 협상하기 전에 자기 제품의 어디에 그 의무가 걸려 있는지 확인하라.
+2. **큰 글자는 3 : 1로 훨씬 관대하다**. 마케팅 랜딩 페이지의 대형 세리프 헤드라인이 본문보다 훨씬 낮은 대비의 강조색을 쓸 수 있는 이유다.
+3. **UI에는 AAA가 없다**. WCAG 2.1이 1.4.11을 3 : 1로 추가하고 거기서 멈췄다. 존재하지 않는 「UI AAA 규칙」을 찾아 시간 낭비하지 말 것; 사내 기준이 더 엄격해야 한다면, 자체 정의하고 근거를 문서화하라.
+
+## 현장에서 자주 빠지는 실패 모드
+
+아래는 모두 드문 케이스가 아니다. 내가 본 모든 회사에서 적어도 한 번씩은 프로덕션에 출시되었다.
+
+### 「AA 통과했으니 출시」——하지만 감사 도구는 다른 자를 쓴다
+
+WCAG 2.x가 유일한 대비 모델이 아니다. WCAG 3 초안에서 제안 중인 APCA(Advanced Perceptual Contrast Algorithm)는 지각적 명도 대비를 측정하며, 단위는 `Lc`다. 최근의 일부 감사 도구가 두 값을 모두 표시한다. APCA는 WCAG 3을 위한 것이며, 현재 draft 상태. WCAG 2.x로 출시했는데 감사가 APCA를 보고하면 숫자가 안 맞는 게 정상이다——버그가 아니라 두 개의 다른 자다.
+
+법률(Section 508 / EN 301 549 / EAA / 한국 KWCAG 2.2)이 인용하는 것은 여전히 WCAG 2.x이므로, 당분간은 2.x로 출시하고 APCA는 사내 연구 신호로 병행 추적한다.
+
+### 반투명 텍스트
+
+대비 공식은 불투명 색상에만 작동한다. 텍스트가 `rgba(20, 20, 20, 0.6)`이고 텍스처 배경 위에 있다면, 실제 렌더링되는 색은 아래 레이어에 따라 달라진다. 전경을 예상하는 실제 배경에 합성한 뒤 합성된 색에 대해 대비 공식을 돌려라. 많은 팀이 이 단계를 건너뛰어, 사진이나 그라데이션 배경에서만 드러나는 대비 버그를 출시한다.
+
+### 중간톤 배경은 「전경 어둡게」를 무력화한다
+
+배경 휘도가 0.18 부근(`#888` 정도)일 때, 순수 검정도 순수 흰색도 4.5 : 1에 도달하지 못한다. 검정이 약 4.0 : 1, 흰색이 약 4.4 : 1까지 닿는 한계. 이 경우 바꿔야 하는 것은 배경이지 전경이 아니다. 디자이너는 반사적으로 「텍스트를 좀 더 진하게」라고 말하지만, 중간톤 배경에서는 이 동작이 작동하지 않는다.
+
+### Placeholder 텍스트도 대비 대상이다
+
+대부분의 브라우저는 `::placeholder`를 기본 50% 불투명도로 렌더링한다. `#1f2937` placeholder가 `#f9fafb` 배경 위에서는 사실상 `#88888d`로 표시되며 AA를 통과하지 못한다. WCAG는 placeholder를 텍스트로 본다. placeholder의 명도를 올리든가, 입력 전 상태가 무장애가 아님을 받아들이든가 둘 중 하나.
+
+### 폼 라벨과 disabled 상태
+
+WCAG 2.x는 `disabled` 컨트롤 *자체*를 대비 요건에서 면제하지만, 거기까지다. disabled 컨트롤 *옆의* 라벨은 면제되지 않는다. 감사 도구가 자주 이 구분을 놓치므로, 사람 리뷰가 잡아야 한다.
+
+## 「색상 유지, 명도만 조정」이 작동하는 방식
+
+`#FFF7ED` 위의 `#B45309`가 AA에서 떨어져 3.86 : 1일 때, 가장 먼저 떠오르는 수정은 「검정으로 바꾸자」. 하지만 브랜드 컬러는 색상 정체성 때문에 선택된 것이다. 검정으로 바꾸면 브랜드를 버린 셈이다. 올바른 동작: 색상과 채도를 유지하고 지각 명도만 대비가 통과할 때까지 옮긴다.
+
+이 작업에는 OKLCH(Oklab을 극좌표로 표현한 것)가 적합하다. 이유는 `L` 축이 지각적으로 균일하기 때문이다——`L = 0.6`에서 `L = 0.5`로 가는 것이 `L = 0.4`에서 `L = 0.3`으로 가는 것과 같은 양의 변화로 보인다. sRGB 명도는 이 성질이 없으며, 등간격 sRGB 스텝이 어두운 쪽과 밝은 쪽에서 매우 다르게 보인다.
+
+알고리즘:
+
+```js
+function fix(fg, bg, target = 4.5) {
+  const fgLch = rgbToOklch(fg);          // hue h와 chroma C 유지
+  // 두 방향 모두 시도: L을 낮춤(어둡게) vs 높임(밝게)
+  let best = null;
+  for (const dir of [-1, 1]) {
+    let lo = fgLch.L;
+    let hi = dir < 0 ? 0 : 1;
+    // 이분법: 시작점에서의 |delta L|이 최소이면서 목표를 만족하는 L을 찾는다
+    for (let i = 0; i < 22; i++) {
+      const mid = (lo + hi) / 2;
+      const trial = clampToSrgb(oklchToRgb({ ...fgLch, L: mid }));
+      if (contrast(trial, bg) >= target) hi = mid;
+      else lo = mid;
+    }
+    const final = clampToSrgb(oklchToRgb({ ...fgLch, L: hi }));
+    const r = contrast(final, bg);
+    if (r >= target * 0.99) {
+      const delta = Math.abs(hi - fgLch.L);
+      if (!best || delta < best.delta) best = { rgb: final, ratio: r, delta };
+    }
+  }
+  return best ?? blackOrWhiteFallback(bg);
+}
+```
+
+두 가지 보충:
+
+- **`target * 0.99` 여유**는 OKLCH ↔ sRGB 행렬의 부동소수점 오차를 흡수한다. 이 슬랙이 없으면, 수학적으로 `4.5 : 1`인 결과가 `4.4998 : 1`로 읽혀 거부된다.
+- **순수 검정/흰색 폴백**은 색상이 sRGB 색역 안에서 목표에 도달하지 못할 때의 정직한 답이다. 네온 옐로를 노란 배경 위에서 명도를 어떻게 조정해도 AA를 통과시킬 수 없다. 알고리즘은 이를 인정해야지 자기 자신을 속여서는 안 된다.
+
+`#B45309`(브랜드 오렌지)를 `#FFF7ED`(따뜻한 크림) 위에서 알고리즘에 돌리면 약 `#925108`에 안착한다——같은 색상, 약간 더 깊고, 비율이 3.86 : 1에서 4.50 : 1로 올라간다. 브랜드 식별은 유지되고 감사도 통과한다.
+
+## 각 스택별 코드 예제
+
+### Python(Pillow + 직접 휘도 계산)
+
+```python
+def srgb_to_lin(c):
+    c = c / 255.0
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+def luminance(rgb):
+    r, g, b = (srgb_to_lin(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+def contrast(c1, c2):
+    L1, L2 = sorted([luminance(c1), luminance(c2)], reverse=True)
+    return (L1 + 0.05) / (L2 + 0.05)
+
+# (180, 83, 9) on (255, 247, 237)
+print(round(contrast((180, 83, 9), (255, 247, 237)), 2))  # 3.86
+```
+
+외부 의존성 없음. Pillow는 이미지에서 픽셀 색을 읽을 때만 필요하다. 알려진 전경/배경 쌍이라면 계산은 열다섯 줄이면 충분.
+
+### JavaScript(브라우저, 라이브러리 없음)
+
+```js
+const lin = c => (c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const lum = ({ r, g, b }) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+const ratio = (a, b) => {
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+```
+
+핵심은 이게 전부. OKLCH 변환을 더해도 마흔 줄이면 한 파일에 들어간다. 한 도구만 사용한다면 `chroma.js`나 `culori`를 import할 필요 없음——라이브러리는 색상 연산 열 종류가 필요할 때 쓰는 것이지, 한 종류만 필요할 때 쓰는 것이 아니다.
+
+### Bash(CI 게이트)
+
+```bash
+# tokens.json의 임의 토큰이 페이지 배경 대비 4.5:1 미만이면 CI를 떨어뜨린다
+node -e '
+  const tokens = require("./tokens.json");
+  const bg = tokens["color.background.default"];
+  let failed = 0;
+  for (const [k, fg] of Object.entries(tokens)) {
+    if (!k.startsWith("color.text.")) continue;
+    const r = wcagContrast(fg, bg);
+    if (r < 4.5) {
+      console.error(`FAIL ${k} ${fg} on ${bg} = ${r.toFixed(2)}`);
+      failed++;
+    }
+  }
+  process.exit(failed ? 1 : 0);
+'
+```
+
+이것이 살아남는 접근성 테스트의 형태다. 수동 감사는 흘러간다; design token을 읽고 PR마다 빌드를 떨어뜨리는 CI 게이트만이 사람이 리뷰를 열기 전에 회귀를 잡는다.
+
+## 다른 검사기와의 차이
+
+WebAIM 대비 검사기는 사실상의 표준이며, 본 도구가 그것을 대체하려는 것이 아니다. 알아 둘 가치가 있는 차이:
+
+- **색상 보존 수정**: WebAIM은 「떨어졌다」고만 알린다. 브라우저 DevTools의 컬러 피커는 「슬라이더를 옮겨 고치라」고 한다. 둘 다 OKLCH 명도 축을 자동으로 걷지는 않는다. 본 도구는 걷고, AA 통과에 필요한 최소 명도 변동을 보고한다.
+- **세 단계 분해를 한 화면에**: 본문, 큰 글자, UI 구성요소는 각각 다른 임계값을 갖는다. 대부분의 검사기는 헤드라인 숫자만 보여 주지만, 본 도구는 세 단계로 분해해 머릿속에서 임계값을 다시 계산할 필요가 없게 한다.
+- **4개 언어 지원**: 비영어권 디자인 팀과 협업할 때, 또는 사내 a11y 가이드라인을 배포할 때 유용.
+- **추적 없음, 업로드 없음**: 모든 변환이 로컬에서 실행된다. 입력한 hex는 어떤 서버에도 도달하지 않는다. NDA 중인 브랜드 컬러에 이 점이 중요하다.
+
+## 한국 시장에서의 보충
+
+- 공공 발주 SI 프로젝트는 KWCAG 2.2(WCAG 2.1 기반)를 사실상 참조점으로 두며, 「장애인차별금지법」하의 웹 접근성 인증 마크 획득에 직결된다.
+- 한글 글꼴의 「큰 글자」 경계: CJK 글리프는 18.66&nbsp;px 굵게에서 자획이 라틴 문자보다 빨리 뭉개진다. 디자인 실측에서는 「큰 글자」 시작점을 22&nbsp;px 굵게 / 28&nbsp;px 보통으로 잡는 편이 안전하다.
+- placeholder는 한글 입력 필드(IME 활성화 전)에 자주 노출되므로, placeholder 대비는 본문 요건과 동등하게 다뤄야 한다.
+- Naver, Kakao 같은 주요 플랫폼의 다크 테마 토큰셋은 WCAG AA를 통과하지만 AAA는 모두 통과하지는 않는다. 사내 디자인 시스템을 만들 때 참고.
+
+## 더 읽기
+
+- [WCAG 2.2 성공 기준 1.4.3 — Contrast (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum)
+- [WCAG 2.2 성공 기준 1.4.11 — Non-text Contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast)
+- [Björn Ottosson — A perceptual color space for image processing (Oklab)](https://bottosson.github.io/posts/oklab/)
+- [APCA Readability Criterion (W3C draft)](https://www.w3.org/TR/wcag-3.0/#contrast)
+
+## ZeroTool 관련 도구
+
+- [색상 팔레트 생성기](/ko/tools/color-palette-generator) — 기본 색상에서 4가지 조화로운 팔레트 생성. 대비 검사 전에.
+- [색상 변환기](/ko/tools/color-converter) — HEX, RGB, HSL 상호 변환. 디자인과 코드 사이에서 값을 옮길 때.
+- [색상 셰이드 생성기](/ko/tools/color-shades-generator) — Tailwind 스타일 10단계 스케일. 단일 색상이 아닌 토큰 세트가 필요할 때.

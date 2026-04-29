@@ -104,6 +104,7 @@ import CronJobGeneratorTool from './CronJobGeneratorTool.astro';
 import WifiQrCodeGeneratorTool from './WifiQrCodeGeneratorTool.astro';
 import ExifMetadataViewerTool from './ExifMetadataViewerTool.astro';
 import FaviconGeneratorTool from './FaviconGeneratorTool.astro';
+import ColorContrastCheckerTool from './ColorContrastCheckerTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -208,4 +209,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'wifi-qr-code-generator': WifiQrCodeGeneratorTool,
   'exif-metadata-viewer': ExifMetadataViewerTool,
   'favicon-generator': FaviconGeneratorTool,
+  'color-contrast-checker': ColorContrastCheckerTool,
 };
