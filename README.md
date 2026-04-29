@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 102 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 103 tools and growing.
 
 ## Tools
 
@@ -111,6 +111,7 @@
 | WiFi QR Code Generator | [/tools/wifi-qr-code-generator](https://zerotool.dev/tools/wifi-qr-code-generator) |
 | EXIF Metadata Viewer | [/tools/exif-metadata-viewer](https://zerotool.dev/tools/exif-metadata-viewer) |
 | Favicon Generator | [/tools/favicon-generator](https://zerotool.dev/tools/favicon-generator) |
+| Color Contrast Checker | [/tools/color-contrast-checker](https://zerotool.dev/tools/color-contrast-checker) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
