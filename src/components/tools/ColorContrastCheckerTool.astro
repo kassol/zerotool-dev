@@ -304,8 +304,10 @@ const L = labels[lang] ?? labels['en'];
       var v = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
       return v * 255;
     }
+    /* ITU-R BT.709 sRGB luminance weights (referenced by WCAG 2.x). */
+    var R_LUM = 0.2126, G_LUM = 0.7152, B_LUM = 0.0722;
     function relLum(rgb) {
-      return 0.2126 * srgbToLin(rgb.r) + 0.7152 * srgbToLin(rgb.g) + 0.0722 * srgbToLin(rgb.b);
+      return R_LUM * srgbToLin(rgb.r) + G_LUM * srgbToLin(rgb.g) + B_LUM * srgbToLin(rgb.b);
     }
     function contrast(c1, c2) {
       var l1 = relLum(c1), l2 = relLum(c2);
@@ -360,7 +362,12 @@ const L = labels[lang] ?? labels['en'];
     }
 
     /* Suggestion: keep hue & chroma, search lightness for target ratio.
-       Tries both directions (lower/raise L) and picks the one that succeeds. */
+       Tries both directions (lower/raise L) and picks the one that succeeds.
+       BISECTION_ITERS = 22: each iteration halves the L window, so 22 steps
+       resolve to ~2.4e-7 in OKLCH L — well below the precision needed for
+       8-bit sRGB output (≈ 1/255 ≈ 4e-3). 22 also caps the cost at well
+       under 1ms per call so the suggestion runs synchronously on input. */
+    var BISECTION_ITERS = 22;
     function suggestFix(fgRgb, bgRgb, target) {
       var fgLch = rgbToOklch(fgRgb);
       var directions = [-1, 1];
@@ -373,7 +380,7 @@ const L = labels[lang] ?? labels['en'];
         var lo = startL, hi = endL;
 
         // Bisect: find smallest L delta from start that meets target.
-        for (var i = 0; i < 22; i++) {
+        for (var i = 0; i < BISECTION_ITERS; i++) {
           var mid = (lo + hi) / 2;
           var trial = clampRgb(oklchToRgb({ L: mid, C: fgLch.C, h: fgLch.h }));
           var r = contrast(trial, bgRgb);
