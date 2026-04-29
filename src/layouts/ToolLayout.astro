@@ -171,6 +171,74 @@ const breadcrumbJsonLd = {
         var MAX_ENTRY = 50 * 1024;       // 50 KB per tool
         var MAX_TOTAL = 2 * 1024 * 1024; // 2 MB total
 
+        // Per-slug persistence policy. Slugs not listed default to 'input'.
+        //   input      — saves and restores tool input; Clear should sync-clear.
+        //   preference — saves a small UI preference; Clear leaves it alone.
+        //   disabled   — never persists; existing values are wiped on every load.
+        var POLICY = {
+          'jwt-decoder': 'disabled',
+          'jwt-generator': 'disabled',
+          'uuid-generator': 'preference',
+          'cron-job-generator': 'preference',
+          'css-filter-generator': 'preference'
+        };
+
+        function policyFor(slug) {
+          return POLICY[slug] || 'input';
+        }
+
+        // One-time legacy-key migration: tools used to write directly to
+        // localStorage with custom keys. Move them under zt-input-{slug} so
+        // ztPersist owns all persistence and eviction works uniformly.
+        var LEGACY = {
+          'cron-job-generator': 'cron-job-generator',
+          'css-filter-generator': 'zerotool-css-filter-v1'
+        };
+        for (var legacySlug in LEGACY) {
+          try {
+            var legacyKey = LEGACY[legacySlug];
+            var newKey = 'zt-input-' + legacySlug;
+            var legacyRaw = localStorage.getItem(legacyKey);
+            if (legacyRaw) {
+              // Field-level merge: another tab may have already written newKey
+              // with a fresher payload. Preserve every field from both, with
+              // the new key winning on conflicts.
+              var legacyData = {};
+              try { legacyData = JSON.parse(legacyRaw); } catch (e) {}
+              var newData = {};
+              try { newData = JSON.parse(localStorage.getItem(newKey) || '{}'); } catch (e) {}
+              if (typeof legacyData !== 'object' || legacyData === null) legacyData = {};
+              if (typeof newData !== 'object' || newData === null) newData = {};
+              var merged = {};
+              for (var lk in legacyData) merged[lk] = legacyData[lk];
+              for (var nk in newData) merged[nk] = newData[nk];
+              localStorage.setItem(newKey, JSON.stringify(merged));
+              if (legacyKey !== newKey) localStorage.removeItem(legacyKey);
+            }
+          } catch (e) {}
+        }
+        // Cron's tz preference used a separate key — fold it into the slug payload.
+        try {
+          var legacyTz = localStorage.getItem('cjg_tz');
+          if (legacyTz === 'utc' || legacyTz === 'local') {
+            var cronKey = 'zt-input-cron-job-generator';
+            var cronData = {};
+            try { cronData = JSON.parse(localStorage.getItem(cronKey) || '{}'); } catch (e) {}
+            if (!cronData.tz) {
+              cronData.tz = legacyTz;
+              localStorage.setItem(cronKey, JSON.stringify(cronData));
+            }
+            localStorage.removeItem('cjg_tz');
+          }
+        } catch (e) {}
+
+        // Wipe disabled slugs' historical input on every load (privacy hard guarantee).
+        for (var dSlug in POLICY) {
+          if (POLICY[dSlug] === 'disabled') {
+            try { localStorage.removeItem('zt-input-' + dSlug); } catch (e) {}
+          }
+        }
+
         function _ztEvictIfNeeded(savingSlug, incomingLen) {
           try {
             var recent = JSON.parse(localStorage.getItem('zt-recent') || '[]');
@@ -200,7 +268,9 @@ const breadcrumbJsonLd = {
         }
 
         window.ztPersist = {
+          policy: policyFor,
           save: function(slug, data) {
+            if (policyFor(slug) === 'disabled') return;
             try {
               var json = JSON.stringify(data);
               if (json.length > MAX_ENTRY) return;
@@ -209,11 +279,16 @@ const breadcrumbJsonLd = {
             } catch (e) {}
           },
           load: function(slug) {
+            if (policyFor(slug) === 'disabled') return {};
             try {
               return JSON.parse(localStorage.getItem('zt-input-' + slug) || '{}');
             } catch (e) { return {}; }
           },
           clear: function(slug) {
+            // 'preference' policy keeps user settings (e.g. UUID count, Cron
+            // expression) across the global Ctrl+L shortcut. Only 'input'
+            // (and the no-op-anyway 'disabled') slugs may be wiped via clear().
+            if (policyFor(slug) === 'preference') return;
             try { localStorage.removeItem('zt-input-' + slug); } catch (e) {}
           }
         };
