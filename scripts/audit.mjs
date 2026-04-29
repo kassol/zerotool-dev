@@ -459,15 +459,19 @@ function checkBlog() {
 
 // Internal links inside blog mdx must match the file's own language. A zh.mdx
 // linking `](/tools/foo)` ships readers to the EN tool page, breaking site
-// language continuity and weakening hreflang signals. Rule:
-//   zh|ja|ko.mdx ─ ](/tools|/category|/blog/...)            → FAIL
-//   en.mdx       ─ ](/zh|/ja|/ko/...)                       → FAIL (reverse)
+// language continuity and weakening hreflang signals. Rules:
+//   zh|ja|ko.mdx ─ ](/tools|/category|/blog/...)              → FAIL (no prefix)
+//   zh|ja|ko.mdx ─ ](/<other-lang>/...)                       → FAIL (wrong prefix)
+//   zh|ja|ko.mdx ─ ](/<own-lang>/...)  but no trailing slash  → FAIL (site is trailingSlash:'always')
+//   en.mdx       ─ ](/zh|/ja|/ko/...)                         → FAIL (reverse)
 // Correct form: ](/{lang}/tools/{slug}/) for non-EN; ](/tools/{slug}/) for EN.
+// Code fences are skipped so doc snippets that demonstrate raw markdown
+// don't trip the audit. EN trailing-slash is handled by the rehype plugin
+// at build time and is intentionally not enforced here.
 function checkBlogInternalLinks() {
   const dir = 'src/content/blog';
   const issues = [];
-  const wrongInNonEn = /\]\((\/(?:tools|category|blog)\/[^)]+)\)/g;
-  const wrongInEn = /\]\((\/(?:zh|ja|ko)\/[^)]+)\)/g;
+  const internalLinkRe = /\]\((\/(?:tools|category|blog|zh|ja|ko)(?:\/[^\s)]*)?)\)/g;
 
   for (const entry of listFiles(dir)) {
     const abs = join(ROOT, dir, entry);
@@ -479,17 +483,30 @@ function checkBlogInternalLinks() {
       const lang = fm[1];
       const relPath = `${dir}/${entry}/${file}`;
       const lines = read(relPath).split('\n');
-      const re = lang === 'en' ? wrongInEn : wrongInNonEn;
 
+      let inFence = false;
       lines.forEach((line, idx) => {
-        const lineRe = new RegExp(re.source, 'g');
-        let mm;
-        while ((mm = lineRe.exec(line)) !== null) {
+        if (/^\s{0,3}```/.test(line)) { inFence = !inFence; return; }
+        if (inFence) return;
+
+        for (const mm of line.matchAll(internalLinkRe)) {
           const url = mm[1];
+          const pathOnly = url.split(/[?#]/)[0];
+          const hasTrailing = pathOnly.endsWith('/');
+          const langPrefix = pathOnly.match(/^\/(zh|ja|ko)(?:\/|$)/);
+
           if (lang === 'en') {
-            issues.push(`${relPath}:${idx + 1}: en file links to ${url} (en mdx must not point to /zh|/ja|/ko paths)`);
-          } else {
-            issues.push(`${relPath}:${idx + 1}: ${lang} file links to ${url} (should be /${lang}${url}/)`);
+            if (langPrefix) {
+              issues.push(`${relPath}:${idx + 1}: en mdx must not link to localized path ${url}`);
+            }
+            // EN trailing-slash deferred to rehypeTrailingSlashLinks; out of scope here.
+          } else if (!langPrefix) {
+            const expected = `/${lang}${pathOnly}${hasTrailing ? '' : '/'}`;
+            issues.push(`${relPath}:${idx + 1}: ${lang} mdx links to ${url} (should be ${expected})`);
+          } else if (langPrefix[1] !== lang) {
+            issues.push(`${relPath}:${idx + 1}: ${lang} mdx links to wrong-language path ${url} (must use /${lang}/...)`);
+          } else if (!hasTrailing) {
+            issues.push(`${relPath}:${idx + 1}: ${lang} mdx link ${url} missing trailing slash`);
           }
         }
       });
@@ -497,7 +514,7 @@ function checkBlogInternalLinks() {
   }
 
   if (issues.length === 0) pass('blog_internal_links', 'blog internal links language-prefix check');
-  else fail('blog_internal_links', 'blog internal links missing language prefix', issues);
+  else fail('blog_internal_links', 'blog internal links integrity', issues);
 }
 
 // Layouts that render markdown/MDX must override Shiki's inline `style="..."`
