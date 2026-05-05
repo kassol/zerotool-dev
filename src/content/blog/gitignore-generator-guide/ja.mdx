@@ -1,0 +1,155 @@
+---
+title: "Gitignore ジェネレーター：stack を選び、コピペから解放される"
+description: "200+ の公式 github/gitignore テンプレートから .gitignore を組み立てる。stack の組み合わせ、gitignore 構文、「もうコミットしてしまった」トラップ、出典コメント付き重複排除でファイルを読みやすく保つ仕組みを解説。"
+pubDate: 2026-05-05
+lang: "ja"
+tags: ["gitignore", "git", "developer-tools", "templates", "repository"]
+ogImage: /og/blog-gitignore-generator-guide-ja.png
+---
+
+新しいプロジェクトで `git init` を走らせたばかり。エディタの untracked パネルに `node_modules/`、`.DS_Store`、`.idea/`、3 つの `.env*` ファイル、そして 200 MB の `dist/` ディレクトリが並んでいる。最初に手を伸ばすのは `.gitignore` です。15 回やってきた人なら自分のコレクションがあり、初めてなら GitHub に alt-tab して探し始めることになる。
+
+[200+ のテンプレートから .gitignore を生成 →](/ja/tools/gitignore-generator/)
+
+## .gitignore が見た目以上に重要な理由
+
+雑な `.gitignore` はじわじわ漏れる水道管です。よくある失敗パターン：
+
+- **肥大化したクローン。** `node_modules/` を一度コミットすると、全コントリビューターが永遠に数百 MB を余分にダウンロードし続ける。後から消すには履歴の書き換えが必要。
+- **シークレット流出。** コミットされた `.env.production` は公開ミラー、CI キャッシュ、検索エンジンのスナップショットに入り込む。気付いた時には手遅れ。
+- **クロスプラットフォームのノイズ。** macOS のコントリビューターが `.DS_Store` を一度コミットすると、チーム全員の diff にずっと出続ける。
+- **IDE のノイズ。** JetBrains ユーザーが `.idea/workspace.xml` をコミットしてしまうと、保存のたびに意味ありげな diff が生まれ、全員がそれをスキップしなければならない。
+
+修正点はすべて `.gitignore` にあります。スキップすると、後始末は本番運用サイクルに押し付けられる。
+
+## Git ノイズの 4 つの源
+
+`.gitignore` のほとんどの行は次の 4 つのバケツのいずれかに属します：
+
+| 出典 | 例 | ルールの所在 |
+|---|---|---|
+| ビルド成果物 | `dist/`, `target/`, `*.pyc`, `*.class` | 言語別テンプレート（Node、Python、Java） |
+| 依存関係 | `node_modules/`, `vendor/`, `__pycache__/` | 言語別テンプレート |
+| OS メタデータ | `.DS_Store`, `Thumbs.db`, `.Trashes` | Global テンプレート（macOS、Windows、Linux） |
+| エディタ状態 | `.idea/`, `.vscode/`, `*.swp` | Global テンプレート（JetBrains、VSCode、Vim） |
+
+ほとんどのプロジェクトは少なくとも 4 つのうち 3 つのバケツを必要とします。Node プロジェクトを JetBrains 利用者が混在するチームで運用するなら、最低でも Node + macOS + Windows + JetBrains + VSCode の 5 つが要る。これが stack 構成の本命ユースケースです。
+
+## よくある stack の組み合わせ
+
+| プロジェクトの種類 | 選ぶテンプレート |
+|---|---|
+| フルスタック JavaScript | Node、Nextjs（または Nestjs）、macOS、Windows、JetBrains、VisualStudioCode |
+| Python データプロジェクト | Python、macOS、VisualStudioCode |
+| モバイルネイティブ（Android） | Android、Java、Gradle、JetBrains、macOS |
+| モバイルネイティブ（iOS） | Swift（または Objective-C）、Xcode、macOS |
+| 静的サイト | Node、Jekyll、macOS、Windows、VisualStudioCode |
+| Go サービス | Go、macOS、VisualStudioCode、JetBrains |
+| Rust バイナリ | Rust、macOS、Windows、VisualStudioCode、JetBrains |
+| Terraform / インフラ | Terraform、macOS、VisualStudioCode |
+
+パターンは明快：1〜2 個の言語テンプレート、1〜2 個の IDE テンプレート、1〜2 個の OS テンプレート。3〜6 個のチェックでほとんどのリポジトリをカバーできる。
+
+## 2 分で覚える gitignore 構文
+
+フォーマットは暗記できるくらい小さい：
+
+```
+# コメントは # で始まる
+*.log              # 任意の場所の .log ファイル
+build/             # 任意の場所の build という名のディレクトリ
+/secret.txt        # リポジトリルート直下の secret.txt のみ
+docs/*.pdf         # docs/ 直下の PDF（docs/notes/old.pdf は含まない）
+**/temp/           # 任意の深さの temp/
+!important.log     # 否定：以前のルールが除外していても、これは残す
+```
+
+つまずきやすいポイント：
+
+- 末尾の `/` は「ディレクトリのみ」を意味します。これがないと、同名のファイルもマッチします。
+- スラッシュを含まない（または末尾だけ）パターンは、任意の深さでマッチします。`*.log` と `build/` はどちらもツリー全体に適用されます。中間にスラッシュを含むパターンだけが、`.gitignore` ファイルのあるディレクトリに対して固定されます：`docs/*.pdf` は `docs/` 直下の PDF のみマッチし、`docs/notes/` 内にはマッチしません。
+- 先頭のスラッシュはリポジトリルートに固定します：`/secret.txt` はルート直下のファイルのみマッチします。
+- 否定は単一ファイルの無視を取り消すだけです。すでに無視されたディレクトリ内のファイルを再び含めることはできません。`logs/` を無視した上で `!logs/keep.log` と書いても、Git は `logs/` を覗かないので keep ルールは発火しません。
+- 順序が大事。最後にマッチしたルールが勝ちます。
+
+## 「もうコミットしてしまった」トラップ
+
+`.gitignore` で最も検索される問題で、ツールでは解決できないものです：
+
+> `node_modules/` を `.gitignore` に入れたのに、Git がまだ追跡している。
+
+ファイルが一度追跡されると、`.gitignore` ではトラッキングを止められません。新しい ignore ルールは未追跡ファイルにのみ効きます。すでに index にあるものを止めるには：
+
+```bash
+git rm -r --cached node_modules/
+git commit -m "stop tracking node_modules"
+```
+
+`--cached` は index からファイルを取り除き、ディスク上には残します。コミット後、Git はそれを未追跡として扱い、`.gitignore` が隠せるようになります。
+
+`node_modules/` がずっと前にコミットされたもので、履歴から完全に消したい（最新コミットだけでなく）なら、それは `git filter-repo` の仕事で `.gitignore` の話ではありません。force-push の準備をして、クローンしている全員に通知する必要があります。
+
+## このツールでのマージの仕組み
+
+テンプレートを選ぶと、ジェネレーターはそれらをアルファベット順に連結します。各セクションには `### Name.gitignore` ヘッダーが付き、どのルールがどのテンプレートから来たか追跡できます。コメントと空行はそのまま保持され、各セクションがまとまった一群として読めます。
+
+github/gitignore のテンプレートは互いに重複しないように設計されているため、テンプレート同士を並べただけで自然な重複はほぼ発生しません。**重複排除が本当に役立つのは Custom additions セクションです**：Node テンプレートを選びつつカスタム欄に `node_modules/` を貼り付けると、カスタムブロック側でそれが静かに落とされます。最初の出現が勝ち、以降の重複は消えるため、ファイルはコンパクトに保たれ、同じルールが二箇所で「正規」のように並ぶこともありません。
+
+典型的な Node + macOS + JetBrains の出力はこのように始まります：
+
+```
+# .gitignore generated at https://zerotool.dev/tools/gitignore-generator/
+# Source templates: github/gitignore (CC0-1.0)
+
+### JetBrains.gitignore
+# Covers JetBrains IDEs: IntelliJ IDEA, PyCharm, WebStorm, ...
+.idea/
+*.iml
+out/
+
+### Node.gitignore
+# Logs
+logs
+*.log
+npm-debug.log*
+node_modules/
+
+### macOS.gitignore
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+```
+
+冒頭 2 行のアトリビューションを削除すれば、残りの内容は各テンプレートを手で 1 つずつコピーして貼り付けたものとバイト単位で同じ──ただしカスタムブロックも書いた場合の重複行リスクが消えます。
+
+## なぜ github/gitignore に固定するのか
+
+テンプレートは [github/gitignore](https://github.com/github/gitignore) リポジトリ（CC0-1.0 ライセンス）から来ています。独自のコレクションを蓄積する代わりにこれを標準とした理由は 2 つ：
+
+1. **メンテナンス。** コミュニティがこれらのテンプレートを最新に保ってくれます。Vite が新しいキャッシュディレクトリを追加すれば、数日内に github/gitignore に PR が出ます。
+2. **監査可能性。** 各テンプレートは短い 1 ファイルです。リポジトリに加える前に読み切れる。独自コレクションは「5 年前にあるプロジェクトのために追加したけど、何のためだっけ」というカスを溜めがちです。
+
+リポジトリのルート（プログラミング言語とフレームワーク、約 160 テンプレート）と `Global/` サブディレクトリ（IDE・OS・エディタ、約 75 個）を同梱しています。`community/` サブディレクトリは除外──カバレッジは広いが品質が一定しないためです。
+
+更新方法：上流から再 snapshot して新しいバンドルをコミット。実行時のネットワーク呼び出しなし、レート制限なし、オフライン失敗なし。
+
+## プロジェクト固有のものをゼロから書くべきタイミング
+
+テンプレートがカバーするのは「一般的なもの」だけで、プロジェクト固有の事情はカバーしません：
+
+- ビルドスクリプトが書き出すパス（`coverage-html/`、`_site/`）
+- 主設定と同じディレクトリにある、シークレットを含むローカル config（`config.local.yaml`）
+- CI が再アップロードする生成物（`*.bundle.tar.gz`）
+
+これらにはジェネレーターの **カスタムルールを追加** セクションを使います。末尾の `### Custom additions` セクションに置かれ、同じ重複排除パスに参加するため、プロジェクト固有の `*.log` が Node テンプレートの `*.log` と重複することはありません。
+
+## 30 秒ワークフロー
+
+1. [ジェネレーター](/ja/tools/gitignore-generator/) を開く。
+2. 検索ボックスに runtime 名を入力してチェック。
+3. エディタと OS を追加。
+4. プロジェクト固有のものをカスタム欄に貼り付け。
+5. **ダウンロード** をクリック、リポジトリのルートに置いてコミット。
+
+これだけです。ログインなし、アップロードなし、サーバー側処理なし──すべてのテンプレートはページにバンドルされ、合成はあなたのブラウザで完結します。ファイルは最終的にリポジトリに収まります。

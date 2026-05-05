@@ -1,0 +1,155 @@
+---
+title: "Gitignore 生成器：选好 stack，告别复制粘贴"
+description: "从 200+ 个官方 github/gitignore 模板组合 .gitignore 文件。覆盖 stack 组合、gitignore 语法、「已经 commit 进去了」陷阱，以及带来源注释的去重如何让文件保持可读。"
+pubDate: 2026-05-05
+lang: "zh"
+tags: ["gitignore", "git", "developer-tools", "templates", "repository"]
+ogImage: /og/blog-gitignore-generator-guide-zh.png
+---
+
+你刚跑完 `git init`。编辑器的 untracked 面板里出现了 `node_modules/`、`.DS_Store`、`.idea/`、三个 `.env*` 文件，还有一个 200 MB 的 `dist/` 目录。第一件事就是写 `.gitignore`。做过十五次的人手上有自己的一份收藏；没做过的人会 alt-tab 切到 GitHub 开始翻找。
+
+[从 200+ 个模板生成 .gitignore →](/zh/tools/gitignore-generator/)
+
+## 为什么 .gitignore 比想象中更重要
+
+写得不好的 `.gitignore` 是慢性漏水。最常见的几种翻车方式：
+
+- **臃肿的 clone。** `node_modules/` 一旦被 commit，每个贡献者每次拉取都多下载几百兆，永远撤不掉，除非重写历史。
+- **泄漏密钥。** 一份 commit 进仓库的 `.env.production` 会进入公共镜像、CI 缓存与搜索引擎快照，等你发现时已经晚了。
+- **跨平台噪音。** macOS 贡献者 commit 一次 `.DS_Store`，整个团队从此每次 diff 都看到它。
+- **IDE 噪音。** JetBrains 用户 commit 了 `.idea/workspace.xml`，从那以后每次保存都生成一个看上去有意义的 diff，所有人都得跳过。
+
+修复点都在 `.gitignore`。跳过它，清理就被推到生产周期里。
+
+## Git 噪音的四个来源
+
+`.gitignore` 中几乎每一行都属于以下四类之一：
+
+| 来源 | 例子 | 规则所在模板 |
+|---|---|---|
+| 构建产物 | `dist/`, `target/`, `*.pyc`, `*.class` | 每语言模板（Node、Python、Java） |
+| 依赖 | `node_modules/`, `vendor/`, `__pycache__/` | 每语言模板 |
+| OS 元数据 | `.DS_Store`, `Thumbs.db`, `.Trashes` | Global 模板（macOS、Windows、Linux） |
+| 编辑器状态 | `.idea/`, `.vscode/`, `*.swp` | Global 模板（JetBrains、VSCode、Vim） |
+
+绝大多数项目至少需要四类中的三类。一个 Node 项目，团队里又混着 JetBrains 用户，最少要 Node + macOS + Windows + JetBrains + VSCode 五份。这是 stack 组合的硬需求。
+
+## 常见 stack 组合
+
+| 项目类型 | 选这些模板 |
+|---|---|
+| 全栈 JavaScript | Node、Nextjs（或 Nestjs）、macOS、Windows、JetBrains、VisualStudioCode |
+| Python 数据项目 | Python、macOS、VisualStudioCode |
+| 移动端原生（Android） | Android、Java、Gradle、JetBrains、macOS |
+| 移动端原生（iOS） | Swift（或 Objective-C）、Xcode、macOS |
+| 静态站点 | Node、Jekyll、macOS、Windows、VisualStudioCode |
+| Go 服务 | Go、macOS、VisualStudioCode、JetBrains |
+| Rust 二进制 | Rust、macOS、Windows、VisualStudioCode、JetBrains |
+| Terraform / 基础设施 | Terraform、macOS、VisualStudioCode |
+
+模式很清晰：一两个语言模板、一两个 IDE 模板、一两个 OS 模板。三到六个勾选覆盖绝大多数仓库。
+
+## 两分钟掌握 gitignore 语法
+
+格式小到能背下来：
+
+```
+# 注释以 # 开头
+*.log              # 任意位置的 .log 文件
+build/             # 任意位置名为 build 的目录
+/secret.txt        # 仅匹配仓库根的 secret.txt
+docs/*.pdf         # docs/ 直接子项中的 PDF（不含 docs/notes/old.pdf）
+**/temp/           # 任意深度的 temp/ 目录
+!important.log     # 否定：即使前面规则忽略了它，也保留
+```
+
+几个常踩的坑：
+
+- 末尾 `/` 表示「仅目录」。没有它，同名文件也会匹配。
+- 不含 `/`（或只有末尾 `/`）的 pattern 在任意深度匹配。`*.log` 和 `build/` 都对整棵树生效。pattern 中间出现 `/` 才会锚定到当前 `.gitignore` 文件所在目录：`docs/*.pdf` 只匹配 `docs/` 直接子项，不会匹配 `docs/notes/`。
+- 开头 `/` 锚定到仓库根：`/secret.txt` 只匹配根目录的那个文件，不匹配深层。
+- 否定只能取消对单个文件的忽略，无法重新包含已被忽略目录里的文件。忽略了 `logs/` 后再写 `!logs/keep.log`，Git 根本不会进入 `logs/` 目录，keep 规则永远不触发。
+- 顺序很重要。最后一条匹配的规则胜出。
+
+## 「已经 commit 进去了」陷阱
+
+这是 `.gitignore` 最高频的被搜索问题，也是工具替你解决不了的：
+
+> 我把 `node_modules/` 加进 `.gitignore` 了，但 Git 还是在跟踪它。
+
+文件一旦被跟踪，`.gitignore` 不会让它停止跟踪。新加的 ignore 规则只对未跟踪的文件生效。要让 index 中已有的文件停止被跟踪：
+
+```bash
+git rm -r --cached node_modules/
+git commit -m "stop tracking node_modules"
+```
+
+`--cached` 把文件从 index 里移除但保留在磁盘上。commit 后 Git 会把它当作未跟踪的文件，`.gitignore` 才能把它隐藏。
+
+如果 `node_modules/` 很早就 commit 进去了，你想从历史里彻底抹掉（不只是最新一条 commit），那是 `git filter-repo` 的活，不是 `.gitignore` 的事。要做好 force-push 的准备，并通知所有已 clone 的人。
+
+## 工具内部的合并逻辑
+
+选几个模板后，生成器按字母顺序拼接它们。每段加一个 `### Name.gitignore` 头，方便追溯每条规则来自哪个模板。注释和空行原样保留，让每段读起来仍然是一组完整规则。
+
+github/gitignore 的模板设计上互不重叠，所以单独串接几个模板很少自然产生重复。**真正用到去重的是 Custom additions 段**：如果你既选了 Node 模板又在自定义区粘贴了 `node_modules/`，自定义段会静默丢弃这条。首次出现的规则胜出，后续重复的全部消失，文件保持紧凑，单条规则也不会在两处看起来都像权威源。
+
+一个典型的 Node + macOS + JetBrains 输出开头是这样：
+
+```
+# .gitignore generated at https://zerotool.dev/tools/gitignore-generator/
+# Source templates: github/gitignore (CC0-1.0)
+
+### JetBrains.gitignore
+# Covers JetBrains IDEs: IntelliJ IDEA, PyCharm, WebStorm, ...
+.idea/
+*.iml
+out/
+
+### Node.gitignore
+# Logs
+logs
+*.log
+npm-debug.log*
+node_modules/
+
+### macOS.gitignore
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+```
+
+把开头两行 attribution 删掉，剩下的内容与你手动复制每个模板逐个拼接的结果字节级一致——少了一个风险：如果你还写了自己的 custom 段，里面不会出现重复行。
+
+## 为什么固定用 github/gitignore
+
+模板来自 [github/gitignore](https://github.com/github/gitignore) 仓库，CC0-1.0 协议发布。我们以它为标准而不是自己积累一份，原因有两个：
+
+1. **维护成本。** 社区已经在持续更新这些模板。Vite 加了一个新的缓存目录，几天内就有人向 github/gitignore 提 PR。
+2. **可审计性。** 每个模板都是一个短文件，加进仓库前你能完整读一遍。自定义集合则容易堆出「五年前为某个项目加的，到底为啥来着」的坨。
+
+我们打包了仓库根目录（编程语言与框架，约 160 个模板）加上 `Global/` 子目录（IDE、操作系统、编辑器，约 75 个）。`community/` 子目录被排除——覆盖更广，但质量参差。
+
+刷新方式：重新 snapshot 上游、commit 新 bundle。无运行时网络调用，无速率限制，无离线失败。
+
+## 什么时候应该自己从零写一份
+
+模板覆盖的是「常规」，覆盖不了项目特有的部分：
+
+- 构建脚本写出去的路径（`coverage-html/`、`_site/`）
+- 跟主配置同目录、含密钥的本地 config（`config.local.yaml`）
+- CI 重新上传的生成产物（`*.bundle.tar.gz`）
+
+这些用生成器的 **追加自定义规则** 区。它们落在末尾的 `### Custom additions` 段，参与同一轮去重，所以项目特有的 `*.log` 不会与 Node 模板里的 `*.log` 重复出现。
+
+## 30 秒上手
+
+1. 打开 [生成器](/zh/tools/gitignore-generator/)。
+2. 在搜索框输入 runtime 名，勾选。
+3. 加上你的编辑器和操作系统。
+4. 项目特有的内容粘到自定义区。
+5. 点击 **下载**，丢到仓库根目录，commit。
+
+完事。无登录、无上传、无服务端处理——每个模板都打包进了页面，所有合并都在你的浏览器里完成。文件最终落到你的仓库里。

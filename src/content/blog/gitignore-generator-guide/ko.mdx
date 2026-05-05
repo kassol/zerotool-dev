@@ -1,0 +1,155 @@
+---
+title: "Gitignore 생성기: stack을 고르고 복사·붙여넣기에서 해방되기"
+description: "200+개의 공식 github/gitignore 템플릿에서 .gitignore를 조립합니다. stack 조합, gitignore 문법, '이미 commit해 버렸는데' 함정, 그리고 출처 주석이 포함된 중복 제거가 파일을 어떻게 읽기 좋게 유지하는지 다룹니다."
+pubDate: 2026-05-05
+lang: "ko"
+tags: ["gitignore", "git", "developer-tools", "templates", "repository"]
+ogImage: /og/blog-gitignore-generator-guide-ko.png
+---
+
+새 프로젝트에서 `git init`을 막 실행했습니다. 에디터의 untracked 패널에 `node_modules/`, `.DS_Store`, `.idea/`, 세 개의 `.env*` 파일, 그리고 200 MB의 `dist/` 디렉터리가 보입니다. 가장 먼저 손이 가는 건 `.gitignore`. 열다섯 번 해 본 사람이라면 개인 컬렉션이 있을 테고, 처음이라면 GitHub로 alt-tab 해서 뒤지기 시작하게 됩니다.
+
+[200+개 템플릿에서 .gitignore 만들기 →](/ko/tools/gitignore-generator/)
+
+## .gitignore가 생각보다 더 중요한 이유
+
+엉성한 `.gitignore`는 천천히 새는 누수입니다. 가장 흔한 실패 패턴:
+
+- **부풀어 오른 clone.** `node_modules/`가 한 번 commit되면 모든 기여자가 영원히 수백 MB를 더 다운로드해야 합니다. 나중에 제거하려면 히스토리 재작성이 필요합니다.
+- **시크릿 유출.** 저장소에 commit된 `.env.production`은 공개 미러, CI 캐시, 검색 엔진 스냅샷에 들어갑니다. 알아챘을 때는 이미 늦습니다.
+- **크로스플랫폼 노이즈.** macOS 기여자가 `.DS_Store`를 한 번 commit하면, 팀 전체가 매번 diff에서 그것을 보게 됩니다.
+- **IDE 노이즈.** JetBrains 사용자가 `.idea/workspace.xml`을 commit하면, 그 후로는 저장할 때마다 의미 있어 보이는 diff가 생기고 모두가 그것을 건너뛰어야 합니다.
+
+수정점은 모두 `.gitignore`에 있습니다. 건너뛰면 정리는 운영 사이클로 떠넘겨집니다.
+
+## Git 노이즈의 네 가지 출처
+
+`.gitignore`의 거의 모든 행은 다음 네 가지 분류 중 하나에 속합니다:
+
+| 출처 | 예시 | 규칙이 사는 곳 |
+|---|---|---|
+| 빌드 산출물 | `dist/`, `target/`, `*.pyc`, `*.class` | 언어별 템플릿 (Node, Python, Java) |
+| 의존성 | `node_modules/`, `vendor/`, `__pycache__/` | 언어별 템플릿 |
+| OS 메타데이터 | `.DS_Store`, `Thumbs.db`, `.Trashes` | Global 템플릿 (macOS, Windows, Linux) |
+| 에디터 상태 | `.idea/`, `.vscode/`, `*.swp` | Global 템플릿 (JetBrains, VSCode, Vim) |
+
+대부분의 프로젝트는 네 분류 중 적어도 세 개가 필요합니다. JetBrains 사용자가 섞인 팀의 Node 프로젝트라면 최소한 Node + macOS + Windows + JetBrains + VSCode 다섯 개가 필요합니다. 이것이 stack 조합의 결정적 사용 사례입니다.
+
+## 일반적인 stack 조합
+
+| 프로젝트 종류 | 선택할 템플릿 |
+|---|---|
+| 풀스택 JavaScript | Node, Nextjs (또는 Nestjs), macOS, Windows, JetBrains, VisualStudioCode |
+| Python 데이터 프로젝트 | Python, macOS, VisualStudioCode |
+| 모바일 네이티브 (Android) | Android, Java, Gradle, JetBrains, macOS |
+| 모바일 네이티브 (iOS) | Swift (또는 Objective-C), Xcode, macOS |
+| 정적 사이트 | Node, Jekyll, macOS, Windows, VisualStudioCode |
+| Go 서비스 | Go, macOS, VisualStudioCode, JetBrains |
+| Rust 바이너리 | Rust, macOS, Windows, VisualStudioCode, JetBrains |
+| Terraform / 인프라 | Terraform, macOS, VisualStudioCode |
+
+패턴은 명확합니다: 한두 개의 언어 템플릿, 한두 개의 IDE 템플릿, 한두 개의 OS 템플릿. 세 개에서 여섯 개의 선택으로 대부분의 저장소를 커버합니다.
+
+## 2분 안에 익히는 gitignore 문법
+
+포맷은 외울 수 있을 만큼 작습니다:
+
+```
+# 주석은 #으로 시작
+*.log              # 어디서든 .log 파일
+build/             # 어디서든 build라는 이름의 디렉터리
+/secret.txt        # 저장소 루트의 secret.txt만
+docs/*.pdf         # docs/ 직하의 PDF (docs/notes/old.pdf는 제외)
+**/temp/           # 어떤 깊이의 temp/든
+!important.log     # 부정: 이전 규칙이 제외했어도 유지
+```
+
+발이 걸리기 쉬운 몇 가지:
+
+- 끝에 `/`는 "디렉터리만"을 의미합니다. 그것이 없으면 같은 이름의 파일도 매칭됩니다.
+- 슬래시가 없는 패턴(또는 끝에만 있는 경우)은 어떤 깊이에서도 매칭됩니다. `*.log`와 `build/`는 모두 트리 전체에 적용됩니다. 중간에 슬래시가 들어간 패턴만이 `.gitignore` 파일이 있는 디렉터리에 고정됩니다: `docs/*.pdf`는 `docs/` 직하의 PDF만 매칭하고, `docs/notes/` 안은 매칭하지 않습니다.
+- 시작 슬래시는 저장소 루트에 고정됩니다: `/secret.txt`는 루트의 그 파일만 매칭하고 더 깊은 곳은 매칭하지 않습니다.
+- 부정은 단일 파일의 무시만 취소할 수 있습니다. 이미 무시된 디렉터리 안의 파일을 다시 포함시킬 수는 없습니다. `logs/`를 무시한 다음 `!logs/keep.log`라고 써도, Git은 `logs/` 안을 들여다보지 않으므로 keep 규칙은 발화하지 않습니다.
+- 순서가 중요합니다. 마지막으로 매칭된 규칙이 이깁니다.
+
+## "이미 commit해 버렸는데" 함정
+
+`.gitignore`에서 가장 많이 검색되는 문제이자 도구가 대신 해결해 줄 수 없는 문제입니다:
+
+> `node_modules/`를 `.gitignore`에 추가했는데도 Git이 여전히 추적합니다.
+
+파일이 한 번 추적되면 `.gitignore`로는 추적을 멈출 수 없습니다. 새로 추가된 ignore 규칙은 추적되지 않은 파일에만 적용됩니다. 이미 index에 있는 것을 멈추려면:
+
+```bash
+git rm -r --cached node_modules/
+git commit -m "stop tracking node_modules"
+```
+
+`--cached`는 index에서 파일을 제거하지만 디스크에는 남깁니다. commit 후 Git은 그것을 추적되지 않은 것으로 취급하고 `.gitignore`가 그것을 가릴 수 있게 됩니다.
+
+`node_modules/`가 오래 전에 commit된 것이고 히스토리에서도 완전히 지우고 싶다면 (최신 commit만이 아니라), 그것은 `git filter-repo`의 일이지 `.gitignore`의 일이 아닙니다. force-push를 준비하고 clone한 모든 사람에게 알려야 합니다.
+
+## 이 도구의 병합 방식
+
+템플릿 몇 개를 선택하면 생성기는 그것들을 알파벳순으로 연결합니다. 각 섹션에는 `### Name.gitignore` 헤더가 붙어 어느 규칙이 어느 템플릿에서 왔는지 추적할 수 있습니다. 주석과 빈 줄은 그대로 보존되어 각 섹션이 일관된 그룹으로 읽힙니다.
+
+github/gitignore 템플릿은 서로 겹치지 않도록 설계되어 있어, 템플릿을 단순히 이어 붙이는 것만으로는 자연 발생하는 중복이 거의 없습니다. **중복 제거가 실제로 도움이 되는 곳은 Custom additions 섹션입니다**: Node 템플릿을 선택한 채 사용자 정의 영역에 `node_modules/`를 붙여 넣으면, 사용자 정의 블록 측에서 그것을 조용히 떨어뜨립니다. 첫 등장이 이기고 이후 중복은 사라지므로, 파일은 컴팩트하게 유지되고 같은 규칙이 두 곳에서 권위 있는 것처럼 보이지도 않습니다.
+
+전형적인 Node + macOS + JetBrains 출력은 다음과 같이 시작합니다:
+
+```
+# .gitignore generated at https://zerotool.dev/tools/gitignore-generator/
+# Source templates: github/gitignore (CC0-1.0)
+
+### JetBrains.gitignore
+# Covers JetBrains IDEs: IntelliJ IDEA, PyCharm, WebStorm, ...
+.idea/
+*.iml
+out/
+
+### Node.gitignore
+# Logs
+logs
+*.log
+npm-debug.log*
+node_modules/
+
+### macOS.gitignore
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+```
+
+처음 두 줄의 attribution을 제거하면 나머지 내용은 각 템플릿을 손으로 하나씩 복사·붙여넣기한 결과와 바이트 단위로 동일합니다 — 다만 사용자 정의 블록도 작성한 경우의 중복 행 위험이 사라집니다.
+
+## 왜 github/gitignore에 고정하나
+
+템플릿은 [github/gitignore](https://github.com/github/gitignore) 저장소(CC0-1.0)에서 옵니다. 자체 컬렉션을 쌓아 가는 대신 이것을 표준으로 한 이유는 두 가지:
+
+1. **유지보수.** 커뮤니티가 이미 이 템플릿들을 최신으로 유지해 줍니다. Vite가 새로운 캐시 디렉터리를 추가하면 며칠 안에 누군가 github/gitignore에 PR을 엽니다.
+2. **감사 가능성.** 각 템플릿은 짧은 한 파일입니다. 저장소에 추가하기 전에 통째로 읽어 볼 수 있습니다. 자체 컬렉션은 "5년 전 어떤 프로젝트를 위해 추가했는데, 왜였더라" 같은 찌꺼기를 쌓기 쉽습니다.
+
+저장소 루트(프로그래밍 언어와 프레임워크, 약 160개 템플릿)와 `Global/` 하위 디렉터리(IDE·OS·에디터, 약 75개)를 번들로 포함합니다. `community/` 하위 디렉터리는 제외 — 커버리지는 더 넓지만 품질이 일정하지 않습니다.
+
+갱신 방법: 상위에서 재 snapshot한 뒤 새 번들을 commit. 런타임 네트워크 호출 없음, 레이트 제한 없음, 오프라인 실패 없음.
+
+## 프로젝트 고유의 것을 처음부터 쓸 때
+
+템플릿이 커버하는 것은 "일반적인 것"이지 프로젝트 고유의 사정은 아닙니다:
+
+- 빌드 스크립트가 쓰는 경로 (`coverage-html/`, `_site/`)
+- 주 설정과 같은 디렉터리에 있는, 시크릿이 들어간 로컬 config (`config.local.yaml`)
+- CI가 재업로드하는 생성물 (`*.bundle.tar.gz`)
+
+이런 것들은 생성기의 **사용자 정의 규칙 추가** 섹션을 사용하세요. 끝의 `### Custom additions` 섹션에 들어가고 같은 중복 제거 패스에 참여하므로, 프로젝트 고유의 `*.log`가 Node 템플릿의 `*.log`와 중복되지 않습니다.
+
+## 30초 워크플로
+
+1. [생성기](/ko/tools/gitignore-generator/)를 엽니다.
+2. 검색 박스에 runtime 이름을 입력하고 체크.
+3. 에디터와 OS를 추가.
+4. 프로젝트 고유의 것을 사용자 정의 영역에 붙여 넣기.
+5. **다운로드** 클릭, 저장소 루트에 두고 commit.
+
+끝입니다. 로그인 없음, 업로드 없음, 서버 측 처리 없음 — 모든 템플릿은 페이지에 번들되고 병합은 브라우저 안에서 완료됩니다. 파일은 최종적으로 저장소에 들어갑니다.

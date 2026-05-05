@@ -1,0 +1,155 @@
+---
+title: "Gitignore Generator: Pick Your Stack, Skip the Copy-Paste"
+description: "Build a .gitignore from 200+ official github/gitignore templates. Covers stack combos, gitignore syntax, the 'I already committed it' trap, and how dedup-with-provenance keeps the file readable."
+pubDate: 2026-05-05
+lang: "en"
+tags: ["gitignore", "git", "developer-tools", "templates", "repository"]
+ogImage: /og/blog-gitignore-generator-guide.png
+---
+
+You just ran `git init` on a new project. Your editor opens an untracked-files panel that includes `node_modules/`, `.DS_Store`, `.idea/`, three `.env*` files, and a 200 MB `dist/` directory. The first thing you reach for is a `.gitignore`. If you've done this fifteen times, you have a personal collection. If you haven't, you alt-tab to GitHub and start hunting.
+
+[Build a .gitignore from 200+ templates →](/tools/gitignore-generator/)
+
+## Why a .gitignore matters more than people think
+
+A bad `.gitignore` is a slow leak. The most common failure modes:
+
+- **Bloated clones.** A committed `node_modules/` adds hundreds of megabytes that every contributor downloads forever. Removing it later requires rewriting history.
+- **Leaked secrets.** A committed `.env.production` ends up in the public mirror, the CI cache, and the search-engine snapshot before anyone notices.
+- **Cross-platform churn.** A macOS contributor commits `.DS_Store` once and the entire team starts seeing it in every diff.
+- **IDE noise.** A JetBrains user commits `.idea/workspace.xml`, then every save creates a meaningful-looking diff that everyone has to skip.
+
+The fix lives in `.gitignore`. Skipping it pushes the cleanup into production cycles.
+
+## The four sources of git noise
+
+Almost every entry in a `.gitignore` belongs to one of four buckets:
+
+| Source | Examples | Where the rules live |
+|---|---|---|
+| Build artifacts | `dist/`, `target/`, `*.pyc`, `*.class` | Per-language template (Node, Python, Java) |
+| Dependencies | `node_modules/`, `vendor/`, `__pycache__/` | Per-language template |
+| OS metadata | `.DS_Store`, `Thumbs.db`, `.Trashes` | Global template (macOS, Windows, Linux) |
+| Editor state | `.idea/`, `.vscode/`, `*.swp` | Global template (JetBrains, VSCode, Vim) |
+
+Most projects need at least three of these four buckets. A Node project on a JetBrains-using mixed team needs Node + macOS + Windows + JetBrains + VSCode at minimum. That's the killer use case for stack composition.
+
+## Common stack combinations
+
+| Project type | Pick these templates |
+|---|---|
+| Full-stack JavaScript | Node, Nextjs (or Nestjs), macOS, Windows, JetBrains, VisualStudioCode |
+| Python data project | Python, macOS, VisualStudioCode |
+| Mobile native (Android) | Android, Java, Gradle, JetBrains, macOS |
+| Mobile native (iOS) | Swift (or Objective-C), Xcode, macOS |
+| Static site | Node, Jekyll, macOS, Windows, VisualStudioCode |
+| Go service | Go, macOS, VisualStudioCode, JetBrains |
+| Rust binary | Rust, macOS, Windows, VisualStudioCode, JetBrains |
+| Terraform / infra | Terraform, macOS, VisualStudioCode |
+
+The pattern: one or two language templates, one or two IDE templates, one or two OS templates. Three to six picks covers the vast majority of repos.
+
+## Gitignore syntax in two minutes
+
+The format is small enough to memorize:
+
+```
+# Comments start with #
+*.log              # all .log files anywhere
+build/             # only directories named build
+/secret.txt        # only at the repo root
+docs/*.pdf         # PDFs in docs/, but not docs/notes/old.pdf
+**/temp/           # any temp/ at any depth
+!important.log     # negation: keep this file even if a prior rule excluded it
+```
+
+A few things that trip people up:
+
+- A trailing slash means "directory only". Without it, a file with the same name also matches.
+- A pattern with no slash (or only a trailing slash) matches at any depth. `*.log` and `build/` both apply across the whole tree. A pattern with a slash in the middle is anchored to the `.gitignore` file's directory: `docs/*.pdf` only matches PDFs directly inside `docs/`, not inside `docs/notes/`.
+- A leading slash anchors to the repo root: `/secret.txt` matches only the file at the root, not deeper.
+- Negation only un-ignores a file. It cannot re-include a file inside an ignored directory. If you ignore `logs/` and then write `!logs/keep.log`, Git will not look inside `logs/` at all and the keep rule never fires.
+- Order matters. The last matching rule wins.
+
+## The "I already committed it" trap
+
+This is the most-Googled `.gitignore` problem and the one the tool can't solve for you:
+
+> I added `node_modules/` to `.gitignore` but Git still tracks it.
+
+Once a file is tracked, `.gitignore` does not stop tracking it. New ignore rules only affect untracked files. To stop tracking something already in the index:
+
+```bash
+git rm -r --cached node_modules/
+git commit -m "stop tracking node_modules"
+```
+
+`--cached` removes the file from the index but leaves it on disk. After the commit, Git will treat it as untracked and `.gitignore` will hide it.
+
+If `node_modules/` was committed long ago and you want it gone from history (not just the latest commit), that's a `git filter-repo` job, not a `.gitignore` job. Plan for a force-push and notify everyone with a clone.
+
+## How merging works in this tool
+
+Pick a few templates and the generator concatenates them in alphabetical order. Each section gets a `### Name.gitignore` header so you can trace which rules came from which template. Comments and blank lines are preserved verbatim so each section still reads as a coherent group.
+
+The github/gitignore templates are designed to be non-overlapping, so back-to-back templates rarely produce duplicates on their own. Where deduplication actually helps is the **Custom additions** section: if you paste `node_modules/` while you also have the Node template selected, the custom block silently drops it. The first occurrence wins; later duplicates disappear so the file stays compact and one rule does not look authoritative in two places.
+
+A typical Node + macOS + JetBrains output starts like this:
+
+```
+# .gitignore generated at https://zerotool.dev/tools/gitignore-generator/
+# Source templates: github/gitignore (CC0-1.0)
+
+### JetBrains.gitignore
+# Covers JetBrains IDEs: IntelliJ IDEA, PyCharm, WebStorm, ...
+.idea/
+*.iml
+out/
+
+### Node.gitignore
+# Logs
+logs
+*.log
+npm-debug.log*
+node_modules/
+
+### macOS.gitignore
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+```
+
+If you remove the attribution header, the rest is byte-identical to copy-pasting each template by hand — minus the duplicate-line risk if you also wrote your own custom block.
+
+## Why we pin to github/gitignore
+
+The templates ship from the [github/gitignore](https://github.com/github/gitignore) repository, published under CC0-1.0. Two reasons we standardize on it instead of accumulating a custom collection:
+
+1. **Maintenance.** The community already keeps these templates current. When Vite ships a new cache directory, someone opens a PR against github/gitignore within days.
+2. **Auditability.** Each template is one short file. You can read it before adding it to your repo. Custom collections accumulate "we added this for one project five years ago" cruft.
+
+We bundle the repository root (programming languages and frameworks, ~160 templates) plus the `Global/` subdirectory (IDEs, OSes, editors, ~75 templates). The `community/` subdirectory is excluded — it has wider coverage but more inconsistent quality.
+
+To refresh, we re-snapshot upstream and commit the new bundle. No live network calls, no rate limits, no offline failures.
+
+## When to start a project-specific .gitignore from scratch
+
+Templates cover what's normal. They do not cover what's specific to your project:
+
+- a path your build script writes to (`coverage-html/`, `_site/`)
+- a config file with secrets that lives next to the committed config (`config.local.yaml`)
+- a generated artifact your CI reuploads (`*.bundle.tar.gz`)
+
+Use the generator's **Add custom rules** section for these. They land at the bottom under `### Custom additions` and participate in the same dedup pass, so a project-specific `*.log` does not duplicate a Node template `*.log`.
+
+## The 30-second workflow
+
+1. Open the [generator](/tools/gitignore-generator/).
+2. Type your runtime in the search box. Tick it.
+3. Add your editor and your OS.
+4. Paste anything project-specific into the custom section.
+5. Click **Download**, drop the file at the repo root, commit.
+
+That's it. No login, no upload, no server-side processing — every template is bundled into the page and merged in your browser. The file ends up in your repository.
