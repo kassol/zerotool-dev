@@ -454,10 +454,8 @@
           if (v.description) schema.description = v.description;
           if (v.canonical) schema.url = v.canonical;
           if (v.ogImage) schema.image = v.ogImage;
-          if (v.author && (v.schemaType === 'Article' || v.schemaType === 'Organization')) {
-            schema.author = v.schemaType === 'Article'
-              ? { '@type': 'Person', name: v.author }
-              : v.author;
+          if (v.author && v.schemaType === 'Article') {
+            schema.author = { '@type': 'Person', name: v.author };
           }
           var jsonLines = JSON.stringify(schema, null, 2).split('\n');
           lines.push('<script type="application/ld+json">');
@@ -537,7 +535,7 @@
             '</div>';
           }
         } else if (currentPlatform === 'discord') {
-          var bar = v.themeColor && /^#[0-9a-fA-F]{3,8}$/.test(v.themeColor) ? v.themeColor : '#5865f2';
+          var bar = v.themeColor && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v.themeColor) ? v.themeColor : '#5865f2';
           html = '<div class="mtg-card mtg-discord" style="--mtg-bar:' + escapeAttr(bar) + ';">' +
             '<div class="mtg-discord-bar" aria-hidden="true"></div>' +
             '<div class="mtg-discord-body">' +
@@ -623,10 +621,23 @@
             copyBtn.classList.remove('copied');
           }, 1500);
         };
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(val).then(done).catch(done);
+        function fallbackCopy() {
+          var ta = document.createElement('textarea');
+          ta.value = val;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          ta.setAttribute('readonly', '');
+          document.body.appendChild(ta);
+          ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+          if (ok) done();
+        }
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(val).then(done, fallbackCopy);
         } else {
-          done();
+          fallbackCopy();
         }
       });
 
