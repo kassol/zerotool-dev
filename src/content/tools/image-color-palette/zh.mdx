@@ -1,0 +1,64 @@
+---
+seoTitle: "图像配色提取 — 浏览器内 k-means 主色提取 | ZeroTool"
+seoDescription: "从任意图片提取主色调色板，浏览器内 k-means 算法运算，输出 HEX/RGB/HSL/OKLCH，附 CSS 变量与 Tailwind 配置。零上传，纯客户端。"
+faqItems:
+  - question: "工具是怎么提取主色的？"
+    answer: "对降采样后的像素 RGB 值跑 k-means 聚类。图片先被缩到最长边 200 像素，对每个可见像素按欧式 RGB 距离归到 k 个聚类中心，输出每个聚类的均值颜色与它在原图中的占比。"
+  - question: "上传的图片会被发到服务器吗？"
+    answer: "不会。图片由浏览器的 FileReader 与 Canvas 在本地解码，k-means 完全在 JavaScript 中跑。打开开发者工具的网络面板查看——除工具自己的页面资源外，没有任何上传请求。"
+  - question: "支持哪些图片格式？"
+    answer: "凡是浏览器能通过 `<img>` 元素和 Canvas 解码的格式都支持：常见的 JPEG、PNG、WebP、GIF、SVG、BMP，以及 Chromium 上的 AVIF 与 Safari 上的 HEIC。相机 RAW 格式浏览器无法直接解码，请先在本地转换为 JPEG 或 PNG。"
+  - question: "为什么两次提取的结果可能不一样？"
+    answer: "k-means 的初始聚类中心是随机选取的。色彩复杂的图片配上较小的 `k`，两次运行可能收敛到略有不同的结果。点击「重新提取」换一组随机种子，或调高 `k`，让更多聚类中心覆盖色彩空间，结果会更稳定。"
+---
+
+<h2>这个工具能做什么</h2>
+
+<p>把任何图片——UI 设计稿、品牌素材、产品摄影、库存图——拖进来，得到一份可以直接粘贴到样式表、设计 token 或 Tailwind 主题里的调色板。工具用 k-means 对可见像素聚类，每个聚类输出一块色卡，附带它在原图中的占比，以及四种颜色空间表达：用于设计软件的 HEX、用于传统 CSS 的 RGB / HSL，以及用于现代色彩管线的 OKLCH。</p>
+
+<h2>使用方法</h2>
+
+<ol>
+  <li>把图片拖到上传卡片上，或点击卡片选择文件，或者复制图片后用 `Ctrl + V` 直接粘贴。</li>
+  <li>调节控件：选择要提取的颜色数量（3 到 16），按出现频率、色相或亮度排序，按需勾选「跳过透明像素」「跳过接近白色」。</li>
+  <li>点击任意色块复制它的 HEX。点击色块下方的 RGB / HSL / OKLCH 行可以复制对应格式。</li>
+  <li>整组复制：<strong>复制 CSS 变量</strong> 输出 `:root { --color-1: …; }` 代码块；<strong>复制 JSON</strong> 输出 `{hex, rgb, weight}` 数组；<strong>复制 Tailwind</strong> 输出 `theme.extend.colors.palette` 配置片段，方便直接接入 tailwind.config.js。</li>
+</ol>
+
+<h2>算法说明</h2>
+
+<p>k-means 是最简单但仍能产出可用调色板的聚类方法。图片先按最长边降到 200 像素——一张 4K 照片大约会被压成 4 万个采样像素，这个量级既能让聚类中心稳定，又能在主流笔记本上保持 100 毫秒内的运行时间。每个像素归到欧式 RGB 距离最近的中心，中心更新为所属聚类的均值，循环到中心不再移动（或 24 轮迭代，以先到的为准）。</p>
+
+<p>在此基础上做了两个工程化优化：聚类间 ΔRGB &lt; 6 的近似中心会被合并，避免输出几乎相同的色卡；可选的预过滤会丢弃透明像素与接近纯白的像素（亮度 &gt; 0.95），让算法聚焦在真正承载视觉重量的颜色上，而不是被边缘留白带偏。</p>
+
+<h2>输出格式说明</h2>
+
+<ul>
+  <li><strong>HEX</strong>：通用互通格式，点击色卡上半部分直接复制。</li>
+  <li><strong>RGB</strong>：现代空格分隔语法 `rgb(160 90 44)`，所有现代浏览器都支持。</li>
+  <li><strong>HSL</strong>：方便在不离开色卡的情况下对色相 / 饱和度 / 亮度做小调整。</li>
+  <li><strong>OKLCH</strong>：感知均匀，适合用作设计 token；做色相旋转或互调时不会出现 HSL 那种亮度跳变。</li>
+  <li><strong>占比</strong>：每个聚类在原图像素中的占比；占比最高的通常用作品牌主色，其余作为辅助色。</li>
+</ul>
+
+<h2>典型使用场景</h2>
+
+<ul>
+  <li>从客户提供的品牌物料（海报、产品图、网页截图）反推主色调。</li>
+  <li>把摄影作品转译成网页设计 token，做摄影师作品集或电商详情页。</li>
+  <li>开发竞品分析时，对照自家产品和竞品 banner 的色彩占比差异。</li>
+  <li>给文章配图前，先抽出图片调色板，再据此选择对比度合规的标题、引言色。</li>
+</ul>
+
+<h2>隐私</h2>
+
+<p>所有处理都在浏览器内完成。图片解码到 HTMLImageElement，绘制到隐藏的 Canvas，再用 JavaScript 跑聚类。任何关于图片的字节都不会发到服务器。要验证可以打开开发者工具的网络面板，每次加载新图片时都能看到一份干净的请求日志。</p>
+
+<h2>相关工具</h2>
+
+<ul>
+  <li><a href="/zh/tools/color-palette-generator/">配色方案生成器</a> —— 从一个基础 HEX 出发，生成互补、类比、三角、四方等配色。</li>
+  <li><a href="/zh/tools/color-shades-generator/">颜色色阶生成器</a> —— 从任意基础色拉出 9 级亮度阶梯。</li>
+  <li><a href="/zh/tools/color-converter/">颜色转换器</a> —— 在 HEX / RGB / HSL 间互转，带实时预览。</li>
+  <li><a href="/zh/tools/color-contrast-checker/">颜色对比度检测器</a> —— 拿到调色板之后，逐对验证它们在前景 / 背景组合下是否满足 WCAG AA / AAA。</li>
+</ul>
