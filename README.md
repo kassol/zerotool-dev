@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 106 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 107 tools and growing.
 
 ## Tools
 
@@ -115,6 +115,7 @@
 | Color Contrast Checker | [/tools/color-contrast-checker](https://zerotool.dev/tools/color-contrast-checker) |
 | Cubic Bezier Generator | [/tools/cubic-bezier-generator](https://zerotool.dev/tools/cubic-bezier-generator) |
 | Meta Tag Generator | [/tools/meta-tag-generator](https://zerotool.dev/tools/meta-tag-generator) |
+| Gitignore Generator | [/tools/gitignore-generator](https://zerotool.dev/tools/gitignore-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
