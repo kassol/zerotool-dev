@@ -1,0 +1,160 @@
+---
+title: "JSONL コンバーター：JSON Lines、NDJSON、JSON 配列"
+description: "JSONL の仕組み、JSON Lines / NDJSON を JSON 配列に変換する方法、配列をコンパクトな行区切りレコードへ戻す方法、行単位のエラー検証を解説します。"
+pubDate: 2026-05-05
+lang: "ja"
+tags: ["jsonl", "ndjson", "json", "data-tools", "developer-tools"]
+ogImage: /og/blog-jsonl-converter-guide-ja.png
+---
+
+ログ、イベントストリーム、データエクスポート、AI データセットが 1 つの整った JSON ドキュメントを超える規模になると、JSONL が登場します。各行が 1 つの完全な JSON 値なので、追記、分割、ストリーミング、レコード単位の処理がしやすくなります。
+
+[ZeroTool JSONL コンバーターを開く →](/ja/tools/jsonl-converter/)
+
+このガイドでは、JSONL、NDJSON、双方向変換、行単位の検証、コマンドラインでの同等操作、壊れたデータファイルを作る典型的な原因を扱います。
+
+## クイック回答
+
+| タスク | 最適な方法 |
+| --- | --- |
+| JSONL を通常の JSON に変換 | 各行を解析し、レコードを JSON 配列で包む。 |
+| JSON 配列を JSONL に変換 | 各配列アイテムをコンパクトな `JSON.stringify()` でシリアライズし、1 アイテム 1 行にする。 |
+| JSONL ファイルを検証 | 各行を独立して解析し、失敗した行番号を報告する。 |
+| 乱れたファイルから一部データを出力 | 有効な行だけ変換し、報告されたエラー行を確認する。 |
+
+ブラウザで素早く確認するなら [JSONL コンバーター](/ja/tools/jsonl-converter/) を使います。繰り返し使うシェルスクリプトには `jq` が向いています。
+
+## JSONL とは
+
+JSONL は JSON Lines の略です。NDJSON は newline-delimited JSON を意味します。日常の開発では、どちらも実用上は同じ形を指します。
+
+```json
+{"id":1,"event":"signup","user":"alice"}
+{"id":2,"event":"purchase","user":"bob","amount":29.99}
+{"id":3,"event":"cancel","user":"carol"}
+```
+
+各行は単体で有効な JSON です。ファイル全体は、改行で区切られた JSON 値の並びです。この形は次の用途に適しています。
+
+- 発生したイベントを追記するアプリケーションログ
+- 各行が構造化レコードである分析エクスポート
+- 検索インデックス作成パイプライン
+- 機械学習と AI トレーニングデータセット
+- レコードが 1 件ずつ届くストリーミング API
+
+JSON 配列はレコードを 1 つのドキュメントにまとめます。JSONL は各レコードを独立した行として保存します。この行指向の構造が、ストリーミング処理やコマンドラインツールと相性のよい理由です。
+
+## JSONL を JSON 配列に変換する
+
+ブラウザ上の変換ロジックはシンプルです。
+
+```js
+const jsonl = `{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}`;
+
+const array = jsonl
+  .split("\n")
+  .filter((line) => line.trim())
+  .map((line) => JSON.parse(line));
+
+console.log(JSON.stringify(array, null, 2));
+```
+
+出力:
+
+```json
+[
+  {
+    "id": 1,
+    "event": "signup"
+  },
+  {
+    "id": 2,
+    "event": "purchase"
+  }
+]
+```
+
+ZeroTool コンバーターは、この処理に安全なワークフローを加えています。総行数、有効行、空行、解析エラーを追跡します。行の解析に失敗すると、問題パネルに行番号、パーサーメッセージ、元の行の短いプレビューが表示されます。
+
+## JSON 配列を JSONL に変換する
+
+配列から始めます。
+
+```json
+[
+  { "id": 1, "event": "signup" },
+  { "id": 2, "event": "purchase" }
+]
+```
+
+各アイテムを 1 行のコンパクトな JSON 文字列にします。
+
+```js
+const jsonl = array.map((item) => JSON.stringify(item)).join("\n");
+```
+
+出力:
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}
+```
+
+コンパクト出力は重要です。各行が 1 つの完全なレコードである必要があります。オブジェクトを複数行に整形すると、1 レコードが複数の断片に分かれます。
+
+## 行単位のエラーを検証する
+
+JSONL の失敗は多くの場合、局所的です。大きなファイルの中に 1 行だけ壊れた行があり、周囲のレコードは正常というケースがあります。
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+2 行目には末尾カンマがあります。行単位の検証器なら `2 行目` をすぐに報告できます。通常の JSON フォーマッターでは、ファイル全体が解析失敗のドキュメントとして扱われます。
+
+実用的な検証項目:
+
+- 空行以外の各行を独立して解析する
+- 空行を別に数える
+- 失敗した行の短いプレビューを保持する
+- レビュー後に解析成功済みの有効レコードを出力する
+- 有効レコードの元の順序を保つ
+
+## コマンドラインでの同等操作
+
+`jq` で JSON 配列を JSONL に変換:
+
+```bash
+jq -c '.[]' data.json > data.jsonl
+```
+
+JSONL を JSON 配列に戻す:
+
+```bash
+jq -s '.' data.jsonl > data.json
+```
+
+JSONL ファイルを行ごとに検証:
+
+```bash
+awk '{ print NR ":" $0 }' data.jsonl | while IFS=: read -r line value; do
+  echo "$value" | jq empty >/dev/null 2>&1 || echo "Invalid JSON on line $line"
+done
+```
+
+ブラウザツールは単発の確認に向いています。シェル版は CI ジョブや繰り返し使うインポートパイプラインに向いています。
+
+## ベストプラクティス
+
+| 実践 | 効果 |
+| --- | --- |
+| 1 行 1 レコードを保つ | ストリーミングツールがレコードを独立して処理できます。 |
+| 各レコードをコンパクト JSON にする | 複数行に整形されたオブジェクトは行区切り形式を壊します。 |
+| UTF-8 テキストで保存する | エディタ、ターミナル、API 間で扱いやすくなります。 |
+| インポート前に検証する | データベースやモデル学習ジョブに入る前にエラー行を発見できます。 |
+| 安定したキーを維持する | 下流の CSV、SQL、schema ツールが使いやすくなります。 |
+
+変換後は、JSON 配列を [JSON フォーマッター](/ja/tools/json-formatter/) で確認し、[JSON to CSV コンバーター](/ja/tools/json-to-csv/) で表計算ワークフローへ渡し、[JSON Diff](/ja/tools/json-diff/) で 2 つのエクスポートを比較できます。

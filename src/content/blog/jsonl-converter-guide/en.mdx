@@ -1,0 +1,160 @@
+---
+title: "JSONL Converter: JSON Lines, NDJSON, and JSON Arrays"
+description: "Learn how JSONL works, how to convert JSON Lines and NDJSON to JSON arrays, how to turn arrays back into compact line-delimited records, and how to validate line-level errors."
+pubDate: 2026-05-05
+lang: "en"
+tags: ["jsonl", "ndjson", "json", "data-tools", "developer-tools"]
+ogImage: /og/blog-jsonl-converter-guide.png
+---
+
+JSONL is the format you meet when logs, event streams, data exports, and AI datasets grow beyond a single tidy JSON document. Each line is one complete JSON value, which makes the file easy to append, split, stream, and process record by record.
+
+[Open the ZeroTool JSONL Converter →](/tools/jsonl-converter/)
+
+This guide covers JSONL, NDJSON, conversion in both directions, line-level validation, command-line equivalents, and the mistakes that create broken data files.
+
+## Quick answer
+
+| Task | Best move |
+| --- | --- |
+| Convert JSONL to regular JSON | Parse each line and wrap the records in a JSON array. |
+| Convert JSON array to JSONL | Serialize each array item with compact `JSON.stringify()` and put one item per line. |
+| Validate a JSONL file | Parse every line independently and report exact line numbers for failures. |
+| Export partial data from a messy file | Convert valid lines only, then inspect the reported error lines. |
+
+Use the [JSONL Converter](/tools/jsonl-converter/) when you need a quick browser-based check. Use `jq` when the conversion lives in a repeatable shell script.
+
+## What JSONL means
+
+JSONL stands for JSON Lines. NDJSON means newline-delimited JSON. In day-to-day developer work, both names describe the same practical shape:
+
+```json
+{"id":1,"event":"signup","user":"alice"}
+{"id":2,"event":"purchase","user":"bob","amount":29.99}
+{"id":3,"event":"cancel","user":"carol"}
+```
+
+Each line is valid JSON by itself. The whole file is a sequence of JSON values separated by newlines. That shape is useful for:
+
+- application logs where each event is appended as it happens
+- analytics exports where each row is a structured record
+- search indexing pipelines
+- machine learning and AI training datasets
+- streaming APIs where records arrive one at a time
+
+JSON arrays group records inside one document. JSONL stores each record as an independent line. That line-oriented structure is the reason JSONL works so well with streaming and command-line tools.
+
+## Convert JSONL to a JSON array
+
+The browser conversion is conceptually simple:
+
+```js
+const jsonl = `{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}`;
+
+const array = jsonl
+  .split("\n")
+  .filter((line) => line.trim())
+  .map((line) => JSON.parse(line));
+
+console.log(JSON.stringify(array, null, 2));
+```
+
+Output:
+
+```json
+[
+  {
+    "id": 1,
+    "event": "signup"
+  },
+  {
+    "id": 2,
+    "event": "purchase"
+  }
+]
+```
+
+The ZeroTool converter does the same operation with a safer workflow: it tracks total lines, valid lines, empty lines, and parse errors. When a line fails, the issue panel shows the line number, parser message, and a short preview of the original line.
+
+## Convert a JSON array to JSONL
+
+Start with an array:
+
+```json
+[
+  { "id": 1, "event": "signup" },
+  { "id": 2, "event": "purchase" }
+]
+```
+
+Turn each item into one compact JSON string:
+
+```js
+const jsonl = array.map((item) => JSON.stringify(item)).join("\n");
+```
+
+Output:
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}
+```
+
+Compact output matters because every line must remain one complete record. Pretty-printing an object across multiple lines turns a single record into several fragments.
+
+## Validate line-level errors
+
+Most JSONL failures are local. A single bad line can sit inside a large file while the surrounding records are fine:
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+The second line has a trailing comma. A line-level validator can report `Line 2` immediately, while a regular JSON formatter sees the file as one invalid document.
+
+Useful validation checks:
+
+- parse every non-empty line independently
+- count empty lines separately
+- keep a short preview for failed lines
+- allow export of valid parsed records after review
+- preserve the original order of valid records
+
+## Command-line equivalents
+
+With `jq`, convert a JSON array to JSONL:
+
+```bash
+jq -c '.[]' data.json > data.jsonl
+```
+
+Convert JSONL back to a JSON array:
+
+```bash
+jq -s '.' data.jsonl > data.json
+```
+
+Validate a JSONL file line by line:
+
+```bash
+awk '{ print NR ":" $0 }' data.jsonl | while IFS=: read -r line value; do
+  echo "$value" | jq empty >/dev/null 2>&1 || echo "Invalid JSON on line $line"
+done
+```
+
+The browser tool is faster for one-off inspection. The shell version is better for CI jobs and repeatable import pipelines.
+
+## Best practices
+
+| Practice | Why it helps |
+| --- | --- |
+| Keep one record per line | Streaming tools can process records independently. |
+| Use compact JSON per record | Pretty-printed objects break the line-delimited format. |
+| Store UTF-8 text | JSONL files move cleanly across editors, terminals, and APIs. |
+| Validate before import | Bad lines surface before they reach a database or model training job. |
+| Keep stable keys | Downstream CSV, SQL, and schema tools become easier to use. |
+
+After conversion, you can send the JSON array to the [JSON Formatter](/tools/json-formatter/) for inspection, the [JSON to CSV Converter](/tools/json-to-csv/) for spreadsheet workflows, or the [JSON Diff](/tools/json-diff/) to compare two exports.

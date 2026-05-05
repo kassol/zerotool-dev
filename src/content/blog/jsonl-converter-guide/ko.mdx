@@ -1,0 +1,160 @@
+---
+title: "JSONL 변환기: JSON Lines, NDJSON, JSON 배열"
+description: "JSONL의 작동 방식, JSON Lines/NDJSON을 JSON 배열로 변환하는 방법, 배열을 compact 줄 단위 레코드로 되돌리는 방법, 줄별 오류 검증을 설명합니다."
+pubDate: 2026-05-05
+lang: "ko"
+tags: ["jsonl", "ndjson", "json", "data-tools", "developer-tools"]
+ogImage: /og/blog-jsonl-converter-guide-ko.png
+---
+
+로그, 이벤트 스트림, 데이터 내보내기, AI 데이터셋이 하나의 깔끔한 JSON 문서를 넘어서는 규모가 되면 JSONL을 만나게 됩니다. 각 줄은 하나의 완전한 JSON 값이므로 파일을 이어 쓰고, 나누고, 스트리밍하고, 레코드 단위로 처리하기 쉽습니다.
+
+[ZeroTool JSONL 변환기 열기 →](/ko/tools/jsonl-converter/)
+
+이 가이드는 JSONL, NDJSON, 양방향 변환, 줄 단위 검증, 명령줄 equivalent 작업, 데이터 파일이 깨지는 흔한 원인을 다룹니다.
+
+## 빠른 답변
+
+| 작업 | 권장 방법 |
+| --- | --- |
+| JSONL을 일반 JSON으로 변환 | 각 줄을 파싱하고 레코드를 JSON 배열로 감쌉니다. |
+| JSON 배열을 JSONL로 변환 | 각 배열 항목을 compact `JSON.stringify()`로 직렬화하고 항목마다 한 줄을 사용합니다. |
+| JSONL 파일 검증 | 각 줄을 독립적으로 파싱하고 실패한 줄 번호를 보고합니다. |
+| 지저분한 파일에서 일부 데이터 내보내기 | 유효한 줄만 변환한 뒤 보고된 오류 줄을 확인합니다. |
+
+브라우저에서 빠르게 확인할 때는 [JSONL 변환기](/ko/tools/jsonl-converter/)를 사용하세요. 반복 가능한 셸 스크립트에는 `jq`가 적합합니다.
+
+## JSONL이 의미하는 것
+
+JSONL은 JSON Lines의 약자입니다. NDJSON은 newline-delimited JSON을 뜻합니다. 일상적인 개발 작업에서 두 이름은 같은 실용적 형태를 가리킵니다.
+
+```json
+{"id":1,"event":"signup","user":"alice"}
+{"id":2,"event":"purchase","user":"bob","amount":29.99}
+{"id":3,"event":"cancel","user":"carol"}
+```
+
+각 줄은 그 자체로 유효한 JSON입니다. 전체 파일은 줄바꿈으로 구분된 JSON 값의 연속입니다. 이 형태는 다음에 잘 맞습니다.
+
+- 이벤트가 발생할 때마다 추가되는 애플리케이션 로그
+- 각 행이 구조화 레코드인 분석 내보내기
+- 검색 인덱싱 파이프라인
+- 머신러닝 및 AI 학습 데이터셋
+- 레코드가 하나씩 도착하는 스트리밍 API
+
+JSON 배열은 레코드를 하나의 문서 안에 모읍니다. JSONL은 각 레코드를 독립적인 줄로 저장합니다. 이 줄 중심 구조 덕분에 JSONL은 스트리밍과 명령줄 도구에 잘 어울립니다.
+
+## JSONL을 JSON 배열로 변환하기
+
+브라우저 변환의 핵심 로직은 간단합니다.
+
+```js
+const jsonl = `{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}`;
+
+const array = jsonl
+  .split("\n")
+  .filter((line) => line.trim())
+  .map((line) => JSON.parse(line));
+
+console.log(JSON.stringify(array, null, 2));
+```
+
+출력:
+
+```json
+[
+  {
+    "id": 1,
+    "event": "signup"
+  },
+  {
+    "id": 2,
+    "event": "purchase"
+  }
+]
+```
+
+ZeroTool 변환기는 같은 작업에 더 안전한 흐름을 더합니다. 전체 줄, 유효한 줄, 빈 줄, 파싱 오류를 추적합니다. 한 줄의 파싱이 실패하면 문제 패널에 줄 번호, 파서 메시지, 원본 줄의 짧은 미리보기가 표시됩니다.
+
+## JSON 배열을 JSONL로 변환하기
+
+배열에서 시작합니다.
+
+```json
+[
+  { "id": 1, "event": "signup" },
+  { "id": 2, "event": "purchase" }
+]
+```
+
+각 항목을 한 줄의 compact JSON 문자열로 만듭니다.
+
+```js
+const jsonl = array.map((item) => JSON.stringify(item)).join("\n");
+```
+
+출력:
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}
+```
+
+compact 출력은 중요합니다. 각 줄이 하나의 완전한 레코드로 유지되어야 합니다. 객체를 여러 줄로 보기 좋게 출력하면 하나의 레코드가 여러 조각으로 나뉩니다.
+
+## 줄 단위 오류 검증
+
+대부분의 JSONL 실패는 국소적입니다. 큰 파일 안에 잘못된 줄 하나가 있고 주변 레코드는 정상인 경우가 많습니다.
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+두 번째 줄에는 trailing comma가 있습니다. 줄 단위 검증기는 `2번 줄`을 즉시 보고할 수 있습니다. 일반 JSON 포매터는 전체 파일을 하나의 파싱 실패 문서로 봅니다.
+
+실용적인 검증 항목:
+
+- 빈 줄을 제외한 각 줄을 독립적으로 파싱
+- 빈 줄을 별도 집계
+- 실패한 줄의 짧은 미리보기 보존
+- 검토 후 파싱 성공한 유효 레코드 내보내기
+- 유효 레코드의 원래 순서 보존
+
+## 명령줄 equivalent 작업
+
+`jq`로 JSON 배열을 JSONL로 변환:
+
+```bash
+jq -c '.[]' data.json > data.jsonl
+```
+
+JSONL을 JSON 배열로 되돌리기:
+
+```bash
+jq -s '.' data.jsonl > data.json
+```
+
+JSONL 파일을 줄별로 검증:
+
+```bash
+awk '{ print NR ":" $0 }' data.jsonl | while IFS=: read -r line value; do
+  echo "$value" | jq empty >/dev/null 2>&1 || echo "Invalid JSON on line $line"
+done
+```
+
+브라우저 도구는 일회성 검사에 빠릅니다. 셸 버전은 CI 작업과 반복 가능한 가져오기 파이프라인에 적합합니다.
+
+## 모범 사례
+
+| 실천 | 효과 |
+| --- | --- |
+| 한 줄에 한 레코드 유지 | 스트리밍 도구가 레코드를 독립적으로 처리할 수 있습니다. |
+| 각 레코드에 compact JSON 사용 | 여러 줄로 출력된 객체는 줄 구분 형식을 깨뜨립니다. |
+| UTF-8 텍스트로 저장 | 편집기, 터미널, API 사이에서 안정적으로 이동합니다. |
+| 가져오기 전에 검증 | 데이터베이스나 모델 학습 작업에 들어가기 전에 오류 줄이 드러납니다. |
+| 안정적인 키 유지 | 하위 CSV, SQL, schema 도구를 더 쉽게 사용할 수 있습니다. |
+
+변환 후 JSON 배열을 [JSON 포매터](/ko/tools/json-formatter/)로 검사하거나, [JSON to CSV 변환기](/ko/tools/json-to-csv/)로 스프레드시트 흐름에 넘기거나, [JSON Diff](/ko/tools/json-diff/)로 두 내보내기 파일을 비교할 수 있습니다.

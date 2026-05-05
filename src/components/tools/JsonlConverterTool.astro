@@ -1,0 +1,765 @@
+---
+// JSONL Converter — validate JSON Lines / NDJSON and convert to a JSON array.
+---
+
+<div>
+  <div class="jlc-wrap">
+    <div class="jlc-panels">
+      <div class="jlc-panel">
+        <label for="jlc-jsonl">
+          <span>JSONL / NDJSON</span>
+          <span class="jlc-label-actions">
+            <button id="jlc-load-sample" class="btn-copy" type="button" data-i18n="sample">Sample</button>
+            <button id="jlc-open-jsonl" class="btn-copy" type="button" data-i18n="openFile">Open</button>
+            <button id="jlc-copy-jsonl" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+          </span>
+        </label>
+        <textarea
+          id="jlc-jsonl"
+          class="tool-textarea"
+          placeholder='{"id":1,"event":"signup"}&#10;{"id":2,"event":"purchase"}'
+          spellcheck="false"
+        ></textarea>
+      </div>
+
+      <div class="jlc-panel">
+        <label for="jlc-json">
+          <span data-i18n="jsonArray">JSON array</span>
+          <span class="jlc-label-actions">
+            <button id="jlc-open-json" class="btn-copy" type="button" data-i18n="openFile">Open</button>
+            <button id="jlc-copy-json" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+          </span>
+        </label>
+        <textarea
+          id="jlc-json"
+          class="tool-textarea"
+          placeholder='[{"id":1,"event":"signup"},{"id":2,"event":"purchase"}]'
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <input id="jlc-file" class="jlc-file" type="file" accept=".jsonl,.ndjson,.json,.txt,application/json,text/plain" />
+
+    <div class="jlc-actions">
+      <button id="jlc-to-json" class="btn-primary" type="button" data-i18n="jsonlToJson">JSONL → JSON</button>
+      <button id="jlc-to-jsonl" class="btn-primary" type="button" data-i18n="jsonToJsonl">JSON → JSONL</button>
+      <button id="jlc-validate" class="btn-secondary" type="button" data-i18n="validate">Validate</button>
+      <button id="jlc-download-json" class="btn-secondary" type="button" data-i18n="downloadJson">Download .json</button>
+      <button id="jlc-download-jsonl" class="btn-secondary" type="button" data-i18n="downloadJsonl">Download .jsonl</button>
+      <button id="jlc-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div class="jlc-options" aria-label="JSONL conversion options">
+      <label class="jlc-check">
+        <input id="jlc-ignore-empty" type="checkbox" checked />
+        <span data-i18n="ignoreEmpty">Ignore empty lines</span>
+      </label>
+      <label class="jlc-check">
+        <input id="jlc-valid-only" type="checkbox" />
+        <span data-i18n="validOnly">Convert valid lines only</span>
+      </label>
+      <label class="jlc-check">
+        <input id="jlc-pretty-json" type="checkbox" checked />
+        <span data-i18n="prettyJson">Pretty JSON output</span>
+      </label>
+    </div>
+
+    <div class="jlc-stats" aria-live="polite">
+      <div class="jlc-stat">
+        <span id="jlc-total-lines" class="jlc-stat-value">0</span>
+        <span class="jlc-stat-label" data-i18n="lines">Lines</span>
+      </div>
+      <div class="jlc-stat">
+        <span id="jlc-valid-lines" class="jlc-stat-value">0</span>
+        <span class="jlc-stat-label" data-i18n="valid">Valid</span>
+      </div>
+      <div class="jlc-stat">
+        <span id="jlc-error-lines" class="jlc-stat-value">0</span>
+        <span class="jlc-stat-label" data-i18n="errors">Errors</span>
+      </div>
+      <div class="jlc-stat">
+        <span id="jlc-empty-lines" class="jlc-stat-value">0</span>
+        <span class="jlc-stat-label" data-i18n="empty">Empty</span>
+      </div>
+    </div>
+
+    <div id="jlc-status" class="tool-status none" aria-live="polite"></div>
+
+    <div class="jlc-issues">
+      <div class="jlc-issues-head">
+        <span data-i18n="lineIssues">Line issues</span>
+        <span id="jlc-issues-count">0</span>
+      </div>
+      <div id="jlc-issues-list" class="jlc-issues-list" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          sample: 'Sample',
+          openFile: 'Open',
+          copy: 'Copy',
+          copied: 'Copied!',
+          jsonArray: 'JSON array',
+          jsonlToJson: 'JSONL \u2192 JSON',
+          jsonToJsonl: 'JSON \u2192 JSONL',
+          validate: 'Validate',
+          downloadJson: 'Download .json',
+          downloadJsonl: 'Download .jsonl',
+          clear: 'Clear',
+          ignoreEmpty: 'Ignore empty lines',
+          validOnly: 'Convert valid lines only',
+          prettyJson: 'Pretty JSON output',
+          lines: 'Lines',
+          valid: 'Valid',
+          errors: 'Errors',
+          empty: 'Empty',
+          lineIssues: 'Line issues',
+          noIssues: 'Every parsed line is valid JSON.',
+          emptyInput: 'Paste JSONL or JSON first.',
+          strictErrors: 'Fix the invalid lines or enable "Convert valid lines only".',
+          convertedToJson: 'Converted {n} JSONL record{s} to a JSON array.',
+          convertedToJsonl: 'Converted {n} JSON array item{s} to JSONL.',
+          jsonArrayRequired: 'JSON input must be an array.',
+          invalidJson: 'Invalid JSON',
+          validJsonl: 'JSONL validation complete.',
+          downloadReady: 'Download ready.',
+          fileLoaded: 'Loaded {name}.',
+          fileReadError: 'Could not read the selected file.',
+          emptyLine: 'Empty line',
+          line: 'Line',
+          preview: 'Preview'
+        },
+        zh: {
+          sample: '示例',
+          openFile: '打开',
+          copy: '复制',
+          copied: '已复制！',
+          jsonArray: 'JSON 数组',
+          jsonlToJson: 'JSONL \u2192 JSON',
+          jsonToJsonl: 'JSON \u2192 JSONL',
+          validate: '校验',
+          downloadJson: '下载 .json',
+          downloadJsonl: '下载 .jsonl',
+          clear: '清除',
+          ignoreEmpty: '忽略空行',
+          validOnly: '只转换有效行',
+          prettyJson: '格式化 JSON 输出',
+          lines: '总行数',
+          valid: '有效',
+          errors: '错误',
+          empty: '空行',
+          lineIssues: '逐行问题',
+          noIssues: '已解析的每一行都是有效 JSON。',
+          emptyInput: '请先粘贴 JSONL 或 JSON。',
+          strictErrors: '修复错误行，或启用“只转换有效行”。',
+          convertedToJson: '已将 {n} 条 JSONL 记录转换为 JSON 数组。',
+          convertedToJsonl: '已将 {n} 个 JSON 数组项转换为 JSONL。',
+          jsonArrayRequired: 'JSON 输入必须是数组。',
+          invalidJson: '无效 JSON',
+          validJsonl: 'JSONL 校验完成。',
+          downloadReady: '下载已准备好。',
+          fileLoaded: '已载入 {name}。',
+          fileReadError: '读取所选文件失败。',
+          emptyLine: '空行',
+          line: '第',
+          preview: '预览'
+        },
+        ja: {
+          sample: 'サンプル',
+          openFile: '開く',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          jsonArray: 'JSON 配列',
+          jsonlToJson: 'JSONL \u2192 JSON',
+          jsonToJsonl: 'JSON \u2192 JSONL',
+          validate: '検証',
+          downloadJson: '.json を保存',
+          downloadJsonl: '.jsonl を保存',
+          clear: 'クリア',
+          ignoreEmpty: '空行を無視',
+          validOnly: '有効な行だけ変換',
+          prettyJson: 'JSON を整形',
+          lines: '行',
+          valid: '有効',
+          errors: 'エラー',
+          empty: '空行',
+          lineIssues: '行ごとの問題',
+          noIssues: '解析された各行は有効な JSON です。',
+          emptyInput: 'JSONL または JSON を貼り付けてください。',
+          strictErrors: 'エラー行を修正するか「有効な行だけ変換」を有効にしてください。',
+          convertedToJson: '{n} 件の JSONL レコードを JSON 配列に変換しました。',
+          convertedToJsonl: '{n} 件の JSON 配列アイテムを JSONL に変換しました。',
+          jsonArrayRequired: 'JSON 入力は配列である必要があります。',
+          invalidJson: '無効な JSON',
+          validJsonl: 'JSONL 検証が完了しました。',
+          downloadReady: '保存データを作成しました。',
+          fileLoaded: '{name} を読み込みました。',
+          fileReadError: '選択したファイルを読み取れませんでした。',
+          emptyLine: '空行',
+          line: '行',
+          preview: 'プレビュー'
+        },
+        ko: {
+          sample: '샘플',
+          openFile: '열기',
+          copy: '복사',
+          copied: '복사됨!',
+          jsonArray: 'JSON 배열',
+          jsonlToJson: 'JSONL \u2192 JSON',
+          jsonToJsonl: 'JSON \u2192 JSONL',
+          validate: '검증',
+          downloadJson: '.json 저장',
+          downloadJsonl: '.jsonl 저장',
+          clear: '지우기',
+          ignoreEmpty: '빈 줄 무시',
+          validOnly: '유효한 줄만 변환',
+          prettyJson: 'JSON 보기 좋게 출력',
+          lines: '줄',
+          valid: '유효',
+          errors: '오류',
+          empty: '빈 줄',
+          lineIssues: '줄별 문제',
+          noIssues: '파싱된 모든 줄이 유효한 JSON입니다.',
+          emptyInput: 'JSONL 또는 JSON을 먼저 붙여넣으세요.',
+          strictErrors: '오류 줄을 수정하거나 "유효한 줄만 변환"을 켜세요.',
+          convertedToJson: 'JSONL 레코드 {n}개를 JSON 배열로 변환했습니다.',
+          convertedToJsonl: 'JSON 배열 항목 {n}개를 JSONL로 변환했습니다.',
+          jsonArrayRequired: 'JSON 입력은 배열이어야 합니다.',
+          invalidJson: '유효하지 않은 JSON',
+          validJsonl: 'JSONL 검증이 완료되었습니다.',
+          downloadReady: '저장 파일을 준비했습니다.',
+          fileLoaded: '{name} 파일을 불러왔습니다.',
+          fileReadError: '선택한 파일을 읽을 수 없습니다.',
+          emptyLine: '빈 줄',
+          line: '줄',
+          preview: '미리보기'
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.jlc-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+
+      var jsonlEl = document.getElementById('jlc-jsonl');
+      var jsonEl = document.getElementById('jlc-json');
+      var fileEl = document.getElementById('jlc-file');
+      var statusEl = document.getElementById('jlc-status');
+      var issuesListEl = document.getElementById('jlc-issues-list');
+      var issuesCountEl = document.getElementById('jlc-issues-count');
+      var ignoreEmptyEl = document.getElementById('jlc-ignore-empty');
+      var validOnlyEl = document.getElementById('jlc-valid-only');
+      var prettyJsonEl = document.getElementById('jlc-pretty-json');
+      var totalLinesEl = document.getElementById('jlc-total-lines');
+      var validLinesEl = document.getElementById('jlc-valid-lines');
+      var errorLinesEl = document.getElementById('jlc-error-lines');
+      var emptyLinesEl = document.getElementById('jlc-empty-lines');
+      var copyJsonlBtn = document.getElementById('jlc-copy-jsonl');
+      var copyJsonBtn = document.getElementById('jlc-copy-json');
+      var pendingFileTarget = 'jsonl';
+      var lastJsonOutput = '';
+      var lastJsonlOutput = '';
+
+      function msg(template, values) {
+        return template.replace(/\{(\w+)\}/g, function (_, key) {
+          if (key === 's') return values.n === 1 ? '' : 's';
+          return values[key] === undefined ? '' : String(values[key]);
+        });
+      }
+
+      function normalizeLines(text) {
+        return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      }
+
+      function setStatus(message, type) {
+        statusEl.textContent = message;
+        statusEl.className = 'tool-status ' + (type || 'none');
+      }
+
+      function clearStatus() {
+        setStatus('', 'none');
+      }
+
+      function setInputError(el, hasError) {
+        el.classList.toggle('jlc-input-error', !!hasError);
+      }
+
+      function parseJsonl(text, ignoreEmpty) {
+        var normalized = normalizeLines(text);
+        var lines = normalized.length ? normalized.split('\n') : [];
+        var values = [];
+        var errors = [];
+        var emptyCount = 0;
+
+        lines.forEach(function (line, index) {
+          var lineNumber = index + 1;
+          var trimmed = line.trim();
+          if (trimmed === '') {
+            emptyCount++;
+            if (!ignoreEmpty) {
+              errors.push({ line: lineNumber, message: t.emptyLine, preview: '' });
+            }
+            return;
+          }
+          try {
+            values.push({ line: lineNumber, value: JSON.parse(trimmed), raw: trimmed });
+          } catch (e) {
+            errors.push({
+              line: lineNumber,
+              message: e.message,
+              preview: trimmed.slice(0, 120)
+            });
+          }
+        });
+
+        return {
+          total: lines.length,
+          valid: values.length,
+          empty: emptyCount,
+          values: values,
+          errors: errors
+        };
+      }
+
+      function updateStats(result) {
+        totalLinesEl.textContent = String(result.total);
+        validLinesEl.textContent = String(result.valid);
+        errorLinesEl.textContent = String(result.errors.length);
+        emptyLinesEl.textContent = String(result.empty);
+      }
+
+      function renderIssues(errors) {
+        issuesCountEl.textContent = String(errors.length);
+        issuesListEl.textContent = '';
+        if (errors.length === 0) {
+          var empty = document.createElement('div');
+          empty.className = 'jlc-issue-empty';
+          empty.textContent = t.noIssues;
+          issuesListEl.appendChild(empty);
+          return;
+        }
+
+        errors.slice(0, 40).forEach(function (error) {
+          var row = document.createElement('div');
+          row.className = 'jlc-issue-row';
+
+          var line = document.createElement('span');
+          line.className = 'jlc-issue-line';
+          line.textContent = pageLang === 'en' ? t.line + ' ' + error.line : t.line + ' ' + error.line;
+
+          var message = document.createElement('span');
+          message.className = 'jlc-issue-message';
+          message.textContent = error.message;
+
+          var preview = document.createElement('span');
+          preview.className = 'jlc-issue-preview';
+          preview.textContent = error.preview ? t.preview + ': ' + error.preview : '';
+
+          row.appendChild(line);
+          row.appendChild(message);
+          row.appendChild(preview);
+          issuesListEl.appendChild(row);
+        });
+      }
+
+      function validateJsonl() {
+        var result = parseJsonl(jsonlEl.value, ignoreEmptyEl.checked);
+        updateStats(result);
+        renderIssues(result.errors);
+        setInputError(jsonlEl, result.errors.length > 0);
+        if (!jsonlEl.value.trim()) {
+          clearStatus();
+        } else if (result.errors.length > 0) {
+          setStatus(t.strictErrors, 'error');
+        } else {
+          setStatus(t.validJsonl, 'success');
+        }
+        return result;
+      }
+
+      function compactJsonlFromValues(values) {
+        return values.map(function (record) {
+          return JSON.stringify(record.value);
+        }).join('\n');
+      }
+
+      function convertJsonlToJson() {
+        var result = parseJsonl(jsonlEl.value, ignoreEmptyEl.checked);
+        updateStats(result);
+        renderIssues(result.errors);
+        setInputError(jsonlEl, result.errors.length > 0);
+
+        if (!jsonlEl.value.trim()) {
+          setStatus(t.emptyInput, 'none');
+          return;
+        }
+        if (result.errors.length > 0 && !validOnlyEl.checked) {
+          setStatus(t.strictErrors, 'error');
+          return;
+        }
+
+        var values = result.values.map(function (record) { return record.value; });
+        var json = JSON.stringify(values, null, prettyJsonEl.checked ? 2 : 0);
+        var jsonl = compactJsonlFromValues(result.values);
+        jsonEl.value = json;
+        lastJsonOutput = json;
+        lastJsonlOutput = jsonl;
+        setStatus(msg(t.convertedToJson, { n: values.length }), result.errors.length > 0 ? 'info' : 'success');
+        window.trackTool && window.trackTool('jsonl-converter', 'jsonl_to_json');
+      }
+
+      function convertJsonToJsonl() {
+        var raw = jsonEl.value.trim();
+        if (!raw) {
+          setStatus(t.emptyInput, 'none');
+          return;
+        }
+
+        try {
+          var parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) {
+            throw new Error(t.jsonArrayRequired);
+          }
+          var lines = parsed.map(function (item) {
+            return JSON.stringify(item);
+          });
+          var jsonl = lines.join('\n');
+          jsonlEl.value = jsonl;
+          lastJsonlOutput = jsonl;
+          lastJsonOutput = JSON.stringify(parsed, null, prettyJsonEl.checked ? 2 : 0);
+          setInputError(jsonEl, false);
+          var result = parseJsonl(jsonl, true);
+          updateStats(result);
+          renderIssues(result.errors);
+          setInputError(jsonlEl, false);
+          setStatus(msg(t.convertedToJsonl, { n: parsed.length }), 'success');
+          window.trackTool && window.trackTool('jsonl-converter', 'json_to_jsonl');
+        } catch (e) {
+          setInputError(jsonEl, true);
+          setStatus(t.invalidJson + ': ' + e.message, 'error');
+        }
+      }
+
+      function copyText(text, button) {
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          button.textContent = t.copied;
+          setTimeout(function () { button.textContent = t.copy; }, 1500);
+        });
+      }
+
+      function downloadText(filename, type, text) {
+        if (!text) {
+          setStatus(t.emptyInput, 'none');
+          return;
+        }
+        var blob = new Blob([text], { type: type });
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 250);
+        setStatus(t.downloadReady, 'success');
+      }
+
+      function openFile(target) {
+        pendingFileTarget = target;
+        fileEl.value = '';
+        fileEl.click();
+      }
+
+      function loadSample() {
+        jsonlEl.value = [
+          '{"id":1,"event":"signup","user":"alice","plan":"free"}',
+          '{"id":2,"event":"purchase","user":"bob","amount":29.99}',
+          '{"id":3,"event":"cancel","user":"carol","reason":"duplicate"}'
+        ].join('\n');
+        convertJsonlToJson();
+      }
+
+      document.getElementById('jlc-to-json').addEventListener('click', convertJsonlToJson);
+      document.getElementById('jlc-to-jsonl').addEventListener('click', convertJsonToJsonl);
+      document.getElementById('jlc-validate').addEventListener('click', function () {
+        validateJsonl();
+        window.trackTool && window.trackTool('jsonl-converter', 'validate');
+      });
+      document.getElementById('jlc-clear').addEventListener('click', function () {
+        jsonlEl.value = '';
+        jsonEl.value = '';
+        lastJsonOutput = '';
+        lastJsonlOutput = '';
+        updateStats({ total: 0, valid: 0, empty: 0, errors: [] });
+        renderIssues([]);
+        setInputError(jsonlEl, false);
+        setInputError(jsonEl, false);
+        clearStatus();
+      });
+      document.getElementById('jlc-load-sample').addEventListener('click', loadSample);
+      document.getElementById('jlc-open-jsonl').addEventListener('click', function () { openFile('jsonl'); });
+      document.getElementById('jlc-open-json').addEventListener('click', function () { openFile('json'); });
+      document.getElementById('jlc-download-json').addEventListener('click', function () {
+        var output = jsonEl.value.trim() || lastJsonOutput;
+        downloadText('jsonl-converted.json', 'application/json;charset=utf-8', output);
+      });
+      document.getElementById('jlc-download-jsonl').addEventListener('click', function () {
+        var result = parseJsonl(jsonlEl.value, true);
+        var output = compactJsonlFromValues(result.values) || lastJsonlOutput || jsonlEl.value.trim();
+        downloadText('jsonl-converted.jsonl', 'application/x-ndjson;charset=utf-8', output);
+      });
+      copyJsonlBtn.addEventListener('click', function () {
+        copyText(jsonlEl.value || lastJsonlOutput, copyJsonlBtn);
+      });
+      copyJsonBtn.addEventListener('click', function () {
+        copyText(jsonEl.value || lastJsonOutput, copyJsonBtn);
+      });
+
+      fileEl.addEventListener('change', function () {
+        var file = fileEl.files && fileEl.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+          var text = String(reader.result || '');
+          if (pendingFileTarget === 'json') {
+            jsonEl.value = text;
+            convertJsonToJsonl();
+          } else {
+            jsonlEl.value = text;
+            validateJsonl();
+          }
+          setStatus(msg(t.fileLoaded, { name: file.name }), 'success');
+        };
+        reader.onerror = function () {
+          setStatus(t.fileReadError, 'error');
+        };
+        reader.readAsText(file);
+      });
+
+      var jsonlTimer = null;
+      jsonlEl.addEventListener('input', function () {
+        clearTimeout(jsonlTimer);
+        jsonlTimer = setTimeout(validateJsonl, 350);
+      });
+
+      ignoreEmptyEl.addEventListener('change', validateJsonl);
+      validOnlyEl.addEventListener('change', validateJsonl);
+      prettyJsonEl.addEventListener('change', function () {
+        if (jsonlEl.value.trim()) convertJsonlToJson();
+      });
+
+      jsonlEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          convertJsonlToJson();
+        }
+      });
+      jsonEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          convertJsonToJsonl();
+        }
+      });
+
+      renderIssues([]);
+    })();
+  </script>
+</div>
+
+<style is:global>
+  .jlc-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .jlc-panels {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem;
+  }
+
+  .jlc-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .jlc-panel label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    color: var(--color-text-secondary);
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
+
+  .jlc-label-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
+  }
+
+  .jlc-panel textarea {
+    min-height: 260px;
+  }
+
+  .jlc-panel textarea.jlc-input-error {
+    box-shadow: inset 0 0 0 1px var(--color-danger), 0 0 0 4px color-mix(in oklch, var(--color-danger) 14%, transparent);
+  }
+
+  .jlc-file {
+    display: none;
+  }
+
+  .jlc-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .jlc-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem 1rem;
+    align-items: center;
+    padding: 0.65rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .jlc-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-size: 0.86rem;
+    font-weight: 650;
+  }
+
+  .jlc-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+
+  .jlc-stat {
+    min-height: 64px;
+    padding: 0.7rem 0.8rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .jlc-stat-value {
+    display: block;
+    color: var(--color-primary);
+    font-family: var(--font-mono);
+    font-size: 1.25rem;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+
+  .jlc-stat-label {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-weight: 750;
+    text-transform: uppercase;
+  }
+
+  .jlc-issues {
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    overflow: hidden;
+  }
+
+  .jlc-issues-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    padding: 0.65rem 0.8rem;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    background: var(--color-surface-muted);
+  }
+
+  .jlc-issues-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 240px;
+    overflow: auto;
+  }
+
+  .jlc-issue-empty,
+  .jlc-issue-row {
+    padding: 0.62rem 0.8rem;
+    color: var(--color-text-secondary);
+    font-size: 0.85rem;
+  }
+
+  .jlc-issue-row {
+    display: grid;
+    grid-template-columns: minmax(72px, 0.28fr) minmax(0, 0.7fr) minmax(0, 1fr);
+    gap: 0.65rem;
+    border-top: 1px solid var(--color-border-soft);
+  }
+
+  .jlc-issue-line {
+    color: var(--color-primary);
+    font-family: var(--font-mono);
+    font-weight: 800;
+  }
+
+  .jlc-issue-message {
+    color: var(--color-danger);
+    overflow-wrap: anywhere;
+  }
+
+  .jlc-issue-preview {
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 760px) {
+    .jlc-panels,
+    .jlc-stats {
+      grid-template-columns: 1fr;
+    }
+
+    .jlc-panel textarea {
+      min-height: 190px;
+    }
+
+    .jlc-panel label {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .jlc-label-actions {
+      justify-content: flex-start;
+    }
+
+    .jlc-issue-row {
+      grid-template-columns: 1fr;
+      gap: 0.25rem;
+    }
+  }
+</style>

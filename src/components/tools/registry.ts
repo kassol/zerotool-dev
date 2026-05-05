@@ -99,6 +99,7 @@ import CssClipPathGeneratorTool from './CssClipPathGeneratorTool.astro';
 import ColorPaletteGeneratorTool from './ColorPaletteGeneratorTool.astro';
 import StringEscapeTool from './StringEscapeTool.astro';
 import JsonXmlConverterTool from './JsonXmlConverterTool.astro';
+import JsonlConverterTool from './JsonlConverterTool.astro';
 import CssFilterGeneratorTool from './CssFilterGeneratorTool.astro';
 import CronJobGeneratorTool from './CronJobGeneratorTool.astro';
 import WifiQrCodeGeneratorTool from './WifiQrCodeGeneratorTool.astro';
@@ -205,6 +206,7 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'color-palette-generator': ColorPaletteGeneratorTool,
   'string-escape': StringEscapeTool,
   'json-xml-converter': JsonXmlConverterTool,
+  'jsonl-converter': JsonlConverterTool,
   'css-filter-generator': CssFilterGeneratorTool,
   'cron-job-generator': CronJobGeneratorTool,
   'wifi-qr-code-generator': WifiQrCodeGeneratorTool,
