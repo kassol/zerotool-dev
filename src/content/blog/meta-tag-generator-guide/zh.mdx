@@ -1,0 +1,176 @@
+---
+title: "Meta 标签生成器：一个页面，四类受众"
+description: "一键生成完整 <head> Meta 区块——Open Graph、Twitter 卡片、Schema.org JSON-LD 与 SEO 基础项。覆盖 og:image 规范、canonical URL 易踩坑点与各平台差异。"
+pubDate: 2026-05-05
+lang: "zh"
+tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
+ogImage: /og/blog-meta-tag-generator-guide-zh.png
+---
+
+页面写好了，部署按钮就差一下点击，而你的 `<head>` 即将被四类受众读到：Google 的爬虫、Facebook 的 unfurl 机器人、Twitter 的卡片抓取器、Discord 的链接预览。它们都不像人那样看渲染好的 HTML 正文——它们看的是 meta 标签。
+
+[立即生成完整 &lt;head&gt; 区块 →](/zh/tools/meta-tag-generator/)
+
+## 页面元数据的四个层次
+
+现代页面 head 回答四个独立问题：
+
+| 层级 | 受众 | 核心标签 |
+|------|------|----------|
+| 基础 SEO | 搜索引擎、浏览器 | `title`、`description`、`canonical`、`robots`、`viewport` |
+| Open Graph | Facebook、LinkedIn、Slack、iMessage、Discord | `og:title`、`og:description`、`og:image`、`og:url`、`og:type` |
+| Twitter Card | Twitter / X | `twitter:card`、`twitter:image`、`twitter:site` |
+| Schema.org JSON-LD | Google 富结果、语音助手 | `<script type="application/ld+json">` |
+
+这些层级并不冗余。每一层都由不同厂商设计、回答其他层级不答的问题。搜索引擎不读 Open Graph 来生成展开预览，Facebook 也不读 Schema.org 来生成分享卡片。少写哪一层，那一类受众就会回退到猜——通常猜得很糟。
+
+## 社交卡片必备的五行
+
+可写的 meta 标签有几十个，但当链接被分享出去时，五行承担了大部分工作量：
+
+```html
+<title>文章标题 — 品牌名</title>
+<meta name="description" content="一句话简介，控制在 160 字符以内。">
+<link rel="canonical" href="https://example.com/article/">
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:type" content="article">
+```
+
+其余都是锦上添花。如果只来得及写五行，就写这五行。
+
+## og:image：把所有人都坑过的规范
+
+Slack 或 Discord 的预览看起来不对劲，最常见的原因就是 `og:image` 出了问题。这个规范一点也不宽容：
+
+**尺寸**。1200x630 像素（1.91:1）是 Facebook、LinkedIn、Discord 渲染最稳定的安全默认值；Twitter 的 `summary_large_image` 期望 2:1，所以 1200x600 也行。小于 200x200 的图会被部分抓取器直接拒绝。
+
+**格式**。PNG 或 JPEG。WebP 支持参差不齐，SVG 虽然是合法 HTML 但每一个社交抓取器都会忽略。
+
+**绝对 URL**。`og:image` 必须是带 scheme 与 host 的绝对 URL。`/og/article.png` 这样的相对路径会静默失败——Facebook 调试器会报「图片找不到」却不告诉你为什么。
+
+**可达性**。抓取器按需拉取这个 URL。如果你的 CDN 慢、被 CAPTCHA 挡住、或返回的 `Content-Type` 错成 `text/html` 而不是 `image/png`，预览就会回退到一个通用站点缩略图。
+
+**缓存**。Facebook 会把抓取结果缓存数小时甚至数天。修好 `og:image` 之后，到 [Sharing Debugger](https://developers.facebook.com/tools/debug/) 点 Scrape Again 强制刷新。
+
+每张图都要同时声明宽高：
+
+```html
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="文章封面，标题以大号白色衬线字体显示在绿色背景上。">
+```
+
+宽高让 Discord 和 Slack 在图片加载前预留布局空间；alt 会在 unfurl 出现在聊天里时被屏幕阅读器朗读。
+
+## Canonical URL：错值会拆散你的分享数
+
+`<link rel="canonical">` 同时承担 `og:url` 的角色，告诉爬虫和 unfurl 机器人：当同一页面通过多条路径都能访问时，哪个 URL 才是权威版本。
+
+同一篇文章出现多个 URL 的常见原因：
+
+- `https://example.com/post/` 和 `https://example.com/post`
+- `https://example.com/post` 和 `https://www.example.com/post`
+- `?utm_source=twitter` 与不带参数的版本
+- `https://example.com/post` 和 `https://example.com/post?ref=newsletter`
+
+其中两个被分享出去时，Facebook 会把它们当成不同链接，各自累计分享数。作者看着较低的那个数字，以为这篇没火。在页面上设置 canonical URL，就能把所有变体折叠成一条记录。
+
+如果路由带尾部斜杠，canonical URL 也必须带。ZeroTool 的静态构建始终输出尾部斜杠，canonical 不一致就会破坏去重。
+
+## 不依赖 schema 库手写 JSON-LD
+
+JSON-LD 不过是塞进 `<script type="application/ld+json">` 的 JSON。Google 的富结果解析器对字段顺序和空白宽容，但对几件事很严格：
+
+- 必须有 `"@context": "https://schema.org"`。
+- 必须有 `"@type"`，匹配 [Schema.org 列出的类型](https://schema.org/docs/full.html) 之一。
+- 所有 URL 必须是绝对 URL。
+- 日期用 ISO 8601（写 `2026-05-05`，不要写 `May 5 2026`）。
+- 重复的结构化字段（作者、面包屑项）即使只有一个元素也要用数组。
+
+最小化的 `Article`：
+
+```html
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Meta Tag Generator: One Page, Four Audiences",
+  "description": "Build a complete head meta block...",
+  "url": "https://example.com/blog/meta-tag-generator-guide/",
+  "image": "https://example.com/og/article.png",
+  "datePublished": "2026-05-05",
+  "author": { "@type": "Person", "name": "Jane Doe" }
+}
+</script>
+```
+
+Schema.org 文档里那些字段不必每个都写。Google 在富结果资格说明里列出了每种结果类型的必填字段——从那里开始，等真的有数据再补其他字段。
+
+## 验证你发布的版本
+
+四个免费工具覆盖四类受众：
+
+| 工具 | 验证内容 | URL |
+|------|----------|-----|
+| Facebook Sharing Debugger | og:* 标签、抓取结果、缓存预览 | https://developers.facebook.com/tools/debug/ |
+| Twitter Card Validator | twitter:* 标签（被 X 弃用，但仍可用） | https://cards-dev.twitter.com/validator |
+| LinkedIn Post Inspector | 模拟 LinkedIn 渲染 og:* 标签 | https://www.linkedin.com/post-inspector/ |
+| Google Rich Results Test | JSON-LD 资格、结构化数据警告 | https://search.google.com/test/rich-results |
+
+Discord 和 Slack 没有公开调试器——它们抓取并激进缓存，最直接的验证方式就是把链接粘到一个私有频道里看效果。
+
+第五个检查是 `view-source:`（Chrome 里 Cmd+Option+U）。盯一下重复的 `og:title`、缺失的 `og:image`、以及任何 `content` 是字面字符串 `undefined` 的标签——后者通常意味着模板引擎吞掉了一个空变量。
+
+## 常见踩坑
+
+**多个 `og:image` 标签**。不同抓取器有的取首个、有的取末个、有的合并。务必只发一张主图；如果还要列尺寸更小的备选，用 `og:image:secure_url` 来声明。
+
+**`og:url` 与实际 URL 不一致**。这是致命错误，先修 canonical URL 再去查别的。
+
+**设了 `robots: noindex` 还指望 og:* 起效**。og:* 仍会工作——社交抓取器不读 robots——但搜索引擎不会索引这个页面，富预览也不会出现在 SERP 里。
+
+**写死的 `og:image:width` 与实际文件尺寸不符**。Discord 信任你声明的尺寸来排版。如果文件是 1200x600 而你声明了 1200x630，预览会被怪异裁切。
+
+**JSON-LD 带尾随逗号或未转义引号**。多数 JS 验证器接受，但 Google 的严格解析器会判定页面没有富结果资格。发布前用 JSON linter 跑一遍。
+
+**两个页面用了相同的 canonical URL**。爬虫会挑一个，彻底忽略另一个。这通常发生在 CMS 模板忘了为分页归档页更新 canonical。
+
+## 内联生成
+
+如果你直接在模板引擎里输出 meta 标签，逻辑足够小可以内联保留。JavaScript 模板：
+
+```javascript
+function metaBlock({ title, description, canonical, image, type = 'website' }) {
+  const esc = (s) => String(s ?? '').replace(/"/g, '&quot;');
+  return `
+    <title>${esc(title)}</title>
+    <meta name="description" content="${esc(description)}">
+    <link rel="canonical" href="${esc(canonical)}">
+    <meta property="og:type" content="${esc(type)}">
+    <meta property="og:title" content="${esc(title)}">
+    <meta property="og:description" content="${esc(description)}">
+    <meta property="og:url" content="${esc(canonical)}">
+    <meta property="og:image" content="${esc(image)}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="${esc(title)}">
+    <meta name="twitter:description" content="${esc(description)}">
+    <meta name="twitter:image" content="${esc(image)}">
+  `.trim();
+}
+```
+
+转义很关键——title 里未转义的引号会让整个区块静默失效。
+
+## 相关工具
+
+- [Robots.txt 生成器](/zh/tools/robots-txt-generator/) — 配合 meta 标签设置爬虫规则
+- [Favicon 生成器](/zh/tools/favicon-generator/) — 生成 `<head>` 引用的图标包
+- [URL 解析器](/zh/tools/url-parser/) — 发布前验证 canonical URL 是否合规
+
+## 参考资料
+
+- [Open Graph protocol](https://ogp.me/) — 原始规范
+- [Twitter — Cards Markup](https://developer.twitter.com/en/docs/twitter-for-websites/cards/overview/markup) — `twitter:*` 参考
+- [Schema.org](https://schema.org/docs/gs.html) — 入门
+- [Google — Control your snippets](https://developers.google.com/search/docs/appearance/snippet) — `description` 如何变成搜索片段

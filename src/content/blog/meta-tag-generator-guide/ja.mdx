@@ -1,0 +1,176 @@
+---
+title: "Meta タグジェネレーター：1 つのページ、4 つの観客"
+description: "<head> メタブロックを一括生成 — Open Graph・Twitter カード・Schema.org JSON-LD・SEO 基本項目。og:image の仕様、正規 URL の落とし穴、各プラットフォーム固有の癖までカバー。"
+pubDate: 2026-05-05
+lang: "ja"
+tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
+ogImage: /og/blog-meta-tag-generator-guide-ja.png
+---
+
+ページは仕上がり、デプロイボタンまであと一押し。あなたの `<head>` を読みに来るのは 4 種類の観客 ── Google のクローラー、Facebook の unfurl ボット、Twitter のカードスクレイパー、Discord のリンクプレビュー。どれも人間のようにレンダリング後の HTML 本文を見るわけではなく、メタタグだけを見ています。
+
+[完全な &lt;head&gt; ブロックを今すぐ生成 →](/ja/tools/meta-tag-generator/)
+
+## ページメタデータの 4 つのレイヤー
+
+現代のページ head は、4 つの独立した問いに答えています：
+
+| レイヤー | 観客 | 主要タグ |
+|----------|------|----------|
+| 基本 SEO | 検索エンジン、ブラウザ | `title`、`description`、`canonical`、`robots`、`viewport` |
+| Open Graph | Facebook、LinkedIn、Slack、iMessage、Discord | `og:title`、`og:description`、`og:image`、`og:url`、`og:type` |
+| Twitter カード | Twitter / X | `twitter:card`、`twitter:image`、`twitter:site` |
+| Schema.org JSON-LD | Google リッチリザルト、音声アシスタント | `<script type="application/ld+json">` |
+
+これらは冗長ではありません。各レイヤーはベンダーごとに設計されており、他のレイヤーが答えない問いに答えます。検索エンジンは unfurl のために Open Graph を読みませんし、Facebook はシェアプレビューのために Schema.org を読みません。あるレイヤーを省くと、その観客は推測に頼ることになり、たいてい外します。
+
+## ソーシャルカードに必須の 5 行
+
+書けるメタタグは数十種類ありますが、リンクがシェアされる場面で重みを持つのはこの 5 行です：
+
+```html
+<title>記事タイトル — ブランド</title>
+<meta name="description" content="160 文字以内に収めた一文の要約。">
+<link rel="canonical" href="https://example.com/article/">
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:type" content="article">
+```
+
+それ以外は飾りです。5 行しか書けない時間しかなくても、この 5 行は書いてください。
+
+## og:image：誰もがハマる仕様
+
+Slack や Discord のプレビューが妙な見た目になる最大の原因は、たいてい `og:image` の問題です。この仕様には容赦がありません：
+
+**サイズ**。1200x630 ピクセル（1.91:1）が、Facebook・LinkedIn・Discord で最も安定して描画される安全な既定値です。Twitter の `summary_large_image` は 2:1 を期待するため、1200x600 でも問題なく動きます。200x200 より小さい画像は、一部のスクレイパーから即座に拒否されます。
+
+**フォーマット**。PNG または JPEG。WebP のサポートはまちまちで、SVG は HTML として正当でも全てのソーシャルスクレイパーに無視されます。
+
+**絶対 URL**。`og:image` は scheme と host を備えた絶対 URL でなければなりません。`/og/article.png` のような相対パスは黙って失敗します ── Facebook デバッガーは「画像が見つかりません」と表示しますが、理由までは教えてくれません。
+
+**到達性**。スクレイパーはオンデマンドでこの URL を取得します。CDN が遅い、CAPTCHA に阻まれる、画像の `Content-Type` が `image/png` ではなく `text/html` で返るといった事情があると、プレビューは汎用的なサイトサムネイルにフォールバックします。
+
+**キャッシュ**。Facebook はスクレイプ結果を数時間から数日キャッシュします。`og:image` を直したあとは、[Sharing Debugger](https://developers.facebook.com/tools/debug/) を開いて Scrape Again を押し、強制再取得させてください。
+
+画像の幅と高さは必ず一緒に宣言します：
+
+```html
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="記事カバー画像。緑の背景に大きな白いセリフ体でタイトルが入っている。">
+```
+
+サイズが分かると、Discord や Slack は画像読み込み前にレイアウトの場所を確保できます。alt は unfurl がチャットに現れた時にスクリーンリーダーが読み上げるテキストです。
+
+## 正規 URL：誤った値はシェア数を分断する
+
+`<link rel="canonical">` は同時に `og:url` の役割も担い、同じページが複数のパスから到達できる時に「どの URL が正本か」をクローラーや unfurl ボットに伝えます。
+
+同じ記事が複数の URL を持つよくある原因：
+
+- `https://example.com/post/` と `https://example.com/post`
+- `https://example.com/post` と `https://www.example.com/post`
+- `?utm_source=twitter` と素のままの URL
+- `https://example.com/post` と `https://example.com/post?ref=newsletter`
+
+このうち 2 つがシェアされると、Facebook は別々のリンクと見なし、それぞれ独立してシェア数を積み上げます。著者は低い方の数字を見て「ウケなかった」と判断してしまう。ページに canonical URL を設定すれば、すべてのバリアントが 1 つのレコードに集約されます。
+
+ルーティングが末尾スラッシュ付きの URL を返すなら、canonical URL にも末尾スラッシュを付けてください。ZeroTool の静的ビルドは常に末尾スラッシュを出力するため、canonical の不一致は重複排除を壊します。
+
+## スキーマライブラリなしで JSON-LD を書く
+
+JSON-LD は `<script type="application/ld+json">` の中に置く JSON にすぎません。Google のリッチリザルト・パーサーはフィールドの順番や空白には寛容ですが、いくつかの点では厳格です：
+
+- `"@context": "https://schema.org"` は必須。
+- `"@type"` は必須で、[Schema.org のタイプ一覧](https://schema.org/docs/full.html) のいずれかと一致させる。
+- すべての URL は絶対 URL。
+- 日付は ISO 8601（`2026-05-05`、`May 5 2026` ではなく）。
+- 構造化フィールドの繰り返し（著者、パンくずアイテム）は要素 1 つでも配列。
+
+最小限の `Article`：
+
+```html
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Meta Tag Generator: One Page, Four Audiences",
+  "description": "Build a complete head meta block...",
+  "url": "https://example.com/blog/meta-tag-generator-guide/",
+  "image": "https://example.com/og/article.png",
+  "datePublished": "2026-05-05",
+  "author": { "@type": "Person", "name": "Jane Doe" }
+}
+</script>
+```
+
+Schema.org が説明する全フィールドを書く必要はありません。Google のリッチリザルト適格性ガイドが、結果タイプごとの必須フィールドを示しています ── そこから始めて、データが揃ってから残りを足していきましょう。
+
+## 公開した内容を検証する
+
+4 つの無料ツールが、4 種類の観客をカバーします：
+
+| ツール | 検証対象 | URL |
+|--------|----------|-----|
+| Facebook Sharing Debugger | og:* タグ、スクレイプ結果、キャッシュプレビュー | https://developers.facebook.com/tools/debug/ |
+| Twitter Card Validator | twitter:* タグ（X では非推奨だが現役） | https://cards-dev.twitter.com/validator |
+| LinkedIn Post Inspector | LinkedIn 視点で og:* タグを描画 | https://www.linkedin.com/post-inspector/ |
+| Google Rich Results Test | JSON-LD 適格性、構造化データの警告 | https://search.google.com/test/rich-results |
+
+Discord と Slack には公開デバッガーがありません ── 取得とキャッシュが攻撃的なので、プライベートチャンネルにメッセージを貼って実際の見た目を確認するのが一番直接的です。
+
+5 つ目のチェックは `view-source:`（Chrome なら Cmd+Option+U）。重複した `og:title`、欠落した `og:image`、`content` が文字列 `undefined` のまま残っているタグを目視で確認します。最後のものは、テンプレートエンジンが空変数を呑み込んだサインです。
+
+## よくある落とし穴
+
+**`og:image` タグが複数ある**。スクレイパーによって最初を取るか、最後を取るか、マージするかが分かれます。メイン画像は 1 枚だけを発信し、サイズ違いを併記したい場合は `og:image:secure_url` を使ってください。
+
+**`og:url` と実際の URL が一致しない**。これは致命的です。他を疑う前に canonical URL を直してください。
+
+**`robots: noindex` を入れたまま og:* が効くと思っている**。og:* は機能します ── ソーシャルスクレイパーは robots を読みません ── が、検索エンジンはページをインデックスしないので、リッチプレビューが SERP に出ることはありません。
+
+**ハードコードした `og:image:width` が実ファイルと食い違う**。Discord は宣言された寸法を信頼してレイアウトを組みます。実ファイルが 1200x600 なのに 1200x630 と書いてあると、プレビューが奇妙にトリミングされます。
+
+**JSON-LD に末尾カンマや未エスケープの引用符**。多くの JS バリデータは受理しますが、Google の厳格パーサーは「リッチリザルト不適格」と判定します。公開前に JSON linter で通しておきましょう。
+
+**2 つのページが同じ canonical URL を共有している**。クローラーは片方を選び、もう片方は完全に無視します。CMS テンプレートがページネーション付きアーカイブの canonical を更新し忘れた、というパターンが典型的です。
+
+## インラインで生成する
+
+テンプレートエンジンから直接メタタグを吐く場合、ロジックは小さくインラインで保てます。JavaScript テンプレート：
+
+```javascript
+function metaBlock({ title, description, canonical, image, type = 'website' }) {
+  const esc = (s) => String(s ?? '').replace(/"/g, '&quot;');
+  return `
+    <title>${esc(title)}</title>
+    <meta name="description" content="${esc(description)}">
+    <link rel="canonical" href="${esc(canonical)}">
+    <meta property="og:type" content="${esc(type)}">
+    <meta property="og:title" content="${esc(title)}">
+    <meta property="og:description" content="${esc(description)}">
+    <meta property="og:url" content="${esc(canonical)}">
+    <meta property="og:image" content="${esc(image)}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="${esc(title)}">
+    <meta name="twitter:description" content="${esc(description)}">
+    <meta name="twitter:image" content="${esc(image)}">
+  `.trim();
+}
+```
+
+エスケープが鍵です ── title 内のエスケープされていない引用符が、ブロック全体を黙って壊します。
+
+## 関連ツール
+
+- [Robots.txt ジェネレーター](/ja/tools/robots-txt-generator/) — メタタグと併せてクロールルールを設定
+- [Favicon ジェネレーター](/ja/tools/favicon-generator/) — `<head>` から参照されるアイコンセットを生成
+- [URL パーサー](/ja/tools/url-parser/) — 公開前に canonical URL の整形を確認
+
+## 参考資料
+
+- [Open Graph protocol](https://ogp.me/) — オリジナル仕様
+- [Twitter — Cards Markup](https://developer.twitter.com/en/docs/twitter-for-websites/cards/overview/markup) — `twitter:*` リファレンス
+- [Schema.org](https://schema.org/docs/gs.html) — はじめに
+- [Google — Control your snippets](https://developers.google.com/search/docs/appearance/snippet) — `description` がスニペットになるまで

@@ -1,0 +1,176 @@
+---
+title: "Meta 태그 생성기: 한 페이지, 네 종류의 청중"
+description: "<head> 메타 블록을 한 번에 생성 — Open Graph, Twitter 카드, Schema.org JSON-LD, SEO 기본 항목. og:image 사양, 표준 URL 함정, 플랫폼별 특이점까지 다룹니다."
+pubDate: 2026-05-05
+lang: "ko"
+tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
+ogImage: /og/blog-meta-tag-generator-guide-ko.png
+---
+
+페이지는 준비됐고 배포 버튼은 한 번의 클릭이면 충분합니다. 그리고 여러분의 `<head>`를 곧 네 종류의 청중이 읽게 됩니다 ── Google 크롤러, Facebook unfurl 봇, Twitter 카드 스크레이퍼, Discord 링크 미리보기. 누구도 사람처럼 렌더링된 HTML 본문을 보지 않습니다. 그들은 메타 태그만 봅니다.
+
+[완전한 &lt;head&gt; 블록을 지금 생성하기 →](/ko/tools/meta-tag-generator/)
+
+## 페이지 메타데이터의 네 가지 레이어
+
+현대 페이지 head는 네 가지 독립적인 질문에 답합니다:
+
+| 레이어 | 청중 | 핵심 태그 |
+|--------|------|-----------|
+| 기본 SEO | 검색 엔진, 브라우저 | `title`, `description`, `canonical`, `robots`, `viewport` |
+| Open Graph | Facebook, LinkedIn, Slack, iMessage, Discord | `og:title`, `og:description`, `og:image`, `og:url`, `og:type` |
+| Twitter 카드 | Twitter / X | `twitter:card`, `twitter:image`, `twitter:site` |
+| Schema.org JSON-LD | Google 리치 결과, 음성 어시스턴트 | `<script type="application/ld+json">` |
+
+이 레이어들은 중복이 아닙니다. 각 레이어는 다른 벤더가 설계했고 다른 레이어가 답하지 않는 질문에 답합니다. 검색 엔진은 unfurl을 위해 Open Graph를 읽지 않고, Facebook은 공유 미리보기를 위해 Schema.org를 읽지 않습니다. 한 레이어를 빼면 그 청중은 추측에 의존하게 되고, 대개 잘못 추측합니다.
+
+## 소셜 카드의 필수 다섯 줄
+
+쓸 수 있는 메타 태그는 수십 가지지만, 링크가 공유될 때 무게를 지탱하는 것은 다섯 줄입니다:
+
+```html
+<title>글 제목 — 브랜드</title>
+<meta name="description" content="160자 이내의 한 문장 요약.">
+<link rel="canonical" href="https://example.com/article/">
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:type" content="article">
+```
+
+나머지는 부가 요소입니다. 다섯 줄만 쓸 시간이 있다면, 이 다섯 줄을 쓰세요.
+
+## og:image: 누구나 한 번은 걸리는 사양
+
+Slack이나 Discord 미리보기가 이상하게 보이는 가장 흔한 이유는 `og:image` 문제입니다. 이 사양은 관대하지 않습니다:
+
+**크기**. 1200x630 픽셀(1.91:1)이 Facebook, LinkedIn, Discord에서 가장 안정적으로 렌더링되는 기본값입니다. Twitter의 `summary_large_image`는 2:1을 기대하므로 1200x600도 잘 동작합니다. 200x200 미만 이미지는 일부 스크레이퍼가 즉시 거부합니다.
+
+**포맷**. PNG 또는 JPEG. WebP 지원은 들쭉날쭉하고, SVG는 합법적인 HTML임에도 모든 소셜 스크레이퍼가 무시합니다.
+
+**절대 URL**. `og:image`는 scheme과 host가 포함된 절대 URL이어야 합니다. `/og/article.png` 같은 상대 경로는 조용히 실패합니다 ── Facebook 디버거는 "이미지를 찾을 수 없음"이라고 표시하지만 이유까지는 알려주지 않습니다.
+
+**도달 가능성**. 스크레이퍼는 필요할 때 그 URL을 가져옵니다. CDN이 느리거나, CAPTCHA로 막혀 있거나, 이미지가 `image/png`가 아닌 `text/html`로 반환되면 미리보기는 일반 사이트 썸네일로 폴백됩니다.
+
+**캐시**. Facebook은 스크레이프 결과를 몇 시간에서 며칠씩 캐싱합니다. `og:image`를 고친 후 [Sharing Debugger](https://developers.facebook.com/tools/debug/)에서 Scrape Again을 눌러 강제 새로고침하세요.
+
+이미지의 너비와 높이는 항상 함께 선언합니다:
+
+```html
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="글 커버, 녹색 배경에 큰 흰색 세리프체로 제목이 표시됨.">
+```
+
+크기 정보는 Discord와 Slack이 이미지 로딩 전에 레이아웃 공간을 확보하도록 돕습니다. alt 텍스트는 unfurl이 채팅에 나타날 때 스크린 리더가 읽어줍니다.
+
+## Canonical URL: 잘못된 값은 공유 수를 분산시킵니다
+
+`<link rel="canonical">`은 `og:url` 역할도 함께 합니다. 같은 페이지가 여러 경로로 도달 가능할 때, 어떤 URL이 정본인지 크롤러와 unfurl 봇에게 알려줍니다.
+
+같은 글이 여러 URL을 갖게 되는 흔한 이유:
+
+- `https://example.com/post/`와 `https://example.com/post`
+- `https://example.com/post`와 `https://www.example.com/post`
+- `?utm_source=twitter`와 파라미터 없는 URL
+- `https://example.com/post`와 `https://example.com/post?ref=newsletter`
+
+이 중 두 개가 공유되면 Facebook은 그것들을 별개의 링크로 취급하고, 각각 독립적으로 공유 수를 누적합니다. 작성자는 낮은 숫자를 보고 "이 글은 망했다"고 판단하기 쉽습니다. 페이지에 canonical URL을 설정하면 모든 변형이 하나의 레코드로 합쳐집니다.
+
+라우팅이 후행 슬래시를 사용한다면 canonical URL에도 슬래시를 붙여야 합니다. ZeroTool의 정적 빌드는 항상 후행 슬래시를 출력하므로, canonical 불일치는 중복 제거를 무너뜨립니다.
+
+## 스키마 라이브러리 없이 JSON-LD 작성하기
+
+JSON-LD는 그저 `<script type="application/ld+json">` 안에 들어가는 JSON일 뿐입니다. Google 리치 결과 파서는 필드 순서와 공백에는 관대하지만 몇 가지에는 엄격합니다:
+
+- `"@context": "https://schema.org"`는 필수.
+- `"@type"`은 필수이며 [Schema.org의 타입 목록](https://schema.org/docs/full.html) 중 하나와 일치해야 합니다.
+- 모든 URL은 절대 URL이어야 합니다.
+- 날짜는 ISO 8601(`2026-05-05`, `May 5 2026`이 아님).
+- 반복되는 구조 필드(저자, 브레드크럼 항목)는 원소가 하나여도 배열로 작성합니다.
+
+최소한의 `Article`:
+
+```html
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Meta Tag Generator: One Page, Four Audiences",
+  "description": "Build a complete head meta block...",
+  "url": "https://example.com/blog/meta-tag-generator-guide/",
+  "image": "https://example.com/og/article.png",
+  "datePublished": "2026-05-05",
+  "author": { "@type": "Person", "name": "Jane Doe" }
+}
+</script>
+```
+
+Schema.org가 문서화한 모든 필드를 채울 필요는 없습니다. Google의 리치 결과 적격성 가이드가 결과 유형별 필수 필드를 알려줍니다 ── 거기서 시작하고, 실제 데이터가 있을 때만 나머지를 추가하세요.
+
+## 배포한 내용을 검증하기
+
+네 가지 무료 도구가 네 종류의 청중을 커버합니다:
+
+| 도구 | 검사 대상 | URL |
+|------|-----------|-----|
+| Facebook Sharing Debugger | og:* 태그, 스크레이프 결과, 캐시된 미리보기 | https://developers.facebook.com/tools/debug/ |
+| Twitter Card Validator | twitter:* 태그(X에서 deprecated, 그러나 동작) | https://cards-dev.twitter.com/validator |
+| LinkedIn Post Inspector | LinkedIn 관점에서 og:* 태그 렌더링 | https://www.linkedin.com/post-inspector/ |
+| Google Rich Results Test | JSON-LD 적격성, 구조화 데이터 경고 | https://search.google.com/test/rich-results |
+
+Discord와 Slack은 공개 디버거가 없습니다 ── 가져와 공격적으로 캐싱하므로, 가장 직접적인 방법은 비공개 채널에 메시지를 붙여서 실제 모습을 확인하는 것입니다.
+
+다섯 번째 점검은 `view-source:`(Chrome에서 Cmd+Option+U). 중복된 `og:title`, 누락된 `og:image`, 그리고 `content`가 문자 그대로 `undefined`인 태그를 살피세요 ── 마지막은 템플릿 엔진이 빈 변수를 삼킨 흔적입니다.
+
+## 흔한 함정
+
+**`og:image` 태그가 여러 개**. 스크레이퍼에 따라 첫 번째를 고르거나, 마지막을 고르거나, 합칩니다. 메인 이미지는 정확히 한 장만 보내고, 작은 변형을 함께 노출하고 싶다면 `og:image:secure_url`로 선언하세요.
+
+**`og:url`이 실제 URL과 일치하지 않음**. 치명적입니다. 다른 것을 디버깅하기 전에 canonical URL부터 고치세요.
+
+**`robots: noindex`를 설정하고도 og:*가 노출되리라 기대**. og:*는 동작합니다 ── 소셜 스크레이퍼는 robots를 읽지 않습니다 ── 그러나 검색 엔진은 페이지를 색인하지 않으므로 SERP의 리치 미리보기에는 절대 나타나지 않습니다.
+
+**하드코딩된 `og:image:width`가 실제 파일과 다름**. Discord는 선언된 치수를 신뢰해 레이아웃을 잡습니다. 파일이 1200x600인데 1200x630이라고 적었다면 미리보기가 어색하게 잘립니다.
+
+**후행 쉼표나 이스케이프되지 않은 따옴표가 있는 JSON-LD**. 대부분의 JS 검증기는 받아들이지만 Google의 엄격한 파서는 페이지를 리치 결과 부적격으로 판정합니다. 배포 전에 JSON linter로 한 번 검사하세요.
+
+**두 페이지가 같은 canonical URL을 공유**. 크롤러는 한쪽을 고르고 다른 쪽은 완전히 무시합니다. CMS 템플릿이 페이지네이션된 아카이브의 canonical 업데이트를 깜빡한 경우에 흔히 발생합니다.
+
+## 인라인으로 생성하기
+
+템플릿 엔진에서 직접 메타 태그를 출력한다면 로직은 인라인으로 유지할 만큼 작습니다. JavaScript 템플릿:
+
+```javascript
+function metaBlock({ title, description, canonical, image, type = 'website' }) {
+  const esc = (s) => String(s ?? '').replace(/"/g, '&quot;');
+  return `
+    <title>${esc(title)}</title>
+    <meta name="description" content="${esc(description)}">
+    <link rel="canonical" href="${esc(canonical)}">
+    <meta property="og:type" content="${esc(type)}">
+    <meta property="og:title" content="${esc(title)}">
+    <meta property="og:description" content="${esc(description)}">
+    <meta property="og:url" content="${esc(canonical)}">
+    <meta property="og:image" content="${esc(image)}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="${esc(title)}">
+    <meta name="twitter:description" content="${esc(description)}">
+    <meta name="twitter:image" content="${esc(image)}">
+  `.trim();
+}
+```
+
+이스케이프가 핵심입니다 ── title 내부에 이스케이프되지 않은 따옴표가 있으면 블록 전체가 조용히 깨집니다.
+
+## 관련 도구
+
+- [Robots.txt 생성기](/ko/tools/robots-txt-generator/) — 메타 태그와 함께 크롤 규칙 설정
+- [Favicon 생성기](/ko/tools/favicon-generator/) — `<head>`에서 참조하는 아이콘 세트 생성
+- [URL 파서](/ko/tools/url-parser/) — 배포 전에 canonical URL 형식 확인
+
+## 참고 자료
+
+- [Open Graph protocol](https://ogp.me/) — 원본 사양
+- [Twitter — Cards Markup](https://developer.twitter.com/en/docs/twitter-for-websites/cards/overview/markup) — `twitter:*` 레퍼런스
+- [Schema.org](https://schema.org/docs/gs.html) — 시작하기
+- [Google — Control your snippets](https://developers.google.com/search/docs/appearance/snippet) — `description`이 스니펫이 되는 과정
