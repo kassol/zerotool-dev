@@ -108,6 +108,7 @@ import FaviconGeneratorTool from './FaviconGeneratorTool.astro';
 import ColorContrastCheckerTool from './ColorContrastCheckerTool.astro';
 import CubicBezierGeneratorTool from './CubicBezierGeneratorTool.astro';
 import MetaTagGeneratorTool from './MetaTagGeneratorTool.astro';
+import GitignoreGeneratorTool from './GitignoreGeneratorTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -216,4 +217,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'color-contrast-checker': ColorContrastCheckerTool,
   'cubic-bezier-generator': CubicBezierGeneratorTool,
   'meta-tag-generator': MetaTagGeneratorTool,
+  'gitignore-generator': GitignoreGeneratorTool,
 };

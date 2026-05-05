@@ -1,0 +1,668 @@
+---
+// GitignoreGeneratorTool — pick stack templates and merge into a single .gitignore.
+import { gitignoreTemplates } from '../../data/gitignore-templates';
+
+const templateMeta = gitignoreTemplates.map((t) => ({ id: t.id, name: t.name, group: t.group }));
+const counts = {
+  languages: templateMeta.filter((t) => t.group === 'languages').length,
+  globals: templateMeta.filter((t) => t.group === 'globals').length,
+};
+---
+<div>
+  <div class="gig-wrap">
+
+    <!-- Search + bulk clear -->
+    <div class="gig-controls">
+      <input
+        id="gig-search"
+        class="tool-input gig-search"
+        type="search"
+        spellcheck="false"
+        autocomplete="off"
+        data-i18n-ph="searchPlaceholder"
+      />
+      <button id="gig-clear-all" class="btn-ghost gig-clear-all" type="button" data-i18n="clearAll" hidden>Clear all</button>
+    </div>
+
+    <!-- Selected chips -->
+    <div id="gig-chips" class="gig-chips" aria-live="polite"></div>
+
+    <!-- Template groups -->
+    <div class="gig-groups">
+      <details class="gig-group" data-group="languages" open>
+        <summary class="gig-group-summary">
+          <span class="gig-group-arrow" aria-hidden="true">▾</span>
+          <span class="gig-group-title" data-i18n="groupLanguages">Languages &amp; Frameworks</span>
+          <span class="gig-group-count">
+            <span class="gig-group-selected" id="gig-selected-languages">0</span>
+            <span class="gig-group-divider">/</span>
+            <span class="gig-group-total">{counts.languages}</span>
+          </span>
+        </summary>
+        <div class="gig-group-grid" id="gig-grid-languages"></div>
+      </details>
+
+      <details class="gig-group" data-group="globals" open>
+        <summary class="gig-group-summary">
+          <span class="gig-group-arrow" aria-hidden="true">▾</span>
+          <span class="gig-group-title" data-i18n="groupGlobals">IDEs, OS &amp; Tools</span>
+          <span class="gig-group-count">
+            <span class="gig-group-selected" id="gig-selected-globals">0</span>
+            <span class="gig-group-divider">/</span>
+            <span class="gig-group-total">{counts.globals}</span>
+          </span>
+        </summary>
+        <div class="gig-group-grid" id="gig-grid-globals"></div>
+      </details>
+    </div>
+
+    <p id="gig-no-results" class="gig-no-results" hidden data-i18n="noResults">No templates match your search.</p>
+
+    <!-- Custom additions -->
+    <details class="gig-custom-details">
+      <summary class="gig-custom-summary" data-i18n="customSummary">Add custom rules (optional)</summary>
+      <textarea
+        id="gig-custom"
+        class="tool-textarea gig-custom"
+        rows="4"
+        spellcheck="false"
+        data-i18n-ph="customPlaceholder"
+      ></textarea>
+    </details>
+
+    <!-- Output -->
+    <div class="gig-output-wrap">
+      <div class="gig-output-header">
+        <span class="gig-output-label">.gitignore</span>
+        <div class="gig-output-actions">
+          <button id="gig-download" class="btn-secondary gig-download" type="button" disabled data-i18n="download">Download</button>
+          <button id="gig-copy" class="btn-copy gig-copy" type="button" disabled data-i18n="copy">Copy</button>
+        </div>
+      </div>
+      <pre id="gig-output" class="gig-output" data-i18n-empty="emptyOutput"></pre>
+    </div>
+
+    <div id="gig-status" class="tool-status gig-status" aria-live="polite"></div>
+  </div>
+
+  <script>
+    import { gitignoreTemplates } from '../../data/gitignore-templates';
+
+    (() => {
+      const SLUG = 'gitignore-generator';
+
+      type Lang = 'en' | 'zh' | 'ja' | 'ko';
+      const STRINGS: Record<Lang, Record<string, string>> = {
+        en: {
+          searchPlaceholder: 'Search Node, macOS, JetBrains…',
+          clearAll: 'Clear all',
+          groupLanguages: 'Languages & Frameworks',
+          groupGlobals: 'IDEs, OS & Tools',
+          customSummary: 'Add custom rules (optional)',
+          customPlaceholder: '# Project-specific paths\nbuild/local-cache/\n.env.production',
+          copy: 'Copy',
+          copied: 'Copied!',
+          download: 'Download',
+          emptyOutput: 'Pick one or more templates above. The merged .gitignore appears here.',
+          noResults: 'No templates match your search.',
+          selectedHint: '{n} selected',
+        },
+        zh: {
+          searchPlaceholder: '搜索 Node、macOS、JetBrains……',
+          clearAll: '清空所有',
+          groupLanguages: '编程语言与框架',
+          groupGlobals: 'IDE、操作系统与工具',
+          customSummary: '追加自定义规则（可选）',
+          customPlaceholder: '# 项目特有的路径\nbuild/local-cache/\n.env.production',
+          copy: '复制',
+          copied: '已复制！',
+          download: '下载',
+          emptyOutput: '在上方选择一个或多个模板，合并后的 .gitignore 将显示在这里。',
+          noResults: '没有匹配的模板。',
+          selectedHint: '已选 {n} 个',
+        },
+        ja: {
+          searchPlaceholder: 'Node, macOS, JetBrains を検索…',
+          clearAll: 'すべてクリア',
+          groupLanguages: '言語とフレームワーク',
+          groupGlobals: 'IDE・OS・ツール',
+          customSummary: 'カスタムルールを追加（任意）',
+          customPlaceholder: '# プロジェクト固有のパス\nbuild/local-cache/\n.env.production',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          download: 'ダウンロード',
+          emptyOutput: '上のテンプレートを 1 つ以上選択すると、ここに統合された .gitignore が表示されます。',
+          noResults: '一致するテンプレートはありません。',
+          selectedHint: '{n} 件選択中',
+        },
+        ko: {
+          searchPlaceholder: 'Node, macOS, JetBrains 검색…',
+          clearAll: '모두 지우기',
+          groupLanguages: '언어와 프레임워크',
+          groupGlobals: 'IDE, OS 및 도구',
+          customSummary: '사용자 정의 규칙 추가 (선택)',
+          customPlaceholder: '# 프로젝트 고유 경로\nbuild/local-cache/\n.env.production',
+          copy: '복사',
+          copied: '복사됨!',
+          download: '다운로드',
+          emptyOutput: '위에서 하나 이상의 템플릿을 선택하면 병합된 .gitignore가 여기 표시됩니다.',
+          noResults: '일치하는 템플릿이 없습니다.',
+          selectedHint: '{n}개 선택됨',
+        },
+      };
+
+      const pageLang = ((document.documentElement.lang || 'en').slice(0, 2) as Lang);
+      const t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll<HTMLElement>('[data-i18n]').forEach((el) => {
+        const key = el.getAttribute('data-i18n');
+        if (key && t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll<HTMLInputElement>('[data-i18n-ph]').forEach((el) => {
+        const key = el.getAttribute('data-i18n-ph');
+        if (key && t[key]) el.placeholder = t[key];
+      });
+
+      const searchEl = document.getElementById('gig-search') as HTMLInputElement;
+      const clearAllBtn = document.getElementById('gig-clear-all') as HTMLButtonElement;
+      const chipsEl = document.getElementById('gig-chips') as HTMLDivElement;
+      const grids = {
+        languages: document.getElementById('gig-grid-languages') as HTMLDivElement,
+        globals: document.getElementById('gig-grid-globals') as HTMLDivElement,
+      };
+      const counters = {
+        languages: document.getElementById('gig-selected-languages') as HTMLSpanElement,
+        globals: document.getElementById('gig-selected-globals') as HTMLSpanElement,
+      };
+      const noResultsEl = document.getElementById('gig-no-results') as HTMLParagraphElement;
+      const customEl = document.getElementById('gig-custom') as HTMLTextAreaElement;
+      const outputEl = document.getElementById('gig-output') as HTMLPreElement;
+      const copyBtn = document.getElementById('gig-copy') as HTMLButtonElement;
+      const downloadBtn = document.getElementById('gig-download') as HTMLButtonElement;
+
+      const templatesById = new Map(gitignoreTemplates.map((tpl) => [tpl.id, tpl]));
+      const selected = new Set<string>();
+
+      const emptyText = outputEl.getAttribute('data-i18n-empty');
+      if (emptyText && t[emptyText]) outputEl.dataset.placeholder = t[emptyText];
+
+      function renderGrids() {
+        for (const group of ['languages', 'globals'] as const) {
+          const items = gitignoreTemplates.filter((tpl) => tpl.group === group);
+          const frag = document.createDocumentFragment();
+          for (const tpl of items) {
+            const id = `gig-cb-${tpl.id}`;
+            const label = document.createElement('label');
+            label.className = 'gig-item';
+            label.htmlFor = id;
+            label.dataset.id = tpl.id;
+            label.dataset.name = tpl.name.toLowerCase();
+
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.id = id;
+            input.className = 'gig-item-cb';
+            input.dataset.id = tpl.id;
+
+            const text = document.createElement('span');
+            text.className = 'gig-item-name';
+            text.textContent = tpl.name;
+
+            label.appendChild(input);
+            label.appendChild(text);
+            frag.appendChild(label);
+          }
+          grids[group].appendChild(frag);
+        }
+      }
+
+      function renderChips() {
+        chipsEl.innerHTML = '';
+        if (selected.size === 0) {
+          clearAllBtn.hidden = true;
+          return;
+        }
+        clearAllBtn.hidden = false;
+
+        const sortedIds = Array.from(selected).sort((a, b) => {
+          const an = templatesById.get(a)?.name || a;
+          const bn = templatesById.get(b)?.name || b;
+          return an.localeCompare(bn);
+        });
+
+        for (const id of sortedIds) {
+          const tpl = templatesById.get(id);
+          if (!tpl) continue;
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'gig-chip';
+          chip.dataset.id = id;
+          chip.setAttribute('aria-label', `Remove ${tpl.name}`);
+
+          const label = document.createElement('span');
+          label.className = 'gig-chip-label';
+          label.textContent = tpl.name;
+
+          const x = document.createElement('span');
+          x.className = 'gig-chip-x';
+          x.textContent = '×';
+          x.setAttribute('aria-hidden', 'true');
+
+          chip.appendChild(label);
+          chip.appendChild(x);
+          chipsEl.appendChild(chip);
+        }
+      }
+
+      function syncCheckboxes() {
+        document.querySelectorAll<HTMLInputElement>('.gig-item-cb').forEach((cb) => {
+          cb.checked = selected.has(cb.dataset.id || '');
+        });
+        counters.languages.textContent = String(
+          Array.from(selected).filter((id) => templatesById.get(id)?.group === 'languages').length
+        );
+        counters.globals.textContent = String(
+          Array.from(selected).filter((id) => templatesById.get(id)?.group === 'globals').length
+        );
+      }
+
+      function dedupePreservingComments(content: string, seen: Set<string>): string[] {
+        const out: string[] = [];
+        for (const rawLine of content.split('\n')) {
+          const line = rawLine.replace(/\s+$/, '');
+          const norm = line.trim();
+          if (norm === '' || norm.startsWith('#')) {
+            out.push(line);
+            continue;
+          }
+          if (seen.has(norm)) continue;
+          seen.add(norm);
+          out.push(line);
+        }
+        return out;
+      }
+
+      function trimBlock(lines: string[]): string {
+        let start = 0;
+        let end = lines.length;
+        while (start < end && lines[start].trim() === '') start++;
+        while (end > start && lines[end - 1].trim() === '') end--;
+        return lines.slice(start, end).join('\n');
+      }
+
+      function generate(): string {
+        if (selected.size === 0 && customEl.value.trim() === '') return '';
+
+        const sortedIds = Array.from(selected).sort((a, b) => {
+          const an = templatesById.get(a)?.name || a;
+          const bn = templatesById.get(b)?.name || b;
+          return an.localeCompare(bn);
+        });
+
+        const seen = new Set<string>();
+        const sections: string[] = [];
+
+        for (const id of sortedIds) {
+          const tpl = templatesById.get(id);
+          if (!tpl) continue;
+          const body = trimBlock(dedupePreservingComments(tpl.content, seen));
+          if (!body) continue;
+          sections.push(`### ${tpl.name}.gitignore\n${body}`);
+        }
+
+        const custom = customEl.value.trim();
+        if (custom) sections.push(`### Custom additions\n${custom}`);
+
+        const header = [
+          '# .gitignore generated at https://zerotool.dev/tools/gitignore-generator/',
+          '# Source templates: github/gitignore (CC0-1.0)',
+        ].join('\n');
+
+        return `${header}\n\n${sections.join('\n\n')}\n`;
+      }
+
+      function refreshOutput() {
+        const text = generate();
+        if (text) {
+          outputEl.textContent = text;
+          outputEl.classList.remove('is-empty');
+          copyBtn.disabled = false;
+          downloadBtn.disabled = false;
+        } else {
+          outputEl.textContent = outputEl.dataset.placeholder || '';
+          outputEl.classList.add('is-empty');
+          copyBtn.disabled = true;
+          downloadBtn.disabled = true;
+        }
+      }
+
+      function applyFilter() {
+        const q = searchEl.value.trim().toLowerCase();
+        let visible = 0;
+        document.querySelectorAll<HTMLLabelElement>('.gig-item').forEach((label) => {
+          const name = label.dataset.name || '';
+          const match = !q || name.includes(q);
+          label.hidden = !match;
+          if (match) visible++;
+        });
+        noResultsEl.hidden = visible !== 0;
+      }
+
+      let saveTimer: ReturnType<typeof setTimeout> | null = null;
+      function persist() {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+          if (window.ztPersist) {
+            window.ztPersist.save(SLUG, {
+              selected: Array.from(selected),
+              custom: customEl.value,
+            });
+          }
+        }, 400);
+      }
+
+      function restore() {
+        if (!window.ztPersist) return;
+        const saved = window.ztPersist.load(SLUG) as { selected?: string[]; custom?: string };
+        if (Array.isArray(saved.selected)) {
+          for (const id of saved.selected) {
+            if (templatesById.has(id)) selected.add(id);
+          }
+        }
+        if (typeof saved.custom === 'string') customEl.value = saved.custom;
+      }
+
+      function update() {
+        renderChips();
+        syncCheckboxes();
+        refreshOutput();
+        persist();
+      }
+
+      function onCheckboxChange(e: Event) {
+        const cb = e.target as HTMLInputElement;
+        if (!cb.matches('.gig-item-cb')) return;
+        const id = cb.dataset.id;
+        if (!id) return;
+        if (cb.checked) selected.add(id);
+        else selected.delete(id);
+        update();
+        window.trackTool && window.trackTool(SLUG, cb.checked ? 'select' : 'deselect');
+      }
+
+      function onChipClick(e: Event) {
+        const target = e.target as HTMLElement;
+        const chip = target.closest('.gig-chip') as HTMLButtonElement | null;
+        if (!chip) return;
+        const id = chip.dataset.id;
+        if (!id) return;
+        selected.delete(id);
+        update();
+      }
+
+      function onClearAll() {
+        selected.clear();
+        customEl.value = '';
+        searchEl.value = '';
+        applyFilter();
+        update();
+        if (window.ztPersist) window.ztPersist.clear(SLUG);
+      }
+
+      function onCopy() {
+        const text = outputEl.textContent || '';
+        if (!text || copyBtn.disabled) return;
+        const original = t.copy;
+        const showDone = () => {
+          copyBtn.textContent = t.copied;
+          copyBtn.classList.add('copied');
+          setTimeout(() => {
+            copyBtn.textContent = original;
+            copyBtn.classList.remove('copied');
+          }, 1500);
+        };
+        navigator.clipboard.writeText(text).then(showDone).catch(showDone);
+        window.trackTool && window.trackTool(SLUG, 'copy');
+      }
+
+      function onDownload() {
+        const text = outputEl.textContent || '';
+        if (!text || downloadBtn.disabled) return;
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = '.gitignore';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        window.trackTool && window.trackTool(SLUG, 'download');
+      }
+
+      renderGrids();
+      restore();
+      update();
+      applyFilter();
+
+      searchEl.addEventListener('input', applyFilter);
+      grids.languages.addEventListener('change', onCheckboxChange);
+      grids.globals.addEventListener('change', onCheckboxChange);
+      chipsEl.addEventListener('click', onChipClick);
+      customEl.addEventListener('input', () => {
+        refreshOutput();
+        persist();
+      });
+      clearAllBtn.addEventListener('click', onClearAll);
+      copyBtn.addEventListener('click', onCopy);
+      downloadBtn.addEventListener('click', onDownload);
+    })();
+  </script>
+
+  <style is:global>
+    .gig-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+    .gig-controls {
+      display: flex;
+      gap: 0.6rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .gig-search { flex: 1; min-width: 220px; }
+    .gig-clear-all { flex-shrink: 0; }
+
+    .gig-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .gig-chips:empty { display: none; }
+    .gig-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.28rem 0.58rem 0.28rem 0.7rem;
+      border-radius: var(--radius-pill);
+      background: color-mix(in oklch, var(--color-primary) 14%, var(--color-bg-secondary));
+      color: var(--color-text);
+      font-size: 0.82rem;
+      font-weight: 600;
+      border: 0;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 35%, transparent);
+      transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .gig-chip:hover {
+      background: color-mix(in oklch, var(--color-primary) 22%, var(--color-bg-secondary));
+    }
+    .gig-chip-label { line-height: 1.2; }
+    .gig-chip-x {
+      font-size: 1rem;
+      line-height: 0.8;
+      color: var(--color-text-secondary);
+    }
+    .gig-chip:hover .gig-chip-x { color: var(--color-primary); }
+
+    .gig-groups { display: flex; flex-direction: column; gap: 0.55rem; }
+
+    .gig-group {
+      background: var(--color-surface);
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      overflow: hidden;
+    }
+    .gig-group-summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 0.65rem 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-weight: 700;
+      color: var(--color-text);
+      user-select: none;
+    }
+    .gig-group-summary::-webkit-details-marker { display: none; }
+    .gig-group-arrow {
+      display: inline-block;
+      font-size: 0.75rem;
+      transition: transform 0.15s ease;
+      color: var(--color-text-secondary);
+    }
+    .gig-group[open] .gig-group-arrow { transform: rotate(0deg); }
+    .gig-group:not([open]) .gig-group-arrow { transform: rotate(-90deg); }
+    .gig-group-title { flex: 1; font-size: 0.92rem; }
+    .gig-group-count {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .gig-group-selected {
+      color: var(--color-primary);
+      font-weight: 700;
+    }
+    .gig-group-divider { margin: 0 0.15rem; }
+
+    .gig-group-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 0.35rem;
+      padding: 0.6rem 0.85rem 0.85rem;
+      border-top: 1px solid var(--color-border-soft);
+    }
+
+    .gig-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.55rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background-color var(--transition-fast);
+      font-size: 0.85rem;
+      color: var(--color-text);
+      line-height: 1.25;
+    }
+    .gig-item:hover { background: var(--color-surface-muted); }
+    .gig-item-cb {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: var(--color-primary);
+      flex-shrink: 0;
+    }
+    .gig-item-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .gig-item:has(.gig-item-cb:checked) {
+      background: color-mix(in oklch, var(--color-primary) 12%, var(--color-bg-secondary));
+      color: var(--color-text);
+    }
+
+    .gig-no-results {
+      text-align: center;
+      color: var(--color-text-muted);
+      font-size: 0.88rem;
+      padding: 0.5rem 0;
+      margin: 0;
+    }
+
+    .gig-custom-details {
+      background: var(--color-surface);
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      overflow: hidden;
+    }
+    .gig-custom-summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 0.6rem 0.85rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      font-size: 0.88rem;
+    }
+    .gig-custom-summary::-webkit-details-marker { display: none; }
+    .gig-custom {
+      margin: 0 0.85rem 0.85rem;
+      width: calc(100% - 1.7rem);
+    }
+
+    .gig-output-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      background: var(--color-bg-secondary);
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      overflow: hidden;
+    }
+    .gig-output-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0.85rem;
+      background: var(--color-surface);
+      border-bottom: 1px solid var(--color-border-soft);
+    }
+    .gig-output-label {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      letter-spacing: 0.02em;
+    }
+    .gig-output-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .gig-output {
+      margin: 0;
+      padding: 0.85rem 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.55;
+      color: var(--color-text);
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+      max-height: 480px;
+      min-height: 120px;
+    }
+    .gig-output.is-empty {
+      color: var(--color-text-muted);
+      font-style: italic;
+    }
+
+    .gig-status { min-height: 1.2em; }
+
+    @media (max-width: 540px) {
+      .gig-group-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      }
+    }
+  </style>
+</div>
