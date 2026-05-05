@@ -1,0 +1,176 @@
+---
+title: "Meta Tag Generator: One Page, Four Audiences"
+description: "Build a complete <head> meta block — Open Graph, Twitter Card, Schema.org JSON-LD, and SEO basics. Covers og:image specs, canonical URL pitfalls, and platform-specific quirks."
+pubDate: 2026-05-05
+lang: "en"
+tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
+ogImage: /og/blog-meta-tag-generator-guide.png
+---
+
+The page is ready, the deploy button is one click away, and four audiences are about to read your `<head>`: Google's crawler, Facebook's unfurl bot, Twitter's card scraper, and Discord's link preview. None of them sees the rendered HTML body the way a human does. They see the meta tags.
+
+[Generate a complete &lt;head&gt; block now →](/tools/meta-tag-generator)
+
+## The Four Layers of Page Metadata
+
+A modern page head answers four separate questions:
+
+| Layer | Audience | Key tags |
+|-------|----------|----------|
+| Basic SEO | Search engines, browsers | `title`, `description`, `canonical`, `robots`, `viewport` |
+| Open Graph | Facebook, LinkedIn, Slack, iMessage, Discord | `og:title`, `og:description`, `og:image`, `og:url`, `og:type` |
+| Twitter Card | Twitter / X | `twitter:card`, `twitter:image`, `twitter:site` |
+| Schema.org JSON-LD | Google rich results, voice assistants | `<script type="application/ld+json">` |
+
+These layers are not redundant. Each was designed by a different vendor and answers questions the others don't. Search engines do not read Open Graph for unfurls. Facebook does not read Schema.org for the share preview. Skip a layer and that audience falls back to guessing — usually badly.
+
+## The Required Five for Social Cards
+
+Of the dozens of meta tags you can ship, five carry most of the weight when a link gets shared:
+
+```html
+<title>Article title — Brand</title>
+<meta name="description" content="One-sentence pitch under 160 chars.">
+<link rel="canonical" href="https://example.com/article/">
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:type" content="article">
+```
+
+Everything else is sugar. If you only have time to write five lines, write these five.
+
+## og:image: The Spec That Catches Everyone
+
+The single most common reason a Slack or Discord preview looks broken is an `og:image` problem. The spec is unforgiving:
+
+**Size.** 1200x630 pixels (1.91:1) is the safe default and what Facebook, LinkedIn, and Discord render most reliably. Twitter's `summary_large_image` expects 2:1, so 1200x600 also works. Anything smaller than 200x200 is rejected outright by some scrapers.
+
+**Format.** PNG or JPEG. WebP support is patchy. SVG is ignored by every social scraper despite being legal HTML.
+
+**Absolute URL.** `og:image` must be an absolute URL with scheme and host. Relative paths like `/og/article.png` fail silently — Facebook's debugger reports "image not found" without telling you why.
+
+**Reachability.** The scraper fetches the URL on demand. If your CDN is slow, behind a CAPTCHA, or returns the image with `Content-Type: text/html` instead of `image/png`, the preview falls back to a generic site thumbnail.
+
+**Cache.** Facebook caches the scrape result for hours, sometimes days. After fixing an `og:image`, hit the [Sharing Debugger](https://developers.facebook.com/tools/debug/) and click "Scrape Again" to force a refresh.
+
+Always declare width and height alongside the image:
+
+```html
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Article cover with the title in large white serif on a green background.">
+```
+
+The dimensions help Discord and Slack reserve layout space before the image loads. The alt text is read by screen readers when the unfurl appears in chat.
+
+## Canonical URL: Why Wrong Values Fragment Share Counts
+
+`<link rel="canonical">` doubles as `og:url`. It tells crawlers and unfurl bots which URL is the authoritative one when the same page is reachable through multiple paths.
+
+Common reasons the same article has multiple URLs:
+
+- `https://example.com/post/` and `https://example.com/post`
+- `https://example.com/post` and `https://www.example.com/post`
+- `?utm_source=twitter` and the bare URL
+- `https://example.com/post` and `https://example.com/post?ref=newsletter`
+
+If two of these get shared, Facebook treats them as separate links. Each accumulates its own share count. The author looks at the lower number and assumes the post flopped. Setting a canonical URL on the page collapses all variants into one record.
+
+The canonical URL must include the trailing slash if your routing serves it that way. ZeroTool's static build always emits trailing slashes; mismatching them in canonical breaks the dedupe.
+
+## Writing JSON-LD Without a Schema Library
+
+JSON-LD is just JSON inside a `<script type="application/ld+json">`. Google's rich-result parser is forgiving about field order and whitespace but strict about a few things:
+
+- Always include `"@context": "https://schema.org"`.
+- Always include `"@type"` matching one of [Schema.org's types](https://schema.org/docs/full.html).
+- All URLs must be absolute.
+- Dates use ISO 8601 (`2026-05-05`, not `May 5 2026`).
+- Repeated structured fields (authors, breadcrumb items) are arrays even when there is one element.
+
+A minimal `Article`:
+
+```html
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Meta Tag Generator: One Page, Four Audiences",
+  "description": "Build a complete head meta block...",
+  "url": "https://example.com/blog/meta-tag-generator-guide/",
+  "image": "https://example.com/og/article.png",
+  "datePublished": "2026-05-05",
+  "author": { "@type": "Person", "name": "Jane Doe" }
+}
+</script>
+```
+
+You don't need every field Schema.org documents. Google's rich-result eligibility lists the required fields per result type — start there, add the rest only if you actually have the data.
+
+## Validating What You Shipped
+
+Four free tools cover the four audiences:
+
+| Tool | What it tests | URL |
+|------|---------------|-----|
+| Facebook Sharing Debugger | og:* tags, scrape result, cached preview | https://developers.facebook.com/tools/debug/ |
+| Twitter Card Validator | twitter:* tags (legacy but functional) | https://cards-dev.twitter.com/validator |
+| LinkedIn Post Inspector | og:* tags rendered as LinkedIn would | https://www.linkedin.com/post-inspector/ |
+| Google Rich Results Test | JSON-LD eligibility, structured-data warnings | https://search.google.com/test/rich-results |
+
+For Discord and Slack, paste a real message into a private channel — they fetch and cache aggressively, and there is no public debugger.
+
+The fifth check is `view-source:` (Cmd+Option+U in Chrome). Look for duplicate `og:title`, missing `og:image`, and any tag whose `content` is the literal string `undefined` — a sign your templating engine swallowed an empty variable.
+
+## Common Pitfalls
+
+**Multiple `og:image` tags.** Some scrapers pick the first, some the last, some merge them. Ship exactly one canonical image and let the platform pick from the smaller variants you might also list with `og:image:secure_url`.
+
+**`og:url` does not match the actual URL.** This is fatal. Fix the canonical URL before debugging anything else.
+
+**Setting `robots: noindex` and expecting og:* to still surface.** They will — social scrapers do not read robots — but search engines will not index the page, so the rich preview never shows up in SERPs.
+
+**Hard-coded `og:image:width` that disagrees with the actual file.** Discord trusts the declared dimensions and uses them to pick layout. If the file is 1200x600 but you declared 1200x630, the preview crops oddly.
+
+**JSON-LD with trailing commas or unescaped quotes.** Most JS validators accept it; Google's strict parser rejects the page as ineligible for rich results. Run the output through a JSON linter before shipping.
+
+**Two pages with identical canonical URLs.** Crawlers pick one and ignore the other entirely. This usually happens when a CMS template forgets to update the canonical for paginated archive pages.
+
+## Generating It Inline
+
+If you are emitting meta tags from a templating engine, the logic is small enough to keep inline. JavaScript template:
+
+```javascript
+function metaBlock({ title, description, canonical, image, type = 'website' }) {
+  const esc = (s) => String(s ?? '').replace(/"/g, '&quot;');
+  return `
+    <title>${esc(title)}</title>
+    <meta name="description" content="${esc(description)}">
+    <link rel="canonical" href="${esc(canonical)}">
+    <meta property="og:type" content="${esc(type)}">
+    <meta property="og:title" content="${esc(title)}">
+    <meta property="og:description" content="${esc(description)}">
+    <meta property="og:url" content="${esc(canonical)}">
+    <meta property="og:image" content="${esc(image)}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="${esc(title)}">
+    <meta name="twitter:description" content="${esc(description)}">
+    <meta name="twitter:image" content="${esc(image)}">
+  `.trim();
+}
+```
+
+The escaping is important — un-escaped quotes in the title break the entire block silently.
+
+## Related Tools
+
+- [Robots.txt Generator](/tools/robots-txt-generator) — set crawl rules alongside the meta tags
+- [Favicon Generator](/tools/favicon-generator) — produce the icon set referenced from `<head>`
+- [URL Parser](/tools/url-parser) — verify your canonical URL is well-formed before shipping
+
+## References
+
+- [Open Graph protocol](https://ogp.me/) — the original spec
+- [Twitter — Cards Markup](https://developer.twitter.com/en/docs/twitter-for-websites/cards/overview/markup) — `twitter:*` reference
+- [Schema.org](https://schema.org/docs/gs.html) — getting started
+- [Google — Control your snippets](https://developers.google.com/search/docs/appearance/snippet) — how `description` becomes the snippet
