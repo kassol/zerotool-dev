@@ -1,0 +1,173 @@
+---
+title: "Markdown 목차 생성기: 한 파일, 네 가지 앵커 방언"
+description: "GitHub, GitLab, Jekyll, Bitbucket에서 실제로 동작하는 Markdown 목차 생성. 앵커 slug 알고리즘, 중복 처리 규칙, 마커 기반 원위치 갱신, 그리고 링크를 조용히 망가뜨리는 크로스플랫폼 함정까지."
+pubDate: 2026-05-05
+lang: "ko"
+tags: ["markdown", "documentation", "github", "gitlab", "developer-tools"]
+ogImage: /og/blog-markdown-toc-generator-guide.png
+---
+
+12개 섹션짜리 README를 다 쓰고 GitHub에 푸시했는데, 동료가 GitLab에서 같은 파일을 열자 TOC 링크가 전부 죽어 있다. 또는 Jekyll 사이트를 Hugo로 마이그레이션했더니 앵커 절반의 대소문자가 조용히 바뀌어 있다. Markdown은 한 글자도 변하지 않았는데, 앵커는 다른 것이 되어 있다.
+
+Markdown 목차 생성은 한 줄로 끝날 일처럼 보인다. 제목을 읽고, slug를 만들고, 링크로 엮으면 된다 — 처음 80%는 정말 그렇다. 함정은 나머지 20%에 있다. 렌더러마다 slugify 규칙이 다르고, 중복 처리 방식이 다르고, Unicode에 대한 입장이 다르다. 잘못된 타깃용으로 만든 TOC는 TOC가 없는 것보다 나쁘다 — 에디터에서는 멀쩡해 보이다가 렌더러 단계에서 끊어진다.
+
+[Markdown 목차 만들기 →](/ko/tools/markdown-toc-generator/)
+
+## 왜 앵커는 표준화되지 않았나
+
+Markdown 명세는 "제목 앵커"를 아예 다루지 않는다. CommonMark는 제목의 HTML 렌더링을 의도적으로 구현체에 맡겼고, "제목으로부터 slug를 만드는" 기능을 제공하는 모든 렌더러는 각자 알고리즘을 짰다. 방언 간 격차는 이미 한 TOC 생성기로 모든 곳을 커버할 수 없을 정도로 벌어져 있다 — 타깃을 하나 골라야 한다.
+
+실제 렌더링 환경의 약 98%를 커버하는 네 가지 방언:
+
+| 렌더러 | 사용처 | 앵커 스타일 |
+|---|---|---|
+| **GitHub Flavored Markdown** | github.com, gh-pages, Discourse, Gitiles | 소문자 변환, 구두점 제거, 하이픈화, Unicode 유지 |
+| **GitLab Flavored Markdown** | gitlab.com, GitLab 셀프호스팅 | GitHub과 동일 + 연속 하이픈을 하나로 압축 |
+| **kramdown / Jekyll classic** | 오래된 Jekyll 사이트 | 소문자 변환, 비 ASCII 제거, 하이픈화 |
+| **Bitbucket** | bitbucket.org | 모든 앵커에 `markdown-` 접두사, 중복은 `_N` |
+
+Hugo + goldmark(v0.62 이후 기본 렌더러)는 GitHub 규칙에 상당히 가깝다 — 실무에서 앵커가 끊어지는 경우는 거의 없을 정도지만, 구두점 처리 같은 엣지 케이스에서는 약간 벗어난다. 다른 현대 렌더러(Discourse, Gitea, Forgejo)는 같은 기본 알고리즘 위에 변형을 얹은 것이다. MkDocs는 자체 toc 확장과 pymdownx 변형을 사용한다. 네 방언 표에 없는 타깃을 쓴다면, TOC를 커밋하기 전에 실제 렌더러에서 한 번 굴려보는 편이 안전하다. 즉석용으로는 GitHub 스타일이 가장 안전한 기본값이다 — 단, kramdown classic slugger를 쓰는 Jekyll 사이트와 모든 Bitbucket 저장소는 GitHub과 호환되지 않는다.
+
+## slugify 알고리즘, 네 가지 갈래
+
+같은 제목을 네 방언에 통과시키면 서로 다른 앵커가 나온다:
+
+제목: `## Quick Start: Setting up SSO (Auth 2.0)`
+
+| 스타일 | 앵커 |
+|---|---|
+| GitHub | `quick-start-setting-up-sso-auth-20` |
+| GitLab | `quick-start-setting-up-sso-auth-20` |
+| Jekyll | `quick-start-setting-up-sso-auth-20` |
+| Bitbucket | `markdown-quick-start-setting-up-sso-auth-20` |
+
+여기까지는 같다. 이제 Unicode 제목: `## 빠른 시작`
+
+| 스타일 | 앵커 |
+|---|---|
+| GitHub | `빠른-시작` |
+| GitLab | `빠른-시작` |
+| Jekyll | (slug 후 빈 문자열 — kramdown이 렌더링 단계에서 폴백 id를 할당) |
+| Bitbucket | `markdown-빠른-시작` |
+
+Jekyll classic이 이 지점에서 무너진다. 사이트가 기본 `auto_ids`로 `kramdown`을 쓰고 제목에 비 ASCII가 포함되면, 해당 앵커는 비거나 렌더러 쪽에서 일반적인 폴백 id를 받는다. Jekyll 쪽 수정 경로는 Unicode 친화 slugger로 업그레이드하는 것 — 최신 kramdown 버전과 일부 Jekyll 플러그인이 변형을 제공한다. 렌더러가 앵커에 Unicode를 보존하기 시작하면, 이 생성기를 GitHub 스타일로 전환해 TOC를 맞춘다. 구버전 Jekyll에 동봉된 클래식 kramdown은 설계상 ASCII 전용이다. 업그레이드가 어렵다면 비 ASCII를 제목에서 빼는 편이 낫다 — 렌더러가 조용히 다시 쓰는 TOC를 커밋하는 것보단 낫다.
+
+또 하나의 경우 — 중복된 제목:
+
+```
+## Examples
+### Curl
+## Examples
+### Python
+```
+
+| 스타일 | 앵커 |
+|---|---|
+| GitHub / GitLab / Jekyll | `examples`, `curl`, `examples-1`, `python` |
+| Bitbucket | `markdown-examples`, `markdown-curl`, `markdown-examples_1`, `markdown-python` |
+
+Bitbucket이 유일한 예외다. 중복 카운터를 하이픈이 아니라 밑줄로 붙인다. 다른 주요 렌더러는 모두 `-N`이다.
+
+## 마커 모드: git 잡음 없이 TOC를 최신 상태로
+
+TOC에서 흔한 함정이 "stale TOC" 차이다. 2,000줄짜리 운영 매뉴얼에 섹션을 하나 추가했는데 상단 TOC가 따라오지 않아, 리뷰어가 두 PR을 거친 뒤에야 알아차리는 식이다. 두 가지 출구가 있다:
+
+1. **주석 마커로 생성기에 TOC를 위임**. `<!-- toc -->` ... `<!-- /toc -->` 로 감싸 두고, 변경할 때마다 생성기를 돌린다. 마커 자체는 파일에 남고, 그 사이의 본문만 갱신된다.
+2. **pre-commit 훅**. 위와 같은 일을 커밋 직전에 자동으로.
+
+이 도구의 marker mode는 패턴 1의 구현이다. Markdown을 붙여넣고 Marker mode를 켜면, 마커 사이에 새로 만든 TOC가 든 전체 Markdown을 받게 된다. 아직 마커가 없는 문서라면, 첫 제목 바로 앞에 새 마커 블록이 삽입되므로 한 번 커밋하면 그 다음부터는 마커 흐름으로 운영된다.
+
+이 관행은 [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)(webpack 문서, Mocha, Sass 등 수십 개 주요 프로젝트가 쓰는 npm 패키지), [`gh-md-toc`](https://github.com/ekalinin/github-markdown-toc)(Kubernetes 문서가 쓰는 셸 도구), 여러 에디터 플러그인의 관행과 일치한다. HTML 주석 마커는 이식성이 높다 — GitHub, GitLab, Bitbucket 어디서도 렌더링되지 않고, HTML 주석을 주석으로 다루는 SSG라면 모두 인식한다.
+
+## 결국 마주칠 다섯 가지 함정
+
+실제 프로젝트에서 자주 만나는 순으로:
+
+1. **코드 블록 안의 `#` 주석**. Bash, Ruby, Python 주석은 모두 `#`으로 시작한다. 단순한 제목 파서는 펜스드 코드 블록 안의 `# This is a comment`를 H1으로 읽는다. 쓸 만한 TOC 생성기는 펜스드 코드 블록을 건너뛴다. 이 도구는 `` ``` ``과 `~~~` 양쪽을 모두 올바로 처리한다. 직접 짠다면 이 케이스를 조심하라.
+
+2. **Setext 제목**. Markdown은 ATX(`# Title`)와 setext(`Title\n=====`) 두 가지 제목 형식을 모두 지원한다. 오래된 README는 H1, H2를 setext로 쓴다. ATX만 처리하는 생성기는 이를 조용히 빠뜨린다.
+
+3. **제목 안의 인라인 서식**. `## **Important**: Backups`의 TOC 라벨은 굵게를 포함해야 하고 앵커는 평문을 써야 한다. 이를 잘못 다루면 `\`code\``를 앵커의 일부로 끌어들이게 된다. slug용으로는 인라인 syntax를 벗기고, 라벨에는 원본 Markdown을 남기는 게 정답이다.
+
+4. **H 레벨을 가로지르는 중복 제목**. `## Examples`와 `### Examples`는 둘 다 `examples`로 slug되고, 둘째는 `examples-1`이 되어야 한다. 동일 H 레벨 안에서만 중복 처리를 하는 생성기는 레벨을 가로지르면 링크를 깨뜨린다.
+
+5. **이미 마커가 있는 경우**. 문서에 이미 `<!-- toc -->` ... `<!-- /toc -->`이 있는데 단순히 "삽입"하면 TOC가 두 개가 된다. 올바른 동작은 기존 마커를 감지해 그 사이 내용을 교체하는 것이지 append가 아니다.
+
+## 코드 레시피
+
+### pre-commit 훅: 커밋 시 TOC 재생성
+
+TOC를 항상 동기화하는 가장 깔끔한 방법은 커밋 시 오래된 TOC면 fail하게 하고 원-키 수정을 두는 것이다. `markdown-toc`(npm) 또는 비슷한 CLI + `pre-commit` 훅:
+
+```bash
+#!/bin/sh
+# .git/hooks/pre-commit
+for f in $(git diff --cached --name-only --diff-filter=AM | grep '\.md$'); do
+  before=$(md5sum "$f")
+  npx markdown-toc -i "$f"
+  after=$(md5sum "$f")
+  if [ "$before" != "$after" ]; then
+    echo "TOC out of date: $f — staged the regenerated version."
+    git add "$f"
+  fi
+done
+```
+
+`npx markdown-toc -i`는 원하는 생성기로 바꿔도 된다. 계약은 파일을 in-place로 수정하고 마커 블록을 인식한다는 것이다.
+
+### GitHub Actions: PR에서 TOC 드리프트 검출
+
+```yaml
+name: TOC drift
+on: [pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx markdown-toc -i README.md
+      - run: |
+          if ! git diff --quiet README.md; then
+            echo "::error::README.md TOC is out of date. Run 'npx markdown-toc -i README.md' locally and commit."
+            exit 1
+          fi
+```
+
+### Jekyll: slugger를 TOC에 맞추기
+
+Jekyll 사이트에 비 ASCII 제목이 있다면 TOC를 커밋하기 전에 slugger를 손본다:
+
+```yaml
+# _config.yml
+kramdown:
+  syntax_highlighter: rouge
+  toc_levels: 1..3
+  transliterate: false
+```
+
+그런 다음 GitHub 스타일로 TOC를 만들면 결과 앵커와 일치한다.
+
+## 이 도구의 자리
+
+TOC 생성기를 고를 때 체감 차이가 큰 항목과 이 도구의 구현:
+
+| 동작 | 이 도구 |
+|---|---|
+| 펜스드 코드 블록(``` 및 `~~~`) 건너뛰기 | 한다 |
+| ATX와 setext 제목 모두 | 둘 다 |
+| 기존 `<!-- toc -->` 블록 in-place 교체 | 한다 |
+| 한 페이지에 네 가지 앵커 스타일 | GitHub / GitLab / Jekyll / Bitbucket |
+| Bitbucket `_N` 중복 처리 | 한다 |
+| 앵커는 인라인 Markdown 제거, 라벨은 보존 | 한다 |
+| 제목 레벨 필터 + H1 토글 | 있다 |
+| 완전히 브라우저에서 실행 | 한다 |
+
+워크플로가 서버 사이드 위주이고 CLI가 필요하다면, [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)(npm, GitHub 스타일)이 가장 실전 검증된 선택지다 — webpack docs, Mocha, Sass, Prettier 등이 사용한다. 웹에서 즉석으로 붙여넣고 복사해야 한다면, 이 도구의 네 스타일 지원과 마커 인식 교체가 "방언을 잘못 골라 다시 만드는" 왕복을 줄여준다.
+
+## 더 읽기
+
+- [GitHub Flavored Markdown 명세](https://github.github.com/gfm/) — 명세 자체는 앵커 slug를 정의하지 않는다(그건 GitHub 렌더러 동작)지만, slug 규칙이 의존하는 제목과 코드 블록 파싱은 못박아 둔다
+- [kramdown auto_ids](https://kramdown.gettalong.org/converter/html.html#auto-ids) — Jekyll slug 규칙의 정식 정의
+- [GitLab Flavored Markdown 레퍼런스](https://docs.gitlab.com/ee/user/markdown.html) — CommonMark 위의 GitLab 추가 사양
+- [Bitbucket Markdown 레퍼런스](https://support.atlassian.com/bitbucket-cloud/docs/use-mark-up-in-comments-and-pull-request-descriptions/) — 앵커 접두사와 중복 규칙
+- ZeroTool [Slugify](/ko/tools/slugify/), [Markdown Linter](/ko/tools/markdown-linter/), [Markdown 표 생성기](/ko/tools/markdown-table-generator/) — Markdown 워크플로의 자매 도구

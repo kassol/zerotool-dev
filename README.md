@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 107 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 108 tools and growing.
 
 ## Tools
 
@@ -116,6 +116,7 @@
 | Cubic Bezier Generator | [/tools/cubic-bezier-generator](https://zerotool.dev/tools/cubic-bezier-generator) |
 | Meta Tag Generator | [/tools/meta-tag-generator](https://zerotool.dev/tools/meta-tag-generator) |
 | Gitignore Generator | [/tools/gitignore-generator](https://zerotool.dev/tools/gitignore-generator) |
+| Markdown TOC Generator | [/tools/markdown-toc-generator](https://zerotool.dev/tools/markdown-toc-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
