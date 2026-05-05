@@ -1,0 +1,160 @@
+---
+title: "JSONL 转换器：JSON Lines、NDJSON 与 JSON 数组"
+description: "了解 JSONL 的工作方式，如何将 JSON Lines / NDJSON 转为 JSON 数组，如何把数组转回紧凑的逐行记录，以及如何定位逐行错误。"
+pubDate: 2026-05-05
+lang: "zh"
+tags: ["jsonl", "ndjson", "json", "数据工具", "开发者工具"]
+ogImage: /og/blog-jsonl-converter-guide-zh.png
+---
+
+当日志、事件流、数据导出和 AI 数据集超出一个整洁 JSON 文档的规模时，JSONL 就会出现。它每一行都是一个完整 JSON 值，文件可以追加、拆分、流式读取，也可以按记录逐条处理。
+
+[打开 ZeroTool JSONL 转换器 →](/zh/tools/jsonl-converter/)
+
+本文讲清 JSONL、NDJSON、双向转换、逐行校验、命令行等价操作，以及常见的数据文件损坏原因。
+
+## 快速答案
+
+| 任务 | 推荐做法 |
+| --- | --- |
+| JSONL 转常规 JSON | 逐行解析，再把记录包装成 JSON 数组。 |
+| JSON 数组转 JSONL | 用紧凑的 `JSON.stringify()` 序列化每个数组项，每项一行。 |
+| 校验 JSONL 文件 | 独立解析每一行，并报告失败行号。 |
+| 从混乱文件导出部分数据 | 只转换有效行，再检查报告出的错误行。 |
+
+需要浏览器端快速检查时，用 [JSONL 转换器](/zh/tools/jsonl-converter/)。需要可重复脚本时，用 `jq`。
+
+## JSONL 是什么
+
+JSONL 是 JSON Lines 的缩写。NDJSON 表示 newline-delimited JSON。日常开发里，这两个名字通常描述同一种实用形态：
+
+```json
+{"id":1,"event":"signup","user":"alice"}
+{"id":2,"event":"purchase","user":"bob","amount":29.99}
+{"id":3,"event":"cancel","user":"carol"}
+```
+
+每一行本身都是有效 JSON。整个文件由一系列 JSON 值按换行分隔组成。这种形态适合：
+
+- 追加写入的应用日志
+- 每一行都是结构化记录的分析导出
+- 搜索索引流水线
+- 机器学习和 AI 训练数据集
+- 一次到达一条记录的流式 API
+
+JSON 数组把记录集中放进一个文档。JSONL 把每条记录作为独立行保存。这种按行组织的结构让 JSONL 很适合流式处理和命令行工具。
+
+## JSONL 转 JSON 数组
+
+浏览器端转换的核心逻辑很直接：
+
+```js
+const jsonl = `{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}`;
+
+const array = jsonl
+  .split("\n")
+  .filter((line) => line.trim())
+  .map((line) => JSON.parse(line));
+
+console.log(JSON.stringify(array, null, 2));
+```
+
+输出：
+
+```json
+[
+  {
+    "id": 1,
+    "event": "signup"
+  },
+  {
+    "id": 2,
+    "event": "purchase"
+  }
+]
+```
+
+ZeroTool 转换器在这个基础上加了更稳的工作流：统计总行数、有效行、空行和解析错误。某一行解析失败时，问题面板会显示行号、解析消息和原始行预览。
+
+## JSON 数组转 JSONL
+
+从一个数组开始：
+
+```json
+[
+  { "id": 1, "event": "signup" },
+  { "id": 2, "event": "purchase" }
+]
+```
+
+把每一项变成一行紧凑 JSON 字符串：
+
+```js
+const jsonl = array.map((item) => JSON.stringify(item)).join("\n");
+```
+
+输出：
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase"}
+```
+
+紧凑输出很关键，因为每一行都要保持一条完整记录。把对象格式化成多行会把单条记录拆成多个片段。
+
+## 校验逐行错误
+
+大多数 JSONL 错误都发生在局部。一个错误行可能夹在大型文件中，周围记录仍然正常：
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+第二行有尾随逗号。逐行校验器能立刻报告 `第 2 行`，常规 JSON 格式化器会把整个文件视为一个解析失败的文档。
+
+实用校验检查：
+
+- 独立解析每一个非空行
+- 单独统计空行
+- 为失败行保留短预览
+- 审查后导出已成功解析的有效记录
+- 保持有效记录的原始顺序
+
+## 命令行等价操作
+
+使用 `jq`，把 JSON 数组转成 JSONL：
+
+```bash
+jq -c '.[]' data.json > data.jsonl
+```
+
+把 JSONL 转回 JSON 数组：
+
+```bash
+jq -s '.' data.jsonl > data.json
+```
+
+逐行校验 JSONL 文件：
+
+```bash
+awk '{ print NR ":" $0 }' data.jsonl | while IFS=: read -r line value; do
+  echo "$value" | jq empty >/dev/null 2>&1 || echo "Invalid JSON on line $line"
+done
+```
+
+浏览器工具适合一次性检查。Shell 版本适合 CI 任务和可重复导入流水线。
+
+## 最佳实践
+
+| 做法 | 价值 |
+| --- | --- |
+| 一行一条记录 | 流式工具可以逐条处理记录。 |
+| 每条记录使用紧凑 JSON | 多行格式化对象会破坏逐行格式。 |
+| 保存为 UTF-8 文本 | 文件能在编辑器、终端和 API 之间稳定流转。 |
+| 导入前先校验 | 错误行会在进入数据库或模型训练任务前暴露。 |
+| 保持稳定字段 | 下游 CSV、SQL 和 schema 工具更容易使用。 |
+
+转换完成后，可以把 JSON 数组送到 [JSON 格式化工具](/zh/tools/json-formatter/) 检查结构，送到 [JSON 转 CSV 转换器](/zh/tools/json-to-csv/) 进入表格流程，或用 [JSON Diff](/zh/tools/json-diff/) 对比两份导出。
