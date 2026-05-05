@@ -1,0 +1,646 @@
+---
+// MarkdownTocGeneratorTool — Generate clickable TOC from Markdown headings.
+// Supports GitHub / GitLab / Jekyll / Bitbucket anchor styles, heading-level
+// filtering, and in-place TOC updates via <!-- toc --> ... <!-- /toc --> markers.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    inputLabel: 'Markdown input',
+    inputPh: 'Paste your Markdown here…\n\n# Document Title\n\n## Section 1\n\n## Section 2\n\n### Subsection',
+    anchorLabel: 'Anchor style',
+    bulletLabel: 'Bullet',
+    indentLabel: 'Indent',
+    minLevelLabel: 'Min heading level',
+    maxLevelLabel: 'Max heading level',
+    includeH1: 'Include H1',
+    markerMode: 'Marker mode',
+    markerHint: 'Replace TOC inside <!-- toc --> ... <!-- /toc --> markers',
+    indent2: '2 spaces',
+    indent4: '4 spaces',
+    indentTab: 'Tab',
+    bulletDash: '- (hyphen)',
+    bulletAsterisk: '* (asterisk)',
+    bulletNumber: '1. (numbered)',
+    tocOutput: 'Table of contents',
+    mdOutput: 'Markdown with TOC inserted',
+    copyToc: 'Copy TOC',
+    copyMd: 'Copy MD',
+    copied: 'Copied!',
+    empty: 'No headings found.',
+    markerMissing: 'No <!-- toc --> markers found. TOC will be inserted before the first heading.',
+    markerUpdated: 'TOC inserted between markers.',
+    markerInserted: 'TOC inserted before first heading.',
+    markerUnclosed: '<!-- toc --> marker not closed — TOC unchanged. Add <!-- /toc --> to enable replacement.',
+    headings: (n: number) => `${n} heading${n === 1 ? '' : 's'}`,
+  },
+  zh: {
+    inputLabel: 'Markdown 输入',
+    inputPh: '在此粘贴 Markdown 内容…\n\n# 文档标题\n\n## 第一节\n\n## 第二节\n\n### 子章节',
+    anchorLabel: '锚点风格',
+    bulletLabel: '列表符号',
+    indentLabel: '缩进',
+    minLevelLabel: '最小标题级别',
+    maxLevelLabel: '最大标题级别',
+    includeH1: '包含 H1',
+    markerMode: '标记模式',
+    markerHint: '在 <!-- toc --> ... <!-- /toc --> 标记之间替换目录',
+    indent2: '2 空格',
+    indent4: '4 空格',
+    indentTab: 'Tab',
+    bulletDash: '- (连字符)',
+    bulletAsterisk: '* (星号)',
+    bulletNumber: '1. (有序)',
+    tocOutput: '目录',
+    mdOutput: '插入 TOC 后的 Markdown',
+    copyToc: '复制 TOC',
+    copyMd: '复制 Markdown',
+    copied: '已复制！',
+    empty: '未找到任何标题。',
+    markerMissing: '未找到 <!-- toc --> 标记。TOC 将插入到第一个标题之前。',
+    markerUpdated: '已在标记之间插入 TOC。',
+    markerInserted: '已在第一个标题之前插入 TOC。',
+    markerUnclosed: '<!-- toc --> 标记未闭合 — Markdown 未改动。请添加 <!-- /toc --> 以启用替换。',
+    headings: (n: number) => `共 ${n} 个标题`,
+  },
+  ja: {
+    inputLabel: 'Markdown 入力',
+    inputPh: 'ここに Markdown を貼り付けてください…\n\n# ドキュメントタイトル\n\n## セクション 1\n\n## セクション 2\n\n### サブセクション',
+    anchorLabel: 'アンカー形式',
+    bulletLabel: '箇条書き記号',
+    indentLabel: 'インデント',
+    minLevelLabel: '最小見出しレベル',
+    maxLevelLabel: '最大見出しレベル',
+    includeH1: 'H1 を含む',
+    markerMode: 'マーカーモード',
+    markerHint: '<!-- toc --> ... <!-- /toc --> マーカー間の目次を置換',
+    indent2: '半角スペース 2',
+    indent4: '半角スペース 4',
+    indentTab: 'Tab',
+    bulletDash: '- (ハイフン)',
+    bulletAsterisk: '* (アスタリスク)',
+    bulletNumber: '1. (番号付き)',
+    tocOutput: '目次',
+    mdOutput: 'TOC 挿入後の Markdown',
+    copyToc: 'TOC をコピー',
+    copyMd: 'Markdown をコピー',
+    copied: 'コピーしました！',
+    empty: '見出しが見つかりません。',
+    markerMissing: '<!-- toc --> マーカーが見つかりません。TOC は最初の見出しの前に挿入されます。',
+    markerUpdated: 'マーカー間に TOC を挿入しました。',
+    markerInserted: '最初の見出しの前に TOC を挿入しました。',
+    markerUnclosed: '<!-- toc --> マーカーが閉じていません — Markdown は変更されていません。<!-- /toc --> を追加して置換を有効にしてください。',
+    headings: (n: number) => `見出し ${n} 件`,
+  },
+  ko: {
+    inputLabel: 'Markdown 입력',
+    inputPh: '여기에 Markdown 을 붙여넣으세요…\n\n# 문서 제목\n\n## 섹션 1\n\n## 섹션 2\n\n### 하위 섹션',
+    anchorLabel: '앵커 스타일',
+    bulletLabel: '글머리 기호',
+    indentLabel: '들여쓰기',
+    minLevelLabel: '최소 제목 레벨',
+    maxLevelLabel: '최대 제목 레벨',
+    includeH1: 'H1 포함',
+    markerMode: '마커 모드',
+    markerHint: '<!-- toc --> ... <!-- /toc --> 마커 사이의 목차 교체',
+    indent2: '공백 2칸',
+    indent4: '공백 4칸',
+    indentTab: 'Tab',
+    bulletDash: '- (하이픈)',
+    bulletAsterisk: '* (별표)',
+    bulletNumber: '1. (번호)',
+    tocOutput: '목차',
+    mdOutput: 'TOC 삽입된 Markdown',
+    copyToc: 'TOC 복사',
+    copyMd: 'Markdown 복사',
+    copied: '복사됨!',
+    empty: '제목을 찾을 수 없습니다.',
+    markerMissing: '<!-- toc --> 마커를 찾을 수 없습니다. TOC가 첫 제목 앞에 삽입됩니다.',
+    markerUpdated: '마커 사이에 TOC를 삽입했습니다.',
+    markerInserted: '첫 제목 앞에 TOC를 삽입했습니다.',
+    markerUnclosed: '<!-- toc --> 마커가 닫혀 있지 않음 — Markdown 변경 없음. 교체를 활성화하려면 <!-- /toc --> 를 추가하세요.',
+    headings: (n: number) => `제목 ${n}개`,
+  },
+};
+
+const L = labels[lang] ?? labels.en;
+---
+
+<div
+  class="mtoc-wrap"
+  data-lang={lang}
+  data-copy={L.copyToc}
+  data-copy-md={L.copyMd}
+  data-copied={L.copied}
+  data-empty={L.empty}
+  data-marker-missing={L.markerMissing}
+  data-marker-updated={L.markerUpdated}
+  data-marker-inserted={L.markerInserted}
+  data-marker-unclosed={L.markerUnclosed}
+  data-headings-singular={lang === 'en' ? '1 heading' : (lang === 'zh' ? '共 1 个标题' : (lang === 'ja' ? '見出し 1 件' : '제목 1개'))}
+  data-headings-plural-pre={lang === 'en' ? '' : (lang === 'zh' ? '共 ' : (lang === 'ja' ? '見出し ' : '제목 '))}
+  data-headings-plural-post={lang === 'en' ? ' headings' : (lang === 'zh' ? ' 个标题' : (lang === 'ja' ? ' 件' : '개'))}
+>
+  <div class="mtoc-grid">
+    <div class="mtoc-input-col">
+      <label class="tool-label" for="mtoc-input">{L.inputLabel}</label>
+      <textarea
+        id="mtoc-input"
+        class="tool-textarea mtoc-textarea"
+        placeholder={L.inputPh}
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="mtoc-controls-col">
+      <div class="mtoc-control">
+        <label class="tool-label" for="mtoc-anchor">{L.anchorLabel}</label>
+        <select id="mtoc-anchor" class="tool-input mtoc-select">
+          <option value="github">GitHub / Hugo</option>
+          <option value="gitlab">GitLab</option>
+          <option value="jekyll">Jekyll</option>
+          <option value="bitbucket">Bitbucket</option>
+        </select>
+      </div>
+
+      <div class="mtoc-control">
+        <label class="tool-label" for="mtoc-bullet">{L.bulletLabel}</label>
+        <select id="mtoc-bullet" class="tool-input mtoc-select">
+          <option value="-">{L.bulletDash}</option>
+          <option value="*">{L.bulletAsterisk}</option>
+          <option value="1.">{L.bulletNumber}</option>
+        </select>
+      </div>
+
+      <div class="mtoc-control">
+        <label class="tool-label" for="mtoc-indent">{L.indentLabel}</label>
+        <select id="mtoc-indent" class="tool-input mtoc-select">
+          <option value="2">{L.indent2}</option>
+          <option value="4">{L.indent4}</option>
+          <option value="tab">{L.indentTab}</option>
+        </select>
+      </div>
+
+      <div class="mtoc-range">
+        <label class="tool-label" for="mtoc-min">{L.minLevelLabel} <span class="mtoc-range-value" id="mtoc-min-value">1</span></label>
+        <input id="mtoc-min" type="range" min="1" max="6" value="1" />
+      </div>
+
+      <div class="mtoc-range">
+        <label class="tool-label" for="mtoc-max">{L.maxLevelLabel} <span class="mtoc-range-value" id="mtoc-max-value">6</span></label>
+        <input id="mtoc-max" type="range" min="1" max="6" value="6" />
+      </div>
+
+      <label class="mtoc-toggle">
+        <input id="mtoc-include-h1" type="checkbox" checked />
+        <span>{L.includeH1}</span>
+      </label>
+
+      <label class="mtoc-toggle">
+        <input id="mtoc-marker-mode" type="checkbox" />
+        <span>{L.markerMode}</span>
+      </label>
+      <p class="mtoc-hint">{L.markerHint}</p>
+    </div>
+  </div>
+
+  <div class="mtoc-output">
+    <div class="mtoc-output-head">
+      <span class="tool-label">{L.tocOutput}</span>
+      <span class="mtoc-status" id="mtoc-status" aria-live="polite"></span>
+      <button id="mtoc-copy-toc" class="btn-copy" type="button" disabled>{L.copyToc}</button>
+    </div>
+    <textarea id="mtoc-toc" class="tool-textarea mtoc-textarea-out" readonly spellcheck="false"></textarea>
+  </div>
+
+  <div class="mtoc-output mtoc-md-output" id="mtoc-md-block" hidden>
+    <div class="mtoc-output-head">
+      <span class="tool-label">{L.mdOutput}</span>
+      <span class="mtoc-status" id="mtoc-md-status" aria-live="polite"></span>
+      <button id="mtoc-copy-md" class="btn-copy" type="button" disabled>{L.copyMd}</button>
+    </div>
+    <textarea id="mtoc-md" class="tool-textarea mtoc-textarea-out" readonly spellcheck="false"></textarea>
+  </div>
+</div>
+
+<script is:inline>
+(function () {
+  var wrap = document.querySelector('.mtoc-wrap');
+  if (!wrap) return;
+  var inputEl = document.getElementById('mtoc-input');
+  var anchorEl = document.getElementById('mtoc-anchor');
+  var bulletEl = document.getElementById('mtoc-bullet');
+  var indentEl = document.getElementById('mtoc-indent');
+  var minEl = document.getElementById('mtoc-min');
+  var maxEl = document.getElementById('mtoc-max');
+  var minValEl = document.getElementById('mtoc-min-value');
+  var maxValEl = document.getElementById('mtoc-max-value');
+  var h1El = document.getElementById('mtoc-include-h1');
+  var markerEl = document.getElementById('mtoc-marker-mode');
+  var tocEl = document.getElementById('mtoc-toc');
+  var mdEl = document.getElementById('mtoc-md');
+  var mdBlock = document.getElementById('mtoc-md-block');
+  var statusEl = document.getElementById('mtoc-status');
+  var mdStatusEl = document.getElementById('mtoc-md-status');
+  var copyTocBtn = document.getElementById('mtoc-copy-toc');
+  var copyMdBtn = document.getElementById('mtoc-copy-md');
+
+  var COPY_LABEL = wrap.getAttribute('data-copy') || 'Copy';
+  var COPY_MD_LABEL = wrap.getAttribute('data-copy-md') || 'Copy';
+  var COPIED_LABEL = wrap.getAttribute('data-copied') || 'Copied!';
+  var EMPTY_LABEL = wrap.getAttribute('data-empty') || 'No headings found.';
+  var MARKER_MISSING = wrap.getAttribute('data-marker-missing') || '';
+  var MARKER_UPDATED = wrap.getAttribute('data-marker-updated') || '';
+  var MARKER_INSERTED = wrap.getAttribute('data-marker-inserted') || '';
+  var MARKER_UNCLOSED = wrap.getAttribute('data-marker-unclosed') || '';
+  var HEAD_SINGULAR = wrap.getAttribute('data-headings-singular') || '1 heading';
+  var HEAD_PRE = wrap.getAttribute('data-headings-plural-pre') || '';
+  var HEAD_POST = wrap.getAttribute('data-headings-plural-post') || ' headings';
+
+  // ── Heading parser ────────────────────────────────────────────────
+  function parseHeadings(md) {
+    var lines = md.split('\n');
+    var headings = [];
+    var inFence = false;
+    var fenceChar = '';
+    var inTocMarker = false;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.trim();
+      // Fenced code block
+      var fenceMatch = trimmed.match(/^(```|~~~)/);
+      if (fenceMatch) {
+        if (!inFence) { inFence = true; fenceChar = fenceMatch[1]; }
+        else if (trimmed.indexOf(fenceChar) === 0) { inFence = false; fenceChar = ''; }
+        continue;
+      }
+      if (inFence) continue;
+      // Skip TOC marker block
+      if (/<!--\s*toc\s*-->/i.test(line)) { inTocMarker = true; continue; }
+      if (/<!--\s*\/toc\s*-->/i.test(line)) { inTocMarker = false; continue; }
+      if (inTocMarker) continue;
+      // ATX heading
+      var atx = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+      if (atx) {
+        headings.push({ level: atx[1].length, text: cleanInline(atx[2]) });
+        continue;
+      }
+      // Setext heading
+      if (i + 1 < lines.length && trimmed && !inFence) {
+        var next = lines[i + 1].trim();
+        if (/^=+$/.test(next)) { headings.push({ level: 1, text: cleanInline(trimmed) }); i++; continue; }
+        if (/^-+$/.test(next) && next.length >= 2) {
+          // disambiguate: setext H2 needs preceding non-empty line
+          var prev = i > 0 ? lines[i - 1].trim() : '';
+          if (prev !== '') { /* not a paragraph break before */ }
+          headings.push({ level: 2, text: cleanInline(trimmed) });
+          i++;
+          continue;
+        }
+      }
+    }
+    return headings;
+  }
+
+  // Strip Markdown inline syntax for anchor computation; keep readable for TOC label
+  function cleanInline(text) {
+    return text
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/_([^_]+)_/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+      .trim();
+  }
+
+  // ── Slugify per platform ──────────────────────────────────────────
+  function slugifyGithub(text) {
+    var s = text.toLowerCase();
+    // Strip everything except letters, numbers (incl. unicode), spaces, hyphens
+    s = s.replace(/[^\p{L}\p{N}\s\-]/gu, '');
+    s = s.replace(/\s+/g, '-');
+    s = s.replace(/^-+|-+$/g, '');
+    return s;
+  }
+  function slugifyGitlab(text) {
+    var s = slugifyGithub(text);
+    return s.replace(/-+/g, '-');
+  }
+  function slugifyJekyll(text) {
+    var s = text.toLowerCase();
+    // Jekyll/kramdown classic: ASCII only
+    s = s.replace(/[^\x00-\x7F]/g, '');
+    s = s.replace(/[^a-z0-9\s\-]/g, '');
+    s = s.replace(/\s+/g, '-');
+    s = s.replace(/^-+|-+$/g, '');
+    return s;
+  }
+  function slugifyBitbucket(text) {
+    return 'markdown-' + slugifyGithub(text);
+  }
+  function slugify(text, style) {
+    if (style === 'gitlab') return slugifyGitlab(text);
+    if (style === 'jekyll') return slugifyJekyll(text);
+    if (style === 'bitbucket') return slugifyBitbucket(text);
+    return slugifyGithub(text);
+  }
+
+  function dedupe(slugs, style) {
+    var counts = {};
+    var out = [];
+    var sep = style === 'bitbucket' ? '_' : '-';
+    for (var i = 0; i < slugs.length; i++) {
+      var base = slugs[i];
+      if (base === '') { out.push(''); continue; }
+      if (!(base in counts)) {
+        counts[base] = 0;
+        out.push(base);
+      } else {
+        counts[base] += 1;
+        out.push(base + sep + counts[base]);
+      }
+    }
+    return out;
+  }
+
+  // ── TOC renderer ──────────────────────────────────────────────────
+  function escapeMdLink(text) {
+    // Escape brackets so they don't terminate the link label
+    return text.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+  }
+
+  function renderTOC(headings, opts) {
+    if (headings.length === 0) return '';
+    var minL = opts.minLevel;
+    var maxL = opts.maxLevel;
+    var includeH1 = opts.includeH1;
+    var bullet = opts.bullet;
+    var indentChars = opts.indent === 'tab' ? '\t' : (opts.indent === '4' ? '    ' : '  ');
+
+    var filtered = [];
+    for (var i = 0; i < headings.length; i++) {
+      var h = headings[i];
+      if (h.level < minL || h.level > maxL) continue;
+      if (!includeH1 && h.level === 1) continue;
+      filtered.push(h);
+    }
+    if (filtered.length === 0) return '';
+
+    var baseLevel = Infinity;
+    for (var j = 0; j < filtered.length; j++) {
+      if (filtered[j].level < baseLevel) baseLevel = filtered[j].level;
+    }
+
+    var rawSlugs = filtered.map(function (h) { return slugify(h.text, opts.style); });
+    var finalSlugs = dedupe(rawSlugs, opts.style);
+
+    var lines = [];
+    for (var k = 0; k < filtered.length; k++) {
+      var depth = filtered[k].level - baseLevel;
+      var indent = depth > 0 ? new Array(depth + 1).join(indentChars) : '';
+      var b = bullet === '1.' ? '1.' : bullet;
+      var anchor = finalSlugs[k];
+      var label = escapeMdLink(filtered[k].text);
+      lines.push(indent + b + ' [' + label + '](#' + anchor + ')');
+    }
+    return lines.join('\n');
+  }
+
+  // ── In-place TOC marker update ────────────────────────────────────
+  // Returns { md: string, status: 'updated' | 'inserted' | 'unclosed' | 'missing-no-heading' }
+  function applyToMarkdown(md, toc) {
+    var openRe = /<!--\s*toc\s*-->/i;
+    var closeRe = /<!--\s*\/toc\s*-->/i;
+    var openMatch = openRe.exec(md);
+    if (openMatch) {
+      var afterOpen = md.slice(openMatch.index + openMatch[0].length);
+      var closeMatch = closeRe.exec(afterOpen);
+      if (!closeMatch) {
+        return { md: md, status: 'unclosed' };
+      }
+      var closeAbs = openMatch.index + openMatch[0].length + closeMatch.index;
+      var newMd = md.slice(0, openMatch.index + openMatch[0].length) + '\n' + toc + '\n' + md.slice(closeAbs);
+      return { md: newMd, status: 'updated' };
+    }
+    // No marker: insert before first ATX heading
+    var firstHeadingRe = /(^|\n)(#{1,6})\s+/m;
+    var firstMatch = firstHeadingRe.exec(md);
+    if (!firstMatch) {
+      return { md: md, status: 'missing-no-heading' };
+    }
+    var insertAt = firstMatch.index === 0 ? 0 : firstMatch.index + 1; // skip the leading newline
+    var prefix = md.slice(0, insertAt);
+    var suffix = md.slice(insertAt);
+    var newDoc = prefix + '<!-- toc -->\n' + toc + '\n<!-- /toc -->\n\n' + suffix;
+    return { md: newDoc, status: 'inserted' };
+  }
+
+  function headingCountLabel(n) {
+    if (n === 1) return HEAD_SINGULAR;
+    return HEAD_PRE + n + HEAD_POST;
+  }
+
+  function update() {
+    var md = inputEl.value;
+    var minL = parseInt(minEl.value, 10);
+    var maxL = parseInt(maxEl.value, 10);
+    if (minL > maxL) { var swap = minL; minL = maxL; maxL = swap; }
+    minValEl.textContent = String(minL);
+    maxValEl.textContent = String(maxL);
+
+    var headings = parseHeadings(md);
+    var visibleCount = headings.filter(function (h) {
+      if (h.level < minL || h.level > maxL) return false;
+      if (!h1El.checked && h.level === 1) return false;
+      return true;
+    }).length;
+
+    var toc = renderTOC(headings, {
+      style: anchorEl.value,
+      bullet: bulletEl.value,
+      indent: indentEl.value,
+      minLevel: minL,
+      maxLevel: maxL,
+      includeH1: h1El.checked,
+    });
+
+    if (toc === '') {
+      tocEl.value = '';
+      tocEl.placeholder = EMPTY_LABEL;
+      copyTocBtn.disabled = true;
+      statusEl.textContent = headings.length === 0 ? '' : EMPTY_LABEL;
+    } else {
+      tocEl.value = toc;
+      copyTocBtn.disabled = false;
+      statusEl.textContent = headingCountLabel(visibleCount);
+    }
+
+    if (markerEl.checked) {
+      mdBlock.hidden = false;
+      if (md.trim() === '') {
+        mdEl.value = '';
+        copyMdBtn.disabled = true;
+        mdStatusEl.textContent = '';
+      } else if (toc === '') {
+        mdEl.value = md;
+        copyMdBtn.disabled = true;
+        mdStatusEl.textContent = EMPTY_LABEL;
+      } else {
+        var result = applyToMarkdown(md, toc);
+        mdEl.value = result.md;
+        if (result.status === 'updated') {
+          copyMdBtn.disabled = false;
+          mdStatusEl.textContent = MARKER_UPDATED;
+        } else if (result.status === 'inserted') {
+          copyMdBtn.disabled = false;
+          mdStatusEl.textContent = MARKER_INSERTED;
+        } else if (result.status === 'unclosed') {
+          copyMdBtn.disabled = true;
+          mdStatusEl.textContent = MARKER_UNCLOSED;
+        } else {
+          copyMdBtn.disabled = true;
+          mdStatusEl.textContent = MARKER_MISSING;
+        }
+      }
+    } else {
+      mdBlock.hidden = true;
+    }
+  }
+
+  function copyValue(textarea, btn, baseLabel) {
+    if (!textarea.value) return;
+    var done = function () {
+      btn.classList.add('copied');
+      btn.textContent = COPIED_LABEL;
+      setTimeout(function () {
+        btn.classList.remove('copied');
+        btn.textContent = baseLabel;
+      }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textarea.value).then(done).catch(function () {
+        textarea.select();
+        try { document.execCommand('copy'); done(); } catch (_e) {}
+      });
+    } else {
+      textarea.select();
+      try { document.execCommand('copy'); done(); } catch (_e) {}
+    }
+  }
+
+  copyTocBtn.addEventListener('click', function () { copyValue(tocEl, copyTocBtn, COPY_LABEL); });
+  copyMdBtn.addEventListener('click', function () { copyValue(mdEl, copyMdBtn, COPY_MD_LABEL); });
+
+  ['input', 'change'].forEach(function (evt) {
+    [inputEl, anchorEl, bulletEl, indentEl, minEl, maxEl, h1El, markerEl].forEach(function (el) {
+      el.addEventListener(evt, update);
+    });
+  });
+
+  update();
+})();
+</script>
+
+<style is:global>
+.mtoc-wrap {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.mtoc-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+}
+@media (max-width: 760px) {
+  .mtoc-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.mtoc-input-col,
+.mtoc-controls-col {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.mtoc-textarea {
+  min-height: 280px;
+  font-size: 0.88rem;
+}
+@media (max-width: 760px) {
+  .mtoc-textarea { min-height: 200px; }
+}
+
+.mtoc-control,
+.mtoc-range {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.mtoc-select {
+  font-family: var(--font-sans);
+}
+
+.mtoc-range-value {
+  display: inline-block;
+  min-width: 1.2rem;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.mtoc-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.mtoc-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.mtoc-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin: -0.2rem 0 0 1.6rem;
+  line-height: 1.4;
+}
+
+.mtoc-output {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.mtoc-output-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.mtoc-status {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+
+.mtoc-textarea-out {
+  min-height: 180px;
+  font-size: 0.85rem;
+}
+
+.mtoc-textarea-out:focus {
+  background: var(--color-bg-secondary);
+  box-shadow: inset 0 0 0 1px var(--color-border-soft);
+}
+</style>
