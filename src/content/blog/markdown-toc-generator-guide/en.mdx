@@ -1,0 +1,175 @@
+---
+title: "Markdown TOC Generator: One File, Four Anchor Dialects"
+description: "Generate a clickable Markdown table of contents that actually works on GitHub, GitLab, Jekyll, and Bitbucket. Covers anchor slug algorithms, dedup rules, marker-based in-place updates, and the cross-platform traps that silently break your links."
+pubDate: 2026-05-05
+lang: "en"
+tags: ["markdown", "documentation", "github", "gitlab", "developer-tools"]
+ogImage: /og/blog-markdown-toc-generator-guide.png
+---
+
+You finish a 12-section README, ship it to GitHub, then a teammate opens the same file in GitLab and every TOC link is dead. Or you migrate a Jekyll site to Hugo and discover that half your anchors silently changed casing. The Markdown looks identical. The anchors are not.
+
+Markdown table-of-contents generation looks like a one-liner — read the headings, slugify them, emit links — and the first 80% of the work really is. The trap is the last 20%: every renderer has its own slugify rules, its own duplicate handling, and its own opinion on Unicode. A TOC built for the wrong target is worse than no TOC at all, because the links look correct in your editor and break the moment they hit the renderer.
+
+[Build a Markdown TOC →](/tools/markdown-toc-generator/)
+
+## Why anchors aren't standardized
+
+The Markdown spec doesn't talk about heading anchors. CommonMark deliberately left HTML rendering of headings to the implementation, and every renderer that ships a "slug from heading" feature wrote its own algorithm. The dialects diverged enough that you can't write a universal TOC generator without picking a target.
+
+The four dialects that cover ~98% of where Markdown actually renders:
+
+| Renderer | Where you see it | Anchor style |
+|---|---|---|
+| **GitHub Flavored Markdown** | github.com, gh-pages, Discourse, Gitiles | lowercase, strip punctuation, hyphenate, keep Unicode |
+| **GitLab Flavored Markdown** | gitlab.com, GitLab self-hosted | same as GitHub + collapse repeated hyphens |
+| **kramdown / Jekyll classic** | older Jekyll sites | lowercase, strip non-ASCII, hyphenate |
+| **Bitbucket** | bitbucket.org | `markdown-` prefix on every anchor, `_N` for duplicates |
+
+Hugo with goldmark (the default since v0.62) is close to the GitHub rules — close enough that you'll rarely see broken anchors in practice, though edge cases around punctuation can still drift. Other renderers (Discourse, Gitea, Forgejo) ship variations on the same basic algorithm; MkDocs has its own toc extension and pymdownx variants. If you have a target that isn't in the four-dialect table, run a quick sanity check on the actual renderer before committing a TOC. GitHub is the safe default for ad-hoc cases — except for Jekyll sites still on the kramdown classic slugger and any Bitbucket repo, which are not GitHub-compatible.
+
+## The slugify algorithm, four ways
+
+Walk through a single heading and watch the four dialects produce different anchors:
+
+Heading: `## Quick Start: Setting up SSO (Auth 2.0)`
+
+| Style | Anchor |
+|---|---|
+| GitHub | `quick-start-setting-up-sso-auth-20` |
+| GitLab | `quick-start-setting-up-sso-auth-20` |
+| Jekyll | `quick-start-setting-up-sso-auth-20` |
+| Bitbucket | `markdown-quick-start-setting-up-sso-auth-20` |
+
+So far so consistent. Now try a Unicode heading: `## 快速开始`
+
+| Style | Anchor |
+|---|---|
+| GitHub | `快速开始` |
+| GitLab | `快速开始` |
+| Jekyll | (empty after slugify — kramdown then assigns a fallback id on the rendering side) |
+| Bitbucket | `markdown-快速开始` |
+
+This is where Jekyll classic falls over. If your site uses `kramdown` with the default `auto_ids` and your headings include any non-ASCII characters, every such anchor either ends up empty or gets a generic fallback id from the renderer. The fix on the Jekyll side is to upgrade to a Unicode-aware slugger — modern kramdown versions and Jekyll plugin alternatives both ship variants — and once your renderer keeps Unicode in the anchor, switch this generator to GitHub style so the TOC matches. The classic kramdown shipped with older Jekyll is ASCII-only; if you can't upgrade it, drop non-ASCII out of your headings rather than commit a TOC the renderer will silently rewrite.
+
+One more case — repeated headings:
+
+```
+## Examples
+### Curl
+## Examples
+### Python
+```
+
+| Style | Anchors |
+|---|---|
+| GitHub / GitLab / Jekyll | `examples`, `curl`, `examples-1`, `python` |
+| Bitbucket | `markdown-examples`, `markdown-curl`, `markdown-examples_1`, `markdown-python` |
+
+Bitbucket is the odd one out: it uses an underscore for the duplicate counter instead of a hyphen. Every other major renderer uses `-N`.
+
+## Marker mode: keep the TOC fresh without git noise
+
+A common workflow trap with TOCs is the "stale TOC" diff: you add a section to a 2,000-line operations runbook, the TOC at the top drifts out of sync, and reviewers spend two PRs noticing. There are two ways out:
+
+1. **Generator-managed comment markers.** Wrap the TOC region with `<!-- toc -->` ... `<!-- /toc -->` and re-run the generator on every change. The markers stay in the file; only the body between them moves.
+2. **Pre-commit hook.** Same as above, run automatically before commit.
+
+The marker mode in this tool implements pattern 1. Paste the document, enable Marker mode, and you get the full Markdown back with a regenerated TOC inside the markers. If your document doesn't have markers yet, the tool inserts a fresh block right before the first heading so you can commit it once and use markers from then on.
+
+This matches the convention used by [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc) (the npm package used by webpack docs, Mocha, Sass, and dozens of other major projects), [`gh-md-toc`](https://github.com/ekalinin/github-markdown-toc) (the shell tool used by Kubernetes docs), and several editor plugins. The marker comment convention is portable: it works on GitHub, GitLab, Bitbucket, and inside any static site generator that treats HTML comments as comments.
+
+## Five traps you'll hit eventually
+
+A list of failure modes that actually happen in real projects, ordered by how often they bite:
+
+1. **Code blocks with `#` comments.** Bash, Ruby, and Python comments start with `#`. A naive heading parser reads `# This is a comment` inside a fenced code block as an H1. Any TOC generator worth using skips fenced code blocks. The tool here handles `` ``` `` and `~~~` fences correctly; if you're rolling your own, watch this case.
+
+2. **Setext headings.** Markdown supports two heading styles: ATX (`# Title`) and setext (`Title\n=====`). Older READMEs still use setext for H1 and H2. A generator that only handles ATX silently skips them.
+
+3. **Inline formatting in headings.** `## **Important**: Backups` should produce a TOC entry whose label includes the bold but whose anchor uses the plain text. Get this wrong and your anchor becomes `important-backups` while GitHub generates `important-backups` — same outcome here, but `## \`code\` example` produces `code-example` and not `\`code\`-example`. Strip inline syntax for the slug; preserve it for the label.
+
+4. **Repeated headings across H levels.** `## Examples` and `### Examples` both slug to `examples`, then `examples-1` for the second one. Not all generators get the cross-level dedupe right; some only dedupe within the same H level, which produces broken links.
+
+5. **The marker-already-present case.** If a document already has `<!-- toc -->` ... `<!-- /toc -->`, naive in-place insertion adds a *second* TOC. The right behavior is to detect the existing markers and replace what's between them, not append.
+
+## Code recipes
+
+### Pre-commit hook: regenerate the TOC on commit
+
+The cleanest way to keep TOCs in sync is to fail the commit if the TOC is stale, then have a one-key fix. With `markdown-toc` (npm) or `mdtoc` (Go) and a `pre-commit` hook:
+
+```bash
+#!/bin/sh
+# .git/hooks/pre-commit
+for f in $(git diff --cached --name-only --diff-filter=AM | grep '\.md$'); do
+  before=$(md5sum "$f")
+  npx markdown-toc -i "$f"
+  after=$(md5sum "$f")
+  if [ "$before" != "$after" ]; then
+    echo "TOC out of date: $f — staged the regenerated version."
+    git add "$f"
+  fi
+done
+```
+
+Replace `npx markdown-toc -i` with whatever generator you prefer; the contract is that it edits the file in place and reads the marker block.
+
+### GitHub Actions: TOC drift check on PR
+
+```yaml
+name: TOC drift
+on: [pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx markdown-toc -i README.md
+      - run: |
+          if ! git diff --quiet README.md; then
+            echo "::error::README.md TOC is out of date. Run 'npx markdown-toc -i README.md' locally and commit."
+            exit 1
+          fi
+```
+
+### Jekyll: make sure your slugger matches your TOC
+
+If your Jekyll site has any non-ASCII headings, switch the slugger before you commit a TOC:
+
+```yaml
+# _config.yml
+kramdown:
+  syntax_highlighter: rouge
+  toc_levels: 1..3
+  transliterate: false
+  # Or, with kramdown 2.4+:
+  # auto_ids_strip: ""
+```
+
+Then generate your TOC with the GitHub style — it will match the resulting anchors.
+
+## How this tool fits
+
+The behaviors that matter when picking a TOC generator, and where this one lands:
+
+| Behavior | This tool |
+|---|---|
+| Skips fenced code blocks (``` and `~~~`) | yes |
+| ATX and setext headings | both |
+| Replaces existing `<!-- toc -->` block in place | yes |
+| Four anchor styles in a single page | GitHub / GitLab / Jekyll / Bitbucket |
+| Bitbucket `_N` dedupe | yes |
+| Strips inline Markdown for the anchor, keeps it for the label | yes |
+| Heading-level filter and H1 toggle | yes |
+| Runs entirely in your browser | yes |
+
+If your workflow is server-side and you want a CLI, [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc) (npm, GitHub-style) is the most battle-tested option — used by webpack docs, Mocha, Sass, Prettier, and many others. For ad-hoc paste-and-copy on the web, the four-style support and marker-aware replacement here saves a round trip when your target isn't GitHub.
+
+## Further reading
+
+- [GitHub Flavored Markdown spec](https://github.github.com/gfm/) — the spec doesn't define anchor slugs (those come from the GitHub renderer's behavior), but it pins down the heading and code-block parsing the slug rules build on
+- [kramdown auto_ids](https://kramdown.gettalong.org/converter/html.html#auto-ids) — Jekyll's slug rules in their canonical form
+- [GitLab Flavored Markdown reference](https://docs.gitlab.com/ee/user/markdown.html) — the GitLab additions on top of CommonMark
+- [Bitbucket Markdown reference](https://support.atlassian.com/bitbucket-cloud/docs/use-mark-up-in-comments-and-pull-request-descriptions/) — anchor prefixing and dedupe rules
+- ZeroTool [Slugify](/tools/slugify/), [Markdown Linter](/tools/markdown-linter/), [Markdown Table Generator](/tools/markdown-table-generator/) — sister tools for the rest of your Markdown workflow
