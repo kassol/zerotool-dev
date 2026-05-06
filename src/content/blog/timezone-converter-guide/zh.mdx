@@ -1,0 +1,185 @@
+---
+title: "时区转换：IANA、夏令时与让工程师头疼的 UTC 偏移"
+description: "拆解 IANA 时区、夏令时切换与 UTC 偏移背后的真实机制，附 JavaScript、Python、Go、Java、SQL 的可直接复用的转换代码。"
+pubDate: 2026-05-06
+lang: "zh"
+tags: ["时区", "iana", "dst", "datetime", "开发工具"]
+ogImage: /og/blog-timezone-converter-guide.png
+---
+
+"上午 9 点 PT" 在二月份是 UTC-08:00，到了四月就变成 UTC-07:00；一份跨过春季夏令时切换的日历邀约会悄无声息地偏移一小时。按本地时钟跑的回填任务，会在秋季回拨那天跑两遍。巴西 2019 年取消夏令时之后，圣保罗的客户在订单历史里看到一段一小时的空白。每个 bug 的修法都从同一个词开始：**IANA**。
+
+本文讲清楚时区运算的真实机制，以及怎么不自己手搓夏令时表也能完成跨时区转换。
+
+## 即时跨时区转换
+
+**[试试 ZeroTool 时区转换器 →](/zh/tools/timezone-converter/)**
+
+选定基准时间，挑一个源时区，再添加任意多个目标时区。每行展示转换后的时间、UTC 偏移、标准时或夏令时缩写，七天内若有夏令时切换还会带一个标记徽章。
+
+## "时区"其实是三个概念
+
+工程师常常把 *timezone* 一词当三种不同的东西用，bug 就是这么来的：
+
+1. **UTC 偏移**——`+09:00`。一个数字，没有夏令时行为。
+2. **缩写**——`JST`、`CST`、`IST`。跨地区有歧义。
+3. **IANA 时区**——`Asia/Tokyo`、`America/Sao_Paulo`。一个区域，带完整的偏移历史和夏令时规则。
+
+只有 IANA 时区是无歧义的。`CST` 单独出现，可能是北美中部标准时、中国标准时，也可能是古巴标准时；`IST` 在不同地区代表印度、以色列或爱尔兰。在数据库里存"时区"时，存 IANA 名字——`America/New_York`，而不是 `EST`。
+
+## 为什么朴素代码会被夏令时坑掉
+
+夏令时是*时区中某个瞬间*的属性，不是时区本身的属性。同一个 `America/New_York` 时区在一月用 `EST`（UTC-05:00），到了七月用 `EDT`（UTC-04:00）。切换发生在本地定义的时刻——春季 02:00 向前跳，秋季 02:00 向后拨，这就意味着：
+
+- 某些本地时钟值是**无效的**（春季向前跳那天，02:30 不存在，时钟从 01:59 直接跳到 03:00）。
+- 某些本地时钟值是**有歧义的**（秋季向后拨那天，01:30 出现两次）。
+- 按本地时钟排序会出问题；按 UTC 瞬间排序永远没问题。
+
+更糟的是，夏令时规则会变。巴西 2019 年取消了夏令时，俄罗斯 2014 年永久切到冬令时，埃及 2023 年又把夏令时恢复了。代码里写死 `summer = April-September` 这种规则，在某个国家修改政策的那一刻就会悄悄输出错误时间。唯一可靠的修法是从 tzdata 数据库读取——这些政策决定都已经替你打包好了。
+
+## IANA tzdata 才是事实来源
+
+IANA 时区数据库（也叫 `tz`、`zoneinfo` 或 Olson 数据库）记录了 1970 年以来每个地区使用过的每一个偏移，是规范来源。它每年更新数次，并随以下系统分发：
+
+- Linux 上的 glibc 和 musl
+- macOS 与 iOS
+- Windows 10+（通过 ICU）
+- Java 的 `java.time` 包
+- Python 的 `zoneinfo` 模块（Python 3.9+）
+- 现代浏览器，通过 `Intl.DateTimeFormat` 暴露
+
+ZeroTool 转换器依赖浏览器自带的 tzdata，通常随浏览器版本一起更新。如果你在长期运行的后端里转换历史时间，把 tzdata 版本钉死，按正常发版流程更新——这样不同部署之间答案不会漂移。
+
+## JavaScript 里的转换
+
+`Date.toLocaleString` 接收 `timeZone` 选项，但更好的工具是 `Intl.DateTimeFormat`：构造一次 formatter 反复使用，再用 `formatToParts` 把结果拆成机器可读的片段。两个 API 都接受显式的 IANA 时区，所以你永远不会被服务器的本地时区污染：
+
+```js
+const date = new Date('2026-05-06T13:30:00Z'); // UTC instant
+
+const fmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false,
+  timeZoneName: 'longOffset',
+});
+
+console.log(fmt.format(date));
+// "2026-05-06, 22:30:00 GMT+09:00"
+```
+
+要把偏移拿成分钟数？从 `formatToParts` 里抠：
+
+```js
+function getOffsetMin(date, zone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    timeZoneName: 'longOffset',
+  }).formatToParts(date);
+  const tz = parts.find(p => p.type === 'timeZoneName').value; // "GMT+09:00"
+  const m = tz.match(/GMT([+-])(\d{2}):(\d{2})/);
+  return (m[1] === '+' ? 1 : -1) * (Number(m[2]) * 60 + Number(m[3]));
+}
+```
+
+现代浏览器还能通过 `Intl.supportedValuesOf('timeZone')` 拿到完整的 IANA 时区列表，Chrome 99+、Safari 15.4+、Firefox 93+ 都支持。
+
+## Python 里的转换
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo  # Python 3.9+
+
+# UTC instant → Tokyo wall clock
+utc = datetime(2026, 5, 6, 13, 30, tzinfo=ZoneInfo('UTC'))
+tokyo = utc.astimezone(ZoneInfo('Asia/Tokyo'))
+print(tokyo.isoformat())
+# 2026-05-06T22:30:00+09:00
+
+# Tokyo wall clock → UTC instant
+local = datetime(2026, 5, 6, 22, 30, tzinfo=ZoneInfo('Asia/Tokyo'))
+print(local.astimezone(ZoneInfo('UTC')).isoformat())
+# 2026-05-06T13:30:00+00:00
+```
+
+3.9 之前的环境用 `pytz`，但要注意 `pytz` 必须调 `localize()`，不能把时区直接传给 datetime 构造器——这是 `pytz` 独有的坑。
+
+## Go 里的转换
+
+```go
+import "time"
+
+loc, _ := time.LoadLocation("Asia/Tokyo")
+
+// UTC → Tokyo
+utc := time.Date(2026, 5, 6, 13, 30, 0, 0, time.UTC)
+tokyo := utc.In(loc)
+fmt.Println(tokyo.Format(time.RFC3339))
+// 2026-05-06T22:30:00+09:00
+
+// Tokyo wall clock → UTC instant
+local := time.Date(2026, 5, 6, 22, 30, 0, 0, loc)
+fmt.Println(local.UTC().Format(time.RFC3339))
+// 2026-05-06T13:30:00Z
+```
+
+`time.LoadLocation` 读系统的 tzdata。在缺少 `/usr/share/zoneinfo` 的 scratch 或 distroless 容器镜像里，这个调用会返回 error，忽略 error 的代码会默默退化成 UTC。要么装 `tzdata` 包、要么把 `zoneinfo` 拷进镜像，要么在 Go 1.15+ 里 `import "time/tzdata"`，把数据库直接嵌进二进制。
+
+## Java 里的转换
+
+```java
+import java.time.*;
+
+ZonedDateTime utc = ZonedDateTime.of(2026, 5, 6, 13, 30, 0, 0, ZoneOffset.UTC);
+ZonedDateTime tokyo = utc.withZoneSameInstant(ZoneId.of("Asia/Tokyo"));
+System.out.println(tokyo); // 2026-05-06T22:30+09:00[Asia/Tokyo]
+
+ZonedDateTime localTokyo = ZonedDateTime.of(2026, 5, 6, 22, 30, 0, 0, ZoneId.of("Asia/Tokyo"));
+System.out.println(localTokyo.withZoneSameInstant(ZoneOffset.UTC));
+// 2026-05-06T13:30Z
+```
+
+新代码别再用 `java.util.Date` 和 `java.util.Calendar`；Java 8 加入的 `java.time` 包修掉了一整代时区 bug。
+
+## SQL 里的转换
+
+Postgres 的 `timestamptz` 在内部存的是 UTC 瞬间，按 session 的 `TimeZone` 设置渲染。`AT TIME ZONE` 操作符在边界上做双向转换：
+
+```sql
+-- Wall clock in Tokyo → timestamptz (UTC instant), rendered in session TZ
+SELECT timestamp '2026-05-06 22:30:00' AT TIME ZONE 'Asia/Tokyo';
+-- e.g. 2026-05-06 13:30:00+00 with TimeZone=UTC
+
+-- timestamptz → wall clock in Tokyo (returns timestamp without zone)
+SELECT timestamptz '2026-05-06 13:30:00+00' AT TIME ZONE 'Asia/Tokyo';
+-- 2026-05-06 22:30:00
+```
+
+MySQL 安装时会建好时区表，但**不会**填充数据。在你用 `mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql`（或发行版的对应包）把 tzdata 灌进去之前，`CONVERT_TZ(now(), 'UTC', 'Asia/Tokyo')` 返回 `NULL`。`+09:00` 这种数字偏移不需要导入也能用，命名时区不行。
+
+## 把转换后的时间分享给别人
+
+发"上午 9 点 PT"会让每个收件人都在猜。更好的选项，按推荐度排序：
+
+1. UTC ISO 8601 字符串——`2026-05-06T13:30:00Z`。无歧义、可解析、可排序。
+2. Discord 的时间戳标签——`<t:1778074200:F>`（整数是该瞬间的 Unix 秒数）。Discord 自动按每位查看者的本地时区渲染。Slack 用的是另一套语法：`<!date^1778074200^{date_short_pretty} {time}|May 6, 2026 1:30 PM UTC>`。
+3. 可分享的转换器链接——`https://zerotool.dev/tools/timezone-converter/#t=2026-05-06T13:30&s=UTC&z=Asia/Tokyo,America/New_York`。不管收件人在哪，看到的都是同一份对照。
+
+## 常见坑
+
+- **把本地时间存进数据库。** 存 UTC；如果之后还要还原本地时钟，用单独一列存 IANA 时区。
+- **拿偏移当标识符。** `+05:30` 没法告诉你用户是在印度（无夏令时）、斯里兰卡（无夏令时），还是尼泊尔某地（`+05:45`）。存 IANA。
+- **相信 `new Date('2026-05-06')`。** 按 ES5 规范，纯日期 ISO 字符串解析为 UTC 零点；但带时间不带偏移的字符串（`'2026-05-06 09:30'`）解析为本地时间。永远显式带上偏移消除歧义。
+- **写死 "America/Los_Angeles 是 UTC-08:00"。** 从春天到秋天它都是 UTC-07:00。
+- **跑 cron 时无视夏令时。** 02:30 的每日任务一年里有一天跑零次，另一天跑两次。如果时机重要，用 UTC 写 cron 表达式。
+
+## 小结
+
+把时间分三层来对待，永远不要混淆：
+
+1. **UTC 瞬间**——存进库里的东西。
+2. **IANA 时区**——展示或输入时怎么解释这个瞬间。
+3. **本地时钟字符串**——人看到的东西。
+
+在边界上做转换，存 UTC 瞬间，用 IANA 字符串标识时区，把夏令时交给 tzdata 库。需要快速做跨时区对照时，[ZeroTool 时区转换器](/zh/tools/timezone-converter/)在浏览器里完成所有运算，时间数据不会发到任何地方。

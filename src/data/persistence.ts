@@ -13,6 +13,7 @@ export const toolPersistencePolicy = {
   'uuid-generator': 'preference',
   'cron-job-generator': 'preference',
   'css-filter-generator': 'preference',
+  'timezone-converter': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

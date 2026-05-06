@@ -1,0 +1,709 @@
+---
+// TimezoneConverterTool — convert one moment across many IANA zones with DST awareness.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    baseTime: 'Base time', now: 'Now',
+    sourceZone: 'Source timezone', localBrowser: 'Local (browser)',
+    addZone: 'Add timezone', addZonePlaceholder: 'Search city or zone…',
+    addBtn: 'Add', copySummary: 'Copy summary', shareLink: 'Share link',
+    targets: 'Target timezones',
+    copy: 'Copy', copied: 'Copied!',
+    remove: 'Remove', empty: 'No target zones — add one to start comparing.',
+    invalidTime: 'Invalid base time.', invalidZone: 'Unknown timezone.',
+    summaryHeader: 'Timezone comparison for {time}',
+    dstShiftFuture: 'DST shift in {n} day(s)', dstShiftPast: 'DST shifted {n} day(s) ago',
+    noDst: 'No DST',
+  },
+  zh: {
+    baseTime: '基准时间', now: '现在',
+    sourceZone: '源时区', localBrowser: '本地（浏览器）',
+    addZone: '添加时区', addZonePlaceholder: '搜索城市或时区…',
+    addBtn: '添加', copySummary: '复制摘要', shareLink: '分享链接',
+    targets: '目标时区',
+    copy: '复制', copied: '已复制！',
+    remove: '删除', empty: '尚无目标时区 — 添加一个开始对比。',
+    invalidTime: '基准时间无效。', invalidZone: '未知时区。',
+    summaryHeader: '{time} 的时区对照',
+    dstShiftFuture: '{n} 天后切换夏令时', dstShiftPast: '{n} 天前已切换夏令时',
+    noDst: '无夏令时',
+  },
+  ja: {
+    baseTime: '基準時刻', now: '現在',
+    sourceZone: 'ソースタイムゾーン', localBrowser: 'ローカル（ブラウザ）',
+    addZone: 'タイムゾーンを追加', addZonePlaceholder: '都市またはゾーン名で検索…',
+    addBtn: '追加', copySummary: 'サマリーをコピー', shareLink: 'リンクを共有',
+    targets: 'ターゲットタイムゾーン',
+    copy: 'コピー', copied: 'コピー済み！',
+    remove: '削除', empty: '対象タイムゾーンがありません — 追加して比較を始めましょう。',
+    invalidTime: '基準時刻が無効です。', invalidZone: '未知のタイムゾーンです。',
+    summaryHeader: '{time} のタイムゾーン対照',
+    dstShiftFuture: '{n}日後にサマータイム切替', dstShiftPast: '{n}日前にサマータイム切替済み',
+    noDst: 'サマータイムなし',
+  },
+  ko: {
+    baseTime: '기준 시간', now: '현재',
+    sourceZone: '소스 시간대', localBrowser: '로컬(브라우저)',
+    addZone: '시간대 추가', addZonePlaceholder: '도시 또는 시간대 검색…',
+    addBtn: '추가', copySummary: '요약 복사', shareLink: '링크 공유',
+    targets: '대상 시간대',
+    copy: '복사', copied: '복사됨!',
+    remove: '삭제', empty: '대상 시간대가 없습니다 — 추가하여 비교를 시작하세요.',
+    invalidTime: '기준 시간이 잘못되었습니다.', invalidZone: '알 수 없는 시간대.',
+    summaryHeader: '{time} 시간대 비교',
+    dstShiftFuture: '{n}일 후 서머타임 전환', dstShiftPast: '{n}일 전 서머타임 전환됨',
+    noDst: '서머타임 없음',
+  },
+};
+const L = labels[lang] ?? labels.en;
+---
+
+<div class="tzc-wrap">
+  <div class="tzc-controls">
+    <div class="tzc-field">
+      <label class="tool-label" for="tzc-base">{L.baseTime}</label>
+      <div class="tzc-row">
+        <input id="tzc-base" type="datetime-local" class="tool-input" step="1" />
+        <button id="tzc-now" class="btn-secondary" type="button">{L.now}</button>
+      </div>
+    </div>
+
+    <div class="tzc-field">
+      <label class="tool-label" for="tzc-source">{L.sourceZone}</label>
+      <div class="tzc-row">
+        <input id="tzc-source" type="text" class="tool-input" list="tzc-zone-list" autocomplete="off" spellcheck="false" />
+        <datalist id="tzc-zone-list"></datalist>
+      </div>
+    </div>
+  </div>
+
+  <div id="tzc-status" class="tool-status" aria-live="polite"></div>
+
+  <div class="tzc-field">
+    <label class="tool-label" for="tzc-add">{L.addZone}</label>
+    <div class="tzc-row">
+      <input id="tzc-add" type="text" class="tool-input" list="tzc-zone-list" placeholder={L.addZonePlaceholder} autocomplete="off" spellcheck="false" />
+      <button id="tzc-add-btn" class="btn-primary" type="button">{L.addBtn}</button>
+    </div>
+  </div>
+
+  <div class="tzc-targets-header">
+    <span class="tool-label">{L.targets}</span>
+    <div class="tzc-actions">
+      <button id="tzc-copy-all" class="btn-secondary" type="button">{L.copySummary}</button>
+      <button id="tzc-share" class="btn-secondary" type="button">{L.shareLink}</button>
+    </div>
+  </div>
+
+  <div id="tzc-results" class="tzc-results"></div>
+</div>
+
+<script is:inline define:vars={{ lang, L }}>
+(function () {
+  const SLUG = 'timezone-converter';
+  const FALLBACK_ZONES = [
+    'UTC', 'Africa/Cairo', 'Africa/Johannesburg', 'Africa/Lagos', 'Africa/Nairobi',
+    'America/Anchorage', 'America/Argentina/Buenos_Aires', 'America/Bogota', 'America/Chicago',
+    'America/Denver', 'America/Halifax', 'America/Lima', 'America/Los_Angeles', 'America/Mexico_City',
+    'America/New_York', 'America/Phoenix', 'America/Sao_Paulo', 'America/Toronto', 'America/Vancouver',
+    'Asia/Bangkok', 'Asia/Dubai', 'Asia/Hong_Kong', 'Asia/Jakarta', 'Asia/Karachi', 'Asia/Kolkata',
+    'Asia/Manila', 'Asia/Riyadh', 'Asia/Seoul', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Taipei',
+    'Asia/Tehran', 'Asia/Tokyo', 'Asia/Yerevan',
+    'Australia/Adelaide', 'Australia/Brisbane', 'Australia/Melbourne', 'Australia/Perth', 'Australia/Sydney',
+    'Europe/Amsterdam', 'Europe/Athens', 'Europe/Berlin', 'Europe/Dublin', 'Europe/Helsinki',
+    'Europe/Istanbul', 'Europe/Lisbon', 'Europe/London', 'Europe/Madrid', 'Europe/Moscow',
+    'Europe/Paris', 'Europe/Prague', 'Europe/Rome', 'Europe/Stockholm', 'Europe/Warsaw', 'Europe/Zurich',
+    'Pacific/Auckland', 'Pacific/Fiji', 'Pacific/Honolulu',
+  ];
+  const ALIASES = {
+    'new york': 'America/New_York',
+    'los angeles': 'America/Los_Angeles',
+    'san francisco': 'America/Los_Angeles',
+    'silicon valley': 'America/Los_Angeles',
+    'london': 'Europe/London',
+    'paris': 'Europe/Paris',
+    'berlin': 'Europe/Berlin',
+    'tokyo': 'Asia/Tokyo',
+    'beijing': 'Asia/Shanghai',
+    'shanghai': 'Asia/Shanghai',
+    'hong kong': 'Asia/Hong_Kong',
+    'singapore': 'Asia/Singapore',
+    'sydney': 'Australia/Sydney',
+    'mumbai': 'Asia/Kolkata',
+    'delhi': 'Asia/Kolkata',
+    'dubai': 'Asia/Dubai',
+    'sao paulo': 'America/Sao_Paulo',
+    'mexico city': 'America/Mexico_City',
+    'moscow': 'Europe/Moscow',
+    'auckland': 'Pacific/Auckland',
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const baseInput = $('tzc-base');
+  const sourceInput = $('tzc-source');
+  const addInput = $('tzc-add');
+  const addBtn = $('tzc-add-btn');
+  const nowBtn = $('tzc-now');
+  const copyAllBtn = $('tzc-copy-all');
+  const shareBtn = $('tzc-share');
+  const statusEl = $('tzc-status');
+  const resultsEl = $('tzc-results');
+  const datalist = $('tzc-zone-list');
+
+  const allZones = (function () {
+    if (typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function') {
+      try {
+        const z = Intl.supportedValuesOf('timeZone');
+        if (z && z.length) return z;
+      } catch (e) {}
+    }
+    return FALLBACK_ZONES;
+  })();
+  const zoneSet = new Set(allZones);
+  datalist.innerHTML = allZones.map((z) => '<option value="' + z + '">').join('');
+
+  const localZone = (function () {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+    catch (e) { return 'UTC'; }
+  })();
+
+  function pad(n) { return ('0' + n).slice(-2); }
+
+  function nowLocalIso() {
+    const d = new Date();
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  // Read datetime-local input as wall-clock time interpreted in `zone`.
+  // Returns the corresponding UTC Date object.
+  function wallClockToUtc(localStr, zone) {
+    if (!localStr) return null;
+    const m = localStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) return null;
+    const y = +m[1], mo = +m[2] - 1, d = +m[3], h = +m[4], mi = +m[5], s = m[6] ? +m[6] : 0;
+    // First guess: treat the wall-clock as UTC, then back-correct by the zone offset.
+    const guess = Date.UTC(y, mo, d, h, mi, s);
+    const off1 = getOffsetMin(new Date(guess), zone);
+    let utc = guess - off1 * 60 * 1000;
+    // Refine once to handle DST boundaries (offset may differ at the corrected instant).
+    const off2 = getOffsetMin(new Date(utc), zone);
+    if (off2 !== off1) utc = guess - off2 * 60 * 1000;
+    return new Date(utc);
+  }
+
+  function getOffsetMin(date, zone) {
+    try {
+      const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: zone, timeZoneName: 'longOffset' });
+      const parts = fmt.formatToParts(date);
+      const tz = (parts.find((p) => p.type === 'timeZoneName') || {}).value || 'GMT+00:00';
+      const m = tz.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+      if (!m) return 0;
+      return (m[1] === '+' ? 1 : -1) * (Number(m[2]) * 60 + Number(m[3] || 0));
+    } catch (e) { return 0; }
+  }
+
+  function formatInZone(date, zone) {
+    try {
+      const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: zone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+        timeZoneName: 'short',
+      });
+      const parts = fmt.formatToParts(date);
+      const get = (t) => (parts.find((p) => p.type === t) || {}).value || '';
+      const local = get('year') + '-' + get('month') + '-' + get('day') + ' ' +
+        get('hour').replace('24', '00') + ':' + get('minute') + ':' + get('second');
+      // Filter out abbreviations that are just "GMT+N" / "UTC+N" — they duplicate
+      // the explicit offset shown beside the time. Keep meaningful abbreviations
+      // like JST, EDT, IST, CET.
+      const tzRaw = get('timeZoneName');
+      const tz = /^(GMT|UTC)([+-]\d|$)/.test(tzRaw) ? '' : tzRaw;
+      const off = getOffsetMin(date, zone);
+      const sign = off >= 0 ? '+' : '-';
+      const abs = Math.abs(off);
+      const offStr = 'UTC' + sign + pad(Math.floor(abs / 60)) + ':' + pad(abs % 60);
+      return { local: local, abbr: tz, offset: offStr };
+    } catch (e) { return null; }
+  }
+
+  function dstSummary(date, zone) {
+    const winter = new Date(Date.UTC(date.getUTCFullYear(), 0, 15));
+    const summer = new Date(Date.UTC(date.getUTCFullYear(), 6, 15));
+    const observesDst = getOffsetMin(winter, zone) !== getOffsetMin(summer, zone);
+    if (!observesDst) return { observesDst: false, shiftDays: null };
+    const baseOff = getOffsetMin(date, zone);
+    for (let d = 1; d <= 7; d++) {
+      const fwd = new Date(date.getTime() + d * 86400000);
+      if (getOffsetMin(fwd, zone) !== baseOff) return { observesDst: true, shiftDays: d };
+      const back = new Date(date.getTime() - d * 86400000);
+      if (getOffsetMin(back, zone) !== baseOff) return { observesDst: true, shiftDays: -d };
+    }
+    return { observesDst: true, shiftDays: null };
+  }
+
+  function zoneCity(zone) {
+    if (zone === 'UTC' || zone === 'GMT') return zone;
+    const seg = zone.split('/');
+    return seg[seg.length - 1].replace(/_/g, ' ');
+  }
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'tool-status' + (kind ? ' ' + kind : '');
+  }
+
+  // ── State + persistence ──────────────────────────────────────────────────
+  let state = {
+    base: nowLocalIso(),
+    source: localZone,
+    targets: [localZone === 'UTC' ? 'America/New_York' : localZone, 'UTC'],
+  };
+
+  function loadState() {
+    try {
+      const persisted = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+      if (Array.isArray(persisted.targets) && persisted.targets.length) {
+        state.targets = persisted.targets.filter((z) => zoneSet.has(z));
+        if (!state.targets.length) state.targets = [localZone, 'UTC'];
+      }
+      if (persisted.source && zoneSet.has(persisted.source)) state.source = persisted.source;
+    } catch (e) {}
+    parseHash();
+  }
+
+  function persist() {
+    try {
+      window.ztPersist && window.ztPersist.save(SLUG, {
+        targets: state.targets,
+        source: state.source,
+      });
+    } catch (e) {}
+  }
+
+  function parseHash() {
+    const raw = location.hash.replace(/^#/, '');
+    if (!raw) return;
+    const params = new URLSearchParams(raw);
+    const t = params.get('t');
+    const s = params.get('s');
+    const z = params.get('z');
+    if (t && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) state.base = t;
+    if (s && zoneSet.has(s)) state.source = s;
+    if (z) {
+      const zones = z.split(',').map((x) => x.trim()).filter((x) => zoneSet.has(x));
+      if (zones.length) state.targets = zones;
+    }
+  }
+
+  function writeHash() {
+    const params = new URLSearchParams();
+    params.set('t', state.base);
+    params.set('s', state.source);
+    params.set('z', state.targets.join(','));
+    const newHash = '#' + params.toString();
+    if (location.hash !== newHash) {
+      try { history.replaceState(null, '', newHash); } catch (e) {}
+    }
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────
+  function render() {
+    baseInput.value = state.base;
+    sourceInput.value = state.source;
+    setStatus('', null);
+
+    const utc = wallClockToUtc(state.base, state.source);
+    if (!utc) {
+      setStatus(L.invalidTime, 'error');
+      resultsEl.innerHTML = '';
+      return;
+    }
+    if (!zoneSet.has(state.source)) {
+      setStatus(L.invalidZone, 'error');
+      resultsEl.innerHTML = '';
+      return;
+    }
+
+    if (!state.targets.length) {
+      resultsEl.innerHTML = '<p class="tzc-empty">' + escapeHtml(L.empty) + '</p>';
+      return;
+    }
+
+    const rows = state.targets.map((zone) => {
+      const f = formatInZone(utc, zone);
+      if (!f) return '';
+      const dst = dstSummary(utc, zone);
+      let dstHtml = '';
+      if (!dst.observesDst) {
+        dstHtml = '<span class="tzc-dst tzc-dst-none">' + escapeHtml(L.noDst) + '</span>';
+      } else if (dst.shiftDays !== null) {
+        const tpl = dst.shiftDays > 0 ? L.dstShiftFuture : L.dstShiftPast;
+        const txt = tpl.replace('{n}', String(Math.abs(dst.shiftDays)));
+        dstHtml = '<span class="tzc-dst tzc-dst-shift">' + escapeHtml(txt) + '</span>';
+      }
+      const isLocal = zone === localZone;
+      const cityLabel = isLocal ? (L.localBrowser + ' · ' + zone) : zone;
+      const summaryText = cityLabel + ' · ' + f.local + ' · ' + f.offset + (f.abbr ? ' (' + f.abbr + ')' : '');
+      return [
+        '<div class="tzc-result" data-zone="' + escapeAttr(zone) + '">',
+        '  <div class="tzc-result-main">',
+        '    <div class="tzc-result-zone">',
+        '      <strong>' + escapeHtml(zoneCity(zone)) + '</strong>',
+        '      <span class="tzc-zone-id">' + escapeHtml(zone) + '</span>',
+        '      ' + (f.abbr ? '<span class="tzc-abbr">' + escapeHtml(f.abbr) + '</span>' : ''),
+        '    </div>',
+        '    <div class="tzc-result-time">',
+        '      <code class="tzc-time">' + escapeHtml(f.local) + '</code>',
+        '      <span class="tzc-offset">' + escapeHtml(f.offset) + '</span>',
+        '      ' + dstHtml,
+        '    </div>',
+        '  </div>',
+        '  <div class="tzc-result-side">',
+        '    <button class="btn-copy tzc-copy" data-text="' + escapeAttr(summaryText) + '" type="button">' + escapeHtml(L.copy) + '</button>',
+        '    <button class="btn-icon tzc-remove" data-zone="' + escapeAttr(zone) + '" type="button" aria-label="' + escapeAttr(L.remove) + '" title="' + escapeAttr(L.remove) + '">',
+        '      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+        '    </button>',
+        '  </div>',
+        '</div>',
+      ].join('');
+    });
+    resultsEl.innerHTML = rows.join('');
+    bindRowEvents();
+  }
+
+  function bindRowEvents() {
+    resultsEl.querySelectorAll('.tzc-copy').forEach((btn) => {
+      btn.addEventListener('click', () => copyText(btn, btn.getAttribute('data-text') || ''));
+    });
+    resultsEl.querySelectorAll('.tzc-remove').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const zone = btn.getAttribute('data-zone');
+        state.targets = state.targets.filter((z) => z !== zone);
+        persist();
+        writeHash();
+        render();
+      });
+    });
+  }
+
+  function copyText(btn, text) {
+    if (!text) return;
+    const finalize = () => {
+      const prev = btn.textContent;
+      btn.textContent = L.copied;
+      setTimeout(() => { btn.textContent = prev; }, 1500);
+    };
+    try {
+      navigator.clipboard.writeText(text).then(finalize, () => fallbackCopy(text, finalize));
+    } catch (e) {
+      fallbackCopy(text, finalize);
+    }
+  }
+
+  function fallbackCopy(text, cb) {
+    // Fires only when navigator.clipboard.writeText is missing or rejects —
+    // typically non-secure contexts, sandboxed iframes, or older browsers.
+    // execCommand('copy') is "no longer recommended" but remains broadly
+    // shipped and is the standard last-resort copy path; no spec or browser
+    // has announced removal as of 2026-05.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'absolute';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      cb && cb();
+    } catch (e) {}
+  }
+
+  function buildSummary() {
+    const utc = wallClockToUtc(state.base, state.source);
+    if (!utc) return '';
+    const header = L.summaryHeader.replace('{time}', state.base + ' (' + state.source + ')');
+    const lines = state.targets.map((zone) => {
+      const f = formatInZone(utc, zone);
+      if (!f) return '';
+      const isLocal = zone === localZone;
+      const tag = isLocal ? L.localBrowser : zoneCity(zone);
+      return '- ' + tag + ' (' + zone + '): ' + f.local + ' · ' + f.offset + (f.abbr ? ' (' + f.abbr + ')' : '');
+    });
+    return header + '\n' + lines.join('\n');
+  }
+
+  function resolveZoneFromInput(raw) {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (zoneSet.has(trimmed)) return trimmed;
+    const lc = trimmed.toLowerCase();
+    if (ALIASES[lc] && zoneSet.has(ALIASES[lc])) return ALIASES[lc];
+    const match = allZones.find((z) => z.toLowerCase() === lc);
+    if (match) return match;
+    const cityMatch = allZones.find((z) => z.toLowerCase().endsWith('/' + lc.replace(/ /g, '_')));
+    if (cityMatch) return cityMatch;
+    const partial = allZones.find((z) => z.toLowerCase().includes(lc));
+    return partial || null;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  }
+  function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
+
+  // ── Events ───────────────────────────────────────────────────────────────
+  baseInput.addEventListener('change', () => {
+    if (!baseInput.value) return;
+    state.base = baseInput.value;
+    writeHash();
+    render();
+  });
+
+  nowBtn.addEventListener('click', () => {
+    state.base = nowLocalIso();
+    writeHash();
+    render();
+    window.trackTool && window.trackTool(SLUG, 'now');
+  });
+
+  sourceInput.addEventListener('change', () => {
+    const zone = resolveZoneFromInput(sourceInput.value);
+    if (!zone) {
+      setStatus(L.invalidZone, 'error');
+      return;
+    }
+    state.source = zone;
+    sourceInput.value = zone;
+    persist();
+    writeHash();
+    render();
+  });
+
+  function handleAdd() {
+    const zone = resolveZoneFromInput(addInput.value);
+    if (!zone) {
+      setStatus(L.invalidZone, 'error');
+      return;
+    }
+    if (!state.targets.includes(zone)) {
+      state.targets = state.targets.concat(zone);
+      persist();
+      writeHash();
+    }
+    addInput.value = '';
+    render();
+    window.trackTool && window.trackTool(SLUG, 'add_zone');
+  }
+  addBtn.addEventListener('click', handleAdd);
+  addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleAdd(); } });
+
+  copyAllBtn.addEventListener('click', () => {
+    const summary = buildSummary();
+    if (summary) copyText(copyAllBtn, summary);
+    window.trackTool && window.trackTool(SLUG, 'copy_summary');
+  });
+
+  shareBtn.addEventListener('click', () => {
+    writeHash();
+    const url = location.href;
+    copyText(shareBtn, url);
+    window.trackTool && window.trackTool(SLUG, 'share_link');
+  });
+
+  window.addEventListener('hashchange', () => {
+    parseHash();
+    render();
+  });
+
+  loadState();
+  baseInput.value = state.base;
+  sourceInput.value = state.source;
+  render();
+})();
+</script>
+
+<style is:global>
+  .tzc-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .tzc-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .tzc-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .tzc-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .tzc-row .tool-input {
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+
+  .tzc-row .btn-secondary,
+  .tzc-row .btn-primary {
+    flex-shrink: 0;
+  }
+
+  .tzc-targets-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+
+  .tzc-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .tzc-results {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .tzc-empty {
+    margin: 0;
+    padding: 1rem 0.75rem;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+    text-align: center;
+  }
+
+  .tzc-result {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    flex-wrap: wrap;
+  }
+
+  .tzc-result-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+    flex: 1 1 220px;
+  }
+
+  .tzc-result-zone {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+
+  .tzc-result-zone strong {
+    font-size: 0.98rem;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .tzc-zone-id {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+  }
+
+  .tzc-abbr {
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--color-surface-muted);
+    padding: 0.1rem 0.5rem;
+    border-radius: var(--radius-pill);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .tzc-result-time {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .tzc-time {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    color: var(--color-text);
+    word-break: keep-all;
+  }
+
+  .tzc-offset {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+  }
+
+  .tzc-dst {
+    font-size: 0.74rem;
+    font-weight: 700;
+    padding: 0.12rem 0.5rem;
+    border-radius: var(--radius-pill);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .tzc-dst-none {
+    color: var(--color-text-muted);
+    background: var(--color-surface-muted);
+  }
+
+  .tzc-dst-shift {
+    color: var(--color-accent);
+    background: color-mix(in oklch, var(--color-accent) 16%, var(--color-surface));
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-accent) 35%, transparent);
+  }
+
+  .tzc-result-side {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 640px) {
+    .tzc-controls {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tzc-result {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .tzc-result-side {
+      width: 100%;
+      justify-content: flex-end;
+    }
+  }
+</style>

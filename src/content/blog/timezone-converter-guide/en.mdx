@@ -1,0 +1,185 @@
+---
+title: "Timezone Converter: IANA, DST, and the UTC Offsets That Burn Engineers"
+description: "How IANA timezones, DST transitions, and UTC offsets actually work — plus copy-paste conversion code for JavaScript, Python, Go, Java, and SQL."
+pubDate: 2026-05-06
+lang: "en"
+tags: ["timezone", "iana", "dst", "datetime", "developer-tools"]
+ogImage: /og/blog-timezone-converter-guide.png
+---
+
+"9 AM PT" means UTC-08:00 in February and UTC-07:00 in April, and a calendar invite that crosses the spring DST transition silently shifts by an hour. A backfill job that uses local wall clock runs twice on the fall-back day. A São Paulo customer sees a one-hour gap in order history after Brazil abolished DST in 2019. The fix in every case starts with the same word: **IANA**.
+
+This guide unpacks how timezone math actually works and how to convert between zones without rolling your own DST table.
+
+## Convert Across Zones Instantly
+
+**[Try the ZeroTool Timezone Converter →](/tools/timezone-converter/)**
+
+Pick a base time, choose a source zone, and add as many target zones as you want. Each row shows the converted time, the UTC offset, the standard or daylight abbreviation, and a DST shift badge when a transition is within seven days.
+
+## The Three Things "Timezone" Means
+
+Engineers misuse the word *timezone* to mean three different things, and the bugs come from mixing them up:
+
+1. **A UTC offset** — `+09:00`. Just a number; no DST behavior.
+2. **An abbreviation** — `JST`, `CST`, `IST`. Ambiguous across regions.
+3. **An IANA zone** — `Asia/Tokyo`, `America/Sao_Paulo`. A region with a complete history of offsets and DST rules.
+
+Only IANA zones are unambiguous. `CST` alone can mean Central Standard Time in North America, China Standard Time, or Cuba Standard Time. `IST` covers India, Israel, and Ireland depending on locale. When you store a "timezone" in a database, store the IANA zone — `America/New_York`, not `EST`.
+
+## Why DST Wrecks Naive Code
+
+Daylight Saving Time is not a property of a zone; it is a property of an *instant in a zone*. The same `America/New_York` zone uses `EST` (UTC-05:00) in January and `EDT` (UTC-04:00) in July. The transitions between them happen at locally-defined moments — 02:00 spring forward, 02:00 fall back — which means:
+
+- One wall clock value can be **invalid** (02:30 on the spring-forward day skips from 01:59 to 03:00).
+- One wall clock value can be **ambiguous** (01:30 on the fall-back day happens twice).
+- Sorting by wall clock breaks; sorting by UTC instant always works.
+
+Worse, DST rules change. Brazil abolished DST in 2019. Russia froze on permanent winter time in 2014. Egypt reinstated DST in 2023. Naive code that hardcoded a `summer = April-September` rule silently emits wrong times the moment a country changes policy. The only durable fix is to read from a tzdata database that ships those decisions for you.
+
+## IANA tzdata Is the Source of Truth
+
+The IANA Time Zone Database (sometimes called `tz`, `zoneinfo`, or the Olson database) is the canonical record of every offset every region has used since 1970. It is updated several times a year, and ships inside:
+
+- glibc and musl on Linux
+- macOS and iOS
+- Windows 10+ via ICU
+- Java's `java.time` package
+- Python's `zoneinfo` module (Python 3.9+)
+- Modern browsers, exposed via `Intl.DateTimeFormat`
+
+The ZeroTool converter relies on whatever tzdata your browser ships, which is normally refreshed with each browser release. If you are converting historical times in a long-running backend, pin a specific tzdata version and update it through your normal release process so the answer doesn't drift between deploys.
+
+## Conversion in JavaScript
+
+`Date.toLocaleString` accepts a `timeZone` option, but `Intl.DateTimeFormat` is the better tool: you build the formatter once, reuse it, and break the result into machine-readable parts via `formatToParts`. Both APIs take an explicit IANA zone, so you never inherit the server's local time:
+
+```js
+const date = new Date('2026-05-06T13:30:00Z'); // UTC instant
+
+const fmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false,
+  timeZoneName: 'longOffset',
+});
+
+console.log(fmt.format(date));
+// "2026-05-06, 22:30:00 GMT+09:00"
+```
+
+Need an offset as minutes? Pull it out of `formatToParts`:
+
+```js
+function getOffsetMin(date, zone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    timeZoneName: 'longOffset',
+  }).formatToParts(date);
+  const tz = parts.find(p => p.type === 'timeZoneName').value; // "GMT+09:00"
+  const m = tz.match(/GMT([+-])(\d{2}):(\d{2})/);
+  return (m[1] === '+' ? 1 : -1) * (Number(m[2]) * 60 + Number(m[3]));
+}
+```
+
+Modern browsers also expose the full IANA zone list through `Intl.supportedValuesOf('timeZone')`, available in Chrome 99+, Safari 15.4+, and Firefox 93+.
+
+## Conversion in Python
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo  # Python 3.9+
+
+# UTC instant → Tokyo wall clock
+utc = datetime(2026, 5, 6, 13, 30, tzinfo=ZoneInfo('UTC'))
+tokyo = utc.astimezone(ZoneInfo('Asia/Tokyo'))
+print(tokyo.isoformat())
+# 2026-05-06T22:30:00+09:00
+
+# Tokyo wall clock → UTC instant
+local = datetime(2026, 5, 6, 22, 30, tzinfo=ZoneInfo('Asia/Tokyo'))
+print(local.astimezone(ZoneInfo('UTC')).isoformat())
+# 2026-05-06T13:30:00+00:00
+```
+
+Pre-3.9 stacks should use `pytz`, but be aware that `pytz` requires you to call `localize()` rather than passing the zone to the constructor — a footgun specific to that library.
+
+## Conversion in Go
+
+```go
+import "time"
+
+loc, _ := time.LoadLocation("Asia/Tokyo")
+
+// UTC → Tokyo
+utc := time.Date(2026, 5, 6, 13, 30, 0, 0, time.UTC)
+tokyo := utc.In(loc)
+fmt.Println(tokyo.Format(time.RFC3339))
+// 2026-05-06T22:30:00+09:00
+
+// Tokyo wall clock → UTC instant
+local := time.Date(2026, 5, 6, 22, 30, 0, 0, loc)
+fmt.Println(local.UTC().Format(time.RFC3339))
+// 2026-05-06T13:30:00Z
+```
+
+`time.LoadLocation` reads the system tzdata. On scratch or distroless container images that ship without `/usr/share/zoneinfo`, the call returns an error and any code that ignores it falls through to UTC. Either install the `tzdata` package, copy `zoneinfo` into the image, or import `time/tzdata` in Go 1.15+ to embed the database in your binary.
+
+## Conversion in Java
+
+```java
+import java.time.*;
+
+ZonedDateTime utc = ZonedDateTime.of(2026, 5, 6, 13, 30, 0, 0, ZoneOffset.UTC);
+ZonedDateTime tokyo = utc.withZoneSameInstant(ZoneId.of("Asia/Tokyo"));
+System.out.println(tokyo); // 2026-05-06T22:30+09:00[Asia/Tokyo]
+
+ZonedDateTime localTokyo = ZonedDateTime.of(2026, 5, 6, 22, 30, 0, 0, ZoneId.of("Asia/Tokyo"));
+System.out.println(localTokyo.withZoneSameInstant(ZoneOffset.UTC));
+// 2026-05-06T13:30Z
+```
+
+Avoid `java.util.Date` and `java.util.Calendar` in new code; the `java.time` package added in Java 8 fixes a generation of timezone bugs.
+
+## Conversion in SQL
+
+Postgres `timestamptz` stores a UTC instant internally and renders it according to the session's `TimeZone` setting. The `AT TIME ZONE` operator converts at the boundary in either direction:
+
+```sql
+-- Wall clock in Tokyo → timestamptz (UTC instant), rendered in session TZ
+SELECT timestamp '2026-05-06 22:30:00' AT TIME ZONE 'Asia/Tokyo';
+-- e.g. 2026-05-06 13:30:00+00 with TimeZone=UTC
+
+-- timestamptz → wall clock in Tokyo (returns timestamp without zone)
+SELECT timestamptz '2026-05-06 13:30:00+00' AT TIME ZONE 'Asia/Tokyo';
+-- 2026-05-06 22:30:00
+```
+
+MySQL creates the time-zone tables on install but does **not** populate them. Until you load tzdata via `mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql` (or your distro's package), `CONVERT_TZ(now(), 'UTC', 'Asia/Tokyo')` returns `NULL`. Numeric offsets like `+09:00` work without the import; named zones don't.
+
+## Sharing a Converted Time
+
+Sending "9 AM PT" leaves every recipient guessing. Better options, in order:
+
+1. A UTC ISO 8601 string — `2026-05-06T13:30:00Z`. Unambiguous, parseable, sortable.
+2. A Discord timestamp tag — `<t:1778074200:F>` (the integer is the Unix seconds value of the instant). Discord renders it in each viewer's local zone automatically. Slack uses a different syntax: `<!date^1778074200^{date_short_pretty} {time}|May 6, 2026 1:30 PM UTC>`.
+3. A shareable converter URL — `https://zerotool.dev/tools/timezone-converter/#t=2026-05-06T13:30&s=UTC&z=Asia/Tokyo,America/New_York`. The recipient sees the same comparison no matter where they are.
+
+## Common Mistakes
+
+- **Storing local times in the database.** Store UTC; store the IANA zone in a separate column if you need to recover the wall clock later.
+- **Using offsets as identifiers.** `+05:30` does not tell you whether the user is in India (no DST) or Sri Lanka (no DST) or somewhere in Nepal (`+05:45`). Store IANA.
+- **Trusting `new Date('2026-05-06')`.** A date-only ISO string parses as midnight UTC per ES5, but a string with time but no offset (`'2026-05-06 09:30'`) parses as local time. Always include an explicit offset to remove the ambiguity.
+- **Hardcoding "America/Los_Angeles is UTC-08:00".** It's UTC-07:00 from spring through fall.
+- **Ignoring DST when scheduling cron.** A 02:30 daily job runs zero times one day a year and twice another. If timing matters, use UTC cron expressions.
+
+## Summary
+
+Treat time as three layers and never confuse them:
+
+1. The **UTC instant** — what is stored.
+2. The **IANA zone** — how it is interpreted for display or input.
+3. The **wall clock string** — what the human sees.
+
+Convert at the boundary, store UTC instants, identify zones with IANA strings, and let the tzdata library handle DST. When you need a quick check across zones, the [ZeroTool Timezone Converter](/tools/timezone-converter/) handles the math in your browser without sending the times anywhere.
