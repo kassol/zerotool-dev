@@ -1,0 +1,185 @@
+---
+title: "タイムゾーン変換ツール：IANA・サマータイム・UTC オフセットが開発者を焼き尽くす理由"
+description: "IANA タイムゾーン、サマータイム遷移、UTC オフセットの実態と、JavaScript / Python / Go / Java / SQL でそのままコピペできる変換コードを解説します。"
+pubDate: 2026-05-06
+lang: "ja"
+tags: ["タイムゾーン", "iana", "dst", "datetime", "開発者ツール"]
+ogImage: /og/blog-timezone-converter-guide.png
+---
+
+「9 AM PT」は 2 月には UTC-08:00、4 月には UTC-07:00 を指します。春のサマータイム遷移をまたぐカレンダー招待は、何の警告もなく 1 時間ずれます。ローカルのウォールクロックを使ったバックフィルジョブは、秋の戻し日に 2 回走ります。サンパウロの顧客は、ブラジルが 2019 年にサマータイムを廃止した直後、注文履歴に 1 時間の空白を見ます。これらすべての修正は、同じ単語から始まります。**IANA** です。
+
+本記事では、タイムゾーンの計算が実際にどう動くか、そして自前のサマータイムテーブルを抱え込まずにゾーン間変換を行う方法を解きほぐします。
+
+## ゾーンをまたいだ変換を一瞬で
+
+**[ZeroTool タイムゾーン変換ツールを試す →](/ja/tools/timezone-converter/)**
+
+基準時刻を選び、変換元のゾーンを選び、変換先のゾーンを好きなだけ追加します。各行には変換後の時刻、UTC オフセット、標準時または夏時間の略称、そして 7 日以内に遷移がある場合はサマータイム切替バッジが表示されます。
+
+## 「タイムゾーン」が意味する 3 つのもの
+
+開発者は *タイムゾーン* という言葉を 3 つの異なる意味で使い回し、それを混同したところからバグが生まれます。
+
+1. **UTC オフセット** — `+09:00`。単なる数値で、サマータイムの挙動はありません。
+2. **略称** — `JST`、`CST`、`IST`。地域によって意味が変わります。
+3. **IANA ゾーン** — `Asia/Tokyo`、`America/Sao_Paulo`。オフセットとサマータイム規則の完全な履歴を持つ地域識別子です。
+
+曖昧さがないのは IANA ゾーンだけです。`CST` 単体では、北米の Central Standard Time、China Standard Time、Cuba Standard Time のいずれかを指します。`IST` はロケールによってインド、イスラエル、アイルランドのいずれかを指します。データベースに「タイムゾーン」を保存するなら、`EST` ではなく `America/New_York` のような IANA ゾーンを保存してください。
+
+## サマータイムが素朴なコードを破壊する理由
+
+サマータイムはゾーンの属性ではなく、*ゾーン内のある瞬間* の属性です。同じ `America/New_York` ゾーンが、1 月には `EST`（UTC-05:00）、7 月には `EDT`（UTC-04:00）を使います。両者の遷移はローカル時刻で定義された瞬間に起こり ── 春は 02:00 に進み、秋は 02:00 に戻ります ── その結果次のことが発生します。
+
+- あるウォールクロック値が **無効** になる（春に進める日、02:30 は 01:59 から 03:00 に飛ばされる）。
+- あるウォールクロック値が **曖昧** になる（秋に戻す日、01:30 が 2 回発生する）。
+- ウォールクロックでのソートは壊れる。UTC 瞬間でのソートは常に動く。
+
+さらに厄介なのは、サマータイムの規則自体が変わる点です。ブラジルは 2019 年にサマータイムを廃止しました。ロシアは 2014 年に永続的な冬時間に固定しました。エジプトは 2023 年にサマータイムを再導入しました。`summer = April-September` のような規則をハードコードした素朴なコードは、各国がポリシーを変えた瞬間に黙って誤った時刻を吐き出します。耐久性のある修正方法は、こうした決定がそのまま入っている tzdata データベースを参照することだけです。
+
+## IANA tzdata が真実の源泉
+
+IANA Time Zone Database（`tz`、`zoneinfo`、Olson データベースとも呼ばれます）は、1970 年以降に各地域が使ってきたすべてのオフセットの正規記録です。年に数回更新され、次のような環境に同梱されています。
+
+- Linux の glibc と musl
+- macOS と iOS
+- Windows 10 以降（ICU 経由）
+- Java の `java.time` パッケージ
+- Python の `zoneinfo` モジュール（Python 3.9 以降）
+- モダンブラウザ（`Intl.DateTimeFormat` 経由で公開）
+
+ZeroTool の変換ツールは、ブラウザに同梱された tzdata に依存します。これは通常、ブラウザのリリースごとに更新されます。長時間動作するバックエンドで過去の時刻を変換する場合は、特定の tzdata バージョンに固定し、通常のリリースプロセスを通じて更新してください。そうしないと、デプロイのたびに答えがずれます。
+
+## JavaScript での変換
+
+`Date.toLocaleString` には `timeZone` オプションがありますが、`Intl.DateTimeFormat` の方が適切です。フォーマッタを 1 度作って使い回し、`formatToParts` で機械可読なパーツに分解できます。どちらの API も明示的な IANA ゾーンを受け取るので、サーバのローカル時刻を引き継ぐことはありません。
+
+```js
+const date = new Date('2026-05-06T13:30:00Z'); // UTC instant
+
+const fmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false,
+  timeZoneName: 'longOffset',
+});
+
+console.log(fmt.format(date));
+// "2026-05-06, 22:30:00 GMT+09:00"
+```
+
+オフセットを分単位で取り出したい場合は、`formatToParts` から抽出します。
+
+```js
+function getOffsetMin(date, zone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    timeZoneName: 'longOffset',
+  }).formatToParts(date);
+  const tz = parts.find(p => p.type === 'timeZoneName').value; // "GMT+09:00"
+  const m = tz.match(/GMT([+-])(\d{2}):(\d{2})/);
+  return (m[1] === '+' ? 1 : -1) * (Number(m[2]) * 60 + Number(m[3]));
+}
+```
+
+モダンブラウザは `Intl.supportedValuesOf('timeZone')` で IANA ゾーンの完全リストも公開しています。Chrome 99 以降、Safari 15.4 以降、Firefox 93 以降で利用可能です。
+
+## Python での変換
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo  # Python 3.9+
+
+# UTC instant → Tokyo wall clock
+utc = datetime(2026, 5, 6, 13, 30, tzinfo=ZoneInfo('UTC'))
+tokyo = utc.astimezone(ZoneInfo('Asia/Tokyo'))
+print(tokyo.isoformat())
+# 2026-05-06T22:30:00+09:00
+
+# Tokyo wall clock → UTC instant
+local = datetime(2026, 5, 6, 22, 30, tzinfo=ZoneInfo('Asia/Tokyo'))
+print(local.astimezone(ZoneInfo('UTC')).isoformat())
+# 2026-05-06T13:30:00+00:00
+```
+
+Python 3.9 より前の環境では `pytz` を使うことになりますが、コンストラクタに直接ゾーンを渡すのではなく `localize()` を呼ぶ必要がある点に注意してください。`pytz` 固有の罠です。
+
+## Go での変換
+
+```go
+import "time"
+
+loc, _ := time.LoadLocation("Asia/Tokyo")
+
+// UTC → Tokyo
+utc := time.Date(2026, 5, 6, 13, 30, 0, 0, time.UTC)
+tokyo := utc.In(loc)
+fmt.Println(tokyo.Format(time.RFC3339))
+// 2026-05-06T22:30:00+09:00
+
+// Tokyo wall clock → UTC instant
+local := time.Date(2026, 5, 6, 22, 30, 0, 0, loc)
+fmt.Println(local.UTC().Format(time.RFC3339))
+// 2026-05-06T13:30:00Z
+```
+
+`time.LoadLocation` はシステムの tzdata を読み込みます。`/usr/share/zoneinfo` を含まない scratch や distroless のコンテナイメージでは、この呼び出しはエラーを返し、それを無視するコードは UTC にフォールスルーします。対処法は次のいずれかです。`tzdata` パッケージをインストールする、`zoneinfo` をイメージにコピーする、Go 1.15 以降で `time/tzdata` をインポートしてバイナリにデータベースを埋め込む。
+
+## Java での変換
+
+```java
+import java.time.*;
+
+ZonedDateTime utc = ZonedDateTime.of(2026, 5, 6, 13, 30, 0, 0, ZoneOffset.UTC);
+ZonedDateTime tokyo = utc.withZoneSameInstant(ZoneId.of("Asia/Tokyo"));
+System.out.println(tokyo); // 2026-05-06T22:30+09:00[Asia/Tokyo]
+
+ZonedDateTime localTokyo = ZonedDateTime.of(2026, 5, 6, 22, 30, 0, 0, ZoneId.of("Asia/Tokyo"));
+System.out.println(localTokyo.withZoneSameInstant(ZoneOffset.UTC));
+// 2026-05-06T13:30Z
+```
+
+新規コードでは `java.util.Date` と `java.util.Calendar` を避けてください。Java 8 で追加された `java.time` パッケージは、一世代分のタイムゾーンバグを解消しています。
+
+## SQL での変換
+
+Postgres の `timestamptz` は内部的には UTC 瞬間を保存し、表示時にセッションの `TimeZone` 設定に従ってレンダリングします。`AT TIME ZONE` 演算子は境界での変換を双方向に行います。
+
+```sql
+-- Wall clock in Tokyo → timestamptz (UTC instant), rendered in session TZ
+SELECT timestamp '2026-05-06 22:30:00' AT TIME ZONE 'Asia/Tokyo';
+-- e.g. 2026-05-06 13:30:00+00 with TimeZone=UTC
+
+-- timestamptz → wall clock in Tokyo (returns timestamp without zone)
+SELECT timestamptz '2026-05-06 13:30:00+00' AT TIME ZONE 'Asia/Tokyo';
+-- 2026-05-06 22:30:00
+```
+
+MySQL はインストール時にタイムゾーンテーブルを作成しますが、中身は **投入されません**。`mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql` か、ディストリのパッケージで tzdata をロードするまで、`CONVERT_TZ(now(), 'UTC', 'Asia/Tokyo')` は `NULL` を返します。`+09:00` のような数値オフセットはインポートなしで動きますが、名前付きゾーンは動きません。
+
+## 変換結果を共有する
+
+「9 AM PT」を送りつけても、受け手は全員推測するしかありません。望ましい順に挙げると次の通りです。
+
+1. UTC ISO 8601 文字列 ── `2026-05-06T13:30:00Z`。曖昧さがなく、パース可能で、ソート可能。
+2. Discord のタイムスタンプタグ ── `<t:1778074200:F>`（整数値はその瞬間の Unix 秒です）。Discord は閲覧者ごとのローカルゾーンで自動的にレンダリングします。Slack は別の構文を使います: `<!date^1778074200^{date_short_pretty} {time}|May 6, 2026 1:30 PM UTC>`。
+3. 共有可能な変換 URL ── `https://zerotool.dev/tools/timezone-converter/#t=2026-05-06T13:30&s=UTC&z=Asia/Tokyo,America/New_York`。受け手はどこにいても同じ比較画面を見ます。
+
+## よくある失敗
+
+- **ローカル時刻をデータベースに保存する。** UTC を保存し、後でウォールクロックを復元する必要があるなら IANA ゾーンを別カラムに保存してください。
+- **オフセットを識別子として使う。** `+05:30` だけでは、ユーザがインド（サマータイムなし）にいるのか、スリランカ（サマータイムなし）にいるのか、ネパールのどこか（`+05:45`）にいるのか判別できません。IANA を保存してください。
+- **`new Date('2026-05-06')` を信用する。** ES5 では日付のみの ISO 文字列は UTC の真夜中としてパースされますが、時刻ありオフセットなしの文字列（`'2026-05-06 09:30'`）はローカル時刻としてパースされます。曖昧さを取り除くために、明示的なオフセットを必ず含めてください。
+- **「America/Los_Angeles は UTC-08:00」とハードコードする。** 春から秋にかけては UTC-07:00 です。
+- **cron スケジューリングでサマータイムを無視する。** 02:30 の毎日ジョブは、年に 1 日は実行されず、別の日には 2 回走ります。タイミングが重要なら UTC ベースの cron 式を使ってください。
+
+## まとめ
+
+時間を 3 層で扱い、決して混同しないでください。
+
+1. **UTC 瞬間** ── 保存するもの。
+2. **IANA ゾーン** ── 表示や入力時の解釈に使うもの。
+3. **ウォールクロック文字列** ── 人間が見るもの。
+
+境界で変換し、UTC 瞬間で保存し、IANA 文字列でゾーンを識別し、サマータイムは tzdata ライブラリに任せます。ゾーンをまたいだ素早い確認が必要なときは、[ZeroTool タイムゾーン変換ツール](/ja/tools/timezone-converter/) がブラウザ内で計算を完結させ、時刻をどこにも送信しません。

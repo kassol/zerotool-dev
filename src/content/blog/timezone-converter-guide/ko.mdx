@@ -1,0 +1,185 @@
+---
+title: "시간대 변환기: IANA, 서머타임, 그리고 개발자를 태우는 UTC 오프셋"
+description: "IANA 시간대, 서머타임 전환, UTC 오프셋의 실제 동작 원리. JavaScript, Python, Go, Java, SQL용 복붙 가능한 변환 코드까지."
+pubDate: 2026-05-06
+lang: "ko"
+tags: ["시간대", "iana", "dst", "datetime", "개발자-도구"]
+ogImage: /og/blog-timezone-converter-guide.png
+---
+
+"오전 9시 PT"는 2월에는 UTC-08:00, 4월에는 UTC-07:00을 의미합니다. 봄철 서머타임 전환 구간을 가로지르는 캘린더 초대장은 한 시간씩 조용히 어긋납니다. 로컬 벽시계 시각으로 도는 백필 잡은 가을 폴백 날에 두 번 실행됩니다. 브라질이 2019년 서머타임을 폐지한 뒤 상파울루 고객의 주문 이력에는 한 시간짜리 구멍이 생깁니다. 이 모든 사례의 해결은 같은 단어에서 시작합니다. **IANA**입니다.
+
+이 글은 시간대 연산이 실제로 어떻게 굴러가는지, 그리고 자체 서머타임 테이블을 굴리지 않고 시간대 간 변환을 어떻게 수행하는지를 풀어냅니다.
+
+## 시간대 즉시 변환
+
+**[ZeroTool 시간대 변환기 사용해 보기 →](/ko/tools/timezone-converter/)**
+
+기준 시각을 고르고 출발 시간대를 선택한 뒤, 대상 시간대를 원하는 만큼 추가합니다. 각 행에는 변환된 시각, UTC 오프셋, 표준시 또는 서머타임 약어가 표시되고, 7일 이내에 전환이 있을 때는 서머타임 시프트 배지가 함께 붙습니다.
+
+## "시간대"가 의미하는 세 가지
+
+개발자는 *시간대*라는 단어를 세 가지 다른 의미로 섞어 쓰는데, 버그는 거기서 시작됩니다.
+
+1. **UTC 오프셋** — `+09:00`. 단순한 숫자이며 서머타임 동작이 없습니다.
+2. **약어** — `JST`, `CST`, `IST`. 지역에 따라 의미가 다릅니다.
+3. **IANA 시간대** — `Asia/Tokyo`, `America/Sao_Paulo`. 오프셋과 서머타임 규칙의 전체 이력을 가진 지역입니다.
+
+명확한 것은 IANA 시간대뿐입니다. `CST` 하나만 놓고 보면 북미 중부 표준시(Central Standard Time), 중국 표준시, 쿠바 표준시 모두를 가리킬 수 있습니다. `IST`는 인도, 이스라엘, 아일랜드를 모두 포괄합니다. 데이터베이스에 "시간대"를 저장한다면 IANA 시간대를 저장합니다. `EST`가 아니라 `America/New_York`입니다.
+
+## 서머타임이 순진한 코드를 망가뜨리는 이유
+
+서머타임은 시간대의 속성이 아니라 *시간대 안의 한 순간*의 속성입니다. 같은 `America/New_York` 시간대가 1월에는 `EST`(UTC-05:00), 7월에는 `EDT`(UTC-04:00)를 사용합니다. 둘 사이의 전환은 지역적으로 정의된 순간 — 봄에 02:00 시계 전진, 가을에 02:00 시계 후퇴 — 에 일어납니다. 결과는 다음과 같습니다.
+
+- 어떤 벽시계 시각은 **존재하지 않습니다** (봄철 전진 날 02:30은 01:59에서 03:00으로 건너뜁니다).
+- 어떤 벽시계 시각은 **모호합니다** (가을철 후퇴 날 01:30은 두 번 발생합니다).
+- 벽시계 시각으로 정렬하면 깨지지만, UTC 순간으로 정렬하면 항상 동작합니다.
+
+게다가 서머타임 규칙은 바뀝니다. 브라질은 2019년에 서머타임을 폐지했습니다. 러시아는 2014년에 영구 겨울시간으로 고정했습니다. 이집트는 2023년에 서머타임을 부활시켰습니다. `여름 = 4월~9월` 같은 규칙을 하드코딩한 순진한 코드는 한 국가가 정책을 바꾸는 순간 잘못된 시각을 조용히 토해냅니다. 유일한 지속 가능한 해법은 그런 결정을 대신 실어 나르는 tzdata 데이터베이스에서 읽는 것입니다.
+
+## IANA tzdata가 진실의 원천입니다
+
+IANA 시간대 데이터베이스(`tz`, `zoneinfo`, Olson 데이터베이스라고도 부릅니다)는 1970년 이래 모든 지역이 사용한 모든 오프셋의 정본 기록입니다. 매년 수차례 갱신되며 다음 환경에 탑재됩니다.
+
+- Linux의 glibc와 musl
+- macOS와 iOS
+- Windows 10 이상은 ICU를 통해
+- 자바의 `java.time` 패키지
+- 파이썬의 `zoneinfo` 모듈 (Python 3.9 이상)
+- 최신 브라우저, `Intl.DateTimeFormat`을 통해 노출
+
+ZeroTool 변환기는 브라우저에 탑재된 tzdata를 그대로 사용하며, 이는 일반적으로 브라우저 릴리스마다 갱신됩니다. 장기 가동되는 백엔드에서 과거 시각을 변환한다면 특정 tzdata 버전을 고정하고 일반 릴리스 절차를 통해 갱신하십시오. 그래야 배포 사이에 답이 흔들리지 않습니다.
+
+## JavaScript 변환
+
+`Date.toLocaleString`은 `timeZone` 옵션을 받지만, 실제로는 `Intl.DateTimeFormat`이 더 나은 도구입니다. 포매터를 한 번 만들어 재사용하고, `formatToParts`로 결과를 기계 판독 가능한 조각으로 분해할 수 있습니다. 두 API 모두 IANA 시간대를 명시적으로 받기 때문에 서버 로컬 시각을 물려받을 일이 없습니다.
+
+```js
+const date = new Date('2026-05-06T13:30:00Z'); // UTC 순간
+
+const fmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false,
+  timeZoneName: 'longOffset',
+});
+
+console.log(fmt.format(date));
+// "2026-05-06, 22:30:00 GMT+09:00"
+```
+
+오프셋을 분 단위로 받고 싶다면 `formatToParts`에서 뽑아냅니다.
+
+```js
+function getOffsetMin(date, zone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    timeZoneName: 'longOffset',
+  }).formatToParts(date);
+  const tz = parts.find(p => p.type === 'timeZoneName').value; // "GMT+09:00"
+  const m = tz.match(/GMT([+-])(\d{2}):(\d{2})/);
+  return (m[1] === '+' ? 1 : -1) * (Number(m[2]) * 60 + Number(m[3]));
+}
+```
+
+최신 브라우저는 `Intl.supportedValuesOf('timeZone')`을 통해 IANA 시간대 전체 목록도 노출합니다. Chrome 99+, Safari 15.4+, Firefox 93+에서 사용할 수 있습니다.
+
+## Python 변환
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo  # Python 3.9+
+
+# UTC 순간 → 도쿄 벽시계 시각
+utc = datetime(2026, 5, 6, 13, 30, tzinfo=ZoneInfo('UTC'))
+tokyo = utc.astimezone(ZoneInfo('Asia/Tokyo'))
+print(tokyo.isoformat())
+# 2026-05-06T22:30:00+09:00
+
+# 도쿄 벽시계 시각 → UTC 순간
+local = datetime(2026, 5, 6, 22, 30, tzinfo=ZoneInfo('Asia/Tokyo'))
+print(local.astimezone(ZoneInfo('UTC')).isoformat())
+# 2026-05-06T13:30:00+00:00
+```
+
+3.9 이전 환경에서는 `pytz`를 사용해야 하지만, `pytz`는 시간대를 생성자에 넘기지 않고 `localize()`를 호출해야 한다는 점에 주의해야 합니다. 이 라이브러리 고유의 함정입니다.
+
+## Go 변환
+
+```go
+import "time"
+
+loc, _ := time.LoadLocation("Asia/Tokyo")
+
+// UTC → 도쿄
+utc := time.Date(2026, 5, 6, 13, 30, 0, 0, time.UTC)
+tokyo := utc.In(loc)
+fmt.Println(tokyo.Format(time.RFC3339))
+// 2026-05-06T22:30:00+09:00
+
+// 도쿄 벽시계 시각 → UTC 순간
+local := time.Date(2026, 5, 6, 22, 30, 0, 0, loc)
+fmt.Println(local.UTC().Format(time.RFC3339))
+// 2026-05-06T13:30:00Z
+```
+
+`time.LoadLocation`은 시스템의 tzdata를 읽습니다. `/usr/share/zoneinfo`가 없는 scratch나 distroless 컨테이너 이미지에서는 호출이 에러를 반환하며, 이를 무시한 코드는 UTC로 폴백합니다. `tzdata` 패키지를 설치하거나, `zoneinfo`를 이미지에 복사하거나, Go 1.15 이상에서 `time/tzdata`를 임포트해 바이너리에 데이터베이스를 임베드해야 합니다.
+
+## Java 변환
+
+```java
+import java.time.*;
+
+ZonedDateTime utc = ZonedDateTime.of(2026, 5, 6, 13, 30, 0, 0, ZoneOffset.UTC);
+ZonedDateTime tokyo = utc.withZoneSameInstant(ZoneId.of("Asia/Tokyo"));
+System.out.println(tokyo); // 2026-05-06T22:30+09:00[Asia/Tokyo]
+
+ZonedDateTime localTokyo = ZonedDateTime.of(2026, 5, 6, 22, 30, 0, 0, ZoneId.of("Asia/Tokyo"));
+System.out.println(localTokyo.withZoneSameInstant(ZoneOffset.UTC));
+// 2026-05-06T13:30Z
+```
+
+새 코드에서 `java.util.Date`나 `java.util.Calendar`는 피해야 합니다. Java 8에 추가된 `java.time` 패키지가 한 세대의 시간대 버그를 정리해 두었습니다.
+
+## SQL 변환
+
+Postgres `timestamptz`는 내부적으로 UTC 순간을 저장하며, 세션의 `TimeZone` 설정에 따라 렌더링합니다. `AT TIME ZONE` 연산자는 양방향 경계에서 변환을 처리합니다.
+
+```sql
+-- 도쿄 벽시계 시각 → timestamptz (UTC 순간), 세션 TZ로 렌더링
+SELECT timestamp '2026-05-06 22:30:00' AT TIME ZONE 'Asia/Tokyo';
+-- 예: TimeZone=UTC 일 때 2026-05-06 13:30:00+00
+
+-- timestamptz → 도쿄 벽시계 시각 (시간대 없는 timestamp 반환)
+SELECT timestamptz '2026-05-06 13:30:00+00' AT TIME ZONE 'Asia/Tokyo';
+-- 2026-05-06 22:30:00
+```
+
+MySQL은 설치 시 시간대 테이블을 만들지만 데이터를 채우지는 **않습니다**. `mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql` 같은 명령(또는 배포판 패키지)으로 tzdata를 적재하기 전까지는 `CONVERT_TZ(now(), 'UTC', 'Asia/Tokyo')`이 `NULL`을 반환합니다. `+09:00` 같은 숫자 오프셋은 임포트 없이도 동작하지만 명명된 시간대는 그렇지 않습니다.
+
+## 변환된 시각 공유하기
+
+"오전 9시 PT"라고만 보내면 받는 사람마다 다르게 추측합니다. 더 나은 방법을 우선순위 순으로 정리하면 다음과 같습니다.
+
+1. UTC ISO 8601 문자열 — `2026-05-06T13:30:00Z`. 명확하고, 파싱 가능하며, 정렬 가능합니다.
+2. Discord 타임스탬프 태그 — `<t:1778074200:F>` (정수는 해당 순간의 Unix 초 값입니다). Discord가 자동으로 각 뷰어의 로컬 시간대로 렌더링합니다. Slack은 다른 문법을 씁니다. `<!date^1778074200^{date_short_pretty} {time}|May 6, 2026 1:30 PM UTC>`.
+3. 공유 가능한 변환기 URL — `https://zerotool.dev/tools/timezone-converter/#t=2026-05-06T13:30&s=UTC&z=Asia/Tokyo,America/New_York`. 받는 사람은 어디에 있든 동일한 비교를 봅니다.
+
+## 흔한 실수
+
+- **로컬 시각을 데이터베이스에 저장하기.** UTC를 저장하고, 나중에 벽시계 시각을 복원해야 한다면 IANA 시간대를 별도 컬럼에 저장합니다.
+- **오프셋을 식별자로 사용하기.** `+05:30`은 사용자가 인도(서머타임 없음)에 있는지 스리랑카(서머타임 없음)에 있는지 네팔의 어딘가(`+05:45`)에 있는지 알려주지 않습니다. IANA를 저장합니다.
+- **`new Date('2026-05-06')`을 신뢰하기.** 날짜만 있는 ISO 문자열은 ES5 기준 UTC 자정으로 파싱되지만, 시각은 있고 오프셋이 없는 문자열(`'2026-05-06 09:30'`)은 로컬 시각으로 파싱됩니다. 모호함을 제거하려면 항상 명시적 오프셋을 포함합니다.
+- **"America/Los_Angeles는 UTC-08:00"이라고 하드코딩하기.** 봄부터 가을까지는 UTC-07:00입니다.
+- **크론 스케줄링에서 서머타임 무시하기.** 매일 02:30에 도는 잡은 1년에 한 번은 0회, 다른 한 번은 2회 실행됩니다. 타이밍이 중요하면 UTC 크론 표현식을 사용합니다.
+
+## 정리
+
+시간을 세 개의 층으로 다루고 절대로 섞지 마십시오.
+
+1. **UTC 순간** — 저장되는 값입니다.
+2. **IANA 시간대** — 표시 또는 입력을 위한 해석 방식입니다.
+3. **벽시계 시각 문자열** — 사람이 보는 값입니다.
+
+경계에서 변환하고, UTC 순간을 저장하고, 시간대는 IANA 문자열로 식별하고, 서머타임은 tzdata 라이브러리에 맡기십시오. 시간대 간 빠른 확인이 필요할 때 [ZeroTool 시간대 변환기](/ko/tools/timezone-converter/)는 시각을 어디에도 보내지 않고 브라우저 안에서 연산을 처리합니다.
