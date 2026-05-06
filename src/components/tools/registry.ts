@@ -111,6 +111,7 @@ import MetaTagGeneratorTool from './MetaTagGeneratorTool.astro';
 import GitignoreGeneratorTool from './GitignoreGeneratorTool.astro';
 import MarkdownTocGeneratorTool from './MarkdownTocGeneratorTool.astro';
 import ImageColorPaletteTool from './ImageColorPaletteTool.astro';
+import ColorBlindnessSimulatorTool from './ColorBlindnessSimulatorTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -222,4 +223,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'gitignore-generator': GitignoreGeneratorTool,
   'markdown-toc-generator': MarkdownTocGeneratorTool,
   'image-color-palette': ImageColorPaletteTool,
+  'color-blindness-simulator': ColorBlindnessSimulatorTool,
 };
