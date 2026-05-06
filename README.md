@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 109 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 110 tools and growing.
 
 ## Tools
 
@@ -118,6 +118,7 @@
 | Gitignore Generator | [/tools/gitignore-generator](https://zerotool.dev/tools/gitignore-generator) |
 | Markdown TOC Generator | [/tools/markdown-toc-generator](https://zerotool.dev/tools/markdown-toc-generator) |
 | Image Color Palette Extractor | [/tools/image-color-palette](https://zerotool.dev/tools/image-color-palette) |
+| Color Blindness Simulator | [/tools/color-blindness-simulator](https://zerotool.dev/tools/color-blindness-simulator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
