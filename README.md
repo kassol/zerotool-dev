@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 111 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 112 tools and growing.
 
 ## Tools
 
@@ -120,6 +120,7 @@
 | Image Color Palette Extractor | [/tools/image-color-palette](https://zerotool.dev/tools/image-color-palette) |
 | Color Blindness Simulator | [/tools/color-blindness-simulator](https://zerotool.dev/tools/color-blindness-simulator) |
 | Timezone Converter | [/tools/timezone-converter](https://zerotool.dev/tools/timezone-converter) |
+| AI Token Counter | [/tools/ai-token-counter](https://zerotool.dev/tools/ai-token-counter) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
