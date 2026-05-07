@@ -1,0 +1,193 @@
+---
+title: "AI Token 计数器：浏览器端为 GPT-5 / Claude / Gemini 估算 Token 与成本"
+description: "在浏览器里完成 GPT-5、GPT-4.1、Claude Sonnet 4.6、Gemini 3、DeepSeek V3 的 BPE token 数与成本估算。无需 API Key，prompt 不出本地。"
+pubDate: 2026-05-07
+lang: "zh"
+tags: ["llm", "tokenizer", "gpt", "claude", "developer-tools"]
+ogImage: /og/blog-ai-token-counter-guide.png
+---
+
+一段 12,000 token 的系统 prompt 在编辑器里看着无害。但它每发一次 Claude Sonnet 4.6 请求就要花掉 3.6 美分,在用户敲下第一个字之前就先吃掉 12K 的上下文窗口。2026 年的每一块钱 LLM 开销都按 token 计费,「字符数 × 0.25」这种估法做不了任何决策,你需要的是和服务商完全一致的那把 tokenizer。
+
+这篇文章会讲清楚 BPE tokenizer 实际在做什么、为什么 GPT-4o 和 Claude 切同一句话会切出不同数字、跨服务商的成本怎么算,以及如何在本地完成 token 计数——包括那些不允许把 prompt 送到第三方 tokenizer 服务的生产代码路径。
+
+## 不用 API Key 数 Token
+
+**[打开 ZeroTool AI Token 计数器 →](/zh/tools/ai-token-counter/)**
+
+把任意 prompt 粘进来,页面会同时返回六个当前一线模型的 token 数与输入侧成本估算——GPT-5、GPT-4.1、GPT-4o、Claude Sonnet 4.6、Gemini 3 Pro、DeepSeek V3。计算全程在浏览器里跑,GPT 系列用 OpenAI 自家的 `o200k_base` BPE 表得出精确数,其余服务商走经过校准的近似算法。rank 表只在空闲时加载一次,之后没有任何数据离开页面。
+
+## 什么是 Token
+
+token 是语言模型真正「读」的最小单元。模型不看字符也不看单词,它看到的是一串整数 ID,由 Byte Pair Encoding(BPE)算法在互联网级语料上训练得出。训练过程会反复把出现频次最高的相邻字节对合并成新单元,直到词表凑齐大约 10 万到 20 万条。常见的英文片段——`the`、`ing`、` you`(注意前导空格)——都会塌缩成单个 token;生僻字符串、URL 和绝大多数 CJK 字符则会被拆成好几个 token。
+
+几个值得记在脑子里的粗略校准:
+
+| Sample | cl100k_base tokens | o200k_base tokens |
+|---|---:|---:|
+| `Hello, world!` | 4 | 4 |
+| `tokenizer` | 1 | 2 |
+| `browser-based developer tools` | 4 | 4 |
+| `https://api.example.com/v1/users?limit=10` | 12 | 12 |
+| `你好,世界!` | 7 | 4 |
+| `東京の天気は晴れ` | 10 | 7 |
+
+最后两行就是为什么 o200k_base——和 GPT-4o 一起发布的版本——对非英文市场是一次重大利好:词表翻倍后,中、日、韩、阿拉伯文的 token 数砍掉了 20% 到 40%。在长上下文调用上,这就是真金白银的差距。对于把 DeepSeek V3 当主力的国内开发者来说,这种差距更敏感——同样一段技术文档,跑在词表更优的 tokenizer 上,每一次调用省下来的成本会按调用量乘进去。
+
+## 为什么各家数出来不一样
+
+每个服务商都训自己的 tokenizer。词表、字节回退策略、特殊 token 预留位都各不相同。同一段文字过 `cl100k_base`、`o200k_base`、Anthropic 的 tokenizer、Google 的 SentencePiece、Meta 的 Llama 3 tokenizer,会得到四到六个相近但永远不会一致的数字:
+
+| 服务商 | Tokenizer | 词表大小 | 备注 |
+|---|---|---:|---|
+| OpenAI GPT-3.5/GPT-4 | `cl100k_base` (BPE) | ~100K | 与 `text-embedding-3` 同款 |
+| OpenAI GPT-4o/4.1/5 | `o200k_base` (BPE) | ~200K | 词表翻倍,多语种受益 |
+| Anthropic Claude | 自研 BPE(未公开) | ~100K | tokenizer 未开源,精确数走 `count_tokens` API |
+| Google Gemini | SentencePiece | ~256K | 完全不同的算法家族 |
+| Meta Llama 3.x | `tiktoken` 风格 BPE | ~128K | 格式兼容 OpenAI,但词表不同 |
+| DeepSeek V3 | 自研 BPE | ~100K | 中英双语语料训练 |
+
+两个直接后果:
+
+1. **Token 数不能直接互相比较。** 不指明 tokenizer 就说「这个 prompt 是 1,000 token」是没有意义的。GPT-4o 下的 1,000 token 英文 prompt,在 Claude 下大约是 970 token,中文场景可能落在 850 到 1,100 之间。
+2. **成本对比要用钱,不要用 token。** 拿每家的 token 数乘以它的百万 token 报价,再比美元数。ZeroTool 的计数器替你做了这一步。
+
+## 快速算账:Token 换美元
+
+成本算法不复杂,但在 code review 里靠脑算很容易出错。公式是:
+
+```
+cost_usd = (tokens / 1_000_000) * price_per_1M_usd
+```
+
+拿一个真实场景算一遍——Anthropic Claude Sonnet 4.6 输入侧每百万 token \$3.00,一个 12,000 token 的系统 prompt 每次请求都要发:
+
+```
+cost_per_request_usd = (12_000 / 1_000_000) * 3.00 = 0.036
+cost_per_1k_requests = 0.036 * 1000 = 36.00
+cost_per_1M_requests = 0.036 * 1_000_000 = 36_000
+```
+
+这意味着,在还没算用户内容、没算模型输出之前,这段 12K token 的系统 prompt 在每百万次调用上就要花 \$36,000。输出侧只会让账单更狠:输出 \$15 / 百万 token,平均回复 500 token、同样百万次调用,再加 \$7,500。在 token 计数器上花 30 秒,就能在 code review 里把这种问题挡下来。
+
+## js-tiktoken 在浏览器里是怎么跑的
+
+ZeroTool 计数器构建在 [js-tiktoken](https://github.com/dqbd/tiktoken) 之上,这是 OpenAI 官方 `tiktoken` 库的 JavaScript 移植。`tiktoken` 是开源的,直接打包了 OpenAI 生产环境正在用的那张 BPE 表;JavaScript 移植版同样把这些表编译进了浏览器 bundle。
+
+几个关键组件:
+
+- **`Tiktoken` 类**——编解码运行时。接收一张词表,暴露 `.encode(text)` 与 `.decode(ids)`。
+- **Rank 表**——`cl100k_base`、`o200k_base`、`p50k_base`、`r50k_base`、`gpt2` 各自一个独立模块。每张表 gzip 后大约 150 到 300 KB。ZeroTool 计数器只动态导入 `o200k_base`,而且推迟到 `requestIdleCallback` 才加载,首屏渲染稳定保持在 1.2s 以内。
+- **不依赖 WASM**——lite 构建是纯 JavaScript,意味着可以直接跑在 service worker、Cloudflare Workers、Deno Deploy 上,不需要任何二进制 loader。
+
+## 在代码里数 Token
+
+下面是浏览器工具背后等价的代码路径。运行时的唯一区别是 bundle 大小——服务端通常带全套五张词表,浏览器端则按需挑用。
+
+### Python (tiktoken)
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("o200k_base")
+text = "Count me carefully, please."
+tokens = enc.encode(text)
+print(len(tokens), tokens)
+# 6 [3417, 668, 18455, 11, 4843, 13]
+```
+
+如果想用模型名而不是 encoding 名,改成 `tiktoken.encoding_for_model("gpt-4o")` 即可,会自动解析到对应词表。
+
+### JavaScript (js-tiktoken,浏览器或 Node)
+
+```javascript
+import { Tiktoken } from "js-tiktoken/lite";
+import o200k_base from "js-tiktoken/ranks/o200k_base";
+
+const enc = new Tiktoken(o200k_base);
+const text = "Count me carefully, please.";
+const tokens = enc.encode(text);
+console.log(tokens.length, tokens);
+// 6 [ 3417, 668, 18455, 11, 4843, 13 ]
+```
+
+想让 bundle 更小,把 rank 表的导入放到用户手势之后再动态触发,Vite/Webpack 会切成独立 chunk。
+
+### Bash(给 CI 做单次检查)
+
+```bash
+python -c "
+import sys, tiktoken
+enc = tiktoken.get_encoding('o200k_base')
+print(len(enc.encode(sys.stdin.read())))
+" < prompt.md
+```
+
+很适合做 CI 卡点:`prompt.md` 一旦超过比如 2,000 token 就直接 fail build。配合 `find prompts/ -name '*.md' | xargs -I {} ...` 可以批量审一整个目录。
+
+## 常见坑
+
+下面这些套路是真的会让团队亏钱、出生产事故的:
+
+1. **拿字符数估成本。** 「平均一个 token 四个字符」对英文是大致成立的,但对代码完全失灵(`__init__.py` 是 5 token、11 个字符,比例 2.2),对 CJK 也失灵(中文字符在 `o200k_base` 上一般是 1 到 2 个 token,绝不是 0.25)。老老实实用真 tokenizer。
+
+2. **忘记 chat 格式开销。** Chat API 会给每条消息包上角色标记(`<|im_start|>system\n...<|im_end|>`),每条多花 3 到 8 个 token。100 条消息的对话,在内容之前就先垫上 300 到 800 个纯开销 token。计数器测的是单段文本——做 chat 会话时,把每条消息分别数,再按每轮加 4 个 token 估算。
+
+3. **数一次,发无数次。** 系统 prompt 每次请求都发,就每次都要付钱。缓存它。OpenAI、Anthropic、Google 都提供 prompt 缓存,缓存命中部分能打 50% 到 90% 的折扣。计数器里给的是未缓存价。
+
+4. **忽略 tool-call 负载。** 函数定义和工具 schema 都要算进输入预算。一份 30 个嵌套字段的 JSON Schema 能膨胀到 800 token。如果你切了模型之后账单飙升,先去审你的工具定义,别一上来就怪模型退步。
+
+5. **看板里把精确数和近似数混在一起。** ZeroTool 给 OpenAI 的数标 `exact`、其余标 `approx` 是有原因的。如果你按 token 给客户计费,就只能用 API 响应里返回的那家服务商精确数——本地估算不能拿来出账单。
+
+6. **没给输出侧留预算。** 输出价钱通常是输入的 3 到 5 倍。一个动辄回答 1,000 token 长段落的 bot,输出花的钱比整个用户 prompt 还多。
+
+## 本地 Tokenizer vs 云端 Tokenizer
+
+大部分公开的 token 计数器都是把 prompt 发到服务端的 tokenizer 接口。这对三类输入是问题:
+
+1. **私有系统 prompt。** 里面有商业秘密、模型行为指令、护城河逻辑。送进第三方接口就等于全交出去了。
+2. **客户数据。** 真实聊天记录、工单、生产端生成内容,都受隐私承诺约束。第三方 tokenizer 完全可能记日志。
+3. **隔离环境。** 受监管行业(医疗、金融、国防)根本不允许 prompt 走公网。
+
+国内做政企交付的同学对第三点尤其敏感:数据出域、跨境传输、等保合规这一类要求,会直接把所有「把 prompt 发去远端 tokenize」的方案排除在选型之外。剩下的路只有一条——把 tokenizer 拉到客户端,在本地完成编码。
+
+ZeroTool 计数器就是把整个 BPE 编码过程搬到了浏览器里,把这三类问题一次性解决掉。你可以打开 DevTools 的 Network 面板验证:页面和延迟加载的 rank 表都加载完之后,随便敲字,不会再有任何出站请求。同样的思路在代码里也成立——`tiktoken` 之于 Python、`js-tiktoken` 之于 Node 和浏览器,词表都在进程内。
+
+## ZeroTool 与其他计数器对比
+
+| 工具 | Tokenizer 精度 | 隐私模型 | 是否带成本列 |
+|---|---|---|---|
+| OpenAI Platform Tokenizer | 仅对 OpenAI 精确 | 服务端 | 无 |
+| gpt-tokenizer.dev | 通过 `tiktoken` 精确 | 客户端 | 无 |
+| tokencounter.org | OpenAI 精确 + 其他近似 | 服务端 | 有 |
+| **ZeroTool AI Token 计数器** | OpenAI 精确 + Claude/Gemini/DeepSeek 校准近似 | 客户端 | 有 |
+| 服务商自家 `count_tokens` API | 对该服务商精确 | 服务端,需 API Key | 各家分开 |
+
+只跑 OpenAI 的工作流,gpt-tokenizer.dev 和 OpenAI 官方工具都够用。要做多模型对比、要看成本列、又不想申 API Key,ZeroTool 是最省事的入口。
+
+## 哪些场景真能省时间
+
+几个把 prompt 粘进计数器就能省下大量时间的实际工作流:
+
+- **上线前给 prompt 减肥。** 把最终系统 prompt 粘进来,看能不能再砍掉 500 token。每省一个 token,都会按整个部署生命周期里所有用户请求的次数复利累加。
+- **服务商替换评估。** 把同一份 payload 同时打到六家,直接读成本列。光是 tokenizer 差异就经常能让胜出方案换人,差距在 30% 上下。
+- **上下文窗口规划。** GPT-4o 是 128K,Claude Sonnet 4.6 是 200K,Gemini 3 Pro 是 2M。如果你的检索系统会拉 180K token 的上下文,Claude(200K)和 Gemini(2M)还有余量,GPT-4o(128K)就直接超了——计数器一眼能看出哪些模型还塞得下。
+- **多语言审计。** 把同一份内容用英文和目标语言各跑一次。`o200k_base` 在 CJK 上对 `cl100k_base` 的改进意味着,从 GPT-3.5 升到 GPT-4o 不光升了模型质量,也实打实砍了 token 数。
+- **价格变动后重算。** 服务商一旦下调头部价格(2024-2025 OpenAI 就降了三次),立刻重新算账。计数器里的参考价是带日期的静态值,FAQ 里有标注,把它当起点用,签续约前再去服务商定价页核对一遍。
+
+## 延伸阅读
+
+服务商文档与底层标准:
+
+- [OpenAI tokenizer cookbook](https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken) ——`tiktoken` 官方 Python 与 JS 示例
+- [Anthropic count_tokens API](https://docs.anthropic.com/en/api/messages-count-tokens) ——通过 API 拿到 Claude 精确 token 数
+- [Google AI count_tokens](https://ai.google.dev/api/tokens) ——通过 Gemini API 调 SentencePiece 计数
+- [BPE 原始论文(Sennrich et al., 2016)](https://aclanthology.org/P16-1162/) ——奠基性工作
+- [Karpathy 「Let's build the GPT tokenizer」](https://www.youtube.com/watch?v=zduSFxRajkE) ——三小时手搓 BPE 内部机制
+
+ZeroTool 的相关工具:
+
+- [字数与字符计数器](/zh/tools/word-counter/) ——给那种按字符或字数算配额、不按 token 算的内容场景
+- [JSON 格式化](/zh/tools/json-formatter/) ——数 token 之前清洗一下 tool-call schema
+- [cURL 转代码](/zh/tools/curl-to-code/) ——把服务商的 API 示例在 Python、JS、Go、PHP、Node 之间互转
+- [假数据生成器](/zh/tools/fake-data-generator/) ——生成已知 token 规模的合成 prompt 做压测

@@ -1,0 +1,191 @@
+---
+title: "AI Token Counter: Browser-Side Tokenizer for GPT-5, Claude, Gemini"
+description: "Count BPE tokens and estimate costs for GPT-5, GPT-4.1, Claude Sonnet 4.6, Gemini 3, and DeepSeek V3 entirely in your browser. No API key needed."
+pubDate: 2026-05-07
+lang: "en"
+tags: ["llm", "tokenizer", "gpt", "claude", "developer-tools"]
+ogImage: /og/blog-ai-token-counter-guide.png
+---
+
+A 12,000-token system prompt looks fine in your editor. It also costs you 3.6 cents on every Claude Sonnet 4.6 request and burns 12K of your context window before the user has typed a single character. Every dollar of LLM spend in 2026 is metered in tokens, and "characters times 0.25" is not accurate enough to plan against. You need the same tokenizer your provider uses.
+
+This guide walks through what BPE tokenizers actually do, why GPT-4o and Claude split the same sentence into different counts, how cost arithmetic works across providers, and how to count tokens locally — including in production code paths where shipping an API call to remote tokenization service is unacceptable.
+
+## Count Tokens Without an API Key
+
+**[Open the ZeroTool AI Token Counter →](/tools/ai-token-counter/)**
+
+Paste any prompt and the page returns token counts and estimated input cost across six current frontier models — GPT-5, GPT-4.1, GPT-4o, Claude Sonnet 4.6, Gemini 3 Pro, and DeepSeek V3. The calculation runs in your browser using OpenAI's `o200k_base` BPE table for exact GPT counts and calibrated approximations for the non-OpenAI providers; the rank table loads once at idle, and after that nothing leaves the page.
+
+## What Is a Token?
+
+A token is the unit a language model actually reads. Models do not see characters or words — they see a sequence of integer IDs produced by a Byte Pair Encoding (BPE) algorithm trained on internet-scale text. The training process iteratively merges the most common adjacent byte pairs into single units until it has roughly 100,000 to 200,000 entries. Common English fragments like `the`, `ing`, ` you` (note the leading space) collapse into single tokens; rare strings, URLs, and most CJK characters expand to several tokens each.
+
+A few rough calibrations to keep in your head:
+
+| Sample | cl100k_base tokens | o200k_base tokens |
+|---|---:|---:|
+| `Hello, world!` | 4 | 4 |
+| `tokenizer` | 1 | 2 |
+| `browser-based developer tools` | 4 | 4 |
+| `https://api.example.com/v1/users?limit=10` | 12 | 12 |
+| `你好，世界！` | 7 | 4 |
+| `東京の天気は晴れ` | 10 | 7 |
+
+The last two rows explain why o200k_base — released alongside GPT-4o — was such a big deal for non-English markets: doubling the vocabulary size cut Chinese, Japanese, Korean, and Arabic token counts by 20 to 40 percent. That is real money on long-context calls.
+
+## Why Provider Counts Diverge
+
+Every provider trains its own tokenizer. The vocabulary, byte-fallback strategy, and special token reservations all differ. The same paragraph in `cl100k_base`, `o200k_base`, Anthropic's tokenizer, Google's SentencePiece, and Meta's Llama 3 tokenizer will produce four-to-six counts that are similar but never identical:
+
+| Provider | Tokenizer | Vocabulary size | Notes |
+|---|---|---:|---|
+| OpenAI GPT-3.5/GPT-4 | `cl100k_base` (BPE) | ~100K | Same as `text-embedding-3` |
+| OpenAI GPT-4o/4.1/5 | `o200k_base` (BPE) | ~200K | 2× vocabulary, multilingual gains |
+| Anthropic Claude | Custom BPE (closed) | ~100K | Tokenizer not publicly released; counts via `count_tokens` API |
+| Google Gemini | SentencePiece | ~256K | Different algorithm family entirely |
+| Meta Llama 3.x | `tiktoken`-style BPE | ~128K | OpenAI-compatible BPE format, different vocab |
+| DeepSeek V3 | Custom BPE | ~100K | Trained on bilingual EN/ZH corpus |
+
+Two consequences:
+
+1. **Token counts are not directly comparable.** You cannot say "this prompt is 1,000 tokens" without naming a tokenizer. A 1,000-token GPT-4o prompt is roughly 970 Claude tokens for English and could be 850-1,100 for Chinese.
+2. **Cost comparisons must use cost, not tokens.** Multiply each provider's count by its per-million rate, then compare dollars. ZeroTool's counter does that step for you.
+
+## The Fast Math: Tokens to Dollars
+
+Cost arithmetic is straightforward but error-prone when you are eyeballing it during a code review. The formula is:
+
+```
+cost_usd = (tokens / 1_000_000) * price_per_1M_usd
+```
+
+Working through one realistic example — the Anthropic Claude Sonnet 4.6 input rate of \$3.00 per million tokens, applied to a 12,000-token system prompt sent on every request:
+
+```
+cost_per_request_usd = (12_000 / 1_000_000) * 3.00 = 0.036
+cost_per_1k_requests = 0.036 * 1000 = 36.00
+cost_per_1M_requests = 0.036 * 1_000_000 = 36_000
+```
+
+That 12K-token system prompt costs you \$36,000 per million calls *before* you count any user content or model output. Output tokens compound the bill: at \$15 per million output tokens, a 500-token average response over the same million calls adds another \$7,500. A 30-second exercise on a token counter would have caught this in code review.
+
+## How js-tiktoken Works in the Browser
+
+The ZeroTool counter is built on [js-tiktoken](https://github.com/dqbd/tiktoken), the JavaScript port of OpenAI's official `tiktoken` library. `tiktoken` is open source and ships the exact BPE tables OpenAI uses in production. The JavaScript port includes the same tables compiled for browser bundles.
+
+The relevant pieces:
+
+- **`Tiktoken` class** — the encoder/decoder runtime. Takes a vocabulary table and exposes `.encode(text)` and `.decode(ids)`.
+- **Rank tables** — separate modules for `cl100k_base`, `o200k_base`, `p50k_base`, `r50k_base`, and `gpt2`. Each table is roughly 150-300 KB gzipped. The ZeroTool counter dynamically imports `o200k_base` only, deferred to `requestIdleCallback` so the first paint stays under 1.2s.
+- **No WASM** — the lite build is pure JavaScript, which means it works in service workers, Cloudflare Workers, and deno deploy without binary loaders.
+
+## Counting Tokens From Code
+
+For code paths, here is the equivalent of what the browser tool does. The only difference at runtime is bundle size — server-side you usually have the full tokenizer with all five vocabularies; in the browser you cherry-pick.
+
+### Python (tiktoken)
+
+```python
+import tiktoken
+
+enc = tiktoken.get_encoding("o200k_base")
+text = "Count me carefully, please."
+tokens = enc.encode(text)
+print(len(tokens), tokens)
+# 6 [3417, 668, 18455, 11, 4843, 13]
+```
+
+For a model name instead of an encoding, use `tiktoken.encoding_for_model("gpt-4o")` — it resolves to the right table.
+
+### JavaScript (js-tiktoken, browser or Node)
+
+```javascript
+import { Tiktoken } from "js-tiktoken/lite";
+import o200k_base from "js-tiktoken/ranks/o200k_base";
+
+const enc = new Tiktoken(o200k_base);
+const text = "Count me carefully, please.";
+const tokens = enc.encode(text);
+console.log(tokens.length, tokens);
+// 6 [ 3417, 668, 18455, 11, 4843, 13 ]
+```
+
+For a smaller bundle, dynamic-import the rank table behind a user gesture so it is split into its own chunk.
+
+### Bash (one-shot for CI prompts)
+
+```bash
+python -c "
+import sys, tiktoken
+enc = tiktoken.get_encoding('o200k_base')
+print(len(enc.encode(sys.stdin.read())))
+" < prompt.md
+```
+
+Useful as a CI guard: if a `prompt.md` exceeds, say, 2,000 tokens, fail the build. Compose with `find prompts/ -name '*.md' | xargs -I {} ...` to audit a directory.
+
+## Common Pitfalls
+
+These are the patterns that cost teams real money or production incidents:
+
+1. **Using character count to estimate cost.** "Roughly four characters per token" is true on average for English but breaks badly for code (`__init__.py` is 5 tokens, 11 characters; ratio 2.2) and CJK text (Chinese characters are typically 1 to 2 tokens each on `o200k_base`, not 0.25). Use a real tokenizer.
+
+2. **Forgetting chat formatting overhead.** Chat APIs wrap each message in role markers (`<|im_start|>system\n...<|im_end|>`) that cost 3 to 8 tokens per message. A 100-message conversation pays 300 to 800 tokens of pure overhead before any content. The counter measures one body of text — for chat sessions, sum each message and add roughly 4 tokens per turn.
+
+3. **Counting once, sending many.** A system prompt sent on every request gets billed every request. Cache it. OpenAI, Anthropic, and Google all offer prompt caching with discounts ranging from 50 to 90 percent on cached portions; the counter's reference rates are the uncached price.
+
+4. **Ignoring tool-call payloads.** Function definitions and tool schemas count toward your input budget. A JSON Schema with 30 nested fields can balloon to 800 tokens. If you switched models and the bill climbed, audit your tool definitions before assuming the model regressed.
+
+5. **Mixing exact and approximate counts in dashboards.** The ZeroTool tool labels OpenAI counts as `exact` and others as `approx` for a reason. If you are billing customers per-token, log the exact provider count from the API response — never the local estimate.
+
+6. **Not budgeting for output tokens.** Output is usually 3 to 5x more expensive than input. A bot that answers in 1,000-token paragraphs costs more on output than on the entire user prompt.
+
+## Local Versus Hosted Tokenizers
+
+Most public token counters send your prompt to a server-side tokenizer endpoint. That is a problem for three categories of input:
+
+1. **Proprietary system prompts.** They contain trade secrets, model behaviors, and competitive moats. Putting them through a third-party endpoint leaks all of it.
+2. **Customer data.** Real chat logs, support tickets, or generated content from production fall under privacy commitments. A third-party tokenizer may log the request.
+3. **Air-gapped environments.** Regulated industries (healthcare, finance, defense) cannot route prompts through the public internet at all.
+
+The ZeroTool counter solves all three by running the entire BPE encoder in-browser. You can verify in the DevTools Network tab: once the page and the deferred rank table have settled, type freely and watch no further outbound requests appear. The same approach works in code — `tiktoken` for Python, `js-tiktoken` for Node and the browser, both ship the vocabularies in-process.
+
+## ZeroTool vs. Other Counters
+
+| Tool | Tokenizer accuracy | Privacy model | Cost columns |
+|---|---|---|---|
+| OpenAI Platform Tokenizer | Exact for OpenAI only | Server-side | None |
+| gpt-tokenizer.dev | Exact via `tiktoken` | Client-side | None |
+| tokencounter.org | Exact OpenAI + approx others | Server-side | Yes |
+| **ZeroTool AI Token Counter** | Exact OpenAI + approx Claude/Gemini/DeepSeek with calibrated factors | Client-side | Yes |
+| Provider's own `count_tokens` API | Exact for that provider | Server-side, requires API key | Per provider |
+
+For OpenAI-only workloads, gpt-tokenizer.dev and OpenAI's hosted tool both work well. For multi-model comparisons with cost columns and no required API key, the ZeroTool tool is the simplest path.
+
+## Workflows the Counter Speeds Up
+
+A few patterns where pasting into the counter saves real time:
+
+- **Prompt diet before deploy.** Paste your final system prompt and check whether you can trim 500 tokens. Each saved token compounds across every customer request for the lifetime of the deployment.
+- **Vendor swap evaluation.** Paste the same payload against six providers and read the cost column. The tokenizer differences alone often shift the winner by 30 percent.
+- **Context window planning.** GPT-4o has a 128K window, Claude Sonnet 4.6 has 200K, Gemini 3 Pro has 2M. If your retrieval system pulls 180K tokens of context, you have headroom on Claude (200K) and Gemini (2M) but not on GPT-4o (128K) — the counter shows you which models still have room.
+- **Multi-language audit.** Run the same content in English and your target market language. The CJK improvements in `o200k_base` over `cl100k_base` mean migrating from GPT-3.5 to GPT-4o saves more than just model upgrade quality — it saves token count.
+- **Pricing changes.** When a provider drops headline rates (OpenAI did three times in 2024-2025), redo the math. The counter ships static reference values dated in the FAQ; treat them as a starting point and verify against the provider's pricing page before signing renewals.
+
+## Further Reading
+
+Provider documentation and standards:
+
+- [OpenAI tokenizer cookbook](https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken) — official Python and JS examples for `tiktoken`
+- [Anthropic count_tokens API](https://docs.anthropic.com/en/api/messages-count-tokens) — exact Claude counts via API
+- [Google AI count_tokens](https://ai.google.dev/api/tokens) — Gemini SentencePiece counter via Gemini API
+- [BPE original paper (Sennrich et al., 2016)](https://aclanthology.org/P16-1162/) — the foundational technique
+- [Karpathy's "Let's build the GPT tokenizer"](https://www.youtube.com/watch?v=zduSFxRajkE) — three-hour deep dive into BPE internals
+
+Related ZeroTool widgets:
+
+- [Word & Character Counter](/tools/word-counter/) — for content-length quotas where chars and words matter, not tokens
+- [JSON Formatter](/tools/json-formatter/) — for cleaning up tool-call schemas before counting
+- [cURL to Code](/tools/curl-to-code/) — translate provider API examples between Python, JS, Go, PHP, and Node
+- [Fake Data Generator](/tools/fake-data-generator/) — generate synthetic prompts at known token sizes for load testing
