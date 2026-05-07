@@ -1,0 +1,675 @@
+---
+// AiTokenCounterTool — count tokens and estimate cost across major LLMs.
+// All BPE tokenization runs in the browser via js-tiktoken; vocabularies
+// are dynamically imported so initial JS payload stays small.
+---
+
+<div class="atc-wrap"
+  data-msg-paste=""
+  data-msg-empty=""
+  data-msg-tokens-shown=""
+  data-msg-chars=""
+  data-msg-words=""
+  data-msg-loading=""
+  data-msg-copied=""
+  data-msg-copy-stats=""
+  data-msg-show-viz=""
+  data-msg-hide-viz=""
+  data-msg-viz-hint=""
+>
+  <section class="atc-input-section">
+    <label for="atc-input" class="tool-label" data-i18n="inputLabel">Prompt or context</label>
+    <textarea
+      id="atc-input"
+      class="tool-textarea"
+      rows="6"
+      spellcheck="false"
+      autocapitalize="off"
+      autocorrect="off"
+      placeholder="Paste your prompt or context here…"
+      data-i18n-attr="placeholder|inputPlaceholder"
+    ></textarea>
+    <div class="atc-input-meta">
+      <div class="atc-input-actions">
+        <button id="atc-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+        <button id="atc-sample" class="btn-ghost" type="button" data-i18n="loadSample">Load sample</button>
+        <button id="atc-copy-stats" class="btn-secondary" type="button" data-i18n="copyStats">Copy stats</button>
+      </div>
+      <span class="atc-input-stats" aria-live="polite">
+        <span data-i18n="charsLabel">chars</span>:&nbsp;<span id="atc-chars" class="atc-stat-num">0</span>
+        <span class="atc-stat-sep">·</span>
+        <span data-i18n="wordsLabel">words</span>:&nbsp;<span id="atc-words" class="atc-stat-num">0</span>
+      </span>
+    </div>
+  </section>
+
+  <section class="atc-cards-section">
+    <h2 class="atc-section-heading" data-i18n="resultsHeading">Token counts &amp; cost</h2>
+    <div id="atc-cards" class="atc-cards-grid"></div>
+    <p class="atc-pricing-note" data-i18n="pricingNote">
+      Prices are reference values reviewed in May 2026. Verify on each provider's pricing page.
+    </p>
+  </section>
+
+  <section class="atc-viz-section">
+    <button id="atc-viz-toggle" class="btn-secondary" type="button" aria-expanded="false" aria-controls="atc-viz-body">
+      <span data-i18n="showViz">Show token visualization</span>
+    </button>
+    <div id="atc-viz-body" class="atc-viz-body" hidden>
+      <p class="atc-viz-meta" id="atc-viz-meta"></p>
+      <div id="atc-viz-chips" class="atc-viz-chips" role="list"></div>
+    </div>
+  </section>
+</div>
+
+<script is:inline>
+  (function () {
+    var STRINGS = {
+      en: {
+        inputLabel: 'Prompt or context',
+        inputPlaceholder: 'Paste your prompt or context here…',
+        clear: 'Clear',
+        loadSample: 'Load sample',
+        copyStats: 'Copy stats',
+        charsLabel: 'chars',
+        wordsLabel: 'words',
+        resultsHeading: 'Token counts & cost',
+        pricingNote: "Prices are reference values reviewed in May 2026. Verify on each provider's pricing page.",
+        showViz: 'Show token visualization',
+        hideViz: 'Hide token visualization',
+        msgEmpty: 'Type or paste text to see token counts.',
+        msgTokensShown: 'Showing {shown} of {total} tokens — collapse and paste a shorter sample to render all chips.',
+        msgLoading: 'Loading tokenizer…',
+        msgCopied: 'Copied!',
+        msgVizHint: 'Each chip is one token from the GPT-4.1 / GPT-4o tokenizer (o200k_base). Hover a chip to see its token id.',
+        tagExact: 'exact',
+        tagApprox: 'approx',
+        tokensSuffix: 'tokens',
+        rateInput: 'in',
+        rateOutput: 'out',
+        per1M: '/ 1M'
+      },
+      zh: {
+        inputLabel: 'Prompt 或上下文',
+        inputPlaceholder: '把 prompt 或上下文粘贴到这里…',
+        clear: '清空',
+        loadSample: '加载示例',
+        copyStats: '复制统计',
+        charsLabel: '字符',
+        wordsLabel: '词',
+        resultsHeading: 'Token 数与成本',
+        pricingNote: '价格为 2026 年 5 月人工核对的参考值，请以厂商定价页为准。',
+        showViz: '显示 token 可视化',
+        hideViz: '隐藏 token 可视化',
+        msgEmpty: '输入或粘贴文本即可查看 token 数。',
+        msgTokensShown: '已显示 {shown} / {total} 个 token — 折叠后粘贴更短文本可渲染全部。',
+        msgLoading: '正在加载 tokenizer…',
+        msgCopied: '已复制！',
+        msgVizHint: '每个 chip 是 GPT-4.1 / GPT-4o tokenizer（o200k_base）切出的一个 token。悬停查看 token id。',
+        tagExact: '精确',
+        tagApprox: '近似',
+        tokensSuffix: '个 token',
+        rateInput: '输入',
+        rateOutput: '输出',
+        per1M: '/ 百万'
+      },
+      ja: {
+        inputLabel: 'プロンプト・コンテキスト',
+        inputPlaceholder: 'プロンプトやコンテキストをここに貼り付け…',
+        clear: 'クリア',
+        loadSample: 'サンプル読込',
+        copyStats: '統計をコピー',
+        charsLabel: '文字',
+        wordsLabel: '単語',
+        resultsHeading: 'トークン数とコスト',
+        pricingNote: '価格は 2026 年 5 月時点の参考値。各社の料金ページで再確認してください。',
+        showViz: 'トークン可視化を表示',
+        hideViz: 'トークン可視化を非表示',
+        msgEmpty: 'テキストを入力または貼り付けるとトークン数が表示されます。',
+        msgTokensShown: '{total} 件中 {shown} 件のトークンを表示中 — 折りたたんで短いテキストを貼り付けると全件描画できます。',
+        msgLoading: 'tokenizer を読み込み中…',
+        msgCopied: 'コピーしました！',
+        msgVizHint: '各チップは GPT-4.1 / GPT-4o tokenizer（o200k_base）が分割したトークン 1 個。チップにホバーするとトークン ID を表示。',
+        tagExact: '精密',
+        tagApprox: '近似',
+        tokensSuffix: 'トークン',
+        rateInput: '入力',
+        rateOutput: '出力',
+        per1M: '/ 100 万'
+      },
+      ko: {
+        inputLabel: '프롬프트 또는 컨텍스트',
+        inputPlaceholder: '여기에 프롬프트나 컨텍스트를 붙여넣으세요…',
+        clear: '지우기',
+        loadSample: '샘플 불러오기',
+        copyStats: '통계 복사',
+        charsLabel: '문자',
+        wordsLabel: '단어',
+        resultsHeading: '토큰 수와 비용',
+        pricingNote: '가격은 2026년 5월 기준 참고 값. 각 제공자 가격 페이지에서 다시 확인하세요.',
+        showViz: '토큰 시각화 표시',
+        hideViz: '토큰 시각화 숨김',
+        msgEmpty: '텍스트를 입력하거나 붙여넣으면 토큰 수가 표시됩니다.',
+        msgTokensShown: '{total}개 중 {shown}개 토큰을 표시 중 — 접고 더 짧은 텍스트를 붙여넣으면 모두 렌더됩니다.',
+        msgLoading: 'tokenizer 로드 중…',
+        msgCopied: '복사 완료!',
+        msgVizHint: '각 칩은 GPT-4.1 / GPT-4o tokenizer(o200k_base)가 분할한 토큰 1개. 칩 위에 마우스를 올리면 토큰 ID 표시.',
+        tagExact: '정확',
+        tagApprox: '근사',
+        tokensSuffix: '토큰',
+        rateInput: '입력',
+        rateOutput: '출력',
+        per1M: '/ 100만'
+      }
+    };
+
+    var lang = (document.documentElement.lang || 'en').slice(0, 2);
+    var t = STRINGS[lang] || STRINGS.en;
+
+    document.querySelectorAll('.atc-wrap [data-i18n]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n');
+      if (t[key]) el.textContent = t[key];
+    });
+    document.querySelectorAll('.atc-wrap [data-i18n-attr]').forEach(function (el) {
+      var spec = el.getAttribute('data-i18n-attr');
+      if (!spec) return;
+      var parts = spec.split('|');
+      if (parts.length === 2 && t[parts[1]]) el.setAttribute(parts[0], t[parts[1]]);
+    });
+
+    var wrap = document.querySelector('.atc-wrap');
+    if (wrap) {
+      wrap.dataset.msgEmpty = t.msgEmpty;
+      wrap.dataset.msgTokensShown = t.msgTokensShown;
+      wrap.dataset.msgLoading = t.msgLoading;
+      wrap.dataset.msgCopied = t.msgCopied;
+      wrap.dataset.msgCopyStats = t.copyStats;
+      wrap.dataset.msgShowViz = t.showViz;
+      wrap.dataset.msgHideViz = t.hideViz;
+      wrap.dataset.msgVizHint = t.msgVizHint;
+      wrap.dataset.tagExact = t.tagExact;
+      wrap.dataset.tagApprox = t.tagApprox;
+      wrap.dataset.tokensSuffix = t.tokensSuffix;
+      wrap.dataset.rateInput = t.rateInput;
+      wrap.dataset.rateOutput = t.rateOutput;
+      wrap.dataset.per1M = t.per1M;
+    }
+  })();
+</script>
+
+<script>
+  import { Tiktoken } from 'js-tiktoken/lite';
+
+  const SLUG = 'ai-token-counter';
+
+  // Pricing reviewed 2026-05. All values per 1M tokens, USD.
+  // Sources: provider pricing pages and 2026 industry surveys. Treat as
+  // budget reference, not invoice — providers adjust headline rates and
+  // batch tiers without notice.
+  const MODELS = [
+    { id: 'gpt-5',         label: 'GPT-5',             rank: 'o200k', exact: true,  factor: 1.0,  inUsd: 1.25, outUsd: 10.00 },
+    { id: 'gpt-4.1',       label: 'GPT-4.1',           rank: 'o200k', exact: true,  factor: 1.0,  inUsd: 5.00, outUsd: 15.00 },
+    { id: 'gpt-4o',        label: 'GPT-4o',            rank: 'o200k', exact: true,  factor: 1.0,  inUsd: 2.50, outUsd: 10.00 },
+    { id: 'claude-4.6',    label: 'Claude Sonnet 4.6', rank: 'o200k', exact: false, factor: 0.97, inUsd: 3.00, outUsd: 15.00 },
+    { id: 'gemini-3',      label: 'Gemini 3 Pro',      rank: 'o200k', exact: false, factor: 1.01, inUsd: 2.00, outUsd: 12.00 },
+    { id: 'deepseek-v3',   label: 'DeepSeek V3',       rank: 'o200k', exact: false, factor: 0.98, inUsd: 0.27, outUsd: 1.10 },
+  ];
+
+  const SAMPLE_PROMPT = `You are a senior staff engineer reviewing a pull request that introduces a new caching layer in front of a Postgres analytics database.
+
+The PR adds a Redis-based read-through cache with a 60-second TTL on every aggregate query. The author argues this will reduce p99 latency from 1200ms to under 50ms for the dashboard endpoint that serves 12k requests per minute at peak.
+
+Please walk through:
+1. The two highest-risk failure modes you would flag.
+2. Whether 60 seconds is the right TTL given the data freshness expectations of a financial reporting dashboard.
+3. One concrete observability hook the author should add before merging.
+
+Return your answer as a numbered list, with each item under 80 words.`;
+
+  const wrap = document.querySelector('.atc-wrap') as HTMLElement | null;
+  if (!wrap) throw new Error('atc wrap missing');
+
+  const inputEl = document.getElementById('atc-input') as HTMLTextAreaElement;
+  const clearBtn = document.getElementById('atc-clear') as HTMLButtonElement;
+  const sampleBtn = document.getElementById('atc-sample') as HTMLButtonElement;
+  const copyStatsBtn = document.getElementById('atc-copy-stats') as HTMLButtonElement;
+  const charsEl = document.getElementById('atc-chars')!;
+  const wordsEl = document.getElementById('atc-words')!;
+  const cardsEl = document.getElementById('atc-cards')!;
+  const vizToggle = document.getElementById('atc-viz-toggle') as HTMLButtonElement;
+  const vizBody = document.getElementById('atc-viz-body') as HTMLElement;
+  const vizMeta = document.getElementById('atc-viz-meta')!;
+  const vizChips = document.getElementById('atc-viz-chips')!;
+
+  const T = {
+    tagExact: wrap.dataset.tagExact || 'exact',
+    tagApprox: wrap.dataset.tagApprox || 'approx',
+    tokensSuffix: wrap.dataset.tokensSuffix || 'tokens',
+    rateInput: wrap.dataset.rateInput || 'in',
+    rateOutput: wrap.dataset.rateOutput || 'out',
+    per1M: wrap.dataset.per1M || '/ 1M',
+    msgEmpty: wrap.dataset.msgEmpty || '',
+    msgTokensShown: wrap.dataset.msgTokensShown || '',
+    msgLoading: wrap.dataset.msgLoading || '',
+    msgCopied: wrap.dataset.msgCopied || '',
+    msgShowViz: wrap.dataset.msgShowViz || 'Show token visualization',
+    msgHideViz: wrap.dataset.msgHideViz || 'Hide token visualization',
+    msgVizHint: wrap.dataset.msgVizHint || ''
+  };
+
+  // ── Card scaffolding ────────────────────────────────────────────────
+  function escapeHtml(s: string): string {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[c];
+    });
+  }
+
+  function buildCards(): void {
+    const html = MODELS.map(function (m) {
+      const tagClass = m.exact ? 'atc-tag--exact' : 'atc-tag--approx';
+      const tagText = m.exact ? T.tagExact : T.tagApprox;
+      return [
+        '<article class="atc-card" data-model="', m.id, '">',
+          '<header class="atc-card-head">',
+            '<h3 class="atc-card-title">', escapeHtml(m.label), '</h3>',
+            '<span class="atc-tag ', tagClass, '">', escapeHtml(tagText), '</span>',
+          '</header>',
+          '<div class="atc-card-tokens">',
+            '<span class="atc-card-num" id="atc-tok-', m.id, '">—</span>',
+            '<span class="atc-card-num-suffix">', escapeHtml(T.tokensSuffix), '</span>',
+          '</div>',
+          '<div class="atc-card-cost" id="atc-cost-', m.id, '">—</div>',
+          '<dl class="atc-card-rates">',
+            '<div><dt>', escapeHtml(T.rateInput), '</dt><dd>$', m.inUsd.toFixed(2), ' ', escapeHtml(T.per1M), '</dd></div>',
+            '<div><dt>', escapeHtml(T.rateOutput), '</dt><dd>$', m.outUsd.toFixed(2), ' ', escapeHtml(T.per1M), '</dd></div>',
+          '</dl>',
+        '</article>'
+      ].join('');
+    }).join('');
+    cardsEl.innerHTML = html;
+  }
+
+  buildCards();
+
+  // ── Tokenizer (lazy) ────────────────────────────────────────────────
+  let o200kEnc: any = null;
+  let loadingPromise: Promise<any> | null = null;
+
+  async function getEncoder(): Promise<any> {
+    if (o200kEnc) return o200kEnc;
+    if (loadingPromise) return loadingPromise;
+    loadingPromise = (async () => {
+      const ranks = (await import('js-tiktoken/ranks/o200k_base')).default;
+      o200kEnc = new Tiktoken(ranks);
+      return o200kEnc;
+    })();
+    return loadingPromise;
+  }
+
+  // Pre-warm at idle so the first keystroke isn't slow.
+  if (typeof (window as any).requestIdleCallback === 'function') {
+    (window as any).requestIdleCallback(() => { void getEncoder(); }, { timeout: 4000 });
+  } else {
+    setTimeout(() => { void getEncoder(); }, 800);
+  }
+
+  // ── Counting & rendering ────────────────────────────────────────────
+  function countWords(text: string): number {
+    if (!text) return 0;
+    const m = text.match(/\S+/g);
+    return m ? m.length : 0;
+  }
+
+  function formatCost(usd: number): string {
+    if (!isFinite(usd) || usd <= 0) return '$0.00';
+    if (usd < 0.0001) return '< $0.0001';
+    if (usd < 0.01) return '$' + usd.toFixed(6);
+    if (usd < 1) return '$' + usd.toFixed(4);
+    return '$' + usd.toFixed(2);
+  }
+
+  let lastBaseTokens = 0;
+  let lastTokensArr: number[] | null = null;
+
+  async function update(): Promise<void> {
+    const text = inputEl.value || '';
+    const chars = text.length;
+    const words = countWords(text);
+    charsEl.textContent = String(chars);
+    wordsEl.textContent = String(words);
+
+    if (!text) {
+      MODELS.forEach(function (m) {
+        const tokEl = document.getElementById('atc-tok-' + m.id);
+        const costEl = document.getElementById('atc-cost-' + m.id);
+        if (tokEl) tokEl.textContent = '—';
+        if (costEl) costEl.textContent = '—';
+      });
+      lastBaseTokens = 0;
+      lastTokensArr = null;
+      renderViz();
+      return;
+    }
+
+    const enc = await getEncoder();
+    const tokens: number[] = enc.encode(text);
+    lastBaseTokens = tokens.length;
+    lastTokensArr = tokens;
+
+    MODELS.forEach(function (m) {
+      const count = m.exact ? tokens.length : Math.max(0, Math.round(tokens.length * m.factor));
+      const cost = (count / 1_000_000) * m.inUsd;
+      const tokEl = document.getElementById('atc-tok-' + m.id);
+      const costEl = document.getElementById('atc-cost-' + m.id);
+      if (tokEl) tokEl.textContent = m.exact ? count.toLocaleString() : '≈ ' + count.toLocaleString();
+      if (costEl) costEl.textContent = formatCost(cost);
+    });
+
+    renderViz();
+  }
+
+  // ── Token Visualization ─────────────────────────────────────────────
+  const VIZ_CAP = 200;
+  let vizOpen = false;
+
+  function renderViz(): void {
+    if (!vizOpen) return;
+    if (!lastTokensArr || lastTokensArr.length === 0) {
+      vizMeta.textContent = T.msgEmpty;
+      vizChips.innerHTML = '';
+      return;
+    }
+    const total = lastTokensArr.length;
+    const shown = Math.min(total, VIZ_CAP);
+
+    const meta = total > VIZ_CAP
+      ? T.msgTokensShown.replace('{shown}', String(shown)).replace('{total}', String(total))
+      : T.msgVizHint;
+    vizMeta.textContent = meta;
+
+    void renderChipsAsync(lastTokensArr.slice(0, shown));
+  }
+
+  async function renderChipsAsync(tokens: number[]): Promise<void> {
+    const enc = await getEncoder();
+    const parts: string[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const id = tokens[i];
+      let str = '';
+      try { str = enc.decode([id]); } catch (_) { str = '?'; }
+      const display = str.replace(/ /g, '·').replace(/\n/g, '↵');
+      const hue = (id * 37) % 360;
+      parts.push(
+        '<span class="atc-chip" role="listitem" title="id ' + id + '" style="--atc-h:' + hue + '">' +
+        escapeHtml(display) +
+        '</span>'
+      );
+    }
+    vizChips.innerHTML = parts.join('');
+  }
+
+  vizToggle.addEventListener('click', function () {
+    vizOpen = !vizOpen;
+    vizBody.hidden = !vizOpen;
+    vizToggle.setAttribute('aria-expanded', vizOpen ? 'true' : 'false');
+    const labelEl = vizToggle.querySelector('span');
+    if (labelEl) labelEl.textContent = vizOpen ? T.msgHideViz : T.msgShowViz;
+    if (vizOpen) renderViz();
+  });
+
+  // ── Persistence ─────────────────────────────────────────────────────
+  function persist(): void {
+    if (window.ztPersist && window.ztPersist.save) {
+      window.ztPersist.save(SLUG, { text: inputEl.value || '' });
+    }
+  }
+
+  function loadPersisted(): void {
+    if (window.ztPersist && window.ztPersist.load) {
+      const data = window.ztPersist.load(SLUG) || {};
+      if (data && typeof data.text === 'string' && data.text) {
+        inputEl.value = data.text;
+      }
+    }
+  }
+
+  // ── Events ──────────────────────────────────────────────────────────
+  let debounceId: number | null = null;
+  inputEl.addEventListener('input', function () {
+    if (debounceId) window.clearTimeout(debounceId);
+    debounceId = window.setTimeout(function () {
+      void update();
+      persist();
+      if (window.trackTool) window.trackTool('ai-token-counter', 'count');
+    }, 80) as unknown as number;
+  });
+
+  clearBtn.addEventListener('click', function () {
+    inputEl.value = '';
+    if (window.ztPersist && window.ztPersist.clear) window.ztPersist.clear(SLUG);
+    void update();
+    inputEl.focus();
+  });
+
+  sampleBtn.addEventListener('click', function () {
+    inputEl.value = SAMPLE_PROMPT;
+    persist();
+    void update();
+    if (window.trackTool) window.trackTool('ai-token-counter', 'sample');
+  });
+
+  copyStatsBtn.addEventListener('click', async function () {
+    if (!lastTokensArr) return;
+    const lines = MODELS.map(function (m) {
+      const count = m.exact ? lastBaseTokens : Math.max(0, Math.round(lastBaseTokens * m.factor));
+      const cost = (count / 1_000_000) * m.inUsd;
+      const tag = m.exact ? T.tagExact : T.tagApprox;
+      return m.label + ' (' + tag + '): ' + count.toLocaleString() + ' ' + T.tokensSuffix + ' · ' + formatCost(cost);
+    });
+    const summary = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(summary);
+      const original = copyStatsBtn.textContent;
+      copyStatsBtn.textContent = T.msgCopied;
+      setTimeout(function () { copyStatsBtn.textContent = original; }, 1400);
+      if (window.trackTool) window.trackTool('ai-token-counter', 'copy-stats');
+    } catch (_) {}
+  });
+
+  // ── Boot ────────────────────────────────────────────────────────────
+  loadPersisted();
+  void update();
+</script>
+
+<style is:global>
+  .atc-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .atc-input-section { display: flex; flex-direction: column; gap: 0.5rem; }
+  .atc-input-section .tool-textarea { min-height: 140px; }
+
+  .atc-input-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 0.75rem;
+  }
+  .atc-input-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .atc-input-stats {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    font-family: var(--font-sans);
+  }
+  .atc-stat-num { font-family: var(--font-mono); color: var(--color-text); font-weight: 600; }
+  .atc-stat-sep { margin: 0 0.4rem; color: var(--color-border); }
+
+  .atc-cards-section { display: flex; flex-direction: column; gap: 0.6rem; }
+  .atc-section-heading {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    color: var(--color-text);
+  }
+  .atc-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 0.75rem;
+  }
+  .atc-card {
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.85rem 0.95rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .atc-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .atc-card-title {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+  .atc-tag {
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.16rem 0.5rem;
+    border-radius: var(--radius-pill);
+    line-height: 1;
+  }
+  .atc-tag--exact {
+    background: color-mix(in oklch, var(--color-success) 18%, transparent);
+    color: var(--color-success);
+  }
+  .atc-tag--approx {
+    background: var(--color-surface-muted);
+    color: var(--color-text-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .atc-card-tokens {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .atc-card-num {
+    font-family: var(--font-mono);
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: var(--color-text);
+    line-height: 1.05;
+    word-break: break-all;
+  }
+  .atc-card-num-suffix {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+  }
+  .atc-card-cost {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    color: var(--color-primary);
+    font-weight: 700;
+    word-break: break-all;
+  }
+  .atc-card-rates {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem 0.75rem;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+  }
+  .atc-card-rates > div { display: flex; gap: 0.3rem; min-width: 0; }
+  .atc-card-rates dt {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .atc-card-rates dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+
+  .atc-pricing-note {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin: 0.25rem 0 0;
+  }
+
+  .atc-viz-section { display: flex; flex-direction: column; gap: 0.6rem; }
+  .atc-viz-body {
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.85rem 0.95rem 0.95rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .atc-viz-meta {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+  }
+  .atc-viz-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem;
+    line-height: 1.6;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+  .atc-chip {
+    --atc-h: 200;
+    background: oklch(82% 0.07 var(--atc-h));
+    color: oklch(28% 0.05 var(--atc-h));
+    padding: 0.05rem 0.32rem;
+    border-radius: 4px;
+    border: 1px solid oklch(70% 0.08 var(--atc-h));
+    white-space: pre;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .atc-chip {
+      background: oklch(35% 0.05 var(--atc-h));
+      color: oklch(92% 0.04 var(--atc-h));
+      border-color: oklch(45% 0.06 var(--atc-h));
+    }
+  }
+  [data-theme="dark"] .atc-chip {
+    background: oklch(35% 0.05 var(--atc-h));
+    color: oklch(92% 0.04 var(--atc-h));
+    border-color: oklch(45% 0.06 var(--atc-h));
+  }
+
+  @media (max-width: 640px) {
+    .atc-input-meta {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .atc-input-actions { width: 100%; }
+    .atc-input-actions .btn-secondary,
+    .atc-input-actions .btn-ghost { flex: 1 1 110px; }
+    .atc-card-num { font-size: 1.35rem; }
+  }
+</style>

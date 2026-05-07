@@ -1,0 +1,47 @@
+---
+seoTitle: "AI Token 计数器 — GPT/Claude/Gemini 分词工具 | ZeroTool"
+seoDescription: "免费浏览器端 token 计数与成本估算，支持 GPT-5、GPT-4.1、Claude Sonnet 4.6、Gemini 3、Llama 3.3、DeepSeek V3。零上传、无需 API key。"
+faqItems:
+  - question: "我输入的内容会被发送到服务器吗？"
+    answer: "不会。Token 计数完全在你的浏览器中运行。cl100k_base 和 o200k_base 这两套 BPE 词表随页面一起打包加载，编码器只读取你输入框里的文本。页面加载完成后不会再有任何网络请求，你的 prompt 从未离开过这个标签页。"
+  - question: "非 OpenAI 模型的 token 数准吗？"
+    answer: "GPT-5、GPT-4.1、GPT-4o、GPT-4 Turbo、GPT-3.5 的 token 数是精确的，调用了 OpenAI 官方 BPE 词表。Claude、Gemini、Llama、DeepSeek 在 o200k_base 基线上做了启发式校准，根据公开样本对齐——和厂商自家 tokenizer 的差距通常在 5–10% 以内。如果你的成本估算精确到分，建议用厂商 count_tokens API 二次核对。"
+  - question: "价格是实时的吗？"
+    answer: "价格是 2026 年 5 月人工核对过的静态参考值。各家在批量价、区域定价、prompt cache 折扣上随时调整。把它当作预算估算的起点，正式投产前请以厂商定价页为准。"
+  - question: "支持多大的输入？"
+    answer: "单次最大约 500 KB 文本。再大些 textarea 和 tokenizer 在低端设备上可能卡顿。批量场景请本地跑官方 tokenizer——OpenAI 用 pip install tiktoken，Claude 用 anthropic.tokenizers。"
+  - question: "为什么我应用里算出来的 token 数和这里不一样？"
+    answer: "生产应用会算上 system prompt、function/tool definition、图像和音频 token，以及 chat 格式化开销，这些都被本工具刻意忽略。这里只测量一段纯文本。如果你在排查账单，请把 system prompt 和用户消息分开粘贴，并和应用上报的「用户消息 token 数」对比。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>把 prompt 粘贴或键入到输入框。计数和成本卡片会随输入实时刷新。</li>
+  <li>每张模型卡片显示三项——<strong>token 数</strong>、按当前文本作为输入的<strong>估算成本</strong>，以及该模型每百万 token 的输入/输出价。</li>
+  <li>标记 <em>exact</em> 的卡片走 OpenAI BPE 编码器精确计算。<em>approx</em> 卡片在相同基线上加了校准系数，与厂商自家 tokenizer 的偏差通常在 5–10% 以内。</li>
+  <li>展开 <em>Token Visualization</em> 可以看到精确模型如何切分文本。每个彩色 chip 就是一个 token，悬停可看 token id。</li>
+  <li>点 <em>Copy stats</em> 复制一行纯文本摘要——在 code review 或群聊里贴 context 窗口很顺手。</li>
+</ol>
+
+<h2>什么是 token</h2>
+<p>
+  大语言模型读取文本的单位不是字符也不是单词，而是 token。Token 是 Byte Pair Encoding（BPE）算法在互联网级语料上训练出来的子词单元。常见英文词如 <code>tokenizer</code> 通常是 1–2 个 token；URL、罕见拼写、CJK 字符则单字符就要 3 个甚至更多 token。计费、速率限制、上下文窗口的单位都是 token。
+</p>
+<p>
+  本工具用的是 OpenAI 官方的 <code>cl100k_base</code> 和 <code>o200k_base</code> 词表，与 GPT-3.5 到 GPT-5 生产环境完全一致。o200k_base 把词汇表扩到了 cl100k_base 的两倍，对中文、日文、韩文、阿拉伯文的 token 消耗减少了 20–40%。多语言 prompt 写得越多，省的就是真金白银。
+</p>
+
+<h2>为什么要本地计数</h2>
+<p>
+  把 prompt 发到远端 token 接口的"在线计数器"用着方便，但 system prompt 里常常包含商业秘密、客户数据或未发布的产品话术——这些一旦离开你的机器就是泄漏。本工具走纯客户端方案，所有字节都留在你浏览器里，首次加载完后离线也能用。
+</p>
+
+<h2>跨厂商成本对比</h2>
+<p>
+  token 数本身没法跨厂商直接对比，因为每个 tokenizer 切文本的粒度不同。同样 1000 个字符，OpenAI 可能算出 250 个 token，Claude 可能只 230，反过来也可能。真正能对比的是成本。各张成本卡片把 token 数乘以厂商公布的每百万 token 输入价，让你用同一把尺衡量取舍——一般而言，聊天密集型应用 DeepSeek V3 和 Llama 3.3 在原始单价上更便宜，复杂推理场景 GPT-5 和 Claude Sonnet 4.6 在「质量/美元」上更划算。
+</p>
+
+<h2>隐私与网络行为</h2>
+<p>
+  页面 HTML 和 JS 加载完之后，本页面不再发任何网络请求获取 token 数据。BPE 词表已经打包进页面随附的 JS chunk。你输入的内容不会出现在 HTTP 请求、分析事件或错误日志里。可以打开浏览器 DevTools 的 Network 面板自己验证——页面 ready 之后再怎么打字，新增请求数始终为零。
+</p>
