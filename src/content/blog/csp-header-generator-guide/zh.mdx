@@ -1,0 +1,155 @@
+---
+title: "CSP 头部生成器：构建严格的内容安全策略，告别繁琐"
+description: "用指令、hash 与 nonce 构建生产级 Content-Security-Policy 头部——含严格模式模板、Express / Nginx 片段。"
+pubDate: 2026-05-09
+updatedDate: 2026-05-09
+lang: "zh"
+tags: ["csp", "web-security", "xss-prevention", "developer-tools"]
+---
+
+安全审查找上门的剧情通常都是同一套。某人对生产环境跑了一遍 Mozilla Observatory 或 Lighthouse，报告里赫然标着「缺失 `Content-Security-Policy` 头部」。你打开 MDN，扫了三十多个指令，写了一份「看起来还行」的策略，发了上线。两天后，错误监控里塞满了挂掉的 stripe.js、加载不出的 Google Fonts，Sentry 收件箱滚动到看不见底。你回滚策略。半年后，同一幕重演。
+
+CSP 是浏览器端抵御跨站脚本与点击劫持的最强工具之一，也是最容易出错的一个。指令多、语法严苛、三个名字相近的头部行为却各有微妙差别，hash、nonce 与 `'unsafe-inline'` 之间的关系若不把规范读两遍，根本看不明白。ZeroTool 的 [CSP 头部生成器](/zh/tools/csp-header-generator/) 给你一张工作台：选预设、点你需要的关键字芯片、把 inline script 粘进来计算 hash，然后把结果以 HTTP 头部、HTML `<meta>` 标签、Express 中间件片段或 Nginx 指令的形式复制走。本指南讲清楚怎么用它、严格预设里那些设计决定、以及验证面板为什么要标记那些常见陷阱。
+
+## 为什么需要 CSP
+
+Content Security Policy 是一种 HTTP 响应头部。浏览器在页面加载时把它解析一次，然后用它来允许或拒绝该页面的每一次资源拉取——脚本、样式表、图片、字体、frame、连接、prefetch。没有 CSP，页面想拉哪个 URL 都行。开了严格 CSP 的页面只能拉你显式信任的资源，这意味着即使攻击者成功在 HTML 里塞了一个 `<script>`，浏览器也会拒绝执行。同一个机制还能防 frame 攻击（靠 `frame-ancestors`）、base-tag 劫持（靠 `base-uri`）、表单数据外泄（靠 `form-action`）。
+
+CSP 不是用来代替输入清洗、输出编码或模板自动转义的。它是最后一道防线，专门用来抓住绕过其他所有防护的 XSS 载荷。[W3C CSP3 规范](https://www.w3.org/TR/CSP3/)、Google 的 CSP Evaluator、OWASP 的 strict CSP 指南，三方现在都收敛到同一套骨架：inline script 用 nonce 或 hash、用 `'strict-dynamic'` 让派生脚本继承信任、`'self'` 限定第一方资源、`object-src 'none'` 因为遗留插件内容是 XSS 绕过的最大入口。
+
+## 五种常见场景
+
+| 场景 | 起步预设 | 关键指令配置 |
+|---|---|---|
+| 全新 SPA、无第三方 CDN | Strict | `script-src 'self' 'strict-dynamic'` + 按请求生成的 nonce |
+| 带 Google Fonts 与 Analytics 的营销站 | Moderate | `font-src 'self' fonts.gstatic.com`，`script-src` 中给 GA 引导脚本配 hash |
+| 充斥 inline 事件处理器的遗留应用 | Basic（先 Report-Only） | 看上报，再为那些没法改写的 handler 开 `'unsafe-hashes'` |
+| 内部管理后台，要锁死 framing | Strict | `frame-ancestors 'none'`，谁也别想 iframe 进去 |
+| API 网关响应预览器 | Strict + report-only | `default-src 'self'`，`connect-src 'self'`，一周无干扰报告再切到 enforce |
+
+每个场景从不同预设起步，是因为安全与可用性之间的取舍点不同。营销站因为 Google Analytics 加载失败而崩溃，比留一份稍宽松的策略更糟。管理后台被人 iframe 进钓鱼工具包，则是绝对不能接受的。工具的预设选择器把这条曲线上的四个位置都编排好了，你挑一个起点再调整即可。
+
+## 工作台布局
+
+打开页面后，顶部工具栏负责选预设和模式。Strict 预设对应 OWASP 的「strict CSP」推荐：`script-src` 写 `'self' 'strict-dynamic'`、`object-src` 写 `'none'`、`base-uri` 与 `form-action` 写 `'self'`。Moderate 在 `style-src` 加了 `'unsafe-inline'`，因为很多老牌 CSS-in-JS 库还在产出 inline style；同时给 `img-src` 加上 `https:`，毕竟大多数产品站会从几个 CDN 拉图。Basic 只给你一句 `default-src 'self'`，让你按需逐条往上加。Empty 直接空白，适合那种你已经心里有谱的情况。
+
+Mode 开关切换的是 `Content-Security-Policy`（强制 Enforce）和 `Content-Security-Policy-Report-Only`（仅上报）。Report-Only 把违规上报到你 `report-uri` 或 `report-to` 端点，但不阻断任何请求。这是你**先**部署的模式。
+
+工具栏下面，每条指令都是一张卡片。每张卡片里有三排来源选择器：关键字（`'self'`、`'none'`、`'strict-dynamic'`、`'unsafe-inline'`、`'unsafe-eval'`）、协议（`https:`、`data:`、`blob:`、`mediastream:`），以及一个自由输入框，用来写主机、路径、hash 或 nonce。`+ nonce` 按钮通过 `crypto.getRandomValues` 生成一个新的 base64 token。点芯片切换源开关，点标签上的 × 移除某个源。
+
+表单底部的 hash 计算器接收 inline `<script>` 或 `<style>` 块的内容——也就是开闭标签之间的精确字节，然后调用 [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest) 跑 SHA-256 / SHA-384 / SHA-512。输出是 CSP 期望的格式：`'sha256-<base64>'`。点一下就能加进 `script-src` 或 `style-src`，看你下拉里选的是哪个。
+
+输出面板有四个 tab：
+
+- **HTTP header**——你的源服务器实际下发的形式，是规范形态。
+- **HTML `<meta>`**——给那些没法设置头部的静态托管做兜底。工具会提醒你，CSP 通过 `<meta>` 下发时，`frame-ancestors`、`report-uri`、`report-to`、`sandbox` 会被静默忽略。
+- **Express (helmet)**——给 Node 服务器用 helmet 的即插即用代码。注意 `useDefaults: false`，这样你的策略就不会和 helmet 内建默认值悄悄合并。
+- **Nginx**——`add_header ... always;` 指令。`always` 标志很关键，没它的话 Nginx 会跳过错误响应的头部，导致 500 页面没有保护。
+
+输出下方的验证清单会实时标记可疑组合：`'none'` 与其他源混用、`'unsafe-inline'` 被 hash 抵消、`frame-ancestors` 出现在 `<meta>` 策略里、`default-src` 缺失、`http:` 协议放行了非安全请求等。
+
+## hash 与 nonce，以及为什么通常两个都要用
+
+inline `<script>...</script>` 块是 CSP 上线被回滚的头号原因。最简单的修法是给 `script-src` 加 `'unsafe-inline'`。这能跑通，但会把 CSP 防 XSS 的核心能力关掉——而那是策略存在的全部意义。
+
+正确的修法是只允许特定的 inline script。两套机制：
+
+**hash** 是对 `<script>` 标签里精确字节做 SHA-256（或 384、512）摘要后的 base64 编码。脚本内容只要有一个字符变了，hash 不再匹配，浏览器就会拦截。hash 是确定性的，对缓存友好：你可以在构建时预先算好，写进静态头部里发出去。hash 是 analytics 片段、关键 CSS 以及那些随页面一起发布、几乎不变的 inline 内容的正确选择。
+
+**nonce** 是服务器为每次请求生成的随机 base64 token。服务器在头部里写 `'nonce-XYZ'`，并把同一个 `XYZ` 盖在它渲染的每一个 `<script nonce="XYZ">` 标签上。浏览器执行 `nonce` 属性匹配的脚本，其余一律拦下。nonce 是服务端渲染 HTML 中 inline 内容会变的场景（CSRF token、用户 ID、按页面定制的引导脚本）的正确选择。
+
+页面上的 hash 计算器服务于静态场景。动态场景下，点 `+ nonce` 生成一个示例 nonce，再在服务器侧按请求替换。
+
+两者跟 `'strict-dynamic'` 配合得很好。一旦某个脚本被信任（通过 hash 或 nonce），`'strict-dynamic'` 就声明：这个脚本接下来加载的任何脚本也都信任，呈传递关系。这意味着你不必把这个被信任脚本可能拉的每一个 CDN 都列进白名单。它还堵住了一类绕过——攻击者利用一个被合法白名单的 CDN 来托管自己的载荷，因为 `'strict-dynamic'` 会让派生脚本不再受基于主机的白名单约束。
+
+一个微妙的点：当 `script-src` 里有 hash 或 nonce 时，现代浏览器会忽略 `'unsafe-inline'`。这就是规范里的「strict mode」：你既然已经会用 hash 或 nonce 了，浏览器就把 `'unsafe-inline'` 当作给老浏览器的向后兼容线索，其他时候直接丢弃。工具的验证面板把这一条作为信息级提示露出来，免得你看到两个关键字同时存在时心里发慌。
+
+## 验证器盯着的五个陷阱
+
+### `'none'` 必须独占
+
+CSP3 规范说得很明白：当 `'none'` 出现在某个源列表里，其他所有源都会被丢弃。写 `script-src 'none' https://cdn.example.com` 是 bug——浏览器会忽略那个 CDN。验证器把这一条标为硬警告。
+
+### `frame-ancestors` 仅 HTTP 生效
+
+HTML `<meta http-equiv="Content-Security-Policy">` 这个标签是存在的，但有四个指令在 CSP 通过 meta 下发时会被故意忽略：`frame-ancestors`、`sandbox`、`report-uri`、`report-to`。原因是这些指令需要在文档完全解析之前生效，而 meta 标签是在文档中段才被解析。如果你在 GitHub Pages 这类静态托管上需要 framing 防护，必须发真的头部——通常通过 CDN 或一个 worker 来下发。
+
+### 缺失 `default-src` 让你失去兜底
+
+好几个 fetch 类指令（`script-src`、`style-src`、`img-src` 等）在没显式声明时会回退到 `default-src`。未来 CSP 修订里新增的指令，为了兼容也会回退到 `default-src`。如果你完全跳过 `default-src`，策略就脆——某天浏览器上线一个新指令，你的站点就悄悄放行了它。哪怕只写一句 `default-src 'self'`，也比没有强。
+
+### `http:` 不等于「没策略」
+
+很方便就会想写 `img-src https: http:`，让 dev 和 prod 的 CDN 都能跑。但 `http:` 协议放行明文非安全资源，意味着拿着 Wi-Fi pineapple 的咖啡馆攻击者可以中间人篡改响应、把你的图片换成别的。只用 `https:` 即可；如果非要兼容自家 HTML 里残留的 `http://` URL，加 `upgrade-insecure-requests`。验证器会把 `http:` 源标为信息级警告。
+
+### 自定义主机不能含分号
+
+CSP 用分号分隔指令。主机或路径里出现一个分号，就会终结策略，把后面所有指令都变成垃圾。工具会拒绝任何含分号的源添加。
+
+## 部署生成的头部
+
+挑好策略后，四个输出 tab 覆盖了常见的部署面。下面是各自的心智模型。
+
+```nginx
+# Nginx：通常写在 server { } 块内
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
+```
+
+```apache
+# Apache：写在 .htaccess 或 httpd.conf，"always" 隐含
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
+```
+
+```javascript
+// Express + helmet
+const helmet = require('helmet');
+app.use(helmet.contentSecurityPolicy({
+  useDefaults: false,
+  directives: {
+    "default-src": ["'self'"],
+    "script-src": ["'self'", "'strict-dynamic'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
+    "object-src": ["'none'"],
+    "base-uri": ["'self'"],
+  }
+}));
+```
+
+```toml
+# Cloudflare Pages _headers 文件
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'
+```
+
+Vercel 把同一字符串贴到 `vercel.json` 的 `headers` 数组里。Netlify 加到 `netlify.toml`。导出到 S3 + CloudFront 的静态站，在 CloudFront 的 response-headers policy 里配。要点是：策略文本到处都一样，变的只是外层配置语法。
+
+## 一份真能跑通的分阶段部署计划
+
+几乎所有成功的 CSP 部署都长一个样：
+
+1. **在工具里选 Strict 预设**，以 `Content-Security-Policy-Report-Only` + `report-uri`（或 `report-to` group）端点的形式部署。先别 enforce。
+2. **盯着上报**看一到两周。你会看到自家代码的真实违规（一个 inline `onclick`、一个忘掉的 CDN）、浏览器扩展注入的脚本、prerender 爬虫。
+3. **分类处理**：自家代码触发的违规去修（把 inline handler 挪到 addEventListener、给那段挪不动的 analytics 片段加 hash）；扩展触发的违规在服务器侧过滤；prerender 爬虫触发的通常意味着要收紧某个指令。
+4. **收紧**：把第 3 步学到的内容拿回工具里重建策略。也许 `script-src` 需要为某段 inline 引导加一个 hash。也许 `connect-src` 需要加你错误监控的域名。
+5. **切到 enforce**，把头部名从 `Content-Security-Policy-Report-Only` 改成 `Content-Security-Policy`。工具的 Mode 开关一下就给你切了。
+6. **enforce 之后继续收上报**。新的 SDK、新的第三方脚本、新的页面都会触发策略。上报端点是你的早期预警系统。
+
+让这个计划翻车的两种典型方式：跳过第 1 步（第一天直接 Enforce），或者把上报端点当成只写不读的（收报告但从不看）。工具默认在你第一次选 Strict 预设时把 Mode 设为 Report-Only，鼓励你走第 1 步。上报端点这事得你自己盯。
+
+## 与既有 CSP 工具的差异
+
+[Report URI 的 CSP Wizard](https://report-uri.com/home/generate) 和 [csper.io](https://csper.io/) 都通过观察站点真实流量来构建策略，对已经部署 CSP、想精修的场景很合适。但如果你是从零起步、想第一天就拿到一个合理预设，它们就不那么趁手。OWASP 的 CSP Generator 是个 JSON 表单，没有预览也没有验证。Chrome 商店里那些显示当前站 CSP 的扩展适合查看，不适合写。
+
+ZeroTool 这个工具范围更小、做得更干净。无账号、无流量采集、无遥测——你的策略不会离开浏览器 tab。验证面板专挑那五个会真的把部署搞挂的陷阱说，而不是把每一种理论上的违规都列出来。hash 计算器在浏览器里走 SubtleCrypto 跑，所以你可以放心粘贴生产代码，不用担心被记录。四种输出格式覆盖你会真的部署的面，且用的是这些面真的接受的语法。
+
+## 延伸阅读
+
+- [W3C 内容安全策略 Level 3](https://www.w3.org/TR/CSP3/)——规范本身。
+- [OWASP 内容安全策略速查表](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html)——纵深防御实操。
+- [Google 的 strict CSP 指南](https://web.dev/articles/strict-csp)——nonce + `'strict-dynamic'` 的论证。
+- [MDN: Content-Security-Policy](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers/Content-Security-Policy)——指令参考（中文版）。
+- [ZeroTool Meta 标签生成器](/zh/tools/meta-tag-generator/)——同行 SEO / 社交分享 `<head>` 块的配套工具。
+- [ZeroTool 哈希生成器](/zh/tools/hash-generator/)——CSP 之外需要原生 SHA-256 的场景。
+- [ZeroTool .htaccess 生成器](/zh/tools/htaccess-generator/)——Apache 部署面的配套。
+- [ZeroTool Robots.txt 生成器](/zh/tools/robots-txt-generator/)——爬虫控制的另一半。
+
+CSP 不是一次配置就能撂下不管的东西。它是一份会随依赖、第三方脚本、威胁模型变化而变化的活策略。下次安全审查到来之前，让生成器在浏览器里留一张 tab。
