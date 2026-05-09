@@ -1,0 +1,48 @@
+---
+seoTitle: "CSP ヘッダージェネレーター — 無料オンラインツール | ZeroTool"
+seoDescription: "ディレクティブ・hash・nonce から Content-Security-Policy ヘッダーを構築。strict モード・Report-Only テンプレート、Express / Nginx スニペット対応。完全ブラウザ完結。"
+faqItems:
+  - question: "Content Security Policy とは何ですか？"
+    answer: "CSP はブラウザに対して、信頼できるスクリプト・スタイル・画像・フォント・フレームなどの読み込み元を宣言する HTTP レスポンスヘッダーです。出力エスケープと組み合わせることで、XSS・クリックジャッキング・データインジェクションに対する最強のブラウザ側防御になります。"
+  - question: "Enforce と Report-Only、どちらから始めるべきですか？"
+    answer: "まず `Content-Security-Policy-Report-Only` と `report-uri`（または `report-to`）エンドポイントで運用します。1〜2 週間ほど実トラフィックの違反レポートを集めて誤検知を直してから、強制版の `Content-Security-Policy` に切り替えます。"
+  - question: "インラインスクリプトには 'unsafe-inline' が必要ですか？"
+    answer: "可能な限り避けてください。現代の CSP は内容ベースのハッシュ（`'sha256-...'` ほか）とリクエストごとの nonce（`'nonce-...'`）をサポートします。本ページのハッシュ計算機をそのまま使えます。"
+  - question: "'strict-dynamic' は何を意味しますか？"
+    answer: "nonce か hash で信頼されたスクリプトが、実行時に他のスクリプトを CDN 一覧なしで読み込めるようにします。モダンアプリで推奨される方式で、ホストベースの許可リストを上書きし、典型的なバイパス手段を塞ぎます。"
+  - question: "生成したヘッダーはどこに置けばよいですか？"
+    answer: "オリジンサーバーから `Content-Security-Policy` を送出します（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` など）。HTML `<meta http-equiv>` は静的ホスト向けのフォールバックですが、`frame-ancestors`・`report-uri`・`report-to`・`sandbox` は <meta> では無視されます。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li><strong>プリセット</strong>を選びます。Strict は OWASP の「strict CSP」推奨に対応し、Empty は空のポリシーから始めます。</li>
+  <li><strong>モード</strong>を切り替えます。最初は Report-Only にして、違反を計測しつつ実ユーザーをブロックしないようにします。</li>
+  <li>各ディレクティブで、キーワードチップ（<code>'self'</code>、<code>'strict-dynamic'</code>、<code>'none'</code>）やスキームチップ（<code>https:</code>、<code>data:</code>）をクリック、もしくはホスト・パスを入力して <kbd>Enter</kbd> を押します。</li>
+  <li><strong>ハッシュ計算機</strong>で特定のインラインスクリプト / スタイルを許可するためのハッシュを生成。<code>+ nonce</code> ボタンでリクエストごとの nonce を追加できます。</li>
+  <li>出力タブを切り替えて必要な形式（<strong>HTTP ヘッダー</strong>、<strong>HTML &lt;meta&gt;</strong>、<strong>Express (helmet)</strong>、<strong>Nginx</strong> <code>add_header</code>）をコピー。</li>
+</ol>
+
+<h2>Strict CSP のスタート構成</h2>
+<p>Strict プリセットは三本柱です：<code>script-src</code> に <code>'self' 'strict-dynamic'</code>、<code>object-src</code> に <code>'none'</code>、<code>base-uri</code> に <code>'self'</code>。これに nonce か hash を組み合わせれば、典型的な反射型・蓄積型 XSS のほとんどを防げます。フィッシング系の悪用を抑えたければ、<code>form-action</code> を <code>'self'</code>、<code>frame-ancestors</code> を <code>'none'</code> にしましょう。</p>
+
+<h2>よくある落とし穴</h2>
+<ul>
+  <li><strong><code>'none'</code> は単独でしか使えません。</strong> 他のソースと併記するとそのディレクティブごと無視されます。</li>
+  <li><strong><code>frame-ancestors</code> は HTTP ヘッダー専用。</strong> <code>&lt;meta&gt;</code> 経由では無視されます。<code>report-uri</code>・<code>report-to</code>・<code>sandbox</code> も同様です。</li>
+  <li><strong>hash / nonce があると <code>'unsafe-inline'</code> は無効化されます。</strong> モダンブラウザは安全側を優先します。</li>
+  <li><strong><code>default-src</code> は必ず定義すること。</strong> 未指定の fetch 系ディレクティブは <code>default-src</code> をフォールバックします。これがないと将来追加されたディレクティブにフォールバックが効きません。</li>
+  <li><strong>カスタムホストにセミコロンは入れられません。</strong> セミコロンはポリシー全体を切ってしまいます。</li>
+</ul>
+
+<h2>Hash と Nonce の使い分け</h2>
+<p><strong>静的なインライン内容</strong>（解析タグ、クリティカル CSS、SSR で出力される共通スクリプト）は hash を使います。静的 HTML やエッジキャッシュとも相性がよく、リクエストごとの値を必要としません。</p>
+<p><strong>動的にレンダリングされる内容</strong>は nonce です。サーバーがヘッダーに <code>'nonce-XYZ'</code> を埋め込み、レンダリングする全 <code>&lt;script nonce="XYZ"&gt;</code> に同じ値を付与します。<code>'strict-dynamic'</code> と組み合わせれば、信頼されたスクリプトの子スクリプトも自動的に信頼され、巨大なホスト許可リストを保守する必要がなくなります。</p>
+
+<h2>デプロイ早見表</h2>
+<ul>
+  <li><strong>Nginx</strong>：Nginx タブの内容を <code>server</code> ブロックに貼って reload。<code>always</code> はエラー応答にもヘッダーを付けます。</li>
+  <li><strong>Apache</strong>：<code>.htaccess</code> や <code>httpd.conf</code> に <code>Header always set Content-Security-Policy "..."</code>。</li>
+  <li><strong>Express / Node</strong>：helmet スニペットを貼り付け、<code>useDefaults</code> を必ず <code>false</code> にして自分のポリシーが helmet デフォルトと暗黙にマージされないようにします。</li>
+  <li><strong>Cloudflare Pages / Vercel / Netlify</strong>：HTTP ヘッダー欄をそれぞれのヘッダー設定（<code>_headers</code>、<code>vercel.json</code>、<code>netlify.toml</code>）に貼ります。</li>
+</ul>

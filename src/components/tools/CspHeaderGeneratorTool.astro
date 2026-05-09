@@ -1,0 +1,1276 @@
+---
+// CspHeaderGeneratorTool — interactive Content-Security-Policy builder
+// Output: HTTP header, HTML <meta>, Express (helmet), Nginx add_header.
+// Pure DOM + Web Crypto API for hash calculation. No npm runtime deps.
+---
+<div>
+  <div class="csp-wrap">
+
+    <div class="csp-toolbar">
+      <div class="csp-toolbar-row">
+        <label class="csp-toolbar-field">
+          <span class="tool-label" data-i18n="presetLabel">Preset</span>
+          <select id="csp-preset" class="csp-select">
+            <option value="strict" data-i18n="presetStrict">Strict (recommended)</option>
+            <option value="moderate" data-i18n="presetModerate">Moderate</option>
+            <option value="basic" data-i18n="presetBasic">Basic</option>
+            <option value="empty" data-i18n="presetEmpty">Empty (start blank)</option>
+          </select>
+        </label>
+
+        <div class="csp-toolbar-field">
+          <span class="tool-label" data-i18n="modeLabel">Mode</span>
+          <div class="csp-mode-toggle" role="radiogroup" aria-label="CSP mode">
+            <button type="button" class="csp-mode-btn is-active" data-mode="enforce" role="radio" aria-checked="true" data-i18n="modeEnforce">Enforce</button>
+            <button type="button" class="csp-mode-btn" data-mode="report-only" role="radio" aria-checked="false" data-i18n="modeReport">Report-Only</button>
+          </div>
+        </div>
+
+        <div class="csp-toolbar-actions">
+          <button type="button" id="csp-reset" class="btn-secondary" data-i18n="resetBtn">Reset to preset</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="csp-directives" class="csp-directive-grid" aria-live="polite"></div>
+
+    <div class="csp-add-row">
+      <label class="csp-toolbar-field csp-add-field">
+        <span class="tool-label" data-i18n="addDirectiveLabel">Add directive</span>
+        <select id="csp-add-select" class="csp-select"></select>
+      </label>
+      <button type="button" id="csp-add-btn" class="btn-secondary" data-i18n="addDirectiveBtn">+ Add</button>
+    </div>
+
+    <div class="csp-flag-row">
+      <label class="csp-flag">
+        <input type="checkbox" id="csp-flag-upgrade" />
+        <span data-i18n="upgradeInsecure">upgrade-insecure-requests</span>
+      </label>
+      <label class="csp-flag">
+        <input type="checkbox" id="csp-flag-block" />
+        <span data-i18n="blockAllMixed">block-all-mixed-content</span>
+      </label>
+    </div>
+
+    <details class="csp-section">
+      <summary class="csp-section-summary">
+        <span data-i18n="hashCalcTitle">Inline script &amp; style hash calculator</span>
+      </summary>
+      <div class="csp-section-body">
+        <textarea
+          id="csp-hash-input"
+          class="tool-textarea"
+          rows="3"
+          data-i18n-ph="hashInputPh"
+          placeholder="Paste the exact contents between &lt;script&gt;...&lt;/script&gt; or &lt;style&gt;...&lt;/style&gt;"
+          spellcheck="false"
+        ></textarea>
+        <div class="csp-hash-controls">
+          <label class="csp-toolbar-field">
+            <span class="tool-label" data-i18n="hashAlgoLabel">Algorithm</span>
+            <select id="csp-hash-algo" class="csp-select">
+              <option value="SHA-256">sha256</option>
+              <option value="SHA-384">sha384</option>
+              <option value="SHA-512">sha512</option>
+            </select>
+          </label>
+          <label class="csp-toolbar-field">
+            <span class="tool-label" data-i18n="hashTargetLabel">Add to</span>
+            <select id="csp-hash-target" class="csp-select">
+              <option value="script-src">script-src</option>
+              <option value="style-src">style-src</option>
+            </select>
+          </label>
+          <div class="csp-hash-actions">
+            <button type="button" id="csp-hash-add" class="btn-primary" disabled data-i18n="hashAddBtn">Compute &amp; add</button>
+          </div>
+        </div>
+        <div class="csp-hash-output">
+          <code id="csp-hash-value" class="csp-hash-value" data-i18n="hashEmpty">Hash will appear here</code>
+          <button type="button" id="csp-hash-copy" class="btn-copy" disabled data-i18n="copy">Copy</button>
+        </div>
+      </div>
+    </details>
+
+    <div class="csp-output">
+      <div class="csp-tab-row" role="tablist">
+        <button type="button" class="csp-tab is-active" data-format="header" role="tab" aria-selected="true" data-i18n="formatHeader">HTTP header</button>
+        <button type="button" class="csp-tab" data-format="meta" role="tab" aria-selected="false" data-i18n="formatMeta">HTML &lt;meta&gt;</button>
+        <button type="button" class="csp-tab" data-format="express" role="tab" aria-selected="false" data-i18n="formatExpress">Express (helmet)</button>
+        <button type="button" class="csp-tab" data-format="nginx" role="tab" aria-selected="false" data-i18n="formatNginx">Nginx</button>
+      </div>
+      <div class="csp-output-panel">
+        <pre id="csp-output" class="csp-output-pre" tabindex="0"></pre>
+        <button type="button" id="csp-copy" class="btn-copy" disabled data-i18n="copy">Copy</button>
+      </div>
+    </div>
+
+    <div id="csp-validation" class="csp-validation" aria-live="polite"></div>
+    <div id="csp-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+  <style is:global>
+    .csp-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .csp-toolbar,
+    .csp-section,
+    .csp-output {
+      background: var(--color-bg-secondary);
+      border-radius: var(--radius-md);
+      padding: 0.95rem 1rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+
+    .csp-toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-end;
+    }
+    .csp-toolbar-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .csp-toolbar-actions {
+      margin-left: auto;
+    }
+    .csp-add-field { flex: 1 1 220px; }
+
+    .csp-select {
+      min-height: 40px;
+      padding: 0.5rem 0.75rem;
+      border-radius: var(--radius-md);
+      border: 0;
+      background: var(--color-surface);
+      color: var(--color-text);
+      font-family: var(--font-sans);
+      font-size: 0.9rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .csp-select:focus {
+      outline: none;
+      box-shadow: inset 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light);
+    }
+
+    .csp-mode-toggle {
+      display: inline-flex;
+      gap: 0.25rem;
+      padding: 0.25rem;
+      border-radius: var(--radius-pill);
+      background: var(--color-surface-muted);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .csp-mode-btn {
+      min-height: 32px;
+      padding: 0.3rem 0.95rem;
+      border: 0;
+      background: transparent;
+      color: var(--color-text-secondary);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 0.82rem;
+      transition: background-color var(--transition-fast), color var(--transition-fast);
+    }
+    .csp-mode-btn.is-active {
+      background: var(--color-surface);
+      color: var(--color-primary);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+    }
+    @media (hover: hover) {
+      .csp-mode-btn:hover:not(.is-active) { color: var(--color-text); }
+    }
+
+    .csp-directive-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+      gap: 0.85rem;
+    }
+    .csp-directive {
+      background: var(--color-surface);
+      border-radius: var(--radius-md);
+      padding: 0.85rem 0.9rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .csp-directive-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+    .csp-directive-name {
+      font-family: var(--font-mono);
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--color-primary);
+      word-break: break-all;
+    }
+    .csp-directive-remove {
+      background: transparent;
+      border: 0;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      padding: 0.2rem 0.45rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      transition: color var(--transition-fast), background-color var(--transition-fast);
+    }
+    @media (hover: hover) {
+      .csp-directive-remove:hover {
+        color: var(--color-danger);
+        background: var(--color-surface-muted);
+      }
+    }
+    .csp-source-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .csp-source-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.55rem;
+      border-radius: var(--radius-pill);
+      background: var(--color-surface-muted);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--color-text);
+      max-width: 100%;
+    }
+    .csp-source-tag-text {
+      overflow-wrap: anywhere;
+    }
+    .csp-source-tag.is-keyword {
+      color: var(--color-primary);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+      background: var(--color-primary-light);
+    }
+    .csp-source-tag.is-hash,    .csp-source-tag.is-nonce {
+      color: var(--color-accent);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-accent) 45%, transparent);
+    }
+    .csp-source-remove {
+      background: transparent;
+      border: 0;
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 0;
+      line-height: 1;
+      opacity: 0.65;
+    }
+    @media (hover: hover) {
+      .csp-source-remove:hover { opacity: 1; }
+    }
+    .csp-source-add-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+    }
+    .csp-source-input {
+      flex: 1 1 140px;
+      min-width: 0;
+      min-height: 32px;
+      padding: 0.32rem 0.6rem;
+      border: 0;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      color: var(--color-text);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .csp-source-input:focus {
+      outline: none;
+      background: var(--color-surface);
+      box-shadow: inset 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light);
+    }
+    .csp-source-add-btn {
+      min-height: 32px;
+      padding: 0.25rem 0.7rem;
+      font-size: 0.78rem;
+      border: 0;
+      background: var(--color-surface-muted);
+      color: var(--color-text-secondary);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      font-weight: 700;
+      white-space: nowrap;
+      transition: background-color var(--transition-fast), color var(--transition-fast);
+    }
+    @media (hover: hover) {
+      .csp-source-add-btn:hover {
+        color: var(--color-primary);
+        box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+      }
+    }
+    .csp-keyword-pool {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+    }
+    .csp-keyword-chip {
+      background: transparent;
+      border: 0;
+      padding: 0.2rem 0.55rem;
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--color-text-muted);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      transition: color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+    }
+    @media (hover: hover) {
+      .csp-keyword-chip:hover:not(:disabled) {
+        color: var(--color-primary);
+        background: var(--color-primary-light);
+        box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+      }
+    }
+    .csp-keyword-chip:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .csp-pool-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .csp-pool-label {
+      font-size: 0.72rem;
+      color: var(--color-text-muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .csp-add-row {
+      display: flex;
+      gap: 0.6rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .csp-flag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem 1.4rem;
+      padding: 0.4rem 0.2rem 0;
+      font-size: 0.85rem;
+    }
+    .csp-flag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      cursor: pointer;
+      color: var(--color-text-secondary);
+      font-family: var(--font-mono);
+    }
+
+    .csp-section-summary {
+      cursor: pointer;
+      list-style: none;
+      font-weight: 700;
+      color: var(--color-text);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .csp-section-summary::-webkit-details-marker { display: none; }
+    .csp-section-summary::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform var(--transition-fast);
+    }
+    details[open] > .csp-section-summary::after {
+      transform: rotate(45deg);
+    }
+    .csp-section-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      padding-top: 0.7rem;
+    }
+    .csp-hash-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: flex-end;
+    }
+    .csp-hash-actions { margin-left: auto; }
+    .csp-hash-output {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.5rem 0.6rem;
+      background: var(--color-bg-secondary);
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      flex-wrap: wrap;
+    }
+    .csp-hash-value {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--color-text);
+      word-break: break-all;
+      min-width: 0;
+    }
+
+    .csp-tab-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-bottom: 0.6rem;
+    }
+    .csp-tab {
+      min-height: 32px;
+      padding: 0.3rem 0.85rem;
+      border: 0;
+      border-radius: var(--radius-pill);
+      background: transparent;
+      color: var(--color-text-secondary);
+      font-weight: 700;
+      font-size: 0.8rem;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    @media (hover: hover) {
+      .csp-tab:hover:not(.is-active) { color: var(--color-text); }
+    }
+    .csp-tab.is-active {
+      background: var(--color-primary-light);
+      color: var(--color-primary);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+    }
+
+    .csp-output-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .csp-output-pre {
+      margin: 0;
+      padding: 0.85rem 0.95rem;
+      background: var(--color-surface);
+      color: var(--color-text);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.55;
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+
+    .csp-validation {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .csp-validation-item {
+      padding: 0.5rem 0.7rem;
+      border-radius: var(--radius-md);
+      font-size: 0.85rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      background: var(--color-bg-secondary);
+    }
+    .csp-validation-item.is-warn {
+      color: var(--color-danger);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent);
+      background: color-mix(in oklch, var(--color-danger) 8%, var(--color-bg-secondary));
+    }
+    .csp-validation-item.is-info {
+      color: var(--color-text-secondary);
+    }
+
+    @media (max-width: 540px) {
+      .csp-toolbar-row { gap: 0.7rem; }
+      .csp-toolbar-actions { margin-left: 0; width: 100%; }
+      .csp-toolbar-actions .btn-secondary { width: 100%; }
+      .csp-mode-toggle { width: 100%; justify-content: stretch; }
+      .csp-mode-btn { flex: 1; }
+      .csp-hash-actions { margin-left: 0; width: 100%; }
+      .csp-hash-actions .btn-primary { width: 100%; }
+    }
+  </style>
+
+  <script is:inline>
+    (function () {
+      var SLUG = 'csp-header-generator';
+
+      var STRINGS = {
+        en: {
+          presetLabel: 'Preset', presetStrict: 'Strict (recommended)', presetModerate: 'Moderate', presetBasic: 'Basic', presetEmpty: 'Empty (start blank)',
+          modeLabel: 'Mode', modeEnforce: 'Enforce', modeReport: 'Report-Only',
+          resetBtn: 'Reset to preset', addDirectiveLabel: 'Add directive', addDirectiveBtn: '+ Add',
+          upgradeInsecure: 'upgrade-insecure-requests', blockAllMixed: 'block-all-mixed-content',
+          hashCalcTitle: 'Inline script & style hash calculator',
+          hashInputPh: 'Paste the exact contents between <script>...<\/script> or <style>...<\/style>',
+          hashAlgoLabel: 'Algorithm', hashTargetLabel: 'Add to', hashAddBtn: 'Compute & add',
+          hashEmpty: 'Hash will appear here',
+          formatHeader: 'HTTP header', formatMeta: 'HTML <meta>', formatExpress: 'Express (helmet)', formatNginx: 'Nginx',
+          copy: 'Copy', copied: 'Copied!',
+          removeDirective: 'Remove directive', removeSource: 'Remove source',
+          poolKeywords: 'Keywords', poolSchemes: 'Schemes', poolHosts: 'Hosts and nonces',
+          inputPlaceholder: 'https://cdn.example.com',
+          addBtn: 'Add', addNonceBtn: '+ nonce',
+          warnNoneAlone: "'none' must be alone — other sources are ignored when 'none' is present.",
+          warnInlineHash: "When a hash or nonce is present, modern browsers ignore 'unsafe-inline'.",
+          warnFrameAncestorsMeta: "frame-ancestors is ignored in <meta> form — must be sent as an HTTP header.",
+          warnReportMeta: "report-uri / report-to are ignored in <meta> — only valid as HTTP headers.",
+          warnSandboxMeta: "sandbox is ignored in <meta> — only valid as an HTTP header.",
+          warnNoDefault: "No default-src defined. Browsers will not apply a fallback for missing fetch directives.",
+          warnHttpScheme: "http: source allows insecure resources. Prefer https: in production.",
+          warnUnsafeEval: "'unsafe-eval' enables eval(), Function(), and setTimeout('string'). Avoid unless required.",
+          warnUnsafeInlineScript: "'unsafe-inline' on script-src disables one of CSP's main XSS protections. Prefer hashes or nonces.",
+          warnEmpty: "Add at least one directive to generate a policy."
+        },
+        zh: {
+          presetLabel: '预设', presetStrict: '严格（推荐）', presetModerate: '适中', presetBasic: '基础', presetEmpty: '空白（从头开始）',
+          modeLabel: '模式', modeEnforce: '强制 Enforce', modeReport: '仅上报 Report-Only',
+          resetBtn: '重置到预设', addDirectiveLabel: '添加指令', addDirectiveBtn: '+ 添加',
+          upgradeInsecure: 'upgrade-insecure-requests', blockAllMixed: 'block-all-mixed-content',
+          hashCalcTitle: '内联脚本 / 样式 hash 计算器',
+          hashInputPh: '粘贴 <script>...<\/script> 或 <style>...<\/style> 标签内的完整内容',
+          hashAlgoLabel: '算法', hashTargetLabel: '加入', hashAddBtn: '计算并加入',
+          hashEmpty: 'hash 将显示在此',
+          formatHeader: 'HTTP 头部', formatMeta: 'HTML <meta>', formatExpress: 'Express (helmet)', formatNginx: 'Nginx',
+          copy: '复制', copied: '已复制！',
+          removeDirective: '移除指令', removeSource: '移除源',
+          poolKeywords: '关键字', poolSchemes: '协议', poolHosts: '主机与 nonce',
+          inputPlaceholder: 'https://cdn.example.com',
+          addBtn: '添加', addNonceBtn: '+ nonce',
+          warnNoneAlone: "'none' 必须独占——存在 'none' 时其他源会被浏览器忽略。",
+          warnInlineHash: "存在 hash 或 nonce 时，现代浏览器会忽略 'unsafe-inline'。",
+          warnFrameAncestorsMeta: 'frame-ancestors 在 <meta> 形式中无效，必须作为 HTTP 头部下发。',
+          warnReportMeta: 'report-uri / report-to 在 <meta> 中无效，仅在 HTTP 头部下生效。',
+          warnSandboxMeta: 'sandbox 在 <meta> 中无效，仅在 HTTP 头部下生效。',
+          warnNoDefault: '未定义 default-src，浏览器不会为缺失的 fetch 指令提供回退。',
+          warnHttpScheme: 'http: 协议会放行非安全资源，生产环境优先使用 https:。',
+          warnUnsafeEval: "'unsafe-eval' 允许 eval()、Function()、setTimeout('string')，非必要请避免。",
+          warnUnsafeInlineScript: "在 script-src 中使用 'unsafe-inline' 会禁用 CSP 对 XSS 的核心保护，优先使用 hash 或 nonce。",
+          warnEmpty: '请至少添加一条指令以生成策略。'
+        },
+        ja: {
+          presetLabel: 'プリセット', presetStrict: '厳格（推奨）', presetModerate: '中程度', presetBasic: '基本', presetEmpty: '空（ゼロから）',
+          modeLabel: 'モード', modeEnforce: '強制 Enforce', modeReport: 'レポートのみ Report-Only',
+          resetBtn: 'プリセットに戻す', addDirectiveLabel: 'ディレクティブを追加', addDirectiveBtn: '+ 追加',
+          upgradeInsecure: 'upgrade-insecure-requests', blockAllMixed: 'block-all-mixed-content',
+          hashCalcTitle: 'インライン script / style ハッシュ計算機',
+          hashInputPh: '<script>...<\/script> または <style>...<\/style> 内の内容を貼り付け',
+          hashAlgoLabel: 'アルゴリズム', hashTargetLabel: '追加先', hashAddBtn: '計算して追加',
+          hashEmpty: 'ハッシュはここに表示',
+          formatHeader: 'HTTP ヘッダー', formatMeta: 'HTML <meta>', formatExpress: 'Express (helmet)', formatNginx: 'Nginx',
+          copy: 'コピー', copied: 'コピーしました！',
+          removeDirective: 'ディレクティブを削除', removeSource: 'ソースを削除',
+          poolKeywords: 'キーワード', poolSchemes: 'スキーム', poolHosts: 'ホスト・nonce',
+          inputPlaceholder: 'https://cdn.example.com',
+          addBtn: '追加', addNonceBtn: '+ nonce',
+          warnNoneAlone: "'none' は単独でのみ使用可。他のソースが指定されると 'none' が無視されます。",
+          warnInlineHash: "ハッシュまたは nonce があると、現代のブラウザは 'unsafe-inline' を無視します。",
+          warnFrameAncestorsMeta: 'frame-ancestors は <meta> では無効。HTTP ヘッダーで送信してください。',
+          warnReportMeta: 'report-uri / report-to は <meta> では無効。HTTP ヘッダーでのみ有効です。',
+          warnSandboxMeta: 'sandbox は <meta> では無効。HTTP ヘッダーでのみ有効です。',
+          warnNoDefault: 'default-src がありません。fetch 系ディレクティブが欠けている場合のフォールバックは適用されません。',
+          warnHttpScheme: 'http: は非セキュアなリソースを許可します。本番環境では https: を推奨。',
+          warnUnsafeEval: "'unsafe-eval' は eval()、Function()、setTimeout('string') を許可します。必要時のみ。",
+          warnUnsafeInlineScript: "script-src の 'unsafe-inline' は XSS 対策の中核を無効化します。ハッシュ / nonce を推奨。",
+          warnEmpty: 'ポリシー生成には少なくとも1つのディレクティブが必要です。'
+        },
+        ko: {
+          presetLabel: '프리셋', presetStrict: '엄격 (권장)', presetModerate: '중간', presetBasic: '기본', presetEmpty: '비어 있음 (처음부터)',
+          modeLabel: '모드', modeEnforce: '강제 Enforce', modeReport: '보고만 Report-Only',
+          resetBtn: '프리셋으로 재설정', addDirectiveLabel: '지시문 추가', addDirectiveBtn: '+ 추가',
+          upgradeInsecure: 'upgrade-insecure-requests', blockAllMixed: 'block-all-mixed-content',
+          hashCalcTitle: '인라인 스크립트 / 스타일 해시 계산기',
+          hashInputPh: '<script>...<\/script> 또는 <style>...<\/style> 안의 내용을 붙여넣으세요',
+          hashAlgoLabel: '알고리즘', hashTargetLabel: '추가 대상', hashAddBtn: '계산 후 추가',
+          hashEmpty: '해시가 여기에 표시됩니다',
+          formatHeader: 'HTTP 헤더', formatMeta: 'HTML <meta>', formatExpress: 'Express (helmet)', formatNginx: 'Nginx',
+          copy: '복사', copied: '복사됨!',
+          removeDirective: '지시문 제거', removeSource: '소스 제거',
+          poolKeywords: '키워드', poolSchemes: '스킴', poolHosts: '호스트 및 nonce',
+          inputPlaceholder: 'https://cdn.example.com',
+          addBtn: '추가', addNonceBtn: '+ nonce',
+          warnNoneAlone: "'none'은 단독 사용만 유효합니다. 다른 소스가 있으면 무시됩니다.",
+          warnInlineHash: "해시 또는 nonce가 있으면 최신 브라우저는 'unsafe-inline'을 무시합니다.",
+          warnFrameAncestorsMeta: 'frame-ancestors는 <meta>에서 무시되므로 HTTP 헤더로 전송해야 합니다.',
+          warnReportMeta: 'report-uri / report-to는 <meta>에서 무시됩니다. HTTP 헤더에서만 유효합니다.',
+          warnSandboxMeta: 'sandbox는 <meta>에서 무시됩니다. HTTP 헤더에서만 유효합니다.',
+          warnNoDefault: 'default-src가 없으면 누락된 fetch 지시문에 대한 폴백이 적용되지 않습니다.',
+          warnHttpScheme: 'http:는 비보안 리소스를 허용합니다. 프로덕션에서는 https:를 권장합니다.',
+          warnUnsafeEval: "'unsafe-eval'은 eval(), Function(), setTimeout('string')을 허용합니다. 꼭 필요한 경우에만.",
+          warnUnsafeInlineScript: "script-src의 'unsafe-inline'은 CSP의 핵심 XSS 방어를 무효화합니다. 해시 또는 nonce를 사용하세요.",
+          warnEmpty: '정책을 생성하려면 최소 한 개의 지시문이 필요합니다.'
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var T = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (T[key]) el.textContent = T[key];
+      });
+      document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph');
+        if (T[key]) el.placeholder = T[key];
+      });
+
+      var DIRECTIVE_DEFS = [
+        { name: 'default-src', kind: 'fetch' },
+        { name: 'script-src', kind: 'fetch' },
+        { name: 'script-src-elem', kind: 'fetch' },
+        { name: 'script-src-attr', kind: 'fetch' },
+        { name: 'style-src', kind: 'fetch' },
+        { name: 'style-src-elem', kind: 'fetch' },
+        { name: 'style-src-attr', kind: 'fetch' },
+        { name: 'img-src', kind: 'fetch' },
+        { name: 'font-src', kind: 'fetch' },
+        { name: 'connect-src', kind: 'fetch' },
+        { name: 'media-src', kind: 'fetch' },
+        { name: 'object-src', kind: 'fetch' },
+        { name: 'frame-src', kind: 'fetch' },
+        { name: 'child-src', kind: 'fetch' },
+        { name: 'worker-src', kind: 'fetch' },
+        { name: 'manifest-src', kind: 'fetch' },
+        { name: 'prefetch-src', kind: 'fetch' },
+        { name: 'frame-ancestors', kind: 'navigation' },
+        { name: 'form-action', kind: 'navigation' },
+        { name: 'base-uri', kind: 'document' },
+        { name: 'navigate-to', kind: 'navigation' },
+        { name: 'sandbox', kind: 'sandbox' },
+        { name: 'report-uri', kind: 'report' },
+        { name: 'report-to', kind: 'report' },
+        { name: 'require-trusted-types-for', kind: 'tt' },
+        { name: 'trusted-types', kind: 'tt' }
+      ];
+
+      var DIRECTIVE_INDEX = {};
+      DIRECTIVE_DEFS.forEach(function (d) { DIRECTIVE_INDEX[d.name] = d; });
+
+      var KEYWORDS_BY_KIND = {
+        fetch: ["'self'", "'none'", "'unsafe-inline'", "'unsafe-eval'", "'strict-dynamic'", "'unsafe-hashes'", "'wasm-unsafe-eval'", "'report-sample'"],
+        navigation: ["'self'", "'none'"],
+        document: ["'self'", "'none'"],
+        sandbox: ['allow-forms', 'allow-scripts', 'allow-same-origin', 'allow-popups', 'allow-modals', 'allow-downloads', 'allow-top-navigation', 'allow-orientation-lock'],
+        report: [],
+        tt: ["'none'", "'allow-duplicates'", "'script'"]
+      };
+
+      var SCHEMES = ['https:', 'http:', 'data:', 'blob:', 'mediastream:', 'filesystem:', 'wss:', 'ws:'];
+
+      var PRESETS = {
+        strict: {
+          'default-src': ["'self'"],
+          'script-src': ["'self'", "'strict-dynamic'"],
+          'style-src': ["'self'"],
+          'img-src': ["'self'", 'data:'],
+          'font-src': ["'self'"],
+          'connect-src': ["'self'"],
+          'object-src': ["'none'"],
+          'base-uri': ["'self'"],
+          'form-action': ["'self'"],
+          'frame-ancestors': ["'none'"]
+        },
+        moderate: {
+          'default-src': ["'self'"],
+          'script-src': ["'self'"],
+          'style-src': ["'self'", "'unsafe-inline'"],
+          'img-src': ["'self'", 'data:', 'https:'],
+          'font-src': ["'self'", 'data:'],
+          'connect-src': ["'self'"],
+          'object-src': ["'none'"],
+          'base-uri': ["'self'"],
+          'frame-ancestors': ["'self'"]
+        },
+        basic: {
+          'default-src': ["'self'"]
+        },
+        empty: {}
+      };
+
+      var PRESET_FLAGS = {
+        strict: { upgrade: true, block: false },
+        moderate: { upgrade: true, block: false },
+        basic: { upgrade: false, block: false },
+        empty: { upgrade: false, block: false }
+      };
+
+      // ── State ─────────────────────────────────────────────────────────
+      var state = {
+        preset: 'strict',
+        mode: 'enforce',
+        format: 'header',
+        upgrade: true,
+        block: false,
+        directives: cloneDirectives(PRESETS.strict)
+      };
+
+      function cloneDirectives(src) {
+        var out = {};
+        Object.keys(src).forEach(function (k) { out[k] = src[k].slice(); });
+        return out;
+      }
+
+      function applyPreset(name) {
+        state.preset = name;
+        state.directives = cloneDirectives(PRESETS[name] || {});
+        state.upgrade = !!(PRESET_FLAGS[name] && PRESET_FLAGS[name].upgrade);
+        state.block = !!(PRESET_FLAGS[name] && PRESET_FLAGS[name].block);
+      }
+
+      // ── Persistence ──────────────────────────────────────────────────
+      function persist() {
+        if (window.ztPersist && window.ztPersist.save) {
+          window.ztPersist.save(SLUG, {
+            preset: state.preset,
+            mode: state.mode,
+            upgrade: state.upgrade,
+            block: state.block,
+            directives: state.directives
+          });
+        }
+      }
+      function loadPersisted() {
+        if (window.ztPersist && window.ztPersist.load) {
+          var data = window.ztPersist.load(SLUG) || {};
+          if (data && data.directives && typeof data.directives === 'object') {
+            state.directives = {};
+            Object.keys(data.directives).forEach(function (k) {
+              if (Array.isArray(data.directives[k])) {
+                state.directives[k] = data.directives[k].slice();
+              }
+            });
+          }
+          if (typeof data.preset === 'string' && PRESETS[data.preset]) state.preset = data.preset;
+          if (data.mode === 'enforce' || data.mode === 'report-only') state.mode = data.mode;
+          state.upgrade = !!data.upgrade;
+          state.block = !!data.block;
+        }
+      }
+
+      // ── DOM refs ─────────────────────────────────────────────────────
+      var presetSel = document.getElementById('csp-preset');
+      var modeBtns = document.querySelectorAll('.csp-mode-btn');
+      var resetBtn = document.getElementById('csp-reset');
+      var directivesEl = document.getElementById('csp-directives');
+      var addSelect = document.getElementById('csp-add-select');
+      var addBtn = document.getElementById('csp-add-btn');
+      var flagUpgrade = document.getElementById('csp-flag-upgrade');
+      var flagBlock = document.getElementById('csp-flag-block');
+      var hashInput = document.getElementById('csp-hash-input');
+      var hashAlgo = document.getElementById('csp-hash-algo');
+      var hashTarget = document.getElementById('csp-hash-target');
+      var hashAddBtn = document.getElementById('csp-hash-add');
+      var hashValueEl = document.getElementById('csp-hash-value');
+      var hashCopyBtn = document.getElementById('csp-hash-copy');
+      var tabBtns = document.querySelectorAll('.csp-tab');
+      var outputEl = document.getElementById('csp-output');
+      var copyBtn = document.getElementById('csp-copy');
+      var validationEl = document.getElementById('csp-validation');
+
+      // ── Renderers ────────────────────────────────────────────────────
+      function renderAddSelect() {
+        addSelect.innerHTML = '';
+        DIRECTIVE_DEFS.forEach(function (d) {
+          if (state.directives[d.name]) return;
+          var opt = document.createElement('option');
+          opt.value = d.name;
+          opt.textContent = d.name;
+          addSelect.appendChild(opt);
+        });
+        addBtn.disabled = addSelect.options.length === 0;
+      }
+
+      function classForSource(src) {
+        if (/^'sha(256|384|512)-/.test(src)) return 'is-hash';
+        if (/^'nonce-/.test(src)) return 'is-nonce';
+        if (/^'[^']+'$/.test(src)) return 'is-keyword';
+        return '';
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"]/g, function (c) {
+          return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;';
+        });
+      }
+
+      function renderDirectives() {
+        directivesEl.innerHTML = '';
+        var names = Object.keys(state.directives);
+        names.forEach(function (name) {
+          var def = DIRECTIVE_INDEX[name] || { name: name, kind: 'fetch' };
+          var card = document.createElement('div');
+          card.className = 'csp-directive';
+          card.dataset.directive = name;
+
+          var head = document.createElement('div');
+          head.className = 'csp-directive-head';
+          var nameEl = document.createElement('span');
+          nameEl.className = 'csp-directive-name';
+          nameEl.textContent = name;
+          var removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.className = 'csp-directive-remove';
+          removeBtn.setAttribute('aria-label', T.removeDirective);
+          removeBtn.textContent = '×';
+          removeBtn.addEventListener('click', function () {
+            delete state.directives[name];
+            renderAll();
+            update();
+          });
+          head.appendChild(nameEl);
+          head.appendChild(removeBtn);
+          card.appendChild(head);
+
+          // Selected sources
+          var sourceList = document.createElement('div');
+          sourceList.className = 'csp-source-list';
+          (state.directives[name] || []).forEach(function (src, idx) {
+            var tag = document.createElement('span');
+            tag.className = 'csp-source-tag ' + classForSource(src);
+            var text = document.createElement('span');
+            text.className = 'csp-source-tag-text';
+            text.textContent = src;
+            var rm = document.createElement('button');
+            rm.type = 'button';
+            rm.className = 'csp-source-remove';
+            rm.setAttribute('aria-label', T.removeSource);
+            rm.textContent = '×';
+            rm.addEventListener('click', function () {
+              state.directives[name].splice(idx, 1);
+              renderAll();
+              update();
+            });
+            tag.appendChild(text);
+            tag.appendChild(rm);
+            sourceList.appendChild(tag);
+          });
+          card.appendChild(sourceList);
+
+          // Keyword pool
+          var keywords = KEYWORDS_BY_KIND[def.kind] || [];
+          if (keywords.length > 0) {
+            var kwRow = document.createElement('div');
+            kwRow.className = 'csp-pool-row';
+            var kwLabel = document.createElement('span');
+            kwLabel.className = 'csp-pool-label';
+            kwLabel.textContent = def.kind === 'sandbox' ? 'sandbox tokens' : T.poolKeywords;
+            kwRow.appendChild(kwLabel);
+            var kwPool = document.createElement('div');
+            kwPool.className = 'csp-keyword-pool';
+            keywords.forEach(function (kw) {
+              var chip = document.createElement('button');
+              chip.type = 'button';
+              chip.className = 'csp-keyword-chip';
+              chip.textContent = kw;
+              if ((state.directives[name] || []).indexOf(kw) >= 0) chip.disabled = true;
+              chip.addEventListener('click', function () {
+                addSource(name, kw);
+              });
+              kwPool.appendChild(chip);
+            });
+            kwRow.appendChild(kwPool);
+            card.appendChild(kwRow);
+          }
+
+          // Scheme pool (only fetch directives)
+          if (def.kind === 'fetch') {
+            var schRow = document.createElement('div');
+            schRow.className = 'csp-pool-row';
+            var schLabel = document.createElement('span');
+            schLabel.className = 'csp-pool-label';
+            schLabel.textContent = T.poolSchemes;
+            schRow.appendChild(schLabel);
+            var schPool = document.createElement('div');
+            schPool.className = 'csp-keyword-pool';
+            SCHEMES.forEach(function (s) {
+              var chip = document.createElement('button');
+              chip.type = 'button';
+              chip.className = 'csp-keyword-chip';
+              chip.textContent = s;
+              if ((state.directives[name] || []).indexOf(s) >= 0) chip.disabled = true;
+              chip.addEventListener('click', function () {
+                addSource(name, s);
+              });
+              schPool.appendChild(chip);
+            });
+            schRow.appendChild(schPool);
+            card.appendChild(schRow);
+          }
+
+          // Custom host / nonce input (skip pure tt directives)
+          if (def.kind !== 'tt') {
+            var hostRow = document.createElement('div');
+            hostRow.className = 'csp-pool-row';
+            var hostLabel = document.createElement('span');
+            hostLabel.className = 'csp-pool-label';
+            hostLabel.textContent = def.kind === 'report' ? 'URLs / group' : T.poolHosts;
+            hostRow.appendChild(hostLabel);
+
+            var addRow = document.createElement('div');
+            addRow.className = 'csp-source-add-row';
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'csp-source-input';
+            input.placeholder = def.kind === 'report' ? '/csp-reports' : T.inputPlaceholder;
+            input.spellcheck = false;
+
+            var addHostBtn = document.createElement('button');
+            addHostBtn.type = 'button';
+            addHostBtn.className = 'csp-source-add-btn';
+            addHostBtn.textContent = T.addBtn;
+            addHostBtn.addEventListener('click', function () {
+              if (!input.value.trim()) return;
+              addSource(name, input.value.trim());
+              input.value = '';
+              input.focus();
+            });
+            input.addEventListener('keydown', function (ev) {
+              if (ev.key === 'Enter') {
+                ev.preventDefault();
+                addHostBtn.click();
+              }
+            });
+            addRow.appendChild(input);
+            addRow.appendChild(addHostBtn);
+
+            if (def.kind === 'fetch') {
+              var nonceBtn = document.createElement('button');
+              nonceBtn.type = 'button';
+              nonceBtn.className = 'csp-source-add-btn';
+              nonceBtn.textContent = T.addNonceBtn;
+              nonceBtn.addEventListener('click', function () {
+                addSource(name, "'nonce-" + randomNonce() + "'");
+              });
+              addRow.appendChild(nonceBtn);
+            }
+
+            hostRow.appendChild(addRow);
+            card.appendChild(hostRow);
+          }
+
+          directivesEl.appendChild(card);
+        });
+      }
+
+      function addSource(name, value) {
+        var raw = String(value).trim();
+        if (!raw) return;
+        if (raw.indexOf(';') >= 0) {
+          showStatus(T.warnEmpty, 'error');
+          return;
+        }
+        state.directives[name] = state.directives[name] || [];
+        if (state.directives[name].indexOf(raw) >= 0) return;
+        state.directives[name].push(raw);
+        renderDirectives();
+        renderAddSelect();
+        update();
+      }
+
+      function randomNonce() {
+        var bytes = new Uint8Array(16);
+        (window.crypto || window.msCrypto).getRandomValues(bytes);
+        var bin = '';
+        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      function buildPolicy(forMeta) {
+        var entries = [];
+        Object.keys(state.directives).forEach(function (name) {
+          var def = DIRECTIVE_INDEX[name];
+          if (forMeta && def && (name === 'frame-ancestors' || name === 'sandbox' || name === 'report-uri' || name === 'report-to')) {
+            return;
+          }
+          var sources = state.directives[name] || [];
+          if (sources.length === 0 && name !== 'sandbox') return;
+          entries.push(name + (sources.length ? ' ' + sources.join(' ') : ''));
+        });
+        if (state.upgrade) entries.push('upgrade-insecure-requests');
+        if (state.block) entries.push('block-all-mixed-content');
+        return entries.join('; ');
+      }
+
+      function buildOutput(format) {
+        var policyHeader = buildPolicy(false);
+        var policyMeta = buildPolicy(true);
+        if (!policyHeader) return T.warnEmpty;
+        var headerName = state.mode === 'report-only' ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy';
+
+        if (format === 'header') {
+          return headerName + ': ' + policyHeader;
+        }
+        if (format === 'meta') {
+          if (state.mode === 'report-only') {
+            return '<!-- Report-Only mode is not available in <meta>. Send as HTTP header instead. -->\n' +
+              '<meta http-equiv="Content-Security-Policy" content="' + escapeAttr(policyMeta) + '">';
+          }
+          return '<meta http-equiv="Content-Security-Policy" content="' + escapeAttr(policyMeta) + '">';
+        }
+        if (format === 'express') {
+          var helmet = "// npm install helmet\n" +
+            "const helmet = require('helmet');\n\n" +
+            "app.use(helmet.contentSecurityPolicy({\n" +
+            "  useDefaults: false,\n" +
+            "  reportOnly: " + (state.mode === 'report-only' ? 'true' : 'false') + ",\n" +
+            "  directives: " + JSON.stringify(buildHelmetDirectives(), null, 2).replace(/\n/g, '\n    ') + "\n" +
+            "}));";
+          return helmet;
+        }
+        if (format === 'nginx') {
+          return 'add_header ' + headerName + ' "' + policyHeader.replace(/"/g, '\\"') + '" always;';
+        }
+        return '';
+      }
+
+      function buildHelmetDirectives() {
+        var out = {};
+        Object.keys(state.directives).forEach(function (name) {
+          var sources = state.directives[name] || [];
+          out[name] = sources.length ? sources : [];
+        });
+        if (state.upgrade) out['upgrade-insecure-requests'] = [];
+        if (state.block) out['block-all-mixed-content'] = [];
+        return out;
+      }
+
+      function escapeAttr(s) {
+        return String(s).replace(/"/g, '&quot;');
+      }
+
+      function renderTabs() {
+        tabBtns.forEach(function (btn) {
+          var active = btn.getAttribute('data-format') === state.format;
+          btn.classList.toggle('is-active', active);
+          btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      }
+
+      function renderOutput() {
+        var text = buildOutput(state.format);
+        outputEl.textContent = text;
+        copyBtn.disabled = !text || text === T.warnEmpty;
+      }
+
+      function renderValidation() {
+        validationEl.innerHTML = '';
+        var warns = [];
+        var names = Object.keys(state.directives);
+        if (names.length === 0) {
+          warns.push({ level: 'info', text: T.warnEmpty });
+        }
+        if (!state.directives['default-src']) {
+          warns.push({ level: 'info', text: T.warnNoDefault });
+        }
+        names.forEach(function (n) {
+          var sources = state.directives[n] || [];
+          if (sources.indexOf("'none'") >= 0 && sources.length > 1) {
+            warns.push({ level: 'warn', text: n + ': ' + T.warnNoneAlone });
+          }
+          var hasHash = sources.some(function (s) { return /^'(sha256|sha384|sha512)-/.test(s); });
+          var hasNonce = sources.some(function (s) { return /^'nonce-/.test(s); });
+          if (sources.indexOf("'unsafe-inline'") >= 0 && (hasHash || hasNonce)) {
+            warns.push({ level: 'info', text: n + ': ' + T.warnInlineHash });
+          }
+          if (n === 'script-src' && sources.indexOf("'unsafe-inline'") >= 0 && !hasHash && !hasNonce) {
+            warns.push({ level: 'warn', text: T.warnUnsafeInlineScript });
+          }
+          if (sources.indexOf("'unsafe-eval'") >= 0) {
+            warns.push({ level: 'info', text: n + ': ' + T.warnUnsafeEval });
+          }
+          if (sources.indexOf('http:') >= 0) {
+            warns.push({ level: 'info', text: n + ': ' + T.warnHttpScheme });
+          }
+        });
+        if (state.format === 'meta') {
+          if (state.directives['frame-ancestors']) warns.push({ level: 'warn', text: T.warnFrameAncestorsMeta });
+          if (state.directives['report-uri'] || state.directives['report-to']) warns.push({ level: 'warn', text: T.warnReportMeta });
+          if (state.directives['sandbox']) warns.push({ level: 'warn', text: T.warnSandboxMeta });
+        }
+        warns.forEach(function (w) {
+          var item = document.createElement('li');
+          item.className = 'csp-validation-item ' + (w.level === 'warn' ? 'is-warn' : 'is-info');
+          item.textContent = (w.level === 'warn' ? '⚠ ' : 'ℹ ') + w.text;
+          validationEl.appendChild(item);
+        });
+      }
+
+      function renderAll() {
+        presetSel.value = state.preset;
+        modeBtns.forEach(function (btn) {
+          var active = btn.getAttribute('data-mode') === state.mode;
+          btn.classList.toggle('is-active', active);
+          btn.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+        flagUpgrade.checked = !!state.upgrade;
+        flagBlock.checked = !!state.block;
+        renderDirectives();
+        renderAddSelect();
+        renderTabs();
+      }
+
+      function update() {
+        renderOutput();
+        renderValidation();
+        persist();
+        if (window.trackTool) window.trackTool('csp-header-generator', 'generate');
+      }
+
+      function showStatus(msg, level) {
+        var el = document.getElementById('csp-status');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = 'tool-status ' + (level || 'none');
+        if (msg) {
+          window.setTimeout(function () { el.textContent = ''; el.className = 'tool-status none'; }, 3000);
+        }
+      }
+
+      // ── Hash calculator ──────────────────────────────────────────────
+      var lastHash = '';
+      hashInput.addEventListener('input', function () {
+        if (lastHash) {
+          lastHash = '';
+          hashValueEl.textContent = T.hashEmpty;
+          hashCopyBtn.disabled = true;
+        }
+        hashAddBtn.disabled = !hashInput.value;
+      });
+
+      async function computeHash() {
+        var algo = hashAlgo.value;
+        var content = hashInput.value;
+        if (!content) return;
+        var encoder = new TextEncoder();
+        var data = encoder.encode(content);
+        var digest = await window.crypto.subtle.digest(algo, data);
+        var bytes = new Uint8Array(digest);
+        var bin = '';
+        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        var b64 = btoa(bin);
+        var prefix = algo.toLowerCase().replace('-', '');
+        return "'" + prefix + '-' + b64 + "'";
+      }
+
+      hashAddBtn.addEventListener('click', async function () {
+        try {
+          var value = await computeHash();
+          if (!value) return;
+          lastHash = value;
+          hashValueEl.textContent = value;
+          hashCopyBtn.disabled = false;
+          var target = hashTarget.value;
+          if (!state.directives[target]) state.directives[target] = ["'self'"];
+          addSource(target, value);
+        } catch (e) {
+          showStatus('Hash failed: ' + e.message, 'error');
+        }
+      });
+
+      function attachCopy(btn, getter) {
+        btn.addEventListener('click', async function () {
+          var value = getter();
+          if (!value) return;
+          try {
+            await navigator.clipboard.writeText(value);
+            var original = btn.textContent;
+            btn.classList.add('copied');
+            btn.textContent = T.copied;
+            window.setTimeout(function () {
+              btn.classList.remove('copied');
+              btn.textContent = original;
+            }, 1500);
+          } catch (e) {
+            showStatus('Copy failed.', 'error');
+          }
+        });
+      }
+
+      attachCopy(copyBtn, function () { return outputEl.textContent || ''; });
+      attachCopy(hashCopyBtn, function () { return lastHash; });
+
+      // ── Wiring ───────────────────────────────────────────────────────
+      presetSel.addEventListener('change', function () {
+        applyPreset(presetSel.value);
+        renderAll();
+        update();
+      });
+
+      modeBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          state.mode = btn.getAttribute('data-mode');
+          renderAll();
+          update();
+        });
+      });
+
+      resetBtn.addEventListener('click', function () {
+        applyPreset(state.preset);
+        renderAll();
+        update();
+      });
+
+      addBtn.addEventListener('click', function () {
+        var name = addSelect.value;
+        if (!name || state.directives[name]) return;
+        state.directives[name] = name === 'sandbox' ? [] : ["'self'"];
+        renderAll();
+        update();
+      });
+
+      flagUpgrade.addEventListener('change', function () {
+        state.upgrade = flagUpgrade.checked;
+        update();
+      });
+      flagBlock.addEventListener('change', function () {
+        state.block = flagBlock.checked;
+        update();
+      });
+
+      tabBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          state.format = btn.getAttribute('data-format');
+          renderTabs();
+          renderOutput();
+          renderValidation();
+        });
+      });
+
+      // ── Boot ─────────────────────────────────────────────────────────
+      loadPersisted();
+      if (Object.keys(state.directives).length === 0) {
+        applyPreset('strict');
+      }
+      renderAll();
+      update();
+    })();
+  </script>
+</div>

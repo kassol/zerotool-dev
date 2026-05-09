@@ -114,6 +114,7 @@ import ImageColorPaletteTool from './ImageColorPaletteTool.astro';
 import ColorBlindnessSimulatorTool from './ColorBlindnessSimulatorTool.astro';
 import TimezoneConverterTool from './TimezoneConverterTool.astro';
 import AiTokenCounterTool from './AiTokenCounterTool.astro';
+import CspHeaderGeneratorTool from './CspHeaderGeneratorTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -228,4 +229,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'color-blindness-simulator': ColorBlindnessSimulatorTool,
   'timezone-converter': TimezoneConverterTool,
   'ai-token-counter': AiTokenCounterTool,
+  'csp-header-generator': CspHeaderGeneratorTool,
 };

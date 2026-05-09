@@ -1,0 +1,48 @@
+---
+seoTitle: "CSP Header Generator — Free Online Tool | ZeroTool"
+seoDescription: "Build Content-Security-Policy headers with directives, hashes, and nonces. Strict-mode templates, report-only fallback, plus Express and Nginx snippets. 100% client-side."
+faqItems:
+  - question: "What is a Content Security Policy?"
+    answer: "A CSP is an HTTP response header that tells browsers which sources of scripts, styles, images, fonts, frames, and other content are trusted. Together with output encoding, it is the strongest browser-side defense against cross-site scripting, clickjacking, and data injection attacks."
+  - question: "Should I deploy Enforce or Report-Only first?"
+    answer: "Always roll out with `Content-Security-Policy-Report-Only` plus a `report-uri` (or `report-to`) endpoint. Watch real traffic for one to two weeks, fix legitimate violations in your code, then switch to enforced `Content-Security-Policy`."
+  - question: "Do I need 'unsafe-inline' for inline scripts and styles?"
+    answer: "Avoid it whenever you can. Modern CSP supports per-script hashes (`'sha256-...'`, `'sha384-...'`, `'sha512-...'`) and per-request nonces (`'nonce-...'`). Use the inline-content hash calculator on this page to add a hash for a specific snippet."
+  - question: "What does 'strict-dynamic' do?"
+    answer: "'strict-dynamic' lets a trusted nonced or hashed script load further scripts at runtime without listing every CDN. It is the recommended pattern for modern apps because it overrides host-based allow-lists for descendant scripts and stops trivial bypasses."
+  - question: "Where do I deploy the generated header?"
+    answer: "Send `Content-Security-Policy` from your origin server (Nginx `add_header`, Apache `Header set`, Cloudflare Transform Rules, Vercel `headers`, etc.). The HTML `<meta http-equiv>` form is a fallback for static hosts but the browser ignores `frame-ancestors`, `report-uri`, `report-to`, and `sandbox` when CSP is delivered via `<meta>`."
+---
+
+<h2>How to use</h2>
+<ol>
+  <li>Pick a <strong>Preset</strong>. Strict matches the OWASP "strict CSP" recommendation; Empty lets you start from a blank policy.</li>
+  <li>Toggle <strong>Mode</strong>. Use Report-Only first so violations are reported but never block real users.</li>
+  <li>For each directive, click keyword chips (<code>'self'</code>, <code>'strict-dynamic'</code>, <code>'none'</code>), scheme chips (<code>https:</code>, <code>data:</code>), or type a host/path and press <kbd>Enter</kbd>.</li>
+  <li>Use the <strong>Hash calculator</strong> to allow a specific inline script or style by content hash, or click <code>+ nonce</code> to inject a fresh nonce.</li>
+  <li>Switch the output tab to copy the form you need: <strong>HTTP header</strong>, <strong>HTML &lt;meta&gt;</strong>, <strong>Express (helmet)</strong>, or <strong>Nginx</strong> <code>add_header</code>.</li>
+</ol>
+
+<h2>Strict CSP starter</h2>
+<p>The Strict preset is built around three rules: <code>'self' 'strict-dynamic'</code> on <code>script-src</code>, <code>'none'</code> on <code>object-src</code>, and <code>'self'</code> on <code>base-uri</code>. Combined with per-request nonces or per-script hashes, this layout resists most reflected and stored XSS payloads. Add <code>'self'</code> to <code>form-action</code> and <code>'none'</code> to <code>frame-ancestors</code> to lock down phishing-style abuse.</p>
+
+<h2>Common pitfalls</h2>
+<ul>
+  <li><strong><code>'none'</code> is exclusive.</strong> If you list any other source alongside <code>'none'</code>, the browser drops the directive.</li>
+  <li><strong>frame-ancestors is HTTP only.</strong> Browsers ignore it when CSP is delivered via <code>&lt;meta&gt;</code>. The same applies to <code>report-uri</code>, <code>report-to</code>, and <code>sandbox</code>.</li>
+  <li><strong>Hashes and nonces void <code>'unsafe-inline'</code>.</strong> Modern browsers fall back to the safer of the two when both are present.</li>
+  <li><strong>Always set <code>default-src</code>.</strong> Missing fetch directives fall back to <code>default-src</code>; without it the browser applies no fallback for new directives added later.</li>
+  <li><strong>Custom hosts cannot contain semicolons.</strong> A semicolon would terminate the policy and corrupt every directive after it.</li>
+</ul>
+
+<h2>Hashes vs. nonces</h2>
+<p>Use <strong>hashes</strong> for static inline content that ships with the page — analytics snippets, critical CSS, server-rendered helpers. Hashes work for static HTML and edge-cached responses because they do not need any per-request value.</p>
+<p>Use <strong>nonces</strong> for dynamic content rendered per request. The server emits a <code>Content-Security-Policy</code> header containing <code>'nonce-XYZ'</code> and stamps the same value on every <code>&lt;script nonce="XYZ"&gt;</code> it renders. Pair nonces with <code>'strict-dynamic'</code> so descendant scripts inherit trust without you maintaining a host allow-list.</p>
+
+<h2>Deployment cheat sheet</h2>
+<ul>
+  <li><strong>Nginx</strong>: copy the Nginx tab into your <code>server</code> block and reload — the <code>always</code> flag forces the header on error responses too.</li>
+  <li><strong>Apache</strong>: use <code>Header always set Content-Security-Policy "..."</code> in <code>.htaccess</code> or <code>httpd.conf</code>.</li>
+  <li><strong>Express / Node</strong>: paste the helmet snippet, and remember to disable <code>useDefaults</code> so your policy is not silently merged with helmet defaults.</li>
+  <li><strong>Cloudflare Pages / Vercel / Netlify</strong>: paste the HTTP header form into your platform's headers config (<code>_headers</code>, <code>vercel.json</code>, <code>netlify.toml</code>).</li>
+</ul>
