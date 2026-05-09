@@ -1,0 +1,48 @@
+---
+seoTitle: "CSP 头部生成器 — 免费在线工具 | ZeroTool"
+seoDescription: "通过指令、hash 与 nonce 构建 Content-Security-Policy 头部。含严格模式模板、Report-Only 调试模式以及 Express、Nginx 片段。完全在浏览器中运行。"
+faqItems:
+  - question: "什么是 Content Security Policy？"
+    answer: "CSP 是一类 HTTP 响应头部，用于声明浏览器允许加载的脚本、样式、图片、字体、iframe 等内容来源。结合输出编码，它是抵御 XSS、点击劫持与数据注入的最强浏览器侧防线。"
+  - question: "上线时应该先用 Enforce 还是 Report-Only？"
+    answer: "强烈建议先用 `Content-Security-Policy-Report-Only` 配合 `report-uri`（或 `report-to`）端点。先观察真实流量 1-2 周，把误伤改完，再切到强制生效的 `Content-Security-Policy`。"
+  - question: "我必须用 'unsafe-inline' 才能写 inline script / style 吗？"
+    answer: "不必。现代 CSP 支持按内容计算的 hash（`'sha256-...'` 等）以及按请求生成的 nonce（`'nonce-...'`），优先使用这两种方式。直接用页面里的 hash 计算器即可。"
+  - question: "'strict-dynamic' 起什么作用？"
+    answer: "它允许已经被 nonce 或 hash 信任的脚本在运行时再加载其他脚本，而无需一一列出 CDN 主机。这是现代应用推荐的模式，会覆盖基于主机的白名单，从而堵住绕过路径。"
+  - question: "生成的头部应该部署到哪里？"
+    answer: "请从源站发出 `Content-Security-Policy`（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` 等都可以）。HTML `<meta http-equiv>` 仅作为静态托管的兜底；它不支持 `frame-ancestors`、`report-uri`、`report-to`、`sandbox`。"
+---
+
+<h2>使用步骤</h2>
+<ol>
+  <li>选择一个<strong>预设</strong>。Strict 对应 OWASP 的「strict CSP」推荐配置，Empty 让你从空白策略开始。</li>
+  <li>切换<strong>模式</strong>。先用 Report-Only：浏览器只上报违规，不阻断真实用户。</li>
+  <li>逐条指令：点击关键字芯片（<code>'self'</code>、<code>'strict-dynamic'</code>、<code>'none'</code>）、协议芯片（<code>https:</code>、<code>data:</code>），或在输入框里写主机/路径后按 <kbd>Enter</kbd>。</li>
+  <li>用<strong>hash 计算器</strong>为某段 inline script / style 生成 SHA-256/384/512 哈希；或点击 <code>+ nonce</code> 生成一次性 nonce。</li>
+  <li>切换输出页签复制需要的形式：<strong>HTTP header</strong>、<strong>HTML &lt;meta&gt;</strong>、<strong>Express (helmet)</strong>、<strong>Nginx</strong> <code>add_header</code>。</li>
+</ol>
+
+<h2>Strict CSP 起步配置</h2>
+<p>Strict 预设围绕三条规则展开：<code>script-src</code> 写 <code>'self' 'strict-dynamic'</code>，<code>object-src</code> 写 <code>'none'</code>，<code>base-uri</code> 写 <code>'self'</code>。再配合按请求生成的 nonce 或按脚本计算的 hash，足以拦下绝大多数反射型与存储型 XSS 注入。如果想进一步压制 phishing 类攻击，把 <code>form-action</code> 写成 <code>'self'</code>，<code>frame-ancestors</code> 写成 <code>'none'</code>。</p>
+
+<h2>容易踩的坑</h2>
+<ul>
+  <li><strong><code>'none'</code> 必须独占。</strong> 与其他源同列时，浏览器会把整条指令视为无效。</li>
+  <li><strong><code>frame-ancestors</code> 仅在 HTTP 头部生效。</strong> 在 <code>&lt;meta&gt;</code> 里写它会被浏览器忽略，<code>report-uri</code>、<code>report-to</code>、<code>sandbox</code> 同理。</li>
+  <li><strong>hash / nonce 会让 <code>'unsafe-inline'</code> 失效。</strong> 现代浏览器会优先采用更安全的策略。</li>
+  <li><strong>务必声明 <code>default-src</code>。</strong> 缺失的 fetch 指令会回退到 <code>default-src</code>；没有它，未来新增的指令也得不到任何兜底。</li>
+  <li><strong>自定义主机不能包含分号。</strong> 分号会终止策略，把后续指令一并破坏。</li>
+</ul>
+
+<h2>Hash 还是 Nonce？</h2>
+<p>对于<strong>静态内联内容</strong>（埋点片段、关键 CSS、服务端渲染的辅助脚本），用 hash。它和静态 HTML、边缘缓存兼容，不需要每次请求都生成新值。</p>
+<p>对于<strong>动态渲染内容</strong>，用 nonce。服务端在头部里写 <code>'nonce-XYZ'</code>，并在所有 <code>&lt;script nonce="XYZ"&gt;</code> 上盖同一个值。把 nonce 与 <code>'strict-dynamic'</code> 组合使用，可以让被信任脚本的子脚本继承信任，而你不必维护庞大的主机白名单。</p>
+
+<h2>部署速查</h2>
+<ul>
+  <li><strong>Nginx</strong>：把 Nginx 页签的内容粘贴到 <code>server</code> 块并 reload。<code>always</code> 标志让错误响应也带上头部。</li>
+  <li><strong>Apache</strong>：在 <code>.htaccess</code> 或 <code>httpd.conf</code> 里写 <code>Header always set Content-Security-Policy "..."</code>。</li>
+  <li><strong>Express / Node</strong>：粘贴 helmet 片段。务必关闭 <code>useDefaults</code>，避免你的策略被 helmet 默认值悄悄合并。</li>
+  <li><strong>Cloudflare Pages / Vercel / Netlify</strong>：把 HTTP header 写进各自的 headers 配置（<code>_headers</code>、<code>vercel.json</code>、<code>netlify.toml</code>）。</li>
+</ul>
