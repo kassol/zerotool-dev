@@ -549,7 +549,8 @@
           warnHttpScheme: "http: source allows insecure resources. Prefer https: in production.",
           warnUnsafeEval: "'unsafe-eval' enables eval(), Function(), and setTimeout('string'). Avoid unless required.",
           warnUnsafeInlineScript: "'unsafe-inline' on script-src disables one of CSP's main XSS protections. Prefer hashes or nonces.",
-          warnEmpty: "Add at least one directive to generate a policy."
+          warnEmpty: "Add at least one directive to generate a policy.",
+          warnSemicolon: "Invalid character: semicolons are not allowed in sources."
         },
         zh: {
           presetLabel: '预设', presetStrict: '严格（推荐）', presetModerate: '适中', presetBasic: '基础', presetEmpty: '空白（从头开始）',
@@ -575,7 +576,8 @@
           warnHttpScheme: 'http: 协议会放行非安全资源，生产环境优先使用 https:。',
           warnUnsafeEval: "'unsafe-eval' 允许 eval()、Function()、setTimeout('string')，非必要请避免。",
           warnUnsafeInlineScript: "在 script-src 中使用 'unsafe-inline' 会禁用 CSP 对 XSS 的核心保护，优先使用 hash 或 nonce。",
-          warnEmpty: '请至少添加一条指令以生成策略。'
+          warnEmpty: '请至少添加一条指令以生成策略。',
+          warnSemicolon: '非法字符：源中不允许包含分号。'
         },
         ja: {
           presetLabel: 'プリセット', presetStrict: '厳格（推奨）', presetModerate: '中程度', presetBasic: '基本', presetEmpty: '空（ゼロから）',
@@ -601,7 +603,8 @@
           warnHttpScheme: 'http: は非セキュアなリソースを許可します。本番環境では https: を推奨。',
           warnUnsafeEval: "'unsafe-eval' は eval()、Function()、setTimeout('string') を許可します。必要時のみ。",
           warnUnsafeInlineScript: "script-src の 'unsafe-inline' は XSS 対策の中核を無効化します。ハッシュ / nonce を推奨。",
-          warnEmpty: 'ポリシー生成には少なくとも1つのディレクティブが必要です。'
+          warnEmpty: 'ポリシー生成には少なくとも1つのディレクティブが必要です。',
+          warnSemicolon: '不正な文字：ソースにセミコロンは含められません。'
         },
         ko: {
           presetLabel: '프리셋', presetStrict: '엄격 (권장)', presetModerate: '중간', presetBasic: '기본', presetEmpty: '비어 있음 (처음부터)',
@@ -627,7 +630,8 @@
           warnHttpScheme: 'http:는 비보안 리소스를 허용합니다. 프로덕션에서는 https:를 권장합니다.',
           warnUnsafeEval: "'unsafe-eval'은 eval(), Function(), setTimeout('string')을 허용합니다. 꼭 필요한 경우에만.",
           warnUnsafeInlineScript: "script-src의 'unsafe-inline'은 CSP의 핵심 XSS 방어를 무효화합니다. 해시 또는 nonce를 사용하세요.",
-          warnEmpty: '정책을 생성하려면 최소 한 개의 지시문이 필요합니다.'
+          warnEmpty: '정책을 생성하려면 최소 한 개의 지시문이 필요합니다.',
+          warnSemicolon: '잘못된 문자: 소스에 세미콜론을 포함할 수 없습니다.'
         }
       };
 
@@ -984,7 +988,7 @@
         var raw = String(value).trim();
         if (!raw) return;
         if (raw.indexOf(';') >= 0) {
-          showStatus(T.warnEmpty, 'error');
+          showStatus(T.warnSemicolon, 'error');
           return;
         }
         state.directives[name] = state.directives[name] || [];
@@ -1063,7 +1067,7 @@
       }
 
       function escapeAttr(s) {
-        return String(s).replace(/"/g, '&quot;');
+        return escapeHtml(s);
       }
 
       function renderTabs() {
@@ -1100,13 +1104,19 @@
           if (sources.indexOf("'unsafe-inline'") >= 0 && (hasHash || hasNonce)) {
             warns.push({ level: 'info', text: n + ': ' + T.warnInlineHash });
           }
-          if (n === 'script-src' && sources.indexOf("'unsafe-inline'") >= 0 && !hasHash && !hasNonce) {
-            warns.push({ level: 'warn', text: T.warnUnsafeInlineScript });
+          var scriptLikeDirective = (
+            n === 'script-src' ||
+            n === 'script-src-elem' ||
+            n === 'script-src-attr' ||
+            n === 'default-src'
+          );
+          if (scriptLikeDirective && sources.indexOf("'unsafe-inline'") >= 0 && !hasHash && !hasNonce) {
+            warns.push({ level: 'warn', text: n + ': ' + T.warnUnsafeInlineScript });
           }
           if (sources.indexOf("'unsafe-eval'") >= 0) {
             warns.push({ level: 'info', text: n + ': ' + T.warnUnsafeEval });
           }
-          if (sources.indexOf('http:') >= 0) {
+          if (sources.some(function (s) { return /^http:/i.test(s); })) {
             warns.push({ level: 'info', text: n + ': ' + T.warnHttpScheme });
           }
         });
@@ -1241,7 +1251,13 @@
       addBtn.addEventListener('click', function () {
         var name = addSelect.value;
         if (!name || state.directives[name]) return;
-        state.directives[name] = name === 'sandbox' ? [] : ["'self'"];
+        var def = DIRECTIVE_INDEX[name];
+        var defaultValue;
+        if (name === 'sandbox' || (def && def.kind === 'report')) defaultValue = [];
+        else if (name === 'require-trusted-types-for') defaultValue = ["'script'"];
+        else if (name === 'trusted-types') defaultValue = ["'none'"];
+        else defaultValue = ["'self'"];
+        state.directives[name] = defaultValue;
         renderAll();
         update();
       });
