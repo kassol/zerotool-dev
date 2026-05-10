@@ -632,7 +632,29 @@
     return /<svg[\s>]/i.test(text);
   }
 
+  function renderPreviewImg(host: HTMLElement, svg: string): void {
+    host.replaceChildren();
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = url;
+    const revoke = () => URL.revokeObjectURL(url);
+    img.onload = revoke;
+    img.onerror = revoke;
+    host.appendChild(img);
+  }
+
   async function optimize(): Promise<void> {
+    // Always reset the result panel at the start of a new run — including
+    // when input validation fails — so a previous pass's preview and
+    // action buttons cannot be mistaken for the current attempt's result.
+    resultEl.hidden = true;
+    lastOutput = '';
+    previewBeforeEl.replaceChildren();
+    previewAfterEl.replaceChildren();
+    outputCodeEl.textContent = '';
+
     const input = inputEl.value.trim();
     if (!input) {
       setStatus(T.statusEmpty, 'error');
@@ -678,8 +700,12 @@
     bytesAfterEl.textContent = afterFmt;
     savedEl.textContent = delta;
     savedEl.className = 'svgo-saved' + (isLarger ? ' svgo-saved--larger' : '');
-    previewBeforeEl.innerHTML = input;
-    previewAfterEl.innerHTML = output;
+    // Render previews via <img src="blob:"> rather than innerHTML so a
+    // pasted SVG containing <script> or onload= cannot execute in this
+    // document (self-XSS hardening). The blob URL is revoked once the
+    // image has loaded.
+    renderPreviewImg(previewBeforeEl, input);
+    renderPreviewImg(previewAfterEl, output);
     outputCodeEl.textContent = output;
 
     resultEl.hidden = false;
@@ -992,7 +1018,8 @@
     overflow: hidden;
     padding: 0.5rem;
   }
-  .svgo-preview svg {
+  .svgo-preview svg,
+  .svgo-preview img {
     max-width: 100%;
     max-height: 220px;
   }
