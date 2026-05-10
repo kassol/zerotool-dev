@@ -1,0 +1,1036 @@
+---
+// SvgOptimizerTool — minify SVG markup with SVGO v4 in the browser.
+// SVGO is loaded lazily on first Optimize click (~190KB gzipped browser bundle),
+// so the tool page itself stays light. All processing is local.
+---
+
+<div class="svgo-wrap">
+  <div class="svgo-tabs" role="tablist">
+    <button
+      id="svgo-tab-paste"
+      class="svgo-tab svgo-tab--active"
+      role="tab"
+      aria-selected="true"
+      aria-controls="svgo-panel-paste"
+      type="button"
+      data-i18n="tabPaste"
+    >Paste SVG</button>
+    <button
+      id="svgo-tab-upload"
+      class="svgo-tab"
+      role="tab"
+      aria-selected="false"
+      aria-controls="svgo-panel-upload"
+      type="button"
+      data-i18n="tabUpload"
+    >Upload File</button>
+  </div>
+
+  <div id="svgo-panel-paste" class="svgo-panel" role="tabpanel">
+    <label for="svgo-input" class="tool-label" data-i18n="inputLabel">SVG markup</label>
+    <textarea
+      id="svgo-input"
+      class="tool-textarea svgo-input"
+      rows="7"
+      spellcheck="false"
+      autocapitalize="off"
+      autocorrect="off"
+      placeholder="Paste your SVG markup here…"
+      data-i18n-attr="placeholder|inputPlaceholder"
+    ></textarea>
+  </div>
+
+  <div id="svgo-panel-upload" class="svgo-panel" hidden role="tabpanel">
+    <div id="svgo-drop" class="svgo-drop" role="button" tabindex="0" aria-label="Drop or select SVG">
+      <div class="svgo-drop-inner">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p data-i18n="dropHint">Drop an SVG file here, or click to select</p>
+        <p class="svgo-drop-hint" data-i18n="dropHint2">.svg files only</p>
+      </div>
+      <input id="svgo-file" type="file" accept=".svg,image/svg+xml" class="svgo-file-input" aria-label="Select SVG file" />
+    </div>
+  </div>
+
+  <div class="svgo-controls">
+    <div class="svgo-controls-head">
+      <h3 class="svgo-controls-heading" data-i18n="pluginsHeading">Plugins</h3>
+      <button id="svgo-reset" class="btn-ghost svgo-reset" type="button" data-i18n="resetBtn">Reset</button>
+    </div>
+    <div class="svgo-toggle-grid">
+      <label class="svgo-toggle">
+        <input type="checkbox" data-plugin="cleanupIds" checked />
+        <span class="svgo-toggle-text" data-i18n="pluginCleanupIds">Clean unused IDs</span>
+      </label>
+      <label class="svgo-toggle">
+        <input type="checkbox" data-plugin="convertColors" checked />
+        <span class="svgo-toggle-text" data-i18n="pluginConvertColors">Shorten colors</span>
+      </label>
+      <label class="svgo-toggle">
+        <input type="checkbox" data-plugin="removeComments" checked />
+        <span class="svgo-toggle-text" data-i18n="pluginRemoveComments">Remove comments</span>
+      </label>
+      <label class="svgo-toggle">
+        <input type="checkbox" data-plugin="removeViewBox" />
+        <span class="svgo-toggle-text" data-i18n="pluginRemoveViewBox">Remove viewBox</span>
+        <span class="svgo-warn" aria-hidden="true">!</span>
+      </label>
+      <label class="svgo-toggle">
+        <input type="checkbox" data-plugin="removeDimensions" />
+        <span class="svgo-toggle-text" data-i18n="pluginRemoveDimensions">Remove width/height</span>
+      </label>
+      <label class="svgo-toggle">
+        <input type="checkbox" data-plugin="mergePaths" checked />
+        <span class="svgo-toggle-text" data-i18n="pluginMergePaths">Merge paths</span>
+      </label>
+      <label class="svgo-toggle">
+        <input type="checkbox" data-plugin="multipass" checked />
+        <span class="svgo-toggle-text" data-i18n="pluginMultipass">Multipass</span>
+      </label>
+      <label class="svgo-toggle svgo-toggle--slider">
+        <span class="svgo-toggle-text">
+          <span data-i18n="pluginPrecision">Precision</span>
+          <span class="svgo-precision-val" id="svgo-precision-val">3</span>
+        </span>
+        <input type="range" id="svgo-precision" min="0" max="5" step="1" value="3" />
+      </label>
+    </div>
+
+    <button
+      id="svgo-toggle-advanced"
+      class="btn-ghost svgo-advanced-btn"
+      type="button"
+      aria-expanded="false"
+      aria-controls="svgo-advanced-body"
+    >
+      <span data-i18n="showAllPlugins">Show all 33 plugins</span>
+    </button>
+    <div id="svgo-advanced-body" class="svgo-advanced-body" hidden>
+      <p class="svgo-advanced-hint">Advanced — raw SVGO plugin names. Defaults match SVGO preset-default.</p>
+      <div id="svgo-advanced-grid" class="svgo-advanced-grid"></div>
+    </div>
+  </div>
+
+  <div class="svgo-actions">
+    <button id="svgo-optimize" class="btn-primary" type="button" data-i18n="optimizeBtn">Optimize SVG</button>
+    <span id="svgo-status" class="tool-status none" aria-live="polite" data-i18n="statusReady">Ready</span>
+  </div>
+
+  <div id="svgo-result" class="svgo-result" hidden>
+    <div class="svgo-result-grid">
+      <article class="svgo-result-card">
+        <header class="svgo-result-head">
+          <span class="svgo-result-label" data-i18n="previewBefore">Before</span>
+          <span id="svgo-bytes-before" class="svgo-result-bytes">—</span>
+        </header>
+        <div id="svgo-preview-before" class="svgo-preview"></div>
+      </article>
+      <article class="svgo-result-card">
+        <header class="svgo-result-head">
+          <span class="svgo-result-label" data-i18n="previewAfter">After</span>
+          <span id="svgo-bytes-after" class="svgo-result-bytes">—</span>
+          <span id="svgo-saved" class="svgo-saved"></span>
+        </header>
+        <div id="svgo-preview-after" class="svgo-preview"></div>
+      </article>
+    </div>
+
+    <div class="svgo-output-actions">
+      <button id="svgo-copy" class="btn-copy" type="button" data-i18n="copyOutput">Copy output</button>
+      <button id="svgo-download" class="btn-secondary" type="button" data-i18n="downloadSvg">Download .svg</button>
+    </div>
+
+    <details class="svgo-output-details">
+      <summary data-i18n="showOutputCode">Show optimized code</summary>
+      <pre class="svgo-output-pre"><code id="svgo-output-code"></code></pre>
+    </details>
+  </div>
+</div>
+
+<script is:inline>
+  (function () {
+    var STRINGS = {
+      en: {
+        tabPaste: 'Paste SVG',
+        tabUpload: 'Upload File',
+        inputLabel: 'SVG markup',
+        inputPlaceholder: 'Paste your SVG markup here…',
+        dropHint: 'Drop an SVG file here, or click to select',
+        dropHint2: '.svg files only',
+        pluginsHeading: 'Plugins',
+        resetBtn: 'Reset',
+        pluginCleanupIds: 'Clean unused IDs',
+        pluginConvertColors: 'Shorten colors',
+        pluginRemoveComments: 'Remove comments',
+        pluginRemoveViewBox: 'Remove viewBox',
+        pluginRemoveDimensions: 'Remove width/height',
+        pluginMergePaths: 'Merge paths',
+        pluginMultipass: 'Multipass',
+        pluginPrecision: 'Precision',
+        showAllPlugins: 'Show all 33 plugins',
+        hideAllPlugins: 'Hide advanced plugins',
+        advancedHint: 'Advanced — raw SVGO plugin names. Defaults match SVGO preset-default.',
+        optimizeBtn: 'Optimize SVG',
+        statusReady: 'Ready',
+        statusOptimizing: 'Optimizing…',
+        statusEmpty: 'Paste or upload an SVG.',
+        statusInvalid: 'Does not look like valid SVG markup.',
+        statusFileError: 'Please drop a .svg file.',
+        statusOptimized: 'Optimized: {before} → {after} ({delta})',
+        statusLarger: 'Result is larger: {before} → {after} ({delta})',
+        statusError: 'Optimization failed: {msg}',
+        previewBefore: 'Before',
+        previewAfter: 'After',
+        savedLabel: 'saved',
+        largerLabel: 'larger',
+        showOutputCode: 'Show optimized code',
+        copyOutput: 'Copy output',
+        downloadSvg: 'Download .svg',
+        copied: 'Copied!'
+      },
+      zh: {
+        tabPaste: '粘贴 SVG',
+        tabUpload: '上传文件',
+        inputLabel: 'SVG 代码',
+        inputPlaceholder: '在这里粘贴 SVG 代码…',
+        dropHint: '拖放 SVG 文件到这里，或点击选择',
+        dropHint2: '仅支持 .svg 文件',
+        pluginsHeading: '插件',
+        resetBtn: '重置',
+        pluginCleanupIds: '清理无引用 ID',
+        pluginConvertColors: '颜色短名',
+        pluginRemoveComments: '去注释',
+        pluginRemoveViewBox: '去 viewBox',
+        pluginRemoveDimensions: '去 width/height',
+        pluginMergePaths: '合并 path',
+        pluginMultipass: '多次优化',
+        pluginPrecision: '精度',
+        showAllPlugins: '显示全部 33 个插件',
+        hideAllPlugins: '隐藏高级插件',
+        advancedHint: '高级 — SVGO 原始插件名，默认值对齐 preset-default。',
+        optimizeBtn: '压缩 SVG',
+        statusReady: '待优化',
+        statusOptimizing: '优化中…',
+        statusEmpty: '请粘贴或上传 SVG。',
+        statusInvalid: '看起来不是有效 SVG 代码。',
+        statusFileError: '请拖放 .svg 文件。',
+        statusOptimized: '优化完成：{before} → {after}（{delta}）',
+        statusLarger: '结果更大：{before} → {after}（{delta}）',
+        statusError: '优化失败：{msg}',
+        previewBefore: '优化前',
+        previewAfter: '优化后',
+        savedLabel: '节省',
+        largerLabel: '增加',
+        showOutputCode: '显示优化后代码',
+        copyOutput: '复制结果',
+        downloadSvg: '下载 .svg',
+        copied: '已复制'
+      },
+      ja: {
+        tabPaste: 'SVG を貼り付け',
+        tabUpload: 'ファイルをアップロード',
+        inputLabel: 'SVG マークアップ',
+        inputPlaceholder: 'SVG マークアップをここに貼り付け…',
+        dropHint: 'SVG ファイルをドロップ、またはクリックで選択',
+        dropHint2: '.svg ファイルのみ',
+        pluginsHeading: 'プラグイン',
+        resetBtn: 'リセット',
+        pluginCleanupIds: '未使用 ID を削除',
+        pluginConvertColors: '色記法を短縮',
+        pluginRemoveComments: 'コメントを削除',
+        pluginRemoveViewBox: 'viewBox を削除',
+        pluginRemoveDimensions: 'width/height を削除',
+        pluginMergePaths: 'パスを統合',
+        pluginMultipass: '反復最適化',
+        pluginPrecision: '小数桁数',
+        showAllPlugins: 'すべてのプラグイン (33) を表示',
+        hideAllPlugins: '詳細プラグインを隠す',
+        advancedHint: '詳細 — SVGO 原本のプラグイン名。既定値は preset-default と同じ。',
+        optimizeBtn: 'SVG を最適化',
+        statusReady: '準備完了',
+        statusOptimizing: '最適化中…',
+        statusEmpty: 'SVG を貼り付けまたはアップロードしてください。',
+        statusInvalid: '有効な SVG マークアップではないようです。',
+        statusFileError: '.svg ファイルをドロップしてください。',
+        statusOptimized: '最適化完了: {before} → {after} ({delta})',
+        statusLarger: '結果が増加: {before} → {after} ({delta})',
+        statusError: '最適化に失敗: {msg}',
+        previewBefore: '最適化前',
+        previewAfter: '最適化後',
+        savedLabel: '削減',
+        largerLabel: '増加',
+        showOutputCode: '最適化後のコードを表示',
+        copyOutput: '出力をコピー',
+        downloadSvg: '.svg をダウンロード',
+        copied: 'コピーしました'
+      },
+      ko: {
+        tabPaste: 'SVG 붙여넣기',
+        tabUpload: '파일 업로드',
+        inputLabel: 'SVG 마크업',
+        inputPlaceholder: '여기에 SVG 마크업 붙여넣기…',
+        dropHint: 'SVG 파일을 드롭, 또는 클릭하여 선택',
+        dropHint2: '.svg 파일만 지원',
+        pluginsHeading: '플러그인',
+        resetBtn: '재설정',
+        pluginCleanupIds: '미사용 ID 정리',
+        pluginConvertColors: '색상 단축',
+        pluginRemoveComments: '주석 제거',
+        pluginRemoveViewBox: 'viewBox 제거',
+        pluginRemoveDimensions: 'width/height 제거',
+        pluginMergePaths: '경로 통합',
+        pluginMultipass: '다중 패스',
+        pluginPrecision: '정밀도',
+        showAllPlugins: '모든 33개 플러그인 표시',
+        hideAllPlugins: '고급 플러그인 숨기기',
+        advancedHint: '고급 — SVGO 원본 플러그인 이름. 기본값은 preset-default와 동일.',
+        optimizeBtn: 'SVG 최적화',
+        statusReady: '준비됨',
+        statusOptimizing: '최적화 중…',
+        statusEmpty: 'SVG를 붙여넣거나 업로드하세요.',
+        statusInvalid: '유효한 SVG 마크업이 아닌 것 같습니다.',
+        statusFileError: '.svg 파일을 드롭하세요.',
+        statusOptimized: '최적화 완료: {before} → {after} ({delta})',
+        statusLarger: '결과가 더 큼: {before} → {after} ({delta})',
+        statusError: '최적화 실패: {msg}',
+        previewBefore: '최적화 전',
+        previewAfter: '최적화 후',
+        savedLabel: '절감',
+        largerLabel: '증가',
+        showOutputCode: '최적화된 코드 표시',
+        copyOutput: '결과 복사',
+        downloadSvg: '.svg 다운로드',
+        copied: '복사됨'
+      }
+    };
+
+    var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+    var t = STRINGS[pageLang] || STRINGS.en;
+
+    document.querySelectorAll('.svgo-wrap [data-i18n]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n');
+      if (t[key]) el.textContent = t[key];
+    });
+    document.querySelectorAll('.svgo-wrap [data-i18n-attr]').forEach(function (el) {
+      var spec = el.getAttribute('data-i18n-attr');
+      if (!spec) return;
+      var parts = spec.split('|');
+      if (parts.length === 2 && t[parts[1]]) el.setAttribute(parts[0], t[parts[1]]);
+    });
+
+    var wrap = document.querySelector('.svgo-wrap');
+    if (wrap) {
+      Object.keys(t).forEach(function (k) {
+        wrap.dataset['msg' + k.charAt(0).toUpperCase() + k.slice(1)] = t[k];
+      });
+    }
+
+    var hint = document.querySelector('.svgo-advanced-hint');
+    if (hint) hint.textContent = t.advancedHint;
+  })();
+</script>
+
+<script>
+  const SLUG = 'svg-optimizer';
+
+  // SVGO preset-default plugin list (33 entries) — see svgo.dev/docs/preset-default.
+  // The 4 we expose as primary toggles (cleanupIds, convertColors, removeComments,
+  // mergePaths) are excluded from the advanced grid to avoid double controls.
+  const PRESET_DEFAULT_OTHER = [
+    'removeDoctype',
+    'removeXMLProcInst',
+    'removeMetadata',
+    'removeEditorsNSData',
+    'cleanupAttrs',
+    'mergeStyles',
+    'inlineStyles',
+    'minifyStyles',
+    'removeUselessDefs',
+    'cleanupNumericValues',
+    'removeUnknownsAndDefaults',
+    'removeNonInheritableGroupAttrs',
+    'removeUselessStrokeAndFill',
+    'cleanupEnableBackground',
+    'removeHiddenElems',
+    'removeEmptyText',
+    'convertShapeToPath',
+    'convertEllipseToCircle',
+    'moveElemsAttrsToGroup',
+    'moveGroupAttrsToElems',
+    'collapseGroups',
+    'convertPathData',
+    'convertTransform',
+    'removeEmptyAttrs',
+    'removeEmptyContainers',
+    'removeUnusedNS',
+    'sortAttrs',
+    'sortDefsChildren',
+    'removeDesc'
+  ];
+
+  type State = {
+    cleanupIds: boolean;
+    convertColors: boolean;
+    removeComments: boolean;
+    removeViewBox: boolean;
+    removeDimensions: boolean;
+    mergePaths: boolean;
+    multipass: boolean;
+    precision: number;
+    advanced: Record<string, boolean>;
+  };
+
+  function defaultState(): State {
+    const advanced: Record<string, boolean> = {};
+    PRESET_DEFAULT_OTHER.forEach((p) => { advanced[p] = true; });
+    return {
+      cleanupIds: true,
+      convertColors: true,
+      removeComments: true,
+      removeViewBox: false,
+      removeDimensions: false,
+      mergePaths: true,
+      multipass: true,
+      precision: 3,
+      advanced,
+    };
+  }
+
+  const wrap = document.querySelector('.svgo-wrap') as HTMLElement | null;
+  if (!wrap) throw new Error('svgo wrap missing');
+
+  const T = {
+    statusReady: wrap.dataset.msgStatusReady || 'Ready',
+    statusOptimizing: wrap.dataset.msgStatusOptimizing || 'Optimizing…',
+    statusEmpty: wrap.dataset.msgStatusEmpty || 'Paste or upload an SVG.',
+    statusInvalid: wrap.dataset.msgStatusInvalid || 'Does not look like valid SVG.',
+    statusFileError: wrap.dataset.msgStatusFileError || 'Please drop a .svg file.',
+    statusOptimized: wrap.dataset.msgStatusOptimized || 'Optimized: {before} → {after} ({delta})',
+    statusLarger: wrap.dataset.msgStatusLarger || 'Result is larger: {before} → {after} ({delta})',
+    statusError: wrap.dataset.msgStatusError || 'Optimization failed: {msg}',
+    savedLabel: wrap.dataset.msgSavedLabel || 'saved',
+    largerLabel: wrap.dataset.msgLargerLabel || 'larger',
+    copied: wrap.dataset.msgCopied || 'Copied!',
+    showAll: wrap.dataset.msgShowAllPlugins || 'Show all 33 plugins',
+    hideAll: wrap.dataset.msgHideAllPlugins || 'Hide advanced plugins',
+  };
+
+  // Refs
+  const tabPaste = document.getElementById('svgo-tab-paste') as HTMLButtonElement;
+  const tabUpload = document.getElementById('svgo-tab-upload') as HTMLButtonElement;
+  const panelPaste = document.getElementById('svgo-panel-paste') as HTMLElement;
+  const panelUpload = document.getElementById('svgo-panel-upload') as HTMLElement;
+  const inputEl = document.getElementById('svgo-input') as HTMLTextAreaElement;
+  const dropEl = document.getElementById('svgo-drop') as HTMLElement;
+  const fileEl = document.getElementById('svgo-file') as HTMLInputElement;
+  const optimizeBtn = document.getElementById('svgo-optimize') as HTMLButtonElement;
+  const resetBtn = document.getElementById('svgo-reset') as HTMLButtonElement;
+  const statusEl = document.getElementById('svgo-status') as HTMLElement;
+  const precisionEl = document.getElementById('svgo-precision') as HTMLInputElement;
+  const precisionVal = document.getElementById('svgo-precision-val') as HTMLElement;
+  const advancedBtn = document.getElementById('svgo-toggle-advanced') as HTMLButtonElement;
+  const advancedBody = document.getElementById('svgo-advanced-body') as HTMLElement;
+  const advancedGrid = document.getElementById('svgo-advanced-grid') as HTMLElement;
+  const resultEl = document.getElementById('svgo-result') as HTMLElement;
+  const bytesBeforeEl = document.getElementById('svgo-bytes-before') as HTMLElement;
+  const bytesAfterEl = document.getElementById('svgo-bytes-after') as HTMLElement;
+  const savedEl = document.getElementById('svgo-saved') as HTMLElement;
+  const previewBeforeEl = document.getElementById('svgo-preview-before') as HTMLElement;
+  const previewAfterEl = document.getElementById('svgo-preview-after') as HTMLElement;
+  const outputCodeEl = document.getElementById('svgo-output-code') as HTMLElement;
+  const copyBtn = document.getElementById('svgo-copy') as HTMLButtonElement;
+  const downloadBtn = document.getElementById('svgo-download') as HTMLButtonElement;
+  const primaryToggles = Array.from(
+    document.querySelectorAll<HTMLInputElement>('.svgo-toggle input[type="checkbox"][data-plugin]')
+  );
+
+  let state: State = defaultState();
+  let lastOutput = '';
+
+  // Build advanced grid
+  PRESET_DEFAULT_OTHER.forEach((name) => {
+    const wrapEl = document.createElement('label');
+    wrapEl.className = 'svgo-adv-toggle';
+    wrapEl.innerHTML =
+      '<input type="checkbox" data-adv-plugin="' + name + '" checked />' +
+      '<code>' + name + '</code>';
+    advancedGrid.appendChild(wrapEl);
+  });
+
+  // Persistence (preference policy — plugin config survives Clear)
+  function loadPersisted(): void {
+    if (window.ztPersist && window.ztPersist.load) {
+      const saved = window.ztPersist.load(SLUG) as Partial<State> | null;
+      if (saved && typeof saved === 'object') {
+        state = { ...defaultState(), ...saved, advanced: { ...defaultState().advanced, ...(saved.advanced || {}) } };
+      }
+    }
+    // Reflect into UI
+    primaryToggles.forEach((cb) => {
+      const key = cb.getAttribute('data-plugin') as keyof State;
+      if (key && typeof state[key] === 'boolean') cb.checked = state[key] as boolean;
+    });
+    precisionEl.value = String(state.precision);
+    precisionVal.textContent = String(state.precision);
+    Object.keys(state.advanced).forEach((p) => {
+      const cb = advancedGrid.querySelector<HTMLInputElement>('[data-adv-plugin="' + p + '"]');
+      if (cb) cb.checked = state.advanced[p];
+    });
+  }
+
+  function persist(): void {
+    if (window.ztPersist && window.ztPersist.save) {
+      window.ztPersist.save(SLUG, state);
+    }
+  }
+
+  // Tab switching
+  function setTab(which: 'paste' | 'upload'): void {
+    const isPaste = which === 'paste';
+    tabPaste.classList.toggle('svgo-tab--active', isPaste);
+    tabUpload.classList.toggle('svgo-tab--active', !isPaste);
+    tabPaste.setAttribute('aria-selected', isPaste ? 'true' : 'false');
+    tabUpload.setAttribute('aria-selected', isPaste ? 'false' : 'true');
+    panelPaste.hidden = !isPaste;
+    panelUpload.hidden = isPaste;
+  }
+  tabPaste.addEventListener('click', () => setTab('paste'));
+  tabUpload.addEventListener('click', () => setTab('upload'));
+
+  // File / drag-drop
+  dropEl.addEventListener('click', (e) => { if (e.target !== fileEl) fileEl.click(); });
+  dropEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileEl.click(); }
+  });
+  fileEl.addEventListener('change', () => {
+    if (fileEl.files && fileEl.files[0]) readFile(fileEl.files[0]);
+  });
+  dropEl.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropEl.classList.add('svgo-drop--over');
+  });
+  dropEl.addEventListener('dragleave', () => dropEl.classList.remove('svgo-drop--over'));
+  dropEl.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropEl.classList.remove('svgo-drop--over');
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (f) readFile(f);
+  });
+
+  function readFile(file: File): void {
+    if (!file.name.toLowerCase().endsWith('.svg') && file.type !== 'image/svg+xml') {
+      setStatus(T.statusFileError, 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = String(ev.target && ev.target.result || '');
+      inputEl.value = text;
+      setTab('paste');
+      setStatus(T.statusReady, 'none');
+    };
+    reader.onerror = () => setStatus(T.statusFileError, 'error');
+    reader.readAsText(file);
+  }
+
+  // Toggles
+  primaryToggles.forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const key = cb.getAttribute('data-plugin') as keyof State;
+      if (!key) return;
+      (state as any)[key] = cb.checked;
+      persist();
+    });
+  });
+  precisionEl.addEventListener('input', () => {
+    state.precision = Number(precisionEl.value);
+    precisionVal.textContent = String(state.precision);
+    persist();
+  });
+  advancedGrid.addEventListener('change', (e) => {
+    const tgt = e.target as HTMLInputElement;
+    if (tgt && tgt.dataset.advPlugin) {
+      state.advanced[tgt.dataset.advPlugin] = tgt.checked;
+      persist();
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    state = defaultState();
+    loadPersisted(); // also re-renders UI
+    persist();
+    setStatus(T.statusReady, 'none');
+  });
+
+  advancedBtn.addEventListener('click', () => {
+    const open = advancedBody.hidden;
+    advancedBody.hidden = !open;
+    advancedBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const labelEl = advancedBtn.querySelector('span');
+    if (labelEl) labelEl.textContent = open ? T.hideAll : T.showAll;
+  });
+
+  // Status
+  function setStatus(msg: string, kind: 'success' | 'error' | 'info' | 'none'): void {
+    statusEl.textContent = msg;
+    statusEl.className = 'tool-status ' + kind;
+  }
+
+  function formatBytes(n: number): string {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(2) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function formatDelta(before: number, after: number): { delta: string; isLarger: boolean } {
+    const ratio = before === 0 ? 0 : (before - after) / before;
+    const isLarger = after > before;
+    const sign = isLarger ? '+' : '↓';
+    const pct = Math.abs(ratio * 100).toFixed(1);
+    const label = isLarger ? T.largerLabel : T.savedLabel;
+    return { delta: sign + pct + '% ' + label, isLarger };
+  }
+
+  // Lazy SVGO loader
+  let svgoMod: any = null;
+  let svgoLoading: Promise<any> | null = null;
+  async function getSvgo(): Promise<any> {
+    if (svgoMod) return svgoMod;
+    if (svgoLoading) return svgoLoading;
+    svgoLoading = import('svgo/browser').then((mod) => {
+      svgoMod = mod;
+      return mod;
+    });
+    return svgoLoading;
+  }
+
+  function buildConfig(): any {
+    const overrides: Record<string, any> = {
+      cleanupIds: state.cleanupIds ? {} : false,
+      convertColors: state.convertColors ? {} : false,
+      removeComments: state.removeComments ? {} : false,
+      mergePaths: state.mergePaths ? {} : false,
+    };
+    Object.keys(state.advanced).forEach((p) => {
+      if (!state.advanced[p]) overrides[p] = false;
+    });
+    const plugins: any[] = [{ name: 'preset-default', params: { overrides } }];
+    if (state.removeViewBox) plugins.push('removeViewBox');
+    if (state.removeDimensions) plugins.push('removeDimensions');
+    return {
+      multipass: state.multipass,
+      floatPrecision: state.precision,
+      plugins,
+    };
+  }
+
+  function isSvgish(text: string): boolean {
+    return /<svg[\s>]/i.test(text);
+  }
+
+  async function optimize(): Promise<void> {
+    const input = inputEl.value.trim();
+    if (!input) {
+      setStatus(T.statusEmpty, 'error');
+      return;
+    }
+    if (!isSvgish(input)) {
+      setStatus(T.statusInvalid, 'error');
+      return;
+    }
+
+    setStatus(T.statusOptimizing, 'info');
+    optimizeBtn.disabled = true;
+
+    let mod: any;
+    try {
+      mod = await getSvgo();
+    } catch (err: any) {
+      setStatus(T.statusError.replace('{msg}', String(err && err.message || err)), 'error');
+      optimizeBtn.disabled = false;
+      return;
+    }
+
+    let output = input;
+    try {
+      const result = mod.optimize(input, buildConfig());
+      output = result.data || input;
+    } catch (err: any) {
+      setStatus(T.statusError.replace('{msg}', String(err && err.message || err)), 'error');
+      optimizeBtn.disabled = false;
+      return;
+    }
+
+    optimizeBtn.disabled = false;
+    lastOutput = output;
+
+    const beforeBytes = new Blob([input]).size;
+    const afterBytes = new Blob([output]).size;
+    const beforeFmt = formatBytes(beforeBytes);
+    const afterFmt = formatBytes(afterBytes);
+    const { delta, isLarger } = formatDelta(beforeBytes, afterBytes);
+
+    bytesBeforeEl.textContent = beforeFmt;
+    bytesAfterEl.textContent = afterFmt;
+    savedEl.textContent = delta;
+    savedEl.className = 'svgo-saved' + (isLarger ? ' svgo-saved--larger' : '');
+    previewBeforeEl.innerHTML = input;
+    previewAfterEl.innerHTML = output;
+    outputCodeEl.textContent = output;
+
+    resultEl.hidden = false;
+
+    const tpl = isLarger ? T.statusLarger : T.statusOptimized;
+    const msg = tpl
+      .replace('{before}', beforeFmt)
+      .replace('{after}', afterFmt)
+      .replace('{delta}', delta);
+    setStatus(msg, isLarger ? 'info' : 'success');
+
+    if (window.trackTool) window.trackTool('svg-optimizer', 'optimize');
+  }
+  optimizeBtn.addEventListener('click', () => { void optimize(); });
+
+  // Copy / Download
+  copyBtn.addEventListener('click', async () => {
+    if (!lastOutput) return;
+    try {
+      await navigator.clipboard.writeText(lastOutput);
+      const original = copyBtn.textContent;
+      copyBtn.classList.add('copied');
+      copyBtn.textContent = T.copied;
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+        copyBtn.textContent = original;
+      }, 1400);
+      if (window.trackTool) window.trackTool('svg-optimizer', 'copy');
+    } catch (_) {}
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    if (!lastOutput) return;
+    const blob = new Blob([lastOutput], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'optimized.svg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    if (window.trackTool) window.trackTool('svg-optimizer', 'download');
+  });
+
+  // Boot
+  loadPersisted();
+  setStatus(T.statusReady, 'none');
+</script>
+
+<style is:global>
+  .svgo-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  /* ── Tabs ── */
+  .svgo-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--color-border-soft);
+  }
+  .svgo-tab {
+    padding: 0.5rem 1rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+  .svgo-tab:hover { color: var(--color-text); }
+  .svgo-tab--active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+  }
+
+  /* ── Panels ── */
+  .svgo-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+  .svgo-input { min-height: 140px; }
+
+  /* ── Drop zone ── */
+  .svgo-drop {
+    position: relative;
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 1.4rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    background: var(--color-bg-secondary);
+    transition: border-color var(--transition-fast), background-color var(--transition-fast);
+  }
+  .svgo-drop:hover,
+  .svgo-drop--over {
+    border-color: var(--color-primary);
+    background: var(--color-surface);
+  }
+  .svgo-drop-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--color-text-secondary);
+    pointer-events: none;
+  }
+  .svgo-drop-inner p { margin: 0; font-size: 0.92rem; }
+  .svgo-drop-hint { font-size: 0.78rem; color: var(--color-text-muted); }
+  .svgo-file-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  /* ── Controls ── */
+  .svgo-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.85rem 0.95rem 0.95rem;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .svgo-controls-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .svgo-controls-heading {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--color-text);
+    font-family: var(--font-sans);
+  }
+  .svgo-reset {
+    font-size: 0.78rem;
+    min-height: 32px;
+    padding: 0.2rem 0.7rem;
+  }
+
+  .svgo-toggle-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+    gap: 0.4rem 0.75rem;
+  }
+  .svgo-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    cursor: pointer;
+    font-size: 0.88rem;
+    color: var(--color-text);
+    padding: 0.25rem 0;
+    user-select: none;
+  }
+  .svgo-toggle input[type="checkbox"] { flex-shrink: 0; }
+  .svgo-toggle-text {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    line-height: 1.3;
+  }
+  .svgo-warn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    color: var(--color-primary-contrast);
+    font-size: 0.68rem;
+    font-weight: 800;
+    font-style: normal;
+  }
+  .svgo-toggle--slider {
+    grid-column: 1 / -1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+  .svgo-toggle--slider .svgo-toggle-text {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .svgo-precision-val {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--color-primary);
+  }
+
+  .svgo-advanced-btn {
+    align-self: flex-start;
+    font-size: 0.82rem;
+    min-height: 32px;
+    padding: 0.2rem 0.7rem;
+  }
+  .svgo-advanced-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border-top: 1px dashed var(--color-border-soft);
+    padding-top: 0.6rem;
+  }
+  .svgo-advanced-hint {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+  }
+  .svgo-advanced-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 0.3rem 0.7rem;
+  }
+  .svgo-adv-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .svgo-adv-toggle code {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--color-text);
+    background: transparent;
+    padding: 0;
+  }
+
+  /* ── Actions ── */
+  .svgo-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+  }
+  .svgo-actions .tool-status { flex: 1 1 auto; min-width: 160px; }
+
+  /* ── Result ── */
+  .svgo-result {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .svgo-result-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+    gap: 0.85rem;
+  }
+  .svgo-result-card {
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.7rem 0.85rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    min-width: 0;
+  }
+  .svgo-result-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .svgo-result-label {
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .svgo-result-bytes {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+  .svgo-saved {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-success);
+    margin-left: auto;
+  }
+  .svgo-saved--larger { color: var(--color-danger); }
+
+  .svgo-preview {
+    background:
+      repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px,
+      var(--color-surface);
+    border-radius: var(--radius-sm);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    min-height: 140px;
+    max-height: 240px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: 0.5rem;
+  }
+  .svgo-preview svg {
+    max-width: 100%;
+    max-height: 220px;
+  }
+
+  .svgo-output-actions {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+  }
+
+  .svgo-output-details summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    font-weight: 600;
+    padding: 0.35rem 0;
+  }
+  .svgo-output-details summary:hover { color: var(--color-primary); }
+  .svgo-output-pre {
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.85rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--color-text);
+    max-height: 280px;
+    overflow: auto;
+  }
+  .svgo-output-pre code {
+    background: transparent;
+    color: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 640px) {
+    .svgo-toggle-grid { grid-template-columns: 1fr; }
+    .svgo-result-grid { grid-template-columns: 1fr; }
+    .svgo-actions { flex-direction: column; align-items: stretch; }
+    .svgo-actions .tool-status { min-width: 0; }
+  }
+</style>
