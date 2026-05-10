@@ -1,0 +1,208 @@
+---
+title: "SVG Optimizer: Slim Down Your Icons Without Breaking Them"
+description: "How SVGO compresses SVG markup, which plugins are safe to enable, the two toggles that quietly break responsive icons, and how to ship a build-time pipeline that matches what you tuned in the browser."
+pubDate: 2026-05-10
+updatedDate: 2026-05-10
+lang: "en"
+tags: ["svg", "performance", "web-optimization", "developer-tools"]
+---
+
+A designer just dropped twelve `.svg` icons into your shared drive. Each file is somewhere between 6 and 12 KB. You open one in a text editor: the first 70 lines are `<sodipodi:namedview>`, `<inkscape:perspective>`, an XML processing instruction, a comment from the export plugin, three layers of `<g>` with auto-generated IDs, and four `<defs>` containing gradients no element actually references. The icon itself is one 90-byte path.
+
+SVG is unique among image formats because the file is also the source code. Every export tool — Illustrator, Figma, Sketch, Inkscape — leaves its fingerprints behind, and unlike JPEG or PNG those fingerprints are addressable. You can read them, you can delete them, and you can do it deterministically. That is what [SVGO](https://svgo.dev/) does. ZeroTool's [SVG Optimizer](/tools/svg-optimizer/) is SVGO running in your browser with a control panel for the plugin decisions you are most likely to second-guess.
+
+This guide walks through what SVGO actually removes, the two plugins that quietly break icons in production, what to do with `<style>` and `<script>` blocks, and how to ship the same configuration you tuned in the browser as part of your bundler or CI step.
+
+## Where the bytes hide
+
+A typical Figma export of a 24×24 icon looks something like this:
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <!-- exported from Figma 2026.5 -->
+  <g id="icon">
+    <g id="path-group">
+      <path id="Vector"
+            d="M11.99999 2.00001 L21.99999 12.00001 L11.99999 22.00001 L2.00001 12.00001 L11.99999 2.00001 Z"
+            stroke="#000000" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>
+```
+
+There are six separate optimization wins hiding in those eight lines:
+
+| What | Saved by |
+|---|---|
+| `xmlns:xlink` declared but unused | `removeUnusedNS` |
+| Designer comment | `removeComments` |
+| Auto-generated `id="icon" / id="path-group" / id="Vector"` not referenced anywhere | `cleanupIds` |
+| Two `<g>` wrappers with no attributes worth keeping | `collapseGroups` |
+| Stroke widths written as `2.000` instead of `2` | `cleanupNumericValues` |
+| Coordinate noise like `11.99999` from float precision | `cleanupNumericValues` with `floatPrecision: 3` |
+| Color `#000000` instead of `#000` (or even `currentColor` if you want themability) | `convertColors` |
+
+The `preset-default` collection enables all of these. Run it through the SVG Optimizer with default settings and you typically end up with something like:
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m12 2 10 10-10 10L2 12 12 2Z"/></svg>
+```
+
+That is around 200 bytes from a 700-byte original — a typical reduction for hand-authored or design-tool exports. Already-minified production icons see less, often 5–15%, because the easy wins were taken upstream.
+
+## What `preset-default` actually runs
+
+When you click **Optimize SVG** with the default eight toggles enabled and **Show all 34 plugins** untouched, SVGO runs the `preset-default` chain in this order (verified against `svgo@4.0.1`):
+
+```
+removeDoctype          removeXMLProcInst        removeComments
+removeDeprecatedAttrs  removeMetadata           removeEditorsNSData
+cleanupAttrs           mergeStyles              inlineStyles
+minifyStyles           cleanupIds               removeUselessDefs
+cleanupNumericValues   convertColors            removeUnknownsAndDefaults
+removeNonInheritableGroupAttrs                  removeUselessStrokeAndFill
+cleanupEnableBackground removeHiddenElems       removeEmptyText
+convertShapeToPath     convertEllipseToCircle   moveElemsAttrsToGroup
+moveGroupAttrsToElems  collapseGroups           convertPathData
+convertTransform       removeEmptyAttrs         removeEmptyContainers
+mergePaths             removeUnusedNS           sortAttrs
+sortDefsChildren       removeDesc
+```
+
+Most of these are safe by construction — they only remove things the spec defines as visual no-ops. Three of them deserve attention because they can change rendering in ways that are not obvious until something breaks.
+
+**`inlineStyles`** moves rules from `<style>` blocks onto element attributes. A 5-line stylesheet that targeted three classes becomes three elements with inline `fill`, `stroke`, and `opacity` attributes. This is what you want for an icon that will be embedded into HTML where you control the colors via `currentColor`. It is what you do not want when an external stylesheet expected to override `.icon-primary { fill: red; }` at runtime — that selector now matches nothing because the class is gone.
+
+**`convertPathData`** rewrites every path's `d` attribute using shorter commands and relative coordinates. It is mathematically lossy at the precision boundary: a 0.001-unit divergence in a Bézier handle can produce a visually different curve at very large render sizes. The default `floatPrecision: 3` is fine for icon-scale work; bump it to 4 or 5 for hero illustrations rendered at 2000 px wide.
+
+**`cleanupIds`** removes IDs that are not referenced by `<use>`, `<style>`, or other `url(#…)` references inside the same file. If your icon ships as part of a sprite sheet where another file references `#icon-name`, SVGO does not see that reference and will strip the ID. Either disable `cleanupIds` for sprite source files or run them through the **Show all 34 plugins** panel and uncheck it there.
+
+## The two toggles that break responsiveness
+
+The eight primary toggles in the workbench are deliberately ordered. The first six are safe defaults you will rarely change. The two that deserve their own warning sit in the second row: **Remove viewBox** and **Remove width/height**.
+
+Both are off by default and labeled with a warning indicator because both are technically optimizations, and both can render an icon unusable depending on how it is embedded.
+
+`viewBox="0 0 24 24"` is the SVG equivalent of "the coordinate system inside this image is 24 units wide and 24 units tall." Without it, an SVG without explicit `width` and `height` defaults to 300×150 pixels (the user-agent default for `<svg>`), and an SVG with width/height but no viewBox cannot scale — the coordinate system is locked to those exact pixel dimensions. Strip the viewBox from a 24×24 icon, embed it inside a 200×200 container, and you get either a tiny icon in the top-left corner or, depending on the parent's `display` mode, a stretched mess.
+
+The only case where removing viewBox is safe is when every embedding point is under your control and the new coordinate system is re-established somewhere downstream — for example, a sprite source file whose `<symbol>` elements still carry their own `viewBox`, or a build pipeline that wraps the markup with a fresh `<svg viewBox=…>`. Outside of those carefully audited scenarios, leave it on.
+
+`width` and `height` attributes are similar but slightly less catastrophic. Remove them and the SVG will inherit its rendering box from the parent element, which is fine for most CSS layouts but breaks when the SVG is loaded via `<img src="icon.svg">` (browsers fall back to 300×150 for any image without intrinsic dimensions and an explicit `width`/`height` is the cleanest way to set the intrinsic size).
+
+If you are not sure whether your embedding context is safe, leave both off. The bytes you save by removing 20 characters of `width="24" height="24"` are not worth a broken icon page.
+
+## Inline `<style>` and CSS classes
+
+The default behavior of `inlineStyles + minifyStyles` is correct for the most common case — icons whose colors should follow `currentColor` or be set via inline `fill` overrides. It is wrong for the second-most-common case: SVGs distributed alongside external CSS that styles them by class.
+
+If you need to keep the class hooks, head to **Show all 34 plugins** and uncheck both `inlineStyles` and `minifyStyles`. Your output will keep the `<style>` block and the class attributes intact:
+
+```xml
+<svg ... ><style>.brand{fill:#5b8def}</style><path class="brand" d="..."/></svg>
+```
+
+Be aware that some CSS minifiers will then take a second pass at that `<style>` block, so the savings you skipped here may come back through your bundler. The only configuration where inline classes survive end-to-end is when SVGO is the only style-aware tool in your pipeline.
+
+## When the optimizer makes things bigger
+
+It is rare but possible for SVGO to produce a larger output than its input. The most common scenario:
+
+**A pre-minified SVG with a single short path.** If the file is already 80 bytes and your input is mostly the `<svg>` opening tag, `convertPathData` may rewrite the path in a way that adds 4–8 bytes of relative coordinates while saving 0 bytes elsewhere. The workbench surfaces this honestly in the result card with a red `+X% larger` indicator. When you see it, the answer is to leave the original file alone — there is no value in re-optimizing an already-optimized icon.
+
+Multipass re-runs the plugin chain until the byte count stops decreasing. If the byte ratio is hovering at the boundary, toggle multipass off and accept the single-pass result.
+
+A separate pitfall: **the byte count is not the file size your CDN serves.** Modern CDNs Brotli- or gzip-compress text responses on the wire. SVG markup is highly repetitive, so the wire size is often 30–50% of what the workbench shows. Optimize for the markup size anyway — every byte you remove is a byte the parser does not have to read once the file lands.
+
+## Sprite sheets, `<use>`, and external references
+
+A common SVG distribution pattern is a single sprite file with one `<symbol id="icon-foo">` per icon, referenced from HTML via `<svg><use href="sprite.svg#icon-foo"></use></svg>`. SVGO has historically been thorny with sprite source files because the IDs that look unreferenced from inside the sprite are very much referenced from outside.
+
+Two practical rules:
+
+- **For the sprite source file**, disable `cleanupIds` (uncheck it in the primary toggles) and disable `removeUnusedNS` if your sprite uses `xlink:href`.
+- **For per-icon SVGs that will be assembled into a sprite later**, run the default config. The build tool that assembles them will rewrite the IDs anyway.
+
+`<use href="external-file.svg#id">` references are preserved. SVGO does not touch the URL or the fragment.
+
+## Optimizing for a build pipeline
+
+Once you have a plugin combination that produces good output for your project, you want the same configuration in CI rather than running each new icon through the workbench by hand. Two patterns:
+
+**Vite or webpack with vite-plugin-svgo / svgo-loader:**
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite'
+import svgo from 'vite-plugin-svgo'
+
+export default defineConfig({
+  plugins: [
+    svgo({
+      multipass: true,
+      floatPrecision: 3,
+      plugins: [
+        {
+          name: 'preset-default',
+          params: {
+            overrides: {
+              cleanupIds: false,        // keep IDs for runtime CSS hooks
+              removeViewBox: false,     // never strip viewBox in build pipeline
+            },
+          },
+        },
+      ],
+    }),
+  ],
+})
+```
+
+**Standalone CLI for CI or pre-commit hooks:**
+
+```bash
+npm install --save-dev svgo
+npx svgo --config svgo.config.js -f assets/icons -o assets/icons.optimized
+```
+
+Save your tuned configuration as `svgo.config.js` at the repository root:
+
+```js
+// svgo.config.js
+export default {
+  multipass: true,
+  floatPrecision: 3,
+  plugins: [
+    {
+      name: 'preset-default',
+      params: {
+        overrides: {
+          cleanupIds: false,
+          removeViewBox: false,
+        },
+      },
+    },
+  ],
+}
+```
+
+The workbench pins `svgo@4.0.1` in the bundle. If your CI installs `svgo@^4.0.0` and runs the same overrides, the byte counts will match within rounding; minor SVGO releases occasionally tighten a plugin and shave a few extra bytes, so pin to an exact version when reproducibility matters.
+
+## How this differs from SVGOMG and similar tools
+
+The browser-based SVG optimizer ecosystem has converged on a few options. [SVGOMG](https://jakearchibald.github.io/svgomg/) by Jake Archibald is the canonical implementation — same SVGO core, same plugin pipeline, English-only, no design-system constraints. [SVGcrop](https://svgcrop.com/) handles cropping to content bounds, which is a related but separate problem. Sketch plugins such as [SVGO Compressor](https://www.sketch.com/extensions/plugins/svgo-compressor/) and bundler plugins like `vite-plugin-svgo` move the optimization step into the export or build flow.
+
+ZeroTool's optimizer makes three deliberate choices that differ:
+
+- **SVGO version pinned to 4.0.1.** Using a freshly-released upstream version means SVGOMG-tuned configurations and ZeroTool-tuned configurations both land on the same plugin parameter validation, the same `convertPathData` heuristics, and the same `removeDeprecatedAttrs` pass.
+- **Eight primary toggles instead of all 34 by default.** The full `preset-default` is exposed, but the eight that drive most decisions live in the main panel. Choosing whether to keep `viewBox` is a daily decision; choosing whether to keep `<sodipodi:namedview>` is not.
+- **Native interfaces in English, Chinese, Japanese, and Korean.** The plugin names stay in English (they are the same SVGO config keys you will eventually paste into `svgo.config.js`), but every label, status message, and FAQ is localized.
+
+Single-file optimization is a deliberate scope cap. Batch optimization, custom plugin authoring, watch-mode pipelines, and CI integrations belong in the SVGO command-line tool. Tune one icon in the browser, then port the configuration upstream.
+
+## Further reading
+
+- [SVGO documentation](https://svgo.dev/) — the canonical reference for every plugin and its parameters.
+- [Tips for Creating and Exporting Better SVGs by Sara Soueidan](https://www.sarasoueidan.com/blog/svg-tips-for-designers/) — what designers can do to make SVGO's job easier.
+- [Inline SVG by Chris Coyier](https://css-tricks.com/lodge/svg/) — when to inline, when to `<img>`, when to sprite.
+- ZeroTool's [SVG to PNG Converter](/tools/svg-to-png-converter/) for cases where the destination cannot render SVG (legacy email clients, some CMS image fields).
+- ZeroTool's [SVG to JSX](/tools/svg-to-jsx/) for converting an optimized icon into a React component.

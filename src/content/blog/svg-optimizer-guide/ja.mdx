@@ -1,0 +1,208 @@
+---
+title: "SVG オプティマイザー: 壊さずにアイコンを軽くする"
+description: "SVGO がどのように SVG を圧縮するのか、安全に有効化できるプラグイン、レスポンシブを密かに壊す 2 つのトグル、そしてブラウザでチューニングした設定をビルドパイプラインへ持ち込む方法。"
+pubDate: 2026-05-10
+updatedDate: 2026-05-10
+lang: "ja"
+tags: ["svg", "performance", "web-optimization", "developer-tools"]
+---
+
+デザイナーが共有ドライブに 12 個の `.svg` アイコンを置いていった。各ファイルは 6〜12 KB ほど。テキストエディタで一つ開いてみると、最初の 70 行は `<sodipodi:namedview>`、`<inkscape:perspective>`、XML 処理命令、エクスポートプラグインのコメント、自動生成 ID 付きの 3 重 `<g>`、そしてどの要素も参照していないグラデーションが詰まった `<defs>` が 4 つ。アイコン本体は 90 バイトのパス 1 本だけだ。
+
+SVG は画像フォーマットの中でも特別だ — ファイル自体がソースコードでもある。Illustrator、Figma、Sketch、Inkscape、どのエクスポートツールも指紋を残す。しかし JPEG や PNG と違って、その指紋にはアドレスを振れる。読めるし、消せるし、決定論的に処理できる。それが [SVGO](https://svgo.dev/) のやっていることだ。ZeroTool の [SVG オプティマイザー](/ja/tools/svg-optimizer/) は SVGO をそのままブラウザ上で走らせ、最も判断に迷うプラグイン決定だけをコントロールパネルに出している。
+
+このガイドでは SVGO が実際に何を削るのか、本番でアイコンを密かに壊す 2 つのプラグイン、`<style>` と `<script>` ブロックの扱い方、そしてブラウザで調整した設定をそのままバンドラや CI に持ち込む方法を順に見ていく。
+
+## バイトはどこに隠れているか
+
+Figma が書き出す 24×24 アイコンの典型例：
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <!-- exported from Figma 2026.5 -->
+  <g id="icon">
+    <g id="path-group">
+      <path id="Vector"
+            d="M11.99999 2.00001 L21.99999 12.00001 L11.99999 22.00001 L2.00001 12.00001 L11.99999 2.00001 Z"
+            stroke="#000000" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>
+```
+
+この 8 行に少なくとも 6 つの最適化ポイントが潜んでいる：
+
+| 内容 | 担当プラグイン |
+|---|---|
+| 宣言だけして使われていない `xmlns:xlink` | `removeUnusedNS` |
+| デザイナーのコメント | `removeComments` |
+| 自動生成かつどこからも参照されていない `id="icon" / id="path-group" / id="Vector"` | `cleanupIds` |
+| 残す価値のある属性を持たない 2 重の `<g>` ラッパ | `collapseGroups` |
+| `2.000` のような stroke-width を `2` へ | `cleanupNumericValues` |
+| `11.99999` のような浮動小数の尾部 | `cleanupNumericValues` + `floatPrecision: 3` |
+| `#000000` を `#000` へ（あるいはテーマ可変にしたければ `currentColor` へ） | `convertColors` |
+
+`preset-default` プリセットはこれらを既定で全部有効にする。同じ SVG を SVG オプティマイザーに通し、既定のトグルで走らせれば、概ねこんな出力になる：
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m12 2 10 10-10 10L2 12 12 2Z"/></svg>
+```
+
+700 バイト前後が 200 バイト前後に — 手書きまたはデザインツール書き出しの SVG ではよくある削減幅だ。本番ですでに minify されているアイコンは削減幅が小さく、5〜15% 程度に留まることが多い。簡単なところは上流ですでに刈り取られているからだ。
+
+## `preset-default` が実際に走らせるもの
+
+主トグル 8 つを既定のまま、「すべてのプラグイン (34) を表示」を触らずに **SVG を最適化** をクリックすると、SVGO は `preset-default` チェーンを次の順序で実行する（`svgo@4.0.1` で実測）：
+
+```
+removeDoctype          removeXMLProcInst        removeComments
+removeDeprecatedAttrs  removeMetadata           removeEditorsNSData
+cleanupAttrs           mergeStyles              inlineStyles
+minifyStyles           cleanupIds               removeUselessDefs
+cleanupNumericValues   convertColors            removeUnknownsAndDefaults
+removeNonInheritableGroupAttrs                  removeUselessStrokeAndFill
+cleanupEnableBackground removeHiddenElems       removeEmptyText
+convertShapeToPath     convertEllipseToCircle   moveElemsAttrsToGroup
+moveGroupAttrsToElems  collapseGroups           convertPathData
+convertTransform       removeEmptyAttrs         removeEmptyContainers
+mergePaths             removeUnusedNS           sortAttrs
+sortDefsChildren       removeDesc
+```
+
+ほとんどは構造的に安全だ — 仕様上「視覚に副作用なし」と定義された要素しか消さない。ただ次の 3 つは別格で、目に見えるかたちで描画を変えうる。問題が出るのはたいてい本番で何かが壊れた瞬間だ。
+
+**`inlineStyles`** は `<style>` ブロックの規則を要素属性へ移す。3 クラスを対象にした 5 行の stylesheet が、`fill`・`stroke`・`opacity` をインラインで持つ 3 要素に変わる。HTML へ埋め込んで `currentColor` で色を制御する図形ならこれで合っている。逆に外部 stylesheet が実行時に `.icon-primary { fill: red; }` で色を上書きする想定なら困る — 上書き対象の class はもう存在しない。
+
+**`convertPathData`** は各 path の `d` 属性をより短いコマンドと相対座標で書き直す。精度境界では数学的にロッシー：ベジェ制御点で 0.001 単位ずれるだけでも、巨大サイズで描画したときに肉眼で違うカーブに見える可能性がある。アイコンサイズなら既定の `floatPrecision: 3` で十分。2000 px 幅で描画されるヒーローイラストレーションは 4 か 5 にまで上げておくのが安心。
+
+**`cleanupIds`** は同一ファイル内の `<use>`、`<style>`、または `url(#…)` 参照に拾われていない ID を削る。スプライトシート構成で外部ファイルが `#icon-name` を参照していても、SVGO はその参照を見ない。結果として ID が消える。スプライトの元ファイルを処理する場合は主トグルで `cleanupIds` を切るか、「すべてのプラグイン (34) を表示」パネルで個別にオフにする。
+
+## レスポンシブを壊す 2 つのトグル
+
+ワークベンチの主トグル 8 つは並びが意図的だ。先頭 6 つはまず触らない安全な既定値、警告の必要な 2 つは敢えて 2 行目に置いてある — **viewBox を削除** と **width/height を削除** だ。
+
+両方とも既定でオフ、警告マーク付き。確かに最適化項目だが、埋め込みコンテキスト次第ではアイコンを完全に使い物にならなくする。
+
+`viewBox="0 0 24 24"` は SVG が「この画像の内部座標系は幅 24 単位 × 高さ 24 単位」と宣言している。これを取ると、明示的な `width` / `height` がない SVG は 300×150 ピクセルに落ちる（`<svg>` の user-agent デフォルト）。width/height はあっても viewBox がないと、座標系がそのピクセル寸法に固定されてスケール不能になる。24×24 アイコンから viewBox を取り除き 200×200 のコンテナに埋めると、左上に小さく出るか、親の `display` モード次第では引き伸ばされて崩壊する。
+
+viewBox を取り除いて安全なのは、**埋め込みポイントを完全に制御していて**、新しい座標系が下流のどこかで再構築される場合だけだ — たとえば `<symbol>` 自身が `viewBox` を保持しているスプライトの元ファイル、あるいは新しい `<svg viewBox=…>` でラップし直すビルドパイプライン。これらを慎重に検証したシナリオ以外では、オンのままにしておく。
+
+`width` と `height` 属性も似ているがやや穏やかだ。これらを消すと SVG は親要素から描画ボックスを継承する — 普通の CSS レイアウトなら問題ないが、`<img src="icon.svg">` で読み込まれると壊れる（内在寸法がない画像はブラウザが 300×150 にフォールバックし、明示的な `width` / `height` を入れるのが内在寸法を設定する一番きれいな手段）。
+
+埋め込みコンテキストの安全性が確信できないなら両方オフにする。`width="24" height="24"` の 20 文字を削って得る数バイトのために、アイコンページが壊れるのは割に合わない。
+
+## インライン `<style>` と CSS class
+
+`inlineStyles + minifyStyles` の既定動作は最も多いシナリオ — `currentColor` で色を追従させる、あるいはインライン `fill` で上書きする — に対しては正解。次に多いシナリオ — 外部 CSS と一緒に配布する SVG で、その CSS が class 経由で色付けする — には不正解。
+
+class フックを残す必要があるなら、「すべてのプラグイン (34) を表示」パネルで `inlineStyles` と `minifyStyles` の両方をオフにする。出力は `<style>` ブロックと class 属性をそのまま残す：
+
+```xml
+<svg ... ><style>.brand{fill:#5b8def}</style><path class="brand" d="..."/></svg>
+```
+
+ただしバンドラ側の CSS minify がそこから 2 度目の圧縮に入る可能性はある。つまりここでスキップしたバイトはパイプラインの先で取り戻されることがある。class 内联が頭から尾まで生き延びる唯一の構成は、SVGO がパイプラインで唯一の style 認識ツールであるケースだけだ。
+
+## 最適化したのに大きくなる場合
+
+稀ではあるが、SVGO の出力が入力より大きくなることはある。もっとも一般的なケース：
+
+**既に minify 済みで短いパスが 1 本しかない SVG。** ファイルが既に 80 バイト、ほとんどが `<svg>` 開始タグで占められている場合、`convertPathData` は相対座標で 4〜8 バイト増やしてしまい、他のところで 1 バイトも削れないことがある。ワークベンチは結果カードに赤い `+X% larger` を出して正直に教えてくれる。これが出たら、その元ファイルは触らないのが答え — 既に最適化されたアイコンを再最適化する意味はない。
+
+Multipass はバイト数が減らなくなるまでプラグインチェーンを反復する。バイト比が境界をうろうろしているなら multipass を切って単発の結果を受け入れればいい。
+
+別の罠：**ワークベンチが表示するバイト数は CDN が実際に送出するファイルサイズではない。** 現代の CDN はテキスト応答に Brotli または gzip 圧縮をかける。SVG マークアップは反復が多いため、wire size はワークベンチ表示の 30〜50% 程度に収まることが多い。それでもマークアップサイズで最適化する価値はある — 削るバイトはファイル落地後にパーサが読み込まなくて済むバイトでもあるから。
+
+## スプライトシート、`<use>`、外部参照
+
+SVG の代表的な配布パターン：単一のスプライトファイルにアイコン 1 個ずつ `<symbol id="icon-foo">` を入れ、HTML から `<svg><use href="sprite.svg#icon-foo"></use></svg>` で参照する。SVGO はスプライト元ファイルに対して伝統的に厄介だった — スプライト内部から見ると参照されていない ID が、スプライト外部から見ると参照されまくっているからだ。
+
+実用上のルール 2 つ：
+
+- **スプライト元ファイル本体**：主トグルで `cleanupIds` をオフ。スプライトが `xlink:href` を使っているなら詳細パネルで `removeUnusedNS` もオフ。
+- **後でスプライトに合成される個別アイコン SVG**：既定設定でよい。合成ツールがどうせ ID を書き直す。
+
+`<use href="external-file.svg#id">` のような外部参照は SVGO が保持する — URL もフラグメントも触らない。
+
+## ビルドパイプラインへの組み込み
+
+ワークベンチで自分のプロジェクトに合うプラグイン構成が固まったら、新しいアイコンを毎回手動で通すのではなく、同じ設定を CI に置きたくなる。代表的なパターン 2 つ：
+
+**Vite または webpack に `vite-plugin-svgo` / `svgo-loader` を入れる：**
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite'
+import svgo from 'vite-plugin-svgo'
+
+export default defineConfig({
+  plugins: [
+    svgo({
+      multipass: true,
+      floatPrecision: 3,
+      plugins: [
+        {
+          name: 'preset-default',
+          params: {
+            overrides: {
+              cleanupIds: false,        // 実行時 CSS フック用に ID を残す
+              removeViewBox: false,     // ビルドパイプラインで viewBox を絶対に削らない
+            },
+          },
+        },
+      ],
+    }),
+  ],
+})
+```
+
+**CI または pre-commit hook 用にスタンドアロン CLI：**
+
+```bash
+npm install --save-dev svgo
+npx svgo --config svgo.config.js -f assets/icons -o assets/icons.optimized
+```
+
+調整した設定はリポジトリ ルートの `svgo.config.js` に保存する：
+
+```js
+// svgo.config.js
+export default {
+  multipass: true,
+  floatPrecision: 3,
+  plugins: [
+    {
+      name: 'preset-default',
+      params: {
+        overrides: {
+          cleanupIds: false,
+          removeViewBox: false,
+        },
+      },
+    },
+  ],
+}
+```
+
+ワークベンチはバンドルに `svgo@4.0.1` をピン留めしている。CI 側も `svgo@^4.0.0` を入れ同じ overrides を回せば、バイト数は丸め誤差の範囲で揃う。SVGO の minor リリースはたまにプラグインを締めて数バイト追加で削ることがある。再現性が必要な場面ではバージョンをきっちり固定すること。
+
+## SVGOMG など類似ツールとの違い
+
+ブラウザ上の SVG オプティマイザー界隈はいくつかの選択肢に収束している。Jake Archibald 氏の [SVGOMG](https://jakearchibald.github.io/svgomg/) は標準的な実装 — 同じ SVGO コア、同じプラグインパイプライン、英語のみ、デザインシステム制約なし。[SVGcrop](https://svgcrop.com/) は内容範囲へのクロップを扱うが、これは関連だが別問題だ。Sketch プラグインの [SVGO Compressor](https://www.sketch.com/extensions/plugins/svgo-compressor/) や `vite-plugin-svgo` のようなバンドラプラグインは、最適化ステップをエクスポートやビルドのフローへ前倒しする。
+
+ZeroTool のオプティマイザーが意識的に違える 3 つの選択：
+
+- **SVGO バージョンを 4.0.1 に固定**。リリースしたばかりの上流バージョンを使うことで、SVGOMG で調整した設定と ZeroTool で調整した設定が同じプラグインパラメータ検証、同じ `convertPathData` ヒューリスティック、同じ `removeDeprecatedAttrs` パスに着地する。
+- **34 個全部ではなく 8 個の主トグル**。`preset-default` 全体は出してあるが、日々の判断を駆動する 8 つだけ主面盤に置いた。`viewBox` を残すかどうかは毎日の判断、`<sodipodi:namedview>` を残すかどうかはそうではない。
+- **英語・中国語・日本語・韓国語のネイティブ UI**。プラグイン名は英語のまま（最終的に `svgo.config.js` へ貼り付ける SVGO 設定キーそのものだから）、しかしラベル・ステータス・FAQ はすべてローカライズされている。
+
+「単一ファイル」は意図的なスコープ制限だ。バッチ最適化、カスタムプラグイン作成、watch モードパイプライン、CI 統合は SVGO コマンドラインの領分 — ワークベンチで 1 個のアイコンを調整し、その設定を上流へそのまま運ぶ。
+
+## 関連リソース
+
+- [SVGO 公式ドキュメント](https://svgo.dev/) — 各プラグインとパラメータの正典。
+- [Sara Soueidan による SVG 作成・書き出しのコツ](https://www.sarasoueidan.com/blog/svg-tips-for-designers/) — デザイナーが SVGO の仕事を楽にするためにできること。
+- [Chris Coyier のインライン SVG ガイド](https://css-tricks.com/lodge/svg/) — いつ inline、いつ `<img>`、いつ sprite を選ぶか。
+- ZeroTool の [SVG → PNG 変換ツール](/ja/tools/svg-to-png-converter/)：宛先で SVG を描画できない場合（古いメールクライアント、CMS 画像フィールドの一部など）。
+- ZeroTool の [SVG → JSX 変換ツール](/ja/tools/svg-to-jsx/)：最適化済みアイコンを React コンポーネントへ変換。
