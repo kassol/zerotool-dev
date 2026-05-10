@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 113 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 114 tools and growing.
 
 ## Tools
 
@@ -122,6 +122,7 @@
 | Timezone Converter | [/tools/timezone-converter](https://zerotool.dev/tools/timezone-converter) |
 | AI Token Counter | [/tools/ai-token-counter](https://zerotool.dev/tools/ai-token-counter) |
 | CSP Header Generator | [/tools/csp-header-generator](https://zerotool.dev/tools/csp-header-generator) |
+| SVG Optimizer | [/tools/svg-optimizer](https://zerotool.dev/tools/svg-optimizer) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
