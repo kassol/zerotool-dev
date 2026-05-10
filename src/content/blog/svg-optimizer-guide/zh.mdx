@@ -1,0 +1,208 @@
+---
+title: "SVG 压缩优化：给图标减重，但别把它弄坏"
+description: "SVGO 怎么压缩 SVG，哪些插件可以放心开，哪两个 toggle 会悄悄破坏响应式图标，以及怎样把浏览器里调好的配置同步到构建流水线。"
+pubDate: 2026-05-10
+updatedDate: 2026-05-10
+lang: "zh"
+tags: ["svg", "performance", "web-optimization", "developer-tools"]
+---
+
+设计师刚把 12 个 `.svg` 图标丢进了共享盘。每个文件 6–12 KB。你随手在文本编辑器里打开一个：开头 70 行是 `<sodipodi:namedview>`、`<inkscape:perspective>`、一条 XML 处理指令、导出插件留下的注释、3 层带自动 ID 的 `<g>`，外加 4 个 `<defs>` 里没人引用的渐变。真正的图标内容只是一个 90 字节的 path。
+
+SVG 在所有图像格式里很特殊——文件本身就是源代码。每个导出工具（Illustrator、Figma、Sketch、Inkscape）都会留下指纹，但和 JPEG / PNG 不同，这些指纹是可寻址的：读得到、删得掉，而且可以确定性地处理。这正是 [SVGO](https://svgo.dev/) 在做的事。ZeroTool 的 [SVG 压缩优化工具](/zh/tools/svg-optimizer/) 就是把 SVGO 跑在你的浏览器里，加上一组面板，专门照顾那些你最容易拿不准的插件决策。
+
+这篇指南讲清楚 SVGO 真正会去掉什么、哪两个插件会在生产里悄悄把图标搞坏、`<style>` 和 `<script>` 块要怎么处理，以及如何把你在浏览器里调好的配置直接接入打包器或 CI。
+
+## 字节藏在哪
+
+Figma 导出的一个 24×24 图标大致长这样：
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <!-- exported from Figma 2026.5 -->
+  <g id="icon">
+    <g id="path-group">
+      <path id="Vector"
+            d="M11.99999 2.00001 L21.99999 12.00001 L11.99999 22.00001 L2.00001 12.00001 L11.99999 2.00001 Z"
+            stroke="#000000" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>
+```
+
+这八行里至少藏着 6 处可以优化掉的字节：
+
+| 内容 | 由谁负责 |
+|---|---|
+| 声明了但完全没用上的 `xmlns:xlink` | `removeUnusedNS` |
+| 设计师注释 | `removeComments` |
+| 自动生成且无人引用的 `id="icon" / id="path-group" / id="Vector"` | `cleanupIds` |
+| 两层没有任何属性可保留的 `<g>` 包裹 | `collapseGroups` |
+| 把 `2.000` 这样的 stroke-width 写成 `2` | `cleanupNumericValues` |
+| `11.99999` 这种浮点尾巴 | `cleanupNumericValues` 配合 `floatPrecision: 3` |
+| `#000000` 缩成 `#000`（甚至改成 `currentColor` 让图标可换色） | `convertColors` |
+
+`preset-default` 这个集合默认就把上面这些都打开。把同一份 SVG 丢进 SVG 压缩优化工具，按默认 toggle 跑一遍，输出大约会是：
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m12 2 10 10-10 10L2 12 12 2Z"/></svg>
+```
+
+700 字节左右压成 200 字节左右——手写或设计工具导出的 SVG 通常都能拿到这种数量级的减重。已经在生产里被 minify 过的图标缩得少很多，往往 5%–15%，因为容易摘的果子上游已经摘走了。
+
+## `preset-default` 实际跑了哪些插件
+
+当你在面板里勾着默认那 8 个主 toggle、没有动「显示全部 34 插件」面板，点击 **压缩 SVG**，SVGO 会按下面这个顺序跑完 `preset-default`（基于 `svgo@4.0.1` 实测）：
+
+```
+removeDoctype          removeXMLProcInst        removeComments
+removeDeprecatedAttrs  removeMetadata           removeEditorsNSData
+cleanupAttrs           mergeStyles              inlineStyles
+minifyStyles           cleanupIds               removeUselessDefs
+cleanupNumericValues   convertColors            removeUnknownsAndDefaults
+removeNonInheritableGroupAttrs                  removeUselessStrokeAndFill
+cleanupEnableBackground removeHiddenElems       removeEmptyText
+convertShapeToPath     convertEllipseToCircle   moveElemsAttrsToGroup
+moveGroupAttrsToElems  collapseGroups           convertPathData
+convertTransform       removeEmptyAttrs         removeEmptyContainers
+mergePaths             removeUnusedNS           sortAttrs
+sortDefsChildren       removeDesc
+```
+
+绝大多数插件是按构造就安全的——只删除规范定义为「视觉无副作用」的内容。但有 3 个值得拿出来单说，因为它们可能以一种不那么显然的方式改变渲染结果，问题往往要等到上线之后才被发现。
+
+**`inlineStyles`** 把 `<style>` 块里的规则搬到元素属性上。一段 5 行、目标是 3 个 class 的 stylesheet，会被改写成 3 个带内联 `fill`、`stroke`、`opacity` 属性的元素。如果这个图标本来就是要内嵌进 HTML、靠 `currentColor` 控色，这正是你想要的；但如果你有个外部 stylesheet 期待运行时用 `.icon-primary { fill: red; }` 覆盖颜色——抱歉，那个选择器现在什么都匹配不到，class 早就没了。
+
+**`convertPathData`** 重写每条 path 的 `d` 属性，用更短的命令和相对坐标。这一步在精度边界上是有损的：贝塞尔控制点上 0.001 单位的偏差，到大尺寸渲染时可能变成肉眼可见的曲线差异。默认 `floatPrecision: 3` 给图标级别的尺寸够用了；如果是 hero 插画要在 2000 px 宽的位置渲染，提到 4 或 5 更稳。
+
+**`cleanupIds`** 会去掉那些没被同文件内的 `<use>`、`<style>` 或其他 `url(#…)` 引用的 ID。如果你的图标作为 sprite sheet 的一部分，外部文件用 `#icon-name` 引用它——SVGO 看不到那条引用，会把 ID 直接删掉。处理 sprite 源文件时要么主面板关掉 `cleanupIds`，要么去「显示全部 34 插件」面板里反勾它。
+
+## 两个会破坏响应式的 toggle
+
+主面板这 8 个 toggle 的排列是有意为之的：前 6 个是你几乎不会去动的安全默认，剩下那两个值得单独警告的——**去 viewBox** 和 **去 width/height**——故意放在第二行。
+
+它们默认都是关的，旁边带一个警告标记。它们确实是优化项，但根据你的嵌入方式，它们也可以让一个图标彻底失效。
+
+`viewBox="0 0 24 24"` 是 SVG 在说「这张图内部的坐标系是 24 单位宽 × 24 单位高」。一旦把它去掉，没有显式 `width` / `height` 的 SVG 会回退到 300×150 像素（user-agent 默认尺寸）；带了 width/height 但没 viewBox 的 SVG 完全无法缩放，坐标系被锁死在那个像素尺寸上。把一个 24×24 图标的 viewBox 去掉，再嵌到 200×200 的容器里——你看到的不是左上角的小图标，就是被父级 `display` 模式拉成一团乱码。
+
+只有当你**完全控制每一个嵌入点**、并且新的坐标系会在下游某处被重新建立时，去掉 viewBox 才是安全的——比如 sprite 源文件里的 `<symbol>` 元素自己还带着 `viewBox`，或者你的构建流水线会用全新的 `<svg viewBox=…>` 把这段 markup 包起来。在仔细审过的这几种场景之外，留着它。
+
+`width` 和 `height` 属性的情况类似但稍微温和一些。把它们删掉，SVG 会从父元素继承渲染框——大多数 CSS 布局里没问题；但当 SVG 通过 `<img src="icon.svg">` 加载时就翻车（任何没有内在尺寸的图像，浏览器都会回退到 300×150，显式 `width` / `height` 是设置内在尺寸最干净的办法）。
+
+如果你不确定自己的嵌入上下文是不是安全的——两个都关掉。省下 20 字节的 `width="24" height="24"` 不值得让一个图标页崩了。
+
+## 内联 `<style>` 与 CSS class
+
+`inlineStyles + minifyStyles` 这套默认行为对最常见的场景（颜色跟 `currentColor` 走、或者用内联 `fill` 覆盖）是对的。它对第二常见的场景（SVG 和外部 CSS 一起分发、外部 CSS 通过 class 给它上色）就不对了。
+
+如果你需要保留 class 钩子，去「显示全部 34 插件」面板里把 `inlineStyles` 和 `minifyStyles` 都关掉。输出会原样保留 `<style>` 块和 class 属性：
+
+```xml
+<svg ... ><style>.brand{fill:#5b8def}</style><path class="brand" d="..."/></svg>
+```
+
+要注意：你的打包器里的 CSS minify 可能会再来一刀对那个 `<style>` 块做一次压缩，所以你这里跳过的字节会从打包流程里回来。class 内联从头到尾都活着的唯一情形——SVGO 是你打包链上唯一的 style-aware 工具。
+
+## 优化反而变大的情况
+
+很罕见但真有可能：SVGO 输出比输入还大。最常见的一种：
+
+**已经被 minify 过、只有一条短 path 的 SVG。** 如果文件本身只有 80 字节、大头都是 `<svg>` 开标签，`convertPathData` 重写 path 时可能多 4–8 字节相对坐标，其他地方又一个字节也没省。面板会在结果卡片上诚实地用红色 `+X% larger` 标出来。看到这种情况，答案就是别动它——再优化一个已优化过的图标没意义。
+
+Multipass 的逻辑是反复跑插件链，直到字节数不再减少。如果字节比例一直贴在边界上，把 multipass 关掉、接受单次的结果就好。
+
+另外有个相关陷阱：**面板上看到的字节数不是 CDN 真正发出去的体积。** 现代 CDN 会对文本响应做 Brotli 或 gzip 压缩。SVG markup 重复度极高，wire size 通常只有面板显示的 30%–50%。但你还是要按 markup 大小优化——每去掉一个字节，文件落地之后解析器就少读一个字节。
+
+## Sprite sheet、`<use>` 与外部引用
+
+SVG 比较常见的一种分发模式：单个 sprite 文件里一组 `<symbol id="icon-foo">`，HTML 里用 `<svg><use href="sprite.svg#icon-foo"></use></svg>` 引用。SVGO 历史上对 sprite 源文件不太友好——从 sprite 内部看像是没人引用的 ID，从 sprite 外部看其实被引用得很。
+
+实操两条规则：
+
+- **对 sprite 源文件本身**：主面板里反勾 `cleanupIds`；如果 sprite 用了 `xlink:href`，再去高级面板把 `removeUnusedNS` 也关掉。
+- **对那些会被打成 sprite 的单图标 SVG**：默认配置就行。后续合并 sprite 的工具会自己重写 ID。
+
+`<use href="external-file.svg#id">` 这种外部引用 SVGO 会保留——URL 和 fragment 都不会被改。
+
+## 集成到构建流程
+
+一旦你在面板里调出一组对项目合适的插件组合，你会想把同一份配置放到 CI，而不是每次新加图标都到面板里手动跑一遍。两种典型用法：
+
+**Vite / webpack 配 `vite-plugin-svgo` 或 `svgo-loader`：**
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite'
+import svgo from 'vite-plugin-svgo'
+
+export default defineConfig({
+  plugins: [
+    svgo({
+      multipass: true,
+      floatPrecision: 3,
+      plugins: [
+        {
+          name: 'preset-default',
+          params: {
+            overrides: {
+              cleanupIds: false,        // 保留 ID 给运行时 CSS 钩子
+              removeViewBox: false,     // 构建流水线里永远不要去掉 viewBox
+            },
+          },
+        },
+      ],
+    }),
+  ],
+})
+```
+
+**单独跑 CLI 给 CI 或 pre-commit hook：**
+
+```bash
+npm install --save-dev svgo
+npx svgo --config svgo.config.js -f assets/icons -o assets/icons.optimized
+```
+
+把面板里调好的配置存到仓库根的 `svgo.config.js`：
+
+```js
+// svgo.config.js
+export default {
+  multipass: true,
+  floatPrecision: 3,
+  plugins: [
+    {
+      name: 'preset-default',
+      params: {
+        overrides: {
+          cleanupIds: false,
+          removeViewBox: false,
+        },
+      },
+    },
+  ],
+}
+```
+
+面板里固定 `svgo@4.0.1`，如果你 CI 也安装 `svgo@^4.0.0` 跑同一组 overrides，字节数会在四舍五入误差内对齐；SVGO 的 minor 版本偶尔会把某个插件再收紧几字节，所以严格复现的场景里把版本钉死。
+
+## 与 SVGOMG 等工具的差异
+
+浏览器端 SVG 优化器生态已经收敛到几个选择。Jake Archibald 的 [SVGOMG](https://jakearchibald.github.io/svgomg/) 是经典实现——同样的 SVGO 内核、同样的插件管线，仅英文，没有设计系统约束。[SVGcrop](https://svgcrop.com/) 处理「按内容裁剪 viewBox」是相关但独立的一个问题。Sketch 插件如 [SVGO Compressor](https://www.sketch.com/extensions/plugins/svgo-compressor/) 和打包器插件如 `vite-plugin-svgo` 把优化步骤推到了导出或构建阶段。
+
+ZeroTool 的优化器有意做了 3 个不一样的选择：
+
+- **SVGO 版本钉到 4.0.1**。用刚释出的上游版本意味着 SVGOMG 调好的配置和 ZeroTool 调好的配置都落在同一套插件参数校验、同一份 `convertPathData` 启发式、同一个 `removeDeprecatedAttrs` pass 上。
+- **8 个主 toggle 而不是默认全展示 34 个**。完整的 `preset-default` 都暴露在那里，但驱动绝大多数日常决策的 8 个住在主面板里。是否保留 `viewBox` 是天天要做的判断；是否保留 `<sodipodi:namedview>` 不是。
+- **英 / 中 / 日 / 韩四语原生界面**。插件名字保持英文（它们是你最终要粘进 `svgo.config.js` 的那些 SVGO 配置 key），但每一个标签、状态、FAQ 都本地化。
+
+「单文件」是一个有意识的范围限定。批量优化、自定义插件编写、watch 模式管线、CI 集成都属于 SVGO 命令行的领地——在面板里调好一个图标，把配置原样搬到上游。
+
+## 延伸阅读
+
+- [SVGO 官方文档](https://svgo.dev/) — 每个插件及其参数的标准参考。
+- [Sara Soueidan 写的 SVG 创作与导出建议](https://www.sarasoueidan.com/blog/svg-tips-for-designers/) — 设计师可以怎么帮 SVGO 做事更轻松。
+- [Chris Coyier 的内联 SVG 指南](https://css-tricks.com/lodge/svg/) — 什么时候 inline、什么时候用 `<img>`、什么时候做 sprite。
+- ZeroTool 的 [SVG 转 PNG 工具](/zh/tools/svg-to-png-converter/)：当目标位置无法渲染 SVG（老旧邮件客户端、某些 CMS 图片字段）时使用。
+- ZeroTool 的 [SVG 转 JSX 工具](/zh/tools/svg-to-jsx/)：把优化后的图标变成一个 React 组件。

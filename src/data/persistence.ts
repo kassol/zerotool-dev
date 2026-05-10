@@ -15,6 +15,7 @@ export const toolPersistencePolicy = {
   'css-filter-generator': 'preference',
   'timezone-converter': 'preference',
   'csp-header-generator': 'preference',
+  'svg-optimizer': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)
