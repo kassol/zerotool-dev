@@ -1,0 +1,183 @@
+---
+title: "PKCE 生成器：把 OAuth 授权码流程接对的实战指南"
+description: "在浏览器里生成 code_verifier 与 code_challenge，正确接入 /authorize 与 /token，并躲开会让移动端与 SPA 登录静默失败的四个 PKCE 坑。"
+pubDate: 2026-05-11
+updatedDate: 2026-05-11
+lang: "zh"
+tags: ["oauth", "pkce", "authentication", "security", "developer-tools"]
+---
+
+你接手了一个昨天还跑得好好的授权码流程。同事周末升级了一版移动 SDK，今天每台新设备登录都报 `invalid_grant`，但 Web 端正常。服务端日志显示 `/token` 调用没带 `code_verifier`。打开 SDK changelog 才发现：上游库把原来悄悄存着的 client secret 换成了 PKCE，本想做"无感迁移"。移动同学没注意到，是因为测试机还有缓存的 session。等问题被发现，团队已经在工位上吵了三个小时——SHA-256 到底是 verifier 还是 challenge。
+
+PKCE 全称 Proof Key for Code Exchange，是 OAuth 的扩展，让那些**身上没有 server secret 的客户端**也能证明授权请求是自己发起的。RFC 7636 在 2015 年为移动和原生应用引入，到了 OAuth 2.1 已经被推到所有客户端、所有场景都必须用。机制小得能一段话讲清，又容易写错——错得能通过 happy-path 测试，等真实客户端第一次重试就崩盘。ZeroTool 的 [PKCE 生成器](/zh/tools/pkce-generator/) 在你的浏览器里就把这对值算好，同时给出 `/authorize` URL 与 `/token` 交换的 `curl` 命令，遇到不符合 RFC 字符集的 verifier 还会拒绝计算 challenge。
+
+## PKCE 到底干了什么
+
+标准 OAuth 2.0 授权码流程长这样：用户在你的客户端里点"用 Acme 登录"，你把他重定向到 `https://acme.example/authorize`，附上 `client_id` 与 `redirect_uri`。用户登录后，Acme 把他带回你的 `redirect_uri`，URL 上挂着一个不透明的 `code`。客户端后端拿这个 code 去 `https://acme.example/token` 换 access token，认证方式是你和 Acme 之间共享的 `client_secret`。
+
+软肋在重定向那一步。移动平台上，任何人都能注册一个 `myapp://callback` 的处理器；SPA 里这个 code 短暂地出现在 `window.location`，任何能读 URL 的扩展或脚本都看得见。如果攻击者在你客户端用 code 之前截到了它，又知道你的 `client_id`，他完全可以替你完成 token 交换。
+
+PKCE 把这个漏洞堵上了。客户端在跳转到 `/authorize` 之前，先生成一个随机 secret 叫 `code_verifier`，对它做 SHA-256，再 base64url 编码得到 `code_challenge`。`/authorize` 请求带的是 challenge——**不是** verifier。服务端把 challenge 跟签发的 code 绑在一起。等客户端拿着 code 来 `/token` 时，把原始 `code_verifier` 也送上去。服务端再哈希一次，确认匹配。截到 code 的攻击者从来没看过 verifier，根本伪造不出第二段请求。
+
+verifier 是 secret，challenge 是公开承诺。两者配起来，让"截 code"攻击失效——因为完成交换的第二步需要一份从未在网络上出现过的知识。
+
+## 五种现在就需要 PKCE 的场景
+
+| 客户端类型 | 为什么需要 PKCE | `/token` 端点认证方式 |
+|---|---|---|
+| 原生移动 App（iOS / Android） | 没法安全保存 `client_secret`，RFC 7636 的原始场景 | 仅 `code_verifier`——public client |
+| SPA（React / Vue / SvelteKit 已 hydrate） | 浏览器里同样的问题，JS 里任何东西都对扩展和 devtools 透明 | 仅 `code_verifier`——public client |
+| 带本地 callback server 的 CLI 工具 | `http://127.0.0.1:PORT` 这种 loopback 重定向，本地任何进程都能劫持 | 仅 `code_verifier`——public client |
+| 桌面应用（Electron / 原生） | URL handler 可以系统级注册 | 仅 `code_verifier` |
+| Confidential Web App（服务端渲染） | OAuth 2.1 要求**每个**客户端都用 PKCE，即便服务端有 secret 也要做深度防御 | `code_verifier` **加** `client_secret` |
+
+最后一行是很多团队从 OAuth 2.0 升 2.1 时最容易踩的坑。哪怕你那个手握 server `client_secret` 的 Express 后端，2.1 时代也要带 PKCE。威胁模型假定 secret 可能泄漏；PKCE 是不依赖该秘密的第二层保险。
+
+## 走一遍工坊
+
+打开 [PKCE 生成器](/zh/tools/pkce-generator/)，脚本一跑，页面就把 verifier 渲出来了。默认 64 个字符，来自 RFC 7636 §4.1 规定的 `[A-Z a-z 0-9 - . _ ~]` 字符集。点 **重新生成** 立刻换一组，challenge 同一帧重算。
+
+verifier 下面是 **Challenge 方法** 那一行，两个 pill。`S256` 默认选中，`plain` 这个 pill 之所以存在，是因为 RFC 7636 允许那些算不了 SHA-256 的客户端用它——但现代任何主流 OAuth 提供方都默认拒绝 `plain`，OAuth 2.1 干脆禁止新部署用。选 `S256`，把另一个忘掉。
+
+**Code Challenge** 卡片显示的就是真正发到 `/authorize` 的值，从这里复制。每次重新生成尾巴几位都不一样——这是新 verifier 的新哈希。
+
+底部两个 `<details>` 面板给你可复制的预览。**Authorization URL preview** 让你把授权端点、client_id、redirect_uri 填进 URL 模板，生成完整的 `/authorize` URL：含 `response_type=code`、当前 challenge、`code_challenge_method=S256`、占位 `state`、`scope=openid profile`。把这串贴到浏览器地址栏就能模拟流程第一段，登录后从重定向 URL 里捞 `code`。
+
+**Token exchange (cURL)** 生成对应的 `/token` 请求。注意 `code_verifier` body 参数里塞的是页面生成的那串随机串，**不是 challenge**。把 `AUTHORIZATION_CODE_FROM_REDIRECT` 换成刚才捞到的真实值，跑命令。verifier 和 challenge 对得上、code 没过期，provider 就会返回 access token。对不上就是 `invalid_grant`——和生产环境里 PKCE 接错时一模一样的报错，正是这套工坊要帮你定位的故障。
+
+## 密码学就那几行
+
+四行真正起作用的代码，可以念出来听。
+
+```js
+// 1. 生成随机 verifier
+const bytes = new Uint8Array(32);
+crypto.getRandomValues(bytes);
+const verifier = base64url(bytes);   // 32 字节 → 43 字符
+
+// 2. 哈希为 challenge
+const data = new TextEncoder().encode(verifier);
+const hash = await crypto.subtle.digest('SHA-256', data);
+const challenge = base64url(new Uint8Array(hash));   // 32 字节 → 43 字符
+
+function base64url(bytes) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+```
+
+这样产出的 verifier 长度永远是 43——32 字节按无 padding 的 base64 编码刚好 43 字符。RFC 7636 允许 43~128 字符，所以 43 是合法下限。ZeroTool 默认 64 字符是因为多一些熵成本很低，而部分 provider 会对"太短的 token"做些奇怪的拒绝。
+
+哈希用的是 [SubtleCrypto](https://developer.mozilla.org/zh-CN/docs/Web/API/SubtleCrypto/digest)，Web Crypto API 的一部分，只要页面走 HTTPS，现代浏览器都能用。如果检测不到 `crypto.subtle`（一般是有人用 `http://` 打开了页面），工具会拒绝运行，状态行直接提示换 HTTPS。
+
+Base64url 是 base64 的小改版：`+` 换 `-`，`/` 换 `_`，结尾的 `=` padding 全剥掉。RFC 7636 指定这个格式，所有按规范实现的 provider 也只认这个。**这里最常见的静默 bug 就是编码错位**——标准 `btoa()` 产出的 base64 含 `+` 和 `/`，遇到严格校验 challenge 字符集的 provider，请求会被拒，错误信息基本一句话讲不清。
+
+## 五个会让登录静默失败的错
+
+**1. 把 challenge 当 verifier 送到 `/token`。** `/authorize` 收 challenge，`/token` 收 verifier。它俩都是 43 字符的 base64url 字符串，调错了肉眼看不出来。我经手过的所有 PKCE 故障单，最后追溯都是这个。口诀：challenge 是你**公开承诺**的那串，verifier 是你**私下持有**要证明的那串。
+
+**2. `code_challenge_method` 前后不一致。** `/authorize` 上声明 `S256`，但客户端忘了在本地做 SHA-256，把原始 verifier 当 challenge 送过去？服务端会对你 `/token` 时送的 verifier 算哈希，再跟你"刚才那个原始 verifier"比对，自然对不上。要么把 method 在两段请求里都串好，要么干脆全局默认 S256，永远别再看它一眼。
+
+**3. 跨次重试复用 verifier。** 每一次授权流程都该有自己的 verifier/challenge 对。如果用户取消了授权同意页、你重发 `/authorize`，要起一个新的 verifier——服务端有可能把你上一次发起、自己已经放弃的 verifier 记在那里。
+
+**4. verifier 存得不安全。** SPA 用 `localStorage` 是务实选择——verifier 寿命只有几分钟，威胁模型本就假定能控制你 JS 的攻击者干什么都行。原生 App 走平台安全存储（iOS Keychain、Android EncryptedSharedPreferences），别明文落盘。
+
+**5. 嫌 S256 麻烦改用 `plain`。** 上面那五行就是 S256 的完整实现。每个 OAuth 库都内置了它。Okta、Auth0、Keycloak、Cognito、Spotify、Google 这些 provider 对新注册的 client 都拒绝 `plain`。2026 年没有任何场景该选 `plain`。
+
+## 接主流 provider 怎么接
+
+`code_challenge` 的参数和请求形态在所有 provider 之间是一样的——RFC 7636 标准化了。差异只在注册环节：要不要勾"公共客户端"或"允许 PKCE"、能接受哪些 `redirect_uri` scheme。
+
+**Auth0** 把 PKCE 当透明特性。把应用注册成 Native 或 Single Page Application、启用 Authorization Code Grant，Auth0 自动期望 `code_challenge`。端点是 `https://YOUR_TENANT.auth0.com/authorize` 与 `https://YOUR_TENANT.auth0.com/oauth/token`。
+
+**Okta** 要求在应用 General Settings 标签下打开 `Use PKCE`。端点是 `https://YOUR_OKTA_DOMAIN/oauth2/v1/authorize` 与 `https://YOUR_OKTA_DOMAIN/oauth2/v1/token`。Confidential Web App 即便有 `client_secret`，按 OAuth 2.1 建议也应继续带 `code_verifier`。
+
+**Keycloak** 在 OpenID Connect 客户端设置里逐 client 开 PKCE，把 `Proof Key for Code Exchange Code Challenge Method` 设成 `S256`。端点跟 realm 走：`https://YOUR_KEYCLOAK/realms/YOUR_REALM/protocol/openid-connect/{authorize,token}`。
+
+**AWS Cognito** 对 Public Client（无 secret）支持 PKCE。Hosted UI 在 `https://YOUR_DOMAIN.auth.us-west-2.amazoncognito.com/login`，token 端点是 `/oauth2/token`。
+
+**Spotify** 在没有后端的纯前端 Authorization Code Flow 上**要求**用 PKCE，文档见 [Authorization Code with PKCE Flow](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)。它后台没有单独的 "Enable PKCE" 开关，直接把参数发过去就行。
+
+## 三段代码上手
+
+Python，使用 `requests`：
+
+```python
+import base64, hashlib, secrets, requests
+
+verifier = secrets.token_urlsafe(64)[:64]
+challenge = base64.urlsafe_b64encode(
+    hashlib.sha256(verifier.encode()).digest()
+).rstrip(b"=").decode()
+
+# 1. 把用户跳到 /authorize，带上 challenge
+# 2. 在 redirect_uri 上收到 code
+# 3. 用 verifier 换 token：
+response = requests.post(
+    "https://acme.example/token",
+    data={
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": "https://yourapp.example/callback",
+        "client_id": "YOUR_CLIENT_ID",
+        "code_verifier": verifier,
+    },
+)
+```
+
+JavaScript / TypeScript（浏览器）：
+
+```ts
+const bytes = crypto.getRandomValues(new Uint8Array(32));
+const verifier = base64url(bytes);
+const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+const challenge = base64url(new Uint8Array(hash));
+
+sessionStorage.setItem('pkce_verifier', verifier);
+
+const authUrl = `https://acme.example/authorize?` + new URLSearchParams({
+  response_type: 'code',
+  client_id: 'YOUR_CLIENT_ID',
+  redirect_uri: 'https://yourapp.example/callback',
+  code_challenge: challenge,
+  code_challenge_method: 'S256',
+  state: crypto.randomUUID(),
+});
+location.href = authUrl;
+
+function base64url(bytes: Uint8Array) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+```
+
+Bash，拿到 code 之后跑 `/token`：
+
+```bash
+curl -X POST https://acme.example/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code" \
+  -d "code=$AUTHORIZATION_CODE" \
+  -d "redirect_uri=https://yourapp.example/callback" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "code_verifier=$CODE_VERIFIER"
+```
+
+## 浏览器端生成器为什么值得做
+
+公网上的 PKCE 生成器多数都把密码学放在 JS 里——那部分本来就简单。差别在于工具周围还配套了什么。
+
+`tonyxu-io.github.io/pkce-generator` 是事实上的参考实现：UI 极简、输出准确、只有英文，是大家都收藏的那一个。Ping Identity 的 [PKCE Code Generator](https://developer.pingidentity.com/en/tools/pkce-code-generator.html) 是同样的东西套了一层 Ping 品牌。`oauth.com/playground` 互动性强但会拉自己的测试 issuer 跑完整 round trip，学概念时好用、调你自己的 provider 就重了。它们都不给你 `/token` 这一段的 `curl` 命令，也都没有中日韩三语版本。
+
+ZeroTool 这只工具补的缺口是：把生成器和可粘贴的 `/token` `curl` 直接绑在一起，让你能把交换重放到你真正的 provider 上；对 verifier 字符集做实时校验；同一个界面四语言呈现。verifier 每次页面加载都会重新生成，绝不写进 `localStorage`——持久化策略标的就是 `disabled`。两次调试之间刷新 tab，上一次的 verifier 就消失了，和真实 OAuth helper 该有的"无状态"行为对得上。
+
+## 延伸阅读
+
+- [RFC 7636 — Proof Key for Code Exchange](https://datatracker.ietf.org/doc/html/rfc7636) — 原始规范
+- [OAuth 2.1 draft](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) — 把 PKCE 设为强制的合并版
+- [Web Crypto API：SubtleCrypto.digest](https://developer.mozilla.org/zh-CN/docs/Web/API/SubtleCrypto/digest) — MDN 中文 SHA-256 调用参考
+- [JWT 解码器](/zh/tools/jwt-decoder/) — 检查 PKCE 交换成功后 `/token` 返回的 access token
+- [JWT 生成器](/zh/tools/jwt-generator/) — 自己签 HS256 token，测资源服务器
+- [哈希生成器](/zh/tools/hash-generator/) — 手算 SHA-256 / SHA-384 / SHA-512，需要校验非 PKCE 的 challenge 时用得上
