@@ -118,6 +118,7 @@ import AiTokenCounterTool from './AiTokenCounterTool.astro';
 import CspHeaderGeneratorTool from './CspHeaderGeneratorTool.astro';
 import SvgOptimizerTool from './SvgOptimizerTool.astro';
 import PkceGeneratorTool from './PkceGeneratorTool.astro';
+import SslCertificateDecoderTool from './SslCertificateDecoderTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -236,4 +237,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'csp-header-generator': CspHeaderGeneratorTool,
   'svg-optimizer': SvgOptimizerTool,
   'pkce-generator': PkceGeneratorTool,
+  'ssl-certificate-decoder': SslCertificateDecoderTool,
 };

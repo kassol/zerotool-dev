@@ -1,0 +1,1186 @@
+---
+// SslCertificateDecoderTool — X.509 PEM certificate decoder
+// 100% client-side: ASN.1 DER parser + Web Crypto fingerprints, no dependencies.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+---
+
+<div>
+  <div class="scd-wrap">
+    <div class="scd-input-section">
+      <label for="scd-input" class="tool-label">
+        <span data-i18n="pasteLabel">Paste PEM Certificate</span>
+      </label>
+      <textarea
+        id="scd-input"
+        class="tool-textarea scd-input"
+        rows="9"
+        placeholder="-----BEGIN CERTIFICATE-----&#10;MIIFazCCA1OgAwIBAgIRAIIQ...&#10;-----END CERTIFICATE-----"
+        data-i18n-placeholder="placeholder"
+        spellcheck="false"
+        autocomplete="off"
+      ></textarea>
+    </div>
+
+    <div class="scd-actions">
+      <button id="scd-decode" class="btn-primary" type="button" data-i18n="decode">Decode</button>
+      <button id="scd-example" class="btn-ghost" type="button" data-i18n="loadExample">Load Example</button>
+      <button id="scd-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="scd-status" class="tool-status none" aria-live="polite"></div>
+
+    <div id="scd-results" class="scd-results" hidden></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          pasteLabel: 'Paste PEM Certificate', decode: 'Decode', loadExample: 'Load Example', clear: 'Clear',
+          placeholder: '-----BEGIN CERTIFICATE-----\nMIIFazCCA1OgAwIBAgIRAIIQ...\n-----END CERTIFICATE-----',
+          copy: 'Copy', copied: 'Copied!',
+          decoded: 'Decoded successfully.',
+          bundleNotice: 'Found {n} certificates — showing certificate #1.',
+          errEmpty: 'Please paste a PEM certificate.',
+          errNoMarkers: 'No -----BEGIN CERTIFICATE----- marker found. DER binary input is not supported — convert with: openssl x509 -inform DER -in cert.der -out cert.pem',
+          errBase64: 'Unable to Base64-decode the certificate body.',
+          errAsn1: 'Unable to parse ASN.1 structure: ',
+          errUnexpected: 'Unexpected decoder error: ',
+          sectionValidity: 'Validity', sectionSubject: 'Subject', sectionIssuer: 'Issuer',
+          sectionPublicKey: 'Public Key', sectionSan: 'Subject Alternative Names',
+          sectionUsage: 'Key Usage', sectionEku: 'Extended Key Usage',
+          sectionConstraints: 'Basic Constraints', sectionSignature: 'Signature',
+          sectionFingerprints: 'Fingerprints', sectionIdentity: 'Identity',
+          sectionCrl: 'CRL Distribution Points', sectionAia: 'Authority Information Access',
+          labelNotBefore: 'Not Before', labelNotAfter: 'Not After', labelStatus: 'Status',
+          labelDaysLeft: 'Days Left', labelAlgorithm: 'Algorithm', labelKeySize: 'Key Size',
+          labelExponent: 'Exponent', labelCurve: 'Curve', labelSignatureAlgo: 'Signature Algorithm',
+          labelSerial: 'Serial Number', labelVersion: 'Version',
+          labelCa: 'Certificate Authority', labelPathLen: 'Path Length',
+          labelSki: 'Subject Key ID', labelAki: 'Authority Key ID',
+          statusValid: 'Valid', statusExpired: 'Expired', statusFuture: 'Not yet valid',
+          statusSoon: 'Expires in {n} days', statusYes: 'Yes', statusNo: 'No',
+          critical: 'critical',
+        },
+        zh: {
+          pasteLabel: '粘贴 PEM 证书', decode: '解码', loadExample: '加载示例', clear: '清除',
+          placeholder: '-----BEGIN CERTIFICATE-----\nMIIFazCCA1OgAwIBAgIRAIIQ...\n-----END CERTIFICATE-----',
+          copy: '复制', copied: '已复制！',
+          decoded: '解码成功。',
+          bundleNotice: '检测到 {n} 张证书 — 展示第 1 张。',
+          errEmpty: '请粘贴 PEM 证书。',
+          errNoMarkers: '未找到 -----BEGIN CERTIFICATE----- 标记。本工具不直接支持 DER 二进制，请先用 openssl x509 -inform DER -in cert.der -out cert.pem 转换。',
+          errBase64: '无法对证书正文进行 Base64 解码。',
+          errAsn1: '无法解析 ASN.1 结构：',
+          errUnexpected: '解码异常：',
+          sectionValidity: '有效期', sectionSubject: '主题（Subject）', sectionIssuer: '颁发者（Issuer）',
+          sectionPublicKey: '公钥', sectionSan: 'Subject Alternative Names',
+          sectionUsage: 'Key Usage', sectionEku: 'Extended Key Usage',
+          sectionConstraints: 'Basic Constraints', sectionSignature: '签名',
+          sectionFingerprints: '指纹', sectionIdentity: '标识',
+          sectionCrl: 'CRL 分发点', sectionAia: 'Authority Info Access',
+          labelNotBefore: '生效时间', labelNotAfter: '到期时间', labelStatus: '状态',
+          labelDaysLeft: '剩余天数', labelAlgorithm: '算法', labelKeySize: '密钥长度',
+          labelExponent: '公钥指数', labelCurve: '曲线', labelSignatureAlgo: '签名算法',
+          labelSerial: '序列号', labelVersion: '版本',
+          labelCa: '是否 CA', labelPathLen: 'Path Length',
+          labelSki: 'Subject Key ID', labelAki: 'Authority Key ID',
+          statusValid: '有效', statusExpired: '已过期', statusFuture: '尚未生效',
+          statusSoon: '{n} 天后到期', statusYes: '是', statusNo: '否',
+          critical: 'critical',
+        },
+        ja: {
+          pasteLabel: 'PEM 証明書を貼り付け', decode: 'デコード', loadExample: 'サンプル読込', clear: 'クリア',
+          placeholder: '-----BEGIN CERTIFICATE-----\nMIIFazCCA1OgAwIBAgIRAIIQ...\n-----END CERTIFICATE-----',
+          copy: 'コピー', copied: 'コピー済み！',
+          decoded: 'デコードしました。',
+          bundleNotice: '{n} 件の証明書を検出 — 1 番目を表示します。',
+          errEmpty: 'PEM 証明書を貼り付けてください。',
+          errNoMarkers: '-----BEGIN CERTIFICATE----- マーカーが見つかりません。DER バイナリは直接対応していません。openssl x509 -inform DER -in cert.der -out cert.pem で変換してください。',
+          errBase64: '証明書本体を Base64 デコードできませんでした。',
+          errAsn1: 'ASN.1 構造を解析できません：',
+          errUnexpected: 'デコードエラー：',
+          sectionValidity: '有効期間', sectionSubject: 'Subject', sectionIssuer: 'Issuer',
+          sectionPublicKey: '公開鍵', sectionSan: 'Subject Alternative Names',
+          sectionUsage: 'Key Usage', sectionEku: 'Extended Key Usage',
+          sectionConstraints: 'Basic Constraints', sectionSignature: '署名',
+          sectionFingerprints: 'フィンガープリント', sectionIdentity: 'Identity',
+          sectionCrl: 'CRL 配布ポイント', sectionAia: 'Authority Info Access',
+          labelNotBefore: 'Not Before', labelNotAfter: 'Not After', labelStatus: 'ステータス',
+          labelDaysLeft: '残り日数', labelAlgorithm: 'アルゴリズム', labelKeySize: '鍵長',
+          labelExponent: 'Exponent', labelCurve: '曲線', labelSignatureAlgo: '署名アルゴリズム',
+          labelSerial: 'シリアル番号', labelVersion: 'バージョン',
+          labelCa: 'CA 証明書', labelPathLen: 'Path Length',
+          labelSki: 'Subject Key ID', labelAki: 'Authority Key ID',
+          statusValid: '有効', statusExpired: '期限切れ', statusFuture: 'まだ有効ではない',
+          statusSoon: '残り {n} 日で期限切れ', statusYes: 'はい', statusNo: 'いいえ',
+          critical: 'critical',
+        },
+        ko: {
+          pasteLabel: 'PEM 인증서 붙여넣기', decode: '디코드', loadExample: '예시 불러오기', clear: '지우기',
+          placeholder: '-----BEGIN CERTIFICATE-----\nMIIFazCCA1OgAwIBAgIRAIIQ...\n-----END CERTIFICATE-----',
+          copy: '복사', copied: '복사됨!',
+          decoded: '디코딩 완료.',
+          bundleNotice: '{n}개의 인증서가 감지됨 — 첫 번째 인증서 표시.',
+          errEmpty: 'PEM 인증서를 붙여넣어 주세요.',
+          errNoMarkers: '-----BEGIN CERTIFICATE----- 마커를 찾을 수 없습니다. DER 바이너리는 직접 지원하지 않습니다. openssl x509 -inform DER -in cert.der -out cert.pem 로 변환해 주세요.',
+          errBase64: '인증서 본문을 Base64 디코딩할 수 없습니다.',
+          errAsn1: 'ASN.1 구조를 파싱할 수 없습니다: ',
+          errUnexpected: '디코딩 오류: ',
+          sectionValidity: '유효 기간', sectionSubject: 'Subject', sectionIssuer: 'Issuer',
+          sectionPublicKey: '공개 키', sectionSan: 'Subject Alternative Names',
+          sectionUsage: 'Key Usage', sectionEku: 'Extended Key Usage',
+          sectionConstraints: 'Basic Constraints', sectionSignature: '서명',
+          sectionFingerprints: '지문', sectionIdentity: 'Identity',
+          sectionCrl: 'CRL 배포 지점', sectionAia: 'Authority Info Access',
+          labelNotBefore: 'Not Before', labelNotAfter: 'Not After', labelStatus: '상태',
+          labelDaysLeft: '남은 일수', labelAlgorithm: '알고리즘', labelKeySize: '키 길이',
+          labelExponent: 'Exponent', labelCurve: '곡선', labelSignatureAlgo: '서명 알고리즘',
+          labelSerial: '일련번호', labelVersion: '버전',
+          labelCa: 'CA 인증서 여부', labelPathLen: 'Path Length',
+          labelSki: 'Subject Key ID', labelAki: 'Authority Key ID',
+          statusValid: '유효', statusExpired: '만료됨', statusFuture: '아직 유효하지 않음',
+          statusSoon: '{n}일 후 만료', statusYes: '예', statusNo: '아니오',
+          critical: 'critical',
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.scd-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.scd-wrap [data-i18n-placeholder]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-placeholder'); if (t[key]) el.setAttribute('placeholder', t[key]);
+      });
+
+      // ISRG Root X1 — Let's Encrypt root certificate, stable public PEM.
+      var EXAMPLE_PEM = [
+        '-----BEGIN CERTIFICATE-----',
+        'MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw',
+        'TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh',
+        'cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4',
+        'WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu',
+        'ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY',
+        'MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc',
+        'h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+',
+        '0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U',
+        'A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW',
+        'T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymdu+DbXJlYDbduPpLOeNl+JdEuT0qz',
+        'tbWUtX8aIuhxxsHGV9JYTC6t5cKMHIuI2zVuPRcvbODs5MA+TRgEy3hOOMjuV5KP',
+        'BfsJoLpZJUEKcrjxR0RBNL7CObzRz5jXyaSrU3T3D+v8YOnsLT9JqXEEZE5LH+8c',
+        'mLT9SLF1nrhLwYI4hH3WrWa7+VyOClwQM2D2gXrvJpA6VYvy8H+ROxkrwCC1qSAR',
+        'KdpUgcLNb9q9aT4t1HJHMOmgPwlsTbqi9DRsXKp9NSDtUcvfk4SVuJaPLDtP0PdF',
+        'q6IzwLkPB+RuU/twHF5pTrRupGZ4otpf6qhCs+IEMc8KijdcDvQuV5BFxDbBfTo+',
+        'qN/v0iyrxlhDhSbvFw6kfvbufrwSI4ymkOI9wOnsRX5gFNk4D5VrVtv4MutoUcwT',
+        'lL6IjMINNNwc7Vh2ZOg2EYBdkAJBAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAP',
+        'BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjAN',
+        'BgkqhkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V',
+        '9lZLubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk',
+        '6ZGQ3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcO',
+        'j/KKNFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHC',
+        'gKQ5ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvH',
+        'u7UrTkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8',
+        'NwdCjNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZA',
+        'JzVcoyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ',
+        '2qxq4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d1',
+        '1TPAmRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwx',
+        'A57demyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItre',
+        'GCc=',
+        '-----END CERTIFICATE-----'
+      ].join('\n');
+
+      // OID dictionary — labels for the most common X.509 OIDs.
+      var OID = {
+        // RDN attributes
+        '2.5.4.3':'CN','2.5.4.4':'SN','2.5.4.5':'serialNumber','2.5.4.6':'C','2.5.4.7':'L','2.5.4.8':'ST',
+        '2.5.4.9':'streetAddress','2.5.4.10':'O','2.5.4.11':'OU','2.5.4.12':'title','2.5.4.15':'businessCategory',
+        '2.5.4.17':'postalCode','2.5.4.42':'GN','2.5.4.43':'initials','2.5.4.44':'generationQualifier',
+        '2.5.4.65':'pseudonym','2.5.4.97':'organizationIdentifier',
+        '1.2.840.113549.1.9.1':'emailAddress',
+        '0.9.2342.19200300.100.1.25':'DC',
+        '1.3.6.1.4.1.311.60.2.1.1':'jurisdictionLocalityName',
+        '1.3.6.1.4.1.311.60.2.1.2':'jurisdictionStateOrProvinceName',
+        '1.3.6.1.4.1.311.60.2.1.3':'jurisdictionCountryName',
+
+        // Signature algorithms
+        '1.2.840.113549.1.1.1':'rsaEncryption',
+        '1.2.840.113549.1.1.4':'md5WithRSAEncryption',
+        '1.2.840.113549.1.1.5':'sha1WithRSAEncryption',
+        '1.2.840.113549.1.1.10':'RSASSA-PSS',
+        '1.2.840.113549.1.1.11':'sha256WithRSAEncryption',
+        '1.2.840.113549.1.1.12':'sha384WithRSAEncryption',
+        '1.2.840.113549.1.1.13':'sha512WithRSAEncryption',
+        '1.2.840.10045.4.1':'ecdsa-with-SHA1',
+        '1.2.840.10045.4.3.2':'ecdsa-with-SHA256',
+        '1.2.840.10045.4.3.3':'ecdsa-with-SHA384',
+        '1.2.840.10045.4.3.4':'ecdsa-with-SHA512',
+        '1.3.101.112':'Ed25519',
+        '1.3.101.113':'Ed448',
+
+        // Public key algorithms
+        '1.2.840.10045.2.1':'id-ecPublicKey',
+
+        // EC named curves
+        '1.2.840.10045.3.1.7':'prime256v1 (P-256)',
+        '1.3.132.0.34':'secp384r1 (P-384)',
+        '1.3.132.0.35':'secp521r1 (P-521)',
+        '1.3.132.0.10':'secp256k1',
+        '1.3.36.3.3.2.8.1.1.7':'brainpoolP256r1',
+        '1.3.36.3.3.2.8.1.1.11':'brainpoolP384r1',
+        '1.3.36.3.3.2.8.1.1.13':'brainpoolP512r1',
+
+        // v3 extensions
+        '2.5.29.14':'subjectKeyIdentifier',
+        '2.5.29.15':'keyUsage',
+        '2.5.29.17':'subjectAltName',
+        '2.5.29.18':'issuerAltName',
+        '2.5.29.19':'basicConstraints',
+        '2.5.29.30':'nameConstraints',
+        '2.5.29.31':'cRLDistributionPoints',
+        '2.5.29.32':'certificatePolicies',
+        '2.5.29.33':'policyMappings',
+        '2.5.29.35':'authorityKeyIdentifier',
+        '2.5.29.36':'policyConstraints',
+        '2.5.29.37':'extKeyUsage',
+        '2.5.29.54':'inhibitAnyPolicy',
+        '1.3.6.1.5.5.7.1.1':'authorityInfoAccess',
+        '1.3.6.1.4.1.11129.2.4.2':'signedCertificateTimestampList',
+
+        // Extended key usage
+        '1.3.6.1.5.5.7.3.1':'serverAuth',
+        '1.3.6.1.5.5.7.3.2':'clientAuth',
+        '1.3.6.1.5.5.7.3.3':'codeSigning',
+        '1.3.6.1.5.5.7.3.4':'emailProtection',
+        '1.3.6.1.5.5.7.3.8':'timeStamping',
+        '1.3.6.1.5.5.7.3.9':'OCSPSigning',
+
+        // AIA access methods
+        '1.3.6.1.5.5.7.48.1':'OCSP',
+        '1.3.6.1.5.5.7.48.2':'caIssuers',
+
+        // Certificate policies
+        '2.23.140.1.1':'extended-validation',
+        '2.23.140.1.2.1':'domain-validated',
+        '2.23.140.1.2.2':'organization-validated',
+        '2.23.140.1.2.3':'individual-validated'
+      };
+
+      var KU_NAMES = ['digitalSignature','nonRepudiation','keyEncipherment','dataEncipherment','keyAgreement','keyCertSign','cRLSign','encipherOnly','decipherOnly'];
+
+      // ── ASN.1 parser ─────────────────────────────────────────────────
+      function asnRead(buf, off) {
+        var first = buf[off];
+        var cls = (first >> 6) & 0x3;
+        var constructed = (first & 0x20) !== 0;
+        var tag = first & 0x1F;
+        var p = off + 1;
+        if (tag === 0x1F) {
+          tag = 0;
+          while (buf[p] & 0x80) { tag = (tag << 7) | (buf[p] & 0x7F); p++; }
+          tag = (tag << 7) | buf[p]; p++;
+        }
+        var lenByte = buf[p++];
+        var len;
+        if ((lenByte & 0x80) === 0) {
+          len = lenByte;
+        } else {
+          var n = lenByte & 0x7F;
+          if (n === 0) throw new Error('indefinite length not supported');
+          if (n > 4) throw new Error('length too large');
+          len = 0;
+          for (var i = 0; i < n; i++) len = (len << 8) | buf[p++];
+        }
+        return { cls: cls, constructed: constructed, tag: tag, length: len, valueOffset: p, end: p + len };
+      }
+
+      function asnChildren(buf, node) {
+        var out = [];
+        var p = node.valueOffset;
+        while (p < node.end) {
+          var c = asnRead(buf, p);
+          out.push(c);
+          p = c.end;
+        }
+        return out;
+      }
+
+      function bytesToLatin1(buf, s, e) {
+        var out = '';
+        for (var i = s; i < e; i++) out += String.fromCharCode(buf[i]);
+        return out;
+      }
+
+      function bytesToUtf8(buf, s, e) {
+        try { return new TextDecoder('utf-8').decode(buf.subarray(s, e)); }
+        catch (err) { return bytesToLatin1(buf, s, e); }
+      }
+
+      function bytesToBmp(buf, s, e) {
+        var out = '';
+        for (var i = s; i < e; i += 2) out += String.fromCharCode((buf[i] << 8) | buf[i + 1]);
+        return out;
+      }
+
+      function decodeOid(buf, s, e) {
+        var oid = '', v = 0, first = true;
+        for (var i = s; i < e; i++) {
+          v = (v * 128) + (buf[i] & 0x7F);
+          if ((buf[i] & 0x80) === 0) {
+            if (first) {
+              var a = v >= 80 ? 2 : Math.floor(v / 40);
+              oid = a + '.' + (v - a * 40);
+              first = false;
+            } else {
+              oid += '.' + v;
+            }
+            v = 0;
+          }
+        }
+        return oid;
+      }
+
+      function decodeInteger(buf, s, e) {
+        if (e - s === 0) return 0n;
+        var hex = '';
+        for (var i = s; i < e; i++) hex += (buf[i] < 16 ? '0' : '') + buf[i].toString(16);
+        var n = BigInt('0x' + hex);
+        if ((buf[s] & 0x80) !== 0 && e - s > 0) n -= (1n << BigInt((e - s) * 8));
+        return n;
+      }
+
+      function decodeUtcTime(buf, s, e) {
+        var str = bytesToLatin1(buf, s, e);
+        var yy = parseInt(str.slice(0, 2), 10);
+        var year = yy < 50 ? 2000 + yy : 1900 + yy;
+        return new Date(Date.UTC(year, parseInt(str.slice(2, 4), 10) - 1, parseInt(str.slice(4, 6), 10),
+          parseInt(str.slice(6, 8), 10), parseInt(str.slice(8, 10), 10), parseInt(str.slice(10, 12), 10)));
+      }
+
+      function decodeGenTime(buf, s, e) {
+        var str = bytesToLatin1(buf, s, e);
+        return new Date(Date.UTC(parseInt(str.slice(0, 4), 10), parseInt(str.slice(4, 6), 10) - 1,
+          parseInt(str.slice(6, 8), 10), parseInt(str.slice(8, 10), 10),
+          parseInt(str.slice(10, 12), 10), parseInt(str.slice(12, 14), 10)));
+        }
+
+      function valueOf(buf, node) {
+        if (node.cls !== 0) return null;
+        switch (node.tag) {
+          case 0x01: return buf[node.valueOffset] !== 0;
+          case 0x02: return decodeInteger(buf, node.valueOffset, node.end);
+          case 0x03: {
+            var unused = buf[node.valueOffset];
+            return { unusedBits: unused, data: buf.subarray(node.valueOffset + 1, node.end) };
+          }
+          case 0x04: return buf.subarray(node.valueOffset, node.end);
+          case 0x05: return null;
+          case 0x06: return decodeOid(buf, node.valueOffset, node.end);
+          case 0x0C: return bytesToUtf8(buf, node.valueOffset, node.end);
+          case 0x13: case 0x14: case 0x15: case 0x16: case 0x19: case 0x1A:
+            return bytesToLatin1(buf, node.valueOffset, node.end);
+          case 0x17: return decodeUtcTime(buf, node.valueOffset, node.end);
+          case 0x18: return decodeGenTime(buf, node.valueOffset, node.end);
+          case 0x1E: return bytesToBmp(buf, node.valueOffset, node.end);
+          default: return buf.subarray(node.valueOffset, node.end);
+        }
+      }
+
+      // ── PEM helpers ───────────────────────────────────────────────────
+      function base64ToBytes(b64) {
+        var clean = b64.replace(/[^A-Za-z0-9+/=]/g, '');
+        var bin = atob(clean);
+        var out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+
+      function bytesToHex(bytes, sep) {
+        var out = [];
+        for (var i = 0; i < bytes.length; i++) {
+          var h = bytes[i].toString(16).toUpperCase();
+          if (h.length === 1) h = '0' + h;
+          out.push(h);
+        }
+        return out.join(sep || ':');
+      }
+
+      function extractPemCerts(input) {
+        var re = /-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\s]+)-----END CERTIFICATE-----/g;
+        var matches = [];
+        var m;
+        while ((m = re.exec(input)) !== null) matches.push(m[1]);
+        return matches;
+      }
+
+      // ── Certificate decoder ───────────────────────────────────────────
+      function decodeCertificate(der) {
+        var rootNode = asnRead(der, 0);
+        if (rootNode.tag !== 0x10) throw new Error('expected SEQUENCE at root');
+        var root = asnChildren(der, rootNode);
+        if (root.length < 3) throw new Error('certificate must have 3 components');
+
+        var tbs = asnChildren(der, root[0]);
+        var sigAlg = parseAlg(der, root[1]);
+        var sigVal = valueOf(der, root[2]);
+
+        var idx = 0;
+        var version = 1;
+        if (tbs[idx].cls === 2 && tbs[idx].tag === 0 && tbs[idx].constructed) {
+          var ver = asnChildren(der, tbs[idx])[0];
+          version = Number(valueOf(der, ver)) + 1;
+          idx++;
+        }
+
+        var serial = valueOf(der, tbs[idx++]);
+        var innerSigAlg = parseAlg(der, tbs[idx++]);
+        var issuer = parseName(der, tbs[idx++]);
+        var validity = parseValidity(der, tbs[idx++]);
+        var subject = parseName(der, tbs[idx++]);
+        var spki = parseSpki(der, tbs[idx++]);
+        var extensions = [];
+        while (idx < tbs.length) {
+          var n = tbs[idx++];
+          if (n.cls === 2 && n.tag === 3 && n.constructed) {
+            var extsSeq = asnChildren(der, n)[0];
+            var extNodes = asnChildren(der, extsSeq);
+            for (var j = 0; j < extNodes.length; j++) {
+              extensions.push(parseExtension(der, extNodes[j]));
+            }
+          }
+        }
+
+        return {
+          version: version,
+          serial: serial,
+          signatureAlgorithm: sigAlg,
+          issuer: issuer,
+          validity: validity,
+          subject: subject,
+          publicKey: spki,
+          extensions: extensions,
+          sigValue: sigVal
+        };
+      }
+
+      function parseAlg(buf, node) {
+        var c = asnChildren(buf, node);
+        return { oid: valueOf(buf, c[0]), params: c[1] };
+      }
+
+      function parseName(buf, node) {
+        var rdns = asnChildren(buf, node);
+        var out = [];
+        for (var i = 0; i < rdns.length; i++) {
+          var attrs = asnChildren(buf, rdns[i]);
+          for (var j = 0; j < attrs.length; j++) {
+            var pair = asnChildren(buf, attrs[j]);
+            out.push({ oid: valueOf(buf, pair[0]), value: valueOf(buf, pair[1]) });
+          }
+        }
+        return out;
+      }
+
+      function parseValidity(buf, node) {
+        var c = asnChildren(buf, node);
+        return { notBefore: valueOf(buf, c[0]), notAfter: valueOf(buf, c[1]) };
+      }
+
+      function parseSpki(buf, node) {
+        var c = asnChildren(buf, node);
+        var algChildren = asnChildren(buf, c[0]);
+        var algOid = valueOf(buf, algChildren[0]);
+        var algParams = algChildren.length > 1 ? algChildren[1] : null;
+        var bitStr = valueOf(buf, c[1]);
+        var detail = { algorithm: algOid, raw: bitStr.data };
+
+        if (algOid === '1.2.840.113549.1.1.1') {
+          try {
+            var rsaSeq = asnRead(bitStr.data, 0);
+            var rsaChildren = asnChildren(bitStr.data, rsaSeq);
+            var modulus = valueOf(bitStr.data, rsaChildren[0]);
+            var exponent = valueOf(bitStr.data, rsaChildren[1]);
+            // Strip leading zero byte that protects sign bit
+            var modHex = modulus.toString(16);
+            if (modHex.length % 2 !== 0) modHex = '0' + modHex;
+            detail.modulus = modHex;
+            detail.exponent = exponent.toString();
+            detail.keySize = modulus.toString(2).length;
+          } catch (e) {}
+        } else if (algOid === '1.2.840.10045.2.1') {
+          if (algParams && algParams.tag === 0x06) {
+            detail.curve = valueOf(buf, algParams);
+          }
+          detail.keySize = (bitStr.data.length - 1) * 4; // uncompressed point: 0x04 + X + Y
+        } else if (algOid === '1.3.101.112') {
+          detail.curve = '1.3.101.112';
+          detail.keySize = 256;
+        } else if (algOid === '1.3.101.113') {
+          detail.curve = '1.3.101.113';
+          detail.keySize = 448;
+        }
+        return detail;
+      }
+
+      function parseExtension(buf, node) {
+        var c = asnChildren(buf, node);
+        var oid = valueOf(buf, c[0]);
+        var critical = false;
+        var valueIdx = 1;
+        if (c[valueIdx] && c[valueIdx].cls === 0 && c[valueIdx].tag === 0x01) {
+          critical = valueOf(buf, c[valueIdx]);
+          valueIdx++;
+        }
+        var oct = c[valueIdx];
+        var inner = buf.subarray(oct.valueOffset, oct.end);
+        return { oid: oid, critical: critical, raw: inner };
+      }
+
+      // ── Extension decoders ───────────────────────────────────────────
+      function parseSan(bytes) {
+        var seq = asnRead(bytes, 0);
+        var children = asnChildren(bytes, seq);
+        var entries = [];
+        for (var i = 0; i < children.length; i++) {
+          var n = children[i];
+          if (n.cls !== 2) continue;
+          if (n.tag === 1) entries.push({ type: 'email', value: bytesToLatin1(bytes, n.valueOffset, n.end) });
+          else if (n.tag === 2) entries.push({ type: 'DNS', value: bytesToLatin1(bytes, n.valueOffset, n.end) });
+          else if (n.tag === 6) entries.push({ type: 'URI', value: bytesToLatin1(bytes, n.valueOffset, n.end) });
+          else if (n.tag === 7) entries.push({ type: 'IP', value: ipFromBytes(bytes, n.valueOffset, n.end) });
+        }
+        return entries;
+      }
+
+      function ipFromBytes(buf, s, e) {
+        var len = e - s;
+        if (len === 4) return buf[s] + '.' + buf[s + 1] + '.' + buf[s + 2] + '.' + buf[s + 3];
+        if (len === 16) {
+          var parts = [];
+          for (var i = 0; i < 8; i++) parts.push(((buf[s + i * 2] << 8) | buf[s + i * 2 + 1]).toString(16));
+          return parts.join(':');
+        }
+        return bytesToHex(buf.subarray(s, e), ':');
+      }
+
+      function parseBasicConstraints(bytes) {
+        var seq = asnRead(bytes, 0);
+        var c = asnChildren(bytes, seq);
+        var out = { ca: false, pathLen: null };
+        for (var i = 0; i < c.length; i++) {
+          if (c[i].tag === 0x01) out.ca = valueOf(bytes, c[i]);
+          else if (c[i].tag === 0x02) out.pathLen = Number(valueOf(bytes, c[i]));
+        }
+        return out;
+      }
+
+      function parseKeyUsage(bytes) {
+        var bs = asnRead(bytes, 0);
+        var unused = bytes[bs.valueOffset];
+        var data = bytes.subarray(bs.valueOffset + 1, bs.end);
+        var flags = [];
+        var totalBits = data.length * 8 - unused;
+        for (var i = 0; i < KU_NAMES.length && i < totalBits; i++) {
+          var byteIdx = Math.floor(i / 8);
+          var bitIdx = 7 - (i % 8);
+          if ((data[byteIdx] & (1 << bitIdx))) flags.push(KU_NAMES[i]);
+        }
+        return flags;
+      }
+
+      function parseEku(bytes) {
+        var seq = asnRead(bytes, 0);
+        return asnChildren(bytes, seq).map(function (n) {
+          var oid = valueOf(bytes, n);
+          return OID[oid] || oid;
+        });
+      }
+
+      function parseOctetIdentifier(bytes) {
+        var oct = asnRead(bytes, 0);
+        return bytesToHex(bytes.subarray(oct.valueOffset, oct.end), ':');
+      }
+
+      function parseAki(bytes) {
+        var seq = asnRead(bytes, 0);
+        var c = asnChildren(bytes, seq);
+        for (var i = 0; i < c.length; i++) {
+          if (c[i].cls === 2 && c[i].tag === 0) {
+            return bytesToHex(bytes.subarray(c[i].valueOffset, c[i].end), ':');
+          }
+        }
+        return null;
+      }
+
+      function parseCrlDistribution(bytes) {
+        var seq = asnRead(bytes, 0);
+        var dps = asnChildren(bytes, seq);
+        var urls = [];
+        for (var i = 0; i < dps.length; i++) {
+          var dp = asnChildren(bytes, dps[i]);
+          for (var j = 0; j < dp.length; j++) {
+            if (dp[j].cls === 2 && dp[j].tag === 0 && dp[j].constructed) {
+              var dpn = asnChildren(bytes, dp[j]);
+              for (var k = 0; k < dpn.length; k++) {
+                if (dpn[k].cls === 2 && dpn[k].tag === 0 && dpn[k].constructed) {
+                  var gn = asnChildren(bytes, dpn[k]);
+                  for (var l = 0; l < gn.length; l++) {
+                    if (gn[l].cls === 2 && gn[l].tag === 6) {
+                      urls.push(bytesToLatin1(bytes, gn[l].valueOffset, gn[l].end));
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        return urls;
+      }
+
+      function parseAia(bytes) {
+        var seq = asnRead(bytes, 0);
+        var entries = asnChildren(bytes, seq);
+        var out = [];
+        for (var i = 0; i < entries.length; i++) {
+          var c = asnChildren(bytes, entries[i]);
+          var method = valueOf(bytes, c[0]);
+          var loc = null;
+          var gn = c[1];
+          if (gn && gn.cls === 2 && gn.tag === 6) {
+            loc = bytesToLatin1(bytes, gn.valueOffset, gn.end);
+          }
+          out.push({ method: OID[method] || method, location: loc });
+        }
+        return out;
+      }
+
+      // ── Fingerprints ─────────────────────────────────────────────────
+      async function digest(algorithm, der) {
+        var hashBuf = await crypto.subtle.digest(algorithm, der);
+        return bytesToHex(new Uint8Array(hashBuf), ':');
+      }
+
+      function md5(bytes) {
+        // RFC 1321 implementation; only needed because Web Crypto omits MD5.
+        var x = [];
+        for (var i = 0; i < bytes.length; i++) x[i >> 2] = (x[i >> 2] || 0) | (bytes[i] << ((i % 4) * 8));
+        var bitLen = bytes.length * 8;
+        var idx = bytes.length >> 2;
+        x[idx] = (x[idx] || 0) | (0x80 << ((bytes.length % 4) * 8));
+        var lenIdx = (((bytes.length + 8) >> 6) << 4) + 14;
+        while (x.length < lenIdx) x.push(0);
+        x[lenIdx] = bitLen;
+        x[lenIdx + 1] = 0;
+        var a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+        function add(p, q) { var lsw = (p & 0xFFFF) + (q & 0xFFFF); var msw = (p >> 16) + (q >> 16) + (lsw >> 16); return (msw << 16) | (lsw & 0xFFFF); }
+        function rol(num, cnt) { return (num << cnt) | (num >>> (32 - cnt)); }
+        function cmn(q, a, b, x, s, t) { return add(rol(add(add(a, q), add(x, t)), s), b); }
+        function ff(a, b, c, d, x, s, t) { return cmn((b & c) | ((~b) & d), a, b, x, s, t); }
+        function gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & (~d)), a, b, x, s, t); }
+        function hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
+        function ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | (~d)), a, b, x, s, t); }
+        for (var i = 0; i < x.length; i += 16) {
+          var oa = a, ob = b, oc = c, od = d;
+          a = ff(a, b, c, d, x[i + 0] | 0, 7, -680876936);
+          d = ff(d, a, b, c, x[i + 1] | 0, 12, -389564586);
+          c = ff(c, d, a, b, x[i + 2] | 0, 17, 606105819);
+          b = ff(b, c, d, a, x[i + 3] | 0, 22, -1044525330);
+          a = ff(a, b, c, d, x[i + 4] | 0, 7, -176418897);
+          d = ff(d, a, b, c, x[i + 5] | 0, 12, 1200080426);
+          c = ff(c, d, a, b, x[i + 6] | 0, 17, -1473231341);
+          b = ff(b, c, d, a, x[i + 7] | 0, 22, -45705983);
+          a = ff(a, b, c, d, x[i + 8] | 0, 7, 1770035416);
+          d = ff(d, a, b, c, x[i + 9] | 0, 12, -1958414417);
+          c = ff(c, d, a, b, x[i + 10] | 0, 17, -42063);
+          b = ff(b, c, d, a, x[i + 11] | 0, 22, -1990404162);
+          a = ff(a, b, c, d, x[i + 12] | 0, 7, 1804603682);
+          d = ff(d, a, b, c, x[i + 13] | 0, 12, -40341101);
+          c = ff(c, d, a, b, x[i + 14] | 0, 17, -1502002290);
+          b = ff(b, c, d, a, x[i + 15] | 0, 22, 1236535329);
+
+          a = gg(a, b, c, d, x[i + 1] | 0, 5, -165796510);
+          d = gg(d, a, b, c, x[i + 6] | 0, 9, -1069501632);
+          c = gg(c, d, a, b, x[i + 11] | 0, 14, 643717713);
+          b = gg(b, c, d, a, x[i + 0] | 0, 20, -373897302);
+          a = gg(a, b, c, d, x[i + 5] | 0, 5, -701558691);
+          d = gg(d, a, b, c, x[i + 10] | 0, 9, 38016083);
+          c = gg(c, d, a, b, x[i + 15] | 0, 14, -660478335);
+          b = gg(b, c, d, a, x[i + 4] | 0, 20, -405537848);
+          a = gg(a, b, c, d, x[i + 9] | 0, 5, 568446438);
+          d = gg(d, a, b, c, x[i + 14] | 0, 9, -1019803690);
+          c = gg(c, d, a, b, x[i + 3] | 0, 14, -187363961);
+          b = gg(b, c, d, a, x[i + 8] | 0, 20, 1163531501);
+          a = gg(a, b, c, d, x[i + 13] | 0, 5, -1444681467);
+          d = gg(d, a, b, c, x[i + 2] | 0, 9, -51403784);
+          c = gg(c, d, a, b, x[i + 7] | 0, 14, 1735328473);
+          b = gg(b, c, d, a, x[i + 12] | 0, 20, -1926607734);
+
+          a = hh(a, b, c, d, x[i + 5] | 0, 4, -378558);
+          d = hh(d, a, b, c, x[i + 8] | 0, 11, -2022574463);
+          c = hh(c, d, a, b, x[i + 11] | 0, 16, 1839030562);
+          b = hh(b, c, d, a, x[i + 14] | 0, 23, -35309556);
+          a = hh(a, b, c, d, x[i + 1] | 0, 4, -1530992060);
+          d = hh(d, a, b, c, x[i + 4] | 0, 11, 1272893353);
+          c = hh(c, d, a, b, x[i + 7] | 0, 16, -155497632);
+          b = hh(b, c, d, a, x[i + 10] | 0, 23, -1094730640);
+          a = hh(a, b, c, d, x[i + 13] | 0, 4, 681279174);
+          d = hh(d, a, b, c, x[i + 0] | 0, 11, -358537222);
+          c = hh(c, d, a, b, x[i + 3] | 0, 16, -722521979);
+          b = hh(b, c, d, a, x[i + 6] | 0, 23, 76029189);
+          a = hh(a, b, c, d, x[i + 9] | 0, 4, -640364487);
+          d = hh(d, a, b, c, x[i + 12] | 0, 11, -421815835);
+          c = hh(c, d, a, b, x[i + 15] | 0, 16, 530742520);
+          b = hh(b, c, d, a, x[i + 2] | 0, 23, -995338651);
+
+          a = ii(a, b, c, d, x[i + 0] | 0, 6, -198630844);
+          d = ii(d, a, b, c, x[i + 7] | 0, 10, 1126891415);
+          c = ii(c, d, a, b, x[i + 14] | 0, 15, -1416354905);
+          b = ii(b, c, d, a, x[i + 5] | 0, 21, -57434055);
+          a = ii(a, b, c, d, x[i + 12] | 0, 6, 1700485571);
+          d = ii(d, a, b, c, x[i + 3] | 0, 10, -1894986606);
+          c = ii(c, d, a, b, x[i + 10] | 0, 15, -1051523);
+          b = ii(b, c, d, a, x[i + 1] | 0, 21, -2054922799);
+          a = ii(a, b, c, d, x[i + 8] | 0, 6, 1873313359);
+          d = ii(d, a, b, c, x[i + 15] | 0, 10, -30611744);
+          c = ii(c, d, a, b, x[i + 6] | 0, 15, -1560198380);
+          b = ii(b, c, d, a, x[i + 13] | 0, 21, 1309151649);
+          a = ii(a, b, c, d, x[i + 4] | 0, 6, -145523070);
+          d = ii(d, a, b, c, x[i + 11] | 0, 10, -1120210379);
+          c = ii(c, d, a, b, x[i + 2] | 0, 15, 718787259);
+          b = ii(b, c, d, a, x[i + 9] | 0, 21, -343485551);
+
+          a = add(a, oa); b = add(b, ob); c = add(c, oc); d = add(d, od);
+        }
+        function toBytes(num) { var out = []; for (var i = 0; i < 4; i++) out.push((num >> (i * 8)) & 0xFF); return out; }
+        var arr = toBytes(a).concat(toBytes(b)).concat(toBytes(c)).concat(toBytes(d));
+        return bytesToHex(new Uint8Array(arr), ':');
+      }
+
+      // ── Rendering ────────────────────────────────────────────────────
+      function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      function formatDate(d) {
+        if (!(d instanceof Date) || isNaN(d.getTime())) return String(d);
+        var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+        return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) +
+          ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' UTC';
+      }
+
+      function nameToString(entries) {
+        return entries.map(function (e) {
+          var label = OID[e.oid] || e.oid;
+          var val = e.value instanceof Uint8Array ? bytesToHex(e.value, '') : String(e.value);
+          return label + '=' + val;
+        }).join(', ');
+      }
+
+      function renderRow(label, value, copy) {
+        var copyBtn = copy ? '<button class="btn-copy scd-copy" type="button" data-copy="' + escapeHtml(copy) + '">' + escapeHtml(t.copy) + '</button>' : '';
+        return '<div class="scd-row"><span class="scd-row-label">' + escapeHtml(label) + '</span><span class="scd-row-value">' + value + '</span>' + copyBtn + '</div>';
+      }
+
+      function renderCard(title, body) {
+        return '<section class="scd-card"><h3 class="scd-card-title">' + escapeHtml(title) + '</h3><div class="scd-card-body">' + body + '</div></section>';
+      }
+
+      function statusBadge(validity) {
+        var now = Date.now();
+        var nb = validity.notBefore.getTime();
+        var na = validity.notAfter.getTime();
+        var diffDays = Math.floor((na - now) / (24 * 3600 * 1000));
+        if (now < nb) return { cls: 'scd-status-future', text: t.statusFuture, daysLeft: diffDays };
+        if (now > na) return { cls: 'scd-status-expired', text: t.statusExpired, daysLeft: 0 };
+        if (diffDays <= 30) return { cls: 'scd-status-soon', text: t.statusSoon.replace('{n}', diffDays), daysLeft: diffDays };
+        return { cls: 'scd-status-valid', text: t.statusValid, daysLeft: diffDays };
+      }
+
+      function findExtension(exts, oid) {
+        for (var i = 0; i < exts.length; i++) if (exts[i].oid === oid) return exts[i];
+        return null;
+      }
+
+      function render(cert, fps) {
+        var html = '';
+
+        var badge = statusBadge(cert.validity);
+        var validityBody =
+          renderRow(t.labelStatus, '<span class="scd-tag ' + badge.cls + '">' + escapeHtml(badge.text) + '</span>') +
+          renderRow(t.labelNotBefore, escapeHtml(formatDate(cert.validity.notBefore))) +
+          renderRow(t.labelNotAfter, escapeHtml(formatDate(cert.validity.notAfter))) +
+          renderRow(t.labelDaysLeft, escapeHtml(String(badge.daysLeft)));
+        html += renderCard(t.sectionValidity, validityBody);
+
+        function renderName(entries) {
+          if (!entries.length) return '<div class="scd-row scd-row--muted">—</div>';
+          return entries.map(function (e) {
+            var label = OID[e.oid] || e.oid;
+            var val = e.value instanceof Uint8Array ? bytesToHex(e.value, '') : String(e.value);
+            return renderRow(label, escapeHtml(val));
+          }).join('');
+        }
+
+        html += '<div class="scd-grid-2">' +
+          renderCard(t.sectionSubject, renderName(cert.subject)) +
+          renderCard(t.sectionIssuer, renderName(cert.issuer)) +
+          '</div>';
+
+        var pk = cert.publicKey;
+        var pkBody = renderRow(t.labelAlgorithm, escapeHtml(OID[pk.algorithm] || pk.algorithm));
+        if (pk.keySize) pkBody += renderRow(t.labelKeySize, escapeHtml(pk.keySize + ' bits'));
+        if (pk.exponent) pkBody += renderRow(t.labelExponent, escapeHtml(pk.exponent));
+        if (pk.curve) pkBody += renderRow(t.labelCurve, escapeHtml(OID[pk.curve] || pk.curve));
+
+        var sigOid = cert.signatureAlgorithm.oid;
+        var sigCardBody = renderRow(t.labelSignatureAlgo, escapeHtml(OID[sigOid] || sigOid));
+
+        html += '<div class="scd-grid-2">' +
+          renderCard(t.sectionPublicKey, pkBody) +
+          renderCard(t.sectionSignature, sigCardBody) +
+          '</div>';
+
+        var sanExt = findExtension(cert.extensions, '2.5.29.17');
+        if (sanExt) {
+          try {
+            var sans = parseSan(sanExt.raw);
+            if (sans.length) {
+              var sanBody = sans.map(function (s) {
+                return renderRow(s.type, escapeHtml(s.value), s.value);
+              }).join('');
+              html += renderCard(t.sectionSan, sanBody);
+            }
+          } catch (e) {}
+        }
+
+        var kuExt = findExtension(cert.extensions, '2.5.29.15');
+        var ekuExt = findExtension(cert.extensions, '2.5.29.37');
+        var usageHtml = '';
+        if (kuExt) {
+          try {
+            var flags = parseKeyUsage(kuExt.raw);
+            usageHtml += renderCard(t.sectionUsage,
+              flags.length
+                ? flags.map(function (f) { return '<span class="scd-chip">' + escapeHtml(f) + '</span>'; }).join('')
+                : '<span class="scd-row--muted">—</span>'
+            );
+          } catch (e) {}
+        }
+        if (ekuExt) {
+          try {
+            var ekus = parseEku(ekuExt.raw);
+            usageHtml += renderCard(t.sectionEku,
+              ekus.length
+                ? ekus.map(function (f) { return '<span class="scd-chip">' + escapeHtml(f) + '</span>'; }).join('')
+                : '<span class="scd-row--muted">—</span>'
+            );
+          } catch (e) {}
+        }
+        if (usageHtml) html += '<div class="scd-grid-2">' + usageHtml + '</div>';
+
+        var bcExt = findExtension(cert.extensions, '2.5.29.19');
+        var bcBody = '';
+        if (bcExt) {
+          try {
+            var bc = parseBasicConstraints(bcExt.raw);
+            bcBody += renderRow(t.labelCa, escapeHtml(bc.ca ? t.statusYes : t.statusNo));
+            if (bc.pathLen !== null) bcBody += renderRow(t.labelPathLen, escapeHtml(String(bc.pathLen)));
+          } catch (e) {}
+        }
+        var skiExt = findExtension(cert.extensions, '2.5.29.14');
+        var akiExt = findExtension(cert.extensions, '2.5.29.35');
+        var idBody = '';
+        if (skiExt) {
+          try { idBody += renderRow(t.labelSki, '<span class="scd-mono">' + escapeHtml(parseOctetIdentifier(skiExt.raw)) + '</span>'); } catch (e) {}
+        }
+        if (akiExt) {
+          try {
+            var aki = parseAki(akiExt.raw);
+            if (aki) idBody += renderRow(t.labelAki, '<span class="scd-mono">' + escapeHtml(aki) + '</span>');
+          } catch (e) {}
+        }
+
+        var rightHtml = '';
+        if (bcBody) rightHtml += renderCard(t.sectionConstraints, bcBody);
+        if (idBody) rightHtml += renderCard(t.sectionIdentity, idBody);
+        if (rightHtml) html += '<div class="scd-grid-2">' + rightHtml + '</div>';
+
+        var crlExt = findExtension(cert.extensions, '2.5.29.31');
+        if (crlExt) {
+          try {
+            var urls = parseCrlDistribution(crlExt.raw);
+            if (urls.length) {
+              var crlBody = urls.map(function (u) { return renderRow('URL', '<span class="scd-mono">' + escapeHtml(u) + '</span>', u); }).join('');
+              html += renderCard(t.sectionCrl, crlBody);
+            }
+          } catch (e) {}
+        }
+
+        var aiaExt = findExtension(cert.extensions, '1.3.6.1.5.5.7.1.1');
+        if (aiaExt) {
+          try {
+            var aia = parseAia(aiaExt.raw);
+            if (aia.length) {
+              var aiaBody = aia.map(function (a) {
+                return renderRow(a.method, '<span class="scd-mono">' + escapeHtml(a.location || '') + '</span>', a.location || '');
+              }).join('');
+              html += renderCard(t.sectionAia, aiaBody);
+            }
+          } catch (e) {}
+        }
+
+        var fpBody =
+          renderRow('SHA-256', '<span class="scd-mono">' + escapeHtml(fps.sha256) + '</span>', fps.sha256) +
+          renderRow('SHA-1', '<span class="scd-mono">' + escapeHtml(fps.sha1) + '</span>', fps.sha1) +
+          renderRow('MD5', '<span class="scd-mono">' + escapeHtml(fps.md5) + '</span>', fps.md5);
+        html += renderCard(t.sectionFingerprints, fpBody);
+
+        var serialHex = cert.serial.toString(16).toUpperCase();
+        if (serialHex.length % 2 !== 0) serialHex = '0' + serialHex;
+        var serialFormatted = serialHex.match(/.{1,2}/g).join(':');
+        var metaBody =
+          renderRow(t.labelSerial, '<span class="scd-mono">' + escapeHtml(serialFormatted) + '</span>', serialFormatted) +
+          renderRow(t.labelVersion, escapeHtml('v' + cert.version));
+        html += renderCard('Metadata', metaBody);
+
+        return html;
+      }
+
+      // ── State & wiring ──────────────────────────────────────────────
+      var inputEl = document.getElementById('scd-input');
+      var statusEl = document.getElementById('scd-status');
+      var resultsEl = document.getElementById('scd-results');
+      var btnDecode = document.getElementById('scd-decode');
+      var btnExample = document.getElementById('scd-example');
+      var btnClear = document.getElementById('scd-clear');
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status ' + (type || 'none');
+      }
+
+      async function runDecode() {
+        var input = inputEl.value.trim();
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = '';
+        if (!input) { setStatus(t.errEmpty, 'error'); return; }
+        if (input.indexOf('-----BEGIN CERTIFICATE-----') === -1) {
+          setStatus(t.errNoMarkers, 'error');
+          return;
+        }
+        var pems = extractPemCerts(input);
+        if (!pems.length) { setStatus(t.errNoMarkers, 'error'); return; }
+        var b64 = pems[0];
+        var der;
+        try { der = base64ToBytes(b64); }
+        catch (e) { setStatus(t.errBase64, 'error'); return; }
+        var cert;
+        try { cert = decodeCertificate(der); }
+        catch (e) { setStatus(t.errAsn1 + (e && e.message ? e.message : String(e)), 'error'); return; }
+        try {
+          var sha256, sha1;
+          if (crypto && crypto.subtle) {
+            sha256 = await digest('SHA-256', der);
+            sha1 = await digest('SHA-1', der);
+          } else {
+            sha256 = '—';
+            sha1 = '—';
+          }
+          var md = md5(der);
+          var fps = { sha256: sha256, sha1: sha1, md5: md };
+          resultsEl.innerHTML = render(cert, fps);
+          resultsEl.hidden = false;
+          if (pems.length > 1) {
+            setStatus(t.bundleNotice.replace('{n}', pems.length), 'info');
+          } else {
+            setStatus(t.decoded, 'success');
+          }
+          wireCopyButtons();
+        } catch (e) {
+          setStatus(t.errUnexpected + (e && e.message ? e.message : String(e)), 'error');
+        }
+      }
+
+      function wireCopyButtons() {
+        resultsEl.querySelectorAll('.scd-copy').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var v = btn.getAttribute('data-copy') || '';
+            if (!v) return;
+            try {
+              navigator.clipboard.writeText(v).then(function () {
+                var original = btn.textContent;
+                btn.classList.add('copied');
+                btn.textContent = t.copied;
+                setTimeout(function () { btn.classList.remove('copied'); btn.textContent = original; }, 1400);
+              });
+            } catch (e) {}
+          });
+        });
+      }
+
+      btnDecode.addEventListener('click', runDecode);
+      btnExample.addEventListener('click', function () {
+        inputEl.value = EXAMPLE_PEM;
+        setStatus('', 'none');
+      });
+      btnClear.addEventListener('click', function () {
+        inputEl.value = '';
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = '';
+        setStatus('', 'none');
+        if (window.ztPersist) {
+          try { window.ztPersist.clear('ssl-certificate-decoder'); } catch (e) {}
+        }
+      });
+
+      inputEl.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runDecode(); }
+      });
+
+      // Persist input via global ztPersist API (policy: input, default).
+      if (window.ztPersist) {
+        try {
+          var saved = window.ztPersist.load('ssl-certificate-decoder');
+          if (saved && typeof saved === 'string') inputEl.value = saved;
+        } catch (e) {}
+        inputEl.addEventListener('input', function () {
+          try { window.ztPersist.save('ssl-certificate-decoder', inputEl.value); } catch (e) {}
+        });
+      }
+    })();
+  </script>
+
+  <style is:global>
+    .scd-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .scd-input-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .scd-input {
+      min-height: 200px;
+    }
+    .scd-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .scd-results {
+      display: grid;
+      gap: 0.75rem;
+    }
+    .scd-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    @media (min-width: 720px) {
+      .scd-grid-2 {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    .scd-card {
+      background: var(--color-surface);
+      border-radius: var(--radius-lg);
+      padding: 0.9rem 1rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft), var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+    .scd-card-title {
+      margin: 0;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-primary);
+    }
+    .scd-card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .scd-row {
+      display: flex;
+      gap: 0.7rem;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 0.4rem 0.6rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      min-width: 0;
+    }
+    .scd-row--muted {
+      color: var(--color-text-muted);
+      font-style: italic;
+    }
+    .scd-row-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary);
+      flex: 0 0 auto;
+      min-width: 7rem;
+    }
+    .scd-row-value {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-size: 0.88rem;
+      color: var(--color-text);
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+    .scd-mono {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+    .scd-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.18rem 0.6rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.78rem;
+      font-weight: 700;
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, currentColor 35%, transparent);
+      background: color-mix(in oklch, currentColor 12%, transparent);
+    }
+    .scd-status-valid { color: var(--color-success); }
+    .scd-status-expired { color: var(--color-danger); }
+    .scd-status-soon { color: var(--color-accent); }
+    .scd-status-future { color: var(--color-text-muted); }
+    .scd-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.65rem;
+      border-radius: var(--radius-pill);
+      background: var(--color-bg-secondary);
+      color: var(--color-text-secondary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-right: 0.35rem;
+      margin-bottom: 0.3rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .scd-copy {
+      flex: 0 0 auto;
+    }
+    @media (max-width: 640px) {
+      .scd-row-label {
+        min-width: 0;
+        flex: 0 0 100%;
+      }
+    }
+  </style>
+</div>

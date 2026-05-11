@@ -1,0 +1,61 @@
+---
+seoTitle: "SSL 证书解码器 — 在线解析 X.509 PEM | ZeroTool"
+seoDescription: "粘贴任意 X.509 PEM 证书，在线查看 Subject、Issuer、有效期、SAN、公钥算法、签名算法和 SHA-256/SHA-1/MD5 指纹。免费，浏览器端运行，无需上传。"
+faqItems:
+  - question: "证书会上传到服务器吗？"
+    answer: "不会。解析全部在浏览器内通过内联 JavaScript 与 Web Crypto API 完成，PEM 内容不会离开本机。生产、灰度、内部证书都可以放心粘贴。"
+  - question: "支持哪些证书格式？"
+    answer: "仅支持 PEM 格式的 X.509 证书（含 -----BEGIN CERTIFICATE----- 与 -----END CERTIFICATE----- 标记）。DER 二进制不直接支持，请先用 openssl x509 -inform DER -in cert.der -out cert.pem 转换。"
+  - question: "工具会验证证书链或信任链吗？"
+    answer: "不会。本工具只解析单张证书字段。链路验证请用 openssl verify -CAfile chain.pem cert.pem，或交给操作系统/浏览器的信任库处理。"
+  - question: "指纹是如何计算的？"
+    answer: "SHA-256 / SHA-1 / MD5 都是对证书的 DER 字节（不是 PEM 文本）计算的摘要。SHA-256 是当下的事实标准，SHA-1 和 MD5 仅为兼容传统工具保留。"
+  - question: "支持 ECDSA 或 Ed25519 吗？"
+    answer: "都支持。解码器识别 rsaEncryption、id-ecPublicKey（prime256v1 / secp384r1 / secp521r1，以及 secp256k1、Brainpool 系列）、Ed25519 与 Ed448 公钥。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>把 X.509 PEM 证书粘贴到输入框。</li>
+  <li>点击 <strong>解码</strong>，下方会展示完整字段。</li>
+  <li>查看 <strong>有效期</strong> 区块，状态会用颜色标记：已过期、有效、即将过期（30 天内）。</li>
+  <li>核对 <strong>Subject</strong>、<strong>Issuer</strong> 与 <strong>Subject Alternative Names</strong>，确认覆盖的域名。</li>
+  <li>需要做 pinning 或写审计日志时，点击 <strong>复制</strong> 按钮拷贝指纹。</li>
+</ol>
+
+<h2>解码后能看到的字段</h2>
+<ul>
+  <li><strong>有效期</strong> — Not Before / Not After 时间戳，及彩色状态标签。</li>
+  <li><strong>Subject 与 Issuer</strong> — CN、O、OU、C、L、ST，以及扩展字段（jurisdiction、business category、serialNumber）。</li>
+  <li><strong>Subject Alternative Names</strong> — DNS、IP、URI、email 按类型分组展示。</li>
+  <li><strong>公钥</strong> — 算法（RSA / EC / Ed25519 / Ed448）、密钥长度（bits）、RSA 公钥指数、EC 命名曲线。</li>
+  <li><strong>Key Usage 与 Extended Key Usage</strong> — 数字签名、密钥封装、服务端 / 客户端认证、代码签名、OCSP 签名等。</li>
+  <li><strong>Basic Constraints</strong> — 是否 CA 证书，pathLenConstraint 路径长度。</li>
+  <li><strong>签名算法</strong> — sha256WithRSAEncryption、ecdsa-with-SHA384、Ed25519 等。</li>
+  <li><strong>指纹</strong> — SHA-256 / SHA-1 / MD5 十六进制（冒号分隔）。</li>
+  <li><strong>序列号 与 版本</strong> — 十六进制序列号 + X.509 版本（一般为 v3）。</li>
+</ul>
+
+<h2>PEM 证书是如何解码的</h2>
+<p>
+  PEM 证书是 DER 编码的 ASN.1 的 Base64 外壳。剥掉头尾、Base64 解码后得到 DER 字节流，再按 ASN.1
+  结构递归解析：<code>Certificate</code> SEQUENCE 包含 <code>tbsCertificate</code>、
+  <code>signatureAlgorithm</code> 和 <code>signatureValue</code>，TBS 部分承载了所有可见字段。
+  本工具用纯 JavaScript 自实现解析器，没有网络往返，没有服务端组件。
+</p>
+
+<h2>典型用途</h2>
+<ul>
+  <li>部署 TLS 证书前核对 SAN 覆盖了所有目标域名。</li>
+  <li>批量巡检线上 / 灰度环境的证书过期时间。</li>
+  <li>在移动 App 或 HSTS preload 申请里用 SHA-256 指纹做 pinning。</li>
+  <li>检查签名算法和密钥强度是否符合 PCI DSS、FIPS 140-3、Mozilla Modern profile 等合规规范。</li>
+  <li>调试 Subject CN 与现代浏览器 SAN-only 校验之间的不一致。</li>
+</ul>
+
+<h2>本工具的边界</h2>
+<p>
+  仅解码单张证书。不做链路验证、CRL/OCSP 拉取、吊销检查或真实 TLS 握手。
+  链路校验请用 <code>openssl verify</code>；线上证书巡检请用
+  <code>openssl s_client -showcerts</code> 或 <code>nmap --script ssl-cert</code>。
+</p>
