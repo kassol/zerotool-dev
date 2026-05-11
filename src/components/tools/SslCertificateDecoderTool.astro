@@ -291,7 +291,8 @@ const { lang = 'en' } = Astro.props;
           if (n === 0) throw new Error('indefinite length not supported');
           if (n > 4) throw new Error('length too large');
           len = 0;
-          for (var i = 0; i < n; i++) len = (len << 8) | buf[p++];
+          // Arithmetic accumulation avoids 32-bit signed wrap on 4-byte length fields.
+          for (var i = 0; i < n; i++) len = (len * 256) + buf[p++];
         }
         return { cls: cls, constructed: constructed, tag: tag, length: len, valueOffset: p, end: p + len };
       }
@@ -325,18 +326,19 @@ const { lang = 'en' } = Astro.props;
       }
 
       function decodeOid(buf, s, e) {
-        var oid = '', v = 0, first = true;
+        // BigInt accumulator: enterprise OID sub-identifiers can exceed 2^53.
+        var oid = '', v = 0n, first = true;
         for (var i = s; i < e; i++) {
-          v = (v * 128) + (buf[i] & 0x7F);
+          v = (v * 128n) + BigInt(buf[i] & 0x7F);
           if ((buf[i] & 0x80) === 0) {
             if (first) {
-              var a = v >= 80 ? 2 : Math.floor(v / 40);
-              oid = a + '.' + (v - a * 40);
+              var a = v >= 80n ? 2n : v / 40n;
+              oid = a.toString() + '.' + (v - a * 40n).toString();
               first = false;
             } else {
-              oid += '.' + v;
+              oid += '.' + v.toString();
             }
-            v = 0;
+            v = 0n;
           }
         }
         return oid;
@@ -513,7 +515,12 @@ const { lang = 'en' } = Astro.props;
           if (algParams && algParams.tag === 0x06) {
             detail.curve = valueOf(buf, algParams);
           }
-          detail.keySize = (bitStr.data.length - 1) * 4; // uncompressed point: 0x04 + X + Y
+          // EC point encoding: 0x04 = uncompressed (X||Y), 0x02/0x03 = compressed (X only).
+          if (bitStr.data && bitStr.data.length > 0) {
+            var firstByte = bitStr.data[0];
+            if (firstByte === 0x04) detail.keySize = (bitStr.data.length - 1) * 4;
+            else if (firstByte === 0x02 || firstByte === 0x03) detail.keySize = (bitStr.data.length - 1) * 8;
+          }
         } else if (algOid === '1.3.101.112') {
           detail.curve = '1.3.101.112';
           detail.keySize = 256;
