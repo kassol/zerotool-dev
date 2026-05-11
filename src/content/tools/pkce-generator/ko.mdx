@@ -1,0 +1,41 @@
+---
+seoTitle: "PKCE 생성기 — OAuth 2.0 code_verifier 및 challenge | ZeroTool"
+seoDescription: "OAuth 2.0 / 2.1 인증 코드 흐름을 위한 암호학적으로 안전한 PKCE code_verifier 및 code_challenge 생성. SHA-256(S256)·plain 방식 지원, 100% 브라우저 완결."
+faqItems:
+  - question: "PKCE란 무엇이며 왜 필요한가요?"
+    answer: "PKCE는 Proof Key for Code Exchange(RFC 7636)의 약자로, OAuth 흐름에서 인증 코드 가로채기를 막는 메커니즘입니다. client_secret을 안전하게 보관할 수 없는 퍼블릭 클라이언트(모바일 앱, SPA, CLI, 데스크톱 앱)에서 특히 중요합니다. OAuth 2.1은 퍼블릭 클라이언트뿐 아니라 모든 클라이언트에 PKCE를 의무화합니다."
+  - question: "S256과 plain 중 어느 것을 써야 하나요?"
+    answer: "프로덕션에서는 항상 S256입니다. plain은 SHA-256을 계산할 수 없는 과거 클라이언트를 위해 남겨진 방식으로 현대에는 실질적인 의미가 없습니다. RFC 7636도 S256을 명확히 권장하며, 주요 OAuth 제공자는 plain을 기본적으로 거부합니다."
+  - question: "이 도구가 verifier를 외부로 전송하나요?"
+    answer: "아닙니다. 난수는 crypto.getRandomValues, 해시는 crypto.subtle.digest, URL 미리보기는 단순 문자열 결합으로 모두 브라우저 내에서 처리됩니다. verifier는 localStorage에도 저장되지 않으며 새로고침할 때마다 새로 생성됩니다."
+  - question: "verifier 길이는 어느 정도가 적절한가요?"
+    answer: "RFC 7636은 43~128자, 문자 집합은 [A-Z a-z 0-9 - . _ ~]을 허용합니다. 기본값 64자는 무차별 대입 공격에 충분한 엔트로피와 URL 길이 사이의 균형점입니다. 제공자가 128자를 받아들이고 최대 엔트로피를 원한다면 상한을 사용해도 됩니다."
+  - question: "내 OAuth 흐름에 어떻게 통합하나요?"
+    answer: "클라이언트 측에 code_verifier를 안전하게 보관(브라우저는 localStorage, 네이티브는 안전 저장소)하고, /authorize 리다이렉트 시 code_challenge와 code_challenge_method=S256을 쿼리 파라미터로 전송하세요. /token에서 인증 코드를 교환할 때 원본 code_verifier를 다시 보내면 서버가 재해싱해 비교합니다."
+---
+
+<h2>사용 방법</h2>
+<ol>
+  <li>페이지 로드 시 64자 <strong>code_verifier</strong>가 자동 생성됩니다.</li>
+  <li><strong>재생성</strong> 버튼으로 새 랜덤 verifier를 받거나 직접 붙여넣을 수 있습니다.</li>
+  <li><strong>Challenge 방식</strong>을 선택하세요. 명확한 이유가 없다면 S256을 유지합니다.</li>
+  <li><strong>code_challenge</strong>는 실시간으로 갱신됩니다. /authorize 요청에 복사하세요.</li>
+  <li><strong>인증 URL 미리보기</strong>를 펼쳐 엔드포인트, client_id, redirect_uri를 입력하세요.</li>
+  <li><strong>토큰 교환(cURL)</strong>을 펼치면 /token 호출용 실행 가능한 명령을 바로 받을 수 있습니다.</li>
+</ol>
+
+<h2>주요 사용 사례</h2>
+<ul>
+  <li><strong>로컬 OAuth 디버깅:</strong> verifier/challenge 쌍을 생성하고 인증 URL을 브라우저에 붙여 code를 얻은 다음 curl 미리보기로 /token 교환을 재현합니다.</li>
+  <li><strong>모바일·데스크톱 클라이언트:</strong> 백엔드를 띄우지 않고 iOS / Android / 데스크톱 앱의 테스트 흐름을 수동으로 실행합니다.</li>
+  <li><strong>새 제공자 연동:</strong> 코드를 작성하기 전에 제공자가 S256을 받아들이고 client_id 설정이 올바른지 검증합니다.</li>
+  <li><strong>보안 리뷰:</strong> 사양 문서를 열지 않고 라이브 도구로 verifier 문자 집합과 길이가 RFC 7636을 따르는지 확인합니다.</li>
+</ul>
+
+<h2>작동 원리</h2>
+<ol>
+  <li><code>crypto.getRandomValues</code>로 32바이트 난수를 받아 base64url로 인코딩한 뒤 원하는 길이로 자릅니다.</li>
+  <li>S256은 verifier를 UTF-8로 인코딩한 다음 <code>crypto.subtle.digest('SHA-256', …)</code>로 해시를 계산합니다.</li>
+  <li>32바이트 해시를 다시 base64url로 인코딩(+ → -, / → _, = 패딩 제거)하면 43자 challenge가 만들어집니다.</li>
+  <li>plain 모드에서는 challenge가 verifier와 동일합니다. 호환성을 위해서만 남아 있으며 권장하지 않습니다.</li>
+</ol>

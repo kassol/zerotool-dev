@@ -1,0 +1,41 @@
+---
+seoTitle: "PKCE ジェネレーター — OAuth 2.0 code_verifier と challenge | ZeroTool"
+seoDescription: "OAuth 2.0 / 2.1 認可コードフロー向けの PKCE code_verifier と code_challenge を暗号学的に安全に生成。SHA-256（S256）と plain 方式に対応、100% ブラウザ完結。"
+faqItems:
+  - question: "PKCE とは何か、なぜ必要なのか？"
+    answer: "PKCE は Proof Key for Code Exchange（RFC 7636）の略で、OAuth フロー中に認可コードが横取りされるのを防ぐ仕組み。client_secret を安全に保管できないパブリッククライアント（モバイルアプリ、SPA、CLI、デスクトップアプリ）で特に重要。OAuth 2.1 では公共クライアントだけでなくすべてのクライアントに必須。"
+  - question: "S256 と plain、どちらを選ぶ？"
+    answer: "本番では常に S256。plain は SHA-256 を計算できない歴史的クライアント向けに残されたメソッドで、現代では実質的に不要。RFC 7636 も S256 を明確に推奨し、主要な OAuth プロバイダーは plain をデフォルトで拒否する。"
+  - question: "このツールは verifier を外部に送信する？"
+    answer: "送信しない。乱数は crypto.getRandomValues、ハッシュは crypto.subtle.digest、URL プレビューは単純な文字列連結で、すべてブラウザ内で完結。verifier は localStorage にも保存されず、リロードのたびに新規生成される。"
+  - question: "verifier の長さは？"
+    answer: "RFC 7636 で 43〜128 文字、文字セットは [A-Z a-z 0-9 - . _ ~]。デフォルトの 64 文字はブルートフォース耐性と URL 長のバランス点。プロバイダーが 128 文字を受け入れる場合は最大化してもよい。"
+  - question: "自分の OAuth フローにどう組み込む？"
+    answer: "クライアント側で code_verifier を安全に保管（ブラウザは localStorage、ネイティブは安全ストレージ）。/authorize リダイレクト時に code_challenge と code_challenge_method=S256 をクエリパラメータで送信し、/token で認可コードと交換する際に元の code_verifier を返却すれば、サーバーが再ハッシュして照合する。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>ページ読み込み時に 64 文字の <strong>code_verifier</strong> が自動生成される。</li>
+  <li><strong>再生成</strong> ボタンで新しいランダム verifier を取得、または独自の値を貼り付け。</li>
+  <li><strong>Challenge メソッド</strong> を選択 — 明確な理由がない限り S256 のまま。</li>
+  <li><strong>code_challenge</strong> はリアルタイムで更新。/authorize リクエストにコピー。</li>
+  <li><strong>認可 URL プレビュー</strong> を展開してエンドポイント・client_id・redirect_uri を入力。</li>
+  <li><strong>トークン交換（cURL）</strong> を展開すれば、/token への即実行可能なコマンドが手に入る。</li>
+</ol>
+
+<h2>主な用途</h2>
+<ul>
+  <li><strong>ローカル OAuth デバッグ：</strong>verifier/challenge ペアを生成し、認可 URL をブラウザに貼って code を取得、curl プレビューで /token 交換を再現。</li>
+  <li><strong>モバイル・デスクトップクライアント：</strong>バックエンドを立てずに iOS / Android / デスクトップアプリのテストフローを手動で実行。</li>
+  <li><strong>新規プロバイダー対応：</strong>コードを書く前にプロバイダーが S256 を受け入れること、client_id 設定が正しいことを検証。</li>
+  <li><strong>セキュリティレビュー：</strong>仕様書を開かずにライブツールで verifier の文字セットと長さが RFC 7636 に準拠しているか確認。</li>
+</ul>
+
+<h2>仕組み</h2>
+<ol>
+  <li><code>crypto.getRandomValues</code> で 32 バイトの乱数を取得し、base64url エンコード後に目的の長さに切り詰める。</li>
+  <li>S256 では、verifier を UTF-8 エンコードしてから <code>crypto.subtle.digest('SHA-256', …)</code> でハッシュ計算。</li>
+  <li>32 バイトのハッシュを base64url エンコード（+ を -、/ を _、= パディングを除去）して 43 文字の challenge を生成。</li>
+  <li>plain モードでは challenge は verifier と同一。互換性のためだけに残されている。</li>
+</ol>

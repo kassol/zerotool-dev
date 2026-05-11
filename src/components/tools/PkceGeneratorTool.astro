@@ -1,0 +1,695 @@
+---
+// PkceGeneratorTool — generate OAuth 2.0 PKCE code_verifier and code_challenge
+// pairs (S256 + plain) entirely in the browser. Uses Crypto.getRandomValues +
+// SubtleCrypto.digest; no network calls, nothing persisted.
+---
+
+<div class="pkce-wrap">
+  <div class="pkce-field">
+    <div class="pkce-field-head">
+      <label class="tool-label" for="pkce-verifier" data-i18n="verifierLabel">Code Verifier</label>
+      <div class="pkce-field-meta">
+        <span id="pkce-verifier-count" class="pkce-count">0</span>
+        <span class="pkce-count-hint" data-i18n="verifierHint">43–128 chars · [A-Z a-z 0-9 -._~]</span>
+      </div>
+    </div>
+    <div class="pkce-input-row">
+      <textarea
+        id="pkce-verifier"
+        class="tool-textarea pkce-verifier"
+        rows="3"
+        spellcheck="false"
+        autocapitalize="off"
+        autocorrect="off"
+        autocomplete="off"
+        data-i18n-attr="placeholder|verifierPlaceholder"
+        placeholder="Paste your verifier or click Regenerate"
+      ></textarea>
+      <button
+        id="pkce-regenerate"
+        class="btn-secondary pkce-regen-btn"
+        type="button"
+        data-i18n="regenerateBtn"
+        title="Generate a new random verifier"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><polyline points="21 3 21 8 16 8"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><polyline points="3 21 3 16 8 16"/></svg>
+        <span data-i18n="regenerateLabel">Regenerate</span>
+      </button>
+    </div>
+    <p id="pkce-verifier-status" class="tool-status none" aria-live="polite"></p>
+  </div>
+
+  <div class="pkce-field">
+    <span class="tool-label" data-i18n="methodLabel">Challenge Method</span>
+    <div class="pkce-method-row" role="radiogroup" aria-label="Challenge Method">
+      <label class="pkce-method-pill pkce-method-pill--active">
+        <input type="radio" name="pkce-method" value="S256" checked />
+        <span>S256</span>
+        <span class="pkce-method-tag" data-i18n="methodRecommend">recommended</span>
+      </label>
+      <label class="pkce-method-pill">
+        <input type="radio" name="pkce-method" value="plain" />
+        <span>plain</span>
+        <span class="pkce-method-tag pkce-method-tag--warn" data-i18n="methodLegacy">legacy only</span>
+      </label>
+    </div>
+    <p id="pkce-method-status" class="tool-status none" aria-live="polite"></p>
+  </div>
+
+  <div class="pkce-result">
+    <div class="pkce-result-head">
+      <span class="pkce-result-label" data-i18n="challengeLabel">Code Challenge</span>
+      <button id="pkce-copy-challenge" class="btn-copy" type="button" data-i18n="copyBtn">Copy</button>
+    </div>
+    <code id="pkce-challenge" class="pkce-challenge">—</code>
+  </div>
+
+  <details class="pkce-snippet">
+    <summary>
+      <span data-i18n="authUrlLabel">Authorization URL preview</span>
+      <span class="pkce-snippet-tip" data-i18n="authUrlHint">paste &amp; tweak for your provider</span>
+    </summary>
+    <div class="pkce-snippet-body">
+      <div class="pkce-snippet-row">
+        <label class="tool-label" for="pkce-authurl-base" data-i18n="authBaseLabel">Authorization endpoint</label>
+        <input
+          id="pkce-authurl-base"
+          class="tool-input"
+          type="text"
+          spellcheck="false"
+          autocapitalize="off"
+          autocorrect="off"
+          value="https://example.com/oauth/authorize"
+        />
+      </div>
+      <div class="pkce-snippet-grid">
+        <div class="pkce-snippet-row">
+          <label class="tool-label" for="pkce-client-id" data-i18n="clientIdLabel">client_id</label>
+          <input id="pkce-client-id" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" value="YOUR_CLIENT_ID" />
+        </div>
+        <div class="pkce-snippet-row">
+          <label class="tool-label" for="pkce-redirect" data-i18n="redirectLabel">redirect_uri</label>
+          <input id="pkce-redirect" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" value="https://example.com/callback" />
+        </div>
+      </div>
+      <div class="pkce-snippet-preview-row">
+        <code id="pkce-authurl" class="pkce-snippet-preview">—</code>
+        <button id="pkce-copy-authurl" class="btn-copy" type="button" data-i18n="copyBtn">Copy</button>
+      </div>
+    </div>
+  </details>
+
+  <details class="pkce-snippet">
+    <summary>
+      <span data-i18n="tokenExchangeLabel">Token exchange (cURL)</span>
+      <span class="pkce-snippet-tip" data-i18n="tokenExchangeHint">send verifier on /token</span>
+    </summary>
+    <div class="pkce-snippet-body">
+      <div class="pkce-snippet-row">
+        <label class="tool-label" for="pkce-token-endpoint" data-i18n="tokenEndpointLabel">Token endpoint</label>
+        <input id="pkce-token-endpoint" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" value="https://example.com/oauth/token" />
+      </div>
+      <div class="pkce-snippet-preview-row">
+        <pre id="pkce-curl" class="pkce-snippet-pre">—</pre>
+        <button id="pkce-copy-curl" class="btn-copy" type="button" data-i18n="copyBtn">Copy</button>
+      </div>
+    </div>
+  </details>
+
+  <p class="pkce-privacy" data-i18n="privacyNote">
+    All randomness, hashing and URL preview happens in your browser. Nothing is uploaded.
+  </p>
+</div>
+
+<script is:inline>
+  (function () {
+    var STRINGS = {
+      en: {
+        verifierLabel: 'Code Verifier',
+        verifierHint: '43–128 chars · [A-Z a-z 0-9 -._~]',
+        verifierPlaceholder: 'Paste a verifier or click Regenerate',
+        regenerateBtn: 'Regenerate',
+        regenerateLabel: 'Regenerate',
+        methodLabel: 'Challenge Method',
+        methodRecommend: 'recommended',
+        methodLegacy: 'legacy only',
+        challengeLabel: 'Code Challenge',
+        copyBtn: 'Copy',
+        copiedBtn: 'Copied!',
+        authUrlLabel: 'Authorization URL preview',
+        authUrlHint: 'paste & tweak for your provider',
+        authBaseLabel: 'Authorization endpoint',
+        clientIdLabel: 'client_id',
+        redirectLabel: 'redirect_uri',
+        tokenExchangeLabel: 'Token exchange (cURL)',
+        tokenExchangeHint: 'send verifier on /token',
+        tokenEndpointLabel: 'Token endpoint',
+        privacyNote: 'All randomness, hashing and URL preview happens in your browser. Nothing is uploaded.',
+        errTooShort: 'Minimum 43 characters per RFC 7636.',
+        errTooLong: 'Maximum 128 characters per RFC 7636.',
+        errEmpty: 'Enter or generate a verifier.',
+        errBadChars: 'Only A–Z, a–z, 0–9, "-", ".", "_", "~" are allowed.',
+        errSubtle: 'crypto.subtle is unavailable. Open this page over HTTPS.',
+        hintLowEntropy: 'Tip: 64+ chars gives stronger entropy.',
+        hintPlain: 'S256 is strongly recommended; plain is only for legacy clients that cannot compute SHA-256.',
+      },
+      zh: {
+        verifierLabel: 'Code Verifier',
+        verifierHint: '43–128 字符 · [A-Z a-z 0-9 -._~]',
+        verifierPlaceholder: '粘贴 verifier 或点击"重新生成"',
+        regenerateBtn: '重新生成',
+        regenerateLabel: '重新生成',
+        methodLabel: 'Challenge 方法',
+        methodRecommend: '推荐',
+        methodLegacy: '仅历史兼容',
+        challengeLabel: 'Code Challenge',
+        copyBtn: '复制',
+        copiedBtn: '已复制！',
+        authUrlLabel: '授权 URL 预览',
+        authUrlHint: '按你的 Provider 修改',
+        authBaseLabel: '授权端点',
+        clientIdLabel: 'client_id',
+        redirectLabel: 'redirect_uri',
+        tokenExchangeLabel: '令牌交换（cURL）',
+        tokenExchangeHint: '在 /token 时回传 verifier',
+        tokenEndpointLabel: '令牌端点',
+        privacyNote: '所有随机数、哈希、URL 预览都在你的浏览器中完成，零上传。',
+        errTooShort: '按 RFC 7636，至少 43 个字符。',
+        errTooLong: '按 RFC 7636，最多 128 个字符。',
+        errEmpty: '请输入或生成一个 verifier。',
+        errBadChars: '仅允许 A–Z、a–z、0–9、"-"、"."、"_"、"~"。',
+        errSubtle: 'crypto.subtle 不可用，请用 HTTPS 打开本页。',
+        hintLowEntropy: '提示：64+ 字符可获得更强熵。',
+        hintPlain: '强烈建议使用 S256；plain 仅用于无法计算 SHA-256 的历史客户端。',
+      },
+      ja: {
+        verifierLabel: 'Code Verifier',
+        verifierHint: '43〜128文字 · [A-Z a-z 0-9 -._~]',
+        verifierPlaceholder: 'verifierを貼り付けるか「再生成」をクリック',
+        regenerateBtn: '再生成',
+        regenerateLabel: '再生成',
+        methodLabel: 'Challenge メソッド',
+        methodRecommend: '推奨',
+        methodLegacy: '互換のみ',
+        challengeLabel: 'Code Challenge',
+        copyBtn: 'コピー',
+        copiedBtn: 'コピー済み！',
+        authUrlLabel: '認可URLプレビュー',
+        authUrlHint: 'プロバイダーに合わせて編集',
+        authBaseLabel: '認可エンドポイント',
+        clientIdLabel: 'client_id',
+        redirectLabel: 'redirect_uri',
+        tokenExchangeLabel: 'トークン交換（cURL）',
+        tokenExchangeHint: '/token で verifier を返却',
+        tokenEndpointLabel: 'トークンエンドポイント',
+        privacyNote: '乱数生成・ハッシュ計算・URLプレビューはすべてブラウザ内で完結。アップロードは行いません。',
+        errTooShort: 'RFC 7636 により最少43文字。',
+        errTooLong: 'RFC 7636 により最大128文字。',
+        errEmpty: 'verifierを入力するか生成してください。',
+        errBadChars: 'A–Z、a–z、0–9、"-"、"."、"_"、"~" のみ使用可能。',
+        errSubtle: 'crypto.subtleが利用できません。HTTPSで開いてください。',
+        hintLowEntropy: 'ヒント：64文字以上でより強いエントロピーになります。',
+        hintPlain: 'S256を強く推奨。plainはSHA-256を計算できない古いクライアント専用。',
+      },
+      ko: {
+        verifierLabel: 'Code Verifier',
+        verifierHint: '43–128자 · [A-Z a-z 0-9 -._~]',
+        verifierPlaceholder: 'verifier 붙여넣기 또는 "재생성" 클릭',
+        regenerateBtn: '재생성',
+        regenerateLabel: '재생성',
+        methodLabel: 'Challenge 방식',
+        methodRecommend: '권장',
+        methodLegacy: '레거시 전용',
+        challengeLabel: 'Code Challenge',
+        copyBtn: '복사',
+        copiedBtn: '복사됨!',
+        authUrlLabel: '인증 URL 미리보기',
+        authUrlHint: '제공자에 맞게 수정',
+        authBaseLabel: '인증 엔드포인트',
+        clientIdLabel: 'client_id',
+        redirectLabel: 'redirect_uri',
+        tokenExchangeLabel: '토큰 교환 (cURL)',
+        tokenExchangeHint: '/token에서 verifier 전달',
+        tokenEndpointLabel: '토큰 엔드포인트',
+        privacyNote: '난수, 해시, URL 미리보기 모두 브라우저에서 처리. 업로드 없음.',
+        errTooShort: 'RFC 7636 기준 최소 43자.',
+        errTooLong: 'RFC 7636 기준 최대 128자.',
+        errEmpty: 'verifier를 입력하거나 생성하세요.',
+        errBadChars: 'A–Z, a–z, 0–9, "-", ".", "_", "~"만 허용.',
+        errSubtle: 'crypto.subtle 사용 불가. HTTPS로 페이지를 여세요.',
+        hintLowEntropy: '팁: 64자 이상은 더 강한 엔트로피.',
+        hintPlain: 'S256을 강력히 권장. plain은 SHA-256 계산이 불가능한 레거시 클라이언트 전용.',
+      }
+    };
+
+    var VERIFIER_CHARSET = /^[A-Za-z0-9\-._~]+$/;
+    var DEFAULT_VERIFIER_LENGTH = 64;
+
+    var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+    var t = STRINGS[pageLang] || STRINGS.en;
+
+    document.querySelectorAll('.pkce-wrap [data-i18n]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n');
+      if (t[key]) el.textContent = t[key];
+    });
+    document.querySelectorAll('.pkce-wrap [data-i18n-attr]').forEach(function (el) {
+      var pair = el.getAttribute('data-i18n-attr').split('|');
+      if (pair.length === 2 && t[pair[1]]) el.setAttribute(pair[0], t[pair[1]]);
+    });
+
+    var verifierEl = document.getElementById('pkce-verifier');
+    var verifierCountEl = document.getElementById('pkce-verifier-count');
+    var verifierStatusEl = document.getElementById('pkce-verifier-status');
+    var methodStatusEl = document.getElementById('pkce-method-status');
+    var challengeEl = document.getElementById('pkce-challenge');
+    var regenBtn = document.getElementById('pkce-regenerate');
+    var authBaseEl = document.getElementById('pkce-authurl-base');
+    var clientIdEl = document.getElementById('pkce-client-id');
+    var redirectEl = document.getElementById('pkce-redirect');
+    var authUrlEl = document.getElementById('pkce-authurl');
+    var tokenEndpointEl = document.getElementById('pkce-token-endpoint');
+    var curlEl = document.getElementById('pkce-curl');
+    var copyChallengeBtn = document.getElementById('pkce-copy-challenge');
+    var copyAuthUrlBtn = document.getElementById('pkce-copy-authurl');
+    var copyCurlBtn = document.getElementById('pkce-copy-curl');
+    var methodPills = document.querySelectorAll('.pkce-method-pill');
+    var methodInputs = document.querySelectorAll('input[name="pkce-method"]');
+
+    var currentMethod = 'S256';
+
+    function base64url(bytes) {
+      var bin = '';
+      for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function generateVerifier(length) {
+      var byteLen = Math.ceil(length * 0.75) + 4;
+      var bytes = new Uint8Array(byteLen);
+      crypto.getRandomValues(bytes);
+      var encoded = base64url(bytes);
+      return encoded.slice(0, length);
+    }
+
+    function setStatus(el, message, kind) {
+      el.textContent = message || '';
+      el.className = 'tool-status ' + (kind || 'none');
+    }
+
+    function validateVerifier(v) {
+      if (!v) return { kind: 'error', message: t.errEmpty };
+      if (!VERIFIER_CHARSET.test(v)) return { kind: 'error', message: t.errBadChars };
+      if (v.length < 43) return { kind: 'error', message: t.errTooShort };
+      if (v.length > 128) return { kind: 'error', message: t.errTooLong };
+      if (v.length < 64) return { kind: 'info', message: t.hintLowEntropy };
+      return { kind: 'success', message: '' };
+    }
+
+    async function computeChallenge(v, method) {
+      if (method === 'plain') return v;
+      if (!crypto.subtle) throw new Error('subtle-unavailable');
+      var data = new TextEncoder().encode(v);
+      var hash = await crypto.subtle.digest('SHA-256', data);
+      return base64url(new Uint8Array(hash));
+    }
+
+    function updateMethodPills() {
+      methodPills.forEach(function (pill) {
+        var input = pill.querySelector('input[name="pkce-method"]');
+        if (input && input.checked) {
+          pill.classList.add('pkce-method-pill--active');
+        } else {
+          pill.classList.remove('pkce-method-pill--active');
+        }
+      });
+    }
+
+    function buildAuthUrl(challenge, method) {
+      var base = (authBaseEl.value || '').trim();
+      if (!base || !challenge || challenge === '—') return '—';
+      var params = new URLSearchParams();
+      params.set('response_type', 'code');
+      params.set('client_id', (clientIdEl.value || 'YOUR_CLIENT_ID').trim() || 'YOUR_CLIENT_ID');
+      params.set('redirect_uri', (redirectEl.value || 'https://example.com/callback').trim() || 'https://example.com/callback');
+      params.set('code_challenge', challenge);
+      params.set('code_challenge_method', method);
+      params.set('state', 'OPAQUE_STATE');
+      params.set('scope', 'openid profile');
+      var sep = base.indexOf('?') === -1 ? '?' : '&';
+      return base + sep + params.toString();
+    }
+
+    function buildCurl(verifier, method) {
+      var endpoint = (tokenEndpointEl.value || '').trim() || 'https://example.com/oauth/token';
+      var clientId = (clientIdEl.value || 'YOUR_CLIENT_ID').trim() || 'YOUR_CLIENT_ID';
+      var redirect = (redirectEl.value || 'https://example.com/callback').trim() || 'https://example.com/callback';
+      // method only affects the /authorize step; /token always receives the raw verifier
+      return [
+        'curl -X POST ' + endpoint + ' \\',
+        '  -H "Content-Type: application/x-www-form-urlencoded" \\',
+        '  -d "grant_type=authorization_code" \\',
+        '  -d "code=AUTHORIZATION_CODE_FROM_REDIRECT" \\',
+        '  -d "redirect_uri=' + redirect + '" \\',
+        '  -d "client_id=' + clientId + '" \\',
+        '  -d "code_verifier=' + verifier + '"'
+      ].join('\n');
+    }
+
+    async function recompute() {
+      var v = verifierEl.value.trim();
+      verifierCountEl.textContent = String(v.length);
+
+      var validation = validateVerifier(v);
+      setStatus(verifierStatusEl, validation.message, validation.kind);
+
+      if (validation.kind === 'error') {
+        challengeEl.textContent = '—';
+        authUrlEl.textContent = '—';
+        curlEl.textContent = '—';
+        return;
+      }
+
+      try {
+        var challenge = await computeChallenge(v, currentMethod);
+        challengeEl.textContent = challenge;
+        authUrlEl.textContent = buildAuthUrl(challenge, currentMethod);
+        curlEl.textContent = buildCurl(v, currentMethod);
+        if (currentMethod === 'plain') {
+          setStatus(methodStatusEl, t.hintPlain, 'info');
+        } else {
+          setStatus(methodStatusEl, '', 'none');
+        }
+        if (window.trackTool) window.trackTool('pkce-generator', 'compute');
+      } catch (err) {
+        challengeEl.textContent = '—';
+        authUrlEl.textContent = '—';
+        curlEl.textContent = '—';
+        setStatus(methodStatusEl, t.errSubtle, 'error');
+      }
+    }
+
+    function attachCopy(btn, sourceEl) {
+      btn.addEventListener('click', function () {
+        var val = sourceEl.textContent || '';
+        if (!val || val === '—') return;
+        navigator.clipboard.writeText(val).then(function () {
+          btn.classList.add('copied');
+          var original = btn.textContent;
+          btn.textContent = t.copiedBtn;
+          setTimeout(function () {
+            btn.classList.remove('copied');
+            btn.textContent = original;
+          }, 1500);
+        }).catch(function () {});
+      });
+    }
+
+    attachCopy(copyChallengeBtn, challengeEl);
+    attachCopy(copyAuthUrlBtn, authUrlEl);
+    attachCopy(copyCurlBtn, curlEl);
+
+    regenBtn.addEventListener('click', function () {
+      verifierEl.value = generateVerifier(DEFAULT_VERIFIER_LENGTH);
+      recompute();
+    });
+
+    verifierEl.addEventListener('input', recompute);
+    methodInputs.forEach(function (input) {
+      input.addEventListener('change', function () {
+        currentMethod = input.value;
+        updateMethodPills();
+        recompute();
+      });
+    });
+    [authBaseEl, clientIdEl, redirectEl, tokenEndpointEl].forEach(function (input) {
+      input.addEventListener('input', recompute);
+    });
+
+    // Initial state — auto-generate so the page is useful on first paint.
+    verifierEl.value = generateVerifier(DEFAULT_VERIFIER_LENGTH);
+    updateMethodPills();
+    recompute();
+  })();
+</script>
+
+<style>
+  .pkce-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+  }
+
+  .pkce-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .pkce-field-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .pkce-field-meta {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+  }
+
+  .pkce-count {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-primary);
+    font-weight: 700;
+  }
+
+  .pkce-count-hint {
+    letter-spacing: 0.01em;
+  }
+
+  .pkce-input-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+
+  .pkce-verifier {
+    flex: 1;
+    min-width: 0;
+    min-height: 76px;
+    word-break: break-all;
+  }
+
+  .pkce-regen-btn {
+    align-self: flex-start;
+    min-width: 7.5rem;
+  }
+
+  .pkce-method-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .pkce-method-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.85rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    cursor: pointer;
+    font-size: 0.86rem;
+    font-weight: 660;
+    color: var(--color-text);
+    transition: background-color var(--transition-fast), box-shadow var(--transition-fast), color var(--transition-fast);
+  }
+
+  .pkce-method-pill input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .pkce-method-pill:hover {
+    background: var(--color-surface);
+  }
+
+  .pkce-method-pill--active {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 55%, transparent);
+  }
+
+  .pkce-method-tag {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+  }
+
+  .pkce-method-pill--active .pkce-method-tag {
+    color: color-mix(in oklch, var(--color-primary) 80%, var(--color-text-muted));
+  }
+
+  .pkce-method-tag--warn {
+    color: var(--color-warning, color-mix(in oklch, var(--color-danger) 65%, var(--color-text-muted)));
+  }
+
+  .pkce-result {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .pkce-result-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .pkce-result-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .pkce-challenge {
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    color: var(--color-text);
+    word-break: break-all;
+    line-height: 1.55;
+  }
+
+  .pkce-snippet {
+    border-radius: var(--radius-md);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.65rem 0.85rem;
+  }
+
+  .pkce-snippet > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .pkce-snippet > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .pkce-snippet > summary::after {
+    content: '+';
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    color: var(--color-text-muted);
+  }
+
+  .pkce-snippet[open] > summary::after {
+    content: '−';
+  }
+
+  .pkce-snippet-tip {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--color-text-muted);
+  }
+
+  .pkce-snippet-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    margin-top: 0.85rem;
+  }
+
+  .pkce-snippet-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .pkce-snippet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 0.7rem;
+  }
+
+  .pkce-snippet-preview-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    border-radius: var(--radius-md);
+    padding: 0.7rem 0.85rem;
+  }
+
+  .pkce-snippet-preview {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    word-break: break-all;
+    line-height: 1.55;
+  }
+
+  .pkce-snippet-pre {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.55;
+    background: transparent;
+  }
+
+  .pkce-snippet-preview-row .btn-copy {
+    align-self: flex-start;
+  }
+
+  .pkce-privacy {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin: 0;
+    text-align: center;
+  }
+
+  @media (max-width: 640px) {
+    .pkce-input-row {
+      flex-direction: column;
+    }
+    .pkce-regen-btn {
+      width: 100%;
+    }
+    .pkce-snippet-preview-row {
+      flex-direction: column;
+    }
+    .pkce-snippet-preview-row .btn-copy {
+      align-self: stretch;
+    }
+  }
+</style>

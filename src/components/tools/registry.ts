@@ -116,6 +116,7 @@ import TimezoneConverterTool from './TimezoneConverterTool.astro';
 import AiTokenCounterTool from './AiTokenCounterTool.astro';
 import CspHeaderGeneratorTool from './CspHeaderGeneratorTool.astro';
 import SvgOptimizerTool from './SvgOptimizerTool.astro';
+import PkceGeneratorTool from './PkceGeneratorTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -232,4 +233,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'ai-token-counter': AiTokenCounterTool,
   'csp-header-generator': CspHeaderGeneratorTool,
   'svg-optimizer': SvgOptimizerTool,
+  'pkce-generator': PkceGeneratorTool,
 };

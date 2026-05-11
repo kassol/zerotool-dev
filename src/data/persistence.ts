@@ -10,6 +10,7 @@ export type PersistencePolicy = 'input' | 'preference' | 'disabled';
 export const toolPersistencePolicy = {
   'jwt-decoder': 'disabled',
   'jwt-generator': 'disabled',
+  'pkce-generator': 'disabled',
   'uuid-generator': 'preference',
   'cron-job-generator': 'preference',
   'css-filter-generator': 'preference',
