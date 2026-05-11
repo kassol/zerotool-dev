@@ -1,0 +1,77 @@
+---
+title: "如何生成和解码 Basic Auth 请求头"
+description: "了解 HTTP Basic Authentication 请求头格式、Base64 编码方式、如何在 cURL 和 Fetch 中使用 Basic auth，以及如何安全解码复制来的请求头。"
+pubDate: 2026-05-11
+ogImage: "/og/blog-basic-auth-header-generator-guide-zh.png"
+lang: "zh"
+tags: ["security", "api", "http"]
+---
+
+HTTP Basic Authentication 仍然常见于内部 API、Webhook 测试端点、遗留服务和快速集成验证。格式很小，但很容易出错：编码了错误的字符串、复用令牌前没有解码确认，或者把 Base64 当成加密。本文说明请求头格式，以及生成和检查 Basic auth 令牌的安全流程。
+
+## Basic auth 请求头包含什么
+
+Basic auth 请求会在 `Authorization` 请求头中发送凭据：
+
+```http
+Authorization: Basic <token>
+```
+
+`<token>` 是下面这个精确字符串的 Base64 编码：
+
+```text
+username:password
+```
+
+例如，`Aladdin:open sesame` 会变成 `QWxhZGRpbjpvcGVuIHNlc2FtZQ==`，完整请求头是：
+
+```http
+Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==
+```
+
+为了获得更广泛的兼容性，ASCII 凭据最稳妥，因为旧服务器和代理可能对字符编码的处理不一致。如果用户名或密码包含非 ASCII 字符，请验证客户端和服务器是否以相同方式处理 UTF-8 凭据。
+
+## 为 cURL 生成请求头
+
+当 API 文档要求提供 Basic auth 请求头时，可以直接用 `-H` 传入：
+
+```bash
+curl -H "Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" https://api.example.com/resource
+```
+
+当你已经有复制来的请求头值，并希望精确复现同一个请求时，这种方式很方便。写脚本时，优先从环境变量读取凭据，不要把密钥硬编码进 shell 历史记录。
+
+## 在 Fetch 中使用 Basic auth
+
+浏览器和 Node.js 的 `fetch` 调用使用相同的请求头名称和值：
+
+```js
+fetch('https://api.example.com/resource', {
+  headers: {
+    Authorization: 'Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='
+  }
+});
+```
+
+如果在代码中生成令牌，请先把 `username:password` 编码为字节，再进行 Base64 编码。避免记录生成后的请求头，因为任何看到它的人都能还原原始凭据。
+
+## 复用令牌前先解码
+
+复用复制来的 Basic auth 令牌前，先解码并确认它属于哪个账号。一个令牌可能指向测试环境账号、共享测试用户，或一个应该轮换的旧密码。
+
+使用 [ZeroTool Basic Auth 请求头生成器](/zh/tools/basic-auth-header-generator/) 可以从 `username` 和 `password` 生成请求头，也可以粘贴 `Authorization: Basic ...` 值，在浏览器端解码回 `username:password`。
+
+## 安全注意事项
+
+Base64 是可逆的。它是编码格式，不是加密。任何拿到请求头的人都可以解码出用户名和密码。
+
+HTTPS 会在客户端和服务器之间的传输过程中保护请求头。没有 HTTPS 时，Basic auth 凭据可能被任何能观察网络路径的人捕获。
+
+避免在截图、聊天工具、Issue 跟踪系统、文档草稿或共享机器中暴露生产凭据。如果真实的 Basic auth 请求头已经泄露，请立即轮换密码或令牌。
+
+## 相关工具
+
+- [JWT 解码器](/zh/tools/jwt-decoder/)：检查 token header 和 payload
+- [JWT 生成器](/zh/tools/jwt-generator/)：创建签名 JWT 测试令牌
+- [HMAC 生成器](/zh/tools/hmac-generator/)：处理 Webhook 签名和请求签名
+- [cURL 转代码](/zh/tools/curl-to-code/)：把带认证的 cURL 请求转换为代码

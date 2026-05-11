@@ -1,0 +1,77 @@
+---
+title: "How to Generate and Decode a Basic Auth Header"
+description: "Learn the HTTP Basic Authentication header format, how Base64 encoding works, how to use Basic auth with cURL and Fetch, and how to decode a copied header safely."
+pubDate: 2026-05-11
+ogImage: "/og/blog-basic-auth-header-generator-guide.png"
+lang: "en"
+tags: ["security", "api", "http"]
+---
+
+HTTP Basic Authentication is still common in internal APIs, webhook test endpoints, legacy services, and quick integration checks. The format is small, but mistakes are easy: encode the wrong string, paste a token without decoding it, or treat Base64 as encryption. This guide explains the header format and the safe workflow for generating and inspecting Basic auth tokens.
+
+## What a Basic auth header contains
+
+A Basic auth request sends credentials in the `Authorization` header:
+
+```http
+Authorization: Basic <token>
+```
+
+The `<token>` is the Base64 encoding of this exact string:
+
+```text
+username:password
+```
+
+For example, `Aladdin:open sesame` becomes `QWxhZGRpbjpvcGVuIHNlc2FtZQ==`, so the full header is:
+
+```http
+Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==
+```
+
+ASCII credentials are safest for broad compatibility because old servers and proxies may disagree about character encoding. If usernames or passwords contain non-ASCII characters, verify that both client and server handle UTF-8 credentials the same way.
+
+## Generate a header for cURL
+
+When an API documentation page asks for a Basic auth header, pass it directly with `-H`:
+
+```bash
+curl -H "Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" https://api.example.com/resource
+```
+
+This is useful when you already have a copied header value and want to reproduce the same request exactly. For scripts, prefer sourcing credentials from environment variables instead of hard-coding secrets in shell history.
+
+## Use Basic auth with Fetch
+
+Browser and Node.js `fetch` calls use the same header name and value:
+
+```js
+fetch('https://api.example.com/resource', {
+  headers: {
+    Authorization: 'Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='
+  }
+});
+```
+
+If you generate the token in code, encode `username:password` as bytes before Base64 encoding. Avoid logging the generated header because anyone who sees it can recover the original credentials.
+
+## Decode before you reuse a token
+
+Before reusing a copied Basic auth token, decode it and confirm which account it belongs to. A token may point to a staging account, a shared test user, or an old password that should be rotated.
+
+Use the [ZeroTool Basic Auth Header Generator](/tools/basic-auth-header-generator/) to generate a header from `username` and `password`, or paste an `Authorization: Basic ...` value to decode it back to `username:password` in the browser.
+
+## Security notes
+
+Base64 is reversible. It is an encoding format, not encryption. Anyone with the header can decode the username and password.
+
+HTTPS protects the header in transit between the client and server. Without HTTPS, Basic auth credentials can be captured by anyone who can observe the network path.
+
+Avoid sharing production credentials in screenshots, chat tools, issue trackers, documentation drafts, or shared machines. If a real Basic auth header was exposed, rotate the password or token immediately.
+
+## Related tools
+
+- [JWT Decoder](/tools/jwt-decoder/) for inspecting token headers and payloads
+- [JWT Generator](/tools/jwt-generator/) for creating signed JWT test tokens
+- [HMAC Generator](/tools/hmac-generator/) for webhook signatures and request signing
+- [cURL to Code](/tools/curl-to-code/) for converting authenticated cURL requests into code

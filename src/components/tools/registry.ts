@@ -5,6 +5,7 @@
 import AsciiConverterTool from './AsciiConverterTool.astro';
 import AspectRatioTool from './AspectRatioTool.astro';
 import Base64Tool from './Base64Tool.astro';
+import BasicAuthHeaderGeneratorTool from './BasicAuthHeaderGeneratorTool.astro';
 import ChmodCalculatorTool from './ChmodCalculatorTool.astro';
 import ColorConverterTool from './ColorConverterTool.astro';
 import CronParserTool from './CronParserTool.astro';
@@ -122,6 +123,7 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'ascii-converter': AsciiConverterTool,
   'aspect-ratio': AspectRatioTool,
   'base64': Base64Tool,
+  'basic-auth-header-generator': BasicAuthHeaderGeneratorTool,
   'chmod-calculator': ChmodCalculatorTool,
   'color-converter': ColorConverterTool,
   'cron-parser': CronParserTool,
