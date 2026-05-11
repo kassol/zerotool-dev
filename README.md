@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 115 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 116 tools and growing.
 
 ## Tools
 
@@ -11,6 +11,7 @@
 |------|-----|
 | JSON Formatter | [/tools/json-formatter](https://zerotool.dev/tools/json-formatter) |
 | Base64 Encode / Decode | [/tools/base64](https://zerotool.dev/tools/base64) |
+| Basic Auth Header Generator | [/tools/basic-auth-header-generator](https://zerotool.dev/tools/basic-auth-header-generator) |
 | UUID Generator | [/tools/uuid-generator](https://zerotool.dev/tools/uuid-generator) |
 | URL Encode / Decode | [/tools/url-encode](https://zerotool.dev/tools/url-encode) |
 | Text Case Converter | [/tools/text-case](https://zerotool.dev/tools/text-case) |
