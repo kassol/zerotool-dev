@@ -1,0 +1,41 @@
+---
+seoTitle: "PKCE Generator — OAuth 2.0 Code Verifier & Challenge | ZeroTool"
+seoDescription: "Generate cryptographically secure PKCE code_verifier and code_challenge pairs for OAuth 2.0 / 2.1 flows. S256 and plain methods, 100% browser-based — no network calls."
+faqItems:
+  - question: "What is PKCE and why do I need it?"
+    answer: "PKCE stands for Proof Key for Code Exchange (RFC 7636). It prevents authorization code interception on public clients — mobile apps, single-page apps, CLI tools, and desktop apps where you cannot safely store a client secret. OAuth 2.1 makes PKCE mandatory for every client, not just public ones."
+  - question: "Should I use S256 or plain?"
+    answer: "Always S256 in production. The plain method exists only for legacy clients that genuinely cannot compute SHA-256, which is no longer a realistic constraint. RFC 7636 explicitly recommends S256 and most modern OAuth providers reject plain by default."
+  - question: "Does this tool send my verifier anywhere?"
+    answer: "No. Random bytes come from crypto.getRandomValues, hashing happens via crypto.subtle.digest, and the URL preview is concatenated as plain strings. Nothing leaves your browser, and nothing is persisted to localStorage either — the verifier is regenerated fresh each time you reload."
+  - question: "How long should the verifier be?"
+    answer: "RFC 7636 allows 43 to 128 characters using the character set [A-Z a-z 0-9 - . _ ~]. We default to 64 characters: high enough entropy to resist brute force, short enough to fit comfortably in URLs. Choose 128 if you want to maximise entropy and your provider accepts it."
+  - question: "How do I use this with my OAuth provider?"
+    answer: "Store code_verifier securely on your client (localStorage for browsers, secure storage for native apps). Send code_challenge and code_challenge_method=S256 as query parameters on the /authorize redirect. When you exchange the authorization code at /token, send the original code_verifier so the server can re-hash and compare."
+---
+
+<h2>How to Use</h2>
+<ol>
+  <li>The tool auto-generates a 64-character <strong>code_verifier</strong> the moment the page loads.</li>
+  <li>Click <strong>Regenerate</strong> to get a fresh random verifier, or paste your own.</li>
+  <li>Pick the <strong>challenge method</strong> — keep S256 unless you have a strong reason to fall back to plain.</li>
+  <li>The <strong>code_challenge</strong> updates instantly. Copy it into your /authorize request.</li>
+  <li>Expand <strong>Authorization URL preview</strong> to plug in your endpoint, client_id, and redirect_uri.</li>
+  <li>Expand <strong>Token exchange (cURL)</strong> to grab a ready-to-run command for the /token call.</li>
+</ol>
+
+<h2>Common Use Cases</h2>
+<ul>
+  <li><strong>Local OAuth debugging:</strong> Generate a verifier/challenge pair, copy the authorize URL into your browser, capture the code, and replay the token exchange with the curl preview.</li>
+  <li><strong>Native + mobile apps:</strong> Manually craft test flows for desktop / iOS / Android clients without spinning up a sample backend.</li>
+  <li><strong>Onboarding new providers:</strong> Verify that an OAuth provider accepts S256 and that your client_id is configured correctly before writing any code.</li>
+  <li><strong>Security review:</strong> Confirm the verifier character set and length against RFC 7636 with a live tool instead of reading the spec mid-review.</li>
+</ul>
+
+<h2>How It Works</h2>
+<ol>
+  <li>32 random bytes from <code>crypto.getRandomValues</code> are base64url-encoded and truncated to your target length.</li>
+  <li>For S256, the verifier is UTF-8 encoded and hashed with <code>crypto.subtle.digest('SHA-256', …)</code>.</li>
+  <li>The 32-byte hash is base64url-encoded (replace + with -, / with _, strip = padding) to produce the 43-character challenge.</li>
+  <li>For plain, the challenge equals the verifier — kept for compatibility, not recommended.</li>
+</ol>

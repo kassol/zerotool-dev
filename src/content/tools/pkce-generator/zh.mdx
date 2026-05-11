@@ -1,0 +1,41 @@
+---
+seoTitle: "PKCE 生成器 — OAuth 2.0 code_verifier 与 challenge 在线生成 | ZeroTool"
+seoDescription: "为 OAuth 2.0 / 2.1 授权码流程生成密码学安全的 PKCE code_verifier 与 code_challenge。支持 SHA-256（S256）与 plain 方法，完全在浏览器中运行，零网络请求。"
+faqItems:
+  - question: "PKCE 是什么？为什么需要它？"
+    answer: "PKCE 全称 Proof Key for Code Exchange（RFC 7636），用来防止 OAuth 授权码在传输过程中被截获。它对无法安全保存 client secret 的公共客户端（移动 App、SPA、CLI、桌面应用）尤其重要。OAuth 2.1 已经把 PKCE 设为所有客户端的强制要求，而不仅是公共客户端。"
+  - question: "S256 与 plain 该用哪个？"
+    answer: "生产环境永远用 S256。plain 方法只保留给历史上无法计算 SHA-256 的客户端，而这个限制在今天已经不再成立。RFC 7636 明确推荐 S256，主流 OAuth Provider 默认会拒绝 plain。"
+  - question: "这个工具会把 verifier 上传到任何地方吗？"
+    answer: "不会。随机字节来自浏览器的 crypto.getRandomValues，哈希通过 crypto.subtle.digest 完成，URL 预览是纯字符串拼接，所有计算都在浏览器内完成。verifier 也不写入 localStorage，每次刷新都会重新生成。"
+  - question: "verifier 应该多长？"
+    answer: "RFC 7636 规定 43 到 128 个字符，字符集是 [A-Z a-z 0-9 - . _ ~]。默认 64 字符是平衡点：熵足够抗暴力破解，长度又不会撑爆 URL。如果你的 Provider 接受 128 字符且想最大化熵，可以拉到上限。"
+  - question: "怎么把它接入我的 OAuth 流程？"
+    answer: "在客户端安全保存 code_verifier（浏览器用 localStorage，原生 App 用安全存储），在 /authorize 重定向时通过 query 参数携带 code_challenge 与 code_challenge_method=S256。当 /token 交换授权码时，把原始 code_verifier 回传给服务器，让它重新哈希并比对。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>页面加载时自动生成一个 64 字符的 <strong>code_verifier</strong>。</li>
+  <li>点击 <strong>重新生成</strong> 获取新的随机 verifier，也可以手动粘贴你自己的。</li>
+  <li>选择 <strong>Challenge 方法</strong>——除非有充分理由，否则保持 S256。</li>
+  <li><strong>code_challenge</strong> 实时更新。复制到你的 /authorize 请求里。</li>
+  <li>展开 <strong>授权 URL 预览</strong>，填入你的端点、client_id、redirect_uri。</li>
+  <li>展开 <strong>令牌交换（cURL）</strong>，拿到可直接运行的 /token 请求命令。</li>
+</ol>
+
+<h2>典型场景</h2>
+<ul>
+  <li><strong>本地 OAuth 调试：</strong>生成 verifier/challenge 对，把授权 URL 复制到浏览器获取 code，再用 curl 预览回放 /token 交换。</li>
+  <li><strong>移动 / 桌面客户端：</strong>不用搭后端就能为 iOS / Android / 桌面应用手工跑通测试流程。</li>
+  <li><strong>对接新 Provider：</strong>在写一行代码之前，验证目标 Provider 接受 S256 且 client_id 已正确配置。</li>
+  <li><strong>安全评审：</strong>直接对照工具确认 verifier 字符集与长度是否符合 RFC 7636，不必中途翻规范。</li>
+</ul>
+
+<h2>原理</h2>
+<ol>
+  <li>用 <code>crypto.getRandomValues</code> 取 32 字节随机数，base64url 编码后截到目标长度。</li>
+  <li>S256 时，verifier 经 UTF-8 编码后用 <code>crypto.subtle.digest('SHA-256', …)</code> 计算哈希。</li>
+  <li>32 字节哈希再做 base64url 编码（+ 换 -、/ 换 _、剥掉 = padding），得到 43 字符的 challenge。</li>
+  <li>plain 模式下 challenge 等于 verifier 本身，只为兼容，不建议使用。</li>
+</ol>

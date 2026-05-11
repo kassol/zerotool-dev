@@ -1,0 +1,183 @@
+---
+title: "PKCE Generator: Wire Up OAuth Authorization Code Flow Without Mistakes"
+description: "Generate code_verifier and code_challenge pairs, plug them into /authorize and /token, and avoid the four PKCE mistakes that silently break login on mobile and SPAs."
+pubDate: 2026-05-11
+updatedDate: 2026-05-11
+lang: "en"
+tags: ["oauth", "pkce", "authentication", "security", "developer-tools"]
+---
+
+You inherit an authorization code flow that worked yesterday. A coworker upgraded the mobile SDK over the weekend, and now every login attempt fails on a fresh device with `invalid_grant`. The web app is fine. The server logs say the `code_verifier` was missing on the `/token` call. You open the new SDK changelog: the upstream library moved from a quietly-stored client secret to PKCE, and the migration was supposed to be transparent. The mobile team did not notice because the test device still had a cached session. By the time anyone catches the regression, your team has spent three hours arguing about whether SHA-256 is the verifier or the challenge.
+
+PKCE — Proof Key for Code Exchange — is the OAuth extension that lets clients without a server secret prove they originated the authorization request. RFC 7636 introduced it in 2015 for mobile and native apps, and OAuth 2.1 makes it mandatory for every client, including confidential ones. The mechanism is small enough to explain in a paragraph and easy enough to implement wrongly in a way that passes happy-path tests but fails the first time a real client retries. ZeroTool's [PKCE Generator](/tools/pkce-generator/) builds the pair in your browser, shows you both the `/authorize` URL and the `/token` exchange `curl` command, and refuses to compute the challenge when the verifier breaks the spec's character set.
+
+## What PKCE actually does
+
+A standard OAuth 2.0 authorization code flow works like this. The user clicks "Log in with Acme" in your client. You redirect them to `https://acme.example/authorize` with your `client_id` and a `redirect_uri`. They log in. Acme redirects back to your `redirect_uri` carrying an opaque `code` in the query string. Your client backend exchanges that code for an access token at `https://acme.example/token`, authenticating itself with a `client_secret` it shares with Acme.
+
+The weak spot is the redirect. On a mobile platform, anyone can register a handler for `myapp://callback`. On a SPA, the code lives briefly in `window.location` and is vulnerable to anything that can read the URL. If an attacker intercepts the code before your client uses it, and they know your `client_id`, they can complete the token exchange themselves.
+
+PKCE plugs that hole. Before redirecting to `/authorize`, the client generates a random secret it calls `code_verifier`, hashes it with SHA-256, and base64url-encodes the hash to produce a `code_challenge`. It sends the challenge — not the verifier — on the `/authorize` request. The server records the challenge against the issued code. When the client comes back to `/token` with the code, it also sends the original `code_verifier`. The server hashes it again and confirms it matches the recorded challenge. An attacker who intercepted the code never saw the verifier and cannot fake the second request.
+
+The verifier is the secret. The challenge is the public commitment. The two together make code interception attacks fail because the second leg of the exchange requires knowledge that never crossed the wire.
+
+## Five flows that need PKCE today
+
+| Client type | Why PKCE | Token endpoint authentication |
+|---|---|---|
+| Native mobile app (iOS / Android) | Cannot store `client_secret` securely; original PKCE use case from RFC 7636 | `code_verifier` only — public client |
+| Single-page app (React, Vue, SvelteKit hydrated) | Same problem in the browser. Anything in JS leaks to extensions and devtools | `code_verifier` only — public client |
+| CLI tool with local callback server | Loopback redirect on `http://127.0.0.1:PORT` is hijackable by any local process | `code_verifier` only — public client |
+| Desktop app (Electron, native) | URL handlers are registrable system-wide | `code_verifier` only |
+| Confidential web app (server-rendered) | OAuth 2.1 mandates PKCE for **every** client; defense-in-depth even when the server has a secret | `code_verifier` **and** `client_secret` |
+
+The last row is the surprise that catches teams upgrading from OAuth 2.0 to OAuth 2.1. Even your trusty Express backend with a server-side `client_secret` is supposed to use PKCE now. The threat model assumes the secret might leak; PKCE provides a second factor that does not.
+
+## Walk through the workbench
+
+Open the [PKCE Generator](/tools/pkce-generator/) and the page renders a verifier the moment the script runs. The default is 64 random characters from the `[A-Z a-z 0-9 - . _ ~]` set defined in RFC 7636 section 4.1. Click **Regenerate** and a fresh verifier appears with a new challenge computed in the same tick.
+
+Below the verifier the **Challenge Method** row offers two pills. `S256` is checked by default. The `plain` pill exists because RFC 7636 allows it for clients that cannot compute SHA-256, but every modern OAuth provider rejects `plain` by default and OAuth 2.1 prohibits it for new deployments. Choose `S256` and forget the other one exists.
+
+The **Code Challenge** card below shows the value you actually send on `/authorize`. Copy it from there. The trailing characters change every regeneration because the SHA-256 of a fresh verifier is a fresh hash.
+
+Two `<details>` panels at the bottom give you copyable previews. **Authorization URL preview** lets you plug your authorization endpoint, client_id, and redirect_uri into the URL template. The result is a complete `/authorize` URL with `response_type=code`, the current challenge, `code_challenge_method=S256`, a placeholder `state`, and `scope=openid profile`. Paste that URL into your browser to simulate the first leg of the flow, complete the login, and grab the `code` from the redirect.
+
+**Token exchange (cURL)** generates the matching `/token` request. The `code_verifier` body parameter holds the same random string the page generated, not the challenge. Replace `AUTHORIZATION_CODE_FROM_REDIRECT` with the value you captured and run the command. If the verifier and challenge are correctly paired and the code is fresh, the provider returns an access token. If not, you get `invalid_grant`, which is the same error you would see in production with broken PKCE — exactly the failure mode this workbench is meant to debug.
+
+## How the cryptography fits together
+
+The four lines of code that matter are short enough to read aloud.
+
+```js
+// 1. Generate a random verifier.
+const bytes = new Uint8Array(32);
+crypto.getRandomValues(bytes);
+const verifier = base64url(bytes);   // 43 chars from 32 bytes
+
+// 2. Hash it for the challenge.
+const data = new TextEncoder().encode(verifier);
+const hash = await crypto.subtle.digest('SHA-256', data);
+const challenge = base64url(new Uint8Array(hash));   // 43 chars from 32 bytes
+
+function base64url(bytes) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+```
+
+The verifier produced this way is always 43 characters because 32 bytes encoded in base64 with no padding is exactly 43 characters. RFC 7636 allows 43–128 characters, so 43 is the minimum and a perfectly valid choice. The ZeroTool default is 64 characters because the extra entropy is cheap and provider quirks sometimes punish suspiciously short tokens.
+
+The hashing uses [SubtleCrypto](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest), which is part of the Web Crypto API and available in every modern browser when the page is served over HTTPS. The tool refuses to run if `crypto.subtle` is unavailable — typically because someone opened the page over `http://` — and the inline status message tells you to switch to HTTPS.
+
+Base64url is the same as base64 except `+` becomes `-`, `/` becomes `_`, and trailing `=` padding is stripped. This is the format RFC 7636 specifies and the format every spec-compliant provider expects. Mis-encoding here is the most common silent bug: standard `btoa()` produces base64 with `+` and `/`, and a provider that strictly validates challenge characters will reject your request with no useful error.
+
+## Five mistakes that silently break login
+
+**1. Sending the challenge to `/token` instead of the verifier.** The `/authorize` request takes the challenge. The `/token` request takes the verifier. Switching them is the easiest possible mistake because both strings are 43 characters of base64url. Every PKCE failure ticket I have ever debugged turned out to be this. The mnemonic: the challenge is what you commit to publicly, the verifier is what you prove you held privately.
+
+**2. Mismatched `code_challenge_method`.** Send `S256` on `/authorize` and then forget to compute SHA-256 client-side, sending the raw verifier as the challenge? The server hashes the verifier you send to `/token`, compares it to the raw verifier you sent as the challenge, and the comparison fails. Always wire the method through both requests, or default to S256 everywhere and never look at it again.
+
+**3. Reusing the verifier across attempts.** Each authorization flow gets a fresh verifier and challenge pair. If your client retries `/authorize` because the user dismissed the consent screen, generate a new verifier; do not keep the old one around because the server might have associated the original verifier with the previous attempt that you abandoned.
+
+**4. Storing the verifier insecurely.** For SPAs, `localStorage` is the practical choice — the verifier is short-lived (minutes) and the threat model assumes an attacker who already controls your JS can do anything anyway. For native apps, use the platform's secure storage (Keychain on iOS, EncryptedSharedPreferences on Android). Do not write the verifier to disk in plaintext.
+
+**5. Using `plain` because S256 is "too complex."** The five lines of code above are the complete S256 implementation. Every OAuth library implements it. Providers like Okta, Auth0, Keycloak, Cognito, Spotify, and Google reject `plain` for new client registrations. There is no working scenario in 2026 where `plain` is the right choice.
+
+## Integrate with the major providers
+
+The `code_challenge` parameters and request shape are identical across providers because RFC 7636 standardised them. The differences live in registration: whether you tick a "Public Client" or "Allow PKCE" box, and which `redirect_uri` schemes are accepted.
+
+**Auth0** treats PKCE as transparent. Register your app as a Native or Single Page Application, enable Authorization Code Grant, and Auth0 expects `code_challenge` automatically. The endpoints are `https://YOUR_TENANT.auth0.com/authorize` and `https://YOUR_TENANT.auth0.com/oauth/token`.
+
+**Okta** requires `Use PKCE` on the application's General Settings tab. Endpoints are `https://YOUR_OKTA_DOMAIN/oauth2/v1/authorize` and `https://YOUR_OKTA_DOMAIN/oauth2/v1/token`. Confidential web apps with a `client_secret` should still send `code_verifier` per OAuth 2.1 guidance.
+
+**Keycloak** enables PKCE per client in the OpenID Connect settings. Set `Proof Key for Code Exchange Code Challenge Method` to `S256`. Endpoints follow the realm pattern `https://YOUR_KEYCLOAK/realms/YOUR_REALM/protocol/openid-connect/{authorize,token}`.
+
+**AWS Cognito** supports PKCE for Public Clients (no secret). The hosted UI is at `https://YOUR_DOMAIN.auth.us-west-2.amazoncognito.com/login`, the token endpoint at `/oauth2/token`.
+
+**Spotify** requires PKCE for any client that uses Authorization Code Flow without a backend, documented under the [Authorization Code with PKCE Flow](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow). Their UI does not have a separate "Enable PKCE" toggle; you just send the parameters.
+
+## Three quick implementations
+
+Python with `requests`:
+
+```python
+import base64, hashlib, secrets, requests
+
+verifier = secrets.token_urlsafe(64)[:64]
+challenge = base64.urlsafe_b64encode(
+    hashlib.sha256(verifier.encode()).digest()
+).rstrip(b"=").decode()
+
+# 1. Send the user to /authorize with `challenge`
+# 2. Receive `code` on your redirect_uri
+# 3. Exchange:
+response = requests.post(
+    "https://acme.example/token",
+    data={
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": "https://yourapp.example/callback",
+        "client_id": "YOUR_CLIENT_ID",
+        "code_verifier": verifier,
+    },
+)
+```
+
+JavaScript / TypeScript (browser):
+
+```ts
+const bytes = crypto.getRandomValues(new Uint8Array(32));
+const verifier = base64url(bytes);
+const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+const challenge = base64url(new Uint8Array(hash));
+
+sessionStorage.setItem('pkce_verifier', verifier);
+
+const authUrl = `https://acme.example/authorize?` + new URLSearchParams({
+  response_type: 'code',
+  client_id: 'YOUR_CLIENT_ID',
+  redirect_uri: 'https://yourapp.example/callback',
+  code_challenge: challenge,
+  code_challenge_method: 'S256',
+  state: crypto.randomUUID(),
+});
+location.href = authUrl;
+
+function base64url(bytes: Uint8Array) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+```
+
+Bash for the `/token` leg, once you have the code:
+
+```bash
+curl -X POST https://acme.example/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code" \
+  -d "code=$AUTHORIZATION_CODE" \
+  -d "redirect_uri=https://yourapp.example/callback" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "code_verifier=$CODE_VERIFIER"
+```
+
+## Why a browser-only generator earns its place
+
+Most PKCE generators on the open web do the cryptography in JavaScript already — that is the easy part. The differences come from what they bundle around the pair.
+
+`tonyxu-io.github.io/pkce-generator` is the canonical reference: minimal UI, accurate output, English-only. It is the tool everyone bookmarks. Ping Identity's [PKCE Code Generator](https://developer.pingidentity.com/en/tools/pkce-code-generator.html) is the same thing branded for Ping customers. `oauth.com/playground` is interactive but builds an entire round-trip against its own test issuer, which is great for learning and overkill for debugging your own provider. None of them give you the exact `curl` command for the second leg, and none of them work in Chinese, Japanese, or Korean.
+
+ZeroTool's tool fills the gap by tying the generator to a pasteable `/token` `curl` so you can replay the exchange against your actual provider, by validating verifier characters live, and by rendering the same interface in four languages. The verifier is regenerated on every page load and never written to `localStorage` — the `disabled` persistence policy ensures it. If you reload the tab between debugging sessions, the previous verifier is gone, which matches the real-world behavior you want from an OAuth helper.
+
+## Further reading
+
+- [RFC 7636 — Proof Key for Code Exchange](https://datatracker.ietf.org/doc/html/rfc7636) — the original specification
+- [OAuth 2.1 draft](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) — the consolidation that makes PKCE mandatory
+- [Web Crypto API: SubtleCrypto.digest](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest) — MDN reference for the SHA-256 call
+- [JWT Decoder](/tools/jwt-decoder/) — inspect the access token returned by `/token` after a successful PKCE exchange
+- [JWT Generator](/tools/jwt-generator/) — mint your own HS256 tokens for testing resource servers
+- [Hash Generator](/tools/hash-generator/) — compute SHA-256 / SHA-384 / SHA-512 hashes when you need to verify a non-PKCE challenge manually
