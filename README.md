@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 116 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 117 tools and growing.
 
 ## Tools
 
@@ -125,6 +125,7 @@
 | CSP Header Generator | [/tools/csp-header-generator](https://zerotool.dev/tools/csp-header-generator) |
 | SVG Optimizer | [/tools/svg-optimizer](https://zerotool.dev/tools/svg-optimizer) |
 | PKCE Generator | [/tools/pkce-generator](https://zerotool.dev/tools/pkce-generator) |
+| SSL Certificate Decoder | [/tools/ssl-certificate-decoder](https://zerotool.dev/tools/ssl-certificate-decoder) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
