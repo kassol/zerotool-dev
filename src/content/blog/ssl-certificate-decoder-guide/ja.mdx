@@ -1,0 +1,148 @@
+---
+title: "SSL 証明書デコーダー:X.509 PEM の現場速見ガイド"
+description: "X.509 PEM 証明書をブラウザでデコードし、Subject・Issuer・SAN・有効期間・鍵タイプ・署名アルゴリズム・フィンガープリントを確認。アップロード不要、OpenSSL コマンドも不要。"
+pubDate: 2026-05-11
+lang: "ja"
+tags: ["ssl-certificate-decoder", "x509", "tls", "developer-tools"]
+ogImage: /og/blog-ssl-certificate-decoder-guide.png
+---
+
+ワイルドカード証明書の差し替えまで残り 30 分、ステージング環境では `SSL_ERROR_BAD_CERT_DOMAIN` が出ている。手元のターミナル履歴に残っているのは PEM ブロックひとつだけ。デプロイ枠が閉じる前に SAN リスト、有効期限、SHA-256 フィンガープリントを確認したい。`openssl x509 -text` でも見られるが、フラグを 5 つ打ったあとも本当に欲しい一行を探してスクロールしている——そんなとき、用途を絞ったデコーダーのほうが速い。
+
+[証明書をすぐデコード →](/ja/tools/ssl-certificate-decoder/)
+
+## PEM 証明書の中身
+
+`.pem` ファイルは DER バイナリを Base64 でくるんだだけのものだ。`-----BEGIN CERTIFICATE-----` と `-----END CERTIFICATE-----` を剥がして Base64 デコードすれば、ASN.1 でエンコードされたバイナリ構造が出てくる——LDAP メッセージ、SNMP パケット、ほとんどの公開鍵フォーマットと同じエンコーディングだ。
+
+トップレベルの形は RFC 5280 で固定されている:
+
+```
+Certificate ::= SEQUENCE {
+    tbsCertificate       TBSCertificate,
+    signatureAlgorithm   AlgorithmIdentifier,
+    signatureValue       BIT STRING
+}
+```
+
+`tbsCertificate`(「to be signed」、署名対象)に、人間が気にする情報がすべて入っている——バージョン、シリアル、有効期間、Subject、Issuer、Subject Public Key Info、そして v3 拡張の一覧。`signatureAlgorithm` と `signatureValue` は残りの仕事を担う:TBS バイト列が対応 CA によって署名されたことを示す。
+
+ZeroTool のデコーダーは、純粋な JavaScript で書かれた小さな ASN.1 パーサーで、このツリーをすべてブラウザ内で歩く。アップロードもサーバー側の OpenSSL も API キーも不要だ。`cert-tools-online.example` には貼り付けるのをためらうような PEM でも、ここなら安全に貼れる。
+
+## 有効期間の読み方
+
+`notBefore` と `notAfter` のタイムスタンプは、2050 年より前なら `UTCTime`(`YYMMDDhhmmssZ`)、それ以降なら `GeneralizedTime`(`YYYYMMDDhhmmssZ`)でエンコードされる。RFC 5280 がこの切り替えを規定しているのは、2 桁年号があいまいにならないようにするためだ。
+
+実務で気にするのは次の 4 状態:
+
+| 状態 | 意味 | アクション |
+|------|------|-----------|
+| 有効(残り 30 日超) | 期限内・更新ウィンドウ前 | 何もしなくてよい——ただし期限を監視ダッシュボードに登録する |
+| 30 日以内に期限切れ | ブラウザはまだ受け入れる、ACME・商用 CA の更新はこの窓口で発火 | ローテーションをスケジュール |
+| 期限切れ | ブラウザが拒否、クライアントは `NET::ERR_CERT_DATE_INVALID` を見る | 即座にローテーション。期限が直近なら時計ずれを確認 |
+| まだ有効でない | `notBefore` が未来——時計のずれか段階展開 | サーバー NTP と CA 発行時刻を確認 |
+
+デコーダーはこれらの状態を色で直接示す。運用が最初に視線を向けるのは `Days Left` の行で、30 を割っていたら会話は「更新ジョブは動いているか?」に切り替わる。
+
+## Subject・Issuer・SAN——現代のホスト名照合ルール
+
+2026 年のブラウザはホスト名照合で Subject CN を**見ない**。`Subject Alternative Name`(SAN)拡張だけを見る。Chrome は 58 で CN フォールバックを廃止、Firefox は 48、Safari は iOS 13。`CN=example.com` のみで SAN がない証明書は、主要ブラウザがいずれも拒否する。
+
+だから証明書をデコードしたらこの順で読む:
+
+1. **SAN**——この証明書は実際にどのホスト名をカバーするのか?
+2. **Subject**——CN は一致しているか?(主に人間向け。CA はまだ埋める習慣だ)
+3. **Issuer**——誰が署名したか?(Let's Encrypt R3、DigiCert Global Root、ZeroSSL、社内 CA のどれを想定するかが決まる)
+
+今日の典型的な Let's Encrypt 証明書は、SAN にネイキッドドメイン(`example.com`)と `www` サブドメインの両方を持つ。ワイルドカード証明書では `*.example.com` が SAN であり、CN ではない。デコーダーは SAN エントリを種別(DNS、IP、URI、email)でグルーピングして表示するので、誤発行のワイルドカード証明書が一目でわかる。
+
+## Key Usage と Extended Key Usage は「許可証」
+
+Key Usage 拡張は 9 ビットの BIT STRING で、この証明書の公開鍵に許される行為を宣言する。Extended Key Usage(EKU)は Key Usage の上に重ねて、`serverAuth` や `codeSigning` のような意図レベルの粒度で許可を細分化する。
+
+TLS サーバー証明書なら典型的にはこうなる:
+
+```
+Key Usage: digitalSignature, keyEncipherment
+EKU      : serverAuth, clientAuth
+```
+
+CA 証明書(中間または root)ならこうだ:
+
+```
+Key Usage: keyCertSign, cRLSign
+Basic Constraints: CA = true
+```
+
+リーフ証明書に `keyCertSign` が立っていたら異常だ——このビットは他の証明書を署名する権限を意味し、中間 CA だけが持つべき特権だ。デコーダーは KU と EKU を読みやすいチップで並べるので、一覧で目視確認できる。
+
+## フィンガープリント:どのハッシュをどう使うか
+
+デコーダーが出すフィンガープリントは、証明書の DER バイト列全体(PEM テキストでも公開鍵単独でもない)に対する SHA-256、SHA-1、MD5 のダイジェストだ。**証明書の中身ではない**——CA は署名していない——が、特定の証明書ファイルを識別する最も安価な手段ではある。
+
+| ハッシュ | 2026 年の実用途 |
+|---------|----------------|
+| SHA-256 | 現在の標準識別子。HSTS preload 申請、モバイルアプリの証明書ピンニング、いくつかの規格における SRI、`openssl x509 -fingerprint -sha256` のすべてが SHA-256 を想定。 |
+| SHA-1 | レガシーツール:古い監視スクリプト、未移行の社内 CMDB、一部の IDS/IPS シグネチャ。新規のピンニング用途では使わない。 |
+| MD5 | かなり古い `openssl` 出力との互換のため。暗号学的には破られている——読み取り照合用途のみ。 |
+
+ピンニング目的なら SHA-256 行をコピー。誰かがログに書き残したハッシュを grep したいときは、デコーダーが 3 種類すべてを出すので、相手がどれを使ったかを推測しなくて済む。
+
+## RSA・ECDSA・Ed25519——公開鍵フィールドが教えてくれること
+
+Subject Public Key Info セクションは、アルゴリズム OID と生の鍵バイト列を持つ。現代で遭遇する 3 形態:
+
+```
+1.2.840.113549.1.1.1  rsaEncryption          (古典的な RSA)
+1.2.840.10045.2.1     id-ecPublicKey         (名前付き曲線上の ECDSA)
+1.3.101.112           id-Ed25519             (edwards25519 上の EdDSA)
+```
+
+RSA の鍵バイト列はそれ自体が ASN.1 SEQUENCE `{ modulus, exponent }` だ。デコーダーは modulus のビット長を報告する——2048 は許容範囲、3072 は推奨、4096 はルート CA 領域。2026 年に 1024 ビット RSA が出てきたら指摘事項だ:主要ブラウザは 2014 年あたりから受け入れを停止している。
+
+ECDSA は名前付き曲線 OID を表示する。実務で遭遇する 3 種類:
+
+- `prime256v1`(別名 `P-256`、`secp256r1`)——Let's Encrypt の ECDSA チェーンのデフォルト
+- `secp384r1`(`P-384`)——一部 EV 証明書や Windows エンドポイントが好む
+- `secp521r1`(`P-521`)——実環境では稀。主に内部コンプライアンス用途
+
+Ed25519 証明書は公開 web TLS ではまだ一般的ではない(Chrome が対応したのは 109 から)が、内部メッシュ TLS、コード署名、SSH では見かける。デコーダーは OID でラベル付けするので、hex を暗記する必要はない。
+
+## バンドルファイルと処理範囲
+
+PEM バンドルとは、`-----BEGIN CERTIFICATE-----` ブロックを複数連結したものだ。サーバーが leaf + 中間 + ルートをチェーンファイルでまとめて配信したり、CA が `fullchain.pem` として提供したりするときに出てくる。
+
+ZeroTool のデコーダーは、入力の**最初の証明書のみ**をデコードし、ステータスバナーで何枚検出したかを伝える。別の位置を見たい場合は、そのブロックだけを貼り直す。証明書間の署名検証はツール範囲外——必要なら手元で `openssl verify -CAfile chain.pem cert.pem` を実行する。
+
+## デコード結果で「ん?」と思うべきポイント
+
+運用レビューで次のパターンは赤フラグだ:
+
+- **公開 TLS リーフ証明書の `notAfter` が `notBefore` から 13 か月以上離れている**。Apple、Mozilla、Google は 2020 年 9 月から公開 TLS 寿命を 398 日に上限統一した。それより長ければ、非公開 CA、設定ミスの私的 PKI、または上限導入前の古い証明書のいずれかだ。
+- **CN は埋まっているが SAN がない**。前述のとおりブラウザは拒否する——新規デプロイを壊しそうなレガシー内部 CA フローを発見するのに便利。
+- **サーバー証明書に CA = true**。誤発行か、リーフと取り違えた中間証明書のどちらかだ。
+- **AIA に OCSP URL があるが OCSP Must-Staple フラグがない**。ほとんどのデプロイでは問題ないが、stapling を必須化する環境なら発行時に OCSP Must-Staple 拡張(OID 1.3.6.1.5.5.7.1.24)を追加する必要がある。
+
+## `openssl x509 -text` との関係
+
+```bash
+openssl x509 -in cert.pem -noout -text
+openssl x509 -in cert.pem -noout -fingerprint -sha256
+openssl x509 -in cert.pem -noout -dates -subject -issuer -ext subjectAltName
+```
+
+`openssl` は網羅的でスクリプト化しやすい。ZeroTool のデコーダーは、インシデント対応時の「これは何の証明書なのか?」という単発の問いに対して速い。両者は補完関係で代替ではない——`openssl` はパイプラインに、デコーダーは Slack に貼られた PEM をすぐ読む瞬間に。
+
+## 運用担当が気にするプライバシー上の論点
+
+本番証明書を見慣れない Web ツールに貼り付ける行為はソフトリークだ:証明書自体は公開情報で TLS クライアント全員が受け取るとはいえ、**貼り付けたという行為**そのものが「今この瞬間、御社の誰かがこの証明書をデバッグ中」と相手のサーバーに伝える。一部のコンプライアンス枠組みではこのパターンを監査ログにマークする。
+
+ZeroTool のデコーダーはブラウザタブ内で完結する。PEM はサーバーに届かない——初回ページロード後のネットワークリクエストは発生しない。DevTools → Network を開き、PEM を貼って Decode し、リクエスト数が変わらないことを確認すれば自分で検証できる。
+
+## 関連リソース
+
+- [RSA 鍵ペアジェネレーター](/ja/tools/rsa-key-generator/)——マッチするキーペア(PEM / JWK)を生成
+- [JWT デコーダー](/ja/tools/jwt-decoder/)——同じ「Base64 エンコードされた構造化トークン」パターンを JWT に適用
+- [Hash ジェネレーター](/ja/tools/hash-generator/)——任意の入力に対する SHA-256 / SHA-1 / MD5 を計算
+- [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280)——X.509 v3 + CRL profile、上記すべてのフィールドの典拠
+- [CA/Browser Forum Baseline Requirements](https://cabforum.org/baseline-requirements-documents/)——公開 TLS 発行を管轄するポリシー文書
