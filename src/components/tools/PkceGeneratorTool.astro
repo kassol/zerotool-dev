@@ -349,23 +349,37 @@
       params.set('code_challenge_method', method);
       params.set('state', 'OPAQUE_STATE');
       params.set('scope', 'openid profile');
-      var sep = base.indexOf('?') === -1 ? '?' : '&';
-      return base + sep + params.toString();
+      // Split off any fragment so params land before '#', not after.
+      var hashIdx = base.indexOf('#');
+      var path = hashIdx === -1 ? base : base.slice(0, hashIdx);
+      var hash = hashIdx === -1 ? '' : base.slice(hashIdx);
+      var sep = path.indexOf('?') === -1 ? '?' : '&';
+      return path + sep + params.toString() + hash;
+    }
+
+    // POSIX-safe single-quote wrap: 'abc' becomes 'abc', 'a'b' becomes 'a'\''b'.
+    function shSingleQuote(s) {
+      return "'" + String(s).replace(/'/g, "'\\''") + "'";
     }
 
     function buildCurl(verifier, method) {
       var endpoint = (tokenEndpointEl.value || '').trim() || 'https://example.com/oauth/token';
       var clientId = (clientIdEl.value || 'YOUR_CLIENT_ID').trim() || 'YOUR_CLIENT_ID';
       var redirect = (redirectEl.value || 'https://example.com/callback').trim() || 'https://example.com/callback';
+      // Build form body via URLSearchParams so '&' / '=' / unicode in values are
+      // properly percent-encoded; wrap the whole body in shell single quotes so
+      // metacharacters in the user's inputs cannot break out into the shell.
+      var body = new URLSearchParams();
+      body.set('grant_type', 'authorization_code');
+      body.set('code', 'AUTHORIZATION_CODE_FROM_REDIRECT');
+      body.set('redirect_uri', redirect);
+      body.set('client_id', clientId);
+      body.set('code_verifier', verifier);
       // method only affects the /authorize step; /token always receives the raw verifier
       return [
-        'curl -X POST ' + endpoint + ' \\',
-        '  -H "Content-Type: application/x-www-form-urlencoded" \\',
-        '  -d "grant_type=authorization_code" \\',
-        '  -d "code=AUTHORIZATION_CODE_FROM_REDIRECT" \\',
-        '  -d "redirect_uri=' + redirect + '" \\',
-        '  -d "client_id=' + clientId + '" \\',
-        '  -d "code_verifier=' + verifier + '"'
+        'curl -X POST ' + shSingleQuote(endpoint) + ' \\',
+        "  -H 'Content-Type: application/x-www-form-urlencoded' \\",
+        '  --data ' + shSingleQuote(body.toString())
       ].join('\n');
     }
 
