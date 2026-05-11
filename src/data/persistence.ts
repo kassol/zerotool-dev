@@ -8,6 +8,7 @@ export type PersistencePolicy = 'input' | 'preference' | 'disabled';
  * - disabled: never persist; historical values are wiped on page load for privacy.
  */
 export const toolPersistencePolicy = {
+  'basic-auth-header-generator': 'disabled',
   'jwt-decoder': 'disabled',
   'jwt-generator': 'disabled',
   'pkce-generator': 'disabled',

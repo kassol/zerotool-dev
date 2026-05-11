@@ -1,0 +1,77 @@
+---
+title: "Basic Auth ヘッダーを生成してデコードする方法"
+description: "HTTP Basic Authentication ヘッダー形式、Base64 エンコードの仕組み、cURL と Fetch での Basic auth の使い方、コピーしたヘッダーを安全にデコードする方法を解説します。"
+pubDate: 2026-05-11
+ogImage: "/og/blog-basic-auth-header-generator-guide-ja.png"
+lang: "ja"
+tags: ["security", "api", "http"]
+---
+
+HTTP Basic Authentication は、内部 API、Webhook のテストエンドポイント、レガシーサービス、短時間の連携確認で今もよく使われます。形式は小さいものの、間違いは起きやすいです。誤った文字列をエンコードする、デコードせずにトークンを再利用する、Base64 を暗号化だと誤解する、といったケースです。このガイドでは、ヘッダー形式と Basic auth トークンを生成・確認する安全な手順を説明します。
+
+## Basic auth ヘッダーに含まれるもの
+
+Basic auth リクエストは、`Authorization` ヘッダーで認証情報を送信します。
+
+```http
+Authorization: Basic <token>
+```
+
+`<token>` は、次の正確な文字列を Base64 エンコードしたものです。
+
+```text
+username:password
+```
+
+たとえば、`Aladdin:open sesame` は `QWxhZGRpbjpvcGVuIHNlc2FtZQ==` になるため、完全なヘッダーは次のようになります。
+
+```http
+Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==
+```
+
+幅広い互換性を考えると、ASCII の認証情報が最も安全です。古いサーバーやプロキシでは、文字エンコーディングの扱いが一致しないことがあります。ユーザー名やパスワードに非 ASCII 文字が含まれる場合は、クライアントとサーバーが UTF-8 認証情報を同じ方法で扱うことを確認してください。
+
+## cURL 用のヘッダーを生成する
+
+API ドキュメントで Basic auth ヘッダーを求められたら、`-H` で直接渡せます。
+
+```bash
+curl -H "Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" https://api.example.com/resource
+```
+
+コピー済みのヘッダー値があり、同じリクエストを正確に再現したい場合に便利です。スクリプトでは、シェル履歴にシークレットを残さないよう、認証情報を環境変数から読み込むことを推奨します。
+
+## Fetch で Basic auth を使う
+
+ブラウザと Node.js の `fetch` 呼び出しでは、同じヘッダー名と値を使います。
+
+```js
+fetch('https://api.example.com/resource', {
+  headers: {
+    Authorization: 'Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='
+  }
+});
+```
+
+コード内でトークンを生成する場合は、`username:password` をバイト列として扱ってから Base64 エンコードしてください。生成したヘッダーはログに出さないでください。それを見た人は元の認証情報を復元できます。
+
+## トークンを再利用する前にデコードする
+
+コピーした Basic auth トークンを再利用する前に、デコードしてどのアカウントに紐づいているか確認してください。トークンはステージング用アカウント、共有テストユーザー、またはローテーションすべき古いパスワードを指している可能性があります。
+
+[ZeroTool Basic Auth ヘッダー生成ツール](/ja/tools/basic-auth-header-generator/)を使うと、`username` と `password` からヘッダーを生成できます。また、`Authorization: Basic ...` の値を貼り付けて、ブラウザベースで `username:password` にデコードできます。
+
+## セキュリティ上の注意
+
+Base64 は可逆です。これはエンコード形式であり、暗号化ではありません。ヘッダーを持っている人は、ユーザー名とパスワードをデコードできます。
+
+HTTPS は、クライアントとサーバー間の転送中にヘッダーを保護します。HTTPS がない場合、ネットワーク経路を観測できる人に Basic auth 認証情報を取得される可能性があります。
+
+本番環境の認証情報を、スクリーンショット、チャットツール、Issue トラッカー、ドキュメントの下書き、共有マシンで露出させないでください。実際の Basic auth ヘッダーが漏えいした場合は、ただちにパスワードまたはトークンをローテーションしてください。
+
+## 関連ツール
+
+- [JWT Decoder](/ja/tools/jwt-decoder/): トークンのヘッダーとペイロードを確認
+- [JWT Generator](/ja/tools/jwt-generator/): 署名付き JWT テストトークンを作成
+- [HMAC Generator](/ja/tools/hmac-generator/): Webhook 署名とリクエスト署名を扱う
+- [cURL to Code](/ja/tools/curl-to-code/): 認証付き cURL リクエストをコードに変換

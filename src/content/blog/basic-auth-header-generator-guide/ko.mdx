@@ -1,0 +1,77 @@
+---
+title: "Basic Auth 헤더를 생성하고 디코딩하는 방법"
+description: "HTTP Basic Authentication 헤더 형식, Base64 인코딩 방식, cURL과 Fetch에서 Basic auth를 사용하는 방법, 복사한 헤더를 안전하게 디코딩하는 방법을 알아봅니다."
+pubDate: 2026-05-11
+ogImage: "/og/blog-basic-auth-header-generator-guide-ko.png"
+lang: "ko"
+tags: ["security", "api", "http"]
+---
+
+HTTP Basic Authentication은 내부 API, Webhook 테스트 엔드포인트, 레거시 서비스, 빠른 연동 확인에서 여전히 자주 쓰입니다. 형식은 작지만 실수하기 쉽습니다. 잘못된 문자열을 인코딩하거나, 토큰을 디코딩하지 않고 재사용하거나, Base64를 암호화로 오해하는 경우가 대표적입니다. 이 가이드는 헤더 형식과 Basic auth 토큰을 생성하고 확인하는 안전한 흐름을 설명합니다.
+
+## Basic auth 헤더에 들어가는 내용
+
+Basic auth 요청은 `Authorization` 헤더로 자격 증명을 보냅니다.
+
+```http
+Authorization: Basic <token>
+```
+
+`<token>`은 다음 정확한 문자열을 Base64로 인코딩한 값입니다.
+
+```text
+username:password
+```
+
+예를 들어 `Aladdin:open sesame`는 `QWxhZGRpbjpvcGVuIHNlc2FtZQ==`가 되므로 전체 헤더는 다음과 같습니다.
+
+```http
+Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==
+```
+
+넓은 호환성을 위해서는 ASCII 자격 증명이 가장 안전합니다. 오래된 서버나 프록시는 문자 인코딩 처리 방식이 서로 다를 수 있습니다. 사용자 이름이나 비밀번호에 비 ASCII 문자가 포함된다면 클라이언트와 서버가 UTF-8 자격 증명을 같은 방식으로 처리하는지 확인하세요.
+
+## cURL용 헤더 생성
+
+API 문서에서 Basic auth 헤더를 요구한다면 `-H`로 직접 전달할 수 있습니다.
+
+```bash
+curl -H "Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" https://api.example.com/resource
+```
+
+이미 복사한 헤더 값이 있고 같은 요청을 정확히 재현하고 싶을 때 유용합니다. 스크립트에서는 셸 히스토리에 비밀 값이 남지 않도록 자격 증명을 환경 변수에서 읽는 방식을 권장합니다.
+
+## Fetch에서 Basic auth 사용
+
+브라우저와 Node.js의 `fetch` 호출은 같은 헤더 이름과 값을 사용합니다.
+
+```js
+fetch('https://api.example.com/resource', {
+  headers: {
+    Authorization: 'Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=='
+  }
+});
+```
+
+코드에서 토큰을 생성한다면 `username:password`를 바이트로 인코딩한 뒤 Base64로 변환하세요. 생성된 헤더는 로그에 남기지 마세요. 그 값을 본 사람은 원래 자격 증명을 복원할 수 있습니다.
+
+## 토큰을 재사용하기 전에 디코딩하기
+
+복사한 Basic auth 토큰을 재사용하기 전에 디코딩해서 어떤 계정에 속한 값인지 확인하세요. 토큰은 스테이징 계정, 공유 테스트 사용자, 또는 교체해야 하는 오래된 비밀번호를 가리킬 수 있습니다.
+
+[ZeroTool Basic Auth 헤더 생성기](/ko/tools/basic-auth-header-generator/)를 사용하면 `username`과 `password`로 헤더를 만들 수 있고, `Authorization: Basic ...` 값을 붙여 넣어 브라우저 기반으로 `username:password`로 디코딩할 수 있습니다.
+
+## 보안 참고 사항
+
+Base64는 되돌릴 수 있습니다. 인코딩 형식일 뿐 암호화가 아닙니다. 헤더를 가진 사람은 누구나 사용자 이름과 비밀번호를 디코딩할 수 있습니다.
+
+HTTPS는 클라이언트와 서버 사이의 전송 구간에서 헤더를 보호합니다. HTTPS가 없으면 네트워크 경로를 관찰할 수 있는 사람이 Basic auth 자격 증명을 캡처할 수 있습니다.
+
+프로덕션 자격 증명을 스크린샷, 채팅 도구, 이슈 트래커, 문서 초안, 공유 머신에 노출하지 마세요. 실제 Basic auth 헤더가 노출됐다면 비밀번호나 토큰을 즉시 교체하세요.
+
+## 관련 도구
+
+- [JWT 디코더](/ko/tools/jwt-decoder/): 토큰 헤더와 페이로드 확인
+- [JWT 생성기](/ko/tools/jwt-generator/): 서명된 JWT 테스트 토큰 생성
+- [HMAC 생성기](/ko/tools/hmac-generator/): Webhook 서명과 요청 서명 처리
+- [cURL to Code](/ko/tools/curl-to-code/): 인증이 포함된 cURL 요청을 코드로 변환
