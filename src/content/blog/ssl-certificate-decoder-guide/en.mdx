@@ -1,0 +1,148 @@
+---
+title: "SSL Certificate Decoder: A Practical Guide to X.509 PEM Inspection"
+description: "Decode any X.509 PEM certificate to read Subject, Issuer, SANs, validity, key type, signature algorithm, and fingerprints — without uploading the file or running OpenSSL."
+pubDate: 2026-05-11
+lang: "en"
+tags: ["ssl-certificate-decoder", "x509", "tls", "developer-tools"]
+ogImage: /og/blog-ssl-certificate-decoder-guide.png
+---
+
+A wildcard renewal is half an hour from going live, the staging endpoint is throwing `SSL_ERROR_BAD_CERT_DOMAIN`, and the only thing you have in your terminal scrollback is a PEM block. You want to see the SAN list, the expiry, and the SHA-256 fingerprint before the deploy window closes. `openssl x509 -text` works, but five flags later you are still scrolling for the one field that matters. A focused decoder is faster.
+
+[Decode a certificate now →](/tools/ssl-certificate-decoder)
+
+## What's Actually Inside a PEM Certificate
+
+A `.pem` file is a Base64 wrapper around a DER blob. Strip the `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----` markers, Base64-decode what's left, and you get a binary structure encoded as ASN.1 — the same encoding used for LDAP messages, SNMP packets, and most public-key formats.
+
+The top-level shape is fixed by RFC 5280:
+
+```
+Certificate ::= SEQUENCE {
+    tbsCertificate       TBSCertificate,
+    signatureAlgorithm   AlgorithmIdentifier,
+    signatureValue       BIT STRING
+}
+```
+
+The `tbsCertificate` half ("to be signed") is where every field a human cares about lives — version, serial, validity window, Subject, Issuer, Subject Public Key Info, and the v3 extensions list. The `signatureAlgorithm` and `signatureValue` cover the rest: they prove the issuer's CA signed the TBS bytes.
+
+The ZeroTool decoder walks this tree entirely in your browser using a small ASN.1 parser written in plain JavaScript. There is no upload, no server-side OpenSSL, no API key. The same PEM you'd hesitate to paste into `cert-tools-online.example` is safe to paste here.
+
+## Reading the Validity Window
+
+The `notBefore` and `notAfter` timestamps are encoded as `UTCTime` (`YYMMDDhhmmssZ`) for dates before 2050, and `GeneralizedTime` (`YYYYMMDDhhmmssZ`) for anything later. RFC 5280 mandates this switchover so two-digit years stay unambiguous.
+
+In practice you care about three states:
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| Valid (> 30 days left) | Certificate is current and not in the renewal window | Nothing — but log the expiry into your monitor |
+| Expires in ≤ 30 days | Browsers still accept it, but ACME / commercial renewals normally kick in here | Schedule the rotation |
+| Expired | Browsers reject; clients see a hard `NET::ERR_CERT_DATE_INVALID` | Rotate now; check time skew if the date looks recent |
+| Not yet valid | `notBefore` is in the future — clock skew or staged rollout | Check server NTP and CA issuance time |
+
+The decoder colour-codes these states inline. The `Days Left` row is what most operators glance at first — if you see a number under 30, the conversation shifts to "is the renewal job running?"
+
+## Subject vs Issuer vs SAN — the Modern Hostname Story
+
+A 2026 browser does not look at the Subject `CN` to match a hostname. It looks at the `Subject Alternative Name` (SAN) extension. Chrome dropped CN fallback in 58, Firefox in 48, Safari in iOS 13. If you have a cert with `CN=example.com` but no SAN entry, every major browser will reject it.
+
+So when you decode a cert, read in this order:
+
+1. **SAN** — what hostnames will this certificate actually cover?
+2. **Subject** — is the CN consistent? (Mostly for human reading; CAs still set it.)
+3. **Issuer** — who signed this? (Tells you whether to expect Let's Encrypt R3, DigiCert Global Root, ZeroSSL, etc.)
+
+A typical Let's Encrypt cert today has SAN entries for the apex (`example.com`) and the `www` subdomain. A wildcard cert has `*.example.com` as a SAN — not as the CN. The decoder groups SAN entries by type (DNS, IP, URI, email) so you can spot mis-issued wildcards quickly.
+
+## Key Usage and Extended Key Usage Are the Permission Slip
+
+The Key Usage extension is a 9-bit bitmap that says what the public key in this certificate is allowed to do. The Extended Key Usage list (EKU) layers on top with intent-level grants like `serverAuth` or `codeSigning`.
+
+For a TLS server certificate you'd expect:
+
+```
+Key Usage: digitalSignature, keyEncipherment
+EKU      : serverAuth, clientAuth
+```
+
+For a CA certificate (intermediate or root) you'd expect:
+
+```
+Key Usage: keyCertSign, cRLSign
+Basic Constraints: CA = true
+```
+
+If a leaf cert shows `keyCertSign`, something is wrong — that bit lets the holder sign other certificates, which is a privilege only intermediates should have. The decoder surfaces both extensions as readable chips, so you can scan them at a glance.
+
+## Fingerprints: Which Hash for Which Job
+
+The fingerprints in the decoder are SHA-256, SHA-1, and MD5 digests of the full DER bytes (not the PEM text, not just the public key). They are not part of the certificate — the CA never signed them — but they are the cheapest way to identify a specific certificate file.
+
+| Hash | What it's for in 2026 |
+|------|----------------------|
+| SHA-256 | The default identifier. HSTS preload submissions, certificate pinning in mobile apps, Subresource Integrity for some standards, and `openssl x509 -fingerprint -sha256` all expect this. |
+| SHA-1 | Legacy tooling: older monitoring scripts, internal CMDBs that have not migrated, some IDS/IPS signatures. Don't use for new pinning. |
+| MD5 | Compatibility with very old `openssl` output. Cryptographically broken — read-only purposes only. |
+
+For pinning, copy the SHA-256 row. For grepping log files where someone wrote down a hash, the decoder gives you all three so you don't have to guess.
+
+## RSA, ECDSA, and Ed25519 — What the Public Key Field Tells You
+
+The Subject Public Key Info section names an algorithm OID and carries the raw key bytes. The three modern shapes you will meet:
+
+```
+1.2.840.113549.1.1.1  rsaEncryption          (RSA, classic)
+1.2.840.10045.2.1     id-ecPublicKey         (ECDSA on a named curve)
+1.3.101.112           id-Ed25519             (EdDSA on edwards25519)
+```
+
+For RSA, the key bytes are themselves an ASN.1 SEQUENCE `{ modulus, exponent }`. The decoder reports the modulus bit length — typically 2048 (acceptable), 3072 (preferred), or 4096 (root CA territory). A 1024-bit RSA key in 2026 is a finding: most browsers stopped accepting them around 2014.
+
+For ECDSA you get the named curve OID. The three you will see in practice:
+
+- `prime256v1` (also called `P-256` or `secp256r1`) — the default for Let's Encrypt ECDSA chains
+- `secp384r1` (`P-384`) — what some EV certs and Windows endpoints prefer
+- `secp521r1` (`P-521`) — rare in the wild; mostly internal compliance
+
+Ed25519 certs are still uncommon for public web TLS (Chrome only added support in version 109) but show up in internal mesh TLS, code signing, and SSH. The decoder labels them by OID so you don't have to memorise the hex.
+
+## Bundle Files and What Comes Out
+
+A PEM bundle is just multiple `-----BEGIN CERTIFICATE-----` blocks back-to-back. They appear when a server delivers leaf + intermediate + root in one chain file, or when a CA ships a "fullchain.pem".
+
+The ZeroTool decoder takes the first certificate in the input and decodes it, with a status banner telling you how many it saw. To inspect a different position, paste just that block. (Future cross-certificate signature verification is not in scope — for that, use `openssl verify -CAfile chain.pem cert.pem` locally.)
+
+## When the Decoder Reports Something Surprising
+
+A few patterns are worth flagging in operational reviews:
+
+- **`notAfter` more than 13 months from `notBefore` on a public TLS leaf.** Apple, Mozilla, and Google all cap public TLS lifetimes at 398 days since September 2020. Longer means either a non-public CA, a misconfigured private PKI, or an old cert from before the cap.
+- **Missing SAN but populated CN.** As noted above, browsers will reject this — useful for catching legacy internal-CA workflows that are about to break a new deployment.
+- **CA = true on a server cert.** Either the cert is mis-issued or you are looking at an intermediate that someone confused with the leaf.
+- **OCSP URLs in the AIA but no `OCSP Must-Staple` flag.** Fine for most deployments, but if your environment requires stapling enforcement you need to add `OCSP Must-Staple` (OID 1.3.6.1.5.5.7.1.24) at issuance time.
+
+## Comparing With `openssl x509 -text`
+
+```bash
+openssl x509 -in cert.pem -noout -text
+openssl x509 -in cert.pem -noout -fingerprint -sha256
+openssl x509 -in cert.pem -noout -dates -subject -issuer -ext subjectAltName
+```
+
+`openssl` is exhaustive and scriptable; the ZeroTool decoder is faster for the single-certificate "what is this exactly?" question that comes up during an incident. They are complements, not substitutes — `openssl` for pipelines, the decoder for the moment you have the PEM in a Slack thread and need to read it now.
+
+## A Privacy Note Operators Care About
+
+Pasting a production certificate into an unknown web tool is a soft-leak: even though the certificate is public information that any TLS client receives, the *act of pasting* tells the server that someone at your company is debugging that cert at that moment. Some compliance regimes flag that pattern in audit logs.
+
+The ZeroTool decoder runs entirely in the browser tab. The PEM never reaches a server — there is no network request after the initial page load. You can verify this by opening DevTools → Network, pasting a PEM, decoding it, and confirming the request count does not change.
+
+## Further Reading
+
+- [RSA Key Pair Generator](/tools/rsa-key-generator) — generate matching key pairs (PEM / JWK)
+- [JWT Decoder](/tools/jwt-decoder) — the same "Base64-encoded structured token" pattern, applied to JWT
+- [Hash Generator](/tools/hash-generator) — generate SHA-256 / SHA-1 / MD5 for arbitrary input
+- [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280) — the X.509 v3 + CRL profile, the source of truth for every field above
+- [BR (CA/Browser Forum Baseline Requirements)](https://cabforum.org/baseline-requirements-documents/) — the policy document that governs public TLS issuance

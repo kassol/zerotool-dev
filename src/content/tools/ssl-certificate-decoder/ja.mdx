@@ -1,0 +1,62 @@
+---
+seoTitle: "SSL 証明書デコーダー — X.509 PEM をオンライン解析 | ZeroTool"
+seoDescription: "X.509 PEM 証明書を貼り付けて Subject・Issuer・有効期間・SAN・公開鍵・署名アルゴリズム・SHA-256/SHA-1/MD5 フィンガープリントを表示。無料、ブラウザ完結、アップロード不要。"
+faqItems:
+  - question: "証明書はサーバーに送信されますか？"
+    answer: "送信されません。すべての解析はブラウザ内のインライン JavaScript と Web Crypto API で完了し、PEM の内容はマシン外に出ません。本番・ステージング・社内証明書も安全に貼り付けられます。"
+  - question: "対応している証明書形式は？"
+    answer: "PEM エンコードの X.509 証明書（-----BEGIN CERTIFICATE----- 〜 -----END CERTIFICATE----- マーカー付き）のみ対応。DER バイナリは事前に openssl x509 -inform DER -in cert.der -out cert.pem で PEM 化してください。"
+  - question: "証明書チェーンや信頼性は検証できますか？"
+    answer: "できません。本ツールは単一証明書のフィールドを解析するだけです。チェーン検証は openssl verify -CAfile chain.pem cert.pem、または OS のトラストストアで行ってください。"
+  - question: "フィンガープリントの計算方法は？"
+    answer: "SHA-256・SHA-1・MD5 のいずれも証明書の DER バイト列（PEM テキストではなく）に対してダイジェストを計算します。現代の標準は SHA-256 で、SHA-1 と MD5 は旧来ツールとの互換のために表示しています。"
+  - question: "ECDSA や Ed25519 にも対応していますか？"
+    answer: "対応しています。rsaEncryption、id-ecPublicKey（prime256v1 / secp384r1 / secp521r1、secp256k1、Brainpool 系列）、Ed25519、Ed448 を認識します。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>X.509 PEM 証明書を入力ボックスに貼り付けます。</li>
+  <li><strong>デコード</strong> をクリックすると、下にすべてのフィールドが表示されます。</li>
+  <li><strong>有効期間</strong> セクションのカラー付きステータスバッジで期限を確認（期限切れ、有効、30 日以内に期限切れ予定）。</li>
+  <li><strong>Subject</strong>、<strong>Issuer</strong>、<strong>Subject Alternative Names</strong> でホスト名カバレッジを確認。</li>
+  <li>ピンニングや監査ログ用に、<strong>コピー</strong> ボタンでフィンガープリントをクリップボードに転送。</li>
+</ol>
+
+<h2>表示されるフィールド</h2>
+<ul>
+  <li><strong>有効期間</strong> — Not Before / Not After タイムスタンプとカラー付きステータス。</li>
+  <li><strong>Subject と Issuer</strong> — CN、O、OU、C、L、ST、および拡張属性（jurisdiction、business category、serialNumber）。</li>
+  <li><strong>Subject Alternative Names</strong> — DNS、IP、URI、email を種類別にグルーピング。</li>
+  <li><strong>公開鍵</strong> — アルゴリズム（RSA / EC / Ed25519 / Ed448）、鍵長（bit）、RSA exponent、EC 名前付き曲線。</li>
+  <li><strong>Key Usage と Extended Key Usage</strong> — Digital Signature、Key Encipherment、serverAuth / clientAuth、codeSigning、OCSPSigning など。</li>
+  <li><strong>Basic Constraints</strong> — CA 証明書かどうか、pathLenConstraint。</li>
+  <li><strong>署名アルゴリズム</strong> — sha256WithRSAEncryption、ecdsa-with-SHA384、Ed25519 など。</li>
+  <li><strong>フィンガープリント</strong> — SHA-256 / SHA-1 / MD5 の 16 進（コロン区切り）。</li>
+  <li><strong>シリアル番号 と バージョン</strong> — 16 進シリアル、X.509 バージョン（通常 v3）。</li>
+</ul>
+
+<h2>PEM 証明書をデコードする仕組み</h2>
+<p>
+  PEM 証明書は DER エンコードされた ASN.1 の Base64 ラッパーです。ヘッダ・フッタを除去し
+  Base64 デコードすると DER バイト列が得られ、それを ASN.1 構造に従って再帰的に解析します。
+  <code>Certificate</code> SEQUENCE には <code>tbsCertificate</code>、
+  <code>signatureAlgorithm</code>、<code>signatureValue</code> が含まれ、可視化される情報の大半は
+  TBS 部分にあります。本ツールはピュア JavaScript でこの解析器を実装しており、サーバー往復は発生しません。
+</p>
+
+<h2>主なユースケース</h2>
+<ul>
+  <li>新規 TLS 証明書をデプロイする前に SAN が必要なホスト名をすべてカバーしているか確認。</li>
+  <li>ステージング / 本番環境の証明書期限を一括チェック。</li>
+  <li>モバイルアプリや HSTS preload 申請で SHA-256 フィンガープリントによるピンニング。</li>
+  <li>署名アルゴリズム・鍵長が PCI DSS、FIPS 140-3、Mozilla Modern profile などのコンプライアンス要件を満たしているか検証。</li>
+  <li>Subject CN と SAN-only 検証の不一致デバッグ。</li>
+</ul>
+
+<h2>本ツールの設計上の境界</h2>
+<p>
+  単一証明書をデコードするのみです。チェーン検証、CRL/OCSP 取得、失効確認、実 TLS ハンドシェイクは行いません。
+  チェーン検証は <code>openssl verify</code>、ライブ TLS 検査は
+  <code>openssl s_client -showcerts</code> や <code>nmap --script ssl-cert</code> をご利用ください。
+</p>

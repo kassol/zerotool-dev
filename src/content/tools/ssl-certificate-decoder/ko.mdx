@@ -1,0 +1,62 @@
+---
+seoTitle: "SSL 인증서 디코더 — X.509 PEM 온라인 분석 | ZeroTool"
+seoDescription: "X.509 PEM 인증서를 붙여넣어 Subject, Issuer, 유효 기간, SAN, 공개 키, 서명 알고리즘, SHA-256/SHA-1/MD5 지문 확인. 무료, 브라우저 기반, 업로드 없음."
+faqItems:
+  - question: "인증서가 서버로 전송됩니까?"
+    answer: "아니요. 모든 파싱은 브라우저 내 인라인 JavaScript와 Web Crypto API로 처리되며 PEM이 기기를 떠나지 않습니다. 프로덕션·스테이징·내부 인증서 모두 안전하게 붙여넣을 수 있습니다."
+  - question: "어떤 인증서 형식을 지원하나요?"
+    answer: "-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- 마커가 포함된 PEM 형식의 X.509 인증서만 지원합니다. DER 바이너리는 openssl x509 -inform DER -in cert.der -out cert.pem 으로 먼저 변환해 주세요."
+  - question: "인증서 체인이나 신뢰성을 검증할 수 있나요?"
+    answer: "아니요. 단일 인증서의 필드만 디코딩합니다. 체인 검증은 openssl verify -CAfile chain.pem cert.pem 또는 운영체제 신뢰 저장소에 맡기세요."
+  - question: "지문은 어떻게 계산되나요?"
+    answer: "SHA-256, SHA-1, MD5 모두 인증서의 DER 바이트(PEM 텍스트가 아님)에 대해 다이제스트를 계산합니다. 오늘날 표준은 SHA-256이며 SHA-1과 MD5는 레거시 도구 호환을 위해 표시됩니다."
+  - question: "ECDSA나 Ed25519도 지원하나요?"
+    answer: "모두 지원합니다. 디코더는 rsaEncryption, id-ecPublicKey(이름 곡선 prime256v1 / secp384r1 / secp521r1, secp256k1, Brainpool 계열 포함), Ed25519, Ed448 공개 키를 인식합니다."
+---
+
+<h2>사용 방법</h2>
+<ol>
+  <li>X.509 PEM 인증서를 입력 상자에 붙여넣으세요.</li>
+  <li><strong>디코드</strong> 를 클릭하면 아래에 모든 필드가 표시됩니다.</li>
+  <li><strong>유효 기간</strong> 섹션의 색상 배지로 만료 상태를 확인하세요 — 만료됨 / 유효 / 30일 이내 만료 예정.</li>
+  <li><strong>Subject</strong>, <strong>Issuer</strong>, <strong>Subject Alternative Names</strong> 로 호스트명 커버리지를 검증합니다.</li>
+  <li>핀닝 또는 감사 로그에 사용하려면 <strong>복사</strong> 버튼으로 지문을 클립보드에 옮기세요.</li>
+</ol>
+
+<h2>이 디코더가 보여주는 필드</h2>
+<ul>
+  <li><strong>유효 기간</strong> — Not Before / Not After 타임스탬프와 색상 상태 배지.</li>
+  <li><strong>Subject 와 Issuer</strong> — CN, O, OU, C, L, ST 및 확장 속성(jurisdiction, business category, serialNumber).</li>
+  <li><strong>Subject Alternative Names</strong> — DNS, IP, URI, email 항목을 유형별로 그룹화.</li>
+  <li><strong>공개 키</strong> — 알고리즘(RSA / EC / Ed25519 / Ed448), 키 길이(bit), RSA exponent, EC 이름 곡선.</li>
+  <li><strong>Key Usage 와 Extended Key Usage</strong> — Digital Signature, Key Encipherment, serverAuth / clientAuth, codeSigning, OCSPSigning 등.</li>
+  <li><strong>Basic Constraints</strong> — CA 여부와 pathLenConstraint.</li>
+  <li><strong>서명 알고리즘</strong> — sha256WithRSAEncryption, ecdsa-with-SHA384, Ed25519 등.</li>
+  <li><strong>지문</strong> — SHA-256 / SHA-1 / MD5 16진(콜론 구분).</li>
+  <li><strong>일련번호 와 버전</strong> — 16진 시리얼 및 X.509 버전(일반적으로 v3).</li>
+</ul>
+
+<h2>PEM 인증서가 디코딩되는 방식</h2>
+<p>
+  PEM 인증서는 DER로 인코딩된 ASN.1의 Base64 래퍼입니다. 헤더와 푸터를 제거한 뒤 Base64 디코딩하면
+  DER 바이트 스트림을 얻고, 이를 ASN.1 구조에 따라 재귀적으로 파싱합니다.
+  <code>Certificate</code> SEQUENCE 는 <code>tbsCertificate</code>,
+  <code>signatureAlgorithm</code>, <code>signatureValue</code> 를 포함하며 표시되는 정보의 대부분은
+  TBS 부분에 있습니다. 본 도구는 순수 JavaScript로 직접 구현된 파서를 사용하여 네트워크 라운드트립이 없습니다.
+</p>
+
+<h2>주요 사용 사례</h2>
+<ul>
+  <li>새 TLS 인증서를 배포하기 전에 SAN이 필요한 호스트명을 모두 포함하는지 검증.</li>
+  <li>스테이징 및 프로덕션 인증서 만료를 일괄 점검.</li>
+  <li>모바일 앱 또는 HSTS preload 신청에서 SHA-256 지문 기반 핀닝.</li>
+  <li>서명 알고리즘과 키 강도가 PCI DSS, FIPS 140-3, Mozilla Modern profile 등 컴플라이언스 요구를 충족하는지 검증.</li>
+  <li>Subject CN과 SAN-only 검증 사이의 불일치 디버깅.</li>
+</ul>
+
+<h2>설계상의 경계</h2>
+<p>
+  단일 인증서만 디코딩합니다. 체인 검증, CRL/OCSP 조회, 폐기 확인, 실제 TLS 핸드셰이크는 수행하지 않습니다.
+  체인 검증은 <code>openssl verify</code>를, 라이브 TLS 검사는
+  <code>openssl s_client -showcerts</code> 또는 <code>nmap --script ssl-cert</code> 를 사용하세요.
+</p>
