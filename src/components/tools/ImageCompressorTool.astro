@@ -1,0 +1,596 @@
+---
+// ImageCompressorTool — compresses JPEG/PNG/WebP/GIF images locally via Canvas
+---
+
+<div>
+  <div class="ic-wrap">
+    <!-- Output format row -->
+    <div class="ic-format-row">
+      <span class="tool-label" data-i18n="formatLabel">Output format:</span>
+      <label class="ic-radio-label">
+        <input type="radio" name="ic-format" value="keep" checked />
+        <span data-i18n="keepOriginal">Keep original</span>
+      </label>
+      <label class="ic-radio-label">
+        <input type="radio" name="ic-format" value="image/jpeg" />
+        JPEG
+      </label>
+      <label class="ic-radio-label">
+        <input type="radio" name="ic-format" value="image/png" />
+        PNG
+      </label>
+      <label class="ic-radio-label">
+        <input type="radio" name="ic-format" value="image/webp" />
+        WebP
+      </label>
+    </div>
+
+    <!-- Quality slider -->
+    <div class="ic-quality-row" id="ic-quality-row">
+      <label for="ic-quality" class="ic-quality-label">
+        <span data-i18n="qualityLabel">Quality:</span>
+        <strong id="ic-quality-val">75</strong>
+      </label>
+      <input type="range" id="ic-quality" min="1" max="100" value="75" step="1" aria-label="Quality" />
+    </div>
+
+    <!-- Resize row -->
+    <div class="ic-resize-row">
+      <label class="ic-resize-toggle">
+        <input type="checkbox" id="ic-resize-toggle" />
+        <span data-i18n="resizeLabel">Resize long edge to</span>
+      </label>
+      <div class="ic-resize-input-wrap">
+        <input type="number" id="ic-resize-px" class="tool-input ic-resize-px" min="64" max="16384" value="1920" disabled aria-label="Long edge in pixels" />
+        <span class="ic-resize-suffix">px</span>
+      </div>
+    </div>
+
+    <!-- Drop zone -->
+    <div id="ic-drop" class="ic-drop" role="button" tabindex="0" aria-label="Drop images here or click to select">
+      <div class="ic-drop-inner">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <p data-i18n="dropHint">Drop images here, or <strong>click to select</strong></p>
+        <p class="ic-hint" data-i18n="formatsHint">JPEG / PNG / WebP / GIF · up to 50 MB each</p>
+      </div>
+      <input type="file" id="ic-file" accept="image/jpeg,image/png,image/webp,image/gif" multiple class="ic-file-input" aria-label="Select image files" />
+    </div>
+
+    <!-- Results list -->
+    <div id="ic-results" class="ic-results" hidden></div>
+
+    <!-- Actions -->
+    <div class="ic-actions" id="ic-actions" hidden>
+      <button id="ic-download-all" class="btn-primary" type="button" data-i18n="downloadAll">Download All</button>
+      <button id="ic-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="ic-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          formatLabel: 'Output format:', keepOriginal: 'Keep original',
+          qualityLabel: 'Quality:', resizeLabel: 'Resize long edge to',
+          dropHint: 'Drop images here, or <strong>click to select</strong>',
+          formatsHint: 'JPEG / PNG / WebP / GIF · up to 50 MB each',
+          downloadAll: 'Download All', clear: 'Clear',
+          download: 'Download', compressing: 'Compressing…',
+          done: '{ok} file(s) compressed',
+          someFailed: ', {fail} failed',
+          tooLarge: 'File exceeds 50 MB limit',
+          unsupported: 'Unsupported format — try exiftool / ImageMagick locally',
+          decodeFailed: 'Could not decode this image',
+          encodeFailed: 'Browser could not encode the output',
+          pngNote: 'PNG is lossless — quality slider disabled',
+        },
+        zh: {
+          formatLabel: '输出格式：', keepOriginal: '保持原格式',
+          qualityLabel: '质量：', resizeLabel: '长边缩放至',
+          dropHint: '把图片拖到这里，或者<strong>点击选择</strong>',
+          formatsHint: 'JPEG / PNG / WebP / GIF · 单文件 ≤ 50 MB',
+          downloadAll: '全部下载', clear: '清除',
+          download: '下载', compressing: '压缩中…',
+          done: '已压缩 {ok} 张',
+          someFailed: '，{fail} 张失败',
+          tooLarge: '单文件超出 50 MB 上限',
+          unsupported: '不支持的格式 — 请用 exiftool / ImageMagick 本地处理',
+          decodeFailed: '无法解码此图片',
+          encodeFailed: '浏览器无法编码该输出',
+          pngNote: 'PNG 是无损格式，质量滑块不生效',
+        },
+        ja: {
+          formatLabel: '出力フォーマット：', keepOriginal: '元のまま',
+          qualityLabel: '品質：', resizeLabel: '長辺をリサイズ',
+          dropHint: '画像をここにドロップ、または<strong>クリックして選択</strong>',
+          formatsHint: 'JPEG / PNG / WebP / GIF · 1 ファイル 50 MB まで',
+          downloadAll: 'すべてダウンロード', clear: 'クリア',
+          download: 'ダウンロード', compressing: '圧縮中…',
+          done: '{ok} 件圧縮完了',
+          someFailed: '、{fail} 件失敗',
+          tooLarge: 'ファイルが 50 MB を超えています',
+          unsupported: '非対応フォーマット — exiftool / ImageMagick をローカルで使用してください',
+          decodeFailed: 'この画像をデコードできません',
+          encodeFailed: 'ブラウザが出力をエンコードできません',
+          pngNote: 'PNG はロスレス — 品質スライダーは無効',
+        },
+        ko: {
+          formatLabel: '출력 포맷:', keepOriginal: '원본 유지',
+          qualityLabel: '품질:', resizeLabel: '긴 변 리사이즈',
+          dropHint: '이미지를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
+          formatsHint: 'JPEG / PNG / WebP / GIF · 파일당 50 MB 이하',
+          downloadAll: '모두 다운로드', clear: '지우기',
+          download: '다운로드', compressing: '압축 중…',
+          done: '{ok} 개 압축 완료',
+          someFailed: ', {fail} 개 실패',
+          tooLarge: '파일이 50 MB 한도를 초과합니다',
+          unsupported: '지원하지 않는 포맷 — exiftool / ImageMagick을 로컬에서 사용하세요',
+          decodeFailed: '이 이미지를 디코딩할 수 없습니다',
+          encodeFailed: '브라우저가 출력을 인코딩할 수 없습니다',
+          pngNote: 'PNG는 무손실 — 품질 슬라이더 비활성화',
+        },
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.innerHTML = t[key];
+      });
+
+      var MAX_FILE = 50 * 1024 * 1024;
+      var SUPPORTED_INPUT = { 'image/jpeg': 1, 'image/png': 1, 'image/webp': 1, 'image/gif': 1 };
+
+      var formatRadios = document.getElementsByName('ic-format');
+      var qualityRow = document.getElementById('ic-quality-row');
+      var qualityInput = document.getElementById('ic-quality');
+      var qualityVal = document.getElementById('ic-quality-val');
+      var resizeToggle = document.getElementById('ic-resize-toggle');
+      var resizePx = document.getElementById('ic-resize-px');
+      var dropEl = document.getElementById('ic-drop');
+      var fileInput = document.getElementById('ic-file');
+      var resultsEl = document.getElementById('ic-results');
+      var actionsEl = document.getElementById('ic-actions');
+      var dlAllBtn = document.getElementById('ic-download-all');
+      var clearBtn = document.getElementById('ic-clear');
+      var statusEl = document.getElementById('ic-status');
+
+      var compressedItems = []; // [{name, blob}]
+      var lastFiles = [];        // cached for re-compress on setting change
+
+      function selectedFormat() {
+        for (var i = 0; i < formatRadios.length; i++) {
+          if (formatRadios[i].checked) return formatRadios[i].value;
+        }
+        return 'keep';
+      }
+
+      function applyFormatUI(originMime) {
+        var fmt = selectedFormat();
+        var willBePng = fmt === 'image/png' || (fmt === 'keep' && originMime === 'image/png');
+        qualityRow.style.opacity = willBePng ? '0.5' : '';
+        qualityInput.disabled = willBePng;
+      }
+
+      function fmtBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1048576).toFixed(2) + ' MB';
+      }
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status ' + (kind || 'info');
+      }
+
+      function esc(s) {
+        var d = document.createElement('span');
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
+      function scaleToLong(w, h, maxLong) {
+        if (!maxLong || (w <= maxLong && h <= maxLong)) return { w: w, h: h };
+        var ratio = w >= h ? maxLong / w : maxLong / h;
+        return { w: Math.round(w * ratio), h: Math.round(h * ratio) };
+      }
+
+      function outputMimeFor(origMime) {
+        var fmt = selectedFormat();
+        return fmt === 'keep' ? origMime : fmt;
+      }
+
+      function extFor(mime) {
+        if (mime === 'image/jpeg') return '.jpg';
+        if (mime === 'image/png') return '.png';
+        if (mime === 'image/webp') return '.webp';
+        if (mime === 'image/gif') return '.gif';
+        return '.bin';
+      }
+
+      function renameOut(name, outMime) {
+        var base = name.replace(/\.[^.]+$/, '');
+        return base + extFor(outMime);
+      }
+
+      function canvasToBlobPromise(canvas, mime, quality) {
+        if (canvas.convertToBlob) {
+          return canvas.convertToBlob(quality !== undefined ? { type: mime, quality: quality } : { type: mime });
+        }
+        return new Promise(function (resolve) {
+          canvas.toBlob(function (b) { resolve(b); }, mime, quality);
+        });
+      }
+
+      function loadBitmap(file) {
+        if (typeof createImageBitmap === 'function') {
+          // imageOrientation handles EXIF rotation automatically on modern browsers
+          try {
+            return createImageBitmap(file, { imageOrientation: 'from-image' });
+          } catch (e) {
+            return createImageBitmap(file);
+          }
+        }
+        return new Promise(function (resolve, reject) {
+          var url = URL.createObjectURL(file);
+          var img = new Image();
+          img.onload = function () {
+            URL.revokeObjectURL(url);
+            resolve({ width: img.naturalWidth, height: img.naturalHeight, _img: img, close: function () {} });
+          };
+          img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode')); };
+          img.src = url;
+        });
+      }
+
+      function compressOne(file) {
+        if (!SUPPORTED_INPUT[file.type]) {
+          return Promise.resolve({ ok: false, name: file.name, error: t.unsupported });
+        }
+        if (file.size > MAX_FILE) {
+          return Promise.resolve({ ok: false, name: file.name, error: t.tooLarge });
+        }
+        return loadBitmap(file).then(function (bmp) {
+          var outMime = outputMimeFor(file.type);
+          var quality = parseInt(qualityInput.value, 10) / 100;
+          var maxLong = resizeToggle.checked ? parseInt(resizePx.value, 10) : 0;
+          if (maxLong && (isNaN(maxLong) || maxLong < 64)) maxLong = 64;
+          var dim = scaleToLong(bmp.width, bmp.height, maxLong);
+
+          var canvas;
+          if (typeof OffscreenCanvas === 'function') {
+            try { canvas = new OffscreenCanvas(dim.w, dim.h); } catch (e) { canvas = null; }
+          }
+          if (!canvas) {
+            canvas = document.createElement('canvas');
+            canvas.width = dim.w;
+            canvas.height = dim.h;
+          }
+          var ctx = canvas.getContext('2d');
+          if (outMime === 'image/jpeg') {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, dim.w, dim.h);
+          }
+          ctx.drawImage(bmp._img || bmp, 0, 0, dim.w, dim.h);
+          if (bmp.close) bmp.close();
+
+          var qParam = outMime === 'image/png' ? undefined : quality;
+          return canvasToBlobPromise(canvas, outMime, qParam).then(function (blob) {
+            if (!blob) return { ok: false, name: file.name, error: t.encodeFailed };
+            return {
+              ok: true,
+              origName: file.name,
+              outName: renameOut(file.name, outMime),
+              origSize: file.size,
+              outSize: blob.size,
+              origDim: { w: bmp.width, h: bmp.height },
+              outDim: dim,
+              blob: blob,
+              thumbUrl: URL.createObjectURL(blob),
+            };
+          });
+        }).catch(function () {
+          return { ok: false, name: file.name, error: t.decodeFailed };
+        });
+      }
+
+      function renderCard(item) {
+        var card = document.createElement('div');
+        card.className = 'ic-card';
+        if (item.ok === false) {
+          card.className += ' ic-card-error';
+          card.innerHTML = '<div class="ic-card-name">' + esc(item.name) + '</div><div class="ic-card-err">' + esc(item.error) + '</div>';
+          resultsEl.appendChild(card);
+          return;
+        }
+        var saved = item.outSize < item.origSize;
+        var delta = ((item.outSize - item.origSize) / item.origSize) * 100;
+        var deltaCls = saved ? 'ic-saved' : 'ic-larger';
+        var deltaTxt = (saved ? '−' : '+') + Math.abs(delta).toFixed(1) + '%';
+        var sizesLine =
+          esc(item.origDim.w + '×' + item.origDim.h) + ' → ' +
+          esc(item.outDim.w + '×' + item.outDim.h) + ' · ' +
+          esc(fmtBytes(item.origSize)) + ' → ' + esc(fmtBytes(item.outSize)) +
+          ' <span class="' + deltaCls + '">' + deltaTxt + '</span>';
+        card.innerHTML =
+          '<img class="ic-thumb" src="' + esc(item.thumbUrl) + '" alt="" />' +
+          '<div class="ic-card-info">' +
+            '<div class="ic-card-name" title="' + esc(item.outName) + '">' + esc(item.outName) + '</div>' +
+            '<div class="ic-card-sizes">' + sizesLine + '</div>' +
+          '</div>' +
+          '<a class="btn-copy ic-dl" href="' + URL.createObjectURL(item.blob) + '" download="' + esc(item.outName) + '">' + t.download + '</a>';
+        resultsEl.appendChild(card);
+      }
+
+      function processFiles(files) {
+        if (!files || files.length === 0) return;
+        lastFiles = Array.prototype.slice.call(files);
+        compressedItems = [];
+        resultsEl.innerHTML = '';
+        resultsEl.hidden = false;
+        actionsEl.hidden = true;
+        setStatus(t.compressing, 'info');
+
+        var promises = [];
+        for (var i = 0; i < files.length; i++) promises.push(compressOne(files[i]));
+
+        Promise.all(promises).then(function (results) {
+          var ok = 0, fail = 0;
+          for (var j = 0; j < results.length; j++) {
+            var r = results[j];
+            if (r.ok) {
+              ok++;
+              compressedItems.push({ name: r.outName, blob: r.blob });
+            } else {
+              fail++;
+            }
+            renderCard(r.ok ? r : { ok: false, name: r.name, error: r.error });
+          }
+          if (ok > 0) {
+            actionsEl.hidden = false;
+            dlAllBtn.hidden = ok < 2;
+          }
+          var msg = t.done.replace('{ok}', ok);
+          if (fail > 0) msg += t.someFailed.replace('{fail}', fail);
+          setStatus(msg, fail > 0 && ok === 0 ? 'error' : 'success');
+          if (window.trackTool) window.trackTool('image-compressor', 'compress');
+        });
+      }
+
+      /* ── Wire up controls ── */
+      for (var k = 0; k < formatRadios.length; k++) {
+        formatRadios[k].addEventListener('change', function () {
+          var firstOrigin = lastFiles[0] ? lastFiles[0].type : null;
+          applyFormatUI(firstOrigin);
+        });
+      }
+      qualityInput.addEventListener('input', function () { qualityVal.textContent = qualityInput.value; });
+      resizeToggle.addEventListener('change', function () { resizePx.disabled = !resizeToggle.checked; });
+
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+      dropEl.addEventListener('dragover', function (e) { e.preventDefault(); dropEl.classList.add('drag-over'); });
+      dropEl.addEventListener('dragleave', function () { dropEl.classList.remove('drag-over'); });
+      dropEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        if (e.dataTransfer.files && e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
+      });
+      fileInput.addEventListener('change', function () {
+        if (this.files && this.files.length) processFiles(this.files);
+      });
+
+      dlAllBtn.addEventListener('click', function () {
+        for (var i = 0; i < compressedItems.length; i++) {
+          (function (item) {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(item.blob);
+            a.download = item.name;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function () {
+              URL.revokeObjectURL(a.href);
+              document.body.removeChild(a);
+            }, 1000);
+          })(compressedItems[i]);
+        }
+      });
+
+      clearBtn.addEventListener('click', function () {
+        fileInput.value = '';
+        lastFiles = [];
+        compressedItems = [];
+        resultsEl.innerHTML = '';
+        resultsEl.hidden = true;
+        actionsEl.hidden = true;
+        setStatus('', 'info');
+      });
+
+      // Initial UI sync
+      applyFormatUI(null);
+    })();
+  </script>
+
+  <style>
+    .ic-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+    .ic-format-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 1.1rem;
+      font-size: 0.88rem;
+    }
+    .ic-radio-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      cursor: pointer;
+      color: var(--color-text-secondary);
+    }
+
+    .ic-quality-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--color-text-secondary);
+      transition: opacity var(--transition-fast);
+    }
+    .ic-quality-label { white-space: nowrap; min-width: 100px; }
+    .ic-quality-row input[type="range"] { flex: 1; }
+
+    .ic-resize-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem 1rem;
+      font-size: 0.88rem;
+      color: var(--color-text-secondary);
+    }
+    .ic-resize-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+    }
+    .ic-resize-input-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .ic-resize-px {
+      width: 7rem;
+    }
+    .ic-resize-px:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .ic-resize-suffix {
+      font-family: var(--font-mono);
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+    }
+
+    .ic-drop {
+      position: relative;
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      background: var(--color-bg-secondary);
+    }
+    .ic-drop:hover,
+    .ic-drop.drag-over {
+      border-color: var(--color-primary);
+      background: var(--color-surface);
+    }
+    .ic-drop:focus-visible {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 4px var(--color-primary-light);
+    }
+    .ic-drop-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--color-text-secondary);
+      pointer-events: none;
+    }
+    .ic-drop-inner p { margin: 0; font-size: 0.95rem; }
+    .ic-hint { font-size: 0.8rem; opacity: 0.78; }
+    .ic-file-input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .ic-results {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .ic-card {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 0.75rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .ic-card-error {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
+      background: color-mix(in oklch, var(--color-danger) 8%, var(--color-bg-secondary));
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 35%, transparent);
+    }
+    .ic-card-error .ic-card-name { color: var(--color-danger); }
+    .ic-card-err {
+      font-size: 0.82rem;
+      color: var(--color-danger);
+    }
+    .ic-thumb {
+      width: 52px;
+      height: 52px;
+      object-fit: cover;
+      border-radius: var(--radius-sm);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      flex-shrink: 0;
+      background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px;
+    }
+    .ic-card-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+    .ic-card-name {
+      font-size: 0.85rem;
+      font-weight: 660;
+      color: var(--color-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ic-card-sizes {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--color-text-secondary);
+    }
+    .ic-saved { color: var(--color-success); font-weight: 700; }
+    .ic-larger { color: var(--color-danger); font-weight: 700; }
+    .ic-dl {
+      flex-shrink: 0;
+      text-decoration: none;
+    }
+
+    .ic-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 640px) {
+      .ic-quality-label { min-width: 86px; }
+      .ic-resize-px { width: 6.4rem; }
+      .ic-actions .btn-primary,
+      .ic-actions .btn-ghost { flex: 1 1 100%; }
+    }
+  </style>
+</div>
