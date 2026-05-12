@@ -158,8 +158,17 @@
       var clearBtn = document.getElementById('ic-clear');
       var statusEl = document.getElementById('ic-status');
 
-      var compressedItems = []; // [{name, blob}]
+      var compressedItems = []; // [{name, blob, url}]
       var lastFiles = [];        // cached for re-compress on setting change
+      var activeUrls = [];       // every URL.createObjectURL we own; revoked on clear / new batch
+
+      function trackUrl(u) { activeUrls.push(u); return u; }
+      function revokeAll() {
+        for (var i = 0; i < activeUrls.length; i++) {
+          try { URL.revokeObjectURL(activeUrls[i]); } catch (e) {}
+        }
+        activeUrls = [];
+      }
 
       function selectedFormat() {
         for (var i = 0; i < formatRadios.length; i++) {
@@ -238,7 +247,7 @@
           var url = URL.createObjectURL(file);
           var img = new Image();
           img.onload = function () {
-            URL.revokeObjectURL(url);
+            URL.revokeObjectURL(url); // single-use decode URL, safe to revoke before result
             resolve({ width: img.naturalWidth, height: img.naturalHeight, _img: img, close: function () {} });
           };
           img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode')); };
@@ -282,6 +291,9 @@
           var qParam = outMime === 'image/png' ? undefined : quality;
           return canvasToBlobPromise(canvas, outMime, qParam).then(function (blob) {
             if (!blob) return { ok: false, name: file.name, error: t.encodeFailed };
+            // One URL per blob, tracked so we can revoke it on clear / next batch.
+            // The same URL serves both the <img> thumbnail and the <a> download link.
+            var url = trackUrl(URL.createObjectURL(blob));
             return {
               ok: true,
               origName: file.name,
@@ -291,7 +303,7 @@
               origDim: { w: origW, h: origH },
               outDim: dim,
               blob: blob,
-              thumbUrl: URL.createObjectURL(blob),
+              url: url,
             };
           });
         }).catch(function () {
@@ -317,35 +329,59 @@
           esc(item.outDim.w + '×' + item.outDim.h) + ' · ' +
           esc(fmtBytes(item.origSize)) + ' → ' + esc(fmtBytes(item.outSize)) +
           ' <span class="' + deltaCls + '">' + deltaTxt + '</span>';
+        // Same URL backs the <img> thumbnail and the <a download> link — created once
+        // by compressOne, tracked in activeUrls, revoked on clear / next batch.
         card.innerHTML =
-          '<img class="ic-thumb" src="' + esc(item.thumbUrl) + '" alt="" />' +
+          '<img class="ic-thumb" src="' + esc(item.url) + '" alt="" />' +
           '<div class="ic-card-info">' +
             '<div class="ic-card-name" title="' + esc(item.outName) + '">' + esc(item.outName) + '</div>' +
             '<div class="ic-card-sizes">' + sizesLine + '</div>' +
           '</div>' +
-          '<a class="btn-copy ic-dl" href="' + URL.createObjectURL(item.blob) + '" download="' + esc(item.outName) + '">' + t.download + '</a>';
+          '<a class="btn-copy ic-dl" href="' + esc(item.url) + '" download="' + esc(item.outName) + '">' + t.download + '</a>';
         resultsEl.appendChild(card);
+      }
+
+      function runWithConcurrency(files, limit) {
+        // Bitmap decoding holds large buffers per file. Cap concurrent work so a 10×50 MB
+        // batch does not OOM mobile Safari. 3 is a measured sweet spot for desktop too.
+        var results = new Array(files.length);
+        var nextIdx = 0;
+        function worker() {
+          if (nextIdx >= files.length) return Promise.resolve();
+          var idx = nextIdx++;
+          return Promise.resolve(compressOne(files[idx])).then(function (r) {
+            results[idx] = r;
+            return worker();
+          });
+        }
+        var pool = [];
+        var poolSize = Math.min(limit, files.length);
+        for (var i = 0; i < poolSize; i++) pool.push(worker());
+        return Promise.all(pool).then(function () { return results; });
       }
 
       function processFiles(files) {
         if (!files || files.length === 0) return;
-        lastFiles = Array.prototype.slice.call(files);
+        // Free URLs from the previous batch before we begin so a user who keeps
+        // dropping new batches does not accumulate dead blobs in memory.
+        revokeAll();
         compressedItems = [];
+        lastFiles = Array.prototype.slice.call(files);
+        // Snap the quality slider to the dropped files' first mime type so PNG inputs
+        // with "Keep original" selected reflect the lossless reality instantly.
+        applyFormatUI(lastFiles[0] ? lastFiles[0].type : null);
         resultsEl.innerHTML = '';
         resultsEl.hidden = false;
         actionsEl.hidden = true;
         setStatus(t.compressing, 'info');
 
-        var promises = [];
-        for (var i = 0; i < files.length; i++) promises.push(compressOne(files[i]));
-
-        Promise.all(promises).then(function (results) {
+        runWithConcurrency(lastFiles, 3).then(function (results) {
           var ok = 0, fail = 0;
           for (var j = 0; j < results.length; j++) {
             var r = results[j];
             if (r.ok) {
               ok++;
-              compressedItems.push({ name: r.outName, blob: r.blob });
+              compressedItems.push({ name: r.outName, blob: r.blob, url: r.url });
             } else {
               fail++;
             }
@@ -390,18 +426,17 @@
       });
 
       dlAllBtn.addEventListener('click', function () {
+        // Reuse the tracked URL from compressOne — no new createObjectURL,
+        // no separate revoke timer. The URL stays alive until the next batch
+        // or Clear, both of which call revokeAll().
         for (var i = 0; i < compressedItems.length; i++) {
-          (function (item) {
-            var a = document.createElement('a');
-            a.href = URL.createObjectURL(item.blob);
-            a.download = item.name;
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(function () {
-              URL.revokeObjectURL(a.href);
-              document.body.removeChild(a);
-            }, 1000);
-          })(compressedItems[i]);
+          var item = compressedItems[i];
+          var a = document.createElement('a');
+          a.href = item.url;
+          a.download = item.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         }
       });
 
@@ -409,6 +444,7 @@
         fileInput.value = '';
         lastFiles = [];
         compressedItems = [];
+        revokeAll();
         resultsEl.innerHTML = '';
         resultsEl.hidden = true;
         actionsEl.hidden = true;
