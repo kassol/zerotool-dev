@@ -1,0 +1,199 @@
+---
+title: "브라우저 이미지 압축기: 개발자를 위한 실전 가이드"
+description: "JPEG, PNG, WebP 이미지를 전부 브라우저 안에서 압축합니다. 올바른 포맷 선택, 품질 조정, 긴 변 기준 리사이즈, 그리고 스크린샷을 외부 서버에 노출하지 않고 배포하는 방법까지 다룹니다."
+pubDate: 2026-05-12
+updatedDate: 2026-05-12
+lang: "ko"
+tags: ["images", "compression", "performance", "developer-tools"]
+---
+
+import { Image } from 'astro:assets';
+
+지난주 팀원이 제가 보고 있던 Linear 티켓에 12 MB짜리 PNG 스크린샷을 첨부했습니다. 에디터가 잠깐 멈췄습니다. 모바일에서 검토하던 사람은 썸네일이 뜰 때까지 4초를 기다렸습니다. 그날 실제로 낭비된 시간은 어쩌면 90초 — 이후 티켓을 연 모두에게 그만큼 곱해진 시간입니다. 해결은 1분이면 됩니다. 단, 내부 대시보드 스크린샷을 모르는 사람의 서버에 먼저 업로드하지 않아도 된다면요.
+
+이 가이드는 이미지를 전부 브라우저 안에서 압축하는 방법, 각 포맷이 그렇게 동작하는 이유, 그리고 경험 많은 엔지니어조차 빠지는 몇 가지 함정을 다룹니다. 함께 사용할 도구는 여기 있습니다: [Image Compressor →](/ko/tools/image-compressor/).
+
+## 언제 압축하고, 언제 그대로 둘지
+
+"무조건 압축"부터 "원본 그대로"까지 스펙트럼이 있습니다:
+
+| 원본 | 처리 방법 | 이유 |
+|---|---|---|
+| Slack / Linear / Notion에 올라가는 12 MB PNG 스크린샷 | WebP q75 또는 JPEG q80으로 압축, 긴 변 1920으로 리사이즈 | 스크린샷은 시각적으로 복잡하지만 약간의 압축에는 관대하며, 1920에서는 사용자가 차이를 느끼지 못함 |
+| 마케팅 페이지에 올릴 DSLR 24 MP JPEG | WebP q80으로 압축, 긴 변 2560으로 리사이즈 | LCP 개선; 원본은 다른 곳에 보관 |
+| 투명도가 있는 32 KB PNG 로고 | PNG 그대로 두고, 필요하면 `oxipng` 실행 | 32 KB 무손실 PNG를 재인코딩하면 오히려 커지는 경우가 많음 |
+| 200 KB 애니메이션 GIF | `ffmpeg`로 MP4 / WebM 변환 | 프레임 단위 재인코딩이 실제로 필요한 작업 |
+| 픽셀 단위로 정확해야 하는 QR 코드나 바코드 | PNG로 유지 | 손실 압축은 가장자리를 뭉개서 디코더를 망가뜨림 |
+| 박물관 인쇄용 아카이브 사진 | TIFF / RAW 유지 | 손실 포맷은 아카이브 용도로 부적합 |
+
+Image Compressor 도구는 1, 2, 3행을 깔끔하게 처리합니다. 4–6행은 의도적으로 다루지 않으며, 이 가이드의 나머지 부분에서 그 이유와 대안을 설명합니다.
+
+## 이미지 압축의 멘탈 모델
+
+두 가지 개념이 거의 모든 동작을 설명합니다.
+
+### 손실 압축은 지각 데이터를 버린다
+
+JPEG와 WebP-lossy는 모든 픽셀을 저장하지 않습니다. 8×8(JPEG) 또는 더 큰(WebP) 타일을 주파수 도메인으로 변환하고, 고주파 계수를 공격적으로 양자화한 뒤, 사람 시각 시스템이 그 손실을 알아채지 못한다는 점에 기댑니다. **Quality 75**가 널리 인용되는 실무 기본값입니다 — [web.dev의 이미지 가이드](https://web.dev/articles/choose-the-right-image-format)는 70–85 구간을 권장하며, Next.js의 `<Image>`도 기본값으로 `75`를 사용합니다. 60 아래로 내려가면 피부 톤이나 하늘에 밴딩이 보이기 시작하고, 90 위로 올리면 파일 크기는 더 이상 줄지 않는데 체감 품질은 거의 그대로입니다. 75는 이득 대부분을 챙길 수 있는 곡선상의 지점입니다.
+
+### 무손실 압축은 바이트를 재배치할 뿐이다
+
+PNG와 WebP-lossless는 모든 픽셀을 저장합니다. 필터(PNG는 Sub, Up, Average, Paeth; WebP는 predictor + entropy)를 거친 후 결과를 범용 바이트 압축기에 넣습니다. "품질" 노브는 없습니다 — 인코더가 얼마나 열심히 일하느냐만 있을 뿐입니다. 브라우저는 그 노브를 JavaScript에 노출하지 않기 때문에, 이 도구는 PNG 출력을 선택하면 품질 슬라이더가 비활성화됩니다. 더 깊은 무손실 압축이 필요하다면 로컬에서 [`oxipng`](https://github.com/shssoichiro/oxipng)이나 [`pngquant`](https://pngquant.org/)를 실행하세요.
+
+## 실무 개발자를 위한 포맷 치트시트
+
+| 포맷 | 적합한 용도 | 피해야 할 용도 | 투명도 | 브라우저 지원 |
+|---|---|---|---|---|
+| **JPEG** | 사진, 히어로 이미지, 연속 톤 이미지 전반 | 가장자리가 뾰족한 UI 스크린샷, 투명도가 필요한 이미지 | 없음 | 모든 환경 |
+| **PNG** | UI 스크린샷, 다이어그램, 로고, 투명 오버레이 | 사진(같은 체감 품질에서 JPEG보다 4–10배 큼) | 있음 | 모든 환경 |
+| **WebP** | 새로 작업하는 웹 콘텐츠의 기본값 | 여전히 IE 11을 지원해야 하는 환경 | 있음(lossless + lossy) | 모든 모던 브라우저; 전 세계 약 96% |
+| **AVIF** | 같은 품질에서 WebP보다 작음; 타깃 브라우저가 지원하면 선택 | 구버전 Safari (< 16)와 많은 구형 Android 브라우저 | 있음 | caniuse 기준 전 세계 약 92%; 브라우저 측 인코딩은 아직 부분 지원 |
+| **GIF** | 인라인이 반드시 필요한 작은 애니메이션 | 200 KB 초과; 더 나은 현대적 대안 존재 | 단일 색상 키 | 모든 환경 |
+| **HEIC** | Apple 기기의 카메라 롤 | 크로스 플랫폼 웹 전송 | 있음 | Safari 전용; Chrome / Firefox는 디코딩 불가 |
+| **TIFF / RAW** | 아카이빙, 전문 편집 | 웹 전송 | 있음(TIFF) | 브라우저는 디코딩 불가 |
+
+Image Compressor는 처음 세 가지 포맷과 단일 프레임 GIF 입력을 다룹니다. HEIC, TIFF, RAW는 macOS 로컬에서 `exiftool`, `ImageMagick`, `sips`를 사용하세요 — 브라우저는 무거운 WASM 포팅 없이는 물리적으로 이 포맷들을 디코딩할 수 없습니다.
+
+## 왜 굳이 브라우저에서 압축하나?
+
+다음 세 가지 구체적인 상황에서 브라우저가 이 작업을 해야 할 올바른 장소입니다.
+
+**프라이버시.** 내부 대시보드, 코드 에디터 스크린샷, 고객 지원 티켓, URL 바에 세션 쿠키가 포함된 이미지 — 그 어떤 것도 외부 압축 서비스에 닿아서는 안 됩니다. 가장 인기 있는 호스팅 압축 서비스(TinyPNG, iLoveIMG, Compressor.io)는 일정 기간 이미지를 서버에 저장합니다. 이는 많은 EU 팀에게는 GDPR 데이터 처리 요구와 충돌하며, 대부분의 기업에서는 내부 데이터 분류 정책과도 맞지 않습니다. 브라우저 기반 압축은 바이트가 사용자 기기를 떠나지 않게 합니다.
+
+**EXIF 누출.** 휴대폰 사진은 GPS 좌표, 카메라 모델, 타임스탬프, 때로는 기기 시리얼 번호까지 EXIF에 담고 있습니다. "그냥 압축만" 하려고 외부 서비스에 업로드하면, 원칙적으로 그 서비스는 이 모든 정보를 읽을 수 있습니다. Image Compressor는 `createImageBitmap`에 `imageOrientation: 'from-image'`를 적용해 EXIF 회전을 처리한 다음, Canvas로 재인코딩하며 그 과정에서 다른 메타데이터를 부수적으로 제거합니다. EXIF를 직접 확인하거나 외과 수술처럼 정밀하게 제거하고 싶다면 [EXIF Metadata Viewer](/ko/tools/exif-metadata-viewer/)에서 태그 단위로 제어할 수 있습니다.
+
+**오프라인 / 망 분리 작업.** 비행기 모드로 도구를 켜보면 — 그대로 동작합니다. ZeroTool이 폐쇄형 기업 네트워크에서도 유용한 것과 같은 특성입니다.
+
+## 도구는 실제로 어떻게 동작하나
+
+압축기 전체는 약 200줄의 평범한 JavaScript입니다. 흥미로운 부분은 다음과 같습니다:
+
+```javascript
+// 1. EXIF 방향을 이미 적용한 상태로 디코딩
+const bitmap = await createImageBitmap(file, {
+  imageOrientation: 'from-image',
+});
+
+// 2. 타깃 크기 계산 (종횡비 유지)
+const { w, h } = scaleToLong(bitmap.width, bitmap.height, maxLongEdge);
+
+// 3. OffscreenCanvas에 렌더링 (DOM canvas보다 빠름)
+const canvas = new OffscreenCanvas(w, h);
+const ctx = canvas.getContext('2d');
+
+// 4. JPEG로 출력할 경우 흰색으로 채우기 (알파 채널 없음)
+if (outMime === 'image/jpeg') {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+}
+ctx.drawImage(bitmap, 0, 0, w, h);
+bitmap.close();
+
+// 5. 요청된 품질로 인코딩
+const blob = await canvas.convertToBlob({
+  type: outMime,
+  quality: outMime === 'image/png' ? undefined : quality / 100,
+});
+```
+
+대부분의 구현이 놓치는 세 가지 디테일이 있습니다.
+
+**`imageOrientation: 'from-image'`** 는 2026년 기준 EXIF 회전을 다루는 정석입니다. 이전 방식 — `<img>` 요소의 CSS `image-orientation: from-image` 기본값에 의존 — 은 브라우저별로 도입 시점이 달랐고(Chrome 81, Firefox 26, Safari 13.1), Canvas에 넣은 일반 `Image` 객체의 기본 동작은 버전마다 일관적이지 않았습니다. `createImageBitmap`을 사용하면 Canvas가 비트맵을 읽는 시점에 이미 올바른 방향이 적용되어 있어서, 옆으로 찍힌 사진도 디코더의 변덕과 무관하게 똑바로 나옵니다.
+
+**JPEG에 그리기 전 흰색으로 채우기**가 필요한 이유는 Canvas의 기본 배경이 투명한데 JPEG는 알파를 저장할 수 없기 때문입니다. `fillRect`가 없으면 PNG의 투명 영역이, 프레임버퍼를 RGBA(0,0,0,0)으로 초기화하는 브라우저에서는 정의되지 않은 듯한 검은 픽셀로 나옵니다. 흰색이 시각적으로 안전한 기본값이며, 마케팅 자산에 다른 배경색이 필요하다면 원본을 PNG로 저장한 뒤 CSS나 컴포지터에서 색을 지정하세요.
+
+**PNG에서 품질 슬라이더를 비활성화**한 것은 게으름이 아니라 포맷 자체의 특성을 반영한 결과입니다. PNG 압축은 무손실이며, 브라우저의 PNG 인코더는 `quality` 인자를 무시합니다. 브라우저 도구에서 PNG를 더 작게 만들려면 손실 포맷으로 바꾸거나 크기를 줄여야 합니다. 픽셀을 보존하는 최적화(`oxipng -o max`, `pngcrush`, `zopflipng`)는 데스크톱 도구를 쓰세요.
+
+## 흔히 겪는 함정
+
+도구를 10분쯤 써보면 떠오를 만한 질문들입니다.
+
+### "PNG가 압축하고 나서 더 커졌어요"
+
+원인은 두 가지입니다. 원본 PNG가 이미 강하게 최적화되어 있거나(Apple 스크린샷 도구, 최근 Figma 익스포트, `oxipng`를 거친 결과물 등), 출력 포맷을 PNG에서 매우 높은 품질의 JPEG로 바꿨거나입니다. 도구는 출력이 더 커진 경우 빨간 퍼센티지로 표시해주므로 더 나쁜 버전은 버릴 수 있습니다. 경험칙: 원본이 200 KB 미만 PNG 스크린샷이면 PNG로 두고, 1 MB 초과 사진 JPEG라면 quality 75로 재인코딩해 거의 항상 60%를 절약할 수 있으며 체감 손실은 없습니다.
+
+### "같은 품질 숫자인데 WebP가 JPEG보다 나빠 보여요"
+
+품질 숫자는 포맷 간에 호환되지 않습니다. WebP quality 75는 시각적으로 대략 JPEG quality 82와 비슷합니다. 대부분의 WebP 인코더 기본값이 75인 데는 이유가 있습니다 — 이 포맷은 75에서 이미 사진에 거의 인지 불가능한 압축을 적용하도록 설계되었습니다. 같은 품질 숫자로 WebP와 JPEG를 비교하면 JPEG가 *깔끔하게 보이는* 경우가 많은데, 실효 설정값이 더 높기 때문입니다. 같은 파일 크기를 기준으로 비교하세요 — 같은 바이트 수에서는 WebP가 체감 품질에서 거의 항상 이깁니다.
+
+### "quality 75에서 스크린샷의 작은 글자가 뭉개져요"
+
+손실 압축은 급격한 전환을 싫어합니다. 안티에일리어싱된 글자, 신택스 하이라이트된 코드, 가는 격자선이 있는 UI 스크린샷은 사진보다 빨리 무너집니다. 스크린샷에는 PNG 출력을 권장하며, 파일 크기를 더 줄여야 한다면 리사이즈 컨트롤로 긴 변을 줄이세요. 꼭 JPEG를 써야 한다면 quality를 90까지 올리고 파일이 커지는 것을 감수하세요.
+
+### "압축 후 EXIF 방향이 사라졌어요"
+
+의도된 동작입니다. Canvas를 거친 재인코딩은 모든 메타데이터를 부수적으로 제거합니다. 출력에 EXIF를 유지해야 한다면, 압축 후 `exiftool` 같은 CLI 도구로 태그를 다시 복사하세요. 대부분의 웹 전송 시나리오에서는 이것이 원하는 동작입니다 — 메타데이터가 제거된 파일이 더 작고 GPS 좌표도 유출되지 않습니다.
+
+### "200 MB짜리 원본 스캔을 드롭했더니 탭이 멈췄어요"
+
+도구는 모바일 브라우저의 메모리 부족을 막기 위해 단일 파일을 50 MB로 제한합니다. 데스크톱은 보통 더 큰 파일도 처리할 수 있지만, 뷰포트 전반에 동일한 제한을 두어야 실패 양상이 예측 가능합니다. 더 큰 입력이 필요하다면 `convert input.tif -resize 4000x output.png`(ImageMagick)로 먼저 크기를 줄인 뒤 중간 파일을 브라우저로 가져오세요.
+
+## 다른 도구와의 비교
+
+| 도구 | 바이트의 행선지 | 포맷 지원 | 무료 | 특징 |
+|---|---|---|---|---|
+| ZeroTool Image Compressor | 브라우저 안에 머무름 | JPEG / PNG / WebP / GIF (첫 프레임만) | 예 | 긴 변 기준 리사이즈, EXIF 방향 처리, 배치 내 여러 파일 병렬 처리 |
+| [Squoosh](https://squoosh.app) | 브라우저 안에 머무름 | JPEG / PNG / WebP / AVIF / OxiPNG / MozJPEG | 예 | 더 세밀한 인코더 옵션(크로마 서브샘플링, MozJPEG 패스 수); 한 번에 한 파일 |
+| TinyPNG | 서버로 업로드 | PNG / JPEG / WebP, 신규 플랜에서 AVIF 추가 | 무료 티어 제한 있음 | 서버 사이드, 스크린샷에 최적화; 내부 이미지를 보내기 전에 데이터 처리 정책을 확인할 것 |
+| ImageOptim (macOS) | 기기에 머무름 | PNG / JPEG / WebP / SVG / GIF | 예 | 동급 최강의 무손실 튜닝; 데스크톱 전용 |
+| `cwebp` / `mozjpeg` CLI | 기기에 머무름 | 각각 단일 포맷 | 예 | 최대한의 제어; 스크립트화 가능 |
+
+대략 트레이드오프는 이렇습니다: 브라우저 기반 도구(ZeroTool, Squoosh)는 바이트를 외부에 노출하지 않으면서 일상적인 웹 작업의 대부분을 커버하고, CLI 도구는 마지막 몇 퍼센트까지 짜내며 CI에서 스크립트화하기 좋고, 호스팅 서비스는 어차피 오픈 웹에 게시될 공개 마케팅 자산에 편리합니다.
+
+## 직접 코드로 같은 작업 하기
+
+브라우저 압축을 자체 앱에 통합해야 한다면(파일 업로드 위젯, 드래그 앤 드롭 아바타, 백엔드 전송 전 기기 측 사전 처리 등), 최소한의 JavaScript는 다음과 같습니다:
+
+```javascript
+async function compress(file, { format = 'image/webp', quality = 0.75, maxLong = 1920 } = {}) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(maxLong / bitmap.width, maxLong / bitmap.height, 1);
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  if (format === 'image/jpeg') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  return await canvas.convertToBlob({ type: format, quality });
+}
+```
+
+Python으로 백엔드 / 배치 작업을 한다면:
+
+```python
+from PIL import Image, ImageOps
+
+def compress(path: str, out: str, quality: int = 75, max_long: int = 1920) -> None:
+    img = ImageOps.exif_transpose(Image.open(path))
+    img.thumbnail((max_long, max_long), Image.LANCZOS)
+    img.save(out, quality=quality, optimize=True)
+```
+
+ImageMagick을 쓰는 셸 파이프라인:
+
+```bash
+mogrify -resize 1920x1920\> -quality 75 -strip *.jpg
+```
+
+`\>`는 1920보다 작은 이미지를 건드리지 않게 해주고, `-strip`은 EXIF를 제거합니다.
+
+## 더 읽어볼 자료
+
+- [MDN — Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API) — 기반이 되는 프리미티브
+- [MDN — `createImageBitmap`](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap) — 권장 디코더
+- [web.dev — Choose the right image format](https://web.dev/articles/choose-the-right-image-format) — Google 공식 가이드, 위 치트시트와 같은 결론
+- [WebP specification](https://developers.google.com/speed/webp) — WebP 품질 숫자가 실제로 무엇을 뜻하는지 이해할 때
+
+## ZeroTool의 관련 도구
+
+- [WebP Converter](/ko/tools/webp-converter/) — UI를 더 간결하게 유지하면서 포맷 변환만 필요할 때
+- [SVG Optimizer](/ko/tools/svg-optimizer/) — 벡터 이미지는 래스터로 압축할 수 없으므로 SVG 소스 자체를 최적화하세요
+- [Image to Base64](/ko/tools/image-to-base64/) — 이미지를 data URL로 인라인할 때
+- [EXIF Metadata Viewer](/ko/tools/exif-metadata-viewer/) — 압축 전에 메타데이터를 확인하고 외과 수술처럼 제거할 때
+- [Favicon Generator](/ko/tools/favicon-generator/) — 원본 이미지에서 파비콘을 생성할 때

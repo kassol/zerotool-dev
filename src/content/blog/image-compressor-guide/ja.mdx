@@ -1,0 +1,199 @@
+---
+title: "ブラウザで完結する画像圧縮：開発者向け実践ガイド"
+description: "JPEG・PNG・WebP の画像をブラウザだけで圧縮する方法を解説します。フォーマットの選び方、品質の調整、長辺基準のリサイズ、そして社内スクリーンショットをサードパーティに渡さずに済ませるための実践ノウハウまで。"
+pubDate: 2026-05-12
+updatedDate: 2026-05-12
+lang: "ja"
+tags: ["images", "compression", "performance", "developer-tools"]
+---
+
+import { Image } from 'astro:assets';
+
+先週、同僚が 12 MB の PNG スクリーンショットを Linear のチケットに貼り付けてきました。エディタは一瞬固まり、スマホで確認していたレビュアーはサムネイルが表示されるまで 4 秒待たされる始末。失われた人間の注意は、おそらくこの日 90 秒——ただし、この後そのチケットを開く全員にこれが掛け算されていきます。直すのに必要な作業は 1 分足らず。ただしそれは、社内ダッシュボードのスクリーンショットを見知らぬサーバーに先にアップロードせずに済む場合の話です。
+
+このガイドでは、ブラウザだけで完結する画像圧縮の手順、各フォーマットがそういう振る舞いをする理由、そして経験豊富なエンジニアでもハマる数少ない落とし穴を解説します。対応するツールはこちら：[Image Compressor →](/ja/tools/image-compressor/)。
+
+## 圧縮すべきとき、放っておくべきとき
+
+「明らかに圧縮すべき」から「そのままにしておくべき」まで、スペクトルが存在します。
+
+| 元画像 | 対処 | 理由 |
+|---|---|---|
+| Slack / Linear / Notion に貼る 12 MB の PNG スクリーンショット | WebP q75 または JPEG q80 に圧縮、長辺 1920 にリサイズ | スクリーンショットは視覚的に情報量が多いものの、わずかな圧縮には十分耐える。1920 では読者は違いに気付かない |
+| マーケティングページに載せる、DSLR で撮った 24 MP の JPEG | WebP q80 に圧縮、長辺 2560 にリサイズ | LCP の改善効果が大きい。原本は別途アーカイブされている前提 |
+| 透過ありの 32 KB の PNG ロゴ | PNG のまま保持、必要なら `oxipng` を通す | 32 KB の可逆 PNG を再エンコードすると、かえって肥大化することが多い |
+| 200 KB のアニメーション GIF | `ffmpeg` で MP4 / WebM に変換する | 本当に必要なのはフレームを理解した再エンコード |
+| ピクセル単位の精度が必要な QR コードやバーコード | PNG のまま保持 | 非可逆圧縮はエッジを潰し、デコーダが読めなくなる |
+| 美術館の印刷に使うアーカイブ用写真 | TIFF / RAW のまま保持 | アーカイブ用途に非可逆フォーマットは不適切 |
+
+Image Compressor ツールがきれいにカバーするのは 1〜3 行目です。4〜6 行目は意図的に対象外としています。理由と代替手段については、このガイドの残りで説明していきます。
+
+## 画像圧縮の背後にあるメンタルモデル
+
+ほぼすべての挙動は、2 つのアイデアで説明がつきます。
+
+### 非可逆圧縮は知覚情報を捨てている
+
+JPEG と WebP の非可逆モードは、すべてのピクセルを保存しているわけではありません。8×8（JPEG）あるいはそれより大きな（WebP）タイルに分割して周波数領域に変換し、高周波の係数を大胆に量子化することで、人間の視覚がその欠落に気付かないことに賭けるのです。**品質 75** は広く知られた実用デフォルトで——[web.dev の画像ガイダンス](https://web.dev/articles/choose-the-right-image-format) は 70〜85 のレンジに着地し、Next.js の `<Image>` も `75` をデフォルト品質として採用しています。60 を下回ると肌や空の階調にバンディングが目立ち始め、90 を超えるとファイルサイズが縮まなくなる一方で、知覚される品質はほとんど変わりません。75 は、得られるメリットの大半をカーブ上で捉えるポイントなのです。
+
+### 可逆圧縮はバイトを並べ直しているだけ
+
+PNG と WebP の可逆モードはすべてのピクセルを保存します。フィルタ（PNG なら Sub・Up・Average・Paeth、WebP なら予測子＋エントロピー符号化）を適用し、その結果を汎用のバイト圧縮器に通します。「品質」のつまみは存在せず、エンコーダがどれだけ頑張るかという軸しかありません。ブラウザはこのつまみを JavaScript に公開していないため、出力に PNG を選ぶと本ツールの品質スライダーが無効化されます。可逆圧縮をさらに突き詰めたい場合は、ローカルで [`oxipng`](https://github.com/shssoichiro/oxipng) や [`pngquant`](https://pngquant.org/) を実行してください。
+
+## 現場の開発者向けフォーマット早見表
+
+| フォーマット | 向いている用途 | 避けるべき用途 | 透過 | ブラウザ対応 |
+|---|---|---|---|---|
+| **JPEG** | 写真、ヒーロー画像、連続諧調のもの全般 | エッジのシャープな UI スクリーンショット、透過が必要なもの | なし | 全環境 |
+| **PNG** | UI スクリーンショット、図、ロゴ、透過オーバーレイ | 写真（同等の知覚品質では JPEG の 4〜10 倍のサイズになる） | あり | 全環境 |
+| **WebP** | 新規 Web 案件のデフォルト | IE 11 にまだ配信している環境 | あり（可逆 + 非可逆） | すべてのモダンブラウザ。グローバルで約 96% |
+| **AVIF** | 同等品質で WebP より小さい。対象ブラウザが対応していれば最適 | 古い Safari（< 16）や古い Android ブラウザ | あり | caniuse 基準で約 92%。ブラウザ側エンコードは依然として部分的 |
+| **GIF** | どうしてもインラインで動かしたい極小アニメーション | 200 KB を超えるもの。モダンな代替手段の方が優秀 | 単色キー | 全環境 |
+| **HEIC** | Apple 端末のカメラロール | クロスプラットフォーム配信 | あり | Safari のみ。Chrome / Firefox ではデコード不可 |
+| **TIFF / RAW** | アーカイブ、プロの編集作業 | Web 配信 | あり（TIFF） | ブラウザはそもそもデコードできない |
+
+Image Compressor は上記の最初の 3 つに加え、単一フレームの GIF 入力を扱います。HEIC・TIFF・RAW については、ローカルで `exiftool`・`ImageMagick`・macOS なら `sips` を使ってください。重量級の WASM ポートを抱え込まない限り、ブラウザは物理的にこれらのフォーマットをデコードできません。
+
+## そもそもなぜブラウザで圧縮するのか
+
+ブラウザでこの作業を行うのが正解になるのは、具体的には次の 3 つの状況です。
+
+**プライバシー。** 社内ダッシュボード、コードエディタのスクリーンショット、カスタマーサポートのチケット、URL バーにセッション Cookie が写り込んでいる画像——いずれもサードパーティの圧縮サービスに触れさせるべきではありません。最も人気のあるホスト型圧縮サービス（TinyPNG、iLoveIMG、Compressor.io）は、画像を一定期間サーバー上に保存します。これは多くの EU チームにとって GDPR のデータ処理要件と相容れず、ほとんどの大企業の内部データ分類ポリシーとも整合しません。クライアントサイドで圧縮すれば、バイトは自分のマシンから出ていきません。
+
+**EXIF 漏洩。** スマートフォンで撮った写真には、GPS 座標、カメラのモデル、タイムスタンプ、ときには端末のシリアル番号まで EXIF に書き込まれています。「とりあえず圧縮するだけ」のつもりでサードパーティに上げると、原理的にはそれらすべてを相手に読まれます。Image Compressor は `createImageBitmap` を `imageOrientation: 'from-image'` で呼び出して EXIF 由来の回転を反映し、その後 Canvas で再エンコードします。Canvas を経由すると、副作用としてその他のメタデータは剥がれ落ちます。EXIF の中身を細かく確認したい、あるいは特定タグだけ外科的に削除したい場合は、[EXIF Metadata Viewer](/ja/tools/exif-metadata-viewer/) でタグ単位の制御ができます。
+
+**オフライン / エアギャップ環境での作業。** 機内モードでツールを試してみてください——ちゃんと動きます。閉じた社内ネットワークの中でも ZeroTool が役立つのは、これと同じ性質によるものです。
+
+## ツールは実際にどう動いているか
+
+圧縮器全体で約 200 行の素の JavaScript です。注目すべき部分は次のとおり。
+
+```javascript
+// 1. EXIF の向きを反映した状態でデコード
+const bitmap = await createImageBitmap(file, {
+  imageOrientation: 'from-image',
+});
+
+// 2. 目標サイズを計算（アスペクト比は維持）
+const { w, h } = scaleToLong(bitmap.width, bitmap.height, maxLongEdge);
+
+// 3. OffscreenCanvas に描画する（DOM canvas より速い）
+const canvas = new OffscreenCanvas(w, h);
+const ctx = canvas.getContext('2d');
+
+// 4. JPEG 出力ならまず白で塗りつぶす（アルファチャンネルがないため）
+if (outMime === 'image/jpeg') {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+}
+ctx.drawImage(bitmap, 0, 0, w, h);
+bitmap.close();
+
+// 5. 指定された品質でエンコード
+const blob = await canvas.convertToBlob({
+  type: outMime,
+  quality: outMime === 'image/png' ? undefined : quality / 100,
+});
+```
+
+ここには 3 つの重要な細部があり、ほとんどの実装でつまずくポイントになっています。
+
+**`imageOrientation: 'from-image'`** は、2026 年時点で EXIF 回転を尊重するための定石です。古いやり方——`<img>` 要素の CSS `image-orientation: from-image` のデフォルト挙動に頼る——は、ブラウザによって対応時期がバラバラ（Chrome 81、Firefox 26、Safari 13.1）で、`Image` オブジェクトを Canvas に流し込んだ場合のデフォルト挙動もバージョン間で揃っていませんでした。`createImageBitmap` を使えば、Canvas が読み込む時点で既にビットマップが正しい向きになっており、横向きで撮った写真がデコーダの癖に関係なく正しい向きで出力されます。
+
+**JPEG に描く前に白で塗りつぶす** のは、Canvas のデフォルト背景が透明で、JPEG はアルファを保存できないからです。`fillRect` がないと、PNG の透過部分はフレームバッファを RGBA(0,0,0,0) で初期化するブラウザでは、得体の知れない黒っぽいピクセルとして現れます。視覚的に安全なデフォルトは白です。マーケティング素材で別の背景色を使いたい場合は、ソースを PNG で保存し、CSS かコンポジタ側で色を選ぶようにしてください。
+
+**PNG で品質スライダーを無効化している** のは手抜きではなく、フォーマットの性質を反映しています。PNG の圧縮は可逆で、ブラウザの PNG エンコーダは `quality` 引数を無視するのです。ブラウザのツールから PNG をさらに小さくしたいなら、非可逆フォーマットに切り替えるか、サイズを縮めるしかありません。ピクセルを保ったままの最適化（`oxipng -o max`、`pngcrush`、`zopflipng`）には、デスクトップツールを使ってください。
+
+## よくある落とし穴
+
+ツールを 10 分使うと出てくる疑問群です。
+
+### 「圧縮したら PNG が大きくなった」
+
+原因は 2 つあります。元の PNG が既に強く最適化されている（Apple のスクリーンショットツール、最近の Figma エクスポート、`oxipng` を通したもの）、あるいは出力フォーマットを PNG から非常に高品質の JPEG に切り替えたか。本ツールは出力が大きくなった場合に赤いパーセンテージを表示するので、悪い方を捨てればよい設計になっています。経験則として、元が 200 KB 未満の PNG スクリーンショットなら PNG のままにしておく、1 MB を超える写真系 JPEG なら品質 75 で再エンコードすればほぼ確実に 60% 削れて、知覚的な劣化は出ません。
+
+### 「同じ品質値なのに WebP の方が JPEG より見栄えが悪い」
+
+品質の数値はフォーマット間で互換ではありません。品質 75 の WebP は、視覚的にはおおむね品質 82 の JPEG と同等です。ほとんどのエンコーダで WebP のデフォルトが 75 になっているのには理由があります——このフォーマットは、75 の時点で写真への圧縮がほぼ知覚不能になるよう設計されているのです。同じ品質値で WebP と JPEG を比べると、実効的にはより高い設定で走っている JPEG の方が *見た目* には少しクリーンになりがちです。比較するなら同等のファイルサイズで——同じバイト数なら、知覚品質ではほぼ常に WebP が勝ちます。
+
+### 「品質 75 でスクリーンショットの細い文字がにじむ」
+
+非可逆圧縮はシャープな遷移を嫌います。アンチエイリアスのかかったテキスト、シンタックスハイライトされたコード、細いグリッド線を含む UI スクリーンショットは、写真よりも遥かに早く崩れます。スクリーンショットには PNG 出力を優先し、より小さなファイルが必要なら長辺リサイズで対応してください。どうしても JPEG が必要なら、品質を 90 まで引き上げてファイルサイズの増加は受け入れます。
+
+### 「圧縮後に EXIF の向き情報が消えている」
+
+仕様どおりの挙動です。Canvas での再エンコードは、副作用としてあらゆるメタデータを剥がします。出力に EXIF を残したい場合は、圧縮後に `exiftool` のような CLI でタグをコピーし戻してください。Web 配信ではむしろこちらが望ましい挙動です——メタデータが削ぎ落とされた方がサイズは小さく、GPS 座標が漏れる心配もありません。
+
+### 「200 MB の生スキャンを投入したらタブが固まった」
+
+本ツールは単一ファイルを 50 MB に制限しており、これはモバイルブラウザのメモリ枯渇を防ぐためです。デスクトップなら通常はもっと耐えますが、すべてのビューポートで同じ上限を適用することで失敗モードを予測可能に保っています。これより大きい入力は、まず `convert input.tif -resize 4000x output.png`（ImageMagick）などで縮小し、中間ファイルをブラウザに持ち込んでください。
+
+## 他ツールとの比較
+
+| ツール | バイトの行き先 | 対応フォーマット | 無料 | 特徴 |
+|---|---|---|---|---|
+| ZeroTool Image Compressor | ブラウザ内に留まる | JPEG / PNG / WebP / GIF（先頭フレームのみ） | 無料 | 長辺リサイズ、EXIF の向き処理、1 バッチ内の複数ファイル並列処理 |
+| [Squoosh](https://squoosh.app) | ブラウザ内に留まる | JPEG / PNG / WebP / AVIF / OxiPNG / MozJPEG | 無料 | エンコーダの詳細つまみが豊富（クロマサブサンプリング、MozJPEG のパス数）。1 ファイルずつの処理 |
+| TinyPNG | サーバーにアップロード | PNG / JPEG / WebP、新プランでは AVIF も | 無料枠あり | サーバーサイドでスクリーンショットに最適化。社内画像を送る前に同社のデータ取り扱いポリシーを要確認 |
+| ImageOptim（macOS） | マシン内に留まる | PNG / JPEG / WebP / SVG / GIF | 無料 | 可逆チューニングの完成度は群を抜く。デスクトップ専用 |
+| `cwebp` / `mozjpeg` CLI | マシン内に留まる | それぞれ単一フォーマット | 無料 | 最大限の制御。スクリプト化可能 |
+
+ざっくりとしたトレードオフはこうです——ブラウザベースのツール（ZeroTool、Squoosh）はバイトを外に出さず、日常的な Web 業務の大部分をカバーします。CLI 系は最後の数%まで絞り出せて、CI でスクリプト化できます。ホスト型サービスは、どうせ公開 Web 上に置く公開マーケティング素材なら手軽です。
+
+## コードから同じことを実現する
+
+ブラウザ圧縮を自前のアプリ（ファイルアップロードのウィジェット、ドラッグ＆ドロップのアバター、バックエンドに送る前のオンデバイス前処理）に組み込みたい場合の最小 JavaScript はこちらです。
+
+```javascript
+async function compress(file, { format = 'image/webp', quality = 0.75, maxLong = 1920 } = {}) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(maxLong / bitmap.width, maxLong / bitmap.height, 1);
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  if (format === 'image/jpeg') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  return await canvas.convertToBlob({ type: format, quality });
+}
+```
+
+Python のバックエンド / バッチ処理ならこう。
+
+```python
+from PIL import Image, ImageOps
+
+def compress(path: str, out: str, quality: int = 75, max_long: int = 1920) -> None:
+    img = ImageOps.exif_transpose(Image.open(path))
+    img.thumbnail((max_long, max_long), Image.LANCZOS)
+    img.save(out, quality=quality, optimize=True)
+```
+
+ImageMagick を使ったシェルパイプラインなら次のとおり。
+
+```bash
+mogrify -resize 1920x1920\> -quality 75 -strip *.jpg
+```
+
+`\>` を付けることで 1920 より小さい画像はそのまま残り、`-strip` で EXIF が削除されます。
+
+## さらなる参考資料
+
+- [MDN — Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API) — 土台となるプリミティブ
+- [MDN — `createImageBitmap`](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap) — 推奨のデコーダ
+- [web.dev — Choose the right image format](https://web.dev/articles/choose-the-right-image-format) — Google 公式のガイダンス。上記の早見表もこれをベースにしている
+- [WebP specification](https://developers.google.com/speed/webp) — WebP の品質値が実際に何を意味するのかを理解するために
+
+## ZeroTool 上の関連ツール
+
+- [WebP Converter](/ja/tools/webp-converter/) — UI をシンプルに保ったまま、ピンポイントでフォーマット変換だけしたいとき
+- [SVG Optimizer](/ja/tools/svg-optimizer/) — ベクター画像はラスタ圧縮できないので、SVG ソース自体を最適化する
+- [Image to Base64](/ja/tools/image-to-base64/) — 画像をデータ URL としてインライン化する
+- [EXIF Metadata Viewer](/ja/tools/exif-metadata-viewer/) — 圧縮前にメタデータを確認し、必要に応じて外科的に削除する
+- [Favicon Generator](/ja/tools/favicon-generator/) — 元画像からファビコンを生成したいとき

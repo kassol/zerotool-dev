@@ -120,6 +120,7 @@ import SvgOptimizerTool from './SvgOptimizerTool.astro';
 import PkceGeneratorTool from './PkceGeneratorTool.astro';
 import SslCertificateDecoderTool from './SslCertificateDecoderTool.astro';
 import FileHashCheckerTool from './FileHashCheckerTool.astro';
+import ImageCompressorTool from './ImageCompressorTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -240,4 +241,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'pkce-generator': PkceGeneratorTool,
   'ssl-certificate-decoder': SslCertificateDecoderTool,
   'file-hash-checker': FileHashCheckerTool,
+  'image-compressor': ImageCompressorTool,
 };

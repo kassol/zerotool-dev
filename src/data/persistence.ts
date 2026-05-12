@@ -13,6 +13,7 @@ export const toolPersistencePolicy = {
   'jwt-generator': 'disabled',
   'pkce-generator': 'disabled',
   'file-hash-checker': 'disabled',
+  'image-compressor': 'disabled',
   'uuid-generator': 'preference',
   'cron-job-generator': 'preference',
   'css-filter-generator': 'preference',

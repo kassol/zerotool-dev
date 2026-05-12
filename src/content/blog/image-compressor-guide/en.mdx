@@ -1,0 +1,199 @@
+---
+title: "Image Compressor in the Browser: A Practical Guide for Developers"
+description: "Compress JPEG, PNG, and WebP images entirely in your browser. Pick the right format, tune quality, resize on the long edge, and ship without leaking your screenshots to a third party."
+pubDate: 2026-05-12
+updatedDate: 2026-05-12
+lang: "en"
+tags: ["images", "compression", "performance", "developer-tools"]
+---
+
+import { Image } from 'astro:assets';
+
+A teammate dropped a 12 MB PNG screenshot into the Linear ticket I was reading last week. The editor stalled for a beat. The mobile reviewer waited four seconds before the thumbnail rendered. Total real damage to the day: maybe 90 seconds of human attention, multiplied by everyone who later opened the ticket. The fix is a minute of work — but only if you don't have to first upload your screenshot of an internal dashboard to a stranger's server.
+
+This guide walks through compressing images entirely in your browser, why each format behaves the way it does, and the few traps that catch even experienced engineers. The companion tool is here: [Image Compressor →](/tools/image-compressor/).
+
+## When to compress, when to leave it alone
+
+There is a spectrum from "obviously compress" to "leave it raw":
+
+| Source | What to do | Why |
+|---|---|---|
+| A 12 MB PNG screenshot heading into Slack / Linear / Notion | Compress to WebP q75 or JPEG q80, resize to 1920 long edge | Screenshots are visually busy but tolerant of slight compression; readers cannot tell at 1920 |
+| A 24 MP JPEG out of a DSLR going onto a marketing page | Compress to WebP q80, resize to 2560 long edge | LCP wins; the original is archived elsewhere |
+| A 32 KB PNG logo with transparency | Leave it as PNG, maybe run `oxipng` | Re-encoding a 32 KB lossless PNG often grows it |
+| A 200 KB animated GIF | Use `ffmpeg` to make an MP4 / WebM | Frame-aware re-encoding is what you actually want |
+| A pixel-perfect QR code or barcode | Leave as PNG | Lossy compression smears edges and breaks decoders |
+| An archival photograph for a museum print | Keep TIFF / RAW | Lossy formats are wrong for archive |
+
+The Image Compressor tool covers rows 1, 2, and 3 cleanly. Rows 4–6 are out of scope by design; the rest of this guide explains why, and what to use instead.
+
+## The mental model behind image compression
+
+Two ideas explain almost every behaviour you will see.
+
+### Lossy compression discards perceptual data
+
+JPEG and WebP-lossy do not store every pixel. They transform 8×8 (JPEG) or larger (WebP) tiles into the frequency domain, quantise the high-frequency coefficients aggressively, and rely on the human visual system not noticing. **Quality 75** is the widely cited working default — [web.dev's image guidance](https://web.dev/articles/choose-the-right-image-format) lands in the 70–85 band, and Next.js's `<Image>` ships with quality `75`. Below 60 you start seeing banding on skin tones and skies; above 90 the file size stops shrinking but the perceived quality barely moves. 75 is the point on the curve where most of the win is captured.
+
+### Lossless compression only re-arranges bytes
+
+PNG and WebP-lossless store every pixel. They run filters (Sub, Up, Average, Paeth for PNG; predictor + entropy for WebP) and feed the result through a generic byte compressor. There is no "quality" knob — only how hard the encoder works. Browsers do not expose that knob to JavaScript, which is why this tool's quality slider is disabled when you ask for PNG output. For deeper lossless squeezing, run [`oxipng`](https://github.com/shssoichiro/oxipng) or [`pngquant`](https://pngquant.org/) locally.
+
+## Format cheat sheet for working developers
+
+| Format | Best for | Avoid for | Transparency | Browser support |
+|---|---|---|---|---|
+| **JPEG** | Photographs, hero images, anything continuous-tone | UI screenshots with sharp edges, anything needing transparency | No | Everywhere |
+| **PNG** | UI screenshots, diagrams, logos, transparent overlays | Photographs (4–10× larger than JPEG for equal perceived quality) | Yes | Everywhere |
+| **WebP** | Default for new web work | Anywhere that still serves IE 11 | Yes (lossless + lossy) | All modern browsers; ~96% global |
+| **AVIF** | Smaller than WebP at equal quality; pick when target browsers support it | Older Safari (< 16) and many older Android browsers | Yes | ~92% global on caniuse; browser-side encoding is still partial |
+| **GIF** | Tiny animations that absolutely must inline | Anything > 200 KB; modern alternatives are better | Single colour key | Everywhere |
+| **HEIC** | Camera roll on Apple devices | Cross-platform web delivery | Yes | Safari only; cannot decode in Chrome / Firefox |
+| **TIFF / RAW** | Archival, professional editing | Web delivery | Yes (TIFF) | Browsers do not decode these |
+
+The Image Compressor handles the first three plus single-frame GIF input. For HEIC, TIFF, and RAW, use `exiftool`, `ImageMagick`, or `sips` on macOS locally — browsers physically cannot decode those formats without bringing in a heavyweight WASM port.
+
+## Why compress in the browser at all?
+
+The browser is the right place to do this work in three concrete situations.
+
+**Privacy.** Internal dashboards, code editor screenshots, customer support tickets and any image that contains a session cookie in a URL bar should never touch a third-party compression service. The most popular hosted compressors (TinyPNG, iLoveIMG, Compressor.io) store your image for some period of time on their servers. That is incompatible with GDPR data processing for many EU teams and with internal data classification policies at most enterprises. Browser-side compression keeps the bytes on your machine.
+
+**EXIF leakage.** Photographs from phones carry GPS coordinates, camera model, timestamp, and sometimes the device serial number in EXIF. When you upload to a third-party service to "just compress", the service can in principle read all of that. The Image Compressor uses `createImageBitmap` with `imageOrientation: 'from-image'` to apply EXIF rotation, then re-encodes via Canvas which strips other metadata as a side effect. If you specifically want EXIF inspection or surgical removal, our [EXIF Metadata Viewer](/tools/exif-metadata-viewer/) gives you per-tag control.
+
+**Offline / air-gapped work.** Try the tool in airplane mode — it works. This is the same property that makes ZeroTool useful inside locked-down corporate networks.
+
+## How the tool actually works
+
+The whole compressor is about 200 lines of plain JavaScript. The interesting parts:
+
+```javascript
+// 1. Decode with EXIF orientation already applied
+const bitmap = await createImageBitmap(file, {
+  imageOrientation: 'from-image',
+});
+
+// 2. Compute target dimensions (preserve aspect ratio)
+const { w, h } = scaleToLong(bitmap.width, bitmap.height, maxLongEdge);
+
+// 3. Render onto an OffscreenCanvas (faster than DOM canvas)
+const canvas = new OffscreenCanvas(w, h);
+const ctx = canvas.getContext('2d');
+
+// 4. Fill white if going to JPEG (no alpha channel)
+if (outMime === 'image/jpeg') {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+}
+ctx.drawImage(bitmap, 0, 0, w, h);
+bitmap.close();
+
+// 5. Encode at the requested quality
+const blob = await canvas.convertToBlob({
+  type: outMime,
+  quality: outMime === 'image/png' ? undefined : quality / 100,
+});
+```
+
+Three details matter and trip up most implementations.
+
+**`imageOrientation: 'from-image'`** is the canonical way to honour EXIF rotation in 2026. The older approach — relying on the CSS `image-orientation: from-image` default of `<img>` elements — landed at different times across browsers (Chrome 81, Firefox 26, Safari 13.1) and the default behaviour for plain `Image` objects fed into Canvas was not uniform across versions. With `createImageBitmap`, the bitmap is already oriented correctly when Canvas reads it, so a photo shot sideways comes out the right way up regardless of decoder quirks.
+
+**Filling white before drawing onto JPEG** is required because Canvas's default backdrop is transparent and JPEG cannot store alpha. Without the `fillRect`, transparent areas of a PNG come out as undefined-looking black pixels in browsers that initialise the framebuffer to RGBA(0,0,0,0). White is the visually safe default; if you want a different background colour for marketing assets, save the source as PNG and let your CSS or compositor pick the colour.
+
+**Disabling the quality slider for PNG** is not laziness — it reflects the format. PNG compression is lossless; the browser's PNG encoder ignores a `quality` argument. To make PNGs smaller from a browser tool, you must either change to a lossy format or reduce dimensions. For pixel-preserving optimisation (`oxipng -o max`, `pngcrush`, `zopflipng`), use a desktop tool.
+
+## Common pitfalls
+
+These are the questions you would ask after using the tool for ten minutes.
+
+### "My PNG got bigger after compression"
+
+Two causes. Either the source PNG was already heavily optimised (Apple's screenshot tool, recent Figma exports, anything that ran through `oxipng`), or you switched output format from PNG to JPEG at very high quality. The tool flags larger output with a red percentage so you can drop the worse version. The rule of thumb: if your source is a PNG screenshot under 200 KB, leave it as PNG; if it is a photographic JPEG over 1 MB, you can almost always save 60% by re-encoding at quality 75 with no perceptual loss.
+
+### "My WebP looks worse than my JPEG at the same quality number"
+
+Quality numbers are not portable between formats. WebP at quality 75 is roughly equivalent to JPEG at quality 82 visually. WebP defaults in most encoders sit at 75 for a reason: the format is designed so 75 already buys you near-imperceptible compression on photographs. If you compare WebP and JPEG at the same quality, JPEG will often *look* slightly cleaner because you are running it at a higher effective setting. Compare equivalent file sizes instead — at the same byte count, WebP almost always wins on perceived quality.
+
+### "My screenshot has fine text that smears at quality 75"
+
+Lossy compression hates sharp transitions. UI screenshots with antialiased text, syntax-highlighted code, or thin gridlines fall apart faster than photographs. For screenshots, prefer PNG output and use the resize control to drop the long edge if you need a smaller file. If you must use JPEG, push quality to 90 and accept the larger file.
+
+### "EXIF orientation is gone after compression"
+
+Yes, by design. Re-encoding via Canvas strips all metadata as a side effect. If you need to preserve EXIF in the output, use a CLI tool like `exiftool` to copy tags back after compression. For most web delivery this is the desired behaviour: stripped metadata is smaller and does not leak GPS coordinates.
+
+### "I dropped a 200 MB raw scan and the tab froze"
+
+The tool caps single files at 50 MB to protect mobile browsers from running out of memory. Desktops can usually handle more, but enforcing the same limit across viewports keeps the failure mode predictable. For larger inputs, downsize first with `convert input.tif -resize 4000x output.png` (ImageMagick) and then bring the intermediate file into the browser.
+
+## Comparison with other tools
+
+| Tool | Where bytes go | Format coverage | Free | Notable |
+|---|---|---|---|---|
+| ZeroTool Image Compressor | Stays in browser | JPEG / PNG / WebP / GIF (first frame only) | Yes | Resize on long edge, EXIF orientation handling, parallel processing of multiple files in one batch |
+| [Squoosh](https://squoosh.app) | Stays in browser | JPEG / PNG / WebP / AVIF / OxiPNG / MozJPEG | Yes | Deeper encoder knobs (chroma subsampling, MozJPEG passes); single-file at a time |
+| TinyPNG | Uploaded to server | PNG / JPEG / WebP, plus AVIF on its newer plans | Free tier limited | Server-side, optimised for screenshots; check their data-handling policy before sending internal images |
+| ImageOptim (macOS) | Stays on machine | PNG / JPEG / WebP / SVG / GIF | Yes | Best-in-class lossless tuning; desktop only |
+| `cwebp` / `mozjpeg` CLI | Stays on machine | Single format each | Yes | Maximum control; scriptable |
+
+The trade-off is roughly: the browser-based tools (ZeroTool, Squoosh) keep your bytes private and cover the bulk of day-to-day web work; the CLI tools squeeze out the last few percent and are scriptable in CI; the hosted services are convenient for public marketing assets where the image is going to live on the open web anyway.
+
+## Doing the same thing from code
+
+If you need to integrate browser compression into your own app (file upload widgets, drag-and-drop avatars, on-device pre-processing before sending to a backend), here is the minimal JavaScript:
+
+```javascript
+async function compress(file, { format = 'image/webp', quality = 0.75, maxLong = 1920 } = {}) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(maxLong / bitmap.width, maxLong / bitmap.height, 1);
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  if (format === 'image/jpeg') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  return await canvas.convertToBlob({ type: format, quality });
+}
+```
+
+For backend / batch jobs in Python:
+
+```python
+from PIL import Image, ImageOps
+
+def compress(path: str, out: str, quality: int = 75, max_long: int = 1920) -> None:
+    img = ImageOps.exif_transpose(Image.open(path))
+    img.thumbnail((max_long, max_long), Image.LANCZOS)
+    img.save(out, quality=quality, optimize=True)
+```
+
+For a shell pipeline using ImageMagick:
+
+```bash
+mogrify -resize 1920x1920\> -quality 75 -strip *.jpg
+```
+
+The `\>` ensures images smaller than 1920 are left alone, and `-strip` removes EXIF.
+
+## Further reading
+
+- [MDN — Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API) — the underlying primitive
+- [MDN — `createImageBitmap`](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap) — the recommended decoder
+- [web.dev — Choose the right image format](https://web.dev/articles/choose-the-right-image-format) — Google's official guidance, mirrors the cheat sheet above
+- [WebP specification](https://developers.google.com/speed/webp) — for understanding what WebP quality numbers actually mean
+
+## Related tools on ZeroTool
+
+- [WebP Converter](/tools/webp-converter/) — when you specifically want format conversion with a leaner UI
+- [SVG Optimizer](/tools/svg-optimizer/) — vector images cannot be raster-compressed; optimise the SVG source instead
+- [Image to Base64](/tools/image-to-base64/) — inline an image as a data URL
+- [EXIF Metadata Viewer](/tools/exif-metadata-viewer/) — inspect and surgically remove metadata before compressing
+- [Favicon Generator](/tools/favicon-generator/) — when the goal is producing favicons from a source image
