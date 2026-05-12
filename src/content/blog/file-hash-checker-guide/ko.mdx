@@ -1,0 +1,126 @@
+---
+title: "File Hash Checker: 브라우저에서 SHA-256으로 다운로드 검증하기"
+description: "Web Crypto로 로컬 파일의 SHA-256 / SHA-1 / SHA-384 / SHA-512 / MD5를 그 자리에서 계산. 한 바이트도 업로드하지 않고 배포자의 해시와 대조."
+pubDate: 2026-05-12
+lang: "ko"
+tags: ["file-hash-checker", "sha-256", "checksum", "developer-tools"]
+ogImage: /og/blog-file-hash-checker-guide.png
+---
+
+PostgreSQL 18 macOS DMG가 12분 만에 다운로드를 끝냈다. 릴리스 페이지에 SHA-256이 같이 적혀 있다. 설치 프로그램을 돌리기 전에 확인하고 싶지만, 지금 손에 있는 건 빌려 쓰는 노트북이고 `shasum`도 `$PATH`에 들어 있지 않다. 푸터에 "we don't store your file"이라고 적힌 온라인 해시 서비스에 320 MB짜리 DMG를 던지는 건 현명한 선택이 아니다. 파일을 로컬에서만 읽고, 단 한 바이트도 네트워크로 내보내지 않는 브라우저 기반 해셔 — 그게 정답이다.
+
+한국 개발 현장에서도 비슷한 상황은 흔하다. 카카오 미러나 Naver Cloud, 또는 NAVER 오픈소스 미러에서 받은 배포물이 본가의 SHA-256과 같은지 확인할 때. 또는 사내 프록시 환경에서 HTTPS 재암호화가 일어나면서 큰 바이너리의 일부가 도중에 바뀌었는지 의심스러울 때. 두 경우 모두 해시 대조는 초 단위로 답을 준다. 그것도 어떤 제3자 서비스도 거치지 않고서.
+
+[지금 파일 검증하기 →](/ko/tools/file-hash-checker/)
+
+## 체크섬이 왜 필요한가
+
+암호학적 해시 함수는 임의의 바이트 스트림을 짧고 고정 길이인 지문으로 압축한다. 다운로드 검증에 쓸모 있는 이유는 두 가지 성질 때문이다.
+
+- **결정성** — 같은 바이트는 항상 같은 해시를 만든다.
+- **눈사태 효과** — 입력의 단 한 비트만 바꿔도 출력 전체가 완전히 뒤바뀐다.
+
+이 두 성질을 합치면, CDN 프록시가 설치 프로그램에 광고 iframe 한 장을 끼워 넣었을 때 SHA-256은 완전히 달라진다. 사내 프록시가 페이로드 일부를 투명하게 다시 쓴 경우도 같다. 흔들리는 다운로드로 마지막 1 MB가 잘렸을 때도 마찬가지다. 배포자가 공개한 해시와 내 머신이 계산한 해시를 대조하는 것 — 재다운로드 없이 이 모든 걸 잡아내는 가장 값싼 수단이다.
+
+해시 자체로는 **진위 증명**이 되지 않는다. 그건 서명의 영역이다. 하지만 "내가 받은 파일이 배포자가 게시한 그 파일과 같다"는 사실은, 서명 검증을 포함한 그다음 모든 단계의 전제 조건이다.
+
+## SHA-256과 레거시 알고리즘의 차이
+
+ZeroTool의 File Hash Checker는 한 번에 다섯 가지 알고리즘을 모두 계산해 준다. 이들은 서로 호환되지 않는다. 간단 대조표는 다음과 같다.
+
+| 알고리즘 | 출력 길이 | 충돌 저항성 | 현실의 용도 |
+|---|---|---|---|
+| MD5 | 128 bit | 깨졌음 (2004) | 호환성용 체크섬에 한정 |
+| SHA-1 | 160 bit | 깨졌음 (2017, SHAttered) | 호환성용 체크섬에 한정 |
+| SHA-256 | 256 bit | 강함 | 오늘날의 표준: npm registry / Docker Hub digest / GitHub Releases / Homebrew formula의 sha256 / 카카오·NAVER 오픈소스 미러 |
+| SHA-384 | 384 bit | 강함 | TLS 1.3 일부 cipher suite, 코드 서명 |
+| SHA-512 | 512 bit | 강함 | Linux 커널 tarball, 일부 BSD ports, 충돌 여유를 크게 두는 경우 |
+
+MD5와 SHA-1이 "깨졌다"는 말은, 공격자가 **서로 다른 두 파일을 같은 해시값으로 일치시키는** 일이 계산적으로 가능해졌다는 뜻이다. 이 성질이 사라지면 해시는 "누구도 이 파일을 손대지 않았다"를 증명하지 못한다. 단지 "전송 도중 우연한 손상이 없었다"만 말할 수 있다. ZeroTool이 UI에서 MD5와 SHA-1을 *legacy*로 라벨링하는 이유의 전부가 여기에 있다 — 여전히 유용한 정보는 주지만, "배포자가 서명한 그 파일"이라는 보증은 더 이상 못 한다.
+
+새로운 정책을 세운다면 SHA-256으로 못 박는다. 배포자가 MD5만 공개했다면 MD5도 같이 계산하되, 결과는 "전송이 무사했다"는 정도의 약한 힌트로 다루고 보안 보증이 아니라고 분명히 한 뒤 상대에게 업그레이드를 요청한다.
+
+## 브라우저는 해시를 어떻게 계산하는가
+
+도구는 `File.arrayBuffer()`로 파일을 한 번 메모리에 읽어 들인다. 거기서 길이 갈라진다.
+
+- `SHA-1`, `SHA-256`, `SHA-384`, `SHA-512`는 `crypto.subtle.digest()`로 바로 넘긴다. 이 호출은 브라우저 내장 암호 서브시스템으로 직행하며, 오늘날 출시 중인 모든 데스크톱 브라우저에서 OS 수준 가속을 받는다. 플랫폼이 지원하면 CPU의 하드웨어 SHA 가속도 활용한다 — x86에서는 Intel SHA-NI, Apple Silicon과 최근 ARM 칩에서는 ARMv8 Cryptography Extensions.
+- `MD5`는 Web Crypto API가 아예 노출하지 않는다. 페이지에 함께 묶인 작은 퍼블릭 도메인 MD5 루틴이 같은 `Uint8Array`를 순수 JavaScript로 처리한다. 같은 입력에 대해 SHA 계열보다 느리며, 100 MB를 넘어가는 파일에서는 5~10배까지 차이가 난다. 하드웨어 가속의 혜택을 받지 못하기 때문이다.
+
+업로드 단계는 없다. 백엔드로 동기화하는 Service Worker도 없다. IndexedDB 영속화도 없다. 파일은 탭의 메모리에만 머무르고, 새로고침하면 사라진다. *Clear*를 누르면 그 메모리 사본까지 버려진다.
+
+```javascript
+// SHA 계열에 대한 도구의 최소 등가 구현
+async function sha256(file) {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+```
+
+같은 결과를 셸에서 얻고 싶다면 세 플랫폼이 대부분의 경우를 커버한다.
+
+```bash
+# Linux (coreutils)
+sha256sum postgresql-18.0.dmg
+
+# macOS (BSD utils)
+shasum -a 256 postgresql-18.0.dmg
+
+# Windows (Vista부터 기본 탑재)
+certutil -hashfile postgresql-18.0.dmg SHA256
+```
+
+출력 포맷은 다르다 (Linux/macOS는 소문자 hex 연속, Windows는 공백이 섞인 대문자). 하지만 밑단의 해시값은 같다. 도구의 대조 입력란은 세 형식 모두를 정규화한다 — **모든 공백 문자를 제거하고 소문자로 바꾼 뒤** 비교한다. 따라서 `certutil`의 원래 출력(`AA BB CC …` 식)을 그대로 붙여도, `sha256sum`의 깔끔한 hex를 붙여도, 두 경우 모두 깨끗한 ✓를 받는다.
+
+## 실전: Linux 배포판 ISO 검증하기
+
+최근 Debian 13 testing 주간 ISO를 예로 든다. 미러 페이지에는 `SHA256SUMS` 파일이 함께 있고, ISO마다 한 줄씩 적혀 있다.
+
+```
+4e3a1c...d2  debian-13.0.0-amd64-netinst.iso
+```
+
+한국에서는 카카오 미러나 KAIST 미러를 자주 쓰는데, `SHA256SUMS`도 본 파일과 같은 미러 디렉터리에서 가져오는 게 좋다 — 해시만 다른 출처에서 받아 본 파일과 대조하는 건 흔하지만 자초하는 함정이다.
+
+ISO를 File Hash Checker에 끌어 놓고, 기본 선택인 SHA-256 그대로 *Compute Hashes*를 누른다. 한 줄짜리 결과가 돌아온다. `SHA256SUMS`에서 해당 줄의 hex를 복사해 대조 입력란에 붙여 넣고 `Matches SHA-256 ✓`를 확인한다. 최근 노트북 기준으로 700 MB ISO 한 개는 2초 안에 끝난다 — `crypto.subtle.digest`의 SHA-256은 그 정도로 빠르다.
+
+대조란에 `No match against any computed hash ✗`가 나오면 절차는 단순하다.
+
+1. 복사한 SHA-256이 완전한 64자 hex인지 다시 확인한다. 앞부분이 잘렸거나 다른 파일의 줄을 가져온 건 아닌지.
+2. 다른 미러에서 다시 받는다. 일시적 전송 손상이 가장 흔한 원인이다. 약한 회선이나 프록시 통과 환경에서는 특히 자주 일어난다.
+3. 미러가 분리 서명(`SHA256SUMS.gpg`)도 같이 공개한다면 먼저 프로젝트의 릴리스 키로 `gpg --verify`를 돌린다. 변조된 `SHA256SUMS` 위의 해시가 일치해도 무의미하다 — 서명 단계 없이는 해시가 "다운로드가 깨지지 않았다" 이상을 보증할 수 없다.
+
+이 마지막 지점이 ZeroTool의 File Hash Checker가 "해시 계산"에서 범위를 멈추는 이유다. 서명 검증은 배포자의 GPG 또는 Sigstore 키를 필요로 하며, 올바른 실행 위치는 내 머신 위의 `gpg --verify`나 `cosign verify`다. 사용자의 개인 키 입력을 요구하는 브라우저 도구는 훨씬 신뢰하기 어려운 물건이 된다.
+
+## 도구가 풀어 주지 않는 경계 사례
+
+브라우저 내 해셔가 다루지 않는 시나리오를 명시해 둔다. 다른 도구를 골라야 할 때를 판단하기 위해서다.
+
+- **약 1 GB가 넘는 파일**. 브라우저는 단일 `ArrayBuffer` 할당을 2 GB 부근에서 제한하고, 그보다 훨씬 일찍부터 스왑이 시작된다. 1 GB를 넘어가면 도구가 소프트 경고를 띄우지만, 30 GB짜리 게임 패치는 이 위젯이 할 일이 아니다. `sha256sum` / `shasum -a 256` / `certutil -hashfile`을 쓰자.
+- **디렉터리 / 아카이브 단위의 해시**. 디렉터리에는 정규의 바이트 스트림이 없다. 트리 전체를 검증하려면 먼저 아카이브로 묶고(`.tar.gz`, `.zip`) 그 위에 해시한다. 디렉터리 자체에 지문을 매기고 싶다면 `b3sum --recursive`(BLAKE3) 같은 도구가 있다.
+- **다운로드하면서 진행되는 스트리밍 해시**. 다운로드 중에 해시를 누적하는 일은 서버 측 또는 CLI의 작업이다(`curl … | sha256sum` 같은 형태). Web Crypto는 완전히 읽힌 `ArrayBuffer`를 요구한다.
+- **HMAC, 비밀번호 해시, 또는 새로운 트리 해시(BLAKE3 / SHA-3)**. 별도의 문제군이다: [HMAC Generator](/ko/tools/hmac-generator/)는 공유 비밀이 있는 무결성 검증, [Bcrypt Generator](/ko/tools/bcrypt-generator/)는 비밀번호 저장, [Hash Generator](/ko/tools/hash-generator/)는 짧은 텍스트(비밀번호, 페이로드, 샘플 문자열)의 해시를 다룬다.
+
+## 단독 도구가 `sha256sum`보다 유리한 이유
+
+CLI에 익숙한 개발자는 망설임 없이 `sha256sum`을 친다. 하지만 PostgreSQL DMG, YubiKey 드라이버, Tailscale 인스톨러를 받는 동작 대부분은 사용자가 셸 안에 없거나, Windows를 쓰거나, 동료를 옆에서 돕는 상황에서 일어난다. 브라우저 도구는 바로 이런 자리들을 위해 존재한다.
+
+- macOS / Windows / Linux / ChromeOS에서 같은 인터페이스로 동작한다.
+- 무엇을 설치하기 위한 관리자 권한이 필요 없다.
+- 이미 디스크에 있는 파일을 대상으로 계산하므로 재다운로드가 없다.
+- 드래그&드롭을 지원한다. 대부분의 CLI는 그렇지 않다.
+- 기대 해시를 붙여 넣어 비교할 수 있다. `diff <(sha256sum file | cut -d' ' -f1) <(echo "expected")` 따위를 외우는 것보다 훨씬 친화적이다.
+- 한국 환경에서는 특히 "WSL 없이 Windows를 메인으로 쓰는 개발자", "macOS에서 Homebrew를 거치지 않은 일회성 바이너리"를 검증할 때 가치가 두드러진다.
+
+명시적으로 **하지 않는 일**: TB 단위 아카이브의 스트리밍 해시, 서명 검증, CI 무결성 검사의 대체. 이런 일은 파이프라인에 있어야 하며 브라우저 탭에 있을 게 아니다.
+
+## 더 읽기
+
+- [Hash Generator](/ko/tools/hash-generator/) — 같은 알고리즘들을 짧은 텍스트 입력(비밀번호, 페이로드, 샘플 문자열)에 쓸 때.
+- [HMAC Generator](/ko/tools/hmac-generator/) — 공유 비밀이 있어서, 맨 해시가 아니라 키 부착 무결성 검증이 필요할 때.
+- [SSL Certificate Decoder](/ko/tools/ssl-certificate-decoder/) — 파일 페이로드가 아니라 TLS 엔드포인트 뒤의 서명 신원을 검증할 때.
+- [SubtleCrypto.digest on MDN](https://developer.mozilla.org/ko/docs/Web/API/SubtleCrypto/digest) — 도구의 SHA 경로가 의존하는 명세 문서.
+- [SHAttered: 첫 실용적인 SHA-1 충돌](https://shattered.io/) — 2017년에 새로운 보안 워크플로에서 SHA-1을 퇴장시킨 논문.

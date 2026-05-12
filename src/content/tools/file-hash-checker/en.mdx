@@ -1,0 +1,62 @@
+---
+seoTitle: "File Hash Checker — SHA-256 & MD5 in Browser | ZeroTool"
+seoDescription: "Compute SHA-256, SHA-1, SHA-384, SHA-512, and MD5 checksums of any local file in your browser. No upload — verify download integrity privately and compare against an expected hash."
+faqItems:
+  - question: "Which hash algorithms are supported?"
+    answer: "SHA-1, SHA-256, SHA-384, and SHA-512 are computed via the browser's built-in Web Crypto API. MD5 uses a bundled public-domain JavaScript routine. SHA-256 is the default and the recommended choice for new verification flows."
+  - question: "Are MD5 and SHA-1 still safe to use?"
+    answer: "No, not for cryptographic security. Both have known collision attacks. They remain useful as legacy checksums when a software vendor publishes an MD5 or SHA-1 alongside a download. Treat them as integrity hints rather than guarantees, and prefer SHA-256 when you have the choice."
+  - question: "Is the file uploaded anywhere?"
+    answer: "No. The file is read into your browser as an ArrayBuffer and hashed locally. The SHA family runs on the device through Web Crypto; MD5 runs through the inline JavaScript routine bundled in this page. Nothing leaves the tab — safe for build artifacts, signed packages, and confidential downloads."
+  - question: "What is the practical file size limit?"
+    answer: "Designed for files up to about 1 GB. Beyond that, browsers cap ArrayBuffer allocation near 2 GB and performance depends on available memory. For TB-scale archives use the command line: sha256sum on Linux, shasum -a 256 on macOS, or certutil -hashfile <file> SHA256 on Windows."
+  - question: "Why is MD5 noticeably slower on large files?"
+    answer: "SHA-1/256/384/512 run inside the browser's native crypto subsystem, which is implemented in compiled code and benefits from hardware acceleration. MD5 here runs in pure JavaScript because Web Crypto does not implement it. For files above ~100 MB the wall-clock difference becomes obvious; stick with SHA-256 when only one algorithm is needed."
+---
+
+<h2>How to use</h2>
+<ol>
+  <li>Drop a file into the upload zone or click to pick one.</li>
+  <li>Leave SHA-256 checked, or pick additional algorithms (SHA-1, SHA-384, SHA-512, MD5).</li>
+  <li>Click <strong>Compute Hashes</strong>. Each result lands in its own row with a copy button.</li>
+  <li>To verify a download, paste the expected hash from the vendor into the bottom field. The tool reports which row it matches, case-insensitive.</li>
+</ol>
+
+<h2>What this checker is for</h2>
+<ul>
+  <li><strong>Download verification</strong> — confirm an ISO, installer, or release archive matches the SHA-256 the project published.</li>
+  <li><strong>Build artifact integrity</strong> — check that a build output hasn't been altered in transit through CI artifacts, S3, or a corporate proxy.</li>
+  <li><strong>Cross-system file identity</strong> — quickly tell whether two copies of a binary are byte-identical.</li>
+  <li><strong>Legacy compatibility</strong> — many distros still publish MD5 or SHA-1 alongside SHA-256; this tool gives you all of them in one pass.</li>
+</ul>
+
+<h2>How the hashing works</h2>
+<p>
+  Hashing happens locally. The file is read with the <code>File.arrayBuffer()</code> API into
+  a single <code>ArrayBuffer</code>. SHA-1, SHA-256, SHA-384, and SHA-512 are then handed to
+  <code>crypto.subtle.digest()</code>, which is the browser's native, hardware-accelerated
+  implementation. MD5 is not exposed by Web Crypto, so a compact public-domain MD5 routine
+  runs over the same byte array directly in JavaScript. The resulting hex digests are
+  rendered into the result rows, never sent anywhere.
+</p>
+
+<h2>SHA-256 versus the legacy algorithms</h2>
+<p>
+  SHA-256 is the default for a reason. It is part of the SHA-2 family, has no known
+  practical collision attacks, and is what modern toolchains (rustup, cargo, npm,
+  Docker registries, GitHub Releases, Linux package mirrors) publish today. SHA-1
+  collisions have been demonstrated since 2017 (SHAttered) and MD5 collisions are
+  trivial to construct. They still have a place when the publisher only offers those
+  values, but treat them as "did this download arrive intact" hints — not as proofs
+  of authenticity.
+</p>
+
+<h2>Limits by design</h2>
+<p>
+  This tool computes hashes of a single local file in one pass. It does not stream
+  through multi-gigabyte files, sign or verify signatures, check GPG / PGP keys, or
+  reach out to any server. For huge archives use <code>sha256sum</code> (Linux),
+  <code>shasum -a 256</code> (macOS), or <code>certutil -hashfile</code> (Windows).
+  For signature verification, use <code>gpg --verify</code> or <code>cosign verify</code>
+  against the publisher's signing key.
+</p>

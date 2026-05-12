@@ -1,0 +1,591 @@
+---
+// FileHashCheckerTool — In-browser SHA-256/SHA-1/SHA-384/SHA-512/MD5 checksum computer
+// for local files. Uses Web Crypto API for SHA family; inline public-domain MD5 routine
+// adapted from HashGeneratorTool to accept Uint8Array (binary-safe).
+// No upload, no npm dependencies, designed for files up to ~1 GB.
+---
+<div>
+  <div class="fhc-wrap">
+    <!-- Upload / drag zone -->
+    <div id="fhc-dropzone" class="fhc-dropzone" tabindex="0" role="button" aria-label="Choose a file to hash">
+      <svg class="fhc-dz-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="16" y2="18"/><line x1="12" y1="12" x2="10" y2="20"/><line x1="15" y1="12" x2="13" y2="20"/></svg>
+      <p id="fhc-dz-hint" class="fhc-dz-hint" data-i18n="dropHint">Drop a file, or click to choose</p>
+      <p class="fhc-dz-sub" data-i18n="dropSub">Any file · best up to ~1 GB · hashed in your browser</p>
+      <input type="file" id="fhc-file" hidden />
+    </div>
+
+    <!-- File info row -->
+    <div id="fhc-file-info" class="fhc-file-info" style="display:none">
+      <div class="fhc-file-meta">
+        <span id="fhc-filename" class="fhc-filename"></span>
+        <span id="fhc-filesize" class="fhc-filesize"></span>
+      </div>
+      <button id="fhc-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <!-- Algorithms -->
+    <fieldset class="fhc-algo-fieldset">
+      <legend class="fhc-algo-legend" data-i18n="algorithms">Algorithms</legend>
+      <div class="fhc-algo-grid">
+        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-256" checked /> <span>SHA-256</span></label>
+        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-1" /> <span>SHA-1</span></label>
+        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-384" /> <span>SHA-384</span></label>
+        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-512" /> <span>SHA-512</span></label>
+        <label class="fhc-algo-item"><input type="checkbox" data-algo="MD5" /> <span>MD5 <em class="fhc-legacy" data-i18n="legacyTag">(legacy)</em></span></label>
+      </div>
+    </fieldset>
+
+    <div class="fhc-actions">
+      <button id="fhc-compute" class="btn-primary" disabled data-i18n="compute">Compute Hashes</button>
+    </div>
+
+    <div id="fhc-status" class="tool-status" aria-live="polite"></div>
+
+    <!-- Results -->
+    <div id="fhc-results" class="fhc-results"></div>
+
+    <!-- Verify panel -->
+    <div id="fhc-verify" class="fhc-verify" style="display:none">
+      <label for="fhc-expected" class="fhc-verify-label" data-i18n="verifyLabel">Compare with expected hash (optional)</label>
+      <input id="fhc-expected" type="text" class="tool-input fhc-verify-input" spellcheck="false" autocomplete="off" />
+      <p id="fhc-verify-status" class="fhc-verify-status" aria-live="polite" data-i18n="verifyHint">Paste an expected hash above to verify against your results.</p>
+    </div>
+
+    <!-- Privacy badge -->
+    <p class="fhc-privacy">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <span data-i18n="privacy">100% client-side — the file never leaves your browser</span>
+    </p>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          dropHint: 'Drop a file, or click to choose',
+          dropSub: 'Any file · best up to ~1 GB · hashed in your browser',
+          algorithms: 'Algorithms',
+          legacyTag: '(legacy)',
+          compute: 'Compute Hashes',
+          computing: 'Computing…',
+          done: 'Hashes computed.',
+          clear: 'Clear',
+          copy: 'Copy',
+          copied: 'Copied!',
+          verifyLabel: 'Compare with expected hash (optional)',
+          verifyHint: 'Paste an expected hash above to verify against your results.',
+          verifyMatch: 'Matches ',
+          verifyNoMatch: 'No match against any computed hash.',
+          fileMeta: 'File',
+          errRead: 'Could not read the file.',
+          errNoAlgo: 'Pick at least one algorithm.',
+          warnLargeFile: 'Files over 1 GB may be slow or run out of browser memory. For TB-scale archives use sha256sum on the command line.',
+          warnLargeMd5: 'MD5 on large files (>100 MB) is much slower than SHA-256 in JavaScript. SHA-256 is recommended for new verification flows.'
+        },
+        zh: {
+          dropHint: '拖入文件，或点击选择',
+          dropSub: '任意文件 · 推荐 ≤1 GB · 在浏览器中计算',
+          algorithms: '算法',
+          legacyTag: '（旧）',
+          compute: '计算哈希',
+          computing: '计算中…',
+          done: '已完成。',
+          clear: '清除',
+          copy: '复制',
+          copied: '已复制！',
+          verifyLabel: '与期望哈希值比对（可选）',
+          verifyHint: '粘贴期望哈希值，与计算结果自动比对。',
+          verifyMatch: '匹配 ',
+          verifyNoMatch: '未匹配任何已计算的哈希。',
+          fileMeta: '文件',
+          errRead: '读取文件失败。',
+          errNoAlgo: '请至少选择一种算法。',
+          warnLargeFile: '超过 1 GB 的文件可能导致浏览器变慢或内存不足。TB 级归档请使用命令行 sha256sum。',
+          warnLargeMd5: 'MD5 处理超 100 MB 文件在 JS 中比 SHA-256 慢得多，新流程建议改用 SHA-256。'
+        },
+        ja: {
+          dropHint: 'ファイルをドロップ、またはクリックして選択',
+          dropSub: '任意ファイル · 推奨 1 GB 以下 · ブラウザ内で計算',
+          algorithms: 'アルゴリズム',
+          legacyTag: '（レガシー）',
+          compute: 'ハッシュを計算',
+          computing: '計算中…',
+          done: '完了しました。',
+          clear: 'クリア',
+          copy: 'コピー',
+          copied: 'コピー済み！',
+          verifyLabel: '期待されるハッシュ値と照合（任意）',
+          verifyHint: '期待ハッシュをここに貼ると結果と自動照合します。',
+          verifyMatch: '一致 ',
+          verifyNoMatch: '計算済みのいずれとも一致しません。',
+          fileMeta: 'ファイル',
+          errRead: 'ファイルを読み込めませんでした。',
+          errNoAlgo: '少なくとも 1 つのアルゴリズムを選択してください。',
+          warnLargeFile: '1 GB を超えるファイルはブラウザのメモリ不足や遅延を招くことがあります。TB 級は sha256sum コマンドを推奨。',
+          warnLargeMd5: 'JS の MD5 は 100 MB を超えるとSHA-256 より大幅に遅くなります。新規用途では SHA-256 を推奨。'
+        },
+        ko: {
+          dropHint: '파일을 끌어다 놓거나 클릭해 선택',
+          dropSub: '임의 파일 · 1 GB 이하 권장 · 브라우저에서 계산',
+          algorithms: '알고리즘',
+          legacyTag: '(레거시)',
+          compute: '해시 계산',
+          computing: '계산 중…',
+          done: '완료.',
+          clear: '지우기',
+          copy: '복사',
+          copied: '복사됨!',
+          verifyLabel: '기대 해시값과 비교 (선택)',
+          verifyHint: '기대 해시를 붙여 넣으면 결과와 자동 비교합니다.',
+          verifyMatch: '일치 ',
+          verifyNoMatch: '계산된 어느 해시와도 일치하지 않습니다.',
+          fileMeta: '파일',
+          errRead: '파일을 읽을 수 없습니다.',
+          errNoAlgo: '하나 이상의 알고리즘을 선택하세요.',
+          warnLargeFile: '1 GB 이상 파일은 브라우저 메모리 부족이나 지연이 발생할 수 있습니다. TB 규모는 sha256sum CLI 사용 권장.',
+          warnLargeMd5: 'JS의 MD5는 100 MB 이상에서 SHA-256보다 훨씬 느립니다. 새 검증 흐름에는 SHA-256 권장.'
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.fhc-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+
+      var dropzone   = document.getElementById('fhc-dropzone');
+      var fileInput  = document.getElementById('fhc-file');
+      var infoEl     = document.getElementById('fhc-file-info');
+      var nameEl     = document.getElementById('fhc-filename');
+      var sizeEl     = document.getElementById('fhc-filesize');
+      var clearBtn   = document.getElementById('fhc-clear');
+      var computeBtn = document.getElementById('fhc-compute');
+      var statusEl   = document.getElementById('fhc-status');
+      var resultsEl  = document.getElementById('fhc-results');
+      var verifyEl   = document.getElementById('fhc-verify');
+      var expectedEl = document.getElementById('fhc-expected');
+      var vStatusEl  = document.getElementById('fhc-verify-status');
+
+      var currentFile = null;
+      var lastResults = {};
+
+      function fmtBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+        return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+      }
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status' + (kind ? ' ' + kind : '');
+      }
+
+      function setFile(file) {
+        currentFile = file;
+        if (file) {
+          nameEl.textContent = file.name || '(unnamed)';
+          sizeEl.textContent = fmtBytes(file.size);
+          infoEl.style.display = '';
+          computeBtn.disabled = false;
+        } else {
+          infoEl.style.display = 'none';
+          computeBtn.disabled = true;
+        }
+        resultsEl.innerHTML = '';
+        verifyEl.style.display = 'none';
+        expectedEl.value = '';
+        vStatusEl.textContent = t.verifyHint;
+        vStatusEl.className = 'fhc-verify-status';
+        lastResults = {};
+        setStatus('');
+      }
+
+      /* ── MD5 (public-domain implementation, binary-safe) ──
+         Byte-indexed packing into an Int32Array avoids the 32-bit
+         signed overflow that bites the bit-indexed variant at the
+         256 MB mark; a true 64-bit length is written into the last
+         two words so files above 512 MB still pad correctly. */
+      function md5Bytes(bytes) {
+        function safeAdd(x, y) { var lsw = (x & 0xffff) + (y & 0xffff); return (((x >> 16) + (y >> 16) + (lsw >> 16)) << 16) | (lsw & 0xffff); }
+        function bitRotateLeft(num, cnt) { return (num << cnt) | (num >>> (32 - cnt)); }
+        function md5cmn(q, a, b, x, s, t2) { return safeAdd(bitRotateLeft(safeAdd(safeAdd(a, q), safeAdd(x, t2)), s), b); }
+        function md5ff(a, b, c, d, x, s, t2) { return md5cmn((b & c) | ((~b) & d), a, b, x, s, t2); }
+        function md5gg(a, b, c, d, x, s, t2) { return md5cmn((b & d) | (c & (~d)), a, b, x, s, t2); }
+        function md5hh(a, b, c, d, x, s, t2) { return md5cmn(b ^ c ^ d, a, b, x, s, t2); }
+        function md5ii(a, b, c, d, x, s, t2) { return md5cmn(c ^ (b | (~d)), a, b, x, s, t2); }
+        function binlToHex(input) {
+          var hex = '0123456789abcdef', output = '';
+          for (var i = 0; i < input.length * 4; i++) {
+            output += hex.charAt((input[i >> 2] >> ((i % 4) * 8 + 4)) & 0x0f) + hex.charAt((input[i >> 2] >> ((i % 4) * 8)) & 0x0f);
+          }
+          return output;
+        }
+        function binlMD5(x) {
+          var i, olda, oldb, oldc, oldd, a = 1732584193, b = -271733879, c = -1732584194, d = 271733878;
+          for (i = 0; i < x.length; i += 16) {
+            olda = a; oldb = b; oldc = c; oldd = d;
+            a = md5ff(a, b, c, d, x[i], 7, -680876936); d = md5ff(d, a, b, c, x[i + 1], 12, -389564586); c = md5ff(c, d, a, b, x[i + 2], 17, 606105819); b = md5ff(b, c, d, a, x[i + 3], 22, -1044525330);
+            a = md5ff(a, b, c, d, x[i + 4], 7, -176418897); d = md5ff(d, a, b, c, x[i + 5], 12, 1200080426); c = md5ff(c, d, a, b, x[i + 6], 17, -1473231341); b = md5ff(b, c, d, a, x[i + 7], 22, -45705983);
+            a = md5ff(a, b, c, d, x[i + 8], 7, 1770035416); d = md5ff(d, a, b, c, x[i + 9], 12, -1958414417); c = md5ff(c, d, a, b, x[i + 10], 17, -42063); b = md5ff(b, c, d, a, x[i + 11], 22, -1990404162);
+            a = md5ff(a, b, c, d, x[i + 12], 7, 1804603682); d = md5ff(d, a, b, c, x[i + 13], 12, -40341101); c = md5ff(c, d, a, b, x[i + 14], 17, -1502002290); b = md5ff(b, c, d, a, x[i + 15], 22, 1236535329);
+            a = md5gg(a, b, c, d, x[i + 1], 5, -165796510); d = md5gg(d, a, b, c, x[i + 6], 9, -1069501632); c = md5gg(c, d, a, b, x[i + 11], 14, 643717713); b = md5gg(b, c, d, a, x[i], 20, -373897302);
+            a = md5gg(a, b, c, d, x[i + 5], 5, -701558691); d = md5gg(d, a, b, c, x[i + 10], 9, 38016083); c = md5gg(c, d, a, b, x[i + 15], 14, -660478335); b = md5gg(b, c, d, a, x[i + 4], 20, -405537848);
+            a = md5gg(a, b, c, d, x[i + 9], 5, 568446438); d = md5gg(d, a, b, c, x[i + 14], 9, -1019803690); c = md5gg(c, d, a, b, x[i + 3], 14, -187363961); b = md5gg(b, c, d, a, x[i + 8], 20, 1163531501);
+            a = md5gg(a, b, c, d, x[i + 13], 5, -1444681467); d = md5gg(d, a, b, c, x[i + 2], 9, -51403784); c = md5gg(c, d, a, b, x[i + 7], 14, 1735328473); b = md5gg(b, c, d, a, x[i + 12], 20, -1926607734);
+            a = md5hh(a, b, c, d, x[i + 5], 4, -378558); d = md5hh(d, a, b, c, x[i + 8], 11, -2022574463); c = md5hh(c, d, a, b, x[i + 11], 16, 1839030562); b = md5hh(b, c, d, a, x[i + 14], 23, -35309556);
+            a = md5hh(a, b, c, d, x[i + 1], 4, -1530992060); d = md5hh(d, a, b, c, x[i + 4], 11, 1272893353); c = md5hh(c, d, a, b, x[i + 7], 16, -155497632); b = md5hh(b, c, d, a, x[i + 10], 23, -1094730640);
+            a = md5hh(a, b, c, d, x[i + 13], 4, 681279174); d = md5hh(d, a, b, c, x[i], 11, -358537222); c = md5hh(c, d, a, b, x[i + 3], 16, -722521979); b = md5hh(b, c, d, a, x[i + 6], 23, 76029189);
+            a = md5hh(a, b, c, d, x[i + 9], 4, -640364487); d = md5hh(d, a, b, c, x[i + 12], 11, -421815835); c = md5hh(c, d, a, b, x[i + 15], 16, 530742520); b = md5hh(b, c, d, a, x[i + 2], 23, -995338651);
+            a = md5ii(a, b, c, d, x[i], 6, -198630844); d = md5ii(d, a, b, c, x[i + 7], 10, 1126891415); c = md5ii(c, d, a, b, x[i + 14], 15, -1416354905); b = md5ii(b, c, d, a, x[i + 5], 21, -57434055);
+            a = md5ii(a, b, c, d, x[i + 12], 6, 1700485571); d = md5ii(d, a, b, c, x[i + 3], 10, -1894986606); c = md5ii(c, d, a, b, x[i + 10], 15, -1051523); b = md5ii(b, c, d, a, x[i + 1], 21, -2054922799);
+            a = md5ii(a, b, c, d, x[i + 8], 6, 1873313359); d = md5ii(d, a, b, c, x[i + 15], 10, -30611744); c = md5ii(c, d, a, b, x[i + 6], 15, -1560198380); b = md5ii(b, c, d, a, x[i + 13], 21, 1309151649);
+            a = md5ii(a, b, c, d, x[i + 4], 6, -145523070); d = md5ii(d, a, b, c, x[i + 11], 10, -1120210379); c = md5ii(c, d, a, b, x[i + 2], 15, 718787259); b = md5ii(b, c, d, a, x[i + 9], 21, -343485551);
+            a = safeAdd(a, olda); b = safeAdd(b, oldb); c = safeAdd(c, oldc); d = safeAdd(d, oldd);
+          }
+          return [a, b, c, d];
+        }
+        var len = bytes.length;
+        // Padded length in 32-bit words: original bytes + 0x80 sentinel + room for two 32-bit length words,
+        // rounded up to the next 16-word (512-bit) block.
+        var words = new Int32Array(((len + 8) >> 6) + 1 << 4);
+        for (var i = 0; i < len; i++) words[i >> 2] |= (bytes[i] & 0xff) << ((i % 4) * 8);
+        words[len >> 2] |= 0x80 << ((len % 4) * 8);
+        // 64-bit bit-length, little-endian, written as two 32-bit halves.
+        var bitLen = len * 8;
+        words[words.length - 2] = bitLen | 0;
+        words[words.length - 1] = Math.floor(bitLen / 4294967296);
+        return binlToHex(binlMD5(words));
+      }
+
+      function bufToHex(buf) {
+        var bytes = new Uint8Array(buf);
+        var hex = new Array(bytes.length);
+        for (var i = 0; i < bytes.length; i++) hex[i] = ('0' + bytes[i].toString(16)).slice(-2);
+        return hex.join('');
+      }
+
+      function makeRow(label, value, legacy) {
+        var row = document.createElement('div');
+        row.className = 'fhc-row';
+        var labelHtml = '<span class="fhc-row-label">' + label + (legacy ? ' <em class="fhc-legacy">' + t.legacyTag + '</em>' : '') + '</span>';
+        var valHtml = '<code class="fhc-row-value" id="fhc-val-' + label + '"></code>';
+        row.innerHTML = labelHtml + valHtml + '<button class="btn-copy" type="button" data-label="' + label + '">' + t.copy + '</button>';
+        row.querySelector('.fhc-row-value').textContent = value;
+        return row;
+      }
+
+      function pickedAlgos() {
+        var checked = [];
+        document.querySelectorAll('.fhc-algo-item input[type=checkbox]').forEach(function (cb) {
+          if (cb.checked) checked.push(cb.getAttribute('data-algo'));
+        });
+        return checked;
+      }
+
+      function ensureSha256(algos) {
+        if (algos.length === 0) {
+          var sha = document.querySelector('.fhc-algo-item input[data-algo="SHA-256"]');
+          if (sha) sha.checked = true;
+          return ['SHA-256'];
+        }
+        return algos;
+      }
+
+      function refreshVerify() {
+        // Strip whitespace and lower-case, then look for a computed hash as a
+        // substring. This accepts every common paste shape: bare hex,
+        // 'sha256sum file.iso' lines (hash + filename), Windows certutil output
+        // (header + 'AA BB CC …' + footer), or a SHA256SUMS file line.
+        var raw = (expectedEl.value || '').replace(/\s+/g, '').toLowerCase();
+        if (!raw) {
+          vStatusEl.textContent = t.verifyHint;
+          vStatusEl.className = 'fhc-verify-status';
+          return;
+        }
+        var hit = null;
+        Object.keys(lastResults).forEach(function (algo) {
+          var hash = lastResults[algo] && lastResults[algo].toLowerCase();
+          if (hash && raw.indexOf(hash) !== -1) hit = algo;
+        });
+        if (hit) {
+          vStatusEl.textContent = t.verifyMatch + hit + ' ✓';
+          vStatusEl.className = 'fhc-verify-status match';
+        } else {
+          vStatusEl.textContent = t.verifyNoMatch + ' ✗';
+          vStatusEl.className = 'fhc-verify-status no-match';
+        }
+      }
+
+      async function compute() {
+        if (!currentFile) return;
+        var algos = ensureSha256(pickedAlgos());
+        var size = currentFile.size || 0;
+
+        // Soft warnings (non-blocking)
+        var warnings = [];
+        if (size > 1024 * 1024 * 1024) warnings.push(t.warnLargeFile);
+        if (algos.indexOf('MD5') !== -1 && size > 100 * 1024 * 1024) warnings.push(t.warnLargeMd5);
+
+        computeBtn.disabled = true;
+        resultsEl.innerHTML = '';
+        verifyEl.style.display = 'none';
+        lastResults = {};
+        setStatus(t.computing);
+
+        try {
+          var buf = await currentFile.arrayBuffer();
+          for (var i = 0; i < algos.length; i++) {
+            var algo = algos[i];
+            setStatus(t.computing + ' ' + algo);
+            var hex;
+            if (algo === 'MD5') {
+              hex = md5Bytes(new Uint8Array(buf));
+            } else {
+              var digest = await crypto.subtle.digest(algo, buf);
+              hex = bufToHex(digest);
+            }
+            lastResults[algo] = hex;
+            resultsEl.appendChild(makeRow(algo, hex, algo === 'MD5' || algo === 'SHA-1'));
+          }
+
+          // Wire copy buttons
+          resultsEl.querySelectorAll('.btn-copy').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              var label = btn.getAttribute('data-label');
+              var val = document.getElementById('fhc-val-' + label).textContent;
+              navigator.clipboard.writeText(val).then(function () {
+                btn.classList.add('copied');
+                var prev = btn.textContent;
+                btn.textContent = t.copied;
+                setTimeout(function () { btn.textContent = prev; btn.classList.remove('copied'); }, 1500);
+              });
+            });
+          });
+
+          if (warnings.length) {
+            setStatus(warnings.join(' '), 'warn');
+          } else {
+            setStatus(t.done, 'success');
+          }
+          verifyEl.style.display = '';
+          refreshVerify();
+          window.trackTool && window.trackTool('file-hash-checker', 'compute');
+        } catch (e) {
+          setStatus(t.errRead + ' ' + (e && e.message ? '(' + e.message + ')' : ''), 'error');
+        } finally {
+          computeBtn.disabled = false;
+        }
+      }
+
+      /* ── Event wiring ── */
+      dropzone.addEventListener('click', function () { fileInput.click(); });
+      dropzone.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+      fileInput.addEventListener('change', function () {
+        if (fileInput.files && fileInput.files[0]) setFile(fileInput.files[0]);
+        fileInput.value = '';
+      });
+      dropzone.addEventListener('dragover', function (e) {
+        e.preventDefault(); dropzone.classList.add('drag-over');
+      });
+      dropzone.addEventListener('dragleave', function () {
+        dropzone.classList.remove('drag-over');
+      });
+      dropzone.addEventListener('drop', function (e) {
+        e.preventDefault(); dropzone.classList.remove('drag-over');
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) setFile(f);
+      });
+
+      clearBtn.addEventListener('click', function () { setFile(null); });
+      computeBtn.addEventListener('click', compute);
+      expectedEl.addEventListener('input', refreshVerify);
+
+      // Initial state
+      setFile(null);
+    })();
+  </script>
+</div>
+
+<style is:global>
+  .fhc-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .fhc-dropzone {
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+    background: var(--color-bg-secondary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    outline: none;
+  }
+  .fhc-dropzone:hover,
+  .fhc-dropzone:focus-visible,
+  .fhc-dropzone.drag-over {
+    border-color: var(--color-primary);
+    background: var(--color-surface);
+  }
+  .fhc-dz-icon { color: var(--color-text-muted); }
+  .fhc-dz-hint { font-size: 0.95rem; color: var(--color-text-secondary); margin: 0; font-weight: 600; }
+  .fhc-dz-sub  { font-size: 0.78rem; color: var(--color-text-muted); margin: 0; }
+
+  .fhc-file-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.85rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    flex-wrap: wrap;
+  }
+  .fhc-file-meta { display: flex; gap: 0.85rem; align-items: baseline; min-width: 0; flex: 1; flex-wrap: wrap; }
+  .fhc-filename {
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    color: var(--color-text);
+    word-break: break-all;
+    min-width: 0;
+  }
+  .fhc-filesize {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+  }
+
+  .fhc-algo-fieldset {
+    border: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .fhc-algo-legend {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0;
+  }
+  .fhc-algo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.5rem;
+  }
+  .fhc-algo-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-size: 0.88rem;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .fhc-algo-item:hover {
+    background: var(--color-surface);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  }
+  .fhc-algo-item input[type=checkbox] {
+    accent-color: var(--color-primary);
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .fhc-legacy {
+    font-style: normal;
+    font-size: 0.74rem;
+    color: var(--color-text-muted);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .fhc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .fhc-results { display: flex; flex-direction: column; gap: 0.5rem; }
+  .fhc-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  @media (max-width: 520px) {
+    .fhc-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "label copy" "value value";
+    }
+    .fhc-row-label { grid-area: label; }
+    .fhc-row-value { grid-area: value; }
+    .fhc-row .btn-copy { grid-area: copy; justify-self: end; }
+  }
+  .fhc-row-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+  .fhc-row-value {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+
+  .fhc-verify {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.75rem 0.85rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .fhc-verify-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .fhc-verify-input { font-family: var(--font-mono); font-size: 0.86rem; }
+  .fhc-verify-status {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+  .fhc-verify-status.match { color: var(--color-success); font-weight: 700; }
+  .fhc-verify-status.no-match { color: var(--color-danger); font-weight: 700; }
+
+  .tool-status.warn { color: #b45309; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .tool-status.warn { color: #f59e0b; }
+  }
+  [data-theme="dark"] .tool-status.warn { color: #f59e0b; }
+
+  .fhc-privacy {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+</style>

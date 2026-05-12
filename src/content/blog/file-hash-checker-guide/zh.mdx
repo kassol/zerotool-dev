@@ -1,0 +1,125 @@
+---
+title: "File Hash Checker：在浏览器中用 SHA-256 验证下载完整性"
+description: "用 Web Crypto 在本地计算文件的 SHA-256、SHA-1、SHA-384、SHA-512、MD5 — 一字节不上传，直接与发布方公布的哈希比对。"
+pubDate: 2026-05-12
+lang: "zh"
+tags: ["file-hash-checker", "sha-256", "checksum", "developer-tools"]
+ogImage: /og/blog-file-hash-checker-guide.png
+---
+
+PostgreSQL 18 的 macOS DMG 下了十二分钟才下完，release 页面里贴了一个 SHA-256。你想在跑安装器之前校一下，但手头是一台借来的笔记本，`shasum` 不在 `$PATH` 里。把一个 320 MB 的 DMG 拖到一个 footer 里写着 "we don't store your file" 的在线哈希站，不是个聪明选择。一个浏览器端的哈希工具——文件只在本地读、一个字节都不出网——才是。
+
+国内的实际场景更典型：清华源或阿里镜像同步可能滞后几分钟，下错版本时给你的 SHA-256 会对不上；公司代理也常常透明替换 HTTPS 证书后改写大文件。这两类问题，哈希校验一秒钟就能发现，而你用不上任何第三方服务。
+
+[立即校验文件 →](/zh/tools/file-hash-checker/)
+
+## 为什么需要校验和
+
+一个密码学哈希函数把任意字节流压成一个短的、定长的指纹。两个性质决定了它对下载验证有用：
+
+- **确定性** — 同样的字节永远得到同样的哈希。
+- **雪崩效应** — 改动输入里的任何一个比特，输出会完全变样。
+
+合起来：如果 CDN 代理在安装器里塞了个广告 iframe，SHA-256 就会变；如果企业代理透明改写了某段载荷，同样会变；如果不稳定的下载把最后一兆截了，也照样变。把发布方公布的哈希和你机器上算出来的对一下，是检测这一切「无需重新下载」的最廉价手段。
+
+它本身不是**真伪证明** — 那需要数字签名。但「我拿到的文件和发布方贴出来的是同一份」是所有后续动作的前提。
+
+## SHA-256 与那些「旧算法」
+
+ZeroTool 的 File Hash Checker 一次性给出五种算法的结果。它们不可互换。简版对照：
+
+| 算法 | 输出长度 | 碰撞抵抗 | 当前现实用途 |
+|---|---|---|---|
+| MD5 | 128 bit | 已被攻破（2004） | 仅作兼容性校验和 |
+| SHA-1 | 160 bit | 已被攻破（2017，SHAttered） | 仅作兼容性校验和 |
+| SHA-256 | 256 bit | 强 | 现今主流：npm registry / Docker Hub digest / GitHub Releases asset / 国产软件镜像（清华、阿里、华为云） |
+| SHA-384 | 384 bit | 强 | TLS 1.3 部分密码套件、代码签名场景 |
+| SHA-512 | 512 bit | 强 | Linux 内核 tarball、部分 BSD ports、对碰撞冗余要求高的场景 |
+
+MD5 / SHA-1 的「被攻破」是指：攻击者可以**人为构造**两个不同文件让它们的哈希撞到一起。一旦这个性质丢了，哈希就不能再证明「没有人改过这份文件」，只能说「传输途中没出随机损坏」。这也是 ZeroTool 在 UI 上把 MD5 / SHA-1 标成 *legacy* 的全部原因 — 它们仍然给你有用的信息，但已经不是「这是发布方亲手签的那一份」。
+
+如果你在为新流程定策略：钉死 SHA-256。如果对方只发布了 MD5，你照样算 MD5，但把结果当作传输完整性提示而非安全保证，并提醒对方升级。
+
+## 浏览器内部到底是怎么算的
+
+工具用 `File.arrayBuffer()` 一次性把文件读进内存。然后兵分两路：
+
+- `SHA-1`、`SHA-256`、`SHA-384`、`SHA-512` 直接交给 `crypto.subtle.digest()`。这一调用直通浏览器内建的密码学子系统 — 现今所有主流桌面浏览器都是 OS 加速实现，在硬件支持时还会走 CPU 的硬件 SHA 加速：x86 上是 Intel SHA-NI，Apple Silicon 与近几年的 ARM 芯片上是 ARMv8 Cryptography Extensions。
+- `MD5` Web Crypto API 根本没暴露。页面内嵌了一段紧凑的 public domain MD5 实现，对同一段 `Uint8Array` 走纯 JavaScript 计算。同样输入下，它比 SHA 系列慢 — 100 MB 以上文件常见慢 5-10 倍 — 因为它享受不到硬件加速。
+
+整个流程里没有上传步骤、没有偷偷同步到后端的 Service Worker、没有 IndexedDB 持久化。文件就留在当前标签页的内存里，刷新页面就没了。点 *Clear* 按钮，连这份内存里的拷贝也丢掉。
+
+```javascript
+// 工具对 SHA 系列的最简等价实现
+async function sha256(file) {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+```
+
+要在终端里拿到同样结果，三个平台覆盖大多数场景：
+
+```bash
+# Linux（coreutils）
+sha256sum postgresql-18.0.dmg
+
+# macOS（BSD utils）
+shasum -a 256 postgresql-18.0.dmg
+
+# Windows（Vista 起内置）
+certutil -hashfile postgresql-18.0.dmg SHA256
+```
+
+输出格式略有差异（Linux/macOS 是小写连续 hex；Windows 是大写带空格），但底层哈希完全一样。工具里的「期望哈希」对比框已经为这三种统一做了归一 — 它会**剥掉所有空白字符**并转成小写再做比对，所以你可以把 `certutil` 原样输出（`AA BB CC …` 这种）整行粘进来，也可以贴 `sha256sum` 那种纯 hex，两边都会被算成同一个 ✓。
+
+## 实操：校验一个 Linux 发行版 ISO
+
+挑一个最近的 Debian 13 testing 周构建 ISO。镜像页面会发布一个 `SHA256SUMS` 文件，一行对应一个 ISO：
+
+```
+4e3a1c...d2  debian-13.0.0-amd64-netinst.iso
+```
+
+国内通常从 mirrors.tuna.tsinghua.edu.cn 或 mirrors.aliyun.com 拉，注意 `SHA256SUMS` 也要从同一个镜像目录取 — 跨源拉哈希再校原文件是常见自找麻烦的姿势。
+
+把 ISO 拖到 File Hash Checker，默认勾选 SHA-256，点*计算哈希*。返回一行结果。从 `SHA256SUMS` 里复制对应的 hex，粘到对比框，状态显示 `Matches SHA-256 ✓`。一台不算新的笔记本上，700 MB ISO 两秒内出结果 — `crypto.subtle.digest` 在 SHA-256 上就是这种量级。
+
+如果对比框显示 `No match against any computed hash ✗`，排查路径很机械：
+
+1. 重新确认你复制的是完整 64 个十六进制字符，没复制成截断前缀或另一个文件那一行。
+2. 换一个镜像源重下；瞬时网络损坏是最常见原因，尤其在弱网络或代理穿透的环境下。
+3. 如果镜像同时发布了分离签名（`SHA256SUMS.gpg`），先用 `gpg --verify` 配项目发布密钥验签。一个被篡改过的 `SHA256SUMS` 给你的哈希对得上也没意义 — 没有签名这一步，哈希只是「下载完整」的保证。
+
+最后这条也是 ZeroTool 的 File Hash Checker 把范围停在「哈希计算」的原因。签名验证需要发布方的 GPG 或 Sigstore 密钥，正确的执行位置是你自己机器上的 `gpg --verify` 或 `cosign verify`。一个浏览器工具如果要你贴私钥，那才是真正难以信任的东西。
+
+## 工具不会替你解决的边界情况
+
+下面这些场景不在浏览器端哈希工具的能力范围内，列出来方便你判断什么时候该换别的工具：
+
+- **超过 ~1 GB 的文件**。浏览器对单个 `ArrayBuffer` 分配上限大约 2 GB，远在到那条线之前就会开始换页变慢。工具在 1 GB 以上会弹软警告，但一个 30 GB 的游戏更新包不是它该干的活。改用 `sha256sum` / `shasum -a 256` / `certutil -hashfile`。
+- **目录 / 归档的哈希**。一个目录没有规范字节流。要校验整棵树，先打成归档（`.tar.gz`、`.zip`）再哈希。需要直接对目录做指纹时有 `b3sum --recursive` 这类工具（BLAKE3）。
+- **下载边收边算的流式哈希**。要在下载过程中累积哈希是服务端或 CLI 的活（比如 `curl … | sha256sum`），Web Crypto 必须接到一个加载完成的 `ArrayBuffer` 才能算。
+- **HMAC、密码哈希、或新型树哈希（BLAKE3 / SHA-3）**。这是另一组问题：[HMAC Generator](/zh/tools/hmac-generator/) 处理带密钥的完整性校验；[Bcrypt Generator](/zh/tools/bcrypt-generator/) 处理密码存储；[Hash Generator](/zh/tools/hash-generator/) 处理短文本（如负载片段、口令样本）的哈希而非文件。
+
+## 为什么独立工具在很多场景下打得过 `sha256sum`
+
+CLI 熟手会直接 `sha256sum`。但下载 PostgreSQL DMG、YubiKey 驱动、Tailscale 安装包这类动作，大多数发生在用户不在 shell 里、或者在 Windows 上、或者在帮同事看问题的场合。浏览器工具就是为这些场合设计的：
+
+- macOS / Windows / Linux / ChromeOS 上是同一套交互。
+- 不需要管理员权限装任何东西。
+- 直接对已经在硬盘上的文件算，不用重下。
+- 支持拖拽，多数 CLI 不支持。
+- 粘贴期望哈希做对比，比 `diff <(sha256sum file | cut -d' ' -f1) <(echo "expected")` 友好太多 — 国内开发者尤其在 Windows 主力机场景下，这条价值很大。
+
+它显式**不是**：TB 级归档的流式哈希器、签名验证器、CI 完整性检查的替代。那些应该在流水线里，不在浏览器标签页里。
+
+## 延伸阅读
+
+- [Hash Generator](/zh/tools/hash-generator/) — 同一组算法但用于短文本输入（密码、负载、样本字符串）。
+- [HMAC Generator](/zh/tools/hmac-generator/) — 当你还有一个共享密钥、需要带密钥的完整性校验而不是裸哈希时。
+- [SSL Certificate Decoder](/zh/tools/ssl-certificate-decoder/) — 校验 TLS 端点背后的签发身份，而不是文件本身。
+- [MDN：SubtleCrypto.digest](https://developer.mozilla.org/zh-CN/docs/Web/API/SubtleCrypto/digest) — 工具 SHA 路径所依赖的规范文档。
+- [SHAttered：第一个实用的 SHA-1 碰撞](https://shattered.io/) — 2017 年那篇让 SHA-1 退出新安全工作流的论文。
