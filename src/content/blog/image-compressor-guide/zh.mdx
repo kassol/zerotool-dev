@@ -1,0 +1,199 @@
+---
+title: "浏览器里的图片压缩器：写给开发者的实战指南"
+description: "全程在浏览器里压缩 JPEG、PNG、WebP。选对格式、调好质量、按长边缩放，把截图发出去之前不必先递给第三方服务器。"
+pubDate: 2026-05-12
+updatedDate: 2026-05-12
+lang: "zh"
+tags: ["images", "compression", "performance", "developer-tools"]
+---
+
+import { Image } from 'astro:assets';
+
+上周我正在看一张 Linear 工单，同事甩了一张 12 MB 的 PNG 截图进来。编辑器卡了一下，移动端的同事等了四秒缩略图才出来。一天里被偷走的注意力大概九十秒，再乘上后来打开这张工单的每个人。修复只需要一分钟——前提是你不必先把这张内部仪表盘截图上传到陌生人的服务器。
+
+这篇指南讲三件事：怎么在浏览器里完成图片压缩、每种格式为什么是现在这副样子、以及那几个连资深工程师也会踩的坑。配套工具在这里：[Image Compressor →](/zh/tools/image-compressor/)。
+
+## 什么时候压缩、什么时候别动
+
+从「明显该压缩」到「原图别碰」是一条光谱：
+
+| 来源 | 怎么做 | 为什么 |
+|---|---|---|
+| 12 MB 的 PNG 截图，要发到 Slack / Linear / Notion | 压成 WebP q75 或 JPEG q80，长边缩到 1920 | 截图视觉上信息密集，但能容忍轻微压缩；读者在 1920 分辨率下看不出区别 |
+| 单反出来的 24 MP JPEG，要放到营销页 | 压成 WebP q80，长边缩到 2560 | LCP 直接受益；原图另存一份归档即可 |
+| 32 KB 带透明的 PNG logo | 留着 PNG，可以再过一次 `oxipng` | 重编码一个 32 KB 的无损 PNG 通常会变大 |
+| 200 KB 的 GIF 动图 | 用 `ffmpeg` 转 MP4 / WebM | 你真正需要的是帧感知的重编码 |
+| 像素级精确的二维码或条码 | 留着 PNG | 有损压缩会把边缘糊掉，让解码器读不出来 |
+| 准备给博物馆出版的存档照片 | 保留 TIFF / RAW | 有损格式不适合归档 |
+
+Image Compressor 干净利落地覆盖第 1、2、3 行。第 4–6 行是有意不做的；本文剩下的部分会解释为什么不做，以及该用什么替代。
+
+## 图像压缩背后的心智模型
+
+两个想法能解释你将看到的几乎所有现象。
+
+### 有损压缩丢弃感知数据
+
+JPEG 和 WebP-lossy 不会存下每个像素。它们把 8×8（JPEG）或更大（WebP）的块转换到频域，激进地量化掉高频系数，赌的是人眼察觉不到。**质量 75** 是被广泛引用的默认值——[web.dev 的图像指南](https://web.dev/articles/choose-the-right-image-format)落在 70–85 这一带，Next.js 的 `<Image>` 出厂就是 `75`。低于 60，肤色和天空会开始出现色带；高于 90，文件大小不再缩小，感知质量却几乎没变。75 是这条曲线上「收益已经基本拿到手」的那个点。
+
+### 无损压缩只是重新排列字节
+
+PNG 和 WebP-lossless 存下每个像素。它们跑滤波器（PNG 是 Sub、Up、Average、Paeth；WebP 是预测器加熵编码），结果交给通用字节压缩器。没有「质量」这个旋钮——只有「编码器要不要拼命」。浏览器没把这个旋钮暴露给 JavaScript，所以当你选 PNG 输出时，这个工具的质量滑杆是禁用的。要更深度的无损压榨，本地跑 [`oxipng`](https://github.com/shssoichiro/oxipng) 或 [`pngquant`](https://pngquant.org/)。
+
+## 给开发者的格式速查表
+
+| 格式 | 适合 | 不适合 | 透明 | 浏览器支持 |
+|---|---|---|---|---|
+| **JPEG** | 照片、首屏大图、任何连续色调内容 | 边缘锐利的 UI 截图、任何需要透明的场景 | 否 | 全平台 |
+| **PNG** | UI 截图、示意图、logo、透明叠加 | 照片（相同感知质量下比 JPEG 大 4–10 倍） | 是 | 全平台 |
+| **WebP** | 新项目的默认选择 | 还要服务 IE 11 的场景 | 是（有损 + 无损） | 所有现代浏览器；全球约 96% |
+| **AVIF** | 相同质量下比 WebP 更小，目标浏览器支持时优先 | 旧 Safari（< 16）和很多旧版 Android 浏览器 | 是 | caniuse 上约 92%；浏览器端编码仍是半成品 |
+| **GIF** | 必须内嵌的极小动画 | 任何超过 200 KB 的内容；现代替代品都更好 | 单色键透明 | 全平台 |
+| **HEIC** | Apple 设备相册 | 跨平台 Web 分发 | 是 | 仅 Safari；Chrome / Firefox 无法解码 |
+| **TIFF / RAW** | 归档、专业修图 | Web 分发 | 是（TIFF） | 浏览器无法解码 |
+
+Image Compressor 处理前三种，再加上单帧 GIF 输入。HEIC、TIFF、RAW 请在 macOS 本地用 `exiftool`、`ImageMagick` 或 `sips`——浏览器在不引入重量级 WASM 移植的前提下，物理上无法解码这些格式。
+
+## 为什么要在浏览器里压缩
+
+有三个具体场景，浏览器是干这件事的正确地方。
+
+**隐私。** 内部仪表盘、代码编辑器截图、客服工单，以及任何 URL 栏里带着会话 Cookie 的图，都不该碰第三方压缩服务。最流行的几家在线压缩服务（TinyPNG、iLoveIMG、Compressor.io）会把你的图在服务器上保存一段时间。这对很多欧盟团队的 GDPR 数据处理来说是不合规的，对大多数企业的内部数据分级策略也是冲突的。浏览器端压缩把字节留在你自己的机器上。
+
+**EXIF 泄漏。** 手机拍的照片在 EXIF 里带着 GPS 坐标、相机型号、时间戳，有时还有设备序列号。当你上传到第三方服务「只为了压一下」，服务原则上能读到全部。Image Compressor 用 `createImageBitmap` 配合 `imageOrientation: 'from-image'` 应用 EXIF 旋转，然后通过 Canvas 重编码——作为副作用，其他元数据被自动剥离。如果你要专门检查 EXIF 或精确删除某些字段，[EXIF Metadata Viewer](/zh/tools/exif-metadata-viewer/) 提供逐字段控制。
+
+**离线 / 物理隔离环境。** 打开飞行模式试试这个工具——照样能用。这也是 ZeroTool 在严格管控的企业内网里好用的同一个原因。
+
+## 工具到底是怎么实现的
+
+整个压缩器大约 200 行 JavaScript。有意思的部分在这里：
+
+```javascript
+// 1. 解码时已经应用 EXIF 方向
+const bitmap = await createImageBitmap(file, {
+  imageOrientation: 'from-image',
+});
+
+// 2. 计算目标尺寸（保持宽高比）
+const { w, h } = scaleToLong(bitmap.width, bitmap.height, maxLongEdge);
+
+// 3. 渲染到 OffscreenCanvas（比 DOM canvas 更快）
+const canvas = new OffscreenCanvas(w, h);
+const ctx = canvas.getContext('2d');
+
+// 4. 输出 JPEG 时铺一层白底（JPEG 没有 Alpha 通道）
+if (outMime === 'image/jpeg') {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+}
+ctx.drawImage(bitmap, 0, 0, w, h);
+bitmap.close();
+
+// 5. 按指定质量编码
+const blob = await canvas.convertToBlob({
+  type: outMime,
+  quality: outMime === 'image/png' ? undefined : quality / 100,
+});
+```
+
+三个细节很关键，多数实现都在这里翻车。
+
+**`imageOrientation: 'from-image'`** 是 2026 年处理 EXIF 旋转的规范做法。老套路靠 `<img>` 元素 `image-orientation: from-image` 的 CSS 默认值，但各浏览器落地时间不一致（Chrome 81、Firefox 26、Safari 13.1），而把普通 `Image` 对象塞给 Canvas 时的默认行为在版本之间也不统一。用 `createImageBitmap` 拿到的位图，Canvas 读取时方向已经正确，所以横着拍的照片不管解码器有什么怪癖都会朝上。
+
+**画到 JPEG 之前先铺白底** 是必须的，因为 Canvas 默认背景是透明的，而 JPEG 不存 Alpha。没有 `fillRect`，PNG 的透明区域在那些把帧缓冲初始化为 RGBA(0,0,0,0) 的浏览器里会变成不明所以的黑色像素。白色是视觉上安全的默认值；如果你想给营销素材换个背景色，把源图存为 PNG，让 CSS 或合成器去选颜色。
+
+**PNG 时禁用质量滑杆** 不是偷懒——是格式决定的。PNG 压缩无损，浏览器的 PNG 编码器会忽略 `quality` 参数。要让 PNG 从浏览器工具里变小，要么换成有损格式，要么减小尺寸。要做像素级保留的优化（`oxipng -o max`、`pngcrush`、`zopflipng`），上桌面工具。
+
+## 常见坑
+
+下面这些是用了十分钟之后你会问的问题。
+
+### "我的 PNG 压完反而变大了"
+
+两种原因。要么源 PNG 已经被深度优化过（Apple 的截图工具、最近的 Figma 导出、跑过 `oxipng` 的任何东西），要么你把输出格式从 PNG 切到了 JPEG 但又用了极高质量。工具会用红色百分比标出更大的输出，你可以丢掉变差的版本。经验法则：源是 200 KB 以下的 PNG 截图，留着 PNG；源是 1 MB 以上的摄影 JPEG，几乎总能在质量 75 下省掉 60%，肉眼看不出损失。
+
+### "同样的质量数字，我的 WebP 看起来比 JPEG 差"
+
+质量数字在格式之间不可移植。WebP 在质量 75 视觉上大致相当于 JPEG 在质量 82。多数编码器把 WebP 默认设在 75 不是凭空——这个格式被设计成在 75 已经能在照片上做出几乎不可察觉的压缩。如果你在相同质量数字下对比 WebP 和 JPEG，JPEG 经常*看起来*更干净一些，因为你实际上是在更高有效设置下运行它。改成在等量文件大小下对比——同样字节数，WebP 在感知质量上几乎总是赢。
+
+### "我的截图里的小字在质量 75 下糊了"
+
+有损压缩讨厌锐利的过渡。带抗锯齿文本、语法高亮代码、细网格线的 UI 截图崩得比照片快。截图首选 PNG 输出，需要更小文件时用缩放控件压一压长边。如果一定要 JPEG，把质量推到 90，接受更大的文件。
+
+### "压完 EXIF 方向信息没了"
+
+是的，刻意为之。通过 Canvas 重编码作为副作用会剥离所有元数据。如果你需要在输出里保留 EXIF，压完后用 `exiftool` 这类 CLI 工具把标签拷回去。对绝大多数 Web 分发场景来说这是想要的行为：剥掉元数据更小，也不会泄漏 GPS 坐标。
+
+### "我丢了一张 200 MB 的原扫描图，标签页冻住了"
+
+工具把单文件限制在 50 MB，避免移动浏览器内存炸掉。桌面通常能扛更多，但跨视口统一这个限制能让失败模式可预测。更大的输入先用 `convert input.tif -resize 4000x output.png`（ImageMagick）缩一遍，再把中间文件放进浏览器。
+
+## 和其他工具的对比
+
+| 工具 | 字节去了哪 | 格式覆盖 | 免费 | 备注 |
+|---|---|---|---|---|
+| ZeroTool Image Compressor | 留在浏览器 | JPEG / PNG / WebP / GIF（仅首帧） | 是 | 按长边缩放、EXIF 方向处理、单批多文件并行处理 |
+| [Squoosh](https://squoosh.app) | 留在浏览器 | JPEG / PNG / WebP / AVIF / OxiPNG / MozJPEG | 是 | 更深的编码器旋钮（色度子采样、MozJPEG passes）；一次一张 |
+| TinyPNG | 上传到服务器 | PNG / JPEG / WebP，新套餐有 AVIF | 免费档有限 | 服务端，截图场景做了优化；发内部图前先看一遍数据处理政策 |
+| ImageOptim (macOS) | 留在本机 | PNG / JPEG / WebP / SVG / GIF | 是 | 一流的无损调优；仅桌面 |
+| `cwebp` / `mozjpeg` CLI | 留在本机 | 单格式 | 是 | 最大控制权；可脚本化 |
+
+权衡大致是：浏览器端工具（ZeroTool、Squoosh）保住你的字节隐私，覆盖日常 Web 工作的大头；CLI 工具能榨出最后几个百分点，在 CI 里可以脚本化；托管服务方便用在公开营销素材上——反正图最终也要挂在公网。
+
+## 用代码做同一件事
+
+如果你要把浏览器压缩集成进自己的应用（文件上传组件、拖拽头像、上传后端前的设备端预处理），这是最小化 JavaScript 实现：
+
+```javascript
+async function compress(file, { format = 'image/webp', quality = 0.75, maxLong = 1920 } = {}) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(maxLong / bitmap.width, maxLong / bitmap.height, 1);
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  if (format === 'image/jpeg') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  return await canvas.convertToBlob({ type: format, quality });
+}
+```
+
+后端 / 批处理用 Python：
+
+```python
+from PIL import Image, ImageOps
+
+def compress(path: str, out: str, quality: int = 75, max_long: int = 1920) -> None:
+    img = ImageOps.exif_transpose(Image.open(path))
+    img.thumbnail((max_long, max_long), Image.LANCZOS)
+    img.save(out, quality=quality, optimize=True)
+```
+
+ImageMagick 的 shell 流水线：
+
+```bash
+mogrify -resize 1920x1920\> -quality 75 -strip *.jpg
+```
+
+`\>` 保证小于 1920 的图不会被放大，`-strip` 移除 EXIF。
+
+## 延伸阅读
+
+- [MDN — Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API) — 底层原语
+- [MDN — `createImageBitmap`](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap) — 推荐的解码器
+- [web.dev — Choose the right image format](https://web.dev/articles/choose-the-right-image-format) — Google 官方指南，与上面的速查表口径一致
+- [WebP specification](https://developers.google.com/speed/webp) — 了解 WebP 质量数字到底是什么含义
+
+## ZeroTool 上的相关工具
+
+- [WebP Converter](/zh/tools/webp-converter/) — 当你专门想要更轻量 UI 的格式转换
+- [SVG Optimizer](/zh/tools/svg-optimizer/) — 矢量图无法做光栅压缩；改去优化 SVG 源码
+- [Image to Base64](/zh/tools/image-to-base64/) — 把图片作为 data URL 内联
+- [EXIF Metadata Viewer](/zh/tools/exif-metadata-viewer/) — 压缩前检查并精确移除元数据
+- [Favicon Generator](/zh/tools/favicon-generator/) — 当目标是从源图生成 favicon
