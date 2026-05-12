@@ -1,0 +1,55 @@
+---
+seoTitle: "文件哈希校验 — 浏览器内 SHA-256 / MD5 计算 | ZeroTool"
+seoDescription: "在浏览器中计算本地文件的 SHA-256、SHA-1、SHA-384、SHA-512、MD5 校验和，不上传文件即可验证下载完整性，并支持与期望哈希值比对。"
+faqItems:
+  - question: "支持哪些哈希算法？"
+    answer: "SHA-1、SHA-256、SHA-384、SHA-512 通过浏览器内置 Web Crypto API 计算；MD5 使用页面内嵌的 public domain JavaScript 实现。默认勾选 SHA-256，也是新流程推荐的算法。"
+  - question: "MD5 和 SHA-1 还能用于安全校验吗？"
+    answer: "不能用于密码学意义上的安全性。两者都已被证明可构造碰撞攻击。但作为旧版完整性校验仍有意义——许多软件发布方仍同时提供 MD5 / SHA-1，把它们当作「文件是否下载完整」的提示就好，不要当作真伪证明。新流程优先选 SHA-256。"
+  - question: "文件会被上传到任何地方吗？"
+    answer: "不会。文件通过 ArrayBuffer 读入浏览器后在本地计算：SHA 系列走 Web Crypto 由浏览器原生模块执行，MD5 走本页内嵌的 JavaScript 实现。整个过程不离开当前标签页，构建产物、签名包、机密下载都可放心使用。"
+  - question: "文件大小限制是多少？"
+    answer: "按设计推荐处理 1 GB 以内的文件。浏览器对单个 ArrayBuffer 分配上限约为 2 GB，超过会受设备内存影响。TB 级归档请用命令行：Linux 用 sha256sum，macOS 用 shasum -a 256，Windows 用 certutil -hashfile <file> SHA256。"
+  - question: "为什么 MD5 在大文件上明显更慢？"
+    answer: "SHA-1/256/384/512 由浏览器原生加密模块执行，通常带硬件加速；MD5 在本工具中由纯 JavaScript 计算，因为 Web Crypto 并未实现 MD5。文件超过约 100 MB 后差距会非常明显。如果只需一种算法，建议直接用 SHA-256。"
+---
+
+<h2>使用方式</h2>
+<ol>
+  <li>把文件拖入上传区，或点击选择本地文件。</li>
+  <li>默认勾选 SHA-256；如需 SHA-1 / SHA-384 / SHA-512 / MD5 同步计算，逐项勾选即可。</li>
+  <li>点击<strong>「计算哈希」</strong>，每种算法的结果会单独成行，附带复制按钮。</li>
+  <li>验证下载完整性时，把发布方公布的期望哈希粘贴到下方输入框。工具会忽略大小写自动比对，并提示与哪一行匹配。</li>
+</ol>
+
+<h2>典型场景</h2>
+<ul>
+  <li><strong>下载校验</strong> — 验证 ISO、安装包、release 归档与项目公布的 SHA-256 一致。</li>
+  <li><strong>构建产物完整性</strong> — 检查 CI 产物、S3 对象、企业代理传输过的二进制是否被改动。</li>
+  <li><strong>跨机器文件比对</strong> — 快速判断两份二进制是否逐字节相同。</li>
+  <li><strong>兼容旧版校验</strong> — 部分发行版仍同时发布 MD5 / SHA-1，本工具一次性给出全部摘要。</li>
+</ul>
+
+<h2>哈希是怎么算的</h2>
+<p>
+  全部在本地完成。文件通过 <code>File.arrayBuffer()</code> 一次性读入 <code>ArrayBuffer</code>，
+  SHA-1 / SHA-256 / SHA-384 / SHA-512 通过 <code>crypto.subtle.digest()</code> 走浏览器原生加密
+  模块，通常带硬件加速。MD5 没有被 Web Crypto 实现，所以由页面内嵌的 public domain MD5 例程对
+  同一段字节数据计算。最终的十六进制摘要直接渲染到结果行，不会发送到任何服务器。
+</p>
+
+<h2>SHA-256 与旧算法的取舍</h2>
+<p>
+  SHA-256 之所以作为默认，是因为它属于 SHA-2 家族，目前没有已知的实用碰撞攻击，并且现代工具链
+  （rustup、cargo、npm、Docker Registry、GitHub Releases、Linux 软件镜像）也都以 SHA-256 作为
+  公布标准。SHA-1 早在 2017 年的 SHAttered 攻击中被证明可碰撞；MD5 的碰撞构造更是早就工程化。
+  如果发布方只给了 MD5 / SHA-1，把它们当作「文件是否下载完整」的提示即可，不要当作真伪证明。
+</p>
+
+<h2>设计边界</h2>
+<p>
+  本工具按设计只做单文件一次性哈希计算。不支持分块流式哈希、不会校验签名、不会触碰 GPG / PGP
+  密钥、也不会连接任何服务。超大归档请用 <code>sha256sum</code>（Linux）/
+  <code>shasum -a 256</code>（macOS）/ <code>certutil -hashfile</code>（Windows）。
+  需要真伪验证请用 <code>gpg --verify</code> 或 <code>cosign verify</code> 配合发布方的签名密钥。
+</p>

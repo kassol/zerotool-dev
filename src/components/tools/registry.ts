@@ -119,6 +119,7 @@ import CspHeaderGeneratorTool from './CspHeaderGeneratorTool.astro';
 import SvgOptimizerTool from './SvgOptimizerTool.astro';
 import PkceGeneratorTool from './PkceGeneratorTool.astro';
 import SslCertificateDecoderTool from './SslCertificateDecoderTool.astro';
+import FileHashCheckerTool from './FileHashCheckerTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -238,4 +239,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'svg-optimizer': SvgOptimizerTool,
   'pkce-generator': PkceGeneratorTool,
   'ssl-certificate-decoder': SslCertificateDecoderTool,
+  'file-hash-checker': FileHashCheckerTool,
 };

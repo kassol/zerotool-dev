@@ -12,6 +12,7 @@ export const toolPersistencePolicy = {
   'jwt-decoder': 'disabled',
   'jwt-generator': 'disabled',
   'pkce-generator': 'disabled',
+  'file-hash-checker': 'disabled',
   'uuid-generator': 'preference',
   'cron-job-generator': 'preference',
   'css-filter-generator': 'preference',
