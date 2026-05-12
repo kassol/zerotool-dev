@@ -1,0 +1,121 @@
+---
+title: "File Hash Checker: Verifying Downloads with SHA-256 in the Browser"
+description: "Compute SHA-256, SHA-1, SHA-384, SHA-512, and MD5 of a local file with Web Crypto — verify a download against the publisher's hash without uploading a byte."
+pubDate: 2026-05-12
+lang: "en"
+tags: ["file-hash-checker", "sha-256", "checksum", "developer-tools"]
+ogImage: /og/blog-file-hash-checker-guide.png
+---
+
+The Postgres 18 macOS DMG finishes downloading after twelve minutes. The release page lists a SHA-256 next to the file. You need to verify it before you run the installer, but you are on a borrowed laptop and `shasum` is not in `$PATH`. Pasting a 320 MB DMG into an online "hash my file" page that promises privacy in its footer is not the move. A browser-based hasher that reads the file locally and never sends a byte over the wire is.
+
+[Verify a file now →](/tools/file-hash-checker)
+
+## Why a Checksum Even Matters
+
+A cryptographic hash takes any byte stream and produces a short, fixed-length fingerprint. Two well-known properties make hashes useful for downloads:
+
+- **Determinism** — the same bytes always produce the same hash.
+- **Avalanche** — flipping a single bit anywhere in the input scrambles the entire output.
+
+Together, those mean that if a CDN proxy injected an extra ad iframe into the installer, the SHA-256 changes completely. If a corporate MITM transparently rewrote part of the payload, same story. If a flaky download truncated the last megabyte, also same. Comparing the publisher's hash against the one your machine computed is the cheapest way to catch all of those without re-downloading.
+
+It is not, by itself, proof of *authenticity* — that needs a signature. But "the file I got matches the file the publisher posted" is the precondition for everything else.
+
+## SHA-256 vs the Legacy Algorithms
+
+ZeroTool's File Hash Checker offers five algorithms in one pass. They are not interchangeable. The short version:
+
+| Algorithm | Output size | Collision resistance | Real-world status |
+|---|---|---|---|
+| MD5 | 128 bits | Broken (2004) | Compatibility checksum only |
+| SHA-1 | 160 bits | Broken (2017, SHAttered) | Compatibility checksum only |
+| SHA-256 | 256 bits | Strong | Today's default for releases, package registries, container digests |
+| SHA-384 | 384 bits | Strong | Common in TLS 1.3 cipher suites and code-signing |
+| SHA-512 | 512 bits | Strong | Linux kernel tarballs, some BSD ports, where collision margin matters |
+
+"Broken" for MD5 and SHA-1 means it is computationally feasible for an attacker to craft two different files with the same hash. Once that property is gone, the hash cannot prove "no one altered this file" — only "no random corruption happened in transit." That distinction is the entire reason ZeroTool labels MD5 and SHA-1 as *legacy* in the UI: they still tell you something useful, but it is no longer "this is the file the publisher signed."
+
+If you are setting a new policy, pin SHA-256. If you are verifying against a vendor that only published an MD5, compute the MD5 too — but treat the result as a transit-integrity hint, not a security guarantee, and ask the vendor to upgrade.
+
+## How the Browser Actually Computes the Hash
+
+The tool reads the file once with `File.arrayBuffer()`. From there it splits:
+
+- `SHA-1`, `SHA-256`, `SHA-384`, `SHA-512` are handed to `crypto.subtle.digest()`. That call goes straight to the browser's built-in cryptography subsystem, which on every shipping desktop browser today is OS-accelerated and may use the CPU's hardware SHA acceleration where the platform supports it — Intel SHA-NI on x86, the ARMv8 Cryptography Extensions on Apple Silicon and recent ARM chips.
+- `MD5` is not exposed by the Web Crypto API at all. The page bundles a compact public-domain MD5 routine that runs in pure JavaScript over the same `Uint8Array`. It is slower than the SHA family for the same input — by a factor of 5–10× on files above a hundred megabytes — because it does not get hardware acceleration.
+
+There is no upload step, no service worker syncing bytes to a backend, no IndexedDB persistence. The file lives in the tab's memory until you reload. When you click *Clear*, even that copy is dropped.
+
+```javascript
+// Minimal version of what the tool does for SHA family
+async function sha256(file) {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+```
+
+If you want the same result from a shell, three platforms cover most cases:
+
+```bash
+# Linux (coreutils)
+sha256sum postgresql-18.0.dmg
+
+# macOS (BSD utils)
+shasum -a 256 postgresql-18.0.dmg
+
+# Windows (built in since Vista)
+certutil -hashfile postgresql-18.0.dmg SHA256
+```
+
+The output format differs (lowercase hex on Linux/macOS, uppercase with spaces on Windows), but the underlying hash is the same. The compare field in the tool normalises all three — it strips every whitespace character and lower-cases before matching, so you can paste the raw `certutil` line (`AA BB CC …`) or the trimmed `sha256sum` hex and get a clean ✓ either way.
+
+## A Worked Example: Verifying a Linux Distro ISO
+
+Pick a recent Debian 13 testing weekly ISO. The mirror page publishes a `SHA256SUMS` file with one line per ISO:
+
+```
+4e3a1c...d2  debian-13.0.0-amd64-netinst.iso
+```
+
+Download the ISO, drop it into File Hash Checker, leave SHA-256 selected, and click *Compute Hashes*. You get a single row back. Copy the hex from `SHA256SUMS`, paste it into the compare field, and the status reads `Matches SHA-256 ✓`. Total time on a recent laptop with a 700 MB ISO is under two seconds — `crypto.subtle.digest` for SHA-256 is that fast.
+
+If the compare reads `No match against any computed hash ✗`, the next steps are mechanical:
+
+1. Re-check that you copied the entire 64-character SHA-256, not a truncated prefix or a different file's row.
+2. Re-download from a different mirror; transient corruption is the most common cause.
+3. If the mirror also publishes a detached signature (`SHA256SUMS.gpg`), verify it first with `gpg --verify` against the project's release key. A correct hash on a tampered `SHA256SUMS` is worthless without the signature step.
+
+That last point is why ZeroTool's File Hash Checker stops at hashing. Signature verification needs the publisher's GPG or Sigstore key, and the right place for that is `gpg --verify` or `cosign verify` on your own machine. A browser tool that asked for a private key would be a much harder thing to trust.
+
+## Edge Cases the Tool Won't Solve For You
+
+Some scenarios fall outside what an in-browser hasher can do. They are worth naming so you don't reach for the wrong tool:
+
+- **Files larger than ~1 GB.** Browsers cap a single `ArrayBuffer` allocation near 2 GB and start swapping much earlier. The tool surfaces a soft warning above 1 GB, but a 30 GB game patch is not a job for this widget. Use `sha256sum` / `shasum -a 256` / `certutil -hashfile` instead.
+- **Folder / archive hashing.** A directory does not have a canonical byte stream. If you need to verify a tree, hash the archive (`.tar.gz`, `.zip`) and compare that. Tools like `b3sum --recursive` exist for fingerprinting whole directories with BLAKE3.
+- **Streaming hashes over network input.** Computing the hash *while* downloading is a server-side or CLI workflow (`curl … | sha256sum`). Web Crypto on a fully-loaded `ArrayBuffer` can't do that.
+- **HMAC, password hashing, or tree hashes (BLAKE3 / SHA-3).** Different problems, different tools. ZeroTool exposes [HMAC Generator](/tools/hmac-generator/) for keyed integrity, [Bcrypt Generator](/tools/bcrypt-generator/) for password storage, and [Hash Generator](/tools/hash-generator/) for hashing plain text rather than files.
+
+## Why a Standalone Tool Beats `sha256sum` for Many People
+
+A working developer who is fluent on the command line will reach for `sha256sum`. Most other downloads of a Postgres DMG, a YubiKey driver, or a Tailscale installer happen on machines where the user is not in a shell, or is on Windows, or is helping a teammate. The browser tool exists for those cases:
+
+- It is the same surface on macOS, Windows, Linux, and ChromeOS.
+- It does not require admin rights to install anything.
+- It runs against a file already on disk, no re-download.
+- It supports drag-and-drop, which most CLIs do not.
+- It compares against a pasted expected hash without needing the user to memorise `diff <(sha256sum file | cut -d' ' -f1) <(echo "expected")`.
+
+What it explicitly is not: a streaming hasher for terabyte archives, a signature verifier, or a replacement for CI integrity checks. Those belong in the pipeline, not in a browser tab.
+
+## Further Reading
+
+- [Hash Generator](/tools/hash-generator/) — same algorithms but for short text inputs (passwords, payloads, sample strings).
+- [HMAC Generator](/tools/hmac-generator/) — when you also have a shared secret and need keyed integrity, not plain hashing.
+- [SSL Certificate Decoder](/tools/ssl-certificate-decoder/) — for verifying the *signing* identity behind a TLS endpoint, not the file payload.
+- [SubtleCrypto.digest on MDN](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest) — the spec the tool's SHA path is built on.
+- [SHAttered: The First Practical SHA-1 Collision](https://shattered.io/) — the 2017 paper that retired SHA-1 from new security workflows.
