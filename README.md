@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 118 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 119 tools and growing.
 
 ## Tools
 
@@ -127,6 +127,7 @@
 | PKCE Generator | [/tools/pkce-generator](https://zerotool.dev/tools/pkce-generator) |
 | SSL Certificate Decoder | [/tools/ssl-certificate-decoder](https://zerotool.dev/tools/ssl-certificate-decoder) |
 | File Hash Checker | [/tools/file-hash-checker](https://zerotool.dev/tools/file-hash-checker) |
+| Image Compressor | [/tools/image-compressor](https://zerotool.dev/tools/image-compressor) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
