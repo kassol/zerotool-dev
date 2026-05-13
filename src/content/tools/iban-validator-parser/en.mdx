@@ -1,0 +1,82 @@
+---
+seoTitle: "IBAN Validator & Parser — Free Online ISO 13616 Checker | ZeroTool"
+seoDescription: "Validate any IBAN with the mod-97 checksum, then parse country, check digits, bank code, branch code, and account number. Covers 80+ countries from the SWIFT IBAN Registry. Free, browser-side, no upload."
+faqItems:
+  - question: "What does the mod-97 check prove?"
+    answer: "IBAN check digits are derived so that, after letters are mapped to numbers (A=10..Z=35) and the first four characters are moved to the end, the entire IBAN leaves remainder 1 when divided by 97. Correct check digits catch single-digit typos and adjacent-digit transpositions with > 99.5% probability. They do not prove the account actually exists."
+  - question: "Does this tool tell me the bank name?"
+    answer: "No. By design, this tool parses the bank code (e.g., WEST for a UK IBAN) but does not map it to a bank name. That mapping requires an online BIC/SWIFT directory which ZeroTool does not include. For the bank name, use your country's central bank directory or a SWIFT lookup service."
+  - question: "Why might my IBAN show valid but the payment still fails?"
+    answer: "IBAN validation only confirms the format and checksum. A valid-looking IBAN can still point to a closed account, a frozen one, or a bank that does not accept the payment type or currency. Banks run their own backend checks at submission time — IBAN validity is necessary but never sufficient."
+  - question: "Which countries are covered?"
+    answer: "ZeroTool ships the March 2024 SWIFT IBAN Registry layouts for the 80+ countries that publish a national IBAN standard. If a country adopts IBAN after this snapshot, that country will still validate by checksum, but the per-field BBAN breakdown will be hidden."
+  - question: "Is my IBAN sent to any server?"
+    answer: "No. Validation, length checks, BBAN parsing, and country lookup all run entirely in your browser via inline JavaScript. Nothing is sent to any server, and inputs are not logged. The page works fully offline once loaded."
+  - question: "Does it generate IBANs or BICs?"
+    answer: "No, by design. Generating IBANs from random bank codes makes account-spoofing scams easier; ZeroTool only validates and parses what you already have. For a real IBAN, use the official issuance channels of your bank. For BIC lookups, use the SWIFT BIC/IBAN directory."
+---
+
+<h2>How to use</h2>
+<ol>
+  <li>Paste an IBAN into the input. Spaces, hyphens, and case do not matter — the tool normalises them automatically.</li>
+  <li>Validation runs as you type. The <strong>Status</strong> card shows whether the IBAN is valid, the country, the check digits, and the expected length.</li>
+  <li>The <strong>BBAN Components</strong> card breaks the country-specific part into Bank Code, Branch Code, Account Number, and any national check digit defined by the SWIFT IBAN Registry.</li>
+  <li>The <strong>Formats</strong> card lets you copy the IBAN in print format (groups of four), machine format (no spaces), or just the BBAN portion.</li>
+  <li>Use <strong>Load Example</strong> to drop in a published sample IBAN for a country you want to test against.</li>
+</ol>
+
+<h2>What an IBAN actually is</h2>
+<p>
+  IBAN (International Bank Account Number) is defined by ISO 13616 and maintained by SWIFT.
+  It packs four things into a single string: a 2-letter ISO country code, a 2-digit checksum,
+  and a country-specific BBAN (Basic Bank Account Number) that holds the bank, branch, and
+  account identifiers in a fixed layout. Length is fixed per country — 15 characters for
+  Norway, 22 for the UK, 34 for Saint Lucia — and every position has a defined character
+  class: digits, letters, or alphanumeric.
+</p>
+
+<h2>How the mod-97 check works</h2>
+<p>
+  The checksum algorithm is deliberately simple and runs in the browser in microseconds:
+</p>
+<ol>
+  <li>Remove spaces and uppercase the IBAN.</li>
+  <li>Move the first 4 characters (country + check digits) to the end.</li>
+  <li>Replace every letter with two digits: <code>A → 10</code>, <code>B → 11</code>, … <code>Z → 35</code>.</li>
+  <li>Treat the resulting digit string as a single integer and compute <code>n mod 97</code>.</li>
+  <li>If the remainder is <strong>1</strong>, the checksum is correct.</li>
+</ol>
+<p>
+  Letters can appear in the BBAN of many countries (UK bank code, Germany has none,
+  Italy starts with a letter check), which is why mapping letters to digits is a core
+  step rather than an edge case. ZeroTool uses native <code>BigInt</code> when available
+  and falls back to a chunked modulo on older browsers.
+</p>
+
+<h2>What the BBAN breakdown shows</h2>
+<ul>
+  <li><strong>Bank Code</strong> — identifies the issuing bank within the country. May be letters (UK, Netherlands, Ireland), digits (Germany, France, Italy), or alphanumeric (Switzerland, Albania).</li>
+  <li><strong>Branch Code</strong> — many countries carve out a sub-identifier inside the BBAN for the branch/sort code (UK sort code, French <em>code guichet</em>, Spanish <em>oficina</em>).</li>
+  <li><strong>Account Number</strong> — the bank-internal account identifier.</li>
+  <li><strong>National Check Digit</strong> — countries like France, Italy, Belgium, and Hungary embed an extra national check inside the BBAN, in addition to the IBAN mod-97. It is shown for completeness; this tool does not separately verify national check algorithms.</li>
+  <li><strong>Account Type / Holder Indicator / Currency Code</strong> — country-specific fields (Brazil includes account type + holder; Mauritius and Seychelles include a currency code; Bulgaria includes an account type code).</li>
+</ul>
+
+<h2>Typical use cases</h2>
+<ul>
+  <li>Catching transposition typos before submitting a SEPA transfer or wire instruction.</li>
+  <li>Sanitising user-submitted IBANs in checkout forms — a client-side mod-97 check is the cheapest first filter before a paid validation API.</li>
+  <li>Inspecting test IBANs from payment gateways (Stripe, Adyen, Mollie, Braintree) to verify which country layout they follow.</li>
+  <li>Debugging OCR results from invoices: the most common OCR errors (0/O, 1/I, 5/S) all break mod-97, so the tool flags them instantly.</li>
+  <li>Confirming the bank code matches the bank you expected before paying an unfamiliar invoice.</li>
+</ul>
+
+<h2>Limits by design</h2>
+<p>
+  This tool is a validator and parser, not a bank-account lookup service. It does not call
+  any external API and cannot tell you whether an account is open, frozen, or owned by a
+  particular person. It does not generate IBANs from raw bank codes — that capability has
+  obvious abuse potential and is intentionally absent. For BIC/SWIFT codes, use the official
+  SWIFT directory or your bank's online resources. For SEPA payment QR codes, use the
+  <code>QR Code Generator</code> tool on ZeroTool with an EPC069-12 payload.
+</p>
