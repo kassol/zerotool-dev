@@ -1,0 +1,775 @@
+---
+// IbanValidatorParserTool — IBAN (ISO 13616) validator + BBAN parser.
+// 100% client-side: mod-97 over BigInt + an inlined SWIFT IBAN Registry snapshot.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+---
+
+<div>
+  <div class="ivp-wrap">
+    <div class="ivp-input-section">
+      <label for="ivp-input" class="tool-label">
+        <span data-i18n="inputLabel">Enter an IBAN</span>
+      </label>
+      <input
+        id="ivp-input"
+        class="tool-input ivp-input"
+        type="text"
+        placeholder="GB82 WEST 1234 5698 7654 32"
+        data-i18n-placeholder="placeholder"
+        spellcheck="false"
+        autocomplete="off"
+        autocapitalize="characters"
+        autocorrect="off"
+        maxlength="60"
+      />
+    </div>
+
+    <div class="ivp-actions">
+      <button id="ivp-validate" class="btn-primary" type="button" data-i18n="validate">Validate</button>
+      <details class="ivp-example-wrap">
+        <summary class="btn-ghost ivp-example-summary" data-i18n="loadExample">Load Example</summary>
+        <div class="ivp-example-list" role="listbox"></div>
+      </details>
+      <button id="ivp-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="ivp-status" class="tool-status none" aria-live="polite"></div>
+
+    <div id="ivp-results" class="ivp-results" hidden></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'Enter an IBAN',
+          placeholder: 'GB82 WEST 1234 5698 7654 32',
+          validate: 'Validate', loadExample: 'Load Example', clear: 'Clear',
+          copy: 'Copy', copied: 'Copied!',
+          statusEmpty: '',
+          okValid: 'Valid IBAN.',
+          okBbanUnavailable: 'Checksum valid. BBAN field breakdown not provided for this country.',
+          errFormat: 'IBAN must start with 2 letters, 2 digits, then alphanumerics only.',
+          errCountry: 'Unknown country code "{cc}". ZeroTool covers the SWIFT IBAN Registry entries only.',
+          errLength: 'Wrong length for {country}: expected {exp}, got {got}.',
+          errBbanType: 'BBAN character type mismatch at position {pos} (expected {type}).',
+          errChecksum: 'Checksum failed (mod 97 ≠ 1). Check digits or account body are wrong.',
+          errLong: 'Input too long — paste a single IBAN.',
+          sectionStatus: 'Status', sectionBban: 'BBAN Components', sectionFormats: 'Formats',
+          rowResult: 'Result', rowCountry: 'Country', rowCheckDigits: 'Check Digits',
+          rowLength: 'Length', rowPrint: 'Print format', rowMachine: 'Machine format', rowBbanOnly: 'BBAN only',
+          tagValid: 'Valid', tagInvalid: 'Invalid',
+          fieldBank: 'Bank Code', fieldBranch: 'Branch Code', fieldAccount: 'Account Number',
+          fieldCheck: 'National Check Digit', fieldCheck2: 'Second Check Digit',
+          fieldType: 'Account Type', fieldHolder: 'Holder Indicator',
+          fieldCurrency: 'Currency Code', fieldId: 'Identifier', fieldKennitala: 'Kennitala',
+          fieldReserved: 'Reserved', fieldOwner: 'Owner Identifier',
+          lengthExpected: '{got} ({exp} for {country})',
+          typeN: 'digits 0-9', typeA: 'letters A-Z', typeC: 'alphanumeric A-Z 0-9',
+        },
+        zh: {
+          inputLabel: '输入 IBAN',
+          placeholder: 'GB82 WEST 1234 5698 7654 32',
+          validate: '校验', loadExample: '加载示例', clear: '清空',
+          copy: '复制', copied: '已复制！',
+          statusEmpty: '',
+          okValid: 'IBAN 有效。',
+          okBbanUnavailable: '校验通过，但该国家暂未提供 BBAN 字段拆分。',
+          errFormat: 'IBAN 必须以 2 个字母 + 2 个数字开头，其余位仅允许字母数字。',
+          errCountry: '未识别的国家代码 "{cc}"。本工具仅覆盖 SWIFT IBAN Registry 收录的国家。',
+          errLength: '{country} 的 IBAN 长度不正确：期望 {exp}，实际 {got}。',
+          errBbanType: '第 {pos} 位的 BBAN 字符类型不符（应为 {type}）。',
+          errChecksum: '校验失败（mod 97 ≠ 1），可能是校验位或账号正文有误。',
+          errLong: '输入过长，请粘贴单个 IBAN。',
+          sectionStatus: '校验结果', sectionBban: 'BBAN 字段', sectionFormats: '常用格式',
+          rowResult: '结果', rowCountry: '国家', rowCheckDigits: '校验位',
+          rowLength: '长度', rowPrint: '打印格式', rowMachine: '机读格式', rowBbanOnly: '仅 BBAN',
+          tagValid: '有效', tagInvalid: '无效',
+          fieldBank: '银行代码', fieldBranch: '分行代码', fieldAccount: '账号',
+          fieldCheck: '国家级校验位', fieldCheck2: '附加校验位',
+          fieldType: '账户类型', fieldHolder: '持有人标识',
+          fieldCurrency: '币种代码', fieldId: '标识符', fieldKennitala: 'Kennitala 标识',
+          fieldReserved: '保留位', fieldOwner: '所有者标识',
+          lengthExpected: '{got}（{country} 标准长度 {exp}）',
+          typeN: '数字 0-9', typeA: '字母 A-Z', typeC: '字母与数字 A-Z 0-9',
+        },
+        ja: {
+          inputLabel: 'IBAN を入力',
+          placeholder: 'GB82 WEST 1234 5698 7654 32',
+          validate: '検証', loadExample: 'サンプル読込', clear: 'クリア',
+          copy: 'コピー', copied: 'コピー済み！',
+          statusEmpty: '',
+          okValid: 'IBAN は有効です。',
+          okBbanUnavailable: 'チェックサム有効。当該国の BBAN フィールド分解は未対応です。',
+          errFormat: 'IBAN は 2 文字のアルファベット + 2 桁の数字で始まり、以降は英数字のみ許可されます。',
+          errCountry: '未対応の国コードです: "{cc}"。本ツールは SWIFT IBAN Registry 掲載国のみ対応。',
+          errLength: '{country} の IBAN 長さが正しくありません: 期待 {exp}, 実際 {got}。',
+          errBbanType: '位置 {pos} の BBAN 文字種が不一致 (必要: {type})。',
+          errChecksum: 'チェックサム失敗 (mod 97 ≠ 1)。チェックデジットまたは口座本文に誤りがあります。',
+          errLong: '入力が長すぎます。IBAN を 1 件のみ貼り付けてください。',
+          sectionStatus: '検証結果', sectionBban: 'BBAN フィールド', sectionFormats: 'フォーマット',
+          rowResult: '結果', rowCountry: '国', rowCheckDigits: 'チェックデジット',
+          rowLength: '長さ', rowPrint: '印刷形式', rowMachine: '機械可読形式', rowBbanOnly: 'BBAN のみ',
+          tagValid: '有効', tagInvalid: '無効',
+          fieldBank: '銀行コード', fieldBranch: '支店コード', fieldAccount: '口座番号',
+          fieldCheck: '国内チェックデジット', fieldCheck2: '副チェックデジット',
+          fieldType: '口座種別', fieldHolder: '保有者識別',
+          fieldCurrency: '通貨コード', fieldId: '識別子', fieldKennitala: 'Kennitala',
+          fieldReserved: '予約', fieldOwner: '所有者識別',
+          lengthExpected: '{got}（{country} 標準: {exp}）',
+          typeN: '数字 0-9', typeA: '英字 A-Z', typeC: '英数字 A-Z 0-9',
+        },
+        ko: {
+          inputLabel: 'IBAN 입력',
+          placeholder: 'GB82 WEST 1234 5698 7654 32',
+          validate: '검증', loadExample: '예시 불러오기', clear: '지우기',
+          copy: '복사', copied: '복사됨!',
+          statusEmpty: '',
+          okValid: '유효한 IBAN입니다.',
+          okBbanUnavailable: '체크섬은 유효합니다. 해당 국가의 BBAN 필드 분해는 지원되지 않습니다.',
+          errFormat: 'IBAN은 2자 알파벳 + 2자리 숫자로 시작해야 하며 이후는 영숫자만 허용됩니다.',
+          errCountry: '알 수 없는 국가 코드 "{cc}". 본 도구는 SWIFT IBAN Registry 등재 국가만 다룹니다.',
+          errLength: '{country} IBAN 길이 오류: 기대 {exp}, 실제 {got}.',
+          errBbanType: '위치 {pos}의 BBAN 문자 형식 불일치(필요: {type}).',
+          errChecksum: '체크섬 실패 (mod 97 ≠ 1). 체크 디지트 또는 계좌 본문이 잘못되었을 수 있습니다.',
+          errLong: '입력이 너무 깁니다. 단일 IBAN을 붙여넣어 주세요.',
+          sectionStatus: '검증 결과', sectionBban: 'BBAN 필드', sectionFormats: '형식',
+          rowResult: '결과', rowCountry: '국가', rowCheckDigits: '체크 디지트',
+          rowLength: '길이', rowPrint: '인쇄 형식', rowMachine: '기계 판독 형식', rowBbanOnly: 'BBAN만',
+          tagValid: '유효', tagInvalid: '무효',
+          fieldBank: '은행 코드', fieldBranch: '지점 코드', fieldAccount: '계좌 번호',
+          fieldCheck: '국가 체크 디지트', fieldCheck2: '보조 체크 디지트',
+          fieldType: '계좌 유형', fieldHolder: '보유자 표시',
+          fieldCurrency: '통화 코드', fieldId: '식별자', fieldKennitala: 'Kennitala',
+          fieldReserved: '예약', fieldOwner: '소유자 식별',
+          lengthExpected: '{got} ({country} 표준 {exp})',
+          typeN: '숫자 0-9', typeA: '문자 A-Z', typeC: '영숫자 A-Z 0-9',
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.ivp-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.ivp-wrap [data-i18n-placeholder]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-placeholder'); if (t[key]) el.setAttribute('placeholder', t[key]);
+      });
+
+      // ── SWIFT IBAN Registry snapshot (March 2024). Length is authoritative for
+      //    checksum validation; field breakdown follows the published BBAN structure.
+      //    Field roles: bank, branch, account, check (national), check2, type,
+      //    holder, currency, id, kennitala, reserved, owner.
+      var REG = {
+        AD: { len: 24, name: 'Andorra', fields: [['bank',4,'n'],['branch',4,'n'],['account',12,'c']] },
+        AE: { len: 23, name: 'United Arab Emirates', fields: [['bank',3,'n'],['account',16,'n']] },
+        AL: { len: 28, name: 'Albania', fields: [['bank',8,'n'],['account',16,'c']] },
+        AT: { len: 20, name: 'Austria', fields: [['bank',5,'n'],['account',11,'n']] },
+        AZ: { len: 28, name: 'Azerbaijan', fields: [['bank',4,'a'],['account',20,'c']] },
+        BA: { len: 20, name: 'Bosnia and Herzegovina', fields: [['bank',3,'n'],['branch',3,'n'],['account',8,'n'],['check',2,'n']] },
+        BE: { len: 16, name: 'Belgium', fields: [['bank',3,'n'],['account',7,'n'],['check',2,'n']] },
+        BG: { len: 22, name: 'Bulgaria', fields: [['bank',4,'a'],['branch',4,'n'],['type',2,'n'],['account',8,'c']] },
+        BH: { len: 22, name: 'Bahrain', fields: [['bank',4,'a'],['account',14,'c']] },
+        BI: { len: 27, name: 'Burundi', fields: [['bank',5,'n'],['branch',5,'n'],['account',11,'n'],['check',2,'n']] },
+        BR: { len: 29, name: 'Brazil', fields: [['bank',8,'n'],['branch',5,'n'],['account',10,'n'],['type',1,'a'],['holder',1,'c']] },
+        BY: { len: 28, name: 'Belarus', fields: [['bank',4,'c'],['type',4,'n'],['account',16,'c']] },
+        CH: { len: 21, name: 'Switzerland', fields: [['bank',5,'n'],['account',12,'c']] },
+        CR: { len: 22, name: 'Costa Rica', fields: [['bank',4,'n'],['account',14,'n']] },
+        CY: { len: 28, name: 'Cyprus', fields: [['bank',3,'n'],['branch',5,'n'],['account',16,'c']] },
+        CZ: { len: 24, name: 'Czech Republic', fields: [['bank',4,'n'],['branch',6,'n'],['account',10,'n']] },
+        DE: { len: 22, name: 'Germany', fields: [['bank',8,'n'],['account',10,'n']] },
+        DK: { len: 18, name: 'Denmark', fields: [['bank',4,'n'],['account',9,'n'],['check',1,'n']] },
+        DO: { len: 28, name: 'Dominican Republic', fields: [['bank',4,'c'],['account',20,'n']] },
+        EE: { len: 20, name: 'Estonia', fields: [['bank',2,'n'],['branch',2,'n'],['account',11,'n'],['check',1,'n']] },
+        EG: { len: 29, name: 'Egypt', fields: [['bank',4,'n'],['branch',4,'n'],['account',17,'n']] },
+        ES: { len: 24, name: 'Spain', fields: [['bank',4,'n'],['branch',4,'n'],['check',2,'n'],['account',10,'n']] },
+        FI: { len: 18, name: 'Finland', fields: [['bank',3,'n'],['account',11,'n']] },
+        FK: { len: 18, name: 'Falkland Islands', fields: [['bank',2,'a'],['account',12,'n']] },
+        FO: { len: 18, name: 'Faroe Islands', fields: [['bank',4,'n'],['account',9,'n'],['check',1,'n']] },
+        FR: { len: 27, name: 'France', fields: [['bank',5,'n'],['branch',5,'n'],['account',11,'c'],['check',2,'n']] },
+        GB: { len: 22, name: 'United Kingdom', fields: [['bank',4,'a'],['branch',6,'n'],['account',8,'n']] },
+        GE: { len: 22, name: 'Georgia', fields: [['bank',2,'a'],['account',16,'n']] },
+        GI: { len: 23, name: 'Gibraltar', fields: [['bank',4,'a'],['account',15,'c']] },
+        GL: { len: 18, name: 'Greenland', fields: [['bank',4,'n'],['account',9,'n'],['check',1,'n']] },
+        GR: { len: 27, name: 'Greece', fields: [['bank',3,'n'],['branch',4,'n'],['account',16,'c']] },
+        GT: { len: 28, name: 'Guatemala', fields: [['bank',4,'c'],['currency',2,'c'],['type',2,'c'],['account',20,'c']] },
+        HR: { len: 21, name: 'Croatia', fields: [['bank',7,'n'],['account',10,'n']] },
+        HU: { len: 28, name: 'Hungary', fields: [['bank',3,'n'],['branch',4,'n'],['check',1,'n'],['account',15,'n'],['check2',1,'n']] },
+        IE: { len: 22, name: 'Ireland', fields: [['bank',4,'a'],['branch',6,'n'],['account',8,'n']] },
+        IL: { len: 23, name: 'Israel', fields: [['bank',3,'n'],['branch',3,'n'],['account',13,'n']] },
+        IQ: { len: 23, name: 'Iraq', fields: [['bank',4,'a'],['branch',3,'n'],['account',12,'n']] },
+        IS: { len: 26, name: 'Iceland', fields: [['bank',4,'n'],['account',2,'n'],['id',6,'n'],['kennitala',10,'n']] },
+        IT: { len: 27, name: 'Italy', fields: [['check',1,'a'],['bank',5,'n'],['branch',5,'n'],['account',12,'c']] },
+        JO: { len: 30, name: 'Jordan', fields: [['bank',4,'a'],['branch',4,'n'],['account',18,'c']] },
+        KW: { len: 30, name: 'Kuwait', fields: [['bank',4,'a'],['account',22,'c']] },
+        KZ: { len: 20, name: 'Kazakhstan', fields: [['bank',3,'n'],['account',13,'c']] },
+        LB: { len: 28, name: 'Lebanon', fields: [['bank',4,'n'],['account',20,'c']] },
+        LC: { len: 32, name: 'Saint Lucia', fields: [['bank',4,'a'],['account',24,'c']] },
+        LI: { len: 21, name: 'Liechtenstein', fields: [['bank',5,'n'],['account',12,'c']] },
+        LT: { len: 20, name: 'Lithuania', fields: [['bank',5,'n'],['account',11,'n']] },
+        LU: { len: 20, name: 'Luxembourg', fields: [['bank',3,'n'],['account',13,'c']] },
+        LV: { len: 21, name: 'Latvia', fields: [['bank',4,'a'],['account',13,'c']] },
+        LY: { len: 25, name: 'Libya', fields: [['bank',3,'n'],['branch',3,'n'],['account',15,'n']] },
+        MC: { len: 27, name: 'Monaco', fields: [['bank',5,'n'],['branch',5,'n'],['account',11,'c'],['check',2,'n']] },
+        MD: { len: 24, name: 'Moldova', fields: [['bank',2,'c'],['account',18,'c']] },
+        ME: { len: 22, name: 'Montenegro', fields: [['bank',3,'n'],['account',13,'n'],['check',2,'n']] },
+        MK: { len: 19, name: 'North Macedonia', fields: [['bank',3,'n'],['account',10,'c'],['check',2,'n']] },
+        MN: { len: 20, name: 'Mongolia', fields: [['bank',4,'n'],['account',12,'n']] },
+        MR: { len: 27, name: 'Mauritania', fields: [['bank',5,'n'],['branch',5,'n'],['account',11,'n'],['check',2,'n']] },
+        MT: { len: 31, name: 'Malta', fields: [['bank',4,'a'],['branch',5,'n'],['account',18,'c']] },
+        MU: { len: 30, name: 'Mauritius', fields: [['bank',4,'a'],['branch',4,'n'],['account',15,'n'],['reserved',3,'a']] },
+        NI: { len: 28, name: 'Nicaragua', fields: [['bank',4,'a'],['account',24,'n']] },
+        NL: { len: 18, name: 'Netherlands', fields: [['bank',4,'a'],['account',10,'n']] },
+        NO: { len: 15, name: 'Norway', fields: [['bank',4,'n'],['account',6,'n'],['check',1,'n']] },
+        OM: { len: 23, name: 'Oman', fields: [['bank',3,'n'],['account',16,'c']] },
+        PK: { len: 24, name: 'Pakistan', fields: [['bank',4,'a'],['account',16,'c']] },
+        PL: { len: 28, name: 'Poland', fields: [['bank',8,'n'],['account',16,'n']] },
+        PS: { len: 29, name: 'Palestinian Territories', fields: [['bank',4,'a'],['account',21,'c']] },
+        PT: { len: 25, name: 'Portugal', fields: [['bank',4,'n'],['branch',4,'n'],['account',11,'n'],['check',2,'n']] },
+        QA: { len: 29, name: 'Qatar', fields: [['bank',4,'a'],['account',21,'c']] },
+        RO: { len: 24, name: 'Romania', fields: [['bank',4,'a'],['account',16,'c']] },
+        RS: { len: 22, name: 'Serbia', fields: [['bank',3,'n'],['account',13,'n'],['check',2,'n']] },
+        RU: { len: 33, name: 'Russia', fields: [['bank',9,'n'],['branch',5,'n'],['account',15,'c']] },
+        SA: { len: 24, name: 'Saudi Arabia', fields: [['bank',2,'n'],['account',18,'c']] },
+        SC: { len: 31, name: 'Seychelles', fields: [['bank',4,'a'],['branch',4,'n'],['account',16,'n'],['currency',3,'a']] },
+        SD: { len: 18, name: 'Sudan', fields: [['bank',2,'n'],['account',12,'n']] },
+        SE: { len: 24, name: 'Sweden', fields: [['bank',3,'n'],['account',16,'n'],['check',1,'n']] },
+        SI: { len: 19, name: 'Slovenia', fields: [['bank',5,'n'],['account',8,'n'],['check',2,'n']] },
+        SK: { len: 24, name: 'Slovakia', fields: [['bank',4,'n'],['branch',6,'n'],['account',10,'n']] },
+        SM: { len: 27, name: 'San Marino', fields: [['check',1,'a'],['bank',5,'n'],['branch',5,'n'],['account',12,'c']] },
+        SO: { len: 23, name: 'Somalia', fields: [['bank',4,'n'],['branch',3,'n'],['account',12,'n']] },
+        ST: { len: 25, name: 'São Tomé and Príncipe', fields: [['bank',4,'n'],['branch',4,'n'],['account',11,'n'],['check',2,'n']] },
+        SV: { len: 28, name: 'El Salvador', fields: [['bank',4,'a'],['account',20,'n']] },
+        TL: { len: 23, name: 'Timor-Leste', fields: [['bank',3,'n'],['account',14,'n'],['check',2,'n']] },
+        TN: { len: 24, name: 'Tunisia', fields: [['bank',2,'n'],['branch',3,'n'],['account',13,'n'],['check',2,'n']] },
+        TR: { len: 26, name: 'Turkey', fields: [['bank',5,'n'],['reserved',1,'n'],['account',16,'c']] },
+        UA: { len: 29, name: 'Ukraine', fields: [['bank',6,'n'],['account',19,'c']] },
+        VA: { len: 22, name: 'Vatican City', fields: [['bank',3,'n'],['account',15,'n']] },
+        VG: { len: 24, name: 'British Virgin Islands', fields: [['bank',4,'a'],['account',16,'n']] },
+        XK: { len: 20, name: 'Kosovo', fields: [['bank',2,'n'],['branch',2,'n'],['account',10,'n'],['check',2,'n']] },
+        YE: { len: 30, name: 'Yemen', fields: [['bank',4,'a'],['branch',4,'n'],['account',18,'c']] }
+      };
+
+      // Curated short example list (mix of regions; all real published test IBANs).
+      var EXAMPLES = [
+        { iban: 'GB82 WEST 1234 5698 7654 32', cc: 'GB' },
+        { iban: 'DE89 3704 0044 0532 0130 00', cc: 'DE' },
+        { iban: 'FR14 2004 1010 0505 0001 3M02 606', cc: 'FR' },
+        { iban: 'IT60 X054 2811 1010 0000 0123 456', cc: 'IT' },
+        { iban: 'NL91 ABNA 0417 1643 00', cc: 'NL' },
+        { iban: 'SA03 8000 0000 6080 1016 7519', cc: 'SA' },
+        { iban: 'BR18 0036 0305 0000 1000 9795 493C 1', cc: 'BR' },
+        { iban: 'CH93 0076 2011 6238 5295 7', cc: 'CH' }
+      ];
+
+      // ── Field labels ───────────────────────────────────────────────────
+      var FIELD_LABEL_KEYS = {
+        bank: 'fieldBank', branch: 'fieldBranch', account: 'fieldAccount',
+        check: 'fieldCheck', check2: 'fieldCheck2', type: 'fieldType',
+        holder: 'fieldHolder', currency: 'fieldCurrency', id: 'fieldId',
+        kennitala: 'fieldKennitala', reserved: 'fieldReserved', owner: 'fieldOwner'
+      };
+      function fieldLabel(role) {
+        var key = FIELD_LABEL_KEYS[role];
+        return (key && t[key]) ? t[key] : role;
+      }
+      function typeName(type) {
+        if (type === 'n') return t.typeN;
+        if (type === 'a') return t.typeA;
+        return t.typeC;
+      }
+
+      // ── Normalisation ─────────────────────────────────────────────────
+      function normalise(raw) {
+        // Strip every code point that is not A-Z or 0-9 (uppercase letters and
+        // digits). This drops spaces, hyphens, dots, NBSP, zero-width chars, etc.
+        return String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      }
+
+      function flagEmoji(cc) {
+        if (!/^[A-Z]{2}$/.test(cc)) return '';
+        return String.fromCodePoint(0x1F1E6 + cc.charCodeAt(0) - 65) +
+               String.fromCodePoint(0x1F1E6 + cc.charCodeAt(1) - 65);
+      }
+
+      // ── mod 97 over a numeric string (avoids BigInt incompatibility risks). ──
+      function mod97(numericStr) {
+        // Use BigInt where available; otherwise fall back to chunked remainder.
+        if (typeof BigInt === 'function') {
+          try { return Number(BigInt(numericStr) % 97n); } catch (e) {}
+        }
+        var rem = 0;
+        for (var i = 0; i < numericStr.length; i++) {
+          rem = (rem * 10 + (numericStr.charCodeAt(i) - 48)) % 97;
+        }
+        return rem;
+      }
+
+      function toNumeric(s) {
+        // Move first 4 chars to the end and replace letters with 10..35.
+        var rearranged = s.slice(4) + s.slice(0, 4);
+        var out = '';
+        for (var i = 0; i < rearranged.length; i++) {
+          var ch = rearranged.charCodeAt(i);
+          if (ch >= 48 && ch <= 57) out += rearranged.charAt(i);
+          else if (ch >= 65 && ch <= 90) out += (ch - 55).toString();
+          else return null;
+        }
+        return out;
+      }
+
+      function bbanTypeOk(ch, type) {
+        if (type === 'n') return ch >= '0' && ch <= '9';
+        if (type === 'a') return ch >= 'A' && ch <= 'Z';
+        return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z');
+      }
+
+      function splitBban(bban, fields) {
+        var parts = [];
+        var pos = 0;
+        for (var i = 0; i < fields.length; i++) {
+          var role = fields[i][0], len = fields[i][1], type = fields[i][2];
+          var chunk = bban.substr(pos, len);
+          for (var j = 0; j < chunk.length; j++) {
+            if (!bbanTypeOk(chunk.charAt(j), type)) {
+              return { error: { pos: pos + j + 5, type: type } };
+            }
+          }
+          parts.push({ role: role, value: chunk });
+          pos += len;
+        }
+        return { parts: parts };
+      }
+
+      function printFormat(s) {
+        return s.replace(/(.{4})/g, '$1 ').trim();
+      }
+
+      // ── Validation orchestrator ───────────────────────────────────────
+      function validate(raw) {
+        if (raw.length > 200) return { ok: false, error: t.errLong };
+        var s = normalise(raw);
+        if (!s) return { empty: true };
+        if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(s)) return { ok: false, error: t.errFormat };
+
+        var cc = s.slice(0, 2);
+        var reg = REG[cc];
+        if (!reg) return { ok: false, error: t.errCountry.replace('{cc}', cc) };
+
+        if (s.length !== reg.len) {
+          return { ok: false, error: t.errLength
+            .replace('{country}', reg.name)
+            .replace('{exp}', String(reg.len))
+            .replace('{got}', String(s.length)) };
+        }
+
+        var numeric = toNumeric(s);
+        if (!numeric || mod97(numeric) !== 1) {
+          return { ok: false, error: t.errChecksum };
+        }
+
+        var bban = s.slice(4);
+        var split = splitBban(bban, reg.fields);
+        var bbanError = null;
+        if (split.error) {
+          bbanError = t.errBbanType
+            .replace('{pos}', String(split.error.pos))
+            .replace('{type}', typeName(split.error.type));
+        }
+
+        return {
+          ok: true,
+          machine: s,
+          cc: cc,
+          country: reg.name,
+          checkDigits: s.slice(2, 4),
+          length: s.length,
+          expectedLength: reg.len,
+          flag: flagEmoji(cc),
+          bban: bban,
+          parts: split.parts || [],
+          bbanError: bbanError
+        };
+      }
+
+      // ── Rendering ─────────────────────────────────────────────────────
+      function escapeHtml(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function renderRow(label, valueHtml, copy) {
+        var copyAttr = copy ? ' data-copy="' + escapeHtml(copy) + '"' : '';
+        var copyBtn = copy
+          ? '<button class="btn-copy ivp-copy" type="button"' + copyAttr + '>' + escapeHtml(t.copy) + '</button>'
+          : '';
+        return '<div class="tool-result-row ivp-row">' +
+          '<span class="tool-result-label ivp-row-label">' + escapeHtml(label) + '</span>' +
+          '<span class="tool-result-value ivp-row-value">' + valueHtml + '</span>' +
+          copyBtn + '</div>';
+      }
+
+      function renderCard(title, body) {
+        return '<section class="ivp-card">' +
+          '<h3 class="ivp-card-title">' + escapeHtml(title) + '</h3>' +
+          '<div class="ivp-card-body">' + body + '</div></section>';
+      }
+
+      function render(result) {
+        var html = '';
+
+        // Status card
+        var resultChip = '<span class="ivp-tag ivp-tag-valid">' + escapeHtml(t.tagValid) + '</span>';
+        var countryLine = '<span class="ivp-flag">' + result.flag + '</span> ' +
+          '<span class="ivp-country">' + escapeHtml(result.country) + '</span> ' +
+          '<span class="ivp-country-code">(' + escapeHtml(result.cc) + ')</span>';
+        var lengthLine = t.lengthExpected
+          .replace('{got}', String(result.length))
+          .replace('{exp}', String(result.expectedLength))
+          .replace('{country}', escapeHtml(result.cc));
+
+        var statusBody =
+          renderRow(t.rowResult, resultChip) +
+          renderRow(t.rowCountry, countryLine) +
+          renderRow(t.rowCheckDigits, '<span class="ivp-mono">' + escapeHtml(result.checkDigits) + '</span>') +
+          renderRow(t.rowLength, escapeHtml(lengthLine));
+        html += renderCard(t.sectionStatus, statusBody);
+
+        // BBAN components card (when split is available)
+        if (result.parts && result.parts.length && !result.bbanError) {
+          var bbanBody = result.parts.map(function (p) {
+            return renderRow(fieldLabel(p.role), '<span class="ivp-mono">' + escapeHtml(p.value) + '</span>', p.value);
+          }).join('');
+          html += renderCard(t.sectionBban, bbanBody);
+        }
+
+        // Formats card
+        var print = printFormat(result.machine);
+        var formatsBody =
+          renderRow(t.rowPrint, '<span class="ivp-mono">' + escapeHtml(print) + '</span>', print) +
+          renderRow(t.rowMachine, '<span class="ivp-mono">' + escapeHtml(result.machine) + '</span>', result.machine) +
+          renderRow(t.rowBbanOnly, '<span class="ivp-mono">' + escapeHtml(result.bban) + '</span>', result.bban);
+        html += renderCard(t.sectionFormats, formatsBody);
+
+        return html;
+      }
+
+      function renderInvalid(message) {
+        var statusBody =
+          renderRow(t.rowResult, '<span class="ivp-tag ivp-tag-invalid">' + escapeHtml(t.tagInvalid) + '</span>') +
+          renderRow('—', escapeHtml(message));
+        return renderCard(t.sectionStatus, statusBody);
+      }
+
+      // ── State & wiring ───────────────────────────────────────────────
+      var inputEl = document.getElementById('ivp-input');
+      var statusEl = document.getElementById('ivp-status');
+      var resultsEl = document.getElementById('ivp-results');
+      var btnValidate = document.getElementById('ivp-validate');
+      var btnClear = document.getElementById('ivp-clear');
+      var exampleWrap = document.querySelector('.ivp-example-wrap');
+      var exampleList = document.querySelector('.ivp-example-list');
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status ' + (type || 'none');
+      }
+
+      function show(result) {
+        if (result.empty) {
+          resultsEl.hidden = true;
+          resultsEl.innerHTML = '';
+          setStatus(t.statusEmpty, 'none');
+          return;
+        }
+        if (!result.ok) {
+          resultsEl.innerHTML = renderInvalid(result.error);
+          resultsEl.hidden = false;
+          setStatus(result.error, 'error');
+          return;
+        }
+        resultsEl.innerHTML = render(result);
+        resultsEl.hidden = false;
+        if (result.bbanError) {
+          setStatus(t.okBbanUnavailable + ' — ' + result.bbanError, 'info');
+        } else if (!result.parts.length) {
+          setStatus(t.okBbanUnavailable, 'info');
+        } else {
+          setStatus(t.okValid, 'success');
+        }
+        wireCopyButtons();
+        if (window.trackTool) window.trackTool('iban-validator-parser', 'validate');
+      }
+
+      function runValidate() {
+        show(validate(inputEl.value));
+      }
+
+      function wireCopyButtons() {
+        resultsEl.querySelectorAll('.ivp-copy').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var v = btn.getAttribute('data-copy') || '';
+            if (!v || !navigator.clipboard) return;
+            navigator.clipboard.writeText(v).then(function () {
+              var original = btn.textContent;
+              btn.classList.add('copied');
+              btn.textContent = t.copied;
+              setTimeout(function () { btn.classList.remove('copied'); btn.textContent = original; }, 1400);
+            }).catch(function () {});
+          });
+        });
+      }
+
+      function buildExampleList() {
+        EXAMPLES.forEach(function (ex) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ivp-example-item';
+          btn.innerHTML =
+            '<span class="ivp-example-flag">' + flagEmoji(ex.cc) + '</span>' +
+            '<span class="ivp-example-cc">' + escapeHtml(ex.cc) + '</span>' +
+            '<span class="ivp-example-iban">' + escapeHtml(ex.iban) + '</span>';
+          btn.addEventListener('click', function () {
+            inputEl.value = ex.iban;
+            if (exampleWrap) exampleWrap.removeAttribute('open');
+            runValidate();
+            persist();
+          });
+          exampleList.appendChild(btn);
+        });
+      }
+
+      btnValidate.addEventListener('click', runValidate);
+      btnClear.addEventListener('click', function () {
+        inputEl.value = '';
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = '';
+        setStatus('', 'none');
+        if (window.ztPersist) {
+          try { window.ztPersist.clear('iban-validator-parser'); } catch (e) {}
+        }
+      });
+
+      inputEl.addEventListener('input', function () {
+        // Live validate on input (cheap; mod 97 is sub-millisecond).
+        runValidate();
+        persist();
+      });
+      inputEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); runValidate(); }
+      });
+
+      function persist() {
+        if (window.ztPersist) {
+          try { window.ztPersist.save('iban-validator-parser', inputEl.value); } catch (e) {}
+        }
+      }
+      if (window.ztPersist) {
+        try {
+          var saved = window.ztPersist.load('iban-validator-parser');
+          if (saved && typeof saved === 'string') {
+            inputEl.value = saved;
+            runValidate();
+          }
+        } catch (e) {}
+      }
+
+      buildExampleList();
+    })();
+  </script>
+
+  <style is:global>
+    .ivp-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .ivp-input-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .ivp-input {
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .ivp-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .ivp-example-wrap {
+      position: relative;
+    }
+    .ivp-example-summary {
+      list-style: none;
+      cursor: pointer;
+    }
+    .ivp-example-summary::-webkit-details-marker { display: none; }
+    .ivp-example-summary::after {
+      content: '▾';
+      margin-left: 0.35rem;
+      font-size: 0.78rem;
+      opacity: 0.65;
+    }
+    .ivp-example-wrap[open] .ivp-example-summary::after {
+      content: '▴';
+    }
+    .ivp-example-list {
+      display: none;
+      position: absolute;
+      top: calc(100% + 0.4rem);
+      left: 0;
+      min-width: 18rem;
+      max-width: min(90vw, 28rem);
+      max-height: 22rem;
+      overflow-y: auto;
+      padding: 0.4rem;
+      background: var(--color-surface);
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft), var(--shadow-card);
+      z-index: 12;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .ivp-example-wrap[open] .ivp-example-list {
+      display: flex;
+    }
+    .ivp-example-item {
+      display: grid;
+      grid-template-columns: 1.6rem 2rem 1fr;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.45rem 0.6rem;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--color-text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: background-color var(--transition-fast);
+    }
+    @media (hover: hover) {
+      .ivp-example-item:hover {
+        background: var(--color-bg-secondary);
+      }
+    }
+    .ivp-example-flag { font-size: 1.05rem; line-height: 1; }
+    .ivp-example-cc {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      letter-spacing: 0.04em;
+    }
+    .ivp-example-iban {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--color-text);
+      word-break: break-all;
+    }
+
+    .ivp-results {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    @media (min-width: 780px) {
+      .ivp-results {
+        grid-template-columns: 1fr 1fr;
+      }
+      /* Status card spans full width; BBAN + Formats sit side-by-side. */
+      .ivp-card:first-child {
+        grid-column: 1 / -1;
+      }
+    }
+    .ivp-card {
+      background: var(--color-surface);
+      border-radius: var(--radius-lg);
+      padding: 0.9rem 1rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft), var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      min-width: 0;
+    }
+    .ivp-card-title {
+      margin: 0;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-primary);
+    }
+    .ivp-card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      min-width: 0;
+    }
+    .ivp-row {
+      gap: 0.7rem;
+    }
+    .ivp-row-label {
+      min-width: 8.5rem;
+      flex: 0 0 auto;
+    }
+    .ivp-row-value {
+      flex: 1 1 auto;
+      min-width: 0;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+    .ivp-mono {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      letter-spacing: 0.02em;
+    }
+    .ivp-flag {
+      font-size: 1.08rem;
+      line-height: 1;
+      margin-right: 0.1rem;
+    }
+    .ivp-country {
+      font-weight: 700;
+    }
+    .ivp-country-code {
+      color: var(--color-text-muted);
+      margin-left: 0.2rem;
+      font-size: 0.85rem;
+    }
+    .ivp-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.2rem 0.7rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, currentColor 35%, transparent);
+      background: color-mix(in oklch, currentColor 14%, transparent);
+    }
+    .ivp-tag-valid { color: var(--color-success); }
+    .ivp-tag-invalid { color: var(--color-danger); }
+    .ivp-copy {
+      flex: 0 0 auto;
+    }
+
+    @media (max-width: 640px) {
+      .ivp-row-label {
+        min-width: 0;
+        flex: 0 0 100%;
+      }
+      .ivp-example-list {
+        min-width: min(90vw, 20rem);
+      }
+    }
+  </style>
+</div>

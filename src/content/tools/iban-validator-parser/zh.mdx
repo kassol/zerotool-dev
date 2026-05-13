@@ -1,0 +1,73 @@
+---
+seoTitle: "IBAN 校验与解析工具 — 在线 ISO 13616 检查 | ZeroTool"
+seoDescription: "在线校验任意 IBAN 的 mod-97 校验和，并按国家结构拆分国家代码、校验位、银行代码、分行代码与账号。覆盖 80+ 国家（SWIFT IBAN Registry）。免费，浏览器端运行，无需上传。"
+faqItems:
+  - question: "mod-97 校验能证明什么？"
+    answer: "IBAN 的两位校验位是这样推导的——把字母按 A=10..Z=35 转成数字、前 4 字符移到末尾、整串当大整数对 97 取模，结果应为 1。这能以 > 99.5% 的概率发现单位数错位和相邻数字调换。它无法证明账户真实存在或可用。"
+  - question: "工具会告诉我银行名称吗？"
+    answer: "不会。工具只拆出银行代码（例如英国 IBAN 中的 WEST），但不映射到银行名。银行代码 → 银行名需要在线 BIC/SWIFT 目录，ZeroTool 不内置这类数据。要查银行名，请使用本国央行目录或 SWIFT 查询服务。"
+  - question: "为什么 IBAN 校验通过，但付款仍失败？"
+    answer: "IBAN 校验只确认格式与校验和。一个格式正确的 IBAN 仍可能指向已关闭、被冻结、或不接收该币种 / 通道的账户。银行在受理付款时会跑后端校验——IBAN 有效是必要条件，绝非充分条件。"
+  - question: "覆盖哪些国家？"
+    answer: "ZeroTool 内嵌的是 2024 年 3 月的 SWIFT IBAN Registry 快照，覆盖 80+ 个发布国家 IBAN 标准的经济体。若某国家在该快照之后才加入 IBAN，本工具仍能校验 mod-97，但「BBAN 字段拆分」卡片不会显示。"
+  - question: "我的 IBAN 会被发送到任何服务器吗？"
+    answer: "不会。所有校验、长度检查、BBAN 解析与国家查找都在浏览器本地通过内联 JavaScript 完成。输入不会上传，不会记录。页面一旦加载即可离线使用。"
+  - question: "工具会生成 IBAN 或 BIC 吗？"
+    answer: "不会，这是有意的设计选择。由随机银行代码生成 IBAN 会方便账号伪造类诈骗，ZeroTool 只校验和拆分你已有的 IBAN。真实 IBAN 请从银行正规渠道获取；查 BIC/SWIFT 请用 SWIFT 官方目录或银行网站。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>把 IBAN 粘贴到输入框。空格、连字符、大小写无关紧要——工具会自动归一化。</li>
+  <li>输入时实时校验。<strong>校验结果</strong> 卡片显示是否有效、国家、校验位与期望长度。</li>
+  <li><strong>BBAN 字段</strong> 卡片按 SWIFT IBAN Registry 拆出银行代码、分行代码、账号，以及该国家定义的国家级校验位。</li>
+  <li><strong>常用格式</strong> 卡片可复制打印格式（每 4 位空格分组）、机读格式（无空格）或仅 BBAN 部分。</li>
+  <li>点击 <strong>加载示例</strong> 可一键填入某国家的官方测试 IBAN，方便对比验证。</li>
+</ol>
+
+<h2>IBAN 到底是什么</h2>
+<p>
+  IBAN（International Bank Account Number）由 ISO 13616 定义，SWIFT 维护。它把四样东西打包成一个字符串：
+  2 位 ISO 国家代码、2 位校验位，以及国家自定义的 BBAN（Basic Bank Account Number）—— BBAN 用固定布局承载银行、
+  分行、账号等标识。每个国家的 IBAN 长度固定——挪威 15 位，英国 22 位，圣卢西亚 34 位，每一位都有明确的字符类型：
+  数字、字母或字母数字混合。
+</p>
+
+<h2>mod-97 校验如何工作</h2>
+<p>校验和算法刻意做得极简，浏览器中微秒级完成：</p>
+<ol>
+  <li>去掉空格并将 IBAN 转大写。</li>
+  <li>把前 4 个字符（国家代码 + 校验位）移到末尾。</li>
+  <li>把每个字母替换成两位数字：<code>A → 10</code>、<code>B → 11</code>、…、<code>Z → 35</code>。</li>
+  <li>把结果字符串当作一个大整数，计算 <code>n mod 97</code>。</li>
+  <li>结果为 <strong>1</strong> 即校验通过。</li>
+</ol>
+<p>
+  许多国家的 BBAN 中含字母（英国银行代码、意大利首位字母校验），因此「字母 → 数字映射」是算法核心而非边角情况。
+  ZeroTool 优先使用原生 <code>BigInt</code>，在旧浏览器上降级为分块求模。
+</p>
+
+<h2>BBAN 字段都说明了什么</h2>
+<ul>
+  <li><strong>银行代码</strong> — 识别国内发卡银行。字符类型按国家而异：字母（英国、荷兰、爱尔兰）、数字（德国、法国、意大利）、字母数字混合（瑞士、阿尔巴尼亚）。</li>
+  <li><strong>分行代码</strong> — 多国 BBAN 内置分行/sort-code 标识（英国 sort code、法国 <em>code guichet</em>、西班牙 <em>oficina</em>）。</li>
+  <li><strong>账号</strong> — 银行内部账号标识。</li>
+  <li><strong>国家级校验位</strong> — 法国、意大利、比利时、匈牙利等国在 BBAN 内嵌入额外的国家级校验位，独立于 IBAN mod-97。工具会展示这一位，但不单独跑各国的国内校验算法。</li>
+  <li><strong>账户类型 / 持有人标识 / 币种代码</strong> — 部分国家专属字段（巴西含账户类型 + 持有人；毛里求斯、塞舌尔含币种代码；保加利亚含账户类型代码）。</li>
+</ul>
+
+<h2>典型用途</h2>
+<ul>
+  <li>在提交 SEPA 转账或电汇前抓出数字调换类输入错误。</li>
+  <li>在结算页清洗用户输入的 IBAN——客户端 mod-97 校验是付费 IBAN API 之前最廉价的初筛。</li>
+  <li>核对支付网关（Stripe、Adyen、Mollie、Braintree）提供的测试 IBAN 是否符合预期国家结构。</li>
+  <li>调试 OCR 发票识别结果：最常见的 OCR 误识（0/O、1/I、5/S）都会破坏 mod-97，工具会立即提示。</li>
+  <li>处理陌生发票前先核对银行代码，确认对方银行是否与预期一致。</li>
+</ul>
+
+<h2>本工具的边界</h2>
+<p>
+  工具只做校验与拆分，不做银行账号查询。它不调任何外部 API，无法告诉你账户是否开通、是否冻结、是否归某人所有。
+  也不支持由「裸银行代码」反向生成 IBAN —— 该能力存在被滥用空间，被有意排除。需要 BIC/SWIFT 代码请用 SWIFT 官方目录
+  或所在银行的网上工具。需要 SEPA 收款二维码请用 ZeroTool 的 <code>QR Code Generator</code>，按 EPC069-12 格式填入载荷。
+</p>

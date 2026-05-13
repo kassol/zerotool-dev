@@ -121,6 +121,7 @@ import PkceGeneratorTool from './PkceGeneratorTool.astro';
 import SslCertificateDecoderTool from './SslCertificateDecoderTool.astro';
 import FileHashCheckerTool from './FileHashCheckerTool.astro';
 import ImageCompressorTool from './ImageCompressorTool.astro';
+import IbanValidatorParserTool from './IbanValidatorParserTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -242,4 +243,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'ssl-certificate-decoder': SslCertificateDecoderTool,
   'file-hash-checker': FileHashCheckerTool,
   'image-compressor': ImageCompressorTool,
+  'iban-validator-parser': IbanValidatorParserTool,
 };
