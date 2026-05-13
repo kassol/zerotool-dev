@@ -1,0 +1,200 @@
+---
+title: "IBAN 校验：在汇款打出去之前抓住一个错的银行账号"
+description: "拆解 mod-97 算法、各国 BBAN 结构与 OCR 时代的常见陷阱——一个免费的浏览器端 IBAN 校验工具，配上工程师视角的实战指南。"
+pubDate: 2026-05-13
+lang: "zh"
+tags: ["iban-validator-parser", "iban", "sepa", "payments", "developer-tools"]
+ogImage: /og/blog-iban-validator-parser-guide.png
+---
+
+周一早上，供应商的发票以扫描 PDF 形式进了收件箱，OCR 识别出来的 IBAN 是 `DE89 3704 0044 0532 O130 00`。注意倒数第二组那个字母 `O` 了吗？你差一点就漏掉了。上一批应付账款里，一笔 12,500 EUR 的付款因为同样的把戏被退回——一个 `0` 在打印到 OCR 的过程中被识别成了 `O`——银行还扣了 25 EUR 退单费。
+
+一次 mod-97 校验就能拦下它。IBAN 标准正是为这种场景设计的。
+
+[立即校验一个 IBAN →](/zh/tools/iban-validator-parser/)
+
+## IBAN 到底是什么
+
+IBAN（International Bank Account Number，国际银行账号）由 **ISO 13616** 定义，**SWIFT** 通过 IBAN Registry 维护。每个 IBAN 把四样东西压进同一个字符串：
+
+| 部分 | 长度 | 来源 |
+|------|------|------|
+| 国家代码 | 2 个字母 | ISO 3166-1 alpha-2 |
+| 校验位 | 2 位数字 | 其余位的 mod-97 结果 |
+| BBAN（Basic Bank Account Number） | 11–30 字符 | 国家标准 |
+| 总长度 | 15–34 字符 | 各国固定 |
+
+挪威最短 15 字符；圣卢西亚和马耳他分别 32 与 31。校验位紧跟在国家代码后面——这就是为什么英国 IBAN 长成 `GB82 WEST…`：`GB` 是国家，`82` 是校验位，`WEST` 起是 BBAN。
+
+世界上没有一个全球机构给个人发 IBAN。每个国家先采纳标准，再定义自己的 BBAN 结构（银行代码在哪、账号多长、每个位置是字母还是数字），并把这套结构发布到 SWIFT IBAN Registry。这套结构就是每个校验器要实现的合同。
+
+## mod-97 怎么工作，为什么巧妙
+
+校验位不是随机的。它的取值要保证整个 IBAN——把字母转成数字之后——除以 `97` 余 `1`。算法 5 步，浏览器里微秒级完成：
+
+1. **归一化。** 去掉空白，全部转大写。
+2. **轮转。** 把前 4 个字符（国家代码 + 校验位）移到末尾。
+3. **字母替换。** 每个字母换成两位数字：`A → 10`，`B → 11`，…，`Z → 35`。
+4. **取模。** 把得到的纯数字串当作一个大整数，计算 `n mod 97`。
+5. **比较。** 余数为 `1` 即校验通过。
+
+```javascript
+function isValidIban(raw) {
+  const s = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(s)) return false;
+  const rearranged = s.slice(4) + s.slice(0, 4);
+  const numeric = [...rearranged]
+    .map(c => (c >= 'A' ? (c.charCodeAt(0) - 55).toString() : c))
+    .join('');
+  // BigInt 避免长 IBAN（俄罗斯 33 字符）超过 53 位浮点上限。
+  return BigInt(numeric) % 97n === 1n;
+}
+```
+
+为什么是 97？三个理由：
+
+- **质数。** 选一个质数模数能最大化「任意一位错误改变余数」的概率，因为没有任何更小的因子能吞掉这个错误。
+- **两位数。** 余数 mod 97 永远落在两个字符里，正好对得上标准给校验位留的两位空间。
+- **覆盖常见手误率高。** 它能以压倒性概率抓出所有单字符错误以及所有相邻两位的调换——形式化分析给出的联合覆盖率超过 99.5%。
+
+最妙的是第 2 步的 **轮转**。如果不做这一步，你只能抓 BBAN 内的错误，国家代码会被模运算「跳过」。把国家代码和校验位轮转到末尾，意味着它们也是参与除法的整数的一部分——所以把 `DE` 拼成 `FR` 或把校验位敲错，数学上同样会失败。
+
+## BBAN 才是各国发挥创意的地方
+
+国家代码 + 校验位之后的 BBAN 由各国自行定义。SWIFT IBAN Registry 把每个国家的布局编码进去。光看几个就知道有多花：
+
+| 国家 | 长度 | BBAN 结构 |
+|------|------|-----------|
+| 挪威（NO） | 15 | 4 位银行 + 6 位账号 + 1 位国内校验位 |
+| 比利时（BE） | 16 | 3 位银行 + 7 位账号 + 2 位国内校验位 |
+| 荷兰（NL） | 18 | 4 字母银行（ABNA、RABO、INGB…） + 10 位账号 |
+| 德国（DE） | 22 | 8 位银行 + 10 位账号（无分行） |
+| 英国（GB） | 22 | 4 字母银行 + 6 位 sort code + 8 位账号 |
+| 法国（FR） | 27 | 5 位银行 + 5 位分行 + 11 字符账号 + 2 位国内校验位 |
+| 意大利（IT） | 27 | 1 字母国内校验 + 5 位银行 + 5 位分行 + 12 字符账号 |
+| 沙特阿拉伯（SA） | 24 | 2 位银行 + 18 字符账号 |
+| 巴西（BR） | 29 | 8 位银行 + 5 位分行 + 10 位账号 + 1 字母账户类型 + 1 字符持有人 |
+| 毛里求斯（MU） | 30 | 4 字母银行 + 4 位分行 + 15 位账号 + 3 字母保留 |
+
+有两个模式值得专门讲一下：
+
+**拉丁语区集团（FR、IT、BE、MC、MR、PT、SM、ST、TN）** 都在 BBAN 内部多埋了一个 **国内** 校验位——它独立于 IBAN 层面的 mod-97。法国的 `RIB key` 是对 银行 + 分行 + 账号 跑一次单独的 mod-97。意大利的 BBAN 首字符是 CIN 字母（`A`–`Z`），通过一个位置加权表算出。如果你只做 IBAN 的 mod-97，绝大多数错误能抓住，但 BBAN 里仍有一些单字符错误能蒙混过 IBAN 层，到银行跑国内校验时才暴露。这就是为什么号称「100% 准确」的校验库基本都在撒谎——他们做了 IBAN 结构校验，但跳过了国内层的检查。
+
+**英语区集团（GB、IE、MT）** 用 **字母作为银行代码**。这些字母是银行短名的前缀（`WEST`、`BARC`、`LOYD`、`HSBC`），所以解析一个 GB IBAN 拿到的信息比德国的更可读：不查表你就能猜到 `BARC` 是 Barclays。
+
+## 现实里 IBAN 错误从哪里来
+
+IBAN 错了，损失通常不在钱本身——银行会把款退回来，有时几周后才退。真正的成本是那笔退单费（每笔 5–30 EUR）、运营跟单的工时、以及供应商关系上的摩擦。值得防范的几类：
+
+### OCR 误识
+
+扫描发票的失败方式可预测。最常见的字符替换：
+
+| 错 | 对 | 原因 |
+|----|-----|------|
+| `O` | `0` | 字母 O 与数字零在低质量字体下几乎一样 |
+| `I` / `l` / `1` | `1` | 无衬线字体让这几个字形撞在一起 |
+| `S` | `5` | 斜体或装饰字体下的常见识别错误 |
+| `B` | `8` | 银行流水的压缩输出 |
+| `Z` | `2` | 欧洲大陆手写体习惯 |
+
+mod-97 把这些全都能抓住，因为单位数差一位足以改变余数。ZeroTool 的校验器还会告诉你 *哪一类* 替换最可能发生——出错时它会显示「Checksum failed, check digits or account body are wrong.」从这里你就去扫视觉上相似的字符对。
+
+### 空白字符与零宽字符
+
+从 PDF 或 Outlook 复制粘贴经常带进来不间断空格（`U+00A0`）、零宽连接符（`U+200D`）、偶尔还有 BOM。多数自己写的 IBAN 校验脚本只 strip ASCII 空格，遇到这些就崩。ZeroTool 的归一化按 ISO 13616 标准——除 `A`–`Z` 和 `0`–`9` 之外的所有码点都先剥掉再校验，因为标准里写得很清楚：人类可读形式里的所有非字母数字都只是排版。
+
+### 前导零丢失
+
+电子表格是 IBAN 的天敌。Excel 会主动把 `0123` 改成 `123`，因为它认定这格是数字。IBAN 经过表格再回到支付系统时长度就错了，mod-97 失败。根治办法是结构性的——把 IBAN 列存成 text，绝不当数字解析——但校验器能抓到这个症状。
+
+### 国家代码错位
+
+`DE`（德国）和 `DK`（丹麦）在大多数键盘上挨在一起，而它们的 IBAN 长度差了 4 个字符。如果有人把德国 IBAN 的主体粘到丹麦前缀下面，长度检查会立刻失败，校验器给出明确错误：「Wrong length for Denmark: expected 18, got 22.」
+
+### 小写字母
+
+标准是仅允许大写。有些银行为了可读性会印成大小写混排；有些邮件把 IBAN 包进超链接，链接的处理逻辑会顺手把文本小写。归一化能处理这一类，但遇到「按理该过却没过」的报障时记得想到它。
+
+## IBAN 校验器告诉不了你的事
+
+mod-97 一过就说校验器「对了」很有诱惑力。其实不对。三件事永远在它能力范围之外：
+
+1. **账户是否存在。** 银行可能上周就把它销户了。mod-97 不知道。
+2. **账户是否能正常使用。** 冻结、长期未激活、被封——这些账户都会先收下指令再在结算时退回。
+3. **IBAN 与账户名是否对得上。** 欧盟的 PSD2 与 SEPA 方案把这件事压给收款行，发送方不查。英国的 Confirmation of Payee 与欧盟 2024–2025 落地的 Verification of Payee 正是冲着这个去的，但它们生活在银行层，不在你的前端校验里。
+
+正确的心智模型：**IBAN 校验是必要的第一道筛子，不是充分条件。** 客户端用它便宜地抓住手误，剩下交给银行的 API（或一次真实的付款尝试）来兜底。
+
+## 把校验集成进支付表单
+
+典型模式：边输入边校验，成功显示绿色对勾，失败显示行内错误，没过 mod-97 就不准提交。原生 JS 的骨架：
+
+```html
+<label for="iban">IBAN</label>
+<input
+  id="iban"
+  type="text"
+  inputmode="text"
+  autocapitalize="characters"
+  spellcheck="false"
+  autocomplete="off"
+  aria-describedby="iban-msg"
+/>
+<p id="iban-msg" role="status" aria-live="polite"></p>
+
+<script>
+  const input = document.getElementById('iban');
+  const msg = document.getElementById('iban-msg');
+
+  input.addEventListener('input', () => {
+    const result = isValidIban(input.value);  // 用前面那个函数
+    msg.textContent = result ? 'Valid IBAN.' : 'IBAN checksum invalid.';
+    msg.className = result ? 'ok' : 'err';
+  });
+</script>
+```
+
+落地时有三个小细节值得多看一眼：
+
+- **`autocapitalize="characters"`** 防止 iOS 自动纠正把输入变成 `gB82…`——那样会直接挂在 format regex 上。
+- **`aria-live="polite"`** 让屏幕阅读器用户能听到校验结果，但不会抢走焦点。
+- **边输入边校验，而不是只在提交时校验。** 在第 `n` 次按键就抓住错，而不是等到 300ms submit round-trip 之后——这是整件事的关键。
+
+如果你在校验成功后还要打一个付费 IBAN API（带国内校验位 + 银行存在性查询），就给校验加个 debounce：mod-97 跑得太快可以每次按键都跑；API 调用建议 debounce 300–500ms。
+
+## 比较一下几种免费选项
+
+把 IBAN 校验放到三种地方：客户端库、SaaS API、浏览器工具。
+
+| 选项 | 时延 | 覆盖面 | 费用 | 隐私 |
+|------|------|--------|------|------|
+| `iban`（npm 包，约 28KB） | < 1ms | mod-97 + 长度 | 免费 | 客户端 |
+| ZeroTool IBAN Validator & Parser | < 1ms | mod-97 + 长度 + BBAN 拆分 | 免费 | 客户端 |
+| iban.com REST API | ~150ms | mod-97 + 银行查询 + IBAN→BIC | 按次收费 | server-to-server |
+| openiban.com REST API | ~200ms | mod-97 + 长度 | 免费，限速 | server-to-server |
+
+选哪个看你的问题是什么。个人项目的免费表单——npm 包或 ZeroTool 页面都够用。真的在跑钱的支付处理器——API 那一档值这个钱：国内校验位的覆盖和 IBAN→BIC 映射，第一次拦下本地校验漏掉的问题就回本了。
+
+ZeroTool 这个工具专门做「检视」用例：手里有一个 IBAN，想看它解析成什么，又不想把它传出去给任何人。同样的 mod-97 引擎，加上标准 npm 库不一定暴露的国家感知 BBAN 字段拆分。
+
+## 范围之外的事（以及为什么）
+
+你会发现 ZeroTool 不做这几件事：
+
+- **IBAN 生成器。** 给定国家和银行代码，数学上可以反推出一个校验位正确的「合法 IBAN」。我们不开放这个能力，因为它降低了账号伪造类骗局的门槛。真正的 IBAN 来自银行，绕开这条路的开发者需求基本都不正当。
+- **BIC / SWIFT 查询。** 把银行代码映射到银行名需要一份按月更新的授权数据库，必须分发，长期维护成本不低。BIC 查询请用 SWIFT 官方目录或所在国央行注册表，那才是权威。
+- **SEPA 收款 QR 码。** 欧洲支付理事会的 EPC069-12 格式做了一个能让银行 App 自动填好转账界面的 QR。ZeroTool 的 [QR 码生成器](/zh/tools/qr-code-generator/) 可以生成 QR，只要你自己拼出 EPC069-12 的 payload 即可——校验工具的职责是 IBAN，不是支付指令。
+
+这些是刻意留下的空白。把所有相关能力塞进同一个工具，既稀释工具本身的定位，也稀释它的信任模型。
+
+## 延伸阅读
+
+- [ISO 13616-1:2020](https://www.iso.org/standard/81090.html) — 正式标准，付费下载，但摘要免费可见。
+- [SWIFT IBAN Registry](https://www.swift.com/standards/data-standards/iban-international-bank-account-number) — 每个国家 BBAN 结构的公开 PDF，定期更新。
+- [欧洲支付理事会 — SEPA Credit Transfer rulebook](https://www.europeanpaymentscouncil.eu/) — 你提交 IBAN 之后银行实际怎么处理。
+- [Wikipedia: International Bank Account Number](https://en.wikipedia.org/wiki/International_Bank_Account_Number) — 标准的可读版历史，以及各国采纳时间线。
+
+在 ZeroTool 站内，IBAN 校验器和 [URL 解析器](/zh/tools/url-parser/)（解析支付跳转 URL 里的 token）、[Cookie 解析器](/zh/tools/cookie-parser/)（调试支付门户下发的 session cookie）、[QR 码生成器](/zh/tools/qr-code-generator/)（IBAN 校验通过后构造 SEPA EPC069-12 二维码）天然搭配。
+
+下次发票里出现一个 OCR 刚刚识别出来的 IBAN，在粘进支付页面之前先粘到校验器里。mod-97 会在微秒内告诉你这笔汇款会不会被退回。两分钟的尽职调查，第一次替你省下 25 EUR 的退单费就回本了——给供应商关系带来的隐性回报远不止此。
