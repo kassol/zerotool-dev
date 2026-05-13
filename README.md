@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 119 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 120 tools and growing.
 
 ## Tools
 
@@ -128,6 +128,7 @@
 | SSL Certificate Decoder | [/tools/ssl-certificate-decoder](https://zerotool.dev/tools/ssl-certificate-decoder) |
 | File Hash Checker | [/tools/file-hash-checker](https://zerotool.dev/tools/file-hash-checker) |
 | Image Compressor | [/tools/image-compressor](https://zerotool.dev/tools/image-compressor) |
+| IBAN Validator & Parser | [/tools/iban-validator-parser](https://zerotool.dev/tools/iban-validator-parser) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
