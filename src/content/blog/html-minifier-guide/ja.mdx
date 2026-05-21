@@ -1,0 +1,200 @@
+---
+title: "HTML Minifier: インラインスクリプトを壊さずにバイトを削る"
+description: "HTML 圧縮ツールが実際に何をしているのか、正規表現ベースのツールがどのようにページを静かに壊すのか、そしてブラウザで空白・コメント・boolean 属性を安全に剥がす方法。"
+pubDate: 2026-05-21
+lang: "ja"
+tags: ["html-minifier", "html", "performance", "build-tools", "developer-tools"]
+ogImage: /og/blog-html-minifier-guide.png
+---
+
+先週、同僚が 1.8 MB の HTML メール書き出しを「無料オンライン HTML 圧縮ツール」に貼り付け、1.4 MB の塊が返ってきた。中には髪の毛ほどの亀裂が走っていた。元の HTML にあった `<script>` タグの中で、`<` がインライン式の小なり演算子として使われていたのだが、ツールは文脈を見ずに `<` の間の連続空白をすべて潰してしまった。ページはもう描画されなかった。圧縮ツールは changelog に一行も書かず、差分は 400 KB の塊で、バグの特定には 90 分かかった。
+
+これが HTML 圧縮の繰り返される問題だ — 安全な 80% と危険な 20% が、ソースを見ているだけでは見分けがつかない。
+
+[ブラウザで HTML を圧縮する →](/ja/tools/html-minifier/)
+
+## HTML 圧縮が実際に削るバイト
+
+安全な圧縮ツールが触るのは三つのカテゴリだけだ：
+
+| カテゴリ | 例 | 安全に剥がせるか？ |
+|---|---|---|
+| タグ間の空白テキストノード | `</li>\n  <li>` | 通常はそう — HTML パーサーはテキストノードを保持するが、CSS `white-space: normal` が描画時に連続する空白を単一スペースに折りたたむため、ブロックレベル境界の間で削除しても視覚的には安全 |
+| `<script>`/`<style>` 外の HTML コメント | `<!-- TODO: refactor -->` | はい、IE 条件付きコメントを除いて |
+| boolean 属性のパディング | `disabled=""` → `disabled` | はい — HTML5 §2.3.2 は boolean 意味論が属性の存在によって決まり、値の内容には依存しないと規定しており、裸の形式は等価 |
+
+それ以外 — 正規表現ベースの圧縮ツールが一貫して間違える部分 — は字面のまま残すべきだ：
+
+- `<pre>` と `<textarea>` 内のテキスト。これらの要素は仕様により空白に敏感で、内容を圧縮すると描画が変わる。
+- `<code>`、`<samp>`、`<kbd>` 内のテキスト。HTML 仕様は保持を強制しないが、ユーザースタイルシートやフレームワークの慣例ではこれらを空白敏感として扱うため、保守的な圧縮ツールは触らない。
+- `<script>` と `<style>` のボディ。これらは「raw text」解析モードを使い、中身は JavaScript または CSS であって HTML ではない。ここを触るツールは HTML 圧縮ツールではなくなる。
+- 属性値（引用符内の空白を含む）。`<input value="  spaced  ">` は意味のある HTML だ。
+- `<!DOCTYPE>` 宣言。削除や書き換えはページを quirks mode に切り替える可能性がある。
+
+正規表現ツールが失敗する根本理由は、これらの区別がパターンマッチャから見えないことだ。`<script>` の中の `<` は小なり演算子；外側ではタグの開始記号。どちらかを知っているのはパーサーだけだ。
+
+## DOMParser は誠実な答えだ
+
+モダンブラウザは仕様に従って実装された HTML5 パーサーを搭載している — ページを描画するのと同じものだ。JavaScript からは `DOMParser` でアクセスできる：
+
+```js
+const doc = new DOMParser().parseFromString(rawHtml, 'text/html');
+```
+
+圧縮ツールにとって重要な性質は二つ：
+
+1. **エラー回復はブラウザと同一。** 入力に閉じていないタグ、欠けた `</li>`、`<head>` に紛れ込んだテキストがあっても、`DOMParser` は Chrome や Safari と同じ方法で修復する。出てきたものは描画されたであろう形だ。だからこそフラグメント（`<div>x</div>`）を貼ると `<html><head></head><body><div>x</div></body></html>` の完全なドキュメントが得られる。
+2. **要素の子ノードはパーサーの分類情報を持つ。** `<script>` と `<style>` は `innerHTML` がそのまま保持された状態で届く。`<br>` は DOM 内で閉じタグのない void 要素として到着する。裸の名前で書かれた boolean 属性（`<input disabled>`）は `value === ""` で届く；明示形式（`<input disabled="disabled">`）は文字列値を保持する — boolean 意味論は属性の存在から来るのであって、値の内容からではないからだ。
+
+ZeroTool の `html-minifier` は唯一の HTML 読み取り経路として `DOMParser` を使い、ツリーを走査してバイトを出力する。コードに `<script[^>]*>...</script>` のような正規表現マッチは存在しない；したがって、その結果として JS ペイロードが壊されることもない。
+
+## 70 行の JavaScript で書かれた Walker
+
+正しい圧縮ツールはほとんどが帳簿仕事だ。面白い部分は：
+
+```js
+const VOID = new Set([
+  'area','base','br','col','embed','hr','img','input',
+  'link','meta','source','track','wbr',
+]);
+const PRESERVE = new Set([
+  'script','style','pre','textarea','code','samp','kbd',
+]);
+
+function emitElement(el, out) {
+  const tag = el.tagName.toLowerCase();
+  let attrs = '';
+  for (const a of el.attributes) {
+    attrs += a.value === ''
+      ? ` ${a.name}`
+      : ` ${a.name}="${escapeAttr(a.value)}"`;
+  }
+
+  if (VOID.has(tag)) {
+    out.push(`<${tag}${attrs}>`);
+    return;
+  }
+  if (PRESERVE.has(tag)) {
+    out.push(`<${tag}${attrs}>${el.innerHTML}</${tag}>`);
+    return;
+  }
+  out.push(`<${tag}${attrs}>`);
+  for (const child of el.childNodes) emitNode(child, out);
+  out.push(`</${tag}>`);
+}
+
+function emitText(node, out) {
+  const collapsed = node.data.replace(/\s+/g, ' ');
+  if (collapsed.trim()) out.push(escapeText(collapsed));
+}
+
+function emitComment(node, out) {
+  // Keep IE conditional comments, drop the rest.
+  if (/^\[if /i.test(node.data)) out.push(`<!--${node.data}-->`);
+}
+```
+
+ここに埋め込まれた四つのルールが、ZeroTool HTML 圧縮ツールの挙動を覆っている：
+
+1. **Void 要素は閉じタグもボディも持たない。**
+2. **Preserve 要素の `innerHTML` は変更なしで圧縮出力に渡される。**
+3. **テキストノードは連続する ASCII 空白を単一スペースに折りたたみ、折りたたみ後が空ならノードを破棄する。**
+4. **コメントは IE 条件付きコメントを除いて破棄する。**
+
+本番ビルド時の圧縮ツール（`html-minifier-terser`、`@minify-html/node`）はこの上にさらにパスを重ねる — `</li>` のような省略可能な閉じタグの折りたたみ、属性引用符の正規化、埋め込み JavaScript・CSS の圧縮、数値文字参照のエンコード。これらはバンドラーでは有用だが、一度きりのブラウザツールには移植しにくい — それぞれが依存とエッジケースを増やす。この圧縮ツールは意図的に上記四つのルールで止めている。
+
+## 整形モードでは何が違うか
+
+整形は逆方向の走査だ — 同じ DOM、異なる出力。Walker は深さに従ってインデントし、子ノードを行で区切り、周囲の空白を切り詰める。Void 要素と preserve 要素のルールは同じく適用されるが、もう一つの細工が加わる：
+
+- 80 文字未満で改行を含まない単一子テキストはインラインのまま：  
+  `<title>Hello</title>` を三行に拆らない。
+- それ以外は一ノードあたり一行。
+
+結果は元と一バイト単位では一致しない — それが要点だ。整形は自分が制御していない HTML を *正規化* するためのものだ：CMS 書き出し、手貼りしたメールテンプレート、デバッグが必要な本番環境の一行圧縮 HTML。整形してから diff を取れば、空白ノイズに紛れず構造変化を見られる。
+
+## インライン空白のトラップ
+
+知っておく価値のあるニュアンスが一つある：HTML パーサーはすべての空白テキストノードを DOM に保持し、CSS が描画するかを決める。`<p>` とそのインライン子要素のデフォルト CSS は、ソースに何らかの空白がある位置を単一スペースとして描画する。例：
+
+```html
+<p>Hello <strong>world</strong>!</p>
+```
+
+`Hello` と `<strong>` の間のスペースは *可視* だ — 段落内では一つのスペースとして描画される。これを剥がす圧縮ツールは `Helloworld!` を生成する。ZeroTool の walker はテキストノード内で連続する空白を単一スペースに折りたたみ、丸ごと破棄しないため、トークン間のスペースは圧縮後も生き残る。
+
+これもまた、素朴な正規表現圧縮ツールの失敗が目に見える理由だ。比較：
+
+```html
+<!-- 入力 -->
+<p>Hello <strong>world</strong>!</p>
+
+<!-- 素朴な正規表現圧縮の出力 -->
+<p>Hello<strong>world</strong>!</p>
+
+<!-- 正しい圧縮の出力 -->
+<p>Hello <strong>world</strong>!</p>
+```
+
+素朴な出力はどのブラウザでも `Helloworld!` と描画される。正しい出力は `Hello world!` と描画される。一バイトの節約が、レイアウトバグと引き換えだ。
+
+## 実際にどれくらい削減できるか
+
+モダンな HTML — Next.js、Astro、Hugo、Jekyll、または典型的な CMS が生成するもの — では、圧縮は通常 15% から 40% のバイトを取り戻す。差は三つの要因から生じる：
+
+| 要因 | 典型的な影響 |
+|---|---|
+| インデントの深さ | 4 スペースインデントの深い `<div>` ツリーは、フラットな構造より多くの空白を失う |
+| コメントの密度 | 手書き HTML には `<!-- nav --><!-- footer -->` のような目印がよく入る；生成 HTML にはほぼない |
+| インライン `<script>` と `<style>` の比重 | 触らない。バイトの 80% がインライン JS なら、圧縮の上限は 20% に張り付く |
+
+40% を超える場合、入力はおそらく手で空白を盛られていた。15% を下回る場合、HTML はすでに本番圧縮済みか、本体のほとんどが `<script>`/`<style>` のコンテンツだ（圧縮ツールが触ってはいけない部分）。
+
+ビルドツール圧縮との誠実な比較として、npm の [html-minifier-terser](https://github.com/terser/html-minifier-terser) パッケージは似た範囲を報告している。ここのブラウザベースのツールは、Vite や webpack の本番圧縮ステップを上回ろうとはしていない — 一度きりの処理パスを提供し、バイト単位で監査できるようにすることを目指している。
+
+## このツールが収まる位置
+
+| ユースケース | より適したツール |
+|---|---|
+| 本番ビルドパイプライン | Vite / webpack / Astro `build` 内に組み込んだ `html-minifier-terser` |
+| CMS 書き出しの単発監査 | このツール — 貼って圧縮し、バイト節約を確認 |
+| 一行圧縮ページの読解 | このツール — 貼って整形し、読みやすい形をエディタにコピー |
+| Markdown 由来 HTML の整理 | すでに Prettier を使っているなら `prettier --parser html`；使っていなければこのツール |
+| リポジトリ全体の HTML 再整形 | Prettier または `js-beautify --html`（コマンドライン、スクリプタブル） |
+
+ブラウザ内に閉じるという位置取りは、HTML が機微なときに効いてくる — 未公開のマーケティングコピー、PII を含むカスタマーサポートテンプレート、内部管理ビュー。圧縮ツールは `DOMParser` で HTML を読むが、これは inert ドキュメントを生成する — `<img src>`、`<link href>`、`<iframe>` が参照するリソースを読み込まない。タブ自体も HTML をどこにも送らない；Minify をクリックして DevTools → Network を見れば確認できる。
+
+## 知っておく価値のあるエッジケース
+
+**条件付きコメント。** IE 6–10 は `<!--[if IE]>...<![endif]-->` で IE 専用マークアップを有効にしていた。HTML5 パーサーから見るとただのコメントだが、レガシーなメールクライアント（Outlook 2007+）は依然として解釈する。ZeroTool の圧縮ツールはこれを保持する；すべてのコメントを剥がす正規表現ツールは Outlook の描画を壊す。
+
+**`<script>` ボディ内の `</script>`。** HTML5 はスクリプト内に文字通り `</script>` シーケンスがあることを禁じる。入力にそれがある（文字列として）場合、HTML5 パーサーはその位置でスクリプトを切り詰める — 圧縮ツールには対処できない。回避策はソース側にある：`<\/script>` と書く。これはパーサーの制約であって、圧縮ツールのバグではない。
+
+**`<svg>` 内の `<style>`。** SVG には独自の解析モデルがある。HTML 内のインライン SVG は HTML パーサーが解析するが、SVG 内の `<style>` の中身は CSS ルールに従う。ZeroTool の preserve セットはこれをカバーする — 文脈に関係なく `<style>` は保持される。
+
+**属性順序。** バリデーターによっては属性順序を気にする。Walker は DOM が返す順序で `element.attributes` をイテレートし、その順序で出力する — 圧縮ツールは決して並び替えない。HTML 仕様は `NamedNodeMap` の反復順序をエンジン間で正式に保証していないため、ソースとの順序一致に *依存* するバリデーターを組まないこと；実務上はすべての主要ブラウザがソース順を保つ。
+
+**複数行の属性値。** `<img alt="Line one\nLine two">` は合法 HTML で、改行は alt テキストの一部だ。Walker は属性値を `escapeAttr` 経由で出力する（`&` と `"` を置換）が、引用符内の改行を折りたたむことは *しない*。alt テキストは無傷だ。
+
+## 簡単な比較
+
+| ツール | 実装面 | ブラウザ内 | 新規依存 | boolean 属性 | スクリプト安全 |
+|---|---|---|---|---|---|
+| ZeroTool html-minifier | `DOMParser` walker | はい | なし | はい | はい |
+| オンライン HTML 圧縮サイト | Web UI（ホストごとに異なる） | まちまち | — | 大抵 | 大抵 |
+| html-minifier-terser (npm) | 設定可能な HTML/CSS/JS 圧縮器、オプションで Terser + clean-css | いいえ | ビルド依存 | はい | はい |
+| `prettier --parser html` | Prettier の HTML パーサー | いいえ | ビルド依存 | 整形のみ | はい |
+| 一行正規表現 gist | 正規表現 | はい | なし | 時々 | いいえ |
+
+トレードオフは明確だ：スクリプト安全 + ブラウザ内 + ゼロ依存をすべて満たすなら、選択肢は狭い。このツールが埋めるのはその隙間だ。
+
+## 関連資料
+
+- [HTML Living Standard §13.2 Whitespace](https://html.spec.whatwg.org/multipage/parsing.html#tokenization) — 規範のルール
+- [MDN: `DOMParser`](https://developer.mozilla.org/ja/docs/Web/API/DOMParser) — API リファレンス
+- [html-minifier-terser オプション](https://github.com/terser/html-minifier-terser#options-quick-reference) — ビルド時圧縮ツールができて、このツールが意図的にやらないこと
+- [XML フォーマッター](/ja/tools/xml-formatter/) — 同じ walker パターン、XML ドキュメント向け
+- [HTML から Markdown](/ja/tools/html-to-markdown/) — マークアップを完全に捨てる場面
+- [HTML エンティティエンコーダー](/ja/tools/html-entity/) — 個別文字のエンコード
+
+[ツールページ](/ja/tools/html-minifier/) で HTML を貼り付ければ、Minify のたびにステータスバーにバイト節約が表示される。出力はあなたのもの — コピーする、元と diff する、ビルド成果物に流し込む、どれでも好きにできる。

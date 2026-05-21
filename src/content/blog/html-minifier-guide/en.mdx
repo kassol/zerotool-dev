@@ -1,0 +1,200 @@
+---
+title: "HTML Minifier: Shaving Bytes Without Breaking Inline Scripts"
+description: "What HTML minifiers actually do, where regex-based tools quietly corrupt your page, and how to safely strip whitespace, comments, and boolean attributes in the browser."
+pubDate: 2026-05-21
+lang: "en"
+tags: ["html-minifier", "html", "performance", "build-tools", "developer-tools"]
+ogImage: /og/blog-html-minifier-guide.png
+---
+
+Last week a teammate pasted a 1.8 MB HTML email export into a "free online HTML minifier" and got back a 1.4 MB blob with a hairline crack: one `<script>` tag in the original used `<` as a less-than operator inside an inline expression, and the tool had naively replaced every run of whitespace between `<` characters. The page no longer rendered. The minifier had not added a line to the changelog, the diff was a 400 KB blob, and the bug took ninety minutes to find.
+
+This is the recurring problem with HTML minification: the easy 80% looks identical to the dangerous 20% if you only look at the source.
+
+[Minify HTML in your browser →](/tools/html-minifier/)
+
+## What HTML Minification Actually Removes
+
+A safe minifier touches three categories of bytes:
+
+| Category | Example | Safe to strip? |
+|---|---|---|
+| Inter-tag whitespace text nodes | `</li>\n  <li>` | Usually yes — the HTML parser keeps the text node, but CSS `white-space: normal` collapses runs to a single space at render time, so removing them between block-level boundaries is visually safe |
+| HTML comments outside `<script>`/`<style>` | `<!-- TODO: refactor -->` | Yes, except IE conditional comments |
+| Boolean attribute padding | `disabled=""` → `disabled` | Yes — HTML5 §2.3.2 specifies that the boolean semantic comes from attribute presence, not value content, so the bare form is equivalent |
+
+Everything else — and this is the part regex-driven minifiers consistently get wrong — should stay verbatim:
+
+- Text inside `<pre>` and `<textarea>`. These elements are whitespace-sensitive by specification; collapsing their content changes rendering.
+- Text inside `<code>`, `<samp>`, `<kbd>`. The HTML spec does not mandate preservation, but the convention in user stylesheets and frameworks treats them as whitespace-sensitive, so a conservative minifier leaves them alone.
+- The body of `<script>` and `<style>`. These elements use a "raw text" parsing mode, and their content is JavaScript or CSS, not HTML. A minifier that touches it is not an HTML minifier anymore.
+- Attribute values, including quoted whitespace. `<input value="  spaced  ">` is meaningful HTML.
+- The `<!DOCTYPE>` declaration. Removing or rewriting it can flip the page into quirks mode.
+
+The reason regex tools fail is that none of these distinctions are visible to a pattern matcher. `<` inside a `<script>` is a less-than operator; outside one, it opens a tag. Only a parser knows which.
+
+## DOMParser Is the Honest Answer
+
+Modern browsers ship a HTML5 parser built to spec — the same one rendering the page. It is accessible from JavaScript as `DOMParser`:
+
+```js
+const doc = new DOMParser().parseFromString(rawHtml, 'text/html');
+```
+
+Two properties matter for a minifier:
+
+1. **Error recovery is identical to the browser's.** If the input has unclosed tags, missing `</li>`, or stray text in `<head>`, `DOMParser` repairs it the same way Chrome and Safari do. Whatever you get out is what would have rendered. This is also why pasting a fragment (`<div>x</div>`) yields a full `<html><head></head><body><div>x</div></body></html>` document.
+2. **Element children carry the parser's classification.** `<script>` and `<style>` arrive with their bodies intact in `innerHTML`. `<br>` arrives as a void element with no closing tag in the DOM. Boolean attributes written as bare names (`<input disabled>`) arrive with `value === ""`; explicit forms (`<input disabled="disabled">`) keep their string value, since the boolean semantic comes from attribute presence rather than value content.
+
+The `html-minifier` tool on ZeroTool uses `DOMParser` as the only HTML reading code, then walks the tree and emits bytes. There is no regex matching `<script[^>]*>...</script>`; there cannot be a corrupted JS payload as a result.
+
+## The Walker, in 70 Lines of JavaScript
+
+A correct minifier is mostly bookkeeping. The interesting parts:
+
+```js
+const VOID = new Set([
+  'area','base','br','col','embed','hr','img','input',
+  'link','meta','source','track','wbr',
+]);
+const PRESERVE = new Set([
+  'script','style','pre','textarea','code','samp','kbd',
+]);
+
+function emitElement(el, out) {
+  const tag = el.tagName.toLowerCase();
+  let attrs = '';
+  for (const a of el.attributes) {
+    attrs += a.value === ''
+      ? ` ${a.name}`
+      : ` ${a.name}="${escapeAttr(a.value)}"`;
+  }
+
+  if (VOID.has(tag)) {
+    out.push(`<${tag}${attrs}>`);
+    return;
+  }
+  if (PRESERVE.has(tag)) {
+    out.push(`<${tag}${attrs}>${el.innerHTML}</${tag}>`);
+    return;
+  }
+  out.push(`<${tag}${attrs}>`);
+  for (const child of el.childNodes) emitNode(child, out);
+  out.push(`</${tag}>`);
+}
+
+function emitText(node, out) {
+  const collapsed = node.data.replace(/\s+/g, ' ');
+  if (collapsed.trim()) out.push(escapeText(collapsed));
+}
+
+function emitComment(node, out) {
+  // Keep IE conditional comments, drop the rest.
+  if (/^\[if /i.test(node.data)) out.push(`<!--${node.data}-->`);
+}
+```
+
+The four rules embedded here cover what ZeroTool's HTML minifier does:
+
+1. **Void elements have no closing tag and no body.**
+2. **Preserve elements pass their `innerHTML` through to the minified output unchanged.**
+3. **Text nodes collapse runs of ASCII whitespace to a single space, then drop the node if it is empty.**
+4. **Comments are dropped unless they are IE conditional comments.**
+
+Production build-time minifiers (`html-minifier-terser`, `@minify-html/node`) layer additional passes on top: collapsing optional tags like `</li>`, normalising attribute quoting, minifying the embedded JavaScript and CSS, encoding numeric character references. Those are useful in a bundler but not portable to a one-off browser tool — each adds dependencies and edge cases. This minifier deliberately stops at the four rules above.
+
+## What Beautify Does Differently
+
+Beautify is the inverse traversal: same DOM, different emit. The walker indents by depth, breaks children across lines, and trims surrounding whitespace. The same rules about void and preserve elements still apply, with one extra wrinkle:
+
+- Single-child text under 80 characters with no embedded newlines stays inline:  
+  `<title>Hello</title>` rather than three lines.
+- Anything else gets one node per line.
+
+The result is not bit-identical to the original — that is the point. Beautify is for *normalising* HTML you do not control: CMS exports, hand-pasted email templates, one-line minified production output you need to debug. Run beautify, then diff. You will see the structural change without the whitespace noise.
+
+## The Inline Whitespace Trap
+
+There is one nuance worth knowing: the HTML parser keeps every whitespace text node in the DOM, and CSS decides whether to render it. Default CSS for `<p>` and inline children renders a single space wherever the source has any whitespace at all. So:
+
+```html
+<p>Hello <strong>world</strong>!</p>
+```
+
+The space between `Hello` and `<strong>` is *visible* — it renders as a space in the paragraph. A minifier that strips it produces `Helloworld!`. ZeroTool's walker handles this by collapsing whitespace runs to a single space inside text nodes rather than dropping them outright, so an inter-token space survives even after compression.
+
+This is also why naive regex minifiers fail visibly. Compare:
+
+```html
+<!-- Input -->
+<p>Hello <strong>world</strong>!</p>
+
+<!-- Naive regex minifier output -->
+<p>Hello<strong>world</strong>!</p>
+
+<!-- Correct minifier output -->
+<p>Hello <strong>world</strong>!</p>
+```
+
+The naive output renders as `Helloworld!` in every browser. The correct output renders as `Hello world!`. One byte saved costs you a layout bug.
+
+## How Much You Actually Save
+
+For modern HTML — generated by Next.js, Astro, Hugo, Jekyll, or a typical CMS — minification typically reclaims 15% to 40% of bytes. The variance comes from three factors:
+
+| Factor | Typical impact |
+|---|---|
+| Indentation depth | A deep `<div>` tree with 4-space indent loses more whitespace than a flat one |
+| Comment density | Hand-written HTML often carries `<!-- nav --><!-- footer -->` markers; generated HTML rarely does |
+| Inline `<script>` and `<style>` weight | Untouched. If 80% of your bytes are inline JS, you cap out at 20% savings |
+
+Above 40% means the input was probably whitespace-padded by hand. Below 15% usually means the HTML was already production-minified, or most of the body is `<script>`/`<style>` content (which the minifier should not touch).
+
+For an honest comparison with build-tool minifiers, the [html-minifier-terser](https://github.com/terser/html-minifier-terser) package on npm reports similar ranges. The browser-based tool here is not trying to outdo a Vite or webpack production minify step; it is trying to give you a one-off pass that you can audit byte by byte.
+
+## Where This Tool Fits
+
+| Use case | Best tool |
+|---|---|
+| Production build pipeline | `html-minifier-terser` inside Vite / webpack / Astro `build` |
+| One-off audit of a CMS export | This tool — paste, minify, check the byte savings |
+| Reading a one-line minified page | This tool — paste, beautify, copy the readable form to your editor |
+| Cleaning up Markdown-generated HTML | `prettier --parser html` if you already use Prettier; this tool if you do not |
+| Reformatting HTML across an entire repo | Prettier or `js-beautify --html` (command-line, scriptable) |
+
+The browser-only positioning matters when the HTML is sensitive: marketing pages with unreleased copy, customer support templates with PII, internal admin views. The minifier reads your HTML through `DOMParser`, which produces an inert document — it does not load the resources referenced by `<img src>`, `<link href>`, or `<iframe>`. The tab itself doesn't ship the HTML anywhere; you can confirm by watching DevTools → Network when you click Minify.
+
+## Edge Cases Worth Knowing
+
+**Conditional comments.** IE 6–10 used `<!--[if IE]>...<![endif]-->` to opt into IE-specific markup. They are technically comments to a HTML5 parser, but legacy email clients (Outlook 2007+) still respect them. ZeroTool's minifier keeps them; regex tools that strip all comments break Outlook rendering.
+
+**`</script>` inside a `<script>` body.** HTML5 forbids the literal sequence `</script>` inside a script. If your input has it (as a string), the HTML5 parser truncates the script at that point — there is nothing the minifier can do about it. The workaround belongs in the source: write `<\/script>` instead. This is a parser limitation, not a minifier bug.
+
+**`<style>` inside `<svg>`.** SVG has its own parsing model. Inline SVG inside HTML is parsed by the HTML parser, but the contents of `<style>` inside SVG follow CSS rules. ZeroTool's preserve set covers this — `<style>` is preserved regardless of context.
+
+**Attribute order.** Some validators care about attribute order. The walker iterates `element.attributes` in the order the DOM hands them back and emits them in that order — the minifier never re-sorts. The HTML spec does not formally guarantee `NamedNodeMap` iteration order across engines, so do not build a validator that *depends* on order matching the source; in practice every major browser preserves source order.
+
+**Multi-line attribute values.** `<img alt="Line one\nLine two">` is valid HTML, and the newline is part of the alt text. The walker emits the attribute value through `escapeAttr` (replacing `&` and `"`) but does *not* collapse newlines inside quoted values. Your alt text survives.
+
+## A Quick Comparison
+
+| Tool | Surface | Browser-only | New deps | Boolean attr | Script-safe |
+|---|---|---|---|---|---|
+| ZeroTool html-minifier | `DOMParser` walker | Yes | None | Yes | Yes |
+| Online HTML minifier sites | Web UI (varies per host) | Mixed | — | Usually | Usually |
+| html-minifier-terser (npm) | Configurable HTML/CSS/JS minifier, optional Terser + clean-css | No | Build dep | Yes | Yes |
+| `prettier --parser html` | Prettier's HTML parser | No | Build dep | Beautify only | Yes |
+| Regex-only "one-liner" gist | Regex | Yes | None | Sometimes | No |
+
+The trade-off is clear: if you want script-safety + browser-only + zero dependencies, the options are narrow. That is the gap this tool fills.
+
+## Further Reading
+
+- [HTML Living Standard §13.2 Whitespace](https://html.spec.whatwg.org/multipage/parsing.html#tokenization) — the normative rules
+- [MDN: `DOMParser`](https://developer.mozilla.org/en-US/docs/Web/API/DOMParser) — API reference
+- [html-minifier-terser options](https://github.com/terser/html-minifier-terser#options-quick-reference) — what build-time minifiers can do that this tool deliberately does not
+- [XML Formatter](/tools/xml-formatter/) — same walker pattern, for XML documents
+- [HTML to Markdown](/tools/html-to-markdown/) — when you need to throw away the markup entirely
+- [HTML Entity Encoder](/tools/html-entity/) — for encoding individual characters
+
+Paste your HTML on the [tool page](/tools/html-minifier/) and you will see the byte savings in the status bar after each minify. The output is yours to copy, diff against the original, or feed into a build artefact.
