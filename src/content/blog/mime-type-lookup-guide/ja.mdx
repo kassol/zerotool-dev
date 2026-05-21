@@ -1,0 +1,194 @@
+---
+title: "MIME タイプ検索：アップロード検証のためのマジックバイト判定リファレンス"
+description: "アップロード検証で拡張子を信用するのはやめましょう。IANA メディアタイプレジストリの仕組み、ブラウザ上で動くマジックバイト判定、そして HTTP ヘッダに入れるべき Content-Type を解説します。"
+pubDate: 2026-05-21
+updatedDate: 2026-05-21
+lang: "ja"
+canonicalSlug: "mime-type-lookup-guide"
+tags: ["mime-type", "content-type", "file-upload", "web-security", "developer-tools"]
+---
+
+ユーザーがフォームから `invoice.pdf` をアップロードする。サーバーはブラウザが申告した `Content-Type` をそのまま S3 に書き込む。一週間後、「リンクを開くとインライン表示されずダウンロードダイアログが出る」という報告が届く。オブジェクトのメタデータを確認すると `Content-Type: application/octet-stream`。ブラウザはファイルの正体を把握していなかったのに、平然と申告してきていたわけです。
+
+アップロードまわりのバグは、この一行のメタデータから滑り出します。対策は習慣化に尽きます。拡張子、フォームのフィールド、`File.type` を信じる前に、バイト単位で型を確認すること。
+
+[MIME タイプ検索ツールを開く →](/ja/tools/mime-type-lookup/)
+
+## MIME タイプが担う 2 つの役割
+
+メディアタイプ（RFC 6838 における正式名称）は、まったく異なる役割を同時にこなしています。
+
+| 利用箇所 | MIME タイプの役割 | 誤るとどうなるか |
+|---|---|---|
+| HTTP `Content-Type` ヘッダ | ユーザーエージェントにレスポンス本文の描画方法を伝える | PDF が開かずダウンロードされる、HTML がプレーンテキスト扱いになる |
+| HTTP `Accept` ヘッダ | サーバーにクライアントが受理できる形式を伝える | JSON しか扱えないクライアントに XML が返り、パースが破綻する |
+| `Content-Disposition` のファイル名推測 | ブラウザが保存時の拡張子を選ぶ | `report` が拡張子なしで保存され、OS が音を上げる |
+| メールの MIME パート | メーラーが添付ファイルのレンダラを選ぶ | Excel ファイルがブラウザで文字化けして開く |
+| ファイルシステムの拡張属性 (macOS `kMDItemContentType`) | Finder がデフォルトアプリを選ぶ | `.heic` が TextEdit で開かれる |
+| API メタデータ (S3, R2, Azure Blob) | CDN が配信時の `Content-Type` を決める | 同じヘッダで同じ表示崩れが、今度はキャッシュ越しに発生する |
+
+検索テーブルは、これら 6 つの利用箇所をひとつの判断に圧縮するものです。「拡張子あるいは既知のファイル形式が与えられたとき、各スロットに入れるべき文字列は何か」という問いに答える。ツールの検索パネルがまさにそれで、`.pdf` と入れれば `application/pdf` が返り、`application/json` と入れれば `.json` が表示され、`image` と入れれば `image/*` ファミリ全体が展開されます。
+
+## MIME タイプの実体
+
+文法は地味ですが厳密です。値は必ず `top-level/subtype` の形をとり、必要に応じて `;` とパラメータ対が続きます。
+
+```
+application/json
+text/html; charset=utf-8
+multipart/form-data; boundary=----abc123
+image/svg+xml
+application/vnd.openxmlformats-officedocument.wordprocessingml.document
+```
+
+IANA のトップレベルレジストリは長年にわたって増えてきました（`example` や `haptics` は比較的新しい追加です）が、Web トラフィックのほぼすべてを担うのは次の 9 つで、本ツールが扱う対象もここです。
+
+- `application` — 不透明あるいは構造化されたバイトストリーム（PDF、JSON、ZIP、各種 Office フォーマット）
+- `image` — ラスター画像とベクター画像
+- `audio` — エンコードされた音声ストリーム
+- `video` — エンコードされた映像ストリーム
+- `text` — 人間可読なテキスト（HTML、CSV、ソースコード）
+- `font` — 現代的な WOFF / TTF / OTF アウトライン
+- `multipart` — 複合メッセージ（フォームアップロード、添付付きメール）
+- `message` — カプセル化されたメッセージ（RFC 822 メール、埋め込み HTTP）
+- `model` — 3D ジオメトリ（glTF、OBJ、STL）
+
+サブタイプはツリー構造の規約に従います。
+
+- `vnd.*` はベンダー固有形式 (`application/vnd.ms-excel`)
+- `prs.*` は個人用や実験用
+- `x.`（ドット付き）は RFC 6838 で定義された未登録ツリー。旧来の `x-` プレフィックスは 6838 以前の慣習で、現在はノーオペの互換扱い
+- `+json` や `+xml` といった `+suffix` はラッパ形式をパーサに伝える（`application/manifest+json` の中身は JSON）
+
+パラメータはエンコーディングのヒントを運びます。もっとも頻繁に使うのは `charset` で、これがあって初めてブラウザは `text/html` を実際にデコードできます。中国語ページから `charset=utf-8` を落とせば、2003 年の文字化け時代に逆戻りです。
+
+## マジックバイト：拡張子が嘘をつくとき
+
+マジックバイトは、Unix の `file(1)` が 1973 年からフォーマット判定に使い続けている手法です。ほぼすべてのバイナリ形式は固定シーケンスで始まり、パーサはそれを使って「拡張子が主張する形式と中身が一致しているか」を確認します。
+
+| フォーマット | 先頭バイト (hex) | 補足 |
+|---|---|---|
+| PNG | `89 50 4E 47 0D 0A 1A 0A` | CRLF + EOF の組み合わせで FTP の ASCII モード破損を検知 |
+| JPEG | `FF D8 FF` | 4 バイト目で派生（JFIF、EXIF など）を識別 |
+| GIF | `47 49 46 38 37 61` または `47 49 46 38 39 61` | バージョンがそのまま文字列で `GIF87a` / `GIF89a` |
+| PDF | `25 50 44 46` (`%PDF`) | 直後にバージョン `-1.7` 等が続く |
+| ZIP | `50 4B 03 04` | ZIP ベースの形式はすべてこれを継承する：docx、xlsx、jar、epub、apk |
+| WebP | `52 49 46 46 …  57 45 42 50` | RIFF コンテナのオフセット 8 に `WEBP` |
+| MP4 | `…  66 74 79 70 …` | `ftyp` マジックはバイト 0 ではなく 4 — 見落としやすい |
+| Tar (POSIX ustar) | `75 73 74 61 72` | ヘッダ深部のバイト 257 に位置する |
+| SQLite データベース | `53 51 4C 69 74 65 20 66 6F 72 6D 61 74 20 33 00` | 文字列 `SQLite format 3` の後に NUL 終端子 |
+| WebAssembly | `00 61 73 6D` | `\0asm` |
+
+実務でハマるポイントは 3 つあります。
+
+1. **コンテナはバイト単位では区別がつかない。** `.docx`、`.xlsx`、`.pptx`、`.epub`、`.apk`、`.jar` はすべて `50 4B 03 04` で始まります。バイト単位での型は本当に `application/zip`。アプリケーションレベルの型まで掘るには、セントラルディレクトリを開いて `[Content_Types].xml`、`META-INF/MANIFEST.MF`、`mimetype` の有無を確認する必要があります。
+2. **マジックがゼロでないオフセットにある形式もある。** MP4 は `ftyp` をバイト 4 に隠していて、これは 64 バイト読めば十分捕まえられます。Tar の `ustar` はバイト 257、ISO 9660 の `CD001` はバイト 32769。後者ふたつはより大きい先頭スライスが必要です。ブラウザ版ツールは先頭 64 バイトをスニッフィングするため、MP4 は判別できますが tar や ISO はスキップします。これらが必要なときはローカルの `file(1)` にフォールバックしてください。
+3. **プレーンテキスト系には固定ヘッダがない。** CSV、JSON、SQL、プレーンテキスト — 見るべきバイトが存在しません。エントロピー推定、BOM、コンテンツスニッフィング（WHATWG が締め付ける前にブラウザがやっていた手法）で当たりをつけることはできますが、パースせずに「これは JSON だ」と確定できる署名は存在しません。
+
+ツールの「ファイル判定」タブは、約 30 種類のシグネチャに対するタイトなループをすべてクライアントサイドで回します。ファイルをドロップすると先頭 64 バイトだけを読み出し（標準で同梱する主要 Web 形式にはこれで十分）、最初にマッチした結果を返します。ブラウザ自身が報告する `File.type` も並べて表示するので、両者が食い違ったときにどちらを信じるべきかが一目でわかります。
+
+## 実用的なアップロード検証パイプライン
+
+実際のサーバーで必要になる検証フローを、コストの安い順に並べると次のようになります。
+
+```python
+import magic  # python-magic, wraps libmagic
+
+ALLOWED = {
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/png":  {".png"},
+    "image/webp": {".webp"},
+    "application/pdf": {".pdf"},
+}
+
+def validate_upload(stream, claimed_name, claimed_type):
+    head = stream.read(4096)
+    stream.seek(0)
+
+    sniffed = magic.from_buffer(head, mime=True)
+    if sniffed not in ALLOWED:
+        return False, f"sniffed type {sniffed!r} not allowed"
+
+    ext = "." + claimed_name.rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED[sniffed]:
+        return False, f"extension {ext!r} does not match {sniffed!r}"
+
+    # claimed_type is informational only; never the basis of a decision
+    return True, sniffed
+```
+
+Node で同じロジックを書くなら、ブラウザ版ツールと同じ要領でバイトバッファを読む `file-type` パッケージを使います。
+
+```javascript
+import { fileTypeFromBuffer } from "file-type";
+
+const ALLOWED = new Map([
+  ["image/jpeg", new Set([".jpg", ".jpeg"])],
+  ["image/png",  new Set([".png"])],
+  ["application/pdf", new Set([".pdf"])],
+]);
+
+export async function validateUpload(buffer, claimedName) {
+  const sniffed = await fileTypeFromBuffer(buffer);
+  if (!sniffed || !ALLOWED.has(sniffed.mime)) {
+    throw new Error(`sniffed ${sniffed?.mime ?? "unknown"} not allowed`);
+  }
+  const ext = "." + claimedName.split(".").pop().toLowerCase();
+  if (!ALLOWED.get(sniffed.mime).has(ext)) {
+    throw new Error(`extension ${ext} mismatches ${sniffed.mime}`);
+  }
+  return sniffed.mime;
+}
+```
+
+不審なダウンロードを手元で素早く確認するなら、シェルで以下を叩きます。
+
+```bash
+file --mime-type --brief mystery.bin
+xxd -l 16 mystery.bin
+```
+
+ブラウザ版ツールは、対応している Web 形式について `file --mime-type --brief` 相当のチェックを、アップロードなしでどのマシンからでも実行できます。CAD ファイル、科学データ、ニッチなアーカイブ亜種といった例外的なフォーマットには、引き続き `libmagic` が深いリファレンスとして残ります。
+
+## よくある落とし穴
+
+**リクエストの `Content-Type` を信頼してしまう。** ブラウザは OS が申告した値を送ってきますが、その値は多くのプラットフォームで拡張子から導出されたものです。ユーザーが何をアップロードしようと、クライアント由来の型はヒントとして扱い、サーバー側で必ず検証します。
+
+**すべてのファイルに `Content-Type: application/octet-stream` を設定してしまう。** ストレージ SDK は型を推定できないとこの値を既定として使います。結果としてブラウザは画像や PDF までダウンロードしにかかる。オブジェクトストレージへ書き込む前に、必ず実際の型を設定してください。
+
+**`text/*` で charset を忘れる。** `charset=utf-8` のない `text/csv` は、ユーザーのロケール既定で解釈されます。Windows の Excel は GBK と推測しにかかり、カスタマーサポートにチケットが立ち始めます。
+
+**`application/javascript` と `text/javascript` を混同する。** RFC 9239（2022 年）は `text/javascript` を唯一の標準値とし、`application/javascript` を含むあらゆる歴史的別名を明示的に廃止扱いとしました。互換性のためブラウザは旧来の型でもスクリプトを実行しますが、レスポンスヘッダを自分で制御できるなら `text/javascript; charset=utf-8` が正解です。
+
+**本番で巨大ファイルをスニッフィングする。** 64 バイト読むのは安価です。動画コンテナを識別するために 50 GB 読むのは違います。スライスには必ず上限を設けます。ブラウザ版ツールは `File.slice(0, 64)` でこれをやっています。
+
+**SVG を無害だと思い込む。** `image/svg+xml` は XML であり、`<script>` タグを含み得ます。コンテキストによってはブラウザがそれを実行します（特に `<img>` 経由ではなくドキュメントとして読み込まれた場合）。バイトスニッフィングが確認できるのはフォーマットだけで、サニタイゼーションは別問題です。
+
+## `application/octet-stream` が正解になる場面
+
+直感に反しますが、未知のバイナリデータに対する正しい答えは `application/octet-stream` です。「これは生のバイト列だから描画を試みるな」と受信側に伝える役割を持ちます。次のような場面で使います。
+
+- 内側の形式がサーバーの関知すべきでない暗号化済みデータ
+- インライン表示ではなく保存ダイアログを出したい汎用ファイルダウンロード
+- 不透明なペイロード（ファームウェア、モデル、アーカイブ）を返す API エンドポイント
+
+誤りは、型がわかっているファイルにも既定として使うこと。これをやるとブラウザが画像や PDF のインライン表示に使う経路が壊れます。
+
+## 他のツールとの違い
+
+`mimetype.io` はブラウザ系で最も近い存在で、こちらも File API を介してクライアントサイドで判定を行います。優れたリファレンスであり、プライバシーよりも形状で違いが出ます。ZeroTool はアップロード検証作業を念頭に、240 エントリの厳選カタログ、カテゴリ別の色付きチップ、4 言語 UI、そして「スニッフィング結果の MIME、推定拡張子、生 hex、ブラウザ申告の型」を横並びで見せる結果パネルを提供します。
+
+`codeshack.io/mime-type-lookup` は高速な静的リストで、スニッファは持ちません。「`.xyz` の Content-Type は何か」を引くには便利ですが、バイト単位のファイル識別は含まれません。
+
+`file(1)` と `libmagic` はゴールドスタンダードで、本ツールが意図的に省いている形式まで含めて数百のシグネチャを備えます。CAD ファイル、科学データ、ニッチなアーカイブ亜種を日常的に扱うなら、ローカルに `libmagic` を入れてください。日々の Web 開発で発生する定型ケースは、ブラウザ版ツールがタブを離れずにカバーします。
+
+このトレードオフは意図的なものです。約 240 件の検索エントリと約 30 件のバイトレベルシグネチャを、現代の Web で実際に出現する形式に重みを置いて収録しています。すべてクライアントサイドで動作し、何もアップロードせず、データベースはビルド時にページへ焼き込まれます。
+
+## 参考リンク
+
+- [HTTP ステータスコード](/ja/tools/http-status-codes/) — HTTP レスポンスヘッダのもう半分
+- [URL パーサ](/ja/tools/url-parser/) — ダウンロード URL を詳細に検査したいとき
+- [ファイルハッシュチェッカー](/ja/tools/file-hash-checker/) — 型が判明した後の整合性検証に
+- [RFC 6838: Media Type Specifications and Registration Procedures](https://www.rfc-editor.org/rfc/rfc6838) — 標準そのもの
+- [IANA Media Types Registry](https://www.iana.org/assignments/media-types/media-types.xhtml) — 公式の一覧
+- [MDN: Incomplete list of MIME types](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types) — ブラウザが実際に認識する形式

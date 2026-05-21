@@ -1,0 +1,194 @@
+---
+title: "MIME 타입 조회: 업로드 검증을 위한 레퍼런스와 매직 바이트 스니퍼"
+description: "업로드 검증에서 파일 확장자를 더는 신뢰하지 마십시오. IANA 미디어 타입 레지스트리의 동작 방식, 브라우저에서 실행되는 매직 바이트 탐지, 그리고 HTTP 헤더에 넣어야 할 Content-Type까지 정리합니다."
+pubDate: 2026-05-21
+updatedDate: 2026-05-21
+lang: "ko"
+canonicalSlug: "mime-type-lookup-guide"
+tags: ["mime-type", "content-type", "file-upload", "web-security", "developer-tools"]
+---
+
+사용자가 폼에 `invoice.pdf`를 업로드합니다. 서버는 브라우저가 제출한 `Content-Type`을 그대로 받아 S3에 저장합니다. 일주일 뒤 누군가 링크를 누르면 인라인으로 열리지 않고 다운로드 창이 뜬다고 보고합니다. 객체 메타데이터를 확인해 보면 `Content-Type: application/octet-stream`. 브라우저는 파일의 정체를 전혀 몰랐는데도 서버 코드에 그렇게 알려준 것입니다.
+
+업로드 버그는 거의 항상 이 한 줄의 메타데이터에서 시작됩니다. 해결책은 습관 하나로 정리됩니다. 확장자, 폼 필드, `File.type`을 믿기 전에 바이트 수준의 타입을 먼저 확인하는 것.
+
+[MIME Type Lookup 도구 열기 →](/ko/tools/mime-type-lookup/)
+
+## MIME 타입이 동시에 떠맡는 두 가지 역할
+
+미디어 타입 — RFC 6838의 공식 명칭 — 은 서로 완전히 다른 두 가지 일을 한꺼번에 합니다.
+
+| 사용 위치 | MIME 타입의 역할 | 잘못 설정되면 벌어지는 일 |
+|---|---|---|
+| HTTP `Content-Type` 헤더 | 응답 본문을 어떻게 렌더링할지 사용자 에이전트에 알림 | PDF가 열리지 않고 다운로드되거나, HTML이 일반 텍스트로 표시됨 |
+| HTTP `Accept` 헤더 | 클라이언트가 받을 수 있는 포맷을 서버에 알림 | JSON만 처리하는 클라이언트에 API가 XML을 돌려주고 파싱이 깨짐 |
+| `Content-Disposition` 파일명 추정 | 저장 시 브라우저가 확장자를 선택 | 확장자 없는 `report`로 저장되어 OS가 다루지 못함 |
+| 이메일 MIME 파트 | 메일러가 첨부 파일의 렌더러를 선택 | Excel 파일이 브라우저에서 깨진 텍스트로 열림 |
+| 파일 시스템 확장 속성 (macOS `kMDItemContentType`) | Finder가 연결 프로그램을 결정 | `.heic`가 TextEdit으로 열림 |
+| API 메타데이터 (S3, R2, Azure Blob) | CDN이 송출 `Content-Type`을 설정 | 같은 헤더, 같은 표시 문제가 그대로 캐시까지 됨 |
+
+조회 테이블은 이 여섯 가지 표면을 하나의 판단으로 압축합니다. 확장자나 알려진 파일 포맷이 주어졌을 때 그 자리에 들어가야 할 문자열이 무엇인가. 도구의 검색 패널이 바로 그 일을 합니다. `.pdf`를 입력하면 `application/pdf`, `application/json`을 입력하면 확장자 `.json`, `image`를 입력하면 `image/*` 계열 전체를 펼쳐 보여줍니다.
+
+## MIME 타입의 실제 모양
+
+문법은 단조롭지만 정확합니다. 모든 값은 `top-level/subtype` 형태이고, 필요하면 `;` 뒤에 파라미터 쌍이 따라옵니다.
+
+```
+application/json
+text/html; charset=utf-8
+multipart/form-data; boundary=----abc123
+image/svg+xml
+application/vnd.openxmlformats-officedocument.wordprocessingml.document
+```
+
+IANA 최상위 레지스트리는 시간이 지나며 늘어났습니다 — `example`, `haptics` 같은 항목은 비교적 최근에 추가됐습니다. 다만 웹 트래픽의 거의 전부를 떠받치는 것은 그중 아홉 개이고, 이 도구가 다루는 것도 그 아홉 개입니다.
+
+- `application` — 불투명하거나 구조화된 바이트 스트림 (PDF, JSON, ZIP, 모든 Office 포맷)
+- `image` — 래스터 및 벡터 이미지
+- `audio` — 인코딩된 오디오 스트림
+- `video` — 인코딩된 비디오 스트림
+- `text` — 사람이 읽을 수 있는 텍스트 (HTML, CSV, 소스 코드)
+- `font` — 현대 WOFF / TTF / OTF 윤곽선
+- `multipart` — 복합 메시지 (폼 업로드, 첨부 파일이 있는 이메일)
+- `message` — 캡슐화된 메시지 (RFC 822 이메일, 임베디드 HTTP)
+- `model` — 3D 지오메트리 (glTF, OBJ, STL)
+
+서브타입은 트리 구조 관례를 따릅니다.
+
+- `vnd.*` 는 벤더 고유 포맷 (`application/vnd.ms-excel`)
+- `prs.*` 는 개인용 또는 실험적 포맷
+- `x.` (점 표기) 는 RFC 6838이 정의한 미등록 트리. 이전부터 쓰이던 `x-` 접두사는 RFC 6838 이전 관습으로, 이제는 의미 없는 레거시 형태로 취급됩니다
+- `+json`, `+xml` 같은 `+suffix`는 파서에게 래퍼 포맷을 알려줍니다 (`application/manifest+json`은 내부가 JSON)
+
+파라미터는 인코딩 힌트를 담습니다. 가장 흔한 것이 `charset`이고, 이 값이 있어야 브라우저가 `text/html`을 제대로 디코딩합니다. 한국어 페이지에서 `charset=utf-8`을 빠뜨리면 2003년식 모지바케 시대로 되돌아갑니다.
+
+## 매직 바이트: 확장자가 거짓말할 때
+
+매직 바이트는 1973년부터 Unix의 `file(1)`이 포맷을 식별해 온 방식입니다. 거의 모든 바이너리 포맷은 고정된 바이트 시퀀스로 시작하고, 파서는 이 시퀀스로 나머지 스트림이 확장자가 주장하는 그 포맷이 맞는지 확인합니다.
+
+| 포맷 | 첫 바이트 (hex) | 비고 |
+|---|---|---|
+| PNG | `89 50 4E 47 0D 0A 1A 0A` | CRLF + EOF 패턴이 FTP ASCII 모드 손상까지 잡아냄 |
+| JPEG | `FF D8 FF` | 네 번째 바이트가 변종(JFIF, EXIF 등)을 식별 |
+| GIF | `47 49 46 38 37 61` 또는 `47 49 46 38 39 61` | 버전 문자열 그대로 — `GIF87a` / `GIF89a` |
+| PDF | `25 50 44 46` (`%PDF`) | 뒤에 `-1.7` 같은 리비전이 붙음 |
+| ZIP | `50 4B 03 04` | ZIP 기반 포맷 전체가 상속: docx, xlsx, jar, epub, apk |
+| WebP | `52 49 46 46 …  57 45 42 50` | RIFF 컨테이너, 오프셋 8에 `WEBP` |
+| MP4 | `…  66 74 79 70 …` | `ftyp` 매직이 0바이트가 아니라 4바이트에 위치 — 놓치기 쉬움 |
+| Tar (POSIX ustar) | `75 73 74 61 72` | 헤더 깊숙이, 257바이트 위치에 자리잡음 |
+| SQLite 데이터베이스 | `53 51 4C 69 74 65 20 66 6F 72 6D 61 74 20 33 00` | 글자 그대로 `SQLite format 3`에 NUL 종결자 |
+| WebAssembly | `00 61 73 6D` | `\0asm` |
+
+세 가지 함정이 흔합니다.
+
+1. **컨테이너는 바이트 수준에서 똑같이 생겼습니다.** `.docx`, `.xlsx`, `.pptx`, `.epub`, `.apk`, `.jar`이 모두 `50 4B 03 04`로 시작합니다. 바이트 수준 타입은 진짜로 `application/zip`이 맞습니다. 애플리케이션 수준 타입을 알아내려면 중앙 디렉터리를 열고 `[Content_Types].xml`, `META-INF/MANIFEST.MF`, `mimetype` 같은 파일을 확인해야 합니다.
+2. **0이 아닌 오프셋에 매직이 있는 경우가 있습니다.** MP4는 `ftyp`을 4바이트 위치에 숨기는데, 64바이트만 읽어도 잡힙니다. Tar의 `ustar`는 257바이트에, ISO 9660의 `CD001`은 32769바이트에 있어서 둘 다 더 큰 초기 슬라이스가 필요합니다. 이 도구는 첫 64바이트만 검사하므로 MP4는 식별하지만 tar와 ISO는 건너뜁니다. 이 둘이 필요하면 로컬에서 `file(1)`로 검사하십시오.
+3. **순수 텍스트 포맷은 고정 헤더가 없습니다.** CSV, JSON, SQL, 일반 텍스트 — 들여다볼 게 없습니다. 엔트로피, BOM 마커, 콘텐츠 스니핑(WHATWG가 제동을 걸기 전까지 브라우저가 과하게 해왔던 방식)으로 추측은 가능하지만, 어떤 시그니처로도 파싱 없이 JSON임을 확정할 수는 없습니다.
+
+도구의 Sniff file 탭은 약 서른 개의 시그니처를 좁은 루프로 돌리며, 전부 클라이언트 사이드에서 실행됩니다. 파일을 끌어다 놓으면 첫 64바이트만 읽어서 — 기본 탑재된 일반적인 웹 포맷에는 충분합니다 — 첫 매치를 보고합니다. 브라우저 자체의 `File.type`도 같이 표시되므로, 두 값이 어긋날 때 어느 쪽을 믿을지 바로 보입니다.
+
+## 실전 업로드 검증 파이프라인
+
+대부분의 서버가 실제로 필요한 검증 흐름은 다음과 같습니다. 비용이 싼 단계부터 정렬했습니다.
+
+```python
+import magic  # python-magic, wraps libmagic
+
+ALLOWED = {
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/png":  {".png"},
+    "image/webp": {".webp"},
+    "application/pdf": {".pdf"},
+}
+
+def validate_upload(stream, claimed_name, claimed_type):
+    head = stream.read(4096)
+    stream.seek(0)
+
+    sniffed = magic.from_buffer(head, mime=True)
+    if sniffed not in ALLOWED:
+        return False, f"sniffed type {sniffed!r} not allowed"
+
+    ext = "." + claimed_name.rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED[sniffed]:
+        return False, f"extension {ext!r} does not match {sniffed!r}"
+
+    # claimed_type is informational only; never the basis of a decision
+    return True, sniffed
+```
+
+같은 로직을 Node에서, 브라우저 도구와 동일한 방식으로 바이트 버퍼를 읽는 `file-type` 패키지로 구현하면 이렇습니다.
+
+```javascript
+import { fileTypeFromBuffer } from "file-type";
+
+const ALLOWED = new Map([
+  ["image/jpeg", new Set([".jpg", ".jpeg"])],
+  ["image/png",  new Set([".png"])],
+  ["application/pdf", new Set([".pdf"])],
+]);
+
+export async function validateUpload(buffer, claimedName) {
+  const sniffed = await fileTypeFromBuffer(buffer);
+  if (!sniffed || !ALLOWED.has(sniffed.mime)) {
+    throw new Error(`sniffed ${sniffed?.mime ?? "unknown"} not allowed`);
+  }
+  const ext = "." + claimedName.split(".").pop().toLowerCase();
+  if (!ALLOWED.get(sniffed.mime).has(ext)) {
+    throw new Error(`extension ${ext} mismatches ${sniffed.mime}`);
+  }
+  return sniffed.mime;
+}
+```
+
+수상한 다운로드 파일을 셸에서 즉석 점검할 때는 이렇게 합니다.
+
+```bash
+file --mime-type --brief mystery.bin
+xxd -l 16 mystery.bin
+```
+
+브라우저 도구는 알고 있는 웹 포맷 범위 안에서 `file --mime-type --brief`와 같은 스타일의 점검을 어느 머신에서든 업로드 없이 수행합니다. CAD 파일, 과학 데이터, 비주류 아카이브 변종 같은 이색 포맷에는 여전히 `libmagic`이 더 깊은 레퍼런스입니다.
+
+## 자주 빠지는 함정
+
+**요청의 `Content-Type`을 신뢰하기.** 브라우저는 OS가 알려준 값을 그대로 보내고, 그 값은 대부분 플랫폼에서 확장자에서 유도됩니다. 사용자가 무엇을 올리든 클라이언트 사이드 타입은 힌트로만 다루고 서버에서 직접 검증하십시오.
+
+**모든 파일에 `Content-Type: application/octet-stream`을 박아 넣기.** 스토리지 SDK는 타입을 판단하지 못할 때 이 값을 기본으로 씁니다. 그러면 브라우저는 이미지나 PDF조차 렌더링 대신 다운로드로 응답합니다. 객체 스토리지에 쓰기 전에 항상 진짜 타입을 지정하십시오.
+
+**`text/*`에서 charset 빠뜨리기.** `charset=utf-8`이 없는 `text/csv`는 사용자 로캘 기본값으로 해석됩니다. Windows의 Excel은 이걸 GBK로 추측할 것이고, 그 순간부터 고객 지원 티켓이 쌓이기 시작합니다.
+
+**`application/javascript`와 `text/javascript` 혼동.** RFC 9239 (2022)는 `text/javascript`를 유일한 표준 값으로 정하고 `application/javascript`를 비롯한 모든 기존 별칭을 명시적으로 폐기 처리했습니다. 브라우저는 호환성을 위해 옛 타입으로 제공되는 스크립트도 여전히 실행하지만, 응답 헤더를 직접 제어한다면 정답은 `text/javascript; charset=utf-8`입니다.
+
+**프로덕션에서 거대 파일을 통째로 스니핑.** 64바이트 읽기는 싸지만, 비디오 컨테이너를 식별하겠다고 50 GB를 다 읽는 건 그렇지 않습니다. 항상 슬라이스를 제한하십시오. 브라우저 도구는 `File.slice(0, 64)`로 이를 처리합니다.
+
+**SVG가 안전하다고 가정하기.** `image/svg+xml`은 XML이고 `<script>` 태그를 품을 수 있습니다. 일부 컨텍스트에서는 — 특히 `<img>`가 아니라 문서로 직접 로드될 때 — 브라우저가 이를 실행합니다. 바이트 스니프는 포맷만 확인할 뿐이고, 새니타이즈는 별도의 문제입니다.
+
+## `application/octet-stream`이 오히려 정답인 경우
+
+직관과 반대로, 정체불명의 바이너리 데이터에 대한 정답은 `application/octet-stream`입니다. 수신자에게 "이건 원시 바이트로 다루고 렌더링하려 들지 마"라고 말하는 값입니다. 다음 같은 경우에 사용합니다.
+
+- 내부 포맷이 서버의 관심사가 아닌 암호화된 블롭
+- 인라인 표시 대신 저장 다이얼로그를 원하는 일반 파일 다운로드
+- 불투명 페이로드를 반환하는 API 엔드포인트 (펌웨어, 모델, 아카이브)
+
+문제는 이걸 알 만한 파일에까지 기본값으로 쓰는 것입니다. 그러면 브라우저가 이미지와 PDF에 사용하는 인라인 표시 경로가 깨집니다.
+
+## 다른 대안과의 차이
+
+`mimetype.io`는 브라우저 진영에서 가장 가까운 유사 도구로, 마찬가지로 File API를 통해 클라이언트 사이드에서 탐지를 수행합니다. 견고한 레퍼런스이고, 실제 차이는 프라이버시보다는 형태에 있습니다. ZeroTool은 240개로 큐레이션된 카탈로그, 카테고리 색조의 칩, 4개 언어 UI, 그리고 스니핑된 MIME · 가능한 확장자 · 원시 hex · 브라우저가 보고한 타입을 나란히 보여주는 결과 패널을 업로드 검증 작업에 맞춰 제공합니다.
+
+`codeshack.io/mime-type-lookup`은 스니퍼 없는 빠른 정적 목록입니다. "`.xyz`의 Content-Type은 뭐지?" 같은 질문에는 유용하지만 바이트 수준 파일 식별은 없습니다.
+
+`file(1)`과 `libmagic`은 골드 스탠더드이고, 이 도구가 의도적으로 제외한 포맷을 포함해 수백 개의 시그니처를 갖추고 있습니다. CAD 파일, 과학 데이터, 비주류 아카이브 변종을 일상적으로 다룬다면 로컬에 `libmagic`을 설치하십시오. 일상적인 웹 개발에서는 브라우저 도구가 탭을 벗어나지 않고 일반적인 케이스를 처리합니다.
+
+이 트레이드오프는 의도된 선택입니다. 약 240개의 조회 항목과 약 30개의 바이트 수준 시그니처, 모두 현대 웹에서 실제로 마주치는 포맷에 가중치를 둡니다. 모든 처리는 클라이언트 사이드에서 일어나고, 업로드는 없으며, 데이터베이스는 빌드 시점에 페이지에 구워져 들어갑니다.
+
+## 더 읽기
+
+- [HTTP 상태 코드](/ko/tools/http-status-codes/) — HTTP 응답 헤더의 나머지 절반
+- [URL 파서](/ko/tools/url-parser/) — 다운로드 URL을 자세히 들여다봐야 할 때
+- [파일 해시 체커](/ko/tools/file-hash-checker/) — 타입을 안 다음에는 무결성도 확인
+- [RFC 6838: Media Type Specifications and Registration Procedures](https://www.rfc-editor.org/rfc/rfc6838) — 실제 표준
+- [IANA Media Types Registry](https://www.iana.org/assignments/media-types/media-types.xhtml) — 권위 있는 목록
+- [MDN: Incomplete list of MIME types](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types) — 브라우저가 실제로 인식하는 항목
