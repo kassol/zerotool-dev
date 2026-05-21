@@ -1,0 +1,200 @@
+---
+title: "HTML 压缩工具：在不破坏内联脚本的前提下省字节"
+description: "HTML 压缩工具实际在做什么、基于正则的工具如何悄悄破坏页面，以及如何在浏览器里安全地剥离空白、注释和布尔属性。"
+pubDate: 2026-05-21
+lang: "zh"
+tags: ["html-minifier", "html", "performance", "build-tools", "developer-tools"]
+ogImage: /og/blog-html-minifier-guide.png
+---
+
+上周同事把一份 1.8 MB 的 HTML 邮件导出贴进某个「免费在线 HTML 压缩工具」，拿回 1.4 MB 的产物，里面藏了一道发丝裂缝：原始 HTML 里有一段 `<script>` 用 `<` 作为内联表达式里的小于号，工具不分上下文地折叠了所有 `<` 之间的空白。页面渲染挂了。压缩工具没在 changelog 里多写一行，diff 是一团 400 KB 的乱码，定位这个 bug 花了九十分钟。
+
+这就是 HTML 压缩反复出现的问题：80% 的容易场景和 20% 的危险场景在源码里长得一模一样。
+
+[在浏览器里压缩 HTML →](/zh/tools/html-minifier/)
+
+## HTML 压缩实际上动了哪些字节
+
+一个安全的压缩工具只处理三类字节：
+
+| 类别 | 例子 | 是否安全剥离？ |
+|---|---|---|
+| 标签间空白文本节点 | `</li>\n  <li>` | 通常是 — HTML 解析器会保留这些文本节点，但 CSS `white-space: normal` 在渲染时会把连续空白折叠成一个空格，因此跨块级边界删除它们在视觉上是安全的 |
+| `<script>`/`<style>` 之外的 HTML 注释 | `<!-- TODO: refactor -->` | 是，IE 条件注释除外 |
+| 布尔属性的填充 | `disabled=""` → `disabled` | 是 — HTML5 §2.3.2 规定布尔语义由属性是否存在决定，与属性值内容无关，因此裸属性形式等价 |
+
+剩下的内容——也是基于正则的压缩工具反复出错的地方——应当保持字面不变：
+
+- `<pre>` 和 `<textarea>` 内的文本。规范要求这两个元素对空白敏感，压缩其内容会改变渲染结果。
+- `<code>`、`<samp>`、`<kbd>` 内的文本。HTML 规范并未强制保留，但用户样式表和主流框架都按空白敏感处理，因此保守的压缩工具不动它。
+- `<script>` 和 `<style>` 的内容。这两个元素使用「raw text」解析模式，内部是 JavaScript 或 CSS，不是 HTML。压缩这部分内容的工具已经不算 HTML 压缩工具了。
+- 属性值，包括带引号的空白。`<input value="  spaced  ">` 是有意义的 HTML。
+- `<!DOCTYPE>` 声明。删除或重写它可能把页面切到 quirks mode。
+
+正则工具失败的根本原因，是上述区分对模式匹配器不可见。`<` 在 `<script>` 内部是小于号；在外面是开标签符。只有解析器才知道哪个是哪个。
+
+## DOMParser 是诚实的答案
+
+现代浏览器内置了符合规范的 HTML5 解析器——和渲染页面的是同一个。JavaScript 里通过 `DOMParser` 直接调用：
+
+```js
+const doc = new DOMParser().parseFromString(rawHtml, 'text/html');
+```
+
+对压缩工具来说，有两个性质很重要：
+
+1. **错误恢复与浏览器一致。** 输入有未闭合的标签、漏写的 `</li>`、或者 `<head>` 里残留的散落文本，`DOMParser` 会按照 Chrome 和 Safari 的方式修补。最终拿到的就是浏览器会渲染的形态。这也是为什么贴一个 fragment（`<div>x</div>`）会得到一个完整的 `<html><head></head><body><div>x</div></body></html>` 文档。
+2. **元素子节点带着解析器的分类信息。** `<script>` 和 `<style>` 的 `innerHTML` 完整保留。`<br>` 在 DOM 里是一个没有闭合标签的 void 元素。写成裸属性形式的布尔属性（`<input disabled>`）拿到的 `value === ""`；显式写法（`<input disabled="disabled">`）则保留字符串值，因为布尔语义来自属性的存在与否，与值内容无关。
+
+ZeroTool 上的 `html-minifier` 工具把 `DOMParser` 作为唯一的 HTML 读取入口，再遍历树、输出字节。代码里没有 `<script[^>]*>...</script>` 这样的正则匹配；也就不会因此把 JS 内容压坏。
+
+## 用 70 行 JavaScript 写的遍历器
+
+一个正确的压缩工具大部分是登记式的工作。值得看的部分：
+
+```js
+const VOID = new Set([
+  'area','base','br','col','embed','hr','img','input',
+  'link','meta','source','track','wbr',
+]);
+const PRESERVE = new Set([
+  'script','style','pre','textarea','code','samp','kbd',
+]);
+
+function emitElement(el, out) {
+  const tag = el.tagName.toLowerCase();
+  let attrs = '';
+  for (const a of el.attributes) {
+    attrs += a.value === ''
+      ? ` ${a.name}`
+      : ` ${a.name}="${escapeAttr(a.value)}"`;
+  }
+
+  if (VOID.has(tag)) {
+    out.push(`<${tag}${attrs}>`);
+    return;
+  }
+  if (PRESERVE.has(tag)) {
+    out.push(`<${tag}${attrs}>${el.innerHTML}</${tag}>`);
+    return;
+  }
+  out.push(`<${tag}${attrs}>`);
+  for (const child of el.childNodes) emitNode(child, out);
+  out.push(`</${tag}>`);
+}
+
+function emitText(node, out) {
+  const collapsed = node.data.replace(/\s+/g, ' ');
+  if (collapsed.trim()) out.push(escapeText(collapsed));
+}
+
+function emitComment(node, out) {
+  // Keep IE conditional comments, drop the rest.
+  if (/^\[if /i.test(node.data)) out.push(`<!--${node.data}-->`);
+}
+```
+
+这里面嵌入的四条规则覆盖了 ZeroTool HTML 压缩工具的行为：
+
+1. **Void 元素没有闭合标签，也没有内容。**
+2. **保留元素的 `innerHTML` 原封不动地输出到压缩结果中。**
+3. **文本节点把连续 ASCII 空白折叠为单个空格；如果折叠后为空，丢弃节点。**
+4. **注释一律丢弃，IE 条件注释除外。**
+
+生产环境的构建期压缩工具（`html-minifier-terser`、`@minify-html/node`）会在此之上再叠加若干 pass：折叠可选闭合标签如 `</li>`、归一化属性引号、压缩嵌入的 JavaScript 与 CSS、编码数字字符引用。这些在打包器里有用，但很难移植到一次性使用的浏览器工具——每一项都会引入依赖和边界情况。这个压缩工具有意停在上面四条规则。
+
+## 美化模式做了什么不同的事
+
+美化是反向的遍历：同一个 DOM，不同的输出。遍历器按层级缩进、把子节点拆成多行、并裁掉周围的空白。Void 元素和保留元素的规则照旧适用，只多一处微调：
+
+- 单一文本子节点、长度小于 80 字符、且不含换行的元素保持单行：  
+  `<title>Hello</title>` 不会被拆成三行。
+- 其他情况每个节点单独一行。
+
+输出结果与原文不会逐字节相同——这正是目的。美化用来 *统一格式* 你不掌控的 HTML：CMS 导出、手工粘贴的邮件模板、需要调试的生产环境一行式压缩 HTML。先美化、再 diff，你就能看清结构变化，不被空白噪声干扰。
+
+## 内联空白的陷阱
+
+有一处细节值得注意：HTML 解析器会把每个空白文本节点都保留在 DOM 里，由 CSS 决定是否渲染。`<p>` 及其内联子元素的默认 CSS 在源码有任何空白的位置都会渲染为一个空格。所以：
+
+```html
+<p>Hello <strong>world</strong>!</p>
+```
+
+`Hello` 与 `<strong>` 之间的空格是 *可见的*——它在段落里渲染为一个空格。把它剥掉的压缩工具会产出 `Helloworld!`。ZeroTool 的遍历器在文本节点内把连续空白折叠成单个空格，而不是整块丢掉，所以内联 token 之间的空格在压缩之后仍然存在。
+
+这也是为什么朴素正则压缩工具的失败肉眼可见。对比：
+
+```html
+<!-- 输入 -->
+<p>Hello <strong>world</strong>!</p>
+
+<!-- 朴素正则压缩输出 -->
+<p>Hello<strong>world</strong>!</p>
+
+<!-- 正确的压缩输出 -->
+<p>Hello <strong>world</strong>!</p>
+```
+
+朴素输出在所有浏览器里都渲染成 `Helloworld!`。正确输出渲染成 `Hello world!`。省下来的一个字节换来一个布局 bug。
+
+## 实际能省多少
+
+对现代 HTML——Next.js、Astro、Hugo、Jekyll 或典型 CMS 生成的——压缩通常能回收 15% 到 40% 的字节。差异来自三个因素：
+
+| 因素 | 典型影响 |
+|---|---|
+| 缩进深度 | 4 空格缩进的深层 `<div>` 树比扁平结构丢得多 |
+| 注释密度 | 手写 HTML 常带 `<!-- nav --><!-- footer -->` 这类标记；生成式 HTML 很少 |
+| 内联 `<script>` 和 `<style>` 占比 | 不会动这些。如果 80% 的字节是内联 JS，压缩上限就是 20% |
+
+超过 40% 通常意味着输入是手工堆了大量空白。低于 15% 则要么 HTML 已经是生产环境压缩过的，要么大部分内容是 `<script>`/`<style>`（压缩工具不该动的部分）。
+
+如果要和构建期工具做诚实对比，npm 上的 [html-minifier-terser](https://github.com/terser/html-minifier-terser) 报告的范围相近。这里这个浏览器工具不试图超越 Vite 或 webpack 生产构建的压缩步骤；它是给你一次性的处理通道，让你能逐字节审计输出。
+
+## 这个工具适合放在什么位置
+
+| 使用场景 | 更合适的工具 |
+|---|---|
+| 生产构建流水线 | Vite / webpack / Astro `build` 里嵌入的 `html-minifier-terser` |
+| 一次性审计 CMS 导出 | 这个工具——粘贴、压缩、看字节节省 |
+| 阅读一行式压缩页面 | 这个工具——粘贴、美化，把可读版本拷回编辑器 |
+| 清理 Markdown 生成的 HTML | 如果已经在用 Prettier，用 `prettier --parser html`；没在用就用这个工具 |
+| 在整个仓库里重新格式化 HTML | Prettier 或 `js-beautify --html`（命令行，可脚本化） |
+
+浏览器内运行这一定位在 HTML 涉及敏感内容时尤其重要：未发布的营销页、含 PII 的客服模板、内部管理视图。压缩工具用 `DOMParser` 读取 HTML，它产生的是一份 inert 文档——不会去加载 `<img src>`、`<link href>`、`<iframe>` 引用的资源。当前页面也不会把 HTML 发到任何地方；点 Minify 时打开 DevTools → Network 就能确认这一点。
+
+## 值得了解的边界情况
+
+**条件注释。** IE 6–10 用 `<!--[if IE]>...<![endif]-->` 启用针对 IE 的标记。从 HTML5 解析器的视角它们是普通注释，但旧版邮件客户端（Outlook 2007+）仍然解释它们。ZeroTool 的压缩工具会保留这类注释；那些剥掉所有注释的正则工具会破坏 Outlook 渲染。
+
+**`<script>` 内出现 `</script>` 字面量。** HTML5 禁止 `<script>` 内出现字面 `</script>` 序列。如果输入里有（作为字符串），HTML5 解析器会在那个位置截断脚本——压缩工具对此无能为力。修法在源码侧：写成 `<\/script>`。这是解析器的限制，不是压缩工具的 bug。
+
+**`<svg>` 内的 `<style>`。** SVG 有自己的解析模型。HTML 里的内联 SVG 由 HTML 解析器解析，但 SVG 内 `<style>` 的内容按 CSS 规则处理。ZeroTool 的保留集合覆盖这种情况——无论上下文如何，`<style>` 都会被保留。
+
+**属性顺序。** 有些验证器在意属性顺序。遍历器按 DOM 返回的顺序迭代 `element.attributes` 并按该顺序输出——压缩工具从不重排。HTML 规范并未正式保证 `NamedNodeMap` 在不同引擎间的迭代顺序，因此不要构建一个 *依赖* 属性顺序与源一致的验证器；实践上所有主流浏览器都保留源顺序。
+
+**多行属性值。** `<img alt="Line one\nLine two">` 是合法 HTML，换行是 alt 文本的一部分。遍历器通过 `escapeAttr` 输出属性值（替换 `&` 和 `"`），但 *不* 折叠引号内的换行。alt 文本不受影响。
+
+## 简要对比
+
+| 工具 | 实现面 | 浏览器内 | 新增依赖 | 布尔属性 | 脚本安全 |
+|---|---|---|---|---|---|
+| ZeroTool html-minifier | `DOMParser` 遍历器 | 是 | 无 | 是 | 是 |
+| 在线 HTML 压缩站点 | Web UI（各家不同） | 不一定 | — | 多数支持 | 多数支持 |
+| html-minifier-terser (npm) | 可配置 HTML/CSS/JS 压缩器，可选接 Terser + clean-css | 否 | 构建依赖 | 是 | 是 |
+| `prettier --parser html` | Prettier 的 HTML 解析器 | 否 | 构建依赖 | 仅美化 | 是 |
+| 一行式正则 gist | 正则 | 是 | 无 | 有时 | 否 |
+
+取舍很清楚：如果同时要脚本安全 + 浏览器内 + 零依赖，选项很少。这就是这个工具填补的空缺。
+
+## 延伸阅读
+
+- [HTML Living Standard §13.2 Whitespace](https://html.spec.whatwg.org/multipage/parsing.html#tokenization) — 规范层规则
+- [MDN: `DOMParser`](https://developer.mozilla.org/zh-CN/docs/Web/API/DOMParser) — API 参考
+- [html-minifier-terser 配置项](https://github.com/terser/html-minifier-terser#options-quick-reference) — 构建期压缩工具能做、而本工具刻意不做的事
+- [XML 格式化](/zh/tools/xml-formatter/) — 同一个遍历器模式，针对 XML 文档
+- [HTML 转 Markdown](/zh/tools/html-to-markdown/) — 直接抛弃标记的场景
+- [HTML 实体编码](/zh/tools/html-entity/) — 单字符编码
+
+在 [工具页](/zh/tools/html-minifier/) 粘贴 HTML，每次压缩后状态栏会显示字节节省。输出归你处理：复制走、和原文 diff，或者塞回构建产物。

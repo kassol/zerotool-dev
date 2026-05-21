@@ -1,0 +1,200 @@
+---
+title: "HTML 압축 도구: 인라인 스크립트를 깨뜨리지 않고 바이트 줄이기"
+description: "HTML 압축 도구가 실제로 무엇을 하는지, 정규식 기반 도구가 어떻게 페이지를 조용히 망가뜨리는지, 그리고 브라우저에서 공백·주석·boolean 속성을 안전하게 제거하는 방법."
+pubDate: 2026-05-21
+lang: "ko"
+tags: ["html-minifier", "html", "performance", "build-tools", "developer-tools"]
+ogImage: /og/blog-html-minifier-guide.png
+---
+
+지난 주 동료가 1.8 MB HTML 이메일 내보내기를 어떤 「무료 온라인 HTML 압축 도구」에 붙여 넣었고, 1.4 MB 짜리 덩어리를 받았다. 그 안엔 머리카락 같은 균열이 있었다. 원본 HTML의 어떤 `<script>` 태그에서 `<` 가 인라인 표현식 안의 작다 연산자로 쓰였는데, 도구는 맥락을 보지 않고 `<` 사이의 연속 공백을 모조리 접어버렸다. 페이지는 더 이상 렌더링되지 않았다. 압축 도구는 changelog 에 한 줄도 적지 않았고, diff 는 400 KB 짜리 덩어리였으며, 버그를 찾는 데 90분이 걸렸다.
+
+이것이 HTML 압축에서 반복되는 문제다 — 쉬운 80% 와 위험한 20% 가 소스만 봐서는 똑같이 보인다.
+
+[브라우저에서 HTML 압축하기 →](/ko/tools/html-minifier/)
+
+## HTML 압축이 실제로 제거하는 것
+
+안전한 압축 도구가 건드리는 바이트는 세 가지 부류뿐이다:
+
+| 부류 | 예 | 안전하게 제거 가능? |
+|---|---|---|
+| 태그 사이 공백 텍스트 노드 | `</li>\n  <li>` | 보통 그렇다 — HTML 파서는 텍스트 노드를 유지하지만, CSS `white-space: normal` 이 렌더 시점에 연속 공백을 단일 스페이스로 접기 때문에 블록 경계 사이에서 제거해도 시각적으로 안전 |
+| `<script>`/`<style>` 바깥의 HTML 주석 | `<!-- TODO: refactor -->` | 예, IE 조건부 주석 제외 |
+| boolean 속성의 채움 | `disabled=""` → `disabled` | 예 — HTML5 §2.3.2 에서 boolean 의미는 속성의 존재 여부로 정해지며 값의 내용과 무관하다고 규정하므로, 맨 이름 형식이 동등 |
+
+그 외 — 정규식 기반 압축 도구가 일관되게 망치는 부분 — 은 글자 그대로 남아야 한다:
+
+- `<pre>` 와 `<textarea>` 안의 텍스트. 이 요소들은 사양상 공백에 민감하므로 내용을 압축하면 렌더링이 바뀐다.
+- `<code>`, `<samp>`, `<kbd>` 안의 텍스트. HTML 사양은 보존을 강제하지 않지만, 사용자 스타일시트와 프레임워크 관행은 이들을 공백 민감으로 다루기 때문에 보수적인 압축 도구는 손대지 않는다.
+- `<script>` 와 `<style>` 의 본문. 이들은 「raw text」 파싱 모드를 사용하고, 내용은 JavaScript 또는 CSS 이지 HTML 이 아니다. 여기를 건드리는 도구는 더 이상 HTML 압축 도구가 아니다.
+- 속성 값(따옴표 안 공백 포함). `<input value="  spaced  ">` 는 의미 있는 HTML 이다.
+- `<!DOCTYPE>` 선언. 제거하거나 다시 쓰면 페이지가 quirks mode 로 전환될 수 있다.
+
+정규식 도구가 실패하는 근본 이유는 이런 구분이 패턴 매처에는 보이지 않기 때문이다. `<script>` 안의 `<` 는 작다 연산자; 바깥에서는 태그 시작 기호. 어느 쪽인지 아는 건 파서뿐이다.
+
+## DOMParser 가 정직한 답이다
+
+모던 브라우저는 사양에 맞춘 HTML5 파서를 탑재하고 있다 — 페이지를 렌더링하는 것과 동일한 파서다. JavaScript 에서는 `DOMParser` 로 접근한다:
+
+```js
+const doc = new DOMParser().parseFromString(rawHtml, 'text/html');
+```
+
+압축 도구에 중요한 성질은 두 가지다:
+
+1. **에러 복구가 브라우저와 동일하다.** 입력에 닫히지 않은 태그, 빠진 `</li>`, `<head>` 에 떨어진 텍스트가 있어도 `DOMParser` 는 Chrome 과 Safari 와 같은 방식으로 복구한다. 결과로 나오는 것은 실제 렌더링됐을 형태다. 그래서 fragment(`<div>x</div>`)를 붙여 넣으면 완전한 `<html><head></head><body><div>x</div></body></html>` 문서가 나온다.
+2. **요소 자식 노드는 파서의 분류를 함께 가져온다.** `<script>` 와 `<style>` 은 `innerHTML` 이 그대로 보존된 상태로 도착한다. `<br>` 은 DOM 안에서 닫는 태그 없는 void 요소로 도착한다. 맨 이름으로 쓰인 boolean 속성(`<input disabled>`)은 `value === ""` 로 도착하고; 명시적 형태(`<input disabled="disabled">`)는 문자열 값을 유지한다 — boolean 의미는 속성의 존재 여부에서 오는 것이지 값의 내용에서 오는 것이 아니다.
+
+ZeroTool 의 `html-minifier` 도구는 `DOMParser` 를 유일한 HTML 읽기 경로로 사용하고, 트리를 순회하며 바이트를 출력한다. 코드에는 `<script[^>]*>...</script>` 같은 정규식 매칭이 없다; 따라서 그 결과로 JS 페이로드가 손상될 일도 없다.
+
+## JavaScript 70 줄짜리 워커
+
+올바른 압축 도구는 대부분이 장부 작업이다. 흥미로운 부분은 이렇다:
+
+```js
+const VOID = new Set([
+  'area','base','br','col','embed','hr','img','input',
+  'link','meta','source','track','wbr',
+]);
+const PRESERVE = new Set([
+  'script','style','pre','textarea','code','samp','kbd',
+]);
+
+function emitElement(el, out) {
+  const tag = el.tagName.toLowerCase();
+  let attrs = '';
+  for (const a of el.attributes) {
+    attrs += a.value === ''
+      ? ` ${a.name}`
+      : ` ${a.name}="${escapeAttr(a.value)}"`;
+  }
+
+  if (VOID.has(tag)) {
+    out.push(`<${tag}${attrs}>`);
+    return;
+  }
+  if (PRESERVE.has(tag)) {
+    out.push(`<${tag}${attrs}>${el.innerHTML}</${tag}>`);
+    return;
+  }
+  out.push(`<${tag}${attrs}>`);
+  for (const child of el.childNodes) emitNode(child, out);
+  out.push(`</${tag}>`);
+}
+
+function emitText(node, out) {
+  const collapsed = node.data.replace(/\s+/g, ' ');
+  if (collapsed.trim()) out.push(escapeText(collapsed));
+}
+
+function emitComment(node, out) {
+  // Keep IE conditional comments, drop the rest.
+  if (/^\[if /i.test(node.data)) out.push(`<!--${node.data}-->`);
+}
+```
+
+여기에 박힌 네 가지 규칙이 ZeroTool HTML 압축 도구의 동작을 덮는다:
+
+1. **Void 요소는 닫는 태그도 본문도 갖지 않는다.**
+2. **Preserve 요소의 `innerHTML` 은 변경 없이 압축 출력에 그대로 전달된다.**
+3. **텍스트 노드는 연속된 ASCII 공백을 단일 스페이스로 접고, 접힌 결과가 비었으면 노드를 폐기한다.**
+4. **주석은 IE 조건부 주석을 제외하고 폐기한다.**
+
+프로덕션 빌드 시 압축 도구(`html-minifier-terser`, `@minify-html/node`)는 이 위에 추가 패스를 쌓는다 — `</li>` 같은 선택적 닫는 태그 접기, 속성 따옴표 정규화, 내장 JavaScript 및 CSS 압축, 숫자 문자 참조 인코딩. 번들러에서는 유용하지만 일회성 브라우저 도구로 이식하기는 어렵다 — 각 항목이 의존성과 엣지 케이스를 늘린다. 이 압축 도구는 위 네 규칙에서 의도적으로 멈춘다.
+
+## 정렬 모드는 무엇이 다른가
+
+정렬은 역방향 순회다 — 같은 DOM, 다른 출력. 워커가 깊이에 따라 들여쓰기하고, 자식을 줄로 나누고, 주변 공백을 잘라낸다. Void 요소와 preserve 요소 규칙은 동일하게 적용되며, 한 가지 미세한 추가가 있다:
+
+- 80 자 미만이고 줄바꿈이 없는 단일 자식 텍스트는 인라인으로 유지:  
+  `<title>Hello</title>` 를 세 줄로 쪼개지 않는다.
+- 그 외엔 한 노드당 한 줄.
+
+결과는 원본과 바이트 단위로 동일하지 않다 — 그것이 목적이다. 정렬은 통제권이 없는 HTML 을 *정규화* 하는 용도다: CMS 내보내기, 손으로 붙여 넣은 이메일 템플릿, 디버깅이 필요한 프로덕션의 한 줄 압축 HTML. 정렬한 다음 diff 를 떠라. 공백 노이즈에 묻히지 않고 구조 변화를 볼 수 있다.
+
+## 인라인 공백의 함정
+
+알아둘 만한 미묘함이 하나 있다: HTML 파서는 모든 공백 텍스트 노드를 DOM 에 보관하고, CSS 가 렌더링 여부를 정한다. `<p>` 와 그 인라인 자식에 대한 기본 CSS 는 소스에 공백이 있는 모든 위치를 단일 스페이스로 렌더한다. 따라서:
+
+```html
+<p>Hello <strong>world</strong>!</p>
+```
+
+`Hello` 와 `<strong>` 사이의 스페이스는 *보인다* — 단락 안에서 한 칸의 스페이스로 렌더된다. 이를 제거하는 압축 도구는 `Helloworld!` 를 만들어 낸다. ZeroTool 의 워커는 텍스트 노드 안의 연속 공백을 단일 스페이스로 접지 통째로 버리지 않기 때문에, 토큰 사이의 스페이스는 압축 후에도 살아남는다.
+
+이것이 또한 순진한 정규식 압축 도구의 실패가 눈에 보이는 이유다. 비교:
+
+```html
+<!-- 입력 -->
+<p>Hello <strong>world</strong>!</p>
+
+<!-- 순진한 정규식 압축 출력 -->
+<p>Hello<strong>world</strong>!</p>
+
+<!-- 올바른 압축 출력 -->
+<p>Hello <strong>world</strong>!</p>
+```
+
+순진한 출력은 모든 브라우저에서 `Helloworld!` 로 렌더된다. 올바른 출력은 `Hello world!` 로 렌더된다. 절약한 한 바이트가 레이아웃 버그와 맞바꿔진다.
+
+## 실제로 얼마나 줄어드는가
+
+모던한 HTML — Next.js, Astro, Hugo, Jekyll 또는 전형적인 CMS 에서 생성된 — 의 경우 압축은 보통 15% 에서 40% 의 바이트를 되찾는다. 차이는 세 가지 요인에서 온다:
+
+| 요인 | 일반적인 영향 |
+|---|---|
+| 들여쓰기 깊이 | 4 칸 들여쓰기의 깊은 `<div>` 트리는 평탄한 구조보다 더 많은 공백을 잃는다 |
+| 주석 밀도 | 손으로 쓴 HTML 은 `<!-- nav --><!-- footer -->` 같은 표시를 자주 담는다; 생성된 HTML 은 거의 없다 |
+| 인라인 `<script>` 와 `<style>` 비중 | 손대지 않는다. 바이트의 80% 가 인라인 JS 라면 압축 상한은 20% 에서 멈춘다 |
+
+40% 를 넘는다면 입력이 손으로 공백을 채워 넣은 것일 가능성이 크다. 15% 미만이라면 HTML 이 이미 프로덕션 압축됐거나, 본문 대부분이 `<script>`/`<style>` 콘텐츠(압축 도구가 건드려서는 안 되는 부분)다.
+
+빌드 도구 압축과의 정직한 비교를 위해, npm 의 [html-minifier-terser](https://github.com/terser/html-minifier-terser) 패키지도 유사한 범위를 보고한다. 여기의 브라우저 기반 도구는 Vite 나 webpack 의 프로덕션 압축 단계를 능가하려고 하지 않는다 — 바이트 단위로 감사할 수 있는 일회성 처리 패스를 제공하는 것이 목적이다.
+
+## 이 도구가 들어맞는 자리
+
+| 사용 사례 | 더 적합한 도구 |
+|---|---|
+| 프로덕션 빌드 파이프라인 | Vite / webpack / Astro `build` 안에 묶인 `html-minifier-terser` |
+| CMS 내보내기의 일회성 감사 | 이 도구 — 붙여 넣고 압축, 바이트 절감 확인 |
+| 한 줄 압축 페이지 읽기 | 이 도구 — 붙여 넣고 정렬, 읽을 수 있는 형태를 에디터로 복사 |
+| Markdown 에서 생성된 HTML 정리 | 이미 Prettier 를 쓰고 있다면 `prettier --parser html`; 아니면 이 도구 |
+| 저장소 전체 HTML 재포맷 | Prettier 또는 `js-beautify --html`(명령줄, 스크립트화 가능) |
+
+브라우저 전용이라는 위치 잡기는 HTML 이 민감할 때 의미가 커진다 — 공개 전 마케팅 페이지, PII 가 들어간 고객 지원 템플릿, 내부 관리 화면. 압축 도구는 `DOMParser` 로 HTML 을 읽는데, 이것은 inert 문서를 만든다 — `<img src>`, `<link href>`, `<iframe>` 이 참조하는 리소스를 로드하지 않는다. 탭 자체도 HTML 을 어디로도 보내지 않는다; Minify 를 누르면서 DevTools → Network 를 보면 확인할 수 있다.
+
+## 알아둘 만한 엣지 케이스
+
+**조건부 주석.** IE 6–10 은 `<!--[if IE]>...<![endif]-->` 로 IE 전용 마크업을 사용했다. HTML5 파서 입장에서는 일반 주석이지만, 레거시 메일 클라이언트(Outlook 2007+)는 여전히 해석한다. ZeroTool 의 압축 도구는 이들을 보존한다; 모든 주석을 제거하는 정규식 도구는 Outlook 렌더링을 깨뜨린다.
+
+**`<script>` 본문 안의 `</script>`.** HTML5 는 스크립트 안에 글자 그대로의 `</script>` 시퀀스가 있는 것을 금지한다. 입력에 그것이 (문자열로) 있다면 HTML5 파서는 그 위치에서 스크립트를 잘라낸다 — 압축 도구가 어찌할 수 없다. 해결책은 소스 쪽이다: `<\/script>` 로 쓴다. 이는 파서의 제약이지 압축 도구의 버그가 아니다.
+
+**`<svg>` 안의 `<style>`.** SVG 는 자체 파싱 모델을 가진다. HTML 안의 인라인 SVG 는 HTML 파서가 파싱하지만, SVG 안 `<style>` 의 내용은 CSS 규칙을 따른다. ZeroTool 의 preserve 집합이 이를 다룬다 — 맥락과 상관없이 `<style>` 은 보존된다.
+
+**속성 순서.** 일부 검증기는 속성 순서에 신경 쓴다. 워커는 DOM 이 넘겨주는 순서대로 `element.attributes` 를 순회하고 그 순서대로 출력한다 — 압축 도구는 절대 재정렬하지 않는다. HTML 사양은 엔진 간 `NamedNodeMap` 순회 순서를 공식적으로 보장하지 않으므로, 원본과의 순서 일치에 *의존하는* 검증기를 만들지 말 것; 실무에서는 모든 주요 브라우저가 소스 순서를 보존한다.
+
+**여러 줄에 걸친 속성 값.** `<img alt="Line one\nLine two">` 은 합법 HTML 이며, 줄바꿈은 alt 텍스트의 일부다. 워커는 속성 값을 `escapeAttr`(`&` 와 `"` 치환)을 통해 출력하지만 따옴표 안의 줄바꿈을 접지는 *않는다*. alt 텍스트는 그대로 살아남는다.
+
+## 간단 비교
+
+| 도구 | 구현면 | 브라우저 전용 | 새 의존성 | boolean 속성 | 스크립트 안전 |
+|---|---|---|---|---|---|
+| ZeroTool html-minifier | `DOMParser` 워커 | 예 | 없음 | 예 | 예 |
+| 온라인 HTML 압축 사이트 | Web UI(호스트별로 다름) | 혼합 | — | 대체로 | 대체로 |
+| html-minifier-terser (npm) | 설정 가능한 HTML/CSS/JS 압축기, 선택적 Terser + clean-css | 아니오 | 빌드 의존성 | 예 | 예 |
+| `prettier --parser html` | Prettier 의 HTML 파서 | 아니오 | 빌드 의존성 | 정렬만 | 예 |
+| 한 줄 정규식 gist | 정규식 | 예 | 없음 | 가끔 | 아니오 |
+
+트레이드오프는 분명하다: 스크립트 안전 + 브라우저 전용 + 의존성 제로를 한꺼번에 원한다면 선택지는 좁다. 이 도구가 메우는 자리가 거기다.
+
+## 더 읽을거리
+
+- [HTML Living Standard §13.2 Whitespace](https://html.spec.whatwg.org/multipage/parsing.html#tokenization) — 규범 규칙
+- [MDN: `DOMParser`](https://developer.mozilla.org/ko/docs/Web/API/DOMParser) — API 참조
+- [html-minifier-terser 옵션](https://github.com/terser/html-minifier-terser#options-quick-reference) — 빌드 시 압축 도구가 할 수 있고 이 도구가 의도적으로 하지 않는 것
+- [XML 포매터](/ko/tools/xml-formatter/) — 같은 워커 패턴, XML 문서용
+- [HTML 에서 Markdown 으로](/ko/tools/html-to-markdown/) — 마크업을 통째로 버리는 경우
+- [HTML 엔티티 인코더](/ko/tools/html-entity/) — 개별 문자 인코딩
+
+[도구 페이지](/ko/tools/html-minifier/) 에 HTML 을 붙여 넣으면 Minify 할 때마다 상태 표시줄에 바이트 절감이 나온다. 출력은 사용자 몫이다 — 복사하거나, 원본과 diff 하거나, 빌드 산출물로 흘려 넣어라.
