@@ -1,0 +1,415 @@
+---
+// No props needed — tool widget is language-independent.
+---
+
+<div>
+  <div class="hm-wrap">
+    <div class="hm-panels">
+      <div class="hm-panel">
+        <label for="hm-input">
+          <span data-i18n="htmlInput">HTML Input</span>
+          <button id="hm-copy-input" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="hm-input"
+          class="tool-textarea hm-textarea"
+          data-i18n-ph="inputPh"
+          placeholder='<!DOCTYPE html>&#10;<html lang="en">&#10;  <head>&#10;    <title>Hello</title>&#10;  </head>&#10;  <body>&#10;    <h1>Hello World</h1>&#10;  </body>&#10;</html>'
+          spellcheck="false"
+        ></textarea>
+      </div>
+      <div class="hm-panel">
+        <label for="hm-output">
+          <span data-i18n="output">Output</span>
+          <button id="hm-copy-output" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+        </label>
+        <textarea
+          id="hm-output"
+          class="tool-textarea hm-textarea"
+          readonly
+          data-i18n-ph="outputPh"
+          placeholder="Minified or beautified HTML will appear here…"
+          spellcheck="false"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="hm-actions">
+      <button id="hm-minify" class="btn-primary" type="button" data-i18n="minify">Minify</button>
+      <button id="hm-beautify" class="btn-primary" type="button" data-i18n="beautify">Beautify</button>
+      <button id="hm-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      <label class="hm-indent-label">
+        <span data-i18n="indent">Indent:</span>
+        <select id="hm-indent">
+          <option value="2" selected>2 spaces</option>
+          <option value="4">4 spaces</option>
+          <option value="tab">Tab</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="hm-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          copy: 'Copy', copied: 'Copied!', clear: 'Clear',
+          minify: 'Minify', beautify: 'Beautify',
+          htmlInput: 'HTML Input', output: 'Output',
+          inputPh: 'Paste your HTML here…',
+          outputPh: 'Minified or beautified HTML will appear here…',
+          indent: 'Indent:',
+          statusMin: 'Minified — {orig} → {out} ({pct})',
+          statusBeauty: 'Beautified successfully.',
+          statusErr: 'Error: ',
+          bytes: 'B', kbytes: 'KB',
+        },
+        zh: {
+          copy: '复制', copied: '已复制！', clear: '清除',
+          minify: '压缩', beautify: '美化',
+          htmlInput: 'HTML 输入', output: '输出',
+          inputPh: '在此粘贴 HTML…',
+          outputPh: '压缩或美化后的 HTML 将显示在这里…',
+          indent: '缩进：',
+          statusMin: '已压缩 — {orig} → {out} ({pct})',
+          statusBeauty: '已美化。',
+          statusErr: '错误：',
+          bytes: 'B', kbytes: 'KB',
+        },
+        ja: {
+          copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
+          minify: '圧縮', beautify: '整形',
+          htmlInput: 'HTML 入力', output: '出力',
+          inputPh: 'ここに HTML を貼り付け…',
+          outputPh: '圧縮または整形された HTML がここに表示されます…',
+          indent: 'インデント：',
+          statusMin: '圧縮完了 — {orig} → {out} ({pct})',
+          statusBeauty: '整形が完了しました。',
+          statusErr: 'エラー：',
+          bytes: 'B', kbytes: 'KB',
+        },
+        ko: {
+          copy: '복사', copied: '복사됨!', clear: '지우기',
+          minify: '압축', beautify: '정렬',
+          htmlInput: 'HTML 입력', output: '출력',
+          inputPh: '여기에 HTML 붙여넣기…',
+          outputPh: '압축 또는 정렬된 HTML이 여기에 표시됩니다…',
+          indent: '들여쓰기：',
+          statusMin: '압축됨 — {orig} → {out} ({pct})',
+          statusBeauty: '정렬이 완료되었습니다.',
+          statusErr: '오류：',
+          bytes: 'B', kbytes: 'KB',
+        },
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
+      });
+
+      var inputEl = document.getElementById('hm-input');
+      var outputEl = document.getElementById('hm-output');
+      var statusEl = document.getElementById('hm-status');
+      var copyInputBtn = document.getElementById('hm-copy-input');
+      var copyOutputBtn = document.getElementById('hm-copy-output');
+      var indentEl = document.getElementById('hm-indent');
+      var lastMode = 'minify';
+
+      var VOID_ELEMENTS = {
+        area:1, base:1, br:1, col:1, embed:1, hr:1, img:1, input:1,
+        link:1, meta:1, source:1, track:1, wbr:1,
+      };
+      var PRESERVE_ELEMENTS = {
+        script:1, style:1, pre:1, textarea:1, code:1, samp:1, kbd:1,
+      };
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status ' + (kind || 'success');
+      }
+      function clearStatus() {
+        statusEl.textContent = '';
+        statusEl.className = 'tool-status';
+      }
+      function getIndent() {
+        var v = indentEl.value;
+        if (v === 'tab') return '\t';
+        var n = parseInt(v, 10) || 2;
+        return new Array(n + 1).join(' ');
+      }
+      function escapeAttr(s) {
+        return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      }
+      function escapeText(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+      function formatBytes(n) {
+        if (n < 1024) return n + ' ' + t.bytes;
+        return (n / 1024).toFixed(1) + ' ' + t.kbytes;
+      }
+      function isFragment(raw) {
+        return !/<html[\s>]/i.test(raw);
+      }
+      function repeat(s, n) {
+        var out = ''; for (var i = 0; i < n; i++) out += s; return out;
+      }
+
+      function attrsString(el) {
+        var attrs = '';
+        for (var i = 0; i < el.attributes.length; i++) {
+          var a = el.attributes[i];
+          if (a.value === '') {
+            attrs += ' ' + a.name;
+          } else {
+            attrs += ' ' + a.name + '="' + escapeAttr(a.value) + '"';
+          }
+        }
+        return attrs;
+      }
+
+      function serializeNode(node, mode, depth, indent, parts) {
+        var pad = (mode === 'beautify') ? repeat(indent, depth) : '';
+        var nl = (mode === 'beautify') ? '\n' : '';
+
+        switch (node.nodeType) {
+          case 1: { /* Element */
+            var tag = node.tagName.toLowerCase();
+            var attrs = attrsString(node);
+
+            if (VOID_ELEMENTS[tag]) {
+              parts.push(pad + '<' + tag + attrs + '>' + nl);
+              return;
+            }
+            if (PRESERVE_ELEMENTS[tag]) {
+              var inner = node.innerHTML;
+              if (mode === 'minify') {
+                parts.push('<' + tag + attrs + '>' + inner + '</' + tag + '>');
+              } else {
+                if (inner && inner.indexOf('\n') !== -1) {
+                  parts.push(pad + '<' + tag + attrs + '>' + nl + inner + nl + pad + '</' + tag + '>' + nl);
+                } else {
+                  parts.push(pad + '<' + tag + attrs + '>' + inner + '</' + tag + '>' + nl);
+                }
+              }
+              return;
+            }
+            if (node.childNodes.length === 0) {
+              parts.push(pad + '<' + tag + attrs + '></' + tag + '>' + nl);
+              return;
+            }
+            /* Single text child collapse */
+            if (node.childNodes.length === 1 && node.childNodes[0].nodeType === 3) {
+              var txt = node.childNodes[0].data;
+              if (mode === 'minify') {
+                var collapsed = txt.replace(/\s+/g, ' ').trim();
+                parts.push('<' + tag + attrs + '>' + escapeText(collapsed) + '</' + tag + '>');
+              } else {
+                var trimmed = txt.trim();
+                if (trimmed && trimmed.length < 80 && trimmed.indexOf('\n') === -1) {
+                  parts.push(pad + '<' + tag + attrs + '>' + escapeText(trimmed) + '</' + tag + '>' + nl);
+                } else {
+                  parts.push(pad + '<' + tag + attrs + '>' + nl);
+                  parts.push(repeat(indent, depth + 1) + escapeText(trimmed) + nl);
+                  parts.push(pad + '</' + tag + '>' + nl);
+                }
+              }
+              return;
+            }
+            /* Has children */
+            parts.push(pad + '<' + tag + attrs + '>' + nl);
+            for (var c = 0; c < node.childNodes.length; c++) {
+              serializeNode(node.childNodes[c], mode, depth + 1, indent, parts);
+            }
+            parts.push(pad + '</' + tag + '>' + nl);
+            return;
+          }
+          case 3: { /* Text */
+            var data = node.data;
+            if (mode === 'minify') {
+              var c2 = data.replace(/\s+/g, ' ');
+              if (!c2.trim()) return;
+              parts.push(escapeText(c2));
+            } else {
+              var trimmed2 = data.trim();
+              if (trimmed2) parts.push(pad + escapeText(trimmed2) + nl);
+            }
+            return;
+          }
+          case 8: { /* Comment */
+            if (mode === 'minify') {
+              /* Keep IE conditional comments */
+              if (/^\[if /i.test(node.data) || /^<!\[endif\]/i.test(node.data)) {
+                parts.push('<!--' + node.data + '-->');
+              }
+            } else {
+              parts.push(pad + '<!--' + node.data + '-->' + nl);
+            }
+            return;
+          }
+        }
+      }
+
+      function process(raw, mode) {
+        var doc = new DOMParser().parseFromString(raw, 'text/html');
+        var indent = getIndent();
+        var parts = [];
+        var fragment = isFragment(raw);
+
+        if (!fragment && doc.doctype) {
+          if (mode === 'minify') {
+            parts.push('<!doctype ' + doc.doctype.name + '>');
+          } else {
+            parts.push('<!doctype ' + doc.doctype.name + '>\n');
+          }
+        }
+
+        if (fragment) {
+          var body = doc.body;
+          for (var i = 0; i < body.childNodes.length; i++) {
+            serializeNode(body.childNodes[i], mode, 0, indent, parts);
+          }
+        } else if (doc.documentElement) {
+          serializeNode(doc.documentElement, mode, 0, indent, parts);
+        }
+
+        var out = parts.join('');
+        return (mode === 'minify') ? out.trim() : out.replace(/\n+$/, '\n');
+      }
+
+      function run(mode) {
+        var raw = inputEl.value;
+        if (!raw.trim()) { outputEl.value = ''; clearStatus(); return; }
+        try {
+          var output = process(raw, mode);
+          outputEl.value = output;
+          if (mode === 'minify') {
+            var origBytes = new Blob([raw]).size;
+            var outBytes = new Blob([output]).size;
+            var pct = origBytes > 0
+              ? ((origBytes - outBytes) / origBytes * 100).toFixed(1) + '%'
+              : '0%';
+            var sign = (outBytes <= origBytes) ? '−' : '+';
+            setStatus(
+              t.statusMin
+                .replace('{orig}', formatBytes(origBytes))
+                .replace('{out}', formatBytes(outBytes))
+                .replace('{pct}', sign + pct.replace('-', '')),
+              'success'
+            );
+          } else {
+            setStatus(t.statusBeauty, 'success');
+          }
+          window.trackTool && window.trackTool('html_minifier', mode);
+        } catch (e) {
+          outputEl.value = '';
+          setStatus(t.statusErr + (e && e.message ? e.message : 'Failed'), 'error');
+        }
+      }
+
+      var liveTimer = null;
+      inputEl.addEventListener('input', function () {
+        clearTimeout(liveTimer);
+        liveTimer = setTimeout(function () { run(lastMode); }, 300);
+      });
+
+      document.getElementById('hm-minify').addEventListener('click', function () {
+        lastMode = 'minify';
+        run('minify');
+      });
+      document.getElementById('hm-beautify').addEventListener('click', function () {
+        lastMode = 'beautify';
+        run('beautify');
+      });
+      indentEl.addEventListener('change', function () { run(lastMode); });
+
+      document.getElementById('hm-clear').addEventListener('click', function () {
+        inputEl.value = ''; outputEl.value = ''; clearStatus();
+      });
+
+      function wireCopy(btn, source) {
+        btn.addEventListener('click', function () {
+          if (!source.value) return;
+          navigator.clipboard.writeText(source.value).then(function () {
+            var prev = btn.textContent;
+            btn.textContent = t.copied;
+            btn.classList.add('copied');
+            setTimeout(function () {
+              btn.textContent = prev || t.copy;
+              btn.classList.remove('copied');
+            }, 1500);
+          });
+        });
+      }
+      wireCopy(copyInputBtn, inputEl);
+      wireCopy(copyOutputBtn, outputEl);
+    })();
+  </script>
+</div>
+
+<style>
+  .hm-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .hm-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 720px) {
+    .hm-panels { grid-template-columns: 1fr; }
+  }
+
+  .hm-panel { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+
+  .hm-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .hm-textarea {
+    min-height: 240px;
+  }
+
+  .hm-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .hm-indent-label {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+  }
+
+  .hm-indent-label select {
+    min-height: 36px;
+    padding: 0.35rem 0.55rem;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    font-size: 0.85rem;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .hm-indent-label select:focus {
+    outline: none;
+    background: var(--color-surface);
+    box-shadow: inset 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light);
+  }
+</style>
