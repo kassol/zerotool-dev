@@ -1,0 +1,68 @@
+---
+seoTitle: "MIME 类型查询 — 通过扩展名查 Content-Type | ZeroTool"
+seoDescription: "免费浏览器端 MIME 类型查询，按扩展名查 Content-Type 或反向查询，magic bytes 嗅探完全在本地完成，文件不上传。"
+faqItems:
+  - question: "MIME 数据来自哪里？"
+    answer: "目录是从 IANA Media Types 注册表 + RFC 6838 顶级类型整理出的精选快照，构建时静态打包进页面，因此查询完全离线、不调用任何外部 API。约 240 条覆盖 application / image / audio / video / text / font / multipart / message / model 全部顶级类型。"
+  - question: "文件嗅探会上传文件吗？"
+    answer: "不会。嗅探用浏览器 File API 只读取所选文件的前 64 字节，页面不会把这些字节发送到任何地方。整条识别管线都是本机 JavaScript，断网后工具仍可正常工作。"
+  - question: "为什么嗅探结果与扩展名不一致？"
+    answer: "很多现代格式本质上是容器：docx、xlsx、pptx、EPUB、JAR 在字节层都是 ZIP 归档，因此 magic bytes 会显示 application/zip。工具同时显示「字节级类型」和「扩展名声称的类型」，方便你把同样的判断逻辑搬到服务端，不轻信客户端的 MIME 自报。"
+  - question: "没有固定头部的格式怎么处理？"
+    answer: "CSV、JSON、SQL、源代码等纯文本格式没有可靠的二进制头部。匹配不到任何签名时，工具会回退到浏览器的 File.type（其值是操作系统按扩展名推断的），并显式标注「回退」，避免你误以为是 magic bytes 的结论。"
+  - question: "可以用搜索面板当 Content-Type 速查吗？"
+    answer: "可以。结果旁的 MIME 字符串就是你要填到 HTTP Content-Type、Accept、Content-Disposition 头里、或者 S3 元数据 / fetch() 配置里的内容。扩展名列只是辅助参考，不属于请求头的值。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>在搜索框输入扩展名（带不带点都行）、MIME 类型或任意关键字，结果列表会随输入即时筛选。</li>
+  <li>用类别芯片把结果范围限定到 application / image / audio / video / text / font / multipart / message / model 中任一组。</li>
+  <li>任何结果点击「复制」即可把 Content-Type 字符串放到剪贴板，直接贴到请求头或 API 调用里。</li>
+  <li>切到「文件嗅探」标签页，把本地文件拖入或点击选择，即可看到检测出的 MIME、可能的扩展名、前 16 字节十六进制以及浏览器自报的类型。文件不会上传。</li>
+</ol>
+
+<h2>MIME 类型到底是什么</h2>
+<p>
+  MIME 类型（正式名「媒体类型」）是一对斜杠分隔的标识符，告诉软件如何解释一段字节。顶级类型表示粗粒度家族（image、audio、video、
+  text、application、multipart、message、model、font），子类型表示具体格式（<code>image/png</code>、<code>application/pdf</code>、
+  <code>text/csv</code>）。完整语法定义在 RFC 6838，注册在 IANA。Web 服务器在 <code>Content-Type</code> 头里发它，浏览器根据它挑选渲染器，
+  API 通过它协商请求体。
+</p>
+
+<h2>Magic bytes 嗅探如何工作</h2>
+<p>
+  每种二进制格式都以一段固定的「指纹」开头，解析器用它确认文件确实是声称的类型。PNG 是 <code>89 50 4E 47 0D 0A 1A 0A</code>、JPEG 是
+  <code>FF D8 FF</code>、PDF 是 <code>%PDF</code>、ZIP 是 <code>50 4B 03 04</code>。工具用 <code>File.slice()</code> 切下前 64 字节、
+  交给 <code>FileReader</code>，再走约 30 条签名，找到第一条命中即返回。部分签名不在偏移 0：MP4 的 <code>ftyp</code> 在字节 4，
+  tar 的 <code>ustar</code> 魔数在字节 257。
+</p>
+
+<h2>为什么这对上传校验很重要</h2>
+<p>
+  只信扩展名或浏览器自报的 MIME，是上传漏洞的经典源头。用户可以把 <code>shell.php</code> 改名为 <code>image.png</code>，
+  浏览器就会乐呵呵地报 <code>image/png</code>。服务端做字节级 magic bytes 校验是唯一可靠的防线。本工具的作用是让你在写服务端代码之前，
+  先在本地把这个判断走通——同时对照「检测到的 MIME」「可能的扩展名」「浏览器 File.type」三栏，几秒内就能看出哪些输入会绕过粗糙的校验逻辑。
+</p>
+
+<h2>容器格式与 ZIP 问题</h2>
+<p>
+  现代办公格式大多是建在旧格式之上的容器：<code>.docx</code> 是 XML 的 ZIP 归档、<code>.xlsx</code>、<code>.pptx</code>、
+  <code>.epub</code>、<code>.apk</code>、<code>.jar</code> 都共享 ZIP 的 magic bytes。嗅探报 <code>application/zip</code> 时工具会标出此情况——
+  要进一步确认内层格式，需要读取 ZIP 中心目录里的条目名。「Detected MIME」在字节层永远准确，应用层类型多一步即可。
+</p>
+
+<h2>常见用途</h2>
+<ul>
+  <li>给 S3 / Cloudflare R2 上传设置正确的 <code>Content-Type</code>，避免浏览器把文件当下载而非渲染。</li>
+  <li>调用第三方 API 时确定正确的 <code>Accept</code> 值。</li>
+  <li>排查 CDN 给 <code>.webp</code> 发了错误的类型、把 AVIF 内容协商拦掉的问题。</li>
+  <li>在文件离开页面前先做一道便宜的本地校验，作为服务端校验之外的低成本第一道。</li>
+  <li>当服务端忘记设置 Content-Disposition 时，确认下载下来的二进制 blob 究竟是什么。</li>
+</ul>
+
+<h2>有意的边界</h2>
+<p>
+  这是一个查表 + magic bytes 嗅探工具。它不是病毒扫描器、不是权限网关、也不是容器格式的深度解析器。无固定头部的纯文本格式（CSV、JSON、
+  纯文本、源代码）在签名不匹配时回退到浏览器的 <code>File.type</code>。如果需要更深入的文本内容嗅探，请用服务端针对你领域调优的库。
+</p>
