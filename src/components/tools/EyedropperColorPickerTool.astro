@@ -1,0 +1,500 @@
+---
+// EyedropperColorPickerTool — pick colors from screen via EyeDropper API, fallback to native <input type="color">
+---
+<div>
+  <div class="ecp-wrap">
+    <div class="ecp-preview-row">
+      <div id="ecp-swatch" class="ecp-swatch"></div>
+      <div class="ecp-preview-meta">
+        <span id="ecp-swatch-label" class="ecp-swatch-label">#1a73e8</span>
+        <span id="ecp-support" class="ecp-support" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <div class="ecp-actions">
+      <button id="ecp-pick" class="btn-primary" type="button" data-i18n="pickFromScreen">Pick from screen</button>
+      <input id="ecp-native" type="color" value="#1a73e8" title="Native color picker" />
+      <label for="ecp-native" class="btn-secondary ecp-native-label" data-i18n="nativePicker">Native picker</label>
+      <button id="ecp-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div class="ecp-fields">
+      <div class="ecp-field">
+        <label for="ecp-hex">HEX</label>
+        <div class="ecp-input-row">
+          <input id="ecp-hex" class="tool-input" type="text" placeholder="#1a73e8" spellcheck="false" autocomplete="off" />
+          <button class="btn-copy" data-copy="ecp-hex" data-i18n="copy">Copy</button>
+        </div>
+      </div>
+
+      <div class="ecp-field">
+        <label for="ecp-rgb">RGB</label>
+        <div class="ecp-input-row">
+          <input id="ecp-rgb" class="tool-input" type="text" placeholder="rgb(26, 115, 232)" spellcheck="false" autocomplete="off" />
+          <button class="btn-copy" data-copy="ecp-rgb" data-i18n="copy">Copy</button>
+        </div>
+      </div>
+
+      <div class="ecp-field">
+        <label for="ecp-hsl">HSL</label>
+        <div class="ecp-input-row">
+          <input id="ecp-hsl" class="tool-input" type="text" placeholder="hsl(217, 80%, 51%)" spellcheck="false" autocomplete="off" />
+          <button class="btn-copy" data-copy="ecp-hsl" data-i18n="copy">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="ecp-status" class="ecp-status" aria-live="polite"></div>
+
+    <div class="ecp-recent">
+      <div class="ecp-recent-header">
+        <span class="ecp-recent-title" data-i18n="recent">Recent</span>
+        <button id="ecp-recent-clear" class="btn-ghost ecp-recent-clear" type="button" data-i18n="clearRecent">Clear recent</button>
+      </div>
+      <div id="ecp-recent-grid" class="ecp-recent-grid" role="list"></div>
+      <p id="ecp-recent-empty" class="ecp-recent-empty" data-i18n="recentEmpty">No colors picked yet.</p>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          copy: 'Copy', copied: 'Copied!', clear: 'Clear',
+          pickFromScreen: 'Pick from screen', nativePicker: 'Native picker',
+          recent: 'Recent colors', recentEmpty: 'No colors picked yet.', clearRecent: 'Clear recent',
+          unsupported: 'EyeDropper API not supported — use Native picker instead.',
+          supported: 'EyeDropper API ready. Click "Pick from screen" to sample any pixel.',
+          invalid: 'Invalid color',
+          canceled: 'Picker canceled.'
+        },
+        zh: {
+          copy: '复制', copied: '已复制！', clear: '清除',
+          pickFromScreen: '从屏幕吸色', nativePicker: '原生拾色器',
+          recent: '最近颜色', recentEmpty: '尚未取色。', clearRecent: '清空记录',
+          unsupported: '当前浏览器不支持 EyeDropper API，请使用原生拾色器。',
+          supported: 'EyeDropper API 就绪。点击「从屏幕吸色」可拾取任意像素。',
+          invalid: '颜色格式无效',
+          canceled: '已取消取色。'
+        },
+        ja: {
+          copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
+          pickFromScreen: '画面から取得', nativePicker: 'ネイティブピッカー',
+          recent: '最近のカラー', recentEmpty: 'まだカラーを取得していません。', clearRecent: '履歴をクリア',
+          unsupported: 'このブラウザは EyeDropper API に未対応。ネイティブピッカーを利用してください。',
+          supported: 'EyeDropper API 利用可能。「画面から取得」で任意のピクセルをサンプリング。',
+          invalid: 'カラー形式が無効',
+          canceled: 'ピッカーをキャンセルしました。'
+        },
+        ko: {
+          copy: '복사', copied: '복사됨!', clear: '지우기',
+          pickFromScreen: '화면에서 추출', nativePicker: '기본 색상 선택기',
+          recent: '최근 색상', recentEmpty: '아직 추출한 색상이 없습니다.', clearRecent: '기록 지우기',
+          unsupported: '이 브라우저는 EyeDropper API를 지원하지 않습니다. 기본 색상 선택기를 사용하세요.',
+          supported: 'EyeDropper API 사용 가능. "화면에서 추출"으로 임의의 픽셀을 샘플링하세요.',
+          invalid: '색상 형식이 잘못됨',
+          canceled: '선택기를 취소했습니다.'
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+      });
+
+      var hexEl = document.getElementById('ecp-hex');
+      var rgbEl = document.getElementById('ecp-rgb');
+      var hslEl = document.getElementById('ecp-hsl');
+      var swatch = document.getElementById('ecp-swatch');
+      var swatchLabel = document.getElementById('ecp-swatch-label');
+      var statusEl = document.getElementById('ecp-status');
+      var supportEl = document.getElementById('ecp-support');
+      var pickBtn = document.getElementById('ecp-pick');
+      var nativeInput = document.getElementById('ecp-native');
+      var clearBtn = document.getElementById('ecp-clear');
+      var recentGrid = document.getElementById('ecp-recent-grid');
+      var recentEmpty = document.getElementById('ecp-recent-empty');
+      var recentClearBtn = document.getElementById('ecp-recent-clear');
+
+      var SLUG = 'eyedropper-color-picker';
+      var MAX_RECENT = 8;
+      var hasEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window;
+
+      if (hasEyeDropper) {
+        supportEl.textContent = t.supported;
+        supportEl.classList.add('supported');
+      } else {
+        supportEl.textContent = t.unsupported;
+        supportEl.classList.add('unsupported');
+        pickBtn.disabled = true;
+        pickBtn.classList.add('is-disabled');
+      }
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'ecp-status' + (msg ? ' ' + (kind || 'info') : '');
+      }
+
+      function hexToRgb(hex) {
+        hex = (hex || '').trim().replace(/^#/, '');
+        if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+        if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+        return {
+          r: parseInt(hex.slice(0,2), 16),
+          g: parseInt(hex.slice(2,4), 16),
+          b: parseInt(hex.slice(4,6), 16)
+        };
+      }
+
+      function rgbToHex(r, g, b) {
+        return '#' + [r, g, b].map(function(v) {
+          return ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2);
+        }).join('');
+      }
+
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        var max = Math.max(r, g, b), min = Math.min(r, g, b);
+        var h, s, l = (max + min) / 2;
+        if (max === min) { h = s = 0; }
+        else {
+          var d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+            case g: h = ((b - r) / d + 2) / 6; break;
+            case b: h = ((r - g) / d + 4) / 6; break;
+          }
+        }
+        return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+      }
+
+      function hslToRgb(h, s, l) {
+        h /= 360; s /= 100; l /= 100;
+        var r, g, b;
+        if (s === 0) { r = g = b = l; }
+        else {
+          function hue2rgb(p, q, t) {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+          }
+          var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          var p = 2 * l - q;
+          r = hue2rgb(p, q, h + 1/3);
+          g = hue2rgb(p, q, h);
+          b = hue2rgb(p, q, h - 1/3);
+        }
+        return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+      }
+
+      function parseRgb(str) {
+        var m = (str || '').trim().match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+        if (!m) return null;
+        var r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
+        if (r > 255 || g > 255 || b > 255) return null;
+        return { r: r, g: g, b: b };
+      }
+
+      function parseHsl(str) {
+        var m = (str || '').trim().match(/^hsla?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%?\s*,\s*(\d+(?:\.\d+)?)%?/);
+        if (!m) return null;
+        return { h: parseFloat(m[1]), s: parseFloat(m[2]), l: parseFloat(m[3]) };
+      }
+
+      function loadRecent() {
+        if (!window.ztPersist || !window.ztPersist.load) return [];
+        try {
+          var data = window.ztPersist.load(SLUG) || {};
+          var arr = data.recent;
+          return Array.isArray(arr) ? arr.filter(function(v) { return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v); }).slice(0, MAX_RECENT) : [];
+        } catch (e) { return []; }
+      }
+
+      function saveRecent(list) {
+        if (!window.ztPersist || !window.ztPersist.save) return;
+        try { window.ztPersist.save(SLUG, { recent: list.slice(0, MAX_RECENT) }); } catch (e) {}
+      }
+
+      function pushRecent(hex) {
+        var list = loadRecent();
+        hex = hex.toLowerCase();
+        list = list.filter(function(v) { return v.toLowerCase() !== hex; });
+        list.unshift(hex);
+        list = list.slice(0, MAX_RECENT);
+        saveRecent(list);
+        renderRecent();
+      }
+
+      function renderRecent() {
+        var list = loadRecent();
+        recentGrid.innerHTML = '';
+        if (list.length === 0) {
+          recentEmpty.style.display = '';
+          recentClearBtn.style.display = 'none';
+          return;
+        }
+        recentEmpty.style.display = 'none';
+        recentClearBtn.style.display = '';
+        list.forEach(function(hex) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ecp-recent-chip';
+          btn.style.background = hex;
+          btn.setAttribute('aria-label', hex);
+          btn.setAttribute('data-hex', hex);
+          btn.title = hex;
+          btn.addEventListener('click', function() {
+            updateAll(hex, 'recent');
+            window.trackTool && window.trackTool('eyedropper_color_picker', 'recent_apply');
+          });
+          recentGrid.appendChild(btn);
+        });
+      }
+
+      function updateAll(hex, source) {
+        var rgb = hexToRgb(hex);
+        if (!rgb) { setStatus(t.invalid, 'error'); return; }
+        var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+        var hexStr = rgbToHex(rgb.r, rgb.g, rgb.b);
+        var rgbStr = 'rgb(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ')';
+        var hslStr = 'hsl(' + hsl.h + ', ' + hsl.s + '%, ' + hsl.l + '%)';
+        if (source !== 'hex') hexEl.value = hexStr;
+        if (source !== 'rgb') rgbEl.value = rgbStr;
+        if (source !== 'hsl') hslEl.value = hslStr;
+        if (source !== 'native') nativeInput.value = hexStr;
+        swatch.style.background = hexStr;
+        swatchLabel.textContent = hexStr.toUpperCase();
+        setStatus('');
+        if (source === 'eyedropper' || source === 'native' || source === 'recent') {
+          pushRecent(hexStr);
+        }
+      }
+
+      hexEl.addEventListener('input', function () {
+        var raw = this.value.trim().replace(/^#/, '');
+        if (!raw) { setStatus(''); return; }
+        if (raw.length === 3 || raw.length === 6) {
+          var rgb = hexToRgb(raw);
+          if (rgb) { updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hex'); return; }
+        }
+        if (raw.length >= 6) setStatus(t.invalid, 'error');
+      });
+
+      rgbEl.addEventListener('input', function () {
+        var val = this.value.trim();
+        if (!val) { setStatus(''); return; }
+        var rgb = parseRgb(val);
+        if (rgb) { updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'rgb'); return; }
+        if (/\)/.test(val)) setStatus(t.invalid, 'error');
+      });
+
+      hslEl.addEventListener('input', function () {
+        var val = this.value.trim();
+        if (!val) { setStatus(''); return; }
+        var hsl = parseHsl(val);
+        if (hsl) {
+          var rgb = hslToRgb(hsl.h, hsl.s, hsl.l);
+          updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hsl');
+          return;
+        }
+        if (/\)/.test(val)) setStatus(t.invalid, 'error');
+      });
+
+      nativeInput.addEventListener('input', function () {
+        updateAll(this.value, 'native');
+        window.trackTool && window.trackTool('eyedropper_color_picker', 'native_pick');
+      });
+
+      pickBtn.addEventListener('click', function () {
+        if (!hasEyeDropper) return;
+        try {
+          var dropper = new window.EyeDropper();
+          dropper.open().then(function (result) {
+            updateAll(result.sRGBHex, 'eyedropper');
+            window.trackTool && window.trackTool('eyedropper_color_picker', 'screen_pick');
+          }).catch(function () {
+            setStatus(t.canceled, 'info');
+          });
+        } catch (e) {
+          setStatus(t.unsupported, 'error');
+        }
+      });
+
+      clearBtn.addEventListener('click', function () {
+        hexEl.value = '';
+        rgbEl.value = '';
+        hslEl.value = '';
+        nativeInput.value = '#000000';
+        swatch.style.background = '';
+        swatchLabel.textContent = '';
+        setStatus('');
+      });
+
+      recentClearBtn.addEventListener('click', function () {
+        saveRecent([]);
+        renderRecent();
+      });
+
+      document.querySelectorAll('.btn-copy[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-copy');
+          var val = document.getElementById(id).value;
+          if (!val) return;
+          navigator.clipboard.writeText(val).then(function () {
+            var prev = btn.textContent;
+            btn.textContent = t.copied;
+            setTimeout(function () { btn.textContent = prev; }, 1500);
+          });
+          window.trackTool && window.trackTool('eyedropper_color_picker', 'copy_' + id.replace('ecp-', ''));
+        });
+      });
+
+      // Init with stored last color or default
+      var last = loadRecent()[0] || '#1a73e8';
+      updateAll(last, 'init');
+      hexEl.value = last.toUpperCase();
+      renderRecent();
+    })();
+  </script>
+</div>
+
+<style>
+  .ecp-wrap { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  .ecp-preview-row { display: flex; align-items: center; gap: 1rem; }
+
+  .ecp-swatch {
+    width: 88px;
+    height: 88px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+    background: #1a73e8;
+    flex-shrink: 0;
+    box-shadow: var(--shadow-subtle);
+  }
+
+  .ecp-preview-meta { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+
+  .ecp-swatch-label {
+    font-family: var(--font-mono);
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--color-text);
+    letter-spacing: 0.02em;
+  }
+
+  .ecp-support {
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--color-text-secondary);
+  }
+
+  .ecp-support.unsupported { color: var(--color-text-muted); }
+
+  .ecp-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+
+  .ecp-actions .btn-primary.is-disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  #ecp-native { width: 0; height: 0; opacity: 0; position: absolute; pointer-events: none; }
+  .ecp-native-label { display: inline-block; cursor: pointer; }
+
+  .ecp-fields { display: flex; flex-direction: column; gap: 0.7rem; }
+
+  .ecp-field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .ecp-field label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .ecp-input-row { display: flex; gap: 0.5rem; align-items: center; }
+  .ecp-input-row input { flex: 1; min-width: 0; }
+
+  .ecp-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .ecp-status.success { color: #057a55; }
+  .ecp-status.error { color: #c0392b; }
+  .ecp-status.info { color: var(--color-text-secondary); }
+
+  .ecp-recent {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--color-border-soft, var(--color-border));
+  }
+
+  .ecp-recent-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .ecp-recent-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .ecp-recent-clear {
+    font-size: 0.78rem;
+    padding: 0.15rem 0.5rem;
+  }
+
+  .ecp-recent-grid {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  @media (max-width: 480px) {
+    .ecp-recent-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  .ecp-recent-chip {
+    aspect-ratio: 1;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    cursor: pointer;
+    padding: 0;
+    background: transparent;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+
+  .ecp-recent-chip:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-subtle);
+  }
+
+  .ecp-recent-chip:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--color-primary-light);
+  }
+
+  .ecp-recent-empty {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .ecp-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .ecp-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .ecp-status.success { color: #34d399; }
+  [data-theme="dark"] .ecp-status.error { color: #f87171; }
+</style>
