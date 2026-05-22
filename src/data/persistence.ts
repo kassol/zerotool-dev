@@ -22,6 +22,7 @@ export const toolPersistencePolicy = {
   'csp-header-generator': 'preference',
   'svg-optimizer': 'preference',
   'mime-type-lookup': 'preference',
+  'eyedropper-color-picker': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

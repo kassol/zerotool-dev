@@ -125,6 +125,7 @@ import IbanValidatorParserTool from './IbanValidatorParserTool.astro';
 import HtmlMinifierTool from './HtmlMinifierTool.astro';
 import MimeTypeLookupTool from './MimeTypeLookupTool.astro';
 import HarFileAnalyzerTool from './HarFileAnalyzerTool.astro';
+import EyedropperColorPickerTool from './EyedropperColorPickerTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -250,4 +251,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'html-minifier': HtmlMinifierTool,
   'mime-type-lookup': MimeTypeLookupTool,
   'har-file-analyzer': HarFileAnalyzerTool,
+  'eyedropper-color-picker': EyedropperColorPickerTool,
 };
