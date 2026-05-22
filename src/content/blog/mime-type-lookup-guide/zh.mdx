@@ -1,0 +1,194 @@
+---
+title: "MIME 类型查询：上传校验里的 magic bytes 嗅探指南"
+description: "别再凭文件扩展名做上传校验。IANA 媒体类型注册表的工作机制、浏览器端 magic bytes 嗅探的实现思路，以及 HTTP 响应头里 Content-Type 该怎么填。"
+pubDate: 2026-05-21
+updatedDate: 2026-05-21
+lang: "zh"
+canonicalSlug: "mime-type-lookup-guide"
+tags: ["mime-type", "content-type", "file-upload", "web-security", "developer-tools"]
+---
+
+用户给表单上传 `invoice.pdf`，服务端把浏览器声明的 `Content-Type` 一并写进 S3。一周后有人反馈链接点开是下载弹窗而不是内联预览。你查对象元数据，发现写着 `Content-Type: application/octet-stream`：浏览器其实根本没认出文件是什么，只是顺嘴报给了你的代码。
+
+几乎所有上传 bug 都是从这行错误的元数据开始的。修法只有一种习惯：在信任扩展名、表单字段或 `File.type` 之前，先从字节层面确认真实类型。
+
+[打开 MIME 类型查询工具 →](/zh/tools/mime-type-lookup/)
+
+## MIME 类型同时承担的两件事
+
+媒体类型（RFC 6838 里的正式叫法）在系统里同时承担两套完全不同的职责。
+
+| 出现位置 | MIME 类型的作用 | 错了会出什么问题 |
+|---|---|---|
+| HTTP `Content-Type` 响应头 | 告诉 UA 怎么渲染响应体 | PDF 变成下载、HTML 显示成纯文本 |
+| HTTP `Accept` 请求头 | 告诉服务端客户端能消费哪些格式 | 服务端给只吃 JSON 的客户端回了 XML，解析直接炸 |
+| `Content-Disposition` 推断文件名 | 浏览器保存时选扩展名 | `report` 落地后没扩展名，操作系统两眼一抹黑 |
+| 邮件 MIME 段 | 邮件客户端为附件挑渲染器 | Excel 附件在浏览器里渲染成乱码 |
+| 文件系统扩展属性（macOS 的 `kMDItemContentType`） | Finder 选默认打开方式 | `.heic` 被 TextEdit 打开 |
+| 对象存储元数据（S3、R2、Azure Blob） | CDN 出口设置 `Content-Type` | 同样的头、同样的显示问题，但这次被缓存住了 |
+
+查询表把这六个场景压成一个决策：给定一个扩展名或者一个已识别的文件格式，对应的字符串到底是什么？这就是工具里搜索面板做的事——输 `.pdf` 拿到 `application/pdf`，输 `application/json` 看到对应扩展名是 `.json`，输 `image` 就把整个 `image/*` 家族展开。
+
+## MIME 类型实际长什么样
+
+语法枯燥但严谨。每个值都是 `top-level/subtype`，可选地跟一个 `;` 加参数键值对。
+
+```
+application/json
+text/html; charset=utf-8
+multipart/form-data; boundary=----abc123
+image/svg+xml
+application/vnd.openxmlformats-officedocument.wordprocessingml.document
+```
+
+IANA 顶级类型注册表这些年一直在扩——`example` 和 `haptics` 都是近期新增的，但 Web 流量基本被九个顶级类型吃完，这工具覆盖的也是这九类：
+
+- `application` — 不透明或结构化字节流（PDF、JSON、ZIP，以及全部 Office 格式）
+- `image` — 位图与矢量图
+- `audio` — 编码音频流
+- `video` — 编码视频流
+- `text` — 人类可读文本（HTML、CSV、源码）
+- `font` — 现代字体轮廓（WOFF / TTF / OTF）
+- `multipart` — 复合消息（表单上传、含附件的邮件）
+- `message` — 封装消息（RFC 822 邮件、内嵌 HTTP）
+- `model` — 3D 几何数据（glTF、OBJ、STL）
+
+子类型遵循树形约定：
+
+- `vnd.*` 用于厂商专有格式（`application/vnd.ms-excel`）
+- `prs.*` 用于个人或实验性格式
+- `x.`（带点）是 RFC 6838 定义的未注册树；老的 `x-` 前缀是 6838 之前的写法，现在按遗留写法对待，没有特殊含义
+- `+suffix` 后缀（如 `+json`、`+xml`）告诉解析器底层是哪种封装格式（`application/manifest+json` 实质就是 JSON）
+
+参数承载编码信息。最常见的是 `charset`，它让浏览器能真正解码 `text/html`。中文页面少了 `charset=utf-8`，你就回到了 2003 年的乱码时代。
+
+## Magic bytes：当扩展名说谎
+
+Magic bytes 是 Unix 上 `file(1)` 从 1973 年起就在用的格式识别手段。几乎所有二进制格式开头都有一段固定字节序列，解析器靠它确认后续流确实是扩展名宣称的那种格式。
+
+| 格式 | 起始字节（hex） | 备注 |
+|---|---|---|
+| PNG | `89 50 4E 47 0D 0A 1A 0A` | CRLF + EOF 组合能识破 FTP ASCII 模式的破坏 |
+| JPEG | `FF D8 FF` | 再加第四字节用于区分变体（JFIF、EXIF…） |
+| GIF | `47 49 46 38 37 61` 或 `47 49 46 38 39 61` | 版本号直接拼成字面量：`GIF87a` / `GIF89a` |
+| PDF | `25 50 44 46`（`%PDF`） | 后面跟 `-1.7` 之类的修订号 |
+| ZIP | `50 4B 03 04` | 所有基于 ZIP 的格式都继承这个魔数：docx、xlsx、jar、epub、apk |
+| WebP | `52 49 46 46 …  57 45 42 50` | RIFF 容器，第 8 字节起是 `WEBP` |
+| MP4 | `…  66 74 79 70 …` | `ftyp` 魔数在第 4 字节而不是第 0 字节，容易漏 |
+| Tar（POSIX ustar） | `75 73 74 61 72` | 位于第 257 字节，深埋在头部 |
+| SQLite 数据库 | `53 51 4C 69 74 65 20 66 6F 72 6D 61 74 20 33 00` | 字面就是 `SQLite format 3` 加一个 NUL 终止符 |
+| WebAssembly | `00 61 73 6D` | `\0asm` |
+
+有三个细节很容易踩坑：
+
+1. **容器格式在字节层面完全一样。** `.docx`、`.xlsx`、`.pptx`、`.epub`、`.apk`、`.jar` 开头都是 `50 4B 03 04`。从字节维度看它们确实就是 `application/zip`。要还原成应用层类型，得拆开中央目录，去看里面有没有 `[Content_Types].xml`、`META-INF/MANIFEST.MF` 或者 `mimetype` 这些标识。
+2. **部分魔数不在 0 偏移。** MP4 把 `ftyp` 藏在第 4 字节——读 64 字节足够命中。Tar 的 `ustar` 在第 257 字节，ISO 9660 的 `CD001` 在第 32769 字节，两者都得切更大的片段。浏览器端工具只嗅前 64 字节，所以能识别 MP4，但识别不了 tar 和 ISO。要处理这两类格式，退回到本地的 `file(1)` 即可。
+3. **纯文本格式没有固定头。** CSV、JSON、SQL、纯文本，根本没东西可看。可以靠熵值、BOM 标记或内容嗅探来猜（浏览器以前就是这么过度激进，直到 WHATWG 把规则收紧），但没有任何签名能在不解析的前提下证明一个文件是 JSON。
+
+工具里的 Sniff file 标签会在客户端串行跑三十多个签名。把文件丢进去，只读前 64 字节——足够覆盖工具内置的常见 Web 格式——给出第一个命中。浏览器自己的 `File.type` 会并排显示，两者不一致时一眼就能看出该信哪个。
+
+## 一条真实可用的上传校验流水线
+
+下面是大多数服务端真正需要的校验流程，按开销从低到高排列。
+
+```python
+import magic  # python-magic, wraps libmagic
+
+ALLOWED = {
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/png":  {".png"},
+    "image/webp": {".webp"},
+    "application/pdf": {".pdf"},
+}
+
+def validate_upload(stream, claimed_name, claimed_type):
+    head = stream.read(4096)
+    stream.seek(0)
+
+    sniffed = magic.from_buffer(head, mime=True)
+    if sniffed not in ALLOWED:
+        return False, f"sniffed type {sniffed!r} not allowed"
+
+    ext = "." + claimed_name.rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED[sniffed]:
+        return False, f"extension {ext!r} does not match {sniffed!r}"
+
+    # claimed_type is informational only; never the basis of a decision
+    return True, sniffed
+```
+
+同样的逻辑在 Node 里，可以用 `file-type` 包，它读取字节缓冲区的方式和浏览器端工具一致：
+
+```javascript
+import { fileTypeFromBuffer } from "file-type";
+
+const ALLOWED = new Map([
+  ["image/jpeg", new Set([".jpg", ".jpeg"])],
+  ["image/png",  new Set([".png"])],
+  ["application/pdf", new Set([".pdf"])],
+]);
+
+export async function validateUpload(buffer, claimedName) {
+  const sniffed = await fileTypeFromBuffer(buffer);
+  if (!sniffed || !ALLOWED.has(sniffed.mime)) {
+    throw new Error(`sniffed ${sniffed?.mime ?? "unknown"} not allowed`);
+  }
+  const ext = "." + claimedName.split(".").pop().toLowerCase();
+  if (!ALLOWED.get(sniffed.mime).has(ext)) {
+    throw new Error(`extension ${ext} mismatches ${sniffed.mime}`);
+  }
+  return sniffed.mime;
+}
+```
+
+临时排查一个可疑下载文件，命令行直接看：
+
+```bash
+file --mime-type --brief mystery.bin
+xxd -l 16 mystery.bin
+```
+
+浏览器端工具针对内置的 Web 格式提供了同等于 `file --mime-type --brief` 的检查能力，无论你坐在哪台机器前都能用，文件不离本地。要处理偏门格式——CAD 文件、科学数据、冷门归档变体——本地装个 `libmagic` 仍然是更深入的参考。
+
+## 常见踩坑
+
+**信任请求里的 `Content-Type`。** 浏览器报的是操作系统给出的类型，而操作系统在多数平台又是从扩展名推出来的。无论用户上传了什么，把客户端类型当提示看，服务端再校验一次。
+
+**所有文件都设 `Content-Type: application/octet-stream`。** 各家存储 SDK 在猜不出类型时默认用这个值。浏览器看到这个值就直接下载，不会内联渲染——图片和 PDF 全中招。写入对象存储前永远设置一个真实的类型。
+
+**忘了给 `text/*` 加 charset。** 没有 `charset=utf-8` 的 `text/csv` 会按用户系统区域设置解释。Windows 上的 Excel 会按 GBK 猜，然后你的客服工单就开始涌进来。
+
+**`application/javascript` 和 `text/javascript` 混用。** RFC 9239（2022）把 `text/javascript` 定为唯一标准值，明确把 `application/javascript` 以及一众历史别名标记为废弃。浏览器出于兼容性仍然会执行老类型下的脚本，但只要响应头你说了算，`text/javascript; charset=utf-8` 就是正确答案。
+
+**在线上对超大文件做嗅探。** 读 64 字节很便宜，读 50 GB 来识别视频容器就是另一回事。永远给切片设上限，浏览器工具用的是 `File.slice(0, 64)`。
+
+**以为 SVG 无害。** `image/svg+xml` 本质是 XML，可以包含 `<script>` 标签。某些场景下浏览器真的会执行（典型场景是 SVG 作为文档加载而不是通过 `<img>` 引入）。字节嗅探只能确认格式，清洗是另一个独立问题。
+
+## 什么时候 `application/octet-stream` 才是正确答案
+
+反直觉但成立：处理未知二进制数据时，正确答案就是 `application/octet-stream`。它告诉接收方「按原始字节处理，别尝试渲染」。适用场景：
+
+- 加密 blob，内部格式服务端无须关心
+- 通用文件下载，想要保存对话框而不是内联展示
+- 返回不透明负载的 API 端点（固件、模型、归档）
+
+错误用法是把它当作所有已知文件的默认值——那样会破坏浏览器对图片、PDF 的内联渲染路径。
+
+## 这个查询工具和同类产品的差异
+
+`mimetype.io` 是浏览器世界里最接近的对照，同样通过 File API 在客户端做检测。它是一份扎实的参考；真正的差异不在隐私层面，而在产品形态：ZeroTool 内置 240 条经过整理的目录、带分类色块、4 语言界面，结果面板会把嗅探出的 MIME、推断扩展名、原始 hex 字节、浏览器自报类型并排展示，专为上传校验这种活儿设计。
+
+`codeshack.io/mime-type-lookup` 是一份静态速查表，没有嗅探器。回答「`.xyz` 的 Content-Type 是啥」够用，但不做字节级文件识别。
+
+`file(1)` 和 `libmagic` 是金标准，签名数以百计，覆盖了这个工具刻意没收的格式。如果你日常处理 CAD 文件、科学数据或冷门归档变体，在本地装 `libmagic`。日常 Web 开发的常规场景，浏览器工具不用离开当前标签页就能搞定。
+
+这种权衡是有意为之：约 240 条查询条目、约 30 条字节级签名，重心压在现代 Web 实际遇到的格式上。所有运算都在客户端完成，文件不上传，数据库在构建时直接打进页面。
+
+## 延伸阅读
+
+- [HTTP 状态码](/zh/tools/http-status-codes/) — HTTP 响应头的另一半
+- [URL 解析器](/zh/tools/url-parser/) — 需要逐段拆解下载链接时
+- [文件哈希校验](/zh/tools/file-hash-checker/) — 类型确认后再校验完整性
+- [RFC 6838：媒体类型规范与注册流程](https://www.rfc-editor.org/rfc/rfc6838) — 标准原文
+- [IANA Media Types Registry](https://www.iana.org/assignments/media-types/media-types.xhtml) — 权威列表
+- [MDN：常见 MIME 类型清单](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types) — 浏览器实际能识别的子集

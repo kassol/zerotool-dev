@@ -1,0 +1,71 @@
+---
+seoTitle: "MIME タイプ検索 — 拡張子から Content-Type を調べる | ZeroTool"
+seoDescription: "無料ブラウザ完結の MIME タイプ検索。拡張子・Content-Type の双方向検索、ファイル先頭バイト判定もブラウザ内で完了。アップロード不要。"
+faqItems:
+  - question: "MIME データベースはどこから来ていますか？"
+    answer: "IANA Media Types レジストリと RFC 6838 のトップレベルタイプを基にした選定スナップショットで、ビルド時にページに静的に取り込まれます。ルックアップは完全オフラインで動作し、外部 API を呼びません。約 240 件で application / image / audio / video / text / font / multipart / message / model の全トップレベルをカバーします。"
+  - question: "ファイル判定はアップロードしますか？"
+    answer: "いいえ。判定はブラウザの File API を使い、ドロップしたファイルの先頭 64 バイトのみを読み取ります。バイト列は外部に送信されず、識別パイプラインはすべてあなたの端末で動く JavaScript です。ネットワークを切断しても動作します。"
+  - question: "判定結果と拡張子が食い違うのはなぜ？"
+    answer: "現代の多くの形式はコンテナです。docx・xlsx・pptx・EPUB・JAR はバイトレベルで ZIP アーカイブなので、マジックバイトは application/zip と出ます。ツールは「バイト由来の型」と「拡張子の名目上の型」を並べて表示するので、サーバー側の検証ロジックを設計する際にクライアントの自称を信用しなくて済みます。"
+  - question: "固定ヘッダを持たない形式は？"
+    answer: "CSV・JSON・SQL・ソースコードなどの純テキスト形式には確実な二進ヘッダがありません。どの署名にも一致しない場合はブラウザの File.type（OS が拡張子から推定したもの）にフォールバックし、「フォールバックである」ことを明示するので、マジックバイトの結論と取り違えません。"
+  - question: "検索パネルを Content-Type ヘッダのリファレンスとして使えますか？"
+    answer: "はい。各結果の隣に表示される文字列が、そのまま HTTP Content-Type / Accept / Content-Disposition ヘッダ、あるいは S3 メタデータ・fetch() のオプションに入れる値です。拡張子の列は参考情報で、ヘッダの値そのものではありません。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>検索ボックスに拡張子（先頭ドットは任意）、MIME タイプ、任意のキーワードを入力すると、結果がリアルタイムに絞り込まれます。</li>
+  <li>カテゴリチップを使って application / image / audio / video / text / font / multipart / message / model に範囲を限定できます。</li>
+  <li>結果の <strong>コピー</strong> ボタンで Content-Type 文字列をクリップボードに取り、ヘッダや API リクエストにそのまま貼り付けられます。</li>
+  <li><strong>ファイル判定</strong> タブに切り替え、ローカルファイルをドロップまたはクリックして選択。検出された MIME、推定拡張子、先頭 16 バイトの 16 進、ブラウザが報告する型が表示されます。アップロードされません。</li>
+</ol>
+
+<h2>MIME タイプとは</h2>
+<p>
+  MIME タイプ（正式名「メディアタイプ」）は、バイト列をどう解釈するかをソフトウェアに伝えるためのスラッシュ区切りの識別子です。
+  トップレベル型は粗いファミリ（image・audio・video・text・application・multipart・message・model・font）、サブタイプは具体的な形式
+  （<code>image/png</code>・<code>application/pdf</code>・<code>text/csv</code>）を表します。文法は RFC 6838 で規定され、IANA に登録されています。
+  Web サーバーは <code>Content-Type</code> ヘッダで送信し、ブラウザはレンダラの選択に使い、API はリクエストボディのネゴシエーションに使います。
+</p>
+
+<h2>マジックバイト判定の仕組み</h2>
+<p>
+  バイナリ形式には固有の「指紋」が先頭にあります。パーサはそれでファイルが名乗りどおりかを確認します。PNG は
+  <code>89 50 4E 47 0D 0A 1A 0A</code>、JPEG は <code>FF D8 FF</code>、PDF は <code>%PDF</code>、ZIP は <code>50 4B 03 04</code>。
+  ツールは <code>File.slice()</code> で先頭 64 バイトを切り出し、<code>FileReader</code> に渡し、約 30 種類の署名を順に確認します。
+  オフセット 0 以外の署名もあります。MP4 はバイト 4 の <code>ftyp</code>、tar はバイト 257 の <code>ustar</code> マジックを見ます。
+</p>
+
+<h2>アップロード検証に効く理由</h2>
+<p>
+  拡張子やブラウザ自称の MIME だけを信じるのは、典型的なアップロード脆弱性の温床です。<code>shell.php</code> を <code>image.png</code> に
+  リネームしてもブラウザは喜んで <code>image/png</code> と申告します。サーバー側のバイトレベル検証だけが信頼できる防線で、本ツールは
+  サーバー実装前に同じ検証をローカルで予行演習するためのものです。「Detected MIME」「Likely extensions」「Browser File.type」の
+  3 列を並べれば、雑な検証ロジックを通り抜ける入力が数秒で見つかります。
+</p>
+
+<h2>コンテナ形式と ZIP 問題</h2>
+<p>
+  現代のオフィス形式の多くは旧形式の上に構築されたコンテナです。<code>.docx</code> は XML の ZIP アーカイブで、<code>.xlsx</code>・
+  <code>.pptx</code>・<code>.epub</code>・<code>.apk</code>・<code>.jar</code> も同じ ZIP マジックバイトを共有します。判定結果が
+  <code>application/zip</code> のとき、ツールはこの状況を明示します。内側の形式を確認するには、ZIP セントラルディレクトリのエントリ名を
+  読む必要があります。バイトレベルでの「Detected MIME」は常に正確で、アプリケーションレベルの型はもう一段必要です。
+</p>
+
+<h2>主な用途</h2>
+<ul>
+  <li>S3 / Cloudflare R2 へのアップロードで適切な <code>Content-Type</code> を設定し、ブラウザがファイルを「ダウンロード」ではなく「表示」するようにする。</li>
+  <li>サードパーティ API を呼ぶ際に正しい <code>Accept</code> 値を選ぶ。</li>
+  <li>CDN が <code>.webp</code> を誤った型で配信し AVIF ネゴシエーションを潰している原因を調べる。</li>
+  <li>ファイルがページを離れる前に廉価な前段検証として走らせ、サーバー検証の手前で粗い入力をふるい落とす。</li>
+  <li>サーバーが Content-Disposition を忘れた場合に、ダウンロード済みバイナリ blob の実体を確認する。</li>
+</ul>
+
+<h2>あえての境界</h2>
+<p>
+  本ツールはルックアップ表とマジックバイト判定です。ウイルススキャナでもアクセスゲートでも、コンテナ形式の内部構造パーサでもありません。
+  固定ヘッダを持たない純テキスト（CSV・JSON・プレーンテキスト・ソースコード）はバイナリ署名と一致しない場合にブラウザの
+  <code>File.type</code> にフォールバックします。それより踏み込んだテキスト内容判定が必要なら、領域に合わせて調整されたサーバーライブラリを使ってください。
+</p>

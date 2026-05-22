@@ -20,6 +20,7 @@ export const toolPersistencePolicy = {
   'timezone-converter': 'preference',
   'csp-header-generator': 'preference',
   'svg-optimizer': 'preference',
+  'mime-type-lookup': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

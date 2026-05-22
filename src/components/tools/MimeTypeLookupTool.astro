@@ -1,0 +1,798 @@
+---
+// MimeTypeLookupTool — search MIME types by extension/Content-Type and sniff files by magic bytes.
+// CSS prefix: mtl-
+---
+<div class="mtl-wrap">
+  <div class="mtl-tabs" role="tablist">
+    <button id="mtl-tab-search" class="mtl-tab is-active" role="tab" aria-selected="true" data-i18n="tabSearch">Search</button>
+    <button id="mtl-tab-sniff" class="mtl-tab" role="tab" aria-selected="false" data-i18n="tabSniff">Sniff file</button>
+  </div>
+
+  <section id="mtl-panel-search" class="mtl-panel" role="tabpanel">
+    <div class="mtl-search-row">
+      <input
+        id="mtl-search"
+        type="search"
+        class="tool-input mtl-input"
+        data-i18n-ph="searchPh"
+        placeholder=".pdf, application/json, image…"
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </div>
+
+    <div id="mtl-chips" class="mtl-chips" role="tablist"></div>
+
+    <div id="mtl-results" class="mtl-results"></div>
+    <div id="mtl-empty" class="mtl-empty" style="display:none" data-i18n="empty">No matching MIME types.</div>
+  </section>
+
+  <section id="mtl-panel-sniff" class="mtl-panel" role="tabpanel" hidden>
+    <label class="mtl-drop" id="mtl-drop">
+      <input type="file" id="mtl-file" class="mtl-file" />
+      <div class="mtl-drop-body">
+        <strong data-i18n="dropTitle">Drop file here or click to choose</strong>
+        <span data-i18n="dropHint">Files stay in your browser — only the first 64 bytes are read</span>
+      </div>
+    </label>
+    <div id="mtl-sniff-status" class="tool-status none" aria-live="polite"></div>
+    <div id="mtl-sniff-result" class="mtl-sniff-result" hidden>
+      <div class="tool-result-row">
+        <span class="tool-result-label" data-i18n="detectedMime">Detected MIME</span>
+        <span class="tool-result-value" id="mtl-sniff-mime"></span>
+        <button class="btn-copy mtl-copy" data-target="mtl-sniff-mime" data-i18n="copy">Copy</button>
+      </div>
+      <div class="tool-result-row">
+        <span class="tool-result-label" data-i18n="likelyExt">Likely extensions</span>
+        <span class="tool-result-value" id="mtl-sniff-ext"></span>
+        <button class="btn-copy mtl-copy" data-target="mtl-sniff-ext" data-i18n="copy">Copy</button>
+      </div>
+      <div class="tool-result-row">
+        <span class="tool-result-label" data-i18n="magicBytes">Magic bytes</span>
+        <span class="tool-result-value" id="mtl-sniff-bytes"></span>
+        <button class="btn-copy mtl-copy" data-target="mtl-sniff-bytes" data-i18n="copy">Copy</button>
+      </div>
+      <div class="tool-result-row">
+        <span class="tool-result-label" data-i18n="browserType">Browser File.type</span>
+        <span class="tool-result-value" id="mtl-sniff-browser"></span>
+      </div>
+      <div class="tool-result-row mtl-note-row" id="mtl-sniff-note-row" hidden>
+        <span class="tool-result-label" data-i18n="note">Note</span>
+        <span class="tool-result-value" id="mtl-sniff-note"></span>
+      </div>
+    </div>
+  </section>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          tabSearch: 'Search', tabSniff: 'Sniff file',
+          searchPh: '.pdf, application/json, image…',
+          empty: 'No matching MIME types.',
+          all: 'All', application: 'Application', image: 'Image', audio: 'Audio',
+          video: 'Video', text: 'Text', font: 'Font', multipart: 'Multipart',
+          message: 'Message', model: 'Model',
+          extensions: 'Extensions', group: 'Group', copy: 'Copy', copied: 'Copied',
+          dropTitle: 'Drop file here or click to choose',
+          dropHint: 'Files stay in your browser — only the first 64 bytes are read',
+          detectedMime: 'Detected MIME', likelyExt: 'Likely extensions',
+          magicBytes: 'Magic bytes (hex)', browserType: 'Browser File.type',
+          note: 'Note',
+          noMatchSig: 'No magic-bytes signature matched. Falling back to the browser-reported type.',
+          containerNote: 'ZIP container detected — may also be a docx / xlsx / pptx / EPUB / JAR file.',
+          folderError: 'Only single files are supported.',
+          unsupported: 'Your browser does not expose file reading APIs.',
+          none: '(none)'
+        },
+        zh: {
+          tabSearch: '搜索', tabSniff: '文件嗅探',
+          searchPh: '.pdf、application/json、image…',
+          empty: '未找到匹配的 MIME 类型。',
+          all: '全部', application: '应用', image: '图像', audio: '音频',
+          video: '视频', text: '文本', font: '字体', multipart: '多部分',
+          message: '消息', model: '模型',
+          extensions: '扩展名', group: '分组', copy: '复制', copied: '已复制',
+          dropTitle: '拖入文件或点击选择',
+          dropHint: '文件不出本地浏览器，仅读取前 64 字节',
+          detectedMime: '检测到的 MIME', likelyExt: '可能的扩展名',
+          magicBytes: '魔数字节（hex）', browserType: '浏览器 File.type',
+          note: '提示',
+          noMatchSig: '未匹配到 magic bytes 签名，回退到浏览器声明的类型。',
+          containerNote: '检测到 ZIP 容器 — 也可能是 docx / xlsx / pptx / EPUB / JAR。',
+          folderError: '仅支持单个文件。',
+          unsupported: '当前浏览器不支持文件读取 API。',
+          none: '（无）'
+        },
+        ja: {
+          tabSearch: '検索', tabSniff: 'ファイル判定',
+          searchPh: '.pdf、application/json、image…',
+          empty: '一致する MIME タイプはありません。',
+          all: 'すべて', application: 'アプリ', image: '画像', audio: '音声',
+          video: '動画', text: 'テキスト', font: 'フォント', multipart: 'マルチパート',
+          message: 'メッセージ', model: 'モデル',
+          extensions: '拡張子', group: 'グループ', copy: 'コピー', copied: 'コピー済み',
+          dropTitle: 'ファイルをドロップまたはクリックして選択',
+          dropHint: 'ファイルはブラウザ外に出ません — 先頭 64 バイトのみ読みます',
+          detectedMime: '検出 MIME', likelyExt: '推定拡張子',
+          magicBytes: 'マジックバイト（hex）', browserType: 'ブラウザ File.type',
+          note: '備考',
+          noMatchSig: 'マジックバイト署名と一致しませんでした。ブラウザ提供の型にフォールバックします。',
+          containerNote: 'ZIP コンテナを検出 — docx / xlsx / pptx / EPUB / JAR の可能性もあります。',
+          folderError: '単一ファイルのみ対応です。',
+          unsupported: 'お使いのブラウザではファイル読み取り API が利用できません。',
+          none: '（なし）'
+        },
+        ko: {
+          tabSearch: '검색', tabSniff: '파일 감지',
+          searchPh: '.pdf, application/json, image…',
+          empty: '일치하는 MIME 타입이 없습니다.',
+          all: '전체', application: '애플리케이션', image: '이미지', audio: '오디오',
+          video: '비디오', text: '텍스트', font: '폰트', multipart: '멀티파트',
+          message: '메시지', model: '모델',
+          extensions: '확장자', group: '그룹', copy: '복사', copied: '복사됨',
+          dropTitle: '파일을 끌어다 놓거나 클릭하여 선택',
+          dropHint: '파일은 브라우저를 벗어나지 않으며 앞 64 바이트만 읽습니다',
+          detectedMime: '감지된 MIME', likelyExt: '추정 확장자',
+          magicBytes: 'magic bytes (hex)', browserType: '브라우저 File.type',
+          note: '참고',
+          noMatchSig: 'magic bytes 시그니처와 일치하지 않습니다. 브라우저가 알려준 타입으로 대체합니다.',
+          containerNote: 'ZIP 컨테이너 감지 — docx / xlsx / pptx / EPUB / JAR 일 수도 있습니다.',
+          folderError: '단일 파일만 지원합니다.',
+          unsupported: '현재 브라우저는 파일 읽기 API를 제공하지 않습니다.',
+          none: '(없음)'
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      function applyI18n() {
+        document.querySelectorAll('[data-i18n]').forEach(function (el) {
+          var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+        });
+        document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
+          var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
+        });
+      }
+      applyI18n();
+
+      // Curated MIME database (~240 entries spanning IANA top-level types).
+      // Format: [mime, [extensions], group]. Source: IANA registry highlights + RFC 6838.
+      var DB = [
+        // application/*
+        ['application/json', ['json'], 'application'],
+        ['application/ld+json', ['jsonld'], 'application'],
+        ['application/manifest+json', ['webmanifest'], 'application'],
+        ['application/xml', ['xml'], 'application'],
+        ['application/atom+xml', ['atom'], 'application'],
+        ['application/rss+xml', ['rss'], 'application'],
+        ['application/soap+xml', [], 'application'],
+        ['application/xhtml+xml', ['xhtml', 'xht'], 'application'],
+        ['application/yaml', ['yaml', 'yml'], 'application'],
+        ['application/toml', ['toml'], 'application'],
+        ['application/javascript', ['js', 'mjs'], 'application'],
+        ['application/ecmascript', ['es'], 'application'],
+        ['application/wasm', ['wasm'], 'application'],
+        ['application/pdf', ['pdf'], 'application'],
+        ['application/postscript', ['ps', 'eps', 'ai'], 'application'],
+        ['application/rtf', ['rtf'], 'application'],
+        ['application/zip', ['zip'], 'application'],
+        ['application/gzip', ['gz'], 'application'],
+        ['application/x-bzip2', ['bz2'], 'application'],
+        ['application/x-tar', ['tar'], 'application'],
+        ['application/x-7z-compressed', ['7z'], 'application'],
+        ['application/x-rar-compressed', ['rar'], 'application'],
+        ['application/vnd.rar', ['rar'], 'application'],
+        ['application/x-xz', ['xz'], 'application'],
+        ['application/x-lzip', ['lz'], 'application'],
+        ['application/x-zstd', ['zst'], 'application'],
+        ['application/x-iso9660-image', ['iso'], 'application'],
+        ['application/java-vm', ['class'], 'application'],
+        ['application/octet-stream', ['bin', 'dat', 'exe', 'dll', 'dmg', 'img', 'class'], 'application'],
+        ['application/x-msdownload', ['exe', 'dll'], 'application'],
+        ['application/x-sh', ['sh'], 'application'],
+        ['application/x-shellscript', ['sh'], 'application'],
+        ['application/x-python-code', ['pyc', 'pyo'], 'application'],
+        ['application/x-bittorrent', ['torrent'], 'application'],
+        ['application/x-www-form-urlencoded', [], 'application'],
+        ['application/sql', ['sql'], 'application'],
+        ['application/graphql', ['graphql'], 'application'],
+        ['application/dicom', ['dcm'], 'application'],
+        ['application/epub+zip', ['epub'], 'application'],
+        ['application/x-mobipocket-ebook', ['mobi'], 'application'],
+        ['application/vnd.amazon.ebook', ['azw'], 'application'],
+        ['application/java-archive', ['jar'], 'application'],
+        ['application/vnd.android.package-archive', ['apk'], 'application'],
+        ['application/vnd.apple.installer+xml', ['mpkg'], 'application'],
+        ['application/msword', ['doc'], 'application'],
+        ['application/vnd.ms-excel', ['xls'], 'application'],
+        ['application/vnd.ms-powerpoint', ['ppt'], 'application'],
+        ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', ['docx'], 'application'],
+        ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ['xlsx'], 'application'],
+        ['application/vnd.openxmlformats-officedocument.presentationml.presentation', ['pptx'], 'application'],
+        ['application/vnd.oasis.opendocument.text', ['odt'], 'application'],
+        ['application/vnd.oasis.opendocument.spreadsheet', ['ods'], 'application'],
+        ['application/vnd.oasis.opendocument.presentation', ['odp'], 'application'],
+        ['application/x-x509-ca-cert', ['crt', 'cer'], 'application'],
+        ['application/x-pem-file', ['pem'], 'application'],
+        ['application/pkcs8', ['p8'], 'application'],
+        ['application/pkcs10', ['p10', 'csr'], 'application'],
+        ['application/pkix-cert', ['cer'], 'application'],
+        ['application/vnd.sqlite3', ['sqlite', 'sqlite3', 'db'], 'application'],
+
+        // image/*
+        ['image/jpeg', ['jpg', 'jpeg', 'jpe'], 'image'],
+        ['image/png', ['png'], 'image'],
+        ['image/gif', ['gif'], 'image'],
+        ['image/webp', ['webp'], 'image'],
+        ['image/avif', ['avif'], 'image'],
+        ['image/heic', ['heic'], 'image'],
+        ['image/heif', ['heif'], 'image'],
+        ['image/bmp', ['bmp'], 'image'],
+        ['image/tiff', ['tif', 'tiff'], 'image'],
+        ['image/svg+xml', ['svg', 'svgz'], 'image'],
+        ['image/x-icon', ['ico'], 'image'],
+        ['image/vnd.microsoft.icon', ['ico'], 'image'],
+        ['image/vnd.adobe.photoshop', ['psd'], 'image'],
+        ['image/vnd.dwg', ['dwg'], 'image'],
+        ['image/jxl', ['jxl'], 'image'],
+        ['image/apng', ['apng'], 'image'],
+        ['image/x-tga', ['tga'], 'image'],
+        ['image/x-portable-pixmap', ['ppm'], 'image'],
+
+        // audio/*
+        ['audio/mpeg', ['mp3'], 'audio'],
+        ['audio/mp4', ['m4a', 'm4b', 'm4p'], 'audio'],
+        ['audio/aac', ['aac'], 'audio'],
+        ['audio/ogg', ['ogg', 'oga', 'spx'], 'audio'],
+        ['audio/wav', ['wav'], 'audio'],
+        ['audio/x-wav', ['wav'], 'audio'],
+        ['audio/flac', ['flac'], 'audio'],
+        ['audio/webm', ['weba'], 'audio'],
+        ['audio/midi', ['mid', 'midi'], 'audio'],
+        ['audio/x-aiff', ['aif', 'aiff'], 'audio'],
+        ['audio/opus', ['opus'], 'audio'],
+        ['audio/amr', ['amr'], 'audio'],
+
+        // video/*
+        ['video/mp4', ['mp4', 'm4v'], 'video'],
+        ['video/webm', ['webm'], 'video'],
+        ['video/ogg', ['ogv'], 'video'],
+        ['video/quicktime', ['mov', 'qt'], 'video'],
+        ['video/x-msvideo', ['avi'], 'video'],
+        ['video/x-matroska', ['mkv'], 'video'],
+        ['video/mpeg', ['mpg', 'mpeg', 'mpe'], 'video'],
+        ['video/3gpp', ['3gp'], 'video'],
+        ['video/3gpp2', ['3g2'], 'video'],
+        ['video/mp2t', ['ts'], 'video'],
+        ['video/x-flv', ['flv'], 'video'],
+        ['video/x-m4v', ['m4v'], 'video'],
+
+        // text/*
+        ['text/plain', ['txt', 'text', 'log', 'in'], 'text'],
+        ['text/html', ['html', 'htm', 'shtml'], 'text'],
+        ['text/css', ['css'], 'text'],
+        ['text/javascript', ['js', 'mjs'], 'text'],
+        ['text/csv', ['csv'], 'text'],
+        ['text/tsv', ['tsv'], 'text'],
+        ['text/markdown', ['md', 'markdown'], 'text'],
+        ['text/xml', ['xml'], 'text'],
+        ['text/yaml', ['yaml', 'yml'], 'text'],
+        ['text/x-yaml', ['yaml', 'yml'], 'text'],
+        ['text/vcard', ['vcf', 'vcard'], 'text'],
+        ['text/calendar', ['ics', 'ifb'], 'text'],
+        ['text/vtt', ['vtt'], 'text'],
+        ['text/x-c', ['c', 'h'], 'text'],
+        ['text/x-c++', ['cpp', 'cc', 'cxx', 'hpp'], 'text'],
+        ['text/x-csharp', ['cs'], 'text'],
+        ['text/x-java-source', ['java'], 'text'],
+        ['text/x-python', ['py'], 'text'],
+        ['text/x-ruby', ['rb'], 'text'],
+        ['text/x-go', ['go'], 'text'],
+        ['text/x-rust', ['rs'], 'text'],
+        ['text/x-php', ['php'], 'text'],
+        ['text/x-shellscript', ['sh', 'bash'], 'text'],
+        ['text/x-sql', ['sql'], 'text'],
+        ['text/x-typescript', ['ts'], 'text'],
+        ['text/x-tex', ['tex'], 'text'],
+
+        // font/*
+        ['font/woff', ['woff'], 'font'],
+        ['font/woff2', ['woff2'], 'font'],
+        ['font/ttf', ['ttf'], 'font'],
+        ['font/otf', ['otf'], 'font'],
+        ['font/collection', ['ttc'], 'font'],
+        ['application/vnd.ms-fontobject', ['eot'], 'font'],
+
+        // multipart/*
+        ['multipart/form-data', [], 'multipart'],
+        ['multipart/mixed', [], 'multipart'],
+        ['multipart/alternative', [], 'multipart'],
+        ['multipart/related', [], 'multipart'],
+        ['multipart/byteranges', [], 'multipart'],
+        ['multipart/digest', [], 'multipart'],
+        ['multipart/parallel', [], 'multipart'],
+        ['multipart/encrypted', [], 'multipart'],
+        ['multipart/signed', [], 'multipart'],
+
+        // message/*
+        ['message/rfc822', ['eml', 'mime'], 'message'],
+        ['message/http', [], 'message'],
+        ['message/global', [], 'message'],
+        ['message/delivery-status', [], 'message'],
+        ['message/partial', [], 'message'],
+
+        // model/*
+        ['model/gltf+json', ['gltf'], 'model'],
+        ['model/gltf-binary', ['glb'], 'model'],
+        ['model/obj', ['obj'], 'model'],
+        ['model/stl', ['stl'], 'model'],
+        ['model/vnd.collada+xml', ['dae'], 'model'],
+        ['model/3mf', ['3mf'], 'model'],
+        ['model/vrml', ['wrl', 'vrml'], 'model'],
+        ['model/x3d+xml', ['x3d'], 'model']
+      ];
+
+      var GROUPS = ['application', 'image', 'audio', 'video', 'text', 'font', 'multipart', 'message', 'model'];
+
+      // Reverse extension → list of MIME entries
+      var EXT_INDEX = {};
+      DB.forEach(function (row) {
+        row[1].forEach(function (ext) {
+          if (!EXT_INDEX[ext]) EXT_INDEX[ext] = [];
+          EXT_INDEX[ext].push(row);
+        });
+      });
+
+      // Magic-bytes signatures. Match function gets a Uint8Array of the first 64 bytes.
+      function bytesStartWith(bytes, sig, offset) {
+        offset = offset || 0;
+        if (bytes.length < offset + sig.length) return false;
+        for (var i = 0; i < sig.length; i++) if (bytes[i + offset] !== sig[i]) return false;
+        return true;
+      }
+      function asciiAt(bytes, offset, str) {
+        for (var i = 0; i < str.length; i++) if (bytes[offset + i] !== str.charCodeAt(i)) return false;
+        return true;
+      }
+      var SIGNATURES = [
+        { mime: 'image/png', match: function (b) { return bytesStartWith(b, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); } },
+        { mime: 'image/jpeg', match: function (b) { return bytesStartWith(b, [0xFF, 0xD8, 0xFF]); } },
+        { mime: 'image/gif', match: function (b) { return bytesStartWith(b, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) || bytesStartWith(b, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]); } },
+        { mime: 'image/webp', match: function (b) { return bytesStartWith(b, [0x52, 0x49, 0x46, 0x46]) && asciiAt(b, 8, 'WEBP'); } },
+        { mime: 'image/bmp', match: function (b) { return bytesStartWith(b, [0x42, 0x4D]); } },
+        { mime: 'image/tiff', match: function (b) { return bytesStartWith(b, [0x49, 0x49, 0x2A, 0x00]) || bytesStartWith(b, [0x4D, 0x4D, 0x00, 0x2A]); } },
+        { mime: 'image/x-icon', match: function (b) { return bytesStartWith(b, [0x00, 0x00, 0x01, 0x00]); } },
+        { mime: 'image/heic', match: function (b) { return asciiAt(b, 4, 'ftyp') && (asciiAt(b, 8, 'heic') || asciiAt(b, 8, 'heix') || asciiAt(b, 8, 'mif1')); } },
+        { mime: 'image/avif', match: function (b) { return asciiAt(b, 4, 'ftyp') && (asciiAt(b, 8, 'avif') || asciiAt(b, 8, 'avis')); } },
+        { mime: 'image/jxl', match: function (b) { return bytesStartWith(b, [0xFF, 0x0A]) || bytesStartWith(b, [0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20]); } },
+        { mime: 'application/pdf', match: function (b) { return bytesStartWith(b, [0x25, 0x50, 0x44, 0x46]); } },
+        { mime: 'application/postscript', match: function (b) { return bytesStartWith(b, [0x25, 0x21, 0x50, 0x53]); } },
+        { mime: 'application/zip', match: function (b) { return bytesStartWith(b, [0x50, 0x4B, 0x03, 0x04]) || bytesStartWith(b, [0x50, 0x4B, 0x05, 0x06]) || bytesStartWith(b, [0x50, 0x4B, 0x07, 0x08]); }, container: true },
+        { mime: 'application/x-rar-compressed', match: function (b) { return bytesStartWith(b, [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07]); } },
+        { mime: 'application/x-7z-compressed', match: function (b) { return bytesStartWith(b, [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]); } },
+        { mime: 'application/gzip', match: function (b) { return bytesStartWith(b, [0x1F, 0x8B]); } },
+        { mime: 'application/x-bzip2', match: function (b) { return bytesStartWith(b, [0x42, 0x5A, 0x68]); } },
+        { mime: 'application/x-xz', match: function (b) { return bytesStartWith(b, [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]); } },
+        { mime: 'application/x-zstd', match: function (b) { return bytesStartWith(b, [0x28, 0xB5, 0x2F, 0xFD]); } },
+        { mime: 'video/mp4', match: function (b) { return asciiAt(b, 4, 'ftyp') && (asciiAt(b, 8, 'mp4') || asciiAt(b, 8, 'isom') || asciiAt(b, 8, 'iso2') || asciiAt(b, 8, 'M4V') || asciiAt(b, 8, 'M4A') || asciiAt(b, 8, 'dash')); } },
+        { mime: 'video/quicktime', match: function (b) { return asciiAt(b, 4, 'ftyp') && (asciiAt(b, 8, 'qt') || asciiAt(b, 8, 'mov')); } },
+        { mime: 'video/webm', match: function (b) { return bytesStartWith(b, [0x1A, 0x45, 0xDF, 0xA3]); } },
+        { mime: 'video/x-msvideo', match: function (b) { return bytesStartWith(b, [0x52, 0x49, 0x46, 0x46]) && asciiAt(b, 8, 'AVI '); } },
+        { mime: 'audio/mpeg', match: function (b) { return bytesStartWith(b, [0x49, 0x44, 0x33]) || (b[0] === 0xFF && (b[1] & 0xE0) === 0xE0); } },
+        { mime: 'audio/wav', match: function (b) { return bytesStartWith(b, [0x52, 0x49, 0x46, 0x46]) && asciiAt(b, 8, 'WAVE'); } },
+        { mime: 'audio/ogg', match: function (b) { return bytesStartWith(b, [0x4F, 0x67, 0x67, 0x53]); } },
+        { mime: 'audio/flac', match: function (b) { return bytesStartWith(b, [0x66, 0x4C, 0x61, 0x43]); } },
+        { mime: 'audio/midi', match: function (b) { return bytesStartWith(b, [0x4D, 0x54, 0x68, 0x64]); } },
+        { mime: 'font/woff', match: function (b) { return bytesStartWith(b, [0x77, 0x4F, 0x46, 0x46]); } },
+        { mime: 'font/woff2', match: function (b) { return bytesStartWith(b, [0x77, 0x4F, 0x46, 0x32]); } },
+        { mime: 'font/ttf', match: function (b) { return bytesStartWith(b, [0x00, 0x01, 0x00, 0x00, 0x00]); } },
+        { mime: 'font/otf', match: function (b) { return bytesStartWith(b, [0x4F, 0x54, 0x54, 0x4F]); } },
+        { mime: 'application/vnd.sqlite3', match: function (b) { return asciiAt(b, 0, 'SQLite format 3'); } },
+        { mime: 'application/wasm', match: function (b) { return bytesStartWith(b, [0x00, 0x61, 0x73, 0x6D]); } },
+        { mime: 'application/java-vm', match: function (b) { return bytesStartWith(b, [0xCA, 0xFE, 0xBA, 0xBE]); } },
+        { mime: 'application/rtf', match: function (b) { return asciiAt(b, 0, '{\\rtf'); } },
+        { mime: 'application/x-msdownload', match: function (b) { return bytesStartWith(b, [0x4D, 0x5A]); } }
+      ];
+
+      // ── Search panel ──
+      var searchInput = document.getElementById('mtl-search');
+      var resultsEl = document.getElementById('mtl-results');
+      var emptyEl = document.getElementById('mtl-empty');
+      var chipsEl = document.getElementById('mtl-chips');
+      var activeGroup = 'all';
+
+      function makeChip(group, labelKey) {
+        var btn = document.createElement('button');
+        btn.className = 'mtl-chip' + (group === activeGroup ? ' is-active' : '');
+        btn.setAttribute('data-group', group);
+        btn.textContent = t[labelKey] || labelKey;
+        btn.addEventListener('click', function () {
+          activeGroup = group;
+          chipsEl.querySelectorAll('.mtl-chip').forEach(function (c) { c.classList.toggle('is-active', c.getAttribute('data-group') === group); });
+          render();
+        });
+        return btn;
+      }
+      chipsEl.appendChild(makeChip('all', 'all'));
+      GROUPS.forEach(function (g) { chipsEl.appendChild(makeChip(g, g)); });
+
+      function escapeHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function render() {
+        var q = (searchInput.value || '').trim().toLowerCase();
+        var items = DB.filter(function (row) {
+          if (activeGroup !== 'all' && row[2] !== activeGroup) return false;
+          if (!q) return true;
+          if (q.charAt(0) === '.') {
+            var ext = q.slice(1);
+            return row[1].some(function (e) { return e === ext || e.indexOf(ext) === 0; });
+          }
+          if (q.indexOf('/') !== -1) return row[0].toLowerCase().indexOf(q) !== -1;
+          return row[0].toLowerCase().indexOf(q) !== -1 ||
+                 row[1].some(function (e) { return e.indexOf(q) === 0; }) ||
+                 row[2] === q;
+        });
+
+        resultsEl.innerHTML = '';
+        if (!items.length) {
+          emptyEl.style.display = '';
+          return;
+        }
+        emptyEl.style.display = 'none';
+
+        items.forEach(function (row) {
+          var mime = row[0], exts = row[1], group = row[2];
+          var card = document.createElement('div');
+          card.className = 'mtl-card';
+          var extLabel = exts.length ? exts.map(function (e) { return '.' + e; }).join(' · ') : t.none;
+          card.innerHTML =
+            '<div class="mtl-card-head">' +
+              '<code class="mtl-mime">' + escapeHtml(mime) + '</code>' +
+              '<button class="btn-copy mtl-copy" data-text="' + escapeHtml(mime) + '">' + t.copy + '</button>' +
+            '</div>' +
+            '<div class="mtl-card-meta">' +
+              '<span><strong>' + t.extensions + ':</strong> ' + escapeHtml(extLabel) + '</span>' +
+              '<span class="mtl-group mtl-group-' + group + '">' + (t[group] || group) + '</span>' +
+            '</div>';
+          resultsEl.appendChild(card);
+        });
+      }
+
+      searchInput.addEventListener('input', function () {
+        render();
+        if (window.trackTool) window.trackTool('mime-type-lookup', 'search');
+      });
+
+      render();
+
+      // Copy delegation for search results + sniff rows
+      document.addEventListener('click', function (e) {
+        var target = e.target;
+        if (!target || !target.classList || !target.classList.contains('mtl-copy')) return;
+        var text = target.getAttribute('data-text');
+        if (!text) {
+          var refId = target.getAttribute('data-target');
+          if (refId) {
+            var ref = document.getElementById(refId);
+            if (ref) text = ref.textContent || '';
+          }
+        }
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          var orig = target.textContent;
+          target.textContent = t.copied;
+          target.classList.add('copied');
+          setTimeout(function () {
+            target.textContent = orig;
+            target.classList.remove('copied');
+          }, 1100);
+        });
+      });
+
+      // ── Tabs ──
+      var tabSearch = document.getElementById('mtl-tab-search');
+      var tabSniff = document.getElementById('mtl-tab-sniff');
+      var panelSearch = document.getElementById('mtl-panel-search');
+      var panelSniff = document.getElementById('mtl-panel-sniff');
+
+      function activate(mode) {
+        var isSearch = mode === 'search';
+        tabSearch.classList.toggle('is-active', isSearch);
+        tabSniff.classList.toggle('is-active', !isSearch);
+        tabSearch.setAttribute('aria-selected', String(isSearch));
+        tabSniff.setAttribute('aria-selected', String(!isSearch));
+        panelSearch.hidden = !isSearch;
+        panelSniff.hidden = isSearch;
+        try {
+          if (window.ztPersist) window.ztPersist.save('mime-type-lookup', { mode: mode });
+        } catch (_) {}
+      }
+      tabSearch.addEventListener('click', function () { activate('search'); });
+      tabSniff.addEventListener('click', function () { activate('sniff'); });
+
+      try {
+        if (window.ztPersist) {
+          var saved = window.ztPersist.load('mime-type-lookup');
+          if (saved && saved.mode === 'sniff') activate('sniff');
+        }
+      } catch (_) {}
+
+      // ── Sniff panel ──
+      var dropEl = document.getElementById('mtl-drop');
+      var fileEl = document.getElementById('mtl-file');
+      var statusEl = document.getElementById('mtl-sniff-status');
+      var resultEl = document.getElementById('mtl-sniff-result');
+      var mimeEl = document.getElementById('mtl-sniff-mime');
+      var extEl = document.getElementById('mtl-sniff-ext');
+      var bytesEl = document.getElementById('mtl-sniff-bytes');
+      var browserEl = document.getElementById('mtl-sniff-browser');
+      var noteRow = document.getElementById('mtl-sniff-note-row');
+      var noteEl = document.getElementById('mtl-sniff-note');
+
+      if (!('FileReader' in window) || !('File' in window)) {
+        dropEl.style.display = 'none';
+        statusEl.className = 'tool-status error';
+        statusEl.textContent = t.unsupported;
+      }
+
+      function bytesToHex(bytes, max) {
+        var n = Math.min(bytes.length, max || 16);
+        var out = [];
+        for (var i = 0; i < n; i++) out.push(bytes[i].toString(16).padStart(2, '0').toUpperCase());
+        return out.join(' ');
+      }
+
+      function lookupExtensions(mime) {
+        var row = DB.find(function (r) { return r[0] === mime; });
+        return row ? row[1] : [];
+      }
+
+      function sniff(file) {
+        statusEl.className = 'tool-status none';
+        statusEl.textContent = '';
+        var slice = file.slice(0, 64);
+        var reader = new FileReader();
+        reader.onload = function () {
+          var bytes = new Uint8Array(reader.result);
+          var matched = null;
+          for (var i = 0; i < SIGNATURES.length; i++) {
+            try {
+              if (SIGNATURES[i].match(bytes)) { matched = SIGNATURES[i]; break; }
+            } catch (_) {}
+          }
+          var detected = matched ? matched.mime : (file.type || 'application/octet-stream');
+          var exts = lookupExtensions(detected);
+          mimeEl.textContent = detected;
+          extEl.textContent = exts.length ? exts.map(function (e) { return '.' + e; }).join(' · ') : t.none;
+          bytesEl.textContent = bytesToHex(bytes, 16);
+          browserEl.textContent = file.type || t.none;
+
+          if (!matched) {
+            noteRow.hidden = false;
+            noteEl.textContent = t.noMatchSig;
+          } else if (matched.container) {
+            noteRow.hidden = false;
+            noteEl.textContent = t.containerNote;
+          } else {
+            noteRow.hidden = true;
+            noteEl.textContent = '';
+          }
+          resultEl.hidden = false;
+          if (window.trackTool) window.trackTool('mime-type-lookup', 'sniff');
+        };
+        reader.onerror = function () {
+          statusEl.className = 'tool-status error';
+          statusEl.textContent = String(reader.error || 'read error');
+        };
+        reader.readAsArrayBuffer(slice);
+      }
+
+      function handleFiles(list) {
+        if (!list || !list.length) return;
+        if (list.length > 1) {
+          statusEl.className = 'tool-status error';
+          statusEl.textContent = t.folderError;
+          return;
+        }
+        var f = list[0];
+        if (f.size === 0 && f.type === '') {
+          statusEl.className = 'tool-status error';
+          statusEl.textContent = t.folderError;
+          return;
+        }
+        sniff(f);
+      }
+
+      fileEl.addEventListener('change', function (e) {
+        handleFiles(e.target.files);
+      });
+      dropEl.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        dropEl.classList.add('is-drag');
+      });
+      dropEl.addEventListener('dragleave', function () {
+        dropEl.classList.remove('is-drag');
+      });
+      dropEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('is-drag');
+        handleFiles(e.dataTransfer && e.dataTransfer.files);
+      });
+    })();
+  </script>
+</div>
+
+<style is:global>
+  .mtl-wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+  .mtl-tabs {
+    display: inline-flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    background: var(--color-surface-muted);
+    border-radius: var(--radius-pill);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    align-self: flex-start;
+  }
+  .mtl-tab {
+    appearance: none;
+    border: 0;
+    padding: 0.45rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    background: transparent;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+  .mtl-tab.is-active {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    box-shadow: var(--shadow-subtle);
+  }
+  @media (hover: hover) {
+    .mtl-tab:not(.is-active):hover { color: var(--color-primary); }
+  }
+
+  .mtl-panel { display: flex; flex-direction: column; gap: 0.85rem; }
+  .mtl-panel[hidden] { display: none; }
+
+  .mtl-search-row { display: flex; }
+  .mtl-input { flex: 1; }
+
+  .mtl-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .mtl-chip {
+    appearance: none;
+    border: 0;
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    padding: 0.32rem 0.85rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .mtl-chip.is-active {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  }
+  @media (hover: hover) {
+    .mtl-chip:not(.is-active):hover { color: var(--color-primary); }
+  }
+
+  .mtl-results {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+    gap: 0.7rem;
+  }
+  .mtl-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.75rem 0.9rem;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .mtl-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .mtl-mime {
+    flex: 1;
+    min-width: 0;
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .mtl-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--color-text-secondary);
+    flex-wrap: wrap;
+  }
+  .mtl-group {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.55rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .mtl-group-application { color: var(--color-cat-data); }
+  .mtl-group-image       { color: var(--color-cat-image); }
+  .mtl-group-audio       { color: var(--color-cat-encoding); }
+  .mtl-group-video       { color: var(--color-cat-dev); }
+  .mtl-group-text        { color: var(--color-cat-text); }
+  .mtl-group-font        { color: var(--color-cat-color); }
+  .mtl-group-multipart   { color: var(--color-cat-api); }
+  .mtl-group-message     { color: var(--color-cat-security); }
+  .mtl-group-model       { color: var(--color-primary); }
+
+  .mtl-empty {
+    font-size: 0.88rem;
+    color: var(--color-text-secondary);
+    padding: 1rem 0;
+    text-align: center;
+  }
+
+  /* Sniff panel */
+  .mtl-drop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 160px;
+    padding: 1.5rem;
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    cursor: pointer;
+    text-align: center;
+    transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .mtl-drop.is-drag {
+    background: var(--color-primary-light);
+    box-shadow: inset 0 0 0 2px var(--color-primary);
+  }
+  .mtl-drop-body { display: flex; flex-direction: column; gap: 0.35rem; }
+  .mtl-drop-body strong { font-size: 0.95rem; color: var(--color-text); font-weight: 700; }
+  .mtl-drop-body span { font-size: 0.82rem; color: var(--color-text-secondary); }
+  .mtl-file { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+
+  .mtl-sniff-result {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .mtl-sniff-result[hidden],
+  .mtl-note-row[hidden] { display: none; }
+
+  @media (max-width: 640px) {
+    .mtl-tabs { width: 100%; }
+    .mtl-tab { flex: 1; text-align: center; }
+    .mtl-chips { overflow-x: auto; flex-wrap: nowrap; }
+    .mtl-chip { white-space: nowrap; }
+  }
+</style>

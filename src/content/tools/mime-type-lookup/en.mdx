@@ -1,0 +1,85 @@
+---
+seoTitle: "MIME Type Lookup — Content-Type by Extension | ZeroTool"
+seoDescription: "Free browser-based MIME type lookup. Find the Content-Type for any file extension, reverse-search by MIME, and detect file type by magic bytes — 100% client-side, no upload."
+faqItems:
+  - question: "Where does the MIME database come from?"
+    answer: "The catalog is a curated snapshot of the IANA Media Types registry combined with the RFC 6838 top-level types. It is baked into the page at build time, so lookups work fully offline and do not call any external API. Roughly 240 entries cover application, image, audio, video, text, font, multipart, message, and model types."
+  - question: "Does the file sniffer upload my file?"
+    answer: "No. The sniffer uses the browser File API to read only the first 64 bytes of the file you drop. The page never sends the bytes anywhere — the entire detection pipeline is JavaScript running on your machine. You can disconnect from the network and the tool will still work."
+  - question: "Why does the sniffer disagree with the file extension?"
+    answer: "Many real-world formats are containers in disguise. A docx, xlsx, pptx, EPUB, or JAR is structurally a ZIP archive, so its magic bytes say application/zip. The page surfaces both the byte-level type and the extension's nominal type so you can validate uploads server-side without trusting client-side claims."
+  - question: "What about formats with no fixed binary header?"
+    answer: "CSV, JSON, SQL, source code, and other plain-text formats have no reliable header. When no signature matches, the tool falls back to the browser's File.type — which the operating system derives from the extension — and clearly labels the fallback so you do not mistake it for a magic-bytes detection."
+  - question: "Can I use the search panel as a Content-Type header reference?"
+    answer: "Yes. The value shown next to each result is exactly what you put in HTTP Content-Type, Accept, or Content-Disposition headers, as well as S3 metadata, fetch() options, and similar API surfaces. The extension column is provided for convenience and is not part of the header value."
+---
+
+<h2>How to use</h2>
+<ol>
+  <li>Type an extension (with or without the leading dot), a MIME type, or any keyword into the search box. The list updates as you type.</li>
+  <li>Use the category chips to scope the result list to application, image, audio, video, text, font, multipart, message, or model types.</li>
+  <li>Click <strong>Copy</strong> on any result to put the Content-Type string on your clipboard, ready to paste into a header or API request.</li>
+  <li>Switch to the <strong>Sniff file</strong> tab and drop a local file to see its detected MIME, likely extensions, the first 16 bytes in hex, and what the browser would have reported. Nothing is uploaded.</li>
+</ol>
+
+<h2>What MIME types actually are</h2>
+<p>
+  A MIME type — formally a media type — is a two-part identifier that tells software how to
+  interpret a sequence of bytes. The top-level type names a coarse family (image, audio, video,
+  text, application, multipart, message, model, font), the subtype names the specific format
+  (<code>image/png</code>, <code>application/pdf</code>, <code>text/csv</code>). The full grammar
+  is defined in RFC 6838 and registered with IANA. Web servers send them in the
+  <code>Content-Type</code> header, browsers use them to pick a renderer, and APIs use them to
+  negotiate request bodies.
+</p>
+
+<h2>How the magic-bytes sniffer works</h2>
+<p>
+  Every binary format starts with a recognizable fingerprint — a fixed sequence of bytes the
+  parser uses to confirm the file is what its extension claims. PNG begins with
+  <code>89 50 4E 47 0D 0A 1A 0A</code>, JPEG with <code>FF D8 FF</code>, PDF with
+  <code>%PDF</code>, ZIP with <code>50 4B 03 04</code>. The tool slices the first 64 bytes of
+  your file through <code>File.slice()</code>, hands them to <code>FileReader</code>, and walks
+  about thirty signatures looking for the first match. Some signatures live at non-zero offsets:
+  MP4 looks for <code>ftyp</code> at byte 4, the tar format checks the <code>ustar</code> magic
+  at byte 257.
+</p>
+
+<h2>Why this matters for upload validation</h2>
+<p>
+  Trusting the file extension or the browser-reported MIME alone is a classic upload vulnerability.
+  A user can rename <code>shell.php</code> to <code>image.png</code> and the browser will gladly
+  report <code>image/png</code> as the type. A byte-level sniff on the server is the only reliable
+  defense, and this tool exists so you can rehearse the same check locally before writing the
+  server code. Compare the three columns the Sniff tab shows — detected MIME, likely extensions,
+  browser File.type — and you will see in seconds which inputs would slip past a naive validator.
+</p>
+
+<h2>Container formats and the ZIP problem</h2>
+<p>
+  Modern productivity formats are containers built on top of older formats. A <code>.docx</code>
+  is a ZIP archive of XML, a <code>.xlsx</code> is the same with different XML inside,
+  <code>.pptx</code>, <code>.epub</code>, <code>.apk</code>, and <code>.jar</code> all share the
+  ZIP magic bytes. When the sniffer reports <code>application/zip</code>, the tool calls this
+  out — to recover the inner format you need to read the central directory entries inside the
+  archive. The Detected MIME stays accurate at the byte level; the application-level type takes
+  one more step.
+</p>
+
+<h2>Common use cases</h2>
+<ul>
+  <li>Setting the right <code>Content-Type</code> for S3 / Cloudflare R2 uploads so browsers do not download files instead of displaying them.</li>
+  <li>Picking the correct <code>Accept</code> values when calling third-party APIs.</li>
+  <li>Debugging why a CDN serves a <code>.webp</code> with the wrong type and blocks AVIF negotiation.</li>
+  <li>Auditing user uploads in the browser before the file leaves the page, as a cheap first filter.</li>
+  <li>Confirming what extension a downloaded blob really is when the server forgot to set Content-Disposition.</li>
+</ul>
+
+<h2>Limits by design</h2>
+<p>
+  This tool is a lookup table and a magic-bytes sniffer. It is not a virus scanner, not a
+  permission gate, and not a parser for the inner structure of container formats. Pure text
+  formats with no fixed header — CSV, JSON, plain text, source code — are reported via the
+  browser's <code>File.type</code> when no binary signature matches. For text-content sniffing
+  beyond what the extension implies, use a server-side library tuned to your domain.
+</p>

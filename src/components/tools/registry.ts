@@ -123,6 +123,7 @@ import FileHashCheckerTool from './FileHashCheckerTool.astro';
 import ImageCompressorTool from './ImageCompressorTool.astro';
 import IbanValidatorParserTool from './IbanValidatorParserTool.astro';
 import HtmlMinifierTool from './HtmlMinifierTool.astro';
+import MimeTypeLookupTool from './MimeTypeLookupTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -246,4 +247,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'image-compressor': ImageCompressorTool,
   'iban-validator-parser': IbanValidatorParserTool,
   'html-minifier': HtmlMinifierTool,
+  'mime-type-lookup': MimeTypeLookupTool,
 };
