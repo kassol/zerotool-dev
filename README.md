@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 121 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 122 tools and growing.
 
 ## Tools
 
@@ -130,6 +130,7 @@
 | Image Compressor | [/tools/image-compressor](https://zerotool.dev/tools/image-compressor) |
 | IBAN Validator & Parser | [/tools/iban-validator-parser](https://zerotool.dev/tools/iban-validator-parser) |
 | HTML Minifier & Beautifier | [/tools/html-minifier](https://zerotool.dev/tools/html-minifier) |
+| MIME Type Lookup | [/tools/mime-type-lookup](https://zerotool.dev/tools/mime-type-lookup) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
