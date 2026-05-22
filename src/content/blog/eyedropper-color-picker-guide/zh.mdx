@@ -1,0 +1,127 @@
+---
+title: "用 EyeDropper API 拾取屏幕上的任意像素"
+description: "面向开发者的浏览器原生 EyeDropper API 指南——工作原理、能力边界，以及如何用它从截图、视频和其他应用里取色。"
+pubDate: 2026-05-22
+lang: "zh"
+tags: ["color", "css", "web-api", "design", "developer-tools"]
+ogImage: /og/blog-eyedropper-color-picker-guide.png
+---
+
+你正在为一个提案复刻竞品的 dashboard。参考素材是一张从他们发布会视频里截下来的 4K 截图，外加几张从 Dribbble 扒来的 Figma 导出图。整个界面上有 30 种独立颜色——侧边栏底色、三种按钮态、两层弱化文字、一套六阶图表配色。老流程：切一小块、粘到 Photoshop、用吸管、复制 hex、粘进 Tailwind 配置，循环往复。30 次来回之后，调色板有了，手腕也酸了。
+
+屏幕级取色多年来一直是付费工具的赛道——ColorSnapper、Sip、Just Color Picker，再加上一长串想要单独权限的 Chrome 扩展。从 Chromium 95 开始，常规场景下你已经不再需要它们。浏览器内置了一个 `EyeDropper` API，做的就是这件事：打开系统级放大镜，采样一个像素，返回一个 sRGB 十六进制字符串。ZeroTool 的 [Eyedropper Color Picker](/zh/tools/eyedropper-color-picker/) 就是在这个 API 之上加一层薄壳：补齐格式转换，再加上一条你自己写也要写的最近颜色历史栏。
+
+## 60 秒看懂 EyeDropper API
+
+`EyeDropper` 是 Chromium 孵化、目前由 WICG 跟踪的 Web API。接口面非常小：
+
+```js
+const eyeDropper = new EyeDropper();
+const result = await eyeDropper.open();
+console.log(result.sRGBHex); // "#3a7bd5"
+```
+
+`open()` 返回一个 Promise。浏览器接管鼠标光标，弹出系统级放大镜，用户在物理屏幕的任意位置点击一个像素——包括浏览器窗口之外、其他应用的画面上——Promise resolve 出一个对象，其 `sRGBHex` 属性是一个 7 字符的十六进制字符串。如果用户按下 Escape，Promise 会以 `AbortError` reject。
+
+在它之上构建前，有三条约束值得先记住：
+
+- **必须有用户手势。** 只能在 click 或 keypress 处理器里调用 `open()`。没有 `setTimeout` 取巧，没有页面加载时自动弹出，也没有无头采样。这是设计如此——静默读取其他应用的像素就是一种屏幕截取漏洞。
+- **每次调用只能取一个像素。** 每次调用精确采样一个像素然后关闭放大镜。要取第二个颜色，用户必须再点一次你的按钮。没有"保持打开、持续采样"模式。
+- **只输出 sRGB。** 返回的十六进制值始终在 sRGB 色彩空间内。如果用户在 P3 显示器上从一张广色域图片里取色，数值会先经过色域映射降到 sRGB 再交给你。这个 API 没有任何方式读取显示器原生色。
+
+2026 年的浏览器支持情况：Chrome、Edge、Opera（Chromium 95+）全部已发布。Safari 和 Firefox 不支持。能力检测一行就够：
+
+```js
+if ('EyeDropper' in window) {
+  // EyeDropper 可用——挂上屏幕取色按钮
+} else {
+  // 回落到 <input type="color"> 或显示提示信息
+}
+```
+
+## 工具用法
+
+打开 [Eyedropper Color Picker](/zh/tools/eyedropper-color-picker/)，你会看到三种输入模式：
+
+1. **从屏幕取色。** 点击按钮，然后点击屏幕上任意像素。HEX、RGB、HSL 字段会同步填好。这条路径走的是 EyeDropper API——仅限 Chromium 系。
+2. **原生取色器。** 弹出标准的 `input type="color"` 对话框。所有浏览器都能用，包括 Safari 和 Firefox。需要 HSV 色环或者从零创建一个新颜色时用它。
+3. **直接输入数值。** 粘贴一个已知的 HEX、RGB 或 HSL 值，另外两个会自动算出来。不开 DevTools 就能在三种格式之间转换。
+
+最近 8 次采样会保存在最近颜色历史栏里，背后是 `localStorage`。点击色块可以重新加载，用"清空记录"按钮可以清掉。任何数据都不会离开你的浏览器——两条取色路径都没有任何网络请求。
+
+## 四个具体使用场景
+
+### 反向还原一份设计
+
+你手上有一张截图或一份 Figma 导出，需要把调色板还原进 Tailwind、CSS 变量或者 Sketch 色板。在任意窗口里打开参考图——预览应用、Figma 桌面端、浏览器标签页都行——点击"从屏幕取色"，然后点你想要的颜色。放大镜的缩放倍数足以让你在 1× 显示器上也能精确落到单个像素。
+
+这能在 80% 的场景里替代 ColorSnapper / Sip 的流程。专业应用在浮动调色板、热键快速采样、命名色库这些场景下依然占优。但对于一个项目里的六个颜色，浏览器 API 已经够用。
+
+### 品牌色取证
+
+营销侧常见需求：「网站之前是某个特定的蓝色，源文件丢了，能不能从这份旧 PDF / 截图 / Wayback Machine 存档里把它还原出来？」没有原始 token，就只能从渲染好的图片上读颜色。把图片拖到一个标签页，在另一个标签页里打开工具，切回去，取色。放大镜覆盖整块屏幕，不只是当前标签页，所以图片不需要待在工具内部。
+
+### 视频和直播界面取色
+
+Twitch overlay、YouTube 缩略图、AI agent 工作录屏、会议幻灯片——任何在你屏幕上播放的东西都是取色对象。暂停画面，点击"从屏幕取色"，点击那个像素。传统设计工具很难做到这一点，它们通常需要一个静态文件。
+
+一个细节坑：放大镜采样的是实际渲染到显示器上的那个像素，所以 GPU 合成、色彩配置文件、操作系统的 HDR-to-SDR tone mapping 全部已经烘焙进去了。你取到的颜色是"用户看到的"，不是"源素材里指定的"。
+
+### 无障碍审计
+
+拿到一个颜色后，通常下一步是检查它和另一个颜色的对比度。取前景、取背景，把两者粘进 [Color Contrast Checker](/zh/tools/color-contrast-checker/)，得到 WCAG AA/AAA 判定。对色觉障碍审计，把取到的颜色丢进 [Color Blindness Simulator](/zh/tools/color-blindness-simulator/)，看看绿色盲（deuteranopic）或红色盲（protanopic）用户眼里你的调色板是什么样。
+
+## 边界与变通
+
+**Safari 和 Firefox 用户。** `EyeDropper` 能力检测返回 false。工具会隐藏"从屏幕取色"按钮，回落到原生取色器。要在这些浏览器上做屏幕取色：临时用 Chrome 打开参考图、用系统工具（macOS 自带 Digital Color Meter，Windows PowerToys 有 Color Picker），或者装一个经过审查的扩展。
+
+**DevTools 已经有吸管了。** Chrome 和 Firefox 的 DevTools 在 Styles 面板里集成了一个小型吸管——点击规则面板里的色块就能拿到当前文档的吸管。但那个吸管的范围限定在被检视的页面：只能取视口内的像素，碰不到其他标签页或应用。独立的 `EyeDropper` API 覆盖整块物理屏幕。
+
+**不支持连续采样。** 每次取色都要在你的按钮上重新点一下。50 个颜色意味着 100 次点击。这是用户手势的硬性要求，不是工具的限制。
+
+**P3 和 HDR 截断。** 在广色域显示器上显示 P3 图片时，取到的颜色会先映射到 sRGB 再到你的代码里。这个 hex 值可能和 Photoshop 在同一像素上读出来的差几个百分点——Photoshop 读的是源素材的色彩空间，浏览器读的是合成后的 sRGB 输出。色彩管理严格的工作，去色彩管理工具里复核。
+
+**最近颜色历史栏存在 localStorage 里。** 清掉浏览器站点数据就会被清空。仅存本机，不会同步。
+
+## FAQ
+
+### 它和 Chrome DevTools 内置的吸管有什么区别？
+
+DevTools 的吸管绑定在被检视的文档上——只能取视口像素，碰不到其他标签页或应用。`EyeDropper` Web API 能覆盖整块物理屏幕，因为浏览器是向操作系统请求一次系统级采样。检视当前页面的某个元素时用 DevTools，其他场景用独立工具。
+
+### 为什么不能一次取多个像素或读取一整块区域？
+
+单像素、每次取色都要用户手势是这个 API 的隐私模型核心。读取区域——或者让页面在没有显式点击的情况下采样——会让恶意页面有能力截取用户打开的其他应用。WICG 的威胁模型把"每次手势单像素"定为能接受的最大暴露面。
+
+### Safari 和 Firefox 用户该怎么办？
+
+两条路。同一个工具暴露了原生的 `input type="color"` 取色器，能在所有浏览器里完成新颜色的创作。要做真正的屏幕采样，就用平台工具——macOS Digital Color Meter（系统自带）、Windows PowerToys Color Picker，或者一个可信的扩展。这两个浏览器引擎上没有 Web 标准层面的屏幕采样回退方案。
+
+### 为什么我的 P3 显示器读出来的值和 Photoshop 不一样？
+
+Photoshop 通过自己的色彩管理流水线，按文档的 ICC 配置文件读取源素材的值。浏览器吸管读的是操作系统推送到显示器上的合成后 sRGB 像素。在 P3 显示器上看 P3 素材，这两个数字本来就对不上——Photoshop 看的是广色域原稿，浏览器看的是 sRGB 映射后的输出。两边对各自的工作流都是正确的。色彩管理类的工作放在色彩管理编辑器里做；输出目标是 sRGB 的 UI 工作，浏览器的值就够用。
+
+### 在第二块显示器上能用吗？
+
+能。系统放大镜会跟着光标在所有外接显示器之间移动。每块显示器的色彩配置文件和伽马都会在采样前被应用，所以如果两块显示器校色不同，从它们上面取同一个逻辑颜色可能会得到略有差异的 hex 值。
+
+### 最近颜色历史栏会跨浏览器或跨设备同步吗？
+
+不会。这个历史栏存在当前 origin 的 `localStorage` 里——按浏览器、按用户配置、按设备隔离。清掉站点数据就会被删除。没有账号、不上传、不跨设备同步。
+
+### 能在 iframe 或 Chrome 扩展里用这个 API 吗？
+
+同源 iframe 可以，前提是 click handler 在 iframe 内部，并且父页面允许。跨源 iframe 需要父页面下发一个 Permissions Policy 指令。在 Chrome 扩展的 content script 里 API 也可用，不过大多数做屏幕采样的扩展仍然用 `chrome.tabs.captureVisibleTab` 来读取整块区域。
+
+## 相关色彩工具
+
+拿到 hex 之后，下一步通常会落到下面几个工具上：
+
+- [Color Converter](/zh/tools/color-converter/)——把一个 hex 推过 HEX / RGB / HSL / HSV / CMYK / OKLCH 几种转换，挑你代码库里在用的那种格式。
+- [Color Shades Generator](/zh/tools/color-shades-generator/)——把一个颜色展开成 50 到 950 的明暗阶梯，适配 Tailwind 或 Material 调色板。
+- [Color Palette Generator](/zh/tools/color-palette-generator/)——围绕一个基色生成互补、类似、三色和分裂互补配色。
+- [Color Contrast Checker](/zh/tools/color-contrast-checker/)——验证前景/背景配对是否通过 WCAG AA 或 AAA，覆盖大字号文本和 UI 组件阈值。
+
+---
+
+下次需要从一张截图里取个 hex 时，打开 [Eyedropper Color Picker](/zh/tools/eyedropper-color-picker/) 就行。免费、纯浏览器端、关掉标签页后不留痕迹。
