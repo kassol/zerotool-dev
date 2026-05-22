@@ -1,0 +1,1024 @@
+---
+// HarFileAnalyzerTool — drops a HAR file (DevTools export) and visualizes
+// request waterfall, headers/cookies, status pie, domain breakdown, and a
+// filterable export. Pure browser, no upload, no persistence.
+---
+
+<div>
+  <div class="har-shell">
+    <div class="har-dropzone" id="har-dropzone" tabindex="0" role="button" aria-label="Choose HAR file">
+      <input type="file" id="har-file-input" accept=".har,application/json,application/octet-stream" hidden />
+      <svg class="har-dropzone-icon" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <p class="har-dropzone-title" data-i18n="dropTitle">Drop a .har file here</p>
+      <p class="har-dropzone-hint" data-i18n="dropHint">or click to choose · 100% local, never uploaded</p>
+    </div>
+
+    <div class="har-meta" id="har-meta" hidden>
+      <span class="har-pill" id="har-meta-name" title="">—</span>
+      <span class="har-pill" id="har-meta-version">v—</span>
+      <span class="har-pill" id="har-meta-count">0 reqs</span>
+      <span class="har-pill" id="har-meta-time">0 ms</span>
+      <span class="har-pill" id="har-meta-size">0 B</span>
+      <button class="btn-ghost har-reset" id="har-reset" type="button" data-i18n="reset">Reset</button>
+    </div>
+
+    <div class="tool-status har-status" id="har-status" aria-live="polite"></div>
+
+    <div class="har-tabs" id="har-tabs" role="tablist" aria-label="HAR view" hidden>
+      <button class="har-tab is-active" role="tab" aria-selected="true" data-view="overview" type="button" data-i18n="tabOverview">Overview</button>
+      <button class="har-tab" role="tab" aria-selected="false" data-view="waterfall" type="button" data-i18n="tabWaterfall">Waterfall</button>
+      <button class="har-tab" role="tab" aria-selected="false" data-view="detail" type="button" data-i18n="tabDetail">Detail</button>
+      <button class="har-tab" role="tab" aria-selected="false" data-view="export" type="button" data-i18n="tabExport">Filter &amp; Export</button>
+    </div>
+
+    <div class="har-panel" id="har-panel" role="tabpanel" aria-live="polite" hidden>
+      <!-- Overview -->
+      <section class="har-view" data-view="overview" hidden>
+        <div class="har-stat-grid">
+          <div class="har-stat"><span class="har-stat-label" data-i18n="statRequests">Requests</span><span class="har-stat-value" id="har-stat-count">—</span></div>
+          <div class="har-stat"><span class="har-stat-label" data-i18n="statTotalTime">Total time</span><span class="har-stat-value" id="har-stat-time">—</span></div>
+          <div class="har-stat"><span class="har-stat-label" data-i18n="statTotalSize">Transferred</span><span class="har-stat-value" id="har-stat-size">—</span></div>
+          <div class="har-stat"><span class="har-stat-label" data-i18n="statDomains">Domains</span><span class="har-stat-value" id="har-stat-domains">—</span></div>
+        </div>
+        <div class="har-overview-grid">
+          <div class="har-overview-card">
+            <h3 class="har-card-title" data-i18n="cardStatusCodes">Status codes</h3>
+            <div class="har-pie-wrap"><svg class="har-pie" id="har-pie" viewBox="0 0 100 100" aria-label="Status code distribution"></svg></div>
+            <ul class="har-pie-legend" id="har-pie-legend"></ul>
+          </div>
+          <div class="har-overview-card">
+            <h3 class="har-card-title" data-i18n="cardTopDomains">Top domains</h3>
+            <ol class="har-domain-list" id="har-domain-list"></ol>
+          </div>
+        </div>
+      </section>
+
+      <!-- Waterfall -->
+      <section class="har-view" data-view="waterfall" hidden>
+        <div class="har-legend" role="list">
+          <span class="har-legend-item" role="listitem"><i class="har-swatch" style="background:var(--color-har-queued)"></i><span data-i18n="phaseQueued">Queued / Stalled</span></span>
+          <span class="har-legend-item" role="listitem"><i class="har-swatch" style="background:var(--color-har-dns)"></i><span data-i18n="phaseDns">DNS</span></span>
+          <span class="har-legend-item" role="listitem"><i class="har-swatch" style="background:var(--color-har-connect)"></i><span data-i18n="phaseConnect">Connect</span></span>
+          <span class="har-legend-item" role="listitem"><i class="har-swatch" style="background:var(--color-har-send)"></i><span data-i18n="phaseSend">Send</span></span>
+          <span class="har-legend-item" role="listitem"><i class="har-swatch" style="background:var(--color-har-wait)"></i><span data-i18n="phaseWait">Wait (TTFB)</span></span>
+          <span class="har-legend-item" role="listitem"><i class="har-swatch" style="background:var(--color-har-receive)"></i><span data-i18n="phaseReceive">Receive</span></span>
+        </div>
+        <div class="har-wf-controls">
+          <span class="har-wf-cap" id="har-wf-cap" data-i18n="wfCapHint">Showing first 200 of 0</span>
+          <button class="btn-ghost har-wf-more" id="har-wf-more" type="button" hidden data-i18n="wfShowAll">Show all</button>
+        </div>
+        <div class="har-waterfall" id="har-waterfall" role="table"></div>
+      </section>
+
+      <!-- Detail -->
+      <section class="har-view" data-view="detail" hidden>
+        <div class="har-detail-grid">
+          <div class="har-req-list-wrap">
+            <input id="har-req-search" class="tool-input har-req-search" type="search" data-i18n-ph="searchPh" placeholder="Search URL" autocomplete="off" />
+            <ol class="har-req-list" id="har-req-list" role="listbox" aria-label="Requests"></ol>
+          </div>
+          <div class="har-req-detail" id="har-req-detail"></div>
+        </div>
+      </section>
+
+      <!-- Filter & Export -->
+      <section class="har-view" data-view="export" hidden>
+        <div class="har-filter">
+          <fieldset class="har-filter-group">
+            <legend data-i18n="filterStatus">Status</legend>
+            <label class="har-cb"><input type="checkbox" data-filter="status" value="2xx" checked /> 2xx</label>
+            <label class="har-cb"><input type="checkbox" data-filter="status" value="3xx" checked /> 3xx</label>
+            <label class="har-cb"><input type="checkbox" data-filter="status" value="4xx" checked /> 4xx</label>
+            <label class="har-cb"><input type="checkbox" data-filter="status" value="5xx" checked /> 5xx</label>
+            <label class="har-cb"><input type="checkbox" data-filter="status" value="other" checked /> 1xx / 0</label>
+          </fieldset>
+          <fieldset class="har-filter-group" id="har-filter-types">
+            <legend data-i18n="filterTypes">Resource type</legend>
+          </fieldset>
+          <fieldset class="har-filter-group" id="har-filter-domains">
+            <legend data-i18n="filterDomains">Domain</legend>
+          </fieldset>
+        </div>
+        <div class="har-export-summary" id="har-export-summary"></div>
+        <div class="har-export-actions">
+          <button class="btn-primary" id="har-export-btn" type="button" data-i18n="exportBtn">Export HAR subset</button>
+          <button class="btn-ghost" id="har-copy-curl-btn" type="button" data-i18n="copyAllCurl">Copy all as cURL</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          dropTitle: 'Drop a .har file here',
+          dropHint: 'or click to choose · 100% local, never uploaded',
+          reset: 'Reset',
+          tabOverview: 'Overview', tabWaterfall: 'Waterfall', tabDetail: 'Detail', tabExport: 'Filter & Export',
+          statRequests: 'Requests', statTotalTime: 'Total time', statTotalSize: 'Transferred', statDomains: 'Domains',
+          cardStatusCodes: 'Status codes', cardTopDomains: 'Top domains',
+          phaseQueued: 'Queued / Stalled', phaseDns: 'DNS', phaseConnect: 'Connect', phaseSend: 'Send', phaseWait: 'Wait (TTFB)', phaseReceive: 'Receive',
+          wfCapHint: 'Showing first {shown} of {total}', wfShowAll: 'Show all',
+          searchPh: 'Search URL',
+          filterStatus: 'Status', filterTypes: 'Resource type', filterDomains: 'Domain',
+          exportBtn: 'Export HAR subset', copyAllCurl: 'Copy all as cURL',
+          parsedOk: 'Parsed {n} request{s}.',
+          parseFailed: 'Could not parse this file as HAR 1.2 ({msg}).',
+          notHar: 'This JSON is not a HAR archive — missing log.entries.',
+          empty: 'No request entries in this HAR.',
+          tooBig: 'File too large ({size}) — drop a smaller HAR.',
+          copied: 'Copied to clipboard.',
+          copyFailed: 'Copy failed.',
+          exported: 'Exported {n} request{s}.',
+          tabHeaders: 'Headers', tabCookies: 'Cookies', tabBody: 'Body', tabTiming: 'Timing', tabCurl: 'cURL',
+          requestHeaders: 'Request headers', responseHeaders: 'Response headers',
+          requestCookies: 'Request cookies', responseCookies: 'Response cookies',
+          requestBody: 'Request body', responseBody: 'Response body',
+          noBody: '(no body)', noCookies: '(no cookies)', noHeaders: '(no headers)',
+          status: 'Status', method: 'Method', size: 'Size', time: 'Time',
+          selectRequest: 'Select a request from the list.',
+          subsetSummary: '{n} of {total} requests match · {size}',
+          naLabel: 'N/A',
+        },
+        zh: {
+          dropTitle: '将 .har 文件拖到这里',
+          dropHint: '或点击选择 · 100% 本地解析，不上传',
+          reset: '重置',
+          tabOverview: '概览', tabWaterfall: '瀑布', tabDetail: '详情', tabExport: '筛选与导出',
+          statRequests: '请求数', statTotalTime: '总耗时', statTotalSize: '传输', statDomains: '域名',
+          cardStatusCodes: '状态码分布', cardTopDomains: 'Top 域名',
+          phaseQueued: '排队', phaseDns: 'DNS', phaseConnect: '连接', phaseSend: '发送', phaseWait: '等待(TTFB)', phaseReceive: '接收',
+          wfCapHint: '显示前 {shown} 条，共 {total}', wfShowAll: '显示全部',
+          searchPh: '搜索 URL',
+          filterStatus: '状态码', filterTypes: '资源类型', filterDomains: '域名',
+          exportBtn: '导出 HAR 子集', copyAllCurl: '全部复制为 cURL',
+          parsedOk: '已解析 {n} 个请求。',
+          parseFailed: '无法解析为 HAR 1.2（{msg}）。',
+          notHar: '该 JSON 不是 HAR 归档 —— 缺少 log.entries。',
+          empty: 'HAR 中没有请求条目。',
+          tooBig: '文件过大（{size}），请用更小的 HAR。',
+          copied: '已复制到剪贴板。',
+          copyFailed: '复制失败。',
+          exported: '已导出 {n} 个请求。',
+          tabHeaders: 'Header', tabCookies: 'Cookie', tabBody: 'Body', tabTiming: '时序', tabCurl: 'cURL',
+          requestHeaders: '请求 Header', responseHeaders: '响应 Header',
+          requestCookies: '请求 Cookie', responseCookies: '响应 Cookie',
+          requestBody: '请求体', responseBody: '响应体',
+          noBody: '（无）', noCookies: '（无）', noHeaders: '（无）',
+          status: '状态', method: '方法', size: '大小', time: '耗时',
+          selectRequest: '从列表中选择一条请求。',
+          subsetSummary: '匹配 {n} / {total} 条 · {size}',
+          naLabel: 'N/A',
+        },
+        ja: {
+          dropTitle: '.har ファイルをここにドロップ',
+          dropHint: 'またはクリックで選択 · 完全ブラウザ完結、アップロードなし',
+          reset: 'リセット',
+          tabOverview: '概要', tabWaterfall: 'ウォーターフォール', tabDetail: '詳細', tabExport: 'フィルタとエクスポート',
+          statRequests: 'リクエスト数', statTotalTime: '合計時間', statTotalSize: '転送量', statDomains: 'ドメイン',
+          cardStatusCodes: 'ステータスコード分布', cardTopDomains: 'Top ドメイン',
+          phaseQueued: 'キュー', phaseDns: 'DNS', phaseConnect: '接続', phaseSend: '送信', phaseWait: '待機(TTFB)', phaseReceive: '受信',
+          wfCapHint: '{total} 件中、最初の {shown} 件を表示', wfShowAll: '全件表示',
+          searchPh: 'URL を検索',
+          filterStatus: 'ステータス', filterTypes: 'リソース種類', filterDomains: 'ドメイン',
+          exportBtn: 'HAR サブセット書出', copyAllCurl: '全件を cURL でコピー',
+          parsedOk: '{n} 件のリクエストを解析しました。',
+          parseFailed: 'HAR 1.2 として解析できません（{msg}）。',
+          notHar: 'この JSON は HAR アーカイブではありません — log.entries がありません。',
+          empty: 'HAR にリクエストがありません。',
+          tooBig: 'ファイルが大きすぎます（{size}）。',
+          copied: 'クリップボードにコピーしました。',
+          copyFailed: 'コピー失敗。',
+          exported: '{n} 件をエクスポートしました。',
+          tabHeaders: 'ヘッダー', tabCookies: 'Cookie', tabBody: 'ボディ', tabTiming: 'タイミング', tabCurl: 'cURL',
+          requestHeaders: 'リクエストヘッダー', responseHeaders: 'レスポンスヘッダー',
+          requestCookies: 'リクエスト Cookie', responseCookies: 'レスポンス Cookie',
+          requestBody: 'リクエストボディ', responseBody: 'レスポンスボディ',
+          noBody: '（なし）', noCookies: '（なし）', noHeaders: '（なし）',
+          status: 'ステータス', method: 'メソッド', size: 'サイズ', time: '時間',
+          selectRequest: '一覧からリクエストを選択してください。',
+          subsetSummary: '{total} 件中 {n} 件一致 · {size}',
+          naLabel: 'N/A',
+        },
+        ko: {
+          dropTitle: '.har 파일을 여기에 드롭',
+          dropHint: '또는 클릭으로 선택 · 100% 로컬, 업로드 없음',
+          reset: '초기화',
+          tabOverview: '개요', tabWaterfall: '워터폴', tabDetail: '상세', tabExport: '필터 및 내보내기',
+          statRequests: '요청 수', statTotalTime: '총 시간', statTotalSize: '전송량', statDomains: '도메인',
+          cardStatusCodes: '상태 코드 분포', cardTopDomains: 'Top 도메인',
+          phaseQueued: '대기', phaseDns: 'DNS', phaseConnect: '연결', phaseSend: '전송', phaseWait: '대기(TTFB)', phaseReceive: '수신',
+          wfCapHint: '전체 {total} 중 처음 {shown} 표시', wfShowAll: '전체 보기',
+          searchPh: 'URL 검색',
+          filterStatus: '상태', filterTypes: '리소스 유형', filterDomains: '도메인',
+          exportBtn: 'HAR 부분 내보내기', copyAllCurl: '전체 cURL 복사',
+          parsedOk: '{n}개의 요청을 파싱했습니다.',
+          parseFailed: 'HAR 1.2로 파싱할 수 없습니다 ({msg}).',
+          notHar: '이 JSON은 HAR 아카이브가 아닙니다 — log.entries 누락.',
+          empty: 'HAR에 요청 항목이 없습니다.',
+          tooBig: '파일이 너무 큽니다 ({size}).',
+          copied: '클립보드에 복사됨.',
+          copyFailed: '복사 실패.',
+          exported: '{n}개 요청을 내보냈습니다.',
+          tabHeaders: '헤더', tabCookies: '쿠키', tabBody: '본문', tabTiming: '타이밍', tabCurl: 'cURL',
+          requestHeaders: '요청 헤더', responseHeaders: '응답 헤더',
+          requestCookies: '요청 쿠키', responseCookies: '응답 쿠키',
+          requestBody: '요청 본문', responseBody: '응답 본문',
+          noBody: '(없음)', noCookies: '(없음)', noHeaders: '(없음)',
+          status: '상태', method: '메서드', size: '크기', time: '시간',
+          selectRequest: '목록에서 요청을 선택하세요.',
+          subsetSummary: '{total}개 중 {n}개 일치 · {size}',
+          naLabel: 'N/A',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      function applyI18n(root) {
+        (root || document).querySelectorAll('[data-i18n]').forEach(function (el) {
+          var k = el.getAttribute('data-i18n');
+          if (t[k]) el.textContent = t[k];
+        });
+        (root || document).querySelectorAll('[data-i18n-ph]').forEach(function (el) {
+          var k = el.getAttribute('data-i18n-ph');
+          if (t[k]) el.setAttribute('placeholder', t[k]);
+        });
+      }
+      applyI18n();
+
+      var MAX_BYTES = 50 * 1024 * 1024; // 50 MB
+      var INITIAL_WF_ROWS = 200;
+
+      var dropzone = document.getElementById('har-dropzone');
+      var fileInput = document.getElementById('har-file-input');
+      var meta = document.getElementById('har-meta');
+      var statusEl = document.getElementById('har-status');
+      var tabs = document.getElementById('har-tabs');
+      var panel = document.getElementById('har-panel');
+      var views = panel.querySelectorAll('.har-view');
+      var resetBtn = document.getElementById('har-reset');
+
+      var statCount = document.getElementById('har-stat-count');
+      var statTime = document.getElementById('har-stat-time');
+      var statSize = document.getElementById('har-stat-size');
+      var statDomains = document.getElementById('har-stat-domains');
+      var pieEl = document.getElementById('har-pie');
+      var pieLegendEl = document.getElementById('har-pie-legend');
+      var domainListEl = document.getElementById('har-domain-list');
+
+      var waterfallEl = document.getElementById('har-waterfall');
+      var wfCapEl = document.getElementById('har-wf-cap');
+      var wfMoreBtn = document.getElementById('har-wf-more');
+
+      var reqSearchEl = document.getElementById('har-req-search');
+      var reqListEl = document.getElementById('har-req-list');
+      var reqDetailEl = document.getElementById('har-req-detail');
+
+      var filterTypesEl = document.getElementById('har-filter-types');
+      var filterDomainsEl = document.getElementById('har-filter-domains');
+      var exportSummaryEl = document.getElementById('har-export-summary');
+      var exportBtn = document.getElementById('har-export-btn');
+      var copyAllCurlBtn = document.getElementById('har-copy-curl-btn');
+
+      var harData = null;     // parsed HAR object
+      var entries = [];        // log.entries normalized
+      var totalTime = 0;
+      var totalSize = 0;
+      var domainsCount = 0;
+      var minStart = 0;
+      var maxEnd = 0;
+      var wfShowAllFlag = false;
+      var selectedIdx = -1;
+      var filterState = { status: new Set(['2xx', '3xx', '4xx', '5xx', 'other']), types: new Set(), domains: new Set() };
+
+      function setStatus(msg, tone) {
+        statusEl.textContent = msg || '';
+        statusEl.setAttribute('data-tone', tone || '');
+        statusEl.style.display = msg ? '' : 'none';
+      }
+
+      function fmt(n, suffix) {
+        if (!isFinite(n)) return '—';
+        if (n >= 1000) return (n / 1000).toFixed(2) + ' ' + (suffix === 'ms' ? 's' : 'k' + (suffix || ''));
+        return Math.round(n * 100) / 100 + (suffix ? ' ' + suffix : '');
+      }
+      function fmtBytes(n) {
+        if (!isFinite(n) || n <= 0) return '0 B';
+        var u = ['B', 'KB', 'MB', 'GB']; var i = 0;
+        while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+        return (i === 0 ? n : n.toFixed(2)) + ' ' + u[i];
+      }
+      function escapeHtml(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      function resourceTypeOf(entry) {
+        var mt = (entry && entry.response && entry.response.content && entry.response.content.mimeType) || '';
+        mt = mt.split(';')[0].trim().toLowerCase();
+        if (!mt) return 'other';
+        if (mt.indexOf('javascript') >= 0 || mt === 'application/x-javascript') return 'script';
+        if (mt === 'text/css') return 'stylesheet';
+        if (mt.indexOf('html') >= 0) return 'document';
+        if (mt.indexOf('json') >= 0) return 'json';
+        if (mt.indexOf('xml') >= 0) return 'xml';
+        if (mt.indexOf('image/') === 0) return 'image';
+        if (mt.indexOf('font/') === 0 || mt.indexOf('font-woff') >= 0) return 'font';
+        if (mt.indexOf('video/') === 0 || mt.indexOf('audio/') === 0) return 'media';
+        if (mt.indexOf('text/') === 0) return 'text';
+        return 'other';
+      }
+      function statusBucket(code) {
+        var c = Number(code);
+        if (c >= 200 && c < 300) return '2xx';
+        if (c >= 300 && c < 400) return '3xx';
+        if (c >= 400 && c < 500) return '4xx';
+        if (c >= 500) return '5xx';
+        return 'other';
+      }
+      function domainOf(url) {
+        try { return new URL(url).host; } catch (e) { return '(invalid)'; }
+      }
+
+      // ---------- parse + load ----------
+      function loadFile(file) {
+        if (!file) return;
+        if (file.size > MAX_BYTES) {
+          setStatus(t.tooBig.replace('{size}', fmtBytes(file.size)), 'error');
+          return;
+        }
+        var fr = new FileReader();
+        fr.onload = function () {
+          try {
+            var json = JSON.parse(fr.result);
+            if (!json || !json.log || !Array.isArray(json.log.entries)) {
+              setStatus(t.notHar, 'error');
+              return;
+            }
+            if (json.log.entries.length === 0) {
+              setStatus(t.empty, 'error');
+              return;
+            }
+            ingest(file.name, json);
+          } catch (e) {
+            setStatus(t.parseFailed.replace('{msg}', String(e.message || e)), 'error');
+          }
+        };
+        fr.onerror = function () {
+          setStatus(t.parseFailed.replace('{msg}', 'read error'), 'error');
+        };
+        fr.readAsText(file);
+      }
+
+      function ingest(name, json) {
+        harData = json;
+        var raw = json.log.entries;
+        entries = raw.map(function (e, idx) {
+          var timings = e.timings || {};
+          var phases = phaseSegments(timings);
+          var startMs = Date.parse(e.startedDateTime) || 0;
+          var size = (e.response && e.response._transferSize != null)
+            ? Number(e.response._transferSize)
+            : (e.response && e.response.content && e.response.content.size) || 0;
+          var url = (e.request && e.request.url) || '';
+          var entryTime = Number(e.time) || 0;
+          var sum = phases.reduce(function (a, p) { return a + (p.dur > 0 ? p.dur : 0); }, 0);
+          return {
+            idx: idx,
+            raw: e,
+            url: url,
+            host: domainOf(url),
+            method: (e.request && e.request.method) || '—',
+            status: (e.response && e.response.status) || 0,
+            statusText: (e.response && e.response.statusText) || '',
+            mime: (e.response && e.response.content && e.response.content.mimeType) || '',
+            type: resourceTypeOf(e),
+            size: size > 0 ? size : 0,
+            time: entryTime,
+            startMs: startMs,
+            endMs: startMs + entryTime,
+            phases: phases,
+            timings: timings,
+            invariantOk: Math.abs(entryTime - sum) < 1.5, // ms float tolerance
+          };
+        });
+
+        totalTime = entries.reduce(function (a, e) { return a + (e.time > 0 ? e.time : 0); }, 0);
+        totalSize = entries.reduce(function (a, e) { return a + e.size; }, 0);
+        var seenHosts = {};
+        entries.forEach(function (e) { seenHosts[e.host] = true; });
+        domainsCount = Object.keys(seenHosts).length;
+        minStart = Math.min.apply(Math, entries.map(function (e) { return e.startMs; }));
+        maxEnd = Math.max.apply(Math, entries.map(function (e) { return e.endMs; }));
+
+        // meta pills
+        document.getElementById('har-meta-name').textContent = name || '—';
+        document.getElementById('har-meta-name').setAttribute('title', name || '');
+        document.getElementById('har-meta-version').textContent = 'HAR ' + ((json.log.version) || '1.2');
+        document.getElementById('har-meta-count').textContent = entries.length + ' reqs';
+        document.getElementById('har-meta-time').textContent = fmt(totalTime, 'ms');
+        document.getElementById('har-meta-size').textContent = fmtBytes(totalSize);
+
+        dropzone.hidden = true;
+        meta.hidden = false;
+        tabs.hidden = false;
+        panel.hidden = false;
+
+        wfShowAllFlag = false;
+        selectedIdx = -1;
+        renderOverview();
+        renderWaterfall();
+        renderRequestList('');
+        renderRequestDetail(null);
+        rebuildExportFilters();
+        renderExportSummary();
+        switchView('overview');
+        setStatus(t.parsedOk.replace('{n}', entries.length).replace('{s}', entries.length === 1 ? '' : 's'), 'success');
+        if (window.trackTool) window.trackTool('har-file-analyzer', 'parse');
+      }
+
+      function phaseSegments(timings) {
+        // HAR 1.2 fields: blocked, dns, connect, ssl, send, wait, receive (-1 = N/A).
+        // Per spec, when `ssl` is defined its time is also included in `connect`,
+        // so entry.time = blocked + dns + connect + send + wait + receive (no ssl).
+        function v(name) { var x = Number(timings[name]); return isFinite(x) ? x : -1; }
+        var blocked = v('blocked'), dns = v('dns'), connect = v('connect'), ssl = v('ssl'), send = v('send'), wait = v('wait'), receive = v('receive');
+        // Initial Connection: use connect (already covers ssl). Only fall back to ssl
+        // when connect is -1 but ssl was reported (non-compliant exporter).
+        var connectDur = connect >= 0 ? connect : (ssl >= 0 ? ssl : -1);
+        return [
+          { key: 'queued', dur: blocked, tokenVar: '--color-har-queued', i18nKey: 'phaseQueued' },
+          { key: 'dns', dur: dns, tokenVar: '--color-har-dns', i18nKey: 'phaseDns' },
+          { key: 'connect', dur: connectDur, tokenVar: '--color-har-connect', i18nKey: 'phaseConnect' },
+          { key: 'send', dur: send, tokenVar: '--color-har-send', i18nKey: 'phaseSend' },
+          { key: 'wait', dur: wait, tokenVar: '--color-har-wait', i18nKey: 'phaseWait' },
+          { key: 'receive', dur: receive, tokenVar: '--color-har-receive', i18nKey: 'phaseReceive' },
+        ];
+      }
+
+      // ---------- views ----------
+      function switchView(name) {
+        Array.prototype.forEach.call(tabs.querySelectorAll('.har-tab'), function (b) {
+          var on = b.getAttribute('data-view') === name;
+          b.classList.toggle('is-active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        Array.prototype.forEach.call(views, function (sec) {
+          sec.hidden = sec.getAttribute('data-view') !== name;
+        });
+      }
+      Array.prototype.forEach.call(tabs.querySelectorAll('.har-tab'), function (b) {
+        b.addEventListener('click', function () { switchView(b.getAttribute('data-view')); });
+      });
+
+      function renderOverview() {
+        statCount.textContent = String(entries.length);
+        statTime.textContent = fmt(totalTime, 'ms');
+        statSize.textContent = fmtBytes(totalSize);
+        statDomains.textContent = String(domainsCount);
+
+        // status pie
+        var buckets = { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0, 'other': 0 };
+        entries.forEach(function (e) { buckets[statusBucket(e.status)]++; });
+        var colors = {
+          '2xx': 'var(--color-success)',
+          '3xx': 'var(--color-accent)',
+          '4xx': 'color-mix(in oklch, var(--color-danger) 65%, var(--color-accent))',
+          '5xx': 'var(--color-danger)',
+          'other': 'var(--color-text-muted)',
+        };
+        var total = entries.length;
+        var arc = 0;
+        var segs = [];
+        var legendHtml = '';
+        Object.keys(buckets).forEach(function (k) {
+          var v = buckets[k];
+          if (v === 0) return;
+          var pct = v / total;
+          var dash = pct * 100;
+          segs.push('<circle cx="50" cy="50" r="32" fill="none" stroke="' + colors[k] + '" stroke-width="20" stroke-dasharray="' + dash.toFixed(3) + ' ' + (100 - dash).toFixed(3) + '" stroke-dashoffset="' + (-arc).toFixed(3) + '" pathLength="100" transform="rotate(-90 50 50)" />');
+          arc += dash;
+          legendHtml += '<li><i class="har-swatch" style="background:' + colors[k] + '"></i><span>' + k + '</span><span class="har-pie-count">' + v + '</span></li>';
+        });
+        pieEl.innerHTML = segs.join('');
+        pieLegendEl.innerHTML = legendHtml;
+
+        // top domains
+        var byHost = {};
+        entries.forEach(function (e) {
+          if (!byHost[e.host]) byHost[e.host] = { host: e.host, count: 0, size: 0 };
+          byHost[e.host].count++;
+          byHost[e.host].size += e.size;
+        });
+        var rows = Object.keys(byHost).map(function (h) { return byHost[h]; })
+          .sort(function (a, b) { return b.count - a.count; })
+          .slice(0, 5);
+        domainListEl.innerHTML = rows.map(function (r) {
+          return '<li><span class="har-domain-host">' + escapeHtml(r.host) + '</span><span class="har-domain-meta">' + r.count + ' · ' + fmtBytes(r.size) + '</span></li>';
+        }).join('');
+      }
+
+      function renderWaterfall() {
+        var range = Math.max(1, maxEnd - minStart);
+        var cap = wfShowAllFlag ? entries.length : Math.min(INITIAL_WF_ROWS, entries.length);
+        var rows = [];
+        for (var i = 0; i < cap; i++) {
+          var e = entries[i];
+          var leftPct = ((e.startMs - minStart) / range) * 100;
+          var widthPct = Math.max(0.1, (e.time / range) * 100);
+          var phaseHtml = '';
+          for (var p = 0; p < e.phases.length; p++) {
+            var ph = e.phases[p];
+            if (!(ph.dur > 0)) continue;
+            var sw = (ph.dur / e.time) * 100;
+            var phaseLabel = STRINGS[pageLang] && STRINGS[pageLang][ph.i18nKey] || STRINGS.en[ph.i18nKey];
+            phaseHtml += '<span class="har-wf-seg" style="width:' + sw.toFixed(3) + '%;background:var(' + ph.tokenVar + ')" title="' + escapeHtml(phaseLabel + ': ' + fmt(ph.dur, 'ms')) + '"></span>';
+          }
+          var statusClass = 'har-wf-status-' + statusBucket(e.status);
+          var displayUrl = e.url.length > 80 ? e.url.slice(0, 39) + '…' + e.url.slice(-40) : e.url;
+          rows.push(
+            '<div class="har-wf-row" role="row" data-idx="' + e.idx + '">' +
+              '<div class="har-wf-url" title="' + escapeHtml(e.url) + '"><span class="har-wf-method">' + escapeHtml(e.method) + '</span><span class="har-wf-urltext">' + escapeHtml(displayUrl) + '</span></div>' +
+              '<div class="har-wf-status ' + statusClass + '">' + escapeHtml(String(e.status || '—')) + '</div>' +
+              '<div class="har-wf-size">' + fmtBytes(e.size) + '</div>' +
+              '<div class="har-wf-time">' + fmt(e.time, 'ms') + '</div>' +
+              '<div class="har-wf-bar" style="position:relative">' +
+                '<div class="har-wf-bar-track" style="left:' + leftPct.toFixed(3) + '%;width:' + widthPct.toFixed(3) + '%">' + phaseHtml + '</div>' +
+              '</div>' +
+            '</div>'
+          );
+        }
+        waterfallEl.innerHTML = rows.join('');
+        wfCapEl.textContent = t.wfCapHint.replace('{shown}', cap).replace('{total}', entries.length);
+        wfMoreBtn.hidden = entries.length <= INITIAL_WF_ROWS || wfShowAllFlag;
+        // row click → jump to detail
+        Array.prototype.forEach.call(waterfallEl.querySelectorAll('.har-wf-row'), function (row) {
+          row.addEventListener('click', function () {
+            selectedIdx = Number(row.getAttribute('data-idx'));
+            switchView('detail');
+            renderRequestList(reqSearchEl.value);
+            renderRequestDetail(entries[selectedIdx]);
+            var sel = reqListEl.querySelector('[data-idx="' + selectedIdx + '"]');
+            if (sel) sel.scrollIntoView({ block: 'nearest' });
+          });
+        });
+      }
+      wfMoreBtn.addEventListener('click', function () { wfShowAllFlag = true; renderWaterfall(); });
+
+      function renderRequestList(q) {
+        var query = (q || '').toLowerCase();
+        var items = entries
+          .map(function (e) { return e; })
+          .filter(function (e) { return !query || e.url.toLowerCase().indexOf(query) >= 0 || e.host.toLowerCase().indexOf(query) >= 0; })
+          .slice(0, 500); // safety cap
+        var html = items.map(function (e) {
+          var sel = e.idx === selectedIdx ? ' is-selected' : '';
+          return '<li class="har-req-item ' + 'har-wf-status-' + statusBucket(e.status) + sel + '" role="option" tabindex="0" data-idx="' + e.idx + '" aria-selected="' + (e.idx === selectedIdx ? 'true' : 'false') + '">' +
+            '<span class="har-req-method">' + escapeHtml(e.method) + '</span>' +
+            '<span class="har-req-status">' + escapeHtml(String(e.status || '—')) + '</span>' +
+            '<span class="har-req-url" title="' + escapeHtml(e.url) + '">' + escapeHtml(e.url) + '</span>' +
+            '</li>';
+        }).join('');
+        reqListEl.innerHTML = html;
+        Array.prototype.forEach.call(reqListEl.querySelectorAll('.har-req-item'), function (li) {
+          li.addEventListener('click', function () {
+            selectedIdx = Number(li.getAttribute('data-idx'));
+            Array.prototype.forEach.call(reqListEl.querySelectorAll('.har-req-item'), function (x) {
+              x.classList.toggle('is-selected', x === li);
+              x.setAttribute('aria-selected', x === li ? 'true' : 'false');
+            });
+            renderRequestDetail(entries[selectedIdx]);
+          });
+        });
+      }
+      reqSearchEl.addEventListener('input', function () { renderRequestList(reqSearchEl.value); });
+
+      function kvRows(arr) {
+        if (!arr || !arr.length) return '<div class="har-empty">' + escapeHtml(t.noHeaders) + '</div>';
+        return '<dl class="har-kv">' + arr.map(function (h) {
+          return '<dt>' + escapeHtml(h.name) + '</dt><dd>' + escapeHtml(h.value) + '</dd>';
+        }).join('') + '</dl>';
+      }
+      function cookieRows(arr, emptyMsg) {
+        if (!arr || !arr.length) return '<div class="har-empty">' + escapeHtml(emptyMsg) + '</div>';
+        return '<table class="har-cookie-table"><thead><tr><th>name</th><th>value</th><th>domain</th><th>path</th><th>flags</th></tr></thead><tbody>' +
+          arr.map(function (c) {
+            var flags = [];
+            if (c.httpOnly) flags.push('HttpOnly');
+            if (c.secure) flags.push('Secure');
+            if (c.sameSite) flags.push('SameSite=' + c.sameSite);
+            if (c.expires) flags.push('Expires=' + c.expires);
+            return '<tr><td><code>' + escapeHtml(c.name) + '</code></td><td><code>' + escapeHtml(c.value) + '</code></td><td>' + escapeHtml(c.domain || '') + '</td><td>' + escapeHtml(c.path || '') + '</td><td>' + escapeHtml(flags.join(' ')) + '</td></tr>';
+          }).join('') +
+          '</tbody></table>';
+      }
+      function bodyBlock(label, content, mime) {
+        if (!content || (typeof content === 'object' && content.text == null)) {
+          return '<h4>' + escapeHtml(label) + '</h4><div class="har-empty">' + escapeHtml(t.noBody) + '</div>';
+        }
+        var text = typeof content === 'string' ? content : (content.text || '');
+        if (!text) return '<h4>' + escapeHtml(label) + '</h4><div class="har-empty">' + escapeHtml(t.noBody) + '</div>';
+        if (text.length > 200000) text = text.slice(0, 200000) + '\n…(truncated)';
+        var mt = (mime || (content && content.mimeType) || '');
+        return '<h4>' + escapeHtml(label) + ' <span class="har-mime">' + escapeHtml(mt) + '</span></h4><pre class="har-pre"><code>' + escapeHtml(text) + '</code></pre>';
+      }
+      function curlOf(entry) {
+        var r = entry.raw.request || {};
+        var parts = ['curl', '-X', JSON.stringify(r.method || 'GET'), JSON.stringify(r.url || '')];
+        (r.headers || []).forEach(function (h) {
+          parts.push('-H', JSON.stringify(h.name + ': ' + h.value));
+        });
+        if (r.postData && r.postData.text) parts.push('--data-raw', JSON.stringify(r.postData.text));
+        return parts.join(' ');
+      }
+      function timingTable(timings) {
+        var fields = ['blocked', 'dns', 'connect', 'ssl', 'send', 'wait', 'receive'];
+        var rows = fields.map(function (f) {
+          var v = Number(timings[f]);
+          var disp = isFinite(v) && v >= 0 ? fmt(v, 'ms') : t.naLabel;
+          return '<tr><th>' + f + '</th><td>' + escapeHtml(disp) + '</td></tr>';
+        }).join('');
+        return '<table class="har-timing-table"><tbody>' + rows + '</tbody></table>';
+      }
+
+      function renderRequestDetail(entry) {
+        if (!entry) {
+          reqDetailEl.innerHTML = '<p class="har-detail-empty">' + escapeHtml(t.selectRequest) + '</p>';
+          return;
+        }
+        var req = entry.raw.request || {};
+        var res = entry.raw.response || {};
+        var sections = [
+          '<header class="har-detail-head">',
+            '<div class="har-detail-url"><strong>' + escapeHtml(entry.method) + '</strong> <span>' + escapeHtml(entry.url) + '</span></div>',
+            '<dl class="har-detail-meta">',
+              '<div><dt>' + escapeHtml(t.status) + '</dt><dd>' + escapeHtml(String(entry.status)) + ' ' + escapeHtml(entry.statusText) + '</dd></div>',
+              '<div><dt>' + escapeHtml(t.size) + '</dt><dd>' + escapeHtml(fmtBytes(entry.size)) + '</dd></div>',
+              '<div><dt>' + escapeHtml(t.time) + '</dt><dd>' + escapeHtml(fmt(entry.time, 'ms')) + '</dd></div>',
+            '</dl>',
+          '</header>',
+          '<section class="har-detail-section"><h3>' + escapeHtml(t.tabTiming) + '</h3>' + timingTable(entry.timings) + '</section>',
+          '<section class="har-detail-section"><h3>' + escapeHtml(t.requestHeaders) + '</h3>' + kvRows(req.headers) + '</section>',
+          '<section class="har-detail-section"><h3>' + escapeHtml(t.responseHeaders) + '</h3>' + kvRows(res.headers) + '</section>',
+          '<section class="har-detail-section"><h3>' + escapeHtml(t.requestCookies) + '</h3>' + cookieRows(req.cookies, t.noCookies) + '</section>',
+          '<section class="har-detail-section"><h3>' + escapeHtml(t.responseCookies) + '</h3>' + cookieRows(res.cookies, t.noCookies) + '</section>',
+          '<section class="har-detail-section">' + bodyBlock(t.requestBody, req.postData) + '</section>',
+          '<section class="har-detail-section">' + bodyBlock(t.responseBody, res.content) + '</section>',
+          '<section class="har-detail-section"><h3>' + escapeHtml(t.tabCurl) + '</h3><div class="har-curl-row"><pre class="har-pre"><code>' + escapeHtml(curlOf(entry)) + '</code></pre><button class="btn-copy" data-curl-copy type="button">Copy</button></div></section>',
+        ];
+        reqDetailEl.innerHTML = sections.join('');
+        var copyBtn = reqDetailEl.querySelector('[data-curl-copy]');
+        if (copyBtn) copyBtn.addEventListener('click', function () { copyText(curlOf(entry)); });
+      }
+
+      function rebuildExportFilters() {
+        // types
+        var types = {};
+        entries.forEach(function (e) { types[e.type] = (types[e.type] || 0) + 1; });
+        var typeKeys = Object.keys(types).sort();
+        filterState.types = new Set(typeKeys);
+        filterTypesEl.innerHTML = '<legend>' + escapeHtml(t.filterTypes) + '</legend>' + typeKeys.map(function (k) {
+          return '<label class="har-cb"><input type="checkbox" data-filter="type" value="' + escapeHtml(k) + '" checked /> ' + escapeHtml(k) + ' <span class="har-filter-count">(' + types[k] + ')</span></label>';
+        }).join('');
+        // domains (top 20)
+        var hosts = {};
+        entries.forEach(function (e) { hosts[e.host] = (hosts[e.host] || 0) + 1; });
+        var hostKeys = Object.keys(hosts).sort(function (a, b) { return hosts[b] - hosts[a]; }).slice(0, 20);
+        filterState.domains = new Set(hostKeys);
+        filterDomainsEl.innerHTML = '<legend>' + escapeHtml(t.filterDomains) + '</legend>' + hostKeys.map(function (k) {
+          return '<label class="har-cb"><input type="checkbox" data-filter="domain" value="' + escapeHtml(k) + '" checked /> ' + escapeHtml(k) + ' <span class="har-filter-count">(' + hosts[k] + ')</span></label>';
+        }).join('');
+        var allCb = panel.querySelectorAll('input[data-filter]');
+        Array.prototype.forEach.call(allCb, function (cb) { cb.addEventListener('change', onFilterChange); });
+      }
+      function onFilterChange(ev) {
+        var cb = ev.target;
+        var group = cb.getAttribute('data-filter');
+        var value = cb.value;
+        var bag = group === 'status' ? filterState.status : group === 'type' ? filterState.types : filterState.domains;
+        if (cb.checked) bag.add(value); else bag.delete(value);
+        renderExportSummary();
+      }
+      function filteredEntries() {
+        return entries.filter(function (e) {
+          if (!filterState.status.has(statusBucket(e.status))) return false;
+          if (!filterState.types.has(e.type)) return false;
+          if (!filterState.domains.has(e.host)) return false;
+          return true;
+        });
+      }
+      function renderExportSummary() {
+        var matched = filteredEntries();
+        var size = matched.reduce(function (a, e) { return a + e.size; }, 0);
+        exportSummaryEl.textContent = t.subsetSummary
+          .replace('{n}', matched.length)
+          .replace('{total}', entries.length)
+          .replace('{size}', fmtBytes(size));
+      }
+      exportBtn.addEventListener('click', function () {
+        if (!harData) return;
+        var matched = filteredEntries();
+        var subset = JSON.parse(JSON.stringify(harData));
+        subset.log = subset.log || {};
+        subset.log.entries = matched.map(function (m) { return m.raw; });
+        var blob = new Blob([JSON.stringify(subset, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = 'subset.har';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+        setStatus(t.exported.replace('{n}', matched.length).replace('{s}', matched.length === 1 ? '' : 's'), 'success');
+        if (window.trackTool) window.trackTool('har-file-analyzer', 'export_subset');
+      });
+      copyAllCurlBtn.addEventListener('click', function () {
+        var matched = filteredEntries();
+        var text = matched.map(curlOf).join('\n\n');
+        copyText(text);
+        if (window.trackTool) window.trackTool('har-file-analyzer', 'copy_all_curl');
+      });
+
+      function copyText(text) {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(text)
+            .then(function () { setStatus(t.copied, 'success'); })
+            .catch(function () { setStatus(t.copyFailed, 'error'); });
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); setStatus(t.copied, 'success'); }
+          catch (e) { setStatus(t.copyFailed, 'error'); }
+          document.body.removeChild(ta);
+        }
+      }
+
+      // ---------- dropzone interactions ----------
+      function openPicker() { fileInput.click(); }
+      dropzone.addEventListener('click', openPicker);
+      dropzone.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); }
+      });
+      fileInput.addEventListener('change', function () {
+        if (fileInput.files && fileInput.files[0]) loadFile(fileInput.files[0]);
+        fileInput.value = '';
+      });
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        dropzone.addEventListener(ev, function (e) {
+          e.preventDefault(); e.stopPropagation();
+          dropzone.classList.add('is-dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        dropzone.addEventListener(ev, function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (ev === 'dragleave' && e.target !== dropzone) return;
+          dropzone.classList.remove('is-dragover');
+        });
+      });
+      dropzone.addEventListener('drop', function (e) {
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) loadFile(f);
+      });
+
+      resetBtn.addEventListener('click', function () {
+        harData = null; entries = []; selectedIdx = -1; wfShowAllFlag = false;
+        dropzone.hidden = false;
+        meta.hidden = true;
+        tabs.hidden = true;
+        panel.hidden = true;
+        waterfallEl.innerHTML = '';
+        pieEl.innerHTML = '';
+        pieLegendEl.innerHTML = '';
+        domainListEl.innerHTML = '';
+        reqListEl.innerHTML = '';
+        reqDetailEl.innerHTML = '';
+        filterTypesEl.innerHTML = '<legend>' + escapeHtml(t.filterTypes) + '</legend>';
+        filterDomainsEl.innerHTML = '<legend>' + escapeHtml(t.filterDomains) + '</legend>';
+        exportSummaryEl.textContent = '';
+        setStatus('', '');
+      });
+    })();
+  </script>
+</div>
+
+<style is:global>
+  .har-shell { display: flex; flex-direction: column; gap: 0.85rem; min-width: 0; }
+
+  .har-dropzone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.4rem; padding: 2.5rem 1rem; border-radius: var(--radius-lg);
+    background: var(--color-surface-muted);
+    outline: 1px dashed var(--color-border);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast), outline-color var(--transition-fast);
+    min-height: 200px;
+  }
+  .har-dropzone:hover, .har-dropzone:focus-visible, .har-dropzone.is-dragover {
+    background: color-mix(in oklch, var(--color-primary) 6%, var(--color-surface-muted));
+    outline-color: var(--color-primary);
+    outline-style: solid;
+    color: var(--color-text);
+  }
+  .har-dropzone-icon { color: var(--color-primary); }
+  .har-dropzone-title { font-weight: 600; font-size: 1rem; margin: 0; }
+  .har-dropzone-hint { font-size: 0.82rem; margin: 0; color: var(--color-text-muted); }
+
+  .har-meta { display: none; }
+  .har-meta:not([hidden]) {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+    padding: 0.4rem 0.55rem; border-radius: var(--radius-md);
+    background: var(--color-surface);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+  .har-pill {
+    display: inline-flex; align-items: center;
+    padding: 0.2rem 0.6rem; border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    font-size: 0.78rem; font-family: var(--font-mono);
+    max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .har-reset { margin-left: auto; font-size: 0.78rem; }
+
+  .har-status { font-size: 0.85rem; }
+  .har-status:empty { display: none; }
+  .har-status[data-tone="success"] { color: var(--color-success); }
+  .har-status[data-tone="error"] { color: var(--color-danger); }
+
+  .har-tabs { display: none; }
+  .har-tabs:not([hidden]) {
+    display: flex; flex-wrap: wrap; gap: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .har-tab {
+    appearance: none; background: none; border: none;
+    padding: 0.5rem 0.95rem; font-size: 0.88rem; font-weight: 600;
+    color: var(--color-text-secondary);
+    border-bottom: 2px solid transparent;
+    cursor: pointer; transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+  .har-tab:hover { color: var(--color-text); }
+  .har-tab.is-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+  .har-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+  .har-panel { min-width: 0; }
+  .har-view { display: none; }
+  .har-view:not([hidden]) { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
+
+  /* Overview */
+  .har-stat-grid {
+    display: grid; gap: 0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  }
+  .har-stat {
+    display: flex; flex-direction: column; gap: 0.25rem;
+    padding: 0.7rem 0.85rem; border-radius: var(--radius-md);
+    background: var(--color-surface);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+  }
+  .har-stat-label { font-size: 0.74rem; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .har-stat-value { font-family: var(--font-mono); font-size: 1.15rem; color: var(--color-text); font-weight: 600; }
+
+  .har-overview-grid {
+    display: grid; gap: 0.9rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  }
+  .har-overview-card {
+    padding: 0.9rem 1rem; border-radius: var(--radius-md);
+    background: var(--color-surface);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+  }
+  .har-card-title { margin: 0 0 0.5rem; font-size: 0.88rem; color: var(--color-text-secondary); }
+  .har-pie-wrap { display: flex; justify-content: center; padding: 0.4rem 0; }
+  .har-pie { width: 140px; max-width: 100%; height: auto; }
+  .har-pie-legend { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; }
+  .har-pie-legend li { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82rem; color: var(--color-text-secondary); }
+  .har-pie-count { font-family: var(--font-mono); color: var(--color-text-muted); }
+  .har-swatch { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px; }
+  .har-domain-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .har-domain-list li { display: flex; justify-content: space-between; gap: 0.6rem; font-size: 0.85rem; padding: 0.3rem 0; border-bottom: 1px solid var(--color-border-soft); }
+  .har-domain-list li:last-child { border-bottom: none; }
+  .har-domain-host { font-family: var(--font-mono); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .har-domain-meta { font-family: var(--font-mono); color: var(--color-text-muted); font-size: 0.8rem; white-space: nowrap; }
+
+  /* Waterfall */
+  .har-legend { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; font-size: 0.78rem; color: var(--color-text-secondary); }
+  .har-legend-item { display: inline-flex; align-items: center; gap: 0.3rem; }
+  .har-wf-controls { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+  .har-wf-cap { font-size: 0.78rem; color: var(--color-text-muted); }
+  .har-waterfall {
+    border-radius: var(--radius-md);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+    background: var(--color-surface);
+    overflow-x: auto;
+    min-width: 0;
+  }
+  .har-wf-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 2.4fr) 56px 76px 64px minmax(160px, 3fr);
+    gap: 0.4rem;
+    padding: 0.32rem 0.55rem;
+    border-bottom: 1px solid var(--color-border-soft);
+    font-size: 0.78rem;
+    cursor: pointer;
+    align-items: center;
+  }
+  .har-wf-row:hover { background: var(--color-surface-muted); }
+  .har-wf-row:last-child { border-bottom: none; }
+  .har-wf-url { display: flex; gap: 0.4rem; align-items: baseline; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+  .har-wf-method { font-family: var(--font-mono); font-weight: 700; color: var(--color-text); }
+  .har-wf-urltext { font-family: var(--font-mono); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .har-wf-status { font-family: var(--font-mono); text-align: right; }
+  .har-wf-status-2xx { color: var(--color-success); }
+  .har-wf-status-3xx { color: var(--color-accent); }
+  .har-wf-status-4xx { color: color-mix(in oklch, var(--color-danger) 65%, var(--color-accent)); }
+  .har-wf-status-5xx { color: var(--color-danger); }
+  .har-wf-status-other { color: var(--color-text-muted); }
+  .har-wf-size, .har-wf-time { font-family: var(--font-mono); color: var(--color-text-muted); text-align: right; }
+  .har-wf-bar { height: 14px; background: var(--color-surface-muted); border-radius: var(--radius-sm); overflow: hidden; min-width: 0; }
+  .har-wf-bar-track { position: absolute; top: 0; bottom: 0; display: flex; min-width: 1px; }
+  .har-wf-seg { display: block; height: 100%; }
+
+  /* Detail */
+  .har-detail-grid {
+    display: grid; gap: 0.9rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  }
+  .har-req-list-wrap { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+  .har-req-search { font-family: var(--font-mono); }
+  .har-req-list {
+    list-style: none; padding: 0; margin: 0;
+    border-radius: var(--radius-md);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+    background: var(--color-surface);
+    max-height: 540px; overflow-y: auto;
+  }
+  .har-req-item {
+    display: grid;
+    grid-template-columns: 56px 48px minmax(0, 1fr);
+    gap: 0.4rem; padding: 0.35rem 0.6rem;
+    font-size: 0.78rem; cursor: pointer;
+    border-bottom: 1px solid var(--color-border-soft);
+  }
+  .har-req-item:last-child { border-bottom: none; }
+  .har-req-item:hover { background: var(--color-surface-muted); }
+  .har-req-item.is-selected { background: color-mix(in oklch, var(--color-primary) 10%, var(--color-surface)); }
+  .har-req-method { font-family: var(--font-mono); font-weight: 700; }
+  .har-req-status { font-family: var(--font-mono); text-align: right; }
+  .har-req-url { font-family: var(--font-mono); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .har-req-detail {
+    padding: 0.9rem 1rem; border-radius: var(--radius-md);
+    background: var(--color-surface);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+    display: flex; flex-direction: column; gap: 0.75rem;
+    max-height: 75vh; overflow-y: auto;
+    min-width: 0;
+  }
+  .har-detail-empty { color: var(--color-text-muted); font-style: italic; margin: 0; }
+  .har-detail-head { display: flex; flex-direction: column; gap: 0.5rem; }
+  .har-detail-url { font-family: var(--font-mono); font-size: 0.85rem; overflow-wrap: anywhere; word-break: break-word; }
+  .har-detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr)); gap: 0.5rem; margin: 0; padding: 0; }
+  .har-detail-meta div { background: var(--color-surface-muted); padding: 0.4rem 0.55rem; border-radius: var(--radius-sm); }
+  .har-detail-meta dt { font-size: 0.74rem; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .har-detail-meta dd { margin: 0.15rem 0 0; font-family: var(--font-mono); font-size: 0.9rem; color: var(--color-text); }
+  .har-detail-section h3 { margin: 0 0 0.4rem; font-size: 0.85rem; color: var(--color-text-secondary); }
+  .har-detail-section h4 { margin: 0 0 0.35rem; font-size: 0.82rem; color: var(--color-text-secondary); display: flex; align-items: center; gap: 0.4rem; }
+  .har-mime { font-family: var(--font-mono); color: var(--color-text-muted); font-size: 0.74rem; font-weight: 400; }
+  .har-empty { font-size: 0.82rem; color: var(--color-text-muted); padding: 0.35rem 0; }
+  .har-kv { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); gap: 0.1rem 0.6rem; margin: 0; font-size: 0.78rem; font-family: var(--font-mono); }
+  .har-kv dt { color: var(--color-text-secondary); }
+  .har-kv dd { margin: 0; color: var(--color-text); overflow-wrap: anywhere; word-break: break-word; }
+  .har-cookie-table, .har-timing-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; font-family: var(--font-mono); }
+  .har-cookie-table th, .har-cookie-table td, .har-timing-table th, .har-timing-table td {
+    padding: 0.25rem 0.45rem; border-bottom: 1px solid var(--color-border-soft); text-align: left; vertical-align: top;
+  }
+  .har-cookie-table th, .har-timing-table th { color: var(--color-text-muted); font-weight: 500; }
+  .har-pre { background: var(--color-bg-secondary); padding: 0.6rem 0.7rem; border-radius: var(--radius-sm); margin: 0; overflow-x: auto; font-size: 0.78rem; box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .har-pre code { background: transparent; padding: 0; }
+  .har-curl-row { position: relative; }
+  .har-curl-row .btn-copy { position: absolute; top: 0.35rem; right: 0.35rem; }
+
+  /* Filter & Export */
+  .har-filter {
+    display: grid; gap: 0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  }
+  .har-filter-group {
+    padding: 0.55rem 0.7rem; border-radius: var(--radius-md);
+    background: var(--color-surface);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+    display: flex; flex-direction: column; gap: 0.25rem;
+    border: none;
+  }
+  .har-filter-group legend { font-size: 0.78rem; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; padding: 0 0.2rem; }
+  .har-cb { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--color-text); cursor: pointer; }
+  .har-filter-count { color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.74rem; }
+  .har-export-summary { font-size: 0.85rem; color: var(--color-text-secondary); font-family: var(--font-mono); }
+  .har-export-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+</style>
+</div>

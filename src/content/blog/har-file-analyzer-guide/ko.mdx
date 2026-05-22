@@ -1,0 +1,125 @@
+---
+title: "브라우저에서 HAR 파일 분석하기: 실전 가이드"
+description: "기존 HAR 익스포트를 브라우저에 드롭해 waterfall을 읽고, request headers를 디코딩하고, 필터링된 서브셋을 익스포트하세요 — backend 불필요."
+pubDate: 2026-05-22
+lang: "ko"
+tags: ["har", "network-debugging", "performance", "web-development", "developer-tools"]
+ogImage: /og/blog-har-file-analyzer-guide-ko.png
+---
+
+밤 11시, 동료가 HAR 파일을 넘겨준다. 프로덕션 checkout이 한 시간째 실패 중이고, stack trace는 깨끗하다. 이 HAR이 유일한 ground truth — 고객 브라우저가 실제로 본 requests, headers, timings, responses다. DevTools에서 열려면 적절한 flag로 Chrome을 재시작하고, 600개 entry를 뒤지고, 값을 메모장에 옮겨야 한다. 카트를 깨뜨린 4xx를 찾을 즈음이면 UI 조작에만 20분을 잃은 상태다.
+
+[HAR 파일을 분석기로 드롭하기 →](/ko/tools/har-file-analyzer/)
+
+## HAR 파일에는 정확히 무엇이 들어 있나
+
+HAR(HTTP Archive)은 W3C Web Performance Working Group이 정의한 JSON 문서입니다. 모든 브라우저의 DevTools 패널이 익스포트할 수 있으며 — Chrome, Firefox, Safari, Edge 모두 HAR 1.2를 생성합니다. 구조는 직관적입니다:
+
+```json
+{
+  "log": {
+    "version": "1.2",
+    "creator": { "name": "Firefox", "version": "..." },
+    "entries": [
+      {
+        "startedDateTime": "2026-05-22T10:14:03.512Z",
+        "time": 156.5,
+        "request":  { "method": "GET", "url": "...", "headers": [...], "cookies": [...] },
+        "response": { "status": 200, "statusText": "OK", "headers": [...], "content": {...} },
+        "timings":  { "blocked": 4.2, "dns": 18.6, "connect": 55, "ssl": 25, "send": 0.5, "wait": 78.4, "receive": 27.8 }
+      }
+    ]
+  }
+}
+```
+
+흥미로운 부분은 `entries` 배열입니다. 각 entry는 request와 response, 그리고 timings 분해를 한 쌍으로 묶습니다. 무슨 일이 일어났는지 재구성하는 데 필요한 모든 것 — TLS 오버헤드, 큐 지연, TTFB를 포함해 — 이 안에 있습니다. 과제는 JSON에 빠지지 않고 이를 읽는 것입니다.
+
+## 분석기 한눈에 보기
+
+HAR 파일을 페이지에 드롭하면 단일 tool widget 안에 4개의 view가 나타납니다:
+
+| View | 어떤 질문에 답하는가 |
+|------|---------------------|
+| **Overview** | 페이지 로드 전체가 건강해 보이는가? |
+| **Waterfall** | 시간이 실제로 어디에 쓰였는가? |
+| **Detail** | 브라우저가 무엇을 보내고 무엇을 받았는가? |
+| **Filter & Export** | 범위를 좁히고 공유할 수 있는가? |
+
+4개 view 모두 브라우저 안에서 완전히 동작합니다. 업로드 없음, token 없음, 계정 없음. 파일은 당신의 머신을 떠나지 않습니다 — HAR에는 거의 항상 cookies, bearer token, 그리고 SaaS 대시보드에 올리면 안 되는 PII가 들어 있기 때문에 이 점은 중요합니다.
+
+## Overview — 큰 그림부터
+
+Overview는 4개의 stat card(요청 수, 총 시간, 전송 크기, 고유 domain 수), 상태 코드 파이 차트, 요청 수 기준 Top 5 domain을 보여줍니다. 30초짜리 분류 view입니다 — 이 페이지 로드가 건강한지, 명백히 뭔가 잘못된 게 있는지?
+
+먼저 확인할 것들:
+
+- **4xx 또는 5xx 요청 급증.** 파이 차트 조각은 건수로 크기가 결정됩니다. checkout 페이지에 밝은 4xx 조각이 있다면 가장 먼저 봐야 할 곳입니다.
+- **단일 domain이 요청 수를 점유.** CDN domain에 50 entry가 있고 API에 2 entry라면 병목은 정적 자원일 가능성이 높습니다 — API가 아니라.
+- **총 시간 vs 전송 크기 불일치.** 8개 요청으로 1.3 MB를 8초 동안 전송했다면 보통 payload가 큰 게 아니라 어떤 endpoint 하나가 느린 것입니다.
+
+## Waterfall — 병목 찾기
+
+Waterfall은 요청당 한 줄을 렌더링하며, 각 줄을 DevTools가 기본으로 보여주는 6개 phase로 분할합니다:
+
+| Phase | HAR 1.2 필드 | 무엇을 측정하는가 |
+|-------|--------------|------------------|
+| **Queued / Stalled** | `blocked` | 연결 수 제한, 브라우저 큐, proxy 협상 |
+| **DNS Lookup** | `dns` | DNS 해석 |
+| **Initial Connection** | `connect` | TCP 핸드셰이크(HAR 1.2에서 `connect`가 `ssl`을 포함) |
+| **Request Sent** | `send` | 요청 바이트를 내보내는 시간 |
+| **Waiting (TTFB)** | `wait` | 서버 처리 + 첫 바이트 |
+| **Content Download** | `receive` | 응답 본문 읽기 |
+
+어떤 줄이 `wait`로 지배되면 server가 느린 것입니다. `blocked` 지배면 브라우저가 연결 수 한계에 부딪힌 것(대부분 브라우저는 origin당 6개). `connect` 지배면 요청마다 새 TCP + TLS 비용을 치르고 있는 것 — 연결 재사용이 깨진 상태.
+
+Waterfall은 기본적으로 처음 200개 entry를 렌더링합니다. **Show all**을 클릭하면 나머지를 주입합니다. 500 entry HAR은 최신 노트북에서 약 80 ms에 주입됩니다; 가상 스크롤은 없지만, 첫 로드에 2000 DOM 줄을 그리지 않을 만큼의 절제는 있습니다.
+
+## Detail — 브라우저가 실제로 보낸 것 보기
+
+Detail view의 요청 목록에서 임의의 줄을 골라 자세히 살펴볼 수 있습니다. 오른쪽 패널은 headers, cookies, request와 response 본문, 그리고 한 번에 복사 가능한 완전한 cURL 명령을 보여줍니다.
+
+여기 timings 표는 HAR의 7개 원시 필드를 모두 유지합니다 — `ssl` 포함. Waterfall은 Initial Connection에 `connect`를 사용합니다. HAR 1.2가 SSL/TLS 시간을 `connect` 안에 카운트하기 때문입니다:
+
+> If `ssl` is defined, the time is also included in the `connect` field (to ensure backward compatibility with HAR 1.1).
+> — [HAR 1.2 spec, W3C Web Performance WG](https://w3c.github.io/web-performance/specs/HAR/Overview.html) (accessed 2026-05-22)
+
+다시 말해: `entry.time = blocked + dns + connect + send + wait + receive` — `ssl`은 따로 더하지 않습니다. 수동으로 합산할 때 TLS 핸드셰이크마다 25 ms 더 나오는 이유의 답이 이것입니다. Detail view는 원시 필드를 그대로 보존하므로 필요할 때 분해를 감사할 수 있습니다.
+
+`-1`로 설정된 필드는 "해당 없음"을 의미합니다 — 가장 흔한 경우는 연결이 재사용된 경우(DNS 없음, connect 없음, TLS 없음), 또는 응답이 HTTP 캐시에서 온 경우(모두 `-1`, `time`은 0이거나 0에 가까움).
+
+## Filter & Export — 자르고 공유하기
+
+Filter view는 3개의 필터 차원을 나란히 노출합니다: HTTP 상태 클래스, 리소스 타입, domain. 각각 멀티 셀렉트이며, 각 옵션 옆의 카운트는 범위를 좁힐수록 갱신됩니다.
+
+하단에 2개의 action이 있습니다:
+
+- **Export HAR subset.** 필터에 매칭된 entry만 포함하는 유효한 HAR 1.2 파일을 생성합니다. session 전체를 노출하지 않고 최소 재현을 backend 엔지니어에게 전달할 때 유용합니다.
+- **Copy all as cURL.** 현재 보이는 모든 entry에 대해 `curl` 명령을 연결합니다. 터미널에서 시퀀스를 재생하거나 postmortem에 붙여넣기에 유용합니다.
+
+둘 다 클라이언트에서 `Blob` + `URL.createObjectURL` 다운로드로 동작합니다. server 라운드트립 없음, 업로드 크기 제한 없음(브라우저 자체 JSON parser의 한계 제외 — 수십 MB HAR도 무리 없이 처리).
+
+## HAR 1.2의 몇 가지 함정
+
+HAR은 15년이 넘었고 그 연식이 곳곳에 드러납니다. HAR 위에 도구를 만든다면 알아둘 점:
+
+- **`ssl`은 정보 필드이지 가산 항이 아닙니다.** 위에서 이미 다뤘습니다. 이 spec 문구는 HAR 1.1 하위 호환성을 위해 작성됐고, 서드파티 HAR reader에서 가장 흔한 구현 버그입니다.
+- **`-1`은 "해당 없음" 센티넬 값.** 합산이나 렌더링 전에 항상 `phase >= 0`을 확인하세요. 분석기는 `-1`을 "이 세그먼트 건너뛰기"로 처리합니다 — waterfall 막대 없음, 표 셀에 N/A 표시.
+- **불변식에는 여유가 있습니다.** 실제 브라우저는 시스템 클럭 해상도에서 서브밀리초 지터를 도입합니다. 분석기는 `entry.time`과 세그먼트 합계 사이 최대 1.5 ms 드리프트를 허용한 뒤 entry를 불일치로 표시합니다. 실제로 프로덕션 HAR은 보통 이 임계값을 한참 밑돕니다.
+- **`startedDateTime`은 wall-clock이며 monotonic이 아닙니다.** HAR을 시간 이동해 재생할 때는 주의 — 캡처 도중의 클럭 변경(NTP 보정, 서스펜드/리줌)은 긴 캡처에서 비단조 타임스탬프를 만들 수 있습니다.
+
+## 우리가 이것을 만든 이유(그리고 의도적으로 안 만든 것)
+
+ZeroTool에는 이미 개발자를 위한 브라우저 내 소규모 유틸리티가 약 120개 있었습니다 — JSON 포맷팅, JWT 디코딩, URL 파싱, cron 설명 — 그러나 네트워크 분석 쪽은 비어 있었습니다. HAR reader는 존재합니다(DebugBear, jam.dev, OpenReplay, Google의 HAR Analyzer toolbox), 그중 많은 것이 더 큰 모니터링 또는 협업 제품의 일부로 붙어 있습니다. 우리가 원한 것은 가능한 한 작은 것 입니다: 파일을 드롭하고, 90% 시나리오에 필요한 4개 view를 얻고, 떠난다.
+
+의도적으로 만들지 않은 것:
+
+- **요청 리플레이어.** 읽기 전용 분석기와 요청 도구는 다른 제품입니다. 재생은 cURL 복사와 당신의 터미널로 하세요.
+- **타임라인 애니메이션 / 비디오 동기화.** 유용하지만 단일 tool widget 범위 밖입니다.
+- **서버 사이드 분석.** 도구의 핵심은 당신의 HAR이 — cookies와 bearer token을 안고 — 브라우저를 떠나지 않는다는 점입니다.
+
+이 제약이 당신의 유스 케이스에 맞다면, 이 분석기는 그런 지루하고 빠르고 사적인 기본값으로 설계된 도구입니다.
+
+---
+
+다음 HAR은 SaaS 대시보드 대신 브라우저로 바로 드롭하세요. [HAR File Analyzer 열기 →](/ko/tools/har-file-analyzer/)

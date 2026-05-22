@@ -124,6 +124,7 @@ import ImageCompressorTool from './ImageCompressorTool.astro';
 import IbanValidatorParserTool from './IbanValidatorParserTool.astro';
 import HtmlMinifierTool from './HtmlMinifierTool.astro';
 import MimeTypeLookupTool from './MimeTypeLookupTool.astro';
+import HarFileAnalyzerTool from './HarFileAnalyzerTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -248,4 +249,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'iban-validator-parser': IbanValidatorParserTool,
   'html-minifier': HtmlMinifierTool,
   'mime-type-lookup': MimeTypeLookupTool,
+  'har-file-analyzer': HarFileAnalyzerTool,
 };

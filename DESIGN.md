@@ -54,6 +54,23 @@ Tool cards, related cards, and directory panel items use category tinting throug
 
 The tint appears in icon wells, hover background mixes, and small category tags. Keep the page chrome warm and neutral while category color helps scanning.
 
+## HAR Waterfall Phase Color
+
+`HarFileAnalyzerTool` paints request waterfalls in six Chrome DevTools standard phases. Each phase has a dedicated token, defined for both light and dark in `BaseLayout.astro`. These tokens are reserved for HAR phase signaling; do not reuse them for category tinting or arbitrary surfaces.
+
+| Phase | HAR 1.2 timings field(s) | Token | Light | Dark |
+|---|---|---|---:|---:|
+| Queued / Stalled | `blocked` | `--color-har-queued` | `oklch(63% 0.025 70)` | `oklch(70% 0.022 70)` |
+| DNS Lookup | `dns` | `--color-har-dns` | `oklch(58% 0.105 190)` | `oklch(72% 0.10 190)` |
+| Initial Connection | `connect` (HAR 1.2: `ssl` already included) | `--color-har-connect` | `oklch(60% 0.13 40)` | `oklch(72% 0.12 40)` |
+| Request Sent | `send` | `--color-har-send` | `oklch(56% 0.12 155)` | `oklch(74% 0.11 155)` |
+| Waiting (TTFB) | `wait` | `--color-har-wait` | `oklch(54% 0.135 290)` | `oklch(72% 0.13 290)` |
+| Content Download | `receive` | `--color-har-receive` | `oklch(56% 0.125 250)` | `oklch(72% 0.12 250)` |
+
+Invariant per HAR 1.2 spec: `entry.time === blocked + dns + connect + send + wait + receive` summing only fields whose value is not `-1`. `ssl` is excluded from the sum because it is already counted inside `connect`. When a field is `-1`, the segment is omitted and the tooltip notes N/A.
+
+ssl-only fallback (engineering tolerance, non-spec): when `connect === -1 && ssl >= 0`, the Initial Connection segment uses `ssl` as its duration. This accommodates non-compliant exporters that emit `ssl` without `connect`. For invariant display, this fallback uses the normalized connection duration; the raw HAR remains non-spec because the strict spec sum would not include ssl when connect is -1. Do not "fix" this back to strict spec — it is intentional.
+
 ## Typography
 
 Use the three global font roles:

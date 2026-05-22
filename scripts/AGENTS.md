@@ -14,6 +14,7 @@
 | `update-readme-tools.js` | 文档同步 | 用 `tools.ts` 的 slug + EN name 重写 README 的 `<!-- TOOLS-START/END -->` 段 | CI workflow `update-readme.yml` 在 master 分支 `tools.ts` 变化时自动跑 |
 | `audit.mjs` | 巡检 | 全项目静态一致性审计：tools schema / 图标覆盖 / 路由注册 / content/tools 多语言 / category 类型与 UI 对齐 / 基础页面齐全 / i18n key 对齐 / blog 命名 + frontmatter / _redirects 格式 | `.github/workflows/ci.yml` PR + master push 自动跑；本地 `node scripts/audit.mjs`（FAIL 退出码 1） |
 | `audit-slug-aliases.mjs` | 巡检 | 审计 `_redirects` 与 slug 的对应关系，发现孤儿规则 | 手动按需 |
+| `test-har-invariant.mjs` | 回归 | spec-driven 不变式测试：3 层（spec sum / 新算法 mirror / 旧错算法 regression guard）× 10 fixture；守住 HAR `connect + ssl` 双计 bug 不复发 | 手动按需 / 修改 `HarFileAnalyzerTool.astro` phase 逻辑前后 |
 | `deploy.sh` | 部署 | 本地构建 + `wrangler pages deploy`（需 `PROJECT_NAME` env） | 手工部署兜底 |
 | `devto-article-draft.md` | 内容草稿 | 非脚本，是发到 dev.to 的草稿 | — |
 
@@ -54,3 +55,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 - 2026-04-26 — 初版
 - 2026-04-26 — 加入 `audit.mjs`（13 维度静态校验）+ CI 巡检管线说明
+- 2026-05-22 — 加入 `test-har-invariant.mjs`（HAR waterfall spec-driven 回归测试，3 层 × 10 fixture）

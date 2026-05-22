@@ -1,0 +1,125 @@
+---
+title: "Inspect HAR Files in the Browser: A Practical Guide"
+description: "Analyze an existing HAR export in your browser to read the waterfall, decode request headers, and export filtered subsets — no backend required."
+pubDate: 2026-05-22
+lang: "en"
+tags: ["har", "network-debugging", "performance", "web-development", "developer-tools"]
+ogImage: /og/blog-har-file-analyzer-guide.png
+---
+
+A teammate forwards you a HAR file at 11 p.m. Production checkout has been failing for an hour, and the stack traces are clean. The HAR is the only ground truth — the exact requests, headers, timings, and responses the customer's browser saw. Opening it in DevTools means re-launching Chrome with the right flags, hunting through 600 entries, and copying values into a notepad. By the time you find the 4xx that broke the cart, you've lost twenty minutes to UI plumbing.
+
+[Drop a HAR file into the analyzer →](/tools/har-file-analyzer)
+
+## What a HAR File Actually Contains
+
+A HAR (HTTP Archive) is a JSON document defined by the W3C Web Performance Working Group. Every browser DevTools panel can export one — Chrome, Firefox, Safari, and Edge all produce HAR 1.2. The structure is straightforward:
+
+```json
+{
+  "log": {
+    "version": "1.2",
+    "creator": { "name": "Firefox", "version": "..." },
+    "entries": [
+      {
+        "startedDateTime": "2026-05-22T10:14:03.512Z",
+        "time": 156.5,
+        "request":  { "method": "GET", "url": "...", "headers": [...], "cookies": [...] },
+        "response": { "status": 200, "statusText": "OK", "headers": [...], "content": {...} },
+        "timings":  { "blocked": 4.2, "dns": 18.6, "connect": 55, "ssl": 25, "send": 0.5, "wait": 78.4, "receive": 27.8 }
+      }
+    ]
+  }
+}
+```
+
+The `entries` array is the interesting part. Each entry pairs a request with its response and a timings breakdown. Everything you need to reconstruct what happened — including TLS overhead, queueing delay, and TTFB — is in there. The challenge is reading it without drowning in JSON.
+
+## The Analyzer at a Glance
+
+Drop a HAR file onto the page and you get four views in a single tool widget:
+
+| View | What it answers |
+|------|-----------------|
+| **Overview** | Did the page load look healthy at a high level? |
+| **Waterfall** | Where is the time actually going? |
+| **Detail** | What did the browser send, and what came back? |
+| **Filter & Export** | Can I narrow this down and share a subset? |
+
+All four run entirely in your browser. No upload, no token, no account. The file never leaves your machine — and that matters because a HAR almost always contains cookies, bearer tokens, and PII you shouldn't be uploading to a SaaS dashboard.
+
+## Overview — The Lay of the Land
+
+The Overview shows four stat cards (request count, total time, transferred size, distinct domains), a status code pie chart, and the top five domains by request count. It's the thirty-second triage view — does the picture look like a healthy page load, or is something obviously wrong?
+
+A few things to look for first:
+
+- **A spike in 4xx or 5xx requests.** The status pie segments are sized by count. A bright slice of 4xx on a checkout page is the first place to look.
+- **A single domain dominating the request count.** If your CDN domain has fifty entries and your API has two, the bottleneck is probably static assets, not the API.
+- **Total time vs. transferred size mismatch.** 1.3 MB transferred over 8 seconds with only 8 requests usually means one slow endpoint, not a fat payload.
+
+## Waterfall — Find the Bottleneck
+
+The waterfall renders one row per request, each segmented into the six phases that DevTools shows by default:
+
+| Phase | HAR 1.2 field(s) | What it measures |
+|-------|------------------|------------------|
+| **Queued / Stalled** | `blocked` | Connection limit, browser queueing, proxy negotiation |
+| **DNS Lookup** | `dns` | DNS resolution |
+| **Initial Connection** | `connect` | TCP handshake (HAR 1.2: `connect` includes `ssl`) |
+| **Request Sent** | `send` | Time to push the request bytes |
+| **Waiting (TTFB)** | `wait` | Server processing + first byte |
+| **Content Download** | `receive` | Reading the response body |
+
+If a row is dominated by `wait`, the server is slow. If it's dominated by `blocked`, the browser is hitting a connection limit (six per origin in most browsers). If it's dominated by `connect`, you're paying for fresh TCP and TLS on every request — connection reuse is broken.
+
+The waterfall renders the first 200 entries by default. Click **Show all** to inject the rest. A 500-entry HAR injects in about 80 ms on a modern laptop; there's no virtual scroll, just enough discipline to avoid painting two thousand DOM rows on first load.
+
+## Detail — See What the Browser Sent
+
+Pick any row from the Detail view's request list to inspect it. The right panel shows headers, cookies, the request and response bodies, and a complete cURL command you can copy in one click.
+
+The timings table here keeps all seven raw HAR fields, including `ssl`. The waterfall uses `connect` for Initial Connection because HAR 1.2 counts SSL/TLS inside `connect`:
+
+> If `ssl` is defined, the time is also included in the `connect` field (to ensure backward compatibility with HAR 1.1).
+> — [HAR 1.2 spec, W3C Web Performance WG](https://w3c.github.io/web-performance/specs/HAR/Overview.html) (accessed 2026-05-22)
+
+In other words: `entry.time = blocked + dns + connect + send + wait + receive` — `ssl` is not added separately. If you've ever wondered why your manual sum is 25 ms too high on every TLS handshake, that's the answer. The Detail view preserves the raw fields anyway, so you can audit the breakdown when you need to.
+
+Fields set to `-1` mean "not applicable" — most commonly because the connection was reused (no DNS, no connect, no TLS) or the response came from the HTTP cache (everything `-1`, `time` is zero or near-zero).
+
+## Filter & Export — Slice and Share
+
+The Filter view exposes three filter dimensions side-by-side: HTTP status class, resource type, and domain. Each is a multi-select; the count next to each option updates as you narrow.
+
+Two actions live at the bottom:
+
+- **Export HAR subset.** Generates a valid HAR 1.2 file containing only the entries that match your filters. Useful for forwarding a minimal repro to a backend engineer without leaking the rest of the session.
+- **Copy all as cURL.** Concatenates `curl` commands for every visible entry. Useful for replaying a sequence in a terminal or pasting into a postmortem.
+
+Both run as `Blob` + `URL.createObjectURL` downloads on the client. There's no server round-trip and no upload limit besides the browser's own JSON parser (which comfortably handles HARs into the tens of megabytes).
+
+## A Note on HAR 1.2's Quirks
+
+HAR is over fifteen years old and shows it. A few things to know if you're building tools on top of it:
+
+- **`ssl` is informational, not additive.** Already covered above. The spec text was written for HAR 1.1 backward compatibility and is the single most common implementation bug in third-party HAR readers.
+- **`-1` is the "not applicable" sentinel.** Always check `phase >= 0` before summing or rendering. The analyzer treats `-1` as "skip this segment" — no waterfall bar, table cell shows N/A.
+- **The invariant has slack.** Real browsers introduce sub-millisecond jitter from system clock resolution. The analyzer tolerates a 1.5 ms drift between `entry.time` and the segment sum before flagging an entry as inconsistent. In practice, most production HARs come in well under that.
+- **`startedDateTime` is wall-clock, not monotonic.** Time-shifting a HAR for replay needs care — clock changes during capture (NTP corrections, suspend/resume) can produce non-monotonic timestamps in long captures.
+
+## Why We Built This (and What We Didn't Build)
+
+ZeroTool already had ~120 small in-browser utilities for developers — JSON formatting, JWT decoding, URL parsing, cron explanation — but nothing for network analysis. HAR readers exist (DebugBear, jam.dev, OpenReplay, Google's HAR Analyzer toolbox), and many are attached to larger monitoring or collaboration products. We wanted the smallest possible thing: drop a file, get the four views you need 90% of the time, leave.
+
+We deliberately didn't build:
+
+- **A request replayer.** A read-only analyzer is a different product from a request tool. Use the cURL copy and your terminal.
+- **A timeline animator or video sync.** Useful, but outside the scope of a single tool widget.
+- **Server-side analysis.** The whole point is that your HAR — with its cookies and bearer tokens — never leaves your browser.
+
+If those constraints fit your use case, the analyzer is meant to be the boring, fast, private default.
+
+---
+
+Drop your next HAR into the browser instead of into a SaaS dashboard. [Open the HAR File Analyzer →](/tools/har-file-analyzer)

@@ -1,0 +1,125 @@
+---
+title: "ブラウザで HAR ファイルを分析する：実践ガイド"
+description: "既存の HAR エクスポートをブラウザにドロップして、waterfall を読み、request headers をデコードし、絞り込んだサブセットをエクスポート — backend 不要。"
+pubDate: 2026-05-22
+lang: "ja"
+tags: ["har", "network-debugging", "performance", "web-development", "developer-tools"]
+ogImage: /og/blog-har-file-analyzer-guide-ja.png
+---
+
+夜 11 時、同僚から HAR ファイルが送られてくる。本番の checkout が 1 時間落ちていて、stack trace は完全にクリーン。この HAR が唯一の ground truth — 顧客のブラウザが見た正確な requests、headers、timings、responses。DevTools で開くには適切な flag で Chrome を再起動し、600 個の entry を漁り、値をメモ帳にコピーする必要がある。カートを壊した 4xx を見つける頃には、UI 操作だけで 20 分を失っている。
+
+[HAR ファイルを分析器にドロップする →](/ja/tools/har-file-analyzer/)
+
+## HAR ファイルの中身
+
+HAR(HTTP Archive)は W3C Web Performance Working Group が定義した JSON 文書です。すべてのブラウザの DevTools パネルがエクスポートでき、Chrome・Firefox・Safari・Edge はすべて HAR 1.2 を出力します。構造はシンプルです:
+
+```json
+{
+  "log": {
+    "version": "1.2",
+    "creator": { "name": "Firefox", "version": "..." },
+    "entries": [
+      {
+        "startedDateTime": "2026-05-22T10:14:03.512Z",
+        "time": 156.5,
+        "request":  { "method": "GET", "url": "...", "headers": [...], "cookies": [...] },
+        "response": { "status": 200, "statusText": "OK", "headers": [...], "content": {...} },
+        "timings":  { "blocked": 4.2, "dns": 18.6, "connect": 55, "ssl": 25, "send": 0.5, "wait": 78.4, "receive": 27.8 }
+      }
+    ]
+  }
+}
+```
+
+興味深いのは `entries` 配列です。各 entry は request と response、そして timings の内訳をペアにします。発生したことを再構築するために必要なすべて — TLS オーバーヘッド、キュー遅延、TTFB を含む — はここにあります。課題は、JSON に溺れずにこれを読むことです。
+
+## 分析器の全体像
+
+HAR ファイルをページにドロップすると、単一の tool widget 内に 4 つの view が表示されます:
+
+| View | 答える質問 |
+|------|-----------|
+| **Overview** | ページ読み込み全体は健全に見えるか? |
+| **Waterfall** | 時間は実際どこに使われているか? |
+| **Detail** | ブラウザは何を送り、何を受け取ったか? |
+| **Filter & Export** | 範囲を絞って共有できるか? |
+
+4 つの view すべてがブラウザ内で完結します。アップロードなし、token なし、アカウントなし。ファイルはあなたのマシンを離れません — HAR には cookies、bearer token、SaaS ダッシュボードにアップすべきでない PII がほぼ常に含まれているため、これは重要です。
+
+## Overview — 全体像をつかむ
+
+Overview は 4 枚の stat card(リクエスト数、合計時間、転送サイズ、固有 domain 数)、ステータスコードの円グラフ、リクエスト数で並べた Top 5 domain を表示します。30 秒で状況を把握する view — このページ読み込みは健全か、それとも明らかに何かおかしいか?
+
+最初に確認すべき点:
+
+- **4xx または 5xx リクエストの急増。** 円グラフのセグメントは件数で大きさが決まります。checkout ページに明るい 4xx スライスがあれば、まずそこから見るべきです。
+- **特定の domain がリクエスト数を支配。** CDN domain に 50 entry、API に 2 entry なら、ボトルネックは静的アセットで、API ではない可能性が高いです。
+- **合計時間 vs 転送サイズの不一致。** 8 リクエストで 1.3 MB を 8 秒かけて転送するのは、通常 payload が太いのではなく、どこか 1 つの endpoint が遅いことを示します。
+
+## Waterfall — ボトルネックを見つける
+
+Waterfall は 1 リクエスト 1 行で描画し、各行を DevTools が標準で表示する 6 つの phase に区切ります:
+
+| Phase | HAR 1.2 フィールド | 何を測るか |
+|-------|-------------------|-----------|
+| **Queued / Stalled** | `blocked` | 接続数制限、ブラウザのキュー、proxy ネゴシエーション |
+| **DNS Lookup** | `dns` | DNS 解決 |
+| **Initial Connection** | `connect` | TCP ハンドシェイク(HAR 1.2 では `connect` に `ssl` が含まれる) |
+| **Request Sent** | `send` | リクエストバイトを送り出す時間 |
+| **Waiting (TTFB)** | `wait` | サーバー処理 + 最初のバイト |
+| **Content Download** | `receive` | レスポンスボディの読み取り |
+
+ある行が `wait` で支配されているなら server が遅い。`blocked` 支配なら接続数上限にぶつかっている(多くのブラウザは origin あたり 6 接続)。`connect` 支配なら、リクエストごとに新規 TCP + TLS のコストを払っている — 接続再利用が壊れている。
+
+Waterfall は標準で最初の 200 entry を描画します。**Show all** をクリックすると残りを注入できます。500 entry の HAR は最近のラップトップで約 80 ms で注入されます;仮想スクロールはありませんが、初回ロードで 2000 行の DOM を描画しない程度の節度はあります。
+
+## Detail — ブラウザが何を送ったかを見る
+
+Detail view のリクエストリストから任意の行を選んで詳細を確認できます。右パネルは headers、cookies、request と response のボディ、そしてワンクリックでコピーできる完全な cURL コマンドを表示します。
+
+ここの timings 表は HAR の生 7 フィールドをすべて保持します — `ssl` も含めて。Waterfall は Initial Connection に `connect` を使います。なぜなら HAR 1.2 は SSL/TLS の時間を `connect` の内側で数えているからです:
+
+> If `ssl` is defined, the time is also included in the `connect` field (to ensure backward compatibility with HAR 1.1).
+> — [HAR 1.2 spec, W3C Web Performance WG](https://w3c.github.io/web-performance/specs/HAR/Overview.html) (accessed 2026-05-22)
+
+つまり:`entry.time = blocked + dns + connect + send + wait + receive` — `ssl` は別途加算されません。手動で合計すると TLS ハンドシェイクごとに 25 ms 多くなる謎の答えがこれです。Detail view は生フィールドをそのまま残すので、必要なときに内訳を監査できます。
+
+`-1` に設定されたフィールドは「該当なし」を意味します — 最もよくあるのは接続が再利用された場合(DNS なし、connect なし、TLS なし)、または HTTP キャッシュから来た場合(すべて `-1`、`time` はゼロまたはほぼゼロ)。
+
+## Filter & Export — 切り出して共有
+
+Filter view は 3 つのフィルタ次元を横並びに表示します:HTTP ステータスクラス、リソースタイプ、domain。それぞれマルチセレクトで、各オプションの隣の件数が絞り込みに応じて更新されます。
+
+下部に 2 つの action があります:
+
+- **Export HAR subset.** フィルタにマッチした entry だけを含む正当な HAR 1.2 ファイルを生成します。session 全体を漏らさずに、最小再現を backend エンジニアに転送するのに役立ちます。
+- **Copy all as cURL.** 表示中のすべての entry に対する `curl` コマンドを連結します。ターミナルでシーケンスを再生したり、postmortem に貼り付けたりするのに便利です。
+
+両方ともクライアント側で `Blob` + `URL.createObjectURL` ダウンロードとして動作します。サーバーラウンドトリップなし、アップロードサイズ制限なし(ブラウザ自体の JSON parser の能力を除く — 数十 MB の HAR を快適に扱えます)。
+
+## HAR 1.2 の癖
+
+HAR は 15 年以上の歴史があり、その年代を随所で感じます。HAR の上にツールを構築するなら、知っておくべき点:
+
+- **`ssl` は情報フィールドで、加算項ではない。** 上述のとおり。この spec 文は HAR 1.1 の後方互換性のために書かれており、サードパーティ HAR reader で最もよく見るバグです。
+- **`-1` は「該当なし」のセンチネル値。** 合計や描画前に必ず `phase >= 0` をチェックする。本分析器は `-1` を「このセグメントをスキップ」として扱う — waterfall に棒なし、表セルは N/A。
+- **不変式には余裕がある。** 実際のブラウザはシステムクロック精度からサブミリ秒のジッタを導入します。分析器は `entry.time` とセグメント合計の間で最大 1.5 ms のドリフトを許容してから entry を不整合とフラグします。実際の本番 HAR は通常この閾値を大きく下回ります。
+- **`startedDateTime` は wall-clock であり、monotonic ではない。** HAR を時間シフトして再生するときは注意 — 取得中のクロック変更(NTP 補正、サスペンド/レジューム)で長時間取得では非単調なタイムスタンプが発生する可能性があります。
+
+## なぜこのツールを作ったか(そしてあえて作らなかったこと)
+
+ZeroTool には既に開発者向けのブラウザ内小ツールが約 120 個ありました — JSON フォーマット、JWT デコード、URL パース、cron 解説 — しかしネットワーク分析方面は空白でした。HAR reader は存在します(DebugBear、jam.dev、OpenReplay、Google の HAR Analyzer toolbox)が、多くはより大きな監視や協業プロダクトの一部として提供されています。私たちが欲しかったのは可能な限り最小のもの:ファイルをドロップして、90% のシナリオで必要な 4 つの view を得て、立ち去る。
+
+意図的に作らなかったもの:
+
+- **リクエストリプレイヤー。** 読み取り専用の分析器とリクエストツールは別のプロダクトです。再生は cURL コピーとターミナルでどうぞ。
+- **タイムラインアニメ / 動画同期。** 有用ですが、単一の tool widget の範囲外です。
+- **サーバーサイド分析。** ツールの核心は、あなたの HAR が — cookies と bearer token を抱えたまま — ブラウザを離れないことです。
+
+これらの制約があなたのユースケースに合うなら、本分析器はそのための退屈で速くてプライベートなデフォルトとして設計されています。
+
+---
+
+次の HAR は SaaS ダッシュボードでなく、ブラウザに直接ドロップしましょう。[HAR File Analyzer を開く →](/ja/tools/har-file-analyzer/)

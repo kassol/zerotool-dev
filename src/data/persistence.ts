@@ -14,6 +14,7 @@ export const toolPersistencePolicy = {
   'pkce-generator': 'disabled',
   'file-hash-checker': 'disabled',
   'image-compressor': 'disabled',
+  'har-file-analyzer': 'disabled',
   'uuid-generator': 'preference',
   'cron-job-generator': 'preference',
   'css-filter-generator': 'preference',
