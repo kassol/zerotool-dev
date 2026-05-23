@@ -1,0 +1,183 @@
+---
+title: "像高手一样读懂 HTTP 头部：一份实战指南"
+description: "粘贴 HTTP 原始头部，一次性看清安全、缓存、CORS 与 Cookie 元数据。理解分类、识别合规陷阱，把代码已经发出去的头部真正用上。"
+pubDate: 2026-05-23
+lang: "zh"
+tags: ["http", "security-headers", "cors", "web-development", "developer-tools"]
+ogImage: /og/blog-http-header-analyzer-guide.png
+---
+
+CDN 刚推了一次配置变更，预发响应里突然冒出四十个头部。一半眼熟，几个可疑，剩下你从来没仔细读过。浏览器 DevTools Network 面板把它们摊成一长串、不带任何注释——你只能滚屏、复制，再粘到文档里慢慢琢磨改了什么。等终于发现重复的 `Cache-Control` 或缺失的 `includeSubDomains` 指令，PR 已经合进了主干。
+
+[把原始头部粘进分析器 →](/zh/tools/http-header-analyzer/)
+
+本文系统梳理 HTTP 头部到底在做什么、它们落在哪些类别、每周都在生产环境上演的合规陷阱有哪些，以及如何用一款头部分析器一口气把这些信息看明白。
+
+## HTTP 头部到底是什么
+
+一个 HTTP 报文由状态行（响应）或方法行（请求）开头，接若干头部，一个空行，再加上可选的报文体。每个头部都是单独一行的 `名称: 值`。HTTP/2 与 HTTP/3 在底层换成了二进制帧，但只要工具把头部序列化出来——`curl -I`、`fetch -v`、DevTools 的「Copy as headers」、Nginx 调试日志、服务网格 trace——你拿到的就是文本形态。分析器吃的就是这种文本。
+
+清单看着平平无奇，实际上每个头部都是多方之间的约定：客户端、源服务器、中间缓存、浏览器特性、统计平台。任意一个写错都会触发一组可预测的故障：
+
+| 配置错误 | 直观症状 |
+|---|---|
+| `Cache-Control: no-store, max-age=3600` | 浏览器拒绝缓存。`max-age` 完全失效，但 reviewer 误以为缓存生效。 |
+| `Access-Control-Allow-Origin: *` 配 `Allow-Credentials: true` | 违反规范。浏览器在生产环境直接丢弃响应，fetch 无声失败。 |
+| `Strict-Transport-Security: max-age=86400` | 低于 HSTS preload 要求的 1 年门槛，提交 preload 列表会被静默拒绝。 |
+| `Set-Cookie: session=…; Path=/`（缺 `HttpOnly` 与 `Secure`） | XSS 可经 `document.cookie` 读出；遇到重定向 cookie 会走明文 HTTP 传输。 |
+| 缺 `X-Content-Type-Options: nosniff` | 旧版浏览器把 `.txt` 上传嗅探成 HTML 并执行其中脚本。 |
+
+每一行都是事故复盘里反复出现的真实案例。分析器在卡片里直接标出来，让你当天就能把修复发出去。
+
+## 真正需要认识的八个类别
+
+绝大多数现实头部都落在八个桶里。识别桶能告诉你这个头部归谁负责、出问题该去哪里查。
+
+### 1. 状态行 / 方法行
+
+报文的第一行。`HTTP/1.1 200 OK` 是响应，`GET /api/v1/orders HTTP/1.1` 是请求。分析器自动判断你粘的是哪种，并据此调整下方报告——例如安全警告只对响应生效。
+
+### 2. 安全（Security）
+
+2026 年被审计最频繁的一类。现代 Web 应用必备：
+
+- **Strict-Transport-Security**：在 `max-age` 时长内强制 HTTPS。要进 HSTS preload（`https://hstspreload.org/`），至少需要 `max-age=31536000`、`includeSubDomains`、`preload` 三件套。任何更短的值都只是浏览器在该时段内的软承诺，永远进不了预加载名单。
+- **Content-Security-Policy**：白名单允许的脚本、样式、图片、frame、fetch 源。是目前可用的最强 XSS 缓解措施，但 `'unsafe-inline'` 与 `'unsafe-eval'` 会让大部分防护当场失效。
+- **X-Frame-Options**：`DENY` 或 `SAMEORIGIN`。已被 CSP `frame-ancestors` 取代，但旧浏览器和不少工具仍在认它。
+- **X-Content-Type-Options: nosniff**：关闭 MIME 嗅探，没有任何副作用；响应里缺失时分析器会给出提示。
+- **Referrer-Policy**：控制跨源请求泄漏多少 referrer 信息。`strict-origin-when-cross-origin` 是稳妥的默认值。
+- **Permissions-Policy**：按 origin 限制浏览器特性（摄像头、麦克风、地理定位、全屏、支付 API）。替代已废弃的 Feature-Policy。
+- **Cross-Origin-Opener-Policy / Embedder-Policy / Resource-Policy**（COOP / COEP / CORP）：实现跨源隔离的必要条件，开启后才能用 `SharedArrayBuffer` 与高精度计时。
+
+### 3. 缓存（Caching）
+
+决定响应进磁盘、内存还是哪儿都不进的头部：
+
+- **Cache-Control**：主控杠杆。`no-store` 一刀切覆盖一切；`private` 把响应挡在共享缓存之外；`s-maxage` 只对共享缓存生效。
+- **ETag / Last-Modified**：条件 GET 的两对搭档。服务端算一次，客户端用 `If-None-Match` / `If-Modified-Since` 回拨，命中就返回 `304 Not Modified`。
+- **Vary**：告诉缓存响应会随哪些请求头变化。忘了写 `Vary: Accept-Encoding`，gzip 响应就会被发给只接受明文的客户端。
+
+### 4. 内容（Content）
+
+报文体到底是什么。`Content-Type` 是主角——注意 `text/html`、`text/html; charset=utf-8`、`application/json` 的差别。`Content-Encoding` 报告压缩方式；`Content-Disposition` 决定浏览器是 inline 显示还是强制下载。
+
+### 5. CORS
+
+`Access-Control-*` 头部管跨源读取。每周都会发上线的两个错误组合：
+
+- `Access-Control-Allow-Origin: *` 配 `Access-Control-Allow-Credentials: true`。违反规范，浏览器直接丢弃响应。
+- `Access-Control-Allow-Origin: <origin>` 但没动态回显请求里的 `Origin`。dev 环境因为源刚好匹配能跑通，换一个子域名调用同一接口立刻失败。
+
+### 6. 鉴权（Auth）
+
+`Authorization`、`WWW-Authenticate`、`Proxy-Authorization`、`Proxy-Authenticate`。真正重要的是 scheme 值——`Bearer`、`Basic`、`Digest`、`AWS4-HMAC-SHA256`。生产 token 别粘进有共享意图的工具；分析器在浏览器内解析、零上传，但 Jira 工单里贴一张截图，等效于公开泄露。
+
+### 7. Cookie
+
+`Cookie`（请求）与 `Set-Cookie`（响应）。安全靠 flag 守住：`HttpOnly` 阻止 JavaScript 读取，`Secure` 强制 HTTPS，`SameSite` 控制跨站发送，`Path` / `Domain` / `Expires` / `Max-Age` 决定生命周期。分析器对任何缺 `HttpOnly` 或 `Secure` 的 `Set-Cookie` 都会给出警告，因为这正是 XSS 偷走会话令牌的标准路径。
+
+### 8. 传输 / 范围 / 代理 / 通用 / 自定义
+
+剩下的全在这里：`Transfer-Encoding`、`Range`、`Forwarded` / `X-Forwarded-For`、`Date`、`Server`、`User-Agent`，加上你自己基建注入的各种 `X-*` 头部。分析器把它们另起一组，避免挤占需要立刻处理的关键标头。
+
+## 上手分析器：三分钟流畅使用
+
+打开 `/zh/tools/http-header-analyzer`，粘贴，开始读。
+
+### 第 1 步：抓取头部
+
+挑你最顺手的来源：
+
+```bash
+# 命令行抓取
+curl -sI https://api.example.com/v1/orders
+# -I 发 HEAD 请求；想顺带拿响应体换成 -i
+```
+
+```javascript
+// 在目标页的浏览器 console 里
+fetch('/api/v1/orders').then(async (r) => {
+  const lines = [`HTTP/1.1 ${r.status} ${r.statusText}`];
+  for (const [k, v] of r.headers) lines.push(`${k}: ${v}`);
+  console.log(lines.join('\n'));
+});
+```
+
+```text
+# DevTools Network 面板：右键某个请求 → Copy → Copy as cURL，
+# 粘到终端补上 -I，或者直接从 Headers 标签页复制响应头块。
+```
+
+### 第 2 步：粘贴，读 summary
+
+顶部 summary 一眼能看到：
+
+- **请求 / 响应**：由首行自动判定。
+- **状态行**：原样保留，提供上下文。
+- **头部数量**：跟原始来源核对。
+- **安全标头数**：列出存在的安全标头数量；响应里如果一个都没有，给出警告。
+
+### 第 3 步：按类别钻进去看
+
+分类视图把每个头部归到所属桶，附一行说明与必要的合规提示。提示偏保守——只指明显配置错误，从不评判风格：
+
+- HSTS `max-age` 不到 1 年，或缺 `includeSubDomains` / `preload`。
+- CSP 含 `'unsafe-inline'` 或 `'unsafe-eval'`。
+- `Set-Cookie` 缺 `HttpOnly` 或 `Secure`。
+- `Access-Control-Allow-Credentials: true` 配通配符 origin。
+- `Cache-Control` 同时含 `no-store` 与 `max-age`（max-age 实际无效）。
+
+### 第 4 步：需要时导出
+
+**复制 JSON** 输出一份规范化对象：`{ "Header-Name": "value" }`。重复同名头部折叠成数组，保留顺序；状态行进 `_status` 键。把 JSON 丢进事故复盘文档、Slack 线程或 JSON-diff 工具，对比预发与生产即可。
+
+## 真实失败模式
+
+几个分析器能抓出来、但很容易溜过 code review 的模式。
+
+### 「我们加了 HSTS，但 Chrome 没认」
+
+`max-age` 被设成了 86400——一天。HSTS 在该时段内确实生效，但 preload 列表拒绝 `max-age` 低于 31536000（一年）的任何配置。团队最初在测试时设了短值，后来忘了上调。这种规则被分析器写进了提示里，不用翻规范也能立刻看出。
+
+### 「CORS 在 dev 没事，生产就挂」
+
+dev 环境用 `Access-Control-Allow-Origin: *`，生产新接口要读会话 cookie 于是加上了 `Allow-Credentials: true`。浏览器从此对每个用通配符的 preflight 都丢弃。修复方式是显式回显请求里的 `Origin`，分析器把这个错误组合直接标出来，diff 一目了然。
+
+### 「cookie 写进去了，浏览器却不回传」
+
+`Set-Cookie: session=abc; HttpOnly; SameSite=None` 看着没问题——直到你发现少了 `Secure`。浏览器对 `SameSite=None` 又没 `Secure` 的 cookie 一律静默拒绝。无论 `SameSite` 是什么值，分析器都会提醒缺 `Secure`，因为 `Secure` 在任何场景下都是更稳妥的默认。
+
+### 「Cache-Control 同时含 no-store 与 max-age」
+
+反向代理给已鉴权路由注入 `Cache-Control: no-store`，而源服务器仍返回 `Cache-Control: public, max-age=3600`。浏览器把两段拼起来，按 `no-store` 执行。reviewer 看到 `max-age` 仍在以为缓存生效。分析器把这种矛盾直接标出来。
+
+## ZeroTool 与其他头部工具
+
+现有工具大致分两阵营。**URL 抓取类**（如 `securityheaders.com`、KeyCDN、dnschecker）让你输入 URL，由它们的后端去请求并出报告。适合一次性公开站点审计，但要求目标对第三方后端可达——内网预发、VPN 后的服务、未发布的版本都用不了。**粘贴类**（如 `mockoon.com`、`outstanding.tools`）解析你提供的字符串；ZeroTool 的 HTTP Header 分析器属于第二阵营。
+
+ZeroTool 在此之上提供的差异化：
+
+- **合规提示就嵌在每个头部卡片里**，不是页面底部给个安全打分。提示告诉你改什么、为什么，而不是丢出一个 A/B/C 字母分。
+- **自动识别请求 vs 响应**，curl `-I` 的输出与 `fetch -v` 的输出都不用切换模式就能直接粘。
+- **分类 / 原文 / JSON 三个标签**，同一段粘贴可以驱动安全审查、预发对生产的 diff、或导出 JSON 给下游工具。
+- **100% 客户端**。你粘的 Authorization 与 Set-Cookie 字符串不会离开浏览器。点 Analyze 后打开 DevTools Network 即可验证——零出站请求。
+
+## 与 ZeroTool 工坊其他工具配合
+
+分析器只是 HTTP 调试链上的一站。常见组合：
+
+- **[Cookie 字符串解析器](/zh/tools/cookie-parser/)**——需要把复杂的 `Set-Cookie` 串拆成名称/值/flag 表时，不必离开工坊。
+- **[CSP 头部生成器](/zh/tools/csp-header-generator/)**——分析器标出 CSP 偏弱时，按指令与允许源生成更严格的策略。
+- **[HAR 文件分析器](/zh/tools/har-file-analyzer/)**——头部来自 HAR 导出时，把文件丢进去就能在请求间跳转，免去 copy/paste。
+- **[HTTP 状态码大全](/zh/tools/http-status-codes/)**——状态行出现冷门码（`418`、`425`、`451`）时，查清含义与用例。
+
+## 延伸阅读
+
+- [MDN — HTTP Headers 参考](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers)
+- [OWASP Secure Headers Project](https://owasp.org/www-project-secure-headers/)
+- [RFC 9110 — HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
+- [RFC 9111 — HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111)
+- [RFC 6797 — HTTP Strict Transport Security](https://www.rfc-editor.org/rfc/rfc6797)
+- [W3C — Permissions Policy](https://www.w3.org/TR/permissions-policy-1/)
+
+拿最近一次部署的响应粘进去，按类别走一遍。HTTP 报文里真正值得看的，往往是你自己没写的那部分——CDN 的默认值、框架的默认值、WAF 的默认值。分析器把它们一次性摊在桌面上。
