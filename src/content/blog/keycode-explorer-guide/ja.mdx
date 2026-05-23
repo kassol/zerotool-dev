@@ -1,0 +1,194 @@
+---
+title: "event.keyCode が嘘をつく理由：JavaScript キーボードイベント現代ガイド"
+description: "event.key・event.code・keyCode の使い分けで迷うのはもう終わりにしよう。ブラウザが実際に何を発火するか、修飾キーで挙動がどう変わるか、IME 変換が単キーハンドラを壊す理由、そして非 QWERTY 配列でも壊れないショートカットの書き方を解説する。"
+pubDate: 2026-05-23
+lang: "ja"
+tags: ["javascript", "keyboard", "developer-tools", "ui", "events"]
+ogImage: /og/blog-keycode-explorer-guide.png
+---
+
+先週の金曜日、コマンドパレットを実装した。Cmd+K で開き、`/` で検索にフォーカス、Esc で閉じる。手元の QWERTY MacBook では完璧に動く。月曜の朝、フランス人の同僚から「AZERTY キーボードではショートカットがまったく反応しない」と報告が入る。続いてドイツ人の PM から「Shift を押さないと `/` が打てない」と言われる。DevTools を開き、ハンドラに `console.log(e.key, e.code, e.keyCode)` を貼り付ける。気づけばコーヒー3杯目、`e.key === "/"` がときにスラッシュ、ときに "Shift"、ときに文字通り `Dead` を返す理由を考え込んでいる。
+
+[JavaScript Keycode Explorer を開く →](/ja/tools/keycode-explorer/)
+
+フロントエンドエンジニアなら誰もが一度ははまる沼だ。手元のキーボードハンドラがオフィスを離れた瞬間に壊れる。解決策は「別のプロパティを試す」ことではない。`key`・`code`・非推奨の `keyCode` という3つのプロパティが**実際に何を意味しているか**、そして自分が問いたい質問にどれが対応しているかを理解することだ。
+
+## どのプロパティを選ぶかは、どんな質問をしているかと同義
+
+ブラウザが1回のキー押下に対して3つの異なるビューを提供するのは、キーボード入力に3つの異なるレイヤーがあるからだ。
+
+| プロパティ | 追跡対象 | 不変条件 | QWERTY で A キーを押した例 |
+|---|---|---|---|
+| `event.key` | レイアウトと修飾キー適用後の文字または名前付きアクション | ユーザーがこの文字の出力を期待している | `"a"`、Shift 併用で `"A"` |
+| `event.code` | 標準 US QWERTY 配列における物理キー位置 | ユーザーが同じ物理位置に指を動かす | `"KeyA"` |
+| `event.keyCode` | PS/2 スキャンコードに紐づく旧式の数値マッピング | あなたが2003年に戻りたいと願っている | `65` |
+
+混乱は一文で整理できる。**`key` は「ユーザーが生成した文字は何か？」、`code` は「ユーザーの指はキーボード上のどこにあるか？」**、`keyCode` はモダンブラウザを跨いでどちらにも確実には答えない。
+
+Keycode Explorer は3つすべてを並べて表示する。キャプチャパッドで任意のキーを押すと、`event.key`、`event.code`、旧式の `keyCode` / `which` / `charCode`、修飾キーの状態、`repeat` フラグ、`isComposing` が見える。さらに、押下したキーと修飾キーの組み合わせに合った正しいプロパティを使う、コピペ可能な keydown ハンドラまで組み立ててくれる。
+
+## `key` を使うべきとき
+
+物理位置ではなく、文字または名前付きアクションにユーザーの意図が紐づいているときは `event.key` を使う。典型例は以下の通り。
+
+- **文字に対応するエディタショートカット**。`Ctrl+/` でコメントトグル。ユーザーは自分のレイアウトがどう `/` を生成するかに関わらず、`/` を生み出した瞬間にコメントトグルが発火することを期待している。AZERTY では `/` は `:` と同じキーにあり Shift が必要だが、押下時の `event.key` は依然として `"/"` だ。
+- **フォームヘルパー**。「n で次へ、p で前へ」。物理位置ではなく意味的な文字を使う。
+- **名前付きキー**。`event.key === "Escape"`、`event.key === "ArrowDown"`、`event.key === "Enter"` は [UI Events KeyboardEvent key Values](https://www.w3.org/TR/uievents-key/) 仕様で定められた安定した識別子だ。これを使え。
+
+`event.key` はリテラル文字、`"ArrowLeft"`、`"Tab"`、`"F5"` のような名前付きキー、あるいは——意外なことに——合成入力シーケンスの前半（US Mac で Option+E、アクセント付き母音を待ち受けている状態）では `"Dead"` を返す。Keycode Explorer はリアルタイムで `Dead` を表示するので、ハンドラがそれらのキーストロークを文字入力として扱わず無視すべきだと、最も簡単に気づける。
+
+## `code` を使うべきとき
+
+`event.code` は US QWERTY 配列を前提とした物理キー位置だ。ユーザーの筋肉記憶が文字ではなくキーボード上の位置に紐づいているとき、これが正解になる。代表的な2ケース。
+
+- **WASD のゲーム操作**。AZERTY では QWERTY の Z の位置に W がある。`event.key === "w"` で判定すると、フランス人プレイヤーは Z を押して前進することになる。`event.code === "KeyW"` で判定すれば、物理位置は固定される。
+- **修飾キー無視のショートカット**。`event.code === "Slash"` は、文字を出すのに Shift が必要かどうかに関わらず物理的な `/` キーにマッチする。`e.shiftKey === false` と組み合わせれば厳密なバインディングになる。
+
+`event.code` の値は [UI Events code Values](https://www.w3.org/TR/uievents-code/) 仕様に由来する。`KeyA`、`Digit1`、`Numpad9`、`ArrowDown`、`IntlBackslash`、`Lang1` のような見た目だ。リストを暗記する価値はない。Keycode Explorer はキーを押した瞬間に値を表示する。
+
+## `keyCode`・`which`・`charCode` は何をしようとしていたのか
+
+IE 4 / Netscape 4 の時代、ブラウザは PC スキャンコードと Windows 仮想キーテーブルに遡る整数の「キーコード」を提供していた。レガシーコードベースに必ず存在する古典的なページにはこう書かれている。
+
+```js
+if (e.keyCode === 13) submitForm();        // Enter
+if (e.keyCode === 27) closeDialog();       // Escape
+if (e.keyCode === 191) toggleComment();    // The "/" key
+```
+
+このコードは、ショートカットごとに気にすべきキーボード配列が1つ、OS ファミリーが1つ、ブラウザが1つだった時代に動いていた。今や無数の本番アプリケーションでこのコードが屋台骨を支えている。だからこそ W3C UI Events 仕様が [レガシーとマーク](https://www.w3.org/TR/uievents/#dom-keyboardevent-keycode) しているにも関わらず、ブラウザは今でも `keyCode` を提供し続けている。
+
+> `keyCode` 属性はシステム依存・実装依存の数値コードを表す……現代のスクリプトの作者には、代わりに `key` および `code` 属性を使うことを推奨する。
+
+同じ段落は `charCode` と `which` にもさらに厳しい扱いをしている。両者とも「実装は後方互換性のためにサポートすべき」代替手段として明示的に定義されつつ、特に非ラテン配列ではブラウザ間で値に一貫性がないと注意喚起されている。
+
+Keycode Explorer はモダンな値の隣に旧3値すべてを表示する。これが2026年でも重要な理由は2つ。
+
+1. ショートカット層全体が `if (e.keyCode === N)` で書かれたアプリを引き継いで移行する必要がある。同じ押下に対するモダンな `event.key` を相互参照することで、書き換え対象が分かる。
+2. 自分で変更できない外部ライブラリが今も `keyCode` をキーにしたキーボードトラッキングイベントを発行している。Explorer がどの数値が期待されるかを示してくれるので、互換シムを書ける。
+
+## 修飾キー：ショートカットの片割れ
+
+キーボードショートカットはほとんどの場合「このキー」ではなく「このキー＋これらの修飾キーを押しながら」だ。Explorer は4つのピル（Shift、Ctrl、Alt、Meta）を描画し、押すたびに点灯する。内部の `KeyboardEvent` ではブール値として公開されている。
+
+```js
+e.shiftKey   // Shift on either side
+e.ctrlKey    // Control on either side
+e.altKey     // Alt / Option
+e.metaKey    // Command on macOS, Windows on Windows, Super on Linux
+```
+
+実装すると初回に必ず引っかかる3点。
+
+1. **`e.metaKey` はプラットフォーム依存**。macOS のユーザーは Cmd を期待し、Windows のユーザーは Ctrl を期待する。古典的なパターンは `e.metaKey || e.ctrlKey`。二重発火を避けるためにプラットフォーム検出で優位な方を選び、もう片方は no-op にする実装も多い。
+2. **修飾キー単独の押下でも `keydown` は発火する**。Shift だけを押すと `event.key === "Shift"`、`event.code === "ShiftLeft"` または `"ShiftRight"` が来る。「修飾キー以外なら何でも」というハンドラは、`e.key` が `{"Shift", "Control", "Alt", "Meta"}` のときに早期 return する必要がある。
+3. **CapsLock と NumLock は同じ意味での修飾キーではなく、状態だ**。読み取るには `e.getModifierState("CapsLock")` を使う。Explorer は CapsLock オンの状態でキーを押すと完全性のためにこの情報を表示する——`key` の値は大文字小文字が反転するが、`code` は変わらない。
+
+Explorer がキーストロークごとに生成するスニペットは、4つの修飾フラグをライブで読み取り、最小限の正しい条件式を出力する。`Cmd+Shift+P` を押すと、スニペットは次のようになる。
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'p' && e.ctrlKey === false && e.shiftKey && e.metaKey) {
+    // your handler
+  }
+});
+```
+
+コピーして貼り付け、バインディングに関係ない条件を削れば完成だ。このパターンに特別なところは何もない——だが正しい形のボイラープレートが手元にあるだけで、「自分の環境では動くのに他人の環境では動かない」系のバグが約8割減る。
+
+## IME 変換は逃げ切れないバグではない
+
+macOS の Chrome で日本語または中国語の IME を有効にして Explorer を開く。「kanji」と打つと、`event.isComposing === true` かつ `event.key === "Process"` の `keydown` イベントが連鎖して発生する。IME は変換候補ウィンドウへキーストロークを集めている最中で、ブラウザは「これらをまだ文字として扱うな」と伝えている。Explorer はプロパティグリッドで `isComposing` を直接表示するので、切り替わる瞬間が見える。
+
+ルールは短い。**`event.isComposing === true` のとき、単キーハンドラは早期 return しなければならない**。さもなくば「日本語」を変換中に `n` を押して「次へスキップ」を発火させると、ショートカットが発火しつつ IME のキーストロークを食い荒らす。これはチームの誰も IME を使っていないので `Sentry` で `keystroke disappeared` として静かにログされ、永遠に修正されない類のバグだ。
+
+Explorer が生成するスニペットには現在のところ `isComposing` ガードは自動注入されない——その判断はハンドラの意味論に属する。だが `Process` と `isComposing: true` がプロパティグリッドに見えれば、必要なガードは自明だ。
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  // ... rest of your shortcut logic
+});
+```
+
+## 「なぜスマホで動かないんですか？」
+
+Explorer はこの点を明示している。モバイルでの物理キーボードイベントは信頼できない。iOS Safari やほとんどの Android ブラウザのソフトキーボードは、文字入力に対して `keydown` を一貫して発火しない。代わりに、ユーザーはフォーカスされたフィールドで最終文字列を含む `input` イベントを受け取る。Keycode Explorer は粗いポインタを検出すると、`input` イベントを読み取って `key` 値を推測する単一文字 `<input>` を部分的なフォールバックとして表示するが、旧式の `keyCode` / `which` フィールドを正直に埋めることはできない。
+
+これは仕様だ。モバイルに対して偽の `KeyboardEvent` データを合成することはしない——Web プラットフォームは、ソフトキーボードが一度も生成しなかった配列情報やスキャンコード情報を復元する手段を提供していない。完全なキーボードイベント検査が必要ならデスクトップブラウザを使う。モバイルのキーボード処理が必要なら、タッチデバイス上での実際の契約である `input` と `beforeinput` イベントを中心に設計する。
+
+## 実践レシピ
+
+本番のキーボード処理コードはほぼこの4パターンでカバーできる。
+
+```js
+// 1. Toggle a command palette with Cmd+K (Mac) or Ctrl+K (everywhere else).
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  const cmdOrCtrl = e.metaKey || e.ctrlKey;
+  if (cmdOrCtrl && e.key === 'k') {
+    e.preventDefault();
+    togglePalette();
+  }
+});
+```
+
+```js
+// 2. WASD movement that survives AZERTY (uses code, not key).
+const moves = { KeyW: 'up', KeyA: 'left', KeyS: 'down', KeyD: 'right' };
+document.addEventListener('keydown', (e) => {
+  const dir = moves[e.code];
+  if (dir && !e.repeat) move(dir);
+});
+```
+
+```js
+// 3. Slash to focus the global search, including when produced via Shift.
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (e.key === '/' && document.activeElement === document.body) {
+    e.preventDefault();
+    document.querySelector('#search-input').focus();
+  }
+});
+```
+
+```js
+// 4. Escape that doesn't fight the browser when nothing is open.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isAnyModalOpen()) {
+    e.preventDefault();
+    closeTopModal();
+  }
+});
+```
+
+パターンは常に同じだ。文字または名前付きアクションが欲しければ `key`、物理位置が欲しければ `code` を選ぶ。`isComposing` でゲートする。実際にイベントを消費したときだけ `preventDefault()` を呼ぶ。
+
+## `keypress` について一言
+
+古いコードには今も `keypress` が見つかる。新規には使うな。`keypress` は2017年に UI Events 仕様から削除され、実装も一貫していない——文字を生成するキーに対してしか発火せず、IME 入力では確実に発火せず、文字に対しては再び非推奨の `charCode` を返す。Explorer は `keydown` のみをリッスンする。テキスト入力ならモダンなプリミティブはフォーカスされたフィールドの `input` / `beforeinput`、ショートカットならモダンなプリミティブは `keydown` だ。
+
+## Recent Keys：ちょっとした UX の工夫
+
+Explorer はスニペットの下に、直近8件のキーラベルをチップとして保持する。これは履歴のためではない——パターン発見のためだ。複数キーのショートカットをデバッグするとき、チップ列を見れば「`Tab` は本当に `Enter` の前に発火したか、それともブラウザに食われたか？」をプロパティグリッドをスクロールすることなく確認できる。同じ仕掛けは自作のキーボードハンドラでも有効だ。直近 N 件の `event.key` 値をリングバッファに集め、描画する。`console.log` が陳腐化しても生き残る無料のデバッグツールができあがる。
+
+## ZeroTool と他の Keycode ツールの比較
+
+Toptal の `keycode.info` は定番のリファレンスで今も動く。Explorer の違いは意図的なものだ。
+
+- **すべてのプロパティを一括表示**。`keycode.info` はモダンな値を中心に表示する。Explorer は `key`、`code`、`keyCode`、`which`、`charCode`、`location`、`repeat`、`isComposing` を1つのグリッドに出力するので、1回の押下を一目で監査できる。
+- **修飾キーのライブ描画**。文字キーを押さずに Shift+Alt を押し続けてみる——4つのピルが keydown ごとに更新され、実際のキーストロークをコミットする前に修飾状態を正確に把握できる。
+- **直近の押下に合わせたスニペット**。他のツールはどれも静的なルックアップテーブルを表示する。Explorer は直近押下した特定のキー＋修飾キーの組み合わせに合わせて構成された `keydown` リスナーを出力する。Ctrl を押さずに使いたいキーには `e.ctrlKey === false` 句を意図的に含める。
+- **IME と `isComposing` の可視化**。多くのリファレンスツールは `isComposing` を表示しない。Explorer は表示する。このフラグは IME 関連のショートカットバグの最大の発生源だからだ。
+- **100% クライアントサイド、多言語 SEO コピー**。Explorer は4つの URL に存在する——`/tools/keycode-explorer/`、`/zh/tools/keycode-explorer/`、`/ja/tools/keycode-explorer/`、`/ko/tools/keycode-explorer/`——同じ JavaScript エンジンとローカライズされた UI コピーを備える。
+
+## さらに読む
+
+- [UI Events spec (W3C)](https://www.w3.org/TR/uievents/) — `KeyboardEvent` の規範的リファレンス。`keyCode` と `charCode` の歴史的記録も含む。
+- [UI Events KeyboardEvent code Values (W3C)](https://www.w3.org/TR/uievents-code/) — 国際配列を含む `code` 値の網羅的リスト。
+- [UI Events KeyboardEvent key Values (W3C)](https://www.w3.org/TR/uievents-key/) — カテゴリ別に整理された全名前付き `key` 値。
+- [MDN: KeyboardEvent](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent) — すべてのプロパティに対応表を備えた実践的リファレンス。
+- [Toptal Keycode Info](https://www.toptal.com/developers/keycode) — 単機能ツールの先駆け。今もクイックルックアップとして有用。
+
+自分の環境では動くショートカットが他人の環境で壊れたら、次は [Keycode Explorer](/ja/tools/keycode-explorer/) を使う。相手が押したキーを押し、ブラウザが実際に何を発火するかを見て、合致するスニペットをコピーし、先へ進む。

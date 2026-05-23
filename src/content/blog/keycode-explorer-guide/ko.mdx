@@ -1,0 +1,194 @@
+---
+title: "event.keyCode가 당신을 속이는 이유: JavaScript 키보드 이벤트 현대 가이드"
+description: "event.key, event.code, keyCode 중 무엇을 써야 할지 더 이상 추측하지 마세요. 브라우저가 실제로 무엇을 발생시키는지, 수정자 키가 언제 뒤집히는지, IME 조합이 단일 키 핸들러를 망가뜨리는 이유, QWERTY 이외의 레이아웃에서도 살아남는 키보드 단축키를 작성하는 방법을 확인하세요."
+pubDate: 2026-05-23
+lang: "ko"
+tags: ["javascript", "keyboard", "developer-tools", "ui", "events"]
+ogImage: /og/blog-keycode-explorer-guide.png
+---
+
+지난 금요일, 당신은 명령 팔레트(command palette)를 하나 만들었습니다. Cmd+K로 열리고, `/`로 검색에 포커스를 주며, Esc로 닫힙니다. QWERTY MacBook에서는 모든 게 잘 동작합니다. 월요일 아침, AZERTY 키보드를 쓰는 프랑스 동료에게서 단축키가 전혀 듣지 않는다는 보고가 들어오고, 독일 PM은 Shift 없이는 `/`를 입력할 수조차 없다고 알립니다. DevTools를 열고 `console.log(e.key, e.code, e.keyCode)`를 핸들러에 붙여 넣은 뒤, 세 번째 커피를 들이키면서 `e.key === "/"`가 어떤 때는 슬래시이고, 어떤 때는 "Shift"이며, 또 어떤 때는 그야말로 `Dead`인 이유를 곱씹게 됩니다.
+
+[JavaScript Keycode Explorer 열기 →](/ko/tools/keycode-explorer/)
+
+키보드 핸들러가 사무실 바깥으로 처음 나갔을 때 모든 프런트엔드 엔지니어가 빠지는 토끼굴입니다. 해결책은 "다른 속성을 시도해 보세요"가 아닙니다. 세 가지 속성 — `key`, `code`, 그리고 더 이상 권장되지 않는 `keyCode` — 이 실제로 무엇을 의미하는지, 그리고 당신이 하려는 질문에 어느 것이 들어맞는지를 이해해야 합니다.
+
+## 당신이 고른 속성이 곧 당신의 질문이다
+
+브라우저는 단 한 번의 키 누름에 세 가지 다른 관점을 노출합니다. 키보드 입력 자체에 세 개의 층이 있기 때문입니다.
+
+| 속성 | 추적 대상 | 동일하게 유지되는 조건 | QWERTY에서 A로 표시된 키를 누른 예 |
+|---|---|---|---|
+| `event.key` | 레이아웃과 수정자 키가 적용된 뒤 만들어지는 문자 또는 명명된 동작 | 사용자가 이 문자가 나타나길 기대할 때 | `"a"`, 또는 Shift와 함께라면 `"A"` |
+| `event.code` | 표준 US QWERTY 기준의 물리적 키 위치 | 사용자의 손이 같은 물리적 자리로 이동할 때 | `"KeyA"` |
+| `event.keyCode` | PS/2 스캔 코드와 결부되어 있던 레거시 숫자 매핑 | 당신이 아직도 2003년에 살고 있길 바랄 때 | `65` |
+
+혼란은 한 문장으로 압축됩니다. **`key`는 "사용자가 어떤 문자를 만들어 냈는가?"에 답하고, `code`는 "사용자의 손가락이 키보드 어디에 있는가?"에 답합니다.** 그리고 `keyCode`는 현대 브라우저 어디에서도 둘 중 어느 쪽도 안정적으로 답해 주지 않습니다.
+
+Keycode Explorer는 셋을 나란히 보여 줍니다. 캡처 패드에서 아무 키나 눌러 보면 `event.key`, `event.code`, 레거시 `keyCode` / `which` / `charCode`, 수정자 상태, `repeat` 플래그, `isComposing`이 모두 표시됩니다. 또한 방금 누른 키와 수정자 조합에 맞춰 올바른 속성을 사용하는, 그대로 붙여 넣을 수 있는 `keydown` 핸들러도 함께 만들어 줍니다.
+
+## `key`를 써야 할 때
+
+사용자의 의도가 물리적 위치가 아니라 문자나 명명된 동작에 묶여 있다면 `event.key`를 사용하세요. 대표적인 예시들입니다.
+
+- **문자에 매핑되는 에디터 단축키.** `Ctrl+/`은 주석을 토글해야 합니다. 사용자는 자신의 레이아웃에서 `/`가 어떻게 입력되든 그것을 칠 때마다 주석 토글이 작동하길 기대합니다. AZERTY에서 `/`는 `:`와 같은 키에 있고 Shift가 필요하지만, 그 키를 누르면 `event.key`는 여전히 `"/"`입니다.
+- **폼 도우미.** "n을 누르면 다음으로, p를 누르면 이전으로." 의미를 가진 글자가 필요한 것이지 물리적 위치가 필요한 게 아닙니다.
+- **명명된 키.** `event.key === "Escape"`, `event.key === "ArrowDown"`, `event.key === "Enter"`는 [UI Events KeyboardEvent key Values](https://www.w3.org/TR/uievents-key/) 사양에서 정의한 안정적인 식별자입니다. 그대로 사용하세요.
+
+`event.key`는 문자 그대로의 글자일 수도 있고, `"ArrowLeft"`, `"Tab"`, `"F5"` 같은 명명된 키일 수도 있으며 — 놀랍게도 — 조합 시퀀스의 앞부분이 입력되었을 때(US Mac 레이아웃에서 악센트 모음을 예측하며 Option+E를 눌렀을 때) `"Dead"`가 되기도 합니다. Keycode Explorer는 `Dead`를 실시간으로 보여 주며, 이것이 당신의 핸들러가 해당 키 입력을 문자 입력으로 처리하지 말고 무시해야 한다는 사실을 알아채는 가장 쉬운 방법입니다.
+
+## `code`를 써야 할 때
+
+`event.code`는 US QWERTY 레이아웃을 가정한 물리적 키 위치입니다. 사용자의 근육 기억이 문자가 아니라 키보드의 특정 자리에 매핑되어 있을 때 올바른 선택입니다. 두 가지 전형적인 경우입니다.
+
+- **WASD 게임 컨트롤.** AZERTY에서 W는 QWERTY의 Z 자리에 있습니다. `event.key === "w"`로 분기하면 프랑스 플레이어는 앞으로 가려고 Z를 누르게 됩니다. `event.code === "KeyW"`로 분기하면 물리적 자리가 그대로 유지됩니다.
+- **수정자에 영향받지 않는 단축키.** `event.code === "Slash"`는 사용자가 문자를 만들기 위해 Shift를 눌렀든 말든 물리적 `/` 키와 일치합니다. `e.shiftKey === false`와 결합하면 정확한 바인딩이 됩니다.
+
+`event.code` 값은 [UI Events code Values](https://www.w3.org/TR/uievents-code/) 사양에서 옵니다. `KeyA`, `Digit1`, `Numpad9`, `ArrowDown`, `IntlBackslash`, `Lang1` 같은 형태입니다. 목록을 외울 가치는 없습니다. 키를 누르는 순간 Keycode Explorer가 값을 보여 줍니다.
+
+## `keyCode`, `which`, `charCode`가 하려고 했던 것
+
+IE 4 / Netscape 4 시절, 브라우저는 PC 스캔 코드와 Windows 가상 키 테이블에 뿌리를 둔 정수형 "키 코드"를 노출했습니다. 모든 레거시 코드베이스에 들어 있는 고전적인 페이지는 이렇게 생겼습니다.
+
+```js
+if (e.keyCode === 13) submitForm();        // Enter
+if (e.keyCode === 27) closeDialog();       // Escape
+if (e.keyCode === 191) toggleComment();    // The "/" key
+```
+
+이 코드는 키보드 레이아웃이 하나, OS 계열이 하나, 단축키마다 신경 쓸 만한 브라우저가 하나뿐이던 시절에는 잘 작동했습니다. 지금도 무수히 많은 프로덕션 앱의 중추를 떠받치고 있고, 그래서 W3C UI Events 사양이 [레거시로 표기](https://www.w3.org/TR/uievents/#dom-keyboardevent-keycode)했음에도 브라우저들은 여전히 `keyCode`를 제공하고 있습니다.
+
+> `keyCode` 속성은 시스템과 구현에 종속적인 숫자 코드를 나타냅니다... 현대 스크립트 작성자들은 `key`와 `code` 속성을 대신 사용할 것을 권장합니다.
+
+같은 단락은 `charCode`와 `which`를 더 강하게 깎아내립니다. 둘 다 "구현체가 하위 호환성을 위해 지원해야 하는" 대체 속성으로 명시적으로 정의되어 있지만, 비라틴 레이아웃에서는 특히나 브라우저 간 값이 일관되지 않는다고 경고합니다.
+
+Keycode Explorer는 세 가지 레거시 값을 현대 속성 옆에 함께 출력합니다. 2026년에도 이게 중요한 두 가지 이유가 있습니다.
+
+1. 단축키 레이어 전체가 `if (e.keyCode === N)`로 짜인 앱을 물려받았고 이를 마이그레이션해야 할 때. 같은 키 누름에 대한 현대 `event.key`를 교차 참조하면 다시 작성할 대상이 명확해집니다.
+2. 직접 고칠 수 없는 서드파티 라이브러리가 여전히 `keyCode`를 키로 사용하는 키보드 추적 이벤트를 내보낼 때. Explorer가 어떤 숫자 값이 나올지 알려 주므로 호환성 심(shim)을 작성할 수 있습니다.
+
+## 수정자 키: 모든 단축키의 나머지 절반
+
+키보드 단축키는 "이 키"인 경우가 드뭅니다. 대부분 "이 수정자들이 눌린 채로 이 키"입니다. Explorer는 누를 때마다 켜지는 네 개의 알약(Shift, Ctrl, Alt, Meta)을 렌더링합니다. 내부적으로 `KeyboardEvent`는 이를 불리언으로 노출합니다.
+
+```js
+e.shiftKey   // 좌우 어느 쪽이든 Shift
+e.ctrlKey    // 좌우 어느 쪽이든 Control
+e.altKey     // Alt / Option
+e.metaKey    // macOS의 Command, Windows의 Windows 키, Linux의 Super 키
+```
+
+처음 다룰 때 발목을 잡는 세 가지가 있습니다.
+
+1. **`e.metaKey`는 플랫폼 의존적입니다.** macOS 사용자는 Cmd를 기대하고, Windows 사용자는 Ctrl을 기대합니다. 전형적인 패턴은 `e.metaKey || e.ctrlKey`이며, 때로는 플랫폼을 감지해 둘 중 주가 되는 쪽만 인정하고 다른 쪽은 무시해 이중 발화를 막습니다.
+2. **수정자만 누른 키 입력도 `keydown`을 발생시킵니다.** Shift만 눌러도 `event.key === "Shift"`, `event.code === "ShiftLeft"` 또는 `"ShiftRight"`가 나옵니다. "수정자가 아닌 아무 키" 핸들러는 `e.key`가 `{"Shift", "Control", "Alt", "Meta"}`에 속할 때 일찍 리턴해야 합니다.
+3. **CapsLock과 NumLock은 같은 의미의 수정자가 아니라 상태입니다.** `e.getModifierState("CapsLock")`으로 읽어야 합니다. Explorer는 CapsLock이 켜진 채로 키를 누르면 이를 그대로 보여 줍니다. `key` 값은 대소문자가 뒤집히지만 `code`는 그대로입니다.
+
+Explorer가 키를 누를 때마다 생성하는 스니펫은 네 개의 수정자 플래그를 실시간으로 읽어 최소한의 올바른 조건문을 만들어 냅니다. `Cmd+Shift+P`를 누르면 스니펫은 이렇게 됩니다.
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'p' && e.ctrlKey === false && e.shiftKey && e.metaKey) {
+    // your handler
+  }
+});
+```
+
+복사하고, 붙여 넣고, 바인딩에 필요 없는 조건을 지우면 끝입니다. 이 패턴 자체에 특별한 건 없습니다. 다만 보일러플레이트의 올바른 형태를 손에 쥐고 시작하는 것만으로 "나한테는 단축키가 동작하는데 저 사람에게는 안 된다"는 버그의 약 80%가 사라집니다.
+
+## IME 조합은 회피할 수 있는 버그가 아니다
+
+macOS Chrome에서 일본어 또는 중국어 IME를 활성화한 상태로 Explorer를 열어 보세요. "kanji"를 입력하면 `event.isComposing === true`이고 `event.key === "Process"`인 `keydown` 이벤트가 줄줄이 발생합니다. IME가 후보 창에 입력을 모으는 중이며, 브라우저는 "이걸 아직 문자로 처리하지 마세요"라고 말하고 있는 겁니다. Explorer는 속성 그리드에 `isComposing`을 직접 노출해 뒤집히는 순간을 볼 수 있게 합니다.
+
+규칙은 짧습니다. **`event.isComposing === true`라면 단일 키 핸들러는 일찍 리턴해야 합니다.** 그렇지 않으면 「日本語」를 조합하는 중에 "다음으로 건너뛰기"용 `n`을 누르는 순간 단축키가 발화되고 IME에서 키 입력을 빼앗아 갑니다. 이런 종류의 버그는 `Sentry`에 `keystroke disappeared`로 조용히 기록되었다가, 팀에 IME를 쓰는 사람이 아무도 없어 영영 고쳐지지 않는 부류입니다.
+
+Explorer가 만드는 스니펫은 현재 `isComposing` 가드를 자동으로 주입하지 않습니다. 그 결정은 핸들러의 의미론에 달려 있기 때문입니다. 다만 속성 그리드에서 `Process`와 `isComposing: true`를 한 번 보고 나면 필요한 가드는 자명합니다.
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  // ... rest of your shortcut logic
+});
+```
+
+## "왜 내 폰에서는 안 되죠?"
+
+Explorer는 이를 분명히 합니다. 모바일에서의 물리적 키보드 이벤트는 신뢰할 수 없습니다. iOS Safari와 대부분의 Android 브라우저의 소프트 키보드는 문자 입력에 대해 `keydown`을 일관되게 발생시키지 않습니다. 대신 사용자는 포커스된 필드에서 최종 문자열을 담은 `input` 이벤트를 받게 됩니다. Keycode Explorer는 거친 포인터(coarse pointer)를 감지하면 단일 문자 `<input>`을 부분적 대체 수단으로 보여 줍니다. 이 입력은 `input` 이벤트를 읽어 `key` 값을 추정하지만, 레거시 `keyCode` / `which` 필드는 정확하게 채울 수 없습니다.
+
+이는 의도된 설계입니다. 모바일을 위해 가짜 `KeyboardEvent` 데이터를 합성하지는 않습니다. 웹 플랫폼에서는 소프트 키보드가 애초에 생성하지 않은 레이아웃과 스캔 코드 정보를 복원할 방법이 없습니다. 키보드 이벤트 전체를 들여다봐야 한다면 데스크톱 브라우저를 사용하세요. 모바일 키보드를 다뤄야 한다면 터치 디바이스의 실제 계약(contract)인 `input`과 `beforeinput` 이벤트를 중심으로 설계하세요.
+
+## 실용 레시피
+
+대부분의 프로덕션 키보드 처리 코드는 네 가지 패턴으로 커버됩니다.
+
+```js
+// 1. Cmd+K(Mac) 또는 Ctrl+K(그 외 모든 곳)로 명령 팔레트 토글.
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  const cmdOrCtrl = e.metaKey || e.ctrlKey;
+  if (cmdOrCtrl && e.key === 'k') {
+    e.preventDefault();
+    togglePalette();
+  }
+});
+```
+
+```js
+// 2. AZERTY에서도 살아남는 WASD 이동 (key가 아니라 code 사용).
+const moves = { KeyW: 'up', KeyA: 'left', KeyS: 'down', KeyD: 'right' };
+document.addEventListener('keydown', (e) => {
+  const dir = moves[e.code];
+  if (dir && !e.repeat) move(dir);
+});
+```
+
+```js
+// 3. Shift를 거쳐 입력된 경우까지 포함해 전역 검색에 포커스를 주는 슬래시.
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (e.key === '/' && document.activeElement === document.body) {
+    e.preventDefault();
+    document.querySelector('#search-input').focus();
+  }
+});
+```
+
+```js
+// 4. 열려 있는 게 아무것도 없을 때는 브라우저와 싸우지 않는 Escape.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isAnyModalOpen()) {
+    e.preventDefault();
+    closeTopModal();
+  }
+});
+```
+
+패턴은 항상 같습니다. 문자나 명명된 동작이 필요하면 `key`, 물리적 위치가 필요하면 `code`를 고르고, `isComposing`으로 게이트를 걸고, 이벤트를 실제로 소비했을 때만 `preventDefault()`를 호출합니다.
+
+## `keypress`에 관한 짤막한 메모
+
+오래된 코드에서 `keypress`를 여전히 보게 될 겁니다. 새 코드에서는 쓰지 마세요. `keypress`는 2017년에 UI Events 사양에서 제거되었고 구현이 일관되지 않습니다. 문자를 만들어 내는 키에 대해서만 발생하고, IME 입력에 대해서는 안정적으로 발생하지 않으며, 문자에 대해 `charCode`를 돌려주는데 이 역시 — 다시 한 번 — 폐기 대상입니다. Explorer는 `keydown`만 듣습니다. 텍스트 입력의 현대적 기본 단위는 포커스된 필드의 `input` / `beforeinput`이고, 단축키의 현대적 기본 단위는 `keydown`입니다.
+
+## 최근 키: 작은 UX 트릭
+
+Explorer는 스니펫 아래 칩 형태로 최근 여덟 개의 키 레이블을 유지합니다. 용도는 히스토리가 아니라 패턴 발견입니다. 여러 키로 구성된 단축키를 디버깅할 때, 칩 줄을 보면 속성 그리드를 스크롤하지 않고도 "`Tab`이 정말로 `Enter`보다 먼저 발생했나, 아니면 브라우저가 삼켰나?"를 확인할 수 있습니다. 같은 트릭은 커스텀 키보드 핸들러에서도 통합니다. 마지막 N개의 `event.key` 값을 링 버퍼에 모아 렌더링하면 `console.log`가 흐려져도 살아남는 무료 디버깅 도구가 생깁니다.
+
+## ZeroTool vs. 다른 Keycode 도구들
+
+Toptal의 `keycode.info` 사이트가 정통 레퍼런스이고 여전히 잘 작동합니다. Explorer가 일부러 다르게 만든 지점들입니다.
+
+- **모든 속성을 한곳에.** `keycode.info`는 현대 값을 두드러지게 보여 줍니다. Explorer는 `key`, `code`, `keyCode`, `which`, `charCode`, `location`, `repeat`, `isComposing`을 단일 그리드에 함께 출력해 한 번의 키 누름을 한눈에 감사할 수 있게 합니다.
+- **실시간 수정자 렌더링.** 문자 키를 누르지 않은 채 Shift+Alt만 잡고 있어도 네 개의 알약이 `keydown`마다 갱신되므로, 진짜 키 입력을 확정하기 전부터 수정자 상태를 정확히 볼 수 있습니다.
+- **현재 키 누름에 맞춘 스니펫.** 다른 도구들은 정적인 조회 표를 출력합니다. Explorer는 방금 누른 키와 수정자 조합에 맞춰 구성된 `keydown` 리스너를 만들어 냅니다. Ctrl 없이 키를 누르고 싶을 때 의도적으로 `e.ctrlKey === false` 절을 포함하는 식입니다.
+- **IME와 `isComposing` 가시성.** 대부분의 레퍼런스 도구는 `isComposing`을 노출하지 않습니다. Explorer는 노출합니다. 이 플래그가 IME 관련 단축키 버그의 가장 큰 원천이기 때문입니다.
+- **100% 클라이언트 사이드, 다국어 SEO 카피.** Explorer는 네 개의 URL — `/tools/keycode-explorer/`, `/zh/tools/keycode-explorer/`, `/ja/tools/keycode-explorer/`, `/ko/tools/keycode-explorer/` — 에서 같은 JavaScript 엔진과 현지화된 UI 카피로 살아 있습니다.
+
+## 더 읽을거리
+
+- [UI Events 사양 (W3C)](https://www.w3.org/TR/uievents/) — `keyCode`와 `charCode`의 역사 기록을 포함한 `KeyboardEvent`의 규범적 레퍼런스.
+- [UI Events KeyboardEvent code Values (W3C)](https://www.w3.org/TR/uievents-code/) — 국제 레이아웃까지 포함한 `code` 값 전체 목록.
+- [UI Events KeyboardEvent key Values (W3C)](https://www.w3.org/TR/uievents-key/) — 카테고리별로 정리된 모든 명명된 `key` 값.
+- [MDN: KeyboardEvent](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent) — 속성별 호환성 표가 포함된 실용 레퍼런스.
+- [Toptal Keycode Info](https://www.toptal.com/developers/keycode) — 단일 도구 시절의 전신. 빠른 조회용으로 여전히 쓸 만합니다.
+
+당신에게는 동작하는 단축키가 다른 사람에게는 안 될 때, [Keycode Explorer](/ko/tools/keycode-explorer/)를 다시 열어 보세요. 그들이 누른 키를 똑같이 눌러 보고, 브라우저가 실제로 무엇을 발생시키는지 보고, 맞는 스니펫을 복사한 다음 다음 일로 넘어가면 됩니다.

@@ -1,0 +1,194 @@
+---
+title: "Why event.keyCode Lies to You: A Modern Guide to JavaScript Keyboard Events"
+description: "Stop guessing event.key vs event.code vs keyCode. See exactly what the browser fires, when modifier keys flip, why IME composition breaks single-key handlers, and how to write keyboard shortcuts that survive non-QWERTY layouts."
+pubDate: 2026-05-23
+lang: "en"
+tags: ["javascript", "keyboard", "developer-tools", "ui", "events"]
+ogImage: /og/blog-keycode-explorer-guide.png
+---
+
+You wired up a command palette last Friday. Cmd+K opens it, `/` focuses the search, Esc dismisses it. On your QWERTY MacBook everything works. Monday morning a French colleague reports the shortcut does nothing on her AZERTY keyboard, and a German PM tells you `/` is unreachable without Shift. You open DevTools, paste `console.log(e.key, e.code, e.keyCode)` into the handler, and now you're three coffees deep wondering why `e.key === "/"` is sometimes a slash, sometimes "Shift", and sometimes literally `Dead`.
+
+[Open the JavaScript Keycode Explorer →](/tools/keycode-explorer)
+
+This is the rabbit hole every front-end engineer falls into the first time their keyboard handlers leave the office. The fix isn't "try a different property." It's understanding what the three properties — `key`, `code`, and the deprecated `keyCode` — actually mean, and which one matches the question you're asking.
+
+## The Property You Pick Is the Question You're Asking
+
+Browsers expose three different views of a single key press because keyboard input has three different layers:
+
+| Property | Tracks | Stays constant when | Example pressing the key labelled A on QWERTY |
+|---|---|---|---|
+| `event.key` | The character or named action after layout + modifiers are applied | The user expects this character to appear | `"a"`, or `"A"` with Shift |
+| `event.code` | The physical key position on a standardised US QWERTY | The user moves their hand to the same physical spot | `"KeyA"` |
+| `event.keyCode` | A legacy numeric mapping originally tied to PS/2 scan codes | You wish you were still in 2003 | `65` |
+
+The whole confusion compresses into one sentence: **`key` answers "what character did the user produce?", `code` answers "where is the user's finger on the keyboard?"**, and `keyCode` answers neither reliably across modern browsers.
+
+The Keycode Explorer surfaces all three side by side. Press any key in the capture pad and you see `event.key`, `event.code`, the legacy `keyCode` / `which` / `charCode`, the modifier state, the `repeat` flag, and `isComposing`. It also assembles a ready-to-paste keydown handler that uses the correct property for the keys and modifiers you just held down.
+
+## When You Want `key`
+
+Use `event.key` whenever the user's intent is tied to the character or named action, not the physical position. The classic examples:
+
+- **Editor shortcuts that map to a character.** `Ctrl+/` should toggle a comment. The user expects that comment toggle to fire whenever they produce a `/`, however their layout produces it. On AZERTY, `/` lives on the same key as `:` and requires Shift, but `event.key` is still `"/"` when they hit it.
+- **Form helpers.** "Press n to skip to next, p for previous." You want the semantic letter, not a physical position.
+- **Named keys.** `event.key === "Escape"`, `event.key === "ArrowDown"`, `event.key === "Enter"` are stable identifiers from the [UI Events KeyboardEvent key Values](https://www.w3.org/TR/uievents-key/) spec. Use them.
+
+`event.key` can be the literal character, a named key like `"ArrowLeft"`, `"Tab"`, `"F5"`, or — surprisingly — `"Dead"` when the keystroke is the prefix half of a compose sequence (Option+E on a US Mac layout, anticipating an accented vowel). The Keycode Explorer shows `Dead` in real time, which is the easiest way to discover that your handler needs to ignore those keystrokes instead of treating them as character input.
+
+## When You Want `code`
+
+`event.code` is the physical key position assuming a US QWERTY layout. It is the right choice when the user's muscle memory maps to a spot on the keyboard, not to a character. Two canonical cases:
+
+- **WASD game controls.** On AZERTY, W lives where Z is on QWERTY. If you key off `event.key === "w"`, French players hit Z to move forward. If you key off `event.code === "KeyW"`, the physical spot stays put.
+- **Modifier-stripped shortcuts.** `event.code === "Slash"` matches the physical `/` key regardless of whether the user needs Shift to produce the character. Combined with `e.shiftKey === false` you get a precise binding.
+
+`event.code` values come from the [UI Events code Values](https://www.w3.org/TR/uievents-code/) spec. They look like `KeyA`, `Digit1`, `Numpad9`, `ArrowDown`, `IntlBackslash`, `Lang1`. Memorising the list isn't worth the time; the Keycode Explorer shows the value the moment you press the key.
+
+## What `keyCode`, `which`, and `charCode` Were Trying to Do
+
+In the IE 4 / Netscape 4 era, browsers exposed integer "key codes" that traced back to PC scan codes and the Windows virtual-key table. The classic page on every legacy code base reads:
+
+```js
+if (e.keyCode === 13) submitForm();        // Enter
+if (e.keyCode === 27) closeDialog();       // Escape
+if (e.keyCode === 191) toggleComment();    // The "/" key
+```
+
+That code worked when there was one keyboard layout, one OS family, and one browser that mattered for each shortcut. It is now load-bearing in countless production apps, which is why browsers still ship `keyCode` even though the W3C UI Events spec [marks it as legacy](https://www.w3.org/TR/uievents/#dom-keyboardevent-keycode):
+
+> The `keyCode` attribute represents a system- and implementation-dependent numerical code… It is recommended that authors of contemporary scripts use the `key` and `code` attributes instead.
+
+The same paragraph hits `charCode` and `which` even harder — both are explicitly defined as alternatives that "implementations should support for backward compatibility" while flagging that their values are inconsistent across browsers, especially for non-Latin layouts.
+
+The Keycode Explorer prints all three legacy values next to the modern ones. Two reasons that matters in 2026:
+
+1. You inherit an app whose entire shortcut layer is `if (e.keyCode === N)` and you need to migrate it. Cross-referencing the modern `event.key` for the same press gives you the rewrite target.
+2. A third-party library you can't change still emits keyboard tracking events keyed by `keyCode`. The Explorer tells you which numeric value to expect so you can write a compatibility shim.
+
+## Modifier Keys: The Other Half of Every Shortcut
+
+A keyboard shortcut is rarely "this key" — it's "this key, while these modifiers are held". The Explorer renders four pills (Shift, Ctrl, Alt, Meta) that light up as you press them. The underlying `KeyboardEvent` exposes them as booleans:
+
+```js
+e.shiftKey   // Shift on either side
+e.ctrlKey    // Control on either side
+e.altKey     // Alt / Option
+e.metaKey    // Command on macOS, Windows on Windows, Super on Linux
+```
+
+Three things bite people the first time they wire these up:
+
+1. **`e.metaKey` is platform-dependent**. On macOS users expect Cmd; on Windows they expect Ctrl. The classic pattern is `e.metaKey || e.ctrlKey`, sometimes with platform detection to choose the dominant one and treat the other as a no-op so you don't double-fire.
+2. **Modifier-only keystrokes still fire `keydown`**. Pressing Shift alone gives you `event.key === "Shift"`, `event.code === "ShiftLeft"` or `"ShiftRight"`. Your "any non-modifier key" handlers need to early-return when `e.key` is in `{"Shift", "Control", "Alt", "Meta"}`.
+3. **CapsLock and NumLock are state, not modifiers** in the same sense. Use `e.getModifierState("CapsLock")` to read them. The Explorer surfaces this for completeness once you press a key while CapsLock is on — the `key` value flips case, but `code` does not.
+
+The snippet that the Explorer generates after each keystroke reads the four modifier flags live and emits the minimal correct conditional. Press `Cmd+Shift+P` and the snippet becomes:
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'p' && e.ctrlKey === false && e.shiftKey && e.metaKey) {
+    // your handler
+  }
+});
+```
+
+You copy, you paste, you delete the conditions that don't matter for your binding, you're done. Nothing about that pattern is exotic — but having the right shape of boilerplate cuts roughly 80% of "shortcut works for me, not for them" bugs.
+
+## IME Composition Is Not a Bug You Can Outrun
+
+Open the Explorer in Chrome on macOS with a Japanese or Chinese IME active. Type "kanji" — you get a chain of `keydown` events where `event.isComposing === true` and `event.key === "Process"`. The IME is collecting your keystrokes into a candidate window; the browser is telling you "do not treat these as characters yet". The Explorer surfaces `isComposing` directly in the property grid so you can see it flip.
+
+The rule is short: **if `event.isComposing === true`, your single-key handlers must return early.** Otherwise pressing `n` to fire "skip to next" while composing 「日本語」 will fire the shortcut and eat the keystroke from the IME, which is the kind of bug that gets quietly logged in `Sentry` as `keystroke disappeared` and never gets fixed because nobody on the team uses an IME.
+
+The Explorer's generated snippet does not currently inject the `isComposing` guard automatically — that decision belongs to your handler's semantics. But once you see `Process` and `isComposing: true` in the property grid, the necessary guard is obvious:
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  // ... rest of your shortcut logic
+});
+```
+
+## "Why Doesn't It Work on My Phone?"
+
+The Explorer is explicit about this: physical keyboard events on mobile are unreliable. Soft keyboards on iOS Safari and most Android browsers do not consistently fire `keydown` for character input. Instead, the user gets an `input` event on the focused field with the final string. The Keycode Explorer detects coarse pointers and shows a single-character `<input>` as a partial fallback that reads the input event and infers a `key` value, but the legacy `keyCode` / `which` fields cannot be filled in honestly.
+
+This is by design. We do not synthesise fake `KeyboardEvent` data for mobile — the Web Platform doesn't make it possible to recover layout / scan code information that the soft keyboard never produced. If you need full keyboard event inspection, use a desktop browser. If you need mobile keyboard handling, design around `input` and `beforeinput` events, which are the actual contract on touch devices.
+
+## Practical Recipes
+
+Four patterns cover most production keyboard handling code:
+
+```js
+// 1. Toggle a command palette with Cmd+K (Mac) or Ctrl+K (everywhere else).
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  const cmdOrCtrl = e.metaKey || e.ctrlKey;
+  if (cmdOrCtrl && e.key === 'k') {
+    e.preventDefault();
+    togglePalette();
+  }
+});
+```
+
+```js
+// 2. WASD movement that survives AZERTY (uses code, not key).
+const moves = { KeyW: 'up', KeyA: 'left', KeyS: 'down', KeyD: 'right' };
+document.addEventListener('keydown', (e) => {
+  const dir = moves[e.code];
+  if (dir && !e.repeat) move(dir);
+});
+```
+
+```js
+// 3. Slash to focus the global search, including when produced via Shift.
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (e.key === '/' && document.activeElement === document.body) {
+    e.preventDefault();
+    document.querySelector('#search-input').focus();
+  }
+});
+```
+
+```js
+// 4. Escape that doesn't fight the browser when nothing is open.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isAnyModalOpen()) {
+    e.preventDefault();
+    closeTopModal();
+  }
+});
+```
+
+The pattern is always the same: pick `key` when you want the character or named action, pick `code` when you want the physical position, gate on `isComposing`, only call `preventDefault()` when you actually consumed the event.
+
+## A Note on `keypress`
+
+You will still find `keypress` in old code. Don't add new uses. `keypress` was removed from the UI Events spec in 2017 and is implemented inconsistently — it only fires for keys that produce characters, doesn't fire reliably for IME input, and gives you `charCode` for the character which is, again, deprecated. The Explorer only listens to `keydown`. For text input the modern primitive is `input` / `beforeinput` on the focused field; for shortcuts the modern primitive is `keydown`.
+
+## Recent Keys: A Small UX Trick
+
+The Explorer keeps the last eight key labels as chips below the snippet. The use case is not history — it's pattern discovery. When you're debugging a multi-key shortcut, the chip strip lets you see "did `Tab` actually fire before `Enter`, or did the browser swallow it?" without scrolling the property grid. The same trick works in custom keyboard handlers: collect the last N `event.key` values into a ring buffer, render them, and you have a free debugging tool that survives `console.log` going stale.
+
+## ZeroTool vs. Other Keycode Tools
+
+The Toptal `keycode.info` site is the canonical reference and still works. The Explorer's differences are deliberate:
+
+- **All properties together.** `keycode.info` shows the modern values prominently; the Explorer prints `key`, `code`, `keyCode`, `which`, `charCode`, `location`, `repeat`, and `isComposing` in a single grid so you can audit a press in one glance.
+- **Live modifier rendering.** Hold Shift+Alt without pressing a character key — the four pills update on each keydown so you can see exactly what your modifier state is, even before you commit a real keystroke.
+- **Snippet that matches the current press.** Every other tool prints a static lookup table. The Explorer emits a `keydown` listener configured for the specific key + modifier combination you last pressed, including a deliberate `e.ctrlKey === false` clause when you want a key without Ctrl held.
+- **IME and `isComposing` visibility.** Most reference tools don't surface `isComposing`. The Explorer does, because that flag is the single biggest source of IME-related shortcut bugs.
+- **100% client-side, multilingual SEO copy.** The Explorer lives at four URLs — `/tools/keycode-explorer/`, `/zh/tools/keycode-explorer/`, `/ja/tools/keycode-explorer/`, `/ko/tools/keycode-explorer/` — with the same JavaScript engine and localised UI copy.
+
+## Further Reading
+
+- [UI Events spec (W3C)](https://www.w3.org/TR/uievents/) — the normative reference for `KeyboardEvent`, including the historical record on `keyCode` and `charCode`.
+- [UI Events KeyboardEvent code Values (W3C)](https://www.w3.org/TR/uievents-code/) — the exhaustive list of `code` values, including the international layouts.
+- [UI Events KeyboardEvent key Values (W3C)](https://www.w3.org/TR/uievents-key/) — every named `key` value, organised by category.
+- [MDN: KeyboardEvent](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent) — pragmatic reference with compatibility tables for every property.
+- [Toptal Keycode Info](https://www.toptal.com/developers/keycode) — single-tool predecessor; still useful as a quick lookup.
+
+Use the [Keycode Explorer](/tools/keycode-explorer) the next time a shortcut works for you and breaks for someone else. Press the keys they pressed, watch what the browser actually fires, copy the snippet that matches, and move on.
