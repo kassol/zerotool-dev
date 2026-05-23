@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 126 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 127 tools and growing.
 
 ## Tools
 
@@ -135,6 +135,7 @@
 | Eyedropper Color Picker | [/tools/eyedropper-color-picker](https://zerotool.dev/tools/eyedropper-color-picker) |
 | HTTP Header Analyzer | [/tools/http-header-analyzer](https://zerotool.dev/tools/http-header-analyzer) |
 | GraphQL Formatter | [/tools/graphql-formatter](https://zerotool.dev/tools/graphql-formatter) |
+| jq Playground | [/tools/jq-playground](https://zerotool.dev/tools/jq-playground) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
