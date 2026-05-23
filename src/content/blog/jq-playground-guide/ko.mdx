@@ -1,0 +1,159 @@
+---
+title: "브라우저에서 jq 쓰기: 설치 없이 필터를 검증하는 법"
+description: "공식 jq 1.7 엔진을 모든 최신 브라우저에서 실행합니다. 파이프, select, map, group_by, reduce — CLI와 동일한 결과, 설치도 업로드도 없습니다."
+pubDate: 2026-05-23
+lang: "ko"
+tags: ["jq", "json", "developer-tools", "wasm", "command-line"]
+ogImage: /og/blog-jq-playground-guide.png
+---
+
+새벽 두 시. 웹훅 핸들러가 이벤트를 조용히 누락시킨다는 알림에 깨어납니다. 업스트림 엔드포인트에 `curl`을 날려 지난 한 시간 치 페이로드를 확인하려는데, 터미널에 6MB짜리 JSON 덤프가 쏟아집니다. 원하는 필터의 모양은 머릿속에 있습니다 — *"`status == "retry"`이고 `attempt > 3`인 이벤트를 테넌트별로 묶어 개수를 세는 것"* — 그런데 jq 명령의 정확한 형태가 괄호 하나, 파이프 하나만 어긋난 상태로 손에 잡히지 않습니다. 필터를 고치고, 덤프를 다시 파이프에 태우고, 스크롤하고, 다시 시도하는 사이클을 반복할 의욕은 더더욱 없습니다. 정말로 필요한 건 스크래치패드입니다. JSON은 한 번만 붙여 넣고, 필터를 열 번 고쳐 가며, 결과가 매번 즉시 다시 그려지는 환경.
+
+[jq Playground 열기 →](/ko/tools/jq-playground/)
+
+그게 이 도구의 전부입니다. 공식 jq 1.7 엔진을 WebAssembly로 컴파일했고, 왼쪽엔 JSON 패널, 오른쪽엔 필터 패널, 복사해 쓸 수 있는 프리셋 예제 열 개, 그리고 키 입력마다 즉시 갱신되며 신택스 하이라이팅이 적용된 결과 뷰. 페이지 밖으로 나가는 데이터는 없습니다.
+
+## 왜 하필 jq인가
+
+jq는 JSON을 자르고, 변환하고, 집계하기 위한 작은 함수형 언어입니다. 십 년 넘게 셸 단의 JSON 처리에서 사실상의 표준 자리를 지켜온 데에는 이유가 있습니다 — 네 가지 문제를 한 번에 풀기 때문입니다. 연속된 JSON 문서를 다룰 수 있는 스트림 지향 평가 모델, Unix 파이프처럼 결합되는 파이프, 데이터처럼 읽히는 경로 표현식, 그리고 한 줄짜리 명령에서 200줄짜리 프로그램까지 확장되는 작은 고차 결합자 집합(`map`, `select`, `reduce`, `foreach`, `group_by`).
+
+Playground 내부에서 돌아가는 엔진은 `jq-web` — jq 1.7 업스트림 소스 트리를 Emscripten으로 빌드한 산출물입니다. gzip 압축 기준 약 1MB로, 첫 방문 때 한 번 받아 브라우저가 캐싱하고 이후 세션 내내 메모리에 상주합니다. 첫 로드 이후의 모든 필터 평가는 WASM 모듈을 동기적으로 호출하는 것 — 네트워크도, 서버도, 업로드도 없습니다.
+
+직설적으로 말해 두면, 동작은 CLI와 동일합니다. `reduce`, `foreach`, `def`, `try/catch`, `..` 재귀 하강, `@base64d`, `splits`, `paths`, `walk` — 로컬 `jq`에서 돌아가는 건 여기서도 돌아갑니다.
+
+## jq vs JSONPath vs JMESPath
+
+"JSON 문서를 쿼리한다"고 할 때 가장 자주 마주치는 세 가지 언어입니다. 단순한 필드 접근에서는 겹치지만, 변환이 들어가는 순간 크게 갈라집니다.
+
+| 능력 | jq | JSONPath | JMESPath |
+|---|---|---|---|
+| 필드 & 인덱스 접근 | `.user.name`, `.items[0]` | `$.user.name`, `$.items[0]` | `user.name`, `items[0]` |
+| 조건 필터 | `.items[] | select(.qty > 3)` | `$.items[?(@.qty > 3)]` | ``items[?qty > `3`]`` |
+| 새 객체로 재구성 | `map({id, total: .qty * .price})` | 미지원 | `items[].{id: id}` (프로젝션만, 산술 불가) |
+| 집계 / reduce | `reduce .[] as $x (0; . + $x.qty)` | 미지원 | 미지원 (`sum`, `length`, `max_by` 내장만) |
+| 함수 정의 | `def total: reduce .[] as $x (0; . + $x);` | 미지원 | 미지원 |
+| 표준 구현 | jqlang.org/jq (C, 공식) | 호환되지 않는 여러 방언 | jmespath.org (다양한 SDK) |
+| 출력 카디널리티 | 값의 스트림 | 매치 배열 | 단일 값 |
+
+짧게 정리하면, JSONPath와 JMESPath는 *쿼리* 언어입니다 — 값을 꺼냅니다. jq는 *변환* 언어입니다 — 값을 꺼내 모양을 바꾸고, 집계해, 새로운 JSON 문서로 내보냅니다. 작업이 "매치되는 노드를 달라"에서 끝난다면 셋 중 무엇을 써도 됩니다. "테넌트별 에러 카운트를 CSV로 달라"에서 끝난다면 한 번에 처리해 주는 건 jq뿐입니다.
+
+모양만 추출하면 되는 쿼리라면 ZeroTool에는 [JSONPath Tester](/ko/tools/jsonpath-tester/)도 있습니다 — 가끔은 그 정도면 충분합니다.
+
+## 실전에서 본전을 뽑는 다섯 가지 필터
+
+### 1. 페이지네이션된 API 응답을 CSV용 스트림으로 평탄화
+
+```jq
+.results[] | [.id, .tenant, .status, (.created_at | fromdateiso8601)] | @csv
+```
+
+입력 한 행이 CSV 한 줄이 됩니다. 터미널이라면 출력을 `> events.csv`로 리다이렉트하고, Playground라면 결과 패널을 그대로 복사하면 됩니다.
+
+### 2. 로그를 테넌트별로 묶어 에러 수 집계
+
+```jq
+[.events[] | select(.level == "error")]
+  | group_by(.tenant)
+  | map({tenant: .[0].tenant, errors: length})
+  | sort_by(-.errors)
+```
+
+`group_by`는 배열의 배열을 돌려줍니다 — 내부 배열 하나가 같은 키를 공유합니다. `map`으로 그룹마다 작은 요약 객체를 만들고, `sort_by(-.errors)`로 내림차순 정렬. "필드 기준 히스토그램"을 표현하는 jq의 정석적인 관용구입니다.
+
+### 3. 중첩 트리를 순회하며 특정 필드를 일괄 치환
+
+```jq
+walk(if type == "object" and has("password") then .password = "***" else . end)
+```
+
+`walk`는 후위 순회입니다. 자식을 먼저 방문하므로 순회 순서를 신경 쓰지 않고 잎 노드를 안전하게 다시 쓸 수 있습니다. 페이로드를 공유하기 전에 시크릿을 마스킹하거나, 깊이를 가늠할 수 없는 구조에서 단위를 정규화할 때 유용합니다.
+
+### 4. `foreach`로 누적 합계 계산
+
+```jq
+[foreach .transactions[] as $t (0; . + $t.amount; {date: $t.date, balance: .})]
+```
+
+`foreach`는 `reduce`의 명시적 상태 버전입니다. 초기 상태 `0`, 업데이트 식 `. + $t.amount`, 추출 식 `{date: $t.date, balance: .}`. 입력당 하나의 출력을 내보내므로 최종 숫자가 아니라 잔액 시계열이 됩니다.
+
+### 5. 두 배열을 키로 비교
+
+```jq
+def by_id: map({key: .id, value: .}) | from_entries;
+(.a | by_id) as $a | (.b | by_id) as $b
+| ($a | keys) + ($b | keys) | unique
+| map({id: ., a: $a[.], b: $b[.]})
+| map(select(.a != .b))
+```
+
+`def`로 헬퍼를 정의해 두 개의 키 기반 룩업을 만들고, 키 집합을 합치고, 양쪽을 함께 투영한 뒤 값이 다른 행만 남깁니다. 셸로 짜자면 골치 아픈 종류의 프로그램인데, 여러 줄짜리 jq 필터 하나로 끝납니다.
+
+## 사람들이 자주 걸려 넘어지는 지점
+
+### jq는 배열이 아니라 스트림을 내보냅니다
+
+`.items[]`는 *원소마다 하나씩, N개의 개별 값*을 만들어 냅니다. `.items`는 *배열 하나*를 만들어 냅니다. 터미널에서는 비슷하게 출력되지만, 다음 단계에서 의미가 완전히 다릅니다.
+
+```jq
+.items[]          # 스트림: {...}\n{...}\n{...}
+[.items[]]        # 배열:   [{...}, {...}, {...}]
+.items            # 배열:   위와 동일, 순회 없음
+```
+
+필터의 다음 단계가 `map`이나 `length`라면 거의 항상 배열 형태가 필요합니다. 출력을 `xargs`나 다른 셸 명령에 파이프할 거라면 스트림이 맞습니다. Playground의 결과 패널은 둘 다 보여주기 때문에 차이가 즉시 눈에 들어옵니다.
+
+### `-r` (raw output)는 여기서 의미가 없습니다
+
+CLI 사용자는 문자열 결과의 바깥쪽 따옴표를 벗기려고 반사적으로 `jq -r`을 칩니다. Playground는 결과를 텍스트가 아니라 구조 그대로 렌더링합니다 — 문자열 값은 `"value"\n`이 아니라 문자열로 표시됩니다. 이스케이프해 들어갈 셸이 없으므로 `-r` 플래그도 없습니다. 토큰을 다른 입력 필드에 붙여 넣어야 한다면 출력에서 그대로 복사하세요. 따옴표는 추가로 붙지 않습니다.
+
+### `null`은 실제 값이고, "키 없음"도 마찬가지입니다
+
+`.user.middle_name`은 키가 없든 값이 문자 그대로 `null`이든 똑같이 `null`을 돌려줍니다. 구분이 필요하다면 `has("middle_name")`을 쓰거나 `.user | keys`로 확인하세요. `//` 연산자(alternative)는 왼쪽 값이 `null`이나 `false`일 때만 기본값을 끼워 넣습니다.
+
+```jq
+.user.nickname // .user.name // "anonymous"
+```
+
+"널이 아닌 첫 필드"를 표현하는 올바른 방법입니다. `if .user.nickname then .user.nickname else ...`는 빈 문자열과 `false`에서 잘못 동작합니다.
+
+### 큰 입력: 어느 선부터는 CLI를 쓰는 게 맞습니다
+
+Playground는 최신 노트북에서 대략 50MB까지는 무리 없이 처리합니다. 그 이상에서는 WASM 모듈의 힙 압박이 체감되기 시작하므로, 진짜 CLI의 스트리밍 플래그가 더 낫습니다.
+
+```bash
+jq --stream -c 'select(.[0][0] == "events") | .[1]' huge.json
+```
+
+`--stream`은 문서 전체를 메모리에 올리지 않고 `[path, value]` 쌍의 시퀀스를 내보냅니다. 필터를 짜기는 까다롭지만 수 기가바이트 파일까지 확장됩니다. 그 규모에서는 Playground가 도구를 잘못 고른 셈입니다 — jq를 로컬에 설치하고 옮겨 가세요.
+
+### 숫자는 IEEE 754 double입니다
+
+jq는 자바스크립트와 마찬가지로 모든 숫자를 64비트 부동소수점으로 표현합니다. 2^53을 넘는 정수 ID는 조용히 정밀도를 잃습니다. JSON에 큰 ID(트위터 snowflake ID, 일부 DB row ID)가 있다면 와이어에서는 문자열로 유지하세요 — 한 번 숫자로 파싱되고 나면 jq도 Playground도 원래 값을 복원해 줄 수 없습니다.
+
+## CLI와의 역할 분담
+
+Playground는 필터를 *쓰는* 스크래치패드입니다. CLI는 그 필터를 프로덕션에서 *실행하는* 자리입니다.
+
+권장 워크플로우는 이렇습니다. Playground에서 출력 모양이 원하는 형태가 될 때까지 필터를 프로토타이핑한 뒤, 셸에서 작은따옴표로 감싸 — `jq '<filter>' input.json` — 실제로 돌립니다. 둘은 와이어 호환이라 필터 문법은 그대로 옮겨갑니다.
+
+CLI 외에는 선택지가 없는 경우들:
+
+- 수십 메가바이트를 넘는 파일 (`--stream` 사용).
+- CI 파이프라인이나 셸 스크립트 안.
+- `--slurpfile`이나 `--argfile`로 두 파일을 결합하는 다중 입력 필터.
+- jq의 `-c` 압축 출력을 다른 프로세스로 파이프하는 장시간 데이터 파이프라인.
+
+그 외 — 웹훅 페이로드를 디버깅할 때, 알림 쿼리를 초안 잡을 때, 낯선 API 응답을 탐색할 때, 동료에게 `group_by`가 뭐 하는 녀석인지 가르칠 때 — 에는 터미널로 알트탭하는 것보다 Playground가 빠릅니다.
+
+## 관련 ZeroTool 도구
+
+- [JSONPath Tester](/ko/tools/jsonpath-tester/) — 추출만 필요하고 변환은 필요 없을 때.
+- [JSON Formatter](/ko/tools/json-formatter/) — 필터를 짜기 전에 문서를 보기 좋게 정리하거나 최소화하세요.
+- [JSONL Converter](/ko/tools/jsonl-converter/) — 줄바꿈으로 구분된 JSON용. jq도 `--slurp`나 스트림 순회로 네이티브 지원합니다.
+
+## 더 읽을거리
+
+- [jq 언어 매뉴얼](https://jqlang.org/manual/) — 모든 연산자와 내장 함수의 표준 레퍼런스.
+- [GitHub의 jq](https://github.com/jqlang/jq) — Playground가 구동하는 엔진의 소스, 릴리스, 이슈 트래커.
+- [jq-web](https://github.com/fiatjaf/jq-web) — 브라우저 내 엔진을 가능하게 만든 Emscripten 빌드.
+- [JSON RFC 8259](https://datatracker.ietf.org/doc/html/rfc8259) — 위에서 짚은 IEEE-754 주의사항을 포함한 데이터 모델 정의.

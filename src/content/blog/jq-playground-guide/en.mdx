@@ -1,0 +1,159 @@
+---
+title: "jq in the Browser: Test Filters Without Installing jq"
+description: "Run the official jq 1.7 engine inside any modern browser. Pipes, select, map, group_by, reduce — same output as the CLI, no install, no upload."
+pubDate: 2026-05-23
+lang: "en"
+tags: ["jq", "json", "developer-tools", "wasm", "command-line"]
+ogImage: /og/blog-jq-playground-guide.png
+---
+
+It's 2 a.m. You're paged because a webhook handler is silently dropping events. You `curl` the upstream endpoint to inspect the last hour of payloads and a six-megabyte JSON dump hits your terminal. You know the filter you want is something like *"all events where `status == "retry"` and `attempt > 3`, grouped by tenant, count per group"* — but the exact jq invocation is one bracket and one pipe away from working, and you have no appetite for editing a filter, re-piping the dump, scrolling, and trying again. What you actually want is a scratchpad: paste the JSON once, iterate the filter ten times, see the output redraw instantly.
+
+[Open jq Playground →](/tools/jq-playground)
+
+That's the whole tool. The official jq 1.7 engine compiled to WebAssembly, a JSON pane on the left, a filter pane on the right, ten preset examples to copy from, and a syntax-highlighted result view that updates on every keystroke. Nothing leaves the page.
+
+## Why jq, Specifically
+
+jq is a small functional language for slicing, transforming, and aggregating JSON. It has been the de facto standard for shell-side JSON processing for over a decade because it solves four problems at once: a stream-oriented evaluation model that handles concatenated JSON documents, pipes that compose like Unix pipes, path expressions that read like the data, and a tiny set of higher-order combinators (`map`, `select`, `reduce`, `foreach`, `group_by`) that scale from a one-liner to a 200-line program.
+
+The Playground runs `jq-web`, the Emscripten-compiled build of the upstream jq 1.7 source tree. It's about 1 MB gzipped — fetched once on first visit, cached by the browser, then resident in memory for the rest of the session. After that first load, every filter evaluation is a synchronous call into the WASM module: no network, no server, no upload.
+
+A consequence worth stating directly: behavior is identical to the CLI. `reduce`, `foreach`, `def`, `try/catch`, `..` recursive descent, `@base64d`, `splits`, `paths`, `walk` — if it works in `jq` on your laptop, it works here.
+
+## jq vs JSONPath vs JMESPath
+
+These three are the languages you'll see most often for "query a JSON document." They overlap on simple field access and diverge sharply once you need transformation.
+
+| Capability | jq | JSONPath | JMESPath |
+|---|---|---|---|
+| Field & index access | `.user.name`, `.items[0]` | `$.user.name`, `$.items[0]` | `user.name`, `items[0]` |
+| Filter by predicate | `.items[] | select(.qty > 3)` | `$.items[?(@.qty > 3)]` | ``items[?qty > `3`]`` |
+| Reshape into new objects | `map({id, total: .qty * .price})` | not supported | `items[].{id: id}` (projection, no arithmetic) |
+| Aggregate / reduce | `reduce .[] as $x (0; . + $x.qty)` | not supported | not supported (only `sum`, `length`, `max_by` builtins) |
+| Define functions | `def total: reduce .[] as $x (0; . + $x);` | not supported | not supported |
+| Standard implementation | jqlang.org/jq (C, official) | many incompatible dialects | jmespath.org (multiple SDKs) |
+| Output cardinality | stream of values | array of matches | single value |
+
+The short version: JSONPath and JMESPath are *query* languages — they pull values out. jq is a *transformation* language — it pulls values out, reshapes them, aggregates them, and emits a new JSON document. If your task ends at "give me the matching nodes," any of the three works. If it ends at "give me a CSV of tenant-to-error-count," only jq does it in one pass.
+
+For shape-only queries, ZeroTool also has a [JSONPath Tester](/tools/jsonpath-tester) — sometimes that's all you need.
+
+## Five Filters That Actually Earn Their Keep
+
+### 1. Flatten a paginated API response into a CSV-ready stream
+
+```jq
+.results[] | [.id, .tenant, .status, (.created_at | fromdateiso8601)] | @csv
+```
+
+Each input row becomes one CSV line. Pipe the output through `> events.csv` in your terminal — or, in the Playground, just copy the result pane.
+
+### 2. Group log lines by tenant and count errors
+
+```jq
+[.events[] | select(.level == "error")]
+  | group_by(.tenant)
+  | map({tenant: .[0].tenant, errors: length})
+  | sort_by(-.errors)
+```
+
+`group_by` returns an array of arrays — each inner array shares the key. `map` over those groups projects each into a small summary object. `sort_by(-.errors)` sorts descending. This is the canonical jq idiom for "histogram by field."
+
+### 3. Walk a nested tree and rewrite a field everywhere
+
+```jq
+walk(if type == "object" and has("password") then .password = "***" else . end)
+```
+
+`walk` is post-order: it visits children before parents, so you can rewrite leaves without worrying about traversal order. Useful for redacting secrets before sharing a payload, or normalizing units across an arbitrarily-deep structure.
+
+### 4. Compute a running total with `foreach`
+
+```jq
+[foreach .transactions[] as $t (0; . + $t.amount; {date: $t.date, balance: .})]
+```
+
+`foreach` is the explicit-state cousin of `reduce`. Initial state `0`, update expression `. + $t.amount`, extract expression `{date: $t.date, balance: .}`. It emits one output per input, so you get a balance series, not a final number.
+
+### 5. Diff two arrays by key
+
+```jq
+def by_id: map({key: .id, value: .}) | from_entries;
+(.a | by_id) as $a | (.b | by_id) as $b
+| ($a | keys) + ($b | keys) | unique
+| map({id: ., a: $a[.], b: $b[.]})
+| map(select(.a != .b))
+```
+
+Define a helper with `def`, build two keyed lookups, union the key sets, project both sides, keep only rows that differ. This is the kind of program that's a pain to write in shell — a multi-line jq filter handles it inline.
+
+## Things That Trip People Up
+
+### jq emits a stream, not an array
+
+`.items[]` produces *N separate values*, one per element. `.items` produces *one array*. They print similarly in the terminal but mean different things downstream:
+
+```jq
+.items[]          # stream: {...}\n{...}\n{...}
+[.items[]]        # array:  [{...}, {...}, {...}]
+.items            # array:  same as above, no iteration
+```
+
+If your filter feeds into another `map` or `length`, you almost always want the array form. If you're piping to `xargs` or another shell command, you want the stream. In the Playground, the result pane renders both, so you can see the difference immediately.
+
+### `-r` (raw output) doesn't apply here
+
+CLI users reflexively reach for `jq -r` to strip the outer quotes from a string result. The Playground renders results structurally, not as text — a string value is shown as a string, not as `"value"\n`. There's no `-r` flag because there's no shell to escape into. If you need the raw bytes (say, to paste a token into another field), copy from the output and the surrounding quotes are not added.
+
+### `null` is a real value, and so is "key missing"
+
+`.user.middle_name` returns `null` whether the key is absent or the value is literally `null`. To distinguish, use `has("middle_name")` or `.user | keys`. The `//` operator (alternative) substitutes a default only when the left side is `null` or `false`:
+
+```jq
+.user.nickname // .user.name // "anonymous"
+```
+
+This is the right way to express "first non-null field." `if .user.nickname then .user.nickname else ...` will misfire on the empty string and on `false`.
+
+### Large inputs: at some point, use the CLI
+
+The Playground handles inputs up to roughly 50 MB comfortably on modern laptops. Above that, the WASM module's heap pressure becomes noticeable and you're better served by the streaming flags of the real CLI:
+
+```bash
+jq --stream -c 'select(.[0][0] == "events") | .[1]' huge.json
+```
+
+`--stream` emits a sequence of `[path, value]` pairs without loading the whole document. It's awkward to write filters against, but it scales to multi-gigabyte files. The Playground is the wrong tool for that scale; install jq locally and switch.
+
+### Numbers are IEEE 754 doubles
+
+jq, like JavaScript, represents all numbers as 64-bit floats. Integer IDs above 2^53 lose precision silently. If your JSON contains large IDs (Twitter snowflake IDs, some database row IDs), keep them as strings on the wire — neither jq nor the Playground can give them back to you exactly once they've been parsed as numbers.
+
+## Where This Sits Next to the CLI
+
+The Playground is a scratchpad for writing filters. The CLI is what runs the filter in production.
+
+The right workflow: prototype the filter in the Playground until the output shape is what you want, then paste it between single quotes into your shell — `jq '<filter>' input.json` — for the actual run. The two are wire-compatible; nothing changes in the filter syntax between them.
+
+Cases where the CLI is the only sensible choice:
+
+- Files larger than a few tens of megabytes (use `--stream`).
+- Anything inside a CI pipeline or a shell script.
+- Multi-input filters that combine two files with `--slurpfile` or `--argfile`.
+- Long-running data pipelines where you want jq's `-c` compact output piped into another process.
+
+For everything else — debugging a webhook payload, drafting an alert query, exploring an unfamiliar API response, teaching a teammate what `group_by` does — the Playground is faster than alt-tabbing to a terminal.
+
+## Related ZeroTool Tools
+
+- [JSONPath Tester](/tools/jsonpath-tester) — when you only need to extract, not transform.
+- [JSON Formatter](/tools/json-formatter) — pretty-print or minify the document before you start writing filters.
+- [JSONL Converter](/tools/jsonl-converter) — for newline-delimited JSON, which jq also reads natively via `--slurp` or by iterating the stream.
+
+## Further Reading
+
+- [jq Language Manual](https://jqlang.org/manual/) — the canonical reference for every operator and builtin.
+- [jq on GitHub](https://github.com/jqlang/jq) — source, releases, and the issue tracker for the engine the Playground runs.
+- [jq-web](https://github.com/fiatjaf/jq-web) — the Emscripten build that makes the in-browser engine possible.
+- [JSON RFC 8259](https://datatracker.ietf.org/doc/html/rfc8259) — the underlying data model, including the IEEE-754 caveat above.

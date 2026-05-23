@@ -1,0 +1,159 @@
+---
+title: "浏览器里跑 jq：不装 jq 也能调过滤器"
+description: "在任意现代浏览器里直接跑官方 jq 1.7。管道、select、map、group_by、reduce — 输出和 CLI 完全一致，免安装、不上传。"
+pubDate: 2026-05-23
+lang: "zh"
+tags: ["jq", "json", "developer-tools", "wasm", "command-line"]
+ogImage: /og/blog-jq-playground-guide.png
+---
+
+凌晨两点。一个 webhook handler 正在悄悄丢事件，告警把你叫醒。你 `curl` 上游接口想看最近一小时的载荷，一坨六兆的 JSON 直接糊到终端上。心里想要的过滤器大概是这样：*"所有 `status == "retry"` 且 `attempt > 3` 的事件，按 tenant 分组，每组计数"* — 但精确的 jq 写法离能跑还差一个括号、一个管道，而你完全没耐心反复改 filter、重新 pipe、滚屏、再试一遍。你需要的其实是一块草稿板：JSON 粘一次，过滤器迭代十次，输出实时刷新。
+
+[打开 jq Playground →](/zh/tools/jq-playground/)
+
+工具就这么点东西。官方 jq 1.7 编译成 WebAssembly，左边 JSON 面板，右边过滤器面板，十个预设示例随手抄，结果区带语法高亮、每敲一个键就重渲染。所有数据不离开页面。
+
+## 为什么偏偏是 jq
+
+jq 是一门小型函数式语言，专门用来切片、转换、聚合 JSON。它当了十多年 shell 里处理 JSON 的事实标准，因为它一次性解决了四个问题：流式求值能连读多份拼接的 JSON 文档；管道写起来像 Unix 管道；路径表达式读起来就跟数据本身一样；一小撮高阶组合子（`map`、`select`、`reduce`、`foreach`、`group_by`）能从一行式扩展到两百行程序。
+
+Playground 跑的是 `jq-web`，由上游 jq 1.7 源码经 Emscripten 编译而来。gzip 后约 1 MB，首次访问拉一次，浏览器缓存住，整个会话期间常驻内存。之后每一次过滤器求值都是对 WASM 模块的同步调用：无网络、无服务器、无上传。
+
+补一句关键的：行为和 CLI 完全一致。`reduce`、`foreach`、`def`、`try/catch`、`..` 递归下降、`@base64d`、`splits`、`paths`、`walk` — 你笔记本上 `jq` 能跑通的，这里都能跑通。
+
+## jq vs JSONPath vs JMESPath
+
+"查询 JSON 文档"最常见的三门语言就是这三个。简单字段访问上有重叠，一旦涉及变换就立刻分道扬镳。
+
+| 能力 | jq | JSONPath | JMESPath |
+|---|---|---|---|
+| 字段与索引访问 | `.user.name`、`.items[0]` | `$.user.name`、`$.items[0]` | `user.name`、`items[0]` |
+| 按谓词过滤 | `.items[] | select(.qty > 3)` | `$.items[?(@.qty > 3)]` | ``items[?qty > `3`]`` |
+| 重塑为新对象 | `map({id, total: .qty * .price})` | 不支持 | `items[].{id: id}`（投影，不支持算术） |
+| 聚合 / reduce | `reduce .[] as $x (0; . + $x.qty)` | 不支持 | 不支持（仅 `sum`、`length`、`max_by` 等 builtin） |
+| 定义函数 | `def total: reduce .[] as $x (0; . + $x);` | 不支持 | 不支持 |
+| 标准实现 | jqlang.org/jq（C 写的，官方） | 多个互不兼容的方言 | jmespath.org（多语言 SDK） |
+| 输出基数 | 值流 | 匹配结果数组 | 单个值 |
+
+一句话：JSONPath 和 JMESPath 是*查询*语言 — 把值取出来。jq 是*变换*语言 — 把值取出来、重塑、聚合，再吐一份新的 JSON 文档。如果你的任务只到"给我匹配的节点"为止，三个都能用。如果你要"给我一份 tenant 到错误数的 CSV"，只有 jq 一遍过。
+
+只查不改的场景，ZeroTool 还有 [JSONPath Tester](/zh/tools/jsonpath-tester/) — 有时候你只需要这个。
+
+## 五个真正派得上用场的过滤器
+
+### 1. 把分页 API 响应展平成可写 CSV 的流
+
+```jq
+.results[] | [.id, .tenant, .status, (.created_at | fromdateiso8601)] | @csv
+```
+
+每个输入行变成一行 CSV。在终端里把结果 pipe 到 `> events.csv`；在 Playground 里直接从结果面板复制。
+
+### 2. 按 tenant 分组日志并统计错误数
+
+```jq
+[.events[] | select(.level == "error")]
+  | group_by(.tenant)
+  | map({tenant: .[0].tenant, errors: length})
+  | sort_by(-.errors)
+```
+
+`group_by` 返回一个二维数组 — 每个内层数组共享一个 key。`map` 在这些组上做投影，把每组压成一个小的汇总对象。`sort_by(-.errors)` 降序排。这是 jq 里"按字段做直方图"的标准写法。
+
+### 3. 遍历嵌套树，到处改写一个字段
+
+```jq
+walk(if type == "object" and has("password") then .password = "***" else . end)
+```
+
+`walk` 是后序遍历：先访问子节点再访问父节点，所以改写叶子节点不用担心遍历顺序。适合把载荷脱敏后分享出去，或者在结构任意深的数据里统一单位。
+
+### 4. 用 `foreach` 计算运行余额
+
+```jq
+[foreach .transactions[] as $t (0; . + $t.amount; {date: $t.date, balance: .})]
+```
+
+`foreach` 是 `reduce` 的显式状态版本。初始状态 `0`，更新表达式 `. + $t.amount`，抽取表达式 `{date: $t.date, balance: .}`。它对每个输入吐一个输出，所以拿到的是余额时间序列，而非单一总和。
+
+### 5. 按 key diff 两个数组
+
+```jq
+def by_id: map({key: .id, value: .}) | from_entries;
+(.a | by_id) as $a | (.b | by_id) as $b
+| ($a | keys) + ($b | keys) | unique
+| map({id: ., a: $a[.], b: $b[.]})
+| map(select(.a != .b))
+```
+
+用 `def` 定义一个辅助函数，建两份按 key 的查找表，合并 key 集合，对两侧做投影，只保留有差异的行。这种程序在 shell 里写得很痛苦 — 一段多行 jq filter 就内联搞定。
+
+## 容易踩的坑
+
+### jq 吐的是流，不是数组
+
+`.items[]` 产出 *N 个独立的值*，每个元素一个。`.items` 产出*一个数组*。终端里打印长得像，语义却完全不同：
+
+```jq
+.items[]          # stream: {...}\n{...}\n{...}
+[.items[]]        # array:  [{...}, {...}, {...}]
+.items            # array:  same as above, no iteration
+```
+
+如果你的 filter 后面要接 `map` 或 `length`，基本都要用数组。如果你要 pipe 给 `xargs` 或别的 shell 命令，那就用流。Playground 的结果面板两种形态都能直接看到，差异一眼分明。
+
+### `-r`（raw 输出）在这里没用
+
+CLI 老手习惯反手就是一个 `jq -r`，用来把字符串结果外面的引号剥掉。Playground 按结构渲染结果：字符串值直接显示成字符串，而非 `"value"\n`。这里没有 `-r` flag，因为没有 shell 需要转义。如果你要原始字节（比如把 token 粘到别的输入框），从输出区复制即可，外层引号不会被加上。
+
+### `null` 是一个真值，"键不存在"也是
+
+`.user.middle_name` 不管 key 缺失还是值本身就是 `null`，都返回 `null`。要区分两者，用 `has("middle_name")` 或 `.user | keys`。备选运算符 `//` 只在左侧为 `null` 或 `false` 时替换默认值：
+
+```jq
+.user.nickname // .user.name // "anonymous"
+```
+
+这才是"取第一个非 null 字段"的正确写法。`if .user.nickname then .user.nickname else ...` 在空字符串和 `false` 上会误判。
+
+### 大输入：到某个量级请切回 CLI
+
+现代笔记本上，约 50 MB 以内的输入 Playground 处理起来很流畅。再往上，WASM 模块的堆压力会变明显，这时候真 CLI 的流式 flag 更合适：
+
+```bash
+jq --stream -c 'select(.[0][0] == "events") | .[1]' huge.json
+```
+
+`--stream` 输出 `[path, value]` 对序列，不需要把整份文档加载到内存。写起来不太顺手，但能扛多 GB 文件。Playground 不是这个量级该用的工具；本地装 jq，切过去。
+
+### 数字是 IEEE 754 双精度
+
+jq 跟 JavaScript 一样，所有数字都是 64 位浮点。超过 2^53 的整数 ID 会悄悄丢精度。如果你的 JSON 包含大 ID（Twitter 雪花 ID、某些数据库的行 ID），在线上保持字符串形式 — 一旦被解析成数字，jq 和 Playground 都没法把原值还给你。
+
+## 它和 CLI 的关系
+
+Playground 是写 filter 的草稿板。CLI 才是把 filter 跑在生产环境的工具。
+
+正确流程：在 Playground 里把 filter 原型调到输出形状满意，再用单引号包起来粘进 shell — `jq '<filter>' input.json` — 跑真数据。两边的 filter 写法完全兼容，没有任何语法差异。
+
+只有 CLI 合理的场景：
+
+- 文件比几十兆更大（用 `--stream`）。
+- 任何在 CI 流水线或 shell 脚本里跑的东西。
+- 用 `--slurpfile` 或 `--argfile` 合并两份文件的多输入 filter。
+- 长时间运行的数据管道，需要 jq 的 `-c` 紧凑输出 pipe 给下游进程。
+
+除此之外 — debug webhook 载荷、起草告警查询、探索一个陌生的 API 响应、教队友 `group_by` 是什么 — Playground 比切窗口去终端更快。
+
+## 相关 ZeroTool 工具
+
+- [JSONPath Tester](/zh/tools/jsonpath-tester/) — 只提取不变换的场景。
+- [JSON Formatter](/zh/tools/json-formatter/) — 写 filter 之前先把文档美化或最小化。
+- [JSONL Converter](/zh/tools/jsonl-converter/) — 处理换行分隔的 JSON，jq 自身也能通过 `--slurp` 或迭代流来读。
+
+## 延伸阅读
+
+- [jq Language Manual](https://jqlang.org/manual/) — 每个运算符和 builtin 的权威参考。
+- [jq on GitHub](https://github.com/jqlang/jq) — Playground 跑的那个引擎的源码、release 和 issue tracker。
+- [jq-web](https://github.com/fiatjaf/jq-web) — 让浏览器内引擎成为可能的 Emscripten 构建。
+- [JSON RFC 8259](https://datatracker.ietf.org/doc/html/rfc8259) — 底层数据模型，包括上文提到的 IEEE-754 注意事项。
