@@ -1,0 +1,83 @@
+---
+seoTitle: "HTTP Header アナライザー — HTTPヘッダーをオンラインで解析 | ZeroTool"
+seoDescription: "HTTPリクエストまたはレスポンスの生ヘッダーを貼り付け、セキュリティ・キャッシュ・CORS・コンテンツ・認証メタデータを即座に解析。100+ヘッダー解説と合規ヒント。完全ブラウザ完結。"
+faqItems:
+  - question: "ヘッダーがサーバーに送信されますか?"
+    answer: "いいえ。解析と分析はすべてブラウザ内のインラインJavaScriptで完結し、アップロードはありません。Authorizationトークン、Set-Cookie文字列、本番ヘッダーなどの機密情報も安心して貼り付けられます。"
+  - question: "URLから直接ヘッダーを取得できますか?"
+    answer: "設計上できません。URLフェッチにはバックエンドが必要で、悪用されるリスクもあります。curl -I、fetch -v、ブラウザDevToolsのネットワークパネル、その他HTTPクライアントからヘッダーをコピーして貼り付けてください。本ツールは解析のみを担当します。"
+  - question: "リクエストとレスポンスの判別方法は?"
+    answer: "最初の行を読みます。HTTP/x.x のあとにステータスコードが続けばレスポンス、メソッド(GET、POSTなど)+パス+HTTP/x.xならリクエストです。どちらにも一致しない場合はヘッダーのみとして全行をヘッダーとして解析します。"
+  - question: "どのセキュリティヘッダーをチェックしますか?"
+    answer: "Strict-Transport-Security、Content-Security-Policy、X-Frame-Options、X-Content-Type-Options、Referrer-Policy、Permissions-Policy、Set-Cookieフラグ、Cross-Origin-*ファミリー、CORSのAllow-Origin / Allow-Credentials組み合わせなどの存在と構成を検証します。"
+  - question: "重複ヘッダーや折りたたみ行の扱いは?"
+    answer: "同名の重複ヘッダーはカテゴリビューで個別エントリとして保持され、JSONビューでは配列にまとめられます(順序保持)。HTTP/1.1のobs-fold(空白で始まる行)はRFC 7230に従って前のヘッダーに結合されます。"
+  - question: "解析結果をエクスポートできますか?"
+    answer: "はい。JSONコピーで正規化されたオブジェクトをコピーできます。単一値ヘッダーは文字列、重複ヘッダーは順序を保持した配列になります。ステータス行は_statusキーに収録されます。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>生のHTTPヘッダーをテキストエリアに貼り付けます。最初の行にステータス行またはメソッド行を含めてください。</li>
+  <li><strong>分析</strong>をクリック。ツールがリクエスト/レスポンスを自動判別し、カテゴリ別にグルーピングして表示します。</li>
+  <li><strong>カテゴリ別</strong>、<strong>生データ</strong>、<strong>JSON</strong>タブで表示を切り替えます。</li>
+  <li>セキュリティヘッダーのインラインヒントを確認 — 設定ミスは警告、強化機会は注意として表示されます。</li>
+  <li><strong>JSONコピー</strong>で解析結果をエクスポートし、後続の自動化処理に利用できます。</li>
+</ol>
+
+<h2>例: セキュリティヘッダー付きレスポンス</h2>
+
+```
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+Content-Security-Policy: default-src 'self'; script-src 'self'
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+Cache-Control: no-store
+Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/
+```
+
+<p>アナライザーはStrict-Transport-Security、Content-Security-Policy、X-Content-Type-Options、Referrer-Policyを<strong>セキュリティ</strong>に分類します。Cache-Controlは<strong>キャッシュ</strong>、Content-Typeは<strong>コンテンツ</strong>、Set-Cookieは<strong>Cookie</strong>に入ります。各カードには一行解説とヒント(例: HttpOnlyなしのSet-Cookieは警告表示)が付きます。</p>
+
+<h2>例: CORSプリフライト</h2>
+
+```
+OPTIONS /api/v1/orders HTTP/1.1
+Host: api.example.com
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Authorization, Content-Type
+```
+
+<p>これはリクエストとして認識されます。Access-Control-Request-*ペアはプリフライトの印。アナライザーはOriginを強調し、要求メソッドとヘッダーをリスト化します。レスポンス側と組み合わせれば、CORSハンドシェイクを端から端まで追跡できます。</p>
+
+<h2>カテゴリ一覧</h2>
+<ul>
+  <li><strong>ステータス</strong> — 最初の行(ステータス行またはメソッド行)。</li>
+  <li><strong>セキュリティ</strong> — HSTS、CSP、X-Frame-Options、COOP/COEP/CORP、Permissions-Policy、Fetch metadata。</li>
+  <li><strong>キャッシュ</strong> — Cache-Control、ETag、Vary、Expires、Last-Modified、条件付きリクエストヘッダー。</li>
+  <li><strong>コンテンツ</strong> — Content-Type、Content-Encoding、Accept-\*、Content-Disposition。</li>
+  <li><strong>CORS</strong> — Access-Control-\*とOrigin。</li>
+  <li><strong>認証</strong> — Authorization、WWW-Authenticate、Proxy-Authenticate。</li>
+  <li><strong>Cookie</strong> — CookieとSet-Cookie。</li>
+  <li><strong>転送 / レンジ / プロキシ / 一般 / カスタム</strong> — その他のカテゴリ。X-\*未知ヘッダーはカスタムに入ります。</li>
+</ul>
+
+<h2>合規ヒントの基準</h2>
+<p>ヒントは保守的で、明らかな設定ミスのみを指摘し、主観的なスタイル評価はしません。例:</p>
+<ul>
+  <li>HSTS max-ageが1年未満、またはincludeSubDomains / preload不足。</li>
+  <li>CSPに<code>'unsafe-inline'</code>または<code>'unsafe-eval'</code>が含まれる。</li>
+  <li>Set-CookieにHttpOnlyまたはSecureが欠落。</li>
+  <li>Access-Control-Allow-Credentials: trueとワイルドカードOriginの組み合わせ(仕様違反)。</li>
+  <li>Cache-Controlにno-storeとmax-ageが共存(max-age実質無効)。</li>
+</ul>
+
+<h2>関連ツール</h2>
+<ul>
+  <li><a href="/ja/tools/cookie-parser/">Cookie 文字列パーサー</a> — Cookie / Set-Cookie文字列を名前/値/フラグの表に分解。</li>
+  <li><a href="/ja/tools/csp-header-generator/">CSPヘッダージェネレーター</a> — 厳格なContent-Security-Policyをゼロから構築。</li>
+  <li><a href="/ja/tools/har-file-analyzer/">HARファイル アナライザー</a> — DevToolsのリクエストウォーターフォールを可視化。</li>
+  <li><a href="/ja/tools/http-status-codes/">HTTPステータスコード</a> — 1xx〜5xxの検索可能なリファレンス。</li>
+</ul>
