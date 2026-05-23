@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 125 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 126 tools and growing.
 
 ## Tools
 
@@ -134,6 +134,7 @@
 | HAR File Analyzer | [/tools/har-file-analyzer](https://zerotool.dev/tools/har-file-analyzer) |
 | Eyedropper Color Picker | [/tools/eyedropper-color-picker](https://zerotool.dev/tools/eyedropper-color-picker) |
 | HTTP Header Analyzer | [/tools/http-header-analyzer](https://zerotool.dev/tools/http-header-analyzer) |
+| GraphQL Formatter | [/tools/graphql-formatter](https://zerotool.dev/tools/graphql-formatter) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
