@@ -1,0 +1,184 @@
+---
+title: "Read HTTP Headers Like a Pro: A Practical Guide"
+description: "Paste raw HTTP headers and inspect security, caching, CORS, and cookie metadata in one pass. Learn the categories, the compliance traps, and how to use the headers your code is already sending."
+pubDate: 2026-05-23
+lang: "en"
+tags: ["http", "security-headers", "cors", "web-development", "developer-tools"]
+ogImage: /og/blog-http-header-analyzer-guide.png
+---
+
+Your CDN just shipped a config change and the staging response now carries forty headers. Half of them look familiar, a few look suspicious, and the rest you've never read carefully. The browser DevTools Network panel will show them in a long list with no annotation — you scroll, copy, and paste them into a doc to make sense of what changed. By the time you find the duplicated `Cache-Control` or the missing `includeSubDomains` directive, the pull request review has already been merged.
+
+[Paste raw headers into the analyzer →](/tools/http-header-analyzer)
+
+This guide walks through what HTTP headers actually do, the categories they fall into, the compliance traps that ship to production every week, and how to use a header analyzer to make sense of all of it in one pass.
+
+## What an HTTP Header Actually Is
+
+An HTTP message is a status line (response) or a method line (request), followed by zero or more headers, an empty line, and an optional body. Each header is a `Name: value` pair on its own line. HTTP/2 and HTTP/3 use a binary framing layer, but the moment a tool serializes the headers — `curl -I`, `fetch -v`, the DevTools "Copy as headers" action, an Nginx debug log, a service-mesh trace — you get the textual form back. That serialized form is what the analyzer eats.
+
+The list looks innocent. In practice every header is a contract between two parties — the client, the origin server, intermediate caches, browser features, and analytics — and getting one wrong has predictable failure modes:
+
+| Misconfiguration | Visible symptom |
+|---|---|
+| `Cache-Control: no-store, max-age=3600` | Browser refuses to cache. The `max-age` is dead weight; reviewers assume caching works. |
+| `Access-Control-Allow-Origin: *` with `Allow-Credentials: true` | Spec violation. Browsers reject the response and the fetch fails silently in production. |
+| `Strict-Transport-Security: max-age=86400` | Below the 1-year preload requirement. HSTS preload submission fails without warning. |
+| `Set-Cookie: session=…; Path=/` (no `HttpOnly`, no `Secure`) | XSS reads the cookie via `document.cookie`; the cookie travels over plain HTTP if a redirect fires. |
+| Missing `X-Content-Type-Options: nosniff` | Old browsers sniff a `.txt` upload as HTML and execute embedded scripts. |
+
+Each row is a real incident that has surfaced in postmortems many times. The analyzer flags them inline so you can ship the fix the same day.
+
+## The Eight Categories You Actually Need to Recognize
+
+Most real-world headers fall into eight buckets. Knowing the bucket tells you who is responsible for the header and where to look when something is wrong.
+
+### 1. Status / method line
+
+The first line of the message. `HTTP/1.1 200 OK` is a response; `GET /api/v1/orders HTTP/1.1` is a request. The analyzer detects which one you pasted and adapts the rest of the report — security warnings, for example, only apply to responses.
+
+### 2. Security
+
+The most reviewed category in 2026. Required headers for any modern web application:
+
+- **Strict-Transport-Security** — forces HTTPS for the specified `max-age`. For HSTS preload (`https://hstspreload.org/`) you need at least `max-age=31536000`, `includeSubDomains`, and `preload`. Anything shorter is a soft commitment that browsers respect for the duration but never preload.
+- **Content-Security-Policy** — whitelists allowed sources for scripts, styles, images, frames, and fetches. The single biggest XSS mitigation available, but `'unsafe-inline'` and `'unsafe-eval'` collapse most of the protection.
+- **X-Frame-Options** — `DENY` or `SAMEORIGIN`. Superseded by the CSP `frame-ancestors` directive but still respected by older browsers and many tools.
+- **X-Content-Type-Options: nosniff** — disables MIME sniffing. There is no downside; the analyzer warns when it's missing on a response.
+- **Referrer-Policy** — controls how much referrer information leaks across origins. `strict-origin-when-cross-origin` is the conservative default.
+- **Permissions-Policy** — restricts browser features per origin (camera, microphone, geolocation, fullscreen, payment APIs). Replaces the deprecated Feature-Policy.
+- **Cross-Origin-Opener-Policy / Embedder-Policy / Resource-Policy** (COOP / COEP / CORP) — required for cross-origin isolation, which unlocks `SharedArrayBuffer` and high-resolution timers.
+
+### 3. Caching
+
+The headers that decide whether a response goes to disk, memory, or nowhere at all:
+
+- **Cache-Control** — the main lever. `no-store` overrides everything; `private` keeps the response out of shared caches; `s-maxage` only applies to shared caches.
+- **ETag / Last-Modified** — conditional GET pairs. Compute them once on the server; clients send `If-None-Match` / `If-Modified-Since` and you reply with `304 Not Modified`.
+- **Vary** — tells caches that the response varies by the listed request headers. Forgetting `Vary: Accept-Encoding` is how a gzipped response ends up served to a client that asked for plain.
+
+### 4. Content
+
+What the body is. `Content-Type` is the primary one — note the difference between `text/html`, `text/html; charset=utf-8`, and `application/json`. `Content-Encoding` reports compression; `Content-Disposition` decides whether the browser shows the file inline or forces a download.
+
+### 5. CORS
+
+`Access-Control-*` headers govern cross-origin reads. The two combinations that ship broken every week:
+
+- `Access-Control-Allow-Origin: *` plus `Access-Control-Allow-Credentials: true`. Spec-illegal; the browser drops the response.
+- `Access-Control-Allow-Origin: <origin>` without echoing the request `Origin`. The fetch succeeds in tests because the dev origin matches, but fails as soon as a different subdomain calls the same endpoint.
+
+### 6. Auth
+
+`Authorization`, `WWW-Authenticate`, `Proxy-Authorization`, `Proxy-Authenticate`. The scheme value is the part that matters — `Bearer`, `Basic`, `Digest`, `AWS4-HMAC-SHA256`. Don't paste production tokens into shared tools; the analyzer parses these client-side without uploading anything, but a screenshot in a Jira ticket exposes them just as effectively.
+
+### 7. Cookie
+
+`Cookie` (request) and `Set-Cookie` (response). The flags carry the security: `HttpOnly` to deny JavaScript access, `Secure` to require HTTPS, `SameSite` to control cross-site sending, and `Path` / `Domain` / `Expires` / `Max-Age` to scope the lifetime. The analyzer flags any `Set-Cookie` without `HttpOnly` or `Secure` because that combination is how session tokens get exfiltrated by XSS.
+
+### 8. Transport / Range / Proxy / General / Custom
+
+Everything else: `Transfer-Encoding`, `Range`, `Forwarded` / `X-Forwarded-For`, `Date`, `Server`, `User-Agent`, plus any `X-*` headers your own infrastructure adds. The analyzer groups them so they don't crowd out the actionable ones.
+
+## How to Use the Analyzer
+
+Three minutes to fluency. Open `/tools/http-header-analyzer`, paste, and read.
+
+### Step 1 — Capture the headers
+
+Pick the source that's most convenient:
+
+```bash
+# From the command line
+curl -sI https://api.example.com/v1/orders
+# -I sends a HEAD request; replace with -i to also fetch the body
+```
+
+```javascript
+// From the browser console on the target page
+fetch('/api/v1/orders').then(async (r) => {
+  const lines = [`HTTP/1.1 ${r.status} ${r.statusText}`];
+  for (const [k, v] of r.headers) lines.push(`${k}: ${v}`);
+  console.log(lines.join('\n'));
+});
+```
+
+```text
+# From DevTools Network panel: right-click a request → Copy → Copy as cURL,
+# then paste into a terminal and add -I, or just copy the response headers
+# block directly from the Headers tab.
+```
+
+### Step 2 — Paste and read the summary
+
+The summary bar tells you immediately:
+
+- **Request or Response** — auto-detected from the first line.
+- **Status line** — preserved verbatim for context.
+- **Header count** — sanity check against the source.
+- **Security tally** — how many security headers are present, or a warning if there are zero on a response.
+
+### Step 3 — Drill into categories
+
+The categorized view shows every header in its bucket with a one-line description and any compliance hints. The hints are conservative — they only flag obvious misconfiguration, never style preferences:
+
+- HSTS `max-age` below 1 year, or missing `includeSubDomains` / `preload`.
+- CSP containing `'unsafe-inline'` or `'unsafe-eval'`.
+- `Set-Cookie` without `HttpOnly` or `Secure`.
+- `Access-Control-Allow-Credentials: true` paired with a wildcard origin.
+- `Cache-Control` combining `no-store` with `max-age` (dead weight).
+
+### Step 4 — Export when needed
+
+The **Copy JSON** action returns a normalized object: `{ "Header-Name": "value" }`. Duplicate headers collapse into arrays preserving order. The status line lands under `_status`. Drop the JSON into a postmortem, a Slack thread, or a JSON-diff tool to compare staging against production.
+
+## Real-World Failure Modes
+
+A few patterns the analyzer catches that have a habit of escaping code review.
+
+### "We added HSTS but Chrome ignored it"
+
+The `max-age` was set to 86400 — one day. HSTS works, but the preload list rejects anything below `max-age=31536000` (one year), and the team had set the lower value during testing and never bumped it. The analyzer flags this immediately because the rule is encoded into the hint, not buried in the spec.
+
+### "CORS works in dev but breaks in production"
+
+The dev environment sends `Access-Control-Allow-Origin: *`. Production starts setting `Allow-Credentials: true` because a new endpoint needs to read a session cookie. Browsers now drop every preflight that used the wildcard. The fix is to echo the request `Origin` header explicitly — the analyzer flags the offending combination so the diff is obvious.
+
+### "The cookie is set but the browser isn't sending it back"
+
+`Set-Cookie: session=abc; HttpOnly; SameSite=None` looks fine, until you notice `Secure` is missing. Browsers refuse `SameSite=None` without `Secure`, silently. The analyzer surfaces the missing-Secure warning regardless of `SameSite` value because `Secure` is the safer default.
+
+### "Cache-Control has both no-store and max-age"
+
+A reverse proxy injects `Cache-Control: no-store` for an authenticated route while the origin still returns `Cache-Control: public, max-age=3600`. Browsers concatenate the two and honor `no-store`. Reviewers assume caching works because the `max-age` value is still present. The analyzer flags the contradiction.
+
+## ZeroTool vs. Other Header Tools
+
+Most existing tools fall into two camps. URL-fetcher tools (e.g., `securityheaders.com`, KeyCDN, dnschecker) take a URL, hit it from their server, and report on the response. They are useful for one-off public-site audits but require the target to be reachable from a third-party backend — no help for staging URLs behind a VPN, internal services, or anything pre-deploy. Paste-based tools (e.g., `mockoon.com`, `outstanding.tools`) parse a string you provide; ZeroTool's HTTP Header Analyzer is in this second camp.
+
+What ZeroTool adds on top:
+
+- **Compliance hints inline with each header**, not just a security score at the bottom of the page. The hint tells you what to change and why, not just a letter grade.
+- **Auto-detect request vs. response**, so a curl `-I` output and a `fetch -v` output both work without flipping a mode toggle.
+- **Categorized + Raw + JSON tabs**, so the same paste can drive a security review, a diff between staging and prod, or a JSON export for downstream tooling.
+- **100% client-side**. The Authorization tokens and Set-Cookie strings you paste never leave your browser. Verify by opening DevTools Network — no outbound requests are made when you click Analyze.
+
+## Pairing the Analyzer with Other ZeroTool Workbench Items
+
+The analyzer is one stop on a longer HTTP debugging path. Common combinations:
+
+- **[Cookie Parser](/tools/cookie-parser/)** — when you need to break a complex `Set-Cookie` string into a name / value / flags table without leaving the workbench.
+- **[CSP Header Generator](/tools/csp-header-generator/)** — when the analyzer flags a weak `Content-Security-Policy`, generate a stricter one from directives and host sources.
+- **[HAR File Analyzer](/tools/har-file-analyzer/)** — when the headers come from a HAR export, drop the file in and pivot between requests without copy/paste.
+- **[HTTP Status Codes](/tools/http-status-codes/)** — when the status line shows something obscure (`418`, `425`, `451`), look up the meaning and use case.
+
+## Further Reading
+
+- [MDN — HTTP Headers reference](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers)
+- [OWASP Secure Headers Project](https://owasp.org/www-project-secure-headers/)
+- [RFC 9110 — HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
+- [RFC 9111 — HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111)
+- [RFC 6797 — HTTP Strict Transport Security](https://www.rfc-editor.org/rfc/rfc6797)
+- [W3C — Permissions Policy](https://www.w3.org/TR/permissions-policy-1/)
+
+Paste a response from your latest deploy and walk through the categories. The interesting parts of an HTTP message are often the headers you didn't write — the CDN's defaults, the framework's defaults, the WAF's defaults. The analyzer makes them visible in one pass.

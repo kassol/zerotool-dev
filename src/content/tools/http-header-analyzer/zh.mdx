@@ -1,0 +1,83 @@
+---
+seoTitle: "HTTP Header 分析器 — 在线解析 HTTP 头部 | ZeroTool"
+seoDescription: "粘贴 HTTP 请求或响应原始头部，即时分析安全、缓存、CORS、内容和鉴权信息。内置 100+ 标头说明与合规提示，纯浏览器端运行。"
+faqItems:
+  - question: "工具会把头部发送到服务器吗？"
+    answer: "不会。所有解析与分析都在浏览器内通过内联 JavaScript 完成，不上传任何内容。可以放心粘贴 Authorization、Set-Cookie 等敏感生产头部。"
+  - question: "可以直接从 URL 抓取头部吗？"
+    answer: "按设计不可以。抓取 URL 需要后端，并且容易被滥用。请从 curl -I、fetch -v、浏览器 DevTools 网络面板或任意 HTTP 客户端复制头部后再粘贴。本工具承担分析这一步，抓取是上一步。"
+  - question: "如何区分请求和响应？"
+    answer: "读取首行。HTTP/x.x 后跟状态码 → 响应；方法（GET、POST 等）+ 路径 + HTTP/x.x → 请求。两者都不匹配时按纯头部处理，全部行解析为头部。"
+  - question: "会检查哪些安全头？"
+    answer: "覆盖 Strict-Transport-Security、Content-Security-Policy、X-Frame-Options、X-Content-Type-Options、Referrer-Policy、Permissions-Policy、Set-Cookie 标志、Cross-Origin-* 系列以及 CORS Allow-Origin / Allow-Credentials 组合的存在与配置。"
+  - question: "如何处理重复头部和折行？"
+    answer: "重复同名头部在分类视图中保留为独立条目，JSON 视图中折叠为数组（保留顺序）。HTTP/1.1 obs-fold 折行（以空白开头的行）按 RFC 7230 并入上一条头部。"
+  - question: "解析结果可以导出吗？"
+    answer: "点击复制 JSON 即可。单值头部为字符串，重复头部为数组（保留顺序）。状态行收录在 _status 键下。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>将原始 HTTP 头部粘贴到文本框，首行可以是状态行或方法行。</li>
+  <li>点击<strong>分析</strong>。工具自动识别请求 / 响应，并按类别分组展示。</li>
+  <li>在<strong>分类</strong>、<strong>原文</strong>、<strong>JSON</strong> 三个标签之间切换视图。</li>
+  <li>留意安全头部下的提示——配置错误显示警告，加固建议显示备注。</li>
+  <li><strong>复制 JSON</strong>导出结构化结果，便于后续自动化处理。</li>
+</ol>
+
+<h2>示例：带安全头的响应</h2>
+
+```
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+Content-Security-Policy: default-src 'self'; script-src 'self'
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+Cache-Control: no-store
+Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/
+```
+
+<p>分析器把 Strict-Transport-Security、Content-Security-Policy、X-Content-Type-Options、Referrer-Policy 归入<strong>安全</strong>类；Cache-Control 落入<strong>缓存</strong>，Content-Type 落入<strong>内容</strong>，Set-Cookie 落入 <strong>Cookie</strong>。每张卡片含一行说明与若干提示——例如 Set-Cookie 缺少 HttpOnly 时会触发警告。</p>
+
+<h2>示例：CORS 预检</h2>
+
+```
+OPTIONS /api/v1/orders HTTP/1.1
+Host: api.example.com
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Authorization, Content-Type
+```
+
+<p>识别为请求。Access-Control-Request-* 是预检标志，分析器突出显示 Origin，并列出请求的方法与头部。配合响应端使用，可端到端定位 CORS 握手问题。</p>
+
+<h2>类别一览</h2>
+<ul>
+  <li><strong>状态行</strong> — 首行（状态行或方法行）。</li>
+  <li><strong>安全</strong> — HSTS、CSP、X-Frame-Options、COOP/COEP/CORP、Permissions-Policy、Fetch metadata。</li>
+  <li><strong>缓存</strong> — Cache-Control、ETag、Vary、Expires、Last-Modified、条件请求头。</li>
+  <li><strong>内容</strong> — Content-Type、Content-Encoding、Accept-\*、Content-Disposition。</li>
+  <li><strong>CORS</strong> — Access-Control-\* 与 Origin。</li>
+  <li><strong>鉴权</strong> — Authorization、WWW-Authenticate、Proxy-Authenticate。</li>
+  <li><strong>Cookie</strong> — Cookie 与 Set-Cookie。</li>
+  <li><strong>传输 / 范围 / 代理 / 通用 / 自定义</strong> — 其他类别；X-\* 未知头部归入自定义。</li>
+</ul>
+
+<h2>合规提示规则</h2>
+<p>提示保守，只标出明显的配置错误，不做主观风格点评。例如：</p>
+<ul>
+  <li>HSTS max-age 小于 1 年，或缺少 includeSubDomains / preload。</li>
+  <li>CSP 含 <code>'unsafe-inline'</code> 或 <code>'unsafe-eval'</code>。</li>
+  <li>Set-Cookie 缺少 HttpOnly 或 Secure。</li>
+  <li>Access-Control-Allow-Credentials: true 配 * 通配 Origin（规范禁止）。</li>
+  <li>Cache-Control 同时含 no-store 与 max-age（max-age 实际无效）。</li>
+</ul>
+
+<h2>相关工具</h2>
+<ul>
+  <li><a href="/zh/tools/cookie-parser/">Cookie 字符串解析器</a> — 把 Cookie / Set-Cookie 拆成名值与标志表。</li>
+  <li><a href="/zh/tools/csp-header-generator/">CSP 头部生成器</a> — 从零构建严格的 Content-Security-Policy。</li>
+  <li><a href="/zh/tools/har-file-analyzer/">HAR 文件分析器</a> — 可视化 DevTools 的请求瀑布。</li>
+  <li><a href="/zh/tools/http-status-codes/">HTTP 状态码大全</a> — 1xx–5xx 全量参考。</li>
+</ul>

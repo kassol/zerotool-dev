@@ -1,0 +1,184 @@
+---
+title: "プロのように HTTP ヘッダーを読む：実戦ガイド"
+description: "HTTP の生ヘッダーを貼り付け、セキュリティ・キャッシュ・CORS・Cookie のメタデータを一度に把握。カテゴリの読み方、コンプライアンスの落とし穴、コードがすでに送信しているヘッダーを使い倒す方法を解説。"
+pubDate: 2026-05-23
+lang: "ja"
+tags: ["http", "security-headers", "cors", "web-development", "developer-tools"]
+ogImage: /og/blog-http-header-analyzer-guide.png
+---
+
+CDN が設定変更を反映したばかりで、ステージングのレスポンスに 40 件のヘッダーが乗っている。半分は見慣れたもの、いくつかは怪しく、残りは一度もちゃんと読んだことがない。ブラウザの DevTools「ネットワーク」パネルは長いリストで並べるだけで注釈はない——スクロールしてコピーし、ドキュメントに貼って何が変わったか把握する。重複した `Cache-Control` や欠落した `includeSubDomains` ディレクティブに気付く頃には、プルリクエストのレビューはすでにマージされている。
+
+[生ヘッダーをアナライザーに貼り付ける →](/ja/tools/http-header-analyzer/)
+
+このガイドでは、HTTP ヘッダーが実際に何をするのか、どんなカテゴリに分かれるのか、毎週本番に流れていくコンプライアンスの落とし穴、そしてヘッダーアナライザーを使ってこれらを一度に把握する方法を順を追って解説します。
+
+## HTTP ヘッダーとは何か
+
+HTTP メッセージは、ステータス行（レスポンス）またはメソッド行（リクエスト）から始まり、0 個以上のヘッダー、空行、オプションのボディが続きます。各ヘッダーは独立した行の `名前: 値` ペアです。HTTP/2 と HTTP/3 はバイナリフレーミング層を使いますが、ヘッダーをシリアライズした瞬間——`curl -I`、`fetch -v`、DevTools の「Copy as headers」、Nginx のデバッグログ、サービスメッシュのトレース——テキスト形式が得られます。アナライザーが読み込むのはこのテキストです。
+
+リストは無害に見えます。実際には各ヘッダーはクライアント、オリジンサーバー、中間キャッシュ、ブラウザの機能、アナリティクスなど複数の当事者間の契約で、どれか 1 つでも間違えると予測可能な障害が起きます：
+
+| 設定ミス | 表面化する症状 |
+|---|---|
+| `Cache-Control: no-store, max-age=3600` | ブラウザがキャッシュを拒否。`max-age` は無効化されているが、レビュアーはキャッシュが効いていると勘違いする。 |
+| `Access-Control-Allow-Origin: *` と `Allow-Credentials: true` の併用 | 仕様違反。ブラウザはレスポンスを破棄し、本番で fetch が音もなく失敗する。 |
+| `Strict-Transport-Security: max-age=86400` | 1 年の preload 要件を下回る。HSTS preload への提出は警告なく失敗。 |
+| `Set-Cookie: session=…; Path=/`（`HttpOnly` も `Secure` もなし） | XSS が `document.cookie` で読み取れる。リダイレクト時に Cookie が平文 HTTP で流れる。 |
+| `X-Content-Type-Options: nosniff` の欠落 | 旧ブラウザが `.txt` アップロードを HTML として推測し、埋め込みスクリプトを実行する。 |
+
+どの行も、事後分析で何度も浮上してきた実際のインシデントです。アナライザーはこれらをインラインでフラグするので、その日のうちに修正を出荷できます。
+
+## 認識すべき 8 つのカテゴリ
+
+現実のヘッダーはほぼ 8 つのバケツに収まります。バケツが分かれば、誰がそのヘッダーを担当しているか、何かおかしいときどこを見るべきかが分かります。
+
+### 1. ステータス行 / メソッド行
+
+メッセージの最初の行。`HTTP/1.1 200 OK` はレスポンス、`GET /api/v1/orders HTTP/1.1` はリクエストです。アナライザーは貼り付けられた形式を自動判定し、以降のレポートを調整します——例えばセキュリティ警告はレスポンスにのみ適用されます。
+
+### 2. セキュリティ
+
+2026 年に最も頻繁にレビューされるカテゴリ。モダンな Web アプリに必須のヘッダー：
+
+- **Strict-Transport-Security**：指定された `max-age` の間 HTTPS を強制。HSTS preload（`https://hstspreload.org/`）には少なくとも `max-age=31536000`、`includeSubDomains`、`preload` の 3 点セットが必要です。それより短い値は、ブラウザがその期間中だけ尊重する軽い約束に過ぎず、決して preload リストには載りません。
+- **Content-Security-Policy**：スクリプト、スタイル、画像、フレーム、fetch の許可ソースをホワイトリスト化。現状で最も強力な XSS 対策ですが、`'unsafe-inline'` と `'unsafe-eval'` は保護のほとんどを崩壊させます。
+- **X-Frame-Options**：`DENY` または `SAMEORIGIN`。CSP の `frame-ancestors` ディレクティブに置き換えられましたが、旧ブラウザや多くのツールはまだこれを尊重します。
+- **X-Content-Type-Options: nosniff**：MIME スニッフィングを無効化。デメリットなし。レスポンスから欠落しているとアナライザーが警告します。
+- **Referrer-Policy**：オリジン横断時にどれだけ referrer 情報を漏らすかを制御。`strict-origin-when-cross-origin` が無難なデフォルトです。
+- **Permissions-Policy**：オリジンごとにブラウザ機能（カメラ、マイク、位置情報、フルスクリーン、決済 API）を制限。非推奨となった Feature-Policy の後継。
+- **Cross-Origin-Opener-Policy / Embedder-Policy / Resource-Policy**（COOP / COEP / CORP）：クロスオリジン分離に必要で、これが揃って初めて `SharedArrayBuffer` と高精度タイマーが解禁されます。
+
+### 3. キャッシュ
+
+レスポンスがディスクに行くか、メモリに行くか、どこにも行かないかを決めるヘッダー：
+
+- **Cache-Control**：主要レバー。`no-store` はすべてを上書き、`private` は共有キャッシュから締め出し、`s-maxage` は共有キャッシュにのみ適用されます。
+- **ETag / Last-Modified**：条件付き GET のペア。サーバーで一度計算し、クライアントが `If-None-Match` / `If-Modified-Since` を送信、サーバーが `304 Not Modified` で応答します。
+- **Vary**：キャッシュに対し、列挙されたリクエストヘッダーに応じてレスポンスが変化することを伝えます。`Vary: Accept-Encoding` を忘れると、gzip 圧縮されたレスポンスが平文を要求したクライアントに配信されます。
+
+### 4. コンテンツ
+
+ボディが何であるか。`Content-Type` が主役——`text/html`、`text/html; charset=utf-8`、`application/json` の違いに注意。`Content-Encoding` は圧縮を報告し、`Content-Disposition` はブラウザがファイルをインライン表示するかダウンロードを強制するかを決めます。
+
+### 5. CORS
+
+`Access-Control-*` ヘッダーはクロスオリジン読み取りを管理します。毎週壊れて出荷される 2 つの組み合わせ：
+
+- `Access-Control-Allow-Origin: *` と `Access-Control-Allow-Credentials: true` の併用。仕様違反でブラウザはレスポンスを破棄。
+- `Access-Control-Allow-Origin: <origin>` だがリクエストの `Origin` をエコーしていない。dev ではオリジンがたまたま一致するので fetch が通り、別のサブドメインから同じエンドポイントを叩いた瞬間に失敗します。
+
+### 6. 認証
+
+`Authorization`、`WWW-Authenticate`、`Proxy-Authorization`、`Proxy-Authenticate`。重要なのは scheme 値——`Bearer`、`Basic`、`Digest`、`AWS4-HMAC-SHA256`。本番トークンを共有意図のあるツールに貼らないでください。アナライザーはブラウザ内で解析しアップロード一切なしですが、Jira チケットのスクリーンショットに貼れば公開漏洩と同じ効果になります。
+
+### 7. Cookie
+
+`Cookie`（リクエスト）と `Set-Cookie`（レスポンス）。セキュリティはフラグが守ります：`HttpOnly` で JavaScript アクセスを拒否、`Secure` で HTTPS を要求、`SameSite` でクロスサイト送信を制御、`Path` / `Domain` / `Expires` / `Max-Age` でライフタイムをスコープ。アナライザーは `HttpOnly` または `Secure` のない `Set-Cookie` をフラグします。それがセッショントークンが XSS で抜かれる標準的な経路だからです。
+
+### 8. 転送 / レンジ / プロキシ / 一般 / カスタム
+
+残りすべて：`Transfer-Encoding`、`Range`、`Forwarded` / `X-Forwarded-For`、`Date`、`Server`、`User-Agent`、そして自社インフラが追加する `X-*` ヘッダー。アナライザーはこれらをまとめてグループ化し、対応が必要なものを埋もれさせません。
+
+## アナライザーの使い方：3 分で慣れる
+
+`/ja/tools/http-header-analyzer` を開き、貼り付け、読む。
+
+### ステップ 1：ヘッダーを取得
+
+最も都合のよい入手元を選びます：
+
+```bash
+# コマンドラインから
+curl -sI https://api.example.com/v1/orders
+# -I は HEAD リクエスト。ボディも取得したければ -i に変更
+```
+
+```javascript
+// 対象ページのブラウザコンソールから
+fetch('/api/v1/orders').then(async (r) => {
+  const lines = [`HTTP/1.1 ${r.status} ${r.statusText}`];
+  for (const [k, v] of r.headers) lines.push(`${k}: ${v}`);
+  console.log(lines.join('\n'));
+});
+```
+
+```text
+# DevTools「ネットワーク」パネルから：リクエストを右クリック → Copy → Copy as cURL
+# し、ターミナルに貼って -I を追加。または「Headers」タブからレスポンスヘッダーブロック
+# を直接コピー。
+```
+
+### ステップ 2：貼り付けてサマリーを読む
+
+上部のサマリーバーで即座に分かること：
+
+- **リクエストかレスポンスか** — 最初の行から自動判定。
+- **ステータス行** — そのまま保持して文脈を提供。
+- **ヘッダー数** — 元のソースと突合チェック。
+- **セキュリティカウント** — 存在するセキュリティヘッダーの数、レスポンスでゼロなら警告。
+
+### ステップ 3：カテゴリへ掘り下げる
+
+カテゴリ別ビューはすべてのヘッダーを所属バケツに収め、一行の説明と必要な合規ヒントを付けます。ヒントは保守的——明らかな設定ミスのみフラグし、スタイル選好は問いません：
+
+- HSTS `max-age` が 1 年未満、または `includeSubDomains` / `preload` の欠落。
+- CSP に `'unsafe-inline'` または `'unsafe-eval'` を含む。
+- `Set-Cookie` に `HttpOnly` または `Secure` の欠落。
+- `Access-Control-Allow-Credentials: true` とワイルドカードオリジンの併用。
+- `Cache-Control` に `no-store` と `max-age` を同時指定（max-age は事実上無効）。
+
+### ステップ 4：必要に応じてエクスポート
+
+**Copy JSON** アクションは正規化されたオブジェクトを返します：`{ "Header-Name": "value" }`。重複ヘッダーは順序を保持した配列にまとめられ、ステータス行は `_status` キーに収録されます。事後分析ドキュメント、Slack スレッド、JSON-diff ツールに JSON を放り込めば、ステージングと本番の差分を比較できます。
+
+## 現実の失敗モード
+
+アナライザーが捕まえる、コードレビューを通り抜けがちなパターンをいくつか。
+
+### 「HSTS を追加したのに Chrome が無視する」
+
+`max-age` が 86400——1 日に設定されていた。HSTS は機能するが、preload リストは `max-age=31536000`（1 年）未満を一切受け付けません。チームはテスト中に低い値を入れて、上げ忘れていた。アナライザーはこれを即フラグします——ルールが仕様の中ではなくヒントにエンコードされているからです。
+
+### 「CORS が dev では動くのに本番で壊れる」
+
+dev 環境では `Access-Control-Allow-Origin: *` を送信。本番では新エンドポイントがセッション cookie を読む必要があり `Allow-Credentials: true` を立て始める。ブラウザはワイルドカードを使ったすべての preflight を破棄します。修正はリクエストの `Origin` ヘッダーを明示的にエコーすること——アナライザーが問題の組み合わせをフラグするので、diff が一目瞭然です。
+
+### 「cookie はセットしたのにブラウザが返してくれない」
+
+`Set-Cookie: session=abc; HttpOnly; SameSite=None` は正しそうに見えます——`Secure` が抜けていることに気付くまでは。ブラウザは `SameSite=None` を `Secure` なしで指定された Cookie を音もなく拒否します。アナライザーは `SameSite` の値に関係なく `Secure` 欠落を警告します。`Secure` がより安全なデフォルトだからです。
+
+### 「Cache-Control に no-store と max-age が両方ある」
+
+リバースプロキシが認証付きルートに `Cache-Control: no-store` を注入する一方、オリジンサーバーは `Cache-Control: public, max-age=3600` を返し続けます。ブラウザはこの 2 つを連結し `no-store` を尊重します。レビュアーは `max-age` がまだあるのでキャッシュが効いていると勘違い。アナライザーがこの矛盾をフラグします。
+
+## ZeroTool と他のヘッダーツール
+
+既存ツールはおおむね 2 つの陣営に分かれます。**URL 取得型**（`securityheaders.com`、KeyCDN、dnschecker など）は URL を入力すると、彼らのバックエンドが叩いてレポートを返します。一度限りの公開サイト監査には便利ですが、ターゲットがサードパーティのバックエンドから到達可能である必要があります——VPN 越しのステージング URL、内部サービス、デプロイ前のものにはまったく対応できません。**貼り付け型**（`mockoon.com`、`outstanding.tools` など）は提供された文字列をパースします。ZeroTool の HTTP Header アナライザーはこちらの陣営です。
+
+ZeroTool がそれに加えて提供するもの：
+
+- **各ヘッダーカードにインラインの合規ヒント**。ページ下部のセキュリティスコアではなく。ヒントは何を変えるか、なぜかを伝えます——文字評価だけではありません。
+- **リクエスト / レスポンスの自動判定**。curl `-I` の出力も `fetch -v` の出力も、モード切替なしでそのまま動きます。
+- **カテゴリ別 / 生データ / JSON の 3 タブ**。同じ貼り付けがセキュリティレビュー、ステージング対本番の diff、下流ツール用の JSON エクスポートを駆動できます。
+- **100% クライアントサイド**。貼り付けた Authorization トークンと Set-Cookie 文字列はブラウザを離れません。DevTools「ネットワーク」を開いて Analyze をクリックすれば確認できます——アウトバウンドリクエストはゼロです。
+
+## ZeroTool ワークベンチの他ツールとの連携
+
+アナライザーは HTTP デバッグ経路上の 1 ストップにすぎません。よくある組み合わせ：
+
+- **[Cookie 文字列パーサー](/ja/tools/cookie-parser/)** — 複雑な `Set-Cookie` 文字列を名前 / 値 / フラグの表に分解する必要があるとき、ワークベンチを離れずに完結。
+- **[CSP ヘッダージェネレーター](/ja/tools/csp-header-generator/)** — アナライザーが弱い `Content-Security-Policy` をフラグしたら、ディレクティブとホスト元から厳格なポリシーを生成。
+- **[HAR ファイル アナライザー](/ja/tools/har-file-analyzer/)** — ヘッダーが HAR エクスポート由来なら、ファイルをドロップしてリクエスト間をピボットし、コピー&ペーストを省略。
+- **[HTTP ステータスコード](/ja/tools/http-status-codes/)** — ステータス行に見慣れないコード（`418`、`425`、`451`）が出たら意味とユースケースを参照。
+
+## 関連情報
+
+- [MDN — HTTP Headers リファレンス](https://developer.mozilla.org/ja/docs/Web/HTTP/Headers)
+- [OWASP Secure Headers Project](https://owasp.org/www-project-secure-headers/)
+- [RFC 9110 — HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
+- [RFC 9111 — HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111)
+- [RFC 6797 — HTTP Strict Transport Security](https://www.rfc-editor.org/rfc/rfc6797)
+- [W3C — Permissions Policy](https://www.w3.org/TR/permissions-policy-1/)
+
+最新デプロイのレスポンスを貼り付けて、カテゴリを 1 周してみてください。HTTP メッセージで本当に面白いのは、自分が書いていないヘッダー——CDN のデフォルト、フレームワークのデフォルト、WAF のデフォルトです。アナライザーはそれらを一度に机上に並べます。

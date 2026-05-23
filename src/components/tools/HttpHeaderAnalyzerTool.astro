@@ -1,0 +1,753 @@
+---
+// HTTP Header Analyzer — paste raw HTTP request/response headers, inspect by category.
+// Language-independent widget; strings localized at runtime via document.documentElement.lang.
+---
+
+<div>
+  <div class="hha-wrap">
+    <div class="hha-input-section">
+      <label for="hha-input">
+        <span data-i18n="rawHeaders">Raw HTTP Headers</span>
+        <span class="hha-input-meta">
+          <select id="hha-example" class="hha-example-select" aria-label="Load example">
+            <option value="" data-i18n="exampleLabel">Examples…</option>
+            <option value="response-secure" data-i18n="exResponseSecure">Response · secure</option>
+            <option value="response-basic" data-i18n="exResponseBasic">Response · basic</option>
+            <option value="request-auth" data-i18n="exRequestAuth">Request · auth</option>
+            <option value="cors-preflight" data-i18n="exCorsPreflight">CORS preflight</option>
+          </select>
+          <button id="hha-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+        </span>
+      </label>
+      <textarea
+        id="hha-input"
+        class="tool-textarea"
+        rows="8"
+        spellcheck="false"
+        placeholder={"HTTP/1.1 200 OK\nContent-Type: application/json\nStrict-Transport-Security: max-age=63072000; includeSubDomains\nCache-Control: no-store"}
+      ></textarea>
+    </div>
+
+    <div class="hha-actions">
+      <button id="hha-analyze" class="btn-primary" type="button" data-i18n="analyze">Analyze</button>
+      <button id="hha-copy-json" class="btn-secondary" type="button" data-i18n="copyJson">Copy JSON</button>
+    </div>
+
+    <div id="hha-status" class="tool-status" aria-live="polite"></div>
+
+    <div id="hha-result" class="hha-result" hidden>
+      <div class="hha-summary">
+        <span class="hha-summary-pill" id="hha-summary-type"></span>
+        <span class="hha-summary-pill" id="hha-summary-status"></span>
+        <span class="hha-summary-pill" id="hha-summary-count"></span>
+        <span class="hha-summary-pill" id="hha-summary-security"></span>
+      </div>
+
+      <div class="hha-tabs" role="tablist">
+        <button class="hha-tab hha-tab-active" id="hha-tab-cat" role="tab" data-i18n="tabCategorized">Categorized</button>
+        <button class="hha-tab" id="hha-tab-raw" role="tab" data-i18n="tabRaw">Raw</button>
+        <button class="hha-tab" id="hha-tab-json" role="tab" data-i18n="tabJson">JSON</button>
+      </div>
+
+      <div id="hha-panel-cat" class="hha-panel"></div>
+      <div id="hha-panel-raw" class="hha-panel" hidden><pre id="hha-raw-output" class="hha-pre"></pre></div>
+      <div id="hha-panel-json" class="hha-panel" hidden><pre id="hha-json-output" class="hha-pre"></pre></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          rawHeaders: 'Raw HTTP Headers', exampleLabel: 'Examples…', exResponseSecure: 'Response · secure', exResponseBasic: 'Response · basic',
+          exRequestAuth: 'Request · auth', exCorsPreflight: 'CORS preflight', clear: 'Clear', analyze: 'Analyze', copyJson: 'Copy JSON',
+          tabCategorized: 'Categorized', tabRaw: 'Raw', tabJson: 'JSON',
+          summaryRequest: 'Request', summaryResponse: 'Response', summaryUnknown: 'Headers',
+          summaryCount: '{n} header{s}', summarySecurity: '{n} security ✓', summarySecurityNone: 'no security ⚠',
+          pastePrompt: 'Paste HTTP headers above and click Analyze.',
+          analyzed: 'Parsed {n} header{s}.', empty: 'No headers found.',
+          copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', analyzeFirst: 'Analyze first.',
+          catStatus: 'Status', catGeneral: 'General', catSecurity: 'Security', catCaching: 'Caching',
+          catContent: 'Content', catCors: 'CORS', catAuth: 'Auth', catCookie: 'Cookie',
+          catRange: 'Range', catTransport: 'Transport', catProxy: 'Proxy', catCustom: 'Custom / Other',
+          hintWarn: 'Warning', hintInfo: 'Note', hintOk: 'OK',
+        },
+        zh: {
+          rawHeaders: '原始 HTTP 头部', exampleLabel: '示例…', exResponseSecure: '响应 · 安全', exResponseBasic: '响应 · 基础',
+          exRequestAuth: '请求 · 鉴权', exCorsPreflight: 'CORS 预检', clear: '清除', analyze: '分析', copyJson: '复制 JSON',
+          tabCategorized: '分类', tabRaw: '原文', tabJson: 'JSON',
+          summaryRequest: '请求', summaryResponse: '响应', summaryUnknown: '头部',
+          summaryCount: '{n} 个标头', summarySecurity: '{n} 个安全标头 ✓', summarySecurityNone: '缺少安全标头 ⚠',
+          pastePrompt: '请粘贴 HTTP 头部后点击分析。',
+          analyzed: '已解析 {n} 个标头。', empty: '未找到标头。',
+          copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', analyzeFirst: '请先分析。',
+          catStatus: '状态行', catGeneral: '通用', catSecurity: '安全', catCaching: '缓存',
+          catContent: '内容', catCors: 'CORS', catAuth: '鉴权', catCookie: 'Cookie',
+          catRange: '范围', catTransport: '传输', catProxy: '代理', catCustom: '自定义 / 其他',
+          hintWarn: '警告', hintInfo: '提示', hintOk: '正常',
+        },
+        ja: {
+          rawHeaders: '生 HTTP ヘッダー', exampleLabel: 'サンプル…', exResponseSecure: 'レスポンス · セキュア', exResponseBasic: 'レスポンス · 基本',
+          exRequestAuth: 'リクエスト · 認証', exCorsPreflight: 'CORS プリフライト', clear: 'クリア', analyze: '分析', copyJson: 'JSON コピー',
+          tabCategorized: 'カテゴリ別', tabRaw: '生データ', tabJson: 'JSON',
+          summaryRequest: 'リクエスト', summaryResponse: 'レスポンス', summaryUnknown: 'ヘッダー',
+          summaryCount: '{n} 件', summarySecurity: 'セキュリティ {n} 件 ✓', summarySecurityNone: 'セキュリティ未設定 ⚠',
+          pastePrompt: 'HTTP ヘッダーを貼り付けて分析をクリック。',
+          analyzed: '{n} 件のヘッダーを解析しました。', empty: 'ヘッダーが見つかりません。',
+          copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピー失敗。', analyzeFirst: 'まず分析してください。',
+          catStatus: 'ステータス', catGeneral: '一般', catSecurity: 'セキュリティ', catCaching: 'キャッシュ',
+          catContent: 'コンテンツ', catCors: 'CORS', catAuth: '認証', catCookie: 'Cookie',
+          catRange: 'レンジ', catTransport: '転送', catProxy: 'プロキシ', catCustom: 'カスタム / その他',
+          hintWarn: '警告', hintInfo: '注意', hintOk: 'OK',
+        },
+        ko: {
+          rawHeaders: '원시 HTTP 헤더', exampleLabel: '예시…', exResponseSecure: '응답 · 보안', exResponseBasic: '응답 · 기본',
+          exRequestAuth: '요청 · 인증', exCorsPreflight: 'CORS 프리플라이트', clear: '지우기', analyze: '분석', copyJson: 'JSON 복사',
+          tabCategorized: '분류별', tabRaw: '원본', tabJson: 'JSON',
+          summaryRequest: '요청', summaryResponse: '응답', summaryUnknown: '헤더',
+          summaryCount: '{n} 개 헤더', summarySecurity: '보안 헤더 {n} 개 ✓', summarySecurityNone: '보안 헤더 없음 ⚠',
+          pastePrompt: 'HTTP 헤더를 붙여넣고 분석을 클릭하세요.',
+          analyzed: '{n} 개의 헤더를 분석했습니다.', empty: '헤더를 찾을 수 없습니다.',
+          copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', analyzeFirst: '먼저 분석하세요.',
+          catStatus: '상태', catGeneral: '일반', catSecurity: '보안', catCaching: '캐싱',
+          catContent: '콘텐츠', catCors: 'CORS', catAuth: '인증', catCookie: '쿠키',
+          catRange: '범위', catTransport: '전송', catProxy: '프록시', catCustom: '사용자 정의 / 기타',
+          hintWarn: '경고', hintInfo: '참고', hintOk: 'OK',
+        },
+      };
+
+      // Header dictionary — 100+ entries. category mapped to localized labels.
+      var HEADER_DB = {
+        // Security
+        'strict-transport-security': { cat: 'security', desc: 'Forces HTTPS for the specified duration. Protects against protocol downgrade and cookie hijacking.' },
+        'content-security-policy': { cat: 'security', desc: 'Whitelists allowed sources for scripts, styles, images. Primary XSS mitigation.' },
+        'content-security-policy-report-only': { cat: 'security', desc: 'CSP in monitor mode — violations are reported but not blocked.' },
+        'x-frame-options': { cat: 'security', desc: 'Controls whether the page can be framed. DENY/SAMEORIGIN prevents clickjacking. Superseded by CSP frame-ancestors.' },
+        'x-content-type-options': { cat: 'security', desc: 'nosniff disables MIME-type sniffing. Stops browsers from interpreting files as a different type.' },
+        'referrer-policy': { cat: 'security', desc: 'Controls how much referrer info is shared with cross-origin requests.' },
+        'permissions-policy': { cat: 'security', desc: 'Restricts browser features (camera, geolocation, etc.) per origin. Replaces Feature-Policy.' },
+        'feature-policy': { cat: 'security', desc: 'Deprecated. Use Permissions-Policy instead.' },
+        'cross-origin-opener-policy': { cat: 'security', desc: 'Isolates the document\'s browsing context group. Required for SharedArrayBuffer.' },
+        'cross-origin-embedder-policy': { cat: 'security', desc: 'Restricts subresources to those that grant permission. Pairs with COOP for cross-origin isolation.' },
+        'cross-origin-resource-policy': { cat: 'security', desc: 'Limits which origins can load this resource. Mitigates Spectre-style attacks.' },
+        'expect-ct': { cat: 'security', desc: 'Deprecated. Certificate Transparency is now mandatory; this header has no effect.' },
+        'x-xss-protection': { cat: 'security', desc: 'Legacy XSS auditor. Modern browsers ignore; use CSP instead. 0 disables, 1; mode=block is the safer legacy choice.' },
+        'x-permitted-cross-domain-policies': { cat: 'security', desc: 'Restricts cross-domain policy files (Flash/PDF). Set to none unless legacy plugins needed.' },
+        // Caching
+        'cache-control': { cat: 'caching', desc: 'Primary caching directive. Combine no-store / no-cache / private / public / max-age / s-maxage.' },
+        'pragma': { cat: 'caching', desc: 'HTTP/1.0 legacy. Use Cache-Control instead.' },
+        'expires': { cat: 'caching', desc: 'Absolute expiry. Cache-Control max-age takes precedence when both present.' },
+        'etag': { cat: 'caching', desc: 'Entity tag for conditional GET. Pair with If-None-Match.' },
+        'last-modified': { cat: 'caching', desc: 'Resource modification timestamp. Pair with If-Modified-Since.' },
+        'vary': { cat: 'caching', desc: 'Lists request headers that vary the response. Critical for proxies serving different versions.' },
+        'age': { cat: 'caching', desc: 'Seconds the object has been in a proxy cache.' },
+        'if-none-match': { cat: 'caching', desc: 'Conditional request — only fetch if ETag differs.' },
+        'if-modified-since': { cat: 'caching', desc: 'Conditional request — only fetch if newer than this date.' },
+        'if-match': { cat: 'caching', desc: 'Conditional request — only proceed if ETag matches.' },
+        'if-unmodified-since': { cat: 'caching', desc: 'Conditional request — only proceed if not modified since.' },
+        // Content
+        'content-type': { cat: 'content', desc: 'Media type + optional charset. Determines how the body is parsed.' },
+        'content-length': { cat: 'content', desc: 'Body size in octets. Required when not chunked.' },
+        'content-encoding': { cat: 'content', desc: 'Compression applied: gzip, br, deflate, zstd.' },
+        'content-language': { cat: 'content', desc: 'Natural language of the body, e.g. en-US.' },
+        'content-disposition': { cat: 'content', desc: 'inline shows in browser; attachment forces download with filename.' },
+        'content-location': { cat: 'content', desc: 'Alternative URI for the resource returned.' },
+        'content-range': { cat: 'range', desc: 'Byte range in a 206 Partial Content response.' },
+        'accept': { cat: 'content', desc: 'Media types the client accepts.' },
+        'accept-charset': { cat: 'content', desc: 'Charsets the client accepts. Largely obsolete; UTF-8 assumed.' },
+        'accept-encoding': { cat: 'content', desc: 'Compressions the client accepts.' },
+        'accept-language': { cat: 'content', desc: 'Natural languages the client prefers.' },
+        // CORS
+        'access-control-allow-origin': { cat: 'cors', desc: 'Specifies which origin may read the response. * disallows credentials.' },
+        'access-control-allow-credentials': { cat: 'cors', desc: 'true permits cookies and Authorization. Requires explicit origin, not *.' },
+        'access-control-allow-headers': { cat: 'cors', desc: 'Lists request headers permitted in actual request.' },
+        'access-control-allow-methods': { cat: 'cors', desc: 'Lists HTTP methods permitted in actual request.' },
+        'access-control-expose-headers': { cat: 'cors', desc: 'Lists response headers JS can read beyond the safelist.' },
+        'access-control-max-age': { cat: 'cors', desc: 'Seconds the preflight result can be cached.' },
+        'access-control-request-headers': { cat: 'cors', desc: 'Preflight: headers the actual request will include.' },
+        'access-control-request-method': { cat: 'cors', desc: 'Preflight: method the actual request will use.' },
+        'origin': { cat: 'cors', desc: 'Origin initiating the request. Sent on CORS and POST.' },
+        'timing-allow-origin': { cat: 'cors', desc: 'Permits cross-origin reading of Resource Timing data.' },
+        // Auth
+        'authorization': { cat: 'auth', desc: 'Credentials: Basic, Bearer, Digest, AWS4-HMAC-SHA256, etc.' },
+        'proxy-authorization': { cat: 'auth', desc: 'Credentials for the proxy.' },
+        'www-authenticate': { cat: 'auth', desc: 'Auth scheme demanded by the server on 401.' },
+        'proxy-authenticate': { cat: 'auth', desc: 'Proxy auth scheme demanded on 407.' },
+        // Cookie
+        'cookie': { cat: 'cookie', desc: 'Stored cookies sent to the server.' },
+        'set-cookie': { cat: 'cookie', desc: 'Server sets a cookie. Combine with HttpOnly, Secure, SameSite for safety.' },
+        // General
+        'date': { cat: 'general', desc: 'Message origination timestamp.' },
+        'host': { cat: 'general', desc: 'Target host[:port]. Required in HTTP/1.1.' },
+        'user-agent': { cat: 'general', desc: 'Identifier of the client software.' },
+        'server': { cat: 'general', desc: 'Server software identifier. Often suppressed for security.' },
+        'connection': { cat: 'general', desc: 'Hop-by-hop control: keep-alive, close, upgrade.' },
+        'keep-alive': { cat: 'general', desc: 'Tunes the persistent connection: timeout, max.' },
+        'upgrade': { cat: 'general', desc: 'Requests protocol switch — e.g. websocket, h2c.' },
+        'upgrade-insecure-requests': { cat: 'security', desc: '1 signals client preference for HTTPS-only resources.' },
+        'via': { cat: 'general', desc: 'Intermediate proxies/gateways traversed.' },
+        'warning': { cat: 'general', desc: 'Cache-related warnings. Deprecated in HTTP/1.1 RFC 9111.' },
+        // Range
+        'range': { cat: 'range', desc: 'Requests a specific byte range.' },
+        'if-range': { cat: 'range', desc: 'Range request precondition.' },
+        'accept-ranges': { cat: 'range', desc: 'bytes if range requests supported, none otherwise.' },
+        // Transport
+        'transfer-encoding': { cat: 'transport', desc: 'Hop-by-hop: chunked, compress, deflate, gzip.' },
+        'te': { cat: 'transport', desc: 'Transfer encodings the client accepts. trailers signals trailer support.' },
+        'trailer': { cat: 'transport', desc: 'Headers present in the chunked trailer section.' },
+        'alt-svc': { cat: 'transport', desc: 'Advertises alternative service endpoints (e.g., HTTP/3).' },
+        // Proxy
+        'forwarded': { cat: 'proxy', desc: 'Standardized client info forwarded by proxies (RFC 7239).' },
+        'x-forwarded-for': { cat: 'proxy', desc: 'De facto client IP chain. Use cautiously — spoofable.' },
+        'x-forwarded-host': { cat: 'proxy', desc: 'Original Host header before proxying.' },
+        'x-forwarded-proto': { cat: 'proxy', desc: 'Original protocol (http/https) before proxying.' },
+        'x-real-ip': { cat: 'proxy', desc: 'Single client IP set by reverse proxy.' },
+        // Common request-side
+        'referer': { cat: 'general', desc: 'Previous page URL. Misspelled in the spec, kept for compatibility.' },
+        'dnt': { cat: 'general', desc: 'Do Not Track. Deprecated — site adoption near zero.' },
+        'sec-ch-ua': { cat: 'general', desc: 'Client Hints: brand+version list.' },
+        'sec-ch-ua-mobile': { cat: 'general', desc: 'Client Hints: ?1 if mobile, ?0 otherwise.' },
+        'sec-ch-ua-platform': { cat: 'general', desc: 'Client Hints: OS platform.' },
+        'sec-fetch-dest': { cat: 'security', desc: 'Fetch metadata: request destination (document, image, script…).' },
+        'sec-fetch-mode': { cat: 'security', desc: 'Fetch metadata: cors, no-cors, navigate, same-origin, websocket.' },
+        'sec-fetch-site': { cat: 'security', desc: 'Fetch metadata: same-origin, same-site, cross-site, none.' },
+        'sec-fetch-user': { cat: 'security', desc: 'Fetch metadata: ?1 if user-activated navigation.' },
+        'priority': { cat: 'transport', desc: 'HTTP priority hints (u, i).' },
+        'link': { cat: 'general', desc: 'Typed links to other resources (preload, prefetch, dns-prefetch).' },
+        'location': { cat: 'general', desc: 'Redirect target on 3xx or new resource URL on 201.' },
+        'retry-after': { cat: 'general', desc: 'Suggested wait duration before retry, on 429/503.' },
+        'allow': { cat: 'general', desc: 'Methods allowed for the resource. Returned in 405.' },
+      };
+
+      var CATEGORY_ORDER = ['status', 'security', 'caching', 'content', 'cors', 'auth', 'cookie', 'general', 'range', 'transport', 'proxy', 'custom'];
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key] != null) {
+          if (el.tagName === 'OPTION') el.textContent = t[key];
+          else el.textContent = t[key];
+        }
+      });
+
+      var EXAMPLES = {
+        'response-secure':
+          'HTTP/1.1 200 OK\n' +
+          'Content-Type: application/json; charset=utf-8\n' +
+          'Strict-Transport-Security: max-age=63072000; includeSubDomains; preload\n' +
+          'Content-Security-Policy: default-src \'self\'; script-src \'self\'\n' +
+          'X-Content-Type-Options: nosniff\n' +
+          'Referrer-Policy: strict-origin-when-cross-origin\n' +
+          'Cache-Control: no-store\n' +
+          'Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/',
+        'response-basic':
+          'HTTP/1.1 200 OK\n' +
+          'Date: Thu, 23 May 2026 12:00:00 GMT\n' +
+          'Server: nginx/1.25.0\n' +
+          'Content-Type: text/html; charset=UTF-8\n' +
+          'Content-Length: 4823\n' +
+          'Cache-Control: max-age=3600, public\n' +
+          'Vary: Accept-Encoding\n' +
+          'Connection: keep-alive',
+        'request-auth':
+          'GET /api/v1/users/me HTTP/1.1\n' +
+          'Host: api.example.com\n' +
+          'Authorization: Bearer eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiIxMjM0In0.signature\n' +
+          'Accept: application/json\n' +
+          'User-Agent: curl/8.0.1\n' +
+          'Accept-Encoding: gzip, br',
+        'cors-preflight':
+          'OPTIONS /api/v1/orders HTTP/1.1\n' +
+          'Host: api.example.com\n' +
+          'Origin: https://app.example.com\n' +
+          'Access-Control-Request-Method: POST\n' +
+          'Access-Control-Request-Headers: Authorization, Content-Type\n' +
+          'User-Agent: Mozilla/5.0',
+      };
+
+      var inputEl = document.getElementById('hha-input');
+      var statusEl = document.getElementById('hha-status');
+      var resultEl = document.getElementById('hha-result');
+      var summaryTypeEl = document.getElementById('hha-summary-type');
+      var summaryStatusEl = document.getElementById('hha-summary-status');
+      var summaryCountEl = document.getElementById('hha-summary-count');
+      var summarySecEl = document.getElementById('hha-summary-security');
+      var catPanel = document.getElementById('hha-panel-cat');
+      var rawPanel = document.getElementById('hha-panel-raw');
+      var jsonPanel = document.getElementById('hha-panel-json');
+      var rawOut = document.getElementById('hha-raw-output');
+      var jsonOut = document.getElementById('hha-json-output');
+      var analyzeBtn = document.getElementById('hha-analyze');
+      var clearBtn = document.getElementById('hha-clear');
+      var copyJsonBtn = document.getElementById('hha-copy-json');
+      var exampleSel = document.getElementById('hha-example');
+      var tabCat = document.getElementById('hha-tab-cat');
+      var tabRaw = document.getElementById('hha-tab-raw');
+      var tabJson = document.getElementById('hha-tab-json');
+
+      var lastParsed = null;
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status ' + (type || '');
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      function detectType(firstLine) {
+        if (/^HTTP\/\d/.test(firstLine)) return 'response';
+        if (/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|TRACE|CONNECT)\s+\S+\s+HTTP\/\d/i.test(firstLine)) return 'request';
+        if (/:\s*/.test(firstLine)) return 'unknown';
+        return 'unknown';
+      }
+
+      function unfoldHeaders(rawText) {
+        // HTTP/1.1 obs-fold: lines starting with space/tab continue the previous header.
+        var lines = rawText.split(/\r?\n/);
+        var out = [];
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          if (out.length && /^[ \t]/.test(line)) {
+            out[out.length - 1] += ' ' + line.replace(/^[ \t]+/, '');
+          } else {
+            out.push(line);
+          }
+        }
+        return out;
+      }
+
+      function parseHeaders(rawText) {
+        var lines = unfoldHeaders(rawText).filter(function (l) { return l.trim().length > 0; });
+        if (lines.length === 0) return { type: 'unknown', statusLine: null, headers: [] };
+
+        var type = detectType(lines[0]);
+        var statusLine = null;
+        var headerLines = lines;
+        if (type !== 'unknown') {
+          statusLine = lines[0];
+          headerLines = lines.slice(1);
+        }
+
+        var headers = [];
+        for (var i = 0; i < headerLines.length; i++) {
+          var line = headerLines[i];
+          var idx = line.indexOf(':');
+          if (idx === -1) continue;
+          var name = line.slice(0, idx).trim();
+          var value = line.slice(idx + 1).trim();
+          if (!name) continue;
+          var lower = name.toLowerCase();
+          var entry = HEADER_DB[lower] || null;
+          headers.push({
+            name: name,
+            value: value,
+            lower: lower,
+            cat: entry ? entry.cat : (lower.indexOf('x-') === 0 ? 'custom' : 'custom'),
+            desc: entry ? entry.desc : '',
+            hints: applyHints(lower, value, type),
+          });
+        }
+
+        return { type: type, statusLine: statusLine, headers: headers };
+      }
+
+      function applyHints(name, value, type) {
+        var hints = [];
+        var v = value.toLowerCase();
+        if (name === 'strict-transport-security') {
+          var m = /max-age\s*=\s*(\d+)/.exec(v);
+          var age = m ? parseInt(m[1], 10) : 0;
+          if (age < 31536000) hints.push({ sev: 'warn', text: 'max-age < 1 year (31536000s). Many preload lists require ≥ 1 year.' });
+          if (v.indexOf('includesubdomains') === -1) hints.push({ sev: 'info', text: 'Add includeSubDomains for full coverage.' });
+          if (v.indexOf('preload') === -1) hints.push({ sev: 'info', text: 'Add preload and submit to hstspreload.org.' });
+        }
+        if (name === 'content-security-policy') {
+          if (v.indexOf("'unsafe-inline'") !== -1) hints.push({ sev: 'warn', text: "'unsafe-inline' defeats most XSS protection. Use nonces or hashes instead." });
+          if (v.indexOf("'unsafe-eval'") !== -1) hints.push({ sev: 'warn', text: "'unsafe-eval' allows arbitrary code execution. Remove unless absolutely required." });
+          if (v.indexOf('default-src') === -1) hints.push({ sev: 'info', text: 'No default-src — define one as a safety net.' });
+        }
+        if (name === 'set-cookie') {
+          // Match each attribute as ;<ws>name<word-boundary> so cookie names/values
+          // containing the literal keyword (e.g. session=httponly_token) don't suppress hints.
+          if (!/;\s*httponly\b/.test(v)) hints.push({ sev: 'warn', text: 'Missing HttpOnly — cookie is reachable from JavaScript.' });
+          if (!/;\s*secure\b/.test(v)) hints.push({ sev: 'warn', text: 'Missing Secure — cookie can be sent over plain HTTP.' });
+          if (!/;\s*samesite\b/.test(v)) hints.push({ sev: 'info', text: 'No SameSite — browsers default to Lax but explicit is safer.' });
+        }
+        if (name === 'access-control-allow-origin' && value === '*' && type === 'response') {
+          hints.push({ sev: 'info', text: 'Wildcard origin disables credentialed CORS by spec.' });
+        }
+        if (name === 'access-control-allow-credentials' && v === 'true') {
+          hints.push({ sev: 'warn', text: 'Credentialed CORS requires explicit Allow-Origin (no wildcard).' });
+        }
+        if (name === 'x-frame-options' && v !== 'deny' && v !== 'sameorigin' && v.indexOf('allow-from') !== 0) {
+          hints.push({ sev: 'info', text: 'Unrecognized value. Use DENY or SAMEORIGIN.' });
+        }
+        if (name === 'x-xss-protection' && v.indexOf('1') === 0) {
+          hints.push({ sev: 'info', text: 'Modern browsers ignore X-XSS-Protection. Set to 0 and rely on CSP.' });
+        }
+        if (name === 'cache-control') {
+          if (v.indexOf('no-store') !== -1 && /max-age\s*=\s*\d+/.test(v)) {
+            hints.push({ sev: 'warn', text: 'no-store and max-age together — no-store wins, max-age is dead weight.' });
+          }
+        }
+        if (name === 'server' && type === 'response') {
+          hints.push({ sev: 'info', text: 'Exposing server software helps attackers fingerprint the stack. Consider suppressing.' });
+        }
+        return hints;
+      }
+
+      function localizedCategory(cat) {
+        var map = { status: t.catStatus, general: t.catGeneral, security: t.catSecurity, caching: t.catCaching,
+          content: t.catContent, cors: t.catCors, auth: t.catAuth, cookie: t.catCookie,
+          range: t.catRange, transport: t.catTransport, proxy: t.catProxy, custom: t.catCustom };
+        return map[cat] || cat;
+      }
+
+      function sevLabel(sev) {
+        if (sev === 'warn') return t.hintWarn;
+        if (sev === 'info') return t.hintInfo;
+        return t.hintOk;
+      }
+
+      function renderCategorized(parsed) {
+        var html = '';
+        if (parsed.statusLine) {
+          html += '<section class="hha-cat-section hha-cat-status">' +
+            '<h3 class="hha-cat-title">' + escapeHtml(t.catStatus) + '</h3>' +
+            '<div class="hha-status-line"><code>' + escapeHtml(parsed.statusLine) + '</code></div>' +
+            '</section>';
+        }
+        var groups = {};
+        for (var i = 0; i < parsed.headers.length; i++) {
+          var h = parsed.headers[i];
+          if (!groups[h.cat]) groups[h.cat] = [];
+          groups[h.cat].push(h);
+        }
+        for (var ci = 0; ci < CATEGORY_ORDER.length; ci++) {
+          var cat = CATEGORY_ORDER[ci];
+          if (cat === 'status' || !groups[cat] || !groups[cat].length) continue;
+          html += '<section class="hha-cat-section hha-cat-' + cat + '">' +
+            '<h3 class="hha-cat-title">' + escapeHtml(localizedCategory(cat)) + ' <span class="hha-cat-count">' + groups[cat].length + '</span></h3>';
+          for (var hi = 0; hi < groups[cat].length; hi++) {
+            var hh = groups[cat][hi];
+            html += '<article class="hha-card">' +
+              '<header class="hha-card-head"><code class="hha-h-name">' + escapeHtml(hh.name) + '</code></header>' +
+              '<div class="hha-h-value"><code>' + escapeHtml(hh.value) + '</code></div>';
+            if (hh.desc) html += '<p class="hha-h-desc">' + escapeHtml(hh.desc) + '</p>';
+            if (hh.hints && hh.hints.length) {
+              html += '<ul class="hha-hints">';
+              for (var ji = 0; ji < hh.hints.length; ji++) {
+                var hint = hh.hints[ji];
+                html += '<li class="hha-hint hha-hint-' + hint.sev + '"><strong>' + escapeHtml(sevLabel(hint.sev)) + ':</strong> ' + escapeHtml(hint.text) + '</li>';
+              }
+              html += '</ul>';
+            }
+            html += '</article>';
+          }
+          html += '</section>';
+        }
+        catPanel.innerHTML = html;
+      }
+
+      function renderRaw(parsed) {
+        var lines = [];
+        if (parsed.statusLine) lines.push(parsed.statusLine);
+        for (var i = 0; i < parsed.headers.length; i++) {
+          lines.push(parsed.headers[i].name + ': ' + parsed.headers[i].value);
+        }
+        rawOut.textContent = lines.join('\n');
+      }
+
+      function renderJson(parsed) {
+        var obj = {};
+        if (parsed.statusLine) obj['_status'] = parsed.statusLine;
+        for (var i = 0; i < parsed.headers.length; i++) {
+          var h = parsed.headers[i];
+          // HTTP header names are case-insensitive per RFC 9110 §5.1.
+          // Normalize to lowercase so X-Custom and x-custom merge into one entry.
+          var key = h.lower;
+          if (obj[key] == null) {
+            obj[key] = h.value;
+          } else if (Array.isArray(obj[key])) {
+            obj[key].push(h.value);
+          } else {
+            obj[key] = [obj[key], h.value];
+          }
+        }
+        jsonOut.textContent = JSON.stringify(obj, null, 2);
+      }
+
+      function renderSummary(parsed) {
+        var typeLabel = parsed.type === 'response' ? t.summaryResponse :
+          parsed.type === 'request' ? t.summaryRequest : t.summaryUnknown;
+        summaryTypeEl.textContent = typeLabel;
+        summaryTypeEl.dataset.kind = parsed.type;
+        summaryStatusEl.textContent = parsed.statusLine || '—';
+        summaryStatusEl.hidden = !parsed.statusLine;
+
+        var n = parsed.headers.length;
+        summaryCountEl.textContent = t.summaryCount.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+
+        var secCount = parsed.headers.filter(function (h) { return h.cat === 'security'; }).length;
+        if (secCount > 0) {
+          summarySecEl.textContent = t.summarySecurity.replace('{n}', secCount);
+          summarySecEl.dataset.kind = 'ok';
+        } else if (parsed.type === 'response') {
+          summarySecEl.textContent = t.summarySecurityNone;
+          summarySecEl.dataset.kind = 'warn';
+        } else {
+          summarySecEl.hidden = true;
+        }
+      }
+
+      function analyze() {
+        var text = inputEl.value;
+        if (!text.trim()) {
+          setStatus(t.pastePrompt, '');
+          resultEl.hidden = true;
+          lastParsed = null;
+          return;
+        }
+        var parsed = parseHeaders(text);
+        if (parsed.headers.length === 0 && !parsed.statusLine) {
+          setStatus(t.empty, 'error');
+          resultEl.hidden = true;
+          lastParsed = null;
+          return;
+        }
+        lastParsed = parsed;
+        // reset summary visibility
+        summaryTypeEl.hidden = false;
+        summaryStatusEl.hidden = false;
+        summarySecEl.hidden = false;
+        renderSummary(parsed);
+        renderCategorized(parsed);
+        renderRaw(parsed);
+        renderJson(parsed);
+        resultEl.hidden = false;
+        var n = parsed.headers.length;
+        setStatus(t.analyzed.replace('{n}', n).replace('{s}', n === 1 ? '' : 's'), 'success');
+        window.trackTool && window.trackTool('http-header-analyzer', 'analyze');
+      }
+
+      analyzeBtn.addEventListener('click', analyze);
+
+      clearBtn.addEventListener('click', function () {
+        inputEl.value = '';
+        resultEl.hidden = true;
+        lastParsed = null;
+        setStatus('', '');
+      });
+
+      exampleSel.addEventListener('change', function () {
+        var key = exampleSel.value;
+        if (!key) return;
+        if (EXAMPLES[key]) {
+          inputEl.value = EXAMPLES[key];
+          analyze();
+        }
+        exampleSel.value = '';
+      });
+
+      copyJsonBtn.addEventListener('click', function () {
+        if (!lastParsed) { setStatus(t.analyzeFirst, 'error'); return; }
+        var json = jsonOut.textContent;
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(json).then(
+            function () { setStatus(t.copied, 'success'); },
+            function () { fallbackCopy(json); }
+          );
+        } else {
+          fallbackCopy(json);
+        }
+        window.trackTool && window.trackTool('http-header-analyzer', 'copy_json');
+      });
+
+      function fallbackCopy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); setStatus(t.copied, 'success'); }
+        catch (e) { setStatus(t.copyFailed, 'error'); }
+        document.body.removeChild(ta);
+      }
+
+      function setActiveTab(activeBtn) {
+        [tabCat, tabRaw, tabJson].forEach(function (b) { b.classList.toggle('hha-tab-active', b === activeBtn); });
+        catPanel.hidden = activeBtn !== tabCat;
+        rawPanel.hidden = activeBtn !== tabRaw;
+        jsonPanel.hidden = activeBtn !== tabJson;
+      }
+      tabCat.addEventListener('click', function () { setActiveTab(tabCat); });
+      tabRaw.addEventListener('click', function () { setActiveTab(tabRaw); });
+      tabJson.addEventListener('click', function () { setActiveTab(tabJson); });
+
+      if (inputEl.value.trim()) analyze();
+    })();
+  </script>
+</div>
+
+<style is:global>
+  .hha-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  .hha-input-section { display: flex; flex-direction: column; gap: 0.45rem; }
+
+  .hha-input-section > label {
+    font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary);
+    display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  }
+
+  .hha-input-meta { display: inline-flex; align-items: center; gap: 0.5rem; }
+
+  .hha-example-select {
+    min-height: 32px;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.82rem;
+    font-family: var(--font-sans);
+    color: var(--color-text-secondary);
+    background: var(--color-surface-muted);
+    border-radius: var(--radius-pill);
+    border: 0;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    cursor: pointer;
+    transition: color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .hha-example-select:hover { color: var(--color-primary); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent); }
+  .hha-example-select:focus { outline: none; box-shadow: inset 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light); }
+
+  #hha-input { min-height: 180px; }
+
+  .hha-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .hha-result { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.25rem; }
+
+  .hha-summary {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+  }
+  .hha-summary-pill {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.22rem 0.7rem; border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-size: 0.78rem; font-weight: 700; color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+  }
+  .hha-summary-pill[hidden] { display: none; }
+  .hha-summary-pill[data-kind="response"], .hha-summary-pill[data-kind="ok"] {
+    color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+    background: var(--color-primary-light);
+  }
+  .hha-summary-pill[data-kind="request"] {
+    color: var(--color-accent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-accent) 45%, transparent);
+    background: color-mix(in oklch, var(--color-accent) 18%, var(--color-bg-secondary));
+  }
+  .hha-summary-pill[data-kind="warn"] {
+    color: var(--color-danger);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent);
+    background: color-mix(in oklch, var(--color-danger) 14%, var(--color-bg-secondary));
+  }
+
+  .hha-tabs {
+    display: flex; gap: 0; border-bottom: 1px solid var(--color-border-soft);
+  }
+  .hha-tab {
+    padding: 0.45rem 1rem; font-size: 0.86rem; font-weight: 660;
+    color: var(--color-text-secondary); background: none; border: 0;
+    border-bottom: 2px solid transparent; cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+  .hha-tab:hover { color: var(--color-text); }
+  .hha-tab.hha-tab-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+
+  .hha-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+  .hha-panel[hidden] { display: none; }
+  .hha-result[hidden] { display: none; }
+
+  .hha-cat-section { display: flex; flex-direction: column; gap: 0.5rem; }
+  .hha-cat-title {
+    font-family: var(--font-display);
+    font-size: 1rem; font-weight: 700; color: var(--color-text);
+    margin: 0; display: flex; align-items: center; gap: 0.5rem;
+    letter-spacing: 0.005em;
+  }
+  .hha-cat-count {
+    font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700;
+    padding: 0.1rem 0.45rem; border-radius: var(--radius-pill);
+    background: var(--color-surface-muted); color: var(--color-text-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .hha-status-line { padding: 0.5rem 0.75rem; border-radius: var(--radius-md);
+    background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .hha-status-line code { font-family: var(--font-mono); font-size: 0.86rem; color: var(--color-text); }
+
+  .hha-card {
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-subtle);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+    padding: 0.7rem 0.85rem;
+    display: flex; flex-direction: column; gap: 0.4rem;
+  }
+  .hha-card-head { display: flex; align-items: center; gap: 0.5rem; }
+  .hha-h-name {
+    font-family: var(--font-mono); font-size: 0.86rem; font-weight: 700;
+    color: var(--color-primary); word-break: break-all;
+  }
+  .hha-h-value code {
+    font-family: var(--font-mono); font-size: 0.82rem;
+    color: var(--color-text); word-break: break-all; line-height: 1.45;
+  }
+  .hha-h-desc { font-size: 0.82rem; color: var(--color-text-secondary); margin: 0; line-height: 1.55; }
+
+  .hha-hints { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+  .hha-hint {
+    font-size: 0.78rem; line-height: 1.5;
+    padding: 0.4rem 0.6rem; border-radius: var(--radius-sm);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .hha-hint strong { font-weight: 760; }
+  .hha-hint-warn {
+    color: var(--color-danger);
+    background: color-mix(in oklch, var(--color-danger) 10%, var(--color-bg-secondary));
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent);
+  }
+  .hha-hint-info {
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary);
+  }
+  .hha-hint-ok {
+    color: var(--color-success);
+    background: color-mix(in oklch, var(--color-success) 10%, var(--color-bg-secondary));
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-success) 40%, transparent);
+  }
+
+  .hha-pre {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    line-height: 1.55;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 640px) {
+    .hha-input-section > label { align-items: flex-start; flex-direction: column; }
+    .hha-input-meta { width: 100%; justify-content: space-between; }
+    .hha-tab { padding: 0.5rem 0.75rem; font-size: 0.82rem; }
+    .hha-cat-title { font-size: 0.95rem; }
+  }
+</style>

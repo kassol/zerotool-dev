@@ -1,0 +1,183 @@
+---
+title: "프로처럼 HTTP 헤더 읽기: 실전 가이드"
+description: "HTTP 원시 헤더를 붙여넣고 보안, 캐싱, CORS, 쿠키 메타데이터를 한 번에 점검하기. 카테고리 이해, 컴플라이언스 함정, 그리고 코드가 이미 보내고 있는 헤더를 제대로 활용하는 방법."
+pubDate: 2026-05-23
+lang: "ko"
+tags: ["http", "security-headers", "cors", "web-development", "developer-tools"]
+ogImage: /og/blog-http-header-analyzer-guide.png
+---
+
+CDN가 방금 설정 변경을 적용했고, 스테이징 응답에 40개의 헤더가 실려 있다. 절반은 익숙해 보이고, 몇 개는 의심스럽고, 나머지는 한 번도 자세히 읽어본 적이 없다. 브라우저 DevTools 네트워크 패널은 그것들을 주석 없이 긴 목록으로 보여줄 뿐이다 — 스크롤하고, 복사하고, 무엇이 바뀌었는지 파악하려고 문서에 붙여넣는다. 중복된 `Cache-Control`이나 누락된 `includeSubDomains` 지시자를 발견할 즈음에는, 풀 리퀘스트 리뷰는 이미 머지된 상태다.
+
+[원시 헤더를 분석기에 붙여넣기 →](/ko/tools/http-header-analyzer/)
+
+이 가이드는 HTTP 헤더가 실제로 무엇을 하는지, 어떤 카테고리에 속하는지, 매주 프로덕션에 출시되는 컴플라이언스 함정은 무엇인지, 그리고 헤더 분석기를 사용해 이 모든 것을 한 번에 이해하는 방법을 단계별로 설명한다.
+
+## HTTP 헤더의 실체
+
+HTTP 메시지는 상태 줄(응답) 또는 메서드 줄(요청)로 시작하고, 0개 이상의 헤더, 빈 줄, 그리고 선택적인 본문이 뒤따른다. 각 헤더는 한 줄에 `이름: 값` 쌍으로 표시된다. HTTP/2와 HTTP/3은 바이너리 프레이밍 계층을 사용하지만, 도구가 헤더를 직렬화하는 순간 — `curl -I`, `fetch -v`, DevTools의 "Copy as headers" 액션, Nginx 디버그 로그, 서비스 메시 trace — 텍스트 형태를 다시 얻게 된다. 분석기는 그 직렬화된 형태를 입력으로 받는다.
+
+목록은 무해해 보인다. 실제로는 모든 헤더가 클라이언트, 오리진 서버, 중간 캐시, 브라우저 기능, 분석 도구 사이의 계약이며, 그중 하나라도 잘못 설정하면 예측 가능한 실패 모드가 발생한다:
+
+| 잘못된 설정 | 표면화되는 증상 |
+|---|---|
+| `Cache-Control: no-store, max-age=3600` | 브라우저가 캐싱을 거부한다. `max-age`는 사실상 무효이고, 리뷰어는 캐싱이 작동한다고 가정한다. |
+| `Access-Control-Allow-Origin: *`와 `Allow-Credentials: true` | 스펙 위반. 브라우저가 응답을 거부하고 fetch가 프로덕션에서 조용히 실패한다. |
+| `Strict-Transport-Security: max-age=86400` | 1년 preload 요구치 미달. HSTS preload 제출은 경고 없이 실패한다. |
+| `Set-Cookie: session=…; Path=/` (`HttpOnly` 없음, `Secure` 없음) | XSS가 `document.cookie`로 쿠키를 읽는다. 리다이렉트 발생 시 쿠키는 평문 HTTP로 전송된다. |
+| `X-Content-Type-Options: nosniff` 누락 | 구형 브라우저가 `.txt` 업로드를 HTML로 추측 해석하여 임베디드 스크립트를 실행한다. |
+
+모든 행은 사후 분석에 여러 번 등장한 실제 사건이다. 분석기는 그것들을 인라인으로 플래그하므로, 당일 안에 수정을 출시할 수 있다.
+
+## 알아야 할 8가지 카테고리
+
+현실 세계 헤더의 대부분은 8개의 버킷에 속한다. 버킷을 알면 누가 그 헤더에 책임이 있는지, 무언가 잘못되었을 때 어디를 봐야 할지가 보인다.
+
+### 1. 상태 줄 / 메서드 줄
+
+메시지의 첫 번째 줄. `HTTP/1.1 200 OK`는 응답, `GET /api/v1/orders HTTP/1.1`은 요청. 분석기가 어느 쪽을 붙여넣었는지 자동 감지하고 나머지 보고서를 거기에 맞춰 조정한다 — 예를 들어 보안 경고는 응답에만 적용된다.
+
+### 2. 보안
+
+2026년 가장 자주 리뷰되는 카테고리. 모던 웹 애플리케이션에 필수인 헤더:
+
+- **Strict-Transport-Security** — 지정된 `max-age` 기간 동안 HTTPS를 강제한다. HSTS preload(`https://hstspreload.org/`)에는 최소한 `max-age=31536000`, `includeSubDomains`, `preload` 3종이 필요하다. 그보다 짧은 값은 브라우저가 해당 기간 동안만 지키는 가벼운 약속일 뿐, 결코 preload 목록에 오르지 못한다.
+- **Content-Security-Policy** — 스크립트, 스타일, 이미지, 프레임, fetch의 허용 소스를 화이트리스트로 지정. 현재 사용 가능한 가장 강력한 XSS 완화책이지만, `'unsafe-inline'`과 `'unsafe-eval'`은 대부분의 보호를 무력화한다.
+- **X-Frame-Options** — `DENY` 또는 `SAMEORIGIN`. CSP `frame-ancestors` 지시자로 대체되었지만, 구형 브라우저와 많은 도구는 여전히 이것을 존중한다.
+- **X-Content-Type-Options: nosniff** — MIME 스니핑을 비활성화한다. 단점은 없다. 응답에서 누락되면 분석기가 경고한다.
+- **Referrer-Policy** — 오리진 간 요청에서 얼마나 많은 referrer 정보를 노출할지 제어한다. `strict-origin-when-cross-origin`이 안전한 기본값이다.
+- **Permissions-Policy** — 오리진별로 브라우저 기능(카메라, 마이크, 위치, 전체화면, 결제 API)을 제한. 사장된 Feature-Policy를 대체한다.
+- **Cross-Origin-Opener-Policy / Embedder-Policy / Resource-Policy**(COOP / COEP / CORP) — 크로스 오리진 격리에 필수. 이것이 갖춰져야 `SharedArrayBuffer`와 고정밀 타이머가 해제된다.
+
+### 3. 캐싱
+
+응답이 디스크, 메모리, 혹은 아무 곳에도 가지 않는지를 결정하는 헤더:
+
+- **Cache-Control** — 주요 레버. `no-store`는 모든 것을 덮어쓰고, `private`는 공유 캐시 밖에 두며, `s-maxage`는 공유 캐시에만 적용된다.
+- **ETag / Last-Modified** — 조건부 GET의 쌍. 서버에서 한 번 계산하고, 클라이언트가 `If-None-Match` / `If-Modified-Since`를 보내면 `304 Not Modified`로 답한다.
+- **Vary** — 응답이 어떤 요청 헤더에 따라 달라지는지 캐시에 알린다. `Vary: Accept-Encoding`을 빠뜨리면 gzip 응답이 평문을 요청한 클라이언트에 제공된다.
+
+### 4. 콘텐츠
+
+본문이 무엇인지. `Content-Type`이 주연 — `text/html`, `text/html; charset=utf-8`, `application/json`의 차이에 유의. `Content-Encoding`은 압축을 보고하고, `Content-Disposition`은 브라우저가 파일을 인라인으로 표시할지 다운로드를 강제할지 결정한다.
+
+### 5. CORS
+
+`Access-Control-*` 헤더는 크로스 오리진 읽기를 관리한다. 매주 깨진 채로 출시되는 두 조합:
+
+- `Access-Control-Allow-Origin: *`와 `Access-Control-Allow-Credentials: true` 병용. 스펙 위반이며 브라우저가 응답을 거부한다.
+- `Access-Control-Allow-Origin: <origin>`이지만 요청 `Origin`을 그대로 반영하지 않음. dev에서는 오리진이 우연히 일치해서 fetch가 성공하지만, 다른 서브도메인이 같은 엔드포인트를 호출하는 순간 실패한다.
+
+### 6. 인증
+
+`Authorization`, `WWW-Authenticate`, `Proxy-Authorization`, `Proxy-Authenticate`. 중요한 것은 scheme 값 — `Bearer`, `Basic`, `Digest`, `AWS4-HMAC-SHA256`. 프로덕션 토큰을 공유 의도가 있는 도구에 붙여넣지 말 것. 분석기는 클라이언트사이드로 파싱하며 업로드가 없지만, Jira 티켓의 스크린샷에 첨부하면 공개 노출과 동일한 효과가 난다.
+
+### 7. 쿠키
+
+`Cookie`(요청)와 `Set-Cookie`(응답). 보안은 플래그가 책임진다: `HttpOnly`로 JavaScript 접근 거부, `Secure`로 HTTPS 요구, `SameSite`로 크로스 사이트 전송 제어, `Path` / `Domain` / `Expires` / `Max-Age`로 수명 범위 지정. 분석기는 `HttpOnly`나 `Secure`가 없는 `Set-Cookie`를 모두 플래그한다. XSS가 세션 토큰을 탈취하는 표준 경로이기 때문이다.
+
+### 8. 전송 / 범위 / 프록시 / 일반 / 사용자 정의
+
+나머지 모두: `Transfer-Encoding`, `Range`, `Forwarded` / `X-Forwarded-For`, `Date`, `Server`, `User-Agent`, 그리고 자체 인프라가 추가하는 `X-*` 헤더. 분석기는 이들을 묶어 그룹화해서 조치가 필요한 항목들을 묻히지 않게 한다.
+
+## 분석기 사용법: 3분이면 익숙해진다
+
+`/ko/tools/http-header-analyzer`를 열고, 붙여넣고, 읽는다.
+
+### 1단계 — 헤더 캡처
+
+가장 편리한 출처를 선택한다:
+
+```bash
+# 명령줄에서
+curl -sI https://api.example.com/v1/orders
+# -I는 HEAD 요청. 본문도 함께 받으려면 -i로 교체.
+```
+
+```javascript
+// 대상 페이지의 브라우저 콘솔에서
+fetch('/api/v1/orders').then(async (r) => {
+  const lines = [`HTTP/1.1 ${r.status} ${r.statusText}`];
+  for (const [k, v] of r.headers) lines.push(`${k}: ${v}`);
+  console.log(lines.join('\n'));
+});
+```
+
+```text
+# DevTools 네트워크 패널에서: 요청을 우클릭 → Copy → Copy as cURL,
+# 터미널에 붙여넣고 -I를 추가하거나, Headers 탭에서 응답 헤더 블록을 직접 복사.
+```
+
+### 2단계 — 붙여넣고 요약 읽기
+
+상단 요약 바가 즉시 알려주는 것:
+
+- **요청 또는 응답** — 첫 줄로 자동 감지.
+- **상태 줄** — 맥락을 위해 그대로 보존.
+- **헤더 수** — 원본과 대조해 확인.
+- **보안 헤더 개수** — 존재하는 보안 헤더의 수, 응답에 하나도 없으면 경고.
+
+### 3단계 — 카테고리로 파고들기
+
+분류 보기는 모든 헤더를 해당 버킷에 넣고 한 줄 설명과 필요한 컴플라이언스 힌트를 붙인다. 힌트는 보수적이다 — 명백한 잘못된 설정만 플래그하고, 스타일 선호는 평가하지 않는다:
+
+- HSTS `max-age`가 1년 미만이거나 `includeSubDomains` / `preload`가 누락.
+- CSP에 `'unsafe-inline'` 또는 `'unsafe-eval'` 포함.
+- `Set-Cookie`에 `HttpOnly` 또는 `Secure` 누락.
+- `Access-Control-Allow-Credentials: true`와 와일드카드 오리진 병용.
+- `Cache-Control`에 `no-store`와 `max-age`가 함께(max-age 사실상 무효).
+
+### 4단계 — 필요 시 내보내기
+
+**Copy JSON** 액션은 정규화된 객체를 반환한다: `{ "Header-Name": "value" }`. 중복 헤더는 순서를 보존한 배열로 합쳐지며, 상태 줄은 `_status` 키 아래로 들어간다. JSON을 사후 분석 문서, Slack 스레드, JSON-diff 도구에 넣어 스테이징과 프로덕션을 비교한다.
+
+## 현실의 실패 모드
+
+코드 리뷰를 그냥 지나치기 쉬운, 분석기가 잡아주는 패턴 몇 가지.
+
+### "HSTS를 추가했는데 Chrome이 무시한다"
+
+`max-age`가 86400 — 하루로 설정되어 있었다. HSTS는 작동하지만, preload 목록은 `max-age=31536000`(1년) 미만의 모든 것을 거부한다. 팀은 테스트 중에 낮은 값을 설정했고 다시 올리지 않은 채로 두었다. 분석기는 이를 즉시 플래그한다 — 규칙이 스펙 속이 아니라 힌트에 인코딩되어 있기 때문이다.
+
+### "CORS가 dev에서는 동작하는데 프로덕션에서 깨진다"
+
+dev 환경은 `Access-Control-Allow-Origin: *`를 보낸다. 프로덕션이 세션 쿠키를 읽어야 하는 새 엔드포인트 때문에 `Allow-Credentials: true`를 설정하기 시작한다. 브라우저는 와일드카드를 사용한 모든 preflight를 거부한다. 해결책은 요청 `Origin` 헤더를 명시적으로 그대로 반영하는 것 — 분석기가 문제의 조합을 플래그하므로 diff가 명확하다.
+
+### "쿠키가 설정되었는데 브라우저가 다시 보내지 않는다"
+
+`Set-Cookie: session=abc; HttpOnly; SameSite=None`은 괜찮아 보인다 — `Secure`가 빠진 것을 알아채기 전까지는. 브라우저는 `Secure` 없는 `SameSite=None`을 조용히 거부한다. 분석기는 `SameSite` 값과 무관하게 `Secure` 누락 경고를 띄운다. `Secure`가 더 안전한 기본값이기 때문이다.
+
+### "Cache-Control에 no-store와 max-age가 둘 다 있다"
+
+리버스 프록시가 인증된 라우트에 `Cache-Control: no-store`를 주입하는 동안, 오리진은 여전히 `Cache-Control: public, max-age=3600`을 반환한다. 브라우저는 두 값을 결합하고 `no-store`를 따른다. 리뷰어는 `max-age` 값이 여전히 보이기 때문에 캐싱이 동작한다고 가정한다. 분석기는 이 모순을 플래그한다.
+
+## ZeroTool과 다른 헤더 도구의 차이
+
+기존 도구는 대부분 두 진영으로 나뉜다. **URL 페치 도구**(`securityheaders.com`, KeyCDN, dnschecker 등)는 URL을 입력받아 자체 서버에서 호출하고 응답을 보고한다. 일회성 공개 사이트 감사에는 유용하지만, 대상이 서드파티 백엔드에서 도달 가능해야 한다 — VPN 뒤의 스테이징 URL, 내부 서비스, 배포 전인 것은 도울 수 없다. **붙여넣기 기반 도구**(`mockoon.com`, `outstanding.tools` 등)는 제공된 문자열을 파싱한다. ZeroTool의 HTTP Header 분석기는 이 두 번째 진영에 속한다.
+
+ZeroTool이 그 위에 더하는 것:
+
+- **각 헤더에 인라인된 컴플라이언스 힌트**. 페이지 하단의 보안 점수가 아니다. 힌트는 무엇을 바꿔야 하고 왜 그래야 하는지를 알려준다 — 단순한 알파벳 등급이 아니다.
+- **요청 / 응답 자동 감지**. curl `-I` 출력과 `fetch -v` 출력 모두 모드 전환 없이 그대로 동작한다.
+- **분류별 + 원본 + JSON 탭**. 같은 붙여넣기 하나가 보안 리뷰, 스테이징 대 프로덕션 diff, 다운스트림 도구용 JSON 내보내기를 모두 구동한다.
+- **100% 클라이언트사이드**. 붙여넣은 Authorization 토큰과 Set-Cookie 문자열은 브라우저를 떠나지 않는다. DevTools 네트워크 패널을 열고 Analyze를 클릭해 검증할 수 있다 — 아웃바운드 요청이 0개다.
+
+## ZeroTool 워크벤치의 다른 도구와 함께 쓰기
+
+분석기는 더 긴 HTTP 디버깅 경로의 한 정거장이다. 흔한 조합:
+
+- **[Cookie 문자열 파서](/ko/tools/cookie-parser/)** — 복잡한 `Set-Cookie` 문자열을 이름 / 값 / 플래그 표로 분해해야 할 때, 워크벤치를 떠나지 않고.
+- **[CSP 헤더 생성기](/ko/tools/csp-header-generator/)** — 분석기가 약한 `Content-Security-Policy`를 플래그하면, 지시자와 호스트 소스로부터 더 엄격한 정책을 생성.
+- **[HAR 파일 분석기](/ko/tools/har-file-analyzer/)** — 헤더가 HAR 익스포트에서 왔다면, 파일을 드롭하고 요청 사이를 이동하여 복사/붙여넣기를 생략.
+- **[HTTP 상태 코드](/ko/tools/http-status-codes/)** — 상태 줄에 잘 모르는 코드(`418`, `425`, `451`)가 보이면 의미와 사용 사례를 확인.
+
+## 더 읽을 거리
+
+- [MDN — HTTP 헤더 참조](https://developer.mozilla.org/ko/docs/Web/HTTP/Headers)
+- [OWASP Secure Headers Project](https://owasp.org/www-project-secure-headers/)
+- [RFC 9110 — HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
+- [RFC 9111 — HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111)
+- [RFC 6797 — HTTP Strict Transport Security](https://www.rfc-editor.org/rfc/rfc6797)
+- [W3C — Permissions Policy](https://www.w3.org/TR/permissions-policy-1/)
+
+최근 배포의 응답을 붙여넣고 카테고리를 한 바퀴 돌아보라. HTTP 메시지에서 정말로 흥미로운 부분은 자신이 작성하지 않은 헤더인 경우가 많다 — CDN의 기본값, 프레임워크의 기본값, WAF의 기본값. 분석기는 그것들을 한 번에 책상 위에 펼쳐 놓는다.
