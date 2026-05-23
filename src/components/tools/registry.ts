@@ -129,6 +129,7 @@ import EyedropperColorPickerTool from './EyedropperColorPickerTool.astro';
 import HttpHeaderAnalyzerTool from './HttpHeaderAnalyzerTool.astro';
 import GraphqlFormatterTool from './GraphqlFormatterTool.astro';
 import JqPlaygroundTool from './JqPlaygroundTool.astro';
+import KeycodeExplorerTool from './KeycodeExplorerTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -258,4 +259,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'http-header-analyzer': HttpHeaderAnalyzerTool,
   'graphql-formatter': GraphqlFormatterTool,
   'jq-playground': JqPlaygroundTool,
+  'keycode-explorer': KeycodeExplorerTool,
 };
