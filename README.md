@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 127 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 128 tools and growing.
 
 ## Tools
 
@@ -136,6 +136,7 @@
 | HTTP Header Analyzer | [/tools/http-header-analyzer](https://zerotool.dev/tools/http-header-analyzer) |
 | GraphQL Formatter | [/tools/graphql-formatter](https://zerotool.dev/tools/graphql-formatter) |
 | jq Playground | [/tools/jq-playground](https://zerotool.dev/tools/jq-playground) |
+| JavaScript Keycode Explorer | [/tools/keycode-explorer](https://zerotool.dev/tools/keycode-explorer) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
