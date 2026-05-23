@@ -1,0 +1,183 @@
+---
+title: "Format GraphQL in the Browser: A Practical Guide"
+description: "Beautify, minify, and validate GraphQL queries, mutations, and SDL schemas without an editor extension. Browser-only, runs the official graphql-js parser locally."
+pubDate: 2026-05-23
+lang: "en"
+tags: ["graphql", "developer-tools", "code-formatting", "schema", "browser-based"]
+ogImage: /og/blog-graphql-formatter-guide.png
+---
+
+A backend engineer drops a 90-line GraphQL operation into Slack — one line. No indentation, every fragment inlined, three nested `@include` directives. Reviewers paste it into their IDE for syntax highlighting, except half the team uses VS Code, the other half uses JetBrains, and the Slack version still has zero-width characters smuggled in by the mobile client. By the time anyone can read the query, the conversation has moved on.
+
+[Format the GraphQL right here →](/tools/graphql-formatter)
+
+## What graphql-js Actually Does for You
+
+The reference implementation maintained by The GraphQL Foundation — the package literally called `graphql` on npm — ships three primitives that this tool wires together:
+
+```ts
+import { parse, print, stripIgnoredCharacters } from 'graphql';
+
+const ast = parse(text);                  // text -> DocumentNode AST
+const pretty = print(ast);                 // AST -> canonical formatted GraphQL
+const wire   = stripIgnoredCharacters(text);  // text -> minified GraphQL (spec-defined)
+```
+
+`parse` builds a `DocumentNode` and, on the first invalid token, throws a `GraphQLError` carrying `locations: [{ line, column }]`. `print` walks the AST and emits the canonical form: 2-space indent, one selection per line, fragments separated by a blank line. `stripIgnoredCharacters` is what the spec calls *ignored token elimination* — it removes everything the GraphQL grammar marks as ignored (whitespace, line terminators, commas, comments) and leaves a wire-safe shortest form.
+
+Three operations, one tiny dependency, zero server round-trips.
+
+## Format, Minify, Validate — When to Use Which
+
+| Action | What it does | When to reach for it |
+|---|---|---|
+| **Format** | Reprints the AST through `print` (2-space indent by default; 4-space is a post-print indent doubling) | Review-ready queries, committing operations to `.graphql` files, untangling something the linter mangled |
+| **Minify** | Removes every ignored token via `stripIgnoredCharacters` | Reducing wire payload when persisted queries aren't an option, inlining a query into a JSON config |
+| **Validate** | Parses without printing, reports first syntax error with line/column | Sanity-check a query you suspect is broken before round-tripping it through the network |
+
+A common confusion: validating here means *parses cleanly*, not *fields exist on your schema*. Schema-aware validation needs the schema itself — that lives in `graphql-cli`, `apollo client:check`, or `graphql-inspector`. See [Why this is syntax-only](#why-this-is-syntax-only) below.
+
+## Five Scenarios That Actually Happen
+
+### 1. A code-generator emitted a one-liner
+
+Some persisted-query toolchains store the operation as a single minified string. When the on-call engineer needs to read it at 2 a.m., paste into Format, get back canonical indentation, scan it like normal code.
+
+### 2. PR reviewer asks for an SDL change preview
+
+You're proposing a new `type` and `input` for a procurement service. Pretty-print the SDL fragment, paste into the PR description as a fenced `graphql` block, and reviewers see the same shape your IDE shows.
+
+### 3. Persisted query bundler trims comments
+
+Most build tooling strips comments before hashing the operation. Run Format to confirm what gets hashed — a leading comment can change the persisted query ID.
+
+### 4. Debugging an unexpected 400
+
+Servers return `Syntax Error: ...` for malformed operations. Reproduce the error here with the exact body you sent, and you get the same `line` and `column` the server would have given you, without re-deploying anything.
+
+### 5. Schema diff in a chat thread
+
+Someone shares a schema snippet without line breaks because their chat client mangled it. Format it back to canonical, then run a real diff tool (or `graphql-inspector`) against the previous version locally.
+
+## Constructs That Just Work
+
+The parser is the official spec implementation, so anything `graphql-js` accepts is accepted here:
+
+```graphql
+# Variables, directives, aliases, fragments, inline fragments
+query Feed($cursor: String, $verbose: Boolean!) {
+  recent: posts(first: 20, after: $cursor) {
+    edges {
+      node {
+        ...PostCore
+        ... on VideoPost @include(if: $verbose) {
+          duration
+          thumbnail(size: LARGE) { url }
+        }
+      }
+    }
+  }
+}
+
+fragment PostCore on Post {
+  id
+  title
+  author { displayName }
+}
+
+# Mutations, subscriptions, operations with multiple definitions
+mutation Publish($id: ID!) { publishPost(id: $id) { id status } }
+subscription OnComment($postId: ID!) { commentAdded(postId: $postId) { id body } }
+
+# SDL: type system definitions
+"""A reviewable artifact in the system."""
+type Post implements Node & Timestamped {
+  id: ID!
+  title: String!
+  publishedAt: DateTime
+  author: User!
+}
+
+input PublishPostInput {
+  postId: ID!
+  notifySubscribers: Boolean = true
+}
+
+union FeedItem = Post | VideoPost | Advertisement
+
+enum PostStatus { DRAFT PUBLISHED ARCHIVED }
+```
+
+Custom directives, multiple operations in one document, schema extensions (`extend type ...`) — all parse, all reprint.
+
+## Common Pitfalls
+
+### Trailing commas inside argument lists
+
+GraphQL treats commas as ignored tokens, so `(id: 1, name: "ada",)` parses but reads oddly after formatting because the trailing comma vanishes into the AST. The reprinted form drops it. That's spec behavior, not a bug.
+
+### Fragment spreads vs. inline fragments
+
+`...Foo` is a spread that points at a separately defined `fragment Foo on T { ... }`. `... on T { ... }` is an inline fragment with no name. Format keeps both, but if you paste only the spread (`...Foo`) without the fragment definition, the parse still succeeds — GraphQL grammar doesn't require the target to be present, only that the syntax is valid. The downstream server will reject the operation; this tool will not.
+
+### Directive ordering
+
+GraphQL allows multiple directives on the same node, and order is significant for some servers. `print` preserves source order. If you re-format and a server suddenly errors, check that an upstream linter or autoformatter (a Prettier plugin, an ESLint rule) hasn't reordered them in transit.
+
+### SDL default values
+
+`input PublishPostInput { notifySubscribers: Boolean = true }` — the `= true` is the default value. After formatting, it stays inline with the field. If your style guide wants defaults on a separate line, do it manually after `print`; the official AST printer doesn't expose that toggle.
+
+### Block strings (`"""..."""`)
+
+Multi-line descriptions and block-string arguments survive both Minify and Format intact. `stripIgnoredCharacters` does not touch the bytes inside a block-string literal — only the ignored tokens around it — and `print` writes the block string back from the AST without re-indenting its contents. The spec's `BlockStringValue` algorithm runs at *value* time (when a server or client materializes the string), not during parse or print.
+
+## Why This Is Syntax-Only
+
+`parse` checks grammar. It does not check that `User.posts` exists, that `$cursor` is the right type, or that you have permission to query `internalNotes`. Those are *validation* and *execution* concerns, and they need the schema and (sometimes) the runtime context.
+
+If you need schema-aware validation:
+
+- **`graphql-cli validate`** — give it a schema file and an operation file, it tells you which fields don't exist.
+- **`apollo client:check`** — checks operations against a registered schema in Apollo Studio.
+- **`graphql-inspector validate`** — runs against any SDL, has good CI ergonomics.
+
+All three are command-line tools that need your schema. Pretty-printing the operation here is a useful first step — it makes the field paths legible — but the type check happens elsewhere.
+
+## When to Use This Tool vs. a Local Pipeline
+
+| Situation | Use the browser tool | Use a local pipeline |
+|---|---|---|
+| One-off query from a chat message | ✓ | |
+| Reviewing a PR that includes a GraphQL operation inline | ✓ | |
+| Sanity-check a query before pasting into Postman / Insomnia | ✓ | |
+| Formatting a `.graphql` file in your repo | | `prettier --parser graphql` in pre-commit |
+| Validating operations against your schema in CI | | `graphql-cli` / `graphql-inspector` |
+| Auto-format on save | | `prettier-plugin-graphql` in your editor |
+
+The browser tool exists for the ad-hoc cases that don't justify reaching for a CLI. For anything that runs more than once, put the formatter in your toolchain.
+
+## How This Tool Works Locally
+
+Everything runs inside the page. The full path of a Format request:
+
+1. Browser fetches `/tools/graphql-formatter/` (static HTML, no API).
+2. The Astro-bundled JS chunk for this route imports `parse`, `print`, `stripIgnoredCharacters`, `Source`, and `GraphQLError` from the `graphql` npm package — tree-shaken to roughly 20–25 KB gzipped.
+3. You paste text, click Format, the parser runs in the main thread, the result writes back into the output textarea.
+4. No `fetch`, no `XMLHttpRequest`, no analytics beacon carries the contents. The page does fire a single `tool_use` GA event on action (no payload), and Auto Ads can read the rendered DOM — neither path sees your query body.
+
+The 10 MB input cap exists because the parser is synchronous and a 50 MB schema-introspection dump would freeze the tab. For files larger than that, pipe through `prettier --parser graphql` locally.
+
+## Related ZeroTool Tools
+
+- [SQL Formatter](/tools/sql-formatter) — same workflow for SQL queries.
+- [JSON Formatter](/tools/json-formatter) — for the response bodies your GraphQL server returns.
+- [XML Formatter](/tools/xml-formatter) — for the SOAP and ATOM corners of the world.
+- [JWT Decoder](/tools/jwt-decoder) — when the `Authorization` header in your GraphQL request needs inspecting.
+
+## Further Reading
+
+- [GraphQL October 2021 Specification](https://spec.graphql.org/October2021/) — the source of truth for grammar.
+- [graphql-js on GitHub](https://github.com/graphql/graphql-js) — the parser/printer this tool runs.
+- [GraphQL Foundation](https://graphql.org/foundation/) — governance and conformance information.
+- [Apollo: Persisted Queries](https://www.apollographql.com/docs/router/configuration/persisted-queries/) — relevant when deciding whether minified payloads matter for your stack.

@@ -1,0 +1,183 @@
+---
+title: "浏览器里格式化 GraphQL：一份实用指南"
+description: "美化、压缩、校验 GraphQL 查询、变更与 SDL schema，无需编辑器插件。纯浏览器端运行，本地调用官方 graphql-js 解析器。"
+pubDate: 2026-05-23
+lang: "zh"
+tags: ["graphql", "developer-tools", "code-formatting", "schema", "browser-based"]
+ogImage: /og/blog-graphql-formatter-guide.png
+---
+
+后端工程师把一段 90 行的 GraphQL 操作塞进 Slack——压成一整行：没有缩进、所有 fragment 都内联展开、三个嵌套的 `@include` 指令。评审者把它粘进 IDE 想看语法高亮，结果团队一半人用 VS Code、一半人用 JetBrains，而 Slack 里那个版本还被移动端客户端偷偷塞了几个零宽字符。等到终于有人能读懂这段 query 时，对话早已翻篇。
+
+[在这里直接格式化 GraphQL →](/zh/tools/graphql-formatter/)
+
+## graphql-js 到底替你做了什么
+
+GraphQL 基金会维护的参考实现——npm 上那个直接叫 `graphql` 的包——提供了三个原语，这个工具把它们串起来：
+
+```ts
+import { parse, print, stripIgnoredCharacters } from 'graphql';
+
+const ast = parse(text);                  // text -> DocumentNode AST
+const pretty = print(ast);                 // AST -> canonical formatted GraphQL
+const wire   = stripIgnoredCharacters(text);  // text -> minified GraphQL (spec-defined)
+```
+
+`parse` 构建 `DocumentNode`，遇到第一个非法 token 就抛出 `GraphQLError`，错误对象里带着 `locations: [{ line, column }]`。`print` 遍历 AST 并输出规范形式：2 空格缩进、每个选择一行、fragment 之间空一行。`stripIgnoredCharacters` 执行的就是规范里所谓的「忽略词元剔除」（ignored token elimination）——它把 GraphQL 语法中标记为忽略的所有内容（空白、换行、逗号、注释）剔除干净，留下可安全上线的最短形式。
+
+三个操作，一个极小的依赖，零次服务端往返。
+
+## Format、Minify、Validate——什么时候用哪个
+
+| 动作 | 做了什么 | 适用场景 |
+|---|---|---|
+| **Format** | 把 AST 通过 `print` 重新打印（默认 2 空格缩进；4 空格是 print 之后再加倍） | 评审就绪的 query、把操作提交到 `.graphql` 文件、整理被 linter 搞乱的代码 |
+| **Minify** | 通过 `stripIgnoredCharacters` 去掉所有忽略词元 | 在没法用 persisted query 时压缩线上负载、把 query 内联到 JSON 配置里 |
+| **Validate** | 只 parse 不打印，报告第一个语法错误的行列位置 | 在让它在网络上走一个来回之前先做一次自检 |
+
+一个常见的误解：这里的「校验」指的是「能否干净 parse」，而不是「字段是否真的在你的 schema 上存在」。schema 感知的校验需要 schema 本身——那是 `graphql-cli`、`apollo client:check`、`graphql-inspector` 的活儿。下方〈为什么只做语法级校验〉一节会讲到。
+
+## 五个真实发生过的场景
+
+### 1. 代码生成器吐出一行式 query
+
+某些 persisted-query 工具链会把操作存成单行压缩字符串。值班工程师凌晨 2 点要看懂它时，粘进 Format，拿到规范缩进，像普通代码一样扫读即可。
+
+### 2. PR 评审者要求看 SDL 改动预览
+
+你要为一个采购服务新增 `type` 和 `input`。把 SDL 片段美化打印出来，作为 fenced `graphql` 代码块贴到 PR 描述里，评审者看到的形态就和你 IDE 里一致。
+
+### 3. Persisted query bundler 删掉了注释
+
+大多数构建工具链会在哈希操作之前剥掉注释。跑一遍 Format 确认到底是什么被哈希了——一个开头注释就能改掉 persisted query ID。
+
+### 4. 调试莫名其妙的 400
+
+服务端面对畸形操作返回 `Syntax Error: ...`。把你发出去的请求体原封不动粘到这里复现错误，你能拿到和服务端一样的 `line` 和 `column`，无需重新部署任何东西。
+
+### 5. 群聊里讨论 schema diff
+
+有人分享 schema 片段时被聊天客户端搞掉了换行。先 Format 回规范形式，再本地跑真正的 diff 工具（或者 `graphql-inspector`）和上一个版本比对。
+
+## 一切语法构造照单全收
+
+解析器就是官方的规范实现，所以 `graphql-js` 能接受的，这里都能接受：
+
+```graphql
+# Variables, directives, aliases, fragments, inline fragments
+query Feed($cursor: String, $verbose: Boolean!) {
+  recent: posts(first: 20, after: $cursor) {
+    edges {
+      node {
+        ...PostCore
+        ... on VideoPost @include(if: $verbose) {
+          duration
+          thumbnail(size: LARGE) { url }
+        }
+      }
+    }
+  }
+}
+
+fragment PostCore on Post {
+  id
+  title
+  author { displayName }
+}
+
+# Mutations, subscriptions, operations with multiple definitions
+mutation Publish($id: ID!) { publishPost(id: $id) { id status } }
+subscription OnComment($postId: ID!) { commentAdded(postId: $postId) { id body } }
+
+# SDL: type system definitions
+"""A reviewable artifact in the system."""
+type Post implements Node & Timestamped {
+  id: ID!
+  title: String!
+  publishedAt: DateTime
+  author: User!
+}
+
+input PublishPostInput {
+  postId: ID!
+  notifySubscribers: Boolean = true
+}
+
+union FeedItem = Post | VideoPost | Advertisement
+
+enum PostStatus { DRAFT PUBLISHED ARCHIVED }
+```
+
+自定义 directive、同一文档里多个操作、schema 扩展（`extend type ...`）——全部都能 parse、全部都能重新打印。
+
+## 常见陷阱
+
+### 参数列表里的尾随逗号
+
+GraphQL 把逗号当成忽略词元，所以 `(id: 1, name: "ada",)` 能 parse，但 format 之后读起来怪怪的，因为尾随逗号在 AST 里就消失了。重新打印的版本会把它丢掉。这是规范行为，不是 bug。
+
+### Fragment spread vs. inline fragment
+
+`...Foo` 是一个 spread，指向单独定义的 `fragment Foo on T { ... }`。`... on T { ... }` 是没有名字的 inline fragment。Format 两种都保留，但如果你只粘 spread（`...Foo`）而不带 fragment 定义，parse 依然成功——GraphQL 语法不要求目标 fragment 必须存在，只要语法本身合法即可。下游服务端会拒绝这个操作，但这个工具不会。
+
+### Directive 顺序
+
+GraphQL 允许同一节点上有多个 directive，而且对某些服务端来说顺序有意义。`print` 保留源代码里的顺序。如果你重新 format 之后服务端突然报错，检查是不是上游某个 linter 或自动格式化工具（Prettier 插件、ESLint 规则）在传递过程中把它们重排了。
+
+### SDL 默认值
+
+`input PublishPostInput { notifySubscribers: Boolean = true }`——`= true` 是默认值。Format 之后它会和字段保持同行。如果你的代码风格指南要求默认值单独一行，print 之后手动调；官方 AST 打印器没暴露这个开关。
+
+### 块字符串（`"""..."""`）
+
+多行 description 和块字符串参数在 Minify 和 Format 下都原样保留。`stripIgnoredCharacters` 不会动块字符串字面量内部的字节——它只处理周围的忽略词元——而 `print` 把块字符串从 AST 原样写回，不会重新缩进里面的内容。规范里的 `BlockStringValue` 算法是在「取值」时（服务端或客户端把字符串物化的时刻）跑的，不是在 parse 或 print 时跑。
+
+## 为什么只做语法级校验
+
+`parse` 检查语法。它不检查 `User.posts` 是否存在、`$cursor` 类型是否对、你是否有权限查询 `internalNotes`。这些是**校验**（validation）和**执行**（execution）阶段的事，需要 schema 以及（有时还需要）运行时上下文。
+
+如果你需要 schema 感知的校验：
+
+- **`graphql-cli validate`**——给它一个 schema 文件和一个 operation 文件，它会告诉你哪些字段不存在。
+- **`apollo client:check`**——对照 Apollo Studio 里注册的 schema 校验操作。
+- **`graphql-inspector validate`**——可对任意 SDL 运行，CI 体验良好。
+
+这三个都是命令行工具，都需要你的 schema。在这里把操作美化打印出来是一个有用的第一步——它让字段路径变得可读——但类型检查发生在别处。
+
+## 浏览器工具 vs. 本地流水线：什么时候用哪个
+
+| 场景 | 用浏览器工具 | 用本地流水线 |
+|---|---|---|
+| 从聊天消息里冒出来的一次性 query | ✓ | |
+| 评审 PR 里内联的 GraphQL 操作 | ✓ | |
+| 把 query 粘到 Postman / Insomnia 前先做一次校验 | ✓ | |
+| 格式化仓库里的 `.graphql` 文件 | | pre-commit 跑 `prettier --parser graphql` |
+| CI 里对照 schema 校验操作 | | `graphql-cli` / `graphql-inspector` |
+| 保存时自动格式化 | | 编辑器装 `prettier-plugin-graphql` |
+
+浏览器工具是为那些不值得专门搭 CLI 的临时场景准备的。任何跑超过一次的事，把 formatter 放进你的工具链。
+
+## 工具在本地是怎么跑的
+
+一切都在页面里完成。一次 Format 请求的完整路径：
+
+1. 浏览器请求 `/tools/graphql-formatter/`（静态 HTML，没有 API）。
+2. 这个路由的 Astro JS chunk 从 `graphql` npm 包里 import `parse`、`print`、`stripIgnoredCharacters`、`Source`、`GraphQLError`——tree-shaking 后 gzip 大约 20–25 KB。
+3. 你粘文本，点 Format，解析器在主线程跑，结果写回输出 textarea。
+4. 没有 `fetch`、没有 `XMLHttpRequest`、没有 analytics beacon 携带你的内容。页面会在动作时触发一个 `tool_use` GA 事件（不带负载），Auto Ads 能读到渲染后的 DOM——两条路径都看不到你的 query 主体。
+
+10 MB 的输入上限存在是因为解析器是同步的，50 MB 的 schema introspection dump 会把 tab 卡死。比这更大的文件，本地用 `prettier --parser graphql` 走管道处理。
+
+## ZeroTool 相关工具
+
+- [SQL Formatter](/zh/tools/sql-formatter/) —— SQL 查询的同款工作流。
+- [JSON Formatter](/zh/tools/json-formatter/) —— 处理 GraphQL 服务端返回的响应体。
+- [XML Formatter](/zh/tools/xml-formatter/) —— SOAP 和 ATOM 那些角落世界。
+- [JWT Decoder](/zh/tools/jwt-decoder/) —— 检查 GraphQL 请求里 `Authorization` 头时用得上。
+
+## 延伸阅读
+
+- [GraphQL October 2021 Specification](https://spec.graphql.org/October2021/) —— 语法权威来源。
+- [graphql-js on GitHub](https://github.com/graphql/graphql-js) —— 本工具运行的 parser/printer。
+- [GraphQL Foundation](https://graphql.org/foundation/) —— 治理与一致性信息。
+- [Apollo: Persisted Queries](https://www.apollographql.com/docs/router/configuration/persisted-queries/) —— 在判断 minify 负载对你的技术栈是否重要时值得一读。

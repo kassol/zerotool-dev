@@ -1,0 +1,183 @@
+---
+title: "ブラウザで GraphQL を整形する実用ガイド"
+description: "エディタ拡張を使わずに GraphQL のクエリ、ミューテーション、SDL スキーマを整形・ミニファイ・検証する。ブラウザ完結、公式の graphql-js パーサーをローカルで実行。"
+pubDate: 2026-05-23
+lang: "ja"
+tags: ["graphql", "developer-tools", "code-formatting", "schema", "browser-based"]
+ogImage: /og/blog-graphql-formatter-guide.png
+---
+
+バックエンドエンジニアが 90 行の GraphQL オペレーションを Slack に貼る。1 行で。インデントなし、フラグメントは全部インライン、`@include` ディレクティブが 3 段ネスト。レビュアーはシンタックスハイライトのために IDE に貼り直すが、チームの半分は VS Code、もう半分は JetBrains。しかも Slack に貼られたバージョンには、モバイルクライアントが紛れ込ませたゼロ幅文字まで混じっている。誰かが読める形にする頃には、議論はとっくに次の話題に移っている。
+
+[ここで GraphQL を整形する →](/ja/tools/graphql-formatter/)
+
+## graphql-js が実際にやってくれること
+
+GraphQL Foundation がメンテナンスしているリファレンス実装 — npm でそのまま `graphql` という名前のパッケージ — は、このツールが束ねている 3 つのプリミティブを提供する。
+
+```ts
+import { parse, print, stripIgnoredCharacters } from 'graphql';
+
+const ast = parse(text);                  // text -> DocumentNode AST
+const pretty = print(ast);                 // AST -> canonical formatted GraphQL
+const wire   = stripIgnoredCharacters(text);  // text -> minified GraphQL (spec-defined)
+```
+
+`parse` は `DocumentNode` を構築し、最初の無効トークンに当たると `locations: [{ line, column }]` を含む `GraphQLError` を投げる。`print` は AST を歩いて正準形式を出力する：2 スペースインデント、1 行 1 セレクション、フラグメント間は空行で区切る。`stripIgnoredCharacters` は仕様が *ignored token elimination*（無視トークン除去）と呼ぶもので、GraphQL 文法が「無視される」とマークするすべて（空白、改行、カンマ、コメント）を取り除き、ワイヤー上で安全な最短形を残す。
+
+3 つの操作、ごく小さな依存ひとつ、サーバーへの往復はゼロ。
+
+## Format / Minify / Validate の使い分け
+
+| 操作 | 内容 | 使いどころ |
+|---|---|---|
+| **Format** | `print` で AST を再出力する（既定は 2 スペース、4 スペースは出力後のインデント倍化） | レビューに耐えるクエリ、`.graphql` ファイルへのコミット、リンターに壊された構文の修復 |
+| **Minify** | `stripIgnoredCharacters` で無視されるトークンをすべて削除する | 永続化クエリが使えないときにワイヤーペイロードを削る、JSON 設定にクエリをインライン埋め込みする |
+| **Validate** | 出力なしでパースし、最初のシンタックスエラーを行・列付きで報告する | ネットワーク経由で往復させる前に、壊れていそうなクエリを軽くチェックする |
+
+よくある誤解：ここでの検証は *構文がパースできる* という意味であって、*フィールドがスキーマ上に存在する* という意味ではない。スキーマを参照する検証にはスキーマ本体が必要で、それは `graphql-cli`、`apollo client:check`、`graphql-inspector` の仕事になる。以下の[なぜ構文チェックだけなのか](#なぜ構文チェックだけなのか)を参照。
+
+## 実際によくある 5 つのシナリオ
+
+### 1. コードジェネレーターが 1 行に潰した
+
+永続化クエリ系のツールチェーンには、オペレーションを 1 行のミニファイ済み文字列で保存するものがある。午前 2 時にオンコール担当が中身を読まないといけないとき、Format に貼れば正準インデントで返ってくる。あとは普通のコードのようにスキャンするだけ。
+
+### 2. PR レビュアーが SDL 変更のプレビューを求めた
+
+調達サービスに新しい `type` と `input` を提案している。SDL 断片を整形して PR 説明の ` ```graphql` ブロックに貼れば、レビュアーは IDE と同じ形を見られる。
+
+### 3. 永続化クエリのバンドラがコメントを削った
+
+ほとんどのビルドツールは、オペレーションをハッシュ化する前にコメントを取り除く。Format を走らせて何がハッシュ化されるかを確かめる — 先頭コメント 1 つで永続化クエリ ID が変わることがある。
+
+### 4. 想定外の 400 を調べる
+
+サーバーは不正なオペレーションに対して `Syntax Error: ...` を返してくる。送ったのと同じボディをここで再現すれば、サーバーが返したであろう `line` と `column` がそのまま得られる — 何も再デプロイすることなく。
+
+### 5. チャットスレッド上のスキーマ差分
+
+誰かがスキーマ片を貼ったが、チャットクライアントが改行を潰している。正準形式に整形し直してから、ローカルで本物の diff ツール（または `graphql-inspector`）にかけて前バージョンと比較する。
+
+## そのまま通る構文
+
+パーサーは公式仕様の実装なので、`graphql-js` が受け付けるものはここでも受け付ける。
+
+```graphql
+# Variables, directives, aliases, fragments, inline fragments
+query Feed($cursor: String, $verbose: Boolean!) {
+  recent: posts(first: 20, after: $cursor) {
+    edges {
+      node {
+        ...PostCore
+        ... on VideoPost @include(if: $verbose) {
+          duration
+          thumbnail(size: LARGE) { url }
+        }
+      }
+    }
+  }
+}
+
+fragment PostCore on Post {
+  id
+  title
+  author { displayName }
+}
+
+# Mutations, subscriptions, operations with multiple definitions
+mutation Publish($id: ID!) { publishPost(id: $id) { id status } }
+subscription OnComment($postId: ID!) { commentAdded(postId: $postId) { id body } }
+
+# SDL: type system definitions
+"""A reviewable artifact in the system."""
+type Post implements Node & Timestamped {
+  id: ID!
+  title: String!
+  publishedAt: DateTime
+  author: User!
+}
+
+input PublishPostInput {
+  postId: ID!
+  notifySubscribers: Boolean = true
+}
+
+union FeedItem = Post | VideoPost | Advertisement
+
+enum PostStatus { DRAFT PUBLISHED ARCHIVED }
+```
+
+カスタムディレクティブ、1 ドキュメント内の複数オペレーション、スキーマ拡張（`extend type ...`） — すべてパースされ、すべて再出力できる。
+
+## よくある落とし穴
+
+### 引数リスト末尾のカンマ
+
+GraphQL はカンマを無視トークンとして扱うので、`(id: 1, name: "ada",)` はパースは通るが、整形後は末尾カンマが AST に吸収されて消えるため少し違って見える。これは仕様どおりの挙動であって、バグではない。
+
+### フラグメントスプレッドとインラインフラグメント
+
+`...Foo` は、別途定義された `fragment Foo on T { ... }` を指すスプレッド。`... on T { ... }` は名前のないインラインフラグメント。Format はどちらも保持する。ただし、フラグメント定義なしでスプレッド（`...Foo`）だけを貼ってもパースは成功する — 文法は対象の存在までは要求しない。構文として正しければそれでいい。下流のサーバーは拒否するが、このツールは拒否しない。
+
+### ディレクティブの順序
+
+GraphQL は同じノードに複数のディレクティブを置くことを許す。サーバーによっては順序が意味を持つ。`print` はソースの順序を保つ。再整形した後にサーバーが急にエラーを返すようなら、途中でリンターやオートフォーマッター（Prettier プラグイン、ESLint ルール）が並べ替えていないか確認する。
+
+### SDL のデフォルト値
+
+`input PublishPostInput { notifySubscribers: Boolean = true }` の `= true` はデフォルト値。整形してもフィールドと同じ行に残る。スタイルガイドでデフォルト値を別行に置く規約があるなら、`print` の後に手作業で直すしかない。公式 AST プリンターにはこの切り替えがない。
+
+### ブロック文字列（`"""..."""`）
+
+複数行の description やブロック文字列引数は、Minify と Format のどちらをかけても無傷で残る。`stripIgnoredCharacters` はブロック文字列リテラル内のバイトには触らず、その周辺の無視トークンだけを削る。`print` も AST からブロック文字列をそのまま書き戻し、中身を再インデントしない。仕様の `BlockStringValue` アルゴリズムは *値* レベル（サーバーやクライアントが文字列を実体化するとき）で走るもので、パースや出力のタイミングでは走らない。
+
+## なぜ構文チェックだけなのか
+
+`parse` は文法をチェックする。`User.posts` が存在することも、`$cursor` の型が正しいことも、`internalNotes` を問い合わせる権限を持っていることもチェックしない。それらは *バリデーション* と *実行* の関心事で、スキーマと（場合によっては）ランタイムコンテキストが必要になる。
+
+スキーマを使った検証が必要なら：
+
+- **`graphql-cli validate`** — スキーマファイルとオペレーションファイルを渡せば、存在しないフィールドを教えてくれる。
+- **`apollo client:check`** — Apollo Studio に登録されたスキーマに対してオペレーションを検証する。
+- **`graphql-inspector validate`** — 任意の SDL を相手に動き、CI との相性が良い。
+
+3 つともコマンドラインツールで、スキーマが必要。ここでオペレーションを整形しておくのは有用な下準備 — フィールドパスが読みやすくなる — だが、型チェックは別の場所で行う。
+
+## このツールとローカルパイプラインの使い分け
+
+| 状況 | ブラウザツールを使う | ローカルパイプラインを使う |
+|---|---|---|
+| チャットメッセージに貼られた単発のクエリ | ✓ | |
+| インラインで GraphQL オペレーションが含まれる PR のレビュー | ✓ | |
+| Postman / Insomnia に貼る前のクエリの軽い確認 | ✓ | |
+| リポジトリ内の `.graphql` ファイルの整形 | | pre-commit で `prettier --parser graphql` |
+| CI でスキーマに対するオペレーション検証 | | `graphql-cli` / `graphql-inspector` |
+| 保存時の自動整形 | | エディタに `prettier-plugin-graphql` |
+
+ブラウザツールは、CLI を持ち出すほどでもないアドホックな用途のために存在する。複数回走らせるものは、フォーマッターをツールチェーンに組み込むべきだ。
+
+## このツールがブラウザでどう動くか
+
+すべてはページ内で完結する。Format リクエストのフルパスは：
+
+1. ブラウザが `/tools/graphql-formatter/` を取得する（静的 HTML、API なし）。
+2. このルート用に Astro がバンドルした JS チャンクが、`graphql` npm パッケージから `parse`、`print`、`stripIgnoredCharacters`、`Source`、`GraphQLError` をインポートする — ツリーシェイク済みで gzip 後およそ 20–25 KB。
+3. テキストを貼って Format をクリック、パーサーがメインスレッドで走り、結果が出力テキストエリアに書き戻される。
+4. `fetch` も `XMLHttpRequest` も、アナリティクスビーコンも、内容を運ばない。ページはアクション時に `tool_use` という GA イベントを 1 回だけ発火するが（ペイロードなし）、Auto Ads はレンダリング済み DOM を読める — どちらの経路もクエリ本文を見ない。
+
+入力 10 MB の上限があるのは、パーサーが同期的で、50 MB のスキーマイントロスペクションダンプを流すとタブがフリーズするからだ。それより大きなファイルは、ローカルで `prettier --parser graphql` に通す。
+
+## 関連する ZeroTool ツール
+
+- [SQL Formatter](/ja/tools/sql-formatter/) — SQL クエリ向けの同じワークフロー。
+- [JSON Formatter](/ja/tools/json-formatter/) — GraphQL サーバーが返すレスポンスボディ向け。
+- [XML Formatter](/ja/tools/xml-formatter/) — SOAP と ATOM の世界向け。
+- [JWT Decoder](/ja/tools/jwt-decoder/) — GraphQL リクエストの `Authorization` ヘッダを覗くとき。
+
+## さらに読むなら
+
+- [GraphQL October 2021 Specification](https://spec.graphql.org/October2021/) — 文法の一次ソース。
+- [graphql-js on GitHub](https://github.com/graphql/graphql-js) — このツールが動かしているパーサー／プリンター。
+- [GraphQL Foundation](https://graphql.org/foundation/) — ガバナンスと適合性情報。
+- [Apollo: Persisted Queries](https://www.apollographql.com/docs/router/configuration/persisted-queries/) — ミニファイされたペイロードがあなたのスタックで意味を持つかを判断するときに参考になる。

@@ -1,0 +1,183 @@
+---
+title: "브라우저에서 GraphQL 포맷팅하기: 실전 가이드"
+description: "에디터 확장 없이 GraphQL 쿼리, 뮤테이션, SDL 스키마를 정렬, 최소화, 검증합니다. 공식 graphql-js 파서를 로컬에서 실행하는 브라우저 전용 도구입니다."
+pubDate: 2026-05-23
+lang: "ko"
+tags: ["graphql", "developer-tools", "code-formatting", "schema", "browser-based"]
+ogImage: /og/blog-graphql-formatter-guide.png
+---
+
+백엔드 엔지니어가 90행짜리 GraphQL 오퍼레이션을 Slack에 한 줄로 던집니다. 들여쓰기는 없고, 프래그먼트는 전부 인라인이며, 중첩된 `@include` 디렉티브가 세 개나 박혀 있습니다. 리뷰어들이 문법 강조를 위해 IDE에 붙여 넣지만, 절반은 VS Code, 나머지 절반은 JetBrains를 쓰고, Slack 버전에는 모바일 클라이언트가 슬쩍 끼워 넣은 zero-width 문자까지 섞여 있습니다. 누군가 그 쿼리를 읽을 수 있을 즈음에는 대화는 이미 다른 주제로 넘어가 있습니다.
+
+[지금 바로 GraphQL을 포맷팅하세요 →](/ko/tools/graphql-formatter/)
+
+## graphql-js가 실제로 해주는 일
+
+The GraphQL Foundation이 관리하는 참조 구현(npm에서 말 그대로 `graphql`이라고 불리는 패키지)은 이 도구가 한데 엮는 세 가지 프리미티브를 제공합니다.
+
+```ts
+import { parse, print, stripIgnoredCharacters } from 'graphql';
+
+const ast = parse(text);                  // text -> DocumentNode AST
+const pretty = print(ast);                 // AST -> canonical formatted GraphQL
+const wire   = stripIgnoredCharacters(text);  // text -> minified GraphQL (spec-defined)
+```
+
+`parse`는 `DocumentNode`를 만들고, 잘못된 토큰을 처음 만나면 `locations: [{ line, column }]`을 담은 `GraphQLError`를 던집니다. `print`는 AST를 순회하며 표준 형식으로 출력합니다 — 2칸 들여쓰기, 한 줄에 하나의 선택, 프래그먼트 사이는 빈 줄로 구분. `stripIgnoredCharacters`는 스펙이 *무시 토큰 제거(ignored token elimination)*라고 부르는 동작입니다. GraphQL 문법이 무시 가능하다고 표시한 모든 것(공백, 줄바꿈, 쉼표, 주석)을 제거하고 전송에 안전한 최단 형태를 남깁니다.
+
+세 개의 연산, 작은 의존성 하나, 서버 왕복은 0회.
+
+## Format, Minify, Validate — 언제 무엇을 쓸까
+
+| 동작 | 하는 일 | 손이 가는 순간 |
+|---|---|---|
+| **Format** | AST를 `print`로 다시 출력 (기본 2칸 들여쓰기, 4칸 옵션은 출력 후 들여쓰기를 두 배로 늘리는 방식) | 리뷰용 쿼리 정리, 오퍼레이션을 `.graphql` 파일로 커밋, 린터가 뒤엉켜 놓은 코드 풀기 |
+| **Minify** | `stripIgnoredCharacters`로 모든 무시 토큰 제거 | persisted query를 쓸 수 없을 때 전송 페이로드를 줄이거나, JSON 설정에 쿼리를 인라인으로 박을 때 |
+| **Validate** | 출력 없이 파싱만 수행, 첫 구문 오류를 행/열과 함께 보고 | 네트워크로 보내기 전에 망가졌다고 의심되는 쿼리를 빠르게 점검할 때 |
+
+흔한 오해 하나: 여기서 검증한다는 건 *문법이 깔끔하게 파싱된다*는 뜻이지, *스키마에 그 필드가 존재한다*는 뜻이 아닙니다. 스키마를 함께 보는 검증은 스키마 자체가 필요하며, 그건 `graphql-cli`, `apollo client:check`, `graphql-inspector`의 영역입니다. 아래 [이 도구가 문법만 보는 이유](#이-도구가-문법만-보는-이유)를 참고하세요.
+
+## 실제로 자주 마주치는 다섯 가지 상황
+
+### 1. 코드 제너레이터가 한 줄로 뽑아낸 경우
+
+일부 persisted query 도구체인은 오퍼레이션을 최소화된 단일 문자열로 저장합니다. 새벽 2시에 온콜 엔지니어가 그 쿼리를 읽어야 할 때, Format에 붙여 넣어 표준 들여쓰기로 되돌리면 평소 코드처럼 훑어볼 수 있습니다.
+
+### 2. PR 리뷰어가 SDL 변경 미리보기를 요청한 경우
+
+조달 서비스를 위한 새 `type`과 `input`을 제안하는 중입니다. SDL 조각을 정렬해서 PR 설명에 `graphql` 코드 펜스로 붙여 넣으면, 리뷰어들은 여러분의 IDE에서 보이는 것과 동일한 모양을 봅니다.
+
+### 3. Persisted query 번들러가 주석을 잘라낼 때
+
+대부분의 빌드 도구는 오퍼레이션 해시를 만들기 전에 주석을 제거합니다. Format을 돌려서 실제로 해시되는 게 무엇인지 확인하세요 — 맨 앞 주석 하나가 persisted query ID를 바꿔 놓을 수 있습니다.
+
+### 4. 예기치 않은 400을 디버깅할 때
+
+서버는 잘못된 오퍼레이션에 `Syntax Error: ...`를 반환합니다. 실제로 보냈던 본문 그대로를 여기서 재현하면, 서버가 알려줬을 `line`과 `column`을 다시 배포할 필요 없이 그대로 얻을 수 있습니다.
+
+### 5. 채팅 스레드에서 오는 스키마 diff
+
+누군가 스키마 조각을 공유했는데 채팅 클라이언트가 줄바꿈을 망쳐 놓은 경우. 표준 형태로 되돌린 다음, 로컬에서 진짜 diff 도구(또는 `graphql-inspector`)로 이전 버전과 비교하면 됩니다.
+
+## 그대로 통하는 문법들
+
+파서는 공식 스펙 구현이라, `graphql-js`가 받아들이는 건 여기서도 그대로 받아들입니다.
+
+```graphql
+# 변수, 디렉티브, 별칭, 프래그먼트, 인라인 프래그먼트
+query Feed($cursor: String, $verbose: Boolean!) {
+  recent: posts(first: 20, after: $cursor) {
+    edges {
+      node {
+        ...PostCore
+        ... on VideoPost @include(if: $verbose) {
+          duration
+          thumbnail(size: LARGE) { url }
+        }
+      }
+    }
+  }
+}
+
+fragment PostCore on Post {
+  id
+  title
+  author { displayName }
+}
+
+# 뮤테이션, 서브스크립션, 여러 정의가 한 문서에 있는 오퍼레이션
+mutation Publish($id: ID!) { publishPost(id: $id) { id status } }
+subscription OnComment($postId: ID!) { commentAdded(postId: $postId) { id body } }
+
+# SDL: 타입 시스템 정의
+"""시스템 내에서 리뷰 가능한 산출물."""
+type Post implements Node & Timestamped {
+  id: ID!
+  title: String!
+  publishedAt: DateTime
+  author: User!
+}
+
+input PublishPostInput {
+  postId: ID!
+  notifySubscribers: Boolean = true
+}
+
+union FeedItem = Post | VideoPost | Advertisement
+
+enum PostStatus { DRAFT PUBLISHED ARCHIVED }
+```
+
+커스텀 디렉티브, 한 문서 안의 여러 오퍼레이션, 스키마 확장(`extend type ...`) — 전부 파싱되고 전부 다시 출력됩니다.
+
+## 자주 걸리는 함정들
+
+### 인자 목록 안의 후행 쉼표
+
+GraphQL은 쉼표를 무시 토큰으로 취급하기 때문에 `(id: 1, name: "ada",)`는 파싱은 되지만, 포맷팅 이후엔 이상해 보입니다. 후행 쉼표가 AST 안에서 사라지기 때문입니다. 다시 출력된 형태에서는 빠져 있습니다. 버그가 아니라 스펙 동작입니다.
+
+### 프래그먼트 스프레드 vs. 인라인 프래그먼트
+
+`...Foo`는 따로 정의된 `fragment Foo on T { ... }`를 가리키는 스프레드입니다. `... on T { ... }`는 이름 없는 인라인 프래그먼트입니다. Format은 둘 다 보존합니다. 단, 프래그먼트 정의 없이 스프레드(`...Foo`)만 붙여 넣어도 파싱은 성공합니다 — GraphQL 문법은 대상이 존재해야 한다고 요구하지 않고, 문법적으로 유효하기만 하면 됩니다. 다운스트림 서버는 그 오퍼레이션을 거부하겠지만, 이 도구는 거부하지 않습니다.
+
+### 디렉티브 순서
+
+GraphQL은 같은 노드에 여러 디렉티브를 허용하고, 일부 서버에서는 그 순서가 의미를 가집니다. `print`는 원본 순서를 보존합니다. 다시 포맷팅한 뒤 갑자기 서버에서 에러가 난다면, 중간에 거친 린터나 자동 포맷터(Prettier 플러그인, ESLint 규칙)가 순서를 바꿔 놓지는 않았는지 확인하세요.
+
+### SDL 기본값
+
+`input PublishPostInput { notifySubscribers: Boolean = true }` — 여기서 `= true`가 기본값입니다. 포맷팅 후에도 필드와 같은 줄에 남습니다. 스타일 가이드가 기본값을 별도 줄에 쓰길 원한다면 `print` 이후에 직접 손봐야 합니다. 공식 AST 프린터는 그 토글을 제공하지 않습니다.
+
+### 블록 문자열 (`"""..."""`)
+
+여러 줄 설명이나 블록 문자열 인자는 Minify와 Format을 모두 거쳐도 그대로 살아남습니다. `stripIgnoredCharacters`는 블록 문자열 리터럴 내부의 바이트는 건드리지 않고 주변의 무시 토큰만 제거합니다. `print`는 블록 문자열을 AST에서 다시 써내면서 내부 들여쓰기를 재조정하지 않습니다. 스펙의 `BlockStringValue` 알고리즘은 *값*이 결정되는 시점(서버나 클라이언트가 문자열을 실체화할 때)에 돌지, 파싱이나 출력 시점에 돌지 않습니다.
+
+## 이 도구가 문법만 보는 이유
+
+`parse`는 문법을 확인합니다. `User.posts`가 존재하는지, `$cursor`가 올바른 타입인지, `internalNotes`를 조회할 권한이 있는지는 확인하지 않습니다. 그것들은 *검증*과 *실행*의 영역이며, 스키마와 (때로는) 런타임 컨텍스트가 필요합니다.
+
+스키마를 함께 보는 검증이 필요하다면:
+
+- **`graphql-cli validate`** — 스키마 파일과 오퍼레이션 파일을 주면 존재하지 않는 필드를 알려줍니다.
+- **`apollo client:check`** — Apollo Studio에 등록된 스키마에 대해 오퍼레이션을 점검합니다.
+- **`graphql-inspector validate`** — 임의의 SDL에 대해 동작하며 CI 친화적입니다.
+
+셋 다 스키마가 필요한 커맨드라인 도구입니다. 여기서 오퍼레이션을 정렬하는 건 유용한 첫 단계입니다 — 필드 경로가 읽히게 만들어 주니까요 — 하지만 타입 검사는 다른 곳에서 일어납니다.
+
+## 브라우저 도구 vs. 로컬 파이프라인, 언제 어느 쪽을 쓸까
+
+| 상황 | 브라우저 도구 사용 | 로컬 파이프라인 사용 |
+|---|---|---|
+| 채팅으로 날아온 일회성 쿼리 | ✓ | |
+| GraphQL 오퍼레이션이 인라인으로 포함된 PR 리뷰 | ✓ | |
+| Postman / Insomnia에 붙여 넣기 전 쿼리 점검 | ✓ | |
+| 저장소 안의 `.graphql` 파일 포맷팅 | | pre-commit에서 `prettier --parser graphql` |
+| CI에서 스키마 기준으로 오퍼레이션 검증 | | `graphql-cli` / `graphql-inspector` |
+| 저장 시 자동 포맷 | | 에디터에서 `prettier-plugin-graphql` |
+
+브라우저 도구는 CLI를 꺼낼 만큼은 아닌 임시 작업을 위해 존재합니다. 한 번 이상 반복될 작업이라면 포맷터를 도구체인에 넣으세요.
+
+## 이 도구가 로컬에서 동작하는 방식
+
+모든 처리는 페이지 안에서 일어납니다. Format 요청의 전체 경로는 이렇습니다.
+
+1. 브라우저가 `/tools/graphql-formatter/`를 가져옵니다 (정적 HTML, API 없음).
+2. 이 라우트의 Astro 번들 JS 청크가 `graphql` npm 패키지에서 `parse`, `print`, `stripIgnoredCharacters`, `Source`, `GraphQLError`를 가져옵니다 — 트리 셰이킹을 거치면 대략 20–25 KB(gzip)입니다.
+3. 텍스트를 붙여 넣고 Format을 누르면 파서가 메인 스레드에서 돌고, 결과가 출력 텍스트 영역에 다시 쓰입니다.
+4. `fetch`도, `XMLHttpRequest`도, 분석 비콘도 내용을 실어 나르지 않습니다. 페이지는 동작 시점에 단일 `tool_use` GA 이벤트를 전송하며(페이로드 없음), Auto Ads는 렌더링된 DOM을 읽을 수 있습니다 — 어느 경로도 여러분의 쿼리 본문을 보지 않습니다.
+
+10 MB 입력 상한은 파서가 동기적으로 동작하고 50 MB짜리 스키마 introspection 덤프가 탭을 멈춰 세울 수 있어서입니다. 그보다 큰 파일은 로컬에서 `prettier --parser graphql`로 파이프 처리하세요.
+
+## 관련 ZeroTool 도구
+
+- [SQL Formatter](/ko/tools/sql-formatter/) — SQL 쿼리에 대해 동일한 흐름.
+- [JSON Formatter](/ko/tools/json-formatter/) — GraphQL 서버가 반환하는 응답 본문에.
+- [XML Formatter](/ko/tools/xml-formatter/) — SOAP과 ATOM이 살아 있는 구석을 위해.
+- [JWT Decoder](/ko/tools/jwt-decoder/) — GraphQL 요청의 `Authorization` 헤더를 들여다봐야 할 때.
+
+## 더 읽을 거리
+
+- [GraphQL October 2021 Specification](https://spec.graphql.org/October2021/) — 문법의 출처.
+- [graphql-js on GitHub](https://github.com/graphql/graphql-js) — 이 도구가 돌리는 파서/프린터.
+- [GraphQL Foundation](https://graphql.org/foundation/) — 거버넌스와 적합성 정보.
+- [Apollo: Persisted Queries](https://www.apollographql.com/docs/router/configuration/persisted-queries/) — 최소화된 페이로드가 여러분의 스택에서 의미가 있는지 판단할 때 참고.
