@@ -127,6 +127,7 @@ import MimeTypeLookupTool from './MimeTypeLookupTool.astro';
 import HarFileAnalyzerTool from './HarFileAnalyzerTool.astro';
 import EyedropperColorPickerTool from './EyedropperColorPickerTool.astro';
 import HttpHeaderAnalyzerTool from './HttpHeaderAnalyzerTool.astro';
+import GraphqlFormatterTool from './GraphqlFormatterTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -254,4 +255,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'har-file-analyzer': HarFileAnalyzerTool,
   'eyedropper-color-picker': EyedropperColorPickerTool,
   'http-header-analyzer': HttpHeaderAnalyzerTool,
+  'graphql-formatter': GraphqlFormatterTool,
 };

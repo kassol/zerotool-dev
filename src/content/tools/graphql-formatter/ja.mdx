@@ -1,0 +1,74 @@
+---
+seoTitle: "GraphQL フォーマッター — クエリの整形・圧縮・検証 | ZeroTool"
+seoDescription: "無料オンライン GraphQL フォーマッター。ブラウザで query / mutation / SDL スキーマを整形・圧縮・検証し、構文エラーを行と列で特定。アップロード不要・登録不要。"
+faqItems:
+  - question: "サポートする GraphQL 構文は？"
+    answer: "query、mutation、subscription、fragment、inline fragment、variable、directive（@include / @skip / @deprecated とカスタム）、SDL 型システム定義（type / interface / union / enum / input / scalar / extend / schema）に対応。内部で公式 `graphql` リファレンス実装を使用しており、graphql-js が受け付けるものはすべて受け付けます。"
+  - question: "スキーマやクエリはサーバーに送られますか？"
+    answer: "送られません。パース・出力・検証はすべてブラウザタブ内で完結し、データは端末から出ません。本ツールは設計上、アップロードエンドポイントを持ちません。"
+  - question: "リモートスキーマに対して型チェックできますか？"
+    answer: "構文レベルの検証のみです。GraphQL の文法として正しいかは確認しますが、特定スキーマにフィールドが存在するかは検証しません。型チェックが必要な場合はローカルで `graphql-cli`、`apollo client:check`、`graphql-inspector` をエンドポイントに対して実行してください。"
+  - question: "入力サイズの上限は？"
+    answer: "10 MB のハード上限です。GraphQL operation がこの大きさになることは稀で、ほとんどはスキーマ introspection ダンプです。その場合はローカルで `prettier --parser graphql` を使ってください。"
+  - question: "Minify と Format の違いは？"
+    answer: "Minify は graphql-js の `stripIgnoredCharacters` を使い、GraphQL spec で ignored とされる空白・コメントをすべて削除します（通信向け）。Format は AST を 2 または 4 スペースのインデントで再出力し、人間が読むためのものです。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>GraphQL query、mutation、subscription、SDL スキーマを入力欄に貼り付けるか、<strong>サンプルを読み込む</strong> から例を起点にしてください。</li>
+  <li><strong>整形</strong> で美化、<strong>圧縮</strong> で短縮、<strong>検証</strong> で構文のみ確認できます。</li>
+  <li>インデントは 2 または 4 スペースを切り替え可能。デフォルト 2 は graphql-js のネイティブ出力と同じです。</li>
+  <li><strong>コピー</strong> や <strong>.graphql をダウンロード</strong> で結果を持ち帰り。<kbd>Cmd/Ctrl + Enter</kbd> でキーボードから整形できます。</li>
+</ol>
+
+<h2>実例</h2>
+
+<h3>整形前</h3>
+
+```graphql
+query GetUser($id:ID!,$withPosts:Boolean!){user(id:$id){id name email posts @include(if:$withPosts){...PostSummary}}} fragment PostSummary on Post{id title publishedAt}
+```
+
+<h3>整形後</h3>
+
+```graphql
+query GetUser($id: ID!, $withPosts: Boolean!) {
+  user(id: $id) {
+    id
+    name
+    email
+    posts @include(if: $withPosts) {
+      ...PostSummary
+    }
+  }
+}
+
+fragment PostSummary on Post {
+  id
+  title
+  publishedAt
+}
+```
+
+<h3>SDL スキーマ</h3>
+
+```graphql
+type Post {
+  id: ID!
+  title: String!
+  publishedAt: DateTime
+  author: User!
+}
+
+type Query {
+  post(id: ID!): Post
+  posts(authorId: ID, limit: Int = 20): [Post!]!
+}
+```
+
+<h2>なぜ GraphQL を整形するのか</h2>
+<p>一貫した GraphQL の整形は、コードレビュー、スキーマ diff、<code>.graphql</code> ファイルの保管に直結します。永続化クエリを使えない環境では minify によって通信量を減らせます。整形されたクエリは PR 上で読みやすく、クエリを単体で検証することで fragment 名のタイプミスをリクエストを送る前に発見できます。</p>
+
+<h2>内部の仕組み</h2>
+<p>本ツールはブラウザ内で <code>graphql-js</code>（GraphQL Foundation 管理の公式リファレンス実装）を動かします。<code>parse()</code> がテキストから AST を構築し、最初の構文エラーを行・列で報告。<code>print()</code> が AST を規範的な GraphQL に再シリアライズ。<code>stripIgnoredCharacters()</code> が spec で ignored とされるトークンをすべて除去して圧縮版を返します。ネットワーク往復ゼロ、データは端末内に留まります。</p>

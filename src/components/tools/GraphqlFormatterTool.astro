@@ -1,0 +1,375 @@
+---
+// GraphqlFormatterTool — format / minify / validate GraphQL queries, mutations, SDL
+// Uses the official `graphql` reference implementation (tree-shaken /language/*).
+---
+
+<div>
+  <div class="gqlf-wrap">
+    <div class="gqlf-row">
+      <label for="gqlf-input">
+        <span data-i18n="inputLabel">GraphQL Input</span>
+        <button id="gqlf-sample" class="btn-ghost gqlf-sample-btn" type="button" data-i18n="sample">Load sample</button>
+      </label>
+      <textarea
+        id="gqlf-input"
+        class="tool-textarea"
+        placeholder="query GetUser($id: ID!) { user(id: $id) { id name email } }"
+        spellcheck="false"
+      ></textarea>
+    </div>
+
+    <div class="gqlf-options">
+      <label class="gqlf-opt">
+        <span data-i18n="indent">Indent:</span>
+        <select id="gqlf-indent">
+          <option value="2" data-i18n="indent2">2 spaces</option>
+          <option value="4" data-i18n="indent4">4 spaces</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="gqlf-actions">
+      <button id="gqlf-format" class="btn-primary" data-i18n="format">Format</button>
+      <button id="gqlf-minify" class="btn-secondary" data-i18n="minify">Minify</button>
+      <button id="gqlf-validate" class="btn-secondary" data-i18n="validate">Validate</button>
+      <button id="gqlf-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="gqlf-status" class="gqlf-status" aria-live="polite"></div>
+
+    <div class="gqlf-row">
+      <label for="gqlf-output">
+        <span data-i18n="output">Output</span>
+        <span class="gqlf-out-actions">
+          <button id="gqlf-copy" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+          <button id="gqlf-download" class="btn-ghost gqlf-dl-btn" type="button" data-i18n="download">Download .graphql</button>
+        </span>
+      </label>
+      <textarea
+        id="gqlf-output"
+        class="tool-textarea"
+        data-i18n-ph="outputPlaceholder"
+        placeholder="Formatted GraphQL appears here..."
+        readonly
+        spellcheck="false"
+      ></textarea>
+    </div>
+  </div>
+
+  <script>
+    import { parse, print, Source, stripIgnoredCharacters, GraphQLError } from 'graphql';
+    (window as any).__gqlfLib = { parse, print, Source, stripIgnoredCharacters, GraphQLError };
+    window.dispatchEvent(new Event('gqlf-lib-ready'));
+  </script>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          inputLabel: 'GraphQL Input', sample: 'Load sample',
+          indent: 'Indent:', indent2: '2 spaces', indent4: '4 spaces',
+          format: 'Format', minify: 'Minify', validate: 'Validate', clear: 'Clear',
+          output: 'Output', copy: 'Copy', copied: 'Copied!', download: 'Download .graphql',
+          outputPlaceholder: 'Formatted GraphQL appears here...',
+          formatted: 'Formatted.', minified: 'Minified.', valid: 'Valid GraphQL.',
+          parseError: 'Parse error', emptyInput: 'Paste GraphQL to format.',
+          tooLarge: 'Input exceeds 10 MB. Use prettier --parser graphql locally.',
+          libLoading: 'Loading GraphQL parser...',
+          stats: function (ops, chars) { return ops + ' definition(s), ' + chars + ' chars'; },
+          line: 'line', column: 'column'
+        },
+        zh: {
+          inputLabel: 'GraphQL 输入', sample: '载入示例',
+          indent: '缩进：', indent2: '2 个空格', indent4: '4 个空格',
+          format: '格式化', minify: '压缩', validate: '校验', clear: '清除',
+          output: '输出', copy: '复制', copied: '已复制！', download: '下载 .graphql',
+          outputPlaceholder: '格式化后的 GraphQL 显示在此处...',
+          formatted: '已格式化。', minified: '已压缩。', valid: 'GraphQL 语法有效。',
+          parseError: '解析错误', emptyInput: '粘贴 GraphQL 以开始。',
+          tooLarge: '输入超过 10 MB，请在本地使用 prettier --parser graphql。',
+          libLoading: '正在加载 GraphQL 解析器...',
+          stats: function (ops, chars) { return ops + ' 个定义，' + chars + ' 字符'; },
+          line: '行', column: '列'
+        },
+        ja: {
+          inputLabel: 'GraphQL 入力', sample: 'サンプルを読み込む',
+          indent: 'インデント：', indent2: '2 スペース', indent4: '4 スペース',
+          format: '整形', minify: '圧縮', validate: '検証', clear: 'クリア',
+          output: '出力', copy: 'コピー', copied: 'コピー済み！', download: '.graphql をダウンロード',
+          outputPlaceholder: '整形された GraphQL がここに表示されます...',
+          formatted: '整形しました。', minified: '圧縮しました。', valid: 'GraphQL は有効です。',
+          parseError: '解析エラー', emptyInput: 'GraphQL を貼り付けてください。',
+          tooLarge: '入力が 10 MB を超えています。ローカルで prettier --parser graphql を使用してください。',
+          libLoading: 'GraphQL パーサーを読み込み中...',
+          stats: function (ops, chars) { return ops + ' 定義、' + chars + ' 文字'; },
+          line: '行', column: '列'
+        },
+        ko: {
+          inputLabel: 'GraphQL 입력', sample: '샘플 불러오기',
+          indent: '들여쓰기:', indent2: '공백 2개', indent4: '공백 4개',
+          format: '형식화', minify: '압축', validate: '검증', clear: '지우기',
+          output: '출력', copy: '복사', copied: '복사됨!', download: '.graphql 다운로드',
+          outputPlaceholder: '형식화된 GraphQL이 여기에 표시됩니다...',
+          formatted: '형식화 완료.', minified: '압축 완료.', valid: '유효한 GraphQL입니다.',
+          parseError: '파싱 오류', emptyInput: 'GraphQL을 붙여넣어 시작하세요.',
+          tooLarge: '입력이 10MB를 초과합니다. 로컬에서 prettier --parser graphql 사용하세요.',
+          libLoading: 'GraphQL 파서 로딩 중...',
+          stats: function (ops, chars) { return ops + '개 정의, ' + chars + '자'; },
+          line: '줄', column: '열'
+        }
+      };
+
+      var SAMPLE = [
+        'query GetUser($id: ID!, $withPosts: Boolean!) {',
+        '  user(id: $id) {',
+        '    id name email',
+        '    posts @include(if: $withPosts) {',
+        '      ...PostSummary',
+        '    }',
+        '  }',
+        '}',
+        '',
+        'fragment PostSummary on Post {',
+        '  id title publishedAt',
+        '}',
+        '',
+        'mutation Publish($id: ID!) {',
+        '  publishPost(id: $id) { id status }',
+        '}'
+      ].join('\n');
+
+      var MAX_BYTES = 10 * 1024 * 1024;
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var k = el.getAttribute('data-i18n');
+        if (t[k] && typeof t[k] === 'string') el.textContent = t[k];
+      });
+      document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
+        var k = el.getAttribute('data-i18n-ph');
+        if (t[k]) el.placeholder = t[k];
+      });
+
+      var input = document.getElementById('gqlf-input');
+      var output = document.getElementById('gqlf-output');
+      var statusEl = document.getElementById('gqlf-status');
+      var copyBtn = document.getElementById('gqlf-copy');
+      var indentSel = document.getElementById('gqlf-indent');
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'gqlf-status' + (kind ? ' ' + kind : '');
+      }
+      function clearStatus() { setStatus('', ''); }
+
+      function getLib() { return window.__gqlfLib; }
+
+      function whenLibReady(cb) {
+        if (getLib()) { cb(); return; }
+        setStatus(t.libLoading, '');
+        window.addEventListener('gqlf-lib-ready', function once() {
+          window.removeEventListener('gqlf-lib-ready', once);
+          clearStatus();
+          cb();
+        });
+      }
+
+      function readInput() {
+        var raw = input.value;
+        raw = raw.replace(/^﻿/, '').replace(/\r\n/g, '\n');
+        return raw;
+      }
+
+      function reportError(e) {
+        var lib = getLib();
+        if (lib && e instanceof lib.GraphQLError) {
+          var loc = e.locations && e.locations[0];
+          var detail = loc ? ' (' + t.line + ' ' + loc.line + ', ' + t.column + ' ' + loc.column + ')' : '';
+          setStatus(t.parseError + ': ' + e.message + detail, 'error');
+        } else {
+          setStatus(t.parseError + ': ' + (e && e.message ? e.message : String(e)), 'error');
+        }
+        output.value = '';
+      }
+
+      function indentStr() {
+        return indentSel.value === '4' ? '    ' : '  ';
+      }
+
+      function reindent(text, indent) {
+        if (indent === '  ') return text;
+        return text.replace(/^( +)/gm, function (m) { return m + m; });
+      }
+
+      function doFormat() {
+        var raw = readInput().trim();
+        if (!raw) { setStatus(t.emptyInput, ''); output.value = ''; return; }
+        if (raw.length > MAX_BYTES) { setStatus(t.tooLarge, 'error'); output.value = ''; return; }
+        whenLibReady(function () {
+          var lib = getLib();
+          try {
+            var ast = lib.parse(new lib.Source(raw));
+            var printed = lib.print(ast);
+            output.value = reindent(printed, indentStr());
+            setStatus(t.formatted + ' ' + t.stats(ast.definitions.length, output.value.length), 'success');
+            window.trackTool && window.trackTool('graphql_formatter', 'format');
+          } catch (e) { reportError(e); }
+        });
+      }
+
+      function doMinify() {
+        var raw = readInput().trim();
+        if (!raw) { setStatus(t.emptyInput, ''); output.value = ''; return; }
+        if (raw.length > MAX_BYTES) { setStatus(t.tooLarge, 'error'); output.value = ''; return; }
+        whenLibReady(function () {
+          var lib = getLib();
+          try {
+            lib.parse(new lib.Source(raw));
+            var min = lib.stripIgnoredCharacters(raw);
+            output.value = min;
+            setStatus(t.minified + ' ' + t.stats(0, min.length), 'success');
+            window.trackTool && window.trackTool('graphql_formatter', 'minify');
+          } catch (e) { reportError(e); }
+        });
+      }
+
+      function doValidate() {
+        var raw = readInput().trim();
+        if (!raw) { setStatus(t.emptyInput, ''); output.value = ''; return; }
+        if (raw.length > MAX_BYTES) { setStatus(t.tooLarge, 'error'); output.value = ''; return; }
+        whenLibReady(function () {
+          var lib = getLib();
+          try {
+            var ast = lib.parse(new lib.Source(raw));
+            setStatus(t.valid + ' ' + t.stats(ast.definitions.length, raw.length), 'success');
+            window.trackTool && window.trackTool('graphql_formatter', 'validate');
+          } catch (e) { reportError(e); }
+        });
+      }
+
+      document.getElementById('gqlf-format').addEventListener('click', doFormat);
+      document.getElementById('gqlf-minify').addEventListener('click', doMinify);
+      document.getElementById('gqlf-validate').addEventListener('click', doValidate);
+      document.getElementById('gqlf-clear').addEventListener('click', function () {
+        input.value = ''; output.value = ''; clearStatus();
+      });
+      document.getElementById('gqlf-sample').addEventListener('click', function () {
+        input.value = SAMPLE;
+        doFormat();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        var text = output.value;
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        });
+      });
+
+      document.getElementById('gqlf-download').addEventListener('click', function () {
+        var text = output.value;
+        if (!text) return;
+        var blob = new Blob([text], { type: 'application/graphql' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'query.graphql';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          doFormat();
+        }
+      });
+    })();
+  </script>
+</div>
+
+<style>
+  .gqlf-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  .gqlf-row { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+
+  .gqlf-row > label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .gqlf-row textarea.tool-textarea {
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    line-height: 1.5;
+  }
+
+  .gqlf-options {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .gqlf-opt {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .gqlf-opt select {
+    font-size: 0.85rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .gqlf-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .gqlf-status {
+    font-size: 0.85rem;
+    min-height: 1.2rem;
+    line-height: 1.4;
+  }
+  .gqlf-status.success { color: #057a55; }
+  .gqlf-status.error { color: #c0392b; }
+
+  .gqlf-out-actions {
+    display: inline-flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .gqlf-sample-btn,
+  .gqlf-dl-btn {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.55rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .gqlf-status.success { color: #34d399; }
+    :root:not([data-theme="light"]) .gqlf-status.error { color: #f87171; }
+  }
+  [data-theme="dark"] .gqlf-status.success { color: #34d399; }
+  [data-theme="dark"] .gqlf-status.error { color: #f87171; }
+</style>

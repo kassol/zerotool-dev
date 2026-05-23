@@ -1,0 +1,74 @@
+---
+seoTitle: "GraphQL 포매터 — 쿼리 정리·압축·검증 | ZeroTool"
+seoDescription: "무료 온라인 GraphQL 포매터. 브라우저에서 query / mutation / SDL 스키마를 정리·압축·검증하고 구문 오류를 줄과 열로 표시합니다. 업로드·가입 없음."
+faqItems:
+  - question: "어떤 GraphQL 구문을 지원하나요?"
+    answer: "query, mutation, subscription, fragment, inline fragment, variable, directive(@include / @skip / @deprecated 및 사용자 정의), SDL 타입 시스템 정의(type / interface / union / enum / input / scalar / extend / schema)를 지원합니다. 내부적으로 공식 `graphql` 참조 구현을 사용하므로 graphql-js가 받아들이는 것은 모두 받아들입니다."
+  - question: "스키마나 쿼리가 서버로 전송되나요?"
+    answer: "아니요. 파싱, 출력, 검증은 모두 브라우저 탭 안에서 처리되며 데이터는 기기를 떠나지 않습니다. 본 도구는 설계상 업로드 엔드포인트를 가지지 않습니다."
+  - question: "원격 스키마에 대해 타입 체크가 가능한가요?"
+    answer: "구문 수준 검증만 합니다. 텍스트가 유효한 GraphQL 문법인지만 확인하고 특정 스키마에 필드가 존재하는지는 검증하지 않습니다. 타입 인식 검증이 필요하면 로컬에서 `graphql-cli`, `apollo client:check`, `graphql-inspector`를 엔드포인트에 대해 실행하세요."
+  - question: "입력 크기 제한은?"
+    answer: "10 MB 하드 캡입니다. GraphQL operation이 이 크기까지 가는 일은 드물고, 대부분 스키마 introspection 덤프입니다. 그런 경우 로컬에서 `prettier --parser graphql`을 사용하세요."
+  - question: "Minify와 Format은 어떻게 다른가요?"
+    answer: "Minify는 graphql-js의 `stripIgnoredCharacters`로 GraphQL 스펙이 ignored로 정의한 공백·주석을 모두 제거합니다(전송용). Format은 AST를 2 또는 4 공백 들여쓰기로 다시 출력해 사람이 읽기 좋게 만듭니다."
+---
+
+<h2>사용 방법</h2>
+<ol>
+  <li>GraphQL query, mutation, subscription, SDL 스키마를 입력 영역에 붙여넣거나 <strong>샘플 불러오기</strong>로 예제부터 시작하세요.</li>
+  <li><strong>형식화</strong>로 미화, <strong>압축</strong>으로 축약, <strong>검증</strong>으로 구문만 확인할 수 있습니다.</li>
+  <li>들여쓰기는 2 / 4 공백 사이에서 전환. 기본값 2는 graphql-js 네이티브 출력과 동일합니다.</li>
+  <li><strong>복사</strong> 또는 <strong>.graphql 다운로드</strong>로 결과를 가져갈 수 있고, <kbd>Cmd/Ctrl + Enter</kbd>로 키보드에서 형식화할 수 있습니다.</li>
+</ol>
+
+<h2>실제 예제</h2>
+
+<h3>형식화 전</h3>
+
+```graphql
+query GetUser($id:ID!,$withPosts:Boolean!){user(id:$id){id name email posts @include(if:$withPosts){...PostSummary}}} fragment PostSummary on Post{id title publishedAt}
+```
+
+<h3>형식화 후</h3>
+
+```graphql
+query GetUser($id: ID!, $withPosts: Boolean!) {
+  user(id: $id) {
+    id
+    name
+    email
+    posts @include(if: $withPosts) {
+      ...PostSummary
+    }
+  }
+}
+
+fragment PostSummary on Post {
+  id
+  title
+  publishedAt
+}
+```
+
+<h3>SDL 스키마</h3>
+
+```graphql
+type Post {
+  id: ID!
+  title: String!
+  publishedAt: DateTime
+  author: User!
+}
+
+type Query {
+  post(id: ID!): Post
+  posts(authorId: ID, limit: Int = 20): [Post!]!
+}
+```
+
+<h2>왜 GraphQL을 형식화해야 하나요?</h2>
+<p>일관된 GraphQL 형식은 code review, schema diff, <code>.graphql</code> 파일 보관에 직접적인 영향을 줍니다. persisted query를 쓸 수 없는 환경에서는 minify로 전송량을 줄일 수 있습니다. 정리된 쿼리는 PR에서 읽기 쉽고, 쿼리를 단독으로 검증하면 fragment 오타를 요청을 보내지 않고도 즉시 잡아낼 수 있습니다.</p>
+
+<h2>동작 원리</h2>
+<p>본 도구는 브라우저 안에서 <code>graphql-js</code>(GraphQL Foundation이 관리하는 공식 참조 구현)를 실행합니다. <code>parse()</code>가 텍스트로부터 AST를 만들고 첫 구문 오류를 줄·열로 보고합니다. <code>print()</code>가 AST를 표준 GraphQL로 다시 직렬화하고, <code>stripIgnoredCharacters()</code>가 스펙에서 ignored로 정의된 토큰을 모두 제거해 압축 형태를 만듭니다. 네트워크 왕복 없이 모든 처리가 로컬에서 끝납니다.</p>

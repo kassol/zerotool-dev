@@ -1,0 +1,74 @@
+---
+seoTitle: "GraphQL 格式化工具 — 美化、压缩与校验查询 | ZeroTool"
+seoDescription: "免费在线 GraphQL 格式化工具。在浏览器中美化、压缩并校验 query、mutation 与 SDL 架构，按行列定位语法错误。零上传，零注册。"
+faqItems:
+  - question: "支持哪些 GraphQL 语法结构？"
+    answer: "支持 query、mutation、subscription、fragment、inline fragment、variable、directive（@include / @skip / @deprecated 与自定义）以及 SDL 类型系统定义（type / interface / union / enum / input / scalar / extend / schema）。底层使用官方 `graphql` 参考实现，凡是 graphql-js 接受的都接受。"
+  - question: "我的 schema 或查询会被上传吗？"
+    answer: "不会。解析、打印、校验全部在你的浏览器标签页内完成，数据不会离开设备。本工具按设计就没有上传接口。"
+  - question: "能针对远端 schema 做类型校验吗？"
+    answer: "仅做语法级校验。本工具只检查文本是否符合 GraphQL 语法，不验证字段是否存在于某个具体 schema。需要类型感知的校验请在本地运行 `graphql-cli`、`apollo client:check` 或 `graphql-inspector` 对接你的 endpoint。"
+  - question: "最大支持多大输入？"
+    answer: "10 MB 硬上限。GraphQL operation 很少能写到这种体量；如果你的输入确实超过，多半是 schema introspection dump，请改用本地的 `prettier --parser graphql`。"
+  - question: "Minify 和 Format 有什么区别？"
+    answer: "Minify 调用 graphql-js 的 `stripIgnoredCharacters`，按 GraphQL spec 移除所有 ignored token（空白与注释），用于线上传输。Format 则把 AST 重新打印为 2 或 4 空格缩进，便于人读。"
+---
+
+<h2>使用步骤</h2>
+<ol>
+  <li>把 GraphQL query、mutation、subscription 或 SDL 架构粘进输入框，或点击 <strong>载入示例</strong> 从样例开始。</li>
+  <li>点击 <strong>格式化</strong> 美化、<strong>压缩</strong> 缩短，或 <strong>校验</strong> 仅检查语法。</li>
+  <li>在 2 / 4 空格之间切换缩进，默认 2 空格与 graphql-js 原生输出一致。</li>
+  <li>点 <strong>复制</strong> 或 <strong>下载 .graphql</strong> 带走结果。按 <kbd>Cmd/Ctrl + Enter</kbd> 可用键盘触发格式化。</li>
+</ol>
+
+<h2>实际示例</h2>
+
+<h3>格式化前</h3>
+
+```graphql
+query GetUser($id:ID!,$withPosts:Boolean!){user(id:$id){id name email posts @include(if:$withPosts){...PostSummary}}} fragment PostSummary on Post{id title publishedAt}
+```
+
+<h3>格式化后</h3>
+
+```graphql
+query GetUser($id: ID!, $withPosts: Boolean!) {
+  user(id: $id) {
+    id
+    name
+    email
+    posts @include(if: $withPosts) {
+      ...PostSummary
+    }
+  }
+}
+
+fragment PostSummary on Post {
+  id
+  title
+  publishedAt
+}
+```
+
+<h3>SDL 架构</h3>
+
+```graphql
+type Post {
+  id: ID!
+  title: String!
+  publishedAt: DateTime
+  author: User!
+}
+
+type Query {
+  post(id: ID!): Post
+  posts(authorId: ID, limit: Int = 20): [Post!]!
+}
+```
+
+<h2>为什么要格式化 GraphQL？</h2>
+<p>一致的 GraphQL 格式直接影响 code review、schema diff 与 <code>.graphql</code> 文件入库。压缩后的 query 在没有 persisted query 时能减少线上传输体积；美化后的 query 在 PR 里更易扫读。把 query 单独拿出来做校验，可以在不发请求的情况下秒级定位 fragment 拼写错误。</p>
+
+<h2>实现原理</h2>
+<p>本工具在浏览器中跑 <code>graphql-js</code>（GraphQL Foundation 维护的参考实现）。<code>parse()</code> 从文本构建 AST 并在首个语法错误处报出行列号；<code>print()</code> 把 AST 序列化为规范 GraphQL；<code>stripIgnoredCharacters()</code> 按 spec 移除所有 ignored token，得到压缩形式。整个过程零网络往返，数据完全留在本地。</p>
