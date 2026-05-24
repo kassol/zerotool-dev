@@ -1,0 +1,242 @@
+---
+title: "Zero-Width Character Detector: Find Hidden Unicode in AI Output and Code"
+description: "Detect and strip invisible Unicode characters — zero-width spaces, BOM, bidirectional controls, ChatGPT watermark tag characters — from any text. Trojan-Source aware. 100% client-side."
+pubDate: 2026-05-24
+updatedDate: 2026-05-24
+lang: "en"
+tags: ["unicode", "security", "ai", "watermark", "trojan-source", "text-cleanup", "developer-tools"]
+---
+
+A teammate drops a paragraph of ChatGPT-generated changelog notes into your PR description. The English reads fine. The diff looks clean. CI is green. Two weeks later a security report points at one of the bullet points and asks why your release notes contain a 41-character invisible token in the U+E0000 range — the Unicode tag block. Nobody on the team typed it. Nobody on the team can see it in the rendered Markdown. It rode along with the copy-paste from the assistant, survived your editor, your linter, your reviewer's eyes, and your static site generator, and ended up checksummed into the artifact you shipped to customers. The same week, an unrelated audit flags one of your error messages because someone pasted a translated string from a rich-text editor and a U+202E RIGHT-TO-LEFT OVERRIDE came along with it; the string now reorders the visible characters of every error code printed after it on a terminal.
+
+[Try the Zero-Width Character Detector →](/tools/zero-width-character-detector/)
+
+These are not exotic problems. They are the daily output of working with AI assistants, multilingual content, and rich-text sources. ZeroTool's detector takes any pasted text and tells you exactly which code points are invisible, which category they belong to, and what the cleaned string looks like — all of it in the browser, with nothing uploaded.
+
+## What counts as "invisible"
+
+The Unicode standard intentionally defines characters that render with zero width or that exert side effects on rendering without producing a glyph. They exist for legitimate reasons — Arabic shaping, Devanagari ligatures, soft line-break hints, emoji ZWJ sequences, file encoding markers — and become a problem only when they cross a boundary the author did not intend, such as plain-text export, source code, or a database column expecting ASCII.
+
+The detector groups invisible code points into five categories. Each category has its own attack surface and its own legitimate use:
+
+| Category | Code points | Legitimate use | Risk when smuggled in |
+|----------|-------------|----------------|------------------------|
+| Zero-width | U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+2060 WJ, U+FEFF BOM/ZWNBSP, U+3164 Hangul Filler, U+180E MVS, U+2061–U+2064 invisible math | Soft wrapping; Arabic / Indic shaping; emoji ZWJ sequences; file BOM | Identifier collisions, watermarking, parser drift, fingerprinting |
+| Bidirectional | U+200E LRM, U+200F RLM, U+202A–U+202E LRE/RLE/PDF/LRO/RLO, U+2066–U+2069 LRI/RLI/FSI/PDI | Mixed LTR/RTL paragraphs, Arabic/Hebrew/Persian text | Trojan-Source (CVE-2021-42574) — reorders source code visually |
+| Tag characters | U+E0000–U+E007F | Originally reserved for language tagging in plain text (deprecated by RFC 5198 in practice); kept alive by emoji flag sequences | Steganographic channel; suspected ChatGPT and other LLM watermarks |
+| Variation selectors | U+FE00–U+FE0F (VS1–VS16), U+E0100–U+E01EF (VS17–VS256) | Select glyph variant for emoji (text vs emoji presentation) and CJK ideograph variants | Accumulates in exports from design tools, breaks string comparison, inflates byte length |
+| Formatting | U+00AD SOFT HYPHEN, U+034F COMBINING GRAPHEME JOINER, U+115F / U+1160 Hangul choseong/jungseong fillers | Suggested hyphenation points, grapheme cluster control | Survives plain-text paste from Word / Docs / Slack; breaks substring search and tokenization |
+
+A code point that is *not* invisible can still be malicious — homoglyph attacks substitute Cyrillic `а` (U+0430) for Latin `a` (U+0061) and look identical at most font sizes. That is a different problem (handled by Unicode Technical Report 36 confusable detection) and is not what this tool addresses. The detector is strictly about code points that do not produce a glyph, or that produce only side effects on the rendering of other characters.
+
+## Why they matter — three real-world threats
+
+### Trojan-Source (CVE-2021-42574)
+
+In November 2021 Nicholas Boucher and Ross Anderson at Cambridge published [Trojan Source](https://trojansource.codes/), demonstrating that almost every compiler, IDE, and code review tool at the time rendered bidirectional Unicode control characters according to the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) — even inside comments and string literals in source code. By inserting RLI, LRI, PDI, and RLO controls, an attacker can author a source file in which the bytes the compiler sees say one thing, but the glyphs a reviewer sees say another.
+
+A canonical example reorders a comment so that a `return` statement appears to be inside the `/* ... */`, while the compiler reads it as live code:
+
+```js
+// JavaScript example, with U+202E (RLO) visualised as ⮜
+const isAdmin = false;
+/* Check if user is admin ⮜  begin admins only⁦‭ */
+if (isAdmin) {
+    console.log("You are an admin.");
+/* end admins only ⮜  ⁩‭*/ }
+```
+
+Most editors patched this within months. VS Code shows a warning bar; rustc emits `text_direction_codepoint_in_literal`. But the patches cover *editors and compilers* — not the documents, READMEs, Markdown files, configuration files, JSON blobs, or shell snippets that flow through the rest of your toolchain. A bidi-control hidden in a JSON config or a YAML release manifest is still invisible to most people reviewing it.
+
+The fix on the detection side is mechanical: the entire bidi block is well-defined, and stripping it produces a string whose visible order is the same as its byte order. Run the tool over any inbound text that you cannot author yourself, and the bidi count tells you whether to look harder.
+
+### AI watermarking via tag characters
+
+The Unicode tag block U+E0000–U+E007F was originally proposed in 1998 for language tagging in plain text. It was deprecated as a general mechanism by [RFC 5198](https://datatracker.ietf.org/doc/html/rfc5198) and survives officially only inside emoji subdivision flag sequences (the regional indicator pattern used for `🏴󠁧󠁢󠁳󠁣󠁴󠁿` Scotland and similar). The rest of the block is unallocated *invisible space*: code points that exist, render to nothing, and do not interact with surrounding text.
+
+That makes the block a near-perfect steganographic channel. Each ASCII byte can be encoded by adding `U+E0000` to its code point, giving 128 invisible glyphs that map 1:1 to printable ASCII. A 32-byte payload — a UUID, an HMAC, a fingerprint — encodes into 32 invisible tag characters that ride inside any normal sentence.
+
+Through 2024 and 2025, multiple independent reports (notably [Joseph Thacker's analysis](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) and follow-ups from Riley Goodside) documented LLM outputs — including responses attributed to ChatGPT — carrying tag-character sequences indistinguishable from a deliberately embedded watermark. Whether the model added them, a wrapping system prompt did, or an upstream provider injected them post-hoc is sometimes hard to attribute. The mechanism, however, is the same: invisible bytes that survive copy-paste into Markdown, email, Slack, GitHub, and PDF.
+
+If you are publishing AI-assisted writing under your own name, or accepting AI-generated code into a repository, you want to know whether tag characters are present before you press publish. The detector flags the entire U+E0000–U+E007F range, decodes any ASCII payload that happens to be encoded by the simple offset scheme, and removes the run with a single mode.
+
+### Copy-paste contamination
+
+The most common — and the most boring — source of invisible characters is rich-text editors. Microsoft Word inserts soft hyphens at justified line breaks. Google Docs inserts ZWJ around italic runs that touch punctuation. Slack inserts U+200B inside `@mentions` and around code spans to prevent its renderer from auto-linking. Notion roundtrips RLM markers when you paste mixed-language headings. Email clients hide quoted-printable artifacts as soft hyphens for line-wrapping. Translation memory tools insert RLM/LRM at every script boundary to lock layout.
+
+When that text leaves the rich-text environment and lands in a plain-text destination — a database `varchar`, a YAML file, a Markdown post, a code comment, an HTTP header — the invisible characters come along and quietly break things:
+
+- Substring search misses matches: `"production"` does not equal `"pr\u200bduction"`.
+- Hash and signature checks fail intermittently because two visually identical strings produce different digests.
+- URL parsers reject hosts with embedded ZWSP, but template engines happily render them, leading to mailto/http links that look right and 404 on click.
+- Compiler errors point at the wrong column number because the source bytes are longer than the visible characters.
+- Diff tools show "no change" when a soft hyphen is added or removed.
+
+Polyfill.io's 2024 supply chain incident and several earlier npm typosquatting cases used a mix of confusables and invisible characters in package metadata to evade casual review; the [Trojan-Source paper](https://trojansource.codes/trojan-source.pdf) lists similar techniques in `package.json` `name` fields and Git commit messages. The lesson is not specifically about supply chain — it is that anywhere text flows from a rich-text source into a security-relevant context, you need a way to see what is actually there.
+
+## How to detect and strip — the workflow
+
+Open the [Zero-Width Character Detector](/tools/zero-width-character-detector/). The page is one screen: a textarea for input, an annotated rendering that overlays each invisible character with a labeled pill, a summary table of categories and counts, and a strip mode selector.
+
+Paste any text. The detection is synchronous and runs on every keystroke. You will see four useful pieces of information:
+
+1. **Total count** — how many invisible code points were found, broken down by category. A clean document reports zero.
+2. **Per-character annotation** — every invisible code point is highlighted inline with its Unicode name and code point. Hover for the full description and the byte offset.
+3. **Codepoint frequency** — which specific code points appear most. A document with 200 instances of U+200B and nothing else is a Word paste; a document with 32 tag characters in a contiguous run is probably a watermark.
+4. **Cleaned output** — the same text with the selected category removed, ready to copy.
+
+The strip mode selector has four positions, matching the four most common cleanup intents:
+
+- **All** — remove every invisible code point regardless of category. Use this when the source is plain text and there is no legitimate reason for any of these characters to be present. Most code, configuration files, JSON, YAML, and log lines fall in this bucket.
+- **Zero-width only** — strip ZWSP, ZWNJ, ZWJ, WJ, BOM, Hangul filler, MVS, and invisible math. Preserve bidi controls (because RTL text may legitimately need them) and variation selectors (because emoji presentation depends on them). Use this when cleaning mixed-script writing where you want layout intent preserved.
+- **Bidi only** — strip the bidirectional block exclusively. Use this for source code, configuration files, and anywhere the visible order must match the byte order, while keeping legitimate ZWJ sequences inside emoji or Devanagari intact.
+- **Tag only** — strip the U+E0000–U+E007F range. Use this for AI-generated text where the only suspicious category is the watermark surface. Preserves everything else.
+- **Variation only** — strip U+FE00–U+FE0F and U+E0100–U+E01EF. Useful when exporting from design tools (Figma, Sketch, Illustrator) inserts emoji variation selectors into copy that should be plain glyphs.
+
+Selecting a mode updates the cleaned output in place. Copy with the button, or download as `.txt` for binary-clean transport.
+
+## Detect and strip without the tool
+
+The tool exists because clicking is faster than scripting. But the underlying detection is regex-trivial in any language. Below are three reference implementations you can drop into a CI step, a pre-commit hook, or a script that audits incoming user content.
+
+The Python version uses only the standard library and prints a categorized count plus a cleaned string. Run it as `python detect_invisible.py < input.txt`:
+
+```python
+import re
+import sys
+import unicodedata
+
+CATEGORIES = {
+    "zero-width": r"[\u200B-\u200D\u2060-\u2064\uFEFF\u180E\u3164]",
+    "bidi":       r"[\u200E\u200F\u202A-\u202E\u2066-\u2069]",
+    "tag":        r"[\U000E0000-\U000E007F]",
+    "variation":  r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]",
+    "formatting": r"[\u00AD\u034F\u115F\u1160]",
+}
+
+def scan(text: str) -> dict[str, list[tuple[int, str, str]]]:
+    findings: dict[str, list[tuple[int, str, str]]] = {k: [] for k in CATEGORIES}
+    for name, pattern in CATEGORIES.items():
+        for match in re.finditer(pattern, text):
+            cp = match.group(0)
+            findings[name].append((
+                match.start(),
+                f"U+{ord(cp):04X}",
+                unicodedata.name(cp, "<unknown>"),
+            ))
+    return findings
+
+def strip_all(text: str) -> str:
+    combined = "|".join(p.strip("[]") for p in CATEGORIES.values())
+    return re.sub(f"[{combined}]", "", text)
+
+if __name__ == "__main__":
+    src = sys.stdin.read()
+    report = scan(src)
+    total = sum(len(v) for v in report.values())
+    print(f"invisible code points: {total}")
+    for cat, hits in report.items():
+        if hits:
+            print(f"  {cat}: {len(hits)}")
+            for offset, cp, name in hits[:5]:
+                print(f"    @{offset} {cp} {name}")
+    sys.stdout.write(strip_all(src))
+```
+
+The JavaScript / TypeScript version targets Node 20+ and browsers. The same regexes work; the only twist is that JS source files need the `u` flag and surrogate-pair-aware syntax for code points above U+FFFF:
+
+```js
+const CATEGORIES = {
+  "zero-width": /[\u200B-\u200D\u2060-\u2064\uFEFF\u180E\u3164]/gu,
+  "bidi":       /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu,
+  "tag":        /[\u{E0000}-\u{E007F}]/gu,
+  "variation":  /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu,
+  "formatting": /[\u00AD\u034F\u115F\u1160]/gu,
+};
+
+const ALL = new RegExp(
+  Object.values(CATEGORIES).map(r => r.source).join("|"),
+  "gu"
+);
+
+export function detectInvisible(text) {
+  const findings = {};
+  for (const [name, re] of Object.entries(CATEGORIES)) {
+    findings[name] = [...text.matchAll(re)].map(m => ({
+      offset: m.index,
+      codePoint: "U+" + m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0"),
+    }));
+  }
+  return findings;
+}
+
+export function stripInvisible(text) {
+  return text.replace(ALL, "");
+}
+```
+
+If you want a one-line guard inside Bash — to fail a CI step on any tag character in a Markdown post, for example — `grep` with PCRE works on macOS (via Homebrew) and on GNU `grep` 3.4+:
+
+```bash
+# Fail if any tag character (U+E0000–U+E007F) appears
+if grep -P '[\x{E0000}-\x{E007F}]' "$file" >/dev/null; then
+  echo "tag characters detected in $file" >&2
+  exit 1
+fi
+
+# Strip every category in place using sed (BSD/GNU portable form below)
+perl -CSDA -i -pe '
+  s/[\x{200B}-\x{200D}\x{2060}-\x{2064}\x{FEFF}\x{180E}\x{3164}]//g;
+  s/[\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]//g;
+  s/[\x{E0000}-\x{E007F}]//g;
+  s/[\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]//g;
+  s/[\x{00AD}\x{034F}\x{115F}\x{1160}]//g;
+' "$file"
+```
+
+`perl -CSDA` enables UTF-8 on STDIN, STDOUT, and `@ARGV`, which is the portable way to keep Perl from mangling multibyte input on the command line. The same script runs inside Git pre-commit hooks, GitHub Actions, and Vercel build steps without additional dependencies.
+
+## Pitfalls
+
+Five edges to keep in mind when running invisible-character cleanup at scale:
+
+**Emoji ZWJ sequences are legitimate ZWJ.** The family emoji `👨‍👩‍👧‍👦` is encoded as `MAN U+200D WOMAN U+200D GIRL U+200D BOY` — four base emoji glued together by three zero-width joiners. Stripping ZWJ from a string that contains emoji will turn that into four separate emoji rendered side by side. Same goes for `🏳️‍🌈` (white flag + ZWJ + rainbow) and any of the skin-tone / hairstyle variants. The detector flags ZWJ inside emoji because it has no way to distinguish "intentional sequence" from "smuggled byte" — visually, neither produces a glyph of its own. Use **Bidi only** or **Tag only** when cleaning text that contains emoji you want to preserve, or post-process by reapplying the canonical emoji sequences from a reference list.
+
+**File BOMs are sometimes intentional.** Windows Notepad writes a UTF-8 BOM (U+FEFF) at the start of every text file it creates. Some Microsoft tools — notably old Excel — refuse to read UTF-8 CSV without one. PowerShell scripts run from `cmd.exe` similarly expect a BOM to be treated as UTF-8 rather than the active code page. If your text came from a file rather than a clipboard, decide explicitly whether the leading BOM is meaningful before stripping it. The detector reports BOM as a zero-width code point regardless of position; you decide whether the report is a warning or an artifact.
+
+**Soft hyphens are normal in rich text.** U+00AD is the recommended way to suggest hyphenation points to a rendering engine. A typeset PDF or an EPUB book may contain hundreds of them legitimately. Strip soft hyphens only when the target is plain text — code, configuration, database fields, log lines. Inside a typeset document, removing them degrades line-breaking quality without any security benefit.
+
+**Tag characters are not always watermarks.** The U+E0000–U+E007F range still has one official use: emoji subdivision flag sequences. The Welsh flag `🏴󠁧󠁢󠁷󠁬󠁳󠁿` is composed of the black flag (U+1F3F4), the tag-encoded ISO subdivision code `gbwls`, and a CANCEL TAG (U+E007F) terminator. Stripping the entire tag block deletes those flags. Wikipedia and some Unicode demonstrations also still use tag characters as part of historical examples. Inspect the run before you classify it: contiguous tag characters between a flag base and U+E007F are flags; a free-floating cluster inside ordinary prose is the watermark surface.
+
+**Client-side cleanup does not fix upstream.** If a CMS, a translation memory, or an LLM API is the source of the invisible characters, stripping them in the browser only cleans the copy you happen to be holding. The next copy from the same source has the same problem. Treat the detector as a microscope, not a filter — use it to confirm a hypothesis about the source, then put the actual strip step at the boundary you control (a webhook, a CI step, a pre-commit hook, a server-side normalisation routine using one of the implementations above).
+
+A sixth pitfall worth mentioning: **byte length is not character length is not visible width**. A string with 50 visible characters and 80 invisible characters has a `String.length` of 130 in JavaScript, a `len()` of 130 in Python, but a `wcswidth` of 50 in a terminal. Hash functions, content-length headers, database `VARCHAR(N)` limits, and authentication signatures all see the full 130. If you compare strings normalised by visible width but stored by byte count, you will get false equality on inputs that should be distinct, or false inequality on inputs a human would call identical. NFC / NFKC normalisation in [Unicode Normalization](https://www.unicode.org/reports/tr15/) handles some cases (combining marks, compatibility decomposition) but does not remove invisible code points; stripping is a separate pass.
+
+## Comparison with other detectors
+
+The open web has a handful of invisible-character viewers. They differ on category coverage, privacy, and workflow shape.
+
+`invisiblecharacterviewer.com` is the canonical reference: minimal UI, displays each invisible code point as a labeled pill, English only. Coverage focuses on zero-width and bidi; tag characters and variation selectors are not categorized separately. Processing is client-side. Good for spotting a single character; less useful when you want a strip step.
+
+`toolszone.net/invisible-character-detector` exposes a broader category list including tag characters but lacks per-category strip modes — it is detect-only. Output is a count and an inline highlight, with no cleaned-text export. The site loads third-party analytics on every page.
+
+`unicode-table.com/en/blocks/tags/` is the Unicode block reference for tag characters specifically. It is a documentation tool, not a detector — you bring a code point and it tells you what it is. Useful as a cross-reference when reading the detector output.
+
+`Diffchecker` and similar diff tools display invisible characters with special symbols when comparing two strings, but they do not categorize or strip. They answer "what changed?" rather than "what is hiding?".
+
+ZeroTool's detector positions itself by combining four properties that no single other tool offers together: full coverage of all five categories (including tag characters and variation selectors), four explicit strip modes corresponding to the four most common cleanup intents, fully client-side processing with no telemetry, and a UI rendered in English, Chinese, Japanese, and Korean. The strip modes in particular reflect the operational reality that "clean up this text" rarely means "remove everything invisible" — emoji, RTL text, and intentional formatting all need surgical preservation.
+
+## Further reading
+
+Internal:
+
+- [Unicode Text Converter](/tools/unicode-text-converter/) — inspect any string as code points, names, and bytes; the reverse direction when you need to construct an invisible character intentionally for testing.
+- [String Escape](/tools/string-escape/) — encode and decode `\uXXXX`, `\xXX`, `\nnn`, and percent-encoded sequences across C, JavaScript, Python, JSON, and URL conventions; complement invisible-character cleanup with full-text encoding visibility.
+
+External:
+
+- [Trojan Source: Invisible Vulnerabilities](https://trojansource.codes/trojan-source.pdf) — the Boucher & Anderson paper describing CVE-2021-42574 and CVE-2021-42694, with attack templates and mitigation guidance.
+- [Unicode Technical Report 9 — Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) — the canonical specification for the bidi controls, including the embedding and isolate operators that Trojan-Source exploits.
+- [Unicode Technical Report 36 — Unicode Security Considerations](https://www.unicode.org/reports/tr36/) — the standard's own threat model for invisible characters, confusables, and identifier spoofing.
+- [Joseph Thacker — Hiding and Finding Text with Unicode Tags](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) — practical walkthrough of encoding ASCII payloads in the tag block, with examples drawn from LLM outputs.
+- [RFC 5198 — Unicode Format for Network Interchange](https://datatracker.ietf.org/doc/html/rfc5198) — the IETF guidance that effectively deprecated U+E0001 LANGUAGE TAG and the rest of the tag block for general text, leaving the block as the unallocated invisible space attackers and watermarkers now use.

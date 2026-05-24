@@ -1,0 +1,242 @@
+---
+title: "Zero-Width 문자 탐지기: AI 출력과 코드에 숨겨진 유니코드 찾기"
+description: "Zero-width 공백, BOM, 양방향 제어 문자, ChatGPT 워터마크 태그 문자 등 모든 텍스트에서 보이지 않는 유니코드 문자를 탐지하고 제거합니다. Trojan-Source 대응. 100% 클라이언트 사이드."
+pubDate: 2026-05-24
+updatedDate: 2026-05-24
+lang: "ko"
+tags: ["unicode", "security", "ai", "watermark", "trojan-source", "text-cleanup", "developer-tools"]
+---
+
+팀원이 ChatGPT가 생성한 변경 로그 한 단락을 PR 설명에 붙여 넣습니다. 영어는 자연스럽게 읽힙니다. diff는 깨끗합니다. CI도 통과합니다. 2주 후 보안 보고서가 그 글머리 기호 중 하나를 가리키며, 릴리스 노트에 U+E0000 범위 — 유니코드 태그 블록 — 의 41자짜리 보이지 않는 토큰이 왜 들어 있는지 묻습니다. 팀원 중 누구도 입력하지 않았습니다. 렌더링된 마크다운에서 누구도 볼 수 없습니다. 어시스턴트로부터의 복사-붙여넣기를 따라 들어와서 에디터, 린터, 리뷰어의 눈, 정적 사이트 생성기를 모두 통과해 결국 고객에게 출시한 아티팩트에 체크섬으로 박혀 버린 것입니다. 같은 주에 또 다른 감사 결과 한 오류 메시지가 적발됩니다. 누군가 리치 텍스트 에디터에서 번역된 문자열을 붙여 넣었고 U+202E RIGHT-TO-LEFT OVERRIDE가 함께 따라온 것입니다. 그 결과 해당 문자열 이후 터미널에 출력되는 모든 오류 코드의 보이는 문자 순서가 뒤집힙니다.
+
+[Zero-Width 문자 탐지기 사용해 보기 →](/ko/tools/zero-width-character-detector/)
+
+특이한 문제가 아닙니다. AI 어시스턴트, 다국어 콘텐츠, 리치 텍스트 소스를 다루다 보면 일상적으로 마주치는 결과물입니다. ZeroTool의 탐지기는 붙여 넣은 텍스트를 받아서 어떤 코드 포인트가 보이지 않는지, 어느 카테고리에 속하는지, 정리 후 문자열이 어떤 모습인지를 정확하게 알려 줍니다 — 모두 브라우저 안에서, 어떠한 업로드도 없이.
+
+## "보이지 않는" 문자란 무엇인가
+
+유니코드 표준은 의도적으로 너비가 0이거나, 글리프를 만들어 내지 않으면서 렌더링에 부수 효과를 일으키는 문자를 정의합니다. 이런 문자들은 정당한 이유로 존재합니다 — 아랍어 셰이핑, 데바나가리 합자, 소프트 줄바꿈 힌트, 이모지 ZWJ 시퀀스, 파일 인코딩 마커 — 그리고 작성자가 의도하지 않은 경계, 가령 plain-text 내보내기, 소스 코드, ASCII를 기대하는 데이터베이스 컬럼 등을 넘어갈 때에야 문제가 됩니다.
+
+탐지기는 보이지 않는 코드 포인트를 다섯 가지 카테고리로 분류합니다. 각 카테고리는 고유한 공격 표면과 정당한 용도를 가지고 있습니다:
+
+| 카테고리 | 코드 포인트 | 정당한 용도 | 몰래 들어왔을 때의 위험 |
+|----------|-------------|----------------|------------------------|
+| Zero-width | U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+2060 WJ, U+FEFF BOM/ZWNBSP, U+3164 Hangul Filler, U+180E MVS, U+2061–U+2064 invisible math | 소프트 래핑; 아랍어/인도계 문자 셰이핑; 이모지 ZWJ 시퀀스; 파일 BOM | 식별자 충돌, 워터마킹, 파서 어긋남, 핑거프린팅 |
+| Bidirectional | U+200E LRM, U+200F RLM, U+202A–U+202E LRE/RLE/PDF/LRO/RLO, U+2066–U+2069 LRI/RLI/FSI/PDI | LTR/RTL 혼합 단락, 아랍어/히브리어/페르시아어 텍스트 | Trojan-Source (CVE-2021-42574) — 소스 코드를 시각적으로 재정렬 |
+| Tag 문자 | U+E0000–U+E007F | 본래 plain text에서 언어 태깅용으로 예약 (실무적으로는 RFC 5198에 의해 폐기); 이모지 깃발 시퀀스에서만 유지 | 스테가노그래피 채널; ChatGPT 및 기타 LLM 워터마크 의심 |
+| Variation selector | U+FE00–U+FE0F (VS1–VS16), U+E0100–U+E01EF (VS17–VS256) | 이모지 글리프 변형(텍스트 vs 이모지 표현) 및 CJK 한자 변형 선택 | 디자인 도구 내보내기에서 누적되어 문자열 비교를 깨고 바이트 길이를 부풀림 |
+| Formatting | U+00AD SOFT HYPHEN, U+034F COMBINING GRAPHEME JOINER, U+115F / U+1160 Hangul choseong/jungseong filler | 권장 하이픈 위치, 그래핌 클러스터 제어 | Word/Docs/Slack에서 plain-text 붙여넣기로 살아남아 부분 문자열 검색과 토큰화를 깨뜨림 |
+
+보이지 않는 *것은* 아니지만 여전히 악의적일 수 있는 코드 포인트도 있습니다 — 호모글리프 공격은 라틴 `a` (U+0061) 대신 키릴 `а` (U+0430)를 치환하며, 대부분의 폰트 크기에서 동일하게 보입니다. 이는 다른 문제이며 (Unicode Technical Report 36의 confusable 탐지가 담당) 이 도구가 다루는 영역이 아닙니다. 탐지기는 엄격하게 글리프를 만들지 않거나, 다른 문자의 렌더링에만 부수 효과를 일으키는 코드 포인트를 대상으로 합니다.
+
+## 왜 중요한가 — 세 가지 실세계 위협
+
+### Trojan-Source (CVE-2021-42574)
+
+2021년 11월 케임브리지의 Nicholas Boucher와 Ross Anderson은 [Trojan Source](https://trojansource.codes/)를 발표하여, 당시 거의 모든 컴파일러, IDE, 코드 리뷰 도구가 [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/)에 따라 양방향 유니코드 제어 문자를 렌더링한다는 것을 — 그것도 소스 코드의 주석과 문자열 리터럴 *내부에서* — 입증했습니다. RLI, LRI, PDI, RLO 제어 문자를 삽입함으로써 공격자는 컴파일러가 읽는 바이트와 리뷰어가 보는 글리프가 서로 다른 의미를 가지는 소스 파일을 작성할 수 있습니다.
+
+대표적인 예는 주석을 재정렬하여 `return` 문이 `/* ... */` 안에 있는 것처럼 보이게 하지만, 컴파일러는 이를 실행 코드로 읽습니다:
+
+```js
+// JavaScript example, with U+202E (RLO) visualised as ⮜
+const isAdmin = false;
+/* Check if user is admin ⮜  begin admins only⁦‭ */
+if (isAdmin) {
+    console.log("You are an admin.");
+/* end admins only ⮜  ⁩‭*/ }
+```
+
+대부분의 에디터는 몇 달 안에 패치되었습니다. VS Code는 경고 막대를 표시하고, rustc는 `text_direction_codepoint_in_literal`을 발생시킵니다. 그러나 패치는 *에디터와 컴파일러*만 대상으로 합니다 — 도구 체인의 나머지를 흘러가는 문서, README, 마크다운 파일, 설정 파일, JSON, 셸 스니펫은 다루지 않습니다. JSON 설정이나 YAML 릴리스 매니페스트에 숨겨진 bidi 제어 문자는 여전히 리뷰하는 대부분의 사람에게는 보이지 않습니다.
+
+탐지 측면의 해결은 기계적입니다: bidi 블록 전체가 잘 정의되어 있으며, 이를 제거하면 보이는 순서가 바이트 순서와 일치하는 문자열이 만들어집니다. 직접 작성하지 않은 모든 외부 텍스트에 도구를 돌려서, bidi 개수가 0이 아니라면 더 깊이 들여다봐야 한다는 신호로 삼으십시오.
+
+### 태그 문자를 통한 AI 워터마킹
+
+유니코드 태그 블록 U+E0000–U+E007F는 1998년에 plain text의 언어 태깅 용도로 처음 제안되었습니다. [RFC 5198](https://datatracker.ietf.org/doc/html/rfc5198)에 의해 일반 메커니즘으로는 폐기되었고, 공식적으로는 이모지 행정구역 깃발 시퀀스(스코틀랜드 `🏴󠁧󠁢󠁳󠁣󠁴󠁿` 등에서 사용하는 regional indicator 패턴) 안에서만 살아남았습니다. 블록의 나머지는 할당되지 않은 *보이지 않는 공간*입니다: 존재하지만 아무것도 렌더링하지 않고, 주변 텍스트와도 상호작용하지 않는 코드 포인트입니다.
+
+이 점이 이 블록을 거의 완벽한 스테가노그래피 채널로 만듭니다. 각 ASCII 바이트는 코드 포인트에 `U+E0000`을 더해 인코딩할 수 있으며, 출력 가능한 ASCII와 1:1로 매핑되는 128개의 보이지 않는 글리프가 됩니다. 32바이트 페이로드 — UUID, HMAC, 지문 — 는 평범한 문장 안에 실려 들어가는 32개의 보이지 않는 태그 문자로 인코딩됩니다.
+
+2024년과 2025년에 걸쳐 여러 독립된 보고들 (특히 [Joseph Thacker의 분석](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/)과 Riley Goodside의 후속 글)은 LLM 출력 — ChatGPT에서 나온 응답을 포함 — 이 의도적으로 삽입된 워터마크와 구별할 수 없는 태그 문자 시퀀스를 담고 있다는 것을 기록했습니다. 모델이 추가한 것인지, 감싸는 시스템 프롬프트가 한 것인지, 상류 공급자가 사후에 주입한 것인지 책임을 가리기는 때로 어렵습니다. 그러나 메커니즘은 동일합니다: 마크다운, 이메일, Slack, GitHub, PDF로의 복사-붙여넣기에서도 살아남는 보이지 않는 바이트입니다.
+
+AI 보조 글을 본인 이름으로 발행하거나, AI가 생성한 코드를 저장소에 받아들인다면, 발행 버튼을 누르기 전에 태그 문자가 있는지 확인하고 싶을 것입니다. 탐지기는 U+E0000–U+E007F 전체 범위를 표시하고, 단순 오프셋 방식으로 인코딩된 ASCII 페이로드가 있으면 디코딩하며, 한 가지 모드로 그 부분을 제거합니다.
+
+### 복사-붙여넣기 오염
+
+가장 흔하고 — 가장 지루한 — 보이지 않는 문자의 원인은 리치 텍스트 에디터입니다. Microsoft Word는 양쪽 정렬된 줄바꿈에 soft hyphen을 삽입합니다. Google Docs는 구두점에 인접한 이탤릭 구간 주변에 ZWJ를 삽입합니다. Slack은 `@mentions` 안과 코드 스팬 주변에 U+200B를 삽입하여 자체 렌더러의 자동 링크화를 막습니다. Notion은 혼합 언어 헤딩을 붙여 넣을 때 RLM 마커를 라운드트립합니다. 이메일 클라이언트는 quoted-printable 아티팩트를 줄바꿈용 soft hyphen으로 숨깁니다. 번역 메모리 도구는 레이아웃을 고정하기 위해 모든 스크립트 경계에 RLM/LRM을 삽입합니다.
+
+그 텍스트가 리치 텍스트 환경을 떠나 plain-text 목적지 — 데이터베이스 `varchar`, YAML 파일, 마크다운 포스트, 코드 주석, HTTP 헤더 — 에 도착하면, 보이지 않는 문자들도 함께 따라와 조용히 일을 망칩니다:
+
+- 부분 문자열 검색이 매치를 놓칩니다: `"production"`은 `"pr\u200bduction"`과 같지 않습니다.
+- 시각적으로 동일한 두 문자열이 서로 다른 다이제스트를 만들어 해시 및 서명 검증이 간헐적으로 실패합니다.
+- URL 파서는 ZWSP가 끼어 있는 호스트를 거부하지만, 템플릿 엔진은 기꺼이 렌더링하여 올바르게 보이는데 클릭하면 404가 나는 mailto/http 링크가 만들어집니다.
+- 소스 바이트가 보이는 문자보다 길기 때문에 컴파일러 오류가 잘못된 컬럼 번호를 가리킵니다.
+- soft hyphen이 추가되거나 제거되면 diff 도구는 "변경 없음"을 보여 줍니다.
+
+Polyfill.io의 2024년 공급망 사건과 그 이전의 여러 npm 타이포스쿼팅 사례는 패키지 메타데이터에 confusable과 보이지 않는 문자를 섞어 가벼운 리뷰를 피해 갔습니다. [Trojan-Source 논문](https://trojansource.codes/trojan-source.pdf)은 `package.json`의 `name` 필드와 Git 커밋 메시지에서 비슷한 기법을 나열합니다. 교훈은 공급망에 국한되지 않습니다 — 리치 텍스트 소스에서 보안상 중요한 컨텍스트로 텍스트가 흘러가는 어디서든, 실제로 무엇이 있는지 볼 수 있는 수단이 필요하다는 점입니다.
+
+## 탐지하고 제거하는 방법 — 워크플로
+
+[Zero-Width 문자 탐지기](/ko/tools/zero-width-character-detector/)를 엽니다. 페이지는 한 화면입니다: 입력용 textarea, 각 보이지 않는 문자를 라벨이 붙은 알약 형태로 오버레이하는 주석 처리된 렌더링, 카테고리와 개수를 보여 주는 요약 표, 그리고 제거 모드 선택기.
+
+아무 텍스트나 붙여 넣으십시오. 탐지는 동기식으로 매 키 입력마다 실행됩니다. 유용한 네 가지 정보를 볼 수 있습니다:
+
+1. **총 개수** — 보이지 않는 코드 포인트가 몇 개나 발견되었는지, 카테고리별로 분류됩니다. 깨끗한 문서는 0을 보고합니다.
+2. **문자별 주석** — 모든 보이지 않는 코드 포인트는 그 유니코드 이름과 코드 포인트로 인라인 하이라이트됩니다. 호버하면 전체 설명과 바이트 오프셋이 나옵니다.
+3. **코드 포인트 빈도** — 어떤 코드 포인트가 가장 많이 나타나는지. U+200B가 200개이고 다른 것은 없는 문서는 Word 붙여넣기이고, 32개의 태그 문자가 연속으로 나타나는 문서는 워터마크일 가능성이 높습니다.
+4. **정리된 출력** — 선택한 카테고리가 제거된 같은 텍스트로, 복사할 준비가 되어 있습니다.
+
+제거 모드 선택기에는 네 가지 가장 흔한 정리 의도에 대응하는 네 가지 위치가 있습니다:
+
+- **All** — 카테고리에 관계없이 모든 보이지 않는 코드 포인트를 제거. 소스가 plain text이고 이런 문자들이 존재할 정당한 이유가 전혀 없을 때 사용합니다. 대부분의 코드, 설정 파일, JSON, YAML, 로그 라인이 이 범주에 속합니다.
+- **Zero-width only** — ZWSP, ZWNJ, ZWJ, WJ, BOM, Hangul filler, MVS, invisible math를 제거. bidi 제어 문자(RTL 텍스트가 정당하게 필요할 수 있으므로)와 variation selector(이모지 표현이 의존하므로)는 보존. 레이아웃 의도를 유지하면서 스크립트가 혼합된 글을 정리할 때 사용합니다.
+- **Bidi only** — 양방향 블록만 제거. 소스 코드, 설정 파일, 그리고 보이는 순서가 바이트 순서와 일치해야 하지만 이모지나 데바나가리 안의 정당한 ZWJ 시퀀스는 그대로 두어야 하는 모든 곳에 사용합니다.
+- **Tag only** — U+E0000–U+E007F 범위를 제거. AI 생성 텍스트에서 의심스러운 카테고리가 워터마크 표면뿐일 때 사용합니다. 나머지는 모두 보존합니다.
+- **Variation only** — U+FE00–U+FE0F와 U+E0100–U+E01EF를 제거. 디자인 도구(Figma, Sketch, Illustrator)에서 내보내기가 plain 글리프여야 하는 복사물에 이모지 variation selector를 삽입했을 때 유용합니다.
+
+모드를 선택하면 정리된 출력이 즉시 갱신됩니다. 버튼으로 복사하거나, 바이너리 클린 전송을 위해 `.txt`로 다운로드하십시오.
+
+## 도구 없이 탐지하고 제거하기
+
+이 도구가 존재하는 이유는 클릭이 스크립트 작성보다 빠르기 때문입니다. 하지만 그 바탕에 깔린 탐지는 어느 언어에서든 정규식으로 사소합니다. 아래는 CI 단계, pre-commit 훅, 사용자 입력 콘텐츠를 감사하는 스크립트에 바로 넣을 수 있는 세 가지 참조 구현입니다.
+
+Python 버전은 표준 라이브러리만 사용하며 카테고리별 개수와 정리된 문자열을 출력합니다. `python detect_invisible.py < input.txt`로 실행합니다:
+
+```python
+import re
+import sys
+import unicodedata
+
+CATEGORIES = {
+    "zero-width": r"[\u200B-\u200D\u2060-\u2064\uFEFF\u180E\u3164]",
+    "bidi":       r"[\u200E\u200F\u202A-\u202E\u2066-\u2069]",
+    "tag":        r"[\U000E0000-\U000E007F]",
+    "variation":  r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]",
+    "formatting": r"[\u00AD\u034F\u115F\u1160]",
+}
+
+def scan(text: str) -> dict[str, list[tuple[int, str, str]]]:
+    findings: dict[str, list[tuple[int, str, str]]] = {k: [] for k in CATEGORIES}
+    for name, pattern in CATEGORIES.items():
+        for match in re.finditer(pattern, text):
+            cp = match.group(0)
+            findings[name].append((
+                match.start(),
+                f"U+{ord(cp):04X}",
+                unicodedata.name(cp, "<unknown>"),
+            ))
+    return findings
+
+def strip_all(text: str) -> str:
+    combined = "|".join(p.strip("[]") for p in CATEGORIES.values())
+    return re.sub(f"[{combined}]", "", text)
+
+if __name__ == "__main__":
+    src = sys.stdin.read()
+    report = scan(src)
+    total = sum(len(v) for v in report.values())
+    print(f"invisible code points: {total}")
+    for cat, hits in report.items():
+        if hits:
+            print(f"  {cat}: {len(hits)}")
+            for offset, cp, name in hits[:5]:
+                print(f"    @{offset} {cp} {name}")
+    sys.stdout.write(strip_all(src))
+```
+
+JavaScript / TypeScript 버전은 Node 20+와 브라우저를 대상으로 합니다. 같은 정규식이 동작하며, 한 가지 차이는 JS 소스 파일이 U+FFFF 위 코드 포인트에 대해 `u` 플래그와 서로게이트 쌍 인식 문법을 필요로 한다는 것입니다:
+
+```js
+const CATEGORIES = {
+  "zero-width": /[\u200B-\u200D\u2060-\u2064\uFEFF\u180E\u3164]/gu,
+  "bidi":       /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu,
+  "tag":        /[\u{E0000}-\u{E007F}]/gu,
+  "variation":  /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu,
+  "formatting": /[\u00AD\u034F\u115F\u1160]/gu,
+};
+
+const ALL = new RegExp(
+  Object.values(CATEGORIES).map(r => r.source).join("|"),
+  "gu"
+);
+
+export function detectInvisible(text) {
+  const findings = {};
+  for (const [name, re] of Object.entries(CATEGORIES)) {
+    findings[name] = [...text.matchAll(re)].map(m => ({
+      offset: m.index,
+      codePoint: "U+" + m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0"),
+    }));
+  }
+  return findings;
+}
+
+export function stripInvisible(text) {
+  return text.replace(ALL, "");
+}
+```
+
+예를 들어 마크다운 포스트에 태그 문자가 하나라도 있으면 CI 단계를 실패시키는 Bash 한 줄 가드를 원한다면, PCRE를 지원하는 `grep`은 macOS(Homebrew 경유)와 GNU `grep` 3.4+에서 동작합니다:
+
+```bash
+# Fail if any tag character (U+E0000–U+E007F) appears
+if grep -P '[\x{E0000}-\x{E007F}]' "$file" >/dev/null; then
+  echo "tag characters detected in $file" >&2
+  exit 1
+fi
+
+# Strip every category in place using sed (BSD/GNU portable form below)
+perl -CSDA -i -pe '
+  s/[\x{200B}-\x{200D}\x{2060}-\x{2064}\x{FEFF}\x{180E}\x{3164}]//g;
+  s/[\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]//g;
+  s/[\x{E0000}-\x{E007F}]//g;
+  s/[\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]//g;
+  s/[\x{00AD}\x{034F}\x{115F}\x{1160}]//g;
+' "$file"
+```
+
+`perl -CSDA`는 STDIN, STDOUT, `@ARGV`에 UTF-8을 활성화하여 명령줄에서 Perl이 멀티바이트 입력을 깨뜨리지 않도록 하는 이식성 있는 방법입니다. 동일한 스크립트가 Git pre-commit 훅, GitHub Actions, Vercel 빌드 단계 안에서 추가 의존성 없이 동작합니다.
+
+## 함정
+
+규모 있게 보이지 않는 문자를 정리할 때 염두에 두어야 할 다섯 가지 경계 사례:
+
+**이모지 ZWJ 시퀀스는 정당한 ZWJ입니다.** 가족 이모지 `👨‍👩‍👧‍👦`는 `MAN U+200D WOMAN U+200D GIRL U+200D BOY` — 네 개의 기본 이모지를 세 개의 zero-width joiner로 붙인 형태로 인코딩됩니다. 이모지가 포함된 문자열에서 ZWJ를 제거하면 네 개의 이모지가 옆으로 따로 렌더링됩니다. `🏳️‍🌈`(흰 깃발 + ZWJ + 무지개)와 모든 피부톤/헤어스타일 변형도 마찬가지입니다. 탐지기는 이모지 안의 ZWJ도 표시하는데, "의도된 시퀀스"인지 "몰래 들어온 바이트"인지를 구별할 방법이 없기 때문입니다 — 시각적으로는 둘 다 독립된 글리프를 만들지 않습니다. 보존하고 싶은 이모지가 포함된 텍스트를 정리할 때는 **Bidi only** 또는 **Tag only**를 사용하거나, 사후 처리로 참조 목록에서 정식 이모지 시퀀스를 다시 적용하십시오.
+
+**파일 BOM은 때로 의도적입니다.** Windows 메모장은 자신이 만드는 모든 텍스트 파일 맨 앞에 UTF-8 BOM (U+FEFF)을 씁니다. 일부 Microsoft 도구 — 특히 옛 Excel — 는 BOM 없는 UTF-8 CSV를 거부합니다. `cmd.exe`에서 실행되는 PowerShell 스크립트도 활성 코드 페이지가 아닌 UTF-8로 취급되기 위해 BOM을 기대합니다. 텍스트가 클립보드가 아닌 파일에서 왔다면, 선행 BOM을 제거하기 전에 그것이 의미를 가지는지 명시적으로 판단하십시오. 탐지기는 위치와 관계없이 BOM을 zero-width 코드 포인트로 보고합니다. 그 보고가 경고인지 아티팩트인지는 당신이 결정합니다.
+
+**Soft hyphen은 리치 텍스트에서 정상입니다.** U+00AD는 렌더링 엔진에 하이픈 위치를 제안하는 권장 방법입니다. 조판된 PDF나 EPUB 책은 수백 개의 soft hyphen을 정당하게 담고 있을 수 있습니다. soft hyphen은 대상이 plain text — 코드, 설정, 데이터베이스 필드, 로그 라인 — 일 때만 제거하십시오. 조판된 문서 안에서 이를 제거하면 보안상 이득 없이 줄바꿈 품질만 떨어집니다.
+
+**태그 문자가 항상 워터마크인 것은 아닙니다.** U+E0000–U+E007F 범위는 여전히 한 가지 공식 용도를 가집니다: 이모지 행정구역 깃발 시퀀스. 웨일스 깃발 `🏴󠁧󠁢󠁷󠁬󠁳󠁿`은 검은 깃발(U+1F3F4), 태그 인코딩된 ISO 행정 코드 `gbwls`, CANCEL TAG(U+E007F) 종료자로 구성됩니다. 태그 블록 전체를 제거하면 이런 깃발이 삭제됩니다. Wikipedia와 일부 유니코드 시연도 여전히 역사적 예시의 일부로 태그 문자를 사용합니다. 분류하기 전에 시퀀스를 검사하십시오: 깃발 베이스와 U+E007F 사이의 연속된 태그 문자는 깃발이고, 평범한 산문 안에 떠다니는 클러스터는 워터마크 표면입니다.
+
+**클라이언트 사이드 정리는 상류를 고치지 않습니다.** CMS, 번역 메모리, LLM API가 보이지 않는 문자의 출처라면 브라우저에서 제거하는 것은 지금 손에 든 사본만 깨끗하게 합니다. 같은 출처에서 가져온 다음 사본도 같은 문제를 가집니다. 탐지기를 필터가 아니라 현미경으로 다루십시오 — 출처에 대한 가설을 확인하는 데 사용한 다음, 실제 제거 단계는 당신이 통제하는 경계(webhook, CI 단계, pre-commit 훅, 위의 구현 중 하나를 사용하는 서버 측 정규화 루틴)에 두십시오.
+
+언급할 만한 여섯 번째 함정: **바이트 길이는 문자 길이가 아니며 보이는 너비도 아닙니다**. 50개의 보이는 문자와 80개의 보이지 않는 문자로 이루어진 문자열은 JavaScript의 `String.length`로는 130, Python의 `len()`으로도 130이지만, 터미널의 `wcswidth`로는 50입니다. 해시 함수, content-length 헤더, 데이터베이스 `VARCHAR(N)` 제한, 인증 서명은 모두 130을 봅니다. 보이는 너비로 정규화된 문자열을 바이트 수로 저장된 문자열과 비교하면, 달라야 할 입력에 거짓 동등성을 얻거나, 사람이 같다고 부를 입력에 거짓 부등성을 얻게 됩니다. [Unicode Normalization](https://www.unicode.org/reports/tr15/)의 NFC / NFKC 정규화는 일부 사례(결합 표시, 호환성 분해)를 처리하지만 보이지 않는 코드 포인트를 제거하지는 않습니다. 제거는 별도의 패스입니다.
+
+## 다른 탐지기와의 비교
+
+오픈 웹에는 보이지 않는 문자 뷰어가 몇 가지 있습니다. 카테고리 커버리지, 프라이버시, 워크플로 형태에서 차이를 보입니다.
+
+`invisiblecharacterviewer.com`은 표준 참조입니다: 최소한의 UI, 각 보이지 않는 코드 포인트를 라벨이 붙은 알약으로 표시, 영어 전용. 커버리지는 zero-width와 bidi에 집중하며, 태그 문자와 variation selector는 별도로 분류되지 않습니다. 처리는 클라이언트 사이드. 단일 문자를 찾아내는 데는 좋지만, 제거 단계를 원할 때는 덜 유용합니다.
+
+`toolszone.net/invisible-character-detector`는 태그 문자를 포함한 더 넓은 카테고리 목록을 노출하지만 카테고리별 제거 모드가 없습니다 — 탐지 전용입니다. 출력은 개수와 인라인 하이라이트이며, 정리된 텍스트 내보내기는 없습니다. 사이트는 모든 페이지에서 서드파티 분석을 로드합니다.
+
+`unicode-table.com/en/blocks/tags/`는 태그 문자에 대한 유니코드 블록 참조입니다. 탐지기가 아니라 문서화 도구입니다 — 코드 포인트를 가져가면 그것이 무엇인지 알려 줍니다. 탐지기 출력을 읽을 때 교차 참조용으로 유용합니다.
+
+`Diffchecker`와 비슷한 diff 도구들은 두 문자열을 비교할 때 보이지 않는 문자를 특수 기호로 표시하지만 분류하거나 제거하지는 않습니다. "무엇이 바뀌었나?"에는 답하지만 "무엇이 숨어 있는가?"에는 답하지 않습니다.
+
+ZeroTool의 탐지기는 다른 어떤 단일 도구도 함께 제공하지 않는 네 가지 속성을 결합하여 자리매김합니다: 다섯 카테고리(태그 문자와 variation selector 포함) 전체 커버리지, 네 가지 가장 흔한 정리 의도에 대응하는 명시적인 네 가지 제거 모드, 텔레메트리가 전혀 없는 완전한 클라이언트 사이드 처리, 그리고 영어/중국어/일본어/한국어로 렌더링되는 UI. 특히 제거 모드는 "이 텍스트를 정리하라"가 좀처럼 "보이지 않는 것을 전부 제거하라"를 의미하지 않는다는 운영 현실을 반영합니다 — 이모지, RTL 텍스트, 의도된 서식은 모두 외과적인 보존이 필요합니다.
+
+## 더 읽을거리
+
+내부:
+
+- [Unicode 텍스트 변환기](/ko/tools/unicode-text-converter/) — 모든 문자열을 코드 포인트, 이름, 바이트로 검사; 테스트용으로 의도적으로 보이지 않는 문자를 구성해야 할 때 역방향으로 사용합니다.
+- [문자열 이스케이프](/ko/tools/string-escape/) — C, JavaScript, Python, JSON, URL 컨벤션 전반에 걸쳐 `\uXXXX`, `\xXX`, `\nnn`, 퍼센트 인코딩 시퀀스를 인코딩/디코딩; 보이지 않는 문자 정리를 전체 텍스트 인코딩 가시성으로 보완합니다.
+
+외부:
+
+- [Trojan Source: Invisible Vulnerabilities](https://trojansource.codes/trojan-source.pdf) — CVE-2021-42574와 CVE-2021-42694를 기술하는 Boucher & Anderson 논문, 공격 템플릿과 완화 가이드 포함.
+- [Unicode Technical Report 9 — Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) — Trojan-Source가 악용하는 임베딩 및 isolate 연산자를 포함한 bidi 제어 문자의 정식 명세.
+- [Unicode Technical Report 36 — Unicode Security Considerations](https://www.unicode.org/reports/tr36/) — 보이지 않는 문자, confusable, 식별자 스푸핑에 대한 표준 자체의 위협 모델.
+- [Joseph Thacker — Hiding and Finding Text with Unicode Tags](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) — 태그 블록에 ASCII 페이로드를 인코딩하는 실전 워크스루, LLM 출력에서 가져온 예시 포함.
+- [RFC 5198 — Unicode Format for Network Interchange](https://datatracker.ietf.org/doc/html/rfc5198) — 일반 텍스트에서 U+E0001 LANGUAGE TAG와 나머지 태그 블록을 사실상 폐기시킨 IETF 가이드, 그 결과 공격자와 워터마커가 지금 사용하는 할당되지 않은 보이지 않는 공간이 남게 되었습니다.

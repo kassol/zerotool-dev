@@ -1,0 +1,243 @@
+---
+title: "零宽字符检测器：识别 AI 输出和代码中隐藏的 Unicode"
+description: "从任意文本中检测并清除不可见的 Unicode 字符——零宽空格、BOM、双向控制符、ChatGPT 水印 tag 字符。具备 Trojan-Source 防护意识，100% 客户端运行。"
+pubDate: 2026-05-24
+updatedDate: 2026-05-24
+lang: "zh"
+sourceTitle: "Zero-Width Character Detector: Find Hidden Unicode in AI Output and Code"
+tags: ["unicode", "security", "ai", "watermark", "trojan-source", "text-cleanup", "developer-tools"]
+---
+
+队友把一段 ChatGPT 生成的 changelog 文本贴进了你的 PR 描述里。英文读起来没问题，diff 看着干净，CI 全绿。两周后一份安全报告指着其中一条 bullet 问你：为什么发布说明里包含一段 41 个字符、位于 U+E0000 区段——也就是 Unicode tag 块——的不可见 token？团队里没人输入过这串字符，团队里也没人能在渲染后的 Markdown 中看到它。它跟着复制粘贴从助手那边一路混进来，穿过了你的编辑器、linter、reviewer 的眼睛，再穿过你的静态站点生成器，最终被打进哈希、签进交付给客户的产物。同一周，另一次毫不相关的审计又卡住了你的一条错误信息——有人从富文本编辑器粘了一段翻译过的字符串，U+202E RIGHT-TO-LEFT OVERRIDE 跟着进来了；从那条信息之后，每一条打印到终端的错误码都被这个字符在视觉上反向重排。
+
+[试用 Zero-Width Character Detector →](/zh/tools/zero-width-character-detector/)
+
+这不是什么罕见问题，而是和 AI 助手、多语种内容、富文本来源打交道时的日常产物。ZeroTool 的检测器接收任意粘贴的文本，准确告诉你哪些码点是不可见的、它们归属哪一类、清理后的字符串长什么样——全部在浏览器内完成，不上传任何内容。
+
+## 什么算"不可见"
+
+Unicode 标准有意定义了一类字符：它们渲染时宽度为零，或者只在不产生字形的前提下对渲染施加副作用。这些字符存在的原因都合理——阿拉伯字母的塑形（shaping）、天城文连字（ligature）、软换行提示、emoji ZWJ 序列、文件编码标记——只有当它们越过作者并未预期的边界时（例如纯文本导出、源代码、或一个只期望 ASCII 的数据库列），才会变成问题。
+
+检测器把不可见码点归为五类，每一类都有各自的攻击面和各自的合法用途：
+
+| 类别 | 码点 | 合法用途 | 被夹带时的风险 |
+|------|------|----------|------------------|
+| 零宽字符（Zero-width） | U+200B ZWSP、U+200C ZWNJ、U+200D ZWJ、U+2060 WJ、U+FEFF BOM/ZWNBSP、U+3164 Hangul Filler、U+180E MVS、U+2061–U+2064 不可见数学符号 | 软换行；阿拉伯文／印度系文字塑形；emoji ZWJ 序列；文件 BOM | 标识符冲突、加水印、解析器漂移、指纹追踪 |
+| 双向控制符（Bidirectional） | U+200E LRM、U+200F RLM、U+202A–U+202E LRE/RLE/PDF/LRO/RLO、U+2066–U+2069 LRI/RLI/FSI/PDI | 混合 LTR/RTL 段落、阿拉伯文／希伯来文／波斯文 | Trojan-Source（CVE-2021-42574）——在视觉上重排源代码 |
+| Tag 字符 | U+E0000–U+E007F | 最初保留用于纯文本中的语言标记（实际已被 RFC 5198 废弃）；目前仅靠 emoji 行政区旗序列存活 | 隐写信道；被怀疑承载 ChatGPT 以及其它 LLM 的水印 |
+| 变体选择符（Variation selectors） | U+FE00–U+FE0F（VS1–VS16）、U+E0100–U+E01EF（VS17–VS256） | 选择 emoji 字形变体（文本式 vs emoji 式）以及中日韩表意文字变体 | 从设计工具导出时不断累积，破坏字符串比较，撑大字节长度 |
+| 格式控制（Formatting） | U+00AD SOFT HYPHEN、U+034F COMBINING GRAPHEME JOINER、U+115F / U+1160 韩文初／中声填充符 | 建议的连字符断点、字位簇控制 | 从 Word／Docs／Slack 纯文本粘贴时一路存活；破坏子串搜索和分词 |
+
+一个并*不*不可见的码点也可能是恶意的——同形字（homoglyph）攻击用西里尔字母 `а`（U+0430）替换拉丁字母 `a`（U+0061），在大多数字号下肉眼无法区分。那是另一类问题（由 Unicode 技术报告 36 的 confusable 检测处理），不在本工具范围内。本检测器只关心那些不产生字形、或者只对其他字符的渲染产生副作用的码点。
+
+## 为什么要在意——三个现实威胁
+
+### Trojan-Source（CVE-2021-42574）
+
+2021 年 11 月，剑桥的 Nicholas Boucher 和 Ross Anderson 发表了 [Trojan Source](https://trojansource.codes/)，证明当时几乎所有编译器、IDE 和代码审查工具都会按照 [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) 渲染双向 Unicode 控制字符——包括源代码中的注释和字符串字面量内部。攻击者只要插入 RLI、LRI、PDI、RLO 控制符，就能写出这样一个源文件：编译器读到的字节是一回事，reviewer 看到的字形是另一回事。
+
+一个经典示例把注释重排，使一条 `return` 语句看上去位于 `/* ... */` 内部，而编译器实际把它当作真实代码执行：
+
+```js
+// JavaScript example, with U+202E (RLO) visualised as ⮜
+const isAdmin = false;
+/* Check if user is admin ⮜  begin admins only⁦‭ */
+if (isAdmin) {
+    console.log("You are an admin.");
+/* end admins only ⮜  ⁩‭*/ }
+```
+
+多数编辑器在几个月内打了补丁：VS Code 顶部会弹出警告条，rustc 抛出 `text_direction_codepoint_in_literal`。但补丁覆盖的是*编辑器和编译器*——而不是工具链下游流动的文档、README、Markdown 文件、配置文件、JSON 块、shell 片段。藏在 JSON 配置或 YAML 发布清单里的一个双向控制符，对大多数 reviewer 而言仍然是不可见的。
+
+检测侧的修复非常机械：整个 bidi 块定义明确，剥掉之后字符串的可见顺序就等于字节顺序。把工具跑在任何你自己并未撰写的输入文本上，bidi 计数会告诉你是否需要再仔细看一眼。
+
+### 通过 tag 字符实施 AI 水印
+
+Unicode tag 块 U+E0000–U+E007F 最初在 1998 年被提议用于纯文本中的语言标记。[RFC 5198](https://datatracker.ietf.org/doc/html/rfc5198) 实质上废弃了它作为通用机制的地位，如今官方只在 emoji 行政区旗序列中保留它（用于 `🏴󠁧󠁢󠁳󠁣󠁴󠁿` 苏格兰旗及类似旗帜的 regional indicator 模式）。该块的其余部分是未分配的*不可见空间*：码点存在、不渲染任何东西、与周围字符也不发生交互。
+
+这让整个块几乎成为一个完美的隐写信道。每个 ASCII 字节都可以通过把码点加上 `U+E0000` 来编码，得到 128 个一对一映射到可打印 ASCII 的不可见字形。32 字节的负载（UUID、HMAC、指纹）只需 32 个不可见 tag 字符就能编码完毕，藏进任何一句普通文本里。
+
+整个 2024 到 2025 年间，多份独立报告（尤其是 [Joseph Thacker 的分析](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) 以及 Riley Goodside 的后续追踪）记录了 LLM 输出——包括据称来自 ChatGPT 的响应——携带 tag 字符序列，与刻意嵌入的水印在形态上无法区分。这些字符究竟是模型自己加上的、外层 system prompt 加的、还是上游服务商在事后注入的，往往难以归责。但机制本身始终一样：能在复制粘贴穿越 Markdown、邮件、Slack、GitHub、PDF 后仍然存活的不可见字节。
+
+如果你打算以自己的名义发表 AI 辅助写作，或者把 AI 生成的代码合进仓库，那你会希望在按下发布按钮之前知道里头有没有 tag 字符。本检测器会标记整个 U+E0000–U+E007F 范围，对那些恰好按简单偏移方案编码的 ASCII 负载进行解码，并提供一个独立模式直接移除该区段。
+
+### 复制粘贴污染
+
+最常见——也最无趣——的不可见字符来源是富文本编辑器。Microsoft Word 会在两端对齐的换行处插入软连字符。Google Docs 会在紧挨标点的斜体段两侧插入 ZWJ。Slack 会在 `@提及` 内部和代码段两侧插入 U+200B，防止自家渲染器自动加链接。Notion 在你粘贴混合语言标题时会反复来回插入 RLM 标记。邮件客户端把 quoted-printable 残留物隐藏成软连字符用于换行。翻译记忆库工具会在每个文字脚本边界插入 RLM/LRM 以锁定排版。
+
+当这些文本离开富文本环境，落到一个纯文本目的地（数据库 `varchar`、YAML 文件、Markdown 文章、代码注释、HTTP header）时，不可见字符会一路跟着进来，然后悄悄把事情搞砸：
+
+- 子串搜索匹配失败：`"production"` 不等于 `"pr\u200bduction"`。
+- 哈希和签名校验时好时坏，因为两个看上去一模一样的字符串算出不同摘要。
+- URL 解析器拒绝接受含嵌入 ZWSP 的主机名，但模板引擎照样把它渲染出来，导致 mailto/http 链接看起来正确、一点就 404。
+- 编译器报错指向错误的列号，因为源文件字节数比可见字符数多。
+- diff 工具在添加或移除软连字符时报告"无变化"。
+
+Polyfill.io 在 2024 年的供应链事件，以及更早几起 npm 抢注（typosquatting）案例，都在包元数据中混用同形字和不可见字符以躲过粗略 review；[Trojan-Source 论文](https://trojansource.codes/trojan-source.pdf) 也列举了 `package.json` `name` 字段和 Git commit message 中的类似手法。这里要吸取的教训并非专属于供应链——而是：任何文本从富文本来源流向一个安全敏感场景，你都需要一种方式去看清里面到底有什么。
+
+## 如何检测并清除——工作流
+
+打开 [Zero-Width Character Detector](/zh/tools/zero-width-character-detector/)。整个页面就是一屏：一个输入框、一个把每个不可见字符叠加上标签气泡的注释视图、一张按类别和数量汇总的统计表、一个清除模式选择器。
+
+把任何文本粘进去。检测是同步的，每一次按键都会触发。你会看到四份有用的信息：
+
+1. **总计** —— 检测到多少个不可见码点，按类别拆分。干净的文档应当为零。
+2. **逐字符注释** —— 每个不可见码点会被内联高亮，附上 Unicode 名称和码点。鼠标悬停可以看到完整描述与字节偏移。
+3. **码点频次** —— 哪些具体码点出现得最多。一份文档有 200 个 U+200B、别的什么都没有，多半是从 Word 粘过来的；有 32 个 tag 字符聚成连续一段，大概率是个水印。
+4. **清理后的输出** —— 移除所选类别后的同一段文本，可直接复制。
+
+清除模式选择器有四个挡位，对应四种最常见的清理意图：
+
+- **All** —— 移除所有类别的不可见码点，不分类型。当来源就是纯文本、没有任何理由出现这些字符时使用。大部分代码、配置文件、JSON、YAML、日志行都属于这一档。
+- **Zero-width only** —— 仅清除 ZWSP、ZWNJ、ZWJ、WJ、BOM、Hangul filler、MVS、不可见数学符号。保留 bidi 控制符（因为 RTL 文本可能确实需要它们）和变体选择符（因为 emoji 呈现形式依赖它们）。清理那些你希望保留排版意图的混合脚本文本时使用。
+- **Bidi only** —— 仅清除双向控制块。用于源代码、配置文件，以及任何要求可见顺序必须等同于字节顺序的地方，同时保留 emoji 或天城文里合法的 ZWJ 序列。
+- **Tag only** —— 仅清除 U+E0000–U+E007F 范围。用于 AI 生成文本，且唯一可疑类别就是水印面时。其他一切保留不动。
+- **Variation only** —— 仅清除 U+FE00–U+FE0F 和 U+E0100–U+E01EF。当设计工具（Figma、Sketch、Illustrator）导出文案时夹带了 emoji 变体选择符、而你只想要纯字形时很有用。
+
+选定一种模式后，清理结果会原地刷新。点击按钮复制，或导出为 `.txt` 用于二进制干净的传输。
+
+## 不用工具时如何检测与清除
+
+工具之所以存在，是因为点击比写脚本快。但底层检测在任何语言里都是正则级别的小事。下面是三份参考实现，你可以塞进 CI 步骤、pre-commit hook、或者一个审计用户输入内容的脚本。
+
+Python 版本只用标准库，输出按类别分类的计数加上清理后的字符串。运行方式：`python detect_invisible.py < input.txt`：
+
+```python
+import re
+import sys
+import unicodedata
+
+CATEGORIES = {
+    "zero-width": r"[\u200B-\u200D\u2060-\u2064\uFEFF\u180E\u3164]",
+    "bidi":       r"[\u200E\u200F\u202A-\u202E\u2066-\u2069]",
+    "tag":        r"[\U000E0000-\U000E007F]",
+    "variation":  r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]",
+    "formatting": r"[\u00AD\u034F\u115F\u1160]",
+}
+
+def scan(text: str) -> dict[str, list[tuple[int, str, str]]]:
+    findings: dict[str, list[tuple[int, str, str]]] = {k: [] for k in CATEGORIES}
+    for name, pattern in CATEGORIES.items():
+        for match in re.finditer(pattern, text):
+            cp = match.group(0)
+            findings[name].append((
+                match.start(),
+                f"U+{ord(cp):04X}",
+                unicodedata.name(cp, "<unknown>"),
+            ))
+    return findings
+
+def strip_all(text: str) -> str:
+    combined = "|".join(p.strip("[]") for p in CATEGORIES.values())
+    return re.sub(f"[{combined}]", "", text)
+
+if __name__ == "__main__":
+    src = sys.stdin.read()
+    report = scan(src)
+    total = sum(len(v) for v in report.values())
+    print(f"invisible code points: {total}")
+    for cat, hits in report.items():
+        if hits:
+            print(f"  {cat}: {len(hits)}")
+            for offset, cp, name in hits[:5]:
+                print(f"    @{offset} {cp} {name}")
+    sys.stdout.write(strip_all(src))
+```
+
+JavaScript / TypeScript 版本面向 Node 20+ 与浏览器。同样的正则就能用；唯一的小技巧是 JS 源码需要 `u` 标志，以及对 U+FFFF 以上码点要用代理对（surrogate pair）感知的写法：
+
+```js
+const CATEGORIES = {
+  "zero-width": /[\u200B-\u200D\u2060-\u2064\uFEFF\u180E\u3164]/gu,
+  "bidi":       /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu,
+  "tag":        /[\u{E0000}-\u{E007F}]/gu,
+  "variation":  /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu,
+  "formatting": /[\u00AD\u034F\u115F\u1160]/gu,
+};
+
+const ALL = new RegExp(
+  Object.values(CATEGORIES).map(r => r.source).join("|"),
+  "gu"
+);
+
+export function detectInvisible(text) {
+  const findings = {};
+  for (const [name, re] of Object.entries(CATEGORIES)) {
+    findings[name] = [...text.matchAll(re)].map(m => ({
+      offset: m.index,
+      codePoint: "U+" + m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0"),
+    }));
+  }
+  return findings;
+}
+
+export function stripInvisible(text) {
+  return text.replace(ALL, "");
+}
+```
+
+如果只想要 Bash 里的一行守卫——比如让 CI 在 Markdown 文章出现任何 tag 字符时直接失败——`grep` 配 PCRE 在 macOS（通过 Homebrew）以及 GNU `grep` 3.4+ 上都可用：
+
+```bash
+# Fail if any tag character (U+E0000–U+E007F) appears
+if grep -P '[\x{E0000}-\x{E007F}]' "$file" >/dev/null; then
+  echo "tag characters detected in $file" >&2
+  exit 1
+fi
+
+# Strip every category in place using sed (BSD/GNU portable form below)
+perl -CSDA -i -pe '
+  s/[\x{200B}-\x{200D}\x{2060}-\x{2064}\x{FEFF}\x{180E}\x{3164}]//g;
+  s/[\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]//g;
+  s/[\x{E0000}-\x{E007F}]//g;
+  s/[\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]//g;
+  s/[\x{00AD}\x{034F}\x{115F}\x{1160}]//g;
+' "$file"
+```
+
+`perl -CSDA` 在 STDIN、STDOUT 和 `@ARGV` 上启用 UTF-8，这是在命令行避免 Perl 把多字节输入搅乱的便携做法。同一份脚本可以原样塞进 Git pre-commit hook、GitHub Actions 和 Vercel build 步骤，不需要额外依赖。
+
+## 坑点
+
+大规模跑不可见字符清理时有五个边角值得留心：
+
+**emoji 的 ZWJ 序列是合法的 ZWJ。** 家庭 emoji `👨‍👩‍👧‍👦` 的编码是 `MAN U+200D WOMAN U+200D GIRL U+200D BOY`——四个基础 emoji 用三个零宽连接符粘在一起。如果你对一段包含 emoji 的字符串直接剥掉 ZWJ，那个家庭会被拆成四个并排的独立 emoji。`🏳️‍🌈`（白旗 + ZWJ + 彩虹）以及任何带肤色／发型变体的 emoji 都是同样的下场。检测器仍然会在 emoji 内部标出 ZWJ，因为它无法区分"刻意的序列"和"夹带的字节"——视觉上两者都不产生独立字形。处理含 emoji 的文本时改用 **Bidi only** 或 **Tag only**，或者从参考表中重新拼回规范的 emoji 序列。
+
+**文件 BOM 有时是有意的。** Windows Notepad 会在每个它创建的文本文件开头写入 UTF-8 BOM（U+FEFF）。部分微软工具——尤其是旧版 Excel——拒绝读取没有 BOM 的 UTF-8 CSV。从 `cmd.exe` 启动的 PowerShell 脚本也类似，期待靠 BOM 把文件按 UTF-8 而非当前代码页解释。如果你的文本来自文件而非剪贴板，剥离前要显式判断这个开头的 BOM 是否有意义。检测器不论位置都会把 BOM 当作零宽码点上报；至于这份报告是警告还是无害产物，由你判断。
+
+**软连字符在富文本里很正常。** U+00AD 是建议渲染引擎换行点的标准方式。一份排过版的 PDF 或 EPUB 书可能合法地含有几百个。只在目标是纯文本（代码、配置、数据库字段、日志行）时才剥离软连字符。在已排版文档内部移除它们，只会降低换行质量，没有任何安全收益。
+
+**tag 字符并不总是水印。** U+E0000–U+E007F 范围目前还有一个官方用途：emoji 行政区旗序列。威尔士旗 `🏴󠁧󠁢󠁷󠁬󠁳󠁿` 由黑旗（U+1F3F4）、tag 编码的 ISO 行政区代码 `gbwls`、以及一个 CANCEL TAG（U+E007F）终结符组成。把整个 tag 块剥掉就会把这些旗删掉。维基百科和部分 Unicode 演示也仍然把 tag 字符作为历史样例使用。分类前先看一眼连续段：旗帜基底与 U+E007F 之间的一段连续 tag 字符是旗；漂浮在普通行文里的一团才是水印面。
+
+**客户端清理不会修复上游。** 如果 CMS、翻译记忆库、或者 LLM API 才是不可见字符的来源，在浏览器里剥掉只清理你手里这一份。下一次从同一个来源复制还是同样的问题。把检测器当显微镜用，不要当过滤器——用它去验证关于来源的假设，然后在你能控制的边界上加真正的剥离步骤（webhook、CI 步骤、pre-commit hook、或服务端用上文那几份实现做的归一化例程）。
+
+值得多提一个第六个坑：**字节长度 ≠ 字符长度 ≠ 可见宽度**。一段含 50 个可见字符、80 个不可见字符的字符串，在 JavaScript 里 `String.length` 是 130，在 Python 里 `len()` 是 130，在终端里 `wcswidth` 是 50。哈希函数、`Content-Length` header、数据库 `VARCHAR(N)` 限制、认证签名看到的全是完整的 130。如果你比较时按可见宽度归一化但按字节数储存，就会在本应不同的输入上得到假相等，或者在人眼判断相同的输入上得到假不等。[Unicode Normalization](https://www.unicode.org/reports/tr15/) 里的 NFC / NFKC 归一化能处理一部分场景（组合标记、兼容性分解），但并不会移除不可见码点；剥离是单独的一道工序。
+
+## 与其他检测器的对比
+
+公开的网络上有少数不可见字符查看工具。它们在类别覆盖、隐私和工作流形态上各有差异。
+
+`invisiblecharacterviewer.com` 是经典参考：UI 极简，把每个不可见码点显示为带标签的气泡，仅支持英文。覆盖范围集中在零宽和 bidi；tag 字符和变体选择符没有单独分类。处理全部在客户端。适合定位单个字符；当你想要一个剥离步骤时则不够用。
+
+`toolszone.net/invisible-character-detector` 暴露了一份更广的类别清单，包含 tag 字符，但没有按类别拆分的清除模式——只能检测。输出是计数加一个内联高亮，没有清理后文本可供导出。该站点每页都加载第三方分析脚本。
+
+`unicode-table.com/en/blocks/tags/` 是专门针对 tag 字符的 Unicode 块参考。它是一份文档工具而非检测器——你给它一个码点，它告诉你这个码点是什么。读检测器输出时可以拿它做交叉参考。
+
+`Diffchecker` 以及类似的 diff 工具在比较两段字符串时会用特殊符号显示不可见字符，但不分类也不剥离。它们回答的是"什么变了？"而不是"什么藏起来了？"。
+
+ZeroTool 的检测器靠四个其他单一工具都没有同时具备的属性来定位自己：完整覆盖全部五大类别（含 tag 字符和变体选择符）、四种对应最常见清理意图的显式清除模式、完全客户端处理且无任何遥测、以及英文／中文／日文／韩文四语 UI。其中清除模式尤其反映了一个操作层面的现实——"清理这段文本"很少意味着"移除一切不可见字符"，emoji、RTL 文本、刻意的格式控制都需要外科手术式地保留。
+
+## 延伸阅读
+
+站内：
+
+- [Unicode Text Converter](/zh/tools/unicode-text-converter/) —— 把任意字符串视作码点、名称和字节进行检查；当你需要为了测试故意构造一个不可见字符时，正好是反向操作。
+- [String Escape](/zh/tools/string-escape/) —— 在 C、JavaScript、Python、JSON 和 URL 约定之间编码与解码 `\uXXXX`、`\xXX`、`\nnn`、百分号编码序列；和不可见字符清理互补，给你完整的文本编码可见性。
+
+站外：
+
+- [Trojan Source: Invisible Vulnerabilities](https://trojansource.codes/trojan-source.pdf) —— Boucher & Anderson 描述 CVE-2021-42574 和 CVE-2021-42694 的论文，附攻击模板与缓解指引。
+- [Unicode Technical Report 9 — Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) —— 双向控制符的权威规格，包含 Trojan-Source 利用的嵌入与隔离算子。
+- [Unicode Technical Report 36 — Unicode Security Considerations](https://www.unicode.org/reports/tr36/) —— 标准自身对不可见字符、同形字、标识符欺骗的威胁模型。
+- [Joseph Thacker — Hiding and Finding Text with Unicode Tags](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) —— 用 tag 块编码 ASCII 负载的实操走查，例子取自 LLM 输出。
+- [RFC 5198 — Unicode Format for Network Interchange](https://datatracker.ietf.org/doc/html/rfc5198) —— IETF 的指引，事实上废弃了 U+E0001 LANGUAGE TAG 及 tag 块在通用文本中的使用，把整个块留作攻击者与水印者如今利用的未分配不可见空间。
