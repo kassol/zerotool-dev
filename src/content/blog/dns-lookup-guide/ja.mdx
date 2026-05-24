@@ -1,0 +1,212 @@
+---
+title: "ブラウザでのDNSルックアップ：DNS-over-HTTPSで引くA / MX / TXT / CAA"
+description: "dig、nslookup、whatsmydnsを使わずに、どのブラウザからでもDNSレコードを照会する方法。DoHが fetch() 一発でA、AAAA、CNAME、MX、TXT、NS、SOA、CAA、PTR、SRVを解放する仕組みと、DNSSEC・TXTセグメント・伝播にまつわる落とし穴。"
+pubDate: 2026-05-24
+updatedDate: 2026-05-24
+ogImage: "/og/blog-dns-lookup-guide-ja.png"
+lang: "ja"
+tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
+---
+
+金曜日の午後、`marketing.example.com` のCNAMEをWebflow向けから新しいセルフホストのランディングページ向けに切り替える。DNS管理画面で変更が反映されたのを確認する。5分後、マーケから連絡が入る——「私のラップトップだとまだ古いデザインのままなんだけど」。あなたはターミナルを開き、`dig +short marketing.example.com` を叩く。新しいIPが返ってくる。あなたのラップトップから見れば変更は伝播済みだ。マーケのラップトップから見れば伝播していない。マーケはCloudflare Warp経由で、あなたのdigが当たったPOPとは別のPOPを通って接続している。どちらのキャッシュが間違っているのか？
+
+[いますぐ引く →](/ja/tools/dns-lookup/)
+
+正直に言えば「どちらも間違っていない、変更がまだすべての再帰リゾルバに届いていないだけだ」となる——しかしこれを、ひとつのリゾルバに対する一発の `dig` だけでは証明できない。複数のパブリック再帰リゾルバに、速やかに問い合わせて結果を比較する必要がある。これまでこれを実現する手段は、CLIのループ、有料のネットワーク監視ツール、あるいは広告とCAPTCHAを待たされる whatsmydns.net への巡礼のいずれかだった。ブラウザは役に立たなかった——Webページは UDPポート53のソケットを開けないので、古典的なDNSを話せない。それを変えたのが、2018年にRFC 8484がDNS-over-HTTPSを標準化し、CloudflareとGoogleが寛容なCORS設定のパブリックDoHエンドポイントを公開したことだった。現代の `fetch()` は、どんなゾーンに対しても、どんなレコードタイプを 50〜300ms で問い合わせられる。レスポンスのかたちはただのJSONだ。
+
+ZeroToolのDNS Lookupはそのエンドポイントを包んだものだ。中身は自分で書くであろう `fetch()` そのもので、それにカテゴリ別に色分けされたレコードカード、`dig` 風の生表示、そして **ALL** を選んだときに最頻出の8タイプを並列照会する機能が付いている。以下は運用ガイドだ——DoHが実際にどう動くのか、各レコードタイプが実務的に何を語ってくれるのか、そしてDNSのデバッグで見当違いの足場に立ったときに必ず噛みつかれる5つの落とし穴。
+
+## DNS-over-HTTPSを一段落で
+
+伝統的なDNSクエリは UDP/53（切り詰めが起きた場合は TCP/53）の上に乗ったバイナリパケットだ。ブラウザはそのどちらに対してもソケットAPIを公開していない。DoHは、同じクエリを HTTPS リクエストとして符号化することでこれを解決する。エンコーディングは2種類ある——RFC 8484 のバイナリ方式（`application/dns-message` ボディをもつ `POST`、または `GET ?dns=` の中に base64url で詰めた形式）と、Googleが先行して採用しCloudflareも追随したJSONプロファイル（`GET ?name=...&type=...` でJSONを返す）。JSONプロファイルはどのRFCにも載っていないが、レスポンスのかたちは両プロバイダ間で安定しており、消費するのも簡単だ：
+
+```json
+{
+  "Status": 0,
+  "TC": false,
+  "RD": true,
+  "RA": true,
+  "AD": false,
+  "CD": false,
+  "Question": [{ "name": "zerotool.dev", "type": 1 }],
+  "Answer": [
+    { "name": "zerotool.dev", "type": 1, "TTL": 300, "data": "172.67.170.64" },
+    { "name": "zerotool.dev", "type": 1, "TTL": 300, "data": "104.21.95.91" }
+  ]
+}
+```
+
+`Status` は標準的なDNSのRCODE（RFC 1035 §4.1.1、RFC 6895で拡張）。`AD` はDNSSECの「Authenticated Data」フラグで、リゾルバがトラストアンカーまでの連鎖を検証できたときに 1 になる。`TC` は切り詰めフラグで、設定された応答サイズ上限を超えた場合に立つ——DoHではめったに発生せず、リゾルバが内部でリトライしてくれることがほとんどだ。
+
+ツールは `cd=0`（Checking Disabled = 0）を送る。これはプロトコル上「DNSSECを検証して、結果がどうだったか教えてくれ」とリゾルバに頼む書き方だ。逆の `cd=1` は「検証はスキップしてくれ」という指示で、壊れたゾーンをフォレンジック的に観察するときには有用だが、通常のルックアップで欲しい挙動ではない。
+
+## 10種のレコードタイプと、それが教えてくれること
+
+ツールが公開しているのは10タイプ。それぞれが特定の運用上の問いに答える。間違ったタイプを選ぶと、ありもしない設定ミスを何時間も追いかけることになる。
+
+| タイプ | コード | 問い | 欠落・誤設定時に出やすい運用障害 |
+|---|---:|---|---|
+| `A` | 1 | 「この名前を提供するIPv4アドレスは？」 | 開発者のマシンでは開けるサイトが、他人のマシンでは404——古いAと新しいAが食い違っている。 |
+| `AAAA` | 28 | 「この名前を提供するIPv6アドレスは？」 | デュアルスタックISP配下のユーザーの半数がIPv6エラーページを引く。AAAAが欠けるとサイレントなフォールバック遅延が起きる。 |
+| `CNAME` | 5 | 「このエイリアスはどの正規名を指している？」 | 削除済みのHerokuアプリを指したままのCNAME、SaaSの別テナントを指したままのCNAME。 |
+| `MX` | 15 | 「このドメイン宛のメールを受けるサーバーは？」 | すべての受信メールが「no MX record found」で跳ね返る、あるいは移行後に間違ったプロバイダへルーティングされる。 |
+| `TXT` | 16 | 「どんなポリシー文字列が公開されている？」 | SPFがソフトフェイル、DMARCレポートで正規のメールがスパム判定、ドメイン所有確認が「pending」のまま止まる。 |
+| `NS` | 2 | 「このゾーンの権威サーバーは誰？」 | レジストラ移管後にNSが旧プロバイダを指したまま——更新がそもそも伝播しない。 |
+| `SOA` | 6 | 「プライマリサーバーは誰で、セカンダリはどの頻度でリフレッシュすべき？」 | セカンダリがSOAのリフレッシュウィンドウを過ぎてキャッシュしていたために、権威ゾーンが古いデータを返し続ける。 |
+| `CAA` | 257 | 「このドメインに対して証明書発行を許可されたCAは？」 | Let's Encryptの発行が「CAA mismatch」で失敗。1つのCAにピン留めしていると緊急ローテーションを塞いでしまう。 |
+| `PTR` | 12 | 「このIPは自分が何の名前だと主張する？」 | 送信元IPのPTRがHELOドメインと一致しないせいでメールが跳ね返る。レピュテーションサービスに送信者として晒される。 |
+| `SRV` | 33 | 「サービス `_xmpp-client._tcp`（など）はどこにある？」 | SRVが欠けていたりポートが違っていたりして、XMPP、SIP、LDAP、Matrixフェデレーションがホストを見つけられない。 |
+
+ツールの **ALL** モードは、`Promise.all` で先頭8タイプへの並列リクエストを同時にファンアウトする。これは最頻出の運用上の問い「このゾーンについてわかることを全部見せて」に対する正しいデフォルトだ。PTRとSRVがALLから外れているのは、PTRがドメイン名ではなくin-addr.arpa形式（例：`34.216.184.93.in-addr.arpa`）の入力を要求するためで、SRVはアンダースコア接頭辞付きの特定の名前（`_xmpp-client._tcp.example.com`）を要求するためだ。両者は一括スイープの一部としてではなく、単発のターゲットクエリとして使うのが筋にかなっている。
+
+## なぜ自分の dig とツールが食い違うのか
+
+最頻出の意外な現象——開発者のラップトップで叩いた `dig` と、ブラウザからのDoHが、同じ名前に対して異なる答えを返す。退屈な理由が4つと、興味深い理由が1つある。
+
+**ローカルの再帰キャッシュ。** ラップトップ、ルーター、社内フォワーダのいずれもが、各レコードのTTLぶんDNSをキャッシュする。CNAMEに 86400（24時間）のTTLが付いていれば、権威サーバー上での変更がラップトップに届くまで最大24時間かかる。DoH呼び出しはCloudflareかGoogleに問い合わせる——彼らのキャッシュは独立で、ほぼ常に権威TTLよりも短い。ツールでCloudflareとGoogleの両方を選んで答えを比較してみよう。Cloudflareが新しい値を返し、Googleが古い値を返すなら、伝播の途中を目撃している。
+
+**スプリットホライズンDNS。** 企業ネットワーク、VPN、Active Directory環境では、社内向けの権威リゾルバが同じ名前に対して別の答えを返すのが日常茶飯事だ。`internal-tools.example.com` がファイアウォール内では `10.42.0.5` に解決し、外からは NXDOMAIN になる、という具合。DoH呼び出しは外側の見え方を見ている。会社のマシンでは動く名前にツールがNXDOMAINを返すなら、そのゾーンはスプリットホライズンで、その名前のことをパブリックDNSは知らない。
+
+**ジオルーティングされた応答。** Cloudflare、Akamai、AWS Global Accelerator、ほとんどのCDNは、クエリを受け取ったエッジPOPに応じて異なる A/AAAA レコードを返す。ツールに表示されるIPは、CloudflareやGoogleの再帰リゾルバが*彼らの*ネットワーク位置から見たものであって、あなたから見たものではない。「このIPは正しい？」という問いについては、ツールは一般のパブリックビューワにとっての正解だ。「私のPOPから見てこのIPは正しい？」を問うなら、そのPOPから問い合わせる必要がある。
+
+**EDNS Client Subnet（RFC 7871）。** 一部の権威サーバーは、再帰リゾルバがクライアントのサブネットのヒントを転送してくれた場合に、より正確なジオルーティング応答を返す。Google DoHはデフォルトで切り詰めた `/24`（IPv4）または `/56`（IPv6）を転送するが、Cloudflareは転送しない。これは両者の運用上の差異のひとつだ——同じジオルーティングされた名前をCloudflare経由とGoogle経由で問い合わせると異なるIPが返ってくることがあり、Googleの方が普通は実際のロケーションに近い。
+
+**興味深いやつ——古い負キャッシュ。** RFC 2308 は NXDOMAIN 応答もキャッシュ対象だと定めており、そのキャッシュ寿命は（存在しない）レコードのTTLではなく、SOA の `minimum` フィールドで決まる。あるゾーンが1時間だけ設定ミスで、その間にローカルの再帰リゾルバがNXDOMAINをキャッシュしてしまうと、ツールは正しい答えを返すのに、ローカルからのクエリはSOA `minimum` が切れるまで失敗し続ける、ということが起きる。対処法は——待つ。あるいはゾーン変更前に SOA `minimum` を低くしておく（300秒がよく使われる値）。
+
+## サマリーピルの読み方
+
+レコードビューの上に5つのピルが並ぶ。それぞれが運用上のシグナルを1つに圧縮している：
+
+- **NOERROR / NXDOMAIN / SERVFAIL** —— RCODE。NOERROR はクエリが正しく処理されたという意味で、付随するレコードがゼロのときは「この名前は存在するが、このタイプのレコードは持っていない」を意味する。NXDOMAIN はその名前がゾーンのどこにも存在しないことを示す。SERVFAIL は再帰リゾルバがクエリを完了できなかったという意味で、DNSSEC検証の失敗か、権威サーバーからのエラー応答が原因であることが多い。
+- **N records** —— Answer セクションのレコード数。NOERROR で 0 件が返ってきた場合、その名前に対しては選んだタイプが間違った問いだということだ。実際に欲しいゾーンのNSを確認しよう。
+- **DNSSEC ✓ / no DNSSEC** —— AD フラグ。「no DNSSEC」のピルは、ゾーンが署名されていないか、署名検証が通らなかったことを意味する。これは現在パブリックインターネットの大多数のケースだが、TLDレベルのゾーン（`.com`、`.org`、`.dev`、よく使われるccTLDはすべて署名済み）では急速にシフトしつつある。
+- **Resolver** —— どのDoHエンドポイントが応答したか。CloudflareとGoogleを横並びで比べるときに役立つ。
+- **Latency** —— `fetch()` の開始から JSON パースまでのラウンドトリップ。北米または欧州のクライアントからのCloudflareは通常 20〜80ms。Googleもほぼ同等だ。500ms を超えるレイテンシは、リゾルバ側でのコールドキャッシュミス、遠いPOP、騒がしいネットワーク——いずれもツール側が原因ではない——を示唆する。
+
+## 同じクエリを自分で書くなら
+
+ツールが存在する理由は、単発のルックアップに対してはクリックがスクリプトを上回るからだ。自動化のためであれば、DoHのJSONプロファイルは `fetch` を持つ任意の言語にそのまま落とし込めるほど短い。文脈に応じて使い分けられるリファレンス実装を3つ挙げる。
+
+ブラウザ／Node 18+ 版は、ドメインさえあれば2行：
+
+```js
+const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent('zerotool.dev')}&type=MX&cd=0`;
+const res = await fetch(url, { headers: { accept: 'application/dns-json' } });
+const json = await res.json();
+console.log(json.Answer); // [{ name, type, TTL, data }, ...]
+```
+
+タイムアウトが欲しければ `AbortSignal.timeout(5000)` を、ネットワークが落ちる可能性があるなら `try/catch` を足す。CloudflareとGoogleのDoHはどちらも上記と一致するJSON構造を返すので、URLを差し替えるだけでプロバイダを切り替えられる。
+
+Python 版は `httpx` か `urllib` を使う。標準ライブラリのみでも書ける：
+
+```python
+import json
+import urllib.request
+
+def doh(name: str, qtype: str, resolver: str = "cloudflare"):
+    if resolver == "google":
+        url = f"https://dns.google/resolve?name={name}&type={qtype}&cd=0"
+        headers = {}
+    else:
+        url = f"https://cloudflare-dns.com/dns-query?name={name}&type={qtype}&cd=0"
+        headers = {"accept": "application/dns-json"}
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read())
+
+print(doh("zerotool.dev", "CAA"))
+```
+
+シェルスクリプトや CI ステップ向けには、`curl` と `jq` の組み合わせが定番だ。以下のワンライナーは、ドメインのすべてのMXターゲットをプライオリティ順に取得する：
+
+```bash
+curl -s -H 'accept: application/dns-json' \
+  'https://cloudflare-dns.com/dns-query?name=cloudflare.com&type=MX' \
+  | jq -r '.Answer[] | "\(.data)"' | sort
+```
+
+これを `for` ループで包めばターミナルを離れずに自前の伝播トラッカーが手に入る。Bash関数にして `~/.bashrc` に入れれば、アドホック用途で `dig` の半分を置き換えたことになる。
+
+## TXTセグメンテーション —— 255バイトのルール
+
+長いSPF、DKIM、DMARCレコードは、RFC 1035 §3.3.14 が TXT レコード内の個々の文字列に課している255バイト上限を日常的に超えてしまう。DNSプロトコルは1つのTXTレコードに複数の文字列を持たせることを許しており、SPFでの慣例（RFC 7208 §3.3）は、論理的な1レコードを構成するためにそれらを区切り文字なしで連結するというものだ。DoHのJSONプロファイルは、文字列をクォート付きでそのまま保持する：
+
+```json
+{
+  "name": "google.com",
+  "type": 16,
+  "TTL": 300,
+  "data": "\"v=spf1 include:_spf.google.com ~all\""
+}
+```
+
+より長いレコードでは隣接する2つの文字列として返る：
+
+```json
+{
+  "data": "\"v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com; \" \"fo=1; aspf=r; adkim=r\""
+}
+```
+
+ツールはこれをリゾルバから届いた通りに表示する。論理値を得るには、外側のクォートと、セグメント間のクォート・スペース・クォート（`" "`）を取り除く——あらゆるSPF、DKIM、DMARCパーサーがやっていることだ。dmarcian や easydmarc を含む大半のレポートツールは連結を透過的に扱ってくれる。自前のSPFバリデータを書いているなら、自分で処理する必要がある。
+
+## CAA —— TLS発行を壊しうる唯一のレコード
+
+CAA（RFC 8659）は、ドメインに対してパブリック認証局のうちどれが証明書を発行してよいかを宣言する。制限的なCAAレコードをひとつ置けば、Let's Encrypt、DigiCert、GlobalSign、ZeroSSL は他のCAから証明書を発行することを拒否する。CDNを移行する際にCAAの更新を忘れると、次の証明書更新が「CAA mismatch」で失敗する——これは他のどのDNSクエリからも見えない。CAAルックアップだけが、制限が掛かっていることを教えてくれる。
+
+Let's Encryptを主に使い、Cloudflareをバックアップ CA として持つお客様向けの正しく設定されたゾーンは、こうなる：
+
+```text
+example.com. 0 issue "letsencrypt.org"
+example.com. 0 issue "pki.goog"
+example.com. 0 issuewild ";"
+example.com. 0 iodef "mailto:security@example.com"
+```
+
+`issuewild ";"` は全ワイルドカード発行を拒否する。`iodef` は、未承認の発行元から要求を受けた場合にCAがレポートをメール送付する先を伝える。ツールのCAAクエリは、各レコードをそのタグ（`issue`、`issuewild`、`iodef`）と値とともに報告するので、発行をトリガーする前にポリシーを確認できる。
+
+## 落とし穴
+
+**プライオリティ 0 でターゲットが `.` のMX。** RFC 7505 は「Null MX」レコード——`0 .`——を定義しており、「このドメインはメールを一切受け付けない」を意味する。メールを処理すると思っていたドメインに対してツールが `0 .` を返したなら、レジストラかDNSプロバイダがこのプレースホルダを明示的に公開している。修正には、伝播待ちではなく、ゾーンの編集が必要だ。
+
+**ゾーン頂点でのCNAMEは違法。** RFC 1912 §2.4 は、ゾーン頂点（`example.com`）でのCNAMEを禁じている——頂点はSOAとNSも提供しなければならないからだ。Cloudflare、Route 53、Netlify はいずれも「ALIAS / ANAME」レコードを実装している。これは頂点でのCNAMEのように見えるが、クエリ時に A/AAAA へとフラット化される。Cloudflare管理ゾーンの頂点に対するDoHクエリはCNAMEを返さない——フラット化された A/AAAA が返ってくる。これは正しい挙動だが、ダッシュボードで設定したCNAMEが見えると期待した人は混乱しうる。
+
+**プライベートリゾルバとPi-hole。** Pi-hole、NextDNS、AdGuard Home、その他DNSベースのコンテンツフィルタが動いているネットワーク上のブラウザからのクエリは、ローカルの再帰リゾルバへ向かい、そこで応答が書き換えられたりブロックされたりする可能性がある。ブラウザからのDoHはローカル再帰を完全に迂回してパブリックリゾルバへ問い合わせる——だからこそ、ラップトップの通常のDNSルックアップが失敗するときに、ツールは正しい答えを返せる。これは機能になる場合（誤設定されたPi-holeルールのデバッグ）もあれば、足を撃つ罠になる場合（ブラウザが無関係な理由でブロックしているドメインを、ツールは「動く」と報告してしまう）もある。
+
+**EDNS Client Subnet と CDN テスト。** CDNのジオルーティングをテストする際、DoHが返すIPはCloudflareかGoogleから見える景色であって、あなたから見える景色ではない。特定のリージョンからのテストには、CDN Planet の DNS lookup のようなリージョン特化のツールを使うか、そのリージョン内のクラウドVMで `dig` を走らせる必要がある。ZeroToolのツールは「パブリックインターネットからはどう見えるか？」という問いに対する正解であって、「サンパウロのユーザーから見てどうか？」への答えではない。
+
+**DNSSEC失敗はNXDOMAINに似て見える。** あるゾーンがDNSSECチェーンを誤って署名している場合、CloudflareとGoogleはどちらも `AD=false` 付きのSERVFAILを返す。このエラーは、`cd=1`（Checking Disabled）に切り替えるまでは、強い意味でのサーバー障害と区別がつかない——切り替えると未検証の答えが通り抜けてくるので、その差分から「設定ミスではなくDNSSECの問題だ」と判定できる。ツールは常に `cd=0` を送る——これは日常的なルックアップで正しいデフォルトだ。DNSSECフォレンジックには `dig +cd` か、Verisign DNSViz のような専用ツールを使おう。
+
+## DNSルックアップツールの中での立ち位置
+
+このカテゴリは15年安定しており、ここ5年はとくに混み合っている。それぞれが少しずつ違うニッチを占めている。
+
+`whatsmydns.net` は世界中のPOPから20以上のリゾルバに問い合わせ、伝播マップを表示する。「この変更はもう全リージョンに届いたか？」という問いには正解だが、レート制限あり、広告サポート、アドホック用途には遅い。
+
+`nslookup.io` は UI のよい Web ベースの DNS クライアントで、レコードタイプごとに SEO 用にインデックスされたページを持つ。ZeroToolのツールよりリッチな機能セット——履歴レコード、再帰トレース、レジストラ情報——を、すべてのクエリを見ているバックエンドの上で動かすという代償と引き換えに提供している。
+
+`mxtoolbox.com` はメールデバッグの定番ダッシュボードだ——ブラックリストチェック、SMTPトレースルート、SPF/DKIM/DMARC解析。DNSルックアップは sysadmin 向けのもっと大きなプロダクトの小さな一部に過ぎず、その他の機能は有料アカウントを要求する。
+
+`dig` と `kdig` は CLI のリファレンス実装であり、スクリプト用途や、権威サーバー指定が必要なクエリ（`dig @ns1.example.com`）にとっての正解だ。
+
+ZeroToolのツールはその中間ケースを埋める——`dig` をインストールするには Homebrew パッケージか WSL ディストロを追加することになるようなマシンで、ブラウザから手早くDoHルックアップを引きたい、しかも各クエリのたびにサードパーティ SaaS に投げたくはない、という開発者向けだ。4言語UI、ALLモードの並列ルックアップ、Cloudflare / Google を横並びで切り替えられる仕様が、特徴的なプロパティだ。伝播マップ、権威サーバー限定クエリ、有料のメール到達性モニタリングには向かない——それぞれ上記のツールの方が優れている。
+
+## さらに読む
+
+社内向け：
+
+- [HTTPヘッダーアナライザ](/ja/tools/http-header-analyzer/) —— DNSが解決した後、サーバーが何を返すか。
+- [SSL証明書デコーダ](/ja/tools/ssl-certificate-decoder/) —— 解決されたIPで提供されている証明書がホスト名と一致するかを確認する。
+- [URLパーサー](/ja/tools/url-parser/) —— ホストを解決する前に、URLをプロトコル、ホスト、ポート、パス、クエリに分解する。
+- [IPサブネット計算機](/ja/tools/ip-subnet-calculator/) —— A/AAAAが得られた後、ファイアウォール規則用にサブネット構造を導出する。
+
+外部：
+
+- [RFC 8484 — DNS Queries over HTTPS](https://www.rfc-editor.org/rfc/rfc8484) —— DoH 標準。
+- [Cloudflare DoH ドキュメント](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/) —— エンドポイント、パラメータ、JSONプロファイル、レート制限。
+- [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh) —— `dns.google/resolve` に関する Google のドキュメント。
+- [RFC 1035 — Domain Names](https://www.rfc-editor.org/rfc/rfc1035) —— DNSの原典仕様。レコード形式についての最も有用なリファレンス。
+- [RFC 7208 — Sender Policy Framework](https://www.rfc-editor.org/rfc/rfc7208) —— SPFと、TXTセグメンテーションのルール。
+- [RFC 8659 — CAA](https://www.rfc-editor.org/rfc/rfc8659) —— Certification Authority Authorization。
+- [RFC 6891 — EDNS(0)](https://www.rfc-editor.org/rfc/rfc6891) —— EDNS Client Subnet が乗っている拡張機構。

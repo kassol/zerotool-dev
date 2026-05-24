@@ -1,0 +1,214 @@
+---
+title: "브라우저에서 DNS 조회하기: DNS-over-HTTPS로 A, MX, TXT, CAA 레코드 확인"
+description: "dig, nslookup, whatsmydns 없이 어떤 브라우저에서든 DNS 레코드를 조회하는 방법. DoH가 fetch() 한 번으로 A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR, SRV를 어떻게 풀어내는지 — DNSSEC, TXT 세그먼트, 전파 지연의 함정과 함께."
+pubDate: 2026-05-24
+updatedDate: 2026-05-24
+ogImage: "/og/blog-dns-lookup-guide-ko.png"
+lang: "ko"
+tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
+sourceTitle: "DNS Lookup in the Browser: A, MX, TXT, and CAA via DNS-over-HTTPS"
+sourceDescription: "Look up DNS records from any browser without dig, nslookup, or whatsmydns. How DoH unlocks A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR, and SRV in a fetch() call — with DNSSEC, TXT-segment, and propagation gotchas."
+---
+
+금요일 오후, 당신은 `marketing.example.com`이 Webflow를 가리키던 CNAME을 새로 셀프 호스팅한 랜딩 페이지로 바꿉니다. DNS 콘솔에서 변경이 반영된 것까지 확인합니다. 5분 후 마케팅팀에서 메시지가 옵니다. "내 노트북에서는 아직 예전 디자인이 보여요." 터미널을 열어 `dig +short marketing.example.com`을 실행하니 새 IP가 돌아옵니다. 당신 노트북에서는 변경이 전파된 것입니다. 마케팅팀 노트북에서는 아직입니다. 마케팅팀은 Cloudflare Warp 연결을 쓰는데, 당신이 친 dig와는 다른 POP를 경유하고 있습니다. 누구의 캐시가 잘못된 것일까요?
+
+[지금 조회해 보세요 →](/ko/tools/dns-lookup/)
+
+솔직한 답은 "아무도 틀리지 않았다, 변경이 아직 모든 리커시브 리졸버에 도달하지 않았을 뿐이다"입니다 — 하지만 리졸버 하나에 `dig` 한 번 친 것만으로는 이것을 증명할 수 없습니다. 여러 공용 리커시브 리졸버에 빠르게 질의해서 비교해야 합니다. 예전에는 그 말이 CLI 루프를 돌리거나, 유료 네트워크 모니터링 도구를 쓰거나, whatsmydns.net에서 광고와 CAPTCHA를 견디며 기다린다는 뜻이었습니다. 브라우저는 도움이 되지 않았습니다. 웹 페이지는 UDP 53번 포트 소켓을 열 수 없으니 클래식 DNS를 말할 수 없기 때문입니다. 이것이 바뀐 것은 2018년 RFC 8484가 DNS-over-HTTPS를 표준화하고, Cloudflare와 Google이 관대한 CORS 정책으로 공용 DoH 엔드포인트를 제공하면서부터입니다. 요즘은 `fetch()` 한 번으로 어떤 존(zone)이든 어떤 레코드 타입이든 50–300ms 안에 질의할 수 있고, 응답은 평범한 JSON 형태입니다.
+
+ZeroTool의 DNS Lookup은 이 엔드포인트들을 감싼 도구입니다. 직접 작성할 법한 그 `fetch()` 그대로이되, 카테고리별로 색상이 입혀진 레코드 카드, `dig` 스타일의 원본 출력 뷰, **ALL**을 선택했을 때 가장 많이 쓰이는 8개 타입에 대한 병렬 질의를 제공합니다. 아래는 운영 관점의 실전 가이드입니다. DoH가 실제로 어떻게 동작하는지, 각 레코드 타입이 실무에서 무엇을 알려주는지, 그리고 잘못된 관측 지점에서 DNS를 디버깅할 때 누구나 한 번쯤 걸리는 다섯 가지 함정입니다.
+
+## 한 문단으로 보는 DNS-over-HTTPS
+
+전통적인 DNS 질의는 UDP/53(잘리면 TCP/53) 위로 흐르는 바이너리 패킷입니다. 브라우저는 이 둘 모두에 대해 소켓 API를 노출하지 않습니다. DoH는 이 같은 질의를 HTTPS 요청으로 인코딩해서 문제를 해결합니다. 두 가지 인코딩이 존재합니다. 하나는 RFC 8484 바이너리 형식(`application/dns-message` 바디로 `POST`하거나, base64url 인코딩된 값을 `GET ?dns=`에 실음)이고, 다른 하나는 Google이 먼저 선보이고 Cloudflare가 채택한 좀 더 이른 JSON 프로파일(`GET ?name=...&type=...` 형태로 JSON을 반환)입니다. JSON 프로파일은 어떤 RFC에도 들어가 있지 않지만, 두 제공자 모두에서 응답 형태가 안정적이고 소비하기도 매우 쉽습니다.
+
+```json
+{
+  "Status": 0,
+  "TC": false,
+  "RD": true,
+  "RA": true,
+  "AD": false,
+  "CD": false,
+  "Question": [{ "name": "zerotool.dev", "type": 1 }],
+  "Answer": [
+    { "name": "zerotool.dev", "type": 1, "TTL": 300, "data": "172.67.170.64" },
+    { "name": "zerotool.dev", "type": 1, "TTL": 300, "data": "104.21.95.91" }
+  ]
+}
+```
+
+`Status`는 표준 DNS RCODE(RFC 1035 §4.1.1, RFC 6895에서 확장)입니다. `AD`는 DNSSEC "Authenticated Data" 플래그로, 리졸버가 트러스트 앵커까지 이어지는 체인을 성공적으로 검증했을 때 1이 됩니다. `TC`는 트렁케이션 플래그로, 응답이 설정된 크기 제한을 초과했을 때 세팅됩니다. DoH에서는 이 경우가 드물고, 리졸버가 내부적으로 알아서 재시도합니다.
+
+도구는 `cd=0`(Checking Disabled = 0)을 보냅니다. 이는 프로토콜 수준에서 리졸버에게 "DNSSEC를 대신 검증해 주고 결과를 알려달라"고 요청하는 방식입니다. 반대로 `cd=1`은 검증을 건너뛰라는 의미인데, 망가진 존을 포렌식으로 들여다볼 때는 유용하지만 일반적인 조회에서 원하는 동작은 아닙니다.
+
+## 열 가지 레코드 타입, 그리고 각각이 알려주는 것
+
+도구는 열 가지 타입을 노출합니다. 각각은 특정한 운영상의 질문에 답합니다. 잘못된 타입을 고르면 존재하지도 않는 잘못된 설정을 쫓느라 몇 시간을 날립니다.
+
+| 타입 | 코드 | 묻는 것 | 누락되거나 잘못됐을 때 흔한 운영 장애 |
+|---|---:|---|---|
+| `A` | 1 | "이 이름을 서비스하는 IPv4 주소는?" | 개발자 머신에서는 사이트가 뜨는데 남의 머신에서는 404 — 캐시된 옛 A vs. 새 A. |
+| `AAAA` | 28 | "이 이름을 서비스하는 IPv6 주소는?" | 듀얼 스택 ISP를 쓰는 사용자 절반이 IPv6 에러 페이지를 봄. AAAA가 빠지면 조용한 폴백 지연이 발생. |
+| `CNAME` | 5 | "이 별칭이 가리키는 정식 이름은?" | 삭제된 Heroku 앱이나 SaaS의 잘못된 테넌트를 가리키는 CNAME. |
+| `MX` | 15 | "이 도메인의 메일을 받아주는 서버는?" | 모든 인바운드 메일이 "no MX record found"로 반송되거나, 마이그레이션 후 잘못된 제공자로 라우팅됨. |
+| `TXT` | 16 | "어떤 정책 문자열이 게시되어 있는가?" | SPF가 soft-fail이라 DMARC 리포트에서 정상 메일이 스팸으로 표시되거나, 도메인 검증이 "pending"에서 멈춤. |
+| `NS` | 2 | "이 존에 대해 권위 있는 서버는?" | 레지스트라 이전 후 NS가 옛 제공자를 가리켜서 어떤 변경도 전혀 전파되지 않음. |
+| `SOA` | 6 | "프라이머리 서버는 누구이고, 세컨더리는 얼마나 자주 갱신해야 하는가?" | 세컨더리가 SOA refresh 윈도우를 지나도록 캐시해서 권위 존이 오래된 데이터를 서비스함. |
+| `CAA` | 257 | "이 도메인에 대해 발급할 수 있는 인증 기관은?" | Let's Encrypt 발급이 "CAA mismatch"로 실패. 한 CA에 묶어두면 긴급 로테이션이 막힘. |
+| `PTR` | 12 | "이 IP가 자기 이름이라고 주장하는 것은?" | 전송 IP의 PTR이 HELO 도메인과 일치하지 않아 메일이 반송됨. 평판 서비스가 발신자를 플래그. |
+| `SRV` | 33 | "`_xmpp-client._tcp` 같은 서비스는 어디에 사는가?" | XMPP, SIP, LDAP, Matrix 페더레이션이 SRV가 없거나 포트가 틀려서 호스트를 찾지 못함. |
+
+도구의 **ALL** 모드는 앞쪽 8개 타입에 대해 `Promise.all` 병렬 요청을 동시에 펼칩니다. "이 존에 대해 모든 것을 보여달라"는 가장 흔한 운영 질문에 대한 합리적인 기본값입니다. PTR과 SRV가 ALL에서 빠진 이유는, PTR이 도메인 이름이 아니라 in-addr.arpa 형식(예: `34.216.184.93.in-addr.arpa`)으로 입력해야 하고, SRV는 밑줄로 시작하는 특수한 이름(`_xmpp-client._tcp.example.com`)을 요구하기 때문입니다. 둘 다 일제 조회의 일부보다는, 표적화된 단일 타입 질의로 쓰는 게 자연스럽습니다.
+
+## dig와 도구의 결과가 어긋날 수 있는 이유
+
+가장 흔한 당황 포인트는 개발자 노트북의 `dig`와 브라우저의 DoH가 같은 이름에 대해 서로 다른 답을 내놓는다는 것입니다. 네 가지의 따분한 이유와 한 가지의 흥미로운 이유가 있습니다.
+
+**로컬 리커시브 캐시.** 노트북, 라우터, 또는 회사의 포워더는 각 레코드의 TTL 동안 DNS를 캐싱합니다. CNAME의 TTL이 86400(24시간)이면, 권위 서버에서의 변경이 노트북까지 도달하는 데 최대 24시간이 걸릴 수 있습니다. DoH 호출은 Cloudflare나 Google에 묻는데, 이들의 캐시는 독립적이고 대개 권위 TTL보다 작습니다. 도구에서 Cloudflare와 Google을 모두 선택해서 답을 비교해 보세요. Cloudflare는 새 값을 반환하는데 Google은 옛 값을 반환한다면, 지금 전파가 진행 중인 모습을 실시간으로 보고 있는 것입니다.
+
+**스플릿 호라이즌 DNS.** 회사 네트워크, VPN, Active Directory 환경은 같은 이름에 대해 서로 다른 답을 반환하는 내부 권위 리졸버를 흔히 운영합니다. `internal-tools.example.com`은 방화벽 안에서는 `10.42.0.5`로 해석되고 밖에서는 NXDOMAIN이 될 수 있습니다. DoH 호출은 바깥쪽 뷰를 봅니다. 회사 머신에서는 잘 동작하는 이름에 대해 도구가 NXDOMAIN을 반환한다면, 그 존은 스플릿 호라이즌이고 공용 DNS는 그 이름을 모릅니다.
+
+**지오 라우팅된 응답.** Cloudflare, Akamai, AWS Global Accelerator, 그리고 대부분의 CDN은 어떤 엣지 POP가 질의를 받느냐에 따라 서로 다른 A/AAAA 레코드를 반환합니다. 도구가 보여주는 IP는 Cloudflare나 Google의 리커시브가 *그들의* 네트워크 위치에서 본 값이지, 당신 위치에서 본 값이 아닙니다. "이 IP가 맞느냐?"라는 질문에 대해서는, 도구가 일반 공용 관찰자 입장에서 정답입니다. 하지만 "내 POP에서 봤을 때 이 IP가 맞느냐?"는 그 POP에서 직접 질의해야 합니다.
+
+**EDNS Client Subnet(RFC 7871).** 일부 권위 서버는 리커시브 리졸버가 클라이언트 서브넷 힌트를 함께 전달할 때 더 정확한 지오 라우팅 답을 반환합니다. Google DoH는 기본적으로 잘라낸 `/24`(IPv4) 또는 `/56`(IPv6)을 전달하고, Cloudflare는 그렇지 않습니다. 이것이 두 제공자의 운영상 차이 중 하나입니다 — 같은 지오 라우팅 이름을 Cloudflare와 Google에 각각 질의하면 다른 IP가 나올 수 있고, Google 쪽이 보통 실제 위치에 더 가깝습니다.
+
+**흥미로운 한 가지: 오래된 부정 캐시.** RFC 2308은 NXDOMAIN 응답이 캐시 가능하며, 캐시 기간은 (존재하지 않는) 레코드 자체의 TTL이 아니라 SOA `minimum` 필드에 의해 결정된다고 규정합니다. 어떤 존이 한 시간 동안 잘못 설정되어 있었고 로컬 리커시브가 그 NXDOMAIN을 캐시했다면, 도구는 정답을 반환하는데 로컬 질의는 SOA `minimum`이 만료될 때까지 계속 실패할 수 있습니다. 해법은 기다리거나 — 또는 존 변경 전에 SOA `minimum`을 낮춰두는 것입니다(300초가 일반적).
+
+## 요약 필(pill) 읽기
+
+레코드 뷰 위에 다섯 개의 필이 있습니다. 각각은 하나의 운영 신호를 압축합니다.
+
+- **NOERROR / NXDOMAIN / SERVFAIL** — RCODE입니다. NOERROR는 질의가 올바르게 처리되었다는 뜻이고, 함께 따라온 레코드 수가 0이라면 "이 이름은 존재하지만 해당 타입의 레코드는 없다"는 의미입니다. NXDOMAIN은 그 이름이 존 어디에도 존재하지 않는다는 뜻입니다. SERVFAIL은 리커시브 리졸버가 질의를 완료할 수 없었다는 뜻으로, 보통 DNSSEC 검증 실패이거나 권위 서버가 에러를 반환한 경우입니다.
+- **N records** — Answer 섹션의 레코드 개수입니다. NOERROR인데 0개가 돌아왔다면, 고른 타입이 이 이름에 대해 잘못된 질문이라는 뜻입니다. 실제로 원하는 존에 대해 NS를 확인해 보세요.
+- **DNSSEC ✓ / no DNSSEC** — AD 플래그입니다. "no DNSSEC" 필은 존이 서명되어 있지 않거나 서명 검증에 실패했다는 뜻입니다. 현재 공용 인터넷에서는 이쪽이 다수파이지만, TLD 수준의 존(`.com`, `.org`, `.dev`, 흔한 ccTLD 대부분)은 이미 서명되어 있어서 빠르게 변하고 있습니다.
+- **Resolver** — 어느 DoH 엔드포인트가 응답했는지입니다. Cloudflare와 Google을 나란히 비교할 때 유용합니다.
+- **Latency** — `fetch()` 시작부터 JSON 파싱까지의 왕복 시간입니다. 북미나 유럽 클라이언트에서 Cloudflare는 보통 20–80ms, Google도 비슷합니다. 500ms를 넘는다면 리졸버의 콜드 캐시 미스, 멀리 있는 POP, 시끄러운 네트워크 중 하나를 시사합니다 — 어느 것도 도구 때문에 생긴 문제는 아닙니다.
+
+## 같은 질의를 직접 작성하기
+
+도구가 존재하는 이유는, 일회성 조회에 한해서는 클릭이 스크립팅보다 빠르기 때문입니다. 자동화 용도라면 DoH JSON 프로파일은 `fetch`가 있는 어떤 언어에도 곧장 넣을 수 있을 만큼 짧습니다. 서로 다른 맥락에서 유용한 세 가지 참조 구현입니다.
+
+브라우저 / Node 18+ 버전은 도메인만 있으면 두 줄입니다.
+
+```js
+const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent('zerotool.dev')}&type=MX&cd=0`;
+const res = await fetch(url, { headers: { accept: 'application/dns-json' } });
+const json = await res.json();
+console.log(json.Answer); // [{ name, type, TTL, data }, ...]
+```
+
+타임아웃이 필요하면 `AbortSignal.timeout(5000)`을, 네트워크 장애를 잡으려면 `try/catch`를 더하세요. Cloudflare와 Google DoH 둘 다 위와 같은 JSON 형태를 반환하므로, URL만 바꾸면 제공자를 갈아탈 수 있습니다.
+
+Python 버전은 `httpx`나 `urllib`을 씁니다. 표준 라이브러리만으로 작성하면 이렇습니다.
+
+```python
+import json
+import urllib.request
+
+def doh(name: str, qtype: str, resolver: str = "cloudflare"):
+    if resolver == "google":
+        url = f"https://dns.google/resolve?name={name}&type={qtype}&cd=0"
+        headers = {}
+    else:
+        url = f"https://cloudflare-dns.com/dns-query?name={name}&type={qtype}&cd=0"
+        headers = {"accept": "application/dns-json"}
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read())
+
+print(doh("zerotool.dev", "CAA"))
+```
+
+셸 스크립트와 CI 단계에서는 `curl` + `jq` 조합이 정석입니다. 다음 한 줄은 도메인의 모든 MX 타깃을 우선순위 순으로 뽑아 줍니다.
+
+```bash
+curl -s -H 'accept: application/dns-json' \
+  'https://cloudflare-dns.com/dns-query?name=cloudflare.com&type=MX' \
+  | jq -r '.Answer[] | "\(.data)"' | sort
+```
+
+이걸 `for` 루프로 감싸면 터미널을 떠나지 않고도 자체 전파 추적기를 만들 수 있습니다. Bash 함수로 만들어 `~/.bashrc`에 넣어두면, 임시 작업용으로는 `dig`의 절반을 대체한 셈입니다.
+
+## TXT 세그먼테이션 — 255바이트 규칙
+
+긴 SPF, DKIM, DMARC 레코드는 RFC 1035 §3.3.14가 TXT 레코드 내부의 개별 문자열에 부과한 255바이트 한도를 일상적으로 넘습니다. DNS 프로토콜은 한 TXT 레코드 안에 여러 문자열을 허용하고, SPF의 관행(RFC 7208 §3.3)은 구분자 없이 이어 붙여 논리적 레코드를 만드는 것입니다. DoH JSON 프로파일은 이 문자열을 따옴표째 원본 그대로 보존합니다.
+
+```json
+{
+  "name": "google.com",
+  "type": 16,
+  "TTL": 300,
+  "data": "\"v=spf1 include:_spf.google.com ~all\""
+}
+```
+
+더 긴 레코드라면 두 개의 인접한 문자열로 나타납니다.
+
+```json
+{
+  "data": "\"v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com; \" \"fo=1; aspf=r; adkim=r\""
+}
+```
+
+도구는 리졸버가 전달한 그대로 이를 렌더링합니다. 논리적 값을 얻으려면 바깥 따옴표와 세그먼트 사이의 따옴표-공백-따옴표(`" "`)를 제거하면 됩니다 — 모든 SPF, DKIM, DMARC 파서가 하는 일입니다. dmarcian이나 easydmarc 같은 대부분의 리포팅 도구는 이 결합을 알아서 처리하지만, 직접 SPF 검증기를 만든다면 본인이 처리해야 합니다.
+
+## CAA — TLS 발급을 끊어버릴 수 있는 단 하나의 레코드
+
+CAA(RFC 8659)는 공용 인증 기관 중 어느 곳이 해당 도메인에 대해 인증서를 발급할 수 있는지를 알려줍니다. 단 하나의 제한적인 CAA 레코드만 설정해도 Let's Encrypt, DigiCert, GlobalSign, ZeroSSL은 다른 CA에서의 발급을 거부합니다. CDN을 옮기면서 CAA 업데이트를 잊으면 다음 인증서 갱신이 "CAA mismatch"로 실패하는데, 이 실패는 다른 어떤 DNS 질의로도 보이지 않습니다 — CAA 조회만이 그 제약이 걸려 있다는 사실을 알려줍니다.
+
+Let's Encrypt를 쓰면서 Cloudflare를 백업 CA로 두는 고객의 올바르게 설정된 존은 다음과 같습니다.
+
+```text
+example.com. 0 issue "letsencrypt.org"
+example.com. 0 issue "pki.goog"
+example.com. 0 issuewild ";"
+example.com. 0 iodef "mailto:security@example.com"
+```
+
+`issuewild ";"`는 모든 와일드카드 발급을 거부합니다. `iodef`는 권한 없는 발급자가 요청을 보내왔을 때 CA가 보고를 보낼 곳을 알려줍니다. 도구의 CAA 질의는 각 레코드를 태그(`issue`, `issuewild`, `iodef`)와 값으로 함께 보여주므로, 발급을 트리거하기 전에 정책을 확인할 수 있습니다.
+
+## 함정들
+
+**우선순위 0에 타깃이 `.`인 MX.** RFC 7505는 "Null MX" 레코드 — `0 .` — 를 정의하고 있는데, "이 도메인은 메일을 일절 받지 않는다"는 뜻입니다. 메일을 처리해야 한다고 생각한 도메인에 대해 도구가 `0 .`를 반환한다면, 레지스트라나 DNS 제공자가 이 플레이스홀더를 명시적으로 게시한 것입니다. 이걸 갱신하려면 존을 편집해야지, 전파를 기다린다고 풀리는 문제가 아닙니다.
+
+**에이펙스에서의 CNAME은 불법입니다.** RFC 1912 §2.4는 존 에이펙스(`example.com`)에서의 CNAME을 금지합니다. 에이펙스는 SOA와 NS도 서비스해야 하기 때문입니다. Cloudflare, Route 53, Netlify는 모두 에이펙스에서 CNAME처럼 보이지만 질의 시점에 A/AAAA로 평탄화되는 "ALIAS / ANAME" 레코드를 구현합니다. DoH 질의는 Cloudflare가 관리하는 존의 에이펙스에 대해 CNAME을 절대 반환하지 않습니다. 평탄화된 A/AAAA를 반환합니다. 이는 올바른 동작이지만, 대시보드에서 설정한 CNAME을 그대로 보길 기대한 사람을 헷갈리게 할 수 있습니다.
+
+**프라이빗 리졸버와 Pi-hole.** Pi-hole, NextDNS, AdGuard Home, 또는 DNS 기반 콘텐츠 필터를 돌리는 네트워크의 브라우저에서 보낸 질의는 로컬 리커시브로 가고, 거기서 응답이 재작성되거나 차단될 수 있습니다. 브라우저의 DoH는 로컬 리커시브를 완전히 우회하고 공용 리졸버에 직접 묻습니다 — 그래서 노트북의 일반 DNS 조회는 실패하는데 도구는 올바른 답을 줄 수 있는 것입니다. 어떤 경우에는 이게 기능(잘못 설정한 Pi-hole 룰 디버깅)이고, 어떤 경우에는 자기 발등을 찍는 도구(도구는 도메인이 잘 동작한다고 말하는데 브라우저는 무관한 이유로 차단함)가 됩니다.
+
+**EDNS Client Subnet과 CDN 테스트.** CDN의 지오 라우팅을 테스트할 때, DoH가 반환하는 IP는 Cloudflare나 Google의 시점이지 당신의 시점이 아닙니다. 특정 리전에서 테스트하려면 CDN Planet의 DNS lookup 같은 리전 특화 도구를 쓰거나, 해당 리전의 클라우드 VM에서 `dig`를 돌리세요. ZeroTool의 도구는 "공용 인터넷이 무엇을 보는가?"라는 질문에 대한 정답이지, "상파울루에 있는 내 사용자가 무엇을 볼까?"라는 질문에 대한 답은 아닙니다.
+
+**DNSSEC 실패는 NXDOMAIN처럼 보입니다.** 어떤 존이 DNSSEC 체인을 잘못 서명했다면, Cloudflare와 Google 모두 `AD=false`와 함께 SERVFAIL을 반환합니다. 이 에러는 `cd=1`(Checking Disabled)로 전환하지 않는 한 단순한 서버 장애와 구분할 수 없습니다 — `cd=1`로 바꾸면 서명되지 않은 답이 통과되어 오고, 그 차이가 이 존에 DNSSEC 문제가 있는 것이지 설정 문제가 아니라는 것을 알려줍니다. 도구는 항상 `cd=0`을 보내는데, 일상적인 조회에 대한 올바른 기본값입니다. DNSSEC 포렌식을 위해서는 `dig +cd`나 Verisign DNSViz 같은 전용 도구를 쓰세요.
+
+## DNS 조회 도구들 사이에서 이 도구의 자리
+
+이 카테고리는 15년 동안 안정되어 있었고 지난 5년간 붐볐습니다. 각 도구가 조금씩 다른 자리를 차지하고 있습니다.
+
+`whatsmydns.net`은 전 세계 POP에서 20개 이상의 리졸버에 질의해 전파 지도를 보여줍니다. "이 변경이 모든 리전에 도달했는가?"라는 질문에 대한 올바른 도구이지만, 레이트 리밋이 있고 광고로 운영되며 임시 작업에는 느립니다.
+
+`nslookup.io`는 깔끔한 웹 기반 DNS 클라이언트로, UI가 좋고 SEO를 위해 레코드 타입별 페이지가 색인되어 있습니다. ZeroTool 도구보다 풍부한 기능을 노출합니다 — 과거 레코드, 재귀 트레이스, 등록자 정보 — 그 대가는 모든 질의를 보게 되는 백엔드에서 돌아간다는 점입니다.
+
+`mxtoolbox.com`은 이메일 디버깅 분야의 정석 대시보드입니다. 블랙리스트 점검, SMTP traceroute, SPF/DKIM/DMARC 분석을 제공합니다. DNS 조회는 시스템 관리자를 겨냥한 훨씬 큰 제품의 작은 일부이고, 나머지는 유료 계정이 필요합니다.
+
+`dig`와 `kdig`는 CLI 참조 구현입니다. 스크립팅과, 권위 서버를 지정한 질의(`dig @ns1.example.com`)가 필요한 작업에는 이쪽이 정답입니다.
+
+ZeroTool 도구는 그 사이의 자리, 그러니까 브라우저에서 빠른 DoH 조회를 원하는 개발자 — `dig` 설치가 Homebrew 패키지나 WSL 배포판을 추가한다는 뜻이 되는 머신을 쓰고, 매 질의마다 서드파티 SaaS에 의존하고 싶지 않은 — 의 자리를 채웁니다. 4개 언어 UI, 병렬 ALL 모드 조회, Cloudflare/Google 나란히 전환은 이 도구의 변별점입니다. 전파 지도용 도구나, 권위 전용 질의용 도구나, 유료 이메일 도달성 모니터링용 도구로는 적합하지 않습니다. 그런 용도에는 위에서 언급한 도구들이 더 낫습니다.
+
+## 더 읽을거리
+
+내부 링크:
+
+- [HTTP Header Analyzer](/ko/tools/http-header-analyzer/) — DNS 해석이 끝난 뒤 서버가 무엇을 돌려주는지.
+- [SSL Certificate Decoder](/ko/tools/ssl-certificate-decoder/) — 해석된 IP에서 제공된 인증서가 호스트명과 일치하는지 확인.
+- [URL Parser](/ko/tools/url-parser/) — 호스트를 해석하기 전에 URL을 프로토콜, 호스트, 포트, 경로, 쿼리로 분해.
+- [IP Subnet Calculator](/ko/tools/ip-subnet-calculator/) — A/AAAA를 손에 넣은 뒤 방화벽 규칙용 서브넷 구조를 도출.
+
+외부 링크:
+
+- [RFC 8484 — DNS Queries over HTTPS](https://www.rfc-editor.org/rfc/rfc8484) — DoH 표준.
+- [Cloudflare DoH documentation](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/) — 엔드포인트, 파라미터, JSON 프로파일, 레이트 리밋.
+- [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh) — `dns.google/resolve`에 대한 Google 문서.
+- [RFC 1035 — Domain Names](https://www.rfc-editor.org/rfc/rfc1035) — 원조 DNS 명세. 레코드 포맷에 대해서는 여전히 가장 유용한 참조.
+- [RFC 7208 — Sender Policy Framework](https://www.rfc-editor.org/rfc/rfc7208) — SPF, 그리고 TXT 세그먼테이션 규칙.
+- [RFC 8659 — CAA](https://www.rfc-editor.org/rfc/rfc8659) — Certification Authority Authorization.
+- [RFC 6891 — EDNS(0)](https://www.rfc-editor.org/rfc/rfc6891) — EDNS Client Subnet이 올라타고 있는 확장 메커니즘.
