@@ -131,6 +131,8 @@ import GraphqlFormatterTool from './GraphqlFormatterTool.astro';
 import JqPlaygroundTool from './JqPlaygroundTool.astro';
 import KeycodeExplorerTool from './KeycodeExplorerTool.astro';
 
+import ZeroWidthCharacterDetectorTool from './ZeroWidthCharacterDetectorTool.astro';
+
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
   'aspect-ratio': AspectRatioTool,
@@ -260,4 +262,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'graphql-formatter': GraphqlFormatterTool,
   'jq-playground': JqPlaygroundTool,
   'keycode-explorer': KeycodeExplorerTool,
+  'zero-width-character-detector': ZeroWidthCharacterDetectorTool,
 };

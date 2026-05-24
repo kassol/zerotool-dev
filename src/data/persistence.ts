@@ -23,6 +23,7 @@ export const toolPersistencePolicy = {
   'svg-optimizer': 'preference',
   'mime-type-lookup': 'preference',
   'eyedropper-color-picker': 'preference',
+  'zero-width-character-detector': 'disabled',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)
