@@ -1,0 +1,80 @@
+---
+seoTitle: "DNS 조회 도구 — A / MX / TXT / CAA를 DoH로 조회 | ZeroTool"
+seoDescription: "DNS-over-HTTPS로 브라우저에서 임의 도메인의 DNS 레코드를 조회. A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR, SRV 지원. Cloudflare와 Google DoH 리졸버 사용, 무료, 브라우저 완결, 업로드 없음."
+faqItems:
+  - question: "쿼리가 ZeroTool 서버로 전송됩니까?"
+    answer: "전송되지 않습니다. DoH 요청은 브라우저에서 cloudflare-dns.com 또는 dns.google로 직접 발행됩니다. ZeroTool은 DNS 프록시를 두지 않으며 쿼리 내용을 전혀 보지 못합니다. IP와 조회한 도메인은 선택한 리졸버에게만 보입니다."
+  - question: "어떤 DoH 리졸버를 사용하며 변경할 수 있나요?"
+    answer: "Cloudflare(1.1.1.1)와 Google(8.8.8.8) 두 가지. 드롭다운에서 선택하세요. 본 도구는 설계상 이 두 리졸버만 내장합니다 — 둘 다 안정적인 JSON DoH 엔드포인트와 CORS를 제공합니다. 사설 리졸버가 필요하다면 로컬에서 dig +https=https://your-doh-endpoint를 실행하세요."
+  - question: "로컬 dig 결과와 다른 이유는?"
+    answer: "두 가지 이유가 있습니다. 1) 공개 재귀 리졸버에 질의하므로 캐시 또는 지역 라우팅된 응답이 로컬 재귀와 다를 수 있음. 2) 로컬 dig는 split-horizon, 회사 VPN, /etc/hosts, 내부 DNS 등 공개 DoH가 볼 수 없는 레코드를 잡아낼 수 있음. DoH 결과는 공개 인터넷의 시각을 반영합니다."
+  - question: "DNSSEC 표시(AD 플래그)는 무엇을 의미하나요?"
+    answer: "AD = Authenticated Data. AD가 true이면 리졸버가 DNSSEC 서명을 신뢰 앵커까지 검증 성공한 것입니다. false는 영역이 서명되지 않았거나, 서명 검증에 실패했거나, DNSSEC 검증이 비활성화되었음을 의미합니다. 본 도구는 cd=0을 보내므로 리졸버가 항상 검증을 수행합니다."
+  - question: "긴 TXT 레코드가 여러 따옴표 문자열로 나뉘는 이유는?"
+    answer: "DNS 프로토콜(RFC 1035)은 단일 TXT 문자열을 최대 255바이트로 제한합니다. 긴 SPF, DKIM, DMARC 레코드는 하나의 TXT 레코드 안에 여러 문자열로 저장됩니다. DoH JSON은 따옴표가 붙은 세그먼트를 원본 그대로 보존하므로, 구분자 없이 연결하면 논리값을 얻을 수 있습니다."
+---
+
+<h2>사용 방법</h2>
+<ol>
+  <li>도메인 입력 — 호스트명, 전체 URL, 끝에 점이 붙은 형태 모두 가능. 자동으로 정규화됩니다.</li>
+  <li>레코드 타입 선택. <strong>ALL</strong>은 한 번 클릭으로 A, AAAA, CNAME, MX, TXT, NS, SOA, CAA 8가지를 병렬 조회합니다.</li>
+  <li>리졸버 선택: <strong>Cloudflare(1.1.1.1)</strong> 또는 <strong>Google(8.8.8.8)</strong>.</li>
+  <li><strong>조회</strong>를 클릭하거나 <kbd>Enter</kbd> 키를 누르세요.</li>
+  <li><strong>레코드</strong>, <strong>원본</strong>(dig 스타일 출력), <strong>JSON</strong>(DoH 원본 응답) 탭을 전환하며 확인.</li>
+</ol>
+
+<h2>지원하는 레코드 타입</h2>
+<ul>
+  <li><strong>A</strong> — IPv4 주소.</li>
+  <li><strong>AAAA</strong> — IPv6 주소.</li>
+  <li><strong>CNAME</strong> — 다른 이름을 가리키는 별칭.</li>
+  <li><strong>MX</strong> — 메일 교환 서버와 우선순위.</li>
+  <li><strong>TXT</strong> — 임의 텍스트. SPF, DKIM, DMARC, 도메인 소유권 확인, HTTP/3 origin 등을 보관.</li>
+  <li><strong>NS</strong> — 영역의 권한 있는 네임서버.</li>
+  <li><strong>SOA</strong> — Start of Authority: 기본 NS, 연락처, 시리얼, 리프레시 타이머.</li>
+  <li><strong>CAA</strong> — 해당 도메인에 인증서를 발급할 수 있는 CA 지정.</li>
+  <li><strong>PTR</strong> — 역방향 DNS. <code>x.y.z.w.in-addr.arpa</code> 형식 이름을 직접 입력하세요. 도구는 일반 PTR 쿼리만 발행합니다.</li>
+  <li><strong>SRV</strong> — 서비스 위치. priority / weight / port / target 포함.</li>
+</ul>
+
+<h2>왜 DNS-over-HTTPS인가</h2>
+<p>
+  브라우저는 UDP/53 소켓을 직접 열 수 없어서 브라우저 완결 도구가 클래식 DNS를 말할 수 없습니다.
+  DoH는 DNS 메시지를 HTTPS로 감싸므로 일반 <code>fetch()</code> 호출만으로 공개 리졸버에 임의 레코드를
+  질의할 수 있습니다. Cloudflare와 Google 모두 JSON 프로파일(Cloudflare는 <code>application/dns-json</code>,
+  Google은 네이티브 JSON)을 CORS 허용으로 노출합니다. 본 도구는 그 엔드포인트를 호출하고 응답을 렌더링할 뿐입니다.
+</p>
+
+<h2>요약 필 읽는 법</h2>
+<ul>
+  <li><strong>NOERROR / NXDOMAIN / SERVFAIL</strong> — DNS RCODE. NXDOMAIN은 "도메인이 존재하지 않음"이라는 유효 응답, SERVFAIL은 리졸버가 답할 수 없었음을 의미.</li>
+  <li><strong>N개 레코드</strong> — 응답 레코드 수. NOERROR이고 0개면 조회한 이름에 해당 타입 레코드가 없음.</li>
+  <li><strong>DNSSEC ✓</strong> — AD 플래그가 설정됨. 리졸버가 서명을 검증함.</li>
+  <li><strong>Resolver</strong> — 응답을 제공한 DoH 엔드포인트.</li>
+  <li><strong>지연시간</strong> — <code>fetch()</code> 시작부터 JSON 파싱 완료까지의 왕복 시간.</li>
+</ul>
+
+<h2>대표적인 활용 사례</h2>
+<ul>
+  <li>A 또는 CNAME 변경이 특정 리졸버에 반영되었는지 확인.</li>
+  <li>신규 발송 도메인 오픈 전 MX, SPF(TXT), DKIM(TXT), DMARC(TXT) 정합성 검사.</li>
+  <li>두 공개 리졸버가 본 레코드 비교 — 전파 기간 동안 Cloudflare와 Google이 일치하지 않을 수 있음.</li>
+  <li>인증서 발급 전 CAA를 확인해 "CAA mismatch" 실패 회피.</li>
+  <li>레지스트라 이전 시 NS 위임이 올바른지 점검.</li>
+</ul>
+
+<h2>본 도구의 설계상 경계</h2>
+<p>
+  단발성 재귀 리졸버 클라이언트입니다. 역방향 IP 조회를 위한 ARPA 자동 변환은 하지 않으며(PTR은 in-addr.arpa 이름을 직접 입력),
+  권한 서버에 직접 질의하지 않고(항상 공개 재귀에 질의), 히스토리 스냅샷, WHOIS, 차단 목록, 다중 리졸버 전파 비교도 하지 않습니다.
+  전파 맵은 <a href="https://www.whatsmydns.net/">whatsmydns.net</a>, 권한 서버만 조회는 로컬에서
+  <code>dig @ns1.example.com</code>을 사용하세요.
+</p>
+
+<h2>ZeroTool의 관련 도구</h2>
+<ul>
+  <li><a href="/ko/tools/http-header-analyzer/">HTTP Header 분석기</a> — DNS 해석 후 서버가 반환하는 헤더 검사.</li>
+  <li><a href="/ko/tools/ssl-certificate-decoder/">SSL 인증서 디코더</a> — DNS가 해석한 IP에서 제공되는 인증서를 함께 검토.</li>
+  <li><a href="/ko/tools/url-parser/">URL 파서</a> — URL을 구성 요소로 분해한 후 호스트명을 조회.</li>
+  <li><a href="/ko/tools/ip-subnet-calculator/">IP 서브넷 계산기</a> — A / AAAA를 얻은 후 서브넷 구조 추론.</li>
+</ul>

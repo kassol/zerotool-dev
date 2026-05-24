@@ -1,0 +1,80 @@
+---
+seoTitle: "DNS 查询工具 — 在线查询 A / MX / TXT / CAA 记录 | ZeroTool"
+seoDescription: "通过 DNS-over-HTTPS 在浏览器直接查询任意域名的 DNS 记录，支持 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA、PTR、SRV，使用 Cloudflare 或 Google 解析器，免费、纯浏览器、零上传。"
+faqItems:
+  - question: "查询会发送到 ZeroTool 服务器吗？"
+    answer: "不会。DoH 请求由浏览器直接发往 cloudflare-dns.com 或 dns.google。ZeroTool 没有 DNS 代理，看不到任何查询内容；你的 IP 和查询的域名仅对所选解析器可见。"
+  - question: "用的是哪两个 DoH 解析器，能换吗？"
+    answer: "Cloudflare（1.1.1.1）和 Google（8.8.8.8），下拉切换。本工具按设计只内置这两家——它们提供稳定的 JSON DoH 接口且开启了 CORS。如果要走私有解析器，请本地执行 dig +https=https://你的-doh-端点。"
+  - question: "为什么结果跟我本地 dig 不一样？"
+    answer: "两个原因：1) 你查的是公共递归解析器，可能命中缓存或返回 geo-routed 结果，与你本地递归不同；2) 本地 dig 可能命中 split-horizon、公司 VPN、/etc/hosts、内网 DNS 等公共 DoH 看不到的记录。DoH 结果反映的是公网视角。"
+  - question: "DNSSEC 标识（AD 位）是什么意思？"
+    answer: "AD = Authenticated Data。AD 为 true 表示解析器成功用 DNSSEC 链一路验证到信任锚；false 表示域未签名、签名校验失败，或解析器未开启验证。本工具发请求时 cd=0，强制解析器执行验证。"
+  - question: "为什么长 TXT 记录被切成多段带引号的字符串？"
+    answer: "DNS 协议（RFC 1035）规定单个 TXT 字符串最多 255 字节，超长 SPF、DKIM、DMARC 记录会以多段形式存在同一条 TXT 里。DoH JSON 原样保留这些带引号片段，把它们无分隔符拼接起来就是逻辑值。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>输入域名——裸主机名、完整 URL、带末尾点的形式都可以，工具会自动归一化。</li>
+  <li>选择记录类型。<strong>ALL</strong> 一次并行查询 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA 八种常用类型。</li>
+  <li>选择解析器：<strong>Cloudflare（1.1.1.1）</strong> 或 <strong>Google（8.8.8.8）</strong>。</li>
+  <li>点击 <strong>查询</strong>，或者按 <kbd>Enter</kbd>。</li>
+  <li>在 <strong>记录</strong>、<strong>原文</strong>（dig 风格输出）、<strong>JSON</strong>（DoH 原始响应）三个标签页之间切换。</li>
+</ol>
+
+<h2>支持的记录类型</h2>
+<ul>
+  <li><strong>A</strong> — IPv4 地址。</li>
+  <li><strong>AAAA</strong> — IPv6 地址。</li>
+  <li><strong>CNAME</strong> — 别名，指向另一个名字。</li>
+  <li><strong>MX</strong> — 邮件交换主机及其优先级。</li>
+  <li><strong>TXT</strong> — 自由文本。承载 SPF、DKIM、DMARC、域名归属验证、HTTP/3 origin 等。</li>
+  <li><strong>NS</strong> — 区域的权威名称服务器。</li>
+  <li><strong>SOA</strong> — Start of Authority：主 NS、联系人、序列号、刷新计时器。</li>
+  <li><strong>CAA</strong> — 哪些 CA 可以为该域签发证书。</li>
+  <li><strong>PTR</strong> — 反向 DNS。请自行输入 <code>x.y.z.w.in-addr.arpa</code> 这种名字，工具只发普通 PTR 查询。</li>
+  <li><strong>SRV</strong> — 服务定位，含 priority / weight / port / target。</li>
+</ul>
+
+<h2>为什么用 DNS-over-HTTPS</h2>
+<p>
+  浏览器无法直接开 UDP/53 socket，所以浏览器端工具不能讲传统 DNS 协议。
+  DoH 把 DNS 消息包在 HTTPS 里，普通的 <code>fetch()</code> 就能向公共解析器查询任意记录。
+  Cloudflare 和 Google 都暴露 JSON 接口（Cloudflare 用 <code>application/dns-json</code>，
+  Google 原生 JSON），且 CORS 全开。本工具不过是去调用这些接口并把响应渲染成可读视图。
+</p>
+
+<h2>怎么看顶部的状态标签</h2>
+<ul>
+  <li><strong>NOERROR / NXDOMAIN / SERVFAIL</strong> — DNS RCODE。NXDOMAIN 是合法响应，意味"域名不存在"；SERVFAIL 表示解析器无法回答。</li>
+  <li><strong>N 条记录</strong> — 应答记录数。NOERROR 但 0 条，意味该域名在所查类型下没有记录。</li>
+  <li><strong>DNSSEC ✓</strong> — AD 位为 true，解析器完成了签名验证。</li>
+  <li><strong>Resolver</strong> — 本次响应来自哪个 DoH 端点。</li>
+  <li><strong>延迟</strong> — 从 <code>fetch()</code> 开始到 JSON 解析结束的往返时间。</li>
+</ul>
+
+<h2>典型用途</h2>
+<ul>
+  <li>验证 A / CNAME 修改是否已经在某个解析器上生效。</li>
+  <li>启用新邮件域名前确认 MX、SPF（TXT）、DKIM（TXT）、DMARC（TXT）配置。</li>
+  <li>对比两个公共解析器看到的记录——传播期内 Cloudflare 和 Google 可能不一致。</li>
+  <li>签发证书前检查 CAA，避免 "CAA mismatch" 失败。</li>
+  <li>迁移注册商时核对 NS 委派是否正确。</li>
+</ul>
+
+<h2>本工具的边界</h2>
+<p>
+  这是一次性的递归解析客户端。它不会为反向 IP 查询自动转换 ARPA 名（PTR 请自己输入 in-addr.arpa 名字），
+  不直接查询权威服务器（只问公共递归），也不做历史快照、WHOIS、黑名单或多解析器传播对比。
+  传播图请用 <a href="https://www.whatsmydns.net/">whatsmydns.net</a>；只查权威服务器请本地执行
+  <code>dig @ns1.example.com</code>。
+</p>
+
+<h2>ZeroTool 上的相关工具</h2>
+<ul>
+  <li><a href="/zh/tools/http-header-analyzer/">HTTP Header 分析器</a> — DNS 解析之后，检查服务器返回的头部。</li>
+  <li><a href="/zh/tools/ssl-certificate-decoder/">SSL 证书解码器</a> — 把 DNS 解到的 IP 上服务的证书一并核对。</li>
+  <li><a href="/zh/tools/url-parser/">URL 解析器</a> — 先把 URL 拆成各组成部分，再去查主机名。</li>
+  <li><a href="/zh/tools/ip-subnet-calculator/">IP 子网计算器</a> — 拿到 A / AAAA 后推算子网结构。</li>
+</ul>

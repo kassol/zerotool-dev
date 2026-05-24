@@ -1,0 +1,83 @@
+---
+seoTitle: "DNS Lookup Online — A / MX / TXT / CAA via DoH | ZeroTool"
+seoDescription: "Look up DNS records for any domain via DNS-over-HTTPS. A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR, and SRV via Cloudflare or Google. 100% browser-based, no upload."
+faqItems:
+  - question: "Does this tool send my queries to a ZeroTool server?"
+    answer: "No. The browser issues the DoH request directly to cloudflare-dns.com or dns.google. ZeroTool has no DNS proxy and never sees the query. Your IP and the queried name are visible only to the resolver you pick."
+  - question: "Which DoH providers does it use, and can I change them?"
+    answer: "Cloudflare (1.1.1.1) and Google (8.8.8.8). Pick from the resolver dropdown. The tool ships with these two by design — they have stable JSON DoH endpoints and CORS enabled. For private resolvers, run dig +https=https://your-doh-endpoint locally."
+  - question: "Why is the result different from `dig` on my machine?"
+    answer: "Two reasons. First, you are asking a public recursive resolver that may have a cached or geo-routed answer different from your local recursive. Second, your local dig may pick up split-horizon records that public DoH cannot see (corporate VPN, /etc/hosts, internal DNS). The DoH result reflects what the public internet sees."
+  - question: "What does the DNSSEC indicator (the AD flag) mean?"
+    answer: "AD = Authenticated Data. The flag is true when the resolver successfully validated DNSSEC signatures up to a trust anchor. False means the zone is unsigned, the signature failed, or DNSSEC validation was disabled. ZeroTool sends cd=0 so the resolver always performs validation."
+  - question: "Why does a long TXT record arrive split into multiple quoted strings?"
+    answer: "DNS limits each TXT string to 255 bytes (RFC 1035). Long SPF, DKIM, or DMARC records are stored as multiple strings inside one TXT record. The DoH JSON preserves the quoted segments verbatim — concatenate them (without separator) to get the logical value."
+---
+
+<h2>How to Use</h2>
+<ol>
+  <li>Enter a domain — bare hostname, full URL, or trailing-dot form all work; the tool normalises automatically.</li>
+  <li>Pick a record type. <strong>ALL</strong> fans out parallel queries for A, AAAA, CNAME, MX, TXT, NS, SOA, and CAA in one click.</li>
+  <li>Pick a resolver: <strong>Cloudflare (1.1.1.1)</strong> or <strong>Google (8.8.8.8)</strong>.</li>
+  <li>Click <strong>Lookup</strong> or press <kbd>Enter</kbd>.</li>
+  <li>Switch between <strong>Records</strong>, <strong>Raw</strong> (dig-style output), and <strong>JSON</strong> (raw DoH response) tabs.</li>
+</ol>
+
+<h2>Record types supported</h2>
+<ul>
+  <li><strong>A</strong> — IPv4 address.</li>
+  <li><strong>AAAA</strong> — IPv6 address.</li>
+  <li><strong>CNAME</strong> — canonical alias pointing at another name.</li>
+  <li><strong>MX</strong> — mail exchanger with priority.</li>
+  <li><strong>TXT</strong> — arbitrary text. Hosts SPF, DKIM, DMARC, domain verification, and HTTP/3 origin signals.</li>
+  <li><strong>NS</strong> — authoritative name servers for the zone.</li>
+  <li><strong>SOA</strong> — Start of Authority: primary NS, contact, serial, refresh timers.</li>
+  <li><strong>CAA</strong> — which Certificate Authorities may issue for the domain.</li>
+  <li><strong>PTR</strong> — reverse DNS. Query the <code>x.y.z.w.in-addr.arpa</code> name yourself; the tool issues a plain PTR query.</li>
+  <li><strong>SRV</strong> — service location with priority, weight, port, and target.</li>
+</ul>
+
+<h2>Why DNS-over-HTTPS</h2>
+<p>
+  Browsers cannot open raw UDP/53 sockets, which is why no in-browser tool can speak classic DNS.
+  DoH wraps DNS messages in HTTPS, so a regular <code>fetch()</code> call can ask a public resolver
+  for any record. Cloudflare and Google both expose a JSON profile (<code>application/dns-json</code>
+  for Cloudflare, native JSON for Google) with permissive CORS — this tool does nothing more than
+  call those endpoints and render the response.
+</p>
+
+<h2>Reading the summary pills</h2>
+<ul>
+  <li><strong>NOERROR / NXDOMAIN / SERVFAIL</strong> — the DNS RCODE. NXDOMAIN is a valid answer meaning "domain does not exist"; SERVFAIL means the resolver could not answer.</li>
+  <li><strong>N records</strong> — how many answer records came back. Zero with NOERROR means the type exists for the zone elsewhere but not for the requested name.</li>
+  <li><strong>DNSSEC ✓</strong> — the AD flag is set. The resolver validated signatures.</li>
+  <li><strong>Resolver</strong> — which DoH endpoint served the response.</li>
+  <li><strong>Latency</strong> — round-trip time from <code>fetch()</code> start to JSON parse.</li>
+</ul>
+
+<h2>Typical use cases</h2>
+<ul>
+  <li>Verifying that an A or CNAME change has propagated past a specific resolver.</li>
+  <li>Confirming MX, SPF (TXT), DKIM (TXT), and DMARC (TXT) before launching a new sending domain.</li>
+  <li>Comparing the records two public resolvers see — Cloudflare vs Google can disagree during a propagation window.</li>
+  <li>Checking CAA before issuing a certificate to avoid the "CAA mismatch" failure mode.</li>
+  <li>Sanity-checking NS delegation when moving zones between registrars.</li>
+</ul>
+
+<h2>Limits by design</h2>
+<p>
+  This is a single-shot resolver client. It does not perform automatic ARPA conversion for reverse
+  IP lookups (input the in-addr.arpa name yourself for PTR), it does not query authoritative
+  servers directly (it asks a public recursive), and it does not run history, WHOIS, blocklist, or
+  propagation comparisons across many resolvers. For propagation maps use
+  <a href="https://www.whatsmydns.net/">whatsmydns.net</a>; for authoritative-only lookups use
+  <code>dig @ns1.example.com</code> locally.
+</p>
+
+<h2>Related tools on ZeroTool</h2>
+<ul>
+  <li><a href="/tools/http-header-analyzer/">HTTP Header Analyzer</a> — once DNS resolves, inspect what the server returns.</li>
+  <li><a href="/tools/ssl-certificate-decoder/">SSL Certificate Decoder</a> — pair DNS with the certificate served at the resolved IP.</li>
+  <li><a href="/tools/url-parser/">URL Parser</a> — break a URL into its components before looking up the hostname.</li>
+  <li><a href="/tools/ip-subnet-calculator/">IP Subnet Calculator</a> — once you have the A/AAAA, derive subnet structure.</li>
+</ul>

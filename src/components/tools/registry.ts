@@ -132,6 +132,7 @@ import JqPlaygroundTool from './JqPlaygroundTool.astro';
 import KeycodeExplorerTool from './KeycodeExplorerTool.astro';
 
 import ZeroWidthCharacterDetectorTool from './ZeroWidthCharacterDetectorTool.astro';
+import DnsLookupTool from './DnsLookupTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -263,4 +264,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'jq-playground': JqPlaygroundTool,
   'keycode-explorer': KeycodeExplorerTool,
   'zero-width-character-detector': ZeroWidthCharacterDetectorTool,
+  'dns-lookup': DnsLookupTool,
 };

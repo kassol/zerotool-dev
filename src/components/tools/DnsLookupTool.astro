@@ -1,0 +1,794 @@
+---
+// DNS Lookup — query DNS records via DNS-over-HTTPS (Cloudflare + Google).
+// 100% client-side: queries are sent from the user's browser to the chosen DoH endpoint.
+// Language-independent widget; strings localized at runtime via document.documentElement.lang.
+---
+
+<div>
+  <div class="dnsl-wrap">
+    <div class="dnsl-input-section">
+      <label for="dnsl-domain" data-i18n="domainLabel">Domain</label>
+      <div class="dnsl-input-row">
+        <input
+          id="dnsl-domain"
+          class="tool-input dnsl-domain"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="example.com"
+        />
+        <select id="dnsl-type" class="dnsl-select" aria-label="Record type">
+          <option value="ALL">ALL</option>
+          <option value="A" selected>A</option>
+          <option value="AAAA">AAAA</option>
+          <option value="CNAME">CNAME</option>
+          <option value="MX">MX</option>
+          <option value="TXT">TXT</option>
+          <option value="NS">NS</option>
+          <option value="SOA">SOA</option>
+          <option value="CAA">CAA</option>
+          <option value="PTR">PTR</option>
+          <option value="SRV">SRV</option>
+        </select>
+        <select id="dnsl-resolver" class="dnsl-select" aria-label="Resolver">
+          <option value="cloudflare" selected>Cloudflare (1.1.1.1)</option>
+          <option value="google">Google (8.8.8.8)</option>
+        </select>
+      </div>
+      <div class="dnsl-examples">
+        <span class="dnsl-examples-label" data-i18n="try">Try:</span>
+        <button class="dnsl-chip" type="button" data-example="zerotool.dev">zerotool.dev</button>
+        <button class="dnsl-chip" type="button" data-example="cloudflare.com">cloudflare.com</button>
+        <button class="dnsl-chip" type="button" data-example="github.com">github.com</button>
+        <button class="dnsl-chip" type="button" data-example="example.com">example.com</button>
+      </div>
+    </div>
+
+    <div class="dnsl-actions">
+      <button id="dnsl-lookup" class="btn-primary" type="button" data-i18n="lookup">Lookup</button>
+      <button id="dnsl-copy-json" class="btn-secondary" type="button" data-i18n="copyJson">Copy JSON</button>
+      <button id="dnsl-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="dnsl-status" class="tool-status" aria-live="polite"></div>
+
+    <div id="dnsl-result" class="dnsl-result" hidden>
+      <div class="dnsl-summary">
+        <span class="dnsl-summary-pill" id="dnsl-summary-status" data-kind="ok"></span>
+        <span class="dnsl-summary-pill" id="dnsl-summary-count"></span>
+        <span class="dnsl-summary-pill" id="dnsl-summary-dnssec"></span>
+        <span class="dnsl-summary-pill" id="dnsl-summary-resolver"></span>
+        <span class="dnsl-summary-pill" id="dnsl-summary-time"></span>
+      </div>
+
+      <div class="dnsl-tabs" role="tablist">
+        <button class="dnsl-tab dnsl-tab-active" id="dnsl-tab-records" role="tab" data-i18n="tabRecords">Records</button>
+        <button class="dnsl-tab" id="dnsl-tab-raw" role="tab" data-i18n="tabRaw">Raw</button>
+        <button class="dnsl-tab" id="dnsl-tab-json" role="tab" data-i18n="tabJson">JSON</button>
+      </div>
+
+      <div id="dnsl-panel-records" class="dnsl-panel"></div>
+      <div id="dnsl-panel-raw" class="dnsl-panel" hidden><pre id="dnsl-raw-output" class="dnsl-pre"></pre></div>
+      <div id="dnsl-panel-json" class="dnsl-panel" hidden><pre id="dnsl-json-output" class="dnsl-pre"></pre></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          domainLabel: 'Domain', try: 'Try:', lookup: 'Lookup', copyJson: 'Copy JSON', clear: 'Clear',
+          tabRecords: 'Records', tabRaw: 'Raw', tabJson: 'JSON',
+          pending: 'Querying…', pendingMulti: 'Querying {n} record types…',
+          empty: 'Enter a domain and click Lookup.',
+          invalidDomain: 'Invalid domain. Use a hostname like example.com.',
+          netError: 'Network error. Check your connection or try the other resolver.',
+          timeout: 'Request timed out after 5s.',
+          done: 'Found {n} record{s}.',
+          doneEmpty: 'No records found.',
+          copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', lookupFirst: 'Run a lookup first.',
+          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+          summaryCount: '{n} record{s}', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'no DNSSEC',
+          summaryTime: '{ms} ms', summaryTruncated: 'truncated ⚠',
+          recordsHeading: '{type} ({n})',
+          colType: 'TYPE', colTtl: 'TTL', colName: 'NAME', colData: 'DATA',
+          partialError: 'Lookup failed for {type}: {msg}',
+          notImplemented: 'Resolver returned {code}.',
+        },
+        zh: {
+          domainLabel: '域名', try: '试试：', lookup: '查询', copyJson: '复制 JSON', clear: '清除',
+          tabRecords: '记录', tabRaw: '原文', tabJson: 'JSON',
+          pending: '查询中…', pendingMulti: '正在查询 {n} 种记录类型…',
+          empty: '请输入域名后点击查询。',
+          invalidDomain: '域名无效。请输入类似 example.com 的主机名。',
+          netError: '网络错误。请检查连接或切换解析器。',
+          timeout: '请求超过 5 秒已超时。',
+          done: '找到 {n} 条记录。',
+          doneEmpty: '未找到任何记录。',
+          copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', lookupFirst: '请先查询。',
+          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+          summaryCount: '{n} 条记录', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: '未启用 DNSSEC',
+          summaryTime: '{ms} 毫秒', summaryTruncated: '响应被截断 ⚠',
+          recordsHeading: '{type}（{n} 条）',
+          colType: '类型', colTtl: 'TTL', colName: '名称', colData: '数据',
+          partialError: '{type} 查询失败：{msg}',
+          notImplemented: '解析器返回 {code}。',
+        },
+        ja: {
+          domainLabel: 'ドメイン', try: 'お試し：', lookup: '照会', copyJson: 'JSON コピー', clear: 'クリア',
+          tabRecords: 'レコード', tabRaw: '生データ', tabJson: 'JSON',
+          pending: '照会中…', pendingMulti: '{n} 種類のレコードを照会中…',
+          empty: 'ドメインを入力して照会をクリック。',
+          invalidDomain: 'ドメインが不正です。example.com のような形式を入力してください。',
+          netError: 'ネットワークエラー。接続を確認するか別のリゾルバに切り替えてください。',
+          timeout: '5 秒でタイムアウトしました。',
+          done: '{n} 件のレコードを取得しました。',
+          doneEmpty: 'レコードが見つかりません。',
+          copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピーに失敗しました。', lookupFirst: '先に照会してください。',
+          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+          summaryCount: '{n} 件', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC なし',
+          summaryTime: '{ms} ミリ秒', summaryTruncated: '応答が切り詰められました ⚠',
+          recordsHeading: '{type}（{n} 件）',
+          colType: 'タイプ', colTtl: 'TTL', colName: '名前', colData: 'データ',
+          partialError: '{type} の照会に失敗：{msg}',
+          notImplemented: 'リゾルバが {code} を返しました。',
+        },
+        ko: {
+          domainLabel: '도메인', try: '예시:', lookup: '조회', copyJson: 'JSON 복사', clear: '지우기',
+          tabRecords: '레코드', tabRaw: '원본', tabJson: 'JSON',
+          pending: '조회 중…', pendingMulti: '{n}개 레코드 타입 조회 중…',
+          empty: '도메인을 입력하고 조회를 클릭하세요.',
+          invalidDomain: '잘못된 도메인입니다. example.com 같은 호스트명을 입력하세요.',
+          netError: '네트워크 오류. 연결을 확인하거나 다른 리졸버로 전환해보세요.',
+          timeout: '5초 후 타임아웃되었습니다.',
+          done: '{n}개 레코드를 찾았습니다.',
+          doneEmpty: '레코드를 찾을 수 없습니다.',
+          copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', lookupFirst: '먼저 조회하세요.',
+          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+          summaryCount: '{n}개 레코드', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC 없음',
+          summaryTime: '{ms} ms', summaryTruncated: '응답이 잘림 ⚠',
+          recordsHeading: '{type} ({n}개)',
+          colType: '타입', colTtl: 'TTL', colName: '이름', colData: '데이터',
+          partialError: '{type} 조회 실패: {msg}',
+          notImplemented: '리졸버가 {code}를 반환했습니다.',
+        },
+      };
+
+      // DNS record type code ↔ name. Subset covered by the UI selector.
+      var TYPE_NAMES = {
+        1: 'A', 2: 'NS', 5: 'CNAME', 6: 'SOA', 12: 'PTR',
+        15: 'MX', 16: 'TXT', 28: 'AAAA', 33: 'SRV', 257: 'CAA'
+      };
+      var ALL_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA', 'CAA'];
+
+      // DNS RCODE → friendly label. Only common values; others rendered as "RCODE N".
+      var RCODE_LABEL = {
+        0: 'summaryNoerror', 1: 'summaryFormerr', 2: 'summaryServfail',
+        3: 'summaryNxdomain', 4: 'notImplemented', 5: 'summaryRefused'
+      };
+
+      var lang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[lang] || STRINGS.en;
+
+      var domainEl = document.getElementById('dnsl-domain');
+      var typeSel = document.getElementById('dnsl-type');
+      var resolverSel = document.getElementById('dnsl-resolver');
+      var lookupBtn = document.getElementById('dnsl-lookup');
+      var copyJsonBtn = document.getElementById('dnsl-copy-json');
+      var clearBtn = document.getElementById('dnsl-clear');
+      var statusEl = document.getElementById('dnsl-status');
+      var resultEl = document.getElementById('dnsl-result');
+      var summaryStatusEl = document.getElementById('dnsl-summary-status');
+      var summaryCountEl = document.getElementById('dnsl-summary-count');
+      var summaryDnssecEl = document.getElementById('dnsl-summary-dnssec');
+      var summaryResolverEl = document.getElementById('dnsl-summary-resolver');
+      var summaryTimeEl = document.getElementById('dnsl-summary-time');
+      var tabRecords = document.getElementById('dnsl-tab-records');
+      var tabRaw = document.getElementById('dnsl-tab-raw');
+      var tabJson = document.getElementById('dnsl-tab-json');
+      var panelRecords = document.getElementById('dnsl-panel-records');
+      var panelRaw = document.getElementById('dnsl-panel-raw');
+      var panelJson = document.getElementById('dnsl-panel-json');
+      var rawOut = document.getElementById('dnsl-raw-output');
+      var jsonOut = document.getElementById('dnsl-json-output');
+
+      // Apply localized labels to declarative data-i18n nodes
+      var labeled = document.querySelectorAll('[data-i18n]');
+      for (var li = 0; li < labeled.length; li++) {
+        var key = labeled[li].getAttribute('data-i18n');
+        if (t[key] != null) labeled[li].textContent = t[key];
+      }
+
+      var lastSnapshot = null; // last lookup result for Copy JSON
+
+      function setStatus(text, kind) {
+        statusEl.textContent = text || '';
+        statusEl.className = 'tool-status' + (kind ? ' ' + kind : '');
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      // Normalize user input → bare hostname suitable for DoH `name` param.
+      function normalizeDomain(raw) {
+        if (!raw) return '';
+        var s = String(raw).trim();
+        if (!s) return '';
+        if (s.indexOf('://') !== -1) {
+          try { s = new URL(s).hostname; }
+          catch (e) { /* fall through, keep s */ }
+        }
+        // strip trailing dot, strip :port, lowercase
+        s = s.replace(/^\s+|\s+$/g, '').replace(/\.$/, '').replace(/:\d+$/, '').toLowerCase();
+        return s;
+      }
+
+      // Basic hostname validation: labels separated by dots, ASCII or punycode.
+      function isValidDomain(d) {
+        if (!d || d.length > 253) return false;
+        // Allow IDN punycode (xn--…) plus alphanumerics and hyphens, length 1-63 per label.
+        return /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(d);
+      }
+
+      function rcodeLabel(code) {
+        if (RCODE_LABEL[code] != null) return t[RCODE_LABEL[code]];
+        return 'RCODE ' + code;
+      }
+
+      function typeNameFromCode(code) {
+        return TYPE_NAMES[code] || ('TYPE' + code);
+      }
+
+      function fillFormat(tpl, vars) {
+        return tpl.replace(/\{(\w+)\}/g, function (_, k) { return vars[k] != null ? vars[k] : ('{' + k + '}'); });
+      }
+
+      function pluralS(n) { return n === 1 ? '' : 's'; }
+
+      // Issue a single DoH JSON query. Returns the parsed response or throws.
+      function query(domain, typeName, resolver) {
+        var url;
+        var headers = {};
+        if (resolver === 'google') {
+          url = 'https://dns.google/resolve?name=' + encodeURIComponent(domain) + '&type=' + encodeURIComponent(typeName) + '&cd=0';
+        } else {
+          url = 'https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(domain) + '&type=' + encodeURIComponent(typeName) + '&cd=0';
+          headers.accept = 'application/dns-json';
+        }
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, 5000);
+        return fetch(url, { headers: headers, signal: controller.signal })
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .finally(function () { clearTimeout(timer); });
+      }
+
+      // Merge multi-type ALL results into a single shape the renderer consumes.
+      function mergeAllResults(results) {
+        var merged = {
+          Status: 0,
+          AD: true,
+          TC: false,
+          Answer: [],
+          Authority: [],
+          _queries: [],
+          _partialErrors: []
+        };
+        var anySuccess = false;
+        for (var i = 0; i < results.length; i++) {
+          var item = results[i];
+          if (item.status === 'fulfilled') {
+            anySuccess = true;
+            var v = item.value;
+            merged._queries.push({ type: item.typeName });
+            // Worst-case Status wins (NXDOMAIN trumps NOERROR when all upstream say NXDOMAIN).
+            // Track per-type below; for the summary we use NOERROR if any type succeeded with data.
+            if (v.Answer && v.Answer.length) {
+              for (var j = 0; j < v.Answer.length; j++) merged.Answer.push(v.Answer[j]);
+            }
+            if (v.Authority && v.Authority.length) {
+              for (var k = 0; k < v.Authority.length; k++) merged.Authority.push(v.Authority[k]);
+            }
+            if (v.AD === false) merged.AD = false;
+            if (v.TC === true) merged.TC = true;
+          } else {
+            merged._partialErrors.push({ type: item.typeName, message: item.reason && item.reason.message ? item.reason.message : String(item.reason) });
+          }
+        }
+        // If everything failed, propagate Status=2 (SERVFAIL) so the UI shows an error pill.
+        if (!anySuccess) merged.Status = 2;
+        else if (merged.Answer.length === 0) {
+          // All succeeded but no answers — keep Status=0 (NOERROR), let renderer show empty.
+          merged.Status = 0;
+        }
+        return merged;
+      }
+
+      function renderRecords(snapshot) {
+        var resp = snapshot.response;
+        var byType = {};
+        var answers = resp.Answer || [];
+        for (var i = 0; i < answers.length; i++) {
+          var a = answers[i];
+          var name = typeNameFromCode(a.type);
+          if (!byType[name]) byType[name] = [];
+          byType[name].push(a);
+        }
+
+        // Preserve UI order: ALL_TYPES first, then anything else.
+        var orderedNames = [];
+        for (var ti = 0; ti < ALL_TYPES.length; ti++) {
+          if (byType[ALL_TYPES[ti]]) orderedNames.push(ALL_TYPES[ti]);
+        }
+        for (var bk in byType) {
+          if (Object.prototype.hasOwnProperty.call(byType, bk) && orderedNames.indexOf(bk) === -1) {
+            orderedNames.push(bk);
+          }
+        }
+
+        var html = '';
+        if (orderedNames.length === 0) {
+          html = '<p class="dnsl-empty">' + escapeHtml(t.doneEmpty) + '</p>';
+        } else {
+          for (var oi = 0; oi < orderedNames.length; oi++) {
+            var typeName = orderedNames[oi];
+            var rows = byType[typeName];
+            html += '<section class="dnsl-section">';
+            html += '<h3 class="dnsl-section-title">' + escapeHtml(fillFormat(t.recordsHeading, { type: typeName, n: rows.length })) + '</h3>';
+            for (var ri = 0; ri < rows.length; ri++) {
+              var row = rows[ri];
+              html += '<article class="dnsl-card">'
+                + '<div class="dnsl-card-row"><span class="dnsl-card-key">' + escapeHtml(t.colType) + '</span><code class="dnsl-card-val dnsl-card-type">' + escapeHtml(typeNameFromCode(row.type)) + '</code></div>'
+                + '<div class="dnsl-card-row"><span class="dnsl-card-key">' + escapeHtml(t.colName) + '</span><code class="dnsl-card-val">' + escapeHtml(row.name) + '</code></div>'
+                + '<div class="dnsl-card-row"><span class="dnsl-card-key">' + escapeHtml(t.colTtl) + '</span><code class="dnsl-card-val">' + escapeHtml(String(row.TTL)) + 's</code></div>'
+                + '<div class="dnsl-card-row dnsl-card-data"><span class="dnsl-card-key">' + escapeHtml(t.colData) + '</span><code class="dnsl-card-val dnsl-card-databig">' + escapeHtml(row.data) + '</code></div>'
+                + '</article>';
+            }
+            html += '</section>';
+          }
+        }
+
+        // Partial errors (some types failed in ALL mode)
+        if (resp._partialErrors && resp._partialErrors.length) {
+          html += '<section class="dnsl-section dnsl-section-errors">';
+          for (var ei = 0; ei < resp._partialErrors.length; ei++) {
+            var err = resp._partialErrors[ei];
+            html += '<p class="dnsl-partial-error">' + escapeHtml(fillFormat(t.partialError, { type: err.type, msg: err.message })) + '</p>';
+          }
+          html += '</section>';
+        }
+
+        panelRecords.innerHTML = html;
+      }
+
+      function renderRaw(snapshot) {
+        // dig-like output: ; QUESTION / ANSWER sections.
+        var resp = snapshot.response;
+        var lines = [];
+        lines.push('; <<>> ZeroTool DNS Lookup <<>> ' + snapshot.domain);
+        lines.push(';; status: ' + rcodeLabel(resp.Status) + (resp.TC ? ' (truncated)' : '') + ', AD: ' + (resp.AD ? '1' : '0'));
+        lines.push(';; resolver: ' + (snapshot.resolver === 'google' ? 'dns.google' : 'cloudflare-dns.com'));
+        lines.push(';; time: ' + snapshot.elapsed + ' ms');
+        lines.push('');
+        lines.push(';; QUESTION SECTION:');
+        if (resp._queries && resp._queries.length) {
+          for (var i = 0; i < resp._queries.length; i++) {
+            lines.push(';' + snapshot.domain + '.\tIN\t' + resp._queries[i].type);
+          }
+        } else {
+          lines.push(';' + snapshot.domain + '.\tIN\t' + snapshot.requestedType);
+        }
+        lines.push('');
+        var answers = resp.Answer || [];
+        if (answers.length) {
+          lines.push(';; ANSWER SECTION:');
+          for (var ai = 0; ai < answers.length; ai++) {
+            var a = answers[ai];
+            lines.push(a.name + '\t' + a.TTL + '\tIN\t' + typeNameFromCode(a.type) + '\t' + a.data);
+          }
+        }
+        var auths = resp.Authority || [];
+        if (auths.length) {
+          lines.push('');
+          lines.push(';; AUTHORITY SECTION:');
+          for (var auI = 0; auI < auths.length; auI++) {
+            var au = auths[auI];
+            lines.push(au.name + '\t' + au.TTL + '\tIN\t' + typeNameFromCode(au.type) + '\t' + au.data);
+          }
+        }
+        if (resp._partialErrors && resp._partialErrors.length) {
+          lines.push('');
+          lines.push(';; PARTIAL ERRORS:');
+          for (var pi = 0; pi < resp._partialErrors.length; pi++) {
+            lines.push(';; ' + fillFormat(t.partialError, { type: resp._partialErrors[pi].type, msg: resp._partialErrors[pi].message }));
+          }
+        }
+        rawOut.textContent = lines.join('\n');
+      }
+
+      function renderJson(snapshot) {
+        jsonOut.textContent = JSON.stringify(snapshot.response, null, 2);
+      }
+
+      function renderSummary(snapshot) {
+        var resp = snapshot.response;
+        summaryStatusEl.textContent = rcodeLabel(resp.Status);
+        summaryStatusEl.dataset.kind = resp.Status === 0 ? 'ok' : (resp.Status === 3 ? 'warn' : 'error');
+
+        var count = (resp.Answer || []).length;
+        if (resp.TC) {
+          summaryCountEl.textContent = fillFormat(t.summaryCount, { n: count, s: pluralS(count) }) + ' · ' + t.summaryTruncated;
+          summaryCountEl.dataset.kind = 'warn';
+        } else {
+          summaryCountEl.textContent = fillFormat(t.summaryCount, { n: count, s: pluralS(count) });
+          summaryCountEl.dataset.kind = count > 0 ? 'ok' : 'neutral';
+        }
+
+        if (resp.AD) {
+          summaryDnssecEl.textContent = t.summaryDnssec;
+          summaryDnssecEl.dataset.kind = 'ok';
+        } else {
+          summaryDnssecEl.textContent = t.summaryNoDnssec;
+          summaryDnssecEl.dataset.kind = 'neutral';
+        }
+
+        summaryResolverEl.textContent = snapshot.resolver === 'google' ? 'Google DNS' : 'Cloudflare DNS';
+        summaryResolverEl.dataset.kind = 'neutral';
+
+        summaryTimeEl.textContent = fillFormat(t.summaryTime, { ms: snapshot.elapsed });
+        summaryTimeEl.dataset.kind = 'neutral';
+      }
+
+      function runLookup() {
+        var raw = domainEl.value;
+        var domain = normalizeDomain(raw);
+        if (!domain) {
+          setStatus(t.empty, '');
+          resultEl.hidden = true;
+          return;
+        }
+        if (!isValidDomain(domain)) {
+          setStatus(t.invalidDomain, 'error');
+          resultEl.hidden = true;
+          return;
+        }
+
+        var typeChoice = typeSel.value;
+        var resolver = resolverSel.value;
+        var t0 = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+
+        if (typeChoice === 'ALL') {
+          setStatus(fillFormat(t.pendingMulti, { n: ALL_TYPES.length }), 'info');
+          var promises = ALL_TYPES.map(function (tn) {
+            return query(domain, tn, resolver).then(
+              function (v) { return { status: 'fulfilled', value: v, typeName: tn }; },
+              function (e) { return { status: 'rejected', reason: e, typeName: tn }; }
+            );
+          });
+          Promise.all(promises).then(function (results) {
+            var elapsed = Math.round(((window.performance && window.performance.now) ? window.performance.now() : Date.now()) - t0);
+            var merged = mergeAllResults(results);
+            finalize({ response: merged, domain: domain, requestedType: 'ALL', resolver: resolver, elapsed: elapsed });
+          });
+        } else {
+          setStatus(t.pending, 'info');
+          query(domain, typeChoice, resolver).then(function (response) {
+            var elapsed = Math.round(((window.performance && window.performance.now) ? window.performance.now() : Date.now()) - t0);
+            // Stash request type so raw view can show the QUESTION section.
+            response._queries = [{ type: typeChoice }];
+            finalize({ response: response, domain: domain, requestedType: typeChoice, resolver: resolver, elapsed: elapsed });
+          }, function (err) {
+            handleFailure(err);
+          });
+        }
+      }
+
+      function handleFailure(err) {
+        if (err && err.name === 'AbortError') {
+          setStatus(t.timeout, 'error');
+        } else {
+          setStatus(t.netError + (err && err.message ? ' (' + err.message + ')' : ''), 'error');
+        }
+        resultEl.hidden = true;
+      }
+
+      function finalize(snapshot) {
+        lastSnapshot = snapshot;
+        renderSummary(snapshot);
+        renderRecords(snapshot);
+        renderRaw(snapshot);
+        renderJson(snapshot);
+        resultEl.hidden = false;
+        var count = (snapshot.response.Answer || []).length;
+        if (count > 0) {
+          setStatus(fillFormat(t.done, { n: count, s: pluralS(count) }), 'success');
+        } else if (snapshot.response.Status === 3) {
+          setStatus(rcodeLabel(3), 'error');
+        } else {
+          setStatus(t.doneEmpty, '');
+        }
+        window.trackTool && window.trackTool('dns-lookup', 'lookup');
+      }
+
+      lookupBtn.addEventListener('click', runLookup);
+
+      domainEl.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          runLookup();
+        }
+      });
+
+      clearBtn.addEventListener('click', function () {
+        domainEl.value = '';
+        resultEl.hidden = true;
+        lastSnapshot = null;
+        setStatus('', '');
+        domainEl.focus();
+      });
+
+      copyJsonBtn.addEventListener('click', function () {
+        if (!lastSnapshot) { setStatus(t.lookupFirst, 'error'); return; }
+        var text = jsonOut.textContent;
+        var done = function () { setStatus(t.copied, 'success'); };
+        var fail = function () { setStatus(t.copyFailed, 'error'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done, fail); });
+        } else {
+          fallbackCopy(text, done, fail);
+        }
+        window.trackTool && window.trackTool('dns-lookup', 'copy_json');
+      });
+
+      function fallbackCopy(text, done, fail) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); }
+        catch (e) { fail(); }
+        document.body.removeChild(ta);
+      }
+
+      // Example chips
+      var chips = document.querySelectorAll('.dnsl-chip');
+      for (var ci = 0; ci < chips.length; ci++) {
+        chips[ci].addEventListener('click', function (ev) {
+          domainEl.value = ev.currentTarget.getAttribute('data-example') || '';
+          runLookup();
+        });
+      }
+
+      // Tabs
+      function setActiveTab(btn) {
+        [tabRecords, tabRaw, tabJson].forEach(function (b) { b.classList.toggle('dnsl-tab-active', b === btn); });
+        panelRecords.hidden = btn !== tabRecords;
+        panelRaw.hidden = btn !== tabRaw;
+        panelJson.hidden = btn !== tabJson;
+      }
+      tabRecords.addEventListener('click', function () { setActiveTab(tabRecords); });
+      tabRaw.addEventListener('click', function () { setActiveTab(tabRaw); });
+      tabJson.addEventListener('click', function () { setActiveTab(tabJson); });
+    })();
+  </script>
+</div>
+
+<style is:global>
+  .dnsl-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  .dnsl-input-section { display: flex; flex-direction: column; gap: 0.45rem; }
+  .dnsl-input-section > label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .dnsl-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 8rem 13rem;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+
+  .dnsl-domain { font-family: var(--font-mono); }
+
+  .dnsl-select {
+    min-height: 40px;
+    padding: 0.45rem 0.7rem;
+    font-size: 0.86rem;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 0;
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    cursor: pointer;
+    transition: box-shadow var(--transition-fast);
+  }
+  .dnsl-select:hover { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent); }
+  .dnsl-select:focus { outline: none; box-shadow: inset 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light); }
+
+  .dnsl-examples {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    font-size: 0.78rem; color: var(--color-text-muted);
+  }
+  .dnsl-examples-label { color: var(--color-text-secondary); font-weight: 600; }
+  .dnsl-chip {
+    padding: 0.2rem 0.65rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--color-text-secondary);
+    background: var(--color-surface-muted);
+    border: 0;
+    border-radius: var(--radius-pill);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    cursor: pointer;
+    transition: color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .dnsl-chip:hover { color: var(--color-primary); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent); }
+  .dnsl-chip:active { transform: scale(0.96); }
+
+  .dnsl-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .dnsl-result { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.25rem; }
+  .dnsl-result[hidden] { display: none; }
+
+  .dnsl-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .dnsl-summary-pill {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.22rem 0.7rem; border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-size: 0.78rem; font-weight: 700;
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+  }
+  .dnsl-summary-pill[data-kind="ok"] {
+    color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+    background: var(--color-primary-light);
+  }
+  .dnsl-summary-pill[data-kind="warn"] {
+    color: var(--color-accent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-accent) 45%, transparent);
+    background: color-mix(in oklch, var(--color-accent) 18%, var(--color-bg-secondary));
+  }
+  .dnsl-summary-pill[data-kind="error"] {
+    color: var(--color-danger);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent);
+    background: color-mix(in oklch, var(--color-danger) 14%, var(--color-bg-secondary));
+  }
+  .dnsl-summary-pill[data-kind="neutral"] {
+    color: var(--color-text-secondary);
+  }
+
+  .dnsl-tabs {
+    display: flex; gap: 0; border-bottom: 1px solid var(--color-border-soft);
+  }
+  .dnsl-tab {
+    padding: 0.45rem 1rem;
+    font-size: 0.86rem; font-weight: 660;
+    color: var(--color-text-secondary);
+    background: none; border: 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+  .dnsl-tab:hover { color: var(--color-text); }
+  .dnsl-tab.dnsl-tab-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+
+  .dnsl-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+  .dnsl-panel[hidden] { display: none; }
+
+  .dnsl-section { display: flex; flex-direction: column; gap: 0.5rem; }
+  .dnsl-section-title {
+    font-family: var(--font-display);
+    font-size: 1rem; font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+    letter-spacing: 0.005em;
+  }
+
+  .dnsl-card {
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-subtle);
+    outline: 1px solid var(--color-border-soft); outline-offset: -1px;
+    padding: 0.7rem 0.85rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.3rem;
+  }
+  .dnsl-card-row {
+    display: grid;
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+    gap: 0.6rem;
+    align-items: baseline;
+  }
+  .dnsl-card-key {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .dnsl-card-val {
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    color: var(--color-text);
+    word-break: break-all;
+    line-height: 1.45;
+  }
+  .dnsl-card-type {
+    color: var(--color-primary);
+    font-weight: 700;
+  }
+  .dnsl-card-databig {
+    font-size: 0.86rem;
+  }
+
+  .dnsl-empty {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    color: var(--color-text-secondary);
+    font-size: 0.86rem;
+  }
+
+  .dnsl-section-errors { gap: 0.3rem; }
+  .dnsl-partial-error {
+    margin: 0;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklch, var(--color-danger) 10%, var(--color-bg-secondary));
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 35%, transparent);
+    color: var(--color-danger);
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    line-height: 1.45;
+    word-break: break-word;
+  }
+
+  .dnsl-pre {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-text);
+    line-height: 1.55;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 640px) {
+    .dnsl-input-row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.4rem;
+    }
+    .dnsl-tab { padding: 0.5rem 0.75rem; font-size: 0.82rem; }
+    .dnsl-section-title { font-size: 0.95rem; }
+    .dnsl-card-row { grid-template-columns: 3.5rem minmax(0, 1fr); gap: 0.5rem; }
+  }
+</style>

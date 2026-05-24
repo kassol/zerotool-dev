@@ -1,0 +1,82 @@
+---
+seoTitle: "DNS ルックアップ — A / MX / TXT / CAA を DoH で照会 | ZeroTool"
+seoDescription: "DNS-over-HTTPS でブラウザから任意ドメインの DNS レコードを照会。A・AAAA・CNAME・MX・TXT・NS・SOA・CAA・PTR・SRV に対応。Cloudflare と Google の DoH リゾルバ、無料、ブラウザ完結、アップロード不要。"
+faqItems:
+  - question: "クエリは ZeroTool のサーバーに送信されますか？"
+    answer: "送信されません。DoH リクエストはブラウザから cloudflare-dns.com または dns.google へ直接発行されます。ZeroTool は DNS プロキシを持たず、クエリ内容を一切受け取りません。IP アドレスと照会名は、選択したリゾルバにのみ可視です。"
+  - question: "DoH リゾルバはどれを使い、変更できますか？"
+    answer: "Cloudflare（1.1.1.1）と Google（8.8.8.8）の 2 つです。ドロップダウンで切り替えてください。本ツールは設計上この 2 リゾルバに固定しています — どちらも安定した JSON DoH エンドポイントを持ち、CORS が有効です。プライベートリゾルバが必要な場合はローカルで dig +https=https://your-doh-endpoint を実行してください。"
+  - question: "ローカルの dig と結果が違うのはなぜ？"
+    answer: "2 つの理由があります。1) 問い合わせ先はパブリックな再帰リゾルバで、キャッシュや geo-routed 応答によりローカル再帰と異なる場合があります。2) ローカル dig は split-horizon、社内 VPN、/etc/hosts、内部 DNS など、パブリック DoH からは見えないレコードを拾うことがあります。DoH の結果はインターネット公開側の見え方です。"
+  - question: "DNSSEC インジケータ（AD フラグ）の意味は？"
+    answer: "AD = Authenticated Data。AD が true のとき、リゾルバは DNSSEC 署名を信頼アンカーまで検証成功しています。false はゾーンが署名されていない、署名検証に失敗、または検証が無効化されたことを示します。本ツールは cd=0 を送るため、リゾルバは常に検証を実行します。"
+  - question: "長い TXT レコードが複数の引用文字列に分割されるのはなぜ？"
+    answer: "DNS プロトコル（RFC 1035）は 1 つの TXT 文字列を最大 255 バイトに制限しています。長い SPF・DKIM・DMARC は 1 つの TXT レコード内に複数文字列として格納されます。DoH JSON は引用付きセグメントを原文のまま保持するため、区切り文字なしで結合すれば論理値が得られます。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>ドメインを入力します。裸のホスト名、完全な URL、末尾ドット付きのいずれも可能。自動的に正規化されます。</li>
+  <li>レコードタイプを選択。<strong>ALL</strong> は A / AAAA / CNAME / MX / TXT / NS / SOA / CAA の 8 種類を並列で照会します。</li>
+  <li>リゾルバを選択：<strong>Cloudflare（1.1.1.1）</strong> または <strong>Google（8.8.8.8）</strong>。</li>
+  <li><strong>照会</strong> をクリック、または <kbd>Enter</kbd> キーを押す。</li>
+  <li><strong>レコード</strong>、<strong>生データ</strong>（dig 風出力）、<strong>JSON</strong>（DoH 生レスポンス）の 3 タブを切り替えて閲覧。</li>
+</ol>
+
+<h2>対応レコードタイプ</h2>
+<ul>
+  <li><strong>A</strong> — IPv4 アドレス。</li>
+  <li><strong>AAAA</strong> — IPv6 アドレス。</li>
+  <li><strong>CNAME</strong> — 別名。他の名前への参照。</li>
+  <li><strong>MX</strong> — メールエクスチェンジャと優先度。</li>
+  <li><strong>TXT</strong> — 任意のテキスト。SPF・DKIM・DMARC・所有権検証・HTTP/3 origin 等を格納。</li>
+  <li><strong>NS</strong> — ゾーンの権威ネームサーバ。</li>
+  <li><strong>SOA</strong> — Start of Authority：プライマリ NS、連絡先、シリアル、リフレッシュタイマー。</li>
+  <li><strong>CAA</strong> — そのドメインに証明書を発行できる CA を指定。</li>
+  <li><strong>PTR</strong> — 逆引き DNS。<code>x.y.z.w.in-addr.arpa</code> 形式の名前は自分で入力してください。ツールはプレーンな PTR クエリを発行するのみです。</li>
+  <li><strong>SRV</strong> — サービスロケーション。priority / weight / port / target を含む。</li>
+</ul>
+
+<h2>なぜ DNS-over-HTTPS なのか</h2>
+<p>
+  ブラウザは UDP/53 ソケットを直接開けないため、ブラウザ完結のツールでクラシック DNS を話すことはできません。
+  DoH は DNS メッセージを HTTPS にラップするため、通常の <code>fetch()</code> でパブリックリゾルバへ
+  任意のレコードを問い合わせられます。Cloudflare と Google はいずれも JSON プロファイル
+  （Cloudflare は <code>application/dns-json</code>、Google はネイティブ JSON）を CORS 有効で公開しており、
+  本ツールはそのエンドポイントを呼んでレスポンスをレンダリングしているだけです。
+</p>
+
+<h2>サマリーピルの読み方</h2>
+<ul>
+  <li><strong>NOERROR / NXDOMAIN / SERVFAIL</strong> — DNS RCODE。NXDOMAIN は「ドメインが存在しない」という有効な応答、SERVFAIL はリゾルバが回答できなかったことを示します。</li>
+  <li><strong>N 件</strong> — 応答レコード数。NOERROR で 0 件のとき、照会した名前にはそのタイプのレコードがありません。</li>
+  <li><strong>DNSSEC ✓</strong> — AD フラグが立っています。リゾルバが署名を検証しました。</li>
+  <li><strong>Resolver</strong> — 応答を返した DoH エンドポイント。</li>
+  <li><strong>レイテンシ</strong> — <code>fetch()</code> 開始から JSON パース完了までのラウンドトリップ時間。</li>
+</ul>
+
+<h2>主なユースケース</h2>
+<ul>
+  <li>A / CNAME 変更が特定リゾルバに反映されたか確認。</li>
+  <li>送信用ドメイン公開前に MX、SPF（TXT）、DKIM（TXT）、DMARC（TXT）の整合性をチェック。</li>
+  <li>2 つのパブリックリゾルバの見え方を比較。伝播中は Cloudflare と Google で結果が一致しないことがあります。</li>
+  <li>証明書発行前に CAA を確認し「CAA mismatch」失敗を防ぐ。</li>
+  <li>レジストラ移転時の NS 委任が正しいか検証。</li>
+</ul>
+
+<h2>本ツールの設計境界</h2>
+<p>
+  これは単発の再帰リゾルバクライアントです。逆引きのための ARPA 自動変換は行いません（PTR は in-addr.arpa 名を自分で入力）。
+  権威サーバへの直接照会はせず（常にパブリック再帰へ問い合わせ）、履歴スナップショット、WHOIS、ブラックリスト、
+  複数リゾルバ間の伝播比較もしません。伝播マップは
+  <a href="https://www.whatsmydns.net/">whatsmydns.net</a>、権威のみの照会は
+  <code>dig @ns1.example.com</code> をローカルで実行してください。
+</p>
+
+<h2>ZeroTool の関連ツール</h2>
+<ul>
+  <li><a href="/ja/tools/http-header-analyzer/">HTTP Header アナライザー</a> — DNS が解決した後、サーバが返すヘッダを確認。</li>
+  <li><a href="/ja/tools/ssl-certificate-decoder/">SSL 証明書デコーダー</a> — 解決した IP で提供される証明書と DNS をセットで検査。</li>
+  <li><a href="/ja/tools/url-parser/">URL パーサー</a> — URL を構成要素に分解してからホスト名を照会。</li>
+  <li><a href="/ja/tools/ip-subnet-calculator/">IP サブネット計算機</a> — A / AAAA からサブネット構造を導出。</li>
+</ul>
