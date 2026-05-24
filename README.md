@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 128 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 129 tools and growing.
 
 ## Tools
 
@@ -137,6 +137,7 @@
 | GraphQL Formatter | [/tools/graphql-formatter](https://zerotool.dev/tools/graphql-formatter) |
 | jq Playground | [/tools/jq-playground](https://zerotool.dev/tools/jq-playground) |
 | JavaScript Keycode Explorer | [/tools/keycode-explorer](https://zerotool.dev/tools/keycode-explorer) |
+| Zero-Width Character Detector | [/tools/zero-width-character-detector](https://zerotool.dev/tools/zero-width-character-detector) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
