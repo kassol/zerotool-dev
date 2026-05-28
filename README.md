@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 130 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 131 tools and growing.
 
 ## Tools
 
@@ -139,6 +139,7 @@
 | JavaScript Keycode Explorer | [/tools/keycode-explorer](https://zerotool.dev/tools/keycode-explorer) |
 | Zero-Width Character Detector | [/tools/zero-width-character-detector](https://zerotool.dev/tools/zero-width-character-detector) |
 | DNS Lookup | [/tools/dns-lookup](https://zerotool.dev/tools/dns-lookup) |
+| OpenAPI to TypeScript Generator | [/tools/openapi-to-typescript](https://zerotool.dev/tools/openapi-to-typescript) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
