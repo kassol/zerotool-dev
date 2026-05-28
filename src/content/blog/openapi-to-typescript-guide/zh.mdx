@@ -1,0 +1,403 @@
+---
+title: "OpenAPI 转 TypeScript:生成接口、路径类型与 Zod schema"
+description: "把 OpenAPI 3.0 或 3.1 规范一键转成 TypeScript 接口、按操作分组的路径类型,以及可选的 Zod schema —— 全程在浏览器内完成,无需上传。"
+pubDate: 2026-05-28
+updatedDate: 2026-05-28
+heroImage: "/og/blog-openapi-to-typescript-guide.png"
+lang: "zh"
+canonicalSlug: "openapi-to-typescript-guide"
+tags: ["openapi", "typescript", "code-generation", "developer-tools"]
+---
+
+后端团队周四下午合了 `pets-api-v3` 分支,新的 `openapi.yaml` 落到你的仓库里。打开一看:12 个路径、28 个 schema、3 个 `oneOf` 鉴别器、若干 `nullable` 字段,还有一个混着字符串和整数的 `enum`——因为有人从一套遗留系统里直接导出来的。看板上的前端任务写着"周五下班前接好新接口"。摆在面前两条路:手写 TypeScript 类型,然后祈祷它能跟规范保持同步;或者跑一套代码生成管道。手写在第一个 schema 时是最快的,到第五个就成了灾难。管道是长期正确的答案,但你不想为了一个十行的 `fetch` 封装去引入新的构建步骤和 CI 缓存。
+
+[立即使用 OpenAPI 转 TypeScript 生成器 →](/zh/tools/openapi-to-typescript/)
+
+中间地带:把规范粘进浏览器工具,把生成出来的接口复制进项目,直接发车。ZeroTool 的生成器做的就是这件事——YAML 或 JSON 进、TypeScript 接口出,可选附带按操作分组的路径命名空间和对应的 Zod schema。一切都在客户端跑,规范文件不离开你的机器。本文讲清楚生成器怎么读 OpenAPI、它能处理哪些边界情况(以及搞不定的少数几种),还有生成结果如何接入 fetch 封装、校验层或者 LLM 工具调用 schema。
+
+## OpenAPI 转 TypeScript 代码生成的价值
+
+一旦规范成为单一事实源,从规范生成类型几乎永远是正确的选择。下面 5 个场景覆盖了大多数团队采用它的原因:
+
+| 使用场景 | 生成类型带来的价值 |
+|---|---|
+| API 客户端 | 每个端点的请求/响应对象都有强类型,IDE 里有自动补全 |
+| Mock 数据 | fixture 构造器、MSW handler、Storybook story 都有具体的形状 |
+| 表单校验 | 与 API 契约一一对应的 Zod schema,可配合 `react-hook-form` 或 `@conform-to/zod` |
+| 类型安全的 fetch 封装 | 一个泛型 `apiCall<T>()` 即可从操作推断出响应类型 |
+| Agent 函数调用 | 直接当 OpenAI、Anthropic、Gemini tool use 用的 JSON Schema 形态的工具定义 |
+| 跨团队契约 | 规范一变,前后端 reviewer 看到的是同一份 diff |
+
+最常见的失败模式是生成一次类型之后让它漂移。两种应对方式:要么在 CI 里每次规范变更都跑一遍代码生成,要么每次在 code review 里看到新的 `openapi.yaml` 就重新粘贴重新生成。浏览器工具针对的是第二种工作流;第一种用 `pre-commit` 钩子跑 `openapi-typescript` CLI 才合适。
+
+第二种失败模式是拿 TypeScript 类型当运行时校验用。编译器只信你告诉它的类型形状。如果后端没升规范就改了字段名,所有消费方从一个 TypeScript 以为是 `string` 的位置读到的都是 `undefined`——bug 会在渲染树深处暴露,调用栈停在 UI 组件上,离 API 边界已经远了。下面会讲的 Zod 输出就是用来堵这个缺口的:在接缝处校验响应,失败原因无可争议。一开始就把边界划清楚;事后在整个应用里补校验,远比第一次请求时就把校验串进去要难得多。
+
+## OpenAPI 3.0 与 3.1 的差异如何影响输出
+
+OpenAPI 3.0 与 3.1 乍看相似,在三个地方分道扬镳,这些差异会影响代码生成。
+
+**可空性(nullability)。** 3.0 把 `nullable: true` 写在 `type` 同级。3.1 对齐 JSON Schema 2020-12,改用类型数组写法:`type: ['string', 'null']`。ZeroTool 的生成器两种写法都接受,统一输出 `string | null`。同一份规范里两种写法混用也很常见(迁移过程中),生成器对每个属性独立处理。
+
+```yaml
+# OpenAPI 3.0 写法
+tag: { type: string, nullable: true }
+
+# OpenAPI 3.1 写法
+tag: { type: [string, 'null'] }
+```
+
+两者产出相同:
+
+```typescript
+tag?: string | null;
+```
+
+**JSON Schema 对齐度。** 3.1 是 JSON Schema 2020-12 的严格超集;3.0 是更老一版 JSON Schema 草案的"带修改的子集"。这在 3.1 规范用到 `const`、`contains`、`if/then/else`、`unevaluatedProperties` 这类关键字时会有差异。生成器处理基础部分(`type`、`enum`、`oneOf`、`anyOf`、`allOf`、`properties`、`required`、`additionalProperties`、`items`、`$ref`),JSON Schema 的长尾关键字一概忽略——这与生产环境里大多数代码生成工具的行为一致。
+
+**Webhooks 与 `pathItems`。** 3.1 在顶层加了 `webhooks`,并允许把 `pathItem` 引用放进 `components.pathItems`。生成器只读 `paths`。如果规范依赖 webhooks 充当路径,先把它们 inline 到 `paths` 下再生成。
+
+`openapi` 字段本身也会被检查:符合 `3.x.y` 的接受,Swagger 2.0 显式拒绝,缺失或格式错误的版本号会产生解析错误。Swagger 2.0 是另一份规范——字段叫 `swagger: "2.0"`,schema 放在 `definitions` 而不是 `components.schemas` 下,类型系统缺少 `nullable`、`oneOf`、`anyOf` 以及完整的 `allOf` 语义。没有干净的转换路径;正确做法是一次性升级。把 Swagger 2 规范粘到 [editor.swagger.io](https://editor.swagger.io/) 的编辑器里,走菜单 **Edit → Convert to OpenAPI 3**,把转出来的 YAML 复制回来,再跑 ZeroTool 生成器。Swagger Editor 的转换器会自动处理 `definitions → components.schemas`、`body` 参数 → `requestBody`,以及响应内容的结构调整。
+
+## `$ref` 解析机制(以及它跳过哪些情况)
+
+`$ref` 是让大规模规范保持可维护的关键字。每一个形如 `#/components/schemas/Pet` 的引用,都会被解析成命名类型只生成一次、并在所有出现的地方复用。`components.schemas` 里的声明顺序也会被保留,这让你在做小幅规范修改后重新生成时,git diff 保持稳定。
+
+```yaml
+components:
+  schemas:
+    Pet:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        owner: { $ref: '#/components/schemas/Person' }
+    Person:
+      type: object
+      properties:
+        name: { type: string }
+```
+
+输出:
+
+```typescript
+export interface Pet {
+  id: number;
+  name: string;
+  owner?: Person;
+}
+
+export interface Person {
+  name?: string;
+}
+```
+
+工具有意不解析的几种情况:
+
+- **外部文件引用**:`$ref: './common.yaml#/Pet'` —— 浏览器读不到你的文件系统。
+- **跨文档 URL 引用**:`$ref: 'https://example.com/schemas/Pet.json'` —— 任意 URL 抓取要么被 CORS 拦截,要么得搭一个代理后端,这两种都不适合客户端工具。
+- **`components.schemas` 之外的引用**:`$ref: '#/definitions/Pet'`(Swagger 2 风格)或 `$ref: '#/components/responses/...'` 这种顶层类型生成不予跟随。
+
+需要跨文件解析时,先跑一次 OpenAPI 打包步骤:`npx @redocly/cli bundle openapi.yaml -o bundled.yaml` 会产出一份单文件规范,所有外部引用都被 inline,生成器就能正确处理。`openapi-typescript` CLI 原生支持远程引用,完全跳过打包步骤也行。
+
+工具对 `components.parameters` 的解析是一个例外:当操作引用共享参数(例如 `$ref: '#/components/parameters/PageSize'`)时,参数会被 inline 进生成的 `QueryParameters` / `PathParameters` 接口。这样可以避免为只在某个操作内部有意义的参数单独生成命名空间。
+
+## `oneOf`、`anyOf`、`allOf` —— 以及 TypeScript 能表达什么
+
+三个组合关键字与 TypeScript 干净地一一对应:
+
+| OpenAPI | TypeScript | 语义 |
+|---|---|---|
+| `oneOf: [A, B]` | `A &#124; B` | 运行时恰好匹配其中一个变体 |
+| `anyOf: [A, B]` | `A &#124; B` | 至少匹配一个变体,可以更多 |
+| `allOf: [A, B]` | `A & B` | 所有变体都必须匹配(组合) |
+
+TypeScript 的结构化类型系统无法表达 `oneOf` 与 `anyOf` 在运行时的差异——两者都成为联合类型。Zod 输出里也是同样的擦除:本生成器对这两个关键字都用 `z.union([...])`,而 Zod 的 `z.union` 是 `anyOf` 形态的(至少匹配一个变体即视为合法)。严格的 one-of 校验需要带显式鉴别字段的 `z.discriminatedUnion(...)`,或者手写 `superRefine`,生成器都不会自动插入。
+
+`allOf` 交集是表达 OpenAPI "类型继承"模式的唯一安全方式:
+
+```yaml
+ExtendedPet:
+  allOf:
+    - $ref: '#/components/schemas/Pet'
+    - type: object
+      properties:
+        microchipId: { type: string }
+```
+
+变成:
+
+```typescript
+export type ExtendedPet = Pet & {
+  microchipId?: string;
+};
+```
+
+`allOf` 字段冲突时,冲突属性会得到 TypeScript 的 `never`——在编译期就被发现,通常正中下怀。
+
+一个常见的误解:`allOf` 是组合,不是继承。TypeScript 交集在两部分有分歧时,挑的是"同时满足两边的值",而对不兼容的原始类型来说就是 `never`。规范作者若写 `allOf: [{ properties: { status: { type: 'string' } } }, { properties: { status: { type: 'integer' } } }]`,生成的接口里 `status` 字段的类型就会是 `never`。修复要回到规范本身:选一种类型,或者用 `oneOf` 来建模变体。
+
+开发者问得最多的是 `oneOf` 与 `anyOf` 的区别。规范对差异写得很精确——`oneOf` 恰好匹配一个 schema,`anyOf` 匹配一个或多个——但 TypeScript 擦掉了这个区分。这只在运行时需要校验"值有且仅有一个 schema 匹配"(也就是判别式联合检查)时才有意义。这个场景下应该同时生成 Zod 输出:Zod 的 `z.union([...])` 是 `anyOf` 形态,严格 one-of 检查需要鉴别字段或自定义 `superRefine`。只走 TypeScript 那条路时,两个关键字都按普通联合处理,把"匹配几个"的决定留给运行时。
+
+**Discriminator 是个空头支票。** OpenAPI 3.x 定义了 `discriminator` 用来指示某个负载对应 `oneOf` 的哪个变体,但规范对鉴别器的语义只写了一半,大多数工具的实现也不一致。生成器输出联合类型,不去吃 `discriminator.mapping`。如果你需要在消费侧用判别式联合,要么手写,要么改用显式支持 discriminator 的工具(`openapi-typescript` CLI 通过 tagged union 生成支持 `discriminator.mapping`;ZeroTool 故意不做,以保持输出可预测)。
+
+## `enum` 与 `const`:字面量联合类型与边界情况
+
+单类型 `enum` 变成字面量联合类型:
+
+```yaml
+status:
+  type: string
+  enum: [available, pending, sold]
+```
+
+变成:
+
+```typescript
+status: "available" | "pending" | "sold";
+```
+
+数字 enum 同理:`enum: [200, 404, 500]` 变成 `200 | 404 | 500`。输出是 `number` 字面量的联合,而不是 TypeScript 的 `enum` 块——现代 TypeScript 风格更倾向于字面量联合,因为它们在运行时被完全擦除。
+
+**混合类型 enum 会原样输出,但可移植性很差。** 写着 `enum: ['none', 0, true]` 的规范会产出 `"none" | 0 | true`,这虽然能编译,但几乎一定是错的:大多数消费方与校验器都会拒绝混合类型 enum。如果某个 enum 的生成结果看着奇怪,先回头审计源规范。
+
+**`const`(OpenAPI 3.1)生成器不解析。** 用单值 `enum` 替代——`enum: ['admin']` 会产出字面量类型 `"admin"`,这本来就是大多数团队想用 `const` 表达的东西。已经用了 `const` 的规范,如果想一次性转换,`openapi-typescript` CLI 原生支持这个关键字。
+
+## 对象 schema:`additionalProperties`、可选字段、format
+
+对象 schema 里有三个细节最容易踩坑。
+
+**`additionalProperties` 在 OpenAPI 里默认是 `true`**——意思是未指定的键也允许存在。生成器只在 `additionalProperties` 被显式设置时才输出 `[key: string]: unknown`。想要封闭对象就在规范里写 `additionalProperties: false`。三种情况对应的输出:
+
+```yaml
+# 1. 未指定(规范默认 true,但不输出索引签名)
+properties: { name: { type: string } }
+
+# 2. 显式 true
+additionalProperties: true
+properties: { name: { type: string } }
+
+# 3. 显式带类型
+additionalProperties: { type: number }
+properties: { name: { type: string } }
+```
+
+输出:
+
+```typescript
+// 1
+{ name?: string; }
+
+// 2
+{ name?: string; [key: string]: unknown; }
+
+// 3
+{ name?: string; [key: string]: number; }
+```
+
+第一种行为是一个有意的权衡:每个对象都加索引签名会让自动补全噪音很大。运行时想严格限制额外键,用 Zod 校验(`z.object({...}).strict()`)。
+
+**可选属性**跟着 `required` 数组走。列在 `required` 里的属性变成必填,其他全部变成带 `?` 的可选。工具里的 **Make properties optional** 复选框会覆盖这套规则,把每个属性都标成可选——这在你打算用响应形状做 partial update 时很有用。
+
+**`format` 加的是 JSDoc,不是类型。** OpenAPI 的 `format` 关键字(例如 `date-time`、`uuid`、`email`、`uri`)是给工具的提示,不是 TypeScript 能表达的约束。生成器为四个最常见的 format 输出 JSDoc 注释,并把 `format: binary` 转成 `Blob`:
+
+```typescript
+/** ISO 8601 date-time */ createdAt?: string;
+/** UUID */ id: string;
+/** email address */ contactEmail?: string;
+photo?: Blob;
+```
+
+如果需要这些 format 的运行时校验,Zod 输出用 `z.string().email()`、`z.string().uuid()`、`z.string().datetime()`、`z.string().url()`——见下节。
+
+## 路径类型:从规范到强类型 fetch 封装
+
+打开 **Include path types** 开关,生成器会为每个操作输出一个命名空间,统一挂在你指定的根命名空间下(默认 `Components`):
+
+```typescript
+export namespace Components {
+  export namespace GetPetById {
+    export interface PathParameters {
+      id: number;
+    }
+    export type Response200 = Pet;
+  }
+  export namespace ListPets {
+    export interface QueryParameters {
+      limit?: number;
+    }
+    export type Response200 = (Pet)[];
+  }
+  export namespace CreatePet {
+    export type RequestBody = NewPet;
+    export type Response201 = Pet;
+  }
+}
+```
+
+这种形态用嵌套命名空间,每个按操作分组的类型都通过点访问拿到——`Components.GetPetById.PathParameters`、`Components.CreatePet.RequestBody`。可以直接写按操作分组的 fetch 辅助函数:
+
+```typescript
+import type { Components } from './generated';
+
+async function getPetById(
+  params: Components.GetPetById.PathParameters,
+): Promise<Components.GetPetById.Response200> {
+  const res = await fetch(`/pets/${params.id}`);
+  if (!res.ok) throw new Error(`getPetById ${res.status}`);
+  return res.json();
+}
+
+async function createPet(
+  body: Components.CreatePet.RequestBody,
+): Promise<Components.CreatePet.Response201> {
+  const res = await fetch('/pets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`createPet ${res.status}`);
+  return res.json();
+}
+
+// 调用点完全有类型:
+const pet = await getPetById({ id: 42 });
+//    ^? Components.GetPetById.Response200 (= Pet)
+```
+
+通用操作分发器要按 `Op extends keyof Components` 索引,需要一个扁平化的索引类型,这个生成器不输出。想要一个 `api(op, init)` 入口的话,手工写一份查找表,或者改用 `openapi-typescript` CLI——它产出 `paths[Path][Method]` 索引形态,`openapi-fetch` 这类消费方就是冲这个形态来的。
+
+操作如果没写 `operationId`,工具会基于方法和路径合成一个(比如 `Get_pets_id`)。规范里始终写 `operationId`——它让生成的 TypeScript 和最终的客户端 API 都更易读。合成的名字是确定性的,但很丑:`DELETE /users/{id}/sessions/{session_id}` 会变成 `Delete_users_id_sessions_session_id`。规范里写 `operationId` 则会得到一个干净的 PascalCase 命名空间(`RevokeUserSession`)。后端团队有时不写 `operationId`,因为路径模板本身在路由上就够唯一了——对代码生成消费方来说,远远不够。
+
+来自 `components.parameters` 的参数会按 `in` 字段被 inline 进对应分组(`PathParameters`、`QueryParameters`、`HeaderParameters`、`CookieParameters`)。同时在路径级和操作级声明的参数会被合并——这对每条路径声明一次的通用 header(例如 `X-Trace-Id`)很有用。生成器不按 `name` 去重,所以路径级 `limit` 被操作级 `limit` 覆盖时,会在输出里出现两次;这部分要在规范里清理。
+
+**不会生成什么:**没有 fetch 函数、没有客户端类、没有 SDK。输出只是类型。按上面的示例把类型和你现有的 fetch 工具配对使用。如果想要一份由生成类型驱动的现成客户端,跑 `openapi-typescript` CLI 产出 `paths[Path][Method]` 索引形态,`openapi-fetch` 直接消费。该形态与本工具的嵌套命名空间输出有意做成两种风格:`paths[Path][Method]` 索引形态服务于通用分发器,本工具的嵌套命名空间则服务于手写的按操作封装。
+
+## Zod schema:与类型一一对应的运行时校验
+
+打开 **Include Zod schemas** 开关,生成器会为每个组件产出一份平行的 `XSchema`:
+
+```typescript
+import { z } from 'zod';
+
+export const PetSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  tag: z.string().nullable().optional(),
+  status: z.enum(["available", "pending", "sold"]).optional(),
+  photo: z.instanceof(Blob).optional(),
+});
+```
+
+Zod 输出与 TypeScript 输出一一对应:相同的可空性规则、相同的可选处理、enum 同样映射到 `z.enum()`(全字符串时)或 `z.union([z.literal(...)])`(混合类型时)。带运行时校验的 format(`email`、`uri`、`uuid`、`date-time`)变成 Zod 校验器;其他 format 回退到普通 `z.string()`。
+
+在网络层用它:
+
+```typescript
+import { PetSchema } from './generated';
+
+const response = await fetch('/api/pets/42');
+const data = await response.json();
+const pet = PetSchema.parse(data); // API 违约时直接抛错
+// pet 类型为 Pet,且经过运行时校验
+```
+
+或者作为表单 schema:
+
+```typescript
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { NewPetSchema } from './generated';
+
+const form = useForm({ resolver: zodResolver(NewPetSchema) });
+```
+
+Zod 块可以跟 TypeScript 一起重新生成,不用分两个工作流——两者来自同一次生成。
+
+有两种集成模式值得点名。**只在边界校验**模式:在 fetch 封装那一层校验响应一次,下游把校验过的值视为可信:
+
+```typescript
+async function fetchPet(id: number): Promise<Pet> {
+  const res = await fetch(`/api/pets/${id}`);
+  if (!res.ok) throw new Error(`Pet fetch failed: ${res.status}`);
+  return PetSchema.parse(await res.json());
+}
+```
+
+**防御式**模式则在每个消费数据的组件边界重新校验。对大多数应用来说属于过度设计,但安全敏感的代码路径(鉴权令牌处理、文件上传、支付流程)值得考虑——形状错误的值跨进错误的层是真实风险。
+
+对于响应体非常大(几兆嵌套 JSON)的情况,Zod 的 `.parse()` 同步遍历整棵树。如果负载是分页或流式的,按页或按 chunk 校验,不要一次性把整个响应缓冲进单次 `parse()`。
+
+## 把生成类型接进 LLM 工具调用
+
+OpenAI、Anthropic 和 Google 的工具/函数定义都接受 JSON Schema。OpenAPI 规范本身就近似 JSON Schema,这意味着生成的 TypeScript 类型可以同时作为 LLM 工具调用的契约:
+
+```typescript
+import type { Components } from './generated';
+
+const tools = [
+  {
+    name: 'createPet',
+    description: 'Add a new pet to the store',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        tag: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+] as const;
+
+type CreatePetInput = Components.CreatePet.RequestBody;
+// 模型调用工具时,把 CreatePetInput 用作 handler 的强类型参数
+```
+
+这里的 `input_schema` 是手写的,因为 LLM API 收的是原始 JSON Schema 而不是 OpenAPI——handler 侧的 TypeScript 类型是生成的,这就保证了运行时 handler 与 schema 一致。想要全自动路径,把相关的 `components/schemas` 子集粘进 OpenAPI 输入,复制 Zod 输出,用 `zodToJsonSchema(MySchema)`(来自 `zod-to-json-schema` 包)生成 `input_schema`。形状会对齐。
+
+## 发版前要知道的 6 个坑
+
+**1. 跨文档 `$ref` 不解析。** 多文件规范必须先打包再粘贴。用 `npx @redocly/cli bundle` 或 `swagger-cli bundle`——两者都产出单文件结果,生成器能处理。状态面板不会警告未解析的外部引用,只会默默输出 `unknown`。
+
+**2. 没有 `type` 的 `nullable: true` 会产出过度宽松的开放记录类型。** OpenAPI 3.0 要求有 `type` 字段 `nullable` 才有意义。一个只写了 `{ nullable: true }` 没有类型的属性会变成 `Record<string, unknown> | null`——这准确反映了规范实际约束的内容,但几乎肯定不是作者本意。回到规范里把缺失的 `type` 补上。
+
+**3. `additionalProperties` 默认值对封闭对象契约很关键。** 想让生成器拒绝额外键,显式写 `additionalProperties: false`。TypeScript 输出在运行时无法强制这一点,Zod 输出对称镜像 TS 的决定——不会自动给普通 `z.object({...})` 加 `.strict()`。需要封闭对象校验时,自己在生成的 schema 上链 `.strict()`。
+
+**4. Discriminator 被当成普通联合输出。** 一个带 `discriminator` 字段的 `oneOf` 会变成 `A | B | C`,没有基于标签的窄化。下游代码若用 `switch (payload.kind)` 做判别,要么手动加标签,要么改用显式支持 discriminator 的工具——`openapi-typescript` CLI 是最直接的替代选择。
+
+**5. 混合类型 `enum` 数组会产出看着奇怪的字面量联合。** 写着 `enum: ['off', 0, false]`(某种遗留的三态状态)的规范会产出 `"off" | 0 | false`。输出技术上正确,但几乎一定不是想要的——把源规范统一成一种类型再重新生成。
+
+**6. `format` 是文档,不是类型约束。** `format: ipv4` 写在 string 属性上不会得到 `IPv4Address` 类型,只会得到一行 JSDoc 注释(还只对工具识别的四种 format 生效)。运行时校验 IP / URL / 邮箱要走 Zod 输出,TypeScript 接口管不了这一层。
+
+对于非常大的规范(几百个 schema、深嵌套、大量 `allOf` 链)生成器同步跑在主线程,带 300ms 的 debounce。浏览器端代码生成在实际使用中扛得住约 500 个 schema。再大就走 CLI 更快也更灵活——`openapi-typescript`、`orval`、`quicktype` 处理上千 schema 的规范都不费劲。
+
+## ZeroTool 生成器与其他方案对比
+
+OpenAPI 转 TypeScript 这条赛道有 3 个成熟的 CLI 玩家,外加少数几个付费平台。每一个都有自己最适合的工作流:
+
+`openapi-typescript`(drosenwasser、openapi-ts.dev)是业界标杆 CLI。它生成单个 `.d.ts` 文件,把整份规范编码成 `paths` 类型,专门用来配合 `openapi-fetch` 这个运行时客户端。Discriminator 支持比 ZeroTool 成熟,远程 `$ref` 解析开箱即用。代价是输出形态——`paths['/pets/{id}']['get']['parameters']['path']['id']` 而不是 `Components.GetPetById.PathParameters.id`——有的团队喜欢,有的觉得别扭。CI 里每次规范变更都跑代码生成的场景选它。
+
+`orval` 不只生成类型,还按操作生成 fetch / Axios / SWR / React Query 客户端。配置面很大(自定义 mutator、拆分、hooks),输出风格强势。规范是单一事实源、又想拿到一份维护好的 SDK 而不必自己写,选它。
+
+`quicktype` 是一个多语言代码生成工具——能从 JSON Schema 或 JSON 样本产出 TypeScript、Python、Go、Rust、Java、Swift 等等。对 OpenAPI 的 TypeScript 输出不如专用工具那么定制,但从一份规范产多语言 SDK 这件事,它无人能敌。
+
+ZeroTool 的生成器是浏览器端的临时通道:从 Slack 里粘一份规范,两秒拿到类型,复制进项目。CI 代码生成、SDK 生成、依赖跨文件引用或 discriminator 映射的规范——它都不是合适的选择。其他场景下——快速看一眼规范、提一份 mock 数据的形状、临时给内部端点写个类型——动手点击比配置 CLI 来得快。
+
+## 延伸阅读
+
+站内:
+
+- [OpenAPI 校验器](/zh/tools/openapi-validator/) —— 生成类型前先把规范过一遍。
+- [JSON 转 TypeScript](/zh/tools/json-to-typescript/) —— 只有一份样例 JSON 响应、没有完整规范时用。
+- [JSON 转 Zod Schema](/zh/tools/json-to-zod/) —— 从单个 JSON 样本生成 Zod。
+- [TypeScript 转 Zod](/zh/tools/typescript-to-zod/) —— 类型是单一事实源、Zod 跟随时用。
+
+站外:
+
+- [OpenAPI Specification 3.1.0](https://spec.openapis.org/oas/v3.1.0) —— 当前规范,与 JSON Schema 2020-12 对齐。
+- [OpenAPI Specification 3.0.3](https://spec.openapis.org/oas/v3.0.3) —— 上一个主版本,仍广泛部署。
+- [JSON Schema 2020-12](https://json-schema.org/draft/2020-12/release-notes) —— OpenAPI 3.1 的底层 schema 语言。
+- [Zod 文档](https://zod.dev/) —— Zod 输出对接的运行时校验器。
+- [openapi-typescript](https://openapi-ts.dev/) —— 可重复代码生成的领头 CLI 替代方案。
+- [Redocly CLI](https://redocly.com/docs/cli/) —— 多文件规范在粘进浏览器工具前先打包。

@@ -1,0 +1,403 @@
+---
+title: "OpenAPI에서 TypeScript로: 인터페이스, 경로 타입, Zod 한 번에 생성하기"
+description: "OpenAPI 3.0 또는 3.1 스펙을 TypeScript 인터페이스, 경로 작업 네임스페이스, 그리고 선택적으로 Zod 스키마까지 변환합니다. 모두 브라우저에서, 업로드 없이 처리됩니다."
+pubDate: 2026-05-28
+updatedDate: 2026-05-28
+heroImage: "/og/blog-openapi-to-typescript-guide.png"
+lang: "ko"
+canonicalSlug: "openapi-to-typescript-guide"
+tags: ["openapi", "typescript", "code-generation", "developer-tools"]
+---
+
+목요일 오후, 백엔드 팀이 `pets-api-v3` 브랜치를 머지하면서 새로운 `openapi.yaml`이 여러분의 저장소에 들어옵니다. 파일을 열어 보니 경로 12개, 스키마 28개, `oneOf` 디스크리미네이터 3개, `nullable` 필드 몇 개, 그리고 누군가 레거시 시스템에서 내보내는 바람에 문자열과 정수가 섞여 있는 `enum` 하나가 보입니다. 보드에 걸린 프론트엔드 티켓에는 "금요일 종업까지 새 엔드포인트 연동"이라고 적혀 있습니다. 선택지는 둘입니다. 손으로 TypeScript 타입을 적고 스펙과 동기화가 유지되기를 기도하거나, 코드 생성 파이프라인을 돌리거나. 손으로 짜는 방법은 스키마 하나일 때는 빠르지만 다섯 번째쯤 되면 재앙입니다. 파이프라인은 장기적으로 맞는 답이지만, 열 줄짜리 `fetch` 래퍼를 위해 빌드 단계와 CI 캐시를 추가하고 싶지는 않습니다.
+
+[OpenAPI to TypeScript 생성기 사용해보기 →](/ko/tools/openapi-to-typescript/)
+
+중간 지점은 스펙을 브라우저 도구에 붙여넣고, 생성된 인터페이스를 프로젝트에 복사한 뒤 출시하는 것입니다. ZeroTool의 생성기는 정확히 그 일을 합니다. YAML 또는 JSON을 넣으면 TypeScript 인터페이스가 나오고, 필요하면 경로 작업 네임스페이스와 병렬 Zod 스키마도 함께 생성됩니다. 모든 작업은 클라이언트 사이드에서 실행되므로 스펙이 여러분의 머신을 떠나지 않습니다. 이 가이드는 생성기가 OpenAPI를 어떻게 읽는지, 어떤 엣지 케이스를 처리하고 어떤 것은 처리하지 않는지, 그리고 출력 결과를 fetch 래퍼, 검증 레이어, 또는 LLM 도구 호출 스키마에 어떻게 끼워 넣는지를 다룹니다.
+
+## OpenAPI-to-TypeScript 코드 생성이 가치 있는 순간
+
+스펙이 진실의 원천(source of truth)이 되는 순간부터, 스펙에서 타입을 생성하는 결정은 거의 항상 옳습니다. 아래 다섯 가지 시나리오가 팀이 이 방식을 도입하는 이유의 대부분을 차지합니다.
+
+| 사용 사례 | 생성된 타입이 주는 것 |
+|---|---|
+| API 클라이언트 | 모든 엔드포인트에 대한 강타입 요청/응답 객체, IDE 자동완성 지원 |
+| 모의 데이터 | 픽스처 빌더, MSW 핸들러, Storybook 스토리에 사용할 구체적인 형태 |
+| 폼 검증 | API 계약을 그대로 반영한 Zod 스키마, `react-hook-form` 또는 `@conform-to/zod`와 함께 사용 |
+| 타입 안전 fetch 래퍼 | 작업에서 응답 타입을 추론하는 단일 제네릭 `apiCall<T>()` |
+| 에이전트 함수 호출 | OpenAI, Anthropic, Gemini 도구 호출용 JSON 스키마 형태 도구 정의 |
+| 팀 간 계약 | 스펙이 변경될 때 프론트엔드와 백엔드 리뷰어가 동일한 diff를 본다 |
+
+흔한 실패 모드는 타입을 한 번 생성하고 그대로 방치해 드리프트가 발생하는 것입니다. 매번 스펙이 바뀔 때마다 CI에서 코드 생성을 돌리거나, 코드 리뷰에서 새 `openapi.yaml`을 볼 때마다 붙여넣고 다시 생성하거나, 둘 중 하나는 해야 합니다. 브라우저 도구는 두 번째 워크플로에 최적화되어 있습니다. 첫 번째라면 `pre-commit`에서 실행되는 `openapi-typescript` 같은 CLI가 맞는 도구입니다.
+
+두 번째 실패 모드는 TypeScript 타입을 런타임 검증의 대체물로 사용하는 것입니다. 컴파일러는 여러분이 API가 반환한다고 알려준 형태를 그대로 신뢰합니다. 백엔드가 스펙을 갱신하지 않고 필드 이름을 바꿔서 배포하면, 모든 컨슈머는 TypeScript가 `string`이라고 믿는 곳에서 `undefined`를 읽게 됩니다. 그리고 버그는 렌더 트리 깊숙한 곳에서 표면화되는데, 스택 트레이스는 API 경계가 아니라 UI 컴포넌트를 가리킵니다. Zod 출력(아래에서 다룹니다)은 응답을 경계에서 검증함으로써 이 간극을 메웁니다. 그곳에서 실패는 모호하지 않습니다. 경계는 처음부터 제대로 잡으십시오. 검증을 앱 전반에 나중에 끼워 넣는 것보다, 첫 요청부터 엮어 두는 편이 훨씬 쉽습니다.
+
+## OpenAPI 3.0 대 3.1: 출력을 바꾸는 차이점
+
+OpenAPI 3.0과 3.1은 언뜻 비슷해 보이지만, 코드 생성에 영향을 주는 세 곳에서 갈라집니다.
+
+**Nullability.** 3.0은 `type`과 형제 필드로 `nullable: true`를 사용합니다. 3.1은 JSON Schema 2020-12와 정렬되어 타입 배열을 사용합니다: `type: ['string', 'null']`. ZeroTool 생성기는 두 형식 모두를 받아들여 `string | null`을 출력합니다. 마이그레이션 중에는 한 스펙 안에서 두 형식이 섞이는 경우가 생기는데, 생성기는 각 속성을 독립적으로 처리합니다.
+
+```yaml
+# OpenAPI 3.0 style
+tag: { type: string, nullable: true }
+
+# OpenAPI 3.1 style
+tag: { type: [string, 'null'] }
+```
+
+둘 다 다음을 생성합니다:
+
+```typescript
+tag?: string | null;
+```
+
+**JSON Schema 정렬.** 3.1은 JSON Schema 2020-12의 엄격한 상위 집합이고, 3.0은 더 오래된 JSON Schema 드래프트의 "수정된 부분 집합"입니다. 실무에서는 3.1 스펙이 `const`, `contains`, `if/then/else`, `unevaluatedProperties` 같은 키워드를 사용할 때 차이가 드러납니다. 생성기는 기본적인 것들(`type`, `enum`, `oneOf`, `anyOf`, `allOf`, `properties`, `required`, `additionalProperties`, `items`, `$ref`)을 처리합니다. JSON Schema의 긴 꼬리에 해당하는 나머지 키워드는 무시하는데, 대부분의 프로덕션 코드 생성 도구가 동작하는 방식과 같습니다.
+
+**Webhooks와 `pathItems`.** 3.1은 최상위 `webhooks`와 `components.pathItems` 안에 `pathItem` 참조를 둘 수 있는 기능을 추가했습니다. 생성기는 `paths`만 읽습니다. 스펙이 웹훅을 경로처럼 사용한다면, 생성하기 전에 `paths` 아래로 인라인으로 옮기십시오.
+
+`openapi` 필드 자체는 검사됩니다. `3.x.y`에 매칭되는 것은 모두 허용되고, Swagger 2.0은 명시적으로 거부되며, 누락되거나 잘못된 버전 문자열은 파싱 오류를 발생시킵니다. Swagger 2.0은 다른 스펙입니다. 필드는 `swagger: "2.0"`이고, 스키마는 `components.schemas`가 아닌 `definitions` 아래에 있으며, 타입 시스템에는 `nullable`, `oneOf`, `anyOf`, 그리고 제대로 된 `allOf` 시맨틱이 없습니다. 깔끔한 변환 경로가 없으니, 일회성 업그레이드를 돌리는 것이 옳습니다. Swagger 2 스펙을 [editor.swagger.io](https://editor.swagger.io/) 에디터에 붙여넣고, **Edit → Convert to OpenAPI 3** 메뉴 항목을 사용한 뒤, 변환된 YAML을 다시 복사해서 ZeroTool 생성기에 넣으십시오. Swagger Editor의 컨버터는 `definitions → components.schemas`, `body` 파라미터 → `requestBody`, 그리고 응답 콘텐츠 재구조화를 자동으로 처리합니다.
+
+## `$ref` 해석이 동작하는 방식 (그리고 건너뛰는 것들)
+
+`$ref`는 큰 스펙을 유지 가능하게 만들어 주는 키워드입니다. `#/components/schemas/Pet` 형식의 모든 참조는 명명된 타입을 한 번 방출하고 등장하는 모든 곳에서 재사용하는 방식으로 해석됩니다. `components.schemas`의 선언 순서가 출력에서 보존되므로, 작은 스펙 편집 후 재생성해도 git diff가 안정적으로 유지됩니다.
+
+```yaml
+components:
+  schemas:
+    Pet:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        owner: { $ref: '#/components/schemas/Person' }
+    Person:
+      type: object
+      properties:
+        name: { type: string }
+```
+
+출력:
+
+```typescript
+export interface Pet {
+  id: number;
+  name: string;
+  owner?: Person;
+}
+
+export interface Person {
+  name?: string;
+}
+```
+
+도구가 의도적으로 해석하지 않는 항목:
+
+- **외부 파일 참조**: `$ref: './common.yaml#/Pet'` — 브라우저는 여러분의 파일 시스템을 읽을 수 없습니다.
+- **문서 간 URL 참조**: `$ref: 'https://example.com/schemas/Pet.json'` — 임의의 URL을 가져오면 CORS 차단으로 실패하거나 프록시 형태의 백엔드가 필요한데, 어느 쪽도 클라이언트 사이드 도구에 맞지 않습니다.
+- **`components.schemas` 바깥의 참조**: `$ref: '#/definitions/Pet'` (Swagger 2 스타일) 또는 최상위 타입 생성용 `$ref: '#/components/responses/...'`는 따라가지 않습니다.
+
+파일 간 해석이 필요하다면 OpenAPI Bundler 단계를 먼저 돌리십시오. `npx @redocly/cli bundle openapi.yaml -o bundled.yaml`은 모든 외부 참조가 인라인된 단일 파일 스펙을 만들어 주고, 도구는 이를 올바르게 처리합니다. 번들링 단계를 완전히 건너뛰고 싶다면, `openapi-typescript` CLI가 원격 참조를 기본 지원합니다.
+
+도구의 `components.parameters` 해석에는 예외가 하나 있습니다. 작업이 공유 파라미터를 참조하면(예: `$ref: '#/components/parameters/PageSize'`), 파라미터가 생성된 `QueryParameters` / `PathParameters` 인터페이스에 인라인됩니다. 작업 안에서만 의미 있는 파라미터를 위해 별도의 네임스페이스를 생성하는 것을 막기 위함입니다.
+
+## `oneOf`, `anyOf`, `allOf` — TypeScript가 표현할 수 있는 것
+
+세 가지 조합자(combinator)는 TypeScript에 깔끔하게 매핑됩니다:
+
+| OpenAPI | TypeScript | 의미 |
+|---|---|---|
+| `oneOf: [A, B]` | `A &#124; B` | 런타임에 정확히 하나의 변형만 매칭 |
+| `anyOf: [A, B]` | `A &#124; B` | 최소 하나의 변형이 매칭, 더 많아도 됨 |
+| `allOf: [A, B]` | `A & B` | 모든 변형이 매칭되어야 함 (합성) |
+
+TypeScript의 구조적 타입 시스템은 `oneOf`와 `anyOf` 사이의 런타임 차이를 표현할 수 없습니다. 둘 다 유니온이 됩니다. Zod 출력에서도 같은 소거가 발생합니다. 이 생성기는 두 키워드 모두에 `z.union([...])`를 방출하고, Zod의 `z.union`은 `anyOf` 형태입니다(값이 최소 하나의 변형에 매칭되면 유효). 엄격한 one-of 검증을 하려면 명시적인 판별 필드를 가진 `z.discriminatedUnion(...)` 또는 손으로 작성한 `superRefine`이 필요한데, 생성기는 이 중 어느 것도 자동으로 삽입하지 않습니다.
+
+`allOf` 교차는 OpenAPI의 "타입 상속" 패턴을 표현하는 유일하게 안전한 방법입니다:
+
+```yaml
+ExtendedPet:
+  allOf:
+    - $ref: '#/components/schemas/Pet'
+    - type: object
+      properties:
+        microchipId: { type: string }
+```
+
+다음이 됩니다:
+
+```typescript
+export type ExtendedPet = Pet & {
+  microchipId?: string;
+};
+```
+
+충돌하는 필드를 가진 `allOf`는 충돌하는 속성에 대해 TypeScript `never`를 생성합니다. 컴파일 타임에 잡히는데, 대개 의도한 결과입니다.
+
+자주 헷갈리는 지점: `allOf`는 합성이지 상속이 아닙니다. TypeScript 교차는 두 부분이 일치하지 않을 때 "더 구체적인" 필드를 고르지 않습니다. "양쪽을 만족하는 값"을 고르는데, 호환되지 않는 원시 타입에는 `never`가 됩니다. `allOf: [{ properties: { status: { type: 'string' } } }, { properties: { status: { type: 'integer' } } }]`을 작성한 스펙 작성자는 생성된 인터페이스에서 `status` 필드 타입이 `never`로 나오는 것을 보게 됩니다. 수정은 스펙에서 해야 합니다. 하나의 타입을 고르거나 `oneOf`로 변형을 모델링하십시오.
+
+`oneOf` 대 `anyOf`는 개발자들이 가장 많이 묻는 질문입니다. 스펙은 차이에 대해 정확합니다. `oneOf`는 정확히 하나의 스키마와 매칭되고 `anyOf`는 하나 이상과 매칭되지만, TypeScript는 그 구분을 소거합니다. 실무에서는 값이 집합 안의 *오직 하나의* 스키마에만 매칭되는지를 런타임에 검증하고 싶을 때(판별 유니온 검사)에만 이것이 중요합니다. 그 워크플로에서는 TypeScript와 함께 Zod 출력을 생성하십시오. Zod의 `z.union([...])`은 `anyOf` 형태이고, 엄격한 one-of 검사는 판별 필드 또는 커스텀 `superRefine`을 요구합니다. TypeScript만 사용하는 경로는 두 키워드 모두를 평범한 유니온으로 취급하고 런타임에 결정을 맡깁니다.
+
+**디스크리미네이터는 지원하지 않는 기능입니다.** OpenAPI 3.x는 페이로드가 어느 `oneOf` 변형에 해당하는지를 가리키기 위해 `discriminator`를 정의하지만, 스펙은 discriminator 시맨틱을 부분적으로 열어 두고 있고 대부분의 도구가 이를 일관성 없이 구현합니다. 생성기는 `discriminator.mapping`을 따르지 않고 유니온을 방출합니다. 컨슈머 쪽에서 판별 유니온이 필요하다면 손으로 작성하거나 명시적인 discriminator 지원이 있는 도구를 사용하십시오 (`openapi-typescript` CLI는 태그 유니온 생성을 통해 `discriminator.mapping`을 처리합니다. ZeroTool은 출력의 예측 가능성을 유지하기 위해 의도적으로 그렇게 하지 않습니다).
+
+## `enum`과 `const`: 리터럴 유니온과 엣지 케이스
+
+단일 타입 `enum`은 리터럴 유니온이 됩니다:
+
+```yaml
+status:
+  type: string
+  enum: [available, pending, sold]
+```
+
+다음이 됩니다:
+
+```typescript
+status: "available" | "pending" | "sold";
+```
+
+숫자 enum도 같은 방식으로 동작합니다. `enum: [200, 404, 500]`은 `200 | 404 | 500`이 됩니다. 출력은 TypeScript `enum` 블록이 아니라 `number` 리터럴의 유니온입니다. 모던 TypeScript 스타일은 리터럴 유니온을 선호하는데, 런타임에 아무것도 남기지 않고 소거되기 때문입니다.
+
+**혼합 타입 enum은 그대로 방출되지만 거의 호환되지 않습니다.** `enum: ['none', 0, true]`을 가진 스펙은 `"none" | 0 | true`를 생성하는데, 컴파일은 되지만 거의 확실히 잘못된 것입니다. 대부분의 컨슈머와 검증기는 혼합 타입 enum을 거부합니다. enum의 생성기 출력이 이상해 보이면 원본 스펙부터 확인하십시오.
+
+**`const`(OpenAPI 3.1)는 이 생성기에서 파싱되지 않습니다.** 단일 값 `enum`을 대신 사용하십시오. `enum: ['admin']`은 리터럴 타입 `"admin"`을 생성하는데, 대부분의 팀이 `const`로 표현하려던 것이 바로 이것입니다. 이미 `const`를 사용하는 스펙이라면, 일회성 변환이 필요할 때 `openapi-typescript` CLI가 키워드를 기본 지원합니다.
+
+## 객체 스키마: `additionalProperties`, 선택적 필드, 포맷
+
+객체 스키마 안에서 개발자들이 놓치기 쉬운 세부 사항이 셋 있습니다.
+
+**OpenAPI에서 `additionalProperties`는 기본값이 `true`입니다.** 즉, 명시되지 않은 키도 허용됩니다. 생성기는 `additionalProperties`가 명시적으로 설정된 경우에만 `[key: string]: unknown`을 방출합니다. 닫힌 객체를 원한다면 스펙에서 `additionalProperties: false`를 설정하십시오. 세 가지 경우의 출력:
+
+```yaml
+# 1. unspecified (default true per spec, but no index signature emitted)
+properties: { name: { type: string } }
+
+# 2. explicit true
+additionalProperties: true
+properties: { name: { type: string } }
+
+# 3. explicit typed
+additionalProperties: { type: number }
+properties: { name: { type: string } }
+```
+
+출력:
+
+```typescript
+// 1
+{ name?: string; }
+
+// 2
+{ name?: string; [key: string]: unknown; }
+
+// 3
+{ name?: string; [key: string]: number; }
+```
+
+케이스 1의 동작은 의도된 트레이드오프입니다. 모든 객체에 인덱스 시그니처를 방출하면 자동완성이 시끄러워집니다. 런타임에 추가 키를 엄격하게 막고 싶다면 Zod로 검증하십시오 (`z.object({...}).strict()`).
+
+**선택적 속성**은 `required` 배열을 따릅니다. `required`에 나열된 속성은 필수가 되고, 나머지는 모두 `?`를 가진 선택적 속성이 됩니다. 도구의 **Make properties optional** 체크박스는 이를 오버라이드해서 모든 속성을 선택적으로 표시합니다. 부분 업데이트 시맨틱으로 사용하려는 응답 형태에 유용합니다.
+
+**`format`은 JSDoc을 추가할 뿐, 타입을 추가하지 않습니다.** OpenAPI의 `format` 키워드(예: `date-time`, `uuid`, `email`, `uri`)는 도구를 위한 힌트이지 TypeScript로 표현 가능한 제약이 아닙니다. 생성기는 가장 흔한 네 가지 포맷에 대해 JSDoc 주석을 방출하고, `format: binary`는 `Blob`으로 변환합니다:
+
+```typescript
+/** ISO 8601 date-time */ createdAt?: string;
+/** UUID */ id: string;
+/** email address */ contactEmail?: string;
+photo?: Blob;
+```
+
+이들 포맷에 대한 런타임 검사가 필요하다면, Zod 출력이 `z.string().email()`, `z.string().uuid()`, `z.string().datetime()`, `z.string().url()`을 사용합니다. 아래를 참고하십시오.
+
+## 경로 타입: 스펙에서 타입 안전 fetch 래퍼까지
+
+**Include path types**를 켜면, 생성기가 작업당 하나의 네임스페이스를 방출하고, 선택한 루트 네임스페이스 아래로 묶습니다 (기본값 `Components`):
+
+```typescript
+export namespace Components {
+  export namespace GetPetById {
+    export interface PathParameters {
+      id: number;
+    }
+    export type Response200 = Pet;
+  }
+  export namespace ListPets {
+    export interface QueryParameters {
+      limit?: number;
+    }
+    export type Response200 = (Pet)[];
+  }
+  export namespace CreatePet {
+    export type RequestBody = NewPet;
+    export type Response201 = Pet;
+  }
+}
+```
+
+이 형태는 중첩 네임스페이스를 사용하므로, 각 작업별 타입은 점 접근으로 도달합니다 — `Components.GetPetById.PathParameters`, `Components.CreatePet.RequestBody`. 작업별 fetch 헬퍼를 직접 연결할 수 있습니다:
+
+```typescript
+import type { Components } from './generated';
+
+async function getPetById(
+  params: Components.GetPetById.PathParameters,
+): Promise<Components.GetPetById.Response200> {
+  const res = await fetch(`/pets/${params.id}`);
+  if (!res.ok) throw new Error(`getPetById ${res.status}`);
+  return res.json();
+}
+
+async function createPet(
+  body: Components.CreatePet.RequestBody,
+): Promise<Components.CreatePet.Response201> {
+  const res = await fetch('/pets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`createPet ${res.status}`);
+  return res.json();
+}
+
+// Call site is fully typed:
+const pet = await getPetById({ id: 42 });
+//    ^? Components.GetPetById.Response200 (= Pet)
+```
+
+`Op extends keyof Components`로 키잉하는 제네릭 작업 디스패처는 평탄화된 인덱스 타입이 필요한데, 이 생성기는 그것을 방출하지 않습니다. 단일 `api(op, init)` 진입점을 원한다면 룩업 테이블을 수동으로 만들거나, `openapi-typescript` CLI를 사용하십시오. `openapi-typescript`는 `openapi-fetch` 같은 컨슈머가 기대하는 `paths[Path][Method]` 인덱스 형태를 생성합니다.
+
+작업에 `operationId`가 없으면, 도구는 메서드와 경로에서 하나를 합성합니다(예: `Get_pets_id`). 스펙에 항상 `operationId`를 설정하십시오. 생성된 TypeScript와 최종 클라이언트 API 모두 가독성이 좋아집니다. 합성된 이름은 결정적이지만 보기 좋지 않습니다. `DELETE /users/{id}/sessions/{session_id}`에 대해서는 `Delete_users_id_sessions_session_id`가 됩니다. 반면 스펙의 `operationId`는 깔끔한 PascalCase 네임스페이스(`RevokeUserSession`)가 됩니다. 백엔드 팀이 `operationId`를 비워 두는 경우가 가끔 있는데, 라우팅에는 경로 템플릿만으로도 충분히 유일하기 때문입니다. 하지만 코드 생성 컨슈머에게는 충분하지 않습니다.
+
+`components.parameters`의 파라미터는 `in` 필드에 따라 적절한 그룹(`PathParameters`, `QueryParameters`, `HeaderParameters`, `CookieParameters`)에 인라인됩니다. 경로 레벨과 작업 레벨 모두에 선언된 파라미터는 병합됩니다. 경로당 한 번 선언된 공통 헤더(예: `X-Trace-Id`)에 유용합니다. 생성기는 `name`으로 중복 제거를 하지 않으므로, 작업 레벨 `limit`에 의해 가려진 경로 레벨 `limit`은 출력에 두 번 나타납니다. 스펙에서 정리하십시오.
+
+**생성되지 않는 것:** fetch 함수도 없고, 클라이언트 클래스도 없고, SDK도 없습니다. 출력은 타입뿐입니다. 위에서 보여 준 것처럼 기존 fetch 유틸리티와 타입을 짝지으십시오. 생성된 타입으로 구동되는 즉시 사용 가능한 클라이언트를 원한다면, `openapi-typescript` CLI를 실행해서 `openapi-fetch`가 직접 소비하는 `paths[Path][Method]` 인덱스 형태를 만드십시오. 그 형태는 이 도구의 중첩 네임스페이스 출력과는 의도적으로 다릅니다. 이 도구의 출력은 제네릭 디스패처가 아니라 손으로 작성한 래퍼에 최적화되어 있습니다.
+
+## Zod 스키마: 타입과 짝을 이루는 런타임 검증
+
+**Include Zod schemas**를 켜면 모든 컴포넌트에 대해 병렬 `XSchema`를 방출합니다:
+
+```typescript
+import { z } from 'zod';
+
+export const PetSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  tag: z.string().nullable().optional(),
+  status: z.enum(["available", "pending", "sold"]).optional(),
+  photo: z.instanceof(Blob).optional(),
+});
+```
+
+Zod 출력은 TypeScript 출력의 결정을 그대로 따릅니다. 같은 nullability 규칙, 같은 선택적 처리, 모든 값이 문자열일 때 같은 enum-to-`z.enum()` 매핑(혼합 타입일 때는 `z.union([z.literal(...)])`). 런타임 검사가 있는 포맷(`email`, `uri`, `uuid`, `date-time`)은 Zod 검증기가 되고, 다른 포맷은 평범한 `z.string()`으로 폴백합니다.
+
+실제 통신에서 사용하기:
+
+```typescript
+import { PetSchema } from './generated';
+
+const response = await fetch('/api/pets/42');
+const data = await response.json();
+const pet = PetSchema.parse(data); // throws if the API breaks the contract
+// pet is typed as Pet, validated at runtime
+```
+
+또는 폼 스키마로:
+
+```typescript
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { NewPetSchema } from './generated';
+
+const form = useForm({ resolver: zodResolver(NewPetSchema) });
+```
+
+Zod 블록은 워크플로를 분리하지 않고 TypeScript와 함께 재생성될 수 있습니다. 둘 다 동일한 생성기 패스에서 나옵니다.
+
+따로 언급할 만한 통합 패턴이 두 가지 있습니다. **경계 전용** 패턴은 응답을 fetch 래퍼에서 한 번 검증하고, 검증된 값을 하위에서는 신뢰된 것으로 취급합니다:
+
+```typescript
+async function fetchPet(id: number): Promise<Pet> {
+  const res = await fetch(`/api/pets/${id}`);
+  if (!res.ok) throw new Error(`Pet fetch failed: ${res.status}`);
+  return PetSchema.parse(await res.json());
+}
+```
+
+**방어적** 패턴은 데이터를 소비하는 모든 컴포넌트 경계에서 다시 검증합니다. 대부분의 앱에는 과한 처사지만, 보안에 민감한 코드 경로(인증 토큰 처리, 파일 업로드, 결제 흐름)에서는 고려할 가치가 있습니다. 잘못된 형태의 값이 잘못된 레이어로 넘어가는 것이 실제 위험이 되는 곳입니다.
+
+매우 큰 응답 페이로드(메가바이트 단위의 중첩 JSON)에서는 Zod의 `.parse()`가 전체 트리를 동기적으로 순회합니다. 페이로드가 페이지네이션되거나 스트리밍되면, 전체 응답을 단일 `parse()` 호출에 버퍼링하지 말고 페이지당 또는 청크당 검증하십시오.
+
+## 생성된 타입을 LLM 도구 호출에 연결하기
+
+OpenAI, Anthropic, Google 모두 도구/함수 정의로 JSON Schema를 받아들입니다. 여러분의 OpenAPI 스펙은 어느 정도는 이미 JSON Schema이므로, 생성된 TypeScript 타입은 LLM 도구 호출의 계약 역할도 겸합니다:
+
+```typescript
+import type { Components } from './generated';
+
+const tools = [
+  {
+    name: 'createPet',
+    description: 'Add a new pet to the store',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        tag: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+] as const;
+
+type CreatePetInput = Components.CreatePet.RequestBody;
+// Use CreatePetInput as the typed handler argument when the model calls the tool
+```
+
+여기서 `input_schema`는 손으로 작성했는데, LLM API가 OpenAPI가 아닌 원시 JSON Schema를 기대하기 때문입니다. 하지만 핸들러 쪽 TypeScript 타입은 생성된 것이라, 런타임 핸들러와 스키마가 일치하는 것이 보장됩니다. 완전 자동화 경로를 원한다면, 관련 `components/schemas` 부분 집합을 OpenAPI 입력에 붙여넣고, Zod 출력을 복사한 뒤 `zodToJsonSchema(MySchema)` (`zod-to-json-schema` 패키지에서)를 `input_schema`로 전달하십시오. 형태가 맞을 것입니다.
+
+## 출시 전에 알아둬야 할 여섯 가지 함정
+
+**1. 문서 간 `$ref`는 해석되지 않습니다.** 다중 파일 스펙은 붙여넣기 전에 번들링해야 합니다. `npx @redocly/cli bundle` 또는 `swagger-cli bundle`을 사용하십시오. 둘 다 도구가 처리할 수 있는 단일 파일 출력을 만듭니다. 상태 패널은 해석되지 않은 외부 참조에 대해 경고하지 않으며, 조용히 `unknown`을 방출합니다.
+
+**2. `type:` 없이 `nullable: true`만 있으면 허용적인 열린 레코드 타입이 됩니다.** OpenAPI 3.0은 `nullable`이 의미를 가지려면 `type` 필드를 요구합니다. 타입 없이 `{ nullable: true }`로 선언된 속성은 출력에서 `Record<string, unknown> | null`이 됩니다. 스펙이 실제로 제약하는 것에 비추면 정확하지만, 작성자가 의도한 바는 거의 아닙니다. 누락된 `type`을 추가해서 스펙을 고치십시오.
+
+**3. 닫힌 객체 계약을 다룰 때는 `additionalProperties`의 기본값이 중요합니다.** 생성기가 추가 키를 거부하기를 기대한다면, `additionalProperties: false`를 명시적으로 설정하십시오. TypeScript 출력은 런타임에 이를 강제할 수 없고, Zod 출력은 TS 결정을 대칭으로 따릅니다. 평범한 `z.object({...})`에 `.strict()`를 자동으로 추가하지 않습니다. 닫힌 객체 검증이 필요할 때는 생성된 스키마에 직접 `.strict()`를 체이닝하십시오.
+
+**4. 디스크리미네이터는 평범한 유니온으로 방출됩니다.** `discriminator` 필드를 가진 `oneOf`는 태그 기반 좁히기 없이 `A | B | C`가 됩니다. 다운스트림 코드가 `switch (payload.kind)`로 판별한다면, 태그를 수동으로 추가하거나 명시적인 discriminator 지원이 있는 도구로 전환해야 합니다. `openapi-typescript` CLI가 분명한 대안입니다.
+
+**5. 혼합 타입 `enum` 배열은 놀라운 리터럴 유니온을 만듭니다.** `enum: ['off', 0, false]`로 작성된 스펙(레거시 삼항 상태)은 `"off" | 0 | false`를 생성합니다. 출력은 기술적으로는 정확하지만 거의 항상 바람직하지 않습니다. 재생성하기 전에 원본을 하나의 타입으로 강제하십시오.
+
+**6. `format`은 문서화이지 타입 제약이 아닙니다.** 문자열 속성의 `format: ipv4`는 `IPv4Address` 타입을 주지 않고, JSDoc 노트만 줍니다(그것도 도구가 인식하는 네 가지 포맷에만 해당). IP/URL/이메일에 대한 런타임 검증이 필요하다면, TypeScript 인터페이스가 아니라 Zod 출력을 사용하십시오.
+
+매우 큰 스펙(수백 개 스키마, 깊은 중첩, 많은 `allOf` 체인)에 대해 생성기는 300 ms 디바운스로 메인 스레드에서 동기적으로 실행됩니다. 브라우저 사이드 코드 생성은 실무에서 약 500개 스키마까지는 괜찮습니다. 그 이상이라면 CLI 경로가 더 빠르고 유연합니다. `openapi-typescript`, `orval`, `quicktype` 모두 수천 개 스키마 스펙을 거뜬히 처리합니다.
+
+## ZeroTool 생성기와 대안 비교
+
+OpenAPI-to-TypeScript 영역에는 확립된 CLI가 셋, 그리고 몇 개의 유료 플랫폼이 있습니다. 각각 다른 워크플로에 맞는 정답입니다:
+
+`openapi-typescript`(drosenwasser, openapi-ts.dev)는 표준 CLI입니다. 전체 스펙을 `paths` 타입으로 인코딩한 단일 `.d.ts` 파일을 생성하며, `openapi-fetch` 런타임 클라이언트와 짝을 이루도록 설계되었습니다. discriminator 지원이 ZeroTool보다 성숙하고, 원격 `$ref` 해석이 기본으로 동작합니다. 트레이드오프는 출력 형태입니다. `Components.GetPetById.PathParameters.id`가 아니라 `paths['/pets/{id}']['get']['parameters']['path']['id']` 형식인데, 어떤 팀은 이를 선호하고 어떤 팀은 어색해합니다. 매 스펙 변경마다 CI에서 코드 생성을 돌릴 때 사용하십시오.
+
+`orval`은 타입뿐 아니라 작업당 fetch/Axios/SWR/React Query 클라이언트도 생성합니다. 설정 표면이 크고(커스텀 mutator, 분리, 훅) 출력이 의견 있는 형태입니다. 스펙이 진실의 원천이고 직접 작성하지 않고도 유지되는 SDK를 원할 때 사용하십시오.
+
+`quicktype`은 다국어 코드 생성 도구입니다. JSON Schema나 JSON 샘플에서 TypeScript, Python, Go, Rust, Java, Swift 등을 생성할 수 있습니다. OpenAPI에 대한 TypeScript 출력은 전용 도구보다는 덜 특화되어 있지만, 단일 스펙에서 여러 언어 SDK를 생성하는 데는 비할 데가 없습니다.
+
+ZeroTool 생성기는 일회성 브라우저 경로입니다. Slack에서 스펙을 붙여넣고, 2초 안에 타입을 받고, 프로젝트에 복사합니다. CI 코드 생성, SDK 생성, 또는 파일 간 참조나 discriminator 매핑에 의존하는 스펙에는 맞지 않습니다. 그 외 모든 경우 — 빠른 스펙 검사, 모의 데이터 형태 추출, 내부 엔드포인트용 일회성 타입 — 에서는 클릭이 CLI 설정을 이깁니다.
+
+## 더 읽을거리
+
+내부:
+
+- [OpenAPI Validator](/ko/tools/openapi-validator/) — 타입을 생성하기 전에 스펙 무결성을 점검합니다.
+- [JSON to TypeScript](/ko/tools/json-to-typescript/) — 전체 스펙이 아니라 샘플 JSON 응답만 있을 때.
+- [JSON to Zod Schema](/ko/tools/json-to-zod/) — 단일 JSON 예제에서 Zod를 생성합니다.
+- [TypeScript to Zod](/ko/tools/typescript-to-zod/) — 타입이 진실의 원천이고 Zod가 따라가는 경우.
+
+외부:
+
+- [OpenAPI Specification 3.1.0](https://spec.openapis.org/oas/v3.1.0) — 현재 스펙, JSON Schema 2020-12와 정렬.
+- [OpenAPI Specification 3.0.3](https://spec.openapis.org/oas/v3.0.3) — 이전 주요 버전, 여전히 널리 배포됨.
+- [JSON Schema 2020-12](https://json-schema.org/draft/2020-12/release-notes) — OpenAPI 3.1의 기반 스키마 언어.
+- [Zod documentation](https://zod.dev/) — Zod 출력이 대상으로 하는 런타임 검증기.
+- [openapi-typescript](https://openapi-ts.dev/) — 반복 가능한 코드 생성을 위한 선도적인 CLI 대안.
+- [Redocly CLI](https://redocly.com/docs/cli/) — 브라우저 도구에 붙여넣기 전에 다중 파일 스펙을 번들링.

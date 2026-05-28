@@ -1,0 +1,403 @@
+---
+title: "OpenAPI to TypeScript: Generate Interfaces, Path Types, and Zod"
+description: "Turn an OpenAPI 3.0 or 3.1 spec into TypeScript interfaces, path-operation namespaces, and optional Zod schemas — entirely in your browser, with no upload."
+pubDate: 2026-05-28
+updatedDate: 2026-05-28
+heroImage: "/og/blog-openapi-to-typescript-guide.png"
+lang: "en"
+canonicalSlug: "openapi-to-typescript-guide"
+tags: ["openapi", "typescript", "code-generation", "developer-tools"]
+---
+
+The backend team merges the `pets-api-v3` branch on Thursday afternoon and the new `openapi.yaml` lands in your repo. You open it: 12 paths, 28 schemas, three `oneOf` discriminators, a handful of `nullable` fields, and one `enum` that mixes strings and integers because someone exported it from a legacy system. The frontend ticket on your board says "wire up the new endpoints by EOD Friday." You can either hand-write the TypeScript types and pray they stay in sync with the spec, or run a codegen pipeline. Hand-writing is faster for one schema and a disaster by the fifth. A pipeline is the right answer long-term but you do not want to add a build step and a CI cache for a ten-line `fetch` wrapper.
+
+[Try the OpenAPI to TypeScript generator →](/tools/openapi-to-typescript/)
+
+The middle ground is to paste the spec into a browser tool, copy the generated interfaces into your project, and ship. ZeroTool's generator does exactly that: YAML or JSON in, TypeScript interfaces out, with optional path-operation namespaces and parallel Zod schemas. Everything runs client-side, so the spec never leaves your machine. This guide covers how the generator reads OpenAPI, the corner cases it handles (and the few it does not), and how the output plugs into a fetch wrapper, a validation layer, or an LLM tool-calling schema.
+
+## When OpenAPI-to-TypeScript codegen pays off
+
+The decision to generate types from a spec is almost always correct once the spec is the source of truth. The five scenarios below cover the bulk of why teams adopt it:
+
+| Use case | What the generated types give you |
+|---|---|
+| API client | Strongly-typed request/response objects for every endpoint, with autocomplete in your IDE |
+| Mock data | Concrete shapes for fixture builders, MSW handlers, or Storybook stories |
+| Form validation | Zod schemas mirroring the API contract, used with `react-hook-form` or `@conform-to/zod` |
+| Type-safe fetch wrapper | One generic `apiCall<T>()` that infers the response type from the operation |
+| Agent function calling | JSON-schema-shaped tool definitions for OpenAI, Anthropic, or Gemini tool use |
+| Cross-team contract | Frontend and backend reviewers see the same diff when the spec changes |
+
+The common failure mode is generating types once and letting them drift. Either run codegen in CI on every spec change, or paste-and-regenerate every time you see a fresh `openapi.yaml` in code review. The browser tool optimises for the second workflow; for the first, a CLI like `openapi-typescript` running on `pre-commit` is the right tool.
+
+A second failure mode is using TypeScript types as a substitute for runtime validation. The compiler trusts whatever shape you tell it the API returns. If the backend ships a field rename without bumping the spec, every consumer reads `undefined` from what TypeScript believes is a `string` — and the bug surfaces deep inside a render tree where the stack trace points at a UI component rather than at the API boundary. The Zod output (covered below) closes that gap by validating the response at the seam, where the failure is unambiguous. Pick the right boundary up front; retrofitting validation across an app is much harder than threading it in from the first request.
+
+## OpenAPI 3.0 vs 3.1: the differences that change the output
+
+OpenAPI 3.0 and 3.1 look similar at a glance and diverge in three places that affect codegen.
+
+**Nullability.** 3.0 uses `nullable: true` as a sibling of `type`. 3.1 aligns with JSON Schema 2020-12 and uses a type array: `type: ['string', 'null']`. ZeroTool's generator accepts both forms and emits `string | null`. If you mix them in the same spec — which happens during a migration — the generator handles each property independently.
+
+```yaml
+# OpenAPI 3.0 style
+tag: { type: string, nullable: true }
+
+# OpenAPI 3.1 style
+tag: { type: [string, 'null'] }
+```
+
+Both produce:
+
+```typescript
+tag?: string | null;
+```
+
+**JSON Schema alignment.** 3.1 is a strict superset of JSON Schema 2020-12; 3.0 is a "subset with modifications" of an older JSON Schema draft. In practice this matters when a 3.1 spec uses keywords like `const`, `contains`, `if/then/else`, or `unevaluatedProperties`. The generator handles the basics (`type`, `enum`, `oneOf`, `anyOf`, `allOf`, `properties`, `required`, `additionalProperties`, `items`, `$ref`) — the long tail of JSON Schema keywords is ignored, which mirrors how most production codegen tools behave.
+
+**Webhooks and `pathItems`.** 3.1 adds top-level `webhooks` and the ability to put `pathItem` references in `components.pathItems`. The generator reads `paths` only. If your spec relies on webhooks-as-paths, inline them under `paths` before generating.
+
+The `openapi` field itself is checked: anything matching `3.x.y` is accepted, Swagger 2.0 is rejected explicitly, and missing or malformed version strings produce a parse error. Swagger 2.0 is a different specification — the field is `swagger: "2.0"`, schemas live under `definitions` rather than `components.schemas`, and the type system lacks `nullable`, `oneOf`, `anyOf`, and proper `allOf` semantics. There is no clean translation path; the right move is to run a one-time upgrade. Paste the Swagger 2 spec into the editor at [editor.swagger.io](https://editor.swagger.io/), use the **Edit → Convert to OpenAPI 3** menu item, copy the converted YAML back, then run the ZeroTool generator. The Swagger Editor's converter handles `definitions → components.schemas`, `body` parameters → `requestBody`, and the response-content restructuring automatically.
+
+## How `$ref` resolution works (and what it skips)
+
+`$ref` is the keyword that makes large specs maintainable. Every reference of the form `#/components/schemas/Pet` is resolved by emitting the named type once and reusing it everywhere it appears. The declaration order in `components.schemas` is preserved in the output, which keeps git diffs stable when you regenerate after a small spec edit.
+
+```yaml
+components:
+  schemas:
+    Pet:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        owner: { $ref: '#/components/schemas/Person' }
+    Person:
+      type: object
+      properties:
+        name: { type: string }
+```
+
+Output:
+
+```typescript
+export interface Pet {
+  id: number;
+  name: string;
+  owner?: Person;
+}
+
+export interface Person {
+  name?: string;
+}
+```
+
+What the tool does not resolve, on purpose:
+
+- **External file refs**: `$ref: './common.yaml#/Pet'` — the browser cannot read your filesystem.
+- **Cross-document URL refs**: `$ref: 'https://example.com/schemas/Pet.json'` — fetching arbitrary URLs would mean either a CORS-blocked failure or a proxy-shaped backend, neither of which fits a client-side tool.
+- **Refs outside `components.schemas`**: `$ref: '#/definitions/Pet'` (Swagger 2 style) or `$ref: '#/components/responses/...'` for top-level type generation are not followed.
+
+If you need cross-file resolution, run the OpenAPI Bundler step first: `npx @redocly/cli bundle openapi.yaml -o bundled.yaml` produces a single-file spec with every external ref inlined, which the tool then handles correctly. The `openapi-typescript` CLI also supports remote refs natively if you want to skip the bundling step entirely.
+
+The tool's `components.parameters` resolution is the one exception: when an operation references a shared parameter (e.g. `$ref: '#/components/parameters/PageSize'`), the parameter is inlined into the generated `QueryParameters` / `PathParameters` interface. This avoids producing a separate namespace for parameters that are only meaningful inside an operation.
+
+## `oneOf`, `anyOf`, `allOf` — and what TypeScript can express
+
+The three combinators map cleanly onto TypeScript:
+
+| OpenAPI | TypeScript | Semantic |
+|---|---|---|
+| `oneOf: [A, B]` | `A &#124; B` | Exactly one of the variants matches at runtime |
+| `anyOf: [A, B]` | `A &#124; B` | At least one variant matches; can be more |
+| `allOf: [A, B]` | `A & B` | All variants must match (composition) |
+
+TypeScript's structural type system cannot represent the runtime difference between `oneOf` and `anyOf` — both become a union. The same erasure happens in the Zod output: this generator emits `z.union([...])` for both keywords, and Zod's `z.union` is `anyOf`-shaped (a value is valid if at least one variant matches). Strict one-of validation requires a `z.discriminatedUnion(...)` with an explicit discriminator field or a hand-written `superRefine`, neither of which the generator inserts automatically.
+
+The `allOf` intersection is the only safe way to express OpenAPI's "type inheritance" pattern:
+
+```yaml
+ExtendedPet:
+  allOf:
+    - $ref: '#/components/schemas/Pet'
+    - type: object
+      properties:
+        microchipId: { type: string }
+```
+
+Becomes:
+
+```typescript
+export type ExtendedPet = Pet & {
+  microchipId?: string;
+};
+```
+
+`allOf` with conflicting fields produces a TypeScript `never` for the conflicting property — caught at compile time, which is usually what you want.
+
+A frequent confusion: `allOf` is composition, not inheritance. TypeScript intersections do not pick "the more specific" field when two parts disagree; they pick "the value satisfying both", which for incompatible primitive types is `never`. A spec author who writes `allOf: [{ properties: { status: { type: 'string' } } }, { properties: { status: { type: 'integer' } } }]` will see the `status` field type out as `never` in the generated interface. The fix is in the spec: pick one type or model the variation with `oneOf`.
+
+`oneOf` versus `anyOf` is the question developers ask most. The spec is precise about the difference — `oneOf` matches exactly one schema, `anyOf` matches one or more — but TypeScript erases that distinction. In practice this matters only when you want to validate at runtime that a value matches *one and only one* schema in the set (a discriminated-union check). For that workflow, generate the Zod output alongside the TypeScript: Zod's `z.union([...])` is `anyOf`-shaped, and a strict-one-of check requires either a discriminator field or a custom `superRefine`. The TypeScript-only path treats both keywords as ordinary unions and lets the runtime decide.
+
+**Discriminators are a non-feature.** OpenAPI 3.x defines `discriminator` to indicate which `oneOf` variant a payload corresponds to, but the spec leaves discriminator semantics partially open and most tools implement them inconsistently. The generator emits the union without honouring `discriminator.mapping`. If you need discriminated unions on the consumer side, write them by hand or use a tool with explicit discriminator support (the `openapi-typescript` CLI handles `discriminator.mapping` via tagged union generation; ZeroTool intentionally does not, to keep output predictable).
+
+## `enum` and `const`: literal unions and edge cases
+
+A single-typed `enum` becomes a literal union:
+
+```yaml
+status:
+  type: string
+  enum: [available, pending, sold]
+```
+
+Becomes:
+
+```typescript
+status: "available" | "pending" | "sold";
+```
+
+Numeric enums work the same way: `enum: [200, 404, 500]` becomes `200 | 404 | 500`. The output is a union of `number` literals, not a TypeScript `enum` block — modern TypeScript style prefers literal unions because they erase to nothing at runtime.
+
+**Mixed-type enums are emitted verbatim but rarely portable.** A spec with `enum: ['none', 0, true]` produces `"none" | 0 | true`, which compiles but is almost certainly wrong: most consumers and validators reject mixed-type enums. If the generator output for an enum looks surprising, audit the source spec first.
+
+**`const` (OpenAPI 3.1) is not parsed by this generator.** Use a single-value `enum` instead — `enum: ['admin']` produces the literal type `"admin"`, which is what most teams reach for `const` to express anyway. For specs already using `const`, the `openapi-typescript` CLI handles the keyword natively if you need a one-shot conversion.
+
+## Object schemas: `additionalProperties`, optional fields, formats
+
+Three details inside object schemas catch developers by surprise.
+
+**`additionalProperties` defaults to `true` in OpenAPI** — meaning unspecified keys are allowed. The generator emits `[key: string]: unknown` only when `additionalProperties` is explicitly set. If you want a closed object, set `additionalProperties: false` in the spec. The output for the three cases:
+
+```yaml
+# 1. unspecified (default true per spec, but no index signature emitted)
+properties: { name: { type: string } }
+
+# 2. explicit true
+additionalProperties: true
+properties: { name: { type: string } }
+
+# 3. explicit typed
+additionalProperties: { type: number }
+properties: { name: { type: string } }
+```
+
+Output:
+
+```typescript
+// 1
+{ name?: string; }
+
+// 2
+{ name?: string; [key: string]: unknown; }
+
+// 3
+{ name?: string; [key: string]: number; }
+```
+
+The case-1 behaviour is a deliberate trade-off: emitting index signatures for every object would make autocomplete noisy. If you want to be strict about extra keys at runtime, validate with Zod (`z.object({...}).strict()`).
+
+**Optional properties** follow the `required` array. A property listed in `required` becomes mandatory; everything else becomes optional with `?`. The **Make properties optional** checkbox in the tool overrides this and marks every property optional — useful for response shapes you intend to use with partial-update semantics.
+
+**`format` adds JSDoc, not types.** OpenAPI's `format` keyword (e.g. `date-time`, `uuid`, `email`, `uri`) is a hint for tooling, not a TypeScript-expressible constraint. The generator emits a JSDoc comment for the four most common formats and converts `format: binary` to `Blob`:
+
+```typescript
+/** ISO 8601 date-time */ createdAt?: string;
+/** UUID */ id: string;
+/** email address */ contactEmail?: string;
+photo?: Blob;
+```
+
+If you need runtime checks for these formats, the Zod output uses `z.string().email()`, `z.string().uuid()`, `z.string().datetime()`, and `z.string().url()` — see below.
+
+## Path types: from spec to typed fetch wrapper
+
+Toggle **Include path types** and the generator emits a namespace per operation, grouped under your chosen root namespace (`Components` by default):
+
+```typescript
+export namespace Components {
+  export namespace GetPetById {
+    export interface PathParameters {
+      id: number;
+    }
+    export type Response200 = Pet;
+  }
+  export namespace ListPets {
+    export interface QueryParameters {
+      limit?: number;
+    }
+    export type Response200 = (Pet)[];
+  }
+  export namespace CreatePet {
+    export type RequestBody = NewPet;
+    export type Response201 = Pet;
+  }
+}
+```
+
+This shape uses nested namespaces, so each per-operation type is reached with dot-access — `Components.GetPetById.PathParameters`, `Components.CreatePet.RequestBody`. Wire a per-operation fetch helper directly:
+
+```typescript
+import type { Components } from './generated';
+
+async function getPetById(
+  params: Components.GetPetById.PathParameters,
+): Promise<Components.GetPetById.Response200> {
+  const res = await fetch(`/pets/${params.id}`);
+  if (!res.ok) throw new Error(`getPetById ${res.status}`);
+  return res.json();
+}
+
+async function createPet(
+  body: Components.CreatePet.RequestBody,
+): Promise<Components.CreatePet.Response201> {
+  const res = await fetch('/pets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`createPet ${res.status}`);
+  return res.json();
+}
+
+// Call site is fully typed:
+const pet = await getPetById({ id: 42 });
+//    ^? Components.GetPetById.Response200 (= Pet)
+```
+
+Generic operation dispatchers that key on `Op extends keyof Components` need a flattened indexed type, which this generator does not emit. Build the lookup table manually if you want a single `api(op, init)` entry point, or use the `openapi-typescript` CLI, which produces a `paths[Path][Method]` indexed shape that consumers like `openapi-fetch` are built for.
+
+If an operation has no `operationId`, the tool synthesises one from the method and path (e.g. `Get_pets_id`). Always set `operationId` in your spec — it makes both the generated TypeScript and the eventual client API readable. Synthesised names are deterministic but unpleasant: `Delete_users_id_sessions_session_id` is what you get for `DELETE /users/{id}/sessions/{session_id}`. The `operationId` from the spec, by contrast, becomes a clean PascalCase namespace (`RevokeUserSession`). Backend teams sometimes leave `operationId` blank because the path template alone is unique enough for routing — for codegen consumers, it is not.
+
+Parameters from `components.parameters` are inlined into the appropriate group (`PathParameters`, `QueryParameters`, `HeaderParameters`, `CookieParameters`) by their `in` field. Parameters declared both at the path level and the operation level are merged — useful for common headers (e.g. a `X-Trace-Id`) declared once per path. The generator does not deduplicate by `name`, so a path-level `limit` shadowed by an operation-level `limit` will appear twice in the output; clean that up in the spec.
+
+**What is not generated:** there is no fetch function, no client class, no SDK. The output is types only. Pair the types with your existing fetch utility as shown above. If you want a ready-made client driven by generated types, run the `openapi-typescript` CLI to produce the `paths[Path][Method]` indexed shape that `openapi-fetch` consumes directly — that shape is intentionally different from this tool's nested-namespace output, which optimises for hand-written wrappers rather than generic dispatchers.
+
+## Zod schemas: runtime validation that mirrors the types
+
+Toggle **Include Zod schemas** to emit a parallel `XSchema` for every component:
+
+```typescript
+import { z } from 'zod';
+
+export const PetSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  tag: z.string().nullable().optional(),
+  status: z.enum(["available", "pending", "sold"]).optional(),
+  photo: z.instanceof(Blob).optional(),
+});
+```
+
+The Zod output mirrors the TypeScript output decision-for-decision: same nullability rules, same optional handling, same enum-to-`z.enum()` mapping (when all values are strings) or `z.union([z.literal(...)])` (when mixed). Formats with runtime checks (`email`, `uri`, `uuid`, `date-time`) become Zod validators; other formats fall back to plain `z.string()`.
+
+Use it on the wire:
+
+```typescript
+import { PetSchema } from './generated';
+
+const response = await fetch('/api/pets/42');
+const data = await response.json();
+const pet = PetSchema.parse(data); // throws if the API breaks the contract
+// pet is typed as Pet, validated at runtime
+```
+
+Or as a form schema:
+
+```typescript
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { NewPetSchema } from './generated';
+
+const form = useForm({ resolver: zodResolver(NewPetSchema) });
+```
+
+The Zod block can be regenerated alongside the TypeScript without forking the workflow — both come out of the same generator pass.
+
+Two integration patterns are worth calling out. The **boundary-only** pattern validates the response once, at the fetch wrapper, and treats the validated value as trusted downstream:
+
+```typescript
+async function fetchPet(id: number): Promise<Pet> {
+  const res = await fetch(`/api/pets/${id}`);
+  if (!res.ok) throw new Error(`Pet fetch failed: ${res.status}`);
+  return PetSchema.parse(await res.json());
+}
+```
+
+The **defensive** pattern re-validates at every component boundary that consumes the data. It is overkill for most apps but worth considering for security-sensitive code paths (auth-token handling, file uploads, payment flows) where a misshapen value crossing into the wrong layer is a real risk.
+
+For very large response payloads (megabytes of nested JSON), Zod's `.parse()` traverses the whole tree synchronously. If the payload is paginated or streamed, validate per-page or per-chunk rather than buffering the entire response into a single `parse()` call.
+
+## Wiring generated types into LLM tool calling
+
+OpenAI, Anthropic, and Google all accept JSON Schema for tool/function definitions. Your OpenAPI spec already is JSON Schema, more or less, which means the generated TypeScript types double as a contract for LLM tool calling:
+
+```typescript
+import type { Components } from './generated';
+
+const tools = [
+  {
+    name: 'createPet',
+    description: 'Add a new pet to the store',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        tag: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+] as const;
+
+type CreatePetInput = Components.CreatePet.RequestBody;
+// Use CreatePetInput as the typed handler argument when the model calls the tool
+```
+
+The `input_schema` is hand-written here because the LLM APIs expect raw JSON Schema, not OpenAPI — but the TypeScript type on the handler side is generated, ensuring the runtime handler and the schema agree. For a fully-automated path, paste the relevant `components/schemas` subset into the OpenAPI input, copy the Zod output, and pass `zodToJsonSchema(MySchema)` (from the `zod-to-json-schema` package) as `input_schema`. The shape will line up.
+
+## Six pitfalls to know before you ship
+
+**1. Cross-document `$ref` is not resolved.** A multi-file spec must be bundled before pasting. Use `npx @redocly/cli bundle` or `swagger-cli bundle` — both produce a single-file output the generator handles. The status panel will not warn about unresolved external refs; it will silently emit `unknown`.
+
+**2. `nullable: true` without `type:` produces a permissive open-record type.** OpenAPI 3.0 requires a `type` field for `nullable` to have meaning. A property declared as `{ nullable: true }` with no type becomes `Record<string, unknown> | null` in the output — accurate to what the spec actually constrains, but almost never what the author meant. Fix the spec by adding the missing `type`.
+
+**3. `additionalProperties` defaulting matters for closed-object contracts.** If you expect the generator to refuse extra keys, set `additionalProperties: false` explicitly. The TypeScript output cannot enforce this at runtime, and the Zod output mirrors the TS decision symmetrically — it does not automatically add `.strict()` to plain `z.object({...})`. Chain `.strict()` yourself on the generated schemas when you need closed-object validation.
+
+**4. Discriminators are emitted as plain unions.** A `oneOf` with a `discriminator` field becomes `A | B | C` with no tag-based narrowing. If your downstream code uses `switch (payload.kind)` to discriminate, you need to add the tag manually or switch to a tool with explicit discriminator support — `openapi-typescript` CLI is the obvious alternative.
+
+**5. Mixed-type `enum` arrays produce surprising literal unions.** A spec authored with `enum: ['off', 0, false]` (a legacy ternary state) produces `"off" | 0 | false`. The output is technically correct and almost always undesirable — coerce the source to one type before regenerating.
+
+**6. `format` is documentation, not a type constraint.** `format: ipv4` on a string property does not give you an `IPv4Address` type, only a JSDoc note (and only for the four formats the tool recognises). For runtime IP/URL/email validation, use the Zod output, not the TypeScript interface.
+
+For very large specs (a few hundred schemas, deep nesting, many `allOf` chains) the generator runs synchronously on the main thread with a 300 ms debounce. Browser-side codegen is fine up to ~500 schemas in practice. Past that, the CLI path is faster and more flexible — `openapi-typescript`, `orval`, or `quicktype` all handle thousand-schema specs without breaking a sweat.
+
+## How ZeroTool's generator compares with the alternatives
+
+The OpenAPI-to-TypeScript space has three established CLI players plus a handful of paid platforms. Each one is the right answer for a different workflow:
+
+`openapi-typescript` (drosenwasser, openapi-ts.dev) is the canonical CLI. It generates a single `.d.ts` file with the entire spec encoded as a `paths` type, designed to pair with the `openapi-fetch` runtime client. The discriminator support is more mature than ZeroTool's, and remote `$ref` resolution works out of the box. The trade-off is the output shape — `paths['/pets/{id}']['get']['parameters']['path']['id']` rather than `Components.GetPetById.PathParameters.id` — which some teams prefer and others find awkward. Use it when codegen runs in CI on every spec change.
+
+`orval` generates not just types but also a fetch/Axios/SWR/React Query client per operation. The configuration surface is large (custom mutators, splitting, hooks) and the output is opinionated. Use it when the spec is the source of truth and you want a maintained SDK without writing one.
+
+`quicktype` is a polyglot codegen tool — it can produce TypeScript, Python, Go, Rust, Java, Swift, and more from JSON Schema or JSON samples. The TypeScript output for OpenAPI is less specialised than the dedicated tools, but it is unmatched for multi-language SDK generation from a single spec.
+
+ZeroTool's generator is the ad-hoc browser path: paste a spec from Slack, get types in two seconds, copy into the project. It is not the right tool for CI codegen, for SDK generation, or for specs that rely on cross-file refs or discriminator mappings. For everything else — quick spec inspection, mock-data shape extraction, a one-off type for an internal endpoint — clicking beats configuring a CLI.
+
+## Further reading
+
+Internal:
+
+- [OpenAPI Validator](/tools/openapi-validator/) — sanity-check the spec before generating types.
+- [JSON to TypeScript](/tools/json-to-typescript/) — when you only have a sample JSON response, not a full spec.
+- [JSON to Zod Schema](/tools/json-to-zod/) — generate Zod from a single JSON example.
+- [TypeScript to Zod](/tools/typescript-to-zod/) — when types are the source of truth and Zod follows.
+
+External:
+
+- [OpenAPI Specification 3.1.0](https://spec.openapis.org/oas/v3.1.0) — the current spec, aligned with JSON Schema 2020-12.
+- [OpenAPI Specification 3.0.3](https://spec.openapis.org/oas/v3.0.3) — the previous major, still widely deployed.
+- [JSON Schema 2020-12](https://json-schema.org/draft/2020-12/release-notes) — the underlying schema language for OpenAPI 3.1.
+- [Zod documentation](https://zod.dev/) — the runtime validator the Zod output targets.
+- [openapi-typescript](https://openapi-ts.dev/) — the leading CLI alternative for repeatable codegen.
+- [Redocly CLI](https://redocly.com/docs/cli/) — bundle multi-file specs before pasting into a browser tool.
