@@ -1,0 +1,66 @@
+---
+seoTitle: "OpenAPI → TypeScript ジェネレーター | ZeroTool"
+seoDescription: "OpenAPI 3.0/3.1 仕様（YAML/JSON）からブラウザで TypeScript インターフェースを生成。$ref・oneOf/allOf・enum・nullable 対応、Zod スキーマも同時出力可。"
+faqItems:
+  - question: "対応している OpenAPI のバージョンは？"
+    answer: "3.0.x と 3.1.x の両方に対応します。OpenAPI 3.1 の `type: ['string', 'null']` は `string | null` として、OpenAPI 3.0 の `nullable: true` も同様に解釈されます。"
+  - question: "Swagger 2.0 は使えますか？"
+    answer: "設計上、Swagger 2.0 は非対応です。先に editor.swagger.io（Swagger Editor の内蔵コンバーター）で OpenAPI 3.x に移行してから貼り付けてください。"
+  - question: "リモート $ref は解決されますか？"
+    answer: "`#/components/schemas/...` という内部参照のみ解決します。外部 URL やファイルパスへの $ref は取得しません。参照先スキーマをインライン化するか、openapi-typescript CLI を使ってください。"
+  - question: "仕様はサーバーに送られますか？"
+    answer: "送られません。パース、$ref 解決、TypeScript 生成のすべてがブラウザ内で完結します。バックエンドなし、仕様内容のテレメトリ送信もありません。"
+  - question: "Zod スキーマも一緒に得られますか？"
+    answer: "はい。**Zod スキーマを含める** をオンにすると、TypeScript インターフェースに加えて `z.object({...})` も出力します。静的型と一致するランタイム検証が必要な場合に便利です。"
+  - question: "「path 型を含める」は何をしますか？"
+    answer: "各オペレーションごとに名前空間を生成し、`PathParameters`・`QueryParameters`・`RequestBody`・`Response200` / `Response201` などを公開します。DTO インターフェースだけ欲しい場合はオフのままで構いません。"
+---
+
+<h2>使い方</h2>
+<ol>
+  <li>OpenAPI 3.0.x または 3.1.x のドキュメント（YAML / JSON）を左側パネルに貼り付けます。</li>
+  <li>入力中は 300 ms デバウンスでリアルタイム生成されます。</li>
+  <li>必要に応じて <strong>ルート名前空間</strong> の変更、全プロパティを optional 化、path 型の追加、Zod スキーマの同時出力を切り替えられます。</li>
+  <li><strong>コピー</strong> ボタンで TypeScript 出力全文をコピーします。</li>
+</ol>
+
+<h2>生成される内容</h2>
+<ul>
+  <li><strong>components/schemas</strong>：各スキーマが `export interface` または `export type` になります。オブジェクトは interface、プリミティブ / union / enum / intersection は type alias として出力されます。</li>
+  <li><strong>$ref</strong>：`#/components/schemas/...` への参照は型名で解決され、仕様の宣言順を維持します。</li>
+  <li><strong>oneOf / anyOf</strong>：union 型 `A | B | C`。<strong>allOf</strong> は intersection `A & B` になります。</li>
+  <li><strong>enum</strong>：文字列または数値のリテラル union。</li>
+  <li><strong>nullable</strong>：3.0 の `nullable: true` も 3.1 の `type: ['X', 'null']` も `X | null` に変換。</li>
+  <li><strong>format ヒント</strong>：`format: date-time` には ISO 8601 の JSDoc を付与し、`format: binary` は `Blob` になります。</li>
+  <li><strong>additionalProperties</strong>：インデックスシグネチャまたは `Record&lt;string, T&gt;`。</li>
+</ul>
+
+<h2>Path 型（任意）</h2>
+<p><strong>path 型を含める</strong> を有効にすると、各オペレーションに型エンベロープが生成されます：</p>
+<pre><code>{`export namespace Components {
+  export namespace GetPetById {
+    export interface PathParameters {
+      id: number;
+    }
+    export type Response200 = Pet;
+  }
+}`}</code></pre>
+<p><code>operationId</code> がない場合は method と path から合成します（例：<code>GetPetsId</code>）。</p>
+
+<h2>Zod スキーマ（任意）</h2>
+<p><strong>Zod スキーマを含める</strong> を有効にすると、各コンポーネントに対して `XSchema` を並行して出力します：</p>
+<pre><code>{`import { z } from 'zod';
+
+export const PetSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  status: z.enum(["available", "pending", "sold"]),
+});`}</code></pre>
+<p>OpenAPI 仕様ではなく既存の手書き TS 型から Zod を作りたい場合は <a href="/ja/tools/typescript-to-zod/">TypeScript → Zod</a> を使ってください。</p>
+
+<h2>関連ツール</h2>
+<ul>
+  <li><a href="/ja/tools/openapi-validator/">OpenAPI バリデーター</a> — 型生成前に仕様を検証。</li>
+  <li><a href="/ja/tools/json-to-typescript/">JSON → TypeScript</a> — 仕様はなく JSON レスポンス例だけがある場合に。</li>
+  <li><a href="/ja/tools/json-to-zod/">JSON → Zod スキーマ</a> — 単一の JSON サンプルから Zod を生成。</li>
+</ul>

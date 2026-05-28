@@ -133,6 +133,7 @@ import KeycodeExplorerTool from './KeycodeExplorerTool.astro';
 
 import ZeroWidthCharacterDetectorTool from './ZeroWidthCharacterDetectorTool.astro';
 import DnsLookupTool from './DnsLookupTool.astro';
+import OpenapiToTypescriptTool from './OpenapiToTypescriptTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -265,4 +266,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'keycode-explorer': KeycodeExplorerTool,
   'zero-width-character-detector': ZeroWidthCharacterDetectorTool,
   'dns-lookup': DnsLookupTool,
+  'openapi-to-typescript': OpenapiToTypescriptTool,
 };

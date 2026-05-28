@@ -1,0 +1,66 @@
+---
+seoTitle: "OpenAPI → TypeScript 생성기 | ZeroTool"
+seoDescription: "OpenAPI 3.0/3.1 스펙(YAML/JSON)을 브라우저에서 TypeScript 인터페이스로 변환. $ref, oneOf/allOf, enum, nullable 지원 및 Zod 스키마 동시 출력."
+faqItems:
+  - question: "어떤 OpenAPI 버전을 지원하나요?"
+    answer: "3.0.x와 3.1.x 모두 지원합니다. OpenAPI 3.1의 `type: ['string', 'null']`은 `string | null`로, OpenAPI 3.0의 `nullable: true`도 동일하게 처리됩니다."
+  - question: "Swagger 2.0은 어떻게 되나요?"
+    answer: "Swagger 2.0은 의도적으로 지원하지 않습니다. 먼저 editor.swagger.io(Swagger Editor 내장 변환기)에서 OpenAPI 3.x로 마이그레이션한 뒤 본 도구에 붙여 넣으세요."
+  - question: "원격 $ref도 해석되나요?"
+    answer: "`#/components/schemas/...` 형식의 내부 참조만 해석합니다. 외부 URL이나 파일 경로의 $ref는 가져오지 않습니다. 외부 스키마는 먼저 인라인화하거나 openapi-typescript CLI를 사용하세요."
+  - question: "내 스펙이 서버로 전송되나요?"
+    answer: "전혀 전송되지 않습니다. 파싱, $ref 해석, TypeScript 생성이 모두 브라우저에서 끝납니다. 백엔드도 없고 스펙 내용의 텔레메트리도 수집하지 않습니다."
+  - question: "Zod 스키마도 함께 받을 수 있나요?"
+    answer: "네. **Zod 스키마 포함** 을 켜면 TypeScript 인터페이스와 함께 `z.object({...})` 정의를 출력합니다. 정적 타입과 일치하는 런타임 검증이 필요할 때 유용합니다."
+  - question: "'path 타입 포함'은 무엇을 하나요?"
+    answer: "각 오퍼레이션마다 네임스페이스를 만들어 `PathParameters`, `QueryParameters`, `RequestBody`, `Response200` / `Response201` 등을 노출합니다. DTO 인터페이스만 필요하다면 끄세요."
+---
+
+<h2>사용 방법</h2>
+<ol>
+  <li>OpenAPI 3.0.x 또는 3.1.x 문서(YAML 또는 JSON)를 왼쪽 패널에 붙여 넣습니다.</li>
+  <li>입력하면 300 ms 디바운스로 실시간 생성됩니다.</li>
+  <li>선택적으로 <strong>루트 네임스페이스</strong> 변경, 모든 속성을 optional 처리, path 오퍼레이션 타입 포함, Zod 스키마 동시 출력을 선택할 수 있습니다.</li>
+  <li><strong>복사</strong> 버튼으로 전체 TypeScript 출력을 가져갑니다.</li>
+</ol>
+
+<h2>생성되는 내용</h2>
+<ul>
+  <li><strong>components/schemas</strong>: 각 스키마가 `export interface` 또는 `export type`이 됩니다. 객체는 interface, 기본형 / 유니언 / enum / 교차 타입은 type alias로 출력됩니다.</li>
+  <li><strong>$ref</strong>: `#/components/schemas/...` 참조는 타입 이름으로 해석되며, 스펙의 선언 순서를 그대로 따릅니다.</li>
+  <li><strong>oneOf / anyOf</strong>: 유니언 타입 `A | B | C`. <strong>allOf</strong>는 교차 타입 `A & B`.</li>
+  <li><strong>enum</strong>: 문자열 또는 숫자 리터럴 유니언.</li>
+  <li><strong>nullable</strong>: 3.0의 `nullable: true`와 3.1의 `type: ['X', 'null']` 모두 `X | null`로 변환.</li>
+  <li><strong>format 힌트</strong>: `format: date-time`에는 ISO 8601 JSDoc 주석을 추가하고, `format: binary`는 `Blob`이 됩니다.</li>
+  <li><strong>additionalProperties</strong>: 인덱스 시그니처 또는 `Record&lt;string, T&gt;`.</li>
+</ul>
+
+<h2>Path 타입(선택)</h2>
+<p><strong>path 타입 포함</strong>을 켜면 각 오퍼레이션마다 타입 엔벨로프가 생성됩니다:</p>
+<pre><code>{`export namespace Components {
+  export namespace GetPetById {
+    export interface PathParameters {
+      id: number;
+    }
+    export type Response200 = Pet;
+  }
+}`}</code></pre>
+<p>오퍼레이션에 <code>operationId</code>가 없으면 method와 path로 합성합니다(예: <code>GetPetsId</code>).</p>
+
+<h2>Zod 스키마(선택)</h2>
+<p><strong>Zod 스키마 포함</strong>을 켜면 각 컴포넌트별로 `XSchema`를 함께 출력합니다:</p>
+<pre><code>{`import { z } from 'zod';
+
+export const PetSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  status: z.enum(["available", "pending", "sold"]),
+});`}</code></pre>
+<p>OpenAPI 스펙이 아니라 손으로 쓴 TS 타입에서 Zod를 만들고 싶다면 <a href="/ko/tools/typescript-to-zod/">TypeScript → Zod</a>를 사용하세요.</p>
+
+<h2>관련 도구</h2>
+<ul>
+  <li><a href="/ko/tools/openapi-validator/">OpenAPI 유효성 검사기</a> — 타입 생성 전 스펙을 검증.</li>
+  <li><a href="/ko/tools/json-to-typescript/">JSON → TypeScript</a> — 스펙은 없고 JSON 응답 샘플만 있을 때.</li>
+  <li><a href="/ko/tools/json-to-zod/">JSON → Zod 스키마</a> — 단일 JSON 예시에서 Zod 생성.</li>
+</ul>

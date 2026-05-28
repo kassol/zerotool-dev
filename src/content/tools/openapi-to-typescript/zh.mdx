@@ -1,0 +1,66 @@
+---
+seoTitle: "OpenAPI 转 TypeScript 在线生成器 | ZeroTool"
+seoDescription: "在浏览器中将 OpenAPI 3.0/3.1（YAML/JSON）转换为 TypeScript 接口。支持 $ref、oneOf/allOf、enum、nullable，可选 Zod schema 输出，零上传。"
+faqItems:
+  - question: "支持哪些 OpenAPI 版本？"
+    answer: "支持 3.0.x 与 3.1.x。OpenAPI 3.1 的 `type: ['string', 'null']` 写法会输出 `string | null`，OpenAPI 3.0 的 `nullable: true` 也会被识别。"
+  - question: "支持 Swagger 2.0 吗？"
+    answer: "按设计不支持 Swagger 2.0。请先用 editor.swagger.io（Swagger Editor 内置的转换功能）把规范升级到 OpenAPI 3.x，再粘贴到本工具。"
+  - question: "远程 $ref 会被解析吗？"
+    answer: "仅解析 `#/components/schemas/...` 形式的内部 $ref。指向外部 URL 或文件路径的 $ref 不会被拉取。请把外部 schema 先内联到当前文档，或改用 openapi-typescript CLI 处理这种情况。"
+  - question: "我的规范会被上传吗？"
+    answer: "完全不会。解析、$ref 解引用、TypeScript 生成全部在浏览器内完成，没有后端，也不上报规范内容。"
+  - question: "可以同时输出 Zod schema 吗？"
+    answer: "可以。勾选 **包含 Zod schema** 即可在 TypeScript 接口旁边生成对应的 `z.object({...})`，适合需要运行时校验与静态类型保持一致的场景。"
+  - question: "「包含 path 类型」做什么？"
+    answer: "为每个操作生成一个命名空间，暴露 `PathParameters`、`QueryParameters`、`RequestBody`、`Response200`/`Response201` 等类型，外层用你设置的根命名空间包裹。如果只需要 DTO 接口可不勾选。"
+---
+
+<h2>使用方法</h2>
+<ol>
+  <li>将 OpenAPI 3.0.x 或 3.1.x 文档（YAML 或 JSON）粘贴到左侧面板。</li>
+  <li>输入后会以 300 ms 防抖实时生成类型。</li>
+  <li>可选：调整 <strong>根命名空间</strong>、把所有属性标记为可选、附加 path 操作类型、或同时输出 Zod schema。</li>
+  <li>点击 <strong>复制</strong> 即可拿到完整的 TypeScript 输出。</li>
+</ol>
+
+<h2>生成内容</h2>
+<ul>
+  <li><strong>components/schemas</strong>：每个 schema 输出一个 `export interface` 或 `export type`，对象类型用 interface，基本/联合/枚举/交叉类型用 type alias。</li>
+  <li><strong>$ref</strong>：`#/components/schemas/...` 引用会被解析为对应类型名，并按规范声明顺序输出。</li>
+  <li><strong>oneOf / anyOf</strong>：转为联合类型 `A | B | C`；<strong>allOf</strong> 转为交叉类型 `A & B`。</li>
+  <li><strong>enum</strong>：转为字符串或数字字面量的联合类型。</li>
+  <li><strong>nullable</strong>：3.0 的 `nullable: true` 与 3.1 的 `type: ['X', 'null']` 都转为 `X | null`。</li>
+  <li><strong>format 提示</strong>：`format: date-time` 会附带 ISO 8601 的 JSDoc 注释；`format: binary` 转为 `Blob`。</li>
+  <li><strong>additionalProperties</strong>：转为索引签名或 `Record&lt;string, T&gt;`。</li>
+</ul>
+
+<h2>Path 类型（可选）</h2>
+<p>勾选 <strong>包含 path 类型</strong> 后，每个操作都会产出一个类型封装：</p>
+<pre><code>{`export namespace Components {
+  export namespace GetPetById {
+    export interface PathParameters {
+      id: number;
+    }
+    export type Response200 = Pet;
+  }
+}`}</code></pre>
+<p>如果操作没有 <code>operationId</code>，工具会按 method + path 合成一个，例如 <code>GetPetsId</code>。</p>
+
+<h2>Zod schema（可选）</h2>
+<p>勾选 <strong>包含 Zod schema</strong>，会为每个 component 输出同名 `XSchema`：</p>
+<pre><code>{`import { z } from 'zod';
+
+export const PetSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  status: z.enum(["available", "pending", "sold"]),
+});`}</code></pre>
+<p>若你的项目是从手写 TS 类型反推 Zod，可改用 <a href="/zh/tools/typescript-to-zod/">TypeScript 转 Zod</a>。</p>
+
+<h2>相关工具</h2>
+<ul>
+  <li><a href="/zh/tools/openapi-validator/">OpenAPI 验证器</a> — 生成类型前先校验规范。</li>
+  <li><a href="/zh/tools/json-to-typescript/">JSON 转 TypeScript</a> — 只有 JSON 响应样本、没有完整规范时使用。</li>
+  <li><a href="/zh/tools/json-to-zod/">JSON 转 Zod Schema</a> — 从单个 JSON 示例生成 Zod。</li>
+</ul>
