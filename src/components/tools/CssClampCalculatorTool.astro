@@ -1,0 +1,894 @@
+---
+// CssClampCalculatorTool — responsive CSS clamp() values from two viewport/value endpoints.
+// Pure browser arithmetic, live preview, no dependencies.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const labels = {
+  en: {
+    controls: 'Fluid range',
+    property: 'CSS property',
+    propertyFont: 'Font size',
+    propertyPadding: 'Padding',
+    propertyMargin: 'Margin',
+    propertyGap: 'Gap',
+    propertyWidth: 'Width',
+    propertyCustom: 'Custom property',
+    outputUnit: 'Output unit',
+    rootSize: 'Root font size (px)',
+    minViewport: 'Minimum viewport (px)',
+    maxViewport: 'Maximum viewport (px)',
+    valueAtMin: 'Value at minimum (px)',
+    valueAtMax: 'Value at maximum (px)',
+    curve: 'Fluid value curve',
+    curveAria: 'Linear CSS clamp value between the selected viewport endpoints',
+    livePreview: 'Live preview',
+    previewWidth: 'Preview viewport',
+    output: 'Generated CSS',
+    rawValue: 'Raw value',
+    copyCss: 'Copy CSS',
+    copyValue: 'Copy value',
+    copied: 'Copied!',
+    copyFailed: 'Copy failed. Select the generated code manually.',
+    reset: 'Reset',
+    samples: 'Sampled values',
+    viewport: 'Viewport',
+    pixels: 'Pixels',
+    rems: 'Rem',
+    invalidNumber: 'Enter a valid number in every field.',
+    invalidViewport: 'Maximum viewport must be greater than minimum viewport.',
+    invalidRoot: 'Root font size must be greater than zero.',
+    negativeUnsupported: 'Negative values are valid only for margin and the custom property.',
+    constant: 'Both endpoints match, so a constant length is enough.',
+    zoomWarning: 'For resizable text, consider a maximum font size at least twice the minimum.',
+  },
+  zh: {
+    controls: '流体范围',
+    property: 'CSS 属性',
+    propertyFont: '字号',
+    propertyPadding: '内边距',
+    propertyMargin: '外边距',
+    propertyGap: '间距',
+    propertyWidth: '宽度',
+    propertyCustom: '自定义属性',
+    outputUnit: '输出单位',
+    rootSize: '根字体大小（px）',
+    minViewport: '最小视口（px）',
+    maxViewport: '最大视口（px）',
+    valueAtMin: '最小视口值（px）',
+    valueAtMax: '最大视口值（px）',
+    curve: '流体数值曲线',
+    curveAria: '所选视口端点之间的线性 CSS clamp 数值',
+    livePreview: '实时预览',
+    previewWidth: '预览视口',
+    output: '生成的 CSS',
+    rawValue: '原始值',
+    copyCss: '复制 CSS',
+    copyValue: '复制数值',
+    copied: '已复制！',
+    copyFailed: '复制失败，请手动选择生成的代码。',
+    reset: '重置',
+    samples: '采样数值',
+    viewport: '视口',
+    pixels: '像素',
+    rems: 'Rem',
+    invalidNumber: '请在所有字段中输入有效数字。',
+    invalidViewport: '最大视口必须大于最小视口。',
+    invalidRoot: '根字体大小必须大于零。',
+    negativeUnsupported: '仅外边距和自定义属性允许负值。',
+    constant: '两个端点数值相同，使用固定长度即可。',
+    zoomWarning: '用于可缩放文字时，建议最大字号至少为最小字号的两倍。',
+  },
+  ja: {
+    controls: '流体範囲',
+    property: 'CSS プロパティ',
+    propertyFont: 'フォントサイズ',
+    propertyPadding: 'パディング',
+    propertyMargin: 'マージン',
+    propertyGap: 'ギャップ',
+    propertyWidth: '幅',
+    propertyCustom: 'カスタムプロパティ',
+    outputUnit: '出力単位',
+    rootSize: 'ルートフォントサイズ（px）',
+    minViewport: '最小ビューポート（px）',
+    maxViewport: '最大ビューポート（px）',
+    valueAtMin: '最小時の値（px）',
+    valueAtMax: '最大時の値（px）',
+    curve: '流体値カーブ',
+    curveAria: '選択したビューポート端点間の線形 CSS clamp 値',
+    livePreview: 'ライブプレビュー',
+    previewWidth: 'プレビュービューポート',
+    output: '生成された CSS',
+    rawValue: '値のみ',
+    copyCss: 'CSS をコピー',
+    copyValue: '値をコピー',
+    copied: 'コピー済み！',
+    copyFailed: 'コピーできませんでした。生成コードを手動で選択してください。',
+    reset: 'リセット',
+    samples: 'サンプル値',
+    viewport: 'ビューポート',
+    pixels: 'ピクセル',
+    rems: 'Rem',
+    invalidNumber: 'すべての欄に有効な数値を入力してください。',
+    invalidViewport: '最大ビューポートは最小ビューポートより大きくしてください。',
+    invalidRoot: 'ルートフォントサイズは 0 より大きくしてください。',
+    negativeUnsupported: '負の値を使えるのは margin とカスタムプロパティだけです。',
+    constant: '両端の値が同じため、固定長で十分です。',
+    zoomWarning: '拡大可能な文字では、最大サイズを最小サイズの 2 倍以上にすることを検討してください。',
+  },
+  ko: {
+    controls: '유동 범위',
+    property: 'CSS 속성',
+    propertyFont: '글꼴 크기',
+    propertyPadding: '패딩',
+    propertyMargin: '마진',
+    propertyGap: '간격',
+    propertyWidth: '너비',
+    propertyCustom: '사용자 정의 속성',
+    outputUnit: '출력 단위',
+    rootSize: '루트 글꼴 크기(px)',
+    minViewport: '최소 뷰포트(px)',
+    maxViewport: '최대 뷰포트(px)',
+    valueAtMin: '최소 시점 값(px)',
+    valueAtMax: '최대 시점 값(px)',
+    curve: '유동 값 곡선',
+    curveAria: '선택한 뷰포트 양 끝점 사이의 선형 CSS clamp 값',
+    livePreview: '실시간 미리보기',
+    previewWidth: '미리보기 뷰포트',
+    output: '생성된 CSS',
+    rawValue: '원시 값',
+    copyCss: 'CSS 복사',
+    copyValue: '값 복사',
+    copied: '복사됨!',
+    copyFailed: '복사하지 못했습니다. 생성된 코드를 직접 선택하세요.',
+    reset: '초기화',
+    samples: '샘플 값',
+    viewport: '뷰포트',
+    pixels: '픽셀',
+    rems: 'Rem',
+    invalidNumber: '모든 필드에 유효한 숫자를 입력하세요.',
+    invalidViewport: '최대 뷰포트는 최소 뷰포트보다 커야 합니다.',
+    invalidRoot: '루트 글꼴 크기는 0보다 커야 합니다.',
+    negativeUnsupported: '음수 값은 margin과 사용자 정의 속성에서만 사용할 수 있습니다.',
+    constant: '양 끝점 값이 같으므로 고정 길이면 충분합니다.',
+    zoomWarning: '크기 조절이 필요한 텍스트라면 최대 글꼴 크기를 최소값의 두 배 이상으로 설정하세요.',
+  },
+};
+
+const L = labels[lang] ?? labels.en;
+---
+
+<div
+  class="clamp-wrap"
+  data-invalid-number={L.invalidNumber}
+  data-invalid-viewport={L.invalidViewport}
+  data-invalid-root={L.invalidRoot}
+  data-negative-unsupported={L.negativeUnsupported}
+  data-constant={L.constant}
+  data-zoom-warning={L.zoomWarning}
+  data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
+  data-copy-css={L.copyCss}
+  data-copy-value={L.copyValue}
+>
+  <section class="clamp-controls" aria-labelledby="clamp-controls-title">
+    <h2 id="clamp-controls-title" class="clamp-section-title">{L.controls}</h2>
+    <div class="clamp-field-grid clamp-field-grid--settings">
+      <label class="clamp-field">
+        <span class="tool-label">{L.property}</span>
+        <select id="clamp-property" class="tool-input clamp-select">
+          <option value="font-size">{L.propertyFont}</option>
+          <option value="padding">{L.propertyPadding}</option>
+          <option value="margin">{L.propertyMargin}</option>
+          <option value="gap">{L.propertyGap}</option>
+          <option value="width">{L.propertyWidth}</option>
+          <option value="--fluid-size">{L.propertyCustom}</option>
+        </select>
+      </label>
+      <label class="clamp-field">
+        <span class="tool-label">{L.outputUnit}</span>
+        <select id="clamp-unit" class="tool-input clamp-select">
+          <option value="rem">rem</option>
+          <option value="px">px</option>
+        </select>
+      </label>
+      <label class="clamp-field">
+        <span class="tool-label">{L.rootSize}</span>
+        <input id="clamp-root" class="tool-input" type="number" value="16" min="0.01" max="256" step="0.25" inputmode="decimal" />
+      </label>
+    </div>
+    <div class="clamp-field-grid">
+      <label class="clamp-field">
+        <span class="tool-label">{L.minViewport}</span>
+        <input id="clamp-min-viewport" class="tool-input" type="number" value="320" min="1" max="100000" step="1" inputmode="decimal" />
+      </label>
+      <label class="clamp-field">
+        <span class="tool-label">{L.maxViewport}</span>
+        <input id="clamp-max-viewport" class="tool-input" type="number" value="1440" min="1" max="100000" step="1" inputmode="decimal" />
+      </label>
+      <label class="clamp-field">
+        <span class="tool-label">{L.valueAtMin}</span>
+        <input id="clamp-start-value" class="tool-input" type="number" value="16" step="0.25" inputmode="decimal" />
+      </label>
+      <label class="clamp-field">
+        <span class="tool-label">{L.valueAtMax}</span>
+        <input id="clamp-end-value" class="tool-input" type="number" value="32" step="0.25" inputmode="decimal" />
+      </label>
+    </div>
+  </section>
+
+  <div class="clamp-preview-grid">
+    <section class="clamp-card" aria-labelledby="clamp-curve-title">
+      <div class="clamp-card-head">
+        <h2 id="clamp-curve-title" class="clamp-section-title">{L.curve}</h2>
+        <span id="clamp-curve-range" class="clamp-card-meta"></span>
+      </div>
+      <svg class="clamp-chart" viewBox="0 0 600 190" role="img" aria-label={L.curveAria}>
+        <line x1="20" y1="160" x2="580" y2="160" class="clamp-chart-axis" />
+        <line x1="20" y1="30" x2="20" y2="160" class="clamp-chart-axis" />
+        <path id="clamp-chart-fill" class="clamp-chart-fill" d=""></path>
+        <path id="clamp-chart-line" class="clamp-chart-line" d=""></path>
+        <circle id="clamp-chart-start" class="clamp-chart-point" r="6"></circle>
+        <circle id="clamp-chart-end" class="clamp-chart-point" r="6"></circle>
+      </svg>
+      <div class="clamp-axis-labels">
+        <span id="clamp-axis-min"></span>
+        <span id="clamp-axis-max"></span>
+      </div>
+    </section>
+
+    <section class="clamp-card" aria-labelledby="clamp-live-title">
+      <div class="clamp-card-head">
+        <h2 id="clamp-live-title" class="clamp-section-title">{L.livePreview}</h2>
+        <output id="clamp-live-value" class="clamp-live-value"></output>
+      </div>
+      <label class="clamp-preview-control">
+        <span class="tool-label">{L.previewWidth}: <strong id="clamp-preview-width-label"></strong></span>
+        <input id="clamp-preview-width" type="range" min="320" max="1440" value="880" step="1" />
+      </label>
+      <div class="clamp-meter" aria-hidden="true">
+        <div id="clamp-meter-fill" class="clamp-meter-fill"></div>
+      </div>
+      <code id="clamp-live-property" class="clamp-live-property"></code>
+    </section>
+  </div>
+
+  <section class="clamp-output" aria-labelledby="clamp-output-title">
+    <div class="clamp-card-head">
+      <h2 id="clamp-output-title" class="clamp-section-title">{L.output}</h2>
+      <button id="clamp-copy-css" class="btn-copy" type="button">{L.copyCss}</button>
+    </div>
+    <pre class="clamp-output-pre"><code id="clamp-declaration"></code></pre>
+    <div class="tool-result-row clamp-raw-row">
+      <span class="tool-result-label">{L.rawValue}</span>
+      <code id="clamp-raw-value" class="tool-result-value"></code>
+      <button id="clamp-copy-value" class="btn-copy" type="button">{L.copyValue}</button>
+    </div>
+    <div class="clamp-output-actions">
+      <button id="clamp-reset" class="btn-ghost" type="button">{L.reset}</button>
+      <span id="clamp-status" class="tool-status none" role="status" aria-live="polite"></span>
+    </div>
+  </section>
+
+  <section class="clamp-samples" aria-labelledby="clamp-samples-title">
+    <h2 id="clamp-samples-title" class="clamp-section-title">{L.samples}</h2>
+    <div class="clamp-table-wrap">
+      <table class="clamp-table">
+        <thead>
+          <tr>
+            <th>{L.viewport}</th>
+            <th>{L.pixels}</th>
+            <th>{L.rems}</th>
+          </tr>
+        </thead>
+        <tbody id="clamp-sample-body"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script is:inline>
+  (function() {
+    'use strict';
+
+    var SLUG = 'css-clamp-calculator';
+    var DEFAULTS = {
+      property: 'font-size',
+      unit: 'rem',
+      root: 16,
+      minViewport: 320,
+      maxViewport: 1440,
+      startValue: 16,
+      endValue: 32
+    };
+    var ALLOWED_PROPERTIES = ['font-size', 'padding', 'margin', 'gap', 'width', '--fluid-size'];
+    var wrap = document.querySelector('.clamp-wrap');
+    if (!wrap) return;
+
+    function $(id) { return wrap.querySelector('#' + id); }
+
+    var propertyEl = $('clamp-property');
+    var unitEl = $('clamp-unit');
+    var rootEl = $('clamp-root');
+    var minViewportEl = $('clamp-min-viewport');
+    var maxViewportEl = $('clamp-max-viewport');
+    var startValueEl = $('clamp-start-value');
+    var endValueEl = $('clamp-end-value');
+    var previewWidthEl = $('clamp-preview-width');
+    var previewWidthLabel = $('clamp-preview-width-label');
+    var declarationEl = $('clamp-declaration');
+    var rawValueEl = $('clamp-raw-value');
+    var statusEl = $('clamp-status');
+    var chartLine = $('clamp-chart-line');
+    var chartFill = $('clamp-chart-fill');
+    var chartStart = $('clamp-chart-start');
+    var chartEnd = $('clamp-chart-end');
+    var axisMin = $('clamp-axis-min');
+    var axisMax = $('clamp-axis-max');
+    var curveRange = $('clamp-curve-range');
+    var liveValue = $('clamp-live-value');
+    var liveProperty = $('clamp-live-property');
+    var meterFill = $('clamp-meter-fill');
+    var sampleBody = $('clamp-sample-body');
+    var lastResult = null;
+
+    function text(name) { return wrap.dataset[name] || ''; }
+
+    function formatNumber(value) {
+      if (Math.abs(value) < 0.00005) value = 0;
+      return Number(value.toFixed(4)).toString();
+    }
+
+    function formatLength(px, unit, root) {
+      return formatNumber(unit === 'rem' ? px / root : px) + unit;
+    }
+
+    function makeResult(config) {
+      var slope = (config.endValue - config.startValue) / (config.maxViewport - config.minViewport);
+      var interceptPx = config.startValue - slope * config.minViewport;
+      var lower = Math.min(config.startValue, config.endValue);
+      var upper = Math.max(config.startValue, config.endValue);
+      var constant = Math.abs(config.endValue - config.startValue) < 0.0000001;
+      var raw;
+
+      if (constant) {
+        raw = formatLength(config.startValue, config.unit, config.root);
+      } else {
+        var intercept = config.unit === 'rem' ? interceptPx / config.root : interceptPx;
+        var vw = slope * 100;
+        var preferred = '';
+        if (Math.abs(intercept) >= 0.00005) preferred = formatNumber(intercept) + config.unit;
+        if (Math.abs(vw) >= 0.00005) {
+          var vwTerm = formatNumber(Math.abs(vw)) + 'vw';
+          if (!preferred) preferred = vw < 0 ? '-' + vwTerm : vwTerm;
+          else preferred += vw < 0 ? ' - ' + vwTerm : ' + ' + vwTerm;
+        }
+        raw = 'clamp('
+          + formatLength(lower, config.unit, config.root) + ', '
+          + preferred + ', '
+          + formatLength(upper, config.unit, config.root) + ')';
+      }
+
+      return {
+        property: config.property,
+        unit: config.unit,
+        root: config.root,
+        minViewport: config.minViewport,
+        maxViewport: config.maxViewport,
+        startValue: config.startValue,
+        endValue: config.endValue,
+        lower: lower,
+        upper: upper,
+        slope: slope,
+        constant: constant,
+        raw: raw,
+        declaration: config.property + ': ' + raw + ';'
+      };
+    }
+
+    function valueAt(result, viewport) {
+      var value = result.startValue + result.slope * (viewport - result.minViewport);
+      return Math.min(result.upper, Math.max(result.lower, value));
+    }
+
+    function readNumber(element) {
+      if (!element.value.trim()) return NaN;
+      return Number(element.value);
+    }
+
+    function readConfig() {
+      return {
+        property: propertyEl.value,
+        unit: unitEl.value,
+        root: readNumber(rootEl),
+        minViewport: readNumber(minViewportEl),
+        maxViewport: readNumber(maxViewportEl),
+        startValue: readNumber(startValueEl),
+        endValue: readNumber(endValueEl)
+      };
+    }
+
+    function validate(config) {
+      var numbers = [config.root, config.minViewport, config.maxViewport, config.startValue, config.endValue];
+      if (!numbers.every(Number.isFinite)) return text('invalidNumber');
+      if (config.root <= 0) return text('invalidRoot');
+      if (config.minViewport <= 0 || config.maxViewport <= config.minViewport) return text('invalidViewport');
+      if (config.property !== 'margin' && config.property !== '--fluid-size'
+        && (config.startValue < 0 || config.endValue < 0)) return text('negativeUnsupported');
+      return '';
+    }
+
+    function setStatus(kind, message) {
+      statusEl.className = 'tool-status ' + (kind || 'none');
+      statusEl.textContent = message || '';
+    }
+
+    function clearOutput(message) {
+      lastResult = null;
+      declarationEl.textContent = '';
+      rawValueEl.textContent = '';
+      sampleBody.textContent = '';
+      chartLine.setAttribute('d', '');
+      chartFill.setAttribute('d', '');
+      chartStart.setAttribute('visibility', 'hidden');
+      chartEnd.setAttribute('visibility', 'hidden');
+      liveValue.textContent = '—';
+      liveProperty.textContent = '';
+      meterFill.style.width = '0%';
+      setStatus('error', message);
+    }
+
+    function save(config) {
+      if (!window.ztPersist) return;
+      window.ztPersist.save(SLUG, config);
+    }
+
+    function updateChart(result) {
+      var points = [];
+      for (var i = 0; i < 5; i++) {
+        var viewport = result.minViewport + (result.maxViewport - result.minViewport) * (i / 4);
+        var value = valueAt(result, viewport);
+        var ratio = result.constant ? 0.5 : (value - result.lower) / (result.upper - result.lower);
+        points.push({
+          x: 20 + i * 140,
+          y: 160 - ratio * 130
+        });
+      }
+
+      var line = points.map(function(point, index) {
+        return (index ? 'L' : 'M') + point.x + ' ' + point.y;
+      }).join(' ');
+      chartLine.setAttribute('d', line);
+      chartFill.setAttribute('d', line + ' L580 160 L20 160 Z');
+      chartStart.setAttribute('cx', String(points[0].x));
+      chartStart.setAttribute('cy', String(points[0].y));
+      chartEnd.setAttribute('cx', String(points[4].x));
+      chartEnd.setAttribute('cy', String(points[4].y));
+      chartStart.removeAttribute('visibility');
+      chartEnd.removeAttribute('visibility');
+      axisMin.textContent = formatNumber(result.minViewport) + 'px';
+      axisMax.textContent = formatNumber(result.maxViewport) + 'px';
+      curveRange.textContent = formatNumber(result.startValue) + 'px → ' + formatNumber(result.endValue) + 'px';
+    }
+
+    function updateSamples(result) {
+      var rows = [];
+      for (var i = 0; i < 5; i++) {
+        var viewport = result.minViewport + (result.maxViewport - result.minViewport) * (i / 4);
+        var value = valueAt(result, viewport);
+        rows.push('<tr><td>' + formatNumber(viewport) + 'px</td><td>'
+          + formatNumber(value) + 'px</td><td>'
+          + formatNumber(value / result.root) + 'rem</td></tr>');
+      }
+      sampleBody.innerHTML = rows.join('');
+    }
+
+    function updateLive() {
+      if (!lastResult) return;
+      var viewport = Number(previewWidthEl.value);
+      var value = valueAt(lastResult, viewport);
+      var ratio = lastResult.constant ? 0.5 : (value - lastResult.lower) / (lastResult.upper - lastResult.lower);
+      previewWidthLabel.textContent = formatNumber(viewport) + 'px';
+      liveValue.textContent = formatNumber(value) + 'px / ' + formatNumber(value / lastResult.root) + 'rem';
+      liveProperty.textContent = lastResult.property + ': ' + formatLength(value, lastResult.unit, lastResult.root) + ';';
+      meterFill.style.width = formatNumber(ratio * 100) + '%';
+    }
+
+    function updateNotice(result) {
+      if (result.constant) {
+        setStatus('info', text('constant'));
+      } else if (result.property === 'font-size' && result.lower > 0 && result.upper < result.lower * 2) {
+        setStatus('info', text('zoomWarning'));
+      } else {
+        setStatus('none', '');
+      }
+    }
+
+    function render() {
+      var config = readConfig();
+      var error = validate(config);
+      if (error) {
+        clearOutput(error);
+        return;
+      }
+
+      lastResult = makeResult(config);
+      declarationEl.textContent = lastResult.declaration;
+      rawValueEl.textContent = lastResult.raw;
+
+      previewWidthEl.min = String(config.minViewport);
+      previewWidthEl.max = String(config.maxViewport);
+      var preview = Number(previewWidthEl.value);
+      if (!Number.isFinite(preview) || preview < config.minViewport || preview > config.maxViewport) {
+        previewWidthEl.value = String((config.minViewport + config.maxViewport) / 2);
+      }
+
+      updateChart(lastResult);
+      updateSamples(lastResult);
+      updateLive();
+      updateNotice(lastResult);
+      save(config);
+    }
+
+    function applyState(state) {
+      propertyEl.value = ALLOWED_PROPERTIES.indexOf(state.property) >= 0 ? state.property : DEFAULTS.property;
+      unitEl.value = state.unit === 'px' || state.unit === 'rem' ? state.unit : DEFAULTS.unit;
+      rootEl.value = String(Number.isFinite(state.root) ? state.root : DEFAULTS.root);
+      minViewportEl.value = String(Number.isFinite(state.minViewport) ? state.minViewport : DEFAULTS.minViewport);
+      maxViewportEl.value = String(Number.isFinite(state.maxViewport) ? state.maxViewport : DEFAULTS.maxViewport);
+      startValueEl.value = String(Number.isFinite(state.startValue) ? state.startValue : DEFAULTS.startValue);
+      endValueEl.value = String(Number.isFinite(state.endValue) ? state.endValue : DEFAULTS.endValue);
+    }
+
+    function copyText(value, button, originalText) {
+      var task;
+      if (navigator.clipboard && window.isSecureContext) {
+        task = navigator.clipboard.writeText(value);
+      } else {
+        task = new Promise(function(resolve, reject) {
+          var area = document.createElement('textarea');
+          area.value = value;
+          area.style.position = 'fixed';
+          area.style.opacity = '0';
+          document.body.appendChild(area);
+          area.select();
+          try {
+            if (!document.execCommand('copy')) throw new Error('copy failed');
+            resolve();
+          } catch (error) {
+            reject(error);
+          } finally {
+            area.remove();
+          }
+        });
+      }
+
+      task.then(function() {
+        button.textContent = text('copied');
+        button.classList.add('copied');
+        setStatus('success', text('copied'));
+        setTimeout(function() {
+          button.textContent = originalText;
+          button.classList.remove('copied');
+          if (lastResult) updateNotice(lastResult);
+        }, 1400);
+        if (window.trackTool) window.trackTool(SLUG, 'copy');
+      }).catch(function() {
+        setStatus('error', text('copyFailed'));
+      });
+    }
+
+    [propertyEl, unitEl, rootEl, minViewportEl, maxViewportEl, startValueEl, endValueEl].forEach(function(element) {
+      element.addEventListener(element.tagName === 'SELECT' ? 'change' : 'input', render);
+    });
+    previewWidthEl.addEventListener('input', updateLive);
+
+    $('clamp-copy-css').addEventListener('click', function() {
+      if (lastResult) copyText(lastResult.declaration, this, text('copyCss'));
+    });
+    $('clamp-copy-value').addEventListener('click', function() {
+      if (lastResult) copyText(lastResult.raw, this, text('copyValue'));
+    });
+    $('clamp-reset').addEventListener('click', function() {
+      if (window.ztPersist) window.ztPersist.clear(SLUG);
+      applyState(DEFAULTS);
+      previewWidthEl.value = String((DEFAULTS.minViewport + DEFAULTS.maxViewport) / 2);
+      render();
+      minViewportEl.focus();
+      if (window.trackTool) window.trackTool(SLUG, 'reset');
+    });
+
+    window.addEventListener('storage', function(event) {
+      if (event.key === 'zt-input-' + SLUG && event.newValue === null) {
+        applyState(DEFAULTS);
+        render();
+      }
+    });
+
+    var saved = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+    applyState(Object.assign({}, DEFAULTS, saved));
+
+    var forwardCheck = makeResult(Object.assign({}, DEFAULTS));
+    var reverseCheck = makeResult(Object.assign({}, DEFAULTS, { startValue: 32, endValue: 16 }));
+    var constantCheck = makeResult(Object.assign({}, DEFAULTS, { startValue: 16, endValue: 16 }));
+    console.assert(
+      forwardCheck.raw === 'clamp(1rem, 0.7143rem + 1.4286vw, 2rem)'
+      && reverseCheck.raw === 'clamp(1rem, 2.2857rem - 1.4286vw, 2rem)'
+      && constantCheck.raw === '1rem',
+      'CSS clamp calculation self-check failed'
+    );
+
+    render();
+  })();
+</script>
+
+<style is:global>
+  .clamp-wrap {
+    --category-color: var(--color-cat-dev);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  .clamp-controls,
+  .clamp-output,
+  .clamp-samples {
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .clamp-section-title {
+    margin: 0;
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: 0.88rem;
+    font-weight: 760;
+    letter-spacing: 0.035em;
+    text-transform: uppercase;
+  }
+
+  .clamp-field-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+
+  .clamp-field-grid--settings {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .clamp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .clamp-field .tool-input {
+    width: 100%;
+  }
+
+  .clamp-select {
+    appearance: auto;
+  }
+
+  .clamp-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .clamp-card {
+    min-width: 0;
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-subtle), inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .clamp-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .clamp-card-meta,
+  .clamp-live-value {
+    color: var(--color-primary);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    font-weight: 700;
+  }
+
+  .clamp-chart {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 0.7rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+  }
+
+  .clamp-chart-axis {
+    stroke: var(--color-border);
+    stroke-width: 1;
+  }
+
+  .clamp-chart-fill {
+    fill: color-mix(in oklch, var(--category-color) 14%, transparent);
+  }
+
+  .clamp-chart-line {
+    fill: none;
+    stroke: var(--category-color);
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .clamp-chart-point {
+    fill: var(--color-surface);
+    stroke: var(--category-color);
+    stroke-width: 4;
+  }
+
+  .clamp-axis-labels {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.35rem;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+  }
+
+  .clamp-preview-control {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 1.1rem;
+  }
+
+  .clamp-meter {
+    height: 44px;
+    margin-top: 1rem;
+    overflow: hidden;
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .clamp-meter-fill {
+    height: 100%;
+    min-width: 2px;
+    border-radius: inherit;
+    background: color-mix(in oklch, var(--category-color) 70%, var(--color-surface));
+    transition: width var(--transition-fast);
+  }
+
+  .clamp-live-property {
+    display: block;
+    margin-top: 0.75rem;
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
+  }
+
+  .clamp-output-pre {
+    min-height: 58px;
+    margin: 0.75rem 0;
+    padding: 1rem 1.1rem;
+    overflow: auto;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .clamp-output-pre code {
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-family: var(--font-mono);
+    font-size: 0.86rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .clamp-raw-row {
+    flex-wrap: nowrap;
+  }
+
+  .clamp-output-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .clamp-output-actions .tool-status {
+    flex: 1 1 260px;
+  }
+
+  .clamp-table-wrap {
+    margin-top: 0.75rem;
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .clamp-table {
+    width: 100%;
+    min-width: 420px;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+  }
+
+  .clamp-table th,
+  .clamp-table td {
+    padding: 0.65rem 0.8rem;
+    border-bottom: 1px solid var(--color-border-soft);
+    text-align: right;
+  }
+
+  .clamp-table th:first-child,
+  .clamp-table td:first-child {
+    text-align: left;
+  }
+
+  .clamp-table th {
+    color: var(--color-text-secondary);
+    font-family: var(--font-sans);
+    font-weight: 700;
+  }
+
+  .clamp-table td {
+    color: var(--color-text);
+  }
+
+  .clamp-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  @media (max-width: 760px) {
+    .clamp-field-grid,
+    .clamp-field-grid--settings,
+    .clamp-preview-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .clamp-controls,
+    .clamp-output,
+    .clamp-samples,
+    .clamp-card {
+      padding: 0.85rem;
+    }
+
+    .clamp-field-grid,
+    .clamp-field-grid--settings,
+    .clamp-preview-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .clamp-field .tool-input {
+      min-height: 44px;
+    }
+
+    .clamp-raw-row {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+  }
+</style>

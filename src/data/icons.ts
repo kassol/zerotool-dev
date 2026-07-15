@@ -131,6 +131,7 @@ const icons: Record<string, string> = {
   'zero-width-character-detector': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><circle cx="11" cy="11" r="2" stroke-dasharray="2 2"/><path d="m7.5 14.5 7-7"/></svg>',
   'dns-lookup': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M4 11h14"/><path d="M11 4a10 10 0 0 1 0 14"/><path d="M11 4a10 10 0 0 0 0 14"/><path d="m20 20-3.2-3.2"/></svg>',
   'openapi-to-typescript': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6v16H4z"/><path d="M6.5 8h1"/><path d="M6.5 11h1"/><path d="M6.5 14h1"/><path d="m13 9 3 3-3 3"/><path d="M16 9h4v6h-4"/><path d="M18 12h2"/></svg>',
+  'css-clamp-calculator': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18h4L17 6h4"/><path d="M7 4v16M17 4v16" stroke-dasharray="2 2"/></svg>',
 };
 
 export function getToolIcon(slug: string): string {
