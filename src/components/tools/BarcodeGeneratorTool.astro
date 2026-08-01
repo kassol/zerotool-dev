@@ -34,6 +34,7 @@ const labels = {
     errCode39: 'Code 39 allows 0-9, A-Z, space, and - . $ / + % only. Remove: {ch}',
     errCodabar: 'Codabar allows 0-9 and - $ : / . + only. Remove: {ch}',
     lowercased: 'Lowercase letters were uppercased for Code 39.',
+    tooLong: 'Encoded, but {n} characters make the symbol wider than a handheld scanner reads in one pass. Keep it under {max}.',
     modules: '{n} modules',
   },
   zh: {
@@ -63,6 +64,7 @@ const labels = {
     errCode39: 'Code 39 仅支持 0-9、A-Z、空格和 - . $ / + %，请移除：{ch}',
     errCodabar: 'Codabar 仅支持 0-9 和 - $ : / . +，请移除：{ch}',
     lowercased: '小写字母已转为大写以符合 Code 39。',
+    tooLong: '已生成，但 {n} 个字符会让条码宽度超出手持扫描器单次读取范围，建议控制在 {max} 以内。',
     modules: '{n} 个模块',
   },
   ja: {
@@ -92,6 +94,7 @@ const labels = {
     errCode39: 'Code 39 は 0-9、A-Z、スペース、- . $ / + % のみ対応です。削除してください：{ch}',
     errCodabar: 'Codabar は 0-9 と - $ : / . + のみ対応です。削除してください：{ch}',
     lowercased: 'Code 39 のため小文字を大文字に変換しました。',
+    tooLong: '生成しましたが、{n} 文字ではハンディスキャナーが一度に読み取れる幅を超えます。{max} 以内を推奨します。',
     modules: '{n} モジュール',
   },
   ko: {
@@ -121,6 +124,7 @@ const labels = {
     errCode39: 'Code 39는 0-9, A-Z, 공백, - . $ / + %만 지원합니다. 제거하세요: {ch}',
     errCodabar: 'Codabar는 0-9와 - $ : / . +만 지원합니다. 제거하세요: {ch}',
     lowercased: 'Code 39를 위해 소문자를 대문자로 변환했습니다.',
+    tooLong: '생성했지만 {n}자는 휴대용 스캐너가 한 번에 읽는 폭을 넘습니다. {max}자 이내를 권장합니다.',
     modules: '{n}개 모듈',
   },
 };
@@ -141,6 +145,7 @@ const L = labels[lang] ?? labels.en;
   data-err-code39={L.errCode39}
   data-err-codabar={L.errCodabar}
   data-lowercased={L.lowercased}
+  data-too-long={L.tooLong}
   data-modules={L.modules}
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
@@ -197,13 +202,15 @@ const L = labels[lang] ?? labels.en;
   <section class="bcode-preview-card" aria-labelledby="bcode-preview-title">
     <div class="bcode-card-head">
       <h2 id="bcode-preview-title" class="bcode-section-title">{L.preview}</h2>
-      <span id="bcode-meta" class="bcode-card-meta"></span>
+      <div class="bcode-head-actions">
+        <span id="bcode-meta" class="bcode-card-meta"></span>
+        <button id="bcode-copy" class="btn-copy" type="button">{L.copySvg}</button>
+      </div>
     </div>
     <div id="bcode-canvas" class="bcode-canvas"></div>
     <div class="bcode-actions">
       <button id="bcode-png" class="btn-primary" type="button">{L.downloadPng}</button>
       <button id="bcode-svg" class="btn-secondary" type="button">{L.downloadSvg}</button>
-      <button id="bcode-copy" class="btn-copy" type="button">{L.copySvg}</button>
       <button id="bcode-reset" class="btn-ghost" type="button">{L.reset}</button>
     </div>
   </section>
@@ -442,6 +449,18 @@ const L = labels[lang] ?? labels.en;
       return '';
     }
 
+    // Variable-length symbologies have no hard limit, but a symbol wider than a
+    // scanner's field of view cannot be read in one pass. GS1 General
+    // Specifications caps Code 128 at 48 characters; Code 39 and Codabar are
+    // lower-density, so they run out of usable width sooner.
+    var PRACTICAL_MAX = { code128: 48, code39: 43, codabar: 43 };
+
+    function lengthNotice(kind, length) {
+      var max = PRACTICAL_MAX[kind];
+      if (!max || length <= max) return '';
+      return fill(text('tooLong'), { n: length, max: max });
+    }
+
     function build(kind, raw, options) {
       var spec = SPECS[kind];
       var data = raw.trim();
@@ -489,9 +508,11 @@ const L = labels[lang] ?? labels.en;
       if (kind === 'code128') {
         var bad128 = firstInvalid(data, function(ch) { return ch.charCodeAt(0) <= 127; });
         if (bad128) return { error: fill(text('errAscii'), { ch: bad128 }) };
+        var long128 = lengthNotice('code128', data.length);
         return {
           modules: encodeCode128(data), hri: data, layout: 'plain',
-          quietLeft: spec.quietLeft, quietRight: spec.quietRight, notice: '', status: 'none'
+          quietLeft: spec.quietLeft, quietRight: spec.quietRight,
+          notice: long128, status: long128 ? 'info' : 'none'
         };
       }
 
@@ -501,6 +522,8 @@ const L = labels[lang] ?? labels.en;
         var bad39 = firstInvalid(upper, function(ch) { return CODE39[ch] !== undefined && ch !== '*'; });
         if (bad39) return { error: fill(text('errCode39'), { ch: bad39 }) };
         var payload = options.code39Check ? upper + code39CheckChar(upper) : upper;
+        var long39 = lengthNotice('code39', payload.length);
+        if (long39) notice = notice ? notice + ' ' + long39 : long39;
         return {
           modules: encodeCode39(payload), hri: payload, layout: 'plain',
           quietLeft: spec.quietLeft, quietRight: spec.quietRight,
@@ -517,9 +540,11 @@ const L = labels[lang] ?? labels.en;
       });
       if (badCb) return { error: fill(text('errCodabar'), { ch: badCb }) };
       var framed = startStop ? body : 'A' + payloadCb + 'B';
+      var longCb = lengthNotice('codabar', framed.length);
       return {
         modules: encodeCodabar(framed), hri: framed, layout: 'plain',
-        quietLeft: spec.quietLeft, quietRight: spec.quietRight, notice: '', status: 'none'
+        quietLeft: spec.quietLeft, quietRight: spec.quietRight,
+        notice: longCb, status: longCb ? 'info' : 'none'
       };
     }
 
@@ -890,6 +915,13 @@ const L = labels[lang] ?? labels.en;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .bcode-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
     flex-wrap: wrap;
   }
 
