@@ -121,6 +121,28 @@ equal('GS1 check UPC-A 03600029145', M.gs1CheckDigit('03600029145'), 2);
 equal('GS1 check EAN-8 9638507', M.gs1CheckDigit('9638507'), 4);
 equal('GS1 check EAN-8 7351353', M.gs1CheckDigit('7351353'), 7);
 
+// Odd-length discriminators. EAN-13 is the only symbology here with an
+// even-length payload, so the widely quoted positional rule ("from the left,
+// odd positions weigh 1") happens to be right for it and wrong for the rest.
+// The textbook vectors above cannot tell the two apart — these can, and they
+// are the reason this file anchors on the rightmost digit instead.
+{
+  const positional = (d) => {
+    let sum = 0;
+    for (let i = 0; i < d.length; i++) sum += Number(d[i]) * (i % 2 === 0 ? 1 : 3);
+    return (10 - (sum % 10)) % 10;
+  };
+  [
+    ['1234567', 0, 8],          // EAN-8
+    ['04963406000', 4, 8],      // UPC-A
+    ['1540141253226', 4, 2],    // ITF-14
+  ].forEach(([data, correct, wrong]) => {
+    equal('GS1 check ' + data + ' (odd-length)', M.gs1CheckDigit(data), correct);
+    check('positional rule really differs on ' + data, positional(data) === wrong,
+      'expected the buggy variant to yield ' + wrong + ', got ' + positional(data));
+  });
+}
+
 // Code 128 "PJJ123C" under Start B carries check symbol 55 (Wikipedia worked example).
 {
   const values = M.code128Values('PJJ123C');

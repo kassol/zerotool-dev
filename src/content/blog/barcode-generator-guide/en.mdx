@@ -1,0 +1,222 @@
+---
+title: "Barcodes That Actually Scan: A Developer's Guide"
+description: "Pick the right 1D symbology, compute check digits correctly, and avoid the print mistakes that turn a valid barcode into an unreadable label."
+pubDate: 2026-08-01
+lang: "en"
+tags: ["barcode", "ean-13", "code-128", "gs1", "developer-tools"]
+ogImage: /og/blog-barcode-generator-guide.png
+---
+
+The barcode looked right on screen. It printed cleanly. At the warehouse it read as a different product, and nobody noticed until the shipment was already out.
+
+The cause was a check digit computed with the weights running the wrong direction. The symbol was structurally valid, so every renderer accepted it and every preview looked correct. A scanner does not validate intent — it decodes what the bars say and returns the number.
+
+Barcodes fail in ways that are invisible until hardware is involved. This guide covers what actually decides whether a symbol scans: which symbology fits your data, how the check digit maths works, and the handful of print and layout mistakes that produce valid-but-unreadable labels.
+
+[Open the Barcode Generator →](/tools/barcode-generator/)
+
+## Choosing a symbology
+
+For retail products, the choice is not yours to make. The numbering scheme dictates the symbology, and the number itself tells you which one you already have.
+
+| Symbology | Data | Length | Where it belongs |
+|---|---|---|---|
+| EAN-13 | Digits | 12 + check | Retail worldwide; ISBN-13, ISSN, and JAN use the same encoding |
+| EAN-8 | Digits | 7 + check | Packaging too small for a full EAN-13 |
+| UPC-A | Digits | 11 + check | Retail in North America |
+| Code 128 | ASCII 0-127 | Variable | Logistics, warehousing, internal asset tags |
+| Code 39 | 0-9 A-Z space `- . $ / + %` | Variable | Industrial, automotive, defence legacy systems |
+| ITF-14 | Digits | 13 + check | Shipping cartons and pallet-level trade units |
+| Codabar | 0-9 `- $ : / . +` | Variable | Libraries, blood banks, courier labels |
+
+A GTIN-13 has to be an EAN-13. A GTIN-12 has to be a UPC-A. If you are labelling something that will cross a retail checkout, you are not choosing a symbology — you are encoding a number that was assigned to you, and the symbology comes with it.
+
+Everything internal is a real choice, and Code 128 is usually the right one. It encodes the full ASCII range, switches between three subsets automatically to stay compact, and is what modern logistics systems expect. Code 39 survives in older installations because it is trivial to print and decode, but it holds fewer characters in the same width and its character set stops at 43 symbols. Pick Code 39 when a receiving system demands it, not because it appears first in a dropdown.
+
+## The check digit, and why direction matters
+
+EAN-13, EAN-8, UPC-A, and ITF-14 share one formula. Starting from the **rightmost data digit** and moving left, digits alternate weights of 3 and 1. Sum the weighted digits, then take the distance to the next multiple of ten:
+
+```
+check = (10 - (weighted sum mod 10)) mod 10
+```
+
+Work through `590123412345`:
+
+```
+digit:   5  9  0  1  2  3  4  1  2  3  4  5
+weight:  1  3  1  3  1  3  1  3  1  3  1  3
+product: 5 27  0  3  2  9  4  3  2  9  4 15   → sum 83
+check:   (10 - 83 mod 10) mod 10 = 7
+```
+
+The complete EAN-13 is `5901234123457`.
+
+The trap is the anchor. Most explanations of EAN-13 state the rule positionally — "counting from the left, odd positions have weight 1 and even positions have weight 3" — and for EAN-13 that is correct, because its twelve data digits make the two formulations equivalent. EAN-13 is the only one of the four with an even-length payload. UPC-A carries eleven digits, EAN-8 seven, ITF-14 thirteen. Carry the positional rule over to any of them and the weights land on the wrong digits.
+
+The result is not an occasional edge case. Across random payloads of those lengths, the positional rule disagrees with the correct answer roughly **80%** of the time — and the remaining 20% is what makes it dangerous, because a single hand-picked test vector has a real chance of passing:
+
+| Data | Symbology | Right-anchored | Positional rule |
+|---|---|---|---|
+| `9638507` | EAN-8 | 4 | 4 |
+| `1234567` | EAN-8 | 0 | **8** |
+| `03600029145` | UPC-A | 2 | **8** |
+| `1540141253226` | ITF-14 | 4 | **2** |
+
+`9638507` is the vector that appears in most EAN-8 documentation, and both implementations agree on it. A test suite built around the textbook example ships the bug.
+
+```javascript
+// Anchored at the rightmost data digit — correct for EAN-13, EAN-8,
+// UPC-A, and ITF-14 alike.
+function checkDigit(data) {
+  let sum = 0;
+  for (let i = data.length - 1, weight = 3; i >= 0; i--, weight = 4 - weight) {
+    sum += Number(data[i]) * weight;
+  }
+  return (10 - (sum % 10)) % 10;
+}
+
+checkDigit('590123412345');  // 7   EAN-13
+checkDigit('1234567');       // 0   EAN-8
+checkDigit('03600029145');   // 2   UPC-A
+```
+
+Test at least one odd-length payload. `1234567` and `03600029145` both separate a right-anchored implementation from a positional one; the usual textbook vectors do not.
+
+## UPC-A is EAN-13 wearing a shorter name
+
+A UPC-A symbol is an EAN-13 with a leading zero. `036000291452` encodes identically to `0036000291452`, and prepending the zero does not change the check digit.
+
+What varies is how a scanner reports it, and the variation is by platform rather than by device. On macOS and iOS the system decoder returns UPC-A as a thirteen-digit `ean_13` result — Apple's [Technical Note TN2325](https://developer.apple.com/library/archive/technotes/tn2325/_index.html) states that a decoded UPC-A is output as an EAN-13 object with a leading zero. Chromium's `BarcodeDetector` inherits that behaviour there; calling `getSupportedFormats()` on macOS returns a list containing `ean_13` and `upc_e` but no `upc_a` at all. On Android the same API is backed by ML Kit, where [UPC-A is its own format](https://developers.google.com/ml-kit/vision/barcode-scanning) and comes back as twelve digits.
+
+So the same code reading the same label gets thirteen digits on one platform and twelve on another. If your products are stored as twelve-digit UPCs, every lookup misses on macOS; store them padded and the Android path misses instead. Normalise at the boundary: pick one internal representation and convert every scan into it before matching, rather than trusting the length you happen to receive.
+
+The same relationship explains UPC-E, which you will occasionally be asked for. UPC-E is not a separate numbering scheme; it is a zero-suppressed printing of a UPC-A for packages too small to carry the full symbol. Most scanners can be configured to expand it back to the twelve-digit UPC-A — on Zebra hardware this is the [Convert UPC-E to UPC-A](https://docs.zebra.com/us/en/scanners/multi-plane/mp72pg/symbologies/upc-ean-jan/convert-upc-e-to-upc-a.html) parameter — but it is a setting, not a guarantee, so confirm it rather than assume it. If a system asks you for a product code, generate the UPC-A.
+
+## How Code 128 stays compact
+
+Code 128 has three character subsets. A encodes control characters and uppercase, B encodes the printable ASCII range including lowercase, and C encodes **pairs** of digits — two digits per symbol instead of one.
+
+That pairing is the reason Code 128 handles long numeric payloads well, and the reason its length is not proportional to your input. A twenty-digit serial number in subset C costs ten symbols. The same twenty digits in subset B cost twenty. An encoder that never switches to C produces a symbol roughly twice as wide as necessary.
+
+Switching costs one symbol, so it only pays off past a threshold. The minimisation rules in ISO/IEC 15417 Annex E work out to roughly: four or more digits at the start or end of the data, where the start symbol or the end of the payload absorbs the cost, and six or more mid-stream, where a switch symbol has to be spent to enter subset C and another to leave it. Below those counts, staying in the current subset is cheaper. Implementations vary in how far they take this — `JsBarcode` applies fixed thresholds, while `zint` searches for a minimum-cost encoding rather than using thresholds at all — so two conforming encoders can produce different symbol counts for the same input. Both decode to the same string.
+
+Everything after the start symbol contributes to a modulo-103 check symbol:
+
+```
+checksum = (start value + Σ(symbol value × position)) mod 103
+```
+
+Positions begin at 1 for the first data symbol; the start symbol contributes its own value once. Subset switches are ordinary symbols and count like any other. The check symbol is embedded in the bars and never appears in the human-readable text, which is why a Code 128 label shows exactly what you encoded while carrying an extra symbol you cannot see.
+
+## When the label needs GS1-128
+
+Shipping labels often carry more than one field: a GTIN, a batch number, an expiry date, a serial. GS1-128 is the convention for packing them into a single Code 128 symbol. It is not a separate symbology — it is Code 128 plus a data structure.
+
+Each field is introduced by an Application Identifier, a two-to-four digit prefix that declares what follows and how long it is. `(01)` is a GTIN-14, `(17)` an expiry date in `YYMMDD`, `(10)` a batch code:
+
+```
+(01)09501101020917(17)260801(10)ABC123
+```
+
+The parentheses are a human-readable convention and are never encoded. In the bars, the structure is marked by FNC1: once as the first symbol to declare the data GS1-formatted, and again to terminate any variable-length field that is not the last one. Fixed-length AIs such as `(01)` and `(17)` need no terminator because the length is implied by the identifier; variable-length ones such as `(10)` do.
+
+This is where a generic Code 128 encoder and a GS1-128 encoder part ways. A generic encoder given the string above encodes the parentheses as literal characters and inserts no FNC1 — the symbol scans, returns a string containing brackets, and any GS1-aware system rejects it. The ZeroTool generator is a generic Code 128 encoder and treats your input literally, which is the honest behaviour for a tool that does not parse AI syntax. When you need real GS1-128, use an encoder that understands application identifiers: `zint --barcode=16 --data="[01]09501101020917[17]260801[10]ABC123"` handles the FNC1 placement, and GS1's own [Digital Link and syntax resources](https://www.gs1.org/standards/barcodes) document the identifier set.
+
+If the payload is genuinely structured and the reading hardware supports 2D, consider a [QR code](/tools/qr-code-generator/) or GS1 DataMatrix instead. A linear symbol that has grown to hold four fields is usually a sign the data has outgrown the format.
+
+## The failure modes that survive code review
+
+Encoding correctly is the easy half. These are the ones that pass every test and fail on a loading dock.
+
+**The quiet zone gets cropped.** Every 1D symbology needs blank margin on both sides, and scanners use it to find where the symbol starts. The required width is specified per symbology in modules, and it is not symmetric: EAN-13 wants 11 modules on the left and 7 on the right, EAN-8 wants 7 on each side, UPC-A 9, and Code 128 at least 10. Designers see whitespace and tighten the layout, or a script trims the image to its bounding box. The bars are intact and the symbol is unreadable. Export with the quiet zone included and never crop to content.
+
+**Someone makes it match the brand.** Decoding depends on contrast between bars and background. A mid-grey bar on a beige label, a dark blue on black, or an inverted white-on-dark symbol will fail on hardware that read the black-on-white proof perfectly. Red is a special case: many laser scanners use a red light source, so red bars can vanish entirely against white. Keep dark bars on a light background.
+
+**The narrowest bar is thinner than the printer can print.** A module width valid in vector space becomes a smeared grey line at 203 dpi on a thermal printer. Direct thermal and inkjet also spread ink slightly, thickening bars and narrowing spaces. Print a test label at production size on production stock and scan it with the hardware that will be used — not a phone camera, which is far more forgiving than a fixed-mount laser.
+
+**The payload outgrows the scanner's field of view.** Variable-length symbologies have no hard limit, so nothing stops you from encoding a 300-character string. The result is structurally valid and physically unreadable, because a handheld scanner decodes what fits in its window. Keep Code 128 under about 48 characters, and Code 39 and Codabar under about 43 — they are lower-density and run out of usable width sooner. Long payloads belong in a 2D symbology.
+
+**ITF-14 loses its bearer bar.** Interleaved 2 of 5 is vulnerable to partial scans: sweep across only part of the symbol and you can decode a shorter, wrong number. The heavy horizontal bars above and below an ITF-14 exist to defeat that, and they are part of the specification rather than decoration. Dropping them to save label space is how a carton reads as a different GTIN.
+
+**Both ends disagree about the Code 39 check character.** Code 39's modulo-43 check character is optional. A scanner that does not expect it reports it as the last character of your data; a system that requires it rejects a symbol without it. Confirm which behaviour the receiving system wants before enabling it, and be aware that the character appears in the human-readable text.
+
+## Verifying before you print
+
+The strongest check is a round trip: encode the payload, rasterise it, and decode it with an independent implementation. If what comes back is not exactly what went in, the symbol is wrong regardless of how it looks.
+
+Modern Chromium browsers expose a decoder natively:
+
+```javascript
+// Decode a rendered barcode with the browser's own scanner.
+const detector = new BarcodeDetector();
+const results = await detector.detect(canvas);
+console.log(results.map(r => `${r.format}:${r.rawValue}`));
+// → ["ean_13:5901234123457"]
+```
+
+Two details make this a real test rather than a formality. Rasterise at several times the display size so narrow bars survive sampling, and compare the decoded string against the payload **including** the check digit. Comparing only the data portion hides exactly the bug that matters most.
+
+For batch work, verify off the browser. `zint` renders and `zbarimg` decodes:
+
+```bash
+# Generate a batch of EAN-13 labels, then verify each one decodes
+# back to the number it was built from.
+while read -r gtin; do
+  zint -b EAN13 --data="$gtin" --output="labels/$gtin.png" --height=60
+  decoded=$(zbarimg --quiet --raw "labels/$gtin.png")
+  [ "$decoded" = "$gtin" ] || echo "MISMATCH: $gtin -> $decoded"
+done < gtins.txt
+```
+
+Two notes on the tooling. Use `zint`'s symbology *names* rather than its numeric IDs: `-b EAN13` is stable, while the old numeric `13` refers to the legacy `EANX` type that newer releases keep only for backward compatibility. And `zbarimg --raw` prints the decoded value alone, which is what makes the string comparison above safe — decoders that print a human-readable block need parsing before you can compare anything.
+
+In Python, the same check digit logic that guards your generator should guard your data import:
+
+```python
+def check_digit(data: str) -> int:
+    """GS1 modulo-10, anchored at the rightmost data digit."""
+    total = 0
+    for i, char in enumerate(reversed(data)):
+        total += int(char) * (3 if i % 2 == 0 else 1)
+    return (10 - total % 10) % 10
+
+
+def is_valid_gtin(code: str) -> bool:
+    # Guard the whole string, not code[:-1] — otherwise a trailing
+    # non-digit slips past the check and int() raises instead of
+    # returning False.
+    return code.isdigit() and int(code[-1]) == check_digit(code[:-1])
+
+
+assert is_valid_gtin('5901234123457')
+assert not is_valid_gtin('5901234123456')
+assert not is_valid_gtin('590123412345X')
+```
+
+Validating GTINs at import time catches transcription errors while they are still cheap. A wrong digit in a spreadsheet costs a minute to fix; the same digit printed onto ten thousand cartons costs considerably more.
+
+## What the ZeroTool generator does differently
+
+Most online barcode generators upload your input to a server that renders the image. For a public product GTIN this is harmless. For an unreleased SKU, an internal asset tag, or a serial number, it is data leaving your machine for no technical reason — the encoding is a lookup table and some arithmetic, and it belongs in the browser.
+
+The [ZeroTool barcode generator](/tools/barcode-generator/) encodes entirely client-side. It appends the check digit when you supply data digits, and verifies the digit instead when you paste a complete code, telling you the correct value on mismatch. Bar colour is deliberately not configurable: low-contrast colour pairs are the most common cause of a label that fails on hardware, and removing the option removes the failure. When a variable-length payload grows past what a handheld scanner reads in one pass, the status line says so rather than silently producing an unusable symbol.
+
+Exports are SVG and PNG. Prefer SVG for print and anything that will be resized — bar edges stay exact at any scale, which is precisely what a scanner cares about. The PNG is rasterised at four times the on-screen size so narrow modules survive.
+
+For pipelines rather than one-off labels, use a library: `zint` on the command line, `python-barcode` in Python, `JsBarcode` in Node. The generator is for the cases where reaching for a dependency costs more than the label is worth.
+
+## Further reading
+
+Related tools on ZeroTool:
+
+- [QR Code Generator](/tools/qr-code-generator/) — 2D symbols for URLs and structured payloads
+- [QR Code Decoder](/tools/qr-code-decoder/) — read codes back from an image or camera
+- [Hash Generator](/tools/hash-generator/) — checksums for the data behind your labels
+
+Specifications and references:
+
+- [GS1 General Specifications](https://www.gs1.org/standards/barcodes-epcrfid-id-keys/gs1-general-specifications) — the authority on GTIN structure, check digits, and print quality
+- [ISO/IEC 15417](https://www.iso.org/standard/43896.html) — Code 128 symbology specification
+- [ISO/IEC 15420](https://www.iso.org/standard/46143.html) — EAN/UPC symbology specification
+- [MDN: BarcodeDetector](https://developer.mozilla.org/en-US/docs/Web/API/BarcodeDetector) — the browser decoding API used above
