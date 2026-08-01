@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 132 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 133 tools and growing.
 
 ## Tools
 
@@ -141,6 +141,7 @@
 | DNS Lookup | [/tools/dns-lookup](https://zerotool.dev/tools/dns-lookup) |
 | OpenAPI to TypeScript Generator | [/tools/openapi-to-typescript](https://zerotool.dev/tools/openapi-to-typescript) |
 | CSS Clamp Calculator | [/tools/css-clamp-calculator](https://zerotool.dev/tools/css-clamp-calculator) |
+| Barcode Generator | [/tools/barcode-generator](https://zerotool.dev/tools/barcode-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
