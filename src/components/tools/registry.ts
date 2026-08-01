@@ -12,6 +12,7 @@ import CronParserTool from './CronParserTool.astro';
 import CssToTailwindTool from './CssToTailwindTool.astro';
 import CssUnitConverterTool from './CssUnitConverterTool.astro';
 import CssClampCalculatorTool from './CssClampCalculatorTool.astro';
+import BarcodeGeneratorTool from './BarcodeGeneratorTool.astro';
 import CsvJsonTool from './CsvJsonTool.astro';
 import DiffCheckerTool from './DiffCheckerTool.astro';
 import HashGeneratorTool from './HashGeneratorTool.astro';
@@ -147,6 +148,7 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'css-to-tailwind': CssToTailwindTool,
   'css-unit-converter': CssUnitConverterTool,
   'css-clamp-calculator': CssClampCalculatorTool,
+  'barcode-generator': BarcodeGeneratorTool,
   'csv-json': CsvJsonTool,
   'diff-checker': DiffCheckerTool,
   'hash-generator': HashGeneratorTool,
