@@ -1,0 +1,61 @@
+---
+seoTitle: "CSR デコーダー — PKCS#10 をオンライン検証 | ZeroTool"
+seoDescription: "PKCS#10 証明書署名要求をブラウザで解析。Subject・公開鍵・要求された SAN と拡張を表示し、自己署名を検証して CA 提出前に不備を発見。アップロード不要。"
+faqItems:
+  - question: "CSR はどこかにアップロードされますか？"
+    answer: "されません。ASN.1 解析・ハッシュ計算・署名検証はすべてページ内のインライン JavaScript と Web Crypto API で完結し、要求の内容が端末から出ることはありません。Web 上の CSR デコーダーの多くは証明書販売業者の集客ページで、貼り付けた内容が相手のサーバーに届く点は意識しておく価値があります。"
+  - question: "自己署名の検証は何を証明しますか？"
+    answer: "PKCS#10 要求は、その中の公開鍵と対になる秘密鍵で署名されています。この署名を検証できれば、鍵ペアが確かに対であること、そして生成後に 1 バイトも改変されていないことが確かめられます。CA が受領時に行う所持証明と同じ処理なので、ここで失敗する要求は CA でも失敗します。原因の多くは PEM の切れ、メールクライアントによる改行の入れ直し、手作業での編集です。"
+  - question: "問題なさそうな CSR が CA に却下されるのはなぜですか？"
+    answer: "よくある 4 つの原因はすべてここで検査します。RSA 鍵が 2048 ビット未満、SHA-1 署名、subjectAltName が皆無、Common Name が SAN に重複記載されていない、の 4 点です。ブラウザは長年 SAN のみでホスト名を照合しているため、ホスト名を CN にしか書いていない CSR は、どのブラウザも受け入れない証明書を生みます。"
+  - question: "対応する入力形式は？"
+    answer: "PEM のみです。-----BEGIN CERTIFICATE REQUEST----- と、Windows certreq が出力する -----BEGIN NEW CERTIFICATE REQUEST----- の両形式に対応します。DER バイナリは直接読み込みません。openssl req -inform DER -in req.der -out req.pem で変換してください。"
+  - question: "このツールで CSR を作成できますか？"
+    answer: "できませんし、できるべきでもありません。CSR の作成は秘密鍵の生成を伴い、Web ページが生成した秘密鍵はそのページが控えを取り得る鍵です。openssl req -new -newkey rsa:2048 -nodes -keyout key.pem -out req.pem をローカルで実行し、生成された要求をここに貼り付けて点検してください。"
+---
+
+<h2>CSR を点検する手順</h2>
+
+<ol>
+  <li>BEGIN 行と END 行を含めて PEM 要求を貼り付けます。</li>
+  <li><strong>デコード</strong>を押すか、テキストエリアで Ctrl / Cmd + Enter を押します。</li>
+  <li>まず提出前チェックを読みます。却下につながりやすい順に並んでいます。</li>
+  <li>Subject と要求された SAN の一覧が、取得しようとしている証明書の内容と一致するか確認します。一覧にある名前はすべて発行証明書に入り、書き忘れた名前は入りません。</li>
+</ol>
+
+<h2>提出前チェックの判断基準</h2>
+
+<table>
+  <thead>
+    <tr><th>チェック項目</th><th>CA が重視する理由</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>自己署名</td><td>所持証明。署名が検証できない要求は、転送中に破損したか、噛み合わない部品から組み立てられています。</td></tr>
+    <tr><td>鍵強度</td><td>CA/Browser Forum ベースライン要件の下限は RSA 2048 ビットまたは 256 ビット楕円曲線です。これを下回れば即座に拒否されます。</td></tr>
+    <tr><td>署名ハッシュ</td><td>SHA-1 は 2016 年に公的発行から撤廃されました。SHA-1 や MD5 で署名した要求は提出した時点で無効です。</td></tr>
+    <tr><td>subjectAltName</td><td>SAN のない証明書は何も保護しません。ブラウザはホスト名照合で Common Name を読まなくなったためです。</td></tr>
+    <tr><td>CN の SAN 収載</td><td>CN を SAN にも書いていなければ、まさにその指定したホスト名を守らない証明書ができあがります。</td></tr>
+    <tr><td>ワイルドカードの位置</td><td>ワイルドカードは最左ラベル全体としてのみ有効です。<code>&#42;.example.com</code> は可、<code>api.&#42;.example.com</code> と <code>w&#42;.example.com</code> は不可。</td></tr>
+    <tr><td>公開解決可能な名前</td><td><code>.local</code> や <code>.internal</code> などの内部サフィックス、ドットのない単一ラベル名、プライベート IP は公的に信頼される証明書に記載できません。</td></tr>
+  </tbody>
+</table>
+
+<h2>CSR の中身</h2>
+
+<p>PKCS#10 要求の実体は、DER で包まれた 3 つの要素です。要求される情報、それを署名したアルゴリズム、そして署名そのもの。情報ブロックには Subject 識別名、公開鍵、任意の属性集合が入ります。興味深い内容はほぼすべて属性集合の中にあり、<code>extensionRequest</code> 属性が SAN 一覧・key usage・extended key usage を運びます。</p>
+
+<p>CSR に入っていないのは秘密鍵です。要求内のどの情報もなりすましには使えないため、通常の経路で CA に送っても安全です。唯一の例外が <code>challengePassword</code> で、これは一部の CA が後日の失効手続きに使う共有秘密です。本デコーダーはこの属性の有無だけを報告し、値は意図的に一切表示しません。</p>
+
+<h2>署名検証の仕組み</h2>
+
+<p>デコーダーは DER から <code>CertificationRequestInfo</code> のバイト範囲を正確に切り出し、埋め込まれた <code>SubjectPublicKeyInfo</code> を <code>crypto.subtle.importKey</code> で読み込み、要求に記された アルゴリズムで <code>crypto.subtle.verify</code> を呼びます。RSA PKCS#1 v1.5、RSA-PSS、および P-256 / P-384 / P-521 上の ECDSA がこの経路で検証されます。ECDSA 署名は DER の <code>SEQUENCE&#123;r,s&#125;</code> 形式から、Web Crypto が要求する固定長形式へ変換されます。</p>
+
+<p>Ed25519 と Ed448 も同様に試行し、成否はブラウザが Web Crypto にこれらを公開しているかに依存します。ブラウザが読み込みを拒否した場合、チェックは「署名が不正」ではなく「検証できなかった」と報告します。アルゴリズム未対応と署名破損は別の問題であり、心配すべきは後者だけだからです。その場合はローカルで <code>openssl req -in req.pem -verify -noout</code> を実行してください。</p>
+
+<h2>SPKI ピンの使いどころ</h2>
+
+<p>要求のフィンガープリントに加えて、SubjectPublicKeyInfo から計算した <code>sha256/…</code> ピン（公開鍵ピンニング設定で使う RFC 7469 形式）も表示します。この値は鍵のみに依存するため、同じ鍵ペアで発行されたすべての証明書で同一です。<code>openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64</code> の出力と突き合わせれば、受け取った証明書がこの要求から発行されたものかを確認できます。</p>
+
+<h2>対応範囲</h2>
+
+<p>本ツールが読むのは PEM 形式の PKCS#10 要求だけです。要求の生成は行わず、秘密鍵は読み取りも受け付けもせず、ネットワーク通信も一切しません。実行するチェックは、目の前のバイト列だけで判断できるものに限られます。証明書チェーンの検証、CT ログの確認、発行ポリシーの適用は CA の職掌であり、ローカルでの等価コマンドは <code>openssl req -in req.pem -noout -text</code> です。</p>

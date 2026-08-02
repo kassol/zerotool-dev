@@ -1,0 +1,61 @@
+---
+seoTitle: "CSR Decoder — Verify a PKCS#10 Request | ZeroTool"
+seoDescription: "Decode a PKCS#10 CSR in your browser: Subject, public key, requested SANs, and a self-signature check that catches errors before the CA does. No upload."
+faqItems:
+  - question: "Is my CSR uploaded anywhere?"
+    answer: "No. The ASN.1 parsing, the hashing, and the signature verification all run in the page through inline JavaScript and the Web Crypto API. The request body never leaves your device, which matters because most CSR decoders on the web are lead-generation pages run by certificate resellers that receive whatever you paste."
+  - question: "What does the self-signature check actually prove?"
+    answer: "A PKCS#10 request is signed with the private key that matches the public key inside it. Verifying that signature proves the two halves belong together and that no byte of the request has changed since it was created. It is the same proof of possession a CA performs on receipt, so a failure here means the CA will fail too — usually because the PEM was truncated, line-wrapped by an email client, or edited by hand."
+  - question: "Why did my CA reject a CSR that looks fine?"
+    answer: "The four common reasons are all checked here: an RSA key under 2048 bits, a SHA-1 signature, no subjectAltName at all, and a Common Name that is not repeated as a SAN entry. Browsers have matched hostnames on SAN alone for years, so a CSR whose only hostname lives in the CN produces a certificate that no browser accepts."
+  - question: "Which input formats work?"
+    answer: "PEM only — both -----BEGIN CERTIFICATE REQUEST----- and the -----BEGIN NEW CERTIFICATE REQUEST----- form written by Windows certreq. DER binary is not read directly; convert it first with openssl req -inform DER -in req.der -out req.pem."
+  - question: "Can this tool create a CSR for me?"
+    answer: "No, and it should not. Generating a CSR means generating a private key, and a private key produced by a web page is a private key that page could have kept. Create it locally with openssl req -new -newkey rsa:2048 -nodes -keyout key.pem -out req.pem, then paste the resulting request here to check it."
+---
+
+<h2>How to check a CSR</h2>
+
+<ol>
+  <li>Paste the PEM request, including the BEGIN and END lines.</li>
+  <li>Press <strong>Decode</strong>, or use Ctrl/Cmd + Enter from the text area.</li>
+  <li>Read the pre-submission checks first — they are ordered by how likely each one is to get the request rejected.</li>
+  <li>Confirm the Subject and the requested SAN list match what you intend to buy a certificate for. Every name in that list ends up in the issued certificate, and every name you forgot does not.</li>
+</ol>
+
+<h2>What the pre-submission checks look for</h2>
+
+<table>
+  <thead>
+    <tr><th>Check</th><th>Why a CA cares</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Self-signature</td><td>Proof of possession. A request whose signature does not verify has been damaged in transit or was assembled from mismatched parts.</td></tr>
+    <tr><td>Key strength</td><td>The CA/Browser Forum Baseline Requirements set the floor at RSA 2048 or a 256-bit elliptic curve. Anything smaller is refused outright.</td></tr>
+    <tr><td>Signature hash</td><td>SHA-1 was withdrawn from public issuance in 2016. A request signed with SHA-1 or MD5 is dead on arrival.</td></tr>
+    <tr><td>subjectAltName</td><td>A certificate without SAN entries protects nothing, because browsers stopped reading Common Name for hostname matching.</td></tr>
+    <tr><td>CN covered by SAN</td><td>A Common Name that is not repeated in the SAN list produces a certificate that does not cover the very hostname you named.</td></tr>
+    <tr><td>Wildcard placement</td><td>A wildcard is only valid as the whole leftmost label. <code>&#42;.example.com</code> is fine; <code>api.&#42;.example.com</code> and <code>w&#42;.example.com</code> are not.</td></tr>
+    <tr><td>Publicly resolvable names</td><td>Internal suffixes such as <code>.local</code> and <code>.internal</code>, bare single-label hostnames, and private IP ranges cannot appear in a publicly trusted certificate.</td></tr>
+  </tbody>
+</table>
+
+<h2>What a CSR contains</h2>
+
+<p>A PKCS#10 request is three things wrapped in DER: the information being requested, the algorithm that signed it, and the signature itself. The information block holds the Subject distinguished name, the public key, and an optional attribute set. Almost everything interesting lives in that attribute set, because the <code>extensionRequest</code> attribute is where the SAN list, the key usage flags, and the extended key usage flags are carried.</p>
+
+<p>What a CSR does not contain is the private key. Nothing in the request can be used to impersonate you, which is why sending one to a CA over ordinary channels is safe. The one exception is <code>challengePassword</code>, a shared secret some CAs use to authorise later revocation — this decoder reports whether that attribute is present and deliberately never prints its value.</p>
+
+<h2>How the signature verification works</h2>
+
+<p>The decoder slices the exact <code>CertificationRequestInfo</code> byte range out of the DER, imports the embedded <code>SubjectPublicKeyInfo</code> through <code>crypto.subtle.importKey</code>, and calls <code>crypto.subtle.verify</code> with the algorithm named in the request. RSA PKCS#1 v1.5, RSA-PSS, and ECDSA over P-256, P-384, and P-521 are all verified this way; ECDSA signatures are converted from their DER <code>SEQUENCE&#123;r,s&#125;</code> form to the fixed-width layout Web Crypto expects.</p>
+
+<p>Ed25519 and Ed448 are attempted the same way and depend on the browser exposing them to Web Crypto. When a browser refuses the import, the check reports that it could not verify rather than claiming the signature is bad — an unsupported algorithm and a broken signature are different problems, and only one of them should worry you. Verify those locally with <code>openssl req -in req.pem -verify -noout</code>.</p>
+
+<h2>The SPKI pin</h2>
+
+<p>Alongside the request fingerprints, the tool prints a <code>sha256/…</code> pin computed over the SubjectPublicKeyInfo, the RFC 7469 form used by public key pinning configurations. Because that value depends only on the key, it stays identical across every certificate ever issued for this key pair. Compare it against <code>openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64</code> to confirm that a certificate you received back really was issued from this request.</p>
+
+<h2>Scope</h2>
+
+<p>This tool reads PEM PKCS#10 requests and nothing else. It does not generate requests, does not read or accept private keys, and does not fetch anything over the network — the checks it runs are the ones that can be decided from the bytes in front of it. Chain validation, CT log inspection, and issuance policy are the CA's job, and the local equivalent is <code>openssl req -in req.pem -noout -text</code>.</p>

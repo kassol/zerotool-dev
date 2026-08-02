@@ -133,6 +133,7 @@ const icons: Record<string, string> = {
   'openapi-to-typescript': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6v16H4z"/><path d="M6.5 8h1"/><path d="M6.5 11h1"/><path d="M6.5 14h1"/><path d="m13 9 3 3-3 3"/><path d="M16 9h4v6h-4"/><path d="M18 12h2"/></svg>',
   'css-clamp-calculator': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18h4L17 6h4"/><path d="M7 4v16M17 4v16" stroke-dasharray="2 2"/></svg>',
   'barcode-generator': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5v14"/><path d="M8 5v14"/><path d="M12 5v14"/><path d="M17 5v14"/><path d="M21 5v14"/></svg>',
+  'csr-decoder': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6"/><path d="M14 2v6h6"/><path d="M8 13h4"/><path d="M8 17h3"/><path d="m15 19 2 2 4-4"/></svg>',
 };
 
 export function getToolIcon(slug: string): string {

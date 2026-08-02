@@ -1,0 +1,61 @@
+---
+seoTitle: "CSR 解码器 — 在线解析并校验 PKCS#10 | ZeroTool"
+seoDescription: "在浏览器中解析 PKCS#10 证书签名请求：Subject、公钥、申请的 SAN 与扩展，并验证 CSR 自签名，在提交 CA 前发现问题。免费，不上传。"
+faqItems:
+  - question: "CSR 会上传到服务器吗？"
+    answer: "不会。ASN.1 解析、哈希计算、签名验证全部通过页面内联 JavaScript 与 Web Crypto API 在本机完成，请求内容不会离开浏览器。这一点值得强调：网上多数 CSR 解码器是证书经销商的引流页面，你粘贴的内容会进入他们的服务器。"
+  - question: "自签名验证到底验的是什么？"
+    answer: "PKCS#10 请求由与其中公钥配对的私钥签名。验证这个签名能证明公私钥确实是一对，且请求自生成以来一个字节都没被改动。CA 收到 CSR 后做的就是同一件事，所以这里验不过，CA 也会验不过——常见原因是 PEM 被截断、被邮件客户端重新折行，或者被手工编辑过。"
+  - question: "为什么看起来正常的 CSR 会被 CA 拒绝？"
+    answer: "四种常见原因这里都会检查：RSA 密钥不足 2048 位、使用 SHA-1 签名、完全没有 subjectAltName、Common Name 没有同时写进 SAN。浏览器早已只按 SAN 匹配主机名，因此域名只写在 CN 里的 CSR 会签出一张任何浏览器都不认的证书。"
+  - question: "支持哪些输入格式？"
+    answer: "仅 PEM，包含 -----BEGIN CERTIFICATE REQUEST----- 以及 Windows certreq 输出的 -----BEGIN NEW CERTIFICATE REQUEST----- 两种标记。DER 二进制不直接读取，请先用 openssl req -inform DER -in req.der -out req.pem 转换。"
+  - question: "能用这个工具生成 CSR 吗？"
+    answer: "不能，也不该能。生成 CSR 就要生成私钥，而由网页生成的私钥，网页有能力留一份。请在本地执行 openssl req -new -newkey rsa:2048 -nodes -keyout key.pem -out req.pem，再把生成的请求粘贴到这里检查。"
+---
+
+<h2>检查 CSR 的步骤</h2>
+
+<ol>
+  <li>粘贴 PEM 请求，保留 BEGIN 与 END 行。</li>
+  <li>点击 <strong>解码</strong>，或在输入框中按 Ctrl / Cmd + Enter。</li>
+  <li>先看提交前检查——这些项按「导致拒签的概率」排序。</li>
+  <li>核对 Subject 与申请的 SAN 列表是否与你要买的证书一致。列表里的每个域名都会进入签发的证书，漏掉的不会。</li>
+</ol>
+
+<h2>提交前检查的判据</h2>
+
+<table>
+  <thead>
+    <tr><th>检查项</th><th>CA 为什么在意</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>自签名</td><td>持有证明（proof of possession）。签名验不过说明请求在传输中损坏，或由不匹配的部件拼接而成。</td></tr>
+    <tr><td>密钥强度</td><td>CA/Browser Forum 基线要求的下限是 RSA 2048 位或 256 位椭圆曲线，低于此值直接拒绝。</td></tr>
+    <tr><td>签名摘要算法</td><td>SHA-1 自 2016 年起退出公共签发。用 SHA-1 或 MD5 签名的请求提交即废。</td></tr>
+    <tr><td>subjectAltName</td><td>没有 SAN 的证书什么都保护不了，因为浏览器早已不再读取 Common Name 做主机名匹配。</td></tr>
+    <tr><td>CN 是否被 SAN 覆盖</td><td>CN 没有同时写进 SAN，签出的证书就不覆盖你指名的那个主机名。</td></tr>
+    <tr><td>通配符位置</td><td>通配符只能作为完整的最左标签。<code>&#42;.example.com</code> 合法，<code>api.&#42;.example.com</code> 与 <code>w&#42;.example.com</code> 不合法。</td></tr>
+    <tr><td>域名可否公网解析</td><td><code>.local</code>、<code>.internal</code> 等内部后缀、无点的单标签主机名、私有 IP 段都不能出现在公共信任证书里。</td></tr>
+  </tbody>
+</table>
+
+<h2>CSR 里装了什么</h2>
+
+<p>PKCS#10 请求本质是 DER 包裹的三件东西：被申请的信息、签名所用的算法、签名本身。信息块里是 Subject 可分辨名称、公钥，以及一个可选属性集。真正有价值的内容几乎都在属性集里——<code>extensionRequest</code> 属性承载着 SAN 列表、key usage 与 extended key usage 标志。</p>
+
+<p>CSR 里没有的是私钥。请求中的任何内容都无法用来冒充你，所以通过常规渠道把 CSR 发给 CA 是安全的。唯一例外是 <code>challengePassword</code>——部分 CA 用它作为后续吊销的共享口令。本解码器只报告该属性是否存在，刻意不打印它的值。</p>
+
+<h2>签名验证是怎么做的</h2>
+
+<p>解码器从 DER 中切出 <code>CertificationRequestInfo</code> 的精确字节范围，通过 <code>crypto.subtle.importKey</code> 导入内嵌的 <code>SubjectPublicKeyInfo</code>，再用请求中声明的算法调用 <code>crypto.subtle.verify</code>。RSA PKCS#1 v1.5、RSA-PSS，以及 P-256 / P-384 / P-521 上的 ECDSA 都按此路径验证；ECDSA 签名会先从 DER 的 <code>SEQUENCE&#123;r,s&#125;</code> 形式转换为 Web Crypto 要求的定长布局。</p>
+
+<p>Ed25519 与 Ed448 同样尝试验证，能否成功取决于浏览器是否向 Web Crypto 暴露这两种算法。浏览器拒绝导入时，检查项会报告「无法验证」而不是「签名无效」——算法不受支持与签名损坏是两个问题，只有后者值得担心。这种情况请在本地用 <code>openssl req -in req.pem -verify -noout</code> 验证。</p>
+
+<h2>SPKI Pin 的用途</h2>
+
+<p>除请求指纹外，工具还会输出一个基于 SubjectPublicKeyInfo 计算的 <code>sha256/…</code> pin，即公钥固定（public key pinning）配置采用的 RFC 7469 形式。由于该值只依赖密钥，同一密钥对签发的每一张证书上它都相同。把它与 <code>openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64</code> 的输出比对，就能确认收到的证书确实是由这份请求签发的。</p>
+
+<h2>能力范围</h2>
+
+<p>本工具只读取 PEM 格式的 PKCS#10 请求。它不生成请求，不读取也不接受私钥，不发起任何网络请求——所做的检查全部能从眼前这段字节中判定。证书链校验、CT 日志检查与签发策略属于 CA 的职责，本地等价命令是 <code>openssl req -in req.pem -noout -text</code>。</p>

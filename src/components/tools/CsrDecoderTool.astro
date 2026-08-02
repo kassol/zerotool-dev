@@ -1,0 +1,1268 @@
+---
+// CsrDecoderTool — PKCS#10 certificate signing request decoder
+// 100% client-side: ASN.1 DER parser + Web Crypto signature verification, no dependencies.
+// The ASN.1 primitives mirror SslCertificateDecoderTool; DER is the same grammar for
+// X.509 and PKCS#10, and asnRead here additionally records each node's start offset so
+// the exact CertificationRequestInfo and SubjectPublicKeyInfo byte ranges can be sliced
+// for crypto.subtle.verify.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+---
+
+<div>
+  <div class="csrd-wrap">
+    <div class="csrd-input-section">
+      <label for="csrd-input" class="tool-label">
+        <span data-i18n="pasteLabel">Paste CSR (PEM)</span>
+      </label>
+      <textarea
+        id="csrd-input"
+        class="tool-textarea csrd-input"
+        rows="9"
+        placeholder="-----BEGIN CERTIFICATE REQUEST-----&#10;MIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...&#10;-----END CERTIFICATE REQUEST-----"
+        data-i18n-placeholder="placeholder"
+        spellcheck="false"
+        autocomplete="off"
+      ></textarea>
+    </div>
+
+    <div class="csrd-actions">
+      <button id="csrd-decode" class="btn-primary" type="button" data-i18n="decode">Decode</button>
+      <button id="csrd-example" class="btn-ghost" type="button" data-i18n="loadExample">Load Example</button>
+      <button id="csrd-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="csrd-status" class="tool-status none" aria-live="polite"></div>
+
+    <div id="csrd-results" class="csrd-results" hidden></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          pasteLabel: 'Paste CSR (PEM)', decode: 'Decode', loadExample: 'Load Example', clear: 'Clear',
+          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+          copy: 'Copy', copied: 'Copied!',
+          decoded: 'Decoded successfully.',
+          bundleNotice: 'Found {n} requests — showing request #1.',
+          errEmpty: 'Please paste a PEM certificate signing request.',
+          errNoMarkers: 'No -----BEGIN CERTIFICATE REQUEST----- marker found. DER binary input is not supported — convert with: openssl req -inform DER -in req.der -out req.pem',
+          errIsCertificate: 'This is an X.509 certificate, not a signing request. Use the SSL Certificate Decoder for it.',
+          errIsPrivateKey: 'This is a private key. Never paste a private key into a web page — decode the matching CSR instead.',
+          errBase64: 'Unable to Base64-decode the request body.',
+          errAsn1: 'Unable to parse ASN.1 structure: ',
+          errUnexpected: 'Decoder error: ',
+          sectionChecks: 'Pre-submission Checks', sectionSubject: 'Subject', sectionPublicKey: 'Public Key',
+          sectionSan: 'Requested Subject Alternative Names', sectionExtensions: 'Requested Extensions',
+          sectionAttributes: 'Attributes', sectionSignature: 'Signature', sectionFingerprints: 'Fingerprints',
+          sectionMetadata: 'Metadata',
+          labelAlgorithm: 'Algorithm', labelKeySize: 'Key Size', labelExponent: 'Exponent', labelCurve: 'Curve',
+          labelSignatureAlgo: 'Signature Algorithm', labelVersion: 'Version', labelSpkiPin: 'SPKI SHA-256 Pin',
+          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+          labelCa: 'Certificate Authority', labelPathLen: 'Path Length',
+          statusYes: 'Yes', statusNo: 'No', present: 'present', notShown: 'value not displayed',
+          checkSig: 'Self-signature', checkKey: 'Key strength', checkHash: 'Signature hash',
+          checkSan: 'Subject alternative names', checkCn: 'Common Name coverage',
+          checkWildcard: 'Wildcard names', checkPublic: 'Publicly resolvable names',
+          sigOk: 'Verified with {algo} — the request was signed by the matching private key',
+          sigBad: 'Does not match the public key in this request. The CSR is corrupt or was tampered with.',
+          sigUnsupported: '{algo} cannot be verified by this browser. Check locally with: openssl req -in req.pem -verify -noout',
+          keyOk: '{algo} {bits} bits',
+          keyWeak: '{algo} {bits} bits — below the 2048-bit RSA / 256-bit EC minimum public CAs accept',
+          hashOk: '{hash}',
+          hashWeak: '{hash} — public CAs stopped accepting SHA-1 signatures in 2016',
+          sanOk: '{n} name(s) requested',
+          sanMissing: 'No subjectAltName requested. A public CA will reject this — browsers match on SAN, not Common Name.',
+          cnOk: 'CN {cn} is also a SAN entry',
+          cnMissingFromSan: 'CN {cn} is not in the SAN list. Browsers ignore Common Name, so the issued certificate will not cover it.',
+          cnAbsent: 'No Common Name set. Valid — browsers match on SAN only.',
+          wildcardNone: 'No wildcard names',
+          wildcardOk: '{name} — well-formed leftmost wildcard',
+          wildcardBad: '{name} — a wildcard is only allowed as the entire leftmost label',
+          wildcardBroad: '{name} spans a two-label domain; a CA refuses wildcards at registry level',
+          publicOk: 'All names are publicly resolvable in form',
+          publicBad: '{name} — internal names and private IPs cannot appear in a publicly trusted certificate',
+        },
+        zh: {
+          pasteLabel: '粘贴 CSR（PEM）', decode: '解码', loadExample: '加载示例', clear: '清除',
+          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+          copy: '复制', copied: '已复制！',
+          decoded: '解码成功。',
+          bundleNotice: '检测到 {n} 个请求 — 展示第 1 个。',
+          errEmpty: '请粘贴 PEM 格式的证书签名请求。',
+          errNoMarkers: '未找到 -----BEGIN CERTIFICATE REQUEST----- 标记。本工具不直接支持 DER 二进制，请先用 openssl req -inform DER -in req.der -out req.pem 转换。',
+          errIsCertificate: '这是 X.509 证书，不是签名请求。请改用 SSL 证书解码器。',
+          errIsPrivateKey: '这是私钥。任何网页都不该收到私钥——请改为粘贴对应的 CSR。',
+          errBase64: '无法对请求正文进行 Base64 解码。',
+          errAsn1: '无法解析 ASN.1 结构：',
+          errUnexpected: '解码异常：',
+          sectionChecks: '提交前检查', sectionSubject: '主题（Subject）', sectionPublicKey: '公钥',
+          sectionSan: '申请的 Subject Alternative Names', sectionExtensions: '申请的扩展',
+          sectionAttributes: '属性', sectionSignature: '签名', sectionFingerprints: '指纹',
+          sectionMetadata: '元数据',
+          labelAlgorithm: '算法', labelKeySize: '密钥长度', labelExponent: '公钥指数', labelCurve: '曲线',
+          labelSignatureAlgo: '签名算法', labelVersion: '版本', labelSpkiPin: 'SPKI SHA-256 Pin',
+          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+          labelCa: '是否 CA', labelPathLen: 'Path Length',
+          statusYes: '是', statusNo: '否', present: '存在', notShown: '不显示内容',
+          checkSig: '自签名', checkKey: '密钥强度', checkHash: '签名摘要算法',
+          checkSan: 'Subject Alternative Names', checkCn: 'Common Name 覆盖',
+          checkWildcard: '通配符域名', checkPublic: '可公网解析的域名',
+          sigOk: '已用 {algo} 验证通过——该请求由配对的私钥签名',
+          sigBad: '与请求中的公钥不匹配。CSR 已损坏或被篡改。',
+          sigUnsupported: '当前浏览器无法验证 {algo}。请在本地执行 openssl req -in req.pem -verify -noout 检查。',
+          keyOk: '{algo} {bits} 位',
+          keyWeak: '{algo} {bits} 位——低于公共 CA 接受的 RSA 2048 位 / EC 256 位下限',
+          hashOk: '{hash}',
+          hashWeak: '{hash}——公共 CA 自 2016 年起不再接受 SHA-1 签名',
+          sanOk: '共申请 {n} 个域名',
+          sanMissing: '未申请 subjectAltName。公共 CA 会拒签——浏览器只匹配 SAN，不看 Common Name。',
+          cnOk: 'CN {cn} 同时也是 SAN 条目',
+          cnMissingFromSan: 'CN {cn} 不在 SAN 列表中。浏览器忽略 Common Name，签发的证书不会覆盖它。',
+          cnAbsent: '未设置 Common Name。这是合法的——浏览器只匹配 SAN。',
+          wildcardNone: '无通配符域名',
+          wildcardOk: '{name}——最左标签通配符，格式正确',
+          wildcardBad: '{name}——通配符只能作为完整的最左标签',
+          wildcardBroad: '{name} 覆盖二级域，CA 拒绝注册局层级的通配符',
+          publicOk: '所有域名在形式上均可公网解析',
+          publicBad: '{name}——内部域名与私有 IP 不能出现在公共信任证书中',
+        },
+        ja: {
+          pasteLabel: 'CSR（PEM）を貼り付け', decode: 'デコード', loadExample: 'サンプル読込', clear: 'クリア',
+          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+          copy: 'コピー', copied: 'コピー済み！',
+          decoded: 'デコードしました。',
+          bundleNotice: '{n} 件のリクエストを検出 — 1 番目を表示します。',
+          errEmpty: 'PEM 形式の証明書署名要求を貼り付けてください。',
+          errNoMarkers: '-----BEGIN CERTIFICATE REQUEST----- マーカーが見つかりません。DER バイナリは直接対応していません。openssl req -inform DER -in req.der -out req.pem で変換してください。',
+          errIsCertificate: 'これは X.509 証明書であり署名要求ではありません。SSL 証明書デコーダーをご利用ください。',
+          errIsPrivateKey: 'これは秘密鍵です。秘密鍵を Web ページに貼り付けないでください。対応する CSR を貼り付けてください。',
+          errBase64: 'リクエスト本体を Base64 デコードできませんでした。',
+          errAsn1: 'ASN.1 構造を解析できません：',
+          errUnexpected: 'デコードエラー：',
+          sectionChecks: '提出前チェック', sectionSubject: 'Subject', sectionPublicKey: '公開鍵',
+          sectionSan: '要求された Subject Alternative Names', sectionExtensions: '要求された拡張',
+          sectionAttributes: '属性', sectionSignature: '署名', sectionFingerprints: 'フィンガープリント',
+          sectionMetadata: 'メタデータ',
+          labelAlgorithm: 'アルゴリズム', labelKeySize: '鍵長', labelExponent: 'Exponent', labelCurve: '曲線',
+          labelSignatureAlgo: '署名アルゴリズム', labelVersion: 'バージョン', labelSpkiPin: 'SPKI SHA-256 Pin',
+          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+          labelCa: 'CA 証明書', labelPathLen: 'Path Length',
+          statusYes: 'はい', statusNo: 'いいえ', present: 'あり', notShown: '値は表示しません',
+          checkSig: '自己署名', checkKey: '鍵強度', checkHash: '署名ハッシュ',
+          checkSan: 'Subject Alternative Names', checkCn: 'Common Name の網羅',
+          checkWildcard: 'ワイルドカード名', checkPublic: '公開解決可能な名前',
+          sigOk: '{algo} で検証に成功 — 対応する秘密鍵で署名されています',
+          sigBad: 'このリクエスト内の公開鍵と一致しません。CSR が破損しているか改ざんされています。',
+          sigUnsupported: 'このブラウザでは {algo} を検証できません。ローカルで openssl req -in req.pem -verify -noout を実行してください。',
+          keyOk: '{algo} {bits} ビット',
+          keyWeak: '{algo} {bits} ビット — 公的 CA が受け付ける RSA 2048 ビット / EC 256 ビットの下限を下回ります',
+          hashOk: '{hash}',
+          hashWeak: '{hash} — 公的 CA は 2016 年に SHA-1 署名の受付を終了しました',
+          sanOk: '{n} 件の名前を要求',
+          sanMissing: 'subjectAltName が要求されていません。ブラウザは SAN のみを照合するため、公的 CA は却下します。',
+          cnOk: 'CN {cn} は SAN にも含まれています',
+          cnMissingFromSan: 'CN {cn} が SAN に含まれていません。ブラウザは Common Name を無視するため、発行された証明書はこの名前を保護しません。',
+          cnAbsent: 'Common Name が未設定です。ブラウザは SAN のみを照合するため問題ありません。',
+          wildcardNone: 'ワイルドカード名なし',
+          wildcardOk: '{name} — 最左ラベルのワイルドカードとして正しい形式です',
+          wildcardBad: '{name} — ワイルドカードは最左ラベル全体としてのみ使用できます',
+          wildcardBroad: '{name} は 2 ラベルのドメインを覆います。CA はレジストリ階層のワイルドカードを拒否します',
+          publicOk: 'すべての名前が形式上、公開解決可能です',
+          publicBad: '{name} — 内部名やプライベート IP は公的に信頼される証明書に記載できません',
+        },
+        ko: {
+          pasteLabel: 'CSR(PEM) 붙여넣기', decode: '디코드', loadExample: '예시 불러오기', clear: '지우기',
+          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+          copy: '복사', copied: '복사됨!',
+          decoded: '디코딩 완료.',
+          bundleNotice: '{n}개의 요청이 감지됨 — 첫 번째 요청 표시.',
+          errEmpty: 'PEM 형식의 인증서 서명 요청을 붙여넣어 주세요.',
+          errNoMarkers: '-----BEGIN CERTIFICATE REQUEST----- 마커를 찾을 수 없습니다. DER 바이너리는 직접 지원하지 않습니다. openssl req -inform DER -in req.der -out req.pem 로 변환해 주세요.',
+          errIsCertificate: 'X.509 인증서이며 서명 요청이 아닙니다. SSL 인증서 디코더를 사용해 주세요.',
+          errIsPrivateKey: '개인 키입니다. 개인 키를 웹 페이지에 붙여넣지 마세요. 해당하는 CSR을 붙여넣어 주세요.',
+          errBase64: '요청 본문을 Base64 디코딩할 수 없습니다.',
+          errAsn1: 'ASN.1 구조를 파싱할 수 없습니다: ',
+          errUnexpected: '디코딩 오류: ',
+          sectionChecks: '제출 전 점검', sectionSubject: 'Subject', sectionPublicKey: '공개 키',
+          sectionSan: '요청된 Subject Alternative Names', sectionExtensions: '요청된 확장',
+          sectionAttributes: '속성', sectionSignature: '서명', sectionFingerprints: '지문',
+          sectionMetadata: '메타데이터',
+          labelAlgorithm: '알고리즘', labelKeySize: '키 길이', labelExponent: 'Exponent', labelCurve: '곡선',
+          labelSignatureAlgo: '서명 알고리즘', labelVersion: '버전', labelSpkiPin: 'SPKI SHA-256 핀',
+          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+          labelCa: 'CA 인증서 여부', labelPathLen: 'Path Length',
+          statusYes: '예', statusNo: '아니오', present: '있음', notShown: '값은 표시하지 않음',
+          checkSig: '자체 서명', checkKey: '키 강도', checkHash: '서명 해시',
+          checkSan: 'Subject Alternative Names', checkCn: 'Common Name 포함 여부',
+          checkWildcard: '와일드카드 이름', checkPublic: '공개 확인 가능한 이름',
+          sigOk: '{algo}(으)로 검증 완료 — 짝이 되는 개인 키로 서명되었습니다',
+          sigBad: '이 요청의 공개 키와 일치하지 않습니다. CSR이 손상되었거나 변조되었습니다.',
+          sigUnsupported: '이 브라우저에서는 {algo}를 검증할 수 없습니다. 로컬에서 openssl req -in req.pem -verify -noout 로 확인하세요.',
+          keyOk: '{algo} {bits}비트',
+          keyWeak: '{algo} {bits}비트 — 공인 CA가 허용하는 RSA 2048비트 / EC 256비트 하한 미만',
+          hashOk: '{hash}',
+          hashWeak: '{hash} — 공인 CA는 2016년부터 SHA-1 서명을 받지 않습니다',
+          sanOk: '{n}개의 이름 요청됨',
+          sanMissing: 'subjectAltName이 요청되지 않았습니다. 브라우저는 SAN만 대조하므로 공인 CA가 거부합니다.',
+          cnOk: 'CN {cn}이(가) SAN 항목에도 포함되어 있습니다',
+          cnMissingFromSan: 'CN {cn}이(가) SAN 목록에 없습니다. 브라우저는 Common Name을 무시하므로 발급된 인증서가 이 이름을 보호하지 않습니다.',
+          cnAbsent: 'Common Name이 없습니다. 브라우저는 SAN만 대조하므로 유효합니다.',
+          wildcardNone: '와일드카드 이름 없음',
+          wildcardOk: '{name} — 최좌측 레이블 와일드카드로 형식이 올바릅니다',
+          wildcardBad: '{name} — 와일드카드는 최좌측 레이블 전체로만 사용할 수 있습니다',
+          wildcardBroad: '{name}은(는) 2레이블 도메인을 포괄합니다. CA는 레지스트리 수준 와일드카드를 거부합니다',
+          publicOk: '모든 이름이 형식상 공개 확인 가능합니다',
+          publicBad: '{name} — 내부 이름과 사설 IP는 공개 신뢰 인증서에 넣을 수 없습니다',
+        }
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+
+      document.querySelectorAll('.csrd-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
+      });
+      document.querySelectorAll('.csrd-wrap [data-i18n-placeholder]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-placeholder'); if (t[key]) el.setAttribute('placeholder', t[key]);
+      });
+
+      // Sample CSR generated with `openssl req -new -newkey rsa:2048`; the private key was
+      // written to /dev/null and never existed on disk. RSA 2048 / SHA-256 with SAN,
+      // keyUsage and extendedKeyUsage so every result card has content to show.
+      var EXAMPLE_PEM = [
+        '-----BEGIN CERTIFICATE REQUEST-----',
+        'MIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVTMRMwEQYDVQQIDApDYWxpZm9ybmlh',
+        'MRYwFAYDVQQHDA1TYW4gRnJhbmNpc2NvMRUwEwYDVQQKDAxFeGFtcGxlIENvcnAx',
+        'HTAbBgNVBAsMFFBsYXRmb3JtIEVuZ2luZWVyaW5nMRQwEgYDVQQDDAtleGFtcGxl',
+        'LmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALMC9DgxOmruvrS8',
+        'JfGz672soiBlfyjtkPHvpl9A03eEh1me7BaWBc+DVGX4dNc+VEgsMrpbV4nCae/7',
+        'rDagkqL525pXk+n5eVFQ7EcWE+dW/lNOja2kv8fM8lrgRzlrH7GlgIWZIHsuOgTi',
+        '0KpGY5radA5VALG5AVRlYk4HQ5i7Zs2Svxf+huWBhIoE3vBj9j02Ur0d+2Lhpxvv',
+        'dQjJUZUy064T7oGzZLTiTpD4ro0WNFpspW50OgwNnXMN2FVeK7NmGYbM8UASMhA+',
+        'VLxdVIRXrvE0s5/P64q+oCciUrWwv72Lls3LYj7B4DvXiwlNDjh7/1TGAqH0PLpI',
+        'nxqeqvcCAwEAAaB3MHUGCSqGSIb3DQEJDjFoMGYwOAYDVR0RBDEwL4ILZXhhbXBs',
+        'ZS5jb22CD3d3dy5leGFtcGxlLmNvbYIPYXBpLmV4YW1wbGUuY29tMAsGA1UdDwQE',
+        'AwIFoDAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwDQYJKoZIhvcNAQEL',
+        'BQADggEBAJSS4oxNbcn1NlWPrE+q5X0EjB1PQvzMsYy/RWVKO8WK9YTDczT6m2Ch',
+        'pvOUFMSg7K4AHSjtWq4OY0MqkwpRl2Wv41UQJQSB9R/MeWQSB8iCE11fBdS/ycRl',
+        '+XGsgMf48DwPbPNgijCXPnFo1xgfPAUPR6lDurleakzzJSUKW8hSO6t4d7LCjWIK',
+        'iCXt6TV5w6ro2PNUOFB5LAC6vwVOzY4P7gkgvWQxG6+wrxQV16aQaWLYRqxiya53',
+        'ZuPqturHhIgrxW7NNmOJRxSiOtoJ7qsTEFDvKKhIcNj5g7tfqbJUZcCuVIeydPoh',
+        'g8wjM/GptJPjK5T+NCWombZZCrS87zw=',
+        '-----END CERTIFICATE REQUEST-----'
+      ].join('\n');
+
+      // OID dictionary — RDN attributes, algorithms, curves, PKCS#9 attributes, extensions.
+      var OID = {
+        '2.5.4.3':'CN','2.5.4.4':'SN','2.5.4.5':'serialNumber','2.5.4.6':'C','2.5.4.7':'L','2.5.4.8':'ST',
+        '2.5.4.9':'streetAddress','2.5.4.10':'O','2.5.4.11':'OU','2.5.4.12':'title','2.5.4.15':'businessCategory',
+        '2.5.4.17':'postalCode','2.5.4.42':'GN','2.5.4.43':'initials','2.5.4.44':'generationQualifier',
+        '2.5.4.65':'pseudonym','2.5.4.97':'organizationIdentifier',
+        '1.2.840.113549.1.9.1':'emailAddress',
+        '0.9.2342.19200300.100.1.25':'DC',
+        '1.3.6.1.4.1.311.60.2.1.1':'jurisdictionLocalityName',
+        '1.3.6.1.4.1.311.60.2.1.2':'jurisdictionStateOrProvinceName',
+        '1.3.6.1.4.1.311.60.2.1.3':'jurisdictionCountryName',
+
+        '1.2.840.113549.1.1.1':'rsaEncryption',
+        '1.2.840.113549.1.1.4':'md5WithRSAEncryption',
+        '1.2.840.113549.1.1.5':'sha1WithRSAEncryption',
+        '1.2.840.113549.1.1.10':'RSASSA-PSS',
+        '1.2.840.113549.1.1.11':'sha256WithRSAEncryption',
+        '1.2.840.113549.1.1.12':'sha384WithRSAEncryption',
+        '1.2.840.113549.1.1.13':'sha512WithRSAEncryption',
+        '1.2.840.10045.4.1':'ecdsa-with-SHA1',
+        '1.2.840.10045.4.3.2':'ecdsa-with-SHA256',
+        '1.2.840.10045.4.3.3':'ecdsa-with-SHA384',
+        '1.2.840.10045.4.3.4':'ecdsa-with-SHA512',
+        '1.3.101.112':'Ed25519',
+        '1.3.101.113':'Ed448',
+
+        '1.2.840.10045.2.1':'id-ecPublicKey',
+        '1.2.840.10045.3.1.7':'prime256v1 (P-256)',
+        '1.3.132.0.34':'secp384r1 (P-384)',
+        '1.3.132.0.35':'secp521r1 (P-521)',
+        '1.3.132.0.10':'secp256k1',
+        '1.3.36.3.3.2.8.1.1.7':'brainpoolP256r1',
+        '1.3.36.3.3.2.8.1.1.11':'brainpoolP384r1',
+        '1.3.36.3.3.2.8.1.1.13':'brainpoolP512r1',
+
+        '1.3.14.3.2.26':'SHA-1',
+        '2.16.840.1.101.3.4.2.1':'SHA-256',
+        '2.16.840.1.101.3.4.2.2':'SHA-384',
+        '2.16.840.1.101.3.4.2.3':'SHA-512',
+
+        // PKCS#9 attributes carried in a CSR
+        '1.2.840.113549.1.9.2':'unstructuredName',
+        '1.2.840.113549.1.9.7':'challengePassword',
+        '1.2.840.113549.1.9.8':'unstructuredAddress',
+        '1.2.840.113549.1.9.14':'extensionRequest',
+        '1.2.840.113549.1.9.15':'sMIMECapabilities',
+        '1.3.6.1.4.1.311.13.2.2':'microsoftEnrollmentCSP',
+        '1.3.6.1.4.1.311.13.2.3':'microsoftOSVersion',
+        '1.3.6.1.4.1.311.21.20':'microsoftRequestClientInfo',
+
+        '2.5.29.14':'subjectKeyIdentifier',
+        '2.5.29.15':'keyUsage',
+        '2.5.29.17':'subjectAltName',
+        '2.5.29.19':'basicConstraints',
+        '2.5.29.30':'nameConstraints',
+        '2.5.29.32':'certificatePolicies',
+        '2.5.29.37':'extKeyUsage',
+
+        '1.3.6.1.5.5.7.3.1':'serverAuth',
+        '1.3.6.1.5.5.7.3.2':'clientAuth',
+        '1.3.6.1.5.5.7.3.3':'codeSigning',
+        '1.3.6.1.5.5.7.3.4':'emailProtection',
+        '1.3.6.1.5.5.7.3.8':'timeStamping',
+        '1.3.6.1.5.5.7.3.9':'OCSPSigning'
+      };
+
+      var KU_NAMES = ['digitalSignature','nonRepudiation','keyEncipherment','dataEncipherment','keyAgreement','keyCertSign','cRLSign','encipherOnly','decipherOnly'];
+
+      // ── ASN.1 parser ─────────────────────────────────────────────────
+      // `start` is recorded so a node's full tag-length-value range can be sliced back
+      // out of the buffer, which crypto.subtle needs for both tbs bytes and SPKI bytes.
+      function asnRead(buf, off) {
+        var first = buf[off];
+        var cls = (first >> 6) & 0x3;
+        var constructed = (first & 0x20) !== 0;
+        var tag = first & 0x1F;
+        var p = off + 1;
+        if (tag === 0x1F) {
+          tag = 0;
+          while (buf[p] & 0x80) { tag = (tag << 7) | (buf[p] & 0x7F); p++; }
+          tag = (tag << 7) | buf[p]; p++;
+        }
+        var lenByte = buf[p++];
+        var len;
+        if ((lenByte & 0x80) === 0) {
+          len = lenByte;
+        } else {
+          var n = lenByte & 0x7F;
+          if (n === 0) throw new Error('indefinite length not supported');
+          if (n > 4) throw new Error('length too large');
+          len = 0;
+          // Arithmetic accumulation avoids 32-bit signed wrap on 4-byte length fields.
+          for (var i = 0; i < n; i++) len = (len * 256) + buf[p++];
+        }
+        if (p + len > buf.length) throw new Error('declared length exceeds available bytes');
+        return { start: off, cls: cls, constructed: constructed, tag: tag, length: len, valueOffset: p, end: p + len };
+      }
+
+      function asnChildren(buf, node) {
+        var out = [];
+        var p = node.valueOffset;
+        while (p < node.end) {
+          var c = asnRead(buf, p);
+          out.push(c);
+          p = c.end;
+        }
+        return out;
+      }
+
+      function bytesToLatin1(buf, s, e) {
+        var out = '';
+        for (var i = s; i < e; i++) out += String.fromCharCode(buf[i]);
+        return out;
+      }
+
+      function bytesToUtf8(buf, s, e) {
+        try { return new TextDecoder('utf-8').decode(buf.subarray(s, e)); }
+        catch (err) { return bytesToLatin1(buf, s, e); }
+      }
+
+      function bytesToBmp(buf, s, e) {
+        var out = '';
+        for (var i = s; i < e; i += 2) out += String.fromCharCode((buf[i] << 8) | buf[i + 1]);
+        return out;
+      }
+
+      function decodeOid(buf, s, e) {
+        // BigInt accumulator: enterprise OID sub-identifiers can exceed 2^53.
+        var oid = '', v = 0n, first = true;
+        for (var i = s; i < e; i++) {
+          v = (v * 128n) + BigInt(buf[i] & 0x7F);
+          if ((buf[i] & 0x80) === 0) {
+            if (first) {
+              var a = v >= 80n ? 2n : v / 40n;
+              oid = a.toString() + '.' + (v - a * 40n).toString();
+              first = false;
+            } else {
+              oid += '.' + v.toString();
+            }
+            v = 0n;
+          }
+        }
+        return oid;
+      }
+
+      function decodeInteger(buf, s, e) {
+        if (e - s === 0) return 0n;
+        var hex = '';
+        for (var i = s; i < e; i++) hex += (buf[i] < 16 ? '0' : '') + buf[i].toString(16);
+        var n = BigInt('0x' + hex);
+        if ((buf[s] & 0x80) !== 0) n -= (1n << BigInt((e - s) * 8));
+        return n;
+      }
+
+      function valueOf(buf, node) {
+        if (node.cls !== 0) return null;
+        switch (node.tag) {
+          case 0x01: return buf[node.valueOffset] !== 0;
+          case 0x02: return decodeInteger(buf, node.valueOffset, node.end);
+          case 0x03: {
+            var unused = buf[node.valueOffset];
+            return { unusedBits: unused, data: buf.subarray(node.valueOffset + 1, node.end) };
+          }
+          case 0x04: return buf.subarray(node.valueOffset, node.end);
+          case 0x05: return null;
+          case 0x06: return decodeOid(buf, node.valueOffset, node.end);
+          case 0x0C: return bytesToUtf8(buf, node.valueOffset, node.end);
+          case 0x13: case 0x14: case 0x15: case 0x16: case 0x19: case 0x1A:
+            return bytesToLatin1(buf, node.valueOffset, node.end);
+          case 0x1E: return bytesToBmp(buf, node.valueOffset, node.end);
+          default: return buf.subarray(node.valueOffset, node.end);
+        }
+      }
+
+      // ── PEM helpers ───────────────────────────────────────────────────
+      function base64ToBytes(b64) {
+        var clean = b64.replace(/[^A-Za-z0-9+/=]/g, '');
+        var bin = atob(clean);
+        var out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+
+      function bytesToBase64(bytes) {
+        var bin = '';
+        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+      }
+
+      function bytesToHex(bytes, sep) {
+        var out = [];
+        for (var i = 0; i < bytes.length; i++) {
+          var h = bytes[i].toString(16).toUpperCase();
+          if (h.length === 1) h = '0' + h;
+          out.push(h);
+        }
+        return out.join(sep || ':');
+      }
+
+      function extractPemCsrs(input) {
+        // Windows certreq emits "NEW CERTIFICATE REQUEST"; both forms carry the same PKCS#10 body.
+        var re = /-----BEGIN (?:NEW )?CERTIFICATE REQUEST-----([A-Za-z0-9+/=\s]+)-----END (?:NEW )?CERTIFICATE REQUEST-----/g;
+        var matches = [];
+        var m;
+        while ((m = re.exec(input)) !== null) matches.push(m[1]);
+        return matches;
+      }
+
+      // ── PKCS#10 decoder (RFC 2986) ────────────────────────────────────
+      function decodeCsr(der) {
+        var rootNode = asnRead(der, 0);
+        if (rootNode.tag !== 0x10) throw new Error('expected SEQUENCE at root');
+        var root = asnChildren(der, rootNode);
+        if (root.length < 3) throw new Error('CertificationRequest must have 3 components');
+
+        var criNode = root[0];
+        var cri = asnChildren(der, criNode);
+        if (cri.length < 3) throw new Error('CertificationRequestInfo must have at least 3 components');
+
+        var version = Number(valueOf(der, cri[0])) + 1;
+        var subject = parseName(der, cri[1]);
+        var spkiNode = cri[2];
+        var publicKey = parseSpki(der, spkiNode);
+
+        var attributes = [];
+        var extensions = [];
+        for (var i = 3; i < cri.length; i++) {
+          var n = cri[i];
+          if (n.cls === 2 && n.tag === 0 && n.constructed) {
+            var attrNodes = asnChildren(der, n);
+            for (var j = 0; j < attrNodes.length; j++) {
+              var attr = parseAttribute(der, attrNodes[j]);
+              if (attr.oid === '1.2.840.113549.1.9.14' && attr.valueNode) {
+                try {
+                  var extSeq = asnChildren(der, attr.valueNode)[0];
+                  var extNodes = asnChildren(der, extSeq);
+                  for (var k = 0; k < extNodes.length; k++) extensions.push(parseExtension(der, extNodes[k]));
+                } catch (e) { /* malformed extensionRequest: fall back to listing it as a plain attribute */ }
+              }
+              attributes.push(attr);
+            }
+          }
+        }
+
+        return {
+          version: version,
+          subject: subject,
+          publicKey: publicKey,
+          attributes: attributes,
+          extensions: extensions,
+          signatureAlgorithm: parseAlg(der, root[1]),
+          signature: valueOf(der, root[2]),
+          tbsBytes: der.subarray(criNode.start, criNode.end),
+          spkiBytes: der.subarray(spkiNode.start, spkiNode.end)
+        };
+      }
+
+      function parseAlg(buf, node) {
+        var c = asnChildren(buf, node);
+        return { oid: valueOf(buf, c[0]), paramsNode: c.length > 1 ? c[1] : null, buf: buf };
+      }
+
+      function parseName(buf, node) {
+        var rdns = asnChildren(buf, node);
+        var out = [];
+        for (var i = 0; i < rdns.length; i++) {
+          var attrs = asnChildren(buf, rdns[i]);
+          for (var j = 0; j < attrs.length; j++) {
+            var pair = asnChildren(buf, attrs[j]);
+            out.push({ oid: valueOf(buf, pair[0]), value: valueOf(buf, pair[1]) });
+          }
+        }
+        return out;
+      }
+
+      function parseSpki(buf, node) {
+        var c = asnChildren(buf, node);
+        var algChildren = asnChildren(buf, c[0]);
+        var algOid = valueOf(buf, algChildren[0]);
+        var algParams = algChildren.length > 1 ? algChildren[1] : null;
+        var bitStr = valueOf(buf, c[1]);
+        var detail = { algorithm: algOid, raw: bitStr.data };
+
+        if (algOid === '1.2.840.113549.1.1.1') {
+          try {
+            var rsaSeq = asnRead(bitStr.data, 0);
+            var rsaChildren = asnChildren(bitStr.data, rsaSeq);
+            var modulus = valueOf(bitStr.data, rsaChildren[0]);
+            var exponent = valueOf(bitStr.data, rsaChildren[1]);
+            detail.exponent = exponent.toString();
+            detail.keySize = modulus.toString(2).length;
+          } catch (e) { /* non-standard RSA body: key size stays unknown */ }
+        } else if (algOid === '1.2.840.10045.2.1') {
+          if (algParams && algParams.tag === 0x06) detail.curve = valueOf(buf, algParams);
+          // EC point encoding: 0x04 = uncompressed (X||Y), 0x02/0x03 = compressed (X only).
+          if (bitStr.data && bitStr.data.length > 0) {
+            var firstByte = bitStr.data[0];
+            if (firstByte === 0x04) detail.keySize = (bitStr.data.length - 1) * 4;
+            else if (firstByte === 0x02 || firstByte === 0x03) detail.keySize = (bitStr.data.length - 1) * 8;
+          }
+        } else if (algOid === '1.3.101.112') {
+          detail.curve = '1.3.101.112';
+          detail.keySize = 256;
+        } else if (algOid === '1.3.101.113') {
+          detail.curve = '1.3.101.113';
+          detail.keySize = 448;
+        }
+        return detail;
+      }
+
+      function parseAttribute(buf, node) {
+        var c = asnChildren(buf, node);
+        var oid = valueOf(buf, c[0]);
+        return { oid: oid, valueNode: c.length > 1 ? c[1] : null, buf: buf };
+      }
+
+      function parseExtension(buf, node) {
+        var c = asnChildren(buf, node);
+        var oid = valueOf(buf, c[0]);
+        var critical = false;
+        var valueIdx = 1;
+        if (c[valueIdx] && c[valueIdx].cls === 0 && c[valueIdx].tag === 0x01) {
+          critical = valueOf(buf, c[valueIdx]);
+          valueIdx++;
+        }
+        var oct = c[valueIdx];
+        return { oid: oid, critical: critical, raw: buf.subarray(oct.valueOffset, oct.end) };
+      }
+
+      // ── Extension decoders ───────────────────────────────────────────
+      function parseSan(bytes) {
+        var seq = asnRead(bytes, 0);
+        var children = asnChildren(bytes, seq);
+        var entries = [];
+        for (var i = 0; i < children.length; i++) {
+          var n = children[i];
+          if (n.cls !== 2) continue;
+          if (n.tag === 1) entries.push({ type: 'email', value: bytesToLatin1(bytes, n.valueOffset, n.end) });
+          else if (n.tag === 2) entries.push({ type: 'DNS', value: bytesToLatin1(bytes, n.valueOffset, n.end) });
+          else if (n.tag === 6) entries.push({ type: 'URI', value: bytesToLatin1(bytes, n.valueOffset, n.end) });
+          else if (n.tag === 7) entries.push({ type: 'IP', value: ipFromBytes(bytes, n.valueOffset, n.end) });
+        }
+        return entries;
+      }
+
+      function ipFromBytes(buf, s, e) {
+        var len = e - s;
+        if (len === 4) return buf[s] + '.' + buf[s + 1] + '.' + buf[s + 2] + '.' + buf[s + 3];
+        if (len === 16) {
+          var parts = [];
+          for (var i = 0; i < 8; i++) parts.push(((buf[s + i * 2] << 8) | buf[s + i * 2 + 1]).toString(16));
+          return parts.join(':');
+        }
+        return bytesToHex(buf.subarray(s, e), ':');
+      }
+
+      function parseBasicConstraints(bytes) {
+        var seq = asnRead(bytes, 0);
+        var c = asnChildren(bytes, seq);
+        var out = { ca: false, pathLen: null };
+        for (var i = 0; i < c.length; i++) {
+          if (c[i].tag === 0x01) out.ca = valueOf(bytes, c[i]);
+          else if (c[i].tag === 0x02) out.pathLen = Number(valueOf(bytes, c[i]));
+        }
+        return out;
+      }
+
+      function parseKeyUsage(bytes) {
+        var bs = asnRead(bytes, 0);
+        var unused = bytes[bs.valueOffset];
+        var data = bytes.subarray(bs.valueOffset + 1, bs.end);
+        var flags = [];
+        var totalBits = data.length * 8 - unused;
+        for (var i = 0; i < KU_NAMES.length && i < totalBits; i++) {
+          var byteIdx = Math.floor(i / 8);
+          var bitIdx = 7 - (i % 8);
+          if ((data[byteIdx] & (1 << bitIdx))) flags.push(KU_NAMES[i]);
+        }
+        return flags;
+      }
+
+      function parseEku(bytes) {
+        var seq = asnRead(bytes, 0);
+        return asnChildren(bytes, seq).map(function (n) {
+          var oid = valueOf(bytes, n);
+          return OID[oid] || oid;
+        });
+      }
+
+      function findExtension(exts, oid) {
+        for (var i = 0; i < exts.length; i++) if (exts[i].oid === oid) return exts[i];
+        return null;
+      }
+
+      // ── Signature verification ───────────────────────────────────────
+      var RSA_HASH = {
+        '1.2.840.113549.1.1.5': 'SHA-1',
+        '1.2.840.113549.1.1.11': 'SHA-256',
+        '1.2.840.113549.1.1.12': 'SHA-384',
+        '1.2.840.113549.1.1.13': 'SHA-512'
+      };
+      var ECDSA_HASH = {
+        '1.2.840.10045.4.1': 'SHA-1',
+        '1.2.840.10045.4.3.2': 'SHA-256',
+        '1.2.840.10045.4.3.3': 'SHA-384',
+        '1.2.840.10045.4.3.4': 'SHA-512'
+      };
+      var CURVE_NAME = {
+        '1.2.840.10045.3.1.7': 'P-256',
+        '1.3.132.0.34': 'P-384',
+        '1.3.132.0.35': 'P-521'
+      };
+      var CURVE_FIELD_BYTES = { 'P-256': 32, 'P-384': 48, 'P-521': 66 };
+      var HASH_OID_NAME = {
+        '1.3.14.3.2.26': 'SHA-1',
+        '2.16.840.1.101.3.4.2.1': 'SHA-256',
+        '2.16.840.1.101.3.4.2.2': 'SHA-384',
+        '2.16.840.1.101.3.4.2.3': 'SHA-512'
+      };
+
+      // RSASSA-PSS-params (RFC 4055): all fields are optional and default to SHA-1 / MGF1-SHA-1 / salt 20.
+      function parsePssParams(buf, node) {
+        var out = { hash: 'SHA-1', saltLength: 20 };
+        if (!node) return out;
+        try {
+          var c = asnChildren(buf, node);
+          for (var i = 0; i < c.length; i++) {
+            var n = c[i];
+            if (n.cls !== 2) continue;
+            if (n.tag === 0) {
+              var hashAlg = asnChildren(buf, n)[0];
+              var hashOid = valueOf(buf, asnChildren(buf, hashAlg)[0]);
+              if (HASH_OID_NAME[hashOid]) out.hash = HASH_OID_NAME[hashOid];
+            } else if (n.tag === 2) {
+              out.saltLength = Number(valueOf(buf, asnChildren(buf, n)[0]));
+            }
+          }
+        } catch (e) { /* malformed params: RFC 4055 defaults stay in effect */ }
+        return out;
+      }
+
+      // Web Crypto ECDSA wants raw r‖s at fixed field width; X.509 carries DER SEQUENCE{r,s}.
+      function ecdsaDerToRaw(sig, fieldBytes) {
+        var seq = asnRead(sig, 0);
+        var c = asnChildren(sig, seq);
+        var out = new Uint8Array(fieldBytes * 2);
+        for (var i = 0; i < 2; i++) {
+          var s = c[i].valueOffset;
+          var e = c[i].end;
+          while (s < e - 1 && sig[s] === 0) s++;          // drop the sign-bit padding byte
+          var len = e - s;
+          if (len > fieldBytes) throw new Error('ECDSA component wider than the curve field');
+          out.set(sig.subarray(s, e), i * fieldBytes + (fieldBytes - len));
+        }
+        return out;
+      }
+
+      // Returns 'valid' | 'invalid' | 'unsupported'. An algorithm this browser cannot import
+      // is never reported as a bad signature — those are different failures.
+      async function verifySignature(csr) {
+        if (!(crypto && crypto.subtle)) return 'unsupported';
+        var sigOid = csr.signatureAlgorithm.oid;
+        var sigBytes = csr.signature && csr.signature.data;
+        if (!sigBytes) return 'unsupported';
+
+        var importAlgo = null;
+        var verifyAlgo = null;
+        var payload = sigBytes;
+
+        if (RSA_HASH[sigOid]) {
+          importAlgo = { name: 'RSASSA-PKCS1-v1_5', hash: RSA_HASH[sigOid] };
+          verifyAlgo = { name: 'RSASSA-PKCS1-v1_5' };
+        } else if (sigOid === '1.2.840.113549.1.1.10') {
+          var pss = parsePssParams(csr.signatureAlgorithm.buf, csr.signatureAlgorithm.paramsNode);
+          importAlgo = { name: 'RSA-PSS', hash: pss.hash };
+          verifyAlgo = { name: 'RSA-PSS', saltLength: pss.saltLength };
+        } else if (ECDSA_HASH[sigOid]) {
+          var curve = CURVE_NAME[csr.publicKey.curve];
+          if (!curve) return 'unsupported';
+          importAlgo = { name: 'ECDSA', namedCurve: curve };
+          verifyAlgo = { name: 'ECDSA', hash: ECDSA_HASH[sigOid] };
+          try { payload = ecdsaDerToRaw(sigBytes, CURVE_FIELD_BYTES[curve]); }
+          catch (e) { return 'unsupported'; }
+        } else if (sigOid === '1.3.101.112' || sigOid === '1.3.101.113') {
+          var edName = sigOid === '1.3.101.112' ? 'Ed25519' : 'Ed448';
+          importAlgo = { name: edName };
+          verifyAlgo = { name: edName };
+        } else {
+          return 'unsupported';
+        }
+
+        try {
+          var key = await crypto.subtle.importKey('spki', csr.spkiBytes, importAlgo, false, ['verify']);
+          var ok = await crypto.subtle.verify(verifyAlgo, key, payload, csr.tbsBytes);
+          return ok ? 'valid' : 'invalid';
+        } catch (e) {
+          return 'unsupported';
+        }
+      }
+
+      // ── Pre-submission checks ────────────────────────────────────────
+      var INTERNAL_SUFFIXES = ['.local', '.localhost', '.internal', '.intranet', '.lan', '.home', '.corp', '.test', '.example', '.invalid'];
+
+      function isPrivateIp(value) {
+        var v4 = value.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+        if (v4) {
+          var a = +v4[1], b = +v4[2];
+          if (a === 10 || a === 127 || a === 0) return true;
+          if (a === 172 && b >= 16 && b <= 31) return true;
+          if (a === 192 && b === 168) return true;
+          if (a === 169 && b === 254) return true;
+          if (a >= 224) return true;
+          return false;
+        }
+        var lower = value.toLowerCase();
+        if (lower === '::1' || lower === '::') return true;
+        if (/^f[cd]/.test(lower) || /^fe8/.test(lower)) return true;
+        return false;
+      }
+
+      function buildChecks(csr, sigState, sans) {
+        var checks = [];
+        var sigAlgLabel = OID[csr.signatureAlgorithm.oid] || csr.signatureAlgorithm.oid;
+
+        if (sigState === 'valid') {
+          checks.push({ state: 'pass', label: t.checkSig, detail: t.sigOk.replace('{algo}', sigAlgLabel) });
+        } else if (sigState === 'invalid') {
+          checks.push({ state: 'fail', label: t.checkSig, detail: t.sigBad });
+        } else {
+          checks.push({ state: 'warn', label: t.checkSig, detail: t.sigUnsupported.replace('{algo}', sigAlgLabel) });
+        }
+
+        var pk = csr.publicKey;
+        var pkLabel = OID[pk.algorithm] || pk.algorithm;
+        var isRsa = pk.algorithm === '1.2.840.113549.1.1.1';
+        var minBits = isRsa ? 2048 : 256;
+        if (pk.keySize) {
+          var keyMsg = (pk.keySize < minBits ? t.keyWeak : t.keyOk).replace('{algo}', pkLabel).replace('{bits}', String(pk.keySize));
+          checks.push({ state: pk.keySize < minBits ? 'fail' : 'pass', label: t.checkKey, detail: keyMsg });
+        }
+
+        var hashName = RSA_HASH[csr.signatureAlgorithm.oid] || ECDSA_HASH[csr.signatureAlgorithm.oid] || null;
+        if (csr.signatureAlgorithm.oid === '1.2.840.113549.1.1.4') hashName = 'MD5';
+        if (csr.signatureAlgorithm.oid === '1.2.840.113549.1.1.10') {
+          hashName = parsePssParams(csr.signatureAlgorithm.buf, csr.signatureAlgorithm.paramsNode).hash;
+        }
+        if (hashName) {
+          var weakHash = hashName === 'SHA-1' || hashName === 'MD5';
+          checks.push({
+            state: weakHash ? 'fail' : 'pass',
+            label: t.checkHash,
+            detail: (weakHash ? t.hashWeak : t.hashOk).replace('{hash}', hashName)
+          });
+        }
+
+        if (sans.length) {
+          checks.push({ state: 'pass', label: t.checkSan, detail: t.sanOk.replace('{n}', String(sans.length)) });
+        } else {
+          checks.push({ state: 'fail', label: t.checkSan, detail: t.sanMissing });
+        }
+
+        var cnEntry = null;
+        for (var i = 0; i < csr.subject.length; i++) {
+          if (csr.subject[i].oid === '2.5.4.3') { cnEntry = csr.subject[i]; break; }
+        }
+        var hostSans = sans.filter(function (s) { return s.type === 'DNS' || s.type === 'IP'; })
+          .map(function (s) { return String(s.value).toLowerCase(); });
+        if (!cnEntry) {
+          checks.push({ state: 'warn', label: t.checkCn, detail: t.cnAbsent });
+        } else {
+          var cn = String(cnEntry.value);
+          var covered = hostSans.indexOf(cn.toLowerCase()) !== -1;
+          checks.push({
+            state: covered ? 'pass' : 'fail',
+            label: t.checkCn,
+            detail: (covered ? t.cnOk : t.cnMissingFromSan).replace('{cn}', cn)
+          });
+        }
+
+        var wildcards = hostSans.filter(function (n) { return n.indexOf('*') !== -1; });
+        if (!wildcards.length) {
+          checks.push({ state: 'pass', label: t.checkWildcard, detail: t.wildcardNone });
+        } else {
+          for (var w = 0; w < wildcards.length; w++) {
+            var name = wildcards[w];
+            var labels = name.split('.');
+            if (labels[0] !== '*' || name.slice(1).indexOf('*') !== -1) {
+              checks.push({ state: 'fail', label: t.checkWildcard, detail: t.wildcardBad.replace('{name}', name) });
+            } else if (labels.length <= 2) {
+              checks.push({ state: 'warn', label: t.checkWildcard, detail: t.wildcardBroad.replace('{name}', name) });
+            } else {
+              checks.push({ state: 'pass', label: t.checkWildcard, detail: t.wildcardOk.replace('{name}', name) });
+            }
+          }
+        }
+
+        var offenders = [];
+        for (var j = 0; j < sans.length; j++) {
+          var entry = sans[j];
+          var val = String(entry.value);
+          if (entry.type === 'IP') {
+            if (isPrivateIp(val)) offenders.push(val);
+            continue;
+          }
+          if (entry.type !== 'DNS') continue;
+          var lower = val.toLowerCase();
+          if (lower.indexOf('.') === -1) { offenders.push(val); continue; }
+          for (var k = 0; k < INTERNAL_SUFFIXES.length; k++) {
+            if (lower.slice(-INTERNAL_SUFFIXES[k].length) === INTERNAL_SUFFIXES[k]) { offenders.push(val); break; }
+          }
+        }
+        if (sans.length) {
+          if (offenders.length) {
+            checks.push({ state: 'fail', label: t.checkPublic, detail: t.publicBad.replace('{name}', offenders.join(', ')) });
+          } else {
+            checks.push({ state: 'pass', label: t.checkPublic, detail: t.publicOk });
+          }
+        }
+
+        return checks;
+      }
+
+      // ── Rendering ────────────────────────────────────────────────────
+      function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      function renderRow(label, value, copy) {
+        var copyBtn = copy ? '<button class="btn-copy csrd-copy" type="button" data-copy="' + escapeHtml(copy) + '">' + escapeHtml(t.copy) + '</button>' : '';
+        return '<div class="csrd-row"><span class="csrd-row-label">' + escapeHtml(label) + '</span><span class="csrd-row-value">' + value + '</span>' + copyBtn + '</div>';
+      }
+
+      function renderCard(title, body) {
+        return '<section class="csrd-card"><h3 class="csrd-card-title">' + escapeHtml(title) + '</h3><div class="csrd-card-body">' + body + '</div></section>';
+      }
+
+      var CHECK_GLYPH = { pass: '✓', warn: '!', fail: '✕' };
+
+      function renderChecks(checks) {
+        var body = checks.map(function (c) {
+          return '<div class="csrd-check csrd-check--' + c.state + '">' +
+            '<span class="csrd-check-mark" aria-hidden="true">' + CHECK_GLYPH[c.state] + '</span>' +
+            '<span class="csrd-check-text"><span class="csrd-check-label">' + escapeHtml(c.label) + '</span>' +
+            '<span class="csrd-check-detail">' + escapeHtml(c.detail) + '</span></span></div>';
+        }).join('');
+        return renderCard(t.sectionChecks, body);
+      }
+
+      function render(csr, checks, sans, fps) {
+        var html = renderChecks(checks);
+
+        function renderName(entries) {
+          if (!entries.length) return '<div class="csrd-row csrd-row--muted">—</div>';
+          return entries.map(function (e) {
+            var label = OID[e.oid] || e.oid;
+            var val = e.value instanceof Uint8Array ? bytesToHex(e.value, '') : String(e.value);
+            return renderRow(label, escapeHtml(val));
+          }).join('');
+        }
+
+        var pk = csr.publicKey;
+        var pkBody = renderRow(t.labelAlgorithm, escapeHtml(OID[pk.algorithm] || pk.algorithm));
+        if (pk.keySize) pkBody += renderRow(t.labelKeySize, escapeHtml(pk.keySize + ' bits'));
+        if (pk.exponent) pkBody += renderRow(t.labelExponent, escapeHtml(pk.exponent));
+        if (pk.curve) pkBody += renderRow(t.labelCurve, escapeHtml(OID[pk.curve] || pk.curve));
+
+        html += '<div class="csrd-grid-2">' +
+          renderCard(t.sectionSubject, renderName(csr.subject)) +
+          renderCard(t.sectionPublicKey, pkBody) +
+          '</div>';
+
+        if (sans.length) {
+          var sanBody = sans.map(function (s) {
+            return renderRow(s.type, '<span class="csrd-mono">' + escapeHtml(s.value) + '</span>', s.value);
+          }).join('');
+          html += renderCard(t.sectionSan, sanBody);
+        }
+
+        var extBody = '';
+        var kuExt = findExtension(csr.extensions, '2.5.29.15');
+        if (kuExt) {
+          try {
+            var flags = parseKeyUsage(kuExt.raw);
+            if (flags.length) {
+              extBody += renderRow(t.labelKeyUsage, flags.map(function (f) {
+                return '<span class="csrd-chip">' + escapeHtml(f) + '</span>';
+              }).join(''));
+            }
+          } catch (e) { /* unreadable keyUsage is simply not shown */ }
+        }
+        var ekuExt = findExtension(csr.extensions, '2.5.29.37');
+        if (ekuExt) {
+          try {
+            var ekus = parseEku(ekuExt.raw);
+            if (ekus.length) {
+              extBody += renderRow(t.labelEku, ekus.map(function (f) {
+                return '<span class="csrd-chip">' + escapeHtml(f) + '</span>';
+              }).join(''));
+            }
+          } catch (e) { /* unreadable EKU is simply not shown */ }
+        }
+        var bcExt = findExtension(csr.extensions, '2.5.29.19');
+        if (bcExt) {
+          try {
+            var bc = parseBasicConstraints(bcExt.raw);
+            extBody += renderRow(t.labelCa, escapeHtml(bc.ca ? t.statusYes : t.statusNo));
+            if (bc.pathLen !== null) extBody += renderRow(t.labelPathLen, escapeHtml(String(bc.pathLen)));
+          } catch (e) { /* unreadable basicConstraints is simply not shown */ }
+        }
+        if (extBody) html += renderCard(t.sectionExtensions, extBody);
+
+        // extensionRequest is already surfaced through the SAN and extension cards.
+        var otherAttrs = csr.attributes.filter(function (a) { return a.oid !== '1.2.840.113549.1.9.14'; });
+        if (otherAttrs.length) {
+          var attrBody = otherAttrs.map(function (a) {
+            var label = OID[a.oid] || a.oid;
+            // challengePassword is a shared secret used at revocation time; presence only.
+            if (a.oid === '1.2.840.113549.1.9.7') {
+              return renderRow(label, '<span class="csrd-row--muted">' + escapeHtml(t.present + ' — ' + t.notShown) + '</span>');
+            }
+            var shown = t.present;
+            try {
+              var v = valueOf(a.buf, asnChildren(a.buf, a.valueNode)[0]);
+              if (typeof v === 'string' && v) shown = v;
+            } catch (e) { /* opaque attribute value: fall back to presence */ }
+            return renderRow(label, '<span class="csrd-mono">' + escapeHtml(shown) + '</span>');
+          }).join('');
+          html += renderCard(t.sectionAttributes, attrBody);
+        }
+
+        var sigOid = csr.signatureAlgorithm.oid;
+        var sigBody = renderRow(t.labelSignatureAlgo, escapeHtml(OID[sigOid] || sigOid));
+        var fpBody =
+          renderRow('SHA-256', '<span class="csrd-mono">' + escapeHtml(fps.sha256) + '</span>', fps.sha256) +
+          renderRow('SHA-1', '<span class="csrd-mono">' + escapeHtml(fps.sha1) + '</span>', fps.sha1) +
+          renderRow(t.labelSpkiPin, '<span class="csrd-mono">' + escapeHtml(fps.spkiPin) + '</span>', fps.spkiPin);
+
+        html += '<div class="csrd-grid-2">' +
+          renderCard(t.sectionSignature, sigBody) +
+          renderCard(t.sectionFingerprints, fpBody) +
+          '</div>';
+
+        html += renderCard(t.sectionMetadata, renderRow(t.labelVersion, escapeHtml('v' + csr.version)));
+
+        return html;
+      }
+
+      // ── State & wiring ──────────────────────────────────────────────
+      var inputEl = document.getElementById('csrd-input');
+      var statusEl = document.getElementById('csrd-status');
+      var resultsEl = document.getElementById('csrd-results');
+      var btnDecode = document.getElementById('csrd-decode');
+      var btnExample = document.getElementById('csrd-example');
+      var btnClear = document.getElementById('csrd-clear');
+
+      function setStatus(msg, type) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status ' + (type || 'none');
+      }
+
+      async function digest(algorithm, bytes) {
+        var hashBuf = await crypto.subtle.digest(algorithm, bytes);
+        return new Uint8Array(hashBuf);
+      }
+
+      async function runDecode() {
+        var input = inputEl.value.trim();
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = '';
+        if (!input) { setStatus(t.errEmpty, 'error'); return; }
+        if (input.indexOf('PRIVATE KEY-----') !== -1) { setStatus(t.errIsPrivateKey, 'error'); return; }
+
+        var pems = extractPemCsrs(input);
+        if (!pems.length) {
+          setStatus(input.indexOf('-----BEGIN CERTIFICATE-----') !== -1 ? t.errIsCertificate : t.errNoMarkers, 'error');
+          return;
+        }
+
+        var der;
+        try { der = base64ToBytes(pems[0]); }
+        catch (e) { setStatus(t.errBase64, 'error'); return; }
+
+        var csr;
+        try { csr = decodeCsr(der); }
+        catch (e) { setStatus(t.errAsn1 + (e && e.message ? e.message : String(e)), 'error'); return; }
+
+        try {
+          var sigState = await verifySignature(csr);
+          var sanExt = findExtension(csr.extensions, '2.5.29.17');
+          var sans = [];
+          if (sanExt) {
+            try { sans = parseSan(sanExt.raw); }
+            catch (e) { /* unreadable SAN behaves like an absent one for the checks */ }
+          }
+          var checks = buildChecks(csr, sigState, sans);
+
+          var fps = { sha256: '—', sha1: '—', spkiPin: '—' };
+          if (crypto && crypto.subtle) {
+            fps.sha256 = bytesToHex(await digest('SHA-256', der), ':');
+            fps.sha1 = bytesToHex(await digest('SHA-1', der), ':');
+            fps.spkiPin = 'sha256/' + bytesToBase64(await digest('SHA-256', csr.spkiBytes));
+          }
+
+          resultsEl.innerHTML = render(csr, checks, sans, fps);
+          resultsEl.hidden = false;
+          setStatus(pems.length > 1 ? t.bundleNotice.replace('{n}', pems.length) : t.decoded, pems.length > 1 ? 'info' : 'success');
+          wireCopyButtons();
+        } catch (e) {
+          setStatus(t.errUnexpected + (e && e.message ? e.message : String(e)), 'error');
+        }
+      }
+
+      function wireCopyButtons() {
+        resultsEl.querySelectorAll('.csrd-copy').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var v = btn.getAttribute('data-copy') || '';
+            if (!v) return;
+            try {
+              navigator.clipboard.writeText(v).then(function () {
+                var original = btn.textContent;
+                btn.classList.add('copied');
+                btn.textContent = t.copied;
+                setTimeout(function () { btn.classList.remove('copied'); btn.textContent = original; }, 1400);
+              });
+            } catch (e) { /* clipboard denied: the value stays selectable on screen */ }
+          });
+        });
+      }
+
+      btnDecode.addEventListener('click', runDecode);
+      btnExample.addEventListener('click', function () {
+        inputEl.value = EXAMPLE_PEM;
+        setStatus('', 'none');
+      });
+      btnClear.addEventListener('click', function () {
+        inputEl.value = '';
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = '';
+        setStatus('', 'none');
+      });
+
+      inputEl.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runDecode(); }
+      });
+
+      // No ztPersist wiring: persistence policy for csr-decoder is `disabled` because a CSR
+      // can carry a challengePassword and lists domains that are not public before issuance.
+    })();
+  </script>
+
+  <style is:global>
+    .csrd-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .csrd-input-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .csrd-input {
+      min-height: 200px;
+    }
+    .csrd-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .csrd-results {
+      display: grid;
+      gap: 0.75rem;
+    }
+    .csrd-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    @media (min-width: 720px) {
+      .csrd-grid-2 {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    .csrd-card {
+      background: var(--color-surface);
+      border-radius: var(--radius-lg);
+      padding: 0.9rem 1rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft), var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+    .csrd-card-title {
+      margin: 0;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-primary);
+    }
+    .csrd-card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .csrd-row {
+      display: flex;
+      gap: 0.7rem;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 0.4rem 0.6rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      min-width: 0;
+    }
+    .csrd-row--muted {
+      color: var(--color-text-muted);
+      font-style: italic;
+    }
+    .csrd-row-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary);
+      flex: 0 0 auto;
+      min-width: 7rem;
+    }
+    .csrd-row-value {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-size: 0.88rem;
+      color: var(--color-text);
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+    .csrd-mono {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+    .csrd-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.65rem;
+      border-radius: var(--radius-pill);
+      background: var(--color-surface);
+      color: var(--color-text-secondary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-right: 0.35rem;
+      margin-bottom: 0.3rem;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .csrd-copy {
+      flex: 0 0 auto;
+    }
+    .csrd-check {
+      display: flex;
+      gap: 0.6rem;
+      align-items: flex-start;
+      padding: 0.5rem 0.65rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      min-width: 0;
+    }
+    .csrd-check-mark {
+      flex: 0 0 auto;
+      width: 1.35rem;
+      height: 1.35rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-pill);
+      font-size: 0.78rem;
+      font-weight: 800;
+      line-height: 1;
+      background: color-mix(in oklch, currentColor 14%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, currentColor 35%, transparent);
+    }
+    .csrd-check-text {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+      min-width: 0;
+    }
+    .csrd-check-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary);
+    }
+    .csrd-check-detail {
+      font-size: 0.88rem;
+      color: var(--color-text);
+      overflow-wrap: anywhere;
+    }
+    .csrd-check--pass .csrd-check-mark { color: var(--color-success); }
+    .csrd-check--warn .csrd-check-mark { color: var(--color-accent); }
+    .csrd-check--fail .csrd-check-mark { color: var(--color-danger); }
+    @media (max-width: 640px) {
+      .csrd-row-label {
+        min-width: 0;
+        flex: 0 0 100%;
+      }
+    }
+  </style>
+</div>

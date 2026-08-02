@@ -24,6 +24,7 @@ export const toolPersistencePolicy = {
   'mime-type-lookup': 'preference',
   'eyedropper-color-picker': 'preference',
   'zero-width-character-detector': 'disabled',
+  'csr-decoder': 'disabled',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)
