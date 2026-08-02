@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 133 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 134 tools and growing.
 
 ## Tools
 
@@ -142,6 +142,7 @@
 | OpenAPI to TypeScript Generator | [/tools/openapi-to-typescript](https://zerotool.dev/tools/openapi-to-typescript) |
 | CSS Clamp Calculator | [/tools/css-clamp-calculator](https://zerotool.dev/tools/css-clamp-calculator) |
 | Barcode Generator | [/tools/barcode-generator](https://zerotool.dev/tools/barcode-generator) |
+| CSR Decoder | [/tools/csr-decoder](https://zerotool.dev/tools/csr-decoder) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
