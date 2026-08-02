@@ -1,0 +1,249 @@
+---
+title: "CA が CSR を却下する理由と、その事前検出方法"
+description: "認証局が PKCS#10 要求に署名する前に確認する 7 項目、SAN のない Common Name が役に立たない証明書を生む理由、そして CSR の自己署名を自分で検証する方法。"
+pubDate: 2026-08-02
+lang: "ja"
+tags: ["csr", "pkcs10", "ssl", "x509", "developer-tools"]
+ogImage: /og/blog-csr-decoder-guide.png
+---
+
+証明書が届いたのは金曜日だった。インストールは滞りなく完了し、チェーンの検証も通り、有効期限は 2 年先。それなのに、サイトにアクセスするブラウザはことごとく `NET::ERR_CERT_COMMON_NAME_INVALID` を返した。
+
+その CSR は、Common Name しか設定していない設定ファイルから生成されていた。`subjectAltName` は無し。要求の構造そのものには何の不備もなかったため CA は署名し、出来上がったものは X.509 の字面どおりには有効な証明書——何一つ保護しない有効な証明書だった。ブラウザがホスト名の照合に Common Name を読まなくなってから何年も経つ。肝心の名前は、最初から一度も要求されていなかった。
+
+この種の障害は、ブラウザが接続を拒むその瞬間まで、どの工程でも姿を見せない。CSR は問題なく見える。`openssl req -noout -text` は期待どおりの Subject を出力する。CA は受理する。証明書は本物である。
+
+本記事が扱うのは、署名要求が CA との接触を生き延びられるかを実際に決めている検査項目である。そのうちいくつかがなぜ RFC ではなく CA/Browser Forum のポリシーに由来するのか、そして支払いを済ませる前にそれらを全部走らせる方法を見ていく。
+
+[CSR デコーダーを開く →](/ja/tools/csr-decoder/)
+
+## CSR の中身
+
+PKCS#10 証明書要求（RFC 2986）は DER でエンコードされた 3 つのフィールドから成り、自分で決めた内容が入るのは最初の 1 つだけである。
+
+| フィールド | 内容 |
+|---|---|
+| `CertificationRequestInfo` | バージョン、Subject DN、`SubjectPublicKeyInfo`、および任意の属性集合 |
+| `signatureAlgorithm` | 上のブロック全体に署名したアルゴリズム識別子 |
+| `signature` | 署名本体。埋め込まれた公開鍵と対になる秘密鍵で生成される |
+
+重要なものはすべて、その任意の属性集合に隠れている。SAN のリストも、key usage フラグも、extended key usage フラグも、CSR のトップレベルフィールドではない。いずれも PKCS#9 属性 `extensionRequest`（OID `1.2.840.113549.1.9.14`）に包まれて届き、この属性は X.509 の `Extensions` シーケンスをそのまま保持する。だから Subject しか表示しないツールは、ドメイン名を一つも要求していない CSR について「問題ありません」と平然と告げる。
+
+CSR に決して入らないのが秘密鍵である。要求内のどの情報もなりすましには使えない。だからこそ CA にメールで送っても安全なのだ。唯一守る価値があるフィールドは `challengePassword` で、これは一部の CA が後日の失効手続きの認可情報として受け取る共有秘密である。鍵を保護するためのパスワードではなく、その値を画面に表示するデコーダーが漏らしているのは失効用の資格情報にほかならない。
+
+## CA が実行する 7 つの検査
+
+このうち 4 項目は RFC ではなく CA/Browser Forum のベースライン要件（Baseline Requirements）に由来する。形式的に完璧な CSR が却下されうるのはこのためである。
+
+| 検査項目 | 却下される条件 | 根拠 |
+|---|---|---|
+| 自己署名が検証できる | 署名が埋め込まれた公開鍵と一致しない | RFC 2986 の所持証明 |
+| 鍵強度 | RSA 2048 ビット未満、または EC 曲線 256 ビット未満 | BR 6.1.5 |
+| 署名ハッシュ | SHA-1 または MD5 | BR 7.1.3.2 |
+| `subjectAltName` の存在 | 名前を一つも要求していない | BR 7.1.4.2.1 |
+| CN が SAN に含まれる | Common Name が指すホストを SAN 集合が覆っていない | ブラウザの挙動であり BR ではない |
+| ワイルドカードの位置 | `*` が最左ラベル全体になっていない | BR 3.2.2.6 |
+| 名前が公開解決可能 | `.local`、`.internal`、単一ラベル名、プライベート IP 帯 | BR 7.1.4.2.1 |
+
+冒頭の金曜日の障害を生んだのは 5 行目であり、そしてこれは、どの CA にも捕捉する義務がない唯一の項目でもある。CN が SAN に載っていない証明書を発行しても、CA 自身の検証は何も壊れない。それはあなたの問題であり、あなたのユーザーによって発見される。
+
+## 自己署名を自分で検証する
+
+PKCS#10 要求は、その中の公開鍵と対になる秘密鍵で署名されている。この署名は手に入る中で最も安価な完全性検査である。`CertificationRequestInfo` ブロック全体を覆っているため、Subject・公開鍵・要求された拡張のどこか 1 バイトでも反転すれば無効になる。
+
+```bash
+openssl req -in request.pem -verify -noout
+# Certificate request self-signature verify OK
+```
+
+これが失敗したなら、CSR は設定を誤ったのではなく破損している。実際の原因は平凡なものばかりだ。最終行を取りこぼしたコピー＆ペーストによる PEM の切れ、メールクライアントによる base64 の改行の入れ直し、行末空白と判断してチケットシステムが削ったもの、あるいはテキストエディタで Subject を手直しし、署名も追随すると思い込んだケース。
+
+同じ検査はブラウザでも Web Crypto を通して実行できる。必要な材料はすべて要求の中にあるからだ。
+
+```javascript
+// spkiBytes: 要求から切り出した SubjectPublicKeyInfo の DER
+// tbsBytes:  CertificationRequestInfo の DER（tag と length を含む）
+// sigBytes:  BIT STRING のペイロードから unused-bits バイトを除いたもの
+const key = await crypto.subtle.importKey(
+  'spki',
+  spkiBytes,
+  { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+  false,
+  ['verify'],
+);
+
+const valid = await crypto.subtle.verify(
+  { name: 'RSASSA-PKCS1-v1_5' },
+  key,
+  sigBytes,
+  tbsBytes,
+);
+```
+
+ここに落とし穴が 2 つある。ECDSA 署名は X.509 では 2 つの INTEGER から成る DER `SEQUENCE` として運ばれるのに対し、Web Crypto が要求するのは固定幅の生の `r‖s` バッファである。P-256 なら各 32 バイト、P-384 なら 48 バイト、P-521 なら 66 バイト。したがって DER を展開し、各成分をフィールド幅までゼロ埋めする必要がある。もう一つは RSA-PSS で、パラメータはすべて任意であり RFC 4055 の既定値は SHA-1 と 20 バイトのソルト長である。つまりパラメータを省略した PSS 要求は、パイプラインの他の部分がどう想定していようと SHA-256 を使っていない。
+
+## CN と SAN、正しい順序は一つだけ
+
+Common Name はもともとホスト名を入れるために設計されたものではない。X.500 はこれをディレクトリエントリの人間可読なラベルとして定義しており、DNS 名を入れるのは慣習にすぎなかった。RFC 2818 は 2000 年にそれを容認し、RFC 6125 は 2011 年に非推奨とした。Chrome はバージョン 58 で CN フォールバックを完全に廃止した。現行のブラウザはいずれも `subjectAltName` だけを照合する。
+
+実務上のルールは 2 つに分かれ、見落とされるのは決まって後半である。
+
+1. 証明書が保護すべきホスト名はすべて SAN リストに入っていなければならない。
+2. Common Name を設定するのであれば、その名前そのものも SAN リストに入っていなければならない。
+
+後半が必要なのは、CA が CN を発行証明書へそのままコピーするからだ。SAN に載っていない CN は、証明書に記載され、監視画面にも現れながら、何も保護しない名前になる。多くのツールはこれを見逃す。`openssl req` に `-addext` を付けても警告は出ないし、CA の Web フォームも同様である。
+
+```bash
+# 正しい形：CN を最初の SAN エントリとして重ねて記載する
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout key.pem -out request.pem \
+  -subj "/C=US/O=Example Corp/CN=example.com" \
+  -addext "subjectAltName=DNS:example.com,DNS:www.example.com"
+```
+
+SAN リストを読み戻すには、それがどこに住んでいるかを知っている必要がある。トップレベルではなく `extensionRequest` の中だ。
+
+```python
+from cryptography import x509
+from cryptography.x509.oid import ExtensionOID, NameOID
+
+csr = x509.load_pem_x509_csr(open("request.pem", "rb").read())
+
+cn = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+cn = cn[0].value if cn else None
+
+try:
+    san = csr.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+    names = san.value.get_values_for_type(x509.DNSName)
+except x509.ExtensionNotFound:
+    names = []
+
+print("署名の有効性:", csr.is_signature_valid)
+print("SAN:", names)
+if cn and cn not in names:
+    print(f"警告: CN {cn} が SAN リストにありません")
+```
+
+`csr.is_signature_valid` が所持証明の検査であり、`ExtensionNotFound` こそが冒頭の障害を生んだ分岐である。空の `names` リストは、このスクリプト全体で最も大きな警告音だ。
+
+## ACME は CSR をどう扱うか
+
+証明書を Let's Encrypt などの ACME CA から取得しているなら、丹念に埋めた Subject の大半は捨てられる。RFC 8555 の finalize は確かに PKCS#10 要求を受け取るが、ACME サーバーが検証対象の識別子を導くのは SAN リストと CN からであり、Let's Encrypt はそれ以外の Subject 属性を一切無視する。組織名、部署、国、地域——どれも発行された証明書には届かない。ドメイン検証証明書は定義上、組織の身元を持たないからだ。
+
+ここから 2 つの帰結が出る。第一に、ACME フロー向けの CSR で正しくある必要があるのは公開鍵と SAN リストの 2 つだけで、残りは剥がされる装飾にすぎない。第二に、finalize 要求の識別子は注文で既に認可された識別子の部分集合でなければならず、そうでなければサーバーは証明書ではなく `malformed` の problem document を返す。これは「CN あり SAN なし」障害の ACME 版であり、より早い段階で、より明確なメッセージとともに捕捉される。
+
+ほとんどの ACME クライアントは CSR を自前で生成し、利用者に見せない。それが正しい既定である。CSR を目にするのは、事前生成した CSR を使うようクライアントを設定した場合——鍵が HSM にある構成や、コンプライアンス上、鍵を対象ホスト上で生成しなければならない現場でよくある。そしてそこは、手で組み立てた CSR がレビューを経ずに CA へ届く経路そのものである。
+
+```bash
+# ACME CA が要求から実際に読み取る部分
+openssl req -in request.pem -noout -text \
+  | grep -A2 'Subject Alternative Name'
+```
+
+## ワイルドカードと、決して発行されない名前
+
+ワイルドカードが有効なのは、それが最左ラベル全体である場合に限られる。`*.example.com` は可。`api.*.example.com` はワイルドカードが最左でないため不可。`w*.example.com` はラベルの一部だけがリテラルであるため不可である——RFC 6125 は部分ラベルのワイルドカードに言及しているが、CA は一律に拒否し、そもそもブラウザ側も確実には照合しない。
+
+`*.example.com` は `example.com` 自身にも `a.b.example.com` にも一致しない。ワイルドカードが覆うのはちょうど 1 ラベルである。頂点ドメインとサブドメインの両方を覆っているように見える証明書は、SAN で両者を別々に列挙している。
+
+そもそも発行されえない名前は、思われているより少ない。
+
+| 名前の形 | 署名できない理由 |
+|---|---|
+| `server.local`、`db.internal`、`app.corp` | 予約済みまたは登録不能なサフィックスで、検証対象となる所有者が存在しない |
+| `intranet`（ドットなし） | 単一ラベル名はドメイン検証を完了できない |
+| `10.0.0.5`、`192.168.1.1`、`127.0.0.1` | プライベートおよびループバック帯。定義上、検証不能 |
+| `*.co.uk` | レジストリ階層のサフィックスを跨ぐワイルドカード |
+
+公的 CA が内部名への発行を停止したのは 2015 年 11 月、ベースライン要件の期限が到来した時点である。内部ホストに対する答えは、ルート証明書を自分で配布するプライベート CA を立てることだ。要求は変わらず PKCS#10 であり、本記事の検査項目のうち「公開解決可能」以外はすべてそのまま適用される。
+
+## 拡張はどの生成経路で失われるのか
+
+現実に見かける SAN 欠落の CSR は、ほぼすべて 3 つの生成経路のいずれかから来ており、拡張が落ちる理由は経路ごとに異なる。
+
+1 つ目は設定ファイルで駆動する `openssl req` で、拡張ブロックは存在するのに一度も参照されていないケースだ。`req_extensions` は OpenSSL が `extensionRequest` へコピーするセクションを指し、`x509_extensions` は `-x509` で自己署名するときに使うセクションを指す。`[ v3_req ]` を定義しながら `req_extensions = v3_req` の行を書き忘れると、Subject は完璧で拡張が皆無の要求が、何の警告もなく出来上がる。
+
+```ini
+[ req ]
+distinguished_name = dn
+req_extensions     = v3_req      # この行がないと下のブロックは死んだ設定になる
+prompt             = no
+
+[ dn ]
+C  = US
+O  = Example Corp
+CN = example.com
+
+[ v3_req ]
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = example.com
+DNS.2 = www.example.com
+```
+
+2 つ目は `-addext` と `-config` の併用である。OpenSSL 3 は両方を受け付け、`-addext` が名指しした拡張については `-addext` が勝つ。その結果、SAN を 4 件要求する設定にコマンドラインの `-addext "subjectAltName=DNS:example.com"` が加わると、送り出されるのは 5 件ではなく 1 件になる。
+
+3 つ目は Windows の `certreq` で、INF ファイルでは SAN を友好的なキー名ではなく `2.5.29.17` の拡張文字列として書く必要がある。その OID 行のタイプミスはエラーにならず、静かに存在しない拡張になるだけである。
+
+3 つの失敗には共通の兆候がある。要求はパースでき、Subject は正しく、SAN の欄が空である。だからこそ、要求された拡張を Subject と分けて表示するデコーダーなら一目で捕まえられる。
+
+## 更新時に CSR を再利用する
+
+CSR は特定の公開鍵を埋め込んでいるため、更新時に CSR を再利用することは鍵ペアの再利用を意味する。意図してそうするチームもある。鍵が変わらなければ SPKI ピンは更新をまたいで有効なままだし、公開鍵ピンニングを行っている環境で鍵を入れ替えると、バックアップピンが引き継ぐまで旧ピンを保持する全クライアントが遮断されるからだ。
+
+代償は、鍵のローテーションが行われなくなることである。2019 年に生成され 6 回の更新を通じて使い回された鍵は、それを保持したすべてのホスト・バックアップ・マシンイメージの上で 6 年間を過ごしており、その暴露期間はそれらすべての和集合になる。証明書はこの事実を何も語らない。更新のたびに有効期間は振り出しに戻るが、鍵は戻らない。
+
+現実的な折衷案は、更新サイクルに従うのではなく自分で決めた周期で鍵を回すことだ。証明書が 90 日ごとに更新されるとしても CSR は年に一度作り直し、同時にピンニング設定にバックアップピンを残してローテーションを一斉切替にしない。ピンニングを行っていないなら、毎回新しい鍵を生成すればよい。古い鍵を持ち越す利点は何もない。
+
+```bash
+# 同じ鍵で新しい要求だけを作る——意図的な再利用
+openssl req -new -key existing-key.pem -out renewal.pem \
+  -subj "/CN=example.com" -addext "subjectAltName=DNS:example.com"
+
+# 新しい鍵と新しい要求——ピンニングをしないなら本来こちらが既定
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout new-key.pem -out renewal.pem \
+  -subj "/CN=example.com" -addext "subjectAltName=DNS:example.com"
+```
+
+## 戻ってきた証明書を照合する
+
+証明書が届いたら、それが自分の要求から発行されたことを証明する比較が一つある。公開鍵のフィンガープリントだ。この値は鍵だけに依存するため、CSR の中でも、その鍵ペアで発行されたあらゆる証明書の中でも同一になる。
+
+```bash
+# 要求から取得
+openssl req -in request.pem -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64
+
+# 発行された証明書から取得——両者は一致しなければならない
+openssl x509 -in certificate.pem -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64
+```
+
+この値が RFC 7469 の SPKI ピンであり、公開鍵ピンニング設定で使う文字列と同じものである。一致しない場合、その証明書は別の要求から署名されている。多くは CA のダッシュボードに残っていた古い CSR が原因で、この種の誤りは更新サイクルを丸ごと気づかれずに生き延びるのが得意だ。
+
+## 検索で最初に出てきたデコーダーに貼らない理由
+
+CSR デコーダーを検索すると、1 ページ目はほぼ証明書販売業者で埋まる。彼らのデコーダーは集客ページであり、サーバーサイドのフォームとして作られているものは貼り付けた内容をそのまま受け取る。一方 CSR は、これから保護しようとするドメイン、その背後の法人、そして時には失効用の秘密を記載した文書である。どれも漏れて致命的というほどではないが、どれも漏らす必要がない。
+
+| | 典型的な販売業者のデコーダー | ZeroTool CSR デコーダー |
+|---|---|---|
+| 解析が行われる場所 | サーバーサイドのフォーム送信 | あなたのブラウザ |
+| 自己署名の検証 | ほとんど行わない | 行う（Web Crypto 経由） |
+| ベースライン要件の検査 | なし | 7 項目、失敗理由付き |
+| SPKI ピンの出力 | なし | RFC 7469 形式 |
+| アカウントの要否 | 必要な場合あり | 不要 |
+
+[CSR デコーダー](/ja/tools/csr-decoder/) は DER を解析し、署名を検証し、7 項目すべてをネットワーク通信なしで実行する。証明書が返ってきたら [SSL 証明書デコーダー](/ja/tools/ssl-certificate-decoder/) が発行された X.509 を同じ方式で読み、[RSA 鍵ペアジェネレーター](/ja/tools/rsa-key-generator/) が鍵生成の工程を担う——ブラウザで作る使い捨ての鍵で本当に用が足りる場面向けだ。
+
+## 参考資料
+
+- [RFC 2986](https://datatracker.ietf.org/doc/html/rfc2986) — PKCS #10 証明書要求構文
+- [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280) — X.509 証明書と CRL のプロファイル。`extensionRequest` が運ぶ拡張の定義を含む
+- [RFC 6125](https://datatracker.ietf.org/doc/html/rfc6125) — ホスト名検証と Common Name の非推奨化
+- [RFC 7469](https://datatracker.ietf.org/doc/html/rfc7469) — SPKI ピンの形式
+- [CA/Browser Forum ベースライン要件](https://cabforum.org/working-groups/server/baseline-requirements/documents/) — 7 項目の検査の政策的な出所
+- [MDN: SubtleCrypto.verify()](https://developer.mozilla.org/ja/docs/Web/API/SubtleCrypto/verify) — ブラウザ側の検証 API

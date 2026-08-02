@@ -1,0 +1,249 @@
+---
+title: "CA 为什么拒签你的 CSR——以及如何提前发现"
+description: "证书颁发机构签发 PKCS#10 请求前会检查的七件事、为什么只写 Common Name 不写 SAN 会签出一张没用的证书，以及如何自己验证 CSR 的自签名。"
+pubDate: 2026-08-02
+lang: "zh"
+tags: ["csr", "pkcs10", "ssl", "x509", "developer-tools"]
+ogImage: /og/blog-csr-decoder-guide.png
+---
+
+证书是周五送到的。安装干净利落，证书链校验通过，有效期还有两年——然后每个访问站点的浏览器都抛出 `NET::ERR_CERT_COMMON_NAME_INVALID`。
+
+那份 CSR 是用一份只设置了 Common Name 的配置生成的，没有 `subjectAltName`。CA 签了，因为请求本身结构上挑不出毛病；签出来的东西按 X.509 的字面规定确实是一张有效证书——一张什么都不保护的有效证书。浏览器早在多年前就不再用 Common Name 做主机名匹配了，而真正起作用的那个名字，从头到尾就没被申请过。
+
+这类故障在浏览器拒绝连接之前的每一步都是隐形的。CSR 看着没问题，`openssl req -noout -text` 打印出的 Subject 和你预期的一模一样，CA 收了，证书是真的。
+
+本文讲的是真正决定一份签名请求能否活着通过 CA 的那些检查项：为什么其中一部分来自 CA/Browser Forum 的政策而非任何 RFC，以及如何在花钱之前把它们全跑一遍。
+
+[打开 CSR 解码器 →](/zh/tools/csr-decoder/)
+
+## CSR 里到底装了什么
+
+一份 PKCS#10 证书请求（RFC 2986）由三个 DER 编码字段组成，而其中只有第一个承载了你自己填的内容：
+
+| 字段 | 内容 |
+|---|---|
+| `CertificationRequestInfo` | 版本号、Subject DN、`SubjectPublicKeyInfo`，以及一个可选属性集 |
+| `signatureAlgorithm` | 对上面那一整块签名所用的算法标识 |
+| `signature` | 签名本身，由与内嵌公钥配对的私钥生成 |
+
+有价值的东西全藏在那个可选属性集里。SAN 列表、key usage 标志、extended key usage 标志——没有一个是 CSR 的顶层字段。它们统统包在一个 PKCS#9 属性 `extensionRequest`（OID `1.2.840.113549.1.9.14`）里，该属性原样承载一个 X.509 `Extensions` 序列。所以一个只会打印 Subject 的工具，会心安理得地告诉你：这份根本没申请任何域名的 CSR 一切正常。
+
+CSR 里永远不会有的是私钥。请求中的任何内容都无法用来冒充你，这也是为什么把它发给 CA 是安全的。唯一值得防一手的字段是 `challengePassword`——部分 CA 把它当作日后吊销证书的授权凭据。它不是保护密钥的口令，而一个会把它的值打印到屏幕上的解码器，泄漏的是一份吊销凭据。
+
+## CA 会跑的七项检查
+
+其中四项来自 CA/Browser Forum 基线要求（Baseline Requirements）而非任何 RFC，这正是一份格式完全正确的 CSR 仍然会被拒的原因。
+
+| 检查项 | 何时被拒 | 依据 |
+|---|---|---|
+| 自签名可验证 | 签名与内嵌公钥不匹配 | RFC 2986 持有证明 |
+| 密钥强度 | RSA 低于 2048 位，或 EC 曲线低于 256 位 | BR 6.1.5 |
+| 签名摘要算法 | SHA-1 或 MD5 | BR 7.1.3.2 |
+| 存在 `subjectAltName` | 请求里一个域名都没申请 | BR 7.1.4.2.1 |
+| CN 出现在 SAN 列表中 | Common Name 指定的主机不在 SAN 集合内 | 浏览器行为，不在 BR 内 |
+| 通配符位置 | `*` 不是完整的最左标签 | BR 3.2.2.6 |
+| 域名可公网解析 | `.local`、`.internal`、单标签主机名、私有 IP 段 | BR 7.1.4.2.1 |
+
+第五行就是上文那场周五事故的元凶，也是唯一一项没有任何 CA 有义务替你拦下来的检查。签发一张 CN 不在 SAN 列表里的证书，在 CA 自己的校验流程中不违反任何规则——那是你的问题，由你的用户替你发现。
+
+## 自己验证自签名
+
+PKCS#10 请求由与其中公钥配对的私钥签名。这个签名是现成的、最廉价的完整性校验：它覆盖整个 `CertificationRequestInfo` 块，因此 Subject、公钥或申请的扩展中任何一个字节被翻转，签名就失效。
+
+```bash
+openssl req -in request.pem -verify -noout
+# Certificate request self-signature verify OK
+```
+
+这一步失败，说明 CSR 是被损坏了，而不是配错了。实际原因往往很平庸：复制粘贴漏掉最后一行导致 PEM 被截断；邮件客户端重新折行了 base64；工单系统把它认作行尾空白给清理了；或者有人在文本编辑器里手改了 Subject，还以为签名会跟着一起变。
+
+同一个校验在浏览器里通过 Web Crypto 也能跑，因为它需要的东西全在请求内部：
+
+```javascript
+// spkiBytes: 从请求中切出的 SubjectPublicKeyInfo DER
+// tbsBytes:  CertificationRequestInfo DER，含 tag 与 length
+// sigBytes:  BIT STRING 载荷，去掉 unused-bits 字节
+const key = await crypto.subtle.importKey(
+  'spki',
+  spkiBytes,
+  { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+  false,
+  ['verify'],
+);
+
+const valid = await crypto.subtle.verify(
+  { name: 'RSASSA-PKCS1-v1_5' },
+  key,
+  sigBytes,
+  tbsBytes,
+);
+```
+
+这里有两个坑。ECDSA 签名在 X.509 中是以两个 INTEGER 组成的 DER `SEQUENCE` 承载的，而 Web Crypto 要的是定长的原始 `r‖s` 缓冲区——P-256 每段 32 字节、P-384 每段 48 字节、P-521 每段 66 字节——所以必须先拆开 DER，再把每段左侧补零到字段宽度。另一个坑是 RSA-PSS：它的参数全部可选，RFC 4055 给的默认值是 SHA-1 加 20 字节盐长，也就是说一份省略了参数的 PSS 请求并不在用 SHA-256，无论你的流水线其余部分怎么假设。
+
+## CN 与 SAN，只有一种正确顺序
+
+Common Name 从设计之初就不是用来装主机名的。X.500 把它定义为目录条目的人类可读标签，用它承载 DNS 名称只是一个约定俗成的做法：RFC 2818 在 2000 年容忍了它，RFC 6125 在 2011 年宣布弃用。Chrome 从 58 版起彻底移除了 CN 回退。今天所有主流浏览器只匹配 `subjectAltName`。
+
+实际规则分两半，而通常被漏掉的是后一半：
+
+1. 证书需要保护的每一个主机名都必须出现在 SAN 列表里。
+2. 只要你设置了 Common Name，这个名字本身也必须出现在 SAN 列表里。
+
+第二条之所以存在，是因为 CA 会把 CN 原样复制进签发的证书。一个不在 SAN 里的 CN 会成为这样一个名字：它出现在证书里、出现在你的监控面板里，但什么都不保护。大多数工具对此视而不见——`openssl req` 配合 `-addext` 不会警告你，CA 的网页表单同样不会。
+
+```bash
+# 正确写法：CN 作为第一条 SAN 重复出现
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout key.pem -out request.pem \
+  -subj "/C=US/O=Example Corp/CN=example.com" \
+  -addext "subjectAltName=DNS:example.com,DNS:www.example.com"
+```
+
+想把 SAN 列表读回来，前提是知道它住在哪儿——在 `extensionRequest` 里面，不在顶层：
+
+```python
+from cryptography import x509
+from cryptography.x509.oid import ExtensionOID, NameOID
+
+csr = x509.load_pem_x509_csr(open("request.pem", "rb").read())
+
+cn = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+cn = cn[0].value if cn else None
+
+try:
+    san = csr.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+    names = san.value.get_values_for_type(x509.DNSName)
+except x509.ExtensionNotFound:
+    names = []
+
+print("签名是否有效:", csr.is_signature_valid)
+print("SAN:", names)
+if cn and cn not in names:
+    print(f"警告: CN {cn} 不在 SAN 列表中")
+```
+
+`csr.is_signature_valid` 就是持有证明校验，而 `ExtensionNotFound` 正是引发那场事故的分支——空的 `names` 列表是整段脚本里最响的一声警报。
+
+## ACME 会怎么处理你的 CSR
+
+如果证书来自 Let's Encrypt 或任何一家 ACME CA，你精心填写的 Subject 大部分会被丢掉。RFC 8555 的 finalize 阶段确实接收一份 PKCS#10 请求，但 ACME 服务器只从 SAN 列表和 CN 推导它要校验的标识符，Let's Encrypt 会直接忽略其余所有 Subject 属性。组织名、部门、国家、城市——没有一个会进入签发的证书，因为域名验证型（DV）证书按定义就不携带组织身份。
+
+由此有两个推论。第一，为 ACME 流程准备的 CSR 只需要两样东西正确：公钥和 SAN 列表，其余都是会被剥掉的装饰。第二，finalize 请求里的标识符必须是订单中已授权标识符的子集，否则服务器返回的是一份 `malformed` 问题文档而不是证书——这相当于 ACME 版本的「有 CN 无 SAN」故障，只是发现得更早，报错也更明确。
+
+大多数 ACME 客户端自己生成 CSR 且从不给你看，这是正确的默认行为。你会亲眼见到 CSR 的场合，是客户端被配置为使用预先生成的 CSR——常见于密钥存放在 HSM 中，或合规流程要求密钥必须在目标主机上生成的场景。而这恰恰是一份手工构造的 CSR 未经复核就抵达 CA 的路径。
+
+```bash
+# ACME CA 实际会从请求中读取的内容
+openssl req -in request.pem -noout -text \
+  | grep -A2 'Subject Alternative Name'
+```
+
+## 通配符，以及永远签不出来的域名
+
+通配符只有作为完整的最左标签时才合法。`*.example.com` 可以。`api.*.example.com` 不行，因为通配符不在最左。`w*.example.com` 也不行，因为这个标签只有一部分是通配——尽管 RFC 6125 讨论过部分标签通配，CA 一律拒绝，浏览器也无法可靠匹配。
+
+`*.example.com` 同样不匹配 `example.com` 本身，也不匹配 `a.b.example.com`。一个通配符只覆盖一层标签。那些看上去既覆盖主域又覆盖子域的证书，是在 SAN 里把两者分别列出来的。
+
+真正永远签不出来的域名，比大多数人以为的要少：
+
+| 域名形态 | 为什么签不出来 |
+|---|---|
+| `server.local`、`db.internal`、`app.corp` | 保留或不可注册的后缀，没有可供验证的所有者 |
+| `intranet`（无点） | 单标签名称无法完成域名验证 |
+| `10.0.0.5`、`192.168.1.1`、`127.0.0.1` | 私有与回环地址段，按定义不可验证 |
+| `*.co.uk` | 通配符跨越了注册局层级的后缀 |
+
+公共 CA 从 2015 年 11 月起停止为内部域名签发证书，那是基线要求设定的最后期限。内部主机的正解是自建私有 CA 并自行分发根证书——请求依然是 PKCS#10 格式，本文中除「可公网解析」外的每一项检查也依然适用。
+
+## 扩展是在哪一步生成时丢掉的
+
+现实中几乎所有缺 SAN 的 CSR 都出自三条生成路径中的一条，而每条路径丢掉扩展的原因还各不相同。
+
+第一条是用配置文件驱动 `openssl req`，扩展区块写了却从未被引用。`req_extensions` 指定的是 OpenSSL 会复制进 `extensionRequest` 的那一节，而 `x509_extensions` 指定的是用 `-x509` 自签时才会用到的那一节。定义了 `[ v3_req ]` 却漏掉 `req_extensions = v3_req` 这一行，产出的就是一份 Subject 完美、扩展全无的请求——悄无声息。
+
+```ini
+[ req ]
+distinguished_name = dn
+req_extensions     = v3_req      # 少了这一行，下面的区块就是废配置
+prompt             = no
+
+[ dn ]
+C  = US
+O  = Example Corp
+CN = example.com
+
+[ v3_req ]
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = example.com
+DNS.2 = www.example.com
+```
+
+第二条是把 `-addext` 与 `-config` 混用。OpenSSL 3 两者都接受，且对它指名的扩展，`-addext` 优先——于是一份请求四个 SAN 的配置，加上命令行里一句 `-addext "subjectAltName=DNS:example.com"`，最终发出去的是一个 SAN，不是五个。
+
+第三条是 Windows `certreq`：INF 文件里的 SAN 必须写成 `2.5.29.17` 扩展字符串，而不是某个友好的键名。那行 OID 里的拼写错误不会报错，只会让这条扩展安静地不存在。
+
+三种失败有同一个特征：请求能解析、Subject 正确、SAN 那一栏是空的。这也是为什么一个把「申请的扩展」与「Subject」分开展示的解码器，能一眼就把它们抓出来。
+
+## 续期时复用 CSR
+
+CSR 内嵌了一个特定的公钥，因此续期时复用 CSR 就是复用密钥对。有些团队是故意这么做的——密钥不变可以让 SPKI pin 跨续期继续有效，而一个做了公钥固定却轮换了密钥的部署，会让所有持有旧 pin 的客户端全部中断，直到备用 pin 接管为止。
+
+代价是密钥轮换从此不再发生。一把 2019 年生成、经过六次续期一路沿用下来的密钥，已经在每一台主机、每一份备份、每一个机器镜像上躺了六年，它的暴露窗口是这些窗口的并集。证书本身不会透露这一点：每次续期有效期都重新开始计算，密钥却没有。
+
+可行的折中是：按你自己定的节奏轮换密钥，而不是被续期节奏牵着走——即便证书每 90 天续一次，也每年重新生成一份 CSR，同时在固定配置里保留一个备用 pin，让轮换不必变成一次「大爆炸式切换」。如果压根没做公钥固定，那就每次都生成新密钥，留着旧的没有任何好处。
+
+```bash
+# 沿用同一把密钥，只生成新请求——这是有意为之的复用
+openssl req -new -key existing-key.pem -out renewal.pem \
+  -subj "/CN=example.com" -addext "subjectAltName=DNS:example.com"
+
+# 新密钥 + 新请求——没做公钥固定时应有的默认做法
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout new-key.pem -out renewal.pem \
+  -subj "/CN=example.com" -addext "subjectAltName=DNS:example.com"
+```
+
+## 核对拿回来的证书
+
+证书到手后，有一项比对能证明它确实是由你那份请求签发的：公钥指纹。它只取决于密钥，因此在 CSR 中和在该密钥对签发过的每一张证书中都完全相同。
+
+```bash
+# 取自请求
+openssl req -in request.pem -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64
+
+# 取自签发的证书——两者必须一致
+openssl x509 -in certificate.pem -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64
+```
+
+这个值就是 RFC 7469 定义的 SPKI pin，与公钥固定配置里用的是同一个字符串。两边对不上，说明证书是从另一份请求签出来的——通常是 CA 控制台里还躺着的一份旧 CSR，而这类错误恰好最擅长在一整个续期周期里不被发现。
+
+## 为什么别随手往搜到的第一个解码器里粘
+
+搜索 CSR 解码器，首页结果几乎全是证书经销商。它们的解码器是获客页面，其中做成服务端表单的那些，会原样收下你粘贴的内容——而一份 CSR 记载着你即将保护的域名、背后的法人实体，偶尔还有一份吊销凭据。这些信息泄漏出去都算不上灾难，但也全都没必要泄漏。
+
+| | 典型经销商解码器 | ZeroTool CSR 解码器 |
+|---|---|---|
+| 解析发生在哪 | 服务端表单提交 | 你的浏览器 |
+| 是否验证自签名 | 很少 | 是，走 Web Crypto |
+| 基线要求检查 | 无 | 七项，并给出失败原因 |
+| 输出 SPKI pin | 无 | RFC 7469 格式 |
+| 是否需要账号 | 有时需要 | 不需要 |
+
+[CSR 解码器](/zh/tools/csr-decoder/) 解析 DER、验证签名、跑完全部七项检查，全程不发一个网络请求。证书签回来之后，[SSL 证书解码器](/zh/tools/ssl-certificate-decoder/) 用同样的方式读取签发的 X.509；而 [RSA 密钥对生成器](/zh/tools/rsa-key-generator/) 覆盖密钥生成环节——适用于那些确实只需要一把浏览器生成的临时密钥的场景。
+
+## 延伸阅读
+
+- [RFC 2986](https://datatracker.ietf.org/doc/html/rfc2986) — PKCS #10 证书请求语法
+- [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280) — X.509 证书与 CRL 规范，含 `extensionRequest` 所承载的扩展定义
+- [RFC 6125](https://datatracker.ietf.org/doc/html/rfc6125) — 主机名校验，以及 Common Name 的弃用
+- [RFC 7469](https://datatracker.ietf.org/doc/html/rfc7469) — SPKI pin 格式
+- [CA/Browser Forum 基线要求](https://cabforum.org/working-groups/server/baseline-requirements/documents/) — 上述七项检查的政策来源
+- [MDN：SubtleCrypto.verify()](https://developer.mozilla.org/zh-CN/docs/Web/API/SubtleCrypto/verify) — 浏览器端验签 API

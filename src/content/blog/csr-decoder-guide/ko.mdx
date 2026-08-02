@@ -1,0 +1,249 @@
+---
+title: "CA가 CSR을 거절하는 이유와 미리 잡아내는 법"
+description: "인증기관이 PKCS#10 요청에 서명하기 전에 확인하는 일곱 가지, SAN 없는 Common Name이 쓸모없는 인증서를 만드는 이유, 그리고 CSR 자체 서명을 직접 검증하는 방법."
+pubDate: 2026-08-02
+lang: "ko"
+tags: ["csr", "pkcs10", "ssl", "x509", "developer-tools"]
+ogImage: /og/blog-csr-decoder-guide.png
+---
+
+인증서는 금요일에 도착했다. 설치는 깔끔했고 체인 검증도 통과했으며 만료일은 2년 뒤였다. 그런데 사이트에 접속하는 모든 브라우저가 `NET::ERR_CERT_COMMON_NAME_INVALID`를 던졌다.
+
+그 CSR은 Common Name만 설정한 구성 파일에서 생성된 것이었다. `subjectAltName`은 없었다. 요청 자체에는 구조적 결함이 없었기에 CA는 서명했고, 그 결과물은 X.509의 문자 그대로는 유효한 인증서였다. 아무것도 보호하지 않는 유효한 인증서. 브라우저가 호스트 이름 대조에 Common Name을 읽지 않게 된 지는 이미 여러 해가 지났다. 정작 중요한 이름은 애초에 요청된 적이 없었다.
+
+이런 장애는 브라우저가 연결을 거부하는 순간까지 모든 단계에서 보이지 않는다. CSR은 멀쩡해 보인다. `openssl req -noout -text`는 예상한 Subject를 그대로 출력한다. CA는 받아준다. 인증서는 진짜다.
+
+이 글은 서명 요청이 CA와의 접촉에서 살아남을지를 실제로 결정하는 검사 항목을 다룬다. 그중 일부가 왜 RFC가 아니라 CA/Browser Forum 정책에서 오는지, 그리고 비용을 지불하기 전에 그 전부를 직접 돌려보는 방법까지 살펴본다.
+
+[CSR 디코더 열기 →](/ko/tools/csr-decoder/)
+
+## CSR 안에는 무엇이 들어 있나
+
+PKCS#10 인증서 요청(RFC 2986)은 DER로 인코딩된 세 개의 필드로 이루어지며, 사용자가 직접 정한 내용이 담기는 것은 첫 번째 하나뿐이다.
+
+| 필드 | 내용 |
+|---|---|
+| `CertificationRequestInfo` | 버전, Subject DN, `SubjectPublicKeyInfo`, 그리고 선택적 속성 집합 |
+| `signatureAlgorithm` | 위 블록 전체에 서명한 알고리즘 식별자 |
+| `signature` | 서명 본체. 내장된 공개 키와 짝이 되는 개인 키로 생성됨 |
+
+정작 중요한 것은 모두 그 선택적 속성 집합에 숨어 있다. SAN 목록도, key usage 플래그도, extended key usage 플래그도 CSR의 최상위 필드가 아니다. 전부 하나의 PKCS#9 속성 `extensionRequest`(OID `1.2.840.113549.1.9.14`) 안에 감싸여 도착하며, 이 속성은 X.509 `Extensions` 시퀀스를 그대로 담는다. 그래서 Subject만 출력하는 도구는 도메인을 하나도 요청하지 않은 CSR을 두고 아무 문제 없다고 태연히 알려준다.
+
+CSR에 절대 들어가지 않는 것이 개인 키다. 요청 안의 어떤 정보로도 사용자를 사칭할 수 없고, 그래서 CA에 메일로 보내도 안전하다. 유일하게 지킬 가치가 있는 필드는 `challengePassword`로, 일부 CA가 훗날 폐기 절차의 승인 수단으로 받는 공유 비밀이다. 키를 보호하는 비밀번호가 아니며, 그 값을 화면에 찍는 디코더가 흘리고 있는 것은 폐기용 자격 증명이다.
+
+## CA가 돌리는 일곱 가지 검사
+
+이 중 네 항목은 RFC가 아니라 CA/Browser Forum 기준 요건(Baseline Requirements)에서 온다. 형식적으로 완벽한 CSR이 거절당할 수 있는 이유가 여기에 있다.
+
+| 검사 항목 | 거절되는 조건 | 근거 |
+|---|---|---|
+| 자체 서명 검증 | 서명이 내장된 공개 키와 일치하지 않음 | RFC 2986 소유 증명 |
+| 키 강도 | RSA 2048비트 미만, 또는 EC 곡선 256비트 미만 | BR 6.1.5 |
+| 서명 해시 | SHA-1 또는 MD5 | BR 7.1.3.2 |
+| `subjectAltName` 존재 | 이름을 하나도 요청하지 않음 | BR 7.1.4.2.1 |
+| CN이 SAN 목록에 포함 | Common Name이 가리키는 호스트를 SAN 집합이 덮지 않음 | 브라우저 동작이며 BR 항목이 아님 |
+| 와일드카드 위치 | `*`가 최좌측 레이블 전체가 아님 | BR 3.2.2.6 |
+| 공개 확인 가능한 이름 | `.local`, `.internal`, 단일 레이블 호스트, 사설 IP 대역 | BR 7.1.4.2.1 |
+
+앞서 이야기한 금요일 장애를 만든 것이 다섯 번째 줄이며, 동시에 어떤 CA도 대신 잡아줄 의무가 없는 유일한 항목이다. CN이 SAN에 없는 인증서를 발급해도 CA 자신의 검증은 전혀 깨지지 않는다. 그건 당신의 문제이고, 당신의 사용자가 대신 발견해 준다.
+
+## 자체 서명을 직접 검증하기
+
+PKCS#10 요청은 그 안의 공개 키와 짝이 되는 개인 키로 서명된다. 이 서명은 손에 넣을 수 있는 가장 값싼 완전성 검사다. `CertificationRequestInfo` 블록 전체를 덮기 때문에 Subject, 공개 키, 요청된 확장 어디든 한 바이트만 뒤집혀도 무효가 된다.
+
+```bash
+openssl req -in request.pem -verify -noout
+# Certificate request self-signature verify OK
+```
+
+이 검사가 실패하면 CSR은 잘못 설정된 것이 아니라 손상된 것이다. 실제 원인은 대개 평범하다. 마지막 줄을 놓친 복사·붙여넣기로 잘린 PEM, 메일 클라이언트가 다시 줄바꿈한 base64, 후행 공백인 줄 알고 지워버린 티켓 시스템, 혹은 텍스트 편집기로 Subject를 손보면서 서명도 따라올 거라 여긴 경우.
+
+같은 검사는 브라우저에서 Web Crypto로도 돌아간다. 필요한 재료가 전부 요청 안에 있기 때문이다.
+
+```javascript
+// spkiBytes: 요청에서 잘라낸 SubjectPublicKeyInfo DER
+// tbsBytes:  CertificationRequestInfo DER (tag와 length 포함)
+// sigBytes:  BIT STRING 페이로드에서 unused-bits 바이트를 제외한 값
+const key = await crypto.subtle.importKey(
+  'spki',
+  spkiBytes,
+  { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+  false,
+  ['verify'],
+);
+
+const valid = await crypto.subtle.verify(
+  { name: 'RSASSA-PKCS1-v1_5' },
+  key,
+  sigBytes,
+  tbsBytes,
+);
+```
+
+여기서 두 가지가 발목을 잡는다. ECDSA 서명은 X.509에서 두 개의 INTEGER로 구성된 DER `SEQUENCE`로 실려 오는 반면, Web Crypto가 원하는 것은 고정 폭의 원시 `r‖s` 버퍼다. P-256은 각 32바이트, P-384는 48바이트, P-521은 66바이트이므로 DER을 풀어 각 성분을 필드 폭까지 왼쪽으로 0을 채워야 한다. 다른 하나는 RSA-PSS로, 파라미터가 전부 선택 사항이고 RFC 4055 기본값이 SHA-1과 20바이트 솔트다. 즉 파라미터를 생략한 PSS 요청은 파이프라인의 나머지가 무엇을 가정하든 SHA-256을 쓰고 있지 않다.
+
+## CN과 SAN, 올바른 순서는 하나뿐
+
+Common Name은 애초에 호스트 이름을 담기 위해 설계되지 않았다. X.500은 이를 디렉터리 항목의 사람이 읽는 라벨로 정의했고, 거기에 DNS 이름을 넣는 것은 관행일 뿐이었다. RFC 2818이 2000년에 이를 용인했고 RFC 6125가 2011년에 폐기 대상으로 지정했다. Chrome은 58 버전에서 CN 폴백을 완전히 제거했다. 현행 브라우저는 모두 `subjectAltName`만 대조한다.
+
+실무 규칙은 두 부분이고, 놓치는 쪽은 언제나 후자다.
+
+1. 인증서가 보호해야 할 모든 호스트 이름은 SAN 목록에 있어야 한다.
+2. Common Name을 설정한다면, 그 이름 자체도 SAN 목록에 있어야 한다.
+
+후자가 필요한 이유는 CA가 CN을 발급 인증서로 그대로 복사하기 때문이다. SAN에 없는 CN은 인증서에 기재되고 모니터링 화면에도 나타나지만 아무것도 보호하지 않는 이름이 된다. 대부분의 도구는 이를 덮어버린다. `openssl req`에 `-addext`를 붙여도 경고하지 않고, CA의 웹 폼도 마찬가지다.
+
+```bash
+# 올바른 형태: CN을 첫 SAN 항목으로 함께 기재
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout key.pem -out request.pem \
+  -subj "/C=US/O=Example Corp/CN=example.com" \
+  -addext "subjectAltName=DNS:example.com,DNS:www.example.com"
+```
+
+SAN 목록을 다시 읽으려면 그것이 어디에 사는지를 알아야 한다. 최상위가 아니라 `extensionRequest` 안이다.
+
+```python
+from cryptography import x509
+from cryptography.x509.oid import ExtensionOID, NameOID
+
+csr = x509.load_pem_x509_csr(open("request.pem", "rb").read())
+
+cn = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+cn = cn[0].value if cn else None
+
+try:
+    san = csr.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+    names = san.value.get_values_for_type(x509.DNSName)
+except x509.ExtensionNotFound:
+    names = []
+
+print("서명 유효 여부:", csr.is_signature_valid)
+print("SAN:", names)
+if cn and cn not in names:
+    print(f"경고: CN {cn} 이(가) SAN 목록에 없습니다")
+```
+
+`csr.is_signature_valid`가 소유 증명 검사이고, `ExtensionNotFound`가 바로 그 장애를 만든 분기다. 비어 있는 `names` 목록이야말로 이 스크립트 전체에서 가장 큰 경고음이다.
+
+## ACME는 CSR을 어떻게 다루나
+
+인증서를 Let's Encrypt를 비롯한 ACME CA에서 받는다면, 공들여 채운 Subject의 대부분은 버려진다. RFC 8555의 finalize는 PKCS#10 요청을 받긴 하지만, ACME 서버가 검증할 식별자를 뽑아내는 곳은 SAN 목록과 CN이고 Let's Encrypt는 나머지 Subject 속성을 통째로 무시한다. 조직명, 부서, 국가, 지역 — 무엇도 발급된 인증서에 닿지 않는다. 도메인 검증 인증서는 정의상 조직 신원을 담지 않기 때문이다.
+
+여기서 두 가지가 따라 나온다. 첫째, ACME 흐름을 위한 CSR에서 정확해야 하는 것은 공개 키와 SAN 목록 둘뿐이고 나머지는 떨어져 나갈 장식이다. 둘째, finalize 요청의 식별자는 주문에서 이미 승인된 식별자의 부분집합이어야 하며, 그렇지 않으면 서버는 인증서 대신 `malformed` 문제 문서를 돌려준다. 이는 'CN은 있고 SAN은 없는' 장애의 ACME 판이며, 더 이른 시점에 더 분명한 메시지로 잡힌다.
+
+대부분의 ACME 클라이언트는 CSR을 스스로 만들고 사용자에게 보여주지 않는다. 그것이 올바른 기본값이다. CSR을 직접 보게 되는 때는 미리 생성한 CSR을 쓰도록 클라이언트를 구성한 경우 — 키가 HSM에 있는 구성이나, 규정상 키를 대상 호스트에서 생성해야 하는 현장에서 흔하다. 그리고 바로 그 경로가, 손으로 만든 CSR이 검토 없이 CA에 도달하는 길이다.
+
+```bash
+# ACME CA가 요청에서 실제로 읽어가는 부분
+openssl req -in request.pem -noout -text \
+  | grep -A2 'Subject Alternative Name'
+```
+
+## 와일드카드, 그리고 결코 발급되지 않는 이름
+
+와일드카드는 최좌측 레이블 전체일 때만 유효하다. `*.example.com`은 가능하다. `api.*.example.com`은 와일드카드가 최좌측이 아니라서 불가하다. `w*.example.com`은 레이블의 일부만 리터럴이라 불가하다 — RFC 6125가 부분 레이블 와일드카드를 다루기는 하지만 CA는 일괄 거부하고, 브라우저도 안정적으로 대조하지 못한다.
+
+`*.example.com`은 `example.com` 자신과도, `a.b.example.com`과도 일치하지 않는다. 와일드카드가 덮는 것은 정확히 한 레이블이다. 최상위 도메인과 서브도메인을 모두 덮는 것처럼 보이는 인증서는 SAN에 둘을 따로 나열한 것이다.
+
+아예 발급될 수 없는 이름은 생각보다 짧은 목록이다.
+
+| 이름 형태 | 서명될 수 없는 이유 |
+|---|---|
+| `server.local`, `db.internal`, `app.corp` | 예약되었거나 등록 불가능한 접미사로, 검증할 소유자가 존재하지 않음 |
+| `intranet`(점 없음) | 단일 레이블 이름은 도메인 검증을 완료할 수 없음 |
+| `10.0.0.5`, `192.168.1.1`, `127.0.0.1` | 사설 및 루프백 대역으로 정의상 검증 불가 |
+| `*.co.uk` | 레지스트리 수준 접미사를 가로지르는 와일드카드 |
+
+공인 CA가 내부 이름 발급을 중단한 것은 기준 요건의 마감이 도래한 2015년 11월이다. 내부 호스트에 대한 답은 루트를 직접 배포하는 사설 CA를 세우는 것이다. 요청은 여전히 PKCS#10이며, 이 글의 검사 중 '공개 확인 가능' 항목을 제외한 나머지는 그대로 적용된다.
+
+## 확장은 어느 생성 경로에서 사라지나
+
+현장에서 보이는 SAN 누락 CSR은 거의 전부 세 가지 생성 경로 중 하나에서 나오며, 확장이 빠지는 이유는 경로마다 다르다.
+
+첫째는 구성 파일로 구동하는 `openssl req`에서 확장 블록이 존재하는데도 한 번도 참조되지 않는 경우다. `req_extensions`는 OpenSSL이 `extensionRequest`로 복사하는 섹션을 가리키고, `x509_extensions`는 `-x509`로 자체 서명할 때 쓰는 섹션을 가리킨다. `[ v3_req ]`를 정의해 놓고 `req_extensions = v3_req` 줄을 빠뜨리면, Subject는 완벽하고 확장은 하나도 없는 요청이 조용히 만들어진다.
+
+```ini
+[ req ]
+distinguished_name = dn
+req_extensions     = v3_req      # 이 줄이 없으면 아래 블록은 죽은 설정이다
+prompt             = no
+
+[ dn ]
+C  = US
+O  = Example Corp
+CN = example.com
+
+[ v3_req ]
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = example.com
+DNS.2 = www.example.com
+```
+
+둘째는 `-addext`와 `-config`를 섞어 쓰는 경우다. OpenSSL 3은 둘 다 받아들이고, `-addext`가 지목한 확장에 대해서는 `-addext`가 이긴다. 그래서 SAN 네 개를 요청하는 구성에 명령줄의 `-addext "subjectAltName=DNS:example.com"`이 더해지면 실제로 나가는 것은 다섯 개가 아니라 하나다.
+
+셋째는 Windows `certreq`로, INF 파일에서 SAN을 친절한 키 이름이 아니라 `2.5.29.17` 확장 문자열로 적어야 한다. 그 OID 줄의 오타는 오류가 아니라, 조용히 존재하지 않는 확장이 된다.
+
+세 실패에는 공통된 징후가 있다. 요청은 파싱되고, Subject는 맞고, SAN 칸이 비어 있다. 요청된 확장을 Subject와 분리해 보여주는 디코더가 한눈에 잡아내는 이유다.
+
+## 갱신 때 CSR 재사용하기
+
+CSR은 특정 공개 키를 내장하므로, 갱신 시 CSR을 재사용한다는 것은 키 쌍을 재사용한다는 뜻이다. 일부 팀은 의도적으로 그렇게 한다. 키가 그대로면 SPKI 핀이 갱신을 넘어 유효하게 유지되고, 공개 키 피닝을 적용한 배포에서 키를 교체하면 백업 핀이 넘겨받기 전까지 예전 핀을 들고 있는 모든 클라이언트가 끊기기 때문이다.
+
+대가는 키 순환이 더 이상 일어나지 않는다는 것이다. 2019년에 만들어져 여섯 번의 갱신을 거쳐 계속 쓰인 키는 그것을 보관한 모든 호스트, 백업, 머신 이미지 위에서 6년을 보냈고, 그 노출 구간은 그 전부의 합집합이다. 인증서는 이 사실을 전혀 드러내지 않는다. 갱신할 때마다 유효 기간은 처음으로 돌아가지만 키는 돌아가지 않는다.
+
+현실적인 절충은 갱신 주기가 강요하는 대로가 아니라 스스로 정한 주기로 키를 도는 것이다. 인증서가 90일마다 갱신되더라도 CSR은 해마다 새로 만들고, 동시에 피닝 설정에 백업 핀을 남겨 순환이 일괄 전환이 되지 않게 한다. 피닝을 하지 않는다면 매번 새 키를 생성하면 된다. 예전 키를 끌고 갈 이점은 없다.
+
+```bash
+# 같은 키로 새 요청만 생성 — 의도적인 재사용
+openssl req -new -key existing-key.pem -out renewal.pem \
+  -subj "/CN=example.com" -addext "subjectAltName=DNS:example.com"
+
+# 새 키와 새 요청 — 피닝을 하지 않을 때의 기본값
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout new-key.pem -out renewal.pem \
+  -subj "/CN=example.com" -addext "subjectAltName=DNS:example.com"
+```
+
+## 돌아온 인증서 확인하기
+
+인증서가 도착하면, 그것이 내 요청에서 발급되었음을 증명하는 비교가 하나 있다. 공개 키 지문이다. 이 값은 키에만 의존하므로 CSR 안에서도, 그 키 쌍으로 발급된 모든 인증서 안에서도 동일하다.
+
+```bash
+# 요청에서 추출
+openssl req -in request.pem -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64
+
+# 발급된 인증서에서 추출 — 둘은 일치해야 한다
+openssl x509 -in certificate.pem -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64
+```
+
+이 값이 RFC 7469의 SPKI 핀이며, 공개 키 피닝 설정에서 쓰는 문자열과 같다. 일치하지 않는다면 그 인증서는 다른 요청에서 서명된 것이다. 대개는 CA 대시보드에 남아 있던 오래된 CSR이 원인이고, 이런 실수는 갱신 주기 하나를 통째로 들키지 않고 넘기는 데 능하다.
+
+## 검색해서 처음 나온 디코더에 붙여 넣지 않는 이유
+
+CSR 디코더를 검색하면 첫 페이지는 사실상 전부 인증서 판매사다. 이들의 디코더는 유입 페이지이고, 서버 사이드 폼으로 만들어진 것들은 붙여 넣은 내용을 그대로 받아 간다. 반면 CSR은 앞으로 보호할 도메인, 그 뒤의 법인, 때로는 폐기용 비밀까지 적힌 문서다. 어느 것도 유출된다고 치명적이지는 않지만, 어느 것도 유출할 필요가 없다.
+
+| | 전형적인 판매사 디코더 | ZeroTool CSR 디코더 |
+|---|---|---|
+| 파싱이 일어나는 곳 | 서버 사이드 폼 전송 | 사용자의 브라우저 |
+| 자체 서명 검증 | 거의 하지 않음 | 수행(Web Crypto 사용) |
+| 기준 요건 검사 | 없음 | 일곱 항목, 실패 사유 포함 |
+| SPKI 핀 출력 | 없음 | RFC 7469 형식 |
+| 계정 필요 여부 | 필요한 경우 있음 | 불필요 |
+
+[CSR 디코더](/ko/tools/csr-decoder/)는 DER을 파싱하고 서명을 검증하며 일곱 항목 전부를 네트워크 요청 없이 수행한다. 인증서가 돌아오면 [SSL 인증서 디코더](/ko/tools/ssl-certificate-decoder/)가 발급된 X.509를 같은 방식으로 읽고, [RSA 키 쌍 생성기](/ko/tools/rsa-key-generator/)가 키 생성 단계를 맡는다 — 브라우저에서 만든 일회용 키로 충분한 상황을 위한 것이다.
+
+## 더 읽을거리
+
+- [RFC 2986](https://datatracker.ietf.org/doc/html/rfc2986) — PKCS #10 인증서 요청 구문
+- [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280) — X.509 인증서 및 CRL 프로파일. `extensionRequest`가 운반하는 확장 정의 포함
+- [RFC 6125](https://datatracker.ietf.org/doc/html/rfc6125) — 호스트 이름 검증과 Common Name의 폐기
+- [RFC 7469](https://datatracker.ietf.org/doc/html/rfc7469) — SPKI 핀 형식
+- [CA/Browser Forum 기준 요건](https://cabforum.org/working-groups/server/baseline-requirements/documents/) — 일곱 가지 검사의 정책적 출처
+- [MDN: SubtleCrypto.verify()](https://developer.mozilla.org/ko/docs/Web/API/SubtleCrypto/verify) — 브라우저 측 검증 API
