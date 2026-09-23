@@ -625,6 +625,25 @@ function checkPersistencePolicy() {
   }
 }
 
+function checkNoPublishedAgentsMd() {
+  // public/ is copied verbatim into dist/, and Astro renders .md under src/pages/ as pages.
+  // An AGENTS.md in either tree ships internal docs to production.
+  const issues = [];
+  const walk = (rel) => {
+    const abs = join(ROOT, rel);
+    if (!existsSync(abs)) return;
+    for (const f of readdirSync(abs)) {
+      const child = `${rel}/${f}`;
+      if (statSync(join(ROOT, child)).isDirectory()) walk(child);
+      else if (f === 'AGENTS.md') issues.push(`${child}: would be published — move its content to the root AGENTS.md`);
+    }
+  };
+  walk('public');
+  walk('src/pages');
+  if (issues.length === 0) pass('no_published_agents_md', 'no AGENTS.md in published trees (public/, src/pages/)');
+  else fail('no_published_agents_md', 'AGENTS.md in published tree', issues);
+}
+
 function checkRedirects() {
   const issues = [];
   const path = 'public/_redirects';
@@ -670,6 +689,7 @@ try {
   checkLayoutShikiOverride();
   checkPersistencePolicy();
   checkRedirects();
+  checkNoPublishedAgentsMd();
 } catch (e) {
   fail('fatal', 'audit setup', [e.message, e.stack].filter(Boolean));
 }

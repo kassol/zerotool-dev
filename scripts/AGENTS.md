@@ -12,7 +12,7 @@
 | `generate-og.mjs` | 生成 | 用 sharp + figlet 为每个工具生成 OG 图，输出到 `public/og/{slug}.png` | `npm run build` 第 2 步 / `npm run generate-og` |
 | `generate-blog-redirects.mjs` | 后处理 | 扫 `src/content/blog/{baseSlug}/{zh,ja,ko}.mdx`，向 `dist/_redirects` 追加旧语言后缀 URL → 新目录 URL 的 301 | `npm run build` 第 4 步 |
 | `update-readme-tools.js` | 文档同步 | 用 `tools.ts` 的 slug + EN name 重写 README 的 `<!-- TOOLS-START/END -->` 段 | CI workflow `update-readme.yml` 在 master 分支 `tools.ts` 变化时自动跑 |
-| `audit.mjs` | 巡检 | 全项目静态一致性审计：tools schema / 图标覆盖 / 路由注册 / content/tools 多语言 / category 类型与 UI 对齐 / 基础页面齐全 / i18n key 对齐 / blog 命名 + frontmatter / _redirects 格式 | `.github/workflows/ci.yml` PR + master push 自动跑；本地 `node scripts/audit.mjs`（FAIL 退出码 1） |
+| `audit.mjs` | 巡检 | 全项目静态一致性审计：tools schema / 图标覆盖 / 路由注册 / content/tools 多语言 / category 类型与 UI 对齐 / 基础页面齐全 / i18n key 对齐 / blog 命名 + frontmatter / _redirects 格式 / public 与 src/pages 下无 AGENTS.md | `.github/workflows/ci.yml` PR + master push 自动跑；本地 `node scripts/audit.mjs`（FAIL 退出码 1） |
 | `audit-slug-aliases.mjs` | 巡检 | 审计 `_redirects` 与 slug 的对应关系，发现孤儿规则 | 手动按需 |
 | `test-har-invariant.mjs` | 回归 | spec-driven 不变式测试：3 层（spec sum / 新算法 mirror / 旧错算法 regression guard）× 10 fixture；守住 HAR `connect + ssl` 双计 bug 不复发 | 手动按需 / 修改 `HarFileAnalyzerTool.astro` phase 逻辑前后 |
 | `test-barcode-symbology.mjs` | 回归 | spec-driven 条码编码测试：从 `BarcodeGeneratorTool.astro` 抽取真实编码块（不 mirror，杜绝漂移），3 层（表结构不变式 / 已知校验位向量 / 独立解码器 round-trip）共 497 项 | 手动按需 / 修改 `BarcodeGeneratorTool.astro` 编码表或子集切换逻辑前后 |
@@ -60,3 +60,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-05-22 — 加入 `test-har-invariant.mjs`（HAR waterfall spec-driven 回归测试，3 层 × 10 fixture）
 - 2026-08-01 — 加入 `test-barcode-symbology.mjs`（条码符号集 spec-driven 回归测试；从组件源码抽取编码器 + 独立解码器 round-trip）
 - 2026-09-23 — 加入 `test-secret-redactor.mjs`（secret-redactor 检测/脱敏/还原引擎 spec-driven 回归测试；从组件源码抽取引擎块）
+- 2026-09-23 — `audit.mjs` 新增 `no_published_agents_md`：`public/`、`src/pages/` 下出现 AGENTS.md 即 FAIL
