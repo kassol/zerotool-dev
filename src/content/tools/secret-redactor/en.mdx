@@ -1,0 +1,80 @@
+---
+seoTitle: "Secret Redactor — Mask API Keys Before AI Chat | ZeroTool"
+seoDescription: "Redact API keys, JWTs, private keys and database passwords from logs and .env files before sharing with ChatGPT or Claude. Restore them after. No upload."
+faqItems:
+  - question: "Why not just ask the AI to remove the secrets?"
+    answer: "Because the request itself is the leak: the key reaches the provider's servers, logs and possibly training data before any model can remove it. Detection here is a fixed set of regular expressions plus an entropy check that runs in your browser, so the only text that ever leaves your machine is the version you copy after redaction."
+  - question: "Is anything uploaded or saved?"
+    answer: "No. The page makes no network request with your text, and nothing is written to localStorage, sessionStorage, cookies or the URL. The placeholder mapping exists only in the page's memory: Clear, Ctrl/Cmd+L, reloading or closing the tab discards it. JavaScript cannot overwrite a string in place, so the browser frees the memory on its next garbage collection."
+  - question: "What does it detect?"
+    answer: "Keys for Anthropic, OpenAI and OpenAI-compatible sk- providers, Hugging Face, AWS, Google, GitHub, GitLab, Slack, Stripe, SendGrid, npm, PyPI and Telegram; JWTs; Bearer and Basic authorization headers; PEM private key blocks; passwords inside connection strings such as postgres://user:pass@host; values assigned to names ending in password, secret, token or api_key; and long random-looking strings with at least 4.2 bits of entropy per character. It finds credentials only. Emails, hostnames and IP addresses stay as they are."
+  - question: "How does restoring work, and what if the AI changes a placeholder?"
+    answer: "Each distinct secret becomes a numbered placeholder such as [OPENAI_KEY_1], and the same value always gets the same placeholder. Paste the AI's reply into the restore box and every placeholder is swapped back. Case changes, extra spaces inside the brackets and Markdown-escaped brackets are accepted. A placeholder the AI rewrote without its brackets is left untouched and the missing ones are counted, so tell the AI to keep placeholders exactly as written."
+  - question: "Why wasn't my secret caught?"
+    answer: "Secrets split across two lines, hex-only tokens without a telling variable name, and keys shorter than 32 characters with no recognisable prefix or key name are not detected; hex was excluded so commit SHAs and checksums in CI logs do not drown the real findings. Review the redacted text before sending. For scanning whole repositories and git history, run gitleaks or trufflehog locally."
+---
+
+<h2>How to use</h2>
+
+<ol>
+  <li>Paste the log, stack trace, <code>.env</code> file or config you want help with into box ①. Detection runs as you type.</li>
+  <li>Check the category toggles and open <strong>Findings</strong> to see what was matched. Turn a category off if it flags something that is not a secret.</li>
+  <li>Copy the redacted text from box ② and paste it into ChatGPT, Claude or any other assistant.</li>
+  <li>Paste the assistant's answer into box ③. Every placeholder it kept is swapped back to the real value, ready to copy into your terminal or editor.</li>
+</ol>
+
+<p>Keep box ① as it is until you have restored the reply. The mapping from placeholder to value is rebuilt from that text every time it changes, and nothing else remembers it.</p>
+
+<h2>What gets redacted</h2>
+
+<table>
+  <thead>
+    <tr><th>Category</th><th>Examples</th><th>What stays visible</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>AI provider keys</td><td><code>sk-ant-…</code>, <code>sk-proj-…</code>, <code>hf_…</code>, other <code>sk-</code> keys (DeepSeek, OpenRouter, Moonshot)</td><td>The variable name</td></tr>
+    <tr><td>Cloud &amp; SaaS tokens</td><td><code>AKIA…</code> and the matching AWS secret, <code>AIza…</code>, <code>ghp_…</code>, <code>github_pat_…</code>, <code>glpat-…</code>, <code>xoxb-…</code>, Slack webhook URLs, <code>sk_live_…</code>, <code>whsec_…</code>, SendGrid, npm, PyPI, Telegram bot tokens</td><td>The variable name; Stripe <code>pk_</code> publishable keys are not matched by the Stripe rule</td></tr>
+    <tr><td>JWT &amp; auth headers</td><td><code>eyJ….eyJ….…</code>, <code>Authorization: Basic …</code>, <code>Bearer …</code></td><td>The header name and scheme</td></tr>
+    <tr><td>Private keys</td><td>PEM blocks from <code>-----BEGIN … PRIVATE KEY-----</code> to the matching END line (RSA, EC, OpenSSH, PGP, encrypted)</td><td>Nothing; the whole block becomes one placeholder</td></tr>
+    <tr><td>Passwords &amp; connection strings</td><td><code>postgres://app:…@db</code>, <code>DB_PASSWORD=…</code>, <code>client_secret: …</code>, <code>?api_key=…</code></td><td>User name, host, port and database name</td></tr>
+    <tr><td>High-entropy strings</td><td>Unlabelled random strings of 32+ characters</td><td>Everything around them</td></tr>
+  </tbody>
+</table>
+
+<p>A value assigned to a name only counts when the name <em>ends</em> in the keyword, so <code>max_tokens: 1024</code> and <code>token_count=12</code> are left alone. Environment references such as <code>$&#123;DB_PASS&#125;</code>, template placeholders like <code>&lt;your-key&gt;</code>, masked values like <code>****</code> and literals such as <code>true</code> or <code>null</code> are skipped as well.</p>
+
+<h2>How the high-entropy check works</h2>
+
+<p>Anything that looks like a run of base64 or base64url characters at least 32 characters long is a candidate. It is redacted only when it contains an uppercase letter, a lowercase letter and a digit, and when its Shannon entropy reaches 4.2 bits per character. Random base64 of that length averages about 4.56 bits.</p>
+
+<p>The mixed-case requirement is what keeps CI logs readable: git commit SHAs, MD5 and SHA-256 digests, Docker image digests and UUIDs are all hex or single-case, so none of them qualify. Lockfile integrity values (<code>sha512-…</code>), <code>data:</code> URIs, file paths and the bodies of certificates and public keys are excluded explicitly, because they are public by design.</p>
+
+<p>The trade-off is deliberate. A bare 32-character hex token with no variable name next to it is not caught by this check. Give it a name (<code>TWILIO_AUTH_TOKEN=…</code>) and the password rule catches it.</p>
+
+<h2>Placeholder rules</h2>
+
+<ul>
+  <li>Placeholders look like <code>[LABEL_n]</code>: <code>[OPENAI_KEY_1]</code>, <code>[URL_PASSWORD_1]</code>, <code>[SECRET_2]</code>. The label tells the assistant what kind of value it is without revealing it, so an answer such as "rotate <code>[AWS_ACCESS_KEY_1]</code>" still makes sense.</li>
+  <li>The same value always gets the same placeholder, even when it appears twenty times or two rules found it.</li>
+  <li>Numbering is per label and skips any placeholder that already appears in your text, so a pasted <code>[SECRET_1]</code> never collides with a generated one.</li>
+  <li>Running the tool on text it has already redacted changes nothing.</li>
+  <li>Restore accepts <code>[OPENAI_KEY_1]</code>, <code>&#92;[OPENAI_KEY_1&#92;]</code>, <code>[openai_key_1]</code>, <code>[ OPENAI_KEY_1 ]</code> and placeholders inside code spans. It does not accept <code>OPENAI_KEY_1</code> without brackets, because that is indistinguishable from an environment variable name.</li>
+  <li>Placeholders in the reply that are not in the mapping, for example one the assistant invented, are left unchanged and listed under the restore box.</li>
+</ul>
+
+<h2>Limits</h2>
+
+<table>
+  <thead>
+    <tr><th>Not done here</th><th>Use instead</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Scanning files, folders or git history</td><td><code>gitleaks detect</code> or <code>trufflehog</code> on your machine</td></tr>
+    <tr><td>Personal data: emails, names, phone numbers, IP addresses, hostnames</td><td>Edit by hand. Hostnames in connection strings stay visible on purpose so the assistant can still reason about your config.</td></tr>
+    <tr><td>Un-redacting one false positive</td><td>Turn off its category, or edit the copied text</td></tr>
+    <tr><td>Checking whether a key is still live</td><td>Nothing in this page does that, because it would mean sending the key to the provider</td></tr>
+    <tr><td>Restoring placeholders written without brackets</td><td>Ask the assistant to keep placeholders exactly as written</td></tr>
+  </tbody>
+</table>
+
+<p>Input is limited to 1,000,000 characters. Secrets split across a line break are not detected, since every rule except the private key rule stops at the end of a line.</p>

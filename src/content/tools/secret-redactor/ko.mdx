@@ -1,0 +1,80 @@
+---
+seoTitle: "시크릿 마스킹 도구 — AI에 붙여넣기 전 API 키 가리기 | ZeroTool"
+seoDescription: "로그, 코드, .env, docker-compose 속 API 키·JWT·개인 키·DB 비밀번호를 브라우저에서 감지해 치환하고, AI 답변의 플레이스홀더는 원래 값으로 복원. 업로드 없음."
+faqItems:
+  - question: "AI에게 시크릿을 지워 달라고 하면 안 되나요?"
+    answer: "요청을 보내는 순간 이미 유출된 것입니다. 모델이 무언가를 지우기 전에 키는 제공자의 서버와 로그, 경우에 따라 학습 데이터에까지 도달합니다. 이 도구의 감지는 고정된 정규식과 엔트로피 검사로만 이루어지며 모두 브라우저 안에서 실행됩니다. 내 컴퓨터를 떠나는 것은 마스킹 후 직접 복사한 텍스트뿐입니다."
+  - question: "입력한 내용이 업로드되거나 저장되나요?"
+    answer: "아니요. 페이지는 입력 텍스트를 담은 네트워크 요청을 전혀 보내지 않고 localStorage, sessionStorage, 쿠키, URL에도 기록하지 않습니다. 플레이스홀더 매핑은 페이지 메모리에만 있으며 지우기, Ctrl/Cmd+L, 새로고침, 탭 닫기로 사라집니다. JavaScript는 문자열을 제자리에서 덮어쓸 수 없으므로 메모리는 다음 가비지 컬렉션 때 해제됩니다."
+  - question: "무엇을 감지하나요?"
+    answer: "Anthropic, OpenAI 및 OpenAI 호환 sk- 형식(DeepSeek, OpenRouter, Moonshot 등), Hugging Face, AWS, Google, GitHub, GitLab, Slack, Stripe, SendGrid, npm, PyPI, Telegram 키, JWT, Bearer·Basic 인증 헤더, PEM 개인 키 블록, postgres://user:pass@host 같은 연결 문자열 속 비밀번호, 이름이 password·secret·token·api_key로 끝나는 변수의 값, 그리고 문자당 엔트로피 4.2비트 이상인 긴 무작위 문자열입니다. 인증 정보만 다루며 이메일, 호스트명, IP 주소는 그대로 둡니다."
+  - question: "복원은 어떻게 동작하고, AI가 플레이스홀더를 바꾸면 어떻게 되나요?"
+    answer: "서로 다른 시크릿마다 [OPENAI_KEY_1] 같은 번호 붙은 플레이스홀더가 붙고, 같은 값은 항상 같은 플레이스홀더를 받습니다. AI 답변을 복원 칸에 붙여넣으면 플레이스홀더가 원래 값으로 바뀝니다. 대소문자 변경, 대괄호 안 공백, Markdown으로 이스케이프된 대괄호는 허용합니다. 대괄호가 빠진 플레이스홀더는 복원하지 않고 누락 수로 표시되니, AI에게 플레이스홀더를 그대로 유지하라고 지시하세요."
+  - question: "왜 제 시크릿이 감지되지 않았나요?"
+    answer: "줄바꿈으로 나뉜 시크릿, 변수명 단서가 없는 16진수 전용 토큰, 알려진 접두사나 변수명 없이 32자보다 짧은 키는 감지되지 않습니다. 16진수를 제외한 이유는 CI 로그의 커밋 SHA와 체크섬이 실제 감지 결과를 묻어 버리지 않게 하기 위해서입니다. 보내기 전에 마스킹 결과를 직접 확인하세요. 저장소 전체와 git 기록 검사는 로컬에서 gitleaks나 trufflehog를 실행하세요."
+---
+
+<h2>사용 방법</h2>
+
+<ol>
+  <li>도움을 받고 싶은 로그, 스택 트레이스, <code>.env</code>, 설정 파일을 ① 칸에 붙여넣습니다. 입력하는 동안 감지가 진행됩니다.</li>
+  <li>카테고리 토글의 개수를 확인하고 <strong>감지 목록</strong>을 펼쳐 일치한 항목을 봅니다. 시크릿이 아닌 것을 잡는 카테고리는 끕니다.</li>
+  <li>② 칸의 마스킹된 텍스트를 복사해 ChatGPT, Claude 등 AI 어시스턴트에 붙여넣습니다.</li>
+  <li>돌아온 답변을 ③ 칸에 붙여넣으면 남아 있던 플레이스홀더가 실제 값으로 바뀌어, 터미널이나 에디터에 바로 복사할 수 있습니다.</li>
+</ol>
+
+<p>복원을 마칠 때까지 ① 칸을 바꾸지 마세요. 플레이스홀더와 값의 매핑은 이 텍스트가 바뀔 때마다 새로 만들어지며 다른 곳에는 기록되지 않습니다.</p>
+
+<h2>치환 대상</h2>
+
+<table>
+  <thead>
+    <tr><th>카테고리</th><th>예시</th><th>그대로 보이는 부분</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>AI 제공자 키</td><td><code>sk-ant-…</code>, <code>sk-proj-…</code>, <code>hf_…</code>, DeepSeek·OpenRouter·Moonshot 등의 <code>sk-</code> 키</td><td>변수명</td></tr>
+    <tr><td>클라우드·SaaS 토큰</td><td><code>AKIA…</code>와 짝을 이루는 AWS 시크릿, <code>AIza…</code>, <code>ghp_…</code>, <code>github_pat_…</code>, <code>glpat-…</code>, <code>xoxb-…</code>, Slack 웹훅 URL, <code>sk_live_…</code>, <code>whsec_…</code>, SendGrid, npm, PyPI, Telegram 봇 토큰</td><td>변수명. Stripe 공개용 <code>pk_</code> 키는 Stripe 규칙 대상이 아님</td></tr>
+    <tr><td>JWT·인증 헤더</td><td><code>eyJ….eyJ….…</code>, <code>Authorization: Basic …</code>, <code>Bearer …</code></td><td>헤더 이름과 인증 방식</td></tr>
+    <tr><td>개인 키</td><td><code>-----BEGIN … PRIVATE KEY-----</code>부터 대응하는 END 줄까지의 PEM 블록(RSA, EC, OpenSSH, PGP, 암호화된 키)</td><td>없음. 블록 전체가 플레이스홀더 하나로 바뀜</td></tr>
+    <tr><td>비밀번호·연결 문자열</td><td><code>postgres://app:…@db</code>, <code>DB_PASSWORD=…</code>, <code>client_secret: …</code>, <code>?api_key=…</code></td><td>사용자명, 호스트, 포트, DB 이름</td></tr>
+    <tr><td>고엔트로피 문자열</td><td>변수명 없는 32자 이상의 무작위 문자열</td><td>주변 텍스트 전부</td></tr>
+  </tbody>
+</table>
+
+<p>변수명으로 판단하는 규칙은 이름이 키워드로 <em>끝날</em> 때만 일치합니다. 그래서 <code>max_tokens: 1024</code>나 <code>token_count=12</code>는 치환되지 않습니다. <code>$&#123;DB_PASS&#125;</code> 같은 환경 변수 참조, <code>&lt;your-key&gt;</code> 같은 템플릿, <code>****</code> 같은 가려진 값, <code>true</code>·<code>null</code> 같은 리터럴도 건너뜁니다.</p>
+
+<h2>고엔트로피 검사 방식</h2>
+
+<p>base64 / base64url 문자가 32자 이상 이어진 부분이 후보가 됩니다. 대문자, 소문자, 숫자를 모두 포함하고 섀넌 엔트로피가 문자당 4.2비트 이상일 때만 치환합니다. 같은 길이의 무작위 base64는 평균 약 4.56비트입니다.</p>
+
+<p>대소문자와 숫자가 섞여야 한다는 조건 덕분에 CI 로그가 읽기 좋게 유지됩니다. git 커밋 SHA, MD5·SHA-256 다이제스트, Docker 이미지 다이제스트, UUID는 모두 16진수이거나 한 가지 대소문자만 쓰므로 해당하지 않습니다. lockfile의 <code>sha512-…</code> 무결성 해시, <code>data:</code> URI, 파일 경로, 인증서와 공개 키 본문은 원래 공개 정보라서 명시적으로 제외합니다.</p>
+
+<p>의도된 절충입니다. 옆에 변수명이 없는 32자 16진수 토큰은 이 검사로 잡히지 않습니다. <code>TWILIO_AUTH_TOKEN=…</code>처럼 이름이 붙어 있으면 비밀번호 규칙이 잡아냅니다.</p>
+
+<h2>플레이스홀더 규칙</h2>
+
+<ul>
+  <li>형식은 <code>[종류_번호]</code>입니다(<code>[OPENAI_KEY_1]</code>, <code>[URL_PASSWORD_1]</code>, <code>[SECRET_2]</code>). 종류 이름 덕분에 AI는 값을 보지 않고도 무엇인지 알 수 있어 "<code>[AWS_ACCESS_KEY_1]</code>을 교체하세요" 같은 답변이 의미를 가집니다.</li>
+  <li>같은 값은 항상 같은 플레이스홀더를 받습니다. 스무 번 나오든 두 규칙에 동시에 걸리든 같습니다.</li>
+  <li>번호는 종류별로 매기며, 원문에 이미 있는 플레이스홀더 번호는 건너뜁니다. 붙여넣은 <code>[SECRET_1]</code>이 생성된 것과 겹치지 않습니다.</li>
+  <li>이미 마스킹된 텍스트를 다시 처리해도 결과는 같습니다.</li>
+  <li>복원은 <code>[OPENAI_KEY_1]</code>, <code>&#92;[OPENAI_KEY_1&#92;]</code>, <code>[openai_key_1]</code>, <code>[ OPENAI_KEY_1 ]</code>, 인라인 코드 안의 플레이스홀더를 받아들입니다. 대괄호 없는 <code>OPENAI_KEY_1</code>은 환경 변수 이름과 구별할 수 없어 대상이 아닙니다.</li>
+  <li>답변에 있지만 매핑에 없는 플레이스홀더(AI가 지어낸 것 등)는 그대로 두고 복원 칸 아래에 목록으로 보여 줍니다.</li>
+</ul>
+
+<h2>지원 범위</h2>
+
+<table>
+  <thead>
+    <tr><th>이 도구가 하지 않는 일</th><th>대신 쓸 방법</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>파일, 폴더, git 기록 검사</td><td>로컬에서 <code>gitleaks detect</code> 또는 <code>trufflehog</code> 실행</td></tr>
+    <tr><td>개인 정보(이메일, 이름, 전화번호, IP 주소, 호스트명)</td><td>직접 편집. 연결 문자열의 호스트명은 AI가 설정을 이해할 수 있도록 일부러 남깁니다</td></tr>
+    <tr><td>오탐 한 건만 되돌리기</td><td>해당 카테고리를 끄거나 복사한 텍스트를 수정</td></tr>
+    <tr><td>키가 아직 유효한지 확인</td><td>하지 않습니다. 확인하려면 키를 제공자에게 보내야 하기 때문입니다</td></tr>
+    <tr><td>대괄호가 빠진 플레이스홀더 복원</td><td>AI에게 플레이스홀더를 그대로 유지하라고 지시</td></tr>
+  </tbody>
+</table>
+
+<p>입력 한도는 1,000,000자입니다. 개인 키 규칙을 제외한 모든 규칙은 줄 끝에서 멈추므로 줄바꿈으로 나뉜 시크릿은 감지되지 않습니다.</p>

@@ -25,6 +25,7 @@ export const toolPersistencePolicy = {
   'eyedropper-color-picker': 'preference',
   'zero-width-character-detector': 'disabled',
   'csr-decoder': 'disabled',
+  'secret-redactor': 'disabled',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

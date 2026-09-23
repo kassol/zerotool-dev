@@ -1,0 +1,80 @@
+---
+seoTitle: "シークレットマスキング — AI に貼る前に API キーを隠す | ZeroTool"
+seoDescription: "ログ・コード・.env・docker-compose に含まれる API キー、JWT、秘密鍵、DB パスワードをブラウザ内で検出・置換。AI の返答はプレースホルダーから元の値へ復元。アップロードなし。"
+faqItems:
+  - question: "AI に「シークレットを消して」と頼むのではだめですか？"
+    answer: "頼んだ時点で漏えいが起きています。モデルが何かを消す前に、キーはすでにプロバイダーのサーバーやログ、場合によっては学習データに届いています。このツールの検出は固定の正規表現とエントロピー判定だけで構成され、すべてブラウザ内で動きます。手元の PC から出ていくのは、マスキング後にあなたがコピーしたテキストだけです。"
+  - question: "入力内容はアップロードや保存をされますか？"
+    answer: "されません。ページは入力テキストを伴うネットワーク通信を一切行わず、localStorage・sessionStorage・Cookie・URL にも書き込みません。プレースホルダーの対応表はページのメモリ上にだけ存在し、クリア、Ctrl/Cmd+L、再読み込み、タブを閉じる操作で破棄されます。JavaScript では文字列をその場で上書きできないため、メモリは次のガベージコレクションで解放されます。"
+  - question: "何を検出しますか？"
+    answer: "Anthropic、OpenAI と OpenAI 互換の sk- 形式（DeepSeek、OpenRouter、Moonshot など）、Hugging Face、AWS、Google、GitHub、GitLab、Slack、Stripe、SendGrid、npm、PyPI、Telegram のキー、JWT、Bearer / Basic 認証ヘッダー、PEM 秘密鍵ブロック、postgres://user:pass@host のような接続文字列内のパスワード、名前が password・secret・token・api_key で終わる変数の値、そして 1 文字あたり 4.2 ビット以上のエントロピーを持つ長いランダム文字列です。対象は認証情報だけで、メールアドレス・ホスト名・IP アドレスはそのまま残ります。"
+  - question: "復元の仕組みは？ AI がプレースホルダーを書き換えたら？"
+    answer: "異なるシークレットごとに [OPENAI_KEY_1] のような番号付きプレースホルダーを割り当て、同じ値には必ず同じプレースホルダーを使います。AI の返答を復元欄に貼ると、プレースホルダーが元の値に戻ります。大文字小文字の違い、角括弧内の余分な空白、Markdown でエスケープされた角括弧は許容します。角括弧を外されたものは復元せず、足りない数として表示されるので、AI にはプレースホルダーをそのまま残すよう指示してください。"
+  - question: "シークレットが検出されなかったのはなぜ？"
+    answer: "改行で分断されたシークレット、変数名の手がかりがない 16 進数だけのトークン、既知の接頭辞も変数名もない 32 文字未満のキーは検出されません。16 進数を除外しているのは、CI ログのコミット SHA やチェックサムで本当の検出結果が埋もれないようにするためです。送信前にマスキング結果を目で確認してください。リポジトリ全体や git 履歴の走査には、ローカルで gitleaks か trufflehog を使ってください。"
+---
+
+<h2>使い方</h2>
+
+<ol>
+  <li>相談したいログ、スタックトレース、<code>.env</code>、設定ファイルを ① 欄に貼り付けます。入力と同時に検出が走ります。</li>
+  <li>カテゴリ切り替えの件数を確認し、<strong>検出一覧</strong>を開いて一致した内容を見ます。シークレットでないものを拾うカテゴリはオフにします。</li>
+  <li>② 欄のマスキング済みテキストをコピーし、ChatGPT や Claude などのアシスタントに貼り付けます。</li>
+  <li>返ってきた回答を ③ 欄に貼ると、残っていたプレースホルダーが実際の値に戻り、そのままターミナルやエディターにコピーできます。</li>
+</ol>
+
+<p>復元が終わるまで ① 欄は変更しないでください。プレースホルダーと値の対応表は、このテキストが変わるたびに作り直され、ほかのどこにも記録されません。</p>
+
+<h2>置換される対象</h2>
+
+<table>
+  <thead>
+    <tr><th>カテゴリ</th><th>例</th><th>見えたまま残る部分</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>AI プロバイダーキー</td><td><code>sk-ant-…</code>、<code>sk-proj-…</code>、<code>hf_…</code>、DeepSeek・OpenRouter・Moonshot などの <code>sk-</code> キー</td><td>変数名</td></tr>
+    <tr><td>クラウド・SaaS トークン</td><td><code>AKIA…</code> と対になる AWS シークレット、<code>AIza…</code>、<code>ghp_…</code>、<code>github_pat_…</code>、<code>glpat-…</code>、<code>xoxb-…</code>、Slack Webhook URL、<code>sk_live_…</code>、<code>whsec_…</code>、SendGrid、npm、PyPI、Telegram Bot トークン</td><td>変数名。Stripe の公開用 <code>pk_</code> キーは Stripe ルールの対象外</td></tr>
+    <tr><td>JWT・認証ヘッダー</td><td><code>eyJ….eyJ….…</code>、<code>Authorization: Basic …</code>、<code>Bearer …</code></td><td>ヘッダー名と認証方式</td></tr>
+    <tr><td>秘密鍵</td><td><code>-----BEGIN … PRIVATE KEY-----</code> から対応する END 行までの PEM ブロック（RSA、EC、OpenSSH、PGP、暗号化鍵）</td><td>なし。ブロック全体が 1 つのプレースホルダーになります</td></tr>
+    <tr><td>パスワード・接続文字列</td><td><code>postgres://app:…@db</code>、<code>DB_PASSWORD=…</code>、<code>client_secret: …</code>、<code>?api_key=…</code></td><td>ユーザー名、ホスト、ポート、DB 名</td></tr>
+    <tr><td>高エントロピー文字列</td><td>変数名のない 32 文字以上のランダム文字列</td><td>周囲のテキストすべて</td></tr>
+  </tbody>
+</table>
+
+<p>変数名で判定するルールは、名前がキーワードで<em>終わる</em>場合だけ一致します。そのため <code>max_tokens: 1024</code> や <code>token_count=12</code> は置換されません。<code>$&#123;DB_PASS&#125;</code> のような環境変数参照、<code>&lt;your-key&gt;</code> のようなテンプレート、<code>****</code> のような伏せ字、<code>true</code> や <code>null</code> などのリテラルも対象外です。</p>
+
+<h2>高エントロピー判定の仕組み</h2>
+
+<p>base64 / base64url の文字が 32 文字以上続く部分が候補になります。大文字・小文字・数字をすべて含み、シャノンエントロピーが 1 文字あたり 4.2 ビットに達したものだけを置換します。同じ長さのランダムな base64 は平均で約 4.56 ビットです。</p>
+
+<p>「大文字・小文字・数字の混在」という条件が CI ログの読みやすさを守ります。git のコミット SHA、MD5・SHA-256 ダイジェスト、Docker イメージのダイジェスト、UUID はいずれも 16 進数か単一ケースなので該当しません。lockfile の <code>sha512-…</code> 整合性ハッシュ、<code>data:</code> URI、ファイルパス、証明書や公開鍵の本文はもともと公開情報なので、明示的に除外しています。</p>
+
+<p>これは意図的なトレードオフです。変数名が隣にない 32 文字の 16 進トークンは、この判定では拾えません。<code>TWILIO_AUTH_TOKEN=…</code> のように名前が付いていれば、パスワードルールが拾います。</p>
+
+<h2>プレースホルダーのルール</h2>
+
+<ul>
+  <li>形式は <code>[種別_番号]</code> です（<code>[OPENAI_KEY_1]</code>、<code>[URL_PASSWORD_1]</code>、<code>[SECRET_2]</code>）。種別名によって AI は値を見ずに何の値かを把握でき、「<code>[AWS_ACCESS_KEY_1]</code> をローテーションしてください」といった回答が成り立ちます。</li>
+  <li>同じ値には常に同じプレースホルダーが付きます。20 回出現しても、2 つのルールに一致しても同じです。</li>
+  <li>番号は種別ごとに振られ、元のテキストにすでにあるプレースホルダーは飛ばします。貼り付けた <code>[SECRET_1]</code> が生成されたものと衝突することはありません。</li>
+  <li>マスキング済みのテキストをもう一度処理しても、結果は変わりません。</li>
+  <li>復元では <code>[OPENAI_KEY_1]</code>、<code>&#92;[OPENAI_KEY_1&#92;]</code>、<code>[openai_key_1]</code>、<code>[ OPENAI_KEY_1 ]</code>、インラインコード内のプレースホルダーを受け付けます。角括弧のない <code>OPENAI_KEY_1</code> は環境変数名と区別できないため対象外です。</li>
+  <li>返答に含まれていても対応表にないプレースホルダー（AI が作り出したものなど）はそのまま残し、復元欄の下に一覧表示します。</li>
+</ul>
+
+<h2>対応範囲</h2>
+
+<table>
+  <thead>
+    <tr><th>このツールでは行わないこと</th><th>代わりの方法</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ファイル・フォルダ・git 履歴の走査</td><td>ローカルで <code>gitleaks detect</code> または <code>trufflehog</code> を実行</td></tr>
+    <tr><td>個人情報（メール、氏名、電話番号、IP アドレス、ホスト名）</td><td>手作業で編集。接続文字列のホスト名は、AI が設定を読み解けるようあえて残しています</td></tr>
+    <tr><td>誤検出 1 件だけの取り消し</td><td>そのカテゴリをオフにするか、コピー後のテキストを編集</td></tr>
+    <tr><td>キーがまだ有効かどうかの確認</td><td>行いません。確認するにはキーをプロバイダーに送る必要があるためです</td></tr>
+    <tr><td>角括弧が外されたプレースホルダーの復元</td><td>AI にプレースホルダーをそのまま残すよう指示</td></tr>
+  </tbody>
+</table>
+
+<p>入力の上限は 1,000,000 文字です。秘密鍵ルール以外はすべて行末で止まるため、改行で分かれたシークレットは検出されません。</p>

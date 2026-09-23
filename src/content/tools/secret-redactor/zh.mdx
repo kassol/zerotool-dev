@@ -1,0 +1,80 @@
+---
+seoTitle: "密钥脱敏工具 — 发给 AI 前遮蔽 API Key | ZeroTool"
+seoDescription: "在浏览器本地检测并替换日志、代码、.env、docker-compose 中的 API Key、JWT、私钥与数据库密码，发给 AI 后可将回复中的占位符还原。不上传。"
+faqItems:
+  - question: "为什么不直接让 AI 帮我删掉密钥？"
+    answer: "因为发出请求的那一刻就已经泄露了：密钥先到达服务商的服务器、日志，甚至可能进入训练数据，模型才有机会“删除”它。本工具的检测是一组固定的正则表达式加上熵值检查，全部在你的浏览器里运行，真正离开你电脑的只有你脱敏后复制出去的那份文本。"
+  - question: "会上传或保存我的内容吗？"
+    answer: "不会。页面不会带着你的文本发起任何网络请求，也不会写入 localStorage、sessionStorage、Cookie 或 URL。占位符映射只存在于页面内存中：点清空、按 Ctrl/Cmd+L、刷新或关闭标签页都会丢弃它。JavaScript 无法原地覆写字符串，内存由浏览器在下一次垃圾回收时释放。"
+  - question: "能检测哪些内容？"
+    answer: "Anthropic、OpenAI 及兼容 OpenAI 的 sk- 前缀服务商（DeepSeek、OpenRouter、Moonshot 等）、Hugging Face、AWS、Google、GitHub、GitLab、Slack、Stripe、SendGrid、npm、PyPI、Telegram 的密钥；JWT；Bearer 与 Basic 认证头；PEM 私钥块；postgres://user:pass@host 这类连接串中的密码；变量名以 password、secret、token、api_key 结尾的赋值；以及每字符熵值不低于 4.2 bit 的长随机串。它只处理凭据，邮箱、主机名、IP 地址保持原样。"
+  - question: "还原是怎么做的？AI 改动了占位符怎么办？"
+    answer: "每个不同的密钥对应一个编号占位符，例如 [OPENAI_KEY_1]，同一个值永远得到同一个占位符。把 AI 的回复粘贴到还原框，占位符会被换回原值。大小写变化、方括号内多出的空格、Markdown 转义的方括号都能识别。被 AI 去掉方括号的占位符不会被还原，并会在统计里体现缺失，所以请让 AI 原样保留占位符。"
+  - question: "为什么我的密钥没被检测出来？"
+    answer: "被换行拆开的密钥、没有可识别变量名的纯十六进制 token、短于 32 字符且既无已知前缀也无变量名的密钥都不会被检测到。排除十六进制是为了不让 CI 日志里的 commit SHA 和校验和淹没真正的发现。发送前请自己再看一遍脱敏结果。扫描整个仓库和 git 历史请在本地运行 gitleaks 或 trufflehog。"
+---
+
+<h2>使用步骤</h2>
+
+<ol>
+  <li>把需要求助的日志、报错堆栈、<code>.env</code> 或配置文件粘贴到 ① 号框，输入时即自动检测。</li>
+  <li>查看类别开关上的计数，展开<strong>检测明细</strong>核对命中项。某个类别误报时直接关掉它。</li>
+  <li>从 ② 号框复制脱敏后的文本，发给 ChatGPT、Claude 或其他 AI 助手。</li>
+  <li>把 AI 的回复粘贴到 ③ 号框，回复里保留下来的占位符会换回真实值，可直接复制到终端或编辑器。</li>
+</ol>
+
+<p>在还原完成之前不要改动 ① 号框。占位符与原值的映射每次都由这段文本重新生成，页面之外没有任何地方记录它。</p>
+
+<h2>会被替换的内容</h2>
+
+<table>
+  <thead>
+    <tr><th>类别</th><th>示例</th><th>保留可见的部分</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>AI 服务密钥</td><td><code>sk-ant-…</code>、<code>sk-proj-…</code>、<code>hf_…</code>，以及 DeepSeek、OpenRouter、Moonshot 等 <code>sk-</code> 前缀密钥</td><td>变量名</td></tr>
+    <tr><td>云与 SaaS 令牌</td><td><code>AKIA…</code> 及对应的 AWS Secret、<code>AIza…</code>、<code>ghp_…</code>、<code>github_pat_…</code>、<code>glpat-…</code>、<code>xoxb-…</code>、Slack Webhook 地址、<code>sk_live_…</code>、<code>whsec_…</code>、SendGrid、npm、PyPI、Telegram Bot Token</td><td>变量名；Stripe 的 <code>pk_</code> 公开密钥不在 Stripe 规则范围内</td></tr>
+    <tr><td>JWT 与认证头</td><td><code>eyJ….eyJ….…</code>、<code>Authorization: Basic …</code>、<code>Bearer …</code></td><td>头名称与认证方案</td></tr>
+    <tr><td>私钥</td><td>从 <code>-----BEGIN … PRIVATE KEY-----</code> 到对应 END 行的整个 PEM 块（RSA、EC、OpenSSH、PGP、加密私钥）</td><td>无，整块替换为一个占位符</td></tr>
+    <tr><td>密码与连接串</td><td><code>postgres://app:…@db</code>、<code>DB_PASSWORD=…</code>、<code>client_secret: …</code>、<code>?api_key=…</code></td><td>用户名、主机、端口、库名</td></tr>
+    <tr><td>高熵字符串</td><td>没有变量名的 32 位以上随机串</td><td>周围的全部文本</td></tr>
+  </tbody>
+</table>
+
+<p>按变量名匹配时，要求变量名以关键词<em>结尾</em>，所以 <code>max_tokens: 1024</code>、<code>token_count=12</code> 不会被误替换。<code>$&#123;DB_PASS&#125;</code> 这类环境变量引用、<code>&lt;your-key&gt;</code> 这类模板占位、<code>****</code> 这类已打码的值，以及 <code>true</code>、<code>null</code> 等字面量也会跳过。</p>
+
+<h2>高熵检查的判定方式</h2>
+
+<p>连续 32 个以上 base64 / base64url 字符构成候选串。只有同时包含大写字母、小写字母和数字，且香农熵达到每字符 4.2 bit，才会被替换。同长度的随机 base64 平均约为 4.56 bit。</p>
+
+<p>“大小写混合 + 数字”这一条让 CI 日志保持可读：git commit SHA、MD5、SHA-256、Docker 镜像摘要、UUID 都是十六进制或单一大小写，全部不满足条件。lockfile 中的 <code>sha512-…</code> 完整性哈希、<code>data:</code> URI、文件路径，以及证书和公钥的正文本来就是公开信息，也被明确排除。</p>
+
+<p>这是有意的取舍：旁边没有变量名的 32 位纯十六进制 token 不会被这一条抓到。写成 <code>TWILIO_AUTH_TOKEN=…</code> 这样带名字的形式，密码规则就会命中。</p>
+
+<h2>占位符规则</h2>
+
+<ul>
+  <li>格式为 <code>[类型_编号]</code>，例如 <code>[OPENAI_KEY_1]</code>、<code>[URL_PASSWORD_1]</code>、<code>[SECRET_2]</code>。类型名让 AI 知道这是什么值却看不到值本身，回答“请轮换 <code>[AWS_ACCESS_KEY_1]</code>”依然有意义。</li>
+  <li>同一个值始终对应同一个占位符，出现二十次或被两条规则同时命中都一样。</li>
+  <li>编号按类型分别递增，并跳过原文中已经出现的占位符，你粘贴进来的 <code>[SECRET_1]</code> 不会与生成的占位符冲突。</li>
+  <li>对已经脱敏的文本再运行一次，结果不变。</li>
+  <li>还原时识别 <code>[OPENAI_KEY_1]</code>、<code>&#92;[OPENAI_KEY_1&#92;]</code>、<code>[openai_key_1]</code>、<code>[ OPENAI_KEY_1 ]</code> 以及行内代码中的占位符；不识别去掉方括号的 <code>OPENAI_KEY_1</code>，因为它和环境变量名无法区分。</li>
+  <li>回复中出现但映射里没有的占位符（例如 AI 自己编出来的）保持原样，并列在还原框下方。</li>
+</ul>
+
+<h2>能力边界</h2>
+
+<table>
+  <thead>
+    <tr><th>本工具不做</th><th>替代做法</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>扫描文件、目录或 git 历史</td><td>在本地运行 <code>gitleaks detect</code> 或 <code>trufflehog</code></td></tr>
+    <tr><td>个人信息：邮箱、姓名、电话、IP 地址、主机名</td><td>手动编辑。连接串中的主机名刻意保留，方便 AI 继续分析你的配置</td></tr>
+    <tr><td>单独撤销某一处误报</td><td>关闭对应类别，或在复制后的文本里手动修改</td></tr>
+    <tr><td>验证密钥是否仍然有效</td><td>页面不会这样做，因为那等于把密钥发给服务商</td></tr>
+    <tr><td>还原去掉了方括号的占位符</td><td>让 AI 原样保留占位符</td></tr>
+  </tbody>
+</table>
+
+<p>输入上限为 1,000,000 个字符。除私钥规则外，所有规则都在行尾停止，所以被换行拆开的密钥不会被检测到。</p>
