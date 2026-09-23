@@ -26,16 +26,18 @@ New visual work should consume these tokens first:
 |---|---|---:|---:|
 | Primary action | `--color-primary` | `oklch(49% 0.095 48)` | `oklch(70% 0.105 58)` |
 | Primary hover | `--color-primary-hover` | `oklch(43% 0.105 48)` | `oklch(76% 0.11 58)` |
-| Accent | `--color-accent` | `oklch(57% 0.09 78)` | `oklch(72% 0.08 90)` |
+| Accent | `--color-accent` | `oklch(52% 0.09 78)` | `oklch(72% 0.08 90)` |
 | Page background | `--color-bg` | `oklch(98.4% 0.009 78)` | `oklch(15% 0.012 65)` |
 | Secondary background | `--color-bg-secondary` | `oklch(96.2% 0.011 78)` | `oklch(19% 0.014 65)` |
 | Surface | `--color-surface` | `oklch(99.4% 0.006 78)` | token mix |
 | Muted surface | `--color-surface-muted` | `oklch(97.1% 0.01 78)` | token mix |
 | Body text | `--color-text` | `oklch(22% 0.018 70)` | `oklch(92% 0.011 78)` |
 | Secondary text | `--color-text-secondary` | `oklch(43% 0.016 70)` | `oklch(76% 0.012 78)` |
-| Muted text | `--color-text-muted` | `oklch(58% 0.014 70)` | `oklch(62% 0.012 78)` |
+| Muted text | `--color-text-muted` | `oklch(53% 0.014 70)` | `oklch(62% 0.012 78)` |
 
 Raw hex values are reserved for true generated color previews, imported external content, and static brand assets such as `public/favicon.svg`.
+
+Text color tokens must reach a contrast ratio of at least 4.5:1 (WCAG AA) against `--color-bg`, `--color-bg-secondary`, and `--color-surface`.
 
 ## Category Color
 
