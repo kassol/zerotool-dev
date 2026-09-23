@@ -87,7 +87,7 @@ const L = labels[lang] ?? labels['en'];
     <div class="cpg-input-row">
       <label class="cpg-label" for="cpg-hex-input">{L.baseColor}</label>
       <div class="cpg-color-input-wrap">
-        <input id="cpg-color-picker" class="cpg-picker" type="color" value="#3b82f6" />
+        <input id="cpg-color-picker" class="cpg-picker" type="color" value="#3b82f6" aria-label={L.baseColor} />
         <div class="cpg-hex-input-wrap">
           <input
             id="cpg-hex-input"
@@ -217,14 +217,39 @@ const L = labels[lang] ?? labels['en'];
         return rgbToHex(rgb.r, rgb.g, rgb.b);
       }
 
+      /* WCAG relative luminance + contrast ratio, so the chosen text color
+         always reaches the >=4.5:1 requirement (a perceived-brightness
+         threshold like 0.299r+0.587g+0.114b can pick white on saturated
+         mid-tone backgrounds, e.g. #3b82f6, which fails contrast). */
+      function relativeLuminance(r, g, b) {
+        var lin = [r, g, b].map(function (c) {
+          c /= 255;
+          return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+      }
+
+      function contrastRatio(l1, l2) {
+        var lighter = Math.max(l1, l2), darker = Math.min(l1, l2);
+        return (lighter + 0.05) / (darker + 0.05);
+      }
+
+      /* Pure black keeps the passing range for arbitrary user-picked
+         background colors nearly gap-free (max(contrast(black,bg),
+         contrast(white,bg)) is guaranteed >=4.5 for all but a sliver of
+         luminance); a softened near-black like #111827 reopens a real gap. */
+      var DARK_TEXT = '#000000';
+      var LIGHT_TEXT = '#f9fafb';
+      var DARK_TEXT_LUM = relativeLuminance(0, 0, 0);
+      var LIGHT_TEXT_LUM = relativeLuminance(0xf9, 0xfa, 0xfb);
+
       function textColor(r, g, b) {
-        return (0.299 * r + 0.587 * g + 0.114 * b) > 140 ? '#1f2937' : '#f9fafb';
+        var bgLum = relativeLuminance(r, g, b);
+        return contrastRatio(bgLum, DARK_TEXT_LUM) >= contrastRatio(bgLum, LIGHT_TEXT_LUM) ? DARK_TEXT : LIGHT_TEXT;
       }
 
       function labelBackground(r, g, b) {
-        return (0.299 * r + 0.587 * g + 0.114 * b) > 140
-          ? 'rgba(255,255,255,0.64)'
-          : 'rgba(0,0,0,0.30)';
+        return textColor(r, g, b) === DARK_TEXT ? 'rgba(255,255,255,0.64)' : 'rgba(0,0,0,0.30)';
       }
 
       /* ── Render ── */
