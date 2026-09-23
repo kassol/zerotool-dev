@@ -15,7 +15,7 @@ ZeroTool（zerotool.dev）— 100 个浏览器端开发者工具的多语言静�
 |----|------|------|
 | 框架 | Astro 5 | `output: 'static'` + `@astrojs/cloudflare` adapter |
 | 内容 | MDX | `@astrojs/mdx` 驱动博客 |
-| 第三方脚本 | Partytown | GA4 + AdSense 走 worker 线程，不阻塞主线程 |
+| 第三方脚本 | Partytown | GA4 走 worker 线程，不阻塞主线程；AdSense 需直接操作 DOM，走主线程 async 加载 |
 | 多语言 | i18n JSON + 路由前缀 | `src/i18n/` + `src/pages/{lang}/*` |
 | 图像 | sharp | 仅构建期使用，生成 OG 图 |
 | 部署 | Cloudflare Pages | 项目名 `zerotool-dev`，生产分支 `master` |
@@ -79,7 +79,7 @@ PROJECT_NAME=zerotool-dev bash scripts/deploy.sh   # 手工部署兜底
 |------|--------|----------|
 | Google Analytics 4 | `src/layouts/BaseLayout.astro` 通过 Partytown 加载 `gtag.js`；`window.trackTool(name, action)` 发送 `tool_use` 自定义事件。敏感工具页（`src/data/persistence.ts` 中 policy 为 `disabled` 的 slug，4 语言路由）不加载 `gtag.js`：`ToolLayout` 向 `BaseLayout` 传 `sensitive`，`trackTool` 仍可调用，事件只进本地 `dataLayer` | 新增第三方脚本要同步 `astro.config.mjs` 的 Partytown `forward` 列表 |
 | Google Search Console | 域名级验证（Cloudflare DNS TXT 记录） | 切换 DNS 服务商时验证失效，需提前在新 DNS 加 TXT |
-| Google AdSense | Auto Ads via Partytown；`src/components/AdUnit.astro` 手动位组件（当前未启用）；`public/ads.txt` 声明 publisher。敏感工具页（同上 `disabled` slug）不加载 `adsbygoogle.js`，`ToolLayout` 也不渲染 `AdUnit` | publisher ID 改动必须三处同步：`ads.txt`、env、CF Pages secret |
+| Google AdSense | Auto Ads 主线程 async 加载（Partytown worker 不支持 adsbygoogle.js）；`src/components/AdUnit.astro` 手动位组件（当前未启用）；`public/ads.txt` 声明 publisher。敏感工具页（同上 `disabled` slug）不加载 `adsbygoogle.js`，`ToolLayout` 也不渲染 `AdUnit` | publisher ID 改动必须三处同步：`ads.txt`、env、CF Pages secret |
 | Google Ads（投放后台） | 未集成 | 未来要投流量需新增 conversion tag（`AW-` ID） |
 
 ## 自动化质量门
@@ -112,3 +112,4 @@ CI 在 PR 与 master push 时跑 `audit → build`，PR 必须两个 job 都过�
 - 2026-04-27 — 删除 `src/pages/tools/AGENTS.md`（Astro 把 `src/pages/` 下 .md 当作页面渲染，曾以 `/tools/AGENTS/` 公网泄漏并进入 sitemap）；slug 重命名约定上提至「全局规范」第 10 条；目录索引中 `src/pages/tools/` 不再标记子 AGENTS.md
 - 2026-05-11 — 新增 `docs/` 内部设计 spec 目录，用于保存实现前的设计决策与验收标准
 - 2026-09-23 — 敏感工具页（`persistence.ts` 中 `disabled` 的 slug）跳过 GA4 与 AdSense 脚本及 AdUnit 广告位；由 `ToolLayout` 计算 `sensitive` 传给 `BaseLayout`
+- 2026-09-23 — AdSense 脚本移出 Partytown 改为主线程加载，Partytown `forward` 移除 `adsbygoogle`

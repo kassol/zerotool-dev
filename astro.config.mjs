@@ -117,11 +117,11 @@ export default defineConfig({
       },
     }),
     partytown({
-      // Forward GA4 + AdSense calls from main thread to worker.
+      // Forward GA4 calls from main thread to worker. AdSense runs on the main thread.
       // Preserve dataLayer.push on the main thread so early tool_use calls remain visible
       // even before the Partytown worker has finished booting.
       config: {
-        forward: [['dataLayer.push', { preserveBehavior: true }], 'adsbygoogle'],
+        forward: [['dataLayer.push', { preserveBehavior: true }]],
       },
     }),
   ],
