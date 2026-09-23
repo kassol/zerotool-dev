@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 135 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 136 tools and growing.
 
 ## Tools
 
@@ -144,6 +144,7 @@
 | Barcode Generator | [/tools/barcode-generator](https://zerotool.dev/tools/barcode-generator) |
 | CSR Decoder | [/tools/csr-decoder](https://zerotool.dev/tools/csr-decoder) |
 | Secret Redactor | [/tools/secret-redactor](https://zerotool.dev/tools/secret-redactor) |
+| SQLite Viewer | [/tools/sqlite-viewer](https://zerotool.dev/tools/sqlite-viewer) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
