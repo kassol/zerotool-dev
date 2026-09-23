@@ -78,9 +78,20 @@ function readPixel(data, w, x, y) {
   // Block 1 (x:0-1,y:0-1): avg r = (0+10+20+30)/4 = 15, g=b=0, a=255
   deepEqual('pixelate block1 top-left pixel', readPixel(data, w, 0, 0), [15, 0, 0, 255]);
   deepEqual('pixelate block1 uniform fill', readPixel(data, w, 1, 1), [15, 0, 0, 255]);
-  // Block 2 (x:2-3,y:0-1): avg r = (100+200+150+250)/4 = 175, g=b=100, a=(200+200+100+100)/4=150
-  deepEqual('pixelate block2 uniform fill', readPixel(data, w, 2, 0), [175, 100, 100, 150]);
-  deepEqual('pixelate block2 uniform fill 2', readPixel(data, w, 3, 1), [175, 100, 100, 150]);
+  // Block 2 (x:2-3,y:0-1): color is alpha-weighted, r = (100*200+200*200+150*100+250*100)/600 ≈ 167,
+  // g=b=100, a = (200+200+100+100)/4 = 150
+  deepEqual('pixelate block2 uniform fill', readPixel(data, w, 2, 0), [167, 100, 100, 150]);
+  deepEqual('pixelate block2 uniform fill 2', readPixel(data, w, 3, 1), [167, 100, 100, 150]);
+}
+{
+  // Transparent pixels must not darken the block color (their RGB is meaningless).
+  const w = 2, h = 1;
+  const data = makeBuffer([[[255, 0, 0, 255], [0, 0, 0, 0]]], w, h);
+  E.pixelate(data, w, h, 2);
+  deepEqual('pixelate ignores RGB of transparent pixels', readPixel(data, w, 0, 0), [255, 0, 0, 128]);
+  const clear = makeBuffer([[[9, 9, 9, 0], [7, 7, 7, 0]]], w, h);
+  E.pixelate(clear, w, h, 2);
+  deepEqual('pixelate fully transparent block stays transparent', readPixel(clear, w, 1, 0), [0, 0, 0, 0]);
 }
 
 // ---------- 2. pixelate(): non-divisible edge blocks ----------

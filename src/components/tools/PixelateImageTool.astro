@@ -170,7 +170,8 @@
 
       // Pixelate `data` (a flat RGBA Uint8ClampedArray of a w×h region) in place:
       // divide it into `block`×`block` cells (edge cells shrink to fit w/h) and
-      // fill each cell with the average RGBA of its own pixels.
+      // fill each cell with the average RGBA of its own pixels. RGB is weighted by
+      // alpha so transparent pixels (whose RGB is meaningless) do not darken it.
       function pixelate(data, w, h, block) {
         for (var by = 0; by < h; by += block) {
           var bh = Math.min(block, h - by);
@@ -181,10 +182,12 @@
               var rowStart = ((by + y) * w + bx) * 4;
               for (var x = 0; x < bw; x++) {
                 var idx = rowStart + x * 4;
-                rSum += data[idx]; gSum += data[idx + 1]; bSum += data[idx + 2]; aSum += data[idx + 3];
+                var pa = data[idx + 3];
+                rSum += data[idx] * pa; gSum += data[idx + 1] * pa; bSum += data[idx + 2] * pa; aSum += pa;
               }
             }
-            var r = Math.round(rSum / count), g = Math.round(gSum / count), bAvg = Math.round(bSum / count), a = Math.round(aSum / count);
+            var r = 0, g = 0, bAvg = 0, a = Math.round(aSum / count);
+            if (aSum > 0) { r = Math.round(rSum / aSum); g = Math.round(gSum / aSum); bAvg = Math.round(bSum / aSum); }
             for (var y2 = 0; y2 < bh; y2++) {
               var rowStart2 = ((by + y2) * w + bx) * 4;
               for (var x2 = 0; x2 < bw; x2++) {
