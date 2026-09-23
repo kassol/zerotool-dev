@@ -243,6 +243,14 @@ Code blocks in `ToolLayout` and `ArticleLayout` use:
 
 `pre code` uses transparent background and inherited foreground. Syntax highlight spans inside code blocks also use transparent background and inherited foreground. Inline code wraps with `overflow-wrap: anywhere` to protect mobile layouts.
 
+### highlight.js Syntax Theme
+
+The shared `.hljs` theme lives in `src/styles/tool-common.css` (not in any single tool component), since `ToolLayout` loads that stylesheet on every tool page and several tools render highlighted code: `MarkdownPreviewTool`, `CurlToCodeTool`, `JsonToJavaTool`, `JsonToMongooseTool`, `TypescriptToZodTool`.
+
+- Base `.hljs` background and text use `--color-bg-secondary` and `--color-text` so code blocks match the surrounding panel in both themes automatically.
+- Syntax colors are GitHub Light (light theme) and GitHub Dark (dark theme, unchanged from upstream). Light-theme colors that fell under 4.5:1 against `--color-bg-secondary` were darkened in place (hue and saturation preserved): keyword/type `#d73a49`→`#d02a3a`, built_in/symbol `#e36209`→`#b64e07`, comment `#666e78` (from `#6a737d`), name/tag/quote `#22863a`→`#207d36`, addition text `#22863a`→`#218339`. All light syntax colors now measure ≥4.6:1; all dark syntax colors measure ≥6:1.
+- A component embedding highlighted code must not hardcode a background that duplicates `.hljs`'s own (light/dark) values — it will drift out of sync with the shared theme. Let `.hljs` or the surrounding token-based panel background show through instead.
+
 ## Dark Mode
 
 Dark mode uses the same token names with warmer, lower-lightness values. Components should rely on tokens so both system dark mode and `[data-theme="dark"]` render correctly.
