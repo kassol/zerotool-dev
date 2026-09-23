@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 134 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 135 tools and growing.
 
 ## Tools
 
@@ -143,6 +143,7 @@
 | CSS Clamp Calculator | [/tools/css-clamp-calculator](https://zerotool.dev/tools/css-clamp-calculator) |
 | Barcode Generator | [/tools/barcode-generator](https://zerotool.dev/tools/barcode-generator) |
 | CSR Decoder | [/tools/csr-decoder](https://zerotool.dev/tools/csr-decoder) |
+| Secret Redactor | [/tools/secret-redactor](https://zerotool.dev/tools/secret-redactor) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
