@@ -1,0 +1,267 @@
+---
+title: "安全地给图片打码：截图该用马赛克、模糊还是纯色遮挡？"
+description: "给图片区域打马赛克、给人脸做模糊处理，或者把截图里的秘密信息涂黑。马赛克和模糊的原理是什么、为什么两者都能被还原，以及正确遮挡之后仍会泄露哪些信息。"
+pubDate: 2026-09-23
+lang: "zh"
+tags: ["image", "privacy", "redaction", "screenshots", "developer-tools"]
+ogImage: /og/blog-pixelate-image-guide.png
+---
+
+支付 webhook 一直报错，服务商的支持表单要求提供后台截图。截图里除了错误信息，还带出了正在用的密钥、账号邮箱，以及事件日志里的客户姓名。于是密钥被用图片编辑器随手打了个马赛克，邮箱做了模糊处理，工单就这么发了出去。
+
+三周后，这张工单截图被引用进了一篇公开的状态更新文章。密钥上的马赛克是一排 16 像素的方块平均色，覆盖在已知字体、已知字号、由已知浏览器渲染的等宽文本上——这正是去马赛克工具最擅长处理的输入。
+
+图片马赛克和模糊处理只能挡住随意的一瞥，原始信息大部分仍留在像素里。在给图片打码、对局部做模糊、或者给截图打码之前，先搞清楚每种效果对像素做了什么、哪些能被还原、正确遮挡之后又还会泄露什么。
+
+[立即体验图片马赛克 →](/zh/tools/pixelate-image/)
+
+## 什么时候需要遮挡图片的一部分
+
+该用哪种效果，取决于要遮挡的内容是不是文字。
+
+| 场景 | 需要遮挡的内容 | 该用的效果 |
+|---|---|---|
+| 发给 AI 对话、提交支持工单或论坛帖子的截图 | API 密钥、令牌、密码、账号 ID | 纯色遮挡 |
+| 附带生产环境数据的 Bug 报告 | 客户姓名、邮箱、订单号、内部主机名 | 纯色遮挡 |
+| 教程或文档截图 | 自己的邮箱、工作区名称、账单信息 | 纯色遮挡 |
+| 要发到微信群、钉钉群里的聊天截图 | 同事姓名、手机号、内部群名、私聊内容 | 纯色遮挡 |
+| 用于博客的街景、活动或办公室照片 | 路人的脸 | 大尺寸马赛克或模糊，身份确实重要时用纯色遮挡 |
+| 车辆或停车场照片 | 车牌 | 纯色遮挡（车牌是标准字体的短文本） |
+| 占位图、缩略图或复古风格作品 | 整张图片，为了效果 | 马赛克并勾选"应用到整张图片" |
+| 剧透或敏感预览图 | 整张图片，柔化处理 | 模糊并勾选"应用到整张图片" |
+
+只要人眼能读出来的内容，就用纯色遮挡。马赛克和模糊处理留给非文字内容，或者纯粹为了视觉效果。
+
+## 三种效果的原理
+
+[图片马赛克](/zh/tools/pixelate-image/) 工具会把图片加载进 Canvas 2D 上下文，让你在上面拖出一个或多个矩形框，再把同一种效果应用到每个矩形上。每次调整参数，它都会从原始解码图像重新绘制并重新应用效果，结果不会叠加在上一版本之上。
+
+### 马赛克：分块取平均色
+
+马赛克效果会把选中区域切分成边长可调的正方形格子（4 到 64 像素，默认 16）。对每个格子，它把内部所有像素的红、绿、蓝、alpha 值相加，除以像素数量，再用这个平均色填满整个格子。
+
+有两个细节值得知道：
+
+- **网格从每个区域的左上角开始排列。** 位置不同的两个矩形，网格彼此不对齐，也不对齐图片原点。
+- **边缘格子会缩小以适配区域大小。** 如果区域宽 100 像素、格子大小是 16，最后一列格子就只有 4 像素宽。这些边缘格子只对自己内部的像素取平均，绝不会读取矩形外的像素。
+
+这是一种线性盒式滤波（box filter）：每个输出格子都是输入像素的固定等权平均值。它是确定性的——同样的输入和网格永远得到同样的输出，这正是还原攻击能够成立的前提。
+
+一个 320 × 32 像素的区域，用 16 像素打码后变成 20 × 2 个格子，也就是 40 个平均色。落在一行等宽字体文本上，这已经透露了相当多关于原文字符的信息。
+
+### 模糊：先缩小再放大
+
+模糊效果的半径范围是 2 到 40 像素（默认 12）。它并不使用高斯卷积，而是先把选中区域以高质量平滑方式绘制到一个 `ceil(width / radius)` × `ceil(height / radius)` 像素的临时小画布上，再把这张小图以同样开启平滑的方式放大绘回原区域。
+
+效果看起来是柔和的，格子之间的台阶被插值抹平了。但看它实际保留了什么：原图每 radius × radius 大小的区域大约只留下一个采样点，和用同样大小的格子做马赛克是同一数量级。模糊本质上是把边缘磨平的马赛克，保留的信息量差不多。
+
+和马赛克一样，模糊效果只读取选中矩形内部的像素，不会有外部颜色渗入。
+
+### 纯色遮挡：直接替换
+
+纯色遮挡会用取色器选定的一种不透明颜色（默认黑色）填满整个矩形，原始像素不留下任何平均值、采样或痕迹。
+
+预览里的虚线边框只在屏幕上显示。下载和复制操作会在另一个画布上重新渲染图片和效果，不包含这些虚线。
+
+### 每种效果处理后还剩下什么
+
+| 效果 | 区域内留下的信息 | 能否被还原 |
+|---|---|---|
+| 马赛克（格子大小 b） | 每个 b × b 格子一个平均色 | 文字：能，研究和公开工具反复证明过。人脸：训练过的模型往往仍能识别 |
+| 模糊（半径 r） | 每个 r × r 区域大约一个平滑采样 | 和马赛克一样：平滑处理并不会消除信息 |
+| 纯色遮挡 | 什么都不剩 | 不能 |
+
+## 为什么马赛克和模糊能被还原
+
+两种效果都是有损的：许多不同的原图会产生同一个格子，数学上无法直接逆运算。攻击方法也不走这条路，而是靠猜测——对猜测结果套用同样的滤波，再和目标比对。当可能的原图范围很小时，比如已知字体的文本，这种猜测非常有效。
+
+### Depix：用渲染出的字符集匹配色块
+
+[Depix](https://github.com/spipm/Depix) 于 2020 年 12 月出现在 GitHub 上，作者是 `spipm`。项目自我描述为"一个从打码截图中还原明文技术的概念验证（PoC）"。它专门针对用线性盒式滤波打码的图片——正是本工具马赛克效果所用的滤波方式。
+
+使用时，你要生成一张包含预期字符德布鲁因序列（De Bruijn sequence）的搜索图，字号、字体、颜色都和目标截图一致。Depix 会给这张搜索图打上马赛克，找出和你截图里色块匹配的格子，再用相邻格子的信息在候选字符之间做取舍。
+
+它的 README 列出了限制条件：文字必须对齐整数个格子边界，字体（有时还包括屏幕设置）必须已知，进一步的压缩会让它失效。这个 GitHub 仓库现已归档，开发转移到了 [Codeberg](https://codeberg.org/spipm/Depixelization_poc)。
+
+### Unredacter：暴力枚举网格偏移
+
+2022 年 2 月，Bishop Fox 的 Dan Petro 发表了[《不要用图片马赛克遮挡敏感文本》](https://bishopfox.com/blog/unredacter-tool-never-pixelation)，同时放出了名为 Unredacter 的工具。它针对的是 Jumpsec 一位研究者放出的挑战图片，文本用 5 像素格子打了码。Unredacter 逐字符猜测：渲染出候选字母、给它打码，再和目标图片比对匹配度。由于文本没有对齐格子网格，它还会枚举所有可能的网格偏移量——格子大小为 5 时，偏移量只有 25 种。
+
+在本工具中，网格从你画出的每个矩形的角点开始，因此和文字的对齐方式实际上是随机的。而 Unredacter 会把每一种偏移都试一遍，这个随机性挡不住它。
+
+这篇文章的建议很直接："需要遮挡文字时，用完全覆盖文字的黑条，不要用任何其他方式。"
+
+### 隐马尔可夫模型：更大的格子、噪声与模糊都挡不住
+
+更早的学术成果来自 Steven Hill、Zhimin Zhou、Lawrence Saul 和 Hovav Shacham 发表的[《论马赛克与模糊作为文档遮挡工具的（无）效性》](https://petsymposium.org/popets/2016/popets-2016-0047.php)，刊登于 Proceedings on Privacy Enhancing Technologies 2016 年第 4 期。论文借用语音识别里的隐马尔可夫模型（HMM）来建模被遮挡的文字。
+
+- 该方法从用 18p 字体渲染、又打上 24p 马赛克的英文句子中还原出了可读文字。比字号更粗的网格并不能让文字变得安全。
+- 即使图片被压缩为 0% 质量的 JPEG，它仍然能还原出可读文字。把遮挡后的图片存成低质量 JPEG 起不到保护作用。
+- 针对被模糊处理的文字，该方法会先给模糊区域套上一层马赛克再攻击。模糊处理同样保护不了文字。
+
+论文的结论是："尽管马赛克和模糊被广泛使用，它们都不是可行的文本遮挡方式。"
+
+### 人脸同样不安全
+
+针对人脸图片，相关工作是 Richard McPherson、Reza Shokri 和 Vitaly Shmatikov 于 2016 年 9 月发表在 arXiv 上的[《用深度学习攻破图像混淆》](https://arxiv.org/abs/1609.00408)。他们训练神经网络，去识别经马赛克、YouTube 式模糊以及 P3 加密方案处理过的图片中的人脸，以及识别其中的物体和手写数字。
+
+这种攻击并不还原出清晰的人脸，而是判断被遮挡的脸属于哪个已知的人。大格子的马赛克能挡住随意路过的人认出陌生人，但不能保证一个在相关人物照片上训练过的模型认不出他们。如果身份信息确实重要，人脸也应该用纯色遮挡。
+
+## 常见坑与边界情况
+
+1. **打了马赛克的文字，任何格子大小都可能被还原。** 格子越大猜测越难，但上面那篇 HMM 论文已经在比字号更粗的马赛克下还原出了文字。把马赛克效果当成对文字永远不安全的选项。
+
+2. **模糊处理不比马赛克更安全。** 柔和的观感容易让人以为破坏了更多信息，实际上这里的模糊只是先缩小再放大，保留的信息量和同尺寸的马赛克差不多；HMM 论文处理高斯模糊的文字时，第一步也是先把它转换成马赛克。
+
+3. **格子太小、矩形框太紧。** 普通界面文字用 4 到 8 像素的格子打码，肉眼往往还能读出词形。画矩形时要留出余量：区域边缘只要短了一个像素，就可能漏掉高字母的顶部或降部字母的底部。工具会丢弃任意方向小于 2 像素的矩形，误点一下不会留下一个空区域。
+
+4. **黑条会暴露文字长度。** 一条严格贴合文字大小的纯色遮挡条，会暴露原文有多少个字符——等宽字体下甚至是精确长度。对于 PIN 码这类短小的敏感信息，遮挡条要画得比文字更宽。
+
+5. **原始文件里的元数据。** 照片通常带有 EXIF 数据：相机型号、拍摄时间，往往还有 GPS 坐标。本工具导出的文件是 Canvas API 仅根据像素重新编码出来的全新文件，不会写入原图的 EXIF、GPS 或相机信息。图片解码时会应用 EXIF 里的方向信息，所以手机拍摄的旋转照片导出后依然是正的，即使方向标签本身已经丢失。但仍有两处信息留在像素之外：
+   - **文件名。** 下载文件会保留你的原始文件名并加上 `-pixelated` 后缀，比如 `passport-jane-doe.jpg` 会变成 `passport-jane-doe-pixelated.png`。粘贴进来的图片会命名为 `pasted-image-pixelated`。如果文件名本身能指认出某个人，分享前先改名。
+   - **原始文件本身。** 打码只会生成一个新文件，未处理的原图仍然留在你的磁盘上、截图文件夹里，甚至可能已经同步进了云端相册备份。
+
+6. **藏在文件容器里的数据。** 你看到的像素并不总是文件包含的全部数据。2023 年曝出的 aCropalypse 漏洞就是例子：Google Pixel 的 Markup 编辑器（[CVE-2023-21036](https://www.cve.org/CVERecord?id=CVE-2023-21036)）和 Windows 截图工具（[CVE-2023-28303](https://www.cve.org/CVERecord?id=CVE-2023-28303)）会把裁剪后的图片直接覆盖写入原文件而不截断它，导致未裁剪部分的数据残留在文件末尾、仍可被还原。Canvas 导出不存在这个问题——它是完全根据渲染出的像素重新构建的新文件。但如果你在另一个"原地保存"的编辑器里做过打码处理，最好再导出一份干净的副本。
+
+7. **同一张截图里的二次泄露。** 你遮挡掉的秘密信息，往往还会出现在这张图的其他地方：
+   - 浏览器标签页标题和窗口标题里的文档名、工单标题或用户名。
+   - 地址栏里查询字符串携带的令牌或邮箱地址。
+   - 截图那一刻正好显示在屏幕上的自动补全下拉框、通知弹窗、聊天预览。
+   - 各种缩略图：最近文件列表、图片预览窗格、侧边栏里的消息预览。
+   - 终端、日志行或网络面板里更往下重复出现的同一个密钥。
+   - 反光。[Private Eye](https://arxiv.org/abs/2205.03971)（Yan Long 等人，2022）证明了：通过 720p 摄像头拍到的眼镜反光，能以超过 75% 的准确率还原出小到 10 毫米高的屏幕文字。一张办公桌前的人物照，同样可能在眼镜、窗户或光滑表面上映出显示器内容。
+
+   分享之前，把整张图从头到尾扫一遍，不要只检查你已经遮挡过的那块区域。
+
+8. **一次只能用一种效果，加上"整张图片"开关。** 当前选中的效果会同时应用到所有区域。如果要在同一张图里既给人脸打码、又对密码做纯色遮挡，需要先完成一种效果并下载结果，再重新加载这个文件应用第二种效果。画好的区域不能再移动或调整大小，用撤销去掉最后一个再重画。勾选"应用到整张图片"后，效果会覆盖全图且无法再画矩形；取消勾选后，之前画的区域会重新出现。
+
+9. **动图 GIF 只会导出一帧。** 浏览器会把动图解码成第一帧，导出结果是静态图片，这是有意为之的行为。如果敏感内容出现在后面的帧里，先用视频或 GIF 工具把那一帧提取出来。
+
+10. **HEIC 格式只有 Safari 能打开。** 工具接受浏览器能解码的任意格式：通常是 PNG、JPEG、WebP、GIF、BMP 和 AVIF。根据 [Can I use](https://caniuse.com/heif) 的数据，只有 macOS 和 iOS 上 17 及以上版本的 Safari 支持 HEIF/HEIC。在 Chrome、Edge 或 Firefox 里，HEIC 照片会加载失败并报错。先转成 JPEG，或者改用 Safari。
+
+11. **导出格式的差异。** PNG 是默认格式，也是截图的最佳选择，因为它无损，能保持文字边缘清晰。JPEG 不支持透明度，透明区域会被压平成白色。WebP 导出依赖浏览器的 canvas 编码器：根据 MDN 的兼容性数据，Safari 的 canvas 不支持 WebP 编码，在 Safari 里选择 WebP 会实际保存成 PNG 文件，所以在 Safari 上应该选 PNG 或 JPEG。**复制图片** 始终会把 PNG 放进剪贴板。如果浏览器拒绝剪贴板访问，工具会给出提示，改用下载即可。
+
+12. **超大图片。** 浏览器对 canvas 尺寸有上限。如果导出失败，工具会提示"无法导出——请尝试更小的图片"；缩小图片再试一次。
+
+## 用代码实现同样的效果
+
+这三种操作，用任何图像处理库都只需要几行代码。
+
+### JavaScript：在 canvas 上做分块取平均
+
+这和本工具马赛克效果用的是同一套算法：网格锚定在矩形角点、边缘格子自动缩小以适配、对 RGBA 直接取平均。用到的是 [`getImageData`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/getImageData) 和 `putImageData`。
+
+```javascript
+// 原地给 2D canvas 上下文里的矩形 (x, y, w, h) 打码。
+function pixelateRegion(ctx, x, y, w, h, block) {
+  const img = ctx.getImageData(x, y, w, h);
+  const d = img.data; // 扁平的 RGBA 数组，每个像素 4 字节
+  for (let by = 0; by < h; by += block) {
+    for (let bx = 0; bx < w; bx += block) {
+      const bw = Math.min(block, w - bx); // 边缘格子缩小以适配
+      const bh = Math.min(block, h - by);
+      const sum = [0, 0, 0, 0];
+      for (let yy = by; yy < by + bh; yy++) {
+        for (let xx = bx; xx < bx + bw; xx++) {
+          const i = (yy * w + xx) * 4;
+          for (let c = 0; c < 4; c++) sum[c] += d[i + c];
+        }
+      }
+      const avg = sum.map((s) => Math.round(s / (bw * bh)));
+      for (let yy = by; yy < by + bh; yy++) {
+        for (let xx = bx; xx < bx + bw; xx++) {
+          const i = (yy * w + xx) * 4;
+          for (let c = 0; c < 4; c++) d[i + c] = avg[c];
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, x, y);
+}
+
+// 纯色遮挡只需一行：
+// ctx.fillStyle = "#000"; ctx.fillRect(x, y, w, h);
+
+// 从 canvas 像素导出一个干净的文件（不含 EXIF）：
+// canvas.toBlob((blob) => { /* download or upload blob */ }, "image/png");
+```
+
+如果 canvas 画过一张未经 CORS 许可的跨域图片，`getImageData` 会抛出安全错误。从本地文件或剪贴板加载的图片不会有这个问题。
+
+### Python：Pillow
+
+[Pillow](https://pillow.readthedocs.io/en/stable/reference/Image.html) 内置了盒式滤波。用 `Image.Resampling.BOX` 缩小时会对每个格子取平均，用 `NEAREST` 放大时则把每个平均像素还原成一个实心方块。`Image.Resampling` 需要 Pillow 9.1 及以上版本。
+
+```python
+from PIL import Image, ImageDraw
+
+def pixelate(img, box, block=16):
+    """原地给 box = (left, top, right, bottom) 打码。"""
+    region = img.crop(box)
+    w, h = region.size
+    small = region.resize(
+        (max(1, round(w / block)), max(1, round(h / block))),
+        Image.Resampling.BOX,  # 对每个格子取平均
+    )
+    img.paste(small.resize((w, h), Image.Resampling.NEAREST), box[:2])
+
+def black_out(img, box, color="black"):
+    # rectangle() 会包含右边和底边
+    ImageDraw.Draw(img).rectangle(box, fill=color)
+
+img = Image.open("screenshot.png").convert("RGB")
+pixelate(img, (40, 60, 360, 140), block=16)  # 照片里的一张脸
+black_out(img, (40, 200, 520, 232))          # 一个 API 密钥
+img.save("redacted.png")  # 没有传 exif= 参数，因此不会写入 EXIF
+```
+
+由于目标尺寸会被四舍五入，格子大小只是接近 `block` 像素，并不精确。处理文字时，还是应该用 `black_out`。
+
+### Bash：ImageMagick
+
+ImageMagick 的 [`-scale`](https://imagemagick.org/command-line-options/) 选项在缩小时会"用像素块取平均"，放大时用像素复制，两步合起来正好就是一次打码。要应用到某个区域，需要克隆图片、裁剪出该区域、先缩小再放大，最后合成回去：
+
+```bash
+# 给 (40,60) 处 320x128 的区域打码，格子大小 16 px：320/16 = 20，128/16 = 8
+magick screenshot.png \
+  \( +clone -crop 320x128+40+60 +repage -scale 20x8! -scale 320x128! \) \
+  -geometry +40+60 -composite \
+  -fill black -draw "rectangle 40,200 520,232" \
+  -strip redacted.png
+```
+
+`!` 强制使用精确尺寸，当区域大小是格子大小的整数倍时，每个格子正好是 16 × 16 像素。`-draw "rectangle ..."` 这一行就是纯色遮挡。务必保留 `-strip`：它会从输出里去掉配置文件和注释信息，包括 EXIF。
+
+## 横向对比
+
+两个常见的替代方案：一个在线打码服务和一个桌面编辑器。表格内容只基于各产品自己页面或文档中的说明。
+
+| | ZeroTool 图片马赛克 | ResizePixel Pixelate | GIMP Pixelize 滤镜 |
+|---|---|---|---|
+| 图片在哪里处理 | 在浏览器标签页内，图片本身不发起任何网络请求 | 页面要求"上传到网站"，上传表单会把文件提交到服务器 | 在你自己的电脑上（桌面应用） |
+| 支持的效果 | 马赛克、模糊、纯色遮挡 | 页面描述可对"整张图片或其中一部分"打码 | Pixelize，以及 GIMP 的其他滤镜 |
+| 区域选择方式 | 可拖拽任意数量的矩形，或整张图片 | 格子大小应用于"图片中选定的部分" | 使用 GIMP 自身的选区工具 |
+| 马赛克参数 | 格子大小 4–64 px | 格子大小 | 格子宽高、X/Y 偏移量、形状（方形、圆形、菱形） |
+| 支持的输入格式 | 浏览器能解码的任意格式 | JPG、PNG、WEBP、GIF、TIFF、BMP | GIMP 支持的所有格式 |
+| 安装配置 | 无需安装 | 无需安装 | 需要安装应用程序 |
+
+信息来源：[ResizePixel 的 pixelate 页面](https://www.resizepixel.com/pixelate-image/) 与 [GIMP 3.0 Pixelize 文档](https://docs.gimp.org/3.0/en/gimp-filter-pixelize.html)。
+
+对于带有账号密码的截图，在标签页内处理意味着未打码的原图永远不会离开你的设备，而且 ZeroTool 页面不加载任何统计或广告脚本。如果需要圆形马赛克、精确的网格偏移，或者更多后期编辑，GIMP 提供的控制项更丰富。
+
+## 相关工具
+
+- [密钥脱敏工具](/zh/tools/secret-redactor/) — 把文本和日志里的 API 密钥、令牌粘贴给别人前先遮盖，收到回复后再一键还原
+- [EXIF 元数据查看器](/zh/tools/exif-metadata-viewer/) — 分享原图之前，先看清楚图片到底带着哪些相机、时间和 GPS 信息
+- [图片压缩工具](/zh/tools/image-compressor/) — 打码后的截图要发出去之前，先把体积压缩一下
+
+## 延伸阅读
+
+- [MDN — 用 canvas 做像素处理](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Pixel_manipulation_with_canvas)
+- [MDN — createImageBitmap()](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap)
+- [MDN — HTMLCanvasElement.toBlob()](https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob)
+- [MDN — CanvasRenderingContext2D.imageSmoothingQuality](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/imageSmoothingQuality)
+- [Hill, Zhou, Saul, Shacham — On the (In)effectiveness of Mosaicing and Blurring as Tools for Document Redaction (PoPETs 2016)](https://petsymposium.org/popets/2016/popets-2016-0047.php)
+- [McPherson, Shokri, Shmatikov — Defeating Image Obfuscation with Deep Learning (2016)](https://arxiv.org/abs/1609.00408)
+- [Bishop Fox — Never Use Text Pixelation To Redact Sensitive Information](https://bishopfox.com/blog/unredacter-tool-never-pixelation)
+- [Depix on Codeberg](https://codeberg.org/spipm/Depixelization_poc)

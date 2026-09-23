@@ -1,0 +1,266 @@
+---
+title: "Pixelate Image Safely: Mosaic, Blur or Black Bars for Screenshots"
+description: "Pixelate image areas, blur faces or black out secrets in a screenshot. How block averaging and blur work, why both can be reversed, and what still leaks."
+pubDate: 2026-09-23
+lang: "en"
+tags: ["image", "privacy", "redaction", "screenshots", "developer-tools"]
+ogImage: /og/blog-pixelate-image-guide.png
+---
+
+A payment webhook kept failing, and the provider's support form asked for a screenshot of the dashboard. It showed the error, and also the live secret key, the account owner's email, and a customer's name in the event log. So the key got a quick mosaic in an image editor, the email got a blur, and the ticket went out.
+
+Three weeks later the ticket was quoted in a public status post. The mosaic over the key was a row of box-averaged 16-pixel cells over monospace text in a known font, at a known size, rendered by a known browser. That is exactly the input that depixelation tools are built for.
+
+Pixelation and blur hide things from a casual glance, but they keep much of the information that was there. Before you pixelate an image, blur image regions or redact a screenshot, it helps to know what each effect does to the pixels, which ones can be reversed, and what leaks even after a correct redaction.
+
+[Pixelate an image →](/tools/pixelate-image/)
+
+## When you need to hide part of an image
+
+The right effect depends on whether the hidden content is text.
+
+| Situation | What needs hiding | Effect to use |
+|---|---|---|
+| Screenshot for an AI chat, a support ticket or a forum post | API keys, tokens, passwords, account IDs | Solid fill |
+| Bug report with production data visible | Customer names, emails, order numbers, internal hostnames | Solid fill |
+| Tutorial or documentation screenshot | Your own email, workspace name, billing details | Solid fill |
+| Photo of a street, event or office for a blog post | Bystanders' faces | Pixelate or Blur at a large size, or Solid fill when identity really matters |
+| Photo of a car or a parking lot | License plates | Solid fill (a plate is short text in a standard typeface) |
+| Placeholder, thumbnail or retro artwork | The whole picture, for the look | Pixelate with "Apply to entire image" |
+| Spoiler or sensitive preview image | The whole picture, softened | Blur with "Apply to entire image" |
+
+If a human could read it, use a solid fill. Pixelate and Blur are for things that are not text, and for visual style.
+
+## How the three effects work
+
+The [Pixelate Image](/tools/pixelate-image/) tool loads your image into a Canvas 2D context, lets you drag one or more rectangles over it, and applies one effect to every rectangle. Each time you change a setting, it redraws from the original decoded image and applies the effect again, so the result never stacks on a previous version.
+
+### Pixelate: block averaging
+
+Pixelate divides the selected area into square cells of the chosen block size (4 to 64 pixels, default 16). For each cell it adds up the red, green, blue and alpha values of every pixel inside it, divides by the pixel count, and paints the whole cell with that average color.
+
+Two details are worth knowing:
+
+- **The grid starts at each area's top-left corner.** Two rectangles drawn at different positions get grids that are not aligned with each other or with the image origin.
+- **Edge cells shrink to fit.** If an area is 100 pixels wide and the block size is 16, the last column of cells is 4 pixels wide. Those edge cells average only their own pixels and never read pixels outside the rectangle.
+
+This is a linear box filter: every output cell is a fixed, equal-weight average of its input pixels. It is deterministic: the same input and grid always give the same output, which is what reconstruction attacks depend on.
+
+A 320 × 32 pixel area pixelated at 16 pixels becomes 20 × 2 cells: 40 averaged colors. Over a line of monospace text, that is a lot of information about which characters were there.
+
+### Blur: downscale, then upscale
+
+The Blur effect uses a radius from 2 to 40 pixels (default 12). It does not use a Gaussian convolution. Instead, it draws the selected area onto a small temporary canvas of `ceil(width / radius)` × `ceil(height / radius)` pixels with high-quality smoothing, then draws that small image back over the area at full size, again with smoothing on.
+
+The result looks soft. The steps between cells are smoothed by interpolation. But look at what is stored: one sample for roughly every radius × radius square of the original, the same order of magnitude as pixelating at a block size equal to the radius. A blur is a pixelation with the edges smoothed, and it keeps about the same amount of information.
+
+Like Pixelate, Blur reads only pixels inside the selected rectangle, so no outside colors bleed in.
+
+### Solid fill: replacement
+
+Solid fill paints the rectangle with one opaque color from a color picker (default black). No average, sample or trace of the original pixels survives.
+
+The dashed outlines in the preview are drawn only on screen. Download and copy render the image and effects again on a separate canvas without them.
+
+### What survives each effect
+
+| Effect | What remains in the area | Can it be reversed? |
+|---|---|---|
+| Pixelate (block size b) | One average color per b × b cell | Text: yes, shown repeatedly in research and public tools. Faces: often recognizable by trained models |
+| Blur (radius r) | About one smoothed sample per r × r square | Same as Pixelate: the smoothing does not remove information |
+| Solid fill | Nothing | No |
+
+## Why pixelation and blur can be reversed
+
+Both effects are lossy: many originals produce the same block, so the math cannot run backwards. The attacks do not try. They guess, apply the same filter to the guess, and compare. When the set of possible originals is small, as it is for text in a known font, guessing works very well.
+
+### Depix: matching blocks against a rendered alphabet
+
+[Depix](https://github.com/spipm/Depix) appeared on GitHub in December 2020, published by the author `spipm`. The project describes itself as "a PoC for a technique to recover plaintext from pixelized screenshots". It targets images pixelized with a linear box filter, the same kind of filter the Pixelate effect uses.
+
+To use it, you create a search image that contains a De Bruijn sequence of the expected characters, rendered with the same font settings as the target (the same text size, a similar font and the same colors). Depix pixelates the search image, finds blocks that match the blocks in your screenshot, and uses neighboring blocks to decide between candidates.
+
+Its README lists the limits: text must align to whole block boundaries, the font and sometimes the screen settings must be known, and further compression breaks it. The GitHub repository is now archived, and development moved to [Codeberg](https://codeberg.org/spipm/Depixelization_poc).
+
+### Unredacter: brute-forcing offsets
+
+In February 2022, Dan Petro at Bishop Fox published [Never Use Text Pixelation To Redact Sensitive Information](https://bishopfox.com/blog/unredacter-tool-never-pixelation) with a tool called Unredacter. It targeted a challenge image from a researcher at Jumpsec, with text pixelated in 5-pixel blocks. Unredacter guesses one character at a time: render the letter, pixelate it, and measure how well it matches the redacted image. Because the text did not line up with the block grid, it also tested every possible grid offset, which for a block size of 5 is only 25.
+
+In this tool the grid starts at the corner of each rectangle you draw, so its alignment with the text is effectively random. Unredacter tests every offset anyway.
+
+The article's recommendation is direct: "when you need to redact text, use black bars covering the whole text. Never use anything else."
+
+### Hidden Markov models: larger blocks, noise and blur
+
+The academic result came earlier. [On the (In)effectiveness of Mosaicing and Blurring as Tools for Document Redaction](https://petsymposium.org/popets/2016/popets-2016-0047.php) by Steven Hill, Zhimin Zhou, Lawrence Saul and Hovav Shacham appeared in Proceedings on Privacy Enhancing Technologies 2016, issue 4. It models redacted text with hidden Markov models, borrowed from speech recognition.
+
+- The method recovered readable text from English sentences rendered in an 18p font under a 24p mosaic. A grid coarser than the font size did not make the text safe.
+- It still recovered readable text after the image was degraded by JPEG compression at 0% quality. Saving the redacted image as a low-quality JPEG does not protect it.
+- To attack blurred text, the method first applies a mosaic to the blurred region. Blur did not protect text either.
+
+The paper's conclusion is that "mosaicing and blurring, despite their widespread usage, are not viable approaches for text redaction."
+
+### Faces are not safe either
+
+For images of faces, the relevant work is [Defeating Image Obfuscation with Deep Learning](https://arxiv.org/abs/1609.00408) by Richard McPherson, Reza Shokri and Vitaly Shmatikov (arXiv, September 2016). They trained neural networks to identify faces and recognize objects and handwritten digits in images protected by mosaicing, YouTube-style blurring and the P3 encryption scheme.
+
+The attack does not reconstruct a sharp face. It identifies which known person an obscured face belongs to. A large block size stops a casual viewer from recognizing a stranger. It does not guarantee that a model trained on photos of the people involved cannot match them. If identity really matters, use Solid fill for faces too.
+
+## Pitfalls and edge cases
+
+1. **Pixelated text can be recovered at any block size.** A bigger block makes guessing harder, but the HMM result above recovered text under a mosaic coarser than the font. Treat Pixelate as unsafe for text at every setting.
+
+2. **Blur is not stronger than Pixelate.** The smooth look suggests more was destroyed. Here the blur is a downscale and upscale that stores about as much as pixelating at the same size, and the HMM paper handled Gaussian-blurred text by converting it to a mosaic first.
+
+3. **Small blocks and tight rectangles.** At a 4 to 8 pixel block size over normal UI text, word shapes are often readable by eye. Draw rectangles with margin: an area that stops one pixel short of the text leaves the tops of tall letters or the bottoms of descenders untouched. The tool discards rectangles smaller than 2 pixels in either direction, so a mis-click does not add an empty area.
+
+4. **A black bar reveals length.** A solid bar that fits the text exactly shows how many characters were there. With a monospace font, that is the exact length. For short secrets such as PINs, draw the bar wider than the text.
+
+5. **Metadata in the original file.** Photos carry EXIF data: camera model, time, and often GPS coordinates. The exported file from this tool is a fresh encode produced by the Canvas API from pixels only, so none of the original's EXIF, GPS or camera data is written into it. The image is decoded with its EXIF orientation applied, so a rotated phone photo exports the right way up even after the orientation tag is gone. Two things still carry information outside the pixels:
+   - **The file name.** The download keeps your original base name and adds `-pixelated`, so `passport-jane-doe.jpg` becomes `passport-jane-doe-pixelated.png`. Pasted images are named `pasted-image-pixelated`. Rename the file before sharing it if the name identifies someone.
+   - **The original file.** Redaction creates a new file. The unredacted original is still on your disk, in your screenshots folder, and possibly in a cloud photo backup.
+
+6. **Data hidden in the file container.** The pixels you see are not always all the data a file contains. In 2023, the aCropalypse vulnerabilities showed that Google Pixel's Markup editor ([CVE-2023-21036](https://www.cve.org/CVERecord?id=CVE-2023-21036)) and the Windows Snipping Tool ([CVE-2023-28303](https://www.cve.org/CVERecord?id=CVE-2023-28303)) could write a cropped image over the original file without truncating it, leaving parts of the uncropped image recoverable at the end of the file. A Canvas export does not have this problem. It is a new file built from the rendered pixels. But if you redacted an image in another editor that saves in place, it is worth exporting a clean copy.
+
+7. **Second-order leaks in the rest of the screenshot.** The secret you blacked out is often visible somewhere else in the same image:
+   - Browser tab titles and window titles that show a document name, a ticket subject or a user name.
+   - The address bar, with tokens or email addresses in query strings.
+   - Autocomplete dropdowns, notification toasts and chat previews that were on screen when you pressed the shortcut.
+   - Thumbnails: a recent-files list, an image preview pane, a message preview in a sidebar.
+   - The same key repeated further down a terminal, a log line or a network panel.
+   - Reflections. [Private Eye](https://arxiv.org/abs/2205.03971) (Yan Long et al., 2022) showed that text reflected in eyeglasses and captured by a 720p webcam could be reconstructed with over 75% accuracy for on-screen text as small as 10 mm tall. A photo of a person at a desk can also catch a monitor reflected in glasses, a window or a glossy surface.
+
+   Scan the whole image before sharing it, not only the area you already covered.
+
+8. **One effect per pass, and the whole-image switch.** The selected effect applies to every area at once. To pixelate faces and black out a password in the same image, finish one effect, download the result, load that file again and apply the second effect. Areas cannot be moved or resized after drawing. Use Undo to remove the last one and redraw it. While "Apply to entire image" is on, the effect covers the full image and drawing is disabled; your drawn areas come back when you clear the checkbox.
+
+9. **Animated GIFs export one frame.** The browser decodes an animated GIF to its first frame, and the export is a static image. This is by design. If the sensitive content appears in a later frame, extract that frame with a video or GIF tool first.
+
+10. **HEIC opens only in Safari.** The tool accepts any format the browser can decode: typically PNG, JPEG, WebP, GIF, BMP and AVIF. According to [Can I use](https://caniuse.com/heif), only Safari 17 and later on macOS and iOS support HEIF/HEIC. In Chrome, Edge or Firefox, a HEIC photo fails to load with an error. Convert it to JPEG first, or use Safari.
+
+11. **Export format differences.** PNG is the default and the best choice for screenshots, because it is lossless and keeps text edges sharp. JPEG has no transparency, so transparent areas are flattened onto white. WebP export depends on the browser's canvas encoder: MDN's compatibility data lists no WebP encoding support for canvas in Safari. In Safari, a WebP selection is saved as a PNG file, so choose PNG or JPEG there. **Copy image** always puts a PNG on the clipboard. If the browser blocks clipboard access, the tool says so and you can use Download instead.
+
+12. **Very large images.** Browsers limit canvas size. If an export fails, the tool reports "Could not export — try a smaller image"; resize and try again.
+
+## Doing it in code
+
+The same three operations take a few lines in any image library.
+
+### JavaScript: block averaging on a canvas
+
+This is the same algorithm as the tool's Pixelate effect: a grid anchored at the rectangle's corner, edge cells that shrink to fit, and a plain average over RGBA. It uses [`getImageData`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/getImageData) and `putImageData`.
+
+```javascript
+// Pixelate the rectangle (x, y, w, h) of a 2D canvas context in place.
+function pixelateRegion(ctx, x, y, w, h, block) {
+  const img = ctx.getImageData(x, y, w, h);
+  const d = img.data; // flat RGBA, 4 bytes per pixel
+  for (let by = 0; by < h; by += block) {
+    for (let bx = 0; bx < w; bx += block) {
+      const bw = Math.min(block, w - bx); // edge cells shrink to fit
+      const bh = Math.min(block, h - by);
+      const sum = [0, 0, 0, 0];
+      for (let yy = by; yy < by + bh; yy++) {
+        for (let xx = bx; xx < bx + bw; xx++) {
+          const i = (yy * w + xx) * 4;
+          for (let c = 0; c < 4; c++) sum[c] += d[i + c];
+        }
+      }
+      const avg = sum.map((s) => Math.round(s / (bw * bh)));
+      for (let yy = by; yy < by + bh; yy++) {
+        for (let xx = bx; xx < bx + bw; xx++) {
+          const i = (yy * w + xx) * 4;
+          for (let c = 0; c < 4; c++) d[i + c] = avg[c];
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, x, y);
+}
+
+// Solid fill is one call:
+// ctx.fillStyle = "#000"; ctx.fillRect(x, y, w, h);
+
+// Export a clean file (no EXIF) from the canvas pixels:
+// canvas.toBlob((blob) => { /* download or upload blob */ }, "image/png");
+```
+
+`getImageData` throws a security error if the canvas has drawn a cross-origin image without CORS approval. Images loaded from a local file or the clipboard do not have that problem.
+
+### Python: Pillow
+
+[Pillow](https://pillow.readthedocs.io/en/stable/reference/Image.html) has a box filter built in. Shrinking with `Image.Resampling.BOX` averages each cell, and enlarging with `NEAREST` turns each averaged pixel back into a flat square. `Image.Resampling` needs Pillow 9.1 or later.
+
+```python
+from PIL import Image, ImageDraw
+
+def pixelate(img, box, block=16):
+    """Pixelate box = (left, top, right, bottom) in place."""
+    region = img.crop(box)
+    w, h = region.size
+    small = region.resize(
+        (max(1, round(w / block)), max(1, round(h / block))),
+        Image.Resampling.BOX,  # plain average of each cell
+    )
+    img.paste(small.resize((w, h), Image.Resampling.NEAREST), box[:2])
+
+def black_out(img, box, color="black"):
+    # rectangle() includes the right and bottom edge
+    ImageDraw.Draw(img).rectangle(box, fill=color)
+
+img = Image.open("screenshot.png").convert("RGB")
+pixelate(img, (40, 60, 360, 140), block=16)  # a face in a photo
+black_out(img, (40, 200, 520, 232))          # an API key
+img.save("redacted.png")  # no exif= argument, so no EXIF is written
+```
+
+Because the target size is rounded, cells come out close to `block` pixels, not exactly. For text, use `black_out` anyway.
+
+### Bash: ImageMagick
+
+ImageMagick's [`-scale`](https://imagemagick.org/command-line-options/) option shrinks "with pixel block averaging" and enlarges with pixel replication, which is a pixelation in two steps. To apply it to one area, clone the image, crop the area, scale it down and up, and composite it back:
+
+```bash
+# Pixelate a 320x128 area at (40,60) with 16 px blocks: 320/16 = 20, 128/16 = 8
+magick screenshot.png \
+  \( +clone -crop 320x128+40+60 +repage -scale 20x8! -scale 320x128! \) \
+  -geometry +40+60 -composite \
+  -fill black -draw "rectangle 40,200 520,232" \
+  -strip redacted.png
+```
+
+The `!` forces exact dimensions, so each block is exactly 16 × 16 pixels when the area size is a multiple of the block size. The `-draw "rectangle ..."` line is the solid fill. Keep `-strip`: it removes profiles and comments, including EXIF, from the output.
+
+## How it compares
+
+Two common alternatives: an online pixelation service and a desktop editor. The table only lists what each product's own page or documentation states.
+
+| | ZeroTool Pixelate Image | ResizePixel Pixelate | GIMP Pixelize filter |
+|---|---|---|---|
+| Where the image is processed | In the browser tab. No network request for the image | Page says "upload it to the website". The upload form posts the file to the site | On your computer (desktop app) |
+| Effects | Pixelate, Blur, Solid fill | Page describes pixelating "the image or its part" | Pixelize, plus GIMP's other filters |
+| Area selection | Drag any number of rectangles, or the whole image | Block size applied "to a selected part of the image" | Uses GIMP's own tools |
+| Pixelate options | Block size 4–64 px | Block size | Block width and height, offset X and Y, shape (square, round, diamond) |
+| Input formats | Anything the browser decodes | JPG, PNG, WEBP, GIF, TIFF, BMP | GIMP's supported formats |
+| Setup | None | None | Install the application |
+
+Sources: the [ResizePixel pixelate page](https://www.resizepixel.com/pixelate-image/) and the [GIMP 3.0 Pixelize documentation](https://docs.gimp.org/3.0/en/gimp-filter-pixelize.html).
+
+For a screenshot with credentials in it, processing in the tab means the unredacted version never leaves your machine, and the ZeroTool page loads no analytics or advertising scripts. For a round mosaic, precise grid offsets or further editing, GIMP has more controls.
+
+## Related tools
+
+- [Secret Redactor](/tools/secret-redactor/) — mask API keys and tokens in text and logs before you paste them, then restore them in the reply
+- [EXIF Metadata Viewer](/tools/exif-metadata-viewer/) — see exactly what camera, time and GPS data an image carries before you share the original
+- [Image Compressor](/tools/image-compressor/) — reduce a redacted screenshot's file size before attaching it
+
+## Further reading
+
+- [MDN — Pixel manipulation with canvas](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Pixel_manipulation_with_canvas)
+- [MDN — createImageBitmap()](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap)
+- [MDN — HTMLCanvasElement.toBlob()](https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob)
+- [MDN — CanvasRenderingContext2D.imageSmoothingQuality](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/imageSmoothingQuality)
+- [Hill, Zhou, Saul, Shacham — On the (In)effectiveness of Mosaicing and Blurring as Tools for Document Redaction (PoPETs 2016)](https://petsymposium.org/popets/2016/popets-2016-0047.php)
+- [McPherson, Shokri, Shmatikov — Defeating Image Obfuscation with Deep Learning (2016)](https://arxiv.org/abs/1609.00408)
+- [Bishop Fox — Never Use Text Pixelation To Redact Sensitive Information](https://bishopfox.com/blog/unredacter-tool-never-pixelation)
+- [Depix on Codeberg](https://codeberg.org/spipm/Depixelization_poc)
