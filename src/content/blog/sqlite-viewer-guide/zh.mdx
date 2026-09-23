@@ -1,36 +1,36 @@
 ---
-title: "浏览器 SQLite 查看器：在线打开 .db 文件，无需上传"
-description: "在浏览器里打开 SQLite .db 文件，查看表结构、字段与数据，用内存副本跑 SQL，处理 WAL 与 BLOB，导出 CSV。全程不上传文件。"
+title: "浏览器 SQLite 查看器：不上传，直接检查 .db 文件"
+description: "在浏览器里打开 SQLite .db 文件，查看表、schema 和数据行，在内存副本上跑 SQL，处理 WAL 和 BLOB，并导出 CSV。全程不上传。"
 pubDate: 2026-09-23
 lang: "zh"
 tags: ["sqlite", "database", "sql", "developer-tools"]
 ---
 
-一个写代码的 AI agent 刚完成一个任务：写了一条迁移、跑通、给 `dev.db` 灌了测试数据。它的总结里写着"给 `orders.status` 加了默认值 `'pending'`，回填了 3200 行"。在信它之前，你想亲眼确认一遍。ORM 自动生成了一条你没有手写的迁移时，会遇到同样的问题；移动端 App 在测试设备上写本地数据库、某个页面突然空白，把文件导出来排查原因，也是同一件事。
+一个 AI agent 刚完成一个任务：写了一条迁移、执行了它，并用 fixture 数据填充了 `dev.db`。总结写着"给 `orders.status` 加了默认值 `'pending'`，回填了 3,200 行"。你想亲眼确认这件事，而不是直接相信总结。ORM 自动生成一条你没有手写的迁移时，同样的场景会发生；移动端 App 在测试设备上写本地数据库、你把文件拉出来查某个页面为什么空白时，也是一样。
 
-最省事的做法是把数据粘进 AI 对话框问它哪里出了问题。对大多数真实数据库来说，不能这么干。从预发环境拷贝出来的 `dev.db` 里有客户邮箱，移动 App 的数据库里有 session token，CLI 工具的状态文件里有 API key。这份文件需要留在它本来所在的机器上，由人亲自打开看。
+最直接的做法是把行数据粘进 AI 对话框，问哪里出了问题。对大多数真实数据库来说，不该这么做。从 staging 拷贝出来的 `dev.db` 里有客户邮箱；移动端 App 的数据库里有 session token；CLI 的状态文件里有 API key。这份文件应该由人来读，就在它本来所在的那台机器上。
 
-[在 SQLite 查看器中打开文件 →](/zh/tools/sqlite-viewer/)
+[在查看器中打开 SQLite 文件 →](/zh/tools/sqlite-viewer/)
 
-这个 SQLite 查看器直接在浏览器标签页里打开文件：列出表、视图、字段、索引和 `CREATE` 语句，分页翻行、执行你输入的任意 SQL，支持导出 CSV。说到底，这就是「在线打开 db 文件」看一眼——不用装桌面软件，不用担心数据外泄。全程不上传，工具页也不加载统计和广告脚本。下文讲清楚 SQLite 文件内部是什么结构、查看器怎么读它，以及哪些情况下文件不会显示你预期的内容。
+查看器在浏览器标签页内打开文件：展示表、视图、列、索引和 `CREATE` 语句，分页浏览数据行，执行你输入的任意 SQL，还能导出 CSV。整个过程不上传任何数据，这个工具页面也不加载统计或广告脚本。本文接下来说明 SQLite 文件内部是什么样子、查看器如何读取它，以及哪些情况下文件显示的内容会和你预期的不一样。
 
 ## 什么时候该用浏览器端 SQLite 查看器
 
 | 场景 | 你要检查什么 | 为什么浏览器端查看器合适 |
-|------|--------------|--------------------------|
-| agent 或脚本跑了一条迁移 | 新增字段、默认值、回填的数据、新索引 | 打开文件，看一眼结构面板，跑一条 `SELECT`，关掉标签页 |
-| ORM 迁移复核 | SQLite 实际存下的 `CREATE TABLE` 语句，可能和模型定义不一致 | 查看器原样显示存储的 `CREATE` 语句 |
+|-----------|----------------|---------------------------|
+| AI agent 或脚本执行了一次迁移 | 新增的列、默认值、回填的数据、新索引 | 打开文件，看结构面板，跑一条 `SELECT`，关掉标签页 |
+| 审查 ORM 生成的迁移 | SQLite 实际存储的 `CREATE TABLE` 语句，可能和模型定义不一致 | 查看器原样显示存储的 `CREATE` 语句 |
 | 移动 App 本地数据库 | App 在测试设备上写入的行，比如 Android Room 生成的 `.db`，或 iOS Core Data 的 `.sqlite` 存储 | 不用装桌面客户端，文件留在你自己机器上 |
-| Electron 应用或 CLI 的状态文件 | 配置项、缓存、队列表 | 很多桌面应用和 CLI 都把状态存进单个 SQLite 文件 |
-| 测试夹具核对 | 提交进仓库的 fixture 数据库 | 确认夹具里的数据和测试假设的一致 |
-| 把数据给同事 | 一次查询的结果，不是整个数据库 | 跑查询、导出 CSV、把 CSV 发过去 |
-| 正式执行前先试一条语句 | `UPDATE` 或 `DELETE` 的影响范围 | SQL 跑在内存副本上，磁盘上的文件不会变 |
+| Electron App 或 CLI 的状态 | 设置、缓存、队列表 | 很多桌面 App 和 CLI 把状态存在单个 SQLite 文件里 |
+| 检查测试 fixture | 提交进仓库的 fixture 数据库 | 确认 fixture 里的数据和测试假设的一致 |
+| 把数据交给同事 | 一次查询结果，不是整个数据库 | 跑查询，导出 CSV，把 CSV 发过去 |
+| 正式执行前先试一条语句 | `UPDATE` 或 `DELETE` 的效果 | SQL 跑在内存副本上，磁盘上的文件不会变 |
 
-要原地编辑文件、处理超大文件或加密数据库，用本地工具。后面几节会说明原因，并给出每种场景对应的工具。
+需要原地编辑文件、文件特别大、或者是加密数据库时，用本地工具。下面的章节会解释原因，并为每种情况指出该用哪个工具。
 
 ## SQLite 文件内部是什么
 
-SQLite 数据库就是一个普通文件。格式在 [SQLite Database File Format](https://www.sqlite.org/fileformat.html) 页面里有完整记录，其中几个事实就能解释查看器大部分行为。
+一个 SQLite 数据库就是一个普通文件。完整格式记录在 [SQLite Database File Format](https://www.sqlite.org/fileformat.html) 页面，其中几个事实就能解释查看器大部分行为的由来。
 
 ### 100 字节的文件头
 
@@ -41,44 +41,44 @@ SQLite 数据库就是一个普通文件。格式在 [SQLite Database File Forma
 S  Q  L  i  t  e     f  o  r  m  a  t     3  \0
 ```
 
-这是 UTF-8 字符串 `SQLite format 3` 加一个 nul 字节。不是以这 16 字节开头的文件，就不是纯粹的 SQLite 3 数据库。扩展名说明不了任何问题：`.db`、`.sqlite`、`.sqlite3`、`.db3` 都很常见，大量 `.db` 文件其实是别的东西。
+这是 UTF-8 字符串 `SQLite format 3` 加一个 nul 字节。不以这 16 字节开头的文件，就不是普通的 SQLite 3 数据库。文件扩展名说明不了任何问题：`.db`、`.sqlite`、`.sqlite3`、`.db3` 都很常见，而且不少 `.db` 文件其实是别的东西。
 
-文件行为异常时，文件头里这几个字段还有用：
+文件行为异常时，文件头里还有几个字段有用：
 
 | 偏移量 | 大小 | 字段 |
-|--------|------|------|
+|--------|------|-------|
 | 16 | 2 字节 | 页大小（大端序） |
-| 18 | 1 字节 | 文件格式写版本 |
-| 19 | 1 字节 | 文件格式读版本 |
-| 40 | 4 字节 | schema cookie（每次 schema 变化都会递增） |
+| 18 | 1 字节 | 文件格式写入版本 |
+| 19 | 1 字节 | 文件格式读取版本 |
+| 40 | 4 字节 | schema cookie（每次 schema 变更都会递增） |
 | 56 | 4 字节 | 文本编码 |
-| 60 | 4 字节 | user version（应用常用它当迁移计数器） |
-| 68 | 4 字节 | application ID |
-| 96 | 4 字节 | 最后写入这个文件的 SQLite 库版本号 |
+| 60 | 4 字节 | user version（应用常用它做迁移计数器） |
+| 68 | 4 字节 | Application ID |
+| 96 | 4 字节 | 最后写入该文件的 SQLite 库版本号 |
 
-页大小是 2 的幂。3.7.0.1 及之前的版本允许 512 到 32768 字节；SQLite 3.7.1（2010 年）加入了 65536 字节的页。因为 65536 放不进两个字节，就用值 `1` 表示。回滚日志（rollback-journal）模式的数据库里，第 18、19 字节都是 `1`；WAL 模式下都是 `2`。不用打开文件也能看出日志模式。
+页大小是 2 的幂。3.7.0.1 及之前的版本支持 512 到 32,768 字节。SQLite 3.7.1（2010 年）加入了 65,536 字节的页。因为 65,536 装不进两个字节，这个值会存成 `1`。回滚日志（rollback-journal）数据库的第 18、19 字节都是 `1`，WAL 数据库都是 `2`——不用打开文件就能看出它用的是哪种日志模式。
 
 ### schema 表
 
-文件的第 1 页是一张叫 `sqlite_schema` 的表的根页。老代码和大多数教程管它叫 `sqlite_master`，这个别名现在依然有效。它有五个字段：`type`、`name`、`tbl_name`、`rootpage`、`sql`。每个表、索引、视图和触发器各占一行，`sql` 字段存的是原始 `CREATE` 语句文本。
+文件的第 1 页是一张名为 `sqlite_schema` 的表的根页。老代码和大多数教程叫它 `sqlite_master`，这个别名现在依然有效。它有五列：`type`、`name`、`tbl_name`、`rootpage`、`sql`。每个表、索引、视图和触发器各占一行，`sql` 列存的是原始 `CREATE` 语句文本。
 
-以 `sqlite_` 开头的名字是 SQLite 给自己用的内部对象，比如给 `AUTOINCREMENT` 计数器用的 `sqlite_sequence`，或者给查询规划器统计信息用的 `sqlite_stat1`。应用层不能创建这个前缀的对象。
+以 `sqlite_` 开头的名字是 SQLite 自己创建的内部对象，比如给 `AUTOINCREMENT` 计数器用的 `sqlite_sequence`，或者给查询规划器统计信息用的 `sqlite_stat1`。SQLite 不允许应用创建带这个前缀的对象。
 
-## 查看器怎么读你的文件
+## 查看器怎么读取你的文件
 
-从你拖进文件到列出表清单，中间按顺序发生了这些事。
+从你拖入文件到看到表列表，中间按顺序发生了这些事。
 
-**1. 体积检查。** 超过 100 MB 的文件在读取任何字节之前就会被拒绝。原因是内存：文件会被同时持有两份——一份是从磁盘读出的 buffer，一份在 SQLite 引擎内部。大数据库存两份，浏览器标签页会变得不稳定。
+**1. 体积检查。** 超过 100 MB 的文件在读取任何字节之前就会被拒绝。原因是内存：文件会先以 buffer 形式从磁盘读入一份，再在 SQLite 引擎内部持有一份。大数据库存两份会让浏览器标签页变得不稳定。
 
-**2. 文件头检查。** 查看器只用 File API 读前 100 字节，把前 16 字节和 `SQLite format 3\0` 比对。文件不足 100 字节，或者字节对不上，就会报 "Not a SQLite 3 database" 错误。扩展名从不被信任。
+**2. 文件头检查。** 查看器用 File API 只读取前 100 字节，把前 16 字节和 `SQLite format 3\0` 比对。文件不足 100 字节或字节不匹配，就会报"Not a SQLite 3 database"错误。文件扩展名从不被信任。
 
-**3. 引擎加载。** 文件头检查通过之后，页面才会去拉取 SQLite 引擎。引擎是 [sql.js](https://github.com/sql-js/sql.js) 1.14.2，也就是编译成 WebAssembly 的 SQLite 3.49.1。两个文件压缩后大约 340 KB，浏览器只拉一次。传错文件、传 PNG 或 CSV 都不会触发这次下载。
+**3. 引擎加载。** 只有文件头检查通过后，页面才会去拉取 SQLite 引擎。引擎是 [sql.js](https://github.com/sql-js/sql.js) 1.14.2，也就是编译成 WebAssembly 的 SQLite 3.49.1。两个文件压缩后约 340 KB，浏览器只拉取一次。选错文件、传个 PNG 或 CSV 都不会触发这次下载。
 
-**4. 内存中打开。** 整个文件被读进一个 `Uint8Array`，传给 `new SQL.Database(bytes)`。sql.js 把这份数据库放进一个虚拟的内存文件系统。从这一步开始，所有查询都跑在这份副本上。
+**4. 内存中打开。** 整个文件被读入一个 `Uint8Array`，传给 `new SQL.Database(bytes)`。sql.js 把这个数据库保存在一个虚拟的内存文件系统里。从这一步开始，所有查询都跑在这份副本上。
 
-**5. 对象列表。** 查看器查询 `sqlite_master` 拿到表和视图。内部的 `sqlite_%` 对象不出现在列表里，但你仍然可以在 SQL 编辑器里查询它们。每个表都会跑一次 `COUNT(*)`；视图列出来但不带计数。
+**5. 对象列表。** 查看器查询 `sqlite_master` 拿到表和视图。内部的 `sqlite_%` 对象不会出现在列表里，但你仍然可以在 SQL 编辑器里查询它们。每个表都会算一次 `COUNT(*)`，视图列出时不带行数。
 
-**6. 结构。** 你选中一个表或视图时，查看器会跑这几个表值 pragma 函数：
+**6. 结构信息。** 选中一个表或视图时，查看器会执行以下表值 pragma 函数：
 
 ```sql
 SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?);
@@ -86,39 +86,39 @@ SELECT name, "unique", origin FROM pragma_index_list(?);
 SELECT name FROM pragma_index_info(?) ORDER BY seqno;
 ```
 
-这几个 pragma 的表值形式从 SQLite 3.16.0（2017 年）起就有了。结构面板显示每一列的名字、声明类型、`NOT NULL`、默认值和主键位置；索引面板显示名字、涉及的列、是否唯一以及来源。来源是 `c` 表示由 `CREATE INDEX` 创建，`u` 表示由 `UNIQUE` 约束创建，`pk` 表示由 `PRIMARY KEY` 约束创建。索引条目是 rowid 或表达式时，`pragma_index_info` 会把列名返回为 `NULL`，查看器把这种条目显示成 `(expr)`。索引下方是 schema 表里原样存储的 `CREATE` 语句。
+这些 pragma 的表值形式从 SQLite 3.16.0（2017 年）开始就有了。结构面板显示每一列的名称、声明类型、`NOT NULL`、默认值和主键位置。索引面板显示名称、列、唯一性和来源。来源为 `c` 表示由 `CREATE INDEX` 创建，`u` 表示由 `UNIQUE` 约束创建，`pk` 表示由 `PRIMARY KEY` 约束创建。当索引项是 rowid 或表达式时，`pragma_index_info` 会返回 `NULL` 作为列名，查看器把这种条目显示为 `(expr)`。索引下方是 schema 表里原样存储的 `CREATE` 语句。
 
-**7. 行数据。** 数据网格用 `LIMIT 100 OFFSET n` 每次翻 100 行，范围提示会写 "Rows 101–200 of 3,200"，让你随时知道自己翻到哪了。
+**7. 数据行。** 数据网格用 `LIMIT 100 OFFSET n` 每次分页 100 行。范围提示行会写"Rows 101–200 of 3,200"，让你随时知道自己看到哪里了。
 
-查看器拼进 SQL 里的每个表名和列名都用双引号包裹，名字里的双引号会被转义成两个双引号。叫 `order`、`user data`、`"quoted"` 的表，以及非拉丁字符的名字，都能正常打开。
+查看器拼进 SQL 里的每个表名和列名都用双引号包裹，名字里出现的双引号会被转义成两个双引号。名字是 `order`、`user data`、`"quoted"` 的表，以及非拉丁字符的名字，都能正常打开。
 
-### "不上传"具体指什么
+### 「不上传」具体指什么
 
-文件通过 File API 从你的磁盘直接进到页面内存里。这个工具发出的唯一网络请求是拉取引擎文件，而且是同一个站点下的静态文件。因为输入是私有数据库，这个工具页还被配置成跳过站点的统计和广告脚本。关掉或刷新标签页，内存里的副本就没了。
+文件通过 File API 从你的磁盘直接进入页面内存。这个工具发出的唯一网络请求是拉取引擎文件，而且这些文件是同一个站点的静态资源。因为输入是私有数据库，这个工具页面也被配置成跳过站点的统计和广告脚本。关闭或刷新标签页，内存里的副本就没了。
 
 ## SQLite 里，值的类型不看列怎么声明
 
-读 SQLite 文件时大多数困惑都来自它的类型系统。[Datatypes In SQLite](https://www.sqlite.org/datatype3.html) 页面有完整说明，这里是精简版：
+读 SQLite 文件时大多数困惑都来自它的类型系统。[Datatypes In SQLite](https://www.sqlite.org/datatype3.html) 页面有完整说明，简单版是这样的：
 
-- 一个值属于五种**存储类型**之一：`NULL`、`INTEGER`、`REAL`、`TEXT`、`BLOB`。
-- SQLite 用的是动态类型：**类型属于值本身，不属于列。**
-- 声明的列类型只是设置一个**亲和性（affinity）**（`TEXT`、`NUMERIC`、`INTEGER`、`REAL`、`BLOB`），SQLite 在插入时能转就转。
+- 一个值有五种**存储类型**之一：`NULL`、`INTEGER`、`REAL`、`TEXT`、`BLOB`。
+- SQLite 用动态类型：**类型属于值，不属于列。**
+- 声明的列类型只是设定一个**亲和性**（`TEXT`、`NUMERIC`、`INTEGER`、`REAL`、`BLOB`），SQLite 会在插入时尽可能按这个亲和性转换值。
 
-亲和性按子串规则从声明的类型名推出：类型名里带 `INT` 就是 INTEGER 亲和性；带 `CHAR`、`CLOB` 或 `TEXT` 是 TEXT 亲和性，所以 `VARCHAR(255)` 其实是 TEXT，`255` 这个数字会被忽略；带 `BLOB` 或不声明类型是 BLOB 亲和性；带 `REAL`、`FLOA`、`DOUB` 是 REAL 亲和性；其余的都归 NUMERIC。
+亲和性由声明类型名里的子串规则决定。类型名包含 `INT` 得到 INTEGER 亲和性；包含 `CHAR`、`CLOB` 或 `TEXT` 得到 TEXT 亲和性，所以 `VARCHAR(255)` 是 TEXT，255 这个长度会被忽略；包含 `BLOB` 或者根本没声明类型，得到 BLOB 亲和性；包含 `REAL`、`FLOA` 或 `DOUB` 得到 REAL；其他情况一律是 NUMERIC。
 
-这意味着一列声明成 `INTEGER`，只要有代码写过字符串 `'n/a'`，它照样存得下。某个 ORM 声明了 `created_at DATETIME`，也完全可能这一行存 ISO-8601 文本、那一行存 Unix 时间戳。SQLite 没有日期类型也没有布尔类型：日期存成 TEXT、REAL（儒略日）或 INTEGER（Unix 时间），布尔值就是整数 `0` 和 `1`。
+这意味着，只要有代码写过，声明为 `INTEGER` 的列照样能存字符串 `'n/a'`。声明了 `created_at DATETIME` 的 ORM，可能在这一行存 ISO-8601 文本，在另一行存 Unix 时间戳。SQLite 没有日期类型，也没有布尔类型：日期存成 TEXT、REAL（儒略日）或 INTEGER（Unix 时间），布尔值存成整数 `0` 和 `1`。
 
-查看器渲染每个单元格看的是拿到的实际值，不是列声明的类型：
+查看器根据取回的值本身渲染每个单元格，不看声明的列类型：
 
-| 值 | 网格里显示 | CSV 导出里 |
-|----|------------|------------|
+| 值 | 在网格里 | 在 CSV 导出里 |
+|-------|-------------|---------------|
 | `NULL` | 灰色的 `NULL` 标记 | 空字段 |
 | 空字符串 `''` | 空单元格 | 空字段 |
-| 数字（INTEGER 或 REAL） | 右对齐 | 按原样 |
-| 文本 | 按文本显示，长文本在单元格里截断 | 完整值，需要时加引号 |
-| BLOB | `BLOB · 4 B · 89504E47`（字节长度 + 前 16 字节的十六进制） | 完整内容转成大写十六进制 |
+| 数字（INTEGER 或 REAL） | 右对齐 | 按存储值原样输出 |
+| 文本 | 按文本显示，单元格里过长会截断 | 完整值，需要时加引号 |
+| BLOB | `BLOB · 4 B · 89504E47`（字节长度和前 16 字节的十六进制） | 完整内容转成大写十六进制 |
 
-一列数据看起来不对劲时，直接问 SQLite 里面存的是什么：
+列的内容看着不对劲时，直接问 SQLite 里面存的是什么：
 
 ```sql
 SELECT typeof(created_at) AS storage_class, COUNT(*)
@@ -126,111 +126,111 @@ FROM orders
 GROUP BY 1;
 ```
 
-如果结果里同时出现 `text` 和 `integer`，说明有两条代码路径在用不同格式写这一列。SQLite 3.37.0（2021 年）加入了 `STRICT` 表：只允许 `INT`、`INTEGER`、`REAL`、`TEXT`、`BLOB`、`ANY` 作为列类型，类型不对的值会被拒绝写入。如果存储的 `CREATE` 语句以 `STRICT` 结尾，这张表就不会出现类型混杂的问题。
+如果结果里同时出现 `text` 和 `integer`，说明有两条代码路径在用不同格式写这一列。SQLite 3.37.0（2021 年）加入了 `STRICT` 表，只允许 `INT`、`INTEGER`、`REAL`、`TEXT`、`BLOB`、`ANY` 作为列类型，并拒绝类型不对的值。如果存储的 `CREATE` 语句以 `STRICT` 结尾，这张表就不会出现类型混杂的问题。
 
-## 在内存副本上跑 SQL
+## 在内存副本上执行 SQL
 
-数据网格下方的编辑器接受 SQLite 3.49.1 能理解的任何 SQL。按 **Run SQL** 或 Ctrl/Cmd + Enter 执行。
+数据网格下方的编辑器接受 SQLite 3.49.1 能理解的任何 SQL。按 **Run SQL** 按钮，或者 Ctrl/Cmd + Enter。
 
-- **一次跑多条语句。** 编辑器里的内容按顺序全部执行。结果网格显示最后一条返回列的语句，比如 `SELECT` 或者带 `RETURNING` 的 `UPDATE`。
-- **报错来自 SQLite 本身。** 写错了会在状态栏显示 SQLite 自己的报错信息，比如 `near "SELEC": syntax error`。上一次的结果会被清空，不会和新结果混在一起。
-- **改数据的语句** 会报 "Done. N row(s) changed in the in-memory copy."，这个数字来自运行前后两次 `total_changes()` 的差值。
-- **schema 变化会被自动识别。** 如果这次执行改了数据或 schema 版本，表清单会重新加载：刚跑的 `CREATE TABLE` 会出现在列表里，`INSERT` 或 `DELETE` 之后行数也会更新。
-- **大结果集。** 网格只渲染结果的前 1000 行以保证页面流畅，并会提示这一点；**Export CSV** 始终写出结果的全部行。
+- **一次执行多条语句。** 编辑器里的内容按顺序全部执行，结果网格显示最后一条返回列的语句，比如 `SELECT` 或 `UPDATE ... RETURNING`。
+- **错误信息来自 SQLite 本身。** 写错一个词，状态栏会显示 SQLite 自己的报错，比如 `near "SELEC": syntax error`。之前的结果会被清空，不会和新结果混在一起。
+- **改动数据的语句** 会报告"Done. N row(s) changed in the in-memory copy."，这个数字来自执行前后 `total_changes()` 的差值。
+- **schema 变更会被感知。** 只要这次执行改了数据或 schema 版本，表列表就会重新加载。你刚跑的 `CREATE TABLE` 会出现在列表里，`INSERT` 或 `DELETE` 之后行数也会更新。
+- **大结果集。** 为了让页面保持响应，网格只渲染结果的前 1,000 行，并会提示这一点。**Export CSV** 始终导出结果的全部行。
 
-几条在陌生数据库上很好用的查询：
+面对一个陌生数据库时，这几条查询很有用：
 
 ```sql
--- 所有对象及其 CREATE 语句，包括索引和触发器
+-- 每个对象及其 CREATE 语句，包括索引和触发器
 SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name;
 
 -- 很多应用存在文件头里的迁移计数器
 PRAGMA user_version;
 
--- 一张表上声明的外键
+-- 某个表上声明的外键
 SELECT * FROM pragma_foreign_key_list('orders');
 
 -- 检查文件是否损坏
 PRAGMA integrity_check;
 ```
 
-### 写操作只停留在内存里
+### 写操作只留在内存里
 
-浏览器对你选中的文件没有写权限。引擎操作的是内存里的副本，所以 `INSERT`、`UPDATE`、`DELETE`、`CREATE`、`DROP` 都能跑，查看器也会显示它们的效果，但磁盘上的文件分毫不动。刷新页面或打开另一个文件，这些改动就消失了。这个工具没有下载编辑后副本的选项。
+浏览器对你选中的文件没有写权限。引擎操作的是内存里的副本，所以 `INSERT`、`UPDATE`、`DELETE`、`CREATE`、`DROP` 都能正常执行，查看器也会展示它们的效果，但磁盘上的文件原封不动。刷新页面或打开另一个文件，这些改动就消失了。这个工具没有下载编辑后副本的选项。
 
-这让编辑器成了正式执行前的安全试验场。比如先看一次清理操作会影响多少行，再看看剩下的数据：
+这让编辑器成了正式执行前试语句的安全场所。比如你可以先看一次清理操作会影响多少行，再看看剩下的是什么：
 
 ```sql
 DELETE FROM sessions WHERE expires_at < unixepoch();
 SELECT COUNT(*) AS remaining FROM sessions;
 ```
 
-测试级联删除时有个细节要注意：SQLite 新建连接默认不强制外键约束，除非应用主动开启，查看器也是一样。想让测试里的 `ON DELETE CASCADE` 生效，先跑一句 `PRAGMA foreign_keys = ON;`。
+测试级联删除时有个细节要注意：新建的 SQLite 连接默认不启用外键约束，除非应用主动打开它，查看器也不例外。想让测试里的 `ON DELETE CASCADE` 生效，先执行 `PRAGMA foreign_keys = ON;`。
 
-要改真实文件，在自己机器上用 `sqlite3` 命令行工具或 DB Browser for SQLite。
+要改动真实文件，用你自己机器上的 `sqlite3` 命令行工具或 DB Browser for SQLite。
 
 ## 导出 CSV
 
-**Export CSV** 按钮有两个。数据网格上方那个导出整张选中的表或视图的所有行，不只是当前这一页；SQL 编辑器下方那个导出上一次查询的完整结果。
+有两个 **Export CSV** 按钮。数据网格上方那个导出当前选中的整张表或视图的全部行，不只是当前页；SQL 编辑器下方那个导出你最后一次查询的全部结果。
 
-输出遵循 RFC 4180：逗号分隔、CRLF 换行、首行是列名，字段里出现逗号、双引号、CR 或 LF 时用双引号包裹，字段内部的双引号会被转义成两个双引号。文件名取自表名，字母、数字、`.`、`_`、`-` 之外的字符会替换成 `_`；查询结果导出的文件名固定是 `query.csv`。
+输出遵循 RFC 4180：逗号分隔，CRLF 换行，首行是列名，字段包含逗号、双引号、CR 或 LF 时用 `"` 括起来，字段内的双引号会被转义成两个双引号。文件名取自表名，字母、数字、`.`、`_`、`-` 以外的字符会被替换成 `_`；查询结果的文件名固定是 `query.csv`。
 
-CSV 作为格式带来两个后果：
+CSV 这种格式带来两个后果：
 
-- `NULL` 和空字符串在 CSV 里都变成空字段。如果这个区别对你有意义，导出前在查询里用 `COALESCE(col, '<null>')` 或 `col IS NULL AS col_is_null` 处理一下。
-- BLOB 会变成大写十六进制。一个 4 字节的 PNG 文件头会导出成 `89504E47`，这样 CSV 依然是合法文本，绝大多数语言用一个调用就能解回二进制，比如 Python 里的 `bytes.fromhex()`。
+- `NULL` 和空字符串导出后都是空字段。如果这个区别对你有意义，导出前在查询里选 `COALESCE(col, '<null>')` 或 `col IS NULL AS col_is_null`。
+- BLOB 会转成大写十六进制。一个 4 字节的 PNG 签名会导出为 `89504E47`。这样能让 CSV 保持是合法文本，大多数语言一次调用就能解码回来，比如 Python 里的 `bytes.fromhex()`。
 
-要把数据给同事，只导出他需要的查询结果就够了，数据库文件留在你自己手里。
+把数据交给同事时，只导出他们需要的查询结果，数据库文件留在你自己手里。
 
-## 坑与边界情况
+## 常见坑和边界情况
 
-### 最近的行不见了：WAL 文件
+### 最近的数据行不见了：WAL 文件
 
-这是最常见的意外。[Write-Ahead Logging](https://www.sqlite.org/wal.html) 页面描述的 WAL 模式下，SQLite 不会立刻把已提交的改动写进主数据库文件，而是追加到一个以数据库同名、后缀 `-wal` 的独立文件里，旁边还有一个索引文件 `-shm`。**checkpoint** 会把 WAL 里的事务搬回主文件。默认情况下，WAL 达到 1000 页时 SQLite 会自动 checkpoint，最后一个连接关闭时 WAL 通常会被删除。
+这是最常见的意外情况。[Write-Ahead Logging](https://www.sqlite.org/wal.html) 页面描述的 WAL 模式下，SQLite 不会立刻把已提交的改动写进主数据库文件，而是追加到一个以数据库名加 `-wal` 后缀命名的独立文件里，旁边还有一个 `-shm` 索引文件。**checkpoint** 会把 WAL 里的事务搬回主文件。默认情况下，WAL 达到 1,000 页时 SQLite 会自动 checkpoint，最后一个连接关闭时 WAL 通常会被删除。
 
-所以，如果你从正在运行的 App 拷贝 `app.db`，或者在 App 开着的时候从手机上把文件拉出来，最新的事务很可能还留在 `app.db-wal` 里。查看器只读主文件，这些行自然就看不到。SQLite 官方文档也提醒过：把数据库文件和它的 WAL 分开拷贝，可能丢失已提交的事务，甚至损坏数据库。
+所以，如果你从一个正在运行的 App 拷贝 `app.db`，或者在手机 App 开着的时候把文件拉出来，最新的事务可能还留在 `app.db-wal` 里。查看器只读主文件，这些行就不会出现。SQLite 官方文档也警告过，把数据库文件和它的 WAL 分开可能丢失已提交的事务，或者损坏数据库。
 
-文件头第 18、19 字节能告诉你这个文件是不是用了 WAL（都是 `2` 就是）。要把 WAL 合并回主文件，先关掉写它的那个应用，再跑：
+文件头的第 18、19 字节能告诉你文件是否用了 WAL（都是 `2` 就是）。要把 WAL 合并进主文件，先关掉写它的那个应用，再执行：
 
 ```bash
 sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"
 ```
 
-`TRUNCATE` 会把每一帧都 checkpoint 完，再把 WAL 文件截断到 0 字节。之后再打开 `app.db`。回滚模式数据库留下的 `-journal` 文件也是同样道理：查看器只读主文件，先让原本的应用或者 `sqlite3` shell 打开一次数据库。
+`TRUNCATE` 会 checkpoint 每一帧，然后把 WAL 文件截断为零字节。之后重新打开 `app.db` 即可。回滚模式数据库残留的 `-journal` 文件也是同样道理：查看器只读主文件，所以先让原本使用它的应用或 `sqlite3` shell 打开一次数据库。
 
-### 明明是数据库，却报 "Not a SQLite 3 database"
+### 明明是数据库，却报「不是 SQLite 3 数据库」
 
-加密数据库会触发这个错误。[SQLCipher](https://www.zetetic.net/sqlcipher/design/) 会在前 16 字节存一段随机 salt，其余部分全部加密，整个文件看起来就是随机数据，`SQLite format 3` 文件头也就没了。SQLite Encryption Extension（SEE）同样会加密文件。查看器不打开加密数据库，用 `sqlcipher` shell 解密，或者用支持 SQLCipher 的 DB Browser for SQLite 打开。
+加密数据库会触发这个错误。[SQLCipher](https://www.zetetic.net/sqlcipher/design/) 把随机 salt 存在前 16 字节，其余部分加密，整个文件看起来就是一堆随机数据，`SQLite format 3` 文件头没了。SQLite Encryption Extension（SEE）同样会加密文件。查看器不打开加密数据库。用 `sqlcipher` shell 解密，或者用支持 SQLCipher 文件的 [DB Browser for SQLite](https://sqlitebrowser.org/) 打开。
 
-名字带 `.db` 但其实是别的东西的文件，以及被截断的拷贝，也会报同样的错误。用 `head -c 16 app.db | xxd` 看一眼前几个字节就能确认。
+文件名带 `.db` 但实际是别的东西，或者是截断了的拷贝，也会报同样的错误。用 `head -c 16 app.db | xxd` 查一下前几个字节。
 
 ### 文件超过 100 MB
 
-这个上限是固定的，因为数据库打开期间会在内存里存两份。文件更大的话，本地跑 `sqlite3 app.db`，或者先取一个小一点的子集：
+这个上限是固定的，因为文件打开期间要在内存里存两份。文件更大的话，本地跑 `sqlite3 app.db`，或者先取一份更小的子集：
 
 ```bash
 sqlite3 big.db "ATTACH 'small.db' AS s; CREATE TABLE s.orders AS SELECT * FROM orders WHERE created_at >= '2026-09-01';"
 ```
 
-然后把 `small.db` 丢进查看器打开。
+然后在查看器里打开 `small.db`。
 
-### 某张表不显示行，只显示报错
+### 表显示的是错误而不是数据
 
-有些表需要 SQLite 核心之外的代码支持。像 SpatiaLite 的几何表、`sqlite-vec` 向量表、FTS5 全文索引、R-Tree 空间索引这类虚表，依赖的是编译进创建它们的那个应用里的模块。查看器用的 sql.js 1.14.2 构建版本没有包含 `fts5` 或 `rtree` 模块，查询这类表会得到 SQLite 自己的报错，比如 `no such module: fts5`。
+有些表需要 SQLite 核心之外的代码支持。SpatiaLite 几何表、`sqlite-vec` 向量表、FTS5 全文索引、R-Tree 空间索引这类虚拟表，依赖编译进创建它们的那个应用里的模块。查看器用的 sql.js 1.14.2 构建版本不包含 `fts5` 或 `rtree` 模块，查询这类表会得到 SQLite 自己的报错，比如 `no such module: fts5`。
 
-这类表的行数统计会失败，列表里显示 `—`，数据面板显示报错，数据库的其余部分照常可以浏览。FTS5 的数据本身还存在普通的 "shadow" 表里（比如 `notes_fts_content`），这些是普通表，可以正常读取。
+这类表算不出行数时，列表里显示 `—`，数据面板显示错误信息，数据库的其余部分照常可以浏览。FTS5 还会把数据存在普通的"影子"表里（比如 `notes_fts_content`），这些是可以正常读取的普通表。
 
-### 查询结果一行都没有
+### 查询没有匹配到任何行
 
-一条匹配不到任何行的 `SELECT`，照样会显示列名，状态栏会写 "0 row(s)"。这说明查询本身跑通了、列名也对，问题出在 `WHERE` 子句上。`SELECT COUNT(*) ... WHERE ...` 永远返回一行，能把结果说清楚。
+匹配零行的 `SELECT` 依然会显示列名，状态栏会报告"0 row(s)"。这说明查询跑成功了，列名也对，问题该去 `WHERE` 子句里找。`SELECT COUNT(*) ... WHERE ...` 总能返回一行，把答案说清楚。
 
-### 长文本与宽表
+### 长文本和宽表
 
-单元格宽度有上限，长文本会用省略号截断。超过 60 个字符的文本，悬停就能在 tooltip 里看到前 2000 个字符。要读一列里存的完整 JSON 文档，单独查出这个值再导出成 CSV，或者在查询里用 `json_extract()` 把需要的部分取出来。
+单元格宽度有上限，长文本会被省略号截断。超过 60 个字符的文本，鼠标悬停可以在提示框里看到前 2,000 个字符。要读某一列里存的完整 JSON 文档，单独查询这个值并导出成 CSV，或者在查询里用 `json_extract()` 取出你需要的部分。
 
-### 安全地拷贝一个正在使用的数据库
+### 安全地拷贝一个运行中的数据库
 
-应用还在写文件时用 `cp` 直接拷贝，可能拿到一份"撕裂"的坏副本。SQLite 3.15.0 起提供的 `VACUUM INTO` 会把一份事务一致的快照写进新文件，原文件不受影响。这份快照是单个文件，包含了 WAL 里已提交的内容：
+应用还在写文件的时候用 `cp` 拷贝，可能拿到一份撕裂的副本。SQLite 3.15.0 起提供的 `VACUUM INTO` 会把一份事务一致的快照写进新文件，不动原文件。这份快照是单个文件，包含了 WAL 里已提交的内容：
 
 ```bash
 sqlite3 app.db "VACUUM INTO 'snapshot.db'"
@@ -238,9 +238,9 @@ sqlite3 app.db "VACUUM INTO 'snapshot.db'"
 
 ## 代码示例
 
-### Python：先检查文件头，再只读统计行数
+### Python：检查文件头，再只读统计行数
 
-标准库的 `sqlite3` 模块可以通过 URI 以只读方式打开文件。下面这段脚本用查看器同样的方式检查文件头，打印页大小和日志模式，并列出每张表的行数。
+标准库 `sqlite3` 模块可以通过 URI 以只读方式打开文件。下面这段脚本用和查看器一样的方式检查文件头，打印页大小和日志模式，并列出每张表的行数。
 
 ```python
 import sqlite3
@@ -255,11 +255,11 @@ if len(header) < 100 or header[:16] != b"SQLite format 3\x00":
 
 page_size = int.from_bytes(header[16:18], "big")
 if page_size == 1:
-    page_size = 65536                      # 1 是 64 KiB 页的特殊标记值
+    page_size = 65536                      # 1 是 64 KiB 页的魔数
 journal = "WAL" if header[18] == 2 else "rollback"
 print(f"page size: {page_size}  journal mode: {journal}")
 
-con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)   # 只读打开
+con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)   # 只读
 tables = con.execute(
     "SELECT name FROM sqlite_master WHERE type = 'table' "
     "AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name"
@@ -273,7 +273,7 @@ con.close()
 
 ### JavaScript：Node.js 里用同一个引擎
 
-sql.js 在 Node.js 里也能跑，用的是和浏览器工具一样的模型：文件被加载进内存，写操作只改动这份副本。
+sql.js 在 Node.js 里也能跑。这和浏览器工具用的是同一套模型：文件加载进内存，写操作只改这份副本。
 
 ```js
 import { readFileSync } from "node:fs";
@@ -288,63 +288,63 @@ const [schema] = db.exec(
 );
 for (const [type, name] of schema?.values ?? []) console.log(type.padEnd(6), name);
 
-// 写操作只改动这份副本，磁盘上的文件不受影响。
+// 写操作只改这份副本，磁盘上的文件不受影响
 db.run("DELETE FROM users WHERE email LIKE ?", ["%@example.com"]);
 console.log("rows deleted in memory:", db.getRowsModified());
 
-// 如果想保留改动，db.export() 会把改动后的数据库返回成一个 Uint8Array。
+// 如果想保留结果，db.export() 会把改动后的数据库返回成 Uint8Array
 db.close();
 ```
 
-### Bash：为查看准备文件，并从命令行导出
+### Bash：为查看做准备，并从命令行导出
 
 ```bash
-# 把待处理的 WAL 事务合并进主文件（先关掉写它的应用）
+# 把还没落盘的 WAL 事务合并进主文件（先关掉写它的应用）
 sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"
 
-# 或者取一份一致的单文件快照，不动原文件
+# 或者拿一份一致的单文件快照，不动原文件
 sqlite3 app.db "VACUUM INTO 'snapshot.db'"
 
-# 打开之前先确认文件头
+# 打开前先确认文件头
 head -c 16 snapshot.db | xxd
 
-# 从 shell 导出 CSV；hex() 和查看器一样把 BLOB 转成文本
+# 从 shell 导出 CSV；hex() 像查看器一样把 BLOB 转成文本
 sqlite3 -header -csv snapshot.db \
   "SELECT id, email, hex(avatar) AS avatar FROM users LIMIT 100" > users.csv
 ```
 
-`hex()` 这一步很关键。`sqlite3` shell 默认会把 BLOB 列原样写成字节导出到 CSV，大多数 CSV 解析器都会被这种文件搞坏。
+`hex()` 这一步很关键。`sqlite3` shell 会把 BLOB 列原样以字节形式写进 CSV，这对大多数 CSV 读取器来说都是损坏的文件。
 
 ## 和其他 SQLite 工具的对比
 
-下面这几个工具各有各的适用场景。
+下面每个工具都适合不同的场景。
 
-| 工具 | 运行环境 | 能读什么 | 是否写入文件 | 加密文件 |
-|------|----------|----------|--------------|----------|
-| ZeroTool SQLite 查看器 | 浏览器标签页，无需安装 | 单个文件，最大 100 MB | 否，改动只留在内存副本里 | 不支持 |
+| 工具 | 运行在哪里 | 能读什么 | 是否写回文件 | 加密文件 |
+|------|-----------|-------|--------------------|-----------------|
+| ZeroTool SQLite 查看器 | 浏览器标签页，无需安装 | 单个文件，最大 100 MB | 否；改动只留在内存副本里 | 不支持 |
 | `sqlite3` 命令行 shell | 本地终端 | 本地磁盘上的文件，包括 WAL | 是 | 不支持（用 `sqlcipher` shell） |
 | DB Browser for SQLite | Windows / macOS / Linux 桌面应用，开源 | 本地磁盘上的文件 | 是 | 支持，SQLCipher |
 
-`sqlite3` shell 是参照系一样的工具：原地打开文件，自身没有大小限制，能读 WAL，也适合写脚本。只想看一眼的话用 `sqlite3 -readonly app.db`。它的局限是你得记住那些点命令，而且要在终端里读宽表。
+`sqlite3` shell 是参照标准的工具。它原地打开文件，自身没有大小限制，能读 WAL，也很适合写脚本。只想看看的话用 `sqlite3 -readonly app.db`。它的局限是你得记住那些点命令，还要在终端里读宽表。
 
-DB Browser for SQLite 是一个完整的桌面编辑器，能建表改表、在网格里改单元格、添加或去掉 SQLCipher 加密。需要真的改文件时用它。
+DB Browser for SQLite 是一个完整的桌面编辑器，能创建和修改表、在网格里编辑单元格、增删 SQLCipher 加密。需要真正改动文件时用它。
 
-浏览器查看器就是给你快速看一眼：结构面板、分页数据、SQL 编辑器、CSV 导出，不用装软件、不用注册、不上传。它从设计上就对文件只读，所以不可能弄坏你正在检查的数据库。
+浏览器查看器是给快速查看用的：结构面板、分页数据、SQL 编辑器、CSV 导出，不用装东西，不用账号，不上传。它对文件天生只读，所以你不可能弄坏正在查看的数据库。
 
 ## 相关工具与参考资料
 
 ZeroTool 上和数据库文件搭配使用的工具：
 
-- [CSV 转 SQL](/zh/tools/csv-to-sql/) 把 CSV 转成 `CREATE TABLE` 和 `INSERT` 语句，方便把测试数据灌进一个全新的 SQLite 文件。
-- [SQL 格式化](/zh/tools/sql-formatter/) 把粘进编辑器之前的长 `CREATE` 语句或查询整理成可读的格式。
-- [CSV ↔ JSON](/zh/tools/csv-json/) 把导出的查询结果转成 JSON，用作测试夹具或 API mock 数据。
-- [JSON 格式化](/zh/tools/json-formatter/) 适合处理存在 TEXT 列里的 JSON 文档。
+- [CSV to SQL](/zh/tools/csv-to-sql/) 把 CSV 转成 `CREATE TABLE` 和 `INSERT` 语句，用来给一个全新的 SQLite 文件灌测试数据。
+- [SQL Formatter](/zh/tools/sql-formatter/) 在你把一条很长的 `CREATE` 语句或查询粘进编辑器之前，先把它格式化到可读。
+- [CSV ↔ JSON](/zh/tools/csv-json/) 把导出的查询结果转成 JSON，用作 fixture 或 API mock 数据。
+- [JSON Formatter](/zh/tools/json-formatter/) 用来处理存在 TEXT 列里的 JSON 文档。
 
-本文引用的原始资料：
+本文引用的一手资料：
 
 - [Database File Format](https://www.sqlite.org/fileformat.html)：文件头布局、页大小、schema 表
 - [Write-Ahead Logging](https://www.sqlite.org/wal.html)：WAL、`-wal` 和 `-shm` 文件、checkpoint
-- [Datatypes In SQLite](https://www.sqlite.org/datatype3.html)：存储类型与类型亲和性
+- [Datatypes In SQLite](https://www.sqlite.org/datatype3.html)：存储类型和类型亲和性
 - [STRICT Tables](https://www.sqlite.org/stricttables.html)：3.37.0 起的强类型列
 - [PRAGMA Statements](https://www.sqlite.org/pragma.html)：`table_info`、`index_list`、`wal_checkpoint`
 - [VACUUM](https://www.sqlite.org/lang_vacuum.html)：`VACUUM INTO` 快照
