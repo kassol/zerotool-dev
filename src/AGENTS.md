@@ -19,7 +19,7 @@ src/
 │   ├── BaseLayout.astro     全局壳：导航 / 主题切换 / GA4 / AdSense / 语言切换
 │   ├── ToolLayout.astro     工具页布局（含 SEO + AdUnit 槽位）
 │   └── ArticleLayout.astro  博客文章布局
-├── pages/              路由（详见 pages/tools/AGENTS.md）
+├── pages/              路由（约定见根 AGENTS.md；src/pages/ 下禁止放 .md）
 └── styles/             全局 CSS
 ```
 
