@@ -1,0 +1,741 @@
+---
+// PixelateImageTool — pixelates, blurs, or solid-fills selected areas (or the
+// whole image) of a local image/screenshot via Canvas 2D. No upload.
+---
+
+<div>
+  <div class="pxi-wrap" id="pxi-wrap">
+    {/* Drop zone — visible until an image is loaded */}
+    <div id="pxi-drop" class="pxi-drop" role="button" tabindex="0" aria-label="Drop an image here or click to select">
+      <div class="pxi-drop-inner">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <p data-i18n="dropHint">Drop an image here, or <strong>click to select</strong></p>
+        <p class="pxi-hint" data-i18n="pasteHint">You can also paste a screenshot with Ctrl/Cmd+V</p>
+        <p class="pxi-hint" data-i18n="formatsHint">PNG / JPEG / WebP / GIF / BMP / AVIF · first GIF frame only</p>
+      </div>
+      <input type="file" id="pxi-file" accept="image/*" class="pxi-file-input" aria-label="Select an image file" />
+    </div>
+
+    {/* Controls — hidden until an image is loaded */}
+    <div id="pxi-controls" class="pxi-controls" hidden>
+      <div class="pxi-effect-row" role="radiogroup" aria-label="Effect">
+        <label class="pxi-radio-label">
+          <input type="radio" name="pxi-effect" value="pixelate" checked />
+          <span data-i18n="effectPixelate">Pixelate</span>
+        </label>
+        <label class="pxi-radio-label">
+          <input type="radio" name="pxi-effect" value="blur" />
+          <span data-i18n="effectBlur">Blur</span>
+        </label>
+        <label class="pxi-radio-label">
+          <input type="radio" name="pxi-effect" value="solid" />
+          <span data-i18n="effectSolid">Solid fill</span>
+        </label>
+      </div>
+
+      <div class="pxi-strength-row" id="pxi-strength-row">
+        <label for="pxi-strength" class="pxi-strength-label">
+          <span id="pxi-strength-label-text" data-i18n="blockSizeLabel">Block size:</span>
+          <strong id="pxi-strength-val">16</strong> px
+        </label>
+        <input type="range" id="pxi-strength" min="4" max="64" value="16" step="1" aria-label="Strength" />
+      </div>
+
+      <div class="pxi-color-row" id="pxi-color-row" hidden>
+        <label for="pxi-color" class="tool-label" data-i18n="colorLabel">Fill color:</label>
+        <input type="color" id="pxi-color" value="#000000" aria-label="Fill color" />
+      </div>
+
+      <label class="pxi-entire-label">
+        <input type="checkbox" id="pxi-entire" />
+        <span data-i18n="entireImageLabel">Apply to entire image</span>
+      </label>
+
+      <p class="pxi-tip" data-i18n="tip">Pixelate and blur can sometimes be reversed — use solid fill for passwords and API keys.</p>
+    </div>
+
+    {/* Canvas preview — hidden until an image is loaded */}
+    <div id="pxi-canvas-wrap" class="pxi-canvas-wrap" hidden>
+      <canvas id="pxi-canvas" class="pxi-canvas"></canvas>
+      <div id="pxi-dim-status" class="pxi-dim-status"></div>
+    </div>
+
+    {/* Actions — hidden until an image is loaded */}
+    <div id="pxi-actions" class="pxi-actions" hidden>
+      <label class="pxi-format-label">
+        <span data-i18n="formatLabel">Format:</span>
+        <select id="pxi-format" class="tool-input pxi-format-select" aria-label="Output format">
+          <option value="image/png" selected>PNG</option>
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/webp">WebP</option>
+        </select>
+      </label>
+      <button id="pxi-download" class="btn-primary" type="button" data-i18n="download">Download</button>
+      <button id="pxi-copy" class="btn-secondary" type="button" data-i18n="copyImage">Copy image</button>
+      <button id="pxi-undo" class="btn-ghost" type="button" data-i18n="undo">Undo</button>
+      <button id="pxi-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+    </div>
+
+    <div id="pxi-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          dropHint: 'Drop an image here, or <strong>click to select</strong>',
+          pasteHint: 'You can also paste a screenshot with Ctrl/Cmd+V',
+          formatsHint: 'PNG / JPEG / WebP / GIF / BMP / AVIF · first GIF frame only',
+          effectPixelate: 'Pixelate', effectBlur: 'Blur', effectSolid: 'Solid fill',
+          blockSizeLabel: 'Block size:', blurRadiusLabel: 'Blur radius:',
+          colorLabel: 'Fill color:', entireImageLabel: 'Apply to entire image',
+          tip: 'Pixelate and blur can sometimes be reversed — use solid fill for passwords and API keys.',
+          formatLabel: 'Format:', download: 'Download', copyImage: 'Copy image', undo: 'Undo', clear: 'Clear',
+          areasCount: '{n} area(s)',
+          statusNotImage: 'Not an image file', statusDecodeFailed: 'Could not decode this image',
+          statusExportFailed: 'Could not export — try a smaller image',
+          statusCopyUnsupported: 'Copy is not supported in this browser — use Download instead',
+          statusCopyFailed: 'Copy was blocked — use Download instead',
+          statusCopied: 'Image copied to clipboard', statusDownloaded: 'Downloaded',
+        },
+        zh: {
+          dropHint: '把图片拖到这里，或<strong>点击选择</strong>',
+          pasteHint: '也可以直接 Ctrl/Cmd+V 粘贴截图',
+          formatsHint: 'PNG / JPEG / WebP / GIF / BMP / AVIF · GIF 仅取首帧',
+          effectPixelate: '像素化', effectBlur: '模糊', effectSolid: '纯色涂黑',
+          blockSizeLabel: '块大小：', blurRadiusLabel: '模糊半径：',
+          colorLabel: '填充颜色：', entireImageLabel: '应用到整张图片',
+          tip: '像素化与模糊都可能被还原——密码和 API Key 等文字类信息请用纯色涂黑。',
+          formatLabel: '格式：', download: '下载', copyImage: '复制图片', undo: '撤销', clear: '清除',
+          areasCount: '{n} 个区域',
+          statusNotImage: '不是图片文件', statusDecodeFailed: '无法解码此图片',
+          statusExportFailed: '导出失败——请试试更小的图片',
+          statusCopyUnsupported: '当前浏览器不支持复制图片，请改用下载',
+          statusCopyFailed: '复制被拒绝，请改用下载',
+          statusCopied: '图片已复制到剪贴板', statusDownloaded: '已下载',
+        },
+        ja: {
+          dropHint: '画像をここにドロップ、または<strong>クリックして選択</strong>',
+          pasteHint: 'Ctrl/Cmd+V でスクリーンショットを直接貼り付けることもできます',
+          formatsHint: 'PNG / JPEG / WebP / GIF / BMP / AVIF · GIF は先頭フレームのみ',
+          effectPixelate: 'モザイク', effectBlur: 'ぼかし', effectSolid: '塗りつぶし',
+          blockSizeLabel: 'ブロックサイズ：', blurRadiusLabel: 'ぼかし半径：',
+          colorLabel: '塗りつぶし色：', entireImageLabel: '画像全体に適用',
+          tip: 'モザイクとぼかしは復元される場合があります——パスワードや API キーなどの文字情報は塗りつぶしを使ってください。',
+          formatLabel: '出力フォーマット：', download: 'ダウンロード', copyImage: '画像をコピー', undo: '元に戻す', clear: 'クリア',
+          areasCount: '{n} 件の範囲',
+          statusNotImage: '画像ファイルではありません', statusDecodeFailed: 'この画像をデコードできません',
+          statusExportFailed: '書き出しに失敗しました — より小さい画像でお試しください',
+          statusCopyUnsupported: 'このブラウザは画像コピーに対応していません — ダウンロードをご利用ください',
+          statusCopyFailed: 'コピーがブロックされました — ダウンロードをご利用ください',
+          statusCopied: '画像をクリップボードにコピーしました', statusDownloaded: 'ダウンロードしました',
+        },
+        ko: {
+          dropHint: '이미지를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
+          pasteHint: 'Ctrl/Cmd+V로 스크린샷을 바로 붙여넣을 수도 있습니다',
+          formatsHint: 'PNG / JPEG / WebP / GIF / BMP / AVIF · GIF는 첫 프레임만',
+          effectPixelate: '모자이크', effectBlur: '블러', effectSolid: '단색 채우기',
+          blockSizeLabel: '블록 크기:', blurRadiusLabel: '블러 반경:',
+          colorLabel: '채우기 색상:', entireImageLabel: '전체 이미지에 적용',
+          tip: '모자이크와 블러는 복원될 수 있습니다 — 비밀번호와 API 키 등 텍스트 정보는 단색 채우기를 사용하세요.',
+          formatLabel: '포맷:', download: '다운로드', copyImage: '이미지 복사', undo: '실행 취소', clear: '지우기',
+          areasCount: '영역 {n}개',
+          statusNotImage: '이미지 파일이 아닙니다', statusDecodeFailed: '이 이미지를 디코딩할 수 없습니다',
+          statusExportFailed: '내보내기 실패 — 더 작은 이미지로 시도해 보세요',
+          statusCopyUnsupported: '이 브라우저는 이미지 복사를 지원하지 않습니다 — 다운로드를 이용하세요',
+          statusCopyFailed: '복사가 차단되었습니다 — 다운로드를 이용하세요',
+          statusCopied: '이미지를 클립보드에 복사했습니다', statusDownloaded: '다운로드했습니다',
+        },
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.innerHTML = t[key];
+      });
+
+      /* ── engine:start ── */
+      // Pure, canvas-independent helpers — extracted verbatim by
+      // scripts/test-pixelate-image.mjs, so keep this block free of DOM/canvas APIs.
+
+      // Pixelate `data` (a flat RGBA Uint8ClampedArray of a w×h region) in place:
+      // divide it into `block`×`block` cells (edge cells shrink to fit w/h) and
+      // fill each cell with the average RGBA of its own pixels.
+      function pixelate(data, w, h, block) {
+        for (var by = 0; by < h; by += block) {
+          var bh = Math.min(block, h - by);
+          for (var bx = 0; bx < w; bx += block) {
+            var bw = Math.min(block, w - bx);
+            var rSum = 0, gSum = 0, bSum = 0, aSum = 0, count = bw * bh;
+            for (var y = 0; y < bh; y++) {
+              var rowStart = ((by + y) * w + bx) * 4;
+              for (var x = 0; x < bw; x++) {
+                var idx = rowStart + x * 4;
+                rSum += data[idx]; gSum += data[idx + 1]; bSum += data[idx + 2]; aSum += data[idx + 3];
+              }
+            }
+            var r = Math.round(rSum / count), g = Math.round(gSum / count), bAvg = Math.round(bSum / count), a = Math.round(aSum / count);
+            for (var y2 = 0; y2 < bh; y2++) {
+              var rowStart2 = ((by + y2) * w + bx) * 4;
+              for (var x2 = 0; x2 < bw; x2++) {
+                var idx2 = rowStart2 + x2 * 4;
+                data[idx2] = r; data[idx2 + 1] = g; data[idx2 + 2] = bAvg; data[idx2 + 3] = a;
+              }
+            }
+          }
+        }
+        return data;
+      }
+
+      // Turn an arbitrary drag (any direction) into an integer {x,y,w,h} rect
+      // clipped to the [0,W]×[0,H] image bounds. Returns null when the clipped
+      // rect is degenerate (width or height below 2px).
+      function normalizeRect(x0, y0, x1, y1, W, H) {
+        var minX = Math.min(x0, x1), minY = Math.min(y0, y1);
+        var maxX = Math.max(x0, x1), maxY = Math.max(y0, y1);
+        var x = Math.round(Math.max(0, Math.min(W, minX)));
+        var y = Math.round(Math.max(0, Math.min(H, minY)));
+        var x2 = Math.round(Math.max(0, Math.min(W, maxX)));
+        var y2 = Math.round(Math.max(0, Math.min(H, maxY)));
+        var w = x2 - x, h = y2 - y;
+        if (w < 2 || h < 2) return null;
+        return { x: x, y: y, w: w, h: h };
+      }
+
+      // Map a client (viewport) coordinate to image-pixel coordinates, given the
+      // canvas element's displayed CSS rect (getBoundingClientRect()) and the
+      // canvas's true pixel resolution W×H (which may differ from the displayed
+      // size because of the `max-width:100%` responsive scaling).
+      function toImageCoords(clientX, clientY, rect, W, H) {
+        var scaleX = rect.width ? W / rect.width : 1;
+        var scaleY = rect.height ? H / rect.height : 1;
+        return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+      }
+      /* ── engine:end ── */
+
+      var dropEl = document.getElementById('pxi-drop');
+      var fileInput = document.getElementById('pxi-file');
+      var wrapEl = document.getElementById('pxi-wrap');
+      var controlsEl = document.getElementById('pxi-controls');
+      var effectRadios = document.getElementsByName('pxi-effect');
+      var strengthRow = document.getElementById('pxi-strength-row');
+      var strengthLabelText = document.getElementById('pxi-strength-label-text');
+      var strengthInput = document.getElementById('pxi-strength');
+      var strengthVal = document.getElementById('pxi-strength-val');
+      var colorRow = document.getElementById('pxi-color-row');
+      var colorInput = document.getElementById('pxi-color');
+      var entireCheckbox = document.getElementById('pxi-entire');
+      var canvasWrapEl = document.getElementById('pxi-canvas-wrap');
+      var canvasEl = document.getElementById('pxi-canvas');
+      var dimStatusEl = document.getElementById('pxi-dim-status');
+      var actionsEl = document.getElementById('pxi-actions');
+      var formatSelect = document.getElementById('pxi-format');
+      var downloadBtn = document.getElementById('pxi-download');
+      var copyBtn = document.getElementById('pxi-copy');
+      var undoBtn = document.getElementById('pxi-undo');
+      var clearBtn = document.getElementById('pxi-clear');
+      var statusEl = document.getElementById('pxi-status');
+      var ctx = canvasEl.getContext('2d');
+
+      var bitmap = null;      // decoded ImageBitmap (or fallback wrapper), owns .close()
+      var imgSource = null;   // the actual drawImage source (ImageBitmap or <img>)
+      var W = 0, H = 0;       // true image pixel dimensions
+      var areas = [];         // committed {x,y,w,h} regions, image-pixel space
+      var origName = null;
+      var isPasted = false;
+      var dragging = false, dragStart = null, dragCurrent = null, rafScheduled = false;
+      var state = { blockSize: 16, blurRadius: 12, fillColor: '#000000' };
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status ' + (kind || 'info');
+      }
+
+      function selectedEffect() {
+        for (var i = 0; i < effectRadios.length; i++) {
+          if (effectRadios[i].checked) return effectRadios[i].value;
+        }
+        return 'pixelate';
+      }
+
+      function updateDimStatus() {
+        dimStatusEl.textContent = W + '×' + H + ' · ' + t.areasCount.replace('{n}', areas.length);
+      }
+
+      function syncEffectUI() {
+        var effect = selectedEffect();
+        if (effect === 'solid') {
+          strengthRow.hidden = true;
+          colorRow.hidden = false;
+        } else {
+          colorRow.hidden = true;
+          strengthRow.hidden = false;
+          if (effect === 'pixelate') {
+            strengthLabelText.textContent = t.blockSizeLabel;
+            strengthInput.min = '4'; strengthInput.max = '64'; strengthInput.value = String(state.blockSize);
+          } else {
+            strengthLabelText.textContent = t.blurRadiusLabel;
+            strengthInput.min = '2'; strengthInput.max = '40'; strengthInput.value = String(state.blurRadius);
+          }
+          strengthVal.textContent = strengthInput.value;
+        }
+      }
+
+      function drawDashedRect(targetCtx, rect) {
+        var lw = Math.max(2, Math.round(Math.min(W, H) / 250));
+        targetCtx.save();
+        targetCtx.setLineDash([lw * 3, lw * 2]);
+        targetCtx.lineWidth = lw;
+        targetCtx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-primary') || '#a8571d';
+        targetCtx.strokeRect(rect.x + lw / 2, rect.y + lw / 2, rect.w - lw, rect.h - lw);
+        targetCtx.restore();
+      }
+
+      function applyBlur(targetCtx, region) {
+        var r = state.blurRadius;
+        var smallW = Math.max(1, Math.ceil(region.w / r));
+        var smallH = Math.max(1, Math.ceil(region.h / r));
+        var small = document.createElement('canvas');
+        small.width = smallW; small.height = smallH;
+        var sctx = small.getContext('2d');
+        sctx.imageSmoothingEnabled = true;
+        sctx.imageSmoothingQuality = 'high';
+        sctx.drawImage(targetCtx.canvas, region.x, region.y, region.w, region.h, 0, 0, smallW, smallH);
+        targetCtx.imageSmoothingEnabled = true;
+        targetCtx.imageSmoothingQuality = 'high';
+        targetCtx.drawImage(small, 0, 0, smallW, smallH, region.x, region.y, region.w, region.h);
+      }
+
+      function applyEffect(targetCtx, region) {
+        var effect = selectedEffect();
+        if (effect === 'pixelate') {
+          var imgData = targetCtx.getImageData(region.x, region.y, region.w, region.h);
+          pixelate(imgData.data, region.w, region.h, state.blockSize);
+          targetCtx.putImageData(imgData, region.x, region.y);
+        } else if (effect === 'blur') {
+          applyBlur(targetCtx, region);
+        } else {
+          targetCtx.fillStyle = state.fillColor;
+          targetCtx.fillRect(region.x, region.y, region.w, region.h);
+        }
+      }
+
+      // Rebuild the canvas from the original bitmap, then apply the active
+      // effect to every committed area (or the whole image when the "entire
+      // image" checkbox is on). `withOutlines` draws dashed preview borders.
+      function render(targetCtx, withOutlines) {
+        targetCtx.clearRect(0, 0, W, H);
+        targetCtx.drawImage(imgSource, 0, 0, W, H);
+        var whole = entireCheckbox.checked;
+        var regions = whole ? [{ x: 0, y: 0, w: W, h: H }] : areas;
+        for (var i = 0; i < regions.length; i++) applyEffect(targetCtx, regions[i]);
+        if (withOutlines && !whole) {
+          for (var j = 0; j < areas.length; j++) drawDashedRect(targetCtx, areas[j]);
+        }
+      }
+
+      function fullRender() {
+        if (!imgSource) return;
+        try {
+          render(ctx, true);
+        } catch (e) {
+          setStatus(t.statusExportFailed, 'error');
+        }
+      }
+
+      function scheduleDraftRender() {
+        if (rafScheduled) return;
+        rafScheduled = true;
+        requestAnimationFrame(function () {
+          rafScheduled = false;
+          if (!dragging) return;
+          render(ctx, true);
+          var draft = normalizeRect(dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, W, H);
+          if (draft) drawDashedRect(ctx, draft);
+        });
+      }
+
+      function canvasToBlobPromise(canvas, mime) {
+        if (canvas.convertToBlob) return canvas.convertToBlob({ type: mime });
+        return new Promise(function (resolve) {
+          canvas.toBlob(function (b) { resolve(b); }, mime);
+        });
+      }
+
+      function makeCanvas(w, h) {
+        if (typeof OffscreenCanvas === 'function') {
+          try { return new OffscreenCanvas(w, h); } catch (e) {}
+        }
+        var c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        return c;
+      }
+
+      function exportBlob(mime) {
+        // render() starts with clearRect, so any background fill applied before
+        // it would be wiped out — composite first, then flatten transparency
+        // onto white for JPEG as a second pass.
+        var canvas = makeCanvas(W, H);
+        var ctx2 = canvas.getContext('2d');
+        try {
+          render(ctx2, false);
+        } catch (e) {
+          return Promise.resolve(null);
+        }
+        if (mime === 'image/jpeg') {
+          var flat = makeCanvas(W, H);
+          var fctx = flat.getContext('2d');
+          fctx.fillStyle = '#ffffff';
+          fctx.fillRect(0, 0, W, H);
+          fctx.drawImage(canvas, 0, 0);
+          canvas = flat;
+        }
+        return canvasToBlobPromise(canvas, mime).catch(function () { return null; });
+      }
+
+      function extFor(mime) {
+        if (mime === 'image/jpeg') return '.jpg';
+        if (mime === 'image/webp') return '.webp';
+        return '.png';
+      }
+
+      function outputFileName(mime) {
+        var ext = extFor(mime);
+        var base = (isPasted || !origName) ? 'pasted-image' : origName.replace(/\.[^.]+$/, '');
+        return base + '-pixelated' + ext;
+      }
+
+      function loadBitmap(file) {
+        if (typeof createImageBitmap === 'function') {
+          try {
+            return createImageBitmap(file, { imageOrientation: 'from-image' });
+          } catch (e) {
+            return createImageBitmap(file);
+          }
+        }
+        return new Promise(function (resolve, reject) {
+          var url = URL.createObjectURL(file);
+          var img = new Image();
+          img.onload = function () {
+            URL.revokeObjectURL(url);
+            resolve({ width: img.naturalWidth, height: img.naturalHeight, _img: img, close: function () {} });
+          };
+          img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode')); };
+          img.src = url;
+        });
+      }
+
+      function processImage(file, pasted) {
+        if (!file || file.type.indexOf('image/') !== 0) {
+          setStatus(t.statusNotImage, 'error');
+          return;
+        }
+        loadBitmap(file).then(function (bmp) {
+          if (bitmap && bitmap.close) bitmap.close();
+          bitmap = bmp;
+          imgSource = bmp._img || bmp;
+          W = bmp.width; H = bmp.height;
+          canvasEl.width = W; canvasEl.height = H;
+          areas = [];
+          origName = file.name || null;
+          isPasted = !!pasted;
+          dropEl.hidden = true;
+          controlsEl.hidden = false;
+          canvasWrapEl.hidden = false;
+          actionsEl.hidden = false;
+          syncEffectUI();
+          fullRender();
+          updateDimStatus();
+          setStatus('', 'info');
+        }).catch(function () {
+          setStatus(t.statusDecodeFailed, 'error');
+        });
+      }
+
+      /* ── Effect / strength / color / entire-image controls ── */
+      for (var k = 0; k < effectRadios.length; k++) {
+        effectRadios[k].addEventListener('change', function () { syncEffectUI(); fullRender(); });
+      }
+      strengthInput.addEventListener('input', function () {
+        var v = parseInt(strengthInput.value, 10);
+        if (selectedEffect() === 'pixelate') state.blockSize = v; else state.blurRadius = v;
+        strengthVal.textContent = String(v);
+        fullRender();
+      });
+      colorInput.addEventListener('input', function () { state.fillColor = colorInput.value; fullRender(); });
+      entireCheckbox.addEventListener('change', function () { fullRender(); });
+
+      /* ── Drop zone: click / keyboard / drag-over visuals ── */
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+      dropEl.addEventListener('dragover', function (e) { e.preventDefault(); dropEl.classList.add('drag-over'); });
+      dropEl.addEventListener('dragleave', function () { dropEl.classList.remove('drag-over'); });
+      fileInput.addEventListener('change', function () {
+        if (this.files && this.files[0]) processImage(this.files[0], false);
+      });
+
+      /* ── Wrap-level drop: works both before and after an image is loaded,
+         so dropping a new image always replaces the current one. ── */
+      wrapEl.addEventListener('dragover', function (e) { e.preventDefault(); });
+      wrapEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+          processImage(e.dataTransfer.files[0], false);
+        }
+      });
+
+      /* ── Clipboard paste replaces the current image ── */
+      document.addEventListener('paste', function (e) {
+        if (!e.clipboardData) return;
+        var items = e.clipboardData.items;
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf('image/') === 0) {
+            var file = items[i].getAsFile();
+            if (file) {
+              e.preventDefault();
+              processImage(file, true);
+            }
+            break;
+          }
+        }
+      });
+
+      /* ── Canvas drag-to-select (mouse + touch via Pointer Events) ── */
+      canvasEl.addEventListener('pointerdown', function (e) {
+        if (!imgSource || entireCheckbox.checked) return;
+        e.preventDefault();
+        var r = canvasEl.getBoundingClientRect();
+        var pt = toImageCoords(e.clientX, e.clientY, r, W, H);
+        dragStart = pt; dragCurrent = pt; dragging = true;
+        try { canvasEl.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      canvasEl.addEventListener('pointermove', function (e) {
+        if (!dragging) return;
+        var r = canvasEl.getBoundingClientRect();
+        dragCurrent = toImageCoords(e.clientX, e.clientY, r, W, H);
+        scheduleDraftRender();
+      });
+      function endDrag() {
+        if (!dragging) return;
+        dragging = false;
+        var rect = normalizeRect(dragStart.x, dragStart.y, dragCurrent.x, dragCurrent.y, W, H);
+        if (rect) { areas.push(rect); updateDimStatus(); }
+        fullRender();
+      }
+      canvasEl.addEventListener('pointerup', endDrag);
+      canvasEl.addEventListener('pointercancel', endDrag);
+
+      /* ── Actions ── */
+      downloadBtn.addEventListener('click', function () {
+        if (!imgSource) return;
+        var mime = formatSelect.value;
+        exportBlob(mime).then(function (blob) {
+          if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = outputFileName(mime);
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          setStatus(t.statusDownloaded, 'success');
+          if (window.trackTool) window.trackTool('pixelate-image', 'download');
+        });
+      });
+
+      copyBtn.addEventListener('click', function () {
+        if (!imgSource) return;
+        if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+          setStatus(t.statusCopyUnsupported, 'error');
+          return;
+        }
+        exportBlob('image/png').then(function (blob) {
+          if (!blob) { setStatus(t.statusExportFailed, 'error'); return Promise.reject(new Error('handled')); }
+          return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        }).then(function () {
+          setStatus(t.statusCopied, 'success');
+          if (window.trackTool) window.trackTool('pixelate-image', 'copy');
+        }).catch(function (err) {
+          if (err && err.message === 'handled') return;
+          setStatus(t.statusCopyFailed, 'error');
+        });
+      });
+
+      undoBtn.addEventListener('click', function () {
+        if (areas.length === 0) return;
+        areas.pop();
+        updateDimStatus();
+        fullRender();
+      });
+
+      clearBtn.addEventListener('click', function () {
+        if (bitmap && bitmap.close) bitmap.close();
+        bitmap = null; imgSource = null; W = 0; H = 0; areas = [];
+        origName = null; isPasted = false;
+        fileInput.value = '';
+        dropEl.hidden = false;
+        controlsEl.hidden = true;
+        canvasWrapEl.hidden = true;
+        actionsEl.hidden = true;
+        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+        canvasEl.width = 0; canvasEl.height = 0;
+        setStatus('', 'info');
+      });
+
+      syncEffectUI();
+    })();
+  </script>
+
+  <style>
+    .pxi-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+    .pxi-drop {
+      position: relative;
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      background: var(--color-bg-secondary);
+    }
+    .pxi-drop:hover,
+    .pxi-drop.drag-over {
+      border-color: var(--color-primary);
+      background: var(--color-surface);
+    }
+    .pxi-drop:focus-visible {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 4px var(--color-primary-light);
+    }
+    .pxi-drop-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--color-text-secondary);
+      pointer-events: none;
+    }
+    .pxi-drop-inner p { margin: 0; font-size: 0.95rem; }
+    .pxi-hint { font-size: 0.8rem; opacity: 0.78; }
+    .pxi-file-input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .pxi-controls { display: flex; flex-direction: column; gap: 0.7rem; }
+
+    .pxi-effect-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.1rem;
+      font-size: 0.88rem;
+    }
+    .pxi-radio-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      cursor: pointer;
+      color: var(--color-text-secondary);
+    }
+
+    .pxi-strength-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--color-text-secondary);
+    }
+    .pxi-strength-label { white-space: nowrap; min-width: 120px; }
+    .pxi-strength-row input[type="range"] { flex: 1; }
+
+    .pxi-color-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 0.88rem;
+    }
+    .pxi-color-row input[type="color"] {
+      width: 2.4rem;
+      height: 2.2rem;
+      padding: 0.15rem;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      cursor: pointer;
+    }
+
+    .pxi-entire-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.88rem;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      width: fit-content;
+    }
+
+    .pxi-tip {
+      margin: 0;
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
+    }
+
+    .pxi-canvas-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .pxi-canvas {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      touch-action: none;
+      cursor: crosshair;
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+    }
+    .pxi-dim-status {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--color-text-secondary);
+    }
+
+    .pxi-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .pxi-format-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      color: var(--color-text-secondary);
+    }
+    .pxi-format-select { min-height: 40px; width: auto; }
+
+    @media (max-width: 640px) {
+      .pxi-strength-label { min-width: 100px; }
+      .pxi-actions .btn-primary,
+      .pxi-actions .btn-secondary,
+      .pxi-actions .btn-ghost { flex: 1 1 45%; }
+    }
+  </style>
+</div>

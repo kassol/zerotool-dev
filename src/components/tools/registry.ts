@@ -139,6 +139,7 @@ import OpenapiToTypescriptTool from './OpenapiToTypescriptTool.astro';
 import CsrDecoderTool from './CsrDecoderTool.astro';
 import SecretRedactorTool from './SecretRedactorTool.astro';
 import SqliteViewerTool from './SqliteViewerTool.astro';
+import PixelateImageTool from './PixelateImageTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -277,4 +278,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'csr-decoder': CsrDecoderTool,
   'secret-redactor': SecretRedactorTool,
   'sqlite-viewer': SqliteViewerTool,
+  'pixelate-image': PixelateImageTool,
 };

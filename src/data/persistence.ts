@@ -27,6 +27,7 @@ export const toolPersistencePolicy = {
   'csr-decoder': 'disabled',
   'secret-redactor': 'disabled',
   'sqlite-viewer': 'disabled',
+  'pixelate-image': 'disabled',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)
