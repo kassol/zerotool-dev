@@ -9,8 +9,9 @@
 | 脚本 | 类型 | 用途 | 何时跑 |
 |------|------|------|--------|
 | `check-icon-coverage.mjs` | 校验 | 比对 `tools.ts` 与 `icons.ts`，缺图标即 exit 1 | `npm run build` 第 1 步 |
-| `generate-og.mjs` | 生成 | 用 sharp + figlet 为每个工具生成 OG 图，输出到 `public/og/{slug}.png` | `npm run build` 第 2 步 / `npm run generate-og` |
-| `generate-blog-redirects.mjs` | 后处理 | 扫 `src/content/blog/{baseSlug}/{zh,ja,ko}.mdx`，向 `dist/_redirects` 追加旧语言后缀 URL → 新目录 URL 的 301 | `npm run build` 第 4 步 |
+| `generate-og.mjs` | 生成 | 用 sharp + figlet 为每个工具生成 OG 图，输出到 `public/og/{slug}.png` | `npm run build` 第 4 步 / `npm run generate-og` |
+| `generate-blog-redirects.mjs` | 后处理 | 扫 `src/content/blog/{baseSlug}/{zh,ja,ko}.mdx`，向 `dist/_redirects` 追加旧语言后缀 URL → 新目录 URL 的 301 | `npm run build` 第 6 步 |
+| `sync-jq-web.mjs` | 同步 | 把 jq-web 运行时从 `node_modules` 复制到 `public/jq-web/`（gitignored），供 `jq-playground` 加载 | `npm run dev` / `npm run build` 前置步骤 |
 | `sync-sql-js.mjs` | 同步 | 把 `node_modules/sql.js/dist/` 的 `sql-wasm.js` + `sql-wasm.wasm` 复制到 `public/sql-js/`（gitignored），供 `SqliteViewerTool` 选文件后懒加载 | `npm run dev` / `npm run build` 前置步骤 |
 | `update-readme-tools.js` | 文档同步 | 用 `tools.ts` 的 slug + EN name 重写 README 的 `<!-- TOOLS-START/END -->` 段 | CI workflow `update-readme.yml` 在 master 分支 `tools.ts` 变化时自动跑 |
 | `audit.mjs` | 巡检 | 全项目静态一致性审计：tools schema / 图标覆盖 / 路由注册 / content/tools 多语言 / category 类型与 UI 对齐 / 基础页面齐全 / i18n key 对齐 / blog 命名 + frontmatter / _redirects 格式 / public 与 src/pages 下无 AGENTS.md | `.github/workflows/ci.yml` PR + master push 自动跑；本地 `node scripts/audit.mjs`（FAIL 退出码 1） |
@@ -26,9 +27,11 @@
 
 ```
 1. node scripts/check-icon-coverage.mjs   # 缺图标即停
-2. node scripts/generate-og.mjs           # 生成 public/og/*.png
-3. astro build                            # 编译到 dist/
-4. node scripts/generate-blog-redirects.mjs  # 追加 dist/_redirects
+2. node scripts/sync-jq-web.mjs           # 复制 jq-web 运行时到 public/jq-web/
+3. node scripts/sync-sql-js.mjs           # 复制 sql.js 运行时到 public/sql-js/
+4. node scripts/generate-og.mjs           # 生成 public/og/*.png
+5. astro build                            # 编译到 dist/
+6. node scripts/generate-blog-redirects.mjs  # 追加 dist/_redirects
 ```
 
 ## CI 巡检管线（.github/workflows/ci.yml）
