@@ -1,7 +1,7 @@
 import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
 import sitemap from '@astrojs/sitemap';
-import partytown from '@astrojs/partytown';
+import { copyLibFiles, partytownVite } from '@qwik.dev/partytown/utils';
 import cloudflare from '@astrojs/cloudflare';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -116,14 +116,19 @@ export default defineConfig({
         return item;
       },
     }),
-    partytown({
-      // Forward GA4 calls from main thread to worker. AdSense runs on the main thread.
-      // Preserve dataLayer.push on the main thread so early tool_use calls remain visible
-      // even before the Partytown worker has finished booting.
-      config: {
-        forward: [['dataLayer.push', { preserveBehavior: true }]],
+    // Partytown lib files only. The snippet is rendered by BaseLayout on pages that load GA4,
+    // so sensitive tool pages do not register the Partytown service worker.
+    {
+      name: 'partytown-lib',
+      hooks: {
+        'astro:config:setup': ({ command, updateConfig }) => {
+          if (command === 'dev') updateConfig({ vite: { plugins: [partytownVite()] } });
+        },
+        'astro:build:done': async ({ dir }) => {
+          await copyLibFiles(fileURLToPath(new URL('~partytown', dir)), { debugDir: false });
+        },
       },
-    }),
+    },
   ],
 
   i18n: {
