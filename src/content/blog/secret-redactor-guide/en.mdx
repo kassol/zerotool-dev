@@ -1,0 +1,344 @@
+---
+title: "Redact Secrets Before You Paste Logs into an AI Chat or an Issue"
+description: "What leaks when you paste logs or .env files into an AI chat or GitHub issue, how redaction with stable placeholders works, and what to do once a key is out."
+pubDate: 2026-09-23
+lang: "en"
+tags: ["secrets", "api-keys", "redaction", "ai", "developer-tools"]
+ogImage: /og/blog-secret-redactor-guide.png
+---
+
+The deploy failed at 2 a.m. with a wall of red in the CI log. The fastest path to an answer looked obvious: select the whole log, paste it into an AI chat, ask what broke. The answer was good. It pointed at a missing environment variable three hundred lines down.
+
+Line forty of that same log was the job's startup banner, and the startup banner printed the resolved config. The database URL was in there with its password. So was the payment provider's live secret key, because a debug flag someone added last quarter echoed every variable whose name ended in `_KEY`.
+
+Nothing about that paste felt like publishing a credential. It felt like asking a colleague. But the text left the machine, landed on a third party's servers, and now exists in a conversation history that the developer does not control and cannot fully audit. The same thing happens when a log goes into a GitHub issue, a Slack thread, a Jira ticket or a Stack Overflow question — except those are often readable by far more people.
+
+This guide covers what actually leaks in everyday debugging text, how to strip it out before the paste instead of after, and what to do when you notice too late.
+
+[Open the Secret Redactor →](/tools/secret-redactor)
+
+## The paste is the leak
+
+The instinct to ask the assistant to "ignore the keys" or "remove any secrets" gets the order of operations backwards. By the time a model reads that instruction, the full text has already been transmitted to the provider. Whatever the provider's retention and training policies are, you are now relying on them. The model cannot un-send your request.
+
+The same logic applies to every place developers paste text for help:
+
+| Where the text goes | Who can read it afterwards |
+|---|---|
+| AI chat (ChatGPT, Claude, Gemini, or any app that calls a model API) | The provider, under its own retention policy, and anyone who can open your conversation history |
+| Public GitHub issue or discussion | Everyone, including automated scrapers |
+| Private repository issue | Every collaborator, every integration with read access, and every future member |
+| Slack, Teams, Jira, Confluence | Every channel or project member, plus any integration with read access |
+| Stack Overflow, forums | Everyone |
+| Paste sites | Anyone with the URL |
+
+GitGuardian's [State of Secrets Sprawl 2026](https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/) report counted 28.65 million new hardcoded secrets in public GitHub commits during 2025, a 34% increase year over year. Secrets for AI services alone reached 1,275,105, up 81%. The same report found that roughly 28% of incidents originate entirely outside repositories, in places like Slack, Jira and Confluence — exactly the tools where people paste logs to ask for help.
+
+The remediation numbers are worse. Nearly 70% of credentials GitGuardian confirmed as valid in 2022 were still valid in January 2025, and when retested in January 2026 the rate was still above 64%. A leaked key is rarely rotated on its own.
+
+## What leaks in everyday debugging text
+
+Most leaks are not a developer deliberately pasting a key. They are a key riding along inside something else.
+
+| Source text | What tends to be inside it |
+|---|---|
+| `.env` file, `docker-compose.yml`, Helm values | Every credential the service uses, one per line, labelled |
+| CI log | Resolved environment dumped by a debug step, `curl -v` output with an `Authorization` header, a `git clone https://user:token@…` URL |
+| Application log | Request headers with `Bearer` tokens, a JWT in a query string, the connection string printed at startup |
+| Stack trace | The connection string passed to the driver that threw, or the full config object in the exception message |
+| Shell history | `export OPENAI_API_KEY=…`, `mysql -p…`, `psql postgres://user:pass@host/db` |
+| Terraform plan, Kubernetes manifest | Provider credentials, base64-encoded `Secret` data (base64 is encoding, not encryption) |
+| `~/.ssh`, `~/.aws`, `~/.config` snippets | Private keys and long-lived access keys in plaintext |
+
+The credentials themselves fall into a small number of shapes, and those shapes are what makes automatic detection possible.
+
+### Prefixed API keys
+
+Many vendors put a fixed prefix on their keys so that scanners can find them. GitHub's 2021 token format change is the clearest documented example: [personal access tokens start with `ghp_`, OAuth tokens with `gho_`, user-to-server tokens with `ghu_`, server-to-server tokens with `ghs_` and refresh tokens with `ghr_`](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/). GitHub's stated reason is that "token prefixes are a clear way to make tokens identifiable" for its secret scanning.
+
+AWS access key IDs are similar. The [IAM identifier reference](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html) lists `AKIA` for long-term access keys and `ASIA` for temporary STS credentials. The matching secret access key has no prefix at all, which is why it is harder to catch: AWS's own documentation example is `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`, a 40-character string that looks like any other base64.
+
+AI provider keys follow the same idea. Anthropic's [API key documentation](https://platform.claude.com/docs/en/get-api-key) states that the full key starts with `sk-ant-`.
+
+### JSON Web Tokens
+
+A JWT is defined by [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519) (May 2015) as "a sequence of URL-safe parts separated by period ('.') characters", each base64url-encoded. Because the header and payload are JSON objects whose first member name starts with a letter, both begin with `{"` plus a letter, which base64url-encodes to `eyJ`. That gives practically every JWT a distinctive `eyJ….eyJ….` shape. The third part can be empty: RFC 7519 defines an Unsecured JWT as one using `alg: none` "with the empty string for its JWS Signature value".
+
+A JWT in a log is usually a live session or API credential until it expires. Decoding one is harmless; pasting one is handing over the session.
+
+### HTTP authorization headers
+
+`Authorization: Bearer …` comes from [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750) (October 2012), which defines the token as a `b64token`: letters, digits and `-._~+/`, with optional trailing `=`. `Authorization: Basic …` comes from [RFC 7617](https://www.rfc-editor.org/rfc/rfc7617) (September 2015) and is just `user-id:password` run through base64. RFC 7617 states plainly that Basic "is not a secure method of user authentication" on its own. Anyone who sees the header can decode the password.
+
+### PEM private keys
+
+Private keys usually travel as PEM text blocks between `-----BEGIN … PRIVATE KEY-----` and `-----END … PRIVATE KEY-----`. [RFC 7468](https://www.rfc-editor.org/rfc/rfc7468) (April 2015) standardises the labels `PRIVATE KEY` and `ENCRYPTED PRIVATE KEY`. OpenSSL's traditional formats use `RSA PRIVATE KEY` and `EC PRIVATE KEY`, and OpenSSH writes `OPENSSH PRIVATE KEY`; those labels are not in RFC 7468 but are what most key files on disk actually contain. The same RFC also defines public labels — `CERTIFICATE`, `CERTIFICATE REQUEST`, `PUBLIC KEY`, `X509 CRL` — which are safe to share.
+
+### Connection strings
+
+`postgres://app:password@db:5432/app` puts the password in the URI userinfo component. [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1) (January 2005), section 3.2.1, already says "Use of the format 'user:password' in the userinfo field is deprecated." Database drivers, Redis clients and message brokers accept it anyway, so it shows up in every other `.env` file and in the exception message when the connection fails.
+
+### Keyed secrets without a format
+
+`DB_PASSWORD=hunter2`, `client_secret: …`, `?api_key=…` — values with no recognisable shape at all, identifiable only by the name next to them.
+
+## How the Secret Redactor works
+
+The [Secret Redactor](/tools/secret-redactor) takes the text you are about to paste, replaces each credential with a labelled placeholder, and later puts the real values back into the assistant's reply. It runs entirely in the browser tab.
+
+### Step 1: a fixed table of 26 rules
+
+Detection is a table of 26 regular expressions grouped into five categories, plus a sixth entropy category. Every category has a toggle, and all are on by default.
+
+| Category | What it matches | Placeholder labels |
+|---|---|---|
+| AI provider keys | Anthropic `sk-ant-…`, OpenAI `sk-proj-` / `sk-svcacct-` / `sk-admin-` and the legacy format, Hugging Face `hf_…`, and any other `sk-` key of 32+ characters (the convention used by many OpenAI-compatible providers) | `ANTHROPIC_KEY`, `OPENAI_KEY`, `HF_TOKEN`, `API_KEY` |
+| Cloud & SaaS tokens | GitHub classic (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`) and fine-grained (`github_pat_`) tokens, GitLab `glpat-`, Slack tokens and webhook URLs, Stripe `sk_`/`rk_` live and test keys and `whsec_` webhook secrets, AWS `AKIA`/`ASIA`/`ABIA`/`ACCA` key IDs, AWS secret keys next to an `aws…secret` name, Google `AIza…` API keys and `GOCSPX-` OAuth secrets, SendGrid, npm, PyPI and Telegram bot tokens | `GITHUB_TOKEN`, `AWS_ACCESS_KEY`, `STRIPE_KEY`, … |
+| JWT & auth headers | JWTs (`eyJ….eyJ….…`, empty signature included), `Authorization: Basic …`, `Bearer …` | `JWT`, `BASIC_AUTH`, `BEARER_TOKEN` |
+| Private keys | Everything from `-----BEGIN … PRIVATE KEY-----` to the matching END line, including OpenSSH, RSA, EC, encrypted and PGP blocks | `PRIVATE_KEY` |
+| Passwords & connection strings | The password in `scheme://user:password@host` for any scheme, and values assigned to names ending in `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`, `access_key`, `private_key`, `client_secret`, `auth_token` or `credentials` | `URL_PASSWORD`, `SECRET` |
+| High-entropy strings | Unlabelled random-looking strings, described below | `HIGH_ENTROPY` |
+
+Several rules replace only part of the match. The variable name, the header name, the `Bearer` or `Basic` scheme word, and the user, host, port and database of a connection string all stay visible. That is deliberate: the assistant still needs to know that `DATABASE_URL` points at `db.internal:5432`, it just does not need the password.
+
+Stripe `pk_` publishable keys are not matched by the Stripe rule. Stripe's [API key documentation](https://docs.stripe.com/keys) lists publishable keys as safe to expose in front-end code.
+
+The keyed-secret rule has three guards that keep it from flagging ordinary config:
+
+- The name must *end* in the keyword. `max_tokens: 1024` and `token_count=12` do not match; `GITHUB_TOKEN=…` does.
+- Values that are obviously not secrets are skipped: environment references (`${DB_PASS}`, `$SECRET`, `%APPDATA%`), template placeholders (`<your-key>`, `{{secret}}`), a single repeated character (`****`, `xxxxxxxx`), and the literals `true`, `false`, `null`, `none`, `nil`, `undefined`, `required`, `optional`, `bearer` and `basic`.
+- The value must be at least 4 characters.
+
+The last two words on that stop list matter for JSON logs. In `"token": "Bearer eyJ…"` the keyed rule would otherwise treat the word `Bearer` as the value; with it skipped, the Bearer rule masks the credential and leaves the scheme readable.
+
+### Step 2: an entropy fallback for keys with no prefix
+
+Rules only catch what they know about. A random 40-character token from an internal service has no prefix and may not have a helpful variable name. For those, the tool scans for runs of 32 or more base64 or base64url characters and computes their Shannon entropy:
+
+```
+H = −Σ p(c) · log2 p(c)    over the characters c in the string
+```
+
+Truly random base64 draws from 64 symbols, so the ceiling is log2(64) = 6 bits per character, but a 32-character sample cannot show all 64 symbols. In practice, 32 random base64 characters average about 4.56 bits per character. English words and identifiers score lower because a few letters repeat.
+
+A candidate is redacted only when all of these hold:
+
+| Condition | Why it exists |
+|---|---|
+| At least 32 characters, not counting trailing `=` padding | Shorter unlabelled strings are too ambiguous; shorter labelled ones are handled by the keyed rule |
+| Contains an uppercase letter, a lowercase letter and a digit | Excludes every hex value (git SHAs, MD5, SHA-256, `sha256:` image digests) and single-case UUIDs, which fill CI logs |
+| Entropy of at least 4.2 bits per character | Separates random tokens from long readable identifiers |
+| Not a path with two or more lowercase segments | `src/components/…` style paths are long and mixed but not secret |
+| Does not start with `sha1-`, `sha256-`, `sha384-` or `sha512-` | Lockfile and Subresource Integrity hashes are public |
+| Not immediately after `base64,` | `data:` URIs are content, not credentials |
+| Not inside a `CERTIFICATE`, `CERTIFICATE REQUEST`, `PUBLIC KEY` or `X509 CRL` PEM block | Those blocks are public by design |
+
+The mixed-case requirement is the key trade-off. A 32-character hex token with no variable name next to it is not caught. The alternative — flagging hex — would bury the three real findings in a CI log under forty commit SHAs, and a redaction report nobody reads protects nothing. Give the hex token a name (`TWILIO_AUTH_TOKEN=…`) and the keyed rule catches it.
+
+The known false positive in the other direction is a long CamelCase identifier with a digit in it: `AbstractSingletonProxyFactoryBean2Impl` scores about 4.33 bits and gets redacted. Turning off the High-entropy category removes it.
+
+### Step 3: overlaps resolve by rule order
+
+One value often matches several rules. `OPENAI_API_KEY=sk-proj-…` matches the OpenAI rule, the generic `sk-` rule, the keyed-secret rule and the entropy check. The tool collects every hit, sorts by rule priority (the private key rule first, vendor-specific patterns before the generic `sk-` rule, the connection-string and keyed-secret rules last among the regexes, entropy after all of them), and keeps a hit only if it does not overlap one already kept. The most specific rule wins, so that line becomes `OPENAI_API_KEY=[OPENAI_KEY_1]` and not `[API_KEY_1]` or `[HIGH_ENTROPY_1]`.
+
+### Step 4: stable placeholders
+
+Each distinct value gets one placeholder of the form `[LABEL_n]`, numbered per label:
+
+```text
+OPENAI_API_KEY=[OPENAI_KEY_1]
+DATABASE_URL=postgres://app:[URL_PASSWORD_1]@db.internal:5432/app
+MAX_TOKENS=1024
+...
+2026-09-23T10:12:04Z retry with key [OPENAI_KEY_1] -> 200
+```
+
+Four properties make these placeholders safe to hand to an assistant:
+
+- **Same value, same placeholder.** A key that appears twenty times becomes `[OPENAI_KEY_1]` twenty times. The assistant can still see that the retry used the same key as the config, which is often the entire diagnosis.
+- **The label carries meaning.** `[AWS_ACCESS_KEY_1]` tells the model what kind of value was there without revealing it, so an answer like "rotate `[AWS_ACCESS_KEY_1]` and update the CI secret" still makes sense.
+- **No collisions.** Numbering skips any placeholder string already present in the input, so a document that literally contains `[SECRET_1]` gets `[SECRET_2]` for its first detected secret.
+- **Idempotent.** Values that already look like placeholders are ignored by every rule, so running the tool on text it has already redacted changes nothing.
+
+The findings list shows each placeholder with the rule that produced it, how many times it occurred, and a masked preview: the first 4 and last 2 characters plus the length, or only the length when the value is shorter than 12 characters. That is enough to confirm the right thing was caught without putting the value back on screen.
+
+### Step 5: restore from the assistant's reply
+
+When the assistant answers with a corrected config or a command to run, paste the reply into the restore box. Every placeholder that exists in the current mapping is swapped back to the real value, ready to copy into your terminal.
+
+Models do not always reproduce text exactly, so restore accepts a bounded set of variations:
+
+| In the reply | Restored? |
+|---|---|
+| `[OPENAI_KEY_1]` | Yes |
+| `\[OPENAI_KEY_1\]` (Markdown-escaped brackets) | Yes |
+| `[openai_key_1]` (case changed) | Yes |
+| `[ OPENAI_KEY_1 ]` (spaces inside the brackets) | Yes |
+| `` `[OPENAI_KEY_1]` `` inside a code span | Yes |
+| `OPENAI_KEY_1` with no brackets | No |
+
+The last row is intentional. Without brackets, `OPENAI_KEY_1` is indistinguishable from an environment variable name, and silently substituting a secret into a variable name would be worse than leaving it alone. Placeholder-shaped tokens in the reply that are not in the mapping — say, a `[PASSWORD_7]` the model invented — are left unchanged and listed under the restore box, so you notice when the model made something up.
+
+A short instruction at the top of the prompt reduces the bracket problem: *"Values in square brackets like [OPENAI_KEY_1] are redacted secrets. Keep them exactly as written."*
+
+The mapping is rebuilt from the text in the first box every time that text changes. Keep the original input as it is until you have restored the reply.
+
+## Where the data goes
+
+The detection and restore code is plain JavaScript in the page. It makes no network request with your text. Nothing is written to `localStorage`, `sessionStorage`, cookies or the URL. The placeholder-to-value mapping lives in a single in-memory variable, and it is discarded by the Clear button, by `Ctrl`/`Cmd` + `L`, and when you reload, close or navigate away from the tab. The text boxes are cleared on `pagehide`, so the browser's back-forward cache does not bring secrets back.
+
+The tool page also loads no analytics or advertising scripts. Pages on this site that take credentials, private keys or tokens as input are excluded from both, so no third-party script runs next to the text you paste.
+
+One honest limit: JavaScript cannot overwrite a string in place. Clearing drops every reference, and the browser reclaims that memory on its next garbage collection. Closing the tab ends it.
+
+## Common pitfalls
+
+1. **Trusting the redactor more than your own eyes.** Rule-based detection is fast and predictable, and it misses anything it has no rule for. Read the redacted text before sending it. The findings count is a quick sanity check: if a 300-line `.env` produced one finding, something is off.
+
+2. **Secrets split across lines.** No rule except the private key rule matches a value that contains a line break. A token that a terminal or log viewer wrapped onto two lines is not detected. Copy from the raw file, not from a wrapped display.
+
+3. **Hex tokens with no name.** As covered above, a bare hex string is left alone. If your service issues hex API keys, make sure they appear next to a descriptive name in whatever you paste.
+
+4. **Base64-encoded secrets inside other data.** A Kubernetes `Secret` manifest stores values base64-encoded under `data:`, and the [Kubernetes documentation](https://kubernetes.io/docs/concepts/configuration/secret/) warns that Secrets are stored unencrypted in etcd by default. The entropy rule catches long encoded values with mixed case, but a short password encodes to a short string that may not qualify. Treat any `kind: Secret` manifest as sensitive by default.
+
+5. **Personal data.** The tool targets credentials only. Emails, names, phone numbers, IP addresses and hostnames stay visible — hostnames on purpose, so the assistant can still reason about your topology. Remove personal data by hand if your policy requires it.
+
+6. **Changing toggles mid-conversation.** Turning a category off or on re-runs detection, and placeholder numbers can shift if an overlap winner changes. Restore always uses the mapping for the current input and toggles, so restore with the same settings you redacted with.
+
+7. **Input size.** The tool accepts up to 1,000,000 characters per run. For larger logs, trim to the relevant window first; the assistant will give a better answer with less noise anyway.
+
+## Scope, stated plainly
+
+| This tool does not | Use instead |
+|---|---|
+| Scan files, folders or git history | [gitleaks](https://github.com/gitleaks/gitleaks) (`gitleaks git` for a repository, `gitleaks dir` for files) or [TruffleHog](https://github.com/trufflesecurity/trufflehog), run locally |
+| Detect personal data (emails, names, phone numbers, IP addresses) | Manual editing |
+| Un-redact a single false positive | Turn off its category, or edit the copied text |
+| Check whether a key is still live | Nothing on this page does that, because checking means sending the key to the provider |
+| Restore placeholders the assistant wrote without brackets | Ask the assistant to keep placeholders verbatim |
+
+gitleaks and TruffleHog solve a different problem: finding secrets that are already committed. gitleaks is MIT-licensed. TruffleHog is AGPL-3.0 and can verify candidates against provider APIs to report which are live. Both belong in a pre-commit hook or CI job. The Secret Redactor covers the moment before a paste, where there is no repository to scan.
+
+## Doing it in code
+
+The same ideas are easy to apply in scripts that forward logs somewhere else.
+
+A Bash pre-flight check before attaching a log to an issue. It only reports line numbers and rule names, never the values:
+
+```bash
+#!/usr/bin/env bash
+# usage: ./precheck.sh build.log
+# Prints rule names and line numbers only, never the matched values.
+file="$1"
+found=0
+check() {
+  local name="$1" pattern="$2" lines
+  lines=$(grep -nE -- "$pattern" "$file" | cut -d: -f1 | paste -sd, -)
+  if [ -n "$lines" ]; then
+    echo "$name: line $lines"
+    found=1
+  fi
+}
+check "ai-key"          'sk-(proj|svcacct|admin|ant-[a-z]{3,6}[0-9]{2})-'
+check "github-token"    'gh[pousr]_[A-Za-z0-9]{36}|github_pat_'
+check "aws-key-id"      '(AKIA|ASIA)[A-Z2-7]{16}'
+check "jwt"             'eyJ[A-Za-z0-9_-]{8,}\.eyJ'
+check "private-key"     'BEGIN [A-Z ]*PRIVATE KEY'
+check "url-credential"  '://[^:/@ ]+:[^@ ]+@'
+if [ "$found" -eq 1 ]; then
+  echo "Possible secrets found. Redact before sharing."
+else
+  echo "No known patterns found. Read it anyway."
+fi
+```
+
+The entropy check in Python, with the same thresholds the tool uses:
+
+```python
+import math
+import re
+from collections import Counter
+
+CANDIDATE = re.compile(r"[A-Za-z0-9+/_-]{32,}={0,2}")
+
+def shannon(s: str) -> float:
+    n = len(s)
+    return -sum(c / n * math.log2(c / n) for c in Counter(s).values())
+
+def looks_random(run: str) -> bool:
+    run = run.rstrip("=")
+    has_classes = (
+        re.search(r"[A-Z]", run)
+        and re.search(r"[a-z]", run)
+        and re.search(r"[0-9]", run)
+    )
+    return bool(has_classes) and shannon(run) >= 4.2
+
+def high_entropy_spans(text: str):
+    return [m.span() for m in CANDIDATE.finditer(text) if looks_random(m.group())]
+
+print(shannon("3f786850e387550fdab836ed7e6dc881de23001b"))  # hex SHA: fails the class check anyway
+print(shannon("AbstractSingletonProxyFactoryBean2Impl"))     # ~4.33: the known false positive
+```
+
+Stable placeholders and restore in JavaScript. The mapping never leaves the process that built it:
+
+```javascript
+function redact(text, rules) {
+  const valueToPh = new Map();
+  const counters = {};
+  let out = text;
+  for (const { label, re } of rules) {
+    out = out.replace(re, (value) => {
+      if (/^\[[A-Z][A-Z0-9_]*_\d+\]$/.test(value)) return value; // already a placeholder
+      if (!valueToPh.has(value)) {
+        counters[label] = (counters[label] || 0) + 1;
+        valueToPh.set(value, `[${label}_${counters[label]}]`);
+      }
+      return valueToPh.get(value);
+    });
+  }
+  const phToValue = new Map([...valueToPh].map(([v, ph]) => [ph.slice(1, -1), v]));
+  return { out, phToValue };
+}
+
+function restore(reply, phToValue) {
+  return reply.replace(/\\?\[\s*([A-Za-z][A-Za-z0-9_]*_\d+)\s*\\?\]/g, (m, key) =>
+    phToValue.get(key.toUpperCase()) ?? m,
+  );
+}
+```
+
+This simplified version applies rules one after another, so a later rule never sees text an earlier rule already replaced. The tool instead collects every hit first and resolves overlaps by priority, which is what lets the most specific rule win regardless of where in the line the match starts.
+
+## If a secret already leaked
+
+Redaction is prevention. Once a credential has been pasted somewhere you do not control, deleting the message is not remediation: the text may already be in logs, notifications, email digests, search indexes, or the provider's conversation store.
+
+The order that works:
+
+1. **Revoke or rotate first.** GitHub's guide to [removing sensitive data from a repository](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) puts it directly: when the data is a password, token or credential, "as a first step you need to revoke and/or rotate that secret." Once it is revoked, it can no longer be used, and that may be all you need.
+2. **Rotate without downtime where the platform allows it.** AWS allows [a maximum of two access keys per IAM user](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html) precisely so you can [create the new key, move applications to it, deactivate the old one, confirm nothing broke, then delete it](https://docs.aws.amazon.com/IAM/latest/UserGuide/id-credentials-access-keys-update.html).
+3. **Check for use.** AWS exposes `aws iam get-access-key-last-used`; most providers have an equivalent audit log or "last used" field. Look for activity between the leak and the rotation.
+4. **Clean up the copies.** Delete the message, issue comment or chat. For a git repository, GitHub's guide recommends `git-filter-repo` for rewriting history, and notes that forks, clones and cached views can still hold the old content — which is why step 1 comes first.
+5. **Close the path that leaked it.** Remove the debug step that dumped the environment, stop logging request headers, move the secret out of the file that got pasted.
+
+GitHub also [automatically revokes](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation) valid OAuth tokens, GitHub App tokens and personal access tokens that are pushed to a public repository or public gist. That protection covers GitHub's own tokens in GitHub's own public spaces. It does nothing for a key pasted into an AI chat, a Slack channel or a private issue tracker.
+
+## Related tools
+
+- [JWT Decoder](/tools/jwt-decoder) — inspect a token's header, claims and expiry locally before deciding whether it is still sensitive
+- [.env File Parser](/tools/env-file-parser) — see exactly which variables a `.env` file defines before sharing any of it
+- [Basic Auth Header Generator](/tools/basic-auth-header-generator) — shows how little stands between a `Basic` header and the password inside it
+- [Zero-Width Character Detector](/tools/zero-width-character-detector) — the other check worth running on text you are about to paste
+- [AI Token Counter](/tools/ai-token-counter) — trim a log to fit the context window instead of pasting all of it
+
+## Further reading
+
+- [RFC 7519 — JSON Web Token (JWT)](https://www.rfc-editor.org/rfc/rfc7519)
+- [RFC 7468 — Textual Encodings of PKIX, PKCS, and CMS Structures](https://www.rfc-editor.org/rfc/rfc7468)
+- [RFC 6750 — OAuth 2.0 Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750)
+- [RFC 7617 — The 'Basic' HTTP Authentication Scheme](https://www.rfc-editor.org/rfc/rfc7617)
+- [RFC 3986 §3.2.1 — User Information](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1)
+- [GitHub — Behind GitHub's new authentication token formats](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/)
+- [GitGuardian — The State of Secrets Sprawl 2026](https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/)

@@ -1,0 +1,344 @@
+---
+title: "AI チャットや Issue にログを貼る前に、シークレットをマスキングする"
+description: "ログや .env ファイルを AI チャットや GitHub Issue に貼ったときに何が漏れるか、安定したプレースホルダーによるマスキングの仕組み、そして鍵が漏れてしまった後にすべきこと。"
+pubDate: 2026-09-23
+lang: "ja"
+tags: ["secrets", "api-keys", "redaction", "ai", "developer-tools"]
+ogImage: /og/blog-secret-redactor-guide.png
+---
+
+デプロイは午前 2 時に失敗し、CI ログは赤一色になった。答えへの最短路は明らかに見えた——ログ全体を選択し、AI チャットに貼り付け、何が壊れたのか尋ねる。返ってきた答えは的確だった。300 行下にある、欠けた環境変数を指し示していた。
+
+同じログの 40 行目には、ジョブ起動時のバナーがあり、そこには解決済みの設定がそのまま出力されていた。データベース URL はパスワード込みでそこにあった。決済プロバイダーの本番シークレットキーも同様だった。前四半期に誰かが追加したデバッグフラグが、名前が `_KEY` で終わるすべての変数をそのまま出力していたからだ。
+
+その貼り付けに、資格情報を公開しているという感覚はまるでなかった。同僚に尋ねているだけのつもりだった。だがそのテキストはマシンを離れ、第三者のサーバーに着地し、開発者が制御できず完全には監査もできない会話履歴の中に存在し続けることになる。同じことは、ログが GitHub Issue、Slack のスレッド、Jira のチケット、Stack Overflow の質問に貼られたときにも起きる——違うのは、そちらの方がはるかに多くの人に読まれるということだけだ。
+
+本記事が扱うのは、日々のデバッグ用テキストの中で実際に何が漏れるのか、貼り付けた後ではなく貼り付ける前にそれを取り除く方法、そして気づくのが遅れた場合にすべきことである。
+
+[シークレットマスキングを開く →](/ja/tools/secret-redactor/)
+
+## 漏洩は貼り付けた瞬間に起きる
+
+アシスタントに「キーは無視して」「シークレットは消して」と頼もうとする直感は、手順の順序を取り違えている。モデルがその指示を読む時点で、テキスト全体はすでにプロバイダーへ送信済みだ。プロバイダーの保持ポリシーや学習ポリシーがどうであれ、もはやそれに頼るしかない。モデルはリクエストを送信前の状態に戻せない。
+
+同じ論理は、開発者が助けを求めてテキストを貼り付けるあらゆる場所に当てはまる。
+
+| テキストの行き先 | 誰が後から読めるか |
+|---|---|
+| AI チャット（ChatGPT、Claude、Gemini、あるいはモデル API を呼ぶあらゆるアプリ） | 保持ポリシーに従うプロバイダー自身と、会話履歴を開けるすべての人 |
+| 公開 GitHub Issue や Discussion | 自動スクレイパーを含む全員 |
+| プライベートリポジトリの Issue | すべての共同作業者、読み取り権限を持つすべての連携アプリ、そして将来加わるすべてのメンバー |
+| Slack、Teams、Jira、Confluence | チャンネルやプロジェクトのメンバー全員、および読み取り権限を持つ連携アプリ |
+| Stack Overflow、フォーラム | 全員 |
+| ペーストサイト | URL を知る誰でも |
+
+GitGuardian の [State of Secrets Sprawl 2026](https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/) レポートは、2025 年に公開 GitHub コミット内で新規に検出されたハードコードされたシークレットを 2,865 万件と数えており、前年比 34% の増加である。AI サービス向けのシークレットだけで 1,275,105 件に達し、81% 増加した。同レポートはまた、インシデントの約 28% がリポジトリの外——Slack、Jira、Confluence のような、まさに人々が助けを求めてログを貼り付ける場所——だけで発生していることも明らかにしている。
+
+是正の数字はさらに悪い。GitGuardian が 2022 年に有効と確認した資格情報のうち、およそ 70% が 2025 年 1 月時点でもなお有効だった。2026 年 1 月に再検証した際も、その割合は 64% を上回ったままだった。漏洩した鍵が自然にローテーションされることはめったにない。
+
+## 日々のデバッグ用テキストの中で実際に何が漏れるか
+
+ほとんどの漏洩は、開発者が意図的に鍵を貼り付けたものではない。鍵が何か別のものに乗って一緒に運ばれてくるのだ。
+
+| 元テキスト | 中に入っていがちなもの |
+|---|---|
+| `.env` ファイル、`docker-compose.yml`、Helm values | サービスが使うすべての資格情報、1 行 1 件、ラベル付き |
+| CI ログ | デバッグ用ステップが出力した解決済み環境変数、`Authorization` ヘッダー付きの `curl -v` 出力、`git clone https://user:token@…` の URL |
+| アプリケーションログ | `Bearer` トークン付きのリクエストヘッダー、クエリ文字列内の JWT、起動時に出力される接続文字列 |
+| スタックトレース | 例外を投げたドライバーに渡された接続文字列、または例外メッセージ内の設定オブジェクト全体 |
+| シェル履歴 | `export OPENAI_API_KEY=…`、`mysql -p…`、`psql postgres://user:pass@host/db` |
+| Terraform のプラン、Kubernetes マニフェスト | プロバイダーの資格情報、base64 エンコードされた `Secret` データ（base64 は暗号化ではなくエンコーディングにすぎない） |
+| `~/.ssh`、`~/.aws`、`~/.config` の断片 | 平文の秘密鍵と長期有効なアクセスキー |
+
+資格情報そのものは、限られた種類の形に収まる。この形こそが、自動検出を可能にしている。
+
+### 接頭辞付き API キー
+
+多くのベンダーは、スキャナーが見つけられるように鍵に固定の接頭辞を付ける。GitHub が 2021 年に行ったトークン形式の変更は、最も明確に文書化された例だ。[個人アクセストークンは `ghp_`、OAuth トークンは `gho_`、user-to-server トークンは `ghu_`、server-to-server トークンは `ghs_`、リフレッシュトークンは `ghr_` で始まる](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/)。GitHub 自身が述べる理由は、シークレットスキャンのために「トークンの接頭辞はトークンを識別可能にする明確な方法」だからというものだ。
+
+AWS のアクセスキー ID も同様だ。[IAM の識別子リファレンス](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html) には、長期アクセスキーには `AKIA`、一時的な STS 資格情報には `ASIA` が挙げられている。対になるシークレットアクセスキーには接頭辞が一切なく、これが捕捉を難しくしている理由だ。AWS 自身のドキュメントの例は `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` という 40 文字の文字列で、ほかの base64 文字列と見分けがつかない。
+
+AI プロバイダーの鍵も同じ発想に従う。Anthropic の [API キーに関するドキュメント](https://platform.claude.com/docs/en/get-api-key) には、完全な鍵が `sk-ant-` で始まると記載されている。
+
+### JSON Web Token（JWT）
+
+JWT は [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)（2015 年 5 月）によって、それぞれ base64url エンコードされた「ピリオド（`.`）区切りの URL セーフな部分の並び」と定義されている。ヘッダーとペイロードはどちらも、最初のメンバー名が文字で始まる JSON オブジェクトであるため、両方とも `{"` に文字が続く形で始まり、これを base64url エンコードすると `eyJ` になる。そのため事実上すべての JWT が `eyJ….eyJ….` という特徴的な形を持つ。3 番目の部分は空になり得る。RFC 7519 は、`alg: none` を使い「JWS Signature の値として空文字列」を持つものを Unsecured JWT として定義している。
+
+ログの中の JWT は、たいてい有効期限が切れるまで生きているセッションまたは API の資格情報である。デコードするだけなら無害だが、貼り付けることはセッションそのものを渡すのと同じだ。
+
+### HTTP の認可ヘッダー
+
+`Authorization: Bearer …` は [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750)（2012 年 10 月）に由来し、トークンを `b64token`——英数字と `-._~+/`、末尾に任意の `=`——として定義している。`Authorization: Basic …` は [RFC 7617](https://www.rfc-editor.org/rfc/rfc7617)（2015 年 9 月）に由来し、単に `user-id:password` を base64 に通しただけのものだ。RFC 7617 は、Basic はそれ単体では「安全なユーザー認証方式ではない」とはっきり述べている。ヘッダーを見た者は誰でもパスワードをデコードできる。
+
+### PEM 秘密鍵
+
+秘密鍵は通常、`-----BEGIN … PRIVATE KEY-----` から `-----END … PRIVATE KEY-----` までの PEM テキストブロックとして運ばれる。[RFC 7468](https://www.rfc-editor.org/rfc/rfc7468)（2015 年 4 月）は `PRIVATE KEY` と `ENCRYPTED PRIVATE KEY` というラベルを標準化している。OpenSSL の伝統的な形式は `RSA PRIVATE KEY` と `EC PRIVATE KEY` を使い、OpenSSH は `OPENSSH PRIVATE KEY` と書く。これらのラベルは RFC 7468 には含まれていないが、ディスク上の鍵ファイルの大半が実際に持っているものだ。同じ RFC は、共有しても安全な公開用ラベル——`CERTIFICATE`、`CERTIFICATE REQUEST`、`PUBLIC KEY`、`X509 CRL`——も定義している。
+
+### 接続文字列
+
+`postgres://app:password@db:5432/app` は、パスワードを URI の userinfo コンポーネントに置く。[RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1)（2005 年 1 月）の 3.2.1 節は、すでに「userinfo フィールドで `user:password` という形式を使うことは非推奨である」と述べている。それでもデータベースドライバー、Redis クライアント、メッセージブローカーはこれを受け付けるため、ほぼすべての `.env` ファイルに、そして接続が失敗したときの例外メッセージに登場する。
+
+### 決まった形を持たないキー付きシークレット
+
+`DB_PASSWORD=hunter2`、`client_secret: …`、`?api_key=…`——これといった形を持たず、隣にある名前だけを手がかりに識別できる値である。
+
+## シークレットマスキングの仕組み
+
+[シークレットマスキング](/ja/tools/secret-redactor/) は、これから貼り付けようとしているテキストを受け取り、資格情報の一つひとつをラベル付きのプレースホルダーに置き換え、後でアシスタントの返答の中に実際の値を戻す。すべてブラウザのタブ内で完結する。
+
+### ステップ 1：26 個のルールからなる固定テーブル
+
+検出は、5 つのカテゴリーにまとめられた 26 個の正規表現のテーブルと、6 番目のエントロピーカテゴリーで構成される。すべてのカテゴリーにオン・オフの切り替えがあり、初期状態ではすべて有効になっている。
+
+| カテゴリー | 一致する対象 | プレースホルダーのラベル |
+|---|---|---|
+| AI プロバイダーの鍵 | Anthropic の `sk-ant-…`、OpenAI の `sk-proj-` / `sk-svcacct-` / `sk-admin-` と旧形式、Hugging Face の `hf_…`、および 32 文字以上のその他の `sk-` 鍵（多くの OpenAI 互換プロバイダーが使う慣習） | `ANTHROPIC_KEY`、`OPENAI_KEY`、`HF_TOKEN`、`API_KEY` |
+| クラウド・SaaS トークン | GitHub の classic（`ghp_`、`gho_`、`ghu_`、`ghs_`、`ghr_`）と fine-grained（`github_pat_`）トークン、GitLab の `glpat-`、Slack のトークンと webhook URL、Stripe の `sk_`/`rk_` の本番・テスト鍵と `whsec_` webhook シークレット、AWS の `AKIA`/`ASIA`/`ABIA`/`ACCA` キー ID、`aws…secret` に類する名前の隣にある AWS シークレットキー、Google の `AIza…` API キーと `GOCSPX-` OAuth シークレット、SendGrid、npm、PyPI、Telegram の bot トークン | `GITHUB_TOKEN`、`AWS_ACCESS_KEY`、`STRIPE_KEY`、… |
+| JWT・認証ヘッダー | JWT（`eyJ….eyJ….…`、空の署名を含む）、`Authorization: Basic …`、`Bearer …` | `JWT`、`BASIC_AUTH`、`BEARER_TOKEN` |
+| 秘密鍵 | `-----BEGIN … PRIVATE KEY-----` から対応する END 行までのすべて。OpenSSH、RSA、EC、暗号化、PGP のブロックを含む | `PRIVATE_KEY` |
+| パスワード・接続文字列 | 任意のスキームにおける `scheme://user:password@host` のパスワード、および `password`、`passwd`、`pwd`、`secret`、`token`、`api_key`、`access_key`、`private_key`、`client_secret`、`auth_token`、`credentials` のいずれかで終わる名前に割り当てられた値 | `URL_PASSWORD`、`SECRET` |
+| 高エントロピー文字列 | ラベルのない、ランダムに見える文字列（後述） | `HIGH_ENTROPY` |
+
+いくつかのルールは、一致した部分の一部だけを置換する。変数名、ヘッダー名、`Bearer` や `Basic` というスキーム語、そして接続文字列のユーザー・ホスト・ポート・データベース名は、すべてそのまま見える状態を保つ。これは意図的な設計だ。アシスタントは `DATABASE_URL` が `db.internal:5432` を指しているという情報は必要とするが、パスワードまでは必要としない。
+
+Stripe の `pk_` 公開可能キーは、Stripe ルールの一致対象ではない。Stripe の [API キーに関するドキュメント](https://docs.stripe.com/keys) は、公開可能キーをフロントエンドのコードに露出させても安全なものとして挙げている。
+
+キー付きシークレットのルールには、通常の設定値を誤検出しないための 3 つのガードがある。
+
+- 名前がそのキーワードで*終わっている*必要がある。`max_tokens: 1024` や `token_count=12` は一致しないが、`GITHUB_TOKEN=…` は一致する。
+- 明らかにシークレットではない値はスキップされる。環境変数参照（`${DB_PASS}`、`$SECRET`、`%APPDATA%`）、テンプレートのプレースホルダー（`<your-key>`、`{{secret}}`）、単一文字の繰り返し（`****`、`xxxxxxxx`）、そして `true`、`false`、`null`、`none`、`nil`、`undefined`、`required`、`optional`、`bearer`、`basic` といったリテラルである。
+- 値は少なくとも 4 文字以上でなければならない。
+
+この除外リストの最後の 2 語は、JSON ログにとって重要な意味を持つ。`"token": "Bearer eyJ…"` では、これがなければキー付きルールが `Bearer` という単語自体を値として扱ってしまう。これをスキップすることで、Bearer ルールが資格情報だけをマスキングし、スキーム部分は読める状態のまま残る。
+
+### ステップ 2：接頭辞のない鍵のためのエントロピー判定
+
+ルールは、あらかじめ知っている形しか捕捉できない。社内サービスが発行するランダムな 40 文字のトークンには接頭辞がなく、役に立つ変数名も付いていないかもしれない。そうしたケースに対して、このツールは 32 文字以上連続する base64 または base64url 文字の並びを走査し、シャノンエントロピーを計算する。
+
+```
+H = −Σ p(c) · log2 p(c)    over the characters c in the string
+```
+
+完全にランダムな base64 は 64 種類の記号から選ばれるため、理論上の上限は 1 文字あたり log2(64) = 6 ビットになる。だが 32 文字のサンプルでは 64 種類すべてを出し切ることはできない。実際には、ランダムな 32 文字の base64 は平均して 1 文字あたり約 4.56 ビットになる。英単語や識別子は、いくつかの文字が繰り返されるためスコアが低くなる。
+
+候補がマスキングされるのは、以下のすべてを満たす場合だけである。
+
+| 条件 | 存在理由 |
+|---|---|
+| 末尾の `=` パディングを除いて 32 文字以上 | それより短いラベルなし文字列は曖昧すぎる。短くてラベル付きのものはキー付きルールが処理する |
+| 大文字・小文字・数字をすべて含む | CI ログを埋め尽くす 16 進数の値（git の SHA、MD5、SHA-256、`sha256:` のイメージダイジェスト）と単一ケースの UUID をすべて除外する |
+| 1 文字あたり 4.2 ビット以上のエントロピー | ランダムなトークンと、読める長い識別子とを区別する |
+| 小文字セグメントが 2 つ以上あるパスではないこと | `src/components/…` のようなパスは長く文字種も混在するが、シークレットではない |
+| `sha1-`、`sha256-`、`sha384-`、`sha512-` のいずれでも始まっていないこと | ロックファイルや Subresource Integrity のハッシュは公開情報である |
+| `base64,` の直後ではないこと | `data:` URI はコンテンツであり資格情報ではない |
+| `CERTIFICATE`、`CERTIFICATE REQUEST`、`PUBLIC KEY`、`X509 CRL` の PEM ブロック内ではないこと | これらのブロックは設計上公開されるものである |
+
+大文字・小文字混在という要件が、鍵となるトレードオフだ。隣に変数名のない 32 文字の 16 進数トークンは捕捉されない。もし代わりに 16 進数もフラグ対象にすれば、CI ログの中の 3 件の本物の検出結果が、40 個のコミット SHA の中に埋もれてしまう。そして誰も読まないマスキングレポートは、何も守らない。16 進数トークンに名前（`TWILIO_AUTH_TOKEN=…`）を付ければ、キー付きルールがそれを捕捉する。
+
+逆方向の既知の誤検出は、数字を含む長い CamelCase の識別子だ。`AbstractSingletonProxyFactoryBean2Impl` は約 4.33 ビットのスコアとなり、マスキングされてしまう。高エントロピーカテゴリーをオフにすれば、この誤検出は消える。
+
+### ステップ 3：重複はルールの優先順位で解決する
+
+一つの値が複数のルールに一致することは珍しくない。`OPENAI_API_KEY=sk-proj-…` は、OpenAI ルール、汎用の `sk-` ルール、キー付きシークレットルール、エントロピー判定のすべてに一致する。ツールはすべてのヒットを収集し、ルールの優先順位（秘密鍵ルールが最優先、ベンダー固有のパターンが汎用の `sk-` ルールより優先、接続文字列ルールとキー付きシークレットルールは正規表現の中で最後、エントロピーはそれらすべての後）で並べ替え、すでに採用済みのヒットと重ならない場合だけそのヒットを採用する。最も特定的なルールが勝つため、その行は `[API_KEY_1]` でも `[HIGH_ENTROPY_1]` でもなく `OPENAI_API_KEY=[OPENAI_KEY_1]` になる。
+
+### ステップ 4：安定したプレースホルダー
+
+個々の異なる値には、ラベルごとに番号を振った `[LABEL_n]` という形のプレースホルダーが一つずつ割り当てられる。
+
+```text
+OPENAI_API_KEY=[OPENAI_KEY_1]
+DATABASE_URL=postgres://app:[URL_PASSWORD_1]@db.internal:5432/app
+MAX_TOKENS=1024
+...
+2026-09-23T10:12:04Z retry with key [OPENAI_KEY_1] -> 200
+```
+
+この方式のプレースホルダーをアシスタントに渡しても安全である理由は、次の 4 つの性質による。
+
+- **同じ値には同じプレースホルダー。** 20 回登場する鍵は、20 回とも `[OPENAI_KEY_1]` になる。アシスタントは、リトライで使われた鍵が設定内の鍵と同一であることを見て取れる。これだけで診断が完結することも多い。
+- **ラベルが意味を運ぶ。** `[AWS_ACCESS_KEY_1]` は、値そのものを明かすことなく、そこにあった値の種類をモデルに伝える。そのため「`[AWS_ACCESS_KEY_1]` をローテーションして CI のシークレットを更新して」といった回答も、意味の通るものになる。
+- **衝突しない。** 番号付けは、入力の中にすでに存在するプレースホルダー文字列をスキップする。そのため、文字どおり `[SECRET_1]` という文字列を含む文書では、最初に検出されたシークレットに `[SECRET_2]` が割り当てられる。
+- **冪等である。** すでにプレースホルダーに見える値は、すべてのルールから無視される。そのため、すでにマスキング済みのテキストに対してこのツールを実行しても、何も変わらない。
+
+検出一覧には、各プレースホルダーとそれを生成したルール、出現回数、そしてマスキングされたプレビュー——先頭 4 文字と末尾 2 文字に加えて長さ、値が 12 文字未満の場合は長さのみ——が表示される。これだけあれば、値を画面に戻すことなく、正しいものが捕捉されたかを確認するには十分だ。
+
+### ステップ 5：アシスタントの返答から復元する
+
+アシスタントが修正済みの設定や実行すべきコマンドで答えたら、その返答を復元欄に貼り付ける。現在の対応表に存在するすべてのプレースホルダーが実際の値に置き換わり、そのままターミナルにコピーできる状態になる。
+
+モデルは常にテキストを正確に再現するとは限らないため、復元処理は一定範囲の表記ゆれを受け入れる。
+
+| 返答内の表記 | 復元されるか |
+|---|---|
+| `[OPENAI_KEY_1]` | される |
+| `\[OPENAI_KEY_1\]`（Markdown でエスケープされた角括弧） | される |
+| `[openai_key_1]`（大文字小文字が変わっている） | される |
+| `[ OPENAI_KEY_1 ]`（角括弧内にスペースがある） | される |
+| コードスパン内の `` `[OPENAI_KEY_1]` `` | される |
+| 角括弧のない `OPENAI_KEY_1` | されない |
+
+最後の行は意図的な仕様だ。角括弧がなければ、`OPENAI_KEY_1` は環境変数名と見分けがつかず、変数名に黙ってシークレットを代入してしまうことは、何もしないより悪い結果になる。返答内にプレースホルダーのような形をしていながら対応表にないトークン——たとえばモデルが勝手に作った `[PASSWORD_7]`——はそのまま変更されず、復元欄の下に一覧表示される。これにより、モデルが何かをでっち上げたことに気づける。
+
+プロンプトの冒頭に短い指示を添えるだけで、角括弧の問題は減らせる。*「[OPENAI_KEY_1] のように角括弧で囲まれた値はマスキングされたシークレットです。そのまま正確に維持してください」*
+
+対応表は、1 つ目の欄のテキストが変わるたびに、そのテキストから作り直される。返答を復元し終えるまでは、元の入力をそのまま保っておくこと。
+
+## データはどこへ行くのか
+
+検出と復元のコードは、ページ内の素の JavaScript だ。テキストを使ったネットワークリクエストは一切発生しない。`localStorage`、`sessionStorage`、Cookie、URL のいずれにも何も書き込まれない。プレースホルダーと値の対応表は、メモリ上の単一の変数として存在するだけで、Clear ボタン、`Ctrl`/`Cmd` + `L`、そしてタブの再読み込み・クローズ・離脱のいずれによっても破棄される。テキスト欄は `pagehide` イベントでクリアされるため、ブラウザの back-forward キャッシュがシークレットを呼び戻すことはない。
+
+このツールページは、アナリティクスや広告のスクリプトも一切読み込まない。このサイトの中で資格情報・秘密鍵・トークンを入力として扱うページは、その両方から除外されているため、貼り付けたテキストの隣でサードパーティのスクリプトが動くことはない。
+
+正直に言っておくべき限界が一つある。JavaScript は文字列をその場で上書きできない。クリア操作はすべての参照を破棄するだけで、そのメモリはブラウザの次のガベージコレクションで回収される。タブを閉じれば、それで終わる。
+
+## よくある落とし穴
+
+1. **マスキングツールを自分の目より信用してしまうこと。** ルールベースの検出は高速で予測可能な反面、ルールを持たないものはすべて見逃す。送信する前に、マスキング後のテキストを読むこと。検出件数は簡易的な健全性チェックになる——300 行の `.env` から検出結果が 1 件しか出なかったなら、何かがおかしい。
+
+2. **複数行にまたがったシークレット。** 秘密鍵ルールを除き、改行を含む値に一致するルールはない。ターミナルやログビューアーが折り返して 2 行にしてしまったトークンは検出されない。折り返し表示ではなく、生のファイルからコピーすること。
+
+3. **名前のない 16 進数トークン。** 前述のとおり、裸の 16 進数文字列はそのまま残される。自分のサービスが 16 進数の API キーを発行しているなら、貼り付ける内容の中で、そのキーが説明的な名前の隣に置かれるようにすること。
+
+4. **他のデータの中に埋め込まれた base64 エンコード済みシークレット。** Kubernetes の `Secret` マニフェストは、値を `data:` の下に base64 エンコードして保存する。[Kubernetes のドキュメント](https://kubernetes.io/docs/concepts/configuration/secret/) は、Secret がデフォルトでは etcd 内に暗号化されずに保存されると警告している。エントロピールールは大文字小文字混在の長いエンコード済み値を捕捉するが、短いパスワードは短い文字列にエンコードされ、条件を満たさないことがある。`kind: Secret` のマニフェストは、デフォルトで機微な情報として扱うこと。
+
+5. **個人データ。** このツールが対象とするのは資格情報だけだ。メールアドレス、氏名、電話番号、IP アドレス、ホスト名はそのまま見える状態を保つ——ホスト名については意図的なもので、アシスタントがネットワーク構成について推論できるようにするためだ。自社のポリシーが求めるなら、個人データは手作業で取り除くこと。
+
+6. **会話の途中でトグルを切り替えること。** カテゴリーのオン・オフを切り替えると検出が再実行され、重複の勝者が変われば、プレースホルダーの番号がずれることがある。復元は常に、現在の入力とトグル設定に対応した対応表を使う。マスキング時と同じ設定で復元すること。
+
+7. **入力サイズ。** このツールは、1 回の実行につき最大 1,000,000 文字まで受け付ける。それより大きなログは、まず関係する範囲だけに絞り込むこと。ノイズが少ない方が、どのみちアシスタントはより良い答えを返す。
+
+## スコープを率直に言うと
+
+| このツールがしないこと | 代わりに使うもの |
+|---|---|
+| ファイル・フォルダ・git 履歴の走査 | ローカルで実行する [gitleaks](https://github.com/gitleaks/gitleaks)（リポジトリなら `gitleaks git`、ファイルなら `gitleaks dir`）または [TruffleHog](https://github.com/trufflesecurity/trufflehog) |
+| 個人データ（メールアドレス、氏名、電話番号、IP アドレス）の検出 | 手作業での編集 |
+| 特定の誤検出 1 件だけの復元 | そのカテゴリーをオフにするか、コピーしたテキストを編集する |
+| 鍵がまだ有効かどうかの確認 | このページ上の機能では行えない。確認するにはその鍵をプロバイダーに送信する必要があるためだ |
+| アシスタントが角括弧なしで書いたプレースホルダーの復元 | アシスタントにプレースホルダーをそのまま維持するよう頼む |
+
+gitleaks と TruffleHog は、別の問題を解決するツールだ。すでにコミットされてしまったシークレットを見つけるためのものである。gitleaks は MIT ライセンスだ。TruffleHog は AGPL-3.0 で、候補をプロバイダーの API に照会して、どれが有効かを報告できる。どちらも pre-commit フックや CI ジョブに置くのが適している。シークレットマスキングがカバーするのは、貼り付ける前の瞬間——走査すべきリポジトリがまだ存在しない場面だ。
+
+## コードで同じことをやる
+
+同じ考え方は、ログを他所へ転送するスクリプトにも簡単に応用できる。
+
+Issue にログを添付する前の Bash による事前チェック。行番号とルール名だけを報告し、値は決して出力しない。
+
+```bash
+#!/usr/bin/env bash
+# usage: ./precheck.sh build.log
+# Prints rule names and line numbers only, never the matched values.
+file="$1"
+found=0
+check() {
+  local name="$1" pattern="$2" lines
+  lines=$(grep -nE -- "$pattern" "$file" | cut -d: -f1 | paste -sd, -)
+  if [ -n "$lines" ]; then
+    echo "$name: line $lines"
+    found=1
+  fi
+}
+check "ai-key"          'sk-(proj|svcacct|admin|ant-[a-z]{3,6}[0-9]{2})-'
+check "github-token"    'gh[pousr]_[A-Za-z0-9]{36}|github_pat_'
+check "aws-key-id"      '(AKIA|ASIA)[A-Z2-7]{16}'
+check "jwt"             'eyJ[A-Za-z0-9_-]{8,}\.eyJ'
+check "private-key"     'BEGIN [A-Z ]*PRIVATE KEY'
+check "url-credential"  '://[^:/@ ]+:[^@ ]+@'
+if [ "$found" -eq 1 ]; then
+  echo "Possible secrets found. Redact before sharing."
+else
+  echo "No known patterns found. Read it anyway."
+fi
+```
+
+ツールと同じ閾値を使った、Python でのエントロピーチェック。
+
+```python
+import math
+import re
+from collections import Counter
+
+CANDIDATE = re.compile(r"[A-Za-z0-9+/_-]{32,}={0,2}")
+
+def shannon(s: str) -> float:
+    n = len(s)
+    return -sum(c / n * math.log2(c / n) for c in Counter(s).values())
+
+def looks_random(run: str) -> bool:
+    run = run.rstrip("=")
+    has_classes = (
+        re.search(r"[A-Z]", run)
+        and re.search(r"[a-z]", run)
+        and re.search(r"[0-9]", run)
+    )
+    return bool(has_classes) and shannon(run) >= 4.2
+
+def high_entropy_spans(text: str):
+    return [m.span() for m in CANDIDATE.finditer(text) if looks_random(m.group())]
+
+print(shannon("3f786850e387550fdab836ed7e6dc881de23001b"))  # hex SHA: fails the class check anyway
+print(shannon("AbstractSingletonProxyFactoryBean2Impl"))     # ~4.33: the known false positive
+```
+
+JavaScript による安定したプレースホルダーと復元処理。対応表は、それを構築したプロセスの外に出ることは決してない。
+
+```javascript
+function redact(text, rules) {
+  const valueToPh = new Map();
+  const counters = {};
+  let out = text;
+  for (const { label, re } of rules) {
+    out = out.replace(re, (value) => {
+      if (/^\[[A-Z][A-Z0-9_]*_\d+\]$/.test(value)) return value; // already a placeholder
+      if (!valueToPh.has(value)) {
+        counters[label] = (counters[label] || 0) + 1;
+        valueToPh.set(value, `[${label}_${counters[label]}]`);
+      }
+      return valueToPh.get(value);
+    });
+  }
+  const phToValue = new Map([...valueToPh].map(([v, ph]) => [ph.slice(1, -1), v]));
+  return { out, phToValue };
+}
+
+function restore(reply, phToValue) {
+  return reply.replace(/\\?\[\s*([A-Za-z][A-Za-z0-9_]*_\d+)\s*\\?\]/g, (m, key) =>
+    phToValue.get(key.toUpperCase()) ?? m,
+  );
+}
+```
+
+この簡略版は、ルールを一つずつ順番に適用するため、後のルールが、前のルールがすでに置換した後のテキストを見ることは決してない。実際のツールはこれとは異なり、まずすべてのヒットを収集してから優先順位で重複を解決する。これによって、行のどこから一致が始まっていても、最も特定的なルールが勝つようになっている。
+
+## すでにシークレットが漏洩してしまったら
+
+マスキングは予防策だ。資格情報がいったん自分の制御下にない場所へ貼り付けられてしまえば、メッセージを削除しても是正にはならない。そのテキストは、すでにログ、通知、メールダイジェスト、検索インデックス、あるいはプロバイダーの会話ストアの中に存在している可能性がある。
+
+有効な手順は次の順序だ。
+
+1. **まず失効させるかローテーションする。** GitHub の [リポジトリから機微なデータを削除する](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) ガイドは、これを率直に述べている。データがパスワード、トークン、資格情報である場合、「最初のステップとして、そのシークレットを失効させるか、ローテーションする必要がある」。一度失効させてしまえば、それはもう使えなくなる。それだけで十分な場合も多い。
+2. **プラットフォームが許すなら、ダウンタイムなしでローテーションする。** AWS が [IAM ユーザーごとに最大 2 個までのアクセスキー](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html) を許しているのは、まさに [新しい鍵を作成し、アプリケーションをそちらへ移し、古い鍵を無効化し、何も壊れていないことを確認してから削除する](https://docs.aws.amazon.com/IAM/latest/UserGuide/id-credentials-access-keys-update.html) という手順を可能にするためだ。
+3. **利用履歴を確認する。** AWS は `aws iam get-access-key-last-used` を提供している。ほとんどのプロバイダーには、同等の監査ログや「最終利用」フィールドがある。漏洩からローテーションまでの間に活動がなかったかを確認すること。
+4. **コピーを片付ける。** メッセージ、Issue のコメント、チャットを削除する。git リポジトリについては、GitHub のガイドは履歴の書き換えに `git-filter-repo` を推奨しており、フォーク・クローン・キャッシュされたビューには古い内容が残り続ける可能性があると指摘している——これが、ステップ 1 を先に行うべき理由である。
+5. **漏洩の経路を塞ぐ。** 環境変数を出力していたデバッグ用ステップを削除し、リクエストヘッダーのロギングを止め、貼り付けられたファイルからシークレットを移す。
+
+GitHub は、公開リポジトリや公開 gist にプッシュされた有効な OAuth トークン、GitHub App トークン、個人アクセストークンを [自動的に失効させる](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation) 機能も持つ。この保護がカバーするのは、GitHub 自身の公開スペースにある GitHub 自身のトークンだけだ。AI チャット、Slack チャンネル、プライベートな Issue トラッカーに貼り付けられた鍵に対しては、何もしてくれない。
+
+## 関連ツール
+
+- [JWT デコーダー](/ja/tools/jwt-decoder/) — トークンのヘッダー、クレーム、有効期限をローカルで確認してから、まだ機微な情報かどうかを判断する
+- [.env ファイルパーサー](/ja/tools/env-file-parser/) — `.env` ファイルのどれかを共有する前に、そこで定義されている変数を正確に把握する
+- [Basic Auth Header ジェネレーター](/ja/tools/basic-auth-header-generator/) — `Basic` ヘッダーとその中のパスワードの間に、いかに何も立ちはだかっていないかを示す
+- [ゼロ幅文字検出器](/ja/tools/zero-width-character-detector/) — 貼り付ける前のテキストに対して行う価値のある、もう一つのチェック
+- [AI トークンカウンター](/ja/tools/ai-token-counter/) — ログをすべて貼り付ける代わりに、コンテキストウィンドウに収まるよう削る
+
+## 参考資料
+
+- [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519) — JSON Web Token（JWT）
+- [RFC 7468](https://www.rfc-editor.org/rfc/rfc7468) — PKIX、PKCS、CMS 構造のテキストエンコーディング
+- [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750) — OAuth 2.0 Bearer Token の利用法
+- [RFC 7617](https://www.rfc-editor.org/rfc/rfc7617) — 'Basic' HTTP 認証スキーム
+- [RFC 3986 §3.2.1](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1) — ユーザー情報
+- [GitHub](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/) — GitHub の新しい認証トークン形式の裏側
+- [GitGuardian](https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/) — State of Secrets Sprawl 2026

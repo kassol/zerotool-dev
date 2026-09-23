@@ -1,0 +1,344 @@
+---
+title: "把日志粘进 AI 对话或 Issue 之前，先给密钥脱敏"
+description: "把日志或 .env 文件粘进 AI 对话或 GitHub issue 时会泄漏什么、用稳定占位符脱敏的原理，以及密钥一旦泄漏后该怎么办。"
+pubDate: 2026-09-23
+lang: "zh"
+tags: ["secrets", "api-keys", "redaction", "ai", "developer-tools"]
+ogImage: /og/blog-secret-redactor-guide.png
+---
+
+凌晨两点部署失败，CI 日志里刷了一整屏红色。最快找到答案的办法看似显而易见：把整份日志全选，粘进 AI 对话，问它哪里出了问题。回答很准，指出了三百行之外缺失的一个环境变量。
+
+同一份日志的第四十行是任务的启动横幅，横幅打印了解析后的配置。数据库 URL 连同密码都在里面。支付服务商的生产环境密钥也在——因为上个季度有人加的一个调试开关，会把所有名字以 `_KEY` 结尾的变量都回显出来。
+
+这次粘贴丝毫不像是在发布一份凭据，感觉更像是在问同事。但这段文本离开了本机，落到了第三方的服务器上，如今存在于一份开发者既不掌控、也无法完全审计的对话记录里。同样的事情也会发生在日志被贴进 GitHub issue、Slack 讨论串、Jira 工单或 Stack Overflow 提问的时候——只是那些地方往往能被远更多的人看到。
+
+本文讲的是日常调试文本里到底会泄漏什么、如何在粘贴之前而不是之后把它们剥离出去，以及发现得太晚时该怎么办。
+
+[打开密钥脱敏工具 →](/zh/tools/secret-redactor/)
+
+## 粘贴的那一刻，就是泄漏
+
+让助手"忽略这些密钥"或"删掉任何敏感信息"的本能做法，把操作顺序搞反了。等模型读到这条指令时，完整文本早已经传给了服务商。无论服务商的留存和训练政策是什么，你现在都得依赖它们。模型没法把你已发出的请求撤回来。
+
+同样的逻辑适用于开发者为求助而粘贴文本的每一个地方：
+
+| 文本粘贴到哪里 | 之后谁能看到 |
+|---|---|
+| AI 对话（ChatGPT、Claude、Gemini，或任何调用模型 API 的应用） | 服务商（按其留存政策），以及任何能打开你对话记录的人 |
+| 公开的 GitHub issue 或讨论 | 所有人，包括自动抓取程序 |
+| 私有仓库的 issue | 每一位协作者、每一个有读权限的集成，以及未来加入的每一位成员 |
+| Slack、Teams、Jira、Confluence | 每一位频道或项目成员，加上任何有读权限的集成 |
+| Stack Overflow、论坛 | 所有人 |
+| 粘贴分享站 | 拿到链接的任何人 |
+
+GitGuardian 的[《State of Secrets Sprawl 2026》](https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/)报告统计，2025 年公开 GitHub 提交中新增了 2865 万条硬编码密钥，同比增长 34%。仅 AI 服务相关的密钥就达到 1,275,105 条，同比增长 81%。同一份报告还发现，约 28% 的事故完全发生在代码仓库之外，出现在 Slack、Jira、Confluence 这类地方——恰恰就是人们粘贴日志求助时用的那些工具。
+
+补救情况的数字更难看。GitGuardian 在 2022 年确认为有效的凭据里，将近 70% 到 2025 年 1 月依然有效；2026 年 1 月复测时，这个比例仍然高于 64%。泄漏的密钥很少会被自动轮换。
+
+## 日常调试文本里，到底会泄漏什么
+
+大多数泄漏都不是开发者故意粘贴一个密钥，而是密钥搭着别的东西的顺风车一起进来的。
+
+| 源文本 | 通常藏着什么 |
+|---|---|
+| `.env` 文件、`docker-compose.yml`、Helm values | 服务用到的每一条凭据，逐行列出，带标签 |
+| CI 日志 | 调试步骤转储的已解析环境变量、带 `Authorization` 头的 `curl -v` 输出、`git clone https://user:token@…` 这样的 URL |
+| 应用日志 | 带 `Bearer` token 的请求头、query string 里的 JWT、启动时打印的连接字符串 |
+| 堆栈跟踪 | 传给抛出异常的驱动的连接字符串，或异常信息里的完整配置对象 |
+| Shell 历史 | `export OPENAI_API_KEY=…`、`mysql -p…`、`psql postgres://user:pass@host/db` |
+| Terraform plan、Kubernetes manifest | 云服务商凭据、base64 编码的 `Secret` 数据（base64 是编码，不是加密） |
+| `~/.ssh`、`~/.aws`、`~/.config` 片段 | 明文的私钥和长期有效的 access key |
+
+凭据本身的形态并不多，正是这些固定形态让自动检测成为可能。
+
+### 带前缀的 API Key
+
+很多厂商会给自己的密钥加一个固定前缀，方便扫描工具识别。GitHub 2021 年的 token 格式改造是文档记录最清楚的例子：[个人访问令牌以 `ghp_` 开头，OAuth 令牌以 `gho_` 开头，user-to-server 令牌以 `ghu_` 开头，server-to-server 令牌以 `ghs_` 开头，刷新令牌以 `ghr_` 开头](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/)。GitHub 给出的理由是，对它的密钥扫描而言，"token 前缀是让令牌可被识别的清晰方式"。
+
+AWS 的 access key ID 也是同样的思路。[IAM 标识符参考文档](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html)列出长期 access key 以 `AKIA` 开头，临时 STS 凭据以 `ASIA` 开头。与之配对的 secret access key 却完全没有前缀，这也是它更难被抓到的原因：AWS 自己的文档示例是 `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`，一个看起来和任何 base64 字符串没有区别的 40 字符串。
+
+AI 服务商的密钥沿用了同样的思路。Anthropic 的 [API key 文档](https://platform.claude.com/docs/en/get-api-key)写明，完整密钥以 `sk-ant-` 开头。
+
+### JSON Web Token
+
+[RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)（2015 年 5 月）把 JWT 定义为"以句点（`.`）分隔的一串 URL 安全片段"，每一段都经过 base64url 编码。由于 header 和 payload 都是 JSON 对象，且第一个成员名都以字母开头，两者都以 `{"` 加一个字母开头，这段内容经 base64url 编码后就是 `eyJ`。这让几乎每一个 JWT 都有 `eyJ….eyJ….` 这个特征性的形状。第三段可以为空：RFC 7519 把使用 `alg: none` 的 JWT 定义为 Unsecured JWT，其"JWS 签名值为空字符串"。
+
+日志里的 JWT 在过期之前通常就是一个活跃的会话或 API 凭据。解码它没有危害，粘贴它就是把会话拱手让出去。
+
+### HTTP 授权头
+
+`Authorization: Bearer …` 出自 [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750)（2012 年 10 月），它把 token 定义为一个 `b64token`：字母、数字和 `-._~+/`，末尾可选加 `=`。`Authorization: Basic …` 出自 [RFC 7617](https://www.rfc-editor.org/rfc/rfc7617)（2015 年 9 月），就是把 `user-id:password` 过一遍 base64。RFC 7617 直言不讳地写明，单靠 Basic "不是一种安全的用户认证方式"。任何看到这个头的人都能解码出密码。
+
+### PEM 私钥
+
+私钥通常以 `-----BEGIN … PRIVATE KEY-----` 到 `-----END … PRIVATE KEY-----` 之间的 PEM 文本块形式出现。[RFC 7468](https://www.rfc-editor.org/rfc/rfc7468)（2015 年 4 月）把 `PRIVATE KEY` 和 `ENCRYPTED PRIVATE KEY` 这两个标签标准化。OpenSSL 的传统格式用 `RSA PRIVATE KEY` 和 `EC PRIVATE KEY`，OpenSSH 写作 `OPENSSH PRIVATE KEY`；这些标签不在 RFC 7468 里，但磁盘上大多数密钥文件实际用的就是它们。同一份 RFC 还定义了公开信息的标签——`CERTIFICATE`、`CERTIFICATE REQUEST`、`PUBLIC KEY`、`X509 CRL`——这些是可以安全分享的。
+
+### 连接字符串
+
+`postgres://app:password@db:5432/app` 把密码放进了 URI 的 userinfo 部分。[RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1)（2005 年 1 月）第 3.2.1 节早就写明"userinfo 字段中使用 'user:password' 这种格式已被弃用"。数据库驱动、Redis 客户端和消息代理仍然照单全收，所以它几乎出现在每隔一份 `.env` 文件里，也出现在连接失败时的异常信息中。
+
+### 没有固定格式的具名密钥
+
+`DB_PASSWORD=hunter2`、`client_secret: …`、`?api_key=…`——这些值本身没有任何可识别的形状，只能靠旁边的名字来认出它们。
+
+## 密钥脱敏工具是怎么工作的
+
+[密钥脱敏工具](/zh/tools/secret-redactor/)接收你准备粘贴的文本，把每一份凭据替换成带标签的占位符，等助手回复之后再把真实值填回去。整个过程完全在浏览器标签页内完成。
+
+### 第一步：26 条固定规则
+
+检测由 26 条正则表达式组成，分成五个类别，外加第六个熵值类别。每个类别都有一个开关，默认全部开启。
+
+| 类别 | 匹配的内容 | 占位符标签 |
+|---|---|---|
+| AI 服务商密钥 | Anthropic 的 `sk-ant-…`，OpenAI 的 `sk-proj-` / `sk-svcacct-` / `sk-admin-` 及旧格式，Hugging Face 的 `hf_…`，以及任何其他 32 字符以上的 `sk-` 密钥（许多兼容 OpenAI 接口的服务商都沿用这一约定） | `ANTHROPIC_KEY`、`OPENAI_KEY`、`HF_TOKEN`、`API_KEY` |
+| 云服务与 SaaS token | GitHub 经典令牌（`ghp_`、`gho_`、`ghu_`、`ghs_`、`ghr_`）和细粒度令牌（`github_pat_`）、GitLab 的 `glpat-`、Slack 令牌与 webhook URL、Stripe 的 `sk_`/`rk_` 生产与测试密钥及 `whsec_` webhook 密钥、AWS 的 `AKIA`/`ASIA`/`ABIA`/`ACCA` key ID、紧邻 `aws…secret` 这类名字出现的 AWS secret key、Google 的 `AIza…` API key 与 `GOCSPX-` OAuth 密钥，以及 SendGrid、npm、PyPI 和 Telegram bot 的令牌 | `GITHUB_TOKEN`、`AWS_ACCESS_KEY`、`STRIPE_KEY`、… |
+| JWT 与授权头 | JWT（`eyJ….eyJ….…`，包括空签名的情形）、`Authorization: Basic …`、`Bearer …` | `JWT`、`BASIC_AUTH`、`BEARER_TOKEN` |
+| 私钥 | 从 `-----BEGIN … PRIVATE KEY-----` 到对应 END 行之间的全部内容，包括 OpenSSH、RSA、EC、加密及 PGP 区块 | `PRIVATE_KEY` |
+| 密码与连接字符串 | 任意 scheme 下 `scheme://user:password@host` 中的密码，以及赋给以 `password`、`passwd`、`pwd`、`secret`、`token`、`api_key`、`access_key`、`private_key`、`client_secret`、`auth_token` 或 `credentials` 结尾的名字的值 | `URL_PASSWORD`、`SECRET` |
+| 高熵字符串 | 没有标签、看起来随机的字符串，详见下文 | `HIGH_ENTROPY` |
+
+有几条规则只替换匹配内容的一部分。变量名、header 名、`Bearer` 或 `Basic` 这个 scheme 词，以及连接字符串里的用户名、主机、端口和数据库名都会保持可见。这是有意为之：助手仍然需要知道 `DATABASE_URL` 指向 `db.internal:5432`，只是不需要知道密码。
+
+Stripe 的 `pk_` 可发布密钥不会被 Stripe 规则匹配。Stripe 的 [API key 文档](https://docs.stripe.com/keys)把可发布密钥列为可以安全暴露在前端代码里的密钥。
+
+具名密钥规则有三道防线，防止它把普通配置也当成密钥标记出来：
+
+- 名字必须以关键词*结尾*。`max_tokens: 1024` 和 `token_count=12` 不会匹配；`GITHUB_TOKEN=…` 会。
+- 明显不是密钥的值会被跳过：环境变量引用（`${DB_PASS}`、`$SECRET`、`%APPDATA%`）、模板占位符（`<your-key>`、`{{secret}}`）、单一字符的重复（`****`、`xxxxxxxx`），以及 `true`、`false`、`null`、`none`、`nil`、`undefined`、`required`、`optional`、`bearer`、`basic` 这些字面量。
+- 值至少要有 4 个字符。
+
+停用词表里最后两个词对 JSON 日志格外重要。在 `"token": "Bearer eyJ…"` 里，具名规则原本会把 `Bearer` 这个词当成值本身；跳过它之后，Bearer 规则会去遮盖真正的凭据，同时把 scheme 留在可读状态。
+
+### 第二步：无前缀密钥的熵值兜底
+
+规则只能抓到它认识的东西。来自内部服务的一个随机 40 字符 token 既没有前缀，也可能没有一个有帮助的变量名。针对这类情况，工具会扫描 32 个及以上连续的 base64 或 base64url 字符，并计算它们的香农熵：
+
+```
+H = −Σ p(c) · log2 p(c)    over the characters c in the string
+```
+
+真正随机的 base64 从 64 个符号中取值，所以理论上限是 log2(64) = 6 比特/字符，但 32 字符的样本不可能覆盖全部 64 个符号。实际测算下来，32 个随机 base64 字符平均约为 4.56 比特/字符。英文单词和标识符的得分更低，因为少数字母会反复出现。
+
+只有同时满足以下全部条件，候选字符串才会被脱敏：
+
+| 条件 | 为什么需要它 |
+|---|---|
+| 不算末尾 `=` 补位，至少 32 个字符 | 更短的无标签字符串太模糊；更短的有标签字符串由具名规则处理 |
+| 包含大写字母、小写字母和数字 | 排除所有十六进制值（git SHA、MD5、SHA-256、`sha256:` 镜像摘要）和单一大小写的 UUID，这些东西在 CI 日志里到处都是 |
+| 熵值至少 4.2 比特/字符 | 把随机 token 和可读的长标识符区分开 |
+| 不是带两段及以上小写路径的路径 | `src/components/…` 这类路径虽长且大小写混合，但不是密钥 |
+| 不以 `sha1-`、`sha256-`、`sha384-`、`sha512-` 开头 | Lockfile 和 Subresource Integrity 的哈希值本身是公开的 |
+| 不是紧跟在 `base64,` 之后 | `data:` URI 是内容，不是凭据 |
+| 不在 `CERTIFICATE`、`CERTIFICATE REQUEST`、`PUBLIC KEY` 或 `X509 CRL` 的 PEM 区块内 | 这些区块按设计就是公开的 |
+
+大小写混合这一条要求是关键的权衡取舍。一个旁边没有变量名的 32 字符十六进制 token 不会被抓到。换个做法——把十六进制也标记出来——会让 CI 日志里真正的三条发现被四十个 commit SHA 淹没，而一份没人会读的脱敏报告保护不了任何东西。给这个十六进制 token 起个名字（`TWILIO_AUTH_TOKEN=…`），具名规则就能抓到它。
+
+另一个方向上已知的误报，是带数字的长驼峰命名标识符：`AbstractSingletonProxyFactoryBean2Impl` 的得分约为 4.33 比特，会被脱敏。关掉高熵字符串这个类别就能消除它。
+
+### 第三步：重叠匹配按规则优先级裁决
+
+同一个值经常会命中多条规则。`OPENAI_API_KEY=sk-proj-…` 会同时命中 OpenAI 规则、通用 `sk-` 规则、具名密钥规则和熵值检测。工具会收集所有命中，按规则优先级排序（私钥规则最先，厂商专属模式排在通用 `sk-` 规则之前，连接字符串和具名密钥规则在所有正则里排最后，熵值检测排在所有正则之后），只有当一条命中不与已保留的命中重叠时才会保留它。最具体的规则获胜，所以这一行最终会变成 `OPENAI_API_KEY=[OPENAI_KEY_1]`，而不是 `[API_KEY_1]` 或 `[HIGH_ENTROPY_1]`。
+
+### 第四步：稳定占位符
+
+每一个不同的值都会得到一个 `[LABEL_n]` 形式的占位符，编号按标签各自计数：
+
+```text
+OPENAI_API_KEY=[OPENAI_KEY_1]
+DATABASE_URL=postgres://app:[URL_PASSWORD_1]@db.internal:5432/app
+MAX_TOKENS=1024
+...
+2026-09-23T10:12:04Z retry with key [OPENAI_KEY_1] -> 200
+```
+
+这些占位符之所以能放心交给助手，靠的是四个特性：
+
+- **同一个值，同一个占位符。** 一个出现二十次的密钥会二十次都变成 `[OPENAI_KEY_1]`。助手依然能看出重试用的密钥和配置里的是同一个，而这往往就是整个诊断的关键。
+- **标签本身携带信息。** `[AWS_ACCESS_KEY_1]` 在不暴露值的前提下告诉模型这里原来是什么类型的值，所以"轮换 `[AWS_ACCESS_KEY_1]` 并更新 CI secret"这样的回答依然说得通。
+- **不会冲突。** 编号会跳过输入中已经存在的占位符字符串，所以一份原本就含有字面量 `[SECRET_1]` 的文档，检测到的第一个密钥会得到 `[SECRET_2]`。
+- **幂等。** 每条规则都会忽略看起来已经是占位符的值，所以对已经脱敏过的文本再跑一遍工具，不会有任何变化。
+
+发现列表会展示每个占位符对应的规则、出现次数，以及一份打码预览：前 4 位和后 2 位字符加上总长度，若值短于 12 个字符则只显示长度。这足以确认抓对了东西，又不会把值重新摆到屏幕上。
+
+### 第五步：从助手的回复中还原
+
+当助手回复了修正后的配置或要运行的命令，把回复粘进还原框。当前映射表里存在的每一个占位符都会被换回真实值，可以直接复制到终端里用。
+
+模型不总是能原样复现文本，所以还原功能会接受一组有限的变体写法：
+
+| 回复中出现的写法 | 能否还原？ |
+|---|---|
+| `[OPENAI_KEY_1]` | 能 |
+| `\[OPENAI_KEY_1\]`（Markdown 转义方括号） | 能 |
+| `[openai_key_1]`（大小写变化） | 能 |
+| `[ OPENAI_KEY_1 ]`（方括号内有空格） | 能 |
+| 行内代码里的 `` `[OPENAI_KEY_1]` `` | 能 |
+| 没有方括号的 `OPENAI_KEY_1` | 不能 |
+
+最后一行是有意为之。没有方括号时，`OPENAI_KEY_1` 和一个环境变量名没法区分，悄悄把密钥替换进一个变量名，后果比不替换更糟。回复里那些长得像占位符、但不在映射表里的字符串——比如模型自己编出来的 `[PASSWORD_7]`——会原样保留，并列在还原框下面，让你能注意到模型编了东西出来。
+
+在 prompt 开头加一句简短的说明，能减少方括号丢失的问题：*"方括号里的值，比如 [OPENAI_KEY_1]，是已脱敏的密钥。请原样保留，不要改动。"*
+
+第一个框里的文本每次变化，映射表都会重新构建。在你把回复还原之前，请保持原始输入不变。
+
+## 数据去了哪里
+
+检测和还原的代码就是页面里的普通 JavaScript，不会用你的文本发起任何网络请求。`localStorage`、`sessionStorage`、cookie 和 URL 里都不会写入任何东西。占位符到值的映射表只存在于一个内存变量里，点击 Clear 按钮、按 `Ctrl`/`Cmd` + `L`，以及刷新、关闭或离开标签页时都会被丢弃。文本框会在 `pagehide` 时清空，所以浏览器的前进后退缓存不会把密钥带回来。
+
+这个工具页面也不加载任何统计或广告脚本。本站所有接收凭据、私钥或 token 作为输入的页面都被排除在两者之外，所以没有任何第三方脚本会在你粘贴的文本旁边运行。
+
+有一个诚实的局限：JavaScript 没法原地覆写一个字符串。清空操作只是丢掉所有引用，真正的内存要等浏览器下一次垃圾回收才会被回收。关闭标签页则会立刻终结这一切。
+
+## 常见坑
+
+1. **比起自己的眼睛，更相信脱敏工具。** 基于规则的检测又快又可预测，但对它没有规则覆盖的东西一概会漏掉。发送脱敏后的文本前先读一遍。发现数量是一个快速的自检：如果一份 300 行的 `.env` 只产生了一条发现，那就说明哪里不对劲。
+
+2. **跨行的密钥。** 除了私钥规则之外，没有任何规则能匹配一个包含换行符的值。终端或日志查看器把一个 token 折成两行显示时，它不会被检测到。请从原始文件复制，不要从折行后的显示界面复制。
+
+3. **没有名字的十六进制 token。** 如前所述，一个裸的十六进制字符串会被放过。如果你的服务签发的是十六进制 API key，确保你粘贴的内容里，它旁边有一个能说明用途的名字。
+
+4. **藏在其他数据里的 base64 编码密钥。** Kubernetes 的 `Secret` manifest 把值以 base64 编码存在 `data:` 下面，而 [Kubernetes 文档](https://kubernetes.io/docs/concepts/configuration/secret/)警告说，Secret 默认在 etcd 中是未加密存储的。熵值规则能抓到大小写混合的长编码值，但一个短密码编码后会变成一个短字符串，可能达不到门槛。默认就把任何 `kind: Secret` 的 manifest 当作敏感内容对待。
+
+5. **个人数据。** 这个工具只针对凭据。邮箱、姓名、电话号码、IP 地址和主机名都会保持可见——主机名是有意保留的，好让助手仍然能推理你的网络拓扑。如果你的政策有要求，个人数据需要手动移除。
+
+6. **对话中途改开关。** 打开或关闭某个类别会重新跑一次检测，如果重叠裁决的结果变了，占位符编号也可能跟着变。还原始终使用当前输入和当前开关状态对应的映射表，所以请用脱敏时同样的设置来做还原。
+
+7. **输入大小。** 工具单次最多接受 1,000,000 个字符。日志更大时，先裁剪到相关的那一段；噪音更少，助手给出的答案通常也会更好。
+
+## 能力边界，说清楚
+
+| 这个工具不做的事 | 该用什么 |
+|---|---|
+| 扫描文件、文件夹或 git 历史 | 本地运行 [gitleaks](https://github.com/gitleaks/gitleaks)（`gitleaks git` 扫仓库，`gitleaks dir` 扫文件）或 [TruffleHog](https://github.com/trufflesecurity/trufflehog) |
+| 检测个人数据（邮箱、姓名、电话号码、IP 地址） | 手动编辑 |
+| 撤销单条误判的脱敏 | 关闭对应类别，或直接编辑复制出来的文本 |
+| 检查密钥是否仍然有效 | 这个页面没有任何功能做这件事，因为检查就意味着要把密钥发给服务商 |
+| 还原助手写掉了方括号的占位符 | 让助手原样保留占位符 |
+
+gitleaks 和 TruffleHog 解决的是另一个问题：找出已经被提交进去的密钥。gitleaks 采用 MIT 许可证。TruffleHog 采用 AGPL-3.0 许可证，能拿候选项去服务商的 API 验证，报告哪些仍然有效。两者都该放进 pre-commit hook 或 CI job 里。密钥脱敏工具覆盖的是粘贴之前的那一刻——那时候根本没有仓库可扫。
+
+## 用代码实现
+
+同样的思路也很容易用在把日志转发到别处的脚本里。
+
+在把日志附到 issue 之前做一次 Bash 预检。它只报告行号和规则名，绝不报告匹配到的值：
+
+```bash
+#!/usr/bin/env bash
+# usage: ./precheck.sh build.log
+# Prints rule names and line numbers only, never the matched values.
+file="$1"
+found=0
+check() {
+  local name="$1" pattern="$2" lines
+  lines=$(grep -nE -- "$pattern" "$file" | cut -d: -f1 | paste -sd, -)
+  if [ -n "$lines" ]; then
+    echo "$name: line $lines"
+    found=1
+  fi
+}
+check "ai-key"          'sk-(proj|svcacct|admin|ant-[a-z]{3,6}[0-9]{2})-'
+check "github-token"    'gh[pousr]_[A-Za-z0-9]{36}|github_pat_'
+check "aws-key-id"      '(AKIA|ASIA)[A-Z2-7]{16}'
+check "jwt"             'eyJ[A-Za-z0-9_-]{8,}\.eyJ'
+check "private-key"     'BEGIN [A-Z ]*PRIVATE KEY'
+check "url-credential"  '://[^:/@ ]+:[^@ ]+@'
+if [ "$found" -eq 1 ]; then
+  echo "Possible secrets found. Redact before sharing."
+else
+  echo "No known patterns found. Read it anyway."
+fi
+```
+
+熵值检测的 Python 版本，用的是和工具相同的阈值：
+
+```python
+import math
+import re
+from collections import Counter
+
+CANDIDATE = re.compile(r"[A-Za-z0-9+/_-]{32,}={0,2}")
+
+def shannon(s: str) -> float:
+    n = len(s)
+    return -sum(c / n * math.log2(c / n) for c in Counter(s).values())
+
+def looks_random(run: str) -> bool:
+    run = run.rstrip("=")
+    has_classes = (
+        re.search(r"[A-Z]", run)
+        and re.search(r"[a-z]", run)
+        and re.search(r"[0-9]", run)
+    )
+    return bool(has_classes) and shannon(run) >= 4.2
+
+def high_entropy_spans(text: str):
+    return [m.span() for m in CANDIDATE.finditer(text) if looks_random(m.group())]
+
+print(shannon("3f786850e387550fdab836ed7e6dc881de23001b"))  # hex SHA: fails the class check anyway
+print(shannon("AbstractSingletonProxyFactoryBean2Impl"))     # ~4.33: the known false positive
+```
+
+稳定占位符与还原逻辑的 JavaScript 实现。映射表不会离开构建它的那个进程：
+
+```javascript
+function redact(text, rules) {
+  const valueToPh = new Map();
+  const counters = {};
+  let out = text;
+  for (const { label, re } of rules) {
+    out = out.replace(re, (value) => {
+      if (/^\[[A-Z][A-Z0-9_]*_\d+\]$/.test(value)) return value; // already a placeholder
+      if (!valueToPh.has(value)) {
+        counters[label] = (counters[label] || 0) + 1;
+        valueToPh.set(value, `[${label}_${counters[label]}]`);
+      }
+      return valueToPh.get(value);
+    });
+  }
+  const phToValue = new Map([...valueToPh].map(([v, ph]) => [ph.slice(1, -1), v]));
+  return { out, phToValue };
+}
+
+function restore(reply, phToValue) {
+  return reply.replace(/\\?\[\s*([A-Za-z][A-Za-z0-9_]*_\d+)\s*\\?\]/g, (m, key) =>
+    phToValue.get(key.toUpperCase()) ?? m,
+  );
+}
+```
+
+这个简化版本按顺序依次应用规则，所以后面的规则永远看不到前面规则已经替换过的文本。工具的实际做法是先收集全部命中，再按优先级裁决重叠，这正是无论匹配在行内从哪里开始，都能让最具体规则获胜的原因。
+
+## 密钥已经泄漏了怎么办
+
+脱敏是预防手段。一旦凭据被粘贴到了你无法掌控的地方，删掉消息不算补救：这段文本可能已经进了日志、通知、邮件摘要、搜索索引，或者服务商的对话存储里。
+
+行之有效的处理顺序：
+
+1. **第一步先吊销或轮换。** GitHub 关于[从仓库中移除敏感数据](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)的指南说得很直接：如果数据是密码、令牌或凭据，"第一步就是吊销和/或轮换该密钥"。一旦被吊销，它就再也用不了了，很多时候这就已经够了。
+2. **平台允许的情况下无停机轮换。** AWS [允许每个 IAM 用户最多拥有两个 access key](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html)，为的正是让你能够[先创建新 key，把应用迁移过去，停用旧的，确认没有出问题，再删除它](https://docs.aws.amazon.com/IAM/latest/UserGuide/id-credentials-access-keys-update.html)。
+3. **检查是否被用过。** AWS 提供了 `aws iam get-access-key-last-used`；大多数服务商都有等效的审计日志或"最近使用时间"字段。重点查看从泄漏到轮换这段时间内有没有活动。
+4. **清理副本。** 删掉消息、issue 评论或聊天记录。对 git 仓库而言，GitHub 的指南推荐用 `git-filter-repo` 改写历史，并指出 fork、clone 和缓存视图仍然可能保留旧内容——这也是第一步要排在最前面的原因。
+5. **堵住泄漏的路径。** 移除转储环境变量的调试步骤，停止记录请求头，把密钥从那份被粘贴出去的文件里挪走。
+
+GitHub 还会对被推送到公开仓库或公开 gist 的有效 OAuth 令牌、GitHub App 令牌和个人访问令牌[自动吊销](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation)。这项保护覆盖的是 GitHub 自己的令牌在 GitHub 自己的公开空间里的情形，对粘贴进 AI 对话、Slack 频道或私有 issue 跟踪器里的密钥没有任何作用。
+
+## 相关工具
+
+- [JWT 解码器](/zh/tools/jwt-decoder/) —— 在本地查看一个 token 的 header、claims 和过期时间，再决定它是否还算敏感
+- [.env 文件解析器](/zh/tools/env-file-parser/) —— 在分享任何内容之前，先看清楚一份 `.env` 文件到底定义了哪些变量
+- [Basic Auth Header 生成器](/zh/tools/basic-auth-header-generator/) —— 直观展示 `Basic` 头和里面的密码之间隔得有多近
+- [零宽字符检测器](/zh/tools/zero-width-character-detector/) —— 粘贴文本前，另一项值得跑一遍的检查
+- [AI Token 计数器](/zh/tools/ai-token-counter/) —— 把日志裁到适配上下文窗口的长度，而不是整份粘贴过去
+
+## 延伸阅读
+
+- [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519) — JSON Web Token（JWT）
+- [RFC 7468](https://www.rfc-editor.org/rfc/rfc7468) — PKIX、PKCS 与 CMS 结构的文本编码
+- [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750) — OAuth 2.0 Bearer Token 用法
+- [RFC 7617](https://www.rfc-editor.org/rfc/rfc7617) — 'Basic' HTTP 认证方案
+- [RFC 3986 §3.2.1](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1) — 用户信息
+- [GitHub — Behind GitHub's new authentication token formats](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/)
+- [GitGuardian — The State of Secrets Sprawl 2026](https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/)
