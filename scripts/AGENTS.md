@@ -18,6 +18,7 @@
 | `test-har-invariant.mjs` | 回归 | spec-driven 不变式测试：3 层（spec sum / 新算法 mirror / 旧错算法 regression guard）× 10 fixture；守住 HAR `connect + ssl` 双计 bug 不复发 | 手动按需 / 修改 `HarFileAnalyzerTool.astro` phase 逻辑前后 |
 | `test-barcode-symbology.mjs` | 回归 | spec-driven 条码编码测试：从 `BarcodeGeneratorTool.astro` 抽取真实编码块（不 mirror，杜绝漂移），3 层（表结构不变式 / 已知校验位向量 / 独立解码器 round-trip）共 497 项 | 手动按需 / 修改 `BarcodeGeneratorTool.astro` 编码表或子集切换逻辑前后 |
 | `test-secret-redactor.mjs` | 回归 | spec-driven 脱敏引擎测试：从 `SecretRedactorTool.astro` 抽取 `engine:start/end` 之间的真实代码，覆盖 26 条规则正例 + 已知误报反例、同值同占位符、重叠裁决、既有占位符跳号、还原往返与容错、缺失/未知占位符、1,000,000 字符耗时 | 手动按需 / 修改 `SecretRedactorTool.astro` 规则表或占位符逻辑前后 |
+| `test-sqlite-viewer.mjs` | 回归 | 从 `SqliteViewerTool.astro` 抽取 `engine:start/end` 真实引擎块，用 node_modules 的 sql.js 建库，覆盖文件头校验、标识符转义、表/视图/索引列举、分页 SQL、CSV 转义（NULL / BLOB hex / 引号 / 换行）、内存副本写入与 schema 变化检测，共 34 项 | 手动按需 / 修改 `SqliteViewerTool.astro` 引擎块前后 |
 | `deploy.sh` | 部署 | 本地构建 + `wrangler pages deploy`（需 `PROJECT_NAME` env） | 手工部署兜底 |
 | `devto-article-draft.md` | 内容草稿 | 非脚本，是发到 dev.to 的草稿 | — |
 
@@ -63,3 +64,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-09-23 — 加入 `test-secret-redactor.mjs`（secret-redactor 检测/脱敏/还原引擎 spec-driven 回归测试；从组件源码抽取引擎块）
 - 2026-09-23 — `audit.mjs` 新增 `no_published_agents_md`：`public/`、`src/pages/` 下出现 AGENTS.md 即 FAIL
 - 2026-09-23 — 加入 `sync-sql-js.mjs`（sqlite-viewer 的 sql.js WASM 运行时同步到 `public/sql-js/`）
+- 2026-09-23 — 加入 `test-sqlite-viewer.mjs`（sqlite-viewer 引擎块回归测试，真实 sql.js 执行）
