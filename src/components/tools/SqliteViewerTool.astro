@@ -145,14 +145,22 @@
         return { columns: columns, indexes: indexes };
       }
 
-      // Runs every statement; returns the last result set that produced rows,
-      // plus how many rows the whole script changed and whether the schema moved.
+      // Runs every statement; returns the result of the last statement that has
+      // columns (a zero-row SELECT still counts), plus how many rows the whole
+      // script changed and whether the schema moved.
       function runSql(db, sql) {
         var before = rowsOf(db, 'SELECT total_changes()')[0][0];
         var schemaBefore = rowsOf(db, 'PRAGMA schema_version')[0][0];
-        var sets = db.exec(sql);
+        var result = null;
+        for (var it = db.iterateStatements(sql), step = it.next(); !step.done; step = it.next()) {
+          var stmt = step.value;
+          var columns = stmt.getColumnNames();
+          var values = [];
+          while (stmt.step()) values.push(stmt.get());
+          if (columns.length) result = { columns: columns, values: values };
+        }
         return {
-          result: sets.length ? sets[sets.length - 1] : null,
+          result: result,
           changes: rowsOf(db, 'SELECT total_changes()')[0][0] - before,
           schemaChanged: rowsOf(db, 'PRAGMA schema_version')[0][0] !== schemaBefore,
         };

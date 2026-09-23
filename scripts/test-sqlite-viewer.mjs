@@ -115,6 +115,8 @@ r = E.runSql(db, 'UPDATE users SET age = 1 WHERE id <= 5');
 equal('update changes', [r.result, r.changes, r.schemaChanged], [null, 5, false]);
 r = E.runSql(db, 'CREATE TABLE t2 (a); SELECT 1 AS one; SELECT 2 AS two');
 equal('multi-statement: last result set + schema change', [r.result.columns, r.changes, r.schemaChanged], [['two'], 0, true]);
+r = E.runSql(db, 'SELECT id FROM users WHERE id < 0');
+equal('zero-row select keeps columns', [r.result.columns, r.result.values, r.changes], [['id'], [], 0]);
 r = E.runSql(db, 'CREATE TABLE t3 (a)');
 equal('DDL after an UPDATE reports 0 changes', r.changes, 0);
 let err = '';
