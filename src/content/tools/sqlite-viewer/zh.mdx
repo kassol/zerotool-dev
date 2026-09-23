@@ -1,0 +1,57 @@
+---
+seoTitle: "SQLite 查看器 — 在线打开 .db 数据库文件 | ZeroTool"
+seoDescription: "在浏览器中打开 SQLite .db / .sqlite 文件：查看表结构、索引与数据，执行 SQL 查询并导出 CSV。文件只在本机处理，不上传。"
+faqItems:
+  - question: "数据库文件会上传吗？"
+    answer: "不会。文件通过浏览器 File API 读取，由编译成 WebAssembly 的 SQLite（sql.js）在页面内打开，全程没有服务器参与，本页也不加载任何统计或广告脚本。这正是这个工具存在的理由：数据库里通常是用户记录、token 或生产数据，不该贴进 AI 对话，也不该传到别人的服务器上。"
+  - question: "执行 UPDATE 或 DELETE 会改动我的文件吗？"
+    answer: "不会。浏览器对你选择的文件没有写权限。SQL 在内存副本上执行，INSERT、UPDATE、DELETE、CREATE 都能运行，左侧表列表也会刷新，但刷新页面或打开其他文件后改动就消失。本工具不提供下载改动后副本的功能。要修改磁盘上的文件，请用 sqlite3 命令行或 DB Browser for SQLite。"
+  - question: "最大能打开多大的数据库？"
+    answer: "100 MB。打开期间整个文件会在内存里存两份（文件缓冲区一份、SQLite 引擎内一份），再大就容易让浏览器标签页崩溃。更大的数据库请在本地运行 sqlite3 app.db。"
+  - question: "为什么提示「不是 SQLite 数据库」？"
+    answer: "每个 SQLite 3 文件都以 16 字节的文件头 SQLite format 3 开头。没有这个文件头，说明它是别的格式，或者被加密了。SQLCipher 和 SQLite Encryption Extension 连文件头一起加密，所以加密库无法在这里打开。请用 sqlcipher 解密，或用支持 SQLCipher 的 DB Browser for SQLite 打开。"
+  - question: "最新写入的数据不见了，为什么？"
+    answer: "数据库多半处于 WAL 模式，最新的写入还留在同目录的 app.db-wal 文件里，而本工具只读取主文件。先关闭正在写这个库的程序，或执行 sqlite3 app.db \"PRAGMA wal_checkpoint(TRUNCATE);\"，再重新打开文件。"
+---
+
+<h2>使用步骤</h2>
+
+<ol>
+  <li>把 <code>.db</code>、<code>.sqlite</code> 或 <code>.sqlite3</code> 文件拖到上传区，或点击选择文件。</li>
+  <li>在左侧列表里选一张表或一个视图。数据上方会显示列名、类型、主键、索引以及原始 <code>CREATE</code> 语句。</li>
+  <li>用<strong>上一页</strong> / <strong>下一页</strong>按每页 100 行翻看数据。</li>
+  <li>在 SQL 编辑框写任意查询，点<strong>执行 SQL</strong>或按 Ctrl/Cmd + Enter。</li>
+  <li>点<strong>导出 CSV</strong>，保存整张表，或最近一次查询的完整结果。</li>
+</ol>
+
+<h2>什么时候用浏览器打开 SQLite</h2>
+
+<ul>
+  <li><strong>核对 agent 或脚本写进库里的东西。</strong>coding agent 跑了迁移、灌了测试数据，信它之前先打开文件亲眼看看每一行。</li>
+  <li><strong>读应用的本地数据。</strong>浏览器、手机 App、Electron 应用和很多命令行工具都把状态存在 SQLite 里。把文件拷出来就能看，不用装桌面客户端。</li>
+  <li><strong>把数据交给别人。</strong>跑一条查询，导出 CSV 发出去，数据库本身留在你手里。</li>
+</ul>
+
+<h2>各类值的显示方式</h2>
+
+<table>
+  <thead>
+    <tr><th>值</th><th>表格中显示</th><th>CSV 中</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>NULL</td><td>灰色 <code>NULL</code> 标记，不会和空字符串混淆</td><td>空字段</td></tr>
+    <tr><td>BLOB</td><td>字节数 + 前 16 字节的十六进制</td><td>完整内容的大写十六进制</td></tr>
+    <tr><td>长文本</td><td>单元格内截断，鼠标悬停看更多</td><td>完整值，按 RFC 4180 加引号</td></tr>
+    <tr><td>数字</td><td>右对齐</td><td>原样输出</td></tr>
+  </tbody>
+</table>
+
+<p>查询结果只渲染前 1,000 行，保证页面不卡；导出的 CSV 始终包含全部行。</p>
+
+<h2>实现原理</h2>
+
+<p>页面先只读取文件前 100 字节，校验 SQLite 文件头。校验通过后才下载 SQLite 引擎（sql.js，压缩后约 340 KB），所以打开页面本身没有额外开销，选错文件也不会触发下载。随后整个文件作为内存数据库交给 SQLite。表结构来自 <code>pragma_table_info</code> 和 <code>pragma_index_list</code>；所有表名和列名都会加引号，名字里带空格、引号或中文都没问题。</p>
+
+<h2>范围</h2>
+
+<p>本工具打开单个不超过 100 MB 的 SQLite 3 文件并读取它。不把改动写回文件，不读取 <code>-wal</code> / <code>-journal</code> 附属文件，不打开加密数据库。依赖扩展的虚拟表（如 SpatiaLite 几何表）会显示 SQLite 报错而不是数据。这些情况请在本机使用 sqlite3 命令行或 DB Browser for SQLite。</p>

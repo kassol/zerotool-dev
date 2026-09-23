@@ -1,0 +1,787 @@
+---
+// SqliteViewerTool — opens a local SQLite file in memory with sql.js (WASM),
+// lists tables/views with their structure, pages through rows, runs SQL against
+// the in-memory copy, and exports results as CSV. The engine (/sql-js/, synced
+// from node_modules by scripts/sync-sql-js.mjs) is fetched only after a file
+// passes the header check. No upload, no persistence.
+---
+
+<div>
+  <div class="sqv-shell">
+    <div class="sqv-dropzone" id="sqv-dropzone" tabindex="0" role="button" aria-label="Choose SQLite file">
+      <input type="file" id="sqv-file-input" accept=".db,.sqlite,.sqlite3,.db3,application/vnd.sqlite3,application/x-sqlite3" hidden />
+      <svg class="sqv-dropzone-icon" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+      <p class="sqv-dropzone-title" data-i18n="dropTitle">Drop a SQLite file here</p>
+      <p class="sqv-dropzone-hint" data-i18n="dropHint">.db · .sqlite · .sqlite3 — up to 100 MB · or click to choose · never uploaded</p>
+    </div>
+
+    <div class="sqv-meta" id="sqv-meta" hidden>
+      <span class="sqv-pill sqv-pill-name" id="sqv-meta-name" title="">—</span>
+      <span class="sqv-pill" id="sqv-meta-size">—</span>
+      <span class="sqv-pill" id="sqv-meta-tables">—</span>
+      <span class="sqv-pill" id="sqv-meta-views">—</span>
+      <button class="btn-ghost sqv-reset" id="sqv-reset" type="button" data-i18n="openAnother">Open another file</button>
+    </div>
+
+    <div class="tool-status none" id="sqv-status" aria-live="polite"></div>
+
+    <div class="sqv-layout" id="sqv-layout" hidden>
+      <nav class="sqv-objects" id="sqv-objects" aria-label="Tables and views"></nav>
+
+      <section class="sqv-card sqv-browse">
+        <div class="sqv-browse-head">
+          <h3 class="sqv-object-title" id="sqv-object-title">—</h3>
+          <span class="sqv-object-sub" id="sqv-object-sub"></span>
+        </div>
+
+        <details class="sqv-structure" id="sqv-structure" open>
+          <summary data-i18n="structure">Structure</summary>
+          <div class="sqv-grid-wrap sqv-grid-wrap-sm"><table class="sqv-grid" id="sqv-columns"></table></div>
+          <p class="sqv-subhead" data-i18n="indexes">Indexes</p>
+          <div id="sqv-indexes"></div>
+          <p class="sqv-subhead" data-i18n="createSql">CREATE statement</p>
+          <pre class="sqv-create"><code id="sqv-create"></code></pre>
+        </details>
+
+        <div class="sqv-pager-actions">
+          <button class="btn-secondary" id="sqv-prev" type="button" data-i18n="prev">Previous</button>
+          <span class="sqv-range" id="sqv-range" aria-live="polite"></span>
+          <button class="btn-secondary" id="sqv-next" type="button" data-i18n="next">Next</button>
+          <button class="btn-ghost" id="sqv-export-table" type="button" data-i18n="exportCsv">Export CSV</button>
+        </div>
+        <div class="tool-status none" id="sqv-browse-status" aria-live="polite"></div>
+        <div class="sqv-grid-wrap"><table class="sqv-grid" id="sqv-rows"></table></div>
+      </section>
+
+      <section class="sqv-card sqv-query">
+        <label class="tool-label" for="sqv-sql" data-i18n="sqlLabel">SQL</label>
+        <p class="sqv-hint" data-i18n="sqlHint">Runs against an in-memory copy. The file on your disk is never modified; changes vanish on reload.</p>
+        <textarea id="sqv-sql" class="tool-textarea sqv-sql" rows="5" spellcheck="false" autocomplete="off"></textarea>
+        <div class="sqv-query-actions">
+          <button class="btn-primary" id="sqv-run" type="button" data-i18n="run">Run SQL</button>
+          <button class="btn-ghost" id="sqv-export-query" type="button" data-i18n="exportCsv" disabled>Export CSV</button>
+        </div>
+        <div class="tool-status none" id="sqv-query-status" aria-live="polite"></div>
+        <div class="sqv-grid-wrap" id="sqv-result-wrap" hidden><table class="sqv-grid" id="sqv-result"></table></div>
+      </section>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      /* ── engine:start ── */
+      var MAX_BYTES = 100 * 1024 * 1024;
+      var PAGE_SIZE = 100;
+      var RESULT_RENDER_CAP = 1000;
+      var HEADER = 'SQLite format 3\u0000';
+
+      // A SQLite 3 file starts with a 100-byte header whose first 16 bytes are fixed.
+      function isSqliteHeader(bytes) {
+        if (!bytes || bytes.length < 100) return false;
+        for (var i = 0; i < HEADER.length; i++) {
+          if (bytes[i] !== HEADER.charCodeAt(i)) return false;
+        }
+        return true;
+      }
+
+      function quoteIdent(name) {
+        return '"' + String(name).replace(/"/g, '""') + '"';
+      }
+
+      function toHex(bytes, limit) {
+        var n = limit == null ? bytes.length : Math.min(limit, bytes.length);
+        var out = '';
+        for (var i = 0; i < n; i++) out += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16).toUpperCase();
+        return out;
+      }
+
+      // RFC 4180: NULL → empty field, BLOB → full uppercase hex.
+      function csvField(v) {
+        if (v === null || v === undefined) return '';
+        if (v instanceof Uint8Array) return toHex(v);
+        var s = String(v);
+        return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }
+
+      function toCsv(columns, rows) {
+        return [columns].concat(rows).map(function (r) { return r.map(csvField).join(','); }).join('\r\n') + '\r\n';
+      }
+
+      function pageCount(total) {
+        return Math.max(1, Math.ceil(total / PAGE_SIZE));
+      }
+
+      function pageSql(name, page) {
+        return 'SELECT * FROM ' + quoteIdent(name) + ' LIMIT ' + PAGE_SIZE + ' OFFSET ' + (page * PAGE_SIZE);
+      }
+
+      function rowsOf(db, sql, params) {
+        var res = db.exec(sql, params);
+        return res.length ? res[0].values : [];
+      }
+
+      // Tables and views, internal sqlite_* objects hidden. count is null when COUNT(*) fails
+      // (e.g. a virtual table whose module is not compiled into sql.js).
+      function listObjects(db) {
+        return rowsOf(db, "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY type, name COLLATE NOCASE")
+          .map(function (r) {
+            var count = null;
+            if (r[0] === 'table') {
+              try { count = rowsOf(db, 'SELECT COUNT(*) FROM ' + quoteIdent(r[1]))[0][0]; } catch (e) { count = null; }
+            }
+            return { type: r[0], name: r[1], sql: r[2] || '', count: count };
+          });
+      }
+
+      function describe(db, name) {
+        var columns = rowsOf(db, 'SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?)', [name])
+          .map(function (r) { return { name: r[0], type: r[1], notnull: !!r[2], dflt: r[3], pk: r[4] }; });
+        var indexes = rowsOf(db, 'SELECT name, "unique", origin FROM pragma_index_list(?) ORDER BY name', [name])
+          .map(function (r) {
+            var cols = rowsOf(db, 'SELECT name FROM pragma_index_info(?) ORDER BY seqno', [r[0]])
+              .map(function (c) { return c[0] == null ? '(expr)' : c[0]; });
+            return { name: r[0], unique: !!r[1], origin: r[2], columns: cols };
+          });
+        return { columns: columns, indexes: indexes };
+      }
+
+      // Runs every statement; returns the last result set that produced rows,
+      // plus how many rows the whole script changed and whether the schema moved.
+      function runSql(db, sql) {
+        var before = rowsOf(db, 'SELECT total_changes()')[0][0];
+        var schemaBefore = rowsOf(db, 'PRAGMA schema_version')[0][0];
+        var sets = db.exec(sql);
+        return {
+          result: sets.length ? sets[sets.length - 1] : null,
+          changes: rowsOf(db, 'SELECT total_changes()')[0][0] - before,
+          schemaChanged: rowsOf(db, 'PRAGMA schema_version')[0][0] !== schemaBefore,
+        };
+      }
+      /* ── engine:end ── */
+
+      var STRINGS = {
+        en: {
+          dropTitle: 'Drop a SQLite file here',
+          dropHint: '.db · .sqlite · .sqlite3 — up to 100 MB · or click to choose · never uploaded',
+          openAnother: 'Open another file',
+          tables: 'Tables', views: 'Views', noObjects: 'No tables or views in this database.',
+          typeTable: 'table', typeView: 'view',
+          nTables: '{n} tables', nViews: '{n} views', nRows: '{n} rows', countUnknown: 'rows: —',
+          structure: 'Structure', indexes: 'Indexes', createSql: 'CREATE statement', noIndexes: 'No indexes.',
+          colName: 'Column', colType: 'Type', colNotNull: 'Not null', colDefault: 'Default', colPk: 'PK',
+          idxName: 'Index', idxUnique: 'Unique', idxColumns: 'Columns', idxOrigin: 'Origin', yes: 'yes',
+          prev: 'Previous', next: 'Next', exportCsv: 'Export CSV',
+          rowsRange: 'Rows {a}–{b} of {n}', noRows: 'No rows.', pageUnknown: 'Page {p}',
+          sqlLabel: 'SQL',
+          sqlHint: 'Runs against an in-memory copy. The file on your disk is never modified; changes vanish on reload.',
+          run: 'Run SQL',
+          reading: 'Reading {name}…', loadingEngine: 'Loading the SQLite engine (about 340 KB, first file only)…',
+          opened: 'Opened {name} — {t} tables, {v} views.',
+          notSqlite: 'Not a SQLite 3 database: the file does not start with the "SQLite format 3" header. Encrypted databases (SQLCipher, SEE) look like this too — decrypt them with sqlcipher or open them in DB Browser for SQLite.',
+          tooBig: 'File is {size}. The limit is 100 MB because the whole database is held in memory — use the sqlite3 CLI or DB Browser for SQLite for larger files.',
+          engineFailed: 'Could not load the SQLite engine. Check your connection and try again.',
+          openFailed: 'SQLite could not open this file: {msg}',
+          emptySql: 'Type a SQL statement first.',
+          queryDone: 'Done. {n} row(s) changed in the in-memory copy.',
+          queryRows: '{n} row(s).',
+          queryCapped: 'Showing the first {cap} of {n} rows. Export CSV includes all rows.',
+          sqlError: 'SQL error: {msg}',
+          exported: 'Exported {n} row(s) to {file}.',
+        },
+        zh: {
+          dropTitle: '将 SQLite 文件拖到这里',
+          dropHint: '.db · .sqlite · .sqlite3，最大 100 MB · 或点击选择 · 文件不上传',
+          openAnother: '打开其他文件',
+          tables: '表', views: '视图', noObjects: '该数据库没有表或视图。',
+          typeTable: '表', typeView: '视图',
+          nTables: '{n} 张表', nViews: '{n} 个视图', nRows: '{n} 行', countUnknown: '行数：—',
+          structure: '结构', indexes: '索引', createSql: 'CREATE 语句', noIndexes: '没有索引。',
+          colName: '列名', colType: '类型', colNotNull: '非空', colDefault: '默认值', colPk: '主键',
+          idxName: '索引', idxUnique: '唯一', idxColumns: '列', idxOrigin: '来源', yes: '是',
+          prev: '上一页', next: '下一页', exportCsv: '导出 CSV',
+          rowsRange: '第 {a}–{b} 行，共 {n} 行', noRows: '没有数据行。', pageUnknown: '第 {p} 页',
+          sqlLabel: 'SQL',
+          sqlHint: '在内存副本上执行。磁盘上的原文件永远不会被修改，刷新页面后改动消失。',
+          run: '执行 SQL',
+          reading: '正在读取 {name}…', loadingEngine: '正在加载 SQLite 引擎（约 340 KB，仅首次）…',
+          opened: '已打开 {name}：{t} 张表，{v} 个视图。',
+          notSqlite: '不是 SQLite 3 数据库：文件开头没有 "SQLite format 3" 文件头。加密数据库（SQLCipher、SEE）也会这样——请先用 sqlcipher 解密，或用 DB Browser for SQLite 打开。',
+          tooBig: '文件大小 {size}。上限为 100 MB，因为整个数据库要载入内存——更大的文件请用 sqlite3 命令行或 DB Browser for SQLite。',
+          engineFailed: 'SQLite 引擎加载失败，请检查网络后重试。',
+          openFailed: 'SQLite 无法打开此文件：{msg}',
+          emptySql: '请先输入 SQL 语句。',
+          queryDone: '执行完成。内存副本中 {n} 行被修改。',
+          queryRows: '{n} 行。',
+          queryCapped: '仅显示前 {cap} 行，共 {n} 行。导出 CSV 包含全部行。',
+          sqlError: 'SQL 错误：{msg}',
+          exported: '已导出 {n} 行到 {file}。',
+        },
+        ja: {
+          dropTitle: 'SQLite ファイルをここにドロップ',
+          dropHint: '.db · .sqlite · .sqlite3、最大 100 MB · クリックで選択 · アップロードなし',
+          openAnother: '別のファイルを開く',
+          tables: 'テーブル', views: 'ビュー', noObjects: 'このデータベースにはテーブルもビューもありません。',
+          typeTable: 'テーブル', typeView: 'ビュー',
+          nTables: 'テーブル {n}', nViews: 'ビュー {n}', nRows: '{n} 行', countUnknown: '行数：—',
+          structure: '構造', indexes: 'インデックス', createSql: 'CREATE 文', noIndexes: 'インデックスはありません。',
+          colName: '列名', colType: '型', colNotNull: 'NOT NULL', colDefault: 'デフォルト', colPk: 'PK',
+          idxName: 'インデックス', idxUnique: '一意', idxColumns: '列', idxOrigin: '由来', yes: 'はい',
+          prev: '前へ', next: '次へ', exportCsv: 'CSV エクスポート',
+          rowsRange: '{n} 行中 {a}–{b} 行目', noRows: '行がありません。', pageUnknown: '{p} ページ',
+          sqlLabel: 'SQL',
+          sqlHint: 'メモリ上のコピーに対して実行します。ディスク上の元ファイルは変更されず、再読み込みで変更は消えます。',
+          run: 'SQL 実行',
+          reading: '{name} を読み込み中…', loadingEngine: 'SQLite エンジンを読み込み中（約 340 KB、初回のみ）…',
+          opened: '{name} を開きました：テーブル {t}、ビュー {v}。',
+          notSqlite: 'SQLite 3 データベースではありません：ファイル先頭に "SQLite format 3" ヘッダーがありません。暗号化 DB（SQLCipher、SEE）も同様です。sqlcipher で復号するか、DB Browser for SQLite で開いてください。',
+          tooBig: 'ファイルサイズ {size}。データベース全体をメモリに載せるため上限は 100 MB です。大きなファイルは sqlite3 CLI か DB Browser for SQLite を使ってください。',
+          engineFailed: 'SQLite エンジンを読み込めませんでした。接続を確認して再試行してください。',
+          openFailed: 'SQLite がこのファイルを開けません：{msg}',
+          emptySql: 'SQL 文を入力してください。',
+          queryDone: '完了。メモリ上のコピーで {n} 行が変更されました。',
+          queryRows: '{n} 行。',
+          queryCapped: '{n} 行中、先頭 {cap} 行を表示。CSV エクスポートには全行が含まれます。',
+          sqlError: 'SQL エラー：{msg}',
+          exported: '{n} 行を {file} にエクスポートしました。',
+        },
+        ko: {
+          dropTitle: 'SQLite 파일을 여기에 드롭',
+          dropHint: '.db · .sqlite · .sqlite3, 최대 100 MB · 클릭해서 선택 · 업로드 없음',
+          openAnother: '다른 파일 열기',
+          tables: '테이블', views: '뷰', noObjects: '이 데이터베이스에는 테이블이나 뷰가 없습니다.',
+          typeTable: '테이블', typeView: '뷰',
+          nTables: '테이블 {n}개', nViews: '뷰 {n}개', nRows: '{n}행', countUnknown: '행 수: —',
+          structure: '구조', indexes: '인덱스', createSql: 'CREATE 문', noIndexes: '인덱스가 없습니다.',
+          colName: '컬럼', colType: '타입', colNotNull: 'NOT NULL', colDefault: '기본값', colPk: 'PK',
+          idxName: '인덱스', idxUnique: '고유', idxColumns: '컬럼', idxOrigin: '출처', yes: '예',
+          prev: '이전', next: '다음', exportCsv: 'CSV 내보내기',
+          rowsRange: '전체 {n}행 중 {a}–{b}행', noRows: '행이 없습니다.', pageUnknown: '{p} 페이지',
+          sqlLabel: 'SQL',
+          sqlHint: '메모리 복사본에서 실행됩니다. 디스크의 원본 파일은 변경되지 않으며, 새로고침하면 변경 내용이 사라집니다.',
+          run: 'SQL 실행',
+          reading: '{name} 읽는 중…', loadingEngine: 'SQLite 엔진 로딩 중 (약 340 KB, 최초 1회)…',
+          opened: '{name} 열림 — 테이블 {t}개, 뷰 {v}개.',
+          notSqlite: 'SQLite 3 데이터베이스가 아닙니다. 파일이 "SQLite format 3" 헤더로 시작하지 않습니다. 암호화된 DB(SQLCipher, SEE)도 이렇게 보입니다. sqlcipher로 복호화하거나 DB Browser for SQLite로 여세요.',
+          tooBig: '파일 크기 {size}. 데이터베이스 전체를 메모리에 올리므로 최대 100 MB입니다. 더 큰 파일은 sqlite3 CLI나 DB Browser for SQLite를 사용하세요.',
+          engineFailed: 'SQLite 엔진을 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.',
+          openFailed: 'SQLite가 이 파일을 열 수 없습니다: {msg}',
+          emptySql: '먼저 SQL 문을 입력하세요.',
+          queryDone: '완료. 메모리 복사본에서 {n}행이 변경되었습니다.',
+          queryRows: '{n}행.',
+          queryCapped: '전체 {n}행 중 처음 {cap}행만 표시합니다. CSV 내보내기에는 모든 행이 포함됩니다.',
+          sqlError: 'SQL 오류: {msg}',
+          exported: '{n}행을 {file}(으)로 내보냈습니다.',
+        },
+      };
+
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      function fmt(key, vars) {
+        return t[key].replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; });
+      }
+      function num(n) { return Number(n).toLocaleString(pageLang); }
+
+      document.querySelectorAll('.sqv-shell [data-i18n]').forEach(function (el) {
+        var k = el.getAttribute('data-i18n');
+        if (t[k]) el.textContent = t[k];
+      });
+
+      var dropzone = document.getElementById('sqv-dropzone');
+      var fileInput = document.getElementById('sqv-file-input');
+      var meta = document.getElementById('sqv-meta');
+      var statusEl = document.getElementById('sqv-status');
+      var layout = document.getElementById('sqv-layout');
+      var objectsEl = document.getElementById('sqv-objects');
+      var titleEl = document.getElementById('sqv-object-title');
+      var subEl = document.getElementById('sqv-object-sub');
+      var columnsEl = document.getElementById('sqv-columns');
+      var indexesEl = document.getElementById('sqv-indexes');
+      var createEl = document.getElementById('sqv-create');
+      var prevBtn = document.getElementById('sqv-prev');
+      var nextBtn = document.getElementById('sqv-next');
+      var rangeEl = document.getElementById('sqv-range');
+      var exportTableBtn = document.getElementById('sqv-export-table');
+      var browseStatusEl = document.getElementById('sqv-browse-status');
+      var rowsEl = document.getElementById('sqv-rows');
+      var sqlEl = document.getElementById('sqv-sql');
+      var runBtn = document.getElementById('sqv-run');
+      var exportQueryBtn = document.getElementById('sqv-export-query');
+      var queryStatusEl = document.getElementById('sqv-query-status');
+      var resultWrap = document.getElementById('sqv-result-wrap');
+      var resultEl = document.getElementById('sqv-result');
+
+      var db = null;
+      var objects = [];
+      var current = null;   // { type, name, sql, count }
+      var page = 0;
+      var lastResult = null; // { columns, values } of the last query
+
+      function setStatus(el, msg, kind) {
+        el.textContent = msg || '';
+        el.className = 'tool-status ' + (msg ? (kind || 'none') : 'none');
+      }
+      function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+      function fmtBytes(n) {
+        var u = ['B', 'KB', 'MB', 'GB']; var i = 0;
+        while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+        return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+      }
+
+      /* ── sql.js lazy loader: only called after a file passes the header check ── */
+      var enginePromise = null;
+      function ensureEngine() {
+        if (enginePromise) return enginePromise;
+        enginePromise = new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = '/sql-js/sql-wasm.js';
+          s.onload = function () {
+            window.initSqlJs({ locateFile: function (f) { return '/sql-js/' + f; } }).then(resolve, reject);
+          };
+          s.onerror = function () { reject(new Error('script load failed')); };
+          document.head.appendChild(s);
+        });
+        enginePromise.catch(function () { enginePromise = null; });
+        return enginePromise;
+      }
+
+      /* ── rendering ── */
+      function cellHtml(v) {
+        if (v === null || v === undefined) return '<td class="sqv-null">NULL</td>';
+        if (v instanceof Uint8Array) {
+          var preview = toHex(v, 16) + (v.length > 16 ? '…' : '');
+          return '<td class="sqv-blob">BLOB · ' + num(v.length) + ' B' + (v.length ? ' · ' + preview : '') + '</td>';
+        }
+        if (typeof v === 'number') return '<td class="sqv-num">' + escapeHtml(v) + '</td>';
+        var s = String(v);
+        var title = s.length > 60 ? ' title="' + escapeHtml(s.slice(0, 2000)) + '"' : '';
+        return '<td' + title + '>' + escapeHtml(s) + '</td>';
+      }
+      function renderGrid(tableEl, columns, values, cap) {
+        var head = '<thead><tr>' + columns.map(function (c) { return '<th scope="col">' + escapeHtml(c) + '</th>'; }).join('') + '</tr></thead>';
+        var shown = cap ? values.slice(0, cap) : values;
+        var body = '<tbody>' + shown.map(function (r) { return '<tr>' + r.map(cellHtml).join('') + '</tr>'; }).join('') + '</tbody>';
+        tableEl.innerHTML = head + body;
+      }
+
+      function renderObjects() {
+        if (!objects.length) {
+          objectsEl.innerHTML = '<p class="sqv-empty">' + escapeHtml(t.noObjects) + '</p>';
+          return;
+        }
+        var html = '';
+        [['table', t.tables], ['view', t.views]].forEach(function (g) {
+          var list = objects.filter(function (o) { return o.type === g[0]; });
+          if (!list.length) return;
+          html += '<p class="sqv-group">' + escapeHtml(g[1]) + '</p><ul class="sqv-object-list">';
+          list.forEach(function (o) {
+            var active = current && current.name === o.name;
+            html += '<li><button type="button" class="sqv-object' + (active ? ' is-active' : '') + '" data-name="' + escapeHtml(o.name) + '"' + (active ? ' aria-current="true"' : '') + '>'
+              + '<span class="sqv-object-name">' + escapeHtml(o.name) + '</span>'
+              + (o.type === 'table' ? '<span class="sqv-object-count">' + (o.count == null ? '—' : num(o.count)) + '</span>' : '')
+              + '</button></li>';
+          });
+          html += '</ul>';
+        });
+        objectsEl.innerHTML = html;
+      }
+
+      function renderStructure() {
+        var info = describe(db, current.name);
+        var head = [t.colName, t.colType, t.colNotNull, t.colDefault, t.colPk];
+        renderGrid(columnsEl, head, info.columns.map(function (c) {
+          return [c.name, c.type || '', c.notnull ? t.yes : '', c.dflt, c.pk ? c.pk : ''];
+        }));
+        if (!info.indexes.length) {
+          indexesEl.innerHTML = '<p class="sqv-empty">' + escapeHtml(t.noIndexes) + '</p>';
+        } else {
+          indexesEl.innerHTML = '<div class="sqv-grid-wrap sqv-grid-wrap-sm"><table class="sqv-grid"></table></div>';
+          renderGrid(indexesEl.querySelector('table'), [t.idxName, t.idxColumns, t.idxUnique, t.idxOrigin], info.indexes.map(function (i) {
+            return [i.name, i.columns.join(', '), i.unique ? t.yes : '', i.origin];
+          }));
+        }
+        createEl.textContent = current.sql;
+      }
+
+      function renderPage() {
+        setStatus(browseStatusEl, '');
+        var total = current.count;
+        try {
+          var res = db.exec(pageSql(current.name, page));
+          var columns = res.length ? res[0].columns : describe(db, current.name).columns.map(function (c) { return c.name; });
+          var values = res.length ? res[0].values : [];
+          renderGrid(rowsEl, columns, values);
+          if (total == null) {
+            rangeEl.textContent = fmt('pageUnknown', { p: num(page + 1) });
+          } else if (total === 0) {
+            rangeEl.textContent = t.noRows;
+          } else {
+            rangeEl.textContent = fmt('rowsRange', { a: num(page * PAGE_SIZE + 1), b: num(page * PAGE_SIZE + values.length), n: num(total) });
+          }
+          prevBtn.disabled = page === 0;
+          nextBtn.disabled = total == null ? values.length < PAGE_SIZE : page >= pageCount(total) - 1;
+        } catch (e) {
+          rowsEl.innerHTML = '';
+          rangeEl.textContent = '';
+          prevBtn.disabled = nextBtn.disabled = true;
+          setStatus(browseStatusEl, fmt('sqlError', { msg: e.message || String(e) }), 'error');
+        }
+      }
+
+      function selectObject(name) {
+        current = objects.filter(function (o) { return o.name === name; })[0] || null;
+        page = 0;
+        renderObjects();
+        if (!current) {
+          titleEl.textContent = '—';
+          subEl.textContent = '';
+          columnsEl.innerHTML = rowsEl.innerHTML = indexesEl.innerHTML = createEl.textContent = rangeEl.textContent = '';
+          prevBtn.disabled = nextBtn.disabled = exportTableBtn.disabled = true;
+          return;
+        }
+        exportTableBtn.disabled = false;
+        titleEl.textContent = current.name;
+        subEl.textContent = (current.type === 'table' ? t.typeTable : t.typeView)
+          + (current.type === 'table' ? ' · ' + (current.count == null ? t.countUnknown : fmt('nRows', { n: num(current.count) })) : '');
+        renderStructure();
+        renderPage();
+      }
+
+      function loadObjects(keepName) {
+        objects = listObjects(db);
+        document.getElementById('sqv-meta-tables').textContent = fmt('nTables', { n: objects.filter(function (o) { return o.type === 'table'; }).length });
+        document.getElementById('sqv-meta-views').textContent = fmt('nViews', { n: objects.filter(function (o) { return o.type === 'view'; }).length });
+        var keep = keepName && objects.some(function (o) { return o.name === keepName; });
+        selectObject(keep ? keepName : (objects[0] ? objects[0].name : null));
+      }
+
+      /* ── file open ── */
+      function openFile(file) {
+        if (!file) return;
+        if (file.size > MAX_BYTES) {
+          setStatus(statusEl, fmt('tooBig', { size: fmtBytes(file.size) }), 'error');
+          return;
+        }
+        setStatus(statusEl, fmt('reading', { name: file.name }), 'info');
+        file.slice(0, 100).arrayBuffer().then(function (head) {
+          if (!isSqliteHeader(new Uint8Array(head))) {
+            setStatus(statusEl, t.notSqlite, 'error');
+            return;
+          }
+          if (!enginePromise) setStatus(statusEl, t.loadingEngine, 'info');
+          return Promise.all([ensureEngine(), file.arrayBuffer()]).then(function (res) {
+            var next;
+            try {
+              next = new res[0].Database(new Uint8Array(res[1]));
+              next.exec('SELECT COUNT(*) FROM sqlite_master');
+            } catch (e) {
+              if (next) next.close();
+              setStatus(statusEl, fmt('openFailed', { msg: e.message || String(e) }), 'error');
+              return;
+            }
+            if (db) db.close();
+            db = next;
+            showDatabase(file);
+          }, function () {
+            setStatus(statusEl, t.engineFailed, 'error');
+          });
+        });
+      }
+
+      function showDatabase(file) {
+        var nameEl = document.getElementById('sqv-meta-name');
+        nameEl.textContent = file.name;
+        nameEl.setAttribute('title', file.name);
+        document.getElementById('sqv-meta-size').textContent = fmtBytes(file.size);
+        lastResult = null;
+        exportQueryBtn.disabled = true;
+        resultWrap.hidden = true;
+        resultEl.innerHTML = '';
+        setStatus(queryStatusEl, '');
+        loadObjects(null);
+        if (!sqlEl.value.trim() && current) sqlEl.value = 'SELECT * FROM ' + quoteIdent(current.name) + ' LIMIT 100;';
+        dropzone.hidden = true;
+        meta.hidden = false;
+        layout.hidden = false;
+        var tables = objects.filter(function (o) { return o.type === 'table'; }).length;
+        setStatus(statusEl, fmt('opened', { name: file.name, t: tables, v: objects.length - tables }), 'success');
+        if (window.trackTool) window.trackTool('sqlite-viewer', 'open');
+      }
+
+      /* ── SQL ── */
+      function runQuery() {
+        if (!db) return;
+        var sql = sqlEl.value.trim();
+        if (!sql) { setStatus(queryStatusEl, t.emptySql, 'error'); return; }
+        lastResult = null;
+        exportQueryBtn.disabled = true;
+        resultWrap.hidden = true;
+        resultEl.innerHTML = '';
+        var out;
+        try {
+          out = runSql(db, sql);
+        } catch (e) {
+          setStatus(queryStatusEl, fmt('sqlError', { msg: e.message || String(e) }), 'error');
+          return;
+        }
+        if (out.result) {
+          lastResult = out.result;
+          var n = out.result.values.length;
+          renderGrid(resultEl, out.result.columns, out.result.values, RESULT_RENDER_CAP);
+          resultWrap.hidden = false;
+          exportQueryBtn.disabled = false;
+          setStatus(queryStatusEl, n > RESULT_RENDER_CAP ? fmt('queryCapped', { cap: num(RESULT_RENDER_CAP), n: num(n) }) : fmt('queryRows', { n: num(n) }), 'success');
+        } else {
+          setStatus(queryStatusEl, fmt('queryDone', { n: num(out.changes) }), 'success');
+        }
+        if (out.changes > 0 || out.schemaChanged) loadObjects(current && current.name);
+        if (window.trackTool) window.trackTool('sqlite-viewer', 'query');
+      }
+
+      /* ── CSV export ── */
+      function download(name, columns, values) {
+        var file = name.replace(/[^\w.-]+/g, '_') + '.csv';
+        var blob = new Blob([toCsv(columns, values)], { type: 'text/csv;charset=utf-8' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = file;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        if (window.trackTool) window.trackTool('sqlite-viewer', 'export_csv');
+        return file;
+      }
+
+      exportTableBtn.addEventListener('click', function () {
+        if (!db || !current) return;
+        try {
+          var res = db.exec('SELECT * FROM ' + quoteIdent(current.name));
+          var columns = res.length ? res[0].columns : describe(db, current.name).columns.map(function (c) { return c.name; });
+          var values = res.length ? res[0].values : [];
+          var file = download(current.name, columns, values);
+          setStatus(browseStatusEl, fmt('exported', { n: num(values.length), file: file }), 'success');
+        } catch (e) {
+          setStatus(browseStatusEl, fmt('sqlError', { msg: e.message || String(e) }), 'error');
+        }
+      });
+      exportQueryBtn.addEventListener('click', function () {
+        if (!lastResult) return;
+        var file = download('query', lastResult.columns, lastResult.values);
+        setStatus(queryStatusEl, fmt('exported', { n: num(lastResult.values.length), file: file }), 'success');
+      });
+
+      /* ── events ── */
+      objectsEl.addEventListener('click', function (e) {
+        var btn = e.target.closest('.sqv-object');
+        if (btn) selectObject(btn.getAttribute('data-name'));
+      });
+      prevBtn.addEventListener('click', function () { if (page > 0) { page--; renderPage(); } });
+      nextBtn.addEventListener('click', function () { page++; renderPage(); });
+      runBtn.addEventListener('click', runQuery);
+
+      function openPicker() { fileInput.click(); }
+      dropzone.addEventListener('click', openPicker);
+      dropzone.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); }
+      });
+      fileInput.addEventListener('change', function () {
+        if (fileInput.files && fileInput.files[0]) openFile(fileInput.files[0]);
+        fileInput.value = '';
+      });
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        dropzone.addEventListener(ev, function (e) {
+          e.preventDefault();
+          dropzone.classList.add('is-dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        dropzone.addEventListener(ev, function (e) {
+          e.preventDefault();
+          if (ev === 'dragleave' && e.target !== dropzone) return;
+          dropzone.classList.remove('is-dragover');
+        });
+      });
+      dropzone.addEventListener('drop', function (e) {
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) openFile(f);
+      });
+
+      document.getElementById('sqv-reset').addEventListener('click', function () {
+        if (db) db.close();
+        db = null; objects = []; current = null; lastResult = null;
+        sqlEl.value = '';
+        rowsEl.innerHTML = resultEl.innerHTML = columnsEl.innerHTML = indexesEl.innerHTML = objectsEl.innerHTML = '';
+        resultWrap.hidden = true;
+        setStatus(queryStatusEl, '');
+        setStatus(browseStatusEl, '');
+        setStatus(statusEl, '');
+        layout.hidden = true;
+        meta.hidden = true;
+        dropzone.hidden = false;
+        dropzone.focus();
+      });
+    })();
+  </script>
+</div>
+
+<style is:global>
+  .sqv-shell { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  .sqv-dropzone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.4rem; min-height: 200px; padding: 2.5rem 1rem; text-align: center;
+    border-radius: var(--radius-lg);
+    background: var(--color-surface-muted);
+    outline: 1px dashed var(--color-border);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast), outline-color var(--transition-fast);
+  }
+  .sqv-dropzone[hidden] { display: none; }
+  .sqv-dropzone:hover, .sqv-dropzone:focus-visible, .sqv-dropzone.is-dragover {
+    background: color-mix(in oklch, var(--color-primary) 6%, var(--color-surface-muted));
+    outline-color: var(--color-primary);
+    outline-style: solid;
+    color: var(--color-text);
+  }
+  .sqv-dropzone-icon { color: var(--color-cat-data); }
+  .sqv-dropzone-title { margin: 0; font-size: 1rem; font-weight: 650; }
+  .sqv-dropzone-hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+
+  .sqv-meta:not([hidden]) {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+    padding: 0.4rem 0.55rem; border-radius: var(--radius-md);
+    background: var(--color-surface);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+  .sqv-pill {
+    display: inline-flex; align-items: center;
+    padding: 0.2rem 0.6rem; border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono); font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  .sqv-pill-name { max-width: 28ch; overflow: hidden; text-overflow: ellipsis; }
+  .sqv-reset { margin-left: auto; }
+
+  .sqv-layout:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+    gap: 0.85rem;
+    align-items: start;
+  }
+  .sqv-query { grid-column: 1 / -1; }
+
+  .sqv-card {
+    display: flex; flex-direction: column; gap: 0.6rem;
+    padding: 0.9rem;
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+
+  .sqv-objects {
+    max-height: 560px; overflow: auto;
+    padding: 0.6rem;
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .sqv-group {
+    margin: 0.35rem 0.4rem 0.3rem;
+    font-size: 0.72rem; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+  .sqv-object-list { list-style: none; margin: 0 0 0.4rem; padding: 0; }
+  .sqv-object {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+    width: 100%; min-height: 34px; padding: 0.35rem 0.55rem;
+    border: 0; border-radius: var(--radius-md);
+    background: none; color: var(--color-text);
+    font-family: var(--font-mono); font-size: 0.82rem; text-align: left;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+  .sqv-object:hover { background: var(--color-surface-muted); color: var(--color-primary); }
+  .sqv-object:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+  .sqv-object.is-active {
+    background: color-mix(in oklch, var(--color-cat-data) 14%, var(--color-surface));
+    color: var(--color-text);
+    font-weight: 700;
+  }
+  .sqv-object-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sqv-object-count { flex-shrink: 0; font-size: 0.74rem; color: var(--color-text-muted); }
+
+  .sqv-browse-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.7rem; }
+  .sqv-object-title {
+    margin: 0; font-family: var(--font-mono); font-size: 1.05rem; font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+  .sqv-object-sub { font-size: 0.82rem; color: var(--color-text-muted); }
+
+  .sqv-structure summary {
+    cursor: pointer; font-size: 0.85rem; font-weight: 700; color: var(--color-text-secondary);
+    padding: 0.2rem 0;
+  }
+  .sqv-structure[open] summary { margin-bottom: 0.5rem; }
+  .sqv-subhead { margin: 0.7rem 0 0.35rem; font-size: 0.8rem; font-weight: 700; color: var(--color-text-secondary); }
+  .sqv-create {
+    margin: 0; padding: 0.75rem 0.9rem; max-height: 220px;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-family: var(--font-mono); font-size: 0.8rem;
+  }
+  .sqv-create code { background: transparent; color: var(--color-text); }
+
+  .sqv-pager-actions, .sqv-query-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .sqv-range { font-size: 0.85rem; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+  .sqv-pager-actions .btn-ghost { margin-left: auto; }
+
+  .sqv-grid-wrap {
+    max-height: 480px; overflow: auto;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .sqv-grid-wrap[hidden] { display: none; }
+  .sqv-grid-wrap-sm { max-height: 280px; }
+  .tool-page .sqv-grid {
+    width: max-content; min-width: 100%; margin: 0;
+    border-collapse: separate; border-spacing: 0;
+    font-family: var(--font-mono); font-size: 0.8rem;
+  }
+  .tool-page .sqv-grid th,
+  .tool-page .sqv-grid td {
+    max-width: 36ch; padding: 0.38rem 0.7rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-bottom: 1px solid var(--color-border-soft);
+    text-align: left; vertical-align: top;
+  }
+  .tool-page .sqv-grid th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    font-family: var(--font-sans); font-weight: 700;
+  }
+  .tool-page .sqv-grid td.sqv-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tool-page .sqv-grid td.sqv-null { color: var(--color-text-muted); font-style: italic; }
+  .tool-page .sqv-grid td.sqv-blob { color: var(--color-accent); }
+
+  .sqv-hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+  .sqv-sql { min-height: 120px; }
+  .sqv-empty { margin: 0.3rem 0.4rem; font-size: 0.85rem; color: var(--color-text-muted); }
+
+  @media (max-width: 720px) {
+    .sqv-layout:not([hidden]) { grid-template-columns: minmax(0, 1fr); }
+    .sqv-objects { max-height: 220px; }
+    .sqv-reset { margin-left: 0; }
+    .sqv-pager-actions .btn-ghost { margin-left: 0; }
+  }
+</style>

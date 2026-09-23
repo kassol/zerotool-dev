@@ -1,0 +1,57 @@
+---
+seoTitle: "SQLite Viewer Online — Open .db Files in Browser | ZeroTool"
+seoDescription: "Open SQLite .db and .sqlite files in your browser. Browse tables, schema and indexes, run SQL, and export results to CSV. The file never leaves your device."
+faqItems:
+  - question: "Is my database file uploaded?"
+    answer: "No. The file is read with the browser File API and opened by SQLite compiled to WebAssembly (sql.js) inside the page. There is no server step, and this page loads no analytics or ad scripts. That is the point of the tool: a database is usually full of user records, tokens or production data that should never be pasted into a chat window or sent to someone else's server."
+  - question: "If I run UPDATE or DELETE, does it change my file?"
+    answer: "No. The browser has no write access to the file you picked. SQLite runs on an in-memory copy, so INSERT, UPDATE, DELETE and CREATE work and the table list refreshes, but the changes disappear when you reload or open another file. The tool does not offer a download of the edited copy. To change a file on disk, use the sqlite3 command-line shell or DB Browser for SQLite."
+  - question: "How large a database can I open?"
+    answer: "Up to 100 MB. The whole file is held in memory twice while it is open — once as the file buffer and once inside the SQLite engine — so larger files make browser tabs unstable. For bigger databases run sqlite3 app.db locally."
+  - question: "Why does it say my file is not a SQLite database?"
+    answer: "Every SQLite 3 file starts with the 16-byte header SQLite format 3. If that header is missing, the file is something else — or it is encrypted. SQLCipher and the SQLite Encryption Extension encrypt the header too, so encrypted databases cannot be opened here. Decrypt them with sqlcipher or open them in DB Browser for SQLite, which supports SQLCipher."
+  - question: "Recent rows are missing. Why?"
+    answer: "The database is probably in WAL mode and the newest writes still sit in the app.db-wal file next to it. Only the main file is read. Close the application that writes to it, or run sqlite3 app.db \"PRAGMA wal_checkpoint(TRUNCATE);\", and open the file again."
+---
+
+<h2>How to inspect a SQLite file</h2>
+
+<ol>
+  <li>Drop a <code>.db</code>, <code>.sqlite</code> or <code>.sqlite3</code> file onto the drop area, or click it to choose one.</li>
+  <li>Pick a table or view from the list on the left. Its columns, types, primary key, indexes and original <code>CREATE</code> statement appear above the data.</li>
+  <li>Page through the rows 100 at a time with <strong>Previous</strong> and <strong>Next</strong>.</li>
+  <li>Write any SQL in the editor and press <strong>Run SQL</strong> or Ctrl/Cmd + Enter.</li>
+  <li>Press <strong>Export CSV</strong> to save the whole table, or the full result of your last query.</li>
+</ol>
+
+<h2>When a browser SQLite viewer is the right tool</h2>
+
+<ul>
+  <li><strong>Checking what an agent or script wrote.</strong> A coding agent ran a migration or seeded test data. Open the file and look at the rows before you trust it.</li>
+  <li><strong>Reading app data.</strong> Browsers, mobile apps, Electron apps and many CLIs keep their state in SQLite. Pull the file and read it without installing a desktop client.</li>
+  <li><strong>Handing data to someone else.</strong> Run a query, export the result as CSV, and send the CSV — the database itself stays with you.</li>
+</ul>
+
+<h2>What the viewer shows</h2>
+
+<table>
+  <thead>
+    <tr><th>Value</th><th>How it appears</th><th>In CSV</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>NULL</td><td>A muted <code>NULL</code> marker, so it cannot be confused with an empty string</td><td>Empty field</td></tr>
+    <tr><td>BLOB</td><td>Byte length and the first 16 bytes in hex</td><td>Full content as uppercase hex</td></tr>
+    <tr><td>Long text</td><td>Truncated in the cell; hover to see more</td><td>Full value, quoted per RFC 4180</td></tr>
+    <tr><td>Numbers</td><td>Right-aligned</td><td>As stored</td></tr>
+  </tbody>
+</table>
+
+<p>Query results render the first 1,000 rows so the page stays responsive. The CSV export always contains every row.</p>
+
+<h2>How it works</h2>
+
+<p>The page first reads only the first 100 bytes of the file and checks the SQLite header. The SQLite engine — sql.js, about 340 KB compressed — is fetched only after that check passes, so opening the page costs nothing extra and a wrong file never triggers the download. The full file is then passed to SQLite as an in-memory database. Table structure comes from <code>pragma_table_info</code> and <code>pragma_index_list</code>, and every table and column name is quoted, so names with spaces, quotes or non-Latin characters work.</p>
+
+<h2>Scope</h2>
+
+<p>This tool opens one SQLite 3 file up to 100 MB and reads it. It does not save changes back to the file, does not read <code>-wal</code> or <code>-journal</code> sidecar files, and does not open encrypted databases. Extension-backed virtual tables such as SpatiaLite geometry tables show their SQLite error instead of rows. For any of those cases, the sqlite3 command-line shell or DB Browser for SQLite on your own machine is the right tool.</p>

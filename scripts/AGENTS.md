@@ -11,6 +11,7 @@
 | `check-icon-coverage.mjs` | 校验 | 比对 `tools.ts` 与 `icons.ts`，缺图标即 exit 1 | `npm run build` 第 1 步 |
 | `generate-og.mjs` | 生成 | 用 sharp + figlet 为每个工具生成 OG 图，输出到 `public/og/{slug}.png` | `npm run build` 第 2 步 / `npm run generate-og` |
 | `generate-blog-redirects.mjs` | 后处理 | 扫 `src/content/blog/{baseSlug}/{zh,ja,ko}.mdx`，向 `dist/_redirects` 追加旧语言后缀 URL → 新目录 URL 的 301 | `npm run build` 第 4 步 |
+| `sync-sql-js.mjs` | 同步 | 把 `node_modules/sql.js/dist/` 的 `sql-wasm.js` + `sql-wasm.wasm` 复制到 `public/sql-js/`（gitignored），供 `SqliteViewerTool` 选文件后懒加载 | `npm run dev` / `npm run build` 前置步骤 |
 | `update-readme-tools.js` | 文档同步 | 用 `tools.ts` 的 slug + EN name 重写 README 的 `<!-- TOOLS-START/END -->` 段 | CI workflow `update-readme.yml` 在 master 分支 `tools.ts` 变化时自动跑 |
 | `audit.mjs` | 巡检 | 全项目静态一致性审计：tools schema / 图标覆盖 / 路由注册 / content/tools 多语言 / category 类型与 UI 对齐 / 基础页面齐全 / i18n key 对齐 / blog 命名 + frontmatter / _redirects 格式 / public 与 src/pages 下无 AGENTS.md | `.github/workflows/ci.yml` PR + master push 自动跑；本地 `node scripts/audit.mjs`（FAIL 退出码 1） |
 | `audit-slug-aliases.mjs` | 巡检 | 审计 `_redirects` 与 slug 的对应关系，发现孤儿规则 | 手动按需 |
@@ -61,3 +62,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-08-01 — 加入 `test-barcode-symbology.mjs`（条码符号集 spec-driven 回归测试；从组件源码抽取编码器 + 独立解码器 round-trip）
 - 2026-09-23 — 加入 `test-secret-redactor.mjs`（secret-redactor 检测/脱敏/还原引擎 spec-driven 回归测试；从组件源码抽取引擎块）
 - 2026-09-23 — `audit.mjs` 新增 `no_published_agents_md`：`public/`、`src/pages/` 下出现 AGENTS.md 即 FAIL
+- 2026-09-23 — 加入 `sync-sql-js.mjs`（sqlite-viewer 的 sql.js WASM 运行时同步到 `public/sql-js/`）

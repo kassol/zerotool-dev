@@ -135,6 +135,7 @@ const icons: Record<string, string> = {
   'barcode-generator': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5v14"/><path d="M8 5v14"/><path d="M12 5v14"/><path d="M17 5v14"/><path d="M21 5v14"/></svg>',
   'csr-decoder': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6"/><path d="M14 2v6h6"/><path d="M8 13h4"/><path d="M8 17h3"/><path d="m15 19 2 2 4-4"/></svg>',
   'secret-redactor': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h3"/><rect x="10" y="10" width="10" height="4" rx="1" fill="currentColor"/><path d="M4 18h11"/></svg>',
+  'sqlite-viewer': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10" cy="5" rx="7" ry="3"/><path d="M3 5v12c0 1.66 3.13 3 7 3"/><path d="M3 11c0 1.66 3.13 3 7 3"/><path d="M17 5v4"/><circle cx="17" cy="16" r="3"/><path d="m21 20-1.9-1.9"/></svg>',
 };
 
 export function getToolIcon(slug: string): string {

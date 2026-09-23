@@ -1,0 +1,57 @@
+---
+seoTitle: "SQLite 뷰어 — 브라우저에서 .db 파일 열기 | ZeroTool"
+seoDescription: "SQLite .db / .sqlite 파일을 브라우저에서 열어 테이블 구조, 인덱스, 데이터를 확인하고 SQL 실행 후 CSV로 내보내세요. 파일은 기기 밖으로 나가지 않습니다."
+faqItems:
+  - question: "데이터베이스 파일이 업로드되나요?"
+    answer: "아니요. 파일은 브라우저 File API로 읽고, WebAssembly로 컴파일된 SQLite(sql.js)가 페이지 안에서 엽니다. 서버는 전혀 관여하지 않으며, 이 페이지는 분석·광고 스크립트도 불러오지 않습니다. 데이터베이스에는 보통 사용자 기록, 토큰, 운영 데이터가 들어 있어 AI 채팅에 붙여넣거나 남의 서버로 보내면 안 됩니다. 이 도구가 필요한 이유가 바로 그것입니다."
+  - question: "UPDATE나 DELETE를 실행하면 원본 파일이 바뀌나요?"
+    answer: "바뀌지 않습니다. 브라우저는 선택한 파일에 쓰기 권한이 없습니다. SQL은 메모리 복사본에서 실행되므로 INSERT, UPDATE, DELETE, CREATE가 동작하고 테이블 목록도 갱신되지만, 새로고침하거나 다른 파일을 열면 변경 내용이 사라집니다. 수정된 복사본을 다운로드하는 기능은 없습니다. 디스크의 파일을 수정하려면 sqlite3 명령줄이나 DB Browser for SQLite를 사용하세요."
+  - question: "얼마나 큰 데이터베이스까지 열 수 있나요?"
+    answer: "100 MB까지입니다. 파일을 여는 동안 전체 내용이 메모리에 두 번(파일 버퍼와 SQLite 엔진 내부) 올라가므로, 그보다 크면 브라우저 탭이 불안정해집니다. 더 큰 데이터베이스는 로컬에서 sqlite3 app.db를 실행하세요."
+  - question: "'SQLite 데이터베이스가 아닙니다'라고 나오는 이유는?"
+    answer: "모든 SQLite 3 파일은 16바이트 헤더 SQLite format 3으로 시작합니다. 이 헤더가 없으면 다른 형식의 파일이거나 암호화된 파일입니다. SQLCipher와 SQLite Encryption Extension은 헤더까지 암호화하므로 암호화된 DB는 여기서 열 수 없습니다. sqlcipher로 복호화하거나 SQLCipher를 지원하는 DB Browser for SQLite로 여세요."
+  - question: "최근에 쓴 행이 보이지 않는 이유는?"
+    answer: "데이터베이스가 WAL 모드이고 최신 쓰기가 옆에 있는 app.db-wal 파일에 남아 있을 가능성이 큽니다. 이 도구는 메인 파일만 읽습니다. 해당 DB에 쓰는 프로그램을 종료하거나 sqlite3 app.db \"PRAGMA wal_checkpoint(TRUNCATE);\"를 실행한 뒤 다시 여세요."
+---
+
+<h2>사용 방법</h2>
+
+<ol>
+  <li><code>.db</code>, <code>.sqlite</code>, <code>.sqlite3</code> 파일을 드롭 영역에 놓거나 클릭해서 선택합니다.</li>
+  <li>왼쪽 목록에서 테이블이나 뷰를 고릅니다. 데이터 위에 컬럼, 타입, 기본 키, 인덱스, 원래의 <code>CREATE</code> 문이 표시됩니다.</li>
+  <li><strong>이전</strong> / <strong>다음</strong>으로 100행씩 넘겨 봅니다.</li>
+  <li>SQL 편집기에 원하는 쿼리를 쓰고 <strong>SQL 실행</strong>을 누르거나 Ctrl/Cmd + Enter를 누릅니다.</li>
+  <li><strong>CSV 내보내기</strong>로 테이블 전체 또는 마지막 쿼리 결과 전체를 저장합니다.</li>
+</ol>
+
+<h2>브라우저에서 SQLite를 여는 게 맞는 경우</h2>
+
+<ul>
+  <li><strong>에이전트나 스크립트가 쓴 내용 확인.</strong> 코딩 에이전트가 마이그레이션을 돌리거나 테스트 데이터를 넣었다면, 믿기 전에 파일을 열어 행을 직접 확인하세요.</li>
+  <li><strong>앱 로컬 데이터 읽기.</strong> 브라우저, 모바일 앱, Electron 앱, 많은 CLI가 상태를 SQLite에 저장합니다. 파일만 꺼내면 데스크톱 클라이언트 없이 내용을 볼 수 있습니다.</li>
+  <li><strong>데이터 전달.</strong> 쿼리를 실행해 CSV로 내보내고 그 CSV만 보냅니다. 데이터베이스 자체는 내 손에 남습니다.</li>
+</ul>
+
+<h2>값 표시 방식</h2>
+
+<table>
+  <thead>
+    <tr><th>값</th><th>화면 표시</th><th>CSV</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>NULL</td><td>흐린 <code>NULL</code> 표시. 빈 문자열과 구분됩니다</td><td>빈 필드</td></tr>
+    <tr><td>BLOB</td><td>바이트 수와 앞 16바이트의 16진수</td><td>전체 내용을 대문자 16진수로</td></tr>
+    <tr><td>긴 텍스트</td><td>셀 안에서 잘림. 마우스를 올리면 더 보기</td><td>전체 값, RFC 4180에 따라 따옴표 처리</td></tr>
+    <tr><td>숫자</td><td>오른쪽 정렬</td><td>저장된 값 그대로</td></tr>
+  </tbody>
+</table>
+
+<p>쿼리 결과는 페이지 반응성을 위해 처음 1,000행만 그립니다. CSV 내보내기에는 항상 모든 행이 들어갑니다.</p>
+
+<h2>동작 원리</h2>
+
+<p>페이지는 먼저 파일의 처음 100바이트만 읽어 SQLite 헤더를 확인합니다. SQLite 엔진(sql.js, 압축 시 약 340 KB)은 이 확인을 통과한 뒤에야 내려받으므로, 페이지를 여는 것만으로는 추가 로딩이 없고 잘못된 파일로 다운로드가 일어나지도 않습니다. 그다음 파일 전체를 인메모리 데이터베이스로 SQLite에 넘깁니다. 테이블 구조는 <code>pragma_table_info</code>와 <code>pragma_index_list</code>에서 가져오며, 모든 테이블·컬럼 이름에 따옴표를 붙이므로 공백, 따옴표, 한글이 들어간 이름도 문제없습니다.</p>
+
+<h2>지원 범위</h2>
+
+<p>이 도구는 100 MB 이하의 SQLite 3 파일 하나를 열어 읽습니다. 변경 내용을 파일에 되돌려 쓰지 않고, <code>-wal</code> / <code>-journal</code> 부속 파일을 읽지 않으며, 암호화된 데이터베이스를 열지 않습니다. SpatiaLite 지오메트리 테이블처럼 확장에 의존하는 가상 테이블은 행 대신 SQLite 오류를 표시합니다. 이런 경우에는 내 컴퓨터의 sqlite3 명령줄이나 DB Browser for SQLite를 사용하세요.</p>
