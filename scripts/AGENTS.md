@@ -16,6 +16,7 @@
 | `audit-slug-aliases.mjs` | 巡检 | 审计 `_redirects` 与 slug 的对应关系，发现孤儿规则 | 手动按需 |
 | `test-har-invariant.mjs` | 回归 | spec-driven 不变式测试：3 层（spec sum / 新算法 mirror / 旧错算法 regression guard）× 10 fixture；守住 HAR `connect + ssl` 双计 bug 不复发 | 手动按需 / 修改 `HarFileAnalyzerTool.astro` phase 逻辑前后 |
 | `test-barcode-symbology.mjs` | 回归 | spec-driven 条码编码测试：从 `BarcodeGeneratorTool.astro` 抽取真实编码块（不 mirror，杜绝漂移），3 层（表结构不变式 / 已知校验位向量 / 独立解码器 round-trip）共 497 项 | 手动按需 / 修改 `BarcodeGeneratorTool.astro` 编码表或子集切换逻辑前后 |
+| `test-secret-redactor.mjs` | 回归 | spec-driven 脱敏引擎测试：从 `SecretRedactorTool.astro` 抽取 `engine:start/end` 之间的真实代码，覆盖 26 条规则正例 + 已知误报反例、同值同占位符、重叠裁决、既有占位符跳号、还原往返与容错、缺失/未知占位符、1,000,000 字符耗时 | 手动按需 / 修改 `SecretRedactorTool.astro` 规则表或占位符逻辑前后 |
 | `deploy.sh` | 部署 | 本地构建 + `wrangler pages deploy`（需 `PROJECT_NAME` env） | 手工部署兜底 |
 | `devto-article-draft.md` | 内容草稿 | 非脚本，是发到 dev.to 的草稿 | — |
 
@@ -58,3 +59,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-04-26 — 加入 `audit.mjs`（13 维度静态校验）+ CI 巡检管线说明
 - 2026-05-22 — 加入 `test-har-invariant.mjs`（HAR waterfall spec-driven 回归测试，3 层 × 10 fixture）
 - 2026-08-01 — 加入 `test-barcode-symbology.mjs`（条码符号集 spec-driven 回归测试；从组件源码抽取编码器 + 独立解码器 round-trip）
+- 2026-09-23 — 加入 `test-secret-redactor.mjs`（secret-redactor 检测/脱敏/还原引擎 spec-driven 回归测试；从组件源码抽取引擎块）
