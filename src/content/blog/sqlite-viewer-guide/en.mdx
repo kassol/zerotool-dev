@@ -1,0 +1,352 @@
+---
+title: "SQLite Viewer in the Browser: Inspect .db Files Without Uploading"
+description: "Open a SQLite .db file in your browser to check tables, schema and rows, run SQL on an in-memory copy, handle WAL and BLOBs, and export CSV. No upload."
+pubDate: 2026-09-23
+lang: "en"
+canonicalSlug: "sqlite-viewer-guide"
+tags: ["sqlite", "database", "sql", "developer-tools"]
+---
+
+A coding agent just finished a task. It wrote a migration, ran it, and seeded `dev.db` with fixtures. The summary says "added `orders.status` with a default of `'pending'` and backfilled 3,200 rows." You want to see that with your own eyes before you trust it. The same thing happens when an ORM generates a migration you did not write by hand, or when a mobile app writes its local database on a test device and you pull the file off to find out why a screen is empty.
+
+The obvious shortcut is to paste the rows into an AI chat and ask what went wrong. For most real databases you should not do that. A `dev.db` copied from staging has customer emails. A mobile app database has session tokens. A CLI's state file has API keys. The file needs to be read by a person, on the machine where it already is.
+
+[Open a SQLite file in the viewer →](/tools/sqlite-viewer/)
+
+The viewer opens the file inside the browser tab. It shows the tables, views, columns, indexes and `CREATE` statements, pages through rows, runs any SQL you type, and exports CSV. Nothing is uploaded, and the tool page loads no analytics or ad scripts. The rest of this guide explains what is inside a SQLite file, how the viewer reads it, and the cases where a file does not show what you expect.
+
+## When a browser SQLite viewer is the right tool
+
+| Situation | What you check | Why a browser viewer fits |
+|-----------|----------------|---------------------------|
+| An agent or script ran a migration | New columns, defaults, backfilled values, new indexes | Open the file, read the structure panel, run one `SELECT`, close the tab |
+| ORM migration review | The `CREATE TABLE` SQLite actually stored, which can differ from the model | The viewer shows the stored `CREATE` statement verbatim |
+| Mobile app local database | Rows the app wrote on a test device | No desktop client to install; the file stays on your machine |
+| Electron app or CLI state | Settings, caches, queue tables | Many desktop apps and CLIs keep state in a single SQLite file |
+| Test fixture check | A fixture database committed to the repo | Confirm the fixture holds what the test assumes |
+| Handing data to a colleague | One query result, not the whole database | Run the query, export CSV, send the CSV |
+| Trying a statement before running it for real | Effect of an `UPDATE` or `DELETE` | SQL runs on an in-memory copy; the file on disk does not change |
+
+For editing a file in place, very large files, and encrypted databases, use a local tool. The sections below explain why and name the tool for each case.
+
+## What is inside a SQLite file
+
+A SQLite database is one ordinary file. The format is documented in full in the [SQLite Database File Format](https://www.sqlite.org/fileformat.html) page, and a few facts from it explain most of what a viewer does.
+
+### The 100-byte header
+
+The first 100 bytes of every database file are the file header. The first 16 bytes are fixed:
+
+```text
+53 51 4c 69 74 65 20 66 6f 72 6d 61 74 20 33 00
+S  Q  L  i  t  e     f  o  r  m  a  t     3  \0
+```
+
+That is the UTF-8 string `SQLite format 3` followed by a nul byte. Any file that does not start with these 16 bytes is not a plain SQLite 3 database. The file extension tells you nothing: `.db`, `.sqlite`, `.sqlite3` and `.db3` are all common, and plenty of `.db` files are something else.
+
+Other header fields that are useful when a file behaves strangely:
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 16 | 2 bytes | Page size (big-endian) |
+| 18 | 1 byte | File format write version |
+| 19 | 1 byte | File format read version |
+| 40 | 4 bytes | Schema cookie (incremented on every schema change) |
+| 56 | 4 bytes | Text encoding |
+| 60 | 4 bytes | User version (often used by apps as a migration counter) |
+| 68 | 4 bytes | Application ID |
+| 96 | 4 bytes | Version number of the SQLite library that last wrote the file |
+
+The page size is a power of two. Versions up to 3.7.0.1 allowed 512 to 32,768 bytes. SQLite 3.7.1 (2010) added 65,536-byte pages. Because 65,536 does not fit in two bytes, it is stored as the value `1`. Bytes 18 and 19 are both `1` for rollback-journal databases and both `2` for WAL databases, so you can tell the journal mode of a file without opening it.
+
+### The schema table
+
+Page 1 of the file is the root of a table called `sqlite_schema`. Older code and most tutorials call it `sqlite_master`, which is still a valid alias. It has five columns: `type`, `name`, `tbl_name`, `rootpage` and `sql`. Every table, index, view and trigger has one row, and the `sql` column holds the original `CREATE` statement text.
+
+Names that begin with `sqlite_` are internal objects that SQLite creates for itself, such as `sqlite_sequence` for `AUTOINCREMENT` counters or `sqlite_stat1` for query planner statistics. SQLite does not let applications create objects with that prefix.
+
+## How the viewer reads your file
+
+Here is what happens between the drop and the table list, in order.
+
+**1. Size check.** Files over 100 MB are rejected before any bytes are read. The reason is memory: the file is held once as a buffer read from disk and once inside the SQLite engine. Two copies of a large database make browser tabs unstable.
+
+**2. Header check.** The viewer reads only the first 100 bytes with the File API and compares the first 16 against `SQLite format 3\0`. If the file is shorter than 100 bytes or the bytes differ, you get a "Not a SQLite 3 database" error. The file extension is never trusted.
+
+**3. Engine load.** Only after the header check passes does the page fetch the SQLite engine. The engine is [sql.js](https://github.com/sql-js/sql.js) 1.14.2, which is SQLite 3.49.1 compiled to WebAssembly. The two files are about 340 KB compressed, and the browser fetches them once. A wrong file, a PNG, or a CSV never triggers the download.
+
+**4. In-memory open.** The whole file is read into a `Uint8Array` and passed to `new SQL.Database(bytes)`. sql.js keeps that database in a virtual in-memory file system. From this point, every query runs against the copy.
+
+**5. Object list.** The viewer queries `sqlite_master` for tables and views. Internal `sqlite_%` objects are hidden from the list, but you can still query them from the SQL editor. Each table gets a `COUNT(*)`. Views are listed without a count.
+
+**6. Structure.** When you select a table or view, the viewer runs the table-valued pragma functions:
+
+```sql
+SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?);
+SELECT name, "unique", origin FROM pragma_index_list(?);
+SELECT name FROM pragma_index_info(?) ORDER BY seqno;
+```
+
+The table-valued form of these pragmas exists since SQLite 3.16.0 (2017). The structure panel shows each column's name, declared type, `NOT NULL`, default and primary-key position. The index panel shows name, columns, uniqueness and origin. Origin is `c` for an index created with `CREATE INDEX`, `u` for one created by a `UNIQUE` constraint, and `pk` for one created by a `PRIMARY KEY` constraint. `pragma_index_info` returns `NULL` as the column name when the index entry is the rowid or an expression; the viewer shows such an entry as `(expr)`. Below the indexes is the `CREATE` statement exactly as stored in the schema table.
+
+**7. Rows.** The data grid pages through the table 100 rows at a time with `LIMIT 100 OFFSET n`. The range line reads "Rows 101–200 of 3,200" so you always know where you are.
+
+Every table and column name the viewer puts into SQL is quoted with double quotes, and any double quote inside a name is doubled. Tables named `order`, `user data` or `"quoted"`, and names in non-Latin scripts, open correctly.
+
+### What "no upload" means here
+
+The file goes from your disk to the page's memory through the File API. The only network requests the tool makes are for the engine files, and those are static files from the same site. The tool page is also configured to skip the site's analytics and ad scripts, because the input is a private database. When you close or reload the tab, the in-memory copy is gone.
+
+## SQLite values are not what the column says
+
+Most confusion when reading a SQLite file comes from its type system. The [Datatypes In SQLite](https://www.sqlite.org/datatype3.html) page describes it; the short version:
+
+- A value has one of five **storage classes**: `NULL`, `INTEGER`, `REAL`, `TEXT`, `BLOB`.
+- SQLite uses dynamic typing: **the type belongs to the value, not to the column.**
+- The declared column type only sets an **affinity** (`TEXT`, `NUMERIC`, `INTEGER`, `REAL`, `BLOB`), which SQLite uses to convert values on insert when it can.
+
+The affinity comes from the declared type name by substring rules. A type containing `INT` gets INTEGER affinity. `CHAR`, `CLOB` or `TEXT` gives TEXT affinity, so `VARCHAR(255)` is TEXT and the 255 is ignored. `BLOB`, or no type at all, gives BLOB affinity. `REAL`, `FLOA` or `DOUB` gives REAL. Anything else gets NUMERIC.
+
+In practice this means a column declared `INTEGER` can still hold the string `'n/a'` if something wrote it. An ORM that declared `created_at DATETIME` may store ISO-8601 text in one row and a Unix timestamp in another. SQLite has no date type and no boolean type: dates are stored as TEXT, REAL (Julian day) or INTEGER (Unix time), and booleans as the integers `0` and `1`.
+
+The viewer renders each cell from the value it gets back, not from the declared column type:
+
+| Value | In the grid | In CSV export |
+|-------|-------------|---------------|
+| `NULL` | A muted `NULL` marker | Empty field |
+| Empty string `''` | An empty cell | Empty field |
+| Number (INTEGER or REAL) | Right-aligned | As stored |
+| Text | Shown as text; long text is truncated in the cell | Full value, quoted when needed |
+| BLOB | `BLOB · 4 B · 89504E47` (byte length and first 16 bytes in hex) | Full content as uppercase hex |
+
+When a column looks wrong, ask SQLite directly what is in it:
+
+```sql
+SELECT typeof(created_at) AS storage_class, COUNT(*)
+FROM orders
+GROUP BY 1;
+```
+
+If this returns both `text` and `integer`, two code paths are writing the column in different formats. SQLite 3.37.0 (2021) added `STRICT` tables, which allow only `INT`, `INTEGER`, `REAL`, `TEXT`, `BLOB` and `ANY` as column types and reject values of the wrong type. If the stored `CREATE` statement ends in `STRICT`, the mixed-type problem cannot happen in that table.
+
+## Running SQL against the in-memory copy
+
+The editor under the data grid accepts any SQL that SQLite 3.49.1 understands. Press **Run SQL** or Ctrl/Cmd + Enter.
+
+- **Several statements at once.** Everything in the editor runs in order. The result grid shows the last statement that returns columns, such as a `SELECT` or an `UPDATE ... RETURNING`.
+- **Errors come from SQLite.** A typo gives SQLite's own message, such as `near "SELEC": syntax error`, in the status line. The previous result is cleared so you cannot mistake it for the new one.
+- **Statements that change data** report "Done. N row(s) changed in the in-memory copy." The count comes from `total_changes()` before and after the run.
+- **Schema changes are picked up.** If the run changed data or the schema version, the table list reloads. A `CREATE TABLE` you just ran appears in the list, and row counts update after an `INSERT` or `DELETE`.
+- **Large results.** The grid renders the first 1,000 rows so the page stays responsive, and says so. **Export CSV** always writes every row of the result.
+
+A few queries that are useful on an unfamiliar database:
+
+```sql
+-- Every object and its CREATE statement, including indexes and triggers
+SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name;
+
+-- Migration counter many apps keep in the header
+PRAGMA user_version;
+
+-- Foreign keys declared on a table
+SELECT * FROM pragma_foreign_key_list('orders');
+
+-- Check the file for corruption
+PRAGMA integrity_check;
+```
+
+### Writes stay in memory
+
+The browser has no write access to the file you picked. The engine works on a copy in memory, so `INSERT`, `UPDATE`, `DELETE`, `CREATE` and `DROP` all run and the viewer shows their effect, but the file on disk stays exactly as it was. The changes disappear when you reload the page or open another file. The tool has no option to download the edited copy.
+
+This makes the editor a safe place to try a statement before you run it for real. For example, you can check how many rows a cleanup would touch, then look at what is left:
+
+```sql
+DELETE FROM sessions WHERE expires_at < unixepoch();
+SELECT COUNT(*) AS remaining FROM sessions;
+```
+
+One detail matters if you test cascading deletes. Foreign key enforcement is off on a new SQLite connection unless the application turns it on, and that is also true in the viewer. Run `PRAGMA foreign_keys = ON;` first if you want `ON DELETE CASCADE` to fire in your test.
+
+To change the real file, use the `sqlite3` command-line shell or DB Browser for SQLite on your own machine.
+
+## Exporting CSV
+
+There are two **Export CSV** buttons. The one above the data grid exports the whole selected table or view, all rows, not only the current page. The one under the SQL editor exports the full result of your last query.
+
+The output follows RFC 4180: comma separators, CRLF line endings, a header row with the column names, and fields quoted with `"` when they contain a comma, a double quote, a CR or an LF. A double quote inside a field is doubled. The file name comes from the table name, with characters outside letters, digits, `.`, `_` and `-` replaced by `_`, or `query.csv` for a query result.
+
+Two consequences of CSV as a format:
+
+- `NULL` and the empty string both become an empty field. If the difference matters, select `COALESCE(col, '<null>')` or `col IS NULL AS col_is_null` in the query before exporting.
+- BLOBs become uppercase hex. A 4-byte PNG signature exports as `89504E47`. That keeps the CSV valid text, and most languages can decode it back with one call, such as `bytes.fromhex()` in Python.
+
+To hand data to a colleague, export only the query result they need. The database file stays with you.
+
+## Pitfalls and edge cases
+
+### Recent rows are missing: the WAL file
+
+This is the most common surprise. In WAL mode, described on the [Write-Ahead Logging](https://www.sqlite.org/wal.html) page, SQLite does not write committed changes into the main database file right away. It appends them to a separate file named after the database with a `-wal` suffix, alongside a `-shm` index file. A **checkpoint** moves the transactions from the WAL back into the main file. By default SQLite checkpoints automatically when the WAL reaches 1,000 pages, and the WAL is usually deleted when the last connection closes.
+
+So if you copy `app.db` from a running app, or pull it from a phone while the app is open, the newest transactions may still sit in `app.db-wal`. The viewer reads only the main file, so those rows are not there. The SQLite documentation also warns that separating a database file from its WAL can lose committed transactions or corrupt the database.
+
+Header bytes 18 and 19 tell you whether a file uses WAL (both are `2`). To fold the WAL into the main file, close the application that writes to it, then run:
+
+```bash
+sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"
+```
+
+`TRUNCATE` checkpoints every frame and then truncates the WAL file to zero bytes. Open `app.db` again afterwards. The same applies to a leftover `-journal` file from a rollback-mode database: the viewer reads only the main file, so let the owning application or the `sqlite3` shell open the database first.
+
+### "Not a SQLite 3 database" for a file you know is a database
+
+Encrypted databases produce this error. [SQLCipher](https://www.zetetic.net/sqlcipher/design/) stores a random salt in the first 16 bytes and encrypts the rest, so the whole file looks like random data and the `SQLite format 3` header is gone. The SQLite Encryption Extension (SEE) also encrypts the file. The viewer does not open encrypted databases. Decrypt with the `sqlcipher` shell, or open the file in [DB Browser for SQLite](https://sqlitebrowser.org/), which supports SQLCipher files.
+
+The same error appears for files that are something else with a `.db` name, and for truncated copies. Check the first bytes with `head -c 16 app.db | xxd`.
+
+### The file is larger than 100 MB
+
+The limit is fixed because the database is held in memory twice while it is open. For larger files, run `sqlite3 app.db` locally, or take a smaller extract first:
+
+```bash
+sqlite3 big.db "ATTACH 'small.db' AS s; CREATE TABLE s.orders AS SELECT * FROM orders WHERE created_at >= '2026-09-01';"
+```
+
+Then open `small.db` in the viewer.
+
+### A table shows an error instead of rows
+
+Some tables need code that is not part of the SQLite core. Virtual tables such as SpatiaLite geometry tables, `sqlite-vec` vector tables, FTS5 full-text indexes and R-Tree spatial indexes rely on modules compiled into the application that created them. The sql.js 1.14.2 build the viewer uses does not include the `fts5` or `rtree` modules; querying such a table returns SQLite's own error, for example `no such module: fts5`.
+
+When the row count of such a table fails, the list shows `—` and the data pane shows the error. The rest of the database stays browsable. FTS5 also keeps its data in ordinary "shadow" tables (for example `notes_fts_content`), and those are regular tables you can read.
+
+### A query that matches nothing
+
+A `SELECT` that matches zero rows still shows its column headers, and the status line reports "0 row(s)." That tells you the query ran and the column names are right, so the `WHERE` clause is the place to look. `SELECT COUNT(*) ... WHERE ...` always returns one row and makes the answer explicit.
+
+### Long text and wide tables
+
+Cells are capped in width, and long text is cut with an ellipsis. For text longer than 60 characters, hover to see up to the first 2,000 characters in a tooltip. To read a full JSON document stored in a column, select just that value and export the result as CSV, or use `json_extract()` in the query to pull out the part you need.
+
+### Copying a live database safely
+
+Copying the file with `cp` while an application writes to it can give you a torn copy. `VACUUM INTO`, available since SQLite 3.15.0, writes a transactionally consistent snapshot to a new file and leaves the original alone. The snapshot is a single file that includes the committed contents of the WAL:
+
+```bash
+sqlite3 app.db "VACUUM INTO 'snapshot.db'"
+```
+
+## Code examples
+
+### Python: inspect the header, then read-only counts
+
+The standard library `sqlite3` module can open a file read-only through a URI. This script checks the header the same way the viewer does, prints the page size and journal mode, and lists row counts.
+
+```python
+import sqlite3
+import sys
+
+path = sys.argv[1]
+with open(path, "rb") as f:
+    header = f.read(100)
+
+if len(header) < 100 or header[:16] != b"SQLite format 3\x00":
+    sys.exit(f"{path}: no SQLite 3 header (encrypted, truncated, or not a database)")
+
+page_size = int.from_bytes(header[16:18], "big")
+if page_size == 1:
+    page_size = 65536                      # 1 is the magic value for 64 KiB pages
+journal = "WAL" if header[18] == 2 else "rollback"
+print(f"page size: {page_size}  journal mode: {journal}")
+
+con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)   # read-only
+tables = con.execute(
+    "SELECT name FROM sqlite_master WHERE type = 'table' "
+    "AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name"
+).fetchall()
+for (name,) in tables:
+    quoted = '"' + name.replace('"', '""') + '"'
+    count = con.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
+    print(f"{name:<32}{count:>10}")
+con.close()
+```
+
+### JavaScript: the same engine in Node.js
+
+sql.js runs in Node.js too. This is the same model the browser tool uses: the file is loaded into memory, and writes change only the copy.
+
+```js
+import { readFileSync } from "node:fs";
+import initSqlJs from "sql.js";
+
+const bytes = readFileSync(process.argv[2]);
+const SQL = await initSqlJs();
+const db = new SQL.Database(bytes);          // in-memory copy of the file
+
+const [schema] = db.exec(
+  "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name"
+);
+for (const [type, name] of schema?.values ?? []) console.log(type.padEnd(6), name);
+
+// Writes change only the copy; the file on disk is untouched.
+db.run("DELETE FROM users WHERE email LIKE ?", ["%@example.com"]);
+console.log("rows deleted in memory:", db.getRowsModified());
+
+// db.export() returns the modified database as a Uint8Array if you want to keep it.
+db.close();
+```
+
+### Bash: prepare a file for viewing, and export from the CLI
+
+```bash
+# Fold pending WAL transactions into the main file (close the writing app first)
+sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"
+
+# Or take a consistent single-file snapshot and leave the original alone
+sqlite3 app.db "VACUUM INTO 'snapshot.db'"
+
+# Confirm the header before opening it anywhere
+head -c 16 snapshot.db | xxd
+
+# CSV export from the shell; hex() keeps BLOBs as text like the viewer does
+sqlite3 -header -csv snapshot.db \
+  "SELECT id, email, hex(avatar) AS avatar FROM users LIMIT 100" > users.csv
+```
+
+The `hex()` call matters. The `sqlite3` shell writes BLOB columns to CSV as raw bytes, which corrupts the file for most CSV readers.
+
+## How it compares to other SQLite tools
+
+Each of these tools is a good choice for a different job.
+
+| Tool | Runs where | Reads | Writes to the file | Encrypted files |
+|------|-----------|-------|--------------------|-----------------|
+| ZeroTool SQLite Viewer | Browser tab, nothing to install | One file up to 100 MB | No; changes stay in an in-memory copy | No |
+| `sqlite3` command-line shell | Local terminal | Files on local disk, including the WAL | Yes | No (use the `sqlcipher` shell) |
+| DB Browser for SQLite | Desktop app for Windows, macOS, Linux; open source | Files on local disk | Yes | Yes, SQLCipher |
+
+The `sqlite3` shell is the reference tool. It opens files in place without a size limit of its own, reads the WAL, and scripts well. Use `sqlite3 -readonly app.db` when you only want to look. Its limits are that you have to know the dot-commands and read wide tables in a terminal.
+
+DB Browser for SQLite is a full desktop editor. It can create and change tables, edit cells in a grid, and add or remove SQLCipher encryption. Use it when you need to change the file.
+
+The browser viewer is for the quick look: a structure panel, paged rows, a SQL editor and CSV export with no install, no account, and no upload. It is read-only toward the file by construction, so you cannot damage the database you are inspecting.
+
+## Related tools and references
+
+Tools on ZeroTool that pair well with a database file:
+
+- [CSV to SQL](/tools/csv-to-sql/) turns a CSV into `CREATE TABLE` and `INSERT` statements, for loading test data into a fresh SQLite file.
+- [SQL Formatter](/tools/sql-formatter/) makes a long `CREATE` statement or query readable before you paste it into the editor.
+- [CSV ↔ JSON](/tools/csv-json/) converts an exported query result to JSON for a fixture or an API mock.
+- [JSON Formatter](/tools/json-formatter/) is useful for JSON documents stored in a TEXT column.
+
+Primary sources used in this guide:
+
+- [Database File Format](https://www.sqlite.org/fileformat.html): header layout, page size, the schema table
+- [Write-Ahead Logging](https://www.sqlite.org/wal.html): WAL, `-wal` and `-shm` files, checkpoints
+- [Datatypes In SQLite](https://www.sqlite.org/datatype3.html): storage classes and type affinity
+- [STRICT Tables](https://www.sqlite.org/stricttables.html): typed columns since 3.37.0
+- [PRAGMA Statements](https://www.sqlite.org/pragma.html): `table_info`, `index_list`, `wal_checkpoint`
+- [VACUUM](https://www.sqlite.org/lang_vacuum.html): `VACUUM INTO` snapshots
+- [sql.js on GitHub](https://github.com/sql-js/sql.js): SQLite compiled to WebAssembly

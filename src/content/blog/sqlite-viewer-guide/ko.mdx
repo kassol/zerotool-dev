@@ -1,0 +1,352 @@
+---
+title: "브라우저용 SQLite 뷰어: 업로드 없이 .db 파일 들여다보기"
+description: "SQLite .db 파일을 브라우저에서 열어 테이블·스키마·행을 확인하고, 메모리 사본에 SQL을 실행하고, WAL과 BLOB을 다루고, CSV로 내보내세요. 업로드는 없습니다."
+pubDate: 2026-09-23
+lang: "ko"
+canonicalSlug: "sqlite-viewer-guide"
+tags: ["sqlite", "database", "sql", "developer-tools"]
+---
+
+코딩 에이전트가 방금 작업을 하나 끝냈다. 마이그레이션을 작성하고, 실행하고, 픽스처로 `dev.db`를 채웠다. 요약에는 "기본값 `'pending'`으로 `orders.status`를 추가하고 3,200개 행을 백필했다"고 적혀 있다. 신뢰하기 전에 직접 눈으로 확인하고 싶어진다. ORM이 손으로 작성하지 않은 마이그레이션을 생성했을 때도, 모바일 앱이 테스트 기기에 로컬 데이터베이스를 쓰고 그 파일을 꺼내 화면이 비어 있는 이유를 찾을 때도 같은 상황이 벌어진다. velog나 Tistory에 트러블슈팅 기록을 남기는 개발자들 사이에서도 낯설지 않은 장면이다.
+
+가장 손쉬운 방법은 행 데이터를 AI 챗에 붙여넣고 뭐가 잘못됐는지 물어보는 것이다. 실제 데이터베이스 대부분에서는 이렇게 하면 안 된다. 스테이징에서 복사한 `dev.db`에는 고객 이메일이 들어 있다. 모바일 앱 데이터베이스에는 세션 토큰이 있다. CLI 상태 파일에는 API 키가 있다. 파일은 이미 놓여 있는 그 기기에서, 사람이 직접 읽어야 한다.
+
+[뷰어에서 SQLite 파일 열기 →](/ko/tools/sqlite-viewer/)
+
+이 SQLite 뷰어는 파일을 브라우저 탭 안에서 연다. 테이블, 뷰, 컬럼, 인덱스, `CREATE` 문을 보여주고, 행을 페이지 단위로 넘기고, 입력한 어떤 SQL이든 실행하고, CSV로 내보낸다. 아무것도 업로드되지 않으며, 이 도구 페이지는 애널리틱스나 광고 스크립트도 로드하지 않는다. db 파일을 열어서 안을 확인하는 이 흐름이 궁금하다면, 이 가이드의 나머지 부분에서 SQLite 파일 내부에 무엇이 들어 있는지, 뷰어가 그것을 어떻게 읽는지, 파일이 기대와 다르게 보이는 경우는 언제인지 설명한다.
+
+## 브라우저 SQLite 뷰어가 맞는 도구인 경우
+
+| 상황 | 확인할 것 | 브라우저 뷰어가 맞는 이유 |
+|-----------|----------------|---------------------------|
+| 에이전트나 스크립트가 마이그레이션을 실행했다 | 새 컬럼, 기본값, 백필된 값, 새 인덱스 | 파일을 열고 구조 패널을 읽고 `SELECT` 하나 실행한 뒤 탭을 닫으면 끝 |
+| ORM 마이그레이션 검토 | SQLite가 실제로 저장한 `CREATE TABLE`(모델과 다를 수 있음) | 뷰어가 저장된 `CREATE` 문을 그대로 보여준다 |
+| 모바일 앱 로컬 데이터베이스 | 테스트 기기에서 앱이 기록한 행 | 설치할 데스크톱 클라이언트가 없고, 파일은 내 컴퓨터에 남는다 |
+| Electron 앱이나 CLI 상태 | 설정, 캐시, 큐 테이블 | 많은 데스크톱 앱과 CLI가 상태를 SQLite 파일 하나에 담아 둔다 |
+| 테스트 픽스처 확인 | 저장소에 커밋된 픽스처 데이터베이스 | 픽스처가 테스트의 가정과 맞는지 확인 |
+| 동료에게 데이터 전달 | 데이터베이스 전체가 아니라 쿼리 결과 하나 | 쿼리를 실행하고 CSV로 내보내 CSV만 전달 |
+| 실제로 실행하기 전에 문장을 시험해보기 | `UPDATE`나 `DELETE`의 효과 | SQL은 메모리 사본에서 실행되고 디스크의 파일은 바뀌지 않는다 |
+
+파일을 직접 수정해야 하거나, 파일이 아주 크거나, 암호화된 데이터베이스라면 로컬 도구를 쓴다. 아래 섹션에서 이유와 각 경우에 맞는 도구를 설명한다.
+
+## SQLite 파일 안에는 무엇이 들어 있나
+
+SQLite 데이터베이스는 그냥 평범한 파일 하나다. 포맷 전체는 [SQLite Database File Format](https://www.sqlite.org/fileformat.html) 문서에 정리돼 있고, 여기서 몇 가지 사실만 알아도 뷰어가 하는 일 대부분이 설명된다.
+
+### 100바이트 헤더
+
+모든 데이터베이스 파일의 첫 100바이트는 파일 헤더다. 그중 첫 16바이트는 고정값이다.
+
+```text
+53 51 4c 69 74 65 20 66 6f 72 6d 61 74 20 33 00
+S  Q  L  i  t  e     f  o  r  m  a  t     3  \0
+```
+
+이는 UTF-8 문자열 `SQLite format 3`에 nul 바이트가 붙은 형태다. 이 16바이트로 시작하지 않는 파일은 일반적인 SQLite 3 데이터베이스가 아니다. 확장자는 아무것도 말해주지 않는다. `.db`, `.sqlite`, `.sqlite3`, `.db3` 모두 흔히 쓰이고, `.db` 파일 중 상당수는 전혀 다른 형식이기도 하다.
+
+파일이 이상하게 동작할 때 유용한 다른 헤더 필드는 다음과 같다.
+
+| 오프셋 | 크기 | 필드 |
+|--------|------|-------|
+| 16 | 2바이트 | 페이지 크기(빅엔디안) |
+| 18 | 1바이트 | 파일 포맷 쓰기 버전 |
+| 19 | 1바이트 | 파일 포맷 읽기 버전 |
+| 40 | 4바이트 | 스키마 쿠키(스키마가 바뀔 때마다 증가) |
+| 56 | 4바이트 | 텍스트 인코딩 |
+| 60 | 4바이트 | 사용자 버전(앱이 마이그레이션 카운터로 쓰는 경우가 많음) |
+| 68 | 4바이트 | 애플리케이션 ID |
+| 96 | 4바이트 | 파일을 마지막으로 쓴 SQLite 라이브러리 버전 번호 |
+
+페이지 크기는 2의 거듭제곱이다. 3.7.0.1까지는 512~32,768바이트가 허용됐다. SQLite 3.7.1(2010년)에서 65,536바이트 페이지가 추가됐다. 65,536은 2바이트에 담기지 않으므로 값 `1`로 저장한다. 18번과 19번 바이트는 롤백 저널 데이터베이스에서는 둘 다 `1`, WAL 데이터베이스에서는 둘 다 `2`다. 즉 파일을 열지 않고도 저널 모드를 알 수 있다.
+
+### 스키마 테이블
+
+파일의 1페이지는 `sqlite_schema`라는 테이블의 루트다. 오래된 코드와 대부분의 튜토리얼은 이를 `sqlite_master`라고 부르는데, 여전히 유효한 별칭이다. 이 테이블은 `type`, `name`, `tbl_name`, `rootpage`, `sql` 다섯 컬럼을 가진다. 모든 테이블, 인덱스, 뷰, 트리거가 각각 한 행을 차지하며, `sql` 컬럼에 원본 `CREATE` 문 텍스트가 그대로 들어 있다.
+
+`sqlite_`로 시작하는 이름은 SQLite가 자체적으로 만드는 내부 객체다. `AUTOINCREMENT` 카운터용 `sqlite_sequence`나 쿼리 플래너 통계용 `sqlite_stat1`이 그 예다. SQLite는 애플리케이션이 이 접두어로 객체를 만들지 못하게 막는다.
+
+## 뷰어가 파일을 읽는 방식
+
+파일을 드롭한 순간부터 테이블 목록이 뜨기까지 일어나는 일을 순서대로 정리하면 다음과 같다.
+
+**1. 크기 확인.** 100MB를 넘는 파일은 바이트를 하나도 읽기 전에 거부된다. 이유는 메모리다. 파일은 디스크에서 읽은 버퍼로 한 번, SQLite 엔진 안에서 또 한 번, 두 번 메모리에 올라간다. 큰 데이터베이스 사본이 두 개 있으면 브라우저 탭이 불안정해진다.
+
+**2. 헤더 확인.** 뷰어는 File API로 첫 100바이트만 읽고, 그중 첫 16바이트를 `SQLite format 3\0`과 비교한다. 파일이 100바이트보다 짧거나 바이트가 다르면 "Not a SQLite 3 database" 오류가 뜬다. 파일 확장자는 절대 신뢰하지 않는다.
+
+**3. 엔진 로드.** 헤더 확인을 통과한 뒤에야 페이지가 SQLite 엔진을 가져온다. 엔진은 [sql.js](https://github.com/sql-js/sql.js) 1.14.2로, WebAssembly로 컴파일된 SQLite 3.49.1이다. 두 파일을 합쳐 압축 상태로 약 340KB이며, 브라우저는 이를 한 번만 내려받는다. 잘못된 파일, PNG, CSV를 열었을 때는 이 다운로드 자체가 일어나지 않는다.
+
+**4. 메모리 오픈.** 파일 전체를 `Uint8Array`로 읽어 `new SQL.Database(bytes)`에 전달한다. sql.js는 이 데이터베이스를 가상 인메모리 파일 시스템에 유지한다. 이 시점부터 모든 쿼리는 이 사본을 대상으로 실행된다.
+
+**5. 객체 목록.** 뷰어는 `sqlite_master`를 조회해 테이블과 뷰 목록을 가져온다. 내부 `sqlite_%` 객체는 목록에서 숨겨지지만 SQL 편집기에서는 여전히 조회할 수 있다. 각 테이블에는 `COUNT(*)`가 표시된다. 뷰는 행 개수 없이 나열된다.
+
+**6. 구조.** 테이블이나 뷰를 선택하면 뷰어는 테이블 값 반환 프래그마 함수를 실행한다.
+
+```sql
+SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?);
+SELECT name, "unique", origin FROM pragma_index_list(?);
+SELECT name FROM pragma_index_info(?) ORDER BY seqno;
+```
+
+이 테이블 값 반환 형태의 프래그마는 SQLite 3.16.0(2017년)부터 존재한다. 구조 패널은 각 컬럼의 이름, 선언된 타입, `NOT NULL` 여부, 기본값, 기본 키 위치를 보여준다. 인덱스 패널은 이름, 컬럼, 유일성, origin을 보여준다. origin은 `CREATE INDEX`로 만든 인덱스는 `c`, `UNIQUE` 제약으로 만든 것은 `u`, `PRIMARY KEY` 제약으로 만든 것은 `pk`다. `pragma_index_info`는 인덱스 항목이 rowid이거나 표현식일 때 컬럼 이름으로 `NULL`을 반환하는데, 뷰어는 이런 항목을 `(expr)`로 표시한다. 인덱스 아래에는 스키마 테이블에 저장된 그대로의 `CREATE` 문이 표시된다.
+
+**7. 행.** 데이터 그리드는 `LIMIT 100 OFFSET n`으로 테이블을 한 번에 100행씩 페이지 단위로 넘긴다. 범위 표시줄에 "Rows 101–200 of 3,200"처럼 나와서 지금 어디를 보고 있는지 항상 알 수 있다.
+
+뷰어가 SQL에 넣는 모든 테이블명과 컬럼명은 큰따옴표로 감싸며, 이름 안의 큰따옴표는 두 번 반복해 이스케이프한다. `order`, `user data`, `"quoted"` 같은 이름이나 비라틴 문자로 된 이름도 문제없이 열린다.
+
+### 여기서 "업로드 없음"이 의미하는 것
+
+파일은 File API를 통해 디스크에서 페이지의 메모리로 이동한다. 이 도구가 발생시키는 유일한 네트워크 요청은 엔진 파일용이며, 이 역시 같은 사이트의 정적 파일이다. 입력값이 비공개 데이터베이스이기 때문에 이 도구 페이지는 사이트의 애널리틱스와 광고 스크립트도 건너뛰도록 구성돼 있다. 탭을 닫거나 새로고침하면 메모리 사본은 사라진다.
+
+## SQLite 값은 컬럼이 말하는 것과 다르다
+
+SQLite 파일을 읽을 때 생기는 혼란은 대부분 타입 시스템에서 비롯된다. [Datatypes In SQLite](https://www.sqlite.org/datatype3.html) 문서에 설명돼 있으며, 요약하면 다음과 같다.
+
+- 값은 다섯 가지 **저장 클래스** 중 하나를 가진다: `NULL`, `INTEGER`, `REAL`, `TEXT`, `BLOB`.
+- SQLite는 동적 타이핑을 쓴다. **타입은 컬럼이 아니라 값에 속한다.**
+- 선언된 컬럼 타입은 **어피니티**(`TEXT`, `NUMERIC`, `INTEGER`, `REAL`, `BLOB`)만 정하며, SQLite는 가능할 때 삽입 시점에 이 어피니티로 값을 변환한다.
+
+어피니티는 선언된 타입 이름에 부분 문자열 규칙을 적용해 정해진다. `INT`가 들어간 타입은 INTEGER 어피니티를 얻는다. `CHAR`, `CLOB`, `TEXT`는 TEXT 어피니티를 주므로 `VARCHAR(255)`는 TEXT이고 255는 무시된다. `BLOB`이거나 타입이 아예 없으면 BLOB 어피니티다. `REAL`, `FLOA`, `DOUB`는 REAL을 준다. 그 외에는 모두 NUMERIC이다.
+
+실무에서 이는 `INTEGER`로 선언한 컬럼에도 뭔가가 써넣었다면 문자열 `'n/a'`가 그대로 들어갈 수 있다는 뜻이다. `created_at DATETIME`으로 선언한 ORM이 어떤 행에는 ISO-8601 텍스트를, 다른 행에는 유닉스 타임스탬프를 저장할 수도 있다. SQLite에는 날짜 타입도 불리언 타입도 없다. 날짜는 TEXT, REAL(율리우스일), INTEGER(유닉스 시간) 중 하나로 저장되고, 불리언은 정수 `0`과 `1`로 저장된다.
+
+뷰어는 선언된 컬럼 타입이 아니라 실제로 돌아온 값을 기준으로 각 셀을 렌더링한다.
+
+| 값 | 그리드에서 | CSV 내보내기에서 |
+|-------|-------------|--------------|
+| `NULL` | 흐린 색의 `NULL` 표시 | 빈 필드 |
+| 빈 문자열 `''` | 빈 셀 | 빈 필드 |
+| 숫자(INTEGER 또는 REAL) | 오른쪽 정렬 | 저장된 그대로 |
+| 텍스트 | 텍스트로 표시, 긴 텍스트는 셀 안에서 잘림 | 필요 시 따옴표로 감싼 전체 값 |
+| BLOB | `BLOB · 4 B · 89504E47`(바이트 길이와 앞 16바이트를 16진수로) | 전체 내용을 대문자 16진수로 |
+
+컬럼 값이 이상해 보이면 SQLite에 직접 무엇이 들어 있는지 물어본다.
+
+```sql
+SELECT typeof(created_at) AS storage_class, COUNT(*)
+FROM orders
+GROUP BY 1;
+```
+
+이 쿼리가 `text`와 `integer`를 둘 다 반환한다면, 서로 다른 코드 경로 두 개가 이 컬럼을 다른 포맷으로 쓰고 있다는 뜻이다. SQLite 3.37.0(2021년)에서 추가된 `STRICT` 테이블은 컬럼 타입으로 `INT`, `INTEGER`, `REAL`, `TEXT`, `BLOB`, `ANY`만 허용하고 타입이 맞지 않는 값을 거부한다. 저장된 `CREATE` 문이 `STRICT`로 끝난다면 그 테이블에서는 타입 혼재 문제가 애초에 일어날 수 없다.
+
+## 메모리 사본에 SQL 실행하기
+
+데이터 그리드 아래의 편집기는 SQLite 3.49.1이 이해하는 모든 SQL을 받아들인다. **Run SQL**을 누르거나 Ctrl/Cmd + Enter를 누른다.
+
+- **여러 문장을 한 번에.** 편집기 안의 모든 내용이 순서대로 실행된다. 결과 그리드에는 컬럼을 반환하는 마지막 문장(예: `SELECT`나 `UPDATE ... RETURNING`)이 표시된다.
+- **오류는 SQLite에서 나온다.** 오타가 있으면 `near "SELEC": syntax error`처럼 SQLite가 내는 메시지 그대로가 상태 표시줄에 뜬다. 이전 결과는 지워지므로 새 결과와 헷갈릴 일이 없다.
+- **데이터를 바꾸는 문장**은 "Done. N row(s) changed in the in-memory copy."라고 보고한다. 이 개수는 실행 전후의 `total_changes()` 차이에서 나온다.
+- **스키마 변경도 반영된다.** 실행한 내용이 데이터나 스키마 버전을 바꿨다면 테이블 목록이 다시 로드된다. 방금 실행한 `CREATE TABLE`이 목록에 나타나고, `INSERT`나 `DELETE` 이후 행 개수도 갱신된다.
+- **큰 결과.** 그리드는 페이지가 반응성을 유지하도록 처음 1,000행만 렌더링하고, 그렇다는 사실도 함께 표시한다. **Export CSV**는 항상 결과의 모든 행을 파일에 쓴다.
+
+처음 보는 데이터베이스에서 유용한 쿼리 몇 가지는 다음과 같다.
+
+```sql
+-- 인덱스와 트리거를 포함해 모든 객체와 CREATE 문
+SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name;
+
+-- 많은 앱이 헤더에 유지하는 마이그레이션 카운터
+PRAGMA user_version;
+
+-- 테이블에 선언된 외래 키
+SELECT * FROM pragma_foreign_key_list('orders');
+
+-- 파일 손상 여부 확인
+PRAGMA integrity_check;
+```
+
+### 쓰기는 메모리 안에서만 유지된다
+
+브라우저는 선택한 파일에 쓰기 권한이 없다. 엔진은 메모리 안의 사본을 대상으로 동작하므로 `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP` 모두 실행되고 뷰어에 그 결과가 표시되지만, 디스크의 파일은 원래 그대로 남는다. 페이지를 새로고침하거나 다른 파일을 열면 변경 내용은 사라진다. 이 도구에는 수정된 사본을 다운로드하는 옵션이 없다.
+
+덕분에 편집기는 실제로 실행하기 전에 문장을 시험해볼 수 있는 안전한 공간이 된다. 예를 들어 정리 작업이 몇 행에 영향을 줄지 먼저 확인한 뒤 남은 데이터를 볼 수 있다.
+
+```sql
+DELETE FROM sessions WHERE expires_at < unixepoch();
+SELECT COUNT(*) AS remaining FROM sessions;
+```
+
+캐스케이드 삭제를 테스트할 때 중요한 점이 하나 있다. 애플리케이션이 켜지 않는 한 새 SQLite 연결에서는 외래 키 강제가 기본적으로 꺼져 있고, 이는 뷰어에서도 마찬가지다. 테스트에서 `ON DELETE CASCADE`가 실제로 발동하길 원한다면 먼저 `PRAGMA foreign_keys = ON;`을 실행한다.
+
+실제 파일을 바꾸려면 `sqlite3` 커맨드라인 셸이나 로컬 컴퓨터의 DB Browser for SQLite를 사용한다.
+
+## CSV 내보내기
+
+**Export CSV** 버튼은 두 개다. 데이터 그리드 위쪽의 버튼은 선택한 테이블이나 뷰 전체를 내보낸다. 현재 페이지뿐 아니라 모든 행이 대상이다. SQL 편집기 아래쪽의 버튼은 마지막 쿼리의 전체 결과를 내보낸다.
+
+출력은 RFC 4180을 따른다. 콤마로 구분, CRLF 줄바꿈, 컬럼명이 담긴 헤더 행, 필드에 콤마·큰따옴표·CR·LF가 포함되면 `"`로 감싼다. 필드 안의 큰따옴표는 두 번 반복한다. 파일명은 테이블명에서 문자·숫자·`.`·`_`·`-`가 아닌 문자를 `_`로 바꾼 값이며, 쿼리 결과는 `query.csv`로 저장된다.
+
+CSV라는 포맷이 가진 두 가지 결과가 있다.
+
+- `NULL`과 빈 문자열은 둘 다 빈 필드가 된다. 그 차이가 중요하다면 내보내기 전에 쿼리에서 `COALESCE(col, '<null>')`이나 `col IS NULL AS col_is_null`을 선택한다.
+- BLOB은 대문자 16진수가 된다. 4바이트 PNG 시그니처는 `89504E47`로 내보내진다. 이렇게 하면 CSV가 유효한 텍스트로 유지되고, 대부분의 언어는 Python의 `bytes.fromhex()` 같은 호출 한 번으로 다시 디코딩할 수 있다.
+
+동료에게 데이터를 전달할 때는 필요한 쿼리 결과만 내보낸다. 데이터베이스 파일은 내 쪽에 남는다.
+
+## 함정과 엣지 케이스
+
+### 최근 행이 안 보일 때: WAL 파일
+
+가장 흔히 겪는 놀라움이다. [Write-Ahead Logging](https://www.sqlite.org/wal.html) 문서에 설명된 WAL 모드에서, SQLite는 커밋된 변경 사항을 메인 데이터베이스 파일에 곧바로 쓰지 않는다. 대신 데이터베이스 이름에 `-wal` 접미어가 붙은 별도 파일에 추가하고, 그 옆에 `-shm` 인덱스 파일을 둔다. **체크포인트**가 WAL의 트랜잭션을 메인 파일로 옮긴다. 기본적으로 SQLite는 WAL이 1,000페이지에 도달하면 자동으로 체크포인트를 수행하며, 마지막 연결이 닫히면 WAL은 보통 삭제된다.
+
+그래서 실행 중인 앱에서 `app.db`를 복사하거나, 앱이 열려 있는 상태로 휴대폰에서 파일을 꺼내면 가장 최근 트랜잭션이 아직 `app.db-wal`에 남아 있을 수 있다. 뷰어는 메인 파일만 읽으므로 그 행들은 보이지 않는다. SQLite 공식 문서도 데이터베이스 파일을 WAL과 분리하면 커밋된 트랜잭션을 잃거나 데이터베이스가 손상될 수 있다고 경고한다.
+
+헤더의 18번, 19번 바이트를 보면 파일이 WAL을 쓰는지 알 수 있다(둘 다 `2`면 WAL). WAL을 메인 파일에 합치려면, 파일에 쓰는 애플리케이션을 먼저 닫고 다음을 실행한다.
+
+```bash
+sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"
+```
+
+`TRUNCATE`는 모든 프레임을 체크포인트한 뒤 WAL 파일을 0바이트로 자른다. 이후 `app.db`를 다시 연다. 롤백 모드 데이터베이스에 남은 `-journal` 파일도 마찬가지다. 뷰어는 메인 파일만 읽으므로, 소유 애플리케이션이나 `sqlite3` 셸이 먼저 그 데이터베이스를 열도록 둔다.
+
+### 분명히 데이터베이스인데 "Not a SQLite 3 database"가 뜰 때
+
+암호화된 데이터베이스에서 이 오류가 난다. [SQLCipher](https://www.zetetic.net/sqlcipher/design/)는 첫 16바이트에 무작위 솔트를 저장하고 나머지를 암호화하므로, 파일 전체가 무작위 데이터처럼 보이고 `SQLite format 3` 헤더가 사라진다. SQLite Encryption Extension(SEE) 역시 파일을 암호화한다. 뷰어는 암호화된 데이터베이스를 열지 못한다. `sqlcipher` 셸로 복호화하거나, SQLCipher 파일을 지원하는 [DB Browser for SQLite](https://sqlitebrowser.org/)에서 파일을 연다.
+
+`.db`라는 이름을 가진 전혀 다른 파일이나, 잘려서 손상된 사본에서도 같은 오류가 뜬다. `head -c 16 app.db | xxd`로 첫 바이트를 확인한다.
+
+### 파일이 100MB보다 클 때
+
+이 제한은 파일이 열려 있는 동안 데이터베이스가 메모리에 두 번 올라가기 때문에 고정돼 있다. 더 큰 파일은 로컬에서 `sqlite3 app.db`를 실행하거나, 먼저 더 작은 추출본을 만든다.
+
+```bash
+sqlite3 big.db "ATTACH 'small.db' AS s; CREATE TABLE s.orders AS SELECT * FROM orders WHERE created_at >= '2026-09-01';"
+```
+
+그다음 `small.db`를 뷰어에서 연다.
+
+### 테이블에서 행 대신 오류가 뜰 때
+
+일부 테이블은 SQLite 코어에 포함되지 않은 코드가 필요하다. SpatiaLite 지오메트리 테이블, `sqlite-vec` 벡터 테이블, FTS5 전문 검색 인덱스, R-Tree 공간 인덱스 같은 가상 테이블은 그것을 만든 애플리케이션에 컴파일돼 들어간 모듈에 의존한다. 뷰어가 쓰는 sql.js 1.14.2 빌드에는 `fts5`나 `rtree` 모듈이 포함돼 있지 않다. 이런 테이블을 조회하면 `no such module: fts5` 같은 SQLite 고유의 오류가 반환된다.
+
+이런 테이블의 행 개수 조회가 실패하면 목록에는 `—`가 표시되고 데이터 패널에는 오류가 뜬다. 데이터베이스의 나머지 부분은 그대로 탐색할 수 있다. FTS5는 데이터를 일반 "섀도" 테이블(예: `notes_fts_content`)에도 저장하는데, 이런 테이블은 평범한 테이블이므로 그대로 읽을 수 있다.
+
+### 아무것도 매칭되지 않는 쿼리
+
+아무 행도 매칭되지 않는 `SELECT`도 컬럼 헤더는 그대로 보여주고, 상태 표시줄에는 "0 row(s)"라고 뜬다. 이는 쿼리가 실행됐고 컬럼명이 맞다는 뜻이므로, 살펴볼 곳은 `WHERE` 절이다. `SELECT COUNT(*) ... WHERE ...`는 항상 한 행을 반환하므로 답을 명확하게 보여준다.
+
+### 긴 텍스트와 넓은 테이블
+
+셀 너비는 제한돼 있고, 긴 텍스트는 말줄임표로 잘린다. 60자보다 긴 텍스트는 마우스를 올리면 툴팁에서 앞쪽 최대 2,000자까지 볼 수 있다. 컬럼에 저장된 JSON 문서 전체를 읽으려면 그 값만 선택해서 결과를 CSV로 내보내거나, 쿼리에서 `json_extract()`로 필요한 부분만 뽑아낸다.
+
+### 운영 중인 데이터베이스를 안전하게 복사하기
+
+애플리케이션이 파일에 쓰는 동안 `cp`로 복사하면 찢어진(torn) 사본이 만들어질 수 있다. SQLite 3.15.0부터 쓸 수 있는 `VACUUM INTO`는 트랜잭션 일관성이 보장된 스냅샷을 새 파일에 쓰고 원본은 그대로 둔다. 이 스냅샷은 WAL의 커밋된 내용까지 포함한 단일 파일이다.
+
+```bash
+sqlite3 app.db "VACUUM INTO 'snapshot.db'"
+```
+
+## 코드 예제
+
+### Python: 헤더를 확인한 뒤 읽기 전용으로 행 개수 세기
+
+표준 라이브러리 `sqlite3` 모듈은 URI를 통해 파일을 읽기 전용으로 열 수 있다. 이 스크립트는 뷰어와 같은 방식으로 헤더를 확인하고, 페이지 크기와 저널 모드를 출력한 뒤, 행 개수를 나열한다.
+
+```python
+import sqlite3
+import sys
+
+path = sys.argv[1]
+with open(path, "rb") as f:
+    header = f.read(100)
+
+if len(header) < 100 or header[:16] != b"SQLite format 3\x00":
+    sys.exit(f"{path}: no SQLite 3 header (encrypted, truncated, or not a database)")
+
+page_size = int.from_bytes(header[16:18], "big")
+if page_size == 1:
+    page_size = 65536                      # 1 is the magic value for 64 KiB pages
+journal = "WAL" if header[18] == 2 else "rollback"
+print(f"page size: {page_size}  journal mode: {journal}")
+
+con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)   # read-only
+tables = con.execute(
+    "SELECT name FROM sqlite_master WHERE type = 'table' "
+    "AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name"
+).fetchall()
+for (name,) in tables:
+    quoted = '"' + name.replace('"', '""') + '"'
+    count = con.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
+    print(f"{name:<32}{count:>10}")
+con.close()
+```
+
+### JavaScript: Node.js에서 쓰는 같은 엔진
+
+sql.js는 Node.js에서도 동작한다. 브라우저 도구가 쓰는 모델과 똑같다. 파일을 메모리로 읽어 들이고, 쓰기는 그 사본만 바꾼다.
+
+```js
+import { readFileSync } from "node:fs";
+import initSqlJs from "sql.js";
+
+const bytes = readFileSync(process.argv[2]);
+const SQL = await initSqlJs();
+const db = new SQL.Database(bytes);          // in-memory copy of the file
+
+const [schema] = db.exec(
+  "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name"
+);
+for (const [type, name] of schema?.values ?? []) console.log(type.padEnd(6), name);
+
+// Writes change only the copy; the file on disk is untouched.
+db.run("DELETE FROM users WHERE email LIKE ?", ["%@example.com"]);
+console.log("rows deleted in memory:", db.getRowsModified());
+
+// db.export() returns the modified database as a Uint8Array if you want to keep it.
+db.close();
+```
+
+### Bash: 열람 전 파일 준비, 그리고 CLI에서 내보내기
+
+```bash
+# Fold pending WAL transactions into the main file (close the writing app first)
+sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"
+
+# Or take a consistent single-file snapshot and leave the original alone
+sqlite3 app.db "VACUUM INTO 'snapshot.db'"
+
+# Confirm the header before opening it anywhere
+head -c 16 snapshot.db | xxd
+
+# CSV export from the shell; hex() keeps BLOBs as text like the viewer does
+sqlite3 -header -csv snapshot.db \
+  "SELECT id, email, hex(avatar) AS avatar FROM users LIMIT 100" > users.csv
+```
+
+`hex()` 호출이 중요하다. `sqlite3` 셸은 BLOB 컬럼을 원시 바이트 그대로 CSV에 쓰는데, 이는 대부분의 CSV 리더에서 파일을 깨뜨린다.
+
+## 다른 SQLite 도구와 비교
+
+아래 각 도구는 서로 다른 용도에 맞는다.
+
+| 도구 | 실행 환경 | 읽는 대상 | 파일에 쓰기 | 암호화 파일 |
+|------|-----------|-------|--------------------|-----------------|
+| ZeroTool SQLite 뷰어 | 브라우저 탭, 설치 불필요 | 최대 100MB의 파일 하나 | 아니오. 변경 사항은 메모리 사본에만 남는다 | 아니오 |
+| `sqlite3` 커맨드라인 셸 | 로컬 터미널 | WAL을 포함해 로컬 디스크의 파일 | 예 | 아니오(`sqlcipher` 셸 사용) |
+| DB Browser for SQLite | Windows, macOS, Linux용 데스크톱 앱, 오픈소스 | 로컬 디스크의 파일 | 예 | 예, SQLCipher |
+
+`sqlite3` 셸은 기준이 되는 도구다. 자체적인 크기 제한 없이 파일을 그 자리에서 열고, WAL도 읽고, 스크립트로 다루기도 좋다. 확인만 하고 싶을 때는 `sqlite3 -readonly app.db`를 쓴다. 단점은 닷 커맨드를 외워야 하고, 넓은 테이블을 터미널에서 읽어야 한다는 점이다.
+
+DB Browser for SQLite는 완전한 데스크톱 편집기다. 테이블을 만들고 바꿀 수 있고, 그리드에서 셀을 편집할 수 있고, SQLCipher 암호화를 추가하거나 제거할 수 있다. 파일을 실제로 바꿔야 할 때 쓴다.
+
+브라우저 뷰어는 빠르게 훑어볼 때를 위한 도구다. 구조 패널, 페이지 단위 행, SQL 편집기, CSV 내보내기를 설치도, 계정도, 업로드도 없이 제공한다. 구조적으로 파일에 대해 읽기 전용이므로, 들여다보는 중인 데이터베이스를 실수로 망가뜨릴 수 없다.
+
+## 관련 도구와 참고 자료
+
+데이터베이스 파일과 함께 쓰기 좋은 ZeroTool의 도구들.
+
+- [CSV to SQL](/ko/tools/csv-to-sql/)은 CSV를 `CREATE TABLE`과 `INSERT` 문으로 바꿔, 새 SQLite 파일에 테스트 데이터를 채워 넣을 때 쓴다.
+- [SQL Formatter](/ko/tools/sql-formatter/)는 긴 `CREATE` 문이나 쿼리를 편집기에 붙여넣기 전에 읽기 쉽게 정리한다.
+- [CSV ↔ JSON](/ko/tools/csv-json/)은 내보낸 쿼리 결과를 픽스처나 API 목(mock)용 JSON으로 변환한다.
+- [JSON Formatter](/ko/tools/json-formatter/)는 TEXT 컬럼에 저장된 JSON 문서를 다룰 때 유용하다.
+
+이 가이드에서 참고한 1차 자료.
+
+- [Database File Format](https://www.sqlite.org/fileformat.html): 헤더 구조, 페이지 크기, 스키마 테이블
+- [Write-Ahead Logging](https://www.sqlite.org/wal.html): WAL, `-wal`과 `-shm` 파일, 체크포인트
+- [Datatypes In SQLite](https://www.sqlite.org/datatype3.html): 저장 클래스와 타입 어피니티
+- [STRICT Tables](https://www.sqlite.org/stricttables.html): 3.37.0부터의 타입 지정 컬럼
+- [PRAGMA Statements](https://www.sqlite.org/pragma.html): `table_info`, `index_list`, `wal_checkpoint`
+- [VACUUM](https://www.sqlite.org/lang_vacuum.html): `VACUUM INTO` 스냅샷
+- [sql.js on GitHub](https://github.com/sql-js/sql.js): WebAssembly로 컴파일된 SQLite
