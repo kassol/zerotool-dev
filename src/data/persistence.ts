@@ -28,6 +28,7 @@ export const toolPersistencePolicy = {
   'secret-redactor': 'disabled',
   'sqlite-viewer': 'disabled',
   'pixelate-image': 'disabled',
+  'gif-splitter': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

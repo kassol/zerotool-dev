@@ -1,0 +1,1534 @@
+---
+// GifSplitterTool — decodes an animated GIF in the browser (hand-written
+// GIF87a/89a parser + LZW decoder), composites every frame by its disposal
+// method, and exports frames as PNG/JPG, a STORED ZIP, or a sprite sheet + JSON.
+// No upload. Only export preferences are persisted (policy: preference).
+---
+
+<div>
+  <div class="gs-wrap" id="gs-wrap">
+    <div id="gs-drop" class="gs-drop" role="button" tabindex="0" aria-label="Select a GIF file" data-i18n-aria="dropAria">
+      <div class="gs-drop-inner">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <p data-i18n="dropHint">Drop a GIF here, or <strong>click to select</strong></p>
+        <p class="gs-hint" data-i18n="pasteHint">You can also paste a copied GIF file with Ctrl/Cmd+V</p>
+        <p class="gs-hint" data-i18n="formatsHint">Animated or static GIF (GIF87a / GIF89a)</p>
+      </div>
+      <input type="file" id="gs-file" accept="image/gif,.gif" class="gs-file-input" tabindex="-1" aria-label="Select a GIF file" data-i18n-aria="dropAria" />
+    </div>
+
+    <progress id="gs-progress" class="gs-progress" max="1" value="0" hidden></progress>
+
+    <div id="gs-limit" class="gs-limit" hidden>
+      <p id="gs-limit-msg" class="gs-limit-msg"></p>
+      <div class="gs-limit-cmd-row">
+        <code id="gs-limit-cmd" class="gs-limit-cmd">ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png</code>
+        <button type="button" id="gs-limit-copy" class="btn-copy" data-i18n="copyCommand">Copy command</button>
+      </div>
+    </div>
+
+    <div id="gs-workspace" class="gs-workspace" hidden>
+      <dl class="gs-info" id="gs-info">
+        <div class="gs-info-item"><dt data-i18n="infoSize">Size</dt><dd id="gs-info-size"></dd></div>
+        <div class="gs-info-item"><dt data-i18n="infoFrames">Frames</dt><dd id="gs-info-frames"></dd></div>
+        <div class="gs-info-item"><dt data-i18n="infoDuration">Duration</dt><dd id="gs-info-duration"></dd></div>
+        <div class="gs-info-item"><dt data-i18n="infoLoop">Loop count</dt><dd id="gs-info-loop"></dd></div>
+        <div class="gs-info-item"><dt data-i18n="infoFile">File size</dt><dd id="gs-info-file"></dd></div>
+      </dl>
+
+      <div class="gs-select">
+        <div class="gs-select-row">
+          <span id="gs-selected-count" class="gs-selected-count" aria-live="polite"></span>
+          <button type="button" id="gs-select-all" class="btn-ghost" data-i18n="selectAll">Select all</button>
+          <button type="button" id="gs-select-none" class="btn-ghost" data-i18n="selectNone">Select none</button>
+        </div>
+        <div class="gs-range-row">
+          <label for="gs-from" data-i18n="rangeFrom">Frames</label>
+          <input type="number" id="gs-from" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
+          <label for="gs-to" data-i18n="rangeTo">to</label>
+          <input type="number" id="gs-to" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
+          <label for="gs-step" data-i18n="rangeStep">every</label>
+          <input type="number" id="gs-step" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
+          <button type="button" id="gs-range-apply" class="btn-secondary" data-i18n="rangeApply">Select these</button>
+        </div>
+      </div>
+
+      <div id="gs-grid" class="gs-grid" role="list" aria-label="Frames" data-i18n-aria="gridAria"></div>
+
+      <section class="gs-panel">
+        <h2 class="gs-panel-title" data-i18n="exportTitle">Export frames</h2>
+        <div class="gs-export-row">
+          <label class="gs-field">
+            <span data-i18n="formatLabel">Format</span>
+            <select id="gs-format" class="tool-input gs-select-input">
+              <option value="png">PNG</option>
+              <option value="jpg">JPG</option>
+            </select>
+          </label>
+          <div id="gs-jpg-opts" class="gs-jpg-opts" hidden>
+            <label for="gs-quality" class="gs-quality-label">
+              <span data-i18n="qualityLabel">JPG quality</span> <strong id="gs-quality-val">92</strong>
+            </label>
+            <input type="range" id="gs-quality" min="50" max="100" step="1" value="92" />
+            <label class="gs-field gs-bg-field">
+              <span data-i18n="bgLabel">Background for transparent areas</span>
+              <input type="color" id="gs-bg" value="#ffffff" />
+            </label>
+          </div>
+        </div>
+        <div class="gs-actions">
+          <button type="button" id="gs-zip" class="btn-primary">Download ZIP</button>
+          <button type="button" id="gs-reset" class="btn-ghost" data-i18n="reset">Open another GIF</button>
+        </div>
+      </section>
+
+      <section class="gs-panel">
+        <h2 class="gs-panel-title" data-i18n="spriteTitle">Sprite sheet</h2>
+        <div class="gs-sprite-row">
+          <label class="gs-field">
+            <span data-i18n="columnsLabel">Columns</span>
+            <input type="number" id="gs-columns" class="tool-input gs-num" min="1" value="8" inputmode="numeric" />
+          </label>
+          <label class="gs-field">
+            <span data-i18n="spacingLabel">Spacing (px)</span>
+            <input type="number" id="gs-spacing" class="tool-input gs-num" min="0" value="0" inputmode="numeric" />
+          </label>
+          <button type="button" id="gs-sprite-build" class="btn-secondary" data-i18n="buildSprite">Build sprite sheet</button>
+        </div>
+        <div id="gs-sprite-out" class="gs-sprite-out" hidden>
+          <p id="gs-sprite-meta" class="gs-sprite-meta"></p>
+          <div class="gs-sprite-preview"><img id="gs-sprite-img" alt="Sprite sheet preview" data-i18n-alt="spriteAlt" /></div>
+          <div class="gs-actions">
+            <button type="button" id="gs-sprite-png" class="btn-secondary" data-i18n="downloadPng">Download PNG</button>
+            <button type="button" id="gs-sprite-json-dl" class="btn-secondary" data-i18n="downloadJson">Download JSON</button>
+            <button type="button" id="gs-sprite-copy" class="btn-copy" data-i18n="copyJson">Copy JSON</button>
+          </div>
+          <textarea id="gs-sprite-json" class="tool-textarea gs-json" rows="8" readonly aria-label="Sprite sheet JSON" data-i18n-aria="jsonAria"></textarea>
+        </div>
+      </section>
+    </div>
+
+    <div id="gs-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          dropAria: 'Select a GIF file', gridAria: 'Frames',
+          dropHint: 'Drop a GIF here, or <strong>click to select</strong>',
+          pasteHint: 'You can also paste a copied GIF file with Ctrl/Cmd+V',
+          formatsHint: 'Animated or static GIF (GIF87a / GIF89a)',
+          infoSize: 'Size', infoFrames: 'Frames', infoDuration: 'Duration', infoLoop: 'Loop count', infoFile: 'File size',
+          loopInfinite: 'Infinite', loopOnce: 'Plays once',
+          selectedCount: '{n} / {total} selected', selectAll: 'Select all', selectNone: 'Select none',
+          rangeFrom: 'Frames', rangeTo: 'to', rangeStep: 'every', rangeApply: 'Select these',
+          frameAria: 'Frame {n}, {ms} ms', downloadFrameAria: 'Download frame {n}',
+          exportTitle: 'Export frames', formatLabel: 'Format', qualityLabel: 'JPG quality',
+          bgLabel: 'Background for transparent areas', downloadZip: 'Download ZIP ({n})', reset: 'Open another GIF',
+          spriteTitle: 'Sprite sheet', columnsLabel: 'Columns', spacingLabel: 'Spacing (px)', buildSprite: 'Build sprite sheet',
+          spriteMeta: '{w}×{h} px · {n} frames · {c} columns', spriteAlt: 'Sprite sheet preview',
+          downloadPng: 'Download PNG', downloadJson: 'Download JSON', copyJson: 'Copy JSON', copied: 'Copied',
+          jsonAria: 'Sprite sheet JSON', copyCommand: 'Copy command',
+          statusNotGif: 'Not a GIF file — the file must start with GIF87a or GIF89a. For PNG, JPG or WebP use the WebP Converter.',
+          statusReadFailed: 'Could not read this file',
+          statusNoFrames: 'This GIF contains no image frames',
+          statusDecoding: 'Decoding frame {i} / {n}…',
+          statusDecoded: '{n} frames decoded',
+          statusTruncated: '{n} frames decoded. The file ends early or is damaged, so the last frames may be incomplete.',
+          statusNoSelection: 'Select at least one frame first',
+          statusEncoding: 'Encoding frame {i} / {n}…',
+          statusZipDone: 'ZIP downloaded ({n} frames)',
+          statusFrameDone: 'Frame {n} downloaded',
+          statusExportFailed: 'Export failed — the browser could not encode this image',
+          statusSpriteTooBig: 'The sprite sheet would be {w}×{h} px, above the canvas limit of mobile browsers (16,777,216 px, max 16,384 px per side). Select fewer frames or change the column count.',
+          statusSpriteDone: 'Sprite sheet ready',
+          statusCopyFailed: 'Copy was blocked — select the text and copy it manually',
+          limitPixels: 'This GIF is {w}×{h} with {n} frames: {mp} million pixels to decode. The limit is 50 million pixels (width × height × frames) so the page stays within phone memory. Split it locally with ffmpeg:',
+          limitFrames: 'This GIF has {n} frames. The limit is 1,000 frames. Split it locally with ffmpeg:',
+          limitFrameSize: 'Frames in this GIF are too large ({w}×{h}). The limit is 16,777,216 pixels per frame and 16,384 px per side, the canvas limit of mobile browsers. Split it locally with ffmpeg:',
+        },
+        zh: {
+          dropAria: '选择 GIF 文件', gridAria: '帧列表',
+          dropHint: '把 GIF 拖到这里，或<strong>点击选择</strong>',
+          pasteHint: '也可以用 Ctrl/Cmd+V 粘贴已复制的 GIF 文件',
+          formatsHint: '支持动态或静态 GIF（GIF87a / GIF89a）',
+          infoSize: '尺寸', infoFrames: '帧数', infoDuration: '总时长', infoLoop: '循环次数', infoFile: '文件大小',
+          loopInfinite: '无限循环', loopOnce: '只播放一次',
+          selectedCount: '已选 {n} / {total} 帧', selectAll: '全选', selectNone: '全不选',
+          rangeFrom: '第', rangeTo: '到', rangeStep: '帧，每隔', rangeApply: '按此选择',
+          frameAria: '第 {n} 帧，{ms} 毫秒', downloadFrameAria: '下载第 {n} 帧',
+          exportTitle: '导出帧', formatLabel: '格式', qualityLabel: 'JPG 质量',
+          bgLabel: '透明区域背景色', downloadZip: '下载 ZIP（{n} 帧）', reset: '换一个 GIF',
+          spriteTitle: '雪碧图', columnsLabel: '列数', spacingLabel: '间距（px）', buildSprite: '生成雪碧图',
+          spriteMeta: '{w}×{h} px · {n} 帧 · {c} 列', spriteAlt: '雪碧图预览',
+          downloadPng: '下载 PNG', downloadJson: '下载 JSON', copyJson: '复制 JSON', copied: '已复制',
+          jsonAria: '雪碧图 JSON', copyCommand: '复制命令',
+          statusNotGif: '不是 GIF 文件：文件头必须是 GIF87a 或 GIF89a。PNG、JPG、WebP 请用 WebP 转换器。',
+          statusReadFailed: '无法读取此文件',
+          statusNoFrames: '这个 GIF 里没有图像帧',
+          statusDecoding: '正在解码第 {i} / {n} 帧…',
+          statusDecoded: '已解码 {n} 帧',
+          statusTruncated: '已解码 {n} 帧。文件提前结束或已损坏，最后几帧可能不完整。',
+          statusNoSelection: '请先选择至少一帧',
+          statusEncoding: '正在编码第 {i} / {n} 帧…',
+          statusZipDone: 'ZIP 已下载（{n} 帧）',
+          statusFrameDone: '第 {n} 帧已下载',
+          statusExportFailed: '导出失败：浏览器无法编码这张图片',
+          statusSpriteTooBig: '雪碧图将达到 {w}×{h} px，超出移动端浏览器的 canvas 上限（16,777,216 像素、单边 16,384 px）。请减少所选帧或调整列数。',
+          statusSpriteDone: '雪碧图已生成',
+          statusCopyFailed: '复制被拦截，请手动选中文本复制',
+          limitPixels: '这个 GIF 尺寸 {w}×{h}、共 {n} 帧，需解码 {mp} 百万像素。为保证手机内存够用，上限为 5000 万像素（宽 × 高 × 帧数）。请用 ffmpeg 在本地拆帧：',
+          limitFrames: '这个 GIF 有 {n} 帧，上限为 1000 帧。请用 ffmpeg 在本地拆帧：',
+          limitFrameSize: '这个 GIF 的帧尺寸过大（{w}×{h}）。移动端浏览器的 canvas 上限为单帧 16,777,216 像素、单边 16,384 px。请用 ffmpeg 在本地拆帧：',
+        },
+        ja: {
+          dropAria: 'GIF ファイルを選択', gridAria: 'フレーム一覧',
+          dropHint: 'GIF をここにドロップ、または<strong>クリックして選択</strong>',
+          pasteHint: 'コピーした GIF ファイルを Ctrl/Cmd+V で貼り付けることもできます',
+          formatsHint: 'アニメーション GIF・静止 GIF（GIF87a / GIF89a）',
+          infoSize: 'サイズ', infoFrames: 'フレーム数', infoDuration: '再生時間', infoLoop: 'ループ回数', infoFile: 'ファイルサイズ',
+          loopInfinite: '無限ループ', loopOnce: '1 回のみ再生',
+          selectedCount: '{total} 中 {n} フレームを選択', selectAll: 'すべて選択', selectNone: '選択解除',
+          rangeFrom: 'フレーム', rangeTo: '〜', rangeStep: '、間隔', rangeApply: 'この条件で選択',
+          frameAria: 'フレーム {n}、{ms} ミリ秒', downloadFrameAria: 'フレーム {n} をダウンロード',
+          exportTitle: 'フレームを書き出す', formatLabel: '形式', qualityLabel: 'JPG 品質',
+          bgLabel: '透明部分の背景色', downloadZip: 'ZIP をダウンロード（{n} 枚）', reset: '別の GIF を開く',
+          spriteTitle: 'スプライトシート', columnsLabel: '列数', spacingLabel: '間隔（px）', buildSprite: 'スプライトシートを作成',
+          spriteMeta: '{w}×{h} px · {n} フレーム · {c} 列', spriteAlt: 'スプライトシートのプレビュー',
+          downloadPng: 'PNG をダウンロード', downloadJson: 'JSON をダウンロード', copyJson: 'JSON をコピー', copied: 'コピーしました',
+          jsonAria: 'スプライトシート JSON', copyCommand: 'コマンドをコピー',
+          statusNotGif: 'GIF ファイルではありません。ファイル先頭は GIF87a または GIF89a である必要があります。PNG・JPG・WebP は WebP 変換器をご利用ください。',
+          statusReadFailed: 'このファイルを読み込めません',
+          statusNoFrames: 'この GIF には画像フレームがありません',
+          statusDecoding: 'フレーム {i} / {n} をデコード中…',
+          statusDecoded: '{n} フレームをデコードしました',
+          statusTruncated: '{n} フレームをデコードしました。ファイルが途中で終わっているか破損しているため、最後のフレームが欠けている可能性があります。',
+          statusNoSelection: '先にフレームを 1 つ以上選択してください',
+          statusEncoding: 'フレーム {i} / {n} をエンコード中…',
+          statusZipDone: 'ZIP をダウンロードしました（{n} フレーム）',
+          statusFrameDone: 'フレーム {n} をダウンロードしました',
+          statusExportFailed: '書き出しに失敗しました。ブラウザがこの画像をエンコードできません',
+          statusSpriteTooBig: 'スプライトシートが {w}×{h} px になり、モバイルブラウザの canvas 上限（16,777,216 ピクセル、一辺 16,384 px）を超えます。選択フレームを減らすか列数を変更してください。',
+          statusSpriteDone: 'スプライトシートを作成しました',
+          statusCopyFailed: 'コピーがブロックされました。テキストを選択して手動でコピーしてください',
+          limitPixels: 'この GIF は {w}×{h}、{n} フレームで、デコードに {mp} 百万ピクセルが必要です。スマートフォンのメモリに収めるため上限は 5,000 万ピクセル（幅 × 高さ × フレーム数）です。ffmpeg を使ってローカルで分解してください：',
+          limitFrames: 'この GIF は {n} フレームあります。上限は 1,000 フレームです。ffmpeg を使ってローカルで分解してください：',
+          limitFrameSize: 'この GIF のフレームは大きすぎます（{w}×{h}）。モバイルブラウザの canvas 上限は 1 フレーム 16,777,216 ピクセル、一辺 16,384 px です。ffmpeg を使ってローカルで分解してください：',
+        },
+        ko: {
+          dropAria: 'GIF 파일 선택', gridAria: '프레임 목록',
+          dropHint: 'GIF를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
+          pasteHint: '복사한 GIF 파일을 Ctrl/Cmd+V로 붙여넣을 수도 있습니다',
+          formatsHint: '움직이는 GIF·정지 GIF (GIF87a / GIF89a)',
+          infoSize: '크기', infoFrames: '프레임 수', infoDuration: '재생 시간', infoLoop: '반복 횟수', infoFile: '파일 크기',
+          loopInfinite: '무한 반복', loopOnce: '1회 재생',
+          selectedCount: '{total}개 중 {n}개 선택', selectAll: '전체 선택', selectNone: '선택 해제',
+          rangeFrom: '프레임', rangeTo: '~', rangeStep: ', 간격', rangeApply: '이 조건으로 선택',
+          frameAria: '프레임 {n}, {ms}ms', downloadFrameAria: '프레임 {n} 다운로드',
+          exportTitle: '프레임 내보내기', formatLabel: '형식', qualityLabel: 'JPG 품질',
+          bgLabel: '투명 영역 배경색', downloadZip: 'ZIP 다운로드 ({n}개)', reset: '다른 GIF 열기',
+          spriteTitle: '스프라이트 시트', columnsLabel: '열 수', spacingLabel: '간격 (px)', buildSprite: '스프라이트 시트 만들기',
+          spriteMeta: '{w}×{h} px · 프레임 {n}개 · {c}열', spriteAlt: '스프라이트 시트 미리보기',
+          downloadPng: 'PNG 다운로드', downloadJson: 'JSON 다운로드', copyJson: 'JSON 복사', copied: '복사됨',
+          jsonAria: '스프라이트 시트 JSON', copyCommand: '명령어 복사',
+          statusNotGif: 'GIF 파일이 아닙니다. 파일 헤더가 GIF87a 또는 GIF89a로 시작해야 합니다. PNG·JPG·WebP는 WebP 변환기를 이용하세요.',
+          statusReadFailed: '이 파일을 읽을 수 없습니다',
+          statusNoFrames: '이 GIF에는 이미지 프레임이 없습니다',
+          statusDecoding: '프레임 {i} / {n} 디코딩 중…',
+          statusDecoded: '프레임 {n}개 디코딩 완료',
+          statusTruncated: '프레임 {n}개 디코딩 완료. 파일이 중간에 끝났거나 손상되어 마지막 프레임이 불완전할 수 있습니다.',
+          statusNoSelection: '먼저 프레임을 하나 이상 선택하세요',
+          statusEncoding: '프레임 {i} / {n} 인코딩 중…',
+          statusZipDone: 'ZIP 다운로드 완료 (프레임 {n}개)',
+          statusFrameDone: '프레임 {n} 다운로드 완료',
+          statusExportFailed: '내보내기 실패 — 브라우저가 이 이미지를 인코딩하지 못했습니다',
+          statusSpriteTooBig: '스프라이트 시트가 {w}×{h} px가 되어 모바일 브라우저의 canvas 한도(16,777,216픽셀, 한 변 16,384px)를 넘습니다. 선택한 프레임을 줄이거나 열 수를 바꾸세요.',
+          statusSpriteDone: '스프라이트 시트 생성 완료',
+          statusCopyFailed: '복사가 차단되었습니다 — 텍스트를 선택해 직접 복사하세요',
+          limitPixels: '이 GIF는 {w}×{h}, 프레임 {n}개로 {mp}백만 픽셀을 디코딩해야 합니다. 휴대폰 메모리 안에서 동작하도록 한도는 5,000만 픽셀(가로 × 세로 × 프레임 수)입니다. ffmpeg로 로컬에서 분할하세요:',
+          limitFrames: '이 GIF는 프레임이 {n}개입니다. 한도는 1,000개입니다. ffmpeg로 로컬에서 분할하세요:',
+          limitFrameSize: '이 GIF의 프레임이 너무 큽니다({w}×{h}). 모바일 브라우저의 canvas 한도는 프레임당 16,777,216픽셀, 한 변 16,384px입니다. ffmpeg로 로컬에서 분할하세요:',
+        },
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('.gs-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.innerHTML = t[key];
+      });
+      document.querySelectorAll('.gs-wrap [data-i18n-aria]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-aria');
+        if (t[key]) el.setAttribute('aria-label', t[key]);
+      });
+      document.querySelectorAll('.gs-wrap [data-i18n-alt]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-alt');
+        if (t[key]) el.setAttribute('alt', t[key]);
+      });
+      function fmt(str, vars) {
+        return str.replace(/\{(\w+)\}/g, function (m, k) { return vars[k] !== undefined ? String(vars[k]) : m; });
+      }
+
+      /* ── engine:start ── */
+      // Pure, DOM-free GIF decoding, compositing, layout and ZIP helpers —
+      // extracted verbatim by scripts/test-gif-splitter.mjs. Keep this block
+      // free of DOM/canvas APIs.
+
+      // Decoding budget. Frames are kept as RGBA in memory: 50M px = 200 MB.
+      // 16,777,216 px (4096²) is the iOS Safari per-canvas area limit.
+      var GS_LIMITS = { maxPixels: 50000000, maxFrames: 1000, maxCanvasArea: 16777216, maxSide: 16384 };
+
+      function isGif(bytes) {
+        if (!bytes || bytes.length < 6) return false;
+        return bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38 &&
+          (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61;
+      }
+
+      // Concatenate a chain of data sub-blocks starting at `p`. Tolerates a
+      // file that ends mid-chain: returns what is available with complete=false.
+      function readSubBlocks(bytes, p) {
+        var len = bytes.length, q = p, total = 0, complete = false;
+        while (q < len) {
+          var n = bytes[q];
+          if (n === 0) { complete = true; break; }
+          total += Math.min(n, len - q - 1);
+          q += 1 + n;
+        }
+        var data = new Uint8Array(total), o = 0;
+        q = p;
+        while (q < len) {
+          var n2 = bytes[q];
+          if (n2 === 0) { q++; break; }
+          var take = Math.min(n2, len - q - 1);
+          data.set(bytes.subarray(q + 1, q + 1 + take), o);
+          o += take;
+          q += 1 + n2;
+        }
+        return { data: data, end: Math.min(q, len), complete: complete };
+      }
+
+      // Parse the GIF block structure without decoding pixels (LZW data is
+      // only collected), so size and frame count are known before any heavy work.
+      function parseGif(bytes) {
+        if (!isGif(bytes)) throw new Error('NOT_GIF');
+        var len = bytes.length;
+        var gif = { width: 0, height: 0, globalColorTable: null, loopCount: null, frames: [], truncated: false };
+        if (len < 13) { gif.truncated = true; return gif; }
+        gif.width = bytes[6] | (bytes[7] << 8);
+        gif.height = bytes[8] | (bytes[9] << 8);
+        var packed = bytes[10];
+        var p = 13;
+        if (packed & 0x80) {
+          var gctLen = 3 * (1 << ((packed & 7) + 1));
+          if (p + gctLen > len) { gif.truncated = true; return gif; }
+          gif.globalColorTable = bytes.subarray(p, p + gctLen);
+          p += gctLen;
+        }
+        var gce = null;
+        while (p < len) {
+          var introducer = bytes[p++];
+          if (introducer === 0x3B) break;
+          if (introducer === 0x21) {
+            if (p >= len) { gif.truncated = true; break; }
+            var label = bytes[p++];
+            var ext = readSubBlocks(bytes, p);
+            p = ext.end;
+            var d = ext.data;
+            if (label === 0xF9 && d.length >= 4) {
+              gce = { disposal: (d[0] >> 2) & 7, transparentIndex: (d[0] & 1) ? d[3] : -1, delayCs: d[1] | (d[2] << 8) };
+            } else if (label === 0xFF && d.length >= 14) {
+              var id = String.fromCharCode.apply(null, Array.prototype.slice.call(d.subarray(0, 11)));
+              if ((id === 'NETSCAPE2.0' || id === 'ANIMEXTS1.0') && d[11] === 1) {
+                gif.loopCount = d[12] | (d[13] << 8);
+              }
+            }
+            if (!ext.complete) { gif.truncated = true; break; }
+          } else if (introducer === 0x2C) {
+            if (p + 9 > len) { gif.truncated = true; break; }
+            var frame = {
+              left: bytes[p] | (bytes[p + 1] << 8),
+              top: bytes[p + 2] | (bytes[p + 3] << 8),
+              width: bytes[p + 4] | (bytes[p + 5] << 8),
+              height: bytes[p + 6] | (bytes[p + 7] << 8),
+              interlaced: false, localColorTable: null, minCodeSize: 0, data: null,
+              disposal: gce ? gce.disposal : 0,
+              transparentIndex: gce ? gce.transparentIndex : -1,
+              delayCs: gce ? gce.delayCs : 0,
+              complete: true,
+            };
+            var fpacked = bytes[p + 8];
+            frame.interlaced = !!(fpacked & 0x40);
+            p += 9;
+            if (fpacked & 0x80) {
+              var lctLen = 3 * (1 << ((fpacked & 7) + 1));
+              if (p + lctLen > len) { gif.truncated = true; break; }
+              frame.localColorTable = bytes.subarray(p, p + lctLen);
+              p += lctLen;
+            }
+            if (p >= len) { gif.truncated = true; break; }
+            frame.minCodeSize = bytes[p++];
+            var img = readSubBlocks(bytes, p);
+            p = img.end;
+            frame.data = img.data;
+            frame.complete = img.complete;
+            gce = null;
+            if (!img.complete) {
+              gif.truncated = true;
+              if (img.data.length > 0) gif.frames.push(frame);
+              break;
+            }
+            gif.frames.push(frame);
+          } else {
+            // Unknown block introducer (junk after the last frame): stop like browsers do.
+            break;
+          }
+        }
+        if (!gif.width || !gif.height) {
+          var mw = 0, mh = 0;
+          for (var i = 0; i < gif.frames.length; i++) {
+            var f = gif.frames[i];
+            mw = Math.max(mw, f.left + f.width);
+            mh = Math.max(mh, f.top + f.height);
+          }
+          if (!gif.width) gif.width = mw;
+          if (!gif.height) gif.height = mh;
+        }
+        return gif;
+      }
+
+      // Variable-width GIF LZW decoder. Codes grow up to 12 bits; once the
+      // table is full it keeps reading 12-bit codes without adding entries
+      // (deferred clear). Stops at the end code, on an invalid code, or when
+      // data runs out; `count` is the number of pixel indices produced.
+      function lzwDecode(minCodeSize, data, pixelCount) {
+        var out = new Uint8Array(pixelCount);
+        if (minCodeSize < 1 || minCodeSize > 8) return { indices: out, count: 0 };
+        var clear = 1 << minCodeSize, eoi = clear + 1;
+        var codeSize = minCodeSize + 1, codeMask = (1 << codeSize) - 1;
+        var avail = clear + 2, oldCode = -1, first = 0;
+        var prefix = new Uint16Array(4096), suffix = new Uint8Array(4096), stack = new Uint8Array(4097);
+        for (var c = 0; c < clear; c++) suffix[c] = c;
+        var datum = 0, bits = 0, i = 0, op = 0, dlen = data.length;
+        while (op < pixelCount) {
+          while (bits < codeSize) {
+            if (i >= dlen) return { indices: out, count: op };
+            datum |= data[i++] << bits;
+            bits += 8;
+          }
+          var code = datum & codeMask;
+          datum >>>= codeSize;
+          bits -= codeSize;
+          if (code === clear) {
+            codeSize = minCodeSize + 1;
+            codeMask = (1 << codeSize) - 1;
+            avail = clear + 2;
+            oldCode = -1;
+            continue;
+          }
+          if (code === eoi) break;
+          if (oldCode === -1) {
+            if (code >= clear) break;
+            out[op++] = code;
+            oldCode = code;
+            first = code;
+            continue;
+          }
+          var inCode = code, top = 0;
+          if (code > avail) break;
+          if (code === avail) {
+            stack[top++] = first;
+            code = oldCode;
+          }
+          while (code >= clear) {
+            stack[top++] = suffix[code];
+            code = prefix[code];
+          }
+          first = suffix[code];
+          stack[top++] = first;
+          if (avail < 4096) {
+            prefix[avail] = oldCode;
+            suffix[avail] = first;
+            avail++;
+            if ((avail & codeMask) === 0 && avail < 4096) {
+              codeSize++;
+              codeMask = (1 << codeSize) - 1;
+            }
+          }
+          oldCode = inCode;
+          while (top > 0 && op < pixelCount) out[op++] = stack[--top];
+        }
+        return { indices: out, count: op };
+      }
+
+      // Row order of an interlaced image: decoded row r lands on map[r].
+      function interlaceRows(h) {
+        var map = new Uint32Array(h), r = 0;
+        var starts = [0, 4, 2, 1], steps = [8, 8, 4, 2];
+        for (var pass = 0; pass < 4; pass++) {
+          for (var y = starts[pass]; y < h; y += steps[pass]) map[r++] = y;
+        }
+        return map;
+      }
+
+      // Paint decoded indices onto the RGBA canvas. Transparent-index pixels
+      // and pixels past the decoded count leave the canvas untouched; indices
+      // outside the palette (or with no palette at all) paint opaque black.
+      function blitFrame(canvas, W, H, f, decoded, palette) {
+        var fw = f.width, fh = f.height;
+        if (!fw || !fh) return;
+        var idx = decoded.indices, count = decoded.count, trans = f.transparentIndex;
+        var palLen = palette ? Math.floor(palette.length / 3) : 0;
+        var rows = f.interlaced ? interlaceRows(fh) : null;
+        for (var r = 0; r < fh && r * fw < count; r++) {
+          var y = f.top + (rows ? rows[r] : r);
+          if (y >= H) continue;
+          var rowStart = r * fw, rowEnd = Math.min(rowStart + fw, count);
+          for (var k = rowStart; k < rowEnd; k++) {
+            var ci = idx[k];
+            if (ci === trans) continue;
+            var x = f.left + (k - rowStart);
+            if (x >= W) break;
+            var o = (y * W + x) * 4;
+            if (ci < palLen) {
+              canvas[o] = palette[ci * 3];
+              canvas[o + 1] = palette[ci * 3 + 1];
+              canvas[o + 2] = palette[ci * 3 + 2];
+            } else {
+              canvas[o] = 0; canvas[o + 1] = 0; canvas[o + 2] = 0;
+            }
+            canvas[o + 3] = 255;
+          }
+        }
+      }
+
+      function clearRect(canvas, W, H, f) {
+        var x1 = Math.min(f.left + f.width, W), y1 = Math.min(f.top + f.height, H);
+        if (f.left >= x1) return;
+        for (var y = f.top; y < y1; y++) canvas.fill(0, (y * W + f.left) * 4, (y * W + x1) * 4);
+      }
+
+      // Browsers play delays of 0 or 1 centisecond at 100 ms.
+      function frameDurationMs(delayCs) {
+        return delayCs <= 1 ? 100 : delayCs * 10;
+      }
+
+      // Composite frames one at a time, the way a browser shows them:
+      // apply the previous frame's disposal (2 = clear its rect to transparent,
+      // 3 = restore the canvas from before it was drawn), then draw this frame.
+      function createCompositor(gif) {
+        var W = gif.width, H = gif.height;
+        var canvas = new Uint8ClampedArray(W * H * 4);
+        var index = 0, pending = null;
+        return {
+          width: W, height: H, total: gif.frames.length,
+          next: function () {
+            if (index >= gif.frames.length) return null;
+            if (pending) {
+              if (pending.mode === 2) clearRect(canvas, W, H, pending.frame);
+              else canvas.set(pending.saved);
+              pending = null;
+            }
+            var f = gif.frames[index];
+            var saved = f.disposal === 3 ? canvas.slice() : null;
+            var decoded = lzwDecode(f.minCodeSize, f.data, f.width * f.height);
+            blitFrame(canvas, W, H, f, decoded, f.localColorTable || gif.globalColorTable);
+            var result = {
+              index: index,
+              rgba: canvas.slice(),
+              delayCs: f.delayCs,
+              durationMs: frameDurationMs(f.delayCs),
+              disposal: f.disposal,
+              complete: f.complete && decoded.count >= f.width * f.height,
+            };
+            if (f.disposal === 2) pending = { mode: 2, frame: f };
+            else if (f.disposal === 3) pending = { mode: 3, saved: saved };
+            index++;
+            return result;
+          },
+        };
+      }
+
+      function checkBudget(gif) {
+        var L = GS_LIMITS, W = gif.width, H = gif.height, n = gif.frames.length;
+        var pixels = W * H * n;
+        if (W > L.maxSide || H > L.maxSide || W * H > L.maxCanvasArea) return { ok: false, reason: 'frameSize', pixels: pixels };
+        for (var i = 0; i < n; i++) {
+          if (gif.frames[i].width * gif.frames[i].height > L.maxCanvasArea) return { ok: false, reason: 'frameSize', pixels: pixels };
+        }
+        if (n > L.maxFrames) return { ok: false, reason: 'frames', pixels: pixels };
+        if (pixels > L.maxPixels) return { ok: false, reason: 'pixels', pixels: pixels };
+        return { ok: true, reason: null, pixels: pixels };
+      }
+
+      // 1-based inclusive range with a step, clamped to [1, total]; returns a
+      // boolean selection array of length `total`.
+      function selectRange(total, from, to, step) {
+        var sel = [];
+        for (var i = 0; i < total; i++) sel.push(false);
+        if (total < 1) return sel;
+        function toInt(v, fallback) {
+          if (v === '' || v === null || v === undefined) return fallback;
+          var n = Math.floor(Number(v));
+          return isFinite(n) ? n : fallback;
+        }
+        var a = toInt(from, 1), b = toInt(to, total), s = toInt(step, 1);
+        if (s < 1) s = 1;
+        if (a > b) { var tmp = a; a = b; b = tmp; }
+        a = Math.max(1, Math.min(total, a));
+        b = Math.max(1, Math.min(total, b));
+        for (var k = a; k <= b; k += s) sel[k - 1] = true;
+        return sel;
+      }
+
+      function baseName(fileName) {
+        var name = String(fileName || '').replace(/\.[^.]+$/, '').trim();
+        return name || 'animation';
+      }
+
+      // Zero-pad a 1-based frame number to max(3, digits of total).
+      function padFrameNo(frameNo, total) {
+        var pad = Math.max(3, String(total).length);
+        var num = String(frameNo);
+        while (num.length < pad) num = '0' + num;
+        return num;
+      }
+
+      function frameFileName(base, frameNo, total, ext) {
+        return base + '-frame-' + padFrameNo(frameNo, total) + '.' + ext;
+      }
+
+      function spriteLayout(frameW, frameH, count, columns, spacing) {
+        var cols = Math.floor(Number(columns));
+        if (!isFinite(cols) || cols < 1) cols = 1;
+        cols = Math.min(cols, Math.max(1, count));
+        var gap = Math.floor(Number(spacing));
+        if (!isFinite(gap) || gap < 0) gap = 0;
+        var rows = Math.max(1, Math.ceil(count / cols));
+        var cells = [];
+        for (var i = 0; i < count; i++) {
+          cells.push({ x: (i % cols) * (frameW + gap), y: Math.floor(i / cols) * (frameH + gap) });
+        }
+        return {
+          columns: cols, rows: rows, spacing: gap,
+          width: cols * frameW + (cols - 1) * gap,
+          height: rows * frameH + (rows - 1) * gap,
+          cells: cells,
+        };
+      }
+
+      function spriteFits(layout) {
+        var L = GS_LIMITS;
+        return layout.width <= L.maxSide && layout.height <= L.maxSide && layout.width * layout.height <= L.maxCanvasArea;
+      }
+
+      // frames: [{ frame: 1-based frame number, durationMs }] in sheet order.
+      function spriteJson(imageName, layout, frameW, frameH, frames) {
+        return {
+          image: imageName,
+          width: layout.width,
+          height: layout.height,
+          frameWidth: frameW,
+          frameHeight: frameH,
+          columns: layout.columns,
+          spacing: layout.spacing,
+          frames: frames.map(function (f, i) {
+            return { frame: f.frame, x: layout.cells[i].x, y: layout.cells[i].y, w: frameW, h: frameH, duration: f.durationMs };
+          }),
+        };
+      }
+
+      /* CRC32 + ZIP writer (STORED method, UTF-8 names) */
+      var crcTable = (function () {
+        var table = new Uint32Array(256);
+        for (var n = 0; n < 256; n++) {
+          var c = n;
+          for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+          table[n] = c >>> 0;
+        }
+        return table;
+      })();
+      function crc32(buf) {
+        var c = 0xFFFFFFFF;
+        for (var i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+        return (c ^ 0xFFFFFFFF) >>> 0;
+      }
+
+      function zipStore(files) {
+        var enc = new TextEncoder();
+        var locals = [];
+        var centrals = [];
+        var offset = 0;
+        files.forEach(function (f) {
+          var nameBytes = enc.encode(f.name);
+          var data = f.data;
+          var crc = crc32(data);
+          var size = data.length;
+          var lh = new Uint8Array(30 + nameBytes.length);
+          var dv = new DataView(lh.buffer);
+          dv.setUint32(0, 0x04034b50, true);
+          dv.setUint16(4, 20, true);
+          dv.setUint16(6, 0x0800, true); // bit 11 = UTF-8
+          dv.setUint16(8, 0, true);      // method STORED
+          dv.setUint16(10, 0, true);
+          dv.setUint16(12, 0x21, true);  // mdate (1980-01-01 minimum nonzero)
+          dv.setUint32(14, crc, true);
+          dv.setUint32(18, size, true);
+          dv.setUint32(22, size, true);
+          dv.setUint16(26, nameBytes.length, true);
+          dv.setUint16(28, 0, true);
+          lh.set(nameBytes, 30);
+          locals.push(lh, data);
+
+          var ch = new Uint8Array(46 + nameBytes.length);
+          var cv = new DataView(ch.buffer);
+          cv.setUint32(0, 0x02014b50, true);
+          cv.setUint16(4, 20, true);
+          cv.setUint16(6, 20, true);
+          cv.setUint16(8, 0x0800, true);
+          cv.setUint16(10, 0, true);
+          cv.setUint16(12, 0, true);
+          cv.setUint16(14, 0x21, true);
+          cv.setUint32(16, crc, true);
+          cv.setUint32(20, size, true);
+          cv.setUint32(24, size, true);
+          cv.setUint16(28, nameBytes.length, true);
+          cv.setUint16(30, 0, true);
+          cv.setUint16(32, 0, true);
+          cv.setUint16(34, 0, true);
+          cv.setUint16(36, 0, true);
+          cv.setUint32(38, 0, true);
+          cv.setUint32(42, offset, true);
+          ch.set(nameBytes, 46);
+          centrals.push(ch);
+
+          offset += lh.length + size;
+        });
+
+        var localTotal = locals.reduce(function (s, c) { return s + c.length; }, 0);
+        var centralTotal = centrals.reduce(function (s, c) { return s + c.length; }, 0);
+        var eocd = new Uint8Array(22);
+        var dv2 = new DataView(eocd.buffer);
+        dv2.setUint32(0, 0x06054b50, true);
+        dv2.setUint16(4, 0, true);
+        dv2.setUint16(6, 0, true);
+        dv2.setUint16(8, files.length, true);
+        dv2.setUint16(10, files.length, true);
+        dv2.setUint32(12, centralTotal, true);
+        dv2.setUint32(16, localTotal, true);
+        dv2.setUint16(20, 0, true);
+
+        var out = new Uint8Array(localTotal + centralTotal + 22);
+        var p = 0;
+        locals.forEach(function (c) { out.set(c, p); p += c.length; });
+        centrals.forEach(function (c) { out.set(c, p); p += c.length; });
+        out.set(eocd, p);
+        return out;
+      }
+      /* ── engine:end ── */
+
+      var SLUG = 'gif-splitter';
+      var $ = function (id) { return document.getElementById(id); };
+      var wrapEl = $('gs-wrap');
+      var dropEl = $('gs-drop');
+      var fileInput = $('gs-file');
+      var progressEl = $('gs-progress');
+      var limitEl = $('gs-limit');
+      var limitMsgEl = $('gs-limit-msg');
+      var limitCmdEl = $('gs-limit-cmd');
+      var limitCopyBtn = $('gs-limit-copy');
+      var workspaceEl = $('gs-workspace');
+      var gridEl = $('gs-grid');
+      var selectedCountEl = $('gs-selected-count');
+      var fromInput = $('gs-from');
+      var toInput = $('gs-to');
+      var stepInput = $('gs-step');
+      var formatSelect = $('gs-format');
+      var jpgOptsEl = $('gs-jpg-opts');
+      var qualityInput = $('gs-quality');
+      var qualityVal = $('gs-quality-val');
+      var bgInput = $('gs-bg');
+      var zipBtn = $('gs-zip');
+      var resetBtn = $('gs-reset');
+      var columnsInput = $('gs-columns');
+      var spacingInput = $('gs-spacing');
+      var spriteBuildBtn = $('gs-sprite-build');
+      var spriteOutEl = $('gs-sprite-out');
+      var spriteMetaEl = $('gs-sprite-meta');
+      var spriteImg = $('gs-sprite-img');
+      var spritePngBtn = $('gs-sprite-png');
+      var spriteJsonDlBtn = $('gs-sprite-json-dl');
+      var spriteCopyBtn = $('gs-sprite-copy');
+      var spriteJsonEl = $('gs-sprite-json');
+      var statusEl = $('gs-status');
+
+      var THUMB_MAX = 120;
+      var prefs = { format: 'png', quality: 92, bg: '#ffffff', columns: 8, spacing: 0 };
+      var frames = [];          // [{ rgba, durationMs }]
+      var selected = [];        // boolean per frame
+      var W = 0, H = 0, base = 'animation';
+      var workCanvas = null, workCtx = null, flatCanvas = null, flatCtx = null;
+      var loadToken = 0, busy = false;
+      var spriteBlob = null, spriteUrl = null;
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status ' + (kind || 'info');
+      }
+
+      function loadPrefs() {
+        var saved = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+        if (saved.format === 'png' || saved.format === 'jpg') prefs.format = saved.format;
+        var q = parseInt(saved.quality, 10);
+        if (q >= 50 && q <= 100) prefs.quality = q;
+        if (typeof saved.bg === 'string' && /^#[0-9a-f]{6}$/i.test(saved.bg)) prefs.bg = saved.bg;
+        var c = parseInt(saved.columns, 10);
+        if (c >= 1 && c <= 1000) prefs.columns = c;
+        var s = parseInt(saved.spacing, 10);
+        if (s >= 0 && s <= 256) prefs.spacing = s;
+      }
+      function savePrefs() {
+        if (window.ztPersist) window.ztPersist.save(SLUG, prefs);
+      }
+      function applyPrefsToUI() {
+        formatSelect.value = prefs.format;
+        qualityInput.value = String(prefs.quality);
+        qualityVal.textContent = String(prefs.quality);
+        bgInput.value = prefs.bg;
+        columnsInput.value = String(prefs.columns);
+        spacingInput.value = String(prefs.spacing);
+        jpgOptsEl.hidden = prefs.format !== 'jpg';
+      }
+
+      function formatBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+      }
+
+      function yieldToBrowser() {
+        return new Promise(function (resolve) { setTimeout(resolve, 0); });
+      }
+
+      function canvasToBlob(canvas, mime, quality) {
+        return new Promise(function (resolve) {
+          try {
+            canvas.toBlob(function (b) { resolve(b); }, mime, quality);
+          } catch (e) {
+            resolve(null);
+          }
+        });
+      }
+
+      function downloadBlob(blob, name) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      }
+
+      function setBusy(b) {
+        busy = b;
+        zipBtn.disabled = b;
+        spriteBuildBtn.disabled = b;
+        gridEl.querySelectorAll('.gs-cell-dl').forEach(function (btn) { btn.disabled = b; });
+      }
+
+      function selectedIndices() {
+        var out = [];
+        for (var i = 0; i < selected.length; i++) if (selected[i]) out.push(i);
+        return out;
+      }
+
+      function updateSelectionUI() {
+        var n = selectedIndices().length;
+        selectedCountEl.textContent = fmt(t.selectedCount, { n: n, total: frames.length });
+        zipBtn.textContent = fmt(t.downloadZip, { n: n });
+        var cells = gridEl.children;
+        for (var i = 0; i < cells.length; i++) {
+          var on = !!selected[i];
+          cells[i].classList.toggle('is-selected', on);
+          cells[i].querySelector('.gs-thumb').setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+      }
+
+      function hideSprite() {
+        spriteOutEl.hidden = true;
+        if (spriteUrl) { URL.revokeObjectURL(spriteUrl); spriteUrl = null; }
+        spriteBlob = null;
+        spriteImg.removeAttribute('src');
+        spriteJsonEl.value = '';
+      }
+
+      var DL_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>';
+      var CHECK_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+      function addFrameCell(i, frame, total) {
+        var cell = document.createElement('div');
+        cell.className = 'gs-cell is-selected';
+        cell.setAttribute('role', 'listitem');
+
+        var thumbBtn = document.createElement('button');
+        thumbBtn.type = 'button';
+        thumbBtn.className = 'gs-thumb';
+        thumbBtn.setAttribute('aria-pressed', 'true');
+        thumbBtn.setAttribute('aria-label', fmt(t.frameAria, { n: i + 1, ms: frame.durationMs }));
+        thumbBtn.dataset.index = String(i);
+
+        var box = document.createElement('span');
+        box.className = 'gs-thumb-box';
+        var scale = Math.min(1, THUMB_MAX / Math.max(W, H));
+        var tc = document.createElement('canvas');
+        tc.width = Math.max(1, Math.round(W * scale));
+        tc.height = Math.max(1, Math.round(H * scale));
+        tc.className = 'gs-thumb-canvas' + (Math.max(W, H) < 96 ? ' gs-pixelated' : '');
+        var tctx = tc.getContext('2d');
+        tctx.imageSmoothingEnabled = true;
+        tctx.imageSmoothingQuality = 'high';
+        tctx.drawImage(workCanvas, 0, 0, tc.width, tc.height);
+        box.appendChild(tc);
+        thumbBtn.appendChild(box);
+        var check = document.createElement('span');
+        check.className = 'gs-check';
+        check.innerHTML = CHECK_ICON;
+        thumbBtn.appendChild(check);
+
+        var foot = document.createElement('div');
+        foot.className = 'gs-cell-foot';
+        var meta = document.createElement('span');
+        meta.className = 'gs-cell-meta';
+        var no = document.createElement('span');
+        no.className = 'gs-cell-no';
+        no.textContent = '#' + padFrameNo(i + 1, total);
+        var delay = document.createElement('span');
+        delay.className = 'gs-cell-delay';
+        delay.textContent = frame.durationMs + ' ms';
+        meta.appendChild(no);
+        meta.appendChild(delay);
+        var dl = document.createElement('button');
+        dl.type = 'button';
+        dl.className = 'btn-icon gs-cell-dl';
+        dl.dataset.index = String(i);
+        dl.setAttribute('aria-label', fmt(t.downloadFrameAria, { n: i + 1 }));
+        dl.innerHTML = DL_ICON;
+        dl.disabled = busy;
+        foot.appendChild(meta);
+        foot.appendChild(dl);
+
+        cell.appendChild(thumbBtn);
+        cell.appendChild(foot);
+        gridEl.appendChild(cell);
+      }
+
+      function resetState() {
+        loadToken++;
+        frames = [];
+        selected = [];
+        W = 0; H = 0; base = 'animation';
+        gridEl.innerHTML = '';
+        if (workCanvas) { workCanvas.width = 0; workCanvas.height = 0; }
+        if (flatCanvas) { flatCanvas.width = 0; flatCanvas.height = 0; }
+        workCanvas = null; workCtx = null; flatCanvas = null; flatCtx = null;
+        hideSprite();
+        dropEl.hidden = false;
+        workspaceEl.hidden = true;
+        limitEl.hidden = true;
+        progressEl.hidden = true;
+        setBusy(false);
+      }
+
+      function showLimit(gif, budget) {
+        var msg;
+        if (budget.reason === 'frameSize') msg = fmt(t.limitFrameSize, { w: gif.width, h: gif.height });
+        else if (budget.reason === 'frames') msg = fmt(t.limitFrames, { n: gif.frames.length });
+        else msg = fmt(t.limitPixels, { w: gif.width, h: gif.height, n: gif.frames.length, mp: (budget.pixels / 1e6).toFixed(1) });
+        limitMsgEl.textContent = msg;
+        limitEl.hidden = false;
+      }
+
+      async function loadFile(file) {
+        if (!file) return;
+        resetState();
+        var token = loadToken;
+        setStatus('', 'none');
+        var bytes;
+        try {
+          bytes = new Uint8Array(await file.arrayBuffer());
+        } catch (e) {
+          if (token === loadToken) setStatus(t.statusReadFailed, 'error');
+          return;
+        }
+        if (token !== loadToken) return;
+        if (!isGif(bytes)) { setStatus(t.statusNotGif, 'error'); return; }
+        var gif = parseGif(bytes);
+        if (!gif.frames.length || !gif.width || !gif.height) { setStatus(t.statusNoFrames, 'error'); return; }
+        var budget = checkBudget(gif);
+        if (!budget.ok) { showLimit(gif, budget); return; }
+
+        W = gif.width; H = gif.height;
+        base = baseName(file.name);
+        workCanvas = document.createElement('canvas');
+        workCanvas.width = W; workCanvas.height = H;
+        workCtx = workCanvas.getContext('2d');
+
+        var n = gif.frames.length, totalMs = 0;
+        for (var i = 0; i < n; i++) totalMs += frameDurationMs(gif.frames[i].delayCs);
+        $('gs-info-size').textContent = W + ' × ' + H;
+        $('gs-info-frames').textContent = String(n);
+        $('gs-info-duration').textContent = (totalMs / 1000).toFixed(2) + ' s';
+        $('gs-info-loop').textContent = gif.loopCount === null ? t.loopOnce : (gif.loopCount === 0 ? t.loopInfinite : String(gif.loopCount));
+        $('gs-info-file').textContent = formatBytes(bytes.length);
+        fromInput.max = String(n); toInput.max = String(n); stepInput.max = String(n);
+        fromInput.value = '1'; toInput.value = String(n); stepInput.value = '1';
+
+        dropEl.hidden = true;
+        workspaceEl.hidden = false;
+        progressEl.hidden = false;
+        progressEl.value = 0;
+        setBusy(true);
+
+        var comp = createCompositor(gif);
+        var complete = !gif.truncated, done = false;
+        while (!done) {
+          var sliceStart = performance.now();
+          do {
+            var f = comp.next();
+            if (!f) { done = true; break; }
+            if (!f.complete) complete = false;
+            workCtx.putImageData(new ImageData(f.rgba, W, H), 0, 0);
+            frames.push({ rgba: f.rgba, durationMs: f.durationMs });
+            selected.push(true);
+            addFrameCell(f.index, f, n);
+          } while (performance.now() - sliceStart < 24);
+          progressEl.value = frames.length / n;
+          setStatus(fmt(t.statusDecoding, { i: frames.length, n: n }), 'info');
+          if (!done) {
+            await yieldToBrowser();
+            if (token !== loadToken) return;
+          }
+        }
+        progressEl.hidden = true;
+        setBusy(false);
+        updateSelectionUI();
+        setStatus(fmt(complete ? t.statusDecoded : t.statusTruncated, { n: frames.length }), complete ? 'success' : 'info');
+        if (window.trackTool) window.trackTool(SLUG, 'decode');
+      }
+
+      function frameBlob(i) {
+        workCtx.putImageData(new ImageData(frames[i].rgba, W, H), 0, 0);
+        if (prefs.format === 'jpg') {
+          if (!flatCanvas) {
+            flatCanvas = document.createElement('canvas');
+            flatCanvas.width = W; flatCanvas.height = H;
+            flatCtx = flatCanvas.getContext('2d');
+          }
+          flatCtx.fillStyle = prefs.bg;
+          flatCtx.fillRect(0, 0, W, H);
+          flatCtx.drawImage(workCanvas, 0, 0);
+          return canvasToBlob(flatCanvas, 'image/jpeg', prefs.quality / 100);
+        }
+        return canvasToBlob(workCanvas, 'image/png');
+      }
+
+      function extName() { return prefs.format === 'jpg' ? 'jpg' : 'png'; }
+
+      async function downloadFrame(i) {
+        if (busy || !frames[i]) return;
+        setBusy(true);
+        var blob = await frameBlob(i);
+        setBusy(false);
+        if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
+        downloadBlob(blob, frameFileName(base, i + 1, frames.length, extName()));
+        setStatus(fmt(t.statusFrameDone, { n: i + 1 }), 'success');
+        if (window.trackTool) window.trackTool(SLUG, 'frame');
+      }
+
+      async function downloadZip() {
+        if (busy || !frames.length) return;
+        var idxs = selectedIndices();
+        if (!idxs.length) { setStatus(t.statusNoSelection, 'error'); return; }
+        var token = loadToken;
+        setBusy(true);
+        var files = [];
+        for (var k = 0; k < idxs.length; k++) {
+          setStatus(fmt(t.statusEncoding, { i: k + 1, n: idxs.length }), 'info');
+          var blob = await frameBlob(idxs[k]);
+          if (token !== loadToken) return;
+          if (!blob) { setBusy(false); setStatus(t.statusExportFailed, 'error'); return; }
+          files.push({ name: frameFileName(base, idxs[k] + 1, frames.length, extName()), data: new Uint8Array(await blob.arrayBuffer()) });
+          if (token !== loadToken) return;
+        }
+        var zip = zipStore(files);
+        setBusy(false);
+        downloadBlob(new Blob([zip], { type: 'application/zip' }), base + '-frames.zip');
+        setStatus(fmt(t.statusZipDone, { n: idxs.length }), 'success');
+        if (window.trackTool) window.trackTool(SLUG, 'zip');
+      }
+
+      async function buildSprite() {
+        if (busy) return;
+        var idxs = selectedIndices();
+        if (!idxs.length) { setStatus(t.statusNoSelection, 'error'); return; }
+        var layout = spriteLayout(W, H, idxs.length, prefs.columns, prefs.spacing);
+        if (!spriteFits(layout)) {
+          setStatus(fmt(t.statusSpriteTooBig, { w: layout.width, h: layout.height }), 'error');
+          return;
+        }
+        var token = loadToken;
+        setBusy(true);
+        hideSprite();
+        var sheet = document.createElement('canvas');
+        sheet.width = layout.width; sheet.height = layout.height;
+        var sctx = sheet.getContext('2d');
+        for (var k = 0; k < idxs.length; k++) {
+          sctx.putImageData(new ImageData(frames[idxs[k]].rgba, W, H), layout.cells[k].x, layout.cells[k].y);
+        }
+        var blob = await canvasToBlob(sheet, 'image/png');
+        sheet.width = 0; sheet.height = 0;
+        setBusy(false);
+        if (token !== loadToken) return;
+        if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
+        spriteBlob = blob;
+        spriteUrl = URL.createObjectURL(blob);
+        spriteImg.src = spriteUrl;
+        var json = spriteJson(base + '-sprite.png', layout, W, H, idxs.map(function (i) {
+          return { frame: i + 1, durationMs: frames[i].durationMs };
+        }));
+        spriteJsonEl.value = JSON.stringify(json, null, 2);
+        spriteMetaEl.textContent = fmt(t.spriteMeta, { w: layout.width, h: layout.height, n: idxs.length, c: layout.columns });
+        spriteOutEl.hidden = false;
+        setStatus(t.statusSpriteDone, 'success');
+        if (window.trackTool) window.trackTool(SLUG, 'sprite');
+      }
+
+      function copyText(text, btn, restoreKey) {
+        function done() {
+          btn.textContent = t.copied;
+          setTimeout(function () { btn.textContent = t[restoreKey]; }, 1500);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () { setStatus(t.statusCopyFailed, 'error'); });
+        } else {
+          setStatus(t.statusCopyFailed, 'error');
+        }
+      }
+
+      /* ── Input: drop zone click / keyboard / drag / paste ── */
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+      dropEl.addEventListener('dragover', function (e) { e.preventDefault(); dropEl.classList.add('drag-over'); });
+      dropEl.addEventListener('dragleave', function () { dropEl.classList.remove('drag-over'); });
+      fileInput.addEventListener('change', function () {
+        if (this.files && this.files[0]) loadFile(this.files[0]);
+        this.value = '';
+      });
+      wrapEl.addEventListener('dragover', function (e) { e.preventDefault(); });
+      wrapEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+      });
+      document.addEventListener('paste', function (e) {
+        if (!e.clipboardData || !e.clipboardData.files || !e.clipboardData.files.length) return;
+        e.preventDefault();
+        loadFile(e.clipboardData.files[0]);
+      });
+
+      /* ── Frame grid ── */
+      gridEl.addEventListener('click', function (e) {
+        var dl = e.target.closest('.gs-cell-dl');
+        if (dl) { downloadFrame(parseInt(dl.dataset.index, 10)); return; }
+        var thumb = e.target.closest('.gs-thumb');
+        if (!thumb) return;
+        var i = parseInt(thumb.dataset.index, 10);
+        selected[i] = !selected[i];
+        hideSprite();
+        updateSelectionUI();
+      });
+      $('gs-select-all').addEventListener('click', function () {
+        selected = selected.map(function () { return true; });
+        hideSprite();
+        updateSelectionUI();
+      });
+      $('gs-select-none').addEventListener('click', function () {
+        selected = selected.map(function () { return false; });
+        hideSprite();
+        updateSelectionUI();
+      });
+      $('gs-range-apply').addEventListener('click', function () {
+        if (!frames.length) return;
+        selected = selectRange(frames.length, fromInput.value, toInput.value, stepInput.value);
+        hideSprite();
+        updateSelectionUI();
+      });
+
+      /* ── Export settings (persisted as preferences) ── */
+      formatSelect.addEventListener('change', function () {
+        prefs.format = formatSelect.value === 'jpg' ? 'jpg' : 'png';
+        jpgOptsEl.hidden = prefs.format !== 'jpg';
+        savePrefs();
+      });
+      qualityInput.addEventListener('input', function () {
+        prefs.quality = parseInt(qualityInput.value, 10) || 92;
+        qualityVal.textContent = String(prefs.quality);
+        savePrefs();
+      });
+      bgInput.addEventListener('input', function () {
+        prefs.bg = bgInput.value;
+        savePrefs();
+      });
+      columnsInput.addEventListener('change', function () {
+        var c = parseInt(columnsInput.value, 10);
+        prefs.columns = c >= 1 ? Math.min(c, 1000) : 1;
+        columnsInput.value = String(prefs.columns);
+        hideSprite();
+        savePrefs();
+      });
+      spacingInput.addEventListener('change', function () {
+        var s = parseInt(spacingInput.value, 10);
+        prefs.spacing = s >= 0 ? Math.min(s, 256) : 0;
+        spacingInput.value = String(prefs.spacing);
+        hideSprite();
+        savePrefs();
+      });
+
+      /* ── Actions ── */
+      zipBtn.addEventListener('click', function () { downloadZip(); });
+      spriteBuildBtn.addEventListener('click', function () { buildSprite(); });
+      spritePngBtn.addEventListener('click', function () {
+        if (spriteBlob) downloadBlob(spriteBlob, base + '-sprite.png');
+      });
+      spriteJsonDlBtn.addEventListener('click', function () {
+        if (!spriteJsonEl.value) return;
+        downloadBlob(new Blob([spriteJsonEl.value], { type: 'application/json' }), base + '-sprite.json');
+      });
+      spriteCopyBtn.addEventListener('click', function () {
+        if (spriteJsonEl.value) copyText(spriteJsonEl.value, spriteCopyBtn, 'copyJson');
+      });
+      limitCopyBtn.addEventListener('click', function () {
+        copyText(limitCmdEl.textContent, limitCopyBtn, 'copyCommand');
+      });
+      resetBtn.addEventListener('click', function () {
+        resetState();
+        setStatus('', 'none');
+        dropEl.focus();
+      });
+
+      loadPrefs();
+      applyPrefsToUI();
+      zipBtn.textContent = fmt(t.downloadZip, { n: 0 });
+    })();
+  </script>
+
+  <style is:global>
+    .gs-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+    /* Author display rules beat the UA [hidden] rule; restore it. */
+    .gs-wrap [hidden] { display: none; }
+
+    .gs-drop {
+      position: relative;
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      background: var(--color-bg-secondary);
+    }
+    .gs-drop:hover,
+    .gs-drop.drag-over {
+      border-color: var(--color-primary);
+      background: var(--color-surface);
+    }
+    .gs-drop:focus-visible {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 4px var(--color-primary-light);
+    }
+    .gs-drop-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--color-text-secondary);
+      pointer-events: none;
+    }
+    .gs-drop-inner p { margin: 0; font-size: 0.95rem; }
+    .gs-drop-inner .gs-hint { font-size: 0.8rem; }
+    .gs-file-input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .gs-progress {
+      width: 100%;
+      height: 8px;
+      accent-color: var(--color-primary);
+    }
+
+    .gs-limit {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      padding: 0.85rem 1rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent);
+    }
+    .gs-limit-msg { margin: 0; font-size: 0.88rem; color: var(--color-text); }
+    .gs-limit-cmd-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+    .gs-limit-cmd {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      padding: 0.35rem 0.6rem;
+      border-radius: var(--radius-sm);
+      background: var(--color-surface);
+      color: var(--color-text);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      overflow-wrap: anywhere;
+    }
+
+    .gs-workspace { display: flex; flex-direction: column; gap: 0.85rem; }
+
+    .gs-info {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 0;
+    }
+    .gs-info-item {
+      flex: 1 1 120px;
+      padding: 0.5rem 0.75rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gs-info-item dt {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .gs-info-item dd {
+      margin: 0.15rem 0 0;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--color-text);
+    }
+
+    .gs-select { display: flex; flex-direction: column; gap: 0.5rem; }
+    .gs-select-row,
+    .gs-range-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.4rem 0.6rem;
+      font-size: 0.88rem;
+      color: var(--color-text-secondary);
+    }
+    .gs-selected-count {
+      font-weight: 700;
+      color: var(--color-text);
+      margin-right: auto;
+    }
+    .gs-num { width: 5.5rem; }
+
+    .gs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+      gap: 0.6rem;
+      max-height: 560px;
+      overflow: auto;
+      padding: 0.3rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gs-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      padding: 0.35rem;
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gs-cell.is-selected {
+      box-shadow: inset 0 0 0 2px var(--color-primary);
+    }
+    .gs-thumb {
+      position: relative;
+      display: block;
+      width: 100%;
+      padding: 0;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: none;
+      cursor: pointer;
+    }
+    .gs-thumb:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px var(--color-primary-light), 0 0 0 1px var(--color-primary);
+    }
+    .gs-thumb-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      aspect-ratio: 1;
+      overflow: hidden;
+      border-radius: var(--radius-sm);
+      background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px;
+      transition: opacity var(--transition-fast);
+    }
+    .gs-cell:not(.is-selected) .gs-thumb-box { opacity: 0.45; }
+    .gs-thumb-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .gs-thumb-canvas.gs-pixelated { image-rendering: pixelated; }
+    .gs-check {
+      position: absolute;
+      top: 0.3rem;
+      right: 0.3rem;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 1.3rem;
+      height: 1.3rem;
+      border-radius: 50%;
+      background: var(--color-primary);
+      color: var(--color-primary-contrast);
+      box-shadow: var(--shadow-subtle);
+    }
+    .gs-cell.is-selected .gs-check { display: flex; }
+    .gs-cell-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.3rem;
+    }
+    .gs-cell-meta {
+      display: flex;
+      flex-direction: column;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      line-height: 1.3;
+      color: var(--color-text-secondary);
+    }
+    .gs-cell-no { font-weight: 700; color: var(--color-text); }
+    .gs-cell-dl:disabled { opacity: 0.5; cursor: default; }
+
+    .gs-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding: 0.9rem 1rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gs-panel-title {
+      margin: 0;
+      font-family: var(--font-sans);
+      font-size: 0.95rem;
+      font-weight: 760;
+      color: var(--color-text);
+    }
+    .gs-export-row,
+    .gs-sprite-row {
+      display: flex;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.6rem 1rem;
+    }
+    .gs-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+    }
+    .gs-select-input { width: auto; min-width: 6rem; }
+    .gs-jpg-opts {
+      display: flex;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.6rem 1rem;
+      flex: 1 1 280px;
+    }
+    .gs-quality-label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      flex: 1 1 160px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+    }
+    .gs-quality-label strong { font-family: var(--font-mono); color: var(--color-text); }
+    .gs-jpg-opts input[type="range"] { flex: 1 1 160px; }
+    .gs-bg-field input[type="color"] {
+      width: 2.6rem;
+      height: 2.3rem;
+      padding: 0.15rem;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: var(--color-surface);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      cursor: pointer;
+    }
+    .gs-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .gs-sprite-out { display: flex; flex-direction: column; gap: 0.6rem; }
+    .gs-sprite-meta {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--color-text-secondary);
+    }
+    .gs-sprite-preview {
+      max-height: 360px;
+      overflow: auto;
+      border-radius: var(--radius-md);
+      background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gs-sprite-preview img { display: block; max-width: 100%; height: auto; }
+    .gs-json { min-height: 160px; }
+
+    @media (max-width: 640px) {
+      .gs-grid {
+        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+        max-height: 60vh;
+      }
+      .gs-info-item { flex-basis: calc(50% - 0.25rem); }
+      .gs-actions .btn-primary,
+      .gs-actions .btn-secondary,
+      .gs-actions .btn-ghost { flex: 1 1 45%; }
+      .gs-sprite-row .btn-secondary,
+      .gs-range-row .btn-secondary { flex: 1 1 100%; }
+      .gs-num { width: 4.5rem; }
+    }
+  </style>
+</div>

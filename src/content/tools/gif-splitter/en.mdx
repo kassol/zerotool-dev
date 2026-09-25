@@ -1,0 +1,107 @@
+---
+seoTitle: "GIF to PNG Frames & Sprite Sheet — GIF Splitter | ZeroTool"
+seoDescription: "Split an animated GIF into frames: GIF to PNG or JPG, ZIP download, sprite sheet with JSON coordinates. Correct frame compositing, runs in your browser."
+faqItems:
+  - question: "Do I get full frames or only the part that changed?"
+    answer: "Full frames. Most GIFs store each frame as a small patch plus a disposal rule that says what to do with it before the next frame. The splitter applies all four disposal methods and exports every frame exactly as your browser shows it during playback. Raw patch output is not offered, by design. If you need the stored patches, run gifsicle --explode locally."
+  - question: "Is my GIF uploaded anywhere?"
+    answer: "No. The file is read with the File API and decoded by JavaScript on this page. PNG and JPG encoding, ZIP packing and the sprite sheet all happen in your browser. The only thing saved locally is your export settings (format, JPG quality, background color, columns, spacing). The GIF and its frames are never stored."
+  - question: "How large a GIF can it handle?"
+    answer: "Up to 50 million decoded pixels (width × height × frames), 1,000 frames, and 16,777,216 pixels per frame or sprite sheet (16,384 px max per side). Frames are kept uncompressed in memory, so these limits keep the page within phone memory. A 480×270 GIF with 385 frames still fits. For larger files, run ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png locally."
+  - question: "Why does a frame show 100 ms when the file says 0?"
+    answer: "Major browsers play any frame delay of 10 ms or less (0 or 1 in the GIF's centisecond units) at 100 ms. The splitter shows and exports that real playback time, so the sprite sheet JSON matches what people see in a browser. Delays of 20 ms and above are kept as written."
+  - question: "What is in the sprite sheet JSON?"
+    answer: "The image name, the sheet width and height, the frame size, the column count and spacing, and one entry per frame with its original frame number, x, y, w, h and duration in milliseconds. You can feed it to a game engine, a canvas animation loop, or CSS keyframes."
+---
+
+## How to Use
+
+1. Drop a GIF on the drop zone, click to pick one, or paste a copied GIF file with **Ctrl/Cmd+V**.
+2. Check the info bar: canvas size, frame count, total duration, loop count and file size.
+3. Pick frames. Every frame starts selected. Click a thumbnail to toggle it, use **Select all** / **Select none**, or fill in *Frames 1 to 48 every 4* and click **Select these** to take a range or every Nth frame.
+4. Choose **PNG** (keeps transparency) or **JPG** (set the quality and a background color for transparent areas).
+5. Click **Download ZIP** for all selected frames, or the download icon under a thumbnail for a single frame. Files are named `{name}-frame-001.png`, `{name}-frame-002.png`, and so on.
+6. For a sprite sheet, set the column count and spacing, click **Build sprite sheet**, then download the PNG and the JSON or copy the JSON.
+
+## Full Frames, the Way the Browser Shows Them
+
+A GIF does not store a stack of complete pictures. After the first frame, encoders usually write only the rectangle that changed and mark unchanged pixels as transparent. Each frame also carries a *disposal method*:
+
+| Disposal | Meaning | What the next frame starts from |
+|---|---|---|
+| 0 / 1 | Leave in place | This frame stays on the canvas |
+| 2 | Restore to background | This frame's rectangle is cleared to transparent |
+| 3 | Restore to previous | The canvas goes back to how it was before this frame |
+
+Exporting the raw patches gives you fragments with holes in them. The splitter keeps a running canvas, applies each disposal rule in order, and saves a copy of the canvas after every frame. Each exported PNG is the complete picture at that moment. Frames also keep their full canvas size, so frame 12 lines up with frame 1 pixel for pixel.
+
+## Sprite Sheets and the JSON Data
+
+The sprite sheet places the selected frames in a grid, left to right and top to bottom, with optional spacing between cells. Spacing stays transparent. The JSON looks like this:
+
+```json
+{
+  "image": "loader-sprite.png",
+  "width": 256,
+  "height": 64,
+  "frameWidth": 64,
+  "frameHeight": 64,
+  "columns": 4,
+  "spacing": 0,
+  "frames": [
+    { "frame": 1, "x": 0, "y": 0, "w": 64, "h": 64, "duration": 80 },
+    { "frame": 2, "x": 64, "y": 0, "w": 64, "h": 64, "duration": 80 }
+  ]
+}
+```
+
+`frame` is the original frame number, so gaps show which frames you skipped. `duration` is in milliseconds.
+
+For a pure-CSS animation, set **Columns** to the number of selected frames to get a single row, then step through it:
+
+```css
+.loader {
+  width: 64px;
+  height: 64px;
+  background: url(loader-sprite.png) 0 0 / auto 64px;
+  animation: play 0.32s steps(4) infinite;
+}
+@keyframes play {
+  to { background-position: -256px 0; }
+}
+```
+
+## Common Use Cases
+
+- **Grab one still from a reaction GIF or screen recording** as a lossless PNG for a slide, a bug report or a thumbnail.
+- **Turn a GIF into a game sprite sheet** for Phaser, PixiJS, Godot or a hand-written canvas loop, with frame timing kept in the JSON.
+- **Replace a heavy GIF with CSS** `steps()` animation, or with a few selected frames re-encoded as WebP.
+- **Review a UI animation frame by frame** to find the exact frame where a layout jumps or a transition glitches.
+- **Pull every Nth frame** from a long GIF to build a storyboard or a contact sheet.
+
+## Why Not Just Use ffmpeg?
+
+ffmpeg is the right tool for very large files, and it composites frames correctly. One catch: with default settings it resamples variable-delay GIFs to a constant frame rate, so a 5-frame GIF can come out as dozens of duplicated PNGs. Add `-fps_mode passthrough` to get exactly one image per frame:
+
+```bash
+ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png
+```
+
+This page gives you the same frames with no install, lets you pick frames visually, and builds the sprite sheet and JSON in one step.
+
+## How It Works
+
+The page decodes the GIF itself instead of relying on the browser's image decoder, because the browser API does not expose disposal methods, raw delays or loop counts. The decoder reads the logical screen descriptor, the global and local color tables, the Graphic Control Extension (delay, disposal, transparent color) and the NETSCAPE2.0 loop count. It then decompresses each frame's LZW data: variable-width codes that grow from the minimum code size up to 12 bits, with clear codes that reset the dictionary. Interlaced frames are rebuilt from their four row passes. A file that ends early still yields every pixel decoded up to the break. Decoding runs in short slices, so the page stays responsive and shows progress on large files.
+
+## Limits
+
+- Frames always export at the full canvas size. Cropping and resizing are out of scope; the [Image Compressor](/tools/image-compressor/) can resize exported frames.
+- Output formats are PNG, JPG, a ZIP of either, and a PNG sprite sheet. To convert frames to WebP, use the [WebP Converter](/tools/webp-converter/).
+- Editing or re-assembling an animated GIF is out of scope. This tool only takes GIFs apart.
+- Size limits: 50 million decoded pixels, 1,000 frames, and 16,777,216 pixels per frame or sprite sheet.
+
+## Related Tools
+
+- [WebP Converter](/tools/webp-converter/) — convert exported PNG frames to WebP in bulk.
+- [Pixelate Image](/tools/pixelate-image/) — blur or black out details in a frame before you share it.
+- [Image Compressor](/tools/image-compressor/) — shrink or resize exported frames and sprite sheets.
