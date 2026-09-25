@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 137 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 138 tools and growing.
 
 ## Tools
 
@@ -146,6 +146,7 @@
 | Secret Redactor | [/tools/secret-redactor](https://zerotool.dev/tools/secret-redactor) |
 | SQLite Viewer | [/tools/sqlite-viewer](https://zerotool.dev/tools/sqlite-viewer) |
 | Pixelate Image | [/tools/pixelate-image](https://zerotool.dev/tools/pixelate-image) |
+| GIF Splitter | [/tools/gif-splitter](https://zerotool.dev/tools/gif-splitter) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
