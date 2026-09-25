@@ -77,9 +77,6 @@ const shareText    = isZh
 </div>
 <div class="wechat-backdrop" hidden></div>
 
-{/* qrcode.js — same CDN as QR Code Generator tool */}
-<script src="/vendor/qrcode.min.js" is:inline></script>
-
 <script is:inline define:vars={{ shareText, labelCopied }}>
   (function () {
     var bar = document.querySelector('.share-bar');
@@ -144,6 +141,33 @@ const shareText    = isZh
     var urlDisplay = modal ? modal.querySelector('.wechat-modal-url') : null;
     var qrCanvas   = modal ? modal.querySelector('#wechat-qr-canvas') : null;
     var qrRendered = false;
+    var qrLoading = false;
+
+    function renderQr() {
+      if (qrRendered || typeof QRCode === 'undefined' || !qrCanvas) return;
+      var pageUrl = window.location.href;
+      if (urlDisplay) urlDisplay.textContent = pageUrl;
+      QRCode.toCanvas(qrCanvas, pageUrl, {
+        width: 200,
+        margin: 2,
+        color: { dark: '#000000', light: '#ffffff' },
+      }, function (err) {
+        if (!err) qrRendered = true;
+      });
+    }
+
+    // qrcode.min.js loads on first open, so it does not block page rendering.
+    // QR tools load it themselves; reuse that copy when it is already there.
+    function loadQrLib() {
+      if (typeof QRCode !== 'undefined') { renderQr(); return; }
+      if (qrLoading) return;
+      qrLoading = true;
+      var s = document.createElement('script');
+      s.src = '/vendor/qrcode.min.js';
+      s.onload = function () { qrLoading = false; renderQr(); };
+      s.onerror = function () { qrLoading = false; };
+      document.head.appendChild(s);
+    }
 
     function openModal() {
       if (!modal || !backdrop) return;
@@ -152,17 +176,7 @@ const shareText    = isZh
       wechatBtn && wechatBtn.setAttribute('aria-expanded', 'true');
       document.body.style.overflow = 'hidden';
 
-      if (!qrRendered && typeof QRCode !== 'undefined' && qrCanvas) {
-        var pageUrl = window.location.href;
-        if (urlDisplay) urlDisplay.textContent = pageUrl;
-        QRCode.toCanvas(qrCanvas, pageUrl, {
-          width: 200,
-          margin: 2,
-          color: { dark: '#000000', light: '#ffffff' },
-        }, function (err) {
-          if (!err) qrRendered = true;
-        });
-      }
+      if (!qrRendered) loadQrLib();
     }
 
     function closeModal() {
