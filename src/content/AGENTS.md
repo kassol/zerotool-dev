@@ -45,7 +45,7 @@ title: "..."
 description: "..."
 pubDate: 2026-04-20
 updatedDate: 2026-04-25      # 可选，sitemap lastmod 优先用这个
-ogImage: "/og/{slug}.png"    # 可选
+ogImage: "/og/custom.png"    # 可选，仅在需要覆盖默认图时写；默认由 ArticleLayout 按文件路径推导
 lang: "en"                   # en/zh/ja/ko，必须与文件名（en.mdx/zh.mdx/...）一致
 tags: ["..."]                # 可选；用于"相关文章"模块
 draft: false                 # 可选；为 true 时不会进入路由生成、hreflang 与语言切换
@@ -115,3 +115,4 @@ faqItems:                # 可选，结构化 FAQ
 - 2026-04-26 — 初版（合并自 `src/content/blog/AGENTS.md`，迁移到此处规避 Astro collection schema 冲突）
 - 2026-04-27 — 博客结构 B-migration：平铺 `{slug}-{lang}.mdx` → 目录 `{slug}/{lang}.mdx`，对齐 tools collection 风格；`_redirects` 大幅瘦身（~2470 → ~1100 条），脱离 CF Pages 2100 限制
 - 2026-09-25 — `public/og/` 改为构建产物并移出 git，博客图片不再放该目录
+- 2026-09-25 — 博客 OG 图改由 `ArticleLayout` 按文件路径推导（`{dir}/en.mdx` → `/og/blog-{dir}.png`，其他语言 → `/og/blog-{dir}-{lang}.png`，与 `generate-og.mjs` 命名一致）；删除全部博客 frontmatter 的 `ogImage`（72 篇 zh/ja/ko 曾指向 EN 图，35 篇缺失而用 og-default）

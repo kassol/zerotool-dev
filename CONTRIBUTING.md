@@ -97,7 +97,7 @@ Every new tool requires ALL of the following:
 - **Design tokens**: Use the CSS custom properties defined in `BaseLayout.astro` global styles (`--color-primary`, `--radius-md`, etc.). Do not hardcode hex colors in component styles. See `DESIGN.md`.
 - **Icons**: All icons are inline SVG in `src/data/icons.ts` — no external icon libraries, zero network dependencies.
 - **Persistence**: Use the global `window.ztPersist` API (`save` / `load` / `clear`). Direct `localStorage.setItem` is forbidden — `audit.mjs` will FAIL the build. Per-slug policy lives in `src/data/persistence.ts`: `input` (default; Clear must sync), `preference` (Clear leaves it alone), or `disabled` (never persisted; historical values are wiped on every load).
-- **Blog frontmatter**: `title`, `description`, `pubDate`, `updatedDate?`, `ogImage?`, `lang`, `tags?`, `draft?`, `canonicalUrl?`, `noindex?`. The URL slug is the directory name; there is no per-language slug field.
+- **Blog frontmatter**: `title`, `description`, `pubDate`, `updatedDate?`, `ogImage?` (override only; the layout picks the generated image by default), `lang`, `tags?`, `draft?`, `canonicalUrl?`, `noindex?`. The URL slug is the directory name; there is no per-language slug field.
 
 ## i18n Architecture
 
