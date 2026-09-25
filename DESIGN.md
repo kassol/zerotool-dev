@@ -258,6 +258,7 @@ Dark mode uses the same token names with warmer, lower-lightness values. Compone
 Checklist for dark mode:
 
 - Page background, surface, muted surface, borders, and text come from tokens.
+- The dark token blocks in `BaseLayout.astro` also set `color-scheme: dark`, so native scrollbars, select popups, and checkboxes render dark.
 - Focus rings remain visible on dark surfaces.
 - Generated preview colors remain literal user output.
 - Copy states, success states, and danger states use semantic tokens.
