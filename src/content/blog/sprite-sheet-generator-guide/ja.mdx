@@ -1,0 +1,482 @@
+---
+title: "スプライトシート作成ガイド：テクスチャアトラスの詰め込み配置とにじみ対策"
+description: "複数の PNG を 1 枚のスプライトシートと JSON にまとめ、Phaser・PixiJS で読み込む方法を解説。MaxRects の詰め込み配置、トリムのオフセット、Spacing と Extrude によるテクスチャのにじみ対策まで。"
+pubDate: 2026-09-25
+lang: "ja"
+tags: ["sprite-sheet", "game-development", "texture-atlas", "developer-tools"]
+---
+
+ゲームジャム 2 日目。アーティストがチームのチャットにフォルダーを投げ込みます。中身は 48 × 64 の走りモーション 12 コマ、待機 8 コマ、ジャンプ 6 コマ、24 × 24 の UI アイコン 20 個、それに 32 × 32 の地面タイル一式。PNG ファイルは合計 60 個です。最初のビルドは 1 枚ずつ個別に読み込むので、タイトル画面は 60 本のリクエストを待つことになります。さらにカメラを 1.5 倍にズームすると、地面タイルのあいだに細い暗い線が現れ、プレイヤーが歩くたびにちらつきます。
+
+どちらの問題も解決策は同じです。すべての画像を 1 枚のテクスチャ、つまり**スプライトシート**（テクスチャアトラスとも呼びます）にまとめ、各画像の位置を記したデータファイルを添えます。アトラスは隙間なく詰める必要があります。走りモーションの透明な余白は、アニメーションが揺れないように切り取らなければなりません。タイルの端には、GPU が隣の画像のピクセルを混ぜ込まないよう少し手当てが要ります。
+
+このガイドでは、それぞれの仕組みを順に説明します。60 枚より 1 枚のテクスチャが速い理由、MaxRects パッキングアルゴリズムが矩形を置く手順、トリム後の `spriteSourceSize` の意味、そして Spacing と Extrude が継ぎ目を防ぐ理由です。コード例では結果を Phaser・PixiJS・素の CSS で読み込み、Python スクリプトで座標を検証します。
+
+[スプライトシート作成ツールを開く →](/ja/tools/sprite-sheet-generator/)
+
+## スプライトシートが必要になる場面
+
+| 状況 | 必要なもの | 選ぶ設定 |
+|---|---|---|
+| Phaser や PixiJS で使う、サイズがまちまちなキャラクターのアニメーションフレーム | PNG 1 枚と、名前で引けるフレームデータ | Packed、Trim オン、JSON Hash |
+| Phaser の `load.spritesheet` や、`hframes`・`vframes` を使う Godot の `Sprite2D` 向けのコマ送りループ | 固定位置に並んだ同じ大きさのセル | Grid、Trim オフ、Power of two オフ |
+| 拡大縮小したり小数座標でスクロールしたりするタイルマップ用のタイル | タイル間に継ぎ目が出ないこと | Packed または Grid、Spacing 2、Extrude 1 か 2 |
+| ゲームエンジンを使わない Web ページの UI アイコンセット | 画像 1 枚とアイコンごとのクラス | Packed、Trim オフ、CSS |
+| Starling、Sparrow など Sparrow XML 形式を読むエンジン向けの素材 | `TextureAtlas` の XML | Packed、XML |
+| ローディングスピナーの CSS `steps()` アニメーション | 同じ大きさのフレームを 1 行に並べたもの | Grid、Columns = フレーム数、Spacing 0 |
+| WebGL 1 で動かす必要があり、ミップマップも使う環境 | 2 のべき乗のシートサイズ | Power of two オン |
+
+Packed は最も少ないピクセルに最も多くの画像を収めますが、データファイルが必要です。Grid は多少の無駄が出る代わりに、フレームの幅と高さしか知らないローダーでも扱えます。
+
+## 60 枚より 1 枚が速い理由：ドローコールとテクスチャのバインド
+
+GPU はバッチ単位で描画します。レンダラーは同じ状態（シェーダー、ブレンドモード、テクスチャ）を共有するスプライトを集め、1 回のドローコールで送ります。次のスプライトがバインドされていないテクスチャを必要とすると、そこでバッチが終わり、新しいバッチが始まります。MDN の [WebGL のベストプラクティス](https://developer.mozilla.org/ja/docs/Web/API/WebGL_API/WebGL_best_practices)は、アトラスを使う理由をそのまま書いています。「テクスチャを変更するには描画呼び出しのバッチを分割する必要があるため、テクスチャアトラスを使用することで、より多くの描画呼び出しを、より少ない数の大きなバッチにまとめることができます。」
+
+最近の 2D レンダラーは、1 つのバッチに複数のテクスチャをバインドしてこの影響を和らげています。たとえば PixiJS v8 の WebGL レンダラーは、バッチあたりのテクスチャ数を GPU の `MAX_TEXTURE_IMAGE_UNITS` から決めます。この値の OpenGL ES 2.0 における最低保証は 8 です。つまり 60 枚の個別画像を使うシーンは、そうした GPU では少なくとも 8 バッチ（16 ユニットの GPU なら 4 バッチ）が必要で、描画順がテクスチャ間を行き来すればさらに増えます。アトラス 1 枚なら 60 個のスプライトがすべて同じテクスチャを使い、1 バッチに収まります。
+
+効果はドローコールだけではありません。
+
+- **リクエストが減る。** PNG 1 つと JSON 1 つは、小さなファイル 60 個より速く読み込めます。モバイル回線では特に差が出ます。
+- **ファイルのオーバーヘッドが減る。** PNG 1 つならシグネチャとヘッダーチャンクも 1 組です。60 ファイルなら 60 組になります。
+- **アップロードが 1 回で済む。** GPU が受け取るテクスチャは 60 枚ではなく 1 枚です。管理するミップマップチェーンとサンプラー設定も 1 組だけになります。
+
+代わりに、エンジンは各画像がアトラスのどこにあるかを知る必要があります。それを伝えるのがデータファイルです。
+
+## 詰め込み配置の仕組み：MaxRects と Best Short Side Fit
+
+大きさの異なる矩形をできるだけ小さな領域に収める問題は、2 次元ビンパッキング問題と呼ばれます。NP 困難なので、実用的なパッカーはどれもヒューリスティックを使います。テクスチャアトラスの定番の参考文献は、Jukka Jylänki による 2010 年 2 月 27 日付のサーベイ [A Thousand Ways to Pack the Bin – A Practical Approach to Two-Dimensional Rectangle Bin Packing](https://github.com/juj/RectangleBinPack) です。シェルフ法、ギロチン法、スカイライン法、極大矩形法を比較し、実際のテストケースとしてテクスチャアトラス生成を使っています。結論は「最も性能が高いのは MAXRECTS の各バリエーション」です。
+
+### 空き矩形のリスト
+
+MaxRects は空き矩形のリストを保持します。それぞれの空き矩形は*極大*な空き領域で、どの方向に広げても配置済みのスプライトに重なります。空き矩形同士は重なってもかまいません。これがギロチン法との大きな違いです。
+
+100 × 100 のビンに 60 × 40 のスプライトを左上へ置いてみます。1 つだった空き矩形は、スプライトの周りの帯に分かれます。
+
+```text
++------------+-------+        Free rectangles after placing A (60 x 40):
+|            |       |
+|     A      |   R   |        R = x 60, y 0,  w 40,  h 100  (right of A)
+|  60 x 40   |       |        B = x 0,  y 40, w 100, h 60   (below A)
++------------+  - - -|
+|        B           |        R and B overlap in the bottom-right corner.
+|                    |        Both are maximal.
++--------------------+
+```
+
+A を置いたあとの空き矩形は、A の右の R（x 60, y 0, w 40, h 100）と A の下の B（x 0, y 40, w 100, h 60）です。R と B は右下の角で重なっていて、どちらも極大です。
+
+以降は配置のたびに、触れた空き矩形をそれぞれ最大 4 本の帯（左・右・上・下）に切り分け、ほかの空き矩形に完全に含まれる帯は取り除きます。リストは常に、スプライトを置ける空き場所をすべて表しています。
+
+### 置き場所の選び方：Best Short Side Fit
+
+パッカーはスプライトごとに、十分な大きさのある空き矩形をすべて試して点数を付けます。論文にはいくつかのルールがあります。**Best Short Side Fit**（MAXRECTS-BSSF）は `min(freeW - w, freeH - h)` が最小になる空き矩形、つまり短いほうの余りが最も小さくなる場所を選びます。同点のときは、Jylänki のリファレンス実装と同じく、長いほうの余りが小さいものを優先します。
+
+先ほどの例に 30 × 30 のスプライトを追加します。R では余りが横 10、縦 70 なので短辺は 10。B では 70 と 30 なので短辺は 30。R が勝ち、スプライトは A の隣の (60, 0) に置かれます。このルールは一辺がほぼぴったり収まる場所を好むため、細かい端切れではなく、使い道のある長い帯が残ります。
+
+### 順番が結果を左右する
+
+MaxRects はオンラインアルゴリズムで、与えられた順にスプライトを 1 つずつ置きます。大きなスプライトを最後に回すと置き場所がなくなるため、パッカーは先に並べ替えます。スプライトシート作成ツールは長いほうの辺が大きい順に並べ、次に面積で並べます。長辺が同じ 2 つのスプライトでは、面積が大きいほうが短辺も大きくなるので、この並び順は論文でいう -DESCLS に当たります。
+
+### シートサイズの決め方
+
+パッカーはシートの幅も決めなければなりません。スプライトシート作成ツールは MaxRects を何度か実行します。
+
+1. いちばん幅の広いスプライトから **Max width**（512、1024、2048、4096、8192 px のいずれか。初期値 2048）までの範囲にある複数の幅と、スプライトの総面積の平方根に近い幅を試します。**Power of two** がオンなら 2 のべき乗だけを試します。
+2. 幅ごとに、全スプライトが入りうる最小の高さから始め、すべて収まるまで高さを伸ばします。
+3. Canvas の上限に収まる結果を残し、最小面積から 10% 以内の結果を同等とみなして、そのなかで最も正方形に近いものを選びます。
+
+10% ルールがあるのは、極端に細長いシートのほうが数パーセント密に詰まることが多い一方で、92 × 15357 px のようなサイズになりやすく、多くの GPU のテクスチャサイズ上限を超えてしまうからです。正方形に近いシートのほうが安全です。
+
+フレームは回転させません。90° 回転で面積を節約できる場合もありますが、その場合はエンジン側でテクスチャ座標を戻す必要があり、すべてのローダーが対応しているわけではありません。TexturePacker 自身のドキュメントも、回転オプションについて「すべてのゲーム／Web フレームワークでサポートされているとは限らない」と書いています。すべてのフレームを正立のまま保てば、その形式を読めるどのローダーでも使えます。
+
+## トリム：frame、spriteSourceSize、sourceSize
+
+アニメーションのフレームは、キャラクターの位置がずれないよう同じキャンバスサイズでそろえるのが普通です。64 × 64 の走りフレームでも、キャラクター本体は 30 × 44 しかなく、周りは透明なピクセルということがあります。64 × 64 のまま詰めると、領域の約 3 分の 2 が無駄になります。
+
+トリムは、各画像を見えているピクセルのバウンディングボックスまで切り詰めます。このツールはアルファが 0 より大きいピクセルをすべて残し、上下左右の完全に透明な行と列を取り除きます。そのうえで、切り取った矩形が元のどこにあったかをデータファイルに記録しておかなければなりません。そうしないと、フレームごとに矩形の大きさが変わり、アニメーションが跳ねてしまいます。
+
+**Margin** を 2 にして JSON Hash で書き出したフレームの一例です。
+
+```json
+"walk_01.png": {
+  "frame": { "x": 2, "y": 2, "w": 30, "h": 44 },
+  "rotated": false,
+  "trimmed": true,
+  "spriteSourceSize": { "x": 17, "y": 10, "w": 30, "h": 44 },
+  "sourceSize": { "w": 64, "h": 64 }
+}
+```
+
+- `frame` はシートから切り出す矩形です。(2, 2) にある 30 × 44 ピクセルです。
+- `sourceSize` は元画像のサイズで、64 × 64 です。
+- `spriteSourceSize` は、トリム後のピクセルが元画像のどこにあったかを表します。左から 17 px、上から 10 px の位置です。
+
+エンジンはこのフレームを描くとき、64 × 64 の枠を使い、30 × 44 のピクセルを (17, 10) のオフセットに置きます。スプライトのサイズとアンカーはトリム前の画像と同じで、小さくなるのはテクスチャだけです。Phaser の `JSONHash` パーサーは、`trimmed` が true のときにこれらの値を `Frame.setTrim` に渡します。PixiJS v8 の `Spritesheet` は `spriteSourceSize` からトリム矩形を作り、`sourceSize` を元のサイズとして使います。
+
+Sparrow・Starling の XML 形式は、同じ情報を別の形で持ちます。オフセットは負の値になります。トリム後のピクセルから見て、元のフレームがどこから始まるかを表すからです。
+
+```xml
+<SubTexture name="walk_01.png" x="2" y="2" width="30" height="44"
+  frameX="-17" frameY="-10" frameWidth="64" frameHeight="64"/>
+```
+
+トリムしていないフレームでは、4 つの `frame*` 属性を省略します。Starling の `TextureAtlas` のソースにも同じレイアウトが記されていて、Phaser の `AtlasXML` パーサーは `frameX` と `frameY` の絶対値を使います。
+
+完全に透明な画像には、残すべきピクセルがありません。このツールはそうした画像を 1 × 1 のフレームとして保存し、`sourceSize` は保持します。アニメーション中の空白フレームも、タイミング上の位置を失いません。
+
+## テクスチャのにじみ：Spacing、Extrude、ミップマップ
+
+### 隣の色が混ざる理由
+
+GPU がテクセル 1 つを画面の 1 ピクセルにぴったり対応させることはめったにありません。スプライトを拡大縮小・回転したり、小数座標に描いたりすると、サンプラーはテクセルの中心と中心のあいだを読みます。バイリニアフィルタ（`LINEAR`）では、各サンプルは近くの 4 テクセルの加重平均です。フレームの端では、その 4 つのうち 2 つがアトラス上の隣のスプライトに属することがあります。
+
+その結果、端に沿って違う色の細い線が出ます。隣が透明な黒であることが多いため暗い線になりやすく、カメラの動きに合わせて動きます。冒頭の地面タイルがまさにこれです。1.5 倍ズームでは各タイルの端のテクスチャ座標がテクセルのあいだに落ち、フィルタが隣のタイルの色を混ぜます。
+
+### にじみを防ぐ 3 つの手段
+
+- **Spacing** はスプライトのあいだに透明なピクセルを入れます。フィルタが端と混ぜる相手が、別のスプライトから透明色に変わります。スプライトシート作成ツールの初期値は 2 px です。TexturePacker のドキュメントも Shape padding について同じ数値を挙げ、「OpenGL でレンダリングする場合、隣のスプライトのピクセルを引き込まないよう、少なくとも 2 を指定する」としています。
+- **Extrude** は各スプライトのいちばん外側の行と列を、角も含めて 1〜8 px 外側へ複製します。データファイル上のフレームサイズは変わらないので、複製したピクセルがエンジンで直接表示されることはありません。フィルタは各端を同じ色と混ぜるようになります。これが効くのは不透明なタイルです。透明色と混ざった端は、2 枚のタイルが接すると薄い継ぎ目として見えますが、端の複製と混ざった場合は見えません。
+- **Margin** はシート全体の外周に空白を残します。シートの端にあるスプライトも、中央のスプライトと同じように守られます。
+
+各スプライトは自身のサイズに `2 × extrude` と Spacing を足した領域を占めます。そのため、出力で隣り合う 2 つのフレームの間隔は `spacing + 2 × extrude` です。後述の Python の例でこれを検証します。
+
+### ミップマップではさらに余白が要る
+
+ミップマップでは問題が大きくなります。ミップレベルが 1 つ上がるごとに解像度は半分になり、レベル 1 では 1 テクセルがシートの 2 × 2 ブロック、レベル 2 では 4 × 4 ブロック、レベル k では幅 2^k ピクセルのブロックを覆います。2 px の間隔で守れるのはおおむねレベル 1 までです。レベル 3 になると、各テクセルは隣のピクセルも含む 8 × 8 の領域を平均するため、サンプラーをどれだけ慎重に設定しても混ざります。
+
+スプライトをテクスチャサイズよりかなり小さく描くなら、Spacing と Extrude を増やすか、エンジンが使う最下位のミップレベルを制限するか、そのスプライトを別のテクスチャに分けてください。ニアレストネイバーで整数座標に描くドット絵ではテクセルが混ざらないので、Spacing・Extrude・Margin はすべて 0 でかまいません。Phaser ではゲーム設定の `pixelArt: true` でアンチエイリアスがオフ、ピクセル丸めがオンになります。PixiJS v8 では、シートを読み込むときのテクスチャオプションに `scaleMode: 'nearest'` を渡します。
+
+## 2 のべき乗ルールの由来
+
+古い解説には、スプライトシートは各辺 256、512、1024、2048 ピクセルでなければならないと書かれています。このルールは WebGL 1 と OpenGL ES 2.0 に由来します。MDN の [WebGL でのテクスチャの使用](https://developer.mozilla.org/ja/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL)によると、WebGL1 では 2 のべき乗でない大きさのテクスチャはフィルタリングを `NEAREST` か `LINEAR` に設定した場合しか使えず、ミップマップも生成できません。ラッピングモードも `CLAMP_TO_EDGE` にする必要があります。
+
+WebGL 1 では、ここから 2 つの制約が生じます。
+
+- 2 のべき乗でない（NPOT）テクスチャはミップマップを持てません。大きくズームアウトし、縮小時もなめらかでちらつきのない表示が欲しいゲームには、2 のべき乗のシートが必要です。
+- NPOT テクスチャでは `REPEAT` や `MIRRORED_REPEAT` のラップモードを使えません。もっとも、アトラスを繰り返すことはまずありません。シート全体を繰り返すと、中のスプライトもすべて繰り返されるからです。
+
+WebGL 2 ではミップマップの制限がなくなりました。[WebGL2 Fundamentals の「WebGL2の新機能」](https://webgl2fundamentals.org/webgl/lessons/ja/webgl2-whats-new.html)にも「WebGL1では、2のべき乗でないテクスチャはミップマップを持てませんでした。WebGL2ではこの制限は削除されています。」とあります。WebGL 2 を対象とするエンジンの多くは任意のサイズを受け付けます。**Power of two** をオンにするのは、対象環境がまだ WebGL 1 でミップマップを使う場合か、エンジンや圧縮処理が求める場合です。たとえば TexturePacker のドキュメントは、Unity や Unreal などのエンジンで外部圧縮を行う場合、2 のべき乗や 4 の倍数のサイズが必要になることがあると注意しています。
+
+これとは別に、GPU が受け付けるテクスチャの最大サイズという制約もあります。OpenGL ES 2.0 が保証する `MAX_TEXTURE_SIZE` は 64 にすぎませんが、実際のハードウェアははるかに大きな値に対応しています。[WebGL2 Fundamentals のクロスプラットフォームに関する記事](https://webgl2fundamentals.org/webgl/lessons/webgl-cross-platform-issues.html)（英語）によると、2020 年時点で 4096 に対応するデバイスは約 99%、それを超えるのは約 50% でした。スマートフォンでも動かす必要があるゲームなら、2048 か 4096 px のシートが安全です。それより大きくしたい場合は、対象デバイスで `gl.getParameter(gl.MAX_TEXTURE_SIZE)` を確認してください。
+
+## Unity や Cocos Creator を使っている場合
+
+Unity や Cocos Creator のようなエディター付きのエンジンで開発しているなら、アトラスを作る機能がエンジンに組み込まれています。まずはそちらを使うのが基本です。
+
+- **Unity** には「スプライトアトラス」アセットがあります。[Unity マニュアルのスプライトアトラスの解説](https://docs.unity3d.com/ja/current/Manual/sprite/atlas/atlas-landing.html)には、Unity は通常シーン内のテクスチャごとにドローコールを送るが、スプライトアトラスで複数のテクスチャを 1 つに統合すれば 1 回のドローコールで済む、と書かれています。`.spriteatlas` ファイルを作ってスプライトを登録すれば、パッキングはエディターが行います。
+- **Cocos Creator** には [Auto Atlas](https://docs.cocos.com/creator/3.8/manual/en/asset/auto-atlas.html)（英語）があり、同じフォルダー内の SpriteFrame をビルド時に 1 枚のアトラスへまとめます。パッキングのアルゴリズムは MaxRects で、Padding（間隔）、Power of Two、それに Extrude と同じ働きをする Padding Bleed も設定できます。外部ツールで作ったアトラスを[取り込む場合](https://docs.cocos.com/creator/3.8/manual/en/asset/atlas.html)は、Cocos2d-x 形式の `.plist` と `.png` の組が必要です。
+
+スプライトシート作成ツールが書き出すのは JSON Hash、JSON Array、Sparrow/Starling XML、CSS で、Unity 用の形式や Cocos2d-x の `.plist` には対応していません。このツールが向いているのは、Phaser や PixiJS のような Web のゲームエンジン、Starling、そしてエンジンを使わない Web ページです。この記事で扱う MaxRects、トリム、Spacing と Extrude の考え方は、エンジン組み込みのアトラス機能の設定項目を読み解くときにもそのまま役立ちます。
+
+## スプライトシート作成ツールの動作
+
+[スプライトシート作成ツール](/ja/tools/sprite-sheet-generator/)は、ブラウザのタブの中でアトラスを組み立てます。手順は次のとおりです。
+
+1. **画像を追加する。** ファイルをドロップする、クリックして選ぶ、または Ctrl/Cmd+V でコピーした画像ファイルを貼り付けます。対応形式は PNG、JPG、WebP、GIF、SVG、BMP、AVIF で、ファイルはいつでも追加できます。ラスター画像は `createImageBitmap` でデコードします。SVG は `width`・`height`・`viewBox` 属性が示すサイズで描画します。
+2. **フレームに名前を付ける。** 各フレームには拡張子付きのファイル名（`walk_01.png`）がそのまま付きます。これは TexturePacker の慣例です。同じ名前のファイルが 2 つあると、2 つ目は `walk_01 (2).png` になります。**Sort** の **Name** は自然順で、`walk_2` が `walk_10` より前に来ます。**Added** は追加した順を保ちます。
+3. **トリムする。** 各画像の可視範囲のバウンディングボックスは、画像を追加したときに 1 度だけ計算します。Packed モードでは、**Trim transparent edges** チェックボックス（初期値オン）で、配置にそれを使うかどうかを決めます。Grid モードは常に画像全体を使います。
+4. **配置する。** **Packed** は前述の MaxRects を実行します。**Grid** はすべてのセルを最大の画像と同じ大きさにし、各画像をセルの中央に置いて、セル全体をフレームとして書き出します。**Columns** の初期値は画像枚数の平方根の切り上げです。Spacing（0〜64 px、初期値 2）、Margin（0〜64、初期値 0）、Extrude（0〜8、初期値 0）はどちらのレイアウトにも適用されます。
+5. **描画して書き出す。** 画像をスムージングなしの等倍で Canvas に描き、Extrude の帯を複製し、`toBlob('image/png')` で Canvas をエンコードします。データのテキストは、同じフレームリストから選んだ形式で生成します。
+
+設定を変えると、約 150 ms 後にシートが自動で作り直されます。情報行にはシートのサイズ、スプライト数、充填率（スプライトのピクセル面積 ÷ シートの面積）が表示されます。**Show bounds** はプレビューにだけフレームの枠を描き、PNG には描きません。
+
+### 制限
+
+- 画像は最大 1,000 枚、1 枚あたり一辺 8,192 px までです。画像以外のファイルやデコードに失敗したファイルはスキップし、ファイル名を一覧表示します。
+- シートは一辺 16,384 px 以下、総ピクセル数 16,777,216 以下です。[canvas-size のテスト結果](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results)では、Mobile Safari 9 以降で使える最大の Canvas 面積は 4,096 × 4,096（16,777,216 ピクセル）とされています。それより大きい Canvas は Mobile Safari で動かないため、ツールはそうしたレイアウトを作らず、Spacing を減らす、Max width やレイアウトを変える、画像を減らすのいずれかを求めます。
+- Max width より幅の広い画像が 1 枚でもあると、シートはその画像に合わせて広がり、ステータス行にその画像名が表示されます。
+
+### 「アップロードしない」の具体的な意味
+
+ファイルは File API を通じてディスクからページに渡ります。デコード、トリム、配置、PNG エンコードはすべてタブの中で行い、画像や出力をネットワークに送ることはありません。保存するのはオプション設定（レイアウト、列数、最大幅、間隔、外側余白、エクストルード、トリム、2 のべき乗、並び順、データ形式、シート名、枠表示）だけで、保存先はローカルストレージです。画像、プレビュー、出力テキストは保存しません。サイト内のほかのツールと同じく、ツール名と操作（`png`、`data`、`copy`）を含む利用イベントを Google Analytics に送ります。ファイル名やファイルの内容は含まれません。
+
+## つまずきやすい点と注意事項
+
+### アニメーション中にフレームが跳ねる
+
+ローダーがトリムのデータを無視しています。`spriteSourceSize` のオフセットを足さずに `frame` をスプライトの位置に描く自作コードでは、トリムしたフレームがそれぞれ違う量だけずれます。エンジンのアトラスローダーを使うか、自分のコードでオフセットを足すか、**Trim transparent edges** をオフにしてください。
+
+### Phaser のグリッドローダーが余分なフレームを見つける
+
+Phaser の `load.spritesheet` はデータファイルを読みません。フレーム数を画像サイズから計算します。列数は `floor((width - margin + spacing) / (frameWidth + spacing))` で、行数も同じ式で求め、その積がフレーム数です。描いていないフレームが増える原因は 2 つあります。
+
+- **Power of two** でシートが 1 セル分より大きく広がると、空の列や行が増えて番号がずれます。このローダーを使うときはオフにしてください。
+- 画像枚数が **Columns** の倍数でないと、最終行に空のセルができます。10 枚を 4 列に並べると、Phaser は 12 フレームを作ります。`endFrame: 9`（この値自身を含みます）を渡すか、使うフレームを列挙してください。
+
+**Extrude** を E にした場合は、ローダーに `margin + E` と `spacing + 2 × E` を渡します。
+
+### トリムが効かない
+
+このツールはアルファが 0 より大きいピクセルをすべて残します。ソフトブラシやドロップシャドウの名残で、隅にアルファ 1 のピクセルが 1 つあるだけでも、キャンバス全体が残ります。JPG にはアルファチャンネルがなく、BMP もほとんどは持たないので、切り取るものがありません。元画像を掃除するか、正しいアルファチャンネル付きの PNG で書き出してください。
+
+### CSS アイコンの余白がなくなる
+
+CSS 形式に書き出すのはフレームのサイズと位置だけです。Trim がオンだと、各アイコンのクラスは見えているピクセルのサイズになるので、24 × 24 のアイコンが 18 × 20 になり、ボタンを並べたときに中央からずれることがあります。CSS を書き出す前に Trim をオフにしてください。また CSS 出力には `background-size` を含みません。HiDPI 画面向けには @2x の画像を詰め、`background-size` をシートサイズの半分にして、すべての width、height、`background-position` の値も半分にします。
+
+### PixiJS が PNG を見つけられない
+
+`Assets.load` は JSON の `meta.image` を読み、同じフォルダーからそのファイルを読み込みます。書き出し後に PNG の名前を変えると、読み込みに失敗します。Phaser は PNG の URL を別の引数で受け取り、`meta.image` を読まないので、同じように名前を変えても問題ありません。書き出す前に **Sheet name** を設定し、2 つのファイルを一緒に置いてください。
+
+### Grid モードで Extrude が効かない
+
+Grid モードではセル全体がフレームで、Extrude が複製するのはセルの端です。画像がセルより小さいと端は透明なので、複製しても何も変わりません。Grid モードで Extrude が効くのは、タイルのようにすべての画像がセルを埋めている場合です。サイズがまちまちなら Packed を使ってください。
+
+### GIF の 1 コマ目しか表示されない
+
+このツールは GIF をブラウザの画像デコーダーでデコードするので、得られるのは 1 コマ目だけです。アニメーション GIF のすべてのコマを詰めたい場合は、先に [GIF 分解ツール](/ja/tools/gif-splitter/)でコマに分けてから、ここにドロップしてください。
+
+### 重複したフレームが 2 回分の場所を取る
+
+2 つの画像がまったく同じでも、ファイルはすべて配置されます。一覧から重複を外すか、エンジン側のアニメーション定義で 1 つのフレーム名を使い回してください。
+
+## コード例
+
+以下の例では、`hero` という名前のシートに `run_01.png` から `run_12.png` までのフレームがあり、`hero.png` と `hero.json` として書き出したものとします。
+
+### Phaser：アトラスを読み込んでアニメーションを作る
+
+`this.load.atlas` はテクスチャの URL と JSON の URL を受け取ります。JSON Hash と JSON Array のどちらも読めます。Phaser のテクスチャマネージャーが `frames` が配列かどうかを調べ、対応するパーサーを選ぶからです。以下のコードで使うローダーとアニメーションの API は、Phaser 3.90 と 4.x のソースで共通です。
+
+```js
+class Play extends Phaser.Scene {
+  preload() {
+    this.load.atlas('hero', 'assets/hero.png', 'assets/hero.json');
+    // XML で書き出した場合: this.load.atlasXML('hero', 'assets/hero.png', 'assets/hero.xml');
+  }
+
+  create() {
+    this.anims.create({
+      key: 'run',
+      frames: this.anims.generateFrameNames('hero', {
+        prefix: 'run_', start: 1, end: 12, zeroPad: 2, suffix: '.png'
+      }),
+      frameRate: 14,
+      repeat: -1
+    });
+
+    this.add.sprite(160, 120, 'hero', 'run_01.png').play('run');
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: 320,
+  height: 240,
+  pixelArt: true, // アンチエイリアスをオフ、roundPixels をオン
+  scene: Play
+});
+```
+
+フレーム名に `.png` が含まれるので、`generateFrameNames` には `suffix: '.png'` が必要です。Grid で書き出したシートをデータファイルなしで読み込む場合は次のようにします。
+
+```js
+// Grid で書き出した 48 x 64 のフレーム 10 枚、Spacing 2、Margin 0、Extrude 1
+this.load.spritesheet('coin', 'assets/coin.png', {
+  frameWidth: 48,
+  frameHeight: 64,
+  margin: 0 + 1,      // margin + extrude
+  spacing: 2 + 2 * 1, // spacing + 2 x extrude
+  endFrame: 9         // 最終行の空セルを読み飛ばす
+});
+```
+
+### PixiJS v8：Assets.load と AnimatedSprite
+
+PixiJS は `frames` をフレーム名をキーとするオブジェクトとして型付けしているので、**JSON Hash** で書き出してください。`Assets.load` は `Spritesheet` を返し、その `textures` オブジェクトにフレームごとのテクスチャが入っています。
+
+```js
+import { Application, Assets, AnimatedSprite } from 'pixi.js';
+
+const app = new Application();
+await app.init({ width: 320, height: 240 });
+document.body.appendChild(app.canvas);
+
+const sheet = await Assets.load({
+  src: 'assets/hero.json',
+  data: { textureOptions: { scaleMode: 'nearest' } } // ドット絵をくっきり表示
+});
+
+const runFrames = Object.keys(sheet.textures)
+  .filter((name) => name.startsWith('run_'))
+  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  .map((name) => sheet.textures[name]);
+
+const runner = new AnimatedSprite({
+  textures: runFrames,
+  animationSpeed: 0.25, // 60 fps の 1 tick あたりのフレーム数：毎秒約 15 フレーム
+  autoPlay: true
+});
+runner.position.set(160, 120);
+app.stage.addChild(runner);
+```
+
+`numeric: true` オプションで `run_2` が `run_10` より前に並びます。ツールの Name による並べ替えと同じ自然順です。v8 でも、古いコンストラクター形式 `new AnimatedSprite(textures)` は引き続き使えます。
+
+### CSS：アイコンと steps() アニメーション
+
+**Sheet name** を `icons` にして CSS 形式で書き出すと、次のような出力になります（位置はレイアウトによって変わります）。
+
+```css
+.icons {
+  display: inline-block;
+  background-image: url("icons.png");
+  background-repeat: no-repeat;
+}
+
+.icons-home {
+  width: 24px;
+  height: 24px;
+  background-position: 0 0;
+}
+
+.icons-search {
+  width: 24px;
+  height: 24px;
+  background-position: -26px 0;
+}
+```
+
+```html
+<button><span class="icons icons-search"></span> Search</button>
+```
+
+スピナーなら、64 × 64 の 8 フレームを Grid、Columns 8、Spacing 0 で書き出します。シートは 512 × 64 になります。`steps(8)` で 1 フレーム幅ずつ移動します。
+
+```css
+.spinner {
+  width: 64px;
+  height: 64px;
+  background: url("spinner.png") no-repeat 0 0;
+  animation: spin 0.8s steps(8) infinite;
+}
+
+@keyframes spin {
+  to { background-position: -512px 0; }
+}
+```
+
+### Python：公開前に座標を検証する
+
+このスクリプトは JSON Hash または JSON Array の書き出し結果を読み、すべてのフレームがシート内にあること、トリムのデータに矛盾がないこと、どの 2 フレームも指定した間隔より近くないことを確認します。`--gap` には `spacing + 2 × extrude` を渡します。さらに、`meta.image` に書かれた PNG が JSON ファイルと同じ場所（PixiJS が探す場所）にあるか、Pillow がインストールされていればそのサイズが `meta.size` と一致するかも確認します。
+
+```python
+#!/usr/bin/env python3
+"""check_atlas.py: sanity-check a TexturePacker-style JSON atlas."""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def frames_of(atlas):
+    frames = atlas["frames"]
+    if isinstance(frames, dict):          # JSON Hash
+        return list(frames.items())
+    return [(f["filename"], f) for f in frames]  # JSON Array
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("atlas")
+    ap.add_argument("--gap", type=int, default=0, help="spacing + 2 * extrude")
+    args = ap.parse_args()
+
+    path = Path(args.atlas)
+    atlas = json.loads(path.read_text(encoding="utf-8"))
+    sheet_w, sheet_h = atlas["meta"]["size"]["w"], atlas["meta"]["size"]["h"]
+    errors, rects = [], []
+
+    for name, f in frames_of(atlas):
+        r, ss, src = f["frame"], f["spriteSourceSize"], f["sourceSize"]
+        x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+        if x < 0 or y < 0 or x + w > sheet_w or y + h > sheet_h:
+            errors.append(f"{name}: frame {w}x{h} at {x},{y} is outside {sheet_w}x{sheet_h}")
+        if f.get("rotated"):
+            errors.append(f"{name}: rotated frames are not expected")
+        if (ss["w"], ss["h"]) != (w, h):
+            errors.append(f"{name}: spriteSourceSize size differs from frame size")
+        if ss["x"] < 0 or ss["y"] < 0 or ss["x"] + w > src["w"] or ss["y"] + h > src["h"]:
+            errors.append(f"{name}: trimmed box does not fit inside sourceSize")
+        rects.append((name, x, y, w, h))
+
+    g = args.gap
+    for i, (na, ax, ay, aw, ah) in enumerate(rects):
+        for nb, bx, by, bw, bh in rects[i + 1:]:
+            apart_x = ax + aw + g <= bx or bx + bw + g <= ax
+            apart_y = ay + ah + g <= by or by + bh + g <= ay
+            if not (apart_x or apart_y):
+                errors.append(f"{na} and {nb} overlap or are closer than {g} px")
+
+    png = path.parent / atlas["meta"]["image"]
+    if not png.exists():
+        errors.append(f"meta.image {png.name} is not next to the JSON file")
+    else:
+        try:
+            from PIL import Image
+            with Image.open(png) as im:
+                if im.size != (sheet_w, sheet_h):
+                    errors.append(f"PNG is {im.size[0]}x{im.size[1]}, meta.size says {sheet_w}x{sheet_h}")
+        except ImportError:
+            pass  # Pillow 未インストール時はサイズ確認を省略
+
+    for e in errors:
+        print("ERROR", e)
+    print(f"{len(rects)} frames, {len(errors)} problems")
+    sys.exit(1 if errors else 0)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+初期設定なら `python check_atlas.py assets/hero.json --gap 2` で実行します。ペアの検査では全フレームを総当たりで比較します。1,000 フレームなら約 50 万回の比較になりますが、素の Python でも 1 分を大きく下回る時間で終わります。アトラスをゲームにコピーするビルドの隣に、CI のステップとして組み込めます。
+
+## TexturePacker・free-tex-packer との比較
+
+3 つとも同じアトラスの考え方に基づいていて、書き出す JSON Hash、JSON Array、Sparrow XML の各形式は同じローダーで読めます。違いは対応範囲と、どこで動くかです。
+
+| | ZeroTool スプライトシート作成ツール | TexturePacker | free-tex-packer |
+|---|---|---|---|
+| 動作環境 | ブラウザのタブ。ファイルはローカルに留まる | Windows・macOS・Linux 向けデスクトップアプリとコマンドライン | Web アプリ、Windows・macOS・Linux 向けデスクトップアプリ、CLI と gulp・grunt・webpack プラグイン |
+| ライセンス | 無料の Web ツール | 商用（無料体験版あり） | オープンソース（MIT） |
+| 配置方式 | MaxRects（Best Short Side Fit）、Grid | Grid、Basic、MaxRects、Polygon | 複数の配置ルールを持つ MaxRects（Best Short Side Fit を含む） |
+| 回転 | なし | オプション | オプション |
+| トリム | あり | Trim と Crop | Trim と Crop |
+| 間隔と端の複製 | Spacing、Margin、Extrude | Shape padding、Border padding、Extrude | Padding、Extrude |
+| 1 セットから複数シート | なし | Multipack | Multipacking |
+| 同一スプライトを 1 回だけ格納 | なし | Alias 検出 | Detect identical オプション |
+| 画像出力 | PNG | PNG、WebP、JPG、PVR・KTX・ASTC などの GPU 形式 | PNG または JPG |
+| データ形式 | JSON Hash、JSON Array、Sparrow/Starling XML、CSS | 48 以上のエンジン向けプリセット、汎用 JSON・XML、カスタム形式 | JSON Hash と Array、XML、CSS、Phaser・PixiJS・Godot・Spine・cocos2d・Starling・Unity・Unreal などのプリセット、カスタムテンプレート |
+
+3 つのなかで最も機能が充実しているのは TexturePacker です。ポリゴンパッキング、Alias 検出、デバイスごとのスケーリング、9-slice とピボットのエディター、GPU テクスチャ圧縮は、大規模ゲームの本番パイプラインで使う機能で、コマンドラインはビルドサーバーにも組み込めます。1 つのスプライトセットから複数のアトラスページを作りたい、フレームを回転させたい、WebP やハードウェア圧縮形式で出力したい、Unity 用のようなエンジン固有の形式が必要、という場合は TexturePacker を使ってください。
+
+free-tex-packer は回転、マルチパック、多数のエンジン向けプリセットに対応し、mustache テンプレートで独自のデータ形式も定義できます。これらのオプションをオープンソースのツールで、あるいは gulp・grunt・webpack のビルドの中で使いたい場合に向いています。
+
+スプライトシート作成ツールが担うのは、その中間にあるよくあるケースです。手元の PNG をすぐに詰めて、Phaser・PixiJS・Starling が読める形式で、トリム・Spacing・Extrude まで処理したい。インストールは不要で、ファイルはマシンの外に出ません。設計上、書き出すのは正立フレームの PNG 1 ページと上記の 4 形式です。回転、複数ページのアトラス、WebP 出力、アニメーションのプレビュー、Unity・Godot 用の形式は TexturePacker と free-tex-packer の担当です。
+
+## 関連ツールと参考資料
+
+スプライトシートと組み合わせて使える ZeroTool のツール：
+
+- [GIF 分解ツール](/ja/tools/gif-splitter/)：アニメーション GIF を PNG のコマに分け、このツールで詰められるようにします。
+- [画像圧縮ツール](/ja/tools/image-compressor/)：書き出したシートの PNG を軽くします。
+- [WebP 変換器](/ja/tools/webp-converter/)：WebP を読み込めるエンジンやブラウザ向けに、シートの PNG を WebP に変換します。
+- [画像 Base64 変換器](/ja/tools/image-to-base64/)：小さなアイコンシートを data URL として CSS に埋め込みます。
+- [SVG → PNG 変換器](/ja/tools/svg-to-png-converter/)：詰める前に、ベクターアイコンを指定サイズでラスター化します。
+
+このガイドで参照した一次資料：
+
+- [Jukka Jylänki, A Thousand Ways to Pack the Bin (2010) とリファレンスコード](https://github.com/juj/RectangleBinPack)：MaxRects、Best Short Side Fit、並び順、ベンチマーク結果
+- [MDN：WebGL のベストプラクティス](https://developer.mozilla.org/ja/docs/Web/API/WebGL_API/WebGL_best_practices)：テクスチャアトラスと描画呼び出しのバッチ処理
+- [MDN：WebGL でのテクスチャの使用](https://developer.mozilla.org/ja/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL)：2 のべき乗でないテクスチャに関する WebGL 1 の規則
+- [WebGL2 Fundamentals：WebGL2の新機能](https://webgl2fundamentals.org/webgl/lessons/ja/webgl2-whats-new.html)：2 のべき乗でないテクスチャのミップマップ
+- [WebGL2 Fundamentals：WebGL2 Cross Platform Issues（英語）](https://webgl2fundamentals.org/webgl/lessons/webgl-cross-platform-issues.html)：実機でのテクスチャ最大サイズ
+- [Unity マニュアル：スプライトアトラス](https://docs.unity3d.com/ja/current/Manual/sprite/atlas/atlas-landing.html)：Unity 組み込みのアトラス機能とドローコール
+- [Cocos Creator マニュアル：Auto Atlas（英語）](https://docs.cocos.com/creator/3.8/manual/en/asset/auto-atlas.html)：Cocos Creator のビルド時アトラス生成と設定項目
+- [Phaser のソース：テクスチャパーサー](https://github.com/phaserjs/phaser/tree/master/src/textures/parsers)：JSON Hash、JSON Array、Sparrow XML、スプライトシートの読み込み処理
+- [PixiJS のソース：Spritesheet](https://github.com/pixijs/pixijs/blob/dev/src/spritesheet/Spritesheet.ts)：v8 の `SpritesheetData` 形式とトリムの扱い
+- [Starling のソース：TextureAtlas](https://github.com/Gamua/Starling-Framework/blob/master/starling/src/starling/textures/TextureAtlas.as)：`frameX` と `frameY` を含む XML のレイアウト
+- [TexturePacker ドキュメント：テクスチャ設定](https://www.codeandweb.com/texturepacker/documentation/texture-settings)：Extrude、Padding、回転、サイズ制約、出力形式
+- [GitHub の free-tex-packer](https://github.com/odrick/free-tex-packer)：機能、エクスポーター、テンプレート形式
+- [MDN：CSS での画像スプライトの実装](https://developer.mozilla.org/ja/docs/Web/CSS/Guides/Images/Implementing_image_sprites)：CSS スプライトの手法
+- [canvas-size のテスト結果](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results)：ブラウザごとの Canvas の最大サイズ

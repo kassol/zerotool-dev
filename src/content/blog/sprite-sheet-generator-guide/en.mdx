@@ -1,0 +1,469 @@
+---
+title: "Sprite Sheet Generator Guide: Texture Atlases, Packing and Bleeding"
+description: "Pack PNGs into one sprite sheet with JSON for Phaser and PixiJS. Learn MaxRects packing, trim offsets, and how spacing and extrude stop texture bleeding."
+pubDate: 2026-09-25
+lang: "en"
+tags: ["sprite-sheet", "game-development", "texture-atlas", "developer-tools"]
+---
+
+It is day two of a game jam. The artist drops a folder into the team chat: 12 run frames at 48 × 64, 8 idle frames, 6 jump frames, 20 UI icons at 24 × 24, and a set of 32 × 32 ground tiles. That is 60 PNG files. The first build loads each one on its own, so the start screen waits for 60 requests. When the camera zooms to 1.5×, thin dark lines show up between the ground tiles and flicker as the player walks.
+
+Both problems have the same fix: put all the images into one texture, a **sprite sheet** (also called a texture atlas), plus a data file that says where each image is. The atlas has to be packed tightly, the transparent borders of the run frames have to be trimmed without making the animation shake, and the tiles need a little help at their edges so the GPU does not blend in the neighbor's pixels.
+
+This guide explains how each of those steps works: why one texture is faster than 60, how the MaxRects packing algorithm places rectangles, what `spriteSourceSize` means after a trim, and why spacing and extrude stop the seams. The code examples load the result in Phaser, PixiJS and plain CSS, and a Python script checks the coordinates.
+
+[Open the Sprite Sheet Generator →](/tools/sprite-sheet-generator/)
+
+## When you need a sprite sheet
+
+| Situation | What you need | Settings to choose |
+|---|---|---|
+| Character animation frames of mixed sizes for Phaser or PixiJS | One PNG plus frame data looked up by name | Packed, Trim on, JSON Hash |
+| A frame-by-frame loop for Phaser `load.spritesheet` or a Godot `Sprite2D` with `hframes` and `vframes` | Equal cells at fixed positions | Grid, Trim off, Power of two off |
+| Tiles for a tilemap that will be scaled or scrolled at fractional positions | No seams between tiles | Packed or Grid, Spacing 2, Extrude 1 or 2 |
+| A UI icon set for a web page with no game engine | One image and a class per icon | Packed, Trim off, CSS |
+| Assets for Starling, Sparrow or another engine that reads the Sparrow XML format | `TextureAtlas` XML | Packed, XML |
+| A CSS `steps()` animation of a loading spinner | A single row of equal frames | Grid, Columns = frame count, Spacing 0 |
+| A target that still runs WebGL 1 and needs mipmaps | Power-of-two sheet size | Power of two on |
+
+Packed fits the most images into the fewest pixels and needs a data file. Grid wastes some space but works with any loader that only knows a frame width and height.
+
+## Why one texture beats sixty: draw calls and texture binds
+
+A GPU draws in batches. The renderer collects sprites that share the same state (shader, blend mode, textures) and sends them in one draw call. When the next sprite needs a texture that is not bound, the batch ends and a new one starts. MDN's [WebGL best practices](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices) states the reason for atlases directly: "Since you need to split draw call batches to change textures, texture atlasing lets you combine more draw calls into fewer, bigger batches."
+
+Modern 2D renderers soften this by binding several textures per batch. PixiJS v8's WebGL renderer, for example, takes the number of textures per batch from the GPU's `MAX_TEXTURE_IMAGE_UNITS`, and the OpenGL ES 2.0 minimum for that value is 8. A scene with 60 separate images therefore needs at least 8 batches on such a GPU (4 on a GPU with 16 units), and more when the draw order jumps between textures. With one atlas, all 60 sprites use one texture and can go in one batch.
+
+Draw calls are one part of the gain. The other parts:
+
+- **Fewer requests.** One PNG and one JSON file load faster than 60 small files, especially on mobile networks.
+- **Less file overhead.** One PNG carries one signature and one set of header chunks, where 60 files carry 60.
+- **One upload.** The GPU receives one texture instead of 60, which also means one mipmap chain and one set of sampler settings to manage.
+
+The cost is that the engine has to know where each image is inside the atlas. That is the job of the data file.
+
+## How packing works: MaxRects and Best Short Side Fit
+
+Placing rectangles of different sizes into the smallest possible area is the two-dimensional bin packing problem. It is NP-hard, so every practical packer uses a heuristic. The standard reference for texture atlases is Jukka Jylänki's survey [A Thousand Ways to Pack the Bin – A Practical Approach to Two-Dimensional Rectangle Bin Packing](https://github.com/juj/RectangleBinPack), dated February 27, 2010. It compares shelf, guillotine, skyline and maximal-rectangles algorithms, uses texture atlas generation as its real-world test, and concludes that "the best performing algorithms are the MAXRECTS variants."
+
+### The free-rectangle list
+
+MaxRects keeps a list of free rectangles. Each one is a *maximal* empty area: it cannot grow in any direction without covering a placed sprite. Free rectangles may overlap each other, which is the key difference from the guillotine method.
+
+Start with a 100 × 100 bin and place a 60 × 40 sprite at the top-left. The one free rectangle is split into strips around the sprite:
+
+```text
++------------+-------+        Free rectangles after placing A (60 x 40):
+|            |       |
+|     A      |   R   |        R = x 60, y 0,  w 40,  h 100  (right of A)
+|  60 x 40   |       |        B = x 0,  y 40, w 100, h 60   (below A)
++------------+  - - -|
+|        B           |        R and B overlap in the bottom-right corner.
+|                    |        Both are maximal.
++--------------------+
+```
+
+Every later placement cuts each free rectangle it touches into up to four strips (left, right, above, below), and any strip that lies fully inside another free rectangle is removed. The list always describes every empty spot in which a sprite could go.
+
+### Choosing a spot: Best Short Side Fit
+
+For each sprite, the packer tries every free rectangle that is large enough and scores it. The paper describes several rules. **Best Short Side Fit** (MAXRECTS-BSSF) picks the free rectangle where `min(freeW - w, freeH - h)` is smallest: it minimizes the shorter leftover side. Ties go to the smaller longer leftover side, as in Jylänki's reference implementation.
+
+Continue the example with a 30 × 30 sprite. In R, the leftovers are 10 horizontally and 70 vertically, so the short side is 10. In B, they are 70 and 30, so the short side is 30. R wins, and the sprite goes to (60, 0), next to A. The rule prefers spots where one side fits almost exactly, which leaves long, useful strips behind instead of small fragments.
+
+### Order matters
+
+MaxRects is an online algorithm: it places sprites one at a time in the order given. Large sprites placed last have nowhere to go, so packers sort first. The Sprite Sheet Generator sorts by the longer side, largest first, and then by area. For two sprites with the same longer side, the larger area also means the larger shorter side, so this is the ordering the paper calls -DESCLS.
+
+### Picking the sheet size
+
+A packer also has to pick the sheet width. The Sprite Sheet Generator runs MaxRects several times:
+
+1. It tries a range of widths between the widest sprite and **Max width** (512, 1024, 2048, 4096 or 8192 px, default 2048), plus widths near the square root of the total sprite area. With **Power of two** on, it tries powers of two only.
+2. For each width, it starts from the smallest height that could hold all sprites and grows it until everything fits.
+3. It keeps results that fit the canvas limits, treats every result within 10% of the smallest area as equal, and picks the most square one.
+
+The 10% rule exists because very narrow sheets often pack a few percent tighter but come out at sizes like 92 × 15357 px, which is beyond the texture size limit of many GPUs. A near-square sheet is the safer output.
+
+Frames are never rotated. Rotation by 90° can save space, but the engine must then rotate the texture coordinates back, and not every loader does. TexturePacker's own documentation says of its rotation option that it "might not be supported by all game/web frameworks." Keeping every frame upright means the output works with any reader of the format.
+
+## Trimming: frame, spriteSourceSize and sourceSize
+
+Animation frames usually share one canvas size so the character stays in place. A 64 × 64 run frame may hold a character that is only 30 × 44, surrounded by transparent pixels. Packing the full 64 × 64 wastes about two thirds of the space.
+
+Trimming cuts each image down to the bounding box of its visible pixels. The tool keeps every pixel with alpha greater than 0 and removes fully transparent rows and columns on all four sides. Then the data file has to remember where the trimmed box was, or the animation will jump as each frame's box changes size.
+
+Here is one frame from a JSON Hash export with **Margin** set to 2:
+
+```json
+"walk_01.png": {
+  "frame": { "x": 2, "y": 2, "w": 30, "h": 44 },
+  "rotated": false,
+  "trimmed": true,
+  "spriteSourceSize": { "x": 17, "y": 10, "w": 30, "h": 44 },
+  "sourceSize": { "w": 64, "h": 64 }
+}
+```
+
+- `frame` is the rectangle to cut out of the sheet: 30 × 44 pixels at (2, 2).
+- `sourceSize` is the original image: 64 × 64.
+- `spriteSourceSize` is where the trimmed pixels sat inside the original: 17 px from the left and 10 px from the top.
+
+When the engine draws this frame, it uses a 64 × 64 box and puts the 30 × 44 pixels at offset (17, 10). The sprite has the same size and anchor as the untrimmed image, and only the texture got smaller. Phaser's `JSONHash` parser passes these values to `Frame.setTrim` when `trimmed` is true. PixiJS v8's `Spritesheet` builds a trim rectangle from `spriteSourceSize` and uses `sourceSize` as the original size.
+
+The Sparrow and Starling XML format stores the same information differently. The offset is negative, because it says where the original frame starts relative to the trimmed pixels:
+
+```xml
+<SubTexture name="walk_01.png" x="2" y="2" width="30" height="44"
+  frameX="-17" frameY="-10" frameWidth="64" frameHeight="64"/>
+```
+
+Frames that were not trimmed leave out the four `frame*` attributes. Starling's `TextureAtlas` source documents the same layout, and Phaser's `AtlasXML` parser takes the absolute value of `frameX` and `frameY`.
+
+A fully transparent image has no visible pixels to keep. The tool stores it as a 1 × 1 frame and keeps its `sourceSize`, so a blank frame in an animation still takes its place in the timing.
+
+## Texture bleeding: spacing, extrude and mipmaps
+
+### Why neighbors leak in
+
+A GPU seldom maps one texel to exactly one screen pixel. When a sprite is scaled, rotated or drawn at a fractional position, the sampler reads the texture between texel centers. With bilinear filtering (`LINEAR`), each sample is a weighted average of the four nearest texels. At the edge of a frame, two of those texels can belong to the next sprite in the atlas.
+
+The result is a thin line of the wrong color along the edge. It is often dark, because the neighbor is transparent black, and it moves as the camera moves. The ground tiles from the opening scene show exactly this: at 1.5× zoom, the texture coordinates of each tile's edge fall between texels, and the filter mixes in the next tile.
+
+### Three tools against bleeding
+
+- **Spacing** puts transparent pixels between sprites. The filter then blends the edge with transparency instead of a different sprite. The Sprite Sheet Generator uses 2 px by default. TexturePacker's documentation gives the same number for its shape padding: "Use a value of at least 2 to avoid dragging in pixels from neighbor sprites when using OpenGL rendering."
+- **Extrude** copies the outermost row and column of each sprite outward by 1 to 8 px, corners included. The frame size in the data file does not change, so the engine never shows the copied pixels directly. The filter now blends each edge with the same color. This matters for opaque tiles: blending with transparency is still visible as a faint seam when two tiles touch, and blending with a copy of the edge is not.
+- **Margin** leaves an empty border around the whole sheet, so sprites at the sheet edge get the same protection as sprites in the middle.
+
+Each sprite takes its own size plus `2 × extrude` plus the spacing, so the gap between two neighboring frames in the output is `spacing + 2 × extrude`. The Python example below checks this.
+
+### Mipmaps need more
+
+Mipmaps make the problem larger. Each mip level halves the resolution, so at level 1 one texel covers a 2 × 2 block of the sheet, at level 2 a 4 × 4 block, and at level k a block 2^k pixels wide. A 2 px gap keeps roughly level 1 clean. By level 3, each texel averages an 8 × 8 area that includes pixels from the neighbors, however careful the sampler is.
+
+If sprites are drawn much smaller than their texture size, either raise spacing and extrude, limit the lowest mip level the engine uses, or keep those sprites on a separate texture. Pixel art drawn with nearest-neighbor filtering at whole-pixel positions never blends texels, so it can use 0 for spacing, extrude and margin. In Phaser, the game config option `pixelArt: true` turns antialiasing off and pixel rounding on. In PixiJS v8, pass `scaleMode: 'nearest'` in the texture options when loading the sheet.
+
+## Power of two: where the rule comes from
+
+Old guides say sprite sheets must be 256, 512, 1024 or 2048 pixels on each side. The rule comes from WebGL 1 and OpenGL ES 2.0. MDN's [texture tutorial](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL) states it: "WebGL1 can only use non power of 2 textures with filtering set to NEAREST or LINEAR and it can not generate a mipmap for them. Their wrapping mode must also be set to CLAMP_TO_EDGE."
+
+Two consequences follow for WebGL 1:
+
+- A non-power-of-two (NPOT) texture cannot have mipmaps. A game that zooms far out and wants smooth, flicker-free minification needs a power-of-two sheet.
+- An NPOT texture cannot use `REPEAT` or `MIRRORED_REPEAT` wrapping. Atlases rarely repeat anyway, because repeating a whole sheet repeats every sprite in it.
+
+WebGL 2 removed the mipmap limit. As [WebGL2 Fundamentals](https://webgl2fundamentals.org/webgl/lessons/webgl2-whats-new.html) puts it, "In WebGL1 textures that were not a power of 2 could not have mips. In WebGL2 that limit is removed." Most engines that target WebGL 2 accept any size. Turn on **Power of two** when the target still runs WebGL 1 with mipmaps, or when an engine or compression step asks for it. TexturePacker's documentation notes, for example, that external compression in engines such as Unity or Unreal may need power-of-two sizes or multiples of 4.
+
+A separate limit is the largest texture a GPU accepts. OpenGL ES 2.0 only guarantees a `MAX_TEXTURE_SIZE` of 64, and real hardware goes far beyond that. The [WebGL2 Fundamentals cross-platform notes](https://webgl2fundamentals.org/webgl/lessons/webgl-cross-platform-issues.html) report that, as of 2020, about 99% of devices supported 4096 and only about 50% supported more. A 2048 or 4096 px sheet is the safe choice for a game that must run on phones. Read `gl.getParameter(gl.MAX_TEXTURE_SIZE)` on the target device when you plan to go higher.
+
+## How the Sprite Sheet Generator works
+
+The [Sprite Sheet Generator](/tools/sprite-sheet-generator/) builds the atlas in the browser tab. The steps:
+
+1. **Add images.** Drop files, click to select them, or paste copied image files with Ctrl/Cmd+V. PNG, JPG, WebP, GIF, SVG, BMP and AVIF are accepted, and you can add more files at any time. Raster files are decoded with `createImageBitmap`. SVG files are drawn at the size given by their `width`, `height` or `viewBox` attributes.
+2. **Name the frames.** Each frame is named after its file, extension included (`walk_01.png`), which is the TexturePacker convention. If two files share a name, the second becomes `walk_01 (2).png`. **Sort** by **Name** uses natural order, so `walk_2` comes before `walk_10`. **Added** keeps the order in which you added files.
+3. **Trim.** The tool computes each image's visible bounding box once, when the image is added. In Packed mode, the **Trim transparent edges** checkbox (on by default) decides whether packing uses it. Grid mode always uses the full images.
+4. **Lay out.** **Packed** runs MaxRects as described above. **Grid** makes every cell as large as the largest image, centers each image in its cell, and reports the whole cell as the frame. **Columns** defaults to the rounded-up square root of the image count. Spacing (0 to 64 px, default 2), Margin (0 to 64, default 0) and Extrude (0 to 8, default 0) apply to both layouts.
+5. **Draw and export.** Images are drawn onto a canvas at 1:1 without smoothing, extrude strips are copied, and the canvas is encoded with `toBlob('image/png')`. The data text is built from the same frame list in the format you choose.
+
+The sheet rebuilds by itself about 150 ms after any change. The info line shows the sheet size, sprite count and fill ratio, which is the sprite pixel area divided by the sheet area. **Show bounds** draws the frame outlines on the preview only, never in the PNG.
+
+### Limits
+
+- Up to 1,000 images, each at most 8,192 px per side. Files that are not images or fail to decode are skipped and listed by name.
+- The sheet can be at most 16,384 px per side and 16,777,216 pixels in total. The [canvas-size test results](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) list 4,096 × 4,096 (16,777,216 pixels) as the largest canvas area in Mobile Safari 9+. A larger canvas does not work there, so the tool refuses such a layout and asks you to reduce spacing, change Max width or the layout, or remove images.
+- If one image is wider than Max width, the sheet widens to fit it and the status line names the image.
+
+### What "no upload" means here
+
+Files go from your disk into the page through the File API. Decoding, trimming, packing and PNG encoding all run in the tab, and the tool sends no network request with your images or the output. The only thing it stores is your option settings (layout, columns, max width, spacing, margin, extrude, trim, power of two, sort order, data format, sheet name and show bounds) in local storage. Images, previews and output text are never saved. Like other tools on the site, it sends a usage event to Google Analytics with the tool name and the action (`png`, `data` or `copy`). File names and contents are not part of it.
+
+## Pitfalls and edge cases
+
+### Frames jump during the animation
+
+Your loader ignores the trim data. Custom code that draws `frame` at the sprite position without adding the `spriteSourceSize` offset will shift every trimmed frame by a different amount. Use the engine's atlas loader, add the offset in your own code, or turn **Trim transparent edges** off.
+
+### Phaser's grid loader finds extra frames
+
+Phaser's `load.spritesheet` does not read a data file. It computes the frame count from the image size: `floor((width - margin + spacing) / (frameWidth + spacing))` columns times the same for rows. Two things add frames you did not draw:
+
+- **Power of two** can grow the sheet by more than one cell, which adds empty columns or rows and shifts the numbering. Turn it off for this loader.
+- If the image count is not a multiple of **Columns**, the last row has empty cells. With 10 images in 4 columns, Phaser creates 12 frames. Pass `endFrame: 9` (the value is inclusive) or list the frames you want.
+
+With **Extrude** set to E, pass `margin + E` and `spacing + 2 × E` to the loader.
+
+### Trim does nothing
+
+The tool keeps every pixel with alpha above 0. A single pixel with alpha 1 in a corner, often left behind by a soft brush or a drop shadow, keeps the whole canvas. JPG has no alpha channel and most BMP files have none, so there is nothing to trim. Clean the source images, or export them as PNG with a real alpha channel.
+
+### CSS icons lose their padding
+
+The CSS format writes the frame size and position only. With Trim on, each icon class gets the size of its visible pixels, so a 24 × 24 icon may become 18 × 20 and sit off-center in a row of buttons. Turn Trim off before you export CSS. The CSS output also writes no `background-size`. For HiDPI screens, pack @2x images and set `background-size` to half the sheet size, then halve every width, height and `background-position` value.
+
+### PixiJS cannot find the PNG
+
+`Assets.load` reads `meta.image` from the JSON and loads that file from the same folder. If you rename the PNG after export, the load fails. Phaser takes the PNG URL as a separate argument and does not read `meta.image`, so the same rename works there. Set **Sheet name** before exporting, and keep the two files together.
+
+### Extrude does not help in Grid mode
+
+In Grid mode, the frame is the whole cell, and Extrude repeats the edge of the cell. When an image is smaller than its cell, that edge is transparent, and repeating it changes nothing. Extrude helps in Grid mode when every image fills its cell, as tiles do. For mixed sizes, use Packed.
+
+### Only the first GIF frame appears
+
+The tool decodes GIFs with the browser's image decoder, which returns the first frame. To pack every frame of an animated GIF, split it first with the [GIF Splitter](/tools/gif-splitter/), then drop the frames here.
+
+### Duplicate frames take space twice
+
+Every file is packed, even if two images are identical. Remove duplicates from the list, or reuse one frame name in the animation definition in your engine.
+
+## Code examples
+
+The examples assume a sheet named `hero` with frames `run_01.png` to `run_12.png`, exported as `hero.png` and `hero.json`.
+
+### Phaser: load an atlas and build an animation
+
+`this.load.atlas` takes a texture URL and a JSON URL. It accepts both JSON Hash and JSON Array: Phaser's texture manager checks whether `frames` is an array and picks the matching parser. The code below uses loader and animation APIs that are the same in Phaser 3.90 and the 4.x source.
+
+```js
+class Play extends Phaser.Scene {
+  preload() {
+    this.load.atlas('hero', 'assets/hero.png', 'assets/hero.json');
+    // XML export: this.load.atlasXML('hero', 'assets/hero.png', 'assets/hero.xml');
+  }
+
+  create() {
+    this.anims.create({
+      key: 'run',
+      frames: this.anims.generateFrameNames('hero', {
+        prefix: 'run_', start: 1, end: 12, zeroPad: 2, suffix: '.png'
+      }),
+      frameRate: 14,
+      repeat: -1
+    });
+
+    this.add.sprite(160, 120, 'hero', 'run_01.png').play('run');
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: 320,
+  height: 240,
+  pixelArt: true, // antialias off, roundPixels on
+  scene: Play
+});
+```
+
+The frame names include `.png`, so `generateFrameNames` needs `suffix: '.png'`. For a Grid export loaded without a data file:
+
+```js
+// 10 frames of 48 x 64 in a Grid export, Spacing 2, Margin 0, Extrude 1
+this.load.spritesheet('coin', 'assets/coin.png', {
+  frameWidth: 48,
+  frameHeight: 64,
+  margin: 0 + 1,      // margin + extrude
+  spacing: 2 + 2 * 1, // spacing + 2 x extrude
+  endFrame: 9         // skip empty cells in the last row
+});
+```
+
+### PixiJS v8: Assets.load and AnimatedSprite
+
+PixiJS types `frames` as an object keyed by frame name, so export **JSON Hash** for it. `Assets.load` returns a `Spritesheet` whose `textures` object holds one texture per frame.
+
+```js
+import { Application, Assets, AnimatedSprite } from 'pixi.js';
+
+const app = new Application();
+await app.init({ width: 320, height: 240 });
+document.body.appendChild(app.canvas);
+
+const sheet = await Assets.load({
+  src: 'assets/hero.json',
+  data: { textureOptions: { scaleMode: 'nearest' } } // crisp pixel art
+});
+
+const runFrames = Object.keys(sheet.textures)
+  .filter((name) => name.startsWith('run_'))
+  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  .map((name) => sheet.textures[name]);
+
+const runner = new AnimatedSprite({
+  textures: runFrames,
+  animationSpeed: 0.25, // frames per 60 fps tick: about 15 frames per second
+  autoPlay: true
+});
+runner.position.set(160, 120);
+app.stage.addChild(runner);
+```
+
+The `numeric: true` option sorts `run_2` before `run_10`, the same natural order as the tool's Name sort. The older constructor form `new AnimatedSprite(textures)` also still works in v8.
+
+### CSS: icons and a steps() animation
+
+With **Sheet name** set to `icons` and the CSS format, the output looks like this (positions depend on the layout):
+
+```css
+.icons {
+  display: inline-block;
+  background-image: url("icons.png");
+  background-repeat: no-repeat;
+}
+
+.icons-home {
+  width: 24px;
+  height: 24px;
+  background-position: 0 0;
+}
+
+.icons-search {
+  width: 24px;
+  height: 24px;
+  background-position: -26px 0;
+}
+```
+
+```html
+<button><span class="icons icons-search"></span> Search</button>
+```
+
+For a spinner, export 8 frames of 64 × 64 as a Grid with Columns 8 and Spacing 0, which gives a 512 × 64 sheet. `steps(8)` jumps one frame width at a time:
+
+```css
+.spinner {
+  width: 64px;
+  height: 64px;
+  background: url("spinner.png") no-repeat 0 0;
+  animation: spin 0.8s steps(8) infinite;
+}
+
+@keyframes spin {
+  to { background-position: -512px 0; }
+}
+```
+
+### Python: check the coordinates before you ship
+
+This script reads a JSON Hash or JSON Array export and checks that every frame is inside the sheet, that the trim data is consistent, and that no two frames are closer than a given gap. With `--gap`, pass `spacing + 2 × extrude`. It also checks that the PNG named in `meta.image` sits next to the JSON file, the same place PixiJS looks for it, and, if Pillow is installed, that its size matches `meta.size`.
+
+```python
+#!/usr/bin/env python3
+"""check_atlas.py: sanity-check a TexturePacker-style JSON atlas."""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def frames_of(atlas):
+    frames = atlas["frames"]
+    if isinstance(frames, dict):          # JSON Hash
+        return list(frames.items())
+    return [(f["filename"], f) for f in frames]  # JSON Array
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("atlas")
+    ap.add_argument("--gap", type=int, default=0, help="spacing + 2 * extrude")
+    args = ap.parse_args()
+
+    path = Path(args.atlas)
+    atlas = json.loads(path.read_text(encoding="utf-8"))
+    sheet_w, sheet_h = atlas["meta"]["size"]["w"], atlas["meta"]["size"]["h"]
+    errors, rects = [], []
+
+    for name, f in frames_of(atlas):
+        r, ss, src = f["frame"], f["spriteSourceSize"], f["sourceSize"]
+        x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+        if x < 0 or y < 0 or x + w > sheet_w or y + h > sheet_h:
+            errors.append(f"{name}: frame {w}x{h} at {x},{y} is outside {sheet_w}x{sheet_h}")
+        if f.get("rotated"):
+            errors.append(f"{name}: rotated frames are not expected")
+        if (ss["w"], ss["h"]) != (w, h):
+            errors.append(f"{name}: spriteSourceSize size differs from frame size")
+        if ss["x"] < 0 or ss["y"] < 0 or ss["x"] + w > src["w"] or ss["y"] + h > src["h"]:
+            errors.append(f"{name}: trimmed box does not fit inside sourceSize")
+        rects.append((name, x, y, w, h))
+
+    g = args.gap
+    for i, (na, ax, ay, aw, ah) in enumerate(rects):
+        for nb, bx, by, bw, bh in rects[i + 1:]:
+            apart_x = ax + aw + g <= bx or bx + bw + g <= ax
+            apart_y = ay + ah + g <= by or by + bh + g <= ay
+            if not (apart_x or apart_y):
+                errors.append(f"{na} and {nb} overlap or are closer than {g} px")
+
+    png = path.parent / atlas["meta"]["image"]
+    if not png.exists():
+        errors.append(f"meta.image {png.name} is not next to the JSON file")
+    else:
+        try:
+            from PIL import Image
+            with Image.open(png) as im:
+                if im.size != (sheet_w, sheet_h):
+                    errors.append(f"PNG is {im.size[0]}x{im.size[1]}, meta.size says {sheet_w}x{sheet_h}")
+        except ImportError:
+            pass  # Pillow not installed: skip the size check
+
+    for e in errors:
+        print("ERROR", e)
+    print(f"{len(rects)} frames, {len(errors)} problems")
+    sys.exit(1 if errors else 0)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run it with `python check_atlas.py assets/hero.json --gap 2` for the default settings. The pair check compares every frame with every other one. For 1,000 frames that is about 500,000 comparisons, which takes well under a minute in plain Python. It fits in a CI step next to the build that copies the atlas into the game.
+
+## How it compares to TexturePacker and free-tex-packer
+
+All three read the same idea of an atlas, and the JSON Hash, JSON Array and Sparrow XML formats they write are read by the same loaders. The differences are in scope and in where they run.
+
+| | ZeroTool Sprite Sheet Generator | TexturePacker | free-tex-packer |
+|---|---|---|---|
+| Runs where | Browser tab, files stay local | Desktop app for Windows, macOS and Linux, plus a command line | Web app, desktop app for Windows, macOS and Linux, and a CLI plus gulp, grunt and webpack plugins |
+| License | Free web tool | Commercial, with a free trial | Open source, MIT |
+| Packing | MaxRects (Best Short Side Fit), Grid | Grid, Basic, MaxRects, Polygon | MaxRects with several placement rules, including Best Short Side Fit |
+| Rotation | No | Optional | Optional |
+| Trim | Yes | Trim and crop | Trim and crop |
+| Spacing and edge copy | Spacing, margin, extrude | Shape padding, border padding, extrude | Padding, extrude |
+| Several sheets from one set | No | Multipack | Multipacking |
+| Identical sprites stored once | No | Alias detection | Detect identical option |
+| Image output | PNG | PNG, WebP, JPG and GPU formats such as PVR, KTX and ASTC | PNG or JPG |
+| Data formats | JSON Hash, JSON Array, Sparrow/Starling XML, CSS | Presets for 48+ engines, plus generic JSON and XML and custom formats | JSON Hash and Array, XML, CSS, and presets for Phaser, PixiJS, Godot, Spine, cocos2d, Starling, Unity, Unreal and others, plus custom templates |
+
+TexturePacker is the most complete of the three. Its polygon packing, alias detection, per-device scaling, 9-slice and pivot editor and GPU texture compression are features a production pipeline for a large game uses, and its command line fits a build server. Use it when you need several atlas pages from one sprite set, rotated frames, WebP or hardware-compressed output, or an engine-specific format such as Unity's.
+
+free-tex-packer covers rotation, multipacking and many engine presets, and its mustache templates let you define your own data format. Use it when you want those options in an open-source tool or in a gulp, grunt or webpack build.
+
+The Sprite Sheet Generator covers the common case in between: a set of PNGs you want packed now, in a format Phaser, PixiJS or Starling reads, with trim, spacing and extrude handled, nothing to install, and no file leaving the machine. By design it writes one PNG page with upright frames and the four formats above. Rotation, multi-page atlases, WebP output, animation preview and Unity or Godot formats belong to TexturePacker and free-tex-packer.
+
+## Related tools and references
+
+Tools on ZeroTool that pair well with a sprite sheet:
+
+- [GIF Splitter](/tools/gif-splitter/) turns an animated GIF into PNG frames you can pack here.
+- [Image Compressor](/tools/image-compressor/) shrinks the exported sheet PNG.
+- [WebP Converter](/tools/webp-converter/) converts the sheet PNG to WebP for engines and browsers that load WebP.
+- [Image to Base64](/tools/image-to-base64/) inlines a small icon sheet into CSS as a data URL.
+- [SVG to PNG Converter](/tools/svg-to-png-converter/) rasterizes vector icons at a chosen size before packing.
+
+Primary sources used in this guide:
+
+- [Jukka Jylänki, A Thousand Ways to Pack the Bin (2010), with the reference code](https://github.com/juj/RectangleBinPack): MaxRects, Best Short Side Fit, sort orders and benchmark results
+- [MDN: WebGL best practices](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices): texture atlases and draw call batching
+- [MDN: Using textures in WebGL](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL): the WebGL 1 rules for non-power-of-two textures
+- [WebGL2 Fundamentals: What's new in WebGL2](https://webgl2fundamentals.org/webgl/lessons/webgl2-whats-new.html): mipmaps for non-power-of-two textures
+- [WebGL2 Fundamentals: cross-platform issues](https://webgl2fundamentals.org/webgl/lessons/webgl-cross-platform-issues.html): maximum texture sizes on real devices
+- [Phaser source: texture parsers](https://github.com/phaserjs/phaser/tree/master/src/textures/parsers): how JSON Hash, JSON Array, Sparrow XML and sprite sheets are read
+- [PixiJS source: Spritesheet](https://github.com/pixijs/pixijs/blob/dev/src/spritesheet/Spritesheet.ts): the `SpritesheetData` format and trim handling in v8
+- [Starling source: TextureAtlas](https://github.com/Gamua/Starling-Framework/blob/master/starling/src/starling/textures/TextureAtlas.as): the XML layout with `frameX` and `frameY`
+- [TexturePacker documentation: texture settings](https://www.codeandweb.com/texturepacker/documentation/texture-settings): extrude, padding, rotation, size constraints and output formats
+- [free-tex-packer on GitHub](https://github.com/odrick/free-tex-packer): features, exporters and template format
+- [MDN: Implementing image sprites in CSS](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_images/Implementing_image_sprites_in_CSS): the CSS sprite technique
+- [canvas-size test results](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results): maximum canvas sizes by browser

@@ -1,0 +1,489 @@
+---
+title: "雪碧图生成器指南：纹理图集打包、MaxRects 算法与防渗色"
+description: "把多张 PNG 打包成一张雪碧图（精灵图），导出 Phaser、PixiJS 可读的 JSON。讲清 MaxRects 装箱、Trim 偏移字段，以及间距和扩边如何消除纹理渗色，并对照 Cocos Creator 图集。"
+pubDate: 2026-09-25
+lang: "zh"
+tags: ["sprite-sheet", "game-development", "texture-atlas", "developer-tools"]
+---
+
+Game Jam 第二天，美术把一个文件夹丢进群里：12 帧 48 × 64 的奔跑动画、8 帧待机、6 帧跳跃、20 个 24 × 24 的 UI 图标，外加一套 32 × 32 的地面瓦片，一共 60 个 PNG。第一版构建逐个加载这些文件，开始界面要等 60 个请求。镜头放大到 1.5× 时，地面瓦片之间冒出细细的暗线，角色一走动就跟着闪。
+
+两个问题的解法相同：把所有图片放进一张纹理，也就是**雪碧图**（sprite sheet，也叫精灵图、纹理图集），再配一个记录每张图位置的数据文件。图集要排得紧凑；奔跑帧的透明边要裁掉，同时动画不能抖；瓦片边缘还要做一点处理，免得 GPU 把相邻图片的像素混进来。
+
+本文逐一讲清这些步骤的原理：为什么 1 张纹理比 60 张快，MaxRects 装箱算法怎样摆放矩形，裁剪后的 `spriteSourceSize` 表示什么，间距和扩边为什么能消除接缝。代码示例分别用 Phaser、PixiJS 和纯 CSS 加载结果，另有一个 Python 脚本校验坐标。
+
+[打开雪碧图生成器 →](/zh/tools/sprite-sheet-generator/)
+
+## 什么时候需要雪碧图
+
+| 场景 | 需要什么 | 选项怎么选 |
+|---|---|---|
+| 给 Phaser 或 PixiJS 用的角色动画帧，尺寸不一 | 一张 PNG，外加按名字查帧的数据 | Packed，Trim 开，JSON Hash |
+| Phaser `load.spritesheet` 或 Godot `Sprite2D`（`hframes` / `vframes`）用的逐帧循环 | 等大、位置固定的格子 | Grid，Trim 关，Power of two 关 |
+| tilemap 瓦片，会被缩放或在小数坐标上滚动 | 瓦片之间没有接缝 | Packed 或 Grid，Spacing 2，Extrude 1 或 2 |
+| 不用游戏引擎的网页 UI 图标集 | 一张图，每个图标一个 class | Packed，Trim 关，CSS |
+| Starling、Sparrow 或其他读取 Sparrow XML 格式的引擎 | `TextureAtlas` XML | Packed，XML |
+| 加载转圈的 CSS `steps()` 动画 | 单行等大帧 | Grid，Columns = 帧数，Spacing 0 |
+| 仍跑在 WebGL 1 上且需要 mipmap 的目标 | 2 的幂尺寸的雪碧图 | Power of two 开 |
+
+Packed 能用最少的像素装下最多的图，但需要数据文件。Grid 会浪费一些空间，好处是任何只认帧宽高的加载器都能直接用。
+
+## 一张纹理为什么胜过六十张：draw call 与纹理绑定
+
+GPU 按批次绘制。渲染器把状态相同（着色器、混合模式、纹理）的精灵收集起来，用一次绘制调用（draw call）提交。下一个精灵需要的纹理如果没有绑定，当前批次就结束，另起一批。MDN 的 [WebGL best practices](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices) 直接点明了图集的意义：「由于切换纹理必须拆分 draw call 批次，纹理图集可以把更多 draw call 合并成更少、更大的批次。」
+
+现代 2D 渲染器会在一个批次里绑定多张纹理来缓解这个问题。以 PixiJS v8 的 WebGL 渲染器为例，每批纹理数取自 GPU 的 `MAX_TEXTURE_IMAGE_UNITS`，而 OpenGL ES 2.0 对这个值的最低要求是 8。于是在这样的 GPU 上，60 张独立图片的场景至少要 8 个批次（16 个单元的 GPU 上是 4 个）；绘制顺序在纹理之间来回跳时还会更多。换成一张图集，60 个精灵共用一张纹理，可以放进同一批。
+
+draw call 只是收益的一部分，其余几项：
+
+- **请求更少。** 一个 PNG 加一个 JSON，比 60 个小文件加载得快，移动网络下尤其明显。
+- **文件开销更少。** 一个 PNG 只带一份签名和一组头部 chunk，60 个文件就要 60 份。
+- **只上传一次。** GPU 只接收 1 张纹理，要管理的也只有一条 mipmap 链和一组采样器设置。
+
+代价是引擎必须知道每张图在图集里的位置，这就是数据文件的职责。
+
+## 装箱原理：MaxRects 与 Best Short Side Fit
+
+把大小不一的矩形塞进尽可能小的面积，是二维装箱问题（bin packing）。它是 NP 困难问题，所以实用的打包器都用启发式算法。纹理图集领域的标准参考是 Jukka Jylänki 的综述 [A Thousand Ways to Pack the Bin – A Practical Approach to Two-Dimensional Rectangle Bin Packing](https://github.com/juj/RectangleBinPack)，日期为 2010 年 2 月 27 日。文章比较了 shelf、guillotine、skyline 和 maximal rectangles 几类算法，以生成纹理图集作为真实测试场景，结论是「表现最好的是各种 MAXRECTS 变体」。
+
+### 空闲矩形列表
+
+MaxRects 维护一个空闲矩形列表。每个空闲矩形都是一块*极大*的空白区域：朝任何方向扩张都会压到已放置的精灵。空闲矩形之间可以重叠，这是它和 guillotine 方法的关键区别。
+
+从一个 100 × 100 的箱子开始，在左上角放入一个 60 × 40 的精灵 A。原来唯一的空闲矩形会沿着精灵切成几条：
+
+```text
++------------+-------+        Free rectangles after placing A (60 x 40):
+|            |       |
+|     A      |   R   |        R = x 60, y 0,  w 40,  h 100  (right of A)
+|  60 x 40   |       |        B = x 0,  y 40, w 100, h 60   (below A)
++------------+  - - -|
+|        B           |        R and B overlap in the bottom-right corner.
+|                    |        Both are maximal.
++--------------------+
+```
+
+之后每放一个精灵，它碰到的每个空闲矩形都会被切成最多四条（左、右、上、下），完全落在另一个空闲矩形内部的条会被删掉。这个列表始终描述了所有还能放精灵的空位。
+
+### 选位置：Best Short Side Fit
+
+对每个精灵，打包器会尝试所有放得下它的空闲矩形并逐一打分。论文给出了好几种规则。**Best Short Side Fit**（短边最优匹配，MAXRECTS-BSSF）选 `min(freeW - w, freeH - h)` 最小的空闲矩形，也就是让较短的剩余边最短。分数相同时，按 Jylänki 参考实现的做法，比较较长的剩余边，取更小者。
+
+接着上面的例子放一个 30 × 30 的精灵。放进 R，横向剩 10、纵向剩 70，短边是 10；放进 B，剩 70 和 30，短边是 30。R 胜出，精灵放在 (60, 0)，紧挨着 A。这条规则偏好某一边几乎严丝合缝的位置，留下又长又好用的空条，避免切出零碎小块。
+
+### 顺序很重要
+
+MaxRects 是在线算法：按给定顺序一次放一个精灵。大精灵如果最后才放，往往已经无处可放，所以打包器都会先排序。雪碧图生成器（Sprite Sheet Generator）先按长边从大到小排，再按面积排。两个精灵长边相同时，面积大的短边也大，所以这个顺序就是论文里所说的 -DESCLS。
+
+### 确定雪碧图尺寸
+
+打包器还要决定雪碧图的宽度。雪碧图生成器会多次运行 MaxRects：
+
+1. 在最宽的精灵到 **Max width**（512、1024、2048、4096 或 8192 px，默认 2048）之间尝试一系列宽度，外加总精灵面积平方根附近的几个宽度。开启 **Power of two** 时只试 2 的幂。
+2. 对每个宽度，从能容纳全部精灵的最小高度开始，逐步加高直到全部放下。
+3. 保留符合画布限制的结果，面积与最小面积相差不超过 10% 的都视为同样好，从中取最接近正方形的一个。
+
+之所以有 10% 这条规则，是因为很窄的雪碧图往往能多压紧几个百分点，但尺寸会变成 92 × 15357 px 这样，超出很多 GPU 的纹理尺寸上限。接近正方形的结果更稳妥。
+
+帧永远不旋转。旋转 90° 可以省空间，但引擎得把纹理坐标再转回来，并不是每个加载器都会这么做。TexturePacker 自己的文档在说明旋转选项时也写道，它「可能不被所有游戏/Web 框架支持」。所有帧保持正向，输出就能被这种格式的任何读取器使用。
+
+## 裁剪透明边：frame、spriteSourceSize 与 sourceSize
+
+动画帧通常共用同一块画布尺寸，角色才能待在原地。一帧 64 × 64 的奔跑图里，角色可能只有 30 × 44，周围全是透明像素。按完整的 64 × 64 打包，大约三分之二的空间就浪费了。
+
+裁剪透明边（Trim）把每张图缩到可见像素的包围盒。工具保留 alpha 大于 0 的所有像素，去掉四周完全透明的行和列。接着数据文件必须记住裁剪框原来在哪，否则每帧的框大小不同，动画就会跳。
+
+下面是 **Margin** 设为 2 时，JSON Hash 导出里的一帧：
+
+```json
+"walk_01.png": {
+  "frame": { "x": 2, "y": 2, "w": 30, "h": 44 },
+  "rotated": false,
+  "trimmed": true,
+  "spriteSourceSize": { "x": 17, "y": 10, "w": 30, "h": 44 },
+  "sourceSize": { "w": 64, "h": 64 }
+}
+```
+
+- `frame` 是要从雪碧图上切出来的矩形：位于 (2, 2) 的 30 × 44 像素。
+- `sourceSize` 是原图尺寸：64 × 64。
+- `spriteSourceSize` 是裁剪后的像素在原图里的位置：距左边 17 px，距上边 10 px。
+
+引擎绘制这一帧时，使用 64 × 64 的框，把 30 × 44 的像素放在偏移 (17, 10) 处。精灵的尺寸和锚点都和未裁剪时一样，变小的只是纹理。Phaser 的 `JSONHash` 解析器在 `trimmed` 为 true 时把这些值传给 `Frame.setTrim`；PixiJS v8 的 `Spritesheet` 用 `spriteSourceSize` 构造裁剪矩形，并把 `sourceSize` 作为原始尺寸。
+
+Sparrow / Starling 的 XML 格式换了一种方式存同样的信息。偏移是负数，因为它表示原始帧的起点相对裁剪后像素的位置：
+
+```xml
+<SubTexture name="walk_01.png" x="2" y="2" width="30" height="44"
+  frameX="-17" frameY="-10" frameWidth="64" frameHeight="64"/>
+```
+
+没有裁剪的帧省略这四个 `frame*` 属性。Starling 的 `TextureAtlas` 源码描述的也是这种布局；Phaser 的 `AtlasXML` 解析器则取 `frameX`、`frameY` 的绝对值。
+
+完全透明的图没有可保留的可见像素。工具把它存成 1 × 1 的帧并保留 `sourceSize`，动画里的空白帧照样占着自己的时间位置。
+
+## 纹理渗色：间距、扩边与 mipmap
+
+### 相邻像素为什么会渗进来
+
+GPU 很少恰好把一个纹素映射到一个屏幕像素。精灵被缩放、旋转或画在小数坐标上时，采样器读取的位置落在纹素中心之间。使用双线性过滤（`LINEAR`）时，每次采样都是最近四个纹素的加权平均。在帧的边缘，其中两个纹素可能属于图集里的下一个精灵。
+
+结果就是边缘出现一条颜色不对的细线。它常常是暗色的，因为邻居是透明黑，而且会随镜头移动。开头场景里的地面瓦片正是如此：放大到 1.5× 时，每块瓦片边缘的纹理坐标落在纹素之间，过滤把隔壁瓦片混了进来。
+
+### 防渗色的三个手段
+
+- **间距（Spacing）** 在精灵之间放透明像素，过滤时边缘只会混入透明色，碰不到另一个精灵。雪碧图生成器默认 2 px。TexturePacker 文档对 shape padding 给出的数字相同：「至少设为 2，以免使用 OpenGL 渲染时把相邻精灵的像素拖进来。」
+- **扩边（Extrude）** 把每个精灵最外一圈行和列向外复制 1 到 8 px，四角也包括在内。数据文件里的帧尺寸不变，所以引擎永远不会直接显示这些复制出来的像素。过滤时，每条边混到的都是同一种颜色。这对不透明瓦片很关键：和透明色混合，两块瓦片相接处仍能看出一道淡淡的接缝；和边缘像素的副本混合就看不出来。
+- **外边距（Margin）** 在整张雪碧图四周留一圈空白，让贴着边的精灵也得到和中间精灵一样的保护。
+
+每个精灵占用自身尺寸加 `2 × extrude` 再加间距，所以输出里相邻两帧的间隔是 `spacing + 2 × extrude`。下文的 Python 示例会校验这一点。
+
+### mipmap 需要更多余量
+
+mipmap 会放大这个问题。每一级 mip 分辨率减半：第 1 级的一个纹素覆盖雪碧图上 2 × 2 的块，第 2 级是 4 × 4，第 k 级是 2^k 像素宽的块。2 px 的间隔大致只能保住第 1 级。到第 3 级，每个纹素平均的是一块 8 × 8 的区域，无论采样器多小心，都会包含邻居的像素。
+
+如果精灵的显示尺寸远小于纹理尺寸，有三种做法：加大间距和扩边，限制引擎使用的最低 mip 级别，或者把这些精灵放到单独的纹理上。用最近邻过滤、画在整数像素坐标上的像素风素材从不混合纹素，间距、扩边、外边距都可以设为 0。在 Phaser 里，游戏配置项 `pixelArt: true` 会关闭抗锯齿并开启像素取整；在 PixiJS v8 里，加载雪碧图时在纹理选项中传入 `scaleMode: 'nearest'`。
+
+## 2 的幂：这条规则从哪来
+
+老教程说雪碧图每边必须是 256、512、1024 或 2048 像素。这条规则来自 WebGL 1 和 OpenGL ES 2.0。MDN 的[纹理教程](https://developer.mozilla.org/zh-CN/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL)写得很明确：WebGL1 中，非 2 的幂纹理只能把过滤设为 NEAREST 或 LINEAR，不能生成 mipmap，平铺模式也必须设为 CLAMP_TO_EDGE。
+
+对 WebGL 1 来说，这带来两个后果：
+
+- 非 2 的幂（NPOT）纹理不能有 mipmap。游戏如果要大幅缩小视角，又想缩小时画面平滑、不闪烁，就需要 2 的幂的雪碧图。
+- NPOT 纹理不能用 `REPEAT` 或 `MIRRORED_REPEAT` 平铺。图集本来也很少平铺，因为平铺整张雪碧图会把里面的每个精灵都平铺一遍。
+
+WebGL 2 取消了 mipmap 的限制。[WebGL2 Fundamentals](https://webgl2fundamentals.org/webgl/lessons/webgl2-whats-new.html) 的说法是：「在 WebGL1 中，非 2 的幂纹理不能有 mip。WebGL2 去掉了这个限制。」大多数面向 WebGL 2 的引擎接受任意尺寸。目标环境仍跑 WebGL 1 且用 mipmap，或者引擎、压缩流程要求时，再打开 **Power of two**。比如 TexturePacker 文档提到，Unity、Unreal 等引擎里的外部压缩可能要求 2 的幂尺寸或 4 的倍数。
+
+另一个独立的限制是 GPU 能接受的最大纹理。OpenGL ES 2.0 只保证 `MAX_TEXTURE_SIZE` 至少为 64，真实硬件远超这个值。[WebGL2 Fundamentals 的跨平台说明](https://webgl2fundamentals.org/webgl/lessons/webgl-cross-platform-issues.html)提到，截至 2020 年，约 99% 的设备支持 4096，只有约 50% 支持更大尺寸。必须在手机上运行的游戏，2048 或 4096 px 的雪碧图是稳妥的选择。想用更大的尺寸，先在目标设备上读一下 `gl.getParameter(gl.MAX_TEXTURE_SIZE)`。
+
+## 雪碧图生成器的工作流程
+
+[雪碧图生成器](/zh/tools/sprite-sheet-generator/)在浏览器标签页里完成整个图集的构建，步骤如下：
+
+1. **添加图片。** 拖入文件、点击选择，或用 Ctrl/Cmd+V 粘贴复制的图片文件。支持 PNG、JPG、WebP、GIF、SVG、BMP 和 AVIF，随时可以追加。位图用 `createImageBitmap` 解码；SVG 按其 `width`、`height` 或 `viewBox` 属性给出的尺寸绘制。
+2. **帧命名。** 每一帧以文件名命名并保留扩展名（`walk_01.png`），这是 TexturePacker 的惯例。两个文件重名时，第二个变成 `walk_01 (2).png`。**Sort** 选 **Name** 时按自然排序，`walk_2` 排在 `walk_10` 前面；**Added** 保持添加顺序。
+3. **裁剪。** 工具在图片加入时计算一次可见像素的包围盒。Packed 模式下，**Trim transparent edges** 复选框（默认开启）决定打包时是否使用它。Grid 模式总是使用完整图片。
+4. **排布。** **Packed** 按上文所述运行 MaxRects。**Grid** 让每个格子等于最大那张图，图片在格子里居中，并把整个格子记为帧。**Columns** 默认取图片数量平方根向上取整。Spacing（0 到 64 px，默认 2）、Margin（0 到 64，默认 0）和 Extrude（0 到 8，默认 0）对两种布局都生效。
+5. **绘制与导出。** 图片以 1:1 不做平滑地画到 canvas 上，复制扩边条，再用 `toBlob('image/png')` 编码。数据文本由同一份帧列表按所选格式生成。
+
+任何改动后约 150 ms，雪碧图会自动重建。信息行显示雪碧图尺寸、精灵数量和填充率（精灵像素面积除以雪碧图面积）。**Show bounds** 只在预览上描出帧轮廓，不会画进 PNG。
+
+### 限制
+
+- 最多 1,000 张图，每张每边不超过 8,192 px。非图片或解码失败的文件会被跳过，并按文件名列出。
+- 雪碧图每边不超过 16,384 px，总像素不超过 16,777,216。[canvas-size 测试结果](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results)列出 Mobile Safari 9+ 的最大画布面积为 4,096 × 4,096（16,777,216 像素）。更大的画布在那里无法工作，所以工具会拒绝这种排布，提示你减小间距、调整 Max width 或布局，或者移除一些图片。
+- 如果某张图比 Max width 还宽，雪碧图会加宽以容纳它，状态行会写出这张图的名字。
+
+### 这里的「不上传」指什么
+
+文件通过 File API 从磁盘进入页面。解码、裁剪、打包和 PNG 编码都在标签页里运行，工具不会带着你的图片或输出发出任何网络请求。它唯一保存的是选项设置（布局、列数、最大宽度、间距、外边距、扩边、裁剪、2 的幂、排序、数据格式、雪碧图名称和显示边框），存在 local storage 里。图片、预览和输出文本从不保存。和站内其他工具一样，它会向 Google Analytics 发送一个使用事件，内容是工具名和操作（`png`、`data` 或 `copy`），不包含文件名和文件内容。
+
+## 常见坑与边界情况
+
+### 动画播放时帧在跳
+
+你的加载器忽略了裁剪数据。自己写的代码如果把 `frame` 直接画在精灵位置、不加 `spriteSourceSize` 偏移，每个裁剪过的帧都会偏移不同的距离。改用引擎自带的图集加载器，或在自己的代码里加上偏移，或者关掉 **Trim transparent edges**。
+
+### Phaser 的网格加载器多出了帧
+
+Phaser 的 `load.spritesheet` 不读数据文件，而是根据图片尺寸计算帧数：列数为 `floor((width - margin + spacing) / (frameWidth + spacing))`，行数同理，两者相乘。有两种情况会多出你没画过的帧：
+
+- **Power of two** 可能让雪碧图多出不止一个格子的宽高，产生空列或空行，帧序号随之错位。用这个加载器时请关掉它。
+- 图片数量不是 **Columns** 的整数倍时，最后一行会有空格子。10 张图排 4 列，Phaser 会建出 12 帧。传入 `endFrame: 9`（包含该值），或者列出需要的帧。
+
+**Extrude** 设为 E 时，向加载器传 `margin + E` 和 `spacing + 2 × E`。
+
+### 裁剪没有效果
+
+工具保留 alpha 大于 0 的所有像素。角落里只要有一个 alpha 为 1 的像素（软笔刷或投影常会留下），整块画布就都会保留。JPG 没有 alpha 通道，大多数 BMP 也没有，所以无从裁剪。清理源图，或者导出为带真正 alpha 通道的 PNG。
+
+### CSS 图标丢了内边距
+
+CSS 格式只写帧的尺寸和位置。Trim 开启时，每个图标 class 拿到的是可见像素的尺寸，24 × 24 的图标可能变成 18 × 20，在一排按钮里就不居中了。导出 CSS 前请关闭 Trim。CSS 输出也不写 `background-size`。面向 HiDPI 屏幕时，打包 @2x 图片，把 `background-size` 设为雪碧图尺寸的一半，再把所有 width、height 和 `background-position` 值减半。
+
+### PixiJS 找不到 PNG
+
+`Assets.load` 读取 JSON 里的 `meta.image`，从同一目录加载那个文件。导出后给 PNG 改名，加载就会失败。Phaser 把 PNG 地址作为单独参数传入，不读 `meta.image`，所以同样的改名在 Phaser 里没问题。导出前设好 **Sheet name**，并让两个文件放在一起。
+
+### Grid 模式下扩边不起作用
+
+Grid 模式下帧就是整个格子，Extrude 复制的是格子的边缘。图片比格子小时，格子边缘是透明的，复制了也没有变化。只有每张图都填满格子时（比如瓦片），Grid 模式下的扩边才有用。尺寸混杂的素材请用 Packed。
+
+### GIF 只出现第一帧
+
+工具用浏览器的图片解码器解码 GIF，只返回第一帧。想打包 GIF 动图的每一帧，先用 [GIF 拆帧工具](/zh/tools/gif-splitter/)拆开，再把这些帧拖进来。
+
+### 重复的帧占两份空间
+
+每个文件都会被打包，即使两张图完全相同。从列表里删掉重复项，或者在引擎的动画定义里复用同一个帧名。
+
+## 代码示例
+
+示例假设雪碧图名为 `hero`，帧从 `run_01.png` 到 `run_12.png`，导出为 `hero.png` 和 `hero.json`。
+
+### Phaser：加载图集并创建动画
+
+`this.load.atlas` 接收纹理 URL 和 JSON URL，JSON Hash 和 JSON Array 都能读：Phaser 的纹理管理器会检查 `frames` 是否为数组，再选对应的解析器。下面代码用到的加载器和动画 API 在 Phaser 3.90 与 4.x 源码中一致。
+
+```js
+class Play extends Phaser.Scene {
+  preload() {
+    this.load.atlas('hero', 'assets/hero.png', 'assets/hero.json');
+    // XML 导出：this.load.atlasXML('hero', 'assets/hero.png', 'assets/hero.xml');
+  }
+
+  create() {
+    this.anims.create({
+      key: 'run',
+      frames: this.anims.generateFrameNames('hero', {
+        prefix: 'run_', start: 1, end: 12, zeroPad: 2, suffix: '.png'
+      }),
+      frameRate: 14,
+      repeat: -1
+    });
+
+    this.add.sprite(160, 120, 'hero', 'run_01.png').play('run');
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: 320,
+  height: 240,
+  pixelArt: true, // 关闭抗锯齿，开启 roundPixels
+  scene: Play
+});
+```
+
+帧名带 `.png`，所以 `generateFrameNames` 需要 `suffix: '.png'`。不带数据文件加载 Grid 导出时：
+
+```js
+// Grid 导出：10 帧 48 x 64，Spacing 2，Margin 0，Extrude 1
+this.load.spritesheet('coin', 'assets/coin.png', {
+  frameWidth: 48,
+  frameHeight: 64,
+  margin: 0 + 1,      // margin + extrude
+  spacing: 2 + 2 * 1, // spacing + 2 x extrude
+  endFrame: 9         // 跳过最后一行的空格子
+});
+```
+
+### PixiJS v8：Assets.load 与 AnimatedSprite
+
+PixiJS 把 `frames` 定义为以帧名为键的对象，所以请导出 **JSON Hash**。`Assets.load` 返回一个 `Spritesheet`，其 `textures` 对象里每帧一个纹理。
+
+```js
+import { Application, Assets, AnimatedSprite } from 'pixi.js';
+
+const app = new Application();
+await app.init({ width: 320, height: 240 });
+document.body.appendChild(app.canvas);
+
+const sheet = await Assets.load({
+  src: 'assets/hero.json',
+  data: { textureOptions: { scaleMode: 'nearest' } } // 像素风保持锐利
+});
+
+const runFrames = Object.keys(sheet.textures)
+  .filter((name) => name.startsWith('run_'))
+  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  .map((name) => sheet.textures[name]);
+
+const runner = new AnimatedSprite({
+  textures: runFrames,
+  animationSpeed: 0.25, // 每个 60 fps tick 前进的帧数：约每秒 15 帧
+  autoPlay: true
+});
+runner.position.set(160, 120);
+app.stage.addChild(runner);
+```
+
+`numeric: true` 让 `run_2` 排在 `run_10` 前面，和工具里 Name 排序的自然顺序一致。旧的构造写法 `new AnimatedSprite(textures)` 在 v8 里仍然可用。
+
+### CSS：图标与 steps() 动画
+
+**Sheet name** 设为 `icons`、格式选 CSS 时，输出如下（位置取决于排布）：
+
+```css
+.icons {
+  display: inline-block;
+  background-image: url("icons.png");
+  background-repeat: no-repeat;
+}
+
+.icons-home {
+  width: 24px;
+  height: 24px;
+  background-position: 0 0;
+}
+
+.icons-search {
+  width: 24px;
+  height: 24px;
+  background-position: -26px 0;
+}
+```
+
+```html
+<button><span class="icons icons-search"></span> Search</button>
+```
+
+做加载动画时，把 8 帧 64 × 64 按 Grid 导出，Columns 8、Spacing 0，得到 512 × 64 的雪碧图。`steps(8)` 每次跳一帧宽度：
+
+```css
+.spinner {
+  width: 64px;
+  height: 64px;
+  background: url("spinner.png") no-repeat 0 0;
+  animation: spin 0.8s steps(8) infinite;
+}
+
+@keyframes spin {
+  to { background-position: -512px 0; }
+}
+```
+
+### Python：上线前校验坐标
+
+这个脚本读取 JSON Hash 或 JSON Array 导出，检查每一帧都在雪碧图范围内、裁剪数据自洽、任意两帧的距离不小于给定间隔。`--gap` 传 `spacing + 2 × extrude`。它还会检查 `meta.image` 指定的 PNG 是否就在 JSON 文件旁边（PixiJS 也在这里找它）；如果装了 Pillow，还会核对 PNG 尺寸与 `meta.size` 是否一致。
+
+```python
+#!/usr/bin/env python3
+"""check_atlas.py: sanity-check a TexturePacker-style JSON atlas."""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def frames_of(atlas):
+    frames = atlas["frames"]
+    if isinstance(frames, dict):          # JSON Hash
+        return list(frames.items())
+    return [(f["filename"], f) for f in frames]  # JSON Array
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("atlas")
+    ap.add_argument("--gap", type=int, default=0, help="spacing + 2 * extrude")
+    args = ap.parse_args()
+
+    path = Path(args.atlas)
+    atlas = json.loads(path.read_text(encoding="utf-8"))
+    sheet_w, sheet_h = atlas["meta"]["size"]["w"], atlas["meta"]["size"]["h"]
+    errors, rects = [], []
+
+    for name, f in frames_of(atlas):
+        r, ss, src = f["frame"], f["spriteSourceSize"], f["sourceSize"]
+        x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+        if x < 0 or y < 0 or x + w > sheet_w or y + h > sheet_h:
+            errors.append(f"{name}: frame {w}x{h} at {x},{y} is outside {sheet_w}x{sheet_h}")
+        if f.get("rotated"):
+            errors.append(f"{name}: rotated frames are not expected")
+        if (ss["w"], ss["h"]) != (w, h):
+            errors.append(f"{name}: spriteSourceSize size differs from frame size")
+        if ss["x"] < 0 or ss["y"] < 0 or ss["x"] + w > src["w"] or ss["y"] + h > src["h"]:
+            errors.append(f"{name}: trimmed box does not fit inside sourceSize")
+        rects.append((name, x, y, w, h))
+
+    g = args.gap
+    for i, (na, ax, ay, aw, ah) in enumerate(rects):
+        for nb, bx, by, bw, bh in rects[i + 1:]:
+            apart_x = ax + aw + g <= bx or bx + bw + g <= ax
+            apart_y = ay + ah + g <= by or by + bh + g <= ay
+            if not (apart_x or apart_y):
+                errors.append(f"{na} and {nb} overlap or are closer than {g} px")
+
+    png = path.parent / atlas["meta"]["image"]
+    if not png.exists():
+        errors.append(f"meta.image {png.name} is not next to the JSON file")
+    else:
+        try:
+            from PIL import Image
+            with Image.open(png) as im:
+                if im.size != (sheet_w, sheet_h):
+                    errors.append(f"PNG is {im.size[0]}x{im.size[1]}, meta.size says {sheet_w}x{sheet_h}")
+        except ImportError:
+            pass  # 未安装 Pillow：跳过尺寸检查
+
+    for e in errors:
+        print("ERROR", e)
+    print(f"{len(rects)} frames, {len(errors)} problems")
+    sys.exit(1 if errors else 0)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+默认设置下运行 `python check_atlas.py assets/hero.json --gap 2`。两两检查会把每一帧和其他所有帧比较一遍，1,000 帧约 50 万次比较，纯 Python 远不到一分钟就能跑完。可以把它放进 CI，和把图集复制进游戏的构建步骤放在一起。
+
+## 在 Cocos Creator 与微信小游戏项目里怎么用
+
+国内不少 2D 小游戏用 Cocos Creator 开发、发布到微信小游戏。Cocos Creator 的图集走的是另一套格式，用之前先弄清楚它读什么。
+
+根据 [Cocos Creator 3.8 文档的「图集资源」](https://docs.cocos.com/creator/3.8/manual/zh/asset/atlas.html)一节，编辑器可用的图集由 **plist** 和 **png** 两个文件组成，官方推荐用 TexturePacker 生成，并选择 cocos2d-x 格式的 plist；3.x 不支持 TexturePacker 4.x 以下的图集格式。把两个文件一起拖进资源管理器后，图集下会展开成一组 `SpriteFrame` 子资源。雪碧图生成器输出的是 JSON Hash、JSON Array、Sparrow XML 和 CSS，不输出 plist，所以它的结果不能直接作为 Cocos Creator 的图集资源导入。
+
+Cocos Creator 自带一个更顺手的选项：[自动图集（Auto Atlas）](https://docs.cocos.com/creator/3.8/manual/zh/asset/auto-atlas.html)。在资源管理器里新建一个 `auto-atlas.pac`，它会把所在文件夹下的全部 SpriteFrame 在**构建项目**时打包成大图；预览时仍然使用碎图。它的配置项和本文讲的概念一一对应：
+
+| 自动图集配置项 | 对应本文的概念 |
+|---|---|
+| 最大宽度 / 最大高度 | 雪碧图尺寸上限，参见「确定雪碧图尺寸」 |
+| 间距 | Spacing，防渗色 |
+| 扩边 | Extrude，文档描述为在碎图外扩出一像素外框 |
+| Power of Two | 2 的幂尺寸，WebGL 1 下 mipmap 需要 |
+| 允许旋转 | 帧旋转，雪碧图生成器不做 |
+| 算法 | 只有 `MaxRects` 一个选项 |
+
+所以分工很清楚：Cocos Creator 项目优先用自动图集，或按官方流程用 TexturePacker 导出 plist；用 Phaser、PixiJS 做 H5 或小游戏，或者只需要网页 CSS 雪碧图时，用雪碧图生成器导出 JSON Hash / XML / CSS。无论哪条路，瓦片接缝都靠间距和扩边解决，道理与上文相同。
+
+## 与 TexturePacker、free-tex-packer 对比
+
+三者对图集的理解相同，写出的 JSON Hash、JSON Array 和 Sparrow XML 格式也由同一批加载器读取。区别在于功能范围和运行位置。
+
+| | ZeroTool 雪碧图生成器 | TexturePacker | free-tex-packer |
+|---|---|---|---|
+| 运行位置 | 浏览器标签页，文件不离开本机 | Windows、macOS、Linux 桌面应用，外加命令行 | Web 应用；Windows、macOS、Linux 桌面应用；CLI 及 gulp、grunt、webpack 插件 |
+| 授权 | 免费网页工具 | 商业软件，有免费试用 | 开源，MIT |
+| 装箱 | MaxRects（Best Short Side Fit）、Grid | Grid、Basic、MaxRects、Polygon | MaxRects，多种放置规则，含 Best Short Side Fit |
+| 旋转 | 否 | 可选 | 可选 |
+| 裁剪 | 是 | Trim 与 crop | Trim 与 crop |
+| 间距与边缘复制 | Spacing、Margin、Extrude | Shape padding、border padding、extrude | Padding、extrude |
+| 一组素材拆成多张图 | 否 | Multipack | Multipacking |
+| 相同精灵只存一份 | 否 | Alias detection | Detect identical 选项 |
+| 图片输出 | PNG | PNG、WebP、JPG，以及 PVR、KTX、ASTC 等 GPU 格式 | PNG 或 JPG |
+| 数据格式 | JSON Hash、JSON Array、Sparrow/Starling XML、CSS | 48+ 种引擎预设，外加通用 JSON、XML 与自定义格式 | JSON Hash 与 Array、XML、CSS，Phaser、PixiJS、Godot、Spine、cocos2d、Starling、Unity、Unreal 等预设，外加自定义模板 |
+
+TexturePacker 是三者中功能最全的。多边形装箱、别名检测、按设备缩放、九宫格与锚点编辑器、GPU 纹理压缩，都是大型游戏生产管线会用到的功能，它的命令行也适合放进构建服务器。需要从一组精灵生成多页图集、旋转帧、WebP 或硬件压缩输出，或者 Unity 这类引擎专用格式时，选它。
+
+free-tex-packer 支持旋转、多页打包和大量引擎预设，mustache 模板还能自定义数据格式。想在开源工具里、或在 gulp、grunt、webpack 构建中用上这些选项时，选它。
+
+雪碧图生成器覆盖两者之间的常见情况：手上有一组 PNG，想马上打包成 Phaser、PixiJS 或 Starling 能读的格式，裁剪、间距和扩边都处理好，无需安装，文件也不离开本机。按设计，它只输出一页 PNG，帧保持正向，数据格式就是上面四种。旋转、多页图集、WebP 输出、动画预览以及 Unity、Godot 格式，交给 TexturePacker 和 free-tex-packer。
+
+## 相关工具与参考资料
+
+ZeroTool 上适合与雪碧图搭配的工具：
+
+- [GIF 拆帧工具](/zh/tools/gif-splitter/)：把 GIF 动图拆成 PNG 帧，再拿到这里打包。
+- [图片压缩工具](/zh/tools/image-compressor/)：压缩导出的雪碧图 PNG。
+- [WebP 转换器](/zh/tools/webp-converter/)：把雪碧图 PNG 转成 WebP，供支持 WebP 的引擎和浏览器使用。
+- [图片转 Base64 工具](/zh/tools/image-to-base64/)：把小的图标雪碧图以 data URL 形式内联进 CSS。
+- [SVG 转 PNG 工具](/zh/tools/svg-to-png-converter/)：打包前把矢量图标按指定尺寸栅格化。
+
+本文引用的一手资料：
+
+- [Jukka Jylänki, A Thousand Ways to Pack the Bin (2010) 及参考代码](https://github.com/juj/RectangleBinPack)：MaxRects、Best Short Side Fit、排序方式与基准测试结果
+- [MDN：WebGL best practices](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices)：纹理图集与 draw call 合批
+- [MDN：在 WebGL 中使用纹理](https://developer.mozilla.org/zh-CN/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL)：WebGL 1 对非 2 的幂纹理的规定
+- [WebGL2 Fundamentals: What's new in WebGL2](https://webgl2fundamentals.org/webgl/lessons/webgl2-whats-new.html)：非 2 的幂纹理的 mipmap
+- [WebGL2 Fundamentals: cross-platform issues](https://webgl2fundamentals.org/webgl/lessons/webgl-cross-platform-issues.html)：真实设备上的最大纹理尺寸
+- [Phaser 源码：texture parsers](https://github.com/phaserjs/phaser/tree/master/src/textures/parsers)：JSON Hash、JSON Array、Sparrow XML 与 sprite sheet 的读取方式
+- [PixiJS 源码：Spritesheet](https://github.com/pixijs/pixijs/blob/dev/src/spritesheet/Spritesheet.ts)：v8 的 `SpritesheetData` 格式与裁剪处理
+- [Starling 源码：TextureAtlas](https://github.com/Gamua/Starling-Framework/blob/master/starling/src/starling/textures/TextureAtlas.as)：带 `frameX`、`frameY` 的 XML 布局
+- [TexturePacker 文档：texture settings](https://www.codeandweb.com/texturepacker/documentation/texture-settings)：extrude、padding、旋转、尺寸约束与输出格式
+- [free-tex-packer（GitHub）](https://github.com/odrick/free-tex-packer)：功能、导出器与模板格式
+- [Cocos Creator 3.8 文档：图集资源](https://docs.cocos.com/creator/3.8/manual/zh/asset/atlas.html)与[自动图集资源](https://docs.cocos.com/creator/3.8/manual/zh/asset/auto-atlas.html)：plist 图集格式要求与自动图集配置项
+- [MDN：实现 CSS 图像精灵](https://developer.mozilla.org/zh-CN/docs/Web/CSS/Guides/Images/Implementing_image_sprites)：CSS 雪碧图技术
+- [canvas-size 测试结果](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results)：各浏览器的最大画布尺寸
