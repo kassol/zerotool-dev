@@ -1,0 +1,162 @@
+---
+seoTitle: "雪碧图生成器 — 精灵图在线打包 PNG + JSON 图集 | ZeroTool"
+seoDescription: "在线雪碧图生成器：多张图片紧凑排布或网格拼成一张 PNG，自动裁掉透明边，导出 Phaser、PixiJS、Starling 可读的 JSON / XML 纹理图集或 CSS 雪碧图。浏览器本地处理，不上传。"
+faqItems:
+  - question: "生成的雪碧图怎么在 Phaser 或 PixiJS 里加载？"
+    answer: "下载 PNG 和 JSON Hash 数据文件，放在同一目录。Phaser 3 在 preload 里调用 this.load.atlas(key, textureURL, atlasURL)，之后用原文件名当帧名，例如 this.add.image(x, y, key, walk_01.png)。PixiJS v8 对 JSON 地址执行 await Assets.load，它会按 meta.image 加载同目录的 PNG 并返回 Spritesheet 对象，sheet.textures[walk_01.png] 即可交给 new Sprite()。选 XML 格式时，Phaser 用 this.load.atlasXML，Starling 用 TextureAtlas。"
+  - question: "Packed 和 Grid 两种布局怎么选？"
+    answer: "图片尺寸不一、按名字取帧、想让 PNG 尽量小，选 Packed（紧凑排布），得到的是纹理图集。每帧必须等大、位置固定时选 Grid（网格），例如 Phaser 的 this.load.spritesheet 按 frameWidth / frameHeight 切帧、CSS steps() 逐帧动画、Godot Sprite2D 的 hframes / vframes。Grid 的每个格子等于最大那张图的尺寸，图片在格子里居中。"
+  - question: "裁剪透明边之后，spriteSourceSize 和 sourceSize 是什么意思？"
+    answer: "Trim 会去掉每张图四周完全透明的行和列。frame 是裁剪后的图在雪碧图里的矩形；sourceSize 是原图尺寸；spriteSourceSize 是裁剪后像素在原图中的位置 (x, y) 与尺寸。Phaser、PixiJS、HaxeFlixel 读取这些值，把裁剪后的像素画回原来的偏移处，逐帧动画因此不会抖动。XML 格式用负的 frameX / frameY 加 frameWidth / frameHeight 表达同样的偏移。"
+  - question: "图片会被上传吗？"
+    answer: "不会。解码、裁剪、排布、PNG 编码全部由浏览器的 Canvas API 在本地完成，没有任何数据发往服务器。本地只保存选项设置（布局、列数、最大宽度、间距、外边距、扩边、裁剪、2 的幂、排序、数据格式、雪碧图名称、显示边框），图片、预览和导出文本从不写入存储。"
+  - question: "有哪些限制？"
+    answer: "最多 1000 张图，单张每边不超过 8192 px；生成的雪碧图每边不超过 16384 px，总像素不超过 16,777,216（例如 4096 × 4096）。按设计不旋转帧、不把大量图片拆成多页图集、只输出 PNG。需要旋转、多页图集、WebP 输出或 Unity / Godot 专用图集格式时，请用 TexturePacker 或 free-tex-packer。"
+---
+
+## 使用步骤
+
+1. 把图片拖进上传区、点击选择文件，或用 **Ctrl/Cmd+V** 粘贴图片文件；随时可以继续追加。支持 PNG、JPG、WebP、GIF（只取第一帧）、SVG、BMP、AVIF。
+2. 检查图片列表：点缩略图上的 **×** 移除单张，**Clear all** 清空全部。**Sort** 决定帧的顺序：**Name** 按自然排序（`walk_2` 排在 `walk_10` 前面），**Added** 保持添加顺序。
+3. 选择 **Layout**：**Packed** 生成紧凑的纹理图集，**Grid** 生成等大网格。Packed 模式设置 **Max width**（512 到 8192 px，默认 2048）；Grid 模式设置 **Columns**（填 1 得到竖条，填图片数量得到单行横条）。
+4. 设置 **Spacing**（精灵之间的间距）、**Margin**（雪碧图四周留白）、**Extrude**（把边缘像素向外复制）。Packed 模式建议保持 **Trim** 开启，裁掉透明边。引擎要求 256、512、1024 这类尺寸时打开 **Power of two**。
+5. 选择 **Data format**（JSON Hash、JSON Array、XML 或 CSS），填写 **Sheet name**。它决定 PNG 文件名 `{name}.png`，也会写进数据文件。
+6. 查看预览。信息行显示雪碧图尺寸、精灵数量和填充率。打开 **Show bounds** 可给每一帧描边，描边只画在预览上，不会进入导出的 PNG。
+7. 点 **Download PNG** 和数据下载按钮（JSON、XML 或 CSS），或点 **Copy** 复制数据文本。
+
+改动任何选项或图片列表后，雪碧图会自动重新生成，不需要点「生成」。
+
+帧名直接使用原文件名并保留扩展名（如 `walk_01.png`），与 TexturePacker 的惯例一致。文件重名时，后加入的会变成 `walk_01 (2).png`，保证帧名唯一。
+
+## Packed 还是 Grid
+
+| | Packed（紧凑排布） | Grid（网格） |
+|---|---|---|
+| 排布方式 | MaxRects 装箱，大图先放 | 从左到右逐行排列 |
+| 帧尺寸 | 每帧保持自身尺寸 | 每格等于最大那张图 |
+| 透明边裁剪 | 可用，默认开启 | 不裁剪，格子保持完整尺寸 |
+| 取帧方式 | 按名字（`walk_01.png`） | 按名字，或按序号 + 帧尺寸 |
+| 适合 | 纹理图集、UI 图标、尺寸混杂的素材 | 逐帧动画条、`load.spritesheet`、CSS `steps()` |
+
+Packed 会在「最宽那张图」到 **Max width** 之间试多个宽度（开启 **Power of two** 时只试 2 的幂），保留面积最小的方案；面积相同时取更接近正方形的一个。帧始终不旋转。
+
+Grid 把每张图放在格子正中，数据里的帧矩形就是整个格子，所以只认帧宽高的加载方式也能直接用。
+
+## 数据格式与引擎对照
+
+| 数据格式 | 文件 | 可读取的引擎 / 场景 |
+|---|---|---|
+| JSON Hash | `.json` | Phaser 3 `load.atlas`、PixiJS `Assets.load`、HaxeFlixel `FlxAtlasFrames.fromTexturePackerJson`，以及大多数兼容 TexturePacker JSON 的读取器 |
+| JSON Array | `.json` | Phaser 3 `load.atlas`、HaxeFlixel `fromTexturePackerJson`。PixiJS 按帧名取纹理，请改用 JSON Hash |
+| XML | `.xml` | Starling / Sparrow `TextureAtlas`、Phaser 3 `load.atlasXML`、HaxeFlixel `FlxAtlasFrames.fromSparrow` |
+| CSS | `.css` | 普通网页的图标、按钮等 CSS 雪碧图 |
+
+带裁剪信息的 JSON Hash 一帧长这样：
+
+```json
+{
+  "frames": {
+    "walk_01.png": {
+      "frame": { "x": 2, "y": 2, "w": 30, "h": 44 },
+      "rotated": false,
+      "trimmed": true,
+      "spriteSourceSize": { "x": 17, "y": 10, "w": 30, "h": 44 },
+      "sourceSize": { "w": 64, "h": 64 }
+    }
+  },
+  "meta": {
+    "app": "https://zerotool.dev/tools/sprite-sheet-generator/",
+    "version": "1.0",
+    "image": "spritesheet.png",
+    "format": "RGBA8888",
+    "size": { "w": 256, "h": 128 },
+    "scale": "1"
+  }
+}
+```
+
+JSON Array 字段相同，只是 `frames` 变成数组，帧名放在 `filename` 字段。XML 在 `TextureAtlas` 元素下为每帧写一个 `SubTexture`；裁剪过的帧带 `frameX`、`frameY`、`frameWidth`、`frameHeight`，未裁剪的帧省略这四个属性。
+
+## 在代码里加载
+
+### Phaser 3
+
+```js
+function preload() {
+  this.load.atlas('hero', 'assets/spritesheet.png', 'assets/spritesheet.json');
+  // XML 格式：this.load.atlasXML('hero', 'assets/spritesheet.png', 'assets/spritesheet.xml');
+}
+
+function create() {
+  this.add.image(400, 300, 'hero', 'walk_01.png');
+
+  this.anims.create({
+    key: 'walk',
+    frames: this.anims.generateFrameNames('hero', {
+      prefix: 'walk_', start: 1, end: 8, zeroPad: 2, suffix: '.png'
+    }),
+    frameRate: 12,
+    repeat: -1
+  });
+  this.add.sprite(200, 300, 'hero').play('walk');
+}
+```
+
+Grid 雪碧图也可以不要数据文件，直接用 `this.load.spritesheet`，把格子尺寸以及工具里设置的 **Margin**、**Spacing** 原样传进去：
+
+```js
+this.load.spritesheet('coin', 'assets/coin.png', {
+  frameWidth: 32, frameHeight: 32, margin: 0, spacing: 2
+});
+```
+
+Phaser 按图片宽度推算每行帧数，所以用这个加载方式时请关掉 **Power of two**：多出来的宽度会凭空多出空帧，帧序号随之错位。设置了 **Extrude** 为 E 时，传入 `margin + E` 和 `spacing + 2 × E`。
+
+### PixiJS v8
+
+```js
+import { Assets, Sprite, AnimatedSprite } from 'pixi.js';
+
+const sheet = await Assets.load('assets/spritesheet.json');
+const hero = new Sprite(sheet.textures['walk_01.png']);
+
+const walk = ['walk_01.png', 'walk_02.png', 'walk_03.png'].map((name) => sheet.textures[name]);
+const anim = new AnimatedSprite(walk);
+anim.animationSpeed = 0.2;
+anim.play();
+```
+
+`Assets.load` 读取 JSON 后，会按 `meta.image` 去同一目录加载 PNG，返回 `Spritesheet` 对象。PNG 文件名要和 **Sheet name** 保持一致，改名后记得同步。
+
+### CSS 雪碧图
+
+CSS 格式输出一个基础类（把雪碧图设为背景）和每帧一个类（写好 `width`、`height`、`background-position`）。类名取自去掉扩展名的文件名，并转换成合法字符。把 CSS 与 PNG 放在一起，给元素同时加上两个类即可：
+
+```html
+<span class="icons icons-home"></span>
+```
+
+## 间距与扩边：防止纹理渗色
+
+GPU 很少恰好一个纹素对应一个屏幕像素。精灵被缩放、旋转、画在小数坐标上或从 mipmap 采样时，双线性过滤会把相邻纹素混在一起。帧的边缘旁边就是雪碧图里的另一个精灵，混进来的颜色会在边缘形成一道细线，这就是纹理渗色（texture bleeding）。
+
+- **Spacing** 在精灵之间留透明像素，过滤混到的是透明色而不是别的精灵。默认 2 px 足以应付常规缩放。
+- **Extrude** 把每个精灵最外一圈像素向外复制 1 到 8 px，过滤混到的是同一种颜色。不透明的瓦片和 tilemap 最需要它：只留透明间距时，瓦片之间仍会出现暗色接缝。
+- **Margin** 让精灵远离雪碧图边缘，同样能避开 clamp-to-edge 采样带来的问题。
+
+像素风素材用最近邻过滤、画在整数坐标上时不会渗色，三项都可以设为 0。
+
+**Power of two** 把雪碧图每条边向上取到 256、512、1024 等尺寸。WebGL 1 的纹理只有是 2 的幂才能用 mipmap 和 repeat 平铺，部分老引擎也有这个要求；WebGL 2 与多数现代引擎接受任意尺寸。
+
+## 限制与范围
+
+- 最多 1000 张图，单张每边不超过 8192 px。非图片或解码失败的文件会被跳过，并列出文件名。
+- 雪碧图每边不超过 16384 px，总像素不超过 16,777,216。排布超出时，可以减小 Spacing、换一个 Max width，或减少图片。
+- GIF 只取第一帧。想先把 GIF 动图拆成逐帧 PNG，请用 [GIF 拆帧工具](/zh/tools/gif-splitter/)。
+- 按设计不旋转帧、只输出单页 PNG、不做动画预览、不输出 Unity / Godot 专用图集格式。这些需求请交给 TexturePacker 或 free-tex-packer。
+
+## 相关工具
+
+- [GIF 拆帧工具](/zh/tools/gif-splitter/)：把 GIF 动图拆成 PNG 帧，再拿来打包精灵图。
+- [图片压缩工具](/zh/tools/image-compressor/)：压缩导出的雪碧图 PNG。
+- [图片转 Base64 工具](/zh/tools/image-to-base64/)：把小雪碧图转成 data URL，内联到 CSS 或 HTML。

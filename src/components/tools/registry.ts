@@ -141,6 +141,7 @@ import SecretRedactorTool from './SecretRedactorTool.astro';
 import SqliteViewerTool from './SqliteViewerTool.astro';
 import PixelateImageTool from './PixelateImageTool.astro';
 import GifSplitterTool from './GifSplitterTool.astro';
+import SpriteSheetGeneratorTool from './SpriteSheetGeneratorTool.astro';
 
 export const toolComponentMap: Record<string, (_props: { lang?: string }) => any> = {
   'ascii-converter': AsciiConverterTool,
@@ -281,4 +282,5 @@ export const toolComponentMap: Record<string, (_props: { lang?: string }) => any
   'sqlite-viewer': SqliteViewerTool,
   'pixelate-image': PixelateImageTool,
   'gif-splitter': GifSplitterTool,
+  'sprite-sheet-generator': SpriteSheetGeneratorTool,
 };

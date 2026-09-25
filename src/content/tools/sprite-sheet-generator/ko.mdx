@@ -1,0 +1,162 @@
+---
+seoTitle: "스프라이트 시트 생성기 — PNG + JSON 텍스처 아틀라스 | ZeroTool"
+seoDescription: "여러 이미지를 빈틈없는 배치나 그리드로 스프라이트 시트 PNG 한 장에 합치고 투명 여백을 트림. Phaser·PixiJS·Starling용 텍스처 아틀라스와 CSS 내보내기. 업로드 없음."
+faqItems:
+  - question: "만든 스프라이트 시트를 Phaser나 PixiJS에서 어떻게 불러오나요?"
+    answer: "PNG와 JSON Hash 데이터 파일을 내려받아 같은 폴더에 둡니다. Phaser 3에서는 preload에서 this.load.atlas(key, textureURL, atlasURL)를 호출한 뒤, 원래 파일 이름을 프레임 이름으로 써서 this.add.image(x, y, key, walk_01.png)처럼 사용합니다. PixiJS v8에서는 JSON 주소로 await Assets.load를 호출하면 meta.image에 적힌 PNG까지 불러와 Spritesheet를 돌려주므로, sheet.textures[walk_01.png]를 바로 new Sprite()에 넘기면 됩니다. XML 형식이라면 Phaser는 this.load.atlasXML, Starling은 TextureAtlas를 씁니다."
+  - question: "Packed와 Grid는 언제 각각 쓰나요?"
+    answer: "크기가 제각각인 이미지를 이름으로 찾고 PNG 용량을 최소로 줄이려면 Packed(빈틈없는 배치)로 텍스처 아틀라스를 만듭니다. 모든 프레임이 같은 크기와 고정된 위치를 가져야 하면 Grid를 씁니다. Phaser의 this.load.spritesheet(frameWidth / frameHeight 지정), CSS steps() 애니메이션, Godot Sprite2D의 hframes / vframes가 여기에 해당합니다. Grid의 셀은 가장 큰 이미지와 같은 크기이고, 각 이미지는 셀 가운데에 놓입니다."
+  - question: "트림한 뒤 spriteSourceSize와 sourceSize는 무슨 뜻인가요?"
+    answer: "Trim은 각 이미지 둘레의 완전히 투명한 행과 열을 잘라냅니다. frame은 시트 안에서 트림된 사각형, sourceSize는 원본 이미지 크기, spriteSourceSize는 트림된 픽셀이 원본 안에서 차지하는 위치(x, y)와 크기입니다. Phaser, PixiJS, HaxeFlixel은 이 값으로 트림된 픽셀을 원래 위치에 그리기 때문에 애니메이션 프레임이 흔들리지 않습니다. XML 형식은 같은 오프셋을 음수 frameX / frameY와 frameWidth / frameHeight로 기록합니다."
+  - question: "이미지가 업로드되나요?"
+    answer: "아니요. 디코딩, 트림, 배치, PNG 인코딩은 모두 브라우저의 Canvas API로 로컬에서 처리하며 서버로 아무것도 보내지 않습니다. 로컬에 저장하는 것은 옵션 설정(레이아웃, 열 수, 최대 너비, 간격, 바깥 여백, 익스트루드, 트림, 2의 거듭제곱, 정렬 순서, 데이터 형식, 시트 이름, 테두리 표시)뿐이며 이미지, 미리보기, 출력 텍스트는 저장하지 않습니다."
+  - question: "제한이 있나요?"
+    answer: "이미지는 최대 1,000장, 한 장당 한 변 8,192px까지입니다. 완성된 시트는 한 변 16,384px 이하, 전체 16,777,216픽셀 이하(예: 4096 × 4096)입니다. 설계상 프레임 회전, 여러 페이지로 나누기, PNG 외 형식 출력은 하지 않습니다. 회전, 멀티팩 아틀라스, WebP 출력, Unity·Godot 전용 아틀라스 형식이 필요하면 TexturePacker나 free-tex-packer를 사용하세요."
+---
+
+## 사용 방법
+
+1. 이미지를 끌어다 놓거나 클릭해서 파일을 고릅니다. **Ctrl/Cmd+V**로 이미지 파일을 붙여넣을 수도 있고, 언제든 더 추가할 수 있습니다. PNG, JPG, WebP, GIF(첫 프레임만), SVG, BMP, AVIF를 지원합니다.
+2. 이미지 목록을 확인합니다. 썸네일의 **×**로 한 장씩 빼고, **Clear all**로 모두 지웁니다. **Sort**는 프레임 순서를 정합니다. **Name**은 자연 정렬(`walk_2`가 `walk_10`보다 앞), **Added**는 추가한 순서입니다.
+3. **Layout**을 고릅니다. **Packed**는 빈틈없는 텍스처 아틀라스를, **Grid**는 같은 크기의 셀이 늘어선 시트를 만듭니다. Packed에서는 **Max width**(512~8192px, 기본값 2048), Grid에서는 **Columns**(1이면 세로 한 줄, 이미지 수와 같으면 가로 한 줄)를 정합니다.
+4. **Spacing**(스프라이트 사이 간격), **Margin**(시트 가장자리 여백), **Extrude**(가장자리 픽셀을 바깥으로 복제하는 폭)를 설정합니다. Packed에서는 **Trim**을 켜 두면 투명한 여백이 잘립니다. 엔진이 256, 512, 1024 같은 크기를 요구하면 **Power of two**를 켭니다.
+5. **Data format**(JSON Hash, JSON Array, XML, CSS)을 고르고 **Sheet name**을 입력합니다. 이 이름이 PNG 파일 이름 `{name}.png`가 되고 데이터 파일에도 기록됩니다.
+6. 미리보기를 확인합니다. 정보 줄에 시트 크기, 스프라이트 수, 채움률이 나옵니다. **Show bounds**를 켜면 프레임마다 테두리가 그려집니다. 테두리는 미리보기에만 표시되고 내보낸 PNG에는 들어가지 않습니다.
+7. **Download PNG**와 데이터 다운로드 버튼(JSON, XML, CSS)을 누르거나, **Copy**로 데이터 텍스트를 복사합니다.
+
+옵션이나 이미지 목록을 바꾸면 시트가 자동으로 다시 만들어지므로 따로 생성 버튼을 누를 필요가 없습니다.
+
+프레임 이름은 확장자를 포함한 원래 파일 이름(`walk_01.png`)으로, TexturePacker 관례와 같습니다. 이름이 같은 파일이 있으면 나중에 추가한 파일이 `walk_01 (2).png`가 되어 이름이 겹치지 않습니다.
+
+## Packed와 Grid 비교
+
+| | Packed(빈틈없는 배치) | Grid(그리드) |
+|---|---|---|
+| 배치 방식 | MaxRects 빈 패킹, 큰 이미지부터 배치 | 왼쪽에서 오른쪽으로 한 줄씩 |
+| 프레임 크기 | 이미지마다 다름 | 모든 셀이 가장 큰 이미지와 같음 |
+| 트림 | 사용 가능(기본값 켜짐) | 없음(셀 크기 그대로) |
+| 프레임 참조 | 이름(`walk_01.png`) | 이름, 또는 번호와 프레임 크기 |
+| 적합한 용도 | 텍스처 아틀라스, UI 아이콘, 크기가 섞인 에셋 | 애니메이션 스트립, `load.spritesheet`, CSS `steps()` |
+
+Packed는 가장 넓은 이미지부터 **Max width**까지 여러 시트 너비를 시험하고(**Power of two**가 켜져 있으면 2의 거듭제곱만), 면적이 가장 작은 결과를 고릅니다. 면적이 같으면 정사각형에 더 가까운 쪽을 고릅니다. 프레임은 회전하지 않습니다.
+
+Grid는 각 이미지를 셀 가운데에 두고 셀 전체를 프레임으로 기록합니다. 그래서 프레임 너비와 높이만 아는 로더에서도 그대로 읽힙니다.
+
+## 데이터 형식과 엔진
+
+| 데이터 형식 | 파일 | 읽을 수 있는 엔진·용도 |
+|---|---|---|
+| JSON Hash | `.json` | Phaser 3 `load.atlas`, PixiJS `Assets.load`, HaxeFlixel `FlxAtlasFrames.fromTexturePackerJson`, TexturePacker JSON을 읽는 대부분의 로더 |
+| JSON Array | `.json` | Phaser 3 `load.atlas`, HaxeFlixel `fromTexturePackerJson`. PixiJS는 프레임 이름을 키로 찾으므로 JSON Hash를 쓰세요 |
+| XML | `.xml` | Starling·Sparrow `TextureAtlas`, Phaser 3 `load.atlasXML`, HaxeFlixel `FlxAtlasFrames.fromSparrow` |
+| CSS | `.css` | 일반 웹 페이지의 아이콘, 버튼 이미지 |
+
+트림된 프레임은 JSON Hash에서 다음과 같이 기록됩니다.
+
+```json
+{
+  "frames": {
+    "walk_01.png": {
+      "frame": { "x": 2, "y": 2, "w": 30, "h": 44 },
+      "rotated": false,
+      "trimmed": true,
+      "spriteSourceSize": { "x": 17, "y": 10, "w": 30, "h": 44 },
+      "sourceSize": { "w": 64, "h": 64 }
+    }
+  },
+  "meta": {
+    "app": "https://zerotool.dev/tools/sprite-sheet-generator/",
+    "version": "1.0",
+    "image": "spritesheet.png",
+    "format": "RGBA8888",
+    "size": { "w": 256, "h": 128 },
+    "scale": "1"
+  }
+}
+```
+
+JSON Array는 같은 항목을 `frames` 배열에 담고 이름은 `filename` 필드에 둡니다. XML은 `TextureAtlas` 요소 안에 프레임마다 `SubTexture`를 하나씩 씁니다. 트림한 프레임에는 `frameX`, `frameY`, `frameWidth`, `frameHeight`가 붙고, 트림하지 않은 프레임에서는 생략됩니다.
+
+## 코드에서 불러오기
+
+### Phaser 3
+
+```js
+function preload() {
+  this.load.atlas('hero', 'assets/spritesheet.png', 'assets/spritesheet.json');
+  // XML 형식: this.load.atlasXML('hero', 'assets/spritesheet.png', 'assets/spritesheet.xml');
+}
+
+function create() {
+  this.add.image(400, 300, 'hero', 'walk_01.png');
+
+  this.anims.create({
+    key: 'walk',
+    frames: this.anims.generateFrameNames('hero', {
+      prefix: 'walk_', start: 1, end: 8, zeroPad: 2, suffix: '.png'
+    }),
+    frameRate: 12,
+    repeat: -1
+  });
+  this.add.sprite(200, 300, 'hero').play('walk');
+}
+```
+
+Grid로 만든 시트는 데이터 파일 없이 `this.load.spritesheet`로도 불러올 수 있습니다. 셀 크기와 도구에서 설정한 **Margin**, **Spacing**을 그대로 넘깁니다.
+
+```js
+this.load.spritesheet('coin', 'assets/coin.png', {
+  frameWidth: 32, frameHeight: 32, margin: 0, spacing: 2
+});
+```
+
+Phaser는 시트 너비로 한 줄의 프레임 수를 계산하므로, 이 로더를 쓸 때는 **Power of two**를 꺼 두세요. 너비가 늘어나면 빈 프레임이 생기고 프레임 번호가 밀립니다. **Extrude**를 E px로 설정했다면 `margin + E`와 `spacing + 2 × E`를 넘깁니다.
+
+### PixiJS v8
+
+```js
+import { Assets, Sprite, AnimatedSprite } from 'pixi.js';
+
+const sheet = await Assets.load('assets/spritesheet.json');
+const hero = new Sprite(sheet.textures['walk_01.png']);
+
+const walk = ['walk_01.png', 'walk_02.png', 'walk_03.png'].map((name) => sheet.textures[name]);
+const anim = new AnimatedSprite(walk);
+anim.animationSpeed = 0.2;
+anim.play();
+```
+
+`Assets.load`는 JSON을 읽은 뒤 `meta.image`에 적힌 PNG를 같은 폴더에서 불러와 `Spritesheet`를 돌려줍니다. PNG 파일 이름은 **Sheet name**과 같게 유지하세요.
+
+### CSS
+
+CSS 형식은 시트를 배경 이미지로 지정하는 기본 클래스 하나와, 프레임마다 `width`, `height`, `background-position`을 담은 클래스를 씁니다. 클래스 이름은 확장자를 뺀 파일 이름을 클래스에 쓸 수 있는 문자로 바꾼 것입니다. CSS를 PNG와 같은 곳에 두고 요소에 두 클래스를 함께 붙입니다.
+
+```html
+<span class="icons icons-home"></span>
+```
+
+## Spacing과 Extrude로 텍스처 번짐 막기
+
+GPU가 텍셀 하나를 화면 픽셀 하나에 정확히 대응시키는 경우는 드뭅니다. 스프라이트를 확대·축소·회전하거나, 소수 좌표에 그리거나, 밉맵에서 읽으면 바이리니어 필터가 이웃 텍셀과 색을 섞습니다. 프레임 가장자리 바로 옆은 시트의 다른 스프라이트이므로, 그 색이 섞여 테두리에 가는 선이 생깁니다. 이것이 텍스처 번짐(texture bleeding)입니다.
+
+- **Spacing**은 스프라이트 사이에 투명 픽셀을 두어, 필터가 다른 스프라이트 대신 투명색과 섞이게 합니다. 일반적인 확대·축소라면 기본값 2px로 충분합니다.
+- **Extrude**는 각 스프라이트의 가장 바깥 행과 열을 1~8px 바깥으로 복제해, 필터가 같은 색과 섞이게 합니다. 불투명한 타일과 타일맵에서 가장 효과가 큽니다. 투명한 간격만 두면 타일 이음새에 어두운 선이 남기 때문입니다.
+- **Margin**은 스프라이트를 시트 가장자리에서 떨어뜨려 clamp-to-edge 샘플링 문제도 피합니다.
+
+최근접 이웃 필터로 정수 좌표에 그리는 픽셀 아트는 번짐이 생기지 않으므로 세 값을 모두 0으로 두어도 됩니다.
+
+**Power of two**는 시트의 각 변을 256, 512, 1024 등으로 올림합니다. WebGL 1은 밉맵과 반복(repeat) 래핑에 2의 거듭제곱 텍스처가 필요하고, 일부 오래된 엔진도 같은 조건을 요구합니다. WebGL 2와 대부분의 최신 엔진은 임의 크기를 받습니다.
+
+## 제한과 범위
+
+- 이미지는 최대 1,000장, 한 장당 한 변 8,192px까지입니다. 이미지가 아니거나 디코딩에 실패한 파일은 건너뛰고 파일 이름을 표시합니다.
+- 시트는 한 변 16,384px 이하, 전체 16,777,216픽셀 이하입니다. 넘으면 Spacing을 줄이거나, Max width를 바꾸거나, 이미지를 줄이세요.
+- GIF는 첫 프레임만 사용합니다. 움직이는 GIF를 먼저 프레임별 PNG로 나누려면 [GIF 프레임 추출기](/ko/tools/gif-splitter/)를 쓰세요.
+- 설계상 프레임 회전, 여러 페이지 PNG, 애니메이션 미리보기, Unity·Godot 전용 아틀라스 형식은 다루지 않습니다. 이런 작업은 TexturePacker나 free-tex-packer로 하세요.
+
+## 관련 도구
+
+- [GIF 프레임 추출기](/ko/tools/gif-splitter/) — 움직이는 GIF를 PNG 프레임으로 나눠 여기서 합칠 수 있습니다.
+- [이미지 압축기](/ko/tools/image-compressor/) — 내보낸 스프라이트 시트 PNG 용량을 줄입니다.
+- [이미지 Base64 변환기](/ko/tools/image-to-base64/) — 작은 스프라이트 시트를 data URL로 바꿔 CSS나 HTML에 넣습니다.

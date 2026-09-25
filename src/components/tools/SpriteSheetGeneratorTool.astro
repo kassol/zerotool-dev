@@ -1,0 +1,1563 @@
+---
+// SpriteSheetGeneratorTool — packs many images into one sprite sheet PNG
+// (MaxRects packing or a uniform grid) with optional transparent-edge trim,
+// spacing, margin, extrude and power-of-two size, and exports TexturePacker
+// JSON Hash / JSON Array, Sparrow/Starling XML or CSS. No upload. Only the
+// layout and export options are persisted (policy: preference).
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+---
+
+<div>
+  <div class="ssg-wrap" id="ssg-wrap" data-lang={lang}>
+    <div id="ssg-drop" class="ssg-drop" role="button" tabindex="0" aria-label="Select images" data-i18n-aria="dropAria">
+      <div class="ssg-drop-inner">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <p data-i18n="dropHint">Drop images here, or <strong>click to select</strong></p>
+        <p class="ssg-hint" data-i18n="pasteHint">You can also paste copied image files with Ctrl/Cmd+V</p>
+        <p class="ssg-hint" data-i18n="formatsHint">PNG · JPG · WebP · GIF (first frame) · SVG · BMP · AVIF</p>
+      </div>
+      <input type="file" id="ssg-file" multiple accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/bmp,image/avif,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp,.avif" class="ssg-file-input" tabindex="-1" aria-label="Select images" data-i18n-aria="dropAria" />
+    </div>
+
+    <section id="ssg-list-panel" class="ssg-panel" hidden>
+      <div class="ssg-list-head">
+        <span id="ssg-count" class="ssg-count"></span>
+        <label class="ssg-inline-field">
+          <span class="tool-label" data-i18n="sortLabel">Sort</span>
+          <select id="ssg-order" class="tool-input ssg-select">
+            <option value="name" data-i18n="sortName">Name</option>
+            <option value="added" data-i18n="sortAdded">Added</option>
+          </select>
+        </label>
+        <button type="button" id="ssg-clear" class="btn-ghost" data-i18n="clearAll">Clear all</button>
+      </div>
+      <div id="ssg-list" class="ssg-list" role="list" aria-label="Images" data-i18n-aria="listAria"></div>
+    </section>
+
+    <section class="ssg-panel">
+      <div class="ssg-options">
+        <fieldset class="ssg-field ssg-fieldset">
+          <legend class="tool-label" data-i18n="layoutLabel">Layout</legend>
+          <div class="ssg-seg">
+            <label><input type="radio" name="ssg-layout" value="packed" checked /><span data-i18n="layoutPacked">Packed</span></label>
+            <label><input type="radio" name="ssg-layout" value="grid" /><span data-i18n="layoutGrid">Grid</span></label>
+          </div>
+        </fieldset>
+        <label class="ssg-field" id="ssg-columns-field" hidden>
+          <span class="tool-label" data-i18n="columnsLabel">Columns</span>
+          <input type="number" id="ssg-columns" class="tool-input" min="1" max="1000" step="1" inputmode="numeric" placeholder="Auto" data-i18n-placeholder="columnsAuto" />
+        </label>
+        <label class="ssg-field" id="ssg-maxwidth-field">
+          <span class="tool-label" data-i18n="maxWidthLabel">Max width</span>
+          <select id="ssg-maxwidth" class="tool-input ssg-select">
+            <option value="512">512 px</option>
+            <option value="1024">1024 px</option>
+            <option value="2048">2048 px</option>
+            <option value="4096">4096 px</option>
+            <option value="8192">8192 px</option>
+          </select>
+        </label>
+        <label class="ssg-field">
+          <span class="tool-label" data-i18n="spacingLabel">Spacing (px)</span>
+          <input type="number" id="ssg-spacing" class="tool-input" min="0" max="64" step="1" inputmode="numeric" />
+        </label>
+        <label class="ssg-field">
+          <span class="tool-label" data-i18n="marginLabel">Margin (px)</span>
+          <input type="number" id="ssg-margin" class="tool-input" min="0" max="64" step="1" inputmode="numeric" />
+        </label>
+        <label class="ssg-field">
+          <span class="tool-label" data-i18n="extrudeLabel">Extrude (px)</span>
+          <input type="number" id="ssg-extrude" class="tool-input" min="0" max="8" step="1" inputmode="numeric" />
+        </label>
+        <label class="ssg-field">
+          <span class="tool-label" data-i18n="formatLabel">Data format</span>
+          <select id="ssg-format" class="tool-input ssg-select">
+            <option value="hash" data-i18n="fmtHash">JSON Hash</option>
+            <option value="array" data-i18n="fmtArray">JSON Array</option>
+            <option value="xml" data-i18n="fmtXml">XML (Sparrow / Starling)</option>
+            <option value="css" data-i18n="fmtCss">CSS</option>
+          </select>
+        </label>
+        <label class="ssg-field">
+          <span class="tool-label" data-i18n="sheetNameLabel">Sheet name</span>
+          <input type="text" id="ssg-name" class="tool-input" maxlength="100" spellcheck="false" autocomplete="off" />
+        </label>
+      </div>
+      <div class="ssg-checks">
+        <label class="ssg-check" id="ssg-trim-field"><input type="checkbox" id="ssg-trim" /><span data-i18n="trimLabel">Trim transparent edges</span></label>
+        <label class="ssg-check"><input type="checkbox" id="ssg-pot" /><span data-i18n="potLabel">Power of two size</span></label>
+      </div>
+    </section>
+
+    <div id="ssg-status" class="tool-status" aria-live="polite"></div>
+
+    <section id="ssg-output" class="ssg-panel" hidden>
+      <div class="ssg-meta-row">
+        <p id="ssg-meta" class="ssg-meta"></p>
+        <label class="ssg-check"><input type="checkbox" id="ssg-bounds" /><span data-i18n="showBounds">Show bounds</span></label>
+      </div>
+      <div class="ssg-preview">
+        <div class="ssg-stage">
+          <canvas id="ssg-canvas" class="ssg-canvas" role="img" aria-label="Sprite sheet preview" data-i18n-aria="previewAria"></canvas>
+          <svg id="ssg-bounds-layer" class="ssg-bounds" aria-hidden="true" preserveAspectRatio="none" hidden></svg>
+        </div>
+      </div>
+      <div class="ssg-actions">
+        <button type="button" id="ssg-dl-png" class="btn-primary" data-i18n="downloadPng">Download PNG</button>
+        <button type="button" id="ssg-dl-data" class="btn-secondary">Download JSON</button>
+        <button type="button" id="ssg-copy" class="btn-copy ssg-copy" data-i18n="copy">Copy</button>
+      </div>
+      <textarea id="ssg-data" class="tool-textarea ssg-data" rows="10" readonly spellcheck="false" aria-label="Sprite sheet data" data-i18n-aria="dataAria"></textarea>
+    </section>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          dropAria: 'Select images',
+          dropHint: 'Drop images here, or <strong>click to select</strong>',
+          pasteHint: 'You can also paste copied image files with Ctrl/Cmd+V',
+          formatsHint: 'PNG · JPG · WebP · GIF (first frame) · SVG · BMP · AVIF',
+          listAria: 'Images', listCount: '{n} images · {size}',
+          sortLabel: 'Sort', sortName: 'Name', sortAdded: 'Added', clearAll: 'Clear all', removeAria: 'Remove {name}',
+          layoutLabel: 'Layout', layoutPacked: 'Packed', layoutGrid: 'Grid',
+          columnsLabel: 'Columns', columnsAuto: 'Auto', maxWidthLabel: 'Max width',
+          spacingLabel: 'Spacing (px)', marginLabel: 'Margin (px)', extrudeLabel: 'Extrude (px)',
+          trimLabel: 'Trim transparent edges', potLabel: 'Power of two size',
+          formatLabel: 'Data format', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML (Sparrow / Starling)', fmtCss: 'CSS',
+          sheetNameLabel: 'Sheet name',
+          meta: '{w}×{h} px · {n} sprites · fill {fill}%', showBounds: 'Show bounds', previewAria: 'Sprite sheet preview',
+          downloadPng: 'Download PNG', downloadData: 'Download {ext}', copy: 'Copy', copied: 'Copied', dataAria: 'Sprite sheet data',
+          statusLoading: 'Loading image {i} / {n}…',
+          statusAdded: 'Images added: {n}',
+          statusSkippedType: 'Skipped, not an image or could not be decoded: {files}',
+          statusSkippedSize: 'Skipped, larger than 8,192 px per side: {files}',
+          statusSkippedSvg: 'Skipped, SVG without width, height or viewBox: {files}',
+          statusSkippedCount: 'Skipped {n} files: the limit is 1,000 images.',
+          moreFiles: '{files} and {n} more',
+          statusGif: 'GIF files add their first frame only. To use every frame, split the GIF with the {link} first.',
+          gifLink: 'GIF Splitter',
+          statusTooBig: 'The sprite sheet would be {w}×{h} px, above the canvas limit of mobile browsers (16,777,216 px, max 16,384 px per side). Reduce spacing, change Max width or the layout, or remove some images.',
+          statusWidened: '{name} is wider than Max width, so the sheet is {w} px wide.',
+          statusExportFailed: 'Export failed — the browser could not encode the PNG',
+          statusCopyFailed: 'Copy was blocked — select the text and copy it manually',
+        },
+        zh: {
+          dropAria: '选择图片',
+          dropHint: '把图片拖到这里，或<strong>点击选择</strong>',
+          pasteHint: '也可以用 Ctrl/Cmd+V 粘贴已复制的图片文件',
+          formatsHint: 'PNG · JPG · WebP · GIF（第一帧） · SVG · BMP · AVIF',
+          listAria: '图片列表', listCount: '{n} 张图片 · {size}',
+          sortLabel: '排序', sortName: '文件名', sortAdded: '添加顺序', clearAll: '全部清空', removeAria: '移除 {name}',
+          layoutLabel: '排布', layoutPacked: '紧凑', layoutGrid: '网格',
+          columnsLabel: '列数', columnsAuto: '自动', maxWidthLabel: '最大宽度',
+          spacingLabel: '间距（px）', marginLabel: '外边距（px）', extrudeLabel: '边缘扩展（px）',
+          trimLabel: '裁剪透明边', potLabel: '尺寸取 2 的幂',
+          formatLabel: '数据格式', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML（Sparrow / Starling）', fmtCss: 'CSS',
+          sheetNameLabel: '图集文件名',
+          meta: '{w}×{h} px · {n} 个精灵 · 填充率 {fill}%', showBounds: '显示边框', previewAria: '雪碧图预览',
+          downloadPng: '下载 PNG', downloadData: '下载 {ext}', copy: '复制', copied: '已复制', dataAria: '雪碧图数据',
+          statusLoading: '正在读取第 {i} / {n} 张图片…',
+          statusAdded: '已添加 {n} 张图片',
+          statusSkippedType: '已跳过（不是图片或无法解码）：{files}',
+          statusSkippedSize: '已跳过（单边超过 8192 px）：{files}',
+          statusSkippedSvg: '已跳过（SVG 没有 width、height 或 viewBox）：{files}',
+          statusSkippedCount: '已跳过 {n} 个文件：上限为 1000 张图片。',
+          moreFiles: '{files} 等，另有 {n} 个',
+          statusGif: 'GIF 只取第一帧。要用全部帧，请先用{link}拆帧。',
+          gifLink: 'GIF 拆帧工具',
+          statusTooBig: '雪碧图将达到 {w}×{h} px，超出移动端浏览器的 canvas 上限（16,777,216 像素、单边 16,384 px）。请减小间距、调整最大宽度或排布方式，或减少图片。',
+          statusWidened: '{name} 比最大宽度还宽，图集宽度已放大到 {w} px。',
+          statusExportFailed: '导出失败：浏览器无法编码 PNG',
+          statusCopyFailed: '复制被拦截，请手动选中文本复制',
+        },
+        ja: {
+          dropAria: '画像を選択',
+          dropHint: '画像をここにドロップ、または<strong>クリックして選択</strong>',
+          pasteHint: 'コピーした画像ファイルを Ctrl/Cmd+V で貼り付けることもできます',
+          formatsHint: 'PNG · JPG · WebP · GIF（最初のフレーム） · SVG · BMP · AVIF',
+          listAria: '画像一覧', listCount: '画像 {n} 枚 · {size}',
+          sortLabel: '並び順', sortName: 'ファイル名', sortAdded: '追加順', clearAll: 'すべて削除', removeAria: '{name} を削除',
+          layoutLabel: '配置', layoutPacked: '詰め込み', layoutGrid: 'グリッド',
+          columnsLabel: '列数', columnsAuto: '自動', maxWidthLabel: '最大幅',
+          spacingLabel: '間隔（px）', marginLabel: '外側余白（px）', extrudeLabel: 'エッジ拡張（px）',
+          trimLabel: '透明な余白をトリム', potLabel: 'サイズを 2 のべき乗に',
+          formatLabel: 'データ形式', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML（Sparrow / Starling）', fmtCss: 'CSS',
+          sheetNameLabel: 'シート名',
+          meta: '{w}×{h} px · スプライト {n} 個 · 充填率 {fill}%', showBounds: '枠を表示', previewAria: 'スプライトシートのプレビュー',
+          downloadPng: 'PNG をダウンロード', downloadData: '{ext} をダウンロード', copy: 'コピー', copied: 'コピーしました', dataAria: 'スプライトシートのデータ',
+          statusLoading: '画像 {i} / {n} を読み込み中…',
+          statusAdded: '{n} 枚の画像を追加しました',
+          statusSkippedType: 'スキップ（画像ではない、またはデコードできない）：{files}',
+          statusSkippedSize: 'スキップ（一辺が 8,192 px を超える）：{files}',
+          statusSkippedSvg: 'スキップ（width・height・viewBox のない SVG）：{files}',
+          statusSkippedCount: '{n} 個のファイルをスキップしました。上限は 1,000 枚です。',
+          moreFiles: '{files} ほか {n} 件',
+          statusGif: 'GIF は最初のフレームだけを追加します。全フレームを使うには、先に{link}で分解してください。',
+          gifLink: 'GIF 分解ツール',
+          statusTooBig: 'スプライトシートが {w}×{h} px になり、モバイルブラウザの canvas 上限（16,777,216 ピクセル、一辺 16,384 px）を超えます。間隔を減らす、最大幅や配置を変える、または画像を減らしてください。',
+          statusWidened: '{name} が最大幅より広いため、シート幅を {w} px にしました。',
+          statusExportFailed: '書き出しに失敗しました。ブラウザが PNG をエンコードできません',
+          statusCopyFailed: 'コピーがブロックされました。テキストを選択して手動でコピーしてください',
+        },
+        ko: {
+          dropAria: '이미지 선택',
+          dropHint: '이미지를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
+          pasteHint: '복사한 이미지 파일을 Ctrl/Cmd+V로 붙여넣을 수도 있습니다',
+          formatsHint: 'PNG · JPG · WebP · GIF(첫 프레임) · SVG · BMP · AVIF',
+          listAria: '이미지 목록', listCount: '이미지 {n}개 · {size}',
+          sortLabel: '정렬', sortName: '파일명', sortAdded: '추가 순서', clearAll: '모두 지우기', removeAria: '{name} 제거',
+          layoutLabel: '배치', layoutPacked: '빈틈없이', layoutGrid: '그리드',
+          columnsLabel: '열 수', columnsAuto: '자동', maxWidthLabel: '최대 너비',
+          spacingLabel: '간격 (px)', marginLabel: '바깥 여백 (px)', extrudeLabel: '가장자리 확장 (px)',
+          trimLabel: '투명 여백 트림', potLabel: '크기를 2의 거듭제곱으로',
+          formatLabel: '데이터 형식', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML (Sparrow / Starling)', fmtCss: 'CSS',
+          sheetNameLabel: '시트 이름',
+          meta: '{w}×{h} px · 스프라이트 {n}개 · 채움률 {fill}%', showBounds: '경계 표시', previewAria: '스프라이트 시트 미리보기',
+          downloadPng: 'PNG 다운로드', downloadData: '{ext} 다운로드', copy: '복사', copied: '복사됨', dataAria: '스프라이트 시트 데이터',
+          statusLoading: '이미지 {i} / {n} 읽는 중…',
+          statusAdded: '이미지 {n}개 추가됨',
+          statusSkippedType: '건너뜀(이미지가 아니거나 디코딩 실패): {files}',
+          statusSkippedSize: '건너뜀(한 변이 8,192px 초과): {files}',
+          statusSkippedSvg: '건너뜀(width, height, viewBox가 없는 SVG): {files}',
+          statusSkippedCount: '파일 {n}개를 건너뛰었습니다. 한도는 이미지 1,000개입니다.',
+          moreFiles: '{files} 외 {n}개',
+          statusGif: 'GIF는 첫 프레임만 추가됩니다. 모든 프레임을 쓰려면 먼저 {link}로 분할하세요.',
+          gifLink: 'GIF 프레임 추출기',
+          statusTooBig: '스프라이트 시트가 {w}×{h} px가 되어 모바일 브라우저의 canvas 한도(16,777,216픽셀, 한 변 16,384px)를 넘습니다. 간격을 줄이거나 최대 너비·배치를 바꾸거나 이미지를 줄이세요.',
+          statusWidened: '{name}이(가) 최대 너비보다 넓어 시트 너비를 {w} px로 늘렸습니다.',
+          statusExportFailed: '내보내기 실패 — 브라우저가 PNG를 인코딩하지 못했습니다',
+          statusCopyFailed: '복사가 차단되었습니다 — 텍스트를 선택해 직접 복사하세요',
+        },
+      };
+      var wrapEl = document.getElementById('ssg-wrap');
+      var lang = wrapEl.getAttribute('data-lang') || 'en';
+      if (!STRINGS[lang]) lang = 'en';
+      var t = STRINGS[lang];
+      var langPrefix = lang === 'en' ? '' : '/' + lang;
+      wrapEl.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.innerHTML = t[key];
+      });
+      wrapEl.querySelectorAll('[data-i18n-aria]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-aria');
+        if (t[key]) el.setAttribute('aria-label', t[key]);
+      });
+      wrapEl.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-placeholder');
+        if (t[key]) el.setAttribute('placeholder', t[key]);
+      });
+      function fmt(str, vars) {
+        return str.replace(/\{(\w+)\}/g, function (m, k) { return vars[k] !== undefined ? String(vars[k]) : m; });
+      }
+
+      /* ── engine:start ── */
+      // Pure, DOM-free naming, trimming, layout and export helpers —
+      // extracted verbatim by scripts/test-sprite-sheet-generator.mjs. Keep
+      // this block free of DOM/canvas APIs.
+
+      // 16,777,216 px (4096²) is the iOS Safari per-canvas area limit.
+      var SSG_LIMITS = { maxImages: 1000, maxImageSide: 8192, maxSide: 16384, maxArea: 16777216 };
+      var SSG_APP_URL = 'https://zerotool.dev/tools/sprite-sheet-generator/';
+
+      // Case-insensitive natural order: digit runs compare by value, so
+      // walk_2 < walk_10. Equal values with different zero padding put the
+      // shorter run first; full ties fall back to a plain code-unit compare.
+      function naturalCompare(a, b) {
+        var sa = String(a), sb = String(b);
+        var ax = sa.toLowerCase().match(/\d+|\D+/g) || [];
+        var bx = sb.toLowerCase().match(/\d+|\D+/g) || [];
+        var n = Math.min(ax.length, bx.length), tie = 0;
+        for (var i = 0; i < n; i++) {
+          var x = ax[i], y = bx[i];
+          if (x === y) continue;
+          var xd = x.charCodeAt(0) >= 48 && x.charCodeAt(0) <= 57;
+          var yd = y.charCodeAt(0) >= 48 && y.charCodeAt(0) <= 57;
+          if (xd && yd) {
+            var xs = x.replace(/^0+/, ''), ys = y.replace(/^0+/, '');
+            if (xs.length !== ys.length) return xs.length < ys.length ? -1 : 1;
+            if (xs !== ys) return xs < ys ? -1 : 1;
+            if (!tie) tie = x.length < y.length ? -1 : 1;
+            continue;
+          }
+          return x < y ? -1 : 1;
+        }
+        if (ax.length !== bx.length) return ax.length < bx.length ? -1 : 1;
+        if (tie) return tie;
+        return sa < sb ? -1 : sa > sb ? 1 : 0;
+      }
+
+      // The first occurrence keeps its name; later duplicates get " (2)",
+      // " (3)"… before the extension, skipping names already in the list.
+      function uniqueNames(names) {
+        var taken = new Set(names.map(String));
+        var used = new Set();
+        return names.map(function (raw) {
+          var name = String(raw);
+          if (!used.has(name)) { used.add(name); return name; }
+          var dot = name.lastIndexOf('.');
+          var stem = dot > 0 ? name.slice(0, dot) : name;
+          var ext = dot > 0 ? name.slice(dot) : '';
+          for (var k = 2; ; k++) {
+            var cand = stem + ' (' + k + ')' + ext;
+            if (!taken.has(cand) && !used.has(cand)) {
+              taken.add(cand);
+              used.add(cand);
+              return cand;
+            }
+          }
+        });
+      }
+
+      function sanitizeSheetName(name) {
+        var out = String(name == null ? '' : name).trim().replace(/[^A-Za-z0-9._-]/g, '-');
+        return out || 'spritesheet';
+      }
+
+      // File name without its extension, as a kebab-case token of
+      // [a-z0-9_-]. May be empty or start with a digit; buildCss handles both.
+      function cssClassName(fileName) {
+        return String(fileName).replace(/\.[^.]*$/, '')
+          .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, '-')
+          .replace(/-{2,}/g, '-')
+          .replace(/^-+|-+$/g, '');
+      }
+
+      // Pixel size of an SVG from its root width/height/viewBox attributes.
+      // Only unitless or px lengths count. A missing side follows the viewBox
+      // aspect ratio; with neither width/height nor a viewBox, returns null.
+      function svgIntrinsicSize(width, height, viewBox) {
+        function len(v) {
+          var m = /^\s*(\d*\.?\d+(?:e[+-]?\d+)?)\s*(px)?\s*$/i.exec(v == null ? '' : String(v));
+          var n = m ? parseFloat(m[1]) : 0;
+          return n > 0 && isFinite(n) ? n : 0;
+        }
+        var w = len(width), h = len(height);
+        var vb = String(viewBox == null ? '' : viewBox).trim().split(/[\s,]+/).map(Number);
+        var vw = 0, vh = 0;
+        if (vb.length === 4 && isFinite(vb[2]) && isFinite(vb[3]) && vb[2] > 0 && vb[3] > 0) { vw = vb[2]; vh = vb[3]; }
+        if (w && !h && vw) h = w * vh / vw;
+        else if (h && !w && vw) w = h * vw / vh;
+        else if (!w && !h && vw) { w = vw; h = vh; }
+        if (!w || !h) return null;
+        return { w: Math.max(1, Math.round(w)), h: Math.max(1, Math.round(h)) };
+      }
+
+      // Bounding box of pixels with alpha > 0 in RGBA data. A fully
+      // transparent image keeps a 1×1 box at the origin (empty: true).
+      function trimBounds(rgba, w, h) {
+        var minX = w, minY = -1, maxX = -1, maxY = -1;
+        for (var y = 0; y < h; y++) {
+          var row = y * w * 4, first = -1, last = -1, x;
+          for (x = 0; x < w; x++) if (rgba[row + x * 4 + 3] !== 0) { first = x; break; }
+          if (first < 0) continue;
+          for (x = w - 1; x >= first; x--) if (rgba[row + x * 4 + 3] !== 0) { last = x; break; }
+          if (minY < 0) minY = y;
+          maxY = y;
+          if (first < minX) minX = first;
+          if (last > maxX) maxX = last;
+        }
+        if (maxY < 0) return { x: 0, y: 0, w: 1, h: 1, empty: true };
+        return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, empty: false };
+      }
+
+      function nextPow2(n) {
+        var p = 1;
+        while (p < n) p *= 2;
+        return p;
+      }
+
+      function fitsLimits(w, h) {
+        var L = SSG_LIMITS;
+        return w >= 1 && h >= 1 && w <= L.maxSide && h <= L.maxSide && w * h <= L.maxArea;
+      }
+
+      // Drawn sprite pixels / sheet pixels.
+      function fillRatio(sizes, w, h) {
+        if (!(w > 0 && h > 0)) return 0;
+        var sum = 0;
+        for (var i = 0; i < sizes.length; i++) sum += sizes[i].w * sizes[i].h;
+        return sum / (w * h);
+      }
+
+      function toInt(v, min, max, fallback) {
+        var n = Math.floor(Number(v));
+        if (!isFinite(n)) return fallback;
+        return Math.min(max, Math.max(min, n));
+      }
+
+      function rectContains(a, b) {
+        return b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
+      }
+
+      // MaxRects, Best Short Side Fit, into a binW × binH bin. Places items in
+      // `order`; returns positions indexed like pw/ph, or null if one does
+      // not fit. Free rects stay maximal: every split produces the up to 4
+      // strips around the placed rect, and new strips contained in another
+      // free rect are dropped (old free rects are never inside each other,
+      // so they cannot be inside a strip cut from one of them either).
+      function maxRectsPack(binW, binH, order, pw, ph) {
+        var free = [{ x: 0, y: 0, w: binW, h: binH }];
+        var pos = new Array(pw.length);
+        for (var k = 0; k < order.length; k++) {
+          var idx = order[k], w = pw[idx], h = ph[idx];
+          var best = null, bestShort = Infinity, bestLong = Infinity;
+          for (var f = 0; f < free.length; f++) {
+            var fr = free[f];
+            if (fr.w < w || fr.h < h) continue;
+            var lh = fr.w - w, lv = fr.h - h;
+            var s = lh < lv ? lh : lv, l = lh < lv ? lv : lh;
+            if (s < bestShort || (s === bestShort && (l < bestLong ||
+                (l === bestLong && (fr.y < best.y || (fr.y === best.y && fr.x < best.x)))))) {
+              best = fr; bestShort = s; bestLong = l;
+            }
+          }
+          if (!best) return null;
+          var px = best.x, py = best.y;
+          pos[idx] = { x: px, y: py };
+          var kept = [], created = [];
+          for (f = 0; f < free.length; f++) {
+            var r = free[f];
+            if (px >= r.x + r.w || px + w <= r.x || py >= r.y + r.h || py + h <= r.y) { kept.push(r); continue; }
+            if (px > r.x) created.push({ x: r.x, y: r.y, w: px - r.x, h: r.h });
+            if (px + w < r.x + r.w) created.push({ x: px + w, y: r.y, w: r.x + r.w - px - w, h: r.h });
+            if (py > r.y) created.push({ x: r.x, y: r.y, w: r.w, h: py - r.y });
+            if (py + h < r.y + r.h) created.push({ x: r.x, y: py + h, w: r.w, h: r.y + r.h - py - h });
+          }
+          for (var a = 0; a < created.length; a++) {
+            var c = created[a], drop = false, b;
+            for (b = 0; b < created.length && !drop; b++) {
+              if (b !== a && rectContains(created[b], c) && (b < a || !rectContains(c, created[b]))) drop = true;
+            }
+            for (b = 0; b < kept.length && !drop; b++) if (rectContains(kept[b], c)) drop = true;
+            if (!drop) kept.push(c);
+          }
+          free = kept;
+        }
+        return pos;
+      }
+
+      // Pack sizes [{w, h}] (sprite pixels, after any trim). Each sprite takes
+      // w + 2·extrude + spacing by h + 2·extrude + spacing; the bin is
+      // sheetWidth − 2·margin + spacing wide so the last column's spacing
+      // falls outside the sheet. Tries several sheet widths between the
+      // widest sprite and maxWidth (powers of two only when pot) and keeps
+      // a result that fits the canvas limits with (near) the smallest area,
+      // the squarest first. A sprite wider than maxWidth widens the sheet to it
+      // (widened: true). Returns the sheet size and each sprite's top-left
+      // pixel position (inside its extrude border).
+      // Narrow bins often pack a few percent tighter but give sheets like
+      // 92×15357, beyond the 4096/8192 px texture limit of many GPUs. Results
+      // within 10% of the smallest area count as equal; the squarest wins.
+      var AREA_SLACK = 1.1;
+      function packMaxRects(sizes, opts) {
+        var n = sizes.length;
+        var s = toInt(opts.spacing, 0, 1e6, 0), m = toInt(opts.margin, 0, 1e6, 0), e = toInt(opts.extrude, 0, 1e6, 0);
+        var maxWidth = toInt(opts.maxWidth, 1, 1e9, 2048), pot = !!opts.pot;
+        if (!n) return { width: 0, height: 0, rects: [], widened: false };
+        var pw = [], ph = [], order = [], maxPw = 0, maxPh = 0, area = 0, sumPh = 0;
+        for (var i = 0; i < n; i++) {
+          pw.push(sizes[i].w + 2 * e + s);
+          ph.push(sizes[i].h + 2 * e + s);
+          maxPw = Math.max(maxPw, pw[i]);
+          maxPh = Math.max(maxPh, ph[i]);
+          area += pw[i] * ph[i];
+          sumPh += ph[i];
+          order.push(i);
+        }
+        order.sort(function (a, b) {
+          return Math.max(pw[b], ph[b]) - Math.max(pw[a], ph[a]) || pw[b] * ph[b] - pw[a] * ph[a] || a - b;
+        });
+        var minW = maxPw - s + 2 * m;
+        var widened = (pot ? nextPow2(minW) : minW) > maxWidth;
+        var cands = [];
+        if (widened) cands.push(minW);
+        else if (pot) {
+          for (var p = nextPow2(minW); p <= maxWidth; p *= 2) cands.push(p);
+        } else {
+          for (var k = 0; k <= 10; k++) cands.push(Math.round(minW * Math.pow(maxWidth / minW, k / 10)));
+          var ideal = Math.sqrt(area) - s + 2 * m;
+          [0.9, 1, 1.1, 1.25, 1.5].forEach(function (f) {
+            var cw = Math.round(ideal * f);
+            if (cw >= minW && cw <= maxWidth) cands.push(cw);
+          });
+        }
+        cands = cands.filter(function (c, j) { return cands.indexOf(c) === j; }).sort(function (a, b) { return a - b; });
+
+        var results = [];
+        cands.forEach(function (cw) {
+          var binW = cw - 2 * m + s;
+          var pos = null;
+          var binH = Math.max(maxPh, Math.ceil(area / binW));
+          for (var tries = 0; tries < 40 && !pos; tries++) {
+            pos = maxRectsPack(binW, binH, order, pw, ph);
+            binH = Math.max(binH + 1, Math.ceil(binH * 1.08));
+          }
+          if (!pos) {
+            // Stacking in one column always fits.
+            pos = [];
+            for (var q = 0, y = 0; q < n; q++) { pos.push({ x: 0, y: y }); y += ph[q]; }
+          }
+          var usedW = 0, usedH = 0;
+          for (var j = 0; j < n; j++) {
+            usedW = Math.max(usedW, pos[j].x + pw[j]);
+            usedH = Math.max(usedH, pos[j].y + ph[j]);
+          }
+          var W = usedW - s + 2 * m, H = usedH - s + 2 * m;
+          if (pot) { W = nextPow2(W); H = nextPow2(H); }
+          // Area is compared with the trailing spacing added back on both
+          // axes: otherwise a single column, which has spacing on one axis
+          // only, always looks smallest.
+          var score = pot ? W * H : (W + s) * (H + s);
+          results.push({ width: W, height: H, area: score, pos: pos, fits: fitsLimits(W, H) });
+        });
+        var pool = results.filter(function (r) { return r.fits; });
+        if (!pool.length) pool = results;
+        var minArea = Math.min.apply(null, pool.map(function (r) { return r.area; }));
+        var best = null;
+        pool.forEach(function (r) {
+          if (r.area > minArea * AREA_SLACK) return;
+          if (!best) { best = r; return; }
+          var ra = Math.max(r.width, r.height) / Math.min(r.width, r.height);
+          var ba = Math.max(best.width, best.height) / Math.min(best.width, best.height);
+          if (ra < ba || (ra === ba && (r.area < best.area || (r.area === best.area && r.width < best.width)))) best = r;
+        });
+        return {
+          width: best.width,
+          height: best.height,
+          rects: best.pos.map(function (q) { return { x: m + q.x + e, y: m + q.y + e }; }),
+          widened: widened,
+        };
+      }
+
+      // Uniform grid. Cell = largest width × largest height; every image is
+      // centred in its cell and its frame is the whole cell. columns < 1 or
+      // missing means ceil(sqrt(n)).
+      function gridLayout(sizes, opts) {
+        var n = sizes.length;
+        var s = toInt(opts.spacing, 0, 1e6, 0), m = toInt(opts.margin, 0, 1e6, 0), e = toInt(opts.extrude, 0, 1e6, 0);
+        if (!n) return { width: 0, height: 0, columns: 0, rows: 0, cellW: 0, cellH: 0, frames: [], draws: [] };
+        var cellW = 0, cellH = 0;
+        for (var i = 0; i < n; i++) {
+          cellW = Math.max(cellW, sizes[i].w);
+          cellH = Math.max(cellH, sizes[i].h);
+        }
+        var cols = toInt(opts.columns, 0, 1e6, 0);
+        if (cols < 1) cols = Math.ceil(Math.sqrt(n));
+        cols = Math.min(cols, n);
+        var rows = Math.ceil(n / cols);
+        var stepX = cellW + 2 * e + s, stepY = cellH + 2 * e + s;
+        var frames = [], draws = [];
+        for (i = 0; i < n; i++) {
+          var fx = m + e + (i % cols) * stepX, fy = m + e + Math.floor(i / cols) * stepY;
+          frames.push({ x: fx, y: fy, w: cellW, h: cellH });
+          draws.push({ x: fx + Math.floor((cellW - sizes[i].w) / 2), y: fy + Math.floor((cellH - sizes[i].h) / 2) });
+        }
+        var W = 2 * m + cols * (cellW + 2 * e) + (cols - 1) * s;
+        var H = 2 * m + rows * (cellH + 2 * e) + (rows - 1) * s;
+        if (opts.pot) { W = nextPow2(W); H = nextPow2(H); }
+        return { width: W, height: H, columns: cols, rows: rows, cellW: cellW, cellH: cellH, frames: frames, draws: draws };
+      }
+
+      // frames: [{ name, x, y, w, h, trimmed, sourceX, sourceY, sourceW, sourceH }]
+      // meta: { image, width, height }
+      function frameEntry(f) {
+        return {
+          frame: { x: f.x, y: f.y, w: f.w, h: f.h },
+          rotated: false,
+          trimmed: !!f.trimmed,
+          spriteSourceSize: { x: f.sourceX, y: f.sourceY, w: f.w, h: f.h },
+          sourceSize: { w: f.sourceW, h: f.sourceH },
+        };
+      }
+
+      function atlasMeta(meta) {
+        return {
+          app: SSG_APP_URL,
+          version: '1.0',
+          image: meta.image,
+          format: 'RGBA8888',
+          size: { w: meta.width, h: meta.height },
+          scale: '1',
+        };
+      }
+
+      function buildJsonHash(frames, meta) {
+        var map = Object.create(null);
+        frames.forEach(function (f) { map[f.name] = frameEntry(f); });
+        return JSON.stringify({ frames: map, meta: atlasMeta(meta) }, null, 2);
+      }
+
+      function buildJsonArray(frames, meta) {
+        var list = frames.map(function (f) {
+          var entry = frameEntry(f);
+          return {
+            filename: f.name,
+            frame: entry.frame,
+            rotated: entry.rotated,
+            trimmed: entry.trimmed,
+            spriteSourceSize: entry.spriteSourceSize,
+            sourceSize: entry.sourceSize,
+          };
+        });
+        return JSON.stringify({ frames: list, meta: atlasMeta(meta) }, null, 2);
+      }
+
+      function xmlEscape(v) {
+        return String(v)
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&apos;');
+      }
+
+      function buildXml(frames, meta) {
+        var out = ['<?xml version="1.0" encoding="UTF-8"?>', '<TextureAtlas imagePath="' + xmlEscape(meta.image) + '">'];
+        frames.forEach(function (f) {
+          var line = '  <SubTexture name="' + xmlEscape(f.name) + '" x="' + f.x + '" y="' + f.y + '" width="' + f.w + '" height="' + f.h + '"';
+          if (f.trimmed) {
+            line += ' frameX="' + (-f.sourceX) + '" frameY="' + (-f.sourceY) + '" frameWidth="' + f.sourceW + '" frameHeight="' + f.sourceH + '"';
+          }
+          out.push(line + '/>');
+        });
+        out.push('</TextureAtlas>');
+        return out.join('\n') + '\n';
+      }
+
+      // `.{prefix}` sets the sheet as background; `.{prefix}-{name}` sizes
+      // and positions one frame. The prefix comes from the sheet name and
+      // gets "sprite-" in front if it would start with a digit. Frame tokens
+      // that collide get "-2", "-3"….
+      function buildCss(frames, meta) {
+        var prefix = cssClassName(meta.image) || 'spritesheet';
+        if (/^[0-9]/.test(prefix)) prefix = 'sprite-' + prefix;
+        var used = new Set();
+        function px(v) { return v ? '-' + v + 'px' : '0'; }
+        var out = [
+          '.' + prefix + ' {',
+          '  display: inline-block;',
+          '  background-image: url("' + meta.image + '");',
+          '  background-repeat: no-repeat;',
+          '}',
+        ];
+        frames.forEach(function (f) {
+          var base = cssClassName(f.name) || 'frame';
+          var token = base;
+          for (var k = 2; used.has(token); k++) token = base + '-' + k;
+          used.add(token);
+          out.push('', '.' + prefix + '-' + token + ' {',
+            '  width: ' + f.w + 'px;',
+            '  height: ' + f.h + 'px;',
+            '  background-position: ' + px(f.x) + ' ' + px(f.y) + ';',
+            '}');
+        });
+        return out.join('\n') + '\n';
+      }
+      /* ── engine:end ── */
+
+      var SLUG = 'sprite-sheet-generator';
+      var $ = function (id) { return document.getElementById(id); };
+      var dropEl = $('ssg-drop');
+      var fileInput = $('ssg-file');
+      var listPanel = $('ssg-list-panel');
+      var countEl = $('ssg-count');
+      var orderSelect = $('ssg-order');
+      var clearBtn = $('ssg-clear');
+      var listEl = $('ssg-list');
+      var layoutRadios = wrapEl.querySelectorAll('input[name="ssg-layout"]');
+      var columnsField = $('ssg-columns-field');
+      var columnsInput = $('ssg-columns');
+      var maxWidthField = $('ssg-maxwidth-field');
+      var maxWidthSelect = $('ssg-maxwidth');
+      var spacingInput = $('ssg-spacing');
+      var marginInput = $('ssg-margin');
+      var extrudeInput = $('ssg-extrude');
+      var formatSelect = $('ssg-format');
+      var nameInput = $('ssg-name');
+      var trimField = $('ssg-trim-field');
+      var trimInput = $('ssg-trim');
+      var potInput = $('ssg-pot');
+      var statusEl = $('ssg-status');
+      var outputEl = $('ssg-output');
+      var metaEl = $('ssg-meta');
+      var boundsInput = $('ssg-bounds');
+      var canvas = $('ssg-canvas');
+      var boundsLayer = $('ssg-bounds-layer');
+      var dlPngBtn = $('ssg-dl-png');
+      var dlDataBtn = $('ssg-dl-data');
+      var copyBtn = $('ssg-copy');
+      var dataEl = $('ssg-data');
+
+      var SVG_NS = 'http://www.w3.org/2000/svg';
+      var THUMB_MAX = 96;
+      var MAX_WIDTHS = [512, 1024, 2048, 4096, 8192];
+      var FORMATS = {
+        hash: { ext: 'json', mime: 'application/json', build: buildJsonHash },
+        array: { ext: 'json', mime: 'application/json', build: buildJsonArray },
+        xml: { ext: 'xml', mime: 'application/xml', build: buildXml },
+        css: { ext: 'css', mime: 'text/css', build: buildCss },
+      };
+      var prefs = {
+        layout: 'packed', columns: 0, maxWidth: 2048, spacing: 2, margin: 0, extrude: 0,
+        trim: true, pot: false, order: 'name', format: 'hash', sheetName: 'spritesheet', showBounds: false,
+      };
+
+      var items = [];          // added order: { seq, fileName, name, bytes, source, w, h, trim, el, nameEl, removeBtn }
+      var seq = 0, loadToken = 0, addQueue = Promise.resolve();
+      var addNotes = [], buildNotes = [];
+      var built = null;        // { frames, width, height }
+      var rebuildTimer = 0;
+      var scratch = null, scratchCtx = null;
+
+      function loadPrefs() {
+        var saved = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+        if (saved.layout === 'packed' || saved.layout === 'grid') prefs.layout = saved.layout;
+        prefs.columns = toInt(saved.columns, 0, 1000, 0);
+        if (MAX_WIDTHS.indexOf(Number(saved.maxWidth)) >= 0) prefs.maxWidth = Number(saved.maxWidth);
+        prefs.spacing = toInt(saved.spacing, 0, 64, 2);
+        prefs.margin = toInt(saved.margin, 0, 64, 0);
+        prefs.extrude = toInt(saved.extrude, 0, 8, 0);
+        if (typeof saved.trim === 'boolean') prefs.trim = saved.trim;
+        if (typeof saved.pot === 'boolean') prefs.pot = saved.pot;
+        if (saved.order === 'name' || saved.order === 'added') prefs.order = saved.order;
+        if (FORMATS[saved.format]) prefs.format = saved.format;
+        if (typeof saved.sheetName === 'string') prefs.sheetName = sanitizeSheetName(saved.sheetName.slice(0, 100));
+        if (typeof saved.showBounds === 'boolean') prefs.showBounds = saved.showBounds;
+      }
+      function savePrefs() {
+        if (window.ztPersist) window.ztPersist.save(SLUG, prefs);
+      }
+      function applyPrefsToUI() {
+        layoutRadios.forEach(function (r) { r.checked = r.value === prefs.layout; });
+        columnsInput.value = prefs.columns ? String(prefs.columns) : '';
+        maxWidthSelect.value = String(prefs.maxWidth);
+        spacingInput.value = String(prefs.spacing);
+        marginInput.value = String(prefs.margin);
+        extrudeInput.value = String(prefs.extrude);
+        trimInput.checked = prefs.trim;
+        potInput.checked = prefs.pot;
+        orderSelect.value = prefs.order;
+        formatSelect.value = prefs.format;
+        nameInput.value = prefs.sheetName;
+        boundsInput.checked = prefs.showBounds;
+        toggleLayoutFields();
+      }
+      function toggleLayoutFields() {
+        var grid = prefs.layout === 'grid';
+        columnsField.hidden = !grid;
+        maxWidthField.hidden = grid;
+        trimField.hidden = grid;
+      }
+
+      function formatBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+      }
+
+      function fileList(names) {
+        if (names.length <= 10) return names.join(', ');
+        return fmt(t.moreFiles, { files: names.slice(0, 10).join(', '), n: names.length - 10 });
+      }
+
+      function renderStatus(progressText) {
+        statusEl.textContent = '';
+        statusEl.className = 'tool-status';
+        var notes = progressText ? [{ kind: 'info', text: progressText }] : addNotes.concat(buildNotes);
+        notes.forEach(function (note) {
+          var line = document.createElement('span');
+          line.className = 'ssg-status-line is-' + note.kind;
+          if (note.link) {
+            var parts = note.text.split('{link}');
+            line.appendChild(document.createTextNode(parts[0]));
+            var a = document.createElement('a');
+            a.href = note.link.href;
+            a.textContent = note.link.text;
+            line.appendChild(a);
+            line.appendChild(document.createTextNode(parts[1] || ''));
+          } else {
+            line.textContent = note.text;
+          }
+          statusEl.appendChild(line);
+        });
+      }
+
+      function release(source) {
+        if (!source) return;
+        if (typeof source.close === 'function') source.close();
+        else { source.width = 0; source.height = 0; }
+      }
+
+      function loadImage(url) {
+        return new Promise(function (resolve, reject) {
+          var img = new Image();
+          img.onload = function () { resolve(img); };
+          img.onerror = function () { reject(new Error('decode')); };
+          img.src = url;
+        });
+      }
+
+      // SVG goes through <img>: createImageBitmap does not take SVG blobs in
+      // every browser. The root gets explicit width/height so the raster
+      // size is the intrinsic size from svgIntrinsicSize.
+      async function decodeSvg(file) {
+        var text = await file.text();
+        var doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+        var root = doc.documentElement;
+        if (!root || root.localName !== 'svg' || doc.getElementsByTagName('parsererror').length) return { reason: 'type' };
+        var size = svgIntrinsicSize(root.getAttribute('width'), root.getAttribute('height'), root.getAttribute('viewBox'));
+        if (!size) return { reason: 'svg' };
+        if (size.w > SSG_LIMITS.maxImageSide || size.h > SSG_LIMITS.maxImageSide) return { reason: 'size' };
+        root.setAttribute('width', String(size.w));
+        root.setAttribute('height', String(size.h));
+        var url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(doc)], { type: 'image/svg+xml' }));
+        try {
+          var img = await loadImage(url);
+          var c = document.createElement('canvas');
+          c.width = size.w;
+          c.height = size.h;
+          c.getContext('2d').drawImage(img, 0, 0, size.w, size.h);
+          return { source: c, w: size.w, h: size.h };
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      async function decodeFile(file) {
+        var name = file.name || '';
+        if (file.type === 'image/svg+xml' || /\.svg$/i.test(name)) return decodeSvg(file);
+        var bmp;
+        try { bmp = await createImageBitmap(file); } catch (e) { return { reason: 'type' }; }
+        if (!bmp.width || !bmp.height) { release(bmp); return { reason: 'type' }; }
+        if (bmp.width > SSG_LIMITS.maxImageSide || bmp.height > SSG_LIMITS.maxImageSide) { release(bmp); return { reason: 'size' }; }
+        return { source: bmp, w: bmp.width, h: bmp.height, gif: file.type === 'image/gif' || /\.gif$/i.test(name) };
+      }
+
+      // Read the image in horizontal strips of at most 4M px so the scratch
+      // canvas stays small; merge each strip's trimBounds.
+      function computeTrim(source, w, h) {
+        var full = { x: 0, y: 0, w: w, h: h };
+        var stripH = Math.max(1, Math.min(h, Math.floor(4194304 / w)));
+        if (!scratch) {
+          scratch = document.createElement('canvas');
+          scratchCtx = scratch.getContext('2d', { willReadFrequently: true });
+        }
+        scratch.width = w;
+        scratch.height = stripH;
+        var minX = w, minY = -1, maxX = -1, maxY = -1;
+        try {
+          for (var y = 0; y < h; y += stripH) {
+            var sh = Math.min(stripH, h - y);
+            scratchCtx.clearRect(0, 0, w, stripH);
+            scratchCtx.drawImage(source, 0, y, w, sh, 0, 0, w, sh);
+            var b = trimBounds(scratchCtx.getImageData(0, 0, w, sh).data, w, sh);
+            if (b.empty) continue;
+            if (minY < 0) minY = y + b.y;
+            maxY = y + b.y + b.h - 1;
+            minX = Math.min(minX, b.x);
+            maxX = Math.max(maxX, b.x + b.w - 1);
+          }
+        } catch (e) {
+          return full;
+        }
+        if (maxY < 0) return { x: 0, y: 0, w: 1, h: 1 };
+        return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+      }
+
+      var REMOVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+      function createItemEl(it) {
+        var el = document.createElement('div');
+        el.className = 'ssg-item';
+        el.setAttribute('role', 'listitem');
+        var thumb = document.createElement('div');
+        thumb.className = 'ssg-thumb';
+        var scale = Math.min(1, THUMB_MAX / Math.max(it.w, it.h));
+        var tc = document.createElement('canvas');
+        tc.width = Math.max(1, Math.round(it.w * scale));
+        tc.height = Math.max(1, Math.round(it.h * scale));
+        if (Math.max(it.w, it.h) < THUMB_MAX) tc.className = 'ssg-pixelated';
+        var tctx = tc.getContext('2d');
+        tctx.imageSmoothingQuality = 'high';
+        tctx.drawImage(it.source, 0, 0, tc.width, tc.height);
+        thumb.appendChild(tc);
+        var nameEl = document.createElement('span');
+        nameEl.className = 'ssg-item-name';
+        var sizeEl = document.createElement('span');
+        sizeEl.className = 'ssg-item-size';
+        sizeEl.textContent = it.w + '×' + it.h;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ssg-remove';
+        btn.dataset.seq = String(it.seq);
+        btn.innerHTML = REMOVE_ICON;
+        el.appendChild(thumb);
+        el.appendChild(nameEl);
+        el.appendChild(sizeEl);
+        el.appendChild(btn);
+        it.el = el;
+        it.nameEl = nameEl;
+        it.removeBtn = btn;
+      }
+
+      function sortedItems() {
+        var list = items.slice();
+        if (prefs.order === 'name') {
+          list.sort(function (a, b) { return naturalCompare(a.name, b.name) || a.seq - b.seq; });
+        }
+        return list;
+      }
+
+      function renderList() {
+        var names = uniqueNames(items.map(function (it) { return it.fileName; }));
+        var bytes = 0;
+        items.forEach(function (it, i) {
+          it.name = names[i];
+          it.nameEl.textContent = it.name;
+          it.nameEl.title = it.name;
+          it.removeBtn.setAttribute('aria-label', fmt(t.removeAria, { name: it.name }));
+          bytes += it.bytes;
+        });
+        listPanel.hidden = !items.length;
+        countEl.textContent = fmt(t.listCount, { n: items.length, size: formatBytes(bytes) });
+        var frag = document.createDocumentFragment();
+        sortedItems().forEach(function (it) { frag.appendChild(it.el); });
+        listEl.appendChild(frag);
+      }
+
+      async function addFilesNow(files, token) {
+        if (token !== loadToken) return;
+        addNotes = [];
+        var room = Math.max(0, SSG_LIMITS.maxImages - items.length);
+        var over = Math.max(0, files.length - room);
+        if (over) files = files.slice(0, room);
+        var skipped = { type: [], size: [], svg: [] }, added = 0, gifs = 0;
+        for (var i = 0; i < files.length; i++) {
+          renderStatus(fmt(t.statusLoading, { i: i + 1, n: files.length }));
+          var file = files[i], r;
+          try { r = await decodeFile(file); } catch (e) { r = { reason: 'type' }; }
+          if (token !== loadToken) { release(r.source); return; }
+          if (r.reason) { skipped[r.reason].push(file.name || 'image'); continue; }
+          var it = {
+            seq: seq++, fileName: file.name || 'image.png', name: '', bytes: file.size || 0,
+            source: r.source, w: r.w, h: r.h, trim: computeTrim(r.source, r.w, r.h),
+          };
+          createItemEl(it);
+          items.push(it);
+          added++;
+          if (r.gif) gifs++;
+        }
+        if (scratch) { scratch.width = 0; scratch.height = 0; }
+        if (added) addNotes.push({ kind: 'success', text: fmt(t.statusAdded, { n: added }) });
+        if (skipped.type.length) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedType, { files: fileList(skipped.type) }) });
+        if (skipped.size.length) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedSize, { files: fileList(skipped.size) }) });
+        if (skipped.svg.length) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedSvg, { files: fileList(skipped.svg) }) });
+        if (over) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedCount, { n: over }) });
+        if (gifs) addNotes.push({ kind: 'info', text: t.statusGif, link: { href: langPrefix + '/tools/gif-splitter/', text: t.gifLink } });
+        renderList();
+        renderStatus();
+        if (added) scheduleRebuild(0);
+      }
+
+      function addFiles(list) {
+        var files = Array.prototype.slice.call(list || []);
+        if (!files.length) return;
+        var token = loadToken;
+        addQueue = addQueue.then(function () { return addFilesNow(files, token); }).catch(function () {});
+      }
+
+      function removeItem(seqNo) {
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].seq !== seqNo) continue;
+          var it = items.splice(i, 1)[0];
+          it.el.remove();
+          release(it.source);
+          break;
+        }
+        renderList();
+        scheduleRebuild();
+      }
+
+      function clearAll() {
+        loadToken++;
+        items.forEach(function (it) { it.el.remove(); release(it.source); });
+        items = [];
+        addNotes = [];
+        renderList();
+        if (rebuildTimer) { clearTimeout(rebuildTimer); rebuildTimer = 0; }
+        rebuild();
+      }
+
+      function scheduleRebuild(delay) {
+        if (rebuildTimer) clearTimeout(rebuildTimer);
+        rebuildTimer = setTimeout(rebuild, delay === undefined ? 150 : delay);
+      }
+
+      function hideOutput() {
+        built = null;
+        outputEl.hidden = true;
+        canvas.width = 0;
+        canvas.height = 0;
+        dataEl.value = '';
+        boundsLayer.textContent = '';
+      }
+
+      function extrudeEdges(ctx, r, e) {
+        var x = r.x, y = r.y, w = r.w, h = r.h;
+        ctx.drawImage(canvas, x, y, w, 1, x, y - e, w, e);
+        ctx.drawImage(canvas, x, y + h - 1, w, 1, x, y + h, w, e);
+        ctx.drawImage(canvas, x, y, 1, h, x - e, y, e, h);
+        ctx.drawImage(canvas, x + w - 1, y, 1, h, x + w, y, e, h);
+        ctx.drawImage(canvas, x, y, 1, 1, x - e, y - e, e, e);
+        ctx.drawImage(canvas, x + w - 1, y, 1, 1, x + w, y - e, e, e);
+        ctx.drawImage(canvas, x, y + h - 1, 1, 1, x - e, y + h, e, e);
+        ctx.drawImage(canvas, x + w - 1, y + h - 1, 1, 1, x + w, y + h, e, e);
+      }
+
+      function rebuild() {
+        rebuildTimer = 0;
+        buildNotes = [];
+        if (!items.length) { hideOutput(); renderStatus(); return; }
+        var list = sortedItems();
+        var frames = [], sizes = [], ops = [], W, H;
+        var opts = { spacing: prefs.spacing, margin: prefs.margin, extrude: prefs.extrude, pot: prefs.pot };
+        if (prefs.layout === 'grid') {
+          opts.columns = prefs.columns;
+          var g = gridLayout(list.map(function (it) { return { w: it.w, h: it.h }; }), opts);
+          W = g.width; H = g.height;
+          list.forEach(function (it, i) {
+            var f = g.frames[i];
+            frames.push({ name: it.name, x: f.x, y: f.y, w: f.w, h: f.h, trimmed: false, sourceX: 0, sourceY: 0, sourceW: f.w, sourceH: f.h });
+            sizes.push({ w: it.w, h: it.h });
+            ops.push({ it: it, sx: 0, sy: 0, sw: it.w, sh: it.h, dx: g.draws[i].x, dy: g.draws[i].y, edge: f });
+          });
+        } else {
+          opts.maxWidth = prefs.maxWidth;
+          var rects = list.map(function (it) { return prefs.trim ? it.trim : { x: 0, y: 0, w: it.w, h: it.h }; });
+          var p = packMaxRects(rects, opts);
+          W = p.width; H = p.height;
+          var widest = null;
+          list.forEach(function (it, i) {
+            var r = rects[i], pos = p.rects[i];
+            frames.push({
+              name: it.name, x: pos.x, y: pos.y, w: r.w, h: r.h,
+              trimmed: r.w !== it.w || r.h !== it.h,
+              sourceX: r.x, sourceY: r.y, sourceW: it.w, sourceH: it.h,
+            });
+            sizes.push({ w: r.w, h: r.h });
+            ops.push({ it: it, sx: r.x, sy: r.y, sw: r.w, sh: r.h, dx: pos.x, dy: pos.y, edge: { x: pos.x, y: pos.y, w: r.w, h: r.h } });
+            if (!widest || r.w > widest.w) widest = { w: r.w, name: it.name };
+          });
+          if (p.widened) buildNotes.push({ kind: 'info', text: fmt(t.statusWidened, { name: widest.name, w: W }) });
+        }
+        if (!fitsLimits(W, H)) {
+          buildNotes.push({ kind: 'error', text: fmt(t.statusTooBig, { w: W, h: H }) });
+          hideOutput();
+          renderStatus();
+          return;
+        }
+        canvas.width = W;
+        canvas.height = H;
+        var ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, W, H);
+        ops.forEach(function (op) {
+          ctx.drawImage(op.it.source, op.sx, op.sy, op.sw, op.sh, op.dx, op.dy, op.sw, op.sh);
+        });
+        if (prefs.extrude) ops.forEach(function (op) { extrudeEdges(ctx, op.edge, prefs.extrude); });
+        built = { frames: frames, width: W, height: H };
+        metaEl.textContent = fmt(t.meta, { w: W, h: H, n: frames.length, fill: Math.round(fillRatio(sizes, W, H) * 100) });
+        refreshData();
+        renderBounds();
+        outputEl.hidden = false;
+        renderStatus();
+      }
+
+      function sheetName() { return sanitizeSheetName(prefs.sheetName); }
+
+      function refreshData() {
+        var fmtInfo = FORMATS[prefs.format];
+        dlDataBtn.textContent = fmt(t.downloadData, { ext: fmtInfo.ext.toUpperCase() });
+        if (!built) return;
+        dataEl.value = fmtInfo.build(built.frames, { image: sheetName() + '.png', width: built.width, height: built.height });
+      }
+
+      function renderBounds() {
+        boundsLayer.textContent = '';
+        // SVG elements have no reflected `hidden` property; set the attribute.
+        if (!built || !prefs.showBounds) { boundsLayer.setAttribute('hidden', ''); return; }
+        boundsLayer.setAttribute('viewBox', '0 0 ' + built.width + ' ' + built.height);
+        var frag = document.createDocumentFragment();
+        built.frames.forEach(function (f) {
+          var r = document.createElementNS(SVG_NS, 'rect');
+          r.setAttribute('x', String(f.x + 0.5));
+          r.setAttribute('y', String(f.y + 0.5));
+          r.setAttribute('width', String(Math.max(0, f.w - 1)));
+          r.setAttribute('height', String(Math.max(0, f.h - 1)));
+          frag.appendChild(r);
+        });
+        boundsLayer.appendChild(frag);
+        boundsLayer.removeAttribute('hidden');
+      }
+
+      function flushRebuild() {
+        if (rebuildTimer) { clearTimeout(rebuildTimer); rebuild(); }
+      }
+
+      function downloadBlob(blob, name) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      }
+
+      /* ── Input: drop zone click / keyboard / drag / paste ── */
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+      dropEl.addEventListener('dragover', function (e) { e.preventDefault(); dropEl.classList.add('drag-over'); });
+      dropEl.addEventListener('dragleave', function () { dropEl.classList.remove('drag-over'); });
+      fileInput.addEventListener('change', function () {
+        addFiles(this.files);
+        this.value = '';
+      });
+      wrapEl.addEventListener('dragover', function (e) { e.preventDefault(); });
+      wrapEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
+      });
+      document.addEventListener('paste', function (e) {
+        if (!e.clipboardData || !e.clipboardData.files || !e.clipboardData.files.length) return;
+        e.preventDefault();
+        addFiles(e.clipboardData.files);
+      });
+
+      /* ── Image list ── */
+      listEl.addEventListener('click', function (e) {
+        var btn = e.target.closest('.ssg-remove');
+        if (btn) removeItem(parseInt(btn.dataset.seq, 10));
+      });
+      clearBtn.addEventListener('click', function () {
+        clearAll();
+        dropEl.focus();
+      });
+      orderSelect.addEventListener('change', function () {
+        prefs.order = orderSelect.value === 'added' ? 'added' : 'name';
+        savePrefs();
+        renderList();
+        scheduleRebuild();
+      });
+
+      /* ── Options (persisted as preferences) ── */
+      layoutRadios.forEach(function (r) {
+        r.addEventListener('change', function () {
+          if (!r.checked) return;
+          prefs.layout = r.value === 'grid' ? 'grid' : 'packed';
+          toggleLayoutFields();
+          savePrefs();
+          scheduleRebuild();
+        });
+      });
+      function bindNumber(input, key, min, max, fallback) {
+        input.addEventListener('input', function () {
+          prefs[key] = input.value === '' ? fallback : toInt(input.value, min, max, fallback);
+          savePrefs();
+          scheduleRebuild();
+        });
+        input.addEventListener('change', function () {
+          input.value = key === 'columns' && !prefs[key] ? '' : String(prefs[key]);
+        });
+      }
+      bindNumber(columnsInput, 'columns', 1, 1000, 0);
+      bindNumber(spacingInput, 'spacing', 0, 64, 0);
+      bindNumber(marginInput, 'margin', 0, 64, 0);
+      bindNumber(extrudeInput, 'extrude', 0, 8, 0);
+      maxWidthSelect.addEventListener('change', function () {
+        var v = Number(maxWidthSelect.value);
+        prefs.maxWidth = MAX_WIDTHS.indexOf(v) >= 0 ? v : 2048;
+        savePrefs();
+        scheduleRebuild();
+      });
+      trimInput.addEventListener('change', function () {
+        prefs.trim = trimInput.checked;
+        savePrefs();
+        scheduleRebuild();
+      });
+      potInput.addEventListener('change', function () {
+        prefs.pot = potInput.checked;
+        savePrefs();
+        scheduleRebuild();
+      });
+      formatSelect.addEventListener('change', function () {
+        prefs.format = FORMATS[formatSelect.value] ? formatSelect.value : 'hash';
+        savePrefs();
+        refreshData();
+      });
+      nameInput.addEventListener('input', function () {
+        prefs.sheetName = nameInput.value;
+        savePrefs();
+        refreshData();
+      });
+      nameInput.addEventListener('change', function () {
+        prefs.sheetName = sanitizeSheetName(nameInput.value);
+        nameInput.value = prefs.sheetName;
+        savePrefs();
+        refreshData();
+      });
+      boundsInput.addEventListener('change', function () {
+        prefs.showBounds = boundsInput.checked;
+        savePrefs();
+        renderBounds();
+      });
+
+      /* ── Output actions ── */
+      dlPngBtn.addEventListener('click', function () {
+        flushRebuild();
+        if (!built) return;
+        var name = sheetName() + '.png';
+        try {
+          canvas.toBlob(function (blob) {
+            if (!blob) { buildNotes = [{ kind: 'error', text: t.statusExportFailed }]; renderStatus(); return; }
+            downloadBlob(blob, name);
+            if (window.trackTool) window.trackTool(SLUG, 'png');
+          }, 'image/png');
+        } catch (e) {
+          buildNotes = [{ kind: 'error', text: t.statusExportFailed }];
+          renderStatus();
+        }
+      });
+      dlDataBtn.addEventListener('click', function () {
+        flushRebuild();
+        if (!built || !dataEl.value) return;
+        var info = FORMATS[prefs.format];
+        downloadBlob(new Blob([dataEl.value], { type: info.mime }), sheetName() + '.' + info.ext);
+        if (window.trackTool) window.trackTool(SLUG, 'data');
+      });
+      copyBtn.addEventListener('click', function () {
+        flushRebuild();
+        if (!dataEl.value) return;
+        function failed() { buildNotes = [{ kind: 'error', text: t.statusCopyFailed }]; renderStatus(); }
+        if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
+        navigator.clipboard.writeText(dataEl.value).then(function () {
+          copyBtn.textContent = t.copied;
+          copyBtn.classList.add('copied');
+          setTimeout(function () { copyBtn.textContent = t.copy; copyBtn.classList.remove('copied'); }, 1500);
+          if (window.trackTool) window.trackTool(SLUG, 'copy');
+        }, failed);
+      });
+
+      loadPrefs();
+      applyPrefsToUI();
+      refreshData();
+    })();
+  </script>
+
+  <style is:global>
+    .ssg-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+    /* Author display rules beat the UA [hidden] rule; restore it. */
+    .ssg-wrap [hidden] { display: none; }
+
+    .ssg-drop {
+      position: relative;
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      background: var(--color-bg-secondary);
+    }
+    .ssg-drop:hover,
+    .ssg-drop.drag-over {
+      border-color: var(--color-primary);
+      background: var(--color-surface);
+    }
+    .ssg-drop:focus-visible {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 4px var(--color-primary-light);
+    }
+    .ssg-drop-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--color-text-secondary);
+      pointer-events: none;
+    }
+    .ssg-drop-inner p { margin: 0; font-size: 0.95rem; }
+    .ssg-drop-inner .ssg-hint { font-size: 0.8rem; }
+    .ssg-file-input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .ssg-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding: 0.9rem 1rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+
+    .ssg-list-head {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.75rem;
+    }
+    .ssg-count {
+      margin-right: auto;
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--color-text);
+    }
+    .ssg-inline-field { display: inline-flex; align-items: center; gap: 0.5rem; }
+    .ssg-select { cursor: pointer; }
+    .ssg-inline-field .ssg-select { width: auto; }
+
+    .ssg-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+      gap: 0.5rem;
+      max-height: 340px;
+      overflow: auto;
+      padding: 0.2rem;
+    }
+    .ssg-item {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+      padding: 0.35rem;
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .ssg-thumb {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      aspect-ratio: 1;
+      overflow: hidden;
+      border-radius: var(--radius-sm);
+      background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px;
+    }
+    .ssg-thumb canvas {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .ssg-thumb canvas.ssg-pixelated { image-rendering: pixelated; }
+    .ssg-item-name,
+    .ssg-item-size {
+      overflow: hidden;
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .ssg-item-name { font-size: 0.72rem; font-weight: 700; color: var(--color-text); }
+    .ssg-item-size { font-size: 0.7rem; color: var(--color-text-secondary); }
+    .ssg-remove {
+      position: absolute;
+      top: 0.2rem;
+      right: 0.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: var(--color-surface);
+      color: var(--color-text-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft), var(--shadow-subtle);
+      cursor: pointer;
+      transition: background-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+    }
+    /* 44px tap area around the 28px button. */
+    .ssg-remove::before {
+      content: '';
+      position: absolute;
+      inset: -8px;
+    }
+    @media (hover: hover) {
+      .ssg-remove:hover { color: var(--color-danger); background: var(--color-surface-muted); }
+    }
+    .ssg-remove:active { transform: scale(0.96); }
+    .ssg-remove:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light);
+    }
+
+    .ssg-options {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+      gap: 0.75rem 1rem;
+    }
+    .ssg-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      min-width: 0;
+    }
+    .ssg-field .tool-input { width: 100%; }
+    .ssg-fieldset {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      min-width: 0;
+    }
+    .ssg-fieldset legend { padding: 0; margin-bottom: 0.3rem; }
+    .ssg-seg {
+      display: flex;
+      padding: 3px;
+      border-radius: var(--radius-pill);
+      background: var(--color-surface-muted);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .ssg-seg label {
+      position: relative;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .ssg-seg input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
+    .ssg-seg span {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 0.75rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      transition: background-color var(--transition-fast), color var(--transition-fast);
+    }
+    .ssg-seg input:checked + span {
+      background: var(--color-surface);
+      color: var(--color-primary);
+      box-shadow: var(--shadow-subtle);
+    }
+    .ssg-seg input:focus-visible + span {
+      box-shadow: 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light);
+    }
+
+    .ssg-checks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 1.25rem;
+    }
+    .ssg-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-height: 44px;
+      font-size: 0.88rem;
+      color: var(--color-text);
+      cursor: pointer;
+    }
+    .ssg-check input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
+
+    .ssg-status-line { display: block; }
+    .ssg-status-line.is-success { color: var(--color-success); }
+    .ssg-status-line.is-error { color: var(--color-danger); }
+    .ssg-status-line.is-info { color: var(--color-primary); }
+    .ssg-status-line a { color: inherit; font-weight: 700; text-decoration: underline; }
+
+    .ssg-meta-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0 1rem;
+    }
+    .ssg-meta {
+      margin: 0 auto 0 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--color-text-secondary);
+    }
+    .ssg-preview {
+      max-height: 480px;
+      overflow: auto;
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .ssg-stage {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      vertical-align: top;
+      background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+    }
+    .ssg-canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+    .ssg-bounds {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .ssg-bounds rect {
+      fill: none;
+      stroke: var(--color-primary);
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+    }
+    .ssg-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .ssg-actions .ssg-copy { min-height: 40px; padding: 0.52rem 1.1rem; font-size: 0.9rem; }
+    .ssg-data { min-height: 200px; }
+
+    @media (max-width: 640px) {
+      .ssg-list {
+        grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+        max-height: 50vh;
+      }
+      .ssg-seg span { min-height: 40px; }
+      .ssg-actions .btn-primary,
+      .ssg-actions .btn-secondary,
+      .ssg-actions .ssg-copy { flex: 1 1 45%; min-height: 44px; }
+      .ssg-inline-field .ssg-select { min-height: 44px; }
+    }
+  </style>
+</div>

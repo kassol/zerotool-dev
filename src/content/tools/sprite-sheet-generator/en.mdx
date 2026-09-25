@@ -1,0 +1,162 @@
+---
+seoTitle: "Sprite Sheet Maker Online — PNG + JSON Atlas | ZeroTool"
+seoDescription: "Free sprite sheet maker: pack images into one PNG with tight packing or a grid, trim transparency, export Phaser, PixiJS, Starling or CSS data. No upload."
+faqItems:
+  - question: "How do I load the sprite sheet in Phaser or PixiJS?"
+    answer: "Download the PNG and the JSON Hash file and keep them in the same folder. In Phaser 3, call this.load.atlas(key, textureURL, atlasURL) in preload, then use the original file name as the frame name, for example this.add.image(x, y, key, walk_01.png). In PixiJS v8, await Assets.load on the JSON URL. It loads the PNG named in meta.image and returns a Spritesheet, so sheet.textures[walk_01.png] is ready for new Sprite(). For the XML format, use this.load.atlasXML in Phaser or TextureAtlas in Starling."
+  - question: "When should I use Packed and when Grid?"
+    answer: "Use Packed for a texture atlas: images of different sizes, looked up by name, in the smallest possible PNG. Use Grid when every frame must have the same size and a fixed position, for example Phaser this.load.spritesheet with frameWidth and frameHeight, CSS steps() animation, or a Godot Sprite2D with hframes and vframes. In Grid, every cell is as large as the largest image and each image is centered in its cell."
+  - question: "What do spriteSourceSize and sourceSize mean after trimming?"
+    answer: "Trim removes fully transparent rows and columns around each image. frame is the trimmed rectangle inside the sheet. sourceSize is the original image size. spriteSourceSize gives the position (x, y) and size of the trimmed pixels inside the original image. Phaser, PixiJS and HaxeFlixel use these values to draw the trimmed pixels at their original offset, so animation frames do not jump. In the XML format the same offset is written as negative frameX and frameY, plus frameWidth and frameHeight."
+  - question: "Are my images uploaded?"
+    answer: "No. Images are decoded, trimmed, packed and encoded to PNG in your browser with the Canvas API. Nothing is sent to a server. The only data saved locally is your option settings (layout, columns, max width, spacing, margin, extrude, trim, power of two, sort order, data format, sheet name and show bounds). Images, previews and output text are never stored."
+  - question: "What are the limits?"
+    answer: "Up to 1,000 images, each at most 8,192 px per side. The finished sheet can be at most 16,384 px per side and 16,777,216 pixels in total (for example 4096 × 4096). By design, the tool does not rotate frames, does not split a large set into several atlas pages, and exports PNG only. For rotation, multipack atlases, WebP output or Unity and Godot atlas formats, use TexturePacker or free-tex-packer."
+---
+
+## How to Use
+
+1. Drop images on the drop zone, click to select files, or paste image files with **Ctrl/Cmd+V**. You can add more files at any time. PNG, JPG, WebP, GIF (first frame only), SVG, BMP and AVIF are accepted.
+2. Check the image list. Remove a single image with its **×** button, or use **Clear all**. Choose the frame order with **Sort**: **Name** uses natural order (`walk_2` comes before `walk_10`), **Added** keeps the order you added the files in.
+3. Choose a **Layout**: **Packed** for a compact texture atlas, or **Grid** for equal cells. In Packed mode, pick the **Max width** (512 to 8192 px, default 2048). In Grid mode, set **Columns** (1 gives a vertical strip; the number of images gives a single row).
+4. Set **Spacing** (gap between sprites), **Margin** (empty border around the sheet) and **Extrude** (edge pixels repeated outward). Keep **Trim** on in Packed mode to cut transparent borders. Turn on **Power of two** if your engine needs sheet sizes like 256, 512 or 1024.
+5. Choose the **Data format** (JSON Hash, JSON Array, XML or CSS) and type a **Sheet name**. The name becomes `{name}.png` and is written into the data file.
+6. Check the preview. The info line shows the sheet size, the sprite count and the fill ratio. Turn on **Show bounds** to outline every frame (the outline is only drawn in the preview, never in the PNG).
+7. Click **Download PNG** and the data download button (JSON, XML or CSS), or **Copy** the data text.
+
+The sheet rebuilds automatically when you change an option or the image list. There is no separate build button.
+
+Frame names are the original file names, including the extension (`walk_01.png`), which is the TexturePacker convention. If two files have the same name, the second becomes `walk_01 (2).png` so every name stays unique.
+
+## Packed or Grid?
+
+| | Packed | Grid |
+|---|---|---|
+| Placement | MaxRects bin packing, largest images first | Row by row, left to right |
+| Frame size | Each frame keeps its own size | Every cell equals the largest image |
+| Trim | Available (on by default) | Off: cells keep the full size |
+| Look up frames by | Name (`walk_01.png`) | Name, or index plus frame size |
+| Best for | Texture atlases, UI icons, mixed sizes | Animation strips, `load.spritesheet`, CSS `steps()` |
+
+Packed mode tries several sheet widths between the widest image and **Max width** (only powers of two when **Power of two** is on) and keeps the result with the smallest area. When two results have the same area, it keeps the one closer to a square. Frames are never rotated.
+
+Grid mode centers each image in its cell and reports the whole cell as the frame. That makes the sheet readable by any loader that only knows a frame width and height.
+
+## Data Formats and Engines
+
+| Data format | File | Read by |
+|---|---|---|
+| JSON Hash | `.json` | Phaser 3 `load.atlas`, PixiJS `Assets.load`, HaxeFlixel `FlxAtlasFrames.fromTexturePackerJson`, most TexturePacker JSON readers |
+| JSON Array | `.json` | Phaser 3 `load.atlas`, HaxeFlixel `fromTexturePackerJson`. PixiJS expects frames keyed by name, so use JSON Hash there |
+| XML | `.xml` | Starling and Sparrow `TextureAtlas`, Phaser 3 `load.atlasXML`, HaxeFlixel `FlxAtlasFrames.fromSparrow` |
+| CSS | `.css` | Plain HTML pages: icon sets and UI sprites |
+
+A JSON Hash frame with trimming looks like this:
+
+```json
+{
+  "frames": {
+    "walk_01.png": {
+      "frame": { "x": 2, "y": 2, "w": 30, "h": 44 },
+      "rotated": false,
+      "trimmed": true,
+      "spriteSourceSize": { "x": 17, "y": 10, "w": 30, "h": 44 },
+      "sourceSize": { "w": 64, "h": 64 }
+    }
+  },
+  "meta": {
+    "app": "https://zerotool.dev/tools/sprite-sheet-generator/",
+    "version": "1.0",
+    "image": "spritesheet.png",
+    "format": "RGBA8888",
+    "size": { "w": 256, "h": 128 },
+    "scale": "1"
+  }
+}
+```
+
+JSON Array holds the same fields in a `frames` array, with the name in a `filename` field. The XML format writes one `SubTexture` element per frame inside a `TextureAtlas` element. Trimmed frames get `frameX`, `frameY`, `frameWidth` and `frameHeight`; untrimmed frames leave them out.
+
+## Loading the Sheet
+
+### Phaser 3
+
+```js
+function preload() {
+  this.load.atlas('hero', 'assets/spritesheet.png', 'assets/spritesheet.json');
+  // XML format: this.load.atlasXML('hero', 'assets/spritesheet.png', 'assets/spritesheet.xml');
+}
+
+function create() {
+  this.add.image(400, 300, 'hero', 'walk_01.png');
+
+  this.anims.create({
+    key: 'walk',
+    frames: this.anims.generateFrameNames('hero', {
+      prefix: 'walk_', start: 1, end: 8, zeroPad: 2, suffix: '.png'
+    }),
+    frameRate: 12,
+    repeat: -1
+  });
+  this.add.sprite(200, 300, 'hero').play('walk');
+}
+```
+
+For a Grid sheet you can skip the data file and use `this.load.spritesheet`. Pass the cell size and the same **Margin** and **Spacing** you set in the tool:
+
+```js
+this.load.spritesheet('coin', 'assets/coin.png', {
+  frameWidth: 32, frameHeight: 32, margin: 0, spacing: 2
+});
+```
+
+Phaser counts frames from the sheet width, so turn **Power of two** off for this loader: extra width would add empty frames and shift the numbering. With **Extrude** set to E, pass `margin + E` and `spacing + 2 × E`.
+
+### PixiJS v8
+
+```js
+import { Assets, Sprite, AnimatedSprite } from 'pixi.js';
+
+const sheet = await Assets.load('assets/spritesheet.json');
+const hero = new Sprite(sheet.textures['walk_01.png']);
+
+const walk = ['walk_01.png', 'walk_02.png', 'walk_03.png'].map((name) => sheet.textures[name]);
+const anim = new AnimatedSprite(walk);
+anim.animationSpeed = 0.2;
+anim.play();
+```
+
+`Assets.load` reads the JSON, loads the PNG named in `meta.image` from the same folder, and returns a `Spritesheet`. Keep the PNG file name and the **Sheet name** the same.
+
+### CSS
+
+The CSS format writes one base class that sets the sheet as the background image, and one class per frame with its `width`, `height` and `background-position`. Class names come from the file name without the extension, converted to safe characters. Put the CSS file next to the PNG and add both classes to an element:
+
+```html
+<span class="icons icons-home"></span>
+```
+
+## Spacing and Extrude: Stopping Texture Bleeding
+
+A GPU seldom reads exactly one texel per screen pixel. When a sprite is scaled, rotated, drawn at a fractional position or sampled from a mipmap, bilinear filtering blends each sample with its neighbors. At the edge of a frame, those neighbors belong to the next sprite in the sheet. The result is a thin line of the wrong color along the edge, called texture bleeding.
+
+- **Spacing** puts transparent pixels between sprites, so the filter blends with transparency instead of another sprite. The default of 2 px covers normal scaling.
+- **Extrude** copies the outermost row and column of each sprite outward by 1 to 8 px. The filter then blends with the same color. Use it for opaque tiles and tilemaps, where blending with transparency still shows as a dark seam between tiles.
+- **Margin** keeps sprites away from the sheet border, which also helps with clamp-to-edge sampling.
+
+Pixel art drawn with nearest-neighbor filtering at whole-pixel positions does not bleed, and it can use 0 for all three.
+
+**Power of two** rounds each side of the sheet up to 256, 512, 1024 and so on. WebGL 1 needs power-of-two textures for mipmaps and repeat wrapping, and some older engines require it. WebGL 2 and most modern engines accept any size.
+
+## Limits and Scope
+
+- Up to 1,000 images, each at most 8,192 px per side. Files that are not images or fail to decode are skipped and listed by name.
+- The sheet can be at most 16,384 px per side and 16,777,216 pixels in total. If a layout goes over this limit, reduce Spacing, pick another Max width or remove images.
+- GIF files use their first frame only. To take an animated GIF apart into frames first, use the [GIF Splitter](/tools/gif-splitter/).
+- By design, frames are never rotated, output is a single PNG page, there is no animation preview, and no Unity or Godot atlas format is written. TexturePacker and free-tex-packer cover rotation, multipack pages, WebP output and engine-specific formats.
+
+## Related Tools
+
+- [GIF Splitter](/tools/gif-splitter/) — turn an animated GIF into PNG frames to pack here.
+- [Image Compressor](/tools/image-compressor/) — shrink the exported sprite sheet PNG.
+- [Image to Base64 Converter](/tools/image-to-base64/) — inline a small sprite sheet into CSS or HTML as a data URL.

@@ -1,0 +1,162 @@
+---
+seoTitle: "スプライトシート作成ツール — PNG + JSON テクスチャアトラス | ZeroTool"
+seoDescription: "複数の画像を 1 枚のスプライトシート PNG に詰め込み配置またはグリッドでまとめ、透明余白をトリム。Phaser・PixiJS・Starling 向けテクスチャアトラスや CSS を書き出し。アップロード不要。"
+faqItems:
+  - question: "作ったスプライトシートを Phaser や PixiJS で読み込むには？"
+    answer: "PNG と JSON Hash のデータファイルをダウンロードし、同じフォルダーに置きます。Phaser 3 では preload で this.load.atlas(key, textureURL, atlasURL) を呼び、元のファイル名をフレーム名として this.add.image(x, y, key, walk_01.png) のように使います。PixiJS v8 では JSON の URL を await Assets.load で読み込むと、meta.image に書かれた PNG も読み込まれて Spritesheet が返り、sheet.textures[walk_01.png] をそのまま new Sprite() に渡せます。XML 形式の場合は Phaser なら this.load.atlasXML、Starling なら TextureAtlas を使います。"
+  - question: "Packed と Grid はどう使い分けますか？"
+    answer: "サイズの異なる画像を名前で参照し、PNG をできるだけ小さくしたいなら Packed（詰め込み配置）でテクスチャアトラスを作ります。全フレームが同じサイズで位置が決まっている必要があるなら Grid です。Phaser の this.load.spritesheet（frameWidth / frameHeight 指定）、CSS の steps() アニメーション、Godot の Sprite2D の hframes / vframes などが該当します。Grid のセルは最も大きい画像と同じサイズで、各画像はセルの中央に置かれます。"
+  - question: "トリム後の spriteSourceSize と sourceSize は何を表しますか？"
+    answer: "Trim は各画像の周囲にある完全に透明な行と列を取り除きます。frame はシート上のトリム済み矩形、sourceSize は元画像のサイズ、spriteSourceSize はトリム後のピクセルが元画像のどこにあるか（x, y）とそのサイズです。Phaser・PixiJS・HaxeFlixel はこの値でトリム済みピクセルを元の位置に描くため、アニメーションのコマがずれません。XML 形式では同じオフセットを負の frameX / frameY と frameWidth / frameHeight で表します。"
+  - question: "画像はアップロードされますか？"
+    answer: "されません。デコード、トリム、配置、PNG へのエンコードはすべてブラウザの Canvas API でローカルに処理し、サーバーには何も送りません。ローカルに保存するのはオプション設定（レイアウト、列数、最大幅、間隔、外側余白、エクストルード、トリム、2 のべき乗、並び順、データ形式、シート名、枠表示）だけで、画像・プレビュー・出力テキストは保存しません。"
+  - question: "制限はありますか？"
+    answer: "画像は最大 1,000 枚、1 枚あたり一辺 8,192 px までです。完成したシートは一辺 16,384 px 以下、総ピクセル数 16,777,216 以下（例：4096 × 4096）です。仕様として、フレームの回転、複数ページへの分割、PNG 以外での出力は行いません。回転やマルチパック、WebP 出力、Unity・Godot 専用のアトラス形式が必要な場合は TexturePacker か free-tex-packer を使ってください。"
+---
+
+## 使い方
+
+1. 画像をドロップするか、クリックしてファイルを選びます。**Ctrl/Cmd+V** で画像ファイルを貼り付けることもでき、あとから何度でも追加できます。対応形式は PNG、JPG、WebP、GIF（1 コマ目のみ）、SVG、BMP、AVIF です。
+2. 画像一覧を確認します。サムネイルの **×** で 1 枚ずつ外し、**Clear all** ですべて消去します。**Sort** はフレームの並び順で、**Name** は自然順（`walk_2` が `walk_10` より前）、**Added** は追加した順です。
+3. **Layout** を選びます。**Packed** は隙間の少ないテクスチャアトラス、**Grid** は同じ大きさのセルが並ぶシートになります。Packed では **Max width**（512〜8192 px、初期値 2048）、Grid では **Columns**（1 で縦一列、画像の枚数で横一列）を指定します。
+4. **Spacing**（スプライト同士の間隔）、**Margin**（シート外周の余白）、**Extrude**（端のピクセルを外側へ複製する幅）を設定します。Packed では **Trim** をオンのままにすると透明な余白を切り取れます。256・512・1024 のようなサイズが必要なエンジンでは **Power of two** をオンにします。
+5. **Data format**（JSON Hash、JSON Array、XML、CSS）を選び、**Sheet name** を入力します。この名前が `{name}.png` のファイル名になり、データファイルにも書き込まれます。
+6. プレビューを確認します。情報行にシートのサイズ、スプライト数、充填率が表示されます。**Show bounds** をオンにすると各フレームに枠が付きます。枠はプレビューだけに描かれ、書き出す PNG には入りません。
+7. **Download PNG** とデータのダウンロードボタン（JSON・XML・CSS）を押すか、**Copy** でデータのテキストをコピーします。
+
+オプションや画像一覧を変更すると、シートは自動で作り直されます。「生成」ボタンはありません。
+
+フレーム名は拡張子付きの元のファイル名（`walk_01.png`）で、TexturePacker の慣例に合わせています。同じ名前のファイルがあると、後から追加したほうが `walk_01 (2).png` になり、名前の重複を防ぎます。
+
+## Packed と Grid の違い
+
+| | Packed（詰め込み配置） | Grid（グリッド） |
+|---|---|---|
+| 配置方法 | MaxRects のビンパッキング、大きい画像から配置 | 左から右へ、行ごとに並べる |
+| フレームのサイズ | 画像ごとに異なる | 全セルが最大の画像と同じ |
+| トリム | 利用可（初期値オン） | なし（セルは元のサイズのまま） |
+| フレームの参照方法 | 名前（`walk_01.png`） | 名前、または番号とフレームサイズ |
+| 向いている用途 | テクスチャアトラス、UI アイコン、サイズの混在した素材 | アニメーションの連番、`load.spritesheet`、CSS `steps()` |
+
+Packed は、いちばん幅の広い画像から **Max width** までのあいだで複数のシート幅を試し（**Power of two** がオンなら 2 のべき乗だけ）、面積が最小のものを採用します。面積が同じなら正方形に近いほうを選びます。フレームを回転させることはありません。
+
+Grid は各画像をセルの中央に置き、セル全体をフレームとして書き出します。フレームの幅と高さしか扱えないローダーでもそのまま読み込めます。
+
+## データ形式と対応エンジン
+
+| データ形式 | ファイル | 読み込めるエンジン・用途 |
+|---|---|---|
+| JSON Hash | `.json` | Phaser 3 `load.atlas`、PixiJS `Assets.load`、HaxeFlixel `FlxAtlasFrames.fromTexturePackerJson`、TexturePacker 形式の JSON に対応した多くのローダー |
+| JSON Array | `.json` | Phaser 3 `load.atlas`、HaxeFlixel `fromTexturePackerJson`。PixiJS はフレーム名をキーにして参照するため JSON Hash を選んでください |
+| XML | `.xml` | Starling・Sparrow の `TextureAtlas`、Phaser 3 `load.atlasXML`、HaxeFlixel `FlxAtlasFrames.fromSparrow` |
+| CSS | `.css` | 通常の Web ページのアイコンやボタン画像 |
+
+トリムされたフレームは、JSON Hash では次のようになります。
+
+```json
+{
+  "frames": {
+    "walk_01.png": {
+      "frame": { "x": 2, "y": 2, "w": 30, "h": 44 },
+      "rotated": false,
+      "trimmed": true,
+      "spriteSourceSize": { "x": 17, "y": 10, "w": 30, "h": 44 },
+      "sourceSize": { "w": 64, "h": 64 }
+    }
+  },
+  "meta": {
+    "app": "https://zerotool.dev/tools/sprite-sheet-generator/",
+    "version": "1.0",
+    "image": "spritesheet.png",
+    "format": "RGBA8888",
+    "size": { "w": 256, "h": 128 },
+    "scale": "1"
+  }
+}
+```
+
+JSON Array は同じ項目を `frames` 配列に入れ、名前を `filename` に持ちます。XML は `TextureAtlas` 要素の中にフレームごとの `SubTexture` を並べます。トリムしたフレームには `frameX`・`frameY`・`frameWidth`・`frameHeight` が付き、トリムしていないフレームでは省略されます。
+
+## コードからの読み込み
+
+### Phaser 3
+
+```js
+function preload() {
+  this.load.atlas('hero', 'assets/spritesheet.png', 'assets/spritesheet.json');
+  // XML 形式の場合: this.load.atlasXML('hero', 'assets/spritesheet.png', 'assets/spritesheet.xml');
+}
+
+function create() {
+  this.add.image(400, 300, 'hero', 'walk_01.png');
+
+  this.anims.create({
+    key: 'walk',
+    frames: this.anims.generateFrameNames('hero', {
+      prefix: 'walk_', start: 1, end: 8, zeroPad: 2, suffix: '.png'
+    }),
+    frameRate: 12,
+    repeat: -1
+  });
+  this.add.sprite(200, 300, 'hero').play('walk');
+}
+```
+
+Grid で作ったシートは、データファイルなしで `this.load.spritesheet` でも読み込めます。セルのサイズと、ツールで設定した **Margin**・**Spacing** をそのまま渡します。
+
+```js
+this.load.spritesheet('coin', 'assets/coin.png', {
+  frameWidth: 32, frameHeight: 32, margin: 0, spacing: 2
+});
+```
+
+Phaser はシートの幅から 1 行のフレーム数を計算するため、このローダーを使うときは **Power of two** をオフにしてください。幅が広がると空のフレームが増え、フレーム番号がずれます。**Extrude** を E px にした場合は、`margin + E` と `spacing + 2 × E` を渡します。
+
+### PixiJS v8
+
+```js
+import { Assets, Sprite, AnimatedSprite } from 'pixi.js';
+
+const sheet = await Assets.load('assets/spritesheet.json');
+const hero = new Sprite(sheet.textures['walk_01.png']);
+
+const walk = ['walk_01.png', 'walk_02.png', 'walk_03.png'].map((name) => sheet.textures[name]);
+const anim = new AnimatedSprite(walk);
+anim.animationSpeed = 0.2;
+anim.play();
+```
+
+`Assets.load` は JSON を読んだあと、`meta.image` に書かれた PNG を同じフォルダーから読み込み、`Spritesheet` を返します。PNG のファイル名は **Sheet name** と一致させておきます。
+
+### CSS
+
+CSS 形式では、シートを背景画像に指定するベースクラスと、フレームごとに `width`・`height`・`background-position` を持つクラスが書き出されます。クラス名は拡張子を除いたファイル名を、クラス名に使える文字へ変換したものです。CSS を PNG と同じ場所に置き、要素に 2 つのクラスを付けます。
+
+```html
+<span class="icons icons-home"></span>
+```
+
+## Spacing と Extrude でにじみを防ぐ
+
+GPU がテクセル 1 つを画面の 1 ピクセルにぴったり対応させることはまれです。スプライトを拡大縮小・回転したり、小数座標に描いたり、ミップマップから読んだりすると、バイリニアフィルタが隣のテクセルと色を混ぜます。フレームの端の隣はシート上の別のスプライトなので、その色が混ざって縁に細い線が出ます。これがテクスチャのにじみ（texture bleeding）です。
+
+- **Spacing** はスプライトのあいだに透明なピクセルを置き、混ざる相手を別のスプライトから透明色に変えます。通常の拡大縮小なら初期値の 2 px で足ります。
+- **Extrude** は各スプライトのいちばん外側の行と列を 1〜8 px 外へ複製し、混ざる相手を同じ色にします。不透明なタイルやタイルマップで特に効果があります。透明な間隔だけでは、タイルの継ぎ目に暗い線が残るためです。
+- **Margin** はスプライトをシートの端から離し、clamp-to-edge でのサンプリングの影響も避けます。
+
+ニアレストネイバーで描画し、整数座標に置くドット絵ではにじみは起きないので、3 つとも 0 で構いません。
+
+**Power of two** はシートの各辺を 256・512・1024 などに切り上げます。WebGL 1 ではミップマップとリピートのラップに 2 のべき乗のテクスチャが必要で、一部の古いエンジンも同じ条件を求めます。WebGL 2 や最近のエンジンの多くは任意のサイズを扱えます。
+
+## 制限と対象範囲
+
+- 画像は最大 1,000 枚、1 枚あたり一辺 8,192 px までです。画像以外のファイルやデコードに失敗したファイルはスキップし、ファイル名を表示します。
+- シートは一辺 16,384 px 以下、総ピクセル数 16,777,216 以下です。超えた場合は Spacing を減らす、Max width を変える、画像を減らすのいずれかで調整します。
+- GIF は 1 コマ目だけを使います。アニメーション GIF を先にコマごとの PNG に分けたいときは [GIF 分解ツール](/ja/tools/gif-splitter/) を使ってください。
+- 仕様として、フレームの回転、複数ページの PNG、アニメーションのプレビュー、Unity・Godot 専用のアトラス形式は扱いません。これらは TexturePacker や free-tex-packer の担当です。
+
+## 関連ツール
+
+- [GIF 分解ツール](/ja/tools/gif-splitter/) — アニメーション GIF を PNG のコマに分け、このツールでまとめられます。
+- [画像圧縮ツール](/ja/tools/image-compressor/) — 書き出したスプライトシートの PNG を軽くします。
+- [画像 Base64 変換器](/ja/tools/image-to-base64/) — 小さなスプライトシートを data URL にして CSS や HTML に埋め込みます。
