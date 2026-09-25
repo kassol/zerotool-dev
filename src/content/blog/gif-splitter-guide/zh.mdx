@@ -1,0 +1,409 @@
+---
+title: "GIF 拆帧教程：GIF 转 PNG 逐帧导出，一键生成雪碧图和帧时长 JSON"
+description: "在浏览器里把 GIF 动图拆成逐帧 PNG 或 JPG，拼成雪碧图并导出每帧时长 JSON。讲清 disposal 合成、帧延迟 100 ms 规则与循环次数，附 Python、Node.js、ffmpeg 示例。"
+pubDate: 2026-09-25
+lang: "zh"
+tags: ["gif", "image", "sprite-sheet", "animation", "developer-tools"]
+ogImage: /og/blog-gif-splitter-guide.png
+---
+
+设计组发来一个 `loader.gif`：64 × 64 的加载转圈动画，要放进新版游戏包。引擎要的是一张雪碧图，外加每帧的时长列表。最省事的办法是随手找个工具把帧导出来。
+
+第一次导出得到 5 张 PNG，其中 4 张几乎是空的，只有一条 26 × 16 的色块。第二次改用默认参数的 ffmpeg，5 帧的动画导出了 19 张 PNG，同样的画面反复出现。两种结果都没法直接拼成雪碧图。
+
+两次失败都源于 GIF 存储动画的方式。GIF 的一帧通常只是一小块补丁，再加一条规则，规定下一块补丁画上去之前这一帧怎么处理。帧间延迟是每帧各自记录的数值，GIF 里没有帧率这个概念。要正确地给 GIF 拆帧，工具必须像浏览器那样重放这些规则，并保留原始时长。
+
+[打开 GIF 拆帧工具 →](/zh/tools/gif-splitter/)
+
+## 什么时候需要把 GIF 拆成帧
+
+| 场景 | 需要什么 | 选哪种导出 |
+|---|---|---|
+| 一张表情动图或一段录屏，只想截其中一瞬间放进 PPT、文档或 bug 报告 | 一张无损静态图 | 单帧 PNG 下载 |
+| 给 Phaser、PixiJS、Godot 或 canvas 循环用的加载动画、角色动画 | 雪碧图 + 帧时长 | 雪碧图 PNG + JSON |
+| 落地页上有个很重的 GIF，想改成 CSS 动画 | 配合 `steps()` 用的单行雪碧图 | 列数 = 帧数的雪碧图 |
+| 某个 UI 动画里有东西跳了一帧，需要逐帧排查 | 按顺序排列、原尺寸的全部帧 | PNG 帧打包 ZIP |
+| 很长的 GIF，要做分镜或缩略图总览 | 每隔 N 帧取一帧 | 按步长选范围，再导出 ZIP 或雪碧图 |
+| 帧要放进不支持透明的 CMS 或邮件 | 铺了指定背景色的图片 | JPG + 背景色 |
+
+PNG 保留 GIF 的透明区域，每个像素原样不变。只有目标平台不收 PNG 时，才值得用 JPG。
+
+## 国内项目里的两个典型用法
+
+### 微信表情包：从动图里挑关键帧做缩略图
+
+在[微信表情开放平台](https://sticker.weixin.qq.com/)投稿一套动态表情时，除了 GIF 主图，通常还要准备静态的缩略图等配套素材。缩略图最好取主图里最能代表动作的一帧，用 GIF 拆帧逐帧看一遍，比在播放中截图准确。尺寸、格式和体积要求以平台的最新规范为准。
+
+用 GIF 拆帧工具处理这一步：
+
+1. 把一张主图 GIF 拖进工具，在缩略图网格里挑出最能代表这个表情的那一帧。
+2. 点这一帧下方的下载图标，得到一张 PNG，透明区域保持透明。
+3. 用[图片压缩工具](/zh/tools/image-compressor/)按长边缩到 120 px。
+4. 把文件名从 `xxx-frame-007.png` 改成与主图对应的编号。
+
+给公众号文章或飞书文档配图、只想要动图里某一帧时，操作相同：GIF 转 PNG，单帧下载即可。
+
+### H5 活动页和小程序：用雪碧图替换 GIF
+
+微信里打开的 H5 活动页、小程序里的 loading 动画，常把 GIF 换成雪碧图加 CSS 帧动画：`animation-play-state` 能暂停，`animation-iteration-count` 能控制播放次数，速度也能单独调。做法是先把 GIF 逐帧导出，把列数设成帧数，生成单行雪碧图；JSON 里的 `duration` 就是每帧该停留的毫秒数。
+
+各帧时长相同时，一个 `steps()` 就够了。像上面那个转圈动画这样 50 ms 和 500 ms 混在一起的，`steps()` 只能匀速播放，需要按 JSON 算出每帧在 `@keyframes` 里的百分比位置，或者改用后文的 canvas 循环。
+
+小程序的 WXSS 里，`background-image` 不能引用本地图片路径。体积小的雪碧图可以用[图片转 Base64 工具](/zh/tools/image-to-base64/)转成 data URI 写进样式，大图放到 CDN 上用网络地址引用。
+
+## GIF 文件里装着什么
+
+GIF 文件由一串数据块（block）组成。[GIF89a 规范](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)由 CompuServe 发布，文档日期为 1990 年 7 月 31 日，其中列出两个版本：1987 年 5 月的「87a」和 1989 年 7 月的「89a」。动画依赖 89a 的特性，不过浏览器和解码器两个版本都能读。
+
+动态 GIF 的块顺序大致如下：
+
+```text
+Header               "GIF89a"
+Logical Screen       canvas width, height, global color table flag
+Global Color Table   up to 256 RGB entries
+Application Ext.     NETSCAPE2.0 loop count (optional)
+Graphic Control Ext. delay, disposal, transparent index   ┐
+Image Descriptor     left, top, width, height, flags       │ repeated
+Local Color Table    optional                              │ per frame
+Image Data           LZW-compressed color indices          ┘
+Trailer              0x3B
+```
+
+GIF 的每个像素都是颜色表里的一个索引，颜色表最多 256 项。表的大小是 `3 × 2^(N+1)` 字节，N 是一个 3 位字段，所以最大的表占 768 字节。某一帧可以自带局部颜色表（Local Color Table），它只在这一帧内替代全局颜色表。
+
+动画能做得这么省空间，靠的是图像描述符（Image Descriptor）。它的 left、top、width、height 决定这一帧落在逻辑屏幕（也就是画布）的哪个位置。一帧不必铺满整张画布；从第二帧开始，多数编码器只写入发生变化的那块矩形。
+
+### LZW 图像数据
+
+每帧的颜色索引用变长码 LZW 算法压缩，规范附录 F 有详细描述。数据的第一个字节是 LZW 最小码长（minimum code size），之后：
+
+- **清除码**（Clear code）等于 `2^(code size)`，用来重置码表，可以出现在数据的任意位置。
+- **信息结束码**（End of Information code）等于清除码 + 1，标志这一帧结束。
+- 新的码表项从清除码 + 2 开始编号。
+- 码宽从 code size + 1 位起步，码表每超出当前位宽一次就加 1 位，最多 **12 位**（最大码值 4095）。
+
+压缩后的字节分装在最长 255 字节的子块（sub-block）里，每个子块前面有一个长度字节，最后以长度为 0 的子块收尾。有了这层封装，解析器不用解压任何一帧，就能走完整个文件、数出帧数。
+
+手写解码器常栽在一个细节上。规范封面页描述了**延迟清除码**（deferred clear code）：码表满了以后，编码器可以不发清除码、继续发送 12 位码，解码器这时必须停止新增表项，直到清除码出现。同一段说明还提到，当时有大量解码器没处理这种情况。所以手写解码器一定要专门测这一点。
+
+隔行扫描（interlaced）的帧分四遍存储各行：第一遍从第 0 行起每 8 行取一行，第二遍从第 4 行起每 8 行取一行，第三遍从第 2 行起每 4 行取一行，第四遍从第 1 行起每 2 行取一行。解码器要把这些行排回原来的顺序。
+
+### 图形控制扩展
+
+时长和透明度记录在图形控制扩展（Graphic Control Extension，标签 `0xF9`）里，作用于文件中紧随其后的那张图像。它的 4 个数据字节包含：
+
+| 字段 | 长度 | 含义 |
+|---|---|---|
+| 处置方式（Disposal method） | 3 位 | 绘制下一帧之前，这一帧所占区域如何处理 |
+| 用户输入标志 | 1 位 | 继续播放前是否等待用户输入 |
+| 透明色标志 | 1 位 | 是否指定了透明色索引 |
+| 延迟时间 | 16 位 | 画完这一帧后等待多少个 1/100 秒 |
+| 透明色索引 | 8 位 | 使用该索引的像素不改变画布 |
+
+补丁帧就靠透明色索引实现。取这个索引的像素会保留画布上原有的内容，所以编码器可以写一块大部分标记为「不变」的矩形，只在里面填上移动过的那几个像素。
+
+### 处置方式，以及帧为什么必须合成
+
+处置方式（disposal method）规定一帧的延迟结束后、下一帧绘制前，解码器要对这一帧做什么：
+
+| 值 | 规范中的名称 | 下一帧从什么状态开始画 |
+|---|---|---|
+| 0 | No disposal specified（未指定） | 画布保持现状 |
+| 1 | Do not dispose（不处置） | 画布保持现状，包含这一帧 |
+| 2 | Restore to background color（恢复为背景色） | 这一帧的矩形区域被清空 |
+| 3 | Restore to previous（恢复为先前状态） | 画布回到绘制这一帧之前的样子 |
+| 4–7 | To be defined（待定义） | 规范未定义 |
+
+值 2 在规范里叫「恢复为背景色」，浏览器的实际做法是把这块矩形清成透明。Chrome 的图像解码器在源码里写得很直接："We want to clear the previous frame to transparent, without affecting pixels in the image outside of the frame."（把上一帧清成透明，帧矩形以外的像素不受影响。）
+
+开头那个转圈动画导出失败，原因就在这里。用一个小的结构转储脚本（本文后面的 JavaScript 示例）跑一下这个文件：
+
+```text
+GIF89a 64x64, 5 frames, loop: forever
+#1 rect 64x64@0,0 disposal 0 delay 10cs -> 100 ms
+#2 rect 26x16@0,20 disposal 0 delay 20cs -> 200 ms
+#3 rect 26x16@10,20 disposal 0 delay 5cs -> 50 ms
+#4 rect 26x16@20,20 disposal 0 delay 50cs -> 500 ms
+#5 rect 26x16@30,20 disposal 0 delay 0cs -> 100 ms
+```
+
+只有第 1 帧铺满画布，第 2 到第 5 帧都是 26 × 16 的补丁，放在不同的偏移位置上。把每张存储的图像单独保存，得到的就是开头那几条色块。要拿到用户实际看到的画面，解码器得始终维护一块画布：先对上一帧执行处置，再把下一块补丁画上去（跳过透明色索引的像素），然后复制一份。这份副本才是雪碧图里该放的帧。
+
+处置方式 3 开销最大：每遇到这种帧，解码器都要先给画布存一份快照，之后才能恢复回去。规范本身也建议「谨慎」（sparingly）使用它。
+
+### 延迟：单位是 1/100 秒，外加 100 ms 规则
+
+延迟是一个无符号 16 位整数，单位是 1/100 秒（centisecond，下文写作 cs），所以 GIF 能表达的最小步长是 10 ms，最长延迟是 655.35 秒。延迟为 5 的帧显示 50 ms。
+
+延迟为 0 和 1 是特例，三大浏览器引擎都按 100 ms 播放：
+
+- **Chromium**（`deferred_image_decoder.cc`）："We follow Firefox's behavior and use a duration of 100 ms for any frames that specify a duration of `<= 10 ms`."（沿用 Firefox 的做法，凡是指定时长不超过 10 ms 的帧，一律按 100 ms 处理。）
+- **Firefox**（`image/FrameTimeout.h`）：把 0 到 10 ms 的原始时长统一改成 100 ms，理由是 "broken tools generate these values when they actually want a 'default' value"（有缺陷的工具本想表达「默认值」，结果写出了这些数）。
+- **WebKit**（`ImageDecoderCG.cpp`）：规则相同，注释也和 Chromium 一样。
+
+延迟为 2（20 ms）及以上的帧按标称值播放。上面转储结果里的第 5 帧标着 0 cs，实际播放 100 ms。ffmpeg 和 Pillow 报告的都是原始值，照搬这些数字的脚本，会把这一帧播得比任何浏览器都快 10 倍。
+
+### NETSCAPE2.0 循环次数
+
+循环不属于 GIF89a 规范，它来自一个应用扩展（Application Extension，标签 `0xFF`），8 字节标识符为 `NETSCAPE`，3 字节认证码为 `2.0`。扩展的子块里存着一个 16 位的循环次数。
+
+这个数表示首遍播完之后再重复几次。Chrome 经由 Skia 使用的 Google Wuffs GIF 解码器在源码里写明："A loop count of N, in the wire format, actually means 'repeat N times after the first play', if N is positive. A zero N means to loop forever. Playing the frames exactly once is denoted by the *absence* of this NETSCAPE2.0 application extension." 也就是说：N 为正数时，首遍之后再重复 N 次；N 为 0 表示无限循环；只播一遍的文件根本不带这个扩展。循环次数为 2 时，A、B、C、D 四帧的播放顺序是 ABCDABCDABCD。gifsicle 手册从编码器一侧给出同样的规则：`--loopcount=1` 会让每帧显示两次。
+
+有些老文件用 `ANIMEXTS1.0` 作标识符，结构相同。循环次数不影响任何一帧的像素，但在代码里重建动画时用得上：一个播三遍就该停的精灵动画，离不开这个数。
+
+## GIF 拆帧工具如何处理一个文件
+
+[GIF 拆帧工具](/zh/tools/gif-splitter/)用纯 JavaScript 写的自有解析器和 LZW 解码器来解码 GIF。浏览器的 `<img>` 解码器不暴露处置方式和原始延迟。WebCodecs 的 `ImageDecoder` API 能返回解码后的帧和重复次数，但拿不到每帧的处置方式；而且按 MDN 的兼容性数据，Safari 只在 Technology Preview 里支持它。
+
+每个文件依次经过以下步骤：
+
+1. **检查文件头。** 前 6 个字节必须是 `GIF87a` 或 `GIF89a`。其他文件一律报错，PNG、JPG、WebP 文件会被引导到 [WebP 转换器](/zh/tools/webp-converter/)。
+2. **扫描结构。** 解析器逐块读取画布尺寸、颜色表、每个图形控制扩展、每个图像描述符和循环次数，只收集压缩数据，不做解压。
+3. **核对内存预算。** 解码后的帧以整张画布的 RGBA 形式留在内存里，每像素 4 字节。工具最多接受 5000 万解码像素（宽 × 高 × 帧数，约 200 MB）、1000 帧，单帧不超过 16,777,216 像素且任一边不超过 16,384 px。480 × 270、385 帧的 GIF 在限制之内。超限的文件在开始解码前就会被拒绝，页面上会给出后文 Bash 示例里的那条 ffmpeg 命令。
+4. **解码并合成。** 解码被切成约 24 ms 一段的小片执行，页面保持可响应，进度条也一直在走。每一帧都经过前面讲的合成流程：处置方式 2 清成透明，处置方式 3 恢复快照，值 4–7 让画布保持不动，隔行扫描的行排回原序，超出画布的帧矩形会被裁掉。
+5. **显示网格。** 信息栏列出尺寸、帧数、总时长、首遍后重复次数和文件大小。每张缩略图标出帧序号和播放时长（已套用 100 ms 规则）。
+
+文件损坏不会让处理中断。如果数据在某一帧中途结束，断点前解码出的像素全部保留，这一帧剩下的部分显示下层画布，状态栏提示文件提前结束。在描述符内部就被截断的帧会被丢弃。
+
+### 导出选项
+
+- **单帧**：每张缩略图下方的下载图标可以单独保存这一帧。
+- **ZIP**：所有选中的帧打成一个 ZIP。帧本身已经是压缩过的 PNG 或 JPG，ZIP 直接存储，不再二次压缩。文件名依次为 `loader-frame-001.png`、`loader-frame-002.png` 等，序号至少补齐到 3 位。
+- **PNG 或 JPG**：PNG 保留透明。JPG 可以设置质量 50 到 100（默认 92），以及透明区域的背景色（默认白色）。
+- **选择**：默认全选。点击缩略图切换选中状态，或者在范围选择里填「第 1 到 48 帧，每隔 4」，按区间或每隔 N 帧选取。
+- **雪碧图**：选中的帧按从左到右、从上到下的顺序排进网格，可设置列数和像素间距（间距保持透明）。雪碧图同样受 16,777,216 像素、单边 16,384 px 的限制。下载时得到 PNG 和下面这份 JSON：
+
+```json
+{
+  "image": "loader-sprite.png",
+  "width": 320,
+  "height": 64,
+  "frameWidth": 64,
+  "frameHeight": 64,
+  "columns": 5,
+  "spacing": 0,
+  "frames": [
+    { "frame": 1, "x": 0, "y": 0, "w": 64, "h": 64, "duration": 100 },
+    { "frame": 2, "x": 64, "y": 0, "w": 64, "h": 64, "duration": 200 },
+    { "frame": 3, "x": 128, "y": 0, "w": 64, "h": 64, "duration": 50 },
+    { "frame": 4, "x": 192, "y": 0, "w": 64, "h": 64, "duration": 500 },
+    { "frame": 5, "x": 256, "y": 0, "w": 64, "h": 64, "duration": 100 }
+  ]
+}
+```
+
+`frame` 是原始帧序号，序号有空缺，就说明那几帧被跳过了。`duration` 以毫秒为单位，按浏览器的实际播放时长计算。
+
+### 这里的「零上传」具体指什么
+
+文件经 File API 从磁盘读进页面，由当前标签页里的 JavaScript 解码。PNG 和 JPG 编码用的是 canvas 的 `toBlob()` 方法，ZIP 和雪碧图都在内存里拼装。工具不会带着文件或任何一帧发出网络请求。它唯一存下来的是你的导出设置（格式、JPG 质量、背景色、列数、间距），保存在 local storage 中。和站内其他工具一样，它会向 Google Analytics 发送一条使用事件，内容只有工具名和操作名，比如 "zip" 或 "sprite"，不含文件名和文件内容。
+
+## 常见坑与边界情况
+
+### 导出的帧有窟窿，或者只剩一条色块
+
+这些帧是按存储的补丁直接保存的，没有经过合成。换一个会重放处置方式的工具，或者自己合成（后面的 Python 示例借 Pillow 完成了这一步）。如果确实需要原样的存储帧，比如想研究编码器是怎么优化文件的，可以用 `gifsicle --explode` 为每帧写出一个 GIF；把补丁还原成完整帧的，是它另一个选项 `--unoptimize`。GIF 拆帧工具有意只导出完整帧。
+
+### ffmpeg 导出的文件比 GIF 帧数还多
+
+默认参数下，ffmpeg 会给图片序列输出选定一个固定帧率，再靠复制或丢弃帧来凑满。那个 5 帧的转圈动画就这样变成了 19 张 PNG。`-fps_mode passthrough` 让每个解码帧带着自己的时间戳原样通过，每帧恰好对应一张图。`-fps_mode` 是 FFmpeg 5.1 新增的选项，旧版本用 `-vsync passthrough` 效果相同。
+
+### 转换后帧时长不对
+
+延迟为 0 或 1 的帧在浏览器里按 100 ms 播放，ffmpeg 和 Pillow 却按标称值报告。拿它们的数字重建动画，这些帧会一闪而过。要么自己套用这条规则（下面每个示例都套用了），要么直接取 GIF 拆帧工具 JSON 里的时长，那里已经处理过了。
+
+### 透明区域在 JPG 里变黑或变白
+
+JPG 没有 alpha 通道，透明像素必须变成某种颜色。GIF 拆帧工具用你选的背景色填充，其他工具会替你挑一个颜色。帧要叠在其他内容上时，用 PNG。
+
+### ZIP 比原来的 GIF 大得多
+
+每个导出帧都覆盖整张画布，而 GIF 可能只存了一些共用同一调色板的小补丁。GIF 越依赖补丁，ZIP 相对原文件就膨胀得越厉害。要控制体积，可以用步长选择少导出一些帧，把帧交给[图片压缩工具](/zh/tools/image-compressor/)压缩，或者用 [WebP 转换器](/zh/tools/webp-converter/)转成 WebP。
+
+### 雪碧图在手机上太大
+
+[canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) 项目实测，Mobile Safari 9+ 的最大可用 canvas 面积为 4,096 × 4,096（16,777,216 像素）。超过上限的 canvas 无法使用，在更大画布上生成的雪碧图可能是一片空白。GIF 拆帧工具拒绝生成超过这个面积、或任一边超过 16,384 px 的雪碧图，并提示你减少帧数或调整列数。
+
+### 大 GIF 超出解码预算
+
+一段 1920 × 1080、60 帧的录屏，解码后约 1.24 亿像素，远超 5000 万的上限。帧以未压缩的形式保存，滚动、选择和导出时才不用重新解码，而这部分内存得在手机上也装得下。这种体量的文件，请在本地用 ffmpeg 处理。
+
+## 代码示例
+
+### Python：用 Pillow 导出合成后的帧和雪碧图
+
+从 Pillow 9.0 起，seek 到 GIF 的后续帧会得到合成后的 RGB 或 RGBA 画面，所以 `ImageSequence` 给出的每一帧都已经是完整的。下面的脚本把每帧存成 PNG，再写出一张单行雪碧图和 JSON，并对过短的延迟套用浏览器的 100 ms 规则。
+
+```python
+import json
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageSequence
+
+src = Path(sys.argv[1])
+out = Path(f"{src.stem}-frames")
+out.mkdir(exist_ok=True)
+
+frames, durations = [], []
+with Image.open(src) as im:
+    for i, frame in enumerate(ImageSequence.Iterator(im), start=1):
+        rgba = frame.convert("RGBA")  # Pillow 已经执行过各帧的处置方式
+        rgba.save(out / f"{src.stem}-frame-{i:03d}.png")
+        frames.append(rgba)
+        raw_ms = frame.info.get("duration", 0)  # Pillow 返回毫秒（centisecond × 10）
+        durations.append(100 if raw_ms <= 10 else raw_ms)  # 与浏览器播放时长保持一致
+
+# 单行雪碧图和帧数据
+w, h = frames[0].size
+sheet = Image.new("RGBA", (w * len(frames), h), (0, 0, 0, 0))
+for i, f in enumerate(frames):
+    sheet.paste(f, (i * w, 0))
+sheet.save(f"{src.stem}-sprite.png")
+
+meta = {
+    "image": f"{src.stem}-sprite.png",
+    "frameWidth": w,
+    "frameHeight": h,
+    "frames": [{"frame": i + 1, "x": i * w, "y": 0, "duration": d} for i, d in enumerate(durations)],
+}
+Path(f"{src.stem}-sprite.json").write_text(json.dumps(meta, indent=2))
+print(f"{len(frames)} frames, {sum(durations)} ms total")
+```
+
+用 `python split_gif.py loader.gif` 运行。对那个转圈动画，它输出 `5 frames, 950 ms total`。
+
+### JavaScript：不解码像素，读出帧时长和处置方式
+
+这个 Node.js 脚本遍历块结构，打印每帧存储的信息。它从不解压像素数据，大文件也是瞬间跑完。前文的转储结果就是它输出的。
+
+```js
+// gif-info.mjs — 列出各帧的延迟和处置方式，不解码像素
+import { readFileSync } from 'node:fs';
+
+const bytes = readFileSync(process.argv[2]);
+const u16 = (p) => bytes[p] | (bytes[p + 1] << 8);
+
+const version = bytes.toString('latin1', 0, 6);
+if (version !== 'GIF87a' && version !== 'GIF89a') throw new Error('not a GIF');
+
+const width = u16(6), height = u16(8), packed = bytes[10];
+let p = 13;
+if (packed & 0x80) p += 3 * (1 << ((packed & 7) + 1)); // 跳过全局颜色表
+
+// 遍历一串数据子块，返回拼接后的数据和下一个偏移量
+function subBlocks(p) {
+  const parts = [];
+  while (bytes[p] !== 0) { parts.push(bytes.subarray(p + 1, p + 1 + bytes[p])); p += 1 + bytes[p]; }
+  return { data: Buffer.concat(parts), next: p + 1 };
+}
+
+const frames = [];
+let gce = null, loop = null;
+while (p < bytes.length && bytes[p] !== 0x3b) {
+  if (bytes[p] === 0x21) { // 扩展块
+    const label = bytes[p + 1];
+    const { data, next } = subBlocks(p + 2);
+    if (label === 0xf9) gce = { disposal: (data[0] >> 2) & 7, delayCs: data[1] | (data[2] << 8) };
+    if (label === 0xff && data.toString('latin1', 0, 11) === 'NETSCAPE2.0') loop = data[12] | (data[13] << 8);
+    p = next;
+  } else if (bytes[p] === 0x2c) { // 图像描述符
+    const fp = bytes[p + 9];
+    frames.push({ x: u16(p + 1), y: u16(p + 3), w: u16(p + 5), h: u16(p + 7), ...(gce ?? { disposal: 0, delayCs: 0 }) });
+    p += 10;
+    if (fp & 0x80) p += 3 * (1 << ((fp & 7) + 1)); // 局部颜色表
+    p = subBlocks(p + 1).next;                     // 跳过 LZW 最小码长和图像数据
+    gce = null;
+  } else break;
+}
+
+const playMs = (cs) => (cs <= 1 ? 100 : cs * 10); // 浏览器实际等待的时长
+console.log(`${version} ${width}x${height}, ${frames.length} frames, loop: ${loop === null ? 'play once' : loop === 0 ? 'forever' : `repeat ${loop}x`}`);
+frames.forEach((f, i) =>
+  console.log(`#${i + 1} rect ${f.w}x${f.h}@${f.x},${f.y} disposal ${f.disposal} delay ${f.delayCs}cs -> ${playMs(f.delayCs)} ms`));
+```
+
+用 `node gif-info.mjs loader.gif` 运行。脚本假定文件结构完好；GIF 拆帧工具的解析器还能处理提前结束的文件。
+
+在浏览器里播放导出的雪碧图时，每次画一格，并按每帧自己的时长等待：
+
+```js
+// <script type="module">：读取 loader-sprite.json，播放 loader-sprite.png
+const meta = await (await fetch('/sprites/loader-sprite.json')).json();
+const sheet = new Image();
+sheet.src = `/sprites/${meta.image}`;
+await sheet.decode();
+
+const canvas = document.querySelector('#loader');
+canvas.width = meta.frameWidth;
+canvas.height = meta.frameHeight;
+const ctx = canvas.getContext('2d');
+
+let i = 0;
+let next = 0;
+function tick(now) {
+  if (now >= next) {
+    const f = meta.frames[i];
+    ctx.clearRect(0, 0, f.w, f.h);
+    ctx.drawImage(sheet, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    next = now + f.duration;
+    i = (i + 1) % meta.frames.length;
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+```
+
+固定帧率的循环会把转圈动画里 50 ms 和 500 ms 的帧拉成一样长。逐帧读取 `duration`，才能保住设计师定下的节奏。
+
+### Bash：用 ffmpeg 导出帧和雪碧图
+
+```bash
+# 每个 GIF 帧导出一张合成后的 PNG，不重复也不丢帧
+ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png
+
+# 先数出帧数，再拼成单行雪碧图
+N=$(ffprobe -v error -count_frames -select_streams v:0 \
+  -show_entries stream=nb_read_frames -of csv=p=0 input.gif)
+ffmpeg -i input.gif -fps_mode passthrough -vf "tile=${N}x1" -frames:v 1 sprite.png
+```
+
+第一条命令就是文件超限时 GIF 拆帧工具给出的那条。不加 `-fps_mode passthrough`，5 帧的转圈动画会变成 19 个文件，前面的坑点里讲过。ffmpeg 不会为雪碧图写出帧时长，需要时搭配上面的 JavaScript 脚本。
+
+## 和其他 GIF 拆帧方案对比
+
+三者各有适合的活儿。
+
+| 工具 | 在哪里运行 | 输入 | 帧输出 | 雪碧图 | 帧时长导出 |
+|---|---|---|---|---|---|
+| ZeroTool GIF 拆帧工具 | 浏览器标签页，文件留在本机 | GIF，最多 5000 万解码像素、1000 帧 | PNG、JPG、ZIP | PNG + 含每帧时长的 JSON | 有，在 JSON 里 |
+| ezgif.com GIF splitter | 上传到 ezgif 服务器 | GIF、WebP、APNG、AVIF、JXL、MNG 等，最大 200 MB | GIF、PNG、WebP、JPG、BMP、JXL、AVIF、ZIP | 单独的「GIF to sprite sheet」页面 | 其 GIF maker 能从未改动过的 ZIP 恢复帧时长 |
+| ffmpeg | 本地命令行 | 绝大多数图片和视频格式，自身不设大小限制 | ffmpeg 能写的任何格式 | `tile` 滤镜 | 通过 ffprobe 读取原始延迟 |
+
+按需求挑选：
+
+- **输入是 WebP、APNG，或者拆完还要编辑、重新合成动画** → ezgif。它的拆帧页有 "Upload!" 按钮，接受最大 200 MB 的文件，并声明 "All uploaded files are automatically deleted 1 hour after upload."（上传的文件 1 小时后自动删除）。它支持的动图格式比 GIF 多得多，拆出的帧能直接回到 ezgif 的 GIF maker 里编辑。
+- **超大文件，或者要写进脚本和构建流水线** → ffmpeg。记得加 `-fps_mode passthrough`；在意时长的话，自己套用 100 ms 规则。
+- **GIF 不方便上传、要肉眼挑帧、要一张带时长数据的雪碧图直接交给游戏引擎或 canvas 循环** → GIF 拆帧工具，什么都不用装。它只负责把 GIF 拆开；编辑、裁剪和重新编码动画交给 ezgif 或 ffmpeg。
+
+## 相关工具与参考资料
+
+ZeroTool 上适合搭配导出帧使用的工具：
+
+- [WebP 转换器](/zh/tools/webp-converter/)：把导出的 PNG 帧批量转成 WebP。
+- [图片压缩工具](/zh/tools/image-compressor/)：压缩帧和雪碧图，或调整尺寸。
+- [图片马赛克](/zh/tools/pixelate-image/)：分享前遮住帧里的人脸、邮箱或密钥。
+- [图片转 Base64 工具](/zh/tools/image-to-base64/)：把小雪碧图转成 CSS 里能用的 data URI。
+
+本文引用的一手资料：
+
+- [GIF89a Specification（W3C 镜像）](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)：块结构、图形控制扩展、处置方式、隔行扫描、LZW、延迟清除码
+- [Chromium `deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc)：短延迟的 100 ms 规则
+- [Firefox `FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h)：Gecko 中的同一规则
+- [Chromium `image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/image-decoders/image_decoder.cc)：处置方式 2 清为透明
+- [Wuffs `decode_gif.wuffs`](https://github.com/google/wuffs/blob/main/std/gif/decode_gif.wuffs)：NETSCAPE2.0 循环次数的语义
+- [Gifsicle 手册](https://www.lcdf.org/gifsicle/man.html)：`--explode`、`--unoptimize` 与循环次数语义
+- [FFmpeg 文档：`-fps_mode`](https://ffmpeg.org/ffmpeg.html)：passthrough、cfr、vfr 和 auto
+- [MDN：ImageDecoder](https://developer.mozilla.org/en-US/docs/Web/API/ImageDecoder)：WebCodecs 图像解码 API（仅英文版）
+- [canvas-size 测试结果](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results)：各浏览器的 canvas 最大尺寸
+- [微信表情开放平台](https://sticker.weixin.qq.com/)：表情主图与缩略图的制作规范

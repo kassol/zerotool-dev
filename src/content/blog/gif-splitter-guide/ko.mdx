@@ -1,0 +1,404 @@
+---
+title: "GIF 프레임 추출·분할 가이드: PNG 변환부터 스프라이트 시트와 JSON까지"
+description: "움직이는 GIF를 프레임별 PNG·JPG로 분할하고 스프라이트 시트와 JSON 좌표를 만드는 방법. disposal 방식, 프레임 지연 시간, 반복 횟수가 각 프레임의 모습을 어떻게 결정하는지 정리했습니다."
+pubDate: 2026-09-25
+lang: "ko"
+tags: ["gif", "image", "sprite-sheet", "animation", "developer-tools"]
+ogImage: /og/blog-gif-splitter-guide.png
+---
+
+디자인 팀이 64 × 64 크기의 로딩 스피너 `loader.gif`를 넘겨주며 새 게임 빌드에 넣어 달라고 한다. 게임 엔진이 원하는 것은 스프라이트 시트 한 장과 프레임별 타이밍 목록이다. 가장 빠른 길은 손에 잡히는 도구로 프레임부터 뽑아내는 것이다.
+
+첫 시도에서는 PNG 다섯 장이 나왔는데, 그중 네 장이 거의 비어 있었다. 26 × 16 크기의 색 띠 하나만 남아 있을 뿐이다. 두 번째로 ffmpeg를 기본 설정으로 돌렸더니 5프레임짜리 애니메이션에서 PNG가 19장이나 나왔고, 같은 그림이 여러 번 반복됐다. 어느 쪽도 그대로는 스프라이트 시트에 쓸 수 없다.
+
+두 실패 모두 GIF가 애니메이션을 저장하는 방식에서 비롯된다. GIF의 한 프레임은 대개 화면 일부만 담은 패치와, 다음 패치를 그리기 전에 그 패치를 어떻게 처리할지 정한 규칙으로 이루어진다. 프레임 사이의 지연 시간도 초당 프레임 수(fps)가 아닌, 프레임마다 따로 붙는 숫자다. GIF를 제대로 분할하려면 브라우저와 똑같이 이 규칙을 재현하고, 원래 타이밍을 그대로 유지해야 한다.
+
+[GIF 프레임 추출하기 →](/ko/tools/gif-splitter/)
+
+## GIF를 프레임으로 분할해야 하는 경우
+
+| 상황 | 필요한 것 | 고를 출력 |
+|---|---|---|
+| 리액션 GIF나 화면 녹화에서 한 장면만 슬라이드·문서·버그 리포트에 넣고 싶을 때 | 손실 없는 정지 이미지 한 장 | 단일 프레임 PNG 다운로드 |
+| Phaser, PixiJS, Godot, canvas 루프에 넣을 로딩 애니메이션이나 캐릭터 | 시트 한 장과 프레임 타이밍 | 스프라이트 시트 PNG + JSON |
+| 랜딩 페이지의 무거운 GIF를 CSS 애니메이션으로 바꾸고 싶을 때 | `steps()`용 한 줄짜리 시트 | 열 수 = 프레임 수인 스프라이트 시트 |
+| 한 프레임에서만 요소가 튀는 UI 애니메이션 | 모든 프레임을 순서대로, 원본 크기로 | PNG 프레임 ZIP |
+| 스토리보드나 콘택트 시트가 필요한 긴 GIF | N번째 프레임마다 한 장 | 간격을 지정한 범위 선택 후 ZIP 또는 스프라이트 시트 |
+| 투명도를 처리하지 못하는 CMS나 이메일에 넣을 프레임 | 지정한 배경색 위에 평평하게 합친 이미지 | 배경색을 지정한 JPG |
+
+PNG는 GIF의 투명도와 모든 픽셀 값을 그대로 보존한다. JPG는 대상이 PNG를 받지 못할 때만 쓸 가치가 있다.
+
+### 카카오톡 이모티콘 시안과 velog 글 작업에서
+
+국내에서 GIF 분할이 자주 필요한 곳은 두 군데다.
+
+- **카카오톡 이모티콘 시안**: 움직이는 이모티콘을 준비하다 보면 애니메이션 툴에서 내보낸 GIF를 다시 프레임 단위로 쪼개야 할 때가 있다. 특정 프레임의 표정만 고치거나 타이밍을 다듬어 다시 조립하려면 먼저 GIF 프레임 추출부터 해야 한다. 이때 패치 상태 그대로 저장하면 캐릭터 일부만 남은 조각이 나온다. GIF PNG 변환 결과가 원본 화면과 똑같고 투명 배경까지 유지되어야 수정 작업이 의미가 있다.
+- **velog·기술 블로그 글**: 버그 재현 과정을 화면 녹화 GIF로 남겨 두었는데, 글에는 문제가 드러나는 순간 한 장면만 넣고 싶을 때가 있다. GIF가 수 MB를 넘어 글 로딩이 느려질 때도 통째로 올리기보다 핵심 프레임 몇 장만 PNG로 뽑아 넣는 편이 낫다. 간격 선택으로 4프레임마다 한 장씩 뽑으면 긴 녹화도 몇 장짜리 흐름도로 바뀐다.
+
+두 경우 모두 아래에서 설명할 합성(compositing) 처리가 결과를 좌우한다.
+
+## GIF 파일 안에는 무엇이 들어 있나
+
+GIF 파일은 블록이 차례로 이어진 구조다. CompuServe가 발행한 [GIF89a 명세](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)(문서 날짜 1990년 7월 31일)에는 두 가지 버전이 나온다. 1987년 5월의 "87a"와 1989년 7월의 "89a"다. 애니메이션은 89a의 기능에 의존하지만, 브라우저와 디코더는 두 버전을 모두 읽는다.
+
+움직이는 GIF의 블록 순서는 다음과 같다.
+
+```text
+Header               "GIF89a"
+Logical Screen       canvas width, height, global color table flag
+Global Color Table   up to 256 RGB entries
+Application Ext.     NETSCAPE2.0 loop count (optional)
+Graphic Control Ext. delay, disposal, transparent index   ┐
+Image Descriptor     left, top, width, height, flags       │ repeated
+Local Color Table    optional                              │ per frame
+Image Data           LZW-compressed color indices          ┘
+Trailer              0x3B
+```
+
+GIF의 모든 픽셀은 최대 256개 항목을 가진 색상 테이블의 인덱스다. 테이블 크기는 `3 × 2^(N+1)` 바이트이고 N은 3비트 필드이므로, 가장 큰 테이블은 768바이트다. 프레임은 자체 로컬 색상 테이블을 가질 수 있으며, 이 테이블은 해당 프레임에 한해서만 전역 테이블을 대신한다.
+
+애니메이션을 작게 만드는 핵심은 Image Descriptor에 있다. left, top, width, height 값이 논리 화면(Logical Screen), 즉 캔버스 안에서 프레임의 위치를 정한다. 프레임이 캔버스 전체를 덮을 필요는 없다. 그래서 대부분의 인코더는 첫 프레임 이후로는 바뀐 사각형 영역만 기록한다.
+
+### LZW 이미지 데이터
+
+각 프레임의 색상 인덱스는 가변 길이 코드 LZW 알고리즘으로 압축되며, 자세한 내용은 명세의 부록 F(Appendix F)에 있다. 데이터는 LZW 최소 코드 크기를 담은 1바이트로 시작하고, 이후 규칙은 다음과 같다.
+
+- **Clear 코드**는 `2^(code size)`다. 코드 테이블을 초기화하며, 데이터 어디에서나 나올 수 있다.
+- **End of Information 코드**는 Clear + 1이며, 프레임의 끝을 알린다.
+- 새 테이블 항목은 Clear + 2부터 시작한다.
+- 코드는 code size + 1비트에서 시작해, 테이블이 그 비트 폭으로 표현할 수 있는 범위를 넘어설 때마다 1비트씩 늘어난다. 최대 **12비트**(코드 값 최대 4095)까지다.
+
+압축된 바이트는 최대 255바이트짜리 서브블록에 나뉘어 저장되고, 각 서브블록 앞에는 길이 바이트가 붙는다. 길이 0인 블록이 체인의 끝이다. 이 구조 덕분에 파서는 어떤 프레임도 압축 해제하지 않고 파일 전체를 훑으며 프레임 수를 셀 수 있다.
+
+직접 디코더를 짤 때 발목을 잡는 부분이 하나 있다. 명세의 표지 문서는 **지연된 clear 코드(deferred clear code)** 를 설명한다. 테이블이 가득 찬 뒤에도 인코더는 Clear 코드 없이 12비트 코드를 계속 보낼 수 있고, 디코더는 Clear 코드가 올 때까지 항목 추가를 멈춰야 한다. 같은 문서에는 당시 널리 쓰이던 디코더 상당수가 이를 처리하지 못했다는 언급도 있다. 직접 만든 디코더라면 반드시 이 경우를 테스트해야 하는 이유다.
+
+인터레이스 프레임은 행을 네 번에 나누어 저장한다. 0행부터 8행 간격, 4행부터 8행 간격, 2행부터 4행 간격, 마지막으로 1행부터 2행 간격이다. 디코더는 이 행들을 원래 순서로 되돌려 놓아야 한다.
+
+### Graphic Control Extension
+
+타이밍과 투명도 정보는 Graphic Control Extension(레이블 `0xF9`)에 들어 있으며, 파일에서 바로 다음에 오는 이미지에 적용된다. 4바이트 데이터의 구성은 다음과 같다.
+
+| 필드 | 크기 | 의미 |
+|---|---|---|
+| Disposal method | 3비트 | 다음 프레임 전에 이 프레임 영역을 어떻게 처리할지 |
+| User input flag | 1비트 | 계속하기 전에 사용자 입력을 기다릴지 |
+| Transparent color flag | 1비트 | 투명 인덱스가 지정되어 있는지 |
+| Delay time | 16비트 | 프레임을 그린 뒤 기다릴 시간(1/100초 단위) |
+| Transparent color index | 8비트 | 이 인덱스를 가진 픽셀은 캔버스를 바꾸지 않음 |
+
+패치 프레임이 동작하는 원리가 바로 이 투명 인덱스다. 이 인덱스를 가진 픽셀은 캔버스에 이미 그려진 내용을 그대로 둔다. 그래서 인코더는 대부분이 "변화 없음"이고 움직인 픽셀 몇 개만 담긴 사각형을 기록할 수 있다.
+
+### disposal 방식과 프레임을 합성해야 하는 이유
+
+disposal 방식은 프레임의 지연 시간이 끝난 뒤, 다음 프레임을 그리기 전에 디코더가 그 프레임을 어떻게 처리할지 정한다.
+
+| 값 | 명세상 이름 | 다음 프레임의 출발점 |
+|---|---|---|
+| 0 | No disposal specified | 캔버스 그대로 |
+| 1 | Do not dispose | 이 프레임까지 포함한 캔버스 그대로 |
+| 2 | Restore to background color | 이 프레임의 사각형 영역을 지운 상태 |
+| 3 | Restore to previous | 이 프레임을 그리기 전의 캔버스 |
+| 4–7 | To be defined | 정의되지 않음 |
+
+값 2에 대해 명세는 "restore to background color"(배경색으로 복원)라고 적었지만, 브라우저는 이 사각형을 투명하게 지운다. Chrome의 이미지 디코더 소스에는 이렇게 명시되어 있다. "We want to clear the previous frame to transparent, without affecting pixels in the image outside of the frame."(이전 프레임을 투명하게 지우되, 프레임 바깥의 픽셀에는 영향을 주지 않는다.)
+
+앞의 스피너 추출이 틀어진 이유가 여기에 있다. 간단한 구조 덤프 스크립트(이 글 뒷부분의 JavaScript 예제)로 파일을 살펴보자.
+
+```text
+GIF89a 64x64, 5 frames, loop: forever
+#1 rect 64x64@0,0 disposal 0 delay 10cs -> 100 ms
+#2 rect 26x16@0,20 disposal 0 delay 20cs -> 200 ms
+#3 rect 26x16@10,20 disposal 0 delay 5cs -> 50 ms
+#4 rect 26x16@20,20 disposal 0 delay 50cs -> 500 ms
+#5 rect 26x16@30,20 disposal 0 delay 0cs -> 100 ms
+```
+
+캔버스 전체를 덮는 것은 1번 프레임뿐이다. 2~5번 프레임은 위치만 다른 26 × 16 패치다. 저장된 이미지를 하나씩 따로 저장하는 도구는 도입부에서 본 색 띠를 만들어 낸다. 사용자 눈에 보이는 그림을 얻으려면 디코더가 캔버스 하나를 유지하면서 이전 프레임의 disposal을 적용하고, 그 위에 다음 패치를 그린 뒤(투명 인덱스 픽셀은 건너뛴다) 복사본을 떠야 한다. 스프라이트 시트에 들어가야 할 프레임은 바로 이 복사본이다.
+
+비용이 큰 것은 disposal 3이다. 디코더는 이런 프레임을 그리기 전마다 캔버스 스냅숏을 저장해 두었다가 나중에 복원해야 한다. 명세조차 이 방식을 "sparingly"(아껴서) 쓰라고 권한다.
+
+### 지연 시간: 1/100초 단위와 100ms 규칙
+
+지연 시간은 1/100초 단위의 부호 없는 16비트 정수다. 따라서 GIF가 표현할 수 있는 최소 단위는 10ms, 최대 지연 시간은 655.35초다. 지연 값이 5인 프레임은 50ms 동안 표시된다.
+
+지연 값 0과 1은 특별 취급을 받는다. 3대 브라우저 엔진 모두 이 프레임을 100ms로 재생한다.
+
+- **Chromium**(`deferred_image_decoder.cc`): "We follow Firefox's behavior and use a duration of 100 ms for any frames that specify a duration of `<= 10 ms`."(Firefox의 동작을 따라, 10ms 이하로 지정된 프레임은 모두 100ms로 재생한다.)
+- **Firefox**(`image/FrameTimeout.h`): 0~10ms의 원시 타임아웃 값을 100ms로 정규화한다. 이유는 "broken tools generate these values when they actually want a 'default' value"(잘못 만든 도구가 사실은 '기본값'을 원하면서 이 값을 넣기 때문)다.
+- **WebKit**(`ImageDecoderCG.cpp`): 같은 규칙이며, 주석도 Chromium과 같다.
+
+지연 값 2(20ms) 이상은 적힌 그대로 재생된다. 위 덤프의 5번 프레임은 0cs로 적혀 있지만 100ms 동안 재생된다. ffmpeg와 Pillow는 둘 다 원시 값을 그대로 알려 주므로, 그 값을 믿는 스크립트는 이 프레임을 어떤 브라우저보다 10배 빠르게 재생하게 된다.
+
+### NETSCAPE2.0 반복 횟수
+
+반복 재생은 GIF89a 명세에 들어 있지 않다. 레이블 `0xFF`인 Application Extension에서 온 기능으로, 8바이트 식별자 `NETSCAPE`와 3바이트 인증 코드 `2.0`을 쓴다. 서브블록에는 16비트 반복 횟수가 들어 있다.
+
+이 숫자는 첫 재생 이후의 반복 횟수를 뜻한다. Chrome이 Skia를 통해 사용하는 Google의 Wuffs GIF 디코더는 소스에 이렇게 적어 두었다. "A loop count of N, in the wire format, actually means 'repeat N times after the first play', if N is positive. A zero N means to loop forever. Playing the frames exactly once is denoted by the *absence* of this NETSCAPE2.0 application extension." 정리하면 N이 양수이면 첫 재생 후 N번 더 반복하고, 0이면 무한 반복이며, 딱 한 번만 재생하는 파일은 이 확장 블록 자체가 *없다*. 반복 횟수가 2이면 A, B, C, D 네 프레임은 ABCDABCDABCD로 재생된다. gifsicle 매뉴얼도 인코더 쪽에서 같은 규칙을 설명한다. `--loopcount=1`이면 모든 프레임이 두 번씩 표시된다.
+
+일부 오래된 파일은 같은 구조에 `ANIMEXTS1.0` 식별자를 쓴다. 반복 횟수는 어떤 프레임의 픽셀도 바꾸지 않지만, 코드로 애니메이션을 다시 만들 때는 중요하다. 세 번 재생하고 멈춰야 하는 스프라이트 루프라면 이 숫자가 필요하다.
+
+## GIF 프레임 추출기가 파일을 처리하는 방식
+
+[GIF 프레임 추출기](/ko/tools/gif-splitter/)는 순수 JavaScript로 작성한 자체 파서와 LZW 디코더로 GIF를 디코딩한다. 브라우저의 `<img>` 디코더는 disposal 방식이나 원시 지연 값을 노출하지 않는다. WebCodecs의 `ImageDecoder` API는 디코딩된 프레임과 반복 횟수를 돌려주지만 프레임별 disposal 방식은 알려 주지 않고, MDN 호환성 데이터상 Safari 지원은 Technology Preview에만 있다.
+
+파일마다 거치는 단계는 다음과 같다.
+
+1. **헤더 확인.** 처음 6바이트가 `GIF87a` 또는 `GIF89a`여야 한다. 그 밖의 파일에는 오류를 표시하고, PNG·JPG·WebP 파일이라면 [WebP 변환기](/ko/tools/webp-converter/)를 안내한다.
+2. **구조 스캔.** 파서가 블록을 순서대로 훑으며 캔버스 크기, 색상 테이블, 각 Graphic Control Extension과 Image Descriptor, 반복 횟수를 읽고, 압축된 데이터는 해제하지 않은 채 모아 둔다.
+3. **예산 확인.** 디코딩한 프레임은 캔버스 전체 크기의 RGBA, 즉 픽셀당 4바이트로 메모리에 보관된다. 도구가 받아들이는 한도는 디코딩 픽셀 5,000만 개(가로 × 세로 × 프레임 수, 약 200MB), 프레임 1,000개, 프레임당 16,777,216픽셀이며 한 변은 16,384px를 넘을 수 없다. 480 × 270에 385프레임짜리 GIF는 한도 안에 들어온다. 한도를 넘는 파일은 디코딩을 시작하기 전에 거부되고, 페이지에는 아래 Bash 예제의 ffmpeg 명령어가 표시된다.
+4. **디코딩과 합성.** 페이지가 멈추지 않고 진행 표시줄이 움직이도록, 프레임은 약 24ms씩 짧게 나누어 디코딩된다. 각 프레임은 앞서 설명한 합성 루프를 거친다. disposal 2는 투명하게 지우고, disposal 3은 스냅숏을 복원하며, 값 4~7은 캔버스를 그대로 둔다. 인터레이스 행은 원래 순서로 되돌리고, 캔버스 밖으로 벗어난 프레임 사각형은 잘라 낸다.
+5. **그리드 표시.** 정보 표시줄에 크기, 프레임 수, 재생 시간, 첫 재생 후 반복 횟수, 파일 크기가 나온다. 각 썸네일에는 프레임 번호와 100ms 규칙을 적용한 재생 시간이 표시된다.
+
+손상된 파일이라도 처리가 멈추지는 않는다. 데이터가 프레임 중간에서 끝나면 끊기기 전까지 디코딩한 픽셀은 모두 유지되고, 프레임의 나머지 부분에는 아래 캔버스가 보이며, 상태 표시줄에 파일이 중간에 끝났다는 안내가 나온다. descriptor 도중에 잘린 프레임은 버려진다.
+
+### 내보내기 옵션
+
+- **단일 프레임**: 각 썸네일 아래의 다운로드 아이콘을 누르면 해당 프레임 하나만 저장된다.
+- **ZIP**: 선택한 모든 프레임을 ZIP 파일 하나로 받는다. 프레임은 이미 압축된 PNG나 JPG이므로 ZIP 안에 다시 압축하지 않고 그대로 담는다. 파일 이름은 `loader-frame-001.png`, `loader-frame-002.png`처럼 최소 세 자리로 0을 채운다.
+- **PNG 또는 JPG**: PNG는 투명도를 유지한다. JPG는 50~100 사이의 품질(기본값 92)과 투명 영역에 칠할 배경색(기본값 흰색)을 지정한다.
+- **선택**: 처음에는 모든 프레임이 선택된 상태다. 썸네일을 클릭해 개별로 켜고 끄거나, 「프레임 1 ~ 48, 간격 4」처럼 입력해 범위나 N번째 프레임마다 한 장씩 고를 수 있다.
+- **스프라이트 시트**: 선택한 프레임을 왼쪽에서 오른쪽, 위에서 아래 순서로 격자에 배치한다. 열 수와 간격(px)을 지정할 수 있고, 간격은 투명으로 남는다. 시트 역시 16,777,216픽셀, 한 변 16,384px 한도 안에 들어와야 한다. 결과는 PNG와 함께 아래 JSON으로 내려받는다.
+
+```json
+{
+  "image": "loader-sprite.png",
+  "width": 320,
+  "height": 64,
+  "frameWidth": 64,
+  "frameHeight": 64,
+  "columns": 5,
+  "spacing": 0,
+  "frames": [
+    { "frame": 1, "x": 0, "y": 0, "w": 64, "h": 64, "duration": 100 },
+    { "frame": 2, "x": 64, "y": 0, "w": 64, "h": 64, "duration": 200 },
+    { "frame": 3, "x": 128, "y": 0, "w": 64, "h": 64, "duration": 50 },
+    { "frame": 4, "x": 192, "y": 0, "w": 64, "h": 64, "duration": 500 },
+    { "frame": 5, "x": 256, "y": 0, "w": 64, "h": 64, "duration": 100 }
+  ]
+}
+```
+
+`frame`은 원본의 프레임 번호이므로, 번호가 건너뛴 자리를 보면 어떤 프레임을 뺐는지 알 수 있다. `duration`은 밀리초 단위이며, 브라우저 재생 기준 시간이다.
+
+### 여기서 말하는 "업로드 없음"의 의미
+
+파일이 이동하는 경로와 남는 흔적을 나누어 보면 다음과 같다.
+
+- **읽기**: 파일은 File API를 통해 디스크에서 페이지로 들어오고, 탭 안의 JavaScript가 디코딩한다.
+- **인코딩과 묶기**: PNG와 JPG 인코딩은 canvas의 `toBlob()` 메서드를 쓰고, ZIP과 스프라이트 시트는 메모리 안에서 조립된다.
+- **네트워크**: 도구는 파일이나 어떤 프레임도 네트워크로 보내지 않는다.
+- **저장되는 것**: 내보내기 설정(형식, JPG 품질, 배경색, 열 수, 간격)만 local storage에 남는다.
+- **분석 이벤트**: 사이트의 다른 도구와 마찬가지로 Google Analytics에 사용 이벤트를 보내며, 여기에는 도구 이름과 "zip", "sprite" 같은 동작 이름만 담긴다. 파일 이름과 내용은 포함되지 않는다.
+
+## 함정과 예외 상황
+
+### 추출한 프레임에 구멍이 있거나 색 띠만 보이는 경우
+
+프레임을 합성하지 않고 저장된 패치 그대로 내보냈기 때문이다. disposal을 재현하는 도구를 쓰거나, 직접 합성해야 한다(Python 예제는 Pillow로 합성한다). 인코더가 파일을 어떻게 최적화했는지 살펴보는 경우처럼 저장된 프레임 그대로가 필요하다면, `gifsicle --explode`가 프레임마다 GIF를 하나씩 만들어 준다. 패치를 전체 프레임으로 바꾸는 것은 별도의 `--unoptimize` 옵션이다. GIF 프레임 추출기는 설계상 합성된 전체 프레임만 내보낸다.
+
+### ffmpeg가 GIF의 프레임 수보다 많은 파일을 만드는 경우
+
+기본 설정의 ffmpeg는 이미지 시퀀스 출력에 고정 프레임 레이트를 정하고, 이를 맞추려고 프레임을 복제하거나 버린다. 5프레임짜리 스피너에서 PNG 19장이 나온 것도 이 때문이다. `-fps_mode passthrough`를 주면 디코딩된 프레임이 각자의 타임스탬프를 가진 채 그대로 통과하므로, 프레임 하나당 이미지가 정확히 한 장 나온다. `-fps_mode`는 FFmpeg 5.1에서 추가됐고, 이전 버전에서는 `-vsync passthrough`가 같은 역할을 한다.
+
+### 변환 후 프레임 타이밍이 이상한 경우
+
+지연 값 0이나 1은 브라우저에서 100ms로 재생되지만, ffmpeg와 Pillow는 적힌 값을 그대로 알려 준다. 그 숫자로 애니메이션을 다시 만들면 해당 프레임은 눈 깜짝할 새 지나가 버린다. 규칙을 직접 적용하거나(아래 예제는 모두 적용한다), 규칙이 이미 반영된 GIF 프레임 추출기의 JSON에서 duration을 가져오면 된다.
+
+### JPG에서 투명 영역이 검은색이나 흰색으로 바뀌는 경우
+
+JPG에는 알파 채널이 없으므로 투명 픽셀은 어떤 색으로든 채워져야 한다. GIF 프레임 추출기는 사용자가 고른 배경색으로 채우고, 다른 도구는 임의로 색을 정한다. 프레임을 다른 콘텐츠 위에 겹쳐 쓸 거라면 PNG를 쓰자.
+
+### ZIP이 원본 GIF보다 훨씬 큰 경우
+
+내보낸 프레임은 하나하나가 캔버스 전체를 덮지만, GIF는 팔레트 하나를 공유하는 작은 패치만 저장했을 수 있다. GIF가 패치에 많이 의존할수록 원본 대비 ZIP 크기는 커진다. 용량을 줄이려면 간격 선택으로 내보낼 프레임 수를 줄이거나, [이미지 압축기](/ko/tools/image-compressor/)로 프레임을 압축하거나, [WebP 변환기](/ko/tools/webp-converter/)로 변환하면 된다.
+
+### 스프라이트 시트가 휴대폰에서 쓰기에 너무 큰 경우
+
+[canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) 프로젝트가 측정한 Mobile Safari 9 이상의 최대 사용 가능 canvas 면적은 4,096 × 4,096(16,777,216픽셀)이다. 한도를 넘는 canvas는 쓸 수 없으므로, 더 큰 canvas에서 만든 시트는 빈 이미지로 나올 수 있다. GIF 프레임 추출기는 이 면적을 넘거나 한 변이 16,384px를 넘는 시트는 만들지 않고, 프레임 수를 줄이거나 열 수를 바꾸라고 안내한다.
+
+### 큰 GIF가 디코딩 예산에 걸리는 경우
+
+1920 × 1080에 60프레임짜리 화면 녹화는 디코딩하면 약 1억 2,400만 픽셀로, 5,000만 픽셀 한도를 훌쩍 넘는다. 다시 디코딩하지 않고 스크롤·선택·내보내기를 할 수 있도록 프레임을 압축하지 않은 상태로 보관하는데, 이 메모리가 휴대폰에서도 감당할 수 있는 수준이어야 한다. 이 정도 크기의 파일은 로컬에서 ffmpeg로 처리하자.
+
+## 코드 예제
+
+### Python: Pillow로 합성된 프레임과 스프라이트 시트 만들기
+
+Pillow 9.0부터는 GIF의 뒤쪽 프레임으로 이동(seek)하면 합성이 끝난 RGB 또는 RGBA 이미지를 돌려준다. 따라서 `ImageSequence`가 내주는 각 프레임은 이미 완성된 그림이다. 아래 스크립트는 모든 프레임을 PNG로 저장하고, 한 줄짜리 스프라이트 시트와 JSON을 만들며, 짧은 지연 값에는 브라우저의 100ms 규칙을 적용한다.
+
+```python
+import json
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageSequence
+
+src = Path(sys.argv[1])
+out = Path(f"{src.stem}-frames")
+out.mkdir(exist_ok=True)
+
+frames, durations = [], []
+with Image.open(src) as im:
+    for i, frame in enumerate(ImageSequence.Iterator(im), start=1):
+        rgba = frame.convert("RGBA")  # Pillow가 disposal 처리를 이미 끝낸 상태
+        rgba.save(out / f"{src.stem}-frame-{i:03d}.png")
+        frames.append(rgba)
+        raw_ms = frame.info.get("duration", 0)  # Pillow는 밀리초로 알려 준다(1/100초 값 x 10)
+        durations.append(100 if raw_ms <= 10 else raw_ms)  # 브라우저 재생 시간에 맞춘다
+
+# 한 줄짜리 스프라이트 시트와 프레임 데이터
+w, h = frames[0].size
+sheet = Image.new("RGBA", (w * len(frames), h), (0, 0, 0, 0))
+for i, f in enumerate(frames):
+    sheet.paste(f, (i * w, 0))
+sheet.save(f"{src.stem}-sprite.png")
+
+meta = {
+    "image": f"{src.stem}-sprite.png",
+    "frameWidth": w,
+    "frameHeight": h,
+    "frames": [{"frame": i + 1, "x": i * w, "y": 0, "duration": d} for i, d in enumerate(durations)],
+}
+Path(f"{src.stem}-sprite.json").write_text(json.dumps(meta, indent=2))
+print(f"{len(frames)} frames, {sum(durations)} ms total")
+```
+
+`python split_gif.py loader.gif`로 실행한다. 스피너 파일에서는 `5 frames, 950 ms total`이 출력된다.
+
+### JavaScript: 디코딩 없이 프레임 타이밍과 disposal 읽기
+
+이 Node.js 스크립트는 블록 구조를 따라가며 각 프레임에 저장된 정보를 출력한다. 픽셀 데이터를 전혀 압축 해제하지 않으므로 큰 파일에서도 바로 결과가 나온다. 앞에서 본 덤프도 이 스크립트로 만들었다.
+
+```js
+// gif-info.mjs — 픽셀을 디코딩하지 않고 프레임, 지연 시간, disposal 방식을 나열한다
+import { readFileSync } from 'node:fs';
+
+const bytes = readFileSync(process.argv[2]);
+const u16 = (p) => bytes[p] | (bytes[p + 1] << 8);
+
+const version = bytes.toString('latin1', 0, 6);
+if (version !== 'GIF87a' && version !== 'GIF89a') throw new Error('not a GIF');
+
+const width = u16(6), height = u16(8), packed = bytes[10];
+let p = 13;
+if (packed & 0x80) p += 3 * (1 << ((packed & 7) + 1)); // 전역 색상 테이블 건너뛰기
+
+// 데이터 서브블록 체인을 따라가며 이어 붙인 데이터와 다음 오프셋을 돌려준다.
+function subBlocks(p) {
+  const parts = [];
+  while (bytes[p] !== 0) { parts.push(bytes.subarray(p + 1, p + 1 + bytes[p])); p += 1 + bytes[p]; }
+  return { data: Buffer.concat(parts), next: p + 1 };
+}
+
+const frames = [];
+let gce = null, loop = null;
+while (p < bytes.length && bytes[p] !== 0x3b) {
+  if (bytes[p] === 0x21) { // 확장 블록
+    const label = bytes[p + 1];
+    const { data, next } = subBlocks(p + 2);
+    if (label === 0xf9) gce = { disposal: (data[0] >> 2) & 7, delayCs: data[1] | (data[2] << 8) };
+    if (label === 0xff && data.toString('latin1', 0, 11) === 'NETSCAPE2.0') loop = data[12] | (data[13] << 8);
+    p = next;
+  } else if (bytes[p] === 0x2c) { // Image Descriptor
+    const fp = bytes[p + 9];
+    frames.push({ x: u16(p + 1), y: u16(p + 3), w: u16(p + 5), h: u16(p + 7), ...(gce ?? { disposal: 0, delayCs: 0 }) });
+    p += 10;
+    if (fp & 0x80) p += 3 * (1 << ((fp & 7) + 1)); // 로컬 색상 테이블
+    p = subBlocks(p + 1).next;                     // LZW 최소 코드 크기와 이미지 데이터 건너뛰기
+    gce = null;
+  } else break;
+}
+
+const playMs = (cs) => (cs <= 1 ? 100 : cs * 10); // 브라우저가 실제로 기다리는 시간
+console.log(`${version} ${width}x${height}, ${frames.length} frames, loop: ${loop === null ? 'play once' : loop === 0 ? 'forever' : `repeat ${loop}x`}`);
+frames.forEach((f, i) =>
+  console.log(`#${i + 1} rect ${f.w}x${f.h}@${f.x},${f.y} disposal ${f.disposal} delay ${f.delayCs}cs -> ${playMs(f.delayCs)} ms`));
+```
+
+`node gif-info.mjs loader.gif`로 실행한다. 이 스크립트는 형식이 올바른 파일을 전제로 하며, GIF 프레임 추출기의 파서는 중간에 끝난 파일도 처리한다.
+
+내보낸 스프라이트 시트를 브라우저에서 재생하려면 셀을 한 칸씩 그리면서 프레임마다 지정된 duration만큼 기다리면 된다.
+
+```js
+// <script type="module">: loader-sprite.json을 읽어 loader-sprite.png를 재생한다
+const meta = await (await fetch('/sprites/loader-sprite.json')).json();
+const sheet = new Image();
+sheet.src = `/sprites/${meta.image}`;
+await sheet.decode();
+
+const canvas = document.querySelector('#loader');
+canvas.width = meta.frameWidth;
+canvas.height = meta.frameHeight;
+const ctx = canvas.getContext('2d');
+
+let i = 0;
+let next = 0;
+function tick(now) {
+  if (now >= next) {
+    const f = meta.frames[i];
+    ctx.clearRect(0, 0, f.w, f.h);
+    ctx.drawImage(sheet, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    next = now + f.duration;
+    i = (i + 1) % meta.frames.length;
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+```
+
+고정 프레임 레이트 루프로 돌리면 스피너의 50ms 프레임과 500ms 프레임이 같은 길이로 뭉개진다. 프레임마다 `duration`을 읽어야 디자이너가 정한 타이밍이 살아난다.
+
+### Bash: ffmpeg로 프레임과 스프라이트 시트 만들기
+
+```bash
+# GIF 프레임마다 PNG 한 장씩, 합성된 상태로, 중복·누락 없이
+ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png
+
+# 프레임 수를 센 다음 한 줄짜리 스프라이트 시트로 타일링
+N=$(ffprobe -v error -count_frames -select_streams v:0 \
+  -show_entries stream=nb_read_frames -of csv=p=0 input.gif)
+ffmpeg -i input.gif -fps_mode passthrough -vf "tile=${N}x1" -frames:v 1 sprite.png
+```
+
+첫 번째 명령어는 파일이 크기 한도를 넘었을 때 GIF 프레임 추출기가 보여 주는 명령어와 같다. `-fps_mode passthrough`를 빼면 함정 항목에서 설명한 대로 5프레임 스피너가 19개 파일로 나온다. ffmpeg는 시트용 프레임 타이밍을 기록하지 않으므로, 타이밍이 필요하다면 위의 JavaScript 스크립트와 함께 쓰자.
+
+## 다른 GIF 분할 도구와 비교
+
+셋 다 쓰임새가 다를 뿐, 각자의 작업에서는 좋은 선택이다.
+
+| 도구 | 실행 위치 | 입력 | 프레임 출력 | 스프라이트 시트 | 프레임 타이밍 내보내기 |
+|---|---|---|---|---|---|
+| ZeroTool GIF 프레임 추출기 | 브라우저 탭, 파일은 로컬에 남음 | GIF, 디코딩 픽셀 5,000만 개·프레임 1,000개까지 | PNG, JPG, ZIP | PNG + 프레임별 duration이 담긴 JSON | 지원(JSON에 포함) |
+| ezgif.com GIF splitter | ezgif 서버에 업로드 | GIF, WebP, APNG, AVIF, JXL, MNG 등, 최대 200MB | GIF, PNG, WebP, JPG, BMP, JXL, AVIF, ZIP | 별도의 "GIF to sprite sheet" 페이지 | GIF 메이커가 수정하지 않은 ZIP에서 프레임 duration을 복원 |
+| ffmpeg | 로컬 명령줄 | 대부분의 이미지·동영상 형식, 자체 크기 제한 없음 | ffmpeg가 쓸 수 있는 모든 형식 | `tile` 필터 | ffprobe로 원시 지연 값 확인 |
+
+ezgif의 분할 페이지에는 "Upload!" 버튼이 있고, 최대 200MB까지 받으며, "All uploaded files are automatically deleted 1 hour after upload."(업로드된 모든 파일은 1시간 뒤 자동 삭제된다)라고 안내한다. GIF 외에도 훨씬 많은 애니메이션 형식을 받고, 분할한 프레임을 곧바로 ezgif의 GIF 메이커로 넘겨 편집할 수 있다.
+
+상황별로 고르면 다음과 같다.
+
+- **ezgif**: 입력이 WebP나 APNG일 때, 또는 애니메이션을 편집해 다시 조립하고 싶을 때.
+- **ffmpeg**: 가장 큰 파일을 다뤄야 할 때, 스크립트나 빌드 파이프라인에 넣을 때. `-fps_mode passthrough`를 잊지 말고, 타이밍이 중요하다면 100ms 규칙은 직접 적용하자.
+- **GIF 프레임 추출기**: 그 사이의 경우. 업로드하고 싶지 않은 GIF를 눈으로 보며 프레임을 고르고, 게임 엔진이나 canvas 루프에 바로 넣을 타이밍 데이터가 담긴 스프라이트 시트를 설치 없이 얻고 싶을 때.
+
+GIF 프레임 추출기는 GIF를 분해하는 일만 한다. 애니메이션 편집, 자르기, 재인코딩은 이 도구가 다루는 범위가 아니며, ezgif와 ffmpeg가 모두 이를 지원한다.
+
+## 관련 도구와 참고 자료
+
+내보낸 프레임과 함께 쓰기 좋은 ZeroTool 도구:
+
+- [WebP 변환기](/ko/tools/webp-converter/): 내보낸 PNG 프레임을 한꺼번에 WebP로 변환한다.
+- [이미지 압축기](/ko/tools/image-compressor/): 프레임과 스프라이트 시트의 용량이나 크기를 줄인다.
+- [이미지 모자이크](/ko/tools/pixelate-image/): 공유하기 전에 프레임 속 얼굴, 이메일, 키를 가린다.
+- [이미지 Base64 변환기](/ko/tools/image-to-base64/): 작은 스프라이트 시트를 CSS용 data URI로 바꾼다.
+
+이 가이드에서 참고한 1차 자료:
+
+- [GIF89a Specification (W3C 미러)](https://www.w3.org/Graphics/GIF/spec-gif89a.txt): 블록 구조, Graphic Control Extension, disposal 방식, 인터레이스, LZW, 지연된 clear 코드
+- [Chromium `deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc): 짧은 지연 값에 대한 100ms 규칙
+- [Firefox `FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h): Gecko의 같은 규칙
+- [Chromium `image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/image-decoders/image_decoder.cc): disposal 2를 투명으로 지우는 처리
+- [Wuffs `decode_gif.wuffs`](https://github.com/google/wuffs/blob/main/std/gif/decode_gif.wuffs): NETSCAPE2.0 반복 횟수의 의미
+- [Gifsicle 매뉴얼](https://www.lcdf.org/gifsicle/man.html): `--explode`, `--unoptimize`, 반복 횟수의 의미
+- [FFmpeg 문서: `-fps_mode`](https://ffmpeg.org/ffmpeg.html): passthrough, cfr, vfr, auto
+- [MDN: ImageDecoder](https://developer.mozilla.org/en-US/docs/Web/API/ImageDecoder): WebCodecs 이미지 디코딩 API
+- [canvas-size 테스트 결과](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results): 브라우저별 최대 canvas 크기

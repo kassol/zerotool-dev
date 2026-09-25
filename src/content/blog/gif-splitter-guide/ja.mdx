@@ -1,0 +1,391 @@
+---
+title: "GIF 分解の仕組みと実践：コマを PNG 保存してスプライトシートと JSON を作る"
+description: "GIF アニメをコマ単位で PNG・JPG に分割保存し、フレーム時間付き JSON とスプライトシートを作る方法を解説。破棄方法・ディレイ・ループ回数の仕様と、ffmpeg や Pillow でコマ数や表示時間がずれる原因もまとめます。"
+pubDate: 2026-09-25
+lang: "ja"
+tags: ["gif", "image", "sprite-sheet", "animation", "developer-tools"]
+ogImage: /og/blog-gif-splitter-guide.png
+---
+
+デザイナーから 64 × 64 のローディングスピナー `loader.gif` が届き、「ゲームの新ビルドに組み込んでほしい」と頼まれたとします。エンジン側が求めるのはスプライトシートと、フレームごとの表示時間のリストです。手元のツールでとりあえずコマを書き出せば済む、と考えるのが普通でしょう。
+
+ところが 1 回目の書き出しでは PNG が 5 枚出てきたものの、うち 4 枚はほぼ空っぽで、26 × 16 の色の帯が残っているだけでした。2 回目は ffmpeg をデフォルト設定で使ったところ、5 フレームのアニメーションなのに PNG が 19 枚、しかも同じ絵が重複しています。どちらもそのままではスプライトシートに使えません。
+
+原因はどちらも、GIF がアニメーションを保存する方式にあります。GIF の 1 フレームは多くの場合「画面の一部だけを描き換える差分パッチ」と、「次のパッチを描く前にこの領域をどう処理するか」というルールの組です。フレーム間の待ち時間もフレームレートではなく、フレームごとに個別の数値として記録されています。GIF を正しく分解するには、ブラウザと同じ手順でこのルールを再生し、元のタイミングを保ったまま取り出す必要があります。
+
+[GIF を分解する →](/ja/tools/gif-splitter/)
+
+## GIF をコマに分解したくなる場面
+
+| 状況 | 必要なもの | 選ぶ出力 |
+|---|---|---|
+| リアクション GIF や画面録画から、スライド・ドキュメント・バグ報告に使う一瞬だけ欲しい | 劣化のない静止画 1 枚 | 単一フレームの PNG ダウンロード |
+| Phaser・PixiJS・Godot や canvas ループで動かすローダーやキャラクター | シートとフレーム時間 | スプライトシート PNG + JSON |
+| LP に置いた重い GIF を CSS アニメーションに置き換えたい | `steps()` 用の 1 行シート | 列数 = フレーム数のスプライトシート |
+| 1 フレームだけ何かが跳ねる UI アニメーションを調べたい | 全フレームを順番どおり、原寸で | PNG フレームの ZIP |
+| 長い GIF から絵コンテやコンタクトシートを作りたい | N フレームおきのコマ | 間引き指定で範囲選択し、ZIP かスプライトシート |
+| 透過を扱えない CMS やメールに載せたい | 指定した背景色で塗りつぶした画像 | 背景色付きの JPG |
+
+PNG なら GIF の透過もピクセルもそのまま保てます。JPG を選ぶ意味があるのは、書き出し先が PNG を受け付けない場合だけです。
+
+### 日本の制作現場でよくある 2 つのケース
+
+**LINE アニメーションスタンプの素材づくり。** 手元に GIF アニメの素材があっても、LINE Creators Market のアニメーションスタンプは APNG 形式で提出するため、GIF をそのまま使うことはできません。まず GIF をコマごとの PNG 連番に分解し、不要なコマを間引いてから APNG 作成ツールで組み直す、という流れになります。このとき、差分パッチのまま書き出したコマを使うと、スタンプの一部が欠けた状態で組み上がってしまいます。合成済みのフルフレームで書き出すこと、そして JSON の `duration` を APNG 側のフレーム時間の目安にすることがポイントです。コマ数・再生時間・ループ回数・画像サイズの上限は、LINE Creators Market の制作ガイドラインで確認してください。
+
+**Qiita や Zenn の記事に載せたスクショ GIF からコマを抜き出す。** 操作手順を画面録画した GIF は記事内では便利ですが、OGP 用のサムネイルや「このタイミングで表示が崩れる」と示す図には静止画が欲しくなります。動画から切り出すつもりで GIF 画像を分割すると、前述の差分パッチ問題で背景が抜けたコマが出てきがちです。必要なコマだけを選んで PNG で保存すれば、画面に表示されていたとおりの 1 枚が手に入ります。
+
+## GIF ファイルの中身
+
+GIF ファイルはブロックの並びでできています。CompuServe が公開した [GIF89a 仕様書](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)（文書の日付は 1990 年 7 月 31 日）には 2 つのバージョンが載っています。1987 年 5 月の「87a」と、1989 年 7 月の「89a」です。アニメーションは 89a の機能に依存しますが、ブラウザやデコーダーはどちらも読み込めます。
+
+アニメーション GIF のブロック構成は次のとおりです。
+
+```text
+Header               "GIF89a"
+Logical Screen       canvas width, height, global color table flag
+Global Color Table   up to 256 RGB entries
+Application Ext.     NETSCAPE2.0 loop count (optional)
+Graphic Control Ext. delay, disposal, transparent index   ┐
+Image Descriptor     left, top, width, height, flags       │ repeated
+Local Color Table    optional                              │ per frame
+Image Data           LZW-compressed color indices          ┘
+Trailer              0x3B
+```
+
+GIF の各ピクセルは、最大 256 エントリのカラーテーブルを指すインデックスです。テーブルのサイズは `3 × 2^(N+1)` バイトで、N は 3 ビットのフィールドなので、最大でも 768 バイトに収まります。フレームは独自のローカルカラーテーブルを持つこともでき、その場合はそのフレームに限ってグローバルカラーテーブルの代わりに使われます。
+
+アニメーションを小さく保つ仕掛けは Image Descriptor にあります。left・top・width・height の 4 値で、論理スクリーン（キャンバス）内のどこにフレームを置くかを決めます。フレームがキャンバス全体を覆う必要はなく、多くのエンコーダーは 2 フレーム目以降、変化した矩形だけを書き込みます。
+
+### LZW 画像データ
+
+各フレームのカラーインデックスは、仕様書の Appendix F に記載された可変長コードの LZW アルゴリズムで圧縮されています。データの先頭 1 バイトは LZW 最小コードサイズで、そこから先は次のルールに従います。
+
+- **Clear コード**は `2^(code size)`。コードテーブルをリセットするコードで、データ中のどこに現れてもかまいません。
+- **End of Information コード**は Clear + 1 で、そのフレームの終わりを示します。
+- 新しいテーブルエントリは Clear + 2 から始まります。
+- コード長は code size + 1 ビットから始まり、テーブルがその時点のビット幅に収まらなくなるたびに 1 ビットずつ伸びます。上限は **12 ビット**（コード値の最大は 4095）です。
+
+圧縮済みのバイト列は、先頭に長さバイトを持つ最大 255 バイトのサブブロックに分けて格納され、長さ 0 のブロックで終わります。この構造のおかげで、パーサーは一切展開せずにファイル全体をたどってフレーム数を数えられます。
+
+自作デコーダーがつまずきやすい点もあります。仕様書の表紙部分には**遅延クリアコード**（deferred clear code）の説明があります。テーブルが満杯になっても、エンコーダーは Clear コードを送らずに 12 ビットのコードを出し続けてよく、デコーダーは Clear コードが来るまでエントリの追加を止めなければなりません。同じ注記には、当時の多くのデコーダーがこれに対応していなかったとも書かれています。自作する場合は、必ずこのケースをテストしてください。
+
+インターレースされたフレームは、行を 4 パスに分けて格納します。0 行目から 8 行おき、4 行目から 8 行おき、2 行目から 4 行おき、最後に 1 行目から 2 行おきです。デコーダーはこれを元の行順に並べ直す必要があります。
+
+### Graphic Control Extension
+
+表示時間と透過の情報は Graphic Control Extension（ラベル `0xF9`）にあり、ファイル内で直後に来る画像に適用されます。4 バイトのデータの内訳は次のとおりです。
+
+| フィールド | サイズ | 意味 |
+|---|---|---|
+| Disposal method（破棄方法） | 3 ビット | 次のフレームの前に、このフレームの領域をどう処理するか |
+| User input flag | 1 ビット | ユーザー入力を待ってから先へ進むか |
+| Transparent color flag | 1 ビット | 透過インデックスが指定されているか |
+| Delay time | 16 ビット | フレームを描いた後に待つ時間（1/100 秒単位） |
+| Transparent color index | 8 ビット | このインデックスのピクセルはキャンバスを変更しない |
+
+差分パッチが成り立つのは、この透過インデックスがあるからです。透過インデックスのピクセルはキャンバス上の既存の内容をそのまま残すので、エンコーダーは「ほぼ全面が変化なし、動いた数ピクセルだけ色あり」という矩形を書けます。
+
+### 破棄方法と、フレームを合成しなければならない理由
+
+破棄方法（Disposal Method）は、フレームの表示時間が終わってから次のフレームを描くまでに、デコーダーがそのフレームをどう扱うかを指定します。
+
+| 値 | 仕様書での名称 | 次のフレームの描画起点 |
+|---|---|---|
+| 0 | No disposal specified | その時点のキャンバス |
+| 1 | Do not dispose | このフレームを含むその時点のキャンバス |
+| 2 | Restore to background color | このフレームの矩形をクリアした状態 |
+| 3 | Restore to previous | このフレームを描く前のキャンバス |
+| 4–7 | To be defined | 未定義 |
+
+値 2 について、仕様書は「restore to background color（背景色に戻す）」と書いています。しかしブラウザは実際には矩形を透明にクリアします。Chrome の画像デコーダーのソースにも、はっきりこう書かれています。"We want to clear the previous frame to transparent, without affecting pixels in the image outside of the frame."（フレーム外のピクセルには触れずに、前のフレームを透明にクリアしたい）
+
+冒頭のスピナーの書き出しが失敗したのはこのためです。ファイルに小さな構造ダンプ（後半で紹介する JavaScript の例）をかけると、次の出力が得られます。
+
+```text
+GIF89a 64x64, 5 frames, loop: forever
+#1 rect 64x64@0,0 disposal 0 delay 10cs -> 100 ms
+#2 rect 26x16@0,20 disposal 0 delay 20cs -> 200 ms
+#3 rect 26x16@10,20 disposal 0 delay 5cs -> 50 ms
+#4 rect 26x16@20,20 disposal 0 delay 50cs -> 500 ms
+#5 rect 26x16@30,20 disposal 0 delay 0cs -> 100 ms
+```
+
+キャンバス全体を覆っているのは 1 フレーム目だけです。2〜5 フレーム目は、位置をずらして置かれた 26 × 16 のパッチにすぎません。格納された画像を 1 枚ずつそのまま保存するツールだと、冒頭のような色の帯が出てきます。見たままの絵を得るには、デコーダーがキャンバスを 1 枚保持し、前のフレームの破棄方法を適用してから次のパッチを重ね描き（透過インデックスのピクセルは飛ばす）し、その結果をコピーします。このコピーこそ、スプライトシートに入れたいフレームです。
+
+コストが高いのは破棄方法 3 です。該当フレームの前にキャンバスのスナップショットを保存しておき、後で復元しなければなりません。仕様書自身も「sparingly（控えめに）」使うよう勧めています。
+
+### ディレイは 1/100 秒単位、そして「100 ms ルール」
+
+ディレイは 1/100 秒を単位とする符号なし 16 ビット整数です。したがって GIF で表せる最小の刻みは 10 ms、最長は 655.35 秒です。ディレイ 5 のフレームは 50 ms 表示されます。
+
+ディレイ 0 と 1 は特別扱いされます。主要ブラウザエンジン 3 つは、いずれもこれを 100 ms として再生します。
+
+- **Chromium**（`deferred_image_decoder.cc`）："We follow Firefox's behavior and use a duration of 100 ms for any frames that specify a duration of `<= 10 ms`."（Firefox の挙動に合わせ、10 ms 以下を指定したフレームは 100 ms とする）
+- **Firefox**（`image/FrameTimeout.h`）：0〜10 ms の生のタイムアウト値を 100 ms に正規化します。理由は「broken tools generate these values when they actually want a 'default' value」（壊れたツールが、本当は「デフォルト値」のつもりでこの値を出力するため）です。
+- **WebKit**（`ImageDecoderCG.cpp`）：同じルールで、コメントも Chromium と同じです。
+
+ディレイ 2（20 ms）以上は記録どおりに再生されます。上のダンプの 5 フレーム目は 0 cs と記録されていますが、再生時間は 100 ms です。ffmpeg と Pillow はどちらも生の値を返すので、その値を信じたスクリプトはこのフレームをブラウザより 10 倍速く流してしまいます。
+
+### NETSCAPE2.0 のループ回数
+
+ループは GIF89a 仕様には含まれていません。8 バイトの識別子 `NETSCAPE` と 3 バイトの認証コード `2.0` を持つ Application Extension（ラベル `0xFF`）に由来します。そのサブブロックに 16 ビットのループ回数が入っています。
+
+この回数は「初回再生の後に何回繰り返すか」を意味します。Chrome が Skia 経由で使っている Google の Wuffs GIF デコーダーは、ソースにこう記しています。"A loop count of N, in the wire format, actually means 'repeat N times after the first play', if N is positive. A zero N means to loop forever. Playing the frames exactly once is denoted by the *absence* of this NETSCAPE2.0 application extension."（N が正なら初回再生後に N 回繰り返す。0 は無限ループ。ちょうど 1 回だけ再生する場合は、この拡張自体を*入れない*ことで表す）。ループ回数 2 なら、A・B・C・D の 4 フレームは ABCDABCDABCD と再生されます。gifsicle のマニュアルもエンコーダー側から同じルールを示しており、`--loopcount=1` を指定すると各フレームが 2 回ずつ表示されます。
+
+古いファイルには、同じレイアウトで識別子 `ANIMEXTS1.0` を使うものもあります。ループ回数はどのフレームのピクセルにも影響しませんが、コードでアニメーションを組み直すときには必要です。3 回再生して止まるスプライトループを作るなら、この数値が要ります。
+
+## GIF 分解ツールがファイルを処理する流れ
+
+[GIF 分解ツール](/ja/tools/gif-splitter/)は、素の JavaScript で書いた独自のパーサーと LZW デコーダーで GIF をデコードします。ブラウザの `<img>` のデコーダーは、破棄方法も生のディレイも外部に公開しません。WebCodecs の `ImageDecoder` API はデコード済みフレームと繰り返し回数を返しますが、フレームごとの破棄方法は得られず、MDN の互換性データでは Safari の対応が Technology Preview のみとなっています。
+
+1 ファイルごとの処理手順は次のとおりです。
+
+1. **ヘッダーを確認する。** 先頭 6 バイトは `GIF87a` か `GIF89a` でなければなりません。それ以外はエラーとなり、PNG・JPG・WebP ファイルには [WebP 変換器](/ja/tools/webp-converter/)を案内します。
+2. **構造を走査する。** パーサーがブロックを順にたどり、キャンバスサイズ、カラーテーブル、各 Graphic Control Extension、各 Image Descriptor、ループ回数を読み取ります。圧縮データは展開せずに集めておきます。
+3. **上限を確認する。** デコード済みフレームは、キャンバス全体の RGBA（1 ピクセル 4 バイト）としてメモリに保持されます。受け付けるのはデコード後の総ピクセル数（幅 × 高さ × フレーム数）で最大 5,000 万（約 200 MB）、フレーム数 1,000 まで、1 フレームあたり 16,777,216 ピクセルまでで、どの辺も 16,384 px 以下です。480 × 270 で 385 フレームの GIF なら収まります。上限を超えるファイルはデコード開始前に拒否され、後述の Bash の例と同じ ffmpeg コマンドが表示されます。
+4. **デコードして合成する。** ページの応答性を保ちプログレスバーを進めるため、フレームは約 24 ms ずつの短い区切りでデコードします。各フレームは前述の合成ループを通ります。破棄方法 2 は透明にクリア、3 はスナップショットを復元、4–7 はキャンバスをそのまま残します。インターレースの行は元の順序に並べ直し、キャンバスからはみ出したフレーム矩形は切り詰めます。
+5. **グリッドに表示する。** 情報バーには、キャンバスサイズ、フレーム数、総再生時間、初回再生後の繰り返し回数、ファイルサイズが並びます。各サムネイルにはフレーム番号と、100 ms ルールを適用した再生時間が表示されます。
+
+破損したファイルでも処理は止まりません。フレームの途中でデータが途切れた場合は、途切れる前にデコードできたピクセルをすべて残し、残りの部分には下にあるキャンバスを表示したうえで、ファイルが途中で終わっている旨をステータス行に出します。Image Descriptor の途中で切れたフレームは破棄します。
+
+### 書き出しオプション
+
+- **単一フレーム**：各サムネイル下のダウンロードアイコンで 1 コマだけ保存します。
+- **ZIP**：選択中のフレームをまとめて 1 つの ZIP にします。フレームは圧縮済みの PNG か JPG なので、ZIP では再圧縮せずに格納します。ファイル名は `loader-frame-001.png`、`loader-frame-002.png` のように、少なくとも 3 桁にゼロ埋めされます。
+- **PNG または JPG**：PNG は透過を保持します。JPG は品質を 50〜100（デフォルト 92）で指定でき、透過部分の背景色（デフォルトは白）も選べます。
+- **選択**：初期状態では全フレームが選択されています。サムネイルをクリックすると 1 コマずつ選択を切り替えられます。「フレーム 1 〜 48、間隔 4」のように入力して「この条件で選択」を押せば、範囲指定や N フレームおきの間引きもできます。
+- **スプライトシート**：選択したフレームを左から右、上から下へグリッドに並べます。列数と、ピクセル単位の間隔（間隔部分は透明）を指定できます。シート全体も 16,777,216 ピクセル、1 辺 16,384 px の上限に収まる必要があります。PNG と、次の JSON がセットでダウンロードされます。
+
+```json
+{
+  "image": "loader-sprite.png",
+  "width": 320,
+  "height": 64,
+  "frameWidth": 64,
+  "frameHeight": 64,
+  "columns": 5,
+  "spacing": 0,
+  "frames": [
+    { "frame": 1, "x": 0, "y": 0, "w": 64, "h": 64, "duration": 100 },
+    { "frame": 2, "x": 64, "y": 0, "w": 64, "h": 64, "duration": 200 },
+    { "frame": 3, "x": 128, "y": 0, "w": 64, "h": 64, "duration": 50 },
+    { "frame": 4, "x": 192, "y": 0, "w": 64, "h": 64, "duration": 500 },
+    { "frame": 5, "x": 256, "y": 0, "w": 64, "h": 64, "duration": 100 }
+  ]
+}
+```
+
+`frame` は元のフレーム番号なので、番号の飛びを見ればどのコマを外したかがわかります。`duration` の単位はミリ秒で、ブラウザでの再生時間を表します。
+
+### 「アップロードしない」の具体的な意味
+
+ファイルは File API を通じてディスクからページに読み込まれ、タブ内の JavaScript でデコードされます。PNG・JPG へのエンコードには canvas の `toBlob()` メソッドを使い、ZIP とスプライトシートもメモリ上で組み立てます。ファイルやフレームを載せたネットワークリクエストは一切発生しません。保存するのは書き出し設定（形式、JPG 品質、背景色、列数、間隔）だけで、保存先は local storage です。サイト内の他のツールと同様、Google Analytics に利用イベントを送信しますが、中身はツール名と「zip」「sprite」といったアクション名だけです。ファイル名やファイルの内容は含まれません。
+
+## つまずきやすいポイント
+
+### 書き出したコマが欠けている、または帯状の断片しか写っていない
+
+格納されたパッチをそのまま保存しており、合成していないのが原因です。破棄方法を再生するツールを使うか、自分で合成してください（後述の Python の例は Pillow で合成しています）。エンコーダーがどう最適化したかを調べたいときなど、格納されたままのフレームが必要なら、`gifsicle --explode` がフレームごとに 1 つの GIF を書き出します。パッチをフルフレームに戻すのは、別オプションの `--unoptimize` です。GIF 分解ツールはあえてフルフレームだけを書き出す設計にしています。
+
+### ffmpeg で GIF のフレーム数より多いファイルが出てくる
+
+デフォルト設定の ffmpeg は、連番画像の出力に固定フレームレートを選び、それに合わせてフレームを複製したり落としたりします。5 フレームのスピナーでは PNG が 19 枚になりました。`-fps_mode passthrough` を付けると、デコードした各フレームを自身のタイムスタンプのまま通すので、フレームと画像がちょうど 1 対 1 になります。`-fps_mode` は FFmpeg 5.1 で追加されたオプションです。それより古いビルドでは `-vsync passthrough` で同じ効果が得られます。
+
+### 変換後にフレームの表示時間がおかしい
+
+ディレイ 0 や 1 はブラウザでは 100 ms で再生されますが、ffmpeg と Pillow は記録値をそのまま返します。その数値でアニメーションを組み直すと、該当フレームが一瞬で流れてしまいます。100 ms ルールを自分で適用する（後述の例はすべて適用済み）か、ルール適用済みの GIF 分解ツールの JSON から duration を取ってください。
+
+### JPG にすると透過部分が黒や白になる
+
+JPG にはアルファチャンネルがないため、透過ピクセルは何らかの色で埋めるしかありません。GIF 分解ツールは指定した背景色で埋めますが、他のツールは色を勝手に決めます。フレームを他のコンテンツの上に重ねる用途なら PNG を使ってください。
+
+### ZIP が元の GIF よりずっと大きい
+
+書き出した各フレームはキャンバス全体を覆いますが、GIF 側は 1 つのパレットを共有する小さなパッチしか持っていないことがあります。GIF がパッチに頼っているほど、元ファイルに対する ZIP のサイズ比は大きくなります。サイズを抑えるには、間引き指定で書き出すコマ数を減らすか、[画像圧縮ツール](/ja/tools/image-compressor/)にかけるか、[WebP 変換器](/ja/tools/webp-converter/)で WebP に変換してください。
+
+### スプライトシートがスマートフォンには大きすぎる
+
+[canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) プロジェクトの計測では、Mobile Safari 9 以降で使える canvas の最大面積は 4,096 × 4,096（16,777,216 ピクセル）でした。上限を超えた canvas は使えないため、それより大きな canvas で作ったシートは空で出てくることがあります。GIF 分解ツールはこの面積を超えるシートや、1 辺が 16,384 px を超えるシートの作成を拒否し、フレーム数を減らすか列数を変えるよう促します。
+
+### 大きな GIF はデコード上限に引っかかる
+
+1920 × 1080 で 60 フレームの画面録画は、デコード後に約 1 億 2,400 万ピクセルとなり、5,000 万の上限を大きく超えます。スクロール・選択・書き出しのたびに再デコードせずに済むよう、フレームは非圧縮で保持しており、そのメモリがスマートフォンにも収まる必要があるためです。このサイズのファイルは、ローカルで ffmpeg を使ってください。
+
+## コード例
+
+### Python：Pillow で合成済みフレームとスプライトシートを作る
+
+Pillow 9.0 以降では、GIF の後続フレームにシークすると合成済みの RGB または RGBA 画像が得られます。つまり `ImageSequence` から取り出す各フレームは最初から完成した絵です。次のスクリプトは全フレームを PNG で保存し、1 行のスプライトシートと JSON を書き出します。短いディレイにはブラウザの 100 ms ルールを適用しています。
+
+```python
+import json
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageSequence
+
+src = Path(sys.argv[1])
+out = Path(f"{src.stem}-frames")
+out.mkdir(exist_ok=True)
+
+frames, durations = [], []
+with Image.open(src) as im:
+    for i, frame in enumerate(ImageSequence.Iterator(im), start=1):
+        rgba = frame.convert("RGBA")  # 破棄方法は Pillow が適用済み
+        rgba.save(out / f"{src.stem}-frame-{i:03d}.png")
+        frames.append(rgba)
+        raw_ms = frame.info.get("duration", 0)  # Pillow の値はミリ秒（1/100 秒 x 10）
+        durations.append(100 if raw_ms <= 10 else raw_ms)  # ブラウザの再生に合わせる
+
+# 1 行のスプライトシートとフレーム情報
+w, h = frames[0].size
+sheet = Image.new("RGBA", (w * len(frames), h), (0, 0, 0, 0))
+for i, f in enumerate(frames):
+    sheet.paste(f, (i * w, 0))
+sheet.save(f"{src.stem}-sprite.png")
+
+meta = {
+    "image": f"{src.stem}-sprite.png",
+    "frameWidth": w,
+    "frameHeight": h,
+    "frames": [{"frame": i + 1, "x": i * w, "y": 0, "duration": d} for i, d in enumerate(durations)],
+}
+Path(f"{src.stem}-sprite.json").write_text(json.dumps(meta, indent=2))
+print(f"{len(frames)} frames, {sum(durations)} ms total")
+```
+
+`python split_gif.py loader.gif` で実行します。スピナーの場合は `5 frames, 950 ms total` と出力されます。
+
+### JavaScript：デコードせずにフレーム時間と破棄方法を読む
+
+この Node.js スクリプトはブロック構造をたどり、各フレームに格納された情報を表示します。ピクセルデータを一切展開しないので、大きなファイルでも一瞬で終わります。先ほどのダンプはこのスクリプトの出力です。
+
+```js
+// gif-info.mjs — ピクセルをデコードせずに、フレーム・ディレイ・破棄方法を一覧表示する
+import { readFileSync } from 'node:fs';
+
+const bytes = readFileSync(process.argv[2]);
+const u16 = (p) => bytes[p] | (bytes[p + 1] << 8);
+
+const version = bytes.toString('latin1', 0, 6);
+if (version !== 'GIF87a' && version !== 'GIF89a') throw new Error('not a GIF');
+
+const width = u16(6), height = u16(8), packed = bytes[10];
+let p = 13;
+if (packed & 0x80) p += 3 * (1 << ((packed & 7) + 1)); // グローバルカラーテーブルを読み飛ばす
+
+// データサブブロックの連なりをたどり、連結したデータと次のオフセットを返す
+function subBlocks(p) {
+  const parts = [];
+  while (bytes[p] !== 0) { parts.push(bytes.subarray(p + 1, p + 1 + bytes[p])); p += 1 + bytes[p]; }
+  return { data: Buffer.concat(parts), next: p + 1 };
+}
+
+const frames = [];
+let gce = null, loop = null;
+while (p < bytes.length && bytes[p] !== 0x3b) {
+  if (bytes[p] === 0x21) { // 拡張ブロック
+    const label = bytes[p + 1];
+    const { data, next } = subBlocks(p + 2);
+    if (label === 0xf9) gce = { disposal: (data[0] >> 2) & 7, delayCs: data[1] | (data[2] << 8) };
+    if (label === 0xff && data.toString('latin1', 0, 11) === 'NETSCAPE2.0') loop = data[12] | (data[13] << 8);
+    p = next;
+  } else if (bytes[p] === 0x2c) { // Image Descriptor
+    const fp = bytes[p + 9];
+    frames.push({ x: u16(p + 1), y: u16(p + 3), w: u16(p + 5), h: u16(p + 7), ...(gce ?? { disposal: 0, delayCs: 0 }) });
+    p += 10;
+    if (fp & 0x80) p += 3 * (1 << ((fp & 7) + 1)); // ローカルカラーテーブル
+    p = subBlocks(p + 1).next;                     // LZW 最小コードサイズと画像データを読み飛ばす
+    gce = null;
+  } else break;
+}
+
+const playMs = (cs) => (cs <= 1 ? 100 : cs * 10); // ブラウザが実際に待つ時間
+console.log(`${version} ${width}x${height}, ${frames.length} frames, loop: ${loop === null ? 'play once' : loop === 0 ? 'forever' : `repeat ${loop}x`}`);
+frames.forEach((f, i) =>
+  console.log(`#${i + 1} rect ${f.w}x${f.h}@${f.x},${f.y} disposal ${f.disposal} delay ${f.delayCs}cs -> ${playMs(f.delayCs)} ms`));
+```
+
+`node gif-info.mjs loader.gif` で実行します。このスクリプトは正しい形式のファイルを前提にしています。GIF 分解ツールのパーサーは、途中で終わっているファイルにも対応しています。
+
+書き出したスプライトシートをブラウザで再生するには、セルを 1 つずつ描き、フレームごとの duration だけ待ちます。
+
+```js
+// <script type="module"> 内で、loader-sprite.json を使って loader-sprite.png を再生する
+const meta = await (await fetch('/sprites/loader-sprite.json')).json();
+const sheet = new Image();
+sheet.src = `/sprites/${meta.image}`;
+await sheet.decode();
+
+const canvas = document.querySelector('#loader');
+canvas.width = meta.frameWidth;
+canvas.height = meta.frameHeight;
+const ctx = canvas.getContext('2d');
+
+let i = 0;
+let next = 0;
+function tick(now) {
+  if (now >= next) {
+    const f = meta.frames[i];
+    ctx.clearRect(0, 0, f.w, f.h);
+    ctx.drawImage(sheet, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    next = now + f.duration;
+    i = (i + 1) % meta.frames.length;
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+```
+
+固定フレームレートのループで回すと、スピナーの 50 ms のコマも 500 ms のコマも同じ長さに均されてしまいます。`duration` をフレームごとに読めば、デザイナーが設定したタイミングがそのまま保たれます。
+
+### Bash：ffmpeg でコマとスプライトシートを作る
+
+```bash
+# GIF の各フレームを合成済みの PNG 1 枚ずつに書き出す（重複・欠落なし）
+ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png
+
+# フレーム数を数えてから、1 行のスプライトシートに並べる
+N=$(ffprobe -v error -count_frames -select_streams v:0 \
+  -show_entries stream=nb_read_frames -of csv=p=0 input.gif)
+ffmpeg -i input.gif -fps_mode passthrough -vf "tile=${N}x1" -frames:v 1 sprite.png
+```
+
+1 つ目のコマンドは、ファイルがサイズ上限を超えたときに GIF 分解ツールが表示するものと同じです。`-fps_mode passthrough` を付けないと、「つまずきやすいポイント」で触れたとおり 5 フレームのスピナーが 19 ファイルになります。ffmpeg はシート用のフレーム時間を書き出さないので、必要なら前述の JavaScript スクリプトと組み合わせてください。
+
+## 他の GIF 分割ツールとの比較
+
+どのツールも、それぞれ別の用途では有力な選択肢です。
+
+| ツール | 実行場所 | 入力 | フレーム出力 | スプライトシート | フレーム時間の書き出し |
+|---|---|---|---|---|---|
+| ZeroTool GIF 分解ツール | ブラウザのタブ内（ファイルはローカルのまま） | GIF（デコード後 5,000 万ピクセル・1,000 フレームまで） | PNG、JPG、ZIP | PNG + フレームごとの duration 付き JSON | あり（JSON 内） |
+| ezgif.com の GIF splitter | ezgif のサーバーへアップロード | GIF、WebP、APNG、AVIF、JXL、MNG など（200 MB まで） | GIF、PNG、WebP、JPG、BMP、JXL、AVIF、ZIP | 別ページの「GIF to sprite sheet」 | GIF maker に未加工の ZIP を戻すとフレーム時間を復元 |
+| ffmpeg | ローカルのコマンドライン | ほとんどの画像・動画形式（ツール自体のサイズ上限なし） | ffmpeg が書き出せる任意の形式 | `tile` フィルター | ffprobe で生のディレイ値 |
+
+用途別に選ぶなら、次のように整理できます。
+
+- **入力が WebP や APNG、または分解後に編集して組み直したい → ezgif。** splitter のページには「Upload!」ボタンがあり、200 MB までのファイルを受け付け、"All uploaded files are automatically deleted 1 hour after upload."（アップロードされたファイルは 1 時間後に自動削除）と明記しています。GIF 以外のアニメーション形式にも幅広く対応し、分解したフレームをそのまま ezgif の GIF maker に戻して編集できます。
+- **巨大なファイル、スクリプトやビルドパイプラインへの組み込み → ffmpeg。** `-fps_mode passthrough` を忘れないこと、表示時間が重要なら 100 ms ルールを自分で適用することの 2 点に注意してください。
+- **アップロードしたくない GIF を、コマを目で見て選びながら分解し、ゲームエンジンや canvas ループ向けにフレーム時間付きのスプライトシートを作りたい → GIF 分解ツール。** インストールも不要です。担当するのは GIF の分解だけで、アニメーションの編集・トリミング・再エンコードは対象外です。それらは ezgif と ffmpeg のどちらでもできます。
+
+## 関連ツールと参考資料
+
+書き出したフレームと組み合わせやすい ZeroTool のツール：
+
+- [WebP 変換器](/ja/tools/webp-converter/)：書き出した PNG フレームを WebP に一括変換します。
+- [画像圧縮ツール](/ja/tools/image-compressor/)：フレームやスプライトシートを圧縮・リサイズします。
+- [画像モザイク加工](/ja/tools/pixelate-image/)：共有前に、フレーム内の顔やメールアドレス、キーを隠します。
+- [画像 Base64 変換器](/ja/tools/image-to-base64/)：小さなスプライトシートを CSS 用の data URI にします。
+
+本記事で参照した一次資料：
+
+- [GIF89a Specification（W3C ミラー）](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)：ブロック構成、Graphic Control Extension、破棄方法、インターレース、LZW、遅延クリアコード
+- [Chromium `deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc)：短いディレイに対する 100 ms ルール
+- [Firefox `FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h)：Gecko における同じルール
+- [Chromium `image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/image-decoders/image_decoder.cc)：破棄方法 2 を透明でクリアする処理
+- [Wuffs `decode_gif.wuffs`](https://github.com/google/wuffs/blob/main/std/gif/decode_gif.wuffs)：NETSCAPE2.0 のループ回数の意味
+- [Gifsicle マニュアル](https://www.lcdf.org/gifsicle/man.html)：`--explode`、`--unoptimize` とループ回数の意味
+- [FFmpeg ドキュメント：`-fps_mode`](https://ffmpeg.org/ffmpeg.html)：passthrough、cfr、vfr、auto
+- [MDN: ImageDecoder](https://developer.mozilla.org/en-US/docs/Web/API/ImageDecoder)：WebCodecs の画像デコード API（英語版）
+- [canvas-size のテスト結果](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results)：ブラウザ別の最大 canvas サイズ

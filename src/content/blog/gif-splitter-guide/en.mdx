@@ -1,0 +1,385 @@
+---
+title: "GIF to PNG Frames: Split a GIF and Build a Sprite Sheet with JSON"
+description: "Split a GIF into PNG or JPG frames, build a sprite sheet with JSON, and learn how disposal, frame delays and loop counts decide what each frame looks like."
+pubDate: 2026-09-25
+lang: "en"
+tags: ["gif", "image", "sprite-sheet", "animation", "developer-tools"]
+ogImage: /og/blog-gif-splitter-guide.png
+---
+
+The design team hands over `loader.gif`, a 64 × 64 spinner, and asks for it in the new game build. The engine wants a sprite sheet and a list of frame timings. The quick route is to export the frames with whatever is at hand.
+
+The first attempt gives five PNGs, and four of them are mostly empty: a 26 × 16 strip of color and nothing else. The second attempt uses ffmpeg with default settings and gives 19 PNGs for a 5-frame animation, with the same pictures repeated. Neither result can go into a sprite sheet as-is.
+
+Both failures come from how GIF stores animation. A GIF frame is usually a patch plus a rule that says what happens to it before the next patch, and the delay between frames is a per-frame number, not a frame rate. To split a GIF correctly, a tool has to replay those rules the way a browser does and keep the original timing.
+
+[Split a GIF →](/tools/gif-splitter/)
+
+## When you need a GIF split into frames
+
+| Situation | What you need | Output to choose |
+|---|---|---|
+| A reaction GIF or screen recording, one moment needed for a slide, a doc or a bug report | One lossless still | Single-frame PNG download |
+| An animated loader or character for Phaser, PixiJS, Godot or a canvas loop | A sheet plus frame timing | Sprite sheet PNG + JSON |
+| A heavy GIF on a landing page that should become CSS | A one-row sheet for `steps()` | Sprite sheet with columns = frame count |
+| A UI animation where something jumps for one frame | Every frame, in order, at full size | ZIP of PNG frames |
+| A long GIF that needs a storyboard or contact sheet | Every Nth frame | Range selection with a step, then ZIP or sprite sheet |
+| Frames that go to a CMS or an email that does not handle transparency | Flat images on a chosen background | JPG with a background color |
+
+PNG keeps GIF's transparency and every pixel exactly. JPG is only worth it when the target cannot take PNG.
+
+## What is inside a GIF file
+
+A GIF file is a sequence of blocks. The [GIF89a specification](https://www.w3.org/Graphics/GIF/spec-gif89a.txt), published by CompuServe with a document date of 31 July 1990, lists two versions: "87a" from May 1987 and "89a" from July 1989. Animation depends on 89a features, but browsers and decoders read both.
+
+The block order of an animated GIF looks like this:
+
+```text
+Header               "GIF89a"
+Logical Screen       canvas width, height, global color table flag
+Global Color Table   up to 256 RGB entries
+Application Ext.     NETSCAPE2.0 loop count (optional)
+Graphic Control Ext. delay, disposal, transparent index   ┐
+Image Descriptor     left, top, width, height, flags       │ repeated
+Local Color Table    optional                              │ per frame
+Image Data           LZW-compressed color indices          ┘
+Trailer              0x3B
+```
+
+Every pixel in a GIF is an index into a color table of at most 256 entries. The table size is `3 × 2^(N+1)` bytes, where N is a 3-bit field, so the largest table is 768 bytes. A frame can bring its own local color table, which replaces the global one for that frame only.
+
+The Image Descriptor is where animation gets compact. Its left, top, width and height place the frame inside the logical screen (the canvas). A frame does not have to cover the whole canvas, and after the first frame most encoders write only the rectangle that changed.
+
+### LZW image data
+
+The color indices of each frame are compressed with a variable-length-code LZW algorithm, described in Appendix F of the specification. The data starts with one byte, the LZW minimum code size. From there:
+
+- The **Clear code** is `2^(code size)`. It resets the code table, and it can appear anywhere in the data.
+- The **End of Information code** is Clear + 1 and ends the frame.
+- New table entries start at Clear + 2.
+- Codes start at code size + 1 bits and grow by one bit each time the table outgrows the current width, up to **12 bits** (a maximum code value of 4095).
+
+The compressed bytes are stored in sub-blocks of up to 255 bytes, each with a length byte in front, and a zero-length block ends the chain. That framing means a parser can walk the whole file and count frames without decompressing any of them.
+
+One detail catches hand-written decoders. The cover sheet of the specification describes a **deferred clear code**: when the table is full, the encoder may keep sending 12-bit codes without a Clear code, and the decoder must stop adding entries until a Clear code arrives. The same note says that a large base of decoders of the time did not handle this, which is why a hand-written decoder has to test it.
+
+Interlaced frames store rows in four passes: every 8th row from row 0, every 8th row from row 4, every 4th row from row 2, then every 2nd row from row 1. The decoder has to put the rows back in order.
+
+### The Graphic Control Extension
+
+Timing and transparency live in the Graphic Control Extension (label `0xF9`), which applies to the next image in the file. Its four data bytes hold:
+
+| Field | Size | Meaning |
+|---|---|---|
+| Disposal method | 3 bits | What happens to this frame's area before the next frame |
+| User input flag | 1 bit | Wait for user input before continuing |
+| Transparent color flag | 1 bit | Whether a transparent index is given |
+| Delay time | 16 bits | Hundredths of a second to wait after drawing the frame |
+| Transparent color index | 8 bits | Pixels with this index do not change the canvas |
+
+The transparent index is how patch frames work. A pixel with that index leaves whatever is already on the canvas, so an encoder can write a rectangle that is mostly "no change" plus the few pixels that moved.
+
+### Disposal methods, and why frames must be composited
+
+The disposal method says what the decoder does with a frame after its delay ends, before it draws the next one:
+
+| Value | Specification name | What the next frame starts from |
+|---|---|---|
+| 0 | No disposal specified | The canvas as it is |
+| 1 | Do not dispose | The canvas as it is, this frame included |
+| 2 | Restore to background color | This frame's rectangle cleared |
+| 3 | Restore to previous | The canvas as it was before this frame was drawn |
+| 4–7 | To be defined | Not specified |
+
+For value 2, the specification says "restore to background color". Browsers clear the rectangle to transparent. Chrome's image decoder states this directly in its source: "We want to clear the previous frame to transparent, without affecting pixels in the image outside of the frame."
+
+This is why the spinner export went wrong. Run a small structure dump (the JavaScript example later in this guide) over the file:
+
+```text
+GIF89a 64x64, 5 frames, loop: forever
+#1 rect 64x64@0,0 disposal 0 delay 10cs -> 100 ms
+#2 rect 26x16@0,20 disposal 0 delay 20cs -> 200 ms
+#3 rect 26x16@10,20 disposal 0 delay 5cs -> 50 ms
+#4 rect 26x16@20,20 disposal 0 delay 50cs -> 500 ms
+#5 rect 26x16@30,20 disposal 0 delay 0cs -> 100 ms
+```
+
+Only frame 1 covers the canvas. Frames 2 to 5 are 26 × 16 patches placed at different offsets. A tool that saves each stored image on its own produces the strips of color from the opening. To get what the viewer sees, the decoder keeps one canvas, applies the previous frame's disposal, draws the next patch over it (skipping transparent-index pixels), and takes a copy. That copy is the frame you want in a sprite sheet.
+
+Disposal 3 is the expensive one: the decoder must save a snapshot of the canvas before each such frame so it can restore it afterwards. The specification itself recommends using it "sparingly".
+
+### Delay: hundredths of a second, and the 100 ms rule
+
+The delay is an unsigned 16-bit count of 1/100 s, so the finest step a GIF can express is 10 ms and the longest delay is 655.35 seconds. A frame with delay 5 shows for 50 ms.
+
+Delays of 0 and 1 are a special case. All three major browser engines play them at 100 ms:
+
+- **Chromium** (`deferred_image_decoder.cc`): "We follow Firefox's behavior and use a duration of 100 ms for any frames that specify a duration of `<= 10 ms`."
+- **Firefox** (`image/FrameTimeout.h`): raw timeouts from 0 to 10 ms are normalized to 100 ms, because "broken tools generate these values when they actually want a 'default' value".
+- **WebKit** (`ImageDecoderCG.cpp`): the same rule, with the same comment as Chromium.
+
+Delays of 2 (20 ms) and above play as written. Frame 5 in the dump above says 0 cs and plays for 100 ms. ffmpeg and Pillow both report the raw value, so a script that trusts them will play that frame 10 times faster than any browser does.
+
+### The NETSCAPE2.0 loop count
+
+Looping is not part of the GIF89a specification. It comes from an Application Extension (label `0xFF`) with the 8-byte identifier `NETSCAPE` and the 3-byte authentication code `2.0`. Its sub-block holds a 16-bit loop count.
+
+The count means repeats after the first play. Google's Wuffs GIF decoder, which Chrome uses through Skia, documents it in its source: "A loop count of N, in the wire format, actually means 'repeat N times after the first play', if N is positive. A zero N means to loop forever. Playing the frames exactly once is denoted by the *absence* of this NETSCAPE2.0 application extension." A count of 2 plays four frames A, B, C, D as ABCDABCDABCD. The gifsicle manual gives the same rule from the encoder side: `--loopcount=1` shows every frame twice.
+
+Some older files use the identifier `ANIMEXTS1.0` with the same layout. The loop count does not change any frame's pixels, but it matters when you rebuild the animation in code: a sprite loop that should stop after three plays needs the number.
+
+## How the GIF Splitter handles a file
+
+The [GIF Splitter](/tools/gif-splitter/) decodes GIFs with its own parser and LZW decoder in plain JavaScript. The browser's `<img>` decoder does not expose disposal methods or raw delays. The WebCodecs `ImageDecoder` API returns decoded frames and a repetition count, but it gives no disposal method per frame, and MDN's compatibility data lists Safari support only in Technology Preview.
+
+The steps for each file:
+
+1. **Check the header.** The first six bytes must be `GIF87a` or `GIF89a`. Anything else gets an error that points PNG, JPG and WebP files to the [WebP Converter](/tools/webp-converter/).
+2. **Scan the structure.** The parser walks the blocks, reads the canvas size, color tables, each Graphic Control Extension, each Image Descriptor and the loop count, and collects the compressed data without decompressing it.
+3. **Check the budget.** Decoded frames are kept in memory as full-canvas RGBA, 4 bytes per pixel. The tool accepts at most 50 million decoded pixels (width × height × frames, about 200 MB), 1,000 frames, and 16,777,216 pixels per frame with no side above 16,384 px. A 480 × 270 GIF with 385 frames fits. A file over the limit is refused before any decoding starts, and the page shows the ffmpeg command from the Bash example below.
+4. **Decode and composite.** Frames are decoded in short slices of about 24 ms so the page stays responsive and the progress bar moves. Each frame goes through the compositing loop described above: disposal 2 clears to transparent, disposal 3 restores a snapshot, values 4–7 leave the canvas in place, interlaced rows are put back in order, and frame rectangles that extend past the canvas are clipped.
+5. **Show the grid.** The info bar lists canvas size, frame count, total duration, repeats after first play, and file size. Each thumbnail shows its frame number and its playback time, with the 100 ms rule applied.
+
+A damaged file does not stop the process. If the data ends inside a frame, every pixel decoded before the break is kept, the rest of the frame shows the canvas underneath, and the status line says the file ends early. A frame cut off inside its descriptor is dropped.
+
+### Export options
+
+- **Single frames**: the download icon under each thumbnail saves one frame.
+- **ZIP**: every selected frame in one ZIP file. Frames are already compressed PNG or JPG, so the ZIP stores them without compressing again. Files are named `loader-frame-001.png`, `loader-frame-002.png` and so on, padded to at least three digits.
+- **PNG or JPG**: PNG keeps transparency. JPG takes a quality from 50 to 100 (default 92) and a background color for transparent areas (default white).
+- **Selection**: all frames start selected. Click thumbnails to toggle them, or fill in "Frames 1 to 48 every 4" to take a range or every Nth frame.
+- **Sprite sheet**: the selected frames go into a grid, left to right and top to bottom, with a column count and a spacing in pixels (spacing stays transparent). The sheet has to fit the same 16,777,216-pixel and 16,384 px per side limit. It downloads as PNG together with this JSON:
+
+```json
+{
+  "image": "loader-sprite.png",
+  "width": 320,
+  "height": 64,
+  "frameWidth": 64,
+  "frameHeight": 64,
+  "columns": 5,
+  "spacing": 0,
+  "frames": [
+    { "frame": 1, "x": 0, "y": 0, "w": 64, "h": 64, "duration": 100 },
+    { "frame": 2, "x": 64, "y": 0, "w": 64, "h": 64, "duration": 200 },
+    { "frame": 3, "x": 128, "y": 0, "w": 64, "h": 64, "duration": 50 },
+    { "frame": 4, "x": 192, "y": 0, "w": 64, "h": 64, "duration": 500 },
+    { "frame": 5, "x": 256, "y": 0, "w": 64, "h": 64, "duration": 100 }
+  ]
+}
+```
+
+`frame` is the original frame number, so gaps show which frames you left out. `duration` is in milliseconds, in browser playback time.
+
+### What "no upload" means here
+
+The file goes from your disk into the page through the File API and is decoded by JavaScript in the tab. PNG and JPG encoding use the canvas `toBlob()` method, and the ZIP and the sprite sheet are assembled in memory. The tool makes no network request with the file or any frame. The only thing it stores is your export settings (format, JPG quality, background color, columns, spacing) in local storage. Like other tools on the site, it sends a usage event to Google Analytics that holds only the tool name and the action, such as "zip" or "sprite". File names and contents are not part of it.
+
+## Pitfalls and edge cases
+
+### Exported frames have holes or show only a strip
+
+The frames were saved as stored patches, not composited. Use a tool that replays disposal, or composite them yourself (the Python example does it through Pillow). If you need the stored frames as they are, for example to study how an encoder optimized a file, `gifsicle --explode` writes one GIF per frame; its separate `--unoptimize` option is the one that turns patches into full frames. The GIF Splitter exports full frames only, by design.
+
+### ffmpeg gives more files than the GIF has frames
+
+With default settings, ffmpeg picks a constant frame rate for the image sequence output and duplicates or drops frames to fill it. For the 5-frame spinner it wrote 19 PNGs. `-fps_mode passthrough` passes every decoded frame through with its own timestamp, so you get exactly one image per frame. `-fps_mode` was added in FFmpeg 5.1. Older builds use `-vsync passthrough` for the same effect.
+
+### Frame timings look wrong after conversion
+
+A delay of 0 or 1 plays at 100 ms in browsers, but ffmpeg and Pillow report it as written. If you rebuild the animation from their numbers, those frames flash by. Apply the rule yourself (every example below does), or take the durations from the GIF Splitter's JSON, where it is already applied.
+
+### Transparent areas turn black or white in JPG
+
+JPG has no alpha channel, so transparent pixels must become some color. The GIF Splitter fills them with the background color you choose. Other tools pick a color for you. Use PNG when the frame goes on top of other content.
+
+### The ZIP is much larger than the GIF
+
+Each exported frame covers the full canvas, while the GIF may store only small patches that share one palette. The more a GIF relies on patches, the larger the ZIP gets compared with the original. To cut the size, export fewer frames with the step selector, run the frames through the [Image Compressor](/tools/image-compressor/), or convert them with the [WebP Converter](/tools/webp-converter/).
+
+### The sprite sheet is too big for a phone
+
+The [canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) project measured the largest usable canvas area in Mobile Safari 9+ at 4,096 × 4,096 (16,777,216 pixels). A canvas above the limit is unusable, so a sheet built on a larger canvas can come out empty. The GIF Splitter refuses to build a sheet over that area, or with a side over 16,384 px, and asks for fewer frames or a different column count.
+
+### Large GIFs hit the decode budget
+
+A 1920 × 1080 screen recording with 60 frames is about 124 million decoded pixels, far over the 50 million limit. Frames are kept uncompressed so you can scroll, select and export without decoding again, and that memory has to fit on a phone. For files this size, run ffmpeg locally.
+
+## Code examples
+
+### Python: composited frames and a sprite sheet with Pillow
+
+Since Pillow 9.0, seeking to a later GIF frame gives the composited RGB or RGBA picture, so each frame from `ImageSequence` is already complete. The script saves every frame as PNG and writes a one-row sprite sheet with JSON, applying the browser's 100 ms rule to short delays.
+
+```python
+import json
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageSequence
+
+src = Path(sys.argv[1])
+out = Path(f"{src.stem}-frames")
+out.mkdir(exist_ok=True)
+
+frames, durations = [], []
+with Image.open(src) as im:
+    for i, frame in enumerate(ImageSequence.Iterator(im), start=1):
+        rgba = frame.convert("RGBA")  # Pillow has already applied the disposal methods
+        rgba.save(out / f"{src.stem}-frame-{i:03d}.png")
+        frames.append(rgba)
+        raw_ms = frame.info.get("duration", 0)  # Pillow reports milliseconds (centiseconds x 10)
+        durations.append(100 if raw_ms <= 10 else raw_ms)  # match browser playback
+
+# One-row sprite sheet plus the frame data
+w, h = frames[0].size
+sheet = Image.new("RGBA", (w * len(frames), h), (0, 0, 0, 0))
+for i, f in enumerate(frames):
+    sheet.paste(f, (i * w, 0))
+sheet.save(f"{src.stem}-sprite.png")
+
+meta = {
+    "image": f"{src.stem}-sprite.png",
+    "frameWidth": w,
+    "frameHeight": h,
+    "frames": [{"frame": i + 1, "x": i * w, "y": 0, "duration": d} for i, d in enumerate(durations)],
+}
+Path(f"{src.stem}-sprite.json").write_text(json.dumps(meta, indent=2))
+print(f"{len(frames)} frames, {sum(durations)} ms total")
+```
+
+Run it with `python split_gif.py loader.gif`. For the spinner it prints `5 frames, 950 ms total`.
+
+### JavaScript: read frame timing and disposal without decoding
+
+This Node.js script walks the block structure and prints what each frame stores. It never decompresses pixel data, so it runs instantly on large files. It produced the dump shown earlier.
+
+```js
+// gif-info.mjs — list frames, delays and disposal methods without decoding pixels
+import { readFileSync } from 'node:fs';
+
+const bytes = readFileSync(process.argv[2]);
+const u16 = (p) => bytes[p] | (bytes[p + 1] << 8);
+
+const version = bytes.toString('latin1', 0, 6);
+if (version !== 'GIF87a' && version !== 'GIF89a') throw new Error('not a GIF');
+
+const width = u16(6), height = u16(8), packed = bytes[10];
+let p = 13;
+if (packed & 0x80) p += 3 * (1 << ((packed & 7) + 1)); // skip the global color table
+
+// Walk a chain of data sub-blocks; return the concatenated data and the next offset.
+function subBlocks(p) {
+  const parts = [];
+  while (bytes[p] !== 0) { parts.push(bytes.subarray(p + 1, p + 1 + bytes[p])); p += 1 + bytes[p]; }
+  return { data: Buffer.concat(parts), next: p + 1 };
+}
+
+const frames = [];
+let gce = null, loop = null;
+while (p < bytes.length && bytes[p] !== 0x3b) {
+  if (bytes[p] === 0x21) { // extension
+    const label = bytes[p + 1];
+    const { data, next } = subBlocks(p + 2);
+    if (label === 0xf9) gce = { disposal: (data[0] >> 2) & 7, delayCs: data[1] | (data[2] << 8) };
+    if (label === 0xff && data.toString('latin1', 0, 11) === 'NETSCAPE2.0') loop = data[12] | (data[13] << 8);
+    p = next;
+  } else if (bytes[p] === 0x2c) { // image descriptor
+    const fp = bytes[p + 9];
+    frames.push({ x: u16(p + 1), y: u16(p + 3), w: u16(p + 5), h: u16(p + 7), ...(gce ?? { disposal: 0, delayCs: 0 }) });
+    p += 10;
+    if (fp & 0x80) p += 3 * (1 << ((fp & 7) + 1)); // local color table
+    p = subBlocks(p + 1).next;                     // skip LZW min code size + image data
+    gce = null;
+  } else break;
+}
+
+const playMs = (cs) => (cs <= 1 ? 100 : cs * 10); // what browsers actually wait
+console.log(`${version} ${width}x${height}, ${frames.length} frames, loop: ${loop === null ? 'play once' : loop === 0 ? 'forever' : `repeat ${loop}x`}`);
+frames.forEach((f, i) =>
+  console.log(`#${i + 1} rect ${f.w}x${f.h}@${f.x},${f.y} disposal ${f.disposal} delay ${f.delayCs}cs -> ${playMs(f.delayCs)} ms`));
+```
+
+Run it with `node gif-info.mjs loader.gif`. It assumes a well-formed file; the GIF Splitter's parser also handles files that end early.
+
+To play the exported sprite sheet in a browser, draw one cell at a time and wait for each frame's own duration:
+
+```js
+// <script type="module">: plays loader-sprite.png using loader-sprite.json
+const meta = await (await fetch('/sprites/loader-sprite.json')).json();
+const sheet = new Image();
+sheet.src = `/sprites/${meta.image}`;
+await sheet.decode();
+
+const canvas = document.querySelector('#loader');
+canvas.width = meta.frameWidth;
+canvas.height = meta.frameHeight;
+const ctx = canvas.getContext('2d');
+
+let i = 0;
+let next = 0;
+function tick(now) {
+  if (now >= next) {
+    const f = meta.frames[i];
+    ctx.clearRect(0, 0, f.w, f.h);
+    ctx.drawImage(sheet, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    next = now + f.duration;
+    i = (i + 1) % meta.frames.length;
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+```
+
+A fixed-rate loop would flatten the spinner's 50 ms and 500 ms frames to the same length. Reading `duration` per frame keeps the timing the designer set.
+
+### Bash: frames and a sprite sheet with ffmpeg
+
+```bash
+# One PNG per GIF frame, composited, with no duplicated or dropped frames
+ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png
+
+# Count the frames, then tile them into a one-row sprite sheet
+N=$(ffprobe -v error -count_frames -select_streams v:0 \
+  -show_entries stream=nb_read_frames -of csv=p=0 input.gif)
+ffmpeg -i input.gif -fps_mode passthrough -vf "tile=${N}x1" -frames:v 1 sprite.png
+```
+
+The first command is the same one the GIF Splitter shows when a file is over its size limit. Without `-fps_mode passthrough`, the 5-frame spinner comes out as 19 files, as described in the pitfalls. ffmpeg does not write frame timings for the sheet, so pair it with the JavaScript script above if you need them.
+
+## How it compares to other GIF splitters
+
+Each of these is a good choice for a different job.
+
+| Tool | Runs where | Input | Frame output | Sprite sheet | Frame timing export |
+|---|---|---|---|---|---|
+| ZeroTool GIF Splitter | Browser tab, file stays local | GIF, up to 50 million decoded pixels and 1,000 frames | PNG, JPG, ZIP | PNG + JSON with per-frame duration | Yes, in the JSON |
+| ezgif.com GIF splitter | Upload to ezgif's server | GIF, WebP, APNG, AVIF, JXL, MNG and more, up to 200 MB | GIF, PNG, WebP, JPG, BMP, JXL, AVIF, ZIP | Separate "GIF to sprite sheet" page | Its GIF maker restores frame duration from an unchanged ZIP |
+| ffmpeg | Local command line | Most image and video formats, no size limit of its own | Any format ffmpeg writes | `tile` filter | Raw delays through ffprobe |
+
+ezgif's splitter page has an "Upload!" button, accepts files up to 200 MB, and states that "All uploaded files are automatically deleted 1 hour after upload." It takes many more animated formats than GIF, and its frames can go straight back into ezgif's GIF maker for editing. Use it when the input is WebP or APNG, or when you want to edit and re-assemble the animation.
+
+ffmpeg handles the largest files and fits in scripts and build pipelines. Remember `-fps_mode passthrough`, and apply the 100 ms rule yourself if timing matters.
+
+The GIF Splitter covers the case in between: a GIF you would rather not upload, a visual pick of frames, and a sprite sheet with timing data ready for a game engine or a canvas loop, with nothing to install. It only takes GIFs apart. Editing, cropping and re-encoding an animation are out of its scope; ezgif and ffmpeg both do those.
+
+## Related tools and references
+
+Tools on ZeroTool that pair well with exported frames:
+
+- [WebP Converter](/tools/webp-converter/) converts exported PNG frames to WebP in bulk.
+- [Image Compressor](/tools/image-compressor/) shrinks or resizes frames and sprite sheets.
+- [Pixelate Image](/tools/pixelate-image/) hides a face, email or key in a frame before you share it.
+- [Image to Base64](/tools/image-to-base64/) turns a small sprite sheet into a data URI for CSS.
+
+Primary sources used in this guide:
+
+- [GIF89a Specification (W3C mirror)](https://www.w3.org/Graphics/GIF/spec-gif89a.txt): block layout, Graphic Control Extension, disposal methods, interlacing, LZW, deferred clear code
+- [Chromium `deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc): the 100 ms rule for short delays
+- [Firefox `FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h): the same rule in Gecko
+- [Chromium `image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/image-decoders/image_decoder.cc): disposal 2 cleared to transparent
+- [Wuffs `decode_gif.wuffs`](https://github.com/google/wuffs/blob/main/std/gif/decode_gif.wuffs): NETSCAPE2.0 loop count semantics
+- [Gifsicle manual](https://www.lcdf.org/gifsicle/man.html): `--explode`, `--unoptimize` and loop count semantics
+- [FFmpeg documentation: `-fps_mode`](https://ffmpeg.org/ffmpeg.html): passthrough, cfr, vfr and auto
+- [MDN: ImageDecoder](https://developer.mozilla.org/en-US/docs/Web/API/ImageDecoder): the WebCodecs image decoding API
+- [canvas-size test results](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results): maximum canvas sizes by browser
