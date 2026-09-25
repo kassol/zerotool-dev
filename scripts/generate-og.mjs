@@ -2,11 +2,11 @@
  * generate-og.mjs — Build-time OG image generator
  *
  * Read:  src/data/tools.ts, src/content/blog/**
- * Write: public/og/{slug}.png (tools) and public/og/blog-{slug}[-{lang}].png (blog posts),
- *        1200×630 each. public/og/ is a build artifact and is not tracked in git.
+ * Write: public/og/{slug}[-{lang}].png (tools) and public/og/blog-{slug}[-{lang}].png (blog posts),
+ *        1200×630 each; EN has no suffix. public/og/ is a build artifact and is not tracked in git.
  * Uses sharp (librsvg) + SVG template. Runs before `astro build` via package.json scripts.
  *
- * zh/ja/ko blog images need a CJK font (Noto Sans CJK) installed on the build host.
+ * zh/ja/ko images need a CJK font (Noto Sans CJK) installed on the build host.
  * When CI is set, the script exits 1 if fontconfig reports no ja/zh/ko font.
  *
  * Importing this module does not generate images; only direct execution runs main().
@@ -14,6 +14,7 @@
 
 import sharp from 'sharp';
 import { execFileSync } from 'node:child_process';
+import { availableParallelism } from 'node:os';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -198,26 +199,65 @@ export function wrapLines(text, { fontSize, maxWidth = TEXT_MAX_WIDTH, maxLines 
   return kept;
 }
 
+export const TOOL_LANGS = ['en', 'zh', 'ja', 'ko'];
+
 /**
- * Parse tool list from src/data/tools.ts using regex.
- * Extracts slug and English name/description for each tool.
- * Each tool occupies a single line in tools.ts.
+ * Tool OG image file name. EN keeps `{slug}.png`; other languages get `{slug}-{lang}.png`,
+ * the same suffix rule as blog images. The hyphen also keeps the URL inside the `/*-*`
+ * exclude of public/_routes.json. src/layouts/ToolLayout.astro builds the same path.
  */
-async function parseToolsFromSource() {
-  const source = await readFile(join(projectRoot, 'src', 'data', 'tools.ts'), 'utf-8');
+export function toolOgFileName(slug, lang) {
+  return lang === 'en' ? `${slug}.png` : `${slug}-${lang}.png`;
+}
+
+// A single- or double-quoted JS string literal with backslash escapes.
+const STRING_LITERAL = String.raw`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`;
+const JS_ESCAPES = { n: '\n', t: '\t', r: '\r' };
+
+function unquote(literal) {
+  return literal.slice(1, -1).replace(/\\(.)/g, (_, ch) => JS_ESCAPES[ch] ?? ch);
+}
+
+/**
+ * Parse the tool list from the source text of src/data/tools.ts.
+ * Each tool occupies a single line in tools.ts. Returns
+ * [{ slug, translations: { en: { name, description }, zh, ja, ko } }].
+ * Throws when any tool line lacks a `{lang}: { name, description }` block for one of
+ * TOOL_LANGS, and names every affected slug.
+ */
+export function parseToolsSource(source) {
   const tools = [];
+  const problems = [];
   for (const line of source.split('\n')) {
-    const slugMatch = line.match(/slug:\s*'([^']+)'/);
+    const slugMatch = line.match(/\{\s*slug:\s*'([^']+)'/);
     if (!slugMatch) continue;
     const slug = slugMatch[1];
 
-    // Extract English name and description from the `en: { name: '...', description: '...' }` block
-    const enMatch = line.match(/en:\s*\{\s*name:\s*'([^']+)',\s*description:\s*'([^']+)'/);
-    if (!enMatch) continue;
-
-    tools.push({ slug, name: enMatch[1], description: enMatch[2] });
+    const translations = {};
+    const missing = [];
+    for (const lang of TOOL_LANGS) {
+      const re = new RegExp(
+        String.raw`\b${lang}:\s*\{\s*name:\s*(${STRING_LITERAL}),\s*description:\s*(${STRING_LITERAL})\s*\}`
+      );
+      const m = line.match(re);
+      if (m) translations[lang] = { name: unquote(m[1]), description: unquote(m[2]) };
+      else missing.push(lang);
+    }
+    if (missing.length > 0) problems.push(`${slug} (${missing.join(', ')})`);
+    else tools.push({ slug, translations });
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      'cannot parse name/description in src/data/tools.ts for: ' + problems.join('; ') +
+      '. Each tool line needs `{lang}: { name: \'...\', description: \'...\' }` for ' + TOOL_LANGS.join('/') + '.'
+    );
   }
   return tools;
+}
+
+async function parseToolsFromSource() {
+  const source = await readFile(join(projectRoot, 'src', 'data', 'tools.ts'), 'utf-8');
+  return parseToolsSource(source);
 }
 
 /** Escape XML special chars so SVG stays valid. */
@@ -228,6 +268,14 @@ function esc(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// Tool image footer. zh/ja/ko wording follows tool.trustFree and hero.sub in src/i18n/*.json.
+export const TOOL_BADGE = {
+  en: 'Free · Browser-based · No Sign-up',
+  zh: '免费 · 纯浏览器端运行 · 无需注册',
+  ja: '無料 · ブラウザ完結 · 登録不要',
+  ko: '무료 · 브라우저에서 바로 실행 · 회원가입 불필요',
+};
 
 export const TITLE = { fontSize: 72, weight: 'bold', maxLines: 3, firstBaseline: 220, lineHeight: 78 };
 export const DESC = { fontSize: 32, weight: 'regular', maxLines: 3, minFirstBaseline: 370, gapAfterTitle: 72, lineHeight: 42 };
@@ -301,7 +349,7 @@ export function buildSvg(name, description, type = 'tool', lang = 'en') {
   `;
 
   // Bottom badge
-  const badgeText = isBlog ? 'Blog · ZeroTool' : 'Free · Browser-based · No Sign-up';
+  const badgeText = isBlog ? 'Blog · ZeroTool' : (TOOL_BADGE[lang] ?? TOOL_BADGE.en);
   const badge = `
     <text x="72" y="${H - 52}"
       font-family="${fontFamily}"
@@ -365,46 +413,38 @@ async function main() {
   await mkdir(outputDir, { recursive: true });
 
   const tools = await parseToolsFromSource();
-  let generated = 0;
+  // Collect every image first, then render them in parallel: each render is
+  // mostly single-threaded SVG text layout, so a serial loop leaves cores idle.
+  const jobs = [];
 
-  // Generate tool OG images
+  // Tool OG images, one per language
   for (const tool of tools) {
-    const svg = buildSvg(tool.name, tool.description);
-    const outPath = join(outputDir, `${tool.slug}.png`);
-
-    await sharp(Buffer.from(svg))
-      .png({ compressionLevel: 9, palette: false })
-      .toFile(outPath);
-
-    generated++;
-    process.stdout.write(`  [tool] ${tool.slug}.png\n`);
+    for (const lang of TOOL_LANGS) {
+      const { name, description } = tool.translations[lang];
+      jobs.push({ kind: 'tool', fileName: toolOgFileName(tool.slug, lang), svg: buildSvg(name, description, 'tool', lang) });
+    }
   }
 
-  // Generate blog OG images
+  // Blog OG images
   const blogContentDir = join(projectRoot, 'src', 'content', 'blog');
   const blogEntries = await readdir(blogContentDir, { withFileTypes: true });
 
-  async function emitBlogOg(content, ogSlug, lang = 'en') {
+  function addBlogJob(content, ogSlug, lang = 'en') {
     const titleMatch = content.match(/^title:\s*['"](.*?)['"]?\s*$/m)
       || content.match(/^title:\s*(.+?)\s*$/m);
     const descMatch = content.match(/^description:\s*['"](.*?)['"]?\s*$/m)
       || content.match(/^description:\s*(.+?)\s*$/m);
-    if (!titleMatch) return false;
+    if (!titleMatch) return;
     const name = titleMatch[1].replace(/^['"]|['"]$/g, '');
     const description = descMatch ? descMatch[1].replace(/^['"]|['"]$/g, '') : '';
-    const svg = buildSvg(name, description, 'blog', lang);
-    const outPath = join(outputDir, `blog-${ogSlug}.png`);
-    await sharp(Buffer.from(svg)).png({ compressionLevel: 9, palette: false }).toFile(outPath);
-    process.stdout.write(`  [blog] blog-${ogSlug}.png\n`);
-    return true;
+    jobs.push({ kind: 'blog', fileName: `blog-${ogSlug}.png`, svg: buildSvg(name, description, 'blog', lang) });
   }
 
   // Flat layout: src/content/blog/{slug}.mdx
   for (const entry of blogEntries) {
     if (!entry.isFile() || !/\.mdx?$/.test(entry.name)) continue;
     const content = await readFile(join(blogContentDir, entry.name), 'utf-8');
-    const slug = entry.name.replace(/\.mdx?$/, '');
-    if (await emitBlogOg(content, slug)) generated++;
+    addBlogJob(content, entry.name.replace(/\.mdx?$/, ''));
   }
 
   // Directory layout: src/content/blog/{slug}/{lang}.mdx
@@ -416,10 +456,22 @@ async function main() {
     for (const langFile of langFiles) {
       const lang = langFile.replace(/\.mdx?$/, '');
       const content = await readFile(join(subDir, langFile), 'utf-8');
-      const ogSlug = lang === 'en' ? entry.name : `${entry.name}-${lang}`;
-      if (await emitBlogOg(content, ogSlug, lang)) generated++;
+      addBlogJob(content, lang === 'en' ? entry.name : `${entry.name}-${lang}`, lang);
     }
   }
+
+  let next = 0;
+  async function worker() {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      await sharp(Buffer.from(job.svg))
+        .png({ compressionLevel: 9, palette: false })
+        .toFile(join(outputDir, job.fileName));
+      process.stdout.write(`  [${job.kind}] ${job.fileName}\n`);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(availableParallelism(), jobs.length) }, worker));
+  const generated = jobs.length;
 
   console.log(`\nOG images generated: ${generated} files → public/og/`);
 }

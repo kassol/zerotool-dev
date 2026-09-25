@@ -1,13 +1,15 @@
 // OG image generator — line wrapping and SVG regression test
 //
-// Read:  scripts/generate-og.mjs (imported; importing it does not generate images)
+// Read:  scripts/generate-og.mjs (imported; importing it does not generate images), src/data/tools.ts
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Covers: English words stay whole, CJK text wraps by estimated width, mixed CJK/Latin text,
 // line-start / line-end prohibition rules, the 3-line limit with "…", XML escaping,
 // empty description, per-language font stack and xml:lang, and the vertical layout bounds
-// (description never overlaps the title or the bottom badge).
+// (description never overlaps the title or the bottom badge). Also covers tools.ts parsing
+// for all 4 languages (escaped quotes, missing zh/ja/ko throws), tool OG file names, no slug
+// ending in -zh/-ja/-ko, and the localized tool badge.
 //
 // Run: node scripts/test-generate-og.mjs
 
@@ -17,10 +19,15 @@ import {
   layoutText,
   buildSvg,
   fontFamilyFor,
+  parseToolsSource,
+  toolOgFileName,
+  TOOL_LANGS,
+  TOOL_BADGE,
   TEXT_MAX_WIDTH,
   TITLE,
   DESC,
 } from './generate-og.mjs';
+import { readFileSync } from 'node:fs';
 
 // ---------- harness ----------
 let failures = 0;
@@ -213,6 +220,82 @@ const desc = { ...DESC, maxLines: 99 };
     check(`${lang} blog svg: xml:lang`, svg.includes(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" xml:lang="${lang}">`));
     check(`${lang} blog svg: Noto first`, svg.includes(`font-family="'Noto Sans CJK ${font}', ui-sans-serif`));
   }
+}
+
+// ---------- tools.ts parsing: 4 languages, escaped quotes ----------
+{
+  const line = String.raw`  { slug: 'eye-drop', translations: { en: { name: 'Eye Drop', description: 'Uses the browser\'s API — "native".' }, zh: { name: '吸色器', description: '使用浏览器的 \'EyeDropper\' API。' }, ja: { name: "スポイト", description: "ブラウザの \"API\" を使用。" }, ko: { name: '스포이트', description: 'C:\\path 브라우저.' } }, category: 'color', relatedSlugs: ['color-converter'] },`;
+  const source = ['export const allTools: ToolInfo[] = [', line, '];'].join('\n');
+  const tools = parseToolsSource(source);
+  equal('parse: one tool', tools.length, 1);
+  equal('parse: slug', tools[0].slug, 'eye-drop');
+  deepEqual('parse: en', tools[0].translations.en, { name: 'Eye Drop', description: 'Uses the browser\'s API — "native".' });
+  deepEqual('parse: zh', tools[0].translations.zh, { name: '吸色器', description: '使用浏览器的 \'EyeDropper\' API。' });
+  deepEqual('parse: ja (double quotes)', tools[0].translations.ja, { name: 'スポイト', description: 'ブラウザの "API" を使用。' });
+  deepEqual('parse: ko (escaped backslash)', tools[0].translations.ko, { name: '스포이트', description: 'C:\\path 브라우저.' });
+}
+
+// ---------- tools.ts parsing: missing zh/ja/ko throws and names the slug ----------
+{
+  const full = (slug) => `  { slug: '${slug}', translations: { en: { name: 'A', description: 'a' }, zh: { name: 'B', description: 'b' }, ja: { name: 'C', description: 'c' }, ko: { name: 'D', description: 'd' } }, category: 'dev' },`;
+  for (const lang of ['zh', 'ja', 'ko']) {
+    const broken = full(`no-${lang}`).replace(new RegExp(`${lang}: \\{ name: '.', description: '.' \\},? ?`), '');
+    let err = null;
+    try { parseToolsSource([full('ok-tool'), broken].join('\n')); } catch (e) { err = e; }
+    check(`parse missing ${lang}: throws`, err !== null, broken);
+    check(`parse missing ${lang}: names slug and language`, err && err.message.includes(`no-${lang} (${lang})`), err && err.message);
+    check(`parse missing ${lang}: healthy slug not named`, err && !err.message.includes('ok-tool'), err && err.message);
+  }
+  let err = null;
+  try { parseToolsSource(full('bad-desc').replace("description: 'a'", 'description: a')); } catch (e) { err = e; }
+  check('parse unquoted en: throws', err && err.message.includes('bad-desc (en)'), err && err.message);
+}
+
+// ---------- tools.ts parsing: the real registry ----------
+{
+  const source = readFileSync(new URL('../src/data/tools.ts', import.meta.url), 'utf-8');
+  const tools = parseToolsSource(source);
+  const slugLines = source.split('\n').filter(l => /\{\s*slug:\s*'/.test(l)).length;
+  equal('real tools.ts: every slug line parsed', tools.length, slugLines);
+  check('real tools.ts: non-empty', tools.length > 0);
+  for (const tool of tools) {
+    for (const lang of TOOL_LANGS) {
+      const t = tool.translations[lang];
+      check(`real ${tool.slug} ${lang}: name and description`, t.name.length > 0 && t.description.length > 0);
+      check(`real ${tool.slug} ${lang}: no stray backslash`, !/\\/.test(t.name + t.description), t.description);
+    }
+    // `{slug}-{lang}.png` must not collide with another tool's `{slug}.png`.
+    check(`real ${tool.slug}: no -zh/-ja/-ko suffix`, !/-(zh|ja|ko)$/.test(tool.slug));
+  }
+  const eyedropper = tools.find(t => t.slug === 'eyedropper-color-picker');
+  check('real eyedropper: escaped quote kept', eyedropper && eyedropper.translations.en.description.includes("browser's native EyeDropper API"));
+
+  const names = new Set();
+  for (const tool of tools) for (const lang of TOOL_LANGS) names.add(toolOgFileName(tool.slug, lang));
+  equal('real tools.ts: OG file names are unique', names.size, tools.length * TOOL_LANGS.length);
+}
+
+// ---------- Tool OG file names ----------
+{
+  equal('file name en', toolOgFileName('json-formatter', 'en'), 'json-formatter.png');
+  equal('file name zh', toolOgFileName('json-formatter', 'zh'), 'json-formatter-zh.png');
+  equal('file name ja', toolOgFileName('base64', 'ja'), 'base64-ja.png');
+  equal('file name ko', toolOgFileName('base64', 'ko'), 'base64-ko.png');
+}
+
+// ---------- Tool badge and language per tool image ----------
+{
+  const en = buildSvg('Hash', 'd', 'tool', 'en');
+  check('tool en badge', en.includes('>Free · Browser-based · No Sign-up</text>'));
+  for (const [lang, font] of [['zh', 'SC'], ['ja', 'JP'], ['ko', 'KR']]) {
+    const svg = buildSvg('哈希', '描述', 'tool', lang);
+    check(`tool ${lang} badge`, svg.includes(`>${TOOL_BADGE[lang]}</text>`), TOOL_BADGE[lang]);
+    check(`tool ${lang}: no English badge`, !svg.includes('No Sign-up'));
+    check(`tool ${lang}: xml:lang`, svg.includes(`xml:lang="${lang}"`));
+    check(`tool ${lang}: Noto first`, svg.includes(`font-family="'Noto Sans CJK ${font}', ui-sans-serif`));
+    check(`tool ${lang} badge fits`, textWidth(TOOL_BADGE[lang], 22) < 1200 - 72 - 48 - textWidth('zerotool.dev', 24) - 40);
+  }
+  check('blog badge unchanged for zh', buildSvg('标题', '描述', 'blog', 'zh').includes('>Blog · ZeroTool</text>'));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

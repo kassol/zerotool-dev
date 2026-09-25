@@ -59,7 +59,7 @@ ZeroTool（zerotool.dev）— 100 个浏览器端开发者工具的多语言静�
 | `ads.txt` | AdSense 出版商声明（IAB 标准） | 中：内容必须与 AdSense dashboard 注册一致，否则广告停投 |
 | `robots.txt` | 爬虫规则 + sitemap 指引 | 中：误 disallow 会让 Google 停止索引 |
 | `favicon.svg` | 站点图标 | 低 |
-| `og/` | 工具与博客 OG 图。构建产物，已 gitignore，由 `scripts/generate-og.mjs` 在 build 时生成 | — 不要手编辑、不要提交，也不要放手工图片；本地 `npm run generate-og` 预览 |
+| `og/` | 工具与博客 OG 图，均有 4 语言版本（工具 `{slug}.png` / `{slug}-{zh,ja,ko}.png`，博客 `blog-{dir}.png` / `blog-{dir}-{lang}.png`）。构建产物，已 gitignore，由 `scripts/generate-og.mjs` 在 build 时生成 | — 不要手编辑、不要提交，也不要放手工图片；本地 `npm run generate-og` 预览 |
 | `og-default.png` | 没有专属 OG 图时的 fallback | 低 |
 | `figlet-fonts/` | ASCII 艺术工具用的 figlet 字体 | 低 |
 | `vendor/` | 第三方静态资源（如 wasm、字体） | 中 |
@@ -168,3 +168,4 @@ CI 在 PR 与 master push 时跑 `audit → build`，PR 必须两个 job 都过�
 - 2026-09-23 — 删除 `public/AGENTS.md`（构建时复制进 `dist/`，在 `/AGENTS.md` 公网可访问），内容并入本文件「`public/` 约定」；`audit.mjs` 新增 `no_published_agents_md` 检查
 - 2026-09-23 — Partytown 改为只在加载 GA4 的页面注入：移除 `@astrojs/partytown`（它向每页注入 snippet，敏感页也会注册 service worker），改用 `@qwik.dev/partytown`，snippet 与 `forward` 配置移到 `BaseLayout`；`npm run preview` 改用 `wrangler pages dev dist`
 - 2026-09-25 — `public/og/` 移出 git（`.gitignore` + `git rm --cached`），作为构建产物由 `generate-og.mjs` 在 build 时生成；此前提交的 661 张图中 650 张在 CI build 时被重新生成覆盖，git 里的版本从未上线；另 11 张无对应工具/博客、无页面引用的旧图此前随 checkout 部署，今后不再部署。CI 与 deploy workflow 在 build 前安装 `fonts-noto-cjk`，修复 zh/ja/ko 博客 OG 图显示方框
+- 2026-09-25 — 工具 OG 图按语言生成：zh/ja/ko 工具页的 og:image 由 `ToolLayout` 指向 `/og/{slug}-{lang}.png`（此前 414 页共用英文图），`generate-og.mjs` 从 `tools.ts` 解析 4 语言 name/description 并本地化底部 badge；连字符文件名落在 `_routes.json` 的 `/*-*` 排除内
