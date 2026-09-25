@@ -94,11 +94,14 @@ const isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
 // ---------- sanitizeSheetName ----------
 {
   equal('sheet: allowed chars kept', E.sanitizeSheetName('hero_v2.atlas-1'), 'hero_v2.atlas-1');
-  equal('sheet: illegal chars replaced', E.sanitizeSheetName('my sheet/图集?'), 'my-sheet----');
+  equal('sheet: illegal chars replaced', E.sanitizeSheetName('my sheet/图集?'), 'my-sheet');
+  equal('sheet: dash runs collapsed', E.sanitizeSheetName('my sheet/ü<1>'), 'my-sheet-1');
+  equal('sheet: no ASCII letter or digit → spritesheet', E.sanitizeSheetName('아이콘'), 'spritesheet');
+  equal('sheet: dots only → spritesheet', E.sanitizeSheetName('..'), 'spritesheet');
   equal('sheet: empty → spritesheet', E.sanitizeSheetName(''), 'spritesheet');
   equal('sheet: spaces only → spritesheet', E.sanitizeSheetName('   '), 'spritesheet');
   equal('sheet: null → spritesheet', E.sanitizeSheetName(null), 'spritesheet');
-  equal('sheet: quotes replaced', E.sanitizeSheetName('a"b\'c<d>'), 'a-b-c-d-');
+  equal('sheet: quotes replaced', E.sanitizeSheetName('a"b\'c<d>'), 'a-b-c-d');
 }
 
 // ---------- cssClassName ----------
@@ -106,10 +109,12 @@ const isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
   equal('css name: extension removed', E.cssClassName('walk_01.png'), 'walk_01');
   equal('css name: camelCase to kebab', E.cssClassName('WalkLeft.png'), 'walk-left');
   equal('css name: spaces and parens', E.cssClassName('walk (2).png'), 'walk-2');
-  equal('css name: unicode collapses', E.cssClassName('图标.png'), '');
+  equal('css name: CJK letters kept', E.cssClassName('图标.png'), '图标');
+  equal('css name: Hangul kept', E.cssClassName('아이콘 홈.png'), '아이콘-홈');
+  equal('css name: symbols only → empty', E.cssClassName('@#$.png'), '');
   equal('css name: leading digit kept', E.cssClassName('01.png'), '01');
   equal('css name: only last extension removed', E.cssClassName('icon.small.png'), 'icon-small');
-  check('css name: only [a-z0-9_-]', /^[a-z0-9_-]*$/.test(E.cssClassName('Ä b@c#D.e.png')));
+  check('css name: only letters, digits, _ and -', /^[\p{L}\p{N}_-]*$/u.test(E.cssClassName('Ä b@c#D.e.png')));
 }
 
 // ---------- svgIntrinsicSize ----------
@@ -368,9 +373,9 @@ const meta = { image: 'spritesheet.png', width: 256, height: 128 };
   const dcss = E.buildCss([{ ...frames[1], name: '01.png' }], { ...meta, image: '8bit.png' });
   check('css: prefix starting with digit gets sprite-', dcss.startsWith('.sprite-8bit {') && dcss.includes('.sprite-8bit-01 {'), dcss);
   const dup = E.buildCss([
-    { ...frames[1], name: 'walk.png' }, { ...frames[1], name: 'walk.jpg' }, { ...frames[1], name: 'Walk.gif' }, { ...frames[1], name: '图.png' },
+    { ...frames[1], name: 'walk.png' }, { ...frames[1], name: 'walk.jpg' }, { ...frames[1], name: 'Walk.gif' }, { ...frames[1], name: '图.png' }, { ...frames[1], name: '@#.png' },
   ], meta);
-  check('css: colliding tokens deduplicated', ['.spritesheet-walk {', '.spritesheet-walk-2 {', '.spritesheet-walk-3 {', '.spritesheet-frame {'].every((s) => dup.includes(s)), dup);
+  check('css: colliding tokens deduplicated', ['.spritesheet-walk {', '.spritesheet-walk-2 {', '.spritesheet-walk-3 {', '.spritesheet-图 {', '.spritesheet-frame {'].every((s) => dup.includes(s)), dup);
   const selectors = css.match(/^\.[^\s{]+/gm);
   check('css: selectors are valid identifiers', selectors.every((s) => /^\.-?[_a-zA-Z][_a-zA-Z0-9-]*$/.test(s)), selectors.join(' '));
 }
