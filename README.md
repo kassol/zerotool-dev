@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 138 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 139 tools and growing.
 
 ## Tools
 
@@ -147,6 +147,7 @@
 | SQLite Viewer | [/tools/sqlite-viewer](https://zerotool.dev/tools/sqlite-viewer) |
 | Pixelate Image | [/tools/pixelate-image](https://zerotool.dev/tools/pixelate-image) |
 | GIF Splitter | [/tools/gif-splitter](https://zerotool.dev/tools/gif-splitter) |
+| Sprite Sheet Generator | [/tools/sprite-sheet-generator](https://zerotool.dev/tools/sprite-sheet-generator) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
