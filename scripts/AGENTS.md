@@ -9,7 +9,7 @@
 | 脚本 | 类型 | 用途 | 何时跑 |
 |------|------|------|--------|
 | `check-icon-coverage.mjs` | 校验 | 比对 `tools.ts` 与 `icons.ts`，缺图标即 exit 1 | `npm run build` 第 1 步 |
-| `generate-og.mjs` | 生成 | 用 sharp + figlet 为每个工具生成 OG 图，输出到 `public/og/{slug}.png` | `npm run build` 第 4 步 / `npm run generate-og` |
+| `generate-og.mjs` | 生成 | 用 sharp（librsvg 渲染 SVG 模板）为每个工具与每篇博客生成 1200×630 OG 图，输出到 `public/og/{slug}.png` 与 `public/og/blog-{slug}[-{lang}].png`（构建产物，已 gitignore）。标题与描述按估算字宽断行（拉丁单词不拆、CJK 逐字可断、基础禁则），各最多 3 行，超出末行加「…」。zh/ja/ko 博客图的 `<svg>` 带 `xml:lang`，字体栈以 `Noto Sans CJK SC/JP/KR` 开头，构建机需装 Noto CJK 字体（CI 在 build 前 `apt-get install fonts-noto-cjk`）；`CI` 环境变量为真且 `fc-list :lang=ja/zh/ko` 任一为空时 exit 1。被 import 时不生成图片 | `npm run build` 第 4 步 / `npm run generate-og` |
 | `generate-blog-redirects.mjs` | 后处理 | 扫 `src/content/blog/{baseSlug}/{zh,ja,ko}.mdx`，向 `dist/_redirects` 追加旧语言后缀 URL → 新目录 URL 的 301 | `npm run build` 第 6 步 |
 | `sync-jq-web.mjs` | 同步 | 把 jq-web 运行时从 `node_modules` 复制到 `public/jq-web/`（gitignored），供 `jq-playground` 加载 | `npm run dev` / `npm run build` 前置步骤 |
 | `sync-sql-js.mjs` | 同步 | 把 `node_modules/sql.js/dist/` 的 `sql-wasm.js` + `sql-wasm.wasm` 复制到 `public/sql-js/`（gitignored），供 `SqliteViewerTool` 选文件后懒加载 | `npm run dev` / `npm run build` 前置步骤 |
@@ -22,6 +22,7 @@
 | `test-sqlite-viewer.mjs` | 回归 | 从 `SqliteViewerTool.astro` 抽取 `engine:start/end` 真实引擎块，用 node_modules 的 sql.js 建库，覆盖文件头校验、标识符转义、表/视图/索引列举、分页 SQL、CSV 转义（NULL / BLOB hex / 引号 / 换行）、内存副本写入与 schema 变化检测，共 34 项 | 手动按需 / 修改 `SqliteViewerTool.astro` 引擎块前后 |
 | `test-pixelate-image.mjs` | 回归 | 从 `PixelateImageTool.astro` 抽取 `engine:start/end` 真实引擎块（`pixelate`/`normalizeRect`/`toImageCoords`），覆盖块平均值正确性（含不整除边缘块、alpha 加权与全透明块）、区域合成仅改区域内像素、`normalizeRect` 反向拖拽与越界裁剪、`toImageCoords` 坐标缩放映射，共 31 项 | 手动按需 / 修改 `PixelateImageTool.astro` 引擎块前后 |
 | `test-gif-splitter.mjs` | 回归 | 从 `GifSplitterTool.astro` 抽取 `engine:start/end` 真实引擎块，测试内用独立 LZW 编码器构造 GIF 夹具，覆盖 GIF87a/89a 头校验与非 GIF 拒绝、单帧、disposal 0/1/2/3 合成、透明色、隔行、局部色表、LZW 码宽增长至 12 位与 clear code / 表满不清表、截断文件与非法码容错、循环次数、延迟映射、0×0 逻辑屏幕、越界帧、解码预算、选帧范围、文件名、雪碧图布局与 JSON、CRC32 与 STORED ZIP（回读解析 + 可用时 `unzip -t`，临时文件写入 `os.tmpdir()` 并清理），共 120 项 | 手动按需 / 修改 `GifSplitterTool.astro` 引擎块前后 |
+| `test-generate-og.mjs` | 回归 | import `generate-og.mjs` 的导出函数，覆盖英文不拆词、CJK 按宽度断行、中英混排、禁则、3 行上限加「…」、标题与描述及底部 badge 不重叠、XML 转义、空描述、各语言字体栈与 `xml:lang` | 手动按需 / 修改 `generate-og.mjs` 断行或模板前后 |
 | `deploy.sh` | 部署 | 本地构建 + `wrangler pages deploy`（需 `PROJECT_NAME` env） | 手工部署兜底 |
 | `devto-article-draft.md` | 内容草稿 | 非脚本，是发到 dev.to 的草稿 | — |
 
@@ -72,3 +73,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-09-23 — 加入 `test-sqlite-viewer.mjs`（sqlite-viewer 引擎块回归测试，真实 sql.js 执行）
 - 2026-09-23 — 加入 `test-pixelate-image.mjs`（pixelate-image 像素化/坐标映射引擎块回归测试）
 - 2026-09-25 — 加入 `test-gif-splitter.mjs`（gif-splitter GIF 解析 / LZW / 帧合成 / ZIP 引擎块回归测试）
+- 2026-09-25 — `generate-og.mjs` 改为按估算字宽断行（CJK 可断、基础禁则、3 行上限加「…」、描述随标题行数下移）；zh/ja/ko 博客图指定 Noto Sans CJK 字体与 `xml:lang`；CI 下缺 CJK 字体即 exit 1；import 时不执行生成。加入 `test-generate-og.mjs`
