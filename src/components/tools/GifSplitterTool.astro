@@ -286,18 +286,26 @@
           (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61;
       }
 
-      // Concatenate a chain of data sub-blocks starting at `p`. Tolerates a
-      // file that ends mid-chain: returns what is available with complete=false.
-      function readSubBlocks(bytes, p) {
-        var len = bytes.length, q = p, total = 0, complete = false;
+      // Walk a chain of data sub-blocks starting at `p` without copying.
+      // Tolerates a file that ends mid-chain: `size` counts the data bytes
+      // that are present and complete=false. `end` is just past the chain.
+      function scanSubBlocks(bytes, p) {
+        var len = bytes.length, q = p, size = 0;
         while (q < len) {
           var n = bytes[q];
-          if (n === 0) { complete = true; break; }
-          total += Math.min(n, len - q - 1);
+          if (n === 0) return { size: size, end: q + 1, complete: true };
+          size += Math.min(n, len - q - 1);
           q += 1 + n;
         }
-        var data = new Uint8Array(total), o = 0;
-        q = p;
+        return { size: size, end: len, complete: false };
+      }
+
+      // Concatenate a chain of data sub-blocks starting at `p` (used for the
+      // small extension blocks; image data is read in place by lzwRun).
+      function readSubBlocks(bytes, p) {
+        var len = bytes.length, q = p;
+        var scan = scanSubBlocks(bytes, p);
+        var data = new Uint8Array(scan.size), o = 0;
         while (q < len) {
           var n2 = bytes[q];
           if (n2 === 0) { q++; break; }
@@ -306,15 +314,17 @@
           o += take;
           q += 1 + n2;
         }
-        return { data: data, end: Math.min(q, len), complete: complete };
+        return { data: data, end: scan.end, complete: scan.complete };
       }
 
-      // Parse the GIF block structure without decoding pixels (LZW data is
-      // only collected), so size and frame count are known before any heavy work.
+      // Parse the GIF block structure without decoding pixels, so size and
+      // frame count are known before any heavy work. Image data is not
+      // copied: each frame records where its sub-block chain starts in
+      // gif.bytes (`dataStart`) and how many data bytes it holds (`dataSize`).
       function parseGif(bytes) {
         if (!isGif(bytes)) throw new Error('NOT_GIF');
         var len = bytes.length;
-        var gif = { width: 0, height: 0, globalColorTable: null, loopCount: null, frames: [], truncated: false };
+        var gif = { width: 0, height: 0, globalColorTable: null, loopCount: null, frames: [], truncated: false, bytes: bytes };
         if (len < 13) { gif.truncated = true; return gif; }
         gif.width = bytes[6] | (bytes[7] << 8);
         gif.height = bytes[8] | (bytes[9] << 8);
@@ -352,7 +362,7 @@
               top: bytes[p + 2] | (bytes[p + 3] << 8),
               width: bytes[p + 4] | (bytes[p + 5] << 8),
               height: bytes[p + 6] | (bytes[p + 7] << 8),
-              interlaced: false, localColorTable: null, minCodeSize: 0, data: null,
+              interlaced: false, localColorTable: null, minCodeSize: 0, dataStart: 0, dataSize: 0,
               disposal: gce ? gce.disposal : 0,
               transparentIndex: gce ? gce.transparentIndex : -1,
               delayCs: gce ? gce.delayCs : 0,
@@ -369,14 +379,15 @@
             }
             if (p >= len) { gif.truncated = true; break; }
             frame.minCodeSize = bytes[p++];
-            var img = readSubBlocks(bytes, p);
-            p = img.end;
-            frame.data = img.data;
+            var img = scanSubBlocks(bytes, p);
+            frame.dataStart = p;
+            frame.dataSize = img.size;
             frame.complete = img.complete;
+            p = img.end;
             gce = null;
             if (!img.complete) {
               gif.truncated = true;
-              if (img.data.length > 0) gif.frames.push(frame);
+              if (img.size > 0) gif.frames.push(frame);
               break;
             }
             gif.frames.push(frame);
@@ -398,24 +409,58 @@
         return gif;
       }
 
-      // Variable-width GIF LZW decoder. Codes grow up to 12 bits; once the
-      // table is full it keeps reading 12-bit codes without adding entries
-      // (deferred clear). Stops at the end code, on an invalid code, or when
-      // data runs out; `count` is the number of pixel indices produced.
-      function lzwDecode(minCodeSize, data, pixelCount) {
-        var out = new Uint8Array(pixelCount);
-        if (minCodeSize < 1 || minCodeSize > 8) return { indices: out, count: 0 };
+      // Decoding can pause inside a frame so one large frame does not block
+      // the main thread. The hot loops (LZW, blit) are plain functions that
+      // work on a bounded range and keep their progress in an explicit state
+      // object; only the frame sequencing in compositeSteps is a generator.
+
+      // Variable-width GIF LZW decoder state. The code stream is read in
+      // place from the sub-block chain that starts at bytes[start] (a length
+      // byte). Codes grow up to 12 bits; once the table is full it keeps
+      // reading 12-bit codes without adding entries (deferred clear).
+      // Decoding stops at the end code, on an invalid code, at the chain's
+      // zero-length terminator, or where the file ends (a sub-block cut short
+      // gives the bytes that are present). `indices` holds the output,
+      // `count` the number of pixel indices produced so far; `done` is set
+      // when nothing more will be produced.
+      function createLzw(minCodeSize, bytes, start, pixelCount) {
+        var valid = minCodeSize >= 1 && minCodeSize <= 8;
+        var clear = 1 << minCodeSize;
+        var lzw = {
+          minCodeSize: minCodeSize, bytes: bytes, pixelCount: pixelCount,
+          indices: new Uint8Array(pixelCount), count: 0, done: !valid || pixelCount === 0,
+          codeSize: minCodeSize + 1, avail: clear + 2, oldCode: -1, first: 0,
+          datum: 0, bits: 0, pos: start, left: 0, top: 0,
+          prefix: new Uint16Array(4096), suffix: new Uint8Array(4096), stack: new Uint8Array(4097),
+        };
+        if (valid) for (var c = 0; c < clear; c++) lzw.suffix[c] = c;
+        return lzw;
+      }
+
+      // Decode until `limit` indices exist in total or the stream ends. Can
+      // stop in the middle of a code's output; the rest waits on the stack.
+      function lzwRun(lzw, limit) {
+        if (lzw.done) return;
+        var pixelCount = lzw.pixelCount;
+        if (limit > pixelCount) limit = pixelCount;
+        var minCodeSize = lzw.minCodeSize, bytes = lzw.bytes, out = lzw.indices;
         var clear = 1 << minCodeSize, eoi = clear + 1;
-        var codeSize = minCodeSize + 1, codeMask = (1 << codeSize) - 1;
-        var avail = clear + 2, oldCode = -1, first = 0;
-        var prefix = new Uint16Array(4096), suffix = new Uint8Array(4096), stack = new Uint8Array(4097);
-        for (var c = 0; c < clear; c++) suffix[c] = c;
-        var datum = 0, bits = 0, i = 0, op = 0, dlen = data.length;
-        while (op < pixelCount) {
+        var codeSize = lzw.codeSize, codeMask = (1 << codeSize) - 1;
+        var avail = lzw.avail, oldCode = lzw.oldCode, first = lzw.first;
+        var prefix = lzw.prefix, suffix = lzw.suffix, stack = lzw.stack;
+        var datum = lzw.datum, bits = lzw.bits, i = lzw.pos, left = lzw.left, op = lzw.count, top = lzw.top;
+        var blen = bytes.length, ended = false;
+        while (top > 0 && op < limit) out[op++] = stack[--top];
+        decode: while (op < limit) {
           while (bits < codeSize) {
-            if (i >= dlen) return { indices: out, count: op };
-            datum |= data[i++] << bits;
+            if (i >= blen) { ended = true; break decode; }
+            if (left === 0) {
+              left = bytes[i++];
+              if (left === 0 || i >= blen) { ended = true; break decode; }
+            }
+            datum |= bytes[i++] << bits;
             bits += 8;
+            left--;
           }
           var code = datum & codeMask;
           datum >>>= codeSize;
@@ -427,16 +472,16 @@
             oldCode = -1;
             continue;
           }
-          if (code === eoi) break;
+          if (code === eoi) { ended = true; break; }
           if (oldCode === -1) {
-            if (code >= clear) break;
+            if (code >= clear) { ended = true; break; }
             out[op++] = code;
             oldCode = code;
             first = code;
             continue;
           }
-          var inCode = code, top = 0;
-          if (code > avail) break;
+          var inCode = code;
+          if (code > avail) { ended = true; break; }
           if (code === avail) {
             stack[top++] = first;
             code = oldCode;
@@ -457,9 +502,11 @@
             }
           }
           oldCode = inCode;
-          while (top > 0 && op < pixelCount) out[op++] = stack[--top];
+          while (top > 0 && op < limit) out[op++] = stack[--top];
         }
-        return { indices: out, count: op };
+        lzw.codeSize = codeSize; lzw.avail = avail; lzw.oldCode = oldCode; lzw.first = first;
+        lzw.datum = datum; lzw.bits = bits; lzw.pos = i; lzw.left = left; lzw.count = op; lzw.top = top;
+        lzw.done = ended || op >= pixelCount;
       }
 
       // Row order of an interlaced image: decoded row r lands on map[r].
@@ -472,21 +519,23 @@
         return map;
       }
 
-      // Paint decoded indices onto the RGBA canvas. Transparent-index pixels
-      // and pixels past the decoded count leave the canvas untouched; indices
-      // outside the palette (or with no palette at all) paint opaque black.
-      function blitFrame(canvas, W, H, f, decoded, palette) {
+      // Paint decoded indices [from, to) onto the RGBA canvas; `to` must not
+      // exceed the decoded count and the range may start or end inside a row.
+      // `rows` is interlaceRows(f.height) for an interlaced frame, else null.
+      // Transparent-index pixels and pixels past the decoded count leave the
+      // canvas untouched; indices outside the palette (or with no palette at
+      // all) paint opaque black.
+      function blitRange(canvas, W, H, f, indices, from, to, palette, rows) {
         var fw = f.width, fh = f.height;
-        if (!fw || !fh) return;
-        var idx = decoded.indices, count = decoded.count, trans = f.transparentIndex;
+        if (!fw || !fh || from >= to) return;
+        var trans = f.transparentIndex;
         var palLen = palette ? Math.floor(palette.length / 3) : 0;
-        var rows = f.interlaced ? interlaceRows(fh) : null;
-        for (var r = 0; r < fh && r * fw < count; r++) {
+        for (var r = Math.floor(from / fw); r < fh && r * fw < to; r++) {
           var y = f.top + (rows ? rows[r] : r);
           if (y >= H) continue;
-          var rowStart = r * fw, rowEnd = Math.min(rowStart + fw, count);
-          for (var k = rowStart; k < rowEnd; k++) {
-            var ci = idx[k];
+          var rowStart = r * fw, rowEnd = Math.min(rowStart + fw, to);
+          for (var k = Math.max(rowStart, from); k < rowEnd; k++) {
+            var ci = indices[k];
             if (ci === trans) continue;
             var x = f.left + (k - rowStart);
             if (x >= W) break;
@@ -517,35 +566,55 @@
       // Composite frames one at a time, the way a browser shows them:
       // apply the previous frame's disposal (2 = clear its rect to transparent,
       // 3 = restore the canvas from before it was drawn), then draw this frame.
-      function createCompositor(gif) {
+      // Yields undefined after each `chunk` pixels of LZW or blit work, and
+      // the frame result when a frame is done.
+      function* compositeSteps(gif, chunk) {
         var W = gif.width, H = gif.height;
         var canvas = new Uint8ClampedArray(W * H * 4);
-        var index = 0, pending = null;
+        var pending = null;
+        for (var index = 0; index < gif.frames.length; index++) {
+          if (pending) {
+            if (pending.mode === 2) clearRect(canvas, W, H, pending.frame);
+            else canvas.set(pending.saved);
+            pending = null;
+          }
+          var f = gif.frames[index];
+          var saved = f.disposal === 3 ? canvas.slice() : null;
+          var lzw = createLzw(f.minCodeSize, gif.bytes, f.dataStart, f.width * f.height);
+          lzwRun(lzw, chunk);
+          while (!lzw.done) {
+            yield;
+            lzwRun(lzw, lzw.count + chunk);
+          }
+          var palette = f.localColorTable || gif.globalColorTable;
+          var rows = f.interlaced ? interlaceRows(f.height) : null;
+          for (var k = 0; k < lzw.count; k += chunk) {
+            if (k > 0) yield;
+            blitRange(canvas, W, H, f, lzw.indices, k, Math.min(lzw.count, k + chunk), palette, rows);
+          }
+          if (f.disposal === 2) pending = { mode: 2, frame: f };
+          else if (f.disposal === 3) pending = { mode: 3, saved: saved };
+          yield {
+            index: index,
+            rgba: canvas.slice(),
+            delayCs: f.delayCs,
+            durationMs: frameDurationMs(f.delayCs),
+            disposal: f.disposal,
+            complete: f.complete && lzw.count >= f.width * f.height,
+          };
+        }
+      }
+
+      // step() does about `chunk` pixels of work (no limit if chunk is not
+      // positive) and returns the finished frame, undefined if the current
+      // frame is not done yet, or null when all frames are done.
+      function createCompositor(gif, chunk) {
+        var steps = compositeSteps(gif, chunk > 0 ? chunk : Infinity);
         return {
-          width: W, height: H, total: gif.frames.length,
-          next: function () {
-            if (index >= gif.frames.length) return null;
-            if (pending) {
-              if (pending.mode === 2) clearRect(canvas, W, H, pending.frame);
-              else canvas.set(pending.saved);
-              pending = null;
-            }
-            var f = gif.frames[index];
-            var saved = f.disposal === 3 ? canvas.slice() : null;
-            var decoded = lzwDecode(f.minCodeSize, f.data, f.width * f.height);
-            blitFrame(canvas, W, H, f, decoded, f.localColorTable || gif.globalColorTable);
-            var result = {
-              index: index,
-              rgba: canvas.slice(),
-              delayCs: f.delayCs,
-              durationMs: frameDurationMs(f.delayCs),
-              disposal: f.disposal,
-              complete: f.complete && decoded.count >= f.width * f.height,
-            };
-            if (f.disposal === 2) pending = { mode: 2, frame: f };
-            else if (f.disposal === 3) pending = { mode: 3, saved: saved };
-            index++;
-            return result;
+          width: gif.width, height: gif.height, total: gif.frames.length,
+          step: function () {
+            var r = steps.next();
+            return r.done ? null : r.value;
           },
         };
       }
@@ -764,6 +833,8 @@
       var statusEl = $('gs-status');
 
       var THUMB_MAX = 120;
+      // Pixels of decode work between time checks (about 1 ms on a laptop).
+      var DECODE_CHUNK_PX = 32768;
       var prefs = { format: 'png', quality: 92, bg: '#ffffff', columns: 8, spacing: 0 };
       var frames = [];          // [{ rgba, durationMs }]
       var selected = [];        // boolean per frame
@@ -807,8 +878,20 @@
         return (n / 1024 / 1024).toFixed(2) + ' MB';
       }
 
+      // Let input and rendering run between decode slices. setTimeout(0) is
+      // clamped to 4 ms once nested. scheduler.yield is not used: in Chrome
+      // its continuations kept key events out for the whole decode.
+      var yieldPort = null, yieldQueue = [];
       function yieldToBrowser() {
-        return new Promise(function (resolve) { setTimeout(resolve, 0); });
+        return new Promise(function (resolve) {
+          if (!yieldPort) {
+            var channel = new MessageChannel();
+            channel.port1.onmessage = function () { yieldQueue.shift()(); };
+            yieldPort = channel.port2;
+          }
+          yieldQueue.push(resolve);
+          yieldPort.postMessage(null);
+        });
       }
 
       function canvasToBlob(canvas, mime, quality) {
@@ -991,14 +1074,19 @@
         progressEl.hidden = false;
         progressEl.value = 0;
         setBusy(true);
+        // Keep parsing and the first decode slice in separate tasks.
+        await yieldToBrowser();
+        if (token !== loadToken) return;
 
-        var comp = createCompositor(gif);
-        var complete = !gif.truncated, done = false;
+        var comp = createCompositor(gif, DECODE_CHUNK_PX);
+        var complete = !gif.truncated, done = false, midFrame = false;
         while (!done) {
           var sliceStart = performance.now();
           do {
-            var f = comp.next();
-            if (!f) { done = true; break; }
+            var f = comp.step();
+            if (f === null) { done = true; break; }
+            midFrame = f === undefined;
+            if (midFrame) continue;
             if (!f.complete) complete = false;
             workCtx.putImageData(new ImageData(f.rgba, W, H), 0, 0);
             frames.push({ rgba: f.rgba, durationMs: f.durationMs });
@@ -1006,7 +1094,7 @@
             addFrameCell(f.index, f, n);
           } while (performance.now() - sliceStart < 24);
           progressEl.value = frames.length / n;
-          setStatus(fmt(t.statusDecoding, { i: frames.length, n: n }), 'info');
+          setStatus(fmt(t.statusDecoding, { i: frames.length + (midFrame ? 1 : 0), n: n }), 'info');
           if (!done) {
             await yieldToBrowser();
             if (token !== loadToken) return;

@@ -13,7 +13,10 @@
 // and with a full table and no clear (deferred clear); truncated files; invalid LZW
 // codes; NETSCAPE2.0 loop count; delay-to-duration mapping; 0×0 logical screen;
 // out-of-bounds frames; decoding budget; range selection; file names; sprite layout
-// and JSON; CRC32 and the STORED ZIP writer (parsed back, plus `unzip -t` if present).
+// and JSON; CRC32 and the STORED ZIP writer (parsed back, plus `unzip -t` if present);
+// segmented decoding (chunks from 1 pixel up to past a whole frame give output equal
+// to one-shot decoding, `lzwRun` stops at its limit and resumes mid-code) and a decode
+// abandoned mid-frame leaving no shared state behind.
 //
 // The GIF fixtures are built in this file with an independent LZW encoder.
 //
@@ -38,7 +41,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
 }
 const block = source.slice(startIndex, endIndex);
 const E = new Function(block + `
-return { GS_LIMITS, isGif, parseGif, lzwDecode, interlaceRows, createCompositor, frameDurationMs,
+return { GS_LIMITS, isGif, parseGif, createLzw, lzwRun, interlaceRows, createCompositor, frameDurationMs,
   checkBudget, selectRange, baseName, padFrameNo, frameFileName, spriteLayout, spriteFits, spriteJson,
   crc32, zipStore };`)();
 
@@ -121,13 +124,13 @@ function padTable(colorTable) {
   colorTable.forEach((v, i) => { out[i] = v; });
   return out;
 }
-function subBlocks(data) {
+function subBlocks(data, size = 255, terminate = true) {
   const out = [];
-  for (let i = 0; i < data.length; i += 255) {
-    const chunk = data.slice(i, i + 255);
+  for (let i = 0; i < data.length; i += size) {
+    const chunk = data.slice(i, i + size);
     out.push(chunk.length, ...chunk);
   }
-  out.push(0);
+  if (terminate) out.push(0);
   return out;
 }
 function interlaceOrder(indices, w, h) {
@@ -175,13 +178,26 @@ function px(rgba, W, x, y) {
   const i = (y * W + x) * 4;
   return [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
 }
-function decodeAll(bytes) {
+// One-shot LZW decode of a raw code stream (wrapped in a sub-block chain).
+function lzwDecode(minCodeSize, data, pixelCount) {
+  const lzw = E.createLzw(minCodeSize, Uint8Array.from(subBlocks([...data])), 0, pixelCount);
+  E.lzwRun(lzw, Infinity);
+  return { indices: lzw.indices, count: lzw.count };
+}
+// Drain a compositor; `pauses` counts step() calls that ended inside a frame.
+function drain(comp) {
+  const frames = [];
+  let pauses = 0, f;
+  while ((f = comp.step()) !== null) {
+    if (f === undefined) pauses++;
+    else frames.push(f);
+  }
+  return { frames, pauses };
+}
+function decodeAll(bytes, chunk = 0) {
   const gif = E.parseGif(bytes);
-  const comp = E.createCompositor(gif);
-  const out = [];
-  let f;
-  while ((f = comp.next())) out.push(f);
-  return { gif, frames: out };
+  const { frames, pauses } = drain(E.createCompositor(gif, chunk));
+  return { gif, frames, pauses };
 }
 function lcg(seed) {
   let s = seed >>> 0;
@@ -363,7 +379,7 @@ function roundTrip(name, minCodeSize, count, options, seed) {
   const indices = [];
   for (let i = 0; i < count; i++) indices.push(rand() % max);
   const data = lzwEncode(minCodeSize, indices, options);
-  const res = E.lzwDecode(minCodeSize, data, count);
+  const res = lzwDecode(minCodeSize, data, count);
   equal(name + ': decoded count', res.count, count);
   let same = res.count === count;
   for (let i = 0; same && i < count; i++) if (res.indices[i] !== indices[i]) same = false;
@@ -376,7 +392,7 @@ roundTrip('LZW 4-bit, extra clear codes mid-stream', 4, 5000, { clearEvery: 97 }
 {
   // Long run of one color exercises the KwKwK case (code === next available).
   const indices = new Array(3000).fill(2);
-  const res = E.lzwDecode(2, lzwEncode(2, indices), indices.length);
+  const res = lzwDecode(2, lzwEncode(2, indices), indices.length);
   check('LZW KwKwK run decodes', res.count === 3000 && res.indices.every((v) => v === 2));
 }
 {
@@ -397,9 +413,9 @@ roundTrip('LZW 4-bit, extra clear codes mid-stream', 4, 5000, { clearEvery: 97 }
   check('256-color 80x60 GIF decodes pixel-exact', ok);
 }
 {
-  const res = E.lzwDecode(2, Uint8Array.from([0xFF, 0xFF]), 4);
+  const res = lzwDecode(2, Uint8Array.from([0xFF, 0xFF]), 4);
   check('LZW invalid first code stops without throwing', res.count === 0);
-  const res2 = E.lzwDecode(9, Uint8Array.from([0]), 4);
+  const res2 = lzwDecode(9, Uint8Array.from([0]), 4);
   equal('LZW rejects minimum code size above 8', res2.count, 0);
 }
 
@@ -444,7 +460,7 @@ roundTrip('LZW 4-bit, extra clear codes mid-stream', 4, 5000, { clearEvery: 97 }
   const w = 4, h = 4;
   const indices = new Array(w * h).fill(1);
   const data = lzwEncode(2, indices);
-  const partial = E.lzwDecode(2, data.slice(0, 2), w * h);
+  const partial = lzwDecode(2, data.slice(0, 2), w * h);
   check('partial LZW data: some but not all pixels', partial.count > 0 && partial.count < w * h, 'count ' + partial.count);
 }
 
@@ -596,6 +612,224 @@ roundTrip('LZW 4-bit, extra clear codes mid-stream', 4, 5000, { clearEvery: 97 }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// ---------- 18. segmented decoding ----------
+// Decoding with a small chunk pauses inside frames (mid-row, mid-code, at frame
+// ends). The output must match decoding with no chunk limit byte for byte.
+function frameKey(f) {
+  return JSON.stringify([f.index, f.delayCs, f.durationMs, f.disposal, f.complete]) + Buffer.from(f.rgba.buffer).toString('base64');
+}
+function sameFrames(a, b) {
+  return a.length === b.length && a.every((f, i) => frameKey(f) === frameKey(b[i]));
+}
+const PAL256 = [];
+for (let i = 0; i < 256; i++) PAL256.push(i, 255 - i, (i * 7) & 255);
+const mixedGif = (() => {
+  const rand = lcg(11);
+  const r4 = (n) => Array.from({ length: n }, () => rand() % 4);
+  const r256 = (n) => Array.from({ length: n }, () => rand());
+  return buildGif({
+    width: 7, height: 6, gct: PAL, loop: 0,
+    frames: [
+      { width: 7, height: 6, indices: r4(42), disposal: 1, delayCs: 4 },
+      { left: 2, top: 1, width: 4, height: 3, indices: r4(12), transparentIndex: 0, disposal: 2, delayCs: 4 },
+      { width: 7, height: 6, indices: r256(42), lct: PAL256, minCodeSize: 8, interlaced: true, disposal: 3 },
+      { left: 5, top: 4, width: 4, height: 4, indices: r4(16), transparentIndex: 3, disposal: 1 },
+      { width: 7, height: 6, indices: new Array(42).fill(2), disposal: 0, lzwOptions: { clearEvery: 5 } },
+      { left: 1, top: 1, width: 5, height: 5, indices: r4(25), interlaced: true, transparentIndex: 1, disposal: 3 },
+      { width: 7, height: 6, indices: r4(42), disposal: 1 },
+    ],
+  });
+})();
+const bigGif = (() => {
+  const rand = lcg(12);
+  const w = 80, h = 60;
+  const noise = Array.from({ length: w * h }, () => rand());
+  const run = Array.from({ length: w * h }, (_, i) => (i < 3000 ? 9 : rand()));
+  return buildGif({
+    width: w, height: h, gct: PAL256,
+    frames: [
+      { width: w, height: h, indices: noise, minCodeSize: 8, disposal: 1 },
+      { left: 3, top: 2, width: 70, height: 50, indices: noise.slice(0, 3500), minCodeSize: 8, lzwOptions: { clearWhenFull: false }, transparentIndex: 5, disposal: 2 },
+      { width: w, height: h, indices: run, minCodeSize: 8, interlaced: true, disposal: 1 },
+    ],
+  });
+})();
+const segmentFixtures = [
+  { name: 'mixed 7x6', bytes: mixedGif, chunks: [1, 2, 3, 5, 6, 7, 8, 11, 12, 13, 41, 42, 43, 1000] },
+  { name: 'mixed 7x6 truncated', bytes: mixedGif.slice(0, mixedGif.length - 9), chunks: [1, 4, 7, 42, 43] },
+  { name: 'big 80x60', bytes: bigGif, chunks: [1, 79, 80, 81, 3499, 3500, 3501, 4799, 4800, 4801, 32768] },
+];
+for (const fx of segmentFixtures) {
+  const ref = decodeAll(fx.bytes, 0);
+  equal('segmented ' + fx.name + ': no chunk limit never pauses', ref.pauses, 0);
+  for (const chunk of fx.chunks) {
+    const seg = decodeAll(fx.bytes, chunk);
+    check('segmented ' + fx.name + ', chunk ' + chunk + ': frames match one-shot decode', sameFrames(seg.frames, ref.frames),
+      seg.frames.length + ' vs ' + ref.frames.length + ' frames');
+    const largest = Math.max(...ref.gif.frames.map((f) => f.width * f.height));
+    if (chunk < largest) check('segmented ' + fx.name + ', chunk ' + chunk + ': pauses inside frames', seg.pauses > 0);
+  }
+}
+{
+  const ref = decodeAll(mixedGif, 0);
+  equal('segmented fixture: truncated variant flags an incomplete frame', decodeAll(mixedGif.slice(0, mixedGif.length - 9), 3).frames.some((f) => !f.complete), true);
+  equal('segmented fixture: mixed GIF decodes 7 frames', ref.frames.length, 7);
+  // Chunk 1: every step does at most one pixel of LZW or blit work, so the
+  // pause count is at least the decoded pixels minus one per frame per phase.
+  const one = decodeAll(mixedGif, 1);
+  const pixels = ref.gif.frames.reduce((sum, f) => sum + f.width * f.height, 0);
+  check('segmented chunk 1: pauses at every pixel', one.pauses >= 2 * (pixels - ref.gif.frames.length), one.pauses + ' pauses for ' + pixels + ' px');
+}
+{
+  // lzwRun with a limit produces exactly up to that limit, resuming mid-code
+  // (long runs leave output on the stack between calls).
+  const rand = lcg(13);
+  const indices = Array.from({ length: 6000 }, (_, i) => (i < 3000 ? 2 : rand() % 4));
+  const data = lzwEncode(2, indices, { clearEvery: 301 });
+  const chain = Uint8Array.from(subBlocks([...data]));
+  for (const chunk of [1, 3, 64, 4097]) {
+    const lzw = E.createLzw(2, chain, 0, indices.length);
+    let calls = 0, overshoot = false;
+    while (!lzw.done) {
+      const before = lzw.count;
+      E.lzwRun(lzw, before + chunk);
+      if (lzw.count - before > chunk || (!lzw.done && lzw.count - before !== chunk)) overshoot = true;
+      calls++;
+    }
+    check('lzwRun chunk ' + chunk + ': each call stops at its limit', !overshoot);
+    check('lzwRun chunk ' + chunk + ': resumed output matches the source', lzw.count === indices.length && indices.every((v, i) => lzw.indices[i] === v));
+    check('lzwRun chunk ' + chunk + ': call count', calls === Math.ceil(indices.length / chunk), String(calls));
+  }
+  const bad = E.createLzw(9, Uint8Array.from([1, 0, 0]), 0, 4);
+  check('createLzw with invalid code size is done at once', bad.done === true && bad.count === 0);
+  const partial = E.createLzw(2, Uint8Array.from(subBlocks([...data.slice(0, 40)])), 0, indices.length);
+  E.lzwRun(partial, 5);
+  E.lzwRun(partial, Infinity);
+  const whole = lzwDecode(2, data.slice(0, 40), indices.length);
+  check('lzwRun on truncated data: resumed count matches one-shot', partial.done && partial.count === whole.count && partial.count < indices.length);
+}
+
+// ---------- 19. abort in the middle of a frame ----------
+{
+  const gif = E.parseGif(bigGif);
+  const bytesBefore = Buffer.from(gif.bytes).toString('base64');
+  const ref = drain(E.createCompositor(E.parseGif(bigGif), 0)).frames;
+  // Step an abandoned compositor into the middle of frame 2, then drop it.
+  const abandoned = E.createCompositor(gif, 97);
+  const early = [];
+  let f;
+  while (early.length < 1) {
+    f = abandoned.step();
+    if (f) early.push(f);
+  }
+  for (let i = 0; i < 40; i++) {
+    f = abandoned.step();
+    if (f) early.push(f);
+  }
+  equal('abort: stopped mid-frame (last step paused)', f, undefined);
+  equal('abort: one frame finished before the stop', early.length, 1);
+  const fresh = drain(E.createCompositor(gif, 97)).frames;
+  check('abort: a new compositor on the same parsed GIF matches one-shot decode', sameFrames(fresh, ref));
+  check('abort: file bytes are not modified', Buffer.from(gif.bytes).toString('base64') === bytesBefore);
+  check('abort: frame returned before the stop is unchanged', frameKey(early[0]) === frameKey(ref[0]));
+  // Two decodes stepped in turn (old file still pending, new file started)
+  // do not share state.
+  const a = E.createCompositor(E.parseGif(mixedGif), 3);
+  const b = E.createCompositor(E.parseGif(bigGif), 5);
+  const outA = [], outB = [];
+  let doneA = false, doneB = false;
+  while (!doneA || !doneB) {
+    if (!doneA) { const x = a.step(); if (x === null) doneA = true; else if (x) outA.push(x); }
+    if (!doneB) { const y = b.step(); if (y === null) doneB = true; else if (y) outB.push(y); }
+  }
+  check('abort: interleaved decodes of two files stay independent (file A)', sameFrames(outA, decodeAll(mixedGif, 0).frames));
+  check('abort: interleaved decodes of two files stay independent (file B)', sameFrames(outB, ref));
+  // After the end, step() keeps returning null.
+  equal('step after the last frame returns null', a.step(), null);
+}
+
+// ---------- 20. image data read in place from the sub-block chain ----------
+{
+  const rand = lcg(21);
+  const indices = Array.from({ length: 900 }, () => rand() % 16);
+  const data = lzwEncode(4, indices);
+  const decodeChain = (chain, start = 0, chunk = Infinity) => {
+    const lzw = E.createLzw(4, Uint8Array.from(chain), start, indices.length);
+    E.lzwRun(lzw, chunk);
+    while (!lzw.done) E.lzwRun(lzw, lzw.count + chunk);
+    return lzw;
+  };
+  const matches = (lzw, n) => lzw.count === n && indices.slice(0, n).every((v, i) => lzw.indices[i] === v);
+  // Codes are 5 bits wide and cross sub-block boundaries for every size.
+  for (const size of [1, 2, 3, 7, 254, 255]) {
+    check('sub-blocks of ' + size + ' bytes: decodes all pixels', matches(decodeChain(subBlocks([...data], size)), indices.length));
+    check('sub-blocks of ' + size + ' bytes, chunk 1: decodes all pixels', matches(decodeChain(subBlocks([...data], size), 0, 1), indices.length));
+  }
+  check('chain may start at an offset inside the file', matches(decodeChain([9, 9, 9, ...subBlocks([...data], 50)], 3), indices.length));
+
+  // Zero-length terminator ends the stream: bytes after it are not read.
+  const k = 120;
+  const early = subBlocks([...data.slice(0, k)], 40);
+  const withTail = [...early, ...subBlocks([...data.slice(k)], 40)];
+  const stopped = decodeChain(withTail);
+  const reference = decodeChain(early);
+  check('terminator: stops before the data that follows it', stopped.count === reference.count && stopped.count < indices.length && matches(stopped, stopped.count),
+    stopped.count + ' vs ' + reference.count);
+  equal('terminator: read position is just past the terminator', stopped.pos, early.length);
+
+  // File ends at a sub-block length byte: what came before is decoded.
+  const complete = subBlocks([...data], 30, false);
+  const cutAtHeader = complete.slice(0, 31 * 4);
+  const atHeader = decodeChain(cutAtHeader);
+  const atHeaderRef = decodeChain(subBlocks([...data.slice(0, 30 * 4)], 255));
+  check('cut at a sub-block header: decodes the bytes before it', atHeader.done && atHeader.count === atHeaderRef.count && atHeader.count > 0 && matches(atHeader, atHeader.count));
+  // File ends inside a sub-block whose length byte promises more.
+  const cutInside = complete.slice(0, 31 * 4 + 11);
+  const inside = decodeChain(cutInside);
+  const insideRef = decodeChain(subBlocks([...data.slice(0, 30 * 4 + 10)], 255));
+  check('cut inside a sub-block: decodes the bytes present', inside.done && inside.count === insideRef.count && inside.count > atHeader.count && matches(inside, inside.count));
+  const insideSteps = decodeChain(cutInside, 0, 1);
+  check('cut inside a sub-block, chunk 1: same result', insideSteps.count === inside.count);
+  // File ends right after a length byte.
+  check('cut right after a length byte: decodes the bytes before it', decodeChain(complete.slice(0, 31 * 4 + 1)).count === atHeader.count);
+}
+{
+  // parseGif records the chain in place; frame data bytes are counted, not copied.
+  const w = 30, h = 30;
+  const rand = lcg(22);
+  const indices = Array.from({ length: w * h }, () => rand() % 4);
+  const bytes = buildGif({ width: w, height: h, gct: PAL, frames: [{ width: w, height: h, indices }, { width: w, height: h, indices, disposal: 1 }] });
+  const gif = E.parseGif(bytes);
+  const dataLen = lzwEncode(2, indices).length;
+  check('parse: image data is not copied (frames keep offsets into the file)', gif.bytes === bytes && gif.frames.every((f) => !('data' in f)));
+  equal('parse: dataSize counts data bytes of the chain', gif.frames[0].dataSize, dataLen);
+  equal('parse: dataStart points at the first length byte', bytes[gif.frames[0].dataStart], Math.min(255, dataLen));
+  // Truncation at every offset of the second frame's chain: in-place reading
+  // matches decoding the same bytes copied out into a well-formed chain.
+  const second = gif.frames[1].dataStart;
+  let ok = true, detail = '';
+  for (let cutAt = second - 1; cutAt <= bytes.length; cutAt++) {
+    const g = E.parseGif(bytes.slice(0, cutAt));
+    const f = g.frames[1];
+    if (!f) { if (cutAt > second + 1) { ok = false; detail = 'frame dropped at ' + cutAt; } continue; }
+    const copied = [];
+    for (let q = f.dataStart; q < g.bytes.length && g.bytes[q] !== 0; q += 1 + g.bytes[q]) {
+      copied.push(...g.bytes.slice(q + 1, Math.min(q + 1 + g.bytes[q], g.bytes.length)));
+    }
+    if (copied.length !== f.dataSize) { ok = false; detail = 'dataSize at ' + cutAt; break; }
+    const inPlace = E.createLzw(2, g.bytes, f.dataStart, w * h);
+    E.lzwRun(inPlace, Infinity);
+    const ref = lzwDecode(2, Uint8Array.from(copied), w * h);
+    if (inPlace.count !== ref.count || inPlace.indices.some((v, i) => v !== ref.indices[i])) { ok = false; detail = 'decode at ' + cutAt; break; }
+    const seg = decodeAll(bytes.slice(0, cutAt), 7).frames, one = decodeAll(bytes.slice(0, cutAt), 0).frames;
+    if (!sameFrames(seg, one)) { ok = false; detail = 'segmented at ' + cutAt; break; }
+    if (cutAt < bytes.length - 1 && (f.complete || !g.truncated)) { ok = false; detail = 'flags at ' + cutAt; break; }
+  }
+  check('parse: truncation at every offset of a chain reads like the copied data', ok, detail);
+  const noData = E.parseGif(bytes.slice(0, second));
+  equal('parse: file ending before any image data drops that frame', noData.frames.length, 1);
 }
 
 // ---------- summary ----------
