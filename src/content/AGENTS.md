@@ -59,7 +59,7 @@ draft: false                 # 可选；为 true 时不会进入路由生成、h
 - 跨语言一致性：每篇 EN 文章应有对应的 ZH/JA/KO 版本（至少 ZH）。`src/components/SEO.astro` 会按磁盘存在性输出 hreflang，缺哪个就少哪个
 - slug 唯一性：`base-slug` 在所有语言间共享；新增前先 grep 全目录避免冲突
 - MDX 内嵌组件：可以 `{import Component from '...'}`，但避免运行时依赖
-- 图片：放 `public/og/` 或 `public/`，文章中用绝对路径
+- 图片：放 `public/`，文章中用绝对路径。`public/og/` 是 `generate-og.mjs` 的构建产物（已 gitignore），不要放手工图片
 
 ## tools collection
 
@@ -114,3 +114,4 @@ faqItems:                # 可选，结构化 FAQ
 
 - 2026-04-26 — 初版（合并自 `src/content/blog/AGENTS.md`，迁移到此处规避 Astro collection schema 冲突）
 - 2026-04-27 — 博客结构 B-migration：平铺 `{slug}-{lang}.mdx` → 目录 `{slug}/{lang}.mdx`，对齐 tools collection 风格；`_redirects` 大幅瘦身（~2470 → ~1100 条），脱离 CF Pages 2100 限制
+- 2026-09-25 — `public/og/` 改为构建产物并移出 git，博客图片不再放该目录

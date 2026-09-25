@@ -76,7 +76,7 @@ Every new tool requires ALL of the following:
 - [ ] **Registry entry**: Append to `src/data/tools.ts` — `slug`, full 4-language `translations` (`en`/`zh`/`ja`/`ko`), `category`, optional `relatedSlugs`.
 - [ ] **Component map**: Add the import and `'{slug}': {ToolName}Tool` entry to `src/components/tools/registry.ts` — this single registry is consumed by all four `[slug].astro` routes, so you only edit it once.
 - [ ] **Icon**: Add a Lucide-style inline SVG to `src/data/icons.ts` (24×24 viewBox, `stroke="currentColor"`, stroke-width 2).
-- [ ] **OG image**: `npm run generate-og` produces `public/og/{slug}.png`.
+- [ ] **OG image**: Run `npm run generate-og` to preview `public/og/{slug}.png` locally. Do not commit the image: `public/og/` is a build artifact, and `npm run build` generates it.
 
 ### Content
 
