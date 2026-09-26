@@ -6,7 +6,8 @@
 //
 // Covers: CSS resource extraction (link order, inline <style>, non-stylesheet links ignored,
 // "<style>" text inside JSON-LD ignored, body ignored), classification (site-wide / shared
-// tool / own tool), the order rule and its failure messages, pages without own tool CSS,
+// tool / own tool), the order rule and its failure messages, no inline <style> in <head> on
+// tool pages, pages without own tool CSS,
 // a fixture dist tree end to end, and the exit code of a direct run.
 //
 // Run: node scripts/test-check-tool-css-order.mjs
@@ -58,7 +59,7 @@ const toolPages = (cssBySlug) => Object.entries(cssBySlug).flatMap(([slug, css])
 
 let r = checkOrder(toolPages({
   a: ['/shared.css', '/a.css', '/base.css'],
-  b: ['/shared.css', 'inline:.b{}', '/base.css'],
+  b: ['/shared.css', '/b.css', '/base.css'],
 }), site);
 equal('shared before own passes', r.problems, []);
 equal('pages with own CSS are counted', r.checked, 4);
@@ -71,11 +72,30 @@ equal('own before shared fails once per page', r.problems.length, 2);
 check('failure names both files', /tool CSS \/a\.css comes before shared tool CSS \/shared\.css/.test(r.problems[0]), r.problems[0]);
 
 r = checkOrder(toolPages({
-  a: ['/shared.css', '/a.css', 'inline:.ad{}', '/base.css'],
-  b: ['/shared.css', 'inline:.ad{}', '/b.css', '/base.css'],
+  a: ['/shared.css', '/a.css', '/ad.css', '/base.css'],
+  b: ['/shared.css', '/ad.css', '/b.css', '/base.css'],
 }), site);
 equal('a second shared resource after own CSS fails', r.problems.length, 2);
-check('inline resource is named by size', /<style> \(5 chars\)/.test(r.problems[0]), r.problems[0]);
+
+r = checkOrder(toolPages({
+  a: ['/shared.css', '/a.css', '/base.css'],
+  b: ['/shared.css', 'inline:.b{}', '/base.css'],
+}), site);
+equal('inline <style> in <head> fails once per page', r.problems.length, 2);
+check('inline failure names the size and the setting', /1 inline <style> in <head> \(4 chars\).*inlineStylesheets: 'never'/.test(r.problems[0]), r.problems[0]);
+
+r = checkOrder(toolPages({
+  a: ['/shared.css', 'inline:.a{}', '/base.css'],
+  b: ['inline:.b{}', '/shared.css', '/base.css'],
+}), site);
+equal('inline <style> fails on every page; inline before shared CSS also fails the order', r.problems.length, 6);
+check('inline resource in an order failure is named by size', r.problems.some((p) => /tool CSS <style> \(4 chars\) comes before/.test(p)), r.problems.join(' | '));
+
+r = checkOrder(toolPages({
+  a: ['/shared.css', '/a.css', 'inline:.site{}'],
+  b: ['/shared.css', '/b.css', 'inline:.site{}'],
+}), new Set(['inline:.site{}']));
+equal('a site-wide inline <style> on a tool page also fails', r.problems.length, 4);
 
 r = checkOrder(toolPages({
   a: ['/a.css', '/base.css'],
@@ -112,12 +132,15 @@ function writeDist(name, cssBySlug) {
   }
   return dist;
 }
-const good = writeDist('good', { a: ['/shared.css', '/a.css', '/base.css'], b: ['/shared.css', '.b{}', '/base.css'] });
+const good = writeDist('good', { a: ['/shared.css', '/a.css', '/base.css'], b: ['/shared.css', '/b.css', '/base.css'] });
+const inlined = writeDist('inlined', { a: ['/shared.css', '/a.css', '/base.css'], b: ['/shared.css', '.b{}', '/base.css'] });
 const bad = writeDist('bad', { a: ['/a.css', '/shared.css', '/base.css'], b: ['/shared.css', '/b.css', '/base.css'] });
 r = checkDist(good);
 equal('fixture dist: 8 tool pages, all pass', [r.pages, r.checked, r.problems.length], [8, 8, 0]);
 r = checkDist(bad);
 equal('fixture dist: 4 pages of tool a fail', r.problems.length, 4);
+r = checkDist(inlined);
+equal('fixture dist: 4 pages of tool b fail for inline <style>', [r.problems.length, r.problems.every((p) => p.includes('tools/b/') && p.includes('inline <style>'))], [4, true]);
 let threw = false;
 try { checkDist(join(tmp, 'missing')); } catch { threw = true; }
 check('missing dist/about throws', threw);
@@ -125,6 +148,7 @@ check('missing dist/about throws', threw);
 const script = fileURLToPath(new URL('./check-tool-css-order.mjs', import.meta.url));
 equal('direct run exits 0 on a good dist', spawnSync(process.execPath, [script, good]).status, 0);
 equal('direct run exits 1 on a bad dist', spawnSync(process.execPath, [script, bad]).status, 1);
+equal('direct run exits 1 on a dist with inline <style>', spawnSync(process.execPath, [script, inlined]).status, 1);
 equal('direct run exits 1 on a missing dist', spawnSync(process.execPath, [script, join(tmp, 'missing')]).status, 1);
 
 rmSync(tmp, { recursive: true, force: true });

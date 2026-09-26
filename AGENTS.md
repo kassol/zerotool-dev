@@ -143,7 +143,7 @@ PROJECT_NAME=zerotool-dev bash scripts/deploy.sh   # 手工部署兜底
 |------|------|----------|
 | `scripts/check-icon-coverage.mjs` | `npm run build` 第 1 步 | 任何 slug 缺图标 |
 | `scripts/audit.mjs` | `.github/workflows/ci.yml` audit job + 手动 | 任何 FAIL（发布目录含 AGENTS.md、schema 漂移、孤儿组件、路由缺失、i18n key 漂移、blog 命名违规等） |
-| `scripts/check-tool-css-order.mjs` | `npm run build`（astro build 之后） | 任一工具页的共享工具 CSS（tool-common、ToolLayout、ShareButtons、AdUnit）没有排在本工具 CSS 之前 |
+| `scripts/check-tool-css-order.mjs` | `npm run build`（astro build 之后） | 任一工具页的共享工具 CSS（tool-common、ToolLayout、ShareButtons、AdUnit）没有排在本工具 CSS 之前，或 `<head>` 出现内联 `<style>` |
 | `npm run build` | `.github/workflows/ci.yml` build job + 手动 | 任何编译错误 |
 
 CI 在 PR 与 master push 时跑 `audit → build`，PR 必须两个 job 都过才能合并。Tag push 触发 `deploy.yml`，已经依赖前面 PR 的 CI 通过。
@@ -176,3 +176,4 @@ CI 在 PR 与 master push 时跑 `audit → build`，PR 必须两个 job 都过�
 - 2026-09-25 — 工具 OG 图按语言生成：zh/ja/ko 工具页的 og:image 由 `ToolLayout` 指向 `/og/{slug}-{lang}.png`（此前 414 页共用英文图），`generate-og.mjs` 从 `tools.ts` 解析 4 语言 name/description 并本地化底部 badge；连字符文件名落在 `_routes.json` 的 `/*-*` 排除内
 - 2026-09-26 — `tool-common.css` 的 `.tool-widget` 表单 fallback 焦点规则排除 `.tool-input` / `.tool-textarea`（此前其优先级更高，吃掉共享类聚焦时的 1px 主色内描边）；`BaseLayout` 暗色 token 块加 `color-scheme: dark`（原生滚动条与控件跟随暗色）；`ShareButtons` 的 `/vendor/qrcode.min.js` 改为首次打开微信分享弹窗时加载，不再在每个工具页同步加载
 - 2026-09-26 — 工具页改为每个工具一个注入路由（`astro.config.mjs` 的 `toolRoutes()`，入口生成到 `.generated/tool-routes/`），删除 4 个 `tools/[slug].astro`；`registry.ts` 改为 slug → 组件文件名的数据映射；页面主体移到 `src/components/ToolPage.astro`。工具页首屏 CSS 从全部工具的 516KB 降到共享 + 本工具（抽样 37–45KB）。修复拆分后暴露的 6 组跨工具样式依赖（jwt-decoder、timestamp-converter、regex-tester、css-clip-path-generator、markdown-table-generator / meta-tag-generator、15 个用 `.btn-sm` 的工具），text-case / regex-tester / color-palette-generator / markdown-table-generator 的类名前缀改为 `tcase-` / `rgx-` / `cpal-` / `mdt-`，`.btn-sm` 移入 `tool-common.css`；新增全局规范第 11 条。`npm run build` 新增 `check-tool-css-order.mjs`
+- 2026-09-26 — `astro.config.mjs` 设 `build.inlineStylesheets: 'never'`：打包 CSS 全部外链（此前小于 4KB 的 chunk 被内联，且相邻内联块会合并，CSS 顺序检查看不到块内顺序）。代价：工具页 CSS 请求 2–3 → 4 个（多出 69B 的 AdUnit 样式与 <4KB 的工具样式），博客文章页 2 → 3 个，首页、工具目录、about 不变；原始字节不变，gzip（按文件分别压缩）每页 +0–59B。`check-tool-css-order.mjs` 断言工具页 `<head>` 无内联 `<style>`

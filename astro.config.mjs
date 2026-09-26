@@ -107,6 +107,12 @@ export default defineConfig({
   output: 'static',
   adapter: cloudflare(),
   trailingSlash: 'always',
+  // Link all bundled CSS as files. Astro would otherwise inline small chunks and merge
+  // adjacent ones into one <style>, which hides their order from
+  // scripts/check-tool-css-order.mjs.
+  build: {
+    inlineStylesheets: 'never',
+  },
 
   integrations: [
     toolRoutes(),

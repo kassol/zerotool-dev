@@ -2,7 +2,8 @@
 //
 // Read:  dist/tools/*/index.html, dist/{zh,ja,ko}/tools/*/index.html, dist/about/index.html
 // Write: stdout only
-// Exit:  0 if every tool page links its shared tool CSS before its own tool CSS, 1 otherwise
+// Exit:  0 if every tool page links its shared tool CSS before its own tool CSS and has no
+//        inline <style> in <head>, 1 otherwise
 //
 // Each tool page has its own injected route (toolRoutes() in astro.config.mjs), so its CSS
 // comes in parts. Astro orders the parts by an import-position heuristic, and the tool
@@ -16,6 +17,12 @@
 // - own tool CSS: on the pages of 1 tool only
 // Every shared tool resource must come before every own tool resource on the page.
 // A page with own tool CSS but no shared tool CSS also fails: the order cannot be checked.
+//
+// A tool page must have no <style> in <head>. astro.config.mjs sets
+// build.inlineStylesheets: 'never', so all bundled CSS is linked as files. If Astro inlines
+// CSS again, it merges adjacent chunks into one <style>, and the order inside that block
+// cannot be checked here. The repo has no <style is:inline>; a component that adds one in
+// <head> also fails this check. Move such styles into the component's normal <style> block.
 //
 // Run: node scripts/check-tool-css-order.mjs [distDir]
 
@@ -73,6 +80,10 @@ export function checkOrder(pages, siteWide) {
       if (siteWide.has(r)) return;
       (slugsByResource.get(r).size >= 2 ? shared : own).push(i);
     });
+    const inline = page.css.filter((r) => r.startsWith('inline:'));
+    if (inline.length > 0) {
+      problems.push(`${page.path}: ${inline.length} inline <style> in <head> (${inline.map((r) => r.length - 7).join(', ')} chars); bundled CSS must be linked (build.inlineStylesheets: 'never')`);
+    }
     if (own.length === 0) continue;
     checked++;
     if (shared.length === 0) {
@@ -105,9 +116,9 @@ if (isDirectRun) {
     process.exit(1);
   }
   if (result.problems.length > 0) {
-    console.error(`check-tool-css-order: ${result.problems.length} tool page(s) with wrong CSS order`);
+    console.error(`check-tool-css-order: ${result.problems.length} problem(s) in tool page CSS`);
     for (const p of result.problems.slice(0, 20)) console.error(`  - ${p}`);
     process.exit(1);
   }
-  console.log(`check-tool-css-order: ${result.pages} tool pages, ${result.checked} with own tool CSS, shared tool CSS first on all`);
+  console.log(`check-tool-css-order: ${result.pages} tool pages, no inline <style> in <head>, ${result.checked} with own tool CSS, shared tool CSS first on all`);
 }
