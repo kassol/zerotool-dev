@@ -115,25 +115,14 @@ function parseIcons() {
   return new Set(matches.map(m => m[1]));
 }
 
-function parseToolComponentMap(filePath) {
+function parseToolComponentFiles(filePath) {
   const src = read(filePath);
-  // Imports: tolerant to either route-relative paths (`../../components/tools/X.astro`)
-  // or registry-relative paths (`./X.astro`). We store identifier -> filename so
-  // downstream checks can validate component references without assuming the
-  // identifier and the file basename are spelled identically.
-  const imports = new Map();
-  for (const m of src.matchAll(/^import\s+(\w+)\s+from\s+['"](?:[^'"]*\/)?(\w+)\.astro['"]/gm)) {
-    imports.set(m[1], m[2]);
-  }
-  // Map keys + component refs (`export const toolComponentMap` in registry.ts).
-  // Closing `};` may appear with or without a trailing newline depending on
-  // formatting, so tolerate both.
-  const mapMatch = src.match(/(?:export\s+)?const\s+toolComponentMap\b[\s\S]*?=\s*\{([\s\S]*?)\};/);
-  if (!mapMatch) throw new Error(`No toolComponentMap in ${filePath}`);
-  const entries = [...mapMatch[1].matchAll(/'([^']+)':\s*(\w+)/g)];
+  // `export const toolComponentFiles = { 'slug': 'FileName', ... };` in registry.ts.
+  const mapMatch = src.match(/(?:export\s+)?const\s+toolComponentFiles\b[\s\S]*?=\s*\{([\s\S]*?)\};/);
+  if (!mapMatch) throw new Error(`No toolComponentFiles in ${filePath}`);
   const map = new Map();
-  for (const m of entries) map.set(m[1], m[2]);
-  return { imports, map };
+  for (const m of mapMatch[1].matchAll(/'([^']+)':\s*'([^']+)'/g)) map.set(m[1], m[2]);
+  return map;
 }
 
 function parseFrontmatter(src) {
@@ -225,16 +214,10 @@ function checkIconCoverage(toolSlugs) {
 }
 
 function checkRouteRegistration(toolSlugs) {
-  const routes = [
-    'src/pages/tools/[slug].astro',
-    'src/pages/zh/tools/[slug].astro',
-    'src/pages/ja/tools/[slug].astro',
-    'src/pages/ko/tools/[slug].astro',
-  ];
   const registryPath = 'src/components/tools/registry.ts';
 
   if (!existsSync(join(ROOT, registryPath))) {
-    fail('registry', 'shared toolComponentMap registry', [`${registryPath} does not exist`]);
+    fail('registry', 'shared toolComponentFiles registry', [`${registryPath} does not exist`]);
     return;
   }
 
@@ -244,43 +227,40 @@ function checkRouteRegistration(toolSlugs) {
       .map(f => f.replace(/\.astro$/, ''))
   );
 
-  const { imports, map } = parseToolComponentMap(registryPath);
+  const map = parseToolComponentFiles(registryPath);
 
   const registryIssues = [];
   for (const slug of toolSlugs) {
-    if (!map.has(slug)) registryIssues.push(`${slug}: missing in toolComponentMap`);
+    if (!map.has(slug)) registryIssues.push(`${slug}: missing in toolComponentFiles`);
   }
-  for (const [, filename] of imports) {
-    if (!allComponents.has(filename)) registryIssues.push(`import target missing: ${filename}.astro`);
-  }
-  for (const [slug, comp] of map) {
-    if (!imports.has(comp)) registryIssues.push(`${slug}: maps to "${comp}" which is not imported`);
-  }
-  for (const slug of map.keys()) {
+  for (const [slug, file] of map) {
+    if (!allComponents.has(file)) registryIssues.push(`${slug}: component file missing: src/components/tools/${file}.astro`);
     if (!toolSlugs.has(slug)) registryIssues.push(`${slug}: map entry has no matching slug in tools.ts (dead alias — handle aliases via _redirects instead)`);
   }
   if (registryIssues.length === 0) pass('registry', `${registryPath} (${map.size} mappings)`);
   else fail('registry', registryPath, registryIssues);
 
-  // Each route must import the shared registry rather than maintain its own map.
-  for (const route of routes) {
-    if (!existsSync(join(ROOT, route))) {
-      fail(`route_${route}`, `route file ${route}`, ['file does not exist']);
-      continue;
+  // Tool routes are injected per tool by toolRoutes() in astro.config.mjs from the
+  // registry. A static tools/[slug] route would bundle every tool's CSS into one page.
+  const staticRoutes = [];
+  const walk = (dir) => {
+    for (const f of listFiles(dir)) {
+      const rel = `${dir}/${f}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+      else if (/\/tools\/\[[^/]*$/.test(rel)) staticRoutes.push(rel);
     }
-    const src = read(route);
-    if (!/from\s+['"][^'"]*components\/tools\/registry['"]/.test(src)) {
-      fail(`route:${route}`, route, ['does not import { toolComponentMap } from the shared registry']);
-    } else {
-      pass(`route:${route}`, route);
-    }
-  }
+  };
+  walk('src/pages');
+  const routeIssues = staticRoutes.map(r => `${r}: static tool route must not exist (tool routes are injected by toolRoutes() in astro.config.mjs)`);
+  const config = read('astro.config.mjs');
+  if (!/from\s+['"]\.\/src\/components\/tools\/registry\.ts['"]/.test(config)) routeIssues.push('astro.config.mjs does not import toolComponentFiles from the registry');
+  if (!/toolRoutes\(\)/.test(config)) routeIssues.push('astro.config.mjs does not register toolRoutes()');
+  if (routeIssues.length === 0) pass('tool_routes', 'toolRoutes() injects one route per registry entry; no static tools/[slug] route');
+  else fail('tool_routes', 'tool route injection', routeIssues);
 
-  // Orphan components: present in src/components/tools/ but not pulled into the
-  // registry. Compare against imported filenames (not identifiers), so a future
-  // mismatch between the two also surfaces here.
-  const importedFilenames = new Set(imports.values());
-  const orphans = [...allComponents].filter(c => !importedFilenames.has(c));
+  // Orphan components: present in src/components/tools/ but not referenced in the registry.
+  const referenced = new Set(map.values());
+  const orphans = [...allComponents].filter(c => !referenced.has(c));
   if (orphans.length === 0) pass('component_orphans', `component orphan check (${allComponents.size} components, all used)`);
   else fail('component_orphans', 'orphan components in src/components/tools/', orphans.map(o => `${o}.astro: not referenced in registry.ts`));
 }

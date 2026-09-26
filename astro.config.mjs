@@ -3,6 +3,7 @@ import mdx from '@astrojs/mdx';
 import sitemap from '@astrojs/sitemap';
 import { copyLibFiles, partytownVite } from '@qwik.dev/partytown/utils';
 import cloudflare from '@astrojs/cloudflare';
+import { toolComponentFiles } from './src/components/tools/registry.ts';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -58,6 +59,48 @@ function rehypeTrailingSlashLinks() {
   };
 }
 
+// One injected route per tool. Each generated entry imports only its own tool
+// component, so the page CSS holds the shared tool CSS plus that one component's
+// styles. A single [slug].astro route would bundle every tool's CSS into every page.
+// Entries are written to .generated/tool-routes/ (gitignored) on each run.
+function toolRoutes() {
+  return {
+    name: 'tool-routes',
+    hooks: {
+      'astro:config:setup': ({ config, injectRoute }) => {
+        const outDir = fileURLToPath(new URL('./.generated/tool-routes/', config.root));
+        fs.rmSync(outDir, { recursive: true, force: true });
+        fs.mkdirSync(outDir, { recursive: true });
+        for (const [slug, file] of Object.entries(toolComponentFiles)) {
+          const entry = join(outDir, `${slug}.astro`);
+          fs.writeFileSync(entry, `---
+// Astro orders a page's CSS by import position. These two imports come first so
+// the shared tool CSS (layout, AdUnit, tool-common.css) is linked before the tool
+// CSS, as when all tool CSS was one file. scripts/check-tool-css-order.mjs checks
+// this after the build.
+import '../../src/layouts/ToolLayout.astro';
+import '../../src/styles/tool-common.css';
+import ToolPage from '../../src/components/ToolPage.astro';
+import ToolComponent from '../../src/components/tools/${file}.astro';
+
+export function getStaticPaths() {
+  return [undefined, 'zh', 'ja', 'ko'].map((lang) => ({ params: { lang } }));
+}
+
+const { lang } = Astro.params;
+---
+
+<ToolPage slug="${slug}" lang={lang ?? 'en'}>
+  <ToolComponent slot="tool" lang={lang} />
+</ToolPage>
+`);
+          injectRoute({ pattern: `/[...lang]/tools/${slug}`, entrypoint: entry });
+        }
+      },
+    },
+  };
+}
+
 // https://astro.build/config
 export default defineConfig({
   site: SITE,
@@ -66,6 +109,7 @@ export default defineConfig({
   trailingSlash: 'always',
 
   integrations: [
+    toolRoutes(),
     mdx({
       rehypePlugins: [rehypeTrailingSlashLinks],
     }),
