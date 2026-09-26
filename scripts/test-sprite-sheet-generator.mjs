@@ -77,6 +77,9 @@ const isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
   check('natural: case-insensitive before tie-break', E.naturalCompare('B.png', 'a.png') > 0);
   check('natural: prefix shorter first', E.naturalCompare('frame', 'frame1') < 0);
   check('natural: huge numbers do not overflow', E.naturalCompare('f99999999999999999999', 'f100000000000000000000') < 0);
+  check('natural: dup.png before dup (2).png', E.naturalCompare('dup.png', 'dup (2).png') < 0);
+  check('natural: same stem orders by extension', E.naturalCompare('a.jpg', 'a.png') < 0);
+  check('natural: name without extension', E.naturalCompare('frame', 'frame.png') < 0);
   check('natural: antisymmetric', E.naturalCompare('x_3', 'x_20') === -E.naturalCompare('x_20', 'x_3'));
 }
 
