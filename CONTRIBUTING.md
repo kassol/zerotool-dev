@@ -17,6 +17,8 @@
 src/
 ├── components/
 │   ├── tools/                              # One {ToolName}Tool.astro per tool — interactive widget
+│   │   └── registry.ts                     # slug → component file name; tool routes are injected from it
+│   ├── ToolPage.astro                      # Shared tool page body (content entry + ToolLayout)
 │   └── *.astro                             # Shared UI (SEO, ShareButtons, AdUnit, etc.)
 ├── content/
 │   ├── blog/{base-slug}/{lang}.mdx         # Blog posts, one directory per article × 4 langs
@@ -30,18 +32,19 @@ src/
 │   └── utils.ts                             # `t()` helper + locale registration
 ├── layouts/                                # BaseLayout, ToolLayout, ArticleLayout
 ├── pages/
-│   ├── tools/[slug].astro                   # EN dynamic tool route
-│   ├── {zh,ja,ko}/tools/[slug].astro        # Localized tool routes (same component map)
+│   ├── {,zh/,ja/,ko/}tools/index.astro      # Tool directory pages (tool pages themselves are injected, see below)
 │   ├── blog/[slug].astro                    # EN blog post route (slug = base slug)
 │   ├── {zh,ja,ko}/blog/[slug].astro         # Localized blog post routes
 │   └── {about,privacy,terms,contact}.astro  # Static prose pages × 4 langs
 └── styles/                                 # Global CSS (tool-common.css etc.)
+.generated/tool-routes/                 # Tool route entries written by toolRoutes() in astro.config.mjs (gitignored)
 public/
 └── og/                                     # Generated OG images (PNG, one per tool slug)
 scripts/
 ├── audit.mjs                               # Static consistency checks (run in CI)
 ├── check-icon-coverage.mjs                 # Pre-build: every slug has an icon
 ├── generate-og.mjs                         # Pre-build: render OG PNGs
+├── check-tool-css-order.mjs                # Post-build: shared tool CSS comes before the tool's own CSS
 ├── generate-blog-redirects.mjs             # Post-build: legacy URL → new URL 301s
 └── update-readme-tools.js                  # Sync README tool table from tools.ts
 ```
@@ -50,7 +53,7 @@ scripts/
 
 ```bash
 npm run dev             # Local dev server
-npm run build           # Full build (icon check + OG gen + Astro build + redirects)
+npm run build           # Full build (icon check + OG gen + Astro build + tool CSS order check + redirects)
 npm run generate-og     # Regenerate OG images only
 npm run preview         # Preview production build locally
 node scripts/audit.mjs  # Static audit (also runs in CI)
@@ -74,7 +77,7 @@ Every new tool requires ALL of the following:
 
 - [ ] **Tool component**: `src/components/tools/{ToolName}Tool.astro` — single-file widget with inline `<script>` and scoped `<style>`. No client framework; avoid new npm runtime dependencies unless browser-native APIs are insufficient.
 - [ ] **Registry entry**: Append to `src/data/tools.ts` — `slug`, full 4-language `translations` (`en`/`zh`/`ja`/`ko`), `category`, optional `relatedSlugs`.
-- [ ] **Component map**: Add the import and `'{slug}': {ToolName}Tool` entry to `src/components/tools/registry.ts` — this single registry is consumed by all four `[slug].astro` routes, so you only edit it once.
+- [ ] **Component map**: Add `'{slug}': '{ToolName}Tool'` to `toolComponentFiles` in `src/components/tools/registry.ts`. `toolRoutes()` in `astro.config.mjs` injects the tool page for all four languages from this entry; there is no route file to add.
 - [ ] **Icon**: Add a Lucide-style inline SVG to `src/data/icons.ts` (24×24 viewBox, `stroke="currentColor"`, stroke-width 2).
 - [ ] **OG image**: Run `npm run generate-og` to preview `public/og/{slug}.png` locally. Do not commit the image: `public/og/` is a build artifact, and `npm run build` generates it.
 
@@ -94,6 +97,7 @@ Every new tool requires ALL of the following:
 ## Code Conventions
 
 - **i18n strings**: User-facing UI strings live in `src/i18n/{lang}.json` (looked up via `t(lang, key)`). Per-tool name and description live in `src/data/tools.ts` `translations` (read with `getToolName(tool, lang)` / `getToolDescription(tool, lang)`).
+- **Tool styles are page-local**: Each tool page loads only the shared CSS and the CSS of its own component. Do not rely on styles from another tool component. Use a class prefix that no other tool uses (grep `src/components/tools/` first). Put rules that several tools share in `src/styles/tool-common.css`. Elements that a script creates (`innerHTML`, `createElement`) have no scoped attribute, so style them with `:global(...)`.
 - **Design tokens**: Use the CSS custom properties defined in `BaseLayout.astro` global styles (`--color-primary`, `--radius-md`, etc.). Do not hardcode hex colors in component styles. See `DESIGN.md`.
 - **Icons**: All icons are inline SVG in `src/data/icons.ts` — no external icon libraries, zero network dependencies.
 - **Persistence**: Use the global `window.ztPersist` API (`save` / `load` / `clear`). Direct `localStorage.setItem` is forbidden — `audit.mjs` will FAIL the build. Per-slug policy lives in `src/data/persistence.ts`: `input` (default; Clear must sync), `preference` (Clear leaves it alone), or `disabled` (never persisted; historical values are wiped on every load).
@@ -107,6 +111,6 @@ Supported languages: **en** (default), **zh**, **ja**, **ko**.
 - Locale registration: `src/i18n/utils.ts`
 - Tool name/description: `src/data/tools.ts` `translations` (4-lang object per tool)
 - Tool body content (SEO + FAQ + body): `src/content/tools/{slug}/{lang}.mdx`
-- Routes: `src/pages/{lang}/tools/[slug].astro` + `src/pages/{lang}/blog/[slug].astro`
+- Routes: tool pages are injected as `/[...lang]/tools/{slug}` by `toolRoutes()` in `astro.config.mjs`; blog posts use `src/pages/{lang}/blog/[slug].astro`
 - hreflang tags: emitted by `src/components/SEO.astro`, derived from URL + collection presence
 - Language switcher: `src/layouts/BaseLayout.astro`

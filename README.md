@@ -180,7 +180,7 @@ For new tool PRs:
 - Add the tool's interactive widget under `src/components/tools/{ToolName}Tool.astro` with all logic in an inline `<script>` tag — no client framework, no runtime deps.
 - Register it in `src/data/tools.ts` (slug, 4-language `translations`, `category`) and add a Lucide-style icon to `src/data/icons.ts`.
 - Provide 4 SEO content files at `src/content/tools/{slug}/{en,zh,ja,ko}.mdx` with `seoTitle` / `seoDescription` / optional `faqItems` / a body for the long-tail content.
-- The dynamic routes at `src/pages/tools/[slug].astro` (and the `zh/`, `ja/`, `ko/` siblings) pick the component up automatically once the entry exists in `tools.ts`.
+- Map the slug to the component in `src/components/tools/registry.ts` (`'{slug}': '{ToolName}Tool'`). The tool pages for all four languages are injected from that entry; there is no route file to add.
 
 See `CONTRIBUTING.md` for the full checklist.
 

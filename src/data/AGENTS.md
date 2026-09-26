@@ -20,7 +20,7 @@ interface ToolTranslation {
 }
 
 interface ToolInfo {
-  slug: string;                                    // URL slug，由动态路由 pages/{lang}/tools/[slug].astro 消费
+  slug: string;                                    // URL slug；工具页路由由 astro.config.mjs 的 toolRoutes() 按 components/tools/registry.ts 注入
   translations: Record<'en'|'zh'|'ja'|'ko', ToolTranslation>;  // 4 语言必填
   category: 'data'|'encoding'|'text'|'security'|'dev'|'api'|'color'|'image';
   relatedSlugs?: string[];                         // 可选，工具页底部「相关工具」
@@ -53,3 +53,4 @@ interface ToolInfo {
 ## 变更日志
 
 - 2026-04-26 — 初版
+- 2026-09-26 — `ToolInfo.slug` 注释改为指向 `toolRoutes()` 注入的工具路由（原 `pages/{lang}/tools/[slug].astro` 已删除）

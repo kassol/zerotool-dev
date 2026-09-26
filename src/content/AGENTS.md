@@ -89,7 +89,7 @@ faqItems:                # 可选，结构化 FAQ
 
 ### tools 模块规范
 
-- 4 语言强制齐全：缺任一语言 `[slug].astro` 会在 `getEntry('tools', '${slug}/${lang}')` 处 throw error，build 直接挂
+- 4 语言强制齐全：缺任一语言 `src/components/ToolPage.astro` 会在 `getEntry('tools', '${slug}/${lang}')` 处 throw error，build 直接挂
 - 正文要原创，避免 4 语言间机翻雷同（影响 hreflang 评估）
 - FAQ 数量建议 3-5 条，太少 SEO 弱，太多挤占阅读
 
@@ -104,7 +104,7 @@ faqItems:                # 可选，结构化 FAQ
 - 上游：`config.ts`（schema 定义 + collection 注册）
 - 下游：
   - `src/pages/blog/[slug].astro` 等 8 个 blog 路由
-  - `src/pages/{lang}/tools/[slug].astro` 4 个 tool 路由
+  - `src/components/ToolPage.astro`（工具页主体，由 `astro.config.mjs` 的 `toolRoutes()` 注入的每工具路由渲染，4 语言）
   - `src/components/SEO.astro` 用 blog collection 算 hreflang
   - `astro.config.mjs` sitemap `serialize()` 用 frontmatter 日期
   - `scripts/generate-blog-redirects.mjs` 用文件名生成 redirect
@@ -116,3 +116,4 @@ faqItems:                # 可选，结构化 FAQ
 - 2026-04-27 — 博客结构 B-migration：平铺 `{slug}-{lang}.mdx` → 目录 `{slug}/{lang}.mdx`，对齐 tools collection 风格；`_redirects` 大幅瘦身（~2470 → ~1100 条），脱离 CF Pages 2100 限制
 - 2026-09-25 — `public/og/` 改为构建产物并移出 git，博客图片不再放该目录
 - 2026-09-25 — 博客 OG 图改由 `ArticleLayout` 按文件路径推导（`{dir}/en.mdx` → `/og/blog-{dir}.png`，其他语言 → `/og/blog-{dir}-{lang}.png`，与 `generate-og.mjs` 命名一致）；删除全部博客 frontmatter 的 `ogImage`（72 篇 zh/ja/ko 曾指向 EN 图，35 篇缺失而用 og-default）
+- 2026-09-26 — tools collection 的下游从 4 个 `tools/[slug].astro` 改为 `src/components/ToolPage.astro`（工具页路由由 `toolRoutes()` 注入）
