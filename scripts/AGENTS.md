@@ -26,6 +26,7 @@
 | `test-sprite-sheet-generator.mjs` | 回归 | 从 `SpriteSheetGeneratorTool.astro` 抽取 `engine:start/end` 真实引擎块，覆盖自然排序、帧名去重、图集文件名清洗、CSS 类名、SVG 固有尺寸、trim 包围盒（含全透明，与暴力解对比）、`nextPow2`、canvas 上限、填充率、MaxRects 装箱（固定种子随机 200 组：无重叠、在图集内、spacing / margin / extrude 间距不变式、Max width、2 的幂、超宽自动加宽；等尺寸紧密排布；超限结果；1000 张耗时与近方形）、网格单元格与居中坐标、JSON Hash / JSON Array / Sparrow XML / CSS 结构与转义，共 729 项；只写 stdout | 手动按需 / 修改 `SpriteSheetGeneratorTool.astro` 引擎块前后 |
 | `test-check-tool-css-order.mjs` | 回归 | import `check-tool-css-order.mjs` 的导出函数，覆盖 CSS 资源提取（link 顺序、内联 style、非 stylesheet link、JSON-LD 中的 `<style>` 文本、body 内 style）、全站 / 共享 / 本工具分类、顺序规则与报错信息、工具页 `<head>` 内联 `<style>` 即失败（含全站内联样式、内联块排在共享 CSS 前的双重失败）、无本工具 CSS 的页面跳过、`os.tmpdir()` 下的夹具 dist 端到端（用后删除）、直接运行的退出码，共 26 项 | 手动按需 / 修改 `check-tool-css-order.mjs` 或工具路由入口的 import 顺序前后 |
 | `test-generate-og.mjs` | 回归 | import `generate-og.mjs` 的导出函数，覆盖英文不拆词、CJK 按宽度断行、中英混排、禁则、3 行上限加「…」、标题与描述及底部 badge 不重叠、XML 转义、空描述、各语言字体栈与 `xml:lang`；`tools.ts` 4 语言解析（含转义引号、缺 zh/ja/ko 时报错并列出 slug、真实注册表全量解析）、工具图文件名、slug 不以 `-zh/-ja/-ko` 结尾（防 `{slug}-{lang}.png` 重名）、工具 badge 本地化 | 手动按需 / 修改 `generate-og.mjs` 断行或模板前后 |
+| `test-404-path-normalize.mjs` | 回归 | 从 `src/pages/404.astro` 抽取 `engine:start/end` 真实块（`normalizeNotFoundPath`），覆盖 GA 实测 404 路径（U+2011 连字符、尾随 `；` `)`）、10 种 Unicode 连字符、27 种尾随标点在斜杠前后、不应改动的路径、幂等（404 页只在路径变化时跳转，幂等保证不循环），共 120 项 | 手动按需 / 修改 `404.astro` 规范化逻辑前后 |
 | `deploy.sh` | 部署 | 本地构建 + `wrangler pages deploy`（需 `PROJECT_NAME` env） | 手工部署兜底 |
 | `devto-article-draft.md` | 内容草稿 | 非脚本，是发到 dev.to 的草稿 | — |
 
@@ -84,3 +85,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-09-25 — 加入 `test-sprite-sheet-generator.mjs`（sprite-sheet-generator 命名 / trim / MaxRects 与网格布局 / 4 种数据格式引擎块回归测试）
 - 2026-09-26 — 加入 `check-tool-css-order.mjs`（`npm run build` 第 6 步，工具页 CSS 顺序守护）与 `test-check-tool-css-order.mjs`；`audit.mjs` 的路由检查改为校验 `registry.ts` 的 slug → 组件文件名映射与 `toolRoutes()` 注入（不再检查 4 个 `[slug].astro`）
 - 2026-09-26 — `check-tool-css-order.mjs` 新增断言：工具页 `<head>` 不得有内联 `<style>`（配合 `astro.config.mjs` 的 `build.inlineStylesheets: 'never'`，消除 Astro 合并内联 CSS 造成的顺序检查盲区）；测试 20 → 26 项
+- 2026-09-27 — 加入 `test-404-path-normalize.mjs`（404 页路径规范化回归测试）
