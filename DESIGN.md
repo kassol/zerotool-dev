@@ -168,6 +168,7 @@ Interaction baseline:
 - Hover state changes background or color through tokens.
 - Focus state uses `:focus-visible` or token focus rings.
 - Touch targets on mobile (`max-width: 640px`) are at least 44px high: `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-icon`, `.btn-copy`, `.btn-sm`, `.tool-input`, share buttons, and label rows that wrap a radio or checkbox. Desktop keeps the compact sizes: `.tool-input` 40px, `.btn-copy` 32px, `.btn-sm` 30px, share buttons 36px. Put mobile sizes in the shared `@media (max-width: 640px)` rules. Do not set a smaller `min-height` on these classes in a tool component.
+- Dense controls inside a tool (tag chips, preset buttons, segment buttons, small number inputs, remove "×" buttons, reset buttons, `<summary>` toggles, standalone cross-links) are at least 24×24px on mobile (WCAG 2.2 AA, 2.5.8 Target Size Minimum). Put the rule in the tool component's own `@media (max-width: 640px)` block and keep desktop sizes. A control narrower than 24px is acceptable only when a 24px circle centered on it does not overlap another target or its circle (the 2.5.8 spacing exception). Exempt: links inside a sentence or rendered content, disabled controls, and visually hidden inputs whose visible label is the target.
 
 Use shared form classes:
 
