@@ -632,6 +632,9 @@ function checkRedirects() {
     return;
   }
   const lines = read(path).split('\n');
+  // Cloudflare Pages applies only the first rule for a source path; later ones are dead.
+  const firstLineBySource = new Map();
+  const duplicates = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith('#')) continue;
@@ -644,9 +647,17 @@ function checkRedirects() {
     if (status && !/^(200|30[1-8])$/.test(status)) {
       issues.push(`line ${i + 1}: unusual status code "${status}"`);
     }
+    const source = parts[0];
+    if (firstLineBySource.has(source)) {
+      duplicates.push(`line ${i + 1}: source "${source}" already defined at line ${firstLineBySource.get(source)} (only the first rule applies)`);
+    } else {
+      firstLineBySource.set(source, i + 1);
+    }
   }
   if (issues.length === 0) pass('redirects_format', `_redirects format (${lines.length} lines)`);
   else warn('redirects_format', '_redirects format anomalies', issues);
+  if (duplicates.length === 0) pass('redirects_unique_source', `_redirects source paths unique (${firstLineBySource.size} rules)`);
+  else fail('redirects_unique_source', '_redirects duplicate source paths', duplicates);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
