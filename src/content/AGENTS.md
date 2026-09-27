@@ -58,6 +58,8 @@ draft: false                 # 可选；为 true 时不会进入路由生成、h
 
 - 跨语言一致性：每篇 EN 文章应有对应的 ZH/JA/KO 版本（至少 ZH）。`src/components/SEO.astro` 会按磁盘存在性输出 hreflang，缺哪个就少哪个
 - slug 唯一性：`base-slug` 在所有语言间共享；新增前先 grep 全目录避免冲突
+- 工具指南命名 `{toolSlug}-guide`（`toolSlug` 与 `src/data/tools.ts` 一致）：工具页据此显示「阅读指南」链接（`src/components/ToolPage.astro`，当前语言有该文章才显示），相关文章按工具分类加分（`src/layouts/ArticleLayout.astro`）。起别的目录名两者都不生效
+- 相关文章：同语言内按共同标签数打分，超过半数文章都有的标签（如 `developer-tools`）不计分；标签宜写具体主题词
 - MDX 内嵌组件：可以 `{import Component from '...'}`，但避免运行时依赖
 - 图片：放 `public/`，文章中用绝对路径。`public/og/` 是 `generate-og.mjs` 的构建产物（已 gitignore），不要放手工图片
 
@@ -116,4 +118,5 @@ faqItems:                # 可选，结构化 FAQ
 - 2026-04-27 — 博客结构 B-migration：平铺 `{slug}-{lang}.mdx` → 目录 `{slug}/{lang}.mdx`，对齐 tools collection 风格；`_redirects` 大幅瘦身（~2470 → ~1100 条），脱离 CF Pages 2100 限制
 - 2026-09-25 — `public/og/` 改为构建产物并移出 git，博客图片不再放该目录
 - 2026-09-25 — 博客 OG 图改由 `ArticleLayout` 按文件路径推导（`{dir}/en.mdx` → `/og/blog-{dir}.png`，其他语言 → `/og/blog-{dir}-{lang}.png`，与 `generate-og.mjs` 命名一致）；删除全部博客 frontmatter 的 `ogImage`（72 篇 zh/ja/ko 曾指向 EN 图，35 篇缺失而用 og-default）
+- 2026-09-27 — 相关文章改为按相关度选（排除高频标签、同工具分类加分、按发布时间差补齐）；工具页链接同名 `{slug}-guide` 指南
 - 2026-09-26 — tools collection 的下游从 4 个 `tools/[slug].astro` 改为 `src/components/ToolPage.astro`（工具页路由由 `toolRoutes()` 注入）
