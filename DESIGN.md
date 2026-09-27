@@ -130,6 +130,7 @@ Required structure:
 - `.tool-page`: `width: min(100% - 2rem, 1120px)`
 - `.tool-header`: icon, `ZeroTool Workbench` kicker, title, description, trust bar
 - `.tool-widget`: full-width workbench panel for the actual tool
+- `.tool-guide-link`: card link to the tool's blog guide (`/blog/{slug}-guide/` in the page language), only when that guide exists
 - `.related-tools`: compact related cards below the tool
 - `.tool-content`: SEO and usage content with a reading width near 820px
 - `.tool-faq`: compact accordion cards
