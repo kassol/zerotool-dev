@@ -166,6 +166,7 @@ Interaction baseline:
 - Active state uses `transform: scale(0.96)`.
 - Hover state changes background or color through tokens.
 - Focus state uses `:focus-visible` or token focus rings.
+- Touch targets on mobile (`max-width: 640px`) are at least 44px high: `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-icon`, `.btn-copy`, `.btn-sm`, `.tool-input`, share buttons, and label rows that wrap a radio or checkbox. Desktop keeps the compact sizes: `.tool-input` 40px, `.btn-copy` 32px, `.btn-sm` 30px, share buttons 36px. Put mobile sizes in the shared `@media (max-width: 640px)` rules. Do not set a smaller `min-height` on these classes in a tool component.
 
 Use shared form classes:
 
