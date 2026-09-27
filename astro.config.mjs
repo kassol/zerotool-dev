@@ -5,6 +5,7 @@ import { copyLibFiles, partytownVite } from '@qwik.dev/partytown/utils';
 import cloudflare from '@astrojs/cloudflare';
 import { toolComponentFiles } from './src/components/tools/registry.ts';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -101,6 +102,35 @@ const { lang } = Astro.params;
   };
 }
 
+// Astro names a CSS chunk after the first page that uses it, so the CSS shared by
+// all tool pages was named after the first tool (aes-encrypt-decrypt.*.css). Astro
+// runs a user manualChunks function before its own CSS naming. For a CSS module used
+// only by tool pages, and by more than one, this returns `tool-shared.{hash of the
+// page set}`: modules with the same page set still share one chunk, as in Astro.
+// Other CSS falls through to Astro.
+const toolRoutesDir = fileURLToPath(new URL('./.generated/tool-routes/', import.meta.url));
+const cssRequestRe = /\.(css|less|sass|scss|styl|stylus|pcss|postcss)($|\?)|[?&]lang\.css/;
+
+function toolSharedCssChunk(id, { getModuleInfo }) {
+  if (!cssRequestRe.test(id)) return null;
+  const toolPages = new Set();
+  const seen = new Set();
+  const stack = [id];
+  while (stack.length) {
+    const current = stack.pop();
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (current.startsWith(toolRoutesDir)) { toolPages.add(current); continue; }
+    const importers = getModuleInfo(current)?.importers ?? [];
+    if (importers.length === 0 && current !== id) return null;
+    stack.push(...importers);
+  }
+  if (toolPages.size < 2) return null;
+  const hash = crypto.createHash('sha256');
+  for (const page of [...toolPages].sort()) hash.update(page);
+  return `tool-shared.${hash.digest('hex').slice(0, 8)}`;
+}
+
 // https://astro.build/config
 export default defineConfig({
   site: SITE,
@@ -112,6 +142,13 @@ export default defineConfig({
   // scripts/check-tool-css-order.mjs.
   build: {
     inlineStylesheets: 'never',
+  },
+  vite: {
+    build: {
+      rollupOptions: {
+        output: { manualChunks: toolSharedCssChunk },
+      },
+    },
   },
 
   integrations: [
