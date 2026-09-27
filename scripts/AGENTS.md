@@ -28,6 +28,7 @@
 | `test-generate-og.mjs` | 回归 | import `generate-og.mjs` 的导出函数，覆盖英文不拆词、CJK 按宽度断行、中英混排、禁则、3 行上限加「…」、标题与描述及底部 badge 不重叠、XML 转义、空描述、各语言字体栈与 `xml:lang`；`tools.ts` 4 语言解析（含转义引号、缺 zh/ja/ko 时报错并列出 slug、真实注册表全量解析）、工具图文件名、slug 不以 `-zh/-ja/-ko` 结尾（防 `{slug}-{lang}.png` 重名）、工具 badge 本地化 | 手动按需 / 修改 `generate-og.mjs` 断行或模板前后 |
 | `test-color-shades-generator.mjs` | 回归 | 从 `ColorShadesGeneratorTool.astro` 抽取 `engine:start/end` 真实块（`relativeLuminance`/`contrastRatio`/`textColor`/`labelBackground`），覆盖 WCAG 相对亮度参考值、对比度对称与上下界、`#3b82f6` 等饱和中间色选深色字（旧的 `0.299r+0.587g+0.114b > 140` 阈值会选白字，3.68:1）、每通道步长 5 的全色域扫描（所选文字对比度不低于另一候选、标签底色与文字色一致、文字对叠了半透明底色的色块 ≥ 4.5:1），共 26 项；只写 stdout | 手动按需 / 修改 `ColorShadesGeneratorTool.astro` 判色逻辑前后 |
 | `test-404-path-normalize.mjs` | 回归 | 从 `src/pages/404.astro` 抽取 `engine:start/end` 真实块（`normalizeNotFoundPath`），覆盖 GA 实测 404 路径（U+2011 连字符、尾随 `；` `)`）、10 种 Unicode 连字符、27 种尾随标点在斜杠前后、不应改动的路径、幂等（404 页只在路径变化时跳转，幂等保证不循环），共 120 项 | 手动按需 / 修改 `404.astro` 规范化逻辑前后 |
+| `test-related-posts.mjs` | 回归 | 从 `src/layouts/ArticleLayout.astro` 抽取 `engine:start/end` 真实块（`selectRelatedPosts`），覆盖超过半数文章都有的标签不计分（按语言分别统计、恰好一半仍计分、重复标签只计一次）、`{toolSlug}-guide` 同工具分类加分（非指南 / 未知工具 / 原型链键名不加分）、同分按发布时间差再按目录名排序、不足 3 篇按时间补齐、打乱输入顺序结果不变、排除自身、只取同语言；另用真实 en / zh 博客与 `tools.ts` 校验每篇都有 3 篇、无自链、单篇被选次数不超过文章数的 1/4，共 27 项；只写 stdout | 手动按需 / 修改 `ArticleLayout.astro` 相关文章逻辑前后 |
 | `deploy.sh` | 部署 | 本地构建 + `wrangler pages deploy`（需 `PROJECT_NAME` env） | 手工部署兜底 |
 | `devto-article-draft.md` | 内容草稿 | 非脚本，是发到 dev.to 的草稿 | — |
 
@@ -90,3 +91,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-09-27 — 加入 `test-color-shades-generator.mjs`（color-shades-generator 色块标签判色回归测试）
 - 2026-09-27 — `test-gif-splitter.mjs` 跟随 gif-splitter 进度改为按像素计（`createCompositor().progress()`），224 → 239 项
 - 2026-09-27 — `audit.mjs` 新增 `redirects_unique_source`：`public/_redirects` 同一来源路径定义两次即 FAIL
+- 2026-09-27 — 加入 `test-related-posts.mjs`（博客相关文章选文回归测试）

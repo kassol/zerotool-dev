@@ -2,6 +2,7 @@
 import BaseLayout from './BaseLayout.astro';
 import AdUnit from '../components/AdUnit.astro';
 import { t } from '../i18n/utils';
+import { allTools } from '../data/tools';
 import type { CollectionEntry } from 'astro:content';
 
 interface Props {
@@ -11,7 +12,7 @@ interface Props {
 }
 
 const { post, headings = [], allPosts = [] } = Astro.props;
-const { title, description, pubDate, updatedDate, lang, canonicalUrl, noindex, tags } = post.data;
+const { title, description, pubDate, updatedDate, lang, canonicalUrl, noindex } = post.data;
 
 // Estimate read time
 const wordCount = post.body.split(/\s+/).length;
@@ -41,12 +42,52 @@ const postUrlSlug = (slug: string) => slug.replace(/\/(en|zh|ja|ko)$/, '');
 // TOC: only h2 and h3
 const tocItems = headings.filter(h => h.depth === 2 || h.depth === 3);
 
-// Related articles: same language, share at least one tag, exclude self
-const relatedPosts = allPosts
-  .filter(p => p.slug !== post.slug && p.data.tags.some(t => tags.includes(t)))
-  .sort((a, b) => b.data.pubDate.getTime() - a.data.pubDate.getTime()
-    || (a.slug.split('/')[0] < b.slug.split('/')[0] ? -1 : 1))
-  .slice(0, 3);
+// Related articles. Tested by scripts/test-related-posts.mjs, which runs the block
+// between the engine markers; keep it plain JavaScript.
+/* ── engine:start ── */
+// A tag on more than this share of the posts in a language (e.g. developer-tools)
+// links almost every post to every other post, so it does not add to the score.
+const COMMON_TAG_SHARE = 0.5;
+
+// posts: [{ dir, lang, tags, time }]; toolCategories: { [toolSlug]: category }.
+// Score = shared uncommon tags, +1 when both posts are `{toolSlug}-guide` posts of
+// tools in the same category. Ties: nearest publish time, then dir name.
+// Posts that score 0 fill the list in the same order.
+function selectRelatedPosts(current, posts, toolCategories, limit) {
+  const sameLang = posts.filter((p) => p.lang === current.lang);
+  const tagCount = new Map();
+  for (const p of sameLang) {
+    for (const tag of new Set(p.tags)) tagCount.set(tag, (tagCount.get(tag) || 0) + 1);
+  }
+  const maxCount = sameLang.length * COMMON_TAG_SHARE;
+  const currentTags = new Set(current.tags.filter((tag) => (tagCount.get(tag) || 0) <= maxCount));
+  const categoryOf = (dir) => {
+    const m = /^(.+)-guide$/.exec(dir);
+    return m && Object.prototype.hasOwnProperty.call(toolCategories, m[1]) ? toolCategories[m[1]] : null;
+  };
+  const currentCategory = categoryOf(current.dir);
+  return sameLang
+    .filter((p) => p.dir !== current.dir)
+    .map((p) => {
+      let score = 0;
+      for (const tag of new Set(p.tags)) if (currentTags.has(tag)) score++;
+      if (currentCategory && categoryOf(p.dir) === currentCategory) score++;
+      return { post: p, score, gap: Math.abs(p.time - current.time) };
+    })
+    .sort((a, b) => b.score - a.score || a.gap - b.gap
+      || (a.post.dir < b.post.dir ? -1 : a.post.dir > b.post.dir ? 1 : 0))
+    .slice(0, limit)
+    .map((r) => r.post);
+}
+/* ── engine:end ── */
+
+const toRelatedRef = (p: CollectionEntry<'blog'>) => ({
+  dir: p.slug.split('/')[0], lang: p.data.lang, tags: p.data.tags, time: p.data.pubDate.getTime(),
+});
+const postsByDir = new Map(allPosts.map(p => [p.slug.split('/')[0], p]));
+const toolCategories = Object.fromEntries(allTools.map(tool => [tool.slug, tool.category]));
+const relatedPosts = selectRelatedPosts(toRelatedRef(post), allPosts.map(toRelatedRef), toolCategories, 3)
+  .map(ref => postsByDir.get(ref.dir)!);
 
 // Breadcrumb JSON-LD
 const breadcrumbJsonLd = JSON.stringify({
