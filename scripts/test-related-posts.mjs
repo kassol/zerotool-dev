@@ -8,7 +8,7 @@
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Covers: tags on more than half of the posts in a language do not score, the
-// same-tool-category bonus for `{toolSlug}-guide` posts, ties ordered by publish
+// same-tool-category bonus for tool guide posts (guideDirFor), ties ordered by publish
 // time gap and then dir name, fill with nearest posts when fewer than 3 score,
 // determinism (input order does not change the result), self exclusion, same
 // language only, and on the real blog: no post links to itself, and no English post
@@ -99,7 +99,7 @@ const pick = (current, posts, cats = {}, limit = 3) => dirs(selectRelatedPosts(c
 
 // ---------- 2. category bonus ----------
 {
-  const cats = { 'json-formatter': 'data', 'yaml-json': 'data', 'regex-tester': 'dev', 'uuid-generator': 'dev' };
+  const cats = { 'json-formatter-guide': 'data', 'yaml-json-guide': 'data', 'regex-tester-guide': 'dev', 'uuid-generator-guide': 'dev' };
   const cur = post('json-formatter-guide', 10);
   const posts = [
     cur,
@@ -122,17 +122,17 @@ const pick = (current, posts, cats = {}, limit = 3) => dirs(selectRelatedPosts(c
     post('other4', 10, []),
   ];
   deepEqual('category: tag + category beats tag only', pick(cur2, posts2, cats), ['yaml-json-guide', 'regex-tester-guide', 'other']);
-  // No bonus when the dir is not `{known tool}-guide`.
+  // No bonus when the dir is not a known tool guide.
   const cur3 = post('base64-encoding-explained', 10);
   const posts3 = [cur3, post('yaml-json-guide', 90), post('regex-tester-guide', 11)];
-  deepEqual('category: non-guide current post gets no bonus', pick(cur3, posts3, { ...cats, base64: 'encoding' }), ['regex-tester-guide', 'yaml-json-guide']);
+  deepEqual('category: non-guide current post gets no bonus', pick(cur3, posts3, { ...cats, 'base64-guide': 'encoding' }), ['regex-tester-guide', 'yaml-json-guide']);
   const cur4 = post('unknown-tool-guide', 10);
   const posts4 = [cur4, post('yaml-json-guide', 90), post('regex-tester-guide', 11), post('unknown2-guide', 50)];
   deepEqual('category: unknown tool guide gets no bonus', pick(cur4, posts4, cats), ['regex-tester-guide', 'unknown2-guide', 'yaml-json-guide']);
-  // Object prototype keys are not tools.
-  const cur5 = post('constructor-guide', 10);
-  const posts5 = [cur5, post('toString-guide', 90), post('x', 11)];
-  deepEqual('category: prototype keys are not tool slugs', pick(cur5, posts5, cats), ['x', 'toString-guide']);
+  // Object prototype keys are not guides.
+  const cur5 = post('constructor', 10);
+  const posts5 = [cur5, post('toString', 90), post('x', 11)];
+  deepEqual('category: prototype keys are not guide dirs', pick(cur5, posts5, cats), ['x', 'toString']);
 }
 
 // ---------- 3. tie order: time gap, then dir ----------
@@ -197,7 +197,17 @@ const pick = (current, posts, cats = {}, limit = 3) => dirs(selectRelatedPosts(c
   const blogDir = join(root, 'src/content/blog');
   const toolsSrc = readFileSync(join(root, 'src/data/tools.ts'), 'utf8');
   const cats = {};
-  for (const m of toolsSrc.matchAll(/\{\s*slug:\s*'([^']+)'[\s\S]*?category:\s*'([a-z]+)'/g)) cats[m[1]] = m[2];
+  // Mirror guideDirFor() in src/data/guides.ts.
+  const overrides = {};
+  const guidesSrc = readFileSync(join(root, 'src/data/guides.ts'), 'utf8');
+  for (const m of guidesSrc.matchAll(/^\s*'([^']+)':\s*'([^']+)',$/gm)) overrides[m[1]] = m[2];
+  check('real data: guide dir overrides parsed', Object.keys(overrides).length > 0, JSON.stringify(overrides));
+  for (const dir of Object.values(overrides)) {
+    check(`real data: override guide ${dir} exists`, existsSync(join(blogDir, dir, 'en.mdx')));
+  }
+  for (const m of toolsSrc.matchAll(/\{\s*slug:\s*'([^']+)'[\s\S]*?category:\s*'([a-z]+)'/g)) {
+    cats[overrides[m[1]] ?? `${m[1]}-guide`] = m[2];
+  }
   check('real data: tools.ts categories parsed', Object.keys(cats).length > 100, String(Object.keys(cats).length));
   for (const lang of ['en', 'zh']) {
     const posts = [];
