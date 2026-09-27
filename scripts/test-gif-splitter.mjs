@@ -16,7 +16,9 @@
 // and JSON; CRC32 and the STORED ZIP writer (parsed back, plus `unzip -t` if present);
 // segmented decoding (chunks from 1 pixel up to past a whole frame give output equal
 // to one-shot decoding, `lzwRun` stops at its limit and resumes mid-code) and a decode
-// abandoned mid-frame leaving no shared state behind.
+// abandoned mid-frame leaving no shared state behind; compositor progress counted in
+// decoded and drawn pixels (moves inside one large frame, frame-end values equal the
+// pixel share, monotonic with truncated and zero-size frames).
 //
 // The GIF fixtures are built in this file with an independent LZW encoder.
 //
@@ -830,6 +832,74 @@ for (const fx of segmentFixtures) {
   check('parse: truncation at every offset of a chain reads like the copied data', ok, detail);
   const noData = E.parseGif(bytes.slice(0, second));
   equal('parse: file ending before any image data drops that frame', noData.frames.length, 1);
+}
+
+// ---------- 21. progress counts decoded pixels ----------
+{
+  // Drain a compositor and record progress() after every step.
+  const trace = (comp) => {
+    const values = [comp.progress()];
+    const atFrameEnd = [];
+    let f;
+    while ((f = comp.step()) !== null) {
+      values.push(comp.progress());
+      if (f) atFrameEnd.push(comp.progress());
+    }
+    values.push(comp.progress());
+    return { values, atFrameEnd };
+  };
+  const monotonic = (v) => v.every((x, i) => i === 0 || x >= v[i - 1]);
+  const inRange = (v) => v.every((x) => x >= 0 && x <= 1);
+
+  // One large frame: progress moves before the frame is done.
+  const w = 120, h = 90;
+  const rand = lcg(33);
+  const indices = Array.from({ length: w * h }, () => rand() % 4);
+  const single = buildGif({ width: w, height: h, gct: PAL, frames: [{ width: w, height: h, indices, disposal: 1, delayCs: 10 }] });
+  const chunk = 500;
+  const one = trace(E.createCompositor(E.parseGif(single), chunk));
+  equal('progress single frame: starts at 0', one.values[0], 0);
+  // values: [before, ...paused steps, frame returned, null returned, after]
+  const midFrame = one.values.slice(1, -3);
+  check('progress single frame: moves inside the frame', midFrame.length > 0 && midFrame.every((x) => x > 0 && x < 1), JSON.stringify(midFrame.slice(0, 5)));
+  check('progress single frame: at least one pause per chunk of pixels', midFrame.length >= Math.ceil(w * h / chunk), String(midFrame.length));
+  const maxJump = Math.max(...one.values.slice(1).map((x, i) => x - one.values[i]));
+  check('progress single frame: no step jumps more than two chunks of work', maxJump <= (2 * chunk) / (2 * w * h) + 1e-12, String(maxJump));
+  check('progress single frame: first pause = one chunk of decode work', Math.abs(midFrame[0] - chunk / (2 * w * h)) < 1e-12, String(midFrame[0]));
+  check('progress single frame: monotonic and within [0, 1]', monotonic(one.values) && inRange(one.values));
+  equal('progress single frame: 1 when the frame is returned', one.atFrameEnd[0], 1);
+  equal('progress single frame: 1 after the end', one.values[one.values.length - 1], 1);
+
+  // Frames of different sizes: progress at each frame end = share of pixels so far.
+  const mixed = trace(E.createCompositor(E.parseGif(mixedGif), 7));
+  const parsed = E.parseGif(mixedGif);
+  const areas = parsed.frames.map((f) => f.width * f.height);
+  const totalArea = areas.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  const expected = areas.map((a) => (acc += a) / totalArea);
+  check('progress mixed frames: frame-end values equal the pixel share done',
+    mixed.atFrameEnd.length === expected.length && mixed.atFrameEnd.every((x, i) => Math.abs(x - expected[i]) < 1e-12),
+    JSON.stringify(mixed.atFrameEnd) + ' vs ' + JSON.stringify(expected));
+  check('progress mixed frames: monotonic and within [0, 1]', monotonic(mixed.values) && inRange(mixed.values));
+
+  // Truncated frame: fewer pixels decode, progress still reaches 1 and never goes back.
+  const two = buildGif({ width: w, height: h, gct: PAL, frames: [
+    { width: w, height: h, indices, disposal: 1, delayCs: 10 },
+    { width: w, height: h, indices, disposal: 1, delayCs: 10 },
+  ] });
+  const cut = two.slice(0, two.length - 400);
+  const truncated = trace(E.createCompositor(E.parseGif(cut), chunk));
+  check('progress truncated: monotonic and within [0, 1]', monotonic(truncated.values) && inRange(truncated.values));
+  equal('progress truncated: 1 after the end', truncated.values[truncated.values.length - 1], 1);
+
+  // No limit on chunk: one step per frame, progress jumps straight to the frame's share.
+  const whole = trace(E.createCompositor(E.parseGif(single), 0));
+  deepEqual('progress without chunking: 0 then 1', whole.values, [0, 1, 1]);
+
+  // A GIF with only 0×0 frames has no pixel work: 0 before, 1 after.
+  const empty = trace(E.createCompositor(E.parseGif(buildGif({ width: 4, height: 4, gct: PAL, frames: [{ width: 0, height: 0, indices: [], disposal: 1, delayCs: 10 }] })), chunk));
+  equal('progress zero-size frames: 0 before decoding', empty.values[0], 0);
+  equal('progress zero-size frames: 1 after the end', empty.values[empty.values.length - 1], 1);
 }
 
 // ---------- summary ----------

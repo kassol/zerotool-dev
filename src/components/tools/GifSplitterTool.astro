@@ -567,8 +567,9 @@
       // apply the previous frame's disposal (2 = clear its rect to transparent,
       // 3 = restore the canvas from before it was drawn), then draw this frame.
       // Yields undefined after each `chunk` pixels of LZW or blit work, and
-      // the frame result when a frame is done.
-      function* compositeSteps(gif, chunk) {
+      // the frame result when a frame is done. `work.done` counts that work in
+      // pixels (each frame pixel is decoded once and drawn once).
+      function* compositeSteps(gif, chunk, work) {
         var W = gif.width, H = gif.height;
         var canvas = new Uint8ClampedArray(W * H * 4);
         var pending = null;
@@ -579,19 +580,28 @@
             pending = null;
           }
           var f = gif.frames[index];
+          var area = f.width * f.height;
+          var frameStart = work.done;
           var saved = f.disposal === 3 ? canvas.slice() : null;
-          var lzw = createLzw(f.minCodeSize, gif.bytes, f.dataStart, f.width * f.height);
+          var lzw = createLzw(f.minCodeSize, gif.bytes, f.dataStart, area);
           lzwRun(lzw, chunk);
+          work.done = frameStart + lzw.count;
           while (!lzw.done) {
             yield;
             lzwRun(lzw, lzw.count + chunk);
+            work.done = frameStart + lzw.count;
           }
+          // A truncated frame decodes fewer pixels; count the rest as done.
+          work.done = frameStart + area;
           var palette = f.localColorTable || gif.globalColorTable;
           var rows = f.interlaced ? interlaceRows(f.height) : null;
           for (var k = 0; k < lzw.count; k += chunk) {
             if (k > 0) yield;
-            blitRange(canvas, W, H, f, lzw.indices, k, Math.min(lzw.count, k + chunk), palette, rows);
+            var end = Math.min(lzw.count, k + chunk);
+            blitRange(canvas, W, H, f, lzw.indices, k, end, palette, rows);
+            work.done = frameStart + area + end;
           }
+          work.done = frameStart + 2 * area;
           if (f.disposal === 2) pending = { mode: 2, frame: f };
           else if (f.disposal === 3) pending = { mode: 3, saved: saved };
           yield {
@@ -608,13 +618,23 @@
       // step() does about `chunk` pixels of work (no limit if chunk is not
       // positive) and returns the finished frame, undefined if the current
       // frame is not done yet, or null when all frames are done.
+      // progress() is the finished share of that work, from 0 to 1, so it
+      // also moves while one large frame decodes.
       function createCompositor(gif, chunk) {
-        var steps = compositeSteps(gif, chunk > 0 ? chunk : Infinity);
+        var work = { done: 0, total: 0 };
+        for (var i = 0; i < gif.frames.length; i++) work.total += 2 * gif.frames[i].width * gif.frames[i].height;
+        var finished = false;
+        var steps = compositeSteps(gif, chunk > 0 ? chunk : Infinity, work);
         return {
           width: gif.width, height: gif.height, total: gif.frames.length,
           step: function () {
             var r = steps.next();
+            if (r.done) finished = true;
             return r.done ? null : r.value;
+          },
+          progress: function () {
+            if (finished) return 1;
+            return work.total > 0 ? Math.min(1, work.done / work.total) : 0;
           },
         };
       }
@@ -1093,7 +1113,7 @@
             selected.push(true);
             addFrameCell(f.index, f, n);
           } while (performance.now() - sliceStart < 24);
-          progressEl.value = frames.length / n;
+          progressEl.value = comp.progress();
           setStatus(fmt(t.statusDecoding, { i: frames.length + (midFrame ? 1 : 0), n: n }), 'info');
           if (!done) {
             await yieldToBrowser();
