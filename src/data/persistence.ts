@@ -30,6 +30,7 @@ export const toolPersistencePolicy = {
   'pixelate-image': 'disabled',
   'gif-splitter': 'preference',
   'sprite-sheet-generator': 'preference',
+  'gif-compressor': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

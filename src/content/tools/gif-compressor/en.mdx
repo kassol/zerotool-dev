@@ -1,0 +1,68 @@
+---
+seoTitle: "GIF Compressor — Compress & Resize GIFs Online | ZeroTool"
+seoDescription: "Compress GIF files without uploading: lossy LZW, color reduction, resize and frame skipping. Compare sizes before and after, right in your browser."
+faqItems:
+  - question: "Is my GIF uploaded anywhere?"
+    answer: "No. The file is read with the File API, decoded and re-encoded by JavaScript on this page, and the result is offered as a download from memory. The only thing saved locally is your settings (Lossy, Colors, Frames and Dithering). Width is set per file and is not saved. The GIF and the result are never stored."
+  - question: "What does the Lossy slider do?"
+    answer: "GIF stores pixels with LZW compression, which saves space when a run of pixels repeats a sequence it has seen before. At Lossy above 0, the encoder may write a pixel as a slightly different palette color when that continues a sequence it already knows. The largest allowed shift is Lossy × 0.6 as a distance in RGB space: 24 at the default of 40, 60 at 100. Between frames, a pixel that is within that distance of what is already on screen counts as unchanged and is not redrawn. Transparent pixels never change. At 0 the pixels are written exactly."
+  - question: "Why is the result sometimes larger than the original?"
+    answer: "Some GIFs are already optimized, for example by gifsicle -O3 or by an encoder that gives every frame its own color table. This tool writes one shared palette of up to 255 colors plus a transparent slot, so a GIF that uses 256 colors, or different colors per frame, must be re-quantized and can grow. When that happens, the page says so and you can still download the file. Lower Colors, raise Lossy or reduce the width to get a smaller file."
+  - question: "How large a GIF can it handle?"
+    answer: "Up to 50 million decoded pixels (width × height × frames), 1,000 frames, and 16,777,216 pixels per frame (16,384 px per side). These are the same limits as the GIF Splitter and keep the page within phone memory. For larger files, run gifsicle -O3 --lossy=80 --colors 128 input.gif -o output.gif on your computer."
+  - question: "Why is Dithering off by default?"
+    answer: "Dithering scatters pixels of neighboring palette colors to fake the colors the palette lacks. The scattered pattern changes from frame to frame even where the picture stands still, so far fewer pixels count as unchanged and LZW finds fewer repeats. On a 231-frame screen recording, turning dithering on with 64 colors made the output 1.9 times larger (from 42% to 80% of the original). Turn it on for smooth gradients at low color counts, where banding is worse than the extra bytes."
+---
+
+## How to Use
+
+1. Drop a GIF on the drop zone, click to pick one, or paste a copied GIF file with **Ctrl/Cmd+V**.
+2. The page compresses it once with your current settings and shows the original and the result side by side, with both file sizes.
+3. Change the settings and click **Compress** to try again. Encoding is heavy, so it does not re-run while you move a slider.
+4. Click **Download GIF** to save the result as `{name}-compressed.gif`.
+
+## What Each Setting Does to the File Size
+
+| Setting | What it changes | Effect on size |
+|---|---|---|
+| **Lossy** (0–100, default 40) | Lets LZW reuse sequences with colors up to Lossy × 0.6 away | Usually the biggest win on video-like GIFs. On a 231-frame screen recording: 42% of the original at 40, 19% at 100 |
+| **Colors** (256 to 4) | Size of the color table; one slot is kept for transparency | Fewer colors mean smaller codes and more repeats. If the GIF already uses no more colors than the table holds, the palette stays exact |
+| **Width** | Scales the GIF down; height follows the aspect ratio | Pixel count drops with the square of the scale: half the width is about a quarter of the data |
+| **Frames** | Keeps every 2nd, 3rd or 4th frame | Fewer frames to store. Each kept frame also shows for the time of the frames it replaces, so the animation keeps its total length |
+| **Dithering** | Floyd–Steinberg error diffusion | Smoother gradients at low color counts, but usually a larger file |
+
+Width only shrinks. An empty value, 0, or anything above the original width keeps the original width. Resizing averages the source pixels that each output pixel covers. An output pixel that is less than half covered by opaque pixels becomes transparent.
+
+Frame delays are written in 10 ms steps with a minimum of 20 ms. A delay of 0 or 10 ms is written as 100 ms, because that is how browsers play it.
+
+## How Frame Optimization Works
+
+A GIF frame does not have to cover the whole canvas. The tool always writes the first frame in full. For every later frame, it compares the new picture with what is on screen and writes only the rectangle that holds the changed pixels. Unchanged pixels inside that rectangle use the transparent color, which leaves the previous frame visible and compresses into long runs. A frame with no change at all becomes a single transparent pixel that keeps its delay.
+
+Transparent pixels need one more step. If a pixel was visible and must become transparent, drawing a transparent pixel over it does nothing. The tool marks the frame before with disposal method 2 (restore to background) and grows that frame's rectangle to cover such pixels. The browser clears the area before the next frame draws.
+
+The palette is built once for the whole animation. If all frames together use no more colors than the table allows, the colors are kept exactly. Otherwise median cut splits the color space into boxes and takes the average color of each box.
+
+## Limits
+
+- The output is always a GIF. The [WebP Converter](/tools/webp-converter/) turns a GIF into a still WebP of its first frame. For an animated WebP, run `gif2webp` from libwebp on your computer:
+
+```bash
+gif2webp -lossy -q 75 in.gif -o out.webp
+```
+
+- For MP4, which is often several times smaller than the same GIF, run ffmpeg on your computer. If the width or height is odd, add `-vf "scale=trunc(iw/2)*2:trunc(ih/2)*2"`, because yuv420p needs even dimensions:
+
+```bash
+ffmpeg -i in.gif -movflags +faststart -pix_fmt yuv420p out.mp4
+```
+
+- Frames cannot be cropped, reordered or edited. To take a GIF apart into PNG frames, use the [GIF Splitter](/tools/gif-splitter/).
+- Size limits: 50 million decoded pixels, 1,000 frames, and 16,777,216 pixels per frame.
+- For JPEG, PNG and WebP images, use the [Image Compressor](/tools/image-compressor/).
+
+## Related Tools
+
+- [GIF Splitter](/tools/gif-splitter/) — export frames as PNG or JPG, or build a sprite sheet.
+- [Image Compressor](/tools/image-compressor/) — compress and resize JPEG, PNG and WebP.
+- [WebP Converter](/tools/webp-converter/) — convert PNG, JPG or the first frame of a GIF to WebP.

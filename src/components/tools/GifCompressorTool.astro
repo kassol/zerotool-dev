@@ -1,0 +1,1730 @@
+---
+// GifCompressorTool — shrinks an animated GIF in the browser: frame skipping,
+// area-average resizing, a global palette (exact or median cut), optional
+// Floyd–Steinberg dithering, frame differencing and a lossy LZW encoder.
+// The GIF decoder is a verbatim copy of the one in GifSplitterTool
+// (scripts/test-gif-compressor.mjs checks that both copies match).
+// No upload. Only settings are persisted (policy: preference).
+---
+
+<div>
+  <div class="gc-wrap" id="gc-wrap">
+    <div id="gc-drop" class="gc-drop" role="button" tabindex="0">
+      <div class="gc-drop-inner">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <p data-i18n="dropHint">Drop a GIF here, or <strong>click to select</strong></p>
+        <p class="gc-hint" data-i18n="pasteHint">You can also paste a copied GIF file with Ctrl/Cmd+V</p>
+        <p class="gc-hint" data-i18n="formatsHint">Animated or static GIF (GIF87a / GIF89a)</p>
+      </div>
+      <input type="file" id="gc-file" accept="image/gif,.gif" class="gc-file-input" tabindex="-1" aria-label="Select a GIF file" data-i18n-aria="dropAria" />
+    </div>
+
+    <div id="gc-limit" class="gc-limit" hidden>
+      <p id="gc-limit-msg" class="gc-limit-msg"></p>
+      <div class="gc-limit-cmd-row">
+        <code id="gc-limit-cmd" class="gc-limit-cmd">gifsicle -O3 --lossy=80 --colors 128 input.gif -o output.gif</code>
+        <button type="button" id="gc-limit-copy" class="btn-copy" data-i18n="copyCommand">Copy command</button>
+      </div>
+    </div>
+
+    <div id="gc-workspace" class="gc-workspace" hidden>
+      <dl class="gc-info">
+        <div class="gc-info-item"><dt data-i18n="infoSize">Size</dt><dd id="gc-info-size"></dd></div>
+        <div class="gc-info-item"><dt data-i18n="infoFrames">Frames</dt><dd id="gc-info-frames"></dd></div>
+        <div class="gc-info-item"><dt data-i18n="infoDuration">Duration</dt><dd id="gc-info-duration"></dd></div>
+        <div class="gc-info-item"><dt data-i18n="infoLoop">Repeats after first play</dt><dd id="gc-info-loop"></dd></div>
+        <div class="gc-info-item"><dt data-i18n="infoFile">File size</dt><dd id="gc-info-file"></dd></div>
+      </dl>
+
+      <section class="gc-panel">
+        <h2 class="gc-panel-title" data-i18n="settingsTitle">Compression settings</h2>
+        <div class="gc-settings">
+          <div class="gc-field gc-field-lossy">
+            <label for="gc-lossy" class="gc-range-label">
+              <span data-i18n="lossyLabel">Lossy</span> <strong id="gc-lossy-val">40</strong>
+            </label>
+            <input type="range" id="gc-lossy" min="0" max="100" step="1" value="40" aria-describedby="gc-lossy-hint" />
+            <p id="gc-lossy-hint" class="gc-field-hint" data-i18n="lossyHint">0 = lossless. Higher values allow larger color shifts for a smaller file.</p>
+          </div>
+          <label class="gc-field">
+            <span class="tool-label" data-i18n="colorsLabel">Colors</span>
+            <select id="gc-colors" class="tool-input gc-select-input">
+              <option value="256">256</option>
+              <option value="128">128</option>
+              <option value="64">64</option>
+              <option value="32">32</option>
+              <option value="16">16</option>
+              <option value="8">8</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+          <div class="gc-field">
+            <label for="gc-width" class="tool-label" data-i18n="widthLabel">Width (px)</label>
+            <input type="number" id="gc-width" class="tool-input gc-num" min="1" step="1" inputmode="numeric" aria-describedby="gc-width-hint" />
+            <p id="gc-width-hint" class="gc-field-hint"></p>
+          </div>
+          <label class="gc-field">
+            <span class="tool-label" data-i18n="framesLabel">Frames</span>
+            <select id="gc-step" class="tool-input gc-select-input">
+              <option value="1" data-i18n="stepAll">Keep all</option>
+              <option value="2" data-i18n="step2">Every 2nd frame</option>
+              <option value="3" data-i18n="step3">Every 3rd frame</option>
+              <option value="4" data-i18n="step4">Every 4th frame</option>
+            </select>
+          </label>
+          <label class="gc-check">
+            <input type="checkbox" id="gc-dither" />
+            <span data-i18n="ditherLabel">Dithering</span>
+          </label>
+        </div>
+        <div class="gc-actions">
+          <button type="button" id="gc-run" class="btn-primary" data-i18n="compress">Compress</button>
+          <button type="button" id="gc-reset" class="btn-ghost" data-i18n="reset">Open another GIF</button>
+        </div>
+        <progress id="gc-progress" class="gc-progress" max="1" value="0" hidden></progress>
+      </section>
+
+      <section id="gc-result" class="gc-panel" hidden>
+        <div class="gc-previews">
+          <figure class="gc-preview">
+            <figcaption data-i18n="originalTitle">Original</figcaption>
+            <div class="gc-preview-box"><img id="gc-img-original" alt="Original GIF" data-i18n-alt="originalAlt" /></div>
+          </figure>
+          <figure class="gc-preview">
+            <figcaption data-i18n="compressedTitle">Compressed</figcaption>
+            <div class="gc-preview-box"><img id="gc-img-compressed" alt="Compressed GIF" data-i18n-alt="compressedAlt" /></div>
+          </figure>
+        </div>
+        <p id="gc-summary" class="gc-summary"></p>
+        <div class="gc-actions">
+          <button type="button" id="gc-download" class="btn-primary" data-i18n="download">Download GIF</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="gc-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+  <script is:inline>
+    (function () {
+      var STRINGS = {
+        en: {
+          dropAria: 'Select a GIF file',
+          dropHint: 'Drop a GIF here, or <strong>click to select</strong>',
+          pasteHint: 'You can also paste a copied GIF file with Ctrl/Cmd+V',
+          formatsHint: 'Animated or static GIF (GIF87a / GIF89a)',
+          infoSize: 'Size', infoFrames: 'Frames', infoDuration: 'Duration', infoLoop: 'Repeats after first play', infoFile: 'File size',
+          loopInfinite: 'Infinite',
+          settingsTitle: 'Compression settings',
+          lossyLabel: 'Lossy', lossyHint: '0 = lossless. Higher values allow larger color shifts for a smaller file.',
+          colorsLabel: 'Colors', widthLabel: 'Width (px)',
+          widthHint: 'Output {w} × {h} px. Height follows the width. The GIF can only get smaller.',
+          framesLabel: 'Frames', stepAll: 'Keep all', step2: 'Every 2nd frame', step3: 'Every 3rd frame', step4: 'Every 4th frame',
+          ditherLabel: 'Dithering',
+          compress: 'Compress', reset: 'Open another GIF',
+          originalTitle: 'Original', compressedTitle: 'Compressed', originalAlt: 'Original GIF', compressedAlt: 'Compressed GIF',
+          summary: '{from} → {to} ({pct}) · {w}×{h} · frames: {n} · colors: {c}',
+          download: 'Download GIF', copyCommand: 'Copy command', copied: 'Copied',
+          statusNotGif: 'Not a GIF file — the file must start with GIF87a or GIF89a. For JPEG, PNG or WebP use the Image Compressor.',
+          statusReadFailed: 'Could not read this file',
+          statusNoFrames: 'This GIF contains no image frames',
+          statusDecoding: 'Decoding frame {i} / {n}…',
+          statusPalette: 'Building the color palette…',
+          statusEncoding: 'Encoding frame {i} / {n}…',
+          statusDone: 'Done. To try other settings, change them and click Compress.',
+          statusTruncated: 'The file ends early or is damaged. Frames decoded: {n}. The last frame may be incomplete.',
+          statusBigger: 'The result is not smaller than the original, so this GIF is already well optimized. Lower Colors, raise Lossy or reduce the width.',
+          statusFailed: 'Compression failed — the browser could not process this file',
+          statusCopyFailed: 'Copy was blocked — select the text and copy it manually',
+          limitPixels: 'This GIF is {w}×{h} with {n} frames: {mp} million pixels to decode. The limit is 50 million pixels (width × height × frames) so the page stays within phone memory. Compress it locally with gifsicle:',
+          limitFrames: 'This GIF has {n} frames. The limit is 1,000 frames. Compress it locally with gifsicle:',
+          limitFrameSize: 'Frames in this GIF are too large ({w}×{h}). The limit is 16,777,216 pixels per frame and 16,384 px per side. Compress it locally with gifsicle:',
+        },
+        zh: {
+          dropAria: '选择 GIF 文件',
+          dropHint: '把 GIF 拖到这里，或<strong>点击选择</strong>',
+          pasteHint: '也可以用 Ctrl/Cmd+V 粘贴已复制的 GIF 文件',
+          formatsHint: '支持动态或静态 GIF（GIF87a / GIF89a）',
+          infoSize: '尺寸', infoFrames: '帧数', infoDuration: '总时长', infoLoop: '首遍后重复次数', infoFile: '文件大小',
+          loopInfinite: '无限循环',
+          settingsTitle: '压缩设置',
+          lossyLabel: '有损程度', lossyHint: '0 为无损。数值越大，允许的颜色偏差越大，文件越小。',
+          colorsLabel: '颜色数', widthLabel: '宽度（px）',
+          widthHint: '输出 {w} × {h} px。高度随宽度等比变化，只能缩小。',
+          framesLabel: '帧', stepAll: '保留全部', step2: '每 2 帧留 1 帧', step3: '每 3 帧留 1 帧', step4: '每 4 帧留 1 帧',
+          ditherLabel: '抖动（Dithering）',
+          compress: '压缩', reset: '换一个 GIF',
+          originalTitle: '原图', compressedTitle: '压缩后', originalAlt: '原始 GIF', compressedAlt: '压缩后的 GIF',
+          summary: '{from} → {to}（{pct}）· {w}×{h} · {n} 帧 · {c} 色',
+          download: '下载 GIF', copyCommand: '复制命令', copied: '已复制',
+          statusNotGif: '不是 GIF 文件：文件头必须是 GIF87a 或 GIF89a。JPEG、PNG、WebP 请用图片压缩工具。',
+          statusReadFailed: '无法读取此文件',
+          statusNoFrames: '这个 GIF 里没有图像帧',
+          statusDecoding: '正在解码第 {i} / {n} 帧…',
+          statusPalette: '正在生成调色板…',
+          statusEncoding: '正在编码第 {i} / {n} 帧…',
+          statusDone: '压缩完成。想换参数，改完设置后再点「压缩」。',
+          statusTruncated: '文件提前结束或已损坏，已解码 {n} 帧，最后一帧可能不完整。',
+          statusBigger: '结果没有比原图小，说明原图已高度优化。可以降低颜色数、提高有损程度或缩小宽度。',
+          statusFailed: '压缩失败：浏览器无法处理这个文件',
+          statusCopyFailed: '复制被拦截，请手动选中文本复制',
+          limitPixels: '这个 GIF 尺寸 {w}×{h}、共 {n} 帧，需解码 {mp} 百万像素。为保证手机内存够用，上限为 5000 万像素（宽 × 高 × 帧数）。请用 gifsicle 在本地压缩：',
+          limitFrames: '这个 GIF 有 {n} 帧，上限为 1000 帧。请用 gifsicle 在本地压缩：',
+          limitFrameSize: '这个 GIF 的帧尺寸过大（{w}×{h}）。上限为单帧 16,777,216 像素、单边 16,384 px。请用 gifsicle 在本地压缩：',
+        },
+        ja: {
+          dropAria: 'GIF ファイルを選択',
+          dropHint: 'GIF をここにドロップ、または<strong>クリックして選択</strong>',
+          pasteHint: 'コピーした GIF ファイルを Ctrl/Cmd+V で貼り付けることもできます',
+          formatsHint: 'アニメーション GIF・静止 GIF（GIF87a / GIF89a）',
+          infoSize: 'サイズ', infoFrames: 'フレーム数', infoDuration: '再生時間', infoLoop: '初回後の繰り返し回数', infoFile: 'ファイルサイズ',
+          loopInfinite: '無限ループ',
+          settingsTitle: '圧縮設定',
+          lossyLabel: 'ロッシー', lossyHint: '0 でロスレス。値を上げるほど色のずれを許容し、ファイルが小さくなります。',
+          colorsLabel: '色数', widthLabel: '幅（px）',
+          widthHint: '出力 {w} × {h} px。高さは幅に合わせて自動で決まり、縮小のみできます。',
+          framesLabel: 'フレーム', stepAll: 'すべて残す', step2: '2 フレームごとに 1 枚', step3: '3 フレームごとに 1 枚', step4: '4 フレームごとに 1 枚',
+          ditherLabel: 'ディザリング',
+          compress: '圧縮', reset: '別の GIF を開く',
+          originalTitle: '元の GIF', compressedTitle: '圧縮後', originalAlt: '元の GIF', compressedAlt: '圧縮後の GIF',
+          summary: '{from} → {to}（{pct}）· {w}×{h} · {n} フレーム · {c} 色',
+          download: 'GIF をダウンロード', copyCommand: 'コマンドをコピー', copied: 'コピーしました',
+          statusNotGif: 'GIF ファイルではありません。ファイル先頭は GIF87a または GIF89a である必要があります。JPEG・PNG・WebP は画像圧縮ツールをご利用ください。',
+          statusReadFailed: 'このファイルを読み込めません',
+          statusNoFrames: 'この GIF には画像フレームがありません',
+          statusDecoding: 'フレーム {i} / {n} をデコード中…',
+          statusPalette: 'カラーパレットを作成中…',
+          statusEncoding: 'フレーム {i} / {n} をエンコード中…',
+          statusDone: '圧縮しました。別の設定を試すには、設定を変えて「圧縮」を押してください。',
+          statusTruncated: 'ファイルが途中で終わっているか破損しています。{n} フレームをデコードしました。最後のフレームが欠けている可能性があります。',
+          statusBigger: '結果が元のファイルより小さくなりませんでした。この GIF はすでに十分最適化されています。色数を減らす、ロッシーを上げる、幅を縮めるのいずれかを試してください。',
+          statusFailed: '圧縮に失敗しました。ブラウザがこのファイルを処理できません',
+          statusCopyFailed: 'コピーがブロックされました。テキストを選択して手動でコピーしてください',
+          limitPixels: 'この GIF は {w}×{h}、{n} フレームで、デコードに {mp} 百万ピクセルが必要です。スマートフォンのメモリに収めるため上限は 5,000 万ピクセル（幅 × 高さ × フレーム数）です。gifsicle を使ってローカルで圧縮してください：',
+          limitFrames: 'この GIF は {n} フレームあります。上限は 1,000 フレームです。gifsicle を使ってローカルで圧縮してください：',
+          limitFrameSize: 'この GIF のフレームは大きすぎます（{w}×{h}）。上限は 1 フレーム 16,777,216 ピクセル、一辺 16,384 px です。gifsicle を使ってローカルで圧縮してください：',
+        },
+        ko: {
+          dropAria: 'GIF 파일 선택',
+          dropHint: 'GIF를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
+          pasteHint: '복사한 GIF 파일을 Ctrl/Cmd+V로 붙여넣을 수도 있습니다',
+          formatsHint: '움직이는 GIF·정지 GIF (GIF87a / GIF89a)',
+          infoSize: '크기', infoFrames: '프레임 수', infoDuration: '재생 시간', infoLoop: '첫 재생 후 반복 횟수', infoFile: '파일 크기',
+          loopInfinite: '무한 반복',
+          settingsTitle: '압축 설정',
+          lossyLabel: '손실 압축', lossyHint: '0은 무손실. 값이 클수록 색 차이를 더 허용해 파일이 작아집니다.',
+          colorsLabel: '색상 수', widthLabel: '너비 (px)',
+          widthHint: '출력 {w} × {h} px. 높이는 너비에 맞춰 자동으로 정해지며, 줄이기만 할 수 있습니다.',
+          framesLabel: '프레임', stepAll: '모두 유지', step2: '2프레임마다 1장', step3: '3프레임마다 1장', step4: '4프레임마다 1장',
+          ditherLabel: '디더링',
+          compress: '압축', reset: '다른 GIF 열기',
+          originalTitle: '원본', compressedTitle: '압축 결과', originalAlt: '원본 GIF', compressedAlt: '압축된 GIF',
+          summary: '{from} → {to} ({pct}) · {w}×{h} · 프레임 {n}개 · {c}색',
+          download: 'GIF 다운로드', copyCommand: '명령어 복사', copied: '복사됨',
+          statusNotGif: 'GIF 파일이 아닙니다. 파일 헤더가 GIF87a 또는 GIF89a로 시작해야 합니다. JPEG·PNG·WebP는 이미지 압축기를 이용하세요.',
+          statusReadFailed: '이 파일을 읽을 수 없습니다',
+          statusNoFrames: '이 GIF에는 이미지 프레임이 없습니다',
+          statusDecoding: '프레임 {i} / {n} 디코딩 중…',
+          statusPalette: '색상 팔레트 만드는 중…',
+          statusEncoding: '프레임 {i} / {n} 인코딩 중…',
+          statusDone: '압축 완료. 다른 설정을 시험하려면 설정을 바꾼 뒤 압축을 누르세요.',
+          statusTruncated: '파일이 중간에 끝났거나 손상되었습니다. 프레임 {n}개를 디코딩했으며 마지막 프레임이 불완전할 수 있습니다.',
+          statusBigger: '결과가 원본보다 작지 않습니다. 이 GIF는 이미 충분히 최적화되어 있습니다. 색상 수를 줄이거나, 손실 압축을 높이거나, 너비를 줄여 보세요.',
+          statusFailed: '압축 실패 — 브라우저가 이 파일을 처리하지 못했습니다',
+          statusCopyFailed: '복사가 차단되었습니다 — 텍스트를 선택해 직접 복사하세요',
+          limitPixels: '이 GIF는 {w}×{h}, 프레임 {n}개로 {mp}백만 픽셀을 디코딩해야 합니다. 휴대폰 메모리 안에서 동작하도록 한도는 5,000만 픽셀(가로 × 세로 × 프레임 수)입니다. gifsicle로 로컬에서 압축하세요:',
+          limitFrames: '이 GIF는 프레임이 {n}개입니다. 한도는 1,000개입니다. gifsicle로 로컬에서 압축하세요:',
+          limitFrameSize: '이 GIF의 프레임이 너무 큽니다({w}×{h}). 한도는 프레임당 16,777,216픽셀, 한 변 16,384px입니다. gifsicle로 로컬에서 압축하세요:',
+        },
+      };
+      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var t = STRINGS[pageLang] || STRINGS.en;
+      document.querySelectorAll('.gc-wrap [data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (t[key]) el.innerHTML = t[key];
+      });
+      document.querySelectorAll('.gc-wrap [data-i18n-aria]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-aria');
+        if (t[key]) el.setAttribute('aria-label', t[key]);
+      });
+      document.querySelectorAll('.gc-wrap [data-i18n-alt]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n-alt');
+        if (t[key]) el.setAttribute('alt', t[key]);
+      });
+      function fmt(str, vars) {
+        return str.replace(/\{(\w+)\}/g, function (m, k) { return vars[k] !== undefined ? String(vars[k]) : m; });
+      }
+
+      /* ── engine:start ── */
+      // Pure, DOM-free GIF decoding and compression — extracted verbatim by
+      // scripts/test-gif-compressor.mjs. Keep this block free of DOM/canvas
+      // APIs. The decoder functions (GS_LIMITS through checkBudget) are a
+      // copy of the GifSplitterTool engine block; change both together.
+
+      // Decoding budget. Frames are kept as RGBA in memory: 50M px = 200 MB.
+      // 16,777,216 px (4096²) is the iOS Safari per-canvas area limit.
+      var GS_LIMITS = { maxPixels: 50000000, maxFrames: 1000, maxCanvasArea: 16777216, maxSide: 16384 };
+
+      function isGif(bytes) {
+        if (!bytes || bytes.length < 6) return false;
+        return bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38 &&
+          (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61;
+      }
+
+      // Walk a chain of data sub-blocks starting at `p` without copying.
+      // Tolerates a file that ends mid-chain: `size` counts the data bytes
+      // that are present and complete=false. `end` is just past the chain.
+      function scanSubBlocks(bytes, p) {
+        var len = bytes.length, q = p, size = 0;
+        while (q < len) {
+          var n = bytes[q];
+          if (n === 0) return { size: size, end: q + 1, complete: true };
+          size += Math.min(n, len - q - 1);
+          q += 1 + n;
+        }
+        return { size: size, end: len, complete: false };
+      }
+
+      // Concatenate a chain of data sub-blocks starting at `p` (used for the
+      // small extension blocks; image data is read in place by lzwRun).
+      function readSubBlocks(bytes, p) {
+        var len = bytes.length, q = p;
+        var scan = scanSubBlocks(bytes, p);
+        var data = new Uint8Array(scan.size), o = 0;
+        while (q < len) {
+          var n2 = bytes[q];
+          if (n2 === 0) { q++; break; }
+          var take = Math.min(n2, len - q - 1);
+          data.set(bytes.subarray(q + 1, q + 1 + take), o);
+          o += take;
+          q += 1 + n2;
+        }
+        return { data: data, end: scan.end, complete: scan.complete };
+      }
+
+      // Parse the GIF block structure without decoding pixels, so size and
+      // frame count are known before any heavy work. Image data is not
+      // copied: each frame records where its sub-block chain starts in
+      // gif.bytes (`dataStart`) and how many data bytes it holds (`dataSize`).
+      function parseGif(bytes) {
+        if (!isGif(bytes)) throw new Error('NOT_GIF');
+        var len = bytes.length;
+        var gif = { width: 0, height: 0, globalColorTable: null, loopCount: null, frames: [], truncated: false, bytes: bytes };
+        if (len < 13) { gif.truncated = true; return gif; }
+        gif.width = bytes[6] | (bytes[7] << 8);
+        gif.height = bytes[8] | (bytes[9] << 8);
+        var packed = bytes[10];
+        var p = 13;
+        if (packed & 0x80) {
+          var gctLen = 3 * (1 << ((packed & 7) + 1));
+          if (p + gctLen > len) { gif.truncated = true; return gif; }
+          gif.globalColorTable = bytes.subarray(p, p + gctLen);
+          p += gctLen;
+        }
+        var gce = null;
+        while (p < len) {
+          var introducer = bytes[p++];
+          if (introducer === 0x3B) break;
+          if (introducer === 0x21) {
+            if (p >= len) { gif.truncated = true; break; }
+            var label = bytes[p++];
+            var ext = readSubBlocks(bytes, p);
+            p = ext.end;
+            var d = ext.data;
+            if (label === 0xF9 && d.length >= 4) {
+              gce = { disposal: (d[0] >> 2) & 7, transparentIndex: (d[0] & 1) ? d[3] : -1, delayCs: d[1] | (d[2] << 8) };
+            } else if (label === 0xFF && d.length >= 14) {
+              var id = String.fromCharCode.apply(null, Array.prototype.slice.call(d.subarray(0, 11)));
+              if ((id === 'NETSCAPE2.0' || id === 'ANIMEXTS1.0') && d[11] === 1) {
+                gif.loopCount = d[12] | (d[13] << 8);
+              }
+            }
+            if (!ext.complete) { gif.truncated = true; break; }
+          } else if (introducer === 0x2C) {
+            if (p + 9 > len) { gif.truncated = true; break; }
+            var frame = {
+              left: bytes[p] | (bytes[p + 1] << 8),
+              top: bytes[p + 2] | (bytes[p + 3] << 8),
+              width: bytes[p + 4] | (bytes[p + 5] << 8),
+              height: bytes[p + 6] | (bytes[p + 7] << 8),
+              interlaced: false, localColorTable: null, minCodeSize: 0, dataStart: 0, dataSize: 0,
+              disposal: gce ? gce.disposal : 0,
+              transparentIndex: gce ? gce.transparentIndex : -1,
+              delayCs: gce ? gce.delayCs : 0,
+              complete: true,
+            };
+            var fpacked = bytes[p + 8];
+            frame.interlaced = !!(fpacked & 0x40);
+            p += 9;
+            if (fpacked & 0x80) {
+              var lctLen = 3 * (1 << ((fpacked & 7) + 1));
+              if (p + lctLen > len) { gif.truncated = true; break; }
+              frame.localColorTable = bytes.subarray(p, p + lctLen);
+              p += lctLen;
+            }
+            if (p >= len) { gif.truncated = true; break; }
+            frame.minCodeSize = bytes[p++];
+            var img = scanSubBlocks(bytes, p);
+            frame.dataStart = p;
+            frame.dataSize = img.size;
+            frame.complete = img.complete;
+            p = img.end;
+            gce = null;
+            if (!img.complete) {
+              gif.truncated = true;
+              if (img.size > 0) gif.frames.push(frame);
+              break;
+            }
+            gif.frames.push(frame);
+          } else {
+            // Unknown block introducer (junk after the last frame): stop like browsers do.
+            break;
+          }
+        }
+        if (!gif.width || !gif.height) {
+          var mw = 0, mh = 0;
+          for (var i = 0; i < gif.frames.length; i++) {
+            var f = gif.frames[i];
+            mw = Math.max(mw, f.left + f.width);
+            mh = Math.max(mh, f.top + f.height);
+          }
+          if (!gif.width) gif.width = mw;
+          if (!gif.height) gif.height = mh;
+        }
+        return gif;
+      }
+
+      // Decoding can pause inside a frame so one large frame does not block
+      // the main thread. The hot loops (LZW, blit) are plain functions that
+      // work on a bounded range and keep their progress in an explicit state
+      // object; only the frame sequencing in compositeSteps is a generator.
+
+      // Variable-width GIF LZW decoder state. The code stream is read in
+      // place from the sub-block chain that starts at bytes[start] (a length
+      // byte). Codes grow up to 12 bits; once the table is full it keeps
+      // reading 12-bit codes without adding entries (deferred clear).
+      // Decoding stops at the end code, on an invalid code, at the chain's
+      // zero-length terminator, or where the file ends (a sub-block cut short
+      // gives the bytes that are present). `indices` holds the output,
+      // `count` the number of pixel indices produced so far; `done` is set
+      // when nothing more will be produced.
+      function createLzw(minCodeSize, bytes, start, pixelCount) {
+        var valid = minCodeSize >= 1 && minCodeSize <= 8;
+        var clear = 1 << minCodeSize;
+        var lzw = {
+          minCodeSize: minCodeSize, bytes: bytes, pixelCount: pixelCount,
+          indices: new Uint8Array(pixelCount), count: 0, done: !valid || pixelCount === 0,
+          codeSize: minCodeSize + 1, avail: clear + 2, oldCode: -1, first: 0,
+          datum: 0, bits: 0, pos: start, left: 0, top: 0,
+          prefix: new Uint16Array(4096), suffix: new Uint8Array(4096), stack: new Uint8Array(4097),
+        };
+        if (valid) for (var c = 0; c < clear; c++) lzw.suffix[c] = c;
+        return lzw;
+      }
+
+      // Decode until `limit` indices exist in total or the stream ends. Can
+      // stop in the middle of a code's output; the rest waits on the stack.
+      function lzwRun(lzw, limit) {
+        if (lzw.done) return;
+        var pixelCount = lzw.pixelCount;
+        if (limit > pixelCount) limit = pixelCount;
+        var minCodeSize = lzw.minCodeSize, bytes = lzw.bytes, out = lzw.indices;
+        var clear = 1 << minCodeSize, eoi = clear + 1;
+        var codeSize = lzw.codeSize, codeMask = (1 << codeSize) - 1;
+        var avail = lzw.avail, oldCode = lzw.oldCode, first = lzw.first;
+        var prefix = lzw.prefix, suffix = lzw.suffix, stack = lzw.stack;
+        var datum = lzw.datum, bits = lzw.bits, i = lzw.pos, left = lzw.left, op = lzw.count, top = lzw.top;
+        var blen = bytes.length, ended = false;
+        while (top > 0 && op < limit) out[op++] = stack[--top];
+        decode: while (op < limit) {
+          while (bits < codeSize) {
+            if (i >= blen) { ended = true; break decode; }
+            if (left === 0) {
+              left = bytes[i++];
+              if (left === 0 || i >= blen) { ended = true; break decode; }
+            }
+            datum |= bytes[i++] << bits;
+            bits += 8;
+            left--;
+          }
+          var code = datum & codeMask;
+          datum >>>= codeSize;
+          bits -= codeSize;
+          if (code === clear) {
+            codeSize = minCodeSize + 1;
+            codeMask = (1 << codeSize) - 1;
+            avail = clear + 2;
+            oldCode = -1;
+            continue;
+          }
+          if (code === eoi) { ended = true; break; }
+          if (oldCode === -1) {
+            if (code >= clear) { ended = true; break; }
+            out[op++] = code;
+            oldCode = code;
+            first = code;
+            continue;
+          }
+          var inCode = code;
+          if (code > avail) { ended = true; break; }
+          if (code === avail) {
+            stack[top++] = first;
+            code = oldCode;
+          }
+          while (code >= clear) {
+            stack[top++] = suffix[code];
+            code = prefix[code];
+          }
+          first = suffix[code];
+          stack[top++] = first;
+          if (avail < 4096) {
+            prefix[avail] = oldCode;
+            suffix[avail] = first;
+            avail++;
+            if ((avail & codeMask) === 0 && avail < 4096) {
+              codeSize++;
+              codeMask = (1 << codeSize) - 1;
+            }
+          }
+          oldCode = inCode;
+          while (top > 0 && op < limit) out[op++] = stack[--top];
+        }
+        lzw.codeSize = codeSize; lzw.avail = avail; lzw.oldCode = oldCode; lzw.first = first;
+        lzw.datum = datum; lzw.bits = bits; lzw.pos = i; lzw.left = left; lzw.count = op; lzw.top = top;
+        lzw.done = ended || op >= pixelCount;
+      }
+
+      // Row order of an interlaced image: decoded row r lands on map[r].
+      function interlaceRows(h) {
+        var map = new Uint32Array(h), r = 0;
+        var starts = [0, 4, 2, 1], steps = [8, 8, 4, 2];
+        for (var pass = 0; pass < 4; pass++) {
+          for (var y = starts[pass]; y < h; y += steps[pass]) map[r++] = y;
+        }
+        return map;
+      }
+
+      // Paint decoded indices [from, to) onto the RGBA canvas; `to` must not
+      // exceed the decoded count and the range may start or end inside a row.
+      // `rows` is interlaceRows(f.height) for an interlaced frame, else null.
+      // Transparent-index pixels and pixels past the decoded count leave the
+      // canvas untouched; indices outside the palette (or with no palette at
+      // all) paint opaque black.
+      function blitRange(canvas, W, H, f, indices, from, to, palette, rows) {
+        var fw = f.width, fh = f.height;
+        if (!fw || !fh || from >= to) return;
+        var trans = f.transparentIndex;
+        var palLen = palette ? Math.floor(palette.length / 3) : 0;
+        for (var r = Math.floor(from / fw); r < fh && r * fw < to; r++) {
+          var y = f.top + (rows ? rows[r] : r);
+          if (y >= H) continue;
+          var rowStart = r * fw, rowEnd = Math.min(rowStart + fw, to);
+          for (var k = Math.max(rowStart, from); k < rowEnd; k++) {
+            var ci = indices[k];
+            if (ci === trans) continue;
+            var x = f.left + (k - rowStart);
+            if (x >= W) break;
+            var o = (y * W + x) * 4;
+            if (ci < palLen) {
+              canvas[o] = palette[ci * 3];
+              canvas[o + 1] = palette[ci * 3 + 1];
+              canvas[o + 2] = palette[ci * 3 + 2];
+            } else {
+              canvas[o] = 0; canvas[o + 1] = 0; canvas[o + 2] = 0;
+            }
+            canvas[o + 3] = 255;
+          }
+        }
+      }
+
+      function clearRect(canvas, W, H, f) {
+        var x1 = Math.min(f.left + f.width, W), y1 = Math.min(f.top + f.height, H);
+        if (f.left >= x1) return;
+        for (var y = f.top; y < y1; y++) canvas.fill(0, (y * W + f.left) * 4, (y * W + x1) * 4);
+      }
+
+      // Browsers play delays of 0 or 1 centisecond at 100 ms.
+      function frameDurationMs(delayCs) {
+        return delayCs <= 1 ? 100 : delayCs * 10;
+      }
+
+      // Composite frames one at a time, the way a browser shows them:
+      // apply the previous frame's disposal (2 = clear its rect to transparent,
+      // 3 = restore the canvas from before it was drawn), then draw this frame.
+      // Yields undefined after each `chunk` pixels of LZW or blit work, and
+      // the frame result when a frame is done. `work.done` counts that work in
+      // pixels (each frame pixel is decoded once and drawn once).
+      function* compositeSteps(gif, chunk, work) {
+        var W = gif.width, H = gif.height;
+        var canvas = new Uint8ClampedArray(W * H * 4);
+        var pending = null;
+        for (var index = 0; index < gif.frames.length; index++) {
+          if (pending) {
+            if (pending.mode === 2) clearRect(canvas, W, H, pending.frame);
+            else canvas.set(pending.saved);
+            pending = null;
+          }
+          var f = gif.frames[index];
+          var area = f.width * f.height;
+          var frameStart = work.done;
+          var saved = f.disposal === 3 ? canvas.slice() : null;
+          var lzw = createLzw(f.minCodeSize, gif.bytes, f.dataStart, area);
+          lzwRun(lzw, chunk);
+          work.done = frameStart + lzw.count;
+          while (!lzw.done) {
+            yield;
+            lzwRun(lzw, lzw.count + chunk);
+            work.done = frameStart + lzw.count;
+          }
+          // A truncated frame decodes fewer pixels; count the rest as done.
+          work.done = frameStart + area;
+          var palette = f.localColorTable || gif.globalColorTable;
+          var rows = f.interlaced ? interlaceRows(f.height) : null;
+          for (var k = 0; k < lzw.count; k += chunk) {
+            if (k > 0) yield;
+            var end = Math.min(lzw.count, k + chunk);
+            blitRange(canvas, W, H, f, lzw.indices, k, end, palette, rows);
+            work.done = frameStart + area + end;
+          }
+          work.done = frameStart + 2 * area;
+          if (f.disposal === 2) pending = { mode: 2, frame: f };
+          else if (f.disposal === 3) pending = { mode: 3, saved: saved };
+          yield {
+            index: index,
+            rgba: canvas.slice(),
+            delayCs: f.delayCs,
+            durationMs: frameDurationMs(f.delayCs),
+            disposal: f.disposal,
+            complete: f.complete && lzw.count >= f.width * f.height,
+          };
+        }
+      }
+
+      // step() does about `chunk` pixels of work (no limit if chunk is not
+      // positive) and returns the finished frame, undefined if the current
+      // frame is not done yet, or null when all frames are done.
+      // progress() is the finished share of that work, from 0 to 1, so it
+      // also moves while one large frame decodes.
+      function createCompositor(gif, chunk) {
+        var work = { done: 0, total: 0 };
+        for (var i = 0; i < gif.frames.length; i++) work.total += 2 * gif.frames[i].width * gif.frames[i].height;
+        var finished = false;
+        var steps = compositeSteps(gif, chunk > 0 ? chunk : Infinity, work);
+        return {
+          width: gif.width, height: gif.height, total: gif.frames.length,
+          step: function () {
+            var r = steps.next();
+            if (r.done) finished = true;
+            return r.done ? null : r.value;
+          },
+          progress: function () {
+            if (finished) return 1;
+            return work.total > 0 ? Math.min(1, work.done / work.total) : 0;
+          },
+        };
+      }
+
+      function checkBudget(gif) {
+        var L = GS_LIMITS, W = gif.width, H = gif.height, n = gif.frames.length;
+        var pixels = W * H * n;
+        if (W > L.maxSide || H > L.maxSide || W * H > L.maxCanvasArea) return { ok: false, reason: 'frameSize', pixels: pixels };
+        for (var i = 0; i < n; i++) {
+          if (gif.frames[i].width * gif.frames[i].height > L.maxCanvasArea) return { ok: false, reason: 'frameSize', pixels: pixels };
+        }
+        if (n > L.maxFrames) return { ok: false, reason: 'frames', pixels: pixels };
+        if (pixels > L.maxPixels) return { ok: false, reason: 'pixels', pixels: pixels };
+        return { ok: true, reason: null, pixels: pixels };
+      }
+
+      // ── Compression ──
+
+      // Lossy L (0–100): the largest color shift the encoder may make is
+      // L × GC_LOSSY_SCALE (Euclidean distance in RGB, 0–441).
+      var GC_LOSSY_SCALE = 0.6;
+      var GC_COLOR_OPTIONS = [256, 128, 64, 32, 16, 8, 4];
+      var GC_DEFAULTS = { lossy: 40, colors: 256, step: 1, dither: false };
+
+      // Empty, non-numeric, below 1 or above the original width: keep the
+      // original width. Fractions round to the nearest pixel.
+      function normalizeWidth(value, maxWidth) {
+        if (value === '' || value === null || value === undefined) return maxWidth;
+        var n = Math.round(Number(value));
+        if (!isFinite(n) || n < 1 || n > maxWidth) return maxWidth;
+        return n;
+      }
+
+      function outputHeight(width, height, outWidth) {
+        return Math.max(1, Math.round(height * outWidth / width));
+      }
+
+      function normalizeLossy(value) {
+        var n = Math.round(Number(value));
+        if (!isFinite(n) || n < 0) return 0;
+        return n > 100 ? 100 : n;
+      }
+
+      function normalizeColors(value) {
+        var n = parseInt(value, 10);
+        return GC_COLOR_OPTIONS.indexOf(n) >= 0 ? n : GC_DEFAULTS.colors;
+      }
+
+      function normalizeStep(value) {
+        var n = parseInt(value, 10);
+        return n >= 1 && n <= 4 ? n : 1;
+      }
+
+      // Delays are written in whole centiseconds, at least 2: browsers play
+      // 0 and 1 as 100 ms.
+      function delayCsFromMs(ms) {
+        return Math.min(65535, Math.max(2, Math.round(ms / 10)));
+      }
+
+      // Area-average weights in integer units: output pixel i covers
+      // [i·n, (i+1)·n) and source pixel k covers [k·m, (k+1)·m).
+      function boxWeights(n, m) {
+        var spans = [];
+        for (var i = 0; i < m; i++) {
+          var a = i * n, b = a + n;
+          var start = Math.floor(a / m), end = Math.ceil(b / m);
+          var weights = [];
+          for (var k = start; k < end; k++) weights.push(Math.min(b, (k + 1) * m) - Math.max(a, k * m));
+          spans.push({ start: start, weights: weights });
+        }
+        return spans;
+      }
+
+      // Downscale RGBA from W×H to w×h by area averaging. Colors are weighted
+      // by alpha. An output pixel less than half covered by opaque source
+      // pixels is transparent; the others are opaque.
+      function resizeRgba(src, W, H, w, h) {
+        var out = new Uint8ClampedArray(w * h * 4);
+        var xs = boxWeights(W, w), ys = boxWeights(H, h);
+        var full = 255 * W * H;
+        for (var oy = 0; oy < h; oy++) {
+          var ySpan = ys[oy];
+          for (var ox = 0; ox < w; ox++) {
+            var xSpan = xs[ox];
+            var sa = 0, sr = 0, sg = 0, sb = 0;
+            for (var j = 0; j < ySpan.weights.length; j++) {
+              var wy = ySpan.weights[j], row = (ySpan.start + j) * W + xSpan.start;
+              for (var i = 0; i < xSpan.weights.length; i++) {
+                var o = (row + i) * 4, a = src[o + 3];
+                if (!a) continue;
+                var wa = wy * xSpan.weights[i] * a;
+                sa += wa; sr += wa * src[o]; sg += wa * src[o + 1]; sb += wa * src[o + 2];
+              }
+            }
+            if (sa * 2 >= full) {
+              var q = (oy * w + ox) * 4;
+              out[q] = Math.round(sr / sa);
+              out[q + 1] = Math.round(sg / sa);
+              out[q + 2] = Math.round(sb / sa);
+              out[q + 3] = 255;
+            }
+          }
+        }
+        return out;
+      }
+
+      function colorKey15(r, g, b) {
+        return ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      }
+
+      // Median cut over the 15-bit histogram: split the box with the largest
+      // squared error along its channel of largest variance, at the
+      // pixel-weighted median, until there are `target` boxes. Each palette
+      // color is the pixel-weighted mean of its box.
+      function medianCut(counts, sums, target) {
+        var keys = [];
+        for (var k = 0; k < 32768; k++) if (counts[k] > 0) keys.push(k);
+        var order = Int32Array.from(keys);
+        var means = new Float64Array(32768 * 3);
+        for (var i = 0; i < keys.length; i++) {
+          var kk = keys[i], c = counts[kk];
+          means[kk * 3] = sums[kk * 3] / c;
+          means[kk * 3 + 1] = sums[kk * 3 + 1] / c;
+          means[kk * 3 + 2] = sums[kk * 3 + 2] / c;
+        }
+        function makeBox(lo, hi) {
+          var n = 0, s = [0, 0, 0], s2 = [0, 0, 0];
+          for (var p = lo; p < hi; p++) {
+            var key = order[p], cnt = counts[key];
+            n += cnt;
+            for (var a = 0; a < 3; a++) {
+              var m = means[key * 3 + a];
+              s[a] += cnt * m;
+              s2[a] += cnt * m * m;
+            }
+          }
+          var v = [0, 0, 0], sse = 0;
+          for (var a2 = 0; a2 < 3; a2++) {
+            v[a2] = Math.max(0, s2[a2] - s[a2] * s[a2] / n);
+            sse += v[a2];
+          }
+          return { lo: lo, hi: hi, n: n, sse: sse, v: v, mean: [s[0] / n, s[1] / n, s[2] / n] };
+        }
+        var boxes = keys.length ? [makeBox(0, order.length)] : [];
+        while (boxes.length < target) {
+          var best = -1, bestSse = 0;
+          for (var b = 0; b < boxes.length; b++) {
+            if (boxes[b].hi - boxes[b].lo > 1 && boxes[b].sse > bestSse) { best = b; bestSse = boxes[b].sse; }
+          }
+          if (best < 0) break;
+          var box = boxes[best], v = box.v;
+          var axis = v[0] >= v[1] ? (v[0] >= v[2] ? 0 : 2) : (v[1] >= v[2] ? 1 : 2);
+          order.subarray(box.lo, box.hi).sort(function (x, y) { return (means[x * 3 + axis] - means[y * 3 + axis]) || (x - y); });
+          var half = box.n / 2, acc = 0, split = box.hi - 1;
+          for (var q = box.lo; q < box.hi - 1; q++) {
+            acc += counts[order[q]];
+            if (acc >= half) { split = q + 1; break; }
+          }
+          boxes.splice(best, 1, makeBox(box.lo, split), makeBox(split, box.hi));
+        }
+        var colors = new Uint8Array(boxes.length * 3);
+        for (var j = 0; j < boxes.length; j++) {
+          colors[j * 3] = Math.round(boxes[j].mean[0]);
+          colors[j * 3 + 1] = Math.round(boxes[j].mean[1]);
+          colors[j * 3 + 2] = Math.round(boxes[j].mean[2]);
+        }
+        return colors;
+      }
+
+      // Collects the colors of opaque pixels (alpha ≥ 128) over all frames.
+      // One palette slot is kept for the transparent index, so there are at
+      // most maxColors − 1 colors. If the frames use no more than that, the
+      // palette is exact (lossless); otherwise median cut on a 15-bit
+      // histogram (5 bits per channel).
+      function createPaletteBuilder(maxColors) {
+        var limit = maxColors - 1;
+        var counts = new Float64Array(32768), sums = new Float64Array(32768 * 3);
+        var exact = new Map(), last = -1;
+        return {
+          add: function (rgba) {
+            for (var o = 0; o < rgba.length; o += 4) {
+              if (rgba[o + 3] < 128) continue;
+              var r = rgba[o], g = rgba[o + 1], b = rgba[o + 2];
+              var k = colorKey15(r, g, b);
+              counts[k]++;
+              sums[k * 3] += r; sums[k * 3 + 1] += g; sums[k * 3 + 2] += b;
+              if (exact) {
+                var c = (r << 16) | (g << 8) | b;
+                if (c !== last) {
+                  last = c;
+                  if (!exact.has(c)) {
+                    if (exact.size >= limit) exact = null;
+                    else exact.set(c, exact.size);
+                  }
+                }
+              }
+            }
+          },
+          finish: function () {
+            if (exact) {
+              var colors = new Uint8Array(exact.size * 3);
+              exact.forEach(function (idx, c) {
+                colors[idx * 3] = c >> 16;
+                colors[idx * 3 + 1] = (c >> 8) & 255;
+                colors[idx * 3 + 2] = c & 255;
+              });
+              return { colors: colors, count: exact.size, exact: true, lookup: exact, counts: null, sums: null };
+            }
+            var cut = medianCut(counts, sums, limit);
+            return { colors: cut, count: cut.length / 3, exact: false, lookup: null, counts: counts, sums: sums };
+          },
+        };
+      }
+
+      function nearestColor(colors, count, r, g, b) {
+        var best = 0, bestD = Infinity;
+        for (var i = 0; i < count; i++) {
+          var dr = colors[i * 3] - r, dg = colors[i * 3 + 1] - g, db = colors[i * 3 + 2] - b;
+          var d = dr * dr + dg * dg + db * db;
+          if (d < bestD) { bestD = d; best = i; if (d === 0) break; }
+        }
+        return best;
+      }
+
+      function clamp255(v) {
+        return v <= 0 ? 0 : v >= 255 ? 255 : Math.round(v);
+      }
+
+      // Returns quantize(rgba, w, h) → palette indices. Transparent pixels
+      // (alpha < 128) get index `count`. An exact palette maps every color to
+      // itself. Otherwise each 15-bit key maps (cached) to the palette color
+      // nearest to the mean of its histogram bucket, or to the bucket center
+      // for colors that only appear after dithering. Floyd–Steinberg spreads
+      // the error to opaque pixels only.
+      function createQuantizer(pal, dither) {
+        var count = pal.count, colors = pal.colors, trans = count;
+        var cache = null;
+        if (!pal.exact) {
+          cache = new Int16Array(32768);
+          cache.fill(-1);
+        }
+        function mapKey(k) {
+          var idx = cache[k];
+          if (idx < 0) {
+            var c = pal.counts[k], r, g, b;
+            if (c > 0) {
+              r = pal.sums[k * 3] / c; g = pal.sums[k * 3 + 1] / c; b = pal.sums[k * 3 + 2] / c;
+            } else {
+              r = ((k >> 10) << 3) | 4; g = (((k >> 5) & 31) << 3) | 4; b = ((k & 31) << 3) | 4;
+            }
+            idx = cache[k] = nearestColor(colors, count, r, g, b);
+          }
+          return idx;
+        }
+        return function quantize(rgba, w, h) {
+          var n = w * h, out = new Uint8Array(n), p, o;
+          if (pal.exact) {
+            var lookup = pal.lookup, lastC = -1, lastI = 0;
+            for (p = 0, o = 0; p < n; p++, o += 4) {
+              if (rgba[o + 3] < 128) { out[p] = trans; continue; }
+              var c = (rgba[o] << 16) | (rgba[o + 1] << 8) | rgba[o + 2];
+              if (c !== lastC) { lastC = c; lastI = lookup.get(c); }
+              out[p] = lastI;
+            }
+            return out;
+          }
+          if (!dither) {
+            for (p = 0, o = 0; p < n; p++, o += 4) {
+              out[p] = rgba[o + 3] < 128 ? trans : mapKey(colorKey15(rgba[o], rgba[o + 1], rgba[o + 2]));
+            }
+            return out;
+          }
+          var cur = new Float32Array((w + 2) * 3), nxt = new Float32Array((w + 2) * 3);
+          for (var y = 0; y < h; y++) {
+            for (var x = 0; x < w; x++) {
+              p = y * w + x; o = p * 4;
+              if (rgba[o + 3] < 128) { out[p] = trans; continue; }
+              var e = (x + 1) * 3;
+              var r = clamp255(rgba[o] + cur[e]), g = clamp255(rgba[o + 1] + cur[e + 1]), b = clamp255(rgba[o + 2] + cur[e + 2]);
+              var idx = mapKey(colorKey15(r, g, b));
+              out[p] = idx;
+              var err = [r - colors[idx * 3], g - colors[idx * 3 + 1], b - colors[idx * 3 + 2]];
+              for (var ch = 0; ch < 3; ch++) {
+                cur[e + 3 + ch] += err[ch] * 7 / 16;
+                nxt[e - 3 + ch] += err[ch] * 3 / 16;
+                nxt[e + ch] += err[ch] * 5 / 16;
+                nxt[e + 3 + ch] += err[ch] / 16;
+              }
+            }
+            var swap = cur; cur = nxt; nxt = swap; nxt.fill(0);
+          }
+          return out;
+        };
+      }
+
+      function createByteWriter() {
+        var buf = new Uint8Array(65536), len = 0;
+        function ensure(n) {
+          if (len + n <= buf.length) return;
+          var grown = new Uint8Array(Math.max(buf.length * 2, len + n));
+          grown.set(buf.subarray(0, len));
+          buf = grown;
+        }
+        return {
+          byte: function (v) { ensure(1); buf[len++] = v; },
+          u16: function (v) { ensure(2); buf[len++] = v & 255; buf[len++] = (v >> 8) & 255; },
+          bytes: function (arr) { ensure(arr.length); buf.set(arr, len); len += arr.length; },
+          result: function () { return buf.slice(0, len); },
+        };
+      }
+
+      function createLzwTables() {
+        return {
+          child: new Int16Array(4096 * 256), firstChild: new Int16Array(4096), sibling: new Int16Array(4096),
+          parent: new Int16Array(4096), suffix: new Uint8Array(4096),
+        };
+      }
+
+      // GIF LZW encoder. Codes grow from minCodeSize + 1 up to 12 bits; when
+      // the table is full, a clear code resets it. `px` holds the default
+      // index for each pixel. With `match` ({ target, keep, dist, limit,
+      // trans }), a pixel may be written as any index that shows an
+      // acceptable color: the transparent index where keep[i] is set (the
+      // screen already shows an acceptable color), target[i] itself, or a
+      // color within `limit` (squared RGB distance, -1 = none) of an opaque
+      // target[i]. When the current string has no entry for the default
+      // index, the encoder continues with the existing entry that is
+      // acceptable and closest to the target, if there is one. `px` is
+      // updated to the indices actually written.
+      function lzwEncode(tables, px, minCodeSize, match) {
+        var clear = 1 << minCodeSize, eoi = clear + 1;
+        var child = tables.child, firstChild = tables.firstChild, sibling = tables.sibling;
+        var parent = tables.parent, suffix = tables.suffix;
+        var codeSize = minCodeSize + 1, next = eoi + 1;
+        var out = new Uint8Array((px.length >> 1) + 64), len = 0, acc = 0, bits = 0;
+        var target = match ? match.target : null, keep = match ? match.keep : null;
+        var dist = match ? match.dist : null, limit = match ? match.limit : -1, trans = match ? match.trans : -1;
+        function put(v) {
+          if (len === out.length) {
+            var grown = new Uint8Array(out.length * 2);
+            grown.set(out);
+            out = grown;
+          }
+          out[len++] = v;
+        }
+        function emit(code) {
+          acc |= code << bits;
+          bits += codeSize;
+          while (bits >= 8) { put(acc & 255); acc >>>= 8; bits -= 8; }
+        }
+        function reset() {
+          for (var c = eoi + 1; c < next; c++) child[parent[c] * 256 + suffix[c]] = 0;
+          firstChild.fill(0, 0, next);
+          codeSize = minCodeSize + 1;
+          next = eoi + 1;
+        }
+        emit(clear);
+        var cur = px[0];
+        for (var i = 1; i < px.length; i++) {
+          var k = px[i];
+          var found = child[cur * 256 + k];
+          if (found) { cur = found; continue; }
+          if (match) {
+            var tg = target[i], kp = keep[i], best = 0, bestD = Infinity;
+            for (var ch = firstChild[cur]; ch; ch = sibling[ch]) {
+              var s = suffix[ch], d;
+              if (s === tg || (s === trans && kp)) d = 0;
+              else if (s === trans || tg === trans || limit < 0) continue;
+              else {
+                d = dist[s * 256 + tg];
+                if (d > limit) continue;
+              }
+              if (d < bestD) { best = ch; bestD = d; if (d === 0) break; }
+            }
+            if (best) { px[i] = suffix[best]; cur = best; continue; }
+          }
+          emit(cur);
+          if (next < 4096) {
+            if (next >= (1 << codeSize)) codeSize++;
+            child[cur * 256 + k] = next;
+            parent[next] = cur;
+            suffix[next] = k;
+            sibling[next] = firstChild[cur];
+            firstChild[cur] = next;
+            next++;
+          } else {
+            emit(clear);
+            reset();
+          }
+          cur = k;
+        }
+        emit(cur);
+        emit(eoi);
+        if (bits > 0) put(acc & 255);
+        reset();
+        return out.subarray(0, len);
+      }
+
+      function paletteDistances(colors, count) {
+        var d = new Uint32Array(256 * 256);
+        for (var i = 0; i < count; i++) {
+          for (var j = 0; j < count; j++) {
+            var dr = colors[i * 3] - colors[j * 3], dg = colors[i * 3 + 1] - colors[j * 3 + 1], db = colors[i * 3 + 2] - colors[j * 3 + 2];
+            d[i * 256 + j] = dr * dr + dg * dg + db * db;
+          }
+        }
+        return d;
+      }
+
+      // GIF89a writer. addFrame(target, delayCs) takes palette indices for
+      // the whole canvas (index `count` = transparent). The first frame
+      // covers the whole canvas. Each later frame is the bounding box of
+      // pixels that differ from what is on screen; unchanged pixels inside it
+      // use the transparent index, and a frame with no change is 1×1
+      // transparent to keep its delay. If a frame turns opaque pixels
+      // transparent, the frame before it gets disposal 2 and its rectangle
+      // grows to cover them. With lossy > 0, a pixel within the lossy
+      // distance of what is on screen counts as unchanged. Inside the
+      // rectangle, lzwEncode may write an unchanged pixel as its target
+      // color and, with lossy > 0, any pixel as a color within the lossy
+      // distance, when that makes a longer LZW string. `canvas` follows what
+      // a decoder shows, built from the indices actually written; with
+      // opts.trace a copy is kept after every frame.
+      function createGifEncoder(opts) {
+        var W = opts.width, H = opts.height, N = W * H;
+        var count = opts.count, trans = count;
+        var bits = 1;
+        while ((1 << bits) < count + 1) bits++;
+        var minCodeSize = Math.max(2, bits);
+        var lossyOn = opts.lossy > 0;
+        var dist = lossyOn ? paletteDistances(opts.colors, count) : null;
+        var limit = lossyOn ? Math.pow(opts.lossy * GC_LOSSY_SCALE, 2) : -1;
+        var tables = createLzwTables();
+        var out = createByteWriter();
+        var canvas = new Uint8Array(N);
+        canvas.fill(trans);
+        var pending = null, added = 0;
+        var trace = opts.trace ? [] : null;
+
+        out.bytes([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+        out.u16(W); out.u16(H);
+        out.byte(0x80 | 0x70 | (bits - 1));
+        out.byte(trans);
+        out.byte(0);
+        var table = new Uint8Array(3 << bits);
+        table.set(opts.colors.subarray(0, count * 3));
+        out.bytes(table);
+        if (opts.loopCount !== null && opts.loopCount !== undefined) {
+          out.bytes([0x21, 0xFF, 11, 0x4E, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2E, 0x30, 3, 1]);
+          out.u16(opts.loopCount);
+          out.byte(0);
+        }
+
+        function same(a, b) {
+          if (a === b) return true;
+          if (!lossyOn || a === trans || b === trans) return false;
+          return dist[a * 256 + b] <= limit;
+        }
+
+        function finalize(p) {
+          var r = p.rect, area = r.w * r.h, q = 0, x, y, i;
+          var px = new Uint8Array(area), tgt = new Uint8Array(area), keep = new Uint8Array(area);
+          for (y = r.y; y < r.y + r.h; y++) {
+            for (x = r.x; x < r.x + r.w; x++, q++) {
+              i = y * W + x;
+              tgt[q] = p.target[i];
+              keep[q] = same(canvas[i], p.target[i]) ? 1 : 0;
+              px[q] = keep[q] ? trans : p.target[i];
+            }
+          }
+          out.bytes([0x21, 0xF9, 4, (p.disposal << 2) | 1]);
+          out.u16(p.delayCs);
+          out.bytes([trans, 0, 0x2C]);
+          out.u16(r.x); out.u16(r.y); out.u16(r.w); out.u16(r.h);
+          out.bytes([0, minCodeSize]);
+          var data = lzwEncode(tables, px, minCodeSize, { target: tgt, keep: keep, dist: dist, limit: limit, trans: trans });
+          for (var o = 0; o < data.length; o += 255) {
+            var n = Math.min(255, data.length - o);
+            out.byte(n);
+            out.bytes(data.subarray(o, o + n));
+          }
+          out.byte(0);
+          q = 0;
+          for (y = r.y; y < r.y + r.h; y++) {
+            for (x = r.x; x < r.x + r.w; x++) {
+              var v = px[q++];
+              if (v !== trans) canvas[y * W + x] = v;
+            }
+          }
+          if (trace) trace.push({ canvas: canvas.slice(), rect: { x: r.x, y: r.y, w: r.w, h: r.h }, disposal: p.disposal, delayCs: p.delayCs });
+          if (p.disposal === 2) {
+            for (y = r.y; y < r.y + r.h; y++) canvas.fill(trans, y * W + r.x, y * W + r.x + r.w);
+          }
+        }
+
+        function boundingBox(test) {
+          var x0 = W, y0 = H, x1 = -1, y1 = -1;
+          for (var y = 0; y < H; y++) {
+            for (var x = 0, i = y * W; x < W; x++, i++) {
+              if (!test(i)) continue;
+              if (x < x0) x0 = x;
+              if (x > x1) x1 = x;
+              if (y < y0) y0 = y;
+              y1 = y;
+            }
+          }
+          return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+        }
+
+        return {
+          minCodeSize: minCodeSize,
+          tableBits: bits,
+          trace: trace,
+          addFrame: function (target, delayCs) {
+            if (pending) {
+              var prev = pending.target;
+              var cleared = boundingBox(function (i) { return target[i] === trans && prev[i] !== trans; });
+              if (cleared) {
+                var r = pending.rect;
+                var x0 = Math.min(r.x, cleared.x), y0 = Math.min(r.y, cleared.y);
+                var x1 = Math.max(r.x + r.w, cleared.x + cleared.w), y1 = Math.max(r.y + r.h, cleared.y + cleared.h);
+                pending.rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+                pending.disposal = 2;
+              }
+              finalize(pending);
+            }
+            var rect;
+            if (!added) rect = { x: 0, y: 0, w: W, h: H };
+            else rect = boundingBox(function (i) { return !same(canvas[i], target[i]); }) || { x: 0, y: 0, w: 1, h: 1 };
+            pending = { target: target, rect: rect, delayCs: delayCs, disposal: 1 };
+            added++;
+          },
+          finish: function () {
+            if (pending) { finalize(pending); pending = null; }
+            out.byte(0x3B);
+            return out.result();
+          },
+        };
+      }
+
+      // Decode, skip frames, resize, build the palette, quantize and encode.
+      // opts: { lossy, colors, width, step, dither, chunk, trace }. Yields
+      // undefined between slices of work (the decoder pauses every `chunk`
+      // pixels, later stages after each frame). progress.stage is 'decode',
+      // 'palette' or 'encode'; progress.frame / progress.frames count frames
+      // in that stage; progress.value runs from 0 to 1.
+      function* compressSteps(gif, opts, progress) {
+        var W = gif.width, H = gif.height;
+        var w = normalizeWidth(opts.width, W), h = w === W ? H : outputHeight(W, H, w);
+        var step = normalizeStep(opts.step), colors = normalizeColors(opts.colors), lossy = normalizeLossy(opts.lossy);
+        var comp = createCompositor(gif, opts.chunk || 0);
+        var kept = [], complete = !gif.truncated;
+        progress.stage = 'decode'; progress.frame = 0; progress.frames = gif.frames.length; progress.value = 0;
+        for (;;) {
+          var f = comp.step();
+          if (f === null) break;
+          if (f !== undefined) {
+            if (!f.complete) complete = false;
+            if (f.index % step === 0) kept.push({ rgba: w === W ? f.rgba : resizeRgba(f.rgba, W, H, w, h), durationMs: f.durationMs });
+            else kept[kept.length - 1].durationMs += f.durationMs;
+            progress.frame = f.index + 1;
+          }
+          progress.value = 0.3 * comp.progress();
+          yield;
+        }
+        progress.stage = 'palette'; progress.frame = 0; progress.frames = kept.length;
+        var builder = createPaletteBuilder(colors);
+        for (var i = 0; i < kept.length; i++) {
+          builder.add(kept[i].rgba);
+          progress.frame = i + 1;
+          progress.value = 0.3 + 0.1 * (i + 1) / kept.length;
+          yield;
+        }
+        var pal = builder.finish();
+        yield;
+        progress.stage = 'encode'; progress.frame = 0;
+        var quantize = createQuantizer(pal, !!opts.dither);
+        var enc = createGifEncoder({ width: w, height: h, colors: pal.colors, count: pal.count, loopCount: gif.loopCount, lossy: lossy, trace: !!opts.trace });
+        var delays = [];
+        for (var j = 0; j < kept.length; j++) {
+          var delayCs = delayCsFromMs(kept[j].durationMs);
+          delays.push(delayCs);
+          enc.addFrame(quantize(kept[j].rgba, w, h), delayCs);
+          kept[j].rgba = null;
+          progress.frame = j + 1;
+          progress.value = 0.4 + 0.6 * (j + 1) / kept.length;
+          yield;
+        }
+        var bytes = enc.finish();
+        progress.value = 1;
+        return {
+          bytes: bytes, width: w, height: h, frameCount: kept.length, delays: delays,
+          colorCount: pal.count, palette: pal.colors, exact: pal.exact, complete: complete,
+          minCodeSize: enc.minCodeSize, tableBits: enc.tableBits, trace: enc.trace,
+        };
+      }
+
+      // Run compressSteps to the end in one go.
+      function compressGif(bytes, opts) {
+        var gif = parseGif(bytes);
+        var steps = compressSteps(gif, opts, {});
+        for (;;) {
+          var r = steps.next();
+          if (r.done) return r.value;
+        }
+      }
+      /* ── engine:end ── */
+
+      var SLUG = 'gif-compressor';
+      var $ = function (id) { return document.getElementById(id); };
+      var wrapEl = $('gc-wrap');
+      var dropEl = $('gc-drop');
+      var fileInput = $('gc-file');
+      var limitEl = $('gc-limit');
+      var limitMsgEl = $('gc-limit-msg');
+      var limitCmdEl = $('gc-limit-cmd');
+      var limitCopyBtn = $('gc-limit-copy');
+      var workspaceEl = $('gc-workspace');
+      var lossyInput = $('gc-lossy');
+      var lossyVal = $('gc-lossy-val');
+      var colorsSelect = $('gc-colors');
+      var widthInput = $('gc-width');
+      var widthHint = $('gc-width-hint');
+      var stepSelect = $('gc-step');
+      var ditherInput = $('gc-dither');
+      var runBtn = $('gc-run');
+      var resetBtn = $('gc-reset');
+      var progressEl = $('gc-progress');
+      var resultEl = $('gc-result');
+      var imgOriginal = $('gc-img-original');
+      var imgCompressed = $('gc-img-compressed');
+      var summaryEl = $('gc-summary');
+      var downloadBtn = $('gc-download');
+      var statusEl = $('gc-status');
+
+      // Pixels of decode work between time checks (about 1 ms on a laptop).
+      var DECODE_CHUNK_PX = 32768;
+      var prefs = { lossy: GC_DEFAULTS.lossy, colors: GC_DEFAULTS.colors, step: GC_DEFAULTS.step, dither: GC_DEFAULTS.dither };
+      var gif = null, fileSize = 0, base = 'animation';
+      var originalUrl = null, resultUrl = null, resultBytes = null;
+      var runToken = 0;
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status ' + (kind || 'info');
+      }
+
+      function loadPrefs() {
+        var saved = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+        if (saved.lossy !== undefined) prefs.lossy = normalizeLossy(saved.lossy);
+        if (saved.colors !== undefined) prefs.colors = normalizeColors(saved.colors);
+        if (saved.step !== undefined) prefs.step = normalizeStep(saved.step);
+        if (typeof saved.dither === 'boolean') prefs.dither = saved.dither;
+      }
+      function savePrefs() {
+        if (window.ztPersist) window.ztPersist.save(SLUG, prefs);
+      }
+      function applyPrefsToUI() {
+        lossyInput.value = String(prefs.lossy);
+        lossyVal.textContent = String(prefs.lossy);
+        colorsSelect.value = String(prefs.colors);
+        stepSelect.value = String(prefs.step);
+        ditherInput.checked = prefs.dither;
+      }
+
+      function formatBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+      }
+
+      function baseName(fileName) {
+        var name = String(fileName || '').replace(/\.[^.]+$/, '').trim();
+        return name || 'animation';
+      }
+
+      // Let input and rendering run between work slices (same approach as
+      // gif-splitter: a MessageChannel round trip, not setTimeout).
+      var yieldPort = null, yieldQueue = [];
+      function yieldToBrowser() {
+        return new Promise(function (resolve) {
+          if (!yieldPort) {
+            var channel = new MessageChannel();
+            channel.port1.onmessage = function () { yieldQueue.shift()(); };
+            yieldPort = channel.port2;
+          }
+          yieldQueue.push(resolve);
+          yieldPort.postMessage(null);
+        });
+      }
+
+      function downloadBlob(blob, name) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      }
+
+      function updateWidthHint() {
+        if (!gif) { widthHint.textContent = ''; return; }
+        var w = normalizeWidth(widthInput.value, gif.width);
+        widthHint.textContent = fmt(t.widthHint, { w: w, h: w === gif.width ? gif.height : outputHeight(gif.width, gif.height, w) });
+      }
+
+      function clearResult() {
+        resultEl.hidden = true;
+        if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
+        resultBytes = null;
+        imgCompressed.removeAttribute('src');
+      }
+
+      function resetState() {
+        runToken++;
+        gif = null;
+        clearResult();
+        if (originalUrl) { URL.revokeObjectURL(originalUrl); originalUrl = null; }
+        imgOriginal.removeAttribute('src');
+        dropEl.hidden = false;
+        workspaceEl.hidden = true;
+        limitEl.hidden = true;
+        progressEl.hidden = true;
+        widthHint.textContent = '';
+      }
+
+      function showLimit(g, budget) {
+        var msg;
+        if (budget.reason === 'frameSize') msg = fmt(t.limitFrameSize, { w: g.width, h: g.height });
+        else if (budget.reason === 'frames') msg = fmt(t.limitFrames, { n: g.frames.length });
+        else msg = fmt(t.limitPixels, { w: g.width, h: g.height, n: g.frames.length, mp: (budget.pixels / 1e6).toFixed(1) });
+        limitMsgEl.textContent = msg;
+        limitEl.hidden = false;
+      }
+
+      async function loadFile(file) {
+        if (!file) return;
+        resetState();
+        var token = runToken;
+        setStatus('', 'none');
+        var bytes;
+        try {
+          bytes = new Uint8Array(await file.arrayBuffer());
+        } catch (e) {
+          if (token === runToken) setStatus(t.statusReadFailed, 'error');
+          return;
+        }
+        if (token !== runToken) return;
+        if (!isGif(bytes)) { setStatus(t.statusNotGif, 'error'); return; }
+        var parsed = parseGif(bytes);
+        if (!parsed.frames.length || !parsed.width || !parsed.height) { setStatus(t.statusNoFrames, 'error'); return; }
+        var budget = checkBudget(parsed);
+        if (!budget.ok) { showLimit(parsed, budget); return; }
+
+        gif = parsed;
+        fileSize = bytes.length;
+        base = baseName(file.name);
+        originalUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/gif' }));
+        imgOriginal.src = originalUrl;
+        var n = gif.frames.length, totalMs = 0;
+        for (var i = 0; i < n; i++) totalMs += frameDurationMs(gif.frames[i].delayCs);
+        $('gc-info-size').textContent = gif.width + ' × ' + gif.height;
+        $('gc-info-frames').textContent = String(n);
+        $('gc-info-duration').textContent = (totalMs / 1000).toFixed(2) + ' s';
+        $('gc-info-loop').textContent = gif.loopCount === null ? '0' : (gif.loopCount === 0 ? t.loopInfinite : String(gif.loopCount));
+        $('gc-info-file').textContent = formatBytes(fileSize);
+        widthInput.max = String(gif.width);
+        widthInput.value = String(gif.width);
+        updateWidthHint();
+        dropEl.hidden = true;
+        workspaceEl.hidden = false;
+        runCompress();
+      }
+
+      async function runCompress() {
+        if (!gif) return;
+        var token = ++runToken;
+        var width = normalizeWidth(widthInput.value, gif.width);
+        widthInput.value = String(width);
+        updateWidthHint();
+        clearResult();
+        progressEl.hidden = false;
+        progressEl.value = 0;
+        var progress = {};
+        var steps = compressSteps(gif, { lossy: prefs.lossy, colors: prefs.colors, width: width, step: prefs.step, dither: prefs.dither, chunk: DECODE_CHUNK_PX }, progress);
+        var r;
+        try {
+          // Keep the click and the first slice of work in separate tasks.
+          await yieldToBrowser();
+          if (token !== runToken) return;
+          for (;;) {
+            var sliceStart = performance.now();
+            do { r = steps.next(); } while (!r.done && performance.now() - sliceStart < 24);
+            progressEl.value = progress.value;
+            if (progress.stage === 'decode') setStatus(fmt(t.statusDecoding, { i: Math.min(progress.frame + 1, progress.frames), n: progress.frames }), 'info');
+            else if (progress.stage === 'palette') setStatus(t.statusPalette, 'info');
+            else setStatus(fmt(t.statusEncoding, { i: progress.frame, n: progress.frames }), 'info');
+            if (r.done) break;
+            await yieldToBrowser();
+            if (token !== runToken) return;
+          }
+        } catch (e) {
+          if (token !== runToken) return;
+          progressEl.hidden = true;
+          setStatus(t.statusFailed, 'error');
+          return;
+        }
+        var res = r.value;
+        progressEl.hidden = true;
+        resultBytes = res.bytes;
+        resultUrl = URL.createObjectURL(new Blob([res.bytes], { type: 'image/gif' }));
+        imgCompressed.src = resultUrl;
+        var change = (res.bytes.length - fileSize) / fileSize * 100;
+        var pct = (change > 0 ? '+' : change < 0 ? '−' : '') + Math.abs(change).toFixed(0) + '%';
+        summaryEl.textContent = fmt(t.summary, {
+          from: formatBytes(fileSize), to: formatBytes(res.bytes.length), pct: pct,
+          w: res.width, h: res.height, n: res.frameCount, c: res.colorCount,
+        });
+        resultEl.hidden = false;
+        if (!res.complete) setStatus(fmt(t.statusTruncated, { n: gif.frames.length }), 'info');
+        else if (res.bytes.length >= fileSize) setStatus(t.statusBigger, 'info');
+        else setStatus(t.statusDone, 'success');
+        if (window.trackTool) window.trackTool(SLUG, 'compress');
+      }
+
+      function copyText(text, btn, restoreKey) {
+        function done() {
+          btn.textContent = t.copied;
+          setTimeout(function () { btn.textContent = t[restoreKey]; }, 1500);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () { setStatus(t.statusCopyFailed, 'error'); });
+        } else {
+          setStatus(t.statusCopyFailed, 'error');
+        }
+      }
+
+      /* ── Input: drop zone click / keyboard / drag / paste ── */
+      dropEl.addEventListener('click', function (e) {
+        if (e.target !== fileInput) fileInput.click();
+      });
+      dropEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
+      dropEl.addEventListener('dragover', function (e) { e.preventDefault(); dropEl.classList.add('drag-over'); });
+      dropEl.addEventListener('dragleave', function () { dropEl.classList.remove('drag-over'); });
+      fileInput.addEventListener('change', function () {
+        if (this.files && this.files[0]) loadFile(this.files[0]);
+        this.value = '';
+      });
+      wrapEl.addEventListener('dragover', function (e) { e.preventDefault(); });
+      wrapEl.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropEl.classList.remove('drag-over');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+      });
+      document.addEventListener('paste', function (e) {
+        if (!e.clipboardData || !e.clipboardData.files || !e.clipboardData.files.length) return;
+        e.preventDefault();
+        loadFile(e.clipboardData.files[0]);
+      });
+
+      /* ── Settings (persisted as preferences; width is per file) ── */
+      lossyInput.addEventListener('input', function () {
+        prefs.lossy = normalizeLossy(lossyInput.value);
+        lossyVal.textContent = String(prefs.lossy);
+        savePrefs();
+      });
+      colorsSelect.addEventListener('change', function () {
+        prefs.colors = normalizeColors(colorsSelect.value);
+        savePrefs();
+      });
+      stepSelect.addEventListener('change', function () {
+        prefs.step = normalizeStep(stepSelect.value);
+        savePrefs();
+      });
+      ditherInput.addEventListener('change', function () {
+        prefs.dither = ditherInput.checked;
+        savePrefs();
+      });
+      widthInput.addEventListener('input', updateWidthHint);
+      widthInput.addEventListener('change', function () {
+        if (!gif) return;
+        widthInput.value = String(normalizeWidth(widthInput.value, gif.width));
+        updateWidthHint();
+      });
+
+      /* ── Actions ── */
+      runBtn.addEventListener('click', function () { runCompress(); });
+      downloadBtn.addEventListener('click', function () {
+        if (!resultBytes) return;
+        downloadBlob(new Blob([resultBytes], { type: 'image/gif' }), base + '-compressed.gif');
+        if (window.trackTool) window.trackTool(SLUG, 'download');
+      });
+      limitCopyBtn.addEventListener('click', function () {
+        copyText(limitCmdEl.textContent, limitCopyBtn, 'copyCommand');
+      });
+      resetBtn.addEventListener('click', function () {
+        resetState();
+        setStatus('', 'none');
+        dropEl.focus();
+      });
+
+      loadPrefs();
+      applyPrefsToUI();
+    })();
+  </script>
+
+  <style is:global>
+    .gc-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+    /* Author display rules beat the UA [hidden] rule; restore it. */
+    .gc-wrap [hidden] { display: none; }
+
+    .gc-drop {
+      position: relative;
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      background: var(--color-bg-secondary);
+    }
+    .gc-drop:hover,
+    .gc-drop.drag-over {
+      border-color: var(--color-primary);
+      background: var(--color-surface);
+    }
+    .gc-drop:focus-visible {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 4px var(--color-primary-light);
+    }
+    .gc-drop-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--color-text-secondary);
+      pointer-events: none;
+    }
+    .gc-drop-inner p { margin: 0; font-size: 0.95rem; }
+    .gc-drop-inner .gc-hint { font-size: 0.8rem; }
+    .gc-file-input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .gc-limit {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      padding: 0.85rem 1rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent);
+    }
+    .gc-limit-msg { margin: 0; font-size: 0.88rem; color: var(--color-text); }
+    .gc-limit-cmd-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+    .gc-limit-cmd {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      padding: 0.35rem 0.6rem;
+      border-radius: var(--radius-sm);
+      background: var(--color-surface);
+      color: var(--color-text);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+      overflow-wrap: anywhere;
+    }
+
+    .gc-workspace { display: flex; flex-direction: column; gap: 0.85rem; }
+
+    .gc-info { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0; }
+    .gc-info-item {
+      flex: 1 1 120px;
+      padding: 0.5rem 0.75rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gc-info-item dt {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .gc-info-item dd {
+      margin: 0.15rem 0 0;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--color-text);
+    }
+
+    .gc-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding: 0.9rem 1rem;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-secondary);
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gc-panel-title {
+      margin: 0;
+      font-family: var(--font-sans);
+      font-size: 0.95rem;
+      font-weight: 760;
+      color: var(--color-text);
+    }
+    .gc-settings {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+      align-items: start;
+      gap: 0.75rem 1rem;
+    }
+    .gc-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+    .gc-field-lossy { grid-column: 1 / -1; }
+    .gc-range-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+    }
+    .gc-range-label strong { font-family: var(--font-mono); color: var(--color-text); }
+    .gc-field-hint {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--color-text-muted);
+    }
+    .gc-select-input,
+    .gc-num { width: 100%; }
+    .gc-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      align-self: end;
+      min-height: 40px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+    }
+    .gc-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .gc-progress {
+      width: 100%;
+      height: 8px;
+      accent-color: var(--color-primary);
+    }
+
+    .gc-previews {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+    .gc-preview { display: flex; flex-direction: column; gap: 0.35rem; margin: 0; min-width: 0; }
+    .gc-preview figcaption {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .gc-preview-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 120px;
+      max-height: 360px;
+      overflow: hidden;
+      border-radius: var(--radius-md);
+      background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+      box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    }
+    .gc-preview-box img {
+      display: block;
+      max-width: 100%;
+      max-height: 360px;
+      object-fit: contain;
+    }
+    .gc-summary {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      color: var(--color-text);
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 640px) {
+      .gc-info-item { flex-basis: calc(50% - 0.25rem); }
+      .gc-settings { grid-template-columns: minmax(0, 1fr); }
+      .gc-previews { grid-template-columns: minmax(0, 1fr); }
+      .gc-check { min-height: 44px; }
+    }
+  </style>
+</div>
