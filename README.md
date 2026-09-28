@@ -2,7 +2,7 @@
 
 **Free, fast, browser-based developer tools. No sign-up required.**
 
-[zerotool.dev](https://zerotool.dev) — 140 tools and growing.
+[zerotool.dev](https://zerotool.dev) — 141 tools and growing.
 
 ## Tools
 
@@ -149,6 +149,7 @@
 | GIF Splitter | [/tools/gif-splitter](https://zerotool.dev/tools/gif-splitter) |
 | Sprite Sheet Generator | [/tools/sprite-sheet-generator](https://zerotool.dev/tools/sprite-sheet-generator) |
 | GIF Compressor | [/tools/gif-compressor](https://zerotool.dev/tools/gif-compressor) |
+| Image Splitter | [/tools/image-splitter](https://zerotool.dev/tools/image-splitter) |
 <!-- TOOLS-END -->
 
 ## Why ZeroTool?
