@@ -144,4 +144,5 @@ export const toolComponentFiles: Record<string, string> = {
   'gif-splitter': 'GifSplitterTool',
   'sprite-sheet-generator': 'SpriteSheetGeneratorTool',
   'gif-compressor': 'GifCompressorTool',
+  'image-splitter': 'ImageSplitterTool',
 };
