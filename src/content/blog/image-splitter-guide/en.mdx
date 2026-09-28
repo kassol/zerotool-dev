@@ -1,0 +1,357 @@
+---
+title: "Image Splitter Guide: Equal Grids, Instagram Posting Order, Sprites"
+description: "Split an image into an equal grid, an Instagram profile grid or a carousel. Learn pixel-exact cut lines, posting order, 3:4 tiles and sprite margin and spacing."
+pubDate: 2026-09-28
+lang: "en"
+tags: ["image", "instagram", "sprite-sheet", "canvas", "developer-tools"]
+---
+
+A product launch needs one big banner on the company's Instagram profile: nine posts that join into one picture. The banner is a 4000 × 3000 PNG, and the job lands with the developer because "it is just cutting an image into nine pieces".
+
+The first try uses a quick script that cuts 1333 × 1000 tiles. The last column of pixels is lost, which nobody sees. The next two problems everyone sees. The posts go up in reading order, top-left tile first, and the profile shows the banner backwards: Instagram puts the newest post in the top-left corner. The tiles are also square, and the profile grid now shows posts as tall rectangles, so each tile loses a strip on the left and right, and the picture no longer lines up across posts.
+
+All three problems have exact fixes. Place the cut lines with rounding so that no pixel is lost. Number the tiles in posting order, and cut them at the shape the grid shows. The same cut-line rule also works for print tiling and for cutting a sprite sheet back into frames. This guide covers the rules and the traps, with code for Python, JavaScript and the command line.
+
+[Split an image →](/tools/image-splitter/)
+
+## When you need to split an image
+
+| Situation | What you need | Mode to use |
+|---|---|---|
+| One picture spread over 3, 6 or 9 posts on an Instagram profile | Tall tiles, numbered in posting order | Instagram, *Profile grid* |
+| A panorama that people swipe through edge to edge | 2 to 20 slides of one size, left to right | Instagram, *Carousel* |
+| A poster printed on A4 or Letter sheets and taped together | Equal pieces at full resolution | Grid, for example 2 × 3 or 3 × 4 |
+| A sprite sheet or icon sheet that must go back to single frames | Fixed-size cells with a border and gaps | Tile size, with margin and spacing |
+| A full-page screenshot for a slide deck, a chat or a ticket | Horizontal strips that each fit a screen | Grid with 1 column and N rows |
+| Game map chunks or texture tiles for a level editor | Square tiles of a fixed pixel size | Tile size |
+
+Grid and Tile size keep the original pixels. Instagram mode scales every tile to 1080 px wide, the width that Instagram post sizes are usually given in.
+
+## Equal splits without losing pixels
+
+Most images do not divide evenly. A 4000 px wide image in 3 columns gives 1333.33 px per column. Code that rounds every tile down to 1333 px leaves the last pixel column out. Code that rounds up to 1334 px makes tiles overlap, or makes the last tile read past the edge of the image.
+
+The fix is to round the cut lines, not the tile widths. For `n` parts of a length `L`, cut line `i` sits at:
+
+```text
+x_i = round(i × L / n)      for i = 0 … n
+tile i spans [x_i, x_(i+1))
+```
+
+For 4000 px in 3 columns the cut lines are 0, 1333, 2667 and 4000, so the tiles are 1333, 1334 and 1333 px wide. For 4001 px they are 1334, 1333 and 1334. Three properties follow from the formula:
+
+- The first cut line is 0 and the last is `L`, so every pixel goes into exactly one tile.
+- Tile widths differ by at most 1 px.
+- The extra pixels are spread across the row. They do not pile up in the last tile.
+
+The [Image Splitter](/tools/image-splitter/) uses this formula in Grid mode for both rows and columns. Each tile is copied straight from the decoded image at its own size, with no scaling, so the tiles fit back together into the original image. Rows and columns go from 1 to 20 each. If you ask for more rows than the image has pixels of height, the tool lowers the count and says why.
+
+ImageMagick has the same idea built in: the `@` flag on `-crop` divides the image into a number of tiles instead of tiles of a size. Its [usage guide](https://usage.imagemagick.org/crop/) states that the tile sizes "will differ by 1 pixel at the most". It does not promise the same cut positions as the formula above, so do not mix its tiles with tiles from another tool in one set.
+
+## Instagram profile grids
+
+A profile grid split is a set of posts that forms one picture on your profile page. Three facts decide how the tiles must be cut and posted.
+
+### The grid is three columns, newest post first
+
+The profile shows posts three per row, and the newest post is at the top-left. For a 3 × 3 set, this means the bottom-right tile must be posted first and the top-left tile last. Written as a grid, the posting numbers are:
+
+```text
+9  8  7
+6  5  4
+3  2  1
+```
+
+For `R` rows and 3 columns, the tile in row `r` and column `c` (both counted from 0) gets the number `(R − 1 − r) × 3 + (2 − c) + 1`. The Image Splitter prints that number on every tile in the preview, and it names the files in the same order: `trip-post-1.jpg` to `trip-post-9.jpg` for nine posts. Numbers are zero-padded to the digit count of the total, so a 12-post set gives `trip-post-01.jpg` to `trip-post-12.jpg`, and sorting by name gives the posting order in both cases. The ZIP stores the files in posting order too.
+
+Rows go from 1 to 10, so a set can have up to 30 posts.
+
+### The grid shows tall tiles
+
+Instagram's head, Adam Mosseri, announced in January 2025 that profile grids would show posts as rectangles instead of squares ([The Verge, 17 January 2025](https://www.theverge.com/2025/1/17/24346304/instagram-profile-grids-rectangles-squares)). In late May 2025 he announced support for 3:4 photos in single posts and carousels ([The Verge, 29 May 2025](https://www.theverge.com/news/676549/instagram-3-4-aspect-ratio-photos-phones-square-rectangle)), and reports from the same week describe the grid tile as 3:4 ([DivePhotoGuide, 1 June 2025](https://www.divephotoguide.com/underwater-photography-scuba-ocean-news/instagram-now-supports-images-3-4-aspect-ratio/)).
+
+We did not find an Instagram help page that states the grid tile ratio. 3:4 is the figure that most reports give, so the tool uses it as the default for profile grids. At 1080 px wide, a 3:4 post is 1080 × 1440. Reports differ on the largest pixel size Instagram keeps, and some publishing tools are reported to accept portrait posts only up to 4:5. If yours refuses a 3:4 file, split the set again at 4:5.
+
+The tool offers three post sizes:
+
+| Post size | Pixels | Use it for |
+|---|---|---|
+| 3:4 | 1080 × 1440 | Profile grid sets (default) |
+| 4:5 | 1080 × 1350 | Carousels (default), or grid sets for tools that stop at 4:5 |
+| 1:1 | 1080 × 1080 | Square posts |
+
+With a centered crop, a square tile in a 3:4 grid cell loses one eighth of its width on each side. Across a set, those missing strips break every line that crosses from one post to the next.
+
+### Instagram adds gaps between posts
+
+The grid has a thin gap between cells. The tiles are cut edge to edge, so a thin line of the picture falls under each gap and is not seen. For photos this is rarely visible. For a set where text or a straight line crosses a gap, keep the line away from the tile edges. The tool does not model the gaps.
+
+### Crop or pad
+
+A 3 × 3 set of 3:4 posts is 3240 × 4320 px, a 3:4 shape overall. Your source image is almost never that shape, so the tool offers two fits:
+
+- **Crop** places the largest area of the set's shape inside the image. You drag that area on the preview, or focus it and move it with the arrow keys. Its size stays at the maximum.
+- **Pad** fits the whole image into the set and fills the rest with a color you choose. Use it for logos, tall screenshots or artwork that must not be cut. Tiles that the image does not reach come out as solid pad color.
+
+Each tile is then scaled to 1080 px wide. If the crop area is narrower than 1080 px per column, the tiles are enlarged, and the tool shows the factor. A 4000 × 3000 landscape photo split into a 3 × 3 grid of 3:4 posts gives a crop area of 2250 × 3000 px. Instagram needs 3240 px across, so the tiles are enlarged 1.44 times. The same photo split into one row of three 3:4 posts gives a 4000 × 1778 area, which is scaled down and stays sharp.
+
+## Instagram carousels
+
+A carousel is one post with several slides, and people swipe through them. Since 8 August 2024 a carousel can hold up to 20 photos or videos, up from 10 ([The Verge, 8 August 2024](https://www.theverge.com/2024/8/8/24216111/instagram-carousel-post-expansion)). The Image Splitter makes 2 to 20 slides in one row, numbered left to right as `pano-slide-1.jpg`, `pano-slide-2.jpg` and so on. Add them to the post in that order.
+
+A panorama split into slides only looks seamless if every slide has the same size, so the tool exports every slide at the same post size. The carousel default is 4:5 (1080 × 1350). Five 4:5 slides form a 5400 × 1350 strip, a 4:1 shape. A 12000 × 3000 panorama fits it with no crop.
+
+## Sprite sheets: tile size, margin and spacing
+
+Game sprite sheets and icon sheets are laid out in cells of a fixed size, not in a fixed number of rows and columns. Tile size mode reads them with four numbers:
+
+- **Tile width** and **tile height**: the size of one frame in pixels.
+- **Margin**: the empty border before the first frame, at the top and left of the sheet.
+- **Spacing**: the gap between two frames.
+
+Frame `c` in a row starts at `margin + c × (tile width + spacing)`, and rows use the same rule with the tile height. For a sheet with a 2 px border and 1 px between 32 × 32 frames, enter 32, 32, 2 and 1. The map editor Tiled uses the same two terms in its [tileset format](https://doc.mapeditor.org/en/stable/reference/tmx-map-format/).
+
+Two options handle the edges of a sheet:
+
+- **Drop partial edge tiles** leaves out tiles that the image cuts off at the right or bottom edge. Without it, a partial last column or row is kept as a smaller tile.
+- **Skip fully transparent tiles** leaves out cells where every pixel has alpha 0, such as empty cells at the end of the last row.
+
+A split can have up to 400 tiles. Above that, the tool asks for a larger tile size or spacing. To pack single frames into a sheet, which is the reverse job, use the [Sprite Sheet Generator](/tools/sprite-sheet-generator/).
+
+## Output, file names and privacy
+
+Tiles export as PNG, JPG or WebP. PNG keeps transparency and every pixel exactly. JPG and WebP have a quality slider from 50 to 100 (default 92). JPG has no alpha channel, so it also has a background color for transparent areas (default white). A browser that cannot encode WebP saves PNG instead, and the status line says so.
+
+File names come from the original file name. Pasted images use `image`:
+
+| Mode | Example names | ZIP name |
+|---|---|---|
+| Grid, Tile size | `poster-r1-c1.png`, `poster-r1-c2.png` (row and column, 1-based) | `poster-tiles.zip` |
+| Instagram profile grid | `trip-post-1.jpg` … `trip-post-9.jpg` (posting order) | `trip-instagram.zip` |
+| Instagram carousel | `pano-slide-1.jpg` … `pano-slide-5.jpg` (left to right) | `pano-instagram.zip` |
+
+The ZIP uses the STORED method. PNG, JPG and WebP data is already compressed, so a second compression pass gains little. Every tile also has its own download button.
+
+The image never leaves the page. It is read through the File API, decoded with `createImageBitmap`, drawn tile by tile onto a canvas, and encoded with `canvas.toBlob()`. The ZIP is built in memory. The tool makes no network request with the image or any tile. Every tile is drawn onto a new canvas and encoded again, so EXIF data such as GPS position, camera model and capture time is not copied into the tiles. The only things saved are your settings (mode, sizes, edge options, post size, fit, colors, format and quality), in local storage. Like other tools on the site, it sends a usage event to Google Analytics with the tool name and an action such as "split" or "zip". File names and image content are not part of it.
+
+## Pitfalls and edge cases
+
+### The grid shows up backwards or shifted
+
+Posting in reading order puts the top-left tile at the bottom-right of the set. Post by number, starting with 1. After the set is up, each new single post moves every tile one cell along and breaks the rows. Posts in multiples of three keep the rows aligned. Pinned posts also come before your newest posts: Instagram lets you pin up to three posts, and they sit at the top-left of the grid ([The Verge, 7 June 2022](https://www.theverge.com/2022/6/7/23158443/instagram-profile-pin-three-posts-reels-tiktok-twitter)). Unpin them before you check the result.
+
+### Phone photos come out sideways
+
+Phones often store a photo in the sensor's orientation and add an EXIF tag that says how to rotate it. Code that ignores the tag cuts the photo on its side. In the browser, `createImageBitmap` applies the tag when you pass `imageOrientation: 'from-image'`, which [MDN lists as the default](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap). Pillow's `Image.open` does not apply it, so call `ImageOps.exif_transpose` first, as the Python example below does. ImageMagick applies it when you add `-auto-orient`.
+
+### Python's round() moves a cut line
+
+Python 3 rounds halves to the nearest even number: `round(2.5)` is 2 and `round(3.5)` is 4. JavaScript's `Math.round(2.5)` is 3. For 5 px in 2 columns, the middle cut line is 2 in Python and 3 in JavaScript, so a Python script and the browser tool make different tiles from one image. Integer arithmetic, `(2 × i × L + n) // (2 × n)`, rounds halves up and gives the same result as `Math.round` for these values.
+
+### ffmpeg crops odd sizes to even ones
+
+A JPEG usually decodes to a pixel format with chroma subsampling, such as 4:2:0. For those formats, ffmpeg's `crop` filter rounds the size and position down to even values unless `exact=1` is set, as the [filter documentation](https://ffmpeg.org/ffmpeg-filters.html#crop) states. A request for a 1334 × 1001 tile from a 4:2:0 JPEG gave 1334 × 1000 in our test. Decode to RGBA first, as the Bash example does, or set `exact=1`.
+
+### Thin tiles appear at the right or bottom edge of a sprite sheet
+
+Margin applies at the top and left only. If a sheet also has a border at the right and bottom, the last tile start can land inside that border and produce a tile only a few pixels wide. Turn on *Drop partial edge tiles*, or *Skip fully transparent tiles* when the border is transparent.
+
+### Transparent areas turn white or black
+
+JPG cannot store transparency, so transparent pixels need a color. The tool fills them with the JPG background color. Other tools may pick a color for you. Export PNG or WebP when the tiles go on top of other content.
+
+### The upload looks soft
+
+Instagram tiles are 1080 px wide. A 3 × 3 set needs 3240 px across the crop area, and a 20-slide carousel needs 21,600 px. If the source is smaller, the tiles are enlarged. Read the enlargement factor the tool shows, and use a larger source or fewer columns if it is well above 1.
+
+### Very large images are refused
+
+The decoded image stays in memory at 4 bytes per pixel. The tool accepts up to 50 million pixels (about 200 MB decoded) and 16,384 px per side, so it still runs on a phone. Every tile is drawn on its own canvas and must fit 16,777,216 pixels. That is the largest canvas area the [canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) project measured for Mobile Safari. For larger files, use the command-line examples below.
+
+### An animated GIF gives one tile set
+
+The image is decoded as a still, so an animated GIF gives its first frame only. To take every frame apart, use the [GIF Splitter](/tools/gif-splitter/).
+
+## Code examples
+
+### Python: grid, sprite sheet and posting order with Pillow
+
+```python
+from pathlib import Path
+from PIL import Image, ImageOps
+
+
+def boundaries(n, length):
+    # round(i * length / n) with halves rounded up, like JavaScript's Math.round.
+    # Python's round() sends 2.5 to 2, so use integer arithmetic instead.
+    return [(2 * i * length + n) // (2 * n) for i in range(n + 1)]
+
+
+def split_grid(path, rows, cols, out_dir="tiles"):
+    src = Path(path)
+    img = ImageOps.exif_transpose(Image.open(src))  # apply the EXIF rotation first
+    xb, yb = boundaries(cols, img.width), boundaries(rows, img.height)
+    out = Path(out_dir)
+    out.mkdir(exist_ok=True)
+    rd, cd = len(str(rows)), len(str(cols))
+    for r in range(rows):
+        for c in range(cols):
+            tile = img.crop((xb[c], yb[r], xb[c + 1], yb[r + 1]))  # (left, upper, right, lower)
+            tile.save(out / f"{src.stem}-r{r + 1:0{rd}}-c{c + 1:0{cd}}.png")
+
+
+def split_sheet(path, tile_w, tile_h, margin=0, spacing=0, out_dir="frames"):
+    img = Image.open(path).convert("RGBA")
+    out = Path(out_dir)
+    out.mkdir(exist_ok=True)
+    n = 0
+    for y in range(margin, img.height - tile_h + 1, tile_h + spacing):
+        for x in range(margin, img.width - tile_w + 1, tile_w + spacing):
+            tile = img.crop((x, y, x + tile_w, y + tile_h))
+            if tile.getchannel("A").getbbox() is None:  # fully transparent cell
+                continue
+            n += 1
+            tile.save(out / f"frame-{n:03}.png")
+    return n
+
+
+def post_number(r, c, rows, cols=3):
+    # The profile grid shows the newest post top-left, so the bottom-right
+    # tile is posted first.
+    return (rows - 1 - r) * cols + (cols - 1 - c) + 1
+
+
+if __name__ == "__main__":
+    split_grid("poster.jpg", rows=3, cols=4)
+    print(split_sheet("sheet.png", 32, 32, margin=2, spacing=1), "frames")
+    print([[post_number(r, c, 3) for c in range(3)] for r in range(3)])
+```
+
+`Image.crop` takes a box of `(left, upper, right, lower)` with the right and lower edges excluded, which matches the `[x_i, x_(i+1))` spans above. `split_sheet` keeps only whole cells and skips empty ones, like the tool with both edge options turned on. For a 4000 × 3001 image, `split_grid` writes twelve tiles: 1000 px wide, and 1000, 1001 and 1000 px tall. The last line prints `[[9, 8, 7], [6, 5, 4], [3, 2, 1]]`.
+
+### JavaScript: split a file with canvas
+
+```js
+// Split an image file into rows × cols PNG tiles in the browser.
+function edges(n, len) {
+  return Array.from({ length: n + 1 }, (_, i) => Math.round((i * len) / n));
+}
+
+async function splitGrid(file, rows, cols) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const xs = edges(cols, bitmap.width);
+  const ys = edges(rows, bitmap.height);
+  const base = file.name.replace(/\.[^.]+$/, '') || 'image';
+  const tiles = [];
+  try {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const w = xs[c + 1] - xs[c];
+        const h = ys[r + 1] - ys[r];
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        // Source rect (sx, sy, sw, sh) → destination rect at the same size: no scaling.
+        canvas.getContext('2d').drawImage(bitmap, xs[c], ys[r], w, h, 0, 0, w, h);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error(`Could not encode tile ${r + 1},${c + 1}`);
+        tiles.push({ name: `${base}-r${r + 1}-c${c + 1}.png`, blob });
+      }
+    }
+  } finally {
+    bitmap.close(); // release the decoded pixels
+  }
+  return tiles;
+}
+
+// Usage: <input type="file" id="pick" accept="image/*">
+document.getElementById('pick').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  for (const { name, blob } of await splitGrid(file, 3, 3)) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+});
+```
+
+The nine-argument form of [`drawImage`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/drawImage) copies a source rectangle into a destination rectangle. With equal sizes, no pixel is resampled. `toBlob` passes `null` when it cannot encode, so check for it. Browsers can block or ask about a page that starts several downloads at once. To send one file, pack the tiles into a ZIP instead.
+
+### Bash: ImageMagick and ffmpeg
+
+```bash
+# ImageMagick: 4 columns × 3 rows of near-equal tiles (sizes differ by 1 px at most).
+# -auto-orient applies the EXIF rotation of phone photos first.
+magick photo.jpg -auto-orient -crop 4x3@ +repage +adjoin photo-%02d.png
+
+# ImageMagick: fixed 64 × 64 tiles; the right and bottom tiles are smaller if 64 does not divide the size
+magick sheet.png -crop 64x64 +repage +adjoin tile-%03d.png
+```
+
+```bash
+#!/usr/bin/env bash
+# Split an image into rows x cols tiles with ffmpeg, cut lines at round(i * size / n).
+set -euo pipefail
+in=${1:?usage: grid.sh image rows cols}; rows=${2:-3}; cols=${3:-3}
+# Decode once to an RGBA PNG. crop is exact on RGBA (on 4:2:0 JPEG input it
+# rounds odd sizes to even), and ffprobe then reports the decoded size.
+ffmpeg -v error -y -i "$in" -frames:v 1 -pix_fmt rgba src-rgba.png
+IFS=, read -r W H < <(ffprobe -v error -select_streams v:0 \
+  -show_entries stream=width,height -of csv=p=0 src-rgba.png)
+edge() { echo $(( (2 * $1 * $2 + $3) / (2 * $3) )); }  # round(i * len / n)
+for ((r = 0; r < rows; r++)); do
+  y0=$(edge "$r" "$H" "$rows"); y1=$(edge $((r + 1)) "$H" "$rows")
+  for ((c = 0; c < cols; c++)); do
+    x0=$(edge "$c" "$W" "$cols"); x1=$(edge $((c + 1)) "$W" "$cols")
+    ffmpeg -v error -y -i src-rgba.png \
+      -vf "crop=$((x1 - x0)):$((y1 - y0)):$x0:$y0" \
+      -frames:v 1 "tile-r$((r + 1))-c$((c + 1)).png"
+  done
+done
+rm src-rgba.png
+```
+
+Without a position, ImageMagick's `-crop` makes a set of tiles that covers the whole image. `+repage` removes the page offset that each tile keeps, and `+adjoin` writes one file per tile. The `@` form needs ImageMagick 6.5.8-9 or later. The ffmpeg script runs as `bash grid.sh photo.jpg 3 3`. For a 4001 × 3001 JPEG it writes tiles 1334, 1333 and 1334 px wide, and the tiles of a random-noise PNG join back into the source pixel for pixel. The script measures the decoded PNG, not the input file: in our test, ffmpeg 9.0 applied the EXIF rotation of a phone photo when it decoded it, while ffprobe on the JPEG reported the stored, unrotated size.
+
+## How it compares to other image splitters
+
+Each of these fits a different job.
+
+| Tool | Runs where | Split by | Border and gaps | Instagram layout | Output |
+|---|---|---|---|---|---|
+| ZeroTool Image Splitter | Browser tab, image stays local | Rows × columns, tile size, Instagram grid or carousel | Margin and spacing | Profile grid in posting order, carousel, 3:4 / 4:5 / 1:1 | PNG, JPG, WebP; ZIP or single tiles |
+| PineTools Split image | Web page | Block count or block size, vertical, horizontal or both | Overlap in px | Not among its options | PNG, JPG, WebP, BMP; ZIP or single files |
+| ezgif Sprite sheet cutter | Upload to ezgif's server | Tile size or columns and rows | Offsets and spacing | No | PNG, GIF, BMP, WebP, JPG; ZIP |
+| ImageMagick `-crop` | Local command line | Tile size, or tile count with `@` | Negative overlap with `@` skips gaps | No | Any format ImageMagick writes |
+
+[PineTools](https://pinetools.com/split-image) splits by count or by pixel size in either direction, lets blocks overlap, and lists only the output formats your browser supports. It also has a bulk version for many images. Use it when you need overlapping strips.
+
+The [ezgif sprite sheet cutter](https://ezgif.com/sprite-cutter) takes uploads up to 200 MB and states that "All uploaded files are automatically deleted 1 hour after upload." It lets you rename the output files, and it can turn the cut frames straight into an animated GIF, APNG, WebP or a video. Use it when the frames are going to become an animation.
+
+ImageMagick has no browser memory limit and fits in scripts and build steps. The `@` flag gives near-equal tiles in one command.
+
+The Image Splitter covers the Instagram case, which the other three leave to you: tall tiles, posting numbers on the preview and in the file names, crop or pad, and a warning before the tiles come out soft. It also cuts equal grids with no lost pixels and sprite sheets with margin and spacing, without an upload. It works on one still image at a time, by design. For animations, use the GIF Splitter. For hundreds of files, use a script.
+
+## Related tools and references
+
+Tools on ZeroTool that pair well with split tiles:
+
+- [Sprite Sheet Generator](/tools/sprite-sheet-generator/) packs single frames back into one sheet with JSON data.
+- [GIF Splitter](/tools/gif-splitter/) exports every frame of an animated GIF.
+- [Image Compressor](/tools/image-compressor/) shrinks exported tiles before you upload them.
+- [WebP Converter](/tools/webp-converter/) converts a folder of PNG tiles to WebP.
+- [EXIF Metadata Viewer](/tools/exif-metadata-viewer/) shows what a photo carries before you share the original.
+
+References used in this guide:
+
+- [MDN: createImageBitmap()](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap): decoding options, including `imageOrientation`
+- [MDN: CanvasRenderingContext2D.drawImage()](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/drawImage): the source and destination rectangle arguments
+- [MDN: HTMLCanvasElement.toBlob()](https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob): encoding a canvas to PNG, JPEG or WebP
+- [Pillow: Image.crop](https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.crop) and [ImageOps.exif_transpose](https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.exif_transpose)
+- [ImageMagick usage: cropping and equal-size tile cropping](https://usage.imagemagick.org/crop/)
+- [FFmpeg filters: crop](https://ffmpeg.org/ffmpeg-filters.html#crop): the `exact` option for subsampled formats
+- [canvas-size test results](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results): maximum canvas sizes by browser
+- The Verge on Instagram's [20-item carousels](https://www.theverge.com/2024/8/8/24216111/instagram-carousel-post-expansion), [rectangular profile grid](https://www.theverge.com/2025/1/17/24346304/instagram-profile-grids-rectangles-squares) and [3:4 photo support](https://www.theverge.com/news/676549/instagram-3-4-aspect-ratio-photos-phones-square-rectangle)

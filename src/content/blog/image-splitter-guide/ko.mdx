@@ -1,0 +1,367 @@
+---
+title: "이미지 분할 가이드: 픽셀 손실 없는 균등 그리드, 인스타그램 게시 순서, 스프라이트 시트"
+description: "이미지를 균등 그리드, 인스타그램 프로필 그리드, 캐러셀로 분할하는 방법. 픽셀 단위로 정확한 분할선, 게시 순서, 3:4 타일, 스프라이트 시트의 여백과 간격까지 사진 나누기에 필요한 규칙을 정리했습니다."
+pubDate: 2026-09-28
+lang: "ko"
+tags: ["image", "instagram", "sprite-sheet", "canvas", "developer-tools"]
+---
+
+신제품 출시에 맞춰 회사 인스타그램 프로필에 큰 배너를 하나 걸기로 했다. 게시물 9개가 모여 그림 한 장이 되는 방식이다. 배너는 4000 × 3000 PNG이고, "이미지를 아홉 조각으로 자르기만 하면 된다"는 이유로 일은 개발자에게 넘어온다.
+
+첫 시도는 간단한 스크립트로 1333 × 1000 타일을 잘라 내는 것이었다. 마지막 픽셀 열 하나가 사라졌지만 아무도 알아채지 못한다. 문제는 그다음 두 가지이고, 둘 다 누구나 한눈에 알아본다. 읽는 순서대로 왼쪽 위 타일부터 올렸더니 프로필에서는 배너가 뒤집혀 나왔다. 인스타그램은 가장 최근 게시물을 왼쪽 위에 놓기 때문이다. 게다가 타일은 정사각형인데, 프로필 그리드는 게시물을 세로로 긴 직사각형으로 보여 준다. 그래서 타일마다 좌우 띠가 잘려 나가고, 그림이 게시물 경계에서 더 이상 이어지지 않는다.
+
+세 문제 모두 정확한 해법이 있다. 분할선 위치를 반올림으로 정하면 픽셀이 하나도 사라지지 않는다. 타일에는 게시 순서대로 번호를 붙이고, 그리드에 표시되는 비율로 자른다. 같은 분할선 규칙은 인쇄용 분할이나 스프라이트 시트를 다시 프레임으로 되돌리는 작업에도 그대로 통한다. 이 글은 그 규칙과 함정을 Python, JavaScript, 명령줄 예제와 함께 정리한다.
+
+[이미지 분할하기 →](/ko/tools/image-splitter/)
+
+## 이미지를 분할해야 하는 경우
+
+| 상황 | 필요한 것 | 사용할 모드 |
+|---|---|---|
+| 그림 한 장을 인스타그램 프로필의 게시물 3개, 6개, 9개에 나눠 싣기 | 세로로 긴 타일, 게시 순서 번호 | Instagram, *프로필 그리드* |
+| 끝에서 끝까지 이어지며 넘겨 보는 파노라마 | 같은 크기의 슬라이드 2~20장, 왼쪽에서 오른쪽 순서 | Instagram, *캐러셀* |
+| A4나 레터(Letter) 용지에 나눠 인쇄한 뒤 이어 붙이는 포스터 | 원본 해상도 그대로의 균등한 조각 | 행×열, 예: 2 × 3 또는 3 × 4 |
+| 다시 한 프레임씩 되돌려야 하는 스프라이트 시트나 아이콘 시트 | 테두리와 틈이 있는 고정 크기 칸 | 타일 크기, 여백과 간격 지정 |
+| 슬라이드, 메신저, 이슈 티켓에 넣을 전체 페이지 스크린샷 | 화면 하나에 들어가는 가로 띠 | 1열 N행 그리드 |
+| 레벨 에디터용 게임 맵 조각이나 텍스처 타일 | 픽셀 크기가 고정된 정사각형 타일 | 타일 크기 |
+
+'행×열'과 '타일 크기' 모드는 원본 픽셀을 그대로 유지한다. Instagram 모드는 모든 타일을 너비 1080px로 조정한다. 인스타그램 게시물 크기를 말할 때 흔히 쓰는 기준 너비다.
+
+### 인스타 피드 분할, 상세페이지, A4 분할 인쇄
+
+국내에서 이미지 분할이 자주 필요한 곳은 세 군데다.
+
+- **인스타 피드 분할과 이어지는 캐러셀**: 브랜드 계정은 신제품이나 캠페인을 알릴 때 프로필 첫 화면을 그림 한 장으로 채우는 그리드 피드를 자주 쓴다. 여행 사진이나 풍경을 옆으로 넘기며 이어 보는 캐러셀도 흔하다. 두 경우 모두 사진 나누기만으로 끝나지 않는다. 게시 순서나 타일 비율이 틀리면 프로필에서 그림이 어긋난다. 아래 인스타그램 절에서 두 가지를 모두 다룬다.
+- **쇼핑몰 상세페이지**: 스마트스토어나 오픈마켓의 상품 상세페이지는 세로로 아주 긴 이미지 한 장으로 디자인하는 경우가 많다. 이를 몇 장으로 나눠 올리면 한 파일이 지나치게 무거워지는 것을 피할 수 있다. 1열 N행 그리드로 자르면 조각이 맞닿는 이음새에서 빠지는 픽셀이 없다.
+- **A4 분할 인쇄**: 행사 포스터를 크게 붙이거나 대형 출력 전에 실제 크기로 확인할 때, 가정용 프린터로 A4 여러 장에 나눠 인쇄한다. 2 × 3이나 3 × 4 그리드로 자르면 원본 해상도가 그대로 유지된다. 가정용 프린터는 대개 용지 가장자리까지 인쇄하지 못하므로, 조각을 맞대어 붙이기 전에 인쇄 설정의 여백과 배율을 확인해 둔다.
+
+세 경우 모두 다음 절의 분할선 규칙이 출발점이다.
+
+## 픽셀 손실 없는 균등 분할
+
+대부분의 이미지는 딱 나누어떨어지지 않는다. 너비 4000px 이미지를 3열로 나누면 한 열이 1333.33px다. 모든 타일을 1333px로 내림하는 코드는 마지막 픽셀 열을 빠뜨린다. 1334px로 올림하는 코드는 타일끼리 겹치게 하거나, 마지막 타일이 이미지 끝을 넘어서 읽게 만든다.
+
+해법은 타일 너비가 아닌 분할선 위치를 반올림하는 것이다. 길이 `L`을 `n`개로 나눌 때, `i`번째 분할선의 위치는 다음과 같다.
+
+```text
+x_i = round(i × L / n)      for i = 0 … n
+tile i spans [x_i, x_(i+1))
+```
+
+4000px을 3열로 나누면 분할선은 0, 1333, 2667, 4000이고, 타일 너비는 1333, 1334, 1333px가 된다. 4001px이라면 1334, 1333, 1334px다. 이 식에서 세 가지 성질이 나온다.
+
+- 첫 분할선은 0, 마지막 분할선은 `L`이므로 모든 픽셀이 정확히 한 타일에 들어간다.
+- 타일 너비 차이는 최대 1px이다.
+- 남는 픽셀은 한 줄 전체에 고르게 퍼진다. 마지막 타일에 몰리지 않는다.
+
+[이미지 분할기](/ko/tools/image-splitter/)는 '행×열' 모드에서 행과 열 모두에 이 식을 쓴다. 각 타일은 디코딩한 이미지에서 제 크기 그대로, 크기 조정 없이 복사된다. 그래서 타일을 다시 맞추면 원본 이미지가 된다. 행과 열은 각각 1~20개까지 지정할 수 있다. 이미지 높이의 픽셀 수보다 많은 행을 요청하면 도구가 행 수를 줄이고 그 이유를 알려 준다.
+
+ImageMagick에도 같은 발상이 들어 있다. `-crop`에 `@` 플래그를 붙이면 타일 크기가 아닌 타일 개수로 이미지를 나눈다. [사용 가이드](https://usage.imagemagick.org/crop/)에 따르면 타일 크기는 "최대 1픽셀까지 차이가 난다(will differ by 1 pixel at the most)". 다만 위 식과 같은 분할 위치를 보장하지는 않으므로, 한 세트 안에 ImageMagick 타일과 다른 도구의 타일을 섞어 쓰지 않는다.
+
+## 인스타그램 프로필 그리드
+
+프로필 그리드 분할은 여러 게시물이 프로필 페이지에서 그림 한 장을 이루도록 만드는 것이다. 타일을 어떻게 자르고 올릴지는 세 가지 사실로 정해진다.
+
+### 그리드는 3열이고 최신 게시물이 먼저 온다
+
+프로필은 한 줄에 게시물 3개를 보여 주며, 가장 최근 게시물이 왼쪽 위에 온다. 3 × 3 세트라면 오른쪽 아래 타일을 가장 먼저, 왼쪽 위 타일을 가장 나중에 올려야 한다. 게시 순서를 그리드 모양으로 적으면 다음과 같다.
+
+```text
+9  8  7
+6  5  4
+3  2  1
+```
+
+`R`행 3열에서 `r`행 `c`열(둘 다 0부터 셈)의 타일은 `(R − 1 − r) × 3 + (2 − c) + 1`번이 된다. 이미지 분할기는 미리보기의 모든 타일에 이 번호를 표시하고, 파일 이름도 같은 순서로 붙인다. 게시물 9개라면 `trip-post-1.jpg`부터 `trip-post-9.jpg`까지다. 번호는 전체 개수의 자릿수에 맞춰 0으로 채우므로, 게시물 12개 세트는 `trip-post-01.jpg`부터 `trip-post-12.jpg`까지가 된다. 어느 쪽이든 이름순으로 정렬하면 게시 순서가 된다. ZIP 안의 파일도 게시 순서대로 저장된다.
+
+행은 1~10개이므로 한 세트는 최대 30개 게시물까지 만들 수 있다.
+
+### 그리드는 세로로 긴 타일을 보여 준다
+
+인스타그램 책임자 애덤 모세리(Adam Mosseri)는 2025년 1월, 프로필 그리드가 게시물을 정사각형이 아닌 직사각형으로 보여 주게 된다고 발표했다([The Verge, 2025년 1월 17일](https://www.theverge.com/2025/1/17/24346304/instagram-profile-grids-rectangles-squares)). 2025년 5월 말에는 단일 게시물과 캐러셀에서 3:4 사진을 지원한다고 발표했고([The Verge, 2025년 5월 29일](https://www.theverge.com/news/676549/instagram-3-4-aspect-ratio-photos-phones-square-rectangle)), 같은 주의 보도는 그리드 타일을 3:4로 설명한다([DivePhotoGuide, 2025년 6월 1일](https://www.divephotoguide.com/underwater-photography-scuba-ocean-news/instagram-now-supports-images-3-4-aspect-ratio/)).
+
+그리드 타일 비율을 명시한 인스타그램 도움말 페이지는 찾지 못했다. 대부분의 보도가 3:4를 제시하므로, 도구는 프로필 그리드의 기본값으로 3:4를 쓴다. 너비 1080px 기준 3:4 게시물은 1080 × 1440이다. 인스타그램이 유지하는 최대 픽셀 크기는 보도마다 다르고, 일부 게시 도구는 세로 게시물을 4:5까지만 받는다고 알려져 있다. 쓰는 도구가 3:4 파일을 거부하면 세트를 4:5로 다시 분할한다.
+
+도구는 게시물 크기 세 가지를 제공한다.
+
+| 게시물 크기 | 픽셀 | 용도 |
+|---|---|---|
+| 3:4 | 1080 × 1440 | 프로필 그리드 세트(기본값) |
+| 4:5 | 1080 × 1350 | 캐러셀(기본값), 또는 4:5까지만 받는 도구용 그리드 세트 |
+| 1:1 | 1080 × 1080 | 정사각형 게시물 |
+
+가운데 기준으로 자르면, 3:4 그리드 칸에 들어간 정사각형 타일은 양옆에서 너비의 8분의 1씩을 잃는다. 세트 전체로 보면, 이렇게 사라진 띠가 게시물 경계를 넘어가는 모든 선을 끊어 놓는다.
+
+### 인스타그램은 게시물 사이에 틈을 둔다
+
+그리드의 칸 사이에는 얇은 틈이 있다. 타일은 빈틈 없이 맞닿게 잘리므로, 틈마다 그림의 가는 줄이 가려져 보이지 않는다. 사진에서는 거의 티가 나지 않는다. 하지만 글자나 직선이 틈을 가로지르는 세트라면, 그 선을 타일 가장자리에서 떨어뜨려 둔다. 도구는 이 틈을 계산에 넣지 않는다.
+
+### 자르기와 여백 채우기
+
+3:4 게시물 3 × 3 세트는 3240 × 4320px로, 전체 모양도 3:4다. 원본 이미지가 이 모양과 딱 맞는 경우는 거의 없으므로 도구는 두 가지 맞춤 방식을 제공한다.
+
+- **자르기**: 이미지 안에 세트 비율의 가장 큰 영역을 둔다. 미리보기에서 그 영역을 드래그하거나, 포커스한 뒤 방향키로 옮긴다. 영역의 크기는 항상 최대로 유지된다.
+- **여백 채우기**: 이미지 전체를 세트 안에 맞추고 나머지는 고른 색으로 채운다. 잘리면 안 되는 로고, 세로로 긴 스크린샷, 일러스트에 쓴다. 이미지가 닿지 않는 타일은 여백 색 단색으로 나온다.
+
+그런 다음 각 타일을 너비 1080px로 조정한다. 자르기 영역이 열당 1080px보다 좁으면 타일이 확대되고, 도구가 그 배율을 표시한다. 4000 × 3000 가로 사진을 3:4 게시물 3 × 3 그리드로 나누면 자르기 영역은 2250 × 3000px다. 인스타그램에는 가로 3240px가 필요하므로 타일은 1.44배 확대된다. 같은 사진을 3:4 게시물 3개짜리 한 줄로 나누면 영역은 4000 × 1778이 되고, 축소되므로 선명함이 유지된다.
+
+## 인스타그램 캐러셀
+
+캐러셀은 슬라이드 여러 장을 담은 게시물 하나로, 옆으로 넘기며 본다. 2024년 8월 8일부터 캐러셀에는 사진이나 동영상을 10개에서 늘어난 최대 20개까지 담을 수 있다([The Verge, 2024년 8월 8일](https://www.theverge.com/2024/8/8/24216111/instagram-carousel-post-expansion)). 이미지 분할기는 한 줄에 슬라이드 2~20장을 만들고, 왼쪽부터 `pano-slide-1.jpg`, `pano-slide-2.jpg`처럼 번호를 붙인다. 게시물에도 이 순서대로 추가한다.
+
+파노라마를 나눈 슬라이드가 끊김 없이 이어져 보이려면 모든 슬라이드의 크기가 같아야 한다. 그래서 도구는 모든 슬라이드를 같은 게시물 크기로 내보낸다. 캐러셀 기본값은 4:5(1080 × 1350)다. 4:5 슬라이드 5장은 5400 × 1350, 즉 4:1 모양의 띠가 된다. 12000 × 3000 파노라마는 잘리는 부분 없이 여기에 들어간다.
+
+## 스프라이트 시트: 타일 크기, 여백, 간격
+
+게임 스프라이트 시트와 아이콘 시트는 행과 열의 개수가 아닌 고정 크기의 칸으로 배치된다. '타일 크기' 모드는 숫자 네 개로 시트를 읽는다.
+
+- **타일 너비**와 **타일 높이**: 프레임 하나의 픽셀 크기.
+- **여백**: 시트의 위쪽과 왼쪽, 첫 프레임 앞에 있는 빈 테두리.
+- **간격**: 두 프레임 사이의 틈.
+
+한 줄에서 `c`번째 프레임은 `margin + c × (tile width + spacing)`에서 시작하고, 행도 타일 높이로 같은 규칙을 따른다. 테두리 2px, 프레임 사이 1px, 32 × 32 프레임인 시트라면 32, 32, 2, 1을 입력한다. 맵 에디터 Tiled도 [타일셋 형식](https://doc.mapeditor.org/en/stable/reference/tmx-map-format/)에서 같은 두 용어(margin, spacing)를 쓴다.
+
+시트 가장자리는 두 옵션으로 처리한다.
+
+- **가장자리의 잘린 타일 제외**: 이미지의 오른쪽이나 아래쪽 끝에서 잘린 타일을 빼고 내보낸다. 끄면 불완전한 마지막 열이나 행이 더 작은 타일로 남는다.
+- **완전히 투명한 타일 건너뛰기**: 마지막 행 끝의 빈 칸처럼 모든 픽셀의 알파가 0인 칸을 빼고 내보낸다.
+
+한 번에 최대 400개 타일까지 분할할 수 있다. 이를 넘으면 도구가 타일 크기나 간격을 늘리라고 안내한다. 반대로 낱장 프레임을 시트 한 장으로 합치려면 [스프라이트 시트 생성기](/ko/tools/sprite-sheet-generator/)를 쓴다.
+
+## 출력, 파일 이름, 개인정보
+
+타일은 PNG, JPG, WebP로 내보낸다. PNG는 투명도와 모든 픽셀을 정확히 보존한다. JPG와 WebP에는 50~100 범위의 품질 슬라이더가 있다(기본값 92). JPG에는 알파 채널이 없으므로 투명한 부분에 쓸 배경색도 지정한다(기본값 흰색). WebP를 인코딩할 수 없는 브라우저에서는 PNG로 저장하고, 상태 표시줄에 그 사실을 알린다.
+
+파일 이름은 원본 파일 이름에서 가져온다. 붙여넣은 이미지는 `image`를 쓴다.
+
+| 모드 | 파일 이름 예 | ZIP 이름 |
+|---|---|---|
+| 행×열, 타일 크기 | `poster-r1-c1.png`, `poster-r1-c2.png` (행과 열, 1부터 시작) | `poster-tiles.zip` |
+| Instagram 프로필 그리드 | `trip-post-1.jpg` … `trip-post-9.jpg` (게시 순서) | `trip-instagram.zip` |
+| Instagram 캐러셀 | `pano-slide-1.jpg` … `pano-slide-5.jpg` (왼쪽에서 오른쪽) | `pano-instagram.zip` |
+
+ZIP은 STORED 방식(무압축)을 쓴다. PNG, JPG, WebP 데이터는 이미 압축되어 있어 한 번 더 압축해도 얻는 것이 적다. 타일마다 개별 다운로드 버튼도 있다.
+
+이미지는 페이지 밖으로 나가지 않는다. File API로 읽고, `createImageBitmap`으로 디코딩하고, 타일별로 canvas에 그린 뒤 `canvas.toBlob()`으로 인코딩한다. ZIP도 메모리 안에서 만든다. 도구는 이미지나 타일을 담은 네트워크 요청을 보내지 않는다. 모든 타일을 새 canvas에 그려 다시 인코딩하므로 GPS 위치, 카메라 기종, 촬영 시각 같은 EXIF 정보는 타일에 복사되지 않는다. 저장되는 것은 설정(모드, 크기, 가장자리 옵션, 게시물 크기, 맞춤 방식, 색상, 형식, 품질)뿐이며, 로컬 스토리지에 저장된다. 사이트의 다른 도구와 마찬가지로 도구 이름과 "split", "zip" 같은 동작을 담은 사용 이벤트를 Google Analytics로 보낸다. 파일 이름과 이미지 내용은 여기에 포함되지 않는다.
+
+## 함정과 예외 상황
+
+### 그리드가 뒤집히거나 밀려서 보인다
+
+읽는 순서대로 올리면 왼쪽 위 타일이 세트의 오른쪽 아래에 놓인다. 1번부터 번호순으로 올린다. 세트를 다 올린 뒤 단일 게시물을 하나 올릴 때마다 모든 타일이 한 칸씩 밀려 줄이 깨진다. 게시물을 3의 배수로 올리면 줄이 맞게 유지된다. 고정 게시물도 최신 게시물보다 앞에 온다. 인스타그램은 게시물을 최대 3개까지 고정할 수 있고, 고정된 게시물은 그리드 왼쪽 위에 놓인다([The Verge, 2022년 6월 7일](https://www.theverge.com/2022/6/7/23158443/instagram-profile-pin-three-posts-reels-tiktok-twitter)). 결과를 확인하기 전에 고정을 해제한다.
+
+### 휴대폰 사진이 옆으로 누워서 나온다
+
+휴대폰은 사진을 센서 방향 그대로 저장하고, 어떻게 회전할지 적은 EXIF 태그를 덧붙이는 경우가 많다. 이 태그를 무시하는 코드는 사진을 옆으로 누운 채로 자른다. 브라우저의 `createImageBitmap`은 `imageOrientation: 'from-image'`를 넘기면 태그를 적용하며, [MDN은 이를 기본값으로 명시한다](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap). Pillow의 `Image.open`은 태그를 적용하지 않으므로, 아래 Python 예제처럼 먼저 `ImageOps.exif_transpose`를 호출한다. ImageMagick은 `-auto-orient`를 붙이면 태그를 적용한다.
+
+### Python의 round()가 분할선을 옮긴다
+
+Python 3에서는 .5를 가장 가까운 짝수로 반올림한다. `round(2.5)`는 2, `round(3.5)`는 4다. JavaScript의 `Math.round(2.5)`는 3이다. 5px을 2열로 나누면 가운데 분할선이 Python에서는 2, JavaScript에서는 3이 된다. 그래서 같은 이미지라도 Python 스크립트와 브라우저 도구가 서로 다른 타일을 만든다. 정수 연산 `(2 × i × L + n) // (2 × n)`은 .5를 올림하며, 이 값들에 대해 `Math.round`와 같은 결과를 낸다.
+
+### ffmpeg가 홀수 크기를 짝수로 자른다
+
+JPEG는 대개 4:2:0 같은 크로마 서브샘플링 픽셀 형식으로 디코딩된다. [필터 문서](https://ffmpeg.org/ffmpeg-filters.html#crop)에 따르면 이런 형식에서 ffmpeg의 `crop` 필터는 `exact=1`을 지정하지 않는 한 크기와 위치를 짝수로 내림한다. 테스트에서 4:2:0 JPEG에 1334 × 1001 타일을 요청했더니 1334 × 1000이 나왔다. Bash 예제처럼 먼저 RGBA로 디코딩하거나 `exact=1`을 지정한다.
+
+### 스프라이트 시트의 오른쪽이나 아래쪽 끝에 가는 타일이 생긴다
+
+여백은 위쪽과 왼쪽에만 적용된다. 시트의 오른쪽과 아래쪽에도 테두리가 있으면, 마지막 타일의 시작점이 그 테두리 안에 들어가 너비가 몇 픽셀뿐인 타일이 생길 수 있다. *가장자리의 잘린 타일 제외*를 켜거나, 테두리가 투명하다면 *완전히 투명한 타일 건너뛰기*를 켠다.
+
+### 투명한 부분이 흰색이나 검은색으로 바뀐다
+
+JPG는 투명도를 저장할 수 없으므로 투명한 픽셀에는 색이 필요하다. 이 도구는 JPG 배경색으로 채운다. 다른 도구는 임의로 색을 정할 수 있다. 타일을 다른 콘텐츠 위에 겹쳐 쓸 때는 PNG나 WebP로 내보낸다.
+
+### 올린 사진이 흐릿해 보인다
+
+인스타그램 타일은 너비 1080px다. 3 × 3 세트에는 자르기 영역 가로로 3240px가, 슬라이드 20장짜리 캐러셀에는 21,600px가 필요하다. 원본이 이보다 작으면 타일이 확대된다. 도구가 표시하는 확대 배율을 확인하고, 1을 크게 넘으면 더 큰 원본을 쓰거나 열 수를 줄인다.
+
+### 아주 큰 이미지는 거부된다
+
+디코딩한 이미지는 픽셀당 4바이트로 메모리에 올라간다. 휴대폰에서도 동작하도록 도구는 5,000만 픽셀(디코딩 후 약 200MB), 한 변 16,384px까지만 받는다. 각 타일은 자체 canvas에 그려지며 16,777,216픽셀 안에 들어가야 한다. 이는 [canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) 프로젝트가 Mobile Safari에서 측정한 최대 canvas 면적이다. 더 큰 파일은 아래 명령줄 예제를 쓴다.
+
+### 움직이는 GIF는 타일 세트 하나만 나온다
+
+이미지를 정지 이미지로 디코딩하므로, 움직이는 GIF는 첫 프레임만 쓴다. 모든 프레임을 분리하려면 [GIF 프레임 추출기](/ko/tools/gif-splitter/)를 쓴다.
+
+## 코드 예제
+
+### Python: Pillow로 그리드, 스프라이트 시트, 게시 순서 처리
+
+```python
+from pathlib import Path
+from PIL import Image, ImageOps
+
+
+def boundaries(n, length):
+    # round(i * length / n)을 JavaScript의 Math.round처럼 .5 올림으로 계산한다.
+    # Python의 round()는 2.5를 2로 만들므로 정수 연산을 쓴다.
+    return [(2 * i * length + n) // (2 * n) for i in range(n + 1)]
+
+
+def split_grid(path, rows, cols, out_dir="tiles"):
+    src = Path(path)
+    img = ImageOps.exif_transpose(Image.open(src))  # EXIF 회전부터 적용
+    xb, yb = boundaries(cols, img.width), boundaries(rows, img.height)
+    out = Path(out_dir)
+    out.mkdir(exist_ok=True)
+    rd, cd = len(str(rows)), len(str(cols))
+    for r in range(rows):
+        for c in range(cols):
+            tile = img.crop((xb[c], yb[r], xb[c + 1], yb[r + 1]))  # (left, upper, right, lower)
+            tile.save(out / f"{src.stem}-r{r + 1:0{rd}}-c{c + 1:0{cd}}.png")
+
+
+def split_sheet(path, tile_w, tile_h, margin=0, spacing=0, out_dir="frames"):
+    img = Image.open(path).convert("RGBA")
+    out = Path(out_dir)
+    out.mkdir(exist_ok=True)
+    n = 0
+    for y in range(margin, img.height - tile_h + 1, tile_h + spacing):
+        for x in range(margin, img.width - tile_w + 1, tile_w + spacing):
+            tile = img.crop((x, y, x + tile_w, y + tile_h))
+            if tile.getchannel("A").getbbox() is None:  # 완전히 투명한 칸
+                continue
+            n += 1
+            tile.save(out / f"frame-{n:03}.png")
+    return n
+
+
+def post_number(r, c, rows, cols=3):
+    # 프로필 그리드는 최신 게시물을 왼쪽 위에 보여 주므로
+    # 오른쪽 아래 타일을 가장 먼저 올린다.
+    return (rows - 1 - r) * cols + (cols - 1 - c) + 1
+
+
+if __name__ == "__main__":
+    split_grid("poster.jpg", rows=3, cols=4)
+    print(split_sheet("sheet.png", 32, 32, margin=2, spacing=1), "frames")
+    print([[post_number(r, c, 3) for c in range(3)] for r in range(3)])
+```
+
+`Image.crop`은 `(left, upper, right, lower)` 상자를 받으며 오른쪽과 아래쪽 경계는 포함하지 않는다. 앞에서 본 `[x_i, x_(i+1))` 구간과 같다. `split_sheet`는 온전한 칸만 남기고 빈 칸은 건너뛴다. 도구에서 가장자리 옵션 두 개를 모두 켠 것과 같다. 4000 × 3001 이미지라면 `split_grid`는 타일 12개를 쓴다. 너비는 1000px, 높이는 1000, 1001, 1000px다. 마지막 줄은 `[[9, 8, 7], [6, 5, 4], [3, 2, 1]]`을 출력한다.
+
+### JavaScript: canvas로 파일 분할하기
+
+```js
+// 브라우저에서 이미지 파일을 rows × cols개의 PNG 타일로 분할한다.
+function edges(n, len) {
+  return Array.from({ length: n + 1 }, (_, i) => Math.round((i * len) / n));
+}
+
+async function splitGrid(file, rows, cols) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const xs = edges(cols, bitmap.width);
+  const ys = edges(rows, bitmap.height);
+  const base = file.name.replace(/\.[^.]+$/, '') || 'image';
+  const tiles = [];
+  try {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const w = xs[c + 1] - xs[c];
+        const h = ys[r + 1] - ys[r];
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        // 원본 사각형 (sx, sy, sw, sh) → 같은 크기의 대상 사각형: 크기 조정 없음.
+        canvas.getContext('2d').drawImage(bitmap, xs[c], ys[r], w, h, 0, 0, w, h);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error(`Could not encode tile ${r + 1},${c + 1}`);
+        tiles.push({ name: `${base}-r${r + 1}-c${c + 1}.png`, blob });
+      }
+    }
+  } finally {
+    bitmap.close(); // 디코딩한 픽셀을 해제
+  }
+  return tiles;
+}
+
+// 사용법: <input type="file" id="pick" accept="image/*">
+document.getElementById('pick').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  for (const { name, blob } of await splitGrid(file, 3, 3)) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+});
+```
+
+인자 9개를 받는 [`drawImage`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/drawImage) 형식은 원본 사각형을 대상 사각형으로 복사한다. 두 크기가 같으면 어떤 픽셀도 리샘플링되지 않는다. `toBlob`은 인코딩에 실패하면 `null`을 넘기므로 이를 확인한다. 브라우저는 한 페이지가 여러 파일을 한꺼번에 내려받으려 하면 차단하거나 사용자에게 묻기도 한다. 파일 하나로 보내려면 타일을 ZIP으로 묶는다.
+
+### Bash: ImageMagick과 ffmpeg
+
+```bash
+# ImageMagick: 4열 × 3행의 거의 같은 크기 타일(크기 차이는 최대 1px).
+# -auto-orient로 휴대폰 사진의 EXIF 회전부터 적용한다.
+magick photo.jpg -auto-orient -crop 4x3@ +repage +adjoin photo-%02d.png
+
+# ImageMagick: 64 × 64 고정 타일. 크기가 64로 나누어떨어지지 않으면 오른쪽과 아래쪽 타일이 더 작다
+magick sheet.png -crop 64x64 +repage +adjoin tile-%03d.png
+```
+
+```bash
+#!/usr/bin/env bash
+# ffmpeg로 이미지를 rows x cols 타일로 분할한다. 분할선은 round(i * size / n).
+set -euo pipefail
+in=${1:?usage: grid.sh image rows cols}; rows=${2:-3}; cols=${3:-3}
+# 먼저 RGBA PNG로 한 번 디코딩한다. crop은 RGBA에서 정확하고(4:2:0 JPEG 입력에서는
+# 홀수 크기를 짝수로 내림한다), ffprobe가 디코딩된 크기를 보고하게 된다.
+ffmpeg -v error -y -i "$in" -frames:v 1 -pix_fmt rgba src-rgba.png
+IFS=, read -r W H < <(ffprobe -v error -select_streams v:0 \
+  -show_entries stream=width,height -of csv=p=0 src-rgba.png)
+edge() { echo $(( (2 * $1 * $2 + $3) / (2 * $3) )); }  # round(i * len / n)
+for ((r = 0; r < rows; r++)); do
+  y0=$(edge "$r" "$H" "$rows"); y1=$(edge $((r + 1)) "$H" "$rows")
+  for ((c = 0; c < cols; c++)); do
+    x0=$(edge "$c" "$W" "$cols"); x1=$(edge $((c + 1)) "$W" "$cols")
+    ffmpeg -v error -y -i src-rgba.png \
+      -vf "crop=$((x1 - x0)):$((y1 - y0)):$x0:$y0" \
+      -frames:v 1 "tile-r$((r + 1))-c$((c + 1)).png"
+  done
+done
+rm src-rgba.png
+```
+
+위치를 지정하지 않으면 ImageMagick의 `-crop`은 이미지 전체를 덮는 타일 세트를 만든다. `+repage`는 각 타일에 남는 페이지 오프셋을 지우고, `+adjoin`은 타일마다 파일을 하나씩 쓴다. `@` 형식에는 ImageMagick 6.5.8-9 이상이 필요하다. ffmpeg 스크립트는 `bash grid.sh photo.jpg 3 3`으로 실행한다. 4001 × 3001 JPEG라면 너비 1334, 1333, 1334px 타일을 쓰고, 무작위 노이즈 PNG에서 잘라 낸 타일은 다시 맞추면 원본과 픽셀 단위로 일치한다. 스크립트는 입력 파일이 아닌 디코딩한 PNG의 크기를 잰다. 테스트에서 ffmpeg 9.0은 휴대폰 사진을 디코딩할 때 EXIF 회전을 적용했지만, JPEG에 대한 ffprobe는 회전 전의 저장 크기를 보고했다.
+
+## 다른 이미지 분할 도구와 비교
+
+각 도구는 저마다 맞는 작업이 다르다.
+
+| 도구 | 실행 위치 | 분할 기준 | 테두리와 틈 | 인스타그램 배치 | 출력 |
+|---|---|---|---|---|---|
+| ZeroTool 이미지 분할기 | 브라우저 탭, 이미지는 로컬에 남음 | 행 × 열, 타일 크기, 인스타그램 그리드 또는 캐러셀 | 여백과 간격 | 게시 순서의 프로필 그리드, 캐러셀, 3:4 / 4:5 / 1:1 | PNG·JPG·WebP / ZIP 또는 개별 타일 |
+| PineTools Split image | 웹 페이지 | 블록 수 또는 블록 크기, 세로·가로·양방향 | 겹침(px) | 옵션에 없음 | PNG·JPG·WebP·BMP / ZIP 또는 개별 파일 |
+| ezgif Sprite sheet cutter | ezgif 서버에 업로드 | 타일 크기 또는 행과 열 수 | 오프셋과 간격 | 없음 | PNG·GIF·BMP·WebP·JPG / ZIP |
+| ImageMagick `-crop` | 로컬 명령줄 | 타일 크기, 또는 `@`로 타일 개수 | `@`와 음수 겹침으로 틈 건너뛰기 | 없음 | ImageMagick이 쓸 수 있는 모든 형식 |
+
+[PineTools](https://pinetools.com/split-image)는 개수나 픽셀 크기로 어느 방향이든 분할하고, 블록끼리 겹치게 할 수 있으며, 출력 형식은 브라우저가 지원하는 것만 보여 준다. 여러 이미지를 한꺼번에 처리하는 일괄 버전도 있다. 겹치는 띠가 필요할 때 쓴다.
+
+[ezgif 스프라이트 시트 커터](https://ezgif.com/sprite-cutter)는 최대 200MB까지 업로드를 받으며, "업로드된 모든 파일은 업로드 1시간 후 자동으로 삭제된다(All uploaded files are automatically deleted 1 hour after upload.)"고 밝힌다. 출력 파일 이름을 바꿀 수 있고, 잘라 낸 프레임을 바로 움직이는 GIF, APNG, WebP, 동영상으로 만들 수 있다. 프레임을 애니메이션으로 만들 계획이라면 이 도구를 쓴다.
+
+ImageMagick에는 브라우저 메모리 한도가 없고, 스크립트나 빌드 단계에 넣기 좋다. `@` 플래그를 쓰면 명령 한 줄로 거의 같은 크기의 타일을 얻는다.
+
+이미지 분할기는 나머지 세 도구가 사용자에게 맡기는 인스타그램 작업을 맡는다. 세로로 긴 타일, 미리보기와 파일 이름의 게시 순서 번호, 자르기와 여백 채우기, 타일이 흐릿해지기 전의 경고가 그것이다. 업로드 없이 픽셀 손실 없는 균등 그리드와 여백·간격이 있는 스프라이트 시트도 자른다. 한 번에 정지 이미지 한 장만 다루도록 설계했다. 애니메이션에는 GIF 프레임 추출기를, 수백 개 파일에는 스크립트를 쓴다.
+
+## 관련 도구와 참고 자료
+
+분할한 타일과 함께 쓰기 좋은 ZeroTool 도구:
+
+- [스프라이트 시트 생성기](/ko/tools/sprite-sheet-generator/): 낱장 프레임을 JSON 데이터와 함께 시트 한 장으로 다시 묶는다.
+- [GIF 프레임 추출기](/ko/tools/gif-splitter/): 움직이는 GIF의 모든 프레임을 내보낸다.
+- [이미지 압축기](/ko/tools/image-compressor/): 내보낸 타일을 올리기 전에 용량을 줄인다.
+- [WebP 변환기](/ko/tools/webp-converter/): PNG 타일 폴더를 WebP로 변환한다.
+- [EXIF 메타데이터 뷰어](/ko/tools/exif-metadata-viewer/): 원본을 공유하기 전에 사진에 어떤 정보가 담겨 있는지 보여 준다.
+
+이 글에서 참고한 자료:
+
+- [MDN: createImageBitmap()](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap): `imageOrientation`을 포함한 디코딩 옵션
+- [MDN: CanvasRenderingContext2D.drawImage()](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/drawImage): 원본·대상 사각형 인자
+- [MDN: HTMLCanvasElement.toBlob()](https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob): canvas를 PNG, JPEG, WebP로 인코딩
+- [Pillow: Image.crop](https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.crop)과 [ImageOps.exif_transpose](https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.exif_transpose)
+- [ImageMagick 사용법: 자르기와 균등 크기 타일 자르기](https://usage.imagemagick.org/crop/)
+- [FFmpeg 필터: crop](https://ffmpeg.org/ffmpeg-filters.html#crop): 서브샘플링 형식을 위한 `exact` 옵션
+- [canvas-size 테스트 결과](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results): 브라우저별 최대 canvas 크기
+- 인스타그램 관련 The Verge 기사: [캐러셀 20장 확대](https://www.theverge.com/2024/8/8/24216111/instagram-carousel-post-expansion), [직사각형 프로필 그리드](https://www.theverge.com/2025/1/17/24346304/instagram-profile-grids-rectangles-squares), [3:4 사진 지원](https://www.theverge.com/news/676549/instagram-3-4-aspect-ratio-photos-phones-square-rectangle)

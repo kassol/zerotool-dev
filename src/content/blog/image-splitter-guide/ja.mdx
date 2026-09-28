@@ -1,0 +1,366 @@
+---
+title: "画像分割ガイド：均等グリッド、Instagram の投稿順、スプライトシートの切り分け"
+description: "画像を均等なグリッド、Instagram のプロフィールグリッド、つながるカルーセルに分割する方法を解説。ピクセル単位で正確な分割線、投稿順、3:4 タイル、スプライトシートのマージンと間隔までまとめます。"
+pubDate: 2026-09-28
+lang: "ja"
+tags: ["image", "instagram", "sprite-sheet", "canvas", "developer-tools"]
+---
+
+新製品の発表に合わせて、会社の Instagram プロフィールに大きなバナーを 1 枚出すことになりました。9 件の投稿が並んで 1 枚の絵になる、いわゆる分割投稿です。元画像は 4000 × 3000 の PNG。「画像を 9 枚に切るだけでしょう」という理由で、この仕事は開発者に回ってきます。
+
+最初は手早く書いたスクリプトで 1333 × 1000 のタイルを切り出しました。右端の 1 列分のピクセルが失われますが、これは誰も気づきません。残りの 2 つは誰の目にも明らかでした。1 つ目は投稿順です。左上のタイルから読む順に投稿したところ、プロフィール上ではバナーが逆向きに並びました。Instagram は最新の投稿を左上に置くからです。2 つ目はタイルの形です。タイルは正方形でしたが、プロフィールグリッドは投稿を縦長の長方形で表示します。各タイルは左右が少しずつ切れ、投稿の境目で絵がつながらなくなりました。
+
+3 つとも、確実な直し方があります。分割線の位置を丸めて決めれば、ピクセルは 1 つも失われません。タイルには投稿順に番号を振り、グリッドが表示する形で切り出します。同じ分割線のルールは、ポスターの分割印刷や、スプライトシートを 1 コマずつに切り分ける作業にもそのまま使えます。このガイドでは、画像分割のルールと落とし穴を、Python・JavaScript・コマンドラインのコード付きで説明します。
+
+[画像を分割する →](/ja/tools/image-splitter/)
+
+## 画像を分割したくなる場面
+
+| 状況 | 必要なもの | 使うモード |
+|---|---|---|
+| 1 枚の絵を Instagram プロフィール上の 3・6・9 件の投稿に広げたい | 縦長のタイル、投稿順の番号 | Instagram の「プロフィールグリッド」 |
+| スワイプすると端から端までつながるパノラマ | 同じサイズのスライド 2〜20 枚、左から右へ | Instagram の「カルーセル」 |
+| A4 や Letter の用紙に分けて印刷し、貼り合わせるポスター | 原寸解像度のまま均等に分けた断片 | 行×列（例：2 × 3、3 × 4） |
+| 1 コマずつに戻したいスプライトシートやアイコンシート | 外周の余白とコマ間の隙間がある固定サイズのセル | タイルサイズ（マージンと間隔を指定） |
+| スライド・チャット・チケットに貼るページ全体のスクリーンショット | 1 画面に収まる横長の帯 | 行×列で 1 列 × N 行 |
+| レベルエディター用のマップチャンクやテクスチャタイル | 固定ピクセルサイズの正方形タイル | タイルサイズ |
+
+「行×列」と「タイルサイズ」は元のピクセルをそのまま保ちます。Instagram モードでは、どのタイルも幅 1080 px に拡大縮小します。Instagram の投稿サイズは通常この幅で案内されています。
+
+### 日本でよくある画像の切り分け
+
+日本の SNS 運用や制作現場では、画像分割に次のような呼び名や使い方があります。
+
+- **インスタの分割投稿（パズル投稿）**：店舗やブランドのアカウントが、プロフィールを開いたときに 1 枚の大きな絵に見えるように投稿する手法です。横 1 列の 3 枚か、3 × 3 の 9 枚が定番です。このツールでは Instagram モードの「プロフィールグリッド」を使います。
+- **つながるカルーセル（つながる投稿）**：スワイプすると 1 枚の横長の絵がつながって見える投稿です。旅行先のパノラマ、イラスト、手順の図解によく使われます。「カルーセル」を選びます。
+- **ポスターの分割印刷**：家庭用やオフィスのプリンターが A4 までしか扱えないときは、「行×列」で 2 × 2 に分ければ A4 4 枚で A2 相当の掲示物になります。タイルは重なりなしで切り出すため、のりしろが必要な場合は後述の PineTools のように重なりを指定できるツールを使います。
+- **Qiita や Zenn の記事に貼る長いスクリーンショット**：ページ全体のキャプチャをそのまま載せると、縦に長すぎて読者がスクロールで迷います。「行×列」の 1 列 × N 行で画像を切り分け、説明の段落ごとに 1 枚ずつ貼ると読みやすくなります。
+
+## ピクセルを失わない均等分割
+
+ほとんどの画像は割り切れません。幅 4000 px の画像を 3 列に分けると、1 列あたり 1333.33 px です。すべてのタイルを 1333 px に切り捨てるコードでは、最後の 1 列分のピクセルが抜け落ちます。1334 px に切り上げるコードでは、タイル同士が重なるか、最後のタイルが画像の端を越えて読み込もうとします。
+
+直し方は、タイルの幅ではなく分割線の位置を丸めることです。長さ `L` を `n` 個に分けるとき、`i` 本目の分割線は次の位置に置きます。
+
+```text
+x_i = round(i × L / n)      for i = 0 … n
+tile i spans [x_i, x_(i+1))
+```
+
+4000 px を 3 列に分けると、分割線は 0、1333、2667、4000 で、タイル幅は 1333、1334、1333 px になります。4001 px なら 1334、1333、1334 px です。この式から次の 3 つの性質が導かれます。
+
+- 最初の分割線は 0、最後は `L` なので、どのピクセルもちょうど 1 枚のタイルに入ります。
+- タイル幅の差は最大 1 px です。
+- 余ったピクセルは行全体に散らばり、最後のタイルに寄せ集まりません。
+
+[画像分割ツール](/ja/tools/image-splitter/)の「行×列」モードは、行と列の両方にこの式を使います。各タイルはデコード済みの画像から、それぞれのサイズのまま拡大縮小なしでコピーされるので、並べ直せば元の画像に戻ります。行数・列数はそれぞれ 1〜20 です。画像の高さのピクセル数より多い行数を指定すると、ツールは行数を下げ、その理由を表示します。
+
+ImageMagick にも同じ考え方が組み込まれています。`-crop` に `@` フラグを付けると、タイルのサイズではなくタイルの枚数で画像を分割します。[使用ガイド](https://usage.imagemagick.org/crop/)には、タイルサイズの差は「最大でも 1 ピクセル」（"will differ by 1 pixel at the most"）と書かれています。ただし分割線の位置が上の式と同じになるとは保証していません。1 つのセットの中で、ImageMagick のタイルと別のツールのタイルを混ぜないでください。
+
+## Instagram のプロフィールグリッド
+
+プロフィールグリッド用の分割とは、プロフィールページ上で 1 枚の絵になる投稿のセットのことです。タイルの切り方と投稿の仕方は、次の 3 つの事実で決まります。
+
+### グリッドは 3 列で、最新の投稿が先頭
+
+プロフィールは投稿を 1 行に 3 件ずつ表示し、最新の投稿を左上に置きます。3 × 3 のセットなら、右下のタイルを最初に、左上のタイルを最後に投稿する必要があります。グリッドの形で投稿番号を書くと次のとおりです。
+
+```text
+9  8  7
+6  5  4
+3  2  1
+```
+
+`R` 行 3 列のとき、`r` 行 `c` 列（どちらも 0 から数える）のタイルの番号は `(R − 1 − r) × 3 + (2 − c) + 1` です。画像分割ツールはプレビューの各タイルにこの番号を表示し、ファイル名も同じ順に付けます。9 件なら `trip-post-1.jpg` から `trip-post-9.jpg` です。番号は総数の桁数に合わせてゼロ埋めされるので、12 件のセットでは `trip-post-01.jpg` から `trip-post-12.jpg` になり、どちらの場合も名前順に並べれば投稿順になります。ZIP の中のファイルも投稿順に格納されます。
+
+行数は 1〜10 なので、1 セットは最大 30 件です。
+
+### グリッドは縦長のタイルを表示する
+
+Instagram 責任者の Adam Mosseri は 2025 年 1 月、プロフィールグリッドの投稿を正方形から長方形の表示に変えると発表しました（[The Verge、2025 年 1 月 17 日](https://www.theverge.com/2025/1/17/24346304/instagram-profile-grids-rectangles-squares)）。2025 年 5 月下旬には、単独投稿とカルーセルで 3:4 の写真に対応すると発表しています（[The Verge、2025 年 5 月 29 日](https://www.theverge.com/news/676549/instagram-3-4-aspect-ratio-photos-phones-square-rectangle)）。同じ週の報道では、グリッドのタイルは 3:4 と説明されています（[DivePhotoGuide、2025 年 6 月 1 日](https://www.divephotoguide.com/underwater-photography-scuba-ocean-news/instagram-now-supports-images-3-4-aspect-ratio/)）。
+
+グリッドのタイル比率を明記した Instagram のヘルプページは、私たちが調べた範囲では見つかりませんでした。報道の多くが 3:4 としているため、このツールもプロフィールグリッドの既定値に 3:4 を使います。幅 1080 px なら、3:4 の投稿は 1080 × 1440 です。Instagram が保持する最大ピクセルサイズは報道によって異なり、一部の投稿管理ツールは縦長の投稿を 4:5 までしか受け付けないと報告されています。使っているツールが 3:4 のファイルを拒否した場合は、4:5 で分割し直してください。
+
+ツールで選べる投稿サイズは 3 つです。
+
+| 投稿サイズ | ピクセル | 用途 |
+|---|---|---|
+| 3:4 | 1080 × 1440 | プロフィールグリッドのセット（既定） |
+| 4:5 | 1080 × 1350 | カルーセル（既定）、または 4:5 までしか扱えないツール向けのグリッドセット |
+| 1:1 | 1080 × 1080 | 正方形の投稿 |
+
+中央で切り抜いた場合、3:4 のグリッドセルに置かれた正方形のタイルは、左右それぞれ幅の 8 分の 1 ずつが隠れます。セット全体で見ると、この隠れた帯のせいで、投稿の境目をまたぐ線がすべて途切れます。
+
+### Instagram は投稿の間に隙間を入れる
+
+グリッドのセルの間には細い隙間があります。タイルは端から端まで隙間なく切り出すので、それぞれの隙間の下に絵の細い線が隠れて見えなくなります。写真ならほとんど目立ちません。文字や直線が隙間をまたぐデザインでは、その線をタイルの端から離して配置してください。ツールは隙間を考慮しません。
+
+### 切り抜きか、余白を追加するか
+
+3:4 の投稿を 3 × 3 に並べたセットは 3240 × 4320 px で、全体も 3:4 です。元画像がちょうどこの比率であることはまずないので、ツールは 2 つの合わせ方を用意しています。
+
+- **切り抜き**：セットと同じ比率で取れる最大の範囲を、画像の中に配置します。範囲はプレビュー上でドラッグするか、フォーカスして矢印キーで動かします。範囲のサイズは常に最大のままです。
+- **余白を追加**：画像全体をセットの中に収め、残りを選んだ色で塗りつぶします。ロゴ、縦長のスクリーンショット、切ってはいけないアートワークに使います。画像がかからないタイルは、余白の色一色で出力されます。
+
+その後、各タイルを幅 1080 px に拡大縮小します。切り抜き範囲が 1 列あたり 1080 px に満たない場合、タイルは拡大され、ツールがその倍率を表示します。4000 × 3000 の横長写真を 3:4 の 3 × 3 グリッドに分割すると、切り抜き範囲は 2250 × 3000 px です。Instagram には横 3240 px が必要なので、タイルは 1.44 倍に拡大されます。同じ写真を 3:4 の投稿 3 件の 1 行に分割すれば、範囲は 4000 × 1778 になり、縮小されるので鮮明なままです。
+
+## Instagram のカルーセル
+
+カルーセルは複数のスライドを持つ 1 件の投稿で、閲覧者はスワイプしてスライドを送ります。2024 年 8 月 8 日から、カルーセルに入れられる写真や動画は 10 件から 20 件に増えました（[The Verge、2024 年 8 月 8 日](https://www.theverge.com/2024/8/8/24216111/instagram-carousel-post-expansion)）。画像分割ツールは 1 行に 2〜20 枚のスライドを作り、左から右へ `pano-slide-1.jpg`、`pano-slide-2.jpg` のように番号を振ります。投稿にはこの順で追加してください。
+
+パノラマを分割したスライドが継ぎ目なくつながって見えるのは、すべてのスライドが同じサイズのときだけです。そのためツールは、すべてのスライドを同じ投稿サイズで書き出します。カルーセルの既定は 4:5（1080 × 1350）です。4:5 のスライド 5 枚で 5400 × 1350、比率 4:1 の帯になります。12000 × 3000 のパノラマなら切り抜きなしで収まります。
+
+## スプライトシート：タイルサイズ、マージン、間隔
+
+ゲームのスプライトシートやアイコンシートは、行数・列数ではなく固定サイズのセルで並んでいます。「タイルサイズ」モードは、次の 4 つの数値でシートを読み取ります。
+
+- **タイル幅**と**タイル高さ**：1 コマのピクセルサイズ。
+- **マージン**：シートの上端と左端にある、最初のコマの手前の空白。
+- **間隔**：コマとコマの隙間。
+
+1 行の中で `c` 番目のコマは `margin + c × (tile width + spacing)` から始まり、行方向もタイル高さで同じ規則に従います。外周に 2 px の余白があり、32 × 32 のコマの間に 1 px の隙間があるシートなら、32、32、2、1 と入力します。マップエディター Tiled も、[タイルセットの形式](https://doc.mapeditor.org/en/stable/reference/tmx-map-format/)で同じ 2 つの用語（margin と spacing）を使っています。
+
+シートの端の扱いには 2 つのオプションがあります。
+
+- **端の欠けたタイルを除外**：画像の右端や下端で切れたタイルを出力しません。オフのままだと、欠けた最後の列や行も小さいタイルとして残ります。
+- **完全に透明なタイルを除外**：最後の行の末尾にある空のセルのように、すべてのピクセルのアルファ値が 0 のセルを出力しません。
+
+1 回の分割で出力できるタイルは最大 400 枚です。それを超えると、タイルサイズか間隔を大きくするようツールが促します。逆に、1 コマずつの画像を 1 枚のシートにまとめたい場合は[スプライトシート作成ツール](/ja/tools/sprite-sheet-generator/)を使ってください。
+
+## 出力形式、ファイル名、プライバシー
+
+タイルは PNG、JPG、WebP で書き出せます。PNG は透過もすべてのピクセルもそのまま保ちます。JPG と WebP には 50〜100 の品質スライダーがあります（既定は 92）。JPG にはアルファチャンネルがないため、透明部分の背景色も指定できます（既定は白）。WebP をエンコードできないブラウザでは代わりに PNG で保存し、ステータス行でそのことを知らせます。
+
+ファイル名は元のファイル名から作られます。貼り付けた画像には `image` を使います。
+
+| モード | ファイル名の例 | ZIP の名前 |
+|---|---|---|
+| 行×列、タイルサイズ | `poster-r1-c1.png`、`poster-r1-c2.png`（行と列、1 始まり） | `poster-tiles.zip` |
+| Instagram プロフィールグリッド | `trip-post-1.jpg` … `trip-post-9.jpg`（投稿順） | `trip-instagram.zip` |
+| Instagram カルーセル | `pano-slide-1.jpg` … `pano-slide-5.jpg`（左から右） | `pano-instagram.zip` |
+
+ZIP は STORED 方式（無圧縮）を使います。PNG、JPG、WebP のデータはすでに圧縮済みなので、もう一度圧縮してもほとんど小さくなりません。各タイルには個別のダウンロードボタンもあります。
+
+画像はページの外に出ません。File API で読み込み、`createImageBitmap` でデコードし、タイルごとに canvas に描画して、`canvas.toBlob()` でエンコードします。ZIP はメモリ上で組み立てます。画像やタイルを載せたネットワークリクエストは一切送りません。各タイルは新しい canvas に描画し直してエンコードするため、GPS 位置、カメラの機種、撮影日時といった EXIF データはタイルにコピーされません。保存されるのは設定（モード、サイズ、端の処理オプション、投稿サイズ、合わせ方、色、形式、品質）だけで、ローカルストレージに入ります。サイト内のほかのツールと同じく、ツール名と「split」「zip」などの操作名を含む利用イベントを Google Analytics に送信します。ファイル名や画像の内容は含まれません。
+
+## 落とし穴とエッジケース
+
+### グリッドが逆順になる、ずれる
+
+読む順に投稿すると、左上のタイルがセットの右下に来てしまいます。番号順に、1 から投稿してください。セットを投稿し終えたあと、単独の投稿を 1 件追加するたびに全タイルが 1 マスずつずれ、行が崩れます。3 の倍数単位で投稿すれば、行はそろったままです。固定した投稿も最新の投稿より前に表示されます。Instagram では最大 3 件の投稿を固定でき、それらはグリッドの左上に並びます（[The Verge、2022 年 6 月 7 日](https://www.theverge.com/2022/6/7/23158443/instagram-profile-pin-three-posts-reels-tiktok-twitter)）。仕上がりを確認する前に固定を外してください。
+
+### スマートフォンの写真が横倒しになる
+
+スマートフォンは写真をセンサーの向きのまま保存し、回転方法を示す EXIF タグを付けることがよくあります。このタグを無視するコードは、写真を横倒しのまま切り分けます。ブラウザでは、`createImageBitmap` に `imageOrientation: 'from-image'` を渡すとタグが適用されます。[MDN ではこれが既定値](https://developer.mozilla.org/ja/docs/Web/API/Window/createImageBitmap)とされています。Pillow の `Image.open` はタグを適用しないので、後述の Python の例のように先に `ImageOps.exif_transpose` を呼びます。ImageMagick は `-auto-orient` を付けると適用します。
+
+### Python の round() で分割線がずれる
+
+Python 3 は 0.5 ちょうどの値を最も近い偶数に丸めます（いわゆる偶数丸め、銀行家の丸め）。`round(2.5)` は 2、`round(3.5)` は 4 です。JavaScript の `Math.round(2.5)` は 3 です。5 px を 2 列に分けると、中央の分割線は Python では 2、JavaScript では 3 になり、同じ画像から Python スクリプトとブラウザのツールで異なるタイルができます。整数演算の `(2 × i × L + n) // (2 × n)` は 0.5 を切り上げるので、この用途では `Math.round` と同じ結果になります。
+
+### ffmpeg が奇数サイズを偶数に切り詰める
+
+JPEG は通常、4:2:0 のような色差サブサンプリングを伴うピクセル形式にデコードされます。[フィルターのドキュメント](https://ffmpeg.org/ffmpeg-filters.html#crop)にあるとおり、こうした形式では ffmpeg の `crop` フィルターは、`exact=1` を指定しない限りサイズと位置を偶数に切り捨てます。私たちのテストでは、4:2:0 の JPEG から 1334 × 1001 のタイルを要求すると 1334 × 1000 になりました。Bash の例のように先に RGBA へデコードするか、`exact=1` を指定してください。
+
+### スプライトシートの右端や下端に細いタイルが出る
+
+マージンが適用されるのは上端と左端だけです。シートの右端と下端にも余白がある場合、最後のタイルの開始位置がその余白の中に入り、幅が数ピクセルしかないタイルができることがあります。「端の欠けたタイルを除外」をオンにするか、余白が透明なら「完全に透明なタイルを除外」をオンにしてください。
+
+### 透明部分が白や黒になる
+
+JPG は透過を保存できないので、透明なピクセルには何かの色が必要です。このツールは JPG の背景色で塗りつぶします。ほかのツールは勝手に色を選ぶことがあります。タイルをほかのコンテンツの上に重ねる場合は、PNG か WebP で書き出してください。
+
+### アップロードした画像がぼやける
+
+Instagram のタイルは幅 1080 px です。3 × 3 のセットには切り抜き範囲の横幅として 3240 px、20 枚のカルーセルには 21,600 px が必要です。元画像がそれより小さいとタイルは拡大されます。ツールが表示する拡大倍率を確認し、1 を大きく超えるなら、より大きな元画像を使うか列数を減らしてください。
+
+### 大きすぎる画像は受け付けない
+
+デコードした画像は 1 ピクセルあたり 4 バイトでメモリに載ります。スマートフォンでも動くように、ツールが受け付けるのは 5,000 万ピクセル（デコード後で約 200 MB）まで、一辺 16,384 px までです。各タイルはそれぞれ専用の canvas に描画され、16,777,216 ピクセル以内に収まる必要があります。これは [canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) プロジェクトが Mobile Safari で測定した canvas の最大面積です。これより大きいファイルには、後述のコマンドラインの例を使ってください。
+
+### アニメーション GIF からはタイルが 1 セットだけ
+
+画像は静止画としてデコードされるため、アニメーション GIF は最初のフレームだけが対象になります。すべてのフレームに分解したい場合は [GIF 分解ツール](/ja/tools/gif-splitter/)を使ってください。
+
+## コード例
+
+### Python：Pillow でグリッド、スプライトシート、投稿順
+
+```python
+from pathlib import Path
+from PIL import Image, ImageOps
+
+
+def boundaries(n, length):
+    # round(i * length / n) を 0.5 切り上げで計算する（JavaScript の Math.round と同じ）。
+    # Python の round() は 2.5 を 2 にするので、代わりに整数演算を使う。
+    return [(2 * i * length + n) // (2 * n) for i in range(n + 1)]
+
+
+def split_grid(path, rows, cols, out_dir="tiles"):
+    src = Path(path)
+    img = ImageOps.exif_transpose(Image.open(src))  # 先に EXIF の回転を適用する
+    xb, yb = boundaries(cols, img.width), boundaries(rows, img.height)
+    out = Path(out_dir)
+    out.mkdir(exist_ok=True)
+    rd, cd = len(str(rows)), len(str(cols))
+    for r in range(rows):
+        for c in range(cols):
+            tile = img.crop((xb[c], yb[r], xb[c + 1], yb[r + 1]))  # (left, upper, right, lower)
+            tile.save(out / f"{src.stem}-r{r + 1:0{rd}}-c{c + 1:0{cd}}.png")
+
+
+def split_sheet(path, tile_w, tile_h, margin=0, spacing=0, out_dir="frames"):
+    img = Image.open(path).convert("RGBA")
+    out = Path(out_dir)
+    out.mkdir(exist_ok=True)
+    n = 0
+    for y in range(margin, img.height - tile_h + 1, tile_h + spacing):
+        for x in range(margin, img.width - tile_w + 1, tile_w + spacing):
+            tile = img.crop((x, y, x + tile_w, y + tile_h))
+            if tile.getchannel("A").getbbox() is None:  # 完全に透明なセル
+                continue
+            n += 1
+            tile.save(out / f"frame-{n:03}.png")
+    return n
+
+
+def post_number(r, c, rows, cols=3):
+    # プロフィールグリッドは最新の投稿を左上に表示するので、
+    # 右下のタイルを最初に投稿する。
+    return (rows - 1 - r) * cols + (cols - 1 - c) + 1
+
+
+if __name__ == "__main__":
+    split_grid("poster.jpg", rows=3, cols=4)
+    print(split_sheet("sheet.png", 32, 32, margin=2, spacing=1), "frames")
+    print([[post_number(r, c, 3) for c in range(3)] for r in range(3)])
+```
+
+`Image.crop` は `(left, upper, right, lower)` のボックスを受け取り、右端と下端は含みません。これは上で示した `[x_i, x_(i+1))` の範囲と一致します。`split_sheet` は完全なセルだけを残し、空のセルを飛ばします。ツールで端の処理オプションを両方オンにした場合と同じ動きです。4000 × 3001 の画像なら、`split_grid` は幅 1000 px、高さ 1000・1001・1000 px のタイルを 12 枚書き出します。最後の行は `[[9, 8, 7], [6, 5, 4], [3, 2, 1]]` を出力します。
+
+### JavaScript：canvas でファイルを分割する
+
+```js
+// ブラウザで画像ファイルを rows × cols 枚の PNG タイルに分割する。
+function edges(n, len) {
+  return Array.from({ length: n + 1 }, (_, i) => Math.round((i * len) / n));
+}
+
+async function splitGrid(file, rows, cols) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const xs = edges(cols, bitmap.width);
+  const ys = edges(rows, bitmap.height);
+  const base = file.name.replace(/\.[^.]+$/, '') || 'image';
+  const tiles = [];
+  try {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const w = xs[c + 1] - xs[c];
+        const h = ys[r + 1] - ys[r];
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        // 元の矩形 (sx, sy, sw, sh) → 同じサイズの描画先矩形：拡大縮小なし。
+        canvas.getContext('2d').drawImage(bitmap, xs[c], ys[r], w, h, 0, 0, w, h);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error(`Could not encode tile ${r + 1},${c + 1}`);
+        tiles.push({ name: `${base}-r${r + 1}-c${c + 1}.png`, blob });
+      }
+    }
+  } finally {
+    bitmap.close(); // デコード済みのピクセルを解放する
+  }
+  return tiles;
+}
+
+// 使い方: <input type="file" id="pick" accept="image/*">
+document.getElementById('pick').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  for (const { name, blob } of await splitGrid(file, 3, 3)) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+});
+```
+
+9 引数版の [`drawImage`](https://developer.mozilla.org/ja/docs/Web/API/CanvasRenderingContext2D/drawImage) は、元画像の矩形を描画先の矩形にコピーします。サイズが同じなら、ピクセルは再サンプリングされません。`toBlob` はエンコードできないと `null` を渡すので、必ず確認してください。ブラウザは、一度に複数のダウンロードを始めるページをブロックしたり、許可を求めたりすることがあります。1 ファイルで渡したい場合は、タイルを ZIP にまとめてください。
+
+### Bash：ImageMagick と ffmpeg
+
+```bash
+# ImageMagick: 4 列 × 3 行のほぼ均等なタイル（サイズの差は最大 1 px）。
+# -auto-orient で先にスマートフォン写真の EXIF 回転を適用する。
+magick photo.jpg -auto-orient -crop 4x3@ +repage +adjoin photo-%02d.png
+
+# ImageMagick: 64 × 64 の固定タイル。サイズが 64 で割り切れない場合、右端と下端のタイルは小さくなる
+magick sheet.png -crop 64x64 +repage +adjoin tile-%03d.png
+```
+
+```bash
+#!/usr/bin/env bash
+# ffmpeg で画像を rows x cols のタイルに分割する。分割線は round(i * size / n)。
+set -euo pipefail
+in=${1:?usage: grid.sh image rows cols}; rows=${2:-3}; cols=${3:-3}
+# 一度 RGBA の PNG にデコードする。RGBA なら crop は正確で（4:2:0 の JPEG 入力では
+# 奇数サイズが偶数に丸められる）、ffprobe もデコード後のサイズを返す。
+ffmpeg -v error -y -i "$in" -frames:v 1 -pix_fmt rgba src-rgba.png
+IFS=, read -r W H < <(ffprobe -v error -select_streams v:0 \
+  -show_entries stream=width,height -of csv=p=0 src-rgba.png)
+edge() { echo $(( (2 * $1 * $2 + $3) / (2 * $3) )); }  # round(i * len / n)
+for ((r = 0; r < rows; r++)); do
+  y0=$(edge "$r" "$H" "$rows"); y1=$(edge $((r + 1)) "$H" "$rows")
+  for ((c = 0; c < cols; c++)); do
+    x0=$(edge "$c" "$W" "$cols"); x1=$(edge $((c + 1)) "$W" "$cols")
+    ffmpeg -v error -y -i src-rgba.png \
+      -vf "crop=$((x1 - x0)):$((y1 - y0)):$x0:$y0" \
+      -frames:v 1 "tile-r$((r + 1))-c$((c + 1)).png"
+  done
+done
+rm src-rgba.png
+```
+
+位置を指定しない場合、ImageMagick の `-crop` は画像全体を覆うタイルのセットを作ります。`+repage` は各タイルに残るページオフセットを取り除き、`+adjoin` はタイルごとに 1 ファイルを書き出します。`@` 形式には ImageMagick 6.5.8-9 以降が必要です。ffmpeg のスクリプトは `bash grid.sh photo.jpg 3 3` のように実行します。4001 × 3001 の JPEG なら幅 1334、1333、1334 px のタイルを書き出し、ランダムノイズの PNG で試すと、タイルを並べ直した結果は元画像とピクセル単位で一致しました。スクリプトが測るのは入力ファイルではなく、デコード後の PNG です。私たちのテストでは、ffmpeg 9.0 はスマートフォン写真をデコードする際に EXIF の回転を適用しましたが、JPEG に対する ffprobe は回転前の保存時のサイズを返しました。
+
+## ほかの画像分割ツールとの比較
+
+それぞれ向いている仕事が違います。
+
+| ツール | 動作場所 | 分割の単位 | 外周の余白と隙間 | Instagram 向けレイアウト | 出力 |
+|---|---|---|---|---|---|
+| ZeroTool 画像分割ツール | ブラウザのタブ、画像はローカルに留まる | 行 × 列、タイルサイズ、Instagram グリッドまたはカルーセル | マージンと間隔 | 投稿順のプロフィールグリッド、カルーセル、3:4 / 4:5 / 1:1 | PNG、JPG、WebP。ZIP または個別タイル |
+| PineTools Split image | Web ページ | ブロック数またはブロックサイズ、縦・横・両方向 | 重なり（px） | オプションにない | PNG、JPG、WebP、BMP。ZIP または個別ファイル |
+| ezgif Sprite sheet cutter | ezgif のサーバーへアップロード | タイルサイズ、または列数と行数 | オフセットと間隔 | なし | PNG、GIF、BMP、WebP、JPG。ZIP |
+| ImageMagick `-crop` | ローカルのコマンドライン | タイルサイズ、または `@` でタイル数 | `@` と負の重なりで隙間を飛ばせる | なし | ImageMagick が書き出せる任意の形式 |
+
+[PineTools](https://pinetools.com/split-image) は枚数でもピクセルサイズでも、縦横どちらの方向にも分割でき、ブロック同士を重ねられます。出力形式の一覧には、使っているブラウザが対応する形式だけが表示されます。多数の画像を一括処理する版もあります。重なりのある帯が必要なときに使ってください。
+
+[ezgif のスプライトシートカッター](https://ezgif.com/sprite-cutter)は最大 200 MB までのアップロードを受け付け、「アップロードされたファイルはすべて 1 時間後に自動削除される」（"All uploaded files are automatically deleted 1 hour after upload."）と明記しています。出力ファイルの名前を変えられ、切り出したコマをそのままアニメーション GIF、APNG、WebP、動画に変換できます。切り出したコマからアニメーションを作るなら、こちらが向いています。
+
+ImageMagick にはブラウザのメモリ制限がなく、スクリプトやビルド工程に組み込めます。`@` フラグを使えば、1 つのコマンドでほぼ均等なタイルが得られます。
+
+画像分割ツールがカバーするのは、ほかの 3 つが利用者任せにしている Instagram のケースです。縦長のタイル、プレビューとファイル名の投稿番号、切り抜きか余白の追加、タイルがぼやける前の警告をそろえています。ピクセルを失わない均等グリッドと、マージン・間隔付きのスプライトシートの切り分けも、アップロードなしで行えます。扱うのは一度に 1 枚の静止画で、これは意図した設計です。アニメーションには GIF 分解ツールを、数百のファイルにはスクリプトを使ってください。
+
+## 関連ツールと参考資料
+
+分割したタイルと組み合わせやすい ZeroTool のツール：
+
+- [スプライトシート作成ツール](/ja/tools/sprite-sheet-generator/)：1 コマずつの画像を JSON データ付きで 1 枚のシートにまとめ直します。
+- [GIF 分解ツール](/ja/tools/gif-splitter/)：アニメーション GIF の全フレームを書き出します。
+- [画像圧縮ツール](/ja/tools/image-compressor/)：書き出したタイルをアップロード前に軽くします。
+- [WebP 変換器](/ja/tools/webp-converter/)：PNG タイルのフォルダーを WebP に変換します。
+- [EXIF メタデータビューアー](/ja/tools/exif-metadata-viewer/)：元の写真を共有する前に、どんな情報が含まれているかを確認できます。
+
+このガイドで参照した資料：
+
+- [MDN: createImageBitmap()](https://developer.mozilla.org/ja/docs/Web/API/Window/createImageBitmap)：`imageOrientation` を含むデコードオプション
+- [MDN: CanvasRenderingContext2D.drawImage()](https://developer.mozilla.org/ja/docs/Web/API/CanvasRenderingContext2D/drawImage)：元の矩形と描画先の矩形の引数
+- [MDN: HTMLCanvasElement.toBlob()](https://developer.mozilla.org/ja/docs/Web/API/HTMLCanvasElement/toBlob)：canvas を PNG、JPEG、WebP にエンコードする方法
+- [Pillow: Image.crop](https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.crop) と [ImageOps.exif_transpose](https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.exif_transpose)
+- [ImageMagick の使い方：切り抜きと均等サイズのタイル分割](https://usage.imagemagick.org/crop/)
+- [FFmpeg filters: crop](https://ffmpeg.org/ffmpeg-filters.html#crop)：サブサンプリング形式向けの `exact` オプション
+- [canvas-size のテスト結果](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results)：ブラウザ別の canvas 最大サイズ
+- Instagram に関する The Verge の記事：[カルーセルの 20 件対応](https://www.theverge.com/2024/8/8/24216111/instagram-carousel-post-expansion)、[長方形のプロフィールグリッド](https://www.theverge.com/2025/1/17/24346304/instagram-profile-grids-rectangles-squares)、[3:4 写真への対応](https://www.theverge.com/news/676549/instagram-3-4-aspect-ratio-photos-phones-square-rectangle)
