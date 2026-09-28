@@ -1,0 +1,312 @@
+---
+title: "GIF 压缩教程：用有损 LZW 和减少颜色压缩 GIF 动图大小"
+description: "在浏览器里压缩 GIF 动图：有损 LZW、调色板颜色数、抖动、缩小尺寸和抽帧各自如何改变体积，附三类 GIF 的实测数据和命令行方案。"
+pubDate: 2026-09-28
+updatedDate: 2026-09-28
+lang: "zh"
+tags: ["gif", "compression", "animation", "developer-tools"]
+---
+
+落地页需要一段 6 秒的首屏动画：镜头在一张风景照上缓缓平移。它用 ffmpeg 的两遍调色板方案（先 `palettegen`，再 `paletteuse`）导出，尺寸 480 × 270，每秒 10 帧。结果是 60 帧、6.76 MB。
+
+体积这么大有两个原因。镜头在动，每一帧的每个像素都在变，每帧都按完整的 480 × 270 图像存储。此外，`paletteuse` 默认使用误差扩散抖动，会加入细密的噪点，GIF 的压缩没法把它们缩短。GIF 用 LZW 压缩像素，LZW 是无损的：噪点的每一个点都要原样写进文件。
+
+把同一个文件放进 GIF 压缩工具，用默认设置（有损程度 40、256 色），体积降到原来的 34%。宽度减半后是 545 KB，只剩原来的 8%。这些设置的原理并不神秘，对不同 GIF 的效果也差别很大：录屏和照片平移对它们的反应完全不同。本文用三类 GIF 实测每项设置的效果，解释 GIF 格式里造成这些差别的部分，并列出压缩 GIF 大小时容易踩的坑。
+
+[压缩 GIF →](/zh/tools/gif-compressor/)
+
+## 每项设置对文件大小的影响
+
+下面的数据来自三个测试 GIF，都用 [GIF 压缩工具](/zh/tools/gif-compressor/)的引擎处理：
+
+- **编辑器录屏**：640 × 360，92 帧，20.1 KB。代码编辑器里逐字输入文本，光标闪烁。纯色背景加抗锯齿文字，由 ffmpeg 生成；ffmpeg 本身已经只存每帧变化的矩形。
+- **渐变**：480 × 270，80 帧，480.0 KB。ffmpeg 的 `gradients` 测试源：平滑的颜色渐变缓慢漂移。
+- **照片平移**：480 × 270，60 帧，6.76 MB。就是开头那个文件，在一张 1920 × 1080 照片上平移的裁切画面。
+
+每格是输出大小占原文件的比例（1 KB = 1,024 bytes，与工具显示一致）。表中「有损 N」指有损程度设为 N。
+
+| 设置 | 编辑器录屏 | 渐变 | 照片平移 |
+|---|---|---|---|
+| 有损 0，256 色（无损重编码） | 99% | 100.2% | 99% |
+| 有损 40（默认） | 88% | 52% | 34% |
+| 有损 100 | 82% | 49% | 11% |
+| 有损 40，64 色 | 72% | 25% | 29% |
+| 有损 40，64 色，开启抖动 | 73% | 26% | 32% |
+| 有损 0，16 色 | 67% | 43% | 37% |
+| 有损 0，16 色，开启抖动 | 274% | 71% | 39% |
+| 有损 40，宽度减半 | 49% | 24% | 8% |
+| 有损 40，每 2 帧留 1 帧 | 76% | 26% | 18% |
+| 有损 80，128 色，宽度减半，每 2 帧留 1 帧 | 33% | 5% | 2% |
+
+表里有三个规律。编辑器录屏每帧的大部分内容已经被跳过，有损压缩对它帮助不大；照片平移每个像素都是新的，有损压缩效果明显。宽度对所有类型都很有效，因为像素数随缩放比例的平方下降。抖动还可能让文件比原图更大：16 色时，编辑器录屏开启抖动后涨到 274%，关闭时是 67%。
+
+### 从哪里入手
+
+| 你的 GIF | 先试 | 原因 |
+|---|---|---|
+| 屏幕录制，界面大部分静止 | 宽度，然后颜色数 128 或 64 | 没变化的区域已经被跳过，剩下能削减的是像素数和颜色数 |
+| 视频片段或镜头平移 | 有损程度 60–100，然后宽度 | 每帧每个像素都在变；有损 LZW 缩短这部分数据，不删像素、帧或颜色 |
+| 平滑渐变或颜色淡入淡出 | 颜色数 64 配有损程度 40，关闭抖动 | 颜色少，相同像素的连续串就长；只在色带明显时才开抖动 |
+| 高帧率的长 GIF | 帧：每 2 帧留 1 帧 | 要存的帧减半；每个保留帧会顺延显示被丢弃那一帧的时间，总时长不变 |
+| 已经用 `gifsicle -O3` 处理过的 GIF | 颜色数和宽度 | 无损重编码的结果接近 100%；只有删掉信息才能变小 |
+| 带透明的贴纸或 logo | 有损程度和颜色数，关闭抖动 | 有损压缩从不动透明像素；抖动会给不透明像素加噪点 |
+| 多小都嫌大，格式也可以换 | MP4 或动态 WebP（见 Bash 一节） | 照片类运动画面用视频编码，体积完全是另一个量级 |
+
+## 国内常见场景：公众号、办公 IM 和 README 里的 GIF 动图压缩
+
+国内开发者遇到「GIF 太大」，多半是下面三种情况。
+
+### 公众号和技术社区文章里的操作演示
+
+在公众号、掘金、知乎等平台的文章里插入操作演示 GIF 时，编辑器对单张 GIF 有体积限制，具体数值和超限后的处理以各平台的最新规定为准。读者多在手机上看，正文显示宽度有限，比显示宽度宽很多的 GIF 只是白占体积。
+
+先把宽度降到手机上看得清的尺寸，再按内容类型选有损程度或颜色数（见上表）。照片类动图压到底还是太大，而平台又允许插入视频时，改用视频（见后文「有时 GIF 本身就是错误的格式」）。
+
+### 飞书、钉钉、企业微信里的内部系统录屏
+
+给同事演示内部后台的操作、复现一个 bug、展示还没上线的功能，这类录屏里的界面往往不适合传到在线压缩网站。GIF 压缩工具在浏览器标签页里处理，文件留在本机。这类录屏按「从哪里入手」表的第一行处理：先缩宽度，再把颜色数降到 128 或 64。
+
+### GitHub、Gitee 仓库 README 的演示动图
+
+README 里的演示 GIF 在每次打开仓库首页时加载，体积越大，访问者等得越久。单个 GIF 用本工具压缩后再提交；要在 CI 里让仓库里的 GIF 一直保持小体积，用后文 Bash 一节的 gifsicle 命令。需要先挑出某几帧时，参考 [GIF 拆帧教程](/zh/blog/gif-splitter-guide/)。
+
+## GIF 如何存储动画
+
+GIF 文件是一串数据块，由 [GIF89a 规范](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)定义。这份文档由 CompuServe 发布，文档日期为 1990 年 7 月 31 日，列出两个版本：1987 年 5 月的「87a」和 1989 年 7 月的「89a」。动画依赖图形控制扩展（Graphic Control Extension），这是 89a 才有的数据块。
+
+决定文件大小的部分有：
+
+- **颜色表。** 每个像素都是一个索引，指向一张最多 256 种 RGB 颜色的表。表的条目数是 2^(N+1)，N 是一个 3 位字段，所以能容纳 2、4、8 … 256 种颜色。全局颜色表作用于整个文件。某一帧可以自带一张局部颜色表，只在这一帧内替换全局表。
+- **图像描述符（Image Descriptor）。** 每帧在逻辑屏幕（即画布）内有自己的 left、top、width 和 height。帧不必覆盖整个画布。
+- **图形控制扩展。** 每帧一个，包含以百分之一秒为单位的延迟、处置方式（disposal method），以及可选的透明色索引。使用透明索引的像素保持画布原样。
+- **图像数据。** 这一帧的颜色索引，经 LZW 压缩后存成最多 255 字节的子块。
+
+GIF 不存「第 2 帧减第 1 帧」。它存的是一个索引矩形，外加这个矩形怎么处理的规则。所有体积削减都在这个模型内进行：更少或更便宜的索引、更小的矩形，以及 LZW 能缩短的重复串。
+
+### LZW，以及 GIF 压缩为什么默认无损
+
+LZW 一边读像素，一边建立一部索引串字典。字典开始时每种颜色一个条目，另加两个控制码：**Clear**（2^(最小码长)）和 **End of Information**（Clear + 1）。只要字典里已有当前串，编码器就逐像素把它延长。下一个像素组成字典里没有的串时，编码器写出已知串的码，把更长的串作为新条目加入字典，再从这个像素重新开始。
+
+码宽从比最小码长多 1 位开始，随字典增长而变宽，最多 **12 位**（4,096 个条目）。表满后，编码器可以发送 Clear 重新开始。规范的封面说明还允许「延迟清除」（deferred clear），即编码器继续使用已满的表；但考虑到「大量现存解码器」（"a large base of decoders"）不支持它，规范请编码器暂不使用。GIF 压缩工具在表满时总是发送 Clear。
+
+重复的图案会变成很长的字典串，一个码就能覆盖许多像素。噪点正好相反：每一种新的索引组合都要先学进字典才能复用，所以噪点多的帧会产生大量短串。
+
+LZW 也是 GIF 专利史的源头。Terry Welch 于 1983 年 6 月提交申请，1985 年 12 月获批为[美国专利 4,558,302](https://patents.google.com/patent/US4558302A/en)。最初的专利权人是 Sperry Corporation，它在 1986 年与 Burroughs 合并为 Unisys。美国专利于 2003 年 6 月 20 日到期。英国、法国、德国、意大利、日本和加拿大的对应专利在 2004 年 6 月和 7 月到期，此后 GIF 编码不再需要 LZW 授权。
+
+### 调色板大小与码宽
+
+调色板大小决定码宽。GIF 压缩工具为整段动画写一张全局颜色表，不写局部颜色表。颜色数设为 64 时，保留 63 种可见颜色加 1 个透明位，共 64 个条目，最小码长为 6，码从 7 位开始。256 色时最小码长为 8，码从 9 位开始。调色板越小，相近的色调越容易合并成同一个索引，LZW 就能得到更长的重复。
+
+调色板只生成一次，来源是所有保留帧。如果这些帧用到的颜色总数不超过颜色表在透明位之外能放下的数量，所有颜色都原样保留，没有任何损失。否则，工具对不透明像素建立每通道 5 位的直方图（32,768 个桶），再做中位切分（median cut）：选出颜色误差最大的桶组，沿分布最广的通道，在按像素数加权的中位数处切开，直到组数足够。每组的平均色成为调色板里的一种颜色。
+
+### 帧优化与处置方式
+
+第一帧覆盖整个画布。对之后的每一帧，编码器把新画面与观看者此时屏幕上的内容比较，只写出有差异像素的包围盒。包围盒内没有变化的像素写成透明索引，这一个索引连成的长串压缩后只占几个码。完全没有变化的帧会变成一个透明像素，并保留它的延迟。
+
+帧以处置方式 1「不处置」（do not dispose）写入，所以每帧都叠加在前一帧之上。透明还需要一条规则：某个像素原本可见、下一帧要变成透明时，在它上面画一个透明像素不会改变任何东西。这种情况下，编码器给前一帧设处置方式 2「恢复为背景」（restore to background），并扩大这一帧的矩形以覆盖这些像素。浏览器绘制下一帧之前，会把处置方式 2 的矩形清为透明。
+
+输入帧使用处置方式 3（「恢复为上一帧」，restore to previous）或局部颜色表都没有问题：工具先按浏览器的显示方式解码并合成每一帧，再用上面的方案编码结果。
+
+### 有损 LZW
+
+有损 LZW 只改动编码器的一个步骤。当前串加上下一个像素不在字典里时，无损编码器必须在这里结束这个串。有损编码器会先查看字典里把当前串延长一个像素的条目。如果其中某个条目末尾的颜色与这个像素的颜色足够接近，就改写成那个颜色，串继续增长。有多个符合时，选最接近的。
+
+「足够接近」由**有损程度**滑块（0–100，默认 40）决定。允许的最大偏移为有损程度 × 0.6，按两种颜色在 RGB 空间里的距离计算，从黑到白的全程约为 441。默认值下偏移上限是 24，100 时是 60。有损程度 0 关闭查找，像素原样写入。
+
+同一个阈值也用于帧优化。新颜色与屏幕上已有颜色的距离在有损阈值之内的像素算作没有变化，可以写成透明、保持原样。编码器始终和观看者实际看到的画面比较，包括它已经做过的替换，所以误差不会逐帧累积：任何像素与它本该得到的调色板颜色之间的距离都不会超过有损阈值。透明像素永远不会被替换，应该透明的像素一定写成透明。
+
+Gifsicle 的 `--lossy` 选项基于同样的原理，[gifsicle 手册](https://www.lcdf.org/gifsicle/man.html)把它归功于 Kornel Lesiński。不过两者的刻度不同：gifsicle 在经过伽马校正的色彩空间（默认 sRGB）里衡量误差，所以 `--lossy=40` 和本工具的有损程度 40 并非同一个设置。
+
+### 缩小尺寸与抽帧
+
+**宽度**只能缩小。留空、填 0 或填大于原宽的值都保持原尺寸，高度按宽高比变化。每个输出像素是它覆盖的源像素的平均值，按重叠面积和不透明度加权。一个输出像素被不透明源像素覆盖不到一半时会变成透明，因为 GIF 没有半透明。
+
+**帧**保留每 2、3 或 4 帧中的 1 帧，总是从第一帧开始。每个被丢弃帧的显示时间加到它前面的保留帧上，所以 6 秒的动画仍然是 6 秒。动作会变得更卡顿，这对快速运动影响明显，对幻灯片或缓慢滚动的页面影响小得多。
+
+延迟以 10 ms 为步长写入，范围为 20 ms 到 655.35 秒。源延迟为 0 或 10 ms 的帧会显式写成 100 ms，浏览器本来就是这样播放的（见下文坑点）。
+
+## 使用 GIF 压缩工具
+
+1. 把 GIF 拖到页面上、点击选择，或用 Ctrl/Cmd+V 粘贴已复制的 GIF 文件。文件必须以 `GIF87a` 或 `GIF89a` 开头。
+2. 页面显示尺寸、帧数、总时长、重复次数和文件大小，然后用当前设置压缩一次。
+3. 原图和结果并排播放，下方一行摘要列出两者的大小、变化百分比、输出尺寸、帧数和颜色数。
+4. 修改设置后点**压缩**再试。编码很耗资源，所以拖动滑块不会触发重新压缩。
+5. **下载 GIF** 把结果保存为 `{name}-compressed.gif`。
+
+处理在页面上分成小段执行，进度条显示解码、调色板和编码三个阶段。文件通过 File API 从磁盘读进页面，由标签页里的 JavaScript 解码和编码。工具不会带着文件或结果发出任何网络请求。它把有损程度、颜色数、帧和抖动设置存进 local storage；宽度按文件设置，不保存。和站内其他工具一样，它会向 Google Analytics 发送一个使用事件，只包含工具名和操作（"compress" 或 "download"）。
+
+## 坑点与边界情况
+
+### 抖动让文件变大
+
+抖动（本工具用 Floyd–Steinberg 误差扩散）把相邻调色板颜色的像素混在一起，模拟调色板里没有的颜色。渐变上确实更好看，但字节要付两次代价。帧内，混合的像素打断了本可以被 LZW 变成长串的连续像素。帧间，即使画面静止的地方图案也在变，算作没有变化的像素大大减少，每帧要存的部分大大增加。
+
+实测数据说明了影响有多大。16 色、有损程度 0 时，编辑器录屏不开抖动是原文件的 67%，开抖动后是 274%：抖动让输出变成四倍，远超原文件。渐变从 43% 涨到 71%。gifsicle 手册给出同样的警告：抖动「看起来更好，但文件更大，还可能造成动画瑕疵，所以默认关闭」（"looks better, but makes bigger files and can cause animation artifacts, so it is off by default"）。
+
+本工具的抖动同样默认关闭。低颜色数下的平滑渐变可以开启，这时色带比多出的字节更难接受。如果 GIF 用到的颜色本来就不超过调色板容量，抖动不起作用：颜色完全准确，没有误差可扩散。
+
+### 结果比原图更大
+
+渐变用有损程度 0、256 色重编码后是原文件的 100.2%。无损重编码只有在源文件写得低效时才能变小，而很多 GIF 写得并不低效：ffmpeg 已经用透明来存储变化的矩形，`gifsicle -O3` 会尝试多种优化方法。每帧自带局部颜色表的源文件也可能变大，因为本工具只写一张最多 255 色的共享调色板，帧的颜色总数超出时必须重新量化。
+
+输出没有变小时，页面会提示，结果仍可下载。解决办法是删掉信息：提高有损程度、降低颜色数、缩小宽度或抽帧。gifsicle 手册对它自己的优化器也注明了同样的限制：极少数情况下，「即使 -O3 也可能让文件变大」（"even -O3 may actually enlarge file size"）。
+
+### 得到的颜色比设置的少
+
+颜色数设为 64 时，渐变输出只有 21 色。中位切分作用于每通道 5 位的直方图，差异小于一个桶宽（每通道 8 级）的颜色落进同一个桶，无法再分开。一个 131 色且颜色彼此接近的平滑渐变只填满约 20 个桶。实际影响很小，因为这些颜色几乎一样，但摘要行报告的是真实颜色数。
+
+### 极短的帧延迟
+
+GIF 延迟为 0 或 1（0 或 10 ms）时，浏览器不会按这么快的速度播放。Chromium 的 [`deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc) 写道：沿用 Firefox 的做法，指定时长不超过 10 ms 的帧一律按 100 ms 播放（"We follow Firefox's behavior and use a duration of 100 ms for any frames that specify a duration of `<= 10 ms`."）。Firefox 的 [`FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h) 把 0 到 10 ms 的原始超时值规整为 100 ms，理由是有问题的工具在想要「默认值」时会写出这些值（"broken tools generate these values when they actually want a 'default' value"）。
+
+GIF 压缩工具读取文件时采用浏览器规则，所以页面显示的时长与浏览器实际播放一致。写入时，这类帧显式写成 100 ms 延迟，输出在哪里播放都一样，包括读取原始值的工具。20 ms 及以上的帧延迟按原值保留。
+
+### 透明只有 1 位，还要占一个调色板位
+
+GIF 像素要么完全不透明，要么完全透明。工具把合成后 alpha 小于 128 的像素视为透明。缩放透明 GIF 时，被不透明像素覆盖至少一半的边缘像素变成不透明，取平均色，其余变成透明，所以边缘仍是硬边。贴纸如果总放在同一种背景上，先在图像编辑器里把它合并到这种背景上，边缘会比硬透明更平滑。
+
+即使 GIF 里没有透明像素，也总会留一个调色板条目给透明，因为帧优化会把没变化的像素写成透明。所以颜色数 4 意味着 3 种可见颜色。
+
+### 尺寸上限
+
+工具最多接受 5000 万解码像素（宽 × 高 × 帧数）、1,000 帧，单帧 16,777,216 像素，任一边不超过 16,384 px。解码后的帧以 RGBA 保存在内存里，每像素 4 字节，5000 万像素约 200 MB，手机浏览器也还能承受。一段 60 帧的 1280 × 720 录屏是 5530 万像素，超出上限。这种文件在解码开始前就会被拒绝，页面会给出一条可在本地运行的 gifsicle 命令：
+
+```bash
+gifsicle -O3 --lossy=80 --colors 128 input.gif -o output.gif
+```
+
+### 输出不保留的内容
+
+输出是普通的 GIF89a：一张全局颜色表，无隔行扫描，无局部颜色表。循环次数会保留：只有输入带 `NETSCAPE2.0` 扩展时才写入这个扩展（`ANIMEXTS1.0` 循环会写成 `NETSCAPE2.0`），所以只播放一次的 GIF 仍然只播放一次。注释块、XMP 数据和其他应用扩展不会复制。文件提前结束或已损坏时，工具会压缩能解码出的帧，并提示最后一帧可能不完整。
+
+### 有时 GIF 本身就是错误的格式
+
+本工具的输出始终是 GIF。照片类运动画面换用其他格式会小得多。在照片平移上，`gif2webp` 生成的有损动态 WebP 是原文件的 16%，ffmpeg 默认设置生成的 H.264 MP4 是 1.4%。扁平的界面内容结果正好相反：编辑器录屏转成 MP4 是 GIF 的 137%，无损动态 WebP 是 201%，有损 WebP 是 674%。纯色背景上的抗锯齿文字与 GIF 的调色板和帧优化更契合，视频编码在这里占不到便宜。命令见下面的 Bash 一节。目标平台支持视频时，`<video autoplay loop muted playsinline>` 能让 MP4 像 GIF 一样播放。
+
+## 代码示例
+
+### Python：用 Pillow 缩小尺寸并重建调色板
+
+这个脚本用面积平均把 GIF 缩到一半宽度，从部分帧的采样生成一张中位切分调色板，不加抖动地把每一帧映射到这张调色板上，并对短延迟应用浏览器的 100 ms 规则。
+
+```python
+import sys
+from PIL import Image, ImageSequence
+
+src, dst = sys.argv[1], sys.argv[2]
+scale, colors = 0.5, 128
+
+frames, durations = [], []
+with Image.open(src) as im:
+    loop = im.info.get("loop")  # None：GIF 只播放一次
+    for frame in ImageSequence.Iterator(im):
+        rgb = frame.convert("RGB")  # 合成后的完整帧；透明被丢弃
+        size = (max(1, round(rgb.width * scale)), max(1, round(rgb.height * scale)))
+        frames.append(rgb.resize(size, Image.Resampling.BOX))  # 面积平均
+        ms = frame.info.get("duration", 0)
+        durations.append(100 if ms <= 10 else ms)  # 浏览器把 0-10 ms 按 100 ms 播放
+
+# 整段动画共用一张调色板，由最多 16 帧纵向拼接后生成。
+sample = frames[:: max(1, len(frames) // 16)]
+w, h = frames[0].size
+strip = Image.new("RGB", (w, h * len(sample)))
+for i, f in enumerate(sample):
+    strip.paste(f, (0, i * h))
+palette = strip.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+
+indexed = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
+extra = {} if loop is None else {"loop": loop}
+indexed[0].save(dst, save_all=True, append_images=indexed[1:],
+                duration=durations, optimize=False, **extra)
+```
+
+运行 `python shrink_gif.py input.gif output.gif`。在 Pillow 12.1 下，照片平移输出 1.49 MB（原文件的 22%）。Pillow 会把每帧裁到变化的矩形，并合并相同的帧（编辑器录屏从 92 帧变成 85 帧）。它不用有损 LZW，而且在编辑器录屏上给之后的每一帧都写了一张 128 色的局部颜色表，所以输出 43 KB，是 20.1 KB 输入的两倍多。这个脚本适合不透明的照片类 GIF，按设计会丢掉透明。要做帧优化和有损 LZW，再把结果交给 gifsicle。
+
+### JavaScript：用 sharp 缩小尺寸并重新编码
+
+[sharp](https://sharp.pixelplumbing.com/api-output/#gif)（libvips 搭配 cgif 编码器）在传入 `animated: true` 时读取全部帧。它的 `interFrameMaxError` 选项把与上一帧接近的像素变成透明，类似上文讲的有损帧比较。
+
+```js
+// shrink-gif.mjs：用 sharp（libvips + cgif）缩小并重新编码动态 GIF
+import sharp from 'sharp';
+
+const [input, output, width = '240'] = process.argv.slice(2);
+const { pages, loop, delay } = await sharp(input).metadata();
+console.log(`${pages} frames, loop ${loop}, first delays ${delay?.slice(0, 3).join(', ')} ms`);
+
+const info = await sharp(input, { animated: true })  // 读取全部帧（默认只读第一帧）
+  .resize({ width: Number(width), withoutEnlargement: true })
+  .gif({
+    colours: 128,           // 调色板条目数，含透明
+    dither: 0,              // sharp 默认开启抖动（1.0）；关闭后没变化的像素保持不变
+    interFrameMaxError: 8,  // 与上一帧差异在此范围内的像素变为透明
+    effort: 7,
+  })
+  .toFile(output);
+
+console.log(`${info.size} bytes`);
+```
+
+运行 `node shrink-gif.mjs input.gif output.gif 240`。在 sharp 0.34.5 下，照片平移缩到 240 px 宽后是 484 KB；GIF 压缩工具用同样的宽度、128 色和有损程度 40 得到 508 KB。注意 sharp 默认开启抖动，与 GIF 压缩工具和 gifsicle 相反。
+
+### Bash：gifsicle、ffmpeg，以及换掉 GIF
+
+```bash
+# 1. gifsicle：帧优化、有损 LZW、128 色、宽 240 px
+gifsicle -O3 --lossy=80 --colors 128 --resize-width 240 input.gif -o output.gif
+
+# 2. ffmpeg：用一张调色板重建 GIF，不做误差扩散抖动
+ffmpeg -i input.gif -vf "scale=240:-1:flags=area,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" output.gif
+
+# 3. 换掉 GIF：动态 WebP（libwebp）和 MP4（H.264）
+gif2webp -mixed -q 75 input.gif -o output.webp
+ffmpeg -i input.gif -movflags +faststart -pix_fmt yuv420p \
+  -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" output.mp4
+```
+
+各命令说明：
+
+- **gifsicle**：`-O3` 尝试多种优化方法（更慢，有时更小）；`--lossy` 不带值时用 20；`--colors` 取 2 到 256。只在出现色带时加 `--dither`。`--batch` 会原地修改文件。
+- **ffmpeg**：`stats_mode=diff` 用每帧变化的部分生成调色板，`diff_mode=rectangle` 让 `paletteuse` 只处理变化的矩形。ffmpeg 的 GIF 编码器没有有损选项，所以在照片平移上，这个方案缩到 240 px 宽后是 1.49 MB，是有损结果的三倍。在编辑器录屏上得到 9.3 KB，是原文件的 46%。它最适合扁平内容。
+- **gif2webp**：`-mixed` 逐帧选择有损或无损压缩。在编辑器录屏上，单用 `-lossy -q 75` 得到的文件是 GIF 的 6.7 倍，`-mixed` 是 6.2 倍。两种都用自己的素材测一下。
+- **MP4**：`-pix_fmt yuv420p`（4:2:0 色度）是照顾只能解码 4:2:0 H.264 的播放器的常规选择。它要求宽高为偶数，`scale` 表达式会取整到偶数。
+
+## 与其他 GIF 压缩工具的对比
+
+| | ZeroTool GIF 压缩工具 | ezgif GIF optimizer | gifsicle |
+|---|---|---|---|
+| 运行位置 | 浏览器标签页；文件留在设备上 | 通过文件或 URL 上传；页面称文件在上传 1 小时后删除 | 本地命令行 |
+| 输入上限 | 5000 万解码像素，1,000 帧 | 200 MB | 本机内存 |
+| 有损 LZW | 有，0–100 | 有，gifsicle 搭配 Lossy GIF 编码器，带滑块 | `--lossy`，默认 20 |
+| 减色 | 256 到 4，一张共享调色板 | 有，展示多个变体 | `--colors` 2–256，多种方法 |
+| 抽帧 | 每 2、3 或 4 帧留 1 帧；时长合并 | 每 2、3 或 4 帧留 1 帧；去除重复帧 | 帧选择和 `--delete` |
+| 缩放 | 宽度，只能缩小 | 单独的缩放页面 | `--resize`、`--scale` 等 |
+| 批量 | 一次一个文件 | 单独的批量优化页面 | `--batch` |
+
+三者各自适合不同的任务。
+
+[ezgif 优化器](https://ezgif.com/optimize)需要上传文件，按它页面上的说明，用 Gifsicle 和 Lossy GIF 编码器压缩。它还有本工具没有的方法：带模糊因子（fuzz factor）的「Optimize Transparency」、合并帧（coalescing）、去除重复帧，以及按文件大小上限自动压缩到目标体积。它接受最大 200 MB 的 GIF。GIF 超出本工具的尺寸上限、希望它按目标体积找参数，或者不介意上传文件时，用 ezgif。
+
+**gifsicle** 是脚本化处理的标准工具：构建流水线、批处理任务、让提交进仓库的 GIF 保持小体积的 CI 步骤，以及超大文件。它的选项远多于本工具，包括多种调色板与抖动方法和缩放滤镜。
+
+GIF 压缩工具覆盖两者之间的场景：不想上传的 GIF（内部后台、未发布的产品、客户的屏幕），按自己选的设置并排对比，无需安装任何东西。它只负责把 GIF 变小。裁剪、编辑帧、转换为其他格式交给 ezgif、gifsicle 和 ffmpeg。
+
+## 相关工具与参考资料
+
+ZeroTool 上处理 GIF 和图片的工具：
+
+- [GIF 拆帧工具](/zh/tools/gif-splitter/)：把 GIF 帧导出为 PNG 或 JPG，或生成带帧时长的雪碧图。
+- [图片压缩工具](/zh/tools/image-compressor/)：压缩并缩放 JPEG、PNG 和 WebP。
+- [WebP 转换器](/zh/tools/webp-converter/)：把 PNG、JPG 或 GIF 的第一帧转成 WebP。
+
+本文用到的一手资料：
+
+- [GIF89a 规范（W3C 镜像）](https://www.w3.org/Graphics/GIF/spec-gif89a.txt)：块结构、颜色表、图形控制扩展、处置方式、LZW、延迟清除码
+- [美国专利 4,558,302（Google Patents）](https://patents.google.com/patent/US4558302A/en)：Welch 的 LZW 专利，申请、授权与美国到期日期
+- [Wikipedia: GIF, "Unisys and LZW patent enforcement"](https://en.wikipedia.org/wiki/GIF#Unisys_and_LZW_patent_enforcement)：美国以外对应专利的到期日期
+- [Gifsicle 手册](https://www.lcdf.org/gifsicle/man.html)：`-O3`、`--lossy`、`--colors`、`--dither` 和缩放选项
+- [FFmpeg 滤镜：palettegen 与 paletteuse](https://ffmpeg.org/ffmpeg-filters.html#palettegen)：`stats_mode`、`dither`、`diff_mode`
+- [gif2webp 文档](https://developers.google.com/speed/webp/docs/gif2webp)：`-lossy`、`-mixed`、`-q`
+- [sharp 输出选项：gif](https://sharp.pixelplumbing.com/api-output/#gif)：`colours`、`dither`、`interFrameMaxError`
+- [Chromium `deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc) 与 [Firefox `FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h)：短延迟的 100 ms 规则
+- [ezgif GIF optimizer](https://ezgif.com/optimize)：在线工具的对照对象

@@ -1,0 +1,294 @@
+---
+title: "GIF Compressor: Shrink Animated GIFs with Lossy LZW and Fewer Colors"
+description: "Compress GIF files in the browser: how lossy LZW, palette size, dithering, resizing and frame skipping change the size, with measured results and CLI recipes."
+pubDate: 2026-09-28
+updatedDate: 2026-09-28
+lang: "en"
+tags: ["gif", "compression", "animation", "developer-tools"]
+---
+
+The landing page needs a six-second hero animation: a slow pan across a landscape photo. It gets exported with ffmpeg's two-pass palette recipe (`palettegen`, then `paletteuse`) at 480 × 270 and 10 frames per second. The result is 60 frames and 6.76 MB.
+
+Two things make it that large. The camera moves, so every pixel changes in every frame, and each frame is stored as a full 480 × 270 image. On top of that, `paletteuse` applies error-diffusion dithering by default, which adds fine noise that GIF's compression cannot shorten. GIF compresses pixels with LZW, which is lossless: every dot of that noise has to be written out.
+
+Running the same file through the GIF Compressor at its default settings (Lossy 40, 256 colors) cuts it to 34% of the original. At half the width it is 545 KB, 8% of the original. The settings that do this are not magic, and they do not help every GIF equally. A screen recording and a photo pan react to them very differently. This guide shows the measured effect of each setting on three kinds of GIF, explains the parts of the format that cause it, and lists what goes wrong.
+
+[Compress a GIF →](/tools/gif-compressor/)
+
+## What each setting does to the file size
+
+The numbers below come from three test GIFs run through the [GIF Compressor](/tools/gif-compressor/) engine:
+
+- **Editor recording**: 640 × 360, 92 frames, 20.1 KB. A code editor where text is typed in and a cursor blinks. Flat colors and anti-aliased text, written by ffmpeg, which already stores only the changed rectangle of each frame.
+- **Gradient**: 480 × 270, 80 frames, 480.0 KB. ffmpeg's `gradients` test source: smooth color ramps that drift slowly.
+- **Photo pan**: 480 × 270, 60 frames, 6.76 MB. The file from the opening, a crop that pans across a 1920 × 1080 photo.
+
+Each cell is the output size as a share of the original (1 KB = 1,024 bytes, as the tool shows it).
+
+| Settings | Editor recording | Gradient | Photo pan |
+|---|---|---|---|
+| Lossy 0, 256 colors (lossless re-encode) | 99% | 100.2% | 99% |
+| Lossy 40 (the default) | 88% | 52% | 34% |
+| Lossy 100 | 82% | 49% | 11% |
+| Lossy 40, 64 colors | 72% | 25% | 29% |
+| Lossy 40, 64 colors, dithering on | 73% | 26% | 32% |
+| Lossy 0, 16 colors | 67% | 43% | 37% |
+| Lossy 0, 16 colors, dithering on | 274% | 71% | 39% |
+| Lossy 40, half width | 49% | 24% | 8% |
+| Lossy 40, every 2nd frame | 76% | 26% | 18% |
+| Lossy 80, 128 colors, half width, every 2nd frame | 33% | 5% | 2% |
+
+Three patterns stand out. Lossy compression does little for the editor recording, where most of each frame is already skipped, and a lot for the photo pan, where every pixel is new. Width is a strong setting everywhere, because the pixel count falls with the square of the scale. And dithering can make a file bigger than the original: the editor recording at 16 colors grew to 274% with dithering on, against 67% with it off.
+
+### Where to start
+
+| Your GIF | Try first | Reason |
+|---|---|---|
+| Screen recording, mostly static UI | Width, then Colors 128 or 64 | Unchanged areas are already skipped, so fewer pixels and fewer colors are what is left to cut |
+| Video clip or camera pan | Lossy 60–100, then Width | Every pixel changes each frame; lossy LZW shortens that data without removing pixels, frames or colors |
+| Smooth gradients or color fades | Colors 64 with Lossy 40, dithering off | Few colors give long runs; turn dithering on only if the banding is visible |
+| Long GIF at a high frame rate | Frames: every 2nd frame | Half the frames to store; each kept frame shows for the time of the frame it replaces, so the total length stays the same |
+| A GIF already run through `gifsicle -O3` | Colors and Width | A lossless re-encode lands near 100%; only removing information makes it smaller |
+| Sticker or logo with transparency | Lossy and Colors, dithering off | Lossy compression never moves a transparent pixel; dithering adds noise to the opaque ones |
+| Any size is too big and the format is free | MP4 or animated WebP (see the Bash section) | For photographic motion, video codecs are in another size class |
+
+## How GIF stores an animation
+
+A GIF file is a sequence of blocks, defined in the [GIF89a specification](https://www.w3.org/Graphics/GIF/spec-gif89a.txt). The document is published by CompuServe with a document date of 31 July 1990. It lists two versions: "87a" from May 1987 and "89a" from July 1989. Animation relies on the Graphic Control Extension, which is an 89a block.
+
+The parts that decide the file size are:
+
+- **Color tables.** Every pixel is an index into a table of at most 256 RGB colors. The table has 2^(N+1) entries, where N is a 3-bit field, so it can hold 2, 4, 8 … 256 colors. A global table serves the whole file. A frame can bring a local table that replaces it for that frame only.
+- **Image Descriptor.** Each frame has a left, top, width and height inside the logical screen (the canvas). A frame does not have to cover the whole canvas.
+- **Graphic Control Extension.** One per frame, with a delay in hundredths of a second, a disposal method, and an optional transparent color index. Pixels with the transparent index leave the canvas as it is.
+- **Image data.** The frame's color indices, compressed with LZW and stored in sub-blocks of up to 255 bytes.
+
+GIF does not store "frame 2 minus frame 1". It stores a rectangle of indices plus rules for what happens to it. All size reduction works within that model: fewer or cheaper indices, smaller rectangles, and runs that LZW can shorten.
+
+### LZW, and why GIF compression is lossless by default
+
+LZW builds a dictionary of index strings while it reads the pixels. It starts with one entry per color plus two control codes: **Clear** (2^(minimum code size)) and **End of Information** (Clear + 1). The encoder extends the current string pixel by pixel while the dictionary already has it. When the next pixel makes a string the dictionary does not know, the encoder writes the code for the known string, adds the longer string as a new entry, and starts again from that pixel.
+
+Codes start one bit wider than the minimum code size and grow as the dictionary grows, up to **12 bits** (4,096 entries). When the table is full, the encoder can send Clear and start over. The specification's cover sheet also allows a "deferred clear", where the encoder keeps using the full table, but it asked encoders to hold off because of "a large base of decoders" that did not handle it. The GIF Compressor always sends Clear when the table is full.
+
+Repeating patterns become long dictionary strings, and one code then covers many pixels. Noise does the opposite: every new combination of indices has to be learned before it can be reused, so noisy frames produce many short strings.
+
+LZW was also the source of GIF's patent history. Terry Welch filed the application in June 1983, and it was granted as [US patent 4,558,302](https://patents.google.com/patent/US4558302A/en) in December 1985. The original assignee was Sperry Corporation, which merged with Burroughs in 1986 to form Unisys. The US patent expired on 20 June 2003. The counterpart patents in the United Kingdom, France, Germany, Italy, Japan and Canada expired in June and July 2004, and GIF encoding has needed no LZW license since then.
+
+### Palette size and code width
+
+The palette size sets the width of the codes. The GIF Compressor writes one global color table for the whole animation and no local tables. With Colors set to 64, it keeps 63 visible colors plus one transparent slot. That is 64 entries, so the minimum code size is 6 and codes start at 7 bits. At 256 colors the minimum code size is 8 and codes start at 9 bits. Smaller palettes also merge nearby shades into the same index, which gives LZW longer repeats.
+
+The palette is built once, from all kept frames. If the frames together use no more colors than the table can hold next to the transparent slot, every color is kept exactly and nothing is lost. Otherwise the tool builds a histogram of the opaque pixels with 5 bits per channel (32,768 buckets) and runs median cut on it: it splits the bucket group with the largest color error along its channel of largest spread, at the pixel-weighted median, until it has enough groups. Each group's average becomes one palette color.
+
+### Frame optimization and disposal
+
+The first frame covers the whole canvas. For each later frame, the encoder compares the new picture with what a viewer has on screen at that point and writes only the bounding box of the pixels that differ. Pixels inside that box that did not change are written as the transparent index. Long runs of that one index compress into a few codes. A frame with no change at all becomes a single transparent pixel that keeps its delay.
+
+Frames are written with disposal method 1, "do not dispose", so each frame builds on the one before. Transparency needs one more rule. If a pixel was visible and must become transparent in the next frame, drawing a transparent pixel over it changes nothing. In that case the encoder sets disposal method 2, "restore to background", on the frame before, and grows that frame's rectangle to cover those pixels. Browsers clear a disposal-2 rectangle to transparent before they draw the next frame.
+
+Input frames that use disposal 3 ("restore to previous") or local color tables are no problem: the tool first decodes and composites every frame the way a browser shows it, then encodes the result with the scheme above.
+
+### Lossy LZW
+
+Lossy LZW changes one step of the encoder. When the current string plus the next pixel is not in the dictionary, a lossless encoder has to end the string there. The lossy encoder first looks at the dictionary entries that extend the current string by one pixel. If one of them ends in a color close enough to the pixel's color, it writes that color instead and the string keeps growing. If several qualify, it takes the closest.
+
+"Close enough" is set by the **Lossy** slider (0–100, default 40). The largest allowed shift is Lossy × 0.6, measured as the distance between two colors in RGB space, where the full range from black to white is about 441. That is a shift of 24 at the default and 60 at 100. Lossy 0 turns the search off and the pixels are written exactly.
+
+The same threshold applies to frame optimization. A pixel whose new color is within the lossy distance of what is already on screen counts as unchanged, so it can be written as transparent and left as it is. The encoder always compares against what the viewer actually sees, including the substitutions it has already made. The errors therefore do not add up from frame to frame: no pixel ends up further than the lossy distance from the palette color it would otherwise get. Transparent pixels are never substituted. A pixel that should be transparent is always written as transparent.
+
+Gifsicle's `--lossy` option, which the [gifsicle manual](https://www.lcdf.org/gifsicle/man.html) credits to Kornel Lesiński, works on the same principle. The two scales are different, though: gifsicle measures the error in a gamma-corrected color space (sRGB by default), so `--lossy=40` and Lossy 40 in this tool are not the same setting.
+
+### Resizing and frame skipping
+
+**Width** only shrinks. An empty field, 0, or a value above the original width keeps the original size, and the height follows the aspect ratio. Each output pixel is the average of the source pixels it covers, weighted by the area of overlap and by opacity. An output pixel that is less than half covered by opaque source pixels becomes transparent, because GIF has no partial transparency.
+
+**Frames** keeps every 2nd, 3rd or 4th frame, always starting with the first. Each dropped frame's display time is added to the kept frame before it, so a 6-second animation is still 6 seconds long. Motion gets choppier, which matters for fast movement and much less for a slideshow or a slowly scrolling page.
+
+Delays are written in 10 ms steps, between 20 ms and 655.35 seconds. A frame whose source delay is 0 or 10 ms is written with an explicit 100 ms, which is how browsers play it anyway (see the pitfalls below).
+
+## Using the GIF Compressor
+
+1. Drop a GIF on the page, click to pick one, or paste a copied GIF file with Ctrl/Cmd+V. The file must start with `GIF87a` or `GIF89a`.
+2. The page shows the dimensions, frame count, total duration, repeat count and file size, then compresses once with the current settings.
+3. The original and the result play side by side, with a summary line of both sizes, the change in percent, the output dimensions, the frame count and the number of colors.
+4. Change the settings and click **Compress** to try again. Encoding is heavy, so it does not re-run on every slider move.
+5. **Download GIF** saves the result as `{name}-compressed.gif`.
+
+The work runs in short slices on the page, with a progress bar for the decode, palette and encode stages. The file goes from your disk into the page through the File API and is decoded and encoded by JavaScript in the tab. The tool makes no network request with the file or the result. It stores your Lossy, Colors, Frames and Dithering settings in local storage; the width is set per file and is not saved. Like other tools on the site, it sends a usage event to Google Analytics with only the tool name and an action ("compress" or "download").
+
+## Pitfalls and edge cases
+
+### Dithering makes the file bigger
+
+Dithering (Floyd–Steinberg error diffusion in this tool) mixes pixels of neighboring palette colors to imitate the colors the palette lacks. That looks better on gradients, but it costs bytes twice. Within a frame, the mixed pixels break up the runs that LZW turns into long strings. Between frames, the pattern shifts even where the picture stands still, so far fewer pixels count as unchanged and far more of each frame has to be stored.
+
+The measurements show the size of the effect. With 16 colors and Lossy 0, the editor recording went from 67% of the original without dithering to 274% with it: dithering made the output four times larger and much bigger than the source. The gradient went from 43% to 71%. The gifsicle manual gives the same warning: dithering "looks better, but makes bigger files and can cause animation artifacts, so it is off by default".
+
+Dithering is off by default here too. Turn it on for smooth gradients at low color counts, where banding looks worse than the extra bytes. If the GIF already uses no more colors than the palette holds, dithering has no effect: the colors are exact and there is no error to spread.
+
+### The result is larger than the original
+
+The gradient re-encoded with Lossy 0 and 256 colors came out at 100.2% of the original. A lossless re-encode can only win when the source was written inefficiently, and many GIFs are not: ffmpeg already stores changed rectangles with transparency, and `gifsicle -O3` tries several optimization methods. Sources that give every frame its own local color table can also grow, because this tool writes one shared palette of up to 255 colors and must re-quantize if the frames together use more.
+
+When the output is not smaller, the page says so and you can still download it. The fix is to remove information: raise Lossy, lower Colors, reduce the width or skip frames. Gifsicle's manual notes the same limit for its own optimizer: in rare cases, "even -O3 may actually enlarge file size".
+
+### You get fewer colors than you asked for
+
+With Colors 64, the gradient came out with 21 colors. The median cut works on a histogram with 5 bits per channel, so colors that differ by less than one bucket step (8 levels per channel) fall into the same bucket and cannot be split apart. A smooth gradient whose 131 colors sit close together fills only about 20 buckets. The effect is small in practice, since those colors were nearly identical, but the summary line reports the real count.
+
+### Very short frame delays
+
+A GIF delay of 0 or 1 (0 or 10 ms) does not play that fast in browsers. Chromium's [`deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc) says: "We follow Firefox's behavior and use a duration of 100 ms for any frames that specify a duration of `<= 10 ms`." Firefox's [`FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h) normalizes raw timeouts from 0 to 10 ms to 100 ms, because "broken tools generate these values when they actually want a 'default' value".
+
+The GIF Compressor uses the browser rule when it reads the file, so the duration shown on the page matches what a browser plays. It writes such frames with an explicit 100 ms delay, so the output plays the same everywhere, including in tools that read the raw value. A frame delay of 20 ms or more is kept as written.
+
+### Transparency is one bit, and it takes a palette slot
+
+GIF pixels are fully opaque or fully transparent. The tool treats a composited pixel with alpha below 128 as transparent. When a transparent GIF is resized, edge pixels that are at least half covered by opaque pixels become opaque with the averaged color, and the rest become transparent, so edges stay hard. For a sticker that always sits on the same background, flattening it onto that background in an image editor first gives smoother edges than hard transparency can.
+
+One palette entry is always kept for transparency, even in a GIF without transparent pixels, because frame optimization writes unchanged pixels as transparent. Colors 4 therefore means 3 visible colors.
+
+### Size limits
+
+The tool accepts up to 50 million decoded pixels (width × height × frames), 1,000 frames, and 16,777,216 pixels per frame, with no side over 16,384 px. Decoded frames are kept in memory as RGBA, 4 bytes per pixel, so 50 million pixels is about 200 MB, which a phone browser can still hold. A 1280 × 720 screen recording with 60 frames is 55.3 million pixels and is over the limit. The file is refused before any decoding starts, and the page shows a gifsicle command to run locally instead:
+
+```bash
+gifsicle -O3 --lossy=80 --colors 128 input.gif -o output.gif
+```
+
+### What the output does not keep
+
+The output is a plain GIF89a with one global color table, no interlacing, and no local color tables. The loop count is kept: a `NETSCAPE2.0` extension is written only if the input had one (an `ANIMEXTS1.0` loop is written as `NETSCAPE2.0`), so a GIF that plays once still plays once. Comment blocks, XMP data and other application extensions are not copied. If the file ends early or is damaged, the tool compresses the frames it could decode and says that the last frame may be incomplete.
+
+### Sometimes GIF is the wrong format
+
+The output of this tool is always a GIF. For photographic motion, other formats are far smaller. On the photo pan, a lossy animated WebP from `gif2webp` was 16% of the original, and an H.264 MP4 from ffmpeg with default settings was 1.4%. For flat UI content the result reverses: the editor recording as an MP4 was 137% of the GIF, a lossless animated WebP 201%, and a lossy WebP 674%. Anti-aliased text on flat colors suits GIF's palette and frame optimization better than a video codec. The Bash section below has the commands. Where the target platform accepts video, `<video autoplay loop muted playsinline>` plays an MP4 like a GIF.
+
+## Code examples
+
+### Python: resize and re-palette with Pillow
+
+This script shrinks a GIF to half its width with area averaging, builds one median-cut palette from a sample of frames, maps every frame to it without dithering, and applies the browser's 100 ms rule to short delays.
+
+```python
+import sys
+from PIL import Image, ImageSequence
+
+src, dst = sys.argv[1], sys.argv[2]
+scale, colors = 0.5, 128
+
+frames, durations = [], []
+with Image.open(src) as im:
+    loop = im.info.get("loop")  # None: the GIF plays once
+    for frame in ImageSequence.Iterator(im):
+        rgb = frame.convert("RGB")  # full composited frame; transparency is dropped
+        size = (max(1, round(rgb.width * scale)), max(1, round(rgb.height * scale)))
+        frames.append(rgb.resize(size, Image.Resampling.BOX))  # area average
+        ms = frame.info.get("duration", 0)
+        durations.append(100 if ms <= 10 else ms)  # browsers play 0-10 ms as 100 ms
+
+# One palette for the whole animation, built from up to 16 frames stacked vertically.
+sample = frames[:: max(1, len(frames) // 16)]
+w, h = frames[0].size
+strip = Image.new("RGB", (w, h * len(sample)))
+for i, f in enumerate(sample):
+    strip.paste(f, (0, i * h))
+palette = strip.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+
+indexed = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
+extra = {} if loop is None else {"loop": loop}
+indexed[0].save(dst, save_all=True, append_images=indexed[1:],
+                duration=durations, optimize=False, **extra)
+```
+
+Run it with `python shrink_gif.py input.gif output.gif`. With Pillow 12.1, the photo pan came out at 1.49 MB (22% of the original). Pillow crops each frame to the changed rectangle and merges identical frames (92 became 85 on the editor recording). It does not use lossy LZW, and on the editor recording it wrote a 128-color local table for each later frame, so the output was 43 KB, more than twice the 20.1 KB input. The script suits opaque, photographic GIFs; it drops transparency by design. Pass the result through gifsicle for frame optimization and lossy LZW.
+
+### JavaScript: resize and re-encode with sharp
+
+[sharp](https://sharp.pixelplumbing.com/api-output/#gif) (libvips with the cgif encoder) reads all frames when you pass `animated: true`. Its `interFrameMaxError` option turns pixels that are close to the previous frame into transparency, similar to the lossy frame comparison described above.
+
+```js
+// shrink-gif.mjs: resize and re-encode an animated GIF with sharp (libvips + cgif)
+import sharp from 'sharp';
+
+const [input, output, width = '240'] = process.argv.slice(2);
+const { pages, loop, delay } = await sharp(input).metadata();
+console.log(`${pages} frames, loop ${loop}, first delays ${delay?.slice(0, 3).join(', ')} ms`);
+
+const info = await sharp(input, { animated: true })  // read every frame, not only the first
+  .resize({ width: Number(width), withoutEnlargement: true })
+  .gif({
+    colours: 128,           // palette entries, transparency included
+    dither: 0,              // sharp dithers by default (1.0); off keeps unchanged pixels unchanged
+    interFrameMaxError: 8,  // pixels this close to the previous frame become transparent
+    effort: 7,
+  })
+  .toFile(output);
+
+console.log(`${info.size} bytes`);
+```
+
+Run it with `node shrink-gif.mjs input.gif output.gif 240`. With sharp 0.34.5, the photo pan at 240 px wide came out at 484 KB; the GIF Compressor with the same width, 128 colors and Lossy 40 gave 508 KB. Note that sharp dithers by default, the opposite of the GIF Compressor and gifsicle.
+
+### Bash: gifsicle, ffmpeg, and leaving GIF
+
+```bash
+# 1. gifsicle: frame optimization, lossy LZW, 128 colors, 240 px wide
+gifsicle -O3 --lossy=80 --colors 128 --resize-width 240 input.gif -o output.gif
+
+# 2. ffmpeg: rebuild the GIF with one palette and no error-diffusion dithering
+ffmpeg -i input.gif -vf "scale=240:-1:flags=area,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" output.gif
+
+# 3. Leave GIF: animated WebP (libwebp) and MP4 (H.264)
+gif2webp -mixed -q 75 input.gif -o output.webp
+ffmpeg -i input.gif -movflags +faststart -pix_fmt yuv420p \
+  -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" output.mp4
+```
+
+Notes on each:
+
+- **gifsicle**: `-O3` tries several optimization methods (slower, sometimes smaller); `--lossy` without a value uses 20; `--colors` takes 2 to 256. Add `--dither` only if banding shows. `--batch` changes files in place.
+- **ffmpeg**: `stats_mode=diff` builds the palette from the parts of each frame that change, and `diff_mode=rectangle` makes `paletteuse` process only the changed rectangle. ffmpeg's GIF encoder has no lossy option, so on the photo pan this recipe gave 1.49 MB at 240 px wide, three times the lossy result. On the editor recording it gave 9.3 KB, 46% of the original. It works best on flat content.
+- **gif2webp**: `-mixed` picks lossy or lossless compression per frame. On the editor recording, plain `-lossy -q 75` gave a file 6.7 times the GIF, and `-mixed` 6.2 times. Test both on your own content.
+- **MP4**: `-pix_fmt yuv420p` (4:2:0 chroma) is the usual choice for players that only decode 4:2:0 H.264. It needs even dimensions, which the `scale` expression rounds to.
+
+## How it compares to other GIF compressors
+
+| | ZeroTool GIF Compressor | ezgif GIF optimizer | gifsicle |
+|---|---|---|---|
+| Runs where | Browser tab; the file stays on the device | Upload by file or URL; the page says files are deleted 1 hour after upload | Local command line |
+| Input limit | 50 million decoded pixels, 1,000 frames | 200 MB | Your machine's memory |
+| Lossy LZW | Yes, 0–100 | Yes, gifsicle with the Lossy GIF encoder, with a slider | `--lossy`, default 20 |
+| Color reduction | 256 down to 4, one shared palette | Yes, shows several variations | `--colors` 2–256, several methods |
+| Frame dropping | Every 2nd, 3rd or 4th; durations merged | Every 2nd, 3rd or 4th; duplicate-frame removal | Frame selections and `--delete` |
+| Resize | Width, shrink only | Separate resize page | `--resize`, `--scale` and more |
+| Batch | One file at a time | Separate bulk optimizer page | `--batch` |
+
+Each of these is the right choice for a different job.
+
+The [ezgif optimizer](https://ezgif.com/optimize) takes an upload and, as its page states, compresses it with Gifsicle and the Lossy GIF encoder. It also has methods this tool does not: "Optimize Transparency" with a fuzz factor, coalescing, duplicate-frame removal, and an automatic target-size compressor for a file size limit. It accepts GIFs up to 200 MB. Use it when a GIF is over this tool's size limit, when you want it to find settings for a size target, or when uploading the file is not a concern.
+
+**gifsicle** is the reference for scripted work: build pipelines, batch jobs, CI steps that keep committed GIFs small, and very large files. It exposes far more options than this tool, including several palette and dithering methods and resize filters.
+
+The GIF Compressor covers the case in between: a GIF you would rather not upload (an internal dashboard, an unreleased product, a customer's screen), compared side by side at the settings you choose, with nothing to install. It makes GIFs smaller and nothing else. Cropping, editing frames and converting to other formats are out of its scope; ezgif, gifsicle and ffmpeg do those.
+
+## Related tools and references
+
+Tools on ZeroTool that work with GIFs and images:
+
+- [GIF Splitter](/tools/gif-splitter/): export GIF frames as PNG or JPG, or build a sprite sheet with frame timings.
+- [Image Compressor](/tools/image-compressor/): compress and resize JPEG, PNG and WebP.
+- [WebP Converter](/tools/webp-converter/): convert PNG, JPG or the first frame of a GIF to WebP.
+
+Primary sources used in this guide:
+
+- [GIF89a Specification (W3C mirror)](https://www.w3.org/Graphics/GIF/spec-gif89a.txt): block layout, color tables, Graphic Control Extension, disposal methods, LZW, deferred clear code
+- [US patent 4,558,302 (Google Patents)](https://patents.google.com/patent/US4558302A/en): Welch's LZW patent, filing, grant and US expiration dates
+- [Wikipedia: GIF, "Unisys and LZW patent enforcement"](https://en.wikipedia.org/wiki/GIF#Unisys_and_LZW_patent_enforcement): expiration dates of the non-US counterpart patents
+- [Gifsicle manual](https://www.lcdf.org/gifsicle/man.html): `-O3`, `--lossy`, `--colors`, `--dither` and resize options
+- [FFmpeg filters: palettegen and paletteuse](https://ffmpeg.org/ffmpeg-filters.html#palettegen): `stats_mode`, `dither`, `diff_mode`
+- [gif2webp documentation](https://developers.google.com/speed/webp/docs/gif2webp): `-lossy`, `-mixed`, `-q`
+- [sharp output options: gif](https://sharp.pixelplumbing.com/api-output/#gif): `colours`, `dither`, `interFrameMaxError`
+- [Chromium `deferred_image_decoder.cc`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/graphics/deferred_image_decoder.cc) and [Firefox `FrameTimeout.h`](https://searchfox.org/mozilla-central/source/image/FrameTimeout.h): the 100 ms rule for short delays
+- [ezgif GIF optimizer](https://ezgif.com/optimize): the online comparison point
