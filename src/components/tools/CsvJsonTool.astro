@@ -79,13 +79,6 @@
       var lastValidJsonOutput = '';
       var lastValidCsvOutput = '';
 
-      function escapeCsvField(val) {
-        if (val.indexOf(',') !== -1 || val.indexOf('"') !== -1 || val.indexOf('\n') !== -1) {
-          return '"' + val.replace(/"/g, '""') + '"';
-        }
-        return val;
-      }
-
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
         statusEl.className = 'cj-status ' + (isError ? 'error' : 'success');
@@ -94,6 +87,59 @@
       function clearStatus() {
         statusEl.textContent = '';
         statusEl.className = 'cj-status';
+      }
+
+      /* ── engine:start ── */
+      function escapeCsvField(val) {
+        if (/[",\n\r]/.test(val)) {
+          return '"' + val.replace(/"/g, '""') + '"';
+        }
+        return val;
+      }
+
+      function isPlainObject(v) {
+        return v !== null && typeof v === 'object' && !Array.isArray(v);
+      }
+
+      /* Nested objects become dot-path columns (user.name); arrays and empty objects stay whole as JSON text. */
+      function flattenRow(obj, prefix, out) {
+        var keys = Object.keys(obj);
+        for (var k = 0; k < keys.length; k++) {
+          var path = prefix + keys[k];
+          var v = obj[keys[k]];
+          if (isPlainObject(v) && Object.keys(v).length > 0) flattenRow(v, path + '.', out);
+          else out.set(path, v);
+        }
+        return out;
+      }
+
+      function csvCell(v) {
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'object') return JSON.stringify(v);
+        return String(v);
+      }
+
+      function jsonToCsv(data) {
+        if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
+        if (data.length === 0) throw new Error('JSON array is empty.');
+        var rows = [];
+        var headers = [];
+        var seen = new Set();
+        for (var i = 0; i < data.length; i++) {
+          if (!isPlainObject(data[i])) throw new Error('Item ' + (i + 1) + ' must be a plain object.');
+          var flat = flattenRow(data[i], '', new Map());
+          flat.forEach(function (_, path) {
+            if (!seen.has(path)) { seen.add(path); headers.push(path); }
+          });
+          rows.push(flat);
+        }
+        var lines = [headers.map(escapeCsvField).join(',')];
+        for (var r = 0; r < rows.length; r++) {
+          var cells = [];
+          for (var h = 0; h < headers.length; h++) cells.push(escapeCsvField(csvCell(rows[r].get(headers[h]))));
+          lines.push(cells.join(','));
+        }
+        return lines.join('\n');
       }
 
       /* ── Type inference for a single CSV field value ── */
@@ -201,6 +247,7 @@
 
         return { rows: rows, quotedFlags: quotedFlags };
       }
+      /* ── engine:end ── */
 
       function buildJsonFromCsv(raw) {
         var parsed = parseCsv(raw);
@@ -258,23 +305,7 @@
           if (!raw) { clearStatus(); return; }
           try {
             var data = JSON.parse(raw);
-            if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
-            if (data.length === 0) throw new Error('JSON array is empty.');
-            if (typeof data[0] !== 'object' || data[0] === null || Array.isArray(data[0])) {
-              throw new Error('Each item must be a plain object.');
-            }
-            var headers = Object.keys(data[0]);
-            var lines = [];
-            lines.push(headers.map(escapeCsvField).join(','));
-            for (var i = 0; i < data.length; i++) {
-              var row = [];
-              for (var h = 0; h < headers.length; h++) {
-                var val = data[i][headers[h]];
-                row.push(escapeCsvField(val == null ? '' : String(val)));
-              }
-              lines.push(row.join(','));
-            }
-            csvEl.value = lines.join('\n');
+            csvEl.value = jsonToCsv(data);
             lastValidCsvOutput = csvEl.value;
             setStatus(rowMsg(t.convertedToCsv, data.length), false);
           } catch (e) {
@@ -305,27 +336,7 @@
 
         try {
           var data = JSON.parse(raw);
-          if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
-          if (data.length === 0) throw new Error('JSON array is empty.');
-          if (typeof data[0] !== 'object' || data[0] === null || Array.isArray(data[0])) {
-            throw new Error('Each item must be a plain object.');
-          }
-
-          var headers = Object.keys(data[0]);
-          var lines = [];
-
-          lines.push(headers.map(escapeCsvField).join(','));
-
-          for (var i = 0; i < data.length; i++) {
-            var row = [];
-            for (var h = 0; h < headers.length; h++) {
-              var val = data[i][headers[h]];
-              row.push(escapeCsvField(val == null ? '' : String(val)));
-            }
-            lines.push(row.join(','));
-          }
-
-          csvEl.value = lines.join('\n');
+          csvEl.value = jsonToCsv(data);
           lastValidCsvOutput = csvEl.value;
           setStatus(rowMsg(t.convertedToCsv, data.length), false);
           window.trackTool && window.trackTool('csv_json', 'json_to_csv');
