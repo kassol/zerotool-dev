@@ -1,6 +1,7 @@
 // Tools that send requests off the page because of what they do. Each slug has an
 // i18n key `network.{slug}` that says what is sent and where. ToolLayout shows it in
-// the trust bar instead of `tool.trustPrivacy`; the About pages list the same tools.
+// the trust bar instead of `tool.trustPrivacy` and hides the `tool.trustClient` badge;
+// the About pages list the same tools.
 export const networkToolSlugs: readonly string[] = [
   'dns-lookup',          // DoH query to dns.google or cloudflare-dns.com
   'qr-code-decoder',     // URL mode fetches the image from the entered address
