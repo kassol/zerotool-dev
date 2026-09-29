@@ -23,4 +23,3 @@ docs/
 ## Change Log
 
 - 2026-05-11 - Added docs directory conventions for internal specs and implementation plans.
-- 2026-09-29 - Added `superpowers/specs/2026-09-29-seo-growth-diagnosis.md`: SEO growth diagnosis, new-tool freeze, and prioritized action list.
