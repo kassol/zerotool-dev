@@ -1,82 +1,57 @@
 ---
-seoTitle: "DNS ルックアップ — A / MX / TXT / CAA を DoH で照会 | ZeroTool"
-seoDescription: "DNS-over-HTTPS でブラウザから任意ドメインの DNS レコードを照会。A・AAAA・CNAME・MX・TXT・NS・SOA・CAA・PTR・SRV に対応。Cloudflare と Google の DoH リゾルバ、無料、ブラウザ完結、アップロード不要。"
+seoTitle: "DNS 確認ツール：レコード照会 | ZeroTool"
+seoDescription: "ブラウザーから DNS-over-HTTPS で A・MX・TXT・CAA・NS・SOA・SRV・PTR レコードを確認。Cloudflare と Google を切り替え、DNSSEC 検証の結果と応答 JSON もそのまま表示します。"
 faqItems:
-  - question: "クエリは ZeroTool のサーバーに送信されますか？"
-    answer: "送信されません。DoH リクエストはブラウザから cloudflare-dns.com または dns.google へ直接発行されます。ZeroTool は DNS プロキシを持たず、クエリ内容を一切受け取りません。IP アドレスと照会名は、選択したリゾルバにのみ可視です。"
-  - question: "DoH リゾルバはどれを使い、変更できますか？"
-    answer: "Cloudflare（1.1.1.1）と Google（8.8.8.8）の 2 つです。ドロップダウンで切り替えてください。本ツールは設計上この 2 リゾルバに固定しています — どちらも安定した JSON DoH エンドポイントを持ち、CORS が有効です。プライベートリゾルバが必要な場合はローカルで dig +https=https://your-doh-endpoint を実行してください。"
-  - question: "ローカルの dig と結果が違うのはなぜ？"
-    answer: "2 つの理由があります。1) 問い合わせ先はパブリックな再帰リゾルバで、キャッシュや geo-routed 応答によりローカル再帰と異なる場合があります。2) ローカル dig は split-horizon、社内 VPN、/etc/hosts、内部 DNS など、パブリック DoH からは見えないレコードを拾うことがあります。DoH の結果はインターネット公開側の見え方です。"
-  - question: "DNSSEC インジケータ（AD フラグ）の意味は？"
-    answer: "AD = Authenticated Data。AD が true のとき、リゾルバは DNSSEC 署名を信頼アンカーまで検証成功しています。false はゾーンが署名されていない、署名検証に失敗、または検証が無効化されたことを示します。本ツールは cd=0 を送るため、リゾルバは常に検証を実行します。"
-  - question: "長い TXT レコードが複数の引用文字列に分割されるのはなぜ？"
-    answer: "DNS プロトコル（RFC 1035）は 1 つの TXT 文字列を最大 255 バイトに制限しています。長い SPF・DKIM・DMARC は 1 つの TXT レコード内に複数文字列として格納されます。DoH JSON は引用付きセグメントを原文のまま保持するため、区切り文字なしで結合すれば論理値が得られます。"
+  - question: "照会したドメイン名は ZeroTool に送られますか？"
+    answer: "送られません。ブラウザーが、選んだ cloudflare-dns.com または dns.google に直接問い合わせます。リゾルバー側には IP アドレスと照会名が見えますが、ZeroTool のサーバーは経由しません。ページはサイトのほかのページと同じく Google Analytics と AdSense を読み込みます。利用イベントに入るのはツール名と操作名（lookup または copy_json）だけで、ドメイン名は含みません。"
+  - question: "SPF・DKIM・DMARC はどう確認しますか？"
+    answer: "種類に TXT を選び、SPF はドメインそのもの、DMARC は _dmarc.ドメイン、DKIM は セレクター._domainkey.ドメイン を入力します。セレクターは受信したメールの DKIM-Signature ヘッダーの s= に書かれています。アンダースコアを含む名前もそのまま照会できます。"
+  - question: "「DNSSEC なし」と表示されるのはなぜですか？"
+    answer: "応答の AD フラグが立っていないためです。AD は応答中のすべてのレコードが DNSSEC で検証されたときだけ立ちます。ゾーンが署名されていない場合のほか、署名済みの名前から署名のないゾーンへ CNAME でつながる場合も立ちません。検証に失敗した場合は SERVFAIL が返り、レコード欄の下にリゾルバーの注記が表示されます。"
+  - question: "日本語ドメインは照会できますか？"
+    answer: "できます。日本語.jp のように入力すると、ブラウザーの URL 処理で xn--wgv71a119e.jp のような Punycode に変換してから照会します。全角英数字や「。」も半角に直します。"
+  - question: "ローカルの dig や nslookup と結果が違うのはなぜですか？"
+    answer: "dig と nslookup はパソコンが使っている DNS サーバーに問い合わせます。社内 VPN の DNS、hosts ファイル、プロキシーアプリが返す値はそちらにだけ反映されます。本ツールは HTTPS で公開リゾルバーに直接問い合わせるので、インターネット側から見た結果になります。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>ドメインを入力します。裸のホスト名、完全な URL、末尾ドット付きのいずれも可能。自動的に正規化されます。</li>
-  <li>レコードタイプを選択。<strong>ALL</strong> は A / AAAA / CNAME / MX / TXT / NS / SOA / CAA の 8 種類を並列で照会します。</li>
-  <li>リゾルバを選択：<strong>Cloudflare（1.1.1.1）</strong> または <strong>Google（8.8.8.8）</strong>。</li>
-  <li><strong>照会</strong> をクリック、または <kbd>Enter</kbd> キーを押す。</li>
-  <li><strong>レコード</strong>、<strong>生データ</strong>（dig 風出力）、<strong>JSON</strong>（DoH 生レスポンス）の 3 タブを切り替えて閲覧。</li>
-</ol>
+## 使い方
 
-<h2>対応レコードタイプ</h2>
-<ul>
-  <li><strong>A</strong> — IPv4 アドレス。</li>
-  <li><strong>AAAA</strong> — IPv6 アドレス。</li>
-  <li><strong>CNAME</strong> — 別名。他の名前への参照。</li>
-  <li><strong>MX</strong> — メールエクスチェンジャと優先度。</li>
-  <li><strong>TXT</strong> — 任意のテキスト。SPF・DKIM・DMARC・所有権検証・HTTP/3 origin 等を格納。</li>
-  <li><strong>NS</strong> — ゾーンの権威ネームサーバ。</li>
-  <li><strong>SOA</strong> — Start of Authority：プライマリ NS、連絡先、シリアル、リフレッシュタイマー。</li>
-  <li><strong>CAA</strong> — そのドメインに証明書を発行できる CA を指定。</li>
-  <li><strong>PTR</strong> — 逆引き DNS。<code>x.y.z.w.in-addr.arpa</code> 形式の名前は自分で入力してください。ツールはプレーンな PTR クエリを発行するのみです。</li>
-  <li><strong>SRV</strong> — サービスロケーション。priority / weight / port / target を含む。</li>
-</ul>
+1. ドメイン名を入力します。URL をそのまま貼っても、ポート番号や末尾のドットが付いていても、全角文字や日本語ドメインでも、先に ASCII のホスト名に直してから照会します。
+2. レコードの種類を選びます。**ALL** を選ぶと A・AAAA・CNAME・MX・TXT・NS・SOA・CAA の 8 種類を同時に照会します。
+3. リゾルバーを Cloudflare（`cloudflare-dns.com`）か Google（`dns.google`）から選びます。
+4. **照会** を押すか Enter キーを押します。入力欄の下のドメイン例をクリックしても照会できます。
+5. 結果の上のラベル（応答コード、件数、DNSSEC、リゾルバー、所要時間）を確認し、必要に応じて **生データ**（dig 風の表示）や **JSON**（リゾルバーの応答そのまま）に切り替えます。
 
-<h2>なぜ DNS-over-HTTPS なのか</h2>
-<p>
-  ブラウザは UDP/53 ソケットを直接開けないため、ブラウザ完結のツールでクラシック DNS を話すことはできません。
-  DoH は DNS メッセージを HTTPS にラップするため、通常の <code>fetch()</code> でパブリックリゾルバへ
-  任意のレコードを問い合わせられます。Cloudflare と Google はいずれも JSON プロファイル
-  （Cloudflare は <code>application/dns-json</code>、Google はネイティブ JSON）を CORS 有効で公開しており、
-  本ツールはそのエンドポイントを呼んでレスポンスをレンダリングしているだけです。
-</p>
+## 実例：jprs.jp と 日本語.jp
 
-<h2>サマリーピルの読み方</h2>
-<ul>
-  <li><strong>NOERROR / NXDOMAIN / SERVFAIL</strong> — DNS RCODE。NXDOMAIN は「ドメインが存在しない」という有効な応答、SERVFAIL はリゾルバが回答できなかったことを示します。</li>
-  <li><strong>N 件</strong> — 応答レコード数。NOERROR で 0 件のとき、照会した名前にはそのタイプのレコードがありません。</li>
-  <li><strong>DNSSEC ✓</strong> — AD フラグが立っています。リゾルバが署名を検証しました。</li>
-  <li><strong>Resolver</strong> — 応答を返した DoH エンドポイント。</li>
-  <li><strong>レイテンシ</strong> — <code>fetch()</code> 開始から JSON パース完了までのラウンドトリップ時間。</li>
-</ul>
+2026-09-29 に照会した結果です。再度照会すると TTL は変わります。
 
-<h2>主なユースケース</h2>
-<ul>
-  <li>A / CNAME 変更が特定リゾルバに反映されたか確認。</li>
-  <li>送信用ドメイン公開前に MX、SPF（TXT）、DKIM（TXT）、DMARC（TXT）の整合性をチェック。</li>
-  <li>2 つのパブリックリゾルバの見え方を比較。伝播中は Cloudflare と Google で結果が一致しないことがあります。</li>
-  <li>証明書発行前に CAA を確認し「CAA mismatch」失敗を防ぐ。</li>
-  <li>レジストラ移転時の NS 委任が正しいか検証。</li>
-</ul>
+**DNSSEC の有無。** `.jp` を管理する JPRS の `jprs.jp` を A で照会すると `117.104.133.164` が返り、ラベルは **DNSSEC ✓** です。同じ JPRS が案内用に運用している `日本語.jp` を入力すると `xn--wgv71a119e.jp` に変換されて `117.104.133.183` が返りますが、ラベルは **DNSSEC なし** です。同じ組織のドメインでも、ゾーンごとに署名の有無が違うことが分かります。
 
-<h2>本ツールの設計境界</h2>
-<p>
-  これは単発の再帰リゾルバクライアントです。逆引きのための ARPA 自動変換は行いません（PTR は in-addr.arpa 名を自分で入力）。
-  権威サーバへの直接照会はせず（常にパブリック再帰へ問い合わせ）、履歴スナップショット、WHOIS、ブラックリスト、
-  複数リゾルバ間の伝播比較もしません。伝播マップは
-  <a href="https://www.whatsmydns.net/">whatsmydns.net</a>、権威のみの照会は
-  <code>dig @ns1.example.com</code> をローカルで実行してください。
-</p>
+本ツールはすべての照会に `do=1` を付けています。付けない場合、Cloudflare は署名済みの `example.com` でも `"AD": false` を返しました（同じ時点で Google は `true`）。[RFC 6840 §5.8](https://www.rfc-editor.org/rfc/rfc6840#section-5.8) は、問い合わせに DO か AD ビットがある場合にだけ AD を立てるようリゾルバーに求めているためです。`do=1` を付けると応答に RRSIG（署名）も入りますが、レコード欄には出さず、生データと JSON にだけ表示します。
 
-<h2>ZeroTool の関連ツール</h2>
-<ul>
-  <li><a href="/ja/tools/http-header-analyzer/">HTTP Header アナライザー</a> — DNS が解決した後、サーバが返すヘッダを確認。</li>
-  <li><a href="/ja/tools/ssl-certificate-decoder/">SSL 証明書デコーダー</a> — 解決した IP で提供される証明書と DNS をセットで検査。</li>
-  <li><a href="/ja/tools/url-parser/">URL パーサー</a> — URL を構成要素に分解してからホスト名を照会。</li>
-  <li><a href="/ja/tools/ip-subnet-calculator/">IP サブネット計算機</a> — A / AAAA からサブネット構造を導出。</li>
-</ul>
+**検証に失敗するドメイン。** [Google の JSON API 文書](https://developers.google.com/speed/public-dns/docs/doh/json) で失敗例として使われている `dnssec-failed.org` は、どちらのリゾルバーでも **SERVFAIL** になります。Cloudflare の注記は `EDE(9): DNSKEY Missing ...` で、[RFC 8914](https://www.rfc-editor.org/rfc/rfc8914#section-4.10) の拡張エラーコード 9（DNSKEY Missing）です。
+
+## 送信ドメイン認証（SPF・DMARC）の確認
+
+Gmail は 2024 年 2 月 1 日から、1 日 5,000 件を超えて送信する送信者に SPF・DKIM・DMARC の設定を求めています（[Google のメール送信者のガイドライン](https://support.google.com/a/answer/81126?hl=ja)）。設定したレコードが外から見えるかは、次の順に確認できます。
+
+- `jprs.jp` の MX：`10 jprs.in.tmems-jp.trendmicro.com.`。数字が小さいほど優先されます。
+- `_dmarc.jprs.jp` の TXT：`v=DMARC1; p=none; adkim=r; aspf=r; rua=mailto:dmarc-rua@jprs.co.jp`。`p=none` は、認証に失敗したメールも通常どおり扱い、集計レポートだけを受け取る設定です（[RFC 7489 §6.3](https://www.rfc-editor.org/rfc/rfc7489#section-6.3)）。
+- DKIM の公開鍵は 1 つの文字列の上限 255 バイト（[RFC 1035 §3.3](https://www.rfc-editor.org/rfc/rfc1035#section-3.3)）を超えることが多く、複数の文字列に分けて保存されます。Cloudflare は文字列ごとに引用符で囲んで空白で区切り、Google は 1 つの文字列につなげて返します。どちらも同じレコードです。
+
+## dig・nslookup・他の Web ツールとの違い
+
+- **dig・nslookup**：権威サーバーを直接指定できる（`dig @ns1.example.com`）ので、サーバー上の作業やスクリプトに向いています。一方、社内 VPN やプロキシーアプリがポート 53 に応答している環境では、その値が表示されます。
+- **[Google Admin Toolbox Dig](https://toolbox.googleapps.com/apps/dig/)**：照会は Google 側のサーバー（`/apps/dig/lookup`）から行われます。`dnssec-failed.org` では画面に「Record not found!」とだけ表示され、`rcode SERVFAIL` は Raw 表示にしか出ません。`example.com` のフラグ行は `QR RD RA` で、AD は表示されません。
+- **本ツール**：ブラウザーから Cloudflare と Google に直接問い合わせ、切り替えて比べられます。DNSSEC の検証結果とリゾルバーの注記を表示し、応答 JSON をそのままコピーできます。
+
+名前が解決できたら、[HTTP Header アナライザー](/ja/tools/http-header-analyzer/) でサーバーの応答ヘッダーを、[SSL 証明書デコーダー](/ja/tools/ssl-certificate-decoder/) で証明書の中身を確認できます。
+
+## 制限事項
+
+- リゾルバーは Cloudflare と Google の 2 つだけです。自前の DoH サーバーや権威サーバーは指定できません。
+- 各リゾルバーの観測点は 1 つです。地域ごとの浸透状況は確認できません。
+- 1 回の照会は 5 秒で打ち切ります。ネットワークでリゾルバーがブロックされている場合はネットワークエラーになるので、もう一方に切り替えてください。
+- ALL で照会するのは 8 種類です。PTR は `1.1.1.1.in-addr.arpa` のような逆引き名を自分で入力します（Cloudflare は `one.one.one.one.` を返します）。一覧にない種類（DS・DNSKEY・HTTPS・TLSA）は照会できません。
+- ドメイン名は 2 ラベル以上、各ラベル 63 文字以内（英数字・ハイフン・アンダースコア）、全体で 253 文字以内です。

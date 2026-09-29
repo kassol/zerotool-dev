@@ -1,80 +1,55 @@
 ---
-seoTitle: "DNS 查询工具 — 在线查询 A / MX / TXT / CAA 记录 | ZeroTool"
-seoDescription: "通过 DNS-over-HTTPS 在浏览器直接查询任意域名的 DNS 记录，支持 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA、PTR、SRV，使用 Cloudflare 或 Google 解析器，免费、纯浏览器、零上传。"
+seoTitle: "DNS 查询：A、MX、TXT 记录 | ZeroTool"
+seoDescription: "在浏览器里通过 DNS-over-HTTPS 查询域名的 A、MX、TXT、CAA、NS、SOA、SRV、PTR 记录。可选 Cloudflare 或 Google 解析，显示 DNSSEC 验证结果和原始 JSON。"
 faqItems:
-  - question: "查询会发送到 ZeroTool 服务器吗？"
-    answer: "不会。DoH 请求由浏览器直接发往 cloudflare-dns.com 或 dns.google。ZeroTool 没有 DNS 代理，看不到任何查询内容；你的 IP 和查询的域名仅对所选解析器可见。"
-  - question: "用的是哪两个 DoH 解析器，能换吗？"
-    answer: "Cloudflare（1.1.1.1）和 Google（8.8.8.8），下拉切换。本工具按设计只内置这两家——它们提供稳定的 JSON DoH 接口且开启了 CORS。如果要走私有解析器，请本地执行 dig +https=https://你的-doh-端点。"
-  - question: "为什么结果跟我本地 dig 不一样？"
-    answer: "两个原因：1) 你查的是公共递归解析器，可能命中缓存或返回 geo-routed 结果，与你本地递归不同；2) 本地 dig 可能命中 split-horizon、公司 VPN、/etc/hosts、内网 DNS 等公共 DoH 看不到的记录。DoH 结果反映的是公网视角。"
-  - question: "DNSSEC 标识（AD 位）是什么意思？"
-    answer: "AD = Authenticated Data。AD 为 true 表示解析器成功用 DNSSEC 链一路验证到信任锚；false 表示域未签名、签名校验失败，或解析器未开启验证。本工具发请求时 cd=0，强制解析器执行验证。"
-  - question: "为什么长 TXT 记录被切成多段带引号的字符串？"
-    answer: "DNS 协议（RFC 1035）规定单个 TXT 字符串最多 255 字节，超长 SPF、DKIM、DMARC 记录会以多段形式存在同一条 TXT 里。DoH JSON 原样保留这些带引号片段，把它们无分隔符拼接起来就是逻辑值。"
+  - question: "查询的域名会发给 ZeroTool 吗？"
+    answer: "不会。浏览器直接把查询发给你选的 cloudflare-dns.com 或 dns.google，对方能看到你的 IP 和查询的域名，中间没有 ZeroTool 的服务器。页面和站内其他页面一样加载 Google Analytics 和 AdSense，统计事件里只有工具名和动作（lookup 或 copy_json），不含域名。"
+  - question: "为什么和本机 dig、nslookup 的结果不一样？"
+    answer: "dig 和 nslookup 问的是本机正在用的 DNS。开着代理软件的 fake-ip 模式时，53 端口由代理软件自己回答，返回 198.18 开头的假地址。本页用 HTTPS 直接问公共解析器，看到的是公网上的真实结果。公司内网、hosts 文件里的记录，本页也查不到。"
+  - question: "DNSSEC ✓ 是什么意思？"
+    answer: "表示解析器返回的 AD 标志为真，即回答里的每条记录都通过了 DNSSEC 签名验证。显示「未启用 DNSSEC」通常是域名没有签名，或者 CNAME 指向了没签名的域名。签名验证失败时解析器返回 SERVFAIL，记录下方的解析器备注会写明原因。"
+  - question: "DMARC、DKIM 记录怎么查？"
+    answer: "输入完整的记录名，类型选 TXT。DMARC 在 _dmarc.example.com，DKIM 在 选择器._domainkey.example.com，选择器名要从邮件头的 DKIM-Signature 里的 s= 取。本页接受带下划线的名称。"
+  - question: "Google 解析器一直报网络错误怎么办？"
+    answer: "每次查询 5 秒没有返回就会取消。如果所在网络连不上 dns.google 或 cloudflare-dns.com，页面会显示网络错误，换另一个解析器再试。两个都连不上时，这个页面就用不了，请在本机用 dig 查询。"
 ---
 
-<h2>使用方法</h2>
-<ol>
-  <li>输入域名——裸主机名、完整 URL、带末尾点的形式都可以，工具会自动归一化。</li>
-  <li>选择记录类型。<strong>ALL</strong> 一次并行查询 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA 八种常用类型。</li>
-  <li>选择解析器：<strong>Cloudflare（1.1.1.1）</strong> 或 <strong>Google（8.8.8.8）</strong>。</li>
-  <li>点击 <strong>查询</strong>，或者按 <kbd>Enter</kbd>。</li>
-  <li>在 <strong>记录</strong>、<strong>原文</strong>（dig 风格输出）、<strong>JSON</strong>（DoH 原始响应）三个标签页之间切换。</li>
-</ol>
+## 使用方法
 
-<h2>支持的记录类型</h2>
-<ul>
-  <li><strong>A</strong> — IPv4 地址。</li>
-  <li><strong>AAAA</strong> — IPv6 地址。</li>
-  <li><strong>CNAME</strong> — 别名，指向另一个名字。</li>
-  <li><strong>MX</strong> — 邮件交换主机及其优先级。</li>
-  <li><strong>TXT</strong> — 自由文本。承载 SPF、DKIM、DMARC、域名归属验证、HTTP/3 origin 等。</li>
-  <li><strong>NS</strong> — 区域的权威名称服务器。</li>
-  <li><strong>SOA</strong> — Start of Authority：主 NS、联系人、序列号、刷新计时器。</li>
-  <li><strong>CAA</strong> — 哪些 CA 可以为该域签发证书。</li>
-  <li><strong>PTR</strong> — 反向 DNS。请自行输入 <code>x.y.z.w.in-addr.arpa</code> 这种名字，工具只发普通 PTR 查询。</li>
-  <li><strong>SRV</strong> — 服务定位，含 priority / weight / port / target。</li>
-</ul>
+1. 输入域名。粘贴完整网址、带端口的地址、全角字符或中文域名都可以，页面会先转换成纯 ASCII 域名（中文域名转成 `xn--` 开头的 Punycode）。
+2. 选记录类型。选 **ALL** 会同时查 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA 八种。
+3. 选解析器：Cloudflare（`cloudflare-dns.com`）或 Google（`dns.google`）。
+4. 点 **查询** 或按回车；也可以直接点下方的示例域名。
+5. 先看结果上方的标签（响应码、记录数、DNSSEC、解析器、耗时），再切到 **原文** 看 dig 风格的输出，或切到 **JSON** 看解析器原样返回的内容。
 
-<h2>为什么用 DNS-over-HTTPS</h2>
-<p>
-  浏览器无法直接开 UDP/53 socket，所以浏览器端工具不能讲传统 DNS 协议。
-  DoH 把 DNS 消息包在 HTTPS 里，普通的 <code>fetch()</code> 就能向公共解析器查询任意记录。
-  Cloudflare 和 Google 都暴露 JSON 接口（Cloudflare 用 <code>application/dns-json</code>，
-  Google 原生 JSON），且 CORS 全开。本工具不过是去调用这些接口并把响应渲染成可读视图。
-</p>
+## 实测：百度的 CNAME 链和 QQ 邮箱的记录
 
-<h2>怎么看顶部的状态标签</h2>
-<ul>
-  <li><strong>NOERROR / NXDOMAIN / SERVFAIL</strong> — DNS RCODE。NXDOMAIN 是合法响应，意味"域名不存在"；SERVFAIL 表示解析器无法回答。</li>
-  <li><strong>N 条记录</strong> — 应答记录数。NOERROR 但 0 条，意味该域名在所查类型下没有记录。</li>
-  <li><strong>DNSSEC ✓</strong> — AD 位为 true，解析器完成了签名验证。</li>
-  <li><strong>Resolver</strong> — 本次响应来自哪个 DoH 端点。</li>
-  <li><strong>延迟</strong> — 从 <code>fetch()</code> 开始到 JSON 解析结束的往返时间。</li>
-</ul>
+以下结果在 2026-09-29 查询，重查时 TTL 会不同。
 
-<h2>典型用途</h2>
-<ul>
-  <li>验证 A / CNAME 修改是否已经在某个解析器上生效。</li>
-  <li>启用新邮件域名前确认 MX、SPF（TXT）、DKIM（TXT）、DMARC（TXT）配置。</li>
-  <li>对比两个公共解析器看到的记录——传播期内 Cloudflare 和 Google 可能不一致。</li>
-  <li>签发证书前检查 CAA，避免 "CAA mismatch" 失败。</li>
-  <li>迁移注册商时核对 NS 委派是否正确。</li>
-</ul>
+**同一个域名，两个解析器给出不同 IP。** 查 `www.baidu.com` 的 A 记录，两个解析器都先返回两条 CNAME：`www.a.shifen.com.`，再到 `www.wshifen.com.`。最后的 IP 不一样：Cloudflare 给出 `103.235.46.96`、`103.235.47.188`，Google 给出 `45.113.192.102`、`45.113.192.101`。原因之一是 Google 会把用户 IP 的一部分（[EDNS Client Subnet](https://developers.google.com/speed/public-dns/docs/ecs)）发给权威服务器，Cloudflare [不发](https://developers.cloudflare.com/1.1.1.1/faq/)，CDN 就可能按不同位置返回不同节点。这也说明本页的结果是公共解析器所在位置看到的结果，不等于你家运营商 DNS 的结果。
 
-<h2>本工具的边界</h2>
-<p>
-  这是一次性的递归解析客户端。它不会为反向 IP 查询自动转换 ARPA 名（PTR 请自己输入 in-addr.arpa 名字），
-  不直接查询权威服务器（只问公共递归），也不做历史快照、WHOIS、黑名单或多解析器传播对比。
-  传播图请用 <a href="https://www.whatsmydns.net/">whatsmydns.net</a>；只查权威服务器请本地执行
-  <code>dig @ns1.example.com</code>。
-</p>
+**检查一个邮箱域名的配置。** `qq.com` 的 MX 返回 `10 mx3.qq.com.`、`20 mx2.qq.com.`、`30 mx1.qq.com.`，数字越小越优先。`_dmarc.qq.com` 的 TXT 返回 `v=DMARC1; p=quarantine; rua=mailto:mailauth-reports@qq.com`，表示没通过验证的邮件按隔离处理（DMARC 记录的位置见 [RFC 7489 §6.1](https://www.rfc-editor.org/rfc/rfc7489#section-6.1)）。自己的域名配邮件时，按同样的顺序查 MX、根域名的 TXT（SPF）、`_dmarc` 的 TXT。
 
-<h2>ZeroTool 上的相关工具</h2>
-<ul>
-  <li><a href="/zh/tools/http-header-analyzer/">HTTP Header 分析器</a> — DNS 解析之后，检查服务器返回的头部。</li>
-  <li><a href="/zh/tools/ssl-certificate-decoder/">SSL 证书解码器</a> — 把 DNS 解到的 IP 上服务的证书一并核对。</li>
-  <li><a href="/zh/tools/url-parser/">URL 解析器</a> — 先把 URL 拆成各组成部分，再去查主机名。</li>
-  <li><a href="/zh/tools/ip-subnet-calculator/">IP 子网计算器</a> — 拿到 A / AAAA 后推算子网结构。</li>
-</ul>
+**签名验证失败的域名。** `dnssec-failed.org` 是 [Google 文档](https://developers.google.com/speed/public-dns/docs/doh/json) 里用来演示验证失败的域名。两个解析器都返回 **SERVFAIL**。Cloudflare 的备注是 `EDE(9): DNSKEY Missing ...`，即 [RFC 8914](https://www.rfc-editor.org/rfc/rfc8914#section-4.10) 定义的扩展错误码 9。
+
+## 为什么本机 dig 查到的不一样
+
+在一台开着代理软件 fake-ip 模式的测试机上，`dig @1.1.1.1 dnssec-failed.org` 返回 NOERROR 和 `198.18.2.147`。198.18.0.0/15 是保留给性能测试的地址段（[RFC 6890](https://www.rfc-editor.org/rfc/rfc6890#section-2.2.2)），mihomo（Clash Meta）的 [默认 fake-ip 范围](https://wiki.metacubex.one/config/dns/) 就在这段里。也就是说，即使写了 `@1.1.1.1`，发往 53 端口的查询也被代理软件截下并编了一个地址。本页走 HTTPS，拿到的是真实的 SERVFAIL。
+
+排查「本机打不开，但别人能打开」时，先在本页查一次，再和本机 dig 的结果对照：两边不同，问题多半在本机的代理、hosts 或运营商 DNS。
+
+## 与 dig、nslookup 和其他在线查询站的区别
+
+- **dig / nslookup**：能指定任意权威服务器（`dig @ns1.example.com`），适合脚本和服务器上使用；结果受本机网络环境影响，如上所述。
+- **[Google Admin Toolbox Dig](https://toolbox.googleapps.com/apps/dig/)**：查询由它的后端（`/apps/dig/lookup`）发出。查 `dnssec-failed.org` 时主界面只显示「Record not found!」，原始视图里才有 `rcode SERVFAIL`；查 `example.com` 时标志行是 `QR RD RA`，看不到 AD 标志。
+- **本页**：浏览器直接问 Cloudflare 或 Google，可以切换对比；显示 DNSSEC 验证结果和解析器备注；JSON 原样可复制。
+
+域名解析出 IP 后，可以用 [HTTP Header 分析器](/zh/tools/http-header-analyzer/) 看服务器返回什么，用 [SSL 证书解码器](/zh/tools/ssl-certificate-decoder/) 看它用的证书。
+
+## 限制
+
+- 只能选 Cloudflare 和 Google，不能填自己的 DoH 地址，也不能直接问权威服务器。
+- 每个解析器只有一个观察点，不做多地区传播检测。
+- ALL 只查八种类型。PTR 要自己输入 `1.1.1.1.in-addr.arpa` 这种反向名称；SRV 要输入完整名称，如 `_xmpp-server._tcp.jabber.org`。下拉框以外的类型（DS、DNSKEY、HTTPS、TLSA）查不了。
+- TXT 记录超过 255 字节时会拆成多段（[RFC 1035 §3.3](https://www.rfc-editor.org/rfc/rfc1035#section-3.3)）。Cloudflare 按段加引号、用空格分隔，Google 拼成一整段、不加引号，两者是同一条记录。
+- 域名至少两段；每段 1–63 个字母、数字、连字符或下划线，总长不超过 253。

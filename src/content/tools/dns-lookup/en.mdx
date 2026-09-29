@@ -1,83 +1,57 @@
 ---
-seoTitle: "DNS Lookup Online — A / MX / TXT / CAA via DoH | ZeroTool"
-seoDescription: "Look up DNS records for any domain via DNS-over-HTTPS. A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR, and SRV via Cloudflare or Google. 100% browser-based, no upload."
+seoTitle: "DNS Lookup: A, MX, TXT, CAA Records over DoH | ZeroTool"
+seoDescription: "Look up A, MX, TXT, CAA, NS, SOA, SRV and PTR records from your browser over DNS-over-HTTPS. Pick Cloudflare or Google, see the DNSSEC flag and the raw JSON."
 faqItems:
-  - question: "Does this tool send my queries to a ZeroTool server?"
-    answer: "No. The browser issues the DoH request directly to cloudflare-dns.com or dns.google. ZeroTool has no DNS proxy and never sees the query. Your IP and the queried name are visible only to the resolver you pick."
-  - question: "Which DoH providers does it use, and can I change them?"
-    answer: "Cloudflare (1.1.1.1) and Google (8.8.8.8). Pick from the resolver dropdown. The tool ships with these two by design — they have stable JSON DoH endpoints and CORS enabled. For private resolvers, run dig +https=https://your-doh-endpoint locally."
-  - question: "Why is the result different from `dig` on my machine?"
-    answer: "Two reasons. First, you are asking a public recursive resolver that may have a cached or geo-routed answer different from your local recursive. Second, your local dig may pick up split-horizon records that public DoH cannot see (corporate VPN, /etc/hosts, internal DNS). The DoH result reflects what the public internet sees."
-  - question: "What does the DNSSEC indicator (the AD flag) mean?"
-    answer: "AD = Authenticated Data. The flag is true when the resolver successfully validated DNSSEC signatures up to a trust anchor. False means the zone is unsigned, the signature failed, or DNSSEC validation was disabled. ZeroTool sends cd=0 so the resolver always performs validation."
-  - question: "Why does a long TXT record arrive split into multiple quoted strings?"
-    answer: "DNS limits each TXT string to 255 bytes (RFC 1035). Long SPF, DKIM, or DMARC records are stored as multiple strings inside one TXT record. The DoH JSON preserves the quoted segments verbatim — concatenate them (without separator) to get the logical value."
+  - question: "Does ZeroTool see the domains I look up?"
+    answer: "No. Your browser sends each query straight to cloudflare-dns.com or dns.google, whichever you pick, and that resolver sees your IP address and the name. There is no ZeroTool server in between. The page loads Google Analytics and AdSense like the rest of the site; the usage event it sends holds only the tool name and the action (lookup or copy_json), not the domain."
+  - question: "Why does a signed domain show \"no DNSSEC\"?"
+    answer: "The pill shows the AD (Authenticated Data) flag of the response. It is set only when every record in the answer was validated. A CNAME that leads into an unsigned zone clears it, even when the first name is signed. If validation fails outright, the resolver returns SERVFAIL instead of an answer, and the resolver note under the records says why."
+  - question: "Why does the same TXT record look different with Google and Cloudflare?"
+    answer: "Each string inside a TXT record holds at most 255 bytes, so long DKIM keys are stored as two or more strings. Cloudflare returns them quoted and separated by a space, as dig prints them. Google joins them into one unquoted string. Both are the same record; remove the quote-space-quote joins from the Cloudflare form to get Google's."
+  - question: "How do I look up DMARC, DKIM or SRV records?"
+    answer: "Type the full owner name and pick the type. DMARC lives at _dmarc.example.com (TXT), a DKIM key at selector._domainkey.example.com (TXT), and SRV records at names such as _xmpp-server._tcp.jabber.org. Names with underscores are accepted."
+  - question: "How do I do a reverse (PTR) lookup?"
+    answer: "Reverse the IPv4 address, add .in-addr.arpa, and pick PTR. For 1.1.1.1 enter 1.1.1.1.in-addr.arpa; Cloudflare answers one.one.one.one. The tool does not build the name from an IP address for you."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Enter a domain — bare hostname, full URL, or trailing-dot form all work; the tool normalises automatically.</li>
-  <li>Pick a record type. <strong>ALL</strong> fans out parallel queries for A, AAAA, CNAME, MX, TXT, NS, SOA, and CAA in one click.</li>
-  <li>Pick a resolver: <strong>Cloudflare (1.1.1.1)</strong> or <strong>Google (8.8.8.8)</strong>.</li>
-  <li>Click <strong>Lookup</strong> or press <kbd>Enter</kbd>.</li>
-  <li>Switch between <strong>Records</strong>, <strong>Raw</strong> (dig-style output), and <strong>JSON</strong> (raw DoH response) tabs.</li>
-</ol>
+## How to Use
 
-<h2>Record types supported</h2>
-<ul>
-  <li><strong>A</strong> — IPv4 address.</li>
-  <li><strong>AAAA</strong> — IPv6 address.</li>
-  <li><strong>CNAME</strong> — canonical alias pointing at another name.</li>
-  <li><strong>MX</strong> — mail exchanger with priority.</li>
-  <li><strong>TXT</strong> — arbitrary text. Hosts SPF, DKIM, DMARC, domain verification, and HTTP/3 origin signals.</li>
-  <li><strong>NS</strong> — authoritative name servers for the zone.</li>
-  <li><strong>SOA</strong> — Start of Authority: primary NS, contact, serial, refresh timers.</li>
-  <li><strong>CAA</strong> — which Certificate Authorities may issue for the domain.</li>
-  <li><strong>PTR</strong> — reverse DNS. Query the <code>x.y.z.w.in-addr.arpa</code> name yourself; the tool issues a plain PTR query.</li>
-  <li><strong>SRV</strong> — service location with priority, weight, port, and target.</li>
-</ul>
+1. Type a domain. A full URL, a name with a port, a trailing dot, full-width characters and non-ASCII names such as `日本語.jp` are all converted to the plain ASCII name first.
+2. Pick a record type. **ALL** sends eight queries at once: A, AAAA, CNAME, MX, TXT, NS, SOA and CAA.
+3. Pick a resolver: Cloudflare (`cloudflare-dns.com`) or Google (`dns.google`).
+4. Press **Lookup** or Enter, or click one of the example domains.
+5. Read the pills (response code, record count, DNSSEC, resolver, time), then switch to **Raw** for a dig-style listing or **JSON** for the resolver's response as received. **Copy JSON** copies that response.
 
-<h2>Why DNS-over-HTTPS</h2>
-<p>
-  Browsers cannot open raw UDP/53 sockets, which is why no in-browser tool can speak classic DNS.
-  DoH wraps DNS messages in HTTPS, so a regular <code>fetch()</code> call can ask a public resolver
-  for any record. Cloudflare and Google both expose a JSON profile (<code>application/dns-json</code>
-  for Cloudflare, native JSON for Google) with permissive CORS — this tool does nothing more than
-  call those endpoints and render the response.
-</p>
+## Three Real Lookups
 
-<h2>Reading the summary pills</h2>
-<ul>
-  <li><strong>NOERROR / NXDOMAIN / SERVFAIL</strong> — the DNS RCODE. NXDOMAIN is a valid answer meaning "domain does not exist"; SERVFAIL means the resolver could not answer.</li>
-  <li><strong>N records</strong> — how many answer records came back. Zero with NOERROR means the type exists for the zone elsewhere but not for the requested name.</li>
-  <li><strong>DNSSEC ✓</strong> — the AD flag is set. The resolver validated signatures.</li>
-  <li><strong>Resolver</strong> — which DoH endpoint served the response.</li>
-  <li><strong>Latency</strong> — round-trip time from <code>fetch()</code> start to JSON parse.</li>
-</ul>
+These ran on 2026-09-29. Run them again and the TTLs will differ; the rest should match until the owners change their DNS.
 
-<h2>Typical use cases</h2>
-<ul>
-  <li>Verifying that an A or CNAME change has propagated past a specific resolver.</li>
-  <li>Confirming MX, SPF (TXT), DKIM (TXT), and DMARC (TXT) before launching a new sending domain.</li>
-  <li>Comparing the records two public resolvers see — Cloudflare vs Google can disagree during a propagation window.</li>
-  <li>Checking CAA before issuing a certificate to avoid the "CAA mismatch" failure mode.</li>
-  <li>Sanity-checking NS delegation when moving zones between registrars.</li>
-</ul>
+**Our own mail setup.** `zerotool.dev` with type MX returns three Cloudflare Email Routing servers: `13 route1.mx.cloudflare.net.`, `20 route2.mx.cloudflare.net.` and `63 route3.mx.cloudflare.net.`. TXT returns the SPF policy `v=spf1 include:_spf.mx.cloudflare.net ~all` and a Google site verification token. TXT on `_dmarc.zerotool.dev` returns NXDOMAIN: we have not published a DMARC policy ([RFC 7489 §6.1](https://www.rfc-editor.org/rfc/rfc7489#section-6.1) puts it at that name). The DKIM key at `cf2024-1._domainkey.zerotool.dev` is 420 characters long, so it is stored as two strings, one of exactly 255 characters ([RFC 1035 §3.3](https://www.rfc-editor.org/rfc/rfc1035#section-3.3) limits each string to 255).
 
-<h2>Limits by design</h2>
-<p>
-  This is a single-shot resolver client. It does not perform automatic ARPA conversion for reverse
-  IP lookups (input the in-addr.arpa name yourself for PTR), it does not query authoritative
-  servers directly (it asks a public recursive), and it does not run history, WHOIS, blocklist, or
-  propagation comparisons across many resolvers. For propagation maps use
-  <a href="https://www.whatsmydns.net/">whatsmydns.net</a>; for authoritative-only lookups use
-  <code>dig @ns1.example.com</code> locally.
-</p>
+**DNSSEC, signed and unsigned.** `example.com` type A returns two addresses and the pill **DNSSEC ✓**. `zerotool.dev` returns two addresses and **no DNSSEC**, because the zone is not signed. The tool sends `do=1` with every query. Without it, Cloudflare returned `"AD": false` for `example.com` in our test, while Google returned `true`: [RFC 6840 §5.8](https://www.rfc-editor.org/rfc/rfc6840#section-5.8) lets a resolver set AD only when the query sets the DO or AD bit. With `do=1` the answer also carries RRSIG signatures; the Records view hides them and Raw and JSON show them.
 
-<h2>Related tools on ZeroTool</h2>
-<ul>
-  <li><a href="/tools/http-header-analyzer/">HTTP Header Analyzer</a> — once DNS resolves, inspect what the server returns.</li>
-  <li><a href="/tools/ssl-certificate-decoder/">SSL Certificate Decoder</a> — pair DNS with the certificate served at the resolved IP.</li>
-  <li><a href="/tools/url-parser/">URL Parser</a> — break a URL into its components before looking up the hostname.</li>
-  <li><a href="/tools/ip-subnet-calculator/">IP Subnet Calculator</a> — once you have the A/AAAA, derive subnet structure.</li>
-</ul>
+**A broken zone.** `dnssec-failed.org` is the failure example in [Google's JSON API documentation](https://developers.google.com/speed/public-dns/docs/doh/json). Both resolvers return **SERVFAIL**. Under the records, Cloudflare's note reads `EDE(9): DNSKEY Missing no SEP matching the DS found for dnssec-failed.org.`, an Extended DNS Error defined in [RFC 8914 §4.10](https://www.rfc-editor.org/rfc/rfc8914#section-4.10); Google's note links to DNSViz for the same zone.
+
+## Cloudflare or Google: Why Answers Differ
+
+Both resolvers serve the same JSON format over HTTPS ([Cloudflare](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/), [Google](https://developers.google.com/speed/public-dns/docs/doh/json)). The JSON profile is not an RFC; the binary DNS-over-HTTPS format is [RFC 8484](https://www.rfc-editor.org/rfc/rfc8484). Comparing them with the dropdown shows three differences:
+
+- **Location.** Google sends part of your IP address to authoritative servers ([EDNS Client Subnet](https://developers.google.com/speed/public-dns/docs/ecs)); Cloudflare [does not](https://developers.cloudflare.com/1.1.1.1/faq/). A CDN can therefore give each resolver a different address. `www.baidu.com` returned `103.235.46.96` through Cloudflare and `45.113.192.102` through Google in the same minute.
+- **TXT format.** Cloudflare quotes each string and separates strings with a space; Google returns one unquoted string (see the FAQ).
+- **Notes.** Google adds `Response from <IP>` naming the authoritative server it asked when the answer was not cached; Cloudflare adds Extended DNS Errors when something fails. Both show up as resolver notes.
+
+## How It Compares with dig and Web Lookup Sites
+
+`dig` and `nslookup` ask the resolver your computer uses. When a VPN or proxy app answers port 53 itself, they show that app's answer: on a test machine running a proxy in fake-IP mode, `dig @1.1.1.1 dnssec-failed.org` printed NOERROR with `198.18.2.147`. That address comes from 198.18.0.0/15, a block reserved for benchmark tests ([RFC 6890](https://www.rfc-editor.org/rfc/rfc6890#section-2.2.2)) that proxies such as mihomo use as their default [fake-IP range](https://wiki.metacubex.one/en/config/dns/). This page uses HTTPS to reach the resolver, so it showed the real SERVFAIL. On a server, in scripts, or when you must ask one authoritative server (`dig @ns1.example.com`), use dig.
+
+[Google Admin Toolbox Dig](https://toolbox.googleapps.com/apps/dig/) sends your query to its own backend (`/apps/dig/lookup`). For `dnssec-failed.org` its main view says "Record not found!", and only the raw view shows `rcode SERVFAIL`. Its flags line for `example.com` reads `QR RD RA`, with no AD flag. [DNS Checker](https://dnschecker.org/) queries "a selected list of DNS servers in multiple regions worldwide" from its servers, which is what you want for propagation checks.
+
+This page is for the question in between: what does a major public resolver answer right now, is it DNSSEC-validated, and what exactly did it send back. To check what a web server returns once the name resolves, use the [HTTP Header Analyzer](/tools/http-header-analyzer/); to read the certificate it serves, use the [SSL Certificate Decoder](/tools/ssl-certificate-decoder/).
+
+## Limits
+
+- **Two resolvers.** Only Cloudflare and Google. You cannot enter your own DoH endpoint or an authoritative server.
+- **One vantage point per resolver.** There is no propagation map; for that, use a multi-region checker.
+- **Time limit.** Each query is cancelled after 5 seconds. If a resolver is blocked on your network, the page shows a network error; switch to the other resolver.
+- **Types.** ALL covers eight types. PTR and SRV need their own queries, and PTR needs the `in-addr.arpa` name typed in. Types outside the dropdown (DS, DNSKEY, HTTPS, TLSA) cannot be queried, though RRSIG and NSEC lines appear in Raw when the resolver sends them.
+- **Input.** At least two labels; letters, digits, hyphens and underscores, up to 63 characters per label and 253 in total. `localhost` or a bare `com` are rejected.
