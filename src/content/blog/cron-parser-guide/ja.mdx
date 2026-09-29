@@ -2,7 +2,9 @@
 title: "cron式完全ガイド：構文・よく使う例・プラットフォーム別設定まとめ"
 description: "cron式の構文をチートシートと実例で完全解説。Linux crontab・GitHub Actions・AWS EventBridge・Kubernetes CronJobの設定を即座に検証するオンラインパーサー付き。"
 pubDate: 2026-04-07
+updatedDate: 2026-09-29
 lang: "ja"
+noindex: true
 tags: ["cron", "cron-expression", "cron-syntax", "scheduled-tasks", "developer-tools"]
 ---
 
@@ -24,7 +26,7 @@ cron式は、Linux cron・GitHub Actions・Kubernetes CronJob・AWS EventBridge�
 * * * * *
 ```
 
-一部のシステム（Quartz・Spring・AWS Lambda）では秒や年を含む6フィールドまたは7フィールド形式を使用します。パーサーは両方のバリアントに対応しています。
+別の形式を使うシステムもあります。SpringとQuartzは先頭に秒フィールドを加え（Quartzは末尾の年も任意で指定可）、AWS EventBridgeは末尾に年フィールドを加えます。ZeroToolのパーサーは標準の5フィールド形式のみに対応し、`L`・`#`・`?` はサポートしていません。
 
 ## 特殊文字
 
@@ -130,7 +132,7 @@ crontab -e
 
 ### GitHub Actions
 
-UTC表記の5フィールド形式。負荷が高い場合、ジョブは数分遅れることがあります：
+POSIXの5フィールド構文です。任意の `timezone` キーを指定しない限りUTCで実行され、最短間隔は5分です。毎正時などの高負荷時には実行が遅れたり、取りやめになったりすることがあります（[GitHub Docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)）：
 
 ```yaml
 on:
@@ -142,7 +144,7 @@ on:
 
 ### AWS EventBridge / CloudWatch Events
 
-最初のフィールドが秒の6フィールド形式、または個別の「レート式」を使用します：
+分・時・日・月・曜日・年の6フィールド形式、または個別の「レート式」を使用します（[AWSドキュメント](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html)）：
 
 ```
 cron(0 9 ? * MON-FRI *)
@@ -189,10 +191,10 @@ spec:
 0 9 * * * /path/to/script.sh >> /var/log/myjob.log 2>&1
 ```
 
-**タイムゾーンの混乱**：cronはシステムタイムゾーンで実行されます。明示的な制御には、crontabに `TZ` を設定してください：
+**タイムゾーンの混乱**：cronはシステムタイムゾーンで実行されます。cronie（Fedora、RHEL）はcrontabの `CRON_TZ` をスケジュールのタイムゾーンとして読みます。`TZ` はジョブの環境変数を変えるだけです。`CRON_TZ` を無視する実装もあるので、`man 5 crontab` で確認してください：
 
 ```
-TZ=Asia/Tokyo
+CRON_TZ=Asia/Tokyo
 0 9 * * 1-5 /path/to/script.sh
 ```
 

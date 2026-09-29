@@ -2,11 +2,13 @@
 title: "UUID 生成器：什么是 UUID 以及如何使用"
 description: "了解 UUID 的格式、版本差异、生成方法，以及在数据库主键、API 和分布式系统中的最佳实践——附免费在线 UUID 生成工具。"
 pubDate: 2026-04-04
+updatedDate: 2026-09-29
 lang: "zh"
+noindex: true
 tags: ["uuid", "唯一标识符", "开发者工具"]
 ---
 
-UUID（通用唯一标识符）是分布式系统、数据库和 API 中生成唯一 ID 的标准方法。无需中央协调，就能保证全局唯一性。
+UUID（通用唯一标识符）是分布式系统、数据库和 API 中生成唯一 ID 的标准方法。无需中央协调；随机生成的 v4 UUID 重复的概率小到在实践中可以忽略。
 
 **[立即生成 UUID →](/zh/tools/uuid-generator/)**
 
@@ -19,7 +21,7 @@ UUID 是一个 128 位的数字，通常表示为 5 组十六进制数字，用�
 xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
 ```
 
-- `M`：版本号（1、3、4、5）
+- `M`：版本号（1–8；[RFC 9562](https://www.rfc-editor.org/rfc/rfc9562) 新增了 6、7、8）
 - `N`：变体（8、9、a 或 b）
 
 标准格式是 8-4-4-4-12，共 36 个字符（含连字符），32 个十六进制字符。
@@ -31,13 +33,13 @@ xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
 | v1 | 时间戳 + MAC 地址 | 需要时间排序但可能泄露 MAC 地址 |
 | v3 | 命名空间 + 名称的 MD5 | 确定性 ID，相同输入产生相同 UUID |
 | v4 | 随机 | **最常用**——纯随机，无信息泄露 |
-| v5 | 命名空间 + 名称的 SHA-1 | 比 v3 更安全的确定性 ID |
+| v5 | 命名空间 + 名称的 SHA-1 | 确定性 ID；RFC 9562 建议优先用 v5 而非 v3 |
 
 **v4 是绝大多数场景的正确选择。**
 
 ## UUID v4 碰撞概率
 
-每秒生成 10 亿个 UUID，需要约 **85 年**才会有 50% 的概率出现一次碰撞。实际上可以认为是无限唯一。
+每秒生成 10 亿个 UUID，需要约 **85 年**才会有 50% 的概率出现一次碰撞。实践中，正确生成的 v4 UUID 之间的碰撞可以忽略。
 
 ## 在线生成 UUID
 
@@ -128,7 +130,7 @@ CREATE TABLE users (
 - **体积** — 16 字节 vs 整数的 4-8 字节
 - **不可排序** — v4 UUID 无时间顺序
 
-### 解决方案：UUID v7（草案）
+### 解决方案：UUID v7
 
 UUID v7 将时间戳放在高位，兼顾唯一性和单调递增，是数据库主键的理想选择。目前部分库已支持：
 
@@ -149,13 +151,13 @@ const id = uuidv7();
 URN：     urn:uuid:550e8400-e29b-41d4-a716-446655440000
 ```
 
-存储到数据库时，优先使用原生 UUID 类型（PostgreSQL、MySQL 8.0+）而非 VARCHAR，可节省空间并加快比较速度。
+存储到数据库时，优先使用 16 字节的二进制形式而非 VARCHAR：PostgreSQL 用原生 `uuid` 类型；MySQL 8.0 没有原生 UUID 类型，用 `BINARY(16)` 配合 `UUID_TO_BIN()`。可节省空间并加快比较速度。
 
 ## 验证 UUID
 
 ```js
 // JavaScript
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 UUID_REGEX.test('550e8400-e29b-41d4-a716-446655440000'); // true
 ```
 

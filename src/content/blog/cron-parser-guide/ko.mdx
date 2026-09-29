@@ -2,7 +2,9 @@
 title: "cron 표현식 완벽 가이드: 문법, 예제, 플랫폼별 설정"
 description: "cron 표현식 문법을 치트 시트와 실제 예제로 완전 정복. Linux crontab, GitHub Actions, AWS EventBridge, Kubernetes CronJob 설정을 온라인 파서로 즉시 검증하세요."
 pubDate: 2026-04-07
+updatedDate: 2026-09-29
 lang: "ko"
+noindex: true
 tags: ["cron", "cron-expression", "cron-syntax", "scheduled-tasks", "developer-tools"]
 ---
 
@@ -24,7 +26,7 @@ cron 표현식은 Linux cron, GitHub Actions, Kubernetes CronJob, AWS EventBridg
 * * * * *
 ```
 
-일부 시스템(Quartz, Spring, AWS Lambda)은 초 또는 연도가 포함된 6개 또는 7개 필드 형식을 사용합니다. 파서는 두 변형 모두 처리합니다.
+다른 형식을 쓰는 시스템도 있습니다. Spring과 Quartz는 맨 앞에 초 필드를 더하고(Quartz는 맨 끝의 연도도 선택 가능), AWS EventBridge는 맨 끝에 연도 필드를 더합니다. ZeroTool 파서는 표준 5필드 형식만 받으며 `L`, `#`, `?`는 지원하지 않습니다.
 
 ## 특수 문자
 
@@ -130,7 +132,7 @@ crontab -e
 
 ### GitHub Actions
 
-UTC 기준 5필드 형식 사용. 부하 시 작업이 몇 분 지연될 수 있습니다:
+POSIX 5필드 문법을 씁니다. 선택 항목인 `timezone` 키를 지정하지 않으면 UTC로 실행되고, 최소 간격은 5분입니다. 매시 정각처럼 부하가 높은 시간에는 실행이 지연되거나 아예 빠질 수 있습니다([GitHub Docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)):
 
 ```yaml
 on:
@@ -142,7 +144,7 @@ on:
 
 ### AWS EventBridge / CloudWatch Events
 
-첫 번째 위치에 초가 오는 6필드 형식 또는 별도의 "rate 표현식" 사용:
+분, 시, 일, 월, 요일, 연도의 6필드 형식 또는 별도의 "rate 표현식" 사용([AWS 문서](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html)):
 
 ```
 cron(0 9 ? * MON-FRI *)
@@ -189,10 +191,10 @@ spec:
 0 9 * * * /path/to/script.sh >> /var/log/myjob.log 2>&1
 ```
 
-**타임존 혼란**: cron은 시스템 타임존으로 실행됩니다. 명시적 제어를 위해 crontab에 `TZ`를 설정하세요:
+**타임존 혼란**: cron은 시스템 타임존으로 실행됩니다. cronie(Fedora, RHEL)는 crontab의 `CRON_TZ`를 스케줄 타임존으로 읽고, `TZ`는 작업이 보는 환경 변수만 바꿉니다. `CRON_TZ`를 무시하는 구현도 있으니 `man 5 crontab`으로 확인하세요:
 
 ```
-TZ=Asia/Seoul
+CRON_TZ=Asia/Seoul
 0 9 * * 1-5 /path/to/script.sh
 ```
 

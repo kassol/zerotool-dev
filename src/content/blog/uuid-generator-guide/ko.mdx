@@ -2,11 +2,13 @@
 title: "UUID 생성기 완벽 가이드: UUID 버전별 차이와 실전 활용"
 description: "UUID 형식, 버전별 차이(v1~v7), JavaScript·Python·Go·SQL에서 생성하는 방법, 데이터베이스 기본키로 쓸 때 주의사항까지 정리합니다."
 pubDate: 2026-04-07
+updatedDate: 2026-09-29
 lang: "ko"
+noindex: true
 tags: ["uuid", "unique-identifier", "developer-tools"]
 ---
 
-UUID(Universally Unique Identifier)는 분산 시스템, 데이터베이스, API에서 고유 ID를 생성하는 표준 방식입니다. 중앙 조정 없이도 전 세계적으로 고유성이 보장됩니다.
+UUID(Universally Unique Identifier)는 분산 시스템, 데이터베이스, API에서 고유 ID를 생성하는 표준 방식입니다. 중앙 조정이 필요 없고, 무작위로 생성한 v4 UUID가 겹칠 확률은 실무에서 무시할 수 있을 만큼 작습니다.
 
 **[UUID 생성하기 →](/ko/tools/uuid-generator/)**
 
@@ -19,7 +21,7 @@ UUID는 128비트 숫자이며, 일반적으로 하이픈으로 구분된 5개 �
 xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
 ```
 
-- `M` — 버전 번호 (1, 3, 4, 또는 5)
+- `M` — 버전 번호 (1–8. [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562)에서 6, 7, 8 추가)
 - `N` — 변형 비트 (8, 9, a, 또는 b)
 
 표준 형식은 8-4-4-4-12로 총 36자(하이픈 포함), 32개의 16진수 문자입니다.
@@ -31,13 +33,13 @@ xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
 | v1 | 타임스탬프 + MAC 주소 | 시간 정렬 가능, MAC 주소 노출 위험 |
 | v3 | 네임스페이스 + 이름 (MD5) | 결정론적 — 동일 입력은 항상 동일 UUID |
 | v4 | 무작위 | **가장 일반적** — 순수 랜덤, 정보 노출 없음 |
-| v5 | 네임스페이스 + 이름 (SHA-1) | v3보다 안전한 결정론적 ID |
+| v5 | 네임스페이스 + 이름 (SHA-1) | 결정론적 ID. RFC 9562는 v3보다 v5를 권장 |
 
 **대부분의 경우 v4가 올바른 선택입니다.**
 
 ## UUID v4 충돌 확률
 
-초당 10억 개의 UUID를 생성해도 충돌 확률이 50%에 도달하는 데 약 **85년**이 걸립니다. 실용적인 목적에서 UUID는 사실상 무한히 고유합니다.
+초당 10억 개의 UUID를 생성해도 충돌 확률이 50%에 도달하는 데 약 **85년**이 걸립니다. 실무에서는 올바르게 생성한 v4 UUID끼리의 충돌을 무시할 수 있습니다.
 
 ## 온라인 UUID 생성기
 
@@ -128,7 +130,7 @@ CREATE TABLE users (
 - **스토리지 크기** — 정수(4~8바이트) 대비 16바이트
 - **자연 정렬 불가** — v4 UUID는 시간 기반 정렬 순서가 없음
 
-### 해결책: UUID v7 (드래프트)
+### 해결책: UUID v7
 
 UUID v7은 상위 비트에 타임스탬프를 배치해 고유성과 단조 증가 순서를 결합합니다. 데이터베이스 기본키에 이상적입니다. 일부 라이브러리에서 이미 지원합니다:
 
@@ -149,13 +151,13 @@ const id = uuidv7();
 URN:        urn:uuid:550e8400-e29b-41d4-a716-446655440000
 ```
 
-데이터베이스에 저장할 때는 VARCHAR 대신 네이티브 UUID 타입(PostgreSQL, MySQL 8.0+)을 사용하는 것이 스토리지를 절약하고 비교를 빠르게 합니다.
+데이터베이스에 저장할 때는 VARCHAR 대신 16바이트 바이너리 형식을 쓰는 것이 스토리지를 절약하고 비교를 빠르게 합니다. PostgreSQL은 네이티브 `uuid` 타입을, 네이티브 UUID 타입이 없는 MySQL 8.0은 `BINARY(16)`과 `UUID_TO_BIN()`을 씁니다.
 
 ## UUID 유효성 검사
 
 ```js
 // JavaScript
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 UUID_REGEX.test('550e8400-e29b-41d4-a716-446655440000'); // true
 ```
 
