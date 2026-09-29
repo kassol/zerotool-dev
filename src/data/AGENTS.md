@@ -11,6 +11,7 @@
 | `tools.ts` | `allTools: ToolInfo[]`，每条含 slug、4 语言 translations、category、relatedSlugs | 所有工具页、列表页、`scripts/update-readme-tools.js`、`scripts/generate-og.mjs` |
 | `icons.ts` | 每个 slug 对应的内联 SVG（Lucide 风格） | 列表页、ToolLayout、OG 图 |
 | `guides.ts` | `guideDirFor(slug)`：工具对应的指南博客目录，默认 `{slug}-guide`；`guideDirOverrides` 记录 4 个目录名不同的已发布指南（改目录会改线上 URL） | `components/ToolPage.astro`（阅读指南卡片）、`layouts/ArticleLayout.astro`（相关文章同分类加分）、`scripts/test-related-posts.mjs` |
+| `network.ts` | `networkToolSlugs`：因功能需要会联网的工具；每个 slug 在 4 个 i18n JSON 里有 `network.{slug}`，写明发出什么、发给谁。新增会发请求的工具（`fetch`、外部 URL 的 `<img>` 等）必须加进来 | `layouts/ToolLayout.astro`（顶部提示替换 `tool.trustPrivacy`）、`pages/{,zh/,ja/,ko/}about.astro`（联网工具清单） |
 
 ## ToolInfo schema
 
@@ -56,3 +57,4 @@ interface ToolInfo {
 - 2026-04-26 — 初版
 - 2026-09-26 — `ToolInfo.slug` 注释改为指向 `toolRoutes()` 注入的工具路由（原 `pages/{lang}/tools/[slug].astro` 已删除）
 - 2026-09-27 — 新增 `guides.ts`（工具 → 指南博客目录映射）
+- 2026-09-29 — 新增 `network.ts`（会联网的工具清单，工具页顶部提示与 About 共用）
