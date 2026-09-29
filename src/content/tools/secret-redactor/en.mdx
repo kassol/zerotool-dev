@@ -1,29 +1,83 @@
 ---
-seoTitle: "Secret Redactor — Mask API Keys Before AI Chat | ZeroTool"
-seoDescription: "Redact API keys, JWTs, private keys and database passwords from logs and .env files before sharing with ChatGPT or Claude. Restore them after. No upload."
+seoTitle: "Redact API Keys & Secrets Before Pasting into AI | ZeroTool"
+seoDescription: "Paste a log, .env or config: API keys, tokens, JWTs and passwords become placeholders like [OPENAI_KEY_1]. Paste the AI reply back to restore them. No upload."
 faqItems:
   - question: "Why not just ask the AI to remove the secrets?"
-    answer: "Because the request itself is the leak: the key reaches the provider's servers, logs and possibly training data before any model can remove it. Detection here is a fixed set of regular expressions plus an entropy check that runs in your browser, so the only text that ever leaves your machine is the version you copy after redaction."
+    answer: "Because the request itself is the leak. The key reaches the provider's servers and is kept under the provider's retention policy before any model reads your instruction. Detection here is a fixed set of regular expressions plus an entropy check that runs in your browser, so the only text that leaves your machine is the copy you make after redaction."
   - question: "Is anything uploaded or saved?"
-    answer: "No. The page makes no network request with your text, and nothing is written to localStorage, sessionStorage, cookies or the URL. The placeholder mapping exists only in the page's memory: Clear, Ctrl/Cmd+L, reloading or closing the tab discards it. JavaScript cannot overwrite a string in place, so the browser frees the memory on its next garbage collection."
-  - question: "What does it detect?"
-    answer: "Keys for Anthropic, OpenAI and OpenAI-compatible sk- providers, Hugging Face, AWS, Google, GitHub, GitLab, Slack, Stripe, SendGrid, npm, PyPI and Telegram; JWTs; Bearer and Basic authorization headers; PEM private key blocks; passwords inside connection strings such as postgres://user:pass@host; values assigned to names ending in password, secret, token or api_key; and long random-looking strings with at least 4.2 bits of entropy per character. It finds credentials only. Emails, hostnames and IP addresses stay as they are."
-  - question: "How does restoring work, and what if the AI changes a placeholder?"
-    answer: "Each distinct secret becomes a numbered placeholder such as [OPENAI_KEY_1], and the same value always gets the same placeholder. Paste the AI's reply into the restore box and every placeholder is swapped back. Case changes, extra spaces inside the brackets and Markdown-escaped brackets are accepted. A placeholder the AI rewrote without its brackets is left untouched and the missing ones are counted, so tell the AI to keep placeholders exactly as written."
+    answer: "No. The page makes no network request with your text, and nothing is written to localStorage, sessionStorage, cookies or the URL. The page also loads no analytics or ad scripts. The placeholder mapping exists only in the page's memory: Clear, Ctrl/Cmd+L, reloading or closing the tab discards it. JavaScript cannot overwrite a string in place, so the browser frees the memory on its next garbage collection."
+  - question: "Which keys and tokens does it detect?"
+    answer: "Keys for Anthropic, OpenAI and other sk- providers, Hugging Face, AWS, Google, GitHub, GitLab, Slack, Stripe, SendGrid, npm, PyPI and Telegram; JWTs; Bearer and Basic authorization headers; PEM private key blocks; passwords inside URLs such as postgres://user:pass@host; values assigned to names ending in password, secret, token, api_key and similar; and long random-looking strings. It targets credentials only. Emails, hostnames and IP addresses stay as they are."
+  - question: "What happens if the AI changes a placeholder?"
+    answer: "Case changes, spaces inside the brackets and Markdown-escaped brackets are still restored. A placeholder the AI rewrote without its brackets is left as it is, because OPENAI_KEY_1 cannot be told apart from a variable name. When every copy of a placeholder lost its brackets, the status line shows fewer distinct placeholders than the mapping holds. Placeholders the AI invented are listed under the restore box."
   - question: "Why wasn't my secret caught?"
-    answer: "Secrets split across two lines, hex-only tokens without a telling variable name, and keys shorter than 32 characters with no recognisable prefix or key name are not detected; hex was excluded so commit SHAs and checksums in CI logs do not drown the real findings. Review the redacted text before sending. For scanning whole repositories and git history, run gitleaks or trufflehog locally."
+    answer: "Secrets split across two lines, hex-only tokens with no telling variable name, and keys shorter than 32 characters with neither a known prefix nor a key name are not detected. Hex is excluded so that commit SHAs and checksums in CI logs do not bury the real findings. Read the redacted text before sending it, and give the value a name such as MY_SERVICE_TOKEN= if it was missed."
 ---
 
 <h2>How to use</h2>
 
 <ol>
-  <li>Paste the log, stack trace, <code>.env</code> file or config you want help with into box ①. Detection runs as you type.</li>
-  <li>Check the category toggles and open <strong>Findings</strong> to see what was matched. Turn a category off if it flags something that is not a secret.</li>
-  <li>Copy the redacted text from box ② and paste it into ChatGPT, Claude or any other assistant.</li>
-  <li>Paste the assistant's answer into box ③. Every placeholder it kept is swapped back to the real value, ready to copy into your terminal or editor.</li>
+  <li>Paste the log, stack trace, <code>.env</code> file or config into box ①. Detection runs as you type.</li>
+  <li>Read box ②. Each secret is replaced by a placeholder such as <code>[OPENAI_KEY_1]</code>. Open <strong>Findings</strong> to see which rule matched each one, and turn off a category if it flags something harmless.</li>
+  <li>Copy box ② into ChatGPT, Claude or any other assistant. It helps to start the prompt with: <em>"Values in square brackets like [OPENAI_KEY_1] are redacted. Keep them exactly as written."</em></li>
+  <li>Paste the reply into box ③. Every placeholder it kept comes back as the real value, ready to copy into your terminal or editor.</li>
 </ol>
 
-<p>Keep box ① as it is until you have restored the reply. The mapping from placeholder to value is rebuilt from that text every time it changes, and nothing else remembers it.</p>
+<p>Keep box ① unchanged until you have restored the reply. The mapping from placeholder to value is rebuilt from that text on every change, and nothing else stores it.</p>
+
+<h2>Example: a failing CI job log</h2>
+
+<p>A deploy step ran <code>curl -v</code>, so the log shows the request headers, and a debug line printed two AWS variables. The AWS values are the example keys from the <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html">AWS IAM documentation</a>.</p>
+
+```text
+Run curl -sv https://api.example.com/v1/deploy
+> POST /v1/deploy HTTP/2
+> Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+< HTTP/2 403
+env AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+env AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+env GIT_SHA=3f786850e387550fdab836ed7e6dc881de23001b
+Error: Process completed with exit code 22.
+```
+
+<p>Box ② shows this, with 3 findings:</p>
+
+```text
+Run curl -sv https://api.example.com/v1/deploy
+> POST /v1/deploy HTTP/2
+> Authorization: Bearer [JWT_1]
+< HTTP/2 403
+env AWS_ACCESS_KEY_ID=[AWS_ACCESS_KEY_1]
+env AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]
+env GIT_SHA=3f786850e387550fdab836ed7e6dc881de23001b
+Error: Process completed with exit code 22.
+```
+
+<p>The header name and the <code>Bearer</code> scheme stay, so the assistant can still see that an authenticated request got a 403. The commit SHA stays because it is hex only. If you want to know whether that token had already expired, decode it in the <a href="/tools/jwt-decoder/">JWT Decoder</a> first; it also runs locally.</p>
+
+<h2>Example: one password in two places, then restore</h2>
+
+```text
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: hunter2-staging
+  api:
+    environment:
+      DATABASE_URL: postgres://app:hunter2-staging@db:5432/app
+      MAX_TOKENS: 1024
+```
+
+<p>Both copies of the password become <code>[SECRET_1]</code>, although two different rules found them. That tells the assistant the two values match without showing either. <code>MAX_TOKENS: 1024</code> is left alone: a name counts only when it <em>ends</em> in a keyword such as <code>token</code>. Suppose the reply comes back with one escaped and one lower-case placeholder:</p>
+
+```text
+Run this from the api container to check the login:
+`psql postgres://app:\[SECRET_1\]@db:5432/app`
+If it fails, recreate the volume: the image only reads [secret_1] on first start.
+```
+
+<p>Box ③ restores both to <code>hunter2-staging</code>, and the status line reads "Restored 2 placeholders (1 distinct of 1 in the mapping)". To check which variables a larger <code>.env</code> defines before you paste any of it, the <a href="/tools/env-file-parser/">.env File Parser</a> lists them.</p>
 
 <h2>What gets redacted</h2>
 
@@ -32,35 +86,29 @@ faqItems:
     <tr><th>Category</th><th>Examples</th><th>What stays visible</th></tr>
   </thead>
   <tbody>
-    <tr><td>AI provider keys</td><td><code>sk-ant-…</code>, <code>sk-proj-…</code>, <code>hf_…</code>, other <code>sk-</code> keys (DeepSeek, OpenRouter, Moonshot)</td><td>The variable name</td></tr>
-    <tr><td>Cloud &amp; SaaS tokens</td><td><code>AKIA…</code> and the matching AWS secret, <code>AIza…</code>, <code>ghp_…</code>, <code>github_pat_…</code>, <code>glpat-…</code>, <code>xoxb-…</code>, Slack webhook URLs, <code>sk_live_…</code>, <code>whsec_…</code>, SendGrid, npm, PyPI, Telegram bot tokens</td><td>The variable name; Stripe <code>pk_</code> publishable keys are not matched by the Stripe rule</td></tr>
+    <tr><td>AI provider keys</td><td><code>sk-ant-…</code>, <code>sk-proj-…</code>, <code>hf_…</code>, other <code>sk-</code> keys of 32+ characters</td><td>The variable name</td></tr>
+    <tr><td>Cloud &amp; SaaS tokens</td><td><code>AKIA…</code> / <code>ASIA…</code> and the AWS secret next to an <code>aws…secret</code> name, <code>AIza…</code>, <code>ghp_…</code>, <code>github_pat_…</code>, <code>glpat-…</code>, <code>xoxb-…</code>, Slack webhook URLs, <code>sk_live_…</code>, <code>whsec_…</code>, SendGrid, npm, PyPI, Telegram bot tokens</td><td>The variable name</td></tr>
     <tr><td>JWT &amp; auth headers</td><td><code>eyJ….eyJ….…</code>, <code>Authorization: Basic …</code>, <code>Bearer …</code></td><td>The header name and scheme</td></tr>
-    <tr><td>Private keys</td><td>PEM blocks from <code>-----BEGIN … PRIVATE KEY-----</code> to the matching END line (RSA, EC, OpenSSH, PGP, encrypted)</td><td>Nothing; the whole block becomes one placeholder</td></tr>
-    <tr><td>Passwords &amp; connection strings</td><td><code>postgres://app:…@db</code>, <code>DB_PASSWORD=…</code>, <code>client_secret: …</code>, <code>?api_key=…</code></td><td>User name, host, port and database name</td></tr>
+    <tr><td>Private keys</td><td>PEM blocks from <code>-----BEGIN … PRIVATE KEY-----</code> to the matching END line</td><td>Nothing; the block becomes one placeholder</td></tr>
+    <tr><td>Passwords &amp; connection strings</td><td><code>postgres://app:…@db</code>, <code>DB_PASSWORD=…</code>, <code>client_secret: …</code>, <code>?api_key=…</code></td><td>User, host, port and database</td></tr>
     <tr><td>High-entropy strings</td><td>Unlabelled random strings of 32+ characters</td><td>Everything around them</td></tr>
   </tbody>
 </table>
 
-<p>A value assigned to a name only counts when the name <em>ends</em> in the keyword, so <code>max_tokens: 1024</code> and <code>token_count=12</code> are left alone. Environment references such as <code>$&#123;DB_PASS&#125;</code>, template placeholders like <code>&lt;your-key&gt;</code>, masked values like <code>****</code> and literals such as <code>true</code> or <code>null</code> are skipped as well.</p>
+<p>The prefixes come from the vendors. GitHub documents <code>ghp_</code>, <code>gho_</code>, <code>ghu_</code>, <code>ghs_</code> and <code>ghr_</code> in its <a href="https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/">token format post</a>. AWS lists <code>AKIA</code> and <code>ASIA</code> in its <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html">IAM identifier reference</a>. Anthropic keys start with <code>sk-ant-</code> (<a href="https://platform.claude.com/docs/en/get-api-key">Anthropic docs</a>). Stripe <code>pk_</code> publishable keys are not matched, because <a href="https://docs.stripe.com/keys">Stripe</a> says they are safe to embed in client-side code. The other shapes are defined by standards: JWT by <a href="https://www.rfc-editor.org/rfc/rfc7519">RFC 7519</a>, Bearer by <a href="https://www.rfc-editor.org/rfc/rfc6750">RFC 6750</a>, Basic by <a href="https://www.rfc-editor.org/rfc/rfc7617">RFC 7617</a>, and PEM labels by <a href="https://www.rfc-editor.org/rfc/rfc7468">RFC 7468</a>.</p>
 
-<h2>How the high-entropy check works</h2>
+<p>Values that are obviously not secrets are skipped: <code>$&#123;DB_PASS&#125;</code> references, <code>&lt;your-key&gt;</code> templates, <code>****</code> and literals such as <code>true</code> or <code>null</code>. An unlabelled string of 32+ base64 characters is redacted only when it mixes upper case, lower case and digits and reaches 4.2 bits of Shannon entropy per character. Random base64 of that length averages 4.56 bits. The mixed-case rule keeps git SHAs, SHA-256 digests and UUIDs readable. Lockfile <code>sha512-</code> hashes, <code>data:</code> URIs, file paths and certificate or public key blocks are excluded as well.</p>
 
-<p>Anything that looks like a run of base64 or base64url characters at least 32 characters long is a candidate. It is redacted only when it contains an uppercase letter, a lowercase letter and a digit, and when its Shannon entropy reaches 4.2 bits per character. Random base64 of that length averages about 4.56 bits.</p>
+<h2>How this differs from gitleaks and log masking</h2>
 
-<p>The mixed-case requirement is what keeps CI logs readable: git commit SHAs, MD5 and SHA-256 digests, Docker image digests and UUIDs are all hex or single-case, so none of them qualify. Lockfile integrity values (<code>sha512-…</code>), <code>data:</code> URIs, file paths and the bodies of certificates and public keys are excluded explicitly, because they are public by design.</p>
-
-<p>The trade-off is deliberate. A bare 32-character hex token with no variable name next to it is not caught by this check. Give it a name (<code>TWILIO_AUTH_TOKEN=…</code>) and the password rule catches it.</p>
-
-<h2>Placeholder rules</h2>
+<p>Two kinds of tools already deal with secrets in text. Each covers a different moment.</p>
 
 <ul>
-  <li>Placeholders look like <code>[LABEL_n]</code>: <code>[OPENAI_KEY_1]</code>, <code>[URL_PASSWORD_1]</code>, <code>[SECRET_2]</code>. The label tells the assistant what kind of value it is without revealing it, so an answer such as "rotate <code>[AWS_ACCESS_KEY_1]</code>" still makes sense.</li>
-  <li>The same value always gets the same placeholder, even when it appears twenty times or two rules found it.</li>
-  <li>Numbering is per label and skips any placeholder that already appears in your text, so a pasted <code>[SECRET_1]</code> never collides with a generated one.</li>
-  <li>Running the tool on text it has already redacted changes nothing.</li>
-  <li>Restore accepts <code>[OPENAI_KEY_1]</code>, <code>&#92;[OPENAI_KEY_1&#92;]</code>, <code>[openai_key_1]</code>, <code>[ OPENAI_KEY_1 ]</code> and placeholders inside code spans. It does not accept <code>OPENAI_KEY_1</code> without brackets, because that is indistinguishable from an environment variable name.</li>
-  <li>Placeholders in the reply that are not in the mapping, for example one the assistant invented, are left unchanged and listed under the restore box.</li>
+  <li><strong>Repository scanners</strong> such as <a href="https://github.com/gitleaks/gitleaks">gitleaks</a> and <a href="https://github.com/trufflesecurity/trufflehog">TruffleHog</a> find secrets that are already in files or git history. The gitleaks default config had 222 rules in September 2026, against 26 rules plus the entropy check here, and TruffleHog can test whether a key is still live. They report findings. They do not give you a copy to paste. Run them in a pre-commit hook or CI.</li>
+  <li><strong>Log masking</strong> hides values with one fixed mask. In GitHub Actions, <code>::add-mask::</code> replaces each masked word with <code>*</code> (<a href="https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands">GitHub docs</a>). The mask cannot be reversed, and every value looks the same, so an assistant cannot tell two keys apart.</li>
 </ul>
+
+<p>This page covers the moment before a paste. Every distinct value gets its own numbered placeholder, the same value keeps it everywhere, and the reply can be turned back. To see it, press <strong>Load example</strong>: <code>[OPENAI_KEY_1]</code> appears in both the <code>.env</code> line and the retry log line, which shows the assistant that the retry used the configured key. Then type <code>rotate [OPENAI_KEY_1]</code> into box ③.</p>
 
 <h2>Limits</h2>
 
@@ -70,11 +118,15 @@ faqItems:
   </thead>
   <tbody>
     <tr><td>Scanning files, folders or git history</td><td><code>gitleaks git</code> / <code>gitleaks dir</code> or <code>trufflehog</code> on your machine</td></tr>
-    <tr><td>Personal data: emails, names, phone numbers, IP addresses, hostnames</td><td>Edit by hand. Hostnames in connection strings stay visible on purpose so the assistant can still reason about your config.</td></tr>
+    <tr><td>Personal data: emails, names, phone numbers, IP addresses</td><td>Edit by hand. Hostnames stay on purpose so the assistant can still read your config.</td></tr>
     <tr><td>Un-redacting one false positive</td><td>Turn off its category, or edit the copied text</td></tr>
-    <tr><td>Checking whether a key is still live</td><td>Nothing in this page does that, because it would mean sending the key to the provider</td></tr>
-    <tr><td>Restoring placeholders written without brackets</td><td>Ask the assistant to keep placeholders exactly as written</td></tr>
+    <tr><td>Checking whether a key is still live</td><td>Not done, because it would mean sending the key to the provider</td></tr>
   </tbody>
 </table>
 
-<p>Input is limited to 1,000,000 characters. Secrets split across a line break are not detected, since every rule except the private key rule stops at the end of a line.</p>
+<ul>
+  <li>Input is limited to 1,000,000 characters. Above that, the status line reads "Input is N characters; the limit is 1,000,000. Split the text."</li>
+  <li>Every rule except the private key rule stops at the end of a line, so a token wrapped onto two lines is not detected. Copy from the raw file.</li>
+  <li>Switching a category on or off re-runs detection, and placeholder numbers can change. Restore with the same toggles you redacted with.</li>
+  <li>A long CamelCase identifier with a digit, such as <code>AbstractSingletonProxyFactoryBean2Impl</code> (4.33 bits), is redacted as high-entropy. Turn off that category if it gets in the way.</li>
+</ul>

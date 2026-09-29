@@ -143,7 +143,7 @@
 | CSS Clamp Calculator | [/tools/css-clamp-calculator](https://zerotool.dev/tools/css-clamp-calculator) |
 | Barcode Generator | [/tools/barcode-generator](https://zerotool.dev/tools/barcode-generator) |
 | CSR Decoder | [/tools/csr-decoder](https://zerotool.dev/tools/csr-decoder) |
-| Secret Redactor | [/tools/secret-redactor](https://zerotool.dev/tools/secret-redactor) |
+| Redact API Keys & Secrets | [/tools/secret-redactor](https://zerotool.dev/tools/secret-redactor) |
 | SQLite Viewer | [/tools/sqlite-viewer](https://zerotool.dev/tools/sqlite-viewer) |
 | Pixelate Image | [/tools/pixelate-image](https://zerotool.dev/tools/pixelate-image) |
 | GIF Splitter | [/tools/gif-splitter](https://zerotool.dev/tools/gif-splitter) |

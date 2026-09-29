@@ -1,80 +1,101 @@
 ---
-seoTitle: "シークレットマスキング — AI に貼る前に API キーを隠す | ZeroTool"
-seoDescription: "ログ・コード・.env・docker-compose に含まれる API キー、JWT、秘密鍵、DB パスワードをブラウザ内で検出・置換。AI の返答はプレースホルダーから元の値へ復元。アップロードなし。"
+seoTitle: "APIキーをマスキングしてAIに貼る | ZeroTool"
+seoDescription: "ログ・.env・設定ファイルの API キー、トークン、JWT、秘密鍵、パスワードを [OPENAI_KEY_1] のようなプレースホルダーに置き換えて AI に貼り付け、返答は元の値に戻せます。処理はブラウザ内で完結し、アップロードしません。"
 faqItems:
-  - question: "AI に「シークレットを消して」と頼むのではだめですか？"
-    answer: "頼んだ時点で漏えいが起きています。モデルが何かを消す前に、キーはすでにプロバイダーのサーバーやログ、場合によっては学習データに届いています。このツールの検出は固定の正規表現とエントロピー判定だけで構成され、すべてブラウザ内で動きます。手元の PC から出ていくのは、マスキング後にあなたがコピーしたテキストだけです。"
+  - question: "AI に「キーは無視して」と頼むのではだめですか？"
+    answer: "頼んだ時点でキーはもう手元を離れています。テキストはまずプロバイダーのサーバーに届き、その保存ポリシーに従って保管されます。モデルが指示を読むのはその後です。このツールの検出は固定の正規表現とエントロピー判定だけで、すべてブラウザ内で動きます。外に出るのは、マスキング後にあなたがコピーしたテキストだけです。"
   - question: "入力内容はアップロードや保存をされますか？"
-    answer: "されません。ページは入力テキストを伴うネットワーク通信を一切行わず、localStorage・sessionStorage・Cookie・URL にも書き込みません。プレースホルダーの対応表はページのメモリ上にだけ存在し、クリア、Ctrl/Cmd+L、再読み込み、タブを閉じる操作で破棄されます。JavaScript では文字列をその場で上書きできないため、メモリは次のガベージコレクションで解放されます。"
-  - question: "何を検出しますか？"
-    answer: "Anthropic、OpenAI と OpenAI 互換の sk- 形式（DeepSeek、OpenRouter、Moonshot など）、Hugging Face、AWS、Google、GitHub、GitLab、Slack、Stripe、SendGrid、npm、PyPI、Telegram のキー、JWT、Bearer / Basic 認証ヘッダー、PEM 秘密鍵ブロック、postgres://user:pass@host のような接続文字列内のパスワード、名前が password・secret・token・api_key で終わる変数の値、そして 1 文字あたり 4.2 ビット以上のエントロピーを持つ長いランダム文字列です。対象は認証情報だけで、メールアドレス・ホスト名・IP アドレスはそのまま残ります。"
-  - question: "復元の仕組みは？ AI がプレースホルダーを書き換えたら？"
-    answer: "異なるシークレットごとに [OPENAI_KEY_1] のような番号付きプレースホルダーを割り当て、同じ値には必ず同じプレースホルダーを使います。AI の返答を復元欄に貼ると、プレースホルダーが元の値に戻ります。大文字小文字の違い、角括弧内の余分な空白、Markdown でエスケープされた角括弧は許容します。角括弧を外されたものは復元せず、足りない数として表示されるので、AI にはプレースホルダーをそのまま残すよう指示してください。"
+    answer: "されません。ページは入力テキストを伴う通信を行わず、localStorage・sessionStorage・Cookie・URL にも書き込みません。このページはアクセス解析や広告のスクリプトも読み込みません。プレースホルダーの対応表はメモリ上にだけあり、クリア、Ctrl/Cmd+L、再読み込み、タブを閉じる操作で破棄されます。"
+  - question: "LINE や Chatwork、kintone のトークンも隠せますか？"
+    answer: "LINE のチャネルシークレットとアクセストークン、Chatwork の X-ChatWorkToken、Backlog の apiKey、kintone の X-Cybozu-API-Token は、変数名・ヘッダー名・パラメーター名で検出します。kintone のパスワード認証で使う X-Cybozu-Authorization は検出できないため、送る前に手で消してください。"
+  - question: "AI がプレースホルダーを書き換えたら復元できませんか？"
+    answer: "大文字小文字の違い、角括弧内の空白、Markdown でエスケープされた \\[ \\] は復元します。角括弧を外された SECRET_1 は環境変数名と区別できないので、そのまま残します。あるプレースホルダーがすべて角括弧なしになった場合、ステータスの使用数が対応表の数より少なく表示されます。"
   - question: "シークレットが検出されなかったのはなぜ？"
-    answer: "改行で分断されたシークレット、変数名の手がかりがない 16 進数だけのトークン、既知の接頭辞も変数名もない 32 文字未満のキーは検出されません。16 進数を除外しているのは、CI ログのコミット SHA やチェックサムで本当の検出結果が埋もれないようにするためです。送信前にマスキング結果を目で確認してください。リポジトリ全体や git 履歴の走査には、ローカルで gitleaks か trufflehog を使ってください。"
+    answer: "改行で分かれた値、変数名のない 16 進数だけのトークン、既知の接頭辞も変数名もない 32 文字未満のキーは検出しません。16 進数を対象外にしているのは、CI ログのコミット SHA やチェックサムで結果が埋もれないようにするためです。MY_SERVICE_TOKEN= のように名前を付ければ検出されます。"
 ---
 
 <h2>使い方</h2>
 
 <ol>
   <li>相談したいログ、スタックトレース、<code>.env</code>、設定ファイルを ① 欄に貼り付けます。入力と同時に検出が走ります。</li>
-  <li>カテゴリ切り替えの件数を確認し、<strong>検出一覧</strong>を開いて一致した内容を見ます。シークレットでないものを拾うカテゴリはオフにします。</li>
-  <li>② 欄のマスキング済みテキストをコピーし、ChatGPT や Claude などのアシスタントに貼り付けます。</li>
-  <li>返ってきた回答を ③ 欄に貼ると、残っていたプレースホルダーが実際の値に戻り、そのままターミナルやエディターにコピーできます。</li>
+  <li>② 欄を確認します。シークレットは <code>[OPENAI_KEY_1]</code> のようなプレースホルダーに置き換わっています。<strong>検出一覧</strong>を開くと、どのルールで一致したかがわかります。誤検出するカテゴリはオフにできます。</li>
+  <li>② 欄をコピーして ChatGPT や Claude に貼り付けます。質問の前に「[OPENAI_KEY_1] のような角括弧の値はマスク済みなので、そのまま残してください」と書いておくと、復元の失敗が減ります。</li>
+  <li>返答を ③ 欄に貼ると、残っていたプレースホルダーが実際の値に戻ります。そのままターミナルやエディターにコピーできます。</li>
 </ol>
 
-<p>復元が終わるまで ① 欄は変更しないでください。プレースホルダーと値の対応表は、このテキストが変わるたびに作り直され、ほかのどこにも記録されません。</p>
+<p>復元が終わるまで ① 欄は変更しないでください。プレースホルダーと値の対応表は、このテキストから毎回作り直され、ほかの場所には保存されません。</p>
 
-<h2>置換される対象</h2>
+<h2>例 1：LINE Bot の .env</h2>
+
+<p>Messaging API の Bot でよくある構成です。値はすべてダミーです。</p>
+
+```bash
+LINE_CHANNEL_SECRET=8a1f0c3e5b7d9f2a4c6e8b0d1f3a5c7e
+LINE_CHANNEL_ACCESS_TOKEN=DemoOnlyNotARealLineToken0123456789abcdefGHIJKLmnopqrSTUVwxyz+/0123456789DemoOnly=
+DATABASE_URL=mysql2://bot:Kintone!2026@127.0.0.1:3306/linebot
+RAILS_ENV=production
+```
+
+<p>② 欄の出力（3 件）：</p>
+
+```bash
+LINE_CHANNEL_SECRET=[SECRET_1]
+LINE_CHANNEL_ACCESS_TOKEN=[SECRET_2]
+DATABASE_URL=mysql2://bot:[URL_PASSWORD_1]@127.0.0.1:3306/linebot
+RAILS_ENV=production
+```
+
+<p>チャネルシークレットは 16 進数なので高エントロピー判定では拾えませんが、変数名が <code>SECRET</code> で終わるため置換されます。接続文字列はパスワードだけが消え、ユーザー名・ホスト・ポート・DB 名は残るので、AI は接続先を読み取れます。<code>.env</code> にどの変数があるかを先に一覧したいときは <a href="/ja/tools/env-file-parser/">.env ファイルパーサー</a>が使えます。</p>
+
+<h2>例 2：Chatwork API の curl と、返答の復元</h2>
+
+<p>Chatwork API のトークンは <code>X-ChatWorkToken</code> ヘッダーで送ります（<a href="https://developer.chatwork.com/reference/authentication">Chatwork API ドキュメント</a>）。</p>
+
+```bash
+$ curl -X POST -H "X-ChatWorkToken: 0f9e8d7c6b5a49382716a5b4c3d2e1f0" \
+    -d "body=デプロイ完了" https://api.chatwork.com/v2/rooms/123456789/messages
+```
+
+<p>ヘッダー名が <code>Token</code> で終わるので、値が <code>[SECRET_1]</code> になります。返答のコードブロックで角括弧が Markdown エスケープされていても、③ 欄では元のトークンに戻ります。</p>
+
+```text
+トークンの前後に空白や改行が入っていないか確認してください。
+curl -X POST -H "X-ChatWorkToken: \[SECRET_1\]" -d "body=テスト" https://api.chatwork.com/v2/rooms/123456789/messages
+```
+
+<p>ステータスには「1 箇所を復元しました（対応表 1 個中 1 個）」と表示されます。</p>
+
+<h2>国内サービスのトークン</h2>
 
 <table>
   <thead>
-    <tr><th>カテゴリ</th><th>例</th><th>見えたまま残る部分</th></tr>
+    <tr><th>対象</th><th>結果</th><th>手がかり</th></tr>
   </thead>
   <tbody>
-    <tr><td>AI プロバイダーキー</td><td><code>sk-ant-…</code>、<code>sk-proj-…</code>、<code>hf_…</code>、DeepSeek・OpenRouter・Moonshot などの <code>sk-</code> キー</td><td>変数名</td></tr>
-    <tr><td>クラウド・SaaS トークン</td><td><code>AKIA…</code> と対になる AWS シークレット、<code>AIza…</code>、<code>ghp_…</code>、<code>github_pat_…</code>、<code>glpat-…</code>、<code>xoxb-…</code>、Slack Webhook URL、<code>sk_live_…</code>、<code>whsec_…</code>、SendGrid、npm、PyPI、Telegram Bot トークン</td><td>変数名。Stripe の公開用 <code>pk_</code> キーは Stripe ルールの対象外</td></tr>
-    <tr><td>JWT・認証ヘッダー</td><td><code>eyJ….eyJ….…</code>、<code>Authorization: Basic …</code>、<code>Bearer …</code></td><td>ヘッダー名と認証方式</td></tr>
-    <tr><td>秘密鍵</td><td><code>-----BEGIN … PRIVATE KEY-----</code> から対応する END 行までの PEM ブロック（RSA、EC、OpenSSH、PGP、暗号化鍵）</td><td>なし。ブロック全体が 1 つのプレースホルダーになります</td></tr>
-    <tr><td>パスワード・接続文字列</td><td><code>postgres://app:…@db</code>、<code>DB_PASSWORD=…</code>、<code>client_secret: …</code>、<code>?api_key=…</code></td><td>ユーザー名、ホスト、ポート、DB 名</td></tr>
-    <tr><td>高エントロピー文字列</td><td>変数名のない 32 文字以上のランダム文字列</td><td>周囲のテキストすべて</td></tr>
+    <tr><td>LINE のチャネルシークレット・チャネルアクセストークン</td><td>置換</td><td>変数名（<code>…_SECRET</code>、<code>…_TOKEN</code>）</td></tr>
+    <tr><td>Chatwork の <code>X-ChatWorkToken</code></td><td>置換</td><td>ヘッダー名</td></tr>
+    <tr><td>Backlog の <code>?apiKey=</code>（<a href="https://developer.nulab.com/ja/docs/backlog/auth/">Backlog API</a>）</td><td>置換</td><td>パラメーター名</td></tr>
+    <tr><td>kintone の <code>X-Cybozu-API-Token</code></td><td>置換</td><td>ヘッダー名</td></tr>
+    <tr><td>kintone の <code>X-Cybozu-Authorization</code>（ログイン名:パスワードの Base64、<a href="https://cybozu.dev/ja/kintone/docs/rest-api/overview/authentication/">cybozu developer network</a>）</td><td>置換されない</td><td>名前がキーワードで終わらず、値も短い</td></tr>
   </tbody>
 </table>
 
-<p>変数名で判定するルールは、名前がキーワードで<em>終わる</em>場合だけ一致します。そのため <code>max_tokens: 1024</code> や <code>token_count=12</code> は置換されません。<code>$&#123;DB_PASS&#125;</code> のような環境変数参照、<code>&lt;your-key&gt;</code> のようなテンプレート、<code>****</code> のような伏せ字、<code>true</code> や <code>null</code> などのリテラルも対象外です。</p>
+<p>海外サービスは形式で検出します。GitHub の <code>ghp_</code> などの接頭辞は <a href="https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/">GitHub の公式ブログ</a>、AWS の <code>AKIA</code>・<code>ASIA</code> は <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html">IAM のドキュメント</a>、Anthropic の <code>sk-ant-</code> は <a href="https://platform.claude.com/docs/en/get-api-key">Anthropic のドキュメント</a>に基づきます。JWT は <a href="https://www.rfc-editor.org/rfc/rfc7519">RFC 7519</a>、Bearer ヘッダーは <a href="https://www.rfc-editor.org/rfc/rfc6750">RFC 6750</a>、PEM 秘密鍵は <a href="https://www.rfc-editor.org/rfc/rfc7468">RFC 7468</a> の形式です。ログに出てきた JWT の有効期限は、<a href="/ja/tools/jwt-decoder/">JWT デコーダー</a>でローカルに確認できます。</p>
 
-<h2>高エントロピー判定の仕組み</h2>
+<p>変数名のない長い文字列は、base64 の文字が 32 文字以上続き、大文字・小文字・数字をすべて含み、シャノンエントロピーが 1 文字あたり 4.2 ビット以上のときだけ置換します。同じ長さのランダムな base64 は平均約 4.56 ビットです。コミット SHA、SHA-256、UUID は 16 進数か単一ケースなので対象外です。</p>
 
-<p>base64 / base64url の文字が 32 文字以上続く部分が候補になります。大文字・小文字・数字をすべて含み、シャノンエントロピーが 1 文字あたり 4.2 ビットに達したものだけを置換します。同じ長さのランダムな base64 は平均で約 4.56 ビットです。</p>
+<h2>gitleaks やログのマスク処理との違い</h2>
 
-<p>「大文字・小文字・数字の混在」という条件が CI ログの読みやすさを守ります。git のコミット SHA、MD5・SHA-256 ダイジェスト、Docker イメージのダイジェスト、UUID はいずれも 16 進数か単一ケースなので該当しません。lockfile の <code>sha512-…</code> 整合性ハッシュ、<code>data:</code> URI、ファイルパス、証明書や公開鍵の本文はもともと公開情報なので、明示的に除外しています。</p>
+<p><a href="https://github.com/gitleaks/gitleaks">gitleaks</a> や <a href="https://github.com/trufflesecurity/trufflehog">TruffleHog</a> は、リポジトリや git 履歴に入ってしまったシークレットを探すツールです。gitleaks の標準設定は 2026 年 9 月時点で 222 ルール（このツールは 26 ルールとエントロピー判定）。結果はレポートとして出るだけで、貼り付け用のテキストは作りません。pre-commit や CI で使うものです。GitHub Actions の <code>::add-mask::</code> は値を <code>*</code> に置き換えます（<a href="https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands">GitHub ドキュメント</a>）。どの値も同じ見た目になり、元にも戻せないので、AI には 2 つのキーが同じかどうかもわかりません。</p>
 
-<p>これは意図的なトレードオフです。変数名が隣にない 32 文字の 16 進トークンは、この判定では拾えません。<code>TWILIO_AUTH_TOKEN=…</code> のように名前が付いていれば、パスワードルールが拾います。</p>
+<p>このツールが担うのは、貼り付ける直前の工程です。値ごとに別の番号を振り、同じ値には同じ番号を使い、返答は元に戻せます。<strong>サンプル読込</strong>を押すと、<code>[OPENAI_KEY_1]</code> が <code>.env</code> とリトライのログ行の両方に出てきます。AI はこれを見て、リトライが設定済みのキーを使ったと判断できます。</p>
 
-<h2>プレースホルダーのルール</h2>
+<h2>制限事項</h2>
 
 <ul>
-  <li>形式は <code>[種別_番号]</code> です（<code>[OPENAI_KEY_1]</code>、<code>[URL_PASSWORD_1]</code>、<code>[SECRET_2]</code>）。種別名によって AI は値を見ずに何の値かを把握でき、「<code>[AWS_ACCESS_KEY_1]</code> をローテーションしてください」といった回答が成り立ちます。</li>
-  <li>同じ値には常に同じプレースホルダーが付きます。20 回出現しても、2 つのルールに一致しても同じです。</li>
-  <li>番号は種別ごとに振られ、元のテキストにすでにあるプレースホルダーは飛ばします。貼り付けた <code>[SECRET_1]</code> が生成されたものと衝突することはありません。</li>
-  <li>マスキング済みのテキストをもう一度処理しても、結果は変わりません。</li>
-  <li>復元では <code>[OPENAI_KEY_1]</code>、<code>&#92;[OPENAI_KEY_1&#92;]</code>、<code>[openai_key_1]</code>、<code>[ OPENAI_KEY_1 ]</code>、インラインコード内のプレースホルダーを受け付けます。角括弧のない <code>OPENAI_KEY_1</code> は環境変数名と区別できないため対象外です。</li>
-  <li>返答に含まれていても対応表にないプレースホルダー（AI が作り出したものなど）はそのまま残し、復元欄の下に一覧表示します。</li>
+  <li>入力の上限は 1,000,000 文字です。超えるとステータスに「入力は N 文字です。上限は 1,000,000 文字です。分割してください。」と表示されます。</li>
+  <li>秘密鍵ルール以外は行末で止まるため、ターミナルで折り返された値は検出できません。元のファイルからコピーしてください。</li>
+  <li>カテゴリを切り替えると再検出され、番号が変わることがあります。復元はマスキング時と同じ設定で行ってください。</li>
+  <li>メールアドレス、氏名、電話番号、IP アドレスなどの個人情報は対象外です。ホスト名は意図的に残しています。</li>
+  <li>キーがまだ有効かどうかは確認しません。確認するにはキーをプロバイダーへ送る必要があるためです。</li>
 </ul>
-
-<h2>対応範囲</h2>
-
-<table>
-  <thead>
-    <tr><th>このツールでは行わないこと</th><th>代わりの方法</th></tr>
-  </thead>
-  <tbody>
-    <tr><td>ファイル・フォルダ・git 履歴の走査</td><td>ローカルで <code>gitleaks git</code> / <code>gitleaks dir</code> または <code>trufflehog</code> を実行</td></tr>
-    <tr><td>個人情報（メール、氏名、電話番号、IP アドレス、ホスト名）</td><td>手作業で編集。接続文字列のホスト名は、AI が設定を読み解けるようあえて残しています</td></tr>
-    <tr><td>誤検出 1 件だけの取り消し</td><td>そのカテゴリをオフにするか、コピー後のテキストを編集</td></tr>
-    <tr><td>キーがまだ有効かどうかの確認</td><td>行いません。確認するにはキーをプロバイダーに送る必要があるためです</td></tr>
-    <tr><td>角括弧が外されたプレースホルダーの復元</td><td>AI にプレースホルダーをそのまま残すよう指示</td></tr>
-  </tbody>
-</table>
-
-<p>入力の上限は 1,000,000 文字です。秘密鍵ルール以外はすべて行末で止まるため、改行で分かれたシークレットは検出されません。</p>
