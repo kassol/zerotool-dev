@@ -106,6 +106,7 @@
         statusEl.className = 'sf-status';
       }
 
+      /* ── engine:start ── */
       /* ── SQL Keywords ── */
       var KEYWORDS = [
         'SELECT','FROM','WHERE','AND','OR','NOT','IN','JOIN','LEFT','RIGHT',
@@ -268,11 +269,18 @@
         var depth = 0;
         var inSelect = false;
         var afterClause = false;
+        var parens = [];
 
         function indent(d) {
           var s = '';
           for (var i = 0; i < d; i++) s += indentStr;
           return s;
+        }
+
+        function lineLevel(line) {
+          var n = 0;
+          while (line.startsWith(indentStr, n * indentStr.length)) n++;
+          return n;
         }
 
         function pushLine() {
@@ -293,8 +301,15 @@
         while (i < tokens.length) {
           var tok = tokens[i];
 
-          /* ── open paren: increase depth ── */
+          /* ── open paren: a subquery starts a deeper block; any other paren (function call,
+                expression, list) stays inline. Every paren is pushed so that its ")" closes
+                the right one and restores the SELECT-list state. ── */
           if (tok.type === 'punct' && tok.value === '(') {
+            if (afterClause && inSelect) {
+              pushLine();
+              curLine = indent(depth + 1);
+            }
+            afterClause = false;
             /* Check if this starts a subquery */
             var nextReal = null;
             for (var ni = i + 1; ni < tokens.length; ni++) {
@@ -302,27 +317,40 @@
             }
             var isSubquery = nextReal && nextReal.type === 'keyword' && CLAUSE_HEADS[nextReal.value];
             if (isSubquery) {
-              curLine += ' (';
+              var openLevel = lineLevel(curLine);
+              curLine += curLine.trim().length > 0 ? ' (' : '(';
               pushLine();
-              depth++;
-              i++;
-              continue;
+              parens.push({ subquery: true, inSelect: inSelect, depth: depth, level: openLevel });
+              depth = openLevel + 1;
+            } else {
+              parens.push({ subquery: false, inSelect: inSelect });
+              curLine += tok.value;
             }
-            curLine += tok.value;
+            inSelect = false;
             i++;
             continue;
           }
 
-          /* ── close paren: decrease depth ── */
+          /* ── close paren ── */
           if (tok.type === 'punct' && tok.value === ')') {
-            if (depth > 0) {
+            var frame = parens.pop();
+            if (frame && frame.subquery) {
               pushLine();
-              depth--;
-              curLine = indent(depth) + ')';
+              depth = frame.depth;
+              curLine = indent(frame.level) + ')';
             } else {
               curLine += ')';
             }
+            if (frame) inSelect = frame.inSelect;
+            afterClause = false;
             i++;
+            continue;
+          }
+
+          /* ── ORDER BY / GROUP BY inside a function call, e.g. OVER (... ORDER BY ...), stays inline ── */
+          if (tok.type === 'keyword' && isOrderOrGroupBy(tokens, i) && parens.length > 0 && !parens[parens.length - 1].subquery) {
+            curLine += ' ' + kwText(tok) + ' ' + kwText(tokens[i + 1]);
+            i += 2;
             continue;
           }
 
@@ -469,6 +497,8 @@
         }
         return parts.join('');
       }
+
+      /* ── engine:end ── */
 
       function getIndent() {
         var v = indentSel.value;

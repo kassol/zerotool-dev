@@ -7,7 +7,7 @@ faqItems:
   - question: "데이터가 서버로 전송됩니까?"
     answer: "아니요. 모든 처리는 브라우저 내에서 완결됩니다. 기밀성이 높은 SQL 쿼리도 안전하게 처리할 수 있습니다."
   - question: "길고 복잡한 쿼리도 정렬할 수 있습니까?"
-    answer: "JOIN과 서브쿼리는 정렬됩니다. CTE(WITH 절) 안의 함수 호출과 CASE 식에는 레이아웃 제한이 있습니다(아래 '제한 사항' 참고)."
+    answer: "JOIN, 서브쿼리, CTE(WITH 절)는 정렬됩니다. CASE 식은 한 줄로 남습니다(아래 '제한 사항' 참고)."
   - question: "정렬 옵션을 커스터마이즈할 수 있습니까?"
     answer: "들여쓰기(공백 2칸·4칸·탭)와 키워드 대문자 변환을 설정할 수 있습니다."
 ---
@@ -66,20 +66,32 @@ WHERE id IN (
 );
 ```
 
-## 제한 사항
+## CTE 예시
 
-- **범용 방언 하나뿐이며 문법 검사를 하지 않습니다.** MySQL, PostgreSQL, SQL Server 모드가 없고, 잘못된 SQL도 오류 없이 정렬합니다.
-- **`CASE`는 한 줄로 남습니다.** `CASE WHEN ... THEN ... END`를 `WHEN`마다 줄바꿈하지 않습니다.
-- **CTE 안의 함수 호출은 레이아웃을 깨뜨립니다.** `WITH recent AS (select user_id, sum(total) as spent from orders ...)`에서 `SUM(total)`의 `)`가 따로 한 줄에 놓이고 들여쓰기가 일찍 끝납니다. SQL 의미는 그대로이고 레이아웃만 어긋납니다.
+`WITH ... AS (...)`의 본문은 서브쿼리처럼 들여씁니다. `SUM(total)` 같은 함수 호출은 한 줄에 남고, `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)` 같은 윈도 함수도 마찬가지입니다.
+
+```sql
+with recent as (select user_id, sum(total) as spent from orders group by user_id) select u.name, r.spent from users u join recent r on r.user_id = u.id order by r.spent desc;
+```
 
 ```sql
 WITH recent AS (
   SELECT
     user_id,
-    SUM(total
-) AS spent
-FROM orders
-...
+    SUM(total) AS spent
+  FROM orders
+  GROUP BY user_id
+)
+SELECT
+  u.name,
+  r.spent
+FROM users u
+JOIN recent r ON r.user_id = u.id
+ORDER BY r.spent DESC;
 ```
 
+## 제한 사항
+
+- **범용 방언 하나뿐이며 문법 검사를 하지 않습니다.** MySQL, PostgreSQL, SQL Server 모드가 없고, 잘못된 SQL도 오류 없이 정렬합니다.
+- **`CASE`는 한 줄로 남습니다.** `CASE WHEN ... THEN ... END`를 `WHEN`마다 줄바꿈하지 않습니다.
 - **최소화하면 주석이 사라지고** 닫는 괄호 뒤 공백도 없어집니다(예: `SELECT COUNT(*)FROM events`).
