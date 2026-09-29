@@ -1,13 +1,13 @@
 ---
 title: "Zero-Width Character Detector: Find Hidden Unicode in AI Output and Code"
-description: "Detect and strip invisible Unicode characters — zero-width spaces, BOM, bidirectional controls, ChatGPT watermark tag characters — from any text. Trojan-Source aware. 100% client-side."
+description: "Detect and strip invisible Unicode characters — zero-width spaces, BOM, bidirectional controls, Unicode tag characters that hide ASCII text — from any text. Trojan-Source aware. 100% client-side."
 pubDate: 2026-05-24
-updatedDate: 2026-05-24
+updatedDate: 2026-09-29
 lang: "en"
-tags: ["unicode", "security", "ai", "watermark", "trojan-source", "text-cleanup", "developer-tools"]
+tags: ["unicode", "security", "ai", "prompt-injection", "trojan-source", "text-cleanup", "developer-tools"]
 ---
 
-A teammate drops a paragraph of ChatGPT-generated changelog notes into your PR description. The English reads fine. The diff looks clean. CI is green. Two weeks later a security report points at one of the bullet points and asks why your release notes contain a 41-character invisible token in the U+E0000 range — the Unicode tag block. Nobody on the team typed it. Nobody on the team can see it in the rendered Markdown. It rode along with the copy-paste from the assistant, survived your editor, your linter, your reviewer's eyes, and your static site generator, and ended up checksummed into the artifact you shipped to customers. The same week, an unrelated audit flags one of your error messages because someone pasted a translated string from a rich-text editor and a U+202E RIGHT-TO-LEFT OVERRIDE came along with it; the string now reorders the visible characters of every error code printed after it on a terminal.
+A teammate pastes a paragraph of changelog notes into your PR description. They got the text from an AI chat that had summarized a third-party web page. The English reads fine. The diff looks clean. CI is green. Two weeks later a security report points at one of the bullet points and asks why your release notes contain a 41-character invisible string in the U+E0000 range — the Unicode tag block. Nobody on the team typed it. Nobody on the team can see it in the rendered Markdown. It rode along with the copy-paste, survived your editor, your linter, your reviewer's eyes, and your static site generator, and ended up checksummed into the artifact you shipped to customers. The same week, an unrelated audit flags one of your error messages because someone pasted a translated string from a rich-text editor and a U+202E RIGHT-TO-LEFT OVERRIDE came along with it; the string now reorders the visible characters of every error code printed after it on a terminal.
 
 [Try the Zero-Width Character Detector →](/tools/zero-width-character-detector/)
 
@@ -23,7 +23,7 @@ The detector groups invisible code points into five categories. Each category ha
 |----------|-------------|----------------|------------------------|
 | Zero-width | U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+2060 WJ, U+FEFF BOM/ZWNBSP, U+3164 Hangul Filler, U+180E MVS, U+2061–U+2064 invisible math | Soft wrapping; Arabic / Indic shaping; emoji ZWJ sequences; file BOM | Identifier collisions, watermarking, parser drift, fingerprinting |
 | Bidirectional | U+200E LRM, U+200F RLM, U+202A–U+202E LRE/RLE/PDF/LRO/RLO, U+2066–U+2069 LRI/RLI/FSI/PDI | Mixed LTR/RTL paragraphs, Arabic/Hebrew/Persian text | Trojan-Source (CVE-2021-42574) — reorders source code visually |
-| Tag characters | U+E0000–U+E007F | Originally reserved for language tagging in plain text (deprecated by RFC 5198 in practice); kept alive by emoji flag sequences | Steganographic channel; suspected ChatGPT and other LLM watermarks |
+| Tag characters | U+E0000–U+E007F | Originally for language tagging in plain text (Unicode now deprecates U+E0001 LANGUAGE TAG and strongly discourages tag-based language tags); used today in emoji subdivision flag sequences | Hidden ASCII text ("ASCII smuggling"): prompt-injection instructions that people cannot see but LLMs can read |
 | Variation selectors | U+FE00–U+FE0F (VS1–VS16), U+E0100–U+E01EF (VS17–VS256) | Select glyph variant for emoji (text vs emoji presentation) and CJK ideograph variants | Accumulates in exports from design tools, breaks string comparison, inflates byte length |
 | Formatting | U+00AD SOFT HYPHEN, U+034F COMBINING GRAPHEME JOINER, U+115F / U+1160 Hangul choseong/jungseong fillers | Suggested hyphenation points, grapheme cluster control | Survives plain-text paste from Word / Docs / Slack; breaks substring search and tokenization |
 
@@ -50,15 +50,17 @@ Most editors patched this within months. VS Code shows a warning bar; rustc emit
 
 The fix on the detection side is mechanical: the entire bidi block is well-defined, and stripping it produces a string whose visible order is the same as its byte order. Run the tool over any inbound text that you cannot author yourself, and the bidi count tells you whether to look harder.
 
-### AI watermarking via tag characters
+### ASCII smuggling via tag characters
 
-The Unicode tag block U+E0000–U+E007F was originally proposed in 1998 for language tagging in plain text. It was deprecated as a general mechanism by [RFC 5198](https://datatracker.ietf.org/doc/html/rfc5198) and survives officially only inside emoji subdivision flag sequences (the regional indicator pattern used for `🏴󠁧󠁢󠁳󠁣󠁴󠁿` Scotland and similar). The rest of the block is unallocated *invisible space*: code points that exist, render to nothing, and do not interact with surrounding text.
+The Unicode tag block U+E0000–U+E007F was designed for language tagging in plain text ([RFC 2482](https://www.rfc-editor.org/rfc/rfc2482), 1999). The [Unicode code chart for the block](https://www.unicode.org/charts/PDF/UE0000.pdf) now marks U+E0001 LANGUAGE TAG as deprecated and says that using tag characters to convey language tags is strongly discouraged. The block survives in emoji subdivision flag sequences (the tag sequence used for `🏴󠁧󠁢󠁳󠁣󠁴󠁿` Scotland and similar). The other tag characters are *invisible space*: assigned code points that render to nothing, and do not interact with surrounding text.
 
 That makes the block a near-perfect steganographic channel. Each ASCII byte can be encoded by adding `U+E0000` to its code point, giving 128 invisible glyphs that map 1:1 to printable ASCII. A 32-byte payload — a UUID, an HMAC, a fingerprint — encodes into 32 invisible tag characters that ride inside any normal sentence.
 
-Through 2024 and 2025, multiple independent reports (notably [Joseph Thacker's analysis](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) and follow-ups from Riley Goodside) documented LLM outputs — including responses attributed to ChatGPT — carrying tag-character sequences indistinguishable from a deliberately embedded watermark. Whether the model added them, a wrapping system prompt did, or an upstream provider injected them post-hoc is sometimes hard to attribute. The mechanism, however, is the same: invisible bytes that survive copy-paste into Markdown, email, Slack, GitHub, and PDF.
+In January 2024 Riley Goodside showed that instructions written in tag characters and hidden inside pasted text could prompt-inject ChatGPT. Johann Rehberger then published [ASCII Smuggler](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/), a tool that encodes and decodes these payloads, and showed that an LLM can also emit tag characters in its answers, so hidden text can flow out of a chat as well as into it. He describes the technique as a way to hide instructions for LLMs and to smuggle data in plain sight, and recommends that LLM applications filter tag characters out of prompts and responses. The payload survives copy-paste into Markdown, email, Slack, GitHub, and PDF.
 
-If you are publishing AI-assisted writing under your own name, or accepting AI-generated code into a repository, you want to know whether tag characters are present before you press publish. The detector flags the entire U+E0000–U+E007F range, decodes any ASCII payload that happens to be encoded by the simple offset scheme, and removes the run with a single mode.
+Nothing public shows that tag characters are an AI watermark. OpenAI has not said that it marks ChatGPT output with tag characters. In April 2025 reports that o3 and o4-mini output contained unusual characters concerned U+202F NARROW NO-BREAK SPACE, not tag characters, and [Rumi, the company that reported them](https://www.rumidocs.com/newsroom/new-chatgpt-models-seem-to-leave-watermarks-on-text), later wrote that OpenAI told it those characters are not a watermark but "a quirk of large-scale reinforcement learning". No detector can tell from characters alone whether a text was written by AI.
+
+If you paste web content, documents, or chat output into a prompt, a repository, or a publication, you want to know whether tag characters are present first. The detector flags the entire U+E0000–U+E007F range, labels each tag character with the ASCII letter it stands for, and removes the run with a single mode.
 
 ### Copy-paste contamination
 
@@ -82,7 +84,7 @@ Paste any text. The detection is synchronous and runs on every keystroke. You wi
 
 1. **Total count** — how many invisible code points were found, broken down by category. A clean document reports zero.
 2. **Per-character annotation** — every invisible code point is highlighted inline with its Unicode name and code point. Hover for the full description and the byte offset.
-3. **Codepoint frequency** — which specific code points appear most. A document with 200 instances of U+200B and nothing else is a Word paste; a document with 32 tag characters in a contiguous run is probably a watermark.
+3. **Codepoint frequency** — which specific code points appear most. A document with 200 instances of U+200B and nothing else is a Word paste; a document with 32 tag characters in a contiguous run is probably hidden ASCII text.
 4. **Cleaned output** — the same text with the selected category removed, ready to copy.
 
 The strip mode selector has four positions, matching the four most common cleanup intents:
@@ -90,7 +92,7 @@ The strip mode selector has four positions, matching the four most common cleanu
 - **All** — remove every invisible code point regardless of category. Use this when the source is plain text and there is no legitimate reason for any of these characters to be present. Most code, configuration files, JSON, YAML, and log lines fall in this bucket.
 - **Zero-width only** — strip ZWSP, ZWNJ, ZWJ, WJ, BOM, Hangul filler, MVS, and invisible math. Preserve bidi controls (because RTL text may legitimately need them) and variation selectors (because emoji presentation depends on them). Use this when cleaning mixed-script writing where you want layout intent preserved.
 - **Bidi only** — strip the bidirectional block exclusively. Use this for source code, configuration files, and anywhere the visible order must match the byte order, while keeping legitimate ZWJ sequences inside emoji or Devanagari intact.
-- **Tag only** — strip the U+E0000–U+E007F range. Use this for AI-generated text where the only suspicious category is the watermark surface. Preserves everything else.
+- **Tag only** — strip the U+E0000–U+E007F range. Use this for pasted web or chat text where the only suspicious category is hidden tag text. Preserves everything else.
 - **Variation only** — strip U+FE00–U+FE0F and U+E0100–U+E01EF. Useful when exporting from design tools (Figma, Sketch, Illustrator) inserts emoji variation selectors into copy that should be plain glyphs.
 
 Selecting a mode updates the cleaned output in place. Copy with the button, or download as `.txt` for binary-clean transport.
@@ -206,7 +208,7 @@ Five edges to keep in mind when running invisible-character cleanup at scale:
 
 **Soft hyphens are normal in rich text.** U+00AD is the recommended way to suggest hyphenation points to a rendering engine. A typeset PDF or an EPUB book may contain hundreds of them legitimately. Strip soft hyphens only when the target is plain text — code, configuration, database fields, log lines. Inside a typeset document, removing them degrades line-breaking quality without any security benefit.
 
-**Tag characters are not always watermarks.** The U+E0000–U+E007F range still has one official use: emoji subdivision flag sequences. The Welsh flag `🏴󠁧󠁢󠁷󠁬󠁳󠁿` is composed of the black flag (U+1F3F4), the tag-encoded ISO subdivision code `gbwls`, and a CANCEL TAG (U+E007F) terminator. Stripping the entire tag block deletes those flags. Wikipedia and some Unicode demonstrations also still use tag characters as part of historical examples. Inspect the run before you classify it: contiguous tag characters between a flag base and U+E007F are flags; a free-floating cluster inside ordinary prose is the watermark surface.
+**Tag characters are not always hidden text.** The U+E0000–U+E007F range still has one official use: emoji subdivision flag sequences. The Welsh flag `🏴󠁧󠁢󠁷󠁬󠁳󠁿` is composed of the black flag (U+1F3F4), the tag-encoded ISO subdivision code `gbwls`, and a CANCEL TAG (U+E007F) terminator. Stripping the entire tag block deletes those flags. Wikipedia and some Unicode demonstrations also still use tag characters as part of historical examples. Inspect the run before you classify it: contiguous tag characters between a flag base and U+E007F are flags; a free-floating cluster inside ordinary prose is hidden text.
 
 **Client-side cleanup does not fix upstream.** If a CMS, a translation memory, or an LLM API is the source of the invisible characters, stripping them in the browser only cleans the copy you happen to be holding. The next copy from the same source has the same problem. Treat the detector as a microscope, not a filter — use it to confirm a hypothesis about the source, then put the actual strip step at the boundary you control (a webhook, a CI step, a pre-commit hook, a server-side normalisation routine using one of the implementations above).
 
@@ -238,5 +240,6 @@ External:
 - [Trojan Source: Invisible Vulnerabilities](https://trojansource.codes/trojan-source.pdf) — the Boucher & Anderson paper describing CVE-2021-42574 and CVE-2021-42694, with attack templates and mitigation guidance.
 - [Unicode Technical Report 9 — Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) — the canonical specification for the bidi controls, including the embedding and isolate operators that Trojan-Source exploits.
 - [Unicode Technical Report 36 — Unicode Security Considerations](https://www.unicode.org/reports/tr36/) — the standard's own threat model for invisible characters, confusables, and identifier spoofing.
-- [Joseph Thacker — Hiding and Finding Text with Unicode Tags](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) — practical walkthrough of encoding ASCII payloads in the tag block, with examples drawn from LLM outputs.
-- [RFC 5198 — Unicode Format for Network Interchange](https://datatracker.ietf.org/doc/html/rfc5198) — the IETF guidance that effectively deprecated U+E0001 LANGUAGE TAG and the rest of the tag block for general text, leaving the block as the unallocated invisible space attackers and watermarkers now use.
+- [Johann Rehberger — ASCII Smuggler Tool: Crafting Invisible Text and Decoding Hidden Codes](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) — how tag characters hide instructions for LLMs, with an encoder/decoder and a demo of an LLM that emits hidden text.
+- [Unicode code chart: Tags (U+E0000–U+E007F)](https://www.unicode.org/charts/PDF/UE0000.pdf) — the block's character list, including the deprecation note on U+E0001 LANGUAGE TAG.
+- [RFC 2482 — Language Tagging in Unicode Plain Text](https://www.rfc-editor.org/rfc/rfc2482) — the original proposal for using tag characters as language tags.

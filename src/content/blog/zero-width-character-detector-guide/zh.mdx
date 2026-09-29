@@ -1,14 +1,14 @@
 ---
 title: "零宽字符检测器：识别 AI 输出和代码中隐藏的 Unicode"
-description: "从任意文本中检测并清除不可见的 Unicode 字符——零宽空格、BOM、双向控制符、ChatGPT 水印 tag 字符。具备 Trojan-Source 防护意识，100% 客户端运行。"
+description: "从任意文本中检测并清除不可见的 Unicode 字符——零宽空格、BOM、双向控制符、可藏入 ASCII 文本的 Unicode tag 字符。具备 Trojan-Source 防护意识，100% 客户端运行。"
 pubDate: 2026-05-24
-updatedDate: 2026-05-24
+updatedDate: 2026-09-29
 lang: "zh"
 sourceTitle: "Zero-Width Character Detector: Find Hidden Unicode in AI Output and Code"
-tags: ["unicode", "security", "ai", "watermark", "trojan-source", "text-cleanup", "developer-tools"]
+tags: ["unicode", "security", "ai", "prompt-injection", "trojan-source", "text-cleanup", "developer-tools"]
 ---
 
-队友把一段 ChatGPT 生成的 changelog 文本贴进了你的 PR 描述里。英文读起来没问题，diff 看着干净，CI 全绿。两周后一份安全报告指着其中一条 bullet 问你：为什么发布说明里包含一段 41 个字符、位于 U+E0000 区段——也就是 Unicode tag 块——的不可见 token？团队里没人输入过这串字符，团队里也没人能在渲染后的 Markdown 中看到它。它跟着复制粘贴从助手那边一路混进来，穿过了你的编辑器、linter、reviewer 的眼睛，再穿过你的静态站点生成器，最终被打进哈希、签进交付给客户的产物。同一周，另一次毫不相关的审计又卡住了你的一条错误信息——有人从富文本编辑器粘了一段翻译过的字符串，U+202E RIGHT-TO-LEFT OVERRIDE 跟着进来了；从那条信息之后，每一条打印到终端的错误码都被这个字符在视觉上反向重排。
+队友把一段 changelog 文本贴进了你的 PR 描述里，这段文字来自一次让 AI 总结第三方网页的对话。英文读起来没问题，diff 看着干净，CI 全绿。两周后一份安全报告指着其中一条 bullet 问你：为什么发布说明里包含一段 41 个字符、位于 U+E0000 区段——也就是 Unicode tag 块——的不可见字符串？团队里没人输入过这串字符，团队里也没人能在渲染后的 Markdown 中看到它。它跟着复制粘贴一路混进来，穿过了你的编辑器、linter、reviewer 的眼睛，再穿过你的静态站点生成器，最终被打进哈希、签进交付给客户的产物。同一周，另一次毫不相关的审计又卡住了你的一条错误信息——有人从富文本编辑器粘了一段翻译过的字符串，U+202E RIGHT-TO-LEFT OVERRIDE 跟着进来了；从那条信息之后，每一条打印到终端的错误码都被这个字符在视觉上反向重排。
 
 [试用 Zero-Width Character Detector →](/zh/tools/zero-width-character-detector/)
 
@@ -24,7 +24,7 @@ Unicode 标准有意定义了一类字符：它们渲染时宽度为零，或者
 |------|------|----------|------------------|
 | 零宽字符（Zero-width） | U+200B ZWSP、U+200C ZWNJ、U+200D ZWJ、U+2060 WJ、U+FEFF BOM/ZWNBSP、U+3164 Hangul Filler、U+180E MVS、U+2061–U+2064 不可见数学符号 | 软换行；阿拉伯文／印度系文字塑形；emoji ZWJ 序列；文件 BOM | 标识符冲突、加水印、解析器漂移、指纹追踪 |
 | 双向控制符（Bidirectional） | U+200E LRM、U+200F RLM、U+202A–U+202E LRE/RLE/PDF/LRO/RLO、U+2066–U+2069 LRI/RLI/FSI/PDI | 混合 LTR/RTL 段落、阿拉伯文／希伯来文／波斯文 | Trojan-Source（CVE-2021-42574）——在视觉上重排源代码 |
-| Tag 字符 | U+E0000–U+E007F | 最初保留用于纯文本中的语言标记（实际已被 RFC 5198 废弃）；目前仅靠 emoji 行政区旗序列存活 | 隐写信道；被怀疑承载 ChatGPT 以及其它 LLM 的水印 |
+| Tag 字符 | U+E0000–U+E007F | 最初用于纯文本中的语言标记（Unicode 现已废弃 U+E0001 LANGUAGE TAG，并强烈不建议用 tag 字符表示语言标记）；目前用于 emoji 行政区旗序列 | 藏入 ASCII 文本（ASCII smuggling）：人看不见、LLM 却能读到的提示注入指令 |
 | 变体选择符（Variation selectors） | U+FE00–U+FE0F（VS1–VS16）、U+E0100–U+E01EF（VS17–VS256） | 选择 emoji 字形变体（文本式 vs emoji 式）以及中日韩表意文字变体 | 从设计工具导出时不断累积，破坏字符串比较，撑大字节长度 |
 | 格式控制（Formatting） | U+00AD SOFT HYPHEN、U+034F COMBINING GRAPHEME JOINER、U+115F / U+1160 韩文初／中声填充符 | 建议的连字符断点、字位簇控制 | 从 Word／Docs／Slack 纯文本粘贴时一路存活；破坏子串搜索和分词 |
 
@@ -51,15 +51,17 @@ if (isAdmin) {
 
 检测侧的修复非常机械：整个 bidi 块定义明确，剥掉之后字符串的可见顺序就等于字节顺序。把工具跑在任何你自己并未撰写的输入文本上，bidi 计数会告诉你是否需要再仔细看一眼。
 
-### 通过 tag 字符实施 AI 水印
+### 通过 tag 字符夹带 ASCII 文本
 
-Unicode tag 块 U+E0000–U+E007F 最初在 1998 年被提议用于纯文本中的语言标记。[RFC 5198](https://datatracker.ietf.org/doc/html/rfc5198) 实质上废弃了它作为通用机制的地位，如今官方只在 emoji 行政区旗序列中保留它（用于 `🏴󠁧󠁢󠁳󠁣󠁴󠁿` 苏格兰旗及类似旗帜的 regional indicator 模式）。该块的其余部分是未分配的*不可见空间*：码点存在、不渲染任何东西、与周围字符也不发生交互。
+Unicode tag 块 U+E0000–U+E007F 原本为纯文本中的语言标记而设计（[RFC 2482](https://www.rfc-editor.org/rfc/rfc2482)，1999 年）。[该区段的 Unicode 码表](https://www.unicode.org/charts/PDF/UE0000.pdf)如今把 U+E0001 LANGUAGE TAG 标为已废弃，并写明强烈不建议用 tag 字符表示语言标记。它目前用于 emoji 行政区旗序列（`🏴󠁧󠁢󠁳󠁣󠁴󠁿` 苏格兰旗等旗帜使用的 tag 序列）。其余 tag 字符是*不可见空间*：已分配的码点，不渲染任何东西，与周围字符也不发生交互。
 
 这让整个块几乎成为一个完美的隐写信道。每个 ASCII 字节都可以通过把码点加上 `U+E0000` 来编码，得到 128 个一对一映射到可打印 ASCII 的不可见字形。32 字节的负载（UUID、HMAC、指纹）只需 32 个不可见 tag 字符就能编码完毕，藏进任何一句普通文本里。
 
-整个 2024 到 2025 年间，多份独立报告（尤其是 [Joseph Thacker 的分析](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) 以及 Riley Goodside 的后续追踪）记录了 LLM 输出——包括据称来自 ChatGPT 的响应——携带 tag 字符序列，与刻意嵌入的水印在形态上无法区分。这些字符究竟是模型自己加上的、外层 system prompt 加的、还是上游服务商在事后注入的，往往难以归责。但机制本身始终一样：能在复制粘贴穿越 Markdown、邮件、Slack、GitHub、PDF 后仍然存活的不可见字节。
+2024 年 1 月，Riley Goodside 演示了用 tag 字符写成、藏在粘贴文本里的指令能对 ChatGPT 做提示注入。随后 Johann Rehberger 发布了 [ASCII Smuggler](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/)，用来编码和解码这类负载，并演示了 LLM 也能在回答里输出 tag 字符，隐藏文本既能流进对话，也能流出对话。他把这种手法描述为给 LLM 藏指令、在众目睽睽下夹带数据的方式，并建议 LLM 应用在提示和响应两端过滤 tag 字符。这类负载能在复制粘贴穿越 Markdown、邮件、Slack、GitHub、PDF 后仍然存活。
 
-如果你打算以自己的名义发表 AI 辅助写作，或者把 AI 生成的代码合进仓库，那你会希望在按下发布按钮之前知道里头有没有 tag 字符。本检测器会标记整个 U+E0000–U+E007F 范围，对那些恰好按简单偏移方案编码的 ASCII 负载进行解码，并提供一个独立模式直接移除该区段。
+没有公开资料表明 tag 字符是 AI 水印。OpenAI 没有公开说过用 tag 字符标记 ChatGPT 的输出。2025 年 4 月有报告称 o3 和 o4-mini 的输出含有特殊字符，涉及的是 U+202F NARROW NO-BREAK SPACE，并非 tag 字符；报告方 [Rumi](https://www.rumidocs.com/newsroom/new-chatgpt-models-seem-to-leave-watermarks-on-text) 随后写明，OpenAI 告诉他们这些字符不是水印，而是「a quirk of large-scale reinforcement learning」（大规模强化学习的副产物）。任何检测器都无法只凭字符判断一段文本是否由 AI 写成。
+
+如果你要把网页内容、文档或对话输出贴进提示、仓库或发布物，你会希望先知道里头有没有 tag 字符。本检测器会标记整个 U+E0000–U+E007F 范围，给每个 tag 字符标出它对应的 ASCII 字母，并提供一个独立模式直接移除该区段。
 
 ### 复制粘贴污染
 
@@ -83,7 +85,7 @@ Polyfill.io 在 2024 年的供应链事件，以及更早几起 npm 抢注（typ
 
 1. **总计** —— 检测到多少个不可见码点，按类别拆分。干净的文档应当为零。
 2. **逐字符注释** —— 每个不可见码点会被内联高亮，附上 Unicode 名称和码点。鼠标悬停可以看到完整描述与字节偏移。
-3. **码点频次** —— 哪些具体码点出现得最多。一份文档有 200 个 U+200B、别的什么都没有，多半是从 Word 粘过来的；有 32 个 tag 字符聚成连续一段，大概率是个水印。
+3. **码点频次** —— 哪些具体码点出现得最多。一份文档有 200 个 U+200B、别的什么都没有，多半是从 Word 粘过来的；有 32 个 tag 字符聚成连续一段，大概率是藏起来的 ASCII 文本。
 4. **清理后的输出** —— 移除所选类别后的同一段文本，可直接复制。
 
 清除模式选择器有四个挡位，对应四种最常见的清理意图：
@@ -91,7 +93,7 @@ Polyfill.io 在 2024 年的供应链事件，以及更早几起 npm 抢注（typ
 - **All** —— 移除所有类别的不可见码点，不分类型。当来源就是纯文本、没有任何理由出现这些字符时使用。大部分代码、配置文件、JSON、YAML、日志行都属于这一档。
 - **Zero-width only** —— 仅清除 ZWSP、ZWNJ、ZWJ、WJ、BOM、Hangul filler、MVS、不可见数学符号。保留 bidi 控制符（因为 RTL 文本可能确实需要它们）和变体选择符（因为 emoji 呈现形式依赖它们）。清理那些你希望保留排版意图的混合脚本文本时使用。
 - **Bidi only** —— 仅清除双向控制块。用于源代码、配置文件，以及任何要求可见顺序必须等同于字节顺序的地方，同时保留 emoji 或天城文里合法的 ZWJ 序列。
-- **Tag only** —— 仅清除 U+E0000–U+E007F 范围。用于 AI 生成文本，且唯一可疑类别就是水印面时。其他一切保留不动。
+- **Tag only** —— 仅清除 U+E0000–U+E007F 范围。用于从网页或对话复制来的文本，且唯一可疑类别就是隐藏的 tag 文本时。其他一切保留不动。
 - **Variation only** —— 仅清除 U+FE00–U+FE0F 和 U+E0100–U+E01EF。当设计工具（Figma、Sketch、Illustrator）导出文案时夹带了 emoji 变体选择符、而你只想要纯字形时很有用。
 
 选定一种模式后，清理结果会原地刷新。点击按钮复制，或导出为 `.txt` 用于二进制干净的传输。
@@ -207,7 +209,7 @@ perl -CSDA -i -pe '
 
 **软连字符在富文本里很正常。** U+00AD 是建议渲染引擎换行点的标准方式。一份排过版的 PDF 或 EPUB 书可能合法地含有几百个。只在目标是纯文本（代码、配置、数据库字段、日志行）时才剥离软连字符。在已排版文档内部移除它们，只会降低换行质量，没有任何安全收益。
 
-**tag 字符并不总是水印。** U+E0000–U+E007F 范围目前还有一个官方用途：emoji 行政区旗序列。威尔士旗 `🏴󠁧󠁢󠁷󠁬󠁳󠁿` 由黑旗（U+1F3F4）、tag 编码的 ISO 行政区代码 `gbwls`、以及一个 CANCEL TAG（U+E007F）终结符组成。把整个 tag 块剥掉就会把这些旗删掉。维基百科和部分 Unicode 演示也仍然把 tag 字符作为历史样例使用。分类前先看一眼连续段：旗帜基底与 U+E007F 之间的一段连续 tag 字符是旗；漂浮在普通行文里的一团才是水印面。
+**tag 字符并不总是隐藏文本。** U+E0000–U+E007F 范围目前还有一个官方用途：emoji 行政区旗序列。威尔士旗 `🏴󠁧󠁢󠁷󠁬󠁳󠁿` 由黑旗（U+1F3F4）、tag 编码的 ISO 行政区代码 `gbwls`、以及一个 CANCEL TAG（U+E007F）终结符组成。把整个 tag 块剥掉就会把这些旗删掉。维基百科和部分 Unicode 演示也仍然把 tag 字符作为历史样例使用。分类前先看一眼连续段：旗帜基底与 U+E007F 之间的一段连续 tag 字符是旗；漂浮在普通行文里的一团才是隐藏文本。
 
 **客户端清理不会修复上游。** 如果 CMS、翻译记忆库、或者 LLM API 才是不可见字符的来源，在浏览器里剥掉只清理你手里这一份。下一次从同一个来源复制还是同样的问题。把检测器当显微镜用，不要当过滤器——用它去验证关于来源的假设，然后在你能控制的边界上加真正的剥离步骤（webhook、CI 步骤、pre-commit hook、或服务端用上文那几份实现做的归一化例程）。
 
@@ -239,5 +241,6 @@ ZeroTool 的检测器靠四个其他单一工具都没有同时具备的属性�
 - [Trojan Source: Invisible Vulnerabilities](https://trojansource.codes/trojan-source.pdf) —— Boucher & Anderson 描述 CVE-2021-42574 和 CVE-2021-42694 的论文，附攻击模板与缓解指引。
 - [Unicode Technical Report 9 — Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/) —— 双向控制符的权威规格，包含 Trojan-Source 利用的嵌入与隔离算子。
 - [Unicode Technical Report 36 — Unicode Security Considerations](https://www.unicode.org/reports/tr36/) —— 标准自身对不可见字符、同形字、标识符欺骗的威胁模型。
-- [Joseph Thacker — Hiding and Finding Text with Unicode Tags](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) —— 用 tag 块编码 ASCII 负载的实操走查，例子取自 LLM 输出。
-- [RFC 5198 — Unicode Format for Network Interchange](https://datatracker.ietf.org/doc/html/rfc5198) —— IETF 的指引，事实上废弃了 U+E0001 LANGUAGE TAG 及 tag 块在通用文本中的使用，把整个块留作攻击者与水印者如今利用的未分配不可见空间。
+- [Johann Rehberger — ASCII Smuggler Tool: Crafting Invisible Text and Decoding Hidden Codes](https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/) —— tag 字符如何给 LLM 藏指令，附编码／解码工具和 LLM 输出隐藏文本的演示。
+- [Unicode 码表：Tags（U+E0000–U+E007F）](https://www.unicode.org/charts/PDF/UE0000.pdf) —— 该区段的字符列表，含 U+E0001 LANGUAGE TAG 的废弃说明。
+- [RFC 2482 — Language Tagging in Unicode Plain Text](https://www.rfc-editor.org/rfc/rfc2482) —— 最初提出用 tag 字符做语言标记的文档。
