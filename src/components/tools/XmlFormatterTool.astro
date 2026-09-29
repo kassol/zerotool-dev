@@ -106,6 +106,7 @@
         return doc;
       }
 
+      /* ── engine:start ── */
       /* ── Escape XML special chars ── */
       function escapeXml(str) {
         return str
@@ -116,9 +117,54 @@
           .replace(/'/g, '&apos;');
       }
 
+      /* ── Prolog text that the DOM does not keep ──
+         DOMParser has no node for the XML declaration, and its DocumentType node has no
+         internal subset, so both are copied verbatim from the (well-formed) source. */
+      function scanProlog(src) {
+        var declaration = '';
+        var doctype = '';
+        var pos = 0;
+        var m = /^<\?xml\s[\s\S]*?\?>/.exec(src);
+        if (m) { declaration = m[0]; pos = m[0].length; }
+
+        function skipPast(marker, from) {
+          var end = src.indexOf(marker, from);
+          return end === -1 ? src.length : end + marker.length;
+        }
+
+        while (pos < src.length) {
+          var ch = src[pos];
+          if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') { pos++; continue; }
+          if (src.startsWith('<!--', pos)) { pos = skipPast('-->', pos + 4); continue; }
+          if (src.startsWith('<?', pos)) { pos = skipPast('?>', pos + 2); continue; }
+          if (!src.startsWith('<!DOCTYPE', pos)) break;
+
+          var i = pos + 9;
+          var depth = 0;
+          while (i < src.length) {
+            var c = src[i];
+            if (c === '"' || c === "'") { i = skipPast(c, i + 1); continue; }
+            if (depth > 0 && src.startsWith('<!--', i)) { i = skipPast('-->', i + 4); continue; }
+            if (depth > 0 && src.startsWith('<?', i)) { i = skipPast('?>', i + 2); continue; }
+            if (c === '[') depth++;
+            else if (c === ']') depth--;
+            else if (c === '>' && depth === 0) { i++; break; }
+            i++;
+          }
+          doctype = src.slice(pos, i);
+          break;
+        }
+        return { declaration: declaration, doctype: doctype };
+      }
+
+      function piText(node) {
+        return '<?' + node.target + (node.data ? ' ' + node.data : '') + '?>';
+      }
+
       /* ── Pretty-print by walking the DOM tree ── */
-      function prettyPrint(doc, indent) {
+      function prettyPrint(doc, indent, prolog) {
         var lines = [];
+        if (prolog.declaration) lines.push(prolog.declaration);
 
         function serializeNode(node, depth) {
           var pad = '';
@@ -126,7 +172,11 @@
 
           switch (node.nodeType) {
             case 7: /* ProcessingInstruction */
-              lines.push(pad + '<?' + node.target + ' ' + node.data + '?>');
+              lines.push(pad + piText(node));
+              break;
+
+            case 10: /* DocumentType */
+              lines.push(prolog.doctype);
               break;
 
             case 8: /* Comment */
@@ -192,13 +242,18 @@
       }
 
       /* ── Minify by walking the DOM tree ── */
-      function minify(doc) {
+      function minify(doc, prolog) {
         var parts = [];
+        if (prolog.declaration) parts.push(prolog.declaration);
 
         function serializeNode(node) {
           switch (node.nodeType) {
             case 7: /* ProcessingInstruction */
-              parts.push('<?' + node.target + ' ' + node.data + '?>');
+              parts.push(piText(node));
+              break;
+
+            case 10: /* DocumentType */
+              parts.push(prolog.doctype);
               break;
 
             case 8: /* Comment */
@@ -247,6 +302,8 @@
         return parts.join('');
       }
 
+      /* ── engine:end ── */
+
       /* ── Real-time format on input (debounced 300ms) ── */
       var _xfLiveTimer = null;
       inputEl.addEventListener('input', function () {
@@ -257,7 +314,7 @@
           try {
             var doc = parseXml(raw);
             var indent = getIndent();
-            var result = prettyPrint(doc, indent);
+            var result = prettyPrint(doc, indent, scanProlog(raw));
             outputEl.value = result;
             lastValidXmlOutput = result;
             setStatus('Formatted.', false);
@@ -276,7 +333,7 @@
         try {
           var doc = parseXml(raw);
           var indent = getIndent();
-          outputEl.value = prettyPrint(doc, indent);
+          outputEl.value = prettyPrint(doc, indent, scanProlog(raw));
           lastValidXmlOutput = outputEl.value;
           setStatus('Formatted successfully.', false);
           window.trackTool && window.trackTool('xml_formatter', 'format');
@@ -293,7 +350,7 @@
 
         try {
           var doc = parseXml(raw);
-          outputEl.value = minify(doc);
+          outputEl.value = minify(doc, scanProlog(raw));
           lastValidXmlOutput = outputEl.value;
           setStatus('Minified successfully.', false);
           window.trackTool && window.trackTool('xml_formatter', 'minify');
