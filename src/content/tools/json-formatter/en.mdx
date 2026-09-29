@@ -25,9 +25,28 @@ faqItems:
 <p>
   JSON (JavaScript Object Notation) is the most common data interchange format.
   A formatter makes nested structures readable by adding indentation, while a minifier
-  strips whitespace to reduce payload size. Both operations are lossless — the parsed
-  value is identical.
+  strips whitespace to reduce payload size. Both operations keep the
+  parsed value, except for the cases listed under Limits below.
 </p>
 <p>
   This tool runs entirely in your browser. No data ever leaves your machine.
 </p>
+
+## Common Errors and the Messages You Will See
+
+The formatter parses your input with the browser's `JSON.parse`, so the error after "Invalid JSON:" comes from the browser. These are the messages Chrome shows for the most common mistakes; Firefox and Safari word them differently.
+
+| Input | Problem | Message in Chrome | Fix |
+|---|---|---|---|
+| `{"a":1,}` | Trailing comma | `Expected double-quoted property name in JSON at position 7 (line 1 column 8)` | Remove the last comma |
+| `{'a':'b'}` | Single quotes | `Expected property name or '}' in JSON at position 1 (line 1 column 2)` | Use double quotes |
+| `{a: 1}` | Unquoted key | `Expected property name or '}' in JSON at position 1 (line 1 column 2)` | Quote the key |
+| `{"x": undefined}` | `undefined` is not a JSON value | `Unexpected token 'u', ... is not valid JSON` | Use `null` |
+| `{"a":1} // note` | Comment | `Unexpected non-whitespace character after JSON at position 8` | Delete the comment; [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259) has no comment syntax |
+
+## Limits
+
+- **Large integers lose precision.** Numbers become JavaScript doubles, so integers above 2^53 − 1 change: `{"id": 12345678901234567890}` formats as `{"id": 12345678901234567000}`. Keep long IDs as strings.
+- **Duplicate keys collapse.** `{"a":1,"a":2}` becomes `{"a":2}`; the last value wins.
+- **Numbers are rewritten.** `1.0` becomes `1` and `1e3` becomes `1000`.
+- **Indentation is fixed at 2 spaces.**

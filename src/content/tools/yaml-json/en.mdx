@@ -55,5 +55,26 @@ server:
 <p>
   <strong>YAML</strong> (YAML Ain't Markup Language) is a human-friendly data serialization format popular for configuration files (Docker Compose, Kubernetes, Ansible, GitHub Actions).
   <strong>JSON</strong> (JavaScript Object Notation) is the most widely used data interchange format for APIs and web services.
-  Both can represent the same data structures — this tool converts between them losslessly (except for YAML-only features like comments and anchors).
+  Both can represent the same data structures — this tool converts between them. Comments, anchors, and some scalar values change on the way; see "Values That Change Type" below.
 </p>
+
+## Values That Change Type
+
+The tool uses js-yaml 4.1, which follows the [YAML 1.2](https://yaml.org/spec/1.2.2/) core schema plus timestamps. These inputs convert as shown:
+
+| YAML | JSON | Note |
+|---|---|---|
+| `country: NO` | `"NO"` | String. YAML 1.1 parsers such as PyYAML read it as `false` |
+| `enabled: yes` | `"yes"` | Same as above; write `true` for a boolean |
+| `version: 1.10` | `1.1` | Parsed as a number; quote version strings |
+| `mode: 0755` | `755` | A leading zero is not octal in YAML 1.2; write `0o755` |
+| `zip: 01234` | `1234` | The leading zero is lost; quote codes like this |
+| `date: 2026-09-29` | `"2026-09-29T00:00:00.000Z"` | Dates become full UTC timestamps |
+| `empty:` | `null` | A key with no value is null |
+
+## Limits
+
+- **One document per conversion.** Input containing `---` separators fails with `expected a single document in the stream, but found more`.
+- **Duplicate keys are an error** (`duplicated mapping key`), not a silent overwrite.
+- **Comments and anchors are not kept.** Anchors and `<<` merge keys are expanded into plain copies.
+- **JSON → YAML quotes ambiguous strings** such as `'1.10'`, `'yes'`, and `'NO'`, so they stay strings when read back.

@@ -46,3 +46,32 @@ Gadget,"Includes ""turbo"" mode",24.50</code></pre>
   A literal double-quote inside a quoted field is escaped as two consecutive double-quotes (<code>""</code>).
   The first row is always interpreted as column headers.
 </p>
+
+## Edge Cases: What This Converter Does
+
+**Empty fields.** In this CSV, Bob has no email and row 3 has no name:
+
+```csv
+id,name,email
+1,Alice,alice@example.com
+2,Bob,
+3,,charlie@example.com
+```
+
+By default an empty field becomes `""`. Tick **Empty → null** to get `null` instead:
+
+```json
+[
+  { "id": 1, "name": "Alice", "email": "alice@example.com" },
+  { "id": 2, "name": "Bob", "email": null },
+  { "id": 3, "name": null, "email": "charlie@example.com" }
+]
+```
+
+**Type inference.** With **Parse numbers & booleans** ticked (the default), unquoted `true`, `false`, and `null` (any case) become JSON literals and numbers become JSON numbers. Three kinds of values stay strings so that nothing is lost: quoted fields (`"42"`), values with a leading zero (`007`, `0123`), and integers too large for a JavaScript number (above 2^53 − 1), such as long order IDs.
+
+**Header row.** The first row is always the header. A CSV without one needs a header line added before converting. If two columns share a name, the later column overwrites the earlier one in each object, so rename duplicates first. Fields beyond the last header are dropped; missing trailing fields are treated as empty.
+
+**Delimiter.** Only commas are recognized. Convert semicolon- or tab-separated files to commas first.
+
+**JSON → CSV.** The input must be an array of objects. Column names come from the keys of the first object, so keys that appear only in later objects are not exported. Nested objects are not flattened: an object value is written as the text `[object Object]`, so flatten nested data before converting.

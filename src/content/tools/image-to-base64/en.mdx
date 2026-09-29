@@ -38,3 +38,37 @@ faqItems:
   For example, a 100 KB PNG becomes ~133 KB when base64-encoded.
   This is acceptable for small images (icons, logos) but is inefficient for large photos.
 </p>
+
+## Data URI Format
+
+A data URI has the form `data:[<mediatype>][;base64],<data>` ([RFC 2397](https://www.rfc-editor.org/rfc/rfc2397)). The **Base64 String** box holds only the `<data>` part; the **Data URI** box adds the `data:image/png;base64,` prefix, using the MIME type your browser reports for the file (`image/svg+xml` for SVG, `image/webp` for WebP, and so on). This 1×1 PNG is a complete example:
+
+```html
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="1×1 dot">
+```
+
+## Decode Back to a File
+
+Strip the prefix if present, then decode:
+
+```javascript
+// Node.js: Base64 string → file
+const fs = require('fs');
+const base64 = dataUri.replace(/^data:[^,]*,/, ''); // drop the "data:...," prefix
+fs.writeFileSync('output.png', Buffer.from(base64, 'base64'));
+```
+
+```python
+# Python: Base64 string → file
+import base64, re
+from pathlib import Path
+
+b64 = re.sub(r'^data:[^,]*,', '', data_uri)
+Path('output.png').write_bytes(base64.b64decode(b64))
+```
+
+## When Not to Inline an Image
+
+- **Large images.** Base64 output is 4/3 the size of the file: a 5 MB photo becomes about 6.7 MB of text. The tool has no size cap and puts the whole string in the text boxes.
+- **Images reused across pages.** An inlined image is cached only as part of the HTML or CSS file that contains it. A separate image file is downloaded once and reused by every page.
+- **Frequently changing images.** Any change to the image changes the HTML or CSS file, so browsers must download that whole file again.

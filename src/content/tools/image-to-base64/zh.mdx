@@ -38,3 +38,37 @@ faqItems:
   例如，100 KB 的 PNG 编码后约为 133 KB。
   对于图标、Logo 等小图片来说影响可接受，但对于大尺寸照片则效率较低。
 </p>
+
+## Data URI 格式
+
+Data URI 的格式是 `data:[<mediatype>][;base64],<data>`（[RFC 2397](https://www.rfc-editor.org/rfc/rfc2397)）。「Base64 字符串」框只含 `<data>` 部分；「Data URI」框加上了 `data:image/png;base64,` 前缀，其中的 MIME 类型取浏览器识别出的文件类型（SVG 是 `image/svg+xml`，WebP 是 `image/webp`，以此类推）。下面这个 1×1 的 PNG 就是一个完整示例：
+
+```html
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="1×1 dot">
+```
+
+## 解码回文件
+
+有前缀先去掉前缀，再解码：
+
+```javascript
+// Node.js: Base64 string → file
+const fs = require('fs');
+const base64 = dataUri.replace(/^data:[^,]*,/, ''); // drop the "data:...," prefix
+fs.writeFileSync('output.png', Buffer.from(base64, 'base64'));
+```
+
+```python
+# Python: Base64 string → file
+import base64, re
+from pathlib import Path
+
+b64 = re.sub(r'^data:[^,]*,', '', data_uri)
+Path('output.png').write_bytes(base64.b64decode(b64))
+```
+
+## 哪些情况不适合内嵌
+
+- **大图片。** Base64 结果是原文件的 4/3 大小：5 MB 的照片会变成约 6.7 MB 的文本。本工具不限制文件大小，会把完整字符串放进文本框。
+- **多个页面复用的图片。** 内嵌的图片只能随所在的 HTML 或 CSS 文件一起缓存；单独的图片文件下载一次，所有页面都能复用。
+- **经常改动的图片。** 图片一改，所在的 HTML 或 CSS 文件就变了，浏览器要重新下载整个文件。

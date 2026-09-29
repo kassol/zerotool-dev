@@ -21,3 +21,38 @@ faqItems:
 
 <h2>TOML의 활용 사례</h2>
 <p>Rust 프로젝트 설정(Cargo.toml), Python 패키지 설정(pyproject.toml), 정적 사이트 생성기 설정(Hugo, Zola) 등에서 널리 사용됩니다. 기존 JSON 설정을 TOML로 마이그레이션하거나 TOML 내용을 API에 전달할 때 변환이 필요합니다.</p>
+
+## 변환하면서 바뀌는 것
+
+TOML에는 JSON에 없는 타입이 있고, 그 반대도 있습니다. 다음 입력은
+
+```toml
+# build settings
+title = "x"
+created = 2026-09-29T10:00:00Z
+day = 2026-09-29
+ratio = inf
+
+[server]
+port = 8080
+```
+
+이렇게 변환됩니다.
+
+```json
+{
+  "title": "x",
+  "created": "2026-09-29T10:00:00.000Z",
+  "day": "2026-09-29",
+  "ratio": null,
+  "server": {
+    "port": 8080
+  }
+}
+```
+
+- **주석은 사라집니다.** JSON에는 주석이 없습니다.
+- **날짜와 시간은 문자열이 됩니다.** 오프셋이 있는 날짜-시간에는 밀리초(`.000Z`)가 붙습니다. JSON을 다시 TOML로 바꾸면 TOML 날짜가 아니라 따옴표로 감싼 문자열이 됩니다.
+- **`inf`와 `nan`은 `null`이 됩니다.** JSON에는 무한대와 NaN이 없습니다.
+- **2^53 − 1보다 큰 정수는 오류가 납니다.** [TOML 1.0](https://toml.io/en/v1.0.0)은 64비트 정수를 허용하지만, 파서는 반올림하지 않고 `integer value cannot be represented losslessly` 오류로 멈춥니다.
+- **TOML로 변환할 때 JSON의 `null`은 버려집니다.** TOML에는 null이 없어서 `{"a": null}`은 오류 없이 빈 문서가 됩니다. 먼저 null을 바꿔 두세요.

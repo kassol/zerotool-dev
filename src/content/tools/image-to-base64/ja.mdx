@@ -26,3 +26,37 @@ faqItems:
   <li><strong>JSON APIレスポンス</strong>：画像データをJSONに含める</li>
   <li><strong>オフラインアプリ</strong>：外部ファイル参照なしで画像を使用</li>
 </ul>
+
+## データ URI の形式
+
+データ URI は `data:[<mediatype>][;base64],<data>` という形式です（[RFC 2397](https://www.rfc-editor.org/rfc/rfc2397)）。「Base64 文字列」欄には `<data>` の部分だけが入り、「Data URI」欄には `data:image/png;base64,` という接頭辞が付きます。MIME タイプはブラウザが判定したファイルの種類を使います（SVG なら `image/svg+xml`、WebP なら `image/webp`）。次の 1×1 の PNG が完全な例です。
+
+```html
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="1×1 dot">
+```
+
+## ファイルに戻す
+
+接頭辞があれば取り除いてからデコードします。
+
+```javascript
+// Node.js: Base64 string → file
+const fs = require('fs');
+const base64 = dataUri.replace(/^data:[^,]*,/, ''); // drop the "data:...," prefix
+fs.writeFileSync('output.png', Buffer.from(base64, 'base64'));
+```
+
+```python
+# Python: Base64 string → file
+import base64, re
+from pathlib import Path
+
+b64 = re.sub(r'^data:[^,]*,', '', data_uri)
+Path('output.png').write_bytes(base64.b64decode(b64))
+```
+
+## 埋め込みに向かないケース
+
+- **大きな画像。** Base64 の出力は元ファイルの 4/3 のサイズになります。5 MB の写真は約 6.7 MB のテキストです。このツールにサイズ上限はなく、文字列全体をテキスト欄に表示します。
+- **複数ページで使い回す画像。** 埋め込んだ画像は、それを含む HTML や CSS ファイルの一部としてしかキャッシュされません。別ファイルの画像なら 1 回のダウンロードですべてのページが再利用できます。
+- **頻繁に変わる画像。** 画像を変えるたびに HTML や CSS ファイルが変わるため、ブラウザはファイル全体を再ダウンロードします。

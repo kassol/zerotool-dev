@@ -55,5 +55,26 @@ server:
 <p>
   <strong>YAML</strong>（YAML Ain't Markup Language）是一种人类友好的数据序列化格式，广泛用于配置文件（Docker Compose、Kubernetes、Ansible、GitHub Actions）。
   <strong>JSON</strong>（JavaScript Object Notation）是 API 和 Web 服务中最常用的数据交换格式。
-  两者可以表示相同的数据结构——本工具在它们之间无损转换（YAML 独有的注释和锚点除外）。
+  两者可以表示相同的数据结构——本工具在两者之间转换，注释、锚点和部分标量值会在转换中改变，见下文「类型会变的值」。
 </p>
+
+## 类型会变的值
+
+本工具使用 js-yaml 4.1，遵循 [YAML 1.2](https://yaml.org/spec/1.2.2/) core schema，并支持时间戳。下列输入的转换结果如下：
+
+| YAML | JSON | 说明 |
+|---|---|---|
+| `country: NO` | `"NO"` | 字符串。PyYAML 等 YAML 1.1 解析器会读成 `false` |
+| `enabled: yes` | `"yes"` | 同上；布尔值请写 `true` |
+| `version: 1.10` | `1.1` | 按数字解析；版本号请加引号 |
+| `mode: 0755` | `755` | YAML 1.2 里前导 0 不表示八进制；请写 `0o755` |
+| `zip: 01234` | `1234` | 前导 0 丢失；这类编码请加引号 |
+| `date: 2026-09-29` | `"2026-09-29T00:00:00.000Z"` | 日期变成完整的 UTC 时间戳 |
+| `empty:` | `null` | 没有值的键是 null |
+
+## 限制
+
+- **一次只转换一个文档。** 含 `---` 分隔的输入会报错 `expected a single document in the stream, but found more`。
+- **重复的键会报错**（`duplicated mapping key`），不会静默覆盖。
+- **注释和锚点不保留。** 锚点和 `<<` 合并键会展开成普通的副本。
+- **JSON → YAML 时会给有歧义的字符串加引号**，例如 `'1.10'`、`'yes'`、`'NO'`，再读回来仍是字符串。

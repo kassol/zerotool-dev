@@ -26,3 +26,37 @@ faqItems:
   <li><strong>JSON API 응답</strong>: 이미지 데이터를 JSON에 포함</li>
   <li><strong>오프라인 앱</strong>: 외부 파일 참조 없이 이미지를 사용</li>
 </ul>
+
+## 데이터 URI 형식
+
+데이터 URI는 `data:[<mediatype>][;base64],<data>` 형식입니다([RFC 2397](https://www.rfc-editor.org/rfc/rfc2397)). 'Base64 문자열' 칸에는 `<data>` 부분만 들어가고, 'Data URI' 칸에는 `data:image/png;base64,` 접두사가 붙습니다. MIME 타입은 브라우저가 판별한 파일 형식을 씁니다(SVG는 `image/svg+xml`, WebP는 `image/webp`). 아래 1×1 PNG가 완전한 예입니다.
+
+```html
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="1×1 dot">
+```
+
+## 파일로 되돌리기
+
+접두사가 있으면 먼저 떼고 디코딩합니다.
+
+```javascript
+// Node.js: Base64 string → file
+const fs = require('fs');
+const base64 = dataUri.replace(/^data:[^,]*,/, ''); // drop the "data:...," prefix
+fs.writeFileSync('output.png', Buffer.from(base64, 'base64'));
+```
+
+```python
+# Python: Base64 string → file
+import base64, re
+from pathlib import Path
+
+b64 = re.sub(r'^data:[^,]*,', '', data_uri)
+Path('output.png').write_bytes(base64.b64decode(b64))
+```
+
+## 인라인하기에 맞지 않는 경우
+
+- **큰 이미지.** Base64 결과는 원본의 4/3 크기입니다. 5MB 사진은 약 6.7MB의 텍스트가 됩니다. 이 도구는 크기 제한이 없고 문자열 전체를 텍스트 칸에 넣습니다.
+- **여러 페이지에서 재사용하는 이미지.** 인라인 이미지는 그것을 담은 HTML이나 CSS 파일과 함께만 캐시됩니다. 별도 이미지 파일은 한 번 받으면 모든 페이지가 재사용합니다.
+- **자주 바뀌는 이미지.** 이미지를 바꿀 때마다 HTML이나 CSS 파일이 바뀌므로 브라우저가 그 파일 전체를 다시 받아야 합니다.
