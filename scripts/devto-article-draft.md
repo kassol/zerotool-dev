@@ -1,7 +1,7 @@
 ---
 title: "I built 15 browser-based dev tools with Astro — all free, no sign-up"
 published: true
-description: "ZeroTool: JSON formatter, JWT decoder, regex tester, diff checker, and more. Everything runs in your browser. Zero server, zero tracking."
+description: "ZeroTool: JSON formatter, JWT decoder, regex tester, diff checker, and more. Everything runs in your browser. No server step, no sign-up."
 tags: webdev, javascript, tools, opensource
 cover_image: https://zerotool.dev/og.png
 ---
@@ -43,7 +43,7 @@ The entire value proposition is: **your data never leaves the browser tab.**
 - Hashes → `crypto.subtle.digest()`
 - QR codes → canvas rendering via a bundled library
 
-No `fetch()` calls. No analytics pixels on tool pages (Google Analytics only on the homepage, with partytown for non-blocking load).
+No `fetch()` calls with your input. Google Analytics 4 (loaded through Partytown) counts page views and tool use without your input, and AdSense shows ads; tool pages for credentials, keys, and private files load neither.
 
 ## Stack
 
