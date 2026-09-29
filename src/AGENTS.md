@@ -37,7 +37,7 @@ src/
 - 入口 → `components/ToolPage.astro`（取 content 条目、渲染 `ToolLayout`）+ 只 import 本工具的 `components/tools/{Name}Tool.astro`（放进 `tool` slot）；非 EN 页向组件传 `lang` prop
 - 每个工具页的 CSS = 全站 CSS + 共享工具 CSS（`tool-common.css`、`ToolLayout`、`ShareButtons`、`AdUnit`）+ 本工具组件 CSS。组件不能依赖其他工具组件的样式（根 AGENTS.md 全局规范第 11 条）
 - `BaseLayout.astro` → `i18n/utils.t()`（导航 / footer）
-- `components/SEO.astro` → `getCollection('blog')` 列出存在的语言变体，过滤无效 hreflang
+- `components/SEO.astro` → `getCollection('blog')` 列出可收录（非 draft、非 noindex，判定在 `data/blog-index.mjs`）的语言变体生成 hreflang；noindex 页面不输出 hreflang
 - 工具页 → `data/tools.ts` 取元数据，`data/icons.ts` 取 SVG
 
 ## 新增/重命名约束

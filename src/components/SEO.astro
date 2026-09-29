@@ -1,5 +1,6 @@
 ---
 import { getCollection } from 'astro:content';
+import { blogAlternates, isIndexable } from '../data/blog-index.mjs';
 
 interface Props {
   title: string;
@@ -30,18 +31,18 @@ const ogImageUrl = ogImage
   ? new URL(ogImage, siteUrl).toString()
   : new URL('/og-default.png', siteUrl).toString();
 
-// Build a set of existing blog slugs for hreflang existence checks.
-// Exclude drafts: their routes aren't generated, so emitting hreflang for them
-// would advertise URLs that 404.
-const blogEntries = await getCollection('blog', ({ data }) => !data.draft);
-const blogSlugs = new Set(blogEntries.map((e) => e.slug));
+// Blog language versions that hreflang may point to. Drafts have no route;
+// noindex versions exist but must not be offered to search engines.
+const blogEntries = await getCollection('blog', ({ data }) => isIndexable(data));
+const indexableBlogKeys = new Set(blogEntries.map((e) => e.slug));
 ---
 
 {/* Primary Meta */}
 <title>{title}</title>
 <meta name="description" content={description} />
 <link rel="canonical" href={canonical} />
-{noindex && <meta name="robots" content="noindex,nofollow" />}
+{/* follow: links from a noindex page (e.g. a guide to its tool page) still count. */}
+{noindex && <meta name="robots" content="noindex,follow" />}
 <meta name="language" content={lang} />
 
 {/* Open Graph */}
@@ -62,6 +63,9 @@ const blogSlugs = new Set(blogEntries.map((e) => e.slug));
 
 {/* hreflang alternates for i18n */}
 {(() => {
+  // A noindex page is not in the index, so it takes no part in hreflang.
+  if (noindex) return [];
+
   const pathname = Astro.url.pathname;
   const isBlogPost = /^\/(zh|ja|ko)\/blog\/[^/]+/.test(pathname) || /^\/blog\/[^/]+/.test(pathname);
 
@@ -73,20 +77,11 @@ const blogSlugs = new Set(blogEntries.map((e) => e.slug));
       .replace(/^\/blog\//, '')
       .replace(/\/$/, '');
 
-    const langVariants = [
-      { hreflang: 'en', collectionKey: `${baseSlug}/en`, prefix: '' },
-      { hreflang: 'zh', collectionKey: `${baseSlug}/zh`, prefix: '/zh' },
-      { hreflang: 'ja', collectionKey: `${baseSlug}/ja`, prefix: '/ja' },
-      { hreflang: 'ko', collectionKey: `${baseSlug}/ko`, prefix: '/ko' },
-    ];
-
-    const links: any[] = langVariants
-      .filter(({ collectionKey }) => blogSlugs.has(collectionKey))
-      .map(({ hreflang: l, prefix }) =>
-        <link rel="alternate" hreflang={l} href={new URL(`${prefix}/blog/${baseSlug}/`, siteUrl).toString()} />
-      );
-    // x-default always points to EN if it exists
-    if (blogSlugs.has(`${baseSlug}/en`)) {
+    const links: any[] = blogAlternates(baseSlug, indexableBlogKeys).map(({ lang: l, path }) =>
+      <link rel="alternate" hreflang={l} href={new URL(path, siteUrl).toString()} />
+    );
+    // x-default always points to EN if it is indexable
+    if (indexableBlogKeys.has(`${baseSlug}/en`)) {
       links.push(<link rel="alternate" hreflang="x-default" href={new URL(`/blog/${baseSlug}/`, siteUrl).toString()} />);
     }
     return links;

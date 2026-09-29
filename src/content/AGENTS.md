@@ -49,10 +49,22 @@ ogImage: "/og/custom.png"    # 可选，仅在需要覆盖默认图时写；默�
 lang: "en"                   # en/zh/ja/ko，必须与文件名（en.mdx/zh.mdx/...）一致
 tags: ["..."]                # 可选；用于"相关文章"模块
 draft: false                 # 可选；为 true 时不会进入路由生成、hreflang 与语言切换
+noindex: false               # 可选；为 true 时页面照常生成，但不让搜索引擎收录（见下）
 ---
 ```
 
 `pubDate` 与 `updatedDate` 是 `astro.config.mjs` 中 sitemap `serialize()` 提取 `lastmod` 的来源，缺失会回落到当前时间。
+
+### noindex
+
+`noindex` 按语言文件分别设置：只在 `zh.mdx` 写 `noindex: true`，只影响 `/zh/blog/{base-slug}/`，其他语言版本照常收录。设了 `noindex: true` 的页面：
+
+- 页面照常生成，博客列表、相关文章、语言切换照常链接它
+- `<head>` 输出 `<meta name="robots" content="noindex,follow">`：不收录本页，页内链接（如指南指向工具页）照常传递
+- 不进 sitemap（`astro.config.mjs` 的 sitemap `filter`），也不出现在其他语言版本 sitemap 条目的 alternate 链接里
+- 其他语言版本的 hreflang 不再指向它；它自己不输出 hreflang（`src/components/SEO.astro`）
+
+是否收录的判定集中在 `src/data/blog-index.mjs`（`isIndexable`：非 draft 且非 noindex），sitemap 与 hreflang 共用，测试见 `scripts/test-blog-index.mjs`。sitemap 侧用 js-yaml 解析 frontmatter，hreflang 侧用 Content Collection 数据，两边字段含义一致。
 
 ### blog 模块规范
 
@@ -107,8 +119,8 @@ faqItems:                # 可选，结构化 FAQ
 - 下游：
   - `src/pages/blog/[slug].astro` 等 8 个 blog 路由
   - `src/components/ToolPage.astro`（工具页主体，由 `astro.config.mjs` 的 `toolRoutes()` 注入的每工具路由渲染，4 语言）
-  - `src/components/SEO.astro` 用 blog collection 算 hreflang
-  - `astro.config.mjs` sitemap `serialize()` 用 frontmatter 日期
+  - `src/components/SEO.astro` 用 blog collection 算 hreflang（只含可收录的语言版本）
+  - `astro.config.mjs` sitemap `filter()` / `serialize()` 经 `src/data/blog-index.mjs` 用 frontmatter 的 `draft` / `noindex` 与日期
   - `scripts/generate-blog-redirects.mjs` 用文件名生成 redirect
   - `scripts/audit.mjs` 静态校验文件命名 + frontmatter + 多语言齐全
 
@@ -120,3 +132,4 @@ faqItems:                # 可选，结构化 FAQ
 - 2026-09-25 — 博客 OG 图改由 `ArticleLayout` 按文件路径推导（`{dir}/en.mdx` → `/og/blog-{dir}.png`，其他语言 → `/og/blog-{dir}-{lang}.png`，与 `generate-og.mjs` 命名一致）；删除全部博客 frontmatter 的 `ogImage`（72 篇 zh/ja/ko 曾指向 EN 图，35 篇缺失而用 og-default）
 - 2026-09-27 — 相关文章改为按相关度选（排除高频标签、同工具分类加分、按发布时间差补齐）；工具页链接同名 `{slug}-guide` 指南
 - 2026-09-26 — tools collection 的下游从 4 个 `tools/[slug].astro` 改为 `src/components/ToolPage.astro`（工具页路由由 `toolRoutes()` 注入）
+- 2026-09-29 — blog frontmatter `noindex` 写明用法与效果：robots `noindex,follow`，移出 sitemap 与 hreflang
