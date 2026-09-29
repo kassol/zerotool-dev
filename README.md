@@ -137,7 +137,7 @@
 | GraphQL Formatter | [/tools/graphql-formatter](https://zerotool.dev/tools/graphql-formatter) |
 | jq Playground | [/tools/jq-playground](https://zerotool.dev/tools/jq-playground) |
 | JavaScript Keycode Explorer | [/tools/keycode-explorer](https://zerotool.dev/tools/keycode-explorer) |
-| Zero-Width Character Detector | [/tools/zero-width-character-detector](https://zerotool.dev/tools/zero-width-character-detector) |
+| Invisible Character Detector | [/tools/zero-width-character-detector](https://zerotool.dev/tools/zero-width-character-detector) |
 | DNS Lookup | [/tools/dns-lookup](https://zerotool.dev/tools/dns-lookup) |
 | OpenAPI to TypeScript Generator | [/tools/openapi-to-typescript](https://zerotool.dev/tools/openapi-to-typescript) |
 | CSS Clamp Calculator | [/tools/css-clamp-calculator](https://zerotool.dev/tools/css-clamp-calculator) |
