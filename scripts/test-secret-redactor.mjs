@@ -9,7 +9,9 @@
 // Covers: every rule category positive + known false-positive negatives, same value →
 // same placeholder, overlap resolution, pre-existing placeholder skipping, idempotent
 // re-run, restore round-trip and tolerated variations, missing / invented placeholders,
-// and a 1,000,000-character timing run.
+// and a 1,000,000-character timing run. Local-service rules (Feishu / Lark webhook,
+// WeCom webhook key, kintone X-Cybozu-Authorization, Kakao KakaoAK) have positives and
+// look-alike negatives (doc placeholders, env references, other hosts and paths).
 //
 // Token-shaped fixtures are assembled by concatenation so no literal secret-shaped
 // string sits in the repository (push protection, repo scanners).
@@ -54,6 +56,11 @@ const run = (text, enabled = ALL) => E.detect(text, enabled);
 const B32 = 'Q9vXmT2kLp8RwZ4nYb7Hc1Js5Df3Ga6E';
 const B36 = 'Ab3De6Gh9Jk2Mn5Pq8St1Vw4Yz7Bc0Ef3Hi6';
 const B40 = B32 + 'u0KiWoPq';
+// Local-service credentials: obviously fake values in the documented shapes.
+const FEISHU_TOKEN = '00000000-0000-0000-0000-00000EXAMPLE';
+const WECOM_KEY = '00000000-EXAM-PLE0-0000-000000000000';
+const KINTONE_AUTH = Buffer.from('EXAMPLE:EXAMPLE').toString('base64'); // RVhBTVBMRTpFWEFNUExF
+const KAKAO_KEY = '0000EXAMPLE0000EXAMPLE0000000000';
 
 // ---------- 1. every rule: positive ----------
 // [rule id, text, expected redacted value]
@@ -85,6 +92,10 @@ const positives = [
   ['bearer-token', 'Authorization: Bearer ' + 'opaque.token-value_12345', 'opaque.token-value_12345'],
   ['url-credential', 'DATABASE_URL=postgres://app:' + 'hunter2x' + '@db:5432/app', 'hunter2x'],
   ['keyed-secret', 'db_password: "' + 'correcthorse' + '"', 'correcthorse'],
+  ['feishu-webhook', "curl -X POST https://open.feishu.cn/open-apis/bot/v2/hook/" + FEISHU_TOKEN + " -d '{}'", FEISHU_TOKEN],
+  ['wecom-webhook-key', "curl 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=" + WECOM_KEY + "'", WECOM_KEY],
+  ['kintone-password-auth', 'curl -H "X-Cybozu-Authorization: ' + KINTONE_AUTH + '" https://example.cybozu.com/k/v1/record.json', KINTONE_AUTH],
+  ['kakao-rest-api-key', 'curl -H "Authorization: KakaoAK ' + KAKAO_KEY + '" https://dapi.kakao.com/v2/local/search/address.json', KAKAO_KEY],
 ];
 for (const [id, text, value] of positives) {
   const r = run(text);
@@ -121,6 +132,44 @@ const negatives = [
   ['placeholder-looking text', 'see [SECRET_1] and [OPENAI_KEY_2]'],
 ];
 for (const [name, text] of negatives) {
+  const r = run(text);
+  equal('negative ' + name, r.entries.length, 0);
+}
+
+// ---------- 2b. local-service credentials: variants and look-alikes ----------
+{
+  const lark = run('POST https://open.larksuite.com/open-apis/bot/v2/hook/' + FEISHU_TOKEN);
+  check('lark webhook host', lark.entries.length === 1 && lark.entries[0].rule === 'feishu-webhook', JSON.stringify(lark.entries));
+  equal('feishu keeps the URL, masks the token', run('https://open.feishu.cn/open-apis/bot/v2/hook/' + FEISHU_TOKEN).output, 'https://open.feishu.cn/open-apis/bot/v2/hook/[FEISHU_HOOK_TOKEN_1]');
+  const upload = run('POST https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media?type=file&key=' + WECOM_KEY);
+  check('wecom upload_media, key after another param', upload.entries.length === 1 && upload.entries[0].value === WECOM_KEY, JSON.stringify(upload.entries));
+  equal('wecom keeps the URL, masks the key', run('https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=' + WECOM_KEY).output, 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=[WECOM_WEBHOOK_KEY_1]');
+  const json = run('{"X-Cybozu-Authorization": "' + KINTONE_AUTH + '"}');
+  check('kintone header in JSON', json.entries.length === 1 && json.entries[0].rule === 'kintone-password-auth', JSON.stringify(json.entries));
+  const kakaoLower = run("headers = {'authorization': 'KakaoAK " + KAKAO_KEY + "'}");
+  check('KakaoAK in a Python dict', kakaoLower.entries.length === 1 && kakaoLower.entries[0].rule === 'kakao-rest-api-key', JSON.stringify(kakaoLower.entries));
+  equal('KakaoAK keeps the scheme', run('Authorization: KakaoAK ' + KAKAO_KEY).output, 'Authorization: KakaoAK [KAKAO_API_KEY_1]');
+}
+const localNegatives = [
+  ['feishu doc placeholder ****', 'https://open.feishu.cn/open-apis/bot/v2/hook/****'],
+  ['feishu doc placeholder xxxx', 'https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxxxxxxxxxxx'],
+  ['feishu other open-apis path', 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id'],
+  ['feishu hook on another host', 'https://example.com/open-apis/bot/v2/hook/' + FEISHU_TOKEN.replace(/0/g, '1')],
+  ['wecom placeholder KEY', 'https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media?key=KEY&type=TYPE'],
+  ['wecom env reference', 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${WECOM_KEY}'],
+  ['wecom other API with key=', 'https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=ww0000&corpsecret=${S}&key=abcdefgh1234'],
+  ['key= on another host', 'https://example.com/search?key=Ab3De6Gh9Jk2'],
+  ['kintone env reference', 'X-Cybozu-Authorization: ${KINTONE_AUTH}'],
+  ['kintone btoa call', "'X-Cybozu-Authorization': btoa(user + ':' + pass)"],
+  ['kintone variable name', "'X-Cybozu-Authorization': encodedCredentials"],
+  ['kintone base64 without colon', 'X-Cybozu-Authorization: ' + Buffer.from('no-colon-here').toString('base64')],
+  ['kintone header name in prose', 'Set the X-Cybozu-Authorization header to the Base64 of login:password.'],
+  ['kakao env reference', 'Authorization: KakaoAK ${REST_API_KEY}'],
+  ['kakao doc placeholder', 'Authorization: KakaoAK {REST_API_KEY}'],
+  ['kakao bare placeholder', 'Authorization: KakaoAK REST_API_KEY'],
+  ['kakao in prose', 'Send the key with the KakaoAK scheme in the Authorization header.'],
+];
+for (const [name, text] of localNegatives) {
   const r = run(text);
   equal('negative ' + name, r.entries.length, 0);
 }

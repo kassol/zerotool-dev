@@ -7,7 +7,7 @@ faqItems:
   - question: "入力内容はアップロードや保存をされますか？"
     answer: "されません。ページは入力テキストを伴う通信を行わず、localStorage・sessionStorage・Cookie・URL にも書き込みません。このページはアクセス解析や広告のスクリプトも読み込みません。プレースホルダーの対応表はメモリ上にだけあり、クリア、Ctrl/Cmd+L、再読み込み、タブを閉じる操作で破棄されます。"
   - question: "LINE や Chatwork、kintone のトークンも隠せますか？"
-    answer: "LINE のチャネルシークレットとアクセストークン、Chatwork の X-ChatWorkToken、Backlog の apiKey、kintone の X-Cybozu-API-Token は、変数名・ヘッダー名・パラメーター名で検出します。kintone のパスワード認証で使う X-Cybozu-Authorization は検出できないため、送る前に手で消してください。"
+    answer: "LINE のチャネルシークレットとアクセストークン、Chatwork の X-ChatWorkToken、Backlog の apiKey、kintone の X-Cybozu-API-Token は、変数名・ヘッダー名・パラメーター名で検出します。kintone のパスワード認証で使う X-Cybozu-Authorization も、ヘッダー名と Base64 の値（デコードすると「ログイン名:パスワード」になるもの）で検出します。"
   - question: "AI がプレースホルダーを書き換えたら復元できませんか？"
     answer: "大文字小文字の違い、角括弧内の空白、Markdown でエスケープされた \\[ \\] は復元します。角括弧を外された SECRET_1 は環境変数名と区別できないので、そのまま残します。あるプレースホルダーがすべて角括弧なしになった場合、ステータスの使用数が対応表の数より少なく表示されます。"
   - question: "シークレットが検出されなかったのはなぜ？"
@@ -76,7 +76,7 @@ curl -X POST -H "X-ChatWorkToken: \[SECRET_1\]" -d "body=テスト" https://api.
     <tr><td>Chatwork の <code>X-ChatWorkToken</code></td><td>置換</td><td>ヘッダー名</td></tr>
     <tr><td>Backlog の <code>?apiKey=</code>（<a href="https://developer.nulab.com/ja/docs/backlog/auth/">Backlog API</a>）</td><td>置換</td><td>パラメーター名</td></tr>
     <tr><td>kintone の <code>X-Cybozu-API-Token</code></td><td>置換</td><td>ヘッダー名</td></tr>
-    <tr><td>kintone の <code>X-Cybozu-Authorization</code>（ログイン名:パスワードの Base64、<a href="https://cybozu.dev/ja/kintone/docs/rest-api/overview/authentication/">cybozu developer network</a>）</td><td>置換されない</td><td>名前がキーワードで終わらず、値も短い</td></tr>
+    <tr><td>kintone の <code>X-Cybozu-Authorization</code>（ログイン名:パスワードの Base64、<a href="https://cybozu.dev/ja/kintone/docs/rest-api/overview/authentication/">cybozu developer network</a>）</td><td><code>[KINTONE_AUTH_n]</code> に置換</td><td>ヘッダー名と、デコードすると <code>:</code> を含む Base64 の値</td></tr>
   </tbody>
 </table>
 
@@ -86,7 +86,7 @@ curl -X POST -H "X-ChatWorkToken: \[SECRET_1\]" -d "body=テスト" https://api.
 
 <h2>gitleaks やログのマスク処理との違い</h2>
 
-<p><a href="https://github.com/gitleaks/gitleaks">gitleaks</a> や <a href="https://github.com/trufflesecurity/trufflehog">TruffleHog</a> は、リポジトリや git 履歴に入ってしまったシークレットを探すツールです。gitleaks の標準設定は 2026 年 9 月時点で 222 ルール（このツールは 26 ルールとエントロピー判定）。結果はレポートとして出るだけで、貼り付け用のテキストは作りません。pre-commit や CI で使うものです。GitHub Actions の <code>::add-mask::</code> は値を <code>*</code> に置き換えます（<a href="https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands">GitHub ドキュメント</a>）。どの値も同じ見た目になり、元にも戻せないので、AI には 2 つのキーが同じかどうかもわかりません。</p>
+<p><a href="https://github.com/gitleaks/gitleaks">gitleaks</a> や <a href="https://github.com/trufflesecurity/trufflehog">TruffleHog</a> は、リポジトリや git 履歴に入ってしまったシークレットを探すツールです。gitleaks の標準設定は 2026 年 9 月時点で 222 ルール（このツールは 30 ルールとエントロピー判定）。結果はレポートとして出るだけで、貼り付け用のテキストは作りません。pre-commit や CI で使うものです。GitHub Actions の <code>::add-mask::</code> は値を <code>*</code> に置き換えます（<a href="https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands">GitHub ドキュメント</a>）。どの値も同じ見た目になり、元にも戻せないので、AI には 2 つのキーが同じかどうかもわかりません。</p>
 
 <p>このツールが担うのは、貼り付ける直前の工程です。値ごとに別の番号を振り、同じ値には同じ番号を使い、返答は元に戻せます。<strong>サンプル読込</strong>を押すと、<code>[OPENAI_KEY_1]</code> が <code>.env</code> とリトライのログ行の両方に出てきます。AI はこれを見て、リトライが設定済みのキーを使ったと判断できます。</p>
 

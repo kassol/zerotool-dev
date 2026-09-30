@@ -69,14 +69,14 @@ import React from 'react';
 
 function PlusIcon(props) {
   return (
-    <svg {...props} width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14"/></svg>
+    <svg width="24" height="24" fill="none" viewBox="0 0 24 24" {...props}><path stroke="#000" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14" /></svg>
   );
 }
 
 export default PlusIcon;
 ```
 
-`xmlns` is gone, `stroke-width` and `stroke-linecap` are camelCase, and the markup is copied as written otherwise. Values stay strings (`strokeWidth="2"`); React accepts both strings and numbers here. With TypeScript, forwardRef and memo all on, the same icon becomes `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })` with `ref={ref} {...props}` on the `<svg>` and `export default memo(PlusIcon);`. In React 19 [`forwardRef` is no longer necessary](https://react.dev/reference/react/forwardRef): a function component can take `ref` as a prop.
+`xmlns` is gone, `stroke-width` and `stroke-linecap` are camelCase, and the markup is copied as written otherwise. `{...props}` comes after the root's own attributes, the same place as svgr's default ([`expandProps: 'end'`](https://react-svgr.com/docs/options/#expand-props)), so props you pass win: `<PlusIcon width={48} fill="red" />` renders 48 px and red, and `height` stays 24. Values stay strings (`strokeWidth="2"`); React accepts both strings and numbers here. With TypeScript, forwardRef and memo all on, the same icon becomes `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })` with `ref={ref} {...props}` after the `<svg>`'s own attributes and `export default memo(PlusIcon);`. In React 19 [`forwardRef` is no longer necessary](https://react.dev/reference/react/forwardRef): a function component can take `ref` as a prop.
 
 ## Before You Paste: Export Settings
 
@@ -94,13 +94,12 @@ Each row was checked by compiling the output with esbuild 0.28 and rendering it 
 | `<style>.cls-1{fill:#e11d48;}</style>` | Kept as is | Syntax error: `{` starts a JSX expression | Export with Presentation Attributes, or wrap the CSS in a template literal: `` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
 | `style="fill:#e11d48"` | Kept as a string | Render error: "The `style` prop expects a mapping from style properties to values, not a string" | `style={{ fill: '#e11d48' }}` |
 | `xlink:href="#a"` | Kept as is; the `xmlns:xlink` declaration is removed | React warns "Invalid DOM property"; Babel rejects namespaced attributes by default | `href="#a"` |
-| `width="24"`, `fill="black"` on the root `<svg>` | `{...props}` is placed before them | The SVG's own values win: `<PlusIcon width={48} />` still renders 24 px | Delete the root attributes you want callers to set |
 | Hard-coded `fill` or `stroke` colors | Kept as is | The icon ignores the text color | `fill="currentColor"` / `stroke="currentColor"` |
 
 ## Limits
 
-- **Regex, not an XML parser.** A `>` inside an attribute value ends the tag early.
-- **Attribute names inside values are renamed too.** The renaming step matches names anywhere in a tag, so `aria-label="class schedule"` becomes `aria-label="className schedule"`. Check text values such as `aria-label` after converting.
+- **Pattern matching, not an XML parser.** Quoted values may contain `>` and `/`, but comments are not skipped: a tag written inside `<!-- ... -->` is converted too.
+- **Only attribute names change.** Values and text are copied as written: `aria-label="class schedule"` stays `aria-label="class schedule"`.
 - **One component per paste.** Only the first `<svg>` gets `{...props}`; paste sprite sheets one icon at a time.
 - **Component name**: characters other than letters, digits, `_` and `$` are dropped and the first letter is capitalized (`plus-icon` → `Plusicon`).
 - `data-*` and `aria-*` attributes keep their hyphens, as React expects.

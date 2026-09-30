@@ -20,6 +20,8 @@ const labels = {
     decodedTimestamp: 'Timestamp',
     decodedMs: 'Milliseconds (epoch)',
     invalidUlid: 'Invalid ULID',
+    outOfRange: 'Out of range: the first character must be 0–7 (the largest ULID is 7ZZZZZZZZZZZZZZZZZZZZZZZZZ)',
+    overflow: 'The random part overflowed within one millisecond. Wait a moment and generate again.',
   },
   zh: {
     generate: '生成',
@@ -37,6 +39,8 @@ const labels = {
     decodedTimestamp: '时间戳',
     decodedMs: '毫秒（epoch）',
     invalidUlid: '无效的 ULID',
+    outOfRange: '超出范围：第一个字符必须是 0–7（最大的 ULID 是 7ZZZZZZZZZZZZZZZZZZZZZZZZZ）',
+    overflow: '同一毫秒内随机部分已溢出，请稍后再生成。',
   },
   ja: {
     generate: '生成',
@@ -54,6 +58,8 @@ const labels = {
     decodedTimestamp: 'タイムスタンプ',
     decodedMs: 'ミリ秒（epoch）',
     invalidUlid: '無効なULID',
+    outOfRange: '範囲外です：先頭の文字は 0〜7 でなければなりません（最大の ULID は 7ZZZZZZZZZZZZZZZZZZZZZZZZZ）',
+    overflow: '同じミリ秒内でランダム部分が桁あふれしました。少し待ってから生成してください。',
   },
   ko: {
     generate: '생성',
@@ -71,6 +77,8 @@ const labels = {
     decodedTimestamp: '타임스탬프',
     decodedMs: '밀리초 (epoch)',
     invalidUlid: '유효하지 않은 ULID',
+    outOfRange: '범위를 벗어났습니다: 첫 글자는 0–7이어야 합니다(가장 큰 ULID는 7ZZZZZZZZZZZZZZZZZZZZZZZZZ)',
+    overflow: '같은 밀리초 안에서 무작위 부분이 넘쳤습니다. 잠시 후 다시 생성하세요.',
   },
 };
 
@@ -89,6 +97,8 @@ const L = labels[lang] ?? labels['en'];
   data-decoded-ts={L.decodedTimestamp}
   data-decoded-ms={L.decodedMs}
   data-invalid={L.invalidUlid}
+  data-out-of-range={L.outOfRange}
+  data-overflow={L.overflow}
 >
   {/* Controls */}
   <div class="ulid-controls">
@@ -102,6 +112,7 @@ const L = labels[lang] ?? labels['en'];
       <button id="ulid-clear" class="btn-ghost" type="button" disabled>{L.clear}</button>
     </div>
   </div>
+  <p id="ulid-gen-error" class="ulid-decode-error" role="alert" hidden></p>
 
   {/* Results table */}
   <div id="ulid-results" class="ulid-results" style="display:none;">
@@ -146,6 +157,9 @@ const L = labels[lang] ?? labels['en'];
       var INVALID_LABEL  = wrap.dataset.invalid;
       var LABEL_TS       = wrap.dataset.decodedTs;
       var LABEL_MS       = wrap.dataset.decodedMs;
+      var OUT_OF_RANGE_LABEL = wrap.dataset.outOfRange;
+      var OVERFLOW_LABEL = wrap.dataset.overflow;
+      var genError   = document.getElementById('ulid-gen-error');
 
       var countEl    = document.getElementById('ulid-count');
       var genBtn     = document.getElementById('ulid-generate');
@@ -156,6 +170,7 @@ const L = labels[lang] ?? labels['en'];
       var decodeInput = document.getElementById('ulid-decode-input');
       var decodeResult = document.getElementById('ulid-decode-result');
 
+      /* ── engine:start ── */
       /* ── Crockford Base32 ── */
       var ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -211,43 +226,69 @@ const L = labels[lang] ?? labels['en'];
         return s;
       }
 
-      function generateUlid() {
-        var ms = Date.now();
-        var tsStr = encodeTime(ms);
-        var randBytes = new Uint8Array(10);
-        crypto.getRandomValues(randBytes);
-        var randStr = encodeRandom(randBytes);
-        var ulid = tsStr + randStr;
-        return { ulid: ulid, ms: ms, randStr: randStr };
-      }
-
-      /* ── Decode ── */
-      function decodeTime(ulidStr) {
-        /* First 10 chars = timestamp */
-        var ts = ulidStr.slice(0, 10).toUpperCase();
-        var ms = 0;
-        for (var i = 0; i < 10; i++) {
-          var c = ts[i];
-          var idx = ENCODING.indexOf(c);
-          if (idx === -1) return null;
-          ms = ms * 32 + idx;
+      /* Random part + 1 with carry (ULID spec, Monotonicity); null when it overflows */
+      function incrementBase32(str) {
+        var chars = str.split('');
+        for (var i = chars.length - 1; i >= 0; i--) {
+          var idx = ENCODING.indexOf(chars[i]);
+          if (idx < 31) {
+            chars[i] = ENCODING[idx + 1];
+            return chars.join('');
+          }
+          chars[i] = '0';
         }
-        return ms;
+        return null;
       }
 
-      function isValidUlid(s) {
-        if (!s || s.length !== 26) return false;
-        return /^[0-9A-HJKMNP-TV-Z]{26}$/i.test(s);
+      /* Monotonic generator (ULID spec, Monotonicity; same as ulid/javascript monotonicFactory):
+         within the same millisecond, or when the clock goes back, the previous timestamp is
+         kept and the random part is incremented by 1. Throws when the random part overflows. */
+      function createUlidFactory(now, fillRandom) {
+        var lastMs = -1;
+        var lastRand = '';
+        return function next() {
+          var ms = now();
+          var randStr;
+          if (ms <= lastMs) {
+            ms = lastMs;
+            randStr = incrementBase32(lastRand);
+            if (randStr === null) throw new Error('ULID random component overflow');
+          } else {
+            var randBytes = new Uint8Array(10);
+            fillRandom(randBytes);
+            randStr = encodeRandom(randBytes);
+          }
+          lastMs = ms;
+          lastRand = randStr;
+          return { ulid: encodeTime(ms) + randStr, ms: ms, randStr: randStr };
+        };
       }
 
-      /* ── Format timestamp ── */
+      /* ── Decode ── { ms } or { error: 'invalid' | 'range' }
+         The largest ULID is 7ZZZZZZZZZZZZZZZZZZZZZZZZZ (128 bits); a first character above
+         7 needs 130 bits and is rejected (ULID spec, Overflow Errors when Parsing). */
+      function decodeUlid(str) {
+        var s = String(str).toUpperCase();
+        if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(s)) return { error: 'invalid' };
+        if (ENCODING.indexOf(s[0]) > 7) return { error: 'range' };
+        var ms = 0;
+        for (var i = 0; i < 10; i++) ms = ms * 32 + ENCODING.indexOf(s[i]);
+        return { ms: ms };
+      }
+
+      /* ── Format timestamp ── years after 9999 are written +YYYYYY by toISOString, so
+         replace T and Z instead of cutting at a fixed length */
       function formatMs(ms) {
         try {
-          return new Date(ms).toISOString().replace('T', ' ').replace('.', '.').slice(0, 23) + ' UTC';
+          return new Date(ms).toISOString().replace('T', ' ').replace('Z', ' UTC');
         } catch (e) {
           return String(ms);
         }
       }
+      /* ── engine:end ── */
+
+      var generateUlid = createUlidFactory(Date.now, function (a) { crypto.getRandomValues(a); });
+
 
       /* ── Render row ── */
       function buildRow(item) {
@@ -295,8 +336,15 @@ const L = labels[lang] ?? labels['en'];
       genBtn.addEventListener('click', function () {
         var count = Math.max(1, Math.min(100, parseInt(countEl.value) || 1));
         var newItems = [];
+        genError.hidden = true;
         for (var i = 0; i < count; i++) {
-          newItems.push(generateUlid());
+          try {
+            newItems.push(generateUlid());
+          } catch (e) {
+            genError.textContent = OVERFLOW_LABEL;
+            genError.hidden = false;
+            break;
+          }
         }
         generated = newItems;
         tbodyEl.innerHTML = '';
@@ -334,15 +382,15 @@ const L = labels[lang] ?? labels['en'];
         decodeResult.innerHTML = '';
         if (!val) { decodeResult.style.display = 'none'; return; }
         decodeResult.style.display = '';
-        if (!isValidUlid(val)) {
-          decodeResult.innerHTML = '<span class="ulid-decode-error">' + INVALID_LABEL + '</span>';
+        var decoded = decodeUlid(val);
+        if (decoded.error) {
+          var err = document.createElement('span');
+          err.className = 'ulid-decode-error';
+          err.textContent = decoded.error === 'range' ? OUT_OF_RANGE_LABEL : INVALID_LABEL;
+          decodeResult.appendChild(err);
           return;
         }
-        var ms = decodeTime(val);
-        if (ms === null) {
-          decodeResult.innerHTML = '<span class="ulid-decode-error">' + INVALID_LABEL + '</span>';
-          return;
-        }
+        var ms = decoded.ms;
         var rows = [
           [LABEL_TS, formatMs(ms)],
           [LABEL_MS, String(ms)],
@@ -435,39 +483,40 @@ const L = labels[lang] ?? labels['en'];
   .ulid-th-rand { width: 20%; }
   .ulid-th-act  { width: 5%; }
 
-  .ulid-row { border-bottom: 1px solid var(--color-border); }
-  .ulid-row:last-child { border-bottom: none; }
-  .ulid-row:hover { background: var(--color-bg-secondary); }
+  /* Result rows, copy buttons and the decode table are created by the script, so they have no scoped attribute */
+  .ulid-wrap :global(.ulid-row) { border-bottom: 1px solid var(--color-border); }
+  .ulid-wrap :global(.ulid-row:last-child) { border-bottom: none; }
+  .ulid-wrap :global(.ulid-row:hover) { background: var(--color-bg-secondary); }
 
-  .ulid-td {
+  .ulid-wrap :global(.ulid-td) {
     padding: 0.4rem 0.75rem;
     vertical-align: middle;
   }
 
-  .ulid-td-ulid {
+  .ulid-wrap :global(.ulid-td-ulid) {
     font-family: var(--font-mono);
     font-size: 0.82rem;
     color: var(--color-text);
     word-break: break-all;
   }
 
-  .ulid-td-ts {
+  .ulid-wrap :global(.ulid-td-ts) {
     font-family: var(--font-mono);
     font-size: 0.78rem;
     color: var(--color-text-secondary);
     white-space: nowrap;
   }
 
-  .ulid-td-rand {
+  .ulid-wrap :global(.ulid-td-rand) {
     font-family: var(--font-mono);
     font-size: 0.78rem;
     color: var(--color-primary);
     word-break: break-all;
   }
 
-  .ulid-td-act { white-space: nowrap; }
+  .ulid-wrap :global(.ulid-td-act) { white-space: nowrap; }
 
-  .ulid-copy-btn {
+  .ulid-wrap :global(.ulid-copy-btn) {
     font-size: 0.75rem;
     padding: 0.2rem 0.5rem;
   }
@@ -504,19 +553,21 @@ const L = labels[lang] ?? labels['en'];
     max-width: 420px;
   }
 
-  .ulid-decode-error {
+  /* The decoder's error span is created by the script, so it has no scoped attribute */
+  .ulid-wrap :global(.ulid-decode-error) {
     color: #c0392b;
     font-size: 0.82rem;
+    margin: 0;
   }
 
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .ulid-decode-error { color: #fca5a5; }
+    :root:not([data-theme="light"]) .ulid-wrap :global(.ulid-decode-error) { color: #fca5a5; }
   }
-  [data-theme="dark"] .ulid-decode-error { color: #fca5a5; }
+  [data-theme="dark"] .ulid-wrap :global(.ulid-decode-error) { color: #fca5a5; }
 
-  .ulid-decode-table { border-collapse: collapse; font-size: 0.82rem; }
+  .ulid-wrap :global(.ulid-decode-table) { border-collapse: collapse; font-size: 0.82rem; }
 
-  .ulid-decode-table th {
+  .ulid-wrap :global(.ulid-decode-table th) {
     text-align: left;
     padding: 0.2rem 1rem 0.2rem 0;
     font-weight: 600;
@@ -524,7 +575,7 @@ const L = labels[lang] ?? labels['en'];
     white-space: nowrap;
   }
 
-  .ulid-decode-table td {
+  .ulid-wrap :global(.ulid-decode-table td) {
     font-family: var(--font-mono);
     color: var(--color-text);
     padding: 0.2rem 0;
@@ -532,7 +583,7 @@ const L = labels[lang] ?? labels['en'];
 
   /* ── Responsive ── */
   @media (max-width: 600px) {
-    .ulid-th-rand, .ulid-td-rand { display: none; }
-    .ulid-th-ts, .ulid-td-ts { display: none; }
+    .ulid-th-rand, .ulid-wrap :global(.ulid-td-rand) { display: none; }
+    .ulid-th-ts, .ulid-wrap :global(.ulid-td-ts) { display: none; }
   }
 </style>

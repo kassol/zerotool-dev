@@ -69,14 +69,14 @@ import React from 'react';
 
 function PlusIcon(props) {
   return (
-    <svg {...props} width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14"/></svg>
+    <svg width="24" height="24" fill="none" viewBox="0 0 24 24" {...props}><path stroke="#000" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14" /></svg>
   );
 }
 
 export default PlusIcon;
 ```
 
-`xmlns` が消え、`stroke-width` と `stroke-linecap` がキャメルケースになり、それ以外のマークアップはそのままです。値は文字列のまま（`strokeWidth="2"`）ですが、React は文字列も数値も受け付けます。TypeScript・forwardRef・memo をすべてオンにすると、同じアイコンは `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })` になり、`<svg>` に `ref={ref} {...props}`、末尾に `export default memo(PlusIcon);` が付きます。React 19 では [`forwardRef` は不要](https://react.dev/reference/react/forwardRef)になり、関数コンポーネントは `ref` を props として受け取れます。
+`xmlns` が消え、`stroke-width` と `stroke-linecap` がキャメルケースになり、それ以外のマークアップはそのままです。`{...props}` はルート自身の属性の後ろに入ります。svgr の既定値（[`expandProps: 'end'`](https://react-svgr.com/docs/options/#expand-props)）と同じ位置で、呼び出し側の値が優先されます。`<PlusIcon width={48} fill="red" />` は 48 px・赤で描画され、`height` は 24 のままです。値は文字列のまま（`strokeWidth="2"`）ですが、React は文字列も数値も受け付けます。TypeScript・forwardRef・memo をすべてオンにすると、同じアイコンは `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })` になり、`<svg>` 自身の属性の後ろに `ref={ref} {...props}`、末尾に `export default memo(PlusIcon);` が付きます。React 19 では [`forwardRef` は不要](https://react.dev/reference/react/forwardRef)になり、関数コンポーネントは `ref` を props として受け取れます。
 
 ## 貼り付ける前に：書き出し設定
 
@@ -94,13 +94,12 @@ export default PlusIcon;
 | `<style>.cls-1{fill:#e11d48;}</style>` | そのまま | 構文エラー：`{` が JSX の式として解釈される | Presentation Attributes で書き出し直すか、CSS をテンプレートリテラルで囲む：`` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
 | `style="fill:#e11d48"` | 文字列のまま | レンダリングエラー「The `style` prop expects a mapping from style properties to values, not a string」 | `style={{ fill: '#e11d48' }}` |
 | `xlink:href="#a"` | そのまま（`xmlns:xlink` 宣言は削除） | React が「Invalid DOM property」を警告。Babel は既定で名前空間付き属性を拒否 | `href="#a"` |
-| ルート `<svg>` の `width="24"`・`fill="black"` | `{...props}` がその前に入る | SVG 側の値が優先され、`<PlusIcon width={48} />` でも 24 px のまま | 呼び出し側で指定したい属性をルートから削除 |
 | 固定の `fill` / `stroke` 色 | そのまま | アイコンが文字色に追従しない | `fill="currentColor"` / `stroke="currentColor"` |
 
 ## 制限事項
 
-- **XML パーサーではなく正規表現で処理します。** 属性値に `>` があるとタグがそこで終わったと見なされます。
-- **属性値の中の属性名も置き換わります。** 置換はタグ全体に対して行われるため、`aria-label="class schedule"` は `aria-label="className schedule"` になります。変換後に `aria-label` などのテキスト値を確認してください。
+- **XML パーサーではなく正規表現で処理します。** 引用符で囲んだ属性値に `>` や `/` があっても問題ありませんが、コメントは読み飛ばさないため、`<!-- ... -->` の中に書いたタグも変換されます。
+- **変わるのは属性名だけです。** 値とテキストはそのまま残り、`aria-label="class schedule"` は `aria-label="class schedule"` のままです。
 - **1 回の貼り付けで 1 コンポーネント。** `{...props}` が付くのは最初の `<svg>` だけです。スプライトは 1 アイコンずつ貼り付けてください。
 - **コンポーネント名**：英数字・`_`・`$` 以外は削除され、先頭は大文字になります（`plus-icon` → `Plusicon`）。日本語の名前はすべて削除され `MyIcon` になります。
 - `data-*` と `aria-*` 属性はハイフンのまま残ります。React の仕様どおりです。

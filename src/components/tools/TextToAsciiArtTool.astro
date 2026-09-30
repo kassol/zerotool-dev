@@ -44,6 +44,7 @@
       <span data-i18n="loading">Loading font…</span>
     </div>
     <pre id="taa-output" class="taa-output" aria-live="polite"></pre>
+    <p id="taa-skipped" class="taa-skipped" role="status" hidden></p>
   </div>
 
   <div id="taa-status" class="taa-status" aria-live="polite"></div>
@@ -64,6 +65,7 @@
         loading: 'Loading font…',
         errorRender: 'Render error.',
         empty: 'Type something above to generate ASCII art.',
+        skipped: 'Skipped — the {font} font has no glyph for: {chars}',
       },
       zh: {
         inputLabel: '输入文字',
@@ -75,6 +77,7 @@
         loading: '正在加载字体…',
         errorRender: '渲染错误。',
         empty: '在上方输入文字以生成 ASCII 艺术。',
+        skipped: '已跳过：{font} 字体里没有这些字符：{chars}',
       },
       ja: {
         inputLabel: '入力テキスト',
@@ -86,6 +89,7 @@
         loading: 'フォント読み込み中…',
         errorRender: 'レンダリングエラー。',
         empty: '上にテキストを入力するとASCIIアートが生成されます。',
+        skipped: 'スキップしました：{font} フォントにない文字：{chars}',
       },
       ko: {
         inputLabel: '입력 텍스트',
@@ -97,6 +101,7 @@
         loading: '글꼴 로드 중…',
         errorRender: '렌더링 오류.',
         empty: '위에 텍스트를 입력하면 ASCII 아트가 생성됩니다.',
+        skipped: '건너뜀: {font} 글꼴에 없는 문자: {chars}',
       },
     };
 
@@ -119,6 +124,13 @@
     const copyBtn   = document.getElementById('taa-copy') as HTMLButtonElement;
     const statusEl  = document.getElementById('taa-status') as HTMLElement;
     const loadingEl = document.getElementById('taa-loading') as HTMLElement;
+    const skippedEl = document.getElementById('taa-skipped') as HTMLElement;
+
+    function showSkipped(text: string, font: string) {
+      const chars = unsupportedChars(text, figlet.figFonts[font] || {});
+      skippedEl.hidden = chars.length === 0;
+      skippedEl.textContent = chars.length ? skippedMessage(t.skipped, font, chars) : '';
+    }
 
     function showStatus(msg: string, isError: boolean) {
       statusEl.textContent = msg;
@@ -130,12 +142,42 @@
       outputEl.style.display = on ? 'none' : '';
     }
 
+    /* ── engine:start ── */
+    // figlet.js looks up each UTF-16 code unit in the font and silently skips the ones the
+    // font does not define; a glyph whose rows are all empty (3D-ASCII has these for ( ) { } _
+    // and others) also draws nothing. List those characters (by code point, each once, in
+    // input order).
+    function unsupportedChars(text, font) {
+      var out = [];
+      for (var ch of text) {
+        var missing = false;
+        for (var i = 0; i < ch.length; i++) {
+          var code = ch.charCodeAt(i);
+          var glyph = Object.prototype.hasOwnProperty.call(font, code) ? font[code] : null;
+          if (!glyph || glyph.every(function (row) { return row === ''; })) missing = true;
+        }
+        if (missing && out.indexOf(ch) === -1) out.push(ch);
+      }
+      return out;
+    }
+
+    // Whitespace, control and format characters are invisible, so write them as U+XXXX.
+    function skippedMessage(template, fontName, chars) {
+      var shown = chars.map(function (ch) {
+        if (!/^[\s\p{C}]$/u.test(ch)) return ch;
+        return 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+      });
+      return template.replace('{font}', fontName).replace('{chars}', shown.join(' '));
+    }
+    /* ── engine:end ── */
+
     function render() {
       const text = inputEl.value.trim();
       const font = fontEl.value;
 
       if (!text) {
         outputEl.textContent = '';
+        skippedEl.hidden = true;
         copyBtn.disabled = true;
         showStatus(t.empty, false);
         return;
@@ -149,11 +191,13 @@
         if (err) {
           showStatus(t.errorRender, true);
           outputEl.textContent = '';
+          skippedEl.hidden = true;
           copyBtn.disabled = true;
           return;
         }
         outputEl.textContent = result ?? '';
-        copyBtn.disabled = false;
+        showSkipped(text, font);
+        copyBtn.disabled = !(result && result.trim());
         showStatus('', false);
       });
     }
@@ -260,6 +304,20 @@
     min-height: 100px;
     color: var(--color-text);
   }
+
+  .taa-skipped {
+    margin: 0;
+    padding: 0.45rem 0.75rem;
+    border-top: 1px solid var(--color-border);
+    font-size: 0.82rem;
+    color: #b45309;
+    overflow-wrap: anywhere;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .taa-skipped { color: #fbbf24; }
+  }
+  [data-theme="dark"] .taa-skipped { color: #fbbf24; }
 
   .taa-status {
     font-size: 0.82rem;
