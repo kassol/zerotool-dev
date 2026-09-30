@@ -1,65 +1,94 @@
 ---
-seoTitle: "QR Code Decoder Online — Read QR Codes from Images | ZeroTool"
-seoDescription: "Decode QR codes from image files in your browser. Extract URLs, Wi-Fi credentials, vCards, and text. 100% client-side, no server upload."
+seoTitle: "QR Code Reader — Scan from Image or Camera | ZeroTool"
+seoDescription: "Read QR codes from an image, pasted screenshot or camera. Finds several codes per image, shows the real host of a link, and keeps Shift_JIS/GBK text readable."
 faqItems:
   - question: "Is my image uploaded to a server?"
-    answer: "No. The QR code is decoded entirely in your browser using the jsQR library. Your image never leaves your device."
-  - question: "What image formats are supported?"
-    answer: "PNG, JPG, JPEG, GIF, WebP, BMP, and most other common image formats. Screenshots work especially well."
-  - question: "Why would I decode a QR code instead of just scanning it?"
-    answer: "When the QR code is in a screenshot, PDF, or image file, you can't use your phone camera. Decoding online also lets you see the URL before visiting it — useful for verifying QR codes before clicking."
-  - question: "What types of content can a QR code contain?"
-    answer: "URLs, Wi-Fi credentials (SSID and password), vCard contact info, plain text, email addresses, phone numbers, SMS, and geo locations."
+    answer: "No. Files, pasted screenshots and camera frames are decoded in your browser by zxing-wasm, which this site serves from its own /vendor folder. The only request that leaves the page is the one you ask for in URL mode: the browser downloads the image from the address you type, without cookies or a referrer."
+  - question: "Can it read a QR code from a screenshot?"
+    answer: "Yes. Take the screenshot, click the page and press Ctrl+V (⌘V on a Mac). If the screenshot shows several codes, each one gets its own numbered result card."
+  - question: "Why does the result say the link goes to a different site?"
+    answer: "Everything between https:// and an @ sign is a user name, not the site. https://citypark.example.gov@pay-meter.example.net/ opens pay-meter.example.net. The reader shows the host the browser would really open and warns when an @ or a punycode (xn--) host is in the address."
+  - question: "Why is my decoded text garbled?"
+    answer: "The code probably stores Shift_JIS, GBK or EUC-KR bytes without saying so. Open the Text encoding menu under the result and pick the right one; the Bytes section shows the raw bytes in hex."
+  - question: "What does the camera scanner need?"
+    answer: "A browser with the standard camera API (getUserMedia), an HTTPS page and your permission. The page asks for the camera only when you press Scan with camera, prefers the rear camera, and decodes the frames on the device. If you deny access, upload a photo instead."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Drop an image file containing a QR code onto the tool, or click to upload.</li>
-  <li>The decoder reads the image and displays the encoded content instantly.</li>
-  <li>Copy or use the decoded text — URL, Wi-Fi password, contact info, or plain text.</li>
-</ol>
+## How to Read a QR Code
 
-<h2>When to Use a QR Code Decoder</h2>
-<ul>
-  <li><strong>Screenshot or photo:</strong> You received a QR code as an image and can't scan it with a phone.</li>
-  <li><strong>Security check:</strong> Verify what a QR code links to before scanning it.</li>
-  <li><strong>Extract data:</strong> Pull a Wi-Fi password, contact card, or URL from a QR code image.</li>
-  <li><strong>Debugging:</strong> Confirm the exact content encoded in a QR code you generated.</li>
-</ul>
+1. **Drop an image** on the box, click it to choose a file, or **paste a screenshot** with Ctrl+V / ⌘V. Any format your browser can display works.
+2. Or press **Scan with camera** and point the camera at the code. Scanning stops at the first frame that contains a code.
+3. Read the result card: the type badge, the decoded content, and, for links, the host the link really opens. **Copy** puts the text on the clipboard. Nothing is opened for you.
 
-## What You See for Each Content Type
+The decoder is [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) 3.1.4, a WebAssembly build of the ZXing C++ library. It is about 420 KB compressed and downloads from this site the first time you use the tool. It reads QR codes, Micro QR and rMQR.
 
-The decoder reads the text in the code and picks a card from its first characters. Nothing is opened automatically: a URL is shown as a link you can inspect before clicking.
+## What the Reader Shows
 
 | Text in the code starts with | Badge | Shown as |
 |---|---|---|
-| `http://` or `https://` | URL | Clickable link (opens in a new tab only when you click) and Copy |
-| `WIFI:` | Wi-Fi | Table with SSID, password, encryption and hidden flag; Copy puts the same fields on the clipboard, one `label: value` line each |
-| `BEGIN:VCARD` | vCard | Raw text |
-| `mailto:` | Email | Raw text |
-| `tel:` | Phone | Raw text |
-| `sms:` or `smsto:` | SMS | Raw text |
-| Anything else (`geo:`, `MECARD:`, `www.example.com` without a scheme, plain text in any language) | Text | Raw text |
+| `http://` or `https://` | URL | Link (opens only when you click it), the real host, warnings |
+| `WIFI:` | Wi-Fi | SSID, password, encryption, hidden flag; backslash escapes removed ([ZXing: Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents)) |
+| `BEGIN:VCARD` or `MECARD:` | Contact | Name, organization, phone, email, address, URL, note |
+| `mailto:` or `MATMSG:` | Email | To, Cc, subject, body ([RFC 6068](https://www.rfc-editor.org/rfc/rfc6068)) |
+| `tel:` | Phone | Number ([RFC 3966](https://www.rfc-editor.org/rfc/rfc3966)) |
+| `sms:` or `SMSTO:` | SMS | Number and message ([RFC 5724](https://www.rfc-editor.org/rfc/rfc5724)) |
+| `geo:` | Location | Latitude, longitude, altitude and an OpenStreetMap link ([RFC 5870](https://www.rfc-editor.org/rfc/rfc5870)) |
+| any other `scheme:` | App link | Text only, with a note that only an app opens it |
+| anything else | Text | Text as stored |
 
-Examples checked by generating the codes with the qrcode library and decoding them with the jsQR build this page loads:
+Structured cards keep the raw text one click away, and every card has a **Bytes** section with the stored bytes in hex.
 
-- `WIFI:T:WPA;S:CafeGuest;P:latte2026;;` shows SSID `CafeGuest`, password `latte2026`, encryption `WPA`.
-- `WIFI:T:WPA;S:SHOP:2F;P:ab\;cd;;` shows SSID `SHOP:2F` and password `ab;cd`: the backslash escape is removed.
-- `https://zerotool.dev/tools/qr-code-decoder/` shows the URL card with the full address.
-- `smsto:+819012345678:Hello` gets the SMS badge; `geo:35.6812,139.7671` and `MECARD:N:Sato,Taro;TEL:0312345678;;` show as text.
+These are the results the tool gave for codes generated with the page's own QR library:
 
-## Tips for Images That Do Not Decode
+- A business card code (`BEGIN:VCARD … FN:Ana Rivera … TEL;TYPE=CELL:+1-415-555-0134`) shows **Contact** with Name `Ana Rivera`, Organization `Example Labs`, Phone `+1-415-555-0134` and Email `ana@example.com`.
+- A screenshot with three codes side by side gives three numbered cards in reading order: **Wi-Fi** (`CafeGuest` / `latte2026` / `WPA`), **URL** (`https://example.com/menu`), **Phone** (`+81312345678`). The preview numbers the codes on the image.
+- `geo:37.5665,126.9780` shows **Location** with a link to that point on OpenStreetMap.
 
-- **Crop to the code.** Leave a small white margin (the quiet zone) around it; a wide photo where the code is a small part of the frame fails more often.
-- **Use a screenshot when you can.** A screenshot of a code on screen is sharper than a phone photo of a printed code.
-- **Avoid glare and steep angles.** jsQR corrects some perspective, but reflections over the finder patterns (the three big squares) can stop it.
-- **Light-on-dark codes work.** If the normal pass finds nothing, the decoder tries again with the colors inverted.
-- **Damage is tolerated up to the code's error-correction level**: about 7%, 15%, 25% or 30% of the codewords for levels L, M, Q and H ([DENSO WAVE: Error correction](https://www.qrcode.com/en/about/error_correction.html)).
+## Check a Link Before You Open It
+
+The FTC [warns](https://consumer.ftc.gov/consumer-alerts/2023/12/scammers-hide-harmful-links-qr-codes-steal-your-information) that scammers paste their own QR codes over the ones on parking meters and send codes by email and text, and advises you to inspect the URL before you open it. Two tricks are hard to see on a phone screen, and the reader flags both:
+
+- `https://citypark.example.gov@pay-meter.example.net/zone/4471` looks like a city domain. The host line says **pay-meter.example.net**, and a warning explains that everything before `@` is a user name.
+- `https://exаmple.com/login` uses a Cyrillic `а`. The host line shows the punycode form **xn--exmple-4nf.com** with a look-alike warning.
+
+Only `http` and `https` text becomes a link. `javascript:alert(document.domain)` is shown as an **App link** with the warning that it is not opened, and so are `data:`, `vbscript:` and `file:` addresses. To take a long address apart (query parameters, fragments, encoded characters), paste it into the [URL Parser](/tools/url-parser/).
+
+## Photos, Screenshots and Hard Images
+
+- **Several codes in one image** are all decoded, up to 16, and numbered from the top left.
+- **Light-on-dark codes**, rotated codes and codes without a white margin are read as well.
+- **Large photos** are decoded at full resolution up to 16,777,216 pixels (the canvas limit of iOS Safari); bigger images are scaled down first, and the status line says so. A 4000×3000 phone-style photo with a small code took about 1.2 s in desktop Chromium on the test machine.
+- **Tiny codes** need roughly 1.5 image pixels per module: a 33-module code at 45×45 pixels failed, at 60×60 it read.
+
+## Text Encoding: UTF-8, Shift_JIS, GBK and ECI
+
+A QR code stores bytes. It can declare their character set with an ECI header (ISO/IEC 18004), but most generators just write UTF-8. With an ECI, the card says so (for example `UTF-8 (ECI 26)`). Without one, the reader follows [ZXing's guessing rule](https://github.com/zxing/zxing/blob/master/core/src/main/java/com/google/zxing/common/StringUtils.java): valid UTF-8 is UTF-8, then Shift_JIS or ISO-8859-1. The card labels the result `(guessed)`, and the **Text encoding** menu re-decodes the same bytes as UTF-8, Shift_JIS, GB18030/GBK, Big5, EUC-KR, ISO-8859-1 or UTF-16.
+
+In tests, a code holding the Shift_JIS bytes of `東京都千代田区丸の内 カフェ` decoded correctly on this page. GBK bytes for `你好，世界。二维码测试` were guessed as ISO-8859-1 on the English page, as ZXing does, and read correctly after choosing GB18030 in the menu. Bytes that are not text in any encoding get the **Binary** badge and open in hex.
+
+## How It Compares
+
+Tested on 2026-09-30 with the same seven images in desktop Chromium:
+
+| Image | ZeroTool | [ScanQR](https://scanqr.org/) | [DNS Checker](https://dnschecker.org/qr-code-scanner.php) |
+|---|---|---|---|
+| Three codes in one image | 3 cards | 3 found | Still "Scanning…" after 10 s |
+| Shift_JIS text, no ECI | Correct text | "QR code detected!", empty text | "Empty QR Code" |
+| GBK text, no ECI | Correct after picking GB18030 | Empty text | Still "Scanning…" after 11 s |
+| Light-on-dark code | Read | Read | Read |
+| Gray on gray (110/170) | Read | Read with its fallback engine | Read |
+| `javascript:` payload | Text with warning | Plain text | Plain text |
+| 4000×3000 photo, small code | Read (about 1.2 s) | "No QR code found" | Read |
+
+Given `https://paypal.com@evil.example/login`, ScanQR shows the address as an Open Link button with no warning; ZeroTool shows the host `evil.example` and the `@` warning.
 
 ## Limits
 
-- **One code per image.** If an image has several codes, only one result is shown; crop to the one you want.
-- **Wi-Fi fields follow the ZXing format.** A backslash escapes `;`, `:`, `,`, `"` and `\` ([ZXing: Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents)); the decoder reads the string one field at a time and shows and copies the values with the escapes removed (`S:Home\;Net` is `Home;Net`). A generator that writes a `;` in a value without the backslash produces a code that ends the value there: `P:ab;cd` is read as `ab`. Only SSID, password, encryption and hidden are shown; WPA2-Enterprise fields such as `E:` and `I:` are ignored.
-- **Only image files.** PDFs must be screenshotted first. Formats your browser cannot display (for example HEIC outside Safari) cannot be read.
-- **URL mode downloads the image from that address.** It works only if the server allows cross-origin requests (CORS); otherwise download the image and drop it in.
-- The image is decoded at full resolution; very large photos take longer.
+- One image at a time. PDFs need a screenshot first; HEIC works only where the browser displays it (Safari).
+- The first decode waits for the 420 KB decoder; after that, decoding is local and works offline until you reload.
+- Only the QR family is read. For EAN, UPC or Code 128 barcodes this page shows nothing; the [Barcode Generator](/tools/barcode-generator/) makes them but does not read them.
+- Chrome's built-in `BarcodeDetector` is not used: [MDN's compatibility data](https://developer.mozilla.org/docs/Web/API/BarcodeDetector) lists it only on macOS, ChromeOS and Android, not in Firefox, and behind a flag in Safari.
+- URL mode works only when the image's server allows cross-origin requests (CORS). Otherwise save the image and drop it in.
+- Wi-Fi cards show SSID, password, encryption and the hidden flag; WPA2-Enterprise fields such as `E:` and `I:` stay in the raw text.
+
+To make a code rather than read one, use the [QR Code Generator](/tools/qr-code-generator/) or, for network logins, the [Wi-Fi QR Code Generator](/tools/wifi-qr-code-generator/).

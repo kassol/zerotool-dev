@@ -89,7 +89,7 @@
 | CSS Box Shadow Generator | [/tools/box-shadow-generator](https://zerotool.dev/tools/box-shadow-generator) |
 | Color Shades Generator | [/tools/color-shades-generator](https://zerotool.dev/tools/color-shades-generator) |
 | ULID Generator | [/tools/ulid-generator](https://zerotool.dev/tools/ulid-generator) |
-| QR Code Decoder | [/tools/qr-code-decoder](https://zerotool.dev/tools/qr-code-decoder) |
+| QR Code Reader | [/tools/qr-code-decoder](https://zerotool.dev/tools/qr-code-decoder) |
 | TypeScript to Zod Schema | [/tools/typescript-to-zod](https://zerotool.dev/tools/typescript-to-zod) |
 | JSON to Python Dataclass | [/tools/json-to-python-dataclass](https://zerotool.dev/tools/json-to-python-dataclass) |
 | JWT Generator / Signer | [/tools/jwt-generator](https://zerotool.dev/tools/jwt-generator) |
