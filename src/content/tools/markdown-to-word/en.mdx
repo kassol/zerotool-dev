@@ -3,11 +3,11 @@ seoTitle: "Markdown to Word (.docx): Headings, Lists, Tables | ZeroTool"
 seoDescription: "Convert Markdown to a Word .docx in your browser. Headings use Word heading styles, lists are real Word lists, and tables, footnotes and task lists survive."
 faqItems:
   - question: "Is my Markdown uploaded?"
-    answer: "No. The Markdown is parsed and the .docx is built in your browser. The only network requests are for images written with an http(s) address: the browser downloads them from that address when you export, so they can be embedded in the file."
+    answer: "No. The Markdown is parsed and the .docx is built in your browser, and by default the export sends no network request at all. Only if you check Embed web images does the browser download the http(s) images in your Markdown from their URLs, so they can be embedded; the image host then sees your IP address."
   - question: "Can I add a table of contents in Word?"
     answer: "Yes. Every Markdown heading becomes a Word Heading 1–6 paragraph with an outline level, so Word's References > Table of Contents builds the list from them, and the headings appear in the Navigation pane."
   - question: "Why did an image turn into a link?"
-    answer: "The browser could not download it. Either the server does not allow cross-origin requests (no Access-Control-Allow-Origin header), the address is relative or a local file path, or the request took longer than 15 seconds. The link keeps the image's alt text and address so you can insert the picture in Word yourself."
+    answer: "Either Embed web images is off (the default), so http(s) images are never downloaded, or the switch is on and the browser could not download the image: the server does not allow cross-origin requests (no Access-Control-Allow-Origin header), the address is relative or a local file path, or the request took longer than 15 seconds. The link keeps the alt text and address so you can insert the picture in Word yourself."
   - question: "Can I use my own Word template?"
     answer: "Not in this tool. The file uses fixed styles (Calibri 11 pt body, bold headings, a Source Code style and a Quote style). Change them once in Word under Home > Styles and every paragraph with that style follows. For a company template, use pandoc with --reference-doc."
   - question: "Are LaTeX math and Mermaid diagrams converted?"
@@ -19,7 +19,8 @@ faqItems:
 1. Paste Markdown into the editor, or click **Open .md** to load a file. The preview on the right updates as you type.
 2. Check the file name. It defaults to the first heading; type another name to override it.
 3. Pick the paper size (A4 or Letter, preselected from your browser's region) and the CJK font. The CJK font only matters if the text contains Chinese, Japanese or Korean.
-4. Click **Download .docx**. The status line tells you how many images were embedded and how many could not be loaded.
+4. If the Markdown has images with http(s) addresses and you want them inside the file, check **Embed web images**. It is off by default; while it is off, the export makes no network request.
+5. Click **Download .docx**. The status line tells you how many images were embedded, how many web images were kept as links, and how many could not be loaded.
 
 ## What each Markdown element becomes
 
@@ -35,7 +36,7 @@ The parser follows [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/) and 
 | Inline code | "Verbatim Char" character style |
 | `>` quote | "Quote" style with a left border; nested quotes indent further |
 | `[text](url)`, bare URLs | Clickable hyperlinks. `javascript:` and relative links stay as text |
-| `![alt](url)` | Embedded picture, scaled down to the text width, alt text stored as the image description |
+| `![alt](url)` | `data:` images: embedded picture, scaled down to the text width, alt text stored as the image description. http(s) images: a link, or an embedded picture if Embed web images is on |
 | `[^1]` | Real Word footnote at the bottom of the page |
 | `---` | Paragraph with a bottom border |
 
@@ -52,7 +53,7 @@ The sample in the editor is a short status report. Exported on 2026-09-30 and re
 
 ## Example: images
 
-Images are downloaded by your browser at export time, so they only work if the server allows cross-origin requests ([CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)). In our test on 2026-09-30:
+With **Embed web images** off (the default), every http(s) image becomes a link labelled with its alt text, and no request leaves the browser. With it on, your browser downloads the images at export time, which works only if the server allows cross-origin requests ([CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)). In our test on 2026-09-30, with the switch on:
 
 ```markdown
 ![Markdown logo](https://raw.githubusercontent.com/github/explore/main/topics/markdown/markdown.png)
@@ -60,7 +61,7 @@ Images are downloaded by your browser at export time, so they only work if the s
 ![local](./img/a.png)
 ```
 
-The status line read "1 image(s) embedded · 2 image(s) could not be loaded and were kept as links". The GitHub image (sent with `Access-Control-Allow-Origin: *`) was embedded as a 288 × 288 px PNG. The second server sends no such header, so the image became a link labelled `[No CORS]` pointing to its address. The relative path cannot be resolved from a web page and became the text `[local]`. Images written as `data:` URIs are embedded without any request. SVG and WebP images are redrawn as PNG before they are embedded.
+The status line read "1 image(s) embedded · 2 image(s) could not be loaded and were kept as links". With the switch off, the same file gave three links and the browser's network log showed no image request. The GitHub image (sent with `Access-Control-Allow-Origin: *`) was embedded as a 288 × 288 px PNG. The second server sends no such header, so the image became a link labelled `[No CORS]` pointing to its address. The relative path cannot be resolved from a web page and became the text `[local]`. Images written as `data:` URIs are embedded in both states, without any request. SVG and WebP images are redrawn as PNG before they are embedded.
 
 ## How it compares with other online converters
 
@@ -74,7 +75,7 @@ On 2026-09-30 we exported the same test file from markdowntoword.io, the first r
 | Footnote | Word footnote | Plain paragraph | `^1` text, note dropped |
 | Links | Clickable | Not clickable | Clickable |
 | Heading outline level | Set | Not set | Not set |
-| Image that fails to load | Link with alt text | "[图片未能加载: …]" text | Removed |
+| Image that is not embedded | Link with alt text | "[图片未能加载: …]" text | Removed |
 | `<script>` in the Markdown | Dropped | Copied as text | Its code copied as text |
 | `**注意：**这里` (bold before Chinese text) | Bold | `**` left in | `**` left in |
 

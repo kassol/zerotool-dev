@@ -52,7 +52,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
 }
 const block = source.slice(startIndex, endIndex);
 const E = new Function(block + `
-return { parseMarkdown, collectImageUrls, buildDocx, renderHtml, firstHeadingText,
+return { parseMarkdown, collectImageUrls, exportDocx, buildDocx, renderHtml, firstHeadingText,
   safeFilename, paperFor, defaultPaper, defaultFontFor, FONT_PRESETS, sniffImage, decodeDataUri, fitImage };`)();
 const S_START = source.indexOf('/* ── strings:start ── */');
 const S_END = source.indexOf('/* ── strings:end ── */');
@@ -74,7 +74,7 @@ function check(name, ok, detail) {
 
 async function exportDocx(md, opts) {
   const tree = E.parseMarkdown(md, lib);
-  const { doc, report } = E.buildDocx(tree, lib, Object.assign({ paper: 'a4', font: 'zh-song', images: {}, title: 't' }, opts || {}));
+  const { doc, report } = E.buildDocx(tree, lib, Object.assign({ paper: 'a4', font: 'zh-song', images: {}, title: 't', embedRemote: true }, opts || {}));
   const buf = await docx.Packer.toBuffer(doc);
   const zip = await JSZip.loadAsync(buf);
   const read = async (name) => (zip.file(name) ? zip.file(name).async('string') : '');
@@ -310,8 +310,9 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
 {
   const md = '![red dot](' + PNG_DATA_URI + ')\n\n![remote](https://example.com/a.png "Title")\n\n![missing](https://example.com/404.png)\n\n![ref][img]\n\n[img]: https://example.com/a.png';
   const tree = E.parseMarkdown(md, lib);
-  const urls = E.collectImageUrls(tree);
+  const urls = E.collectImageUrls(tree, true);
   check('image URLs to fetch: remote only, deduplicated, reference resolved', JSON.stringify(urls) === '["https://example.com/a.png","https://example.com/404.png"]', JSON.stringify(urls));
+  check('no image URLs to fetch when embedding web images is off', JSON.stringify(E.collectImageUrls(tree, false)) === '[]', JSON.stringify(E.collectImageUrls(tree, false)));
   const remote = { type: 'png', data: PNG_1x1, width: 1600, height: 800 };
   const r = await exportDocx(md, { images: { 'https://example.com/a.png': remote } });
   const blips = r.document.match(/<a:blip r:embed=/g) || [];
@@ -340,6 +341,42 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
   check('sniffImage unknown (WebP) returns null', E.sniffImage(Uint8Array.from(Buffer.from('RIFF\0\0\0\0WEBPVP8 '))) === null);
   check('fitImage keeps small images', JSON.stringify(E.fitImage(100, 50, 600)) === '{"width":100,"height":50}');
   check('fitImage scales wide images', JSON.stringify(E.fitImage(1200, 300, 600)) === '{"width":600,"height":150}');
+}
+
+// ── export flow: embedding web images is a switch, off by default ─────────────
+{
+  const SVG_URI = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%2210%22%2F%3E';
+  const md = '![dot](' + PNG_DATA_URI + ')\n\n![svg](' + SVG_URI + ')\n\n![remote](https://example.com/a.png)\n\n![missing](https://example.com/404.png)\n\n![ref][img]\n\n[img]: https://example.com/a.png';
+  function makeIo() {
+    const io = { fetchCalls: [], toImageCalls: 0 };
+    io.fetch = async (url) => {
+      io.fetchCalls.push(url);
+      if (url.endsWith('/404.png')) return { ok: false, status: 404, headers: { get: () => 'text/html' }, arrayBuffer: async () => new ArrayBuffer(0) };
+      return { ok: true, status: 200, headers: { get: () => 'image/png' }, arrayBuffer: async () => PNG_1x1.slice().buffer };
+    };
+    // stands in for the browser's canvas re-encode of formats Word cannot embed directly
+    io.toImage = async (bytes) => { io.toImageCalls++; return E.sniffImage(bytes) ? null : { type: 'png', data: PNG_1x1, width: 10, height: 10 }; };
+    return io;
+  }
+  async function run(embedRemote) {
+    const io = makeIo();
+    const tree = E.parseMarkdown(md, lib);
+    const { doc, report } = await E.exportDocx(tree, lib, { paper: 'a4', font: 'zh-song', title: 't', embedRemote }, io);
+    const zip = await JSZip.loadAsync(await docx.Packer.toBuffer(doc));
+    return { io, report, document: await zip.file('word/document.xml').async('string'), rels: await zip.file('word/_rels/document.xml.rels').async('string') };
+  }
+  const off = await run(false);
+  check('switch off: export makes no fetch call', off.io.fetchCalls.length === 0, JSON.stringify(off.io.fetchCalls));
+  check('switch off: http(s) images become links with their alt text', /<w:hyperlink /.test(paraWith(off.document, '[remote]')) && off.rels.includes('Target="https://example.com/a.png"'), paraWith(off.document, 'remote'));
+  check('switch off: data URI images are still embedded (PNG and re-encoded SVG)', (off.document.match(/<a:blip r:embed=/g) || []).length === 2 && off.io.toImageCalls === 1, (off.document.match(/<a:blip r:embed=/g) || []).length);
+  check('switch off: report counts skipped web images, not failures', off.report.imagesEmbedded === 2 && off.report.imagesSkipped === 3 && off.report.imagesMissing === 0, JSON.stringify(off.report));
+  const on = await run(true);
+  check('switch on: each web image URL is fetched once', JSON.stringify(on.io.fetchCalls.slice().sort()) === '["https://example.com/404.png","https://example.com/a.png"]', JSON.stringify(on.io.fetchCalls));
+  check('switch on: fetched images and data URIs are embedded', (on.document.match(/<a:blip r:embed=/g) || []).length === 4, (on.document.match(/<a:blip r:embed=/g) || []).length);
+  check('switch on: image that fails to load stays a link', /<w:hyperlink /.test(paraWith(on.document, '[missing]')));
+  check('switch on: report', on.report.imagesEmbedded === 4 && on.report.imagesMissing === 1 && on.report.imagesSkipped === 0, JSON.stringify(on.report));
+  const dflt = await (async () => { const io = makeIo(); await E.exportDocx(E.parseMarkdown(md, lib), lib, { paper: 'a4', font: 'zh-song' }, io); return io; })();
+  check('switch defaults to off when the option is missing', dflt.fetchCalls.length === 0, JSON.stringify(dflt.fetchCalls));
 }
 
 // ── footnotes ────────────────────────────────────────────────────────────────

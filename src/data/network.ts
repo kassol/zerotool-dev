@@ -7,9 +7,20 @@ export const networkToolSlugs: readonly string[] = [
   'qr-code-decoder',     // URL mode fetches the image from the entered address
   'markdown-preview',    // ![alt](url) renders an <img> that loads from url
   'meta-tag-generator',  // social previews render the og:image / twitter:image URL
-  'markdown-to-word',    // export downloads http(s) images to embed them in the .docx
 ];
 
 export function networkNoteKey(slug: string): string | null {
   return networkToolSlugs.includes(slug) ? `network.${slug}` : null;
+}
+
+// Tools that use the network only after the user turns on an option. They keep the
+// "100% Client-Side" badge; the About pages list them with `networkOptional.{slug}`.
+export const optionalNetworkToolSlugs: readonly string[] = [
+  'markdown-to-word',    // "Embed web images" downloads http(s) images at export
+];
+
+export const aboutNetworkToolSlugs: readonly string[] = [...networkToolSlugs, ...optionalNetworkToolSlugs];
+
+export function aboutNetworkNoteKey(slug: string): string {
+  return optionalNetworkToolSlugs.includes(slug) ? `networkOptional.${slug}` : `network.${slug}`;
 }
