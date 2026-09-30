@@ -79,6 +79,7 @@
       var outputEl = document.getElementById('htj-output');
       var copyBtn  = document.getElementById('htj-copy');
 
+      /* ── engine:start ── */
       // ---- Void elements that need explicit self-closing slash ----
       var VOID_TAGS = [
         'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
@@ -109,11 +110,50 @@
         'allowfullscreen': 'allowFullScreen',
       };
 
-      // ---- Event attributes: on* → camelCase ----
-      function camelCaseEvent(name) {
-        // e.g. onclick → onClick, onmouseover → onMouseOver
-        return name.replace(/^on([a-z])/, function (_, c) { return 'on' + c.toUpperCase(); })
-                   .replace(/([a-z])([A-Z])/g, function (_, a, b) { return a + b; });
+      // ---- Event attributes: HTML on* name → React prop name ----
+      // React derives its prop names from the camelCase event list in react-dom
+      // (DOMEventProperties.js); the lowercase HTML name is the key.
+      var REACT_EVENTS = [
+        'abort', 'animationEnd', 'animationIteration', 'animationStart', 'auxClick',
+        'beforeInput', 'blur', 'cancel', 'canPlay', 'canPlayThrough', 'change', 'click',
+        'close', 'compositionEnd', 'compositionStart', 'compositionUpdate', 'contextMenu',
+        'copy', 'cut', 'drag', 'dragEnd', 'dragEnter', 'dragExit', 'dragLeave', 'dragOver',
+        'dragStart', 'drop', 'durationChange', 'emptied', 'encrypted', 'ended', 'error',
+        'focus', 'gotPointerCapture', 'input', 'invalid', 'keyDown', 'keyPress', 'keyUp',
+        'load', 'loadedData', 'loadedMetadata', 'loadStart', 'lostPointerCapture',
+        'mouseDown', 'mouseEnter', 'mouseLeave', 'mouseMove', 'mouseOut', 'mouseOver',
+        'mouseUp', 'paste', 'pause', 'play', 'playing', 'pointerCancel', 'pointerDown',
+        'pointerEnter', 'pointerLeave', 'pointerMove', 'pointerOut', 'pointerOver',
+        'pointerUp', 'progress', 'rateChange', 'reset', 'resize', 'scroll', 'scrollEnd',
+        'seeked', 'seeking', 'select', 'stalled', 'submit', 'suspend', 'timeUpdate',
+        'toggle', 'touchCancel', 'touchEnd', 'touchMove', 'touchStart', 'transitionEnd',
+        'volumeChange', 'waiting', 'wheel',
+      ];
+      var EVENT_MAP = { ondblclick: 'onDoubleClick' };
+      REACT_EVENTS.forEach(function (name) {
+        EVENT_MAP['on' + name.toLowerCase()] = 'on' + name.charAt(0).toUpperCase() + name.slice(1);
+      });
+
+      // ---- Decode the entities an attribute value may use (for JS contexts) ----
+      var NAMED_ENTITIES = { quot: '"', apos: "'", amp: '&', lt: '<', gt: '>', nbsp: '\u00a0' };
+      function decodeEntities(str) {
+        return str.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/g, function (m, ref) {
+          if (ref.charAt(0) === '#') {
+            var code = ref.charAt(1) === 'x' || ref.charAt(1) === 'X'
+              ? parseInt(ref.slice(2), 16)
+              : parseInt(ref.slice(1), 10);
+            return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+          }
+          return Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, ref) ? NAMED_ENTITIES[ref] : m;
+        });
+      }
+
+      // ---- Inline handler code → arrow function (React needs a function, not a string) ----
+      function handlerToFunction(code) {
+        code = decodeEntities(code).trim();
+        if (!code) return '{(event) => {}}';
+        var end = code.indexOf('//') !== -1 || code.indexOf('\n') !== -1 ? '\n' : ' ';
+        return '{(event) => { ' + code + end + '}}';
       }
 
       // ---- Style string → JSX object ----
@@ -138,32 +178,35 @@
       }
 
       // ---- Process a single tag's attributes ----
+      // Only attribute names are converted. Values are copied as written (htmltojsx does the
+      // same), except style (→ object) and on* handlers (→ arrow function).
+      function jsxAttrName(name) {
+        var lower = name.toLowerCase();
+        return Object.prototype.hasOwnProperty.call(ATTR_MAP, lower) ? ATTR_MAP[lower] : name;
+      }
+      var ATTR_RE = /(\s+)([^\s"'>\/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
       function processAttrs(attrStr) {
         if (!attrStr) return '';
-        // Replace style="..." first (complex substitution)
-        attrStr = attrStr.replace(/style\s*=\s*"([^"]*)"/gi, function (_, val) {
-          return 'style=' + styleStringToObject(val);
+        return attrStr.replace(ATTR_RE, function (_, space, name, rawValue) {
+          var lower = name.toLowerCase();
+          if (rawValue === undefined) {
+            return space + jsxAttrName(name);
+          }
+          var quote = rawValue.charAt(0);
+          var quoted = quote === '"' || quote === "'";
+          var value = quoted ? rawValue.slice(1, -1) : rawValue;
+          if (lower === 'style') {
+            return space + 'style=' + styleStringToObject(decodeEntities(value));
+          }
+          if (Object.prototype.hasOwnProperty.call(EVENT_MAP, lower)) {
+            return space + EVENT_MAP[lower] + '=' + handlerToFunction(value);
+          }
+          return space + jsxAttrName(name) + '=' + (quoted ? rawValue : '"' + value + '"');
         });
-        attrStr = attrStr.replace(/style\s*=\s*'([^']*)'/gi, function (_, val) {
-          return 'style=' + styleStringToObject(val);
-        });
-
-        // Rename known attributes (whole-word match on attr name)
-        Object.keys(ATTR_MAP).forEach(function (from) {
-          var to = ATTR_MAP[from];
-          var re = new RegExp('(?<![\\w-])' + from + '(?=[\\s=>/]|$)', 'gi');
-          attrStr = attrStr.replace(re, to);
-        });
-
-        // Event attributes on* → camelCase
-        attrStr = attrStr.replace(/\bon([a-z]+)(?=\s*=)/gi, function (match) {
-          return camelCaseEvent(match.toLowerCase());
-        });
-
-        return attrStr;
       }
 
       // ---- Main conversion function ----
+      var TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/g;
       function htmlToJsx(html) {
         // 1. HTML comments → JSX comments
         var result = html.replace(/<!--([\s\S]*?)-->/g, function (_, content) {
@@ -171,19 +214,16 @@
         });
 
         // 2. Process tags: find opening tags and transform attributes
-        result = result.replace(/<([a-zA-Z][a-zA-Z0-9-]*)(\s[^>]*)?(\/?)>/g, function (match, tag, attrs, selfClose) {
-          var rawAttrs = attrs || '';
-          // Greedy [^>]* may swallow a trailing `/`; strip it so we don't emit `/ />`.
-          var hadTrailingSlash = /\/\s*$/.test(rawAttrs);
-          if (hadTrailingSlash) rawAttrs = rawAttrs.replace(/\s*\/\s*$/, '');
-          var processedAttrs = processAttrs(rawAttrs);
+        result = result.replace(TAG_RE, function (match, tag, attrs, selfClose) {
+          var processedAttrs = processAttrs(attrs || '');
           var isVoid = VOID_TAGS.indexOf(tag.toLowerCase()) !== -1;
-          var close = (isVoid || selfClose || hadTrailingSlash) ? ' />' : '>';
+          var close = (isVoid || selfClose) ? ' />' : '>';
           return '<' + tag + processedAttrs + close;
         });
 
         return result;
       }
+      /* ── engine:end ── */
 
       function convert() {
         var html = inputEl.value;
