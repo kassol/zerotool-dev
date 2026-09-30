@@ -40,3 +40,54 @@ faqItems:
   <li><strong>500 Internal Server Error</strong> — 服务器意外故障。</li>
   <li><strong>503 Service Unavailable</strong> — 服务器宕机或过载。</li>
 </ul>
+
+## API 该返回哪个状态码
+
+| 场景 | 状态码 |
+|---|---|
+| `GET` 返回资源 | 200 |
+| `POST` 创建了资源 | 201，并带 `Location` 头 |
+| 成功但没有响应体（常见于 `DELETE`） | 204 |
+| 请求体不是合法 JSON 或有语法错误 | 400 |
+| 没带 token 或 token 无效 | 401 |
+| token 有效，但用户没有权限 | 403 |
+| 资源不存在 | 404 |
+| 重复数据，例如邮箱已注册 | 409 |
+| 请求体能解析，但违反业务规则（结束日期早于开始日期） | 422 |
+| 超出频率限制 | 429 |
+| 未处理的异常 | 500 |
+
+**401 还是 403。** 401 表示服务器不知道你是谁，返回 401 时必须同时带 `WWW-Authenticate` 头（[RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.2)）。403 表示服务器知道你是谁，但不允许这个操作。如果不能暴露资源是否存在，可以用 404 代替 403（[§15.5.4](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.4)）。
+
+**重定向与请求方法。** 由于历史原因，浏览器跟随 301 或 302 时可以把 `POST` 改成 `GET`（[§15.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.4.2)）；307 和 308 必须保留方法和请求体。表单 `POST` 需要保持为 `POST` 时，用 307 或 308。
+
+## 状态码配套的响应头
+
+| 状态码 | 响应头 | 要求 |
+|---|---|---|
+| 201 | `Location: /api/users/456` | 指向新建的资源 |
+| 401 | `WWW-Authenticate: Bearer realm="api"` | 必须 |
+| 405 | `Allow: GET, POST` | 必须（[§15.5.6](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.6)） |
+| 429、503 | `Retry-After: 60` | 可选；秒数或 HTTP 日期（[RFC 6585 §4](https://www.rfc-editor.org/rfc/rfc6585#section-4)） |
+| 304 | — | 无响应体，客户端使用缓存 |
+
+## 在 JavaScript 中处理状态码
+
+`fetch()` 遇到 4xx、5xx 不会 reject，只有网络错误才会，所以要检查 `res.ok`（200–299 时为 true）或 `res.status`：
+
+```javascript
+const res = await fetch('/api/orders', { method: 'POST', body });
+if (res.status === 401) return redirectToLogin();
+if (res.status === 429) {
+  const wait = Number(res.headers.get('Retry-After') ?? 60);
+  return retryAfter(wait);
+}
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+const order = await res.json();
+```
+
+## 限制
+
+- **收录 61 个注册状态码。** 列表按 IANA 注册表整理。只有某个产品使用的状态码（如 nginx 的 499、Cloudflare 的 520–526）不在列表中。
+- **两个状态码用的是旧名称。** 列表中是 413 Payload Too Large 和 422 Unprocessable Entity，[RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-15.5) 已改名为 Content Too Large 和 Unprocessable Content。
+- **说明只有英文。** 各语言页面上的名称和说明都是英文。搜索匹配状态码、名称或英文说明中的词，例如搜「重定向」没有结果，要搜 `redirect`。

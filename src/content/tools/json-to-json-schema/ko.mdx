@@ -36,3 +36,81 @@ faqItems:
   선택적 속성을 <code>required</code>에서 제거,
   알려진 값 집합에 <code>enum</code> 추가 등이 있습니다.
 </p>
+
+## 변환 예시
+
+입력:
+
+```json
+{
+  "orderId": 1001,
+  "total": 59.9,
+  "coupon": null,
+  "items": [{ "sku": "A1", "qty": 2 }],
+  "tags": []
+}
+```
+
+출력:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "integer" },
+    "total": { "type": "number" },
+    "coupon": { "type": "null" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "qty": { "type": "integer" }
+        },
+        "required": ["sku", "qty"]
+      }
+    },
+    "tags": { "type": "array", "items": {} }
+  },
+  "required": ["orderId", "total", "items", "tags"]
+}
+```
+
+- 정수는 `integer`, 소수는 `number`가 됩니다. `qty`가 `1.5`가 될 수 있으면 `number`로 바꾸세요.
+- 샘플의 `coupon`은 `null`이라 타입이 `null`이고 `required`에도 들어가지 않습니다. 문자열도 올 수 있으면 타입을 `["string", "null"]`로 바꿉니다.
+- 빈 배열은 `"items": {}`가 되어 어떤 요소든 통과합니다.
+
+## Ajv로 검증하기
+
+Ajv 8은 기본 `Ajv` 클래스로 draft-07을 검증합니다. `format` 키워드에는 [ajv-formats](https://ajv.js.org/packages/ajv-formats.html)가 필요하며, 없으면 `compile()`이 `unknown format "email"`을 던집니다.
+
+```javascript
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+
+const ajv = new Ajv();
+addFormats(ajv);
+
+const validate = ajv.compile({
+  type: 'object',
+  properties: {
+    email: { type: 'string', format: 'email' },
+    coupon: { type: ['string', 'null'] },
+  },
+  required: ['email'],
+  additionalProperties: false,
+});
+
+validate({ email: 'a@example.com', extra: 1 }); // false: must NOT have additional properties
+```
+
+생성기는 `format`, `minimum`, `maxLength`, `pattern`, `enum`, `additionalProperties: false`를 넣지 않습니다. 데이터가 지켜야 할 규칙에 맞게 추가하세요.
+
+## 제한 사항
+
+- **객체 배열은 첫 번째 객체만 씁니다.** `[{"id": 1, "name": "Alice"}, {"id": 2, "email": "b@example.com"}]`이면 `items`에 `id`와 `name`만 들어가고 둘 다 필수라서 두 번째 요소가 검증에 실패합니다. 배열 스키마는 모든 샘플로 확인하세요.
+- **샘플 하나만 봅니다.** null이 아닌 키는 모두 `required`에 들어갑니다. 선택 필드는 직접 `required`에서 빼세요.
+- **타입이 섞이면 구조가 빠집니다.** `[1, "x", {"a": 1}]` 같은 배열은 `"type": ["integer", "string", "object"]`가 되고 객체의 속성은 나오지 않습니다.
+- **draft-07만 출력합니다.** 2020-12를 쓰려면 `$schema`를 바꾸고 Ajv의 `Ajv2020` 클래스를 사용하세요.

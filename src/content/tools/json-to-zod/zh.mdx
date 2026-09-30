@@ -38,3 +38,65 @@ faqItems:
   <li><strong>配置文件：</strong>定义和验证从 JSON 文件加载的配置对象。</li>
   <li><strong>类型安全：</strong>与 TypeScript 结合，从单一 schema 同时获得运行时验证和静态类型推断。</li>
 </ul>
+
+## 示例
+
+根名称填 `User`，输入：
+
+```json
+{
+  "id": 42,
+  "email": "alice@example.com",
+  "price": 19.9,
+  "tags": ["admin", "beta"],
+  "metadata": null,
+  "orders": [
+    { "sku": "A1", "qty": 2 },
+    { "sku": "B7", "qty": 1, "note": "gift" }
+  ]
+}
+```
+
+输出：
+
+```ts
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.number().int(),
+  email: z.string(),
+  price: z.number(),
+  tags: z.array(z.string()),
+  metadata: z.null(),
+  orders: z.array(z.object({
+    sku: z.string(),
+    qty: z.number().int(),
+    note: z.string().optional(),
+  })),
+});
+
+export type User = z.infer<typeof UserSchema>;
+```
+
+两个订单里只有一个有 `note`，所以 `note` 是可选的。输出只用了 Zod 3 和 Zod 4 都支持的写法。
+
+## 调整生成的 schema
+
+样本里每个字段只有一个值，生成器不知道你的业务规则。使用前检查这几处：
+
+| 生成结果 | 问题 | 改为（Zod 4） |
+|---|---|---|
+| `email: z.string()` | 任意字符串都能通过 | `z.email()`（Zod 3：`z.string().email()`） |
+| `qty: z.number().int()` | 只有值一定是整数时才对。样本里 `price: 10` 也会得到 `.int()`，之后 `10.5` 会报 "expected int" | 价格用 `z.number()`，再加 `.min(0)` 或 `.positive()` |
+| `metadata: z.null()` | 只有 `null` 能通过 | `z.string().nullable()` |
+| `status: z.string()` | 任意字符串都能通过 | `z.enum(["active", "inactive"])` |
+| 样本里出现过的字段 | 一律必填，即使接口有时不返回 | 加 `.optional()` |
+
+失败就应该停止运行的地方（如启动时读配置）用 `.parse()`，它会抛出 `ZodError`；接口响应和用户输入用 `.safeParse()`，它返回 `{ success: false, error }`，由你自己处理错误。
+
+## 限制
+
+- **类型只来自一份样本。** 空数组生成 `z.array(z.unknown())`，空对象生成 `z.record(z.string(), z.unknown())`。
+- **`null` 生成 `z.null()`。** 不会自动加 `.nullable()`。在对象数组里，某个键在第一项是 `null`、第二项是字符串时，生成 `z.union([z.null(), z.string()])`。
+- **顶层数组混有对象和其他值。** 根是 `[{"a": 1}, 2]` 这样的数组时，schema 只包含对象，`2` 会校验失败。对象内部的数组会把所有元素类型放进 `z.union`。
+- **没有字符串格式与范围。** 邮箱、URL、日期、UUID 都是 `z.string()`。

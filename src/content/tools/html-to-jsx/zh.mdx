@@ -50,3 +50,43 @@ faqItems:
   <li>将 HTML 邮件模板转换为 React 邮件库可用的格式</li>
   <li>快速将第三方 HTML 组件适配到 React 项目</li>
 </ul>
+
+## 示例
+
+输入：
+
+```html
+<label for="email" class="lbl">Email</label>
+<input id="email" type="email" required>
+<div style="background-image: url('a.png'); font-size:14px">x</div>
+<!-- footer -->
+```
+
+输出：
+
+```jsx
+<label htmlFor="email" className="lbl">Email</label>
+<input id="email" type="email" required />
+<div style={{ backgroundImage: 'url(\'a.png\')', fontSize: '14px' }}>x</div>
+{/* footer */}
+```
+
+`data-*` 和 `aria-*` 属性保持连字符写法，这正是 React 的要求。数字属性保留为字符串，如 `colSpan="2"`，React 可以接受。
+
+## 仍需手动修改的地方
+
+| 转换结果 | 在 React 中的问题 | 改为 |
+|---|---|---|
+| `<button onClick="save()">` | 事件处理器是字符串，React 需要函数 | `onClick={save}` |
+| `<input type="checkbox" checked>` | 有 `checked` 却没有 `onChange`，字段变成只读 | `defaultChecked` |
+| `<option selected>` | React 在 `<select>` 上设置选中项 | `<select defaultValue="...">` |
+| `<textarea>hi</textarea>` | [`<textarea>` 不接受子节点](https://react.dev/reference/react-dom/components/textarea) | `<textarea defaultValue="hi" />` |
+| `<p>a < b and {name}</p>` | 文本里的 `<` 和 `{` 是 JSX 语法 | `a {'<'} b and {'{'}name{'}'}` |
+| 两个及以上顶层元素 | 组件只能返回一个元素 | 用 `<>...</>` 包起来 |
+| `<path stroke-width="2">` | SVG 属性不会被转换 | 用 [SVG 转 JSX](/zh/tools/svg-to-jsx/) |
+
+## 限制
+
+- **属性值可能被改动。** 转换器用正则表达式处理标签文本，所以属性值里的 `class`、`for` 也会被改名：`href="/search?for=1&class=2"` 会变成 `href="/search?htmlFor=1&className=2"`。请检查输出里的 URL 和 `title`、`alt` 文本。
+- **只处理标签。** 标签之间的文本原样保留；粘贴整个文档时，`<!DOCTYPE>`、`<html>`、`<head>`、`<body>` 也会留在结果里。只粘贴要放进组件的部分。
+- **不生成组件外壳。** 输出只是标记，放进组件的 `return (...)` 里使用。

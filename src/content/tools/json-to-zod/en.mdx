@@ -38,3 +38,65 @@ faqItems:
   <li><strong>Config files:</strong> Define and validate configuration objects loaded from JSON files.</li>
   <li><strong>Type safety:</strong> Pair with TypeScript to get both runtime validation and static type inference from a single schema.</li>
 </ul>
+
+## Example
+
+With the root name `User`, this sample:
+
+```json
+{
+  "id": 42,
+  "email": "alice@example.com",
+  "price": 19.9,
+  "tags": ["admin", "beta"],
+  "metadata": null,
+  "orders": [
+    { "sku": "A1", "qty": 2 },
+    { "sku": "B7", "qty": 1, "note": "gift" }
+  ]
+}
+```
+
+produces:
+
+```ts
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.number().int(),
+  email: z.string(),
+  price: z.number(),
+  tags: z.array(z.string()),
+  metadata: z.null(),
+  orders: z.array(z.object({
+    sku: z.string(),
+    qty: z.number().int(),
+    note: z.string().optional(),
+  })),
+});
+
+export type User = z.infer<typeof UserSchema>;
+```
+
+`note` is optional because only one of the two orders has it. The output uses only calls that work in both Zod 3 and Zod 4.
+
+## Refining the Generated Schema
+
+A sample shows one value per field, so the generator cannot know your rules. Check these points before you use the schema:
+
+| Generated | Problem | Change to (Zod 4) |
+|---|---|---|
+| `email: z.string()` | Any string passes | `z.email()` (Zod 3: `z.string().email()`) |
+| `qty: z.number().int()` | Correct only if the value is always a whole number. `price: 10` in the sample also gives `.int()`, and then `10.5` fails with "expected int" | `z.number()` for prices; add `.min(0)` or `.positive()` |
+| `metadata: z.null()` | Only `null` passes | `z.string().nullable()` |
+| `status: z.string()` | Any string passes | `z.enum(["active", "inactive"])` |
+| Field present in the sample | Required, even if the API sometimes leaves it out | `.optional()` |
+
+Use `.parse()` where a failure should stop the program (configuration at startup): it throws a `ZodError`. Use `.safeParse()` for API responses and user input: it returns `{ success: false, error }` and you handle the error yourself.
+
+## Limits
+
+- **Types come from one sample.** An empty array becomes `z.array(z.unknown())`, and an empty object becomes `z.record(z.string(), z.unknown())`.
+- **`null` becomes `z.null()`.** The generator does not add `.nullable()`. In an array of objects, a key that is `null` in the first item and a string in the second becomes `z.union([z.null(), z.string()])`.
+- **Top-level arrays that mix objects and other values.** If the root is an array such as `[{"a": 1}, 2]`, only the objects go into the schema, and the schema rejects the `2`. Arrays inside an object keep all item types in a `z.union`.
+- **No string formats or limits.** Emails, URLs, dates, and UUIDs are all `z.string()`.

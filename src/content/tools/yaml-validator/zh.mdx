@@ -9,7 +9,7 @@ faqItems:
   - question: "「解析结构预览」是什么？"
     answer: "当 YAML 语法合法时，工具会将其解析为数据对象，并以格式化 JSON 形式展示，方便直观确认数据结构是否符合预期，也可复制 JSON 结果供其他地方使用。"
   - question: "支持哪个 YAML 规范版本？"
-    answer: "工具使用 js-yaml 4.x，实现 YAML 1.2 规范，支持锚点、别名、多行字符串、块/流序列及显式类型标签等所有常用 YAML 语法。"
+    answer: "工具使用 js-yaml 4.x，实现 YAML 1.2 规范，支持锚点、别名、多行字符串、块/流序列及显式类型标签等常用 YAML 语法。一次只读取一个文档：用 --- 分隔多个文档的文件会报错。"
   - question: "数据会上传到服务器吗？"
     answer: "不会。验证完全在浏览器中通过 JavaScript 完成，YAML 内容不会离开本地设备。"
 ---
@@ -69,3 +69,45 @@ server:
 ```
 
 <p>验证器会报告检测到缩进不一致的行号和列号，便于快速定位并修复问题。</p>
+
+## 语法合法不等于结构正确
+
+验证器报告的是语法错误。能解析的 YAML 结构也可能不对，所以要看「解析结构」预览。下面的文件里，`carrot` 少缩进了两个空格：
+
+```yaml
+fruits:
+  - apple
+vegetables:
+- carrot
+  - spinach
+```
+
+验证器判定合法，预览显示 `"vegetables": ["carrot - spinach"]`：下一行被并进了 `carrot`，成为一个字符串。
+
+## YAML 1.1 与 1.2 对值的解读不同
+
+本工具用 js-yaml 4.1.1，遵循 YAML 1.2；Python 常用的 PyYAML 遵循 YAML 1.1。同一份文件得到的数据不同：
+
+| YAML | 本工具（js-yaml 4.1.1） | PyYAML 6.0.3 `safe_load` |
+|---|---|---|
+| `debug: yes` | `"yes"`（字符串） | `True` |
+| `country: NO` | `"NO"`（字符串） | `False` |
+| `octal: 0777` | `777` | `511` |
+| `time: 12:30` | `"12:30"`（字符串） | `750` |
+
+文件会被 YAML 1.1 解析器读取时，给 `"NO"`、`"yes"`、`"0777"` 这类值加引号。
+
+## 常见报错
+
+| 输入 | 验证器的报错 |
+|---|---|
+| `message: Error: something went wrong` | bad indentation of a mapping entry（1:15）；给值加引号 |
+| `host:` 前面用了 Tab | tab characters must not be used in indentation |
+| 同一映射里出现两次 `timeout` | duplicated mapping key |
+| `server` 后面漏了冒号，下一行有缩进 | end of the stream or a document separator is expected |
+
+## 限制
+
+- **一次只能验证一个文档。** 用 `---` 分隔多个文档的文件（如同时包含 Deployment 和 Service 的 Kubernetes 清单）会报「expected a single document in the stream」，请逐个文档粘贴。
+- **只检查语法。** 不按 Kubernetes、GitHub Actions、Docker Compose 的 schema 校验，也不做风格检查。CI 里用 [yamllint](https://github.com/adrienverge/yamllint)（`yamllint .`）。
+- **预览是 JSON。** 锚点和 `<<` 合并键在预览里已展开，注释不显示。

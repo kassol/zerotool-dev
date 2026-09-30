@@ -29,3 +29,33 @@ faqItems:
   <li><code>(\w+)@(\w+\.\w+)</code> — simple email capture</li>
   <li><code>https?://\S+</code> — URLs</li>
 </ul>
+
+## Tested Patterns
+
+Each row shows what the tester returns with the `g` flag on:
+
+| Pattern | Test string | Matches |
+|---|---|---|
+| `<.+>` | `<a>foo</a>` | `<a>foo</a>` (greedy: first `<` to last `>`) |
+| `<.+?>` | `<a>foo</a>` | `<a>`, `</a>` (lazy) |
+| `-?\d+(?:\.\d+)?` | `temp -3.5, max 42` | `-3.5`, `42` |
+| `#([A-Fa-f0-9]{6}\|[A-Fa-f0-9]{3})\b` | `#fff #1a73e8 #12345g` | `#fff`, `#1a73e8` |
+| `(?<=\$)\d+` | `cost $42` | `42` (lookbehind) |
+| `^(?<ts>\S+)\s+(?<level>\w+)\s+(?<msg>.+)$` | `2026-04-07T14:23:01 ERROR connection refused` | 1 match; groups `2026-04-07T14:23:01`, `ERROR`, `connection refused` |
+
+A regex checks the format only. `^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$` accepts `2026-02-31`, so parse dates with a date library.
+
+## Common Mistakes
+
+- **Unescaped metacharacters.** `.` `*` `+` `?` `(` `)` `[` `]` `{` `}` `^` `$` `|` `\` have special meanings. Write `\.` to match a dot.
+- **`^` and `$` in multi-line text.** Without the `m` flag they match only at the start and end of the whole text.
+- **`\w` is ASCII only.** `\w+` on `café 東京` matches only `caf`. Use a character range such as `[\u4e00-\u9fff]+` for Chinese characters.
+- **Nested quantifiers.** `(a+)+$` on 28 `a` characters followed by `b` took 18 seconds in Node.js 24 (the V8 engine that Chrome also uses). The tester runs on the page and has no time limit, so the tab stops responding until the match ends.
+
+## Limits
+
+- **JavaScript syntax only.** Python's `(?P<name>...)` gives "Invalid group"; use `(?<name>...)`. Patterns written for Go (RE2), PCRE, or .NET can behave differently.
+- **Four flags.** Only `g`, `i`, `m`, and `s` are available. There is no `u` flag, so `\p{L}` is read as the literal text `p{L}`, and `y`, `d`, and `v` are not available.
+- **Groups are listed by number.** Named groups appear as Group 1, Group 2, and so on.
+- **The match list shows the first 100 matches.** The highlight shows all of them. The index is in UTF-16 code units, so an emoji before a match adds 2.
+- **No replace.** The tester finds matches; it does not run `replace()`.

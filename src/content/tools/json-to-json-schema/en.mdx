@@ -51,3 +51,81 @@ faqItems:
   removing them from <code>required</code>, and adding <code>enum</code> for fields
   with a known set of values.
 </p>
+
+## Example
+
+Input:
+
+```json
+{
+  "orderId": 1001,
+  "total": 59.9,
+  "coupon": null,
+  "items": [{ "sku": "A1", "qty": 2 }],
+  "tags": []
+}
+```
+
+Output:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "integer" },
+    "total": { "type": "number" },
+    "coupon": { "type": "null" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "qty": { "type": "integer" }
+        },
+        "required": ["sku", "qty"]
+      }
+    },
+    "tags": { "type": "array", "items": {} }
+  },
+  "required": ["orderId", "total", "items", "tags"]
+}
+```
+
+- A whole number becomes `integer` and a decimal becomes `number`. If `qty` can be `1.5`, change it to `number`.
+- `coupon` is `null` in the sample, so its type is `null` and it is not in `required`. If it can also be a string, change the type to `["string", "null"]`.
+- An empty array gives `"items": {}`, which accepts any item.
+
+## Using the Schema with Ajv
+
+Ajv 8 validates draft-07 with its default `Ajv` class. The `format` keyword needs the [ajv-formats](https://ajv.js.org/packages/ajv-formats.html) package; without it, `compile()` throws `unknown format "email"`:
+
+```javascript
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+
+const ajv = new Ajv();
+addFormats(ajv);
+
+const validate = ajv.compile({
+  type: 'object',
+  properties: {
+    email: { type: 'string', format: 'email' },
+    coupon: { type: ['string', 'null'] },
+  },
+  required: ['email'],
+  additionalProperties: false,
+});
+
+validate({ email: 'a@example.com', extra: 1 }); // false: must NOT have additional properties
+```
+
+The generator does not add `format`, `minimum`, `maxLength`, `pattern`, `enum`, or `additionalProperties: false`. Add them for the rules your data must follow.
+
+## Limits
+
+- **Arrays of objects use the first object only.** For `[{"id": 1, "name": "Alice"}, {"id": 2, "email": "b@example.com"}]`, `items` has only `id` and `name`, and both are required, so the second item fails validation. Check array schemas against all your samples.
+- **One sample.** Every non-null key becomes required. Remove optional fields from `required` yourself.
+- **Mixed types lose structure.** An array such as `[1, "x", {"a": 1}]` gives `"type": ["integer", "string", "object"]` without the object's properties.
+- **Draft-07 only.** To use draft 2020-12, change `$schema` and use Ajv's `Ajv2020` class.

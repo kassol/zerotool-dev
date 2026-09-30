@@ -25,3 +25,54 @@ faqItems:
   <li><strong>4xx 클라이언트 오류:</strong> 요청에 잘못된 구문이 있거나 처리 불가.</li>
   <li><strong>5xx 서버 오류:</strong> 서버가 유효한 요청 처리에 실패.</li>
 </ul>
+
+## API에서 어떤 상태 코드를 쓸까
+
+| 상황 | 코드 |
+|---|---|
+| `GET`으로 리소스 반환 | 200 |
+| `POST`로 리소스 생성 | 201 (`Location` 헤더 포함) |
+| 성공했지만 본문 없음 (주로 `DELETE`) | 204 |
+| 본문이 올바른 JSON이 아니거나 구문 오류 | 400 |
+| 토큰이 없거나 유효하지 않음 | 401 |
+| 토큰은 유효하지만 권한 없음 | 403 |
+| 리소스가 없음 | 404 |
+| 중복 (이미 가입된 이메일 등) | 409 |
+| 본문은 파싱되지만 업무 규칙 위반 (종료일이 시작일보다 앞섬) | 422 |
+| 요청 한도 초과 | 429 |
+| 처리되지 않은 예외 | 500 |
+
+**401과 403.** 401은 서버가 요청자를 식별하지 못한 상태이며, 401을 보내는 서버는 `WWW-Authenticate` 헤더도 반드시 보내야 합니다([RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.2)). 403은 요청자를 알지만 이 작업을 허용하지 않는 상태입니다. 리소스가 존재한다는 사실을 숨겨야 하면 403 대신 404를 보낼 수 있습니다([§15.5.4](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.4)).
+
+**리다이렉트와 요청 메서드.** 역사적인 이유로 브라우저는 301과 302를 따라갈 때 `POST`를 `GET`으로 바꿀 수 있습니다([§15.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.4.2)). 307과 308은 메서드와 본문을 유지해야 합니다. 폼 `POST`를 `POST`로 유지해야 하면 307이나 308을 쓰세요.
+
+## 코드와 함께 보내는 헤더
+
+| 코드 | 헤더 | 규정 |
+|---|---|---|
+| 201 | `Location: /api/users/456` | 새 리소스를 가리킴 |
+| 401 | `WWW-Authenticate: Bearer realm="api"` | 필수 |
+| 405 | `Allow: GET, POST` | 필수 ([§15.5.6](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.6)) |
+| 429, 503 | `Retry-After: 60` | 선택. 초 또는 HTTP 날짜 ([RFC 6585 §4](https://www.rfc-editor.org/rfc/rfc6585#section-4)) |
+| 304 | — | 본문 없음. 클라이언트가 캐시를 사용 |
+
+## JavaScript에서 처리하기
+
+`fetch()`는 4xx나 5xx에서 reject하지 않습니다. 네트워크 오류일 때만 reject하므로 `res.ok`(200–299이면 true)나 `res.status`를 확인하세요.
+
+```javascript
+const res = await fetch('/api/orders', { method: 'POST', body });
+if (res.status === 401) return redirectToLogin();
+if (res.status === 429) {
+  const wait = Number(res.headers.get('Retry-After') ?? 60);
+  return retryAfter(wait);
+}
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+const order = await res.json();
+```
+
+## 제한 사항
+
+- **등록된 코드 61개.** 목록은 IANA 레지스트리를 따릅니다. nginx 499나 Cloudflare 520–526처럼 특정 제품만 쓰는 코드는 없습니다.
+- **두 코드는 예전 이름입니다.** 목록의 413 Payload Too Large와 422 Unprocessable Entity는 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-15.5)에서 Content Too Large와 Unprocessable Content로 이름이 바뀌었습니다.
+- **설명은 영어로만 나옵니다.** 모든 언어 페이지에서 이름과 설명이 영어입니다. 검색은 코드, 이름, 영어 설명의 단어와 일치하는 항목을 찾으므로 「리다이렉트」로는 결과가 없고 `redirect`로 검색해야 합니다.

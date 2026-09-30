@@ -41,3 +41,54 @@ faqItems:
   <li><strong>500 Internal Server Error</strong> — Unexpected server failure.</li>
   <li><strong>503 Service Unavailable</strong> — Server down or overloaded.</li>
 </ul>
+
+## Choosing a Status Code for an API
+
+| Situation | Code |
+|---|---|
+| `GET` returns the resource | 200 |
+| `POST` creates a resource | 201, with a `Location` header |
+| Success with no response body (often `DELETE`) | 204 |
+| Body is not valid JSON or has a syntax error | 400 |
+| No token, or the token is invalid | 401 |
+| Valid token, but the user does not have permission | 403 |
+| The resource does not exist | 404 |
+| Duplicate, such as an email that is already registered | 409 |
+| The body parses, but a business rule fails (end date before start date) | 422 |
+| Rate limit exceeded | 429 |
+| Unhandled exception | 500 |
+
+**401 or 403.** 401 means the server does not know who you are; the server that sends 401 must also send a `WWW-Authenticate` header ([RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.2)). 403 means the server knows who you are, but you cannot do this. If the server must not reveal that the resource exists, it can send 404 instead of 403 ([§15.5.4](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.4)).
+
+**Redirects and the request method.** For historical reasons, a browser can change a `POST` to a `GET` when it follows a 301 or 302 ([§15.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.4.2)). 307 and 308 must keep the method and body. Use 307 or 308 when a form `POST` must stay a `POST`.
+
+## Headers That Go With a Code
+
+| Code | Header | Rule |
+|---|---|---|
+| 201 | `Location: /api/users/456` | Points to the new resource |
+| 401 | `WWW-Authenticate: Bearer realm="api"` | Required |
+| 405 | `Allow: GET, POST` | Required ([§15.5.6](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.6)) |
+| 429, 503 | `Retry-After: 60` | Optional; seconds or an HTTP date ([RFC 6585 §4](https://www.rfc-editor.org/rfc/rfc6585#section-4)) |
+| 304 | — | No body; the client uses its cached copy |
+
+## Handling Status Codes in JavaScript
+
+`fetch()` does not reject on 4xx or 5xx. It rejects only on network errors, so check `res.ok` (true for 200–299) or `res.status`:
+
+```javascript
+const res = await fetch('/api/orders', { method: 'POST', body });
+if (res.status === 401) return redirectToLogin();
+if (res.status === 429) {
+  const wait = Number(res.headers.get('Retry-After') ?? 60);
+  return retryAfter(wait);
+}
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+const order = await res.json();
+```
+
+## Limits
+
+- **61 registered codes.** The list follows the IANA registry. Codes that only one product uses, such as nginx 499 or Cloudflare 520–526, are not in the list.
+- **Older names for two codes.** The list uses 413 Payload Too Large and 422 Unprocessable Entity. [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-15.5) renamed them to Content Too Large and Unprocessable Content.
+- **English only.** Names and descriptions are in English on every language version of this page. The search matches the code, the name, or words in the English description.

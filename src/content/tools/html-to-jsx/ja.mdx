@@ -50,3 +50,43 @@ faqItems:
   <li>HTMLメールテンプレートをReactメールライブラリ用に変換する</li>
   <li>サードパーティのHTMLウィジェットをReactプロジェクトに素早く適応させる</li>
 </ul>
+
+## 変換例
+
+入力：
+
+```html
+<label for="email" class="lbl">Email</label>
+<input id="email" type="email" required>
+<div style="background-image: url('a.png'); font-size:14px">x</div>
+<!-- footer -->
+```
+
+出力：
+
+```jsx
+<label htmlFor="email" className="lbl">Email</label>
+<input id="email" type="email" required />
+<div style={{ backgroundImage: 'url(\'a.png\')', fontSize: '14px' }}>x</div>
+{/* footer */}
+```
+
+`data-*` と `aria-*` 属性はハイフンのまま残ります。React ではこれが正しい書き方です。数値の属性は `colSpan="2"` のように文字列のままですが、React はそのまま受け付けます。
+
+## 手で直す必要があるところ
+
+| 変換結果 | React での問題 | 修正 |
+|---|---|---|
+| `<button onClick="save()">` | イベントハンドラーが文字列。React には関数が必要 | `onClick={save}` |
+| `<input type="checkbox" checked>` | `onChange` のない `checked` は読み取り専用になる | `defaultChecked` |
+| `<option selected>` | React では選択状態を `<select>` 側で指定する | `<select defaultValue="...">` |
+| `<textarea>hi</textarea>` | [`<textarea>` は子要素を受け付けない](https://ja.react.dev/reference/react-dom/components/textarea) | `<textarea defaultValue="hi" />` |
+| `<p>a < b and {name}</p>` | テキスト中の `<` と `{` は JSX の構文 | `a {'<'} b and {'{'}name{'}'}` |
+| トップレベルの要素が 2 つ以上 | コンポーネントが返せる要素は 1 つ | `<>...</>` で囲む |
+| `<path stroke-width="2">` | SVG の属性は変換されない | [SVG → JSX](/ja/tools/svg-to-jsx/) を使う |
+
+## 制限事項
+
+- **属性値が書き換わることがあります。** 変換はタグの文字列に正規表現をかけるだけなので、値の中の `class` や `for` も名前が変わります。`href="/search?for=1&class=2"` は `href="/search?htmlFor=1&className=2"` になります。出力の URL や `title`・`alt` の文字を確認してください。
+- **変換するのはタグだけ。** タグの間のテキストはそのまま残り、文書全体を貼ると `<!DOCTYPE>`、`<html>`、`<head>`、`<body>` も残ります。コンポーネントに入れる部分だけを貼り付けてください。
+- **コンポーネントの外枠は作りません。** 出力はマークアップだけなので、コンポーネントの `return (...)` の中に入れて使います。

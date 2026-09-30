@@ -36,3 +36,81 @@ faqItems:
   将可选字段从 <code>required</code> 中移除，
   以及为枚举类字段添加 <code>enum</code> 限制。
 </p>
+
+## 示例
+
+输入：
+
+```json
+{
+  "orderId": 1001,
+  "total": 59.9,
+  "coupon": null,
+  "items": [{ "sku": "A1", "qty": 2 }],
+  "tags": []
+}
+```
+
+输出：
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "integer" },
+    "total": { "type": "number" },
+    "coupon": { "type": "null" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "qty": { "type": "integer" }
+        },
+        "required": ["sku", "qty"]
+      }
+    },
+    "tags": { "type": "array", "items": {} }
+  },
+  "required": ["orderId", "total", "items", "tags"]
+}
+```
+
+- 整数生成 `integer`，小数生成 `number`。如果 `qty` 可能是 `1.5`，改成 `number`。
+- 样本里 `coupon` 是 `null`，所以类型为 `null`，且不进 `required`。如果它也可能是字符串，把类型改成 `["string", "null"]`。
+- 空数组生成 `"items": {}`，任何元素都能通过。
+
+## 用 Ajv 校验
+
+Ajv 8 默认的 `Ajv` 类支持 draft-07。`format` 关键字需要 [ajv-formats](https://ajv.js.org/packages/ajv-formats.html)，不装的话 `compile()` 会抛出 `unknown format "email"`：
+
+```javascript
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+
+const ajv = new Ajv();
+addFormats(ajv);
+
+const validate = ajv.compile({
+  type: 'object',
+  properties: {
+    email: { type: 'string', format: 'email' },
+    coupon: { type: ['string', 'null'] },
+  },
+  required: ['email'],
+  additionalProperties: false,
+});
+
+validate({ email: 'a@example.com', extra: 1 }); // false: must NOT have additional properties
+```
+
+生成器不会加 `format`、`minimum`、`maxLength`、`pattern`、`enum` 或 `additionalProperties: false`，按数据必须满足的规则自己补上。
+
+## 限制
+
+- **对象数组只取第一个对象。** 对 `[{"id": 1, "name": "Alice"}, {"id": 2, "email": "b@example.com"}]`，`items` 里只有 `id` 和 `name` 且都是必填，第二个元素会校验失败。数组的 schema 请用全部样本核对。
+- **只看一份样本。** 所有非 null 的键都进 `required`，可选字段需要自己从 `required` 删掉。
+- **混合类型会丢结构。** `[1, "x", {"a": 1}]` 这样的数组生成 `"type": ["integer", "string", "object"]`，不带对象的属性。
+- **只输出 draft-07。** 要用 2020-12，改 `$schema` 并使用 Ajv 的 `Ajv2020` 类。

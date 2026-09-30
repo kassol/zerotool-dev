@@ -9,7 +9,7 @@ faqItems:
   - question: "What is the Parsed Structure preview?"
     answer: "When your YAML is valid, the tool parses it and displays the resulting data as a formatted JSON object. This helps you visually confirm the structure matches what you expect, and lets you copy the JSON equivalent for use elsewhere."
   - question: "Which YAML spec is supported?"
-    answer: "The tool uses js-yaml 4.x, which implements the YAML 1.2 specification. This covers all common YAML syntax including anchors, aliases, multi-line strings, block and flow sequences, and explicit type tags."
+    answer: "The tool uses js-yaml 4.x, which implements the YAML 1.2 specification. This covers all common YAML syntax including anchors, aliases, multi-line strings, block and flow sequences, and explicit type tags. It reads one document per input: a file with several documents separated by --- is reported as an error."
   - question: "Is my YAML sent to a server?"
     answer: "No. Validation runs entirely in your browser using JavaScript. Your YAML content never leaves your machine."
 ---
@@ -69,3 +69,45 @@ server:
 ```
 
 <p>The validator will report the line and column where the inconsistency is detected, making it easy to locate and fix.</p>
+
+## Valid Is Not the Same as Correct
+
+The validator reports syntax errors. YAML that parses can still have the wrong structure, so read the Parsed Structure preview. In this file, `carrot` lost two spaces of indentation:
+
+```yaml
+fruits:
+  - apple
+vegetables:
+- carrot
+  - spinach
+```
+
+The validator says it is valid, and the preview shows `"vegetables": ["carrot - spinach"]`: the next line was joined to `carrot` as one string.
+
+## YAML 1.1 and YAML 1.2 Read Values Differently
+
+This tool uses js-yaml 4.1.1, which follows YAML 1.2. PyYAML follows YAML 1.1. The same file gives different data:
+
+| YAML | This tool (js-yaml 4.1.1) | PyYAML 6.0.3 `safe_load` |
+|---|---|---|
+| `debug: yes` | `"yes"` (string) | `True` |
+| `country: NO` | `"NO"` (string) | `False` |
+| `octal: 0777` | `777` | `511` |
+| `time: 12:30` | `"12:30"` (string) | `750` |
+
+If a file is read by a YAML 1.1 parser, quote values such as `"NO"`, `"yes"`, and `"0777"`.
+
+## Error Messages You Will See
+
+| Input | Message from the validator |
+|---|---|
+| `message: Error: something went wrong` | bad indentation of a mapping entry (1:15); quote the value |
+| A tab before `host:` | tab characters must not be used in indentation |
+| `timeout` twice in one mapping | duplicated mapping key |
+| `server` without a colon, then an indented line | end of the stream or a document separator is expected |
+
+## Limits
+
+- **One document per input.** A file with several documents separated by `---`, such as a Kubernetes manifest with a Deployment and a Service, fails with "expected a single document in the stream". Paste one document at a time.
+- **Syntax only.** The tool does not check a Kubernetes, GitHub Actions, or Docker Compose schema, and it does not apply lint rules. For CI, run [yamllint](https://github.com/adrienverge/yamllint) (`yamllint .`).
+- **The preview is JSON.** Anchors and `<<` merge keys are expanded in the preview, and comments are not shown.

@@ -38,3 +38,81 @@ faqItems:
   オプションフィールドの <code>required</code> からの除外、
   既知の値セットへの <code>enum</code> 追加などがあります。
 </p>
+
+## 変換例
+
+入力：
+
+```json
+{
+  "orderId": 1001,
+  "total": 59.9,
+  "coupon": null,
+  "items": [{ "sku": "A1", "qty": 2 }],
+  "tags": []
+}
+```
+
+出力：
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "integer" },
+    "total": { "type": "number" },
+    "coupon": { "type": "null" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "qty": { "type": "integer" }
+        },
+        "required": ["sku", "qty"]
+      }
+    },
+    "tags": { "type": "array", "items": {} }
+  },
+  "required": ["orderId", "total", "items", "tags"]
+}
+```
+
+- 整数は `integer`、小数は `number` になります。`qty` が `1.5` になりうるなら `number` に変えます。
+- サンプルの `coupon` は `null` なので、型は `null` で `required` にも入りません。文字列も入るなら型を `["string", "null"]` にします。
+- 空の配列は `"items": {}` になり、どんな要素も通ります。
+
+## Ajv で検証する
+
+Ajv 8 は既定の `Ajv` クラスで draft-07 を検証できます。`format` キーワードには [ajv-formats](https://ajv.js.org/packages/ajv-formats.html) が必要で、入れないと `compile()` が `unknown format "email"` を投げます。
+
+```javascript
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+
+const ajv = new Ajv();
+addFormats(ajv);
+
+const validate = ajv.compile({
+  type: 'object',
+  properties: {
+    email: { type: 'string', format: 'email' },
+    coupon: { type: ['string', 'null'] },
+  },
+  required: ['email'],
+  additionalProperties: false,
+});
+
+validate({ email: 'a@example.com', extra: 1 }); // false: must NOT have additional properties
+```
+
+ジェネレーターは `format`、`minimum`、`maxLength`、`pattern`、`enum`、`additionalProperties: false` を付けません。データが守るべきルールに合わせて追加してください。
+
+## 制限事項
+
+- **オブジェクトの配列は最初のオブジェクトだけを使います。** `[{"id": 1, "name": "Alice"}, {"id": 2, "email": "b@example.com"}]` では `items` に `id` と `name` だけが入り、どちらも必須なので、2 つ目の要素が検証に失敗します。配列のスキーマは全サンプルで確認してください。
+- **サンプルは 1 つ。** null 以外のキーはすべて `required` に入ります。任意のフィールドは自分で `required` から外します。
+- **型が混ざると構造が落ちます。** `[1, "x", {"a": 1}]` は `"type": ["integer", "string", "object"]` になり、オブジェクトのプロパティは出力されません。
+- **draft-07 のみ。** 2020-12 を使うなら `$schema` を変え、Ajv の `Ajv2020` クラスを使います。

@@ -38,3 +38,65 @@ faqItems:
   <li><strong>設定ファイル：</strong>JSONファイルから読み込む設定オブジェクトの定義と検証。</li>
   <li><strong>型安全性：</strong>TypeScriptと組み合わせて1つのスキーマから実行時検証と静的型推論を同時に取得。</li>
 </ul>
+
+## 変換例
+
+ルート名を `User` にして次の JSON を入力すると、
+
+```json
+{
+  "id": 42,
+  "email": "alice@example.com",
+  "price": 19.9,
+  "tags": ["admin", "beta"],
+  "metadata": null,
+  "orders": [
+    { "sku": "A1", "qty": 2 },
+    { "sku": "B7", "qty": 1, "note": "gift" }
+  ]
+}
+```
+
+次のように出力されます。
+
+```ts
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.number().int(),
+  email: z.string(),
+  price: z.number(),
+  tags: z.array(z.string()),
+  metadata: z.null(),
+  orders: z.array(z.object({
+    sku: z.string(),
+    qty: z.number().int(),
+    note: z.string().optional(),
+  })),
+});
+
+export type User = z.infer<typeof UserSchema>;
+```
+
+`note` は 2 件の注文のうち 1 件にしかないので optional になります。出力には Zod 3 と Zod 4 の両方で動く書き方だけを使っています。
+
+## 生成したスキーマの調整
+
+サンプルには各フィールドの値が 1 つしかないため、業務ルールは推論できません。使う前に次の点を確認してください。
+
+| 生成結果 | 問題 | 修正（Zod 4） |
+|---|---|---|
+| `email: z.string()` | どんな文字列も通る | `z.email()`（Zod 3 は `z.string().email()`） |
+| `qty: z.number().int()` | 常に整数の場合だけ正しい。サンプルが `price: 10` でも `.int()` になり、あとで `10.5` が "expected int" で失敗する | 価格は `z.number()` にし、`.min(0)` や `.positive()` を足す |
+| `metadata: z.null()` | `null` しか通らない | `z.string().nullable()` |
+| `status: z.string()` | どんな文字列も通る | `z.enum(["active", "inactive"])` |
+| サンプルにあったフィールド | API が省略することがあっても必須になる | `.optional()` を付ける |
+
+失敗したら処理を止めたい場所（起動時の設定読み込みなど）では `.parse()` を使います。`ZodError` を投げます。API レスポンスやユーザー入力には `.safeParse()` を使います。`{ success: false, error }` を返すので、エラーを自分で処理できます。
+
+## 制限事項
+
+- **型は 1 つのサンプルから決まります。** 空の配列は `z.array(z.unknown())`、空のオブジェクトは `z.record(z.string(), z.unknown())` になります。
+- **`null` は `z.null()` になります。** `.nullable()` は付きません。オブジェクトの配列で、あるキーが 1 件目で `null`、2 件目で文字列のときは `z.union([z.null(), z.string()])` になります。
+- **オブジェクトと他の値が混ざったトップレベル配列。** ルートが `[{"a": 1}, 2]` のような配列だと、スキーマにはオブジェクトだけが入り、`2` は検証に失敗します。オブジェクトの中の配列では、すべての要素の型が `z.union` に入ります。
+- **文字列の形式や範囲は付きません。** メール、URL、日付、UUID はすべて `z.string()` です。

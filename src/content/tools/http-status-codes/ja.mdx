@@ -25,3 +25,54 @@ faqItems:
   <li><strong>4xx クライアントエラー：</strong>リクエストに誤りがあるか実行不可能。</li>
   <li><strong>5xx サーバーエラー：</strong>正常なリクエストの処理に失敗した。</li>
 </ul>
+
+## API で返すステータスコードの選び方
+
+| 状況 | コード |
+|---|---|
+| `GET` でリソースを返す | 200 |
+| `POST` でリソースを作成した | 201（`Location` ヘッダー付き） |
+| 成功したがボディがない（`DELETE` など） | 204 |
+| ボディが JSON として不正、または構文エラー | 400 |
+| トークンがない、またはトークンが無効 | 401 |
+| トークンは有効だが権限がない | 403 |
+| リソースが存在しない | 404 |
+| 重複（登録済みのメールアドレスなど） | 409 |
+| ボディは解析できるが業務ルールに違反（終了日が開始日より前） | 422 |
+| レート制限を超えた | 429 |
+| 想定外の例外 | 500 |
+
+**401 か 403 か。** 401 はサーバーが相手を識別できていない状態で、401 を返すサーバーは `WWW-Authenticate` ヘッダーも送らなければなりません（[RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.2)）。403 は相手を識別したうえで操作を許可しない状態です。リソースの存在自体を知られたくない場合は、403 の代わりに 404 を返せます（[§15.5.4](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.4)）。
+
+**リダイレクトとメソッド。** 歴史的な理由から、ブラウザーは 301 と 302 をたどるときに `POST` を `GET` に変えることがあります（[§15.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-15.4.2)）。307 と 308 はメソッドとボディを保持しなければなりません。フォームの `POST` を `POST` のまま転送したいときは 307 か 308 を使います。
+
+## コードとセットで返すヘッダー
+
+| コード | ヘッダー | 規定 |
+|---|---|---|
+| 201 | `Location: /api/users/456` | 作成したリソースを指す |
+| 401 | `WWW-Authenticate: Bearer realm="api"` | 必須 |
+| 405 | `Allow: GET, POST` | 必須（[§15.5.6](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.6)） |
+| 429、503 | `Retry-After: 60` | 任意。秒数か HTTP 日付（[RFC 6585 §4](https://www.rfc-editor.org/rfc/rfc6585#section-4)） |
+| 304 | — | ボディなし。クライアントはキャッシュを使う |
+
+## JavaScript での扱い方
+
+`fetch()` は 4xx や 5xx では reject しません。reject するのはネットワークエラーのときだけなので、`res.ok`（200〜299 で true）か `res.status` を確認します。
+
+```javascript
+const res = await fetch('/api/orders', { method: 'POST', body });
+if (res.status === 401) return redirectToLogin();
+if (res.status === 429) {
+  const wait = Number(res.headers.get('Retry-After') ?? 60);
+  return retryAfter(wait);
+}
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+const order = await res.json();
+```
+
+## 制限事項
+
+- **登録済みの 61 コード。** 一覧は IANA のレジストリに沿っています。nginx の 499 や Cloudflare の 520〜526 のような特定製品だけのコードは載っていません。
+- **2 つのコードは旧名称です。** 一覧では 413 Payload Too Large と 422 Unprocessable Entity ですが、[RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-15.5) で Content Too Large と Unprocessable Content に改名されています。
+- **説明は英語のみ。** どの言語のページでも名称と説明は英語です。検索はコード・名称・英語の説明文に一致するものを探すので、「リダイレクト」では何も出ません。`redirect` で検索してください。

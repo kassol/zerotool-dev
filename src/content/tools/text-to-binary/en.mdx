@@ -54,3 +54,45 @@ o = 01101111
   <li>Use <a href="/tools/base64/">Base64</a> for a more compact text-safe encoding.</li>
   <li>Use <a href="/tools/ascii-converter/">ASCII Converter</a> to work with decimal, hex, and octal values.</li>
 </ul>
+
+## Reading One Byte
+
+Each bit position has a value, from 128 on the left to 1 on the right. Add the values where the bit is 1:
+
+```
+Bit value:  128  64  32  16   8   4   2   1
+01001000:     0   1   0   0   1   0   0   0   → 64 + 8 = 72 = "H"
+```
+
+## How Many Bytes a Character Uses
+
+UTF-8 uses 1 to 4 bytes for each character ([RFC 3629](https://www.rfc-editor.org/rfc/rfc3629#section-3)). The converter shows one 8-bit group for each byte:
+
+| Code points | Bytes | Example | Output |
+|---|---|---|---|
+| U+0000–U+007F (ASCII) | 1 | `H` | `01001000` |
+| U+0080–U+07FF | 2 | `é` | `11000011 10101001` |
+| U+0800–U+FFFF (most CJK) | 3 | `中` | `11100100 10111000 10101101` |
+| U+10000–U+10FFFF (most emoji) | 4 | `😀` | `11110000 10011111 10011000 10000000` |
+
+## The Same Conversion in Code
+
+```javascript
+const toBinary = (text) =>
+  [...new TextEncoder().encode(text)]
+    .map((b) => b.toString(2).padStart(8, '0'))
+    .join(' ');
+
+toBinary('Hi'); // "01001000 01101001"
+```
+
+```python
+' '.join(f'{b:08b}' for b in 'Hi'.encode('utf-8'))  # '01001000 01101001'
+```
+
+## Limits
+
+- **8-bit groups only.** Binary → Text removes all spaces and reads the bits in groups of 8. Seven-bit ASCII such as `1001000 1101001` is regrouped and gives an error or wrong characters.
+- **UTF-8 only.** Bytes that are not valid UTF-8, such as an incomplete 3-byte character, give "The encoded data was not valid for encoding utf-8". The tool does not decode UTF-16, Shift_JIS, or GBK.
+- **Binary → Text needs a click.** Text → Binary updates while you type; for the other direction, click **Binary → Text**.
+- **The status counts characters.** An emoji counts as 1 character in the status message but gives 4 bytes of output.

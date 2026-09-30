@@ -9,7 +9,7 @@ faqItems:
   - question: "「파싱된 구조」 미리보기란 무엇인가요?"
     answer: "YAML이 유효한 경우, 도구는 데이터를 파싱하여 형식화된 JSON 형식으로 표시합니다. 구조가 예상과 일치하는지 시각적으로 확인하고, JSON 결과를 복사하여 다른 곳에서 사용할 수 있습니다."
   - question: "어떤 YAML 명세를 지원하나요?"
-    answer: "js-yaml 4.x를 사용하며 YAML 1.2 명세를 구현합니다. 앵커, 별칭, 여러 줄 문자열, 블록/플로우 시퀀스, 명시적 타입 태그 등 일반적인 YAML 구문을 모두 지원합니다."
+    answer: "js-yaml 4.x를 사용하며 YAML 1.2 명세를 구현합니다. 앵커, 별칭, 여러 줄 문자열, 블록/플로우 시퀀스, 명시적 타입 태그 등 일반적인 YAML 구문을 지원합니다. 한 번에 문서 하나만 읽으며, --- 로 나눈 여러 문서 파일은 오류로 표시됩니다."
   - question: "YAML 데이터가 서버로 전송되나요?"
     answer: "아니요. 유효성 검사는 JavaScript를 통해 브라우저에서 완전히 실행됩니다. YAML 내용은 사용자의 기기를 벗어나지 않습니다."
 ---
@@ -69,3 +69,45 @@ server:
 ```
 
 <p>유효성 검사기는 불일치가 감지된 줄 번호와 열 번호를 보고하여 문제를 쉽게 찾아 수정할 수 있습니다.</p>
+
+## 문법이 맞아도 구조가 맞는 것은 아닙니다
+
+검증기가 알려 주는 것은 문법 오류입니다. 파싱되는 YAML도 구조가 의도와 다를 수 있으니 「파싱 구조」 미리보기를 확인하세요. 다음 파일에서는 `carrot`의 들여쓰기가 두 칸 모자랍니다.
+
+```yaml
+fruits:
+  - apple
+vegetables:
+- carrot
+  - spinach
+```
+
+결과는 「유효」이고 미리보기는 `"vegetables": ["carrot - spinach"]`입니다. 다음 줄이 `carrot`에 이어 붙어 문자열 하나가 되었습니다.
+
+## YAML 1.1과 1.2는 값을 다르게 읽습니다
+
+이 도구는 YAML 1.2를 따르는 js-yaml 4.1.1을 씁니다. Python에서 흔히 쓰는 PyYAML은 YAML 1.1을 따릅니다. 같은 파일이라도 결과가 다릅니다.
+
+| YAML | 이 도구 (js-yaml 4.1.1) | PyYAML 6.0.3 `safe_load` |
+|---|---|---|
+| `debug: yes` | `"yes"` (문자열) | `True` |
+| `country: NO` | `"NO"` (문자열) | `False` |
+| `octal: 0777` | `777` | `511` |
+| `time: 12:30` | `"12:30"` (문자열) | `750` |
+
+YAML 1.1 파서로도 읽히는 파일이라면 `"NO"`, `"yes"`, `"0777"` 같은 값은 따옴표로 감싸세요.
+
+## 자주 보는 오류 메시지
+
+| 입력 | 검증기 메시지 |
+|---|---|
+| `message: Error: something went wrong` | bad indentation of a mapping entry (1:15). 값을 따옴표로 감싸기 |
+| `host:` 앞에 탭 | tab characters must not be used in indentation |
+| 한 매핑에 `timeout`이 두 번 | duplicated mapping key |
+| `server` 뒤 콜론 누락, 다음 줄 들여쓰기 | end of the stream or a document separator is expected |
+
+## 제한 사항
+
+- **한 번에 문서 하나.** `---`로 나눈 여러 문서(Deployment와 Service가 함께 있는 Kubernetes 매니페스트 등)는 「expected a single document in the stream」 오류가 납니다. 문서별로 붙여넣으세요.
+- **문법만 검사합니다.** Kubernetes, GitHub Actions, Docker Compose 스키마 검증이나 lint 규칙은 적용하지 않습니다. CI에서는 [yamllint](https://github.com/adrienverge/yamllint)(`yamllint .`)를 쓰세요.
+- **미리보기는 JSON입니다.** 앵커와 `<<` 병합 키는 펼쳐진 상태로 보이고 주석은 나오지 않습니다.
