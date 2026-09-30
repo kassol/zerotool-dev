@@ -1,858 +1,1399 @@
 ---
-// MarkdownToWordTool — browser-side Markdown to .docx converter using docx.js
+// MarkdownToWordTool — Markdown (CommonMark + GFM) to .docx in the browser.
+// Parser: mdast-util-from-markdown + GFM + CJK-friendly emphasis; writer: docx.js.
+interface Props {
+  lang?: string;
+}
+const { lang = 'en' } = Astro.props;
+
+/* ── strings:start ── */
+const STRINGS = {
+  en: {
+    download: 'Download .docx',
+    openFile: 'Open .md',
+    clear: 'Clear',
+    filenameLabel: 'File name',
+    paperLabel: 'Paper',
+    paperA4: 'A4',
+    paperLetter: 'Letter',
+    fontLabel: 'CJK font',
+    'font_zh-song': 'SimSun (Chinese)',
+    'font_zh-yahei': 'Microsoft YaHei (Chinese)',
+    'font_ja-mincho': 'Yu Mincho (Japanese)',
+    'font_ja-gothic': 'Yu Gothic (Japanese)',
+    'font_ko-malgun': 'Malgun Gothic (Korean)',
+    'font_ko-batang': 'Batang (Korean)',
+    inputLabel: 'Markdown',
+    previewLabel: 'Preview',
+    placeholder: '# Heading\n\nPaste Markdown here, or open a .md file.',
+    previewEmpty: 'The preview appears as you type.',
+    privacyNote: 'Your Markdown is converted in this browser and is not uploaded. Images with an http(s) address are downloaded from that address when you export.',
+    converting: 'Converting…',
+    fetchingImages: 'Downloading {n} image(s)…',
+    done: 'Saved {file}',
+    imagesEmbedded: '{n} image(s) embedded',
+    imagesMissing: '{n} image(s) could not be loaded and were kept as links',
+    emptyError: 'Enter some Markdown first.',
+    error: 'Could not create the file: {msg}',
+    fileError: 'Could not read the file.',
+  },
+  zh: {
+    download: '下载 .docx',
+    openFile: '打开 .md',
+    clear: '清空',
+    filenameLabel: '文件名',
+    paperLabel: '纸张',
+    paperA4: 'A4',
+    paperLetter: 'Letter',
+    fontLabel: '中日韩字体',
+    'font_zh-song': '宋体（中文）',
+    'font_zh-yahei': '微软雅黑（中文）',
+    'font_ja-mincho': '游明朝（日文）',
+    'font_ja-gothic': '游ゴシック（日文）',
+    'font_ko-malgun': 'Malgun Gothic（韩文）',
+    'font_ko-batang': 'Batang（韩文）',
+    inputLabel: 'Markdown',
+    previewLabel: '预览',
+    placeholder: '# 标题\n\n在这里粘贴 Markdown，或打开 .md 文件。',
+    previewEmpty: '输入后在这里预览。',
+    privacyNote: 'Markdown 在本浏览器中转换，不会上传。http(s) 地址的图片会在导出时从该地址下载。',
+    converting: '正在转换…',
+    fetchingImages: '正在下载 {n} 张图片…',
+    done: '已保存 {file}',
+    imagesEmbedded: '嵌入 {n} 张图片',
+    imagesMissing: '{n} 张图片无法加载，已保留为链接',
+    emptyError: '请先输入 Markdown。',
+    error: '生成文件失败：{msg}',
+    fileError: '无法读取该文件。',
+  },
+  ja: {
+    download: '.docx をダウンロード',
+    openFile: '.md を開く',
+    clear: 'クリア',
+    filenameLabel: 'ファイル名',
+    paperLabel: '用紙',
+    paperA4: 'A4',
+    paperLetter: 'Letter',
+    fontLabel: '和文フォント',
+    'font_zh-song': 'SimSun（中国語）',
+    'font_zh-yahei': 'Microsoft YaHei（中国語）',
+    'font_ja-mincho': '游明朝（日本語）',
+    'font_ja-gothic': '游ゴシック（日本語）',
+    'font_ko-malgun': 'Malgun Gothic（韓国語）',
+    'font_ko-batang': 'Batang（韓国語）',
+    inputLabel: 'Markdown',
+    previewLabel: 'プレビュー',
+    placeholder: '# 見出し\n\nここに Markdown を貼り付けるか、.md ファイルを開きます。',
+    previewEmpty: '入力するとここにプレビューが表示されます。',
+    privacyNote: 'Markdown はこのブラウザ内で変換され、アップロードされません。http(s) の URL で書かれた画像は、書き出すときにその URL からダウンロードします。',
+    converting: '変換中…',
+    fetchingImages: '画像 {n} 件をダウンロード中…',
+    done: '{file} を保存しました',
+    imagesEmbedded: '画像 {n} 件を埋め込みました',
+    imagesMissing: '画像 {n} 件は読み込めなかったため、リンクとして残しました',
+    emptyError: '先に Markdown を入力してください。',
+    error: 'ファイルを作成できませんでした：{msg}',
+    fileError: 'ファイルを読み込めませんでした。',
+  },
+  ko: {
+    download: '.docx 다운로드',
+    openFile: '.md 열기',
+    clear: '지우기',
+    filenameLabel: '파일 이름',
+    paperLabel: '용지',
+    paperA4: 'A4',
+    paperLetter: 'Letter',
+    fontLabel: '한중일 글꼴',
+    'font_zh-song': 'SimSun (중국어)',
+    'font_zh-yahei': 'Microsoft YaHei (중국어)',
+    'font_ja-mincho': 'Yu Mincho (일본어)',
+    'font_ja-gothic': 'Yu Gothic (일본어)',
+    'font_ko-malgun': '맑은 고딕 (한국어)',
+    'font_ko-batang': '바탕 (한국어)',
+    inputLabel: 'Markdown',
+    previewLabel: '미리보기',
+    placeholder: '# 제목\n\n여기에 Markdown을 붙여 넣거나 .md 파일을 여세요.',
+    previewEmpty: '입력하면 여기에 미리보기가 표시됩니다.',
+    privacyNote: 'Markdown은 이 브라우저에서 변환되며 업로드되지 않습니다. http(s) 주소의 이미지는 내보낼 때 그 주소에서 내려받습니다.',
+    converting: '변환 중…',
+    fetchingImages: '이미지 {n}개 내려받는 중…',
+    done: '{file} 저장됨',
+    imagesEmbedded: '이미지 {n}개 포함',
+    imagesMissing: '이미지 {n}개를 불러오지 못해 링크로 남겼습니다',
+    emptyError: '먼저 Markdown을 입력하세요.',
+    error: '파일을 만들지 못했습니다: {msg}',
+    fileError: '파일을 읽지 못했습니다.',
+  },
+};
+/* ── strings:end ── */
+
+const S = STRINGS[lang as keyof typeof STRINGS] || STRINGS.en;
+const FONT_KEYS = ['zh-song', 'zh-yahei', 'ja-mincho', 'ja-gothic', 'ko-malgun', 'ko-batang'] as const;
+const DEFAULT_FONT: Record<string, string> = { zh: 'zh-song', ja: 'ja-mincho', ko: 'ko-malgun' };
+const defaultFont = DEFAULT_FONT[lang] || 'zh-yahei';
+
+const SAMPLES: Record<string, string> = {
+  en: [
+    '# Weekly report',
+    '',
+    '**Summary:** the export service moved to the new queue. See the [runbook](https://example.com/runbook) for details.',
+    '',
+    '## Done',
+    '',
+    '1. Migrated the `export-worker` jobs',
+    '2. Added retry with backoff',
+    '   - 3 attempts, then the dead-letter queue',
+    '',
+    '## Next',
+    '',
+    '- [x] Load test at 2× traffic',
+    '- [ ] Remove the old cron job',
+    '',
+    '| Metric | Before | After |',
+    '|:-------|-------:|------:|',
+    '| p95 latency | 840 ms | 310 ms |',
+    '| Failed jobs / day | 37 | 2 |',
+    '',
+    '```bash',
+    'kubectl rollout status deploy/export-worker',
+    '```',
+    '',
+    '> Owners: platform team. Numbers are from the staging dashboard[^1].',
+    '',
+    '[^1]: Measured over the last 7 days.',
+  ].join('\n'),
+  zh: [
+    '# 周报：导出服务迁移',
+    '',
+    '**结论：**导出任务已切到新队列，失败率明显下降。详见[操作手册](https://example.com/runbook)。',
+    '',
+    '## 本周完成',
+    '',
+    '1. 迁移 `export-worker` 的全部任务',
+    '2. 增加指数退避重试',
+    '   - 重试 3 次后进入死信队列',
+    '',
+    '## 下周计划',
+    '',
+    '- [x] 按 2 倍流量压测',
+    '- [ ] 下线旧的定时任务',
+    '',
+    '| 指标 | 迁移前 | 迁移后 |',
+    '|:-----|------:|------:|',
+    '| p95 延迟 | 840 ms | 310 ms |',
+    '| 每日失败任务 | 37 | 2 |',
+    '',
+    '```bash',
+    'kubectl rollout status deploy/export-worker',
+    '```',
+    '',
+    '> 负责人：平台组。数据取自预发环境监控[^1]。',
+    '',
+    '[^1]: 统计区间为最近 7 天。',
+  ].join('\n'),
+  ja: [
+    '# 週報：エクスポート基盤の移行',
+    '',
+    '**結論：**エクスポート処理を新しいキューへ移し、失敗件数が減りました。詳しくは[手順書](https://example.com/runbook)を参照してください。',
+    '',
+    '## 今週やったこと',
+    '',
+    '1. `export-worker` のジョブをすべて移行',
+    '2. 指数バックオフ付きのリトライを追加',
+    '   - 3 回失敗したらデッドレターキューへ',
+    '',
+    '## 来週の予定',
+    '',
+    '- [x] 2 倍の負荷で負荷試験',
+    '- [ ] 旧 cron ジョブの削除',
+    '',
+    '| 指標 | 移行前 | 移行後 |',
+    '|:-----|------:|------:|',
+    '| p95 レイテンシ | 840 ms | 310 ms |',
+    '| 1 日の失敗ジョブ | 37 | 2 |',
+    '',
+    '```bash',
+    'kubectl rollout status deploy/export-worker',
+    '```',
+    '',
+    '> 担当：基盤チーム。数値はステージング環境のダッシュボードより[^1]。',
+    '',
+    '[^1]: 直近 7 日間の集計です。',
+  ].join('\n'),
+  ko: [
+    '# 주간 보고: 내보내기 서비스 이전',
+    '',
+    '**요약:** 내보내기 작업을 새 큐로 옮겨 실패 건수가 줄었습니다. 자세한 내용은 [운영 문서](https://example.com/runbook)를 참고하세요.',
+    '',
+    '## 이번 주 한 일',
+    '',
+    '1. `export-worker` 작업 전체 이전',
+    '2. 지수 백오프 재시도 추가',
+    '   - 3회 실패하면 데드 레터 큐로 이동',
+    '',
+    '## 다음 주 계획',
+    '',
+    '- [x] 2배 트래픽 부하 테스트',
+    '- [ ] 기존 cron 작업 삭제',
+    '',
+    '| 지표 | 이전 | 이후 |',
+    '|:-----|-----:|-----:|',
+    '| p95 지연 | 840 ms | 310 ms |',
+    '| 일일 실패 작업 | 37 | 2 |',
+    '',
+    '```bash',
+    'kubectl rollout status deploy/export-worker',
+    '```',
+    '',
+    '> 담당: 플랫폼 팀. 수치는 스테이징 대시보드 기준입니다[^1].',
+    '',
+    '[^1]: 최근 7일 기준입니다.',
+  ].join('\n'),
+};
+const sample = SAMPLES[lang] || SAMPLES.en;
 ---
 
-<div>
-  <div class="mw-wrap">
-
-    {/* Toolbar */}
-    <div class="mw-toolbar">
-      <div class="mw-filename-group">
-        <input
-          type="text"
-          id="mw-filename"
-          class="mw-filename-input"
-          value="document"
-          maxlength="80"
-          spellcheck="false"
-          aria-label="Output filename"
-          data-i18n-ph="filenamePlaceholder"
-        />
-        <span class="mw-filename-ext">.docx</span>
-      </div>
-      <button id="mw-clear" class="btn-ghost" data-i18n="clear">Clear</button>
-      <button id="mw-convert" class="btn-primary" data-i18n="convertDownload">Convert &amp; Download .docx</button>
-      <span id="mw-status" class="mw-status" aria-live="polite"></span>
+<div class="mw-wrap" data-lang={lang} data-strings={JSON.stringify(S)}>
+  <div class="mw-bar">
+    <button id="mw-convert" type="button" class="btn-primary mw-convert">{S.download}</button>
+    <label class="mw-filename-group">
+      <span class="mw-sr">{S.filenameLabel}</span>
+      <input type="text" id="mw-filename" class="mw-filename-input" maxlength="80" spellcheck="false" autocomplete="off" placeholder="document" />
+      <span class="mw-filename-ext" aria-hidden="true">.docx</span>
+    </label>
+    <label class="mw-field">
+      <span class="mw-field-label">{S.paperLabel}</span>
+      <select id="mw-paper" class="tool-input mw-select">
+        <option value="a4">{S.paperA4}</option>
+        <option value="letter">{S.paperLetter}</option>
+      </select>
+    </label>
+    <label class="mw-field">
+      <span class="mw-field-label">{S.fontLabel}</span>
+      <select id="mw-font" class="tool-input mw-select">
+        {FONT_KEYS.map((k) => <option value={k} selected={k === defaultFont}>{S[`font_${k}` as keyof typeof S]}</option>)}
+      </select>
+    </label>
+    <div class="mw-bar-end">
+      <label class="btn-secondary mw-open">
+        {S.openFile}
+        <input type="file" id="mw-file" accept=".md,.markdown,.mdown,.mkd,.txt,text/markdown,text/plain" class="mw-sr" />
+      </label>
+      <button id="mw-clear" type="button" class="btn-ghost">{S.clear}</button>
     </div>
+  </div>
+  <p id="mw-status" class="mw-status" role="status" aria-live="polite"></p>
 
-    {/* Panes */}
-    <div class="mw-panes">
-      <div class="mw-pane mw-editor-pane">
-        <div class="mw-pane-label" data-i18n="inputLabel">Markdown Input</div>
-        <textarea
-          id="mw-editor"
-          spellcheck="false"
-          data-i18n-ph="placeholder"
-          placeholder="# Heading&#10;&#10;Paste your Markdown here..."
-        ></textarea>
-      </div>
-      <div class="mw-pane mw-preview-pane">
-        <div class="mw-pane-label" data-i18n="previewLabel">Document Preview</div>
-        <div id="mw-preview" class="mw-preview">
-          <div class="mw-preview-placeholder" data-i18n="previewPlaceholder">Preview will appear as you type.</div>
-        </div>
-      </div>
+  <div class="mw-panes">
+    <div class="mw-pane">
+      <label class="mw-pane-label" for="mw-editor">{S.inputLabel}</label>
+      <textarea id="mw-editor" class="tool-textarea mw-editor" spellcheck="false" placeholder={S.placeholder}>{sample}</textarea>
     </div>
-
-    {/* Privacy badge */}
-    <div class="mw-privacy">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span data-i18n="privacyNote">All conversion happens in your browser. Your document is never uploaded to any server.</span>
+    <div class="mw-pane">
+      <div class="mw-pane-label" id="mw-preview-label">{S.previewLabel}</div>
+      <div id="mw-preview" class="mw-preview" aria-labelledby="mw-preview-label" data-empty={S.previewEmpty}></div>
     </div>
-
   </div>
 
-  {/* Module script: load docx and expose on window */}
-  <script>
-    import { Document, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, Packer, AlignmentType, WidthType, ShadingType, BorderStyle } from 'docx';
-    (window as any).__docxLib = { Document, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, Packer, AlignmentType, WidthType, ShadingType, BorderStyle };
-    window.dispatchEvent(new CustomEvent('docx-ready'));
-  </script>
-
-  <script is:inline>
-    (function () {
-      var STRINGS = {
-        en: {
-          clear: 'Clear',
-          convertDownload: 'Convert & Download .docx',
-          inputLabel: 'Markdown Input',
-          previewLabel: 'Document Preview',
-          previewPlaceholder: 'Preview will appear as you type.',
-          placeholder: '# Heading\n\nPaste your Markdown here...',
-          filenamePlaceholder: 'document',
-          privacyNote: 'All conversion happens in your browser. Your document is never uploaded to any server.',
-          converting: 'Converting...',
-          libPending: 'Loading library...',
-          downloaded: 'Downloaded!',
-          emptyError: 'Please enter some Markdown first.',
-        },
-        zh: {
-          clear: '清除',
-          convertDownload: '转换并下载 .docx',
-          inputLabel: 'Markdown 输入',
-          previewLabel: '文档预览',
-          previewPlaceholder: '输入内容后预览将显示在此处。',
-          placeholder: '# 标题\n\n在此处粘贴 Markdown 内容...',
-          filenamePlaceholder: '文档',
-          privacyNote: '所有转换均在浏览器中完成，文档不会上传到任何服务器。',
-          converting: '转换中...',
-          libPending: '加载库...',
-          downloaded: '已下载！',
-          emptyError: '请先输入 Markdown 内容。',
-        },
-        ja: {
-          clear: 'クリア',
-          convertDownload: '変換してダウンロード .docx',
-          inputLabel: 'Markdown 入力',
-          previewLabel: 'ドキュメントプレビュー',
-          previewPlaceholder: '入力すると、ここにプレビューが表示されます。',
-          placeholder: '# 見出し\n\nMarkdownをここに貼り付けてください...',
-          filenamePlaceholder: 'ドキュメント',
-          privacyNote: 'すべての変換はブラウザ内で行われます。ドキュメントはサーバーにアップロードされません。',
-          converting: '変換中...',
-          libPending: 'ライブラリ読み込み中...',
-          downloaded: 'ダウンロード済み！',
-          emptyError: 'まずMarkdownを入力してください。',
-        },
-        ko: {
-          clear: '지우기',
-          convertDownload: '변환 및 다운로드 .docx',
-          inputLabel: 'Markdown 입력',
-          previewLabel: '문서 미리보기',
-          previewPlaceholder: '입력하면 여기에 미리보기가 표시됩니다.',
-          placeholder: '# 제목\n\nMarkdown을 여기에 붙여넣으세요...',
-          filenamePlaceholder: '문서',
-          privacyNote: '모든 변환은 브라우저에서 이루어집니다. 문서는 서버에 업로드되지 않습니다.',
-          converting: '변환 중...',
-          libPending: '라이브러리 로딩...',
-          downloaded: '다운로드됨!',
-          emptyError: '먼저 Markdown을 입력해 주세요.',
-        },
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      // Apply i18n
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-ph');
-        if (t[key]) el.placeholder = t[key];
-      });
-
-      var editor    = document.getElementById('mw-editor');
-      var preview   = document.getElementById('mw-preview');
-      var statusEl  = document.getElementById('mw-status');
-      var clearBtn  = document.getElementById('mw-clear');
-      var convertBtn = document.getElementById('mw-convert');
-      var filenameInput = document.getElementById('mw-filename');
-
-      var _timer = null;
-      var _libReady = false;
-      var _libPending = false;
-
-      // ── Inline parser ────────────────────────────────────────────────────────
-
-      function escHtml(s) {
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      }
-
-      // Parse inline Markdown text into [{text, bold, italic, code, link}]
-      function parseInline(text) {
-        var runs = [];
-        var i = 0;
-        var plain = '';
-
-        while (i < text.length) {
-          // Bold+italic ***..***
-          if (text.slice(i, i+3) === '***') {
-            var j = text.indexOf('***', i + 3);
-            if (j !== -1) {
-              if (plain) { runs.push({ text: plain }); plain = ''; }
-              runs.push({ text: text.slice(i+3, j), bold: true, italic: true });
-              i = j + 3; continue;
-            }
-          }
-          // Bold **
-          if (text.slice(i, i+2) === '**') {
-            var j2 = text.indexOf('**', i + 2);
-            if (j2 !== -1) {
-              if (plain) { runs.push({ text: plain }); plain = ''; }
-              runs.push({ text: text.slice(i+2, j2), bold: true });
-              i = j2 + 2; continue;
-            }
-          }
-          // Bold __
-          if (text.slice(i, i+2) === '__') {
-            var j3 = text.indexOf('__', i + 2);
-            if (j3 !== -1) {
-              if (plain) { runs.push({ text: plain }); plain = ''; }
-              runs.push({ text: text.slice(i+2, j3), bold: true });
-              i = j3 + 2; continue;
-            }
-          }
-          // Italic * (not followed by *)
-          if (text[i] === '*' && text[i+1] !== '*') {
-            var j4 = text.indexOf('*', i + 1);
-            if (j4 !== -1) {
-              if (plain) { runs.push({ text: plain }); plain = ''; }
-              runs.push({ text: text.slice(i+1, j4), italic: true });
-              i = j4 + 1; continue;
-            }
-          }
-          // Italic _ (not followed by _)
-          if (text[i] === '_' && text[i+1] !== '_') {
-            var j5 = text.indexOf('_', i + 1);
-            if (j5 !== -1) {
-              if (plain) { runs.push({ text: plain }); plain = ''; }
-              runs.push({ text: text.slice(i+1, j5), italic: true });
-              i = j5 + 1; continue;
-            }
-          }
-          // Inline code `
-          if (text[i] === '`') {
-            var j6 = text.indexOf('`', i + 1);
-            if (j6 !== -1) {
-              if (plain) { runs.push({ text: plain }); plain = ''; }
-              runs.push({ text: text.slice(i+1, j6), code: true });
-              i = j6 + 1; continue;
-            }
-          }
-          // Link [text](url)
-          if (text[i] === '[') {
-            var te = text.indexOf(']', i + 1);
-            if (te !== -1 && text[te+1] === '(') {
-              var ue = text.indexOf(')', te + 2);
-              if (ue !== -1) {
-                if (plain) { runs.push({ text: plain }); plain = ''; }
-                runs.push({ text: text.slice(i+1, te), link: text.slice(te+2, ue) });
-                i = ue + 1; continue;
-              }
-            }
-          }
-          plain += text[i]; i++;
-        }
-        if (plain) runs.push({ text: plain });
-        return runs;
-      }
-
-      // Parse Markdown text into block tokens
-      function parseBlocks(md) {
-        var lines = md.split('\n');
-        var blocks = [];
-        var i = 0;
-
-        while (i < lines.length) {
-          var line = lines[i];
-
-          // Fenced code block
-          var fenceMatch = line.match(/^(`{3,}|~{3,})(.*)/);
-          if (fenceMatch) {
-            var fence = fenceMatch[1];
-            var lang = fenceMatch[2].trim();
-            var codeLines = [];
-            i++;
-            while (i < lines.length && lines[i].slice(0, fence.length) !== fence) {
-              codeLines.push(lines[i]); i++;
-            }
-            blocks.push({ type: 'code', lang: lang, content: codeLines.join('\n') });
-            i++; continue;
-          }
-
-          // ATX headings
-          var hm = line.match(/^(#{1,6})\s+(.*)/);
-          if (hm) {
-            blocks.push({ type: 'h' + hm[1].length, content: hm[2].replace(/\s+#+\s*$/, '') });
-            i++; continue;
-          }
-
-          // Setext H1
-          if (i + 1 < lines.length && lines[i+1].match(/^=+\s*$/) && line.trim()) {
-            blocks.push({ type: 'h1', content: line.trim() });
-            i += 2; continue;
-          }
-
-          // Setext H2
-          if (i + 1 < lines.length && lines[i+1].match(/^-+\s*$/) && line.trim() && !line.match(/^[-*+]\s/)) {
-            blocks.push({ type: 'h2', content: line.trim() });
-            i += 2; continue;
-          }
-
-          // Horizontal rule
-          if (line.match(/^[ \t]*([-*_][ \t]*){3,}[ \t]*$/)) {
-            blocks.push({ type: 'hr' });
-            i++; continue;
-          }
-
-          // Blockquote
-          if (line.match(/^>\s?/)) {
-            var bqLines = [];
-            while (i < lines.length && (lines[i].match(/^>\s?/) || (bqLines.length && lines[i].trim()))) {
-              bqLines.push(lines[i].replace(/^>\s?/, ''));
-              i++;
-            }
-            blocks.push({ type: 'blockquote', content: bqLines.join(' ').trim() });
-            continue;
-          }
-
-          // GFM table (must have | and separator line)
-          if (line.match(/^\|/) && i + 1 < lines.length && lines[i+1].match(/^\|[\s|:|-]+\|/)) {
-            var tLines = [];
-            while (i < lines.length && lines[i].trim().startsWith('|')) {
-              tLines.push(lines[i]); i++;
-            }
-            blocks.push({ type: 'table', lines: tLines });
-            continue;
-          }
-
-          // Unordered list
-          var ulm = line.match(/^(\s*)([-*+])\s+(.*)/);
-          if (ulm) {
-            var items = [];
-            while (i < lines.length) {
-              var lm2 = lines[i].match(/^(\s*)([-*+])\s+(.*)/);
-              if (!lm2) break;
-              items.push({ level: Math.floor(lm2[1].length / 2), content: lm2[3] });
-              i++;
-              // continuation lines (indented)
-              while (i < lines.length && lines[i].match(/^\s{2,}/) && !lines[i].match(/^\s*([-*+]|\d+\.)\s/)) {
-                items[items.length - 1].content += ' ' + lines[i].trim();
-                i++;
-              }
-            }
-            blocks.push({ type: 'ul', items: items });
-            continue;
-          }
-
-          // Ordered list
-          var olm = line.match(/^(\s*)(\d+)\.\s+(.*)/);
-          if (olm) {
-            var oItems = [];
-            while (i < lines.length) {
-              var om2 = lines[i].match(/^(\s*)(\d+)\.\s+(.*)/);
-              if (!om2) break;
-              oItems.push({ level: Math.floor(om2[1].length / 2), num: parseInt(om2[2]), content: om2[3] });
-              i++;
-              while (i < lines.length && lines[i].match(/^\s{3,}/) && !lines[i].match(/^\s*([-*+]|\d+\.)\s/)) {
-                oItems[oItems.length - 1].content += ' ' + lines[i].trim();
-                i++;
-              }
-            }
-            blocks.push({ type: 'ol', items: oItems });
-            continue;
-          }
-
-          // Blank line
-          if (line.trim() === '') { i++; continue; }
-
-          // Paragraph — collect until blank line or block-level element
-          var pLines = [line];
-          i++;
-          while (i < lines.length) {
-            var nl = lines[i];
-            if (nl.trim() === '') break;
-            if (nl.match(/^(#{1,6}\s|`{3,}|~{3,}|>\s?|[-*+]\s|\d+\.\s|[ \t]*([-*_][ \t]*){3,}[ \t]*$)/)) break;
-            if (nl.match(/^=+\s*$/) || nl.match(/^-+\s*$/)) break;
-            pLines.push(nl);
-            i++;
-          }
-          blocks.push({ type: 'p', content: pLines.join(' ') });
-        }
-
-        return blocks;
-      }
-
-      // ── HTML preview renderer ────────────────────────────────────────────────
-
-      function inlineToHtml(text) {
-        return text
-          .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-          .replace(/\*\*\*(.+?)\*\*\*/g,'<strong><em>$1</em></strong>')
-          .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-          .replace(/__(.+?)__/g,'<strong>$1</strong>')
-          .replace(/\*(.+?)\*/g,'<em>$1</em>')
-          .replace(/_(.+?)_/g,'<em>$1</em>')
-          .replace(/`([^`]+)`/g,'<code>$1</code>')
-          .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2">$1</a>');
-      }
-
-      function renderPreview(blocks) {
-        var html = '';
-        for (var i = 0; i < blocks.length; i++) {
-          var b = blocks[i];
-          if (b.type === 'h1') { html += '<h1>' + inlineToHtml(b.content) + '</h1>'; }
-          else if (b.type === 'h2') { html += '<h2>' + inlineToHtml(b.content) + '</h2>'; }
-          else if (b.type === 'h3') { html += '<h3>' + inlineToHtml(b.content) + '</h3>'; }
-          else if (b.type === 'h4') { html += '<h4>' + inlineToHtml(b.content) + '</h4>'; }
-          else if (b.type === 'h5') { html += '<h5>' + inlineToHtml(b.content) + '</h5>'; }
-          else if (b.type === 'h6') { html += '<h6>' + inlineToHtml(b.content) + '</h6>'; }
-          else if (b.type === 'p') { html += '<p>' + inlineToHtml(b.content) + '</p>'; }
-          else if (b.type === 'ul') {
-            html += '<ul>';
-            for (var k = 0; k < b.items.length; k++) {
-              html += '<li style="margin-left:' + (b.items[k].level * 1.2) + 'em">' + inlineToHtml(b.items[k].content) + '</li>';
-            }
-            html += '</ul>';
-          }
-          else if (b.type === 'ol') {
-            html += '<ol>';
-            for (var k2 = 0; k2 < b.items.length; k2++) {
-              html += '<li style="margin-left:' + (b.items[k2].level * 1.2) + 'em">' + inlineToHtml(b.items[k2].content) + '</li>';
-            }
-            html += '</ol>';
-          }
-          else if (b.type === 'code') {
-            html += '<pre><code>' + escHtml(b.content) + '</code></pre>';
-          }
-          else if (b.type === 'blockquote') {
-            html += '<blockquote>' + inlineToHtml(b.content) + '</blockquote>';
-          }
-          else if (b.type === 'hr') {
-            html += '<hr />';
-          }
-          else if (b.type === 'table') {
-            var tLines = b.lines;
-            var headers = splitTableRow(tLines[0]);
-            html += '<table><thead><tr>';
-            for (var h2 = 0; h2 < headers.length; h2++) {
-              html += '<th>' + inlineToHtml(headers[h2]) + '</th>';
-            }
-            html += '</tr></thead><tbody>';
-            for (var r = 2; r < tLines.length; r++) {
-              var cells = splitTableRow(tLines[r]);
-              html += '<tr>';
-              for (var c = 0; c < cells.length; c++) {
-                html += '<td>' + inlineToHtml(cells[c]) + '</td>';
-              }
-              html += '</tr>';
-            }
-            html += '</tbody></table>';
-          }
-        }
-        return html || '<div class="mw-preview-placeholder">' + escHtml(t.previewPlaceholder) + '</div>';
-      }
-
-      function splitTableRow(line) {
-        return line.split('|').map(function(s){ return s.trim(); }).filter(function(s,i,a){ return i > 0 && i < a.length - 1; });
-      }
-
-      // ── docx conversion ──────────────────────────────────────────────────────
-
-      function inlineToTextRuns(text, lib) {
-        var runs = parseInline(text);
-        return runs.map(function(r) {
-          var opts = { text: r.text };
-          if (r.bold) opts.bold = true;
-          if (r.italic) opts.italics = true;
-          if (r.code) { opts.font = 'Courier New'; opts.size = 18; }
-          if (r.link) { opts.underline = {}; opts.color = '0563C1'; }
-          return new lib.TextRun(opts);
-        });
-      }
-
-      function blocksToDocxChildren(blocks, lib) {
-        var D = lib;
-        var headingMap = {
-          h1: D.HeadingLevel.HEADING_1,
-          h2: D.HeadingLevel.HEADING_2,
-          h3: D.HeadingLevel.HEADING_3,
-          h4: D.HeadingLevel.HEADING_4,
-          h5: D.HeadingLevel.HEADING_5,
-          h6: D.HeadingLevel.HEADING_6,
-        };
-
-        var children = [];
-
-        for (var i = 0; i < blocks.length; i++) {
-          var b = blocks[i];
-
-          if (headingMap[b.type]) {
-            children.push(new D.Paragraph({
-              heading: headingMap[b.type],
-              children: inlineToTextRuns(b.content, lib),
-            }));
-          }
-
-          else if (b.type === 'p') {
-            children.push(new D.Paragraph({
-              children: inlineToTextRuns(b.content, lib),
-              spacing: { after: 120 },
-            }));
-          }
-
-          else if (b.type === 'ul') {
-            for (var k = 0; k < b.items.length; k++) {
-              children.push(new D.Paragraph({
-                children: inlineToTextRuns(b.items[k].content, lib),
-                bullet: { level: b.items[k].level },
-              }));
-            }
-          }
-
-          else if (b.type === 'ol') {
-            for (var k2 = 0; k2 < b.items.length; k2++) {
-              var item = b.items[k2];
-              children.push(new D.Paragraph({
-                children: [
-                  new D.TextRun({ text: item.num + '. ' }),
-                  ...inlineToTextRuns(item.content, lib),
-                ],
-                indent: { left: (item.level + 1) * 360 },
-              }));
-            }
-          }
-
-          else if (b.type === 'code') {
-            var codeLines = b.content.split('\n');
-            for (var cl = 0; cl < codeLines.length; cl++) {
-              children.push(new D.Paragraph({
-                children: [new D.TextRun({ text: codeLines[cl] || ' ', font: 'Courier New', size: 18 })],
-                shading: { type: D.ShadingType.SOLID, color: 'F0F0F0', fill: 'F0F0F0' },
-                indent: { left: 360 },
-                spacing: { after: cl === codeLines.length - 1 ? 120 : 0, line: 240 },
-              }));
-            }
-          }
-
-          else if (b.type === 'blockquote') {
-            children.push(new D.Paragraph({
-              children: [new D.TextRun({ text: b.content, italics: true, color: '595959' })],
-              indent: { left: 720 },
-              border: {
-                left: { color: 'CCCCCC', space: 1, size: 12, style: D.BorderStyle.SINGLE },
-              },
-              spacing: { after: 120 },
-            }));
-          }
-
-          else if (b.type === 'hr') {
-            children.push(new D.Paragraph({
-              children: [],
-              border: {
-                bottom: { color: 'CCCCCC', space: 1, size: 6, style: D.BorderStyle.SINGLE },
-              },
-              spacing: { after: 120 },
-            }));
-          }
-
-          else if (b.type === 'table') {
-            var tLines = b.lines;
-            var headers = splitTableRow(tLines[0]);
-            var aligns = tLines[1] ? splitTableRow(tLines[1]).map(function(a) {
-              if (a.match(/^:-+:$/)) return D.AlignmentType.CENTER;
-              if (a.match(/^-+:$/)) return D.AlignmentType.RIGHT;
-              return D.AlignmentType.LEFT;
-            }) : [];
-
-            var tableRows = [
-              new D.TableRow({
-                tableHeader: true,
-                children: headers.map(function(h3, ci) {
-                  return new D.TableCell({
-                    children: [new D.Paragraph({
-                      children: [new D.TextRun({ text: h3, bold: true })],
-                      alignment: aligns[ci] || D.AlignmentType.LEFT,
-                    })],
-                    shading: { type: D.ShadingType.SOLID, color: 'E8E8E8', fill: 'E8E8E8' },
-                  });
-                }),
-              }),
-            ];
-
-            for (var r = 2; r < tLines.length; r++) {
-              var cells = splitTableRow(tLines[r]);
-              if (!cells.length) continue;
-              tableRows.push(new D.TableRow({
-                children: cells.map(function(cell, ci2) {
-                  return new D.TableCell({
-                    children: [new D.Paragraph({
-                      children: inlineToTextRuns(cell, lib),
-                      alignment: aligns[ci2] || D.AlignmentType.LEFT,
-                    })],
-                  });
-                }),
-              }));
-            }
-
-            children.push(new D.Table({
-              rows: tableRows,
-              width: { size: 100, type: D.WidthType.PERCENTAGE },
-            }));
-          }
-        }
-
-        return children;
-      }
-
-      async function convertAndDownload() {
-        var md = editor.value;
-        if (!md.trim()) {
-          statusEl.textContent = t.emptyError;
-          statusEl.className = 'mw-status mw-status-err';
-          return;
-        }
-
-        var lib = window.__docxLib;
-        if (!lib) {
-          statusEl.textContent = t.libPending;
-          statusEl.className = 'mw-status';
-          _libPending = true;
-          return;
-        }
-
-        convertBtn.disabled = true;
-        statusEl.textContent = t.converting;
-        statusEl.className = 'mw-status';
-
-        try {
-          var blocks = parseBlocks(md);
-          var children = blocksToDocxChildren(blocks, lib);
-
-          var doc = new lib.Document({
-            sections: [{
-              properties: {},
-              children: children,
-            }],
-          });
-
-          var blob = await lib.Packer.toBlob(doc);
-          var url = URL.createObjectURL(blob);
-          var a = document.createElement('a');
-          var fname = (filenameInput.value.trim() || 'document').replace(/\.docx$/i, '');
-          a.href = url;
-          a.download = fname + '.docx';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
-
-          statusEl.textContent = t.downloaded;
-          statusEl.className = 'mw-status mw-status-ok';
-          setTimeout(function() {
-            statusEl.textContent = '';
-            statusEl.className = 'mw-status';
-          }, 2500);
-
-          window.trackTool && window.trackTool('markdown_to_word', 'convert');
-        } catch (err) {
-          statusEl.textContent = 'Error: ' + String(err);
-          statusEl.className = 'mw-status mw-status-err';
-        } finally {
-          convertBtn.disabled = false;
-        }
-      }
-
-      // ── Live preview ─────────────────────────────────────────────────────────
-
-      function updatePreview() {
-        var md = editor.value;
-        if (!md.trim()) {
-          preview.innerHTML = '<div class="mw-preview-placeholder">' + escHtml(t.previewPlaceholder) + '</div>';
-          return;
-        }
-        var blocks = parseBlocks(md);
-        preview.innerHTML = renderPreview(blocks);
-      }
-
-      editor.addEventListener('input', function () {
-        clearTimeout(_timer);
-        _timer = setTimeout(updatePreview, 200);
-      });
-
-      convertBtn.addEventListener('click', function () {
-        convertAndDownload();
-      });
-
-      clearBtn.addEventListener('click', function () {
-        editor.value = '';
-        statusEl.textContent = '';
-        statusEl.className = 'mw-status';
-        preview.innerHTML = '<div class="mw-preview-placeholder">' + escHtml(t.previewPlaceholder) + '</div>';
-        editor.focus();
-      });
-
-      window.addEventListener('docx-ready', function () {
-        _libReady = true;
-        if (_libPending) {
-          _libPending = false;
-          convertAndDownload();
-        }
-      });
-
-      // ── Sample content ───────────────────────────────────────────────────────
-
-      editor.value = [
-        '# Markdown to Word Converter',
-        '',
-        'Convert Markdown to **Word** (.docx) format — entirely in your browser.',
-        '',
-        '## Features',
-        '',
-        '- **Headings** H1 through H6',
-        '- **Bold**, *italic*, and `inline code`',
-        '- Ordered and unordered lists',
-        '- Tables with header rows',
-        '- Fenced code blocks',
-        '- Blockquotes',
-        '- Horizontal rules',
-        '',
-        '## Quick Start',
-        '',
-        '1. Replace this sample with your own Markdown.',
-        '2. Click **Convert & Download .docx**.',
-        '3. Open the downloaded file in Microsoft Word.',
-        '',
-        '## Example Table',
-        '',
-        '| Format | Supported |',
-        '|--------|:---------:|',
-        '| Headings | ✓ |',
-        '| Bold / Italic | ✓ |',
-        '| Code blocks | ✓ |',
-        '| Tables | ✓ |',
-        '',
-        '## Code Example',
-        '',
-        '```javascript',
-        'function greet(name) {',
-        '  return `Hello, ${name}!`;',
-        '}',
-        '```',
-        '',
-        '> **Tip:** Your document is never uploaded. All processing happens on-device.',
-      ].join('\n');
-
-      updatePreview();
-    })();
-  </script>
+  <p class="mw-privacy">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    <span>{S.privacyNote}</span>
+  </p>
 </div>
 
-<style>
-  .mw-wrap { display: flex; flex-direction: column; gap: 0.5rem; }
+<script>
+  import * as docxLib from 'docx';
+  import { fromMarkdown } from 'mdast-util-from-markdown';
+  import { gfmFromMarkdown } from 'mdast-util-gfm';
+  import { gfm } from 'micromark-extension-gfm';
+  import { cjkFriendlyExtension } from 'micromark-extension-cjk-friendly';
+  import { gfmStrikethroughCjkFriendly } from 'micromark-extension-cjk-friendly-gfm-strikethrough';
 
-  .mw-toolbar {
+  /* ── engine:start ── */
+  // Characters between which a soft line break is dropped (Han, Kana, CJK punctuation,
+  // fullwidth forms). Hangul is not here: Korean separates words with spaces.
+  var CJK_JOIN = /[\u2E80-\u2FFF\u3000-\u303F\u3040-\u30FF\u3100-\u312F\u31A0-\u31FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF9F]/;
+  // Any CJK character: paragraphs that contain one get w:hint="eastAsia", so ambiguous
+  // characters such as “ ” … — use the East Asian font, as Word does for IME input.
+  var CJK_ANY = /[\u1100-\u11FF\u2E80-\u9FFF\uA960-\uA97F\uAC00-\uD7FF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]/;
+
+  var FONT_PRESETS = {
+    'zh-song': { eastAsia: 'SimSun', lang: 'zh-CN' },
+    'zh-yahei': { eastAsia: 'Microsoft YaHei', lang: 'zh-CN' },
+    'ja-mincho': { eastAsia: 'Yu Mincho', lang: 'ja-JP' },
+    'ja-gothic': { eastAsia: 'Yu Gothic', lang: 'ja-JP' },
+    'ko-malgun': { eastAsia: 'Malgun Gothic', lang: 'ko-KR' },
+    'ko-batang': { eastAsia: 'Batang', lang: 'ko-KR' },
+  };
+  var LATIN_FONT = 'Calibri';
+  var MONO_FONT = 'Consolas';
+  // twips (1/1440 inch)
+  var PAPER = { a4: { width: 11906, height: 16838 }, letter: { width: 12240, height: 15840 } };
+  var MARGIN = 1440;
+  var LIST_INDENT = 420;
+  var QUOTE_INDENT = 360;
+  // Regions whose default paper is US Letter
+  var LETTER_REGIONS = ['US', 'CA', 'MX', 'PH', 'CL', 'CO', 'VE', 'PR', 'GT', 'CR', 'PA', 'DO'];
+
+  function defaultFontFor(pageLang) {
+    return { zh: 'zh-song', ja: 'ja-mincho', ko: 'ko-malgun' }[pageLang] || 'zh-yahei';
+  }
+
+  function paperFor(locale) {
+    var m = /^[A-Za-z]{2,3}[-_](?:[A-Za-z]{4}[-_])?([A-Za-z]{2})\b/.exec(String(locale || ''));
+    return m && LETTER_REGIONS.indexOf(m[1].toUpperCase()) >= 0 ? 'letter' : 'a4';
+  }
+
+  function safeFilename(name) {
+    var s = String(name == null ? '' : name)
+      .replace(/[\u0000-\u001f\u007f<>:"\/\\|?*]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\.docx$/i, '')
+      .replace(/^[. ]+|[. ]+$/g, '');
+    var cps = Array.from(s);
+    if (cps.length > 80) s = cps.slice(0, 80).join('').trim();
+    return s || 'document';
+  }
+
+  function stripFrontmatter(md) {
+    var m = /^---[ \t]*\n([\s\S]*?)\n(?:---|\.\.\.)[ \t]*(?:\n|$)/.exec(md);
+    if (!m) return md;
+    var lines = m[1].split('\n');
+    var keyLine = /^["']?[A-Za-z0-9_][^:]*["']?:(\s|$)/;
+    var yamlish = lines.every(function (l) {
+      return !l.trim() || keyLine.test(l) || /^\s+\S/.test(l) || /^\s*-\s/.test(l) || /^\s*#/.test(l);
+    });
+    if (!yamlish || !lines.some(function (l) { return keyLine.test(l); })) return md;
+    return md.slice(m[0].length);
+  }
+
+  function visit(node, fn) {
+    if (fn(node) === false) return;
+    if (node.children) for (var i = 0; i < node.children.length; i++) visit(node.children[i], fn);
+  }
+
+  function leafText(n) {
+    if (n.type === 'text' || n.type === 'inlineCode') return n.value;
+    if (n.type === 'image' || n.type === 'imageReference') return n.alt || 'x';
+    if (n.type === 'break') return '\n';
+    if (n.type === 'footnoteReference') return '1';
+    return '';
+  }
+
+  // Soft line breaks: CommonMark renders them as a line ending that browsers show as a
+  // space. Between two Han / Kana characters that space is wrong, so drop it there.
+  function joinSoftBreaks(tree) {
+    visit(tree, function (c) {
+      if (c.type !== 'paragraph' && c.type !== 'heading' && c.type !== 'tableCell') return true;
+      var leaves = [];
+      visit(c, function (n) { if (!n.children) leaves.push(n); return true; });
+      var full = '';
+      var starts = [];
+      leaves.forEach(function (l) { starts.push(full.length); full += leafText(l); });
+      leaves.forEach(function (l, i) {
+        if (l.type !== 'text' || l.value.indexOf('\n') < 0) return;
+        var base = starts[i];
+        l.value = l.value.replace(/[ \t]*\n[ \t]*/g, function (m, off) {
+          var prev = full.charAt(base + off - 1);
+          var next = full.charAt(base + off + m.length);
+          return CJK_JOIN.test(prev) && CJK_JOIN.test(next) ? '' : ' ';
+        });
+      });
+      return false;
+    });
+  }
+
+  function parseMarkdown(md, lib) {
+    var src = stripFrontmatter(String(md == null ? '' : md).replace(/\r\n?/g, '\n'));
+    var tree = lib.fromMarkdown(src, {
+      extensions: [lib.gfm(), lib.cjkFriendlyExtension(), lib.gfmStrikethroughCjkFriendly()],
+      mdastExtensions: [lib.gfmFromMarkdown()],
+    });
+    joinSoftBreaks(tree);
+    return tree;
+  }
+
+  function plainText(node) {
+    var s = '';
+    visit(node, function (n) {
+      if (n.type === 'text' || n.type === 'inlineCode') s += n.value;
+      else if (n.type === 'image' || n.type === 'imageReference') s += n.alt || '';
+      return true;
+    });
+    return s;
+  }
+
+  function firstHeadingText(tree) {
+    var h = null;
+    visit(tree, function (n) { if (!h && n.type === 'heading') h = n; return !h; });
+    return h ? plainText(h).trim() : '';
+  }
+
+  function collectDefinitions(tree) {
+    var defs = {};
+    visit(tree, function (n) {
+      if (n.type === 'definition' && !defs[n.identifier]) defs[n.identifier] = n;
+      return true;
+    });
+    return defs;
+  }
+
+  function decodeDataUri(uri) {
+    var m = /^data:([^;,]*)((?:;[^;,]*)*),([\s\S]*)$/i.exec(String(uri || '').trim());
+    if (!m) return null;
+    var mime = (m[1] || 'text/plain').toLowerCase();
+    var data;
+    try {
+      if (/;base64/i.test(m[2])) {
+        var bin = atob(m[3].replace(/\s+/g, ''));
+        data = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+      } else {
+        data = new TextEncoder().encode(decodeURIComponent(m[3]));
+      }
+    } catch (e) {
+      return null;
+    }
+    return { mime: mime, data: data };
+  }
+
+  // Type and pixel size from the file header, for the formats Word embeds directly.
+  function sniffImage(b) {
+    if (!b || b.length < 10) return null;
+    var be16 = function (i) { return (b[i] << 8) | b[i + 1]; };
+    var le16 = function (i) { return b[i] | (b[i + 1] << 8); };
+    var le32 = function (i) { return (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)); };
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b.length >= 24) {
+      return { type: 'png', width: ((b[16] << 24) >>> 0) + (b[17] << 16) + (b[18] << 8) + b[19], height: ((b[20] << 24) >>> 0) + (b[21] << 16) + (b[22] << 8) + b[23] };
+    }
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) {
+      return { type: 'gif', width: le16(6), height: le16(8) };
+    }
+    if (b[0] === 0x42 && b[1] === 0x4d && b.length >= 26) {
+      return { type: 'bmp', width: Math.abs(le32(18)), height: Math.abs(le32(22)) };
+    }
+    if (b[0] === 0xff && b[1] === 0xd8) {
+      var i = 2;
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xff) return null;
+        var marker = b[i + 1];
+        if (marker === 0xff) { i++; continue; }
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { type: 'jpg', width: be16(i + 7), height: be16(i + 5) };
+        }
+        i += 2 + be16(i + 2);
+      }
+    }
+    return null;
+  }
+
+  function fitImage(width, height, maxWidth) {
+    var w = Math.max(1, Math.round(width || 1));
+    var h = Math.max(1, Math.round(height || 1));
+    if (w <= maxWidth) return { width: w, height: h };
+    return { width: maxWidth, height: Math.max(1, Math.round(h * maxWidth / w)) };
+  }
+
+  function imageUrlOf(n, defs) {
+    if (n.type === 'image') return n.url;
+    if (n.type === 'imageReference' && defs[n.identifier]) return defs[n.identifier].url;
+    return null;
+  }
+
+  // Images the browser has to fetch or re-encode before export: http(s) URLs, and data
+  // URIs in a format Word cannot embed directly (SVG, WebP, ...).
+  function collectImageUrls(tree) {
+    var defs = collectDefinitions(tree);
+    var out = [];
+    visit(tree, function (n) {
+      var url = imageUrlOf(n, defs);
+      if (!url || out.indexOf(url) >= 0) return true;
+      if (/^https?:\/\//i.test(url)) out.push(url);
+      else if (/^data:image\//i.test(url)) {
+        var d = decodeDataUri(url);
+        if (d && !sniffImage(d.data)) out.push(url);
+      }
+      return true;
+    });
+    return out;
+  }
+
+  function isLinkUrl(url) {
+    return /^(https?:\/\/|mailto:)/i.test(String(url || '').trim());
+  }
+
+  function decodeEntities(s) {
+    return s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, function (m, e) {
+      var k = e.toLowerCase();
+      if (k === 'amp') return '&';
+      if (k === 'lt') return '<';
+      if (k === 'gt') return '>';
+      if (k === 'quot') return '"';
+      if (k === 'apos') return "'";
+      if (k === 'nbsp') return '\u00a0';
+      var cp = k.charAt(1) === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+      try { return String.fromCodePoint(cp); } catch (err) { return m; }
+    });
+  }
+
+  // Raw HTML is not rendered: tags are dropped and their text kept. <script>, <style>
+  // and comments produce nothing; <br> and closing block tags end a line.
+  function htmlToText(html) {
+    var s = String(html)
+      .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+      .replace(/<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|tr|h[1-6]|blockquote|pre|table|ul|ol|section|details|summary)\s*>/gi, '\n')
+      .replace(/<\/?[A-Za-z][^>]*>/g, '');
+    return decodeEntities(s)
+      .split('\n')
+      .map(function (l) { return l.replace(/[ \t]+/g, ' ').trim(); })
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  function inlineHtmlKind(value) {
+    var v = String(value).trim();
+    if (/^<br\s*\/?>$/i.test(v)) return { kind: 'br' };
+    var open = /^<(script|style)\b/i.exec(v);
+    if (open) return { kind: 'skip', tag: open[1].toLowerCase() };
+    return { kind: 'drop' };
+  }
+
+  function columnWidths(rows, ncol, total) {
+    var weights = [];
+    for (var c = 0; c < ncol; c++) {
+      var w = 3;
+      rows.forEach(function (r) {
+        var cell = r.children[c];
+        if (!cell) return;
+        var t = plainText(cell);
+        var len = 0;
+        for (var ch of t) len += CJK_ANY.test(ch) ? 2 : 1;
+        if (len > w) w = len;
+      });
+      weights.push(Math.min(w, 40));
+    }
+    var sum = weights.reduce(function (a, b) { return a + b; }, 0);
+    var widths = weights.map(function (w) { return Math.floor(total * w / sum); });
+    widths[ncol - 1] += total - widths.reduce(function (a, b) { return a + b; }, 0);
+    return widths;
+  }
+
+  function buildDocx(tree, lib, opts) {
+    var D = lib.D;
+    opts = opts || {};
+    var preset = FONT_PRESETS[opts.font] || FONT_PRESETS['zh-yahei'];
+    var paper = PAPER[opts.paper] || PAPER.a4;
+    var contentWidth = paper.width - 2 * MARGIN;
+    var defs = collectDefinitions(tree);
+    var report = { imagesEmbedded: 0, imagesMissing: 0 };
+    var images = opts.images || {};
+    var maxImgPx = Math.round(contentWidth / 15);
+
+    var bulletLevels = [];
+    var orderedFormats = [D.LevelFormat.DECIMAL, D.LevelFormat.LOWER_LETTER, D.LevelFormat.LOWER_ROMAN];
+    var bulletGlyphs = [['\uF0B7', 'Symbol'], ['o', 'Courier New'], ['\uF0A7', 'Wingdings']];
+    for (var L = 0; L < 9; L++) {
+      bulletLevels.push({
+        level: L, format: D.LevelFormat.BULLET, text: bulletGlyphs[L % 3][0], alignment: D.AlignmentType.LEFT,
+        style: {
+          paragraph: { indent: { left: LIST_INDENT * (L + 1), hanging: LIST_INDENT } },
+          run: { font: { ascii: bulletGlyphs[L % 3][1], hAnsi: bulletGlyphs[L % 3][1], hint: 'default' } },
+        },
+      });
+    }
+    var numbering = [{ reference: 'zt-ul', levels: bulletLevels }];
+    var olCount = 0;
+    function orderedReference(start) {
+      var ref = 'zt-ol-' + (olCount++);
+      var levels = [];
+      for (var L = 0; L < 9; L++) {
+        levels.push({
+          level: L, format: orderedFormats[L % 3], text: '%' + (L + 1) + '.', alignment: D.AlignmentType.LEFT, start: start,
+          style: { paragraph: { indent: { left: LIST_INDENT * (L + 1), hanging: LIST_INDENT } } },
+        });
+      }
+      numbering.push({ reference: ref, levels: levels });
+      return ref;
+    }
+
+    // Footnotes are numbered in order of first reference
+    var fnDefs = {};
+    visit(tree, function (n) { if (n.type === 'footnoteDefinition' && !fnDefs[n.identifier]) fnDefs[n.identifier] = n; return true; });
+    var fnIds = {};
+    var fnOrder = [];
+    visit(tree, function (n) {
+      if (n.type === 'footnoteDefinition') return false;
+      if (n.type === 'footnoteReference' && fnDefs[n.identifier] && !fnIds[n.identifier]) {
+        fnOrder.push(n.identifier);
+        fnIds[n.identifier] = fnOrder.length;
+      }
+      return true;
+    });
+
+    function withStyle(st, extra) {
+      var o = {};
+      for (var k in st) o[k] = st[k];
+      for (var k2 in extra) o[k2] = extra[k2];
+      return o;
+    }
+
+    function runOpts(text, st) {
+      var o = { text: text };
+      if (st.bold) o.bold = true;
+      if (st.italics) o.italics = true;
+      if (st.strike) o.strike = true;
+      if (st.code) o.style = 'VerbatimChar';
+      else if (st.link) o.style = 'Hyperlink';
+      if (st.cjk) o.font = { hint: 'eastAsia' };
+      return o;
+    }
+
+    function resolveImage(url) {
+      if (images[url]) return images[url];
+      if (/^data:/i.test(url)) {
+        var d = decodeDataUri(url);
+        var s = d && sniffImage(d.data);
+        if (s) return { type: s.type, data: d.data, width: s.width, height: s.height };
+      }
+      return null;
+    }
+
+    function imageRun(url, alt, title, st) {
+      var img = url ? resolveImage(url) : null;
+      if (img) {
+        report.imagesEmbedded++;
+        return [new D.ImageRun({
+          type: img.type, data: img.data,
+          transformation: fitImage(img.width, img.height, maxImgPx),
+          altText: { name: alt || 'image', description: alt || '', title: title || '' },
+        })];
+      }
+      report.imagesMissing++;
+      var label = '[' + (alt || String(url || '').split(/[?#]/)[0].split('/').pop() || 'image') + ']';
+      if (isLinkUrl(url)) {
+        return [new D.ExternalHyperlink({ link: url, children: [new D.TextRun(runOpts(label, withStyle(st, { link: true })))] })];
+      }
+      return [new D.TextRun(runOpts(label, st))];
+    }
+
+    function inlineRuns(nodes, st) {
+      var out = [];
+      var skip = null;
+      (nodes || []).forEach(function (n) {
+        if (skip) {
+          if (n.type === 'html' && new RegExp('^</' + skip + '\\s*>$', 'i').test(n.value.trim())) skip = null;
+          return;
+        }
+        switch (n.type) {
+          case 'text':
+            if (n.value) out.push(new D.TextRun(runOpts(n.value, st)));
+            break;
+          case 'strong':
+            out = out.concat(inlineRuns(n.children, withStyle(st, { bold: true })));
+            break;
+          case 'emphasis':
+            out = out.concat(inlineRuns(n.children, withStyle(st, { italics: true })));
+            break;
+          case 'delete':
+            out = out.concat(inlineRuns(n.children, withStyle(st, { strike: true })));
+            break;
+          case 'inlineCode':
+            out.push(new D.TextRun(Object.assign(runOpts(n.value, withStyle(st, { code: true })), { noProof: true })));
+            break;
+          case 'break':
+            out.push(new D.TextRun({ break: 1 }));
+            break;
+          case 'link':
+          case 'linkReference': {
+            var url = n.type === 'link' ? n.url : (defs[n.identifier] || {}).url;
+            if (isLinkUrl(url)) {
+              out.push(new D.ExternalHyperlink({ link: url.trim(), children: inlineRuns(n.children, withStyle(st, { link: true })) }));
+            } else {
+              out = out.concat(inlineRuns(n.children, st));
+            }
+            break;
+          }
+          case 'image':
+            out = out.concat(imageRun(n.url, n.alt, n.title, st));
+            break;
+          case 'imageReference': {
+            var def = defs[n.identifier];
+            out = out.concat(imageRun(def && def.url, n.alt, def && def.title, st));
+            break;
+          }
+          case 'footnoteReference':
+            if (fnIds[n.identifier]) out.push(new D.FootnoteReferenceRun(fnIds[n.identifier]));
+            else out.push(new D.TextRun(runOpts('[^' + n.label + ']', st)));
+            break;
+          case 'html': {
+            var k = inlineHtmlKind(n.value);
+            if (k.kind === 'br') out.push(new D.TextRun({ break: 1 }));
+            else if (k.kind === 'skip' && !new RegExp('</' + k.tag + '\\s*>', 'i').test(n.value)) skip = k.tag;
+            break;
+          }
+          default:
+            if (n.children) out = out.concat(inlineRuns(n.children, st));
+        }
+      });
+      return out;
+    }
+
+    function paragraphFrom(node, props, st) {
+      var cjk = CJK_ANY.test(plainText(node));
+      var children = inlineRuns(node.children, withStyle(st || {}, { cjk: cjk }));
+      var onlyImages = node.children && node.children.length > 0 && node.children.every(function (c) {
+        return c.type === 'image' || c.type === 'imageReference' || (c.type === 'text' && !c.value.trim());
+      });
+      var p = Object.assign({ children: children }, props || {});
+      if (onlyImages && !p.alignment) p.alignment = D.AlignmentType.CENTER;
+      return new D.Paragraph(p);
+    }
+
+    function baseProps(env) {
+      var p = {};
+      if (env.quote) p.style = 'Quote';
+      if (env.indent) p.indent = { left: env.indent };
+      return p;
+    }
+
+    function codeParagraphs(node, env) {
+      var lines = String(node.value).split('\n');
+      return lines.map(function (line) {
+        var parts = line.split('\t');
+        var cjk = CJK_ANY.test(line);
+        var kids = [];
+        parts.forEach(function (part, i) {
+          if (i > 0) kids.push(new D.TextRun({ children: [new D.Tab()], noProof: true }));
+          if (part) kids.push(new D.TextRun({ text: part, noProof: true, font: cjk ? { hint: 'eastAsia' } : undefined }));
+        });
+        var p = { style: 'SourceCode', children: kids };
+        if (env.indent) p.indent = { left: env.indent };
+        return new D.Paragraph(p);
+      });
+    }
+
+    function tableBlock(node, env) {
+      var rows = node.children || [];
+      if (!rows.length) return [];
+      var ncol = rows[0].children.length || 1;
+      var align = node.align || [];
+      var widths = columnWidths(rows, ncol, contentWidth - (env.indent || 0));
+      var jc = { left: D.AlignmentType.LEFT, center: D.AlignmentType.CENTER, right: D.AlignmentType.RIGHT };
+      var border = { style: D.BorderStyle.SINGLE, size: 4, color: 'BFBFBF' };
+      var trs = rows.map(function (row, ri) {
+        var cells = [];
+        for (var c = 0; c < ncol; c++) {
+          var cell = row.children[c] || { type: 'tableCell', children: [] };
+          var pOpts = { spacing: { before: 0, after: 0 } };
+          if (align[c]) pOpts.alignment = jc[align[c]];
+          var cellOpts = {
+            children: [paragraphFrom(cell, pOpts, ri === 0 ? { bold: true } : {})],
+            width: { size: widths[c], type: D.WidthType.DXA },
+            margins: { top: 60, bottom: 60, left: 100, right: 100 },
+          };
+          if (ri === 0) cellOpts.shading = { type: D.ShadingType.CLEAR, color: 'auto', fill: 'F2F2F2' };
+          cells.push(new D.TableCell(cellOpts));
+        }
+        return new D.TableRow({ tableHeader: ri === 0, cantSplit: true, children: cells });
+      });
+      var t = {
+        rows: trs,
+        width: { size: widths.reduce(function (a, b) { return a + b; }, 0), type: D.WidthType.DXA },
+        columnWidths: widths,
+        layout: D.TableLayoutType.FIXED,
+        borders: { top: border, bottom: border, left: border, right: border, insideHorizontal: border, insideVertical: border },
+      };
+      if (env.indent) t.indent = { size: env.indent, type: D.WidthType.DXA };
+      // An empty paragraph keeps two adjacent tables from merging in Word
+      return [new D.Table(t), new D.Paragraph({ children: [], spacing: { after: 0 } })];
+    }
+
+    function listBlocks(list, env, level) {
+      var ref = list.ordered ? orderedReference(list.start == null ? 1 : list.start) : 'zt-ul';
+      var textIndent = (env.indent || 0) + LIST_INDENT;
+      var out = [];
+      list.children.forEach(function (item, idx) {
+        var last = idx === list.children.length - 1;
+        var kids = item.children || [];
+        var lead = kids[0] && kids[0].type === 'paragraph' ? kids[0] : { type: 'paragraph', children: [] };
+        var props = {
+          indent: { left: textIndent, hanging: LIST_INDENT },
+          spacing: { after: list.spread || (last && level === 0) ? 120 : 0 },
+        };
+        if (env.quote) props.style = 'Quote';
+        var task = item.checked === true || item.checked === false;
+        if (!task) props.numbering = { reference: ref, level: Math.min(level, 8) };
+        var p = paragraphFrom(lead, props);
+        if (task) {
+          var cjk = CJK_ANY.test(plainText(lead));
+          p = new D.Paragraph(Object.assign({}, props, {
+            children: [
+              new D.CheckBox({ checked: item.checked, checkedState: { value: '2612', font: 'MS Gothic' }, uncheckedState: { value: '2610', font: 'MS Gothic' } }),
+              new D.TextRun({ children: [new D.Tab()] }),
+            ].concat(inlineRuns(lead.children, { cjk: cjk })),
+          }));
+        }
+        out.push(p);
+        var inner = { indent: textIndent, quote: env.quote };
+        kids.slice(kids[0] === lead ? 1 : 0).forEach(function (child) {
+          if (child.type === 'list') out = out.concat(listBlocks(child, inner, level + 1));
+          else out = out.concat(blocks([child], inner));
+        });
+      });
+      return out;
+    }
+
+    function blocks(nodes, env) {
+      var out = [];
+      (nodes || []).forEach(function (n) {
+        switch (n.type) {
+          case 'heading': {
+            var hp = { heading: D.HeadingLevel['HEADING_' + Math.min(n.depth, 6)] };
+            if (env.indent) hp.indent = { left: env.indent };
+            out.push(paragraphFrom(n, hp));
+            break;
+          }
+          case 'paragraph':
+            out.push(paragraphFrom(n, baseProps(env)));
+            break;
+          case 'list':
+            out = out.concat(listBlocks(n, env, 0));
+            break;
+          case 'code':
+            out = out.concat(codeParagraphs(n, env));
+            out.push(new D.Paragraph({ children: [], spacing: { after: 0, line: 120 } }));
+            break;
+          case 'blockquote':
+            out = out.concat(blocks(n.children, { indent: (env.indent || 0) + QUOTE_INDENT, quote: (env.quote || 0) + 1 }));
+            break;
+          case 'table':
+            out = out.concat(tableBlock(n, env));
+            break;
+          case 'thematicBreak':
+            out.push(new D.Paragraph({
+              children: [],
+              border: { bottom: { style: D.BorderStyle.SINGLE, size: 6, color: 'BFBFBF', space: 1 } },
+              indent: env.indent ? { left: env.indent } : undefined,
+            }));
+            break;
+          case 'html': {
+            var text = htmlToText(n.value);
+            if (!text) break;
+            var cjk = CJK_ANY.test(text);
+            var runs = [];
+            text.split('\n').forEach(function (line, i) {
+              if (i > 0) runs.push(new D.TextRun({ break: 1 }));
+              runs.push(new D.TextRun(runOpts(line, { cjk: cjk })));
+            });
+            out.push(new D.Paragraph(Object.assign(baseProps(env), { children: runs })));
+            break;
+          }
+          default:
+            break;
+        }
+      });
+      return out;
+    }
+
+    var children = blocks(tree.children, { indent: 0, quote: 0 });
+    if (!children.length) children.push(new D.Paragraph({ children: [] }));
+
+    var footnotes = {};
+    fnOrder.forEach(function (id) {
+      var paras = [];
+      (fnDefs[id].children || []).forEach(function (child) {
+        if (child.type === 'paragraph') paras.push(paragraphFrom(child, { style: 'FootnoteText' }));
+        else blocks([child], { indent: 0, quote: 0 }).forEach(function (b) { if (b instanceof D.Paragraph) paras.push(b); });
+      });
+      footnotes[fnIds[id]] = { children: paras.length ? paras : [new D.Paragraph({ children: [] })] };
+    });
+
+    function headingStyle(level, size, before) {
+      return {
+        run: { bold: true, size: size, color: '1F1F1F', italics: false },
+        paragraph: { keepNext: true, keepLines: true, outlineLevel: level, spacing: { before: before, after: 120 } },
+      };
+    }
+    var shade = { type: D.ShadingType.CLEAR, color: 'auto', fill: 'F2F2F2' };
+    var mono = { ascii: MONO_FONT, hAnsi: MONO_FONT, cs: MONO_FONT };
+
+    var doc = new D.Document({
+      creator: '',
+      lastModifiedBy: '',
+      title: opts.title || '',
+      styles: {
+        default: {
+          document: {
+            run: {
+              font: { ascii: LATIN_FONT, hAnsi: LATIN_FONT, cs: LATIN_FONT, eastAsia: preset.eastAsia },
+              size: 22,
+              language: { value: 'en-US', eastAsia: preset.lang },
+            },
+            paragraph: { spacing: { after: 120, line: 276 } },
+          },
+          heading1: headingStyle(0, 36, 360),
+          heading2: headingStyle(1, 30, 300),
+          heading3: headingStyle(2, 26, 240),
+          heading4: headingStyle(3, 24, 200),
+          heading5: headingStyle(4, 22, 200),
+          heading6: headingStyle(5, 22, 200),
+        },
+        paragraphStyles: [
+          {
+            id: 'SourceCode', name: 'Source Code', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { font: mono, size: 20 },
+            paragraph: { spacing: { before: 0, after: 0, line: 240 }, shading: shade },
+          },
+          {
+            id: 'Quote', name: 'Quote', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { color: '595959' },
+            paragraph: {
+              indent: { left: QUOTE_INDENT },
+              border: { left: { style: D.BorderStyle.SINGLE, size: 18, color: 'BFBFBF', space: 8 } },
+            },
+          },
+        ],
+        characterStyles: [
+          { id: 'VerbatimChar', name: 'Verbatim Char', basedOn: 'DefaultParagraphFont', run: { font: mono, size: 20, shading: shade } },
+        ],
+      },
+      numbering: { config: numbering },
+      footnotes: footnotes,
+      sections: [{
+        properties: {
+          page: {
+            size: { width: paper.width, height: paper.height, orientation: D.PageOrientation.PORTRAIT },
+            margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN },
+          },
+        },
+        children: children,
+      }],
+    });
+    return { doc: doc, report: report };
+  }
+
+  // ── preview ──
+  function escHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function renderHtml(tree) {
+    var defs = collectDefinitions(tree);
+    var fnDefs = {};
+    visit(tree, function (n) { if (n.type === 'footnoteDefinition' && !fnDefs[n.identifier]) fnDefs[n.identifier] = n; return true; });
+    var fnIds = {};
+    var fnOrder = [];
+    visit(tree, function (n) {
+      if (n.type === 'footnoteDefinition') return false;
+      if (n.type === 'footnoteReference' && fnDefs[n.identifier] && !fnIds[n.identifier]) {
+        fnOrder.push(n.identifier);
+        fnIds[n.identifier] = fnOrder.length;
+      }
+      return true;
+    });
+
+    function img(url, alt) {
+      if (/^data:image\/(png|jpe?g|gif|webp|bmp|svg\+xml)[;,]/i.test(url || '')) {
+        return '<img src="' + escHtml(url) + '" alt="' + escHtml(alt || '') + '">';
+      }
+      return '<span class="mw-img-ph">[' + escHtml(alt || 'image') + '] ' + escHtml(url || '') + '</span>';
+    }
+
+    function inline(nodes) {
+      var s = '';
+      var skip = null;
+      (nodes || []).forEach(function (n) {
+        if (skip) {
+          if (n.type === 'html' && new RegExp('^</' + skip + '\\s*>$', 'i').test(n.value.trim())) skip = null;
+          return;
+        }
+        switch (n.type) {
+          case 'text': s += escHtml(n.value); break;
+          case 'strong': s += '<strong>' + inline(n.children) + '</strong>'; break;
+          case 'emphasis': s += '<em>' + inline(n.children) + '</em>'; break;
+          case 'delete': s += '<del>' + inline(n.children) + '</del>'; break;
+          case 'inlineCode': s += '<code>' + escHtml(n.value) + '</code>'; break;
+          case 'break': s += '<br>'; break;
+          case 'link':
+          case 'linkReference': {
+            var url = n.type === 'link' ? n.url : (defs[n.identifier] || {}).url;
+            s += isLinkUrl(url)
+              ? '<a href="' + escHtml(url.trim()) + '" target="_blank" rel="noopener noreferrer">' + inline(n.children) + '</a>'
+              : inline(n.children);
+            break;
+          }
+          case 'image': s += img(n.url, n.alt); break;
+          case 'imageReference': s += img((defs[n.identifier] || {}).url, n.alt); break;
+          case 'footnoteReference':
+            s += fnIds[n.identifier] ? '<sup>[' + fnIds[n.identifier] + ']</sup>' : escHtml('[^' + n.label + ']');
+            break;
+          case 'html': {
+            var k = inlineHtmlKind(n.value);
+            if (k.kind === 'br') s += '<br>';
+            else if (k.kind === 'skip' && !new RegExp('</' + k.tag + '\\s*>', 'i').test(n.value)) skip = k.tag;
+            break;
+          }
+          default:
+            if (n.children) s += inline(n.children);
+        }
+      });
+      return s;
+    }
+
+    function block(nodes) {
+      var s = '';
+      (nodes || []).forEach(function (n) {
+        switch (n.type) {
+          case 'heading': s += '<h' + n.depth + '>' + inline(n.children) + '</h' + n.depth + '>'; break;
+          case 'paragraph': s += '<p>' + inline(n.children) + '</p>'; break;
+          case 'list': {
+            var tag = n.ordered ? 'ol' : 'ul';
+            s += '<' + tag + (n.ordered && n.start != null && n.start !== 1 ? ' start="' + Number(n.start) + '"' : '') + '>';
+            n.children.forEach(function (item) {
+              var task = item.checked === true || item.checked === false;
+              s += '<li' + (task ? ' class="mw-task"' : '') + '>';
+              if (task) s += '<input type="checkbox" disabled' + (item.checked ? ' checked' : '') + '> ';
+              s += block(item.children).replace(/^<p>([\s\S]*?)<\/p>/, '$1');
+              s += '</li>';
+            });
+            s += '</' + tag + '>';
+            break;
+          }
+          case 'code': s += '<pre><code>' + escHtml(n.value) + '</code></pre>'; break;
+          case 'blockquote': s += '<blockquote>' + block(n.children) + '</blockquote>'; break;
+          case 'thematicBreak': s += '<hr>'; break;
+          case 'table': {
+            var align = n.align || [];
+            var ncol = n.children[0] ? n.children[0].children.length : 0;
+            s += '<div class="mw-table-wrap"><table>';
+            n.children.forEach(function (row, ri) {
+              if (ri === 0) s += '<thead>';
+              if (ri === 1) s += '<tbody>';
+              s += '<tr>';
+              for (var c = 0; c < ncol; c++) {
+                var cell = row.children[c];
+                var t = ri === 0 ? 'th' : 'td';
+                s += '<' + t + (align[c] ? ' style="text-align:' + align[c] + '"' : '') + '>' + (cell ? inline(cell.children) : '') + '</' + t + '>';
+              }
+              s += '</tr>';
+              if (ri === 0) s += '</thead>';
+            });
+            if (n.children.length > 1) s += '</tbody>';
+            s += '</table></div>';
+            break;
+          }
+          case 'html': {
+            var text = htmlToText(n.value);
+            if (text) s += '<p>' + escHtml(text).replace(/\n/g, '<br>') + '</p>';
+            break;
+          }
+          default:
+            break;
+        }
+      });
+      return s;
+    }
+
+    var html = block(tree.children);
+    if (fnOrder.length) {
+      html += '<ol class="mw-footnotes">' + fnOrder.map(function (id) {
+        return '<li>' + block(fnDefs[id].children).replace(/^<p>([\s\S]*?)<\/p>/, '$1') + '</li>';
+      }).join('') + '</ol>';
+    }
+    return html;
+  }
+  /* ── engine:end ── */
+
+  const lib = { fromMarkdown, gfm, gfmFromMarkdown, cjkFriendlyExtension, gfmStrikethroughCjkFriendly, D: docxLib };
+
+  const wrap = document.querySelector('.mw-wrap') as HTMLElement;
+  const T = JSON.parse(wrap.dataset.strings || '{}');
+  const pageLang = wrap.dataset.lang || 'en';
+  const editor = document.getElementById('mw-editor') as HTMLTextAreaElement;
+  const preview = document.getElementById('mw-preview') as HTMLElement;
+  const statusEl = document.getElementById('mw-status') as HTMLElement;
+  const convertBtn = document.getElementById('mw-convert') as HTMLButtonElement;
+  const clearBtn = document.getElementById('mw-clear') as HTMLButtonElement;
+  const fileInput = document.getElementById('mw-file') as HTMLInputElement;
+  const filenameInput = document.getElementById('mw-filename') as HTMLInputElement;
+  const paperSel = document.getElementById('mw-paper') as HTMLSelectElement;
+  const fontSel = document.getElementById('mw-font') as HTMLSelectElement;
+
+  paperSel.value = paperFor(navigator.language);
+  fontSel.value = defaultFontFor(pageLang);
+
+  function fmt(key: string, vars: Record<string, string | number>) {
+    return String(T[key] || key).replace(/\{(\w+)\}/g, (_m, k) => String(vars[k] ?? ''));
+  }
+
+  function setStatus(msg: string, kind = '') {
+    statusEl.textContent = msg;
+    statusEl.className = 'mw-status' + (kind ? ' mw-status-' + kind : '');
+  }
+
+  let currentTree: any = null;
+  function refresh() {
+    const md = editor.value;
+    if (!md.trim()) {
+      currentTree = null;
+      preview.innerHTML = '<p class="mw-preview-empty">' + escHtml(preview.dataset.empty || '') + '</p>';
+      filenameInput.placeholder = 'document';
+      return;
+    }
+    currentTree = parseMarkdown(md, lib);
+    preview.innerHTML = renderHtml(currentTree);
+    filenameInput.placeholder = safeFilename(firstHeadingText(currentTree));
+  }
+
+  let timer: number | undefined;
+  editor.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = window.setTimeout(refresh, editor.value.length > 200000 ? 800 : 200);
+  });
+
+  // Fetch http(s) images and re-encode formats Word cannot embed (SVG, WebP, AVIF) as PNG.
+  async function toDocxImage(bytes: Uint8Array, mime: string) {
+    const direct = sniffImage(bytes);
+    if (direct) return { type: direct.type, data: bytes, width: direct.width, height: direct.height };
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime || 'image/png' }));
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const scale = Math.min(1, 4096 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+      const w = Math.max(1, Math.round((img.naturalWidth || 300) * scale));
+      const h = Math.max(1, Math.round((img.naturalHeight || 150) * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+      const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      if (!blob) return null;
+      return { type: 'png', data: new Uint8Array(await blob.arrayBuffer()), width: w, height: h };
+    } catch {
+      return null;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function loadImages(urls: string[]) {
+    const out: Record<string, unknown> = {};
+    await Promise.all(urls.map(async (url) => {
+      try {
+        let bytes: Uint8Array;
+        let mime = '';
+        if (/^data:/i.test(url)) {
+          const d = decodeDataUri(url);
+          if (!d) return;
+          bytes = d.data;
+          mime = d.mime;
+        } else {
+          const ctrl = new AbortController();
+          const timeout = setTimeout(() => ctrl.abort(), 15000);
+          const res = await fetch(url, { signal: ctrl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
+          clearTimeout(timeout);
+          if (!res.ok) return;
+          bytes = new Uint8Array(await res.arrayBuffer());
+          mime = res.headers.get('content-type') || '';
+        }
+        const img = await toDocxImage(bytes, mime);
+        if (img) out[url] = img;
+      } catch {
+        /* kept as a link */
+      }
+    }));
+    return out;
+  }
+
+  async function convertAndDownload() {
+    if (!editor.value.trim()) {
+      setStatus(T.emptyError, 'err');
+      return;
+    }
+    convertBtn.disabled = true;
+    try {
+      refresh();
+      const tree = currentTree;
+      const urls = collectImageUrls(tree);
+      let images = {};
+      if (urls.length) {
+        setStatus(fmt('fetchingImages', { n: urls.length }));
+        images = await loadImages(urls);
+      }
+      setStatus(T.converting);
+      const name = safeFilename(filenameInput.value.trim() || firstHeadingText(tree));
+      const { doc, report } = buildDocx(tree, lib, { paper: paperSel.value, font: fontSel.value, images, title: name });
+      const blob = await docxLib.Packer.toBlob(doc);
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = name + '.docx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 60000);
+      const parts = [fmt('done', { file: name + '.docx' })];
+      if (report.imagesEmbedded) parts.push(fmt('imagesEmbedded', { n: report.imagesEmbedded }));
+      if (report.imagesMissing) parts.push(fmt('imagesMissing', { n: report.imagesMissing }));
+      setStatus(parts.join(' · '), report.imagesMissing ? 'warn' : 'ok');
+      (window as any).trackTool && (window as any).trackTool('markdown_to_word', 'convert');
+    } catch (err) {
+      setStatus(fmt('error', { msg: String((err as Error)?.message || err) }), 'err');
+    } finally {
+      convertBtn.disabled = false;
+    }
+  }
+
+  convertBtn.addEventListener('click', convertAndDownload);
+
+  clearBtn.addEventListener('click', () => {
+    editor.value = '';
+    filenameInput.value = '';
+    setStatus('');
+    refresh();
+    editor.focus();
+  });
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    try {
+      editor.value = await file.text();
+      if (!filenameInput.value.trim()) filenameInput.value = safeFilename(file.name.replace(/\.(md|markdown|mdown|mkd|txt)$/i, ''));
+      setStatus('');
+      refresh();
+    } catch {
+      setStatus(T.fileError, 'err');
+    }
+    fileInput.value = '';
+  });
+
+  refresh();
+</script>
+
+<style>
+  .mw-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+
+  .mw-bar {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
     flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.5rem 0.6rem;
+  }
+  .mw-bar-end { display: flex; gap: 0.5rem; margin-left: auto; }
+
+  .mw-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .mw-filename-group {
     display: flex;
     align-items: center;
+    min-height: 40px;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
     overflow: hidden;
   }
-
+  .mw-filename-group:focus-within {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 18%, transparent);
+  }
   .mw-filename-input {
     border: none;
     background: transparent;
-    padding: 0.35rem 0.6rem;
-    font-size: 0.86rem;
+    padding: 0.35rem 0.2rem 0.35rem 0.65rem;
+    font-size: 0.9rem;
     color: var(--color-text);
-    width: 130px;
+    width: 11rem;
+    min-width: 0;
     outline: none;
   }
-
-  .mw-filename-input:focus {
-    background: var(--color-bg);
-  }
-
   .mw-filename-ext {
-    padding: 0.35rem 0.6rem 0.35rem 0;
+    padding-right: 0.65rem;
     font-size: 0.82rem;
     color: var(--color-text-muted);
     font-family: var(--font-mono);
-    white-space: nowrap;
   }
 
-  .mw-status {
-    font-size: 0.82rem;
-    font-weight: 500;
-    margin-left: auto;
+  .mw-field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+  .mw-field-label {
+    font-size: 0.75rem;
+    font-weight: 650;
+    color: var(--color-text-muted);
   }
-  .mw-status-ok  { color: var(--color-success, #22c55e); }
-  .mw-status-err { color: var(--color-error, #ef4444); }
+  .mw-select { width: auto; font-family: var(--font-sans); }
+
+  .mw-open { position: relative; cursor: pointer; }
+  .mw-open:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+  .mw-status { margin: 0; min-height: 1.2em; font-size: 0.84rem; font-weight: 550; color: var(--color-text-secondary); }
+  .mw-status-ok { color: var(--color-success, oklch(50% 0.12 150)); }
+  .mw-status-warn { color: var(--color-warning, oklch(50% 0.11 70)); }
+  .mw-status-err { color: var(--color-error, oklch(52% 0.17 28)); }
 
   .mw-panes {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 0.75rem;
-    min-height: 380px;
   }
-
-  @media (max-width: 640px) {
-    .mw-panes { grid-template-columns: 1fr; }
-  }
-
-  .mw-pane { display: flex; flex-direction: column; gap: 0.3rem; }
-
+  .mw-pane { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
   .mw-pane-label {
     font-size: 0.78rem;
-    font-weight: 600;
+    font-weight: 650;
     color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-
-  .mw-editor-pane textarea {
-    flex: 1;
-    width: 100%;
-    min-height: 360px;
-    font-family: var(--font-mono);
-    font-size: 0.84rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.6;
-    box-sizing: border-box;
-    tab-size: 2;
-  }
-
-  .mw-editor-pane textarea:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
-
+  .mw-editor { flex: 1; min-height: 420px; resize: vertical; tab-size: 2; }
   .mw-preview {
     flex: 1;
-    min-height: 360px;
-    max-height: 560px;
-    overflow-y: auto;
+    min-height: 420px;
+    max-height: 640px;
+    overflow: auto;
     padding: 0.875rem 1rem;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg);
-    font-size: 0.9rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    font-size: 0.92rem;
     line-height: 1.65;
     color: var(--color-text);
+    overflow-wrap: anywhere;
   }
 
-  .mw-preview-placeholder {
-    color: var(--color-text-muted);
-    font-size: 0.88rem;
-  }
-
-  /* Preview typography */
-  .mw-preview :global(h1) { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.5rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.25rem; }
-  .mw-preview :global(h2) { font-size: 1.25rem; font-weight: 700; margin: 1rem 0 0.4rem; }
-  .mw-preview :global(h3) { font-size: 1.1rem; font-weight: 600; margin: 0.8rem 0 0.3rem; }
+  .mw-preview :global(.mw-preview-empty) { color: var(--color-text-muted); margin: 0; }
+  .mw-preview :global(h1) { font-size: 1.5rem; margin: 0 0 0.5rem; }
+  .mw-preview :global(h2) { font-size: 1.25rem; margin: 1rem 0 0.4rem; }
+  .mw-preview :global(h3) { font-size: 1.1rem; margin: 0.8rem 0 0.3rem; }
   .mw-preview :global(h4),
   .mw-preview :global(h5),
-  .mw-preview :global(h6) { font-size: 0.95rem; font-weight: 600; margin: 0.6rem 0 0.25rem; }
-  .mw-preview :global(p)  { margin: 0 0 0.6rem; }
+  .mw-preview :global(h6) { font-size: 0.98rem; margin: 0.6rem 0 0.25rem; }
+  .mw-preview :global(p) { margin: 0 0 0.6rem; }
   .mw-preview :global(ul),
-  .mw-preview :global(ol) { margin: 0.3rem 0 0.6rem 1.2rem; padding: 0; }
-  .mw-preview :global(li) { margin-bottom: 0.15rem; }
+  .mw-preview :global(ol) { margin: 0.3rem 0 0.6rem; padding-left: 1.5rem; }
+  .mw-preview :global(li.mw-task) { list-style: none; margin-left: -1.3rem; }
   .mw-preview :global(code) {
     font-family: var(--font-mono);
-    font-size: 0.82em;
+    font-size: 0.85em;
     background: var(--color-bg-secondary);
     padding: 0.1em 0.35em;
-    border-radius: 3px;
+    border-radius: 4px;
   }
   .mw-preview :global(pre) {
     font-family: var(--font-mono);
-    font-size: 0.82rem;
+    font-size: 0.84rem;
     background: var(--color-bg-secondary);
     padding: 0.65rem 0.9rem;
     border-radius: var(--radius-sm);
@@ -863,42 +1404,54 @@
   .mw-preview :global(pre code) { background: none; padding: 0; }
   .mw-preview :global(blockquote) {
     margin: 0.4rem 0 0.6rem;
-    padding: 0.4rem 0.8rem;
+    padding: 0.2rem 0.9rem;
     border-left: 3px solid var(--color-border);
-    color: var(--color-text-muted);
-    font-style: italic;
+    color: var(--color-text-secondary);
   }
-  .mw-preview :global(hr) {
-    border: none;
-    border-top: 1px solid var(--color-border);
-    margin: 0.75rem 0;
-  }
-  .mw-preview :global(table) {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.87rem;
-    margin-bottom: 0.6rem;
-  }
+  .mw-preview :global(hr) { border: none; border-top: 1px solid var(--color-border); margin: 0.75rem 0; }
+  .mw-preview :global(.mw-table-wrap) { overflow-x: auto; margin-bottom: 0.6rem; }
+  .mw-preview :global(table) { border-collapse: collapse; font-size: 0.88rem; min-width: 60%; }
   .mw-preview :global(th),
-  .mw-preview :global(td) {
-    padding: 0.35rem 0.6rem;
-    border: 1px solid var(--color-border);
-    text-align: left;
+  .mw-preview :global(td) { padding: 0.35rem 0.6rem; border: 1px solid var(--color-border); }
+  .mw-preview :global(th) { background: var(--color-bg-secondary); font-weight: 650; }
+  .mw-preview :global(a) { color: var(--color-primary); }
+  .mw-preview :global(img) { max-width: 100%; height: auto; }
+  .mw-preview :global(.mw-img-ph) {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border: 1px dashed var(--color-border);
+    border-radius: 4px;
+    color: var(--color-text-muted);
+    font-size: 0.82em;
   }
-  .mw-preview :global(th) {
-    background: var(--color-bg-secondary);
-    font-weight: 600;
+  .mw-preview :global(.mw-footnotes) {
+    margin-top: 1rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--color-border);
+    font-size: 0.85em;
+    color: var(--color-text-secondary);
   }
-  .mw-preview :global(a) { color: var(--color-primary); text-decoration: underline; }
 
-  /* Privacy badge */
   .mw-privacy {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.4rem;
-    font-size: 0.78rem;
+    margin: 0;
+    font-size: 0.8rem;
     color: var(--color-text-muted);
-    padding: 0.35rem 0;
   }
-  .mw-privacy svg { flex-shrink: 0; opacity: 0.7; }
+  .mw-privacy svg { flex-shrink: 0; margin-top: 0.2em; }
+
+  @media (max-width: 640px) {
+    .mw-convert { flex: 1 1 100%; }
+    .mw-filename-group { flex: 1 1 100%; min-height: 44px; }
+    .mw-filename-input { width: 100%; }
+    .mw-field { flex: 1 1 40%; }
+    .mw-select { width: 100%; }
+    .mw-bar-end { flex: 1 1 100%; margin-left: 0; }
+    .mw-bar-end > * { flex: 1 1 0; }
+    .mw-panes { grid-template-columns: minmax(0, 1fr); }
+    .mw-editor { min-height: 220px; }
+    .mw-preview { min-height: 200px; max-height: 420px; }
+  }
 </style>

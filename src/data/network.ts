@@ -7,6 +7,7 @@ export const networkToolSlugs: readonly string[] = [
   'qr-code-decoder',     // URL mode fetches the image from the entered address
   'markdown-preview',    // ![alt](url) renders an <img> that loads from url
   'meta-tag-generator',  // social previews render the og:image / twitter:image URL
+  'markdown-to-word',    // export downloads http(s) images to embed them in the .docx
 ];
 
 export function networkNoteKey(slug: string): string | null {
