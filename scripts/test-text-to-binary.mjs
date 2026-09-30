@@ -37,7 +37,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { encodeText, parseBinary, findUtf8Error, decodeBinary, countCodePoints };')();
+const E = new Function(block + '\nreturn { encodeText, parseBinary, findUtf8Error, decodeBinary, countCodePoints, fill };')();
 
 let failures = 0;
 let passes = 0;
@@ -212,10 +212,22 @@ if (stringsMatch) {
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     for (const kind of errorKinds) {
       check('sample for ' + kind, sampleErrors[kind].error === kind, JSON.stringify(sampleErrors[kind]));
-      const missing = [...STRINGS[lang].err[kind].matchAll(/\{(\w+)\}/g)].map((m) => m[1]).filter((f) => sampleErrors[kind][f] === undefined);
+      const missing = [...STRINGS[lang].err[kind].matchAll(/\{(\w+)(?::[^}]*)?\}/g)].map((m) => m[1]).filter((f) => sampleErrors[kind][f] === undefined);
       eq(lang + ' ' + kind + ' placeholders', missing, []);
     }
   }
+  // English plurals.
+  eq('en incomplete, 1 byte', E.fill(STRINGS.en.err.incomplete, dec('11010110 11010000')),
+    'Byte 1 (11010110) starts a 2-byte UTF-8 character, but only 1 byte of it is present.');
+  eq('en incomplete, 2 bytes', E.fill(STRINGS.en.err.incomplete, dec('11100100 10111000')),
+    'Byte 1 (11100100 10111000) starts a 3-byte UTF-8 character, but only 2 bytes of it are present.');
+  eq('en bitCount, 1 bit', E.fill(STRINGS.en.err.bitCount, dec('010010001')),
+    '9 bits is not a multiple of 8: the last byte has only 1 bit. A digit is missing or extra.');
+  eq('en padded, 1 group', E.fill(STRINGS.en.notePadded, { n: 1 }), '1 group had fewer than 8 bits and was read with leading zeros.');
+  eq('en padded, 4 groups', E.fill(STRINGS.en.notePadded, { n: 4 }), '4 groups had fewer than 8 bits and were read with leading zeros.');
+  eq('zh template without plural forms', E.fill(STRINGS.zh.notePadded, { n: 4 }), '有 4 组不足 8 位，已在前面补 0 读取。');
+  eq('unknown field is left as is', E.fill('{a} {b}', { a: 1 }), '1 {b}');
+  check('decode error clears the text box', source.includes("textEl.value = '';\n          setStatus(fill(t.err[r.error], r), 'error');"));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
