@@ -624,6 +624,36 @@ function checkNoPublishedAgentsMd() {
   else fail('no_published_agents_md', 'AGENTS.md in published tree', issues);
 }
 
+// About pages list the tools that use the network (src/data/network.ts). A claim that
+// every tool runs client-side on the same page contradicts that list.
+const ABSOLUTE_CLIENT_SIDE_CLAIMS = [
+  /\b(every|all)\b[^.]{0,40}\btools?\b[^.]{0,40}\b(client[- ]side|entirely (in|on) (your|the) (browser|client))/i,
+  /\ball (of that )?(computation|processing)\b[^.]{0,20}\bhappens?\b/i,
+  /(所有|全部|每一个|每个)工具[^。]{0,20}(客户端|完全在[^。]{0,6}浏览器)/,
+  /所有(计算|处理)都/,
+  /(すべての|全)ツール[^。]{0,20}(クライアントサイド|ブラウザ完結)/,
+  /すべての処理は/,
+  /모든 도구[^.]{0,20}클라이언트 ?사이드/,
+  /모든 처리는/,
+];
+
+function checkAboutNetworkClaims() {
+  const issues = [];
+  for (const prefix of ['', 'zh/', 'ja/', 'ko/']) {
+    const rel = `src/pages/${prefix}about.astro`;
+    if (!existsSync(join(ROOT, rel))) { issues.push(`${rel}: missing`); continue; }
+    const source = read(rel);
+    if (!source.includes('aboutNetworkToolSlugs')) issues.push(`${rel}: no network tool list (aboutNetworkToolSlugs from src/data/network.ts)`);
+    const text = source.replace(/^---[\s\S]*?\n---/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    for (const re of ABSOLUTE_CLIENT_SIDE_CLAIMS) {
+      const m = text.match(re);
+      if (m) issues.push(`${rel}: "${m[0]}" says every tool runs client-side, but the page lists tools that use the network`);
+    }
+  }
+  if (issues.length === 0) pass('about_network_claims', 'About pages list network tools and make no "every tool runs client-side" claim');
+  else fail('about_network_claims', 'About page claims contradict the network tool list', issues);
+}
+
 function checkRedirects() {
   const issues = [];
   const path = 'public/_redirects';
@@ -681,6 +711,7 @@ try {
   checkPersistencePolicy();
   checkRedirects();
   checkNoPublishedAgentsMd();
+  checkAboutNetworkClaims();
 } catch (e) {
   fail('fatal', 'audit setup', [e.message, e.stack].filter(Boolean));
 }

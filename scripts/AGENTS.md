@@ -15,7 +15,7 @@
 | `sync-jq-web.mjs` | 同步 | 把 jq-web 运行时从 `node_modules` 复制到 `public/jq-web/`（gitignored），供 `jq-playground` 加载 | `npm run dev` / `npm run build` 前置步骤 |
 | `sync-sql-js.mjs` | 同步 | 把 `node_modules/sql.js/dist/` 的 `sql-wasm.js` + `sql-wasm.wasm` 复制到 `public/sql-js/`（gitignored），供 `SqliteViewerTool` 选文件后懒加载 | `npm run dev` / `npm run build` 前置步骤 |
 | `update-readme-tools.js` | 文档同步 | 用 `tools.ts` 的 slug + EN name 重写 README 的 `<!-- TOOLS-START/END -->` 段 | CI workflow `update-readme.yml` 在 master 分支 `tools.ts` 变化时自动跑 |
-| `audit.mjs` | 巡检 | 全项目静态一致性审计：tools schema / 图标覆盖 / registry 映射（`registry.ts` 覆盖 `tools.ts` 全部 slug、组件文件存在、无孤儿组件）与工具路由注入（`astro.config.mjs` 从 registry 注入、`src/pages` 下无静态 `tools/[...]` 路由） / content/tools 多语言 / category 类型与 UI 对齐 / 基础页面齐全 / i18n key 对齐 / blog 命名 + frontmatter / _redirects 格式与来源路径不重复（同一来源路径出现两次即 FAIL，Cloudflare Pages 只取第一条） / public 与 src/pages 下无 AGENTS.md | `.github/workflows/ci.yml` PR + master push 自动跑；本地 `node scripts/audit.mjs`（FAIL 退出码 1） |
+| `audit.mjs` | 巡检 | 全项目静态一致性审计：tools schema / 图标覆盖 / registry 映射（`registry.ts` 覆盖 `tools.ts` 全部 slug、组件文件存在、无孤儿组件）与工具路由注入（`astro.config.mjs` 从 registry 注入、`src/pages` 下无静态 `tools/[...]` 路由） / content/tools 多语言 / category 类型与 UI 对齐 / 基础页面齐全 / i18n key 对齐 / blog 命名 + frontmatter / _redirects 格式与来源路径不重复（同一来源路径出现两次即 FAIL，Cloudflare Pages 只取第一条） / public 与 src/pages 下无 AGENTS.md / About 页（4 语言）列出联网工具（`aboutNetworkToolSlugs`）且不含「每个工具都在客户端运行」「所有处理都在浏览器里完成」一类绝对说法（`about_network_claims`） | `.github/workflows/ci.yml` PR + master push 自动跑；本地 `node scripts/audit.mjs`（FAIL 退出码 1） |
 | `audit-slug-aliases.mjs` | 巡检 | 审计 `_redirects` 与 slug 的对应关系，发现孤儿规则 | 手动按需 |
 | `test-har-invariant.mjs` | 回归 | spec-driven 不变式测试：3 层（spec sum / 新算法 mirror / 旧错算法 regression guard）× 10 fixture；守住 HAR `connect + ssl` 双计 bug 不复发 | 手动按需 / 修改 `HarFileAnalyzerTool.astro` phase 逻辑前后 |
 | `test-barcode-symbology.mjs` | 回归 | spec-driven 条码编码测试：从 `BarcodeGeneratorTool.astro` 抽取真实编码块（不 mirror，杜绝漂移），3 层（表结构不变式 / 已知校验位向量 / 独立解码器 round-trip）共 497 项 | 手动按需 / 修改 `BarcodeGeneratorTool.astro` 编码表或子集切换逻辑前后 |
@@ -138,3 +138,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-09-30 — IndexNow 推送补上本次变成 draft（301 / 404）、noindex 或被删除的页面，`test-indexnow-urls.mjs` 81 → 103 项
 - 2026-09-30 — 加入 `test-totp-generator.mjs`（totp-generator RFC 6238 / 4226 向量、Base32 输入、otpauth:// URI 生成与解析、时钟偏差估计的回归测试；组件新增 `engine:start/end` 标记）
 - 2026-09-30 — 加入 `test-llms-txt.mjs`（构建期生成的 llms 文件的结构、链接、工具覆盖与联网说法检查）
+- 2026-09-30 — `audit.mjs` 新增 `about_network_claims`：About 页出现「every tool … client-side」「所有工具均在客户端」「すべての処理は」等绝对说法，或缺少联网工具清单，即 FAIL

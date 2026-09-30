@@ -154,9 +154,9 @@
 
 ## Why ZeroTool?
 
-- **Private by design** — everything runs in your browser, nothing is sent to a server
+- **Private by design** — tools process your input in your browser and do not upload it; a few tools send requests because of what they do, and the [About page](https://zerotool.dev/about/) lists them
 - **No friction** — no account, no paywalls
-- **Local execution** — once a tool page is loaded, every operation runs in your browser; no further requests are made for the tool itself
+- **Local execution** — tool logic runs in your browser; a few tools load a WebAssembly library (jq, SQLite, the QR code reader) from this site the first time you use them
 - **Fast** — static site on Cloudflare edge, global CDN
 
 ## Stack

@@ -272,8 +272,8 @@ function esc(str) {
 // Tool image footer. zh/ja/ko wording follows tool.trustFree and hero.sub in src/i18n/*.json.
 export const TOOL_BADGE = {
   en: 'Free · Browser-based · No Sign-up',
-  zh: '免费 · 纯浏览器端运行 · 无需注册',
-  ja: '無料 · ブラウザ完結 · 登録不要',
+  zh: '免费 · 在浏览器中运行 · 无需注册',
+  ja: '無料 · ブラウザで動作 · 登録不要',
   ko: '무료 · 브라우저에서 바로 실행 · 회원가입 불필요',
 };
 
