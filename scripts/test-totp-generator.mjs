@@ -2,7 +2,7 @@
 //
 // Read:  src/components/tools/TotpGeneratorTool.astro (extracts the real engine block between
 //        the `engine:start` / `engine:end` markers and the frontmatter STRINGS table),
-//        public/vendor/qrcode.min.js and public/vendor/jsqr.min.js (QR round trip)
+//        public/vendor/qrcode.min.js and public/vendor/zxing-reader.js + .wasm (QR round trip)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -23,7 +23,7 @@
 // account (before: "A:B" became the label "A%3AB:Account", which parses as issuer "A"), parses
 // literal and %3A separators, spaces before the account name, issuer parameter precedence,
 // lower-case algorithm, unsupported type / algorithm / digits / period; generated URIs survive
-// a QR encode (vendor qrcode) → decode (jsQR) → parse round trip; random secrets use
+// a QR encode (vendor qrcode) → decode (vendor zxing-wasm) → parse round trip; random secrets use
 // getRandomValues and are 20 / 32 / 64 bytes for SHA-1 / SHA-256 / SHA-512; countdown and
 // time-step state; a code shown before a 10-minute absence is stale (before the fix the code
 // was only refreshed on the tick where remaining === period, which a throttled background tab
@@ -256,8 +256,12 @@ ctx.window = ctx;
 ctx.self = ctx;
 vm.createContext(ctx);
 vm.runInContext(readFileSync(join(root, 'public/vendor/qrcode.min.js'), 'utf8'), ctx);
-vm.runInContext(readFileSync(join(root, 'public/vendor/jsqr.min.js'), 'utf8'), ctx);
-function qrRoundTrip(text) {
+class ImageDataShim { constructor(data, width, height) { this.data = data; this.width = width; this.height = height; } }
+const zctx = vm.createContext({ console, WebAssembly, TextDecoder, TextEncoder, URL, setTimeout, clearTimeout, performance, ImageData: ImageDataShim });
+zctx.globalThis = zctx;
+vm.runInContext(readFileSync(join(root, 'public/vendor/zxing-reader.js'), 'utf8'), zctx);
+await zctx.ZXingWASM.prepareZXingModule({ overrides: { wasmBinary: readFileSync(join(root, 'public/vendor/zxing-reader.wasm')) }, fireImmediately: true });
+async function qrRoundTrip(text) {
   const qr = ctx.QRCode.create(text, { errorCorrectionLevel: 'M' });
   const n = qr.modules.size;
   const scale = 4;
@@ -275,15 +279,15 @@ function qrRoundTrip(text) {
       }
     }
   }
-  const res = ctx.jsQR(px, w, w);
-  return res ? res.data : null;
+  const res = (await zctx.ZXingWASM.readBarcodes(new ImageDataShim(px, w, w), { formats: ['QRCode'] })).filter((r) => r.isValid);
+  return res.length ? res[0].text : null;
 }
 for (const o of [
   { issuer: 'Example', account: 'alice@google.com' },
   { issuer: '示例 公司', account: 'テスト@example.jp', algo: 'SHA-512', digits: 8, period: 60, secret: E.normalizeSecret(B32_64).secret },
 ]) {
   const u = build(o).uri;
-  const back = qrRoundTrip(u);
+  const back = await qrRoundTrip(u);
   eq('QR round trip keeps the URI: ' + u.slice(0, 40), back, u);
   if (back) eq('QR round trip parses', parse(back).account, o.account);
 }
