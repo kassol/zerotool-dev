@@ -77,7 +77,7 @@
 | Unicode Text Converter | [/tools/unicode-text-converter](https://zerotool.dev/tools/unicode-text-converter) |
 | OpenAPI Validator | [/tools/openapi-validator](https://zerotool.dev/tools/openapi-validator) |
 | CSV to Markdown Table | [/tools/csv-to-markdown](https://zerotool.dev/tools/csv-to-markdown) |
-| Text to Binary Converter | [/tools/text-to-binary](https://zerotool.dev/tools/text-to-binary) |
+| Text to Binary Translator | [/tools/text-to-binary](https://zerotool.dev/tools/text-to-binary) |
 | NATO Phonetic Alphabet | [/tools/nato-phonetic-alphabet](https://zerotool.dev/tools/nato-phonetic-alphabet) |
 | Text to ASCII Art | [/tools/text-to-ascii-art](https://zerotool.dev/tools/text-to-ascii-art) |
 | IP Subnet Calculator | [/tools/ip-subnet-calculator](https://zerotool.dev/tools/ip-subnet-calculator) |
