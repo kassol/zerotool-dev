@@ -28,6 +28,7 @@ export const toolPersistencePolicy = {
   'secret-redactor': 'disabled',
   'sqlite-viewer': 'disabled',
   'pixelate-image': 'disabled',
+  'totp-generator': 'disabled',
   'gif-splitter': 'preference',
   'sprite-sheet-generator': 'preference',
   'gif-compressor': 'preference',

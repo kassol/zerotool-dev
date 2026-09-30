@@ -1,190 +1,165 @@
 ---
-title: "TOTP Generator Online: Generate 2FA Codes & Learn RFC 6238"
-description: "Generate TOTP and 2FA codes online for testing, learn how RFC 6238 works, and implement time-based one-time passwords securely in your app."
+title: "TOTP Explained: How RFC 6238 Codes Are Computed, Checked and Verified"
+description: "How a TOTP code is built from a secret and the clock, worked through with the RFC 6238 test vectors, plus what authenticator apps read from otpauth:// URIs and how servers should verify codes."
 pubDate: 2026-04-07
 updatedDate: 2026-09-30
 lang: "en"
-tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238", "developer-tools"]
+tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238"]
 ---
 
-Two-factor authentication (2FA) has become standard practice for securing accounts. The most common 2FA mechanism — the six-digit code in your authenticator app — is defined by TOTP: Time-Based One-Time Password. This guide explains how TOTP works internally, how to implement it in your application, and how to generate test codes without an authenticator app.
+TOTP (Time-Based One-Time Password, [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238)) is the algorithm behind the six-digit codes in authenticator apps. The server and the app share a secret key. Each side feeds the key and the current time into HMAC and cuts the result down to a few digits. If both have the same key and roughly the same clock, they get the same digits without talking to each other.
 
-## Quick Answer: Generate TOTP Codes Online
+This article works through one code by hand with the RFC's own test values, then covers the provisioning URI, what apps actually read from it, and the server-side rules that the short code depends on. Every number below can be reproduced with the [TOTP Generator](/tools/totp-generator/) or a few lines of Node.js.
 
-**[Open the ZeroTool TOTP Generator →](/tools/totp-generator)**
+## One Code, Step by Step
 
-| Question | Answer |
-| --- | --- |
-| What is TOTP? | A time-based one-time password generated from a shared secret and the current 30-second time window. |
-| What is it used for? | Authenticator app codes for 2FA/MFA login flows. |
-| What do I need to test it? | A base32 secret, usually the `secret` value from an `otpauth://` URI. |
-| Is it sent to a server? | No. ZeroTool generates TOTP codes locally in your browser. |
+TOTP is HOTP ([RFC 4226](https://www.rfc-editor.org/rfc/rfc4226)) with a counter derived from time. The RFC 6238 test key is the ASCII string `12345678901234567890` (20 bytes), which is `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ` in Base32. Take Unix time 59 seconds, the first row of the RFC's test table.
 
-## What Is TOTP?
-
-TOTP (Time-Based One-Time Password) is defined in [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238). It generates a short numeric code (typically 6 digits) that:
-
-- Changes every 30 seconds
-- Is accepted only once: the server must reject a second use of the same code ([RFC 6238 §5.2](https://datatracker.ietf.org/doc/html/rfc6238#section-5.2))
-- Requires a shared secret known to both the server and the authenticator
-
-The algorithm is deterministic — given the same secret and the same time window, it always produces the same code. A code is valid only for its 30-second window, but the window alone does not stop replay: the server must also remember the last accepted time step and reject the same code again.
-
-## How TOTP Works: The Math
-
-TOTP is built on HOTP (HMAC-Based One-Time Password, RFC 4226). The core algorithm:
+**1. Time step.** With the default period X = 30 seconds and start T0 = 0 ([RFC 6238 §4.2](https://www.rfc-editor.org/rfc/rfc6238#section-4.2)):
 
 ```
-T = floor(current_unix_time / 30)    # time counter
-TOTP = HOTP(secret, T)
-HOTP = Truncate(HMAC-SHA1(secret, T))
+T = floor((59 - 0) / 30) = 1
 ```
 
-Step by step:
+T is written as an 8-byte big-endian integer: `00 00 00 00 00 00 00 01`.
 
-1. **Time counter:** Divide the current Unix timestamp by the time step (30 seconds by default). `floor(1712500000 / 30) = 57083333`
-
-2. **HMAC:** Compute HMAC-SHA1 of the secret key and the time counter. This produces a 20-byte hash.
-
-3. **Dynamic truncation:** Take the last byte of the hash. Its low-order 4 bits determine an offset. Extract 4 bytes starting at that offset and mask the high bit to get a 31-bit integer.
-
-4. **Modulo:** Compute `integer mod 10^6` (for 6 digits) to get the final OTP.
-
-The result is a 6-digit code. The server performs the same computation and accepts the code if it matches (usually checking one time step before and after to account for clock drift).
-
-## The Shared Secret
-
-The secret is a base32-encoded random value, typically 160 bits (20 bytes). When you scan a QR code in an authenticator app, the QR code contains a URI like:
+**2. HMAC.** HMAC-SHA-1 of that 8-byte message with the key gives 20 bytes:
 
 ```
-otpauth://totp/Service:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Service&algorithm=SHA1&digits=6&period=30
+75a48a19d4cbe100644e8ac1397eea747a2d33ab
 ```
 
-The `secret` parameter is the base32-encoded shared secret. Your app generates it once during 2FA enrollment and stores it (encrypted) in your database. The user stores it in their authenticator app (Google Authenticator, Authy, 1Password, etc.).
+This is the count-1 row of Table 1 in [RFC 4226 Appendix D](https://www.rfc-editor.org/rfc/rfc4226#appendix-D).
 
-**The secret must be kept confidential.** Anyone with the secret can generate valid codes for that account.
+**3. Dynamic truncation.** The low 4 bits of the last byte (`ab`) are `b` = 11. Read 4 bytes starting at offset 11: `c1 39 7e ea`. Clear the top bit so the value is a positive 31-bit number: `0x41397eea` = 1094287082 ([RFC 4226 §5.3](https://www.rfc-editor.org/rfc/rfc4226#section-5.3)).
 
-## Generate Test TOTP Codes Online
+**4. Digits.** Take the value modulo 10^digits and pad with leading zeros:
 
-**[Try the ZeroTool TOTP Generator →](/tools/totp-generator)**
+```
+1094287082 mod 10^8 = 94287082
+1094287082 mod 10^6 =   287082
+```
 
-Enter a base32 secret and get the current valid TOTP code instantly — useful for:
-- Testing 2FA implementations during development
-- Verifying that your secret is configured correctly
-- Debugging time sync issues
-
-No data is sent to a server. Computation runs in your browser.
-
-## Implementing TOTP in Your Application
-
-### Enrollment Flow
-
-1. Generate a random 20-byte secret
-2. Encode it as base32
-3. Build an `otpauth://` URI with your service name and user identifier
-4. Display as a QR code for the user to scan
-5. Ask the user to enter the current code to verify enrollment
-6. Store the secret (encrypted) in your database
-
-### Node.js Implementation
+`94287082` is the 8-digit SHA-1 value for time 59 in [RFC 6238 Appendix B](https://www.rfc-editor.org/rfc/rfc6238#appendix-B); `287082` is the 6-digit HOTP value for count 1 in RFC 4226. To reproduce steps 2 and 3 in Node.js:
 
 ```js
-import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
-
-// Enrollment
-const secret = generateSecret(); // e.g. "JBSWY3DPEHPK3PXP"
-const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
-
-// Generate QR code (using qrcode library)
-import qrcode from 'qrcode';
-const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
-
-// Verification (at login)
-const { valid } = await verify({ secret, token: userCode });
+const { createHmac } = require('node:crypto');
+const msg = Buffer.alloc(8); msg.writeBigUInt64BE(1n);
+const h = createHmac('sha1', '12345678901234567890').update(msg).digest();
+const o = h[19] & 15;                       // 11
+const bin = h.readUInt32BE(o) & 0x7fffffff; // 1094287082
+console.log(String(bin % 1e8).padStart(8, '0')); // 94287082
 ```
 
-### Python Implementation
+In the TOTP Generator, paste the Base32 key, choose 8 digits and type `59` into **Unix time**. It shows `94287082` as the current code, `84755224` as the previous one (T = 0) and `37359152` as the next one (T = 2).
+
+## The Test Vectors and the Seed Detail
+
+The RFC table has 18 rows: six times, each with SHA-1, SHA-256 and SHA-512. A few of them:
+
+| Unix time | T (hex) | SHA-1 | SHA-256 | SHA-512 |
+|---|---|---|---|---|
+| 59 | 0000000000000001 | 94287082 | 46119246 | 90693936 |
+| 1111111109 | 00000000023523EC | 07081804 | 68084774 | 25091201 |
+| 20000000000 | 0000000027BC86AA | 65353130 | 77737706 | 47863826 |
+
+The prose above the table names only the 20-byte key. The Java reference code in Appendix A uses a 32-byte key for SHA-256 (`12345678901234567890123456789012`) and a 64-byte key for SHA-512 (the same digits repeated to 64 characters). The SHA-256 and SHA-512 columns only match those longer keys, which trips up anyone testing with the 20-byte key. In Base32 they are:
+
+```
+SHA-256: GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA====
+SHA-512: GEZDGNBVGY3TQOJQ (6 times) followed by GEZDGNA=
+```
+
+This also matches the RFC's advice that keys "SHOULD be of the length of the HMAC output" ([§5.1](https://www.rfc-editor.org/rfc/rfc6238#section-5.1)). The last row, 20000000000 seconds, is in the year 2603. [§4.2](https://www.rfc-editor.org/rfc/rfc6238#section-4.2) says implementations "MUST support a time value T larger than a 32-bit integer when it is beyond the year 2038", and this row checks that the timestamp is not squeezed into 32 bits on the way (T itself is 666666666; the counter always has 8 bytes).
+
+## The Secret and the otpauth:// URI
+
+The secret is random bytes, shown to users in Base32 ([RFC 4648 §6](https://www.rfc-editor.org/rfc/rfc4648#section-6): letters A–Z and digits 2–7). [RFC 4226 §4](https://www.rfc-editor.org/rfc/rfc4226#section-4) requires at least 128 bits and recommends 160. Because Base32 has no 0, 1, 8 or 9, a key that contains one of them was copied wrong.
+
+Apps receive the secret through a QR code that holds a URI in Google's [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format):
+
+```
+otpauth://totp/Example:alice@google.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
+```
+
+- The label is `issuer:account`. Neither part may contain a colon, and spaces are encoded as `%20`.
+- `secret` is Base32 without `=` padding.
+- `issuer` should repeat the label prefix; newer apps use the parameter, older ones the prefix.
+- `algorithm` (SHA1, SHA256, SHA512), `digits` (6 or 8) and `period` (default 30) are optional.
+
+The same page says: "Currently, the algorithm parameter is ignored by the Google Authenticator implementations", the period parameter is ignored as well, and the digits parameter is ignored on Android and BlackBerry. A server that enrolls users with SHA-256 or a 60-second period may therefore get codes from Google Authenticator that never match. Other apps differ, and their support changes between versions, so test the app you care about: generate a URI with, say, `algorithm=SHA256&digits=8&period=60` in the TOTP Generator, scan the QR code, and compare the app's code with the page's code in the same period. Unless you control the app, keep SHA-1, 6 digits and 30 seconds. SHA-1 is not the weak point here: the known SHA-1 collision attacks do not break HMAC-SHA1 ([RFC 6194 §3.3](https://www.rfc-editor.org/rfc/rfc6194#section-3.3)).
+
+pyotp 2.10.0 builds the same URI for the example above:
 
 ```python
 import pyotp
-import qrcode
+pyotp.TOTP('JBSWY3DPEHPK3PXP').provisioning_uri(name='alice@google.com', issuer_name='Example')
+# 'otpauth://totp/Example:alice%40google.com?secret=JBSWY3DPEHPK3PXP&issuer=Example'
+```
 
-# Enrollment
+Note that `JBSWY3DPEHPK3PXP` decodes to only 10 bytes (80 bits). It is fine as a documentation example and below the RFC 4226 minimum for real use.
+
+## Verifying Codes on the Server
+
+A six-digit code is only safe because the server adds rules around it:
+
+- **Accept a small window.** The server knows when the code arrived, not when it was generated. [RFC 6238 §5.2](https://www.rfc-editor.org/rfc/rfc6238#section-5.2) says the verifier should also compare against past steps within the transmission delay, and recommends allowing at most one step for network delay. [§6](https://www.rfc-editor.org/rfc/rfc6238#section-6) adds a configurable window for clock drift and suggests recording the drift detected for each token. Libraries choose their own default: pyotp's `verify()` has `valid_window=0`, so it accepts only the current step unless you pass `valid_window=1`.
+- **Reject reuse.** "The verifier MUST NOT accept the second attempt of the OTP after the successful validation has been issued for the first OTP" (§5.2). Store the last accepted T per user and reject any code whose step is not newer.
+- **Limit attempts.** One random guess succeeds with probability about 10^-6 per accepted step. [RFC 4226 §7.3](https://www.rfc-editor.org/rfc/rfc4226#section-7.3) requires throttling: lock out after a number of failures, or add a growing delay after each one. A window of three steps triples the chance of each guess, which is one more reason to keep it small.
+- **Protect the key.** Anyone with the secret can generate every future code. Encrypt it at rest and never log it.
+
+## Implementing Enrollment and Verification
+
+The usual enrollment flow: generate a random secret, build the `otpauth://` URI, show it as a QR code (and the Base32 text for users who cannot scan), ask for one current code to confirm the app is set up, then store the secret.
+
+**Node.js** with otplib v13:
+
+```js
+import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
+import qrcode from 'qrcode';
+
+const secret = generateSecret();
+const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
+const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
+
+// At login
+const { valid } = await verify({ secret, token: userCode });
+```
+
+**Python** with pyotp:
+
+```python
+import pyotp
+
 secret = pyotp.random_base32()
 totp = pyotp.TOTP(secret)
-
-# OTPAuth URI for QR code
 uri = totp.provisioning_uri(name="user@example.com", issuer_name="MyApp")
-img = qrcode.make(uri)
-img.save("qr.png")
 
-# Verification
 is_valid = totp.verify(user_code, valid_window=1)  # current step ±1 (default is 0)
 ```
 
-### Go Implementation
+**Go** with pquerna/otp:
 
 ```go
 import "github.com/pquerna/otp/totp"
 
-// Enrollment
-key, err := totp.Generate(totp.GenerateOpts{
-    Issuer:      "MyApp",
-    AccountName: "user@example.com",
-})
-secret := key.Secret()
+key, err := totp.Generate(totp.GenerateOpts{Issuer: "MyApp", AccountName: "user@example.com"})
+secret := key.Secret() // show key.URL() as a QR code
 
-// Display key.URL() as a QR code
-
-// Verification
 valid := totp.Validate(userCode, secret)
 ```
 
-## TOTP Parameters
+Whatever the library, test it against the RFC table before shipping: fix the time (most libraries accept a timestamp, such as pyotp's `at()`), use the RFC keys, and compare all 18 values.
 
-RFC 6238 allows varying the defaults, but not every authenticator app reads them. Google's [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) notes that Google Authenticator ignores `algorithm` and `period`, and ignores `digits` on Android:
+## Clock Drift
 
-| Parameter | Default | Common Alternatives |
-|-----------|---------|---------------------|
-| Algorithm | SHA-1 | SHA-256, SHA-512 |
-| Digits | 6 | 8 |
-| Period | 30 seconds | 60 seconds |
+Both sides need the time to within a few seconds. Phones normally sync automatically; servers should run NTP (`timedatectl status` shows whether a Linux host is synchronized). When a user's codes fail, compare their device clock with a trusted source. The TOTP Generator does this once with the server's `Date` header and warns when the offset is more than about 3 seconds beyond the measurement error. It also shows the previous and next codes, so you can see whether the user is exactly one step behind or ahead.
 
-**Stick to defaults (SHA-1, 6 digits, 30s)** unless you have a specific requirement. Non-standard settings can cause compatibility issues with some authenticator apps, and SHA-1 is not the weak point here: the known SHA-1 collision attacks do not break HMAC-SHA1 ([RFC 6194 §3.3](https://datatracker.ietf.org/doc/html/rfc6194#section-3.3)). The weak point is the 6-digit code itself — one guess in a million succeeds — so the server must limit failed attempts ([RFC 4226 §7.3](https://datatracker.ietf.org/doc/html/rfc4226#section-7.3)).
+## Limits of TOTP
 
-## Clock Synchronization and Drift
+TOTP codes can be phished: a fake login page can ask for the code and replay it to the real site within the same 30 seconds. [WebAuthn](https://www.w3.org/TR/webauthn-2/) credentials (passkeys and security keys) are bound to the site's origin, so a look-alike domain cannot use them. TOTP is still far stronger than a password alone, and it works offline with no carrier or push service.
 
-TOTP requires that the server and client clocks are reasonably synchronized. Most implementations accept codes from `T-1`, `T`, and `T+1` (i.e., ±30 seconds around the current time step) to handle clock drift.
-
-If a user's device clock is significantly off (several minutes), TOTP will fail. This is rare on modern smartphones but worth noting for embedded devices or custom implementations.
-
-Server clocks should use NTP. On Linux:
-
-```bash
-timedatectl status        # check current NTP sync status
-timedatectl set-ntp true  # enable NTP synchronization
-```
-
-## TOTP vs Other 2FA Methods
-
-| Method | Security | Phishing Resistant | No External Dependency |
-|--------|----------|-------------------|----------------------|
-| TOTP | High | No | Yes |
-| SMS OTP | Low | No | No (carrier) |
-| Push notification | Medium | No | No (app server) |
-| FIDO2 / Passkey | Very High | Yes | Yes |
-| Hardware token (TOTP) | High | No | Yes |
-
-TOTP is vulnerable to real-time phishing (attacker tricks user into entering their code on a fake site and immediately relays it). For highest security, FIDO2/WebAuthn hardware keys are phishing-resistant. TOTP remains a major improvement over passwords alone and is the practical 2FA standard for most applications.
-
-## Recovery Codes
-
-Always implement recovery codes alongside TOTP. If a user loses their authenticator device, they need a way to regain access:
-
-- Generate 8–10 single-use recovery codes at enrollment
-- Store them hashed (bcrypt or Argon2)
-- Display them once and instruct users to save them offline
-- Each code is invalidated after use
+Always issue recovery codes at enrollment: 8 to 10 single-use random codes, stored hashed (for example with bcrypt or Argon2), shown once, and invalidated after use.
 
 ```python
 import secrets
@@ -193,4 +168,4 @@ def generate_recovery_codes(count=10):
     return [secrets.token_hex(10) for _ in range(count)]
 ```
 
-**[Generate and test TOTP codes instantly →](/tools/totp-generator)**
+To check a key or a server implementation against a known value, use the [TOTP Generator](/tools/totp-generator/); to look at the HMAC step with your own inputs, use the [HMAC Generator](/tools/hmac-generator/).

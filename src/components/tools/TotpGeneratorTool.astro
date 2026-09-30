@@ -1,188 +1,282 @@
 ---
-// TotpGeneratorTool — RFC 6238 TOTP generator using Web Crypto API (100% client-side)
+// TotpGeneratorTool — RFC 6238 TOTP codes with the Web Crypto API (100% client-side).
+// The secret stays in memory: the page never writes it to storage or to the URL
+// (persistence policy `disabled` in src/data/persistence.ts).
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
-const labels = {
+const STRINGS = {
   en: {
-    secretLabel: 'Secret (Base32)',
+    secretLabel: 'Secret key (Base32) or otpauth:// URI',
     random: 'Random',
-    digits: 'Digits',
-    period: 'Period',
     algorithm: 'Algorithm',
-    issuer: 'Issuer (optional)',
-    account: 'Account (optional)',
+    digits: 'Digits',
+    period: 'Period (s)',
+    time: 'Unix time (optional)',
+    timePlaceholder: 'now',
+    issuer: 'Issuer',
+    account: 'Account',
+    optional: 'optional',
     copy: 'Copy',
     copied: 'Copied!',
+    codeLabel: 'Current code',
+    seconds: '{n}s',
+    fixedTime: 'fixed time',
+    previous: 'Previous',
+    next: 'Next',
+    step: 'T = {t}',
     uriLabel: 'otpauth:// URI',
-    qrLabel: 'QR Code (scan with authenticator app)',
-    msgEnterSecret: 'Enter or generate a Base32 secret first.',
-    msgError: 'Error: ',
-    msgInvalidChars: 'Secret contains invalid Base32 characters (allowed: A-Z, 2-7).',
+    qrLabel: 'QR code (scan with an authenticator app)',
+    gaNote: 'Google Authenticator ignores the algorithm and period parameters, and on Android also digits (Key Uri Format wiki). With these settings the app may show different codes.',
+    imported: 'Imported from the otpauth:// URI. The URI is not kept.',
+    weakKey: 'This key is {bits} bits. RFC 4226 requires at least 128 bits and recommends 160.',
+    errEmpty: 'Enter a Base32 secret or paste an otpauth:// URI.',
+    errChar: '"{ch}" is not a Base32 character. Base32 uses A–Z and 2–7; 0, 1, 8 and 9 never occur.',
+    errPadding: '"=" padding can only appear at the end of the secret.',
+    errLength: 'A Base32 string cannot have {n} characters (a group of 8 cannot end after 1, 3 or 6). A character is probably missing or extra.',
+    errColon: '{field} cannot contain ":" (Key Uri Format). Remove it to get the URI and QR code.',
+    errPeriod: 'Period must be a whole number of seconds from 1 to 86400.',
+    errTime: 'Unix time must be a whole number of seconds, 0 or more.',
+    errUriScheme: 'This is not an otpauth:// URI.',
+    errUriHotp: 'This is an HOTP (counter-based) URI. This tool generates TOTP codes only.',
+    errUriType: 'Unknown OTP type "{v}". Only totp is supported.',
+    errUriLabel: 'The URI label has invalid percent-encoding.',
+    errUriSecret: 'The URI has no valid Base32 secret parameter.',
+    errUriAlgorithm: 'Unsupported algorithm "{v}". Use SHA1, SHA256 or SHA512.',
+    errUriDigits: 'Unsupported digits "{v}". Use 6 or 8.',
+    errUriPeriod: 'Invalid period "{v}". Use a whole number of seconds from 1 to 86400.',
+    clockBehind: 'Your device clock is about {s} s behind the server time. Codes may be rejected; sync the clock in system settings.',
+    clockAhead: 'Your device clock is about {s} s ahead of the server time. Codes may be rejected; sync the clock in system settings.',
   },
   zh: {
-    secretLabel: '密钥（Base32）',
+    secretLabel: '密钥（Base32）或 otpauth:// URI',
     random: '随机生成',
-    digits: '位数',
-    period: '周期',
     algorithm: '算法',
-    issuer: '发行方（可选）',
-    account: '账户（可选）',
+    digits: '位数',
+    period: '周期（秒）',
+    time: 'Unix 时间（可选）',
+    timePlaceholder: '当前',
+    issuer: '发行方',
+    account: '账户',
+    optional: '可选',
     copy: '复制',
     copied: '已复制！',
+    codeLabel: '当前验证码',
+    seconds: '{n} 秒',
+    fixedTime: '固定时间',
+    previous: '上一个',
+    next: '下一个',
+    step: 'T = {t}',
     uriLabel: 'otpauth:// URI',
     qrLabel: '二维码（用验证器 App 扫描）',
-    msgEnterSecret: '请先输入或生成 Base32 密钥。',
-    msgError: '错误：',
-    msgInvalidChars: '密钥包含非法 Base32 字符（允许：A-Z、2-7）。',
+    gaNote: 'Google Authenticator 会忽略 algorithm 与 period 参数，Android 版还忽略 digits（Key Uri Format 文档）。用当前设置扫码后，App 里的验证码可能与这里不同。',
+    imported: '已从 otpauth:// URI 导入，URI 本身不保留。',
+    weakKey: '这个密钥只有 {bits} 位。RFC 4226 要求至少 128 位，推荐 160 位。',
+    errEmpty: '请输入 Base32 密钥，或粘贴 otpauth:// URI。',
+    errChar: '「{ch}」不是 Base32 字符。Base32 只用 A–Z 和 2–7，不会出现 0、1、8、9。',
+    errPadding: '填充符「=」只能出现在密钥末尾。',
+    errLength: 'Base32 字符串不可能是 {n} 个字符（每 8 个一组，不会在第 1、3、6 个字符处结束），多半多了或少了一个字符。',
+    errColon: '{field}不能包含「:」（Key Uri Format 规定）。去掉冒号后才会生成 URI 和二维码。',
+    errPeriod: '周期须为 1 到 86400 之间的整数秒。',
+    errTime: 'Unix 时间须为不小于 0 的整数秒。',
+    errUriScheme: '这不是 otpauth:// URI。',
+    errUriHotp: '这是 HOTP（计数器型）URI，本工具只生成 TOTP 验证码。',
+    errUriType: '未知的 OTP 类型「{v}」，只支持 totp。',
+    errUriLabel: 'URI 的标签部分百分号编码有误。',
+    errUriSecret: 'URI 中没有有效的 Base32 secret 参数。',
+    errUriAlgorithm: '不支持的算法「{v}」，可用 SHA1、SHA256、SHA512。',
+    errUriDigits: '不支持的位数「{v}」，可用 6 或 8。',
+    errUriPeriod: '无效的周期「{v}」，须为 1 到 86400 之间的整数秒。',
+    clockBehind: '本机时钟比服务器慢约 {s} 秒，验证码可能被拒绝。请在系统设置里同步时间。',
+    clockAhead: '本机时钟比服务器快约 {s} 秒，验证码可能被拒绝。请在系统设置里同步时间。',
   },
   ja: {
-    secretLabel: 'シークレット（Base32）',
+    secretLabel: 'シークレットキー（Base32）または otpauth:// URI',
     random: 'ランダム生成',
-    digits: '桁数',
-    period: '周期',
     algorithm: 'アルゴリズム',
-    issuer: '発行者（任意）',
-    account: 'アカウント（任意）',
+    digits: '桁数',
+    period: '周期（秒）',
+    time: 'Unix 時刻（任意）',
+    timePlaceholder: '現在',
+    issuer: '発行者',
+    account: 'アカウント',
+    optional: '任意',
     copy: 'コピー',
     copied: 'コピーしました！',
+    codeLabel: '現在のコード',
+    seconds: '{n} 秒',
+    fixedTime: '時刻固定',
+    previous: '前',
+    next: '次',
+    step: 'T = {t}',
     uriLabel: 'otpauth:// URI',
-    qrLabel: 'QRコード（認証アプリでスキャン）',
-    msgEnterSecret: 'Base32シークレットを入力または生成してください。',
-    msgError: 'エラー：',
-    msgInvalidChars: 'シークレットに無効な Base32 文字が含まれています（使用可能：A-Z、2-7）。',
+    qrLabel: 'QR コード（認証アプリで読み取り）',
+    gaNote: 'Google Authenticator は algorithm と period を無視し、Android 版は digits も無視します（Key Uri Format 文書）。この設定ではアプリのコードがここと一致しない場合があります。',
+    imported: 'otpauth:// URI から読み込みました。URI 自体は保持しません。',
+    weakKey: 'このキーは {bits} ビットです。RFC 4226 は 128 ビット以上を必須とし、160 ビットを推奨しています。',
+    errEmpty: 'Base32 のシークレットを入力するか、otpauth:// URI を貼り付けてください。',
+    errChar: '「{ch}」は Base32 の文字ではありません。Base32 は A–Z と 2–7 のみで、0・1・8・9 は使いません。',
+    errPadding: 'パディングの「=」はシークレットの末尾にしか置けません。',
+    errLength: 'Base32 の文字列は {n} 文字になりません（8 文字単位で、1・3・6 文字目で終わることはない）。1 文字多いか少ない可能性があります。',
+    errColon: '{field}に「:」は使えません（Key Uri Format の規定）。コロンを除くと URI と QR コードを表示します。',
+    errPeriod: '周期は 1〜86400 の整数（秒）で指定してください。',
+    errTime: 'Unix 時刻は 0 以上の整数（秒）で指定してください。',
+    errUriScheme: 'otpauth:// URI ではありません。',
+    errUriHotp: 'HOTP（カウンター方式）の URI です。このツールは TOTP のコードのみ生成します。',
+    errUriType: '未知の OTP 種別「{v}」です。totp のみ対応しています。',
+    errUriLabel: 'URI のラベル部分のパーセントエンコードが不正です。',
+    errUriSecret: 'URI に有効な Base32 の secret パラメーターがありません。',
+    errUriAlgorithm: '未対応のアルゴリズム「{v}」です。SHA1・SHA256・SHA512 が使えます。',
+    errUriDigits: '未対応の桁数「{v}」です。6 または 8 が使えます。',
+    errUriPeriod: '周期「{v}」は不正です。1〜86400 の整数（秒）で指定してください。',
+    clockBehind: 'この端末の時計はサーバーより約 {s} 秒遅れています。コードが拒否される可能性があるため、システム設定で時刻を同期してください。',
+    clockAhead: 'この端末の時計はサーバーより約 {s} 秒進んでいます。コードが拒否される可能性があるため、システム設定で時刻を同期してください。',
   },
   ko: {
-    secretLabel: '시크릿 (Base32)',
+    secretLabel: '시크릿 키(Base32) 또는 otpauth:// URI',
     random: '랜덤 생성',
-    digits: '자릿수',
-    period: '주기',
     algorithm: '알고리즘',
-    issuer: '발급자 (선택)',
-    account: '계정 (선택)',
+    digits: '자릿수',
+    period: '주기(초)',
+    time: 'Unix 시각(선택)',
+    timePlaceholder: '현재',
+    issuer: '발급자',
+    account: '계정',
+    optional: '선택',
     copy: '복사',
     copied: '복사됨!',
+    codeLabel: '현재 코드',
+    seconds: '{n}초',
+    fixedTime: '시각 고정',
+    previous: '이전',
+    next: '다음',
+    step: 'T = {t}',
     uriLabel: 'otpauth:// URI',
-    qrLabel: 'QR 코드 (인증 앱으로 스캔)',
-    msgEnterSecret: 'Base32 시크릿을 입력하거나 생성하세요.',
-    msgError: '오류: ',
-    msgInvalidChars: '시크릿에 유효하지 않은 Base32 문자가 포함되어 있습니다 (허용: A-Z, 2-7).',
+    qrLabel: 'QR 코드(인증 앱으로 스캔)',
+    gaNote: 'Google Authenticator는 algorithm과 period 매개변수를 무시하고, Android 버전은 digits도 무시합니다(Key Uri Format 문서). 이 설정에서는 앱의 코드가 여기와 다를 수 있습니다.',
+    imported: 'otpauth:// URI에서 가져왔습니다. URI 자체는 보관하지 않습니다.',
+    weakKey: '이 키는 {bits}비트입니다. RFC 4226은 최소 128비트를 요구하고 160비트를 권장합니다.',
+    errEmpty: 'Base32 시크릿을 입력하거나 otpauth:// URI를 붙여 넣으세요.',
+    errChar: '"{ch}"는 Base32 문자가 아닙니다. Base32는 A–Z와 2–7만 쓰며 0, 1, 8, 9는 나오지 않습니다.',
+    errPadding: '패딩 "="는 시크릿 끝에만 올 수 있습니다.',
+    errLength: 'Base32 문자열은 {n}자가 될 수 없습니다(8자 단위에서 1, 3, 6번째 글자로 끝나지 않음). 한 글자가 빠졌거나 더 들어갔을 가능성이 큽니다.',
+    errColon: '{field}에는 ":"를 쓸 수 없습니다(Key Uri Format 규정). 콜론을 지우면 URI와 QR 코드가 나옵니다.',
+    errPeriod: '주기는 1~86400 사이의 정수(초)여야 합니다.',
+    errTime: 'Unix 시각은 0 이상의 정수(초)여야 합니다.',
+    errUriScheme: 'otpauth:// URI가 아닙니다.',
+    errUriHotp: 'HOTP(카운터 방식) URI입니다. 이 도구는 TOTP 코드만 생성합니다.',
+    errUriType: '알 수 없는 OTP 유형 "{v}"입니다. totp만 지원합니다.',
+    errUriLabel: 'URI 레이블의 퍼센트 인코딩이 잘못되었습니다.',
+    errUriSecret: 'URI에 유효한 Base32 secret 매개변수가 없습니다.',
+    errUriAlgorithm: '지원하지 않는 알고리즘 "{v}"입니다. SHA1, SHA256, SHA512를 쓰세요.',
+    errUriDigits: '지원하지 않는 자릿수 "{v}"입니다. 6 또는 8을 쓰세요.',
+    errUriPeriod: '주기 "{v}"가 잘못되었습니다. 1~86400 사이의 정수(초)를 쓰세요.',
+    clockBehind: '이 기기의 시계가 서버 시각보다 약 {s}초 느립니다. 코드가 거부될 수 있으니 시스템 설정에서 시간을 동기화하세요.',
+    clockAhead: '이 기기의 시계가 서버 시각보다 약 {s}초 빠릅니다. 코드가 거부될 수 있으니 시스템 설정에서 시간을 동기화하세요.',
   },
 };
 
-const L = labels[lang];
+const L = STRINGS[lang];
 ---
-<div
-  class="totp-wrap"
-  data-copy={L.copy}
-  data-copied={L.copied}
-  data-msg-enter-secret={L.msgEnterSecret}
-  data-msg-error={L.msgError}
-  data-msg-invalid-chars={L.msgInvalidChars}
->
-  {/* Secret row */}
+<div class="totp-wrap">
   <div class="totp-field">
     <label for="totp-secret">{L.secretLabel}</label>
     <div class="totp-secret-row">
       <input
         type="text"
         id="totp-secret"
-        placeholder="e.g. JBSWY3DPEHPK3PXP"
+        class="tool-input"
+        placeholder="JBSWY3DPEHPK3PXP"
         spellcheck="false"
         autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
       />
       <button id="totp-gen-secret" class="btn-secondary" type="button">{L.random}</button>
     </div>
   </div>
 
-  {/* Options */}
+  <div id="totp-status" class="tool-status" aria-live="polite"></div>
+
+  <div id="totp-display" class="totp-display" hidden>
+    <div class="totp-code-wrap">
+      <span id="totp-code" class="totp-code" aria-label={L.codeLabel}>------</span>
+      <button id="totp-copy-code" class="btn-copy" type="button">{L.copy}</button>
+    </div>
+    <div class="totp-timer-wrap">
+      <div class="totp-bar-bg" aria-hidden="true"><div id="totp-bar" class="totp-bar"></div></div>
+      <span id="totp-countdown" class="totp-countdown"></span>
+    </div>
+    <div class="totp-meta">
+      <span>{L.previous} <code id="totp-prev">—</code></span>
+      <span>{L.next} <code id="totp-next">—</code></span>
+      <span id="totp-step"></span>
+    </div>
+    <p id="totp-clock" class="totp-clock" role="status" hidden></p>
+  </div>
+
   <div class="totp-options">
     <div class="totp-opt">
-      <label for="totp-digits">{L.digits}</label>
-      <select id="totp-digits">
-        <option value="6" selected>6</option>
-        <option value="8">8</option>
-      </select>
-    </div>
-    <div class="totp-opt">
-      <label for="totp-period">{L.period}</label>
-      <select id="totp-period">
-        <option value="30" selected>30 s</option>
-        <option value="60">60 s</option>
-      </select>
-    </div>
-    <div class="totp-opt">
       <label for="totp-algo">{L.algorithm}</label>
-      <select id="totp-algo">
+      <select id="totp-algo" class="tool-input">
         <option value="SHA-1" selected>SHA-1</option>
         <option value="SHA-256">SHA-256</option>
         <option value="SHA-512">SHA-512</option>
       </select>
     </div>
     <div class="totp-opt">
-      <label for="totp-issuer">{L.issuer}</label>
-      <input type="text" id="totp-issuer" placeholder="My App" />
+      <label for="totp-digits">{L.digits}</label>
+      <select id="totp-digits" class="tool-input">
+        <option value="6" selected>6</option>
+        <option value="8">8</option>
+      </select>
     </div>
     <div class="totp-opt">
-      <label for="totp-account">{L.account}</label>
-      <input type="text" id="totp-account" placeholder="user@example.com" />
+      <label for="totp-period">{L.period}</label>
+      <input type="text" id="totp-period" class="tool-input" value="30" inputmode="numeric" autocomplete="off" />
+    </div>
+    <div class="totp-opt">
+      <label for="totp-time">{L.time}</label>
+      <input type="text" id="totp-time" class="tool-input" placeholder={L.timePlaceholder} inputmode="numeric" autocomplete="off" />
+    </div>
+    <div class="totp-opt">
+      <label for="totp-issuer">{L.issuer} <span class="totp-optional">({L.optional})</span></label>
+      <input type="text" id="totp-issuer" class="tool-input" placeholder="Example" autocomplete="off" />
+    </div>
+    <div class="totp-opt">
+      <label for="totp-account">{L.account} <span class="totp-optional">({L.optional})</span></label>
+      <input type="text" id="totp-account" class="tool-input" placeholder="alice@example.com" autocomplete="off" />
     </div>
   </div>
 
-  <div id="totp-status" class="totp-status" aria-live="polite"></div>
-
-  {/* Live OTP display */}
-  <div id="totp-display" class="totp-display" style="display:none">
-    <div class="totp-code-wrap">
-      <span id="totp-code" class="totp-code">------</span>
-      <button id="totp-copy-code" class="btn-copy" type="button">{L.copy}</button>
-    </div>
-    <div class="totp-timer-wrap">
-      <div class="totp-bar-bg">
-        <div id="totp-bar" class="totp-bar"></div>
-      </div>
-      <span id="totp-countdown" class="totp-countdown">30s</span>
-    </div>
-  </div>
-
-  {/* URI + QR */}
-  <div id="totp-uri-block" class="totp-uri-block" style="display:none">
+  <div id="totp-uri-block" class="totp-uri-block" hidden>
     <div class="totp-uri-label">
-      <span>{L.uriLabel}</span>
+      <label for="totp-uri">{L.uriLabel}</label>
       <button id="totp-copy-uri" class="btn-copy" type="button">{L.copy}</button>
     </div>
-    <input type="text" id="totp-uri" class="totp-uri-input" readonly />
+    <input type="text" id="totp-uri" class="tool-input totp-uri-input" readonly />
   </div>
 
-  <div id="totp-qr-block" class="totp-qr-block" style="display:none">
+  <div id="totp-qr-block" class="totp-qr-block" hidden>
     <div class="totp-qr-label">{L.qrLabel}</div>
     <div id="totp-qr-canvas-wrap"></div>
+    <p id="totp-ga-note" class="totp-note" hidden>{L.gaNote}</p>
   </div>
 
-  {/* qrcode.js (same vendor file as QR code generator tool) */}
+  {/* qrcode.js (same vendor file as the QR code generator tool) */}
   <script src="/vendor/qrcode.min.js" is:inline></script>
 
-  <script is:inline>
+  <script is:inline define:vars={{ S: L }}>
     (function () {
-      var wrap = document.currentScript
-        ? document.currentScript.closest('.totp-wrap')
-        : document.querySelector('.totp-wrap');
-
-      var COPY = wrap ? wrap.dataset.copy : 'Copy';
-      var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
-      var MSG_ENTER_SECRET = wrap ? wrap.dataset.msgEnterSecret : 'Enter or generate a Base32 secret first.';
-      var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Error: ';
-      var MSG_INVALID_CHARS = wrap ? wrap.dataset.msgInvalidChars : 'Secret contains invalid Base32 characters (allowed: A-Z, 2-7).';
-
-      // Base32 alphabet
+      /* ── engine:start ── */
       var B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+      var KEY_BYTES = { 'SHA-1': 20, 'SHA-256': 32, 'SHA-512': 64 };
+      var URI_ALGOS = { SHA1: 'SHA-1', SHA256: 'SHA-256', SHA512: 'SHA-512' };
 
-      function base32Decode(input) {
-        var s = input.toUpperCase().replace(/=+$/, '').replace(/[^A-Z2-7]/g, '');
-        var bits = 0, val = 0;
-        var out = [];
+      function base32Decode(s) {
+        var bits = 0, val = 0, out = [];
         for (var i = 0; i < s.length; i++) {
-          val = (val << 5) | B32.indexOf(s[i]);
+          val = ((val << 5) | B32.indexOf(s[i])) & 0xffff;
           bits += 5;
           if (bits >= 8) { bits -= 8; out.push((val >>> bits) & 0xff); }
         }
@@ -192,7 +286,7 @@ const L = labels[lang];
       function base32Encode(bytes) {
         var bits = 0, val = 0, out = '';
         for (var i = 0; i < bytes.length; i++) {
-          val = (val << 8) | bytes[i];
+          val = ((val << 8) | bytes[i]) & 0xffff;
           bits += 8;
           while (bits >= 5) { bits -= 5; out += B32[(val >>> bits) & 31]; }
         }
@@ -200,164 +294,326 @@ const L = labels[lang];
         return out;
       }
 
-      function genRandomSecret(byteLen) {
-        byteLen = byteLen || 20;
-        var buf = new Uint8Array(byteLen);
-        crypto.getRandomValues(buf);
+      // RFC 4648 Base32 as users paste it: any case, grouped with spaces or hyphens,
+      // full-width characters (NFKC), optional trailing '=' padding.
+      function normalizeSecret(raw) {
+        var s = String(raw == null ? '' : raw).normalize('NFKC').replace(/[\s-]/g, '').toUpperCase();
+        var pad = s.indexOf('=');
+        if (pad >= 0) {
+          if (/[^=]/.test(s.slice(pad))) return { ok: false, error: 'padding' };
+          s = s.slice(0, pad);
+        }
+        if (!s) return { ok: false, error: 'empty' };
+        var chars = Array.from(s);
+        for (var i = 0; i < chars.length; i++) {
+          if (B32.indexOf(chars[i]) < 0) return { ok: false, error: 'char', char: chars[i] };
+        }
+        var rem = s.length % 8;
+        if (rem === 1 || rem === 3 || rem === 6) return { ok: false, error: 'length', length: s.length };
+        return { ok: true, secret: s, bytes: base32Decode(s) };
+      }
+
+      function counterBytes(counter) {
+        var out = new Uint8Array(8);
+        var hi = Math.floor(counter / 4294967296);
+        var lo = counter - hi * 4294967296;
+        for (var i = 3; i >= 0; i--) { out[i] = hi & 0xff; hi = Math.floor(hi / 256); }
+        for (var j = 7; j >= 4; j--) { out[j] = lo & 0xff; lo = Math.floor(lo / 256); }
+        return out;
+      }
+
+      // RFC 4226 §5.3: HMAC, dynamic truncation, modulo 10^digits.
+      async function hotp(keyBytes, counter, algo, digits) {
+        var key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: algo }, false, ['sign']);
+        var h = new Uint8Array(await crypto.subtle.sign('HMAC', key, counterBytes(counter)));
+        var o = h[h.length - 1] & 0x0f;
+        var bin = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+        return String(bin % Math.pow(10, digits)).padStart(digits, '0');
+      }
+
+      // RFC 6238 §4.2 with T0 = 0: T = floor(unix seconds / period).
+      function totpAt(keyBytes, unixSeconds, algo, digits, period) {
+        return hotp(keyBytes, Math.floor(unixSeconds / period), algo, digits);
+      }
+
+      function timeState(nowMs, period) {
+        var stepMs = period * 1000;
+        var counter = Math.floor(nowMs / stepMs);
+        var remainingMs = stepMs - (nowMs - counter * stepMs);
+        return { counter: counter, remaining: Math.ceil(remainingMs / 1000) };
+      }
+
+      function codeIsStale(shownCounter, nowMs, period) {
+        return timeState(nowMs, period).counter !== shownCounter;
+      }
+
+      // RFC 6238 §5.1: keys SHOULD be the length of the HMAC output.
+      function randomSecret(algo, rng) {
+        var buf = new Uint8Array(KEY_BYTES[algo] || 20);
+        if (rng) rng(buf); else crypto.getRandomValues(buf);
         return base32Encode(buf);
       }
 
-      function intToBytes(n) {
-        var arr = new Uint8Array(8);
-        var tmp = n;
-        for (var i = 7; i >= 0; i--) {
-          arr[i] = tmp & 0xff;
-          tmp = Math.floor(tmp / 256);
-        }
-        return arr;
+      // Google Authenticator Key Uri Format. Defaults (SHA1, 6, 30) are omitted.
+      function buildUri(o) {
+        if (o.issuer.indexOf(':') >= 0) return { ok: false, field: 'issuer' };
+        if (o.account.indexOf(':') >= 0) return { ok: false, field: 'account' };
+        var label = (o.issuer ? encodeURIComponent(o.issuer) + ':' : '') + encodeURIComponent(o.account || 'Account');
+        var q = 'secret=' + o.secret;
+        if (o.issuer) q += '&issuer=' + encodeURIComponent(o.issuer);
+        if (o.algo !== 'SHA-1') q += '&algorithm=' + o.algo.replace('-', '');
+        if (o.digits !== 6) q += '&digits=' + o.digits;
+        if (o.period !== 30) q += '&period=' + o.period;
+        return { ok: true, uri: 'otpauth://totp/' + label + '?' + q };
       }
 
-      async function computeTotp(secret, algo, period, digits) {
-        var keyBytes = base32Decode(secret);
-        if (keyBytes.length === 0) throw new Error('Invalid Base32 secret');
-        var counter = Math.floor(Date.now() / 1000 / period);
-        var counterBytes = intToBytes(counter);
-        var cryptoAlgo = algo === 'SHA-1' ? 'SHA-1' : (algo === 'SHA-256' ? 'SHA-256' : 'SHA-512');
-        var key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: cryptoAlgo }, false, ['sign']);
-        var sig = await crypto.subtle.sign('HMAC', key, counterBytes);
-        var hmac = new Uint8Array(sig);
-        var offset = hmac[hmac.length - 1] & 0x0f;
-        var code = ((hmac[offset] & 0x7f) << 24) |
-                   ((hmac[offset + 1] & 0xff) << 16) |
-                   ((hmac[offset + 2] & 0xff) << 8) |
-                    (hmac[offset + 3] & 0xff);
-        code = code % Math.pow(10, digits);
-        return String(code).padStart(digits, '0');
+      function parseUri(str) {
+        var m = /^otpauth:\/\/([^/?#]*)\/([^?#]*)(?:\?([^#]*))?/i.exec(String(str).trim());
+        if (!m) return { ok: false, error: 'scheme' };
+        var type = m[1].toLowerCase();
+        if (type === 'hotp') return { ok: false, error: 'hotp' };
+        if (type !== 'totp') return { ok: false, error: 'type', value: m[1] };
+        var label;
+        try { label = decodeURIComponent(m[2]); } catch (e) { return { ok: false, error: 'label' }; }
+        var params = new URLSearchParams(m[3] || '');
+        var n = normalizeSecret(params.get('secret') || '');
+        if (!n.ok) return { ok: false, error: 'secret' };
+        var algoRaw = params.get('algorithm');
+        var algo = URI_ALGOS[(algoRaw == null ? 'SHA1' : algoRaw).toUpperCase().replace('-', '')];
+        if (!algo) return { ok: false, error: 'algorithm', value: algoRaw };
+        var d = params.get('digits');
+        if (d != null && d !== '6' && d !== '8') return { ok: false, error: 'digits', value: d };
+        var p = params.get('period');
+        if (p != null && (!/^\d+$/.test(p) || +p < 1 || +p > 86400)) return { ok: false, error: 'period', value: p };
+        var sep = label.indexOf(':');
+        var prefix = sep >= 0 ? label.slice(0, sep) : '';
+        var account = sep >= 0 ? label.slice(sep + 1).replace(/^ +/, '') : label;
+        var issuer = params.get('issuer') ? params.get('issuer') : prefix;
+        return { ok: true, secret: n.secret, issuer: issuer, account: account, algo: algo, digits: d == null ? 6 : +d, period: p == null ? 30 : +p };
       }
 
-      function buildUri(secret, issuer, account, algo, period, digits) {
-        var label = account ? encodeURIComponent(account) : 'Account';
-        if (issuer) label = encodeURIComponent(issuer) + ':' + label;
-        var algoMap = { 'SHA-1': 'SHA1', 'SHA-256': 'SHA256', 'SHA-512': 'SHA512' };
-        var params = 'secret=' + encodeURIComponent(secret) +
-          '&algorithm=' + (algoMap[algo] || 'SHA1') +
-          '&digits=' + digits +
-          '&period=' + period;
-        if (issuer) params += '&issuer=' + encodeURIComponent(issuer);
-        return 'otpauth://totp/' + label + '?' + params;
+      // HTTP Date has one-second resolution: server time at the response lies in
+      // [D, D + 1000). The local midpoint of the request stands for that moment.
+      function clockOffset(sentMs, receivedMs, dateHeader) {
+        if (!dateHeader) return null;
+        var d = Date.parse(dateHeader);
+        if (isNaN(d)) return null;
+        return { offsetMs: d + 500 - (sentMs + receivedMs) / 2, uncertaintyMs: 500 + (receivedMs - sentMs) / 2 };
       }
 
-      var statusEl = document.getElementById('totp-status');
-      var displayEl = document.getElementById('totp-display');
-      var codeEl = document.getElementById('totp-code');
-      var countdownEl = document.getElementById('totp-countdown');
-      var barEl = document.getElementById('totp-bar');
-      var uriBlock = document.getElementById('totp-uri-block');
-      var uriInput = document.getElementById('totp-uri');
-      var qrBlock = document.getElementById('totp-qr-block');
-      var qrWrap = document.getElementById('totp-qr-canvas-wrap');
-      var secretInput = document.getElementById('totp-secret');
-      var intervalId = null;
+      function clockVerdict(o) {
+        if (!o) return null;
+        var abs = Math.abs(o.offsetMs);
+        if (abs - o.uncertaintyMs < 3000) return null;
+        return { direction: o.offsetMs > 0 ? 'behind' : 'ahead', seconds: Math.round(abs / 1000) };
+      }
+      /* ── engine:end ── */
 
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'totp-status ' + (isError ? 'error' : 'success');
+      var $ = function (id) { return document.getElementById(id); };
+      var secretEl = $('totp-secret');
+      var algoEl = $('totp-algo');
+      var digitsEl = $('totp-digits');
+      var periodEl = $('totp-period');
+      var timeEl = $('totp-time');
+      var issuerEl = $('totp-issuer');
+      var accountEl = $('totp-account');
+      var statusEl = $('totp-status');
+      var displayEl = $('totp-display');
+      var codeEl = $('totp-code');
+      var prevEl = $('totp-prev');
+      var nextEl = $('totp-next');
+      var stepEl = $('totp-step');
+      var countdownEl = $('totp-countdown');
+      var barEl = $('totp-bar');
+      var clockEl = $('totp-clock');
+      var uriBlock = $('totp-uri-block');
+      var uriInput = $('totp-uri');
+      var qrBlock = $('totp-qr-block');
+      var qrWrap = $('totp-qr-canvas-wrap');
+      var gaNote = $('totp-ga-note');
+
+      var state = null;
+      var gen = 0;
+      var clockChecked = false;
+      var lastTracked = '';
+
+      function fmt(s, vars) {
+        return s.replace(/\{(\w+)\}/g, function (_, k) { return vars[k]; });
       }
 
-      document.getElementById('totp-gen-secret').addEventListener('click', function () {
-        secretInput.value = genRandomSecret(20);
-        startTotp();
-      });
-
-      function isValidBase32(raw) {
-        var stripped = raw.toUpperCase().replace(/[\s\-=]/g, '');
-        return stripped.length > 0 && /^[A-Z2-7]+$/.test(stripped);
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status' + (kind ? ' ' + kind : '');
       }
 
-      async function startTotp() {
-        var secret = secretInput.value.trim();
-        if (!secret) { setStatus(MSG_ENTER_SECRET, true); return; }
-        if (!isValidBase32(secret)) {
-          setStatus(MSG_INVALID_CHARS, true);
-          displayEl.style.display = 'none';
-          uriBlock.style.display = 'none';
-          qrBlock.style.display = 'none';
-          if (intervalId) { clearInterval(intervalId); intervalId = null; }
+      function hideOutput() {
+        gen++;
+        state = null;
+        displayEl.hidden = true;
+        uriBlock.hidden = true;
+        qrBlock.hidden = true;
+        qrWrap.innerHTML = '';
+        uriInput.value = '';
+        codeEl.textContent = '------';
+      }
+
+      function secretMessage(n) {
+        if (n.error === 'char') return fmt(S.errChar, { ch: n.char });
+        if (n.error === 'padding') return S.errPadding;
+        if (n.error === 'length') return fmt(S.errLength, { n: n.length });
+        return S.errEmpty;
+      }
+
+      function uriMessage(p) {
+        var key = { scheme: 'errUriScheme', hotp: 'errUriHotp', type: 'errUriType', label: 'errUriLabel', secret: 'errUriSecret', algorithm: 'errUriAlgorithm', digits: 'errUriDigits', period: 'errUriPeriod' }[p.error];
+        return fmt(S[key], { v: p.value == null ? '' : p.value });
+      }
+
+      function renderTimer() {
+        if (!state) return;
+        if (state.fixedT != null) {
+          countdownEl.textContent = S.fixedTime;
+          barEl.style.width = '100%';
+          barEl.className = 'totp-bar fixed';
           return;
         }
-        var algo = document.getElementById('totp-algo').value;
-        var period = parseInt(document.getElementById('totp-period').value);
-        var digits = parseInt(document.getElementById('totp-digits').value);
-        var issuer = document.getElementById('totp-issuer').value.trim();
-        var account = document.getElementById('totp-account').value.trim();
-
-        try {
-          var code = await computeTotp(secret, algo, period, digits);
-          codeEl.textContent = code;
-          displayEl.style.display = '';
-          setStatus('', false);
-
-          var uri = buildUri(secret, issuer, account, algo, period, digits);
-          uriInput.value = uri;
-          uriBlock.style.display = '';
-
-          // QR code
-          qrWrap.innerHTML = '';
-          if (typeof QRCode !== 'undefined') {
-            var canvas = document.createElement('canvas');
-            qrWrap.appendChild(canvas);
-            QRCode.toCanvas(canvas, uri, { width: 192, margin: 1 }, function (err) {
-              if (!err) qrBlock.style.display = '';
-            });
-          }
-
-          window.trackTool && window.trackTool('totp-generator', 'generate');
-        } catch (e) {
-          setStatus(MSG_ERROR + e.message, true);
-          displayEl.style.display = 'none';
-        }
-
-        // Live countdown + refresh
-        if (intervalId) clearInterval(intervalId);
-        intervalId = setInterval(async function () {
-          var now = Math.floor(Date.now() / 1000);
-          var remaining = period - (now % period);
-          countdownEl.textContent = remaining + 's';
-          var pct = remaining / period * 100;
-          barEl.style.width = pct + '%';
-          barEl.className = 'totp-bar' + (remaining <= 5 ? ' urgent' : '');
-          if (remaining === period) {
-            try {
-              codeEl.textContent = await computeTotp(secret, algo, period, digits);
-            } catch (_) {}
-          }
-        }, 500);
+        var ts = timeState(Date.now(), state.period);
+        countdownEl.textContent = fmt(S.seconds, { n: ts.remaining });
+        barEl.style.width = (ts.remaining / state.period * 100) + '%';
+        barEl.className = 'totp-bar' + (ts.remaining <= 5 ? ' urgent' : '');
       }
 
-      document.getElementById('totp-copy-code').addEventListener('click', function () {
-        var btn = this;
-        navigator.clipboard.writeText(codeEl.textContent).then(function () {
-          var prev = btn.textContent;
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = prev; }, 1500);
+      function renderQr(uri) {
+        qrWrap.innerHTML = '';
+        if (typeof QRCode === 'undefined') return;
+        var canvas = document.createElement('canvas');
+        qrWrap.appendChild(canvas);
+        QRCode.toCanvas(canvas, uri, { width: 192, margin: 2 }, function (err) {
+          if (!err && state) qrBlock.hidden = false;
         });
+      }
+
+      function checkClock() {
+        clockChecked = true;
+        if (!window.fetch) return;
+        var sent = Date.now();
+        // Same-origin HEAD of this page, no query or body: only the Date header is read.
+        fetch(location.pathname, { method: 'HEAD', cache: 'no-store' }).then(function (r) {
+          var v = clockVerdict(clockOffset(sent, Date.now(), r.headers.get('Date')));
+          if (!v) return;
+          clockEl.textContent = fmt(v.direction === 'behind' ? S.clockBehind : S.clockAhead, { s: v.seconds });
+          clockEl.hidden = false;
+        }).catch(function () {});
+      }
+
+      async function update() {
+        var raw = secretEl.value;
+        var notes = [];
+        if (/^\s*otpauth:/i.test(raw)) {
+          var p = parseUri(raw);
+          if (!p.ok) { hideOutput(); setStatus(uriMessage(p), 'error'); return; }
+          secretEl.value = p.secret;
+          issuerEl.value = p.issuer;
+          accountEl.value = p.account;
+          algoEl.value = p.algo;
+          digitsEl.value = String(p.digits);
+          periodEl.value = String(p.period);
+          raw = p.secret;
+          notes.push(S.imported);
+        }
+        if (!raw.trim()) { hideOutput(); setStatus('', null); return; }
+        var n = normalizeSecret(raw);
+        if (!n.ok) { hideOutput(); setStatus(secretMessage(n), 'error'); return; }
+        var period = periodEl.value.trim();
+        if (!/^\d+$/.test(period) || +period < 1 || +period > 86400) { hideOutput(); setStatus(S.errPeriod, 'error'); return; }
+        period = +period;
+        var t = timeEl.value.trim();
+        if (t && !/^\d+$/.test(t)) { hideOutput(); setStatus(S.errTime, 'error'); return; }
+        var fixedT = t ? +t : null;
+        var algo = algoEl.value;
+        var digits = +digitsEl.value;
+
+        var my = ++gen;
+        var ts = timeState(fixedT != null ? fixedT * 1000 : Date.now(), period);
+        var codes;
+        try {
+          codes = await Promise.all([
+            hotp(n.bytes, ts.counter, algo, digits),
+            ts.counter > 0 ? hotp(n.bytes, ts.counter - 1, algo, digits) : Promise.resolve('—'),
+            hotp(n.bytes, ts.counter + 1, algo, digits),
+          ]);
+        } catch (e) {
+          if (my !== gen) return;
+          hideOutput();
+          setStatus(e.message, 'error');
+          return;
+        }
+        if (my !== gen) return;
+
+        state = { secret: n.secret, algo: algo, digits: digits, period: period, fixedT: fixedT, counter: ts.counter };
+        codeEl.textContent = codes[0];
+        prevEl.textContent = codes[1];
+        nextEl.textContent = codes[2];
+        stepEl.textContent = fmt(S.step, { t: ts.counter });
+        displayEl.hidden = false;
+        renderTimer();
+
+        if (n.bytes.length * 8 < 128) notes.push(fmt(S.weakKey, { bits: n.bytes.length * 8 }));
+        var u = buildUri({ secret: n.secret, issuer: issuerEl.value.trim(), account: accountEl.value.trim(), algo: algo, digits: digits, period: period });
+        if (!u.ok) {
+          uriBlock.hidden = true;
+          qrBlock.hidden = true;
+          qrWrap.innerHTML = '';
+          uriInput.value = '';
+          setStatus(fmt(S.errColon, { field: u.field === 'issuer' ? S.issuer : S.account }), 'error');
+        } else {
+          setStatus(notes.join(' '), null);
+          if (u.uri !== uriInput.value || qrBlock.hidden) {
+            uriInput.value = u.uri;
+            renderQr(u.uri);
+          }
+          uriBlock.hidden = false;
+          gaNote.hidden = algo === 'SHA-1' && digits === 6 && period === 30;
+        }
+
+        if (!clockChecked && fixedT == null) checkClock();
+        if (n.secret !== lastTracked) {
+          lastTracked = n.secret;
+          window.trackTool && window.trackTool('totp-generator', 'generate');
+        }
+      }
+
+      function tick() {
+        if (!state) return;
+        // Cleared without an input event (e.g. the page-wide Ctrl/Cmd+L shortcut).
+        if (!secretEl.value.trim()) { hideOutput(); setStatus('', null); return; }
+        if (state.fixedT != null) return;
+        renderTimer();
+        if (!state.refreshing && codeIsStale(state.counter, Date.now(), state.period)) {
+          state.refreshing = true;
+          update();
+        }
+      }
+      setInterval(tick, 250);
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+
+      $('totp-gen-secret').addEventListener('click', function () {
+        secretEl.value = randomSecret(algoEl.value);
+        update();
       });
 
-      document.getElementById('totp-copy-uri').addEventListener('click', function () {
-        var btn = this;
-        navigator.clipboard.writeText(uriInput.value).then(function () {
-          var prev = btn.textContent;
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = prev; }, 1500);
+      function copyFrom(btn, text) {
+        if (!text || !navigator.clipboard) return;
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = S.copied;
+          setTimeout(function () { btn.textContent = S.copy; }, 1500);
         });
-      });
+      }
+      $('totp-copy-code').addEventListener('click', function () { if (state) copyFrom(this, codeEl.textContent); });
+      $('totp-copy-uri').addEventListener('click', function () { copyFrom(this, uriInput.value); });
 
-      secretInput.addEventListener('input', startTotp);
-      document.getElementById('totp-digits').addEventListener('change', startTotp);
-      document.getElementById('totp-period').addEventListener('change', startTotp);
-      document.getElementById('totp-algo').addEventListener('change', startTotp);
-      document.getElementById('totp-issuer').addEventListener('change', startTotp);
-      document.getElementById('totp-account').addEventListener('change', startTotp);
+      [secretEl, periodEl, timeEl, issuerEl, accountEl].forEach(function (el) { el.addEventListener('input', update); });
+      [algoEl, digitsEl].forEach(function (el) { el.addEventListener('change', update); });
     })();
   </script>
 </div>
@@ -365,84 +621,41 @@ const L = labels[lang];
 <style>
   .totp-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  .totp-field { display: flex; flex-direction: column; gap: 0.3rem; }
-  .totp-field label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .totp-field,
+  .totp-opt { display: flex; flex-direction: column; gap: 0.3rem; }
+  .totp-field label,
+  .totp-opt label,
+  .totp-uri-label label,
+  .totp-qr-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .totp-optional { font-weight: 400; }
 
   .totp-secret-row { display: flex; gap: 0.5rem; }
-
-  .totp-secret-row input {
-    flex: 1;
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
-    padding: 0.45rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-  }
-  .totp-secret-row input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .totp-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  .totp-opt { display: flex; flex-direction: column; gap: 0.3rem; }
-  .totp-opt label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
-  .totp-opt select,
-  .totp-opt input[type="text"] {
-    padding: 0.35rem 0.6rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    font-size: 0.88rem;
-  }
-  .totp-opt input[type="text"]:focus,
-  .totp-opt select:focus { outline: none; border-color: var(--color-primary); }
-
-  .totp-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .totp-status.success { color: #057a55; }
-  .totp-status.error { color: #c0392b; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .totp-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .totp-status.error { color: #f87171; }
-  }
-  [data-theme="dark"] .totp-status.success { color: #34d399; }
-  [data-theme="dark"] .totp-status.error { color: #f87171; }
+  .totp-secret-row .tool-input { flex: 1; width: 100%; }
 
   .totp-display {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 1rem;
+    padding: 0.85rem 1rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: var(--color-bg-secondary);
   }
+  .totp-display[hidden],
+  .totp-uri-block[hidden],
+  .totp-qr-block[hidden] { display: none; }
 
-  .totp-code-wrap {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
+  .totp-code-wrap { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
   .totp-code {
     font-family: var(--font-mono);
     font-size: 2rem;
     font-weight: 700;
-    letter-spacing: 0.25em;
+    letter-spacing: 0.2em;
+    line-height: 1.2;
     color: var(--color-primary);
   }
 
-  .totp-timer-wrap {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
+  .totp-timer-wrap { display: flex; align-items: center; gap: 0.75rem; }
   .totp-bar-bg {
     flex: 1;
     height: 6px;
@@ -450,51 +663,59 @@ const L = labels[lang];
     background: var(--color-border);
     overflow: hidden;
   }
-
   .totp-bar {
     height: 100%;
     background: var(--color-primary);
     border-radius: 3px;
-    transition: width 0.4s linear, background 0.3s;
+    transition: width 0.25s linear, background 0.3s;
   }
-
-  .totp-bar.urgent { background: #ef4444; }
-
+  .totp-bar.urgent { background: #dc2626; }
+  .totp-bar.fixed { background: var(--color-text-secondary); }
   .totp-countdown {
     font-size: 0.82rem;
     font-family: var(--font-mono);
     color: var(--color-text-secondary);
-    min-width: 28px;
+    min-width: 3.5em;
     text-align: right;
   }
 
-  .totp-uri-block { display: flex; flex-direction: column; gap: 0.4rem; }
-  .totp-uri-label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
+  .totp-meta {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .totp-uri-input {
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    font-size: 0.8rem;
     color: var(--color-text-secondary);
   }
+  .totp-meta code { font-family: var(--font-mono); background: none; padding: 0; }
 
+  .totp-clock,
+  .totp-note { margin: 0; font-size: 0.82rem; line-height: 1.5; }
+  .totp-clock { color: #b45309; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .totp-clock { color: #fbbf24; }
+  }
+  [data-theme="dark"] .totp-clock { color: #fbbf24; }
+  .totp-note { color: var(--color-text-secondary); max-width: 40rem; }
+
+  .totp-options {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.6rem 0.75rem;
+  }
+  .totp-opt .tool-input { width: 100%; }
+
+  .totp-uri-block,
   .totp-qr-block { display: flex; flex-direction: column; gap: 0.4rem; }
-  .totp-qr-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .totp-uri-label { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+  .totp-uri-input { width: 100%; font-size: 0.78rem; color: var(--color-text-secondary); }
 
-  #totp-qr-canvas-wrap canvas {
+  #totp-qr-canvas-wrap :global(canvas) {
     border-radius: var(--radius-sm);
     border: 1px solid var(--color-border);
     display: block;
+  }
+
+  @media (max-width: 900px) {
+    .totp-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 </style>
