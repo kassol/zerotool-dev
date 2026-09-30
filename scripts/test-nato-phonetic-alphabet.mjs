@@ -8,7 +8,7 @@
 //
 // Covers: the 26 letter code words equal the ICAO Annex 10 list (Alfa and Juliett, as on
 // icao.int "Alphabet – Radiotelephony" and in 無線局運用規則 別表第五号); digits 0–9; case-insensitive
-// lookup; spaces become "/" and do not count as characters; full-width letters, digits and the
+// lookup; spaces become "/", do not count as characters and use the localized space label in table rows; full-width letters, digits and the
 // ideographic space (U+3000) match after NFKC; symbols and kana give the unknown marker; an
 // emoji outside the BMP is one row; the ja page examples; 4-language STRINGS have the same keys.
 //
@@ -44,7 +44,8 @@ function eq(name, actual, expected) {
   const e = JSON.stringify(expected);
   check(name, a === e, 'got ' + a + ', expected ' + e);
 }
-const words = (text) => E.convert(text, '[?]').codes.join(' ');
+const conv = (text) => E.convert(text, '[?]', '(space)');
+const words = (text) => conv(text).codes.join(' ');
 
 // ---------- code word table ----------
 const ICAO = ['Alfa', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India',
@@ -59,12 +60,12 @@ eq('table has 36 entries', Object.keys(E.NATO).length, 36);
 eq('lower case', words('hello'), 'Hotel Echo Lima Lima Oscar');
 eq('mixed case', words('HeLLo'), 'Hotel Echo Lima Lima Oscar');
 eq('space → /', words('a b'), 'Alfa / Bravo');
-eq('space not counted', E.convert('a b', '[?]').chars, 2);
-eq('space row', E.convert(' ', '[?]').rows, [{ ch: '(space)', code: '—' }]);
+eq('space not counted', conv('a b').chars, 2);
+eq('space row uses the caller\'s label', E.convert(' ', '[?]', '（スペース）').rows, [{ ch: '（スペース）', code: '—' }]);
 eq('unknown marker is the caller\'s', words('@'), '[?]');
 eq('symbols', words('a.b@c'), 'Alfa [?] Bravo [?] Charlie');
 eq('kana is unknown', words('あ'), '[?]');
-eq('empty text', E.convert('', '[?]'), { rows: [], codes: [], chars: 0 });
+eq('empty text', conv(''), { rows: [], codes: [], chars: 0 });
 eq('prototype keys are unknown', words('_'), '[?]');
 
 // ---------- full-width input (Japanese IME) ----------
@@ -72,11 +73,11 @@ eq('full-width letters', words('ＪＡ'), 'Juliett Alfa');
 eq('full-width lower case', words('ｊａ'), 'Juliett Alfa');
 eq('full-width digits', words('１２３'), 'One Two Three');
 eq('ideographic space', words('Ａ　Ｂ'), 'Alfa / Bravo');
-eq('full-width row keeps the typed character', E.convert('Ａ', '[?]').rows, [{ ch: 'Ａ', code: 'Alfa' }]);
+eq('full-width row keeps the typed character', conv('Ａ').rows, [{ ch: 'Ａ', code: 'Alfa' }]);
 
 // ---------- code points ----------
-eq('emoji outside the BMP is one row', E.convert('a😀', '[?]').rows.length, 2);
-eq('emoji counted once', E.convert('😀', '[?]').chars, 1);
+eq('emoji outside the BMP is one row', conv('a😀').rows.length, 2);
+eq('emoji counted once', conv('😀').chars, 1);
 
 // ---------- ja page examples ----------
 eq('ja example: JA73AB', words('JA73AB'), 'Juliett Alfa Seven Three Alfa Bravo');
@@ -93,6 +94,8 @@ if (stringsMatch) {
   ['zh', 'ja', 'ko'].forEach((lang) => eq('STRINGS ' + lang + ' keys', Object.keys(STRINGS[lang]).sort().join(','), keys));
   const i18nKeys = [...source.matchAll(/data-i18n(?:-ph)?="([^"]+)"/g)].map((m) => m[1]);
   i18nKeys.forEach((k) => check('STRINGS.en has ' + k, k in STRINGS.en));
+  eq('space label per language', ['en', 'zh', 'ja', 'ko'].map((l) => STRINGS[l].space), ['(space)', '（空格）', '（スペース）', '(공백)']);
+  check('render passes the localized space label', source.includes('convert(text, t.unknown, t.space)'));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
