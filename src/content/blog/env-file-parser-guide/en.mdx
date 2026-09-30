@@ -2,6 +2,7 @@
 title: "Env File Parser Online: Parse and Inspect .env Files Instantly"
 description: "Parse .env files online without uploading data. Visualize key-value pairs, catch syntax errors, and export to JSON — all in your browser."
 pubDate: 2026-04-07
+updatedDate: 2026-09-30
 lang: "en"
 tags: ["env file", "dotenv", "environment variables", "developer-tools", "env file parser"]
 ---
@@ -29,7 +30,7 @@ STRIPE_SECRET_KEY=sk_live_...
 SENDGRID_API_KEY=SG.xxxxxxxx
 ```
 
-Libraries like `python-dotenv`, `godotenv`, `dotenv-java`, and Rails' built-in dotenv support mean your application reads these values at startup and injects them into `process.env` (Node.js), `os.environ` (Python), or equivalent.
+Libraries like `python-dotenv`, `godotenv`, `dotenv-java`, and the `dotenv` gem for Ruby mean your application reads these values at startup and injects them into `process.env` (Node.js), `os.environ` (Python), or equivalent.
 
 ## .env Syntax Rules
 
@@ -97,17 +98,18 @@ These mistakes are invisible in a text editor but cause real runtime failures:
 **Spaces around the equals sign**
 
 ```bash
-# Wrong — most parsers treat "KEY " as the key name
+# Works in dotenv 18 (Node) and python-dotenv 1.2,
+# but `source .env` in bash fails: "KEY: command not found"
 KEY = value
 
-# Correct
+# Works everywhere
 KEY=value
 ```
 
 **Unquoted values with special characters**
 
 ```bash
-# Wrong — the # starts a comment, truncating the value
+# dotenv 18 (Node) reads "abc"; python-dotenv 1.2 reads "abc#123"
 PASSWORD=abc#123
 
 # Correct
@@ -123,15 +125,16 @@ DATABASE_URL=postgres://prod-host/mydb  # silently overwrites the first
 
 **Windows-style line endings (CRLF)**
 
-`.env` files created on Windows may have `\r\n` line endings. Some parsers handle this; others produce key names ending in `\r`, causing subtle `KEY\r !== KEY` comparison failures.
+`.env` files created on Windows may have `\r\n` line endings. dotenv 18 and python-dotenv 1.2 remove the `\r`. A bash `source .env` keeps it at the end of each value, so `"$KEY" = "value"` comparisons fail.
 
-**Missing quotes on values with equals signs**
+**Values with equals signs**
 
 ```bash
-# Wrong — some parsers stop at the second =
+# dotenv 18 and python-dotenv 1.2 split only at the first =,
+# so both read "abc=def=ghi"
 API_KEY=abc=def=ghi
 
-# Correct
+# Quotes give the same result and are clearer
 API_KEY="abc=def=ghi"
 ```
 
@@ -281,6 +284,8 @@ For quick inspection, debugging, or format conversion without running any code, 
 - Spot syntax errors with line-level highlighting
 - Detect duplicate keys
 - Export parsed data to JSON
+
+The tool reads the file line by line and does less than dotenv: an `export ` prefix stays in the key name, text after `#` on a value line stays in the value, `${VAR}` is not expanded, `\n` in double quotes is not turned into a line break, and a quoted value that spans several lines shows "Missing = sign" errors.
 
 No data is sent to any server — the parsing runs entirely client-side.
 

@@ -2,7 +2,7 @@
 title: "TOTP Generator Online: Generate 2FA Codes & Learn RFC 6238"
 description: "Generate TOTP and 2FA codes online for testing, learn how RFC 6238 works, and implement time-based one-time passwords securely in your app."
 pubDate: 2026-04-07
-updatedDate: 2026-05-05
+updatedDate: 2026-09-30
 lang: "en"
 tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238", "developer-tools"]
 ---
@@ -18,17 +18,17 @@ Two-factor authentication (2FA) has become standard practice for securing accoun
 | What is TOTP? | A time-based one-time password generated from a shared secret and the current 30-second time window. |
 | What is it used for? | Authenticator app codes for 2FA/MFA login flows. |
 | What do I need to test it? | A base32 secret, usually the `secret` value from an `otpauth://` URI. |
-| Is it sent to a server? | No. ZeroTool generates and verifies TOTP codes locally in your browser. |
+| Is it sent to a server? | No. ZeroTool generates TOTP codes locally in your browser. |
 
 ## What Is TOTP?
 
 TOTP (Time-Based One-Time Password) is defined in [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238). It generates a short numeric code (typically 6 digits) that:
 
 - Changes every 30 seconds
-- Can only be used once
+- Is accepted only once: the server must reject a second use of the same code ([RFC 6238 §5.2](https://datatracker.ietf.org/doc/html/rfc6238#section-5.2))
 - Requires a shared secret known to both the server and the authenticator
 
-The algorithm is deterministic — given the same secret and the same time window, it always produces the same code. "One-time" means each code is only valid for its 30-second window, preventing replay attacks.
+The algorithm is deterministic — given the same secret and the same time window, it always produces the same code. A code is valid only for its 30-second window, but the window alone does not stop replay: the server must also remember the last accepted time step and reject the same code again.
 
 ## How TOTP Works: The Math
 
@@ -89,18 +89,18 @@ No data is sent to a server. Computation runs in your browser.
 ### Node.js Implementation
 
 ```js
-import { authenticator } from 'otplib';
+import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
 
 // Enrollment
-const secret = authenticator.generateSecret(); // e.g. "JBSWY3DPEHPK3PXP"
-const otpauthUrl = authenticator.keyuri('user@example.com', 'MyApp', secret);
+const secret = generateSecret(); // e.g. "JBSWY3DPEHPK3PXP"
+const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
 
 // Generate QR code (using qrcode library)
 import qrcode from 'qrcode';
 const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
 
 // Verification (at login)
-const isValid = authenticator.verify({ token: userCode, secret });
+const { valid } = await verify({ secret, token: userCode });
 ```
 
 ### Python Implementation
@@ -119,7 +119,7 @@ img = qrcode.make(uri)
 img.save("qr.png")
 
 # Verification
-is_valid = totp.verify(user_code)  # accepts current ±1 time step
+is_valid = totp.verify(user_code, valid_window=1)  # current step ±1 (default is 0)
 ```
 
 ### Go Implementation
@@ -142,7 +142,7 @@ valid := totp.Validate(userCode, secret)
 
 ## TOTP Parameters
 
-RFC 6238 allows varying the defaults. Most authenticator apps support all standard variations:
+RFC 6238 allows varying the defaults, but not every authenticator app reads them. Google's [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) notes that Google Authenticator ignores `algorithm` and `period`, and ignores `digits` on Android:
 
 | Parameter | Default | Common Alternatives |
 |-----------|---------|---------------------|
@@ -150,7 +150,7 @@ RFC 6238 allows varying the defaults. Most authenticator apps support all standa
 | Digits | 6 | 8 |
 | Period | 30 seconds | 60 seconds |
 
-**Stick to defaults (SHA-1, 6 digits, 30s)** unless you have a specific requirement. Non-standard settings can cause compatibility issues with some authenticator apps, and SHA-1 is not a security concern here — HMAC-SHA1 with a 160-bit secret key provides 80 bits of security, which is sufficient for OTP generation (brute-forcing 6 digits in 30 seconds is already infeasible).
+**Stick to defaults (SHA-1, 6 digits, 30s)** unless you have a specific requirement. Non-standard settings can cause compatibility issues with some authenticator apps, and SHA-1 is not the weak point here: the known SHA-1 collision attacks do not break HMAC-SHA1 ([RFC 6194 §3.3](https://datatracker.ietf.org/doc/html/rfc6194#section-3.3)). The weak point is the 6-digit code itself — one guess in a million succeeds — so the server must limit failed attempts ([RFC 4226 §7.3](https://datatracker.ietf.org/doc/html/rfc4226#section-7.3)).
 
 ## Clock Synchronization and Drift
 

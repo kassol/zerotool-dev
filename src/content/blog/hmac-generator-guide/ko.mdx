@@ -2,7 +2,9 @@
 title: "HMAC-SHA256 완전 가이드: 원리·Webhook 서명 검증·온라인 생성"
 description: "HMAC의 동작 원리·일반 해시와의 차이·Webhook 서명 검증·JWT 서명 적용을 해설. JavaScript·Python·Go 구현 예제와 브라우저에서 즉시 확인하는 방법을 소개합니다."
 pubDate: 2026-04-07
+updatedDate: 2026-09-30
 lang: "ko"
+noindex: true
 tags: ["hmac", "hmac-sha256", "message-authentication", "cryptography", "developer-tools"]
 ---
 
@@ -24,14 +26,14 @@ HMAC(K, M) = H((K ⊕ opad) || H((K ⊕ ipad) || M))
 |---|---|---|
 | 비밀 키 필요 | 아니오 | 예 |
 | 변조 감지 | 예 | 예 |
-| 발신자 신원 증명 | 아니오 | 예 |
+| 발신자가 키를 가졌음을 증명 | 아니오 | 예 |
 | 누구나 위조 가능 | 예 | 아니오 |
 
 ## 주요 사용 사례
 
 ### Webhook 서명 검증
 
-GitHub·Stripe·Twilio 같은 서비스는 HMAC-SHA256으로 Webhook 페이로드에 서명합니다. Webhook이 수신되면 공유 비밀 키로 요청 본문의 HMAC을 계산하고 헤더의 서명과 비교합니다.
+GitHub와 Stripe는 HMAC-SHA256으로 Webhook 페이로드에 서명합니다([GitHub](https://docs.github.com/ko/webhooks/using-webhooks/validating-webhook-deliveries), [Stripe](https://docs.stripe.com/webhooks#verify-manually)). Twilio의 `X-Twilio-Signature`는 HMAC-SHA1입니다([Twilio](https://www.twilio.com/docs/usage/webhooks/webhooks-security)). Webhook이 수신되면 공유 비밀 키로 요청 본문의 HMAC을 계산하고 헤더의 서명과 비교합니다.
 
 ```
 X-Hub-Signature-256: sha256=3d23ab...
@@ -41,7 +43,7 @@ X-Hub-Signature-256: sha256=3d23ab...
 
 ### API 요청 서명(AWS Signature V4)
 
-AWS는 HMAC-SHA256으로 API 요청에 서명합니다. 서명은 리전·서비스·날짜·비밀 키에 요청을 결합하는 여러 HMAC 연산의 체인입니다. 이를 통해 재생 공격을 방지하고 인증 위조를 불가능하게 합니다.
+AWS는 HMAC-SHA256으로 API 요청에 서명합니다. 서명은 리전·서비스·날짜·비밀 키에 요청을 결합하는 여러 HMAC 연산의 체인입니다. 서명에는 타임스탬프가 들어가며, AWS는 타임스탬프보다 5분 넘게 늦게 도착한 요청을 거부하므로 재전송할 수 있는 시간이 제한됩니다([AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing-elements.html)).
 
 ### JWT 서명(HS256)
 
@@ -65,17 +67,17 @@ HMAC이 필요한 상황에서 일반 SHA256을 사용하지 마세요. 오버�
 | 알고리즘 | 출력 길이 | 비고 |
 |---------|---------|-----|
 | HMAC-SHA-256 | 256비트(64자 16진수) | 대부분 용도의 기본 선택 |
-| HMAC-SHA-384 | 384비트(96자 16진수) | 더 높은 보안 마진, 느림 |
-| HMAC-SHA-512 | 512비트(128자 16진수) | 64비트 플랫폼에서 선호 |
+| HMAC-SHA-384 | 384비트(96자 16진수) | SHA-512를 384비트로 자른 것. 속도는 SHA-512와 같음 |
+| HMAC-SHA-512 | 512비트(128자 16진수) | 64비트 CPU에서는 SHA-256보다 빠른 경우가 많음 |
 
-새 구현에서는 **HMAC-MD5·HMAC-SHA1을 사용하지 마세요**. HMAC이 기반 해시의 충돌 취약점을 어느 정도 완화하지만, 이들은 많은 컴플라이언스 프레임워크에서 금지된 레거시 알고리즘입니다.
+새 구현에서는 **HMAC-MD5·HMAC-SHA1을 사용하지 마세요**. HMAC이 기반 해시의 충돌 취약점을 어느 정도 완화하지만, MD5는 NIST 승인 해시가 아니고, NIST는 SHA-1을 2030년 말까지 퇴출할 계획입니다([NIST](https://www.nist.gov/news-events/news/2022/12/nist-retires-sha-1-cryptographic-algorithm)). HMAC-SHA1은 지금도 쓸 수 있지만(Twilio가 사용), 새 설계에는 SHA-256을 쓰세요.
 
 ## 출력 형식
 
 HMAC 출력은 원시 바이트로, 다음 중 하나로 인코딩할 수 있습니다:
 
 - **Hex** — `3d23ab4f...` — 바이트당 2자, 대부분 API의 표준
-- **Base64** — `PSOrT...` — 더 압축적, HTTP 헤더와 JWT에서 사용
+- **Base64** — `kOsYLYOW...` — 더 압축적, HTTP 헤더에서 사용. JWT는 URL 안전한 Base64url을 사용
 
 둘 다 동일한 바이트를 인코딩합니다. 수동 디버깅에는 Hex(읽기 쉬움), 바이트 효율이 중요한 경우에는 Base64(HTTP 헤더·토큰)를 사용하세요.
 
@@ -100,7 +102,7 @@ async function hmacSha256(key, message) {
 }
 
 const sig = await hmacSha256('my-secret-key', 'hello world');
-// → "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+// → "90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad"
 ```
 
 ### Node.js
@@ -113,7 +115,7 @@ const hmac = crypto.createHmac('sha256', 'my-secret-key')
   .digest('hex');
 
 console.log(hmac);
-// b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+// 90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad
 ```
 
 ### Python
@@ -127,7 +129,7 @@ message = b'hello world'
 
 signature = hmac.new(key, message, hashlib.sha256).hexdigest()
 print(signature)
-# b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+# 90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad
 ```
 
 ### Go
@@ -160,7 +162,10 @@ if (receivedSig === expectedSig) { ... }
 
 // 올바름 — 상수 시간 비교
 const crypto = require('crypto');
-if (crypto.timingSafeEqual(Buffer.from(receivedSig), Buffer.from(expectedSig))) { ... }
+const a = Buffer.from(receivedSig);
+const b = Buffer.from(expectedSig);
+// 길이가 다르면 timingSafeEqual이 예외를 던지므로 길이를 먼저 비교
+if (a.length === b.length && crypto.timingSafeEqual(a, b)) { ... }
 ```
 
 ### 타임스탬프 포함
@@ -171,7 +176,7 @@ if (crypto.timingSafeEqual(Buffer.from(receivedSig), Buffer.from(expectedSig))) 
 HMAC-SHA256(secret, timestamp + "." + body)
 ```
 
-GitHub Webhook은 5분 허용 윈도우로 이 패턴을 사용합니다.
+Stripe가 이 방식을 씁니다. `Stripe-Signature` 헤더에 타임스탬프가 있고, 공식 라이브러리는 기본적으로 5분보다 오래된 이벤트를 거부합니다. GitHub는 본문에만 서명하므로 타임스탬프 확인이 없습니다.
 
 ## 온라인 HMAC 생성기 사용하기
 

@@ -2,7 +2,9 @@
 title: ".envファイルをオンラインで解析・検証する完全ガイド"
 description: ".envファイルの構文ルール・よくあるミス・各言語でのパース方法を解説。ブラウザ上でキーバリュー確認・構文チェック・JSON変換まで即座に実行できます。"
 pubDate: 2026-04-07
+updatedDate: 2026-09-30
 lang: "ja"
+noindex: true
 tags: ["env file", "dotenv", "environment variables", "developer-tools", "env file parser"]
 ---
 
@@ -97,17 +99,18 @@ export DATABASE_URL=postgres://localhost/mydb
 **= の前後にスペースを入れる**
 
 ```bash
-# NG — ほとんどのパーサーが "KEY " をキー名として扱う
+# dotenv 18（Node）と python-dotenv 1.2 は読めるが、
+# bash の source .env は "KEY: command not found" になる
 KEY = value
 
-# OK
+# どこでも動く
 KEY=value
 ```
 
 **特殊文字を含む値をクォートしない**
 
 ```bash
-# NG — # がコメントの開始と見なされ値が途中で切れる
+# dotenv 18（Node）は "abc"、python-dotenv 1.2 は "abc#123" と読む
 PASSWORD=abc#123
 
 # OK
@@ -123,15 +126,16 @@ DATABASE_URL=postgres://prod-host/mydb  # 最初の値が警告なしに上書�
 
 **Windows スタイルの改行コード（CRLF）**
 
-Windows で作成した `.env` ファイルは `\r\n` 改行を含むことがあります。対応していないパーサーでは `KEY\r` というキー名になり、`KEY\r !== KEY` の比較ミスが起きます。
+Windows で作成した `.env` ファイルは `\r\n` 改行を含むことがあります。dotenv 18 と python-dotenv 1.2 は `\r` を取り除きますが、bash の `source .env` では各値の末尾に残り、文字列の比較が失敗します。
 
-**= を含む値をクォートしない**
+**= を含む値**
 
 ```bash
-# NG — パーサーによっては2つ目の = で値が切れる
+# dotenv 18 と python-dotenv 1.2 は最初の = でだけ分割し、
+# どちらも "abc=def=ghi" と読む
 API_KEY=abc=def=ghi
 
-# OK
+# クォートしても結果は同じで、意図が明確になる
 API_KEY="abc=def=ghi"
 ```
 
@@ -281,6 +285,8 @@ print(json.dumps(dict(config), indent=2))
 - 行単位のハイライトで構文エラーを検出
 - 重複キーを検出
 - 解析データを JSON にエクスポート
+
+ツールはファイルを 1 行ずつ読むため、dotenv より処理が少なくなります。`export ` はキー名に残り、値の行の `#` 以降も値に含まれ、`${VAR}` は展開されず、ダブルクォート内の `\n` は改行になりません。複数行にわたるクォート値は「Missing = sign」エラーになります。
 
 データはいかなるサーバーにも送信されず、すべてクライアントサイドで処理されます。
 

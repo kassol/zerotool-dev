@@ -2,7 +2,9 @@
 title: ".env 파일 온라인 파싱·검증 완전 가이드"
 description: ".env 파일 문법 규칙·자주 하는 실수·각 언어별 파싱 방법을 해설. 브라우저에서 키-값 확인·문법 오류 검사·JSON 변환까지 즉시 실행할 수 있습니다."
 pubDate: 2026-04-07
+updatedDate: 2026-09-30
 lang: "ko"
+noindex: true
 tags: ["env file", "dotenv", "environment variables", "developer-tools", "env file parser"]
 ---
 
@@ -97,17 +99,18 @@ export DATABASE_URL=postgres://localhost/mydb
 **= 앞뒤에 공백 추가**
 
 ```bash
-# NG — 대부분의 파서가 "KEY "를 키 이름으로 처리
+# dotenv 18(Node)과 python-dotenv 1.2는 읽지만,
+# bash의 source .env는 "KEY: command not found" 오류
 KEY = value
 
-# OK
+# 어디서나 동작
 KEY=value
 ```
 
 **특수 문자가 포함된 값을 따옴표로 감싸지 않음**
 
 ```bash
-# NG — #이 주석 시작으로 인식되어 값이 잘림
+# dotenv 18(Node)은 "abc", python-dotenv 1.2는 "abc#123"으로 읽음
 PASSWORD=abc#123
 
 # OK
@@ -123,15 +126,16 @@ DATABASE_URL=postgres://prod-host/mydb  # 경고 없이 첫 번째 값을 덮어
 
 **Windows 스타일 줄 바꿈(CRLF)**
 
-Windows에서 만든 `.env` 파일에는 `\r\n` 줄 바꿈이 포함될 수 있습니다. 미지원 파서에서는 `KEY\r`이라는 키 이름이 되어 `KEY\r !== KEY` 비교 오류가 발생합니다.
+Windows에서 만든 `.env` 파일에는 `\r\n` 줄 바꿈이 포함될 수 있습니다. dotenv 18과 python-dotenv 1.2는 `\r`을 제거하지만, bash의 `source .env`는 각 값 끝에 남겨 문자열 비교가 실패합니다.
 
-**= 가 포함된 값을 따옴표로 감싸지 않음**
+**=가 포함된 값**
 
 ```bash
-# NG — 일부 파서는 두 번째 =에서 값을 자름
+# dotenv 18과 python-dotenv 1.2는 첫 번째 =에서만 나누므로
+# 둘 다 "abc=def=ghi"로 읽음
 API_KEY=abc=def=ghi
 
-# OK
+# 따옴표를 써도 결과는 같고 의도가 분명해짐
 API_KEY="abc=def=ghi"
 ```
 
@@ -281,6 +285,8 @@ print(json.dumps(dict(config), indent=2))
 - 줄 단위 하이라이트로 문법 오류 감지
 - 중복 키 감지
 - 파싱된 데이터를 JSON으로 내보내기
+
+도구는 파일을 한 줄씩 읽으므로 dotenv보다 처리하는 범위가 좁습니다. `export ` 접두사는 키 이름에 남고, 값 줄의 `#` 뒤 텍스트도 값에 포함되며, `${VAR}`는 확장되지 않고, 큰따옴표 안의 `\n`은 줄바꿈이 되지 않습니다. 여러 줄에 걸친 따옴표 값은 「Missing = sign」 오류가 납니다.
 
 어떤 서버에도 데이터가 전송되지 않으며, 모두 클라이언트 사이드에서 처리됩니다.
 

@@ -2,7 +2,9 @@
 title: "HMAC 生成器：SHA-256 消息认证码原理与实战指南"
 description: "深入讲解 HMAC 工作原理、与普通哈希的本质区别，覆盖 Webhook 签名验证、JWT、API 签名等场景，附 Python/JS/Go 代码示例。"
 pubDate: 2026-04-06
+updatedDate: 2026-09-30
 lang: "zh"
+noindex: true
 tags: ["hmac", "hmac-sha256", "消息认证码", "密码学", "开发工具"]
 ---
 
@@ -24,14 +26,14 @@ HMAC(K, M) = H((K ⊕ opad) || H((K ⊕ ipad) || M))
 |---|---|---|
 | 需要密钥 | 否 | 是 |
 | 检测篡改 | 是 | 是 |
-| 证明发送方身份 | 否 | 是 |
+| 证明发送方持有密钥 | 否 | 是 |
 | 任何人都能伪造 | 是 | 否 |
 
 ## 主要使用场景
 
 ### Webhook 签名验证
 
-GitHub、Stripe、微信支付等平台发送 Webhook 时，会用 HMAC-SHA256 对请求体签名。你的服务器收到请求后，用共享密钥重新计算 HMAC，与请求头中的签名对比——匹配则说明消息真实且未被篡改。
+GitHub、Stripe 发送 Webhook 时会用 HMAC-SHA256 对请求体签名（[GitHub](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries)、[Stripe](https://docs.stripe.com/webhooks#verify-manually)）；Twilio 的 `X-Twilio-Signature` 用的是 HMAC-SHA1（[Twilio](https://www.twilio.com/docs/usage/webhooks/webhooks-security)）。你的服务器收到请求后，用共享密钥重新计算 HMAC，与请求头中的签名对比——匹配则说明消息真实且未被篡改。
 
 ```
 X-Hub-Signature-256: sha256=3d23ab...
@@ -41,7 +43,7 @@ X-Hub-Signature-256: sha256=3d23ab...
 
 ### API 请求签名（AWS Signature V4）
 
-AWS 用 HMAC-SHA256 对 API 请求签名，将请求绑定到区域、服务、日期和密钥。这防止了请求重放攻击，并确保授权无法伪造。
+AWS 用 HMAC-SHA256 对 API 请求签名，将请求绑定到区域、服务、日期和密钥。签名里带有时间戳，AWS 会拒绝晚于时间戳 5 分钟以上到达的请求，以此限制重放（[AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing-elements.html)）。
 
 ### JWT 签名（HS256）
 
@@ -65,17 +67,17 @@ AWS 用 HMAC-SHA256 对 API 请求签名，将请求绑定到区域、服务、�
 | 算法 | 输出长度 | 说明 |
 |------|---------|------|
 | HMAC-SHA-256 | 256 位（64 个十六进制字符） | 绝大多数场景的默认选择 |
-| HMAC-SHA-384 | 384 位（96 个十六进制字符） | 更高安全裕量，稍慢 |
-| HMAC-SHA-512 | 512 位（128 个十六进制字符） | 64 位平台性能更优 |
+| HMAC-SHA-384 | 384 位（96 个十六进制字符） | SHA-512 截短到 384 位，速度与 SHA-512 相同 |
+| HMAC-SHA-512 | 512 位（128 个十六进制字符） | 在 64 位 CPU 上常比 SHA-256 更快 |
 
-**避免使用 HMAC-MD5 和 HMAC-SHA1**——虽然 HMAC 构造一定程度上缓解了底层哈希的碰撞漏洞，但这两个算法已被很多合规框架明确禁止，新项目不应使用。
+**避免使用 HMAC-MD5 和 HMAC-SHA1**——虽然 HMAC 构造一定程度上缓解了底层哈希的碰撞漏洞，但 MD5 不是 NIST 批准的哈希算法，NIST 也计划在 2030 年底前停用 SHA-1（[NIST](https://www.nist.gov/news-events/news/2022/12/nist-retires-sha-1-cryptographic-algorithm)）。HMAC-SHA1 目前仍可使用（Twilio 就在用），新设计请选 SHA-256。
 
 ## 输出格式
 
 HMAC 输出是原始字节，通常编码为：
 
 - **十六进制（Hex）** — `3d23ab4f...` — 每字节 2 个字符，绝大多数 API 的标准格式
-- **Base64** — `PSOrT...` — 更紧凑，常用于 HTTP 头和 JWT
+- **Base64** — `kOsYLYOW...` — 更紧凑，常用于 HTTP 头；JWT 用的是 URL 安全的变体 Base64url
 
 两种格式编码的是相同字节。手动调试时用 Hex（可读性好）；注重字节效率时用 Base64。
 
@@ -93,7 +95,7 @@ message = b'hello world'
 # Hex 格式
 signature_hex = hmac.new(key, message, hashlib.sha256).hexdigest()
 print(signature_hex)
-# b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+# 90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad
 
 # Base64 格式
 import base64
@@ -111,7 +113,7 @@ const signature = crypto.createHmac('sha256', 'my-secret-key')
   .digest('hex');
 
 console.log(signature);
-// b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+// 90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad
 ```
 
 ### 浏览器（Web Crypto API）
@@ -172,7 +174,10 @@ if hmac.compare_digest(received_sig, expected_sig):
 ```js
 // Node.js 正确方式
 const crypto = require('crypto');
-if (crypto.timingSafeEqual(Buffer.from(received), Buffer.from(expected))) {
+const a = Buffer.from(received);
+const b = Buffer.from(expected);
+// 长度不同时 timingSafeEqual 会抛异常，先比较长度
+if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
     ...
 }
 ```
@@ -186,7 +191,7 @@ payload = f"{timestamp}.{body}"
 signature = hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 ```
 
-收到请求时验证时间戳在合理范围内（通常 ±5 分钟）。GitHub Webhook 就使用这种模式。
+收到请求时验证时间戳在合理范围内（通常 5 分钟）。Stripe 用的就是这种模式：`Stripe-Signature` 头带时间戳，官方库默认拒绝超过 5 分钟的事件。GitHub 只对请求体签名，没有时间戳校验。
 
 ## 在线 HMAC 生成工具
 

@@ -2,7 +2,9 @@
 title: "TOTP 验证码生成器与 2FA 原理详解：时间一次性密码完整指南"
 description: "深入讲解 TOTP/2FA 原理（RFC 6238）、HMAC 计算过程、时间窗口机制，附 Node.js/Python/Go 实现代码，在线生成测试验证码。"
 pubDate: 2026-04-07
+updatedDate: 2026-09-30
 lang: "zh"
+noindex: true
 tags: ["totp", "2fa", "otp", "身份验证", "安全", "开发工具"]
 ---
 
@@ -13,10 +15,10 @@ tags: ["totp", "2fa", "otp", "身份验证", "安全", "开发工具"]
 TOTP（Time-Based One-Time Password，基于时间的一次性密码）由 [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238) 定义。它生成一个短数字码（通常 6 位），具有以下特性：
 
 - 每 30 秒更新一次
-- 每个码只能使用一次
+- 只能被接受一次：服务器必须拒绝同一个码的第二次使用（[RFC 6238 §5.2](https://datatracker.ietf.org/doc/html/rfc6238#section-5.2)）
 - 需要服务器和验证器共享一个密钥
 
-算法是确定性的——相同的密钥和相同的时间窗口，必然产生相同的验证码。"一次性"意味着每个码只在 30 秒窗口内有效，防止重放攻击。
+算法是确定性的——相同的密钥和相同的时间窗口，必然产生相同的验证码。每个码只在 30 秒窗口内有效，但窗口本身挡不住重放：服务器还要记住最后接受的时间步，拒绝再次提交的同一个码。
 
 ## TOTP 的计算过程
 
@@ -77,18 +79,18 @@ otpauth://totp/Service:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Service&a
 ### Node.js 实现
 
 ```js
-import { authenticator } from 'otplib';
+import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
 
 // 开启 2FA
-const secret = authenticator.generateSecret(); // 例如 "JBSWY3DPEHPK3PXP"
-const otpauthUrl = authenticator.keyuri('user@example.com', 'MyApp', secret);
+const secret = generateSecret(); // 例如 "JBSWY3DPEHPK3PXP"
+const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
 
 // 生成二维码（使用 qrcode 库）
 import qrcode from 'qrcode';
 const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
 
 // 验证（登录时）
-const isValid = authenticator.verify({ token: userCode, secret });
+const { valid } = await verify({ secret, token: userCode });
 ```
 
 ### Python 实现
@@ -107,7 +109,7 @@ img = qrcode.make(uri)
 img.save("qr.png")
 
 # 验证
-is_valid = totp.verify(user_code)  # 接受当前 ±1 个时间步长
+is_valid = totp.verify(user_code, valid_window=1)  # 当前 ±1 个时间步（默认 0）
 ```
 
 ### Go 实现
@@ -130,7 +132,7 @@ valid := totp.Validate(userCode, secret)
 
 ## TOTP 参数配置
 
-RFC 6238 允许修改默认参数，大多数验证器 App 支持标准变体：
+RFC 6238 允许修改默认参数，但不是每个验证器 App 都会读取。Google 的 [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) 写明 Google Authenticator 忽略 `algorithm` 和 `period`，Android 版还忽略 `digits`：
 
 | 参数 | 默认值 | 常见替代值 |
 |------|--------|------------|
@@ -138,7 +140,7 @@ RFC 6238 允许修改默认参数，大多数验证器 App 支持标准变体：
 | 位数 | 6 | 8 |
 | 时间步长 | 30 秒 | 60 秒 |
 
-**除非有特殊需求，坚持使用默认值（SHA-1，6 位，30 秒）。** 非标准配置可能导致部分验证器 App 不兼容。SHA-1 在这里不构成安全问题——HMAC-SHA1 配合 160 位密钥提供 80 位安全强度，对于 OTP 生成已经足够（在 30 秒内暴力破解 6 位数字本身就不可行）。
+**除非有特殊需求，坚持使用默认值（SHA-1，6 位，30 秒）。** 非标准配置可能导致部分验证器 App 不兼容。SHA-1 不是这里的弱点：已知的 SHA-1 碰撞攻击攻不破 HMAC-SHA1（[RFC 6194 §3.3](https://datatracker.ietf.org/doc/html/rfc6194#section-3.3)）。真正的弱点是 6 位数字本身——每猜一次有百万分之一的机会——所以服务器必须限制失败次数（[RFC 4226 §7.3](https://datatracker.ietf.org/doc/html/rfc4226#section-7.3)）。
 
 ## 时钟同步与漂移
 

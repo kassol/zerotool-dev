@@ -2,6 +2,7 @@
 title: "TOTP・2FA完全ガイド：時刻ベースワンタイムパスワードの仕組みと実装"
 description: "TOTPとRFC 6238の仕組みを解説。テストコードのオンライン生成、HMAC+タイムステップの原理、Node.js/Python/GoでのTOTP実装方法まで説明します。"
 pubDate: 2026-04-07
+updatedDate: 2026-09-30
 lang: "ja"
 tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238", "developer-tools"]
 ---
@@ -13,10 +14,10 @@ tags: ["totp", "2fa", "otp", "authentication", "security", "rfc6238", "developer
 TOTP（Time-Based One-Time Password）は[RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238)で定義されています。短い数値コード（通常6桁）を生成します：
 
 - 30秒ごとに変わる
-- 一度しか使えない
+- 受け付けられるのは一度だけ：同じコードの 2 回目の使用はサーバーが拒否しなければならない（[RFC 6238 §5.2](https://datatracker.ietf.org/doc/html/rfc6238#section-5.2)）
 - サーバーと認証アプリの両方が知っている共有シークレットを必要とする
 
-アルゴリズムは決定論的です。同じシークレットと同じタイムウィンドウであれば、常に同じコードが生成されます。「ワンタイム」とは各コードが30秒のウィンドウ内でのみ有効であることを意味し、リプレイ攻撃を防ぎます。
+アルゴリズムは決定論的です。同じシークレットと同じタイムウィンドウであれば、常に同じコードが生成されます。各コードは 30 秒のウィンドウ内でのみ有効ですが、それだけではリプレイは防げません。サーバーは最後に受け付けたタイムステップを記録し、同じコードの再提出を拒否する必要があります。
 
 ## TOTPの仕組み：数学的な原理
 
@@ -77,18 +78,18 @@ base32シークレットを入力すると、現在の有効なTOTPコードが�
 ### Node.js実装
 
 ```js
-import { authenticator } from 'otplib';
+import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
 
 // 登録
-const secret = authenticator.generateSecret(); // 例: "JBSWY3DPEHPK3PXP"
-const otpauthUrl = authenticator.keyuri('user@example.com', 'MyApp', secret);
+const secret = generateSecret(); // 例: "JBSWY3DPEHPK3PXP"
+const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
 
 // QRコード生成（qrcodeライブラリを使用）
 import qrcode from 'qrcode';
 const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
 
 // 検証（ログイン時）
-const isValid = authenticator.verify({ token: userCode, secret });
+const { valid } = await verify({ secret, token: userCode });
 ```
 
 ### Python実装
@@ -107,7 +108,7 @@ img = qrcode.make(uri)
 img.save("qr.png")
 
 # 検証
-is_valid = totp.verify(user_code)  # 現在±1タイムステップを受け入れる
+is_valid = totp.verify(user_code, valid_window=1)  # 現在±1タイムステップ（既定は 0）
 ```
 
 ### Go実装
@@ -130,7 +131,7 @@ valid := totp.Validate(userCode, secret)
 
 ## TOTPパラメーター
 
-RFC 6238ではデフォルト値を変更できます。ほとんどの認証アプリは標準的なバリエーションすべてをサポートしています：
+RFC 6238 ではデフォルト値を変更できますが、すべての認証アプリが読み取るわけではありません。Google の [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) には、Google Authenticator が `algorithm` と `period` を無視し、Android 版は `digits` も無視すると書かれています。
 
 | パラメーター | デフォルト | よくある代替値 |
 |-----------|---------|---------------------|
@@ -138,7 +139,7 @@ RFC 6238ではデフォルト値を変更できます。ほとんどの認証ア
 | 桁数 | 6 | 8 |
 | 期間 | 30秒 | 60秒 |
 
-特別な要件がない限り、**デフォルト（SHA-1、6桁、30秒）を使用してください**。非標準の設定は一部の認証アプリとの互換性問題を引き起こす可能性があります。SHA-1はここではセキュリティ上の問題ではありません。160ビットシークレットキーでのHMAC-SHA1は80ビットのセキュリティを提供し、30秒以内に6桁をブルートフォースするのは実質不可能です。
+特別な要件がない限り、**デフォルト（SHA-1、6桁、30秒）を使用してください**。非標準の設定は一部の認証アプリとの互換性問題を引き起こす可能性があります。ここでの弱点は SHA-1 ではありません。既知の SHA-1 衝突攻撃では HMAC-SHA1 は破れません（[RFC 6194 §3.3](https://datatracker.ietf.org/doc/html/rfc6194#section-3.3)）。弱点は 6 桁のコードそのもので、1 回の推測で 100 万分の 1 の確率で当たるため、サーバーは失敗回数を制限する必要があります（[RFC 4226 §7.3](https://datatracker.ietf.org/doc/html/rfc4226#section-7.3)）。
 
 ## クロック同期とドリフト
 
