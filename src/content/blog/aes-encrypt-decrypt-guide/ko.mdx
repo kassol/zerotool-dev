@@ -83,7 +83,7 @@ async function encrypt(plaintext, password) {
     {
       name: 'PBKDF2',
       salt,
-      iterations: 200_000,
+      iterations: 600_000,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -101,19 +101,21 @@ async function encrypt(plaintext, password) {
     data
   );
 
-  // salt + nonce + 암호문을 base64로 반환
+  // "v2:" + salt + nonce + 암호문의 base64를 반환(ZeroTool AES 도구와 같은 형식)
   const combined = new Uint8Array([
     ...salt,
     ...nonce,
     ...new Uint8Array(ciphertext)
   ]);
-  return btoa(String.fromCharCode(...combined));
+  return 'v2:' + btoa(String.fromCharCode(...combined));
 }
 
 // 복호화
 async function decrypt(base64, password) {
   const encoder = new TextEncoder();
-  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  // "v2:"는 60만 번, 접두사가 없으면 20만 번의 이전 형식
+  const iterations = base64.startsWith('v2:') ? 600_000 : 200_000;
+  const combined = Uint8Array.from(atob(base64.replace(/^v2:/, '')), c => c.charCodeAt(0));
 
   const salt       = combined.slice(0, 16);
   const nonce      = combined.slice(16, 28);
@@ -128,7 +130,7 @@ async function decrypt(base64, password) {
   );
 
   const key = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -150,10 +152,10 @@ async function decrypt(base64, password) {
 패스워드는 짧고 엔트로피가 낮아 AES 키로 직접 사용할 수 없습니다. PBKDF2는:
 
 1. 패스워드와 랜덤 솔트를 결합 (레인보우 테이블 공격 방어)
-2. SHA-256을 20만 번 반복 (브루트 포스 공격 비용 증가)
+2. SHA-256을 60만 번 반복 (브루트 포스 공격 비용 증가)
 3. 256비트의 암호학적으로 안전한 키를 출력
 
-위의 20만 번 반복은 이 페이지를 검증한 노트북(Node.js 24)에서 약 25ms가 걸렸습니다. 사용자에게는 부담이 없지만, 공격자도 코어 하나당 초당 약 40개의 비밀번호를 시도할 수 있습니다. [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2)는 PBKDF2-HMAC-SHA256에 60만 번을 권장합니다.
+위 코드는 60만 번 반복을 씁니다. [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2)가 PBKDF2-HMAC-SHA256에 권장하는 값입니다. 이 페이지를 검증한 노트북(Node.js 24)에서 60만 번은 약 73ms, 20만 번은 약 25ms가 걸려, 코어 하나당 초당 시도할 수 있는 비밀번호가 약 40개에서 약 14개로 줄어듭니다. `v2:` 접두사는 ZeroTool AES 도구의 형식이며, `decrypt`는 접두사가 없는 암호문(20만 번의 이전 형식)도 읽습니다.
 
 ## Python 구현
 
@@ -164,12 +166,12 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
-def derive_key(password: str, salt: bytes) -> bytes:
+def derive_key(password: str, salt: bytes, iterations: int = 600_000) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,           # 256비트
         salt=salt,
-        iterations=200_000,
+        iterations=iterations,
     )
     return kdf.derive(password.encode())
 
@@ -182,21 +184,23 @@ def encrypt(plaintext: str, password: str) -> str:
     ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
 
     payload = salt + nonce + ciphertext
-    return base64.b64encode(payload).decode()
+    return "v2:" + base64.b64encode(payload).decode()
 
 def decrypt(encoded: str, password: str) -> str:
-    payload    = base64.b64decode(encoded)
+    # "v2:"는 60만 번, 접두사가 없으면 20만 번의 이전 형식
+    iterations = 600_000 if encoded.startswith("v2:") else 200_000
+    payload    = base64.b64decode(encoded.removeprefix("v2:"))
     salt       = payload[:16]
     nonce      = payload[16:28]
     ciphertext = payload[28:]
 
-    key    = derive_key(password, salt)
+    key    = derive_key(password, salt, iterations)
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(nonce, ciphertext, None).decode()
 
 # 사용 예
 encrypted = encrypt("비밀 메시지", "my-password")
-print(encrypted)  # base64 인코딩된 salt+nonce+암호문+태그
+print(encrypted)  # "v2:" + salt+nonce+암호문+태그의 base64
 
 decrypted = decrypt(encrypted, "my-password")
 print(decrypted)  # 비밀 메시지

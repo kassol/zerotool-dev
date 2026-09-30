@@ -88,7 +88,7 @@ async function encrypt(plaintext, password) {
     {
       name: 'PBKDF2',
       salt,
-      iterations: 200_000,
+      iterations: 600_000,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -105,17 +105,19 @@ async function encrypt(plaintext, password) {
     data
   );
 
-  // 将 salt + nonce + 密文打包成 Base64
+  // 返回 "v2:" + salt + nonce + 密文的 Base64（与 ZeroTool AES 工具格式相同）
   const combined = new Uint8Array([
     ...salt, ...nonce, ...new Uint8Array(ciphertext)
   ]);
-  return btoa(String.fromCharCode(...combined));
+  return 'v2:' + btoa(String.fromCharCode(...combined));
 }
 
 // AES-GCM 解密
 async function decrypt(base64, password) {
   const encoder = new TextEncoder();
-  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  // "v2:" 表示 60 万次迭代；没有前缀是 20 万次迭代的旧格式
+  const iterations = base64.startsWith('v2:') ? 600_000 : 200_000;
+  const combined = Uint8Array.from(atob(base64.replace(/^v2:/, '')), c => c.charCodeAt(0));
 
   const salt = combined.slice(0, 16);
   const nonce = combined.slice(16, 28);
@@ -125,7 +127,7 @@ async function decrypt(base64, password) {
     'raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']
   );
   const key = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -144,10 +146,10 @@ async function decrypt(base64, password) {
 原始密码不适合直接作为 AES 密钥——密码短、熵值低。PBKDF2（基于密码的密钥派生函数 2）将密码"拉伸"成密码学密钥：
 
 1. 将密码与随机盐值组合（防止彩虹表攻击）
-2. 将组合通过 SHA-256 迭代 20 万次（让暴力破解变慢）
+2. 将组合通过 SHA-256 迭代 60 万次（让暴力破解变慢）
 3. 输出 256 位密钥
 
-上面的 20 万次迭代，在测试本文所用的笔记本上（Node.js 24）约需 25 ms。这对用户几乎无感，但也意味着攻击者每个 CPU 核每秒能试约 40 个密码。[OWASP 密码存储速查表](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2)建议 PBKDF2-HMAC-SHA256 使用 60 万次迭代。
+上面的代码用 60 万次迭代，这是 [OWASP 密码存储速查表](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2)对 PBKDF2-HMAC-SHA256 的建议值。在测试本文所用的笔记本上（Node.js 24），60 万次约需 73 ms，20 万次约需 25 ms，每个 CPU 核每秒能试的密码从约 40 个降到约 14 个。`v2:` 前缀是 ZeroTool AES 工具的格式；`decrypt` 也能读取没有前缀的密文，即 20 万次迭代的旧格式。
 
 ## Python 实现
 
@@ -158,12 +160,12 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
-def derive_key(password: str, salt: bytes) -> bytes:
+def derive_key(password: str, salt: bytes, iterations: int = 600_000) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,           # 256 位
         salt=salt,
-        iterations=200_000,
+        iterations=iterations,
     )
     return kdf.derive(password.encode())
 
@@ -177,18 +179,20 @@ def encrypt(plaintext: str, password: str) -> str:
     ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
 
     payload = salt + nonce + ciphertext
-    return base64.b64encode(payload).decode()
+    return "v2:" + base64.b64encode(payload).decode()
 
 def decrypt(encoded: str, password: str) -> str:
-    payload = base64.b64decode(encoded)
+    # "v2:" 表示 60 万次迭代；没有前缀是 20 万次迭代的旧格式
+    iterations = 600_000 if encoded.startswith("v2:") else 200_000
+    payload = base64.b64decode(encoded.removeprefix("v2:"))
     salt, nonce, ciphertext = payload[:16], payload[16:28], payload[28:]
-    key = derive_key(password, salt)
+    key = derive_key(password, salt, iterations)
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(nonce, ciphertext, None).decode()
 
 # 使用
 encrypted = encrypt("机密消息", "强密码123")
-print(encrypted)                      # Base64 编码的 salt+nonce+密文+标签
+print(encrypted)                      # "v2:" + salt+nonce+密文+标签的 Base64
 
 decrypted = decrypt(encrypted, "强密码123")
 print(decrypted)                      # 机密消息

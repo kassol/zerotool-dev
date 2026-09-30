@@ -105,6 +105,48 @@ for (const f of LEGACY) {
   await rejects('not Base64 fails', E.decryptText('pw', 'v2:@@@@'));
 }
 
+// ---------- guide code (4 languages) produces and reads the tool's format ----------
+// The JavaScript block of src/content/blog/aes-encrypt-decrypt-guide/{lang}.mdx must write
+// "v2:" ciphertext with 600,000 iterations, read the tool's output, and read the old format.
+// The Python block is run the same way when python3 with the cryptography package exists.
+{
+  const { execFileSync } = await import('node:child_process');
+  let hasPython = true;
+  try { execFileSync('python3', ['-c', 'import cryptography'], { stdio: 'ignore' }); } catch { hasPython = false; }
+  if (!hasPython) console.log('SKIP: python3 with cryptography not found, guide Python blocks not run');
+  const pw = 'correct horse battery staple';
+  const text = 'guide 例 🌍';
+  const fromTool = await E.encryptText(pw, text);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/blog/aes-encrypt-decrypt-guide/' + lang + '.mdx'), 'utf8');
+    const js = (mdx.match(/```javascript\n([\s\S]*?)```/) || [])[1];
+    check(lang + ' guide has a JavaScript block', !!js);
+    if (js) {
+      const G = new Function(js + '\nreturn { encrypt, decrypt };')();
+      const c = await G.encrypt(text, pw);
+      check(lang + ' guide JS writes v2:', c.startsWith('v2:'), c.slice(0, 6));
+      check(lang + ' guide JS output decrypts in the tool', (await E.decryptText(pw, c).catch((e) => e.message)) === text);
+      check(lang + ' guide JS output uses 600,000 iterations', (await independentDecrypt(pw, c.slice(3), 600000).catch(() => null)) === text);
+      check(lang + ' guide JS reads tool output', (await G.decrypt(fromTool, pw).catch((e) => e.message)) === text);
+      check(lang + ' guide JS reads old format', (await G.decrypt(LEGACY[0].ciphertext, LEGACY[0].password).catch((e) => e.message)) === LEGACY[0].plaintext);
+    }
+    const py = (mdx.match(/```python\n([\s\S]*?)```/) || [])[1];
+    check(lang + ' guide has a Python block', !!py);
+    if (py && hasPython) {
+      const harness = py + '\nimport sys, json\nd = json.load(sys.stdin)\nprint(json.dumps({"enc": encrypt(d["text"], d["pw"]), "dec": decrypt(d["tool"], d["pw"]), "legacy": decrypt(d["legacy"], d["legacyPw"])}))\n';
+      let r = null;
+      try {
+        const out = execFileSync('python3', ['-c', harness], { stdio: ['pipe', 'pipe', 'pipe'], input: JSON.stringify({ text, pw, tool: fromTool, legacy: LEGACY[0].ciphertext, legacyPw: LEGACY[0].password }) }).toString().trim().split('\n');
+        r = JSON.parse(out[out.length - 1]);
+      } catch (e) { r = { error: String(e.message).slice(0, 200) }; }
+      check(lang + ' guide Python writes v2:', typeof r.enc === 'string' && r.enc.startsWith('v2:'), JSON.stringify(r).slice(0, 120));
+      check(lang + ' guide Python output decrypts in the tool', typeof r.enc === 'string' && (await E.decryptText(pw, r.enc).catch(() => null)) === text);
+      check(lang + ' guide Python reads tool output', r.dec === text);
+      check(lang + ' guide Python reads old format', r.legacy === LEGACY[0].plaintext);
+    }
+  }
+}
+
 // ---------- STRINGS ----------
 {
   const m = source.match(/var STRINGS = (\{[\s\S]*?\n\s*\});/);

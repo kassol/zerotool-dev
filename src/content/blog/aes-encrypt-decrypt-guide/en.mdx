@@ -87,7 +87,7 @@ async function encrypt(plaintext, password) {
     {
       name: 'PBKDF2',
       salt,
-      iterations: 200_000,
+      iterations: 600_000,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -105,19 +105,21 @@ async function encrypt(plaintext, password) {
     data
   );
 
-  // Return salt + nonce + ciphertext as base64
+  // Return "v2:" + base64 of salt + nonce + ciphertext (same format as the ZeroTool AES tool)
   const combined = new Uint8Array([
     ...salt,
     ...nonce,
     ...new Uint8Array(ciphertext)
   ]);
-  return btoa(String.fromCharCode(...combined));
+  return 'v2:' + btoa(String.fromCharCode(...combined));
 }
 
 // Decrypt
 async function decrypt(base64, password) {
   const encoder = new TextEncoder();
-  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  // "v2:" means 600,000 iterations; no prefix is the older format with 200,000
+  const iterations = base64.startsWith('v2:') ? 600_000 : 200_000;
+  const combined = Uint8Array.from(atob(base64.replace(/^v2:/, '')), c => c.charCodeAt(0));
 
   const salt = combined.slice(0, 16);
   const nonce = combined.slice(16, 28);
@@ -135,7 +137,7 @@ async function decrypt(base64, password) {
     {
       name: 'PBKDF2',
       salt,
-      iterations: 200_000,
+      iterations,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -162,7 +164,7 @@ Raw passwords are not suitable AES keys — they are short, low-entropy strings.
 2. Runs the combination through SHA-256 hundreds of thousands of times (slows down brute force)
 3. Outputs a 256-bit key suitable for AES-256
 
-The 200,000 iterations above took about 25 ms in Node.js 24 on the laptop used to test this page. That is cheap for a user, but it also means an attacker can test about 40 passwords per second per core. The [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2) recommends 600,000 iterations for PBKDF2-HMAC-SHA256.
+The code above uses 600,000 iterations, the value the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2) recommends for PBKDF2-HMAC-SHA256. On the laptop used to test this page (Node.js 24), 600,000 iterations took about 73 ms and 200,000 took about 25 ms, so one CPU core can test about 14 passwords per second instead of 40. The `v2:` prefix is the format of the ZeroTool AES tool; `decrypt` also reads ciphertext without the prefix, the older format with 200,000 iterations.
 
 ## Python Encryption with cryptography Library
 
@@ -173,12 +175,12 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
-def derive_key(password: str, salt: bytes) -> bytes:
+def derive_key(password: str, salt: bytes, iterations: int = 600_000) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,           # 256 bits
         salt=salt,
-        iterations=200_000,
+        iterations=iterations,
     )
     return kdf.derive(password.encode())
 
@@ -191,21 +193,23 @@ def encrypt(plaintext: str, password: str) -> str:
     ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
 
     payload = salt + nonce + ciphertext
-    return base64.b64encode(payload).decode()
+    return "v2:" + base64.b64encode(payload).decode()
 
 def decrypt(encoded: str, password: str) -> str:
-    payload = base64.b64decode(encoded)
+    # "v2:" means 600,000 iterations; no prefix is the older format with 200,000
+    iterations = 600_000 if encoded.startswith("v2:") else 200_000
+    payload = base64.b64decode(encoded.removeprefix("v2:"))
     salt = payload[:16]
     nonce = payload[16:28]
     ciphertext = payload[28:]
 
-    key = derive_key(password, salt)
+    key = derive_key(password, salt, iterations)
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(nonce, ciphertext, None).decode()
 
 # Usage
 encrypted = encrypt("Secret message", "my-password")
-print(encrypted)  # base64-encoded salt+nonce+ciphertext+tag
+print(encrypted)  # "v2:" + base64 of salt+nonce+ciphertext+tag
 
 decrypted = decrypt(encrypted, "my-password")
 print(decrypted)  # Secret message

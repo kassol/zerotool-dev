@@ -83,7 +83,7 @@ async function encrypt(plaintext, password) {
     {
       name: 'PBKDF2',
       salt,
-      iterations: 200_000,
+      iterations: 600_000,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -101,19 +101,21 @@ async function encrypt(plaintext, password) {
     data
   );
 
-  // salt + nonce + 暗号文 を base64 で返す
+  // "v2:" + salt + nonce + 暗号文 の base64 を返す（ZeroTool の AES ツールと同じ形式）
   const combined = new Uint8Array([
     ...salt,
     ...nonce,
     ...new Uint8Array(ciphertext)
   ]);
-  return btoa(String.fromCharCode(...combined));
+  return 'v2:' + btoa(String.fromCharCode(...combined));
 }
 
 // 復号
 async function decrypt(base64, password) {
   const encoder = new TextEncoder();
-  const combined = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  // "v2:" は 60 万回、接頭辞なしは 20 万回の旧形式
+  const iterations = base64.startsWith('v2:') ? 600_000 : 200_000;
+  const combined = Uint8Array.from(atob(base64.replace(/^v2:/, '')), c => c.charCodeAt(0));
 
   const salt     = combined.slice(0, 16);
   const nonce    = combined.slice(16, 28);
@@ -128,7 +130,7 @@ async function decrypt(base64, password) {
   );
 
   const key = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -150,10 +152,10 @@ async function decrypt(base64, password) {
 パスワードは短くエントロピーが低いため、そのまま AES 鍵に使えません。PBKDF2 は：
 
 1. ランダムなソルトとパスワードを組み合わせる（レインボーテーブル対策）
-2. SHA-256 を 20 万回繰り返す（ブルートフォース対策）
+2. SHA-256 を 60 万回繰り返す（ブルートフォース対策）
 3. 256 ビットの暗号学的に安全な鍵を出力する
 
-上の 20 万回のイテレーションは、このページの検証に使ったノート PC（Node.js 24）で約 25 ms でした。ユーザーには負担になりませんが、攻撃者は 1 コアあたり毎秒約 40 個のパスワードを試せます。[OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2) は PBKDF2-HMAC-SHA256 に 60 万回を推奨しています。
+上のコードは 60 万回のイテレーションを使います。[OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2) が PBKDF2-HMAC-SHA256 に推奨する値です。このページの検証に使ったノート PC（Node.js 24）では 60 万回で約 73 ms、20 万回で約 25 ms で、1 コアあたり毎秒試せるパスワードは約 40 個から約 14 個に減ります。`v2:` 接頭辞は ZeroTool の AES ツールの形式です。`decrypt` は接頭辞のない暗号文（20 万回の旧形式）も読めます。
 
 ## Python 実装
 
@@ -164,12 +166,12 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
-def derive_key(password: str, salt: bytes) -> bytes:
+def derive_key(password: str, salt: bytes, iterations: int = 600_000) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,           # 256 ビット
         salt=salt,
-        iterations=200_000,
+        iterations=iterations,
     )
     return kdf.derive(password.encode())
 
@@ -182,21 +184,23 @@ def encrypt(plaintext: str, password: str) -> str:
     ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
 
     payload = salt + nonce + ciphertext
-    return base64.b64encode(payload).decode()
+    return "v2:" + base64.b64encode(payload).decode()
 
 def decrypt(encoded: str, password: str) -> str:
-    payload    = base64.b64decode(encoded)
+    # "v2:" は 60 万回、接頭辞なしは 20 万回の旧形式
+    iterations = 600_000 if encoded.startswith("v2:") else 200_000
+    payload    = base64.b64decode(encoded.removeprefix("v2:"))
     salt       = payload[:16]
     nonce      = payload[16:28]
     ciphertext = payload[28:]
 
-    key    = derive_key(password, salt)
+    key    = derive_key(password, salt, iterations)
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(nonce, ciphertext, None).decode()
 
 # 使用例
 encrypted = encrypt("秘密のメッセージ", "my-password")
-print(encrypted)  # base64 エンコードされた salt+nonce+暗号文+タグ
+print(encrypted)  # "v2:" + salt+nonce+暗号文+タグ の base64
 
 decrypted = decrypt(encrypted, "my-password")
 print(decrypted)  # 秘密のメッセージ
