@@ -126,3 +126,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-09-29 — 加入 `test-dns-lookup.mjs`（dns-lookup 输入规范化 / 查询 URL / ALL 模式合并引擎块回归测试）
 - 2026-09-29 — 加入 `test-cron-parser.mjs`、`test-csv-json.mjs`、`test-xml-formatter.mjs`、`test-sql-formatter.mjs`（4 个工具静默出错的回归测试；组件新增 `engine:start/end` 标记）
 - 2026-09-30 — `test-dns-lookup.mjs` 跟随 dns-lookup 读取 Google `extended_dns_errors` 与 DNSSEC 失败徽章，80 → 148 项
+- 2026-09-30 — 加入 `test-protobuf-to-json.mjs`、`test-svg-to-jsx.mjs`、`test-qr-code-decoder.mjs`、`test-ulid-generator.mjs`、`test-text-to-ascii-art.mjs`、`test-ip-subnet-calculator.mjs`（第三批 6 个工具缺陷的回归测试；组件新增 `engine:start/end` 标记）
