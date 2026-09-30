@@ -1,173 +1,449 @@
 ---
-// No props needed — tool widget is language-independent
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// Counts are [one, other]; {n} is the number. Error and note templates take the
+// named fields that the engine returns.
+const STRINGS = {
+  en: {
+    copy: 'Copy', copied: 'Copied!', clear: 'Clear', toBinary: 'Text \u2192 Binary', toText: 'Binary \u2192 Text',
+    sepLabel: 'Separator', sepSpace: 'Space', sepNone: 'None', sepComma: 'Comma', sepNewline: 'New line',
+    labelText: 'Text', labelBinary: 'Binary (UTF-8)', textPh: 'Hello', binaryPh: '01001000 01100101 01101100 01101100 01101111',
+    chars: ['1 character', '{n} characters'], codePoints: ['1 code point', '{n} code points'], bytes: ['1 byte', '{n} bytes'],
+    encoded: '{chars} → {bytes} of UTF-8.', encodedCp: '{chars} ({codePoints}) → {bytes} of UTF-8.',
+    decoded: '{bytes} → {chars}.',
+    noteSurrogate: '{n} unpaired surrogate {n:code unit:code units} cannot be encoded and became U+FFFD (11101111 10111111 10111101).',
+    notePadded: '{n} {n:group:groups} had fewer than 8 bits and {n:was:were} read with leading zeros.',
+    noteControl: 'The text contains {n} control {n:character:characters}; the first is U+{cp}. The bits may not be UTF-8 text (for example UTF-16, which puts 00000000 before each ASCII byte).',
+    err: {
+      invalidChar: 'Character "{char}" at position {position} is not 0 or 1. Separate bytes with spaces, line breaks, commas or semicolons.',
+      bitCount: '{bits} bits is not a multiple of 8: the last byte has only {rest} {rest:bit:bits}. A digit is missing or extra.',
+      groupLength: 'Group {group} ({text}) has {bits} bits. A group longer than 8 bits must be a multiple of 8.',
+      mixedGroups: 'Group {group} ({text}) has {bits} bits, but other groups are longer than 8 bits. Short groups are read as single bytes only when no group is longer than 8 bits.',
+      continuation: 'Byte {byte} ({bitsText}) is a continuation byte (10xxxxxx) with no lead byte before it. The bytes are not valid UTF-8.',
+      invalidLead: 'Byte {byte} ({bitsText}) never occurs in UTF-8 (C0, C1 and F5–FF are not used).',
+      incomplete: 'Byte {byte} ({bitsText}) starts a {length}-byte UTF-8 character, but only {got} {got:byte:bytes} of it {got:is:are} present.',
+      overlong: 'Bytes {byte}–{end} ({bitsText}) are an overlong encoding, which UTF-8 does not allow.',
+      surrogate: 'Bytes {byte}–{end} ({bitsText}) encode a UTF-16 surrogate (U+D800–U+DFFF), which UTF-8 does not allow.',
+      tooLarge: 'Bytes {byte}–{end} ({bitsText}) encode a value above U+10FFFF, the last Unicode code point.'
+    }
+  },
+  zh: {
+    copy: '复制', copied: '已复制！', clear: '清空', toBinary: '文本 \u2192 二进制', toText: '二进制 \u2192 文本',
+    sepLabel: '分隔符', sepSpace: '空格', sepNone: '无', sepComma: '逗号', sepNewline: '换行',
+    labelText: '文本', labelBinary: '二进制（UTF-8）', textPh: '你好', binaryPh: '11100100 10111101 10100000 11100101 10100101 10111101',
+    chars: ['{n} 个字符', '{n} 个字符'], codePoints: ['{n} 个码点', '{n} 个码点'], bytes: ['{n} 个字节', '{n} 个字节'],
+    encoded: '{chars} → UTF-8 {bytes}。', encodedCp: '{chars}（{codePoints}）→ UTF-8 {bytes}。',
+    decoded: '{bytes} → {chars}。',
+    noteSurrogate: '有 {n} 个落单的代理项无法编码，已按 U+FFFD（11101111 10111111 10111101）输出。',
+    notePadded: '有 {n} 组不足 8 位，已在前面补 0 读取。',
+    noteControl: '结果含 {n} 个控制字符，第一个是 U+{cp}。输入可能不是 UTF-8 文本（例如 UTF-16，每个 ASCII 字节前多一个 00000000）。',
+    err: {
+      invalidChar: '第 {position} 个字符「{char}」不是 0 或 1。字节之间可用空格、换行、逗号或分号分隔。',
+      bitCount: '共 {bits} 位，不是 8 的倍数：最后一个字节只有 {rest} 位，多了或少了数字。',
+      groupLength: '第 {group} 组（{text}）有 {bits} 位。超过 8 位的组必须是 8 的倍数。',
+      mixedGroups: '第 {group} 组（{text}）有 {bits} 位，而其他组超过 8 位。只有所有组都不超过 8 位时，短组才按单个字节读取。',
+      continuation: '第 {byte} 个字节（{bitsText}）是后续字节（10xxxxxx），前面没有首字节，不是合法的 UTF-8。',
+      invalidLead: '第 {byte} 个字节（{bitsText}）不会出现在 UTF-8 中（C0、C1、F5–FF 都不使用）。',
+      incomplete: '第 {byte} 个字节（{bitsText}）开始一个 {length} 字节的 UTF-8 字符，但只有 {got} 个字节。',
+      overlong: '第 {byte}–{end} 个字节（{bitsText}）是超长编码，UTF-8 不允许。',
+      surrogate: '第 {byte}–{end} 个字节（{bitsText}）编码的是 UTF-16 代理项（U+D800–U+DFFF），UTF-8 不允许。',
+      tooLarge: '第 {byte}–{end} 个字节（{bitsText}）编码的值超过 U+10FFFF（Unicode 最后一个码点）。'
+    }
+  },
+  ja: {
+    copy: 'コピー', copied: 'コピーしました', clear: 'クリア', toBinary: 'テキスト \u2192 2進数', toText: '2進数 \u2192 テキスト',
+    sepLabel: '区切り', sepSpace: 'スペース', sepNone: 'なし', sepComma: 'カンマ', sepNewline: '改行',
+    labelText: 'テキスト', labelBinary: '2進数（UTF-8）', textPh: 'こんにちは', binaryPh: '11100011 10000001 10010011',
+    chars: ['{n} 文字', '{n} 文字'], codePoints: ['{n} コードポイント', '{n} コードポイント'], bytes: ['{n} バイト', '{n} バイト'],
+    encoded: '{chars} → UTF-8 で {bytes}。', encodedCp: '{chars}（{codePoints}）→ UTF-8 で {bytes}。',
+    decoded: '{bytes} → {chars}。',
+    noteSurrogate: '対になっていないサロゲート {n} 個は符号化できないため、U+FFFD（11101111 10111111 10111101）として出力しました。',
+    notePadded: '8 ビットに満たないグループが {n} 個あり、先頭に 0 を補って読みました。',
+    noteControl: '結果に制御文字が {n} 個含まれます（最初は U+{cp}）。入力が UTF-8 のテキストではない可能性があります（UTF-16 なら ASCII の各バイトの前に 00000000 が入ります）。',
+    err: {
+      invalidChar: '{position} 文字目の「{char}」は 0 でも 1 でもありません。バイトの区切りにはスペース・改行・カンマ・セミコロンが使えます。',
+      bitCount: '全 {bits} ビットで 8 の倍数ではありません。最後のバイトが {rest} ビットしかなく、桁が足りないか多すぎます。',
+      groupLength: '{group} 番目のグループ（{text}）は {bits} ビットです。8 ビットを超えるグループは 8 の倍数である必要があります。',
+      mixedGroups: '{group} 番目のグループ（{text}）は {bits} ビットですが、8 ビットを超えるグループもあります。短いグループを 1 バイトとして読むのは、すべてのグループが 8 ビット以下のときだけです。',
+      continuation: '{byte} バイト目（{bitsText}）は後続バイト（10xxxxxx）ですが、前に先頭バイトがありません。UTF-8 として不正です。',
+      invalidLead: '{byte} バイト目（{bitsText}）は UTF-8 に現れない値です（C0・C1・F5–FF は使われません）。',
+      incomplete: '{byte} バイト目（{bitsText}）は {length} バイトの UTF-8 文字の先頭ですが、{got} バイトしかありません。',
+      overlong: '{byte}–{end} バイト目（{bitsText}）は冗長な符号化で、UTF-8 では認められていません。',
+      surrogate: '{byte}–{end} バイト目（{bitsText}）は UTF-16 のサロゲート（U+D800–U+DFFF）を表していて、UTF-8 では認められていません。',
+      tooLarge: '{byte}–{end} バイト目（{bitsText}）は U+10FFFF（Unicode の最後のコードポイント）を超える値です。'
+    }
+  },
+  ko: {
+    copy: '복사', copied: '복사됨!', clear: '지우기', toBinary: '텍스트 \u2192 2진수', toText: '2진수 \u2192 텍스트',
+    sepLabel: '구분자', sepSpace: '공백', sepNone: '없음', sepComma: '쉼표', sepNewline: '줄바꿈',
+    labelText: '텍스트', labelBinary: '2진수 (UTF-8)', textPh: '안녕', binaryPh: '11101100 10010101 10001000',
+    chars: ['{n}자', '{n}자'], codePoints: ['코드 포인트 {n}개', '코드 포인트 {n}개'], bytes: ['{n}바이트', '{n}바이트'],
+    encoded: '{chars} → UTF-8 {bytes}.', encodedCp: '{chars}({codePoints}) → UTF-8 {bytes}.',
+    decoded: '{bytes} → {chars}.',
+    noteSurrogate: '짝이 없는 서로게이트 {n}개는 인코딩할 수 없어 U+FFFD(11101111 10111111 10111101)로 출력했습니다.',
+    notePadded: '8비트보다 짧은 그룹 {n}개는 앞에 0을 채워 읽었습니다.',
+    noteControl: '결과에 제어 문자가 {n}개 있습니다(첫 번째는 U+{cp}). 입력이 UTF-8 텍스트가 아닐 수 있습니다(UTF-16이면 ASCII 바이트마다 앞에 00000000이 붙습니다).',
+    err: {
+      invalidChar: '{position}번째 문자 "{char}"는 0이나 1이 아닙니다. 바이트 사이는 공백, 줄바꿈, 쉼표, 세미콜론으로 구분하세요.',
+      bitCount: '모두 {bits}비트로 8의 배수가 아닙니다. 마지막 바이트가 {rest}비트뿐이라 숫자가 빠졌거나 남습니다.',
+      groupLength: '{group}번째 그룹({text})은 {bits}비트입니다. 8비트보다 긴 그룹은 8의 배수여야 합니다.',
+      mixedGroups: '{group}번째 그룹({text})은 {bits}비트인데, 8비트보다 긴 그룹도 있습니다. 짧은 그룹은 모든 그룹이 8비트 이하일 때만 한 바이트로 읽습니다.',
+      continuation: '{byte}번째 바이트({bitsText})는 연속 바이트(10xxxxxx)인데 앞에 시작 바이트가 없습니다. 올바른 UTF-8이 아닙니다.',
+      invalidLead: '{byte}번째 바이트({bitsText})는 UTF-8에 나오지 않는 값입니다(C0, C1, F5–FF는 쓰이지 않음).',
+      incomplete: '{byte}번째 바이트({bitsText})는 {length}바이트 UTF-8 문자의 시작인데 {got}바이트만 있습니다.',
+      overlong: '{byte}–{end}번째 바이트({bitsText})는 불필요하게 긴 인코딩으로, UTF-8에서 허용되지 않습니다.',
+      surrogate: '{byte}–{end}번째 바이트({bitsText})는 UTF-16 서로게이트(U+D800–U+DFFF)를 나타내며, UTF-8에서 허용되지 않습니다.',
+      tooLarge: '{byte}–{end}번째 바이트({bitsText})는 U+10FFFF(유니코드의 마지막 코드 포인트)보다 큰 값입니다.'
+    }
+  }
+} as const;
+
+const T = STRINGS[lang];
 ---
 
 <div>
   <div class="tb-wrap">
     <div class="tb-options">
-      <label class="tb-opt-label" data-i18n="formatLabel">Format</label>
-      <div class="tb-format-btns">
-        <button id="tb-fmt-spaced" class="tb-fmt-btn active" data-fmt="spaced" type="button" data-i18n="fmtSpaced">Spaced</button>
-        <button id="tb-fmt-continuous" class="tb-fmt-btn" data-fmt="continuous" type="button" data-i18n="fmtContinuous">Continuous</button>
+      <span class="tb-opt-label" id="tb-sep-label">{T.sepLabel}</span>
+      <div class="tb-sep-btns" role="group" aria-labelledby="tb-sep-label">
+        <button class="tb-sep-btn active" data-sep="space" type="button" aria-pressed="true">{T.sepSpace}</button>
+        <button class="tb-sep-btn" data-sep="none" type="button" aria-pressed="false">{T.sepNone}</button>
+        <button class="tb-sep-btn" data-sep="comma" type="button" aria-pressed="false">{T.sepComma}</button>
+        <button class="tb-sep-btn" data-sep="newline" type="button" aria-pressed="false">{T.sepNewline}</button>
       </div>
     </div>
 
     <div class="tb-panels">
       <div class="tb-panel">
         <label for="tb-text">
-          <span data-i18n="labelText">Text</span>
-          <button id="tb-copy-text" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+          <span>{T.labelText}</span>
+          <button id="tb-copy-text" class="btn-copy" type="button">{T.copy}</button>
         </label>
-        <textarea
-          id="tb-text"
-          placeholder="Hello"
-          spellcheck="false"
-        ></textarea>
+        <textarea id="tb-text" placeholder={T.textPh} spellcheck="false"></textarea>
       </div>
       <div class="tb-panel">
         <label for="tb-binary">
-          <span data-i18n="labelBinary">Binary</span>
-          <button id="tb-copy-binary" class="btn-copy" type="button" data-i18n="copy">Copy</button>
+          <span>{T.labelBinary}</span>
+          <button id="tb-copy-binary" class="btn-copy" type="button">{T.copy}</button>
         </label>
-        <textarea
-          id="tb-binary"
-          placeholder="01001000 01100101 01101100 01101100 01101111"
-          spellcheck="false"
-        ></textarea>
+        <textarea id="tb-binary" placeholder={T.binaryPh} spellcheck="false"></textarea>
       </div>
     </div>
 
-    <div class="tb-actions">
-      <button id="tb-to-binary" class="btn-primary" data-i18n="toBinary">Text → Binary</button>
-      <button id="tb-to-text" class="btn-primary" data-i18n="toText">Binary → Text</button>
-      <button id="tb-clear" class="btn-ghost" data-i18n="clear">Clear</button>
-    </div>
+    <div id="tb-status" class="tool-status tb-status" aria-live="polite"></div>
 
-    <div id="tb-status" class="tb-status" aria-live="polite"></div>
+    <div class="tb-actions">
+      <button id="tb-to-binary" class="btn-primary" type="button">{T.toBinary}</button>
+      <button id="tb-to-text" class="btn-primary" type="button">{T.toText}</button>
+      <button id="tb-clear" class="btn-ghost" type="button">{T.clear}</button>
+    </div>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: T }}>
     (function () {
-      var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', toBinary: 'Text \u2192 Binary', toText: 'Binary \u2192 Text', formatLabel: 'Format', fmtSpaced: 'Spaced', fmtContinuous: 'Continuous', labelText: 'Text', labelBinary: 'Binary', convertedToBin: 'Converted {n} character{s} to binary.', convertedToText: 'Converted binary to {n} character{s}.', errorPrefix: 'Error: ' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', toBinary: '文本 \u2192 二进制', toText: '二进制 \u2192 文本', formatLabel: '格式', fmtSpaced: '空格分隔', fmtContinuous: '连续', labelText: '文本', labelBinary: '二进制', convertedToBin: '已将 {n} 个字符转换为二进制。', convertedToText: '已将二进制转换为 {n} 个字符。', errorPrefix: '错误：' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', toBinary: 'テキスト \u2192 バイナリ', toText: 'バイナリ \u2192 テキスト', formatLabel: 'フォーマット', fmtSpaced: 'スペース区切り', fmtContinuous: '連続', labelText: 'テキスト', labelBinary: 'バイナリ', convertedToBin: '{n} 文字をバイナリに変換しました。', convertedToText: 'バイナリを {n} 文字に変換しました。', errorPrefix: 'エラー：' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', toBinary: '텍스트 \u2192 바이너리', toText: '바이너리 \u2192 텍스트', formatLabel: '형식', fmtSpaced: '공백 구분', fmtContinuous: '연속', labelText: '텍스트', labelBinary: '바이너리', convertedToBin: '{n}자를 바이너리로 변환했습니다.', convertedToText: '바이너리를 {n}자로 변환했습니다.', errorPrefix: '오류: ' }
-      };
+      /* ── engine:start ── */
+      var SEPARATORS = { space: ' ', none: '', comma: ',', newline: '\n' };
+      var BYTE_BITS = [];
+      for (var b = 0; b < 256; b++) BYTE_BITS.push(('0000000' + b.toString(2)).slice(-8));
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
+      function countCodePoints(text) {
+        var n = 0;
+        for (var i = 0; i < text.length; i++) {
+          var c = text.charCodeAt(i);
+          if (c >= 0xD800 && c <= 0xDBFF && i + 1 < text.length) {
+            var d = text.charCodeAt(i + 1);
+            if (d >= 0xDC00 && d <= 0xDFFF) i++;
+          }
+          n++;
+        }
+        return n;
+      }
 
-      document.querySelectorAll('.tb-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
+      function countLoneSurrogates(text) {
+        var n = 0;
+        for (var i = 0; i < text.length; i++) {
+          var c = text.charCodeAt(i);
+          if (c >= 0xD800 && c <= 0xDBFF) {
+            var d = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+            if (d >= 0xDC00 && d <= 0xDFFF) { i++; continue; }
+            n++;
+          } else if (c >= 0xDC00 && c <= 0xDFFF) {
+            n++;
+          }
+        }
+        return n;
+      }
+
+      // User-perceived characters (UAX #29 grapheme clusters); falls back to code points.
+      function countCharacters(text) {
+        if (typeof Intl === 'undefined' || typeof Intl.Segmenter !== 'function') return countCodePoints(text);
+        var n = 0;
+        var it = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)[Symbol.iterator]();
+        while (!it.next().done) n++;
+        return n;
+      }
+
+      function bytesToBinary(bytes, sep) {
+        var parts = new Array(bytes.length);
+        for (var i = 0; i < bytes.length; i++) parts[i] = BYTE_BITS[bytes[i]];
+        return parts.join(Object.prototype.hasOwnProperty.call(SEPARATORS, sep) ? SEPARATORS[sep] : ' ');
+      }
+
+      function encodeText(text, sep) {
+        var bytes = new TextEncoder().encode(text);
+        return {
+          binary: bytesToBinary(bytes, sep),
+          bytes: bytes.length,
+          codePoints: countCodePoints(text),
+          characters: countCharacters(text),
+          replaced: countLoneSurrogates(text)
+        };
+      }
+
+      // Full-width digits from a Japanese / Chinese IME become ASCII; full-width
+      // comma, ideographic comma and full-width semicolon become separators.
+      // Each replacement is one UTF-16 unit, so string positions do not move.
+      function normalizeBinaryInput(input) {
+        return input.replace(/[\uFF10\uFF11]/g, function (c) { return c === '\uFF10' ? '0' : '1'; })
+          .replace(/[\uFF0C\u3001\uFF1B]/g, ',');
+      }
+
+      function positionOf(input, index) {
+        return countCodePoints(input.slice(0, index)) + 1;
+      }
+
+      function preview(bits) {
+        return bits.length > 24 ? bits.slice(0, 24) + '…' : bits;
+      }
+
+      // Returns { bytes, padded } or { error, ...fields }.
+      function parseBinary(rawInput) {
+        var input = normalizeBinaryInput(rawInput);
+        var re = /[^\s,;]+/g;
+        var groups = [];
+        var m;
+        while ((m = re.exec(input))) {
+          var token = m[0];
+          var skip = /^0[bB]./.test(token) ? 2 : 0;
+          var bits = token.slice(skip);
+          var bad = bits.search(/[^01]/);
+          if (bad >= 0) {
+            var at = m.index + skip + bad;
+            return { error: 'invalidChar', char: String.fromCodePoint(rawInput.codePointAt(at)), position: positionOf(rawInput, at) };
+          }
+          groups.push(bits);
+        }
+        if (!groups.length) return { bytes: new Uint8Array(0), padded: 0 };
+        if (groups.length === 1 && groups[0].length > 8 && groups[0].length % 8) {
+          return { error: 'bitCount', bits: groups[0].length, rest: groups[0].length % 8 };
+        }
+        var firstLong = -1;
+        var firstShort = -1;
+        var total = 0;
+        for (var i = 0; i < groups.length; i++) {
+          var len = groups[i].length;
+          if (len > 8) {
+            if (len % 8) return { error: 'groupLength', group: i + 1, text: preview(groups[i]), bits: len };
+            if (firstLong < 0) firstLong = i;
+            total += len / 8;
+          } else {
+            if (len < 8 && firstShort < 0) firstShort = i;
+            total += 1;
+          }
+        }
+        if (firstLong >= 0 && firstShort >= 0) {
+          return { error: 'mixedGroups', group: firstShort + 1, text: groups[firstShort], bits: groups[firstShort].length };
+        }
+        var bytes = new Uint8Array(total);
+        var k = 0;
+        var padded = 0;
+        for (var g = 0; g < groups.length; g++) {
+          var s = groups[g];
+          if (s.length < 8) padded++;
+          if (s.length <= 8) { bytes[k++] = parseInt(s, 2); continue; }
+          for (var j = 0; j < s.length; j += 8) bytes[k++] = parseInt(s.slice(j, j + 8), 2);
+        }
+        return { bytes: bytes, padded: padded };
+      }
+
+      // First UTF-8 error per RFC 3629 section 4 (the same byte ranges as the
+      // WHATWG decoder), or null. Offsets are 0-based.
+      function findUtf8Error(bytes) {
+        var i = 0;
+        var n = bytes.length;
+        while (i < n) {
+          var b = bytes[i];
+          if (b < 0x80) { i++; continue; }
+          var need;
+          var lo = 0x80;
+          var hi = 0xBF;
+          var rangeError = null;
+          if (b >= 0x80 && b <= 0xBF) return { kind: 'continuation', offset: i, length: 1 };
+          if (b >= 0xC2 && b <= 0xDF) need = 1;
+          else if (b >= 0xE0 && b <= 0xEF) {
+            need = 2;
+            if (b === 0xE0) { lo = 0xA0; rangeError = 'overlong'; }
+            if (b === 0xED) { hi = 0x9F; rangeError = 'surrogate'; }
+          } else if (b >= 0xF0 && b <= 0xF4) {
+            need = 3;
+            if (b === 0xF0) { lo = 0x90; rangeError = 'overlong'; }
+            if (b === 0xF4) { hi = 0x8F; rangeError = 'tooLarge'; }
+          } else {
+            return { kind: 'invalidLead', offset: i, length: 1 };
+          }
+          for (var k = 1; k <= need; k++) {
+            var c = i + k < n ? bytes[i + k] : -1;
+            if (c < 0x80 || c > 0xBF) return { kind: 'incomplete', offset: i, length: k, expected: need + 1 };
+            if (k === 1 && (c < lo || c > hi)) return { kind: rangeError, offset: i, length: 2 };
+          }
+          i += need + 1;
+        }
+        return null;
+      }
+
+      function firstControl(text) {
+        var count = 0;
+        var first = -1;
+        for (var i = 0; i < text.length; i++) {
+          var c = text.charCodeAt(i);
+          if ((c < 0x20 && c !== 0x09 && c !== 0x0A && c !== 0x0D) || c === 0x7F) {
+            count++;
+            if (first < 0) first = c;
+          }
+        }
+        return { count: count, first: first };
+      }
+
+      function decodeBinary(input) {
+        var parsed = parseBinary(input);
+        if (parsed.error) return parsed;
+        var bytes = parsed.bytes;
+        var bad = findUtf8Error(bytes);
+        if (bad) {
+          var shown = [];
+          for (var i = bad.offset; i < bad.offset + bad.length && i < bytes.length; i++) shown.push(BYTE_BITS[bytes[i]]);
+          return {
+            error: bad.kind,
+            byte: bad.offset + 1,
+            end: bad.offset + bad.length,
+            bitsText: shown.join(' '),
+            length: bad.expected,
+            got: bad.length
+          };
+        }
+        // ignoreBOM keeps a leading EF BB BF as U+FEFF instead of dropping it.
+        var text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+        var ctl = firstControl(text);
+        return {
+          text: text,
+          bytes: bytes.length,
+          codePoints: countCodePoints(text),
+          characters: countCharacters(text),
+          padded: parsed.padded,
+          controls: ctl.count,
+          firstControl: ctl.first
+        };
+      }
+      // {key} inserts a field; {key:one:other} inserts the word for that count.
+      function fill(tmpl, fields) {
+        return tmpl.replace(/\{(\w+)(?::([^:}]*):([^}]*))?\}/g, function (all, key, one, other) {
+          if (!(key in fields)) return all;
+          if (one === undefined) return String(fields[key]);
+          return fields[key] === 1 ? one : other;
+        });
+      }
+      /* ── engine:end ── */
+
+      function count(pair, n) { return fill(pair[n === 1 ? 0 : 1], { n: n }); }
+      function hex4(cp) { return ('000' + cp.toString(16).toUpperCase()).slice(-4); }
 
       var textEl = document.getElementById('tb-text');
       var binEl = document.getElementById('tb-binary');
       var statusEl = document.getElementById('tb-status');
       var copyTextBtn = document.getElementById('tb-copy-text');
       var copyBinBtn = document.getElementById('tb-copy-binary');
-      var currentFmt = 'spaced';
+      var sepBtns = document.querySelectorAll('.tb-sep-btn');
+      var currentSep = 'space';
 
-      /* ── Format buttons ── */
-      document.querySelectorAll('.tb-fmt-btn').forEach(function (btn) {
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status tb-status' + (kind ? ' ' + kind : '');
+      }
+
+      sepBtns.forEach(function (btn) {
         btn.addEventListener('click', function () {
-          document.querySelectorAll('.tb-fmt-btn').forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-          currentFmt = btn.getAttribute('data-fmt');
-          if (textEl.value.trim()) doTextToBinary();
+          sepBtns.forEach(function (b) {
+            var on = b === btn;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+          });
+          currentSep = btn.getAttribute('data-sep');
+          if (textEl.value) doTextToBinary();
         });
       });
 
-      function charMsg(tmpl, n) {
-        return tmpl.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
-      }
-
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'tb-status ' + (isError ? 'error' : 'success');
-      }
-
-      function clearStatus() {
-        statusEl.textContent = '';
-        statusEl.className = 'tb-status';
-      }
-
-      /* ── Text → Binary ── */
       function doTextToBinary() {
         var text = textEl.value;
-        if (!text) { clearStatus(); return; }
-        try {
-          var encoder = new TextEncoder();
-          var bytes = encoder.encode(text);
-          var parts = [];
-          for (var i = 0; i < bytes.length; i++) {
-            parts.push(bytes[i].toString(2).padStart(8, '0'));
-          }
-          binEl.value = currentFmt === 'spaced' ? parts.join(' ') : parts.join('');
-          setStatus(charMsg(t.convertedToBin, [...text].length), false);
-          window.trackTool && window.trackTool('text_to_binary', 'text_to_binary');
-        } catch (e) {
-          setStatus(t.errorPrefix + e.message, true);
-        }
+        if (!text) { binEl.value = ''; setStatus('', ''); return; }
+        var r = encodeText(text, currentSep);
+        binEl.value = r.binary;
+        var fields = { chars: count(t.chars, r.characters), codePoints: count(t.codePoints, r.codePoints), bytes: count(t.bytes, r.bytes) };
+        var msg = fill(r.codePoints === r.characters ? t.encoded : t.encodedCp, fields);
+        if (r.replaced) msg += ' ' + fill(t.noteSurrogate, { n: r.replaced });
+        setStatus(msg, r.replaced ? 'info' : 'success');
+        window.trackTool && window.trackTool('text_to_binary', 'text_to_binary');
       }
 
-      /* ── Binary → Text ── */
       function doBinaryToText() {
-        var raw = binEl.value.trim();
-        if (!raw) { clearStatus(); return; }
-        try {
-          /* strip all whitespace to normalise both spaced and continuous input */
-          var bits = raw.replace(/\s+/g, '');
-          if (bits.length % 8 !== 0) throw new Error('Binary length must be a multiple of 8.');
-          if (!/^[01]+$/.test(bits)) throw new Error('Input must contain only 0 and 1.');
-          var bytes = [];
-          for (var i = 0; i < bits.length; i += 8) {
-            bytes.push(parseInt(bits.slice(i, i + 8), 2));
-          }
-          var decoder = new TextDecoder('utf-8', { fatal: true });
-          var result = decoder.decode(new Uint8Array(bytes));
-          textEl.value = result;
-          setStatus(charMsg(t.convertedToText, [...result].length), false);
-          window.trackTool && window.trackTool('text_to_binary', 'binary_to_text');
-        } catch (e) {
-          setStatus(t.errorPrefix + e.message, true);
+        var raw = binEl.value;
+        if (!raw.trim()) { setStatus('', ''); return; }
+        var r = decodeBinary(raw);
+        if (r.error) {
+          // Clear the text box so an earlier result is not read as the answer.
+          textEl.value = '';
+          setStatus(fill(t.err[r.error], r), 'error');
+          return;
         }
+        textEl.value = r.text;
+        var msg = fill(t.decoded, { bytes: count(t.bytes, r.bytes), chars: count(t.chars, r.characters) });
+        var notes = [];
+        if (r.padded) notes.push(fill(t.notePadded, { n: r.padded }));
+        if (r.controls) notes.push(fill(t.noteControl, { n: r.controls, cp: hex4(r.firstControl) }));
+        setStatus(notes.length ? msg + ' ' + notes.join(' ') : msg, notes.length ? 'info' : 'success');
+        window.trackTool && window.trackTool('text_to_binary', 'binary_to_text');
       }
 
-      /* ── Real-time text → binary (debounced 300ms) ── */
-      var _textTimer = null;
+      var textTimer = null;
       textEl.addEventListener('input', function () {
-        clearTimeout(_textTimer);
-        _textTimer = setTimeout(doTextToBinary, 300);
+        clearTimeout(textTimer);
+        textTimer = setTimeout(doTextToBinary, 150);
       });
 
-      /* ── Buttons ── */
       document.getElementById('tb-to-binary').addEventListener('click', doTextToBinary);
       document.getElementById('tb-to-text').addEventListener('click', doBinaryToText);
+      binEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doBinaryToText(); }
+      });
 
       document.getElementById('tb-clear').addEventListener('click', function () {
+        clearTimeout(textTimer);
         textEl.value = '';
         binEl.value = '';
-        clearStatus();
+        setStatus('', '');
       });
 
-      /* ── Copy buttons ── */
-      copyTextBtn.addEventListener('click', function () {
-        if (!textEl.value) return;
-        navigator.clipboard.writeText(textEl.value).then(function () {
-          copyTextBtn.textContent = t.copied;
-          setTimeout(function () { copyTextBtn.textContent = t.copy; }, 1500);
+      function bindCopy(btn, el) {
+        btn.addEventListener('click', function () {
+          if (!el.value) return;
+          navigator.clipboard.writeText(el.value).then(function () {
+            btn.textContent = t.copied;
+            setTimeout(function () { btn.textContent = t.copy; }, 1500);
+          });
         });
-      });
-
-      copyBinBtn.addEventListener('click', function () {
-        if (!binEl.value) return;
-        navigator.clipboard.writeText(binEl.value).then(function () {
-          copyBinBtn.textContent = t.copied;
-          setTimeout(function () { copyBinBtn.textContent = t.copy; }, 1500);
-        });
-      });
+      }
+      bindCopy(copyTextBtn, textEl);
+      bindCopy(copyBinBtn, binEl);
     })();
   </script>
 </div>
@@ -188,9 +464,9 @@
     color: var(--color-text-secondary);
   }
 
-  .tb-format-btns { display: flex; gap: 0.35rem; }
+  .tb-sep-btns { display: flex; gap: 0.35rem; flex-wrap: wrap; }
 
-  .tb-fmt-btn {
+  .tb-sep-btn {
     padding: 0.25rem 0.65rem;
     font-size: 0.8rem;
     border: 1px solid var(--color-border);
@@ -201,8 +477,9 @@
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
 
-  .tb-fmt-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
-  .tb-fmt-btn.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+  .tb-sep-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .tb-sep-btn.active { background: var(--color-primary); color: var(--color-primary-contrast); border-color: var(--color-primary); }
+  .tb-sep-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
   .tb-panels {
     display: grid;
@@ -210,11 +487,7 @@
     gap: 0.75rem;
   }
 
-  @media (max-width: 600px) {
-    .tb-panels { grid-template-columns: 1fr; }
-  }
-
-  .tb-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+  .tb-panel { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
 
   .tb-panel label {
     font-size: 0.85rem;
@@ -243,14 +516,17 @@
 
   .tb-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
-  .tb-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .tb-status.success { color: #057a55; }
-  .tb-status.error { color: #c0392b; }
+  .tb-status { overflow-wrap: anywhere; }
 
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .tb-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .tb-status.error { color: #f87171; }
+  /* Mobile: both text boxes and the binary Copy button fit in the first
+     screen; the separator row moves below the actions. */
+  @media (max-width: 640px) {
+    .tb-panels { grid-template-columns: 1fr; gap: 0.5rem; }
+    .tb-panel textarea { min-height: 100px; height: 100px; }
+    .tb-panels { order: 1; }
+    .tb-status { order: 2; }
+    .tb-actions { order: 3; }
+    .tb-options { order: 4; }
+    .tb-sep-btn { min-height: 32px; }
   }
-  [data-theme="dark"] .tb-status.success { color: #34d399; }
-  [data-theme="dark"] .tb-status.error { color: #f87171; }
 </style>
