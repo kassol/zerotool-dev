@@ -1,71 +1,69 @@
 ---
-title: "AES Encryption Tool Online: Encrypt and Decrypt Text in the Browser"
-description: "Encrypt and decrypt text with AES-GCM directly in your browser. Learn how AES works, key sizes, modes, and why client-side encryption matters for privacy."
+title: "AES Encryption: Key Sizes, Modes, IVs and the Mistakes That Break It"
+description: "How AES encryption works in practice: FIPS 197 key sizes and rounds, why ECB leaks and CBC padding oracles happen, the GCM nonce rule, PBKDF2 for passwords, and a byte-level ciphertext format you can reproduce."
 pubDate: 2026-04-08
 updatedDate: 2026-09-30
 lang: "en"
 tags: ["aes-encryption", "aes-encrypt-decrypt", "cryptography", "aes-gcm", "developer-tools"]
 ---
 
-AES (Advanced Encryption Standard) is the symmetric encryption algorithm that secures HTTPS traffic, encrypted filesystems, and password managers. This guide explains how AES works, why AES-GCM is the right mode for most use cases, and how to use our browser-based AES tool for client-side encryption without sending your data anywhere.
+AES encryption has two parts. The first is the block cipher itself, which is fixed by a standard and has no settings you can get wrong except the key size. The second is everything around it: the mode of operation, the IV or nonce, how a password becomes a key, and how the pieces are stored. Almost every real-world AES failure happens in the second part. This guide goes through both, with results you can reproduce: the ECB, CBC and GCM behaviour below was measured with Node.js 24 on 2026-09-30, and the ciphertext examples come from the [AES Encryption & Decryption tool](/tools/aes-encrypt-decrypt/).
 
-[Encrypt text with AES in the browser →](/tools/aes-encrypt-decrypt)
+## The Cipher: FIPS 197
 
-## What Is AES?
+NIST selected the Rijndael cipher as the Advanced Encryption Standard in October 2000 and published it as [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final) in November 2001; an editorial update (FIPS 197-upd1) followed in May 2023. AES encrypts one 128-bit block at a time. The key is 128, 192 or 256 bits, and the key length sets the number of rounds:
 
-AES is a symmetric block cipher standardized by NIST in 2001. "Symmetric" means the same key is used for both encryption and decryption. "Block cipher" means it encrypts fixed-size chunks (128-bit blocks) of data.
+| Variant | Key | Rounds |
+|---|---|---|
+| AES-128 | 16 bytes | 10 |
+| AES-192 | 24 bytes | 12 |
+| AES-256 | 32 bytes | 14 |
 
-AES replaced DES (Data Encryption Standard), which became vulnerable as hardware improved and key sizes stayed at 56 bits. AES supports three key sizes:
+Each round runs four steps on a 4×4 byte state: SubBytes (a fixed S-box substitution), ShiftRows, MixColumns (a linear mix in GF(2⁸); the last round skips it) and AddRoundKey (XOR with a round key expanded from the main key). You do not choose any of this. Libraries such as the Web Crypto API, OpenSSL and Python's `cryptography` implement it the same way, which is why AES output is interchangeable between them once the mode and the format match.
 
-| Key size | Security level | Common use |
-|----------|---------------|------------|
-| AES-128 | ~128 bits | General purpose, fast |
-| AES-192 | ~192 bits | Intermediate, rarely used |
-| AES-256 | ~256 bits | High security, government/financial |
+Which key size? All three are approved. AES-256 costs about 40% more rounds than AES-128 and is the usual default when the key comes from a password, because it removes key length from any discussion about margin. The key size never fixes a weak password or a reused nonce, which are the real problems below.
 
-For most applications, AES-256 is the right choice — the performance difference from AES-128 is negligible on modern hardware, and the extra margin is free.
+## A Block Cipher Needs a Mode
 
-## How AES Works (Without the Math)
+AES on its own turns exactly 16 bytes into 16 bytes. To encrypt a message of any other length you need a mode of operation. NIST defines the classic ones (ECB, CBC, CFB, OFB, CTR) in [SP 800-38A](https://csrc.nist.gov/pubs/sp/800/38/a/final) and GCM in [SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final). The mode decides whether patterns leak, whether a wrong key is detected, and what you must never repeat.
 
-AES operates in rounds. AES-256 uses 14 rounds; AES-128 uses 10. Each round applies four transformations to the 128-bit block:
+### ECB leaks repeated blocks
 
-1. **SubBytes** — each byte is replaced using a fixed lookup table (S-box), introducing non-linearity
-2. **ShiftRows** — rows of the 4×4 state matrix are rotated left by 0, 1, 2, 3 positions
-3. **MixColumns** — columns are multiplied in GF(2⁸), mixing bytes within each column
-4. **AddRoundKey** — the block is XORed with a round-specific subkey derived from the main key
+ECB encrypts every 16-byte block independently with the same key, so equal plaintext blocks give equal ciphertext blocks. With the key `000102030405060708090a0b0c0d0e0f` and the 48-byte input `YELLOW SUBMARINEYELLOW SUBMARINEyellow submarine`, AES-128-ECB produced:
 
-These four steps together achieve confusion (obscuring the relationship between plaintext and ciphertext) and diffusion (spreading the influence of each plaintext bit across the ciphertext). After 14 rounds of AES-256, the output cannot be told apart from random noise without the key, even when the algorithm is public.
+```text
+761ab98c7086c509261f322cb3ffa7d9   ← "YELLOW SUBMARINE"
+761ab98c7086c509261f322cb3ffa7d9   ← "YELLOW SUBMARINE" again: same bytes
+02ab60c1d6e06d4d9fbb0d98963661fd   ← "yellow submarine"
+```
 
-## AES Modes of Operation
+Anyone who sees the ciphertext learns which blocks repeat, without the key. That is enough to see the outline of an image, spot identical records in a database dump, or replay a known block. There is no correct use of ECB for data longer than one block.
 
-AES encrypts 128-bit blocks. For longer messages, you need a "mode" that chains blocks together. The mode choice is critical:
+### CBC hides patterns but not tampering
 
-### ECB (Electronic Codebook) — Never Use This
+CBC XORs each plaintext block with the previous ciphertext block before encrypting it, starting from an IV. SP 800-38A (Appendix C) requires the IV to be unpredictable. The predictable IVs of TLS 1.0 are what the BEAST attack (2011) used.
 
-ECB encrypts each block independently. The same 16-byte plaintext block always produces the same ciphertext block. This is catastrophic for any structured data — patterns in plaintext are visible in ciphertext.
+CBC has two structural problems. It needs padding (usually PKCS#7), and it has no integrity check. Serge Vaudenay showed in 2002 that a system which reveals whether the padding of a modified ciphertext is valid lets an attacker decrypt it block by block; this "padding oracle" came back as POODLE against SSL 3.0 (2014), and Lucky Thirteen (2013) used timing to get the same signal from TLS. The padding check is also a poor password check. The [openssl enc manual](https://docs.openssl.org/3.6/man1/openssl-enc/) warns that random data passes it more often than 1 time in 256. In our run, decrypting one AES-256-CBC ciphertext with 100,000 random wrong keys, 419 of them "succeeded" and returned garbage, about 1 in 239.
 
-The canonical demonstration is encrypting a bitmap image with ECB: the encrypted image still shows the shape of the original, because repeating blocks of pixels produce repeating blocks of ciphertext.
+### GCM authenticates, but only if the nonce is unique
 
-### CBC (Cipher Block Chaining) — Old Standard
+GCM combines CTR-mode encryption with a GHASH authenticator and appends a tag, 128 bits by default. On decryption the tag is recomputed; if one bit of the ciphertext, the tag, the nonce or the associated data changed, or the key is wrong, decryption fails with no plaintext at all. Web Crypto throws an `OperationError`, Python's `cryptography` raises `InvalidTag`, and the ZeroTool tool reports "Authentication failed". That replaces the padding guesswork of CBC with a check an attacker cannot pass by trial: with a 128-bit tag, a guessed tag is accepted with negligible probability.
 
-CBC XORs each plaintext block with the previous ciphertext block before encrypting. This breaks ECB's pattern problem — identical plaintext blocks produce different ciphertext. Requires an IV (initialization vector) that must be unique per message.
+The price is one strict rule: never use the same key and nonce twice. SP 800-38D recommends a 96-bit (12-byte) nonce (section 5.2.1.1). It requires that the chance of a repeat is at most 2⁻³² (section 8), and with random 96-bit nonces a key may be used for at most 2³² encryptions (section 8.3). A repeat is not a small leak. We encrypted `PAY 100 TO ALICE` and `PAY 999 TO MALLO` with the same AES-128 key and the same nonce `cafebabefacedbaddecaf888`:
 
-Weakness: CBC requires padding, and padding oracle attacks (POODLE, Lucky Thirteen) have broken many CBC implementations; BEAST, a different attack, used the predictable IVs of CBC in TLS 1.0. Also no built-in authentication — you need a separate MAC.
+```text
+ciphertext1 XOR ciphertext2 = 00000000080909000000000c0d050f0a
+plaintext1  XOR plaintext2  = 00000000080909000000000c0d050f0a   (identical)
+ciphertext1 XOR ciphertext2 XOR plaintext1 = "PAY 999 TO MALLO"
+```
 
-### GCM (Galois/Counter Mode) — Use This
+Knowing one message reveals the other. The repeat also exposes the GHASH key, which lets an attacker forge valid tags for new messages (Antoine Joux described this in his 2006 comments to NIST on the GCM draft). If you cannot guarantee unique nonces, generate a fresh key for each message, which is what password-based formats with a random salt do.
 
-AES-GCM is an authenticated encryption mode. It combines AES-CTR (counter mode) for encryption with GHASH for authentication, producing both ciphertext and a 128-bit authentication tag.
+## Passwords Are Not Keys
 
-The tag is the critical advantage: if anyone modifies the ciphertext (even a single bit), decryption fails with an authentication error. This means AES-GCM provides:
-- **Confidentiality**: only the key holder can read the message
-- **Integrity**: any tampering is detected
-- **Authenticity**: the message genuinely came from someone with the key
+A key must be 16, 24 or 32 random bytes. A password is a short string with far less entropy, so it has to go through a key derivation function that adds a random salt and makes each guess expensive. PBKDF2 is available everywhere, including the Web Crypto API; the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2) gives 600,000 iterations for PBKDF2-HMAC-SHA256. On the laptop used for this page (Node.js 24), 600,000 iterations took about 73 ms and 200,000 took about 25 ms, so one CPU core tests about 14 passwords per second instead of 40. That helps against guessing, but a password from a common list still falls in seconds; the KDF buys time, it does not create entropy.
 
-AES-GCM requires a 96-bit nonce (number used once). The nonce must never repeat for the same key — GCM security collapses catastrophically if the same key+nonce combination is reused.
-
-## Encryption in the Browser
-
-Modern browsers expose the **Web Crypto API**, a native cryptographic implementation that runs in the JavaScript engine. It uses hardware acceleration where available, and a key created with `extractable: false` (as in the code below) cannot be read back by JavaScript.
+This code encrypts and decrypts in the same format as the ZeroTool tool: `v2:` followed by Base64 of salt, nonce, ciphertext and tag. It also reads the tool's older format without a prefix (200,000 iterations).
 
 ```javascript
 // Encrypt a message with AES-GCM (Web Crypto API)
@@ -156,17 +154,27 @@ async function decrypt(base64, password) {
 }
 ```
 
-### Why PBKDF2?
+## A Ciphertext Format You Can Reproduce
 
-Raw passwords are not suitable AES keys — they are short, low-entropy strings. PBKDF2 (Password-Based Key Derivation Function 2) stretches a password into a cryptographic key:
+AES-GCM output is only useful if the receiver knows where the salt and nonce are. The tool uses this layout, and the code above and below writes the same bytes:
 
-1. Combines the password with a random salt (prevents precomputed rainbow table attacks)
-2. Runs the combination through SHA-256 hundreds of thousands of times (slows down brute force)
-3. Outputs a 256-bit key suitable for AES-256
+| Part | Bytes | Why |
+|---|---|---|
+| `v2:` | 3 (text) | Version: PBKDF2 at 600,000 iterations. `:` is not a Base64 or hex character, so it cannot be part of the payload. |
+| Salt | 16 | Random per encryption; gives a new key each time. |
+| Nonce (IV) | 12 | Random per encryption; the 96-bit size SP 800-38D recommends. |
+| Ciphertext | same length as the plaintext | GCM needs no padding. |
+| Tag | 16 | Checked before any plaintext is returned. |
 
-The code above uses 600,000 iterations, the value the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2) recommends for PBKDF2-HMAC-SHA256. On the laptop used to test this page (Node.js 24), 600,000 iterations took about 73 ms and 200,000 took about 25 ms, so one CPU core can test about 14 passwords per second instead of 40. The `v2:` prefix is the format of the ZeroTool AES tool; `decrypt` also reads ciphertext without the prefix, the older format with 200,000 iterations.
+The tool produced this for `Meet at 10:30, gate B` with the password `correct horse battery staple`:
 
-## Python Encryption with cryptography Library
+```text
+v2:l0KuwwrqkW+qHiVFcSad83WDHoteU8LkBJ/dw3N3LGl2PMwh3n8Q9u6wTM1CzpoDINVwd/yy4RRdM7QPNwXfGdc=
+```
+
+88 Base64 characters decode to 65 bytes: 16 + 12 + 21 + 16, because the text is 21 bytes of UTF-8. Both functions in this guide decrypt it, and so does the tool. Encrypt the same text again and the output is different, because the salt and nonce are new; if two runs ever produce the same output, the random number generator is broken.
+
+The same layout in Python with the `cryptography` package (tested with version 45):
 
 ```python
 import os
@@ -215,28 +223,21 @@ decrypted = decrypt(encrypted, "my-password")
 print(decrypted)  # Secret message
 ```
 
-## Key Management: The Hard Part
+Two formats you will meet that this layout is not compatible with:
 
-AES-256 with GCM is computationally secure — breaking it by brute force is not feasible. But the key is the weak point. Common mistakes:
+- **OpenSSL `enc`.** It does not support GCM at all; its manual says it "does not support authenticated encryption modes like CCM and GCM, and will not support such modes in the future", and OpenSSL 3.6.1 answers `-aes-256-gcm` with `enc: AEAD ciphers not supported`. Its output starts with `Salted__` (Base64 `U2FsdGVkX1`) followed by an 8-byte salt, and is normally CBC.
+- **CryptoJS `AES.encrypt(text, "passphrase")`.** It writes the same OpenSSL-style `Salted__` header with AES-256-CBC and an MD5-based key derivation. We decrypted CryptoJS 4.2.0 output with `openssl enc -d -aes-256-cbc -md md5 -a -A`; output of `openssl enc -pbkdf2` needs `-pbkdf2` instead of `-md md5`.
 
-**Hardcoded keys**: Never embed encryption keys in source code. Keys end up in git history, log files, and build artifacts. Use environment variables or a secrets manager (AWS Secrets Manager, HashiCorp Vault, etc.).
+The tool recognizes the `Salted__` header and tells you to use one of those commands instead of reporting a wrong password.
 
-**Key reuse across environments**: Use separate keys for development, staging, and production. A key compromise in dev should not compromise prod.
+## Keys Outside the Code
 
-**No key rotation**: Plan for key rotation. If a key is compromised, you need a way to re-encrypt existing data with a new key.
+Most AES incidents are key incidents. Keep keys out of source code and out of git history; load them from the environment or a secrets manager. Use separate keys per environment, so a leaked development key does not open production data. Plan how you will rotate a key: the version prefix in the format above exists so that data written with old parameters can still be read while it is re-encrypted. When a password protects a message, send the password over a different channel than the ciphertext. A password in the same email as the encrypted file protects nothing.
 
-**Weak passwords for PBKDF2**: If you use password-based key derivation, the security is limited by the password strength. Use long, random passphrases or a dedicated KDF with hardware keys.
+## Checks Before You Ship
 
-## Why Client-Side Encryption Matters
-
-When encryption happens in the browser, the server never sees the plaintext. This is the architecture of tools like Bitwarden's browser extension: your vault is encrypted on your device before it leaves. The server stores ciphertext it cannot read.
-
-This is in contrast to server-side encryption (SSE), where the server encrypts and decrypts on your behalf — which protects against storage theft but not against a compromised or malicious server.
-
-For sensitive personal data, prefer client-side encryption with keys that never leave the device.
-
-## Encrypt Text with AES Online
-
-[ZeroTool's AES Encrypt/Decrypt tool](/tools/aes-encrypt-decrypt) uses AES-256-GCM via the Web Crypto API, running entirely in your browser. Your plaintext and keys are never sent to any server. Paste your text, set a password, and get the encrypted output instantly.
-
-**[Try the AES Encryption Tool →](/tools/aes-encrypt-decrypt)**
+- Mode is GCM (or another AEAD mode). No ECB anywhere; no CBC without a MAC.
+- Every encryption under a key uses a new 96-bit nonce, and a random-nonce key is retired well before 2³² messages.
+- Passwords go through PBKDF2-HMAC-SHA256 with at least 600,000 iterations (or scrypt / Argon2) and a random salt of 16 bytes.
+- The stored format includes a version, the salt, the nonce and the tag, and decryption failures are reported as failures, never as output.
+- Test vectors from another implementation decrypt with yours. The [AES Encryption & Decryption tool](/tools/aes-encrypt-decrypt/) accepts a raw key and a fixed IV for this, and shows the exact bytes it produces.
