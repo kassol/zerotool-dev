@@ -2,6 +2,7 @@
 title: "IP Subnet Calculator Online: CIDR, Subnetting, and Host Ranges Explained"
 description: "Calculate IPv4 subnets instantly online. Enter any CIDR notation and get network address, broadcast, host range, and usable hosts. Free subnet calculator with no signup."
 pubDate: 2026-04-13
+updatedDate: 2026-09-30
 lang: "en"
 tags: ["subnet-calculator", "cidr", "ipv4", "networking", "developer-tools"]
 ---
@@ -41,12 +42,12 @@ The `/24` means the first 24 bits are the **network portion**; the remaining 8 b
 | `/26` | 255.255.255.192 | 62 | Small segment |
 | `/27` | 255.255.255.224 | 30 | VLAN segment |
 | `/28` | 255.255.255.240 | 14 | Small team |
-| `/29` | 255.255.255.248 | 6 | Point-to-point link |
+| `/29` | 255.255.255.248 | 6 | Tiny segment |
 | `/30` | 255.255.255.252 | 2 | Router-to-router |
-| `/31` | 255.255.255.254 | 0 (special) | Point-to-point (RFC 3021) |
+| `/31` | 255.255.255.254 | 2 (no network or broadcast address) | Point-to-point ([RFC 3021](https://www.rfc-editor.org/rfc/rfc3021)) |
 | `/32` | 255.255.255.255 | 1 | Host route |
 
-**Usable hosts = 2^(32 - prefix) - 2** (subtract network and broadcast addresses)
+**Usable hosts = 2^(32 - prefix) - 2** (subtract network and broadcast addresses). The formula applies to `/0`–`/30`; `/31` and `/32` are the exceptions in the table.
 
 ## Key Subnet Parameters
 
@@ -81,12 +82,12 @@ AWS requires you to specify a CIDR block for each VPC and subnet. A typical setu
 
 ```
 VPC:          10.0.0.0/16    (65,536 addresses)
-├─ Public:    10.0.1.0/24    (254 usable — internet-facing)
-├─ Private:   10.0.2.0/24    (254 usable — app tier)
-└─ Database:  10.0.3.0/24    (254 usable — RDS, isolated)
+├─ Public:    10.0.1.0/24    (251 usable — internet-facing)
+├─ Private:   10.0.2.0/24    (251 usable — app tier)
+└─ Database:  10.0.3.0/24    (251 usable — RDS, isolated)
 ```
 
-AWS reserves 5 addresses per subnet (first 4 + broadcast), leaving 251 usable per `/24`.
+AWS reserves 5 addresses per subnet (the first 4 and the last one), leaving 251 usable per `/24` ([Amazon VPC: Subnet CIDR blocks](https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html)).
 
 ### Kubernetes Pod CIDR
 
@@ -141,7 +142,7 @@ print(net.network_address)    # 192.168.10.64
 print(net.broadcast_address)  # 192.168.10.127
 print(net.netmask)            # 255.255.255.192
 print(net.num_addresses)      # 64
-print(list(net.hosts())[:3])  # [192.168.10.65, .66, .67]
+print(list(net.hosts())[:3])  # [IPv4Address('192.168.10.65'), IPv4Address('192.168.10.66'), IPv4Address('192.168.10.67')]
 
 # Check if an IP is in the subnet
 ip = ipaddress.IPv4Address('192.168.10.80')
@@ -167,7 +168,7 @@ if err != nil {
 }
 
 fmt.Println(ipNet.IP)     // 192.168.10.64 (network address)
-fmt.Println(ipNet.Mask)   // ffffff c0 (hex mask)
+fmt.Println(ipNet.Mask)   // ffffffc0 (hex mask)
 
 // Check containment
 testIP := net.ParseIP("192.168.10.80")
@@ -190,24 +191,24 @@ Always use private ranges for internal infrastructure. Public IPs route on the i
 
 **Forgetting reserved addresses**: Every subnet loses 2 addresses (network + broadcast). A `/29` has 8 addresses total but only 6 usable.
 
-**Overlapping subnets**: `10.0.1.0/24` and `10.0.0.0/16` overlap — every address in the /24 is also in the /16. This causes routing ambiguity.
+**Overlapping subnets**: `10.0.1.0/24` and `10.0.0.0/16` overlap — every address in the /24 is also in the /16. A router picks the longest matching prefix, so traffic for the /24 never reaches a network that owns the /16. Many platforms refuse overlaps outright; for example, AWS cannot peer two VPCs whose CIDR blocks overlap.
 
 **Off-by-one on host ranges**: First usable host is network+1, last is broadcast-1. A `/24` has hosts `.1` through `.254`, not `.0` through `.255`.
 
-**CIDR alignment**: A subnet must start on a boundary aligned to its prefix length. `10.0.0.1/24` is not valid CIDR (the host bit is set); the correct form is `10.0.0.0/24`.
+**CIDR alignment**: A subnet must start on a boundary aligned to its prefix length. `10.0.0.1/24` is fine as an interface address, but as a network it has a host bit set; the correct network form is `10.0.0.0/24`. Python's `ipaddress.ip_network('10.0.0.1/24')` raises `10.0.0.1/24 has host bits set`.
 
 ## Using the Online Subnet Calculator
 
 **[Try ZeroTool IP Subnet Calculator →](/tools/ip-subnet-calculator)**
 
-Enter any IPv4 address with CIDR notation and instantly get:
+Enter any IPv4 address with CIDR notation (or pick the prefix from the list) and instantly get:
 
 - Network address and broadcast address
 - Subnet mask and wildcard mask
 - First and last usable host
-- Total hosts and usable host count
-- Binary representation of all fields
+- Usable host count
+- The normalized CIDR notation
 
-No signup, no ads, runs in the browser. Useful for quick VPC planning, network debugging, and subnet allocation during architecture reviews.
+No signup, runs in the browser. It handles IPv4 only. Useful for quick VPC planning, network debugging, and subnet allocation during architecture reviews.
 
 **[Calculate IPv4 subnets instantly →](/tools/ip-subnet-calculator)**

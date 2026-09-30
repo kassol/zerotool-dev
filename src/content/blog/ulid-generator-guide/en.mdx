@@ -2,7 +2,9 @@
 title: "ULID Generator: What Is a ULID and Why It Beats UUID for Sorting"
 description: "ULID vs UUID — understand the difference, when to use a ULID, how to generate one, and how ULIDs solve ordering problems in distributed systems."
 pubDate: 2026-04-15
+updatedDate: 2026-09-30
 lang: "en"
+noindex: true
 tags: ["ulid", "uuid", "distributed-systems", "developer-tools", "database"]
 ---
 
@@ -12,7 +14,7 @@ UUID is the default unique identifier for most applications. But UUID v4 — ran
 
 ## What Is a ULID?
 
-ULID stands for **Universally Unique Lexicographically Sortable Identifier**. It was created by Alizain Feerasta in 2016 and is defined in a public spec.
+ULID stands for **Universally Unique Lexicographically Sortable Identifier**. It was created by Alizain Feerasta in 2016 and is defined in the [ULID spec](https://github.com/ulid/spec).
 
 A ULID looks like this:
 
@@ -31,8 +33,8 @@ A ULID looks like this:
   48 bits         80 bits
 ```
 
-- **Timestamp (48 bits)**: milliseconds since Unix epoch. Good until the year 10895.
-- **Randomness (80 bits)**: cryptographically random. ~1.2 × 10²⁴ possible values per millisecond.
+- **Timestamp (48 bits)**: milliseconds since Unix epoch. The spec says it won't run out of space until the year 10889 AD (2⁴⁸ − 1 ms is 10889-08-02 UTC).
+- **Randomness (80 bits)**: from a cryptographically secure source where possible (spec wording). ~1.2 × 10²⁴ possible values per millisecond.
 
 ## ULID vs UUID: Key Differences
 
@@ -42,9 +44,9 @@ A ULID looks like this:
 | Sortable | No | Yes (lexicographic) |
 | Timestamp embedded | No | Yes |
 | Collision probability | Extremely low | Extremely low |
-| URL-safe | No (contains hyphens) | Yes |
-| Case-sensitive | No | Yes (by spec, case-insensitive decoders exist) |
-| Spec | RFC 4122 | ULID spec |
+| URL-safe | Yes (hex digits and hyphens are unreserved in RFC 3986) | Yes |
+| Case-insensitive | Yes | Yes (by spec) |
+| Spec | RFC 9562 (obsoletes RFC 4122) | ULID spec |
 
 The critical difference: ULIDs sort by creation time. Insert 1000 rows in a ULID-keyed table and the primary key index stays sequential. This matters for:
 
@@ -55,7 +57,7 @@ The critical difference: ULIDs sort by creation time. Insert 1000 rows in a ULID
 
 ## ULID vs UUID v7
 
-UUID v7 (RFC 9562, finalized 2024) also embeds a millisecond timestamp in the first 48 bits — making it sortable. It's a direct response to ULID's success.
+UUID v7 ([RFC 9562](https://www.rfc-editor.org/rfc/rfc9562), published May 2024) also embeds a millisecond timestamp in the first 48 bits — making it sortable. Section 2.1 of the RFC lists ULID among the time-ordered ID schemes that motivated the new versions.
 
 | Feature | ULID | UUID v7 |
 |---|---|---|
@@ -68,7 +70,9 @@ If your database has native UUID support (PostgreSQL's `uuid` type), UUID v7 may
 
 ## Monotonicity Within the Same Millisecond
 
-When multiple ULIDs are generated in the same millisecond, the timestamp portion is identical. The ULID spec defines a monotonicity extension: increment the random component by 1 for each subsequent ULID within the same millisecond. This guarantees ordering even at high throughput (millions of inserts per second).
+When multiple ULIDs are generated in the same millisecond, the timestamp portion is identical. The ULID spec defines a monotonicity extension: increment the random component by 1 for each subsequent ULID within the same millisecond. This keeps IDs from one generator in order. If the random component overflows within one millisecond, generation fails. IDs made by different processes in the same millisecond are still ordered only by their random bits.
+
+The ZeroTool generator does not apply this extension: every ULID in a batch gets fresh random bits, so a batch made within one millisecond is not listed in sorted order. Use `monotonicFactory()` from the `ulid` package when you need that.
 
 ## Generating ULIDs in Code
 
@@ -96,16 +100,17 @@ go get github.com/oklog/ulid/v2
 
 ```go
 import (
-    "math/rand"
-    "time"
+    "crypto/rand"
+    "fmt"
+
     "github.com/oklog/ulid/v2"
 )
 
-ms := ulid.Timestamp(time.Now())
-entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
-id := ulid.MustNew(ms, entropy)
+id := ulid.MustNew(ulid.Now(), rand.Reader)
 fmt.Println(id) // "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
 ```
+
+`ulid.Make()` (v2.1+) is shorter and monotonic within a millisecond, but its default entropy is `math/rand` seeded from the clock, so use `crypto/rand` when IDs must be hard to guess.
 
 ### Python
 
@@ -118,7 +123,8 @@ from ulid import ULID
 
 id = ULID()
 print(str(id))  # "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
-print(id.timestamp())  # datetime object
+print(id.timestamp)  # Unix seconds as a float
+print(id.datetime)   # timezone-aware datetime (UTC)
 ```
 
 ### Rust
@@ -140,17 +146,17 @@ println!("{}", id); // "01HQ7V5J3Z2QK8MNRPXTYW9E4B"
 ### PostgreSQL
 
 ```sql
--- As text (26 bytes)
+-- As text (26 bytes); the application generates the ULID
 CREATE TABLE events (
-  id TEXT PRIMARY KEY DEFAULT gen_ulid(),
+  id CHAR(26) PRIMARY KEY,
   ...
 );
 
 -- As UUID (16 bytes, loses the string format)
--- Requires a conversion function
+-- Convert in the application, e.g. ulidToUUID() from the ulid npm package
 ```
 
-PostgreSQL doesn't natively understand ULID, but you can store as `TEXT` or convert to `BYTEA`. Many teams use `TEXT` for clarity; the 26-byte cost is negligible compared to the query simplicity.
+PostgreSQL has no built-in ULID type or generator function (a `DEFAULT` needs an extension), so most teams generate the ID in the application and store it as `TEXT`, `BYTEA` or `uuid`. Many teams use `TEXT` for clarity; the 26-byte cost is negligible compared to the query simplicity.
 
 ### MySQL / SQLite
 
@@ -164,7 +170,7 @@ The timestamp is embedded in the first 10 characters. You can extract it:
 import { decodeTime } from 'ulid';
 
 const ts = decodeTime('01HQ7V5J3Z2QK8MNRPXTYW9E4B');
-console.log(new Date(ts)); // Wed Apr 15 2026 ...
+console.log(new Date(ts).toISOString()); // 2024-02-22T07:23:36.959Z
 ```
 
 This is useful for debugging: you can tell exactly when a record was created from its ID alone, without querying `created_at`.
