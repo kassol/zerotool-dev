@@ -57,7 +57,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const names = ['encryptText', 'decryptText', 'decryptInput', 'encryptFile', 'decryptFile', 'parseRawKey', 'generateRawKey', 'bytesToBase64', 'bytesToHex'];
+const names = ['encryptText', 'decryptText', 'decryptInput', 'encryptFile', 'decryptFile', 'parseRawKey', 'parseIv', 'generateRawKey', 'bytesToBase64', 'bytesToHex'];
 const E = new Function(block + '\nreturn {' + names.map((n) => n + ': typeof ' + n + " === 'function' ? " + n + ' : undefined').join(',') + '};')();
 
 let failures = 0;
@@ -292,6 +292,41 @@ if (need('parseRawKey')) {
   const tcInput = 'cafebabefacedbaddecaf888' + tcExpectCt + tcExpectTag;
   const tcOut = await E.decryptInput({ type: 'raw', key: tcKey }, tcInput).catch((x) => ({ error: x.code }));
   check('GCM spec Test Case 15 (hex iv|ct|tag) decrypts to the published plaintext', tcOut.bytes && Buffer.from(tcOut.bytes).toString('hex') === tcPt, JSON.stringify(tcOut.error));
+}
+
+// ---------- raw key with a separate IV and AAD (WeChat Pay APIv3 callback layout) ----------
+// WeChat Pay "如何解密回调报文和平台证书": AEAD_AES_256_GCM, key = the 32-byte APIv3 key string,
+// nonce and associated_data are strings used as UTF-8 bytes, ciphertext = Base64(ct | tag).
+if (need('parseRawKey')) {
+  const { createCipheriv } = await import('node:crypto');
+  const apiKey = 'zerotool-example-apiv3-key-0032b'; // 32 ASCII characters, made up
+  const nonce = '0123456789ab';                        // 12 characters, read as text
+  const aad = 'transaction';
+  const plain = '{"out_trade_no":"ZT20260930001","trade_state":"SUCCESS"}';
+  const c = createCipheriv('aes-256-gcm', Buffer.from(apiKey), Buffer.from(nonce));
+  c.setAAD(Buffer.from(aad));
+  const ctB64 = Buffer.concat([c.update(plain, 'utf8'), c.final(), c.getAuthTag()]).toString('base64');
+  const key = E.parseRawKey(apiKey, 'text');
+  check('text key of 32 ASCII characters = 32 bytes', key.length === 32);
+  const bad = (fn) => { try { fn(); return null; } catch (e) { return e; } };
+  const e = bad(() => E.parseRawKey('short text key', 'text'));
+  check('14-character text key fails with keyLength', e && e.code === 'keyLength' && e.detail.bytes === 14, e && e.code);
+  check('parseIv: 12 characters are text', E.parseIv && E.parseIv(nonce).length === 12 && E.parseIv(nonce)[0] === 0x30);
+  check('parseIv: 24 hex digits are hex', E.parseIv && E.parseIv('cafebabefacedbaddecaf888').length === 12 && E.parseIv('cafebabefacedbaddecaf888')[0] === 0xca);
+  check('parseIv: empty is null', E.parseIv && E.parseIv('  ') === null);
+  const spec = { type: 'raw', key, iv: E.parseIv(nonce), aad: te.encode(aad) };
+  check('WeChat-style callback decrypts with IV and AAD', (await E.decryptText(spec, ctB64).catch((x) => 'ERR ' + x.code)) === plain);
+  await rejects('wrong AAD fails with auth', E.decryptText({ ...spec, aad: te.encode('certificate') }, ctB64), 'auth');
+  await rejects('missing AAD fails with auth', E.decryptText({ ...spec, aad: null }, ctB64), 'auth');
+  const s = await rejects('separate IV: 15 bytes fails with short (min 16)', E.decryptText(spec, Buffer.alloc(15, 0xff).toString('base64')), 'short');
+  check('separate IV short min is 16', s && s.detail && s.detail.min === 16, s && JSON.stringify(s.detail));
+  // encrypting with a given IV writes ct | tag only, the same bytes as node:crypto
+  const out = await E.encryptText(spec, plain);
+  check('given IV + AAD: output equals node:crypto (deterministic)', out === ctB64, out.slice(0, 16) + ' vs ' + ctB64.slice(0, 16));
+  // GCM spec Test Case 15 through the IV field
+  const tcKey = Uint8Array.from(Buffer.from('feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308', 'hex'));
+  const tc = await E.decryptInput({ type: 'raw', key: tcKey, iv: E.parseIv('cafebabefacedbaddecaf888') }, '522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015adb094dac5d93471bdec1a502270e3cc6c').catch((x) => ({ error: x.code }));
+  check('Test Case 15 with IV in its own field', tc.bytes && tc.bytes.length === 64, JSON.stringify(tc.error));
 }
 
 // ---------- files ----------

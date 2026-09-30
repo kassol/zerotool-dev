@@ -15,6 +15,12 @@ const STRINGS = {
     rawKeyPlaceholder: 'Key: 32, 48 or 64 hex digits',
     rawKeyPlaceholderB64: 'Key: Base64 of 16, 24 or 32 bytes',
     keyFormat: 'Key format',
+    keyFmtText: 'Text (UTF-8)',
+    rawKeyPlaceholderText: 'Key: text of 16, 24 or 32 bytes',
+    ivPlaceholder: 'IV (optional): 24 hex digits or text',
+    aadPlaceholder: 'AAD (optional): additional data, text',
+    fmtRawIv: 'raw key, IV from the IV field, ciphertext + tag',
+    ivWarning: 'This used the IV you entered. Reusing an IV with the same key breaks GCM (NIST SP 800-38D §8); leave the field empty to get a new random IV.',
     generate: 'Generate',
     show: 'Show',
     hide: 'Hide',
@@ -73,6 +79,12 @@ const STRINGS = {
     rawKeyPlaceholder: '密钥：32、48 或 64 位十六进制',
     rawKeyPlaceholderB64: '密钥：16、24 或 32 字节的 Base64',
     keyFormat: '密钥格式',
+    keyFmtText: '文本（UTF-8）',
+    rawKeyPlaceholderText: '密钥：16、24 或 32 字节的文本',
+    ivPlaceholder: 'IV（可选）：24 位十六进制或文本',
+    aadPlaceholder: 'AAD（可选）：附加数据，文本',
+    fmtRawIv: '原始密钥，IV 取自 IV 输入框，密文 + 认证标签',
+    ivWarning: '本次使用了你输入的 IV。同一密钥重复使用 IV 会破坏 GCM 的安全性（NIST SP 800-38D 第 8 节）；清空该输入框即可每次生成新的随机 IV。',
     generate: '随机生成',
     show: '显示',
     hide: '隐藏',
@@ -131,6 +143,12 @@ const STRINGS = {
     rawKeyPlaceholder: '鍵：16進数 32・48・64 桁',
     rawKeyPlaceholderB64: '鍵：16・24・32 バイトの Base64',
     keyFormat: '鍵の形式',
+    keyFmtText: 'テキスト（UTF-8）',
+    rawKeyPlaceholderText: '鍵：16・24・32 バイトのテキスト',
+    ivPlaceholder: 'IV（任意）：16進数 24 桁かテキスト',
+    aadPlaceholder: 'AAD（任意）：追加データ、テキスト',
+    fmtRawIv: '鍵を直接入力、IV は IV 欄、暗号文 + タグ',
+    ivWarning: '入力した IV を使いました。同じ鍵で IV を再利用すると GCM の安全性が失われます（NIST SP 800-38D 第 8 章）。欄を空にすると毎回新しいランダムな IV を使います。',
     generate: '生成',
     show: '表示',
     hide: '非表示',
@@ -189,6 +207,12 @@ const STRINGS = {
     rawKeyPlaceholder: '키: 16진수 32·48·64자리',
     rawKeyPlaceholderB64: '키: 16·24·32바이트의 Base64',
     keyFormat: '키 형식',
+    keyFmtText: '텍스트(UTF-8)',
+    rawKeyPlaceholderText: '키: 16·24·32바이트의 텍스트',
+    ivPlaceholder: 'IV(선택): 16진수 24자리 또는 텍스트',
+    aadPlaceholder: 'AAD(선택): 추가 데이터, 텍스트',
+    fmtRawIv: '키 직접 입력, IV는 IV 칸, 암호문 + 태그',
+    ivWarning: '입력한 IV를 사용했습니다. 같은 키로 IV를 재사용하면 GCM의 안전성이 깨집니다(NIST SP 800-38D 8절). 칸을 비우면 매번 새 무작위 IV를 씁니다.',
     generate: '생성',
     show: '표시',
     hide: '숨기기',
@@ -255,8 +279,14 @@ const L = STRINGS[lang];
     <select id="aes-keyfmt" class="tool-input aes-select" aria-label={L.keyFormat} hidden>
       <option value="hex">Hex</option>
       <option value="base64">Base64</option>
+      <option value="text">{L.keyFmtText}</option>
     </select>
     <button id="aes-genkey" class="btn-secondary aes-btn" type="button" hidden>{L.generate}</button>
+  </div>
+
+  <div id="aes-advanced" class="aes-advanced" hidden>
+    <input type="text" id="aes-iv" class="tool-input" placeholder={L.ivPlaceholder} aria-label={L.ivPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
+    <input type="text" id="aes-aad" class="tool-input" placeholder={L.aadPlaceholder} aria-label={L.aadPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
   </div>
 
   <div class="aes-grid">
@@ -416,20 +446,28 @@ const L = STRINGS[lang];
       function importRawKey(bytes, usages) {
         return crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, usages);
       }
-      async function gcmOpen(key, iv, data) {
+      function gcmParams(iv, aad) {
+        var p = { name: 'AES-GCM', iv: iv, tagLength: 128 };
+        if (aad && aad.length) p.additionalData = aad;
+        return p;
+      }
+      async function gcmOpen(key, iv, data, aad) {
         try {
-          return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv, tagLength: 128 }, key, data));
+          return new Uint8Array(await crypto.subtle.decrypt(gcmParams(iv, aad), key, data));
         } catch (e) {
           throw fail('auth'); // OperationError: the tag does not match
         }
       }
 
       async function sealPayload(spec, plain) {
-        var iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
         if (spec.type === 'raw') {
+          // A given IV (e.g. a nonce stored next to the ciphertext) is not written to the output.
+          var riv = spec.iv || crypto.getRandomValues(new Uint8Array(IV_BYTES));
           var rk = await importRawKey(spec.key, ['encrypt']);
-          return concat([iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv, tagLength: 128 }, rk, plain))]);
+          var sealed = new Uint8Array(await crypto.subtle.encrypt(gcmParams(riv, spec.aad), rk, plain));
+          return spec.iv ? sealed : concat([riv, sealed]);
         }
+        var iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
         var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
         var key = await deriveKey(spec.password, salt, PBKDF2_ITERATIONS[CURRENT_VERSION], ['encrypt']);
         return concat([salt, iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv, tagLength: 128 }, key, plain))]);
@@ -437,9 +475,11 @@ const L = STRINGS[lang];
 
       async function openPayload(spec, payload, version) {
         if (spec.type === 'raw') {
-          if (payload.length < IV_BYTES + TAG_BYTES) throw fail('short', { bytes: payload.length, min: IV_BYTES + TAG_BYTES });
+          var rmin = spec.iv ? TAG_BYTES : IV_BYTES + TAG_BYTES;
+          if (payload.length < rmin) throw fail('short', { bytes: payload.length, min: rmin });
           var rk = await importRawKey(spec.key, ['decrypt']);
-          return { bytes: await gcmOpen(rk, payload.subarray(0, IV_BYTES), payload.subarray(IV_BYTES)), iterations: 0 };
+          if (spec.iv) return { bytes: await gcmOpen(rk, spec.iv, payload, spec.aad), iterations: 0 };
+          return { bytes: await gcmOpen(rk, payload.subarray(0, IV_BYTES), payload.subarray(IV_BYTES), spec.aad), iterations: 0 };
         }
         var min = SALT_BYTES + IV_BYTES + TAG_BYTES;
         if (payload.length < min) throw fail('short', { bytes: payload.length, min: min });
@@ -521,11 +561,15 @@ const L = STRINGS[lang];
         return (await openPayload(spec, bytes.subarray(m[0].length), version)).bytes;
       }
 
+      // format: 'hex', 'base64', or 'text' (the UTF-8 bytes of the string, e.g. a 32-character
+      // WeChat Pay APIv3 key)
       function parseRawKey(str, format) {
         var text = String(str);
-        if (!text.replace(/\s+/g, '')) throw fail('keyEmpty');
+        if (!(format === 'text' ? text : text.replace(/\s+/g, ''))) throw fail('keyEmpty');
         var bytes;
-        if (format === 'base64') {
+        if (format === 'text') {
+          bytes = new TextEncoder().encode(text);
+        } else if (format === 'base64') {
           try { bytes = decodeBase64(text, 0); } catch (e) {
             if (e.code === 'base64') throw fail('keyChars', { ch: e.detail.ch, pos: e.detail.pos, format: 'Base64' });
             throw fail('keyBase64Length', { chars: e.detail.chars });
@@ -544,6 +588,16 @@ const L = STRINGS[lang];
         return bytes;
       }
 
+      // IV field of raw key mode: 24 hex digits are read as 12 bytes; anything else is text,
+      // used as its UTF-8 bytes (WeChat Pay APIv3 sends the nonce as a 12-character string).
+      function parseIv(str) {
+        var text = String(str || '');
+        if (!text.trim()) return null;
+        var compact = text.replace(/\s+/g, '');
+        if (/^[0-9a-fA-F]{24}$/.test(compact)) return decodeHex(compact);
+        return new TextEncoder().encode(text);
+      }
+
       function generateRawKey(bits) {
         return bytesToHex(crypto.getRandomValues(new Uint8Array((bits || 256) / 8)));
       }
@@ -555,6 +609,9 @@ const L = STRINGS[lang];
       var toggleBtn = document.getElementById('aes-toggle-pw');
       var keyFmtEl = document.getElementById('aes-keyfmt');
       var genBtn = document.getElementById('aes-genkey');
+      var advEl = document.getElementById('aes-advanced');
+      var ivEl = document.getElementById('aes-iv');
+      var aadEl = document.getElementById('aes-aad');
       var plainEl = document.getElementById('aes-plaintext');
       var cipherEl = document.getElementById('aes-ciphertext');
       var encBtn = document.getElementById('aes-encrypt');
@@ -615,7 +672,9 @@ const L = STRINGS[lang];
       });
 
       function currentSpec() {
-        if (modeEl.value === 'raw') return { type: 'raw', key: parseRawKey(rawEl.value, keyFmtEl.value) };
+        if (modeEl.value === 'raw') {
+          return { type: 'raw', key: parseRawKey(rawEl.value, keyFmtEl.value), iv: parseIv(ivEl.value), aad: aadEl.value ? new TextEncoder().encode(aadEl.value) : null };
+        }
         if (!pwEl.value) { var e = new Error('noPassword'); e.ui = S.errNoPassword; throw e; }
         return { type: 'password', password: pwEl.value };
       }
@@ -627,13 +686,15 @@ const L = STRINGS[lang];
         rawEl.hidden = !raw;
         keyFmtEl.hidden = !raw;
         genBtn.hidden = !raw;
-        rawEl.placeholder = keyFmtEl.value === 'base64' ? S.rawKeyPlaceholderB64 : S.rawKeyPlaceholder;
+        advEl.hidden = !raw;
+        rawEl.placeholder = keyFmtEl.value === 'base64' ? S.rawKeyPlaceholderB64 : keyFmtEl.value === 'text' ? S.rawKeyPlaceholderText : S.rawKeyPlaceholder;
         setStatus('');
       }
       modeEl.addEventListener('change', applyMode);
       keyFmtEl.addEventListener('change', applyMode);
       genBtn.addEventListener('click', function () {
         var hex = generateRawKey(256);
+        if (keyFmtEl.value === 'text') { keyFmtEl.value = 'hex'; applyMode(); }
         if (keyFmtEl.value === 'base64') {
           var b = new Uint8Array(32);
           for (var i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
@@ -704,10 +765,10 @@ const L = STRINGS[lang];
             setStatus(fmt(S.fileReady, { name: name, size: size(out.length) }), 'success');
           } else if (kind === 'encrypt') {
             cipherEl.value = await encryptText(spec, plainEl.value, encodingEl.value);
-            setStatus(fmt(S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }), 'success');
+            setStatus(fmt(S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }) + (spec.iv ? ' ' + S.ivWarning : ''), spec.iv ? 'info' : 'success');
           } else {
             var r = await decryptInput(spec, cipherEl.value);
-            var format = spec.type === 'raw' ? S.fmtRaw : r.version === 2 ? S.fmtV2 : r.iterations === PBKDF2_ITERATIONS[1] ? S.fmtLegacy : S.fmtNoPrefix600;
+            var format = spec.type === 'raw' ? (spec.iv ? S.fmtRawIv : S.fmtRaw) : r.version === 2 ? S.fmtV2 : r.iterations === PBKDF2_ITERATIONS[1] ? S.fmtLegacy : S.fmtNoPrefix600;
             if (r.text === null) {
               offerDownload(r.bytes, 'decrypted.bin');
               setStatus(fmt(S.err_utf8, { n: num(r.bytes.length) }), 'error');
@@ -739,6 +800,8 @@ const L = STRINGS[lang];
       document.addEventListener('keydown', function (e) {
         if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
           pwEl.value = '';
+          ivEl.value = '';
+          aadEl.value = '';
           setFile(plainFile, null);
           setFile(cipherFile, null);
         }
@@ -773,6 +836,9 @@ const L = STRINGS[lang];
   .aes-mode { flex: 0 0 auto; }
   .aes-key-input { flex: 1 1 14rem; min-width: 0; }
   .aes-key-input[hidden], .aes-keybar [hidden] { display: none; }
+
+  .aes-advanced { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5rem; }
+  .aes-advanced[hidden] { display: none; }
 
   .aes-grid {
     display: grid;
@@ -862,6 +928,7 @@ const L = STRINGS[lang];
         "hp  hc  hc";
     }
     .aes-wrap { gap: 0.5rem; }
+    .aes-advanced { grid-template-columns: minmax(0, 1fr); }
     .aes-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
     .aes-head { min-height: 0; }
     .aes-file-btn, .aes-enc-label .aes-select { min-height: 44px; }
