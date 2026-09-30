@@ -38,6 +38,13 @@ import {
   chunk,
   requestBody,
   describeStatus,
+  blogState,
+  toolState,
+  pageSource,
+  parseRedirects,
+  redirectTarget,
+  redirectMatches,
+  retiredUrls,
 } from './indexnow-urls.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -70,11 +77,6 @@ equal('no stale key files in public/', otherKeyFiles, []);
 const routes = JSON.parse(readFileSync(join(root, 'public/_routes.json'), 'utf8'));
 check('_routes.json excludes the key file from Functions', routes.exclude.includes(`/${INDEXNOW_KEY}.txt`));
 
-// Cloudflare Pages _redirects: `*` matches anything, `:name` one segment.
-function redirectMatches(source, path) {
-  const re = new RegExp('^' + source.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/:[a-zA-Z]\w*/g, '[^/]+')).join('.*') + '$');
-  return re.test(path);
-}
 check('redirect matcher sanity', redirectMatches('/blog/*', '/blog/x/') && !redirectMatches('/blog/*', '/x.txt') && redirectMatches('/:a.txt', '/k.txt'));
 // dist/_redirects = public/_redirects + rules appended by generate-blog-redirects.mjs.
 for (const file of ['public/_redirects', 'dist/_redirects']) {
@@ -264,6 +266,73 @@ if (existsSync(indexPath)) {
   equal('real sitemap: dropped paths reported', s.notInSitemap, ['/blog/json-formatter-guide/', '/zh/blog/aes-encrypt-decrypt-guide/']);
   check('real sitemap: key file is not in sitemap', !sitemapUrls.includes(KEY_LOCATION));
   check('real sitemap: fewer URLs than one POST allows', sitemapUrls.length <= MAX_URLS_PER_POST);
+}
+
+// ── Pages removed from the index this release (draft / 301, noindex, deleted) ─
+equal('blogState: file missing', blogState(null), 'missing');
+equal('blogState: draft', blogState('---\ntitle: x\ndraft: true\n---\nbody'), 'draft');
+equal('blogState: draft wins over noindex', blogState('---\ndraft: true\nnoindex: true\n---\n'), 'draft');
+equal('blogState: noindex', blogState('---\nnoindex: true\n---\n'), 'noindex');
+equal('blogState: indexable', blogState('---\ntitle: x\n---\nnoindex: true in body'), 'indexable');
+equal('toolState', [toolState('a', regOld), toolState('z', regOld), toolState('a', null)], ['live', 'missing', 'missing']);
+
+equal('pageSource: en blog', pageSource('/blog/x-guide/'), { kind: 'blog', file: 'src/content/blog/x-guide/en.mdx' });
+equal('pageSource: zh blog', pageSource('/zh/blog/x-guide/'), { kind: 'blog', file: 'src/content/blog/x-guide/zh.mdx' });
+equal('pageSource: ja tool', pageSource('/ja/tools/base64/'), { kind: 'tool', slug: 'base64' });
+equal('pageSource: static page', pageSource('/about/'), null);
+equal('pageSource: blog index', pageSource('/blog/'), null);
+
+const rules = parseRedirects([
+  '# comment',
+  '/blog/a-guide /tools/a/ 301',
+  '/blog/a-guide/ /tools/a/ 301',
+  '/zh/blog/a-guide/ /zh/tools/a/ 301',
+  '/old/* /new/:splat 301',
+  '',
+].join('\n'));
+equal('parseRedirects skips comments and blanks', rules.length, 4);
+equal('redirectTarget: canonical path', redirectTarget('/blog/a-guide/', rules), '/tools/a/');
+equal('redirectTarget: splat rule', redirectTarget('/old/x/', rules), '/new/:splat');
+equal('redirectTarget: none', redirectTarget('/ja/blog/a-guide/', rules), null);
+
+{
+  const states = new Map([
+    ['/blog/a-guide/', { from: 'indexable', to: 'draft' }],        // merged into tool, 301
+    ['/zh/blog/a-guide/', { from: 'noindex', to: 'draft' }],        // noindex page now 301
+    ['/ja/blog/a-guide/', { from: 'indexable', to: 'draft' }],      // draft, no rule → 404
+    ['/blog/b-guide/', { from: 'indexable', to: 'noindex' }],
+    ['/zh/blog/b-guide/', { from: 'noindex', to: 'noindex' }],      // already noindex: skip
+    ['/blog/new-guide/', { from: 'missing', to: 'draft' }],         // never public: skip
+    ['/blog/c-guide/', { from: 'indexable', to: 'missing' }],
+    ['/old/x/', { from: 'indexable', to: 'missing' }],
+    ['/tools/gone/', { from: 'live', to: 'missing' }],
+    ['/tools/still/', { from: 'live', to: 'live' }],                // not in sitemap for another reason: skip
+    ['/about/', undefined],                                          // no source state: skip
+  ]);
+  const r = retiredUrls({ paths: [...states.keys()], states, redirects: rules });
+  equal('retired URLs and reasons', r, [
+    { url: `${SITE}/blog/a-guide/`, reason: 'draft, 301 → /tools/a/' },
+    { url: `${SITE}/blog/b-guide/`, reason: 'noindex' },
+    { url: `${SITE}/blog/c-guide/`, reason: 'deleted, 404' },
+    { url: `${SITE}/ja/blog/a-guide/`, reason: 'draft, 404' },
+    { url: `${SITE}/old/x/`, reason: 'deleted, 301 → /new/:splat' },
+    { url: `${SITE}/tools/gone/`, reason: 'deleted, 404' },
+    { url: `${SITE}/zh/blog/a-guide/`, reason: 'draft, 301 → /zh/tools/a/' },
+  ]);
+  const r302 = retiredUrls({ paths: ['/blog/t/'], states: new Map([['/blog/t/', { from: 'indexable', to: 'draft' }]]), redirects: parseRedirects('/blog/t/ /blog/') });
+  equal('retired: rule without status is 302 (Cloudflare default)', r302[0].reason, 'draft, 302 → /blog/');
+  check('retired: only the canonical URL (no slashless variant)', !r.some((x) => x.url === `${SITE}/blog/a-guide`));
+}
+
+const distRedirects = join(root, 'dist/_redirects');
+if (existsSync(distRedirects)) {
+  const real = parseRedirects(readFileSync(distRedirects, 'utf8'));
+  equal('dist/_redirects: merged guide → tool page', redirectTarget('/blog/json-formatter-guide/', real), '/tools/json-formatter/');
+  equal('dist/_redirects: zh merged guide → zh tool page', redirectTarget('/zh/blog/json-formatter-guide/', real), '/zh/tools/json-formatter/');
+  equal('dist/_redirects: noindex guide has no rule', redirectTarget('/zh/blog/aes-encrypt-decrypt-guide/', real), null);
+  const realDraft = readFileSync(join(root, 'src/content/blog/json-formatter-guide/en.mdx'), 'utf8');
+  const realNoindex = readFileSync(join(root, 'src/content/blog/aes-encrypt-decrypt-guide/zh.mdx'), 'utf8');
+  equal('real frontmatter states', [blogState(realDraft), blogState(realNoindex)], ['draft', 'noindex']);
 }
 
 // ── Previous tag ─────────────────────────────────────────────────────────────

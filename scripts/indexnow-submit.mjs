@@ -1,8 +1,9 @@
 // IndexNow release submission — tell IndexNow engines (Bing and others) which pages
 // changed in a release.
 //
-// Read:  git history (tags, `git diff` between two releases, tools.ts / registry.ts at
-//        both releases), dist/sitemap-index.xml + dist/sitemap-*.xml (run after build)
+// Read:  git history (tags, `git diff` between two releases, tools.ts / registry.ts and
+//        changed blog mdx at both releases), dist/sitemap-index.xml +
+//        dist/sitemap-*.xml and dist/_redirects (run after build)
 // Network (without --dry-run): GET https://zerotool.dev/{key}.txt until it serves the
 //        key, then POST the URL list to https://api.indexnow.org/indexnow
 // Write: stdout / stderr only
@@ -30,6 +31,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import {
+  SITE,
   ENDPOINT,
   INDEXNOW_KEY,
   KEY_LOCATION,
@@ -41,8 +43,13 @@ import {
   mapChangedFiles,
   parseRegistryLines,
   parseSitemapLocs,
+  parseRedirects,
   parseToolsLines,
+  pageSource,
   previousTag,
+  blogState,
+  retiredUrls,
+  toolState,
   requestBody,
   selectUrls,
 } from './indexnow-urls.mjs';
@@ -158,6 +165,22 @@ async function main() {
   const sitemapUrls = readSitemap(resolve(root, opts.dist));
   const { urls, notInSitemap } = selectUrls({ paths: mapped.paths, sitemapUrls, all: opts.all });
 
+  // Changed pages that are not in the sitemap: submit those this release made draft,
+  // noindex or deleted (IndexNow FAQ: submit redirected and 404 URLs).
+  const states = new Map();
+  const registryAt = { from: gitShow(from, registryPath), to: gitShow(to, registryPath) };
+  for (const path of notInSitemap) {
+    const src = pageSource(path);
+    if (src?.kind === 'blog') states.set(path, { from: blogState(gitShow(from, src.file)), to: blogState(gitShow(to, src.file)) });
+    if (src?.kind === 'tool') states.set(path, { from: toolState(src.slug, registryAt.from), to: toolState(src.slug, registryAt.to) });
+  }
+  const redirectsPath = resolve(root, opts.dist, '_redirects');
+  const redirects = existsSync(redirectsPath) ? parseRedirects(readFileSync(redirectsPath, 'utf8')) : [];
+  const retired = retiredUrls({ paths: notInSitemap, states, redirects });
+  const retiredPaths = new Set(retired.map((r) => r.url.slice(SITE.length)));
+  const skipped = notInSitemap.filter((p) => !retiredPaths.has(p));
+  const submitUrls = [...urls, ...retired.map((r) => r.url)];
+
   console.log(`IndexNow: ${from} → ${to}, ${files.length} changed files`);
   for (const [file, d] of Object.entries(keyedDiffs)) {
     console.log(`  ${file}: entries changed for ${d.keys.length ? d.keys.join(', ') : '(none)'}${d.other ? '; other lines changed too' : ''}`);
@@ -169,25 +192,28 @@ async function main() {
       ? `--all: submitting all ${sitemapUrls.length} sitemap URLs.`
       : `Not submitting the whole sitemap (${sitemapUrls.length} URLs) for shared-file changes (IndexNow FAQ: avoid layout or cosmetic changes; submit all URLs only after a redesign or migration). Use --all for that.`);
   }
-  if (notInSitemap.length) {
-    console.log(`Skipped, not in the sitemap (draft, noindex, redirected or deleted) (${notInSitemap.length}):`);
-    notInSitemap.forEach((p) => console.log(`  ${p}`));
+  if (skipped.length) {
+    console.log(`Skipped, not in the sitemap and not taken out of the index by this release (${skipped.length}):`);
+    skipped.forEach((p) => console.log(`  ${p}`));
   }
-  console.log(`URLs to submit: ${urls.length}`);
+  console.log(`Changed pages (in the sitemap): ${urls.length}`);
   urls.forEach((u) => console.log(`  ${u}`));
+  console.log(`Removed from the index by this release (draft / 301, noindex, deleted): ${retired.length}`);
+  retired.forEach((r) => console.log(`  ${r.url}  [${r.reason}]`));
+  console.log(`URLs to submit: ${submitUrls.length}`);
 
   if (opts.dryRun) {
     console.log('Dry run: nothing sent.');
     return;
   }
-  if (urls.length === 0) {
+  if (submitUrls.length === 0) {
     console.log('Nothing to submit.');
     return;
   }
 
   await waitForKeyFile(opts.keyTimeout);
   let failed = false;
-  for (const batch of chunk(urls, MAX_URLS_PER_POST)) {
+  for (const batch of chunk(submitUrls, MAX_URLS_PER_POST)) {
     const { status, text } = await post(batch);
     const { ok, meaning } = describeStatus(status);
     console.log(`POST ${ENDPOINT}: ${batch.length} URLs → HTTP ${status} (${status === 0 ? text : meaning})`);

@@ -14,6 +14,11 @@
 // - "Avoid submitting every small layout or cosmetic change."
 // So a change to a shared file (layout, i18n, styles) does not submit the whole
 // sitemap by itself; `all` (the --all flag) does, for a redesign.
+// - "You should submit redirected URLs and pages that return HTTP 404 or HTTP 410."
+// So a changed blog or tool page that this release made draft (301 or 404), noindex
+// or deleted is submitted too, although it is no longer in the sitemap (retiredUrls).
+
+import { isIndexable, parseFrontmatter } from '../src/data/blog-index.mjs';
 
 export const SITE = 'https://zerotool.dev';
 export const INDEXNOW_KEY = 'cb742ae5a7b4c3ed945013823039558f';
@@ -155,6 +160,73 @@ export function selectUrls({ paths, sitemapUrls, all }) {
   }
   if (all) sitemapUrls.forEach((u) => urls.add(u));
   return { urls: [...urls].sort(), notInSitemap: notInSitemap.sort(), full: Boolean(all) };
+}
+
+// State of a page at one release, to find pages this release took out of the index.
+// Blog: from the post's mdx source (null = file missing); noindex as blog-index.mjs decides.
+export function blogState(source) {
+  if (source == null) return 'missing';
+  const data = parseFrontmatter(source);
+  if (data.draft) return 'draft';
+  return isIndexable(data) ? 'indexable' : 'noindex';
+}
+
+// Tool: tool pages are routed from registry.ts, so a slug missing there has no page.
+export function toolState(slug, registrySource) {
+  return parseRegistryLines(registrySource).has(slug) ? 'live' : 'missing';
+}
+
+// The source that decides a page's state: a blog mdx file or a tool slug.
+export function pageSource(path) {
+  let m;
+  if ((m = path.match(/^\/(?:(zh|ja|ko)\/)?blog\/([^/]+)\/$/))) {
+    return { kind: 'blog', file: `src/content/blog/${m[2]}/${m[1] ?? 'en'}.mdx` };
+  }
+  if ((m = path.match(/^\/(?:(?:zh|ja|ko)\/)?tools\/([^/]+)\/$/))) return { kind: 'tool', slug: m[1] };
+  return null;
+}
+
+// Cloudflare Pages _redirects: `<from> <to> [status]`, `*` matches anything, `:name`
+// one path segment. Pages uses the first matching rule.
+export function redirectMatches(source, path) {
+  const re = new RegExp('^' + source.split('*').map((part) => part
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/:[a-zA-Z]\w*/g, '[^/]+')).join('.*') + '$');
+  return re.test(path);
+}
+
+export function parseRedirects(text) {
+  return text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+    .map((l) => { const [source, target, status = '302'] = l.split(/\s+/); return { source, target, status }; });
+}
+
+export function redirectRule(path, rules) {
+  return rules.find((r) => redirectMatches(r.source, path)) ?? null;
+}
+
+export function redirectTarget(path, rules) {
+  return redirectRule(path, rules)?.target ?? null;
+}
+
+// paths: mapped paths that are not in the sitemap. states: Map<path, { from, to }>.
+// A page counts when it existed at the previous release (indexable / noindex / live)
+// and this release changed it to draft, noindex or missing. Only the canonical URL
+// (the path itself, with trailing slash) is returned, not other _redirects variants.
+export function retiredUrls({ paths, states, redirects }) {
+  const out = [];
+  for (const path of paths) {
+    const s = states.get(path);
+    if (!s || s.from === s.to) continue;
+    if (!['indexable', 'noindex', 'live'].includes(s.from)) continue;
+    if (!['draft', 'noindex', 'missing'].includes(s.to)) continue;
+    let reason = s.to === 'missing' ? 'deleted' : s.to;
+    if (s.to !== 'noindex') {
+      const rule = redirectRule(path, redirects);
+      reason += rule ? `, ${rule.status} → ${rule.target}` : ', 404';
+    }
+    out.push({ url: SITE + path, reason });
+  }
+  return out.sort((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
 }
 
 export function parseSitemapLocs(xml) {

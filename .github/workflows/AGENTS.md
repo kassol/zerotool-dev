@@ -33,7 +33,7 @@ GitHub Actions 工作流。两条 pipeline，目标分离明确。
 4. `npm run build` — 注入 5 个 PUBLIC_* env（GA4 + AdSense publisher + 3 slot ID）
 5. `wrangler pages project create zerotool-dev --production-branch master`（continue-on-error，幂等）
 6. `wrangler pages deploy dist --project-name=zerotool-dev --branch=master`
-7. `node scripts/indexnow-submit.mjs --to "$GITHUB_REF_NAME"`（`continue-on-error: true`，`timeout-minutes: 10`）：映射上一个 tag 到本 tag 之间改动的页面 URL，经 `dist/` sitemap 过滤，轮询线上密钥文件（最多 300 秒）后 POST 到 `https://api.indexnow.org/indexnow`，日志打印 URL 数与 HTTP 状态码。失败时输出 `::error` 注解、步骤标红，但 job 仍为成功。不用 secret：IndexNow 密钥按协议公开，放在 `public/{key}.txt`。副作用：对外发送本次改动的 URL 列表（IndexNow 参与引擎共享）。规则详见根 `AGENTS.md`「部署机制」
+7. `node scripts/indexnow-submit.mjs --to "$GITHUB_REF_NAME"`（`continue-on-error: true`，`timeout-minutes: 10`）：映射上一个 tag 到本 tag 之间改动的页面 URL，经 `dist/` sitemap 过滤，另加本次变成 draft（301 / 404）、noindex 或被删除的页面，轮询线上密钥文件（最多 300 秒）后 POST 到 `https://api.indexnow.org/indexnow`，日志打印 URL 数与 HTTP 状态码。失败时输出 `::error` 注解、步骤标红，但 job 仍为成功。不用 secret：IndexNow 密钥按协议公开，放在 `public/{key}.txt`。副作用：对外发送本次改动的 URL 列表（IndexNow 参与引擎共享）。规则详见根 `AGENTS.md`「部署机制」
 
 **所需 secrets**：
 - `CLOUDFLARE_API_TOKEN` — 需要 Pages:Edit 权限
