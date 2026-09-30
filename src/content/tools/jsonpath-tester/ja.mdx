@@ -9,9 +9,11 @@ faqItems:
   - question: "配列のすべての要素を選択するには？"
     answer: "配列のキーの後にワイルドカードセレクター [*] を使います。例えば $.store.book[*] は配列内のすべてのbookオブジェクトを返します。さらに各要素に絞り込むことも可能です：$.store.book[*].author はすべてのauthor値を返します。"
   - question: "フィルター式はどう使いますか？"
-    answer: "フィルター式の構文は [?(@.property operator value)] です。@ は現在の要素を指します。例えば $.store.book[?(@.price < 10)] は価格が10未満のすべての本を返します。対応演算子：==、!=、<、>、<=、>=。"
+    answer: "フィルターは [?式] と書き、@ は判定中の要素を指します。RFC 9535 では括弧は省略でき、$.store.book[?@.price < 10] と $.store.book[?(@.price < 10)] は同じです。==、!=、<、<=、>、>= で比較し、&&、||、! で条件を組み合わせ、@.author.name のような入れ子のパスや、$ で始まる文書内の別の値との比較、length()、count()、match()、search()、value() が使えます。"
   - question: "再帰下降（..）とは何ですか？"
     answer: ".. 演算子は現在のノードのすべての子孫を再帰的に検索します。例えば $..author はネストの深さに関係なく、JSONツリー内のすべてのauthorフィールドを検索します。"
+  - question: "「サポートされていない構文」と表示されるのはなぜですか？"
+    answer: "RFC 9535 で定義されていない構文が式に含まれているため、空の結果を返さずに文字位置を示して止めています。よくある例はスクリプト式 [(@.length-1)]（[-1] を使う）、=~ 演算子（match() か search() を使う）、in / nin です。「マッチなし」と表示される場合は、式は正しく、JSON に該当する値がないという意味です。"
 ---
 
 <h2>使い方</h2>
@@ -22,15 +24,29 @@ faqItems:
   <li><strong>コピー</strong>をクリックしてマッチした出力をクリップボードにコピーします。</li>
 </ol>
 
-<h2>JSONPath 構文リファレンス</h2>
+<h2>JSONPath 構文リファレンス（RFC 9535）</h2>
 <ul>
-  <li><code>$</code> — ルート要素</li>
-  <li><code>.key</code> — 子プロパティ（ドット記法）</li>
-  <li><code>['key']</code> — 子プロパティ（ブラケット記法）</li>
-  <li><code>[n]</code> — インデックスnの配列要素</li>
-  <li><code>[*]</code> — すべての配列要素またはオブジェクトプロパティ</li>
-  <li><code>..key</code> — 再帰下降 — ツリー内のどこでもkeyを検索</li>
-  <li><code>[?(@.prop op value)]</code> — フィルター式</li>
+  <li><code>{"$"}</code> — 文書のルート</li>
+  <li><code>{".key"}</code>、<code>{"['key']"}</code>、<code>{"[\"key\"]"}</code> — オブジェクトのメンバー</li>
+  <li><code>{"[n]"}</code>、<code>{"[-1]"}</code> — 配列の要素。負のインデックスは末尾から数える</li>
+  <li><code>{"[start:end:step]"}</code> — スライス。例：<code>{"[0:2]"}</code>、<code>{"[1:]"}</code>、<code>{"[::-1]"}</code></li>
+  <li><code>{"[0,2]"}</code>、<code>{"['title','price']"}</code> — 1 つの角括弧に複数のセレクター。結果はセレクターの順</li>
+  <li><code>{"[*]"}</code>、<code>{".*"}</code> — 配列のすべての要素、またはオブジェクトのすべての値</li>
+  <li><code>{"..key"}</code>、<code>{"..[0]"}</code>、<code>{"..*"}</code> — 任意の深さの子孫</li>
+  <li><code>{"[?@.price < 10]"}</code> — フィルター。<code>{"[?(@.price < 10)]"}</code> とも書ける</li>
+  <li><code>{"[?@.isbn]"}</code>、<code>{"[?!@.isbn]"}</code> — メンバーがある / ない</li>
+  <li><code>{"[?@.a.b == 'x' && @.c > $.min]"}</code> — フィルター内の入れ子のパス、<code>{"&&"}</code> <code>{"||"}</code> <code>{"!"}</code>、$ で始まる絶対パス</li>
+  <li><code>{"length()"}</code>、<code>{"count()"}</code>、<code>{"match()"}</code>、<code>{"search()"}</code>、<code>{"value()"}</code> — RFC 9535 が定める 5 つの関数</li>
+</ul>
+
+<h2>制限事項</h2>
+<ul>
+  <li>RFC 9535 にない構文は「サポートされていない構文」と文字位置を表示します：スクリプト式 <code>{"[(...)]"}</code>、<code>{"=~"}</code>、<code>{"in"}</code> / <code>{"nin"}</code>、他のライブラリの <code>{"~"}</code>（メンバー名の取得）などの拡張。</li>
+  <li><code>{"$.store.book.length"}</code> は <code>{"length"}</code> という名前のメンバーを選びます。配列にはそのメンバーがないため結果は空です。長さで絞り込むにはフィルター内で <code>{"length()"}</code> を使います（例：<code>{"$[?length(@.book) > 3]"}</code>）。</li>
+  <li>結果はマッチした値の一覧です。正規化パス（<code>{"$['store']['book'][0]"}</code> など）は表示しません。</li>
+  <li>オブジェクトのメンバーは JSON テキストに書かれた順で返します。RFC 9535 はこの順序を定めていないため、他の実装では順序が変わることがあります。</li>
+  <li><code>{"match()"}</code> と <code>{"search()"}</code> は <code>{"."}</code> を <code>{"[^\\n\\r]"}</code> に置き換えたうえで、<code>{"u"}</code> フラグ付きの JavaScript 正規表現として実行します（RFC 9485 §5.3）。JavaScript が受け付けないパターンは false になり、<code>{"\\d"}</code> や先読みなど JavaScript だけの構文も受け付けます。</li>
+  <li>数値は <code>{"JSON.parse"}</code> で JavaScript の数値になるため、2<sup>53</sup> を超える整数は比較の前に精度が落ちます。</li>
 </ul>
 
 <h2>主な使用シーン</h2>

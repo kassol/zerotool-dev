@@ -15,6 +15,7 @@ const labels = {
     invalidJson: 'Invalid JSON',
     noMatch: 'No matches found',
     errorLabel: 'Error',
+    unsupported: 'Unsupported syntax',
   },
   zh: {
     jsonInput: 'JSON 输入',
@@ -27,6 +28,7 @@ const labels = {
     invalidJson: 'JSON 格式无效',
     noMatch: '未找到匹配项',
     errorLabel: '错误',
+    unsupported: '不支持的语法',
   },
   ja: {
     jsonInput: 'JSON 入力',
@@ -39,6 +41,7 @@ const labels = {
     invalidJson: '無効な JSON',
     noMatch: 'マッチなし',
     errorLabel: 'エラー',
+    unsupported: 'サポートされていない構文',
   },
   ko: {
     jsonInput: 'JSON 입력',
@@ -51,6 +54,7 @@ const labels = {
     invalidJson: '유효하지 않은 JSON',
     noMatch: '매칭 없음',
     errorLabel: '오류',
+    unsupported: '지원하지 않는 구문',
   },
 };
 
@@ -76,6 +80,7 @@ const SAMPLE_JSON = `{
   data-invalid-json={L.invalidJson}
   data-no-match={L.noMatch}
   data-error-label={L.errorLabel}
+  data-unsupported={L.unsupported}
 >
   <div class="jpt-layout">
     {/* Left: JSON input */}
@@ -97,6 +102,8 @@ const SAMPLE_JSON = `{
         <button class="jpt-pill" type="button" data-expr="$.store.book[*]">$.store.book[*]</button>
         <button class="jpt-pill" type="button" data-expr="$.store.book[0].title">$.store.book[0].title</button>
         <button class="jpt-pill" type="button" data-expr="$.store.book[*].author">$.store.book[*].author</button>
+        <button class="jpt-pill" type="button" data-expr="$.store.book[-1].title">$.store.book[-1].title</button>
+        <button class="jpt-pill" type="button" data-expr="$.store.book[0:2].title">$.store.book[0:2].title</button>
         <button class="jpt-pill" type="button" data-expr="$.store.book[?(@.price < 10)]">$.store.book[?(@.price &lt; 10)]</button>
         <button class="jpt-pill" type="button" data-expr="$..author">$..author</button>
         <button class="jpt-pill" type="button" data-expr="$.store.bicycle.color">$.store.bicycle.color</button>
@@ -123,6 +130,7 @@ const SAMPLE_JSON = `{
       var INVALID_JSON   = wrap.dataset.invalidJson;
       var NO_MATCH       = wrap.dataset.noMatch;
       var ERROR_LABEL    = wrap.dataset.errorLabel;
+      var UNSUPPORTED    = wrap.dataset.unsupported;
 
       var jsonEl   = document.getElementById('jpt-json');
       var exprEl   = document.getElementById('jpt-expr');
@@ -130,140 +138,567 @@ const SAMPLE_JSON = `{
       var countEl  = document.getElementById('jpt-count');
       var copyBtn  = document.getElementById('jpt-copy');
 
-      /* ── Minimal JSONPath evaluator ── */
-      function jsonpath(data, expr) {
-        if (!expr || expr === '$') return [data];
-
-        // Tokenize the path after $
-        var path = expr.trim();
-        if (!path.startsWith('$')) throw new Error('Expression must start with $');
-        path = path.slice(1);
-
-        return evaluate([data], path);
+      /* ── engine:start ── */
+      // JSONPath per RFC 9535: root $, child and descendant segments, name / wildcard / index /
+      // slice / filter selectors, filter logic (|| && ! and parentheses), comparisons,
+      // existence tests and the functions length, count, match, search, value. Anything the
+      // grammar does not allow throws a JsonPathError with the position, so a query is never
+      // silently turned into an empty result.
+      function JsonPathError(detail, pos) {
+        var e = new Error(detail + ' (at character ' + (pos + 1) + ')');
+        e.name = 'JsonPathError';
+        e.detail = detail;
+        e.pos = pos;
+        return e;
       }
 
-      function evaluate(nodes, path) {
-        if (!path) return nodes;
+      var NOTHING = { nothing: true };
+      var MAX_INT = 9007199254740991;
+      var FUNCTIONS = {
+        length: { params: ['value'], result: 'value' },
+        count: { params: ['nodes'], result: 'value' },
+        match: { params: ['value', 'value'], result: 'logical' },
+        search: { params: ['value', 'value'], result: 'logical' },
+        value: { params: ['nodes'], result: 'value' },
+      };
+      var NAME_FIRST = /[A-Za-z_\u0080-\uD7FF\uE000-\uFFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF]/y;
+      var NAME_CHAR = /[A-Za-z0-9_\u0080-\uD7FF\uE000-\uFFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF]/y;
 
-        // Recursive descent: ..key
-        if (path.startsWith('..')) {
-          var rest = path.slice(2);
-          // Extract next key/selector
-          var m = rest.match(/^([\w*]+)(.*)/);
-          if (!m) return nodes;
-          var key = m[1], remaining = m[2];
-          var results = [];
-          nodes.forEach(function (node) {
-            descend(node, key, results);
-          });
-          return evaluate(results, remaining);
+      function Parser(src) { this.s = src; this.i = 0; }
+      Parser.prototype.peek = function (n) { return this.s.charAt(this.i + (n || 0)); };
+      Parser.prototype.at = function (str) { return this.s.substr(this.i, str.length) === str; };
+      Parser.prototype.skipS = function () {
+        while (this.i < this.s.length && ' \t\n\r'.indexOf(this.s.charAt(this.i)) >= 0) this.i++;
+      };
+      Parser.prototype.fail = function (detail, pos) {
+        throw JsonPathError(detail, pos === undefined ? this.i : pos);
+      };
+      Parser.prototype.expect = function (ch) {
+        if (this.peek() !== ch) {
+          this.fail('expected "' + ch + '" but found ' + (this.i < this.s.length ? '"' + this.peek() + '"' : 'the end'));
         }
+        this.i++;
+      };
+      Parser.prototype.matchRe = function (re) {
+        re.lastIndex = this.i;
+        var m = re.exec(this.s);
+        if (!m) return null;
+        this.i = re.lastIndex;
+        return m[0];
+      };
 
-        // Dot notation: .key or .*
-        if (path.startsWith('.')) {
-          var rest2 = path.slice(1);
-          // Check for another dot (prevent eating ..)
-          var m2 = rest2.match(/^([\w*]+)(.*)/);
-          if (!m2) return nodes;
-          var key2 = m2[1], remaining2 = m2[2];
-          var results2 = [];
-          nodes.forEach(function (node) {
-            if (key2 === '*') {
-              if (Array.isArray(node)) {
-                node.forEach(function (v) { results2.push(v); });
-              } else if (node && typeof node === 'object') {
-                Object.values(node).forEach(function (v) { results2.push(v); });
+      Parser.prototype.parseQuery = function () {
+        var root = this.peek();
+        if (root !== '$' && root !== '@') this.fail('a query must start with $');
+        this.i++;
+        return { type: 'query', root: root, segments: this.parseSegments() };
+      };
+
+      Parser.prototype.parseSegments = function () {
+        var segs = [];
+        for (;;) {
+          var save = this.i;
+          this.skipS();
+          var c = this.peek();
+          if (c === '[') {
+            segs.push({ descendant: false, selectors: this.parseBracketed() });
+          } else if (c === '.' && this.peek(1) === '.') {
+            this.i += 2;
+            if (this.peek() === '[') segs.push({ descendant: true, selectors: this.parseBracketed() });
+            else segs.push({ descendant: true, selectors: [this.parseShorthand('..')] });
+          } else if (c === '.') {
+            this.i++;
+            segs.push({ descendant: false, selectors: [this.parseShorthand('.')] });
+          } else {
+            this.i = save;
+            return segs;
+          }
+        }
+      };
+
+      Parser.prototype.parseShorthand = function (after) {
+        if (this.peek() === '*') { this.i++; return { type: 'wildcard' }; }
+        var start = this.i;
+        if (!this.matchRe(NAME_FIRST)) {
+          if (/[0-9]/.test(this.peek())) this.fail('a member name after "' + after + '" cannot start with a digit; use [n] for an index or [\'name\'] for the name');
+          this.fail('expected a member name or * after "' + after + '"');
+        }
+        while (this.matchRe(NAME_CHAR));
+        return { type: 'name', name: this.s.slice(start, this.i) };
+      };
+
+      Parser.prototype.parseBracketed = function () {
+        this.expect('[');
+        var selectors = [];
+        for (;;) {
+          this.skipS();
+          selectors.push(this.parseSelector());
+          this.skipS();
+          if (this.peek() === ',') { this.i++; continue; }
+          if (this.peek() === ']') { this.i++; return selectors; }
+          this.fail('expected "," or "]" in a bracketed selection');
+        }
+      };
+
+      Parser.prototype.parseSelector = function () {
+        var c = this.peek();
+        if (c === "'" || c === '"') return { type: 'name', name: this.parseString() };
+        if (c === '*') { this.i++; return { type: 'wildcard' }; }
+        if (c === '?') {
+          this.i++;
+          this.skipS();
+          var expr = this.parseLogical();
+          checkLogical(expr);
+          return { type: 'filter', expr: expr };
+        }
+        if (c === '(') this.fail('script expressions such as [(@.length-1)] are not part of RFC 9535; use a negative index such as [-1]');
+        if (c === ':' || c === '-' || /[0-9]/.test(c)) {
+          var start = this.i;
+          var first = this.peek() === ':' ? null : this.parseInt();
+          this.skipS();
+          if (this.peek() !== ':') {
+            if (first === null) this.fail('expected an index', start);
+            return { type: 'index', index: first };
+          }
+          this.i++;
+          this.skipS();
+          var end = /[-0-9]/.test(this.peek()) ? this.parseInt() : null;
+          this.skipS();
+          var step = null;
+          if (this.peek() === ':') {
+            this.i++;
+            this.skipS();
+            step = /[-0-9]/.test(this.peek()) ? this.parseInt() : null;
+          }
+          return { type: 'slice', start: first, end: end, step: step };
+        }
+        if (this.i >= this.s.length) this.fail('the bracket is not closed');
+        this.fail('unexpected "' + c + '" in a bracketed selection');
+      };
+
+      Parser.prototype.parseInt = function () {
+        var start = this.i;
+        var txt = this.matchRe(/-?(0|[1-9][0-9]*)/y);
+        if (txt === null) this.fail('expected an integer');
+        if (txt === '-0' || /[0-9]/.test(this.peek()) && txt.replace('-', '') === '0') this.fail('integers cannot be -0 or have leading zeros', start);
+        var n = Number(txt);
+        if (Math.abs(n) > MAX_INT) this.fail('integer out of range (±(2^53-1))', start);
+        return n;
+      };
+
+      Parser.prototype.parseString = function () {
+        var q = this.peek();
+        var start = this.i;
+        this.i++;
+        var out = '';
+        for (;;) {
+          if (this.i >= this.s.length) this.fail('the string is not closed', start);
+          var c = this.s.charAt(this.i);
+          if (c === q) { this.i++; return out; }
+          if (c === '\\') {
+            var e = this.s.charAt(this.i + 1);
+            var simple = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', '/': '/', '\\': '\\' };
+            if (Object.prototype.hasOwnProperty.call(simple, e)) { out += simple[e]; this.i += 2; continue; }
+            if (e === q) { out += q; this.i += 2; continue; }
+            if (e === 'u') {
+              var cu = this.readHex4(this.i + 2);
+              this.i += 6;
+              if (cu >= 0xDC00 && cu <= 0xDFFF) this.fail('lone low surrogate escape', this.i - 6);
+              if (cu >= 0xD800 && cu <= 0xDBFF) {
+                if (this.s.substr(this.i, 2) !== '\\u') this.fail('a high surrogate escape must be followed by a low surrogate escape', this.i - 6);
+                var lo = this.readHex4(this.i + 2);
+                if (lo < 0xDC00 || lo > 0xDFFF) this.fail('a high surrogate escape must be followed by a low surrogate escape', this.i);
+                this.i += 6;
+                out += String.fromCharCode(cu, lo);
+              } else {
+                out += String.fromCharCode(cu);
               }
+              continue;
+            }
+            this.fail('invalid escape "\\' + e + '" in a string', this.i);
+          }
+          if (c.charCodeAt(0) < 0x20) this.fail('control characters must be escaped in a string', this.i);
+          out += c;
+          this.i++;
+        }
+      };
+
+      Parser.prototype.readHex4 = function (pos) {
+        var h = this.s.substr(pos, 4);
+        if (!/^[0-9A-Fa-f]{4}$/.test(h)) this.fail('\\u must be followed by 4 hex digits', pos - 2);
+        return parseInt(h, 16);
+      };
+
+      // logical-expr → tree of or / and / not / paren / cmp; leaves are literal / query / func
+      Parser.prototype.parseLogical = function () {
+        var items = [this.parseAnd()];
+        for (;;) {
+          var save = this.i;
+          this.skipS();
+          if (this.at('||')) { this.i += 2; this.skipS(); items.push(this.parseAnd()); } else { this.i = save; break; }
+        }
+        return items.length === 1 ? items[0] : { type: 'or', items: items };
+      };
+
+      Parser.prototype.parseAnd = function () {
+        var items = [this.parseBasic()];
+        for (;;) {
+          var save = this.i;
+          this.skipS();
+          if (this.at('&&')) { this.i += 2; this.skipS(); items.push(this.parseBasic()); } else { this.i = save; break; }
+        }
+        return items.length === 1 ? items[0] : { type: 'and', items: items };
+      };
+
+      Parser.prototype.parseBasic = function () {
+        var start = this.i;
+        if (this.peek() === '!' && this.peek(1) !== '=') {
+          this.i++;
+          this.skipS();
+          var inner;
+          if (this.peek() === '(') inner = this.parseParen();
+          else {
+            inner = this.parsePrimary();
+            if (inner.type === 'literal') this.fail('"!" must be followed by a query, a function or parentheses', start);
+            var save = this.i;
+            this.skipS();
+            if (this.compOp()) this.fail('"!" cannot negate a comparison directly; write !(a == b)', start);
+            this.i = save;
+          }
+          return { type: 'not', expr: inner, pos: start };
+        }
+        if (this.peek() === '(') return this.parseParen();
+        var left = this.parsePrimary();
+        var save2 = this.i;
+        this.skipS();
+        var op = this.compOp();
+        if (!op) { this.i = save2; return left; }
+        this.i += op.length;
+        this.skipS();
+        if (this.peek() === '(' || this.peek() === '!') this.fail('the right side of a comparison must be a literal, a singular query or a function');
+        var right = this.parsePrimary();
+        return { type: 'cmp', op: op, left: left, right: right, pos: start };
+      };
+
+      Parser.prototype.compOp = function () {
+        var ops = ['==', '!=', '<=', '>=', '<', '>'];
+        for (var k = 0; k < ops.length; k++) if (this.at(ops[k])) return ops[k];
+        if (this.at('=~')) this.fail('the =~ operator is not part of RFC 9535; use match() or search()');
+        if (this.peek() === '=') this.fail('use == for equality');
+        return null;
+      };
+
+      Parser.prototype.parseParen = function () {
+        var start = this.i;
+        this.expect('(');
+        this.skipS();
+        var e = this.parseLogical();
+        this.skipS();
+        this.expect(')');
+        return { type: 'paren', expr: e, pos: start };
+      };
+
+      Parser.prototype.parsePrimary = function () {
+        var start = this.i;
+        var c = this.peek();
+        if (c === '@' || c === '$') {
+          var q = this.parseQuery();
+          q.pos = start;
+          return q;
+        }
+        if (c === "'" || c === '"') return { type: 'literal', value: this.parseString(), pos: start };
+        if (c === '-' || /[0-9]/.test(c)) {
+          var num = this.matchRe(/-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?/y);
+          if (num === null || /[0-9.]/.test(this.peek())) this.fail('invalid number', start);
+          return { type: 'literal', value: Number(num), pos: start };
+        }
+        var ident = this.matchRe(/[a-z][a-z0-9_]*/y);
+        if (ident !== null) {
+          if (this.peek() === '(') return this.parseFunction(ident, start);
+          if (ident === 'true') return { type: 'literal', value: true, pos: start };
+          if (ident === 'false') return { type: 'literal', value: false, pos: start };
+          if (ident === 'null') return { type: 'literal', value: null, pos: start };
+          this.fail('unknown word "' + ident + '"; member names inside a filter need @ (for example @.' + ident + ')', start);
+        }
+        if (this.i >= this.s.length) this.fail('the expression ends too early');
+        this.fail('unexpected "' + c + '" in a filter expression');
+      };
+
+      Parser.prototype.parseFunction = function (name, start) {
+        if (!Object.prototype.hasOwnProperty.call(FUNCTIONS, name)) {
+          this.fail('unknown function ' + name + '(); supported: length, count, match, search, value', start);
+        }
+        this.expect('(');
+        var args = [];
+        this.skipS();
+        if (this.peek() !== ')') {
+          for (;;) {
+            args.push(this.parseLogical());
+            this.skipS();
+            if (this.peek() === ',') { this.i++; this.skipS(); continue; }
+            break;
+          }
+        }
+        this.expect(')');
+        var def = FUNCTIONS[name];
+        if (args.length !== def.params.length) {
+          this.fail(name + '() takes ' + def.params.length + ' argument' + (def.params.length === 1 ? '' : 's') + ', got ' + args.length, start);
+        }
+        args.forEach(function (a, k) { checkArg(a, def.params[k], name); });
+        return { type: 'func', name: name, args: args, result: def.result, pos: start };
+      };
+
+      function isSingular(q) {
+        return q.segments.every(function (seg) {
+          return !seg.descendant && seg.selectors.length === 1 &&
+            (seg.selectors[0].type === 'name' || seg.selectors[0].type === 'index');
+        });
+      }
+
+      // Well-typedness (RFC 9535 §2.4.3 and the comparison / test-expr grammar)
+      function checkLogical(e) {
+        switch (e.type) {
+          case 'or': case 'and': e.items.forEach(checkLogical); return;
+          case 'paren': checkLogical(e.expr); return;
+          case 'not': checkLogical(e.expr); return;
+          case 'cmp': checkComparable(e.left); checkComparable(e.right); return;
+          case 'query': return;
+          case 'func':
+            if (e.result === 'value') throw JsonPathError(e.name + '() returns a value; compare it, for example ' + e.name + '(...) > 0', e.pos);
+            return;
+          case 'literal': throw JsonPathError('a literal cannot be used as a condition on its own; compare it with something', e.pos);
+        }
+      }
+
+      function checkComparable(e) {
+        if (e.type === 'literal') return;
+        if (e.type === 'query') {
+          if (!isSingular(e)) throw JsonPathError('only singular queries (names and indexes, no .., *, slices or filters) can be compared', e.pos);
+          return;
+        }
+        if (e.type === 'func') {
+          if (e.result !== 'value') throw JsonPathError(e.name + '() returns true/false and cannot be compared', e.pos);
+          return;
+        }
+        throw JsonPathError('only literals, singular queries and functions can be compared', e.pos);
+      }
+
+      function checkArg(a, type, fname) {
+        var ok;
+        if (type === 'value') {
+          ok = a.type === 'literal' || (a.type === 'query' && isSingular(a)) || (a.type === 'func' && a.result === 'value');
+        } else if (type === 'nodes') {
+          ok = a.type === 'query';
+        } else {
+          ok = a.type !== 'literal' && !(a.type === 'func' && a.result === 'value');
+        }
+        if (!ok) {
+          var want = type === 'value' ? 'a literal, a singular query or a value function' : 'a query';
+          throw JsonPathError('argument of ' + fname + '() must be ' + want, a.pos === undefined ? 0 : a.pos);
+        }
+      }
+
+      function compileJsonPath(expr) {
+        var p = new Parser(expr);
+        if (p.peek() === '@') p.fail('@ is only allowed inside a filter [?...]; start the query with $');
+        var q = p.parseQuery();
+        p.skipS();
+        if (p.i < p.s.length) {
+          if (p.peek() === '.') p.fail('expected a member name or * after "."');
+          p.fail('unexpected "' + p.peek() + '"');
+        }
+        return q;
+      }
+
+      // ---- evaluation ----
+      function isObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+      function childrenOf(v) {
+        if (Array.isArray(v)) return v;
+        if (isObject(v)) return Object.keys(v).map(function (k) { return v[k]; });
+        return [];
+      }
+
+      function selectInto(node, sel, root, out) {
+        switch (sel.type) {
+          case 'name':
+            if (isObject(node) && Object.prototype.hasOwnProperty.call(node, sel.name)) out.push(node[sel.name]);
+            return;
+          case 'wildcard':
+            childrenOf(node).forEach(function (v) { out.push(v); });
+            return;
+          case 'index':
+            if (Array.isArray(node)) {
+              var i = sel.index < 0 ? node.length + sel.index : sel.index;
+              if (i >= 0 && i < node.length) out.push(node[i]);
+            }
+            return;
+          case 'slice':
+            if (Array.isArray(node)) sliceInto(node, sel, out);
+            return;
+          case 'filter':
+            childrenOf(node).forEach(function (v) { if (evalLogical(sel.expr, root, v)) out.push(v); });
+            return;
+        }
+      }
+
+      function sliceInto(a, sel, out) {
+        var len = a.length;
+        var step = sel.step === null ? 1 : sel.step;
+        if (step === 0) return;
+        var start = sel.start === null ? (step > 0 ? 0 : len - 1) : sel.start;
+        var end = sel.end === null ? (step > 0 ? len : -len - 1) : sel.end;
+        var ns = start >= 0 ? start : len + start;
+        var ne = end >= 0 ? end : len + end;
+        var lower, upper, i;
+        if (step > 0) {
+          lower = Math.min(Math.max(ns, 0), len);
+          upper = Math.min(Math.max(ne, 0), len);
+          for (i = lower; i < upper; i += step) out.push(a[i]);
+        } else {
+          upper = Math.min(Math.max(ns, -1), len - 1);
+          lower = Math.min(Math.max(ne, -1), len - 1);
+          for (i = upper; lower < i; i += step) out.push(a[i]);
+        }
+      }
+
+      function evalQuery(q, root, current) {
+        var nodes = [q.root === '@' ? current : root];
+        q.segments.forEach(function (seg) {
+          var out = [];
+          nodes.forEach(function (n) {
+            if (seg.descendant) {
+              (function visit(d) {
+                seg.selectors.forEach(function (s) { selectInto(d, s, root, out); });
+                childrenOf(d).forEach(visit);
+              })(n);
             } else {
-              if (node && typeof node === 'object' && !Array.isArray(node) && key2 in node) {
-                results2.push(node[key2]);
-              }
+              seg.selectors.forEach(function (s) { selectInto(n, s, root, out); });
             }
           });
-          return evaluate(results2, remaining2);
-        }
-
-        // Bracket notation: [n], [*], [?(...)]
-        if (path.startsWith('[')) {
-          var close = path.indexOf(']');
-          if (close === -1) return nodes;
-          var inner = path.slice(1, close);
-          var remaining3 = path.slice(close + 1);
-          var results3 = [];
-
-          if (inner === '*') {
-            nodes.forEach(function (node) {
-              if (Array.isArray(node)) {
-                node.forEach(function (v) { results3.push(v); });
-              } else if (node && typeof node === 'object') {
-                Object.values(node).forEach(function (v) { results3.push(v); });
-              }
-            });
-          } else if (/^\d+$/.test(inner)) {
-            var idx = parseInt(inner);
-            nodes.forEach(function (node) {
-              if (Array.isArray(node) && idx < node.length) results3.push(node[idx]);
-            });
-          } else if (inner.startsWith('?(') && inner.endsWith(')')) {
-            var filterExpr = inner.slice(2, -1).trim();
-            nodes.forEach(function (node) {
-              if (Array.isArray(node)) {
-                node.forEach(function (item) {
-                  if (evalFilter(item, filterExpr)) results3.push(item);
-                });
-              }
-            });
-          } else {
-            // string key: ['key']
-            var strKey = inner.replace(/^['"]|['"]$/g, '');
-            nodes.forEach(function (node) {
-              if (node && typeof node === 'object' && strKey in node) results3.push(node[strKey]);
-            });
-          }
-
-          return evaluate(results3, remaining3);
-        }
-
+          nodes = out;
+        });
         return nodes;
       }
 
-      function descend(node, key, results) {
-        if (node === null || typeof node !== 'object') return;
-        if (key === '*') {
-          var vals = Array.isArray(node) ? node : Object.values(node);
-          vals.forEach(function (v) { results.push(v); descend(v, key, results); });
-        } else {
-          if (!Array.isArray(node) && key in node) results.push(node[key]);
-          var children = Array.isArray(node) ? node : Object.values(node);
-          children.forEach(function (v) { descend(v, key, results); });
-        }
-      }
-
-      function evalFilter(item, expr) {
-        // Match patterns like @.prop OP value or @.prop (existence)
-        var m = expr.match(/^@\.([\w]+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/);
-        if (!m) {
-          // Existence check: @.prop
-          var em = expr.match(/^@\.([\w]+)$/);
-          if (em) return item && em[1] in item;
-          return false;
-        }
-        var prop = m[1], op = m[2], rawVal = m[3].trim();
-        if (!(item && prop in item)) return false;
-        var itemVal = item[prop];
-        var cmpVal = rawVal === 'true' ? true : rawVal === 'false' ? false :
-                     rawVal.startsWith('"') || rawVal.startsWith("'") ? rawVal.slice(1, -1) :
-                     parseFloat(rawVal);
-        switch (op) {
-          case '==': return itemVal == cmpVal;
-          case '!=': return itemVal != cmpVal;
-          case '<':  return itemVal <  cmpVal;
-          case '>':  return itemVal >  cmpVal;
-          case '<=': return itemVal <= cmpVal;
-          case '>=': return itemVal >= cmpVal;
+      function evalLogical(e, root, cur) {
+        switch (e.type) {
+          case 'or': return e.items.some(function (x) { return evalLogical(x, root, cur); });
+          case 'and': return e.items.every(function (x) { return evalLogical(x, root, cur); });
+          case 'paren': return evalLogical(e.expr, root, cur);
+          case 'not': return !evalLogical(e.expr, root, cur);
+          case 'query': return evalQuery(e, root, cur).length > 0;
+          case 'func': return evalFunc(e, root, cur);
+          case 'cmp': return compare(e.op, evalValue(e.left, root, cur), evalValue(e.right, root, cur));
         }
         return false;
       }
+
+      function evalValue(e, root, cur) {
+        if (e.type === 'literal') return e.value;
+        if (e.type === 'query') {
+          var nodes = evalQuery(e, root, cur);
+          return nodes.length === 1 ? nodes[0] : NOTHING;
+        }
+        return evalFunc(e, root, cur);
+      }
+
+      function evalFunc(e, root, cur) {
+        var a = e.args;
+        switch (e.name) {
+          case 'length': {
+            var v = evalValue(a[0], root, cur);
+            if (typeof v === 'string') return Array.from(v).length;
+            if (Array.isArray(v)) return v.length;
+            if (v !== NOTHING && isObject(v)) return Object.keys(v).length;
+            return NOTHING;
+          }
+          case 'count': return evalQuery(a[0], root, cur).length;
+          case 'value': {
+            var n = evalQuery(a[0], root, cur);
+            return n.length === 1 ? n[0] : NOTHING;
+          }
+          case 'match': case 'search': {
+            var s = evalValue(a[0], root, cur);
+            var re = evalValue(a[1], root, cur);
+            if (typeof s !== 'string' || typeof re !== 'string') return false;
+            var key = e.name + ':' + re;
+            if (!Object.prototype.hasOwnProperty.call(regexCache, key)) regexCache[key] = iRegexp(re, e.name === 'match');
+            var rx = regexCache[key];
+            return rx ? rx.test(s) : false;
+          }
+        }
+        return NOTHING;
+      }
+
+      var regexCache = {};
+
+      // I-Regexp (RFC 9485 §5.3) to ECMAScript: "." outside a character class becomes
+      // [^\n\r]; match() anchors the whole string. Patterns JavaScript rejects give false.
+      function iRegexp(src, anchored) {
+        var out = '';
+        var inClass = false;
+        for (var i = 0; i < src.length; i++) {
+          var c = src.charAt(i);
+          if (c === '\\') { out += c + src.charAt(i + 1); i++; continue; }
+          if (inClass) { if (c === ']') inClass = false; out += c; continue; }
+          if (c === '[') { inClass = true; out += c; continue; }
+          out += c === '.' ? '[^\\n\\r]' : c;
+        }
+        try {
+          return new RegExp(anchored ? '^(?:' + out + ')$' : out, 'u');
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function compareStrings(a, b) {
+        var ia = a[Symbol.iterator](), ib = b[Symbol.iterator]();
+        for (;;) {
+          var x = ia.next(), y = ib.next();
+          if (x.done || y.done) return x.done && !y.done ? -1 : (!x.done && y.done ? 1 : 0);
+          var d = x.value.codePointAt(0) - y.value.codePointAt(0);
+          if (d !== 0) return d < 0 ? -1 : 1;
+        }
+      }
+
+      function deepEqual(a, b) {
+        if (a === NOTHING || b === NOTHING) return a === b;
+        if (Array.isArray(a) || Array.isArray(b)) {
+          return Array.isArray(a) && Array.isArray(b) && a.length === b.length &&
+            a.every(function (x, i) { return deepEqual(x, b[i]); });
+        }
+        if (isObject(a) || isObject(b)) {
+          if (!isObject(a) || !isObject(b)) return false;
+          var ka = Object.keys(a), kb = Object.keys(b);
+          return ka.length === kb.length && ka.every(function (k) {
+            return Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k]);
+          });
+        }
+        return a === b;
+      }
+
+      function lessThan(a, b) {
+        if (typeof a === 'number' && typeof b === 'number') return a < b;
+        if (typeof a === 'string' && typeof b === 'string') return compareStrings(a, b) < 0;
+        return false;
+      }
+
+      function compare(op, a, b) {
+        switch (op) {
+          case '==': return deepEqual(a, b);
+          case '!=': return !deepEqual(a, b);
+          case '<': return lessThan(a, b);
+          case '<=': return lessThan(a, b) || deepEqual(a, b);
+          case '>': return lessThan(b, a);
+          case '>=': return lessThan(b, a) || deepEqual(a, b);
+        }
+        return false;
+      }
+
+      function jsonpath(data, expr) {
+        return evalQuery(compileJsonPath(expr), data, data);
+      }
+      /* ── engine:end ── */
 
       /* ── Syntax highlight JSON ── */
       function highlightJson(str) {
@@ -316,7 +751,11 @@ const SAMPLE_JSON = `{
             copyBtn.disabled = false;
           }
         } catch (e) {
-          codeEl.innerHTML = '<span class="jpt-error">' + ERROR_LABEL + ': ' + e.message + '</span>';
+          var errText = e.name === 'JsonPathError'
+            ? UNSUPPORTED + ': ' + e.message
+            : ERROR_LABEL + ': ' + e.message;
+          codeEl.innerHTML = '<span class="jpt-error"></span>';
+          codeEl.firstChild.textContent = errText;
           countEl.textContent = '';
           copyBtn.disabled = true;
         }

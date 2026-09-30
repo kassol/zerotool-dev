@@ -9,9 +9,11 @@ faqItems:
   - question: "如何选取数组中的所有元素？"
     answer: "在数组键名后使用通配符选择器 [*]。例如，$.store.book[*] 返回数组中所有 book 对象。还可以进一步提取每个元素的字段：$.store.book[*].author 返回所有 author 值。"
   - question: "过滤表达式如何使用？"
-    answer: "过滤表达式语法为 [?(@.property operator value)]，@ 符号代表当前元素。例如，$.store.book[?(@.price < 10)] 返回所有 price 小于 10 的书。支持的运算符：==、!=、<、>、<=、>=。"
+    answer: "过滤器写作 [?表达式]，@ 表示正在判断的元素。按 RFC 9535，括号可写可不写，$.store.book[?@.price < 10] 与 $.store.book[?(@.price < 10)] 等价。可用 ==、!=、<、<=、>、>= 比较，用 &&、||、! 组合条件，判断 @.author.name 这样的嵌套路径，用 $ 与文档其他位置比较，并可调用 length()、count()、match()、search()、value()。"
   - question: "递归下降（..）是什么？"
     answer: ".. 运算符递归搜索当前节点的所有后代。例如，$..author 在整个 JSON 树中查找所有 author 字段，无论嵌套深度如何。"
+  - question: "为什么显示「不支持的语法」？"
+    answer: "表达式用了 RFC 9535 没有定义的语法，工具会停下并给出字符位置，不会返回空结果。常见的有脚本表达式 [(@.length-1)]（改用 [-1]）、=~ 运算符（改用 match() 或 search()）、in / nin。显示「未找到匹配项」则说明表达式合法，只是 JSON 里没有符合的内容。"
 ---
 
 <h2>使用方法</h2>
@@ -22,15 +24,29 @@ faqItems:
   <li>点击<strong>复制</strong>将匹配输出复制到剪贴板。</li>
 </ol>
 
-<h2>JSONPath 语法参考</h2>
+<h2>JSONPath 语法参考（RFC 9535）</h2>
 <ul>
-  <li><code>$</code> — 根元素</li>
-  <li><code>.key</code> — 子属性（点表示法）</li>
-  <li><code>['key']</code> — 子属性（括号表示法）</li>
-  <li><code>[n]</code> — 数组索引 n 处的元素</li>
-  <li><code>[*]</code> — 所有数组元素或对象属性</li>
-  <li><code>..key</code> — 递归下降——在树中任意位置查找 key</li>
-  <li><code>[?(@.prop op value)]</code> — 过滤表达式</li>
+  <li><code>{"$"}</code> — 文档根节点</li>
+  <li><code>{".key"}</code>、<code>{"['key']"}</code>、<code>{"[\"key\"]"}</code> — 对象成员</li>
+  <li><code>{"[n]"}</code>、<code>{"[-1]"}</code> — 数组元素；负索引从末尾倒数</li>
+  <li><code>{"[start:end:step]"}</code> — 切片，例如<code>{"[0:2]"}</code>、<code>{"[1:]"}</code>、<code>{"[::-1]"}</code></li>
+  <li><code>{"[0,2]"}</code>、<code>{"['title','price']"}</code> — 一个方括号里放多个选择器，结果按选择器顺序排列</li>
+  <li><code>{"[*]"}</code>、<code>{".*"}</code> — 全部数组元素或对象成员值</li>
+  <li><code>{"..key"}</code>、<code>{"..[0]"}</code>、<code>{"..*"}</code> — 任意深度的后代</li>
+  <li><code>{"[?@.price < 10]"}</code> — 过滤器；也可写成 <code>{"[?(@.price < 10)]"}</code></li>
+  <li><code>{"[?@.isbn]"}</code>、<code>{"[?!@.isbn]"}</code> — 成员存在 / 不存在</li>
+  <li><code>{"[?@.a.b == 'x' && @.c > $.min]"}</code> — 过滤器内的嵌套路径、<code>{"&&"}</code> <code>{"||"}</code> <code>{"!"}</code>、以 $ 开头的绝对路径</li>
+  <li><code>{"length()"}</code>、<code>{"count()"}</code>、<code>{"match()"}</code>、<code>{"search()"}</code>、<code>{"value()"}</code> — RFC 9535 定义的 5 个函数</li>
+</ul>
+
+<h2>限制</h2>
+<ul>
+  <li>RFC 9535 之外的语法会显示「不支持的语法」和字符位置：脚本表达式 <code>{"[(...)]"}</code>、<code>{"=~"}</code>、<code>{"in"}</code> / <code>{"nin"}</code>，以及其他库用 <code>{"~"}</code> 取成员名之类的扩展。</li>
+  <li><code>{"$.store.book.length"}</code> 选取名为 <code>{"length"}</code> 的成员，数组没有这个成员，所以结果为空。要按长度筛选，请在过滤器中用 <code>{"length()"}</code>，例如 <code>{"$[?length(@.book) > 3]"}</code>。</li>
+  <li>结果只列出匹配的值，不显示规范化路径（如 <code>{"$['store']['book'][0]"}</code>）。</li>
+  <li>对象成员按 JSON 文本中的顺序返回。RFC 9535 没有规定这个顺序，其他实现可能不同。</li>
+  <li><code>{"match()"}</code> 与 <code>{"search()"}</code> 把 <code>{"."}</code> 换成 <code>{"[^\\n\\r]"}</code> 后，按带 <code>{"u"}</code> 标志的 JavaScript 正则执行（RFC 9485 §5.3）。JavaScript 不接受的模式结果为 false；<code>{"\\d"}</code>、先行断言等只有 JavaScript 支持的写法也会被接受。</li>
+  <li>数字经 <code>{"JSON.parse"}</code> 转成 JavaScript 数字，大于 2<sup>53</sup> 的整数在比较前就已丢失精度。</li>
 </ul>
 
 <h2>常见使用场景</h2>

@@ -9,9 +9,11 @@ faqItems:
   - question: "How do I select all items in an array?"
     answer: "Use the wildcard selector [*] after the array's key. For example, $.store.book[*] returns all book objects in the array. You can further drill into each item: $.store.book[*].author returns every author value."
   - question: "How do filter expressions work?"
-    answer: "Filter expressions use the syntax [?(@.property operator value)]. The @ symbol refers to the current element. For example, $.store.book[?(@.price < 10)] returns all books with a price less than 10. Supported operators include ==, !=, <, >, <=, >=."
+    answer: "A filter is written [?expression], and @ is the element being tested. Under RFC 9535 the parentheses are optional, so $.store.book[?@.price < 10] and $.store.book[?(@.price < 10)] are the same. You can use ==, !=, <, <=, >, >=, combine conditions with &&, || and !, test nested paths such as @.author.name, compare with other parts of the document through $, and call length(), count(), match(), search() and value()."
   - question: "What is recursive descent (..) ?"
     answer: "The .. operator recursively searches all descendants of the current node. For example, $..author finds every author field anywhere in the JSON tree, regardless of nesting depth."
+  - question: "Why do I see \"Unsupported syntax\"?"
+    answer: "The expression uses syntax that RFC 9535 does not define, so the tool stops and shows the character position instead of returning an empty result. Common cases are script expressions such as [(@.length-1)] (use [-1]), the =~ operator (use match() or search()), and in / nin. An empty result with \"No matches found\" means the expression is valid but nothing in the JSON matches it."
 ---
 
 <h2>How to Use</h2>
@@ -22,15 +24,29 @@ faqItems:
   <li>Click <strong>Copy</strong> to copy the matched output to your clipboard.</li>
 </ol>
 
-<h2>JSONPath Syntax Reference</h2>
+<h2>JSONPath Syntax Reference (RFC 9535)</h2>
 <ul>
-  <li><code>$</code> — root element</li>
-  <li><code>.key</code> — child property (dot notation)</li>
-  <li><code>['key']</code> — child property (bracket notation)</li>
-  <li><code>[n]</code> — array element at index n</li>
-  <li><code>[*]</code> — all array elements or object properties</li>
-  <li><code>..key</code> — recursive descent — finds key anywhere in the tree</li>
-  <li><code>[?(@.prop op value)]</code> — filter expression</li>
+  <li><code>{"$"}</code> — root of the document</li>
+  <li><code>{".key"}</code>, <code>{"['key']"}</code>, <code>{"[\"key\"]"}</code> — member of an object</li>
+  <li><code>{"[n]"}</code>, <code>{"[-1]"}</code> — array element; negative indexes count from the end</li>
+  <li><code>{"[start:end:step]"}</code> — slice, for example <code>{"[0:2]"}</code>, <code>{"[1:]"}</code>, <code>{"[::-1]"}</code></li>
+  <li><code>{"[0,2]"}</code>, <code>{"['title','price']"}</code> — several selectors in one bracket; results follow the order of the selectors</li>
+  <li><code>{"[*]"}</code>, <code>{".*"}</code> — all array elements or object member values</li>
+  <li><code>{"..key"}</code>, <code>{"..[0]"}</code>, <code>{"..*"}</code> — descendants at any depth</li>
+  <li><code>{"[?@.price < 10]"}</code> — filter; also written <code>{"[?(@.price < 10)]"}</code></li>
+  <li><code>{"[?@.isbn]"}</code>, <code>{"[?!@.isbn]"}</code> — members that exist / do not exist</li>
+  <li><code>{"[?@.a.b == 'x' && @.c > $.min]"}</code> — nested paths, <code>{"&&"}</code> <code>{"||"}</code> <code>{"!"}</code>, and absolute $ paths inside a filter</li>
+  <li><code>{"length()"}</code>, <code>{"count()"}</code>, <code>{"match()"}</code>, <code>{"search()"}</code>, <code>{"value()"}</code> — the five functions defined by RFC 9535</li>
+</ul>
+
+<h2>Limitations</h2>
+<ul>
+  <li>Syntax outside RFC 9535 is rejected with "Unsupported syntax" and the character position: script expressions <code>{"[(...)]"}</code>, <code>{"=~"}</code>, <code>{"in"}</code> / <code>{"nin"}</code>, and extensions such as <code>{"~"}</code> for member names from other libraries.</li>
+  <li><code>{"$.store.book.length"}</code> selects a member named <code>{"length"}</code>, which arrays do not have, so the result is empty. Use <code>{"length()"}</code> inside a filter, for example <code>{"$[?length(@.book) > 3]"}</code>.</li>
+  <li>Results list the matched values. Normalized paths (such as <code>{"$['store']['book'][0]"}</code>) are not shown.</li>
+  <li>Object members are returned in the order they appear in your JSON. RFC 9535 leaves this order open, so other implementations can return them in a different order.</li>
+  <li><code>{"match()"}</code> and <code>{"search()"}</code> run the pattern as a JavaScript regular expression with the <code>{"u"}</code> flag after changing <code>{"."}</code> to <code>{"[^\\n\\r]"}</code> (RFC 9485 §5.3). Patterns that JavaScript rejects give false; JavaScript-only syntax such as <code>{"\\d"}</code> or lookahead is accepted.</li>
+  <li>Numbers are JavaScript numbers after <code>{"JSON.parse"}</code>, so integers above 2<sup>53</sup> lose precision before they are compared.</li>
 </ul>
 
 <h2>Common Use Cases</h2>
