@@ -86,6 +86,13 @@ eq('paragraphs split on blank lines', E.stats('one\n\ntwo\nstill two\n\n\nthree'
 eq('reading time 1,000 words', E.formatTime(1000 / 200), '5 min');
 eq('speaking time 1,000 words', E.formatTime(1000 / 130), '8 min');
 eq('under a minute', E.formatTime(0.4), '< 1 min');
+// round up to whole minutes first, then split into hours and minutes (was "1 hr 60 min")
+eq('0 minutes', E.formatTime(0), '0 min');
+eq('59.5 minutes', E.formatTime(59.5), '1 hr 0 min');
+eq('119.5 minutes', E.formatTime(119.5), '2 hr 0 min');
+eq('60 minutes', E.formatTime(60), '1 hr 0 min');
+eq('90.2 minutes', E.formatTime(90.2), '1 hr 31 min');
+eq('59 minutes', E.formatTime(59), '59 min');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
