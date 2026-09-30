@@ -91,7 +91,7 @@
           copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', lookupFirst: 'Run a lookup first.',
           summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
           summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n} record{s}', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'no DNSSEC',
+          summaryCount: '{n} record{s}', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'no DNSSEC', summaryDnssecFailed: 'DNSSEC failed',
           summaryTime: '{ms} ms', summaryTruncated: 'truncated ⚠',
           recordsHeading: '{type} ({n})',
           colType: 'TYPE', colTtl: 'TTL', colName: 'NAME', colData: 'DATA',
@@ -112,7 +112,7 @@
           copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', lookupFirst: '请先查询。',
           summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
           summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n} 条记录', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: '未启用 DNSSEC',
+          summaryCount: '{n} 条记录', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: '未启用 DNSSEC', summaryDnssecFailed: 'DNSSEC 验证失败',
           summaryTime: '{ms} 毫秒', summaryTruncated: '响应被截断 ⚠',
           recordsHeading: '{type}（{n} 条）',
           colType: '类型', colTtl: 'TTL', colName: '名称', colData: '数据',
@@ -133,7 +133,7 @@
           copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピーに失敗しました。', lookupFirst: '先に照会してください。',
           summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
           summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n} 件', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC なし',
+          summaryCount: '{n} 件', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC なし', summaryDnssecFailed: 'DNSSEC 検証失敗',
           summaryTime: '{ms} ミリ秒', summaryTruncated: '応答が切り詰められました ⚠',
           recordsHeading: '{type}（{n} 件）',
           colType: 'タイプ', colTtl: 'TTL', colName: '名前', colData: 'データ',
@@ -154,7 +154,7 @@
           copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', lookupFirst: '먼저 조회하세요.',
           summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
           summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n}개 레코드', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC 없음',
+          summaryCount: '{n}개 레코드', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC 없음', summaryDnssecFailed: 'DNSSEC 검증 실패',
           summaryTime: '{ms} ms', summaryTruncated: '응답이 잘림 ⚠',
           recordsHeading: '{type} ({n}개)',
           colType: '타입', colTtl: 'TTL', colName: '이름', colData: '데이터',
@@ -208,16 +208,46 @@
         return (resp.Answer || []).filter(function (a) { return a.type !== RRSIG_TYPE; });
       }
 
-      // Resolver notes: Google sends a string, Cloudflare an array of Extended DNS Errors.
+      // RFC 8914 §4.2–4.13: Extended DNS Error codes defined as DNSSEC validation problems.
+      var DNSSEC_EDE_CODES = [1, 2, 5, 6, 7, 8, 9, 10, 11, 12];
+
+      // Google puts Extended DNS Errors in extended_dns_errors; write them as Cloudflare does: "EDE(9): text".
+      function googleEdeNotes(resp) {
+        var list = Array.isArray(resp.extended_dns_errors) ? resp.extended_dns_errors : [];
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+          var e = list[i];
+          if (!e || typeof e.info_code !== 'number') continue;
+          var text = e.extra_text == null ? '' : String(e.extra_text).trim();
+          out.push('EDE(' + e.info_code + ')' + (text ? ': ' + text : ''));
+        }
+        return out;
+      }
+
+      // Resolver notes: Google sends a string plus extended_dns_errors, Cloudflare an array of Extended DNS Errors.
       function resolverComments(resp) {
         var c = resp.Comment;
-        var list = c == null ? [] : (Array.isArray(c) ? c : [c]);
+        var list = (c == null ? [] : (Array.isArray(c) ? c : [c])).concat(googleEdeNotes(resp));
         var out = [];
         for (var i = 0; i < list.length; i++) {
           var s = String(list[i]).trim();
           if (s && out.indexOf(s) === -1) out.push(s);
         }
         return out;
+      }
+
+      // validated: AD set. failed: SERVFAIL with a DNSSEC Extended DNS Error.
+      // unknown: any other SERVFAIL; the resolver returned no answer, so AD false says nothing about signing.
+      // unvalidated: an answer without AD (RFC 6840 §5.8).
+      function dnssecStatus(resp) {
+        if (resp.AD === true) return 'validated';
+        if (resp.Status !== 2) return 'unvalidated';
+        var notes = resolverComments(resp);
+        for (var i = 0; i < notes.length; i++) {
+          var m = /^EDE\((\d+)\)/.exec(notes[i]);
+          if (m && DNSSEC_EDE_CODES.indexOf(Number(m[1])) !== -1) return 'failed';
+        }
+        return 'unknown';
       }
 
       // Merge multi-type ALL results into a single shape the renderer consumes.
@@ -465,9 +495,14 @@
           summaryCountEl.dataset.kind = count > 0 ? 'ok' : 'neutral';
         }
 
-        if (resp.AD) {
+        var dnssec = dnssecStatus(resp);
+        summaryDnssecEl.hidden = dnssec === 'unknown';
+        if (dnssec === 'validated') {
           summaryDnssecEl.textContent = t.summaryDnssec;
           summaryDnssecEl.dataset.kind = 'ok';
+        } else if (dnssec === 'failed') {
+          summaryDnssecEl.textContent = t.summaryDnssecFailed;
+          summaryDnssecEl.dataset.kind = 'error';
         } else {
           summaryDnssecEl.textContent = t.summaryNoDnssec;
           summaryDnssecEl.dataset.kind = 'neutral';
@@ -709,6 +744,7 @@
   .dnsl-summary-pill[data-kind="neutral"] {
     color: var(--color-text-secondary);
   }
+  .dnsl-summary-pill[hidden] { display: none; }
 
   .dnsl-tabs {
     display: flex; gap: 0; border-bottom: 1px solid var(--color-border-soft);

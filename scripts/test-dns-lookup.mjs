@@ -10,7 +10,9 @@
 // underscore labels); isValidDomain (underscore labels for _dmarc / _domainkey / SRV names,
 // label and name length limits); buildQueryUrl (both resolvers send do=1 and cd=0, name and
 // type are URL-encoded); displayAnswers (RRSIG hidden from the Records view and the count);
-// resolverComments (string and array Comment, dedupe); mergeAllResults (NOERROR when any type
+// resolverComments (string and array Comment, Google extended_dns_errors written as "EDE(n): text",
+// dedupe); dnssecStatus (AD → validated; SERVFAIL with a DNSSEC EDE code from RFC 8914 §4 → failed,
+// other SERVFAIL → unknown; real dnssec-failed.org responses of 2026-09-30); mergeAllResults (NOERROR when any type
 // answers, NXDOMAIN / SERVFAIL kept when every type returns it, all-failed becomes SERVFAIL,
 // AD only when every type validated, TC, partial errors, comments merged); 4-language STRINGS
 // have the same keys.
@@ -33,7 +35,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { normalizeDomain, isValidDomain, buildQueryUrl, displayAnswers, resolverComments, mergeAllResults, typeNameFromCode };')();
+const E = new Function(block + '\nreturn { normalizeDomain, isValidDomain, buildQueryUrl, displayAnswers, resolverComments, dnssecStatus, mergeAllResults, typeNameFromCode };')();
 
 let failures = 0;
 let passes = 0;
@@ -111,6 +113,38 @@ eq('array comment', E.resolverComments({ Comment: ['EDE(9): DNSKEY Missing', 'ED
 eq('no comment', E.resolverComments({}), []);
 eq('empty strings dropped', E.resolverComments({ Comment: ['', '  '] }), []);
 
+// Real responses for dnssec-failed.org, 2026-09-30 03:09–03:10 UTC (devto-b fact-check, final.txt).
+const cfFailed = {"Status":2,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"dnssec-failed.org","type":1}],"Comment":["EDE(9): DNSKEY Missing no SEP matching the DS found for dnssec-failed.org."]};
+const ggFailed = {"Status":2,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"dnssec-failed.org.","type":1}],"Comment":"DNSSEC validation failure. Check http://dnsviz.net/d/dnssec-failed.org/dnssec/ and http://dnssec-debugger.verisignlabs.com/dnssec-failed.org for errors","extended_dns_errors":[{"info_code":9,"extra_text":"No DNSKEY matches DS RRs of dnssec-failed.org"}]};
+const ggExample = {"Status":0,"TC":false,"RD":true,"RA":true,"AD":true,"CD":false,"Question":[{"name":"example.com.","type":1}],"Answer":[{"name":"example.com.","type":1,"TTL":300,"data":"172.66.147.243"},{"name":"example.com.","type":1,"TTL":300,"data":"104.20.23.154"}],"Comment":"Response from 172.64.32.162."};
+const cfUnsigned = {"Status":0,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"www.baidu.com","type":1}],"Answer":[{"name":"www.wshifen.com","type":1,"TTL":274,"data":"103.235.47.188"}]};
+
+eq('google EDE joins the note list', E.resolverComments(ggFailed), [
+  'DNSSEC validation failure. Check http://dnsviz.net/d/dnssec-failed.org/dnssec/ and http://dnssec-debugger.verisignlabs.com/dnssec-failed.org for errors',
+  'EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org',
+]);
+eq('google EDE without extra_text', E.resolverComments({ Status: 2, extended_dns_errors: [{ info_code: 6 }] }), ['EDE(6)']);
+eq('google EDE deduped', E.resolverComments({ extended_dns_errors: [{ info_code: 9, extra_text: 'x' }, { info_code: 9, extra_text: 'x' }] }), ['EDE(9): x']);
+eq('google EDE without info_code ignored', E.resolverComments({ extended_dns_errors: [{ extra_text: 'x' }, null] }), []);
+
+// ---------- dnssecStatus ----------
+eq('dnssec: AD true is validated', E.dnssecStatus(ggExample), 'validated');
+eq('dnssec: NOERROR without AD is not validated', E.dnssecStatus(cfUnsigned), 'unvalidated');
+eq('dnssec: cloudflare SERVFAIL with EDE(9) failed', E.dnssecStatus(cfFailed), 'failed');
+eq('dnssec: google SERVFAIL with extended_dns_errors 9 failed', E.dnssecStatus(ggFailed), 'failed');
+eq('dnssec: SERVFAIL without EDE is unknown', E.dnssecStatus({ Status: 2, AD: false }), 'unknown');
+eq('dnssec: SERVFAIL with a plain comment is unknown', E.dnssecStatus({ Status: 2, AD: false, Comment: 'upstream timed out' }), 'unknown');
+// RFC 8914 §4: codes whose definition is about DNSSEC validation.
+const dnssecCodes = [1, 2, 5, 6, 7, 8, 9, 10, 11, 12];
+for (let code = 0; code <= 24; code++) {
+  const expected = dnssecCodes.includes(code) ? 'failed' : 'unknown';
+  eq('dnssec: SERVFAIL + cloudflare EDE(' + code + ')', E.dnssecStatus({ Status: 2, AD: false, Comment: ['EDE(' + code + '): text'] }), expected);
+  eq('dnssec: SERVFAIL + google EDE ' + code, E.dnssecStatus({ Status: 2, AD: false, extended_dns_errors: [{ info_code: code }] }), expected);
+}
+eq('dnssec: NXDOMAIN with EDE(9) is not called failed', E.dnssecStatus({ Status: 3, AD: false, Comment: ['EDE(9): x'] }), 'unvalidated');
+eq('dnssec: cd=1 NOERROR with EDE(9) is not called failed', E.dnssecStatus({ Status: 0, AD: false, CD: true, Comment: ['EDE(9): DNSKEY Missing no SEP matching the DS found for dnssec-failed.org.'] }), 'unvalidated');
+eq('dnssec: EDE text in the middle of a note does not count', E.dnssecStatus({ Status: 2, AD: false, Comment: 'see EDE(9) docs' }), 'unknown');
+
 // ---------- mergeAllResults ----------
 function ok(typeName, value) { return { status: 'fulfilled', value, typeName }; }
 function bad(typeName, message) { return { status: 'rejected', reason: new Error(message), typeName }; }
@@ -141,10 +175,17 @@ eq('merge: comments deduped', E.resolverComments(m), ['EDE(9): DNSKEY Missing no
 m = E.mergeAllResults([ok('A', nx), ok('MX', { Status: 0, AD: false, Answer: [] })]);
 eq('merge: any NOERROR wins over NXDOMAIN', m.Status, 0);
 
+m = E.mergeAllResults(['A', 'AAAA', 'MX'].map((tn) => ok(tn, ggFailed)));
+eq('merge: google EDE kept in merged notes', E.resolverComments(m), E.resolverComments(ggFailed));
+eq('merge: google DNSSEC failure survives merging', E.dnssecStatus(m), 'failed');
+m = E.mergeAllResults(['A', 'AAAA'].map((tn) => ok(tn, cfFailed)));
+eq('merge: cloudflare DNSSEC failure survives merging', E.dnssecStatus(m), 'failed');
+
 m = E.mergeAllResults([bad('A', 'HTTP 500'), bad('MX', 'Failed to fetch')]);
 eq('merge: all failed becomes SERVFAIL', m.Status, 2);
 eq('merge: partial errors recorded', m._partialErrors.map((p) => p.type + ':' + p.message), ['A:HTTP 500', 'MX:Failed to fetch']);
 eq('merge: AD false when nothing answered', m.AD, false);
+eq('merge: all failed does not claim a DNSSEC state', E.dnssecStatus(m), 'unknown');
 
 m = E.mergeAllResults([ok('A', signedA), bad('MX', 'The operation was aborted.')]);
 eq('merge: partial failure keeps NOERROR', m.Status, 0);
@@ -162,6 +203,7 @@ if (stringsMatch) {
   for (const lang of ['zh', 'ja', 'ko']) {
     eq('STRINGS keys ' + lang, Object.keys(STRINGS[lang]).sort().join(','), enKeys);
   }
+  check('STRINGS.en has summaryDnssecFailed', 'summaryDnssecFailed' in STRINGS.en);
   const i18nKeys = [...source.matchAll(/data-i18n="([^"]+)"/g)].map((x) => x[1]);
   for (const k of i18nKeys) check('data-i18n key ' + k + ' in STRINGS.en', k in STRINGS.en);
 }
