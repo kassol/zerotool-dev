@@ -1,556 +1,1327 @@
 ---
-// SvgToPngConverterTool — converts SVG to PNG using Canvas API
+// SvgToPngConverterTool — renders SVG with the browser (as an <img>) onto a canvas and
+// exports PNG, JPEG or WebP. Nothing is uploaded.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// strings:start
+const STRINGS = {
+  en: {
+    uploadTab: 'Upload files', pasteTab: 'Paste SVG code',
+    dropTitle: 'Drop SVG files here, or click to choose',
+    dropHint: 'Several files are converted with the same settings. Files stay in your browser.',
+    codeLabel: 'SVG code', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    convertCode: 'Convert', other: 'Other SVG',
+    sizeLabel: 'Size', modeScale: 'Scale', modeWidth: 'Width', modeHeight: 'Height', modeExact: 'Width × height',
+    scaleLabel: 'Scale', widthLabel: 'Width (px)', heightLabel: 'Height (px)',
+    formatLabel: 'Format', qualityLabel: 'Quality',
+    bgLabel: 'Background', bgTransparent: 'Transparent', bgWhite: 'White', bgCustom: 'Color', colorLabel: 'Background color',
+    download: 'Download {format}', downloadAll: 'Download all (.zip)', previewAlt: 'Converted image',
+    listFile: 'File', listSize: 'Size', listSizes: '{sw} × {sh} → {w} × {h}', listError: 'Error',
+    converting: 'Converting…', result: '{w} × {h} px · {bytes}',
+    doneOne: '{name} → {file}', doneMany: '{ok} of {n} files converted.',
+    err: {
+      empty: 'The SVG is empty.',
+      notSvg: 'No <svg> element found.',
+      rootNotSvg: 'The root element is <{name}>, not <svg>. Paste only the <svg>…</svg> part.',
+      xml: 'The SVG is not valid XML (line {line}): {detail}',
+      xmlEntity: 'The SVG is not valid XML (line {line}): &{entity}; is an HTML entity, which XML does not define. Write it as a number, for example &#160; instead of &nbsp;.',
+      render: 'The browser could not draw this SVG.',
+      tainted: 'The browser blocked reading the image ({detail}).',
+      taintedForeign: 'The SVG contains <foreignObject> (HTML inside SVG). Chrome and Edge block exporting such an image from a canvas. Replace the HTML with SVG <text> or shapes.',
+      tooLarge: '{w} × {h} px is above the limit of 65,535 px per side.',
+      canvas: 'This browser cannot create a {w} × {h} px canvas. Desktop Chrome allows up to 268,435,456 pixels (16,384 × 16,384); iPhone and iPad allow 4,096 × 4,096. Choose a smaller size.',
+      badNumber: 'Enter a whole number from 1 to 65,535.',
+      badScale: 'Enter a scale greater than 0.',
+      encode: 'The browser could not encode the image.',
+      read: 'Could not read {name}.'
+    },
+    note: {
+      viewBox: 'No width or height: used the viewBox size ({w} × {h}).',
+      default: 'No width, height or viewBox: used the default size 300 × 150.',
+      relativeSize: '{attr}="{value}" depends on the page the SVG is placed in, so it was ignored.',
+      xmlns: 'Added the missing xmlns="http://www.w3.org/2000/svg". Without it the file does not open as an image.',
+      xlink: 'Added the missing xmlns:xlink declaration.',
+      externalImage: 'Removed links to external images, because browsers do not load files referenced from an SVG image: {urls}. Embed them as data: URIs to keep them.',
+      externalUse: '<use> refers to another file, which is not loaded: {urls}.',
+      externalCss: 'CSS refers to external files, which are not loaded: {urls}. Text uses an installed font instead of a web font.',
+      letterbox: 'This size has a different aspect ratio from the SVG. The drawing is centered as its preserveAspectRatio says.',
+      jpegWhite: 'JPEG has no transparency, so transparent areas are white.',
+      formatFallback: 'This browser cannot encode {format}. The file was saved as {actual}.',
+      blank: 'The result is fully transparent. Check that the drawing lies inside the viewBox.',
+      skipped: 'Skipped files that are not SVG: {names}.'
+    }
+  },
+  zh: {
+    uploadTab: '上传文件', pasteTab: '粘贴 SVG 代码',
+    dropTitle: '把 SVG 文件拖到这里，或点击选择',
+    dropHint: '可一次选多个文件，按同一设置转换。文件不离开浏览器。',
+    codeLabel: 'SVG 代码', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    convertCode: '转换', other: '换一个 SVG',
+    sizeLabel: '尺寸', modeScale: '倍数', modeWidth: '宽度', modeHeight: '高度', modeExact: '宽 × 高',
+    scaleLabel: '倍数', widthLabel: '宽度（px）', heightLabel: '高度（px）',
+    formatLabel: '格式', qualityLabel: '质量',
+    bgLabel: '背景', bgTransparent: '透明', bgWhite: '白色', bgCustom: '指定颜色', colorLabel: '背景颜色',
+    download: '下载 {format}', downloadAll: '全部下载（.zip）', previewAlt: '转换结果',
+    listFile: '文件', listSize: '尺寸', listSizes: '{sw} × {sh} → {w} × {h}', listError: '出错',
+    converting: '正在转换…', result: '{w} × {h} px · {bytes}',
+    doneOne: '{name} → {file}', doneMany: '已转换 {ok} / {n} 个文件。',
+    err: {
+      empty: 'SVG 内容为空。',
+      notSvg: '没有找到 <svg> 元素。',
+      rootNotSvg: '根元素是 <{name}>，不是 <svg>。请只粘贴 <svg>…</svg> 部分。',
+      xml: 'SVG 不是合法的 XML（第 {line} 行）：{detail}',
+      xmlEntity: 'SVG 不是合法的 XML（第 {line} 行）：&{entity}; 是 HTML 实体，XML 没有定义。请改写成数字形式，例如用 &#160; 代替 &nbsp;。',
+      render: '浏览器无法绘制这个 SVG。',
+      tainted: '浏览器阻止读取图像（{detail}）。',
+      taintedForeign: 'SVG 中含有 <foreignObject>（SVG 里嵌入的 HTML）。Chrome 和 Edge 不允许从 canvas 导出这类图像。请把其中的 HTML 改成 SVG 的 <text> 或图形。',
+      tooLarge: '{w} × {h} px 超过单边 65,535 px 的上限。',
+      canvas: '当前浏览器无法创建 {w} × {h} px 的 canvas。桌面版 Chrome 上限为 268,435,456 像素（16,384 × 16,384），iPhone 和 iPad 为 4,096 × 4,096。请选小一些的尺寸。',
+      badNumber: '请输入 1 到 65,535 之间的整数。',
+      badScale: '请输入大于 0 的倍数。',
+      encode: '浏览器无法编码这张图像。',
+      read: '无法读取 {name}。'
+    },
+    note: {
+      viewBox: '没有 width / height，按 viewBox 尺寸（{w} × {h}）输出。',
+      default: '没有 width、height 和 viewBox，按默认尺寸 300 × 150 输出。',
+      relativeSize: '{attr}="{value}" 取决于 SVG 所在的页面，已忽略。',
+      xmlns: '已补上缺少的 xmlns="http://www.w3.org/2000/svg"。没有它，文件无法作为图像打开。',
+      xlink: '已补上缺少的 xmlns:xlink 声明。',
+      externalImage: '已去掉外部图片链接，浏览器不会加载 SVG 图像引用的文件：{urls}。要保留这些图片，请改成 data: URI 内嵌。',
+      externalUse: '<use> 引用了其他文件，不会被加载：{urls}。',
+      externalCss: 'CSS 引用了外部文件，不会被加载：{urls}。文字会改用本机已安装的字体。',
+      letterbox: '这个尺寸的宽高比与 SVG 不同，图形按其 preserveAspectRatio 居中。',
+      jpegWhite: 'JPEG 不支持透明，透明区域为白色。',
+      formatFallback: '当前浏览器不能编码 {format}，已保存为 {actual}。',
+      blank: '结果完全透明。请检查图形是否位于 viewBox 范围内。',
+      skipped: '已跳过不是 SVG 的文件：{names}。'
+    }
+  },
+  ja: {
+    uploadTab: 'ファイルを選択', pasteTab: 'SVG コードを貼り付け',
+    dropTitle: 'SVG ファイルをここにドロップ、またはクリックして選択',
+    dropHint: '複数ファイルを同じ設定で一括変換できます。ファイルはブラウザの外に出ません。',
+    codeLabel: 'SVG コード', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    convertCode: '変換', other: '別の SVG',
+    sizeLabel: 'サイズ', modeScale: '倍率', modeWidth: '幅', modeHeight: '高さ', modeExact: '幅 × 高さ',
+    scaleLabel: '倍率', widthLabel: '幅（px）', heightLabel: '高さ（px）',
+    formatLabel: '形式', qualityLabel: '画質',
+    bgLabel: '背景', bgTransparent: '透過', bgWhite: '白', bgCustom: '色を指定', colorLabel: '背景色',
+    download: '{format} をダウンロード', downloadAll: 'すべてダウンロード（.zip）', previewAlt: '変換結果',
+    listFile: 'ファイル', listSize: 'サイズ', listSizes: '{sw} × {sh} → {w} × {h}', listError: 'エラー',
+    converting: '変換中…', result: '{w} × {h} px · {bytes}',
+    doneOne: '{name} → {file}', doneMany: '{n} 件中 {ok} 件を変換しました。',
+    err: {
+      empty: 'SVG が空です。',
+      notSvg: '<svg> 要素が見つかりません。',
+      rootNotSvg: 'ルート要素が <svg> ではなく <{name}> です。<svg>…</svg> の部分だけを貼り付けてください。',
+      xml: 'SVG が XML として正しくありません（{line} 行目）：{detail}',
+      xmlEntity: 'SVG が XML として正しくありません（{line} 行目）：&{entity}; は HTML の文字参照で、XML では定義されていません。&nbsp; なら &#160; のように数値で書いてください。',
+      render: 'ブラウザがこの SVG を描画できませんでした。',
+      tainted: 'ブラウザが画像の読み取りをブロックしました（{detail}）。',
+      taintedForeign: 'SVG に <foreignObject>（SVG 内の HTML）が含まれています。Chrome と Edge はこの種の画像を canvas から書き出すことを禁止しています。HTML の部分を SVG の <text> や図形に置き換えてください。',
+      tooLarge: '{w} × {h} px は一辺 65,535 px の上限を超えています。',
+      canvas: 'このブラウザでは {w} × {h} px の canvas を作れません。デスクトップ版 Chrome の上限は 268,435,456 ピクセル（16,384 × 16,384）、iPhone と iPad は 4,096 × 4,096 です。小さいサイズを選んでください。',
+      badNumber: '1〜65,535 の整数を入力してください。',
+      badScale: '0 より大きい倍率を入力してください。',
+      encode: 'ブラウザが画像を書き出せませんでした。',
+      read: '{name} を読み込めませんでした。'
+    },
+    note: {
+      viewBox: 'width / height がないため、viewBox のサイズ（{w} × {h}）で出力しました。',
+      default: 'width・height・viewBox がないため、既定の 300 × 150 で出力しました。',
+      relativeSize: '{attr}="{value}" は SVG を置くページによって決まるため、無視しました。',
+      xmlns: '欠けていた xmlns="http://www.w3.org/2000/svg" を補いました。これがないと画像として開けません。',
+      xlink: '欠けていた xmlns:xlink の宣言を補いました。',
+      externalImage: '外部画像へのリンクを外しました。SVG 画像から参照されたファイルをブラウザは読み込みません：{urls}。残したい場合は data: URI で埋め込んでください。',
+      externalUse: '<use> が別ファイルを参照していますが、読み込まれません：{urls}。',
+      externalCss: 'CSS が外部ファイルを参照していますが、読み込まれません：{urls}。文字は Web フォントではなくインストール済みのフォントで描画されます。',
+      letterbox: 'このサイズは SVG と縦横比が異なります。図形は preserveAspectRatio の指定どおり中央に配置されます。',
+      jpegWhite: 'JPEG は透過を扱えないため、透明部分は白になります。',
+      formatFallback: 'このブラウザは {format} を書き出せないため、{actual} で保存しました。',
+      blank: '結果がすべて透明です。図形が viewBox の範囲内にあるか確認してください。',
+      skipped: 'SVG ではないファイルをスキップしました：{names}。'
+    }
+  },
+  ko: {
+    uploadTab: '파일 선택', pasteTab: 'SVG 코드 붙여넣기',
+    dropTitle: 'SVG 파일을 여기에 끌어 놓거나 클릭해서 선택',
+    dropHint: '여러 파일을 같은 설정으로 한 번에 변환합니다. 파일은 브라우저 밖으로 나가지 않습니다.',
+    codeLabel: 'SVG 코드', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    convertCode: '변환', other: '다른 SVG',
+    sizeLabel: '크기', modeScale: '배율', modeWidth: '너비', modeHeight: '높이', modeExact: '너비 × 높이',
+    scaleLabel: '배율', widthLabel: '너비(px)', heightLabel: '높이(px)',
+    formatLabel: '형식', qualityLabel: '품질',
+    bgLabel: '배경', bgTransparent: '투명', bgWhite: '흰색', bgCustom: '색 지정', colorLabel: '배경색',
+    download: '{format} 다운로드', downloadAll: '모두 다운로드(.zip)', previewAlt: '변환 결과',
+    listFile: '파일', listSize: '크기', listSizes: '{sw} × {sh} → {w} × {h}', listError: '오류',
+    converting: '변환 중…', result: '{w} × {h} px · {bytes}',
+    doneOne: '{name} → {file}', doneMany: '{n}개 중 {ok}개를 변환했습니다.',
+    err: {
+      empty: 'SVG가 비어 있습니다.',
+      notSvg: '<svg> 요소를 찾을 수 없습니다.',
+      rootNotSvg: '루트 요소가 <svg>가 아니라 <{name}>입니다. <svg>…</svg> 부분만 붙여 넣으세요.',
+      xml: 'SVG가 올바른 XML이 아닙니다({line}번째 줄): {detail}',
+      xmlEntity: 'SVG가 올바른 XML이 아닙니다({line}번째 줄): &{entity};는 HTML 엔티티이며 XML에는 정의되어 있지 않습니다. &nbsp; 대신 &#160;처럼 숫자로 쓰세요.',
+      render: '브라우저가 이 SVG를 그리지 못했습니다.',
+      tainted: '브라우저가 이미지 읽기를 막았습니다({detail}).',
+      taintedForeign: 'SVG에 <foreignObject>(SVG 안의 HTML)가 있습니다. Chrome과 Edge는 이런 이미지를 canvas에서 내보내지 못하게 막습니다. HTML 부분을 SVG의 <text>나 도형으로 바꾸세요.',
+      tooLarge: '{w} × {h} px는 한 변 65,535 px 한도를 넘습니다.',
+      canvas: '이 브라우저에서는 {w} × {h} px canvas를 만들 수 없습니다. 데스크톱 Chrome은 268,435,456픽셀(16,384 × 16,384), iPhone과 iPad는 4,096 × 4,096까지입니다. 더 작은 크기를 고르세요.',
+      badNumber: '1부터 65,535까지의 정수를 입력하세요.',
+      badScale: '0보다 큰 배율을 입력하세요.',
+      encode: '브라우저가 이미지를 인코딩하지 못했습니다.',
+      read: '{name}을(를) 읽지 못했습니다.'
+    },
+    note: {
+      viewBox: 'width / height가 없어 viewBox 크기({w} × {h})로 출력했습니다.',
+      default: 'width, height, viewBox가 모두 없어 기본 크기 300 × 150으로 출력했습니다.',
+      relativeSize: '{attr}="{value}"는 SVG가 놓이는 페이지에 따라 정해지므로 무시했습니다.',
+      xmlns: '빠진 xmlns="http://www.w3.org/2000/svg"를 추가했습니다. 이것이 없으면 이미지로 열리지 않습니다.',
+      xlink: '빠진 xmlns:xlink 선언을 추가했습니다.',
+      externalImage: '외부 이미지 링크를 제거했습니다. 브라우저는 SVG 이미지가 참조하는 파일을 불러오지 않습니다: {urls}. 남기려면 data: URI로 넣으세요.',
+      externalUse: '<use>가 다른 파일을 참조하지만 불러오지 않습니다: {urls}.',
+      externalCss: 'CSS가 외부 파일을 참조하지만 불러오지 않습니다: {urls}. 글자는 웹 폰트 대신 설치된 글꼴로 그려집니다.',
+      letterbox: '이 크기는 SVG와 가로세로 비율이 다릅니다. 도형은 preserveAspectRatio 설정대로 가운데에 놓입니다.',
+      jpegWhite: 'JPEG는 투명을 지원하지 않아 투명한 부분은 흰색이 됩니다.',
+      formatFallback: '이 브라우저는 {format}를 인코딩하지 못해 {actual}로 저장했습니다.',
+      blank: '결과가 완전히 투명합니다. 도형이 viewBox 안에 있는지 확인하세요.',
+      skipped: 'SVG가 아닌 파일은 건너뛰었습니다: {names}.'
+    }
+  }
+};
+// strings:end
+
+const T = STRINGS[lang];
 ---
 
 <div>
-  <div class="s2p-wrap">
+  <div class="s2p-wrap" id="s2p-wrap">
+    <div id="s2p-input" class="s2p-input">
+      <div class="s2p-tabs" role="tablist">
+        <button id="s2p-tab-file" class="s2p-tab s2p-tab--active" type="button" role="tab" aria-selected="true" aria-controls="s2p-panel-file">{T.uploadTab}</button>
+        <button id="s2p-tab-code" class="s2p-tab" type="button" role="tab" aria-selected="false" aria-controls="s2p-panel-code">{T.pasteTab}</button>
+      </div>
 
-    {/* Tabs: upload file vs paste code */}
-    <div class="s2p-tabs" role="tablist">
-      <button id="s2p-tab-file" class="s2p-tab s2p-tab--active" role="tab" aria-selected="true" aria-controls="s2p-panel-file" data-i18n="uploadFile">Upload File</button>
-      <button id="s2p-tab-code" class="s2p-tab" role="tab" aria-selected="false" aria-controls="s2p-panel-code" data-i18n="pasteSvg">Paste SVG Code</button>
-    </div>
-
-    {/* Panel: file upload */}
-    <div id="s2p-panel-file" class="s2p-panel" role="tabpanel">
-      <div id="s2p-drop" class="s2p-drop" role="button" tabindex="0">
-        <div class="s2p-drop-inner">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <div id="s2p-panel-file" class="s2p-panel" role="tabpanel" aria-labelledby="s2p-tab-file">
+        <label id="s2p-drop" class="s2p-drop" for="s2p-file">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
             <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
           </svg>
-          <p>Drop an SVG file here, or <strong>click to select</strong></p>
-          <p class="s2p-hint">Supports .svg files only</p>
-        </div>
-        <input type="file" id="s2p-file" accept=".svg,image/svg+xml" class="s2p-file-input" aria-label="Select SVG file" />
+          <span class="s2p-drop-title">{T.dropTitle}</span>
+          <span class="s2p-drop-hint">{T.dropHint}</span>
+        </label>
+        <input type="file" id="s2p-file" class="s2p-file-input" accept=".svg,image/svg+xml" multiple />
+      </div>
+
+      <div id="s2p-panel-code" class="s2p-panel" hidden role="tabpanel" aria-labelledby="s2p-tab-code">
+        <label for="s2p-code" class="tool-label">{T.codeLabel}</label>
+        <textarea id="s2p-code" class="tool-textarea s2p-code" rows="7" spellcheck="false" placeholder={T.codePh}></textarea>
+        <button id="s2p-convert-code" class="btn-primary" type="button">{T.convertCode}</button>
       </div>
     </div>
 
-    {/* Panel: paste code */}
-    <div id="s2p-panel-code" class="s2p-panel" hidden role="tabpanel">
-      <div class="s2p-field">
-        <label for="s2p-code-input" data-i18n="svgCode">SVG Code</label>
-        <textarea
-          id="s2p-code-input"
-          placeholder="<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; ...>...</svg>"
-          spellcheck="false"
-          rows="8"
-        ></textarea>
-      </div>
-      <button id="s2p-load-code" class="btn-primary s2p-load-btn" data-i18n="loadSvg">Load SVG</button>
-    </div>
-
-    {/* Options */}
-    <div id="s2p-options" class="s2p-options" hidden>
-      <div class="s2p-options-row">
-        {/* Scale / size */}
-        <div class="s2p-opt-group">
-          <label for="s2p-scale" data-i18n="outputSize">Output Size</label>
-          <select id="s2p-scale">
-            <option value="1">Original (1x)</option>
-            <option value="2">2x</option>
-            <option value="4">4x</option>
-            <option value="custom">Custom px</option>
-          </select>
-        </div>
-
-        <div id="s2p-custom-wrap" class="s2p-opt-group" hidden>
-          <label for="s2p-custom-w" data-i18n="widthPx">Width (px)</label>
-          <input type="number" id="s2p-custom-w" min="1" max="8192" placeholder="auto" class="s2p-num-input" />
-        </div>
-        <div id="s2p-custom-h-wrap" class="s2p-opt-group" hidden>
-          <label for="s2p-custom-h" data-i18n="heightPx">Height (px)</label>
-          <input type="number" id="s2p-custom-h" min="1" max="8192" placeholder="auto" class="s2p-num-input" />
-        </div>
-
-        {/* Background */}
-        <div class="s2p-opt-group">
-          <label for="s2p-bg" data-i18n="background">Background</label>
-          <select id="s2p-bg">
-            <option value="transparent">Transparent</option>
-            <option value="white">White</option>
-            <option value="custom">Custom color</option>
-          </select>
-        </div>
-
-        <div id="s2p-bg-color-wrap" class="s2p-opt-group" hidden>
-          <label for="s2p-bg-color" data-i18n="color">Color</label>
-          <input type="color" id="s2p-bg-color" value="#ffffff" class="s2p-color-input" />
-        </div>
-      </div>
-
-      <button id="s2p-convert" class="btn-primary" data-i18n="convertToPng">Convert to PNG</button>
-    </div>
-
-    {/* Preview */}
     <div id="s2p-result" class="s2p-result" hidden>
-      <div class="s2p-preview-header">
-        <span class="s2p-preview-label" data-i18n="preview">Preview</span>
+      <div class="s2p-bar">
         <span id="s2p-dims" class="s2p-dims"></span>
-        <button id="s2p-download" class="btn-primary s2p-dl-btn" data-i18n="downloadPng">Download PNG</button>
+        <button id="s2p-other" class="btn-ghost s2p-other" type="button">{T.other}</button>
+        <button id="s2p-download" class="btn-primary" type="button"></button>
       </div>
       <div class="s2p-preview-box">
-        <img id="s2p-preview" class="s2p-preview-img" src="" alt="PNG preview" />
+        <img id="s2p-preview" class="s2p-preview-img" alt={T.previewAlt} />
       </div>
     </div>
 
-    <div id="s2p-status" class="s2p-status" aria-live="polite"></div>
+    <div id="s2p-status" class="tool-status s2p-status" aria-live="polite"></div>
+    <ul id="s2p-notes" class="s2p-notes" hidden></ul>
+
+    <div id="s2p-batch" class="s2p-batch" hidden>
+      <table class="s2p-table">
+        <thead><tr><th scope="col">{T.listFile}</th><th scope="col">{T.listSize}</th><th scope="col"><span class="s2p-sr">{T.download}</span></th></tr></thead>
+        <tbody id="s2p-rows"></tbody>
+      </table>
+      <button id="s2p-zip" class="btn-secondary" type="button">{T.downloadAll}</button>
+    </div>
+
+    <div class="s2p-options">
+      <div class="s2p-opt">
+        <label for="s2p-mode" class="tool-label">{T.sizeLabel}</label>
+        <select id="s2p-mode" class="tool-input">
+          <option value="scale">{T.modeScale}</option>
+          <option value="width">{T.modeWidth}</option>
+          <option value="height">{T.modeHeight}</option>
+          <option value="exact">{T.modeExact}</option>
+        </select>
+      </div>
+      <div class="s2p-opt" id="s2p-scale-wrap">
+        <label for="s2p-scale" class="tool-label">{T.scaleLabel}</label>
+        <div class="s2p-scale-row">
+          <input id="s2p-scale" class="tool-input s2p-num" type="number" min="0.1" max="64" step="any" value="1" inputmode="decimal" />
+          <div class="s2p-chips" role="group" aria-label={T.scaleLabel}>
+            <button type="button" class="s2p-chip" data-scale="1" aria-pressed="true">1x</button>
+            <button type="button" class="s2p-chip" data-scale="2" aria-pressed="false">2x</button>
+            <button type="button" class="s2p-chip" data-scale="3" aria-pressed="false">3x</button>
+            <button type="button" class="s2p-chip" data-scale="4" aria-pressed="false">4x</button>
+          </div>
+        </div>
+      </div>
+      <div class="s2p-opt" id="s2p-w-wrap" hidden>
+        <label for="s2p-width" class="tool-label">{T.widthLabel}</label>
+        <input id="s2p-width" class="tool-input s2p-num" type="number" min="1" max="65535" step="1" inputmode="numeric" />
+      </div>
+      <div class="s2p-opt" id="s2p-h-wrap" hidden>
+        <label for="s2p-height" class="tool-label">{T.heightLabel}</label>
+        <input id="s2p-height" class="tool-input s2p-num" type="number" min="1" max="65535" step="1" inputmode="numeric" />
+      </div>
+      <div class="s2p-opt">
+        <label for="s2p-format" class="tool-label">{T.formatLabel}</label>
+        <select id="s2p-format" class="tool-input">
+          <option value="image/png">PNG</option>
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/webp">WebP</option>
+        </select>
+      </div>
+      <div class="s2p-opt" id="s2p-quality-wrap" hidden>
+        <label for="s2p-quality" class="tool-label">{T.qualityLabel}</label>
+        <input id="s2p-quality" class="tool-input s2p-num" type="number" min="1" max="100" step="1" value="92" inputmode="numeric" />
+      </div>
+      <div class="s2p-opt">
+        <label for="s2p-bg" class="tool-label">{T.bgLabel}</label>
+        <select id="s2p-bg" class="tool-input">
+          <option value="transparent">{T.bgTransparent}</option>
+          <option value="white">{T.bgWhite}</option>
+          <option value="custom">{T.bgCustom}</option>
+        </select>
+      </div>
+      <div class="s2p-opt" id="s2p-color-wrap" hidden>
+        <label for="s2p-color" class="tool-label">{T.colorLabel}</label>
+        <input id="s2p-color" class="s2p-color" type="color" value="#ffffff" />
+      </div>
+    </div>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: T }}>
     (function () {
-      var STRINGS = {
-        en: { uploadFile: 'Upload File', pasteSvg: 'Paste SVG Code', svgCode: 'SVG Code', loadSvg: 'Load SVG', outputSize: 'Output Size', widthPx: 'Width (px)', heightPx: 'Height (px)', background: 'Background', color: 'Color', convertToPng: 'Convert to PNG', preview: 'Preview', downloadPng: 'Download PNG', svgLoaded: 'SVG loaded. Configure options and click Convert.', pngGenerated: 'PNG generated successfully.' },
-        zh: { uploadFile: '上传文件', pasteSvg: '粘贴 SVG 代码', svgCode: 'SVG 代码', loadSvg: '加载 SVG', outputSize: '输出尺寸', widthPx: '宽度 (px)', heightPx: '高度 (px)', background: '背景', color: '颜色', convertToPng: '转换为 PNG', preview: '预览', downloadPng: '下载 PNG', svgLoaded: 'SVG 已加载，配置选项后点击转换。', pngGenerated: 'PNG 生成成功。' },
-        ja: { uploadFile: 'ファイルをアップロード', pasteSvg: 'SVG コードを貼り付け', svgCode: 'SVG コード', loadSvg: 'SVG を読み込む', outputSize: '出力サイズ', widthPx: '幅 (px)', heightPx: '高さ (px)', background: '背景', color: '色', convertToPng: 'PNG に変換', preview: 'プレビュー', downloadPng: 'PNG をダウンロード', svgLoaded: 'SVG を読み込みました。オプションを設定して変換をクリックしてください。', pngGenerated: 'PNG を生成しました。' },
-        ko: { uploadFile: '파일 업로드', pasteSvg: 'SVG 코드 붙여넣기', svgCode: 'SVG 코드', loadSvg: 'SVG 불러오기', outputSize: '출력 크기', widthPx: '너비 (px)', heightPx: '높이 (px)', background: '배경', color: '색상', convertToPng: 'PNG로 변환', preview: '미리보기', downloadPng: 'PNG 다운로드', svgLoaded: 'SVG를 불러왔습니다. 옵션 설정 후 변환을 클릭하세요.', pngGenerated: 'PNG가 생성되었습니다.' },
-      };
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
+      /* ── engine:start ── */
+      var SVG_NS = 'http://www.w3.org/2000/svg';
+      var XLINK_NS = 'http://www.w3.org/1999/xlink';
+      // Largest canvas side any browser accepts (Chrome 152: 65,535; measured 2026-09-30).
+      var MAX_SIDE = 65535;
+      // CSS absolute units in px (CSS Values and Units Level 4, section 6.2).
+      var ABS_UNITS = { '': 1, px: 1, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, pt: 4 / 3, pc: 16 };
 
-      /* ── element refs ── */
-      var tabFile    = document.getElementById('s2p-tab-file');
-      var tabCode    = document.getElementById('s2p-tab-code');
-      var panelFile  = document.getElementById('s2p-panel-file');
-      var panelCode  = document.getElementById('s2p-panel-code');
-      var dropEl     = document.getElementById('s2p-drop');
-      var fileInput  = document.getElementById('s2p-file');
-      var codeInput  = document.getElementById('s2p-code-input');
-      var loadCodeBtn= document.getElementById('s2p-load-code');
-      var optionsEl  = document.getElementById('s2p-options');
-      var scaleEl    = document.getElementById('s2p-scale');
-      var customWrap = document.getElementById('s2p-custom-wrap');
-      var customHWrap= document.getElementById('s2p-custom-h-wrap');
-      var customW    = document.getElementById('s2p-custom-w');
-      var customH    = document.getElementById('s2p-custom-h');
-      var bgEl       = document.getElementById('s2p-bg');
-      var bgColorWrap= document.getElementById('s2p-bg-color-wrap');
-      var bgColorEl  = document.getElementById('s2p-bg-color');
-      var convertBtn = document.getElementById('s2p-convert');
-      var resultEl   = document.getElementById('s2p-result');
-      var dimsEl     = document.getElementById('s2p-dims');
-      var previewImg = document.getElementById('s2p-preview');
-      var downloadBtn= document.getElementById('s2p-download');
-      var statusEl   = document.getElementById('s2p-status');
+      function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
 
-      var svgText = '';        // current SVG source
-      var pngBlobUrl = '';     // current output blob URL
-
-      /* ── status helper ── */
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 's2p-status ' + (isError ? 'error' : 'success');
-      }
-      function clearStatus() {
-        statusEl.textContent = '';
-        statusEl.className = 's2p-status';
+      // { px } for absolute and font-relative lengths; { px: null, unit } when the length
+      // needs a layout to resolve (%, ex, ch, vw…) or is not a positive number; null when absent.
+      function parseLength(value, fontSize) {
+        if (value == null) return null;
+        var s = String(value).trim();
+        if (s === '' || s.toLowerCase() === 'auto') return null;
+        var m = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$/i.exec(s);
+        if (!m) return { px: null, unit: s };
+        var n = parseFloat(m[1]);
+        var unit = m[2].toLowerCase();
+        var px;
+        if (hasOwn(ABS_UNITS, unit)) px = n * ABS_UNITS[unit];
+        else if (unit === 'em') px = n * fontSize;
+        else if (unit === 'rem') px = n * 16;
+        else return { px: null, unit: unit };
+        if (!(px > 0) || !isFinite(px)) return { px: null, unit: 'invalid' };
+        return { px: px };
       }
 
-      /* ── tab switching ── */
-      function activateTab(tab) {
-        var isFile = (tab === 'file');
-        tabFile.classList.toggle('s2p-tab--active', isFile);
-        tabCode.classList.toggle('s2p-tab--active', !isFile);
-        tabFile.setAttribute('aria-selected', isFile ? 'true' : 'false');
-        tabCode.setAttribute('aria-selected', isFile ? 'false' : 'true');
-        panelFile.hidden = !isFile;
-        panelCode.hidden = isFile;
-        clearStatus();
+      function parseStyle(style) {
+        var out = {};
+        String(style || '').split(';').forEach(function (decl) {
+          var i = decl.indexOf(':');
+          if (i < 0) return;
+          var key = decl.slice(0, i).trim().toLowerCase();
+          var value = decl.slice(i + 1).replace(/!important\s*$/i, '').trim();
+          if (key) out[key] = value;
+        });
+        return out;
       }
-      tabFile.addEventListener('click', function () { activateTab('file'); });
-      tabCode.addEventListener('click', function () { activateTab('code'); });
 
-      /* ── options visibility ── */
-      scaleEl.addEventListener('change', function () {
-        var isCustom = scaleEl.value === 'custom';
-        customWrap.hidden = !isCustom;
-        customHWrap.hidden = !isCustom;
-      });
+      function parseViewBox(value) {
+        if (value == null) return null;
+        var parts = String(value).trim().split(/[\s,]+/);
+        if (parts.length !== 4) return null;
+        var n = parts.map(Number);
+        if (n.some(function (x) { return !isFinite(x); })) return null;
+        if (!(n[2] > 0) || !(n[3] > 0)) return null;
+        return { x: n[0], y: n[1], width: n[2], height: n[3] };
+      }
 
-      bgEl.addEventListener('change', function () {
-        bgColorWrap.hidden = bgEl.value !== 'custom';
-      });
-
-      /* ── load SVG text → show options ── */
-      function loadSvg(text) {
-        if (!text || text.trim() === '') {
-          setStatus('SVG content is empty.', true);
-          return;
+      // The size the SVG has on its own, in CSS px. Follows what Chrome reports as the
+      // natural size of an <img>, except that a viewBox alone gives the viewBox size
+      // (Chrome gives 300 × 150).
+      function intrinsicSize(attrs) {
+        var style = parseStyle(attrs.style);
+        var fsLen = parseLength(hasOwn(style, 'font-size') ? style['font-size'] : attrs['font-size'], 16);
+        var fontSize = fsLen && fsLen.px ? fsLen.px : 16;
+        var notes = [];
+        function dim(name) {
+          var raw = hasOwn(style, name) ? style[name] : attrs[name];
+          var len = parseLength(raw, fontSize);
+          if (len && len.px == null) notes.push({ code: 'relativeSize', attr: name, value: String(raw).trim() });
+          return len && len.px != null ? len.px : null;
         }
-        if (!/<svg[\s>]/i.test(text)) {
-          setStatus('Does not look like valid SVG markup.', true);
-          return;
-        }
-        svgText = text;
-        optionsEl.hidden = false;
-        resultEl.hidden = true;
-        clearStatus();
-        setStatus(t.svgLoaded, false);
-      }
-
-      /* ── file input / drag-drop ── */
-      dropEl.addEventListener('click', function (e) {
-        if (e.target !== fileInput) fileInput.click();
-      });
-      dropEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
-      });
-      fileInput.addEventListener('change', function () {
-        if (this.files && this.files[0]) readFile(this.files[0]);
-      });
-      dropEl.addEventListener('dragover', function (e) {
-        e.preventDefault();
-        dropEl.classList.add('drag-over');
-      });
-      dropEl.addEventListener('dragleave', function () {
-        dropEl.classList.remove('drag-over');
-      });
-      dropEl.addEventListener('drop', function (e) {
-        e.preventDefault();
-        dropEl.classList.remove('drag-over');
-        var file = e.dataTransfer.files[0];
-        if (file) readFile(file);
-      });
-
-      function readFile(file) {
-        if (!file.name.toLowerCase().endsWith('.svg') && file.type !== 'image/svg+xml') {
-          setStatus('Please select a valid .svg file.', true);
-          return;
-        }
-        var reader = new FileReader();
-        reader.onload = function (e) { loadSvg(e.target.result); };
-        reader.onerror = function () { setStatus('Failed to read file.', true); };
-        reader.readAsText(file);
-      }
-
-      /* ── paste code ── */
-      loadCodeBtn.addEventListener('click', function () {
-        loadSvg(codeInput.value);
-      });
-
-      /* ── convert ── */
-      convertBtn.addEventListener('click', function () {
-        if (!svgText) { setStatus('No SVG loaded.', true); return; }
-        clearStatus();
-        convertToPng();
-      });
-
-      function getSvgDimensions(svgStr) {
-        var parser = new DOMParser();
-        var doc = parser.parseFromString(svgStr, 'image/svg+xml');
-        var svgEl = doc.querySelector('svg');
-        if (!svgEl) return { w: 300, h: 150 };
-
-        var vb = svgEl.getAttribute('viewBox');
-        var wAttr = svgEl.getAttribute('width');
-        var hAttr = svgEl.getAttribute('height');
-
-        function parseLen(val) {
-          if (!val) return null;
-          var n = parseFloat(val);
-          return isNaN(n) ? null : n;
-        }
-
-        var w = parseLen(wAttr);
-        var h = parseLen(hAttr);
-
-        if (w && h) return { w: w, h: h };
-
-        if (vb) {
-          var parts = vb.trim().split(/[\s,]+/);
-          if (parts.length === 4) {
-            var vw = parseFloat(parts[2]);
-            var vh = parseFloat(parts[3]);
-            if (!isNaN(vw) && !isNaN(vh)) return { w: vw, h: vh };
+        var w = dim('width');
+        var h = dim('height');
+        var vb = parseViewBox(attrs.viewBox);
+        var source = 'size';
+        if (w == null || h == null) {
+          if (vb) {
+            if (w != null) h = w * vb.height / vb.width;
+            else if (h != null) w = h * vb.width / vb.height;
+            else { w = vb.width; h = vb.height; source = 'viewBox'; }
+          } else {
+            if (w == null && h == null) source = 'default';
+            if (w == null) w = 300;
+            if (h == null) h = 150;
           }
         }
-
-        return { w: w || 300, h: h || 150 };
+        return { width: w, height: h, viewBox: vb, source: source, notes: notes };
       }
 
-      function convertToPng() {
-        var dims = getSvgDimensions(svgText);
-        var scale = scaleEl.value;
-        var outW, outH;
-
-        if (scale === 'custom') {
-          outW = parseInt(customW.value) || dims.w;
-          outH = parseInt(customH.value) || dims.h;
-        } else {
-          var factor = parseFloat(scale) || 1;
-          outW = Math.round(dims.w * factor);
-          outH = Math.round(dims.h * factor);
-        }
-
-        // Ensure at least 1px
-        outW = Math.max(1, outW);
-        outH = Math.max(1, outH);
-
-        var canvas = document.createElement('canvas');
-        canvas.width = outW;
-        canvas.height = outH;
-        var ctx = canvas.getContext('2d');
-
-        // Background
-        var bgVal = bgEl.value;
-        if (bgVal === 'transparent') {
-          ctx.clearRect(0, 0, outW, outH);
-        } else {
-          ctx.fillStyle = bgVal === 'custom' ? bgColorEl.value : '#ffffff';
-          ctx.fillRect(0, 0, outW, outH);
-        }
-
-        // Build a data URI from SVG text
-        var svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-        var url = URL.createObjectURL(svgBlob);
-        var img = new Image();
-
-        img.onload = function () {
-          ctx.drawImage(img, 0, 0, outW, outH);
-          URL.revokeObjectURL(url);
-
-          canvas.toBlob(function (blob) {
-            if (!blob) { setStatus('Failed to generate PNG.', true); return; }
-            if (pngBlobUrl) URL.revokeObjectURL(pngBlobUrl);
-            pngBlobUrl = URL.createObjectURL(blob);
-
-            previewImg.src = pngBlobUrl;
-            dimsEl.textContent = outW + ' × ' + outH + ' px';
-            resultEl.hidden = false;
-
-            setStatus(t.pngGenerated, false);
-            window.trackTool && window.trackTool('svg-to-png-converter', 'convert');
-          }, 'image/png');
-        };
-
-        img.onerror = function () {
-          URL.revokeObjectURL(url);
-          setStatus('Failed to render SVG. Make sure it is valid.', true);
-        };
-
-        img.src = url;
+      function wholeNumber(v) {
+        var s = String(v == null ? '' : v).trim();
+        if (!/^\d+$/.test(s)) return null;
+        var n = parseInt(s, 10);
+        return n >= 1 && n <= MAX_SIDE ? n : null;
       }
 
-      /* ── download ── */
-      downloadBtn.addEventListener('click', function () {
-        if (!pngBlobUrl) return;
-        var a = document.createElement('a');
-        a.href = pngBlobUrl;
-        a.download = 'image.png';
-        a.click();
+      // opts.mode: 'scale' (opts.scale), 'width', 'height' (keep the aspect ratio) or
+      // 'exact' (opts.width × opts.height; the SVG's preserveAspectRatio places the drawing).
+      function planOutput(size, opts) {
+        var w = size.width, h = size.height, ow, oh;
+        if (opts.mode === 'width' || opts.mode === 'height' || opts.mode === 'exact') {
+          var vw = opts.mode === 'height' ? 1 : wholeNumber(opts.width);
+          var vh = opts.mode === 'width' ? 1 : wholeNumber(opts.height);
+          if (vw == null || vh == null) return { error: 'badNumber' };
+          if (opts.mode === 'width') { ow = vw; oh = vw * h / w; }
+          else if (opts.mode === 'height') { oh = vh; ow = vh * w / h; }
+          else { ow = vw; oh = vh; }
+        } else {
+          var f = Number(opts.scale);
+          if (!(f > 0) || !isFinite(f)) return { error: 'badScale' };
+          ow = w * f; oh = h * f;
+        }
+        ow = Math.max(1, Math.round(ow));
+        oh = Math.max(1, Math.round(oh));
+        if (ow > MAX_SIDE || oh > MAX_SIDE) return { error: 'tooLarge', width: ow, height: oh };
+        return { width: ow, height: oh, letterbox: opts.mode === 'exact' && Math.abs((ow / oh) / (w / h) - 1) > 0.01 };
+      }
+
+      function decodeXml(s) {
+        return String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, function (m, e) {
+          var k = e.toLowerCase();
+          if (k === 'amp') return '&';
+          if (k === 'lt') return '<';
+          if (k === 'gt') return '>';
+          if (k === 'quot') return '"';
+          if (k === 'apos') return "'";
+          var cp = k.charAt(1) === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+          return cp > 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : m;
+        });
+      }
+
+      function skipDeclaration(src, i) {
+        var depth = 0, quote = null;
+        for (var j = i + 2; j < src.length; j++) {
+          var c = src.charAt(j);
+          if (quote) { if (c === quote) quote = null; continue; }
+          if (c === '"' || c === "'") quote = c;
+          else if (c === '[') depth++;
+          else if (c === ']') depth--;
+          else if (c === '>' && depth <= 0) return j + 1;
+        }
+        return src.length;
+      }
+
+      var TAG_NAME = /[A-Za-z_][\w.\-]*(?::[\w.\-]+)?/y;
+      var ATTR_NAME = /[^\s=\/>]+/y;
+      var SPACE = /\s/;
+
+      function readStartTag(src, i) {
+        TAG_NAME.lastIndex = i + 1;
+        var m = TAG_NAME.exec(src);
+        if (!m) return null;
+        var n = src.length;
+        var tag = { name: m[0], start: i, attrs: [], selfClosing: false, closeStart: n, end: n };
+        var j = i + 1 + m[0].length;
+        while (j < n) {
+          while (j < n && SPACE.test(src.charAt(j))) j++;
+          var c = src.charAt(j);
+          if (c === '>') { tag.closeStart = j; tag.end = j + 1; return tag; }
+          if (c === '/' && src.charAt(j + 1) === '>') { tag.closeStart = j; tag.end = j + 2; tag.selfClosing = true; return tag; }
+          ATTR_NAME.lastIndex = j;
+          var am = ATTR_NAME.exec(src);
+          if (!am) { j++; continue; }
+          var start = j;
+          j += am[0].length;
+          var k = j;
+          while (k < n && SPACE.test(src.charAt(k))) k++;
+          if (src.charAt(k) !== '=') { tag.attrs.push({ name: am[0], value: '', rawValue: '', quote: '', start: start, end: j }); continue; }
+          k++;
+          while (k < n && SPACE.test(src.charAt(k))) k++;
+          var q = src.charAt(k), raw, end;
+          if (q === '"' || q === "'") {
+            var close = src.indexOf(q, k + 1);
+            if (close < 0) close = n;
+            raw = src.slice(k + 1, close);
+            end = Math.min(n, close + 1);
+          } else {
+            q = '';
+            var e = k;
+            while (e < n && !SPACE.test(src.charAt(e)) && src.charAt(e) !== '>') e++;
+            raw = src.slice(k, e);
+            end = e;
+          }
+          tag.attrs.push({ name: am[0], value: decodeXml(raw), rawValue: raw, quote: q, start: start, end: end });
+          j = end;
+        }
+        return tag;
+      }
+
+      // Start tags in document order, with attribute positions. Comments, CDATA sections,
+      // processing instructions, the DOCTYPE (with its internal subset) and end tags are skipped.
+      function scanMarkup(src) {
+        var tags = [];
+        var i = 0, n = src.length, e;
+        while (i < n) {
+          var lt = src.indexOf('<', i);
+          if (lt < 0) break;
+          if (src.startsWith('<!--', lt)) { e = src.indexOf('-->', lt + 4); i = e < 0 ? n : e + 3; continue; }
+          if (src.startsWith('<![CDATA[', lt)) { e = src.indexOf(']]>', lt + 9); i = e < 0 ? n : e + 3; continue; }
+          if (src.startsWith('<?', lt)) { e = src.indexOf('?>', lt + 2); i = e < 0 ? n : e + 2; continue; }
+          if (src.startsWith('<!', lt)) { i = skipDeclaration(src, lt); continue; }
+          if (src.charAt(lt + 1) === '/') { e = src.indexOf('>', lt); i = e < 0 ? n : e + 1; continue; }
+          var tag = readStartTag(src, lt);
+          if (!tag) { i = lt + 1; continue; }
+          tags.push(tag);
+          i = tag.end;
+        }
+        return tags;
+      }
+
+      function attrOf(tag, names) {
+        for (var i = 0; i < tag.attrs.length; i++) if (names.indexOf(tag.attrs[i].name) >= 0) return tag.attrs[i];
+        return null;
+      }
+
+      function isLocalRef(url) {
+        var u = String(url).trim().toLowerCase();
+        return u === '' || u.charAt(0) === '#' || u.indexOf('data:') === 0;
+      }
+
+      function cssRefs(css, refs) {
+        var importRe = /@import\s+(?:url\(\s*)?(['"]?)([^'")\s;]+)\1/gi, m;
+        while ((m = importRe.exec(css))) if (!isLocalRef(m[2])) refs.imports.push(decodeXml(m[2]));
+        var rest = css.replace(/@import[^;]*;?/gi, '');
+        var urlRe = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
+        while ((m = urlRe.exec(rest))) if (!isLocalRef(m[2])) refs.css.push(decodeXml(m[2]));
+      }
+
+      function analyzeSvg(text) {
+        var src = String(text == null ? '' : text);
+        if (src.charCodeAt(0) === 0xFEFF) src = src.slice(1);
+        if (!src.trim()) return { error: { code: 'empty' } };
+        var tags = scanMarkup(src);
+        if (!tags.length) return { error: { code: 'notSvg' } };
+        var root = tags[0];
+        if (root.name !== 'svg') return { error: { code: 'rootNotSvg', name: root.name } };
+        var attrs = {};
+        root.attrs.forEach(function (a) { attrs[a.name] = a.value; });
+        var fixes = [];
+        if (!hasOwn(attrs, 'xmlns')) fixes.push('xmlns');
+        if (/\bxlink:/.test(src) && src.indexOf('xmlns:xlink') < 0) fixes.push('xlink');
+        var refs = { images: [], uses: [], css: [], imports: [], foreignObject: false, script: false };
+        var strip = [];
+        var styleText = [];
+        tags.forEach(function (tag) {
+          var local = tag.name.split(':').pop();
+          if (local === 'image' || local === 'feImage') {
+            var href = attrOf(tag, ['href', 'xlink:href']);
+            if (href && !isLocalRef(href.value)) { refs.images.push(href.value); strip.push(href); }
+          } else if (local === 'use') {
+            var ref = attrOf(tag, ['href', 'xlink:href']);
+            if (ref && !isLocalRef(ref.value)) refs.uses.push(ref.value);
+          } else if (local === 'foreignObject') {
+            refs.foreignObject = true;
+          } else if (local === 'script') {
+            refs.script = true;
+          } else if (local === 'style' && !tag.selfClosing) {
+            var close = src.indexOf('</', tag.end);
+            styleText.push(src.slice(tag.end, close < 0 ? src.length : close).replace(/<!\[CDATA\[|\]\]>/g, ''));
+          }
+          tag.attrs.forEach(function (a) {
+            if (a.name === 'style') styleText.push(a.value);
+            if (/^on/i.test(a.name)) refs.script = true;
+          });
+        });
+        cssRefs(styleText.join('\n'), refs);
+        return { source: src, tags: tags, root: root, attrs: attrs, size: intrinsicSize(attrs), fixes: fixes, refs: refs, strip: strip };
+      }
+
+      function num(n) { return String(Math.round(n * 10000) / 10000); }
+
+      // The SVG to draw: width and height set to the output size, a viewBox added when
+      // missing (so the drawing scales), missing namespaces added, external image links
+      // removed (Chrome draws a broken-image icon for them). Everything else, including
+      // line breaks, is kept, so XML error line numbers match the input.
+      function buildSvg(text, analysis, plan) {
+        var src = analysis.source;
+        var root = analysis.root;
+        var edits = [];
+        function removeAttr(a) {
+          var s = a.start;
+          while (s > 0 && SPACE.test(src.charAt(s - 1))) s--;
+          edits.push({ start: s, end: a.end, text: '' });
+        }
+        var add = [];
+        var hasViewBox = !!analysis.size.viewBox;
+        root.attrs.forEach(function (a) {
+          if (a.name === 'width' || a.name === 'height' || (a.name === 'viewBox' && !hasViewBox)) removeAttr(a);
+          else if (a.name === 'style') {
+            var kept = a.rawValue.split(';').map(function (d) { return d.trim(); }).filter(function (d) {
+              if (!d) return false;
+              var key = d.split(':')[0].trim().toLowerCase();
+              return key !== 'width' && key !== 'height';
+            }).join(';');
+            if (kept === a.rawValue) return;
+            if (kept) edits.push({ start: a.start, end: a.end, text: 'style=' + (a.quote || '"') + kept + (a.quote || '"') });
+            else removeAttr(a);
+          }
+        });
+        if (analysis.fixes.indexOf('xmlns') >= 0) add.push('xmlns="' + SVG_NS + '"');
+        if (analysis.fixes.indexOf('xlink') >= 0) add.push('xmlns:xlink="' + XLINK_NS + '"');
+        if (!hasViewBox) add.push('viewBox="0 0 ' + num(analysis.size.width) + ' ' + num(analysis.size.height) + '"');
+        add.push('width="' + plan.width + '"', 'height="' + plan.height + '"');
+        edits.push({ start: root.closeStart, end: root.closeStart, text: ' ' + add.join(' ') });
+        analysis.strip.forEach(removeAttr);
+        edits.sort(function (a, b) { return b.start - a.start || b.end - a.end; });
+        var out = src;
+        edits.forEach(function (e) { out = out.slice(0, e.start) + e.text + out.slice(e.end); });
+        return out;
+      }
+
+      function backgroundFor(format, color) {
+        if (color) return { color: color };
+        if (format === 'image/jpeg') return { color: '#ffffff', note: 'jpegWhite' };
+        return { color: null };
+      }
+
+      function extForMime(mime) {
+        return mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png';
+      }
+
+      function outputName(name, opts, plan, ext) {
+        var base = String(name || '').replace(/\.svgz?$/i, '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'image';
+        var suffix = '';
+        if (opts.mode === 'scale') { if (Number(opts.scale) !== 1) suffix = '@' + Number(opts.scale) + 'x'; }
+        else suffix = '-' + plan.width + 'x' + plan.height;
+        return base + suffix + '.' + ext;
+      }
+
+      function uniqueNames(names) {
+        var seen = {};
+        return names.map(function (n) {
+          var key = n.toLowerCase();
+          if (!hasOwn(seen, key)) { seen[key] = 1; return n; }
+          seen[key]++;
+          var dot = n.lastIndexOf('.');
+          return dot > 0 ? n.slice(0, dot) + '-' + seen[key] + n.slice(dot) : n + '-' + seen[key];
+        });
+      }
+
+      function parseXmlError(text) {
+        var s = String(text || '');
+        var m = /line (\d+) at column (\d+):\s*([^\n]*)/.exec(s);
+        if (m) {
+          var detail = m[3].trim();
+          var ent = /Entity '([^']+)' not defined/.exec(detail);
+          return { line: +m[1], column: +m[2], detail: detail, entity: ent ? ent[1] : null };
+        }
+        m = /Line Number (\d+), Column (\d+)/.exec(s);
+        if (m) return { line: +m[1], column: +m[2], detail: s.split('\n')[0].trim(), entity: null };
+        return { line: null, column: null, detail: s.trim().slice(0, 200), entity: null };
+      }
+
+      function isBlank(data) {
+        for (var i = 3; i < data.length; i += 4) if (data[i] !== 0) return false;
+        return true;
+      }
+
+      /* CRC32 + ZIP writer (STORED method, UTF-8 names) */
+      var crcTable = (function () {
+        var table = new Uint32Array(256);
+        for (var n = 0; n < 256; n++) {
+          var c = n;
+          for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+          table[n] = c >>> 0;
+        }
+        return table;
+      })();
+      function crc32(buf) {
+        var c = 0xFFFFFFFF;
+        for (var i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+        return (c ^ 0xFFFFFFFF) >>> 0;
+      }
+
+      function zipStore(files) {
+        var enc = new TextEncoder();
+        var locals = [];
+        var centrals = [];
+        var offset = 0;
+        files.forEach(function (f) {
+          var nameBytes = enc.encode(f.name);
+          var data = f.data;
+          var crc = crc32(data);
+          var size = data.length;
+          var lh = new Uint8Array(30 + nameBytes.length);
+          var dv = new DataView(lh.buffer);
+          dv.setUint32(0, 0x04034b50, true);
+          dv.setUint16(4, 20, true);
+          dv.setUint16(6, 0x0800, true); // bit 11 = UTF-8
+          dv.setUint16(8, 0, true);      // method STORED
+          dv.setUint16(10, 0, true);
+          dv.setUint16(12, 0x21, true);  // mdate (1980-01-01 minimum nonzero)
+          dv.setUint32(14, crc, true);
+          dv.setUint32(18, size, true);
+          dv.setUint32(22, size, true);
+          dv.setUint16(26, nameBytes.length, true);
+          dv.setUint16(28, 0, true);
+          lh.set(nameBytes, 30);
+          locals.push(lh, data);
+
+          var ch = new Uint8Array(46 + nameBytes.length);
+          var cv = new DataView(ch.buffer);
+          cv.setUint32(0, 0x02014b50, true);
+          cv.setUint16(4, 20, true);
+          cv.setUint16(6, 20, true);
+          cv.setUint16(8, 0x0800, true);
+          cv.setUint16(10, 0, true);
+          cv.setUint16(12, 0, true);
+          cv.setUint16(14, 0x21, true);
+          cv.setUint32(16, crc, true);
+          cv.setUint32(20, size, true);
+          cv.setUint32(24, size, true);
+          cv.setUint16(28, nameBytes.length, true);
+          cv.setUint16(30, 0, true);
+          cv.setUint16(32, 0, true);
+          cv.setUint16(34, 0, true);
+          cv.setUint16(36, 0, true);
+          cv.setUint32(38, 0, true);
+          cv.setUint32(42, offset, true);
+          ch.set(nameBytes, 46);
+          centrals.push(ch);
+
+          offset += lh.length + size;
+        });
+
+        var localTotal = locals.reduce(function (s, c) { return s + c.length; }, 0);
+        var centralTotal = centrals.reduce(function (s, c) { return s + c.length; }, 0);
+        var eocd = new Uint8Array(22);
+        var dv2 = new DataView(eocd.buffer);
+        dv2.setUint32(0, 0x06054b50, true);
+        dv2.setUint16(4, 0, true);
+        dv2.setUint16(6, 0, true);
+        dv2.setUint16(8, files.length, true);
+        dv2.setUint16(10, files.length, true);
+        dv2.setUint32(12, centralTotal, true);
+        dv2.setUint32(16, localTotal, true);
+        dv2.setUint16(20, 0, true);
+
+        var out = new Uint8Array(localTotal + centralTotal + 22);
+        var p = 0;
+        locals.forEach(function (c) { out.set(c, p); p += c.length; });
+        centrals.forEach(function (c) { out.set(c, p); p += c.length; });
+        out.set(eocd, p);
+        return out;
+      }
+      /* ── engine:end ── */
+
+      var $ = function (id) { return document.getElementById(id); };
+      var wrap = $('s2p-wrap');
+      var inputSec = $('s2p-input');
+      var tabFile = $('s2p-tab-file');
+      var tabCode = $('s2p-tab-code');
+      var panelFile = $('s2p-panel-file');
+      var panelCode = $('s2p-panel-code');
+      var fileInput = $('s2p-file');
+      var codeInput = $('s2p-code');
+      var resultEl = $('s2p-result');
+      var dimsEl = $('s2p-dims');
+      var previewImg = $('s2p-preview');
+      var downloadBtn = $('s2p-download');
+      var otherBtn = $('s2p-other');
+      var statusEl = $('s2p-status');
+      var notesEl = $('s2p-notes');
+      var batchEl = $('s2p-batch');
+      var rowsEl = $('s2p-rows');
+      var zipBtn = $('s2p-zip');
+      var modeEl = $('s2p-mode');
+      var scaleEl = $('s2p-scale');
+      var widthEl = $('s2p-width');
+      var heightEl = $('s2p-height');
+      var formatEl = $('s2p-format');
+      var qualityEl = $('s2p-quality');
+      var bgEl = $('s2p-bg');
+      var colorEl = $('s2p-color');
+      var chips = Array.prototype.slice.call(wrap.querySelectorAll('.s2p-chip'));
+
+      var FORMAT_LABEL = { 'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/webp': 'WebP' };
+      var state = { items: [], active: 0, gen: 0, skipped: [] };
+
+      function fill(tpl, vars) {
+        return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; });
+      }
+      function shortNum(n) { return String(Math.round(n * 100) / 100); }
+      function formatBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+      }
+      function listUrls(urls) {
+        var shown = urls.slice(0, 3).map(function (u) { return u.length > 80 ? u.slice(0, 77) + '…' : u; });
+        return shown.join(', ') + (urls.length > 3 ? ' (+' + (urls.length - 3) + ')' : '');
+      }
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status s2p-status' + (kind ? ' ' + kind : '');
+      }
+
+      function errorText(e) {
+        if (!e) return '';
+        if (e.code === 'tooLarge' || e.code === 'canvas') return fill(t.err[e.code], { w: e.width.toLocaleString('en-US'), h: e.height.toLocaleString('en-US') });
+        if (e.code === 'xml' && e.entity) return fill(t.err.xmlEntity, { line: e.line, entity: e.entity });
+        if (e.code === 'xml') return fill(t.err.xml, { line: e.line == null ? '?' : e.line, detail: e.detail });
+        return fill(t.err[e.code] || t.err.render, e);
+      }
+
+      function noteText(n) {
+        var vars = {};
+        for (var k in n) if (hasOwn(n, k)) vars[k] = n[k];
+        if (n.urls) vars.urls = listUrls(n.urls);
+        return fill(t.note[n.code], vars);
+      }
+
+      /* ── options ── */
+      function readOptions() {
+        var bg = bgEl.value;
+        var q = parseInt(qualityEl.value, 10);
+        return {
+          mode: modeEl.value,
+          scale: scaleEl.value,
+          width: widthEl.value,
+          height: heightEl.value,
+          format: formatEl.value,
+          quality: q >= 1 && q <= 100 ? q / 100 : 0.92,
+          background: bg === 'white' ? '#ffffff' : bg === 'custom' ? colorEl.value : null
+        };
+      }
+
+      function syncOptionUi() {
+        var mode = modeEl.value;
+        $('s2p-scale-wrap').hidden = mode !== 'scale';
+        $('s2p-w-wrap').hidden = !(mode === 'width' || mode === 'exact');
+        $('s2p-h-wrap').hidden = !(mode === 'height' || mode === 'exact');
+        $('s2p-quality-wrap').hidden = formatEl.value === 'image/png';
+        $('s2p-color-wrap').hidden = bgEl.value !== 'custom';
+        chips.forEach(function (c) { c.setAttribute('aria-pressed', String(Number(c.dataset.scale) === Number(scaleEl.value))); });
+        downloadBtn.textContent = fill(t.download, { format: FORMAT_LABEL[formatEl.value] });
+      }
+
+      function prefillSize() {
+        var item = state.items[state.active];
+        var r = item && item.result && !item.result.error ? item.result : null;
+        if (!r) return;
+        if (!widthEl.value) widthEl.value = r.width;
+        if (!heightEl.value) heightEl.value = r.height;
+      }
+
+      var timer = null;
+      function schedule() {
+        syncOptionUi();
+        if (!state.items.length) return;
+        clearTimeout(timer);
+        timer = setTimeout(run, 250);
+      }
+      modeEl.addEventListener('change', function () { prefillSize(); schedule(); });
+      [scaleEl, widthEl, heightEl, qualityEl].forEach(function (el) { el.addEventListener('input', schedule); });
+      [formatEl, bgEl, colorEl].forEach(function (el) { el.addEventListener('change', schedule); });
+      colorEl.addEventListener('input', schedule);
+      chips.forEach(function (c) {
+        c.addEventListener('click', function () { scaleEl.value = c.dataset.scale; schedule(); });
       });
 
+      /* ── conversion ── */
+      function checkXml(svg) {
+        var doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+        var perr = doc.getElementsByTagName('parsererror')[0];
+        if (!perr) return null;
+        var info = parseXmlError(perr.textContent);
+        return { code: 'xml', line: info.line, detail: info.detail, entity: info.entity };
+      }
+
+      function loadImage(svg) {
+        return new Promise(function (resolve, reject) {
+          var url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+          var img = new Image();
+          img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+          img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('render')); };
+          img.src = url;
+        });
+      }
+
+      // A canvas above the browser's limit is created but draws nothing (MDN, <canvas>
+      // "Maximum canvas size"); test its last pixel before drawing.
+      function canvasUsable(ctx, w, h) {
+        try {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(w - 1, h - 1, 1, 1);
+          var ok = ctx.getImageData(w - 1, h - 1, 1, 1).data[3] === 255;
+          ctx.clearRect(w - 1, h - 1, 1, 1);
+          return ok;
+        } catch (e) { return false; }
+      }
+
+      function toBlob(canvas, type, quality) {
+        return new Promise(function (resolve, reject) {
+          try { canvas.toBlob(resolve, type, quality); } catch (e) { reject(e); }
+        });
+      }
+
+      function collectNotes(a, plan) {
+        var notes = [];
+        if (a.size.source === 'viewBox') notes.push({ code: 'viewBox', w: shortNum(a.size.width), h: shortNum(a.size.height) });
+        if (a.size.source === 'default') notes.push({ code: 'default' });
+        a.size.notes.forEach(function (n) { notes.push(n); });
+        if (a.fixes.indexOf('xmlns') >= 0) notes.push({ code: 'xmlns' });
+        if (a.fixes.indexOf('xlink') >= 0) notes.push({ code: 'xlink' });
+        if (a.refs.images.length) notes.push({ code: 'externalImage', urls: a.refs.images });
+        if (a.refs.uses.length) notes.push({ code: 'externalUse', urls: a.refs.uses });
+        var css = a.refs.imports.concat(a.refs.css);
+        if (css.length) notes.push({ code: 'externalCss', urls: css });
+        if (plan.letterbox) notes.push({ code: 'letterbox' });
+        return notes;
+      }
+
+      function blockedError(e, a) {
+        if (e && e.name === 'SecurityError') return a.refs.foreignObject ? { code: 'taintedForeign' } : { code: 'tainted', detail: e.name };
+        return { code: 'encode' };
+      }
+
+      function convertItem(item, opts) {
+        var a = item.analysis;
+        if (a.error) return Promise.resolve({ error: a.error });
+        var plan = planOutput(a.size, opts);
+        if (plan.error) return Promise.resolve({ error: { code: plan.error, width: plan.width, height: plan.height } });
+        var svg = buildSvg(item.text, a, plan);
+        var xmlError = checkXml(svg);
+        if (xmlError) return Promise.resolve({ error: xmlError });
+        var notes = collectNotes(a, plan);
+        var w = plan.width, h = plan.height;
+        return loadImage(svg).then(function (img) {
+          var canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          var ctx = canvas.getContext('2d');
+          if (!ctx || !canvasUsable(ctx, w, h)) return { error: { code: 'canvas', width: w, height: h } };
+          var bg = backgroundFor(opts.format, opts.background);
+          if (bg.note) notes.push({ code: bg.note });
+          if (bg.color) { ctx.fillStyle = bg.color; ctx.fillRect(0, 0, w, h); }
+          ctx.drawImage(img, 0, 0, w, h);
+          if (!bg.color && w * h <= 4194304 && isBlank(ctx.getImageData(0, 0, w, h).data)) notes.push({ code: 'blank' });
+          return toBlob(canvas, opts.format, opts.quality).then(function (blob) {
+            canvas.width = 0;
+            canvas.height = 0;
+            if (!blob) return { error: { code: 'encode' } };
+            if (blob.type !== opts.format) notes.push({ code: 'formatFallback', format: FORMAT_LABEL[opts.format], actual: FORMAT_LABEL[blob.type] || blob.type });
+            return {
+              blob: blob, url: URL.createObjectURL(blob), width: w, height: h, notes: notes,
+              sourceWidth: a.size.width, sourceHeight: a.size.height,
+              fileName: outputName(item.name, opts, plan, extForMime(blob.type))
+            };
+          });
+        }, function () {
+          return { error: { code: 'render' } };
+        }).catch(function (e) { return { error: blockedError(e, a) }; });
+      }
+
+      function run() {
+        var gen = ++state.gen;
+        var opts = readOptions();
+        var items = state.items;
+        setStatus(t.converting, 'info');
+        var i = 0;
+        (function next() {
+          if (gen !== state.gen) return;
+          if (i >= items.length) { finish(); return; }
+          var item = items[i++];
+          convertItem(item, opts).then(function (res) {
+            if (gen !== state.gen) { if (res.url) URL.revokeObjectURL(res.url); return; }
+            if (item.result && item.result.url) URL.revokeObjectURL(item.result.url);
+            item.result = res;
+            if (item === items[state.active]) renderActive();
+            next();
+          });
+        })();
+      }
+
+      function finish() {
+        var ok = state.items.filter(function (x) { return x.result && !x.result.error; });
+        var names = uniqueNames(ok.map(function (x) { return x.result.fileName; }));
+        ok.forEach(function (x, i) { x.result.fileName = names[i]; });
+        renderActive();
+        renderList();
+        var item = state.items[state.active];
+        if (state.items.length > 1) setStatus(fill(t.doneMany, { ok: ok.length, n: state.items.length }), ok.length ? 'success' : 'error');
+        else if (item.result.error) setStatus(errorText(item.result.error), 'error');
+        else setStatus(fill(t.doneOne, { name: item.name || 'SVG', file: item.result.fileName }), 'success');
+        inputSec.hidden = ok.length > 0;
+        if (ok.length) {
+          window.trackTool && window.trackTool('svg-to-png-converter', 'convert');
+        }
+        resultEl.hidden = !ok.length && state.items.length === 1;
+        var bar = resultEl.getBoundingClientRect();
+        if (!resultEl.hidden && (bar.top < 0 || bar.bottom > window.innerHeight)) resultEl.scrollIntoView({ block: 'nearest' });
+      }
+
+      function renderActive() {
+        var item = state.items[state.active];
+        var r = item && item.result;
+        var notes = [];
+        if (state.skipped.length) notes.push(fill(t.note.skipped, { names: state.skipped.join(', ') }));
+        if (r && !r.error) {
+          resultEl.hidden = false;
+          previewImg.src = r.url;
+          previewImg.hidden = false;
+          dimsEl.textContent = fill(t.result, { w: r.width, h: r.height, bytes: formatBytes(r.blob.size) });
+          downloadBtn.disabled = false;
+          r.notes.forEach(function (n) { notes.push(noteText(n)); });
+        } else {
+          previewImg.hidden = true;
+          previewImg.removeAttribute('src');
+          dimsEl.textContent = r && r.error ? errorText(r.error) : '';
+          downloadBtn.disabled = true;
+        }
+        notesEl.textContent = '';
+        notes.forEach(function (s) {
+          var li = document.createElement('li');
+          li.textContent = s;
+          notesEl.appendChild(li);
+        });
+        notesEl.hidden = !notes.length;
+      }
+
+      function renderList() {
+        var many = state.items.length > 1;
+        batchEl.hidden = !many;
+        rowsEl.textContent = '';
+        if (!many) return;
+        state.items.forEach(function (item, idx) {
+          var r = item.result;
+          var tr = document.createElement('tr');
+          if (idx === state.active) tr.className = 's2p-row-active';
+          var tdName = document.createElement('td');
+          var pick = document.createElement('button');
+          pick.type = 'button';
+          pick.className = 's2p-pick';
+          pick.textContent = item.name;
+          pick.setAttribute('aria-current', idx === state.active ? 'true' : 'false');
+          pick.addEventListener('click', function () { state.active = idx; renderActive(); renderList(); });
+          tdName.appendChild(pick);
+          var tdSize = document.createElement('td');
+          var tdDl = document.createElement('td');
+          if (r && !r.error) {
+            tdSize.textContent = fill(t.listSizes, { sw: shortNum(r.sourceWidth), sh: shortNum(r.sourceHeight), w: r.width, h: r.height });
+            var dl = document.createElement('button');
+            dl.type = 'button';
+            dl.className = 'btn-secondary btn-sm s2p-row-dl';
+            dl.textContent = r.fileName;
+            dl.addEventListener('click', function () { save(r.url, r.fileName); });
+            tdDl.appendChild(dl);
+          } else {
+            tdSize.textContent = t.listError;
+            tdSize.className = 's2p-row-error';
+            tdSize.title = r ? errorText(r.error) : '';
+            tdDl.textContent = r ? errorText(r.error) : '';
+            tdDl.className = 's2p-row-error';
+          }
+          tr.appendChild(tdName);
+          tr.appendChild(tdSize);
+          tr.appendChild(tdDl);
+          rowsEl.appendChild(tr);
+        });
+      }
+
+      function save(url, name) {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      downloadBtn.addEventListener('click', function () {
+        var r = state.items[state.active] && state.items[state.active].result;
+        if (r && !r.error) save(r.url, r.fileName);
+      });
+
+      zipBtn.addEventListener('click', function () {
+        var ok = state.items.filter(function (x) { return x.result && !x.result.error; });
+        if (!ok.length) return;
+        Promise.all(ok.map(function (x) { return x.result.blob.arrayBuffer(); })).then(function (bufs) {
+          var zip = zipStore(ok.map(function (x, i) { return { name: x.result.fileName, data: new Uint8Array(bufs[i]) }; }));
+          var url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
+          save(url, 'svg-to-png.zip');
+          setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+        });
+      });
+
+      /* ── input ── */
+      function load(list, skipped) {
+        state.items.forEach(function (x) { if (x.result && x.result.url) URL.revokeObjectURL(x.result.url); });
+        state.skipped = skipped || [];
+        state.items = list.map(function (x) {
+          var analysis = x.readError ? { error: { code: 'read', name: x.name } } : analyzeSvg(x.text);
+          return { name: x.name, text: x.text, analysis: analysis, result: null };
+        });
+        state.active = 0;
+        if (!state.items.length) {
+          renderActive();
+          renderList();
+          resultEl.hidden = true;
+          setStatus(fill(t.note.skipped, { names: state.skipped.join(', ') }), 'error');
+          return;
+        }
+        run();
+      }
+
+      function isSvgFile(f) { return /\.svg$/i.test(f.name) || f.type === 'image/svg+xml'; }
+
+      function loadFiles(files) {
+        var all = Array.prototype.slice.call(files || []);
+        if (!all.length) return;
+        var svgs = all.filter(isSvgFile);
+        var skipped = all.filter(function (f) { return !isSvgFile(f); }).map(function (f) { return f.name; });
+        Promise.all(svgs.map(function (f) {
+          return f.text().then(function (text) { return { name: f.name, text: text }; }, function () {
+            return { name: f.name, text: '', readError: true };
+          });
+        })).then(function (list) {
+          load(list, skipped);
+        });
+      }
+
+      function activateTab(tab) {
+        var isFile = tab === 'file';
+        tabFile.classList.toggle('s2p-tab--active', isFile);
+        tabCode.classList.toggle('s2p-tab--active', !isFile);
+        tabFile.setAttribute('aria-selected', String(isFile));
+        tabCode.setAttribute('aria-selected', String(!isFile));
+        panelFile.hidden = !isFile;
+        panelCode.hidden = isFile;
+      }
+      tabFile.addEventListener('click', function () { activateTab('file'); });
+      tabCode.addEventListener('click', function () { activateTab('code'); codeInput.focus(); });
+
+      fileInput.addEventListener('change', function () {
+        loadFiles(fileInput.files);
+        fileInput.value = '';
+      });
+      $('s2p-convert-code').addEventListener('click', function () { load([{ name: '', text: codeInput.value }]); });
+      codeInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); load([{ name: '', text: codeInput.value }]); }
+      });
+      otherBtn.addEventListener('click', function () {
+        inputSec.hidden = false;
+        (panelFile.hidden ? codeInput : $('s2p-drop')).focus();
+      });
+
+      // The whole tool accepts dropped files, so a drop next to the box does not open the file.
+      wrap.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        wrap.classList.add('s2p-drag');
+      });
+      wrap.addEventListener('dragleave', function (e) {
+        if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('s2p-drag');
+      });
+      wrap.addEventListener('drop', function (e) {
+        e.preventDefault();
+        wrap.classList.remove('s2p-drag');
+        if (e.dataTransfer && e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
+      });
+
+      // Paste SVG code or SVG files anywhere on the page, outside other text fields.
+      document.addEventListener('paste', function (e) {
+        var target = e.target;
+        if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+        var cd = e.clipboardData;
+        if (!cd) return;
+        var files = Array.prototype.slice.call(cd.files || []).filter(isSvgFile);
+        if (files.length) { e.preventDefault(); loadFiles(files); return; }
+        var text = cd.getData('text/plain');
+        if (text && /<svg[\s>]/i.test(text)) {
+          e.preventDefault();
+          codeInput.value = text;
+          activateTab('code');
+          load([{ name: '', text: text }]);
+        }
+      });
+
+      syncOptionUi();
     })();
   </script>
 </div>
 
 <style>
-  .s2p-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .s2p-wrap { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+  .s2p-input { display: flex; flex-direction: column; gap: 0.6rem; }
+  .s2p-input[hidden] { display: none; }
 
-  /* ── Tabs ── */
-  .s2p-tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 2px solid var(--color-border);
-  }
-
+  .s2p-tabs { display: flex; border-bottom: 2px solid var(--color-border); }
   .s2p-tab {
-    padding: 0.5rem 1.1rem;
+    padding: 0.45rem 1rem;
     font-size: 0.88rem;
-    font-weight: 500;
+    font-weight: 600;
     background: none;
     border: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
     border-bottom: 2px solid transparent;
     margin-bottom: -2px;
-    transition: color 0.15s, border-color 0.15s;
+    cursor: pointer;
+    color: var(--color-text-secondary);
   }
-
   .s2p-tab:hover { color: var(--color-text); }
+  .s2p-tab--active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
 
-  .s2p-tab--active {
-    color: var(--color-primary);
-    border-bottom-color: var(--color-primary);
-    font-weight: 600;
-  }
+  .s2p-panel { display: flex; flex-direction: column; gap: 0.5rem; }
+  .s2p-panel[hidden] { display: none; }
 
-  /* ── Drop zone ── */
   .s2p-drop {
-    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 1.25rem 1rem;
     border: 2px dashed var(--color-border);
-    border-radius: var(--radius-sm);
-    padding: 2rem 1rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
     text-align: center;
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
-    background: var(--color-bg-secondary);
   }
-
   .s2p-drop:hover,
-  .s2p-drop.drag-over {
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
+  .s2p-drag .s2p-drop { border-color: var(--color-primary); background: var(--color-bg); }
+  .s2p-drop-title { font-size: 0.95rem; font-weight: 600; color: var(--color-text); }
+  .s2p-drop-hint { font-size: 0.8rem; }
+  .s2p-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .s2p-panel:focus-within .s2p-drop { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
-  .s2p-drop-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--color-text-secondary);
-    pointer-events: none;
-  }
+  .s2p-code { min-height: 9rem; }
 
-  .s2p-drop-inner p { margin: 0; font-size: 0.95rem; }
-  .s2p-hint { font-size: 0.8rem; }
-
-  .s2p-file-input {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-  }
-
-  /* ── Paste panel ── */
-  .s2p-field { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .s2p-field label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .s2p-field textarea {
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
-  }
-
-  .s2p-field textarea:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
-
-  .s2p-load-btn { margin-top: 0.25rem; }
-
-  /* ── Options ── */
-  .s2p-options { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .s2p-options-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: flex-end;
-  }
-
-  .s2p-opt-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .s2p-opt-group label {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .s2p-opt-group select,
-  .s2p-num-input {
-    font-size: 0.85rem;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    min-width: 130px;
-  }
-
-  .s2p-num-input { width: 100px; min-width: unset; }
-
-  .s2p-color-input {
-    width: 48px;
-    height: 34px;
-    padding: 2px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    cursor: pointer;
-  }
-
-  /* ── Result / preview ── */
   .s2p-result { display: flex; flex-direction: column; gap: 0.5rem; }
-
-  .s2p-preview-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .s2p-preview-label {
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: var(--color-primary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .s2p-dims {
-    font-size: 0.8rem;
-    color: var(--color-text-secondary);
-    flex: 1;
-  }
-
-  .s2p-dl-btn { font-size: 0.85rem; padding: 0.35rem 0.9rem; }
-
+  .s2p-result[hidden] { display: none; }
+  .s2p-bar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .s2p-dims { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); font-size: 0.85rem; color: var(--color-text-secondary); }
   .s2p-preview-box {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-    background: repeating-conic-gradient(#ccc 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 80px;
     padding: 0.5rem;
+    border-radius: var(--radius-md);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+    background: repeating-conic-gradient(var(--color-bg-secondary) 0% 25%, var(--color-surface) 0% 50%) 0 0 / 16px 16px;
+    overflow: hidden;
+  }
+  .s2p-preview-img[hidden] { display: none; }
+  .s2p-preview-img { display: block; max-width: 100%; max-height: min(45vh, 360px); object-fit: contain; }
+
+  .s2p-status { min-height: 0; }
+  .s2p-status:empty { display: none; }
+  .s2p-notes {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    overflow-wrap: anywhere;
+  }
+  .s2p-notes[hidden] { display: none; }
+
+  .s2p-batch { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; min-width: 0; }
+  .s2p-batch[hidden] { display: none; }
+  .s2p-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; display: block; overflow-x: auto; }
+  .s2p-table th { text-align: left; font-weight: 600; color: var(--color-text-secondary); padding: 0.3rem 0.5rem; }
+  .s2p-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .s2p-table :global(td) { padding: 0.3rem 0.5rem; border-top: 1px solid var(--color-border-soft); vertical-align: middle; }
+  .s2p-table :global(.s2p-row-active td) { background: var(--color-surface-muted); }
+  .s2p-table :global(.s2p-pick) {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--color-primary);
+    text-decoration: underline;
+    cursor: pointer;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .s2p-table :global(.s2p-row-error) { color: var(--color-danger); }
+
+  .s2p-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border-soft);
+  }
+  .s2p-opt { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+  .s2p-opt[hidden] { display: none; }
+  .s2p-opt select.tool-input { min-width: 9rem; }
+  .s2p-num { width: 7rem; }
+  .s2p-scale-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+  .s2p-chips { display: flex; gap: 0.25rem; }
+  .s2p-chip {
+    min-width: 2.4rem;
+    height: 2rem;
+    padding: 0 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  .s2p-chip[aria-pressed="true"] { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-bg); }
+  .s2p-color {
+    width: 3rem;
+    height: 2.5rem;
+    padding: 2px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    cursor: pointer;
   }
 
-  .s2p-preview-img {
-    max-width: 100%;
-    max-height: 300px;
-    object-fit: contain;
-    display: block;
-  }
-
-  /* ── Status ── */
-  .s2p-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .s2p-status.success { color: #057a55; }
-  .s2p-status.error   { color: #c0392b; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .s2p-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .s2p-status.error   { color: #f87171; }
-    :root:not([data-theme="light"]) .s2p-preview-box {
-      background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 16px 16px;
-    }
-  }
-  [data-theme="dark"] .s2p-status.success { color: #34d399; }
-  [data-theme="dark"] .s2p-status.error   { color: #f87171; }
-  [data-theme="dark"] .s2p-preview-box {
-    background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 16px 16px;
+  @media (max-width: 640px) {
+    .s2p-drop { padding: 0.9rem 0.75rem; }
+    .s2p-drop-hint { font-size: 0.78rem; }
+    .s2p-preview-img { max-height: 170px; }
+    .s2p-chip { height: 2.75rem; min-width: 2.75rem; }
+    .s2p-color { height: 2.75rem; }
+    .s2p-table :global(.s2p-pick) { min-height: 24px; }
   }
 </style>
