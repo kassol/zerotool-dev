@@ -2,6 +2,9 @@
 // ProtobufToJsonTool — Protobuf schema/binary → JSON converter using protobufjs
 ---
 <div>
+  {/* long.js first: the protobufjs browser bundle reads window.Long when it loads and
+      needs it to decode 64-bit integers without losing precision */}
+  <script is:inline src="/vendor/long.min.js"></script>
   {/* Load protobufjs pre-built browser bundle (80KB / ~24KB gzipped) */}
   <script is:inline src="/vendor/protobuf.min.js"></script>
 
@@ -236,6 +239,41 @@
             });
       }
 
+      /* ── engine:start ── */
+      // proto3 JSON mapping (protobuf.dev/programming-guides/json): int64, uint64, sint64,
+      // fixed64 and sfixed64 are decimal strings; enums are names; bytes are Base64.
+      // longs: String prints a full-precision string only when protobuf.util.Long is set,
+      // which the browser build takes from window.Long (/vendor/long.min.js, loaded first).
+      var DECODE_OPTIONS = { defaults: false, longs: String, enums: String, bytes: String };
+      var SAMPLE_OPTIONS = {
+        defaults: true, longs: String, enums: String, bytes: String,
+        arrays: true, objects: true, oneofs: true
+      };
+
+      function parseBinaryText(raw) {
+        var hexStr = raw.replace(/[\s:]/g, '');
+        if (/^[0-9a-fA-F]+$/.test(hexStr) && hexStr.length % 2 === 0) {
+          var bytes = new Uint8Array(hexStr.length / 2);
+          for (var i = 0; i < hexStr.length; i += 2) {
+            bytes[i / 2] = parseInt(hexStr.substr(i, 2), 16);
+          }
+          return bytes;
+        }
+        var binary = atob(raw.replace(/\s/g, ''));
+        var buf = new Uint8Array(binary.length);
+        for (var j = 0; j < binary.length; j++) buf[j] = binary.charCodeAt(j);
+        return buf;
+      }
+
+      function decodeMessage(MsgType, bytes) {
+        return MsgType.toObject(MsgType.decode(bytes), DECODE_OPTIONS);
+      }
+
+      function sampleMessage(MsgType) {
+        return MsgType.toObject(MsgType.create({}), SAMPLE_OPTIONS);
+      }
+      /* ── engine:end ── */
+
       function showJson(obj) {
         var json = JSON.stringify(obj, null, 2);
         outputEl.innerHTML = syntaxHighlight(json);
@@ -343,16 +381,7 @@
         if (!typeName) { showError(t.errNoType); return; }
         try {
           var MsgType = currentRoot.lookupType(typeName);
-          var sample = MsgType.toObject(MsgType.create({}), {
-            defaults: true,
-            longs: String,
-            enums: String,
-            bytes: String,
-            arrays: true,
-            objects: true,
-            oneofs: true
-          });
-          showJson(sample);
+          showJson(sampleMessage(MsgType));
           setStatus(t.statusSample, false);
           window.trackTool && window.trackTool('protobuf_to_json', 'generate_sample');
         } catch(e) {
@@ -375,34 +404,8 @@
         var rawBinary = binaryEl.value.trim();
         if (!rawBinary) { showError(t.errNoBinary); return; }
         try {
-          var buf;
-          // Detect hex vs base64
-          var hexStr = rawBinary.replace(/[\s:]/g, '');
-          if (/^[0-9a-fA-F]+$/.test(hexStr) && hexStr.length % 2 === 0) {
-            // Hex input
-            var bytes = new Uint8Array(hexStr.length / 2);
-            for (var i = 0; i < hexStr.length; i += 2) {
-              bytes[i / 2] = parseInt(hexStr.substr(i, 2), 16);
-            }
-            buf = bytes;
-          } else {
-            // Base64 input
-            var b64 = rawBinary.replace(/\s/g, '');
-            var binary = atob(b64);
-            buf = new Uint8Array(binary.length);
-            for (var j = 0; j < binary.length; j++) {
-              buf[j] = binary.charCodeAt(j);
-            }
-          }
           var MsgType = currentRoot.lookupType(typeName);
-          var msg = MsgType.decode(buf);
-          var obj = MsgType.toObject(msg, {
-            defaults: false,
-            longs: String,
-            enums: String,
-            bytes: String
-          });
-          showJson(obj);
+          showJson(decodeMessage(MsgType, parseBinaryText(rawBinary)));
           setStatus(t.statusDecoded, false);
           window.trackTool && window.trackTool('protobuf_to_json', 'decode_binary');
         } catch(e) {
