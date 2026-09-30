@@ -1,260 +1,515 @@
 ---
-// QrCodeDecoderTool — client-side QR code decoder using jsQR
+// QrCodeDecoderTool — reads QR codes (QR, Micro QR, rMQR) from images, pasted
+// screenshots, an image URL or the camera with zxing-wasm (zxing-cpp compiled to
+// WebAssembly), served from /vendor and loaded on first use.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    dropHint: 'Drop an image, click to choose one, or paste a screenshot (Ctrl+V / ⌘V)',
+    dropHintCompact: 'Choose, drop or paste another image',
+    dropSub: 'PNG · JPG · GIF · WebP · BMP · AVIF — one image can hold several codes',
+    dropAria: 'Choose an image with a QR code',
+    camera: 'Scan with camera',
+    cameraStop: 'Stop camera',
+    cameraHint: 'Point the camera at a QR code. The camera image stays in this browser.',
+    urlLabel: 'Or decode an image from a URL',
+    urlPlaceholder: 'https://example.com/qr.png',
+    urlDecodeBtn: 'Decode',
+    clear: 'Clear',
+    previewAlt: 'Decoded image with the codes outlined',
+    loading: 'Loading the decoder (about 420 KB, once per visit)…',
+    decoding: 'Decoding…',
+    found: '{n} code found.',
+    foundMany: '{n} codes found, numbered on the image from top left.',
+    scaled: 'The image was reduced from {w}×{h} to {sw}×{sh} pixels before decoding.',
+    errNoQr: 'No QR code found. Crop closer to the code, keep a light margin around it, or use a sharper image.',
+    errNotImage: 'This file is not an image ({type}). Take a screenshot of the code and try that.',
+    errRead: 'This file could not be opened as an image by your browser (for example HEIC outside Safari). Convert it to PNG or JPG.',
+    errLoad: 'The decoder could not be loaded. Check your connection and try again.',
+    errUrlScheme: 'Enter an http:// or https:// address.',
+    errUrlFetch: 'Could not download the image: the server does not allow cross-origin requests (CORS) or is unreachable. Save the image and drop it here instead.',
+    errUrlStatus: 'The server answered HTTP {status}.',
+    errCamNoSupport: 'This browser cannot use a camera on this page. Upload a photo of the code instead.',
+    errCamDenied: 'Camera permission was denied. Allow the camera for this site in the browser settings, or upload a photo.',
+    errCamNotFound: 'No camera was found on this device.',
+    errCamBusy: 'The camera is in use by another app or tab.',
+    errCam: 'The camera could not be started ({name}).',
+    types: { url: 'URL', wifi: 'Wi-Fi', contact: 'Contact', email: 'Email', phone: 'Phone', sms: 'SMS', geo: 'Location', link: 'App link', text: 'Text', binary: 'Binary' },
+    version: 'Version {v}', ecLevel: 'EC {l}',
+    encodingEci: '{name} (ECI {n})',
+    encodingGuess: '{name} (guessed)',
+    encodingLabel: 'Text encoding',
+    encodingAuto: 'Auto: {name}',
+    rawText: 'Raw text',
+    bytes: 'Bytes ({n})',
+    host: 'Host',
+    openLink: 'Open link',
+    warnUserinfo: 'The address contains “@”: everything before it is a user name, and the site that opens is {host}.',
+    warnIdn: 'The host uses non-Latin letters and is shown in punycode ({host}). Check it for look-alike letters.',
+    warnScript: 'This is a {scheme} link. It is shown as text and is not opened.',
+    linkNote: 'Opens only in an app that handles “{scheme}:” links. It is shown as text here.',
+    openMap: 'Open in OpenStreetMap',
+    copy: 'Copy', copied: 'Copied!',
+    fields: {
+      ssid: 'SSID', password: 'Password', encryption: 'Encryption', hiddenNetwork: 'Hidden',
+      name: 'Name', reading: 'Reading', org: 'Organization', title: 'Title', tel: 'Phone', email: 'Email', address: 'Address',
+      url: 'URL', note: 'Note', birthday: 'Birthday', nickname: 'Nickname',
+      to: 'To', cc: 'Cc', bcc: 'Bcc', subject: 'Subject', body: 'Message', number: 'Number',
+      latitude: 'Latitude', longitude: 'Longitude', altitude: 'Altitude', query: 'Search',
+    },
+    crosslinkText: 'Need to create a QR code?',
+    crosslinkLink: 'QR Code Generator →',
+  },
+  zh: {
+    dropHint: '拖入图片、点击选择，或直接粘贴截图（Ctrl+V / ⌘V）',
+    dropHintCompact: '选择、拖入或粘贴另一张图片',
+    dropSub: 'PNG · JPG · GIF · WebP · BMP · AVIF，一张图可含多个码',
+    dropAria: '选择含二维码的图片',
+    camera: '用摄像头扫描',
+    cameraStop: '关闭摄像头',
+    cameraHint: '把摄像头对准二维码。画面只在本浏览器里处理。',
+    urlLabel: '或从图片网址解码',
+    urlPlaceholder: 'https://example.com/qr.png',
+    urlDecodeBtn: '解码',
+    clear: '清空',
+    previewAlt: '已解码的图片，识别到的码带编号框',
+    loading: '正在加载解码器（约 420 KB，每次访问只加载一次）…',
+    decoding: '解码中…',
+    found: '识别到 {n} 个码。',
+    foundMany: '识别到 {n} 个码，图上按从左上开始的顺序编号。',
+    scaled: '图片从 {w}×{h} 缩小到 {sw}×{sh} 像素后解码。',
+    errNoQr: '没有找到二维码。请裁到二维码附近、保留一圈浅色白边，或换一张更清晰的图。',
+    errNotImage: '这个文件不是图片（{type}）。请截图后再试。',
+    errRead: '浏览器无法把这个文件当作图片打开（例如 Safari 以外的 HEIC）。请转成 PNG 或 JPG。',
+    errLoad: '解码器加载失败，请检查网络后重试。',
+    errUrlScheme: '请输入 http:// 或 https:// 开头的地址。',
+    errUrlFetch: '无法下载图片：服务器不允许跨域请求（CORS）或无法访问。请先保存图片再拖进来。',
+    errUrlStatus: '服务器返回 HTTP {status}。',
+    errCamNoSupport: '当前浏览器无法在本页使用摄像头。请上传二维码照片。',
+    errCamDenied: '摄像头权限被拒绝。请在浏览器设置里允许本站使用摄像头，或上传照片。',
+    errCamNotFound: '这台设备上没有找到摄像头。',
+    errCamBusy: '摄像头正被其他应用或标签页占用。',
+    errCam: '无法启动摄像头（{name}）。',
+    types: { url: '网址', wifi: 'Wi-Fi', contact: '联系人', email: '邮件', phone: '电话', sms: '短信', geo: '位置', link: 'App 链接', text: '文本', binary: '二进制' },
+    version: '版本 {v}', ecLevel: '纠错 {l}',
+    encodingEci: '{name}（ECI {n}）',
+    encodingGuess: '{name}（推测）',
+    encodingLabel: '文本编码',
+    encodingAuto: '自动：{name}',
+    rawText: '原始文本',
+    bytes: '字节（{n}）',
+    host: '域名',
+    openLink: '打开链接',
+    warnUserinfo: '地址里有「@」：它前面的部分是用户名，实际打开的网站是 {host}。',
+    warnIdn: '域名含非拉丁字母，按 punycode 显示为 {host}。请留意形近字母。',
+    warnScript: '这是 {scheme} 链接，只按文本显示，不会打开。',
+    linkNote: '只有能处理「{scheme}:」链接的 App 才能打开，这里按文本显示。',
+    openMap: '在 OpenStreetMap 中打开',
+    copy: '复制', copied: '已复制！',
+    fields: {
+      ssid: 'SSID', password: '密码', encryption: '加密方式', hiddenNetwork: '隐藏网络',
+      name: '姓名', reading: '读音', org: '单位', title: '职位', tel: '电话', email: '邮箱', address: '地址',
+      url: '网址', note: '备注', birthday: '生日', nickname: '昵称',
+      to: '收件人', cc: '抄送', bcc: '密送', subject: '主题', body: '正文', number: '号码',
+      latitude: '纬度', longitude: '经度', altitude: '海拔', query: '搜索',
+    },
+    crosslinkText: '需要生成二维码？',
+    crosslinkLink: '二维码生成器 →',
+  },
+  ja: {
+    dropHint: '画像をドロップ、クリックして選択、またはスクリーンショットを貼り付け（Ctrl+V / ⌘V）',
+    dropHintCompact: '別の画像を選択・ドロップ・貼り付け',
+    dropSub: 'PNG · JPG · GIF · WebP · BMP · AVIF、1 枚に複数のコードがあっても読めます',
+    dropAria: 'QRコードの画像を選択',
+    camera: 'カメラで読み取る',
+    cameraStop: 'カメラを止める',
+    cameraHint: 'カメラを QR コードに向けてください。映像はこのブラウザー内だけで処理します。',
+    urlLabel: 'または画像の URL から読み取る',
+    urlPlaceholder: 'https://example.com/qr.png',
+    urlDecodeBtn: '読み取る',
+    clear: 'クリア',
+    previewAlt: '読み取った画像。検出したコードに番号付きの枠',
+    loading: 'デコーダーを読み込み中（約 420 KB、訪問ごとに 1 回）…',
+    decoding: '読み取り中…',
+    found: '{n} 個のコードを読み取りました。',
+    foundMany: '{n} 個のコードを読み取りました。画像上の番号は左上から順です。',
+    scaled: '画像を {w}×{h} から {sw}×{sh} ピクセルに縮小して読み取りました。',
+    errNoQr: 'QRコードが見つかりません。コードの近くで切り抜き、周りに明るい余白を残すか、鮮明な画像を使ってください。',
+    errNotImage: 'このファイルは画像ではありません（{type}）。スクリーンショットを撮って試してください。',
+    errRead: 'ブラウザーがこのファイルを画像として開けません（Safari 以外での HEIC など）。PNG か JPG に変換してください。',
+    errLoad: 'デコーダーを読み込めませんでした。接続を確認して再試行してください。',
+    errUrlScheme: 'http:// または https:// で始まるアドレスを入力してください。',
+    errUrlFetch: '画像をダウンロードできません。サーバーがクロスオリジン要求（CORS）を許可していないか、接続できません。画像を保存してドロップしてください。',
+    errUrlStatus: 'サーバーの応答は HTTP {status} でした。',
+    errCamNoSupport: 'このブラウザーではこのページでカメラを使えません。コードの写真をアップロードしてください。',
+    errCamDenied: 'カメラの使用が拒否されました。ブラウザーの設定でこのサイトのカメラを許可するか、写真をアップロードしてください。',
+    errCamNotFound: 'この端末でカメラが見つかりません。',
+    errCamBusy: 'カメラは別のアプリかタブで使用中です。',
+    errCam: 'カメラを起動できません（{name}）。',
+    types: { url: 'URL', wifi: 'Wi-Fi', contact: '連絡先', email: 'メール', phone: '電話', sms: 'SMS', geo: '位置情報', link: 'アプリのリンク', text: 'テキスト', binary: 'バイナリ' },
+    version: 'バージョン {v}', ecLevel: '誤り訂正 {l}',
+    encodingEci: '{name}（ECI {n}）',
+    encodingGuess: '{name}（推定）',
+    encodingLabel: '文字コード',
+    encodingAuto: '自動：{name}',
+    rawText: '元のテキスト',
+    bytes: 'バイト列（{n}）',
+    host: 'ホスト',
+    openLink: 'リンクを開く',
+    warnUserinfo: 'アドレスに「@」があります。その前はユーザー名で、実際に開くサイトは {host} です。',
+    warnIdn: 'ホスト名にラテン文字以外が含まれ、punycode で {host} と表示しています。紛らわしい文字に注意してください。',
+    warnScript: '{scheme} のリンクです。テキストとして表示し、開きません。',
+    linkNote: '「{scheme}:」のリンクを扱うアプリでだけ開けます。ここではテキストとして表示します。',
+    openMap: 'OpenStreetMap で開く',
+    copy: 'コピー', copied: 'コピーしました！',
+    fields: {
+      ssid: 'SSID', password: 'パスワード', encryption: '暗号化', hiddenNetwork: '非公開ネットワーク',
+      name: '名前', reading: 'よみがな', org: '会社', title: '役職', tel: '電話', email: 'メール', address: '住所',
+      url: 'URL', note: 'メモ', birthday: '誕生日', nickname: 'ニックネーム',
+      to: '宛先', cc: 'Cc', bcc: 'Bcc', subject: '件名', body: '本文', number: '番号',
+      latitude: '緯度', longitude: '経度', altitude: '高度', query: '検索',
+    },
+    crosslinkText: 'QRコードを作成したい方は',
+    crosslinkLink: 'QRコードジェネレーター →',
+  },
+  ko: {
+    dropHint: '이미지를 끌어다 놓거나, 클릭해서 고르거나, 스크린샷을 붙여넣기(Ctrl+V / ⌘V)',
+    dropHintCompact: '다른 이미지 선택·끌어다 놓기·붙여넣기',
+    dropSub: 'PNG · JPG · GIF · WebP · BMP · AVIF, 한 이미지에 코드가 여러 개여도 읽습니다',
+    dropAria: 'QR 코드 이미지 선택',
+    camera: '카메라로 스캔',
+    cameraStop: '카메라 끄기',
+    cameraHint: '카메라를 QR 코드에 맞추세요. 화면은 이 브라우저 안에서만 처리합니다.',
+    urlLabel: '또는 이미지 URL로 읽기',
+    urlPlaceholder: 'https://example.com/qr.png',
+    urlDecodeBtn: '읽기',
+    clear: '지우기',
+    previewAlt: '읽은 이미지, 찾은 코드에 번호 테두리',
+    loading: '디코더를 불러오는 중(약 420KB, 방문당 한 번)…',
+    decoding: '읽는 중…',
+    found: '코드 {n}개를 읽었습니다.',
+    foundMany: '코드 {n}개를 읽었습니다. 이미지의 번호는 왼쪽 위부터 매겼습니다.',
+    scaled: '이미지를 {w}×{h}에서 {sw}×{sh} 픽셀로 줄여서 읽었습니다.',
+    errNoQr: 'QR 코드를 찾지 못했습니다. 코드 가까이 자르고 주변에 밝은 여백을 남기거나, 더 선명한 이미지를 쓰세요.',
+    errNotImage: '이 파일은 이미지가 아닙니다({type}). 스크린샷을 찍어서 다시 시도하세요.',
+    errRead: '브라우저가 이 파일을 이미지로 열지 못했습니다(Safari 외의 HEIC 등). PNG나 JPG로 바꿔 주세요.',
+    errLoad: '디코더를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.',
+    errUrlScheme: 'http:// 또는 https://로 시작하는 주소를 입력하세요.',
+    errUrlFetch: '이미지를 내려받지 못했습니다. 서버가 교차 출처 요청(CORS)을 허용하지 않거나 연결할 수 없습니다. 이미지를 저장해서 끌어다 놓으세요.',
+    errUrlStatus: '서버 응답: HTTP {status}.',
+    errCamNoSupport: '이 브라우저는 이 페이지에서 카메라를 쓸 수 없습니다. 코드 사진을 올려 주세요.',
+    errCamDenied: '카메라 권한이 거부되었습니다. 브라우저 설정에서 이 사이트의 카메라를 허용하거나 사진을 올려 주세요.',
+    errCamNotFound: '이 기기에서 카메라를 찾지 못했습니다.',
+    errCamBusy: '다른 앱이나 탭이 카메라를 쓰고 있습니다.',
+    errCam: '카메라를 시작하지 못했습니다({name}).',
+    types: { url: 'URL', wifi: 'Wi-Fi', contact: '연락처', email: '이메일', phone: '전화', sms: 'SMS', geo: '위치', link: '앱 링크', text: '텍스트', binary: '바이너리' },
+    version: '버전 {v}', ecLevel: '오류 정정 {l}',
+    encodingEci: '{name}(ECI {n})',
+    encodingGuess: '{name}(추정)',
+    encodingLabel: '문자 인코딩',
+    encodingAuto: '자동: {name}',
+    rawText: '원본 텍스트',
+    bytes: '바이트({n})',
+    host: '호스트',
+    openLink: '링크 열기',
+    warnUserinfo: '주소에 “@”가 있습니다. 그 앞은 사용자 이름이고, 실제로 열리는 사이트는 {host}입니다.',
+    warnIdn: '호스트에 라틴 문자가 아닌 글자가 있어 punycode로 {host}라고 표시합니다. 비슷하게 생긴 글자에 주의하세요.',
+    warnScript: '{scheme} 링크입니다. 텍스트로만 보여 주고 열지 않습니다.',
+    linkNote: '“{scheme}:” 링크를 처리하는 앱에서만 열립니다. 여기서는 텍스트로 보여 줍니다.',
+    openMap: 'OpenStreetMap에서 열기',
+    copy: '복사', copied: '복사됨!',
+    fields: {
+      ssid: 'SSID', password: '비밀번호', encryption: '암호화', hiddenNetwork: '숨겨진 네트워크',
+      name: '이름', reading: '읽는 법', org: '회사', title: '직함', tel: '전화', email: '이메일', address: '주소',
+      url: 'URL', note: '메모', birthday: '생일', nickname: '별명',
+      to: '받는 사람', cc: '참조', bcc: '숨은 참조', subject: '제목', body: '내용', number: '번호',
+      latitude: '위도', longitude: '경도', altitude: '고도', query: '검색',
+    },
+    crosslinkText: 'QR 코드를 만들어야 하나요?',
+    crosslinkLink: 'QR 코드 생성기 →',
+  },
+} as const;
+
+const T = STRINGS[lang];
+const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-generator/';
 ---
-<div class="qrd-wrap">
-  {/* Upload / drag zone */}
-  <div id="qrd-dropzone" class="qrd-dropzone" tabindex="0" role="button" aria-label="Upload QR code image">
-    <svg class="qrd-dz-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>
-    <p id="qrd-dz-hint" class="qrd-dz-hint" data-i18n="dropHint">Drop image here, click to upload, or paste (Ctrl+V)</p>
-    <p class="qrd-dz-sub" data-i18n="dropSub">PNG · JPG · GIF · WebP · BMP</p>
-    <input type="file" id="qrd-file" accept="image/*" hidden />
-  </div>
-
-  {/* URL decode row */}
-  <div id="qrd-url-row" class="qrd-url-row">
-    <span class="qrd-url-label" data-i18n="urlLabel">Or decode from URL</span>
-    <div class="qrd-url-input-group">
-      <input type="url" id="qrd-url-input" class="qrd-url-input" data-i18n-placeholder="urlPlaceholder" placeholder="https://example.com/qr.png" />
-      <button id="qrd-url-decode" class="btn-primary qrd-url-btn" data-i18n="urlDecodeBtn">Decode</button>
-    </div>
-    <p id="qrd-url-error" class="qrd-url-error" style="display:none"></p>
-  </div>
-
-  {/* Preview + result */}
-  <div id="qrd-result-area" class="qrd-result-area" style="display:none">
-    <div class="qrd-preview-col">
-      <img id="qrd-preview-img" class="qrd-preview-img" alt="QR code preview" />
-      <button id="qrd-reset" class="btn-secondary qrd-reset-btn" data-i18n="decodeAnother">Decode another</button>
+<div class="qrd-wrap" id="qrd-wrap">
+  <div class="qrd-inputs" id="qrd-inputs">
+    <div class="qrd-pick-row">
+      <div id="qrd-dropzone" class="qrd-dropzone" tabindex="0" role="button" aria-label={T.dropAria}>
+        <svg class="qrd-dz-icon" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>
+        <p class="qrd-dz-hint qrd-dz-full">{T.dropHint}</p>
+        <p class="qrd-dz-hint qrd-dz-compact">{T.dropHintCompact}</p>
+        <p class="qrd-dz-sub">{T.dropSub}</p>
+        <input type="file" id="qrd-file" accept="image/*" hidden />
+      </div>
+      <button type="button" id="qrd-camera" class="btn-secondary qrd-camera-btn" aria-label={T.camera}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+        <span>{T.camera}</span>
+      </button>
     </div>
 
-    <div class="qrd-output-col">
-      <div id="qrd-status" class="qrd-status" aria-live="polite"></div>
-
-      <div id="qrd-success-block" style="display:none">
-        <div class="qrd-type-badge-row">
-          <span id="qrd-type-badge" class="qrd-type-badge"></span>
-        </div>
-
-        {/* Generic result */}
-        <div id="qrd-generic" class="qrd-card" style="display:none">
-          <div class="qrd-card-header" data-i18n="decodedContent">Decoded Content</div>
-          <pre id="qrd-text" class="qrd-text-result"></pre>
-          <div class="qrd-card-actions">
-            <button id="qrd-copy" class="btn-primary btn-sm" data-i18n="copy">Copy</button>
-          </div>
-        </div>
-
-        {/* URL result */}
-        <div id="qrd-url" class="qrd-card" style="display:none">
-          <div class="qrd-card-header" data-i18n="decodedUrl">Decoded URL</div>
-          <a id="qrd-url-link" class="qrd-url-link" href="#" target="_blank" rel="noopener noreferrer"></a>
-          <div class="qrd-card-actions">
-            <button id="qrd-copy-url" class="btn-primary btn-sm" data-i18n="copy">Copy</button>
-          </div>
-        </div>
-
-        {/* WiFi result */}
-        <div id="qrd-wifi" class="qrd-card" style="display:none">
-          <div class="qrd-card-header" data-i18n="wifiNetwork">Wi-Fi Network</div>
-          <table class="qrd-wifi-table">
-            <tbody>
-              <tr><th data-i18n="ssid">SSID</th><td id="qrd-wifi-ssid"></td></tr>
-              <tr><th data-i18n="password">Password</th><td id="qrd-wifi-pass"></td></tr>
-              <tr><th data-i18n="encryption">Encryption</th><td id="qrd-wifi-enc"></td></tr>
-              <tr id="qrd-wifi-hidden-row"><th data-i18n="hiddenNetwork">Hidden</th><td id="qrd-wifi-hidden"></td></tr>
-            </tbody>
-          </table>
-          <div class="qrd-card-actions">
-            <button id="qrd-copy-wifi" class="btn-primary btn-sm" data-i18n="copy">Copy</button>
-          </div>
-        </div>
+    <div id="qrd-url-row" class="qrd-url-row">
+      <label class="qrd-url-label" for="qrd-url-input">{T.urlLabel}</label>
+      <div class="qrd-url-input-group">
+        <input type="url" id="qrd-url-input" class="tool-input qrd-url-input" placeholder={T.urlPlaceholder} autocomplete="off" spellcheck="false" />
+        <button type="button" id="qrd-url-decode" class="btn-primary">{T.urlDecodeBtn}</button>
       </div>
     </div>
   </div>
 
-  {/* Privacy badge */}
-  <p class="qrd-privacy" data-i18n="privacy">
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-    100% client-side — no data uploaded
-  </p>
+  <div id="qrd-status" class="tool-status qrd-status" role="status" aria-live="polite"></div>
 
-  {/* Cross-link to generator */}
+  <div id="qrd-camera-view" class="qrd-camera-view" hidden>
+    <video id="qrd-video" class="qrd-video" playsinline muted></video>
+    <p class="qrd-camera-hint">{T.cameraHint}</p>
+    <button type="button" id="qrd-camera-stop" class="btn-secondary">{T.cameraStop}</button>
+  </div>
+
+  <div id="qrd-result-area" class="qrd-result-area" hidden>
+    <div id="qrd-results" class="qrd-results"></div>
+    <div class="qrd-preview-col">
+      <canvas id="qrd-preview" class="qrd-preview" role="img" aria-label={T.previewAlt}></canvas>
+      <button type="button" id="qrd-clear" class="btn-ghost btn-sm">{T.clear}</button>
+    </div>
+  </div>
+
   <p class="qrd-crosslink">
-    <span data-i18n="crosslinkText">Need to create a QR code?</span>
-    <a href="/tools/qr-code-generator/" data-i18n="crosslinkLink">QR Code Generator →</a>
+    <span>{T.crosslinkText}</span>
+    <a href={generatorHref}>{T.crosslinkLink}</a>
   </p>
 
-  {/* jsQR library */}
-  <script src="/vendor/jsqr.min.js" is:inline></script>
-
-  <script is:inline>
+  <script is:inline define:vars={{ t: T, pageLang: lang }}>
     (function () {
-      var STRINGS = {
-        en: {
-          dropHint: 'Drop image here, click to upload, or paste (Ctrl+V)',
-          dropSub: 'PNG · JPG · GIF · WebP · BMP',
-          decodeAnother: 'Decode another',
-          decodedContent: 'Decoded Content',
-          decodedUrl: 'Decoded URL',
-          wifiNetwork: 'Wi-Fi Network',
-          ssid: 'SSID',
-          password: 'Password',
-          encryption: 'Encryption',
-          hiddenNetwork: 'Hidden',
-          copy: 'Copy',
-          copied: 'Copied!',
-          privacy: '100% client-side — no data uploaded',
-          crosslinkText: 'Need to create a QR code?',
-          crosslinkLink: 'QR Code Generator →',
-          types: { url: 'URL', wifi: 'Wi-Fi', vcard: 'vCard', email: 'Email', phone: 'Phone', sms: 'SMS', text: 'Text' },
-          errNoQr: 'No QR code found in this image.',
-          errNoLib: 'jsQR library not loaded. Please check your network connection.',
-          errRead: 'Could not read image. Please try a different file.',
-          decoding: 'Decoding…',
-          urlLabel: 'Or decode from URL',
-          urlPlaceholder: 'https://example.com/qr.png',
-          urlDecodeBtn: 'Decode',
-          errUrlFetch: 'Could not fetch image from URL (CORS or network error). Download the image and upload it instead.',
-        },
-        zh: {
-          dropHint: '拖拽图片到此处、点击上传，或粘贴 (Ctrl+V)',
-          dropSub: 'PNG · JPG · GIF · WebP · BMP',
-          decodeAnother: '解码其他图片',
-          decodedContent: '解码内容',
-          decodedUrl: '解码 URL',
-          wifiNetwork: 'Wi-Fi 网络',
-          ssid: 'SSID',
-          password: '密码',
-          encryption: '加密方式',
-          hiddenNetwork: '隐藏网络',
-          copy: '复制',
-          copied: '已复制！',
-          privacy: '纯浏览器端运行，数据不会上传',
-          crosslinkText: '需要生成二维码？',
-          crosslinkLink: '二维码生成器 →',
-          types: { url: 'URL', wifi: 'Wi-Fi', vcard: 'vCard', email: '邮箱', phone: '电话', sms: '短信', text: '文本' },
-          errNoQr: '未在图片中找到二维码。',
-          errNoLib: 'jsQR 库未加载，请检查网络连接。',
-          errRead: '无法读取图片，请尝试其他文件。',
-          decoding: '解码中…',
-          urlLabel: '或从 URL 解码',
-          urlPlaceholder: 'https://example.com/qr.png',
-          urlDecodeBtn: '解码',
-          errUrlFetch: '无法从 URL 获取图片（跨域或网络错误），请下载后再上传。',
-        },
-        ja: {
-          dropHint: '画像をドロップ、クリックしてアップロード、またはペースト (Ctrl+V)',
-          dropSub: 'PNG · JPG · GIF · WebP · BMP',
-          decodeAnother: '別の画像を解読',
-          decodedContent: 'デコード結果',
-          decodedUrl: 'デコード URL',
-          wifiNetwork: 'Wi-Fiネットワーク',
-          ssid: 'SSID',
-          password: 'パスワード',
-          encryption: '暗号化',
-          hiddenNetwork: '非表示ネットワーク',
-          copy: 'コピー',
-          copied: 'コピーしました！',
-          privacy: '完全ブラウザ完結 — データはアップロードされません',
-          crosslinkText: 'QRコードを作成したい方は',
-          crosslinkLink: 'QRコードジェネレーター →',
-          types: { url: 'URL', wifi: 'Wi-Fi', vcard: 'vCard', email: 'メール', phone: '電話', sms: 'SMS', text: 'テキスト' },
-          errNoQr: 'この画像にQRコードが見つかりませんでした。',
-          errNoLib: 'jsQRライブラリを読み込めませんでした。',
-          errRead: '画像を読み込めませんでした。別のファイルをお試しください。',
-          decoding: 'デコード中…',
-          urlLabel: 'URLから解読する',
-          urlPlaceholder: 'https://example.com/qr.png',
-          urlDecodeBtn: '解読',
-          errUrlFetch: 'URLから画像を取得できませんでした（CORSまたはネットワークエラー）。画像をダウンロードしてからアップロードしてください。',
-        },
-        ko: {
-          dropHint: '이미지를 드롭하거나 클릭해서 업로드, 또는 붙여넣기 (Ctrl+V)',
-          dropSub: 'PNG · JPG · GIF · WebP · BMP',
-          decodeAnother: '다른 이미지 디코딩',
-          decodedContent: '디코딩 결과',
-          decodedUrl: '디코딩된 URL',
-          wifiNetwork: 'Wi-Fi 네트워크',
-          ssid: 'SSID',
-          password: '비밀번호',
-          encryption: '암호화',
-          hiddenNetwork: '숨겨진 네트워크',
-          copy: '복사',
-          copied: '복사됨!',
-          privacy: '100% 클라이언트 처리 — 데이터 업로드 없음',
-          crosslinkText: 'QR 코드를 만들어야 하나요?',
-          crosslinkLink: 'QR 코드 생성기 →',
-          types: { url: 'URL', wifi: 'Wi-Fi', vcard: 'vCard', email: '이메일', phone: '전화', sms: 'SMS', text: '텍스트' },
-          errNoQr: '이미지에서 QR 코드를 찾을 수 없습니다.',
-          errNoLib: 'jsQR 라이브러리를 불러올 수 없습니다.',
-          errRead: '이미지를 읽을 수 없습니다. 다른 파일을 시도해 주세요.',
-          decoding: '디코딩 중…',
-          urlLabel: 'URL로 디코딩',
-          urlPlaceholder: 'https://example.com/qr.png',
-          urlDecodeBtn: '디코딩',
-          errUrlFetch: 'URL에서 이미지를 가져올 수 없습니다(CORS 또는 네트워크 오류). 이미지를 다운로드하여 업로드하세요.',
-        },
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      /* Apply i18n */
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-placeholder');
-        if (t[key]) el.placeholder = t[key];
-      });
-
-      /* Override cross-link href based on lang */
-      var crosslinkAnchor = document.querySelector('.qrd-crosslink a');
-      if (crosslinkAnchor && pageLang !== 'en') {
-        crosslinkAnchor.href = '/' + pageLang + '/tools/qr-code-generator';
-      }
-
-      /* Element refs */
-      var urlRow       = document.getElementById('qrd-url-row');
-      var urlInput     = document.getElementById('qrd-url-input');
-      var urlDecodeBtn = document.getElementById('qrd-url-decode');
-      var urlError     = document.getElementById('qrd-url-error');
-      var dropzone   = document.getElementById('qrd-dropzone');
-      var fileInput  = document.getElementById('qrd-file');
-      var resultArea = document.getElementById('qrd-result-area');
-      var previewImg = document.getElementById('qrd-preview-img');
-      var statusEl   = document.getElementById('qrd-status');
-      var resetBtn   = document.getElementById('qrd-reset');
-      var successBlock = document.getElementById('qrd-success-block');
-
-      var genericCard = document.getElementById('qrd-generic');
-      var urlCard     = document.getElementById('qrd-url');
-      var wifiCard    = document.getElementById('qrd-wifi');
-
-      var textPre   = document.getElementById('qrd-text');
-      var typeBadge = document.getElementById('qrd-type-badge');
-
-      /* ── Content type detection ── */
-      function detectType(text) {
-        if (/^https?:\/\//i.test(text)) return 'url';
-        if (/^WIFI:/i.test(text)) return 'wifi';
-        if (/^BEGIN:VCARD/i.test(text)) return 'vcard';
-        if (/^mailto:/i.test(text)) return 'email';
-        if (/^tel:/i.test(text)) return 'phone';
-        if (/^smsto:/i.test(text) || /^sms:/i.test(text)) return 'sms';
-        return 'text';
-      }
-
       /* ── engine:start ── */
+      /* Reader options for zxing-wasm readBarcodes(). QR, Micro QR and rMQR; up to 16 codes
+         per image; light-on-dark and rotated codes; text as-is (no HRI escapes). */
+      var READER_OPTIONS = {
+        formats: ['QRCode', 'MicroQRCode', 'rMQRCode'],
+        tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true,
+        maxNumberOfSymbols: 16, textMode: 'Plain',
+      };
+      var CAMERA_OPTIONS = {
+        formats: ['QRCode', 'MicroQRCode', 'rMQRCode'],
+        tryHarder: false, tryRotate: true, tryInvert: true, tryDownscale: true,
+        maxNumberOfSymbols: 4, textMode: 'Plain',
+      };
+      /* Largest canvas many browsers accept (iOS Safari: 16,777,216 pixels). Bigger images
+         are scaled down to fit before decoding. */
+      var MAX_PIXELS = 16777216;
+      function fitSize(w, h, maxPixels) {
+        var s = Math.min(1, Math.sqrt((maxPixels || MAX_PIXELS) / (w * h)));
+        return { width: Math.max(1, Math.floor(w * s)), height: Math.max(1, Math.floor(h * s)), scaled: s < 1 };
+      }
+
+      /* ECI assignment numbers → names (AIM ECI; ISO/IEC 18004 §5.3). */
+      var ECI_NAMES = {
+        1: 'ISO-8859-1', 3: 'ISO-8859-1', 4: 'ISO-8859-2', 5: 'ISO-8859-3', 6: 'ISO-8859-4', 7: 'ISO-8859-5',
+        8: 'ISO-8859-6', 9: 'ISO-8859-7', 10: 'ISO-8859-8', 11: 'ISO-8859-9', 13: 'ISO-8859-11', 15: 'ISO-8859-13',
+        16: 'ISO-8859-14', 17: 'ISO-8859-15', 18: 'ISO-8859-16', 20: 'Shift_JIS', 21: 'Windows-1250',
+        22: 'Windows-1251', 23: 'Windows-1252', 24: 'Windows-1256', 25: 'UTF-16BE', 26: 'UTF-8', 27: 'US-ASCII',
+        28: 'Big5', 29: 'GB2312', 30: 'EUC-KR', 31: 'GBK', 32: 'GB18030', 33: 'UTF-16LE', 34: 'UTF-32BE', 35: 'UTF-32LE',
+      };
+      /* Encodings offered when the code has no ECI: [TextDecoder label, display name] */
+      var CHARSETS = [
+        ['utf-8', 'UTF-8'], ['shift_jis', 'Shift_JIS'], ['gb18030', 'GB18030 / GBK'], ['big5', 'Big5'],
+        ['euc-kr', 'EUC-KR'], ['iso-8859-1', 'ISO-8859-1'], ['utf-16be', 'UTF-16BE'], ['utf-16le', 'UTF-16LE'],
+      ];
+      function charsetName(label) {
+        for (var i = 0; i < CHARSETS.length; i++) if (CHARSETS[i][0] === label) return CHARSETS[i][1];
+        return label;
+      }
+      /* Legacy encoding tried first on each page language when the bytes are not UTF-8,
+         like ZXing's platform-default hint */
+      var LANG_CHARSET = { ja: 'shift_jis', zh: 'gb18030', ko: 'euc-kr' };
+
+      /* ECI numbers from zxing-wasm's bytesECI: "]Q2" then data where "\dddddd" is an ECI
+         designator and "\\" a literal backslash (ISO/IEC 15424 transmission format). */
+      function eciNumbers(bytesECI) {
+        var out = [];
+        if (!bytesECI || bytesECI.length < 3 || bytesECI[2] !== 0x32 && bytesECI[2] !== 0x34 && bytesECI[2] !== 0x36) return out;
+        for (var i = 3; i < bytesECI.length; i++) {
+          if (bytesECI[i] !== 0x5c) continue;
+          if (bytesECI[i + 1] === 0x5c) { i++; continue; }
+          var n = 0, ok = true;
+          for (var k = 1; k <= 6; k++) {
+            var c = bytesECI[i + k];
+            if (c === undefined || c < 0x30 || c > 0x39) { ok = false; break; }
+            n = n * 10 + (c - 0x30);
+          }
+          if (ok) { out.push(n); i += 6; }
+        }
+        return out;
+      }
+
+      /* Port of ZXing StringUtils.guessCharset (UTF-16 BOM, UTF-8, Shift_JIS, ISO-8859-1). */
+      function zxingGuess(bytes) {
+        var length = bytes.length;
+        if (length > 2 && ((bytes[0] === 0xfe && bytes[1] === 0xff) || (bytes[0] === 0xff && bytes[1] === 0xfe))) {
+          return bytes[0] === 0xfe ? 'utf-16be' : 'utf-16le';
+        }
+        var canBeISO88591 = true, canBeShiftJIS = true, canBeUTF8 = true;
+        var utf8BytesLeft = 0, utf8Multi = 0;
+        var sjisBytesLeft = 0, sjisKatakanaChars = 0, sjisCurKatakanaWordLength = 0, sjisCurDoubleBytesWordLength = 0;
+        var sjisMaxKatakanaWordLength = 0, sjisMaxDoubleBytesWordLength = 0, isoHighOther = 0;
+        var utf8bom = length > 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+        for (var i = 0; i < length && (canBeISO88591 || canBeShiftJIS || canBeUTF8); i++) {
+          var value = bytes[i] & 0xff;
+          if (canBeUTF8) {
+            if (utf8BytesLeft > 0) {
+              if ((value & 0x80) === 0) canBeUTF8 = false; else utf8BytesLeft--;
+            } else if ((value & 0x80) !== 0) {
+              if ((value & 0x40) === 0) canBeUTF8 = false;
+              else {
+                utf8BytesLeft++; utf8Multi++;
+                if ((value & 0x20) !== 0) {
+                  utf8BytesLeft++;
+                  if ((value & 0x10) !== 0) {
+                    utf8BytesLeft++;
+                    if ((value & 0x08) !== 0) canBeUTF8 = false;
+                  }
+                }
+              }
+            }
+          }
+          if (canBeISO88591) {
+            if (value > 0x7f && value < 0xa0) canBeISO88591 = false;
+            else if (value > 0x9f && (value < 0xc0 || value === 0xd7 || value === 0xf7)) isoHighOther++;
+          }
+          if (canBeShiftJIS) {
+            if (sjisBytesLeft > 0) {
+              if (value < 0x40 || value === 0x7f || value > 0xfc) canBeShiftJIS = false; else sjisBytesLeft--;
+            } else if (value === 0x80 || value === 0xa0 || value > 0xef) {
+              canBeShiftJIS = false;
+            } else if (value > 0xa0 && value < 0xe0) {
+              sjisKatakanaChars++;
+              sjisCurDoubleBytesWordLength = 0;
+              sjisCurKatakanaWordLength++;
+              if (sjisCurKatakanaWordLength > sjisMaxKatakanaWordLength) sjisMaxKatakanaWordLength = sjisCurKatakanaWordLength;
+            } else if (value > 0x7f) {
+              sjisBytesLeft++;
+              sjisCurKatakanaWordLength = 0;
+              sjisCurDoubleBytesWordLength++;
+              if (sjisCurDoubleBytesWordLength > sjisMaxDoubleBytesWordLength) sjisMaxDoubleBytesWordLength = sjisCurDoubleBytesWordLength;
+            } else {
+              sjisCurKatakanaWordLength = 0;
+              sjisCurDoubleBytesWordLength = 0;
+            }
+          }
+        }
+        if (canBeUTF8 && utf8BytesLeft > 0) canBeUTF8 = false;
+        if (canBeShiftJIS && sjisBytesLeft > 0) canBeShiftJIS = false;
+        if (canBeUTF8 && (utf8bom || utf8Multi > 0)) return 'utf-8';
+        if (canBeShiftJIS && (sjisMaxKatakanaWordLength >= 3 || sjisMaxDoubleBytesWordLength >= 3)) return 'shift_jis';
+        if (canBeISO88591 && canBeShiftJIS) {
+          return (sjisMaxKatakanaWordLength === 2 && sjisKatakanaChars === 2) || isoHighOther * 10 >= length ? 'shift_jis' : 'iso-8859-1';
+        }
+        if (canBeISO88591) return 'iso-8859-1';
+        if (canBeShiftJIS) return 'shift_jis';
+        return 'utf-8';
+      }
+
+      function decodesCleanly(bytes, label) {
+        try { new TextDecoder(label, { fatal: true }).decode(bytes); return true; } catch (e) { return false; }
+      }
+
+      /* Encoding for bytes without ECI: UTF-8 when valid, then the page language's legacy
+         encoding when the bytes are valid in it, then ZXing's guess. */
+      function guessCharset(bytes, lang) {
+        var ascii = true;
+        for (var i = 0; i < bytes.length; i++) if (bytes[i] > 0x7f) { ascii = false; break; }
+        if (ascii) return 'utf-8';
+        var zx = zxingGuess(bytes);
+        if (zx === 'utf-16be' || zx === 'utf-16le' || zx === 'utf-8') return zx;
+        var preferred = LANG_CHARSET[lang];
+        if (preferred && decodesCleanly(bytes, preferred)) return preferred;
+        return zx;
+      }
+
+      function decodeBytes(bytes, label) {
+        return new TextDecoder(label).decode(bytes);
+      }
+
+      /* C0 controls other than tab / LF / CR, DEL, and U+FFFD mean the bytes are not text
+         in this encoding. */
+      function looksBinary(text) {
+        return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD]/.test(text);
+      }
+      /* Control characters drawn as the Unicode Control Pictures (U+2400 block) */
+      function visibleControls(text) {
+        return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, function (c) {
+          var n = c.charCodeAt(0);
+          return String.fromCharCode(n === 0x7f ? 0x2421 : 0x2400 + n);
+        });
+      }
+      function toHex(bytes) {
+        var lines = [];
+        for (var i = 0; i < bytes.length; i += 16) {
+          var row = [];
+          for (var j = i; j < Math.min(i + 16, bytes.length); j++) row.push((bytes[j] < 16 ? '0' : '') + bytes[j].toString(16));
+          lines.push(row.join(' '));
+        }
+        return lines.join('\n');
+      }
+
+      /* One zxing-wasm result → the fields the page shows. Codes with ECI keep ZXing's
+         text (it switches encodings per ECI segment); codes without ECI are decoded here
+         from the raw bytes so the encoding can be shown and changed. */
+      function normalizeResult(r, lang, charsetOverride) {
+        var bytes = r.bytes instanceof Uint8Array ? r.bytes : new Uint8Array(r.bytes || []);
+        var ecis = eciNumbers(r.bytesECI);
+        var encoding, text, label = null;
+        if (r.hasECI && ecis.length) {
+          text = r.text;
+          encoding = { source: 'eci', eci: ecis[0], name: ECI_NAMES[ecis[0]] || ('ECI ' + ecis[0]) };
+        } else {
+          label = charsetOverride || guessCharset(bytes, lang);
+          text = decodeBytes(bytes, label);
+          encoding = { source: charsetOverride ? 'manual' : 'guess', label: label, name: charsetName(label) };
+        }
+        var highBytes = false;
+        for (var i = 0; i < bytes.length; i++) if (bytes[i] > 0x7f) { highBytes = true; break; }
+        var p = r.position || {};
+        return {
+          text: text,
+          bytes: bytes,
+          encoding: encoding,
+          canChangeEncoding: !(r.hasECI && ecis.length) && highBytes,
+          binary: looksBinary(text),
+          format: r.format,
+          version: r.version || '',
+          ecLevel: r.ecLevel || '',
+          corners: [p.topLeft, p.topRight, p.bottomRight, p.bottomLeft].filter(Boolean),
+        };
+      }
+
+      /* Reading order of zxing-wasm results: top to bottom, then left to right (codes whose
+         tops differ by less than half a code height count as one row). */
+      function sortResults(list) {
+        function box(r) {
+          var p = r.position || {};
+          var c = [p.topLeft, p.topRight, p.bottomRight, p.bottomLeft].filter(Boolean);
+          if (!c.length) return { x: 0, y: 0, h: 0 };
+          var xs = c.map(function (q) { return q.x; }), ys = c.map(function (q) { return q.y; });
+          var top = Math.min.apply(null, ys);
+          return { x: Math.min.apply(null, xs), y: top, h: Math.max.apply(null, ys) - top };
+        }
+        return list.slice().sort(function (a, b) {
+          var A = box(a), B = box(b);
+          if (Math.abs(A.y - B.y) > Math.max(A.h, B.h) / 2) return A.y - B.y;
+          return A.x - B.x;
+        });
+      }
+
       /* ── WiFi parser: WIFI:T:WPA;S:ssid;P:pass;H:true;; ──
          Read field by field: KEY:value up to the next unescaped `;`. A backslash escapes the
          next character (ZXing "Barcode Contents": \ escapes ; , : " \), so values are
          returned unescaped. The first of repeated keys wins; unknown keys are ignored. */
-      function parseWifi(text) {
-        var result = { ssid: '', pass: '', enc: '', hidden: false };
-        var fields = {};
-        var i = 5; // after "WIFI:"
+      function readFields(text, start) {
+        var fields = [];
+        var i = start;
         while (i < text.length) {
           var colon = text.indexOf(':', i);
           var semi = text.indexOf(';', i);
@@ -272,9 +527,19 @@
             if (c === ';') break;
             value += c;
           }
-          if (!Object.prototype.hasOwnProperty.call(fields, key)) fields[key] = value;
+          fields.push([key, value]);
           i = j + 1;
         }
+        return fields;
+      }
+      function firstFields(list) {
+        var fields = {};
+        list.forEach(function (kv) { if (!Object.prototype.hasOwnProperty.call(fields, kv[0])) fields[kv[0]] = kv[1]; });
+        return fields;
+      }
+      function parseWifi(text) {
+        var result = { ssid: '', pass: '', enc: '', hidden: false };
+        var fields = firstFields(readFields(text, 5)); // after "WIFI:"
         if (fields.S !== undefined) result.ssid = fields.S;
         if (fields.P !== undefined) result.pass = fields.P;
         if (fields.T !== undefined) result.enc = fields.T;
@@ -290,220 +555,625 @@
         if (wifi.hidden) out.push(labels.hiddenNetwork + ': ✓');
         return out.join('\n');
       }
-      /* ── engine:end ── */
 
-      /* ── Copy helper ── */
-      function copyText(text, btn) {
-        navigator.clipboard.writeText(text).then(function () {
-          var orig = btn.textContent;
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = orig; }, 1500);
+      /* Percent-decoding; `+` stays `+` (RFC 6068 and RFC 5724 encode spaces as %20) unless
+         plusIsSpace (the geo: ?q= search form). */
+      function pctDecode(s, plusIsSpace) {
+        var v = plusIsSpace ? s.replace(/\+/g, '%20') : s;
+        try { return decodeURIComponent(v); } catch (e) { return s; }
+      }
+      /* Query string → [[name, value]] (RFC 6068 / RFC 5724 hfields). */
+      function queryPairs(q, plusIsSpace) {
+        if (!q) return [];
+        return q.split('&').filter(Boolean).map(function (part) {
+          var eq = part.indexOf('=');
+          return eq < 0 ? [pctDecode(part).toLowerCase(), ''] : [pctDecode(part.slice(0, eq)).toLowerCase(), pctDecode(part.slice(eq + 1), plusIsSpace)];
         });
       }
 
-      /* ── Show result ── */
-      function showResult(data) {
-        var text = data.data;
-        var type = detectType(text);
-
-        typeBadge.textContent = t.types[type] || type;
-        typeBadge.className = 'qrd-type-badge qrd-type-' + type;
-
-        /* Hide all cards */
-        genericCard.style.display = 'none';
-        urlCard.style.display     = 'none';
-        wifiCard.style.display    = 'none';
-
-        if (type === 'url') {
-          var urlLink = document.getElementById('qrd-url-link');
-          urlLink.href = text;
-          urlLink.textContent = text;
-          urlCard.style.display = '';
-          document.getElementById('qrd-copy-url').onclick = function () {
-            copyText(text, this);
-            window.trackTool && window.trackTool('qr-code-decoder', 'copy_url');
-          };
-        } else if (type === 'wifi') {
-          var wifi = parseWifi(text);
-          document.getElementById('qrd-wifi-ssid').textContent = wifi.ssid;
-          document.getElementById('qrd-wifi-pass').textContent = wifi.pass || '—';
-          document.getElementById('qrd-wifi-enc').textContent  = wifi.enc  || '—';
-          document.getElementById('qrd-wifi-hidden').textContent = wifi.hidden ? '✓' : '—';
-          wifiCard.style.display = '';
-          document.getElementById('qrd-copy-wifi').onclick = function () {
-            copyText(wifiCopyText(wifi, t), this);
-            window.trackTool && window.trackTool('qr-code-decoder', 'copy_wifi');
-          };
-        } else {
-          textPre.textContent = text;
-          genericCard.style.display = '';
-          document.getElementById('qrd-copy').onclick = function () {
-            copyText(text, this);
-            window.trackTool && window.trackTool('qr-code-decoder', 'copy_text');
-          };
-        }
-
-        successBlock.style.display = '';
-        statusEl.textContent = '';
-        statusEl.className = 'qrd-status';
-        window.trackTool && window.trackTool('qr-code-decoder', 'decode_' + type);
+      /* MECARD (NTT docomo phone-book format, ZXing "Barcode Contents"):
+         MECARD:N:Sato,Taro;SOUND:サトウ,タロウ;TEL:0312345678;EMAIL:a@example.jp;; */
+      var MECARD_KEYS = { N: 'name', SOUND: 'reading', TEL: 'tel', 'TEL-AV': 'tel', EMAIL: 'email', ADR: 'address',
+        URL: 'url', NOTE: 'note', BDAY: 'birthday', NICKNAME: 'nickname', ORG: 'org' };
+      function parseMecard(text) {
+        return readFields(text, 7).filter(function (kv) { return MECARD_KEYS[kv[0]] && kv[1] !== ''; })
+          .map(function (kv) { return [MECARD_KEYS[kv[0]], kv[1]]; });
       }
 
-      /* ── Decode image via jsQR ── */
-      function decodeImage(src) {
-        if (typeof jsQR === 'undefined') {
-          statusEl.textContent = t.errNoLib;
-          statusEl.className = 'qrd-status error';
+      /* vCard 2.1 / 3.0 / 4.0 (RFC 6350): unfold lines, drop groups and parameters,
+         unescape \n \, \; \\, decode QUOTED-PRINTABLE (vCard 2.1). */
+      var VCARD_KEYS = { FN: 'name', N: 'name', ORG: 'org', TITLE: 'title', TEL: 'tel', EMAIL: 'email', ADR: 'address',
+        URL: 'url', NOTE: 'note', BDAY: 'birthday', NICKNAME: 'nickname' };
+      function decodeQP(value, charset) {
+        var bytes = [];
+        var s = value.replace(/=\r?\n/g, '');
+        for (var i = 0; i < s.length; i++) {
+          if (s[i] === '=' && /^[0-9A-Fa-f]{2}$/.test(s.substr(i + 1, 2))) { bytes.push(parseInt(s.substr(i + 1, 2), 16)); i += 2; }
+          else bytes.push(s.charCodeAt(i) & 0xff);
+        }
+        try { return new TextDecoder(charset || 'utf-8').decode(new Uint8Array(bytes)); } catch (e) { return value; }
+      }
+      function vcardUnescape(v) {
+        return v.replace(/\\([nN,;:\\])/g, function (m, c) { return c === 'n' || c === 'N' ? '\n' : c; });
+      }
+      /* Split on `;` not preceded by a backslash (N and ADR components) */
+      function splitComponents(v) {
+        var parts = [''];
+        for (var i = 0; i < v.length; i++) {
+          if (v[i] === '\\' && i + 1 < v.length) { parts[parts.length - 1] += v[i] + v[i + 1]; i++; }
+          else if (v[i] === ';') parts.push('');
+          else parts[parts.length - 1] += v[i];
+        }
+        return parts;
+      }
+      function parseVcard(text) {
+        var lines = text.replace(/\r\n|\r/g, '\n').split('\n');
+        var unfolded = [];
+        lines.forEach(function (line) {
+          if (/^[ \t]/.test(line) && unfolded.length) unfolded[unfolded.length - 1] += line.slice(1);
+          else if (unfolded.length && /ENCODING=QUOTED-PRINTABLE/i.test(unfolded[unfolded.length - 1]) && /=$/.test(unfolded[unfolded.length - 1])) unfolded[unfolded.length - 1] = unfolded[unfolded.length - 1].slice(0, -1) + line;
+          else unfolded.push(line);
+        });
+        var out = [], hasFN = false;
+        unfolded.forEach(function (line) {
+          var colon = line.indexOf(':');
+          if (colon < 0) return;
+          var head = line.slice(0, colon).split(';');
+          var name = head[0].replace(/^[^.]*\./, '').toUpperCase();
+          var key = VCARD_KEYS[name];
+          if (!key) return;
+          var params = head.slice(1).join(';');
+          var value = line.slice(colon + 1);
+          if (/ENCODING=QUOTED-PRINTABLE|^QUOTED-PRINTABLE$/i.test(params)) {
+            var cs = /CHARSET=([^;:]+)/i.exec(params);
+            value = decodeQP(value, cs ? cs[1] : 'utf-8');
+          }
+          if (name === 'N' || name === 'ADR') {
+            value = splitComponents(value).map(vcardUnescape).filter(function (p) { return p.trim() !== ''; });
+            value = name === 'N' ? value.reverse().join(' ') : value.join(', ');
+          } else {
+            value = vcardUnescape(value);
+          }
+          if (name === 'FN') hasFN = true;
+          if (value !== '') out.push([key, value, name]);
+        });
+        if (hasFN) out = out.filter(function (f) { return f[2] !== 'N'; });
+        return out.map(function (f) { return [f[0], f[1]]; });
+      }
+
+      /* MATMSG (docomo mail): MATMSG:TO:a@example.com;SUB:Hi;BODY:Text;; */
+      function parseMatmsg(text) {
+        var map = { TO: 'to', SUB: 'subject', BODY: 'body' };
+        return readFields(text, 7).filter(function (kv) { return map[kv[0]] && kv[1] !== ''; })
+          .map(function (kv) { return [map[kv[0]], kv[1]]; });
+      }
+      /* mailto: (RFC 6068) */
+      function parseMailto(text) {
+        var rest = text.slice(7), q = rest.indexOf('?');
+        var out = [];
+        var to = pctDecode(q < 0 ? rest : rest.slice(0, q));
+        if (to) out.push(['to', to]);
+        queryPairs(q < 0 ? '' : rest.slice(q + 1)).forEach(function (kv) {
+          if (kv[0] === 'to' && kv[1]) out.push(['to', kv[1]]);
+          else if ((kv[0] === 'cc' || kv[0] === 'bcc' || kv[0] === 'subject' || kv[0] === 'body') && kv[1]) out.push([kv[0], kv[1]]);
+        });
+        return out;
+      }
+      /* sms: (RFC 5724) and SMSTO: / MMSTO: (ZXing) */
+      function parseSms(text) {
+        var out = [];
+        if (/^(smsto|mmsto):/i.test(text)) {
+          var rest = text.slice(6), c = rest.indexOf(':');
+          out.push(['number', c < 0 ? rest : rest.slice(0, c)]);
+          if (c >= 0 && rest.slice(c + 1)) out.push(['body', rest.slice(c + 1)]);
+          return out;
+        }
+        var r = text.slice(4), q = r.indexOf('?');
+        (q < 0 ? r : r.slice(0, q)).split(',').filter(Boolean).forEach(function (n) { out.push(['number', pctDecode(n)]); });
+        queryPairs(q < 0 ? '' : r.slice(q + 1)).forEach(function (kv) { if (kv[0] === 'body' && kv[1]) out.push(['body', kv[1]]); });
+        return out;
+      }
+      /* tel: (RFC 3966) */
+      function parseTel(text) {
+        return [['number', pctDecode(text.slice(4).split(';')[0])]];
+      }
+      /* geo: (RFC 5870) plus the Android ?q= form */
+      function parseGeo(text) {
+        var m = /^geo:(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:,(-?\d+(?:\.\d+)?))?([^?]*)(?:\?(.*))?$/i.exec(text.trim());
+        if (!m) return null;
+        var lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+        var out = [['latitude', m[1]], ['longitude', m[2]]];
+        if (m[3] !== undefined) out.push(['altitude', m[3]]);
+        queryPairs(m[5] || '', true).forEach(function (kv) { if (kv[0] === 'q' && kv[1]) out.push(['query', kv[1]]); });
+        var map = null;
+        if (!(lat === 0 && lon === 0)) {
+          map = 'https://www.openstreetmap.org/?mlat=' + m[1] + '&mlon=' + m[2] + '#map=16/' + m[1] + '/' + m[2];
+        }
+        return { fields: out, map: map };
+      }
+
+      /* http(s) addresses only become links. The host is shown as the URL parser returns it
+         (IDN in punycode); "user@host" and IDN hosts get a warning. */
+      function parseUrl(text) {
+        var s = text.trim();
+        if (!/^https?:\/\/[^\s]+$/i.test(s)) return null;
+        var u;
+        try { u = new URL(s); } catch (e) { return null; }
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+        var warnings = [];
+        if (u.username || u.password) warnings.push('userinfo');
+        if (/(^|\.)xn--/i.test(u.hostname)) warnings.push('idn');
+        return { href: u.href, host: u.hostname, warnings: warnings };
+      }
+
+      var RISKY_SCHEMES = /^(javascript|vbscript|data|file|blob|filesystem):/i;
+
+      /* Decoded text → { type, fields?, url?, map?, scheme?, warnings } */
+      function classify(text) {
+        var s = text.replace(/^\uFEFF/, '');
+        var head = s.trim();
+        var url = parseUrl(s);
+        if (url) return { type: 'url', url: url, warnings: url.warnings };
+        if (/^WIFI:/i.test(head)) return { type: 'wifi', wifi: parseWifi(head), warnings: [] };
+        if (/^BEGIN:VCARD/i.test(head)) return { type: 'contact', fields: parseVcard(head), warnings: [] };
+        if (/^MECARD:/i.test(head)) return { type: 'contact', fields: parseMecard(head), warnings: [] };
+        if (/^MATMSG:/i.test(head)) return { type: 'email', fields: parseMatmsg(head), warnings: [] };
+        if (/^mailto:/i.test(head)) return { type: 'email', fields: parseMailto(head), warnings: [] };
+        if (/^tel:/i.test(head)) return { type: 'phone', fields: parseTel(head), warnings: [] };
+        if (/^(sms|smsto|mmsto):/i.test(head)) return { type: 'sms', fields: parseSms(head), warnings: [] };
+        if (/^geo:/i.test(head)) {
+          var g = parseGeo(head);
+          if (g) return { type: 'geo', fields: g.fields, map: g.map, warnings: [] };
+        }
+        var scheme = /^([a-z][a-z0-9+.\-]*):\S/i.exec(head);
+        if (scheme && !/\s/.test(head)) {
+          return { type: 'link', scheme: scheme[1].toLowerCase(), warnings: RISKY_SCHEMES.test(head) ? ['script'] : [] };
+        }
+        return { type: 'text', warnings: [] };
+      }
+      /* ── engine:end ── */
+
+      function fmt(s, vars) {
+        return String(s).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] !== undefined ? vars[k] : m; });
+      }
+      function track(action) { window.trackTool && window.trackTool('qr-code-decoder', action); }
+
+      var wrap = document.getElementById('qrd-wrap');
+      var inputs = document.getElementById('qrd-inputs');
+      var dropzone = document.getElementById('qrd-dropzone');
+      var fileInput = document.getElementById('qrd-file');
+      var cameraBtn = document.getElementById('qrd-camera');
+      var urlRow = document.getElementById('qrd-url-row');
+      var urlInput = document.getElementById('qrd-url-input');
+      var urlBtn = document.getElementById('qrd-url-decode');
+      var statusEl = document.getElementById('qrd-status');
+      var cameraView = document.getElementById('qrd-camera-view');
+      var video = document.getElementById('qrd-video');
+      var cameraStop = document.getElementById('qrd-camera-stop');
+      var resultArea = document.getElementById('qrd-result-area');
+      var resultsEl = document.getElementById('qrd-results');
+      var preview = document.getElementById('qrd-preview');
+      var clearBtn = document.getElementById('qrd-clear');
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status qrd-status' + (kind ? ' ' + kind : '');
+      }
+
+      /* ── zxing-wasm, loaded on first use from /vendor (never from a CDN) ── */
+      var readerPromise = null;
+      function ensureReader() {
+        if (readerPromise) return readerPromise;
+        readerPromise = new Promise(function (resolve, reject) {
+          function prepare() {
+            var Z = window.ZXingWASM;
+            Z.prepareZXingModule({
+              overrides: {
+                locateFile: function (path, prefix) { return /\.wasm$/.test(path) ? '/vendor/zxing-reader.wasm' : prefix + path; },
+              },
+              fireImmediately: true,
+            }).then(function () { resolve(Z); }, reject);
+          }
+          if (window.ZXingWASM) { prepare(); return; }
+          var s = document.createElement('script');
+          s.src = '/vendor/zxing-reader.js';
+          s.onload = prepare;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+        readerPromise.catch(function () { readerPromise = null; });
+        return readerPromise;
+      }
+      ['pointerenter', 'focusin', 'dragenter', 'touchstart'].forEach(function (ev) {
+        wrap.addEventListener(ev, function () { ensureReader().catch(function () {}); }, { once: true, passive: true });
+      });
+
+      /* ── Rendering ── */
+      var current = null; // { canvas, results: [{ raw, charset }] }
+
+      function el(tag, cls, text) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined) e.textContent = text;
+        return e;
+      }
+      function copyButton(getText, action) {
+        var b = el('button', 'btn-copy', t.copy);
+        b.type = 'button';
+        b.addEventListener('click', function () {
+          navigator.clipboard.writeText(getText()).then(function () {
+            b.textContent = t.copied; b.classList.add('copied');
+            setTimeout(function () { b.textContent = t.copy; b.classList.remove('copied'); }, 1500);
+          });
+          track(action);
+        });
+        return b;
+      }
+      function fieldTable(rows) {
+        var table = el('table', 'qrd-fields');
+        var tbody = el('tbody');
+        rows.forEach(function (r) {
+          var tr = el('tr');
+          tr.appendChild(el('th', null, t.fields[r[0]] || r[0]));
+          var td = el('td', null, r[1]);
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        return table;
+      }
+      function warning(msg) { return el('p', 'qrd-warn', msg); }
+
+      function renderCard(entry, index, total) {
+        var n = normalizeResult(entry.raw, pageLang, entry.charset);
+        var cls = n.binary ? { type: 'binary', warnings: [] } : classify(n.text);
+        var card = el('section', 'qrd-card');
+        card.setAttribute('aria-label', (total > 1 ? '#' + (index + 1) + ' ' : '') + t.types[cls.type]);
+
+        var head = el('div', 'qrd-card-head');
+        if (total > 1) head.appendChild(el('span', 'qrd-num', String(index + 1)));
+        head.appendChild(el('span', 'qrd-badge qrd-badge-' + cls.type, t.types[cls.type]));
+        var meta = [];
+        if (n.format && n.format !== 'QRCode') meta.push(n.format === 'MicroQRCode' ? 'Micro QR' : n.format);
+        if (n.version) meta.push(fmt(t.version, { v: n.version }));
+        if (n.ecLevel) meta.push(fmt(t.ecLevel, { l: n.ecLevel }));
+        if (n.encoding.source === 'eci') meta.push(fmt(t.encodingEci, { name: n.encoding.name, n: n.encoding.eci }));
+        else if (n.canChangeEncoding) meta.push(n.encoding.source === 'guess' ? fmt(t.encodingGuess, { name: n.encoding.name }) : n.encoding.name);
+        head.appendChild(el('span', 'qrd-meta', meta.join(' · ')));
+        card.appendChild(head);
+
+        var body = el('div', 'qrd-card-body');
+        var copyText = function () { return n.text; };
+        if (cls.type === 'url') {
+          var a = el('a', 'qrd-link', n.text.trim());
+          a.href = cls.url.href;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer nofollow';
+          a.addEventListener('click', function () { track('open_url'); });
+          body.appendChild(a);
+          var hostLine = el('p', 'qrd-host');
+          hostLine.appendChild(el('span', 'qrd-host-label', t.host + ': '));
+          hostLine.appendChild(el('code', null, cls.url.host));
+          body.appendChild(hostLine);
+          cls.warnings.forEach(function (w) {
+            body.appendChild(warning(fmt(w === 'userinfo' ? t.warnUserinfo : t.warnIdn, { host: cls.url.host })));
+          });
+        } else if (cls.type === 'wifi') {
+          var w = cls.wifi;
+          body.appendChild(fieldTable([['ssid', w.ssid], ['password', w.pass || '—'], ['encryption', w.enc || '—'], ['hiddenNetwork', w.hidden ? '✓' : '—']]));
+          copyText = function () { return wifiCopyText(w, t.fields); };
+        } else if (cls.fields && cls.fields.length) {
+          body.appendChild(fieldTable(cls.fields));
+          if (cls.map) {
+            var m = el('a', 'qrd-maplink', t.openMap);
+            m.href = cls.map; m.target = '_blank'; m.rel = 'noopener noreferrer nofollow';
+            body.appendChild(m);
+          }
+        }
+        if (cls.type === 'link') {
+          body.appendChild(warning(fmt(cls.warnings.length ? t.warnScript : t.linkNote, { scheme: cls.scheme })));
+        }
+        var pre = el('pre', 'qrd-text', n.binary ? visibleControls(n.text) : n.text);
+        if (cls.type === 'text' || cls.type === 'link' || cls.type === 'binary') {
+          body.appendChild(pre);
+        } else if (cls.type !== 'url') {
+          var raw = el('details', 'qrd-raw');
+          raw.appendChild(el('summary', null, t.rawText));
+          raw.appendChild(pre);
+          body.appendChild(raw);
+        }
+
+        var bytesBox = el('details', 'qrd-raw');
+        if (n.binary) bytesBox.open = true;
+        bytesBox.appendChild(el('summary', null, fmt(t.bytes, { n: n.bytes.length })));
+        bytesBox.appendChild(el('pre', 'qrd-hex', toHex(n.bytes)));
+        body.appendChild(bytesBox);
+        card.appendChild(body);
+
+        var actions = el('div', 'qrd-card-actions');
+        actions.appendChild(copyButton(copyText, 'copy_' + cls.type));
+        if (n.canChangeEncoding) {
+          var lab = el('label', 'qrd-enc');
+          lab.appendChild(el('span', null, t.encodingLabel));
+          var sel = el('select', 'qrd-enc-select');
+          var auto = el('option', null, fmt(t.encodingAuto, { name: charsetName(guessCharset(n.bytes, pageLang)) }));
+          auto.value = '';
+          sel.appendChild(auto);
+          CHARSETS.forEach(function (c) { var o = el('option', null, c[1]); o.value = c[0]; sel.appendChild(o); });
+          sel.value = entry.charset || '';
+          sel.addEventListener('change', function () {
+            entry.charset = sel.value || null;
+            var fresh = renderCard(entry, index, total);
+            card.replaceWith(fresh);
+            var s2 = fresh.querySelector('.qrd-enc-select');
+            if (s2) s2.focus();
+            track('change_encoding');
+          });
+          lab.appendChild(sel);
+          actions.appendChild(lab);
+        }
+        card.appendChild(actions);
+        return card;
+      }
+
+      function drawPreview(source, results) {
+        var maxW = 480;
+        var s = Math.min(1, maxW / source.width);
+        preview.width = Math.round(source.width * s);
+        preview.height = Math.round(source.height * s);
+        var ctx = preview.getContext('2d');
+        ctx.drawImage(source, 0, 0, preview.width, preview.height);
+        var color = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#b45309';
+        ctx.lineWidth = Math.max(2, preview.width / 160);
+        results.forEach(function (entry, i) {
+          var c = normalizeResult(entry.raw, pageLang, null).corners;
+          if (c.length !== 4) return;
+          ctx.strokeStyle = color;
+          ctx.beginPath();
+          c.forEach(function (p, k) { ctx[k ? 'lineTo' : 'moveTo'](p.x * s, p.y * s); });
+          ctx.closePath();
+          ctx.stroke();
+          if (results.length > 1) {
+            var r = Math.max(10, preview.width / 28);
+            ctx.fillStyle = color;
+            ctx.beginPath(); ctx.arc(c[0].x * s, c[0].y * s, r, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.font = '700 ' + Math.round(r * 1.2) + 'px system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(String(i + 1), c[0].x * s, c[0].y * s + 1);
+          }
+        });
+      }
+
+      function showResults(canvas, rawResults, scaledFrom) {
+        var sorted = sortResults(rawResults).map(function (r) { return { raw: r, charset: null }; });
+        current = { canvas: canvas, results: sorted };
+        resultsEl.textContent = '';
+        sorted.forEach(function (entry, i) { resultsEl.appendChild(renderCard(entry, i, sorted.length)); });
+        drawPreview(canvas, sorted);
+        resultArea.hidden = false;
+        inputs.classList.add('qrd-compact');
+        var msg = fmt(sorted.length > 1 ? t.foundMany : t.found, { n: sorted.length });
+        if (scaledFrom) msg += ' ' + fmt(t.scaled, scaledFrom);
+        setStatus(msg, 'success');
+        var first = resultsEl.firstElementChild;
+        if (first) {
+          var r = first.getBoundingClientRect();
+          if (r.top < 0 || r.top > window.innerHeight - 120) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+        sorted.forEach(function (entry) {
+          var n = normalizeResult(entry.raw, pageLang, null);
+          track('decode_' + (n.binary ? 'binary' : classify(n.text).type));
+        });
+      }
+
+      function showNone(canvas) {
+        current = null;
+        resultsEl.textContent = '';
+        if (canvas) { drawPreview(canvas, []); resultArea.hidden = false; inputs.classList.add('qrd-compact'); }
+        setStatus(t.errNoQr, 'error');
+        track('decode_none');
+      }
+
+      function loadImage(blob) {
+        return new Promise(function (resolve, reject) {
+          var url = URL.createObjectURL(blob);
+          var img = new Image();
+          img.onload = function () { resolve({ img: img, url: url }); };
+          img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('image')); };
+          img.src = url;
+        });
+      }
+
+      var busy = 0;
+      function processBlob(blob, source) {
+        stopCamera();
+        if (blob.type && blob.type.indexOf('image/') !== 0) {
+          setStatus(fmt(t.errNotImage, { type: blob.type }), 'error');
           return;
         }
-
-        statusEl.textContent = t.decoding;
-        statusEl.className = 'qrd-status';
-        successBlock.style.display = 'none';
-
-        var img = new Image();
-        img.onload = function () {
+        var job = ++busy;
+        setStatus(readerPromise ? t.decoding : t.loading, 'info');
+        Promise.all([ensureReader().catch(function () { return null; }), loadImage(blob).catch(function () { return null; })]).then(function (res) {
+          if (job !== busy) return;
+          var Z = res[0], loaded = res[1];
+          if (!loaded) { setStatus(t.errRead, 'error'); return; }
+          if (!Z) { URL.revokeObjectURL(loaded.url); setStatus(t.errLoad, 'error'); return; }
+          setStatus(t.decoding, 'info');
+          var w = loaded.img.naturalWidth, h = loaded.img.naturalHeight;
+          var size = fitSize(w, h);
           var canvas = document.createElement('canvas');
-          canvas.width  = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          var ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-          try {
-            var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-            if (!code) {
-              /* Try inverted (dark background) */
-              code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'onlyInvert' });
-            }
-            if (code) {
-              showResult(code);
-            } else {
-              statusEl.textContent = t.errNoQr;
-              statusEl.className = 'qrd-status error';
-            }
-          } catch (e) {
-            statusEl.textContent = t.errRead;
-            statusEl.className = 'qrd-status error';
-          }
-        };
-        img.onerror = function () {
-          statusEl.textContent = t.errRead;
-          statusEl.className = 'qrd-status error';
-        };
-        img.src = src;
-      }
-
-      /* ── Process file ── */
-      function processFile(file) {
-        if (!file || !file.type.startsWith('image/')) return;
-        var reader = new FileReader();
-        reader.onload = function (e) {
-          var dataUrl = e.target.result;
-          previewImg.src = dataUrl;
-          dropzone.style.display = 'none';
-          resultArea.style.display = '';
-          decodeImage(dataUrl);
-        };
-        reader.readAsDataURL(file);
-      }
-
-      /* ── Decode from URL ── */
-      function decodeFromUrl() {
-        var url = urlInput.value.trim();
-        if (!url) return;
-        urlError.style.display = 'none';
-        urlDecodeBtn.disabled = true;
-        fetch(url)
-          .then(function (response) {
-            if (!response.ok) throw new Error('fetch failed');
-            return response.blob();
-          })
-          .then(function (blob) {
-            urlDecodeBtn.disabled = false;
-            if (!blob.type.startsWith('image/')) throw new Error('not an image');
-            var reader = new FileReader();
-            reader.onload = function (e) {
-              var dataUrl = e.target.result;
-              previewImg.src = dataUrl;
-              dropzone.style.display = 'none';
-              urlRow.style.display = 'none';
-              resultArea.style.display = '';
-              decodeImage(dataUrl);
-              window.trackTool && window.trackTool('qr-code-decoder', 'decode_from_url');
-            };
-            reader.readAsDataURL(blob);
-          })
-          .catch(function () {
-            urlDecodeBtn.disabled = false;
-            urlError.textContent = t.errUrlFetch;
-            urlError.style.display = '';
+          canvas.width = size.width; canvas.height = size.height;
+          var ctx = canvas.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(loaded.img, 0, 0, size.width, size.height);
+          URL.revokeObjectURL(loaded.url);
+          var data = ctx.getImageData(0, 0, size.width, size.height);
+          return Z.readBarcodes(data, READER_OPTIONS).then(function (results) {
+            if (job !== busy) return;
+            var valid = results.filter(function (r) { return r.isValid; });
+            if (!valid.length) { showNone(canvas); return; }
+            showResults(canvas, valid, size.scaled ? { w: w, h: h, sw: size.width, sh: size.height } : null);
+            if (source) track('source_' + source);
           });
+        }).catch(function () { if (job === busy) setStatus(t.errRead, 'error'); });
       }
 
-      urlDecodeBtn.addEventListener('click', decodeFromUrl);
-      urlInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') decodeFromUrl();
-      });
-
-      /* ── Events ── */
+      /* ── Inputs ── */
       dropzone.addEventListener('click', function () { fileInput.click(); });
-      dropzone.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
-
+      dropzone.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      });
       fileInput.addEventListener('change', function () {
-        if (fileInput.files && fileInput.files[0]) processFile(fileInput.files[0]);
+        if (fileInput.files && fileInput.files[0]) processBlob(fileInput.files[0], 'file');
         fileInput.value = '';
       });
-
-      dropzone.addEventListener('dragover', function (e) {
+      /* The whole tool is a drop target, so a drop next to the zone does not navigate away. */
+      wrap.addEventListener('dragover', function (e) {
+        if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') !== -1) {
+          e.preventDefault();
+          dropzone.classList.add('drag-over');
+        }
+      });
+      wrap.addEventListener('dragleave', function (e) {
+        if (!wrap.contains(e.relatedTarget)) dropzone.classList.remove('drag-over');
+      });
+      wrap.addEventListener('drop', function (e) {
+        if (!e.dataTransfer || !e.dataTransfer.files.length) return;
         e.preventDefault();
-        dropzone.classList.add('drag-over');
-      });
-      dropzone.addEventListener('dragleave', function () {
         dropzone.classList.remove('drag-over');
+        processBlob(e.dataTransfer.files[0], 'drop');
       });
-      dropzone.addEventListener('drop', function (e) {
-        e.preventDefault();
-        dropzone.classList.remove('drag-over');
-        var file = e.dataTransfer.files[0];
-        if (file) processFile(file);
-      });
-
-      /* Clipboard paste */
       document.addEventListener('paste', function (e) {
         var items = e.clipboardData && e.clipboardData.items;
         if (!items) return;
         for (var i = 0; i < items.length; i++) {
-          if (items[i].type.startsWith('image/')) {
-            processFile(items[i].getAsFile());
-            break;
+          if (items[i].kind === 'file' && items[i].type.indexOf('image/') === 0) {
+            var f = items[i].getAsFile();
+            if (f) { e.preventDefault(); processBlob(f, 'paste'); }
+            return;
           }
         }
       });
 
-      /* Reset */
-      resetBtn.addEventListener('click', function () {
-        resultArea.style.display = 'none';
-        dropzone.style.display   = '';
-        urlRow.style.display     = '';
+      function decodeFromUrl() {
+        var value = urlInput.value.trim();
+        if (!value) return;
+        var u;
+        try { u = new URL(value); } catch (e) { u = null; }
+        if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:')) { setStatus(t.errUrlScheme, 'error'); return; }
+        urlBtn.disabled = true;
+        setStatus(t.decoding, 'info');
+        ensureReader().catch(function () {});
+        fetch(u.href, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' })
+          .then(function (response) {
+            if (!response.ok) { var err = new Error('status'); err.status = response.status; throw err; }
+            return response.blob();
+          })
+          .then(function (blob) {
+            urlBtn.disabled = false;
+            processBlob(blob.type ? blob : new Blob([blob], { type: 'image/*' }), 'url');
+          })
+          .catch(function (err) {
+            urlBtn.disabled = false;
+            setStatus(err && err.status ? fmt(t.errUrlStatus, { status: err.status }) : t.errUrlFetch, 'error');
+          });
+      }
+      urlBtn.addEventListener('click', decodeFromUrl);
+      urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); decodeFromUrl(); } });
+
+      clearBtn.addEventListener('click', function () {
+        busy++;
+        current = null;
+        resultsEl.textContent = '';
+        resultArea.hidden = true;
+        inputs.classList.remove('qrd-compact');
         urlInput.value = '';
-        urlError.style.display = 'none';
-        previewImg.src = '';
-        statusEl.textContent = '';
-        statusEl.className = 'qrd-status';
-        successBlock.style.display = 'none';
+        setStatus('');
+        dropzone.focus();
       });
+
+      /* ── Camera ── */
+      var stream = null, scanTimer = null, scanning = false;
+      function stopCamera() {
+        if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+        scanning = false;
+        if (stream) { stream.getTracks().forEach(function (tr) { tr.stop(); }); stream = null; }
+        video.srcObject = null;
+        cameraView.hidden = true;
+        cameraBtn.hidden = false;
+      }
+      function cameraError(err) {
+        var name = err && err.name;
+        if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') return t.errCamDenied;
+        if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') return t.errCamNotFound;
+        if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError') return t.errCamBusy;
+        return fmt(t.errCam, { name: name || String(err) });
+      }
+      function scanFrame(Z) {
+        if (!scanning) return;
+        if (video.readyState >= 2 && video.videoWidth) {
+          var size = fitSize(video.videoWidth, video.videoHeight, 1280 * 720);
+          var canvas = document.createElement('canvas');
+          canvas.width = size.width; canvas.height = size.height;
+          var ctx = canvas.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(video, 0, 0, size.width, size.height);
+          Z.readBarcodes(ctx.getImageData(0, 0, size.width, size.height), CAMERA_OPTIONS).then(function (results) {
+            if (!scanning) return;
+            var valid = results.filter(function (r) { return r.isValid; });
+            if (valid.length) {
+              stopCamera();
+              showResults(canvas, valid, null);
+              track('source_camera');
+            } else {
+              scanTimer = setTimeout(function () { scanFrame(Z); }, 120);
+            }
+          }, function () { scanTimer = setTimeout(function () { scanFrame(Z); }, 250); });
+        } else {
+          scanTimer = setTimeout(function () { scanFrame(Z); }, 120);
+        }
+      }
+      cameraBtn.addEventListener('click', function () {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setStatus(t.errCamNoSupport, 'error'); return; }
+        busy++;
+        setStatus('');
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+          .then(function (s) {
+            stream = s;
+            video.srcObject = stream;
+            cameraView.hidden = false;
+            cameraBtn.hidden = true;
+            resultArea.hidden = true;
+            if (!readerPromise) setStatus(t.loading, 'info');
+            return ensureReader().then(function (Z) {
+              setStatus('');
+              return video.play().then(function () { scanning = true; scanFrame(Z); });
+            }, function () { var e = new Error('reader'); e.readerError = true; throw e; });
+          })
+          .catch(function (err) {
+            stopCamera();
+            setStatus(err && err.readerError ? t.errLoad : cameraError(err), 'error');
+          });
+        track('camera_start');
+      });
+      cameraStop.addEventListener('click', function () { stopCamera(); setStatus(''); });
+      document.addEventListener('visibilitychange', function () { if (document.hidden && stream) { stopCamera(); setStatus(''); } });
     })();
   </script>
 </div>
 
 <style>
-  .qrd-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .qrd-wrap { display: flex; flex-direction: column; gap: 0.85rem; min-width: 0; }
 
-  /* ── Drop zone ── */
+  /* ── Inputs ── */
+  .qrd-inputs { display: flex; flex-direction: column; gap: 0.85rem; }
+  .qrd-pick-row { display: flex; gap: 0.75rem; align-items: stretch; }
   .qrd-dropzone {
+    flex: 1 1 auto;
+    min-width: 0;
     border: 2px dashed var(--color-border);
     border-radius: var(--radius-md);
-    padding: 2.5rem 1.5rem;
+    padding: 1.25rem 1rem;
     text-align: center;
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
@@ -511,213 +1181,190 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
-    outline: none;
+    justify-content: center;
+    gap: 0.4rem;
   }
   .qrd-dropzone:hover,
-  .qrd-dropzone:focus,
   .qrd-dropzone.drag-over {
     border-color: var(--color-primary);
     background: var(--color-bg);
   }
-  .qrd-dz-icon { color: var(--color-text-muted); }
-  .qrd-dz-hint { font-size: 0.92rem; color: var(--color-text-secondary); margin: 0; font-weight: 500; }
-  .qrd-dz-sub  { font-size: 0.78rem; color: var(--color-text-muted); margin: 0; }
-
-  /* ── Result area ── */
-  .qrd-result-area {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 1.5rem;
-    align-items: start;
-  }
-  @media (max-width: 600px) {
-    .qrd-result-area { grid-template-columns: 1fr; }
-  }
-
-  .qrd-preview-col {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    align-items: center;
-  }
-
-  .qrd-preview-img {
-    max-width: 200px;
-    max-height: 200px;
-    width: 100%;
-    object-fit: contain;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg);
-    display: block;
-  }
-
-  .qrd-reset-btn { font-size: 0.82rem; padding: 0.3rem 0.75rem; }
-
-  /* ── Output col ── */
-  .qrd-output-col { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .qrd-status { font-size: 0.88rem; min-height: 1.2rem; }
-  .qrd-status.error { color: #c0392b; }
-  [data-theme="dark"] .qrd-status.error { color: #f87171; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .qrd-status.error { color: #f87171; }
-  }
-
-  /* ── Type badge ── */
-  .qrd-type-badge-row { display: flex; align-items: center; gap: 0.5rem; }
-  .qrd-type-badge {
-    display: inline-block;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    padding: 0.15rem 0.55rem;
-    border-radius: 999px;
-    background: var(--color-primary);
-    color: #fff;
-    text-transform: uppercase;
-  }
-  .qrd-type-url   { background: #2563eb; }
-  .qrd-type-wifi  { background: #059669; }
-  .qrd-type-vcard { background: #7c3aed; }
-  .qrd-type-email { background: #d97706; }
-  .qrd-type-phone { background: #0891b2; }
-  .qrd-type-sms   { background: #db2777; }
-  .qrd-type-text  { background: #6b7280; }
-
-  /* ── Cards ── */
-  .qrd-card {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-  }
-  .qrd-card-header {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    padding: 0.4rem 0.75rem;
-    background: var(--color-bg-secondary);
-    border-bottom: 1px solid var(--color-border);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .qrd-text-result {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    padding: 0.6rem 0.75rem;
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: var(--color-text);
-    background: var(--color-bg);
-    max-height: 160px;
-    overflow-y: auto;
-  }
-  .qrd-url-link {
-    display: block;
-    font-size: 0.88rem;
-    padding: 0.6rem 0.75rem;
-    word-break: break-all;
-    color: var(--color-primary);
-    background: var(--color-bg);
-    text-decoration: none;
-  }
-  .qrd-url-link:hover { text-decoration: underline; }
-
-  .qrd-card-actions {
-    padding: 0.4rem 0.75rem;
-    background: var(--color-bg-secondary);
-    border-top: 1px solid var(--color-border);
-  }
-  .btn-sm { font-size: 0.8rem; padding: 0.25rem 0.65rem; }
-
-  /* ── WiFi table ── */
-  .qrd-wifi-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.88rem;
-    background: var(--color-bg);
-  }
-  .qrd-wifi-table th,
-  .qrd-wifi-table td {
-    padding: 0.35rem 0.75rem;
-    text-align: left;
-    border-bottom: 1px solid var(--color-border);
-  }
-  .qrd-wifi-table tr:last-child th,
-  .qrd-wifi-table tr:last-child td { border-bottom: none; }
-  .qrd-wifi-table th {
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    width: 110px;
-    background: var(--color-bg-secondary);
-  }
-
-  /* ── URL decode row ── */
-  .qrd-url-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .qrd-url-label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .qrd-url-input-group {
-    display: flex;
-    gap: 0.5rem;
-  }
-  .qrd-url-input {
-    flex: 1;
-    padding: 0.4rem 0.65rem;
-    font-size: 0.88rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg);
-    color: var(--color-text);
-    outline: none;
-    min-width: 0;
-  }
-  .qrd-url-input:focus {
+  .qrd-dropzone:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
     border-color: var(--color-primary);
   }
-  .qrd-url-btn { font-size: 0.85rem; padding: 0.4rem 0.85rem; white-space: nowrap; }
-  .qrd-url-error {
-    font-size: 0.82rem;
-    color: #c0392b;
-    margin: 0;
+  .qrd-dz-icon { color: var(--color-text-muted); }
+  .qrd-dz-hint { font-size: 0.92rem; color: var(--color-text-secondary); margin: 0; font-weight: 600; }
+  .qrd-dz-sub { font-size: 0.78rem; color: var(--color-text-muted); margin: 0; }
+  .qrd-dz-compact { display: none; }
+  .qrd-camera-btn { flex: 0 0 auto; align-self: center; }
+  .qrd-camera-btn[hidden] { display: none; }
+
+  .qrd-compact .qrd-dropzone { flex-direction: row; padding: 0.55rem 0.9rem; min-height: 44px; }
+  .qrd-compact .qrd-dz-icon { width: 20px; height: 20px; }
+  .qrd-compact .qrd-dz-full,
+  .qrd-compact .qrd-dz-sub,
+  .qrd-compact .qrd-url-row { display: none; }
+  .qrd-compact .qrd-dz-compact { display: block; }
+
+  .qrd-url-row { display: flex; flex-direction: column; gap: 0.35rem; }
+  .qrd-url-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .qrd-url-input-group { display: flex; gap: 0.5rem; }
+  .qrd-url-input { flex: 1; min-width: 0; }
+
+  .qrd-status:empty { display: none; }
+
+  /* ── Camera ── */
+  .qrd-camera-view { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
+  .qrd-camera-view[hidden] { display: none; }
+  .qrd-video {
+    width: 100%;
+    max-width: 480px;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
   }
-  [data-theme="dark"] .qrd-url-error { color: #f87171; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .qrd-url-error { color: #f87171; }
+  .qrd-camera-hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); text-align: center; }
+
+  /* ── Results ── */
+  .qrd-result-area {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(160px, 240px);
+    gap: 1rem;
+    align-items: start;
+  }
+  .qrd-result-area[hidden] { display: none; }
+  .qrd-results { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+  .qrd-preview-col { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; min-width: 0; }
+  .qrd-preview {
+    display: block;
+    max-width: 100%;
+    max-height: 240px;
+    width: auto;
+    height: auto;
+    border-radius: var(--radius-sm);
+    outline: 1px solid var(--color-border-soft);
+    background: var(--color-bg);
   }
 
-  /* ── Privacy + cross-link ── */
-  .qrd-privacy {
-    font-size: 0.78rem;
-    color: var(--color-text-muted);
-    margin: 0;
+  .qrd-results :global(.qrd-card) {
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    min-width: 0;
+  }
+  .qrd-results :global(.qrd-card-head) {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border-soft);
   }
-  .qrd-crosslink {
-    font-size: 0.85rem;
-    color: var(--color-text-secondary);
-    margin: 0;
+  .qrd-results :global(.qrd-num) {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 1.4rem; height: 1.4rem; border-radius: 999px;
+    background: var(--color-primary); color: var(--color-primary-contrast);
+    font-size: 0.75rem; font-weight: 800;
   }
-  .qrd-crosslink a {
+  .qrd-results :global(.qrd-badge) {
+    font-size: 0.72rem;
+    font-weight: 750;
+    letter-spacing: 0.03em;
+    padding: 0.12rem 0.55rem;
+    border-radius: var(--radius-pill);
     color: var(--color-primary);
-    text-decoration: none;
-    margin-left: 0.3rem;
+    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
   }
+  .qrd-results :global(.qrd-badge-binary),
+  .qrd-results :global(.qrd-badge-link) {
+    color: var(--color-text-secondary);
+    background: var(--color-surface-muted);
+  }
+  .qrd-results :global(.qrd-meta) { font-size: 0.75rem; color: var(--color-text-muted); }
+  .qrd-results :global(.qrd-card-body) { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.65rem 0.75rem; min-width: 0; }
+  .qrd-results :global(.qrd-link) {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+    color: var(--color-primary);
+  }
+  .qrd-results :global(.qrd-host) { margin: 0; font-size: 0.82rem; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+  .qrd-results :global(.qrd-warn) {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--color-danger);
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklch, var(--color-danger) 8%, transparent);
+  }
+  .qrd-results :global(.qrd-text),
+  .qrd-results :global(.qrd-hex) {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    margin: 0;
+    padding: 0.5rem 0.6rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 220px;
+    overflow-y: auto;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  .qrd-results :global(.qrd-hex) { font-size: 0.78rem; color: var(--color-text-secondary); }
+  .qrd-results :global(.qrd-raw > summary) {
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    min-height: 24px;
+    display: list-item;
+  }
+  .qrd-results :global(.qrd-raw[open] > summary) { margin-bottom: 0.35rem; }
+  .qrd-results :global(.qrd-fields) { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 0; }
+  .qrd-results :global(.qrd-fields th),
+  .qrd-results :global(.qrd-fields td) {
+    padding: 0.3rem 0.5rem;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--color-border-soft);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .qrd-results :global(.qrd-fields th) { width: 32%; font-weight: 600; color: var(--color-text-secondary); background: none; }
+  .qrd-results :global(.qrd-maplink) { font-size: 0.85rem; color: var(--color-primary); }
+  .qrd-results :global(.qrd-card-actions) {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    padding: 0.45rem 0.75rem;
+    border-top: 1px solid var(--color-border-soft);
+    background: var(--color-bg-secondary);
+  }
+  .qrd-results :global(.qrd-enc) { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--color-text-secondary); }
+  .qrd-results :global(.qrd-enc-select) { font-size: 0.8rem; min-height: 32px; max-width: 12rem; }
+
+  .qrd-crosslink { font-size: 0.85rem; color: var(--color-text-secondary); margin: 0; }
+  .qrd-crosslink a { color: var(--color-primary); text-decoration: none; margin-left: 0.3rem; }
   .qrd-crosslink a:hover { text-decoration: underline; }
 
   @media (max-width: 640px) {
+    .qrd-pick-row { flex-direction: column; }
+    .qrd-camera-btn { align-self: stretch; }
+    .qrd-compact .qrd-pick-row { flex-direction: row; }
+    .qrd-compact .qrd-camera-btn span { display: none; }
+    .qrd-compact .qrd-camera-btn { padding: 0.6rem 0.9rem; }
+    .qrd-dz-sub { display: none; }
+    .qrd-result-area { grid-template-columns: minmax(0, 1fr); }
+    .qrd-preview { max-height: 180px; }
     .qrd-crosslink a { display: inline-block; line-height: 24px; }
+    .qrd-results :global(.qrd-enc-select) { min-height: 44px; }
   }
 </style>
