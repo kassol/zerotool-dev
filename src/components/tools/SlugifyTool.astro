@@ -64,8 +64,11 @@
       var trimEl = document.getElementById('sl-trim');
       var separatorEl = document.getElementById('sl-separator');
 
-      // Transliteration map for common non-ASCII characters
-      var charMap = {
+      /* ── engine:start ── */
+      // Letters are replaced in place (Crème → Creme). Symbols become a separate word, as
+      // sindresorhus/slugify does for & → " and " (Tom&Jerry → tom-and-jerry). The ASCII
+      // symbols & @ # % + must be looked up too, not only non-ASCII characters.
+      var letterMap = {
         'à':'a','á':'a','â':'a','ã':'a','ä':'a','å':'a','æ':'ae',
         'ç':'c','è':'e','é':'e','ê':'e','ë':'e','ì':'i','í':'i',
         'î':'i','ï':'i','ð':'d','ñ':'n','ò':'o','ó':'o','ô':'o',
@@ -75,19 +78,23 @@
         'Ë':'E','Ì':'I','Í':'I','Î':'I','Ï':'I','Ð':'D','Ñ':'N',
         'Ò':'O','Ó':'O','Ô':'O','Õ':'O','Ö':'O','Ø':'O','Ù':'U',
         'Ú':'U','Û':'U','Ü':'U','Ý':'Y','Þ':'TH',
+      };
+      var symbolMap = {
         '&':'and','@':'at','#':'hash','%':'percent','+':'plus',
         '©':'c','®':'r','™':'tm','€':'euro','£':'pound','¥':'yen',
         '°':'deg','×':'x','÷':'div',
       };
 
-      function slugify(text) {
-        var sep = separatorEl.value;
-        var lower = lowercaseEl.checked;
-        var trim = trimEl.checked;
+      function slugify(text, opts) {
+        var sep = opts.separator;
+        var lower = opts.lowercase;
+        var trim = opts.trim;
+        var has = Object.prototype.hasOwnProperty;
 
-        // Replace known chars
-        var result = text.replace(/[^\u0000-\u007E]/g, function(c) {
-          return charMap[c] || '';
+        // Replace known chars; drop other non-ASCII characters
+        var result = text.replace(/[^\u0000-\u007E]|[&@#%+]/g, function(c) {
+          if (has.call(symbolMap, c)) return ' ' + symbolMap[c] + ' ';
+          return has.call(letterMap, c) ? letterMap[c] : '';
         });
 
         // Replace special chars with separator
@@ -101,6 +108,7 @@
 
         return result;
       }
+      /* ── engine:end ── */
 
       function update() {
         var text = inputEl.value;
@@ -110,7 +118,7 @@
           statusEl.textContent = '';
           return;
         }
-        var slug = slugify(text);
+        var slug = slugify(text, { separator: separatorEl.value, lowercase: lowercaseEl.checked, trim: trimEl.checked });
         resultEl.textContent = slug;
         copyBtn.disabled = !slug;
         statusEl.textContent = slug ? '' : t.emptyResult;
