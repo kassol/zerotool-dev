@@ -136,3 +136,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-09-30 — 加入 `indexnow-urls.mjs`、`indexnow-submit.mjs`（发版后向 IndexNow 推送改动页面）与 `test-indexnow-urls.mjs`
 - 2026-09-30 — IndexNow 推送补上本次变成 draft（301 / 404）、noindex 或被删除的页面，`test-indexnow-urls.mjs` 81 → 103 项
 - 2026-09-30 — 加入 `test-totp-generator.mjs`（totp-generator RFC 6238 / 4226 向量、Base32 输入、otpauth:// URI 生成与解析、时钟偏差估计的回归测试；组件新增 `engine:start/end` 标记）
+- 2026-09-30 — `test-aes-encrypt-decrypt.mjs` 71 → 447 项：错误代码（认证失败、过短、Base64 / 十六进制、未知版本、`Salted__`、非 UTF-8 等）与 4 语言文案对齐、无前缀密文 20 万 / 60 万次回退、十六进制输出、原始密钥（十六进制 / Base64 / 文本）与 IV、AAD（对照 node:crypto 与 GCM 规范 Test Case 15）、文件格式往返、openssl 3.6.1 实跑样本、工具页示例可解、工具页与指南的 JS / Python 代码与工具互通、`persistence.ts` 为 `disabled`；本表第 49 行的说明未随之改写，以本条为准
