@@ -618,7 +618,6 @@ const SENSITIVE_EXEMPT = {
   'url-parser': 'general URL parser; the password field only shows URL userinfo when a URL has it',
   'qr-code-decoder': 'general QR reader; a Wi-Fi password appears only when the scanned code holds one',
   'ssl-certificate-decoder': 'decodes public X.509 certificates; the tool takes no private keys',
-  'curl-to-code': 'borderline: converts pasted curl commands, which may carry -u or Authorization; kept as is until decided',
 };
 
 function checkSensitiveToolsDisabled() {
