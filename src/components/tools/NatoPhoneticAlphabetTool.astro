@@ -34,8 +34,8 @@
   <div class="nato-options">
     <label class="nato-opt-label" data-i18n="modeLabel">Output Mode</label>
     <div class="nato-mode-btns">
-      <button class="nato-mode-btn active" data-mode="word" type="button" data-i18n="modeWord">Word</button>
-      <button class="nato-mode-btn" data-mode="table" type="button" data-i18n="modeTable">Table</button>
+      <button class="nato-mode-btn active" data-mode="word" type="button" aria-pressed="true" data-i18n="modeWord">Word</button>
+      <button class="nato-mode-btn" data-mode="table" type="button" aria-pressed="false" data-i18n="modeTable">Table</button>
     </div>
   </div>
 
@@ -55,15 +55,38 @@
 
   <script is:inline>
     (function () {
+      /* ── engine:start ── */
+      // ICAO Annex 10 spellings (Alfa, Juliett), also used by NATO and Japan's 無線局運用規則 別表第五号.
       var NATO = {
-        A:'Alpha', B:'Bravo', C:'Charlie', D:'Delta', E:'Echo', F:'Foxtrot',
-        G:'Golf', H:'Hotel', I:'India', J:'Juliet', K:'Kilo', L:'Lima',
+        A:'Alfa', B:'Bravo', C:'Charlie', D:'Delta', E:'Echo', F:'Foxtrot',
+        G:'Golf', H:'Hotel', I:'India', J:'Juliett', K:'Kilo', L:'Lima',
         M:'Mike', N:'November', O:'Oscar', P:'Papa', Q:'Quebec', R:'Romeo',
         S:'Sierra', T:'Tango', U:'Uniform', V:'Victor', W:'Whiskey',
         X:'X-ray', Y:'Yankee', Z:'Zulu',
         '0':'Zero', '1':'One', '2':'Two', '3':'Three', '4':'Four',
         '5':'Five', '6':'Six', '7':'Seven', '8':'Eight', '9':'Niner'
       };
+
+      // Full-width letters, digits and spaces (ＡＢＣ１２３, U+3000) are matched after NFKC.
+      function convert(text, unknown) {
+        var rows = [];
+        var codes = [];
+        var chars = 0;
+        Array.from(text).forEach(function (ch) {
+          var key = ch.normalize('NFKC').toUpperCase();
+          if (key === ' ') {
+            rows.push({ ch: '(space)', code: '—' });
+            codes.push('/');
+            return;
+          }
+          chars++;
+          var code = Object.prototype.hasOwnProperty.call(NATO, key) ? NATO[key] : unknown;
+          rows.push({ ch: ch, code: code });
+          codes.push(code);
+        });
+        return { rows: rows, codes: codes, chars: chars };
+      }
+      /* ── engine:end ── */
 
       var STRINGS = {
         en: { labelInput:'Text', labelOutput:'NATO Codes', clear:'Clear', copy:'Copy', copied:'Copied!', modeLabel:'Output Mode', modeWord:'Word', modeTable:'Table', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'Char', thCode:'NATO Code', converted:'Converted {n} character{s}.', unknown:'[?]' },
@@ -90,26 +113,6 @@
       var copyBtn   = document.getElementById('nato-copy');
       var currentMode = 'word';
 
-      function convert(text) {
-        var rows = [];
-        var codes = [];
-        for (var i = 0; i < text.length; i++) {
-          var ch = text[i];
-          var upper = ch.toUpperCase();
-          if (ch === ' ') {
-            rows.push({ ch: '(space)', code: '—' });
-            codes.push('/');
-          } else if (NATO[upper]) {
-            rows.push({ ch: ch, code: NATO[upper] });
-            codes.push(NATO[upper]);
-          } else {
-            rows.push({ ch: ch, code: t.unknown });
-            codes.push(t.unknown);
-          }
-        }
-        return { rows: rows, codes: codes };
-      }
-
       function charMsg(n) {
         return t.converted.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
       }
@@ -122,7 +125,7 @@
           statusEl.textContent = '';
           return;
         }
-        var result = convert(text);
+        var result = convert(text, t.unknown);
         outputEl.value = result.codes.join(' ');
 
         tableBody.innerHTML = '';
@@ -138,16 +141,19 @@
           tableBody.appendChild(tr);
         });
 
-        var count = text.replace(/ /g, '').length;
-        statusEl.textContent = charMsg(count);
+        statusEl.textContent = charMsg(result.chars);
         window.trackTool && window.trackTool('nato_phonetic_alphabet', 'convert');
       }
 
       /* mode toggle */
       document.querySelectorAll('.nato-mode-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
-          document.querySelectorAll('.nato-mode-btn').forEach(function(b) { b.classList.remove('active'); });
+          document.querySelectorAll('.nato-mode-btn').forEach(function(b) {
+            b.classList.remove('active');
+            b.setAttribute('aria-pressed', 'false');
+          });
           btn.classList.add('active');
+          btn.setAttribute('aria-pressed', 'true');
           currentMode = btn.getAttribute('data-mode');
           if (currentMode === 'table') {
             outputEl.closest('.nato-panel').hidden = true;
@@ -226,6 +232,11 @@
   }
 
   .nato-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+
+  /* Keeps the output box on the first screen at 390×844 */
+  @media (max-width: 600px) {
+    .nato-panel textarea { min-height: 100px; }
+  }
 
   .nato-btn-sm {
     padding: 0.2rem 0.55rem;
