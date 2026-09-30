@@ -6,7 +6,9 @@
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Covers: every entry of the mapping table on the tool page. Before the fix the lookup ran only
+// Covers: letters outside the table fall back to their base letter (NFD, then combining marks
+// removed; Łódź → lodz) and letters without a decomposition map by the sindresorhus/transliterate
+// table (ł → l, đ → d, œ → oe, ı → i). Also every entry of the mapping table on the tool page. Before the fix the lookup ran only
 // on non-ASCII characters (/[^\u0000-\u007E]/), so the ASCII symbols & @ # % + were never
 // mapped and became separators (Rock & Roll → rock-roll). Symbols map to a separate word,
 // as sindresorhus/slugify does for & → " and " (Tom&Jerry → tom-and-jerry); letters map in
@@ -107,8 +109,31 @@ t('snake_case and-kebab.dot', 'snake-case-and-kebab-dot');
 t('Hello World!', 'hello-world');
 
 // ---------- removed characters ----------
-t('Łódź', 'od');
-t('Škoda', 'koda');
+// letters outside the table: NFD + remove Mn falls back to the base letter (was removed: Łódź → od)
+t('Łódź', 'lodz');
+t('ŁÓDŹ', 'LODZ', { lowercase: false });
+t('Škoda', 'skoda');
+t('Tiếng Việt', 'tieng-viet');
+t('İstanbul', 'istanbul');
+t('Ångström', 'angstrom');
+t('cafe\u0301 noir', 'cafe-noir');
+// letters without a decomposition, from sindresorhus/transliterate
+t('Đặng', 'dang');
+// page limitation: no language-specific rules
+t('ä ö ü', 'a-o-u');
+t('İ', 'I', keep);
+t('œuvre', 'oeuvre');
+t('Œ', 'OE', keep);
+t('ẞ', 'Ss', keep);
+t('ı', 'i');
+t('Ħal', 'hal');
+t('ĳssel', 'ijssel');
+t('Ĳ', 'IJ', keep);
+t('ə', 'a');
+t('Ł', 'L', keep);
+t('ł', 'l');
+t('đ', 'd');
+t('Đ', 'D', keep);
 t("John's Guide", 'john-s-guide');
 t('你好', '');
 t('日本語 Guide', 'guide');
