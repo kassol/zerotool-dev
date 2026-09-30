@@ -336,12 +336,36 @@ const L = labels[lang];
       });
     }
 
+    // RGI_Emoji_Tag_Sequence, emoji-sequences.txt, Emoji 18.0
+    // (https://www.unicode.org/Public/emoji/latest/emoji-sequences.txt): U+1F3F4 + tag
+    // letters + U+E007F. Only these three render as flags; any other tag run after
+    // U+1F3F4 can carry arbitrary text and stays a hit.
+    var RGI_TAG_SEQUENCES = ['gbeng', 'gbsct', 'gbwls'].map(function (code) {
+      return '\uD83C\uDFF4' + Array.from(code, function (c) { return String.fromCodePoint(0xE0000 + c.charCodeAt(0)); }).join('') + '\uDB40\uDC7F';
+    });
+
+    function rgiTagSequenceAt(text, i) {
+      if (text.charCodeAt(i) !== 0xD83C || text.charCodeAt(i + 1) !== 0xDFF4) return 0;
+      for (var s = 0; s < RGI_TAG_SEQUENCES.length; s++) {
+        if (text.startsWith(RGI_TAG_SEQUENCES[s], i)) return RGI_TAG_SEQUENCES[s].length;
+      }
+      return 0;
+    }
+
     function scan(text) {
       var hits = [];
       var visible = 0;
       var total = 0;
       var i = 0;
       while (i < text.length) {
+        var flagLength = rgiTagSequenceAt(text, i);
+        if (flagLength) {
+          // 7 code points, all visible as one flag
+          total += 7;
+          visible += 7;
+          i += flagLength;
+          continue;
+        }
         var cp = text.codePointAt(i);
         var width = cp > 0xFFFF ? 2 : 1;
         total++;
