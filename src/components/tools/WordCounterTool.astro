@@ -98,6 +98,7 @@
         speakTime: document.getElementById('wc-speak-time'),
       };
 
+      /* ── engine:start ── */
       function formatTime(minutes) {
         if (minutes < 1) return '< 1 min';
         if (minutes < 60) return Math.ceil(minutes) + ' min';
@@ -112,11 +113,17 @@
         return trimmed.split(/\s+/).length;
       }
 
+      // Unicode sentence boundaries (UAX #29) as implemented by Intl.Segmenter: covers every
+      // Sentence_Terminal character (. ! ? 。 ！ ？ ｡), closing quotes and brackets,
+      // "3.14", "U.S.A." and a lowercase word after a period.
+      var sentenceSegmenter = new Intl.Segmenter('und', { granularity: 'sentence' });
+
       function countSentences(text) {
-        var trimmed = text.trim();
-        if (!trimmed) return 0;
-        var matches = trimmed.match(/[.!?…]+[\s"'»）)]*(?=[A-Z\u4e00-\u9fff]|$)/g);
-        return matches ? matches.length : (trimmed.length > 0 ? 1 : 0);
+        var n = 0;
+        for (var seg of sentenceSegmenter.segment(text)) {
+          if (/\S/.test(seg.segment)) n++;
+        }
+        return n;
       }
 
       function countParagraphs(text) {
@@ -127,15 +134,26 @@
         }).length || (trimmed.length > 0 ? 1 : 0);
       }
 
-      function update() {
-        var text = inputEl.value;
-        var words = countWords(text);
+      function stats(text) {
+        return {
+          chars: text.length,
+          charsNoSpaces: text.replace(/\s/g, '').length,
+          words: countWords(text),
+          sentences: countSentences(text),
+          paragraphs: countParagraphs(text),
+        };
+      }
+      /* ── engine:end ── */
 
-        ids.chars.textContent = text.length;
-        ids.charsNoSpaces.textContent = text.replace(/\s/g, '').length;
+      function update() {
+        var s = stats(inputEl.value);
+        var words = s.words;
+
+        ids.chars.textContent = s.chars;
+        ids.charsNoSpaces.textContent = s.charsNoSpaces;
         ids.words.textContent = words;
-        ids.sentences.textContent = countSentences(text);
-        ids.paragraphs.textContent = countParagraphs(text);
+        ids.sentences.textContent = s.sentences;
+        ids.paragraphs.textContent = s.paragraphs;
         ids.readTime.textContent = words === 0 ? '0 min' : formatTime(words / 200);
         ids.speakTime.textContent = words === 0 ? '0 min' : formatTime(words / 130);
 
