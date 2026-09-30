@@ -53,7 +53,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
 const block = source.slice(startIndex, endIndex);
 const E = new Function(block + `
 return { parseMarkdown, collectImageUrls, buildDocx, renderHtml, firstHeadingText,
-  safeFilename, paperFor, defaultFontFor, FONT_PRESETS, sniffImage, decodeDataUri, fitImage };`)();
+  safeFilename, paperFor, defaultPaper, defaultFontFor, FONT_PRESETS, sniffImage, decodeDataUri, fitImage };`)();
 const S_START = source.indexOf('/* ── strings:start ── */');
 const S_END = source.indexOf('/* ── strings:end ── */');
 if (S_START < 0 || S_END <= S_START) {
@@ -386,6 +386,8 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
   check('Letter page size', /<w:pgSz w:w="12240" w:h="15840"/.test(letter.document));
   check('paperFor: Letter for US, Canada, Mexico, Philippines', ['en-US', 'en-CA', 'fr-CA', 'es-MX', 'en-PH', 'es-CL', 'es-CO'].every((l) => E.paperFor(l) === 'letter'));
   check('paperFor: A4 elsewhere and for bare language tags', ['en-GB', 'en-IN', 'de-DE', 'zh-CN', 'ja', 'ko-KR', 'en', '', undefined].every((l) => E.paperFor(l) === 'a4'));
+  check('defaultPaper: A4 on zh / ja / ko pages even with an en-US browser', ['zh', 'ja', 'ko'].every((l) => E.defaultPaper(l, 'en-US') === 'a4'));
+  check('defaultPaper: English page follows the browser region', E.defaultPaper('en', 'en-US') === 'letter' && E.defaultPaper('en', 'en-GB') === 'a4');
   check('document author is not "Un-named"', !zh.core.includes('Un-named'), zh.core);
 }
 
