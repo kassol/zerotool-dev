@@ -73,20 +73,31 @@
         statusEl.className = 'efp-status ' + (type || '');
       }
 
-      function stripQuotes(val) {
-        if (
-          (val.startsWith('"') && val.endsWith('"')) ||
-          (val.startsWith("'") && val.endsWith("'"))
-        ) {
-          return val.slice(1, -1);
+      /* ── engine:start ── */
+      // Parsing follows dotenv (https://github.com/motdotla/dotenv#what-rules-does-the-parsing-engine-follow,
+      // LINE regex in lib/main.js): optional `export `, `#` starts a comment unless the value is
+      // quoted, quoted values may span lines, only double quotes expand \n and \r.
+      var QUOTED_RE = /\s*('(?:\\'|[^'])*'|"(?:\\"|[^"])*"|`(?:\\`|[^`])*`)[^\S\n]*(?:#[^\n]*)?(?=\n|$)/y;
+
+      function finishValue(raw) {
+        var value = raw.trim();
+        var maybeQuote = value[0];
+        value = value.replace(/^(['"`])([\s\S]*)\1$/mg, '$2');
+        if (maybeQuote === '"') {
+          value = value.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
         }
-        return val;
+        return value;
       }
 
       function parseEnv(text) {
-        var lines = text.split(/\r?\n/);
+        text = text.replace(/\r\n?/g, '\n');
+        var lines = text.split('\n');
+        var lineStarts = [];
+        var pos = 0;
+        for (var n = 0; n < lines.length; n++) { lineStarts.push(pos); pos += lines[n].length + 1; }
+
         var entries = [];
-        var seenKeys = {};
+        var seenKeys = Object.create(null);
 
         for (var i = 0; i < lines.length; i++) {
           var raw = lines[i];
@@ -99,21 +110,45 @@
             continue;
           }
 
-          var eqIdx = trimmed.indexOf('=');
+          var prefix = /^\s*(?:export\s+(?=[^\s=]))?/.exec(raw)[0];
+          var body = raw.slice(prefix.length);
+          var eqIdx = body.indexOf('=');
           if (eqIdx === -1) {
             entries.push({ lineNo: lineNo, type: 'error', raw: trimmed, error: 'Missing = sign' });
             continue;
           }
 
-          var key = trimmed.slice(0, eqIdx).trim();
-          var rawVal = trimmed.slice(eqIdx + 1);
-          var value = stripQuotes(rawVal.trim());
-
-          var notes = [];
+          var key = body.slice(0, eqIdx).trim();
           if (!key) {
             entries.push({ lineNo: lineNo, type: 'error', raw: trimmed, error: 'Empty key' });
             continue;
           }
+
+          var notes = [];
+          var valueStart = lineStarts[i] + prefix.length + eqIdx + 1;
+          var value;
+          QUOTED_RE.lastIndex = valueStart;
+          var q = QUOTED_RE.exec(text);
+          if (q) {
+            value = finishValue(q[1]);
+            var lastLine = i + text.slice(valueStart, QUOTED_RE.lastIndex).split('\n').length - 1;
+            if (lastLine > i) {
+              notes.push('Multiline value (lines ' + lineNo + '-' + (lastLine + 1) + ')');
+              i = lastLine;
+            }
+          } else {
+            var rest = raw.slice(prefix.length + eqIdx + 1);
+            var hashIdx = rest.indexOf('#');
+            var unquoted = hashIdx === -1 ? rest : rest.slice(0, hashIdx);
+            value = finishValue(unquoted);
+            var first = unquoted.trim()[0];
+            if ((first === '"' || first === "'" || first === '`') && value === unquoted.trim()) {
+              notes.push(unquoted.trim().indexOf(first, 1) === -1 ? 'Unclosed quote' : 'Text after closing quote');
+            } else if (hashIdx !== -1 && (hashIdx === 0 || !/\s/.test(rest[hashIdx - 1]))) {
+              notes.push('Text after # is a comment; quote the value to keep it');
+            }
+          }
+
           if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
             notes.push('Non-standard key name');
           }
@@ -137,6 +172,7 @@
 
         return entries;
       }
+      /* ── engine:end ── */
 
       function escapeHtml(str) {
         return str
