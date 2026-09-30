@@ -13,6 +13,9 @@ jobs:
       deployments: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history and tags: the IndexNow step diffs this tag against the previous one.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -53,3 +56,11 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=zerotool-dev --branch=master
+
+      # Tell IndexNow engines (Bing and others) which pages changed since the previous
+      # tag. Waits for the live key file first. A failure is marked as an error in the
+      # log but does not fail the deploy. The key is public by protocol; no secret.
+      - name: Submit changed URLs to IndexNow
+        continue-on-error: true
+        timeout-minutes: 10
+        run: node scripts/indexnow-submit.mjs --to "$GITHUB_REF_NAME"

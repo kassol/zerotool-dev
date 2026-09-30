@@ -68,6 +68,7 @@ ZeroTool（zerotool.dev）— 浏览器端开发者工具的多语言静态站�
 | `vendor/` | 第三方静态资源（如 wasm、字体） | 中 |
 | `images/` | 工具页正文引用的手工图片（文件名带连字符，落在 `_routes.json` 的 `/*-*` 排除内）。`nato-phonetic-alphabet-ja.png` 由 `scripts/generate-nato-chart.mjs` 生成后提交 | 低 |
 | `llms.txt` / `llms-full.txt` | 给 LLM 爬虫的站点摘要 | 低 |
+| `cb742ae5a7b4c3ed945013823039558f.txt` | IndexNow 密钥文件，内容就是密钥本身（无换行），密钥与 `scripts/indexnow-urls.mjs` 的 `INDEXNOW_KEY` 一致。协议设计上密钥公开（搜索引擎靠抓取它确认站点所有权），直接进仓库。须以 200 + `text/plain` 返回：已加入 `_routes.json` 的 `exclude`（名字不含连字符，`/*-*` 覆盖不到），`_redirects` 没有规则匹配它，均由 `scripts/test-indexnow-urls.mjs` 校验 | 中：改名或删除会让发版推送返回 403 |
 
 ### `_redirects` 规则约定
 
@@ -86,7 +87,7 @@ ZeroTool（zerotool.dev）— 浏览器端开发者工具的多语言静态站�
 }
 ```
 
-`exclude` 列表是关键：所有静态资源、博客、各语言路径要在这里排除掉，否则会被 Pages Functions 拦截，触发不必要的冷启动。新增静态路径前先确认是否需要追加 exclude。
+`exclude` 列表是关键：所有静态资源、博客、各语言路径要在这里排除掉，否则会被 Pages Functions 拦截，触发不必要的冷启动。新增静态路径前先确认是否需要追加 exclude。IndexNow 密钥文件 `/{key}.txt` 单独列在 exclude 里。
 
 ### `ads.txt` 修改流程
 
@@ -111,12 +112,15 @@ node scripts/audit.mjs           # 静态一致性巡检（PR 前自检）
 node scripts/audit.mjs --quiet   # 仅打印 WARN/FAIL
 node scripts/audit.mjs --json    # 机器可读输出
 PROJECT_NAME=zerotool-dev bash scripts/deploy.sh   # 手工部署兜底
+node scripts/indexnow-submit.mjs --dry-run --from vX --to vY   # 只打印两个 tag 之间要推送给 IndexNow 的 URL，不发送（读当前 dist/ 的 sitemap，先 build）
 ```
 
 ## 部署机制
 
 **触发**：push tag `vX.Y.Z` 到 origin → `.github/workflows/deploy.yml` → CF Pages 部署。
 **关键**：日常 `git push origin master` 仅更新仓库，不会上线。要上线必须 tag。
+
+**IndexNow 推送**：`wrangler pages deploy` 成功后，`deploy.yml` 运行 `scripts/indexnow-submit.mjs`：取上一个 tag（能从当前 tag 到达的、版本号最高的更小 `vX.Y.Z`）与当前 tag 之间的 git diff，把改动的源文件映射成页面 URL（规则见 `scripts/indexnow-urls.mjs`），用 `dist/` 的 sitemap 做最终过滤（draft、noindex、被 301 的 URL 不在其中），等线上密钥文件 `https://zerotool.dev/{key}.txt` 返回密钥后 POST 到 `https://api.indexnow.org/indexnow`，日志打印 URL 数与 HTTP 状态码。推送失败在日志标 `::error`，步骤 `continue-on-error`，不影响部署结果。layouts、i18n、styles、共享组件等全局文件改动不自动推送全站：IndexNow FAQ（indexnow.org/faq）写明协议不是用来一次提交全站 URL 的，只在迁移或改版后可以，并建议不要为布局或外观小改动提交。改版后需要全站推送时，部署完成后在本地运行 `node scripts/indexnow-submit.mjs --all --to vX.Y.Z`（密钥公开，不需要凭据）。协议出处：indexnow.org/documentation（密钥格式、密钥文件位置、单次最多 10,000 个 URL、状态码 200 / 202 / 400 / 403 / 422 / 429）。
 
 **所需 GitHub secrets**：
 - `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`
@@ -147,6 +151,7 @@ PROJECT_NAME=zerotool-dev bash scripts/deploy.sh   # 手工部署兜底
 | `scripts/check-tool-css-order.mjs` | `npm run build`（astro build 之后） | 任一工具页的共享工具 CSS（tool-common、ToolLayout、ShareButtons、AdUnit）没有排在本工具 CSS 之前，或 `<head>` 出现内联 `<style>` |
 | `npm run build` | `.github/workflows/ci.yml` build job + 手动 | 任何编译错误 |
 | `scripts/test-*.mjs` | `.github/workflows/ci.yml` build job（build 之后，部分测试读 `dist/`）+ 提交前手动 | 任一测试脚本退出码非 0 |
+| `scripts/indexnow-submit.mjs` | `.github/workflows/deploy.yml` 部署成功之后 | 不阻塞：失败只在日志标 `::error`，步骤 `continue-on-error`。密钥文件路由与映射规则由 `test-indexnow-urls.mjs` 在 CI 中校验 |
 
 CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两个 job 都过才能合并。Tag push 触发 `deploy.yml`，已经依赖前面 PR 的 CI 通过。
 
@@ -212,3 +217,4 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 - 2026-09-30 — 修 3 个 B 档问题。base64：390×844 下 ja 页「エンコード」底边 y=911、「デコード」y=851，en/ko「Encode」y=858，原因是工具头部（标题两行、ja 描述四行、信任徽章三行）把组件压到 y=502，组件内拖放区 60px 加 140px 输入框排在按钮之前；≤640px 下拖放区（及文件信息、Data URI 开关）用 `order` 排到按钮之后，输入 / 输出框最小高度 100px，4 语言编码与解码按钮底边改为 en/ko 758、zh 656、ja 811，1366×900 不变（Tab 顺序仍是 DOM 顺序，拖放区在输入框之前）；另修组件文案：此前只按 `data-i18n` 在运行时替换按钮文字，输入 / 输出框的标签与占位符要切换一次模式才变成本地语言，拖放区「Drop any file here…」没有翻译，现在文案表移到组件 frontmatter、按 `lang` 在构建期输出（脚本经 `define:vars` 取同一张表），拖放区补 4 语言，新增 `scripts/test-base64.mjs`（读 dist 的 4 语言页面，需先 build）。zero-width-character-detector：英格兰、苏格兰、威尔士旗帜（emoji-sequences.txt Emoji 18.0 的 RGI_Emoji_Tag_Sequence，只有 gbeng / gbsct / gbwls 三条）不算命中、所有清除模式都保留，此前「仅 Tag」与「全部」把它们变成 🏴；其他 Tag 字符照常命中，包括 🏴 + 任意 Tag 文本 + U+E007F 的伪造旗帜；测试 77 → 109 项，4 语言工具页与指南同步（指南原先建议「🏴 与 U+E007F 之间的 Tag 字符就是旗」，改为只有这三条）。secret-redactor：新增 4 条规则，按官方文档中的固定网址或请求头锚定：飞书 / Lark 机器人 Webhook 路径令牌（`open.feishu.cn` / `open.larksuite.com` + `/open-apis/bot/v2/hook/`）、企业微信 Webhook 的 `key`（`qyapi.weixin.qq.com/cgi-bin/webhook/…?key=`）、kintone `X-Cybozu-Authorization`（Base64 且解码后含 `:`）、Kakao `KakaoAK` 后的 16 位以上字母数字；文档占位符（`****`、`xxxx`、`KEY`、`${…}`、`{REST_API_KEY}`）、其他主机与路径不命中；规则数 26 → 30，测试 103 → 135 项，4 语言工具页与指南同步。令牌单独放在变量里时仍只靠变量名识别
 - 2026-09-30 — CI 的 build job 在 build 之后运行全部 `scripts/test-*.mjs`（41 个，其中 `test-base64.mjs` 读 `dist/`），任一失败即阻塞；此前回归测试只在提交前本地运行。ulid-generator 的结果行、复制按钮与解码表由脚本生成，组件样式此前对它们不生效（单元格内边距来自全局表格样式），规则改为 `.ulid-wrap :global(...)`
 - 2026-09-30 — markdown-to-word 按页面质量标准精品化（第 2 批）。90 天 GSC 里 4 语言工具页没有非 `site:` 查询（en 21 次曝光全是 `site:`，ja 1 次匿名，zh / ko 0）；zh 页 28 天 108 次落地会话不是来自 Google 搜索（GSC 该页 0 曝光）。title 用词按 Trends（12 个月）与 SERP 选：en「Markdown to Word」（高于 markdown to docx；md to word 混有无关查询）、zh「Markdown 转 Word」、ja「Markdown Word 変換」（`tools.ts` ja name 改为「Markdown Word 変換ツール」）、ko「마크다운 워드 변환」（ko name 改为「마크다운 워드 변환기」）。组件重写：手写逐行解析器换成 mdast-util-from-markdown + GFM + micromark-extension-cjk-friendly（新增运行时依赖，原因：CommonMark 规则下 `**注意：**这里` 这类中日韩标点旁的加粗不成立，手写解析器能认、换成规范解析器后会退化），`docx` 写出：Heading 1–6 样式带 outlineLvl 与 keepNext（此前没有大纲级别）；有序列表改用 Word 编号且每个列表单独编号、保留起始号（此前打成「1.」文字）；任务列表为 `w14:checkbox`（此前保留「[ ]」文字）；链接为超链接（此前只是蓝色文字）；表格表头重复、列对齐、转义竖线、单元格与表头内的格式（此前 `x \| y` 把一行拆成 4 格、表头与引用里的 `**` 原样显示）；代码块 Source Code 样式、引用 Quote 样式、行内代码 Verbatim Char 样式；图片（`data:` 直接嵌入，SVG / WebP 转 PNG；http(s) 图片由「嵌入网络图片」开关决定，默认关闭，关闭时导出不发任何网络请求、输出为带 alt 的链接，打开后导出时下载，加载失败同样保留为链接；开关状态经 `ztPersist` 保存，按本工具的 `input` 策略随「清空」一起清除）；脚注；删除线与自动链接；原始 HTML 去标签留文字，`<script>` / `<style>` 不输出（此前原样进文档）；docDefaults 写东亚字体与 `w:lang`（此前都没有），含中日韩文字的段落加 `w:hint="eastAsia"`；汉字 / 假名之间的软换行不加空格；A4 / Letter（zh / ja / ko 页默认 A4，en 页按浏览器地区）；文件名默认取第一个标题；作者不再是 docx.js 默认的「Un-named」；预览 HTML 全部转义（此前链接地址里的 `"` 可注入事件属性）。默认不联网，工具页保留「100% 客户端」徽章；`network.ts` 新增 `optionalNetworkToolSlugs`（打开选项后才联网的工具，首个为本工具），About 页的联网工具清单同时列出，文案为 4 语言 `networkOptional.markdown-to-word`（「只在勾选嵌入网络图片时联网」）。新增「打开 .md」、纸张与中日韩字体选择；文案表移到组件 frontmatter 按 `lang` 构建期输出。新增 `scripts/test-markdown-to-word.mjs`（173 项，读回 .docx 的 OOXML；导出流程 `exportDocx` 注入 mock fetch，断言开关关闭时调用 0 次）。脚本包 gzip 101,781 → 135,212 字节。布局：「下载 .docx」移到组件第一行，≤640px 下顺序为按钮、状态、编辑框、文件名与选项、预览；按钮底边 390×844 en/zh/ja/ko 改前 626 / 542 / 588 / 562、改后 567 / 534 / 556 / 508，编辑框顶边改后 624 / 591 / 613 / 565；1366×900 改前 505 / 434、改后 en 524、zh / ko 453、ja 484。4 语言正文重写：元素对照表、默认示例导出后的 XML 结构、图片开关与 CORS 实测（开关关闭时 Network 无图片请求、3 张都输出为链接 / 文字；打开后 raw.githubusercontent.com 嵌入，无 CORS 头的站点与相对路径保留为链接 / 文字）、与 markdowntoword.io、mdtoword.org 的对比（2026-09-30 同一测试文件，读 `document.xml`：两者都不认 `**注意：**这里`、任务状态丢失、不设大纲级别；markdowntoword.io 有序列表打成文字、列对齐丢失、链接不可点；mdtoword.org 脚注内容丢失、中文软换行多空格）、限制；zh 写飞书「导入为在线文档 → 下载为 Word」路线（飞书帮助中心），ja 写 pandoc `east_asian_line_breaks` 在 gfm / commonmark 默认关闭。relatedSlugs：markdown-to-word ↔ markdown-preview ↔ html-to-markdown 互指（另含 markdown-table-generator）。没有 `markdown-to-word-guide` 指南。ko 页面的 h1 / h2 / h3 在 `BaseLayout.astro` 全局样式中加 `:lang(ko)` 下的 `word-break: keep-all`（韩文按空格分词，此前 390px 下 H1 从词中间断开，如「마크다운 워\n드 변환기」），zh / ja 不变；抽查 markdown-to-word、zero-width-character-detector、sprite-sheet-generator 的 ko 页，H1 都在空格处换行，无横向溢出
+- 2026-09-30 — 发版后推送 IndexNow（GA 显示 Bing 是最大的可归因搜索来源）：密钥文件 `public/cb742ae5a7b4c3ed945013823039558f.txt`（加入 `_routes.json` exclude；`npm run preview` 实测 200、`text/plain; charset=utf-8`、内容与密钥一致），`deploy.yml` 在 `wrangler pages deploy` 之后运行 `scripts/indexnow-submit.mjs`（continue-on-error，checkout 改为 `fetch-depth: 0`），映射规则在 `scripts/indexnow-urls.mjs`，测试 `scripts/test-indexnow-urls.mjs`。全局文件改动不自动推全站，依据 IndexNow FAQ「不是用来一次提交全站 URL」「避免为布局或外观小改动提交」，改版后用 `--all` 手动推送。`--dry-run --from v1.138.10 --to v1.138.11` 得到 16 个 URL：markdown-to-word、markdown-preview、html-to-markdown（`tools.ts` 中后两者的 relatedSlugs 也改了）与 about 各 4 语言；BaseLayout、i18n、network.ts 记为全局、未推全站

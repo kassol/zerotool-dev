@@ -9,7 +9,7 @@ GitHub Actions 工作流。两条 pipeline，目标分离明确。
 | 文件 | 触发 | 作用 | 写权限 |
 |------|------|------|--------|
 | `ci.yml` | PR 到 `master` + push 到 `master` | audit job → build job（含回归测试），PR 阻塞合并 | 默认 read |
-| `deploy.yml` | push tag `v*` | 构建并部署到 Cloudflare Pages | `deployments: write` |
+| `deploy.yml` | push tag `v*` | 构建并部署到 Cloudflare Pages，部署后向 IndexNow 推送本次改动的页面 URL | `deployments: write` |
 | `update-readme.yml` | push 到 `master` 且 `src/data/tools.ts` 变化 | 自动重写 README 工具表并 commit 回 master | `contents: write` |
 
 ## ci.yml 详解
@@ -27,12 +27,13 @@ GitHub Actions 工作流。两条 pipeline，目标分离明确。
 **触发**：`push.tags: ['v*']`。日常 push 不触发，只有 `git push origin vX.Y.Z` 才会跑。
 
 **步骤**：
-1. checkout
+1. checkout（`fetch-depth: 0`：拉全部历史与 tag，第 7 步要找上一个 tag 并做 diff）
 2. setup Node 22 + npm cache
 3. `npm ci`
 4. `npm run build` — 注入 5 个 PUBLIC_* env（GA4 + AdSense publisher + 3 slot ID）
 5. `wrangler pages project create zerotool-dev --production-branch master`（continue-on-error，幂等）
 6. `wrangler pages deploy dist --project-name=zerotool-dev --branch=master`
+7. `node scripts/indexnow-submit.mjs --to "$GITHUB_REF_NAME"`（`continue-on-error: true`，`timeout-minutes: 10`）：映射上一个 tag 到本 tag 之间改动的页面 URL，经 `dist/` sitemap 过滤，轮询线上密钥文件（最多 300 秒）后 POST 到 `https://api.indexnow.org/indexnow`，日志打印 URL 数与 HTTP 状态码。失败时输出 `::error` 注解、步骤标红，但 job 仍为成功。不用 secret：IndexNow 密钥按协议公开，放在 `public/{key}.txt`。副作用：对外发送本次改动的 URL 列表（IndexNow 参与引擎共享）。规则详见根 `AGENTS.md`「部署机制」
 
 **所需 secrets**：
 - `CLOUDFLARE_API_TOKEN` — 需要 Pages:Edit 权限
@@ -63,3 +64,4 @@ CF Pages dashboard 也有同名 env 副本（用于 preview 部署）。改 secr
 - 2026-04-26 — 初版
 - 2026-04-26 — 加入 `ci.yml`（audit + build 双 job），覆盖 PR 与 master push
 - 2026-09-30 — `ci.yml` 的 build job 在 build 之后运行全部 `scripts/test-*.mjs`（此前回归测试只在提交前本地运行）
+- 2026-09-30 — `deploy.yml` 在部署成功后运行 `scripts/indexnow-submit.mjs` 推送改动页面（continue-on-error，无新 secret，权限不变）；checkout 改为 `fetch-depth: 0`
