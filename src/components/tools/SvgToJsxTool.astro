@@ -120,6 +120,7 @@
       var frEl     = document.getElementById('stj-forwardref');
       var memoEl   = document.getElementById('stj-memo');
 
+      /* ── engine:start ── */
       // SVG attribute → JSX camelCase map
       var SVG_ATTR_MAP = {
         'stroke-width':          'strokeWidth',
@@ -183,28 +184,30 @@
         return attr.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
       }
 
-      // Process a single attribute string inside a tag
-      function processAttrs(attrStr) {
-        if (!attrStr) return '';
-        // Apply known map first
-        Object.keys(SVG_ATTR_MAP).forEach(function (from) {
-          var to = SVG_ATTR_MAP[from];
-          var re = new RegExp('(?<![\\w-])' + from.replace(/-/g, '\\-') + '(?=[\\s=>/]|$)', 'gi');
-          attrStr = attrStr.replace(re, to);
-        });
-        // Camel-case any remaining hyphenated attributes (data-*, aria-* excluded)
-        attrStr = attrStr.replace(/\b([a-z]+(?:-[a-z]+)+)(?=\s*=)/g, function (match) {
-          // Skip data-*, aria-*
-          if (/^(data|aria)-/.test(match)) return match;
-          return toCamelCase(match);
-        });
-        return attrStr;
+      // JSX name for one attribute name: known map first, then camelCase for any other
+      // hyphenated name (data-*, aria-* excluded)
+      function jsxAttrName(name) {
+        var lower = name.toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(SVG_ATTR_MAP, lower)) return SVG_ATTR_MAP[lower];
+        if (/^[a-z]+(?:-[a-z]+)+$/.test(name) && !/^(data|aria)-/.test(name)) return toCamelCase(name);
+        return name;
       }
 
-      // Remove xmlns attribute (not needed in JSX)
-      function removeXmlns(str) {
-        return str.replace(/\s+xmlns(?::[a-z]+)?="[^"]*"/g, '');
+      // Process a single tag's attributes. Only names are converted; values are copied as
+      // written. xmlns and xmlns:* are dropped (not needed in JSX).
+      var ATTR_RE = /(\s+)([^\s"'>\/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
+      function processAttrs(attrStr) {
+        if (!attrStr) return '';
+        return attrStr.replace(ATTR_RE, function (_, space, name, rawValue) {
+          if (name === 'xmlns' || name.indexOf('xmlns:') === 0) return '';
+          if (rawValue === undefined) return space + jsxAttrName(name);
+          var quote = rawValue.charAt(0);
+          var quoted = quote === '"' || quote === "'";
+          return space + jsxAttrName(name) + '=' + (quoted ? rawValue : '"' + rawValue + '"');
+        });
       }
+
+      var TAG_RE = /<([a-zA-Z][a-zA-Z0-9.-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/g;
 
       // Indent all lines by N spaces (for wrapping)
       function indent(str, spaces) {
@@ -219,18 +222,17 @@
         // 1. Remove XML declaration
         var result = svgStr.replace(/<\?xml[^?]*\?>/g, '').trim();
 
-        // 2. Remove xmlns (clean SVG for JSX)
-        result = removeXmlns(result);
-
-        // 3. Transform all tags: process attrs, ensure self-closing
-        result = result.replace(/<([a-zA-Z][a-zA-Z0-9.-]*)(\s[^>]*)?(\/?)>/g, function (match, tag, attrs, selfClose) {
+        // 2. Transform all tags: process attrs, ensure self-closing. The first <svg> gets
+        //    ref={ref} and {...props} after its own attributes, so caller props win
+        //    (svgr's default expandProps: 'end').
+        var spreadDone = false;
+        result = result.replace(TAG_RE, function (match, tag, attrs, selfClose) {
           var processed = processAttrs(attrs || '');
+          if (!spreadDone && tag === 'svg') {
+            spreadDone = true;
+            processed += useForwardRef ? ' ref={ref} {...props}' : ' {...props}';
+          }
           return '<' + tag + processed + (selfClose ? ' />' : '>');
-        });
-
-        // 3b. Inject {...props} (and ref={ref}) on root <svg>
-        result = result.replace(/(<svg\b)/, function (match) {
-          return useForwardRef ? match + ' ref={ref} {...props}' : match + ' {...props}';
         });
 
         // 4. Indent the SVG body
@@ -281,6 +283,7 @@
 
         return imports + nl + nl + innerFn + exportLine;
       }
+      /* ── engine:end ── */
 
       function convert() {
         var svg   = inputEl.value;
