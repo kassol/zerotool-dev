@@ -246,16 +246,51 @@
         return 'text';
       }
 
-      /* ── WiFi parser: WIFI:T:WPA;S:ssid;P:pass;H:true;; ── */
+      /* ── engine:start ── */
+      /* ── WiFi parser: WIFI:T:WPA;S:ssid;P:pass;H:true;; ──
+         Read field by field: KEY:value up to the next unescaped `;`. A backslash escapes the
+         next character (ZXing "Barcode Contents": \ escapes ; , : " \), so values are
+         returned unescaped. The first of repeated keys wins; unknown keys are ignored. */
       function parseWifi(text) {
         var result = { ssid: '', pass: '', enc: '', hidden: false };
-        var m;
-        m = text.match(/S:([^;]*)/); if (m) result.ssid = m[1];
-        m = text.match(/P:([^;]*)/); if (m) result.pass = m[1];
-        m = text.match(/T:([^;]*)/); if (m) result.enc = m[1];
-        m = text.match(/H:([^;]*)/); if (m) result.hidden = m[1].toLowerCase() === 'true';
+        var fields = {};
+        var i = 5; // after "WIFI:"
+        while (i < text.length) {
+          var colon = text.indexOf(':', i);
+          var semi = text.indexOf(';', i);
+          if (colon === -1 || (semi !== -1 && semi < colon)) {
+            if (semi === -1) break;
+            i = semi + 1; // empty field or field without a key
+            continue;
+          }
+          var key = text.slice(i, colon).toUpperCase();
+          var value = '';
+          var j = colon + 1;
+          for (; j < text.length; j++) {
+            var c = text.charAt(j);
+            if (c === '\\' && j + 1 < text.length) { value += text.charAt(++j); continue; }
+            if (c === ';') break;
+            value += c;
+          }
+          if (!Object.prototype.hasOwnProperty.call(fields, key)) fields[key] = value;
+          i = j + 1;
+        }
+        if (fields.S !== undefined) result.ssid = fields.S;
+        if (fields.P !== undefined) result.pass = fields.P;
+        if (fields.T !== undefined) result.enc = fields.T;
+        if (fields.H !== undefined) result.hidden = fields.H.toLowerCase() === 'true';
         return result;
       }
+
+      /* Text for the Wi-Fi card's Copy button: one "label: value" line per non-empty field */
+      function wifiCopyText(wifi, labels) {
+        var out = [labels.ssid + ': ' + wifi.ssid];
+        if (wifi.pass) out.push(labels.password + ': ' + wifi.pass);
+        if (wifi.enc) out.push(labels.encryption + ': ' + wifi.enc);
+        if (wifi.hidden) out.push(labels.hiddenNetwork + ': ✓');
+        return out.join('\n');
+      }
+      /* ── engine:end ── */
 
       /* ── Copy helper ── */
       function copyText(text, btn) {
@@ -296,7 +331,7 @@
           document.getElementById('qrd-wifi-hidden').textContent = wifi.hidden ? '✓' : '—';
           wifiCard.style.display = '';
           document.getElementById('qrd-copy-wifi').onclick = function () {
-            copyText(text, this);
+            copyText(wifiCopyText(wifi, t), this);
             window.trackTool && window.trackTool('qr-code-decoder', 'copy_wifi');
           };
         } else {
