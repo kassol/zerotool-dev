@@ -41,6 +41,28 @@
       var inputEl = document.getElementById('tcase-input');
       var casesEl = document.getElementById('tcase-cases');
 
+      /* ── engine:start ── */
+      // Word splitting follows change-case v5 split() with separateNumbers: break at
+      // lower→Upper, at ACRONYM→Word (XMLHttp → XML Http), at letter↔digit, and at any run
+      // of characters that are not letters, marks or digits. Apostrophes are removed first,
+      // as lodash words() does, so "don't" stays one word. Letters keep their accents.
+      function splitWords(s) {
+        return s
+          .replace(/['\u2019]/g, '')
+          .replace(/([\p{Ll}\p{N}]\p{M}*)(\p{Lu})/gu, '$1\0$2')
+          .replace(/(\p{Lu}\p{M}*)(\p{Lu}\p{M}*\p{Ll})/gu, '$1\0$2')
+          .replace(/(\p{L}\p{M}*)(\p{N})/gu, '$1\0$2')
+          .replace(/(\p{N})(\p{L})/gu, '$1\0$2')
+          .replace(/[^\p{L}\p{M}\p{N}]+/gu, '\0')
+          .split('\0')
+          .filter(function (w) { return w !== ''; });
+      }
+
+      function capitalize(w) {
+        var first = String.fromCodePoint(w.codePointAt(0));
+        return first.toUpperCase() + w.slice(first.length).toLowerCase();
+      }
+
       var converters = [
         {
           id: 'upper',
@@ -56,9 +78,7 @@
           id: 'title',
           label: 'Title Case',
           fn: function (s) {
-            return s.replace(/\w\S*/g, function (w) {
-              return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-            });
+            return s.replace(/[\p{L}\p{N}]\S*/gu, capitalize);
           },
         },
         {
@@ -72,42 +92,41 @@
           id: 'camel',
           label: 'camelCase',
           fn: function (s) {
-            return s
-              .toLowerCase()
-              .replace(/[^a-z0-9]+(.)/g, function (_, c) { return c.toUpperCase(); });
+            return splitWords(s).map(function (w, i) {
+              return i === 0 ? w.toLowerCase() : capitalize(w);
+            }).join('');
           },
         },
         {
           id: 'pascal',
           label: 'PascalCase',
           fn: function (s) {
-            return s
-              .toLowerCase()
-              .replace(/(^|[^a-z0-9]+)(.)/g, function (_, __, c) { return c.toUpperCase(); });
+            return splitWords(s).map(capitalize).join('');
           },
         },
         {
           id: 'kebab',
           label: 'kebab-case',
           fn: function (s) {
-            return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+            return splitWords(s).join('-').toLowerCase();
           },
         },
         {
           id: 'snake',
           label: 'snake_case',
           fn: function (s) {
-            return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+            return splitWords(s).join('_').toLowerCase();
           },
         },
         {
           id: 'constant',
           label: 'CONSTANT_CASE',
           fn: function (s) {
-            return s.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+            return splitWords(s).join('_').toUpperCase();
           },
         },
       ];
+      /* ── engine:end ── */
 
       // Build output rows
       converters.forEach(function (c) {
