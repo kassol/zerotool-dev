@@ -17,7 +17,8 @@
 // random bits, a clock that goes back keeps the previous timestamp, overflow at ZZZZ...
 // throws and does not change state, decoder: first character 0–7 accepted and 8–Z rejected as
 // out of range (before the fix 8ZZZZZZZZZZZZZZZZZZZZZZZZZ decoded to a date in the year 12004),
-// length / alphabet errors, lower case, the 4-language labels.
+// length / alphabet errors, lower case, timestamps after year 9999 keep their milliseconds
+// (before, formatMs cut the ISO string at a fixed length), the 4-language labels.
 //
 // Run: node scripts/test-ulid-generator.mjs
 
@@ -37,7 +38,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { encodeTime, encodeRandom, createUlidFactory, decodeUlid };')();
+const E = new Function(block + '\nreturn { encodeTime, encodeRandom, createUlidFactory, decodeUlid, formatMs: typeof formatMs === "function" ? formatMs : null };')();
 
 let failures = 0;
 let passes = 0;
@@ -143,6 +144,14 @@ eq('I / L / O / U rejected', ['I', 'L', 'O', 'U'].map((c) => E.decodeUlid('01ARY
   ['invalid', 'invalid', 'invalid', 'invalid']);
 eq('generated ULID decodes to its timestamp', E.decodeUlid(E.createUlidFactory(() => 1759212345678, (a) => a.fill(7))().ulid),
   { ms: 1759212345678 });
+
+// ---------- timestamp display ----------
+check('formatMs is in the engine block', typeof E.formatMs === 'function');
+if (E.formatMs) {
+  eq('formatMs README time', E.formatMs(1469918176385), '2016-07-30 22:36:16.385 UTC');
+  eq('formatMs largest ULID keeps the milliseconds', E.formatMs(2 ** 48 - 1), '+010889-08-02 05:31:50.655 UTC');
+  eq('formatMs 0', E.formatMs(0), '1970-01-01 00:00:00.000 UTC');
+}
 
 // ---------- labels ----------
 for (const key of ['outOfRange', 'overflow']) {
