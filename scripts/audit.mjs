@@ -605,6 +605,48 @@ function checkPersistencePolicy() {
   }
 }
 
+// About (4 languages) promises that pages for tools handling credentials, keys, tokens,
+// or private files and text load neither GA4 nor AdSense. That set is the `disabled`
+// policy in src/data/persistence.ts. A tool whose slug or component suggests such
+// input or output must be `disabled` or listed here with the reason it is not.
+const SENSITIVE_SLUG = /(^|-)(password|passwd|htpasswd|secret|token|credential|auth|cookie|hmac|bcrypt|totp|otp|jwt|pkce|aes|rsa|private|env|key|csr|ssl|cert|wifi)(-|$)/;
+const SENSITIVE_COMPONENT = /\b(password|passphrase|secret[ _-]?key|client[ _-]?secret|private[ _-]?key|api[ _-]?key|access[ _-]?token|bearer|credentials?|authorization)\b|type=["']password["']|PRIVATE KEY-----/i;
+const SENSITIVE_EXEMPT = {
+  'ai-token-counter': '"token" means LLM tokens; the input is prompt text, not a credential',
+  'barcode-generator': '"bearer" is the ITF bearer bar, not an auth scheme',
+  'markdown-to-word': '"credentials" is the fetch option `credentials: \'omit\'` for web images',
+  'url-parser': 'general URL parser; the password field only shows URL userinfo when a URL has it',
+  'qr-code-decoder': 'general QR reader; a Wi-Fi password appears only when the scanned code holds one',
+  'ssl-certificate-decoder': 'decodes public X.509 certificates; the tool takes no private keys',
+  'curl-to-code': 'borderline: converts pasted curl commands, which may carry -u or Authorization; kept as is until decided',
+};
+
+function checkSensitiveToolsDisabled() {
+  const issues = [];
+  const policySrc = read('src/data/persistence.ts');
+  const policy = {};
+  for (const m of policySrc.matchAll(/'([^']+)':\s*'(input|preference|disabled)'/g)) policy[m[1]] = m[2];
+  const components = parseToolComponentFiles('src/components/tools/registry.ts');
+
+  const flagged = new Set();
+  for (const [slug, file] of components) {
+    const src = read(`src/components/tools/${file}.astro`);
+    const hit = SENSITIVE_SLUG.test(slug) ? `slug "${slug}"` : (src.match(SENSITIVE_COMPONENT) || [])[0];
+    if (!hit) continue;
+    flagged.add(slug);
+    if (policy[slug] === 'disabled' || SENSITIVE_EXEMPT[slug]) continue;
+    issues.push(`${slug}: matches ${hit.startsWith('slug') ? hit : `"${hit}" in ${file}.astro`} but is not 'disabled' in src/data/persistence.ts and not in SENSITIVE_EXEMPT`);
+  }
+  for (const slug of Object.keys(SENSITIVE_EXEMPT)) {
+    if (!components.has(slug)) issues.push(`SENSITIVE_EXEMPT: "${slug}" is not a registered tool`);
+    else if (policy[slug] === 'disabled') issues.push(`SENSITIVE_EXEMPT: "${slug}" is already 'disabled'; remove the exemption`);
+    else if (!flagged.has(slug)) issues.push(`SENSITIVE_EXEMPT: "${slug}" no longer matches the heuristic; remove the exemption`);
+  }
+
+  if (issues.length === 0) pass('sensitive_tools_disabled', `sensitive-looking tools are 'disabled' or exempt (${flagged.size} flagged, ${Object.keys(SENSITIVE_EXEMPT).length} exempt)`);
+  else fail('sensitive_tools_disabled', 'sensitive-looking tools still load GA4 / AdSense', issues);
+}
+
 function checkNoPublishedAgentsMd() {
   // public/ is copied verbatim into dist/, and Astro renders .md under src/pages/ as pages.
   // An AGENTS.md in either tree ships internal docs to production.
@@ -709,6 +751,7 @@ try {
   checkBlogInternalLinks();
   checkLayoutShikiOverride();
   checkPersistencePolicy();
+  checkSensitiveToolsDisabled();
   checkRedirects();
   checkNoPublishedAgentsMd();
   checkAboutNetworkClaims();
