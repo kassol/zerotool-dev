@@ -15,6 +15,11 @@ const labels = {
     msgLibMissing: 'YAML library not loaded. Please check your network connection.',
     msgValid: 'Valid YAML \u2014 no errors found.',
     msgInvalid: 'Invalid YAML \u2014 see error details below.',
+    msgValidMulti: 'Valid YAML \u2014 {n} documents, no errors found. The preview shows them as a JSON array.',
+    msgInvalidMulti: 'Invalid YAML \u2014 {bad} of {n} documents have errors; see details below.',
+    docTitle: 'Document {k}',
+    docLines: 'lines {a}\u2013{b}',
+    docValid: 'valid',
   },
   zh: {
     inputLabel: 'YAML 输入',
@@ -27,6 +32,11 @@ const labels = {
     msgLibMissing: 'YAML 库未加载，请检查网络连接。',
     msgValid: 'YAML 有效 \u2014 未发现错误。',
     msgInvalid: 'YAML 无效 \u2014 请查看下方错误详情。',
+    msgValidMulti: 'YAML 有效 \u2014 共 {n} 个文档，未发现错误。预览以 JSON 数组显示。',
+    msgInvalidMulti: 'YAML 无效 \u2014 {n} 个文档中有 {bad} 个有错误，请查看下方详情。',
+    docTitle: '文档 {k}',
+    docLines: '第 {a}\u2013{b} 行',
+    docValid: '有效',
   },
   ja: {
     inputLabel: 'YAML 入力',
@@ -39,6 +49,11 @@ const labels = {
     msgLibMissing: 'YAML ライブラリが読み込まれていません。ネットワーク接続を確認してください。',
     msgValid: 'YAML は有効です \u2014 エラーなし。',
     msgInvalid: 'YAML は無効です \u2014 下のエラー詳細を確認してください。',
+    msgValidMulti: 'YAML は有効です \u2014 {n} 個のドキュメント、エラーなし。プレビューは JSON 配列で表示します。',
+    msgInvalidMulti: 'YAML は無効です \u2014 {n} 個のドキュメントのうち {bad} 個にエラーがあります。下の詳細を確認してください。',
+    docTitle: 'ドキュメント {k}',
+    docLines: '{a}\u2013{b} 行目',
+    docValid: '有効',
   },
   ko: {
     inputLabel: 'YAML 입력',
@@ -51,6 +66,11 @@ const labels = {
     msgLibMissing: 'YAML 라이브러리가 로드되지 않았습니다. 네트워크 연결을 확인하세요.',
     msgValid: 'YAML 유효 \u2014 오류 없음.',
     msgInvalid: 'YAML 유효하지 않음 \u2014 아래 오류 세부사항을 확인하세요.',
+    msgValidMulti: 'YAML 유효 \u2014 문서 {n}개, 오류 없음. 미리보기는 JSON 배열로 표시합니다.',
+    msgInvalidMulti: 'YAML 유효하지 않음 \u2014 문서 {n}개 중 {bad}개에 오류가 있습니다. 아래 세부사항을 확인하세요.',
+    docTitle: '문서 {k}',
+    docLines: '{a}\u2013{b}행',
+    docValid: '유효',
   },
 };
 
@@ -64,6 +84,11 @@ const L = labels[lang];
     data-msg-lib-missing={L.msgLibMissing}
     data-msg-valid={L.msgValid}
     data-msg-invalid={L.msgInvalid}
+    data-msg-valid-multi={L.msgValidMulti}
+    data-msg-invalid-multi={L.msgInvalidMulti}
+    data-doc-title={L.docTitle}
+    data-doc-lines={L.docLines}
+    data-doc-valid={L.docValid}
     data-copy-json={L.copyJson}
     data-copied={L.copied}
   >
@@ -112,8 +137,78 @@ const L = labels[lang];
     const MSG_EMPTY   = wrapEl.dataset.msgEmpty!;
     const MSG_VALID   = wrapEl.dataset.msgValid!;
     const MSG_INVALID = wrapEl.dataset.msgInvalid!;
+    const MSG_VALID_MULTI   = wrapEl.dataset.msgValidMulti!;
+    const MSG_INVALID_MULTI = wrapEl.dataset.msgInvalidMulti!;
+    const DOC_TITLE   = wrapEl.dataset.docTitle!;
+    const DOC_LINES   = wrapEl.dataset.docLines!;
+    const DOC_VALID   = wrapEl.dataset.docValid!;
     const COPY_JSON   = wrapEl.dataset.copyJson!;
     const COPIED      = wrapEl.dataset.copied!;
+
+    /* ── engine:start ── */
+    // A line starting with `---` or `...` is a document marker and never scalar content
+    // (YAML 1.2.2 §9.1.2, c-forbidden), so the text can be cut there to find each document.
+    function splitDocuments(text) {
+      var lines = text.split(/\r?\n/);
+      var chunks = [];
+      var start = 0;
+      for (var i = 1; i < lines.length; i++) {
+        if (!/^---(?:[ \t]|$)/.test(lines[i])) continue;
+        // directives (%YAML, %TAG) written just before `---` belong to the next document
+        var cut = i;
+        for (var j = i - 1; j >= start && /^(%|#|\s*$)/.test(lines[j]); j--) {
+          if (lines[j].charAt(0) === '%') cut = j;
+        }
+        if (cut > start) {
+          chunks.push({ start: start, end: cut - 1, text: lines.slice(start, cut).join('\n') });
+          start = cut;
+        }
+      }
+      chunks.push({ start: start, end: lines.length - 1, text: lines.slice(start).join('\n') });
+      return chunks;
+    }
+
+    function validateYaml(text, yaml) {
+      var chunks = splitDocuments(text);
+      var docs = [];
+      var ok = true;
+      chunks.forEach(function (chunk) {
+        // comments before the first `---` are not a document of their own
+        if (chunks.length > 1 && chunk.text.split('\n').every(function (l) { return /^\s*(#.*)?$/.test(l); })) return;
+        // pad with blank lines so error marks and snippets use the line numbers of the full text
+        var padded = new Array(chunk.start + 1).join('\n') + chunk.text;
+        try {
+          yaml.loadAll(padded).forEach(function (value) {
+            docs.push({ ok: true, value: value, startLine: chunk.start + 1, endLine: chunk.end + 1 });
+          });
+        } catch (e) {
+          ok = false;
+          docs.push({ ok: false, error: e, startLine: chunk.start + 1, endLine: chunk.end + 1 });
+        }
+      });
+
+      if (ok) {
+        // the whole stream is the reference for values; keep line ranges only when they line up
+        var whole = null;
+        try {
+          whole = yaml.loadAll(text);
+        } catch (e) {
+          ok = false;
+          var line = e.mark ? e.mark.line + 1 : 0;
+          var hit = docs.filter(function (d) { return d.startLine <= line && line <= d.endLine; })[0] || docs[docs.length - 1];
+          if (hit) { hit.ok = false; hit.error = e; delete hit.value; }
+          else docs.push({ ok: false, error: e, startLine: null, endLine: null });
+        }
+        if (whole && whole.length !== docs.length) {
+          docs = whole.map(function (value) { return { ok: true, value: value, startLine: null, endLine: null }; });
+        } else if (whole) {
+          whole.forEach(function (value, n) { docs[n].value = value; });
+        }
+      }
+      docs.forEach(function (d, n) { d.index = n + 1; });
+      return { ok: ok, documents: docs };
+    }
+    /* ── engine:end ── */
 
     function setStatus(msg: string, type: string) {
       statusEl.textContent = msg;
@@ -131,7 +226,7 @@ const L = labels[lang];
     function parseYamlError(e: any) {
       const msg = e.message || String(e);
       const reasonMatch = msg.match(/^([^\n]+?)(?:\s+at line\s+(\d+),\s+column\s+(\d+))?[:\n]/);
-      const reason = reasonMatch ? reasonMatch[1].trim() : msg.split('\n')[0].trim();
+      const reason = e.reason || (reasonMatch ? reasonMatch[1].trim() : msg.split('\n')[0].trim());
       const line   = e.mark && e.mark.line   != null ? e.mark.line + 1   : null;
       const col    = e.mark && e.mark.column != null ? e.mark.column + 1 : null;
       const nlIdx  = msg.indexOf('\n');
@@ -167,22 +262,38 @@ const L = labels[lang];
         setStatus(MSG_EMPTY, '');
         return;
       }
-      try {
-        const parsed = jsyaml.load(text);
+      const result = validateYaml(text, jsyaml);
+      const docs = result.documents;
+      const multi = docs.length > 1;
+      if (result.ok) {
         errorBox.style.display = 'none';
         errorBox.innerHTML = '';
-        const jsonStr = JSON.stringify(parsed, null, 2);
-        previewContent.textContent = jsonStr;
+        const value = multi ? docs.map((d: any) => d.value) : (docs[0] ? docs[0].value : null);
+        previewContent.textContent = JSON.stringify(value, null, 2);
         previewEl.style.display = '';
-        setStatus(MSG_VALID, 'success');
+        setStatus(multi ? MSG_VALID_MULTI.replace('{n}', String(docs.length)) : MSG_VALID, 'success');
         (window as any).trackTool?.('yaml-validator', 'validate_success');
-      } catch (e) {
+      } else {
         previewEl.style.display = 'none';
         previewContent.textContent = '';
-        const info = parseYamlError(e);
-        errorBox.innerHTML = buildErrorHtml(info);
+        if (multi) {
+          errorBox.innerHTML = docs.map((d: any) => {
+            let title = DOC_TITLE.replace('{k}', String(d.index));
+            if (d.startLine != null) {
+              title += ' \u00b7 ' + DOC_LINES.replace('{a}', String(d.startLine)).replace('{b}', String(d.endLine));
+            }
+            if (d.ok) {
+              return '<div class="yv-doc yv-doc-ok"><span class="yv-doc-title">' + escapeHtml(title) + '</span> \u2014 ' + escapeHtml(DOC_VALID) + '</div>';
+            }
+            return '<div class="yv-doc"><div class="yv-doc-title">' + escapeHtml(title) + '</div>' + buildErrorHtml(parseYamlError(d.error)) + '</div>';
+          }).join('');
+          const bad = docs.filter((d: any) => !d.ok).length;
+          setStatus(MSG_INVALID_MULTI.replace('{bad}', String(bad)).replace('{n}', String(docs.length)), 'error');
+        } else {
+          errorBox.innerHTML = buildErrorHtml(parseYamlError(docs[0].error));
+          setStatus(MSG_INVALID, 'error');
+        }
         errorBox.style.display = '';
-        setStatus(MSG_INVALID, 'error');
         (window as any).trackTool?.('yaml-validator', 'validate_error');
       }
     }
@@ -293,6 +404,11 @@ const L = labels[lang];
   [data-theme="dark"] .yv-err-title { color: #f87171; }
 
   .yv-err-reason { font-size: 0.88rem; font-weight: 600; color: var(--color-text); }
+
+  .yv-error-box :global(.yv-doc) { display: flex; flex-direction: column; gap: 0.35rem; }
+  .yv-error-box :global(.yv-doc + .yv-doc) { border-top: 1px solid var(--color-border); padding-top: 0.6rem; }
+  .yv-error-box :global(.yv-doc-title) { font-size: 0.82rem; font-weight: 700; color: var(--color-text); }
+  .yv-error-box :global(.yv-doc-ok) { display: block; font-size: 0.85rem; color: var(--color-text-secondary); }
 
   .yv-err-location {
     font-size: 0.82rem;
