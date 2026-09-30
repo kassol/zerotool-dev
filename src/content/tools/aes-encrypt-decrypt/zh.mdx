@@ -5,11 +5,11 @@ faqItems:
   - question: "工具使用哪种加密模式？"
     answer: "AES-256-GCM（伽罗瓦/计数器模式）。GCM 是认证加密模式，同时提供保密性和完整性——对密文的任何篡改都会导致解密失败。"
   - question: "密钥如何从密码派生？"
-    answer: "工具使用 PBKDF2-SHA256（20 万次迭代）从密码派生 256 位 AES 密钥。每次加密生成随机 16 字节盐值，与密文一起存储。"
+    answer: "工具使用 PBKDF2-HMAC-SHA256、60 万次迭代（OWASP 密码存储速查表对 PBKDF2-HMAC-SHA256 给出的值）派生 256 位 AES 密钥。每次加密生成随机 16 字节盐值，与密文一起存储。2026-09-30 之前生成的密文用的是 20 万次迭代，仍可解密。"
   - question: "相同密码加密相同明文会产生相同密文吗？"
     answer: "不会。每次加密都会生成全新的随机盐值和随机数（nonce），因此相同密码加密相同明文每次产生不同密文。这是设计特性，防止模式分析。"
   - question: "可以用其他工具解密吗？"
-    answer: "可以，前提是了解格式：输出为 Base64 编码的 16 字节盐 + 12 字节 nonce + AES-GCM 密文（含 16 字节认证标签）。任何使用 PBKDF2-SHA256（20 万次迭代）的 AES-256-GCM 实现都可以解密。"
+    answer: "可以，按格式处理即可：去掉 v2: 前缀后 Base64 解码，得到 16 字节盐 + 12 字节 nonce + AES-GCM 密文（含 16 字节认证标签）。密钥用 PBKDF2-HMAC-SHA256、60 万次迭代、256 位输出派生。没有前缀的密文布局相同，迭代次数为 20 万。"
   - question: "数据会发送到服务器吗？"
     answer: "不会。所有加解密通过 Web Crypto API 完全在浏览器本地运行，明文和密码不离开设备。"
 ---
@@ -18,9 +18,20 @@ faqItems:
 <ol>
   <li>在密钥栏输入<strong>密码</strong>。</li>
   <li><strong>加密</strong>：在左侧粘贴明文，点击 <strong>加密</strong>，右侧显示 Base64 编码的密文。</li>
-  <li><strong>解密</strong>：在左侧粘贴 Base64 密文，点击 <strong>解密</strong>，右侧显示明文。</li>
+  <li><strong>解密</strong>：在右侧粘贴密文，点击 <strong>解密</strong>，左侧显示明文。</li>
   <li>点击 <strong>复制</strong> 复制结果。</li>
 </ol>
+
+<h2>密文格式</h2>
+<p>新密文为 <code>v2:</code> 加上 <code>盐（16 字节）| nonce（12 字节）| 密文 + 认证标签（16 字节）</code> 的 Base64。密钥用 PBKDF2-HMAC-SHA256、60 万次迭代派生，取 <a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2" rel="noopener">OWASP 密码存储速查表</a>给出的值。</p>
+<p>2026-09-30 之前用本工具生成的密文没有前缀，迭代次数为 20 万。直接粘贴即可：工具识别出没有前缀，就按 20 万次迭代解密。想换成新格式，解密后重新加密一次。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>按旧格式编写的程序读不了 <code>v2:</code> 密文，需要去掉前缀并改用 60 万次迭代。</li>
+  <li>只加密文本（UTF-8），不加密文件。</li>
+  <li>PBKDF2 会拖慢每一次密码猜测，但短密码或常见密码仍可能被猜中，请使用足够长的随机密码短语。</li>
+</ul>
 
 <h2>安全说明</h2>
 <p>AES-256-GCM 在计算上能抵御暴力破解攻击。但加密强度取决于密码强度——对敏感数据请使用足够长的随机密码短语。GCM 的认证标签机制确保密文被篡改时解密会明确失败，不会默默返回错误数据。</p>
