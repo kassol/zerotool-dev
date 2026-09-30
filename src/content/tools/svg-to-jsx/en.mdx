@@ -53,3 +53,54 @@ faqItems:
   <li>Making SVG icons accept <code>className</code>, <code>style</code>, and other React props</li>
   <li>Building accessible icon components that accept an <code>aria-label</code> via spread props</li>
 </ul>
+
+## Example
+
+A 24 × 24 plus icon, component name `PlusIcon`, all options off:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+```
+
+Output:
+
+```jsx
+import React from 'react';
+
+function PlusIcon(props) {
+  return (
+    <svg {...props} width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14"/></svg>
+  );
+}
+
+export default PlusIcon;
+```
+
+`xmlns` is gone, `stroke-width` and `stroke-linecap` are camelCase, and the markup is copied as written otherwise. Values stay strings (`strokeWidth="2"`); React accepts both strings and numbers here. With TypeScript, forwardRef and memo all on, the same icon becomes `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })` with `ref={ref} {...props}` on the `<svg>` and `export default memo(PlusIcon);`. In React 19 [`forwardRef` is no longer necessary](https://react.dev/reference/react/forwardRef): a function component can take `ref` as a prop.
+
+## Before You Paste: Export Settings
+
+- **Figma**: select the layer, then Export → SVG. Leave "Include 'id' attribute" off unless you target elements by ID.
+- **Illustrator**: File → Export → Export As → SVG, and set **Styling** to **Presentation Attributes**. The other two choices, Internal CSS and Inline Style, produce a `<style>` block or `style="..."` strings ([Adobe: SVG export options](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)), and the converter does not rewrite either (see below).
+- If the file has a comment such as `<!-- Generator: ... -->`, delete it before pasting. The converter strips the `<?xml ... ?>` line but keeps comments.
+
+## What You Still Change by Hand
+
+Each row was checked by compiling the output with esbuild 0.28 and rendering it with React 19.
+
+| In the pasted SVG | What the converter outputs | Result in React | Change to |
+|---|---|---|---|
+| `<!-- comment -->` | Kept as is | Syntax error: HTML comments are not JSX | Delete it, or use `{/* ... */}` |
+| `<style>.cls-1{fill:#e11d48;}</style>` | Kept as is | Syntax error: `{` starts a JSX expression | Export with Presentation Attributes, or wrap the CSS in a template literal: `` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
+| `style="fill:#e11d48"` | Kept as a string | Render error: "The `style` prop expects a mapping from style properties to values, not a string" | `style={{ fill: '#e11d48' }}` |
+| `xlink:href="#a"` | Kept as is; the `xmlns:xlink` declaration is removed | React warns "Invalid DOM property"; Babel rejects namespaced attributes by default | `href="#a"` |
+| `width="24"`, `fill="black"` on the root `<svg>` | `{...props}` is placed before them | The SVG's own values win: `<PlusIcon width={48} />` still renders 24 px | Delete the root attributes you want callers to set |
+| Hard-coded `fill` or `stroke` colors | Kept as is | The icon ignores the text color | `fill="currentColor"` / `stroke="currentColor"` |
+
+## Limits
+
+- **Regex, not an XML parser.** A `>` inside an attribute value ends the tag early.
+- **Attribute names inside values are renamed too.** The renaming step matches names anywhere in a tag, so `aria-label="class schedule"` becomes `aria-label="className schedule"`. Check text values such as `aria-label` after converting.
+- **One component per paste.** Only the first `<svg>` gets `{...props}`; paste sprite sheets one icon at a time.
+- **Component name**: characters other than letters, digits, `_` and `$` are dropped and the first letter is capitalized (`plus-icon` → `Plusicon`).
+- `data-*` and `aria-*` attributes keep their hyphens, as React expects.

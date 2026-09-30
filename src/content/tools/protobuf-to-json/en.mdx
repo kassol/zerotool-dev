@@ -71,3 +71,55 @@ enum UserStatus {
 
 <h2>Privacy</h2>
 <p>All processing is client-side. Your schema and binary data are never uploaded or stored.</p>
+
+## Example: Decode a Binary Message
+
+With the default `demo.Person` schema loaded, switch to **Binary → JSON** and paste this hex (44 bytes):
+
+```
+0a 05 41 6c 69 63 65 10 1e 1a 11 61 6c 69 63 65 40 65 78 61 6d 70 6c 65 2e 63 6f 6d 22 0c 12 06 41 75 73 74 69 6e 1a 02 55 53 28 01
+```
+
+Output:
+
+```json
+{
+  "name": "Alice",
+  "age": 30,
+  "emails": [
+    "alice@example.com"
+  ],
+  "address": {
+    "city": "Austin",
+    "country": "US"
+  },
+  "status": "ACTIVE"
+}
+```
+
+The same bytes as Base64 (`CgVBbGljZRAeGhFhbGljZUBleGFtcGxlLmNvbSIMEgZBdXN0aW4aAlVTKAE=`) give the same result. `address.street` is missing because it is not in the binary: decoded output lists only the fields that were sent. In **Schema → Sample JSON** mode the same schema gives `{"emails": [], "name": "", "age": 0, "address": null, "status": "UNKNOWN"}`.
+
+## How the Output Differs From the Official JSON Mapping
+
+The [ProtoJSON format](https://protobuf.dev/programming-guides/json/) that `protoc`-generated code prints differs from this tool's output in a few places (tool: protobuf.js 8.0.1, checked in the browser build the page loads):
+
+| Case | Official ProtoJSON | This tool |
+|---|---|---|
+| Field names | lowerCamelCase (`country_code` → `countryCode`); parsers accept both | Names as written in the `.proto` (`country_code`) |
+| `int64` / `uint64` | Decimal string | Decimal string, but values above 2^53 lose precision (`9007199254740993` shows as `"9007199254740992"`) |
+| Enum | Name (`"ACTIVE"`) | Name; a number the schema does not define stays a number (`7`) |
+| `bytes` | Standard Base64 | Standard Base64 |
+| `map<K, V>` | JSON object | JSON object |
+| Nested message in sample mode | — | `null`; select the nested type in the dropdown to see its fields |
+
+## Decoding Captured gRPC Payloads
+
+gRPC sends each message with a 5-byte prefix: a 1-byte compressed flag and a 4-byte big-endian length ([gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)). Remove those 5 bytes before pasting, and decompress the message first if the flag is `01`. If the server has reflection enabled, `grpcurl` can call it and print JSON without any `.proto` file.
+
+## Limits
+
+- **The schema must be self-contained.** `import` lines are not fetched: a field of type `google.protobuf.Timestamp` with only the import line fails with `no such Type or Enum 'google.protobuf.Timestamp'`. Paste the imported messages into the same box. Well-known types pasted this way are shown as plain messages (`{"seconds": "1695427584"}`), not as the RFC 3339 string of the official mapping.
+- **The binary carries no type name.** Decoding with the wrong message type often succeeds and shows wrong fields: the `Customer` bytes `0a 05 41 6c 69 63 65` decoded as `Order` give `{"order_id": "Alice"}`. Check that the fields make sense.
+- **Truncated input fails** with an error such as `index out of range: 2 + 16 > 3`.
+- **Hex or Base64 is detected automatically**: input made only of hex digits with an even length is read as hex, anything else as Base64. A Base64 string that happens to contain only hex digits is misread as hex; convert such input to hex first.
+- **Sample mode shows defaults only**: empty strings, zeros, empty arrays and maps, the first enum value, and `null` for nested messages. `oneof` fields do not appear.

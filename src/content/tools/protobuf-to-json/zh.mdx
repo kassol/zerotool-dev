@@ -71,3 +71,55 @@ enum UserStatus {
 
 <h2>隐私</h2>
 <p>所有处理在客户端完成，Schema 和二进制数据不会被上传或存储。</p>
+
+## 示例：解码二进制消息
+
+加载默认的 `demo.Person` schema，切到 **Binary → JSON**，粘贴下面的 hex（47 字节）：
+
+```
+0a 06 e5 bc a0 e4 bc 9f 10 1c 1a 13 7a 68 61 6e 67 77 65 69 40 65 78 61 6d 70 6c 65 2e 63 6e 22 0c 12 06 e6 9d ad e5 b7 9e 1a 02 43 4e 28 01
+```
+
+输出：
+
+```json
+{
+  "name": "张伟",
+  "age": 28,
+  "emails": [
+    "zhangwei@example.cn"
+  ],
+  "address": {
+    "city": "杭州",
+    "country": "CN"
+  },
+  "status": "ACTIVE"
+}
+```
+
+中文按 UTF-8 编码，「张伟」占 6 个字节（`e5 bc a0 e4 bc 9f`）。`address.street` 不在二进制里，所以输出里没有：解码结果只列出实际发送的字段。同一 schema 在 **Schema → Sample JSON** 模式下得到 `{"emails": [], "name": "", "age": 0, "address": null, "status": "UNKNOWN"}`。
+
+## 与官方 JSON 映射的差异
+
+`protoc` 生成的代码输出的是 [ProtoJSON 格式](https://protobuf.dev/programming-guides/json/)，本工具（protobuf.js 8.0.1，用页面实际加载的浏览器版本核对）在以下几处不同：
+
+| 情况 | 官方 ProtoJSON | 本工具 |
+|---|---|---|
+| 字段名 | lowerCamelCase（`country_code` → `countryCode`），解析时两种都接受 | 保持 `.proto` 里的写法（`country_code`） |
+| `int64` / `uint64` | 十进制字符串 | 十进制字符串，但超过 2^53 的值会丢精度（`9007199254740993` 显示为 `"9007199254740992"`） |
+| 枚举 | 名称（`"ACTIVE"`） | 名称；schema 里没定义的数值保留为数字（`7`） |
+| `bytes` | 标准 Base64 | 标准 Base64 |
+| `map<K, V>` | JSON 对象 | JSON 对象 |
+| 样例模式下的嵌套消息 | — | `null`；在下拉框里选嵌套类型才能看到它的字段 |
+
+## 解码抓到的 gRPC 数据
+
+gRPC 给每条消息加 5 字节前缀：1 字节压缩标志加 4 字节大端长度（[gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)）。粘贴前去掉这 5 个字节；标志为 `01` 时要先解压。服务端开了反射的话，`grpcurl` 不需要 `.proto` 文件就能调用并输出 JSON。
+
+## 限制
+
+- **schema 必须自包含。** `import` 不会去拉取：只写了 import 行的 `google.protobuf.Timestamp` 字段会报 `no such Type or Enum 'google.protobuf.Timestamp'`。把被引用的消息一起粘贴进来。这样粘贴的常用类型按普通消息显示（`{"seconds": "1695427584"}`），不是官方映射的 RFC 3339 字符串。
+- **二进制里没有类型名。** 选错消息类型往往也能解码成功，只是字段对不上：`Customer` 的字节 `0a 05 41 6c 69 63 65` 按 `Order` 解码得到 `{"order_id": "Alice"}`。解码后检查字段是否合理。
+- **数据被截断时报错**，例如 `index out of range: 2 + 16 > 3`。
+- **自动判断 hex 或 Base64**：只含十六进制字符且长度为偶数的输入按 hex 读，其余按 Base64。恰好只由十六进制字符组成的 Base64 会被误读，这种输入先转成 hex。
+- **样例模式只显示默认值**：空字符串、0、空数组和空 map、第一个枚举值，嵌套消息为 `null`，`oneof` 字段不出现。

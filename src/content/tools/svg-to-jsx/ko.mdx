@@ -53,3 +53,54 @@ faqItems:
   <li>SVG 아이콘이 className, style 등 React props를 받을 수 있도록 설정</li>
   <li>props 스프레드로 aria-label을 받는 접근성 아이콘 컴포넌트 구축</li>
 </ul>
+
+## 변환 예시
+
+24 × 24 더하기 아이콘을 컴포넌트 이름 `PlusIcon`, 옵션은 모두 끈 상태로 변환합니다:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+```
+
+출력:
+
+```jsx
+import React from 'react';
+
+function PlusIcon(props) {
+  return (
+    <svg {...props} width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14"/></svg>
+  );
+}
+
+export default PlusIcon;
+```
+
+`xmlns`는 사라지고 `stroke-width`, `stroke-linecap`은 camelCase가 되며, 나머지 마크업은 그대로입니다. 값은 문자열로 남지만(`strokeWidth="2"`) React는 문자열과 숫자를 모두 받습니다. TypeScript, forwardRef, memo를 모두 켜면 같은 아이콘이 `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })`가 되고, `<svg>`에 `ref={ref} {...props}`, 끝에 `export default memo(PlusIcon);`가 붙습니다. React 19부터는 [`forwardRef`가 필요 없고](https://react.dev/reference/react/forwardRef) 함수 컴포넌트가 `ref`를 prop으로 받을 수 있습니다.
+
+## 붙여넣기 전에: 내보내기 설정
+
+- **Figma**: 레이어를 선택하고 Export → SVG. ID로 요소를 다루지 않는다면 "Include "id" attribute"는 끈 채로 둡니다.
+- **Illustrator**: File → Export → Export As → SVG에서 Styling을 Presentation Attributes로 설정합니다(메뉴 이름은 영문판 기준). 나머지 Internal CSS와 Inline Style은 `<style>` 블록이나 `style="..."` 문자열을 만들며([Adobe: SVG 내보내기 옵션](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)), 이 도구는 둘 다 바꾸지 않습니다(아래 표 참고).
+- `<!-- Generator: ... -->` 같은 주석이 있으면 붙여넣기 전에 지웁니다. `<?xml ... ?>` 선언은 도구가 지우지만 주석은 남깁니다.
+
+## 직접 고쳐야 하는 부분
+
+각 행은 출력을 esbuild 0.28로 컴파일하고 React 19로 렌더링해 확인했습니다.
+
+| 붙여넣은 SVG | 도구 출력 | React에서의 결과 | 이렇게 바꾸기 |
+|---|---|---|---|
+| `<!-- 주석 -->` | 그대로 | 문법 오류: HTML 주석은 JSX가 아님 | 지우거나 `{/* ... */}`로 |
+| `<style>.cls-1{fill:#e11d48;}</style>` | 그대로 | 문법 오류: `{`가 JSX 표현식 시작으로 해석됨 | Presentation Attributes로 다시 내보내거나 CSS를 템플릿 리터럴로 감싸기: `` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
+| `style="fill:#e11d48"` | 문자열 그대로 | 렌더링 오류 "The `style` prop expects a mapping from style properties to values, not a string" | `style={{ fill: '#e11d48' }}` |
+| `xlink:href="#a"` | 그대로(`xmlns:xlink` 선언은 삭제) | React가 "Invalid DOM property" 경고. Babel은 기본적으로 네임스페이스 속성을 거부 | `href="#a"` |
+| 루트 `<svg>`의 `width="24"`, `fill="black"` | `{...props}`가 그 앞에 들어감 | SVG 자체 값이 우선: `<PlusIcon width={48} />`도 24 px로 렌더링 | 호출하는 쪽에서 정할 속성은 루트에서 삭제 |
+| 고정된 `fill` / `stroke` 색상 | 그대로 | 아이콘이 글자색을 따라가지 않음 | `fill="currentColor"` / `stroke="currentColor"` |
+
+## 제한 사항
+
+- **XML 파서가 아니라 정규식으로 처리합니다.** 속성값에 `>`가 있으면 태그가 거기서 끝난 것으로 봅니다.
+- **속성값 안의 속성 이름도 바뀝니다.** 이름 변경이 태그 전체에서 일어나므로 `aria-label="class schedule"`이 `aria-label="className schedule"`이 됩니다. 변환 후 `aria-label` 같은 텍스트 값을 확인하세요.
+- **한 번에 컴포넌트 하나.** `{...props}`는 첫 번째 `<svg>`에만 붙습니다. 스프라이트는 아이콘 하나씩 붙여넣으세요.
+- **컴포넌트 이름**: 영문자, 숫자, `_`, `$` 외의 문자는 지워지고 첫 글자는 대문자가 됩니다(`plus-icon` → `Plusicon`). 한글 이름은 모두 지워져 `MyIcon`이 됩니다.
+- `data-*`와 `aria-*` 속성은 하이픈을 유지합니다. React가 요구하는 방식입니다.

@@ -53,3 +53,54 @@ faqItems:
   <li>让 SVG 图标接受 <code>className</code>、<code>style</code> 等 React props</li>
   <li>构建通过展开 props 接受 <code>aria-label</code> 的无障碍图标组件</li>
 </ul>
+
+## 示例
+
+一个 24 × 24 的加号图标，组件名填 `PlusIcon`，三个选项都不勾：
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+```
+
+输出：
+
+```jsx
+import React from 'react';
+
+function PlusIcon(props) {
+  return (
+    <svg {...props} width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#000" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14"/></svg>
+  );
+}
+
+export default PlusIcon;
+```
+
+`xmlns` 被删掉，`stroke-width`、`stroke-linecap` 改成驼峰，其余标记原样保留。属性值仍是字符串（`strokeWidth="2"`），React 字符串和数字都接受。TypeScript、forwardRef、memo 全勾时，同一图标输出为 `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })`，`<svg>` 上是 `ref={ref} {...props}`，末尾 `export default memo(PlusIcon);`。React 19 起[不再需要 `forwardRef`](https://react.dev/reference/react/forwardRef)，函数组件可以直接把 `ref` 当作 prop 接收。
+
+## 粘贴前：导出设置
+
+- **Figma**：选中图层 → Export → SVG。除非要按 ID 操作元素，否则不勾「Include "id" attribute」。
+- **Illustrator**：File → Export → Export As → SVG，Styling 选 Presentation Attributes（菜单名按英文界面）。另外两项 Internal CSS、Inline Style 会生成 `<style>` 块或 `style="..."` 字符串（[Adobe：SVG 导出选项](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)），本工具不会改写这两种写法（见下表）。
+- 文件里如果有 `<!-- Generator: ... -->` 这类注释，粘贴前删掉。工具会去掉 `<?xml ... ?>` 声明，但保留注释。
+
+## 仍需手动修改的地方
+
+下表每一行都用 esbuild 0.28 编译输出、再用 React 19 渲染核对过。
+
+| 粘贴的 SVG 里 | 工具输出 | 在 React 中的结果 | 改成 |
+|---|---|---|---|
+| `<!-- 注释 -->` | 原样保留 | 语法错误：HTML 注释不是 JSX | 删掉，或改为 `{/* ... */}` |
+| `<style>.cls-1{fill:#e11d48;}</style>` | 原样保留 | 语法错误：`{` 会被当作 JSX 表达式开头 | 用 Presentation Attributes 重新导出，或把 CSS 包进模板字符串：`` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
+| `style="fill:#e11d48"` | 保留为字符串 | 渲染报错：「The `style` prop expects a mapping from style properties to values, not a string」 | `style={{ fill: '#e11d48' }}` |
+| `xlink:href="#a"` | 原样保留，`xmlns:xlink` 声明被删 | React 警告「Invalid DOM property」；Babel 默认拒绝带命名空间的属性 | `href="#a"` |
+| 根 `<svg>` 上的 `width="24"`、`fill="black"` | `{...props}` 放在它们前面 | SVG 自带的值优先：`<PlusIcon width={48} />` 仍渲染成 24 px | 删掉希望由调用方设置的根属性 |
+| 写死的 `fill` / `stroke` 颜色 | 原样保留 | 图标不跟随文字颜色 | `fill="currentColor"` / `stroke="currentColor"` |
+
+## 限制
+
+- **用正则处理，不是 XML 解析器**：属性值里出现 `>` 会让标签提前结束。
+- **属性值里的属性名也会被改**：改名步骤在整个标签里匹配，`aria-label="class schedule"` 会变成 `aria-label="className schedule"`。转换后检查 `aria-label` 这类文本值。
+- **一次一个组件**：只有第一个 `<svg>` 会加 `{...props}`，雪碧图请逐个图标粘贴。
+- **组件名**：字母、数字、`_`、`$` 以外的字符会被删掉，首字母自动大写（`plus-icon` → `Plusicon`）。中文组件名会被整段删掉，回退为 `MyIcon`。
+- `data-*` 与 `aria-*` 属性保留连字符，这也是 React 的要求。

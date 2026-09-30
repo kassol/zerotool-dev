@@ -71,3 +71,55 @@ enum UserStatus {
 
 <h2>개인정보</h2>
 <p>모든 처리는 클라이언트에서 이루어집니다. 스키마와 바이너리 데이터는 업로드되거나 저장되지 않습니다.</p>
+
+## 예시: 바이너리 메시지 디코딩
+
+기본 `demo.Person` 스키마 그대로 **Binary → JSON**으로 바꾸고 다음 hex(48바이트)를 붙여넣습니다:
+
+```
+0a 09 ea b9 80 eb af bc ec a4 80 10 23 1a 11 6d 69 6e 6a 75 6e 40 65 78 61 6d 70 6c 65 2e 6b 72 22 0c 12 06 eb b6 80 ec 82 b0 1a 02 4b 52 28 01
+```
+
+출력:
+
+```json
+{
+  "name": "김민준",
+  "age": 35,
+  "emails": [
+    "minjun@example.kr"
+  ],
+  "address": {
+    "city": "부산",
+    "country": "KR"
+  },
+  "status": "ACTIVE"
+}
+```
+
+한글은 UTF-8로 인코딩되어 "김민준"이 9바이트(`ea b9 80 eb af bc ec a4 80`)입니다. EUC-KR 바이트를 `string` 필드에 넣으면 제대로 표시되지 않습니다. `address.street`는 바이너리에 없어서 출력되지 않습니다. 디코딩 결과에는 실제로 보낸 필드만 나옵니다. 같은 스키마를 **Schema → Sample JSON** 모드로 쓰면 `{"emails": [], "name": "", "age": 0, "address": null, "status": "UNKNOWN"}`가 나옵니다.
+
+## 공식 JSON 매핑과의 차이
+
+`protoc`가 생성한 코드는 [ProtoJSON 형식](https://protobuf.dev/programming-guides/json/)으로 출력합니다. 이 도구(protobuf.js 8.0.1, 페이지가 불러오는 브라우저 빌드로 확인)는 다음이 다릅니다:
+
+| 경우 | 공식 ProtoJSON | 이 도구 |
+|---|---|---|
+| 필드 이름 | lowerCamelCase(`country_code` → `countryCode`), 파서는 둘 다 받음 | `.proto`에 쓴 그대로(`country_code`) |
+| `int64` / `uint64` | 10진 문자열 | 10진 문자열이지만 2^53을 넘는 값은 정밀도가 떨어짐(`9007199254740993`이 `"9007199254740992"`로 표시) |
+| 열거형 | 이름(`"ACTIVE"`) | 이름. 스키마에 없는 숫자는 숫자 그대로(`7`) |
+| `bytes` | 표준 Base64 | 표준 Base64 |
+| `map<K, V>` | JSON 객체 | JSON 객체 |
+| 샘플 모드의 중첩 메시지 | — | `null`. 드롭다운에서 그 타입을 골라야 필드가 보임 |
+
+## 캡처한 gRPC 페이로드 디코딩
+
+gRPC는 메시지마다 5바이트 접두사(1바이트 압축 플래그 + 4바이트 빅엔디언 길이)를 붙입니다([gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)). 붙여넣기 전에 이 5바이트를 지우고, 플래그가 `01`이면 먼저 압축을 푸세요. 서버에 리플렉션이 켜져 있으면 `grpcurl`로 `.proto` 없이 호출해 JSON을 볼 수 있습니다.
+
+## 제한 사항
+
+- **스키마는 자체로 완결되어야 합니다.** `import`는 불러오지 않습니다. import 줄만 있는 상태에서 `google.protobuf.Timestamp` 타입 필드를 쓰면 `no such Type or Enum 'google.protobuf.Timestamp'` 오류가 납니다. 참조하는 메시지도 같은 칸에 붙여넣으세요. 이렇게 붙인 잘 알려진 타입은 일반 메시지로 표시되며(`{"seconds": "1695427584"}`) 공식 매핑의 RFC 3339 문자열이 되지 않습니다.
+- **바이너리에는 타입 이름이 없습니다.** 다른 타입을 골라도 디코딩이 성공하고 엉뚱한 필드가 나올 수 있습니다. `Customer` 바이트 `0a 05 41 6c 69 63 65`를 `Order`로 디코딩하면 `{"order_id": "Alice"}`가 됩니다.
+- **잘린 데이터는 오류**가 납니다(예: `index out of range: 2 + 16 > 3`).
+- **hex인지 Base64인지 자동 판별**: 16진 문자로만 된 짝수 길이 입력은 hex, 나머지는 Base64로 읽습니다. 우연히 16진 문자로만 된 Base64는 hex로 잘못 읽히므로 먼저 hex로 바꾸세요.
+- **샘플 모드는 기본값만**: 빈 문자열, 0, 빈 배열과 map, 첫 번째 열거값, 중첩 메시지는 `null`, `oneof` 필드는 나오지 않습니다.
