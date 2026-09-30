@@ -2,7 +2,7 @@
 title: "ブラウザでのDNSルックアップ：DNS-over-HTTPSで引くA / MX / TXT / CAA"
 description: "dig、nslookup、whatsmydnsを使わずに、どのブラウザからでもDNSレコードを照会する方法。DoHが fetch() 一発でA、AAAA、CNAME、MX、TXT、NS、SOA、CAA、PTR、SRVを解放する仕組みと、DNSSEC・TXTセグメント・伝播にまつわる落とし穴。"
 pubDate: 2026-05-24
-updatedDate: 2026-09-29
+updatedDate: 2026-09-30
 lang: "ja"
 noindex: true
 tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
@@ -36,9 +36,9 @@ ZeroToolのDNS Lookupはそのエンドポイントを包んだものだ。中�
 }
 ```
 
-`Status` は標準的なDNSのRCODE（RFC 1035 §4.1.1、RFC 6895で拡張）。`AD` はDNSSECの「Authenticated Data」フラグで、両社のドキュメントとも、応答中のすべてのレコードが検証されたときだけ true になると説明している。Cloudflare は、問い合わせが `do=1` で DNSSEC データを求めたときだけこのフラグを立てる（RFC 6840 §5.8 が認める動作だ）。`TC` は切り詰めフラグで、Cloudflare のドキュメントによれば、最大サイズの応答に対応しているため DoH ではほぼ常に false になる。
+`Status` は標準的なDNSのRCODE（RFC 1035 §4.1.1、RFC 6895で拡張）。`AD` はDNSSECの「Authenticated Data」フラグで、両社のドキュメントとも、応答中のすべてのレコードが検証されたときだけ true になると説明している。RFC 6840 §5.8 は、問い合わせに DO か AD ビットがあるときだけ AD を立てるようリゾルバに求めている。`do=1` なしの場合、Cloudflare の AD は一定しない（後述）。`TC` は切り詰めフラグで、Cloudflare のドキュメントによれば、最大サイズの応答に対応しているため DoH ではほぼ常に false になる。
 
-ツールは `do=1`（DNSSEC OK）と `cd=0`（Checking Disabled = 0）を送る。`cd=0` はリゾルバに DNSSEC の検証を求め、`do=1` は署名を応答に含めるよう求める。Cloudflare が AD フラグを返すのは `do=1` があるときだ。2026-09-29 のテストでは、`do=1` なしだと署名済みの `example.com` に対して Cloudflare は `"AD": false` を返し、付けると `true` を返した。逆の `cd=1` は「検証はスキップしてくれ」という指示で、壊れたゾーンをフォレンジック的に観察するときには有用だが、通常のルックアップで欲しい挙動ではない。
+ツールは `do=1`（DNSSEC OK）と `cd=0`（Checking Disabled = 0）を送る。`cd=0` はリゾルバに DNSSEC の検証を求め、`do=1` は署名を応答に含めるよう求める。`do=1` なしだと Cloudflare の AD は当てにならない。2026-09-30 に各クエリを 30 回ずつ送ると、`example.com` の A・AAAA・NS は毎回 `"AD": false`、MX は毎回 `true` だった。それより前に A を 20 回送ったときは `true` と `false` が 10 回ずつだった。`do=1` 付きの照会と Google への照会はすべて `true` だった。AD で判断するなら `do=1` を付ける必要がある。逆の `cd=1` は「検証はスキップしてくれ」という指示で、壊れたゾーンをフォレンジック的に観察するときには有用だが、通常のルックアップで欲しい挙動ではない。
 
 ## 10種のレコードタイプと、それが教えてくれること
 
@@ -69,7 +69,7 @@ ZeroToolのDNS Lookupはそのエンドポイントを包んだものだ。中�
 
 **ジオルーティングされた応答。** Cloudflare、Akamai、AWS Global Accelerator、ほとんどのCDNは、クエリを受け取ったエッジPOPに応じて異なる A/AAAA レコードを返す。ツールに表示されるIPは、CloudflareやGoogleの再帰リゾルバが*彼らの*ネットワーク位置から見たものであって、あなたから見たものではない。「このIPは正しい？」という問いについては、ツールは一般のパブリックビューワにとっての正解だ。「私のPOPから見てこのIPは正しい？」を問うなら、そのPOPから問い合わせる必要がある。
 
-**EDNS Client Subnet（RFC 7871）。** 一部の権威サーバーは、再帰リゾルバがクライアントのサブネットのヒントを転送してくれた場合に、より正確なジオルーティング応答を返す。Google Public DNS のドキュメントには「通常はおおよそのネットワーク情報を送る（多くの場合 IPv4 アドレスの最後の部分をゼロにする）」とあり、Cloudflare の FAQ は 1.1.1.1 が ECS を送らないと書いている。そのため同じジオルーティングされた名前でも、両者で異なるIPが返ることがある。2026-09-29 に `www.baidu.com` を照会すると、Cloudflare は `103.235.46.96`、Google は `45.113.192.102` を返した。
+**EDNS Client Subnet（RFC 7871）。** 一部の権威サーバーは、再帰リゾルバがクライアントのサブネットのヒントを転送してくれた場合に、より正確なジオルーティング応答を返す。Google Public DNS のドキュメントには「通常はおおよそのネットワーク情報を送る（多くの場合 IPv4 アドレスの最後の部分をゼロにする）」とあり、Cloudflare の FAQ は 1.1.1.1 が ECS を送らないと書いている。そのため同じジオルーティングされた名前でも、両者で異なるIPが返ることがあり、Google の答えは照会元の位置で変わる。Google の JSON API では `edns_client_subnet` パラメーターでサブネットを指定できる（ツールはこのパラメーターを送らない）。2026-09-30 に `www.qq.com` を照会すると、`114.114.114.0/24` では `121.14.77.201` と `121.14.77.221`、`8.8.8.0/24` では `43.159.109.55`、`139.130.4.0/24` では `43.168.224.173` が返った。Cloudflare は同じパラメーターを無視し、`43.159.109.55` を返した。
 
 **興味深いやつ——古い負キャッシュ。** RFC 2308 は NXDOMAIN 応答もキャッシュ対象だと定めている。存在しないレコードには自分のTTLがないので、負キャッシュの時間は SOA レコード自身のTTLと MINIMUM フィールドの小さいほうになる（RFC 2308 §5）。あるゾーンが1時間だけ設定ミスで、その間にローカルの再帰リゾルバがNXDOMAINをキャッシュしてしまうと、ツールは正しい答えを返すのに、ローカルからのクエリはその時間が過ぎるまで失敗し続ける。対処法は——待つ。あるいはゾーン変更前に SOA の MINIMUM を下げておく。
 
@@ -79,7 +79,7 @@ ZeroToolのDNS Lookupはそのエンドポイントを包んだものだ。中�
 
 - **NOERROR / NXDOMAIN / SERVFAIL** —— RCODE。NOERROR はクエリが正しく処理されたという意味で、付随するレコードがゼロのときは「この名前は存在するが、このタイプのレコードは持っていない」を意味する。NXDOMAIN はその名前がゾーンのどこにも存在しないことを示す。SERVFAIL は再帰リゾルバがクエリを完了できなかったという意味で、DNSSEC検証の失敗か、権威サーバーからのエラー応答が原因であることが多い。
 - **N records** —— Answer セクションのレコード数。NOERROR で 0 件が返ってきた場合、その名前に対しては選んだタイプが間違った問いだということだ。実際に欲しいゾーンのNSを確認しよう。
-- **DNSSEC ✓ / no DNSSEC** —— AD フラグ。「no DNSSEC」のピルは、ゾーンが署名されていないか、応答中の CNAME が署名のないゾーンにつながっていることを意味する。署名の検証に失敗した場合は SERVFAIL が返る。`com`・`org`・`dev` の TLD は署名済み（ルートゾーンにそれぞれの DS レコードがある）だが、その下のドメインは所有者が DNSSEC を有効にしたときだけ署名される。`example.com` は署名済み、`zerotool.dev` は未署名だ。
+- **DNSSEC ✓ / no DNSSEC / DNSSEC failed** —— AD フラグ。「no DNSSEC」のピルは、ゾーンが署名されていないか、応答中の CNAME が署名のないゾーンにつながっていることを意味する。署名の検証に失敗した場合は SERVFAIL が返る。SERVFAIL に DNSSEC 関連の拡張エラーコード（RFC 8914 の 1・2・5〜12）が付いていればピルは「DNSSEC failed」になり、それ以外の SERVFAIL ではピルを出さない。リゾルバが判断材料になる回答を返していないからだ。`com`・`org`・`dev` の TLD は署名済み（ルートゾーンにそれぞれの DS レコードがある）だが、その下のドメインは所有者が DNSSEC を有効にしたときだけ署名される。`example.com` は署名済み、`zerotool.dev` は未署名だ。
 - **Resolver** —— どのDoHエンドポイントが応答したか。CloudflareとGoogleを横並びで比べるときに役立つ。
 - **Latency** —— `fetch()` の開始から JSON パースまでのラウンドトリップ。最初の照会にはリゾルバとの HTTPS 接続の確立が含まれるので、2回目以降より遅くなる。
 
@@ -176,7 +176,7 @@ example.com. 0 iodef "mailto:security@example.com"
 
 **EDNS Client Subnet と CDN テスト。** CDNのジオルーティングをテストする際、DoHが返すIPはCloudflareかGoogleから見える景色であって、あなたから見える景色ではない。特定のリージョンからのテストには、DNS Checker のような複数地域から照会するツールを使うか、そのリージョン内のクラウドVMで `dig` を走らせる必要がある。ZeroToolのツールが答えるのは「このパブリックリゾルバは何を返すか？」であって、「サンパウロのユーザーから見てどうか？」ではない。
 
-**DNSSEC失敗はサーバー障害に似て見える。** あるゾーンがDNSSECチェーンを誤って署名している場合、CloudflareとGoogleはどちらも `AD=false` 付きのSERVFAILを返す。これはリゾルバがゾーンにまったく到達できないときと同じ応答コードだ。レコード欄の下のリゾルバ注記で両者を区別できる。`dnssec-failed.org` では、Cloudflare の注記は `EDE(9): DNSKEY Missing ...`（RFC 8914 の拡張エラー 9）、Google の注記は「DNSSEC validation failure」だ。ツールは常に `cd=0` を送る——これは日常的なルックアップで正しいデフォルトだ。検証前の答えを見るには `dig +cd` を、チェーン全体の分析には DNSViz を使おう。
+**DNSSEC失敗はサーバー障害に似て見える。** あるゾーンがDNSSECチェーンを誤って署名している場合、CloudflareとGoogleはどちらも `AD=false` 付きのSERVFAILを返す。これはリゾルバがゾーンにまったく到達できないときと同じ応答コードだ。レコード欄の下のリゾルバ注記で両者を区別できる。`dnssec-failed.org` では、Cloudflare の注記は `EDE(9): DNSKEY Missing ...`（RFC 8914 の拡張エラー 9）だ。Google は「DNSSEC validation failure」で始まる説明文に加えて `extended_dns_errors` フィールド（コード 9）を返し、ツールは後者を `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org` と表示する。どちらのリゾルバでもピルは「DNSSEC failed」になる。ツールは常に `cd=0` を送る——これは日常的なルックアップで正しいデフォルトだ。検証前の答えを見るには `dig +cd` を、チェーン全体の分析には DNSViz を使おう。
 
 ## DNSルックアップツールの中での立ち位置
 

@@ -2,7 +2,7 @@
 title: "DNS Lookup in the Browser: A, MX, TXT, and CAA via DNS-over-HTTPS"
 description: "Look up DNS records from any browser without dig, nslookup, or whatsmydns. How DoH unlocks A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR, and SRV in a fetch() call — with DNSSEC, TXT-segment, and propagation gotchas."
 pubDate: 2026-05-24
-updatedDate: 2026-09-29
+updatedDate: 2026-09-30
 lang: "en"
 noindex: true
 tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
@@ -36,9 +36,9 @@ A traditional DNS query is a binary packet over UDP/53 (or TCP/53 when truncated
 }
 ```
 
-`Status` is the standard DNS RCODE (RFC 1035 §4.1.1, extended by RFC 6895). `AD` is the DNSSEC "Authenticated Data" flag: both providers document it as true only when every record in the answer was validated. Cloudflare sets it only when the query asks for DNSSEC data with `do=1`, which RFC 6840 §5.8 allows. `TC` is the truncation flag; Cloudflare's documentation says it is almost always false over DoH because the resolver supports the maximum response size.
+`Status` is the standard DNS RCODE (RFC 1035 §4.1.1, extended by RFC 6895). `AD` is the DNSSEC "Authenticated Data" flag: both providers document it as true only when every record in the answer was validated. RFC 6840 §5.8 says a resolver should set it only when the query sets the DO or AD bit, and without `do=1` Cloudflare's AD flag varies (see below). `TC` is the truncation flag; Cloudflare's documentation says it is almost always false over DoH because the resolver supports the maximum response size.
 
-The tool sends `do=1` (DNSSEC OK) and `cd=0` (Checking Disabled = 0). `cd=0` asks the resolver to validate DNSSEC; `do=1` asks it to include the signatures, and it is what makes Cloudflare report the AD flag. In a test on 2026-09-29, Cloudflare returned `"AD": false` for the signed `example.com` without `do=1` and `true` with it. The opposite, `cd=1`, tells the resolver to skip validation — useful for forensic inspection of a broken zone but not what you want for normal lookups.
+The tool sends `do=1` (DNSSEC OK) and `cd=0` (Checking Disabled = 0). `cd=0` asks the resolver to validate DNSSEC; `do=1` asks it to include the signatures. Without `do=1`, Cloudflare's AD flag is not reliable. On 2026-09-30 we sent each query 30 times without it: `example.com` A, AAAA and NS came back `"AD": false` every time, and MX came back `true` every time. An earlier run of 20 `example.com` A queries gave 10 `true` and 10 `false`. With `do=1`, and from Google either way, every answer had `true`. To rely on AD, send `do=1`. The opposite, `cd=1`, tells the resolver to skip validation — useful for forensic inspection of a broken zone but not what you want for normal lookups.
 
 ## The ten record types, and what they tell you
 
@@ -69,7 +69,7 @@ The most common surprise: `dig` on a developer laptop and DoH from a browser pro
 
 **Geo-routed answers.** Cloudflare, Akamai, AWS Global Accelerator, and most CDNs return different A/AAAA records depending on which edge POP receives the query. The IP you see in the tool is the one Cloudflare or Google's recursive saw from *their* network position, not yours. For "is this IP correct?" questions, the tool is the right answer for a generic public viewer; for "is this IP correct from my POP?" you need to query from that POP.
 
-**EDNS Client Subnet (RFC 7871).** Some authoritative servers return more accurate geo-routed answers when the recursive resolver forwards a hint about the client's subnet. Google Public DNS "normally sends approximate network information (usually zeroing out the last part of your IPv4 address)"; Cloudflare's FAQ says 1.1.1.1 does not send ECS. The same geo-routed name can therefore resolve to different IPs through the two: on 2026-09-29, `www.baidu.com` returned `103.235.46.96` through Cloudflare and `45.113.192.102` through Google.
+**EDNS Client Subnet (RFC 7871).** Some authoritative servers return more accurate geo-routed answers when the recursive resolver forwards a hint about the client's subnet. Google Public DNS "normally sends approximate network information (usually zeroing out the last part of your IPv4 address)"; Cloudflare's FAQ says 1.1.1.1 does not send ECS. The same geo-routed name can therefore resolve to different IPs through the two, and Google's answer depends on where the query comes from. Google's JSON API lets you set the subnet with the `edns_client_subnet` parameter (the tool does not send it). On 2026-09-30, `www.qq.com` returned `121.14.77.201` and `121.14.77.221` for `114.114.114.0/24`, `43.159.109.55` for `8.8.8.0/24`, and `43.168.224.173` for `139.130.4.0/24`. Cloudflare ignored the same parameter and returned `43.159.109.55`.
 
 **The interesting one: stale negative caches.** RFC 2308 specifies that NXDOMAIN responses are cacheable. Because the missing record has no TTL of its own, the negative-cache time is the smaller of the SOA record's TTL and its MINIMUM field (RFC 2308 §5). If a zone was misconfigured for an hour and your local recursive cached the NXDOMAIN, the tool can return the correct answer while every local query keeps failing until that time runs out. The fix is to wait — or to lower the SOA MINIMUM before a zone change.
 
@@ -79,7 +79,7 @@ Five pills sit above the records view. Each compresses one operational signal:
 
 - **NOERROR / NXDOMAIN / SERVFAIL** — the RCODE. NOERROR means the query was processed correctly; the zero records that may accompany it mean "this name exists but has no records of that type". NXDOMAIN means the name does not exist anywhere in the zone. SERVFAIL means the recursive resolver could not complete the query — often DNSSEC validation failed, or the authoritative servers returned an error.
 - **N records** — count of records in the Answer section. When NOERROR comes back with 0 records, the chosen type is the wrong question for this name. Check NS for the zone you actually want.
-- **DNSSEC ✓ / no DNSSEC** — the AD flag. A "no DNSSEC" pill means the zone is unsigned or a CNAME in the answer leads into an unsigned zone; a signature that fails validation returns SERVFAIL instead. The `com`, `org` and `dev` TLDs are signed (each has a DS record in the root zone), but a domain under them is signed only if its owner turns DNSSEC on: `example.com` is, `zerotool.dev` is not.
+- **DNSSEC ✓ / no DNSSEC / DNSSEC failed** — the AD flag. A "no DNSSEC" pill means the zone is unsigned or a CNAME in the answer leads into an unsigned zone; a signature that fails validation returns SERVFAIL instead. When the SERVFAIL carries a DNSSEC Extended DNS Error (codes 1, 2 and 5 to 12 in RFC 8914), the pill reads "DNSSEC failed". Any other SERVFAIL hides the pill, because the resolver sent no answer to judge. The `com`, `org` and `dev` TLDs are signed (each has a DS record in the root zone), but a domain under them is signed only if its owner turns DNSSEC on: `example.com` is, `zerotool.dev` is not.
 - **Resolver** — which DoH endpoint answered. Useful when comparing Cloudflare and Google side by side.
 - **Latency** — round-trip from `fetch()` start to JSON parse. The first lookup includes the HTTPS connection setup to the resolver, so it is slower than the ones after it.
 
@@ -176,7 +176,7 @@ The `issuewild ";"` denies all wildcard issuance. The `iodef` tells CAs where to
 
 **EDNS Client Subnet and CDN testing.** When testing geo-routing for a CDN, the IP returned by DoH reflects Cloudflare's or Google's view, not yours. To test from specific regions, use a multi-region checker such as DNS Checker, or run `dig` on a cloud VM in that region. ZeroTool's tool answers "what does this public resolver return?", not "what would my user in São Paulo see?".
 
-**DNSSEC failures look like server failures.** If a zone signs its DNSSEC chain incorrectly, both Cloudflare and Google return SERVFAIL with `AD=false`, the same code a resolver returns when it cannot reach the zone at all. The resolver notes under the records tell the two apart: for `dnssec-failed.org`, Cloudflare's note is `EDE(9): DNSKEY Missing ...` (Extended DNS Error 9, RFC 8914) and Google's says "DNSSEC validation failure". The tool always sends `cd=0`, the correct default for everyday lookups; to see the unvalidated answer use `dig +cd`, and for a full analysis of the chain use DNSViz.
+**DNSSEC failures look like server failures.** If a zone signs its DNSSEC chain incorrectly, both Cloudflare and Google return SERVFAIL with `AD=false`, the same code a resolver returns when it cannot reach the zone at all. The resolver notes under the records tell the two apart: for `dnssec-failed.org`, Cloudflare's note is `EDE(9): DNSKEY Missing ...` (Extended DNS Error 9, RFC 8914). Google sends a sentence that starts "DNSSEC validation failure" plus an `extended_dns_errors` field with code 9, which the tool shows as `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org`. With either resolver the pill reads "DNSSEC failed". The tool always sends `cd=0`, the correct default for everyday lookups; to see the unvalidated answer use `dig +cd`, and for a full analysis of the chain use DNSViz.
 
 ## Where this fits among DNS lookup tools
 

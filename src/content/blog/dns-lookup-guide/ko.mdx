@@ -2,7 +2,7 @@
 title: "브라우저에서 DNS 조회하기: DNS-over-HTTPS로 A, MX, TXT, CAA 레코드 확인"
 description: "dig, nslookup, whatsmydns 없이 어떤 브라우저에서든 DNS 레코드를 조회하는 방법. DoH가 fetch() 한 번으로 A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, PTR, SRV를 어떻게 풀어내는지 — DNSSEC, TXT 세그먼트, 전파 지연의 함정과 함께."
 pubDate: 2026-05-24
-updatedDate: 2026-09-29
+updatedDate: 2026-09-30
 lang: "ko"
 noindex: true
 tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
@@ -38,9 +38,9 @@ ZeroTool의 DNS Lookup은 이 엔드포인트들을 감싼 도구입니다. 직�
 }
 ```
 
-`Status`는 표준 DNS RCODE(RFC 1035 §4.1.1, RFC 6895에서 확장)입니다. `AD`는 DNSSEC "Authenticated Data" 플래그로, 두 제공자 모두 응답 안의 모든 레코드가 검증됐을 때만 true라고 문서에 적고 있습니다. Cloudflare는 질의가 `do=1`로 DNSSEC 데이터를 요청할 때만 이 플래그를 켜며, RFC 6840 §5.8이 이를 허용합니다. `TC`는 트렁케이션 플래그입니다. Cloudflare 문서에 따르면 최대 크기의 응답을 지원하기 때문에 DoH에서는 거의 항상 false입니다.
+`Status`는 표준 DNS RCODE(RFC 1035 §4.1.1, RFC 6895에서 확장)입니다. `AD`는 DNSSEC "Authenticated Data" 플래그로, 두 제공자 모두 응답 안의 모든 레코드가 검증됐을 때만 true라고 문서에 적고 있습니다. RFC 6840 §5.8은 질의에 DO나 AD 비트가 있을 때만 리졸버가 이 플래그를 켜도록 권합니다. `do=1`이 없으면 Cloudflare의 AD는 일정하지 않습니다(아래 참고). `TC`는 트렁케이션 플래그입니다. Cloudflare 문서에 따르면 최대 크기의 응답을 지원하기 때문에 DoH에서는 거의 항상 false입니다.
 
-도구는 `do=1`(DNSSEC OK)과 `cd=0`(Checking Disabled = 0)을 보냅니다. `cd=0`은 리졸버에게 DNSSEC 검증을 요청하고, `do=1`은 서명을 응답에 넣어 달라고 요청합니다. Cloudflare가 AD 플래그를 알려 주는 것도 `do=1`이 있을 때입니다. 2026-09-29 테스트에서 Cloudflare는 `do=1` 없이 서명된 `example.com`을 조회하면 `"AD": false`, 붙이면 `true`를 돌려줬습니다. 반대로 `cd=1`은 검증을 건너뛰라는 의미인데, 망가진 존을 포렌식으로 들여다볼 때는 유용하지만 일반적인 조회에서 원하는 동작은 아닙니다.
+도구는 `do=1`(DNSSEC OK)과 `cd=0`(Checking Disabled = 0)을 보냅니다. `cd=0`은 리졸버에게 DNSSEC 검증을 요청하고, `do=1`은 서명을 응답에 넣어 달라고 요청합니다. `do=1`이 없으면 Cloudflare의 AD는 믿기 어렵습니다. 2026-09-30에 질의마다 30번씩 보냈더니 `example.com`의 A, AAAA, NS는 매번 `"AD": false`, MX는 매번 `true`였습니다. 그보다 앞서 A를 20번 보냈을 때는 `true`와 `false`가 10번씩 나왔습니다. `do=1`을 붙인 질의와 Google 질의는 모두 `true`였습니다. AD로 판단하려면 `do=1`을 붙여야 합니다. 반대로 `cd=1`은 검증을 건너뛰라는 의미인데, 망가진 존을 포렌식으로 들여다볼 때는 유용하지만 일반적인 조회에서 원하는 동작은 아닙니다.
 
 ## 열 가지 레코드 타입, 그리고 각각이 알려주는 것
 
@@ -71,7 +71,7 @@ ZeroTool의 DNS Lookup은 이 엔드포인트들을 감싼 도구입니다. 직�
 
 **지오 라우팅된 응답.** Cloudflare, Akamai, AWS Global Accelerator, 그리고 대부분의 CDN은 어떤 엣지 POP가 질의를 받느냐에 따라 서로 다른 A/AAAA 레코드를 반환합니다. 도구가 보여주는 IP는 Cloudflare나 Google의 리커시브가 *그들의* 네트워크 위치에서 본 값이지, 당신 위치에서 본 값이 아닙니다. "이 IP가 맞느냐?"라는 질문에 대해서는, 도구가 일반 공용 관찰자 입장에서 정답입니다. 하지만 "내 POP에서 봤을 때 이 IP가 맞느냐?"는 그 POP에서 직접 질의해야 합니다.
 
-**EDNS Client Subnet(RFC 7871).** 일부 권위 서버는 리커시브 리졸버가 클라이언트 서브넷 힌트를 함께 전달할 때 더 정확한 지오 라우팅 답을 반환합니다. Google Public DNS 문서는 "보통 대략적인 네트워크 정보를 보낸다(대개 IPv4 주소의 마지막 부분을 0으로 바꾼다)"고 적고 있고, Cloudflare FAQ는 1.1.1.1이 ECS를 보내지 않는다고 밝힙니다. 그래서 같은 지오 라우팅 이름이 두 리졸버에서 다른 IP로 풀릴 수 있습니다. 2026-09-29에 `www.baidu.com`을 조회했을 때 Cloudflare는 `103.235.46.96`, Google은 `45.113.192.102`를 돌려줬습니다.
+**EDNS Client Subnet(RFC 7871).** 일부 권위 서버는 리커시브 리졸버가 클라이언트 서브넷 힌트를 함께 전달할 때 더 정확한 지오 라우팅 답을 반환합니다. Google Public DNS 문서는 "보통 대략적인 네트워크 정보를 보낸다(대개 IPv4 주소의 마지막 부분을 0으로 바꾼다)"고 적고 있고, Cloudflare FAQ는 1.1.1.1이 ECS를 보내지 않는다고 밝힙니다. 그래서 같은 지오 라우팅 이름이 두 리졸버에서 다른 IP로 풀릴 수 있고, Google의 답은 질의가 어디서 왔는지에 따라 달라집니다. Google JSON API에서는 `edns_client_subnet` 파라미터로 서브넷을 직접 지정할 수 있습니다(도구는 이 파라미터를 보내지 않습니다). 2026-09-30에 `www.qq.com`을 조회했더니 `114.114.114.0/24`에서는 `121.14.77.201`과 `121.14.77.221`, `8.8.8.0/24`에서는 `43.159.109.55`, `139.130.4.0/24`에서는 `43.168.224.173`이 돌아왔습니다. Cloudflare는 같은 파라미터를 무시하고 `43.159.109.55`를 돌려줬습니다.
 
 **흥미로운 한 가지: 오래된 부정 캐시.** RFC 2308은 NXDOMAIN 응답이 캐시 가능하다고 규정합니다. 없는 레코드에는 자체 TTL이 없으므로, 부정 캐시 시간은 SOA 레코드 자체의 TTL과 MINIMUM 필드 중 작은 값입니다(RFC 2308 §5). 어떤 존이 한 시간 동안 잘못 설정되어 있었고 로컬 리커시브가 그 NXDOMAIN을 캐시했다면, 도구는 정답을 반환하는데 로컬 질의는 그 시간이 지날 때까지 계속 실패할 수 있습니다. 해법은 기다리거나 — 또는 존 변경 전에 SOA MINIMUM을 낮춰두는 것입니다.
 
@@ -81,7 +81,7 @@ ZeroTool의 DNS Lookup은 이 엔드포인트들을 감싼 도구입니다. 직�
 
 - **NOERROR / NXDOMAIN / SERVFAIL** — RCODE입니다. NOERROR는 질의가 올바르게 처리되었다는 뜻이고, 함께 따라온 레코드 수가 0이라면 "이 이름은 존재하지만 해당 타입의 레코드는 없다"는 의미입니다. NXDOMAIN은 그 이름이 존 어디에도 존재하지 않는다는 뜻입니다. SERVFAIL은 리커시브 리졸버가 질의를 완료할 수 없었다는 뜻으로, 보통 DNSSEC 검증 실패이거나 권위 서버가 에러를 반환한 경우입니다.
 - **N records** — Answer 섹션의 레코드 개수입니다. NOERROR인데 0개가 돌아왔다면, 고른 타입이 이 이름에 대해 잘못된 질문이라는 뜻입니다. 실제로 원하는 존에 대해 NS를 확인해 보세요.
-- **DNSSEC ✓ / no DNSSEC** — AD 플래그입니다. "no DNSSEC" 필은 존이 서명되어 있지 않거나, 응답 속 CNAME이 서명 없는 존으로 이어진다는 뜻입니다. 서명 검증에 실패하면 SERVFAIL이 돌아옵니다. `com`, `org`, `dev` TLD는 서명되어 있지만(루트 존에 각각의 DS 레코드가 있음), 그 아래 도메인은 소유자가 DNSSEC를 켜야 서명됩니다. `example.com`은 서명되어 있고 `zerotool.dev`는 아닙니다.
+- **DNSSEC ✓ / no DNSSEC / DNSSEC failed** — AD 플래그입니다. "no DNSSEC" 필은 존이 서명되어 있지 않거나, 응답 속 CNAME이 서명 없는 존으로 이어진다는 뜻입니다. 서명 검증에 실패하면 SERVFAIL이 돌아옵니다. SERVFAIL에 DNSSEC 관련 확장 오류 코드(RFC 8914의 1, 2, 5~12)가 붙어 있으면 필은 "DNSSEC failed"가 되고, 그 밖의 SERVFAIL에서는 필을 숨깁니다. 리졸버가 판단할 수 있는 답을 주지 않았기 때문입니다. `com`, `org`, `dev` TLD는 서명되어 있지만(루트 존에 각각의 DS 레코드가 있음), 그 아래 도메인은 소유자가 DNSSEC를 켜야 서명됩니다. `example.com`은 서명되어 있고 `zerotool.dev`는 아닙니다.
 - **Resolver** — 어느 DoH 엔드포인트가 응답했는지입니다. Cloudflare와 Google을 나란히 비교할 때 유용합니다.
 - **Latency** — `fetch()` 시작부터 JSON 파싱까지의 왕복 시간입니다. 첫 조회에는 리졸버와의 HTTPS 연결 수립 시간이 포함되므로 이후 조회보다 느립니다.
 
@@ -178,7 +178,7 @@ example.com. 0 iodef "mailto:security@example.com"
 
 **EDNS Client Subnet과 CDN 테스트.** CDN의 지오 라우팅을 테스트할 때, DoH가 반환하는 IP는 Cloudflare나 Google의 시점이지 당신의 시점이 아닙니다. 특정 리전에서 테스트하려면 DNS Checker 같은 여러 지역 조회 도구를 쓰거나, 해당 리전의 클라우드 VM에서 `dig`를 돌리세요. ZeroTool의 도구가 답하는 질문은 "이 공용 리졸버는 무엇을 돌려주는가?"이지, "상파울루에 있는 내 사용자가 무엇을 볼까?"가 아닙니다.
 
-**DNSSEC 실패는 서버 장애처럼 보입니다.** 어떤 존이 DNSSEC 체인을 잘못 서명했다면, Cloudflare와 Google 모두 `AD=false`와 함께 SERVFAIL을 반환합니다. 리졸버가 존에 전혀 닿지 못할 때와 같은 응답 코드입니다. 레코드 아래의 리졸버 메모로 둘을 구분할 수 있습니다. `dnssec-failed.org`의 경우 Cloudflare 메모는 `EDE(9): DNSKEY Missing ...`(RFC 8914 확장 오류 9), Google 메모는 "DNSSEC validation failure"입니다. 도구는 항상 `cd=0`을 보내는데, 일상적인 조회에 대한 올바른 기본값입니다. 검증 전의 답을 보려면 `dig +cd`를, 체인 전체를 분석하려면 DNSViz를 쓰세요.
+**DNSSEC 실패는 서버 장애처럼 보입니다.** 어떤 존이 DNSSEC 체인을 잘못 서명했다면, Cloudflare와 Google 모두 `AD=false`와 함께 SERVFAIL을 반환합니다. 리졸버가 존에 전혀 닿지 못할 때와 같은 응답 코드입니다. 레코드 아래의 리졸버 메모로 둘을 구분할 수 있습니다. `dnssec-failed.org`의 경우 Cloudflare 메모는 `EDE(9): DNSKEY Missing ...`(RFC 8914 확장 오류 9)입니다. Google은 "DNSSEC validation failure"로 시작하는 설명 문장과 함께 `extended_dns_errors` 필드(코드 9)를 돌려주고, 도구는 후자를 `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org`로 보여 줍니다. 어느 리졸버든 필은 "DNSSEC failed"로 표시됩니다. 도구는 항상 `cd=0`을 보내는데, 일상적인 조회에 대한 올바른 기본값입니다. 검증 전의 답을 보려면 `dig +cd`를, 체인 전체를 분석하려면 DNSViz를 쓰세요.
 
 ## DNS 조회 도구들 사이에서 이 도구의 자리
 

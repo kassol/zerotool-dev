@@ -2,7 +2,7 @@
 title: "浏览器里查 DNS：用 DNS-over-HTTPS 查询 A、MX、TXT 和 CAA 记录"
 description: "不用 dig、nslookup 或 whatsmydns，直接在浏览器里查 DNS 记录。DoH 如何让一个 fetch() 调用就拿到 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA、PTR、SRV——附带 DNSSEC、TXT 分段与传播延迟的几个坑。"
 pubDate: 2026-05-24
-updatedDate: 2026-09-29
+updatedDate: 2026-09-30
 lang: "zh"
 noindex: true
 tags: ["dns", "doh", "networking", "tls", "email", "developer-tools"]
@@ -36,9 +36,9 @@ ZeroTool 的 DNS Lookup 就是对这些端点的封装。它就是你自己会�
 }
 ```
 
-`Status` 是标准的 DNS RCODE（RFC 1035 §4.1.1，由 RFC 6895 扩展）。`AD` 是 DNSSEC 的 "Authenticated Data" 标志位，两家文档都写明：只有回答里的每条记录都通过验证时才为真。Cloudflare 只在查询用 `do=1` 请求 DNSSEC 数据时才置这个位，RFC 6840 §5.8 允许这样做。`TC` 是截断标志；Cloudflare 的文档说，由于它支持最大响应大小，DoH 下这个值几乎总是 false。
+`Status` 是标准的 DNS RCODE（RFC 1035 §4.1.1，由 RFC 6895 扩展）。`AD` 是 DNSSEC 的 "Authenticated Data" 标志位，两家文档都写明：只有回答里的每条记录都通过验证时才为真。RFC 6840 §5.8 规定解析器只在查询带 DO 或 AD 位时才应置这个位；不带 `do=1` 时 Cloudflare 的 AD 时真时假（见下文）。`TC` 是截断标志；Cloudflare 的文档说，由于它支持最大响应大小，DoH 下这个值几乎总是 false。
 
-工具发送 `do=1`（DNSSEC OK）和 `cd=0`（Checking Disabled = 0）。`cd=0` 让解析器做 DNSSEC 验证；`do=1` 让它带上签名，Cloudflare 也因此才会报告 AD 标志。2026-09-29 的测试中，不带 `do=1` 时 Cloudflare 对已签名的 `example.com` 返回 `"AD": false`，带上后返回 `true`。反过来，`cd=1` 让解析器跳过验证——对一个坏掉的区域做取证检查时有用，但日常查询不该这么做。
+工具发送 `do=1`（DNSSEC OK）和 `cd=0`（Checking Disabled = 0）。`cd=0` 让解析器做 DNSSEC 验证；`do=1` 让它带上签名。不带 `do=1` 时，Cloudflare 的 AD 不可靠：2026-09-30 每种查询各发 30 次，`example.com` 的 A、AAAA、NS 每次都是 `"AD": false`，MX 每次都是 `true`；更早一轮 20 次 A 查询里 `true` 和 `false` 各 10 次。带 `do=1` 的查询和 Google 的查询全部是 `true`。要靠 AD 判断，就要带 `do=1`。反过来，`cd=1` 让解析器跳过验证——对一个坏掉的区域做取证检查时有用，但日常查询不该这么做。
 
 ## 十种记录类型，以及它们告诉你什么
 
@@ -69,7 +69,7 @@ ZeroTool 的 DNS Lookup 就是对这些端点的封装。它就是你自己会�
 
 **地理路由的答案。** Cloudflare、Akamai、AWS Global Accelerator 以及大多数 CDN 会根据接收查询的边缘 POP 不同而返回不同的 A/AAAA。工具里看到的 IP 是 Cloudflare 或 Google 递归从*他们*的网络位置看到的，不是你的位置。对"这个 IP 对不对？"这种问题，工具给的是通用公网视角的答案；要问"从我的 POP 看这个 IP 对不对？"，就得从那个 POP 发起查询。
 
-**EDNS Client Subnet（RFC 7871）。** 一些权威服务器在递归解析器转发客户端子网提示时，能返回更精准的地理路由答案。Google Public DNS 的文档说它"通常会发送大致的网络信息（一般是把 IPv4 地址的最后一段置零）"；Cloudflare 的 FAQ 说 1.1.1.1 不发送 ECS。因此同一个走地理路由的域名经两家查询可能拿到不同 IP：2026-09-29 查 `www.baidu.com`，Cloudflare 返回 `103.235.46.96`，Google 返回 `45.113.192.102`。
+**EDNS Client Subnet（RFC 7871）。** 一些权威服务器在递归解析器转发客户端子网提示时，能返回更精准的地理路由答案。Google Public DNS 的文档说它"通常会发送大致的网络信息（一般是把 IPv4 地址的最后一段置零）"；Cloudflare 的 FAQ 说 1.1.1.1 不发送 ECS。因此同一个走地理路由的域名经两家查询可能拿到不同 IP，Google 的结果还取决于查询从哪里发出。Google 的 JSON 接口可以用 `edns_client_subnet` 参数自己指定子网（工具不发送该参数）。2026-09-30 用它查 `www.qq.com`：`114.114.114.0/24` 得到 `121.14.77.201`、`121.14.77.221`，`8.8.8.0/24` 得到 `43.159.109.55`，`139.130.4.0/24` 得到 `43.168.224.173`。给 Cloudflare 带同样的参数，它不理会，返回 `43.159.109.55`。
 
 **有意思的那个：陈旧的负缓存。** RFC 2308 规定 NXDOMAIN 响应可缓存。不存在的记录没有自己的 TTL，所以负缓存时长取 SOA 记录自身 TTL 与其 MINIMUM 字段中较小的那个（RFC 2308 §5）。如果某个区域被错配了一个小时、你的本地递归缓存了 NXDOMAIN，那么工具能返回正确答案的同时，你的本地查询会一直失败，直到这段时间过去。修法是等——或者在变更区域之前先把 SOA MINIMUM 调低。
 
@@ -79,7 +79,7 @@ ZeroTool 的 DNS Lookup 就是对这些端点的封装。它就是你自己会�
 
 - **NOERROR / NXDOMAIN / SERVFAIL**——RCODE。NOERROR 表示查询被正确处理；可能伴随的零条记录意思是"这个名字存在但没有该类型的记录"。NXDOMAIN 表示这个名字在该区域里根本不存在。SERVFAIL 表示递归解析器没法完成查询——通常是 DNSSEC 验证失败，或权威服务器返回了错误。
 - **N 条记录**——Answer 段的记录数。当 NOERROR 配 0 条记录回来时，说明你挑的类型对这个名字是错的问题。去查这个名字对应区域的 NS。
-- **DNSSEC ✓ / no DNSSEC**——AD 标志位。出现 "no DNSSEC" 表示区域没有签名，或回答里的 CNAME 指向了没签名的区域；签名验证失败时返回的是 SERVFAIL。`com`、`org`、`dev` 这些 TLD 已签名（根区里都有它们的 DS 记录），但其下的域名要所有者自己开启 DNSSEC 才会签名：`example.com` 已签名，`zerotool.dev` 没有。
+- **DNSSEC ✓ / no DNSSEC / DNSSEC failed**——AD 标志位。出现 "no DNSSEC" 表示区域没有签名，或回答里的 CNAME 指向了没签名的区域；签名验证失败时返回的是 SERVFAIL。SERVFAIL 带有 DNSSEC 类扩展错误码（RFC 8914 的 1、2、5–12）时，标签显示 "DNSSEC failed"；其他 SERVFAIL 不显示这个标签，因为解析器没有给出可判断的回答。`com`、`org`、`dev` 这些 TLD 已签名（根区里都有它们的 DS 记录），但其下的域名要所有者自己开启 DNSSEC 才会签名：`example.com` 已签名，`zerotool.dev` 没有。
 - **Resolver**——哪个 DoH 端点回的。在并排对比 Cloudflare 和 Google 时有用。
 - **Latency**——从 `fetch()` 发起到 JSON 解析完成的往返耗时。第一次查询包含与解析器建立 HTTPS 连接的时间，所以比之后的查询慢。
 
@@ -176,7 +176,7 @@ example.com. 0 iodef "mailto:security@example.com"
 
 **EDNS Client Subnet 与 CDN 测试。** 测 CDN 的地理路由时，DoH 返回的 IP 反映的是 Cloudflare 或 Google 的视角，不是你的。要测特定区域，用 DNS Checker 这类多地区查询工具，或者在那个区域的云上虚机里跑 `dig`。ZeroTool 的工具回答的是"这个公共解析器返回什么？"，不是"我在圣保罗的用户会看到什么？"。
 
-**DNSSEC 失败看起来像服务器故障。** 如果某个区域 DNSSEC 链签错了，Cloudflare 和 Google 都会返回 SERVFAIL 加 `AD=false`，和解析器完全联系不上区域时的响应码相同。记录下方的解析器备注能区分两者：查 `dnssec-failed.org` 时，Cloudflare 的备注是 `EDE(9): DNSKEY Missing ...`（RFC 8914 扩展错误码 9），Google 的备注写着 "DNSSEC validation failure"。工具始终发送 `cd=0`，这是日常查询的正确默认；想看未经验证的答案用 `dig +cd`，要完整分析签名链用 DNSViz。
+**DNSSEC 失败看起来像服务器故障。** 如果某个区域 DNSSEC 链签错了，Cloudflare 和 Google 都会返回 SERVFAIL 加 `AD=false`，和解析器完全联系不上区域时的响应码相同。记录下方的解析器备注能区分两者：查 `dnssec-failed.org` 时，Cloudflare 的备注是 `EDE(9): DNSKEY Missing ...`（RFC 8914 扩展错误码 9）。Google 返回以 "DNSSEC validation failure" 开头的一句说明，外加 `extended_dns_errors` 字段（错误码 9），工具把后者显示为 `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org`。两家的标签都显示 "DNSSEC failed"。工具始终发送 `cd=0`，这是日常查询的正确默认；想看未经验证的答案用 `dig +cd`，要完整分析签名链用 DNSViz。
 
 ## 在 DNS 查询工具家族中的定位
 
