@@ -74,6 +74,7 @@
 <script>
   import Ajv from 'ajv';
   import Ajv2020 from 'ajv/dist/2020';
+  import addFormats from 'ajv-formats';
 
   const schemaEl  = document.getElementById('jsv-schema') as HTMLTextAreaElement;
   const dataEl    = document.getElementById('jsv-data') as HTMLTextAreaElement;
@@ -121,6 +122,23 @@
     "role": "superuser",
     "extra": "not allowed"
   }, null, 2);
+
+  /* ── engine:start ── */
+  // "format" is checked (asserted) for the JSON Schema formats that ajv-formats implements.
+  // Draft 2020-12 treats format as an annotation unless the validator opts in to assertion;
+  // this tool opts in. Formats not in this list (idn-email, iri, custom names) are ignored.
+  var ASSERTED_FORMATS = [
+    'date', 'time', 'date-time', 'duration', 'email', 'hostname', 'ipv4', 'ipv6',
+    'uri', 'uri-reference', 'uri-template', 'uuid', 'json-pointer', 'relative-json-pointer', 'regex',
+  ];
+
+  function createAjv(draft, lib) {
+    var Ctor = draft === '2020' ? lib.Ajv2020 : lib.Ajv;
+    var ajv = new Ctor({ allErrors: true, strict: false });
+    lib.addFormats(ajv, ASSERTED_FORMATS);
+    return ajv;
+  }
+  /* ── engine:end ── */
 
   function setStatus(msg: string, type: 'success' | 'error' | 'info' | '') {
     statusEl.textContent = msg;
@@ -184,13 +202,8 @@
     }
 
     const draft = draftSel.value;
-    let ajv: any;
     try {
-      if (draft === '2020') {
-        ajv = new Ajv2020({ allErrors: true, strict: false });
-      } else {
-        ajv = new Ajv({ allErrors: true, strict: false });
-      }
+      const ajv = createAjv(draft, { Ajv, Ajv2020, addFormats });
       const validateFn = ajv.compile(schema);
       const valid = validateFn(data);
 
