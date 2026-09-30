@@ -154,6 +154,7 @@ const L = labels[lang];
         statusEl.className = 'jtz-status';
       }
 
+      /* ── engine:start ── */
       /* ── PascalCase helper ── */
       function toPascalCase(str) {
         return str
@@ -257,6 +258,16 @@ const L = labels[lang];
         return 'z.object({\n' + fields.join('\n') + '\n' + closing;
       }
 
+      function buildRootZod(parsed, rootName, strict) {
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return buildObjectZod(parsed, strict, '');
+        }
+        // Same path as nested arrays: objects are merged, other element types join a union.
+        if (Array.isArray(parsed)) return inferZod(parsed, rootName, strict, '  ');
+        return inferZod(parsed, rootName, strict, '');
+      }
+      /* ── engine:end ── */
+
       /* ── Main generate ── */
       function generate() {
         var raw = inputEl.value.trim();
@@ -280,21 +291,7 @@ const L = labels[lang];
         var schemaName = toPascalCase(rootName) + 'Schema';
         var typeName = toPascalCase(rootName);
 
-        var zodExpr;
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          zodExpr = buildObjectZod(parsed, strict, '');
-        } else if (Array.isArray(parsed)) {
-          var objItems = parsed.filter(function (v) {
-            return v !== null && typeof v === 'object' && !Array.isArray(v);
-          });
-          if (objItems.length > 0) {
-            zodExpr = 'z.array(' + buildMergedObjectZod(objItems, strict, '  ') + ')';
-          } else {
-            zodExpr = inferZod(parsed, rootName, strict, '');
-          }
-        } else {
-          zodExpr = inferZod(parsed, rootName, strict, '');
-        }
+        var zodExpr = buildRootZod(parsed, rootName, strict);
 
         var lines = [];
         lines.push('import { z } from "zod";');
