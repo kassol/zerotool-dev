@@ -1,40 +1,126 @@
 ---
-seoTitle: "AES Encrypt / Decrypt — AES-GCM Browser Tool | ZeroTool"
-seoDescription: "Encrypt and decrypt text with AES-256-GCM directly in your browser via Web Crypto API. Password-based key derivation with PBKDF2. Nothing leaves your device."
+seoTitle: "AES Encryption & Decryption Online (AES-GCM) | ZeroTool"
+seoDescription: "Encrypt and decrypt text or files with AES-256-GCM in your browser. Password (PBKDF2, 600,000 rounds) or raw key, clear auth-failure errors, nothing uploaded."
 faqItems:
-  - question: "What encryption mode does this tool use?"
-    answer: "AES-256-GCM (Galois/Counter Mode). GCM is an authenticated encryption mode that provides both confidentiality and integrity — any tampering with the ciphertext causes decryption to fail."
-  - question: "How is the key derived from my password?"
-    answer: "The tool uses PBKDF2-HMAC-SHA256 with 600,000 iterations, the value the OWASP Password Storage Cheat Sheet gives for PBKDF2-HMAC-SHA256, to derive a 256-bit AES key. A random 16-byte salt is generated per encryption and stored with the ciphertext. Ciphertext made before 2026-09-30 used 200,000 iterations and still decrypts."
-  - question: "Is the same password guaranteed to produce the same ciphertext?"
-    answer: "No. A fresh random salt and nonce are generated each time, so encrypting the same plaintext with the same password produces different ciphertext. This is by design — it prevents pattern analysis."
-  - question: "Can I decrypt with a different tool?"
-    answer: "Yes, if you follow the format. Remove the v2: prefix and Base64-decode the rest: 16-byte salt + 12-byte nonce + AES-GCM ciphertext with its 16-byte authentication tag. Derive the key with PBKDF2-HMAC-SHA256, 600,000 iterations, 256-bit output. Ciphertext without the prefix uses the same layout with 200,000 iterations."
-  - question: "Is my data sent to a server?"
-    answer: "No. All encryption and decryption runs entirely in your browser via the Web Crypto API. Your plaintext and password never leave your device."
+  - question: "Which AES mode does this tool use?"
+    answer: "AES-GCM only. Password mode uses AES-256-GCM with a key from PBKDF2-HMAC-SHA256; raw key mode uses AES-128, AES-192 or AES-256 depending on the key length. GCM adds a 16-byte authentication tag, so a wrong password or a changed byte makes decryption fail with \"Authentication failed\" instead of printing garbage."
+  - question: "Why does the same text give a different ciphertext every time?"
+    answer: "Each encryption uses a new random 16-byte salt and a new random 12-byte IV. NIST SP 800-38D requires that an IV is not reused with the same key, and the new salt also gives a new key. Every one of the different outputs decrypts to the same text."
+  - question: "Can OpenSSL decrypt the output?"
+    answer: "No. openssl enc does not support GCM, and its manual says it never will. Use the Python code on this page, the Web Crypto API, or any AES-GCM library with the byte layout described below. The other way round, the tool recognizes OpenSSL enc and CryptoJS output (it starts with U2FsdGVkX1) and tells you which openssl command reads it."
+  - question: "Is my text, password or file sent anywhere?"
+    answer: "No. Encryption runs with the Web Crypto API inside the browser tab. The page does not save your input, does not put it in the URL, and does not load Google Analytics or AdSense."
+  - question: "How strong does the password need to be?"
+    answer: "PBKDF2 with 600,000 iterations makes each guess slower (on the laptop used to test this page, about 73 ms in Node.js 24 and 0.3–1.2 s in Chromium), but a short or common password is still guessed quickly. Use a long random passphrase, and send it to the recipient through a different channel than the ciphertext."
 ---
 
-<h2>How to Use</h2>
+<h2>How to Encrypt and Decrypt</h2>
 <ol>
-  <li>Enter your <strong>Password</strong> in the key field.</li>
-  <li>To <strong>Encrypt</strong>: paste your plaintext in the left panel and click <strong>Encrypt</strong>. The base64-encoded ciphertext appears on the right.</li>
-  <li>To <strong>Decrypt</strong>: paste the ciphertext in the right panel and click <strong>Decrypt</strong>. The plaintext appears on the left.</li>
-  <li>Click <strong>Copy</strong> to copy the result.</li>
+  <li>Choose the key type: <strong>Password</strong> (PBKDF2 turns it into a 256-bit key) or <strong>Raw key</strong> (128, 192 or 256 bits as hex, Base64 or text; <strong>Generate</strong> makes one).</li>
+  <li>To encrypt, type in the Plaintext box or click <strong>File…</strong>, then click <strong>Encrypt</strong>. <strong>Output</strong> switches the ciphertext between Base64 and hex.</li>
+  <li>To decrypt, paste the ciphertext or pick an encrypted file and click <strong>Decrypt</strong> (or Ctrl/⌘+Enter in the Ciphertext box).</li>
+  <li>A file result appears as a download button; the file never leaves the tab.</li>
 </ol>
 
+<h2>Examples</h2>
+
+<h3>Password: a short message</h3>
+<p>Text <code>Meet at 10:30, gate B</code>, password <code>correct horse battery staple</code>. One run produced:</p>
+<pre><code>v2:l0KuwwrqkW+qHiVFcSad83WDHoteU8LkBJ/dw3N3LGl2PMwh3n8Q9u6wTM1CzpoDINVwd/yy4RRdM7QPNwXfGdc=</code></pre>
+<p>The 88 Base64 characters after <code>v2:</code> are 65 bytes: 16-byte salt, 12-byte IV, 21 bytes of ciphertext and a 16-byte tag. Paste the line with the same password and the message comes back; encrypt again and the line changes, because the salt and IV are new.</p>
+
+<h3>Raw key with a fixed IV (reproducible)</h3>
+<p>Key type Raw key, key (hex) <code>000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f</code>, IV field <code>cafebabefacedbaddecaf888</code>, text <code>hello from ZeroTool</code>, output Hex:</p>
+<pre><code>e2c6cc4ac55a296929667d871e6fe66b624fac923b410258258a224f6319fb85f4a398</code></pre>
+<p>That is 19 bytes of ciphertext and the 16-byte tag, the same on every run, which is useful for checking another implementation. The tool warns that reusing an IV with the same key breaks GCM (<a href="https://csrc.nist.gov/pubs/sp/800/38/d/final" rel="noopener">NIST SP 800-38D</a>, section 8); for real data leave the IV field empty and a new IV goes in front of the output.</p>
+
+<h3>What the error messages mean</h3>
+<table>
+  <thead><tr><th>Input</th><th>Message</th></tr></thead>
+  <tbody>
+    <tr><td>The first example with password <code>wrong password</code></td><td>Authentication failed: the password or key is wrong, or the ciphertext was changed or cut off. Nothing was decrypted.</td></tr>
+    <tr><td><code>U2FsdGVkX1+YOZ21…</code></td><td>This is OpenSSL enc or CryptoJS output …</td></tr>
+    <tr><td>The first example with <code>v2:</code> changed to <code>v3:</code></td><td>Unknown ciphertext version "v3:".</td></tr>
+    <tr><td>The first example with <code>…</code> pasted in at character 21</td><td>"…" at character 21 is not a Base64 character.</td></tr>
+    <tr><td>A <code>v2:</code> ciphertext with key type Raw key</td><td>This ciphertext starts with "v2:", so it was made with a password.</td></tr>
+  </tbody>
+</table>
+<p>If the decrypted bytes are not UTF-8 text, the tool offers them as a download instead of showing replacement characters.</p>
+
 <h2>Ciphertext Format</h2>
-<p>New ciphertext is <code>v2:</code> followed by Base64 of <code>salt (16 bytes) | nonce (12 bytes) | ciphertext + tag (16 bytes)</code>. The key is derived with PBKDF2-HMAC-SHA256 at 600,000 iterations, the value in the <a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2" rel="noopener">OWASP Password Storage Cheat Sheet</a>.</p>
-<p>Ciphertext made with this tool before 2026-09-30 has no prefix and used 200,000 iterations. Paste it as it is: the tool sees that there is no prefix and decrypts it with 200,000 iterations. To move it to the new format, decrypt it and encrypt it again.</p>
+<table>
+  <thead><tr><th>Mode</th><th>Layout</th></tr></thead>
+  <tbody>
+    <tr><td>Password</td><td><code>v2:</code> + Base64 (or hex) of salt (16) | IV (12) | ciphertext | tag (16). Key: PBKDF2-HMAC-SHA256, 600,000 iterations, 32 bytes, the value in the <a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2" rel="noopener">OWASP Password Storage Cheat Sheet</a>.</td></tr>
+    <tr><td>Password, no prefix</td><td>Same layout, written by this page before 2026-09-30 (200,000 iterations). The tool tries 200,000, then 600,000, so it also reads this layout from other programs.</td></tr>
+    <tr><td>Raw key</td><td>Base64 or hex of IV (12) | ciphertext | tag (16). With the IV field filled: ciphertext | tag only.</td></tr>
+    <tr><td>Files</td><td>The same bytes without Base64: password mode writes <code>v2:</code> followed by the binary payload.</td></tr>
+  </tbody>
+</table>
+<p>The raw key layout is what Go's <code>gcm.Seal(nonce, nonce, plaintext, nil)</code> returns and what Python's <code>AESGCM.encrypt</code> returns once you put the nonce in front. This Python code (cryptography 45) reads and writes the tool's formats:</p>
+
+```python
+import base64, os
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+def _key(password: str, salt: bytes, iterations: int) -> bytes:
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations)
+    return kdf.derive(password.encode("utf-8"))
+
+def encrypt(text: str, password: str) -> str:
+    salt, iv = os.urandom(16), os.urandom(12)
+    ct = AESGCM(_key(password, salt, 600_000)).encrypt(iv, text.encode("utf-8"), None)
+    return "v2:" + base64.b64encode(salt + iv + ct).decode()
+
+def decrypt(token: str, password: str) -> str:
+    # "v2:" = 600,000 iterations; no prefix = made by the tool before 2026-09-30 (200,000)
+    token = token.strip()
+    iterations = 600_000 if token.startswith("v2:") else 200_000
+    data = base64.b64decode(token.removeprefix("v2:"))
+    salt, iv, ct = data[:16], data[16:28], data[28:]
+    return AESGCM(_key(password, salt, iterations)).decrypt(iv, ct, None).decode("utf-8")
+
+def decrypt_raw(token: str, key_hex: str) -> str:
+    # raw key mode, IV field empty: Base64 or hex of iv (12) | ciphertext | tag (16)
+    token = token.strip()
+    is_hex = all(c in "0123456789abcdefABCDEF" for c in token)
+    data = bytes.fromhex(token) if is_hex else base64.b64decode(token)
+    return AESGCM(bytes.fromhex(key_hex)).decrypt(data[:12], data[12:], None).decode("utf-8")
+```
+
+<p>For a file, drop the first three bytes (<code>b"v2:"</code>) and split the rest the same way. A wrong password raises <code>InvalidTag</code>, the check behind the tool's "Authentication failed".</p>
+
+<h2>OpenSSL and CBC Ciphertext</h2>
+<p><code>openssl enc</code> cannot read this format. Its <a href="https://docs.openssl.org/3.6/man1/openssl-enc/" rel="noopener">manual</a> says the command "does not support authenticated encryption modes like CCM and GCM, and will not support such modes in the future"; OpenSSL 3.6.1 answers <code>-aes-256-gcm</code> with <code>enc: AEAD ciphers not supported</code>.</p>
+<p>Text starting with <code>U2FsdGVkX1</code> is Base64 of <code>Salted__</code>, written by <code>openssl enc</code> or CryptoJS <code>AES.encrypt(text, "passphrase")</code>, normally AES-256-CBC. CBC has no tag, and the openssl manual notes that random data passes its padding check more often than 1 in 256, so a wrong password can print garbage. The tool detects the header and points here. Both commands were run on 2026-09-30:</p>
+
+```bash
+# made with openssl enc -pbkdf2
+openssl enc -d -aes-256-cbc -pbkdf2 -a -A -in message.txt
+# made with CryptoJS 4.2.0 AES.encrypt(text, "passphrase")
+openssl enc -d -aes-256-cbc -md md5 -a -A -in message.txt
+```
+
+
+<h2>How Other AES Tools Behave</h2>
+<p>Tested on 2026-09-30 in desktop Chromium with the same text, watching the page's requests:</p>
+<ul>
+  <li><strong>devglan.com</strong> sends the text and the key in a POST request to <code>devglan.com/online-tools/aes-encryption</code>; encryption happens on their server.</li>
+  <li><strong>aesencryption.net</strong> runs in the browser by default, but uses CBC with a fixed IV (<code>12345678b0z2345n</code>) and the password bytes padded with zeros as the key, with no key derivation. The same text and password give the same ciphertext every time. A wrong password shows "Invalid padding (wrong key?)".</li>
+  <li><strong>codertools.net</strong> runs in the browser (CBC by default, text key). A wrong key leaves the result empty with no message.</li>
+  <li><strong>go-tools.org</strong> runs in the browser, uses AES-GCM with PBKDF2 at 600,000 iterations and writes the same byte layout without a prefix. This tool decrypts its passphrase output as it is.</li>
+</ul>
+<p>This page adds a message for each kind of failure, raw keys with a separate IV and AAD, and files, with no analytics or ads.</p>
 
 <h2>Limitations</h2>
 <ul>
-  <li>Programs written for the old format do not read <code>v2:</code> ciphertext. Remove the prefix and use 600,000 iterations.</li>
-  <li>The tool encrypts text (UTF-8), not files.</li>
-  <li>PBKDF2 makes each password guess slower, but a short or common password can still be guessed. Use a long random passphrase.</li>
+  <li>GCM only. The tool does not encrypt or decrypt CBC, ECB or CTR, so it cannot read OpenSSL enc or CryptoJS output; use the commands above.</li>
+  <li>Password mode has a fixed format: PBKDF2-HMAC-SHA256, 600,000 iterations, 16-byte salt, no AAD. The tag is always 128 bits. Raw key mode adds an IV field (24 hex digits, or text used as UTF-8 bytes) and an AAD field (text).</li>
+  <li>Files up to 256 MB, processed in memory: a 200 MB file took about 0.8 s on the test laptop, 5 MB of text about 1.7 s (mostly drawing the text box).</li>
+  <li>With random 96-bit IVs, NIST SP 800-38D (section 8.3) limits one raw key to 2<sup>32</sup> encryptions. Password mode derives a new key for every encryption.</li>
+  <li>The file name is not encrypted: <code>report.pdf.enc</code> shows the original name. The encrypted file does not store the name.</li>
+  <li>The password is used as typed (UTF-8, no Unicode normalization): "é" as one character and as "e" plus a combining accent give different keys.</li>
+  <li>A weak password stays weak: make one with the <a href="/tools/password-generator/">Password Generator</a>. Check a decrypted file against a known SHA-256 with the <a href="/tools/file-hash-checker/">File Hash Checker</a>; to share a key with a stranger, use an <a href="/tools/rsa-key-generator/">RSA key pair</a>.</li>
 </ul>
-
-<h2>Security Notes</h2>
-<p>AES-256-GCM is computationally secure against brute-force attacks. However, the encryption is only as strong as your password. Use a long, random passphrase for sensitive data. The authentication tag in GCM means decryption will fail loudly if the ciphertext is tampered with.</p>
-
-<h2>What Is AES?</h2>
-<p>AES (Advanced Encryption Standard) is the symmetric encryption algorithm standardized by NIST in 2001. It secures HTTPS traffic, encrypted filesystems, and password managers worldwide. AES-256 uses a 256-bit key and 14 rounds of transformation per block.</p>

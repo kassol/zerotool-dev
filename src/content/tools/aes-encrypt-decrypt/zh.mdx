@@ -1,40 +1,125 @@
 ---
-seoTitle: "AES 加密 / 解密 — 浏览器端 AES-GCM 工具 | ZeroTool"
-seoDescription: "通过 Web Crypto API 在浏览器中直接进行 AES-256-GCM 加密解密，PBKDF2 密码派生，数据不离开设备。免费在线工具。"
+seoTitle: "AES 在线加密解密（AES-GCM）| ZeroTool"
+seoDescription: "在浏览器里用 AES-256-GCM 加密解密文本和文件，支持密码或原始密钥（含 IV 与附加数据，可解微信支付回调），密码错误明确提示认证失败，不上传。"
 faqItems:
-  - question: "工具使用哪种加密模式？"
-    answer: "AES-256-GCM（伽罗瓦/计数器模式）。GCM 是认证加密模式，同时提供保密性和完整性——对密文的任何篡改都会导致解密失败。"
-  - question: "密钥如何从密码派生？"
-    answer: "工具使用 PBKDF2-HMAC-SHA256、60 万次迭代（OWASP 密码存储速查表对 PBKDF2-HMAC-SHA256 给出的值）派生 256 位 AES 密钥。每次加密生成随机 16 字节盐值，与密文一起存储。2026-09-30 之前生成的密文用的是 20 万次迭代，仍可解密。"
-  - question: "相同密码加密相同明文会产生相同密文吗？"
-    answer: "不会。每次加密都会生成全新的随机盐值和随机数（nonce），因此相同密码加密相同明文每次产生不同密文。这是设计特性，防止模式分析。"
-  - question: "可以用其他工具解密吗？"
-    answer: "可以，按格式处理即可：去掉 v2: 前缀后 Base64 解码，得到 16 字节盐 + 12 字节 nonce + AES-GCM 密文（含 16 字节认证标签）。密钥用 PBKDF2-HMAC-SHA256、60 万次迭代、256 位输出派生。没有前缀的密文布局相同，迭代次数为 20 万。"
-  - question: "数据会发送到服务器吗？"
-    answer: "不会。所有加解密通过 Web Crypto API 完全在浏览器本地运行，明文和密码不离开设备。"
+  - question: "这个工具用的是 AES 的哪种模式？"
+    answer: "只用 AES-GCM。密码模式是 AES-256-GCM，密钥由 PBKDF2-HMAC-SHA256 派生；原始密钥模式按密钥长度使用 AES-128、AES-192 或 AES-256。GCM 带 16 字节认证标签，密码不对或密文被改动时会提示「认证失败」，不会输出乱码。"
+  - question: "同样的明文和密码，为什么每次加密结果都不一样？"
+    answer: "每次加密都会重新生成 16 字节的随机盐和 12 字节的随机 IV。NIST SP 800-38D 要求同一密钥下 IV 不能重复，新盐也会派生出新密钥。这些不同的密文都能解密回同一段明文。"
+  - question: "能用 OpenSSL 解密这里生成的密文吗？"
+    answer: "不能。openssl enc 不支持 GCM，其手册写明以后也不会支持。请用本页的 Python 代码、Web Crypto API 或任意 AES-GCM 库按下文的字节布局解密。反过来，把 openssl enc 或 CryptoJS 生成的密文（以 U2FsdGVkX1 开头）粘进来，工具会识别出来并告诉你用哪条 openssl 命令。"
+  - question: "我的文本、密码或文件会被上传吗？"
+    answer: "不会。加解密都在浏览器标签页内通过 Web Crypto API 完成。页面不保存输入、不把输入写进网址，也不加载 Google Analytics 与 AdSense。"
+  - question: "解微信支付回调时总是认证失败，常见原因是什么？"
+    answer: "按微信支付文档，密钥是 32 字节的 APIv3 密钥字符串（密钥格式选「文本（UTF-8）」，不是十六进制或 Base64），nonce 与 associated_data 都按字符串原样填入 IV 与 AAD 输入框。associated_data 填错或漏填（文档注明它可能为空，为空时 AAD 框也留空）、密钥格式选成十六进制，都会导致认证失败。"
 ---
 
 <h2>使用方法</h2>
 <ol>
-  <li>在密钥栏输入<strong>密码</strong>。</li>
-  <li><strong>加密</strong>：在左侧粘贴明文，点击 <strong>加密</strong>，右侧显示 Base64 编码的密文。</li>
-  <li><strong>解密</strong>：在右侧粘贴密文，点击 <strong>解密</strong>，左侧显示明文。</li>
-  <li>点击 <strong>复制</strong> 复制结果。</li>
+  <li>选择密钥类型：<strong>密码</strong>（PBKDF2 派生出 256 位密钥）或 <strong>原始密钥</strong>（128、192 或 256 位，可填十六进制、Base64 或文本，点「随机生成」可得到一个随机密钥）。</li>
+  <li>加密：在明文框输入文本，或点 <strong>文件…</strong> 选择文件，再点 <strong>加密</strong>。「输出」可切换 Base64 与十六进制。</li>
+  <li>解密：把密文粘进密文框，或选择加密文件，点 <strong>解密</strong>；在密文框里按 Ctrl/⌘+Enter 也会解密。</li>
+  <li>文件的结果以下载按钮给出，文件只在本标签页的内存里处理。</li>
 </ol>
 
-<h2>密文格式</h2>
-<p>新密文为 <code>v2:</code> 加上 <code>盐（16 字节）| nonce（12 字节）| 密文 + 认证标签（16 字节）</code> 的 Base64。密钥用 PBKDF2-HMAC-SHA256、60 万次迭代派生，取 <a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2" rel="noopener">OWASP 密码存储速查表</a>给出的值。</p>
-<p>2026-09-30 之前用本工具生成的密文没有前缀，迭代次数为 20 万。直接粘贴即可：工具识别出没有前缀，就按 20 万次迭代解密。想换成新格式，解密后重新加密一次。</p>
+<h2>示例一：用密码加密一句话</h2>
+<p>明文 <code>数据库只读账号下周一启用</code>，密码 <code>correct horse battery staple</code>，某一次的输出：</p>
+<pre><code>v2:qXfeC+pkpC/F/K3PR6ucLX6MQOcmQtyj+UUn9SYWmygCNoyV6H080bCB6fI6r1FJzypkhN0oWVRkA1VMXiCkXm6soo3Tqi/PZM0fJ28ANQk=</code></pre>
+<p>这 12 个汉字按 UTF-8 是 36 字节，所以 <code>v2:</code> 后面的 108 个 Base64 字符解码后是 80 字节：16 字节盐 + 12 字节 IV + 36 字节密文 + 16 字节认证标签。用同一个密码解密即可还原；再点一次加密，输出会变，因为盐和 IV 都是新的。</p>
+
+<h2>示例二：解密微信支付 APIv3 回调报文</h2>
+<p>微信支付的回调通知与平台证书下载接口用 AEAD_AES_256_GCM 加密 <code>resource</code> 字段，密钥是 32 字节的 APIv3 密钥，<code>nonce</code> 与 <code>associated_data</code> 按字符串参与解密，<code>ciphertext</code> 是 Base64 编码、末尾带 16 字节认证标签（见<a href="https://pay.weixin.qq.com/doc/v3/merchant/4012071382" rel="noopener">微信支付「如何解密回调报文和平台证书」</a>，2024-11-29 更新）。在本工具里这样填：</p>
+<table>
+  <thead><tr><th>回调字段</th><th>本工具</th><th>示例值（虚构）</th></tr></thead>
+  <tbody>
+    <tr><td>APIv3 密钥</td><td>原始密钥，格式选「文本（UTF-8）」</td><td><code>zerotool-example-apiv3-key-0032b</code></td></tr>
+    <tr><td><code>nonce</code></td><td>IV 输入框</td><td><code>0123456789ab</code></td></tr>
+    <tr><td><code>associated_data</code></td><td>AAD 输入框</td><td><code>transaction</code></td></tr>
+    <tr><td><code>ciphertext</code></td><td>密文框</td><td><code>TB0zfn/fWCjPw0A+a0ZbgqZ7CKokDC839Nw4ZaBq0aOtwBqOthxnj5Ak4KGHMF7BQ5W3PA72tzCaHxynWKK+5mdrbhBQFtsS</code></td></tr>
+  </tbody>
+</table>
+<p>点解密得到 <code>{'{"out_trade_no":"ZT20260930001","trade_state":"SUCCESS"}'}</code>。IV 规则：正好 24 位十六进制时按 12 字节读取，其他内容按文本的 UTF-8 字节读取，所以 12 位的 <code>0123456789ab</code> 按文本处理，与微信支付一致。把 AAD 改成 <code>certificate</code> 或清空，工具会提示认证失败。上面的密钥与报文是按同样规则用 Node.js 生成的示例；排查真实回调时，APIv3 密钥只在本机内存中使用，不会发往任何服务器。</p>
+
+<h2>报错说明</h2>
+<table>
+  <thead><tr><th>输入</th><th>提示</th></tr></thead>
+  <tbody>
+    <tr><td>示例一的密文，密码输错</td><td>认证失败：密码或密钥不对，或者密文被改动、被截断。没有解密出任何内容。</td></tr>
+    <tr><td><code>U2FsdGVkX1…</code> 开头的密文</td><td>这是 OpenSSL enc 或 CryptoJS 的输出……</td></tr>
+    <tr><td>把 <code>v2:</code> 改成 <code>v3:</code></td><td>未知的密文版本「v3:」。</td></tr>
+    <tr><td>密文中间混进一个全角字符</td><td>第 N 个字符「…」不是 Base64 字符。</td></tr>
+    <tr><td>密钥类型为原始密钥时粘贴 <code>v2:</code> 密文</td><td>这段密文以「v2:」开头，是用密码加密的。</td></tr>
+  </tbody>
+</table>
+<p>如果密钥正确，但解出的字节不是 UTF-8 文本，工具会提供下载，不会显示乱码。</p>
+
+<h2>密文格式与 Python 代码</h2>
+<ul>
+  <li>密码模式：<code>v2:</code> + Base64（或十六进制）的「盐 16 字节 | IV 12 字节 | 密文 | 认证标签 16 字节」，密钥由 PBKDF2-HMAC-SHA256 迭代 600,000 次得到 32 字节，取自 <a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2" rel="noopener">OWASP 密码存储速查表</a>。</li>
+  <li>无前缀：同样的布局，是本页 2026-09-30 之前生成的（20 万次迭代）。工具先试 20 万次，再试 60 万次，因此也能读取其他程序按同一布局写出的密文。</li>
+  <li>原始密钥模式：Base64 或十六进制的「IV 12 字节 | 密文 | 认证标签」；填了 IV 时只有「密文 | 认证标签」，与微信支付的 <code>ciphertext</code> 相同。</li>
+  <li>文件：同样的字节，不做 Base64；密码模式的文件以 <code>v2:</code> 三个字节开头。</li>
+</ul>
+<p>下面的 Python 代码（cryptography 45）与本工具互通：</p>
+
+```python
+import base64, os
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+def _key(password: str, salt: bytes, iterations: int) -> bytes:
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations)
+    return kdf.derive(password.encode("utf-8"))
+
+def encrypt(text: str, password: str) -> str:
+    salt, iv = os.urandom(16), os.urandom(12)
+    ct = AESGCM(_key(password, salt, 600_000)).encrypt(iv, text.encode("utf-8"), None)
+    return "v2:" + base64.b64encode(salt + iv + ct).decode()
+
+def decrypt(token: str, password: str) -> str:
+    # 有 "v2:" 前缀为 60 万次迭代；无前缀为本工具 2026-09-30 之前的格式（20 万次）
+    token = token.strip()
+    iterations = 600_000 if token.startswith("v2:") else 200_000
+    data = base64.b64decode(token.removeprefix("v2:"))
+    salt, iv, ct = data[:16], data[16:28], data[28:]
+    return AESGCM(_key(password, salt, iterations)).decrypt(iv, ct, None).decode("utf-8")
+
+def decrypt_raw(token: str, key_hex: str) -> str:
+    # 原始密钥模式、IV 输入框留空：Base64 或十六进制的 iv(12) | 密文 | 标签(16)
+    token = token.strip()
+    is_hex = all(c in "0123456789abcdefABCDEF" for c in token)
+    data = bytes.fromhex(token) if is_hex else base64.b64decode(token)
+    return AESGCM(bytes.fromhex(key_hex)).decrypt(data[:12], data[12:], None).decode("utf-8")
+```
+
+<h2>OpenSSL 与 CBC 密文</h2>
+<p><code>openssl enc</code> 读不了这种格式：<a href="https://docs.openssl.org/3.6/man1/openssl-enc/" rel="noopener">openssl-enc 手册</a>写明该命令不支持 CCM、GCM 等认证加密模式，以后也不会支持；OpenSSL 3.6.1 对 <code>-aes-256-gcm</code> 的回应是 <code>enc: AEAD ciphers not supported</code>。</p>
+<p>以 <code>U2FsdGVkX1</code> 开头的密文是「Salted__」的 Base64，来自 <code>openssl enc</code> 或 CryptoJS 的 <code>AES.encrypt(文本, "口令")</code>，一般是 AES-256-CBC。CBC 没有认证标签，密码错了也可能输出乱码。本工具识别到这个头会直接说明，请改用下面的命令（2026-09-30 实测）：</p>
+
+```bash
+# 用 openssl enc -pbkdf2 加密的
+openssl enc -d -aes-256-cbc -pbkdf2 -a -A -in message.txt
+# 用 CryptoJS 4.2.0 AES.encrypt(文本, "口令") 加密的
+openssl enc -d -aes-256-cbc -md md5 -a -A -in message.txt
+```
+
+
+<h2>与其他 AES 在线工具的实测差异</h2>
+<p>2026-09-30 用桌面版 Chromium、同一段测试文本，观察页面发出的请求：</p>
+<ul>
+  <li><strong>锤子在线工具（toolhelper.cn）</strong>：点加密后把密钥、IV 与明文一起 POST 到 <code>/SymmetricEncryption/AesEncrypt</code>，在服务器端加密。它也有 GCM 的 nonce 与附加数据输入框，但用它解微信支付回调就意味着把 APIv3 密钥交给第三方服务器。</li>
+  <li><strong>在线工具大全（lddgo.net）</strong>：把明文与密码 POST 到 <code>openapi.lddgo.net</code>，默认模式是 ECB。</li>
+  <li><strong>CoderTools（codertools.net）</strong>：在浏览器内运行，默认 CBC、密钥按文本；密钥错误时结果框为空，没有任何提示。</li>
+</ul>
+<p>本工具只做 GCM，但每种失败都有明确提示，支持单独的 IV 与附加数据、文件加解密，页面不加载统计与广告。</p>
 
 <h2>限制</h2>
 <ul>
-  <li>按旧格式编写的程序读不了 <code>v2:</code> 密文，需要去掉前缀并改用 60 万次迭代。</li>
-  <li>只加密文本（UTF-8），不加密文件。</li>
-  <li>PBKDF2 会拖慢每一次密码猜测，但短密码或常见密码仍可能被猜中，请使用足够长的随机密码短语。</li>
+  <li>只支持 GCM，不做 CBC、ECB、CTR，读不了 openssl enc 与 CryptoJS 的输出，请用上面的命令。</li>
+  <li>密码模式格式固定（PBKDF2-HMAC-SHA256、60 万次、16 字节盐、无附加数据），认证标签固定 128 位。</li>
+  <li>文件上限 256 MB，整个在内存中处理。测试笔记本上 200 MB 文件约 0.8 秒，5 MB 文本约 1.7 秒（主要花在绘制文本框）。</li>
+  <li>原始密钥配随机 96 位 IV 时，NIST SP 800-38D 第 8.3 节规定同一密钥最多加密 2<sup>32</sup> 次；密码模式每次都派生新密钥。</li>
+  <li>文件名不加密，<code>合同.pdf.enc</code> 仍能看出原名；加密文件本身不保存文件名。</li>
+  <li>弱密码加密后依然是弱密码，可用<a href="/zh/tools/password-generator/">密码生成器</a>生成；解密出的文件可用<a href="/zh/tools/file-hash-checker/">文件哈希校验</a>核对 SHA-256。</li>
 </ul>
-
-<h2>安全说明</h2>
-<p>AES-256-GCM 在计算上能抵御暴力破解攻击。但加密强度取决于密码强度——对敏感数据请使用足够长的随机密码短语。GCM 的认证标签机制确保密文被篡改时解密会明确失败，不会默默返回错误数据。</p>
-
-<h2>什么是 AES？</h2>
-<p>AES（高级加密标准）是 NIST 于 2001 年标准化的对称加密算法。它保护着全球的 HTTPS 流量、加密文件系统和密码管理器。AES-256 使用 256 位密钥，每个数据块经过 14 轮变换。</p>

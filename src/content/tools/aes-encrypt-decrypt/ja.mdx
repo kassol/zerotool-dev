@@ -1,38 +1,121 @@
 ---
-seoTitle: "AES 暗号化 / 復号 — ブラウザ完結 AES-GCM ツール | ZeroTool"
-seoDescription: "Web Crypto APIを使用してブラウザ内でAES-256-GCM暗号化・復号。PBKDF2パスワード鍵導出。データはデバイスから出ません。無料。"
+seoTitle: "AES 暗号化・復号ツール（GCM）| ZeroTool"
+seoDescription: "AES-256-GCM でテキストとファイルをブラウザ内で暗号化・復号。パスワードか鍵を直接指定でき、誤りは認証失敗として表示。アップロードしません。"
 faqItems:
-  - question: "どの暗号化モードを使用していますか？"
-    answer: "AES-256-GCM（ガロア/カウンタモード）です。GCMは認証付き暗号化モードで、機密性と完全性の両方を提供します。暗号文への改ざんは復号失敗として検出されます。"
-  - question: "パスワードから鍵はどのように導出されますか？"
-    answer: "PBKDF2-HMAC-SHA256（60万回イテレーション。OWASP Password Storage Cheat Sheet が PBKDF2-HMAC-SHA256 に示す値）でパスワードから256ビットAES鍵を導出します。暗号化のたびにランダムな16バイトのソルトが生成され、暗号文と一緒に保存されます。2026-09-30 より前に作った暗号文は20万回で、今も復号できます。"
-  - question: "同じパスワードで同じ平文を暗号化すると同じ暗号文になりますか？"
-    answer: "なりません。毎回新しいランダムなソルトとナンスが生成されるため、同じパスワードと平文でも毎回異なる暗号文が生成されます。これはパターン分析を防ぐための設計です。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。すべての暗号化・復号はWeb Crypto APIを通じてブラウザ内で完全に実行されます。平文とパスワードはデバイスを離れません。"
+  - question: "AES のどのモードを使っていますか？"
+    answer: "AES-GCM だけです。パスワードモードは AES-256-GCM で、鍵は PBKDF2-HMAC-SHA256 で導出します。鍵を直接入力するモードでは、鍵の長さに応じて AES-128・AES-192・AES-256 になります。GCM は 16 バイトの認証タグを付けるため、パスワード違いや改ざんがあると「認証に失敗しました」と表示し、文字化けした平文は出しません。"
+  - question: "同じ平文とパスワードなのに、毎回違う暗号文になるのはなぜですか？"
+    answer: "暗号化のたびに 16 バイトのソルトと 12 バイトの IV を新しく乱数で作るからです。NIST SP 800-38D は同じ鍵で IV を再利用しないことを求めており、新しいソルトからは新しい鍵が導出されます。どの暗号文も同じ平文に復号できます。"
+  - question: "OpenSSL で復号できますか？"
+    answer: "できません。openssl enc は GCM に対応しておらず、マニュアルには今後も対応しないと書かれています。このページの Python コードや Web Crypto API、AES-GCM に対応したライブラリで、下に書いたバイト構成どおりに復号してください。逆に openssl enc や CryptoJS の出力（U2FsdGVkX1 で始まる）を貼ると、ツールがそれと判定し、使うべき openssl コマンドを案内します。"
+  - question: "テキストやパスワード、ファイルは送信されますか？"
+    answer: "送信しません。暗号化と復号はブラウザのタブ内で Web Crypto API によって行います。入力内容は保存せず、URL にも入れず、このページは Google アナリティクスと AdSense を読み込みません。"
+  - question: "このツールで暗号化すれば、個人データが漏えいしても報告不要になりますか？"
+    answer: "それだけでは決まりません。個人情報保護委員会の Q&A 6-19 は、電子政府推奨暗号リスト等に載った暗号技術を適切に実装することに加えて、復号鍵を暗号文と分けて管理するなどの要件を挙げています。AES と GCM は同リストに載っていますが、パスワードの扱いは利用者側の管理になります。"
 ---
 
 <h2>使い方</h2>
 <ol>
-  <li>キーフィールドに<strong>パスワード</strong>を入力します。</li>
-  <li><strong>暗号化</strong>：左側に平文を貼り付けて<strong>暗号化</strong>をクリック。右側にBase64エンコードされた暗号文が表示されます。</li>
-  <li><strong>復号</strong>：右側に暗号文を貼り付けて<strong>復号</strong>をクリック。左側に平文が表示されます。</li>
-  <li><strong>コピー</strong>をクリックして結果をコピーします。</li>
+  <li>鍵の種類を選びます。<strong>パスワード</strong>は PBKDF2 で 256 ビットの鍵にします。<strong>鍵を直接入力</strong>は 128・192・256 ビットの鍵を 16進数・Base64・テキストで受け付け、「生成」でランダムな鍵を作れます。</li>
+  <li>暗号化：平文欄に入力するか <strong>ファイル…</strong> で選び、<strong>暗号化</strong>を押します。「出力」で Base64 と 16進数を切り替えます。</li>
+  <li>復号：暗号文を貼り付けるか暗号化ファイルを選び、<strong>復号</strong>を押します。暗号文欄で Ctrl/⌘+Enter を押しても復号します。</li>
+  <li>ファイルの結果はダウンロードボタンで受け取ります。ファイルはこのタブのメモリ内だけで処理します。</li>
 </ol>
 
-<h2>暗号文の形式</h2>
-<p>新しい暗号文は <code>v2:</code> の後に <code>ソルト（16 バイト）| ナンス（12 バイト）| 暗号文 + 認証タグ（16 バイト）</code> を Base64 にしたものです。鍵は PBKDF2-HMAC-SHA256、60万回イテレーションで導出します（<a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2" rel="noopener">OWASP Password Storage Cheat Sheet</a> の値）。</p>
-<p>2026-09-30 より前にこのツールで作った暗号文には接頭辞がなく、20万回イテレーションです。そのまま貼り付ければ、接頭辞がないことを見て20万回で復号します。新しい形式にするには、復号してからもう一度暗号化してください。</p>
+<h2>例 1：パスワードで一文を暗号化</h2>
+<p>平文 <code>見積書は金曜に送ります</code>、パスワード <code>correct horse battery staple</code> で暗号化した一回分の出力です。</p>
+<pre><code>v2:7v4vi+LVN2PaU0TDRHSSeMduNrofoM62T63g/9tmX11FGSSR54Q3iG/C7Mtm6rUws+FU3HjW7SyBpiGLMypnoOpNINlqrPAtTHDylZw=</code></pre>
+<p>11 文字の平文は UTF-8 で 33 バイトなので、<code>v2:</code> の後ろの Base64 は 77 バイト（ソルト 16 + IV 12 + 暗号文 33 + タグ 16）です。もう一度暗号化すると、ソルトと IV が変わるため別の文字列になります。</p>
 
-<h2>制限事項</h2>
+<h2>例 2：鍵と IV を指定して結果を再現する</h2>
+<p>別の実装と突き合わせたいときは、鍵と IV を固定します。鍵の種類「鍵を直接入力」、形式 Base64、鍵 <code>EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8=</code>（0x10〜0x2f の 32 バイト）、IV 欄 <code>0f0e0d0c0b0a090807060504</code>、平文 <code>テスト用の平文です</code> で暗号化すると、毎回次の出力になります。</p>
+<pre><code>LGnIgt1Hib6Tu03SeTvCFvdLB9EQ6s2tv6R7OtyM8NurwAV+Yu2fFGzbOQ==</code></pre>
+<p>43 バイトで、暗号文 27 バイトとタグ 16 バイトです（IV 欄を使うと IV は出力に含めません）。IV 欄は 16進数ちょうど 24 桁なら 12 バイト、それ以外はテキストの UTF-8 バイトとして読みます。固定 IV で暗号化するとツールは警告を出します。同じ鍵で IV を再利用すると GCM の安全性が崩れるためです（<a href="https://csrc.nist.gov/pubs/sp/800/38/d/final" rel="noopener">NIST SP 800-38D</a> 第 8 章）。実データでは IV 欄を空にしてください。</p>
+
+<h2>エラー表示の意味</h2>
+<table>
+  <thead><tr><th>入力</th><th>表示</th></tr></thead>
+  <tbody>
+    <tr><td>例 1 の暗号文を別のパスワードで復号</td><td>認証に失敗しました。パスワードか鍵が違う、または暗号文が改変・切り詰められています。</td></tr>
+    <tr><td><code>U2FsdGVkX1…</code> で始まる暗号文</td><td>これは OpenSSL enc または CryptoJS の出力です…</td></tr>
+    <tr><td><code>v2:</code> を <code>v3:</code> に書き換え</td><td>不明な暗号文バージョン「v3:」です。</td></tr>
+    <tr><td>暗号文の途中に全角文字が混入</td><td>N 文字目の「…」は Base64 の文字ではありません。</td></tr>
+    <tr><td>「鍵を直接入力」のまま <code>v2:</code> の暗号文を復号</td><td>パスワードで暗号化されています。鍵の種類を「パスワード」にしてください。</td></tr>
+  </tbody>
+</table>
+<p>鍵は正しいのに復号結果が UTF-8 のテキストでない場合は、文字化けを表示せずダウンロードで渡します。</p>
+
+<h2>電子政府推奨暗号リストとの関係</h2>
+<p><a href="https://www.cryptrec.go.jp/list.html" rel="noopener">CRYPTREC 暗号リスト</a>（CRYPTREC LS-0001-2022R2、2026 年 3 月 30 日更新）の電子政府推奨暗号リストには、128 ビットブロック暗号として AES、認証付き秘匿モードとして GCM が載っており、GCM には「初期化ベクトル長は 96 ビットを推奨する」という注があります。このツールの IV はその 96 ビット（12 バイト）です。</p>
+<p>個人情報保護委員会の <a href="https://www.ppc.go.jp/all_faq_index/faq1-q6-19_/" rel="noopener">Q&A 6-19</a> は、漏えい等報告が不要となる「高度な暗号化等の秘匿化」の例として、電子政府推奨暗号リストや ISO/IEC 18033 等に載った暗号技術を適切に実装することを挙げ、さらに復号鍵を暗号文と分けて管理するなど鍵管理の要件を示しています。暗号方式が要件に合っていても、パスワードを暗号文と同じメールで送れば鍵管理の要件は満たせません。パスワードは別の経路で伝えてください。</p>
+
+<h2>暗号文の形式と Python コード</h2>
 <ul>
-  <li>旧形式向けに書かれたプログラムは <code>v2:</code> の暗号文を読めません。接頭辞を取り除き、60万回イテレーションを使ってください。</li>
-  <li>暗号化できるのはテキスト（UTF-8）だけで、ファイルは扱いません。</li>
-  <li>PBKDF2 はパスワードの推測を1回ごとに遅くしますが、短いパスワードやよくあるパスワードは推測されることがあります。長くランダムなパスフレーズを使ってください。</li>
+  <li>パスワード：<code>v2:</code> + 「ソルト 16 | IV 12 | 暗号文 | タグ 16」の Base64（または16進数）。鍵は PBKDF2-HMAC-SHA256 を 600,000 回（<a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2" rel="noopener">OWASP Password Storage Cheat Sheet</a> の値）で 32 バイトを導出します。</li>
+  <li>接頭辞なし：同じ構成で、2026-09-30 より前にこのページが作ったもの（200,000 回）です。ツールは 200,000 回、次に 600,000 回を試すので、同じ構成で書く他のプログラムの出力も読めます。</li>
+  <li>鍵を直接入力：「IV 12 | 暗号文 | タグ 16」。IV 欄を使ったときは「暗号文 | タグ」だけです。</li>
+  <li>ファイル：Base64 にしない同じバイト列で、パスワードモードは先頭が <code>v2:</code> の 3 バイトです。</li>
 </ul>
+<p>次の Python コード（cryptography 45）はツールと相互に暗号化・復号できます。</p>
 
-<h2>セキュリティについて</h2>
-<p>AES-256-GCMはブルートフォース攻撃に対して計算上安全です。ただし暗号化の強度はパスワードの強度に依存します。機密データには長くランダムなパスフレーズを使用してください。GCMの認証タグにより、暗号文への改ざんは復号時に明確に検出されます。</p>
+```python
+import base64, os
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-<h2>AESとは？</h2>
-<p>AES（高度暗号化標準）は2001年にNISTが標準化した対称暗号化アルゴリズムです。世界中のHTTPS通信、暗号化ファイルシステム、パスワードマネージャーを保護しています。AES-256は256ビット鍵を使用し、各ブロックに14ラウンドの変換を適用します。</p>
+def _key(password: str, salt: bytes, iterations: int) -> bytes:
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations)
+    return kdf.derive(password.encode("utf-8"))
+
+def encrypt(text: str, password: str) -> str:
+    salt, iv = os.urandom(16), os.urandom(12)
+    ct = AESGCM(_key(password, salt, 600_000)).encrypt(iv, text.encode("utf-8"), None)
+    return "v2:" + base64.b64encode(salt + iv + ct).decode()
+
+def decrypt(token: str, password: str) -> str:
+    # "v2:" は 600,000 回、接頭辞なしは 2026-09-30 より前の形式（200,000 回）
+    token = token.strip()
+    iterations = 600_000 if token.startswith("v2:") else 200_000
+    data = base64.b64decode(token.removeprefix("v2:"))
+    salt, iv, ct = data[:16], data[16:28], data[28:]
+    return AESGCM(_key(password, salt, iterations)).decrypt(iv, ct, None).decode("utf-8")
+
+def decrypt_raw(token: str, key_hex: str) -> str:
+    # 鍵を直接入力・IV 欄が空の出力：iv(12) | 暗号文 | タグ(16) の Base64 か16進数
+    token = token.strip()
+    is_hex = all(c in "0123456789abcdefABCDEF" for c in token)
+    data = bytes.fromhex(token) if is_hex else base64.b64decode(token)
+    return AESGCM(bytes.fromhex(key_hex)).decrypt(data[:12], data[12:], None).decode("utf-8")
+```
+
+<h2>OpenSSL と CBC の暗号文</h2>
+<p><code>openssl enc</code> はこの形式を読めません。<a href="https://docs.openssl.org/3.6/man1/openssl-enc/" rel="noopener">openssl-enc のマニュアル</a>は CCM や GCM などの認証付き暗号モードに対応せず、今後も対応しないと明記しており、OpenSSL 3.6.1 に <code>-aes-256-gcm</code> を渡すと <code>enc: AEAD ciphers not supported</code> と返ります。</p>
+<p><code>U2FsdGVkX1</code> で始まる文字列は「Salted__」の Base64 で、<code>openssl enc</code> か CryptoJS の <code>AES.encrypt(テキスト, "パスフレーズ")</code> の出力です（通常 AES-256-CBC）。CBC には認証タグがないため、パスワードが違っても文字化けした結果が出ることがあります。このツールはこの形式を検出して案内します。復号には次のコマンドを使います（2026-09-30 に実行して確認）。</p>
+
+```bash
+# openssl enc -pbkdf2 で暗号化したもの
+openssl enc -d -aes-256-cbc -pbkdf2 -a -A -in message.txt
+# CryptoJS 4.2.0 の AES.encrypt(テキスト, "パスフレーズ") で暗号化したもの
+openssl enc -d -aes-256-cbc -md md5 -a -A -in message.txt
+```
+
+
+<h2>ほかの AES ツールとの違い（実測）</h2>
+<p>2026-09-30、デスクトップ版 Chromium で同じテキストを使い、ページが送るリクエストを確認しました。</p>
+<ul>
+  <li><strong>Go Tools（go-tools.org）</strong>：ブラウザ内で動作し、日本語版ページで暗号化したときの送信は Cloudflare のページ計測ビーコンだけでした。英語版で確かめたパスフレーズ方式は AES-GCM・PBKDF2 600,000 回で、このツールと同じバイト構成（接頭辞なし）です。その出力はこのツールでそのまま復号できました。</li>
+  <li><strong>CoderTools（codertools.net）</strong>：ブラウザ内で動作し、既定は CBC、鍵はテキストのまま使います。誤った鍵で復号すると結果欄が空になるだけで、メッセージは出ません。</li>
+  <li><strong>Torinoa Tools</strong>：ブラウザ内で動作し、既定は AES-GCM です。暗号化時に入力内容を含む送信はありませんでした。</li>
+</ul>
+<p>このツールは失敗の種類ごとにメッセージを出し、IV と追加データを指定する鍵直接入力、ファイルの暗号化に対応し、ページで解析タグや広告を読み込みません。</p>
+
+<h2>制限</h2>
+<ul>
+  <li>GCM のみで、CBC・ECB・CTR は扱いません。openssl enc や CryptoJS の出力は上のコマンドで復号してください。</li>
+  <li>パスワードモードの形式は固定です（PBKDF2-HMAC-SHA256・600,000 回・16 バイトのソルト・追加データなし）。タグは常に 128 ビットです。</li>
+  <li>ファイルは 256 MB まで、全体をメモリで処理します。検証用ノート PC では 200 MB のファイルが約 0.8 秒、5 MB のテキストが約 1.7 秒（大半はテキスト欄の描画）でした。</li>
+  <li>ランダムな 96 ビット IV を使う場合、NIST SP 800-38D 第 8.3 節により同じ鍵での暗号化は 2<sup>32</sup> 回までです。パスワードモードは毎回新しい鍵を導出します。</li>
+  <li>ファイル名は暗号化されません（<code>見積書.pdf.enc</code> から元の名前が分かります）。暗号化ファイル自体はファイル名を保存しません。</li>
+  <li>弱いパスワードは暗号化しても弱いままです。<a href="/ja/tools/password-generator/">パスワードジェネレーター</a>で作り、復号したファイルは<a href="/ja/tools/file-hash-checker/">ファイルハッシュチェッカー</a>で SHA-256 を照合できます。</li>
+</ul>

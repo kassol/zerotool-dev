@@ -29,6 +29,7 @@ export const toolPersistencePolicy = {
   'sqlite-viewer': 'disabled',
   'pixelate-image': 'disabled',
   'totp-generator': 'disabled',
+  'aes-encrypt-decrypt': 'disabled',
   'gif-splitter': 'preference',
   'sprite-sheet-generator': 'preference',
   'gif-compressor': 'preference',

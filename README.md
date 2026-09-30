@@ -70,7 +70,7 @@
 | CSS Flexbox Generator | [/tools/css-flexbox-generator](https://zerotool.dev/tools/css-flexbox-generator) |
 | JSON to JSON Schema | [/tools/json-to-json-schema](https://zerotool.dev/tools/json-to-json-schema) |
 | Morse Code Translator | [/tools/morse-code-translator](https://zerotool.dev/tools/morse-code-translator) |
-| AES Encrypt / Decrypt | [/tools/aes-encrypt-decrypt](https://zerotool.dev/tools/aes-encrypt-decrypt) |
+| AES Encryption & Decryption | [/tools/aes-encrypt-decrypt](https://zerotool.dev/tools/aes-encrypt-decrypt) |
 | JSON to Kotlin Data Class | [/tools/json-to-kotlin](https://zerotool.dev/tools/json-to-kotlin) |
 | JSON to Java POJO | [/tools/json-to-java-pojo](https://zerotool.dev/tools/json-to-java-pojo) |
 | JSON to Go Struct | [/tools/json-to-go-struct](https://zerotool.dev/tools/json-to-go-struct) |

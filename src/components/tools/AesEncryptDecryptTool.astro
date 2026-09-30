@@ -1,197 +1,809 @@
 ---
-// AesEncryptDecryptTool — AES-GCM encrypt/decrypt via Web Crypto API
+// AesEncryptDecryptTool — AES-256-GCM encrypt / decrypt via the Web Crypto API (100% client-side).
+// Password (PBKDF2-HMAC-SHA256) or raw key, text or files. Passwords, keys and plaintext stay in
+// memory: the page never writes them to storage or to the URL (persistence policy `disabled`
+// in src/data/persistence.ts, which also keeps Google Analytics and AdSense off this page).
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    keyMode: 'Key type',
+    modePassword: 'Password',
+    modeRaw: 'Raw key',
+    passwordPlaceholder: 'Password',
+    rawKeyPlaceholder: 'Key: 32, 48 or 64 hex digits',
+    rawKeyPlaceholderB64: 'Key: Base64 of 16, 24 or 32 bytes',
+    keyFormat: 'Key format',
+    keyFmtText: 'Text (UTF-8)',
+    rawKeyPlaceholderText: 'Key: text of 16, 24 or 32 bytes',
+    ivPlaceholder: 'IV (optional): 24 hex digits or text',
+    aadPlaceholder: 'AAD (optional): additional data, text',
+    fmtRawIv: 'raw key, IV from the IV field, ciphertext + tag',
+    ivWarning: 'This used the IV you entered. Reusing an IV with the same key breaks GCM (NIST SP 800-38D §8); leave the field empty to get a new random IV.',
+    generate: 'Generate',
+    show: 'Show',
+    hide: 'Hide',
+    plaintext: 'Plaintext',
+    plaintextPlaceholder: 'Text to encrypt. Decrypted text appears here.',
+    ciphertext: 'Ciphertext',
+    ciphertextPlaceholder: 'Ciphertext (v2:…) to decrypt. Encrypted text appears here.',
+    encrypt: 'Encrypt ↓',
+    decrypt: 'Decrypt ↑',
+    encryptWide: 'Encrypt →',
+    decryptWide: '← Decrypt',
+    copy: 'Copy',
+    copied: 'Copied!',
+    file: 'File…',
+    fileEncTitle: 'Choose a file to encrypt',
+    fileDecTitle: 'Choose an encrypted file to decrypt',
+    removeFile: 'Remove file',
+    outputEncoding: 'Output',
+    working: 'Deriving the key (PBKDF2, {n} iterations)…',
+    workingRaw: 'Working…',
+    encrypted: 'Encrypted {n} bytes. The salt and IV are new on every run, so the output changes each time.',
+    decrypted: 'Decrypted {n} bytes. Format: {format}.',
+    fmtV2: 'v2:, PBKDF2 600,000 iterations',
+    fmtLegacy: 'no prefix, PBKDF2 200,000 iterations (made by this page before 2026-09-30)',
+    fmtNoPrefix600: 'no prefix, PBKDF2 600,000 iterations',
+    fmtRaw: 'raw key, IV + ciphertext + tag',
+    fileReady: '{name} ({size}) is ready. Nothing was uploaded.',
+    download: 'Download {name}',
+    errNoPassword: 'Enter a password.',
+    errNoPlaintext: 'Enter text to encrypt, or choose a file.',
+    errNoCiphertext: 'Paste a ciphertext, or choose an encrypted file.',
+    note: 'AES-256-GCM (NIST SP 800-38D) · password: PBKDF2-HMAC-SHA256, 600,000 iterations, new 16-byte salt · new 12-byte IV per encryption · 16-byte tag · runs in this tab, nothing is uploaded',
+    err_empty: 'The input is empty.',
+    err_version: 'Unknown ciphertext version "v{version}:". This page reads v2: and ciphertext without a prefix.',
+    err_openssl: 'This is OpenSSL enc or CryptoJS output (it starts with "Salted__", usually AES-CBC). This page uses AES-GCM and cannot read it. Decrypt it with openssl enc -d (see "OpenSSL and CBC ciphertext" below).',
+    err_base64: '"{ch}" at character {pos} is not a Base64 character.',
+    err_base64Length: 'The Base64 text has {chars} characters, which cannot be complete. A character is missing or extra.',
+    err_hex: 'The hex ciphertext has an odd number of digits ({digits}).',
+    err_short: 'The ciphertext is {bytes} bytes. This format needs at least {min} bytes (salt, IV and the 16-byte tag), so part of it is missing.',
+    err_auth: 'Authentication failed: the password or key is wrong, or the ciphertext was changed or cut off. Nothing was decrypted.',
+    err_utf8: 'Decrypted {n} bytes, but they are not UTF-8 text (probably a file). Download them below.',
+    err_rawPrefix: 'This ciphertext starts with "v2:", so it was made with a password. Switch the key type to Password.',
+    err_fileFormat: 'This file is not a ciphertext from this page. Password-mode files start with "v2:"; a text ciphertext must be Base64 or hex.',
+    err_fileSize: 'The file is {size}. The limit is {max}.',
+    err_keyEmpty: 'Enter a key, or click Generate.',
+    err_keyChars: '"{ch}" at character {pos} is not a {format} character.',
+    err_keyHexLength: 'A hex key needs an even number of digits. This one has {digits}.',
+    err_keyLength: 'The key is {bytes} bytes. AES keys are 16, 24 or 32 bytes (128, 192 or 256 bits).',
+    err_keyBase64Length: 'The Base64 key has {chars} characters, which cannot be complete.',
+  },
+  zh: {
+    keyMode: '密钥类型',
+    modePassword: '密码',
+    modeRaw: '原始密钥',
+    passwordPlaceholder: '密码',
+    rawKeyPlaceholder: '密钥：32、48 或 64 位十六进制',
+    rawKeyPlaceholderB64: '密钥：16、24 或 32 字节的 Base64',
+    keyFormat: '密钥格式',
+    keyFmtText: '文本（UTF-8）',
+    rawKeyPlaceholderText: '密钥：16、24 或 32 字节的文本',
+    ivPlaceholder: 'IV（可选）：24 位十六进制或文本',
+    aadPlaceholder: 'AAD（可选）：附加数据，文本',
+    fmtRawIv: '原始密钥，IV 取自 IV 输入框，密文 + 认证标签',
+    ivWarning: '本次使用了你输入的 IV。同一密钥重复使用 IV 会破坏 GCM 的安全性（NIST SP 800-38D 第 8 节）；清空该输入框即可每次生成新的随机 IV。',
+    generate: '随机生成',
+    show: '显示',
+    hide: '隐藏',
+    plaintext: '明文',
+    plaintextPlaceholder: '输入要加密的文本；解密结果也显示在这里。',
+    ciphertext: '密文',
+    ciphertextPlaceholder: '粘贴要解密的密文（v2:…）；加密结果也显示在这里。',
+    encrypt: '加密 ↓',
+    decrypt: '解密 ↑',
+    encryptWide: '加密 →',
+    decryptWide: '← 解密',
+    copy: '复制',
+    copied: '已复制！',
+    file: '文件…',
+    fileEncTitle: '选择要加密的文件',
+    fileDecTitle: '选择要解密的加密文件',
+    removeFile: '移除文件',
+    outputEncoding: '输出',
+    working: '正在派生密钥（PBKDF2，{n} 次迭代）…',
+    workingRaw: '处理中…',
+    encrypted: '已加密 {n} 字节。盐和 IV 每次都重新生成，所以每次输出都不同。',
+    decrypted: '已解密 {n} 字节。格式：{format}。',
+    fmtV2: 'v2:，PBKDF2 600,000 次迭代',
+    fmtLegacy: '无前缀，PBKDF2 200,000 次迭代（本页 2026-09-30 之前生成）',
+    fmtNoPrefix600: '无前缀，PBKDF2 600,000 次迭代',
+    fmtRaw: '原始密钥，IV + 密文 + 认证标签',
+    fileReady: '{name}（{size}）已生成，没有上传任何内容。',
+    download: '下载 {name}',
+    errNoPassword: '请输入密码。',
+    errNoPlaintext: '请输入要加密的文本，或选择文件。',
+    errNoCiphertext: '请粘贴密文，或选择加密文件。',
+    note: 'AES-256-GCM（NIST SP 800-38D）· 密码模式：PBKDF2-HMAC-SHA256，600,000 次迭代，每次新的 16 字节盐 · 每次新的 12 字节 IV · 16 字节认证标签 · 在本标签页内运行，不上传任何内容',
+    err_empty: '输入为空。',
+    err_version: '未知的密文版本「v{version}:」。本页可读取 v2: 与无前缀的密文。',
+    err_openssl: '这是 OpenSSL enc 或 CryptoJS 的输出（以「Salted__」开头，通常是 AES-CBC）。本页使用 AES-GCM，无法读取它。请用 openssl enc -d 解密（见下文「OpenSSL 与 CBC 密文」）。',
+    err_base64: '第 {pos} 个字符「{ch}」不是 Base64 字符。',
+    err_base64Length: 'Base64 文本有 {chars} 个字符，不可能完整，少了或多了字符。',
+    err_hex: '十六进制密文的位数是奇数（{digits} 位）。',
+    err_short: '密文只有 {bytes} 字节。此格式至少需要 {min} 字节（盐、IV 与 16 字节认证标签），内容不完整。',
+    err_auth: '认证失败：密码或密钥不对，或者密文被改动、被截断。没有解密出任何内容。',
+    err_utf8: '已解密 {n} 字节，但不是 UTF-8 文本（多半是文件）。请在下方下载。',
+    err_rawPrefix: '这段密文以「v2:」开头，是用密码加密的。请把密钥类型切换为「密码」。',
+    err_fileFormat: '这个文件不是本页生成的密文。密码模式的文件以「v2:」开头；文本密文须为 Base64 或十六进制。',
+    err_fileSize: '文件大小为 {size}，上限为 {max}。',
+    err_keyEmpty: '请输入密钥，或点「随机生成」。',
+    err_keyChars: '第 {pos} 个字符「{ch}」不是 {format} 字符。',
+    err_keyHexLength: '十六进制密钥的位数必须是偶数，当前为 {digits} 位。',
+    err_keyLength: '密钥为 {bytes} 字节。AES 密钥须为 16、24 或 32 字节（128、192 或 256 位）。',
+    err_keyBase64Length: 'Base64 密钥有 {chars} 个字符，不可能完整。',
+  },
+  ja: {
+    keyMode: '鍵の種類',
+    modePassword: 'パスワード',
+    modeRaw: '鍵を直接入力',
+    passwordPlaceholder: 'パスワード',
+    rawKeyPlaceholder: '鍵：16進数 32・48・64 桁',
+    rawKeyPlaceholderB64: '鍵：16・24・32 バイトの Base64',
+    keyFormat: '鍵の形式',
+    keyFmtText: 'テキスト（UTF-8）',
+    rawKeyPlaceholderText: '鍵：16・24・32 バイトのテキスト',
+    ivPlaceholder: 'IV（任意）：16進数 24 桁かテキスト',
+    aadPlaceholder: 'AAD（任意）：追加データ、テキスト',
+    fmtRawIv: '鍵を直接入力、IV は IV 欄、暗号文 + タグ',
+    ivWarning: '入力した IV を使いました。同じ鍵で IV を再利用すると GCM の安全性が失われます（NIST SP 800-38D 第 8 章）。欄を空にすると毎回新しいランダムな IV を使います。',
+    generate: '生成',
+    show: '表示',
+    hide: '非表示',
+    plaintext: '平文',
+    plaintextPlaceholder: '暗号化するテキスト。復号結果もここに出ます。',
+    ciphertext: '暗号文',
+    ciphertextPlaceholder: '復号する暗号文（v2:…）。暗号化結果もここに出ます。',
+    encrypt: '暗号化 ↓',
+    decrypt: '復号 ↑',
+    encryptWide: '暗号化 →',
+    decryptWide: '← 復号',
+    copy: 'コピー',
+    copied: 'コピーしました',
+    file: 'ファイル…',
+    fileEncTitle: '暗号化するファイルを選択',
+    fileDecTitle: '復号する暗号化ファイルを選択',
+    removeFile: 'ファイルを外す',
+    outputEncoding: '出力',
+    working: '鍵を導出しています（PBKDF2、{n} 回）…',
+    workingRaw: '処理中…',
+    encrypted: '{n} バイトを暗号化しました。ソルトと IV は毎回新しく作るため、出力は毎回変わります。',
+    decrypted: '{n} バイトを復号しました。形式：{format}。',
+    fmtV2: 'v2:、PBKDF2 600,000 回',
+    fmtLegacy: '接頭辞なし、PBKDF2 200,000 回（2026-09-30 より前にこのページで作成）',
+    fmtNoPrefix600: '接頭辞なし、PBKDF2 600,000 回',
+    fmtRaw: '鍵を直接入力、IV + 暗号文 + タグ',
+    fileReady: '{name}（{size}）を作成しました。アップロードはしていません。',
+    download: '{name} をダウンロード',
+    errNoPassword: 'パスワードを入力してください。',
+    errNoPlaintext: '暗号化するテキストを入力するか、ファイルを選んでください。',
+    errNoCiphertext: '暗号文を貼り付けるか、暗号化ファイルを選んでください。',
+    note: 'AES-256-GCM（NIST SP 800-38D）・パスワード：PBKDF2-HMAC-SHA256 600,000 回、毎回新しい 16 バイトのソルト・毎回新しい 12 バイトの IV・16 バイトの認証タグ・このタブ内で処理し、アップロードしません',
+    err_empty: '入力が空です。',
+    err_version: '不明な暗号文バージョン「v{version}:」です。このページは v2: と接頭辞なしの暗号文を読めます。',
+    err_openssl: 'これは OpenSSL enc または CryptoJS の出力です（「Salted__」で始まり、多くは AES-CBC）。このページは AES-GCM のため読めません。openssl enc -d で復号してください（下の「OpenSSL と CBC の暗号文」を参照）。',
+    err_base64: '{pos} 文字目の「{ch}」は Base64 の文字ではありません。',
+    err_base64Length: 'Base64 の文字数が {chars} で、完全な値になりません。文字が欠けているか余分です。',
+    err_hex: '16進数の暗号文の桁数が奇数（{digits} 桁）です。',
+    err_short: '暗号文が {bytes} バイトしかありません。この形式は最低 {min} バイト（ソルト、IV、16 バイトのタグ）必要で、一部が欠けています。',
+    err_auth: '認証に失敗しました。パスワードか鍵が違う、または暗号文が改変・切り詰められています。何も復号していません。',
+    err_utf8: '{n} バイトを復号しましたが、UTF-8 のテキストではありません（ファイルの可能性が高い）。下からダウンロードしてください。',
+    err_rawPrefix: 'この暗号文は「v2:」で始まるため、パスワードで暗号化されています。鍵の種類を「パスワード」にしてください。',
+    err_fileFormat: 'このページで作った暗号文ファイルではありません。パスワードモードのファイルは「v2:」で始まり、テキストの暗号文は Base64 か16進数です。',
+    err_fileSize: 'ファイルは {size} です。上限は {max} です。',
+    err_keyEmpty: '鍵を入力するか、「生成」を押してください。',
+    err_keyChars: '{pos} 文字目の「{ch}」は {format} の文字ではありません。',
+    err_keyHexLength: '16進数の鍵は偶数桁が必要です。現在 {digits} 桁です。',
+    err_keyLength: '鍵が {bytes} バイトです。AES の鍵は 16・24・32 バイト（128・192・256 ビット）です。',
+    err_keyBase64Length: 'Base64 の鍵が {chars} 文字で、完全な値になりません。',
+  },
+  ko: {
+    keyMode: '키 종류',
+    modePassword: '비밀번호',
+    modeRaw: '키 직접 입력',
+    passwordPlaceholder: '비밀번호',
+    rawKeyPlaceholder: '키: 16진수 32·48·64자리',
+    rawKeyPlaceholderB64: '키: 16·24·32바이트의 Base64',
+    keyFormat: '키 형식',
+    keyFmtText: '텍스트(UTF-8)',
+    rawKeyPlaceholderText: '키: 16·24·32바이트의 텍스트',
+    ivPlaceholder: 'IV(선택): 16진수 24자리 또는 텍스트',
+    aadPlaceholder: 'AAD(선택): 추가 데이터, 텍스트',
+    fmtRawIv: '키 직접 입력, IV는 IV 칸, 암호문 + 태그',
+    ivWarning: '입력한 IV를 사용했습니다. 같은 키로 IV를 재사용하면 GCM의 안전성이 깨집니다(NIST SP 800-38D 8절). 칸을 비우면 매번 새 무작위 IV를 씁니다.',
+    generate: '생성',
+    show: '표시',
+    hide: '숨기기',
+    plaintext: '평문',
+    plaintextPlaceholder: '암호화할 텍스트. 복호화 결과도 여기에 나옵니다.',
+    ciphertext: '암호문',
+    ciphertextPlaceholder: '복호화할 암호문(v2:…). 암호화 결과도 여기에 나옵니다.',
+    encrypt: '암호화 ↓',
+    decrypt: '복호화 ↑',
+    encryptWide: '암호화 →',
+    decryptWide: '← 복호화',
+    copy: '복사',
+    copied: '복사됨!',
+    file: '파일…',
+    fileEncTitle: '암호화할 파일 선택',
+    fileDecTitle: '복호화할 암호화 파일 선택',
+    removeFile: '파일 빼기',
+    outputEncoding: '출력',
+    working: '키를 유도하는 중(PBKDF2, {n}회)…',
+    workingRaw: '처리 중…',
+    encrypted: '{n}바이트를 암호화했습니다. 솔트와 IV를 매번 새로 만들기 때문에 출력이 매번 달라집니다.',
+    decrypted: '{n}바이트를 복호화했습니다. 형식: {format}.',
+    fmtV2: 'v2:, PBKDF2 600,000회',
+    fmtLegacy: '접두사 없음, PBKDF2 200,000회(2026-09-30 이전에 이 페이지에서 생성)',
+    fmtNoPrefix600: '접두사 없음, PBKDF2 600,000회',
+    fmtRaw: '키 직접 입력, IV + 암호문 + 태그',
+    fileReady: '{name}({size})을 만들었습니다. 업로드한 것은 없습니다.',
+    download: '{name} 다운로드',
+    errNoPassword: '비밀번호를 입력해 주세요.',
+    errNoPlaintext: '암호화할 텍스트를 입력하거나 파일을 고르세요.',
+    errNoCiphertext: '암호문을 붙여 넣거나 암호화 파일을 고르세요.',
+    note: 'AES-256-GCM(NIST SP 800-38D) · 비밀번호: PBKDF2-HMAC-SHA256 600,000회, 매번 새 16바이트 솔트 · 매번 새 12바이트 IV · 16바이트 인증 태그 · 이 탭 안에서 처리하며 업로드하지 않음',
+    err_empty: '입력이 비어 있습니다.',
+    err_version: '알 수 없는 암호문 버전 "v{version}:"입니다. 이 페이지는 v2:와 접두사 없는 암호문을 읽습니다.',
+    err_openssl: 'OpenSSL enc 또는 CryptoJS의 출력입니다("Salted__"로 시작, 대개 AES-CBC). 이 페이지는 AES-GCM이라 읽을 수 없습니다. openssl enc -d로 복호화하세요(아래 "OpenSSL과 CBC 암호문" 참고).',
+    err_base64: '{pos}번째 문자 "{ch}"는 Base64 문자가 아닙니다.',
+    err_base64Length: 'Base64 텍스트가 {chars}자라서 온전할 수 없습니다. 문자가 빠졌거나 더 들어갔습니다.',
+    err_hex: '16진수 암호문의 자릿수가 홀수({digits}자리)입니다.',
+    err_short: '암호문이 {bytes}바이트뿐입니다. 이 형식은 최소 {min}바이트(솔트, IV, 16바이트 태그)가 필요하므로 일부가 빠졌습니다.',
+    err_auth: '인증 실패: 비밀번호나 키가 틀렸거나, 암호문이 바뀌었거나 잘렸습니다. 아무것도 복호화하지 않았습니다.',
+    err_utf8: '{n}바이트를 복호화했지만 UTF-8 텍스트가 아닙니다(파일일 가능성이 큼). 아래에서 내려받으세요.',
+    err_rawPrefix: '이 암호문은 "v2:"로 시작하므로 비밀번호로 암호화된 것입니다. 키 종류를 "비밀번호"로 바꾸세요.',
+    err_fileFormat: '이 페이지에서 만든 암호문 파일이 아닙니다. 비밀번호 모드 파일은 "v2:"로 시작하고, 텍스트 암호문은 Base64나 16진수여야 합니다.',
+    err_fileSize: '파일 크기가 {size}입니다. 한도는 {max}입니다.',
+    err_keyEmpty: '키를 입력하거나 "생성"을 누르세요.',
+    err_keyChars: '{pos}번째 문자 "{ch}"는 {format} 문자가 아닙니다.',
+    err_keyHexLength: '16진수 키는 자릿수가 짝수여야 합니다. 지금은 {digits}자리입니다.',
+    err_keyLength: '키가 {bytes}바이트입니다. AES 키는 16·24·32바이트(128·192·256비트)입니다.',
+    err_keyBase64Length: 'Base64 키가 {chars}자라서 온전할 수 없습니다.',
+  },
+};
+
+const L = STRINGS[lang];
 ---
-
 <div class="aes-wrap">
-  <div class="aes-field">
-    <label class="aes-label" for="aes-password" data-i18n="password">Password</label>
-    <div class="aes-pw-row">
-      <input type="password" id="aes-password" class="aes-input" placeholder="Enter a strong password…" data-i18n-ph="passwordPlaceholder" autocomplete="off" />
-      <button id="aes-toggle-pw" class="btn-ghost aes-btn-sm" type="button" title="Show / hide password" data-i18n="show">Show</button>
-    </div>
+  <div class="aes-keybar">
+    <select id="aes-mode" class="tool-input aes-select aes-mode" aria-label={L.keyMode}>
+      <option value="password">{L.modePassword}</option>
+      <option value="raw">{L.modeRaw}</option>
+    </select>
+    <input type="password" id="aes-password" class="tool-input aes-key-input" placeholder={L.passwordPlaceholder} aria-label={L.modePassword} autocomplete="off" spellcheck="false" autocapitalize="off" />
+    <input type="text" id="aes-rawkey" class="tool-input aes-key-input" placeholder={L.rawKeyPlaceholder} aria-label={L.modeRaw} autocomplete="off" spellcheck="false" autocapitalize="off" hidden />
+    <button id="aes-toggle-pw" class="btn-ghost aes-btn" type="button" aria-pressed="false">{L.show}</button>
+    <select id="aes-keyfmt" class="tool-input aes-select" aria-label={L.keyFormat} hidden>
+      <option value="hex">Hex</option>
+      <option value="base64">Base64</option>
+      <option value="text">{L.keyFmtText}</option>
+    </select>
+    <button id="aes-genkey" class="btn-secondary aes-btn" type="button" hidden>{L.generate}</button>
   </div>
 
-  <div class="aes-panes">
-    <div class="aes-pane">
-      <div class="aes-pane-header">
-        <span class="aes-pane-label" data-i18n="plaintext">Plaintext</span>
-        <button id="aes-encrypt" class="btn-primary aes-btn-sm" type="button" data-i18n="encrypt">Encrypt →</button>
+  <div id="aes-advanced" class="aes-advanced" hidden>
+    <input type="text" id="aes-iv" class="tool-input" placeholder={L.ivPlaceholder} aria-label={L.ivPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
+    <input type="text" id="aes-aad" class="tool-input" placeholder={L.aadPlaceholder} aria-label={L.aadPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
+  </div>
+
+  <div class="aes-grid">
+    <div class="aes-head aes-head-plain">
+      <label class="aes-label" for="aes-plaintext">{L.plaintext}</label>
+      <button id="aes-plain-file-btn" class="btn-ghost aes-btn aes-file-btn" type="button" title={L.fileEncTitle} aria-label={L.fileEncTitle}>{L.file}</button>
+      <input type="file" id="aes-plain-file-input" hidden />
+    </div>
+    <div class="aes-box aes-box-plain">
+      <textarea id="aes-plaintext" class="tool-textarea aes-textarea" spellcheck="false" placeholder={L.plaintextPlaceholder}></textarea>
+      <div id="aes-plain-file" class="aes-file" hidden>
+        <span class="aes-file-name"></span>
+        <button type="button" class="aes-file-clear" aria-label={L.removeFile}>×</button>
       </div>
-      <textarea id="aes-plaintext" class="aes-textarea" spellcheck="false" placeholder="Enter text to encrypt…" data-i18n-ph="encryptPlaceholder"></textarea>
     </div>
-    <div class="aes-pane">
-      <div class="aes-pane-header">
-        <span class="aes-pane-label" data-i18n="ciphertext">Ciphertext (Base64)</span>
-        <div class="aes-actions">
-          <button id="aes-decrypt" class="btn-primary aes-btn-sm" type="button" data-i18n="decrypt">← Decrypt</button>
-          <button id="aes-copy" class="btn-ghost aes-btn-sm" type="button" data-i18n="copy">Copy</button>
-        </div>
+    <button id="aes-encrypt" class="btn-primary aes-go aes-go-enc" type="button" data-narrow={L.encrypt} data-wide={L.encryptWide}>{L.encryptWide}</button>
+
+    <div class="aes-head aes-head-cipher">
+      <label class="aes-label" for="aes-ciphertext">{L.ciphertext}</label>
+      <button id="aes-cipher-file-btn" class="btn-ghost aes-btn aes-file-btn" type="button" title={L.fileDecTitle} aria-label={L.fileDecTitle}>{L.file}</button>
+      <input type="file" id="aes-cipher-file-input" hidden />
+      <label class="aes-enc-label">
+        <span>{L.outputEncoding}</span>
+        <select id="aes-encoding" class="tool-input aes-select">
+          <option value="base64">Base64</option>
+          <option value="hex">Hex</option>
+        </select>
+      </label>
+    </div>
+    <div class="aes-box aes-box-cipher">
+      <textarea id="aes-ciphertext" class="tool-textarea aes-textarea" spellcheck="false" placeholder={L.ciphertextPlaceholder}></textarea>
+      <div id="aes-cipher-file" class="aes-file" hidden>
+        <span class="aes-file-name"></span>
+        <button type="button" class="aes-file-clear" aria-label={L.removeFile}>×</button>
       </div>
-      <textarea id="aes-ciphertext" class="aes-textarea" spellcheck="false" placeholder="Paste ciphertext here to decrypt…" data-i18n-ph="decryptPlaceholder"></textarea>
+    </div>
+    <button id="aes-decrypt" class="btn-primary aes-go aes-go-dec" type="button" data-narrow={L.decrypt} data-wide={L.decryptWide}>{L.decryptWide}</button>
+    <button id="aes-copy" class="btn-copy aes-copy" type="button">{L.copy}</button>
+
+    <div class="aes-feedback">
+      <p id="aes-status" class="tool-status aes-status" role="status" aria-live="polite" hidden></p>
+      <button id="aes-download" class="btn-secondary aes-download" type="button" hidden></button>
     </div>
   </div>
-  <div id="aes-status" class="aes-status" hidden></div>
 
-  <div class="aes-note">
-    AES-256-GCM · PBKDF2-SHA256 key derivation (600,000 iterations) · random salt + IV per encryption · runs entirely in your browser
-  </div>
+  <p class="aes-note">{L.note}</p>
 
-  <script is:inline>
+  <script is:inline define:vars={{ S: STRINGS[lang] }}>
     (function () {
-      var STRINGS = {
-        en: { password: 'Password', plaintext: 'Plaintext', ciphertext: 'Ciphertext (Base64)', encrypt: 'Encrypt →', decrypt: '← Decrypt', copy: 'Copy', copied: 'Copied!', show: 'Show', hide: 'Hide', encryptPlaceholder: 'Enter text to encrypt…', decryptPlaceholder: 'Paste ciphertext here to decrypt…', passwordPlaceholder: 'Enter a strong password…', encryptedOk: 'Encrypted successfully.', decryptedOk: 'Decrypted successfully.', errNoPw: 'Please enter a password.', errNoPlain: 'Plaintext is empty.', errNoCipher: 'Ciphertext is empty.', errVersion: 'Decryption failed — unknown ciphertext version (this page reads v2 and unprefixed ciphertext).' },
-        zh: { password: '密码', plaintext: '明文', ciphertext: '密文 (Base64)', encrypt: '加密 →', decrypt: '← 解密', copy: '复制', copied: '已复制！', show: '显示', hide: '隐藏', encryptPlaceholder: '输入要加密的文本…', decryptPlaceholder: '粘贴密文以解密…', passwordPlaceholder: '输入强密码…', encryptedOk: '加密成功。', decryptedOk: '解密成功。', errNoPw: '请输入密码。', errNoPlain: '明文为空。', errNoCipher: '密文为空。', errVersion: '解密失败——密文版本未知（本页可读取 v2 与无前缀的密文）。' },
-        ja: { password: 'パスワード', plaintext: '平文', ciphertext: '暗号文 (Base64)', encrypt: '暗号化 →', decrypt: '← 復号', copy: 'コピー', copied: 'コピー済み！', show: '表示', hide: '非表示', encryptPlaceholder: '暗号化するテキストを入力…', decryptPlaceholder: '復号する暗号文を貼り付け…', passwordPlaceholder: '強力なパスワードを入力…', encryptedOk: '暗号化しました。', decryptedOk: '復号しました。', errNoPw: 'パスワードを入力してください。', errNoPlain: '平文が空です。', errNoCipher: '暗号文が空です。', errVersion: '復号に失敗しました — 暗号文のバージョンが不明です（このページは v2 と接頭辞なしの暗号文を読めます）。' },
-        ko: { password: '비밀번호', plaintext: '평문', ciphertext: '암호문 (Base64)', encrypt: '암호화 →', decrypt: '← 복호화', copy: '복사', copied: '복사됨!', show: '표시', hide: '숨기기', encryptPlaceholder: '암호화할 텍스트를 입력…', decryptPlaceholder: '복호화할 암호문을 붙여넣기…', passwordPlaceholder: '강력한 비밀번호를 입력…', encryptedOk: '암호화 완료.', decryptedOk: '복호화 완료.', errNoPw: '비밀번호를 입력해 주세요.', errNoPlain: '평문이 비어 있습니다.', errNoCipher: '암호문이 비어 있습니다.', errVersion: '복호화 실패 — 알 수 없는 암호문 버전입니다(이 페이지는 v2와 접두사 없는 암호문을 읽습니다).' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.aes-wrap [data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.aes-wrap [data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
-
-      var pwEl        = document.getElementById('aes-password');
-      var togglePwBtn = document.getElementById('aes-toggle-pw');
-      var encBtn      = document.getElementById('aes-encrypt');
-      var decBtn      = document.getElementById('aes-decrypt');
-      var copyBtn     = document.getElementById('aes-copy');
-      var plainEl     = document.getElementById('aes-plaintext');
-      var cipherEl    = document.getElementById('aes-ciphertext');
-      var statusEl    = document.getElementById('aes-status');
-
-      togglePwBtn.addEventListener('click', function () {
-        if (pwEl.type === 'password') {
-          pwEl.type = 'text';
-          togglePwBtn.textContent = t.hide;
-        } else {
-          pwEl.type = 'password';
-          togglePwBtn.textContent = t.show;
-        }
-      });
-
-      function showStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'aes-status' + (isError ? ' aes-status-error' : ' aes-status-ok');
-        statusEl.hidden = false;
-        setTimeout(function () { statusEl.hidden = true; }, 3000);
-      }
-
-      function getPassword() {
-        var pw = pwEl.value;
-        if (!pw) { showStatus(t.errNoPw, true); return null; }
-        return pw;
-      }
-
       /* ── engine:start ── */
-      async function deriveKey(password, salt, iterations) {
-        var enc = new TextEncoder();
-        var keyMaterial = await crypto.subtle.importKey(
-          'raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']
-        );
-        return crypto.subtle.deriveKey(
-          { name: 'PBKDF2', salt: salt, iterations: iterations, hash: 'SHA-256' },
-          keyMaterial,
-          { name: 'AES-GCM', length: 256 },
-          false,
-          ['encrypt', 'decrypt']
-        );
-      }
-
-      function bufToBase64(buf) {
-        var bytes = new Uint8Array(buf);
-        var bin = '';
-        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-        return btoa(bin);
-      }
-
-      function base64ToBuf(b64) {
-        var bin = atob(b64);
-        var buf = new Uint8Array(bin.length);
-        for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-        return buf;
-      }
-
-      // Ciphertext: "v2:" + Base64([salt(16)] [iv(12)] [ciphertext + tag]).
-      // v2 derives the key with PBKDF2-HMAC-SHA256 at 600,000 iterations (OWASP Password
-      // Storage Cheat Sheet). Text without a prefix is the original format (200,000
-      // iterations) and still decrypts; ":" is not a Base64 character, so the two cannot mix.
+      // Password ciphertext: "v2:" + Base64 or hex of [salt 16][iv 12][ciphertext][tag 16], key from
+      // PBKDF2-HMAC-SHA256 at 600,000 iterations (OWASP Password Storage Cheat Sheet). Text without a
+      // prefix is the original format of this page (200,000 iterations); if that fails, the same
+      // layout is tried at 600,000 (what other tools and code that drops the prefix produce).
+      // ":" is not a Base64 or hex character, so a prefix can never be part of the payload.
+      // Raw key ciphertext: Base64 or hex of [iv 12][ciphertext][tag 16], no prefix (the layout of
+      // Go's gcm.Seal(nonce, nonce, …) and of Python AESGCM output with the nonce in front).
+      // Files are the same bytes without Base64: password mode "v2:" + payload, raw key mode payload.
       var CURRENT_VERSION = 2;
       var PBKDF2_ITERATIONS = { 1: 200000, 2: 600000 };
+      var SALT_BYTES = 16, IV_BYTES = 12, TAG_BYTES = 16;
+      var MAX_FILE_BYTES = 256 * 1024 * 1024;
+      var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      var SALTED = [0x53, 0x61, 0x6c, 0x74, 0x65, 0x64, 0x5f, 0x5f]; // "Salted__" (OpenSSL enc, CryptoJS)
+      var HEX = [];
+      for (var h = 0; h < 256; h++) HEX.push((h < 16 ? '0' : '') + h.toString(16));
 
-      async function encryptText(password, text) {
-        var salt = crypto.getRandomValues(new Uint8Array(16));
-        var iv   = crypto.getRandomValues(new Uint8Array(12));
-        var key  = await deriveKey(password, salt, PBKDF2_ITERATIONS[CURRENT_VERSION]);
-        var cipherBuf = await crypto.subtle.encrypt(
-          { name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(text)
-        );
-        var combined = new Uint8Array(16 + 12 + cipherBuf.byteLength);
-        combined.set(salt, 0);
-        combined.set(iv, 16);
-        combined.set(new Uint8Array(cipherBuf), 28);
-        return 'v' + CURRENT_VERSION + ':' + bufToBase64(combined);
+      function fail(code, detail) {
+        var e = new Error(code + (detail ? ' ' + JSON.stringify(detail, function (k, v) { return v instanceof Uint8Array ? v.length + ' bytes' : v; }) : ''));
+        e.code = code;
+        e.detail = detail || {};
+        return e;
+      }
+      function toSpec(spec) { return typeof spec === 'string' ? { type: 'password', password: spec } : spec; }
+      function isSpace(c) { return c === ' ' || c === '\n' || c === '\r' || c === '\t' || c === '\f' || c === '\v'; }
+      function startsWith(bytes, prefix) {
+        if (bytes.length < prefix.length) return false;
+        for (var i = 0; i < prefix.length; i++) if (bytes[i] !== prefix[i]) return false;
+        return true;
+      }
+      function concat(parts) {
+        var n = 0, i;
+        for (i = 0; i < parts.length; i++) n += parts[i].length;
+        var out = new Uint8Array(n), off = 0;
+        for (i = 0; i < parts.length; i++) { out.set(parts[i], off); off += parts[i].length; }
+        return out;
       }
 
-      async function decryptText(password, input) {
-        var text = input.trim();
-        var version = 1;
+      function bytesToBase64(bytes) {
+        var parts = [];
+        for (var i = 0; i < bytes.length; i += 0x8000) parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)));
+        return btoa(parts.join(''));
+      }
+      function bytesToHex(bytes) {
+        var out = new Array(bytes.length);
+        for (var i = 0; i < bytes.length; i++) out[i] = HEX[bytes[i]];
+        return out.join('');
+      }
+
+      // RFC 4648 §4 Base64, or the URL-safe alphabet of §5; whitespace (line breaks of copied
+      // text) is ignored; "=" only at the end. Positions are 1-based characters of the whole input.
+      function binToBytes(bin) {
+        var out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+      function decodeBase64(text, offset) {
+        if (text.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(text)) return binToBytes(atob(text));
+        var clean = [], pad = 0, padPos = 0, pos = offset;
+        for (var ch of text) {
+          pos++;
+          if (isSpace(ch)) continue;
+          if (ch === '=') { if (!pad) padPos = pos; pad++; continue; }
+          if (pad) throw fail('base64', { ch: '=', pos: padPos });
+          if (ch === '-') ch = '+';
+          else if (ch === '_') ch = '/';
+          else if (B64.indexOf(ch) < 0) throw fail('base64', { ch: ch, pos: pos });
+          clean.push(ch);
+        }
+        var s = clean.join('');
+        if (s.length % 4 === 1 || pad > 2 || (pad && (s.length + pad) % 4 !== 0)) throw fail('base64Length', { chars: s.length + pad });
+        while (s.length % 4) s += '=';
+        return binToBytes(atob(s));
+      }
+      function isHexText(text) { return /^[0-9a-fA-F\s]+$/.test(text) && /[0-9a-fA-F]/.test(text); }
+      function decodeHex(text) {
+        var s = text.replace(/\s+/g, '');
+        if (s.length % 2) throw fail('hex', { digits: s.length });
+        var out = new Uint8Array(s.length / 2);
+        for (var i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i * 2, 2), 16);
+        return out;
+      }
+
+      function parseCiphertext(input) {
+        var text = String(input).trim();
+        if (!text) throw fail('empty');
+        var version = null, body = text, offset = 0;
         var m = /^v(\d+):/.exec(text);
+        if (m) { body = text.slice(m[0].length); offset = m[0].length; }
+        var encoding = isHexText(body) ? 'hex' : 'base64';
+        var bytes = encoding === 'hex' ? decodeHex(body) : decodeBase64(body, offset);
+        if (startsWith(bytes, SALTED)) throw fail('openssl');
         if (m) {
           version = Number(m[1]);
-          if (version === 1 || !PBKDF2_ITERATIONS[version]) {
-            var err = new Error('Unsupported ciphertext version v' + m[1] + '.');
-            err.code = 'version';
-            throw err;
-          }
-          text = text.slice(m[0].length);
+          if (version === 1 || !PBKDF2_ITERATIONS[version]) throw fail('version', { version: m[1] });
         }
-        var combined = base64ToBuf(text);
-        if (combined.length < 29) throw new Error('Ciphertext too short.');
-        var salt      = combined.slice(0, 16);
-        var iv        = combined.slice(16, 28);
-        var cipherBuf = combined.slice(28);
-        var key       = await deriveKey(password, salt, PBKDF2_ITERATIONS[version]);
-        var plainBuf  = await crypto.subtle.decrypt(
-          { name: 'AES-GCM', iv: iv }, key, cipherBuf
+        return { version: version, bytes: bytes, encoding: encoding };
+      }
+
+      async function deriveKey(password, salt, iterations, usages) {
+        var keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+        return crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: iterations, hash: 'SHA-256' },
+          keyMaterial, { name: 'AES-GCM', length: 256 }, false, usages
         );
-        return new TextDecoder().decode(plainBuf);
+      }
+      function importRawKey(bytes, usages) {
+        return crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, usages);
+      }
+      function gcmParams(iv, aad) {
+        var p = { name: 'AES-GCM', iv: iv, tagLength: 128 };
+        if (aad && aad.length) p.additionalData = aad;
+        return p;
+      }
+      async function gcmOpen(key, iv, data, aad) {
+        try {
+          return new Uint8Array(await crypto.subtle.decrypt(gcmParams(iv, aad), key, data));
+        } catch (e) {
+          throw fail('auth'); // OperationError: the tag does not match
+        }
+      }
+
+      async function sealPayload(spec, plain) {
+        if (spec.type === 'raw') {
+          // A given IV (e.g. a nonce stored next to the ciphertext) is not written to the output.
+          var riv = spec.iv || crypto.getRandomValues(new Uint8Array(IV_BYTES));
+          var rk = await importRawKey(spec.key, ['encrypt']);
+          var sealed = new Uint8Array(await crypto.subtle.encrypt(gcmParams(riv, spec.aad), rk, plain));
+          return spec.iv ? sealed : concat([riv, sealed]);
+        }
+        var iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+        var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+        var key = await deriveKey(spec.password, salt, PBKDF2_ITERATIONS[CURRENT_VERSION], ['encrypt']);
+        return concat([salt, iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv, tagLength: 128 }, key, plain))]);
+      }
+
+      async function openPayload(spec, payload, version) {
+        if (spec.type === 'raw') {
+          var rmin = spec.iv ? TAG_BYTES : IV_BYTES + TAG_BYTES;
+          if (payload.length < rmin) throw fail('short', { bytes: payload.length, min: rmin });
+          var rk = await importRawKey(spec.key, ['decrypt']);
+          if (spec.iv) return { bytes: await gcmOpen(rk, spec.iv, payload, spec.aad), iterations: 0 };
+          return { bytes: await gcmOpen(rk, payload.subarray(0, IV_BYTES), payload.subarray(IV_BYTES), spec.aad), iterations: 0 };
+        }
+        var min = SALT_BYTES + IV_BYTES + TAG_BYTES;
+        if (payload.length < min) throw fail('short', { bytes: payload.length, min: min });
+        var salt = payload.subarray(0, SALT_BYTES);
+        var iv = payload.subarray(SALT_BYTES, SALT_BYTES + IV_BYTES);
+        var body = payload.subarray(SALT_BYTES + IV_BYTES);
+        var tries = version === null ? [PBKDF2_ITERATIONS[1], PBKDF2_ITERATIONS[2]] : [PBKDF2_ITERATIONS[version]];
+        for (var i = 0; i < tries.length; i++) {
+          var key = await deriveKey(spec.password, salt, tries[i], ['decrypt']);
+          try {
+            return { bytes: await gcmOpen(key, iv, body), iterations: tries[i] };
+          } catch (e) {
+            if (e.code !== 'auth' || i === tries.length - 1) throw e;
+          }
+        }
+      }
+
+      function utf8OrNull(bytes) {
+        try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch (e) { return null; }
+      }
+
+      async function encryptText(spec, text, encoding) {
+        spec = toSpec(spec);
+        var payload = await sealPayload(spec, new TextEncoder().encode(text));
+        var body = encoding === 'hex' ? bytesToHex(payload) : bytesToBase64(payload);
+        return spec.type === 'raw' ? body : 'v' + CURRENT_VERSION + ':' + body;
+      }
+
+      async function decryptInput(spec, input) {
+        spec = toSpec(spec);
+        var p = parseCiphertext(input);
+        if (spec.type === 'raw' && p.version !== null) throw fail('rawPrefix');
+        var r = await openPayload(spec, p.bytes, p.version);
+        return { text: utf8OrNull(r.bytes), bytes: r.bytes, version: p.version, iterations: r.iterations, encoding: p.encoding };
+      }
+
+      async function decryptText(spec, input) {
+        var r = await decryptInput(spec, input);
+        if (r.text === null) throw fail('utf8', { n: r.bytes.length, bytes: r.bytes });
+        return r.text;
+      }
+
+      async function encryptFile(spec, bytes) {
+        spec = toSpec(spec);
+        if (bytes.length > MAX_FILE_BYTES) throw fail('fileSize', { bytes: bytes.length });
+        var payload = await sealPayload(spec, bytes);
+        return spec.type === 'raw' ? payload : concat([new TextEncoder().encode('v' + CURRENT_VERSION + ':'), payload]);
+      }
+
+      function isAsciiText(bytes) {
+        for (var i = 0; i < bytes.length; i++) {
+          var b = bytes[i];
+          if (b > 0x7e || (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d)) return false;
+        }
+        return true;
+      }
+
+      async function decryptFile(spec, bytes) {
+        spec = toSpec(spec);
+        if (!bytes.length) throw fail('empty');
+        if (bytes.length > MAX_FILE_BYTES + 64) throw fail('fileSize', { bytes: bytes.length });
+        if (startsWith(bytes, SALTED)) throw fail('openssl');
+        // A text ciphertext saved to a file (random binary is never all printable ASCII)
+        if (isAsciiText(bytes)) {
+          var text = new TextDecoder().decode(bytes);
+          try {
+            return (await decryptInput(spec, text)).bytes;
+          } catch (e) {
+            if (e.code === 'base64' || e.code === 'base64Length' || e.code === 'hex' || e.code === 'empty') throw fail('fileFormat');
+            throw e;
+          }
+        }
+        if (spec.type === 'raw') return (await openPayload(spec, bytes, null)).bytes;
+        var head = String.fromCharCode.apply(null, bytes.subarray(0, 8));
+        var m = /^v(\d+):/.exec(head);
+        if (!m) throw fail('fileFormat');
+        var version = Number(m[1]);
+        if (version === 1 || !PBKDF2_ITERATIONS[version]) throw fail('version', { version: m[1] });
+        return (await openPayload(spec, bytes.subarray(m[0].length), version)).bytes;
+      }
+
+      // format: 'hex', 'base64', or 'text' (the UTF-8 bytes of the string, e.g. a 32-character
+      // WeChat Pay APIv3 key)
+      function parseRawKey(str, format) {
+        var text = String(str);
+        if (!(format === 'text' ? text : text.replace(/\s+/g, ''))) throw fail('keyEmpty');
+        var bytes;
+        if (format === 'text') {
+          bytes = new TextEncoder().encode(text);
+        } else if (format === 'base64') {
+          try { bytes = decodeBase64(text, 0); } catch (e) {
+            if (e.code === 'base64') throw fail('keyChars', { ch: e.detail.ch, pos: e.detail.pos, format: 'Base64' });
+            throw fail('keyBase64Length', { chars: e.detail.chars });
+          }
+        } else {
+          var pos = 0;
+          for (var ch of text) {
+            pos++;
+            if (!isSpace(ch) && !/[0-9a-fA-F]/.test(ch)) throw fail('keyChars', { ch: ch, pos: pos, format: 'hex' });
+          }
+          var s = text.replace(/\s+/g, '');
+          if (s.length % 2) throw fail('keyHexLength', { digits: s.length });
+          bytes = decodeHex(s);
+        }
+        if (bytes.length !== 16 && bytes.length !== 24 && bytes.length !== 32) throw fail('keyLength', { bytes: bytes.length });
+        return bytes;
+      }
+
+      // IV field of raw key mode: 24 hex digits are read as 12 bytes; anything else is text,
+      // used as its UTF-8 bytes (WeChat Pay APIv3 sends the nonce as a 12-character string).
+      function parseIv(str) {
+        var text = String(str || '');
+        if (!text.trim()) return null;
+        var compact = text.replace(/\s+/g, '');
+        if (/^[0-9a-fA-F]{24}$/.test(compact)) return decodeHex(compact);
+        return new TextEncoder().encode(text);
+      }
+
+      function generateRawKey(bits) {
+        return bytesToHex(crypto.getRandomValues(new Uint8Array((bits || 256) / 8)));
       }
       /* ── engine:end ── */
 
-      // NOTE: AES encrypt/decrypt intentionally keeps manual button triggers only.
-      // Auto-processing on input would be a security risk: it could silently encrypt/decrypt
-      // partial input and expose intermediate plaintext or ciphertext states unexpectedly.
-      encBtn.addEventListener('click', async function () {
-        var pw = getPassword();
-        if (!pw) return;
-        var text = plainEl.value;
-        if (!text) { showStatus(t.errNoPlain, true); return; }
-        try {
-          cipherEl.value = await encryptText(pw, text);
-          showStatus(t.encryptedOk, false);
-          window.trackTool && window.trackTool('aes-encrypt-decrypt', 'encrypt');
-        } catch (e) {
-          showStatus('Encryption failed: ' + e.message, true);
-        }
+      var modeEl = document.getElementById('aes-mode');
+      var pwEl = document.getElementById('aes-password');
+      var rawEl = document.getElementById('aes-rawkey');
+      var toggleBtn = document.getElementById('aes-toggle-pw');
+      var keyFmtEl = document.getElementById('aes-keyfmt');
+      var genBtn = document.getElementById('aes-genkey');
+      var advEl = document.getElementById('aes-advanced');
+      var ivEl = document.getElementById('aes-iv');
+      var aadEl = document.getElementById('aes-aad');
+      var plainEl = document.getElementById('aes-plaintext');
+      var cipherEl = document.getElementById('aes-ciphertext');
+      var encBtn = document.getElementById('aes-encrypt');
+      var decBtn = document.getElementById('aes-decrypt');
+      var copyBtn = document.getElementById('aes-copy');
+      var encodingEl = document.getElementById('aes-encoding');
+      var statusEl = document.getElementById('aes-status');
+      var downloadBtn = document.getElementById('aes-download');
+      var wrap = document.querySelector('.aes-wrap');
+      var plainFile = { input: document.getElementById('aes-plain-file-input'), btn: document.getElementById('aes-plain-file-btn'), chip: document.getElementById('aes-plain-file'), area: plainEl, file: null };
+      var cipherFile = { input: document.getElementById('aes-cipher-file-input'), btn: document.getElementById('aes-cipher-file-btn'), chip: document.getElementById('aes-cipher-file'), area: cipherEl, file: null };
+      var downloadUrl = null;
+      var busy = false;
+
+      function fmt(template, vars) {
+        return String(template).replace(/\{(\w+)\}/g, function (all, k) { return vars && vars[k] !== undefined ? vars[k] : all; });
+      }
+      function num(n) { return Number(n).toLocaleString(document.documentElement.lang || 'en'); }
+      function size(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1024 / 1024).toFixed(1) + ' MB';
+      }
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status aes-status' + (kind ? ' ' + kind : '');
+        statusEl.hidden = !msg;
+      }
+      function errorMessage(e) {
+        var d = (e && e.detail) || {};
+        var vars = {};
+        for (var k in d) vars[k] = d[k];
+        if (e && e.code === 'fileSize') { vars.size = size(d.bytes); vars.max = size(MAX_FILE_BYTES); }
+        if (e && e.code === 'utf8') vars.n = num(d.n);
+        var tpl = e && e.code && S['err_' + e.code];
+        return tpl ? fmt(tpl, vars) : String(e && e.message || e);
+      }
+      function clearDownload() {
+        if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+        downloadUrl = null;
+        downloadBtn.hidden = true;
+      }
+      function offerDownload(bytes, name) {
+        clearDownload();
+        downloadUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+        downloadBtn.textContent = fmt(S.download, { name: name });
+        downloadBtn.dataset.name = name;
+        downloadBtn.hidden = false;
+      }
+      downloadBtn.addEventListener('click', function () {
+        if (!downloadUrl) return;
+        var a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = downloadBtn.dataset.name || 'download.bin';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
       });
 
-      decBtn.addEventListener('click', async function () {
-        var pw = getPassword();
-        if (!pw) return;
-        var b64 = cipherEl.value.trim();
-        if (!b64) { showStatus(t.errNoCipher, true); return; }
+      function currentSpec() {
+        if (modeEl.value === 'raw') {
+          return { type: 'raw', key: parseRawKey(rawEl.value, keyFmtEl.value), iv: parseIv(ivEl.value), aad: aadEl.value ? new TextEncoder().encode(aadEl.value) : null };
+        }
+        if (!pwEl.value) { var e = new Error('noPassword'); e.ui = S.errNoPassword; throw e; }
+        return { type: 'password', password: pwEl.value };
+      }
+
+      function applyMode() {
+        var raw = modeEl.value === 'raw';
+        pwEl.hidden = raw;
+        toggleBtn.hidden = raw;
+        rawEl.hidden = !raw;
+        keyFmtEl.hidden = !raw;
+        genBtn.hidden = !raw;
+        advEl.hidden = !raw;
+        rawEl.placeholder = keyFmtEl.value === 'base64' ? S.rawKeyPlaceholderB64 : keyFmtEl.value === 'text' ? S.rawKeyPlaceholderText : S.rawKeyPlaceholder;
+        setStatus('');
+      }
+      modeEl.addEventListener('change', applyMode);
+      keyFmtEl.addEventListener('change', applyMode);
+      genBtn.addEventListener('click', function () {
+        var hex = generateRawKey(256);
+        if (keyFmtEl.value === 'text') { keyFmtEl.value = 'hex'; applyMode(); }
+        if (keyFmtEl.value === 'base64') {
+          var b = new Uint8Array(32);
+          for (var i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
+          rawEl.value = bytesToBase64(b);
+        } else rawEl.value = hex;
+        setStatus('');
+      });
+      toggleBtn.addEventListener('click', function () {
+        var show = pwEl.type === 'password';
+        pwEl.type = show ? 'text' : 'password';
+        toggleBtn.textContent = show ? S.hide : S.show;
+        toggleBtn.setAttribute('aria-pressed', String(show));
+      });
+
+      function setFile(slot, file) {
+        slot.file = file || null;
+        slot.input.value = '';
+        slot.area.hidden = !!file;
+        slot.chip.hidden = !file;
+        if (file) slot.chip.querySelector('.aes-file-name').textContent = file.name + ' · ' + size(file.size);
+        clearDownload();
+        setStatus('');
+      }
+      [plainFile, cipherFile].forEach(function (slot) {
+        slot.btn.addEventListener('click', function () { slot.input.click(); });
+        slot.input.addEventListener('change', function () { if (slot.input.files && slot.input.files[0]) setFile(slot, slot.input.files[0]); });
+        slot.chip.querySelector('.aes-file-clear').addEventListener('click', function () { setFile(slot, null); slot.area.focus(); });
+        var box = slot.area.parentElement;
+        box.addEventListener('dragover', function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') >= 0) { e.preventDefault(); box.classList.add('aes-drop'); } });
+        box.addEventListener('dragleave', function () { box.classList.remove('aes-drop'); });
+        box.addEventListener('drop', function (e) {
+          box.classList.remove('aes-drop');
+          if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) { e.preventDefault(); setFile(slot, e.dataTransfer.files[0]); }
+        });
+      });
+
+      function setBusy(on, spec) {
+        busy = on;
+        encBtn.disabled = on;
+        decBtn.disabled = on;
+        if (on) setStatus(spec.type === 'raw' ? S.workingRaw : fmt(S.working, { n: num(PBKDF2_ITERATIONS[CURRENT_VERSION]) }), 'info');
+      }
+
+      async function run(kind) {
+        if (busy) return;
+        var spec;
+        clearDownload();
+        try { spec = currentSpec(); } catch (e) { setStatus(e.ui || errorMessage(e), 'error'); return; }
+        var slot = kind === 'encrypt' ? plainFile : cipherFile;
+        if (!slot.file && !(kind === 'encrypt' ? plainEl.value : cipherEl.value.trim())) {
+          setStatus(kind === 'encrypt' ? S.errNoPlaintext : S.errNoCiphertext, 'error');
+          return;
+        }
+        setBusy(true, spec);
         try {
-          plainEl.value = await decryptText(pw, b64);
-          showStatus(t.decryptedOk, false);
-          window.trackTool && window.trackTool('aes-encrypt-decrypt', 'decrypt');
+          if (slot.file) {
+            if (slot.file.size > MAX_FILE_BYTES + (kind === 'encrypt' ? 0 : 64)) throw fail('fileSize', { bytes: slot.file.size });
+            var input = new Uint8Array(await slot.file.arrayBuffer());
+            var out, name;
+            if (kind === 'encrypt') {
+              out = await encryptFile(spec, input);
+              name = slot.file.name + '.enc';
+            } else {
+              out = await decryptFile(spec, input);
+              name = /\.enc$/i.test(slot.file.name) && slot.file.name.length > 4 ? slot.file.name.slice(0, -4) : slot.file.name + '.decrypted';
+            }
+            offerDownload(out, name);
+            setStatus(fmt(S.fileReady, { name: name, size: size(out.length) }), 'success');
+          } else if (kind === 'encrypt') {
+            cipherEl.value = await encryptText(spec, plainEl.value, encodingEl.value);
+            setStatus(fmt(S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }) + (spec.iv ? ' ' + S.ivWarning : ''), spec.iv ? 'info' : 'success');
+          } else {
+            var r = await decryptInput(spec, cipherEl.value);
+            var format = spec.type === 'raw' ? (spec.iv ? S.fmtRawIv : S.fmtRaw) : r.version === 2 ? S.fmtV2 : r.iterations === PBKDF2_ITERATIONS[1] ? S.fmtLegacy : S.fmtNoPrefix600;
+            if (r.text === null) {
+              offerDownload(r.bytes, 'decrypted.bin');
+              setStatus(fmt(S.err_utf8, { n: num(r.bytes.length) }), 'error');
+            } else {
+              plainEl.value = r.text;
+              setStatus(fmt(S.decrypted, { n: num(r.bytes.length), format: format }), 'success');
+            }
+          }
+          window.trackTool && window.trackTool('aes-encrypt-decrypt', kind + (slot.file ? '-file' : ''));
         } catch (e) {
-          if (e && e.code === 'version') { showStatus(t.errVersion, true); return; }
-          showStatus('Decryption failed — wrong password or corrupted ciphertext.', true);
+          setStatus(errorMessage(e), 'error');
+        } finally {
+          busy = false;
+          encBtn.disabled = false;
+          decBtn.disabled = false;
+        }
+      }
+
+      // Manual triggers only: encrypting on every keystroke would run PBKDF2 (600,000 iterations)
+      // for each character and show intermediate states of the plaintext.
+      encBtn.addEventListener('click', function () { run('encrypt'); });
+      decBtn.addEventListener('click', function () { run('decrypt'); });
+      // Ctrl/Cmd+Enter in the ciphertext box decrypts (ToolLayout's shortcut clicks the first
+      // primary button, which is Encrypt).
+      cipherEl.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); run('decrypt'); }
+      });
+      // ToolLayout's Ctrl/Cmd+L clears textareas and text inputs; also clear the password and files.
+      document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          pwEl.value = '';
+          ivEl.value = '';
+          aadEl.value = '';
+          setFile(plainFile, null);
+          setFile(cipherFile, null);
         }
       });
 
@@ -199,122 +811,130 @@
         var text = cipherEl.value;
         if (!text) return;
         navigator.clipboard.writeText(text).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+          copyBtn.textContent = S.copied;
+          setTimeout(function () { copyBtn.textContent = S.copy; }, 1500);
         });
       });
+
+      // Arrow direction follows the layout: side by side on wide screens, stacked on narrow ones.
+      var narrow = window.matchMedia('(max-width: 640px)');
+      function applyArrows() {
+        [encBtn, decBtn].forEach(function (b) { b.textContent = narrow.matches ? b.dataset.narrow : b.dataset.wide; });
+      }
+      applyArrows();
+      if (narrow.addEventListener) narrow.addEventListener('change', applyArrows);
+      applyMode();
     })();
   </script>
 </div>
 
 <style>
-  .aes-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+  .aes-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  .aes-field { display: flex; flex-direction: column; gap: 0.35rem; }
+  .aes-keybar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .aes-select { font-family: var(--font-sans); cursor: pointer; }
+  .aes-mode { flex: 0 0 auto; }
+  .aes-key-input { flex: 1 1 14rem; min-width: 0; }
+  .aes-key-input[hidden], .aes-keybar [hidden] { display: none; }
 
-  .aes-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
+  .aes-advanced { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5rem; }
+  .aes-advanced[hidden] { display: none; }
 
-  .aes-pw-row { display: flex; gap: 0.5rem; align-items: center; }
-
-  .aes-input {
-    font-family: var(--font-mono);
-    font-size: 0.88rem;
-    padding: 0.4rem 0.65rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    flex: 1;
-  }
-
-  .aes-panes {
+  .aes-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "hp enc hc dec cp"
+      "bp bp  bc bc  bc"
+      "fb fb  fb fb  fb";
+    gap: 0.5rem 0.6rem;
+    align-items: center;
   }
+  .aes-head-plain { grid-area: hp; }
+  .aes-box-plain { grid-area: bp; }
+  .aes-go-enc { grid-area: enc; }
+  .aes-head-cipher { grid-area: hc; }
+  .aes-box-cipher { grid-area: bc; }
+  .aes-go-dec { grid-area: dec; }
+  .aes-copy { grid-area: cp; }
+  .aes-feedback { grid-area: fb; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .aes-feedback:not(:has(> :not([hidden]))) { display: none; }
 
-  @media (max-width: 680px) {
-    .aes-panes { grid-template-columns: 1fr; }
-  }
+  .aes-head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; min-height: 40px; }
+  .aes-label { font-size: 0.85rem; font-weight: 650; color: var(--color-text-secondary); }
+  .aes-file-btn { font-size: 0.8rem; min-height: 32px; padding: 0.25rem 0.6rem; }
+  .aes-enc-label { display: inline-flex; align-items: center; gap: 0.35rem; margin-left: auto; font-size: 0.8rem; color: var(--color-text-secondary); }
+  .aes-enc-label .aes-select { min-height: 32px; padding: 0.2rem 0.5rem; font-size: 0.8rem; }
 
-  .aes-pane { display: flex; flex-direction: column; gap: 0.4rem; }
+  .aes-box { position: relative; min-width: 0; align-self: stretch; }
+  .aes-textarea { display: block; min-height: 180px; }
+  .aes-textarea[hidden] { display: none; }
+  .aes-box.aes-drop .aes-textarea, .aes-box.aes-drop .aes-file { box-shadow: inset 0 0 0 2px var(--color-primary); }
 
-  .aes-pane-header {
+  .aes-file {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-  }
-
-  .aes-pane-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .aes-actions { display: flex; gap: 0.35rem; }
-
-  .aes-btn-sm {
-    font-size: 0.75rem;
-    padding: 0.2rem 0.55rem;
-  }
-
-  .aes-textarea {
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    line-height: 1.5;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+    min-height: 180px;
+    padding: 0.82rem;
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
     color: var(--color-text);
-    width: 100%;
-    min-height: 200px;
-    resize: vertical;
-    box-sizing: border-box;
+    overflow-wrap: anywhere;
   }
+  .aes-file[hidden] { display: none; }
+  .aes-file-clear {
+    flex: 0 0 auto;
+    min-width: 32px;
+    min-height: 32px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    font-size: 1.1rem;
+    cursor: pointer;
+  }
+  .aes-file-clear:hover { color: var(--color-primary); }
+  .aes-file-clear:focus-visible, .aes-file-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
-  .aes-status {
-    font-size: 0.82rem;
-    padding: 0.4rem 0.65rem;
-    border-radius: var(--radius-sm);
-  }
-
-  .aes-status-ok {
-    color: #059669;
-    background: #ecfdf5;
-    border: 1px solid #6ee7b7;
-  }
-
-  .aes-status-error {
-    color: #ef4444;
-    background: #fef2f2;
-    border: 1px solid #fca5a5;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .aes-status-ok {
-      background: #052e1c;
-      border-color: #065f46;
-      color: #6ee7b7;
-    }
-    :root:not([data-theme="light"]) .aes-status-error {
-      background: #2d1515;
-      border-color: #7f1d1d;
-      color: #fca5a5;
-    }
-  }
+  .aes-go:disabled { opacity: 0.6; cursor: progress; }
+  .aes-status { margin: 0; overflow-wrap: anywhere; }
+  .aes-status[hidden], .aes-download[hidden] { display: none; }
 
   .aes-note {
+    margin: 0;
     font-size: 0.75rem;
     color: var(--color-text-secondary);
     padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  @media (max-width: 640px) {
+    .aes-mode { flex: 0 1 8.5rem; }
+    .aes-key-input { flex: 1 1 8rem; }
+    .aes-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      grid-template-areas:
+        "bp  bp  bp"
+        "enc dec cp"
+        "bc  bc  bc"
+        "fb  fb  fb"
+        "hp  hc  hc";
+    }
+    .aes-wrap { gap: 0.5rem; }
+    .aes-advanced { grid-template-columns: minmax(0, 1fr); }
+    .aes-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .aes-head { min-height: 0; }
+    .aes-file-btn, .aes-enc-label .aes-select { min-height: 44px; }
+    .aes-go { padding-left: 0.6rem; padding-right: 0.6rem; }
+    .aes-textarea { min-height: 80px; height: 80px; }
+    .aes-file { min-height: 80px; }
+    .aes-file-clear { min-width: 44px; min-height: 44px; }
   }
 </style>
