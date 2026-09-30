@@ -379,6 +379,9 @@ if (need('encryptFile') && need('decryptFile')) {
   const pw = 'correct horse battery staple';
   const text = 'guide 例 🌍';
   const fromTool = await E.encryptText(pw, text);
+  const RAW_KEY_HEX = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
+  const rawTool = await E.encryptText({ type: 'raw', key: E.parseRawKey(RAW_KEY_HEX, 'hex') }, text);
+  const rawToolHex = await E.encryptText({ type: 'raw', key: E.parseRawKey(RAW_KEY_HEX, 'hex') }, text, 'hex');
   const files = ['en', 'zh', 'ja', 'ko'].map((l) => 'src/content/blog/aes-encrypt-decrypt-guide/' + l + '.mdx')
     .concat(['en', 'zh', 'ja', 'ko'].map((l) => 'src/content/tools/aes-encrypt-decrypt/' + l + '.mdx'));
   for (const file of files) {
@@ -398,16 +401,20 @@ if (need('encryptFile') && need('decryptFile')) {
     const py = (mdx.match(/```python\n([\s\S]*?)```/) || [])[1];
     if (isGuide) check(file + ' has a Python block', !!py);
     if (py && hasPython) {
-      const harness = py + '\nimport sys, json\nd = json.load(sys.stdin)\nprint(json.dumps({"enc": encrypt(d["text"], d["pw"]), "dec": decrypt(d["tool"], d["pw"]), "legacy": decrypt(d["legacy"], d["legacyPw"])}))\n';
+      const harness = py + '\nimport sys, json\nd = json.load(sys.stdin)\nprint(json.dumps({"enc": encrypt(d["text"], d["pw"]), "dec": decrypt(d["tool"], d["pw"]), "legacy": decrypt(d["legacy"], d["legacyPw"]), "raw": decrypt_raw(d["raw"], d["rawKey"]) if "decrypt_raw" in globals() else None, "rawHex": decrypt_raw(d["rawHex"], d["rawKey"]) if "decrypt_raw" in globals() else None}))\n';
       let r = null;
       try {
-        const out = execFileSync('python3', ['-c', harness], { stdio: ['pipe', 'pipe', 'pipe'], input: JSON.stringify({ text, pw, tool: fromTool, legacy: LEGACY[0].ciphertext, legacyPw: LEGACY[0].password }) }).toString().trim().split('\n');
+        const out = execFileSync('python3', ['-c', harness], { stdio: ['pipe', 'pipe', 'pipe'], input: JSON.stringify({ text, pw, tool: fromTool, legacy: LEGACY[0].ciphertext, legacyPw: LEGACY[0].password, raw: rawTool, rawHex: rawToolHex, rawKey: RAW_KEY_HEX }) }).toString().trim().split('\n');
         r = JSON.parse(out[out.length - 1]);
       } catch (e) { r = { error: String(e.message).slice(0, 200) }; }
       check(file + ' Python writes v2:', typeof r.enc === 'string' && r.enc.startsWith('v2:'), JSON.stringify(r).slice(0, 120));
       check(file + ' Python output decrypts in the tool', typeof r.enc === 'string' && (await E.decryptText(pw, r.enc).catch(() => null)) === text);
       check(file + ' Python reads tool output', r.dec === text);
       check(file + ' Python reads old format', r.legacy === LEGACY[0].plaintext);
+      if (py.includes('def decrypt_raw')) {
+        check(file + ' Python decrypt_raw reads raw key Base64 output', r.raw === text, JSON.stringify(r.raw));
+        check(file + ' Python decrypt_raw reads raw key hex output', r.rawHex === text, JSON.stringify(r.rawHex));
+      }
     }
   }
 }
@@ -429,6 +436,28 @@ if (need('encryptFile') && need('decryptFile')) {
     const codes = [...new Set([...block.matchAll(/fail\('([a-zA-Z0-9]+)'/g)].map((m) => m[1]))];
     check('engine throws coded errors', codes.length >= 10, codes.join(','));
     for (const c of codes) ['en', 'zh', 'ja', 'ko'].forEach((l) => check('message for ' + c + ' in ' + l, typeof S[l]['err_' + c] === 'string', 'err_' + c));
+  }
+}
+
+// ---------- examples printed on the tool pages decrypt to the stated text ----------
+{
+  const pw = 'correct horse battery staple';
+  const page = (l) => readFileSync(join(root, 'src/content/tools/aes-encrypt-decrypt/' + l + '.mdx'), 'utf8');
+  const rawSpec = (key, fmt, iv, aad) => ({ type: 'raw', key: E.parseRawKey(key, fmt), iv: E.parseIv(iv), aad: aad ? te.encode(aad) : null });
+  const examples = [
+    ['en', pw, 'Meet at 10:30, gate B', 'v2:l0KuwwrqkW+qHiVFcSad83WDHoteU8LkBJ/dw3N3LGl2PMwh3n8Q9u6wTM1CzpoDINVwd/yy4RRdM7QPNwXfGdc='],
+    ['zh', pw, '数据库只读账号下周一启用', 'v2:qXfeC+pkpC/F/K3PR6ucLX6MQOcmQtyj+UUn9SYWmygCNoyV6H080bCB6fI6r1FJzypkhN0oWVRkA1VMXiCkXm6soo3Tqi/PZM0fJ28ANQk='],
+    ['ja', pw, '見積書は金曜に送ります', 'v2:7v4vi+LVN2PaU0TDRHSSeMduNrofoM62T63g/9tmX11FGSSR54Q3iG/C7Mtm6rUws+FU3HjW7SyBpiGLMypnoOpNINlqrPAtTHDylZw='],
+    ['ko', pw, '회의 자료는 금요일에 보낼게요', 'v2:YG1w0RRceJRp9qzhdNMzvbZ7eX8AmQeIuhony1o1zSjfNPaAV5lBkfvl8KT7Q2NZ1XPl+HLtqfttXD8PQ+8IZ8EtFX68wchTNvUT/23rml8L9qRvK/o='],
+    ['en', rawSpec('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f', 'hex', 'cafebabefacedbaddecaf888'), 'hello from ZeroTool', 'e2c6cc4ac55a296929667d871e6fe66b624fac923b410258258a224f6319fb85f4a398', 'hex'],
+    ['zh', rawSpec('zerotool-example-apiv3-key-0032b', 'text', '0123456789ab', 'transaction'), '{"out_trade_no":"ZT20260930001","trade_state":"SUCCESS"}', 'TB0zfn/fWCjPw0A+a0ZbgqZ7CKokDC839Nw4ZaBq0aOtwBqOthxnj5Ak4KGHMF7BQ5W3PA72tzCaHxynWKK+5mdrbhBQFtsS'],
+    ['ja', rawSpec('EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8=', 'base64', '0f0e0d0c0b0a090807060504'), 'テスト用の平文です', 'LGnIgt1Hib6Tu03SeTvCFvdLB9EQ6s2tv6R7OtyM8NurwAV+Yu2fFGzbOQ=='],
+    ['ko', rawSpec('00112233445566778899aabbccddeeff', 'hex', 'a1b2c3d4e5f6a7b8c9d0e1f2'), '안녕하세요, ZeroTool', '9aabdcab3e4772d01c210ffdd44153dcaed5cfb2d26d821b54da9cfc72d4d337e5b2b770e70a7933d8', 'hex'],
+  ];
+  for (const [lang, spec, plain, ct, enc] of examples) {
+    check(lang + ' page shows the example ' + ct.slice(0, 12), page(lang).includes(ct));
+    check(lang + ' example decrypts: ' + plain, (await E.decryptText(spec, ct).catch((e) => 'ERR ' + e.code)) === plain);
+    if (typeof spec === 'object' && spec.iv) check(lang + ' fixed-IV example re-encrypts to the same output', (await E.encryptText(spec, plain, enc)) === ct);
   }
 }
 
