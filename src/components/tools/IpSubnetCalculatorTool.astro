@@ -61,8 +61,8 @@
           lastHost: 'Last Usable Host',
           usableHosts: 'Usable Hosts',
           cidr: 'CIDR Notation',
-          errInvalidIp: 'Invalid IPv4 address.',
-          errInvalidCidr: 'CIDR prefix must be 0–32.',
+          errInvalidIp: 'Invalid IPv4 address. Use four numbers from 0 to 255 separated by dots, with no leading zeros (e.g. 10.0.0.1).',
+          errInvalidCidr: 'The CIDR prefix must be a whole number from 0 to 32 (e.g. /24).',
           errFormat: 'Enter an IP address (e.g. 192.168.1.0) and select a prefix, or use CIDR notation (e.g. 192.168.1.0/24).',
         },
         zh: {
@@ -80,8 +80,8 @@
           lastHost: '最后一个可用主机',
           usableHosts: '可用主机数',
           cidr: 'CIDR 表示法',
-          errInvalidIp: '无效的 IPv4 地址。',
-          errInvalidCidr: 'CIDR 前缀必须在 0–32 之间。',
+          errInvalidIp: '无效的 IPv4 地址。请用点分隔的 4 个 0–255 的数字，不带前导零（如 10.0.0.1）。',
+          errInvalidCidr: 'CIDR 前缀必须是 0–32 的整数（如 /24）。',
           errFormat: '请输入 IP 地址（如 192.168.1.0）并选择前缀，或使用 CIDR 表示法（如 192.168.1.0/24）。',
         },
         ja: {
@@ -99,8 +99,8 @@
           lastHost: '最後の使用可能ホスト',
           usableHosts: '使用可能ホスト数',
           cidr: 'CIDR表記',
-          errInvalidIp: '無効なIPv4アドレスです。',
-          errInvalidCidr: 'CIDRプレフィックスは0〜32の範囲で指定してください。',
+          errInvalidIp: '無効なIPv4アドレスです。0〜255 の数字 4 つをドットで区切り、先頭に 0 を付けずに入力してください（例: 10.0.0.1）。',
+          errInvalidCidr: 'CIDRプレフィックスは 0〜32 の整数で指定してください（例: /24）。',
           errFormat: 'IPアドレス（例: 192.168.1.0）を入力してプレフィックスを選択するか、CIDR表記（例: 192.168.1.0/24）を使用してください。',
         },
         ko: {
@@ -118,8 +118,8 @@
           lastHost: '마지막 사용 가능한 호스트',
           usableHosts: '사용 가능한 호스트 수',
           cidr: 'CIDR 표기법',
-          errInvalidIp: '유효하지 않은 IPv4 주소입니다.',
-          errInvalidCidr: 'CIDR 프리픽스는 0–32 사이여야 합니다.',
+          errInvalidIp: '유효하지 않은 IPv4 주소입니다. 0–255 숫자 4개를 점으로 구분하고 앞에 0을 붙이지 마세요(예: 10.0.0.1).',
+          errInvalidCidr: 'CIDR 프리픽스는 0–32 사이의 정수여야 합니다(예: /24).',
           errFormat: 'IP 주소(예: 192.168.1.0)를 입력하고 프리픽스를 선택하거나, CIDR 표기법(예: 192.168.1.0/24)을 사용하세요.',
         },
       };
@@ -161,17 +161,35 @@
         prefixEl.appendChild(opt);
       }
 
+      /* ── engine:start ── */
       // ---- Pure JS IPv4 bit ops ----
+      // Dotted-decimal as inet_pton reads it (glibc inet_pton4): four decimal parts 0–255,
+      // digits only, no leading zeros. Anything else (10.0.0.01, 10.0.0.1x, hex, octal,
+      // fewer parts) is not an address.
+      var OCTET = '(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])';
+      var IPV4_RE = new RegExp('^' + OCTET + '\\.' + OCTET + '\\.' + OCTET + '\\.' + OCTET + '$');
+      var PREFIX_RE = /^(3[0-2]|[12][0-9]|[0-9])$/;
+
       function ipToInt(ip) {
-        var parts = ip.split('.');
-        if (parts.length !== 4) return null;
-        var n = 0;
-        for (var i = 0; i < 4; i++) {
-          var b = parseInt(parts[i], 10);
-          if (isNaN(b) || b < 0 || b > 255) return null;
-          n = (n * 256 + b) >>> 0;
+        var m = IPV4_RE.exec(ip);
+        if (!m) return null;
+        return ((+m[1] * 16777216) + (+m[2] << 16) + (+m[3] << 8) + +m[4]) >>> 0;
+      }
+
+      // "a.b.c.d/p" or "a.b.c.d" with the dropdown prefix → { ip, prefix } or
+      // { error: 'ip' | 'cidr' }. The prefix is an integer 0–32 with no leading zero.
+      function parseInput(raw, dropdownPrefix) {
+        var slashIdx = raw.indexOf('/');
+        var ipStr = raw;
+        var prefix = dropdownPrefix;
+        if (slashIdx !== -1) {
+          ipStr = raw.slice(0, slashIdx).trim();
+          var prefixStr = raw.slice(slashIdx + 1).trim();
+          if (!PREFIX_RE.test(prefixStr)) return { error: 'cidr' };
+          prefix = +prefixStr;
         }
-        return n;
+        if (ipToInt(ipStr) === null) return { error: 'ip' };
+        return { ip: ipStr, prefix: prefix };
       }
 
       function intToIp(n) {
@@ -220,6 +238,7 @@
           cidr: intToIp(network) + '/' + prefix,
         };
       }
+      /* ── engine:end ── */
 
       function showError(msg) {
         errorEl.textContent = msg;
@@ -236,29 +255,13 @@
         var raw = inputEl.value.trim();
         if (!raw) { clearError(); resultsEl.hidden = true; return; }
 
-        var ipStr, prefix;
+        var parsed = parseInput(raw, parseInt(prefixEl.value, 10));
+        if (parsed.error === 'cidr') { showError(t.errInvalidCidr); return; }
+        if (parsed.error) { showError(t.errInvalidIp); return; }
+        // Sync dropdown
+        prefixEl.value = String(parsed.prefix);
 
-        // Check for CIDR notation
-        var slashIdx = raw.indexOf('/');
-        if (slashIdx !== -1) {
-          ipStr = raw.slice(0, slashIdx).trim();
-          var prefixRaw = parseInt(raw.slice(slashIdx + 1).trim(), 10);
-          if (isNaN(prefixRaw) || prefixRaw < 0 || prefixRaw > 32) {
-            showError(t.errInvalidCidr); return;
-          }
-          prefix = prefixRaw;
-          // Sync dropdown
-          prefixEl.value = String(prefix);
-        } else {
-          ipStr = raw;
-          prefix = parseInt(prefixEl.value, 10);
-        }
-
-        if (!ipStr || ipToInt(ipStr) === null) {
-          showError(t.errInvalidIp); return;
-        }
-
-        var result = calculate(ipStr, prefix);
+        var result = calculate(parsed.ip, parsed.prefix);
         if (!result) { showError(t.errInvalidIp); return; }
 
         clearError();
