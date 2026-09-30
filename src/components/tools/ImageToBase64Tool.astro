@@ -1,185 +1,936 @@
 ---
-// ImageToBase64Tool — drag-and-drop / select image → base64 + data URI
+// ImageToBase64Tool — image file → Base64 / data URI / CSS / HTML / Markdown, and
+// Base64 or data URI → image. The type comes from the file signature, not the name.
+// Everything runs in the browser; nothing is uploaded or stored.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// Counts are [one, other]; {n} is the number. Other placeholders are named.
+const STRINGS = {
+  en: {
+    modeEncode: 'Image \u2192 Base64', modeDecode: 'Base64 \u2192 Image', modeAria: 'Direction',
+    dropTitle: 'Drop an image, paste it (Ctrl+V / \u2318V), or click to choose',
+    dropHint: 'PNG, JPEG, GIF, WebP, AVIF, SVG, ICO, BMP, TIFF, HEIC, JPEG XL \u00b7 up to 100 MB',
+    dropAria: 'Choose an image to encode',
+    chooseAnother: 'Choose another', clear: 'Clear',
+    formatLabel: 'Output', fmtDataUri: 'Data URI', fmtBase64: 'Base64', fmtCss: 'CSS', fmtHtml: 'HTML <img>', fmtMarkdown: 'Markdown',
+    svgEncLabel: 'SVG encoding', svgBase64: 'Base64', svgUrl: 'URL-encoded',
+    copy: 'Copy', copied: 'Copied!', downloadTxt: 'Download .txt',
+    chars: ['1 character', '{n} characters'], bytes: ['1 byte', '{n} bytes'],
+    dims: '{w} \u00d7 {h} px',
+    sizeLine: '{bytes} \u2192 Base64 {chars} (+{pct}%)',
+    tooLong: 'The output is {chars}, too long to show here. Copy and Download .txt still give the full text.',
+    copyFailed: 'Copying failed. Select the text in the box and press Ctrl+C (\u2318C).',
+    copyFailedLong: 'Copying failed. Use Download .txt.',
+    mismatch: 'The file name ends in .{ext}, but the content is {type}. The output uses {mime}.',
+    fromName: 'No known image signature was found; the type {mime} comes from the file name.',
+    noPreview: 'This browser cannot display {type}, so there is no preview. The Base64 text is complete, but the image shows only in browsers that support {type}{where}.',
+    whereHeic: ' (Safari 17 and later)', whereTiff: ' (Safari)',
+    notImage: 'This file is not an image this tool recognizes (first bytes: {hex}). To encode any file, use',
+    base64Tool: 'Base64 Encode / Decode',
+    tooBig: 'This file is {size}. The limit is 100 MB (its Base64 text would be {chars}).',
+    readFailed: 'The file could not be read.',
+    pastedName: 'pasted-image',
+    decLabel: 'Base64 or data URI', decPh: 'data:image/png;base64,iVBORw0KGgo\u2026 or only the Base64 text',
+    decode: 'Decode', download: 'Download {file}', previewAlt: 'Decoded image',
+    decEmpty: 'Paste a Base64 string or a data URI first.',
+    decBadChar: 'Character {pos} ({ch}) is not a Base64 character. Base64 uses A\u2013Z, a\u2013z, 0\u20139, + and / (or - and _), with = only at the end.',
+    decPadMiddle: 'The = at character {pos} is padding; it can only appear at the end.',
+    decBadLength: 'After removing spaces the Base64 text has {n} characters. A length that leaves 1 when divided by 4 cannot be decoded, so a character is missing or extra.',
+    decBadPercent: 'The data URI has an invalid %-escape at character {pos}.',
+    decNotImage: 'Decoded {bytes}, but they are not an image this tool recognizes (first bytes: {hex}).',
+    decDeclared: 'The data URI says {declared}, but the content is {type}. The download uses .{ext}.',
+    decUrlSafe: 'Read as URL-safe Base64 (- and _ instead of + and /).',
+    decExtracted: 'Used the data URI found in the pasted text.',
+    decJsonSlash: 'Turned \\/ into / (JSON escaping).',
+    decResult: '{type} \u00b7 {dims} \u00b7 {bytes}',
+  },
+  zh: {
+    modeEncode: '图片 \u2192 Base64', modeDecode: 'Base64 \u2192 图片', modeAria: '转换方向',
+    dropTitle: '拖入图片、粘贴（Ctrl+V / \u2318V），或点击选择',
+    dropHint: 'PNG、JPEG、GIF、WebP、AVIF、SVG、ICO、BMP、TIFF、HEIC、JPEG XL \u00b7 最大 100 MB',
+    dropAria: '选择要转换的图片',
+    chooseAnother: '换一张', clear: '清空',
+    formatLabel: '输出', fmtDataUri: 'Data URI', fmtBase64: 'Base64', fmtCss: 'CSS', fmtHtml: 'HTML <img>', fmtMarkdown: 'Markdown',
+    svgEncLabel: 'SVG 编码', svgBase64: 'Base64', svgUrl: 'URL 编码',
+    copy: '复制', copied: '已复制', downloadTxt: '下载 .txt',
+    chars: ['1 个字符', '{n} 个字符'], bytes: ['1 字节', '{n} 字节'],
+    dims: '{w} \u00d7 {h} 像素',
+    sizeLine: '{bytes} \u2192 Base64 {chars}（+{pct}%）',
+    tooLong: '输出共 {chars}，太长，不在这里显示。「复制」与「下载 .txt」得到的是完整文本。',
+    copyFailed: '复制失败。请选中文本框里的内容后按 Ctrl+C（\u2318C）。',
+    copyFailedLong: '复制失败，请用「下载 .txt」。',
+    mismatch: '文件名是 .{ext}，但内容是 {type}，输出按 {mime}。',
+    fromName: '文件内容里没有已知的图片签名，类型 {mime} 取自文件名。',
+    noPreview: '当前浏览器不能显示 {type}，所以没有预览。Base64 文本是完整的，但只有支持 {type} 的浏览器{where}才能显示这张图。',
+    whereHeic: '（Safari 17 及以上）', whereTiff: '（Safari）',
+    notImage: '这个文件不是本工具能识别的图片（开头字节：{hex}）。要转换任意文件，请用',
+    base64Tool: 'Base64 编码解码工具',
+    tooBig: '文件大小 {size}，上限是 100 MB（转换后的 Base64 会有 {chars}）。',
+    readFailed: '无法读取这个文件。',
+    pastedName: 'pasted-image',
+    decLabel: 'Base64 或 Data URI', decPh: 'data:image/png;base64,iVBORw0KGgo\u2026 或只粘贴 Base64 文本',
+    decode: '解码', download: '下载 {file}', previewAlt: '解码得到的图片',
+    decEmpty: '请先粘贴 Base64 字符串或 Data URI。',
+    decBadChar: '第 {pos} 个字符（{ch}）不是 Base64 字符。Base64 只用 A\u2013Z、a\u2013z、0\u20139、+ 和 /（或 - 和 _），= 只能在末尾。',
+    decPadMiddle: '第 {pos} 个字符是 =，它是填充符，只能出现在末尾。',
+    decBadLength: '去掉空白后 Base64 文本有 {n} 个字符。长度除以 4 余 1 的文本无法解码，说明少了或多了字符。',
+    decBadPercent: 'Data URI 第 {pos} 个字符处的 % 转义无效。',
+    decNotImage: '解出 {bytes}，但不是本工具能识别的图片（开头字节：{hex}）。',
+    decDeclared: 'Data URI 写的是 {declared}，内容实际是 {type}，下载文件用 .{ext}。',
+    decUrlSafe: '按 URL 安全的 Base64（- 和 _ 代替 + 和 /）读取。',
+    decExtracted: '已从粘贴的文本中取出 Data URI。',
+    decJsonSlash: '已把 \\/ 还原为 /（JSON 转义）。',
+    decResult: '{type} \u00b7 {dims} \u00b7 {bytes}',
+  },
+  ja: {
+    modeEncode: '画像 \u2192 Base64', modeDecode: 'Base64 \u2192 画像', modeAria: '変換の向き',
+    dropTitle: '画像をドロップ、貼り付け（Ctrl+V / \u2318V）、またはクリックして選択',
+    dropHint: 'PNG・JPEG・GIF・WebP・AVIF・SVG・ICO・BMP・TIFF・HEIC・JPEG XL \u00b7 最大 100 MB',
+    dropAria: '変換する画像を選択',
+    chooseAnother: '別の画像', clear: 'クリア',
+    formatLabel: '出力', fmtDataUri: 'Data URI', fmtBase64: 'Base64', fmtCss: 'CSS', fmtHtml: 'HTML <img>', fmtMarkdown: 'Markdown',
+    svgEncLabel: 'SVG のエンコード', svgBase64: 'Base64', svgUrl: 'URL エンコード',
+    copy: 'コピー', copied: 'コピーしました', downloadTxt: '.txt で保存',
+    chars: ['1 文字', '{n} 文字'], bytes: ['1 バイト', '{n} バイト'],
+    dims: '{w} \u00d7 {h} px',
+    sizeLine: '{bytes} \u2192 Base64 {chars}（+{pct}%）',
+    tooLong: '出力は {chars} あり、長すぎるためここには表示しません。「コピー」と「.txt で保存」では全文を取得できます。',
+    copyFailed: 'コピーできませんでした。欄内の文字を選択して Ctrl+C（\u2318C）を押してください。',
+    copyFailedLong: 'コピーできませんでした。「.txt で保存」を使ってください。',
+    mismatch: 'ファイル名は .{ext} ですが、中身は {type} です。出力は {mime} を使います。',
+    fromName: '既知の画像シグネチャが見つからないため、タイプ {mime} はファイル名から判断しました。',
+    noPreview: 'このブラウザは {type} を表示できないため、プレビューはありません。Base64 文字列は完全ですが、画像が表示されるのは {type} に対応したブラウザ{where}だけです。',
+    whereHeic: '（Safari 17 以降）', whereTiff: '（Safari）',
+    notImage: 'このツールが認識できる画像ではありません（先頭バイト：{hex}）。任意のファイルを変換するには',
+    base64Tool: 'Base64 エンコード・デコード',
+    tooBig: 'ファイルサイズは {size} です。上限は 100 MB です（Base64 にすると {chars}）。',
+    readFailed: 'ファイルを読み込めませんでした。',
+    pastedName: 'pasted-image',
+    decLabel: 'Base64 または Data URI', decPh: 'data:image/png;base64,iVBORw0KGgo\u2026 または Base64 文字列だけ',
+    decode: 'デコード', download: '{file} を保存', previewAlt: 'デコードした画像',
+    decEmpty: 'Base64 文字列か Data URI を貼り付けてください。',
+    decBadChar: '{pos} 文字目（{ch}）は Base64 の文字ではありません。Base64 で使うのは A\u2013Z、a\u2013z、0\u20139、+ と /（または - と _）で、= は末尾だけです。',
+    decPadMiddle: '{pos} 文字目の = はパディングで、末尾にしか置けません。',
+    decBadLength: '空白を除くと Base64 文字列は {n} 文字です。4 で割って 1 余る長さはデコードできないので、文字が欠けているか余分です。',
+    decBadPercent: 'Data URI の {pos} 文字目の % エスケープが不正です。',
+    decNotImage: '{bytes} をデコードしましたが、このツールが認識できる画像ではありません（先頭バイト：{hex}）。',
+    decDeclared: 'Data URI には {declared} とありますが、中身は {type} です。保存するファイルは .{ext} にします。',
+    decUrlSafe: 'URL セーフな Base64（+ と / の代わりに - と _）として読みました。',
+    decExtracted: '貼り付けたテキストから Data URI を取り出しました。',
+    decJsonSlash: '\\/ を / に戻しました（JSON のエスケープ）。',
+    decResult: '{type} \u00b7 {dims} \u00b7 {bytes}',
+  },
+  ko: {
+    modeEncode: '이미지 \u2192 Base64', modeDecode: 'Base64 \u2192 이미지', modeAria: '변환 방향',
+    dropTitle: '이미지를 끌어다 놓거나 붙여넣기(Ctrl+V / \u2318V), 또는 클릭해 선택',
+    dropHint: 'PNG, JPEG, GIF, WebP, AVIF, SVG, ICO, BMP, TIFF, HEIC, JPEG XL \u00b7 최대 100MB',
+    dropAria: '변환할 이미지 선택',
+    chooseAnother: '다른 이미지', clear: '지우기',
+    formatLabel: '출력', fmtDataUri: 'Data URI', fmtBase64: 'Base64', fmtCss: 'CSS', fmtHtml: 'HTML <img>', fmtMarkdown: 'Markdown',
+    svgEncLabel: 'SVG 인코딩', svgBase64: 'Base64', svgUrl: 'URL 인코딩',
+    copy: '복사', copied: '복사됨', downloadTxt: '.txt 저장',
+    chars: ['1자', '{n}자'], bytes: ['1바이트', '{n}바이트'],
+    dims: '{w} \u00d7 {h} px',
+    sizeLine: '{bytes} \u2192 Base64 {chars} (+{pct}%)',
+    tooLong: '출력이 {chars}로 너무 길어 여기에는 표시하지 않습니다. \u2018복사\u2019와 \u2018.txt 저장\u2019으로는 전체 텍스트를 받을 수 있습니다.',
+    copyFailed: '복사하지 못했습니다. 입력란의 텍스트를 선택하고 Ctrl+C(\u2318C)를 누르세요.',
+    copyFailedLong: '복사하지 못했습니다. \u2018.txt 저장\u2019을 사용하세요.',
+    mismatch: '파일 이름의 확장자는 .{ext}이지만 내용은 {type}입니다. 출력 형식은 {mime}입니다.',
+    fromName: '알려진 이미지 시그니처가 없어 {mime} 타입은 파일 이름으로 정했습니다.',
+    noPreview: '이 브라우저는 {type} 형식을 표시하지 못해 미리보기가 없습니다. Base64 텍스트는 완전하지만, 이미지는 {type} 형식을 지원하는 브라우저{where}에서만 보입니다.',
+    whereHeic: '(Safari 17 이상)', whereTiff: '(Safari)',
+    notImage: '이 도구가 인식하는 이미지가 아닙니다(앞부분 바이트: {hex}). 아무 파일이나 변환하려면',
+    base64Tool: 'Base64 인코드 / 디코드',
+    tooBig: '파일 크기는 {size}입니다. 상한은 100MB입니다(Base64로 바꾸면 {chars}).',
+    readFailed: '파일을 읽을 수 없습니다.',
+    pastedName: 'pasted-image',
+    decLabel: 'Base64 또는 Data URI', decPh: 'data:image/png;base64,iVBORw0KGgo\u2026 또는 Base64 텍스트만',
+    decode: '디코딩', download: '{file} 저장', previewAlt: '디코딩한 이미지',
+    decEmpty: 'Base64 문자열이나 Data URI를 먼저 붙여넣으세요.',
+    decBadChar: '{pos}번째 문자({ch})는 Base64 문자가 아닙니다. Base64는 A\u2013Z, a\u2013z, 0\u20139, +와 /(또는 -와 _)를 쓰고 =는 끝에만 옵니다.',
+    decPadMiddle: '{pos}번째 문자 =는 패딩이라 끝에만 올 수 있습니다.',
+    decBadLength: '공백을 빼면 Base64 텍스트가 {n}자입니다. 4로 나눠 1이 남는 길이는 디코딩할 수 없으니 문자가 빠졌거나 남습니다.',
+    decBadPercent: 'Data URI {pos}번째 문자의 % 이스케이프가 잘못되었습니다.',
+    decNotImage: '{bytes}를 디코딩했지만 이 도구가 인식하는 이미지가 아닙니다(앞부분 바이트: {hex}).',
+    decDeclared: 'Data URI에 적힌 형식은 {declared}, 실제 내용은 {type}입니다. 저장 파일의 확장자는 .{ext}입니다.',
+    decUrlSafe: 'URL 안전 Base64(+와 / 대신 -와 _)로 읽었습니다.',
+    decExtracted: '붙여넣은 텍스트에서 Data URI를 꺼냈습니다.',
+    decJsonSlash: '\\/를 /로 되돌렸습니다(JSON 이스케이프).',
+    decResult: '{type} \u00b7 {dims} \u00b7 {bytes}',
+  },
+} as const;
+
+const T = STRINGS[lang];
+const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
 ---
 
 <div>
-  <div class="i2b-wrap">
-    {/* Drop zone */}
-    <div id="i2b-drop" class="i2b-drop" role="button" tabindex="0">
-      <div class="i2b-drop-inner">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+  <div class="i2b-wrap" id="i2b-wrap">
+    <div class="i2b-modes" role="group" aria-label={T.modeAria}>
+      <button type="button" class="i2b-mode active" data-mode="encode" aria-pressed="true">{T.modeEncode}</button>
+      <button type="button" class="i2b-mode" data-mode="decode" aria-pressed="false">{T.modeDecode}</button>
+    </div>
+
+    <section id="i2b-enc" class="i2b-panel">
+      <div id="i2b-drop" class="i2b-drop" role="button" tabindex="0" aria-label={T.dropAria}>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
           <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
         </svg>
-        <p>Drop an image here, or <strong>click to select</strong></p>
-        <p class="i2b-hint">Supports JPG, PNG, GIF, WebP, SVG, BMP</p>
+        <p class="i2b-drop-title">{T.dropTitle}</p>
+        <p class="i2b-drop-hint">{T.dropHint}</p>
       </div>
-      <input type="file" id="i2b-file" accept="image/*" class="i2b-file-input" aria-label="Select image file" />
-    </div>
+      <input type="file" id="i2b-file" class="i2b-file-input" accept="image/*,.svg,.ico,.cur,.bmp,.tif,.tiff,.heic,.heif,.avif,.jxl" tabindex="-1" aria-hidden="true" />
 
-    {/* Preview + info */}
-    <div id="i2b-preview-wrap" class="i2b-preview-wrap" hidden>
-      <img id="i2b-preview" class="i2b-preview" src="" alt="Preview" />
-      <div id="i2b-info" class="i2b-info"></div>
-    </div>
+      <div id="i2b-result" class="i2b-result" hidden>
+        <div class="i2b-fileline">
+          <span class="i2b-thumb"><img id="i2b-thumb" alt="" /></span>
+          <div class="i2b-meta">
+            <strong id="i2b-name" class="i2b-name"></strong>
+            <span id="i2b-info" class="i2b-info"></span>
+          </div>
+        </div>
+        <ul id="i2b-notes" class="i2b-notes" hidden></ul>
 
-    {/* Outputs */}
-    <div id="i2b-outputs" class="i2b-outputs" hidden>
-      <div class="i2b-output-row">
-        <label for="i2b-base64-out">
-          <span data-i18n="base64String">Base64 String</span>
-          <button id="i2b-copy-b64" class="btn-copy" type="button" data-i18n="copy">Copy</button>
-        </label>
-        <textarea id="i2b-base64-out" readonly spellcheck="false" rows="4"></textarea>
+        <div class="i2b-optrow">
+          <div class="i2b-seg" role="group" aria-labelledby="i2b-fmt-label">
+            <span class="i2b-seg-label i2b-fmt-label" id="i2b-fmt-label">{T.formatLabel}</span>
+            <button type="button" class="i2b-fmt active" data-fmt="datauri" aria-pressed="true">{T.fmtDataUri}</button>
+            <button type="button" class="i2b-fmt" data-fmt="base64" aria-pressed="false">{T.fmtBase64}</button>
+            <button type="button" class="i2b-fmt" data-fmt="css" aria-pressed="false">{T.fmtCss}</button>
+            <button type="button" class="i2b-fmt" data-fmt="html" aria-pressed="false">{T.fmtHtml}</button>
+            <button type="button" class="i2b-fmt" data-fmt="markdown" aria-pressed="false">{T.fmtMarkdown}</button>
+          </div>
+          <div id="i2b-svgenc" class="i2b-seg" role="group" aria-labelledby="i2b-svg-label" hidden>
+            <span class="i2b-seg-label" id="i2b-svg-label">{T.svgEncLabel}</span>
+            <button type="button" class="i2b-enc" data-enc="base64" aria-pressed="false">{T.svgBase64} <span class="i2b-enc-len" data-len="base64"></span></button>
+            <button type="button" class="i2b-enc" data-enc="url" aria-pressed="false">{T.svgUrl} <span class="i2b-enc-len" data-len="url"></span></button>
+          </div>
+        </div>
+
+        <div class="i2b-out">
+          <div class="i2b-out-head">
+            <label for="i2b-output" id="i2b-out-label" class="tool-label">{T.fmtDataUri}</label>
+            <span id="i2b-out-len" class="i2b-out-len"></span>
+            <button id="i2b-download-txt" class="btn-secondary btn-sm" type="button" hidden>{T.downloadTxt}</button>
+            <button id="i2b-copy" class="btn-copy" type="button">{T.copy}</button>
+          </div>
+          <textarea id="i2b-output" class="tool-textarea i2b-output" readonly spellcheck="false" rows="5"></textarea>
+          <p id="i2b-toolong" class="i2b-toolong" hidden></p>
+        </div>
+        <div class="i2b-file-actions">
+          <button id="i2b-another" class="btn-secondary btn-sm" type="button">{T.chooseAnother}</button>
+          <button id="i2b-clear" class="btn-ghost btn-sm" type="button">{T.clear}</button>
+        </div>
       </div>
-      <div class="i2b-output-row">
-        <label for="i2b-datauri-out">
-          <span data-i18n="dataUri">Data URI</span>
-          <button id="i2b-copy-uri" class="btn-copy" type="button" data-i18n="copy">Copy</button>
-        </label>
-        <textarea id="i2b-datauri-out" readonly spellcheck="false" rows="4"></textarea>
+    </section>
+
+    <section id="i2b-dec" class="i2b-panel" hidden>
+      <label for="i2b-dec-in" class="tool-label">{T.decLabel}</label>
+      <textarea id="i2b-dec-in" class="tool-textarea i2b-dec-in" rows="5" spellcheck="false" placeholder={T.decPh}></textarea>
+      <div class="i2b-actions">
+        <button id="i2b-decode" class="btn-primary" type="button">{T.decode}</button>
+        <button id="i2b-dec-clear" class="btn-ghost" type="button">{T.clear}</button>
       </div>
-    </div>
+      <div id="i2b-dec-result" class="i2b-dec-result" hidden>
+        <div class="i2b-dec-head">
+          <span id="i2b-dec-info" class="i2b-info"></span>
+          <a id="i2b-dec-download" class="btn-secondary btn-sm" href="#" download></a>
+        </div>
+        <ul id="i2b-dec-notes" class="i2b-notes" hidden></ul>
+        <img id="i2b-dec-img" class="i2b-dec-img" alt={T.previewAlt} />
+      </div>
+    </section>
 
-    <div class="i2b-actions" id="i2b-actions" hidden>
-      <button id="i2b-clear" class="btn-ghost" data-i18n="clear">Clear</button>
-    </div>
-
-    <div id="i2b-status" class="i2b-status" aria-live="polite"></div>
+    <p id="i2b-status" class="tool-status i2b-status" aria-live="polite"></p>
+    <p id="i2b-base64-link" class="i2b-base64-link" hidden><a href={base64Href}>{T.base64Tool} &rarr;</a></p>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: T, pageLang: lang }}>
     (function () {
-      var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', base64String: 'Base64 String', dataUri: 'Data URI' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', base64String: 'Base64 字符串', dataUri: 'Data URI' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', base64String: 'Base64 文字列', dataUri: 'Data URI' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', base64String: 'Base64 문자열', dataUri: 'Data URI' },
+      /* ── engine:start ── */
+      var FILE_LIMIT = 100 * 1024 * 1024;
+      var DISPLAY_LIMIT = 2000000;
+
+      var TYPES = {
+        png: { mime: 'image/png', ext: 'png', name: 'PNG' },
+        jpeg: { mime: 'image/jpeg', ext: 'jpg', name: 'JPEG' },
+        gif: { mime: 'image/gif', ext: 'gif', name: 'GIF' },
+        webp: { mime: 'image/webp', ext: 'webp', name: 'WebP' },
+        avif: { mime: 'image/avif', ext: 'avif', name: 'AVIF' },
+        heic: { mime: 'image/heic', ext: 'heic', name: 'HEIC' },
+        heicseq: { mime: 'image/heic-sequence', ext: 'heic', name: 'HEIC' },
+        heif: { mime: 'image/heif', ext: 'heif', name: 'HEIF' },
+        heifseq: { mime: 'image/heif-sequence', ext: 'heif', name: 'HEIF' },
+        svg: { mime: 'image/svg+xml', ext: 'svg', name: 'SVG' },
+        ico: { mime: 'image/x-icon', ext: 'ico', name: 'ICO' },
+        cur: { mime: 'image/x-icon', ext: 'cur', name: 'CUR' },
+        bmp: { mime: 'image/bmp', ext: 'bmp', name: 'BMP' },
+        tiff: { mime: 'image/tiff', ext: 'tiff', name: 'TIFF' },
+        jxl: { mime: 'image/jxl', ext: 'jxl', name: 'JPEG XL' }
       };
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
 
-      var dropEl = document.getElementById('i2b-drop');
-      var fileInput = document.getElementById('i2b-file');
-      var previewWrap = document.getElementById('i2b-preview-wrap');
-      var previewImg = document.getElementById('i2b-preview');
-      var infoEl = document.getElementById('i2b-info');
-      var outputsEl = document.getElementById('i2b-outputs');
-      var actionsEl = document.getElementById('i2b-actions');
-      var b64Out = document.getElementById('i2b-base64-out');
-      var uriOut = document.getElementById('i2b-datauri-out');
-      var statusEl = document.getElementById('i2b-status');
-      var copyB64Btn = document.getElementById('i2b-copy-b64');
-      var copyUriBtn = document.getElementById('i2b-copy-uri');
+      var EXT_TYPES = {
+        png: 'png', apng: 'png', jpg: 'jpeg', jpeg: 'jpeg', jpe: 'jpeg', jfif: 'jpeg', pjpeg: 'jpeg', pjp: 'jpeg',
+        gif: 'gif', webp: 'webp', avif: 'avif', heic: 'heic', heif: 'heif', hif: 'heif', svg: 'svg',
+        ico: 'ico', cur: 'cur', bmp: 'bmp', dib: 'bmp', tif: 'tiff', tiff: 'tiff', jxl: 'jxl'
+      };
 
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'i2b-status ' + (isError ? 'error' : 'success');
+      var MIME_TYPES = {
+        'image/png': 'png', 'image/apng': 'png', 'image/jpeg': 'jpeg', 'image/jpg': 'jpeg', 'image/pjpeg': 'jpeg',
+        'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/heic': 'heic',
+        'image/heic-sequence': 'heicseq', 'image/heif': 'heif', 'image/heif-sequence': 'heifseq',
+        'image/svg+xml': 'svg', 'image/x-icon': 'ico', 'image/vnd.microsoft.icon': 'ico', 'image/bmp': 'bmp',
+        'image/x-ms-bmp': 'bmp', 'image/tiff': 'tiff', 'image/jxl': 'jxl'
+      };
+
+      function startsWith(bytes, sig, offset) {
+        offset = offset || 0;
+        if (bytes.length < offset + sig.length) return false;
+        for (var i = 0; i < sig.length; i++) {
+          if (sig[i] !== null && bytes[offset + i] !== sig[i]) return false;
+        }
+        return true;
       }
 
-      function formatBytes(bytes) {
-        if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+      function ascii(bytes, from, to) {
+        var s = '';
+        for (var i = from; i < to && i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return s;
       }
 
-      function processFile(file) {
-        if (!file || !file.type.startsWith('image/')) {
-          setStatus('Please select a valid image file.', true);
+      // ISO BMFF 'ftyp' box: major brand at 8, compatible brands from 16 to the box end
+      // (HEIF: ISO/IEC 23008-12; AVIF: AV1 Image File Format, brands avif / avis).
+      function sniffFtyp(bytes) {
+        if (bytes.length < 16 || ascii(bytes, 4, 8) !== 'ftyp') return null;
+        var size = ((bytes[0] << 24) >>> 0) + (bytes[1] << 16) + (bytes[2] << 8) + bytes[3];
+        var end = Math.min(bytes.length, Math.max(16, size));
+        var brands = [ascii(bytes, 8, 12)];
+        for (var p = 16; p + 4 <= end; p += 4) brands.push(ascii(bytes, p, p + 4));
+        var order = [
+          ['avif', 'avif'], ['avis', 'avif'],
+          ['heic', 'heic'], ['heix', 'heic'], ['heim', 'heic'], ['heis', 'heic'],
+          ['hevc', 'heicseq'], ['hevx', 'heicseq'], ['hevm', 'heicseq'], ['hevs', 'heicseq'],
+          ['mif1', 'heif'], ['msf1', 'heifseq']
+        ];
+        if (brands[0] === 'avif' || brands[0] === 'avis') return 'avif';
+        for (var i = 0; i < order.length; i++) {
+          if (brands[0] === order[i][0]) {
+            if (order[i][1] === 'heif' || order[i][1] === 'heifseq') {
+              if (brands.indexOf('avif') > 0 || brands.indexOf('avis') > 0) return 'avif';
+            }
+            return order[i][1];
+          }
+        }
+        for (var j = 0; j < order.length; j++) {
+          if (brands.indexOf(order[j][0], 1) > 0) return order[j][1];
+        }
+        return null;
+      }
+
+      // SVG has no magic number: skip a BOM, whitespace, the XML declaration,
+      // comments, processing instructions and a DOCTYPE, then expect <svg.
+      function looksLikeSvg(bytes) {
+        var s = ascii(bytes, 0, Math.min(bytes.length, 8192));
+        var i = 0;
+        if (s.charCodeAt(0) === 0xEF && s.charCodeAt(1) === 0xBB && s.charCodeAt(2) === 0xBF) i = 3;
+        for (var guard = 0; guard < 64; guard++) {
+          while (i < s.length && /\s/.test(s[i])) i++;
+          if (s.substr(i, 2) === '<?') {
+            var e = s.indexOf('?>', i + 2); if (e < 0) return false; i = e + 2; continue;
+          }
+          if (s.substr(i, 4) === '<!--') {
+            var c = s.indexOf('-->', i + 4); if (c < 0) return false; i = c + 3; continue;
+          }
+          if (s.substr(i, 9).toUpperCase() === '<!DOCTYPE') {
+            var depth = 0, q = '';
+            for (i += 9; i < s.length; i++) {
+              var ch = s[i];
+              if (q) { if (ch === q) q = ''; continue; }
+              if (ch === '"' || ch === "'") q = ch;
+              else if (ch === '[') depth++;
+              else if (ch === ']') depth--;
+              else if (ch === '>' && depth <= 0) { i++; break; }
+            }
+            continue;
+          }
+          break;
+        }
+        return /^<svg[\s>\/]/.test(s.substr(i, 5)) || /^<svg:svg[\s>\/]/.test(s.substr(i, 9));
+      }
+
+      // Signatures follow WHATWG MIME Sniffing section 6.1 (image type pattern
+      // matching) where it has one; ftyp is checked first because a 256-byte ftyp
+      // box starts with 00 00 01 00, the ICO pattern.
+      function sniffImage(bytes) {
+        if (!bytes || !bytes.length) return null;
+        var f = sniffFtyp(bytes);
+        if (f) return f;
+        if (startsWith(bytes, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) return 'png';
+        if (startsWith(bytes, [0xFF, 0xD8, 0xFF])) return 'jpeg';
+        if (startsWith(bytes, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) || startsWith(bytes, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61])) return 'gif';
+        if (startsWith(bytes, [0x52, 0x49, 0x46, 0x46, null, null, null, null, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50])) return 'webp';
+        if (startsWith(bytes, [0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A]) || startsWith(bytes, [0xFF, 0x0A])) return 'jxl';
+        if (startsWith(bytes, [0x49, 0x49, 0x2A, 0x00]) || startsWith(bytes, [0x4D, 0x4D, 0x00, 0x2A])) return 'tiff';
+        if (startsWith(bytes, [0x00, 0x00, 0x01, 0x00])) return 'ico';
+        if (startsWith(bytes, [0x00, 0x00, 0x02, 0x00])) return 'cur';
+        if (startsWith(bytes, [0x42, 0x4D])) return 'bmp';
+        if (looksLikeSvg(bytes)) return 'svg';
+        return null;
+      }
+
+      function extOf(name) {
+        var m = /\.([A-Za-z0-9]+)$/.exec(name || '');
+        return m ? m[1].toLowerCase() : '';
+      }
+
+      function hexHead(bytes, n) {
+        var out = [];
+        for (var i = 0; i < Math.min(n || 8, bytes.length); i++) out.push((bytes[i] < 16 ? '0' : '') + bytes[i].toString(16).toUpperCase());
+        return out.join(' ');
+      }
+
+      function sameFamily(a, b) {
+        var fam = { heicseq: 'heic', heifseq: 'heic', heif: 'heic', cur: 'ico' };
+        return (fam[a] || a) === (fam[b] || b);
+      }
+
+      // Type by content first. The name and the browser-reported type are only a
+      // fallback, and a disagreeing extension is reported.
+      function detectImage(bytes, name, reported) {
+        var key = sniffImage(bytes);
+        var ext = extOf(name);
+        var extKey = EXT_TYPES[ext] || null;
+        if (key) {
+          var info = TYPES[key];
+          return {
+            key: key, mime: info.mime, ext: info.ext, name: info.name, source: 'signature',
+            mismatch: extKey && !sameFamily(extKey, key) ? { ext: ext } : null
+          };
+        }
+        var fallback = extKey || MIME_TYPES[(reported || '').toLowerCase()] || null;
+        if (fallback) {
+          var fi = TYPES[fallback];
+          return { key: fallback, mime: fi.mime, ext: fi.ext, name: fi.name, source: 'name', mismatch: null };
+        }
+        return { error: 'notImage', hex: hexHead(bytes, 8) };
+      }
+
+      function base64Length(n) { return 4 * Math.ceil(n / 3); }
+
+      // Data URI body without Base64 (RFC 2397). Bytes are escaped one by one, so the
+      // file's own encoding is kept. Raw: letters, digits, space and -._~!$'()*+,;=:@/?
+      // Escaped: " (HTML attribute and CSS string delimiter), # (starts a fragment),
+      // % (escape), & (HTML character references), < > \ ^ ` { | } [ ], tab, CR, LF
+      // (the URL parser deletes tabs and newlines), other controls, non-ASCII bytes,
+      // and trailing spaces (the URL parser strips them).
+      var URL_RAW = /[A-Za-z0-9\-._~!$'()*+,;=:@\/? ]/;
+      function percentEncodeBytes(bytes) {
+        var parts = [];
+        var lastNonSpace = bytes.length - 1;
+        while (lastNonSpace >= 0 && bytes[lastNonSpace] === 0x20) lastNonSpace--;
+        var chunk = '';
+        for (var i = 0; i < bytes.length; i++) {
+          var b = bytes[i];
+          var c = String.fromCharCode(b);
+          if (b < 0x80 && URL_RAW.test(c) && !(b === 0x20 && i > lastNonSpace)) chunk += c;
+          else chunk += '%' + (b < 16 ? '0' : '') + b.toString(16).toUpperCase();
+          if (chunk.length > 8192) { parts.push(chunk); chunk = ''; }
+        }
+        parts.push(chunk);
+        return parts.join('');
+      }
+
+      function escapeHtmlAttr(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function altFromName(name) {
+        var stem = String(name || '').replace(/\.[A-Za-z0-9]+$/, '');
+        return stem.replace(/[\u0000-\u001F\u007F]/g, '').trim();
+      }
+
+      // One string per output format. dataUri is the data URI in use (Base64, or
+      // URL-encoded for SVG); base64 is always the Base64 of the file.
+      function buildOutput(fmt, o) {
+        var uri = o.dataUri;
+        if (fmt === 'base64') return o.base64;
+        if (fmt === 'css') return 'background-image: url("' + uri + '");';
+        if (fmt === 'html') {
+          var size = o.width > 0 && o.height > 0 ? ' width="' + o.width + '" height="' + o.height + '"' : '';
+          return '<img src="' + uri + '"' + size + ' alt="' + escapeHtmlAttr(altFromName(o.name)) + '">';
+        }
+        if (fmt === 'markdown') {
+          var alt = altFromName(o.name).replace(/([\\\[\]])/g, '\\$1');
+          var dest = /[\s()<>]/.test(uri) ? '<' + uri + '>' : uri;
+          return '![' + alt + '](' + dest + ')';
+        }
+        return uri;
+      }
+
+      function dataUriBase64(mime, base64) { return 'data:' + mime + ';base64,' + base64; }
+      function dataUriSvg(bytes) { return 'data:image/svg+xml,' + percentEncodeBytes(bytes); }
+
+      // Decode side. Accepts a data URI (alone, or inside CSS / HTML / Markdown /
+      // JSON text) or bare Base64 with any whitespace; standard or URL-safe
+      // alphabet; padding optional. Positions are 1-based code points of the input.
+      var B64_VALUE = {};
+      (function () {
+        var abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        for (var i = 0; i < abc.length; i++) B64_VALUE[abc[i]] = i;
+        B64_VALUE['-'] = 62; B64_VALUE['_'] = 63;
+      })();
+
+      function codePointPos(text, index) {
+        var n = 0;
+        for (var i = 0; i < index; i++) {
+          var c = text.charCodeAt(i);
+          if (c >= 0xD800 && c <= 0xDBFF && i + 1 < index) i++;
+          n++;
+        }
+        return n + 1;
+      }
+
+      function decodeBase64Body(text, start) {
+        var clean = [];
+        var urlSafe = false;
+        var padFrom = -1;
+        for (var i = start; i < text.length; i++) {
+          var ch = text[i];
+          if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f') continue;
+          if (ch === '=') {
+            if (padFrom < 0) padFrom = i;
+            continue;
+          }
+          if (padFrom >= 0) return { error: 'padMiddle', pos: codePointPos(text, padFrom) };
+          if (!(ch in B64_VALUE)) {
+            var cp = text.codePointAt(i);
+            return { error: 'badChar', pos: codePointPos(text, i), ch: String.fromCodePoint(cp) };
+          }
+          if (ch === '-' || ch === '_') urlSafe = true;
+          clean.push(ch);
+        }
+        var n = clean.length;
+        if (n % 4 === 1) return { error: 'badLength', n: n };
+        var out = new Uint8Array(Math.floor(n * 3 / 4));
+        var o = 0;
+        for (var k = 0; k + 1 < n; k += 4) {
+          var a = B64_VALUE[clean[k]], b = B64_VALUE[clean[k + 1]];
+          var c2 = k + 2 < n ? B64_VALUE[clean[k + 2]] : -1;
+          var d = k + 3 < n ? B64_VALUE[clean[k + 3]] : -1;
+          out[o++] = (a << 2) | (b >> 4);
+          if (c2 >= 0) out[o++] = ((b & 15) << 4) | (c2 >> 2);
+          if (d >= 0) out[o++] = ((c2 & 3) << 6) | d;
+        }
+        return { bytes: out, urlSafe: urlSafe };
+      }
+
+      function percentDecodeBody(text, start) {
+        var bytes = [];
+        for (var i = start; i < text.length; i++) {
+          var c = text.charCodeAt(i);
+          if (text[i] === '%') {
+            var h = text.substr(i + 1, 2);
+            if (!/^[0-9A-Fa-f]{2}$/.test(h)) return { error: 'badPercent', pos: codePointPos(text, i) };
+            bytes.push(parseInt(h, 16)); i += 2;
+          } else if (c === 0x09 || c === 0x0A || c === 0x0D) {
+            continue;
+          } else if (c < 0x80) {
+            bytes.push(c);
+          } else {
+            var cp = text.codePointAt(i);
+            if (cp > 0xFFFF) i++;
+            var enc = unescape(encodeURIComponent(String.fromCodePoint(cp)));
+            for (var j = 0; j < enc.length; j++) bytes.push(enc.charCodeAt(j));
+          }
+        }
+        return { bytes: new Uint8Array(bytes) };
+      }
+
+      // The body ends at the delimiter that opened the data URI: "…", '…', <…> or (…)
+      // with nesting (a URL-encoded body may hold spaces, quotes and parentheses), or
+      // at the end of the text, so stray characters are reported, not dropped.
+      function textEnd(text, dataIndex, from) {
+        var open = text[dataIndex - 1];
+        var close = { '"': '"', "'": "'", '<': '>', '(': ')' }[open];
+        if (!close) return text.replace(/\s+$/, '').length;
+        var depth = 0;
+        for (var i = from; i < text.length; i++) {
+          var c = text[i];
+          if (open === '(' && c === '(') depth++;
+          else if (c === close) {
+            if (depth === 0) return i;
+            depth--;
+          } else if ((c === '\n' || c === '\r') && open !== '"' && open !== "'") return i;
+        }
+        return text.length;
+      }
+
+      function parseDecodeInput(input) {
+        var text = String(input || '');
+        var notes = [];
+        if (!text.trim()) return { error: 'empty' };
+        if (text.indexOf('\\/') >= 0 && /data:|^[\s"'A-Za-z0-9+\\\/=_-]*$/.test(text)) {
+          text = text.replace(/\\\//g, '/');
+          notes.push('jsonSlash');
+        }
+        var m = /data:([^,]*),/i.exec(text);
+        if (m) {
+          var head = m[1];
+          var params = head.split(';').map(function (p) { return p.trim(); });
+          var isB64 = params.length > 1 && params[params.length - 1].toLowerCase() === 'base64';
+          var declared = (params[0] || '').toLowerCase() || null;
+          var bodyStart = m.index + m[0].length;
+          var before = text.slice(0, m.index).trim();
+          var bodyEnd = textEnd(text, m.index, bodyStart);
+          var rest = text.slice(bodyEnd).trim();
+          if (before || rest) notes.push('extracted');
+          var sub = text.slice(0, bodyEnd);
+          var r = isB64 ? decodeBase64Body(sub, bodyStart) : percentDecodeBody(sub, bodyStart);
+          if (r.error) return r;
+          if (r.urlSafe) notes.push('urlSafe');
+          return { bytes: r.bytes, declared: declared, notes: notes };
+        }
+        var r2 = decodeBase64Body(text.replace(/^\s*["']|["']\s*$/g, function (q) { return q.replace(/["']/, ' '); }), 0);
+        if (r2.error) return r2;
+        if (r2.urlSafe) notes.push('urlSafe');
+        return { bytes: r2.bytes, declared: null, notes: notes };
+      }
+
+      function inspectDecoded(parsed) {
+        var key = sniffImage(parsed.bytes);
+        if (!key) return { error: 'notImage', hex: hexHead(parsed.bytes, 8), size: parsed.bytes.length };
+        var info = TYPES[key];
+        var declaredKey = parsed.declared ? MIME_TYPES[parsed.declared] || 'other' : null;
+        return {
+          key: key, mime: info.mime, ext: info.ext, name: info.name, size: parsed.bytes.length,
+          declaredMismatch: declaredKey && !sameFamily(declaredKey, key) ? parsed.declared : null
+        };
+      }
+
+      function plural(pair, n, lang) {
+        var s = new Intl.NumberFormat(lang).format(n);
+        return (n === 1 ? pair[0] : pair[1]).replace('{n}', s);
+      }
+
+      function fill(tpl, vals) {
+        return tpl.replace(/\{(\w+)\}/g, function (m, k) { return vals[k] !== undefined ? vals[k] : m; });
+      }
+
+      function formatSize(bytes, lang) {
+        var nf = function (v, d) { return new Intl.NumberFormat(lang, { maximumFractionDigits: d }).format(v); };
+        if (bytes < 1024) return nf(bytes, 0) + ' B';
+        if (bytes < 1024 * 1024) return nf(bytes / 1024, 1) + ' KB';
+        return nf(bytes / (1024 * 1024), 1) + ' MB';
+      }
+
+      function growthPercent(bytes, chars) {
+        if (!bytes) return '0';
+        return (Math.round((chars / bytes - 1) * 1000) / 10).toFixed(1);
+      }
+      /* ── engine:end ── */
+
+      var wrap = document.getElementById('i2b-wrap');
+      var $ = function (id) { return document.getElementById(id); };
+      var modeBtns = wrap.querySelectorAll('.i2b-mode');
+      var encPanel = $('i2b-enc'), decPanel = $('i2b-dec');
+      var drop = $('i2b-drop'), fileInput = $('i2b-file');
+      var result = $('i2b-result'), thumb = $('i2b-thumb'), nameEl = $('i2b-name'), infoEl = $('i2b-info'), notesEl = $('i2b-notes');
+      var fmtBtns = wrap.querySelectorAll('.i2b-fmt'), encBtns = wrap.querySelectorAll('.i2b-enc');
+      var svgEncRow = $('i2b-svgenc');
+      var outLabel = $('i2b-out-label'), outLen = $('i2b-out-len'), output = $('i2b-output'), tooLongEl = $('i2b-toolong');
+      var copyBtn = $('i2b-copy'), dlTxt = $('i2b-download-txt');
+      var statusEl = $('i2b-status'), base64Link = $('i2b-base64-link');
+      var decIn = $('i2b-dec-in'), decResult = $('i2b-dec-result'), decInfo = $('i2b-dec-info'), decNotes = $('i2b-dec-notes');
+      var decImg = $('i2b-dec-img'), decDownload = $('i2b-dec-download');
+
+      var FMT_LABEL = { datauri: t.fmtDataUri, base64: t.fmtBase64, css: t.fmtCss, html: t.fmtHtml, markdown: t.fmtMarkdown };
+      var state = null;
+      var fmt = 'datauri';
+      var job = 0;
+      var thumbUrl = '', decUrl = '';
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status i2b-status' + (msg ? ' ' + (kind || 'info') : '');
+      }
+
+      function setNotes(list, items) {
+        list.textContent = '';
+        items.forEach(function (text) { var li = document.createElement('li'); li.textContent = text; list.appendChild(li); });
+        list.hidden = !items.length;
+      }
+
+      function currentText() {
+        if (!state) return '';
+        var uri = state.enc === 'url' ? state.urlUri : state.b64Uri;
+        return buildOutput(fmt, { dataUri: uri, base64: state.base64, name: state.fileName, width: state.width, height: state.height });
+      }
+
+      function render() {
+        if (!state) return;
+        var text = currentText();
+        state.text = text;
+        outLabel.textContent = FMT_LABEL[fmt];
+        outLen.textContent = plural(t.chars, text.length, pageLang);
+        fmtBtns.forEach(function (b) { var on = b.dataset.fmt === fmt; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+        if (state.svg) {
+          encBtns.forEach(function (b) { var on = b.dataset.enc === state.enc; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+        }
+        var tooLong = text.length > DISPLAY_LIMIT;
+        output.hidden = tooLong;
+        tooLongEl.hidden = !tooLong;
+        dlTxt.hidden = !tooLong;
+        output.value = tooLong ? '' : text;
+        if (tooLong) tooLongEl.textContent = fill(t.tooLong, { chars: plural(t.chars, text.length, pageLang) });
+      }
+
+      function resetEncode() {
+        job++;
+        state = null;
+        if (thumbUrl) { URL.revokeObjectURL(thumbUrl); thumbUrl = ''; }
+        thumb.removeAttribute('src');
+        output.value = '';
+        result.hidden = true;
+        drop.hidden = false;
+        fileInput.value = '';
+        setStatus('');
+        base64Link.hidden = true;
+      }
+
+      function readAsBase64(blob) {
+        return new Promise(function (resolve, reject) {
+          var reader = new FileReader();
+          reader.onload = function () { var s = String(reader.result); resolve(s.slice(s.indexOf(',') + 1)); };
+          reader.onerror = function () { reject(reader.error); };
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      function handleFile(file) {
+        if (!file) return;
+        var my = ++job;
+        base64Link.hidden = true;
+        if (file.size > FILE_LIMIT) {
+          setStatus(fill(t.tooBig, { size: formatSize(file.size, pageLang), chars: plural(t.chars, base64Length(file.size), pageLang) }), 'error');
           return;
         }
-
-        var reader = new FileReader();
-        reader.onload = function (e) {
-          var dataUri = e.target.result;
-          var base64 = dataUri.split(',')[1];
-
-          previewImg.src = dataUri;
-          previewWrap.hidden = false;
-
-          var b64Len = base64.length;
-          var outputSizeKb = (b64Len / 1024).toFixed(1);
-          function esc(s) { var d = document.createElement('span'); d.textContent = s; return d.innerHTML; }
-          infoEl.innerHTML =
-            '<strong>' + esc(file.name) + '</strong> &mdash; ' +
-            esc(file.type) + ' &mdash; ' +
-            formatBytes(file.size) + ' original &mdash; ' +
-            outputSizeKb + ' KB base64';
-
-          b64Out.value = base64;
-          uriOut.value = dataUri;
-          outputsEl.hidden = false;
-          actionsEl.hidden = false;
-
-          setStatus('Converted successfully.', false);
-          window.trackTool && window.trackTool('image_to_base64', 'convert');
-        };
-        reader.onerror = function () {
-          setStatus('Failed to read the file.', true);
-        };
-        reader.readAsDataURL(file);
+        file.slice(0, 8192).arrayBuffer().then(function (buf) {
+          if (my !== job) return;
+          var head = new Uint8Array(buf);
+          var det = detectImage(head, file.name, file.type);
+          if (det.error) {
+            setStatus(fill(t.notImage, { hex: det.hex || '\u2014' }), 'error');
+            base64Link.hidden = false;
+            return;
+          }
+          var typed = new Blob([file], { type: det.mime });
+          var svg = det.key === 'svg';
+          return Promise.all([readAsBase64(typed), svg ? file.arrayBuffer() : null]).then(function (res) {
+            if (my !== job) return;
+            var base64 = res[0];
+            var b64Uri = dataUriBase64(det.mime, base64);
+            var urlUri = svg ? dataUriSvg(new Uint8Array(res[1])) : '';
+            state = {
+              fileName: file.name, size: file.size, det: det, base64: base64, b64Uri: b64Uri, urlUri: urlUri,
+              svg: svg, enc: svg && urlUri.length < b64Uri.length ? 'url' : 'base64', width: 0, height: 0
+            };
+            var notes = [];
+            if (det.mismatch) notes.push(fill(t.mismatch, { ext: det.mismatch.ext, type: det.name, mime: det.mime }));
+            if (det.source === 'name') notes.push(fill(t.fromName, { mime: det.mime }));
+            setNotes(notesEl, notes);
+            nameEl.textContent = file.name;
+            svgEncRow.hidden = !svg;
+            if (svg) {
+              wrap.querySelector('[data-len="base64"]').textContent = '(' + new Intl.NumberFormat(pageLang).format(b64Uri.length) + ')';
+              wrap.querySelector('[data-len="url"]').textContent = '(' + new Intl.NumberFormat(pageLang).format(urlUri.length) + ')';
+            }
+            updateInfo();
+            if (thumbUrl) URL.revokeObjectURL(thumbUrl);
+            thumbUrl = URL.createObjectURL(typed);
+            thumb.onload = function () {
+              if (my !== job || !state) return;
+              if (!svg) { state.width = thumb.naturalWidth; state.height = thumb.naturalHeight; }
+              updateInfo(thumb.naturalWidth, thumb.naturalHeight);
+              render();
+            };
+            thumb.onerror = function () {
+              if (my !== job || !state) return;
+              var where = det.key.indexOf('hei') === 0 ? t.whereHeic : det.key === 'tiff' ? t.whereTiff : '';
+              setNotes(notesEl, notes.concat([fill(t.noPreview, { type: det.name, where: where })]));
+            };
+            thumb.src = thumbUrl;
+            drop.hidden = true;
+            result.hidden = false;
+            setStatus('');
+            render();
+            window.trackTool && window.trackTool('image_to_base64', 'encode');
+          });
+        }).catch(function () {
+          if (my !== job) return;
+          setStatus(t.readFailed, 'error');
+        });
       }
 
-      /* ── Click to open file picker ── */
-      dropEl.addEventListener('click', function (e) {
-        if (e.target !== fileInput) fileInput.click();
-      });
+      function updateInfo(w, h) {
+        if (!state) return;
+        var parts = [state.det.name];
+        if (w > 0 && h > 0) parts.push(fill(t.dims, { w: w, h: h }));
+        parts.push(fill(t.sizeLine, {
+          bytes: plural(t.bytes, state.size, pageLang),
+          chars: plural(t.chars, state.base64.length, pageLang),
+          pct: growthPercent(state.size, state.base64.length)
+        }));
+        infoEl.textContent = parts.join(' \u00b7 ');
+      }
 
-      dropEl.addEventListener('keydown', function (e) {
+      function setMode(mode) {
+        modeBtns.forEach(function (b) { var on = b.dataset.mode === mode; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+        encPanel.hidden = mode !== 'encode';
+        decPanel.hidden = mode !== 'decode';
+        setStatus('');
+        base64Link.hidden = true;
+      }
+
+      modeBtns.forEach(function (b) { b.addEventListener('click', function () { setMode(b.dataset.mode); }); });
+
+      drop.addEventListener('click', function () { fileInput.click(); });
+      drop.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
       });
+      fileInput.addEventListener('change', function () { if (this.files && this.files[0]) handleFile(this.files[0]); });
+      $('i2b-another').addEventListener('click', function () { fileInput.value = ''; fileInput.click(); });
+      $('i2b-clear').addEventListener('click', resetEncode);
 
-      fileInput.addEventListener('change', function () {
-        if (this.files && this.files[0]) processFile(this.files[0]);
-      });
-
-      /* ── Drag & Drop ── */
-      dropEl.addEventListener('dragover', function (e) {
+      function hasFiles(e) {
+        return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0;
+      }
+      wrap.addEventListener('dragover', function (e) {
+        if (!hasFiles(e)) return;
         e.preventDefault();
-        dropEl.classList.add('drag-over');
+        drop.classList.add('drag-over');
       });
-
-      dropEl.addEventListener('dragleave', function () {
-        dropEl.classList.remove('drag-over');
+      wrap.addEventListener('dragleave', function (e) {
+        if (!wrap.contains(e.relatedTarget)) drop.classList.remove('drag-over');
       });
-
-      dropEl.addEventListener('drop', function (e) {
+      wrap.addEventListener('drop', function (e) {
+        if (!hasFiles(e)) return;
         e.preventDefault();
-        dropEl.classList.remove('drag-over');
+        drop.classList.remove('drag-over');
         var file = e.dataTransfer.files[0];
-        if (file) processFile(file);
+        if (file) { setMode('encode'); handleFile(file); }
       });
 
-      /* ── Clear ── */
-      document.getElementById('i2b-clear').addEventListener('click', function () {
-        fileInput.value = '';
-        previewImg.src = '';
-        previewWrap.hidden = true;
-        outputsEl.hidden = true;
-        actionsEl.hidden = true;
-        b64Out.value = '';
-        uriOut.value = '';
-        statusEl.textContent = '';
-        statusEl.className = 'i2b-status';
+      document.addEventListener('paste', function (e) {
+        if (encPanel.hidden) return;
+        var items = (e.clipboardData && e.clipboardData.files) || [];
+        for (var i = 0; i < items.length; i++) {
+          var f = items[i];
+          if (f && (f.type.indexOf('image/') === 0 || !f.type)) {
+            e.preventDefault();
+            var name = f.name && f.name !== 'image.png' ? f.name : t.pastedName + '.' + (EXT_TYPES[extOf(f.name)] ? extOf(f.name) : 'png');
+            handleFile(new File([f], name, { type: f.type }));
+            return;
+          }
+        }
       });
 
-      /* ── Copy buttons ── */
-      copyB64Btn.addEventListener('click', function () {
-        if (!b64Out.value) return;
-        navigator.clipboard.writeText(b64Out.value).then(function () {
-          copyB64Btn.textContent = t.copied;
-          setTimeout(function () { copyB64Btn.textContent = t.copy; }, 1500);
-        });
+      fmtBtns.forEach(function (b) { b.addEventListener('click', function () { fmt = b.dataset.fmt; render(); }); });
+      encBtns.forEach(function (b) { b.addEventListener('click', function () { if (state) { state.enc = b.dataset.enc; render(); } }); });
+
+      copyBtn.addEventListener('click', function () {
+        var text = state ? state.text : '';
+        if (!text) return;
+        var done = function () {
+          copyBtn.textContent = t.copied;
+          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
+        };
+        var fallback = function () {
+          if (output.hidden) { setStatus(t.copyFailedLong, 'error'); return; }
+          output.focus();
+          output.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+          if (ok) done(); else setStatus(t.copyFailed, 'error');
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+        else fallback();
       });
 
-      copyUriBtn.addEventListener('click', function () {
-        if (!uriOut.value) return;
-        navigator.clipboard.writeText(uriOut.value).then(function () {
-          copyUriBtn.textContent = t.copied;
-          setTimeout(function () { copyUriBtn.textContent = t.copy; }, 1500);
-        });
+      dlTxt.addEventListener('click', function () {
+        if (!state) return;
+        var url = URL.createObjectURL(new Blob([state.text], { type: 'text/plain' }));
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = altFromName(state.fileName || 'image') + '.' + fmt + '.txt';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      });
+
+      /* ── Decode ── */
+      function resetDecode(keepInput) {
+        if (decUrl) { URL.revokeObjectURL(decUrl); decUrl = ''; }
+        decImg.removeAttribute('src');
+        setNotes(decNotes, []);
+        decResult.hidden = true;
+        if (!keepInput) decIn.value = '';
+        setStatus('');
+        base64Link.hidden = true;
+      }
+
+      $('i2b-decode').addEventListener('click', function () {
+        if (decPanel.hidden) return;
+        resetDecode(true);
+        var parsed = parseDecodeInput(decIn.value);
+        if (parsed.error) {
+          var msg = {
+            empty: t.decEmpty,
+            badChar: fill(t.decBadChar, { pos: parsed.pos, ch: parsed.ch }),
+            padMiddle: fill(t.decPadMiddle, { pos: parsed.pos }),
+            badLength: fill(t.decBadLength, { n: parsed.n }),
+            badPercent: fill(t.decBadPercent, { pos: parsed.pos })
+          }[parsed.error];
+          setStatus(msg, 'error');
+          return;
+        }
+        var info = inspectDecoded(parsed);
+        if (info.error) {
+          setStatus(fill(t.decNotImage, { bytes: plural(t.bytes, info.size, pageLang), hex: info.hex || '\u2014' }), 'error');
+          base64Link.hidden = false;
+          return;
+        }
+        var notes = [];
+        parsed.notes.forEach(function (n) { notes.push({ urlSafe: t.decUrlSafe, extracted: t.decExtracted, jsonSlash: t.decJsonSlash }[n]); });
+        if (info.declaredMismatch) notes.push(fill(t.decDeclared, { declared: info.declaredMismatch, type: info.name, ext: info.ext }));
+        var blob = new Blob([parsed.bytes], { type: info.mime });
+        decUrl = URL.createObjectURL(blob);
+        var file = 'image.' + info.ext;
+        decDownload.href = decUrl;
+        decDownload.download = file;
+        decDownload.textContent = fill(t.download, { file: file });
+        var base = fill(t.decResult, { type: info.name, dims: '\u2026', bytes: plural(t.bytes, info.size, pageLang) });
+        decInfo.textContent = base.replace(' \u00b7 \u2026', '');
+        decImg.onload = function () {
+          decInfo.textContent = fill(t.decResult, { type: info.name, dims: fill(t.dims, { w: decImg.naturalWidth, h: decImg.naturalHeight }), bytes: plural(t.bytes, info.size, pageLang) });
+        };
+        decImg.onerror = function () {
+          var where = info.key.indexOf('hei') === 0 ? t.whereHeic : info.key === 'tiff' ? t.whereTiff : '';
+          setNotes(decNotes, notes.concat([fill(t.noPreview, { type: info.name, where: where })]));
+        };
+        setNotes(decNotes, notes);
+        decImg.src = decUrl;
+        decResult.hidden = false;
+        window.trackTool && window.trackTool('image_to_base64', 'decode');
+      });
+
+      $('i2b-dec-clear').addEventListener('click', function () { resetDecode(false); });
+
+      // The site-wide Ctrl/Cmd+L empties text fields; drop the whole state with it.
+      document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          resetEncode();
+          resetDecode(false);
+        }
       });
     })();
   </script>
@@ -187,110 +938,101 @@
 
 <style>
   .i2b-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .i2b-panel { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+  .i2b-panel[hidden], .i2b-result[hidden], .i2b-drop[hidden] { display: none; }
+
+  .i2b-modes { display: inline-flex; align-self: flex-start; gap: 0; border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: 3px; background: var(--color-bg-secondary); }
+  .i2b-mode {
+    border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: 0.85rem; font-weight: 650;
+    padding: 0.35rem 0.9rem; border-radius: var(--radius-pill); cursor: pointer; min-height: 32px;
+  }
+  .i2b-mode.active { background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-subtle); }
+  .i2b-mode:focus-visible, .i2b-fmt:focus-visible, .i2b-enc:focus-visible, .i2b-drop:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
   .i2b-drop {
-    position: relative;
     border: 2px dashed var(--color-border);
-    border-radius: var(--radius-sm);
-    padding: 2rem 1rem;
+    border-radius: var(--radius-md);
+    padding: 1.25rem 1rem;
     text-align: center;
     cursor: pointer;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    display: flex; flex-direction: column; align-items: center; gap: 0.35rem;
     transition: border-color 0.15s, background 0.15s;
-    background: var(--color-bg-secondary);
+  }
+  .i2b-drop:hover, .i2b-drop.drag-over { border-color: var(--color-primary); background: var(--color-bg); }
+  .i2b-drop p { margin: 0; }
+  .i2b-drop-title { font-size: 0.95rem; font-weight: 650; color: var(--color-text); }
+  .i2b-drop-hint { font-size: 0.8rem; }
+  .i2b-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+  .i2b-result { display: flex; flex-direction: column; gap: 0.65rem; min-width: 0; }
+  .i2b-fileline { display: flex; align-items: center; gap: 0.75rem; min-width: 0; flex-wrap: wrap; }
+  .i2b-thumb {
+    width: 56px; height: 56px; flex: 0 0 56px; border-radius: var(--radius-sm); border: 1px solid var(--color-border);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    background: repeating-conic-gradient(#d4d4d4 0% 25%, #fff 0% 50%) 0 0 / 12px 12px;
+  }
+  .i2b-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .i2b-meta { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1 1 12rem; }
+  .i2b-name { font-size: 0.9rem; overflow-wrap: anywhere; }
+  .i2b-info { font-size: 0.8rem; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+  .i2b-file-actions { display: flex; gap: 0.4rem; }
+
+  .i2b-notes { margin: 0; padding: 0.5rem 0.75rem 0.5rem 1.5rem; font-size: 0.82rem; color: var(--color-text); background: var(--color-surface-muted); border-left: 3px solid var(--color-accent); border-radius: var(--radius-sm); }
+  .i2b-notes[hidden] { display: none; }
+  .i2b-notes :global(li + li) { margin-top: 0.25rem; }
+
+  .i2b-optrow { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+  .i2b-seg { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+  .i2b-seg[hidden] { display: none; }
+  .i2b-seg-label { font-size: 0.8rem; font-weight: 650; color: var(--color-text-secondary); margin-right: 0.15rem; }
+  .i2b-fmt, .i2b-enc {
+    border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); font: inherit;
+    font-size: 0.8rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: var(--radius-pill); cursor: pointer; min-height: 28px;
+  }
+  .i2b-fmt.active, .i2b-enc.active { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-primary-contrast); }
+  .i2b-enc-len { font-weight: 500; opacity: 0.85; }
+
+  .i2b-out { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+  .i2b-out-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .i2b-out-head .tool-label { margin: 0; }
+  .i2b-out-len { font-size: 0.78rem; color: var(--color-text-muted); margin-right: auto; }
+  .i2b-output { word-break: break-all; min-height: 110px; font-size: 0.78rem; }
+  .i2b-output[hidden] { display: none; }
+  .i2b-toolong { margin: 0; font-size: 0.85rem; padding: 0.75rem; border: 1px dashed var(--color-border); border-radius: var(--radius-md); color: var(--color-text-secondary); }
+  .i2b-toolong[hidden] { display: none; }
+
+  .i2b-dec-in { min-height: 120px; word-break: break-all; }
+  .i2b-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .i2b-dec-result { display: flex; flex-direction: column; gap: 0.6rem; }
+  .i2b-dec-result[hidden] { display: none; }
+  .i2b-dec-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+  .i2b-dec-img {
+    max-width: 100%; max-height: 280px; align-self: flex-start; object-fit: contain;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: repeating-conic-gradient(#d4d4d4 0% 25%, #fff 0% 50%) 0 0 / 16px 16px;
   }
 
-  .i2b-drop:hover,
-  .i2b-drop.drag-over {
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
-
-  .i2b-drop-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--color-text-secondary);
-    pointer-events: none;
-  }
-
-  .i2b-drop-inner p { margin: 0; font-size: 0.95rem; }
-  .i2b-hint { font-size: 0.8rem; }
-
-  .i2b-file-input {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-  }
-
-  .i2b-preview-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .i2b-preview {
-    max-width: 100%;
-    max-height: 240px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border);
-    object-fit: contain;
-    background: repeating-conic-gradient(#ccc 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
-  }
-
-  .i2b-info {
-    font-size: 0.82rem;
-    color: var(--color-text-secondary);
-    text-align: center;
-  }
-
-  .i2b-outputs { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .i2b-output-row { display: flex; flex-direction: column; gap: 0.4rem; }
-
-  .i2b-output-row label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .i2b-output-row textarea {
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
-    word-break: break-all;
-  }
-
-  .i2b-actions { display: flex; gap: 0.5rem; }
-
-  .i2b-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .i2b-status.success { color: #057a55; }
-  .i2b-status.error { color: #c0392b; }
+  .i2b-status:empty { display: none; }
+  .i2b-base64-link { margin: -0.4rem 0 0; font-size: 0.85rem; }
+  .i2b-base64-link[hidden] { display: none; }
 
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .i2b-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .i2b-status.error { color: #f87171; }
-    :root:not([data-theme="light"]) .i2b-preview {
-      background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 16px 16px;
-    }
+    :root:not([data-theme="light"]) .i2b-thumb,
+    :root:not([data-theme="light"]) .i2b-dec-img { background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 12px 12px; }
   }
-  [data-theme="dark"] .i2b-status.success { color: #34d399; }
-  [data-theme="dark"] .i2b-status.error { color: #f87171; }
-  [data-theme="dark"] .i2b-preview {
-    background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 16px 16px;
+  :global([data-theme="dark"]) .i2b-thumb,
+  :global([data-theme="dark"]) .i2b-dec-img { background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 12px 12px; }
+
+  @media (max-width: 640px) {
+    .i2b-mode { min-height: 44px; }
+    .i2b-fmt, .i2b-enc { min-height: 32px; }
+    .i2b-drop { padding: 1rem 0.75rem; }
+    .i2b-output { min-height: 100px; }
+    .i2b-notes, .i2b-optrow { order: 1; }
+    .i2b-file-actions { order: 2; }
+    .i2b-fmt-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .i2b-fmt, .i2b-enc { padding: 0.2rem 0.5rem; }
   }
 </style>
