@@ -270,5 +270,36 @@ err(store, '$.store.*~');
   check('error position points at the script expression', e && e.pos === 13, e && e.pos);
 }
 
+// ---------- result / error elements are created with innerHTML ----------
+// They have no Astro scope attribute, so their rules must use :global(...) (AGENTS.md rule 11).
+{
+  const style = source.slice(source.indexOf('<style>'), source.indexOf('</style>'));
+  const dynamic = ['jpt-hl-key', 'jpt-hl-str', 'jpt-hl-num', 'jpt-hl-bool', 'jpt-hl-null', 'jpt-error', 'jpt-no-match'];
+  dynamic.forEach((cls) => {
+    const all = style.match(new RegExp('\\.' + cls + '\\b', 'g')) || [];
+    const wrapped = style.match(new RegExp(':global\\(\\.' + cls + '\\)', 'g')) || [];
+    check('.' + cls + ' rules use :global()', all.length > 0 && all.length === wrapped.length, wrapped.length + ' of ' + all.length);
+  });
+}
+
+// ---------- match count text in 4 languages ----------
+{
+  const EC = new Function(block + '\nreturn { matchCountText };')();
+  const labels = {};
+  ['en', 'zh', 'ja', 'ko'].forEach((l) => {
+    const m = source.match(new RegExp('\\n  ' + l + ": \\{[\\s\\S]*?matchOne: '([^']*)',\\s*matchMany: '([^']*)'"));
+    labels[l] = m ? { one: m[1], many: m[2] } : null;
+    check('matchOne / matchMany labels in ' + l, !!labels[l]);
+  });
+  if (labels.en) {
+    check('en 1 match', EC.matchCountText(1, labels.en.one, labels.en.many) === '1 match');
+    check('en 3 matches', EC.matchCountText(3, labels.en.one, labels.en.many) === '3 matches');
+  }
+  if (labels.zh) check('zh 3 条匹配', EC.matchCountText(3, labels.zh.one, labels.zh.many) === '3 条匹配');
+  if (labels.ja) check('ja 1 件マッチ', EC.matchCountText(1, labels.ja.one, labels.ja.many) === '1 件マッチ');
+  if (labels.ko) check('ko 2개 매칭', EC.matchCountText(2, labels.ko.one, labels.ko.many) === '2개 매칭');
+  check('count element uses matchCountText', /countEl\.textContent = matchCountText\(/.test(source));
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
