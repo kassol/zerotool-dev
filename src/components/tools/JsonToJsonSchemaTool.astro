@@ -43,50 +43,78 @@
       var clearBtn = document.getElementById('jjs-clear');
       var copyBtn  = document.getElementById('jjs-copy');
 
-      function inferSchema(value) {
-        if (value === null) return { type: 'null' };
+      /* ── engine:start ── */
+      function kindOf(value) {
+        if (value === null) return 'null';
+        if (Array.isArray(value)) return 'array';
         var t = typeof value;
-        if (t === 'boolean') return { type: 'boolean' };
-        if (t === 'number') {
-          return Number.isInteger(value) ? { type: 'integer' } : { type: 'number' };
-        }
-        if (t === 'string') return { type: 'string' };
-        if (Array.isArray(value)) {
-          if (value.length === 0) return { type: 'array', items: {} };
-          // merge all item schemas
-          var itemSchemas = value.map(inferSchema);
-          var merged = mergeSchemas(itemSchemas);
-          return { type: 'array', items: merged };
-        }
-        if (t === 'object') {
-          var props = {};
-          var required = [];
-          var keys = Object.keys(value);
-          for (var i = 0; i < keys.length; i++) {
-            var k = keys[i];
-            props[k] = inferSchema(value[k]);
-            if (value[k] !== null && value[k] !== undefined) required.push(k);
-          }
-          var schema = {
-            type: 'object',
-            properties: props,
-          };
-          if (required.length > 0) schema.required = required;
-          return schema;
-        }
-        return {};
+        if (t === 'number') return Number.isInteger(value) ? 'integer' : 'number';
+        return t;
       }
 
-      function mergeSchemas(schemas) {
-        if (schemas.length === 1) return schemas[0];
+      // One schema that accepts every value in the list: a type (or type list) plus the
+      // object and array keywords, which only apply to instances of that type.
+      function inferFromValues(values) {
         var types = [];
-        for (var i = 0; i < schemas.length; i++) {
-          var s = schemas[i];
-          if (s.type && types.indexOf(s.type) === -1) types.push(s.type);
+        var objects = [];
+        var arrays = [];
+        for (var i = 0; i < values.length; i++) {
+          var kind = kindOf(values[i]);
+          if (kind === 'object') objects.push(values[i]);
+          if (kind === 'array') arrays.push(values[i]);
+          if (types.indexOf(kind) === -1) types.push(kind);
         }
-        if (types.length === 1) return schemas[0];
-        return { type: types };
+        // every integer is also a number
+        var intIdx = types.indexOf('integer');
+        var numIdx = types.indexOf('number');
+        if (intIdx !== -1 && numIdx !== -1) {
+          types.splice(Math.max(intIdx, numIdx), 1);
+          types[Math.min(intIdx, numIdx)] = 'number';
+        }
+
+        var schema = { type: types.length === 1 ? types[0] : types };
+
+        if (objects.length > 0) {
+          var keys = [];
+          var props = {};
+          objects.forEach(function (obj) {
+            Object.keys(obj).forEach(function (k) {
+              if (keys.indexOf(k) === -1) keys.push(k);
+            });
+          });
+          var required = [];
+          keys.forEach(function (k) {
+            var keyValues = [];
+            var inAll = true;
+            objects.forEach(function (obj) {
+              if (Object.prototype.hasOwnProperty.call(obj, k)) {
+                keyValues.push(obj[k]);
+                if (obj[k] === null) inAll = false;
+              } else {
+                inAll = false;
+              }
+            });
+            // defineProperty: a plain assignment to props.__proto__ would set the prototype
+            Object.defineProperty(props, k, { value: inferFromValues(keyValues), enumerable: true, writable: true, configurable: true });
+            if (inAll) required.push(k);
+          });
+          schema.properties = props;
+          if (required.length > 0) schema.required = required;
+        }
+
+        if (arrays.length > 0) {
+          var items = [];
+          arrays.forEach(function (arr) { items = items.concat(arr); });
+          schema.items = items.length > 0 ? inferFromValues(items) : {};
+        }
+
+        return schema;
       }
+
+      function inferSchema(value) {
+        return inferFromValues([value]);
+      }
+      /* ── engine:end ── */
 
       function convert() {
         var raw = inputEl.value.trim();

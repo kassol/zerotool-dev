@@ -7,9 +7,9 @@ faqItems:
   - question: "此工具生成哪个版本的 JSON Schema？"
     answer: "此工具生成 JSON Schema draft-07，这是目前支持最广泛的版本之一，兼容 AJV、jsonschema（Python）等主流验证器。"
   - question: "如何确定必填字段？"
-    answer: "输入 JSON 对象中所有非 null 的属性都会被加入 required 数组。null 值被排除，因为无法保证其必然存在。您可以根据实际需求编辑输出的 Schema 来调整必填列表。"
+    answer: "输入 JSON 对象中所有非 null 的属性都会被加入 required 数组。null 值被排除，因为无法保证其必然存在。对象数组里，只有每个对象都有且不为 null 的键才是必填。您可以根据实际需求编辑输出的 Schema 来调整必填列表。"
   - question: "支持嵌套对象和数组吗？"
-    answer: "支持。工具会递归处理嵌套对象和数组。数组根据元素类型推断 items schema，嵌套对象会生成对应的 properties 和 required 数组。"
+    answer: "支持。工具会递归处理嵌套对象和数组。数组的 items schema 由全部元素合并得出，每个元素都能通过，嵌套对象会生成对应的 properties 和 required 数组。"
   - question: "生成的 Schema 可以直接用于验证吗？"
     answer: "可以。将生成的 Schema 粘贴到 ZeroTool 的 JSON Schema 验证器或任何基于 AJV 的验证器中使用。您可能需要进一步完善可选字段，或添加 minLength、minimum、pattern 等额外约束。"
 ---
@@ -110,7 +110,7 @@ validate({ email: 'a@example.com', extra: 1 }); // false: must NOT have addition
 
 ## 限制
 
-- **对象数组只取第一个对象。** 对 `[{"id": 1, "name": "Alice"}, {"id": 2, "email": "b@example.com"}]`，`items` 里只有 `id` 和 `name` 且都是必填，第二个元素会校验失败。数组的 schema 请用全部样本核对。
-- **只看一份样本。** 所有非 null 的键都进 `required`，可选字段需要自己从 `required` 删掉。
-- **混合类型会丢结构。** `[1, "x", {"a": 1}]` 这样的数组生成 `"type": ["integer", "string", "object"]`，不带对象的属性。
+- **数组元素会合并。** 对 `[{"id": 1, "name": "Alice"}, {"id": 2, "email": "b@example.com"}]`，`items` 列出 `id`、`name`、`email`，只有每个元素都有的 `id` 是必填。同一数组里的整数和小数合并为 `"number"`。生成的 schema 一定能通过它的样本；[GenSON](https://github.com/wolverdude/GenSON) 也是这样合并样本的。
+- **必填项来自样本。** 单个对象里所有非 null 的键都进 `required`。数据里可选、但样本里出现了的字段，需要自己从 `required` 删掉。
+- **混合类型生成类型列表。** `[1, "x", {"a": 1}]` 这样的数组生成 `"type": ["integer", "string", "object"]`，旁边带对象的 `properties` 和 `required`，这两个关键字只作用于对象元素。
 - **只输出 draft-07。** 要用 2020-12，改 `$schema` 并使用 Ajv 的 `Ajv2020` 类。
