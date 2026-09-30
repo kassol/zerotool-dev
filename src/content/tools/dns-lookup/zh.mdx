@@ -7,7 +7,7 @@ faqItems:
   - question: "为什么和本机 dig、nslookup 的结果不一样？"
     answer: "dig 和 nslookup 问的是本机正在用的 DNS。开着代理软件的 fake-ip 模式时，53 端口由代理软件自己回答，返回 198.18 开头的假地址。本页用 HTTPS 直接问公共解析器，看到的是公网上的真实结果。公司内网、hosts 文件里的记录，本页也查不到。"
   - question: "DNSSEC ✓ 是什么意思？"
-    answer: "表示解析器返回的 AD 标志为真，即回答里的每条记录都通过了 DNSSEC 签名验证。显示「未启用 DNSSEC」通常是域名没有签名，或者 CNAME 指向了没签名的域名。签名验证失败时解析器返回 SERVFAIL，记录下方的解析器备注会写明原因。"
+    answer: "表示解析器返回的 AD 标志为真，即回答里的每条记录都通过了 DNSSEC 签名验证。显示「未启用 DNSSEC」通常是域名没有签名，或者 CNAME 指向了没签名的域名。签名验证失败时解析器返回 SERVFAIL：如果响应带有 DNSSEC 类扩展错误码（RFC 8914 的 1、2、5–12），标签显示「DNSSEC 验证失败」，记录下方的解析器备注写明原因；其他 SERVFAIL 不显示 DNSSEC 标签，因为解析器没有给出回答，AD 标志说明不了是否签名。"
   - question: "DMARC、DKIM 记录怎么查？"
     answer: "输入完整的记录名，类型选 TXT。DMARC 在 _dmarc.example.com，DKIM 在 选择器._domainkey.example.com，选择器名要从邮件头的 DKIM-Signature 里的 s= 取。本页接受带下划线的名称。"
   - question: "Google 解析器一直报网络错误怎么办？"
@@ -22,15 +22,21 @@ faqItems:
 4. 点 **查询** 或按回车；也可以直接点下方的示例域名。
 5. 先看结果上方的标签（响应码、记录数、DNSSEC、解析器、耗时），再切到 **原文** 看 dig 风格的输出，或切到 **JSON** 看解析器原样返回的内容。
 
-## 实测：百度的 CNAME 链和 QQ 邮箱的记录
+## 实测：腾讯的按地区分流和 QQ 邮箱的记录
 
-以下结果在 2026-09-29 查询，重查时 TTL 会不同。
+以下结果在 2026-09-29 与 2026-09-30 查询，重查时 TTL 会不同。
 
-**同一个域名，两个解析器给出不同 IP。** 查 `www.baidu.com` 的 A 记录，两个解析器都先返回两条 CNAME：`www.a.shifen.com.`，再到 `www.wshifen.com.`。最后的 IP 不一样：Cloudflare 给出 `103.235.46.96`、`103.235.47.188`，Google 给出 `45.113.192.102`、`45.113.192.101`。原因之一是 Google 会把用户 IP 的一部分（[EDNS Client Subnet](https://developers.google.com/speed/public-dns/docs/ecs)）发给权威服务器，Cloudflare [不发](https://developers.cloudflare.com/1.1.1.1/faq/)，CDN 就可能按不同位置返回不同节点。这也说明本页的结果是公共解析器所在位置看到的结果，不等于你家运营商 DNS 的结果。
+**同一个域名，查询来源不同，IP 就不同。** Google 会把查询者 IP 的一部分（[EDNS Client Subnet](https://developers.google.com/speed/public-dns/docs/ecs)）发给权威服务器，Cloudflare [不发](https://developers.cloudflare.com/1.1.1.1/faq/)，CDN 据此按位置返回不同节点。Google 的 [JSON 接口](https://developers.google.com/speed/public-dns/docs/doh/json) 可以用 `edns_client_subnet` 参数自己指定这个子网（本页不发送该参数）。2026-09-30 用它查 `www.qq.com` 的 A 记录：`114.114.114.0/24` 得到 `121.14.77.201`、`121.14.77.221`，`8.8.8.0/24` 得到 `43.159.109.55`，`139.130.4.0/24` 得到 `43.168.224.173`。给 Cloudflare 带上同样的参数，它不理会，返回 `43.159.109.55`。复现命令：
+
+```bash
+curl -s 'https://dns.google/resolve?name=www.qq.com&type=A&edns_client_subnet=114.114.114.0/24'
+```
+
+所以本页显示的是公共解析器按它看到的位置给出的结果，不等于你家运营商 DNS 的结果。两个解析器返回的 IP 不同，也不说明哪一家出了错。
 
 **检查一个邮箱域名的配置。** `qq.com` 的 MX 返回 `10 mx3.qq.com.`、`20 mx2.qq.com.`、`30 mx1.qq.com.`，数字越小越优先。`_dmarc.qq.com` 的 TXT 返回 `v=DMARC1; p=quarantine; rua=mailto:mailauth-reports@qq.com`，表示没通过验证的邮件按隔离处理（DMARC 记录的位置见 [RFC 7489 §6.1](https://www.rfc-editor.org/rfc/rfc7489#section-6.1)）。自己的域名配邮件时，按同样的顺序查 MX、根域名的 TXT（SPF）、`_dmarc` 的 TXT。
 
-**签名验证失败的域名。** `dnssec-failed.org` 是 [Google 文档](https://developers.google.com/speed/public-dns/docs/doh/json) 里用来演示验证失败的域名。两个解析器都返回 **SERVFAIL**。Cloudflare 的备注是 `EDE(9): DNSKEY Missing ...`，即 [RFC 8914](https://www.rfc-editor.org/rfc/rfc8914#section-4.10) 定义的扩展错误码 9。
+**签名验证失败的域名。** `dnssec-failed.org` 是 [Google 文档](https://developers.google.com/speed/public-dns/docs/doh/json) 里用来演示验证失败的域名。两个解析器都返回 **SERVFAIL**，DNSSEC 标签显示「DNSSEC 验证失败」。Cloudflare 的备注是 `EDE(9): DNSKEY Missing ...`。Google 返回一句说明（附 DNSViz 和 Verisign DNSSEC Debugger 的链接）和结构化字段 `extended_dns_errors`，本页把后者显示为 `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org`。9 是 [RFC 8914](https://www.rfc-editor.org/rfc/rfc8914#section-4.10) 定义的扩展错误码 DNSKEY Missing。
 
 ## 为什么本机 dig 查到的不一样
 

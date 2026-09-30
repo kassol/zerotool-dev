@@ -7,7 +7,7 @@ faqItems:
   - question: "SPF・DKIM・DMARC はどう確認しますか？"
     answer: "種類に TXT を選び、SPF はドメインそのもの、DMARC は _dmarc.ドメイン、DKIM は セレクター._domainkey.ドメイン を入力します。セレクターは受信したメールの DKIM-Signature ヘッダーの s= に書かれています。アンダースコアを含む名前もそのまま照会できます。"
   - question: "「DNSSEC なし」と表示されるのはなぜですか？"
-    answer: "応答の AD フラグが立っていないためです。AD は応答中のすべてのレコードが DNSSEC で検証されたときだけ立ちます。ゾーンが署名されていない場合のほか、署名済みの名前から署名のないゾーンへ CNAME でつながる場合も立ちません。検証に失敗した場合は SERVFAIL が返り、レコード欄の下にリゾルバーの注記が表示されます。"
+    answer: "応答の AD フラグが立っていないためです。AD は応答中のすべてのレコードが DNSSEC で検証されたときだけ立ちます。ゾーンが署名されていない場合のほか、署名済みの名前から署名のないゾーンへ CNAME でつながる場合も立ちません。検証に失敗した場合は SERVFAIL が返ります。応答に DNSSEC 関連の拡張エラーコード（RFC 8914 の 1・2・5〜12）が付いていれば、ラベルは「DNSSEC 検証失敗」になり、レコード欄の下にリゾルバーの注記で理由が表示されます。それ以外の SERVFAIL ではラベルを出しません。リゾルバーが回答を返していないので、AD フラグからは署名の有無が分からないためです。"
   - question: "日本語ドメインは照会できますか？"
     answer: "できます。日本語.jp のように入力すると、ブラウザーの URL 処理で xn--wgv71a119e.jp のような Punycode に変換してから照会します。全角英数字や「。」も半角に直します。"
   - question: "ローカルの dig や nslookup と結果が違うのはなぜですか？"
@@ -24,13 +24,13 @@ faqItems:
 
 ## 実例：jprs.jp と 日本語.jp
 
-2026-09-29 に照会した結果です。再度照会すると TTL は変わります。
+2026-09-29 に照会した結果です（AD フラグと `dnssec-failed.org` は 2026-09-30 に再確認）。再度照会すると TTL は変わります。
 
 **DNSSEC の有無。** `.jp` を管理する JPRS の `jprs.jp` を A で照会すると `117.104.133.164` が返り、ラベルは **DNSSEC ✓** です。同じ JPRS が案内用に運用している `日本語.jp` を入力すると `xn--wgv71a119e.jp` に変換されて `117.104.133.183` が返りますが、ラベルは **DNSSEC なし** です。同じ組織のドメインでも、ゾーンごとに署名の有無が違うことが分かります。
 
-本ツールはすべての照会に `do=1` を付けています。付けない場合、Cloudflare は署名済みの `example.com` でも `"AD": false` を返しました（同じ時点で Google は `true`）。[RFC 6840 §5.8](https://www.rfc-editor.org/rfc/rfc6840#section-5.8) は、問い合わせに DO か AD ビットがある場合にだけ AD を立てるようリゾルバーに求めているためです。`do=1` を付けると応答に RRSIG（署名）も入りますが、レコード欄には出さず、生データと JSON にだけ表示します。
+本ツールはすべての照会に `do=1` を付けています。付けない場合、Cloudflare の AD は一定しません。2026-09-30 に署名済みの `example.com` を `do=1` なしで 30 回ずつ照会すると、A・AAAA・NS は毎回 `"AD": false`、MX は毎回 `true` でした。その少し前に A を 20 回照会したときは `true` と `false` が 10 回ずつでした。`do=1` を付けた照会と Google への照会は、すべて `true` です。[RFC 6840 §5.8](https://www.rfc-editor.org/rfc/rfc6840#section-5.8) は、問い合わせに DO か AD ビットがある場合にだけ AD を立てるようリゾルバーに求めています。AD で確実に判断するには `do=1` が必要です。`do=1` を付けると応答に RRSIG（署名）も入りますが、レコード欄には出さず、生データと JSON にだけ表示します。
 
-**検証に失敗するドメイン。** [Google の JSON API 文書](https://developers.google.com/speed/public-dns/docs/doh/json) で失敗例として使われている `dnssec-failed.org` は、どちらのリゾルバーでも **SERVFAIL** になります。Cloudflare の注記は `EDE(9): DNSKEY Missing ...` で、[RFC 8914](https://www.rfc-editor.org/rfc/rfc8914#section-4.10) の拡張エラーコード 9（DNSKEY Missing）です。
+**検証に失敗するドメイン。** [Google の JSON API 文書](https://developers.google.com/speed/public-dns/docs/doh/json) で失敗例として使われている `dnssec-failed.org` は、どちらのリゾルバーでも **SERVFAIL** になり、ラベルは **DNSSEC 検証失敗** です。Cloudflare の注記は `EDE(9): DNSKEY Missing ...` です。Google は説明文（DNSViz と Verisign DNSSEC Debugger へのリンク付き）と構造化フィールド `extended_dns_errors` を返し、本ツールは後者を `EDE(9): No DNSKEY matches DS RRs of dnssec-failed.org` と表示します。9 は [RFC 8914](https://www.rfc-editor.org/rfc/rfc8914#section-4.10) の拡張エラーコード DNSKEY Missing です。
 
 ## 送信ドメイン認証（SPF・DMARC）の確認
 
