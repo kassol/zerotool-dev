@@ -191,6 +191,7 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
     'https://auth.example.com/authorize?response_type=code&client_id=s6BhdRkqt3&redirect_uri=https%3A%2F%2Fclient.example.org%2Fcb&scope=openid+profile&state=xyz&nonce=n-0S6_WzA2Mj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256');
   const noOidc = new URL(E.buildAuthUrl({ ...base, scope: 'read write' }).url);
   eq('nonce only with the openid scope', noOidc.searchParams.has('nonce'), false);
+  eq('comma-separated scope (Kakao, WeChat style) with openid gets a nonce', new URL(E.buildAuthUrl({ ...base, scope: 'openid,profile_nickname' }).url).searchParams.get('nonce'), 'n-0S6_WzA2Mj');
   eq('scope with openid as a substring does not count', new URL(E.buildAuthUrl({ ...base, scope: 'openidx' }).url).searchParams.has('nonce'), false);
   const plain = new URL(E.buildAuthUrl({ ...base, challenge: RFC_VERIFIER, method: 'plain' }).url);
   eq('plain is sent explicitly', plain.searchParams.get('code_challenge_method'), 'plain');
