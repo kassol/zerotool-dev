@@ -1,591 +1,1338 @@
 ---
-// FileHashCheckerTool — In-browser SHA-256/SHA-1/SHA-384/SHA-512/MD5 checksum computer
-// for local files. Uses Web Crypto API for SHA family; inline public-domain MD5 routine
-// adapted from HashGeneratorTool to accept Uint8Array (binary-safe).
-// No upload, no npm dependencies, designed for files up to ~1 GB.
+// FileHashCheckerTool — SHA-256 / SHA-1 / SHA-384 / SHA-512 / MD5 / CRC32 of local files,
+// and verification against a pasted hash or checksum list (sha256sum, BSD tags, certutil,
+// Get-FileHash, SRI, Base64). Files are streamed through public/vendor/file-hash-worker.js
+// (one worker per algorithm, hash-wasm), so memory stays flat for any file size.
+// Nothing is uploaded or stored.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// Counts are [one, other]; {n} is the number. Other placeholders are named.
+const STRINGS = {
+  en: {
+    dropTitle: 'Drop files or a folder, or click to choose',
+    dropSub: 'Any size \u00b7 read on this device, never uploaded',
+    dropAria: 'Choose files to hash',
+    addMore: 'Add files',
+    chooseFolder: 'Choose a folder',
+    algorithms: 'Algorithms',
+    legacyTag: 'legacy',
+    crcTag: 'error check',
+    copy: 'Copy', copied: 'Copied!',
+    copyFailed: 'Copying failed. Select the value and press Ctrl+C (\u2318C).',
+    remove: 'Remove {name}',
+    clearAll: 'Clear all',
+    stop: 'Stop',
+    retry: 'Hash again',
+    upper: 'Uppercase',
+    listOut: 'Checksum file',
+    copyList: 'Copy',
+    download: 'Download',
+    expectedLabel: 'Expected hash or checksum list',
+    expectedHint: 'Optional. Paste a hash, a line like \u201c3a1f\u2026  file.iso\u201d, SHA256SUMS, certutil or Get-FileHash output, or Base64 / SRI.',
+    openList: 'Open checksum file',
+    files: ['1 file', '{n} files'],
+    progress: '{pct}% \u00b7 {rate}/s \u00b7 {eta} left',
+    waiting: 'Waiting\u2026',
+    hashing: 'Hashing {done} of {total} \u00b7 keep this page open',
+    doneAll: '{files} hashed in {time}.',
+    stopped: 'Stopped. Unfinished files can be hashed again.',
+    stoppedFile: 'Stopped',
+    errRead: 'The browser could not read this file. It may have been moved, deleted or changed, or permission was lost. Choose it again.',
+    errWorker: 'The hashing worker could not start. Reload the page and try again.',
+    errOther: 'Error: {message}',
+    tooMany: 'Only the first {max} files were added.',
+    emptyFolder: 'No files found in what was dropped.',
+    listLoaded: 'Read {file}.',
+    listTooBig: '{file} is larger than 1 MB, so it was not read as a checksum list.',
+    autoAlgo: '{algo} was turned on to check the expected value.',
+    badgeOk: 'OK', badgeFail: 'FAILED', badgePending: 'Checking\u2026', badgeNoList: 'Not in the list', badgeNoMatch: 'No match',
+    okBare: 'Matches the expected {algo}.',
+    okNamed: 'Matches the {algo} listed for {name} (line {line}).',
+    okRenamed: 'Matches the {algo} listed for {name} (line {line}); the file name is different.',
+    failNamed: 'Does not match the {algo} listed for {name} (line {line}). First difference at character {pos}.',
+    failBare: 'Does not match the expected {algo}. First difference at character {pos}.',
+    expected: 'Expected',
+    actual: 'This file',
+    maybeOther: 'If the publisher used SHA3 or BLAKE2, the value has the same length but this tool cannot compute it.',
+    noEntry: 'The list has no entry for this file.',
+    noMatch: 'Does not match the expected {algo}.',
+    summary: '{ok} OK \u00b7 {fail} failed',
+    summaryMissing: '{n} listed files were not selected: {names}',
+    bareNoMatch: 'The expected {algo} matches none of the selected files.',
+    pLength: 'Line {line}: {len} hex digits is not the length of a supported hash (CRC32 8, MD5 32, SHA-1 40, SHA-256 64, SHA-384 96, SHA-512 128). A character may be missing or extra.',
+    pBadChar: 'Line {line}: \u201c{ch}\u201d at character {pos} is not a hex digit (0\u20139, a\u2013f).',
+    pUnsupported: 'Line {line}: {algo} is not supported here. Supported: SHA-256, SHA-1, SHA-384, SHA-512, MD5, CRC32.',
+    pLabel: 'Line {line}: labelled {label}, but {len} hex digits is {algo}.',
+    pNone: 'No hash found. Paste a hex or Base64 hash, a sha256sum line, or a checksum file.',
+    durS: ' s', durMin: ' min', durH: ' h',
+    privacy: 'Files are read on this device by a background worker. Nothing is uploaded or saved.',
+  },
+  zh: {
+    dropTitle: '拖入文件或文件夹，或点击选择',
+    dropSub: '不限大小 \u00b7 在本机读取，不上传',
+    dropAria: '选择要计算哈希的文件',
+    addMore: '添加文件',
+    chooseFolder: '选择文件夹',
+    algorithms: '算法',
+    legacyTag: '旧',
+    crcTag: '仅查错',
+    copy: '复制', copied: '已复制！',
+    copyFailed: '复制失败。请选中哈希值后按 Ctrl+C（\u2318C）。',
+    remove: '移除 {name}',
+    clearAll: '全部清除',
+    stop: '停止',
+    retry: '重新计算',
+    upper: '大写',
+    listOut: '校验文件',
+    copyList: '复制',
+    download: '下载',
+    expectedLabel: '期望的哈希值或校验列表',
+    expectedHint: '可选。可粘贴哈希值、「3a1f…  file.iso」这样的行、SHA256SUMS、certutil 或 Get-FileHash 的输出，也认 Base64 / SRI。',
+    openList: '打开校验文件',
+    files: ['{n} 个文件', '{n} 个文件'],
+    progress: '{pct}% \u00b7 {rate}/s \u00b7 还剩 {eta}',
+    waiting: '排队中…',
+    hashing: '正在计算第 {done} / {total} \u00b7 请保持页面打开',
+    doneAll: '{files}，用时 {time}。',
+    stopped: '已停止。未完成的文件可以重新计算。',
+    stoppedFile: '已停止',
+    errRead: '浏览器读不到这个文件。它可能已被移动、删除或修改，或读取权限已失效。请重新选择。',
+    errWorker: '计算线程无法启动。请刷新页面后重试。',
+    errOther: '出错：{message}',
+    tooMany: '只添加了前 {max} 个文件。',
+    emptyFolder: '拖入的内容里没有文件。',
+    listLoaded: '已读取 {file}。',
+    listTooBig: '{file} 超过 1 MB，没有作为校验列表读取。',
+    autoAlgo: '已自动勾选 {algo}，用于核对期望值。',
+    badgeOk: '一致', badgeFail: '不一致', badgePending: '核对中…', badgeNoList: '列表中没有', badgeNoMatch: '不匹配',
+    okBare: '与期望的 {algo} 一致。',
+    okNamed: '与列表中 {name} 的 {algo} 一致（第 {line} 行）。',
+    okRenamed: '与列表中 {name} 的 {algo} 一致（第 {line} 行），只是文件名不同。',
+    failNamed: '与列表中 {name} 的 {algo} 不一致（第 {line} 行），从第 {pos} 个字符开始不同。',
+    failBare: '与期望的 {algo} 不一致，从第 {pos} 个字符开始不同。',
+    expected: '期望值',
+    actual: '本文件',
+    maybeOther: '如果发布方用的是 SHA3 或 BLAKE2，长度相同，但本工具不计算这两种。',
+    noEntry: '列表里没有这个文件。',
+    noMatch: '与期望的 {algo} 不匹配。',
+    summary: '{ok} 个一致 \u00b7 {fail} 个不一致',
+    summaryMissing: '列表中有 {n} 个文件没有选择：{names}',
+    bareNoMatch: '期望的 {algo} 与所选文件都不匹配。',
+    pLength: '第 {line} 行：{len} 位十六进制不是任何支持的哈希长度（CRC32 8、MD5 32、SHA-1 40、SHA-256 64、SHA-384 96、SHA-512 128），可能多了或少了字符。',
+    pBadChar: '第 {line} 行：第 {pos} 个字符「{ch}」不是十六进制数字（0–9、a–f）。',
+    pUnsupported: '第 {line} 行：不支持 {algo}。支持 SHA-256、SHA-1、SHA-384、SHA-512、MD5、CRC32。',
+    pLabel: '第 {line} 行：标注为 {label}，但 {len} 位十六进制是 {algo}。',
+    pNone: '没有找到哈希值。请粘贴十六进制或 Base64 哈希、sha256sum 行或校验文件。',
+    durS: ' 秒', durMin: ' 分', durH: ' 小时',
+    privacy: '文件由后台线程在本机读取，不上传、不保存。',
+  },
+  ja: {
+    dropTitle: 'ファイルやフォルダーをドロップ、またはクリックして選択',
+    dropSub: 'サイズ制限なし \u00b7 この端末で読み取り、アップロードしません',
+    dropAria: 'ハッシュ値を計算するファイルを選択',
+    addMore: 'ファイルを追加',
+    chooseFolder: 'フォルダーを選択',
+    algorithms: 'アルゴリズム',
+    legacyTag: '旧式',
+    crcTag: '誤り検出用',
+    copy: 'コピー', copied: 'コピーしました',
+    copyFailed: 'コピーできませんでした。値を選択して Ctrl+C（\u2318C）を押してください。',
+    remove: '{name} を削除',
+    clearAll: 'すべてクリア',
+    stop: '中止',
+    retry: '再計算',
+    upper: '大文字',
+    listOut: 'チェックサムファイル',
+    copyList: 'コピー',
+    download: 'ダウンロード',
+    expectedLabel: '期待するハッシュ値またはチェックサム一覧',
+    expectedHint: '任意。ハッシュ値、「3a1f…  file.iso」形式の行、SHA256SUMS、certutil や Get-FileHash の出力、Base64 / SRI を貼り付けられます。',
+    openList: 'チェックサムファイルを開く',
+    files: ['{n} 件のファイル', '{n} 件のファイル'],
+    progress: '{pct}% \u00b7 {rate}/s \u00b7 残り {eta}',
+    waiting: '待機中…',
+    hashing: '{total} 件中 {done} 件目を計算中 \u00b7 このページを開いたままにしてください',
+    doneAll: '{files}を {time} で計算しました。',
+    stopped: '中止しました。未完了のファイルは再計算できます。',
+    stoppedFile: '中止',
+    errRead: 'ブラウザーがこのファイルを読み取れませんでした。移動・削除・変更されたか、読み取り権限が失われた可能性があります。もう一度選択してください。',
+    errWorker: '計算用ワーカーを起動できませんでした。ページを再読み込みしてください。',
+    errOther: 'エラー：{message}',
+    tooMany: '先頭の {max} 件だけを追加しました。',
+    emptyFolder: 'ドロップした中にファイルがありません。',
+    listLoaded: '{file} を読み込みました。',
+    listTooBig: '{file} は 1 MB を超えるため、チェックサム一覧として読み込みませんでした。',
+    autoAlgo: '期待値を照合するため {algo} をオンにしました。',
+    badgeOk: '一致', badgeFail: '不一致', badgePending: '照合中…', badgeNoList: '一覧にない', badgeNoMatch: '一致せず',
+    okBare: '期待する {algo} と一致します。',
+    okNamed: '一覧の {name} の {algo} と一致します（{line} 行目）。',
+    okRenamed: '一覧の {name} の {algo} と一致します（{line} 行目）。ファイル名は異なります。',
+    failNamed: '一覧の {name} の {algo} と一致しません（{line} 行目）。{pos} 文字目から異なります。',
+    failBare: '期待する {algo} と一致しません。{pos} 文字目から異なります。',
+    expected: '期待値',
+    actual: 'このファイル',
+    maybeOther: '配布元が SHA3 や BLAKE2 を使っている場合、長さは同じでもこのツールでは計算できません。',
+    noEntry: '一覧にこのファイルの行がありません。',
+    noMatch: '期待する {algo} と一致しません。',
+    summary: '一致 {ok} 件 \u00b7 不一致 {fail} 件',
+    summaryMissing: '一覧にある {n} 件が選択されていません：{names}',
+    bareNoMatch: '期待する {algo} は、選択したどのファイルとも一致しません。',
+    pLength: '{line} 行目：{len} 桁の16進数は、対応するハッシュの長さ（CRC32 8、MD5 32、SHA-1 40、SHA-256 64、SHA-384 96、SHA-512 128）のどれでもありません。文字が欠けているか余分です。',
+    pBadChar: '{line} 行目：{pos} 文字目の「{ch}」は16進数（0–9、a–f）ではありません。',
+    pUnsupported: '{line} 行目：{algo} には対応していません。対応：SHA-256、SHA-1、SHA-384、SHA-512、MD5、CRC32。',
+    pLabel: '{line} 行目：{label} と書かれていますが、{len} 桁の16進数は {algo} です。',
+    pNone: 'ハッシュ値が見つかりません。16進数か Base64 のハッシュ値、sha256sum の行、チェックサムファイルを貼り付けてください。',
+    durS: ' 秒', durMin: ' 分', durH: ' 時間',
+    privacy: 'ファイルはバックグラウンドのワーカーがこの端末で読み取ります。アップロードも保存もしません。',
+  },
+  ko: {
+    dropTitle: '파일이나 폴더를 끌어다 놓거나 클릭해서 선택',
+    dropSub: '크기 제한 없음 \u00b7 이 기기에서 읽고 업로드하지 않음',
+    dropAria: '해시를 계산할 파일 선택',
+    addMore: '파일 추가',
+    chooseFolder: '폴더 선택',
+    algorithms: '알고리즘',
+    legacyTag: '구식',
+    crcTag: '오류 검출용',
+    copy: '복사', copied: '복사됨!',
+    copyFailed: '복사하지 못했습니다. 값을 선택하고 Ctrl+C(\u2318C)를 누르세요.',
+    remove: '{name} 제거',
+    clearAll: '모두 지우기',
+    stop: '중지',
+    retry: '다시 계산',
+    upper: '대문자',
+    listOut: '체크섬 파일',
+    copyList: '복사',
+    download: '다운로드',
+    expectedLabel: '기대 해시값 또는 체크섬 목록',
+    expectedHint: '선택 사항. 해시값, “3a1f…  file.iso” 형식의 줄, SHA256SUMS, certutil·Get-FileHash 출력, Base64 / SRI를 붙여 넣을 수 있습니다.',
+    openList: '체크섬 파일 열기',
+    files: ['파일 {n}개', '파일 {n}개'],
+    progress: '{pct}% \u00b7 {rate}/s \u00b7 {eta} 남음',
+    waiting: '대기 중…',
+    hashing: '{total}개 중 {done}번째 계산 중 \u00b7 페이지를 열어 두세요',
+    doneAll: '{files}의 해시를 {time} 만에 계산했습니다.',
+    stopped: '중지했습니다. 끝나지 않은 파일은 다시 계산할 수 있습니다.',
+    stoppedFile: '중지됨',
+    errRead: '브라우저가 이 파일을 읽지 못했습니다. 파일이 이동·삭제·변경되었거나 읽기 권한이 사라졌을 수 있습니다. 다시 선택하세요.',
+    errWorker: '계산용 워커를 시작하지 못했습니다. 페이지를 새로 고친 뒤 다시 시도하세요.',
+    errOther: '오류: {message}',
+    tooMany: '처음 {max}개 파일만 추가했습니다.',
+    emptyFolder: '끌어다 놓은 항목에 파일이 없습니다.',
+    listLoaded: '{file}을(를) 읽었습니다.',
+    listTooBig: '{file}은(는) 1MB를 넘어서 체크섬 목록으로 읽지 않았습니다.',
+    autoAlgo: '기대값을 확인하려고 {algo}을(를) 켰습니다.',
+    badgeOk: '일치', badgeFail: '불일치', badgePending: '확인 중…', badgeNoList: '목록에 없음', badgeNoMatch: '일치 안 함',
+    okBare: '기대한 {algo}와 일치합니다.',
+    okNamed: '목록의 {name} {algo}와 일치합니다({line}번째 줄).',
+    okRenamed: '목록의 {name} {algo}와 일치합니다({line}번째 줄). 파일 이름은 다릅니다.',
+    failNamed: '목록의 {name} {algo}와 일치하지 않습니다({line}번째 줄). {pos}번째 글자부터 다릅니다.',
+    failBare: '기대한 {algo}와 일치하지 않습니다. {pos}번째 글자부터 다릅니다.',
+    expected: '기대값',
+    actual: '이 파일',
+    maybeOther: '배포처가 SHA3나 BLAKE2를 썼다면 길이는 같지만 이 도구로는 계산할 수 없습니다.',
+    noEntry: '목록에 이 파일이 없습니다.',
+    noMatch: '기대한 {algo}와 일치하지 않습니다.',
+    summary: '일치 {ok}개 \u00b7 불일치 {fail}개',
+    summaryMissing: '목록에 있는 {n}개 파일을 선택하지 않았습니다: {names}',
+    bareNoMatch: '기대한 {algo}와 일치하는 파일이 없습니다.',
+    pLength: '{line}번째 줄: 16진수 {len}자리는 지원하는 해시 길이(CRC32 8, MD5 32, SHA-1 40, SHA-256 64, SHA-384 96, SHA-512 128)가 아닙니다. 글자가 빠졌거나 더 들어갔을 수 있습니다.',
+    pBadChar: '{line}번째 줄: {pos}번째 글자 “{ch}”는 16진수(0–9, a–f)가 아닙니다.',
+    pUnsupported: '{line}번째 줄: {algo}는 지원하지 않습니다. 지원: SHA-256, SHA-1, SHA-384, SHA-512, MD5, CRC32.',
+    pLabel: '{line}번째 줄: {label}(으)로 적혀 있지만 16진수 {len}자리는 {algo}입니다.',
+    pNone: '해시값을 찾지 못했습니다. 16진수나 Base64 해시, sha256sum 줄, 체크섬 파일을 붙여 넣으세요.',
+    durS: '초', durMin: '분', durH: '시간',
+    privacy: '파일은 백그라운드 워커가 이 기기에서 읽습니다. 업로드하거나 저장하지 않습니다.',
+  },
+} as const;
+
+const T = STRINGS[lang];
+const ALGO_UI = [
+  { id: 'SHA-256', checked: true, tag: '' },
+  { id: 'SHA-1', checked: false, tag: T.legacyTag },
+  { id: 'SHA-384', checked: false, tag: '' },
+  { id: 'SHA-512', checked: false, tag: '' },
+  { id: 'MD5', checked: false, tag: T.legacyTag },
+  { id: 'CRC32', checked: false, tag: T.crcTag },
+];
 ---
+
 <div>
-  <div class="fhc-wrap">
-    {/* Upload / drag zone */}
-    <div id="fhc-dropzone" class="fhc-dropzone" tabindex="0" role="button" aria-label="Choose a file to hash">
-      <svg class="fhc-dz-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="16" y2="18"/><line x1="12" y1="12" x2="10" y2="20"/><line x1="15" y1="12" x2="13" y2="20"/></svg>
-      <p id="fhc-dz-hint" class="fhc-dz-hint" data-i18n="dropHint">Drop a file, or click to choose</p>
-      <p class="fhc-dz-sub" data-i18n="dropSub">Any file · best up to ~1 GB · hashed in your browser</p>
-      <input type="file" id="fhc-file" hidden />
+  <div class="fhc-wrap" id="fhc-wrap">
+    <div id="fhc-drop" class="fhc-drop" role="button" tabindex="0" aria-label={T.dropAria}>
+      <svg class="fhc-drop-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6M9 18h6M11 12l-1 8M14 12l-1 8"/>
+      </svg>
+      <span class="fhc-drop-text">
+        <span class="fhc-drop-title" data-full={T.dropTitle} data-compact={T.addMore}>{T.dropTitle}</span>
+        <span class="fhc-drop-sub">{T.dropSub}</span>
+      </span>
+    </div>
+    <input type="file" id="fhc-file" multiple hidden />
+    <input type="file" id="fhc-dir" webkitdirectory multiple hidden />
+
+    <div class="fhc-bar">
+      <fieldset class="fhc-algos">
+        <legend class="fhc-sr">{T.algorithms}</legend>
+        {ALGO_UI.map((a) => (
+          <label class="fhc-algo"><input type="checkbox" data-algo={a.id} checked={a.checked} /><span>{a.id}{a.tag && <em class="fhc-tag">{a.tag}</em>}</span></label>
+        ))}
+      </fieldset>
+      <button type="button" id="fhc-pick-dir" class="btn-ghost btn-sm fhc-pick-dir">{T.chooseFolder}</button>
     </div>
 
-    {/* File info row */}
-    <div id="fhc-file-info" class="fhc-file-info" style="display:none">
-      <div class="fhc-file-meta">
-        <span id="fhc-filename" class="fhc-filename"></span>
-        <span id="fhc-filesize" class="fhc-filesize"></span>
+    <p id="fhc-status" class="tool-status fhc-status" role="status" aria-live="polite"></p>
+    <ul id="fhc-list" class="fhc-list" hidden></ul>
+
+    <div id="fhc-tools" class="fhc-tools" hidden>
+      <label class="fhc-upper"><input type="checkbox" id="fhc-upper" /> {T.upper}</label>
+      <span class="fhc-out">
+        <label for="fhc-out-algo" class="fhc-out-label">{T.listOut}</label>
+        <select id="fhc-out-algo" class="tool-input fhc-out-algo"></select>
+        <button type="button" id="fhc-out-copy" class="btn-copy">{T.copyList}</button>
+        <button type="button" id="fhc-out-dl" class="btn-secondary btn-sm">{T.download}</button>
+      </span>
+      <span class="fhc-tools-end">
+        <button type="button" id="fhc-stop" class="btn-secondary btn-sm" hidden>{T.stop}</button>
+        <button type="button" id="fhc-clear" class="btn-ghost btn-sm">{T.clearAll}</button>
+      </span>
+    </div>
+
+    <div class="fhc-verify">
+      <div class="fhc-verify-head">
+        <label for="fhc-expected" class="tool-label fhc-verify-label">{T.expectedLabel}</label>
+        <button type="button" id="fhc-open-list" class="btn-ghost btn-sm">{T.openList}</button>
+        <input type="file" id="fhc-list-file" hidden />
       </div>
-      <button id="fhc-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+      <textarea id="fhc-expected" class="tool-textarea fhc-expected" rows="2" spellcheck="false" autocomplete="off" aria-describedby="fhc-expected-hint"></textarea>
+      <p id="fhc-expected-hint" class="fhc-hint">{T.expectedHint}</p>
+      <div id="fhc-verify-out" class="fhc-verify-out" aria-live="polite"></div>
     </div>
 
-    {/* Algorithms */}
-    <fieldset class="fhc-algo-fieldset">
-      <legend class="fhc-algo-legend" data-i18n="algorithms">Algorithms</legend>
-      <div class="fhc-algo-grid">
-        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-256" checked /> <span>SHA-256</span></label>
-        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-1" /> <span>SHA-1</span></label>
-        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-384" /> <span>SHA-384</span></label>
-        <label class="fhc-algo-item"><input type="checkbox" data-algo="SHA-512" /> <span>SHA-512</span></label>
-        <label class="fhc-algo-item"><input type="checkbox" data-algo="MD5" /> <span>MD5 <em class="fhc-legacy" data-i18n="legacyTag">(legacy)</em></span></label>
-      </div>
-    </fieldset>
-
-    <div class="fhc-actions">
-      <button id="fhc-compute" class="btn-primary" disabled data-i18n="compute">Compute Hashes</button>
-    </div>
-
-    <div id="fhc-status" class="tool-status" aria-live="polite"></div>
-
-    {/* Results */}
-    <div id="fhc-results" class="fhc-results"></div>
-
-    {/* Verify panel */}
-    <div id="fhc-verify" class="fhc-verify" style="display:none">
-      <label for="fhc-expected" class="fhc-verify-label" data-i18n="verifyLabel">Compare with expected hash (optional)</label>
-      <input id="fhc-expected" type="text" class="tool-input fhc-verify-input" spellcheck="false" autocomplete="off" />
-      <p id="fhc-verify-status" class="fhc-verify-status" aria-live="polite" data-i18n="verifyHint">Paste an expected hash above to verify against your results.</p>
-    </div>
-
-    {/* Privacy badge */}
-    <p class="fhc-privacy">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span data-i18n="privacy">100% client-side — the file never leaves your browser</span>
-    </p>
+    <p class="fhc-privacy">{T.privacy}</p>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ S: T, pageLang: lang }}>
     (function () {
-      var STRINGS = {
-        en: {
-          dropHint: 'Drop a file, or click to choose',
-          dropSub: 'Any file · best up to ~1 GB · hashed in your browser',
-          algorithms: 'Algorithms',
-          legacyTag: '(legacy)',
-          compute: 'Compute Hashes',
-          computing: 'Computing…',
-          done: 'Hashes computed.',
-          clear: 'Clear',
-          copy: 'Copy',
-          copied: 'Copied!',
-          verifyLabel: 'Compare with expected hash (optional)',
-          verifyHint: 'Paste an expected hash above to verify against your results.',
-          verifyMatch: 'Matches ',
-          verifyNoMatch: 'No match against any computed hash.',
-          fileMeta: 'File',
-          errRead: 'Could not read the file.',
-          errNoAlgo: 'Pick at least one algorithm.',
-          warnLargeFile: 'Files over 1 GB may be slow or run out of browser memory. For TB-scale archives use sha256sum on the command line.',
-          warnLargeMd5: 'MD5 on large files (>100 MB) is much slower than SHA-256 in JavaScript. SHA-256 is recommended for new verification flows.'
-        },
-        zh: {
-          dropHint: '拖入文件，或点击选择',
-          dropSub: '任意文件 · 推荐 ≤1 GB · 在浏览器中计算',
-          algorithms: '算法',
-          legacyTag: '（旧）',
-          compute: '计算哈希',
-          computing: '计算中…',
-          done: '已完成。',
-          clear: '清除',
-          copy: '复制',
-          copied: '已复制！',
-          verifyLabel: '与期望哈希值比对（可选）',
-          verifyHint: '粘贴期望哈希值，与计算结果自动比对。',
-          verifyMatch: '匹配 ',
-          verifyNoMatch: '未匹配任何已计算的哈希。',
-          fileMeta: '文件',
-          errRead: '读取文件失败。',
-          errNoAlgo: '请至少选择一种算法。',
-          warnLargeFile: '超过 1 GB 的文件可能导致浏览器变慢或内存不足。TB 级归档请使用命令行 sha256sum。',
-          warnLargeMd5: 'MD5 处理超 100 MB 文件在 JS 中比 SHA-256 慢得多，新流程建议改用 SHA-256。'
-        },
-        ja: {
-          dropHint: 'ファイルをドロップ、またはクリックして選択',
-          dropSub: '任意ファイル · 推奨 1 GB 以下 · ブラウザ内で計算',
-          algorithms: 'アルゴリズム',
-          legacyTag: '（レガシー）',
-          compute: 'ハッシュを計算',
-          computing: '計算中…',
-          done: '完了しました。',
-          clear: 'クリア',
-          copy: 'コピー',
-          copied: 'コピー済み！',
-          verifyLabel: '期待されるハッシュ値と照合（任意）',
-          verifyHint: '期待ハッシュをここに貼ると結果と自動照合します。',
-          verifyMatch: '一致 ',
-          verifyNoMatch: '計算済みのいずれとも一致しません。',
-          fileMeta: 'ファイル',
-          errRead: 'ファイルを読み込めませんでした。',
-          errNoAlgo: '少なくとも 1 つのアルゴリズムを選択してください。',
-          warnLargeFile: '1 GB を超えるファイルはブラウザのメモリ不足や遅延を招くことがあります。TB 級は sha256sum コマンドを推奨。',
-          warnLargeMd5: 'JS の MD5 は 100 MB を超えるとSHA-256 より大幅に遅くなります。新規用途では SHA-256 を推奨。'
-        },
-        ko: {
-          dropHint: '파일을 끌어다 놓거나 클릭해 선택',
-          dropSub: '임의 파일 · 1 GB 이하 권장 · 브라우저에서 계산',
-          algorithms: '알고리즘',
-          legacyTag: '(레거시)',
-          compute: '해시 계산',
-          computing: '계산 중…',
-          done: '완료.',
-          clear: '지우기',
-          copy: '복사',
-          copied: '복사됨!',
-          verifyLabel: '기대 해시값과 비교 (선택)',
-          verifyHint: '기대 해시를 붙여 넣으면 결과와 자동 비교합니다.',
-          verifyMatch: '일치 ',
-          verifyNoMatch: '계산된 어느 해시와도 일치하지 않습니다.',
-          fileMeta: '파일',
-          errRead: '파일을 읽을 수 없습니다.',
-          errNoAlgo: '하나 이상의 알고리즘을 선택하세요.',
-          warnLargeFile: '1 GB 이상 파일은 브라우저 메모리 부족이나 지연이 발생할 수 있습니다. TB 규모는 sha256sum CLI 사용 권장.',
-          warnLargeMd5: 'JS의 MD5는 100 MB 이상에서 SHA-256보다 훨씬 느립니다. 새 검증 흐름에는 SHA-256 권장.'
+      /* ── engine:start ── */
+      var ALGOS = [
+        { id: 'SHA-256', hex: 64 },
+        { id: 'SHA-1', hex: 40 },
+        { id: 'SHA-384', hex: 96 },
+        { id: 'SHA-512', hex: 128 },
+        { id: 'MD5', hex: 32 },
+        { id: 'CRC32', hex: 8 }
+      ];
+      var MAX_LIST_BYTES = 1048576;
+      var LABEL_RE = /(?:^|[^A-Za-z0-9])(MD5|SHA-?1|SHA(?:2-|-)?(?:224|256|384|512)(?:\/(?:224|256))?|SHA3-?\d+|BLAKE2[bs]?|BLAKE3|B2|CRC-?32)(?![A-Za-z0-9])/i;
+
+      function fill(tpl, vars) {
+        return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] !== undefined ? String(vars[k]) : m; });
+      }
+      function plural(pair, n, lang) {
+        var s = new Intl.NumberFormat(lang || 'en').format(n);
+        return fill(n === 1 ? pair[0] : pair[1], { n: s });
+      }
+      function formatBytes(n, lang) {
+        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var i = 0;
+        var v = n;
+        while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+        return new Intl.NumberFormat(lang || 'en', { maximumFractionDigits: i === 0 ? 0 : 1 }).format(v) + ' ' + units[i];
+      }
+      function formatDuration(sec, units) {
+        var u = units || { s: ' s', min: ' min', h: ' h' };
+        if (sec < 0.1) return '< 0.1' + u.s;
+        if (sec < 10) return (Math.round(sec * 10) / 10) + u.s;
+        if (sec < 60) return Math.round(sec) + u.s;
+        var m = Math.floor(sec / 60);
+        if (m < 60) return m + u.min + ' ' + Math.round(sec - m * 60) + u.s;
+        return Math.floor(m / 60) + u.h + ' ' + (m % 60) + u.min;
+      }
+      function algoByLen(n) {
+        for (var i = 0; i < ALGOS.length; i++) if (ALGOS[i].hex === n) return ALGOS[i].id;
+        return null;
+      }
+      function hexLen(algo) {
+        for (var i = 0; i < ALGOS.length; i++) if (ALGOS[i].id === algo) return ALGOS[i].hex;
+        return 0;
+      }
+      // A label such as "SHA256", "sha2-256", "SHA256SUMS" or "md5sum" → algorithm id,
+      // "unsupported:NAME", or null.
+      function labelAlgo(label) {
+        var s = String(label).trim().toUpperCase();
+        var u = s.replace(/[-_\s]/g, '');
+        if (/^(SHA3(224|256|384|512)?(SUMS?)?|KECCAK\d*|SHAKE\d*)$/.test(u)) return 'unsupported:SHA3';
+        if (/^(BLAKE2|B2)/.test(u)) return 'unsupported:BLAKE2';
+        if (/^BLAKE3/.test(u)) return 'unsupported:BLAKE3';
+        var m = /^(MD5|SHA1|SHA2?(224|256|384|512)(\/(224|256))?|CRC32)(SUMS?)?$/.exec(u);
+        if (!m) return null;
+        if (m[1] === 'MD5') return 'MD5';
+        if (m[1] === 'SHA1') return 'SHA-1';
+        if (m[1] === 'CRC32') return 'CRC32';
+        if (m[3]) return 'unsupported:SHA-' + m[2] + m[3];
+        if (m[2] === '224') return 'unsupported:SHA-224';
+        return 'SHA-' + m[2];
+      }
+      // Algorithm implied by a checksum file name (SHA256SUMS, x.iso.sha256, MD5SUMS, game.sfv).
+      function listHint(name) {
+        var b = String(name || '').split(/[\\/]/).pop().toLowerCase();
+        if (/\.sfv$/.test(b)) return 'CRC32';
+        if (/(^|[^a-z0-9])(b2|blake2b?|blake2s)(sums?)?([^a-z0-9]|$)/.test(b)) return 'unsupported:BLAKE2';
+        if (/sha3[-_]?(224|256|384|512)?(?![0-9])/.test(b)) return 'unsupported:SHA3';
+        if (/blake3|b3sum/.test(b)) return 'unsupported:BLAKE3';
+        if (/sha-?512/.test(b)) return 'SHA-512';
+        if (/sha-?384/.test(b)) return 'SHA-384';
+        if (/sha-?256/.test(b)) return 'SHA-256';
+        if (/sha-?224/.test(b)) return 'unsupported:SHA-224';
+        if (/sha-?1(?![0-9])/.test(b)) return 'SHA-1';
+        if (/md5/.test(b)) return 'MD5';
+        if (/crc-?32/.test(b)) return 'CRC32';
+        return null;
+      }
+      function normalizeHexInput(text) {
+        return String(text || '').normalize('NFKC').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+      }
+      function relPathKey(p) {
+        return String(p || '').normalize('NFKC').replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\//, '');
+      }
+      function baseName(p) { return String(p).split(/[\\/]/).pop(); }
+      function bytesToHex(bytes) {
+        var s = '';
+        for (var i = 0; i < bytes.length; i++) s += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+        return s;
+      }
+      // Base64 or base64url digest → hex, or null. Unpadded forms only when allowUnpadded.
+      function base64Digest(tok, allowUnpadded) {
+        if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(tok)) return null;
+        if (/[+/]/.test(tok) && /[-_]/.test(tok)) return null;
+        var body = tok.replace(/=+$/, '');
+        var pad = tok.length - body.length;
+        var bytes = Math.floor(body.length * 3 / 4);
+        if (!algoByLen(bytes * 2) || bytes < 4) return null;
+        var expectPad = (4 - body.length % 4) % 4;
+        if (body.length % 4 === 1) return null;
+        if (pad ? pad !== expectPad : (expectPad && !allowUnpadded)) return null;
+        if (!pad && !expectPad && !allowUnpadded && /^[0-9A-Fa-f]+$/.test(body)) return null;
+        var std = body.replace(/-/g, '+').replace(/_/g, '/');
+        var A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        var out = [];
+        var buf = 0, bits = 0;
+        for (var i = 0; i < std.length; i++) {
+          buf = (buf << 6) | A.indexOf(std[i]);
+          bits += 6;
+          if (bits >= 8) { bits -= 8; out.push((buf >> bits) & 255); }
         }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.fhc-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-
-      var dropzone   = document.getElementById('fhc-dropzone');
-      var fileInput  = document.getElementById('fhc-file');
-      var infoEl     = document.getElementById('fhc-file-info');
-      var nameEl     = document.getElementById('fhc-filename');
-      var sizeEl     = document.getElementById('fhc-filesize');
-      var clearBtn   = document.getElementById('fhc-clear');
-      var computeBtn = document.getElementById('fhc-compute');
-      var statusEl   = document.getElementById('fhc-status');
-      var resultsEl  = document.getElementById('fhc-results');
-      var verifyEl   = document.getElementById('fhc-verify');
-      var expectedEl = document.getElementById('fhc-expected');
-      var vStatusEl  = document.getElementById('fhc-verify-status');
-
-      var currentFile = null;
-      var lastResults = {};
-
-      function fmtBytes(n) {
-        if (n < 1024) return n + ' B';
-        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-        if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
-        return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        if (out.length !== bytes) return null;
+        return bytesToHex(out);
+      }
+      function firstDiff(a, b) {
+        var n = Math.min(a.length, b.length);
+        for (var i = 0; i < n; i++) if (a[i] !== b[i]) return i;
+        return a.length === b.length ? -1 : n;
       }
 
-      function setStatus(msg, kind) {
-        statusEl.textContent = msg || '';
-        statusEl.className = 'tool-status' + (kind ? ' ' + kind : '');
-      }
-
-      function setFile(file) {
-        currentFile = file;
-        if (file) {
-          nameEl.textContent = file.name || '(unnamed)';
-          sizeEl.textContent = fmtBytes(file.size);
-          infoEl.style.display = '';
-          computeBtn.disabled = false;
-        } else {
-          infoEl.style.display = 'none';
-          computeBtn.disabled = true;
+      // Read expected values from pasted text or a checksum file. Returns
+      // { entries: [{ hex, algo, hinted, name, line, form }], problems: [{ code, line, ... }] }.
+      function parseExpected(text, listName) {
+        var out = { entries: [], problems: [] };
+        var src = normalizeHexInput(text);
+        if (!src.trim()) return out;
+        var lines = src.split('\n');
+        var listAlgo = listName ? listHint(listName) : null;
+        if (listAlgo && listAlgo.indexOf('unsupported:') === 0) {
+          out.problems.push({ code: 'unsupported', line: 1, algo: listAlgo.slice(12) });
+          return out;
         }
-        resultsEl.innerHTML = '';
-        verifyEl.style.display = 'none';
-        expectedEl.value = '';
-        vStatusEl.textContent = t.verifyHint;
-        vStatusEl.className = 'fhc-verify-status';
-        lastResults = {};
-        setStatus('');
-      }
+        var ctx = null; // { algo, name } from a certutil header or a Get-FileHash "Algorithm :" line
 
-      /* ── MD5 (public-domain implementation, binary-safe) ──
-         Byte-indexed packing into an Int32Array avoids the 32-bit
-         signed overflow that bites the bit-indexed variant at the
-         256 MB mark; a true 64-bit length is written into the last
-         two words so files above 512 MB still pad correctly. */
-      function md5Bytes(bytes) {
-        function safeAdd(x, y) { var lsw = (x & 0xffff) + (y & 0xffff); return (((x >> 16) + (y >> 16) + (lsw >> 16)) << 16) | (lsw & 0xffff); }
-        function bitRotateLeft(num, cnt) { return (num << cnt) | (num >>> (32 - cnt)); }
-        function md5cmn(q, a, b, x, s, t2) { return safeAdd(bitRotateLeft(safeAdd(safeAdd(a, q), safeAdd(x, t2)), s), b); }
-        function md5ff(a, b, c, d, x, s, t2) { return md5cmn((b & c) | ((~b) & d), a, b, x, s, t2); }
-        function md5gg(a, b, c, d, x, s, t2) { return md5cmn((b & d) | (c & (~d)), a, b, x, s, t2); }
-        function md5hh(a, b, c, d, x, s, t2) { return md5cmn(b ^ c ^ d, a, b, x, s, t2); }
-        function md5ii(a, b, c, d, x, s, t2) { return md5cmn(c ^ (b | (~d)), a, b, x, s, t2); }
-        function binlToHex(input) {
-          var hex = '0123456789abcdef', output = '';
-          for (var i = 0; i < input.length * 4; i++) {
-            output += hex.charAt((input[i >> 2] >> ((i % 4) * 8 + 4)) & 0x0f) + hex.charAt((input[i >> 2] >> ((i % 4) * 8)) & 0x0f);
+        function add(hex, line, form, name, label) {
+          hex = hex.toLowerCase();
+          var byLen = algoByLen(hex.length);
+          var hint = label ? labelAlgo(label) : (ctx && ctx.algo) || listAlgo;
+          if (hint && hint.indexOf('unsupported:') === 0) { out.problems.push({ code: 'unsupported', line: line, algo: hint.slice(12) }); return; }
+          if (!byLen) {
+            if (hex.length === 56) out.problems.push({ code: 'unsupported', line: line, algo: 'SHA-224' });
+            else out.problems.push({ code: 'length', line: line, len: hex.length });
+            return;
           }
-          return output;
-        }
-        function binlMD5(x) {
-          var i, olda, oldb, oldc, oldd, a = 1732584193, b = -271733879, c = -1732584194, d = 271733878;
-          for (i = 0; i < x.length; i += 16) {
-            olda = a; oldb = b; oldc = c; oldd = d;
-            a = md5ff(a, b, c, d, x[i], 7, -680876936); d = md5ff(d, a, b, c, x[i + 1], 12, -389564586); c = md5ff(c, d, a, b, x[i + 2], 17, 606105819); b = md5ff(b, c, d, a, x[i + 3], 22, -1044525330);
-            a = md5ff(a, b, c, d, x[i + 4], 7, -176418897); d = md5ff(d, a, b, c, x[i + 5], 12, 1200080426); c = md5ff(c, d, a, b, x[i + 6], 17, -1473231341); b = md5ff(b, c, d, a, x[i + 7], 22, -45705983);
-            a = md5ff(a, b, c, d, x[i + 8], 7, 1770035416); d = md5ff(d, a, b, c, x[i + 9], 12, -1958414417); c = md5ff(c, d, a, b, x[i + 10], 17, -42063); b = md5ff(b, c, d, a, x[i + 11], 22, -1990404162);
-            a = md5ff(a, b, c, d, x[i + 12], 7, 1804603682); d = md5ff(d, a, b, c, x[i + 13], 12, -40341101); c = md5ff(c, d, a, b, x[i + 14], 17, -1502002290); b = md5ff(b, c, d, a, x[i + 15], 22, 1236535329);
-            a = md5gg(a, b, c, d, x[i + 1], 5, -165796510); d = md5gg(d, a, b, c, x[i + 6], 9, -1069501632); c = md5gg(c, d, a, b, x[i + 11], 14, 643717713); b = md5gg(b, c, d, a, x[i], 20, -373897302);
-            a = md5gg(a, b, c, d, x[i + 5], 5, -701558691); d = md5gg(d, a, b, c, x[i + 10], 9, 38016083); c = md5gg(c, d, a, b, x[i + 15], 14, -660478335); b = md5gg(b, c, d, a, x[i + 4], 20, -405537848);
-            a = md5gg(a, b, c, d, x[i + 9], 5, 568446438); d = md5gg(d, a, b, c, x[i + 14], 9, -1019803690); c = md5gg(c, d, a, b, x[i + 3], 14, -187363961); b = md5gg(b, c, d, a, x[i + 8], 20, 1163531501);
-            a = md5gg(a, b, c, d, x[i + 13], 5, -1444681467); d = md5gg(d, a, b, c, x[i + 2], 9, -51403784); c = md5gg(c, d, a, b, x[i + 7], 14, 1735328473); b = md5gg(b, c, d, a, x[i + 12], 20, -1926607734);
-            a = md5hh(a, b, c, d, x[i + 5], 4, -378558); d = md5hh(d, a, b, c, x[i + 8], 11, -2022574463); c = md5hh(c, d, a, b, x[i + 11], 16, 1839030562); b = md5hh(b, c, d, a, x[i + 14], 23, -35309556);
-            a = md5hh(a, b, c, d, x[i + 1], 4, -1530992060); d = md5hh(d, a, b, c, x[i + 4], 11, 1272893353); c = md5hh(c, d, a, b, x[i + 7], 16, -155497632); b = md5hh(b, c, d, a, x[i + 10], 23, -1094730640);
-            a = md5hh(a, b, c, d, x[i + 13], 4, 681279174); d = md5hh(d, a, b, c, x[i], 11, -358537222); c = md5hh(c, d, a, b, x[i + 3], 16, -722521979); b = md5hh(b, c, d, a, x[i + 6], 23, 76029189);
-            a = md5hh(a, b, c, d, x[i + 9], 4, -640364487); d = md5hh(d, a, b, c, x[i + 12], 11, -421815835); c = md5hh(c, d, a, b, x[i + 15], 16, 530742520); b = md5hh(b, c, d, a, x[i + 2], 23, -995338651);
-            a = md5ii(a, b, c, d, x[i], 6, -198630844); d = md5ii(d, a, b, c, x[i + 7], 10, 1126891415); c = md5ii(c, d, a, b, x[i + 14], 15, -1416354905); b = md5ii(b, c, d, a, x[i + 5], 21, -57434055);
-            a = md5ii(a, b, c, d, x[i + 12], 6, 1700485571); d = md5ii(d, a, b, c, x[i + 3], 10, -1894986606); c = md5ii(c, d, a, b, x[i + 10], 15, -1051523); b = md5ii(b, c, d, a, x[i + 1], 21, -2054922799);
-            a = md5ii(a, b, c, d, x[i + 8], 6, 1873313359); d = md5ii(d, a, b, c, x[i + 15], 10, -30611744); c = md5ii(c, d, a, b, x[i + 6], 15, -1560198380); b = md5ii(b, c, d, a, x[i + 13], 21, 1309151649);
-            a = md5ii(a, b, c, d, x[i + 4], 6, -145523070); d = md5ii(d, a, b, c, x[i + 11], 10, -1120210379); c = md5ii(c, d, a, b, x[i + 2], 15, 718787259); b = md5ii(b, c, d, a, x[i + 9], 21, -343485551);
-            a = safeAdd(a, olda); b = safeAdd(b, oldb); c = safeAdd(c, oldc); d = safeAdd(d, oldd);
+          if (hint && hint !== byLen) {
+            out.problems.push({ code: 'label', line: line, label: label || hint, len: hex.length, algo: byLen });
+            return;
           }
-          return [a, b, c, d];
+          out.entries.push({ hex: hex, algo: byLen, hinted: !!hint, name: name || (ctx && ctx.name) || null, line: line, form: form });
         }
-        var len = bytes.length;
-        // Padded length in 32-bit words: original bytes + 0x80 sentinel + room for two 32-bit length words,
-        // rounded up to the next 16-word (512-bit) block.
-        var words = new Int32Array(((len + 8) >> 6) + 1 << 4);
-        for (var i = 0; i < len; i++) words[i >> 2] |= (bytes[i] & 0xff) << ((i % 4) * 8);
-        words[len >> 2] |= 0x80 << ((len % 4) * 8);
-        // 64-bit bit-length, little-endian, written as two 32-bit halves.
-        var bitLen = len * 8;
-        words[words.length - 2] = bitLen | 0;
-        words[words.length - 1] = Math.floor(bitLen / 4294967296);
-        return binlToHex(binlMD5(words));
-      }
 
-      function bufToHex(buf) {
-        var bytes = new Uint8Array(buf);
-        var hex = new Array(bytes.length);
-        for (var i = 0; i < bytes.length; i++) hex[i] = ('0' + bytes[i].toString(16)).slice(-2);
-        return hex.join('');
-      }
+        for (var i = 0; i < lines.length; i++) {
+          var ln = i + 1;
+          var raw = lines[i];
+          var line = raw.trim();
+          if (!line || line[0] === '#' || line[0] === ';') continue;
+          var m;
 
-      function makeRow(label, value, legacy) {
-        var row = document.createElement('div');
-        row.className = 'fhc-row';
-        var labelHtml = '<span class="fhc-row-label">' + label + (legacy ? ' <em class="fhc-legacy">' + t.legacyTag + '</em>' : '') + '</span>';
-        var valHtml = '<code class="fhc-row-value" id="fhc-val-' + label + '"></code>';
-        row.innerHTML = labelHtml + valHtml + '<button class="btn-copy" type="button" data-label="' + label + '">' + t.copy + '</button>';
-        row.querySelector('.fhc-row-value').textContent = value;
-        return row;
-      }
+          // certutil: "SHA256 hash of C:\path\file.iso:" — applies to the next line.
+          if ((m = /^(\S+) hash of (.+):$/i.exec(line))) { ctx = { algo: labelAlgo(m[1]), name: baseName(m[2]) }; continue; }
+          if (/^CertUtil:/i.test(line)) { ctx = null; continue; }
+          // Get-FileHash -Format List
+          if ((m = /^Algorithm\s*:\s*(\S+)$/i.exec(line))) { ctx = { algo: labelAlgo(m[1]), name: null }; continue; }
+          if ((m = /^Path\s*:\s*(.+)$/i.exec(line))) {
+            var last = out.entries[out.entries.length - 1];
+            if (last && !last.name && ln - last.line <= 2) last.name = baseName(m[1]);
+            continue;
+          }
 
-      function pickedAlgos() {
-        var checked = [];
-        document.querySelectorAll('.fhc-algo-item input[type=checkbox]').forEach(function (cb) {
-          if (cb.checked) checked.push(cb.getAttribute('data-algo'));
-        });
-        return checked;
-      }
-
-      function ensureSha256(algos) {
-        if (algos.length === 0) {
-          var sha = document.querySelector('.fhc-algo-item input[data-algo="SHA-256"]');
-          if (sha) sha.checked = true;
-          return ['SHA-256'];
-        }
-        return algos;
-      }
-
-      function refreshVerify() {
-        // Strip whitespace and lower-case, then look for a computed hash as a
-        // substring. This accepts every common paste shape: bare hex,
-        // 'sha256sum file.iso' lines (hash + filename), Windows certutil output
-        // (header + 'AA BB CC …' + footer), or a SHA256SUMS file line.
-        var raw = (expectedEl.value || '').replace(/\s+/g, '').toLowerCase();
-        if (!raw) {
-          vStatusEl.textContent = t.verifyHint;
-          vStatusEl.className = 'fhc-verify-status';
-          return;
-        }
-        var hit = null;
-        Object.keys(lastResults).forEach(function (algo) {
-          var hash = lastResults[algo] && lastResults[algo].toLowerCase();
-          if (hash && raw.indexOf(hash) !== -1) hit = algo;
-        });
-        if (hit) {
-          vStatusEl.textContent = t.verifyMatch + hit + ' ✓';
-          vStatusEl.className = 'fhc-verify-status match';
-        } else {
-          vStatusEl.textContent = t.verifyNoMatch + ' ✗';
-          vStatusEl.className = 'fhc-verify-status no-match';
-        }
-      }
-
-      async function compute() {
-        if (!currentFile) return;
-        var algos = ensureSha256(pickedAlgos());
-        var size = currentFile.size || 0;
-
-        // Soft warnings (non-blocking)
-        var warnings = [];
-        if (size > 1024 * 1024 * 1024) warnings.push(t.warnLargeFile);
-        if (algos.indexOf('MD5') !== -1 && size > 100 * 1024 * 1024) warnings.push(t.warnLargeMd5);
-
-        computeBtn.disabled = true;
-        resultsEl.innerHTML = '';
-        verifyEl.style.display = 'none';
-        lastResults = {};
-        setStatus(t.computing);
-
-        try {
-          var buf = await currentFile.arrayBuffer();
-          for (var i = 0; i < algos.length; i++) {
-            var algo = algos[i];
-            setStatus(t.computing + ' ' + algo);
-            var hex;
-            if (algo === 'MD5') {
-              hex = md5Bytes(new Uint8Array(buf));
-            } else {
-              var digest = await crypto.subtle.digest(algo, buf);
-              hex = bufToHex(digest);
+          // Hex groups (old certutil "e3 b0 c4 …", gpg --print-md "name: E3B0C442 98FC1C14 …"), maybe wrapped.
+          if ((m = /^(?:(.+?):\s+)?((?:[0-9A-Fa-f]{2,8}\s+){3,}[0-9A-Fa-f]{2,8})$/.exec(line))) {
+            var groups = m[2];
+            while (i + 1 < lines.length && /^\s*(?:[0-9A-Fa-f]{2,8}\s*)+$/.test(lines[i + 1]) && /\s/.test(lines[i + 1].trim() + ' ')) {
+              var joined = (groups + lines[i + 1]).replace(/\s+/g, '');
+              if (joined.length > 128) break;
+              groups += ' ' + lines[i + 1].trim();
+              i++;
             }
-            lastResults[algo] = hex;
-            resultsEl.appendChild(makeRow(algo, hex, algo === 'MD5' || algo === 'SHA-1'));
+            add(groups.replace(/\s+/g, ''), ln, 'grouped', m[1] || null, null);
+            continue;
           }
 
-          // Wire copy buttons
-          resultsEl.querySelectorAll('.btn-copy').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-              var label = btn.getAttribute('data-label');
-              var val = document.getElementById('fhc-val-' + label).textContent;
-              navigator.clipboard.writeText(val).then(function () {
-                btn.classList.add('copied');
-                var prev = btn.textContent;
-                btn.textContent = t.copied;
-                setTimeout(function () { btn.textContent = prev; btn.classList.remove('copied'); }, 1500);
-              });
-            });
+          // GNU coreutils: "<hex>  name", "<hex> *name", "\<hex>  escaped\nname".
+          if ((m = /^(\\?)([0-9A-Fa-f]{8,})[ \t]+\*?(.*\S.*)$/.exec(line))) {
+            var name = m[3].replace(/^\s+/, '');
+            if (m[1]) name = name.replace(/\\(\\|n|r)/g, function (x, c) { return c === 'n' ? '\n' : c === 'r' ? '\r' : '\\'; });
+            if (m[2].length >= 16 || (m[2].length === 8 && listAlgo === 'CRC32')) { add(m[2], ln, 'gnu', name, null); continue; }
+          }
+
+          // BSD / OpenSSL tags: "SHA256 (name) = <hex>", "SHA2-256(name)= <hex>".
+          if ((m = /^([A-Za-z][A-Za-z0-9/_-]*)\s*\((.*)\)\s*=\s*([0-9A-Fa-f]+)$/.exec(line))) {
+            var tagAlgo = labelAlgo(m[1]);
+            if (tagAlgo) { add(m[3], ln, 'bsd', m[2], m[1]); continue; }
+          }
+
+          // SFV: "name 1A2B3C4D".
+          if ((m = /^(.*\S)\s+([0-9A-Fa-f]{8})$/.exec(line)) && !/[:=]$/.test(m[1]) && m[1].split(/\s+/).every(function (t) { return !/^[0-9A-Fa-f]{16,}$/.test(t); })) {
+            if (listAlgo === 'CRC32' || /\.[A-Za-z0-9]{1,8}$/.test(m[1])) { add(m[2], ln, 'sfv', m[1], 'CRC32'); continue; }
+          }
+
+          // Anything else: look for digest-shaped tokens.
+          var lineLabel = (m = LABEL_RE.exec(line)) ? m[1] : null;
+          var tokens = line.split(/[\s"'`,;|()<>[\]{}]+/).filter(Boolean);
+          var whole = tokens.length === 1;
+          var found = false;
+          for (var t = 0; t < tokens.length; t++) {
+            var tok = tokens[t].replace(/[.:]+$/, '');
+            var p;
+            if ((p = /(?:^|[^A-Za-z0-9])(md5|sha-?1|sha-?256|sha-?384|sha-?512|crc-?32)[:=]([0-9A-Fa-f]+)$/i.exec(tok))) { add(p[2], ln, 'prefixed', null, p[1]); found = true; continue; }
+            if ((p = /^(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/.exec(tok))) {
+              var sri = base64Digest(p[2], true);
+              if (sri) { add(sri, ln, 'sri', null, p[1]); found = true; }
+              continue;
+            }
+            if (/^[0-9A-Fa-f]+$/.test(tok)) {
+              if (tok.length >= 32 || (tok.length === 8 && whole)) { add(tok, ln, 'bare', null, lineLabel); found = true; continue; }
+              if (tok.length >= 16) { add(tok, ln, 'bare', null, lineLabel); found = true; continue; }
+            }
+            if (algoByLen(tok.length) && tok.length >= 32 && /^[0-9A-Za-z]+$/.test(tok)) {
+              var bad = tok.replace(/[0-9A-Fa-f]/g, '');
+              if (bad.length && bad.length <= 2) {
+                var pos = tok.search(/[^0-9A-Fa-f]/);
+                out.problems.push({ code: 'badChar', line: ln, pos: pos + 1, ch: tok[pos] });
+                found = true;
+                continue;
+              }
+            }
+            var b64 = base64Digest(tok, whole);
+            if (b64) { add(b64, ln, 'base64', null, lineLabel); found = true; continue; }
+          }
+          if (!found && lineLabel === null) { /* a line of prose; ignore */ }
+        }
+        if (!out.entries.length && !out.problems.length) out.problems.push({ code: 'none', line: 0 });
+        return out;
+      }
+
+      function matchByName(name, files) {
+        var nk = relPathKey(name);
+        if (!nk) return null;
+        var tiers = [
+          function (fk) { return fk === nk; },
+          function (fk) { return fk.slice(-(nk.length + 1)) === '/' + nk || nk.slice(-(fk.length + 1)) === '/' + fk; },
+          function (fk) { return fk.toLowerCase() === nk.toLowerCase(); },
+          function (fk) { var a = fk.toLowerCase(), b = nk.toLowerCase(); return a.slice(-(b.length + 1)) === '/' + b || b.slice(-(a.length + 1)) === '/' + a; }
+        ];
+        for (var t = 0; t < tiers.length; t++) {
+          for (var i = 0; i < files.length; i++) if (tiers[t](relPathKey(files[i].path))) return files[i];
+        }
+        return null;
+      }
+
+      // Compare parsed expected values with computed hashes.
+      // files: [{ key, path, hashes: { algo: hex } }]
+      function verify(parsed, files) {
+        var res = { files: {}, need: [], summary: { ok: 0, fail: 0, missing: 0, missingNames: [], bareNoMatch: 0, bareAlgo: null } };
+        files.forEach(function (f) { res.files[f.key] = { status: 'none', notes: [] }; });
+        function note(f, n) { res.files[f.key].notes.push(n); }
+        var entries = parsed.entries;
+        var named = entries.filter(function (e) { return e.name; });
+        entries.forEach(function (e) { if (res.need.indexOf(e.algo) < 0) res.need.push(e.algo); });
+        function mismatch(e, got, bare) {
+          return { code: bare ? 'failBare' : 'failNamed', algo: e.algo, name: e.name, line: e.line, expected: e.hex, got: got,
+            pos: firstDiff(e.hex, got) + 1, maybeOther: bare && !e.hinted && (e.hex.length === 64 || e.hex.length === 128) };
+        }
+        named.forEach(function (e) {
+          var f = matchByName(e.name, files);
+          if (f) {
+            var got = f.hashes[e.algo];
+            if (!got) note(f, { code: 'pending', algo: e.algo });
+            else if (got === e.hex) note(f, { code: 'okNamed', algo: e.algo, name: e.name, line: e.line });
+            else note(f, mismatch(e, got, false));
+            return;
+          }
+          var hits = files.filter(function (x) { return x.hashes[e.algo] === e.hex; });
+          if (hits.length) { hits.forEach(function (x) { note(x, { code: 'okRenamed', algo: e.algo, name: e.name, line: e.line }); }); return; }
+          if (files.some(function (x) { return !x.hashes[e.algo]; })) return;
+          res.summary.missing++;
+          res.summary.missingNames.push(e.name);
+        });
+        entries.filter(function (e) { return !e.name; }).forEach(function (e) {
+          var hits = files.filter(function (x) { return x.hashes[e.algo] === e.hex; });
+          var pend = files.filter(function (x) { return !x.hashes[e.algo]; });
+          hits.forEach(function (x) { note(x, { code: 'okBare', algo: e.algo }); });
+          if (hits.length) {
+            files.forEach(function (x) { if (hits.indexOf(x) < 0 && x.hashes[e.algo]) note(x, { code: 'nomatch', algo: e.algo }); });
+            return;
+          }
+          if (files.length === 1) {
+            if (pend.length) note(files[0], { code: 'pending', algo: e.algo });
+            else note(files[0], mismatch(e, files[0].hashes[e.algo], true));
+            return;
+          }
+          files.forEach(function (x) { note(x, x.hashes[e.algo] ? { code: 'nomatch', algo: e.algo } : { code: 'pending', algo: e.algo }); });
+          if (!pend.length) { res.summary.bareNoMatch++; res.summary.bareAlgo = e.algo; }
+        });
+        files.forEach(function (f) {
+          var r = res.files[f.key];
+          var c = r.notes.map(function (n) { return n.code; });
+          var has = function (x) { return c.indexOf(x) >= 0; };
+          r.status = (has('failNamed') || has('failBare')) ? 'fail'
+            : (has('okNamed') || has('okRenamed') || has('okBare')) ? 'ok'
+            : has('pending') ? 'pending'
+            : has('nomatch') ? 'nomatch'
+            : named.length ? 'nolist' : 'none';
+          if (r.status === 'ok') res.summary.ok++;
+          if (r.status === 'fail') res.summary.fail++;
+        });
+        return res;
+      }
+
+      function checksumFileName(algo) {
+        return algo === 'CRC32' ? 'checksums.sfv' : algo.replace('-', '') + 'SUMS';
+      }
+      // GNU coreutils format ("<hex>  path"; names with \ or a line break are escaped and the
+      // line starts with \), or SFV ("path HEX") for CRC32. Files without that hash are skipped.
+      function checksumLines(files, algo, upper) {
+        var s = '';
+        files.forEach(function (f) {
+          var h = f.hashes[algo];
+          if (!h) return;
+          if (upper) h = h.toUpperCase();
+          if (algo === 'CRC32') { s += f.path + ' ' + h + '\n'; return; }
+          if (/[\\\n\r]/.test(f.path)) s += '\\' + h + '  ' + f.path.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r') + '\n';
+          else s += h + '  ' + f.path + '\n';
+        });
+        return s;
+      }
+      /* ── engine:end ── */
+
+      var WORKER_URL = '/vendor/file-hash-worker.js';
+      var MAX_FILES = 1000;
+      var UNITS = { s: S.durS, min: S.durMin, h: S.durH };
+
+      var wrap = document.getElementById('fhc-wrap');
+      var drop = document.getElementById('fhc-drop');
+      var dropTitle = drop.querySelector('.fhc-drop-title');
+      var fileInput = document.getElementById('fhc-file');
+      var dirInput = document.getElementById('fhc-dir');
+      var pickDir = document.getElementById('fhc-pick-dir');
+      var statusEl = document.getElementById('fhc-status');
+      var listEl = document.getElementById('fhc-list');
+      var toolsEl = document.getElementById('fhc-tools');
+      var upperEl = document.getElementById('fhc-upper');
+      var outAlgoEl = document.getElementById('fhc-out-algo');
+      var outCopyEl = document.getElementById('fhc-out-copy');
+      var outDlEl = document.getElementById('fhc-out-dl');
+      var stopEl = document.getElementById('fhc-stop');
+      var clearEl = document.getElementById('fhc-clear');
+      var expectedEl = document.getElementById('fhc-expected');
+      var openListEl = document.getElementById('fhc-open-list');
+      var listFileEl = document.getElementById('fhc-list-file');
+      var verifyOutEl = document.getElementById('fhc-verify-out');
+      var algoBoxes = Array.prototype.slice.call(wrap.querySelectorAll('.fhc-algo input'));
+
+      var files = [];
+      var byKey = {};
+      var keySeq = 0;
+      var jobSeq = 0;
+      var pool = {};
+      var parsed = { entries: [], problems: [] };
+      var listName = null;
+      var batch = null;
+      var cards = {};
+      var rafPending = false;
+      var notice = '';
+
+      function checkedAlgos() {
+        return algoBoxes.filter(function (b) { return b.checked; }).map(function (b) { return b.getAttribute('data-algo'); });
+      }
+      function show(h) { return upperEl.checked ? h.toUpperCase() : h; }
+      function el(tag, cls, text) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined) e.textContent = text;
+        return e;
+      }
+      function fileStatus(msg, kind) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status fhc-status' + (kind ? ' ' + kind : '');
+      }
+
+      /* ── workers: one per algorithm, each hashes files in order ── */
+      function poolFor(algo) { return pool[algo] || (pool[algo] = { w: null, job: null, queue: [] }); }
+      function startWorker(algo) {
+        var p = poolFor(algo);
+        if (p.w) return p.w;
+        try { p.w = new Worker(WORKER_URL); } catch (e) { p.w = null; workerFailed(algo); return null; }
+        p.w.onmessage = function (ev) { onMessage(algo, ev.data || {}); };
+        p.w.onerror = function (ev) { if (ev && ev.preventDefault) ev.preventDefault(); workerFailed(algo); };
+        return p.w;
+      }
+      function workerFailed(algo) {
+        var p = poolFor(algo);
+        if (p.w) p.w.terminate();
+        p.w = null;
+        var jobs = (p.job ? [p.job] : []).concat(p.queue);
+        p.job = null;
+        p.queue = [];
+        jobs.forEach(function (j) { var f = byKey[j.key]; if (f) { delete f.jobs[algo]; f.errors[algo] = { name: 'Worker', message: S.errWorker }; touch(f); } });
+        changed();
+      }
+      function enqueue(f, algo) {
+        if (f.hashes[algo] || f.jobs[algo]) return;
+        delete f.errors[algo];
+        var job = { id: ++jobSeq, key: f.key, algo: algo, done: 0 };
+        f.jobs[algo] = job;
+        f.stopped = false;
+        poolFor(algo).queue.push(job);
+        if (!batch) batch = { t0: performance.now(), bytes: 0 };
+        pump(algo);
+      }
+      function pump(algo) {
+        var p = poolFor(algo);
+        while (!p.job && p.queue.length) {
+          var job = p.queue.shift();
+          var f = byKey[job.key];
+          if (!f || f.jobs[algo] !== job) continue;
+          var w = startWorker(algo);
+          if (!w) return;
+          p.job = job;
+          if (!f.t0) f.t0 = performance.now();
+          w.postMessage({ id: job.id, file: f.file, algo: algo });
+        }
+      }
+      function onMessage(algo, m) {
+        var p = poolFor(algo);
+        var job = p.job;
+        if (!job || job.id !== m.id) return;
+        var f = byKey[job.key];
+        if (m.type === 'progress') { job.done = m.done; scheduleProgress(); return; }
+        p.job = null;
+        if (f && f.jobs[algo] === job) {
+          delete f.jobs[algo];
+          if (m.type === 'done') f.hashes[algo] = m.hex;
+          else f.errors[algo] = { name: m.name, message: m.message };
+          if (!Object.keys(f.jobs).length) f.t1 = performance.now();
+          touch(f);
+        }
+        pump(algo);
+        changed();
+      }
+      function busy() {
+        return Object.keys(pool).some(function (a) { return pool[a].job || pool[a].queue.length; });
+      }
+      function stopAll(keepStatus) {
+        Object.keys(pool).forEach(function (a) {
+          var p = pool[a];
+          if (p.job && p.w) { p.w.terminate(); p.w = null; }
+          p.job = null;
+          p.queue = [];
+        });
+        files.forEach(function (f) {
+          if (Object.keys(f.jobs).length) { f.jobs = {}; f.stopped = true; touch(f); }
+        });
+        batch = null;
+        if (!keepStatus) notice = S.stopped;
+        changed();
+      }
+      function cancelFile(f) {
+        Object.keys(f.jobs).forEach(function (a) {
+          var p = poolFor(a);
+          if (p.job && p.job.key === f.key) { if (p.w) p.w.terminate(); p.w = null; p.job = null; }
+          p.queue = p.queue.filter(function (j) { return j.key !== f.key; });
+        });
+        f.jobs = {};
+        Object.keys(pool).forEach(pump);
+      }
+
+      /* ── files ── */
+      function addFiles(list) {
+        var added = 0;
+        notice = '';
+        for (var i = 0; i < list.length; i++) {
+          if (files.length >= MAX_FILES) { notice = fill(S.tooMany, { max: MAX_FILES }); break; }
+          var item = list[i];
+          var file = item.file || item;
+          var path = item.path || file.webkitRelativePath || file.name || 'file';
+          var f = { key: 'f' + (++keySeq), file: file, name: file.name, path: path, size: file.size, hashes: {}, jobs: {}, errors: {}, stopped: false };
+          files.push(f);
+          byKey[f.key] = f;
+          added++;
+        }
+        if (!added && !notice) notice = S.emptyFolder;
+        hashMissing();
+        changed();
+      }
+      function hashMissing() {
+        var algos = checkedAlgos();
+        files.forEach(function (f) { algos.forEach(function (a) { if (!f.errors[a] || f.stopped) enqueue(f, a); }); });
+      }
+      function removeFile(key) {
+        var f = byKey[key];
+        if (!f) return;
+        cancelFile(f);
+        files = files.filter(function (x) { return x !== f; });
+        delete byKey[key];
+        if (cards[key]) { cards[key].li.remove(); delete cards[key]; }
+        changed();
+      }
+      function clearAll() {
+        stopAll(true);
+        files = [];
+        byKey = {};
+        cards = {};
+        listEl.textContent = '';
+        notice = '';
+        changed();
+      }
+
+      // Folder drops: walk FileSystemEntry trees; keep the relative path for list matching.
+      function readEntries(entry, prefix, out) {
+        return new Promise(function (resolve) {
+          if (entry.isFile) {
+            entry.file(function (file) { out.push({ file: file, path: prefix + file.name }); resolve(); }, function () { resolve(); });
+          } else if (entry.isDirectory) {
+            var reader = entry.createReader();
+            var all = [];
+            (function next() {
+              reader.readEntries(function (batchEntries) {
+                if (!batchEntries.length) {
+                  Promise.all(all.map(function (e) { return readEntries(e, prefix + entry.name + '/', out); })).then(resolve);
+                  return;
+                }
+                all = all.concat(Array.prototype.slice.call(batchEntries));
+                next();
+              }, function () { resolve(); });
+            })();
+          } else resolve();
+        });
+      }
+      function handleDrop(dt) {
+        var items = dt.items ? Array.prototype.slice.call(dt.items) : [];
+        var entries = items.map(function (it) { return it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null; });
+        if (entries.some(function (e) { return e && e.isDirectory; })) {
+          var out = [];
+          Promise.all(entries.map(function (e, i) { return e ? readEntries(e, '', out) : Promise.resolve(); })).then(function () {
+            out.sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
+            addFiles(out);
           });
-
-          if (warnings.length) {
-            setStatus(warnings.join(' '), 'warn');
-          } else {
-            setStatus(t.done, 'success');
-          }
-          verifyEl.style.display = '';
-          refreshVerify();
-          window.trackTool && window.trackTool('file-hash-checker', 'compute');
-        } catch (e) {
-          setStatus(t.errRead + ' ' + (e && e.message ? '(' + e.message + ')' : ''), 'error');
-        } finally {
-          computeBtn.disabled = false;
+        } else if (dt.files && dt.files.length) {
+          addFiles(dt.files);
         }
       }
 
-      /* ── Event wiring ── */
-      dropzone.addEventListener('click', function () { fileInput.click(); });
-      dropzone.addEventListener('keydown', function (e) {
+      /* ── checksum lists ── */
+      function loadList(file) {
+        if (file.size > MAX_LIST_BYTES) { notice = fill(S.listTooBig, { file: file.name }); changed(); return; }
+        file.text().then(function (text) {
+          listName = file.name;
+          expectedEl.value = text;
+          notice = fill(S.listLoaded, { file: file.name });
+          reparse();
+        });
+      }
+      function reparse() {
+        parsed = parseExpected(expectedEl.value, listName);
+        var turned = [];
+        parsed.entries.forEach(function (e) {
+          var box = algoBoxes.filter(function (b) { return b.getAttribute('data-algo') === e.algo; })[0];
+          if (box && !box.checked) { box.checked = true; turned.push(e.algo); }
+        });
+        if (turned.length) { notice = fill(S.autoAlgo, { algo: turned.join(', ') }); hashMissing(); }
+        files.forEach(touch);
+        changed();
+      }
+
+      /* ── rendering ── */
+      function touch(f) { f.dirty = true; }
+      function changed() {
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(function () { rafPending = false; render(); });
+      }
+      function scheduleProgress() { changed(); }
+
+      function progressOf(f) {
+        var algos = Object.keys(f.jobs);
+        if (!algos.length) return null;
+        var total = 0, done = 0;
+        checkedAlgos().forEach(function (a) {
+          total += f.size;
+          if (f.hashes[a]) done += f.size;
+          else if (f.jobs[a]) done += f.jobs[a].done;
+        });
+        return total ? done / total : 0;
+      }
+
+      function buildCard(f) {
+        var li = el('li', 'fhc-file');
+        var head = el('div', 'fhc-file-head');
+        var name = el('span', 'fhc-file-name', f.path);
+        var size = el('span', 'fhc-file-size', formatBytes(f.size, pageLang));
+        var badge = el('span', 'fhc-badge');
+        var rm = el('button', 'fhc-remove', '\u00d7');
+        rm.type = 'button';
+        rm.setAttribute('aria-label', fill(S.remove, { name: f.path }));
+        rm.setAttribute('data-remove', f.key);
+        head.appendChild(name);
+        head.appendChild(size);
+        head.appendChild(badge);
+        head.appendChild(rm);
+        var prog = el('div', 'fhc-progress');
+        var bar = el('div', 'fhc-progress-bar');
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+        bar.setAttribute('aria-label', f.path);
+        var fillEl = el('span', 'fhc-progress-fill');
+        bar.appendChild(fillEl);
+        var ptext = el('span', 'fhc-progress-text');
+        prog.appendChild(bar);
+        prog.appendChild(ptext);
+        var rows = el('div', 'fhc-rows');
+        var notes = el('div', 'fhc-notes');
+        li.appendChild(head);
+        li.appendChild(prog);
+        li.appendChild(rows);
+        li.appendChild(notes);
+        listEl.appendChild(li);
+        return { li: li, badge: badge, prog: prog, bar: bar, fill: fillEl, ptext: ptext, rows: rows, notes: notes };
+      }
+
+      function renderRows(f, c) {
+        c.rows.textContent = '';
+        checkedAlgos().forEach(function (a) {
+          var row = el('div', 'fhc-row');
+          var lab = el('span', 'fhc-row-label', a);
+          row.appendChild(lab);
+          if (f.hashes[a]) {
+            var code = el('code', 'fhc-row-value', show(f.hashes[a]));
+            row.appendChild(code);
+            var btn = el('button', 'btn-copy fhc-copy', S.copy);
+            btn.type = 'button';
+            btn.setAttribute('data-copy', f.key + '|' + a);
+            btn.setAttribute('aria-label', S.copy + ' ' + a);
+            row.appendChild(btn);
+          } else if (f.errors[a]) {
+            var err = f.errors[a];
+            var msg = err.name === 'Worker' ? S.errWorker
+              : (err.name === 'NotReadableError' || err.name === 'NotFoundError' || /changed while/.test(err.message)) ? S.errRead
+              : fill(S.errOther, { message: err.message });
+            row.appendChild(el('span', 'fhc-row-error', msg));
+            row.classList.add('is-error');
+          } else if (f.stopped) {
+            row.appendChild(el('span', 'fhc-row-wait', S.stoppedFile));
+          } else {
+            row.appendChild(el('span', 'fhc-row-wait', S.waiting));
+          }
+          c.rows.appendChild(row);
+        });
+        if (f.stopped && !Object.keys(f.jobs).length) {
+          var retry = el('button', 'btn-secondary btn-sm fhc-retry', S.retry);
+          retry.type = 'button';
+          retry.setAttribute('data-retry', f.key);
+          c.rows.appendChild(retry);
+        }
+      }
+
+      function renderVerdict(f, c, v) {
+        c.notes.textContent = '';
+        var st = v ? v.status : 'none';
+        var badgeText = { ok: S.badgeOk, fail: S.badgeFail, pending: S.badgePending, nolist: S.badgeNoList, nomatch: S.badgeNoMatch }[st] || '';
+        c.badge.textContent = badgeText ? (st === 'ok' ? '\u2713 ' : st === 'fail' ? '\u2717 ' : '') + badgeText : '';
+        c.badge.className = 'fhc-badge' + (badgeText ? ' is-' + st : '');
+        c.li.classList.toggle('is-ok', st === 'ok');
+        c.li.classList.toggle('is-fail', st === 'fail');
+        if (!v) return;
+        v.notes.forEach(function (n) {
+          if (n.code === 'pending') return;
+          var p;
+          if (n.code === 'nomatch') { c.notes.appendChild(el('p', 'fhc-note', fill(S.noMatch, n))); return; }
+          if (n.code.indexOf('ok') === 0) { c.notes.appendChild(el('p', 'fhc-note is-ok', fill(S[n.code], n))); return; }
+          p = el('p', 'fhc-note is-fail', fill(S[n.code], n));
+          c.notes.appendChild(p);
+          var cmp = el('div', 'fhc-compare');
+          var pos = n.pos - 1;
+          [[S.expected, n.expected], [S.actual, n.got]].forEach(function (pair) {
+            var line = el('div', 'fhc-compare-row');
+            line.appendChild(el('span', 'fhc-compare-label', pair[0]));
+            var code = el('code', 'fhc-compare-value');
+            var val = show(pair[1]);
+            code.appendChild(document.createTextNode(val.slice(0, pos)));
+            code.appendChild(el('mark', 'fhc-diff', val.slice(pos)));
+            line.appendChild(code);
+            cmp.appendChild(line);
+          });
+          c.notes.appendChild(cmp);
+          if (n.maybeOther) c.notes.appendChild(el('p', 'fhc-note', S.maybeOther));
+        });
+        if (v.status === 'nolist') c.notes.appendChild(el('p', 'fhc-note', S.noEntry));
+      }
+
+      function render() {
+        var algos = checkedAlgos();
+        listEl.hidden = !files.length;
+        toolsEl.hidden = !files.length;
+        drop.classList.toggle('is-compact', files.length > 0);
+        dropTitle.textContent = files.length ? dropTitle.getAttribute('data-compact') : dropTitle.getAttribute('data-full');
+
+        var hasExpected = parsed.entries.length > 0;
+        var v = hasExpected ? verify(parsed, files) : null;
+
+        files.forEach(function (f) {
+          var c = cards[f.key] || (cards[f.key] = buildCard(f));
+          var prog = progressOf(f);
+          c.prog.hidden = prog === null;
+          if (prog !== null) {
+            var pct = Math.floor(prog * 100);
+            c.fill.style.width = (prog * 100).toFixed(1) + '%';
+            c.bar.setAttribute('aria-valuenow', String(pct));
+            var el2 = (performance.now() - (f.t0 || performance.now())) / 1000;
+            var doneBytes = prog * f.size;
+            if (prog > 0 && el2 > 0.3) {
+              c.ptext.textContent = fill(S.progress, { pct: pct, rate: formatBytes(doneBytes / el2, pageLang), eta: formatDuration(el2 * (1 - prog) / prog, UNITS) });
+            } else c.ptext.textContent = pct + '%';
+          }
+          if (f.dirty || f.renderedAlgos !== algos.join() || f.renderedUpper !== upperEl.checked) {
+            renderRows(f, c);
+            f.dirty = false;
+            f.renderedAlgos = algos.join();
+            f.renderedUpper = upperEl.checked;
+          }
+          renderVerdict(f, c, v ? v.files[f.key] : null);
+        });
+
+        // checksum-file output
+        var done = algos.filter(function (a) { return files.some(function (f) { return f.hashes[a]; }); });
+        var cur = outAlgoEl.value;
+        if (outAlgoEl.getAttribute('data-algos') !== done.join()) {
+          outAlgoEl.textContent = '';
+          done.forEach(function (a) { var o = el('option', '', checksumFileName(a)); o.value = a; outAlgoEl.appendChild(o); });
+          if (done.indexOf(cur) >= 0) outAlgoEl.value = cur;
+          outAlgoEl.setAttribute('data-algos', done.join());
+        }
+        outAlgoEl.disabled = outCopyEl.disabled = outDlEl.disabled = !done.length;
+
+        // status line
+        var running = busy();
+        stopEl.hidden = !running;
+        if (running) {
+          var finished = files.filter(function (f) { return !Object.keys(f.jobs).length; }).length;
+          fileStatus(fill(S.hashing, { done: Math.min(finished + 1, files.length), total: files.length }), '');
+        } else if (batch) {
+          var secs = (performance.now() - batch.t0) / 1000;
+          var anyErr = files.some(function (f) { return Object.keys(f.errors).length; });
+          fileStatus(fill(S.doneAll, { files: plural(S.files, files.length, pageLang), time: formatDuration(secs, UNITS) }) + (notice ? ' ' + notice : ''), anyErr ? 'error' : 'success');
+          batch = null;
+          notice = '';
+        } else if (notice) {
+          fileStatus(notice, '');
+        } else if (!files.length) {
+          fileStatus('', '');
+        }
+
+        // verification summary and problems
+        verifyOutEl.textContent = '';
+        parsed.problems.forEach(function (p) {
+          var key = { length: 'pLength', badChar: 'pBadChar', unsupported: 'pUnsupported', label: 'pLabel', none: 'pNone' }[p.code];
+          verifyOutEl.appendChild(el('p', 'fhc-problem', fill(S[key], p)));
+        });
+        if (v && files.length) {
+          var parts = [];
+          if (v.summary.ok || v.summary.fail) parts.push(fill(S.summary, v.summary));
+          var sum = el('p', 'fhc-summary' + (v.summary.fail ? ' is-fail' : v.summary.ok ? ' is-ok' : ''), parts.join(''));
+          if (parts.length) verifyOutEl.appendChild(sum);
+          if (v.summary.missing) {
+            var names = v.summary.missingNames.slice(0, 5).join(', ') + (v.summary.missingNames.length > 5 ? ', \u2026' : '');
+            verifyOutEl.appendChild(el('p', 'fhc-note', fill(S.summaryMissing, { n: v.summary.missing, names: names })));
+          }
+          if (v.summary.bareNoMatch) verifyOutEl.appendChild(el('p', 'fhc-note is-fail', fill(S.bareNoMatch, { algo: v.summary.bareAlgo })));
+        }
+      }
+
+      /* ── events ── */
+      drop.addEventListener('click', function () { fileInput.click(); });
+      drop.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
       });
-      fileInput.addEventListener('change', function () {
-        if (fileInput.files && fileInput.files[0]) setFile(fileInput.files[0]);
-        fileInput.value = '';
+      pickDir.addEventListener('click', function () { dirInput.click(); });
+      fileInput.addEventListener('change', function () { if (fileInput.files && fileInput.files.length) addFiles(fileInput.files); fileInput.value = ''; });
+      dirInput.addEventListener('change', function () { if (dirInput.files && dirInput.files.length) addFiles(dirInput.files); else { notice = S.emptyFolder; changed(); } dirInput.value = ''; });
+
+      wrap.addEventListener('dragover', function (e) {
+        if (!e.dataTransfer || Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') < 0) return;
+        e.preventDefault();
+        var onList = e.target === expectedEl;
+        drop.classList.toggle('drag-over', !onList);
+        expectedEl.classList.toggle('drag-over', onList);
       });
-      dropzone.addEventListener('dragover', function (e) {
-        e.preventDefault(); dropzone.classList.add('drag-over');
+      wrap.addEventListener('dragleave', function (e) {
+        if (!wrap.contains(e.relatedTarget)) { drop.classList.remove('drag-over'); expectedEl.classList.remove('drag-over'); }
       });
-      dropzone.addEventListener('dragleave', function () {
-        dropzone.classList.remove('drag-over');
-      });
-      dropzone.addEventListener('drop', function (e) {
-        e.preventDefault(); dropzone.classList.remove('drag-over');
-        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-        if (f) setFile(f);
+      wrap.addEventListener('drop', function (e) {
+        if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        drop.classList.remove('drag-over');
+        expectedEl.classList.remove('drag-over');
+        if (e.target === expectedEl) loadList(e.dataTransfer.files[0]);
+        else handleDrop(e.dataTransfer);
       });
 
-      clearBtn.addEventListener('click', function () { setFile(null); });
-      computeBtn.addEventListener('click', compute);
-      expectedEl.addEventListener('input', refreshVerify);
+      algoBoxes.forEach(function (b) {
+        b.addEventListener('change', function () {
+          if (b.checked) hashMissing();
+          else {
+            var a = b.getAttribute('data-algo');
+            var p = poolFor(a);
+            if (p.job && p.w) { p.w.terminate(); p.w = null; }
+            p.job = null;
+            p.queue = [];
+            files.forEach(function (f) { delete f.jobs[a]; touch(f); });
+          }
+          changed();
+        });
+      });
+      upperEl.addEventListener('change', changed);
 
-      // Initial state
-      setFile(null);
+      listEl.addEventListener('click', function (e) {
+        var t = e.target.closest('button');
+        if (!t) return;
+        if (t.hasAttribute('data-remove')) { removeFile(t.getAttribute('data-remove')); return; }
+        if (t.hasAttribute('data-retry')) { var f = byKey[t.getAttribute('data-retry')]; if (f) { f.stopped = false; checkedAlgos().forEach(function (a) { enqueue(f, a); }); touch(f); changed(); } return; }
+        if (t.hasAttribute('data-copy')) {
+          var parts = t.getAttribute('data-copy').split('|');
+          var ff = byKey[parts[0]];
+          if (ff && ff.hashes[parts[1]]) copyText(show(ff.hashes[parts[1]]), t);
+        }
+      });
+      function copyText(text, btn) {
+        navigator.clipboard.writeText(text).then(function () {
+          var prev = btn.textContent;
+          btn.textContent = S.copied;
+          btn.classList.add('copied');
+          setTimeout(function () { btn.textContent = prev; btn.classList.remove('copied'); }, 1500);
+        }, function () { fileStatus(S.copyFailed, 'error'); });
+      }
+      outCopyEl.addEventListener('click', function () {
+        var a = outAlgoEl.value;
+        if (a) copyText(checksumLines(files, a, upperEl.checked), outCopyEl);
+      });
+      outDlEl.addEventListener('click', function () {
+        var a = outAlgoEl.value;
+        if (!a) return;
+        var url = URL.createObjectURL(new Blob([checksumLines(files, a, upperEl.checked)], { type: 'text/plain' }));
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = checksumFileName(a);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      });
+      stopEl.addEventListener('click', function () { stopAll(false); });
+      clearEl.addEventListener('click', clearAll);
+
+      var parseTimer = 0;
+      expectedEl.addEventListener('input', function () {
+        listName = null;
+        clearTimeout(parseTimer);
+        parseTimer = setTimeout(reparse, 150);
+      });
+      openListEl.addEventListener('click', function () { listFileEl.click(); });
+      listFileEl.addEventListener('change', function () { if (listFileEl.files && listFileEl.files[0]) loadList(listFileEl.files[0]); listFileEl.value = ''; });
+
+      // ToolLayout's Ctrl/Cmd+L clears text inputs; also drop the files and the parsed list.
+      document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          setTimeout(function () { listName = null; clearAll(); reparse(); }, 0);
+        }
+      });
+
+      render();
     })();
   </script>
 </div>
 
 <style is:global>
-  .fhc-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .fhc-wrap { display: flex; flex-direction: column; gap: 0.85rem; min-width: 0; }
+  .fhc-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-  .fhc-dropzone {
+  .fhc-drop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.85rem;
+    padding: 1.6rem 1.25rem;
     border: 2px dashed var(--color-border);
     border-radius: var(--radius-md);
-    padding: 2.5rem 1.5rem;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color var(--transition-fast), background var(--transition-fast);
     background: var(--color-bg-secondary);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
     outline: none;
   }
-  .fhc-dropzone:hover,
-  .fhc-dropzone:focus-visible,
-  .fhc-dropzone.drag-over {
-    border-color: var(--color-primary);
-    background: var(--color-surface);
-  }
-  .fhc-dz-icon { color: var(--color-text-muted); }
-  .fhc-dz-hint { font-size: 0.95rem; color: var(--color-text-secondary); margin: 0; font-weight: 600; }
-  .fhc-dz-sub  { font-size: 0.78rem; color: var(--color-text-muted); margin: 0; }
+  .fhc-drop:hover,
+  .fhc-drop:focus-visible,
+  .fhc-drop.drag-over { border-color: var(--color-primary); background: var(--color-surface); }
+  .fhc-drop:focus-visible { box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 25%, transparent); }
+  .fhc-drop-icon { color: var(--color-text-muted); flex-shrink: 0; }
+  .fhc-drop-text { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+  .fhc-drop-title { font-size: 0.95rem; font-weight: 650; color: var(--color-text); }
+  .fhc-drop-sub { font-size: 0.8rem; color: var(--color-text-muted); }
+  .fhc-drop.is-compact { padding: 0.55rem 1rem; justify-content: flex-start; min-height: 44px; }
+  .fhc-drop.is-compact .fhc-drop-icon { width: 20px; height: 20px; }
+  .fhc-drop.is-compact .fhc-drop-sub { display: none; }
 
-  .fhc-file-info {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.55rem 0.85rem;
-    border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    flex-wrap: wrap;
-  }
-  .fhc-file-meta { display: flex; gap: 0.85rem; align-items: baseline; min-width: 0; flex: 1; flex-wrap: wrap; }
-  .fhc-filename {
-    font-family: var(--font-mono);
-    font-size: 0.88rem;
-    color: var(--color-text);
-    word-break: break-all;
-    min-width: 0;
-  }
-  .fhc-filesize {
-    font-size: 0.8rem;
-    color: var(--color-text-muted);
-  }
-
-  .fhc-algo-fieldset {
-    border: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .fhc-algo-legend {
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 0;
-  }
-  .fhc-algo-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 0.5rem;
-  }
-  .fhc-algo-item {
+  .fhc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+  .fhc-algos { display: flex; flex-wrap: wrap; gap: 0.4rem; border: 0; padding: 0; margin: 0; min-width: 0; flex: 1; }
+  .fhc-algo {
     display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
-    padding: 0.5rem 0.7rem;
-    border-radius: var(--radius-md);
+    gap: 0.35rem;
+    padding: 0.3rem 0.65rem;
+    border-radius: var(--radius-pill);
     background: var(--color-bg-secondary);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    font-size: 0.88rem;
+    font-size: 0.84rem;
+    font-weight: 650;
     color: var(--color-text);
     cursor: pointer;
-    transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
   }
-  .fhc-algo-item:hover {
-    background: var(--color-surface);
-    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
-  }
-  .fhc-algo-item input[type=checkbox] {
-    accent-color: var(--color-primary);
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-  .fhc-legacy {
-    font-style: normal;
-    font-size: 0.74rem;
-    color: var(--color-text-muted);
-    font-weight: 600;
-    letter-spacing: 0.02em;
-  }
+  .fhc-algo:has(input:checked) { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 55%, transparent); background: var(--color-surface); }
+  .fhc-algo input { accent-color: var(--color-primary); width: 15px; height: 15px; margin: 0; }
+  .fhc-tag { font-style: normal; font-weight: 500; font-size: 0.72rem; color: var(--color-text-muted); margin-left: 0.3rem; }
+  .fhc-pick-dir { white-space: nowrap; }
 
-  .fhc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .fhc-status:empty { display: none; }
 
-  .fhc-results { display: flex; flex-direction: column; gap: 0.5rem; }
-  .fhc-row {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.6rem 0.85rem;
+  .fhc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+  .fhc-file {
+    padding: 0.65rem 0.8rem;
     border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
-  }
-  @media (max-width: 520px) {
-    .fhc-row {
-      grid-template-columns: minmax(0, 1fr) auto;
-      grid-template-areas: "label copy" "value value";
-    }
-    .fhc-row-label { grid-area: label; }
-    .fhc-row-value { grid-area: value; }
-    .fhc-row .btn-copy { grid-area: copy; justify-self: end; }
-  }
-  .fhc-row-label {
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: var(--color-primary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    white-space: nowrap;
-  }
-  .fhc-row-value {
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    color: var(--color-text);
-    word-break: break-all;
-    overflow-wrap: anywhere;
-    min-width: 0;
-  }
-
-  .fhc-verify {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    padding: 0.75rem 0.85rem;
-    border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    gap: 0.45rem;
+    min-width: 0;
   }
-  .fhc-verify-label {
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .fhc-verify-input { font-family: var(--font-mono); font-size: 0.86rem; }
-  .fhc-verify-status {
-    font-size: 0.85rem;
+  .fhc-file.is-ok { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-success) 55%, transparent); }
+  .fhc-file.is-fail { box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--color-danger) 70%, transparent); }
+  .fhc-file-head { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+  .fhc-file-name { font-family: var(--font-mono); font-size: 0.86rem; color: var(--color-text); overflow-wrap: anywhere; min-width: 0; flex: 1; }
+  .fhc-file-size { font-size: 0.78rem; color: var(--color-text-muted); white-space: nowrap; }
+  .fhc-badge { font-size: 0.74rem; font-weight: 750; white-space: nowrap; }
+  .fhc-badge:empty { display: none; }
+  .fhc-badge.is-ok { color: var(--color-success); }
+  .fhc-badge.is-fail { color: var(--color-danger); }
+  .fhc-badge.is-pending, .fhc-badge.is-nolist, .fhc-badge.is-nomatch { color: var(--color-text-muted); }
+  .fhc-remove {
+    min-width: 28px;
+    min-height: 28px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
     color: var(--color-text-muted);
-    margin: 0;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
   }
-  .fhc-verify-status.match { color: var(--color-success); font-weight: 700; }
-  .fhc-verify-status.no-match { color: var(--color-danger); font-weight: 700; }
+  .fhc-remove:hover { color: var(--color-primary); background: var(--color-surface); }
 
-  .tool-status.warn { color: #b45309; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .tool-status.warn { color: #f59e0b; }
-  }
-  [data-theme="dark"] .tool-status.warn { color: #f59e0b; }
+  .fhc-progress { display: flex; align-items: center; gap: 0.6rem; }
+  .fhc-progress[hidden] { display: none; }
+  .fhc-progress-bar { flex: 1; height: 6px; border-radius: var(--radius-pill); background: var(--color-surface); box-shadow: inset 0 0 0 1px var(--color-border-soft); overflow: hidden; }
+  .fhc-progress-fill { display: block; height: 100%; width: 0; background: var(--color-primary); transition: width 0.15s linear; }
+  .fhc-progress-text { font-size: 0.76rem; color: var(--color-text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-  .fhc-privacy {
-    font-size: 0.78rem;
-    color: var(--color-text-muted);
-    margin: 0;
+  .fhc-rows { display: flex; flex-direction: column; gap: 0.3rem; }
+  .fhc-row { display: grid; grid-template-columns: 4.8rem minmax(0, 1fr) auto; align-items: center; gap: 0.6rem; min-height: 32px; }
+  .fhc-row-label { font-size: 0.74rem; font-weight: 750; color: var(--color-primary); letter-spacing: 0.03em; white-space: nowrap; }
+  .fhc-row-value { font-family: var(--font-mono); font-size: 0.82rem; color: var(--color-text); overflow-wrap: anywhere; word-break: break-all; min-width: 0; background: none; padding: 0; }
+  .fhc-row-wait { font-size: 0.8rem; color: var(--color-text-muted); grid-column: 2 / 4; }
+  .fhc-row-error { font-size: 0.82rem; color: var(--color-danger); grid-column: 2 / 4; }
+  .fhc-retry { align-self: flex-start; }
+
+  .fhc-notes:empty { display: none; }
+  .fhc-note { margin: 0; font-size: 0.84rem; color: var(--color-text-secondary); }
+  .fhc-note.is-ok { color: var(--color-success); font-weight: 650; }
+  .fhc-note.is-fail { color: var(--color-danger); font-weight: 650; }
+  .fhc-compare { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.25rem; }
+  .fhc-compare-row { display: grid; grid-template-columns: 4.8rem minmax(0, 1fr); gap: 0.6rem; align-items: baseline; }
+  .fhc-compare-label { font-size: 0.74rem; color: var(--color-text-muted); }
+  .fhc-compare-value { font-family: var(--font-mono); font-size: 0.8rem; overflow-wrap: anywhere; word-break: break-all; background: none; padding: 0; }
+  .fhc-diff { background: color-mix(in oklch, var(--color-danger) 18%, transparent); color: inherit; border-radius: 2px; }
+
+  .fhc-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; font-size: 0.85rem; }
+  .fhc-tools[hidden], .fhc-tools [hidden] { display: none; }
+  .fhc-upper { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--color-text-secondary); cursor: pointer; }
+  .fhc-upper input { accent-color: var(--color-primary); margin: 0; }
+  .fhc-out { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+  .fhc-out-label { color: var(--color-text-secondary); }
+  .fhc-out-algo { width: auto; min-width: 9rem; padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 0.84rem; }
+  .fhc-tools-end { display: inline-flex; gap: 0.4rem; margin-left: auto; }
+
+  .fhc-verify { display: flex; flex-direction: column; gap: 0.35rem; }
+  .fhc-verify-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+  .fhc-verify-label { margin: 0; }
+  .fhc-expected { font-family: var(--font-mono); font-size: 0.84rem; min-height: 3.4rem; resize: vertical; }
+  .fhc-expected.drag-over { box-shadow: inset 0 0 0 2px var(--color-primary); }
+  .fhc-hint { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
+  .fhc-verify-out { display: flex; flex-direction: column; gap: 0.3rem; }
+  .fhc-verify-out:empty { display: none; }
+  .fhc-problem { margin: 0; font-size: 0.84rem; color: var(--color-danger); }
+  .fhc-summary { margin: 0; font-size: 0.9rem; font-weight: 750; }
+  .fhc-summary.is-ok { color: var(--color-success); }
+  .fhc-summary.is-fail { color: var(--color-danger); }
+
+  .fhc-privacy { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
+
+  @media (max-width: 640px) {
+    .fhc-drop { padding: 1.1rem 0.9rem; }
+    .fhc-algo { min-height: 32px; }
+    .fhc-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label copy" "value value"; gap: 0.2rem 0.5rem; }
+    .fhc-row-label { grid-area: label; }
+    .fhc-row-value { grid-area: value; }
+    .fhc-row .fhc-copy { grid-area: copy; }
+    .fhc-row-wait, .fhc-row-error { grid-column: 1 / -1; }
+    .fhc-compare-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .fhc-remove { min-width: 32px; min-height: 32px; }
+    .fhc-tools-end { margin-left: 0; }
   }
 </style>
