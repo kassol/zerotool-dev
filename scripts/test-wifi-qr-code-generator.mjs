@@ -85,11 +85,12 @@ const chk = (o) => { const r = E.checkWifi(Object.assign({ ssid: 'Home', passwor
 eq('byte length', [E.utf8Bytes('My Home Wi-Fi'), E.utf8Bytes('咖啡店'), E.utf8Bytes('우리집'), E.utf8Bytes('😀'), E.utf8Bytes('é')], [13, 9, 9, 4, 2]);
 eq('32 ASCII bytes: no warning', chk({ ssid: 'a'.repeat(32) }), []);
 eq('33 ASCII bytes', chk({ ssid: 'a'.repeat(33) }), ['wSsidBytes:33']);
-eq('10 CJK characters (30 bytes): no warning', chk({ ssid: '咖'.repeat(10) }), []);
-eq('11 CJK characters (33 bytes)', chk({ ssid: '咖啡店二楼访客无线网络' }), ['wSsidBytes:33']);
-eq('Japanese name over 32 bytes', chk({ ssid: 'カフェ二階のゲスト用無線ネットワーク' }), ['wSsidBytes:54']);
-eq('Korean name over 32 bytes', chk({ ssid: '우리집와이파이5G네트워크게스트용' }), ['wSsidBytes:47']);
-eq('8 emoji (32 bytes): no warning', chk({ ssid: '😀'.repeat(8) }), []);
+eq('10 CJK characters (30 bytes): only the UTF-8 note', chk({ ssid: '咖'.repeat(10) }), ['wSsidUtf8']);
+eq('11 CJK characters (33 bytes)', chk({ ssid: '咖啡店二楼访客无线网络' }), ['wSsidBytes:33', 'wSsidUtf8']);
+eq('Japanese name over 32 bytes', chk({ ssid: 'カフェ二階のゲスト用無線ネットワーク' }), ['wSsidBytes:54', 'wSsidUtf8']);
+eq('Korean name over 32 bytes', chk({ ssid: '우리집와이파이5G네트워크게스트용' }), ['wSsidBytes:47', 'wSsidUtf8']);
+eq('8 emoji (32 bytes): only the UTF-8 note', chk({ ssid: '😀'.repeat(8) }), ['wSsidUtf8']);
+eq('ASCII name: no UTF-8 note', chk({ ssid: 'Guest-WiFi 5G' }), []);
 eq('empty SSID is an error', chk({ ssid: '' }), 'errEmptySsid');
 eq('WPA without password is an error (Android rejects it)', chk({ password: '' }), 'errNoPassword');
 eq('WPA3 without password is an error', chk({ password: '', security: 'WPA3' }), 'errNoPassword');
@@ -356,10 +357,24 @@ check('persistence policy stays disabled (Wi-Fi password)', /'wifi-qr-code-gener
 
 // ---------- 8. tool page claims (`{/* wqg-check: {...} */}` in the mdx) ----------
 const mdxDir = join(root, 'src/content/tools/wifi-qr-code-generator');
+let annotated = 0;
 for (const f of readdirSync(mdxDir)) {
   const mdx = readFileSync(join(mdxDir, f), 'utf8');
   check(f + ' no longer mentions a 2-module quiet zone', !/2-module|2 个模块|2モジュール|2모듈/.test(mdx));
+  for (const m of mdx.matchAll(/\{\/\* wqg-check: (\{.*?\}) \*\/\}/g)) {
+    annotated++;
+    const c = JSON.parse(m[1]);
+    const o = { ssid: c.ssid, password: c.password || '', security: c.security || 'WPA', hidden: !!c.hidden };
+    const got = {};
+    if ('payload' in c) got.payload = E.wifiPayload(o);
+    if ('warnings' in c) got.warnings = (() => { const r = E.checkWifi(o); return r.error ? [r.error] : r.warnings.map((w) => w.key); })();
+    if ('version' in c) { const p = E.plan(E.wifiPayload(o), { ecl: c.ecl || 'M' }); got.version = p.ok ? p.version : null; }
+    if ('bytes' in c) got.bytes = E.utf8Bytes(c.ssid);
+    if ('payload' in c) check(f + ' shows the string it claims: ' + c.ssid, mdx.includes(c.payload) || mdx.includes(c.payload.replace(/\\/g, '\\\\')), c.payload);
+    eq(f + ' claim ' + JSON.stringify(c.ssid), got, Object.fromEntries(Object.keys(got).map((k) => [k, c[k]])));
+  }
 }
+check('tool pages carry checked examples', annotated >= 12, annotated);
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
