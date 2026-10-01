@@ -50,7 +50,7 @@
 | URL Parser | [/tools/url-parser](https://zerotool.dev/tools/url-parser) |
 | Slugify String | [/tools/slugify](https://zerotool.dev/tools/slugify) |
 | HTTP Status Codes | [/tools/http-status-codes](https://zerotool.dev/tools/http-status-codes) |
-| HMAC Generator | [/tools/hmac-generator](https://zerotool.dev/tools/hmac-generator) |
+| HMAC SHA256 Generator | [/tools/hmac-generator](https://zerotool.dev/tools/hmac-generator) |
 | cURL to Code Converter | [/tools/curl-to-code](https://zerotool.dev/tools/curl-to-code) |
 | JSON to Zod Schema | [/tools/json-to-zod](https://zerotool.dev/tools/json-to-zod) |
 | Docker Run to Compose | [/tools/docker-to-compose](https://zerotool.dev/tools/docker-to-compose) |
