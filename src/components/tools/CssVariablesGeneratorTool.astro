@@ -231,7 +231,8 @@ const L = labels[lang] ?? labels['en'];
           });
           valueInput.addEventListener('input', function () {
             var v = valueInput.value.trim();
-            if (/^#[0-9a-fA-F]{3,6}$/.test(v)) swatch.value = v;
+            if (/^#[0-9a-fA-F]{6}$/.test(v)) swatch.value = v;
+            else if (/^#[0-9a-fA-F]{3}$/.test(v)) swatch.value = '#' + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
             generate();
           });
         } else {
@@ -290,46 +291,53 @@ const L = labels[lang] ?? labels['en'];
       GROUPS.forEach(buildGroup);
 
       /* ── CSS generation ── */
+      /* ── engine:start ── */
+      // Names, values and the prefix are free text. Every piece is escaped before it is wrapped in
+      // highlight spans; the old version built the string first and put it into innerHTML unescaped.
       function escapeHtml(str) {
-        return str
+        return String(str)
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
       }
 
-      function generate() {
-        var prefix = prefixEl.value || '--';
-        var lines = [':root {'];
-
-        var groups = groupsEl.querySelectorAll('.cvg-group');
-        groups.forEach(function (group) {
-          var groupId = group.dataset.groupId;
-          var rows = group.querySelectorAll('.cvg-token-row');
-          var hasContent = false;
-
-          rows.forEach(function (row) {
-            var nameEl  = row.querySelector('.cvg-token-name');
-            var valueEl = row.querySelector('.cvg-token-value');
-            var name  = nameEl  ? nameEl.value.trim()  : '';
-            var value = valueEl ? valueEl.value.trim() : '';
-            if (!name) return;
-            var sep = prefix.endsWith('-') ? '' : '-';
-            lines.push('  ' + prefix + sep + name + ': ' + (value || '') + ';');
-            hasContent = true;
-          });
+      function tokenDecls(prefix, tokens) {
+        prefix = prefix || '--';
+        var sep = prefix.endsWith('-') ? '' : '-';
+        var decls = [];
+        tokens.forEach(function (t) {
+          var name = (t.name || '').trim();
+          if (!name) return;
+          decls.push([prefix + sep + name, (t.value || '').trim()]);
         });
+        return decls;
+      }
 
-        lines.push('}');
+      function plainCss(decls) {
+        return [':root {'].concat(decls.map(function (d) { return '  ' + d[0] + ': ' + d[1] + ';'; }), ['}']).join('\n');
+      }
 
-        var raw = lines.join('\n');
-        /* Syntax highlighting via innerHTML */
-        var highlighted = raw
-          .replace(/(:root)/g, '<span class="cvg-hl-sel">$1</span>')
-          .replace(/(\{|\})/g, '<span class="cvg-hl-brace">$1</span>')
-          .replace(/(--[\w-]+)/g, '<span class="cvg-hl-var">$1</span>')
-          .replace(/(:)(\s*)([^;{}\n]+)(;)/g, '<span class="cvg-hl-colon">$1</span>$2<span class="cvg-hl-val">$3</span><span class="cvg-hl-semi">$4</span>');
+      function highlightCss(decls) {
+        return '<span class="cvg-hl-sel">:root</span> <span class="cvg-hl-brace">{</span>\n' +
+          decls.map(function (d) {
+            return '  <span class="cvg-hl-var">' + escapeHtml(d[0]) + '</span><span class="cvg-hl-colon">:</span> ' +
+              '<span class="cvg-hl-val">' + escapeHtml(d[1]) + '</span><span class="cvg-hl-semi">;</span>';
+          }).join('\n') +
+          (decls.length ? '\n' : '') + '<span class="cvg-hl-brace">}</span>';
+      }
+      /* ── engine:end ── */
 
-        codeEl.innerHTML = highlighted;
+      function generate() {
+        var tokens = [];
+        groupsEl.querySelectorAll('.cvg-token-row').forEach(function (row) {
+          var nameEl  = row.querySelector('.cvg-token-name');
+          var valueEl = row.querySelector('.cvg-token-value');
+          tokens.push({ name: nameEl ? nameEl.value : '', value: valueEl ? valueEl.value : '' });
+        });
+        var decls = tokenDecls(prefixEl.value, tokens);
+        var lines = plainCss(decls).split('\n');
+        codeEl.innerHTML = highlightCss(decls);
 
         copyBtn.disabled = lines.length <= 2;
         window.trackTool && window.trackTool('css-variables-generator', 'generate');

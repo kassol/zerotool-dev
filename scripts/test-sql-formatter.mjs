@@ -165,6 +165,24 @@ try { fmt('select a) from t'); } catch { threw = true; }
 check('unmatched ) does not throw', !threw);
 eq('empty input', fmt('   '), '');
 
+// ---------- examples on the English tool page ----------
+eq('page: aggregates and comments',
+  fmt("select status, count(*) as n -- per status\nfrom orders /* this year */ where created_at >= '2026-01-01' group by status having count(*) > 5 order by n desc;"),
+  lines('SELECT', '  status,', '  COUNT(*) AS n -- per status', 'FROM orders /* this year */',
+    "WHERE created_at >= '2026-01-01'", 'GROUP BY status', 'HAVING COUNT(*) > 5', 'ORDER BY n DESC;'));
+eq('page: update', fmt("update orders set status = 'shipped', shipped_at = now() where id = 42;"),
+  lines('UPDATE orders', "SET status = 'shipped', shipped_at = now()", 'WHERE id = 42;'));
+eq('page: insert', fmt("insert into users (name, email) values ('Ann', 'ann@example.com'), ('Bo', 'bo@example.com');"),
+  lines('INSERT INTO users(name, email)', "VALUES('Ann', 'ann@example.com'),('Bo', 'bo@example.com');"));
+eq('page: lowercase keywords', fmt("Select Id From Users Where Name Like 'A%'", '  ', false),
+  lines('select', '  Id', 'from Users', "where Name like 'A%'"));
+eq('page: quoted names and doubled quotes', fmt("SELECT \"Order Id\", `name` FROM t WHERE note = 'it''s here'"),
+  lines('SELECT', '  "Order Id",', '  `name`', 'FROM t', "WHERE note = 'it''s here'"));
+
+eq('page: minify formatted aggregate',
+  E.minifySQL(fmt("select status, count(*) as n -- per status\nfrom orders /* this year */ where created_at >= '2026-01-01' group by status having count(*) > 5 order by n desc;")),
+  "SELECT status, COUNT(*)AS n FROM orders WHERE created_at >= '2026-01-01' GROUP BY status HAVING COUNT(*)> 5 ORDER BY n DESC;");
+
 // ---------- minify unchanged ----------
 eq('minify', E.minifySQL('WITH r AS (\n  SELECT SUM(total) -- c\n  FROM t\n) SELECT 1;'), 'WITH r AS(SELECT SUM(total)FROM t)SELECT 1;');
 

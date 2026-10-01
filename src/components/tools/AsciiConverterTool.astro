@@ -126,6 +126,7 @@
         statusEl.className = 'ac-status';
       }
 
+      /* ── engine:start ── */
       /* ── Format a code point based on selected format ── */
       function formatCode(cp, fmt) {
         switch (fmt) {
@@ -135,6 +136,28 @@
           default:    return String(cp);
         }
       }
+
+      /* ── Read one code token: the whole token must be digits of its base ── */
+      var CODE_FORMS = [
+        [/^0x([0-9a-f]+)$/i, 16],
+        [/^0o([0-7]+)$/i, 8],
+        [/^0b([01]+)$/i, 2],
+        [/^([0-9]+)$/, 10],
+      ];
+      function parseCode(tok) {
+        for (var f = 0; f < CODE_FORMS.length; f++) {
+          var m = CODE_FORMS[f][0].exec(tok);
+          if (m) {
+            var num = parseInt(m[1], CODE_FORMS[f][1]);
+            if (num > 0x10FFFF || (num >= 0xD800 && num <= 0xDFFF)) {
+              throw new Error('Code point out of range: ' + tok);
+            }
+            return num;
+          }
+        }
+        throw new Error('Invalid code: ' + tok);
+      }
+      /* ── engine:end ── */
 
       /* ── Text → ASCII ── */
       document.getElementById('ac-to-ascii').addEventListener('click', function () {
@@ -168,16 +191,7 @@
           var tokens = val.split(/[\s,]+/).filter(function (t) { return t.length > 0; });
           var chars = [];
           for (var i = 0; i < tokens.length; i++) {
-            var tok = tokens[i];
-            var num;
-            if (/^0x/i.test(tok))      num = parseInt(tok.slice(2), 16);
-            else if (/^0o/i.test(tok))  num = parseInt(tok.slice(2), 8);
-            else if (/^0b/i.test(tok))  num = parseInt(tok.slice(2), 2);
-            else                        num = parseInt(tok, 10);
-
-            if (isNaN(num)) throw new Error('Invalid code: ' + tokens[i]);
-            if (num < 0 || num > 0x10FFFF) throw new Error('Code point out of range: ' + tokens[i]);
-            chars.push(String.fromCodePoint(num));
+            chars.push(String.fromCodePoint(parseCode(tokens[i])));
           }
           textEl.value = chars.join('');
           setStatus(t.convertedCodes(tokens.length), false);
