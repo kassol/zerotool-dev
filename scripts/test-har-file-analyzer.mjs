@@ -490,33 +490,11 @@ function curlEntry(method, url, headers, body) {
   }
 }
 
-// ---------- page and policy ----------
-{
-  const policy = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
-  check("persistence policy is 'disabled'", /'har-file-analyzer':\s*'disabled'/.test(policy));
-  const script = componentSrc.slice(componentSrc.indexOf('<script'), componentSrc.indexOf('</script>'));
-  for (const api of ['localStorage', 'sessionStorage', 'ztPersist', 'fetch(', 'XMLHttpRequest', 'sendBeacon', 'document.cookie', 'WebSocket(']) {
-    check('component script does not use ' + api, !script.includes(api));
-  }
-  eq('size limit', E.MAX_BYTES, 300000000);
-  const dir = join(root, 'src/content/tools/har-file-analyzer');
-  for (const f of readdirSync(dir)) {
-    const mdx = readFileSync(join(dir, f), 'utf8');
-    // Example blocks marked {/* har-check: <id> */} must match what the engine produces.
-    const marks = [...mdx.matchAll(/\{\/\* har-check: ([a-z0-9-]+) \*\/\}\s*\n+```[a-z]*\n([\s\S]*?)```/g)];
-    for (const [, id, block] of marks) {
-      const expected = PAGE_EXAMPLES[id];
-      check(f + ' example ' + id + ' is known', typeof expected === 'function');
-      if (typeof expected === 'function') eq(f + ' example ' + id, block.trimEnd(), expected().trimEnd());
-    }
-  }
-}
-
 function PAGE_CURL_SAMPLE() {
   const har = E.sampleHar();
   return E.curlFor(har.log.entries[4], 'unix');
 }
-var PAGE_EXAMPLES = {
+const PAGE_EXAMPLES = {
   'curl-login': PAGE_CURL_SAMPLE,
   'curl-login-redacted': () => {
     const red = E.redactHar(E.sampleHar(), { tokens: true, everywhere: true }, [4]);
@@ -532,11 +510,45 @@ var PAGE_EXAMPLES = {
     const e = red.har.log.entries[0];
     return ['set-cookie: ' + e.response.headers.find((h) => h.name === 'set-cookie').value, e.request.postData.text, e.response.content.text].join('\n');
   },
+  'kollus-url': () => {
+    const har = { log: { version: '1.2', entries: [{ startedDateTime: '2026-10-01T00:00:00Z', time: 0, timings: {}, request: { method: 'GET', url: 'https://v.kr.kollus.com/s?jwt=' + JWT + '&custom_key=demo-custom-key-5f2a9c&autoplay=1', headers: [] }, response: { status: 200, headers: [] } }] } };
+    return E.redactHar(har, { tokens: true, everywhere: true }, null).har.log.entries[0].request.url;
+  },
+  'pts-size': () => {
+    const har = E.sampleHar();
+    const idx = E.buildIndex(har);
+    const api = E.filterRows(idx.rows, { query: 'api.example.com', status: new Set(), types: new Set() }).map((r) => r.i);
+    const sub = E.redactHar(har, { tokens: true, everywhere: true, dropRes: true }, api);
+    return 'full sample: ' + JSON.stringify(har, null, 2).length + ' bytes\napi.example.com only, response bodies removed: ' + sub.json.length + ' bytes (' + sub.entries + ' requests)';
+  },
   'timing-firefox': () => {
     const t = E.normalizeTimings({ blocked: 1, dns: 12, connect: 18, ssl: 21, send: 0, wait: 96, receive: 3 }, 151);
     return 'connect ' + t.tcp + ' ms + ssl ' + t.ssl + ' ms (time ' + t.time + ' ms = sum of all seven)';
   },
 };
+
+// ---------- page and policy ----------
+{
+  const policy = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
+  check("persistence policy is 'disabled'", /'har-file-analyzer':\s*'disabled'/.test(policy));
+  const script = componentSrc.slice(componentSrc.indexOf('<script'), componentSrc.indexOf('</script>'));
+  for (const api of ['localStorage', 'sessionStorage', 'ztPersist', 'fetch(', 'XMLHttpRequest', 'sendBeacon', 'document.cookie', 'WebSocket(']) {
+    check('component script does not use ' + api, !script.includes(api));
+  }
+  eq('size limit', E.MAX_BYTES, 300000000);
+  const dir = join(root, 'src/content/tools/har-file-analyzer');
+  for (const f of readdirSync(dir)) {
+    const mdx = readFileSync(join(dir, f), 'utf8');
+    // Example blocks marked {/* har-check: <id> */} must match what the engine produces.
+    const marks = [...mdx.matchAll(/\{\/\* har-check: ([a-z0-9-]+) \*\/\}\s*\n+```[a-z]*\n([\s\S]*?)```/g)];
+    check(f + ' has at least 2 checked examples', marks.length >= 2, String(marks.length));
+    for (const [, id, block] of marks) {
+      const expected = PAGE_EXAMPLES[id];
+      check(f + ' example ' + id + ' is known', typeof expected === 'function');
+      if (typeof expected === 'function') eq(f + ' example ' + id, block.trimEnd(), expected().trimEnd());
+    }
+  }
+}
 
 console.log(`HAR file analyzer: ${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
