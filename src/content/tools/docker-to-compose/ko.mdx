@@ -3,15 +3,17 @@ seoTitle: "Docker Run → Docker Compose 변환기 | ZeroTool"
 seoDescription: "docker run 명령어를 docker-compose.yml로 즉시 변환. 포트, 볼륨, 환경변수, 네트워크, 재시작 정책 등 지원."
 faqItems:
   - question: "어떤 docker run 플래그를 지원하나요?"
-    answer: "--name, -p/--publish(포트), -v/--volume(볼륨), -e/--env(환경변수), --network, --restart, -d(백그라운드), --cap-add, --memory, --cpus, 이미지 이름과 명령어를 지원합니다."
+    answer: "docker run이 받는 모든 옵션(Docker CLI 29.4)을 읽습니다. 그중 Compose 키가 있는 약 60개를 변환합니다: ports, volumes, environment, env_file, entrypoint, user, working_dir, networks, restart, labels, extra_hosts, cap_add, devices, tmpfs 등(아래 대응표 참고). 나머지는 변환하지 않은 옵션으로 표시합니다."
   - question: "생성되는 Compose 파일 버전은?"
     answer: "version 키를 쓰지 않습니다. Compose Specification은 최상위 version을 더 이상 쓰지 않는 필드로 보며, Docker Compose v2는 이 값이 있으면 경고만 출력합니다."
   - question: "서비스 이름은 어떻게 결정되나요?"
     answer: "--name을 지정하면 해당 값이 서비스 이름이 됩니다. 그렇지 않으면 이미지 이름에서 레지스트리 접두사와 태그를 제거하고 슬래시를 언더스코어로 바꾼 이름을 사용합니다."
   - question: "여러 줄 docker run 명령어도 지원하나요?"
     answer: "네. 백슬래시로 줄을 연속한 명령어를 붙여넣으면 올바르게 처리됩니다."
-  - question: "지원하지 않는 플래그는 어떻게 되나요?"
-    answer: "값이 없는 플래그(--privileged 등)는 건너뜁니다. 값을 받으면서 지원 목록에 없는 플래그(--env-file .env, --entrypoint /bin/sh 등)는 잘못 해석되어 그 값이 이미지 이름이 됩니다. 변환 전에 이런 플래그를 빼고 대응하는 Compose 키를 직접 추가하세요."
+  - question: "Compose 키가 없는 옵션은 어떻게 되나요?"
+    answer: "값은 읽으므로 이미지 이름이 어긋나지 않습니다. 상태 표시줄과 파일 첫 줄 주석(예: # Not converted: --gpus all)에 표시되니, 대응하는 Compose 설정을 직접 추가하세요. docker run이 모르는 옵션은 docker run과 마찬가지로 오류가 납니다."
+  - question: "이름 있는 볼륨을 선언하나요?"
+    answer: "네. -v의 소스가 이름이면(pgdata:/var/lib/postgresql/data 등) 최상위 volumes:에 추가합니다. /, ., ~로 시작하는 경로는 바인드 마운트라 선언하지 않습니다."
 ---
 
 <h2>사용 방법</h2>
@@ -21,19 +23,6 @@ faqItems:
   <li>오른쪽 패널에서 생성된 <strong>docker-compose.yml</strong>을 확인합니다.</li>
   <li><strong>복사</strong>를 클릭하여 <code>docker-compose.yml</code>로 저장합니다.</li>
 </ol>
-
-<h2>지원 플래그</h2>
-<ul>
-  <li><code>--name NAME</code> — 서비스 이름</li>
-  <li><code>-p / --publish HOST:CONTAINER</code> — 포트 매핑</li>
-  <li><code>-v / --volume HOST:CONTAINER[:mode]</code> — 볼륨 마운트</li>
-  <li><code>-e / --env KEY=VALUE</code> — 환경변수</li>
-  <li><code>--network NETWORK</code> — 네트워크</li>
-  <li><code>--restart POLICY</code> — 재시작 정책 (no, always, unless-stopped, on-failure)</li>
-  <li><code>--cap-add CAP</code> — 리눅스 권한 추가</li>
-  <li><code>--memory MEM</code> — 메모리 제한 (예: 512m, 1g)</li>
-  <li><code>--cpus N</code> — CPU 제한</li>
-</ul>
 
 <h2>주요 사용 사례</h2>
 <ul>
@@ -74,16 +63,12 @@ services:
       - "POSTGRES_USER=admin"
       - "POSTGRES_PASSWORD=secret"
     restart: unless-stopped
-```
 
-변환기는 최상위 `volumes:` 블록을 쓰지 않습니다. 선언되지 않은 이름 있는 볼륨(여기서는 `pgdata`)을 쓰는 서비스는 Compose가 거부하므로 `docker compose up -d` 전에 추가하세요:
-
-```yaml
 volumes:
   pgdata:
 ```
 
-`-d`는 제거됩니다. Compose에서는 `docker compose up -d`로 백그라운드 실행하기 때문입니다. `--name`은 서비스 이름이 됩니다. 스크립트가 정확한 컨테이너 이름에 의존한다면 `container_name:`을 직접 추가하세요.
+`pgdata`는 이름 있는 볼륨이라 최상위 [`volumes:`](https://docs.docker.com/reference/compose-file/volumes/)에 선언합니다. 이 부분이 없으면 Compose가 파일을 거부하며, `docker compose config`는 `service "postgres" refers to undefined volume pgdata`를 출력합니다. `-d`는 `docker compose up -d`로 백그라운드 실행하므로 뺍니다. `--name`은 서비스 이름이 됩니다. 정확한 컨테이너 이름에 의존하는 스크립트가 있으면 `container_name:`을 직접 추가하세요.
 
 ## 예시: 포트, 리소스 제한, 기존 네트워크
 
@@ -104,11 +89,13 @@ services:
     restart: "on-failure:3"
     cap_add:
       - NET_ADMIN
+    stdin_open: true
+    tty: true
     deploy:
       resources:
         limits:
           memory: 512m
-          cpus: '1.5'
+          cpus: "1.5"
     command: ["npm", "start"]
 
 networks:
@@ -116,42 +103,73 @@ networks:
     external: true
 ```
 
-`--name`이 없으면 서비스 이름은 이미지에서 만들어집니다(`ghcr.io/acme/web:1.2` → `acme_web`). `--rm`, `-i`, `-t`, `-it`는 제거됩니다. `--network`는 외부 네트워크가 되므로 미리 만들어 두어야 합니다(`docker network create app-net`).
+`--name`이 없으면 서비스 이름은 이미지에서 정해집니다(`ghcr.io/acme/web:1.2` → `acme_web`). `-it`는 짧은 옵션 `-i`와 `-t`를 합친 것으로 각각 `stdin_open`, `tty`가 됩니다. `--rm`은 뺍니다. `--network`는 외부 네트워크가 되므로 미리 만들어 두어야 합니다(`docker network create app-net`). `--network host`, `none`, `bridge`, `container:이름`은 `network_mode:`가 됩니다.
+
+## 예시: Compose 키가 없는 옵션
+
+```bash
+docker run -d --name web --env-file .env --entrypoint /bin/sh -u 1000:1000 -w /app --gpus all nginx:1.27 -c "nginx -g 'daemon off;'"
+```
+
+```yaml
+# Not converted: --gpus all
+services:
+  web:
+    image: "nginx:1.27"
+    entrypoint: ["/bin/sh"]
+    env_file:
+      - .env
+    user: "1000:1000"
+    working_dir: /app
+    command: ["-c", "nginx -g 'daemon off;'"]
+```
+
+`docker run`의 `--entrypoint`는 실행 파일 하나만 받으므로 항목 하나짜리 목록이 됩니다. 이미지 뒤의 인수는 `command`입니다. `--gpus`는 1:1 대응하는 Compose 키가 없어(GPU는 `deploy.resources.reservations.devices`에 씀) 값을 읽어 이미지 이름을 바르게 유지하고, 첫 줄 주석과 상태 표시줄에 표시합니다.
+
+위 출력은 모두 `docker compose config`(Docker Compose 5.1)를 통과합니다. 도구의 테스트가 각 예시에 이 검사를 실행합니다.
 
 ## 플래그 대응표
 
 | docker run | docker-compose.yml |
 |---|---|
-| `-p`, `--publish` | `ports:` (따옴표 포함, 호스트 IP와 `/udp` 유지) |
-| `-v`, `--volume` | `volumes:` |
-| `-e`, `--env` | `environment:`에 `KEY=VALUE` 항목으로 출력, `KEY`만 있어도 그대로 유지 |
-| `--network` | `networks:`와 최상위 `external: true` 네트워크 |
-| `--restart` | `restart:` |
-| `--cap-add` | `cap_add:` |
+| `-p`, `--publish` | `ports:` |
+| `-v`, `--volume` | `volumes:`; named volumes also in the top-level `volumes:` |
+| `-e`, `--env`, `--env-file` | `environment:`, `env_file:` |
+| `--network` | `networks:` plus a top-level `external: true` network; `host`, `none`, `bridge`, `container:…` become `network_mode:` |
+| `--entrypoint` | `entrypoint:` (one-item list) |
+| `-u`, `-w`, `-h`, `--domainname` | `user:`, `working_dir:`, `hostname:`, `domainname:` |
+| `--restart`, `--pull`, `--platform` | `restart:`, `pull_policy:`, `platform:` |
+| `-l`, `--label`, `--annotation` | `labels:`, `annotations:` |
+| `--add-host`, `--dns`, `--dns-option`, `--dns-search`, `--link`, `--expose` | `extra_hosts:`, `dns:`, `dns_opt:`, `dns_search:`, `links:`, `expose:` |
+| `--cap-add`, `--cap-drop`, `--privileged`, `--security-opt`, `--device` | `cap_add:`, `cap_drop:`, `privileged:`, `security_opt:`, `devices:` |
+| `--init`, `--read-only`, `-i`, `-t` | `init:`, `read_only:`, `stdin_open:`, `tty:` |
+| `--tmpfs`, `--volumes-from`, `--shm-size`, `--sysctl` | `tmpfs:`, `volumes_from:`, `shm_size:`, `sysctls:` |
 | `--memory`, `-m`, `--cpus` | `deploy.resources.limits` |
-| `--name` | 서비스 이름 |
-| `-d`, `--rm`, `-i`, `-t`, `-it` | 제거 |
-| 이미지와 그 뒤의 인수 | `image:`와 `command:`(JSON 배열) |
+| `--memory-reservation`, `--memory-swap`, `--cpu-shares`, `--cpuset-cpus`, `--pids-limit` | `mem_reservation:`, `memswap_limit:`, `cpu_shares:`, `cpuset:`, `pids_limit:` |
+| `--pid`, `--ipc`, `--uts`, `--userns`, `--cgroupns`, `--stop-signal` | `pid:`, `ipc:`, `uts:`, `userns_mode:`, `cgroup:`, `stop_signal:` |
+| `--name` | service key |
+| `-d`, `--rm`, `-q`, `--detach-keys` | dropped |
+| image and the arguments after it | `image:` and `command:` (JSON array) |
 
-표의 플래그는 `--flag=value` 형식도 지원합니다.
+옵션은 `--flag value`, `--flag=value`, `-p 80:80`, `-p80:80`처럼 쓸 수 있고, Docker CLI와 같이 묶어 쓸 수도 있습니다(`-dit`, `-dp 80:80`).
 
-## 직접 추가해야 하는 플래그
+## 직접 추가해야 하는 옵션
 
-표에 없고 값을 받는 플래그는 잘못 해석됩니다. 그 값이 이미지 이름으로 쓰이고 뒤에 오는 내용은 모두 `command`가 됩니다. 예를 들어 `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"`는 `image: /bin/sh`가 됩니다. 변환 전에 이런 플래그를 빼고, 대응하는 Compose 키를 직접 작성하세요([Compose 파일 레퍼런스](https://docs.docker.com/reference/compose-file/services/)):
+다음 옵션은 읽지만 변환하지 않습니다. Compose 키의 구조가 다르기 때문입니다([services 레퍼런스](https://docs.docker.com/reference/compose-file/services/)):
 
-| docker run | Compose 키 |
+| docker run | Compose key |
 |---|---|
-| `--env-file .env` | `env_file: [".env"]` |
-| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
-| `-u`, `--user 1000:1000` | `user: "1000:1000"` |
-| `-w`, `--workdir /app` | `working_dir: /app` |
-| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
-| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
-| `--add-host`, `-l` | `extra_hosts:`, `labels:` |
+| `--health-cmd "curl -f http://localhost/"` and the other `--health-*` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--log-driver`, `--log-opt` | `logging: { driver: …, options: { … } }` |
+| `--network-alias api`, `--ip` | `networks: { app-net: { aliases: [api], ipv4_address: … } }` |
+| `--mount` | the long syntax of `volumes:` (`type`, `source`, `target`) |
+| `--gpus` | `deploy.resources.reservations.devices` |
+| `--ulimit nofile=1024:2048` | `ulimits: { nofile: { soft: 1024, hard: 2048 } }` |
+| `--stop-timeout 30` | `stop_grace_period: 30s` |
 
 ## 제한 사항
 
-- 한 번에 `docker run` 명령 하나만 변환합니다. 컨테이너가 여러 개라면 각각 변환한 뒤 서비스 블록을 하나의 `services:` 아래에 모으세요.
-- 이름 있는 볼륨은 최상위에 선언되지 않으므로 위와 같이 추가하세요.
-- 표에 없고 값을 받는 플래그가 있으면 파싱이 깨집니다(위 참조).
-- 명령은 `docker run`(또는 `run`)으로 시작해야 합니다. `docker container run`, `podman run`은 "잘못된 docker run 명령어"라고 표시됩니다.
+- 한 번에 `docker run` 명령어 하나를 변환합니다. 여러 컨테이너는 각각 변환한 뒤 서비스 블록을 하나의 `services:` 아래에 합치세요.
+- `docker run`과 `docker container run`을 인식하며 `podman run`은 인식하지 않습니다.
+- `$(...)`, `$VAR`, `&&` 같은 셸 문법은 글자 그대로 남습니다. 변수는 변환 전에 펼치거나, 결과에서 Compose [변수 보간](https://docs.docker.com/reference/compose-file/interpolation/)을 쓰세요.
+- `./data` 같은 상대 바인드 경로는 Compose에서는 compose 파일이 있는 디렉터리, `docker run`에서는 현재 디렉터리를 기준으로 합니다.

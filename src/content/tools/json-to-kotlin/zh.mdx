@@ -32,3 +32,74 @@ faqItems:
   <li>数组 → <code>List&lt;T&gt;</code></li>
   <li>嵌套对象 → 独立的 <code>data class</code></li>
 </ul>
+
+<h2>示例：snake_case 的 API 响应</h2>
+
+<p>输入（键名为 snake_case，含一个 null 字段和一个很大的计数）：</p>
+
+<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
+
+<p>输出：</p>
+
+<pre><code>{`@Serializable
+data class RootObject(
+    @SerialName("user_id")
+    val userId: Int = 0,
+    @SerialName("display_name")
+    val displayName: String = "",
+    @SerialName("is_active")
+    val isActive: Boolean = false,
+    @SerialName("last_login")
+    val lastLogin: Any? = null,
+    @SerialName("follower_count")
+    val followerCount: Int = 0,
+    val tags: List<String> = emptyList(),
+    val address: Address = Address()
+)
+
+@Serializable
+data class Address(
+    val city: String = "",
+    @SerialName("zip_code")
+    val zipCode: String = ""
+)`}</code></pre>
+
+<p>无法直接作为 camelCase 名称的键，会用 <code>{"@SerialName"}</code> 保留原 JSON 键名。根类排在最前，嵌套类按出现顺序排列。</p>
+
+<h2>示例：对象数组</h2>
+
+<p>根节点是数组时，工具把所有对象合并成一个类。只在部分元素中出现的键会变成可空类型，默认值为 <code>{"null"}</code>：</p>
+
+<pre><code>{`[{"id": 1, "name": "Pen", "price": 1.5}, {"id": 2, "name": "Ink", "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`@Serializable
+data class RootObject(
+    val id: Int = 0,
+    val name: String = "",
+    val price: Double? = null,
+    val discount: Double? = null
+)`}</code></pre>
+
+<h2>编译前要改的地方</h2>
+
+<ul>
+  <li>输出不含 import 语句，并且需要 kotlinx.serialization 编译器插件（<code>{"kotlin(\"plugin.serialization\")"}</code>），见 <a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin 官方序列化文档</a>。</li>
+  <li>样例值为 <code>{"null"}</code> 的字段会被推断为 <code>{"Any?"}</code>。kotlinx.serialization 没有 <code>{"Any"}</code> 的序列化器，带这种字段的 <code>{"@Serializable"}</code> 类无法编译。请换成真实类型，比如时间戳用 <code>{"String?"}</code>。</li>
+  <li>整数一律推断为 <code>{"Int"}</code>，即使超过 <code>{"Int.MAX_VALUE"}</code>（2,147,483,647）。上例的 <code>{"3000000000"}</code> 要改成 <code>{"Long"}</code>，雪花算法生成的 ID 同样要用 <code>{"Long"}</code>。</li>
+  <li>空数组和元素类型混杂的数组会变成 <code>{"List<Any>"}</code>，同样有序列化器的问题。</li>
+  <li>同一个键在数组的一个元素里是整数、另一个元素里是小数（如 <code>{"1"}</code> 和 <code>{"1.5"}</code>）时，类型会变成 <code>{"Any"}</code>，不是 <code>{"Double"}</code>。</li>
+  <li>日期保持为 <code>{"String"}</code>。JSON 没有日期类型，解码后再解析，或者写自定义序列化器。</li>
+  <li>两个嵌套对象键名相同（如 <code>{"a.meta"}</code> 和 <code>{"b.meta"}</code>）时，会共用按第一个对象生成的类，只在第二个对象里出现的字段会丢失。</li>
+</ul>
+
+<p>改好类型后用 <code>{"Json.decodeFromString"}</code> 解码：</p>
+
+<pre><code>{`import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+// lastLogin: Any? = null      ->  val lastLogin: String? = null
+// followerCount: Int = 0      ->  val followerCount: Long = 0
+
+val json = Json { ignoreUnknownKeys = true }
+val user = json.decodeFromString<RootObject>(body)`}</code></pre>

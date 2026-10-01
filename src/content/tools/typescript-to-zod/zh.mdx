@@ -83,3 +83,64 @@ export type User = z.infer<typeof UserSchema>;
 
 export const StatusSchema = z.enum(["active", "inactive", "pending"]);
 export type Status = z.infer<typeof StatusSchema>;`}</code></pre>
+
+<h2>示例：注册表单</h2>
+
+<p>输入：</p>
+
+<pre><code>{`interface SignupForm {
+  email: string;
+  password: string;
+  nickname?: string;
+  referrer: string | null;
+  age?: number | undefined;
+  plan: "free" | "pro";
+}`}</code></pre>
+
+<p>输出：</p>
+
+<pre><code>{`import { z } from "zod";
+
+export const SignupFormSchema = z.object({
+  email: z.string(),
+  password: z.string(),
+  nickname: z.string().optional(),
+  referrer: z.union([z.string(), z.null()]),
+  age: z.union([z.number(), z.undefined()]).optional(),
+  plan: z.enum(["free", "pro"]),
+});
+export type SignupForm = z.infer<typeof SignupFormSchema>;`}</code></pre>
+
+<p>用 zod 3.25 拿生成的 schema 校验三份数据：</p>
+
+<pre><code>{`SignupFormSchema.safeParse({ email: "not-an-email", password: "1", referrer: null, plan: "pro" })
+// success: true  (types match; no format rules yet)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", plan: "free" })
+// referrer: Invalid input  (string | null is required, it cannot be missing)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "ad", plan: "team" })
+// plan: Invalid enum value. Expected 'free' | 'pro', received 'team'`}</code></pre>
+
+<h2>null、undefined 与可选</h2>
+
+<ul>
+  <li><code>{"prop?: T"}</code> 变成 <code>{".optional()"}</code>：这个键可以不存在。</li>
+  <li><code>{"T | null"}</code> 变成 <code>{"z.union([T, z.null()])"}</code>，等价于 <code>{"T.nullable()"}</code>：键必须存在，值可以是 <code>{"null"}</code>。缺少 <code>{"referrer"}</code> 的数据会校验失败。</li>
+  <li>可选且可为 null（<code>{"prop?: T | null"}</code>）需要两者兼有；如果 API 就是这么返回的，手动写成 <code>{".nullish()"}</code>。</li>
+</ul>
+
+<h2>补上 TypeScript 表达不了的规则</h2>
+
+<p>TypeScript 类型没有格式和范围，所以上面第一份数据带着无效邮箱和一位密码也通过了。生成后补上约束：</p>
+
+<pre><code>{`export const SignupFormSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  nickname: z.string().max(20).optional(),
+  referrer: z.string().nullable(),
+  age: z.number().int().min(13).optional(),
+  plan: z.enum(["free", "pro"]),
+});`}</code></pre>
+
+<p>之后把生成的 <code>{"z.infer"}</code> 类型当作唯一来源，删掉原来的 interface，两者就不会逐渐不一致。</p>

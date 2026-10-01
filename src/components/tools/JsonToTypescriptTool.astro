@@ -176,15 +176,70 @@ const L = labels[lang];
         statusEl.className = 'jtt-status';
       }
 
+      /* ── engine:start ── */
+      function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
       /* ── PascalCase helper ── */
+      // Type names must be identifiers: a name that does not start with a letter, _ or $
+      // after conversion (2fa, an empty key) gets a "T" prefix.
       function toPascalCase(str) {
-        return str
-          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+        var name = String(str)
+          .replace(/[^\p{L}\p{N}_$]+(.)/gu, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/[^\p{L}\p{N}_$]/gu, '')
           .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+        if (!/^[\p{L}_$]/u.test(name)) name = 'T' + name;
+        return name;
+      }
+
+      // Declarations are kept in a list in the order they are first reached (root first).
+      // A nested object gets the PascalCase of its key. When that name is already used by a
+      // type with different fields, the parent's name is put in front (b.meta → BMeta), then a
+      // number is added; an object with the same fields as an earlier one of the same key
+      // reuses that type. The root name is reserved so a nested key cannot take it.
+      function newState(rootName) {
+        var reserved = {};
+        reserved[rootName] = true;
+        return { list: [], byName: Object.create(null), reserved: reserved };
+      }
+      function openSlot(state) {
+        var slot = { name: null, base: null, sig: null, fields: null };
+        state.list.push(slot);
+        return slot;
+      }
+      function closeSlot(state, slot, base, parent, fields, fixedName) {
+        var sig = fields.join('\n');
+        if (fixedName) {
+          slot.name = fixedName; slot.base = base; slot.sig = sig; slot.fields = fields;
+          state.byName[fixedName] = slot;
+          return fixedName;
+        }
+        for (var i = 0; i < state.list.length; i++) {
+          var other = state.list[i];
+          if (other !== slot && other.base === base && other.sig === sig) {
+            state.list.splice(state.list.indexOf(slot), 1);
+            return other.name;
+          }
+        }
+        var candidates = [base];
+        if (parent) candidates.push(parent + base);
+        var name = null;
+        for (var c = 0; c < candidates.length && !name; c++) {
+          if (!state.byName[candidates[c]] && !state.reserved[candidates[c]]) name = candidates[c];
+        }
+        for (var n = 2; !name; n++) {
+          if (!state.byName[base + n] && !state.reserved[base + n]) name = base + n;
+        }
+        slot.name = name; slot.base = base; slot.sig = sig; slot.fields = fields;
+        state.byName[name] = slot;
+        return name;
+      }
+
+      function fieldKey(k) {
+        return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
       }
 
       /* ── Type inference engine ── */
-      function inferType(value, key, interfaces, optional) {
+      function inferType(value, key, parent, state, optional) {
         if (value === null) return 'null';
         if (typeof value === 'string') return 'string';
         if (typeof value === 'number') return 'number';
@@ -200,17 +255,14 @@ const L = labels[lang];
             if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
               objectItems.push(item);
             } else {
-              var t = inferType(item, key + 'Item', interfaces, optional);
+              var t = inferType(item, key + 'Item', parent, state, optional);
               if (elementTypes.indexOf(t) === -1) elementTypes.push(t);
             }
           }
 
           if (objectItems.length > 0) {
-            var mergedInterfaceName = toPascalCase(key) + 'Item';
-            mergeObjectsToInterface(objectItems, mergedInterfaceName, interfaces, optional);
-            if (elementTypes.indexOf(mergedInterfaceName) === -1) {
-              elementTypes.push(mergedInterfaceName);
-            }
+            var itemName = mergeObjects(objectItems, toPascalCase(key) + 'Item', parent, state, optional, null);
+            if (elementTypes.indexOf(itemName) === -1) elementTypes.push(itemName);
           }
 
           if (elementTypes.length === 1) return elementTypes[0] + '[]';
@@ -218,96 +270,96 @@ const L = labels[lang];
         }
 
         if (typeof value === 'object') {
-          var interfaceName = toPascalCase(key);
-          buildInterface(value, interfaceName, interfaces, optional);
-          return interfaceName;
+          return buildObject(value, toPascalCase(key), parent, state, optional, null);
         }
 
         return 'unknown';
       }
 
-      /* ── Build interface for a single object ── */
-      function buildInterface(obj, name, interfaces, optional) {
-        if (interfaces[name]) return; // already built
-        // Reserve slot to avoid infinite recursion
-        interfaces[name] = null;
-
+      /* ── One object → one declaration; returns the type name ── */
+      function buildObject(obj, base, parent, state, optional, fixedName) {
+        var slot = openSlot(state);
+        var context = fixedName || base;
         var fields = [];
         var keys = Object.keys(obj);
         for (var i = 0; i < keys.length; i++) {
           var k = keys[i];
           var v = obj[k];
-          var typeName = inferType(v, k, interfaces, optional);
+          var typeName = inferType(v, k, context, state, optional);
           var fieldOptional = optional || v === null ? '?' : '';
-          // Quote key if not a valid identifier
-          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
-          fields.push('  ' + safeKey + fieldOptional + ': ' + typeName + ';');
+          fields.push('  ' + fieldKey(k) + fieldOptional + ': ' + typeName + ';');
         }
-
-        interfaces[name] = fields;
+        return closeSlot(state, slot, base, parent, fields, fixedName);
       }
 
-      /* ── Merge multiple objects into one interface (for typed arrays) ── */
-      function mergeObjectsToInterface(objects, name, interfaces, optional) {
-        if (interfaces[name]) return;
-        interfaces[name] = null;
-
-        // Collect all keys across all objects; track which are in all vs some
-        var allKeys = {};
+      /* ── Several objects (array items) → one merged declaration ── */
+      function mergeObjects(objects, base, parent, state, optional, fixedName) {
+        var slot = openSlot(state);
+        var context = fixedName || base;
+        // Count how many objects have each key; a key missing from some gets "?".
+        var counts = Object.create(null);
+        var order = [];
         for (var i = 0; i < objects.length; i++) {
           var keys = Object.keys(objects[i]);
           for (var j = 0; j < keys.length; j++) {
-            if (!allKeys[keys[j]]) allKeys[keys[j]] = 0;
-            allKeys[keys[j]]++;
+            if (!(keys[j] in counts)) { counts[keys[j]] = 0; order.push(keys[j]); }
+            counts[keys[j]]++;
           }
         }
 
         var fields = [];
-        var keyList = Object.keys(allKeys);
-        for (var ki = 0; ki < keyList.length; ki++) {
-          var k = keyList[ki];
-          var presentInAll = allKeys[k] === objects.length;
-          // Collect distinct types for this key
+        for (var ki = 0; ki < order.length; ki++) {
+          var k = order[ki];
+          var presentInAll = counts[k] === objects.length;
           var types = [];
+          var nested = [];
           for (var oi = 0; oi < objects.length; oi++) {
-            if (objects[oi].hasOwnProperty(k)) {
-              var t = inferType(objects[oi][k], k, interfaces, optional);
-              if (types.indexOf(t) === -1) types.push(t);
-            }
+            if (!hasOwn(objects[oi], k)) continue;
+            var v = objects[oi][k];
+            // Objects under the same key in different items are merged into one type.
+            if (v !== null && typeof v === 'object' && !Array.isArray(v)) { nested.push(v); continue; }
+            var t = inferType(v, k, context, state, optional);
+            if (types.indexOf(t) === -1) types.push(t);
+          }
+          if (nested.length) {
+            var nt = nested.length === 1
+              ? buildObject(nested[0], toPascalCase(k), context, state, optional, null)
+              : mergeObjects(nested, toPascalCase(k), context, state, optional, null);
+            if (types.indexOf(nt) === -1) types.push(nt);
           }
           var typeStr = types.length === 1 ? types[0] : '(' + types.join(' | ') + ')';
           var fieldOptional = (!presentInAll || optional) ? '?' : '';
-          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
-          fields.push('  ' + safeKey + fieldOptional + ': ' + typeStr + ';');
+          fields.push('  ' + fieldKey(k) + fieldOptional + ': ' + typeStr + ';');
         }
-
-        interfaces[name] = fields;
+        return closeSlot(state, slot, base, parent, fields, fixedName);
       }
 
-      /* ── Render interfaces to TypeScript string ── */
-      function renderInterfaces(interfaces, useType) {
+      /* ── Render declarations to TypeScript ── */
+      function renderDeclarations(state, useType) {
         var lines = [];
-        var names = Object.keys(interfaces);
-
-        for (var i = 0; i < names.length; i++) {
-          var name = names[i];
-          var fields = interfaces[name];
-          if (fields === null) continue; // shouldn't happen
-
-          if (useType) {
-            lines.push('type ' + name + ' = {');
-          } else {
-            lines.push('interface ' + name + ' {');
-          }
-          for (var j = 0; j < fields.length; j++) {
-            lines.push(fields[j]);
-          }
+        state.list.forEach(function (slot) {
+          lines.push(useType ? 'type ' + slot.name + ' = {' : 'interface ' + slot.name + ' {');
+          for (var j = 0; j < slot.fields.length; j++) lines.push(slot.fields[j]);
           lines.push('}');
           lines.push('');
-        }
-
+        });
         return lines.join('\n').trimEnd();
       }
+
+      // Returns { code, count }; count is 0 when the root is not an object (a type alias).
+      function generateTypeScript(parsed, rootName, optional, useType) {
+        var state = newState(rootName);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildObject(parsed, rootName, '', state, optional, rootName);
+        } else if (Array.isArray(parsed) && parsed.some(function (v) { return v !== null && typeof v === 'object' && !Array.isArray(v); })) {
+          var objectItems = parsed.filter(function (v) { return v !== null && typeof v === 'object' && !Array.isArray(v); });
+          mergeObjects(objectItems, rootName, '', state, optional, rootName);
+        } else {
+          return { code: 'type ' + rootName + ' = ' + inferType(parsed, rootName, '', state, optional) + ';', count: 0 };
+        }
+        return { code: renderDeclarations(state, useType), count: state.list.length };
+      }
+      /* ── engine:end ── */
 
       /* ── Main convert function ── */
       function convert() {
@@ -330,43 +382,10 @@ const L = labels[lang];
         inputEl.classList.remove('error');
 
         var rootName = (rootNameEl.value.trim() || 'RootObject');
-        var optional = optionalEl.checked;
-        var useType = useTypeEl.checked;
-
-        // Use an ordered object (insertion order)
-        var interfaces = {};
-
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildInterface(parsed, rootName, interfaces, optional);
-        } else if (Array.isArray(parsed)) {
-          // If root is an array of objects, merge them
-          var objectItems = parsed.filter(function (v) {
-            return v !== null && typeof v === 'object' && !Array.isArray(v);
-          });
-          if (objectItems.length > 0) {
-            mergeObjectsToInterface(objectItems, rootName, interfaces, optional);
-          } else {
-            // Array of primitives
-            var ts = inferType(parsed, rootName, interfaces, optional);
-            outputCodeEl.textContent = 'type ' + rootName + ' = ' + ts + ';';
-            setStatus(MSG_GENERATED, false);
-            window.trackTool && window.trackTool('json-to-typescript', 'generate');
-            return;
-          }
-        } else {
-          // Primitive root
-          var ts2 = inferType(parsed, rootName, interfaces, optional);
-          outputCodeEl.textContent = 'type ' + rootName + ' = ' + ts2 + ';';
-          setStatus(MSG_GENERATED, false);
-          window.trackTool && window.trackTool('json-to-typescript', 'generate');
-          return;
-        }
-
-        var result = renderInterfaces(interfaces, useType);
-        outputCodeEl.textContent = result;
-        var count = Object.keys(interfaces).length;
-        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
-        setStatus(msg, false);
+        var result = generateTypeScript(parsed, rootName, optionalEl.checked, useTypeEl.checked);
+        outputCodeEl.textContent = result.code;
+        if (result.count === 0) setStatus(MSG_GENERATED, false);
+        else setStatus(result.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', result.count), false);
         window.trackTool && window.trackTool('json-to-typescript', 'generate');
       }
 

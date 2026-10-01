@@ -29,7 +29,7 @@ faqItems:
 
 | 算法 | 格式前缀 | 安全性 | 说明 |
 |------|---------|--------|------|
-| bcrypt | `$2y$` | 极佳 | 推荐用于所有新部署 |
+| bcrypt | `$2a$` | 极佳 | 推荐用于所有新部署 |
 | MD5 (APR1) | `$apr1$` | 中等 | Apache 特有的带盐 MD5 变体 |
 | SHA1 | `{SHA}` | 弱 | 无盐，易受彩虹表攻击 |
 | 明文 | （无）| 无 | 仅用于测试，生产环境禁用 |
@@ -53,3 +53,38 @@ Require valid-user
   <li>生产服务器推荐使用成本因子 ≥ 10 的 bcrypt。</li>
   <li>密码泄露后立即重新生成哈希值——bcrypt 哈希无法逆向还原。</li>
 </ul>
+
+<h2>输出示例与验证方法</h2>
+
+<p>用户 <code>{"deploy"}</code>、密码 <code>{"Correct-Horse-42"}</code>，每种算法各生成一次（bcrypt 强度 10）。盐是随机的，你得到的结果会不同：</p>
+
+<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
+deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
+deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
+
+<p>三行都能通过 Apache 自带的 <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a>（2.4.67）验证，APR1 一行在相同盐值下与 OpenSSL 的结果一致：</p>
+
+<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
+Password for user deploy correct.
+$ htpasswd -vb .htpasswd deploy wrong
+password verification failed`}</code></pre>
+
+<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
+$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
+
+<ul>
+  <li>bcrypt 哈希以 <code>{"$2a$"}</code> 开头：工具用的是 bcrypt.js，而 Apache 的 <code>{"htpasswd -B"}</code> 写出的是 <code>{"$2y$"}</code>。Apache 2.4 两种都接受。</li>
+  <li>bcrypt 只使用密码的前 72 个字节。</li>
+  <li>Apache 文档把 SHA1 列为不安全，因为它不加盐：同一个密码在所有用户那里得到的都是上面这一行。</li>
+</ul>
+
+<h2>Nginx 配置</h2>
+
+<pre><code>{`location /admin/ {
+    auth_basic           "Restricted";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+}`}</code></pre>
+
+<p>按 <a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a> 的说明，Nginx 自己能读 <code>{"$apr1$"}</code>（MD5）、<code>{"{SHA}"}</code> 和 <code>{"{PLAIN}"}</code>，其他格式交给操作系统的 <code>{"crypt()"}</code>。所以 bcrypt 只在系统 <code>{"crypt()"}</code> 支持它时可用（比如带 libxcrypt 的 glibc）；如果服务器拒绝 bcrypt 行，给 Nginx 用 APR1。</p>
+
+<p>改完后运行 <code>{"nginx -t"}</code> 再 reload。文件放在网站根目录之外，只让 worker 用户可读。</p>

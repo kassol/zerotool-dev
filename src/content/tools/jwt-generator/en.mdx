@@ -30,3 +30,45 @@ faqItems:
   <li><strong>Documentation:</strong> Generate example tokens for API docs or README files.</li>
   <li><strong>Learning:</strong> Understand how JWTs are structured and signed.</li>
 </ul>
+
+<h2>Example: A Token for a Local API Test</h2>
+
+<p>Header (unchanged default) and payload as typed into the tool, with the UTF-8 secret <code>{"dev-secret-at-least-32-bytes-long!!"}</code>:</p>
+
+<pre><code>{`{
+  "alg": "HS256",
+  "typ": "JWT"
+}`}</code></pre>
+
+<pre><code>{`{
+  "sub": "user-42",
+  "role": "admin",
+  "iat": 1767225600,
+  "exp": 1767229200
+}`}</code></pre>
+
+<p>Generated HS256 token:</p>
+
+<pre><code>{`ewogICJhbGciOiAiSFMyNTYiLAogICJ0eXAiOiAiSldUIgp9.ewogICJzdWIiOiAidXNlci00MiIsCiAgInJvbGUiOiAiYWRtaW4iLAogICJpYXQiOiAxNzY3MjI1NjAwLAogICJleHAiOiAxNzY3MjI5MjAwCn0.Bv_t0OCTXuNeir4XkkMmC0CJs8jGuy1knb6zZGgSRTs`}</code></pre>
+
+<p>The tool encodes the header and payload text exactly as typed, including line breaks and indentation, so this token is longer than one made from minified JSON (160 vs 125 characters before the signature). It is still a valid JWS. Verifying it with PyJWT:</p>
+
+<pre><code>{`import jwt  # PyJWT 2.10
+
+jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"],
+           options={"verify_exp": False})
+# {'sub': 'user-42', 'role': 'admin', 'iat': 1767225600, 'exp': 1767229200}
+
+jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"])
+# jwt.exceptions.ExpiredSignatureError: Signature has expired`}</code></pre>
+
+<p><code>{"iat"}</code> 1767225600 is 2026-01-01 00:00:00 UTC and <code>{"exp"}</code> is one hour later, so a library that checks expiry rejects the token today. The tool does not add or check <code>{"iat"}</code>, <code>{"exp"}</code> or <code>{"nbf"}</code>; write the timestamps you need yourself (Unix seconds, <a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank" rel="noopener">RFC 7519 §4.1</a>).</p>
+
+<h2>Limits</h2>
+
+<ul>
+  <li>Only HMAC algorithms (HS256, HS384, HS512). RS256 and ES256 tokens need a private key and are not supported.</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc7518#section-3.2" target="_blank" rel="noopener">RFC 7518 §3.2</a> requires a key at least as long as the hash output: 32 bytes for HS256, 48 for HS384, 64 for HS512. The tool accepts shorter secrets without a warning.</li>
+  <li>In Base64 mode the secret is decoded first (standard or URL-safe alphabet, padding optional). Use it when the server stores the key as Base64; otherwise the signature will not match.</li>
+  <li>Do not paste production signing secrets into any web page. Use a dedicated test secret.</li>
+</ul>

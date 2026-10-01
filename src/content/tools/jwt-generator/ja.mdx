@@ -30,3 +30,45 @@ faqItems:
   <li><strong>ドキュメント作成：</strong>APIドキュメントやREADMEのサンプルトークンを生成。</li>
   <li><strong>学習：</strong>JWTの構造と署名の仕組みを理解する。</li>
 </ul>
+
+<h2>例：ローカル API テスト用のトークン</h2>
+
+<p>ヘッダー（既定のまま）とペイロードを次のように入力し、UTF-8 のシークレットは <code>{"dev-secret-at-least-32-bytes-long!!"}</code> にします：</p>
+
+<pre><code>{`{
+  "alg": "HS256",
+  "typ": "JWT"
+}`}</code></pre>
+
+<pre><code>{`{
+  "sub": "user-42",
+  "role": "admin",
+  "iat": 1767225600,
+  "exp": 1767229200
+}`}</code></pre>
+
+<p>生成された HS256 トークン：</p>
+
+<pre><code>{`ewogICJhbGciOiAiSFMyNTYiLAogICJ0eXAiOiAiSldUIgp9.ewogICJzdWIiOiAidXNlci00MiIsCiAgInJvbGUiOiAiYWRtaW4iLAogICJpYXQiOiAxNzY3MjI1NjAwLAogICJleHAiOiAxNzY3MjI5MjAwCn0.Bv_t0OCTXuNeir4XkkMmC0CJs8jGuy1knb6zZGgSRTs`}</code></pre>
+
+<p>ツールはヘッダーとペイロードを入力欄の文字列のまま（改行とインデントも含めて）エンコードするため、圧縮した JSON から作ったトークンより長くなります（署名の前の部分が 160 文字、圧縮すると 125 文字）。それでも正しい JWS です。PyJWT での検証：</p>
+
+<pre><code>{`import jwt  # PyJWT 2.10
+
+jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"],
+           options={"verify_exp": False})
+# {'sub': 'user-42', 'role': 'admin', 'iat': 1767225600, 'exp': 1767229200}
+
+jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"])
+# jwt.exceptions.ExpiredSignatureError: Signature has expired`}</code></pre>
+
+<p><code>{"iat"}</code> の 1767225600 は 2026-01-01 00:00:00 UTC、<code>{"exp"}</code> はその 1 時間後なので、有効期限を確認するライブラリは現在このトークンを拒否します。ツールは <code>{"iat"}</code>・<code>{"exp"}</code>・<code>{"nbf"}</code> を追加も確認もしないので、必要なタイムスタンプは自分で書きます（Unix 秒、<a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank" rel="noopener">RFC 7519 §4.1</a>）。</p>
+
+<h2>制限</h2>
+
+<ul>
+  <li>対応するのは HMAC（HS256、HS384、HS512）だけです。秘密鍵が必要な RS256・ES256 には対応していません。</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc7518#section-3.2" target="_blank" rel="noopener">RFC 7518 §3.2</a> は、鍵の長さをハッシュの出力以上にするよう求めています（HS256 は 32 バイト、HS384 は 48、HS512 は 64）。ツールはそれより短いシークレットも警告なしで受け付けます。</li>
+  <li>Base64 モードではシークレットを先にデコードします（標準・URL セーフどちらのアルファベットも可、パディングは省略可）。サーバーが鍵を Base64 で保存しているときに使います。そうでないと署名が一致しません。</li>
+  <li>本番の署名用シークレットはどんな Web ページにも貼り付けないでください。テスト専用のシークレットを使います。</li>
+</ul>

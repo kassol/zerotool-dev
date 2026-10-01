@@ -30,3 +30,45 @@ faqItems:
   <li><strong>文档编写：</strong>为 API 文档或 README 生成示例 Token。</li>
   <li><strong>学习：</strong>理解 JWT 的结构和签名原理。</li>
 </ul>
+
+<h2>示例：给本地 API 测试生成令牌</h2>
+
+<p>头部（默认值未改）和载荷按下面的文字输入，UTF-8 密钥为 <code>{"dev-secret-at-least-32-bytes-long!!"}</code>：</p>
+
+<pre><code>{`{
+  "alg": "HS256",
+  "typ": "JWT"
+}`}</code></pre>
+
+<pre><code>{`{
+  "sub": "user-42",
+  "role": "admin",
+  "iat": 1767225600,
+  "exp": 1767229200
+}`}</code></pre>
+
+<p>生成的 HS256 令牌：</p>
+
+<pre><code>{`ewogICJhbGciOiAiSFMyNTYiLAogICJ0eXAiOiAiSldUIgp9.ewogICJzdWIiOiAidXNlci00MiIsCiAgInJvbGUiOiAiYWRtaW4iLAogICJpYXQiOiAxNzY3MjI1NjAwLAogICJleHAiOiAxNzY3MjI5MjAwCn0.Bv_t0OCTXuNeir4XkkMmC0CJs8jGuy1knb6zZGgSRTs`}</code></pre>
+
+<p>工具按输入框里的原文编码头部和载荷，包括换行和缩进，所以这个令牌比用压缩 JSON 生成的长（签名前 160 个字符，压缩后 125 个），但仍是合法的 JWS。用 PyJWT 验证：</p>
+
+<pre><code>{`import jwt  # PyJWT 2.10
+
+jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"],
+           options={"verify_exp": False})
+# {'sub': 'user-42', 'role': 'admin', 'iat': 1767225600, 'exp': 1767229200}
+
+jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"])
+# jwt.exceptions.ExpiredSignatureError: Signature has expired`}</code></pre>
+
+<p><code>{"iat"}</code> 1767225600 是 2026-01-01 00:00:00 UTC，<code>{"exp"}</code> 晚一小时，所以检查过期时间的库今天会拒绝这个令牌。工具不会添加或检查 <code>{"iat"}</code>、<code>{"exp"}</code>、<code>{"nbf"}</code>，需要的时间戳请自己写（Unix 秒，<a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank" rel="noopener">RFC 7519 §4.1</a>）。</p>
+
+<h2>限制</h2>
+
+<ul>
+  <li>只支持 HMAC 算法（HS256、HS384、HS512）。RS256、ES256 需要私钥，不支持。</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc7518#section-3.2" target="_blank" rel="noopener">RFC 7518 §3.2</a> 要求密钥长度不少于哈希输出：HS256 为 32 字节、HS384 为 48、HS512 为 64。工具接受更短的密钥且不提示。</li>
+  <li>Base64 模式下会先解码密钥（标准或 URL 安全字母表，填充可省略）。服务端以 Base64 保存密钥时用这个模式，否则签名对不上。</li>
+  <li>不要把生产环境的签名密钥粘贴到任何网页里，请用专门的测试密钥。</li>
+</ul>

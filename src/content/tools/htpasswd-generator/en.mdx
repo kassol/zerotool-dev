@@ -29,7 +29,7 @@ faqItems:
 
 | Algorithm | Format prefix | Security | Notes |
 |-----------|--------------|----------|-------|
-| bcrypt | `$2y$` | Excellent | Recommended for all new deployments |
+| bcrypt | `$2a$` | Excellent | Recommended for all new deployments |
 | MD5 (APR1) | `$apr1$` | Moderate | Apache-specific MD5 variant with salt |
 | SHA1 | `{SHA}` | Weak | No salt; vulnerable to rainbow tables |
 | Plaintext | (none) | None | For testing only — never use in production |
@@ -53,3 +53,38 @@ Require valid-user
   <li>Prefer bcrypt with cost ≥ 10 for production servers.</li>
   <li>Regenerate hashes if a password is compromised — there is no way to reverse a bcrypt hash.</li>
 </ul>
+
+<h2>Example Output and How to Verify It</h2>
+
+<p>User <code>{"deploy"}</code>, password <code>{"Correct-Horse-42"}</code>, generated once with each algorithm (bcrypt at cost 10). Salts are random, so your lines will differ:</p>
+
+<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
+deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
+deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
+
+<p>All three lines verify with Apache's own <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a> 2.4.67, and the APR1 line matches OpenSSL for the same salt:</p>
+
+<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
+Password for user deploy correct.
+$ htpasswd -vb .htpasswd deploy wrong
+password verification failed`}</code></pre>
+
+<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
+$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
+
+<ul>
+  <li>The bcrypt hashes start with <code>{"$2a$"}</code>: the tool uses bcrypt.js, while Apache's <code>{"htpasswd -B"}</code> writes <code>{"$2y$"}</code>. Apache 2.4 accepts both.</li>
+  <li>bcrypt only uses the first 72 bytes of the password.</li>
+  <li>Apache documents SHA1 as insecure because it is unsalted; the line above is the same for every user with that password.</li>
+</ul>
+
+<h2>Nginx Configuration</h2>
+
+<pre><code>{`location /admin/ {
+    auth_basic           "Restricted";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+}`}</code></pre>
+
+<p>Per <a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a>, Nginx reads <code>{"$apr1$"}</code> (MD5), <code>{"{SHA}"}</code> and <code>{"{PLAIN}"}</code> itself and passes other hashes to the operating system's <code>{"crypt()"}</code>. bcrypt therefore works only where the system <code>{"crypt()"}</code> supports it (for example glibc with libxcrypt); if bcrypt lines are rejected on your server, use APR1 for Nginx.</p>
+
+<p>After editing, run <code>{"nginx -t"}</code> and reload. Keep the file outside the web root and readable by the worker user only.</p>

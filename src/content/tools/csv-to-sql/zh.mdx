@@ -3,7 +3,7 @@ seoTitle: "CSV 转 SQL INSERT 在线转换器 — 免费，纯浏览器 | ZeroTo
 seoDescription: "在浏览器中即时将 CSV 数据转换为 SQL INSERT 语句，支持 MySQL、PostgreSQL、SQLite 方言，处理引号字段、NULL 值和批量模式。免费，无需注册。"
 faqItems:
   - question: "这个工具有什么用？"
-    answer: "将 CSV 数据转换为 SQL INSERT 语句。工具读取第一行作为列名，为每个数据行生成 INSERT 语句，并根据所选 SQL 方言正确处理引号和转义。"
+    answer: "将 CSV 数据转换为 SQL INSERT 语句。工具读取第一行作为列名，为每个数据行生成 INSERT 语句，按所选方言给标识符加引号，并把值里的单引号写成两个（反斜杠不转义，见「限制」）。"
   - question: "支持哪些 SQL 方言？"
     answer: "MySQL（反引号标识符）、PostgreSQL（双引号标识符）和 SQLite（双引号标识符）。INSERT 语法相同，区别仅在于标识符的引号方式。"
   - question: "如何处理 NULL 值？"
@@ -58,4 +58,46 @@ faqItems:
   <li>仅包含空格的字段视为字符串，不会转换为 NULL。</li>
   <li>纯数字值（整数和小数）不加引号，以数值类型存储。</li>
   <li>其他所有值用单引号包裹，内部的单引号转义为 <code>''</code>。</li>
+</ul>
+
+<h2>示例：引号、前导零与空字段</h2>
+
+<p>输入：</p>
+
+<pre><code>{`id,name,zip,note
+1,"O'Brien, Pat",02134,
+2,Lee,10001,"path C:\\new"`}</code></pre>
+
+<p>输出（SQLite 方言，批量模式，表名 <code>{"customers"}</code>）：</p>
+
+<pre><code>{`INSERT INTO "customers" ("id", "name", "zip", "note") VALUES
+  (1, 'O''Brien, Pat', 02134, NULL),
+  (2, 'Lee', 10001, 'path C:\\new');`}</code></pre>
+
+<p>先建表，再导入 SQLite 3：</p>
+
+<pre><code>{`CREATE TABLE customers (id INTEGER, name TEXT, zip TEXT, note TEXT);
+-- run the INSERT above, then:
+SELECT * FROM customers;
+-- 1 | O'Brien, Pat | 2134  | NULL
+-- 2 | Lee          | 10001 | path C:\\new`}</code></pre>
+
+<ul>
+  <li>带引号的字段 <code>{"\"O'Brien, Pat\""}</code> 保留了逗号，单引号被写成两个（<code>{"''"}</code>）。</li>
+  <li>空的 <code>{"note"}</code> 变成 <code>{"NULL"}</code>；工具无法生成空字符串 <code>{"''"}</code>。</li>
+  <li><code>{"02134"}</code> 看起来是数字，所以不加引号写出，前导零丢失——即使列是 TEXT 也一样。这类值（邮编、电话号码、编号）请手动加引号：</li>
+</ul>
+
+<pre><code>{`INSERT INTO "customers" ("id", "name", "zip", "note") VALUES
+  (1, 'O''Brien, Pat', '02134', NULL),
+  (2, 'Lee', '10001', 'path C:\\new');`}</code></pre>
+
+<h2>限制</h2>
+
+<ul>
+  <li>工具只生成 <code>{"INSERT"}</code> 语句，不生成 <code>{"CREATE TABLE"}</code>；请先按需要的列类型建表。</li>
+  <li>MySQL 默认把字符串里的反斜杠当作转义符，除非开启 <code>{"NO_BACKSLASH_ESCAPES"}</code>（<a href="https://dev.mysql.com/doc/refman/8.4/en/string-literals.html" target="_blank" rel="noopener">MySQL string literals</a>）。工具只把单引号写成两个，所以上面的 <code>{"C:\\new"}</code> 在 MySQL 里会存成带换行的文本。PostgreSQL（标准字符串）和 SQLite 会原样保存。</li>
+  <li>类型只按模式判断：<code>{"-?数字(.数字)?"}</code> 是数字，其他都加引号当字符串。日期、布尔值和 <code>{"1e5"}</code> 都写成字符串。</li>
+  <li>第一行固定当表头。超出表头列数的单元格会被丢弃，没有提示。</li>
+  <li>大文件在浏览器标签页里一次性转换；百万行级别请用数据库自带的批量导入（<code>{"LOAD DATA"}</code>、<code>{"COPY"}</code>、<code>{".import"}</code>）。</li>
 </ul>

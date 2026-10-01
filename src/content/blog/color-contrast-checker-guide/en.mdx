@@ -2,11 +2,13 @@
 title: "Color Contrast Checker: Pass WCAG AA Without Killing Your Brand Color"
 description: "Pick foreground and background, get the WCAG 2.x ratio, AA/AAA pass-fail across body/large/UI, and a hue-preserving fix when contrast is too low."
 pubDate: 2026-04-28
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["accessibility", "wcag", "color", "developer-tools"]
 ---
 
-You picked `#B45309` for the brand color. The marketing deck loved it. The CEO loved it. You shipped a landing page with `#B45309` on `#FFF7ED` and called it a day. Two weeks later the accessibility audit landed: every body paragraph fails WCAG AA. The contrast ratio is 3.86 : 1, the threshold is 4.5 : 1. Now what — switch to flat black and lose the brand?
+A common situation: the brand color is an orange such as `#EA580C` (Tailwind's `orange-600`), the landing page sets body text in it on a cream `#FFF7ED`, and the accessibility audit reports that every body paragraph fails WCAG AA. The contrast ratio is 3.35 : 1, the threshold is 4.5 : 1. Now what — switch to flat black and lose the brand?
 
 [Open the Color Contrast Checker →](/tools/color-contrast-checker)
 
@@ -17,7 +19,7 @@ This guide is about the moment between "the audit failed" and "we shipped the fi
 WCAG 2.x contrast is a ratio of *relative luminance*, not perceived brightness. The formula has three steps:
 
 1. For each sRGB channel `c`, gamma-decode it:
-   - if `c / 255 ≤ 0.03928` then `c_lin = (c / 255) / 12.92`
+   - if `c / 255 ≤ 0.04045` then `c_lin = (c / 255) / 12.92` (WCAG 2.0 and 2.1 print `0.03928`; no 8-bit value falls between the two, so the results are identical)
    - otherwise `c_lin = ((c / 255 + 0.055) / 1.055) ^ 2.4`
 2. Combine the linearized channels into a single luminance:
    - `L = 0.2126 * R_lin + 0.7152 * G_lin + 0.0722 * B_lin`
@@ -34,23 +36,23 @@ WCAG splits text and non-text into three buckets, each with its own AA and AAA t
 
 | Element | AA | AAA | Counts as |
 |---------|---:|----:|-----------|
-| Body text (1.4.3) | 4.5 : 1 | 7 : 1 | Smaller than 18&nbsp;px regular or 14&nbsp;px bold |
-| Large text | 3 : 1 | 4.5 : 1 | 18.66&nbsp;px bold and up, 24&nbsp;px regular and up |
+| Body text (AA 1.4.3, AAA 1.4.6) | 4.5 : 1 | 7 : 1 | Smaller than 24&nbsp;px regular or 18.66&nbsp;px bold |
+| Large text (AA 1.4.3, AAA 1.4.6) | 3 : 1 | 4.5 : 1 | 18.66&nbsp;px bold and up, 24&nbsp;px regular and up (WCAG defines 18&nbsp;pt and 14&nbsp;pt bold) |
 | UI components & graphics (1.4.11) | 3 : 1 | — | Borders, focus rings, icons, chart strokes |
 
 Three observations that trip up teams:
 
-1. **AAA is not "nice to have" everywhere.** WCAG says AAA is a stretch target, but specific industries (US federal procurement under Section 508, certain EU public bodies) ask for AAA on parts of the experience. Know which parts of your product carry that obligation before negotiating with design.
+1. **AAA is not required by the common legal baselines.** Section 508 incorporates WCAG 2.0 Level AA, and EN 301 549 (used for the European Accessibility Act) maps to WCAG 2.1 Level AA. W3C itself advises against requiring AAA for entire sites ([Understanding Conformance](https://www.w3.org/WAI/WCAG22/Understanding/conformance)). If a contract or internal policy asks for AAA on specific pages, it says so explicitly.
 2. **Large text gets a much friendlier 3 : 1.** This is why marketing landing pages with huge serif headings can use much lower-contrast accent colors than the body copy underneath them.
 3. **There is no AAA target for UI.** WCAG 2.1 added 1.4.11 at 3 : 1 and stopped there. Don't waste time hunting an AAA UI rule that doesn't exist; if you need stricter targets internally, write your own and document the basis.
 
 ## Failure modes that surprise teams
 
-The mistakes below are not exotic. Every one of them has shipped to production at least once at every company I've seen.
+The mistakes below are not exotic; each one is easy to ship without noticing.
 
 ### "We meet AA, ship it" — but the audit tool measures something else
 
-WCAG 2.x is not the only contrast model in use. The proposed APCA (Advanced Perceptual Contrast Algorithm) measures perceptual lightness contrast on a different scale (`Lc`), and several modern audit tools surface both. APCA is intended for WCAG 3, which is still a draft. If you build to WCAG 2.x and the audit reports APCA, the numbers will not match — that is not a bug, it is two different yardsticks.
+WCAG 2.x is not the only contrast model in use. APCA (Accessible Perceptual Contrast Algorithm) measures perceptual lightness contrast on a different scale (`Lc`), and several modern audit tools surface both. APCA was proposed for WCAG 3, which is still a Working Draft and does not set a normative contrast formula. If you build to WCAG 2.x and the audit reports APCA, the numbers will not match — that is not a bug, it is two different yardsticks.
 
 For now, ship to WCAG 2.x because that is the standard referenced by current law (Section 508, EN 301 549, EAA). Track APCA separately as a research signal.
 
@@ -60,19 +62,19 @@ Contrast formulas only work on opaque colors. If your text is `rgba(20, 20, 20, 
 
 ### Mid-tone backgrounds break "just darken the foreground"
 
-If the background luminance is around 0.18 (`#888` ish), neither pure black nor pure white reaches 4.5 : 1 against it. Black gets you to about 4.0 : 1, white gets you about 4.4 : 1. The fix is to change the background, not the foreground. Designers reach for "just bump the text color" reflexively, and on mid-tones the move does not work.
+Against any opaque background, either pure black or pure white reaches at least 4.5 : 1, but on mid-tones only just. On `#767676` black gives 4.62 : 1 and white 4.54 : 1; on `#777777` white drops to 4.48 : 1. A colored foreground has no room left on such a background, so the fix is to change the background, not the foreground. Designers reach for "just bump the text color" reflexively, and on mid-tones the move does not work.
 
 ### Placeholder text counts
 
-Most browsers render `::placeholder` at around 50% opacity by default. That means a placeholder in a `#1f2937` color on a `#f9fafb` background renders effectively as `#88888d`-ish, which fails AA. WCAG does treat placeholder text as text. Either bump the placeholder lightness or accept that the input is not accessible until typed.
+Browsers render `::placeholder` lighter than the typed text by default, and the exact color differs between browsers. Placeholder text is text, so 1.4.3 applies to it. Set an explicit `::placeholder` color and measure that color against the input background.
 
 ### Form labels and disabled states
 
-`disabled` controls are exempt from contrast requirements in WCAG 2.x, but only the disabled control itself. The label *next to* a disabled control is not exempt. Audit tools often miss the distinction; humans should not.
+1.4.3 exempts text that is part of an inactive user interface component. Whether a visible label next to a disabled control counts as part of the control is not spelled out in the criterion, and auditors differ. Keeping labels at 4.5 : 1 avoids the argument.
 
 ## How "keep the hue, fix the lightness" works
 
-When `#B45309` on `#FFF7ED` fails AA at 3.86 : 1, the naive fix is "use black." But brand colors are picked for hue identity. Black throws the brand away. The right move is to keep the hue and chroma constant and move only the perceived lightness until contrast clears.
+When `#EA580C` on `#FFF7ED` fails AA at 3.35 : 1, the naive fix is "use black." But brand colors are picked for hue identity. Black throws the brand away. The right move is to keep the hue and chroma constant and move only the perceived lightness until contrast clears.
 
 OKLCH (Oklab in polar form) is the right space for this because its `L` axis is perceptually uniform: a step from `L = 0.6` to `L = 0.5` looks like the same magnitude of change as from `L = 0.4` to `L = 0.3`. sRGB lightness does not have this property — equal sRGB steps look like very different perceptual jumps near the dark end.
 
@@ -106,10 +108,10 @@ function fix(fg, bg, target = 4.5) {
 
 Two notes:
 
-- **The `target * 0.99` slack** absorbs floating-point rounding from the OKLCH ↔ sRGB matrix. Without it, a result that is mathematically `4.5 : 1` can read as `4.4998 : 1` and get rejected.
+- **The `target * 0.99` slack** absorbs floating-point rounding from the OKLCH ↔ sRGB matrix. Rounding the result to an 8-bit hex value then moves the ratio again, in either direction, so measure the final hex before you ship it: WCAG thresholds are not rounded (`4.499 : 1` fails).
 - **The fallback to flat black or white** is the honest answer when your hue cannot reach the target inside the sRGB gamut. A neon yellow on a yellow background will never pass AA at any lightness; the algorithm should admit that, not pretend.
 
-For `#B45309` (brand orange) on `#FFF7ED` (warm cream), the algorithm lands on roughly `#925108` — same hue, slightly deeper, ratio bumps from 3.86 : 1 to 4.50 : 1. The brand identity stays, the audit passes.
+For `#EA580C` (brand orange) on `#FFF7ED` (warm cream), the tool suggests `#D03F00`, which measures 4.50 : 1 (4.5025) as a hex value. The orange stays recognizable, though not exactly the same hue: lowering lightness pushes the blue channel below zero, and clipping it to the sRGB gamut shifts the OKLCH hue from 0.718 to 0.654 rad. The audit passes.
 
 ## Code examples for your stack
 
@@ -118,7 +120,7 @@ For `#B45309` (brand orange) on `#FFF7ED` (warm cream), the algorithm lands on r
 ```python
 def srgb_to_lin(c):
     c = c / 255.0
-    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 def luminance(rgb):
     r, g, b = (srgb_to_lin(c) for c in rgb)
@@ -128,8 +130,8 @@ def contrast(c1, c2):
     L1, L2 = sorted([luminance(c1), luminance(c2)], reverse=True)
     return (L1 + 0.05) / (L2 + 0.05)
 
-# (180, 83, 9) on (255, 247, 237)
-print(round(contrast((180, 83, 9), (255, 247, 237)), 2))  # 3.86
+# (234, 88, 12) on (255, 247, 237)
+print(round(contrast((234, 88, 12), (255, 247, 237)), 2))  # 3.35
 ```
 
 No external dependency. Pillow is only needed when you need to read pixel colors out of an image. For a known foreground/background pair, the math fits in fifteen lines.
@@ -137,7 +139,7 @@ No external dependency. Pillow is only needed when you need to read pixel colors
 ### JavaScript (browser, no library)
 
 ```js
-const lin = c => (c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const lin = c => (c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 const lum = ({ r, g, b }) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 const ratio = (a, b) => {
   const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
@@ -151,6 +153,7 @@ That is the entire core. The OKLCH conversion adds another forty lines but stays
 
 ```bash
 # Fail CI if any token in tokens.json is below 4.5:1 against the page background.
+# wcagContrast(fg, bg) is the ratio function from the JavaScript example, taking hex strings.
 node -e '
   const tokens = require("./tokens.json");
   const bg = tokens["color.background.default"];
@@ -173,8 +176,8 @@ This is the version of accessibility testing that survives. Manual audits drift;
 
 WebAIM's contrast checker is the de facto reference; we're not trying to replace it. The differences worth knowing:
 
-- **Hue-preserving fix**: WebAIM tells you "this fails." Browser DevTools' contrast picker tells you "drag this slider to fix." Neither walks the OKLCH lightness axis automatically. This tool does, and reports the smallest lightness change that clears AA.
-- **Three-tier breakdown in one view**: Body, large text, and UI components each have different thresholds. Most checkers report only the headline number; this one breaks it down so you don't have to recompute thresholds in your head.
+- **Hue-preserving fix**: WebAIM reports pass or fail and gives lighten / darken buttons that step the color you picked. Chrome DevTools' color picker can suggest a passing color for one element on a live page. This tool searches the OKLCH lightness axis for any pair you type and reports the smallest lightness change that clears AA.
+- **Three-tier breakdown in one view**: like WebAIM, it shows body text, large text, and UI components side by side, each against its own AA and AAA threshold.
 - **Four languages**: Useful when working with non-English design teams or shipping a11y guidelines internally.
 - **No upload**: Every conversion runs locally. The hex values you type never reach any server. For brand colors that are still under NDA, this matters.
 
@@ -183,10 +186,10 @@ WebAIM's contrast checker is the de facto reference; we're not trying to replace
 - [WCAG 2.2 Success Criterion 1.4.3 — Contrast (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum)
 - [WCAG 2.2 Success Criterion 1.4.11 — Non-text Contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast)
 - [Björn Ottosson — A perceptual color space for image processing (Oklab)](https://bottosson.github.io/posts/oklab/)
-- [APCA Readability Criterion (W3C draft)](https://www.w3.org/TR/wcag-3.0/#contrast)
+- [WCAG 3.0 (W3C Working Draft)](https://www.w3.org/TR/wcag-3.0/)
 
 ## Related tools at ZeroTool
 
 - [Color Palette Generator](/tools/color-palette-generator) — pick a base color and get four harmonious schemes; useful before you check contrast.
 - [Color Converter](/tools/color-converter) — HEX, RGB, HSL conversions when you're moving values between design and code.
-- [Color Shades Generator](/tools/color-shades-generator) — Tailwind-style 10-step scales when you need a full token set, not a single color.
+- [Color Shades Generator](/tools/color-shades-generator) — Tailwind-style 11-step (50–950) scales when you need a full token set, not a single color.

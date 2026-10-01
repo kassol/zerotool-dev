@@ -2,11 +2,13 @@
 title: "EXIF Metadata Viewer: Strip GPS and Camera Info from Photos in Your Browser"
 description: "View EXIF metadata and strip EXIF, XMP, and IPTC marker segments from JPEG photos client-side. Covers the JPEG marker layout, GPS coordinate decoding, and what social platforms actually strip."
 pubDate: 2026-04-28
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["exif", "image-privacy", "jpeg", "developer-tools"]
 ---
 
-You post a photo of your cat to a forum. Twenty minutes later, a stranger replies naming the apartment complex. They did not stalk you — they just dropped your image into one of dozens of free EXIF viewers. The phone that took the picture wrote the GPS coordinates, accurate to a few meters, into the file. The forum forwarded the bytes unchanged. Anyone with a browser tab could read them.
+A common way location leaks: you post a photo of your cat to a forum that serves the original file. The phone that took the picture wrote GPS coordinates into the file, and the forum passed the bytes through unchanged. Anyone who drops the image into a free EXIF viewer can read them.
 
 [Open the EXIF Metadata Viewer →](/tools/exif-metadata-viewer)
 
@@ -14,7 +16,7 @@ EXIF is the side of digital photography most people never see. This guide covers
 
 ## What EXIF Actually Contains
 
-EXIF (Exchangeable Image File Format) is a CIPA-maintained standard ([DC-008-Translation-2023, "EXIF 2.32"](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E)) that defines how cameras and phones embed structured metadata into image files. It started in 1995 and is now embedded in nearly every JPEG produced by a consumer device.
+EXIF (Exchangeable image file format) is a standard maintained by CIPA and JEITA (current version Exif 3.0, [CIPA DC-008-2023](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E)) that defines how cameras and phones embed structured metadata into image files. Version 1.0 was published in 1995, and camera and phone JPEGs carry it by default.
 
 A typical phone-camera photo carries far more than a date stamp:
 
@@ -67,7 +69,7 @@ The ZeroTool stripper drops three markers:
 
 It keeps SOI, APP0 (JFIF), APP2 (ICC color profile, so colors render the same), all DQT / SOF / DHT segments, the SOS marker, the compressed image bytes, and EOI.
 
-The result is **byte-identical to the original on the pixel side**. No quality loss. No re-encoding. Compare this to the common "drop EXIF by re-encoding through Canvas" pattern:
+The result is **byte-identical to the original on the pixel side**. No quality loss. No re-encoding. Two side effects follow from dropping whole segments: the EXIF `Orientation` tag goes with APP1, so a phone photo that relied on it can display rotated; and APP14 tells decoders how to interpret Adobe CMYK / YCCK JPEGs, so such files can render with wrong colors after the strip. Ordinary RGB photos from phones and cameras do not depend on APP14. Compare this to the common "drop EXIF by re-encoding through Canvas" pattern:
 
 ```javascript
 // LOSSY — re-encodes JPEG through Canvas, quality drops
@@ -103,21 +105,9 @@ The viewer decodes both axes, applies the `S` / `W` sign flip, and constructs a 
 
 ## What Social Platforms Actually Strip
 
-A common assumption is "I posted on Twitter, the photo is safe." It depends on the platform and the path. Public statements and reverse-engineering reports vary, and platforms do change their handling. As of late 2025 the rough picture:
+A common assumption is "I posted on a big platform, the photo is safe." Most platforms do not document what they keep, the behavior differs between the image shown to other users and the copy kept on the server, and it changes between app versions and upload paths (compressed photo vs. "original" vs. file attachment). Two things hold regardless of platform: a file sent as an attachment (email, chat "send as file", issue trackers that serve the uploaded file) usually arrives byte for byte, and a platform that keeps the original on its servers still has your location even if other users cannot see it.
 
-| Platform | Default upload behavior | Caveats |
-|----------|-------------------------|---------|
-| **Twitter / X** | Strips EXIF for public images | Direct messages may keep more; original-quality uploads through some clients can preserve metadata |
-| **Facebook** | Strips most EXIF on display; keeps a copy server-side | Internal API can return original on certain queries |
-| **Instagram** | Strips EXIF | Re-encodes images aggressively, also removes GPS |
-| **Reddit (i.redd.it)** | Strips EXIF | But links to off-site image hosts (imgur, external) follow that host's policy |
-| **WeChat / 微信** | Strips EXIF for chat images sent at "compressed" mode | Sending as "original file" preserves EXIF in full |
-| **WhatsApp** | Strips EXIF on standard send | Sending as "document" preserves it |
-| **Discord** | Behavior varies by upload path and file type | Audit your specific path or strip locally before posting |
-| **Email attachments** | Pass through | EXIF is preserved unless the client re-encodes |
-| **GitHub / GitLab issue images** | Pass through | EXIF preserved |
-
-The take-away: do not rely on the platform. Strip locally before posting and the question disappears.
+You can check a specific path yourself: upload a test photo that has GPS data, download it back the way another user would, and open the downloaded file in the viewer. Or strip locally before posting and the question disappears.
 
 ## Common Edge Cases
 
@@ -139,7 +129,7 @@ TIFF stores EXIF in IFD trees similar to the EXIF block inside a JPEG, but the f
 
 ### Files larger than 25 MB
 
-Browsers can usually parse and strip files up to 100 MB without trouble on a modern laptop. Phones may get tight on RAM. The tool warns at 25 MB and refuses above 100 MB to avoid OOM crashes. For batch jobs over many large files, a local CLI like `exiftool -all=` or `mat2` is the right tool.
+The tool reads the whole file into memory. It shows a warning above 25 MB and refuses files above 100 MB; phones may run short of memory before that. For batch jobs over many large files, a local CLI like `exiftool -all=` or `mat2` is the right tool.
 
 ## Reproducing the Strip with Other Tools
 
@@ -154,8 +144,7 @@ exiftool -all= photo.jpg
 # Keep ICC color profile, drop EXIF / XMP / IPTC only
 exiftool -all= --icc_profile:all photo.jpg
 
-# Verify the targeted tags are gone (ICC profile and JFIF marker
-# are intentionally kept so colors render correctly)
+# Verify what is left (exiftool keeps a backup as photo.jpg_original)
 exiftool photo.jpg
 ```
 
@@ -220,27 +209,26 @@ That snippet is the entire algorithm. The rest of the tool is the EXIF reader fo
 
 ZeroTool is one of many EXIF tools — what is different here:
 
-| Capability | ZeroTool | exifremover.com | metadata2go.com | exifcleaner (desktop) |
-|------------|----------|-----------------|-----------------|----------------------|
-| 100% in-browser | Yes | Yes (claims) | No (server upload) | Yes |
-| Byte-level strip (no re-encode) | Yes | Unclear from docs | N/A | Yes |
-| Free, no sign-up | Yes | Yes | Yes | Yes |
-| Open-source code | Yes ([repo](https://github.com/kassolzx/zerotool-dev)) | No | No | Yes |
-| Inline GPS map link | Yes | No | Some | No |
-| HEIC / TIFF | JPEG only (by design) | Some | Yes | Yes |
-| Batch | No (single-file) | Yes (up to 20 per browser session) | Some paid | Yes |
+| Capability | ZeroTool | exiftool (CLI) |
+|------------|----------|----------------|
+| Runs locally, no upload | Yes, in the browser tab | Yes, on your machine |
+| Strips without re-encoding | Yes (drops APP1 / APP13 / APP14) | Yes (rewrites metadata only) |
+| Open-source code | Yes ([repo](https://github.com/kassol/zerotool-dev)) | Yes |
+| GPS map link | Yes | No (prints coordinates) |
+| Formats | JPEG only | JPEG, HEIC, TIFF, PNG, video and more |
+| Batch | No (one file at a time) | Yes (directories, `-r`) |
 
-The honest framing: for one-off "is there EXIF in this and can I strip it" the in-browser tools all do the job. For batch jobs, the desktop `exifcleaner` or CLI `exiftool` is faster and supports HEIC. ZeroTool's edge is the byte-level guarantee, transparent open source, and the multilingual documentation that covers what the strip actually does.
+For a one-off "is there EXIF in this and can I strip it" check, the browser tool does the job without installing anything. For batches or HEIC files, `exiftool` is the right tool.
 
 ## Privacy Notes
 
-- The page does not upload your photos. Photo bytes stay in the browser tab. Site-level analytics events (a page view, a "parsed" event, a "download_cleaned" event) fire to ZeroTool's analytics, but they carry no file content — they only count that an action happened, like every other page on the site.
+- The page does not upload your photos. Photo bytes stay in the browser tab. Because photos can carry location data, this tool page loads neither Google Analytics nor AdSense.
 - The Google Maps deep link is constructed locally. It does not fire a request until you click it.
 - The cleaned-file download is a Blob URL revoked after a second to avoid leaks in the page memory.
 
 ## Further Reading
 
-- [CIPA EXIF 2.32 specification (PDF)](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E) — the authoritative spec
+- [CIPA Exif 3.0 specification (DC-008-2023)](https://www.cipa.jp/std/documents/download_e.html?DC-008-Translation-2023-E) — the authoritative spec
 - [JPEG file structure](https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format) — Wikipedia's overview of marker segments
 - [MDN: FileReader](https://developer.mozilla.org/en-US/docs/Web/API/FileReader) — the browser API used to read the bytes
 - [MDN: DataView](https://developer.mozilla.org/en-US/docs/Web/API/DataView) — endian-aware reads for binary parsing

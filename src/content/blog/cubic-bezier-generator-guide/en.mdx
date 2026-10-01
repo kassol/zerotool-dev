@@ -2,7 +2,9 @@
 title: "Cubic Bezier Generator: Stop Guessing CSS Easing Curves"
 description: "Drag two control points, see the animation run, and copy CSS / SCSS / Tailwind. Plus: the math behind cubic-bezier, design system presets, and failure modes that ship to production."
 pubDate: 2026-04-29
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["css", "animation", "easing", "cubic-bezier", "developer-tools"]
 ---
 
@@ -48,7 +50,7 @@ The CSS spec defines five named easings. They're not magic — each one is a fix
 
 Three observations that change how you use them:
 
-1. **`ease` is asymmetric.** It accelerates more than it decelerates: `(0.25, 0.1, 0.25, 1)` puts P2 hard against the top edge. Most teams reach for `ease` thinking it's a gentle default, but it's actually closer to `ease-out` than to a balanced curve.
+1. **`ease` is asymmetric.** It speeds up quickly and spends most of its duration slowing down: `(0.25, 0.1, 0.25, 1)` puts P2 hard against the top edge. `ease` is the CSS initial value, so it is easy to treat it as a balanced default, but its shape is closer to `ease-out` than to `ease-in-out`.
 2. **`ease-in` and `ease-out` are mirrors.** `ease-in` keeps P2 at the top-right corner so the late phase is linear; `ease-out` keeps P1 at the bottom-left corner so the early phase is linear. If your animation needs both halves curved, `ease-in-out` (or a custom curve) is the answer.
 3. **`linear` is rarely what you want.** It feels mechanical for any motion that has a physical analogue (sliding, opening, fading). Reserve `linear` for true infinite loops or progress bars where uniform speed is the intent.
 
@@ -64,24 +66,24 @@ Each major design language ships its own canonical curve. Skipping them in favou
 | Material 3 | Standard decelerate (entering elements) | `cubic-bezier(0, 0, 0, 1)` |
 | Material 3 | Standard accelerate (leaving elements) | `cubic-bezier(0.3, 0, 1, 1)` |
 | Material 2 (legacy) | Standard | `cubic-bezier(0.4, 0, 0.2, 1)` |
-| iOS / UIKit | Default ease (`UIView` block-based animation) | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
-| Tailwind CSS | `transition-timing-function: ease-in-out` default | `cubic-bezier(0.4, 0, 0.2, 1)` |
+| Apple Core Animation | `CAMediaTimingFunction` `.default` (UIView block animations default to `.easeInEaseOut`, which equals CSS `ease-in-out`) | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| Tailwind CSS | `ease-in-out` utility, also the default timing of `transition-*` utilities | `cubic-bezier(0.4, 0, 0.2, 1)` |
 
 Three patterns to internalize:
 
 - **Asymmetric in/out beats symmetric in-out.** Material's three-curve system (standard / decelerate / accelerate) maps to the three things UI elements do: stay, enter, leave. Symmetric `ease-in-out` is the wrong tool for an entering toast — the user reads it as floaty.
 - **Decelerate for arrivals, accelerate for departures.** When a panel slides in, the user needs time to read the final state — slow at the end. When it slides out, the user has already moved on — fast at the end.
-- **Spring (`Back`) curves are punctuation, not punctuation marks.** Curves like `cubic-bezier(0.68, -0.55, 0.265, 1.55)` overshoot and settle. They're great for one-off attention nudges (a badge popping in) and bad for repeated transitions (a button hover that springs every time).
+- **Spring (`Back`) curves are for emphasis, not for every transition.** Curves like `cubic-bezier(0.68, -0.55, 0.265, 1.55)` overshoot and settle. They're great for one-off attention nudges (a badge popping in) and bad for repeated transitions (a button hover that springs every time).
 
-Click any preset in the editor to see the curve, the live ball animation, and the matching CSS. Compare them by clicking through — the differences are subtle on paper, obvious in motion.
+Click any preset in the editor to see the curve, the live ball animation, and the matching CSS. The editor's three Material presets are the Material 2 curves (`0.4, 0, 0.2, 1` / `0, 0, 0.2, 1` / `0.4, 0, 1, 1`); type the Material 3 values from the table into the inputs to try those. Compare them by clicking through — the differences are subtle on paper, obvious in motion.
 
 ## Failure modes that ship to production
 
-Every team I've seen has shipped at least one of these.
+Each of these is easy to ship without noticing.
 
 ### 1. Reaching for `linear` for "neutral" motion
 
-A linear curve with a 200 ms duration feels janky on most UI motion because the eye expects deceleration on arrival. The fix is almost always `cubic-bezier(0, 0, 0.2, 1)` (Material decelerate) or its equivalent. Reserve `linear` for true continuous motion (rotating spinners, marquee tickers, progress bars that report real progress).
+A linear curve with a 200 ms duration feels janky on most UI motion because the eye expects deceleration on arrival. The usual fix is a decelerating curve such as `cubic-bezier(0, 0, 0.2, 1)` (Material 2 decelerate). Reserve `linear` for true continuous motion (rotating spinners, marquee tickers, progress bars that report real progress).
 
 ### 2. Setting `ease-in-out` and calling it a day
 
@@ -89,7 +91,7 @@ A linear curve with a 200 ms duration feels janky on most UI motion because the 
 
 ### 3. Cargo-culting `cubic-bezier(0.4, 0, 0.2, 1)` everywhere
 
-Material's standard curve became the most copied snippet in CSS, but it's a *general-purpose* curve. The standard guide explicitly says to use decelerate for enter and accelerate for exit — most teams stop reading at "standard" and apply it to every transition. The result is acceptable but unremarkable motion. The fix is small: `0, 0, 0.2, 1` for enter, `0.4, 0, 1, 1` for exit, `0.4, 0, 0.2, 1` only for things that don't enter or exit.
+Material 2's standard curve is widely copied, but it's a *general-purpose* curve. Material 2's easing guidance uses decelerate for elements that enter and accelerate for elements that exit; applying "standard" to every transition skips that distinction. The result is acceptable but unremarkable motion. The fix is small: `0, 0, 0.2, 1` for enter, `0.4, 0, 1, 1` for exit, `0.4, 0, 0.2, 1` only for things that don't enter or exit.
 
 ### 4. Negative or > 1 Y for everyday transitions
 
@@ -185,13 +187,13 @@ gsap.registerPlugin(CustomEase);
 CustomEase.create('enter', 'M0,0 C0,0 0.2,1 1,1');
 gsap.to('.modal', { y: 0, duration: 0.25, ease: 'enter' });
 
-// Anime.js: pass cubicBezier as a JS function
+// Anime.js 3: pass the curve as a string
 import anime from 'animejs';
 anime({
   targets: '.modal',
   translateY: [20, 0],
   duration: 250,
-  easing: anime.cubicBezier(0, 0, 0.2, 1)
+  easing: 'cubicBezier(0, 0, 0.2, 1)'
 });
 ```
 
@@ -225,7 +227,7 @@ Motion designers build animations with cubic-bezier handles in After Effects, ex
 
 ## How this editor differs from the alternatives
 
-[`cubic-bezier.com`](https://cubic-bezier.com/) is the canonical tool — Lea Verou wrote it in 2014 and it has been the default reference ever since. It does one job perfectly: drag two handles, see the curve, copy the four numbers. This editor does the same job and adds:
+[`cubic-bezier.com`](https://cubic-bezier.com/) by Lea Verou is the long-standing reference tool. It does one job perfectly: drag two handles, see the curve, copy the four numbers. This editor does the same job and adds:
 
 - **Eleven design-system presets** so you don't retype Material's `(0.4, 0, 0.2, 1)` from memory or paste it from Stack Overflow.
 - **Three output formats** (CSS / SCSS / Tailwind config) so you can ship the same curve to whichever layer of your stack consumes timing functions.
@@ -233,7 +235,7 @@ Motion designers build animations with cubic-bezier handles in After Effects, ex
 - **Local persistence** so the curve you were tuning yesterday is still there when you open the tab today (Reset wipes it instantly).
 - **Four languages** (English, Chinese, Japanese, Korean) so the tool is usable in teams that don't share a working language.
 
-Everything runs in the browser, no upload, no account, no analytics on the curve values themselves. The whole tool is one HTML file plus inline JS — view-source it to see the math.
+Everything runs in the browser, no upload, no account; analytics events record that the tool was used, not the curve values. The tool's script is inline in the page — view-source it to see the math.
 
 ## Further reading
 

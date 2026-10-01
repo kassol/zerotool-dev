@@ -29,7 +29,7 @@ faqItems:
 
 | 알고리즘 | 형식 접두사 | 보안 | 설명 |
 |---------|-----------|------|------|
-| bcrypt | `$2y$` | 우수 | 모든 새 배포에 권장 |
+| bcrypt | `$2a$` | 우수 | 모든 새 배포에 권장 |
 | MD5 (APR1) | `$apr1$` | 보통 | 솔트가 있는 Apache 전용 MD5 변형 |
 | SHA1 | `{SHA}` | 약함 | 솔트 없음, 레인보우 테이블에 취약 |
 | 평문 | (없음) | 없음 | 테스트 전용 — 프로덕션에서는 절대 사용 금지 |
@@ -53,3 +53,38 @@ Require valid-user
   <li>프로덕션 서버에는 비용 인수 10 이상의 bcrypt를 사용하세요.</li>
   <li>비밀번호가 유출된 경우 즉시 해시를 재생성하세요 — bcrypt 해시는 역산할 수 없습니다.</li>
 </ul>
+
+<h2>출력 예시와 확인 방법</h2>
+
+<p>사용자 <code>{"deploy"}</code>, 비밀번호 <code>{"Correct-Horse-42"}</code>로 알고리즘마다 한 번씩 생성했습니다(bcrypt 비용 10). 솔트가 무작위라 결과는 매번 달라집니다:</p>
+
+<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
+deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
+deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
+
+<p>세 줄 모두 Apache에 포함된 <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a>(2.4.67)로 검증되며, APR1 줄은 같은 솔트에서 OpenSSL 결과와 일치합니다:</p>
+
+<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
+Password for user deploy correct.
+$ htpasswd -vb .htpasswd deploy wrong
+password verification failed`}</code></pre>
+
+<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
+$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
+
+<ul>
+  <li>bcrypt 해시는 <code>{"$2a$"}</code>로 시작합니다. 도구는 bcrypt.js를 쓰고, Apache의 <code>{"htpasswd -B"}</code>는 <code>{"$2y$"}</code>를 씁니다. Apache 2.4는 둘 다 받아들입니다.</li>
+  <li>bcrypt는 비밀번호의 앞 72바이트만 사용합니다.</li>
+  <li>Apache 문서는 SHA1을 솔트가 없어 안전하지 않다고 설명합니다. 같은 비밀번호면 어느 사용자든 위 줄과 같은 값이 됩니다.</li>
+</ul>
+
+<h2>Nginx 설정</h2>
+
+<pre><code>{`location /admin/ {
+    auth_basic           "Restricted";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+}`}</code></pre>
+
+<p><a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a>에 따르면 Nginx는 <code>{"$apr1$"}</code>(MD5), <code>{"{SHA}"}</code>, <code>{"{PLAIN}"}</code>을 직접 읽고 나머지는 운영체제의 <code>{"crypt()"}</code>에 넘깁니다. 그래서 bcrypt는 시스템 <code>{"crypt()"}</code>가 지원하는 환경(libxcrypt를 쓰는 glibc 등)에서만 동작합니다. 서버가 bcrypt 줄을 거부하면 Nginx에는 APR1을 쓰세요.</p>
+
+<p>수정 후 <code>{"nginx -t"}</code>를 실행하고 reload하세요. 파일은 웹 루트 밖에 두고 worker 사용자만 읽을 수 있게 합니다.</p>
