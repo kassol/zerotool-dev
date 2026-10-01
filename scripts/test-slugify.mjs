@@ -158,5 +158,51 @@ t("Conway's Law", 'conway-s-law');
   check('page FAQ: punctuation-only input with Trim off and dot separator gives "."', dot === '.', dot);
 }
 
+// ---------- guide examples (src/content/blog/slugify-guide/{en,ja}.mdx) ----------
+// Annotation {/* sl-check: {"input":"…","slug":"…"} */}: the tool's output with default options
+// must equal "slug"; a non-empty slug must appear in the page text after the annotation (within
+// 4000 characters). Code blocks preceded by {/* sl-run: {"lang":"node","expect":"…"} */} are run;
+// stdout must equal "expect" and the "// …" output comments in the block.
+{
+  const { existsSync, writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { execFileSync } = await import('node:child_process');
+  for (const lang of ['en', 'ja']) {
+    const rel = 'src/content/blog/slugify-guide/' + lang + '.mdx';
+    const path = join(root, rel);
+    if (!existsSync(path)) { check(rel + ' exists', false); continue; }
+    const text = readFileSync(path, 'utf8');
+    let count = 0;
+    for (const m of text.matchAll(/\{\/\* sl-check: (\{.*?\}) \*\/\}/g)) {
+      count++;
+      let spec;
+      try { spec = JSON.parse(m[1]); } catch (e) { check(rel + ' annotation is JSON', false, m[1]); continue; }
+      eq(rel + ' ' + JSON.stringify(spec.input), s(spec.input), spec.slug);
+      if (spec.slug) check(rel + ' quotes ' + spec.slug + ' after the annotation', text.slice(m.index, m.index + 4000).includes('`' + spec.slug + '`'), spec.slug);
+    }
+    check(rel + ' has sl-check annotations', count >= (lang === 'en' ? 7 : 9), count);
+    let runs = 0;
+    for (const m of text.matchAll(/\{\/\* sl-run: (\{.*?\}) \*\/\}\s*```[a-z]*\n([\s\S]*?)```/g)) {
+      runs++;
+      const spec = JSON.parse(m[1]);
+      const dir = mkdtempSync(join(tmpdir(), 'slugify-run-'));
+      try {
+        writeFileSync(join(dir, 'main.mjs'), m[2]);
+        const out = execFileSync(process.execPath, [join(dir, 'main.mjs')]).toString().trim();
+        eq(rel + ' code block ' + runs, out, spec.expect);
+        const shown = [...m[2].matchAll(/^\/\/ (.+)$/gm)].map((x) => x[1]).join('\n');
+        eq(rel + ' code block ' + runs + ' output comments', shown, out);
+      } catch (e) {
+        check(rel + ' code block ' + runs, false, String(e.stderr || e.message).slice(0, 300));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    check(rel + ' has a runnable code block', runs >= 1, runs);
+    const tpl = [/^## What (is|are) /mi, /^## .*Online/mi, /^## .* in Code$/mi, /^## (Summary|Conclusion|まとめ)/mi].filter((re) => re.test(text));
+    check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
+  }
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
