@@ -9,23 +9,48 @@ faqItems:
   - question: "What does 'Every N' mode mean?"
     answer: "Every N mode generates a step expression like */5 for the minute field, meaning 'at every 5th minute' (0, 5, 10, 15 … 55). You can use this in any field: */2 in the hour field means 'every 2 hours', */3 in the month field means 'every 3 months', and so on."
   - question: "Can I combine different modes across fields?"
-    answer: "Yes. Each field is independent, so you can mix modes freely. For example, to run at 9 AM on the 1st and 15th of every month, set minute to Every with value 0, hour to Specific with value 9, day to Specific with values 1 and 15, month to Every, and weekday to Every."
+    answer: "Yes. Each field is independent, so you can mix modes freely. For example, to run at 9 AM on the 1st and 15th of every month, set minute to Specific with the value 0, hour to Specific with 9, day to Specific with 1 and 15, and leave month and weekday on Every. The result is 0 9 1,15 * *."
   - question: "Why doesn't the generator support six-field (seconds) cron expressions?"
-    answer: "The five-field format is the standard used by cron, crontab, GitHub Actions, and most scheduling systems. Some tools like Quartz Scheduler add a seconds field, but there is no universal standard for it. This generator focuses on the widely supported five-field format."
+    answer: "The five-field format is the one used by cron (crontab(5)), GitHub Actions and Kubernetes CronJob. Some tools like Quartz Scheduler add a seconds field, but there is no universal standard for it. This generator focuses on the widely supported five-field format."
 ---
 
 <h2>How to Use</h2>
 
-Click a **preset** at the top to load a common schedule instantly, or configure each field manually.
+Click a **preset** at the top to load a common schedule, or set each field yourself. The page opens with `0 9 * * 1-5`, or with the last expression you built in this browser.
 
-For each time field (Minute, Hour, Day, Month, Weekday), choose a mode using the tab buttons:
+For each field (Minute, Hour, Day, Month, Weekday), choose a mode with the tab buttons:
 
-- **Every** — matches all values in the field (outputs `*`).
-- **Every N** — matches every Nth value (e.g., `*/5` for every 5 minutes).
-- **Range** — matches all values between two numbers (e.g., `9-17` for business hours).
-- **Specific** — matches exact values; click chips for Month/Weekday, or type comma-separated numbers for Minute/Hour/Day.
+- **Every** — all values (outputs `*`).
+- **Every N** — a step, such as `*/5`. A step larger than the field's maximum is reduced to the maximum.
+- **Range** — all values between two numbers, such as `9-17`. If From is larger than To, the two are swapped; a range that covers the whole field becomes `*`.
+- **Specific** — exact values. Hour, Day, Month and Weekday use clickable chips; Minute takes comma-separated numbers typed into a box. Selecting every chip gives `*`.
 
-The **Cron Expression** field updates automatically. Copy it with the **Copy** button. Read the **Description** to confirm the schedule in plain English, and check the **Next 10 runs** list to verify the timing in your local timezone.
+The **Cron Expression** box updates as you click. You can also type or paste an expression into it: a valid one sets the field controls to match. Read the **Description** to check the schedule in words, and the list of the next 10 runs to check the actual times. The **UTC / Local** switch decides which clock the schedule is evaluated in, and the times are shown in that clock.
+
+<h2>Examples</h2>
+
+The descriptions and run times below are the tool's own output, computed from 2026-10-01 10:00 UTC with the UTC switch on. To explain an expression you already have, paste it into the box above or into the [Cron Expression Parser](/tools/cron-parser/).
+
+| Expression | Description | Next runs |
+|---|---|---|
+| `0 9 * * 1-5` | At 9:00, on Monday through Friday | 2026-10-02 09:00 UTC, 2026-10-05 09:00 UTC, 2026-10-06 09:00 UTC |
+| `0 0 1,15 * 1` | At midnight, on day 1, 15 of the month or on Monday | 2026-10-05 00:00 UTC, 2026-10-12 00:00 UTC, 2026-10-15 00:00 UTC, 2026-10-19 00:00 UTC |
+| `0 0 */2 * 1` | At midnight, on day every 2 days of the month and on Monday | 2026-10-05 00:00 UTC, 2026-10-19 00:00 UTC, 2026-11-09 00:00 UTC |
+
+The second and third rows show the rule that surprises most people. When both the day-of-month and the weekday field are restricted, cron runs the job on days that match **either** field, so `0 0 1,15 * 1` fires on the 1st, the 15th and every Monday. But a field that starts with `*`, including a step such as `*/2`, does not count as a restriction, so in the third row both fields must match: only Mondays that fall on an odd date. The tool follows cronie, the cron on most Linux distributions, which marks a day field as unrestricted when its first character is `*` (crontab(5) describes the either-field rule).
+
+<h2>Time Zones</h2>
+
+A cron expression has no time zone of its own; the scheduler that reads it supplies one. System cron uses the server's local time (cronie also reads a `CRON_TZ` variable in the crontab). GitHub Actions schedules run in UTC unless the schedule sets a `timezone` (an IANA name such as `America/New_York`). A Kubernetes CronJob uses the time zone of the kube-controller-manager unless `.spec.timeZone` is set. Pick **UTC** in the tool when the target evaluates in UTC, and **Local** when it uses the same zone as your computer. With UTC selected, `0 9 * * 1-5` lists 09:00 UTC on weekdays; with Local selected in Tokyo it lists 09:00 Japan time.
+
+<h2>Limitations</h2>
+
+- Five fields only: no seconds field and no Quartz or Spring extensions (`?`, `L`, `W`, `#`). An expression typed with them shows "Invalid cron expression".
+- Numbers must be whole decimal numbers: `1.5`, `5abc` and `1#2` are rejected. A step needs `*` or a range in front of it, so `5/10` is rejected, as cronie rejects it.
+- The typed expression accepts weekdays 0–6 and the names `sun`–`sat`; it rejects 7, which many crons also accept for Sunday. Use 0 instead.
+- The values typed into the Minute box are copied into the expression as they are. If they are not valid (for example `75`), the run list stays empty without an error message; check the list before copying.
+- A schedule that never occurs, such as `0 0 30 2 *` (30 February), shows an empty run list.
+- The description is in English on every language version of this page.
 
 <h2>Cron Expression Field Reference</h2>
 
