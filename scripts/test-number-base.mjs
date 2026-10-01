@@ -527,6 +527,45 @@ if (stringsMatch) {
   check('tool pages carry examples', count >= 12, count + ' examples');
 }
 
+// ---------- guide: practice table, step listings and code samples ----------
+{
+  const guide = readFileSync(join(root, 'src/content/blog/number-base-converter-guide/en.mdx'), 'utf8');
+  const rows = [...guide.matchAll(/^\| `([01]+)` \| (\d+) \| ([0-9A-F]+) \| ([0-7]+) \|$/gm)];
+  check('guide practice table has 10 rows', rows.length === 10, rows.length);
+  for (const m of rows) {
+    eq('guide table ' + m[1], [10, 16, 8].map((b) => F(m[1], 2, b)), [m[2], m[3], m[4]]);
+  }
+  const s = E.stepsToDecimal('11010110', 2);
+  const expansion = ['Positional expansion, base 2 to decimal:'].concat(s.terms.map((x) => '  ' + x.digit + ' × 2^' + x.power + ' = ' + x.product), ['  Sum = ' + s.sum]).join('\n');
+  check('guide shows the converter\'s expansion of 11010110', guide.includes(expansion));
+  const d = E.stepsFromDecimal(214n, 2);
+  const division = ['Repeated division, decimal to base 2:'].concat(d.rows.map((x) => '  ' + x.dividend + ' ÷ 2 = ' + x.quotient + ', remainder ' + x.remainder), ['  Remainders read from bottom to top: ' + d.result]).join('\n');
+  check('guide shows the converter\'s division of 214', guide.includes(division));
+  // JavaScript sample: every line `expr; // value` must evaluate to the value.
+  const js = guide.match(/```javascript\n([\s\S]*?)```/)[1];
+  for (const line of js.split('\n').filter((l) => l.includes('//'))) {
+    const [expr, comment] = line.split('//');
+    const want = comment.trim().split(/[ ,]/)[0];
+    const got = new Function('return ' + expr.trim().replace(/;$/, ''))();
+    const text = typeof got === 'bigint' ? got + 'n' : typeof got === 'string' ? "'" + got + "'" : String(got);
+    eq('guide JS: ' + expr.trim(), text, want);
+  }
+  eq('guide: parseInt stops at the bad digit', parseInt('10102', 2), 10);
+  eq('guide: parseInt of sixty 1-bits', String(parseInt('1'.repeat(60), 2)), '1152921504606847000');
+  if (python) {
+    const pyCode = guide.match(/```python\n([\s\S]*?)```/)[1];
+    const lines = pyCode.split('\n').filter((l) => l.includes('#'));
+    const out = py(`
+res = []
+for line in json.load(sys.stdin):
+    expr, comment = line.split('#', 1)
+    res.append([repr(eval(expr.strip())), comment.strip().split(' ')[0].rstrip(',')])
+print(json.dumps(res))
+`, lines);
+    out.forEach(([got, want], k) => eq('guide Python: ' + lines[k].split('#')[0].trim(), got, want));
+  } else skip('guide Python sample', 'python3 not installed');
+}
+
 // ---------- page script hygiene ----------
 {
   const script = source.slice(source.indexOf('<script'), source.indexOf('</script>'));
