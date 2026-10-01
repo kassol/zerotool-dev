@@ -14,11 +14,35 @@ faqItems:
 
 <h2>How to Use</h2>
 <ol>
-  <li>Enter a 5-field cron expression or click a preset.</li>
+  <li>Enter a 5-field cron expression or click a preset. The page opens with <code>0 9 * * 1-5</code> already parsed.</li>
   <li>Press <strong>Parse</strong> (or Enter) to see the plain-English explanation.</li>
-  <li>The field breakdown shows all matched values for each position.</li>
-  <li>The next 10 scheduled run times are calculated in your local timezone.</li>
+  <li>The field breakdown shows all matched values for each position, with month and weekday numbers turned into names.</li>
+  <li>The next 10 scheduled run times are calculated in your browser's local time zone, so compare them with the time zone of the machine or service that will run the job.</li>
 </ol>
+
+<h2>Examples</h2>
+<p>The descriptions below are what the tool prints. The run times were computed by the tool's own function starting from 2026-10-01 08:00 with the clock set to UTC; your list starts from the current minute.</p>
+<table>
+  <thead><tr><th>Expression</th><th>Description</th><th>First runs</th></tr></thead>
+  <tbody>
+    <tr><td><code>{'0 9 * * 1-5'}</code></td><td>At 9:00, on mon through fri</td><td>Oct 1 09:00, Oct 2 09:00, Oct 5 09:00</td></tr>
+    <tr><td><code>{'*/15 9-17 * * mon-fri'}</code></td><td>At every 15 minutes past 9 through 17, on mon, tue, wed, thu, fri</td><td>Oct 1 09:00, 09:15, 09:30</td></tr>
+    <tr><td><code>{'30 2 1,15 * *'}</code></td><td>At 2:30, on day 1, 15 of the month</td><td>Oct 15 02:30, Nov 1 02:30, Nov 15 02:30</td></tr>
+    <tr><td><code>{'0 0 1 * 1'}</code></td><td>At midnight, on day 1 of the month or on mon</td><td>Oct 5, Oct 12, Oct 19 (00:00)</td></tr>
+    <tr><td><code>{'0 0 29 2 *'}</code></td><td>At midnight, on day 29 of the month, in feb</td><td>2028-02-29, 2032-02-29, 2036-02-29</td></tr>
+  </tbody>
+</table>
+<p>
+  In the second row the last run of each day is 17:45, not 17:00: the hour field <code>9-17</code> includes hour 17, and the
+  minute field fires four times within it. To stop at 17:00, write the schedule as two lines (<code>{'*/15 9-16 * * 1-5'}</code> and
+  <code>{'0 17 * * 1-5'}</code>). A few inputs and the message they give:
+</p>
+<ul>
+  <li><code>{'0 0 * * * *'}</code> (six fields, as in Spring or Quartz) → "Invalid: expected 5 fields, got 6."</li>
+  <li><code>{'0 24 * * *'}</code> → "Invalid expression — check each field range." Hours run 0–23.</li>
+  <li><code>{'5/10 * * * *'}</code> → the step error that suggests <code>{'*/10'}</code> or <code>5-59/10</code>.</li>
+  <li><code>{'0 0 30 2 *'}</code> → the expression is valid, but no run time is found.</li>
+</ul>
 
 <h2>Cron Field Reference</h2>
 <table>
@@ -40,3 +64,23 @@ faqItems:
 
 <h2>Unsupported Syntax</h2>
 <p><code>#</code> (nth weekday, as in <code>1#2</code> for the second Monday), <code>L</code> (last), <code>W</code> (nearest weekday) and <code>?</code> come from Quartz and similar schedulers; standard cron does not accept them. The tool does not guess a schedule for them: it shows an error that names the part and the field, for example <code>"1#2" in the weekday field</code>. Values that are not plain numbers or names, such as <code>1.5</code> or <code>monday</code>, are also rejected. A step must follow <code>{'*'}</code> or a range: cronie rejects <code>5/10</code>, and so does this tool; write <code>5-59/10</code> or <code>{'*/10'}</code>.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>Local time only.</strong> Run times use the browser's time zone. There is no time zone selector, and a <code>CRON_TZ=</code> line is not read; cronie uses <code>CRON_TZ</code> for the whole crontab.</li>
+  <li><strong>Daylight saving time.</strong> Times that do not exist when clocks go forward never match, as crontab(5) states. Times that occur twice when clocks go back are listed once, although cronie runs the job twice.</li>
+  <li><strong>English description.</strong> The plain-English sentence is generated in English on every language version of this page; field names and messages are translated.</li>
+  <li><strong>No @ macros.</strong> <code>@daily</code>, <code>@hourly</code>, <code>@reboot</code> and the other shortcuts are reported as the wrong number of fields. Write the five-field form: <code>@daily</code> is <code>{'0 0 * * *'}</code>.</li>
+  <li><strong>Ten runs.</strong> The list always stops at ten; there is no "show more" or date picker.</li>
+</ul>
+
+<h2>Same Syntax, Different Schedulers</h2>
+<p>
+  Five-field cron is shared by many systems, but they differ around the edges. <a href="https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows">GitHub Actions</a>
+  runs <code>schedule</code> workflows in UTC unless a time zone is set, never more often than every 5 minutes, and may delay runs at the start of
+  the hour under high load. A <a href="https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/">Kubernetes CronJob</a>
+  accepts the @ macros and treats <code>?</code> like <code>{'*'}</code>, which this tool rejects; set its time zone in <code>.spec.timeZone</code>, because
+  <code>CRON_TZ</code> inside the schedule fails validation. If you need to build an expression rather than read one, the
+  <a href="/tools/cron-job-generator/">cron job generator</a> writes it from form fields.
+</p>
+

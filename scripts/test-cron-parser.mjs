@@ -167,6 +167,29 @@ if (stringsMatch) {
   }
 }
 
+// ---------- en tool page: Examples table ----------
+{
+  const from = new Date(2026, 9, 1, 8, 0); // 2026-10-01 08:00 local
+  const page = [
+    ['0 9 * * 1-5', 'At 9:00, on mon through fri', ['2026-10-01 09:00', '2026-10-02 09:00', '2026-10-05 09:00']],
+    ['*/15 9-17 * * mon-fri', 'At every 15 minutes past 9 through 17, on mon, tue, wed, thu, fri', ['2026-10-01 09:00', '2026-10-01 09:15', '2026-10-01 09:30']],
+    ['30 2 1,15 * *', 'At 2:30, on day 1, 15 of the month', ['2026-10-15 02:30', '2026-11-01 02:30', '2026-11-15 02:30']],
+    ['0 0 1 * 1', 'At midnight, on day 1 of the month or on mon', ['2026-10-05 00:00', '2026-10-12 00:00', '2026-10-19 00:00']],
+    ['0 0 29 2 *', 'At midnight, on day 29 of the month, in feb', ['2028-02-29 00:00', '2032-02-29 00:00', '2036-02-29 00:00']],
+  ];
+  for (const [expr, desc, first] of page) {
+    eq('page description ' + expr, E.humanizeCron(E.parseCron(expr).fields), desc);
+    eq('page first runs ' + expr, runs(expr, from, 3), first);
+  }
+  const day = runs('*/15 9-17 * * mon-fri', from, 36);
+  eq('page: last run of the day is 17:45', day[35], '2026-10-01 17:45');
+  eq('description pads minutes', E.humanizeCron(['5', '4', '*', '*', 'sun']), 'At 4:05, on sun');
+  eq('description for */2 day of month', E.humanizeCron(['0', '0', '*/2', '*', '*']), 'At midnight, on every 2 days of the month');
+  eq('page error: six fields', E.parseCron('0 0 * * * *').error, { code: 'fields', n: 6 });
+  eq('page error: @daily is one field', E.parseCron('@daily').error, { code: 'fields', n: 1 });
+  eq('page error: hour 24', E.parseCron('0 24 * * *').error, { code: 'invalid', field: 1 });
+}
+
 function range(a, b) { const out = []; for (let i = a; i <= b; i++) out.push(i); return out; }
 function pad(n) { return String(n).padStart(2, '0'); }
 
