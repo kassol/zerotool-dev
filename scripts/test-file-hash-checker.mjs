@@ -185,6 +185,7 @@ if (E) {
   eq('63 hex digits', codes(P(H256.slice(1))), ['length@1']);
   eq('65 hex digits gives the count', P(H256 + 'a').problems[0].len, 65);
   eq('one letter O inside a SHA-256', codes(P(H256.slice(0, 10) + 'O' + H256.slice(11))), ['badChar@1']);
+  eq('a stray letter after a SHA-256 is reported, not ignored', codes(P(H256 + 'x')), ['badChar@1']);
   eq('badChar position is 1-based', P(H256.slice(0, 10) + 'O' + H256.slice(11)).problems[0].pos, 11);
 
   // GNU coreutils lines and SHA256SUMS files.
