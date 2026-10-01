@@ -51,6 +51,13 @@
         if (t[key]) el.placeholder = t[key];
       });
 
+      /* ── engine:start ── */
+      // CR LF, lone CR and LF all end a line. A textarea already returns LF only (HTML
+      // "normalize newlines"), so this matters only for text that did not come from one.
+      function splitLines(text) {
+        return text.split(/\r\n|\r|\n/);
+      }
+
       // LCS diff
       function lcs(a, b) {
         var m = a.length, n = b.length;
@@ -77,6 +84,34 @@
         }
         return result;
       }
+
+      // Side-by-Side rows. Inside each block of consecutive changes, the i-th removed line is put
+      // next to the i-th added line; the longer side gets empty partners for its extra lines.
+      function pairRows(diff) {
+        var rows = [];
+        var origLn = 0, modLn = 0;
+        var i = 0;
+        while (i < diff.length) {
+          if (diff[i].type === 'equal') {
+            origLn++; modLn++;
+            rows.push({ left: { type: 'equal', ln: origLn, val: diff[i].val }, right: { type: 'equal', ln: modLn, val: diff[i].val } });
+            i++;
+            continue;
+          }
+          var dels = [], adds = [];
+          while (i < diff.length && diff[i].type !== 'equal') {
+            if (diff[i].type === 'del') dels.push(diff[i].val); else adds.push(diff[i].val);
+            i++;
+          }
+          for (var k = 0; k < Math.max(dels.length, adds.length); k++) {
+            var left = k < dels.length ? { type: 'del', ln: ++origLn, val: dels[k] } : { type: 'empty', ln: null, val: '' };
+            var right = k < adds.length ? { type: 'add', ln: ++modLn, val: adds[k] } : { type: 'empty', ln: null, val: '' };
+            rows.push({ left: left, right: right });
+          }
+        }
+        return rows;
+      }
+      /* ── engine:end ── */
 
       function esc(s) {
         return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -121,38 +156,9 @@
       }
 
       function renderSideBySide(diff) {
-        // Build left (original) and right (modified) line arrays with pairing
-        var left = [], right = [];
-        var origLn = 0, modLn = 0;
-        var i = 0;
-        while (i < diff.length) {
-          var op = diff[i];
-          if (op.type === 'equal') {
-            origLn++; modLn++;
-            left.push({ type: 'equal', ln: origLn, val: op.val });
-            right.push({ type: 'equal', ln: modLn, val: op.val });
-            i++;
-          } else if (op.type === 'del') {
-            // Peek ahead: if next is 'add', pair them as change
-            if (i + 1 < diff.length && diff[i + 1].type === 'add') {
-              origLn++; modLn++;
-              left.push({ type: 'del', ln: origLn, val: op.val });
-              right.push({ type: 'add', ln: modLn, val: diff[i + 1].val });
-              i += 2;
-            } else {
-              origLn++;
-              left.push({ type: 'del', ln: origLn, val: op.val });
-              right.push({ type: 'empty', ln: null, val: '' });
-              i++;
-            }
-          } else {
-            // standalone add
-            modLn++;
-            left.push({ type: 'empty', ln: null, val: '' });
-            right.push({ type: 'add', ln: modLn, val: op.val });
-            i++;
-          }
-        }
+        var rows = pairRows(diff);
+        var left = rows.map(function (r) { return r.left; });
+        var right = rows.map(function (r) { return r.right; });
 
         var leftHtml = '', rightHtml = '';
         for (var k = 0; k < left.length; k++) {
@@ -202,8 +208,8 @@
           return;
         }
 
-        var origLines = origVal.split('\n');
-        var modLines = modVal.split('\n');
+        var origLines = splitLines(origVal);
+        var modLines = splitLines(modVal);
         lastDiff = lcs(origLines, modLines);
         lastAddCount = 0; lastDelCount = 0;
         lastDiff.forEach(function (op) {
