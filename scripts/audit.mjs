@@ -617,7 +617,7 @@ const SENSITIVE_EXEMPT = {
   'markdown-to-word': '"credentials" is the fetch option `credentials: \'omit\'` for web images',
   'url-parser': 'general URL parser; the password field only shows URL userinfo when a URL has it',
   'qr-code-decoder': 'general QR reader; a Wi-Fi password appears only when the scanned code holds one',
-  'ssl-certificate-decoder': 'decodes public X.509 certificates; the tool takes no private keys',
+  'ssl-certificate-decoder': 'decodes public X.509 certificates; PEM private-key blocks and PKCS #8 / PKCS #12 files are detected and skipped, never decoded, and input that contains them is not saved',
 };
 
 function checkSensitiveToolsDisabled() {
