@@ -1,491 +1,1320 @@
 ---
-// EyedropperColorPickerTool — pick colors from screen via EyeDropper API, fallback to native <input type="color">
+// Eyedropper color picker: pick from the screen (EyeDropper API), from an image or screenshot
+// (canvas readout in sRGB and, where supported, Display P3), or from the system color dialog.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// {x} {y} {w} {h} {n} {a} {name} {msg} are filled in by the script.
+const STRINGS = {
+  en: {
+    pickScreen: 'Pick from screen', openImage: 'Open image', dialog: 'Color dialog', clear: 'Clear',
+    screenReady: 'Click “Pick from screen”, then click any pixel in any window. Esc cancels.',
+    screenNone: 'This browser has no EyeDropper API (only Chrome, Edge and Opera on desktop have it). Open an image or paste a screenshot to pick from it.',
+    screenOpen: 'Click any pixel on the screen. Esc cancels.',
+    canceled: 'Screen picking canceled.',
+    errNotAllowed: 'The browser blocked the eyedropper because no click opened it. Click the button again.',
+    errBusy: 'An eyedropper is already open in this window.',
+    errOperation: 'The browser could not open the eyedropper ({msg}). Chrome on Linux Wayland has none. Open an image or paste a screenshot instead.',
+    dropTitle: 'Drop an image here or paste a screenshot',
+    dropSub: 'Ctrl+V / ⌘V pastes from the clipboard. PNG, JPEG, WebP, GIF, SVG, and anything else this browser can display.',
+    imageAria: 'Image. Move the pointer or use the arrow keys, then click or press Enter to pick a pixel.',
+    imageHint: 'Click to pick. Arrow keys move 1 pixel, Shift+arrow 10, Enter picks.',
+    sample: 'Sample', s1: 'Point (1 px)', s3: '3 × 3 average', s5: '5 × 5 average',
+    fit: 'Fit', actual: '100%', closeImage: 'Close image',
+    imgInfo: '{name} · {w} × {h} px',
+    imgScaled: 'Scaled to {w} × {h} for picking (browser canvas limit 16,777,216 pixels): each pixel is an average of about {n} original pixels.',
+    imgError: '{name} could not be opened as an image by this browser.',
+    notImage: '{name} is not an image.',
+    noImageInClipboard: 'The clipboard holds no image or color value.',
+    loading: 'Opening {name}…',
+    valueLabel: 'Color', hexLabel: 'HEX', rgbLabel: 'RGB', hslLabel: 'HSL', oklchLabel: 'OKLCH', p3Label: 'Display P3',
+    swatchAria: 'Current color {hex}',
+    copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed: the browser did not allow clipboard access. Select the text and copy it by hand.',
+    invalid: 'Not a color this tool reads. Try #1a73e8, rgb(26 115 232), hsl(214 82% 51%), oklch(57% 0.19 258), color(display-p3 0.2 0.44 0.88) or a CSS name such as teal.',
+    fromScreen: 'Picked from the screen.',
+    fromImage: 'Picked from the image at x {x}, y {y}.',
+    fromImageAvg: 'Picked from the image: {n}-pixel average around x {x}, y {y}.',
+    outOfGamut: 'Outside sRGB. This is a wide-gamut (Display P3) color: HEX, RGB and HSL are clipped to the nearest sRGB value, OKLCH and Display P3 keep the real color.',
+    outOfGamutTyped: 'Outside sRGB: HEX, RGB and HSL are clipped per channel, OKLCH and Display P3 keep the real color.',
+    alphaNote: 'Partly transparent pixel (alpha {a}). Canvas stores colors multiplied by alpha, so the RGB of a very transparent pixel is approximate.',
+    transparent: 'Fully transparent pixel: it has no color. Pick another pixel.',
+    recent: 'Recent colors', recentEmpty: 'Colors you pick appear here.', clearRecent: 'Clear', copyAll: 'Copy all',
+    recentNote: 'The last 16 picks are kept in this browser (localStorage). Images are never stored.',
+    recentApply: 'Apply {hex}'
+  },
+  zh: {
+    pickScreen: '从屏幕取色', openImage: '打开图片', dialog: '系统取色板', clear: '清除',
+    screenReady: '点击「从屏幕取色」，再点击任意窗口里的任意像素。按 Esc 取消。',
+    screenNone: '当前浏览器没有 EyeDropper API（只有桌面版 Chrome、Edge、Opera 支持）。可以打开图片或粘贴截图，在图上取色。',
+    screenOpen: '点击屏幕上的任意像素，按 Esc 取消。',
+    canceled: '已取消屏幕取色。',
+    errNotAllowed: '浏览器拦截了取色：取色器必须由点击打开。请再点一次按钮。',
+    errBusy: '这个窗口里已经打开了一个取色器。',
+    errOperation: '浏览器无法打开取色器（{msg}）。Linux Wayland 下的 Chrome 没有这个功能。请改为打开图片或粘贴截图。',
+    dropTitle: '把图片拖到这里，或粘贴截图',
+    dropSub: 'Ctrl+V / ⌘V 粘贴剪贴板里的图片。支持 PNG、JPEG、WebP、GIF、SVG 等浏览器能显示的格式。',
+    imageAria: '图片。移动指针或用方向键选位置，点击或按 Enter 取色。',
+    imageHint: '点击取色。方向键移动 1 像素，Shift+方向键移动 10 像素，Enter 取色。',
+    sample: '取样', s1: '单点（1 像素）', s3: '3 × 3 平均', s5: '5 × 5 平均',
+    fit: '适应', actual: '100%', closeImage: '关闭图片',
+    imgInfo: '{name} · {w} × {h} 像素',
+    imgScaled: '已缩小到 {w} × {h} 再取色（浏览器 canvas 上限 16,777,216 像素），每个像素约为 {n} 个原始像素的平均。',
+    imgError: '浏览器无法把 {name} 作为图片打开。',
+    notImage: '{name} 不是图片。',
+    noImageInClipboard: '剪贴板里没有图片，也没有颜色值。',
+    loading: '正在打开 {name}…',
+    valueLabel: '颜色', hexLabel: 'HEX', rgbLabel: 'RGB', hslLabel: 'HSL', oklchLabel: 'OKLCH', p3Label: 'Display P3',
+    swatchAria: '当前颜色 {hex}',
+    copy: '复制', copied: '已复制', copyFailed: '复制失败：浏览器不允许访问剪贴板。请选中文字手动复制。',
+    invalid: '无法识别的颜色。可以输入 #1a73e8、rgb(26 115 232)、hsl(214 82% 51%)、oklch(57% 0.19 258)、color(display-p3 0.2 0.44 0.88) 或 teal 这类 CSS 颜色名。',
+    fromScreen: '取自屏幕。',
+    fromImage: '取自图片 x {x}、y {y}。',
+    fromImageAvg: '取自图片：x {x}、y {y} 周围 {n} 个像素的平均。',
+    outOfGamut: '超出 sRGB。这是广色域（Display P3）颜色：HEX、RGB、HSL 已截取到最近的 sRGB 值，OKLCH 与 Display P3 保留真实颜色。',
+    outOfGamutTyped: '超出 sRGB：HEX、RGB、HSL 按通道截取，OKLCH 与 Display P3 保留真实颜色。',
+    alphaNote: '半透明像素（alpha {a}）。canvas 按 alpha 预乘存储颜色，非常透明的像素 RGB 只是近似值。',
+    transparent: '完全透明的像素，没有颜色。请换一个像素。',
+    recent: '最近颜色', recentEmpty: '取到的颜色会出现在这里。', clearRecent: '清空', copyAll: '全部复制',
+    recentNote: '最近 16 次取色保存在本浏览器（localStorage）。图片不会保存。',
+    recentApply: '使用 {hex}'
+  },
+  ja: {
+    pickScreen: '画面から取得', openImage: '画像を開く', dialog: 'カラーパネル', clear: 'クリア',
+    screenReady: '「画面から取得」を押してから、どのウィンドウでも好きなピクセルをクリックします。Esc でキャンセル。',
+    screenNone: 'このブラウザには EyeDropper API がありません（対応はデスクトップ版の Chrome・Edge・Opera のみ）。画像を開くかスクリーンショットを貼り付けると、画像上で色を取得できます。',
+    screenOpen: '画面上のピクセルをクリックしてください。Esc でキャンセル。',
+    canceled: '画面からの取得をキャンセルしました。',
+    errNotAllowed: 'クリック以外から開こうとしたため、ブラウザがスポイトをブロックしました。もう一度ボタンを押してください。',
+    errBusy: 'このウィンドウではすでにスポイトが開いています。',
+    errOperation: 'ブラウザがスポイトを開けませんでした（{msg}）。Linux Wayland 上の Chrome には未搭載です。画像を開くかスクリーンショットを貼り付けてください。',
+    dropTitle: '画像をここにドロップ、またはスクリーンショットを貼り付け',
+    dropSub: 'Ctrl+V / ⌘V でクリップボードから貼り付け。PNG・JPEG・WebP・GIF・SVG など、ブラウザで表示できる形式に対応。',
+    imageAria: '画像。ポインターか矢印キーで位置を選び、クリックか Enter で色を取得します。',
+    imageHint: 'クリックで取得。矢印キーで 1 px、Shift+矢印キーで 10 px 移動、Enter で取得。',
+    sample: 'サンプル', s1: '1 点（1 px）', s3: '3 × 3 の平均', s5: '5 × 5 の平均',
+    fit: '全体', actual: '100%', closeImage: '画像を閉じる',
+    imgInfo: '{name} · {w} × {h} px',
+    imgScaled: '色の取得用に {w} × {h} へ縮小しました（ブラウザの canvas 上限 16,777,216 ピクセル）。1 ピクセルは元画像の約 {n} ピクセルの平均です。',
+    imgError: '{name} をこのブラウザで画像として開けませんでした。',
+    notImage: '{name} は画像ではありません。',
+    noImageInClipboard: 'クリップボードに画像も色の値もありません。',
+    loading: '{name} を開いています…',
+    valueLabel: '色', hexLabel: 'HEX', rgbLabel: 'RGB', hslLabel: 'HSL', oklchLabel: 'OKLCH', p3Label: 'Display P3',
+    swatchAria: '現在の色 {hex}',
+    copy: 'コピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした。ブラウザがクリップボードへのアクセスを許可していません。文字を選択して手動でコピーしてください。',
+    invalid: '読み取れない色です。#1a73e8、rgb(26 115 232)、hsl(214 82% 51%)、oklch(57% 0.19 258)、color(display-p3 0.2 0.44 0.88)、teal のような CSS の色名を入力できます。',
+    fromScreen: '画面から取得しました。',
+    fromImage: '画像の x {x}・y {y} から取得しました。',
+    fromImageAvg: '画像から取得：x {x}・y {y} 周辺 {n} ピクセルの平均。',
+    outOfGamut: 'sRGB の範囲外です。広色域（Display P3）の色なので、HEX・RGB・HSL は最も近い sRGB 値に切り詰め、OKLCH と Display P3 は本来の色を保ちます。',
+    outOfGamutTyped: 'sRGB の範囲外です。HEX・RGB・HSL はチャンネルごとに切り詰め、OKLCH と Display P3 は本来の色を保ちます。',
+    alphaNote: '半透明のピクセル（alpha {a}）です。canvas は色を alpha で乗算して保存するため、透明度の高いピクセルの RGB は近似値です。',
+    transparent: '完全に透明なピクセルで、色がありません。別のピクセルを選んでください。',
+    recent: '最近の色', recentEmpty: '取得した色がここに並びます。', clearRecent: 'クリア', copyAll: 'すべてコピー',
+    recentNote: '直近 16 件をこのブラウザ（localStorage）に保存します。画像は保存しません。',
+    recentApply: '{hex} を使う'
+  },
+  ko: {
+    pickScreen: '화면에서 추출', openImage: '이미지 열기', dialog: '색상 대화상자', clear: '지우기',
+    screenReady: '"화면에서 추출"을 누른 뒤 어느 창이든 원하는 픽셀을 클릭하세요. Esc로 취소합니다.',
+    screenNone: '이 브라우저에는 EyeDropper API가 없습니다(데스크톱 Chrome, Edge, Opera만 지원). 이미지를 열거나 스크린샷을 붙여 넣으면 이미지에서 색을 추출할 수 있습니다.',
+    screenOpen: '화면의 픽셀을 클릭하세요. Esc로 취소합니다.',
+    canceled: '화면 추출을 취소했습니다.',
+    errNotAllowed: '클릭으로 열지 않아 브라우저가 스포이드를 막았습니다. 버튼을 다시 누르세요.',
+    errBusy: '이 창에서 이미 스포이드가 열려 있습니다.',
+    errOperation: '브라우저가 스포이드를 열지 못했습니다({msg}). Linux Wayland의 Chrome에는 이 기능이 없습니다. 이미지를 열거나 스크린샷을 붙여 넣으세요.',
+    dropTitle: '이미지를 여기에 놓거나 스크린샷을 붙여 넣으세요',
+    dropSub: 'Ctrl+V / ⌘V로 클립보드에서 붙여 넣습니다. PNG, JPEG, WebP, GIF, SVG 등 브라우저가 표시할 수 있는 형식을 지원합니다.',
+    imageAria: '이미지. 포인터나 화살표 키로 위치를 고른 뒤 클릭하거나 Enter를 눌러 색을 추출합니다.',
+    imageHint: '클릭해서 추출. 화살표 키 1픽셀, Shift+화살표 10픽셀 이동, Enter로 추출.',
+    sample: '샘플', s1: '한 점(1픽셀)', s3: '3 × 3 평균', s5: '5 × 5 평균',
+    fit: '맞춤', actual: '100%', closeImage: '이미지 닫기',
+    imgInfo: '{name} · {w} × {h}픽셀',
+    imgScaled: '추출용으로 {w} × {h}로 줄였습니다(브라우저 canvas 상한 16,777,216픽셀). 픽셀 하나가 원본 약 {n}픽셀의 평균입니다.',
+    imgError: '이 브라우저가 {name}을(를) 이미지로 열지 못했습니다.',
+    notImage: '{name}은(는) 이미지가 아닙니다.',
+    noImageInClipboard: '클립보드에 이미지나 색상 값이 없습니다.',
+    loading: '{name} 여는 중…',
+    valueLabel: '색상', hexLabel: 'HEX', rgbLabel: 'RGB', hslLabel: 'HSL', oklchLabel: 'OKLCH', p3Label: 'Display P3',
+    swatchAria: '현재 색상 {hex}',
+    copy: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 브라우저가 클립보드 접근을 허용하지 않았습니다. 텍스트를 선택해 직접 복사하세요.',
+    invalid: '읽을 수 없는 색상입니다. #1a73e8, rgb(26 115 232), hsl(214 82% 51%), oklch(57% 0.19 258), color(display-p3 0.2 0.44 0.88) 또는 teal 같은 CSS 색상 이름을 입력하세요.',
+    fromScreen: '화면에서 추출했습니다.',
+    fromImage: '이미지의 x {x}, y {y}에서 추출했습니다.',
+    fromImageAvg: '이미지에서 추출: x {x}, y {y} 주변 {n}픽셀의 평균.',
+    outOfGamut: 'sRGB 범위 밖입니다. 광색역(Display P3) 색이라 HEX, RGB, HSL은 가장 가까운 sRGB 값으로 잘렸고, OKLCH와 Display P3는 실제 색을 유지합니다.',
+    outOfGamutTyped: 'sRGB 범위 밖입니다. HEX, RGB, HSL은 채널별로 잘렸고, OKLCH와 Display P3는 실제 색을 유지합니다.',
+    alphaNote: '반투명 픽셀입니다(alpha {a}). canvas는 색을 alpha로 곱해 저장하므로 투명도가 높은 픽셀의 RGB는 근삿값입니다.',
+    transparent: '완전히 투명한 픽셀이라 색이 없습니다. 다른 픽셀을 고르세요.',
+    recent: '최근 색상', recentEmpty: '추출한 색이 여기에 표시됩니다.', clearRecent: '지우기', copyAll: '모두 복사',
+    recentNote: '최근 16개를 이 브라우저(localStorage)에 저장합니다. 이미지는 저장하지 않습니다.',
+    recentApply: '{hex} 적용'
+  }
+};
+const L = STRINGS[lang];
+const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
 ---
-<div>
-  <div class="ecp-wrap">
-    <div class="ecp-preview-row">
-      <div id="ecp-swatch" class="ecp-swatch"></div>
-      <div class="ecp-preview-meta">
-        <span id="ecp-swatch-label" class="ecp-swatch-label">#1a73e8</span>
-        <span id="ecp-support" class="ecp-support" aria-live="polite"></span>
-      </div>
-    </div>
-
+<div class="ecp-wrap" id="ecp-wrap">
+  <div class="ecp-left">
+  <div class="ecp-actions-block">
     <div class="ecp-actions">
-      <button id="ecp-pick" class="btn-primary" type="button" data-i18n="pickFromScreen">Pick from screen</button>
-      <input id="ecp-native" type="color" value="#1a73e8" title="Native color picker" />
-      <label for="ecp-native" class="btn-secondary ecp-native-label" data-i18n="nativePicker">Native picker</label>
-      <button id="ecp-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      <button id="ecp-pick" class="btn-primary" type="button">{L.pickScreen}</button>
+      <button id="ecp-open" class="btn-secondary" type="button">{L.openImage}</button>
+      <button id="ecp-dialog" class="btn-secondary" type="button">{L.dialog}</button>
+      <button id="ecp-clear" class="btn-ghost" type="button">{L.clear}</button>
+      <input id="ecp-file" type="file" accept="image/*,.svg,.avif,.heic,.heif" hidden />
+      <input id="ecp-native" class="ecp-native" type="color" value="#1a73e8" tabindex="-1" aria-hidden="true" />
     </div>
+    <p id="ecp-support" class="ecp-support">{L.screenReady}</p>
+  </div>
 
-    <div class="ecp-fields">
-      <div class="ecp-field">
-        <label for="ecp-hex">HEX</label>
-        <div class="ecp-input-row">
-          <input id="ecp-hex" class="tool-input" type="text" placeholder="#1a73e8" spellcheck="false" autocomplete="off" />
-          <button class="btn-copy" data-copy="ecp-hex" data-i18n="copy">Copy</button>
-        </div>
-      </div>
-
-      <div class="ecp-field">
-        <label for="ecp-rgb">RGB</label>
-        <div class="ecp-input-row">
-          <input id="ecp-rgb" class="tool-input" type="text" placeholder="rgb(26, 115, 232)" spellcheck="false" autocomplete="off" />
-          <button class="btn-copy" data-copy="ecp-rgb" data-i18n="copy">Copy</button>
-        </div>
-      </div>
-
-      <div class="ecp-field">
-        <label for="ecp-hsl">HSL</label>
-        <div class="ecp-input-row">
-          <input id="ecp-hsl" class="tool-input" type="text" placeholder="hsl(217, 80%, 51%)" spellcheck="false" autocomplete="off" />
-          <button class="btn-copy" data-copy="ecp-hsl" data-i18n="copy">Copy</button>
-        </div>
-      </div>
+  <section class="ecp-image" id="ecp-image">
+    <div id="ecp-drop" class="ecp-drop" role="button" tabindex="0" aria-describedby="ecp-drop-sub">
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+      <strong>{L.dropTitle}</strong>
+      <span id="ecp-drop-sub">{L.dropSub}</span>
     </div>
-
-    <div id="ecp-status" class="tool-status" aria-live="polite"></div>
-
-    <div class="ecp-recent">
-      <div class="ecp-recent-header">
-        <span class="ecp-recent-title" data-i18n="recent">Recent</span>
-        <button id="ecp-recent-clear" class="btn-ghost ecp-recent-clear" type="button" data-i18n="clearRecent">Clear recent</button>
+    <div id="ecp-viewer" class="ecp-viewer" hidden>
+      <div class="ecp-viewer-bar">
+        <span id="ecp-imginfo" class="ecp-imginfo"></span>
+        <label class="ecp-sample">
+          <span>{L.sample}</span>
+          <select id="ecp-sample" class="tool-input ecp-select">
+            <option value="1">{L.s1}</option>
+            <option value="3">{L.s3}</option>
+            <option value="5">{L.s5}</option>
+          </select>
+        </label>
+        <div class="ecp-seg" role="group">
+          <button type="button" class="ecp-seg-btn" data-zoom="fit" aria-pressed="true">{L.fit}</button>
+          <button type="button" class="ecp-seg-btn" data-zoom="actual" aria-pressed="false">{L.actual}</button>
+        </div>
+        <button id="ecp-close" class="btn-ghost ecp-close" type="button">{L.closeImage}</button>
       </div>
-      <div id="ecp-recent-grid" class="ecp-recent-grid" role="list"></div>
-      <p id="ecp-recent-empty" class="ecp-recent-empty" data-i18n="recentEmpty">No colors picked yet.</p>
+      <div id="ecp-scroller" class="ecp-scroller">
+        <div id="ecp-stage" class="ecp-stage">
+          <canvas id="ecp-canvas" class="ecp-canvas" tabindex="0" aria-label={L.imageAria}></canvas>
+          <span id="ecp-marker" class="ecp-marker" hidden></span>
+        </div>
+      </div>
+      <p id="ecp-hint" class="ecp-hint" aria-live="polite">{L.imageHint}</p>
+      <p id="ecp-imgnote" class="ecp-hint" hidden></p>
+    </div>
+    <canvas id="ecp-loupe" class="ecp-loupe" aria-hidden="true" hidden></canvas>
+  </section>
+
+  </div>
+
+  <div class="ecp-right">
+  <div class="ecp-summary">
+    <div id="ecp-swatch" class="ecp-swatch" role="img" aria-label={L.swatchAria.replace('{hex}', '#1a73e8')}><span id="ecp-swatch-fill" class="ecp-swatch-fill"></span></div>
+    <div class="ecp-summary-main">
+      <label for="ecp-hex" class="ecp-label">{L.hexLabel}</label>
+      <div class="ecp-input-row">
+        <input id="ecp-hex" data-field="hex" class="tool-input ecp-value" type="text" value="#1a73e8" spellcheck="false" autocomplete="off" autocapitalize="off" />
+        <button class="btn-copy" type="button" data-copy="hex">{L.copy}</button>
+      </div>
+      <p id="ecp-status" class="ecp-status" role="status" aria-live="polite"></p>
+      <p id="ecp-note" class="ecp-note" hidden></p>
     </div>
   </div>
 
-  <script is:inline>
-    (function () {
-      var STRINGS = {
-        en: {
-          copy: 'Copy', copied: 'Copied!', clear: 'Clear',
-          pickFromScreen: 'Pick from screen', nativePicker: 'Native picker',
-          recent: 'Recent colors', recentEmpty: 'No colors picked yet.', clearRecent: 'Clear recent',
-          unsupported: 'EyeDropper API not supported — use Native picker instead.',
-          supported: 'EyeDropper API ready. Click "Pick from screen" to sample any pixel.',
-          invalid: 'Invalid color',
-          canceled: 'Picker canceled.'
-        },
-        zh: {
-          copy: '复制', copied: '已复制！', clear: '清除',
-          pickFromScreen: '从屏幕吸色', nativePicker: '原生拾色器',
-          recent: '最近颜色', recentEmpty: '尚未取色。', clearRecent: '清空记录',
-          unsupported: '当前浏览器不支持 EyeDropper API，请使用原生拾色器。',
-          supported: 'EyeDropper API 就绪。点击「从屏幕吸色」可拾取任意像素。',
-          invalid: '颜色格式无效',
-          canceled: '已取消取色。'
-        },
-        ja: {
-          copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
-          pickFromScreen: '画面から取得', nativePicker: 'ネイティブピッカー',
-          recent: '最近のカラー', recentEmpty: 'まだカラーを取得していません。', clearRecent: '履歴をクリア',
-          unsupported: 'このブラウザは EyeDropper API に未対応。ネイティブピッカーを利用してください。',
-          supported: 'EyeDropper API 利用可能。「画面から取得」で任意のピクセルをサンプリング。',
-          invalid: 'カラー形式が無効',
-          canceled: 'ピッカーをキャンセルしました。'
-        },
-        ko: {
-          copy: '복사', copied: '복사됨!', clear: '지우기',
-          pickFromScreen: '화면에서 추출', nativePicker: '기본 색상 선택기',
-          recent: '최근 색상', recentEmpty: '아직 추출한 색상이 없습니다.', clearRecent: '기록 지우기',
-          unsupported: '이 브라우저는 EyeDropper API를 지원하지 않습니다. 기본 색상 선택기를 사용하세요.',
-          supported: 'EyeDropper API 사용 가능. "화면에서 추출"으로 임의의 픽셀을 샘플링하세요.',
-          invalid: '색상 형식이 잘못됨',
-          canceled: '선택기를 취소했습니다.'
-        }
-      };
+  <div class="ecp-fields">
+    {FIELDS.slice(1).map((f) => (
+      <div class="ecp-field">
+        <label for={`ecp-${f}`} class="ecp-label">{L[`${f}Label` as 'rgbLabel']}</label>
+        <div class="ecp-input-row">
+          <input id={`ecp-${f}`} data-field={f} class="tool-input ecp-value" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" />
+          <button class="btn-copy" type="button" data-copy={f}>{L.copy}</button>
+        </div>
+      </div>
+    ))}
+  </div>
+  </div>
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-
-      var hexEl = document.getElementById('ecp-hex');
-      var rgbEl = document.getElementById('ecp-rgb');
-      var hslEl = document.getElementById('ecp-hsl');
-      var swatch = document.getElementById('ecp-swatch');
-      var swatchLabel = document.getElementById('ecp-swatch-label');
-      var statusEl = document.getElementById('ecp-status');
-      var supportEl = document.getElementById('ecp-support');
-      var pickBtn = document.getElementById('ecp-pick');
-      var nativeInput = document.getElementById('ecp-native');
-      var clearBtn = document.getElementById('ecp-clear');
-      var recentGrid = document.getElementById('ecp-recent-grid');
-      var recentEmpty = document.getElementById('ecp-recent-empty');
-      var recentClearBtn = document.getElementById('ecp-recent-clear');
-
-      var SLUG = 'eyedropper-color-picker';
-      var MAX_RECENT = 8;
-      var hasEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window;
-
-      if (hasEyeDropper) {
-        supportEl.textContent = t.supported;
-        supportEl.classList.add('supported');
-      } else {
-        supportEl.textContent = t.unsupported;
-        supportEl.classList.add('unsupported');
-        pickBtn.disabled = true;
-        pickBtn.classList.add('is-disabled');
-      }
-
-      function setStatus(msg, kind) {
-        statusEl.textContent = msg || '';
-        statusEl.className = 'tool-status' + (msg ? ' ' + (kind || 'info') : '');
-      }
-
-      function hexToRgb(hex) {
-        hex = (hex || '').trim().replace(/^#/, '');
-        if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
-        if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
-        return {
-          r: parseInt(hex.slice(0,2), 16),
-          g: parseInt(hex.slice(2,4), 16),
-          b: parseInt(hex.slice(4,6), 16)
-        };
-      }
-
-      function rgbToHex(r, g, b) {
-        return '#' + [r, g, b].map(function(v) {
-          return ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2);
-        }).join('');
-      }
-
-      function rgbToHsl(r, g, b) {
-        r /= 255; g /= 255; b /= 255;
-        var max = Math.max(r, g, b), min = Math.min(r, g, b);
-        var h, s, l = (max + min) / 2;
-        if (max === min) { h = s = 0; }
-        else {
-          var d = max - min;
-          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-          switch (max) {
-            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-            case g: h = ((b - r) / d + 2) / 6; break;
-            case b: h = ((r - g) / d + 4) / 6; break;
-          }
-        }
-        return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
-      }
-
-      function hslToRgb(h, s, l) {
-        h /= 360; s /= 100; l /= 100;
-        var r, g, b;
-        if (s === 0) { r = g = b = l; }
-        else {
-          function hue2rgb(p, q, t) {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1/6) return p + (q - p) * 6 * t;
-            if (t < 1/2) return q;
-            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-            return p;
-          }
-          var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-          var p = 2 * l - q;
-          r = hue2rgb(p, q, h + 1/3);
-          g = hue2rgb(p, q, h);
-          b = hue2rgb(p, q, h - 1/3);
-        }
-        return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
-      }
-
-      function parseRgb(str) {
-        var m = (str || '').trim().match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/);
-        if (!m) return null;
-        var r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
-        if (r > 255 || g > 255 || b > 255) return null;
-        return { r: r, g: g, b: b };
-      }
-
-      function parseHsl(str) {
-        var m = (str || '').trim().match(/^hsla?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%?\s*,\s*(\d+(?:\.\d+)?)%?\s*\)$/);
-        if (!m) return null;
-        var h = parseFloat(m[1]), s = parseFloat(m[2]), l = parseFloat(m[3]);
-        if (s > 100 || l > 100) return null;
-        return { h: h, s: s, l: l };
-      }
-
-      function loadRecent() {
-        if (!window.ztPersist || !window.ztPersist.load) return [];
-        try {
-          var data = window.ztPersist.load(SLUG) || {};
-          var arr = data.recent;
-          return Array.isArray(arr) ? arr.filter(function(v) { return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v); }).slice(0, MAX_RECENT) : [];
-        } catch (e) { return []; }
-      }
-
-      function saveRecent(list) {
-        if (!window.ztPersist || !window.ztPersist.save) return;
-        try { window.ztPersist.save(SLUG, { recent: list.slice(0, MAX_RECENT) }); } catch (e) {}
-      }
-
-      function pushRecent(hex) {
-        var list = loadRecent();
-        hex = hex.toLowerCase();
-        list = list.filter(function(v) { return v.toLowerCase() !== hex; });
-        list.unshift(hex);
-        list = list.slice(0, MAX_RECENT);
-        saveRecent(list);
-        renderRecent();
-      }
-
-      function renderRecent() {
-        var list = loadRecent();
-        recentGrid.innerHTML = '';
-        if (list.length === 0) {
-          recentEmpty.style.display = '';
-          recentClearBtn.style.display = 'none';
-          return;
-        }
-        recentEmpty.style.display = 'none';
-        recentClearBtn.style.display = '';
-        list.forEach(function(hex) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'ecp-recent-chip';
-          btn.style.background = hex;
-          btn.setAttribute('aria-label', hex);
-          btn.setAttribute('data-hex', hex);
-          btn.title = hex;
-          btn.addEventListener('click', function() {
-            updateAll(hex, 'recent');
-            window.trackTool && window.trackTool('eyedropper_color_picker', 'recent_apply');
-          });
-          recentGrid.appendChild(btn);
-        });
-      }
-
-      function updateAll(hex, source) {
-        var rgb = hexToRgb(hex);
-        if (!rgb) { setStatus(t.invalid, 'error'); return; }
-        var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
-        var hexStr = rgbToHex(rgb.r, rgb.g, rgb.b);
-        var rgbStr = 'rgb(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ')';
-        var hslStr = 'hsl(' + hsl.h + ', ' + hsl.s + '%, ' + hsl.l + '%)';
-        if (source !== 'hex') hexEl.value = hexStr;
-        if (source !== 'rgb') rgbEl.value = rgbStr;
-        if (source !== 'hsl') hslEl.value = hslStr;
-        if (source !== 'native') nativeInput.value = hexStr;
-        swatch.style.background = hexStr;
-        swatchLabel.textContent = hexStr.toUpperCase();
-        setStatus('');
-        if (source === 'eyedropper' || source === 'native' || source === 'recent') {
-          pushRecent(hexStr);
-        }
-      }
-
-      hexEl.addEventListener('input', function () {
-        var raw = this.value.trim().replace(/^#/, '');
-        if (!raw) { setStatus(''); return; }
-        if (raw.length === 3 || raw.length === 6) {
-          var rgb = hexToRgb(raw);
-          if (rgb) { updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hex'); return; }
-        }
-        if (raw.length >= 6) setStatus(t.invalid, 'error');
-      });
-
-      rgbEl.addEventListener('input', function () {
-        var val = this.value.trim();
-        if (!val) { setStatus(''); return; }
-        var rgb = parseRgb(val);
-        if (rgb) { updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'rgb'); return; }
-        if (/\)/.test(val)) setStatus(t.invalid, 'error');
-      });
-
-      hslEl.addEventListener('input', function () {
-        var val = this.value.trim();
-        if (!val) { setStatus(''); return; }
-        var hsl = parseHsl(val);
-        if (hsl) {
-          var rgb = hslToRgb(hsl.h, hsl.s, hsl.l);
-          updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hsl');
-          return;
-        }
-        if (/\)/.test(val)) setStatus(t.invalid, 'error');
-      });
-
-      nativeInput.addEventListener('input', function () {
-        updateAll(this.value, 'native');
-        window.trackTool && window.trackTool('eyedropper_color_picker', 'native_pick');
-      });
-
-      pickBtn.addEventListener('click', function () {
-        if (!hasEyeDropper) return;
-        try {
-          var dropper = new window.EyeDropper();
-          dropper.open().then(function (result) {
-            updateAll(result.sRGBHex, 'eyedropper');
-            window.trackTool && window.trackTool('eyedropper_color_picker', 'screen_pick');
-          }).catch(function () {
-            setStatus(t.canceled, 'info');
-          });
-        } catch (e) {
-          setStatus(t.unsupported, 'error');
-        }
-      });
-
-      clearBtn.addEventListener('click', function () {
-        hexEl.value = '';
-        rgbEl.value = '';
-        hslEl.value = '';
-        nativeInput.value = '#000000';
-        swatch.style.background = '';
-        swatchLabel.textContent = '';
-        setStatus('');
-      });
-
-      recentClearBtn.addEventListener('click', function () {
-        saveRecent([]);
-        renderRecent();
-      });
-
-      document.querySelectorAll('.btn-copy[data-copy]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var id = btn.getAttribute('data-copy');
-          var val = document.getElementById(id).value;
-          if (!val) return;
-          navigator.clipboard.writeText(val).then(function () {
-            var prev = btn.textContent;
-            btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = prev; }, 1500);
-          });
-          window.trackTool && window.trackTool('eyedropper_color_picker', 'copy_' + id.replace('ecp-', ''));
-        });
-      });
-
-      // Init with stored last color or default
-      var last = loadRecent()[0] || '#1a73e8';
-      updateAll(last, 'init');
-      hexEl.value = last.toUpperCase();
-      renderRecent();
-    })();
-  </script>
+  <div class="ecp-recent">
+    <div class="ecp-recent-header">
+      <span class="ecp-label">{L.recent}</span>
+      <span class="ecp-recent-actions">
+        <button id="ecp-copy-all" class="btn-copy" type="button" hidden>{L.copyAll}</button>
+        <button id="ecp-recent-clear" class="btn-ghost ecp-recent-clear" type="button" hidden>{L.clearRecent}</button>
+      </span>
+    </div>
+    <div id="ecp-recent-grid" class="ecp-recent-grid" role="list"></div>
+    <p id="ecp-recent-empty" class="ecp-recent-empty">{L.recentEmpty}</p>
+    <p class="ecp-recent-note">{L.recentNote}</p>
+  </div>
 </div>
 
-<style>
-  .ecp-wrap { display: flex; flex-direction: column; gap: 1.1rem; }
+<script is:inline define:vars={{ t: L }}>
+  (function () {
+    /* ── engine:start ── */
+    // Pure color and sampling functions. No DOM access, so scripts/test-eyedropper-color-picker.mjs
+    // can run them in Node. Conversion matrices and transfer functions are the CSS Color 4
+    // sample code (https://drafts.csswg.org/css-color-4/conversions.js).
+    var NAMED = {
+    aliceblue:"f0f8ff",antiquewhite:"faebd7",aqua:"00ffff",aquamarine:"7fffd4",azure:"f0ffff",
+    beige:"f5f5dc",bisque:"ffe4c4",black:"000000",blanchedalmond:"ffebcd",blue:"0000ff",blueviolet:"8a2be2",
+    brown:"a52a2a",burlywood:"deb887",cadetblue:"5f9ea0",chartreuse:"7fff00",chocolate:"d2691e",
+    coral:"ff7f50",cornflowerblue:"6495ed",cornsilk:"fff8dc",crimson:"dc143c",cyan:"00ffff",
+    darkblue:"00008b",darkcyan:"008b8b",darkgoldenrod:"b8860b",darkgray:"a9a9a9",darkgreen:"006400",
+    darkgrey:"a9a9a9",darkkhaki:"bdb76b",darkmagenta:"8b008b",darkolivegreen:"556b2f",darkorange:"ff8c00",
+    darkorchid:"9932cc",darkred:"8b0000",darksalmon:"e9967a",darkseagreen:"8fbc8f",darkslateblue:"483d8b",
+    darkslategray:"2f4f4f",darkslategrey:"2f4f4f",darkturquoise:"00ced1",darkviolet:"9400d3",
+    deeppink:"ff1493",deepskyblue:"00bfff",dimgray:"696969",dimgrey:"696969",dodgerblue:"1e90ff",
+    firebrick:"b22222",floralwhite:"fffaf0",forestgreen:"228b22",fuchsia:"ff00ff",gainsboro:"dcdcdc",
+    ghostwhite:"f8f8ff",gold:"ffd700",goldenrod:"daa520",gray:"808080",green:"008000",greenyellow:"adff2f",
+    grey:"808080",honeydew:"f0fff0",hotpink:"ff69b4",indianred:"cd5c5c",indigo:"4b0082",ivory:"fffff0",
+    khaki:"f0e68c",lavender:"e6e6fa",lavenderblush:"fff0f5",lawngreen:"7cfc00",lemonchiffon:"fffacd",
+    lightblue:"add8e6",lightcoral:"f08080",lightcyan:"e0ffff",lightgoldenrodyellow:"fafad2",
+    lightgray:"d3d3d3",lightgreen:"90ee90",lightgrey:"d3d3d3",lightpink:"ffb6c1",lightsalmon:"ffa07a",
+    lightseagreen:"20b2aa",lightskyblue:"87cefa",lightslategray:"778899",lightslategrey:"778899",
+    lightsteelblue:"b0c4de",lightyellow:"ffffe0",lime:"00ff00",limegreen:"32cd32",linen:"faf0e6",
+    magenta:"ff00ff",maroon:"800000",mediumaquamarine:"66cdaa",mediumblue:"0000cd",mediumorchid:"ba55d3",
+    mediumpurple:"9370db",mediumseagreen:"3cb371",mediumslateblue:"7b68ee",mediumspringgreen:"00fa9a",
+    mediumturquoise:"48d1cc",mediumvioletred:"c71585",midnightblue:"191970",mintcream:"f5fffa",
+    mistyrose:"ffe4e1",moccasin:"ffe4b5",navajowhite:"ffdead",navy:"000080",oldlace:"fdf5e6",olive:"808000",
+    olivedrab:"6b8e23",orange:"ffa500",orangered:"ff4500",orchid:"da70d6",palegoldenrod:"eee8aa",
+    palegreen:"98fb98",paleturquoise:"afeeee",palevioletred:"db7093",papayawhip:"ffefd5",peachpuff:"ffdab9",
+    peru:"cd853f",pink:"ffc0cb",plum:"dda0dd",powderblue:"b0e0e6",purple:"800080",rebeccapurple:"663399",
+    red:"ff0000",rosybrown:"bc8f8f",royalblue:"4169e1",saddlebrown:"8b4513",salmon:"fa8072",
+    sandybrown:"f4a460",seagreen:"2e8b57",seashell:"fff5ee",sienna:"a0522d",silver:"c0c0c0",
+    skyblue:"87ceeb",slateblue:"6a5acd",slategray:"708090",slategrey:"708090",snow:"fffafa",
+    springgreen:"00ff7f",steelblue:"4682b4",tan:"d2b48c",teal:"008080",thistle:"d8bfd8",tomato:"ff6347",
+    turquoise:"40e0d0",violet:"ee82ee",wheat:"f5deb3",white:"ffffff",whitesmoke:"f5f5f5",yellow:"ffff00",
+    yellowgreen:"9acd32"
+    };
 
-  .ecp-preview-row { display: flex; align-items: center; gap: 1rem; }
+    var M_LSRGB_XYZ = [
+      [506752 / 1228815, 87881 / 245763, 12673 / 70218],
+      [87098 / 409605, 175762 / 245763, 12673 / 175545],
+      [7918 / 409605, 87881 / 737289, 1001167 / 1053270]
+    ];
+    var M_XYZ_LSRGB = [
+      [12831 / 3959, -329 / 214, -1974 / 3959],
+      [-851781 / 878810, 1648619 / 878810, 36519 / 878810],
+      [705 / 12673, -2585 / 12673, 705 / 667]
+    ];
+    var M_LP3_XYZ = [
+      [608311 / 1250200, 189793 / 714400, 198249 / 1000160],
+      [35783 / 156275, 247089 / 357200, 198249 / 2500400],
+      [0, 32229 / 714400, 5220557 / 5000800]
+    ];
+    var M_XYZ_LP3 = [
+      [446124 / 178915, -333277 / 357830, -72051 / 178915],
+      [-14852 / 17905, 63121 / 35810, 423 / 17905],
+      [11844 / 330415, -50337 / 660830, 316169 / 330415]
+    ];
+    var M_XYZ_LMS = [
+      [0.8190224379967030, 0.3619062600528904, -0.1288737815209879],
+      [0.0329836539323885, 0.9292868615863434, 0.0361446663506424],
+      [0.0481771893596242, 0.2642395317527308, 0.6335478284694309]
+    ];
+    var M_LMS_OKLAB = [
+      [0.2104542683093140, 0.7936177747023054, -0.0040720430116193],
+      [1.9779985324311684, -2.4285922420485799, 0.4505937096174110],
+      [0.0259040424655478, 0.7827717124575296, -0.8086757549230774]
+    ];
+    var M_LMS_XYZ = [
+      [1.2268798758459243, -0.5578149944602171, 0.2813910456659647],
+      [-0.0405757452148008, 1.1122868032803170, -0.0717110580655164],
+      [-0.0763729366746601, -0.4214933324022432, 1.5869240198367816]
+    ];
+    var M_OKLAB_LMS = [
+      [1, 0.3963377773761749, 0.2158037573099136],
+      [1, -0.1055613458156586, -0.0638541728258133],
+      [1, -0.0894841775298119, -1.2914855480194092]
+    ];
+
+    // Largest canvas area that every current browser accepts (Safari on iOS).
+    var MAX_CANVAS_AREA = 16777216;
+    var MAX_RECENT = 16;
+    // An 8-bit Display P3 readout of an sRGB color, converted back, lands up to 0.006 outside 0–1
+    // in linear light (largest value over all 16,777,216 sRGB colors). The gamut check for canvas
+    // readouts allows that much so ordinary pixels are not flagged.
+    var GAMUT_TOLERANCE = 0.0075;
+
+    function mul(m, v) {
+      return [
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]
+      ];
+    }
+    function toLinear(c) {
+      var a = Math.abs(c);
+      return a <= 0.04045 ? c / 12.92 : (c < 0 ? -1 : 1) * Math.pow((a + 0.055) / 1.055, 2.4);
+    }
+    function toGamma(c) {
+      var a = Math.abs(c);
+      return a > 0.0031308 ? (c < 0 ? -1 : 1) * (1.055 * Math.pow(a, 1 / 2.4) - 0.055) : 12.92 * c;
+    }
+    function srgbToP3(rgb) { return mul(M_XYZ_LP3, mul(M_LSRGB_XYZ, rgb.map(toLinear))).map(toGamma); }
+    function p3ToSrgb(rgb) { return mul(M_XYZ_LSRGB, mul(M_LP3_XYZ, rgb.map(toLinear))).map(toGamma); }
+    function srgbLinearToSrgb(rgb) { return rgb.map(toGamma); }
+    function srgbToOklab(rgb) {
+      var lms = mul(M_XYZ_LMS, mul(M_LSRGB_XYZ, rgb.map(toLinear)));
+      return mul(M_LMS_OKLAB, lms.map(Math.cbrt));
+    }
+    function oklabToSrgb(lab) {
+      var lms = mul(M_OKLAB_LMS, lab).map(function (c) { return c * c * c; });
+      return mul(M_XYZ_LSRGB, mul(M_LMS_XYZ, lms)).map(toGamma);
+    }
+    function oklabToOklch(lab) {
+      var c = Math.sqrt(lab[1] * lab[1] + lab[2] * lab[2]);
+      var h = Math.atan2(lab[2], lab[1]) * 180 / Math.PI;
+      if (h < 0) h += 360;
+      return [lab[0], c, h];
+    }
+    function oklchToOklab(lch) {
+      var r = lch[2] * Math.PI / 180;
+      return [lch[0], lch[1] * Math.cos(r), lch[1] * Math.sin(r)];
+    }
+    // HSL / HWB per CSS Color 4 §7–8. Input and output channels are 0–1, hue in degrees.
+    function hslToSrgb(h, s, l) {
+      h = ((h % 360) + 360) % 360;
+      function f(n) {
+        var k = (n + h / 30) % 12;
+        var a = s * Math.min(l, 1 - l);
+        return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      }
+      return [f(0), f(8), f(4)];
+    }
+    function srgbToHsl(rgb) {
+      var r = rgb[0], g = rgb[1], b = rgb[2];
+      var max = Math.max(r, g, b), min = Math.min(r, g, b);
+      var h = 0, s = 0, l = (max + min) / 2, d = max - min;
+      if (d !== 0) {
+        s = (l === 0 || l === 1) ? 0 : (max - l) / Math.min(l, 1 - l);
+        if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+      }
+      return [h, s, l];
+    }
+    function hwbToSrgb(h, w, bl) {
+      if (w + bl >= 1) { var gray = w / (w + bl); return [gray, gray, gray]; }
+      return hslToSrgb(h, 1, 0.5).map(function (c) { return c * (1 - w - bl) + w; });
+    }
+
+    var NUM_RE = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(%|deg|grad|rad|turn)?$/;
+    function token(t) {
+      if (t === 'none') return { none: true, v: 0, unit: '' };
+      var m = NUM_RE.exec(t);
+      if (!m) return null;
+      return { v: parseFloat(m[1]), unit: m[2] || '' };
+    }
+    function hueOf(t) {
+      if (!t) return null;
+      var f = { '': 1, deg: 1, grad: 0.9, rad: 180 / Math.PI, turn: 360 }[t.unit];
+      return f === undefined ? null : t.v * f;
+    }
+    // number or percentage → value on a scale where 100% = pct
+    function scaled(t, pct) {
+      if (!t || (t.unit !== '' && t.unit !== '%')) return null;
+      return t.unit === '%' ? t.v / 100 * pct : t.v;
+    }
+    function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+
+    // Splits the inside of a CSS color function into channel tokens and an alpha token.
+    function splitArgs(body) {
+      body = body.trim();
+      if (body.indexOf(',') >= 0) {
+        if (body.indexOf('/') >= 0) return null;
+        var parts = body.split(',').map(function (s) { return s.trim(); });
+        if (parts.some(function (p) { return !p || /\s/.test(p); })) return null;
+        return { legacy: true, ch: parts.slice(0, 3), alpha: parts.length === 4 ? parts[3] : null, count: parts.length };
+      }
+      var slash = body.split('/');
+      if (slash.length > 2) return null;
+      var ch = slash[0].trim().split(/\s+/).filter(Boolean);
+      var alpha = slash.length === 2 ? slash[1].trim() : null;
+      if (alpha !== null && (!alpha || /\s/.test(alpha))) return null;
+      return { legacy: false, ch: ch, alpha: alpha, count: ch.length + (alpha !== null ? 1 : 0) };
+    }
+    function alphaOf(a) {
+      if (a === null) return 1;
+      var t = token(a);
+      var v = scaled(t, 1);
+      return v === null ? null : clamp01(v);
+    }
+
+    // Parses one CSS color. Returns { srgb: [r, g, b] (0–1, may be out of range for wide-gamut
+    // input), alpha: 0–1, p3: [r, g, b] when written as color(display-p3 …) } or { error }.
+    function parseColor(input) {
+      var s = String(input == null ? '' : input).trim().toLowerCase().replace(/;$/, '').trim();
+      if (!s) return { error: 'empty' };
+      if (s === 'transparent') return { srgb: [0, 0, 0], alpha: 0 };
+      if (Object.prototype.hasOwnProperty.call(NAMED, s)) {
+        var nh = NAMED[s];
+        return { srgb: [0, 2, 4].map(function (i) { return parseInt(nh.slice(i, i + 2), 16) / 255; }), alpha: 1 };
+      }
+      var hm = /^#?([0-9a-f]+)$/.exec(s);
+      if (hm) {
+        var hx = hm[1];
+        if (hx.length === 3 || hx.length === 4) hx = hx.replace(/./g, '$&$&');
+        if (hx.length !== 6 && hx.length !== 8) return { error: 'hex' };
+        return {
+          srgb: [0, 2, 4].map(function (i) { return parseInt(hx.slice(i, i + 2), 16) / 255; }),
+          alpha: hx.length === 8 ? parseInt(hx.slice(6, 8), 16) / 255 : 1
+        };
+      }
+      var fm = /^([a-z-]+)\(([^()]*)\)$/.exec(s);
+      if (!fm) return { error: 'syntax' };
+      var fn = fm[1], args = splitArgs(fm[2]);
+      if (!args) return { error: 'syntax' };
+      var alpha = alphaOf(args.alpha);
+      if (alpha === null) return { error: 'syntax' };
+      var space = fn === 'color' ? args.ch.shift() : null;
+      var t = args.ch.map(token);
+      if (t.some(function (x) { return !x; })) return { error: 'syntax' };
+      if (args.legacy && t.some(function (x) { return x.none; })) return { error: 'syntax' };
+
+      if (fn === 'rgb' || fn === 'rgba') {
+        if (t.length !== 3) return { error: 'syntax' };
+        if (args.legacy) {
+          var pc = t.filter(function (x) { return x.unit === '%'; }).length;
+          if (pc !== 0 && pc !== 3) return { error: 'syntax' };
+        }
+        var rgb = t.map(function (x) { return scaled(x, 255); });
+        if (rgb.some(function (v) { return v === null; })) return { error: 'syntax' };
+        return { srgb: rgb.map(function (v) { return clamp01(v / 255); }), alpha: alpha };
+      }
+      if (fn === 'hsl' || fn === 'hsla' || fn === 'hwb') {
+        if (t.length !== 3 || (fn === 'hwb' && args.legacy)) return { error: 'syntax' };
+        var h = hueOf(t[0]);
+        var a2 = scaled(t[1], 100), b2 = scaled(t[2], 100);
+        if (h === null || a2 === null || b2 === null) return { error: 'syntax' };
+        a2 = clamp01(a2 / 100); b2 = clamp01(b2 / 100);
+        return { srgb: fn === 'hwb' ? hwbToSrgb(h, a2, b2) : hslToSrgb(h, a2, b2), alpha: alpha };
+      }
+      if (fn === 'oklch' || fn === 'oklab') {
+        if (t.length !== 3 || args.legacy) return { error: 'syntax' };
+        var L = scaled(t[0], 1);
+        if (L === null) return { error: 'syntax' };
+        L = clamp01(L);
+        var lab;
+        if (fn === 'oklch') {
+          var C = scaled(t[1], 0.4), H = hueOf(t[2]);
+          if (C === null || H === null) return { error: 'syntax' };
+          lab = oklchToOklab([L, Math.max(0, C), H]);
+        } else {
+          var A = scaled(t[1], 0.4), B = scaled(t[2], 0.4);
+          if (A === null || B === null) return { error: 'syntax' };
+          lab = [L, A, B];
+        }
+        return { srgb: oklabToSrgb(lab), alpha: alpha };
+      }
+      if (fn === 'color') {
+        if (args.legacy || t.length !== 3) return { error: 'syntax' };
+        var v = t.map(function (x) { return scaled(x, 1); });
+        if (v.some(function (x) { return x === null; })) return { error: 'syntax' };
+        if (space === 'srgb') return { srgb: v, alpha: alpha };
+        if (space === 'srgb-linear') return { srgb: srgbLinearToSrgb(v), alpha: alpha };
+        if (space === 'display-p3') return { srgb: p3ToSrgb(v), alpha: alpha, p3: v };
+        return { error: 'space' };
+      }
+      return { error: 'syntax' };
+    }
+
+    function trim(x, d) {
+      var s = x.toFixed(d);
+      if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+      return s === '-0' ? '0' : s;
+    }
+    function hex2(n) { return (n < 16 ? '0' : '') + n.toString(16); }
+    function to8(c) { return Math.round(clamp01(c) * 255); }
+    // tol is in linear light; values are gamma-encoded sRGB.
+    function inGamut(rgb, tol) {
+      tol = tol || 1e-6;
+      return rgb.map(toLinear).every(function (c) { return c >= -tol && c <= 1 + tol; });
+    }
+    function same8(color, rgb8, a8) {
+      if (!color || color.error) return false;
+      var c = color.srgb.map(to8);
+      return c[0] === rgb8[0] && c[1] === rgb8[1] && c[2] === rgb8[2] && to8(color.alpha) === a8;
+    }
+    // Writes the value with the fewest decimals that still reads back as the same 8-bit color.
+    function shortest(fmt, rgb8, a8, from, to) {
+      for (var d = from; d <= to; d++) {
+        var str = fmt(d);
+        if (same8(parseColor(str), rgb8, a8)) return str;
+      }
+      return fmt(to);
+    }
+
+    // color: { srgb, alpha, p3? }. p3 is the exact Display P3 value when known (canvas readout
+    // or color(display-p3 …) input); it decides the gamut check, OKLCH and the P3 output.
+    function formatColor(color) {
+      var alpha = color.alpha === undefined ? 1 : color.alpha;
+      var a8 = to8(alpha);
+      var wide = color.p3 ? p3ToSrgb(color.p3) : color.srgb;
+      var gamut = inGamut(wide, color.p3 ? GAMUT_TOLERANCE : 1e-6);
+      var rgb8 = color.srgb.map(to8);
+      var exact = rgb8.map(function (c) { return c / 255; });
+      var aStr = trim(a8 / 255, 3);
+      var aSuffix = a8 === 255 ? '' : ' / ' + aStr;
+
+      var hex = '#' + rgb8.map(hex2).join('') + (a8 === 255 ? '' : hex2(a8));
+      var rgb = a8 === 255
+        ? 'rgb(' + rgb8.join(', ') + ')'
+        : 'rgba(' + rgb8.join(', ') + ', ' + aStr + ')';
+
+      var hsl = srgbToHsl(exact);
+      var hslStr = shortest(function (d) {
+        var body = trim(hsl[0], d) + ', ' + trim(hsl[1] * 100, d) + '%, ' + trim(hsl[2] * 100, d) + '%';
+        return a8 === 255 ? 'hsl(' + body + ')' : 'hsla(' + body + ', ' + aStr + ')';
+      }, rgb8, a8, 0, 4);
+
+      function okFmt(lch) {
+        return function (d) {
+          var c = lch[1] < 0.00005 ? 0 : lch[1];
+          return 'oklch(' + trim(lch[0] * 100, 1 + d) + '% ' + trim(c, 3 + d) + ' ' + (c === 0 ? '0' : trim(lch[2], 1 + d)) + aSuffix + ')';
+        };
+      }
+      var oklch = gamut
+        ? shortest(okFmt(oklabToOklch(srgbToOklab(exact))), rgb8, a8, 0, 4)
+        : okFmt(oklabToOklch(srgbToOklab(wide)))(1);
+
+      var p3;
+      if (color.p3) {
+        p3 = 'color(display-p3 ' + color.p3.map(function (c) { return trim(c, 4); }).join(' ') + aSuffix + ')';
+      } else {
+        var p3v = srgbToP3(exact);
+        p3 = shortest(function (d) {
+          return 'color(display-p3 ' + p3v.map(function (c) { return trim(c, d); }).join(' ') + aSuffix + ')';
+        }, rgb8, a8, 3, 6);
+      }
+      return { hex: hex, rgb: rgb, hsl: hslStr, oklch: oklch, p3: p3, inGamut: gamut, rgb8: rgb8, alpha8: a8 };
+    }
+
+    // Canvas readouts (8-bit RGBA, unpremultiplied) → color. The Display P3 readout is kept only
+    // when it lies outside sRGB; for in-gamut pixels the sRGB readout is exact and round-trips.
+    function pixelColor(px, p3px) {
+      if (!px || px[3] === 0) return null;
+      var c = { srgb: [px[0] / 255, px[1] / 255, px[2] / 255], alpha: px[3] / 255 };
+      if (p3px && p3px[3] > 0) {
+        var p3 = [p3px[0] / 255, p3px[1] / 255, p3px[2] / 255];
+        if (!inGamut(p3ToSrgb(p3), GAMUT_TOLERANCE)) c.p3 = p3;
+      }
+      return c;
+    }
+
+    // Average of a size×size block centred on (x, y), clipped to the image. RGB is weighted by
+    // alpha so transparent pixels (stored as 0,0,0 by canvas) do not darken the result.
+    function sampleRegion(data, w, h, x, y, size) {
+      var half = (size - 1) / 2;
+      var x0 = Math.max(0, x - half), x1 = Math.min(w - 1, x + half);
+      var y0 = Math.max(0, y - half), y1 = Math.min(h - 1, y + half);
+      var r = 0, g = 0, b = 0, a = 0, n = 0;
+      for (var yy = y0; yy <= y1; yy++) {
+        for (var xx = x0; xx <= x1; xx++) {
+          var i = (yy * w + xx) * 4, al = data[i + 3];
+          r += data[i] * al; g += data[i + 1] * al; b += data[i + 2] * al; a += al; n++;
+        }
+      }
+      if (a === 0) return [0, 0, 0, 0];
+      return [Math.round(r / a), Math.round(g / a), Math.round(b / a), Math.round(a / n)];
+    }
+    // Pointer position inside the displayed image (CSS px) → image pixel.
+    function clientToPixel(px, py, boxW, boxH, imgW, imgH) {
+      var x = Math.floor(px / boxW * imgW), y = Math.floor(py / boxH * imgH);
+      return [Math.min(imgW - 1, Math.max(0, x)), Math.min(imgH - 1, Math.max(0, y))];
+    }
+    function fitImageSize(w, h, maxArea) {
+      if (w * h <= maxArea) return { w: w, h: h, scaled: false };
+      var k = Math.sqrt(maxArea / (w * h));
+      var nw = Math.max(1, Math.floor(w * k)), nh = Math.max(1, Math.floor(h * k));
+      while (nw * nh > maxArea) { if (nw >= nh) nw--; else nh--; }
+      return { w: nw, h: nh, scaled: true };
+    }
+    function cleanRecent(list) {
+      if (!Array.isArray(list)) return [];
+      var out = [];
+      list.forEach(function (v) {
+        if (typeof v !== 'string' || !/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(v)) return;
+        v = v.toLowerCase();
+        if (out.indexOf(v) < 0 && out.length < MAX_RECENT) out.push(v);
+      });
+      return out;
+    }
+    function pushRecent(list, hex) {
+      hex = String(hex).toLowerCase();
+      return cleanRecent([hex].concat(cleanRecent(list).filter(function (v) { return v !== hex; })));
+    }
+    // EyeDropper.open() rejection → message key. Names from the EyeDropper spec and Chromium
+    // (third_party/blink/renderer/modules/eyedropper/eye_dropper.cc).
+    function eyeDropperErrorKey(err) {
+      var name = err && err.name;
+      if (name === 'AbortError') return 'canceled';
+      if (name === 'NotAllowedError') return 'errNotAllowed';
+      if (name === 'InvalidStateError') return 'errBusy';
+      return 'errOperation';
+    }
+    /* ── engine:end ── */
+
+    var SLUG = 'eyedropper-color-picker';
+    function $(id) { return document.getElementById(id); }
+    function fill(tpl, v) {
+      return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return v && v[k] !== undefined ? v[k] : m; });
+    }
+    function track(action) { if (window.trackTool) window.trackTool('eyedropper_color_picker', action); }
+
+    var wrap = $('ecp-wrap');
+    var pickBtn = $('ecp-pick'), openBtn = $('ecp-open'), dialogBtn = $('ecp-dialog'), clearBtn = $('ecp-clear');
+    var fileInput = $('ecp-file'), nativeInput = $('ecp-native');
+    var supportEl = $('ecp-support'), statusEl = $('ecp-status'), noteEl = $('ecp-note');
+    var swatch = $('ecp-swatch'), swatchFill = $('ecp-swatch-fill');
+    var drop = $('ecp-drop'), viewer = $('ecp-viewer'), imgInfo = $('ecp-imginfo'), imgNote = $('ecp-imgnote');
+    var sampleSel = $('ecp-sample'), closeBtn = $('ecp-close');
+    var hintEl = $('ecp-hint');
+    var scroller = $('ecp-scroller'), canvas = $('ecp-canvas'), marker = $('ecp-marker'), loupe = $('ecp-loupe');
+    var recentGrid = $('ecp-recent-grid'), recentEmpty = $('ecp-recent-empty');
+    var recentClear = $('ecp-recent-clear'), copyAllBtn = $('ecp-copy-all');
+    var fieldEls = {};
+    wrap.querySelectorAll('input[data-field]').forEach(function (el) { fieldEls[el.getAttribute('data-field')] = el; });
+
+    var current = null;      // formatColor() result shown in the fields
+    var img = null;          // { w, h, ctx, p3ctx }
+    var cursor = null;       // [x, y] image pixel under the pointer / keyboard cursor
+    var zoom = 'fit';
+    var touching = false;
+    var dropperOpen = false;
+    var hasEyeDropper = typeof window.EyeDropper === 'function';
+
+    function setStatus(msg, kind) {
+      statusEl.textContent = msg || '';
+      statusEl.className = 'ecp-status' + (msg && kind ? ' is-' + kind : '');
+    }
+
+    // ── persistence (policy "preference": recent colors + sample size) ──
+    function loadPrefs() {
+      try { return (window.ztPersist && window.ztPersist.load(SLUG)) || {}; } catch (e) { return {}; }
+    }
+    function savePrefs(patch) {
+      if (!window.ztPersist) return;
+      var p = loadPrefs();
+      for (var k in patch) p[k] = patch[k];
+      try { window.ztPersist.save(SLUG, { recent: cleanRecent(p.recent), sample: p.sample }); } catch (e) {}
+    }
+    function getRecent() { return cleanRecent(loadPrefs().recent); }
+
+    function renderRecent() {
+      var list = getRecent();
+      recentGrid.textContent = '';
+      list.forEach(function (hex) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ecp-chip';
+        b.setAttribute('role', 'listitem');
+        b.setAttribute('aria-label', fill(t.recentApply, { hex: hex }));
+        b.title = hex;
+        var s = document.createElement('span');
+        s.className = 'ecp-chip-fill';
+        s.style.background = hex;
+        b.appendChild(s);
+        b.addEventListener('click', function () {
+          var c = parseColor(hex);
+          if (!c.error) { show(c, { record: true }); track('recent_apply'); }
+        });
+        recentGrid.appendChild(b);
+      });
+      recentEmpty.hidden = list.length > 0;
+      recentClear.hidden = list.length === 0;
+      copyAllBtn.hidden = list.length === 0;
+    }
+
+    // ── show a color in every field ──
+    function show(color, opts) {
+      opts = opts || {};
+      var f = formatColor(color);
+      current = f;
+      FIELDS_EACH(function (k) { if (k !== opts.skip) fieldEls[k].value = f[k]; });
+      swatchFill.style.background = f.hex;
+      if (!f.inGamut && window.CSS && CSS.supports && CSS.supports('color', f.p3)) swatchFill.style.background = f.p3;
+      swatch.setAttribute('aria-label', fill(t.swatchAria, { hex: f.hex }));
+      nativeInput.value = f.hex.slice(0, 7);
+      var notes = [];
+      if (!f.inGamut) notes.push(color.p3 && opts.fromImage ? t.outOfGamut : t.outOfGamutTyped);
+      if (f.alpha8 < 255 && opts.fromImage) notes.push(fill(t.alphaNote, { a: trim(f.alpha8 / 255, 3) }));
+      noteEl.textContent = notes.join(' ');
+      noteEl.hidden = notes.length === 0;
+      if (opts.status !== undefined) setStatus(opts.status, 'ok');
+      if (opts.record) {
+        savePrefs({ recent: pushRecent(getRecent(), f.hex) });
+        renderRecent();
+      }
+    }
+    function FIELDS_EACH(fn) { ['hex', 'rgb', 'hsl', 'oklch', 'p3'].forEach(fn); }
+
+    function clearAll() {
+      FIELDS_EACH(function (k) { fieldEls[k].value = ''; });
+      current = null;
+      swatchFill.style.background = '';
+      noteEl.hidden = true;
+      setStatus('');
+      closeImage();
+    }
+
+    // ── typed values: any field accepts any CSS color syntax ──
+    FIELDS_EACH(function (k) {
+      var el = fieldEls[k];
+      el.addEventListener('input', function () {
+        var c = parseColor(el.value);
+        if (!c.error) show(c, { skip: k, status: '' });
+      });
+      el.addEventListener('change', function () {
+        if (!el.value.trim()) return;
+        var c = parseColor(el.value);
+        if (c.error) setStatus(t.invalid, 'error');
+      });
+    });
+
+    // ── screen (EyeDropper API) ──
+    if (!hasEyeDropper) {
+      pickBtn.hidden = true;
+      openBtn.className = 'btn-primary';
+      supportEl.textContent = t.screenNone;
+    }
+    pickBtn.addEventListener('click', function () {
+      if (!hasEyeDropper || dropperOpen) return;
+      var dropper;
+      try { dropper = new window.EyeDropper(); } catch (e) { setStatus(fill(t.errOperation, { msg: e.message || e.name }), 'error'); return; }
+      dropperOpen = true;
+      pickBtn.disabled = true;
+      setStatus(t.screenOpen, 'info');
+      Promise.resolve().then(function () { return dropper.open(); }).then(function (res) {
+        var c = parseColor(res && res.sRGBHex);
+        if (c.error) { setStatus(t.invalid, 'error'); return; }
+        show(c, { record: true, status: t.fromScreen });
+        track('screen_pick');
+      }, function (err) {
+        var key = eyeDropperErrorKey(err);
+        setStatus(fill(t[key], { msg: (err && (err.message || err.name)) || '' }), key === 'canceled' ? 'info' : 'error');
+      }).then(function () {
+        dropperOpen = false;
+        pickBtn.disabled = false;
+      });
+    });
+
+    // ── system color dialog ──
+    dialogBtn.addEventListener('click', function () {
+      try {
+        if (typeof nativeInput.showPicker === 'function') { nativeInput.showPicker(); return; }
+      } catch (e) {}
+      nativeInput.click();
+    });
+    nativeInput.addEventListener('input', function () {
+      var c = parseColor(nativeInput.value);
+      if (!c.error) show(c, { status: '' });
+    });
+    nativeInput.addEventListener('change', function () {
+      var c = parseColor(nativeInput.value);
+      if (!c.error) { show(c, { record: true, status: '' }); track('native_pick'); }
+    });
+
+    clearBtn.addEventListener('click', clearAll);
+
+    // ── images ──
+    function isImageFile(file) {
+      return /^image\//.test(file.type) || /\.(png|jpe?g|gif|webp|avif|bmp|ico|svg|heic|heif|tiff?)$/i.test(file.name || '');
+    }
+    function openFile(file) {
+      if (!file) return;
+      var name = file.name || 'image';
+      if (!isImageFile(file)) { setStatus(fill(t.notImage, { name: name }), 'error'); return; }
+      setStatus(fill(t.loading, { name: name }), 'info');
+      var url = URL.createObjectURL(file);
+      var el = new Image();
+      el.decoding = 'async';
+      el.onload = function () {
+        var w = el.naturalWidth, h = el.naturalHeight;
+        if (!w || !h) { URL.revokeObjectURL(url); setStatus(fill(t.imgError, { name: name }), 'error'); return; }
+        var fit = fitImageSize(w, h, MAX_CANVAS_AREA);
+        canvas.width = fit.w; canvas.height = fit.h;
+        var ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.clearRect(0, 0, fit.w, fit.h);
+        ctx.drawImage(el, 0, 0, fit.w, fit.h);
+        var p3ctx = null;
+        try {
+          var c2 = document.createElement('canvas');
+          c2.width = fit.w; c2.height = fit.h;
+          var x2 = c2.getContext('2d', { colorSpace: 'display-p3', willReadFrequently: true });
+          if (x2 && x2.getContextAttributes && x2.getContextAttributes().colorSpace === 'display-p3') {
+            x2.drawImage(el, 0, 0, fit.w, fit.h);
+            p3ctx = x2;
+          }
+        } catch (e) { p3ctx = null; }
+        URL.revokeObjectURL(url);
+        img = { w: fit.w, h: fit.h, ctx: ctx, p3ctx: p3ctx };
+        cursor = null;
+        marker.hidden = true;
+        hintEl.textContent = t.imageHint;
+        imgInfo.textContent = fill(t.imgInfo, { name: name, w: w, h: h });
+        imgNote.hidden = !fit.scaled;
+        imgNote.textContent = fit.scaled ? fill(t.imgScaled, { w: fit.w, h: fit.h, n: (w * h / (fit.w * fit.h)).toFixed(1) }) : '';
+        drop.hidden = true;
+        viewer.hidden = false;
+        setZoom(zoom);
+        setStatus('');
+        // Keep the color fields and the whole image on screen together on small screens.
+        var cr = canvas.getBoundingClientRect();
+        if (cr.bottom > window.innerHeight) {
+          var top = document.querySelector('.ecp-summary').getBoundingClientRect().top;
+          window.scrollBy({ top: Math.min(top - 8, cr.bottom - window.innerHeight + 8), behavior: 'auto' });
+        }
+        track('image_open');
+      };
+      el.onerror = function () {
+        URL.revokeObjectURL(url);
+        setStatus(fill(t.imgError, { name: name }), 'error');
+      };
+      el.src = url;
+    }
+    function closeImage() {
+      if (img) { canvas.width = 1; canvas.height = 1; }
+      img = null;
+      cursor = null;
+      viewer.hidden = true;
+      drop.hidden = false;
+      loupe.hidden = true;
+      fileInput.value = '';
+    }
+    openBtn.addEventListener('click', function () { fileInput.click(); });
+    drop.addEventListener('click', function () { fileInput.click(); });
+    drop.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+    });
+    fileInput.addEventListener('change', function () { openFile(fileInput.files && fileInput.files[0]); });
+    closeBtn.addEventListener('click', closeImage);
+
+    wrap.addEventListener('dragover', function (e) {
+      if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) {
+        e.preventDefault();
+        wrap.classList.add('is-dragging');
+      }
+    });
+    wrap.addEventListener('dragleave', function (e) {
+      if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('is-dragging');
+    });
+    wrap.addEventListener('drop', function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      wrap.classList.remove('is-dragging');
+      openFile(e.dataTransfer.files[0]);
+    });
+
+    document.addEventListener('paste', function (e) {
+      var cd = e.clipboardData;
+      if (!cd) return;
+      var file = null;
+      for (var i = 0; i < cd.files.length; i++) { if (isImageFile(cd.files[i])) { file = cd.files[i]; break; } }
+      if (file) { e.preventDefault(); openFile(file); return; }
+      var target = e.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      var text = cd.getData('text/plain');
+      var c = parseColor(text);
+      if (!c.error) { e.preventDefault(); show(c, { status: '' }); return; }
+      if (wrap.contains(target) || target === document.body) setStatus(t.noImageInClipboard, 'info');
+    });
+
+    function setZoom(z) {
+      zoom = z;
+      wrap.querySelectorAll('[data-zoom]').forEach(function (b) {
+        b.setAttribute('aria-pressed', b.getAttribute('data-zoom') === z ? 'true' : 'false');
+      });
+      layout();
+    }
+    wrap.querySelectorAll('[data-zoom]').forEach(function (b) {
+      b.addEventListener('click', function () { setZoom(b.getAttribute('data-zoom')); });
+    });
+    function layout() {
+      if (!img) return;
+      var s;
+      if (zoom === 'actual') {
+        s = 1;
+        scroller.classList.add('is-actual');
+      } else {
+        scroller.classList.remove('is-actual');
+        var maxW = scroller.clientWidth || viewer.clientWidth || 300;
+        var maxH = Math.max(160, Math.min(window.innerHeight * (window.innerWidth <= 640 ? 0.45 : 0.6), 640));
+        s = Math.min(maxW / img.w, maxH / img.h, 16);
+      }
+      canvas.style.width = (img.w * s) + 'px';
+      canvas.style.height = (img.h * s) + 'px';
+      canvas.classList.toggle('is-pixelated', s >= 1);
+      placeMarker();
+    }
+    window.addEventListener('resize', layout);
+
+    var sample = Number(loadPrefs().sample);
+    if (sample === 3 || sample === 5) sampleSel.value = String(sample);
+    sampleSel.addEventListener('change', function () { savePrefs({ sample: Number(sampleSel.value) }); if (cursor) drawLoupe(); });
+
+    function readRegion(x, y, size) {
+      var half = (size - 1) / 2;
+      var x0 = Math.max(0, x - half), y0 = Math.max(0, y - half);
+      var x1 = Math.min(img.w - 1, x + half), y1 = Math.min(img.h - 1, y + half);
+      var w = x1 - x0 + 1, h = y1 - y0 + 1;
+      var px = sampleRegion(img.ctx.getImageData(x0, y0, w, h).data, w, h, x - x0, y - y0, size);
+      var p3px = null;
+      if (img.p3ctx) {
+        try { p3px = sampleRegion(img.p3ctx.getImageData(x0, y0, w, h, { colorSpace: 'display-p3' }).data, w, h, x - x0, y - y0, size); } catch (e) { p3px = null; }
+      }
+      return pixelColor(px, p3px);
+    }
+    function pick() {
+      if (!img || !cursor) return;
+      var size = Number(sampleSel.value) || 1;
+      var c = readRegion(cursor[0], cursor[1], size);
+      placeMarker(true);
+      if (!c) { hintEl.textContent = t.transparent; return; }
+      var at = { x: cursor[0], y: cursor[1], n: size * size };
+      // Reported under the image, not above it, so the image does not move between picks.
+      hintEl.textContent = fill(size > 1 ? t.fromImageAvg : t.fromImage, at);
+      show(c, { record: true, fromImage: true, status: '' });
+      track('image_pick');
+    }
+    function placeMarker(visible) {
+      if (!img || !cursor) { marker.hidden = true; return; }
+      if (visible) marker.hidden = false;
+      marker.style.left = ((cursor[0] + 0.5) / img.w * 100) + '%';
+      marker.style.top = ((cursor[1] + 0.5) / img.h * 100) + '%';
+    }
+
+    var LOUPE_CELLS = 11, LOUPE_CSS = 132;
+    function drawLoupe(clientX, clientY) {
+      if (!img || !cursor) return;
+      var dpr = window.devicePixelRatio || 1;
+      var px = Math.round(LOUPE_CSS * dpr);
+      if (loupe.width !== px) { loupe.width = px; loupe.height = px; }
+      var lc = loupe.getContext('2d');
+      var cell = px / LOUPE_CELLS, half = (LOUPE_CELLS - 1) / 2;
+      lc.imageSmoothingEnabled = false;
+      lc.fillStyle = '#808080';
+      lc.fillRect(0, 0, px, px);
+      for (var gy = 0; gy < LOUPE_CELLS; gy++) {
+        for (var gx = 0; gx < LOUPE_CELLS; gx++) {
+          var sx = cursor[0] - half + gx, sy = cursor[1] - half + gy;
+          if (sx < 0 || sy < 0 || sx >= img.w || sy >= img.h) continue;
+          if ((gx + gy) % 2) { lc.fillStyle = '#d0d0d0'; lc.fillRect(gx * cell, gy * cell, cell, cell); }
+          else { lc.fillStyle = '#f4f4f4'; lc.fillRect(gx * cell, gy * cell, cell, cell); }
+        }
+      }
+      lc.drawImage(canvas, cursor[0] - half, cursor[1] - half, LOUPE_CELLS, LOUPE_CELLS, 0, 0, px, px);
+      lc.strokeStyle = 'rgba(0,0,0,0.18)';
+      lc.lineWidth = 1;
+      for (var i = 1; i < LOUPE_CELLS; i++) {
+        lc.beginPath(); lc.moveTo(i * cell, 0); lc.lineTo(i * cell, px); lc.stroke();
+        lc.beginPath(); lc.moveTo(0, i * cell); lc.lineTo(px, i * cell); lc.stroke();
+      }
+      var size = Number(sampleSel.value) || 1;
+      var o = (half - (size - 1) / 2) * cell, len = size * cell;
+      lc.lineWidth = Math.max(2, dpr * 1.5);
+      lc.strokeStyle = '#000';
+      lc.strokeRect(o, o, len, len);
+      lc.strokeStyle = '#fff';
+      lc.strokeRect(o - lc.lineWidth, o - lc.lineWidth, len + 2 * lc.lineWidth, len + 2 * lc.lineWidth);
+      if (clientX === undefined) {
+        var r = canvas.getBoundingClientRect();
+        clientX = r.left + (cursor[0] + 0.5) / img.w * r.width;
+        clientY = r.top + (cursor[1] + 0.5) / img.h * r.height;
+      }
+      var gap = touching ? 48 : 18;
+      var left = clientX + gap, top = clientY - gap - LOUPE_CSS;
+      if (left + LOUPE_CSS > window.innerWidth - 4) left = clientX - gap - LOUPE_CSS;
+      if (left < 4) left = 4;
+      if (top < 4) top = clientY + gap;
+      loupe.style.left = left + 'px';
+      loupe.style.top = top + 'px';
+      loupe.hidden = false;
+    }
+    function pointAt(e) {
+      var r = canvas.getBoundingClientRect();
+      cursor = clientToPixel(e.clientX - r.left, e.clientY - r.top, r.width, r.height, img.w, img.h);
+      drawLoupe(e.clientX, e.clientY);
+    }
+    canvas.addEventListener('pointerdown', function (e) {
+      if (!img) return;
+      if (e.pointerType !== 'mouse') {
+        touching = true;
+        try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+        pointAt(e);
+      }
+    });
+    canvas.addEventListener('pointermove', function (e) { if (img) pointAt(e); });
+    canvas.addEventListener('pointerup', function (e) {
+      if (!img) return;
+      if (e.pointerType === 'mouse') { if (e.button === 0) { pointAt(e); pick(); } return; }
+      if (touching) { touching = false; pointAt(e); pick(); loupe.hidden = true; }
+    });
+    canvas.addEventListener('pointercancel', function () { touching = false; loupe.hidden = true; });
+    canvas.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') loupe.hidden = true; });
+    canvas.addEventListener('blur', function () { loupe.hidden = true; });
+    canvas.addEventListener('keydown', function (e) {
+      if (!img) return;
+      var step = e.shiftKey ? 10 : 1;
+      var d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+      if (d) {
+        e.preventDefault();
+        if (!cursor) cursor = [Math.floor(img.w / 2), Math.floor(img.h / 2)];
+        else cursor = [Math.min(img.w - 1, Math.max(0, cursor[0] + d[0])), Math.min(img.h - 1, Math.max(0, cursor[1] + d[1]))];
+        drawLoupe();
+        placeMarker(true);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (!cursor) cursor = [Math.floor(img.w / 2), Math.floor(img.h / 2)];
+        pick();
+      } else if (e.key === 'Escape') {
+        loupe.hidden = true;
+      }
+    });
+    window.addEventListener('scroll', function () { if (!touching) loupe.hidden = true; }, { passive: true });
+
+    // ── copy ──
+    function copyText(text, btn, fallbackInput) {
+      if (!text) return;
+      function done() {
+        var prev = btn.textContent;
+        btn.textContent = t.copied;
+        setTimeout(function () { btn.textContent = prev; }, 1500);
+      }
+      function fallback() {
+        try {
+          if (fallbackInput) { fallbackInput.focus(); fallbackInput.select(); }
+          if (fallbackInput && document.execCommand('copy')) { done(); return; }
+        } catch (e) {}
+        setStatus(t.copyFailed, 'error');
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+      else fallback();
+    }
+    wrap.querySelectorAll('[data-copy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var k = btn.getAttribute('data-copy');
+        copyText(fieldEls[k].value, btn, fieldEls[k]);
+        track('copy_' + k);
+      });
+    });
+    copyAllBtn.addEventListener('click', function () { copyText(getRecent().join('\n'), copyAllBtn, null); });
+    recentClear.addEventListener('click', function () { savePrefs({ recent: [] }); renderRecent(); });
+
+    // The site-wide Ctrl/⌘+L shortcut empties text inputs; reset the rest of the tool with them.
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+        setTimeout(clearAll, 0);
+      }
+    });
+
+    var start = parseColor(getRecent()[0] || '#1a73e8');
+    show(start, {});
+    renderRecent();
+  })();
+</script>
+
+<style>
+  .ecp-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    border-radius: var(--radius-lg);
+    outline: 2px dashed transparent;
+    outline-offset: 4px;
+    transition: outline-color var(--transition-fast);
+  }
+  .ecp-wrap.is-dragging { outline-color: var(--color-primary); }
+  .ecp-wrap [hidden] { display: none !important; }
+  /* Small screens: actions, current color, image, other formats. Wide screens: two columns,
+     image on the left and the formats on the right, so a pick never moves the image. */
+  .ecp-left, .ecp-right { display: contents; }
+  .ecp-actions-block { order: 1; }
+  .ecp-summary { order: 2; }
+  .ecp-image { order: 3; }
+  .ecp-fields { order: 4; }
+  .ecp-recent { order: 5; }
+  @media (min-width: 900px) {
+    .ecp-wrap { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); column-gap: 1.5rem; row-gap: 1rem; align-items: start; }
+    .ecp-left, .ecp-right { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+    .ecp-recent { grid-column: 1 / -1; }
+  }
+  .ecp-actions-block { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+  .ecp-summary { display: flex; gap: 0.9rem; align-items: flex-start; min-width: 0; }
+  .ecp-image { min-width: 0; }
+  .ecp-fields { display: flex; flex-direction: column; gap: 0.7rem; min-width: 0; }
+
+  .ecp-actions { position: relative; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .ecp-native {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    border: 0;
+    padding: 0;
+  }
+  .ecp-support { margin: 0; font-size: 0.84rem; line-height: 1.45; color: var(--color-text-secondary); }
 
   .ecp-swatch {
-    width: 88px;
-    height: 88px;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--color-border);
-    background: var(--color-surface-muted);
+    position: relative;
+    width: 76px;
+    height: 76px;
     flex-shrink: 0;
-    box-shadow: var(--shadow-subtle);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-subtle);
+    background-color: #fff;
+    background-image: linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%);
+    background-size: 14px 14px;
+    background-position: 0 0, 7px 7px;
   }
+  .ecp-swatch-fill { position: absolute; inset: 0; }
+  .ecp-summary-main { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; min-width: 0; }
 
-  .ecp-preview-meta { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
-
-  .ecp-swatch-label {
-    font-family: var(--font-mono);
-    font-size: 1.15rem;
-    font-weight: 600;
-    color: var(--color-text);
-    letter-spacing: 0.02em;
-  }
-
-  .ecp-support {
-    font-size: 0.82rem;
-    line-height: 1.4;
+  .ecp-label {
+    font-size: 0.76rem;
+    font-weight: 700;
     color: var(--color-text-secondary);
-  }
-
-  .ecp-support.unsupported { color: var(--color-text-muted); }
-
-  .ecp-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-
-  .ecp-actions .btn-primary.is-disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  #ecp-native { width: 0; height: 0; opacity: 0; position: absolute; pointer-events: none; }
-  .ecp-native-label { display: inline-block; cursor: pointer; }
-
-  .ecp-fields { display: flex; flex-direction: column; gap: 0.7rem; }
-
-  .ecp-field { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .ecp-field label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
     letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .ecp-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .ecp-input-row { display: flex; gap: 0.5rem; align-items: center; }
+  .ecp-input-row .tool-input { flex: 1; min-width: 0; }
+  .ecp-value { font-family: var(--font-mono); }
+
+  .ecp-status, .ecp-note { margin: 0; font-size: 0.84rem; line-height: 1.45; color: var(--color-text-secondary); }
+  .ecp-status:empty { display: none; }
+  .ecp-status.is-error { color: var(--color-danger); }
+  .ecp-note {
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    color: var(--color-text);
   }
 
-  .ecp-input-row { display: flex; gap: 0.5rem; align-items: center; }
-  .ecp-input-row input { flex: 1; min-width: 0; }
+  .ecp-drop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    min-height: 132px;
+    padding: 1rem;
+    text-align: center;
+    border: 1.5px dashed var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+  .ecp-drop strong { color: var(--color-text); font-size: 0.95rem; }
+  .ecp-drop:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-primary-light); }
+  @media (hover: hover) { .ecp-drop:hover { border-color: var(--color-primary); color: var(--color-text); } }
+
+  .ecp-viewer { display: flex; flex-direction: column; gap: 0.5rem; }
+  .ecp-viewer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .ecp-imginfo {
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    overflow-wrap: anywhere;
+  }
+  .ecp-sample { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--color-text-secondary); }
+  .ecp-select { width: auto; font-family: var(--font-sans); }
+  .ecp-seg { display: inline-flex; border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px var(--color-border-soft); background: var(--color-surface-muted); padding: 2px; }
+  .ecp-seg-btn {
+    border: 0;
+    background: none;
+    border-radius: var(--radius-pill);
+    padding: 0.3rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .ecp-seg-btn[aria-pressed="true"] { background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-subtle); }
+  .ecp-seg-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-primary-light); }
+  .ecp-close { margin-left: auto; }
+
+  .ecp-scroller {
+    max-width: 100%;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    background-color: #fff;
+    background-image: linear-gradient(45deg, #ddd 25%, transparent 25%, transparent 75%, #ddd 75%), linear-gradient(45deg, #ddd 25%, transparent 25%, transparent 75%, #ddd 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 8px 8px;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    text-align: center;
+  }
+  .ecp-scroller.is-actual { overflow: auto; max-height: 70vh; text-align: left; }
+  .ecp-stage { position: relative; display: inline-block; vertical-align: top; line-height: 0; }
+  .ecp-canvas { display: block; cursor: crosshair; touch-action: none; }
+  .ecp-canvas.is-pixelated { image-rendering: pixelated; }
+  .ecp-canvas:focus-visible { outline: 3px solid var(--color-primary); outline-offset: -3px; }
+  .ecp-marker {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    margin: -7px 0 0 -7px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1.5px #000;
+    pointer-events: none;
+  }
+  .ecp-hint { margin: 0; font-size: 0.8rem; line-height: 1.45; color: var(--color-text-muted); }
+  .ecp-loupe {
+    position: fixed;
+    z-index: 50;
+    width: 132px;
+    height: 132px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(0, 0, 0, 0.45), var(--shadow-card);
+    pointer-events: none;
+    image-rendering: pixelated;
+  }
 
   .ecp-recent {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding-top: 0.6rem;
+    padding-top: 0.75rem;
     border-top: 1px solid var(--color-border-soft, var(--color-border));
   }
-
-  .ecp-recent-header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-
-  .ecp-recent-title {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .ecp-recent-clear {
-    font-size: 0.78rem;
-    padding: 0.15rem 0.5rem;
-  }
-
-  .ecp-recent-grid {
-    display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-    gap: 0.45rem;
-  }
-
-  @media (max-width: 480px) {
-    .ecp-recent-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-
-  .ecp-recent-chip {
+  .ecp-recent-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .ecp-recent-actions { display: inline-flex; gap: 0.35rem; align-items: center; }
+  .ecp-recent-clear { min-height: 32px; padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+  .ecp-recent-grid { display: grid; grid-template-columns: repeat(16, minmax(0, 44px)); gap: 0.4rem; }
+  .ecp-recent-grid:empty { display: none; }
+  .ecp-recent-empty, .ecp-recent-note { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+  :global(.ecp-chip) {
+    position: relative;
     aspect-ratio: 1;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--color-border);
-    cursor: pointer;
+    min-height: 28px;
     padding: 0;
-    background: transparent;
-    transition: transform 120ms ease, box-shadow 120ms ease;
+    border: 0;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    overflow: hidden;
+    background-color: #fff;
+    background-image: linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%), linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%);
+    background-size: 10px 10px;
+    background-position: 0 0, 5px 5px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
   }
+  :global(.ecp-chip-fill) { position: absolute; inset: 0; }
+  :global(.ecp-chip:focus-visible) { outline: 3px solid var(--color-primary); outline-offset: 1px; }
 
-  .ecp-recent-chip:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-subtle);
+  @media (max-width: 640px) {
+    .ecp-swatch { width: 60px; height: 60px; }
+    .ecp-drop { min-height: 104px; padding: 0.8rem; }
+    .ecp-recent-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+    .ecp-seg-btn { min-height: 32px; }
+    .ecp-recent-clear { min-height: 44px; }
   }
-
-  .ecp-recent-chip:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px var(--color-primary-light);
-  }
-
-  .ecp-recent-empty {
-    font-size: 0.85rem;
-    color: var(--color-text-muted);
-    margin: 0;
-  }
-
 </style>
