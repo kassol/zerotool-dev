@@ -242,6 +242,7 @@ const L = labels[lang];
         statusEl.className = 'jtm-status';
       }
 
+      /* ── engine:start ── */
       function toCamelCase(str) {
         return str
           .replace(/[_\-\s]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
@@ -378,6 +379,12 @@ const L = labels[lang];
         }
       }
 
+      // Keys that are not JavaScript identifiers (first-name, "a b", 2fa) must be quoted in the
+      // schema object and the TypeScript interface, or the output does not parse.
+      function propKey(key) {
+        return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+      }
+
       function isRefKind(kind) {
         return kind === 'ref' || kind === 'array-ref';
       }
@@ -400,14 +407,14 @@ const L = labels[lang];
             var s = subSchemas[i];
             lines.push('export interface ' + s.interfaceName + ' {');
             for (var j = 0; j < s.fields.length; j++) {
-              lines.push('  ' + s.fields[j].key + ': ' + getTsFieldType(s.fields[j].typeInfo) + ';');
+              lines.push('  ' + propKey(s.fields[j].key) + ': ' + getTsFieldType(s.fields[j].typeInfo) + ';');
             }
             lines.push('}');
             lines.push('');
           }
           lines.push('export interface ' + rootSchema.interfaceName + ' extends Document {');
           for (var j = 0; j < rootSchema.fields.length; j++) {
-            lines.push('  ' + rootSchema.fields[j].key + ': ' + getTsFieldType(rootSchema.fields[j].typeInfo) + ';');
+            lines.push('  ' + propKey(rootSchema.fields[j].key) + ': ' + getTsFieldType(rootSchema.fields[j].typeInfo) + ';');
           }
           lines.push('}');
           lines.push('');
@@ -421,7 +428,7 @@ const L = labels[lang];
           for (var j = 0; j < schema.fields.length; j++) {
             var field = schema.fields[j];
             var applyReq = useRequired && !isRefKind(field.typeInfo.kind);
-            lines.push('  ' + field.key + ': ' + getMongooseFieldType(field.typeInfo, applyReq) + ',');
+            lines.push('  ' + propKey(field.key) + ': ' + getMongooseFieldType(field.typeInfo, applyReq) + ',');
           }
           if (isRoot) {
             lines.push('}, { timestamps: ' + useTimestamps + ' });');
@@ -440,6 +447,8 @@ const L = labels[lang];
 
         return lines.join('\n');
       }
+
+      /* ── engine:end ── */
 
       function clearOutput() {
         outputCodeEl.textContent = '';

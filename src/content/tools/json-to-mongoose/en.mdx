@@ -11,7 +11,7 @@ faqItems:
   - question: "What does the timestamps option do?"
     answer: "When On, the schema is created with { timestamps: true }, which automatically adds createdAt and updatedAt fields managed by Mongoose."
   - question: "Are all fields marked as required?"
-    answer: "No. Fields are generated without required: true by default since JSON alone cannot determine required status. Add required manually as needed."
+    answer: "Not by default, since a JSON sample cannot show which fields are required. Turning the required switch On adds required: true to every field except nested schemas and arrays of objects; then remove it where a field is optional. Note that Mongoose's required validator rejects null, so a field that is null in your sample cannot stay required."
   - question: "Is my data sent to a server?"
     answer: "No. The entire conversion runs in your browser. No data leaves your machine."
 ---
@@ -21,7 +21,7 @@ faqItems:
   <li>Paste or type your JSON into the left panel. The tool validates it in real time.</li>
   <li>Set a <strong>Model name</strong> (default: <code>User</code>). This names the schema variable and the Mongoose model.</li>
   <li>Choose <strong>JavaScript</strong> or <strong>TypeScript</strong> output mode.</li>
-  <li>Toggle <strong>timestamps</strong> On or Off.</li>
+  <li>Toggle <strong>timestamps</strong> and <strong>required</strong> On or Off. The <strong>Example</strong> button fills in a sample user document.</li>
   <li>Click <strong>Generate Schema</strong> or wait for real-time conversion.</li>
   <li>Click <strong>Copy</strong> to copy the output to your clipboard.</li>
 </ol>
@@ -29,6 +29,7 @@ faqItems:
 <h2>Type Mapping</h2>
 <ul>
   <li><code>null</code> → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li>string that starts like an ISO 8601 date-time (<code>2026-10-01T09:30:00Z</code>) → <code>Date</code>; a plain date such as <code>2026-10-01</code> stays <code>String</code></li>
   <li>string → <code>String</code></li>
   <li>number → <code>Number</code></li>
   <li>boolean → <code>Boolean</code></li>
@@ -42,3 +43,65 @@ faqItems:
 <pre><code>{`{"username": "alice", "age": 28, "tags": ["admin"], "address": {"city": "London"}}`}</code></pre>
 <p>JavaScript output (timestamps On):</p>
 <pre><code>{`const mongoose = require('mongoose');\nconst { Schema } = mongoose;\n\nconst addressSchema = new Schema({\n  city: { type: String },\n});\n\nconst userSchema = new Schema({\n  username: { type: String },\n  age: { type: Number },\n  tags: [String],\n  address: addressSchema,\n}, { timestamps: true });\n\nmodule.exports = mongoose.model('User', userSchema);`}</code></pre>
+
+<p>
+  Sub-schemas are named after the key (<code>address</code> → <code>addressSchema</code>) and written before the schema that uses them,
+  so the file runs top to bottom. The model name is converted to PascalCase for <code>mongoose.model()</code>; Mongoose then derives the
+  collection name by lowercasing and pluralizing it (<code>User</code> → <code>users</code>).
+</p>
+
+<h2>Example: TypeScript With required On</h2>
+<p>Model name <code>product</code>, TypeScript, timestamps On, required On:</p>
+<pre><code>{`{"sku":"A-1","price":9.5,"created_at":"2026-10-01T09:30:00Z","release-date":"2026-10-01",
+ "variants":[{"color":"red","stock":3},{"color":"blue","size":"M"}],"meta":null}`}</code></pre>
+<pre><code>{`import mongoose, { Document, Schema } from 'mongoose';
+
+export interface IVariants {
+  color: string;
+  stock: number;
+  size: string;
+}
+
+export interface IProduct extends Document {
+  sku: string;
+  price: number;
+  created_at: Date;
+  "release-date": string;
+  variants: IVariants[];
+  meta: any;
+}
+
+const variantsSchema = new Schema({
+  color: { type: String, required: true },
+  stock: { type: Number, required: true },
+  size: { type: String, required: true },
+});
+
+const productSchema = new Schema<IProduct>({
+  sku: { type: String, required: true },
+  price: { type: Number, required: true },
+  created_at: { type: Date, required: true },
+  "release-date": { type: String, required: true },
+  variants: [variantsSchema],
+  meta: { type: mongoose.Schema.Types.Mixed, required: true },
+}, { timestamps: true });
+
+export default mongoose.model<IProduct>('Product', productSchema);`}</code></pre>
+<p>Three things to fix by hand before using it:</p>
+<ul>
+  <li><code>size</code> and <code>stock</code> each appear in only one variant, yet both are <code>required</code>. The array elements are merged into one sub-schema with every key, and the switch applies to all of them.</li>
+  <li><code>meta</code> was <code>null</code>, so it is <code>Mixed</code> and <code>required</code>: Mongoose would reject the very document you pasted. Give it a real type or drop <code>required</code>.</li>
+  <li>With timestamps On, Mongoose adds <code>createdAt</code> and <code>updatedAt</code>, but the interface does not list them. Add them if your code reads them.</li>
+</ul>
+<p>Keys that are not JavaScript identifiers, such as <code>release-date</code>, are quoted so the generated file parses.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>The first value wins.</strong> When objects in an array are merged, a key takes its type from the first element that has it. <code>{'[{"v": null}, {"v": "x"}]'}</code> gives <code>Mixed</code>, not <code>String</code>.</li>
+  <li><strong>Same key, same schema.</strong> Two different objects under the same key name share one sub-schema; the first one seen decides its fields.</li>
+  <li><strong>No ObjectId, enum, index or validation.</strong> A 24-character hex string stays <code>String</code>; add <code>Schema.Types.ObjectId</code> and <code>ref</code>, <code>unique</code>, <code>enum</code> or <code>min</code>/<code>max</code> yourself.</li>
+  <li><strong>The TypeScript interface extends <code>Document</code>.</strong> The <a href="https://mongoosejs.com/docs/typescript.html">Mongoose TypeScript guide</a> lets Mongoose infer document types from the schema by default, and when you write an interface it uses a plain one (<code>interface IUser</code> passed as <code>{'Schema<IUser>'}</code>) without <code>extends Document</code>. To follow the guide, delete <code>extends Document</code> and the <code>Document</code> import.</li>
+  <li><strong>A root array of primitives</strong> such as <code>["a", "b"]</code> generates no schema, only the comment <code>{"// Array of primitives — no schema to generate"}</code>.</li>
+</ul>
+<p>For plain TypeScript types or a Zod schema from the same JSON, use <a href="/tools/json-to-typescript/">JSON to TypeScript</a> or <a href="/tools/json-to-zod/">JSON to Zod</a>.</p>
+
