@@ -1,86 +1,79 @@
 ---
-seoTitle: "画像カラーパレット抽出 — ブラウザ完結の k-means | ZeroTool"
-seoDescription: "任意の画像から主要色を抽出するブラウザツール。k-means で HEX / RGB / HSL / OKLCH と CSS 変数・Tailwind 設定を生成。アップロード不要、ログイン不要。"
+seoTitle: "画像からカラーパレット抽出｜配色と割合 | ZeroTool"
+seoDescription: "画像から配色を抽出し、各色が画像に占める割合を表示。ベタ塗りの画像は元の色をそのまま取得し、同じ画像なら毎回同じ結果。HEX・RGB・HSL・OKLCH のコピー、CSS・Tailwind・GIMP .gpl・Adobe .ase の書き出しに対応。"
 faqItems:
-  - question: "どうやって主要色を抽出していますか？"
-    answer: "ダウンサンプリングしたピクセルの RGB 値に対する k-means クラスタリングです。画像は最長辺 200 ピクセルにリサイズされ、可視ピクセルがユークリッド RGB 距離で k 個のセントロイドに分類され、各セントロイドの平均色と画像内での占有率を返します。"
-  - question: "画像はサーバーに送信されますか？"
-    answer: "いいえ。画像はブラウザの FileReader と Canvas でデコードされ、クラスタリングはすべて端末上の JavaScript で完結します。DevTools のネットワークパネルを開けば、ツールのページ自体以外のアップロードリクエストが一切ないことを確認できます。"
-  - question: "どんな画像形式に対応していますか？"
-    answer: "ブラウザが `<img>` 要素と Canvas でデコードできるすべての形式に対応：JPEG / PNG / WebP / GIF / SVG / BMP に加え、Chromium 系の AVIF と Safari の HEIC。カメラの RAW 形式はブラウザでデコードできないため、先にローカルで JPEG / PNG に変換してください。"
-  - question: "実行するたびにパレットが変わるのはなぜですか？"
-    answer: "k-means は初期セントロイドをランダムに選びます。色数が多い画像で `k` が小さいと、2 回の実行でわずかに異なるクラスタに収束することがあります。「再抽出」で別のシードを試すか、`k` を大きくしてセントロイドを増やすと結果が安定します。"
+  - question: "画像はアップロードされますか？"
+    answer: "されません。画像はブラウザがデコードし、画素の集計とクラスタリングはこのタブの中の JavaScript で行います。ページが画像や色を送信することはありません。ブラウザに保存するのは設定（色数・並べ替え・スウォッチの色・フィルター・書き出し形式）だけで、画像とパレットは保存しません。"
+  - question: "なぜ毎回同じパレットになるのですか？"
+    answer: "クラスタリングに乱数を使っていないためです。最も重い色グループから始め、決まった順番で初期値を選び、同点は番号の小さい方を取ります。同じ画像・同じ設定なら、色も割合も毎回同じです。k-means の初期値を乱数で決める抽出ツールでは、やり直すたびに結果が変わります。"
+  - question: "色ごとのパーセントは何を表していますか？"
+    answer: "見えている画像のうち、その色のクラスタが占める割合です。画素は不透明度で重み付けし、完全に透明な画素は数えません。「白に近い色を除外」「黒に近い色を除外」で外した画素も分母には含めるので、そのときは合計が 100% 未満になり、除外した割合をステータス行に表示します。"
+  - question: "指定した色数より少なく表示されるのはなぜですか？"
+    answer: "画素を 32,768 個の色グループ（各チャンネル 8 段階ずつ）に分けて数えています。見えている画素が指定した色数より少ないグループにしか入らない場合は、グループごとに 1 色となり、その旨をステータス行に表示します。また OKLab で 0.02 未満しか離れていないクラスタは同じ色に見えるため 1 つにまとめます。"
+  - question: ".gpl と .ase はどのアプリで開けますか？"
+    answer: ".gpl は GIMP のパレット形式で、GIMP・Inkscape・Krita が読み込めます。.ase は Adobe Swatch Exchange で、Illustrator・Photoshop・InDesign でスウォッチライブラリとして読み込めるほか、Krita と GIMP も読み込みに対応しています。どちらも画面の順に色を保存し、各色に HEX 値の名前を付けます。"
 ---
 
-<h2>このツールの役割</h2>
-
-<p>UI モックアップ、ブランド素材、商品写真、ストック画像 — 任意の画像をドロップすると、CSS、デザイントークン、Tailwind テーマにそのまま貼り付けられるパレットが返ります。可視ピクセルを k-means でクラスタリングし、各クラスタを 1 枚のスウォッチとして提示。占有率、HEX、RGB、HSL、そして OKLCH の 5 つの読み出しが揃います。</p>
-
 <h2>使い方</h2>
-
 <ol>
-  <li>アップロードカードに画像をドロップする、カードをクリックして選択する、もしくは画像をコピーした状態で `Ctrl + V` を押してペーストします。</li>
-  <li>コントロールを調整：抽出する色数 (3〜16)、ソート (頻度 / 色相 / 明度)、フィルター (透明ピクセルを除外 / 白に近い色を除外)。</li>
-  <li>スウォッチ上部をクリックすると HEX をコピー。下の RGB / HSL / OKLCH 行をクリックすればその表記をコピー。</li>
-  <li>一括コピー：<strong>CSS 変数をコピー</strong> で `:root { --color-1: …; }` ブロック、<strong>JSON をコピー</strong> で `{hex, rgb, weight}` 配列、<strong>Tailwind をコピー</strong> で `theme.extend.colors.palette` スニペットが取得できます。</li>
+  <li><strong>画像を開く</strong>を押すか、ツールの上に画像をドロップします。Ctrl+V / ⌘V でスクリーンショットを貼り付けることもできます。<strong>サンプルで試す</strong>を押すと小さなイラストを読み込みます。</li>
+  <li>カードには色と、その色が画像に占める割合が表示されます。カードの上の帯グラフは割合を横に並べたもの、プレビュー上の番号付きの点はその色が現れる位置です。</li>
+  <li><strong>色数</strong>は 2〜16。並べ替えは割合・色相・明度から選べます。<strong>スウォッチの色</strong>は「最も多い色合い」と「クラスタの平均色」を切り替えられます。</li>
+  <li>スウォッチを押すと HEX、下の行を押すと RGB・HSL・OKLCH をコピーします。<strong>濃淡</strong>と<strong>配色</strong>は、その色を<a href="/ja/tools/color-shades-generator/">カラーシェード生成器</a>や<a href="/ja/tools/color-palette-generator/">カラーパレット作成・配色ツール</a>で開きます。</li>
+  <li><strong>書き出し</strong>では CSS 変数・SCSS・Tailwind v4 / v3・JSON・値の一覧をコピーでき、.gpl と .ase のパレットファイルもダウンロードできます。</li>
 </ol>
 
-<h2>アルゴリズム</h2>
-
-<p>k-means はシンプルですがデザイナー向けパレットを生成するのに十分な手法です。画像は最長辺 200 ピクセルにダウンサンプリング。3840×2160 の写真なら 200×113、約 2 万 2600 サンプルピクセルになります。各ピクセルは二乗 RGB 距離が最小のセントロイドに割り当てられ、セントロイドはクラスタの平均で更新、24 回反復するか移動量が閾値を下回るまで繰り返します。</p>
-
-<p>2 つの実用的な調整を加えています。1) ΔRGB &lt; 6 のクラスタ同士は統合し、見た目が同じスウォッチが並ばないようにする。2) オプションのプリフィルタで透明ピクセルや白に近いピクセル (輝度 &gt; 0.95) を除外し、被写体ではなく余白に引っ張られないようにする。</p>
-
-<h2>例：小さなロゴ入りのバナー</h2>
-
-<p>400×300 の PNG です。紺色 <code>#1E3A8A</code> の背景、下 4 分の 1 にほぼ白の <code>#F8FAFC</code> の帯、60×60 のオレンジ <code>#F97316</code> の正方形（面積の 3%）があります。<strong>色数</strong>を 3、頻度順にした結果です。</p>
-
+<h2>例：葛飾北斎「神奈川沖浪裏」</h2>
+<p><img src="/images/icp-great-wave.jpg" alt="葛飾北斎「富嶽三十六景 神奈川沖浪裏」" width="512" height="344" loading="lazy" style={{ maxWidth: '100%', height: 'auto' }} /></p>
+<p><a href="https://www.metmuseum.org/art/collection/search/45434" target="_blank" rel="noopener">メトロポリタン美術館</a>の解説によると、「富嶽三十六景 神奈川沖浪裏」（1830〜32 年頃）を含む北斎の風景版画は、藍と輸入されたプルシアンブルーの配色で知られています。上の画像は同館所蔵品を撮影したパブリックドメイン画像（Wikimedia Commons）を幅 512 画素に縮小したものです。色数 5、最も多い色合いで抽出すると次のようになります。</p>
+{/* icp-check: {"image":"icp-great-wave.jpg","k":5,"expect":["#F4EAD4 37.6%","#F5E5C2 24.9%","#244363 17.1%","#D3DCCC 10.7%","#83837C 9.5%"]} */}
 <ul>
-  <li>1 回目：<code>#1F3B8B</code> 72.3%、<code>#F8FAFC</code> 24.7%、<code>#F97316</code> 3.0%。</li>
-  <li>2 回目（再抽出）：<code>#1E3A8A</code> 71.7%、<code>#F5F7FB</code> 25.3%、<code>#F97316</code> 3.0%。</li>
-  <li><strong>白に近い色を除外</strong>をオン：<code>#1E3A8A</code> 95.1%、<code>#F97316</code> 4.0%、<code>#8B9AC3</code> 0.9%。</li>
-  <li>色数を 8 にした場合：色見本は 4 つだけで、元の 3 色と <code>#8B9AC3</code> 0.7% です。</li>
+  <li><code>#F4EAD4</code> 37.6%（空と波頭の紙の色）</li>
+  <li><code>#F5E5C2</code> 24.9%（黄ばんだ紙）</li>
+  <li><code>#244363</code> 17.1%（波の濃い藍）</li>
+  <li><code>#D3DCCC</code> 10.7%</li>
+  <li><code>#83837C</code> 9.5%</li>
 </ul>
+<p>画面の 6 割以上は紙の色です。<strong>白に近い色を除外</strong>をオンにすると画像の 20.1% が外れ、空いた枠に水色がかった <code>#C4D4CB</code> 7.9% が入ります。割合は画像全体に対する値のままなので、<code>#244363</code> は 16.7% です。</p>
+{/* icp-check: {"image":"icp-great-wave.jpg","k":5,"ignoreWhite":true,"expect":["#F4EAD4 24.1%","#F5E5C2 22.2%","#244363 16.7%","#83837C 8.7%","#C4D4CB 7.9%"],"ignored":"20.1%"} */}
+<p>和風の配色を Web サイトに使うなら、<strong>書き出し</strong>で Tailwind v4 を選びます。最初の結果は次の <code>@theme</code> ブロックになり、<code>bg-palette-3</code> で藍色の背景が使えます。</p>
+<pre><code>{`@theme {
+  --color-palette-1: #F4EAD4; /* 37.6% */
+  --color-palette-2: #F5E5C2; /* 24.9% */
+  --color-palette-3: #244363; /* 17.1% */
+  --color-palette-4: #D3DCCC; /* 10.7% */
+  --color-palette-5: #83837C; /* 9.5% */
+}`}</code></pre>
+<p>スウォッチを「クラスタの平均色」にすると、藍は <code>#2C4A64</code> になります。最も多い色合いは、そのクラスタで最も多くの画素を占める色合いで、平均色は境目の淡い色も混ざった値です。ロゴや UI のスクリーンショットでは最も多い色合いが元の色そのものになり、絵や写真では平均色のほうが全体の印象に近くなります。</p>
+{/* icp-check: {"image":"icp-great-wave.jpg","k":5,"pick":"average","expect":["#F2F0E0 37.6%","#F0E1C0 24.9%","#2C4A64 17.1%","#C1C6BC 10.7%","#7D8585 9.5%"]} */}
 
-<p>2 回の結果が違うのは、初期セントロイドをランダムに選ぶためです。セントロイドが色の境目の混ざったピクセルを取り込むと、16 進値が 1〜2 段ずれます。<code>#8B9AC3</code> がその混色で、200×150 に縮小したときに紺とほぼ白の境界の行が混ざって生まれました。8 色を指定して 4 色しか出ないのは、空のクラスタを捨て、差（RGB 差の合計）が 6 未満のセントロイドを統合するためです。白に近い色を除外すると、割合は画像全体ではなく残ったピクセルに対する値になります。</p>
+<h2>例：バナー画像の色を正確に取る</h2>
+<p><a href="/images/icp-banner.png">この 400 × 300 の PNG</a> は、紺 <code>#1E3A8A</code> の背景、下 4 分の 1 の白っぽい帯 <code>#F8FAFC</code>、60 × 60 のオレンジの四角 <code>#F97316</code> だけでできています。色数 6 のまま抽出すると <code>#1E3A8A</code> 72.0%、<code>#F8FAFC</code> 25.0%、<code>#F97316</code> 3.0% で、元の色と面積がそのまま出ます。見えている画素が 3 つの色グループにしかないため、6 色ではなく 3 色を表示した、とステータス行に出ます。</p>
+{/* icp-check: {"image":"icp-banner.png","k":6,"expect":["#1E3A8A 72.0%","#F8FAFC 25.0%","#F97316 3.0%"],"groups":3} */}
+
+<h2>計算のしくみ</h2>
+<ul>
+  <li><strong>サンプリング</strong>：262,144 画素以下の画像はすべての画素を数えます。それより大きい画像は縮小して読みますが、平滑化はしないので、どのサンプルも元画像の実際の画素です。境目に元画像にない中間色が生まれません。</li>
+  <li><strong>色グループ</strong>：各チャンネル 8 段階ずつ、32,768 グループで数えます。<a href="https://github.com/lokesh/color-thief" target="_blank" rel="noopener">Color Thief</a> のメディアンカットと同じ 5 ビット精度です。画素は不透明度で重み付けします。</li>
+  <li><strong>クラスタリング</strong>：<a href="https://bottosson.github.io/posts/oklab/" target="_blank" rel="noopener">OKLab</a> で重み付き k-means を行います。OKLab の直線距離は見た目の色差に近い値です。初期値は決まった順番で選び、乱数は使いません。「鮮やかなアクセントを優先」がオンのときは色相と彩度の差を 2 倍に数え、面積の小さい鮮やかな色も 1 色として残します。</li>
+  <li><strong>統合</strong>：0.02 未満しか離れていないクラスタはまとめます。0.02 は <a href="https://drafts.csswg.org/css-color-4/#binsearch" target="_blank" rel="noopener">CSS Color 4</a> の色域マッピングが使う「見分けられる最小の差」です。</li>
+</ul>
+<p>.gpl は GIMP、<a href="https://inkscape-manuals.readthedocs.io/en/latest/palette.html" target="_blank" rel="noopener">Inkscape</a>（パレットフォルダーに置く）、<a href="https://docs.krita.org/ja/reference_manual/dockers/palette_docker.html" target="_blank" rel="noopener">Krita</a> で、.ase は <a href="https://helpx.adobe.com/jp/illustrator/desktop/manage-colors/use-swatches/share-swatches-between-applications.html" target="_blank" rel="noopener">Illustrator・Photoshop・InDesign</a> のスウォッチとして使えます。</p>
+
+<h2>ほかの抽出ツールとの違い</h2>
+<p>2026 年 10 月 2 日に、上のバナーとゴッホ「星月夜」の画像で確認しました。</p>
+<ul>
+  <li><strong>patto-tool.com の「画像からカラーパレット抽出」</strong>は、ページの説明によると画像を最大 10,000 画素に縮小し、k-means++ で色を選びます。バナーからは元画像にない紺と白の中間色 <code>#8B9AC3</code> を返し、割合は表示しません。同じ「星月夜」を 2 回読み込むと、灰緑の色が <code>#9AA795</code> と <code>#A0AB93</code> で変わりました。</li>
+  <li><strong>imageonline.io（日本語版）</strong>はバナーの 3 色を正確に返しますが、割合は表示しません。</li>
+  <li>ライブラリの <strong>node-vibrant 4.0.4</strong> は「Vibrant」「Muted」など 6 つの役割で色を選び、5 ビットのグループから色を作り直すため、バナーの紺は <code>#1C3C8C</code> になります。</li>
+</ul>
+<p>どのページも、画像を開いたあとに画像を送るネットワーク要求は出しませんでした（ブラウザのリソースタイミングで確認）。</p>
 
 <h2>制限</h2>
-
 <ul>
-  <li>実行するたびに結果が変わることがあります。気に入ったパレットは再抽出の前にコピーしてください。</li>
-  <li>小さなアクセントカラーは、近い色の大きなクラスタに吸収されることがあり、色数を増やすまで出てこない場合があります。</li>
-  <li>色は sRGB で平均するため、セントロイドは元画像にある色そのものではなく、少しくすんだ混色になることがあります。</li>
-  <li>「白に近い色を除外」は輝度（ガンマ補正済みの RGB 値で計算）が 0.95 を超えるピクセルを除き、「透明ピクセルを除外」はアルファが 128 未満のピクセルを除きます。</li>
+  <li>262,144 画素を超える画像は間引いて数えるため、数画素ほどの細部は拾えないことがあります。</li>
+  <li>「最も多い色合い」が元の色と完全に一致するのは、1 つの色がその色グループの半分以上を占めるときです。そうでなければグループの平均色です。</li>
+  <li>sRGB の外にある色（Display P3 の写真など）は sRGB に切り詰めます。ブラウザが Display P3 で読める場合は、該当する画素の割合をステータス行に表示します。</li>
+  <li>アニメーション GIF は最初のフレームだけを使います。HEIC は Safari でのみ開け、カメラの RAW は変換が必要です。</li>
 </ul>
-
-<h2>出力フォーマット</h2>
-
-<ul>
-  <li><strong>HEX</strong> — 汎用フォーマット。スウォッチ上部をクリックでコピー。</li>
-  <li><strong>RGB</strong> — モダンなスペース区切り構文 `rgb(160 90 44)`。すべての現行ブラウザに対応。</li>
-  <li><strong>HSL</strong> — 色相 / 彩度 / 明度を素早く微調整したいときに便利。</li>
-  <li><strong>OKLCH</strong> — 知覚均等で、デザイントークンや色相を回転させるカラーパイプライン向け。HSL のような明度ジャンプが起きにくい。</li>
-  <li><strong>占有率</strong> — 各クラスタが原画像で占めるピクセルの割合。最大値はブランドのアクセント、それ以外は補助色として扱うのがおすすめ。</li>
-</ul>
-
-<h2>想定シナリオ</h2>
-
-<ul>
-  <li>クライアントから受け取った既存ブランド素材から主要色を逆算してデザインシステムを再構築する。</li>
-  <li>写真作品集や EC 商品ページで、メインビジュアルから派生した CSS トークンを生成する。</li>
-  <li>競合分析時、自社プロダクトと競合の LP の色構成比を並べて違いを把握する。</li>
-  <li>記事のアイキャッチを決めた後、見出し・引用ブロックの色を画像のパレットに合わせて選ぶ。</li>
-</ul>
-
-<h2>プライバシー</h2>
-
-<p>すべての処理はクライアント側で行われます。画像は HTMLImageElement にデコードされ、隠し Canvas に縮小描画され、JavaScript で k-means が走るのみ。サーバーに送信されるバイトは一切ありません。確認したい場合はネットワークパネルを開いてください。新しい画像をロードするたびに、クリーンなログが表示されるはずです。</p>
-
-<h2>関連ツール</h2>
-
-<ul>
-  <li><a href="/ja/tools/color-palette-generator/">カラーパレット作成・配色ツール</a> — 1 つのベース HEX から補色・類似色・トライアド・テトラッドを生成。</li>
-  <li><a href="/ja/tools/color-shades-generator/">カラーシェード生成器</a> — 抽出した 1 色を 50〜950 の 11 段階スケールに展開。</li>
-  <li><a href="/ja/tools/color-converter/">カラーコンバーター</a> — HEX / RGB / HSL の相互変換とライブプレビュー。</li>
-  <li><a href="/ja/tools/color-contrast-checker/">カラーコントラストチェッカー</a> — 抽出したパレットを WCAG AA / AAA に対して検証。</li>
-</ul>
+<p>1 画素の色だけを調べるなら<a href="/ja/tools/eyedropper-color-picker/">スポイト カラーピッカー</a>、色覚による見え方は<a href="/ja/tools/color-blindness-simulator/">色覚シミュレーター</a>、文字の読みやすさは<a href="/ja/tools/color-contrast-checker/">カラーコントラストチェッカー</a>で確認できます。</p>

@@ -1,86 +1,65 @@
 ---
-seoTitle: "이미지 컬러 팔레트 추출기 — 브라우저 k-means | ZeroTool"
-seoDescription: "이미지에서 주요 색상을 추출하는 브라우저 도구. k-means로 HEX / RGB / HSL / OKLCH와 CSS 변수, Tailwind 설정 출력. 업로드·로그인 불필요, 100% 클라이언트사이드."
+seoTitle: "이미지 색상 추출·컬러 팔레트 | ZeroTool"
+seoDescription: "이미지에서 컬러 팔레트를 추출하고 각 색이 차지하는 비율을 보여 줍니다. 단색 그래픽은 원래 색 그대로, 같은 이미지는 늘 같은 결과. HEX·RGB·HSL·OKLCH 복사, CSS·Tailwind·GIMP .gpl·Adobe .ase 내보내기."
 faqItems:
-  - question: "어떻게 주요 색상을 추출하나요?"
-    answer: "다운샘플링된 픽셀의 RGB 값에 대해 k-means 클러스터링을 수행합니다. 이미지를 최장 변 200픽셀로 축소한 뒤, 가시 픽셀을 유클리드 RGB 거리에 따라 k개의 중심점에 할당하고, 각 중심점의 평균 색과 이미지 내 점유율을 출력합니다."
-  - question: "이미지가 서버로 전송되나요?"
-    answer: "아니요. 이미지는 브라우저의 FileReader와 Canvas로 디코딩되고, 클러스터링은 모두 기기의 JavaScript에서 처리됩니다. DevTools의 Network 탭을 열어 보면 도구 페이지 자산 외에는 어떤 업로드 요청도 발생하지 않음을 확인할 수 있습니다."
-  - question: "어떤 이미지 포맷을 지원하나요?"
-    answer: "브라우저가 `<img>` 요소와 Canvas를 통해 디코딩 가능한 모든 포맷을 지원합니다: JPEG, PNG, WebP, GIF, SVG, BMP 그리고 Chromium의 AVIF, Safari의 HEIC. 카메라 RAW 포맷은 브라우저에서 직접 디코딩할 수 없으므로 로컬에서 JPEG 또는 PNG로 먼저 변환하세요."
-  - question: "실행할 때마다 팔레트가 달라지는 이유는?"
-    answer: "k-means는 초기 중심점을 무작위로 선택합니다. 색상이 많은 이미지에서 `k`가 작으면 두 번 실행 시 약간 다른 클러스터로 수렴할 수 있습니다. `다시 추출`을 눌러 새로운 시드를 시도하거나 `k`를 키워 더 많은 중심점이 색상 공간을 커버하도록 하세요."
+  - question: "이미지가 업로드되나요?"
+    answer: "아니요. 이미지는 브라우저가 디코딩하고, 픽셀 집계와 클러스터링은 이 탭 안의 JavaScript가 처리합니다. 페이지는 이미지나 색을 전송하지 않습니다. 브라우저에는 설정(색 수, 정렬, 견본 색, 필터, 내보내기 형식)만 저장하고 이미지와 팔레트는 저장하지 않습니다."
+  - question: "왜 매번 같은 팔레트가 나오나요?"
+    answer: "클러스터링에 무작위 단계가 없기 때문입니다. 가장 무거운 색 그룹에서 시작해 정해진 순서로 초깃값을 고르고, 동점이면 번호가 작은 쪽을 택합니다. 같은 이미지와 같은 설정이면 색과 비율이 늘 같습니다. k-means 초깃값을 무작위로 정하는 도구는 다시 실행할 때마다 결과가 달라집니다."
+  - question: "색마다 붙은 퍼센트는 무엇인가요?"
+    answer: "보이는 이미지 가운데 그 색의 클러스터가 차지하는 비율입니다. 픽셀은 불투명도로 가중하고, 완전히 투명한 픽셀은 세지 않습니다. ‘흰색에 가까운 색 제외’나 ‘검은색에 가까운 색 제외’로 뺀 픽셀도 분모에는 들어가므로, 이때는 합계가 100%보다 작고 상태 줄에 제외한 비율이 나옵니다."
+  - question: "지정한 색 수보다 적게 나오는 이유는 무엇인가요?"
+    answer: "픽셀을 32,768개 색 그룹(채널마다 8단계씩)으로 나눠 셉니다. 보이는 픽셀이 지정한 색 수보다 적은 그룹에만 들어 있으면 그룹마다 한 색이 되고, 상태 줄에 그렇게 표시합니다. OKLab에서 0.02 미만으로 떨어진 클러스터는 같은 색으로 보이므로 하나로 합칩니다."
+  - question: ".gpl과 .ase 파일은 어떤 앱에서 여나요?"
+    answer: ".gpl은 GIMP 팔레트 형식으로 GIMP, Inkscape, Krita가 읽습니다. .ase는 Adobe Swatch Exchange로, Illustrator·Photoshop·InDesign이 견본 라이브러리로 불러오며 Krita와 GIMP도 가져올 수 있습니다. 두 파일 모두 화면 순서대로 색을 담고 각 색에 HEX 값으로 이름을 붙입니다."
 ---
 
-<h2>이 도구의 역할</h2>
-
-<p>UI 시안, 브랜드 자산, 제품 사진, 스톡 이미지 — 어떤 그림이든 드롭하면, 스타일시트, 디자인 토큰, Tailwind 테마에 바로 붙여넣을 수 있는 팔레트를 돌려줍니다. 도구는 가시 픽셀을 k-means로 클러스터링하고, 각 클러스터를 점유율과 함께 스와치로 보여주며 디자인 도구용 HEX, 레거시 CSS용 RGB / HSL, 모던 컬러 파이프라인용 OKLCH 네 가지 색 공간 표기를 함께 제공합니다.</p>
-
 <h2>사용 방법</h2>
-
 <ol>
-  <li>업로드 카드에 이미지를 드롭하거나, 카드를 클릭해 파일을 선택하거나, 이미지를 복사한 상태에서 `Ctrl + V`로 붙여넣습니다.</li>
-  <li>컨트롤 조정: 추출할 색상 수 (3~16), 정렬 기준 (빈도 / 색상 / 명도), 필터 (투명 픽셀 제외 / 거의 흰색 제외).</li>
-  <li>스와치 상단을 클릭하면 HEX가 복사됩니다. 아래의 RGB / HSL / OKLCH 행을 클릭하면 해당 표기가 복사됩니다.</li>
-  <li>일괄 복사: <strong>CSS 변수 복사</strong>는 `:root { --color-1: …; }` 블록, <strong>JSON 복사</strong>는 `{hex, rgb, weight}` 배열, <strong>Tailwind 복사</strong>는 `theme.extend.colors.palette` 스니펫을 출력합니다.</li>
+  <li><strong>이미지 열기</strong>를 누르거나 도구 위 아무 곳에 이미지를 끌어다 놓습니다. Ctrl+V / ⌘V로 스크린숏을 붙여 넣어도 됩니다. <strong>예시 이미지</strong>는 작은 일러스트를 불러옵니다.</li>
+  <li>카드마다 색과 그 색이 이미지에서 차지하는 비율이 나옵니다. 카드 위 막대는 비율을 나란히 보여 주고, 미리 보기의 번호 점은 그 색이 나타나는 위치입니다.</li>
+  <li><strong>색 수</strong>는 2~16입니다. 정렬은 비율·색상·명도 중에서 고르고, <strong>견본 색</strong>은 ‘가장 많은 색조’와 ‘클러스터 평균색’ 중에서 고릅니다.</li>
+  <li>견본을 누르면 HEX, 아래 줄을 누르면 RGB·HSL·OKLCH를 복사합니다. <strong>쉐이드</strong>와 <strong>색 조합</strong>은 그 색을 <a href="/ko/tools/color-shades-generator/">색상 쉐이드 생성기</a>와 <a href="/ko/tools/color-palette-generator/">색 조합 생성기</a>에서 엽니다.</li>
+  <li><strong>내보내기</strong>에서 CSS 변수, SCSS, Tailwind v4 / v3, JSON, 값 목록을 복사하거나 .gpl, .ase 팔레트 파일을 내려받습니다.</li>
 </ol>
 
-<h2>알고리즘 설명</h2>
+<h2>예시: 신윤복 「단오풍정」</h2>
+<p><img src="/images/icp-dano-pungjeong.jpg" alt="신윤복 「단오풍정」" width="512" height="413" loading="lazy" style={{ maxWidth: '100%', height: 'auto' }} /></p>
+<p><a href="https://www.heritage.go.kr/heri/cul/culSelectDetail.do?ccbaCpno=1111101350000" target="_blank" rel="noopener">국가유산청</a>에 따르면 「단오풍정」은 혜원 신윤복의 풍속화 30여 점을 담은 화첩(국보, 간송미술관 소장)에 들어 있습니다. 위 그림은 위키미디어 공용의 퍼블릭 도메인 이미지를 너비 512픽셀로 줄인 것입니다. 색 수 8, 클러스터 평균색으로 추출하면 다음과 같습니다.</p>
+{/* icp-check: {"image":"icp-dano-pungjeong.jpg","k":8,"pick":"average","expect":["#D3C3BC 30.1%","#B8A9A2 20.2%","#94867F 13.4%","#E7DBD4 12.6%","#6B625D 8.8%","#403B3D 7.5%","#161318 6.4%","#C14C26 0.6%"]} */}
+<p><code>#D3C3BC</code> 30.1%, <code>#B8A9A2</code> 20.2%, <code>#94867F</code> 13.4%, <code>#E7DBD4</code> 12.6%, <code>#6B625D</code> 8.8%, <code>#403B3D</code> 7.5%, <code>#161318</code> 6.4%, 그리고 그네 타는 여인의 붉은 치마 <code>#C14C26</code> 0.6%.</p>
+<p>붉은 치마는 그림의 1%도 되지 않지만 눈에 가장 먼저 들어오는 색입니다. 이 색이 남는 것은 <strong>선명한 강조색 우선</strong>이 켜져 있어서입니다. 끄면 클러스터가 면적만 따르고, 붉은색은 갈색 클러스터에 섞여 사라집니다: <code>#DBCBC4</code> 25.5%, <code>#CCBCB4</code> 21.7%, <code>#B3A49C</code> 14.0%, <code>#938374</code> 11.3%, <code>#ECE3DC</code> 8.3%, <code>#54544B</code> 7.6%, <code>#242433</code> 6.0%, <code>#03020C</code> 5.1%(가장 많은 색조).</p>
+{/* icp-check: {"image":"icp-dano-pungjeong.jpg","k":8,"vivid":false,"expect":["#DBCBC4 25.5%","#CCBCB4 21.7%","#B3A49C 14.0%","#938374 11.3%","#ECE3DC 8.3%","#54544B 7.6%","#242433 6.0%","#03020C 5.1%"]} */}
+<p>그림 속 짙은 머리채와 먹선은 거의 검은색입니다. 색 수 6에 <strong>검은색에 가까운 색 제외</strong>를 켜면 이미지의 3.7%가 빠지고, 남은 색은 <code>#DBCBC4</code> 30.1%, <code>#C4B4AC</code> 20.7%, <code>#A3948B</code> 14.3%, <code>#E3D3CC</code> 12.6%, <code>#7B6B5C</code> 9.6%, <code>#1B1A24</code> 8.6%입니다. 순수한 검정에 가까운 색만 빠지고 남색이 도는 <code>#1B1A24</code>는 남습니다.</p>
+{/* icp-check: {"image":"icp-dano-pungjeong.jpg","k":6,"ignoreBlack":true,"expect":["#DBCBC4 30.1%","#C4B4AC 20.7%","#A3948B 14.3%","#E3D3CC 12.6%","#7B6B5C 9.6%","#1B1A24 8.6%"],"ignored":"3.7%"} */}
 
-<p>k-means는 가장 간단하면서도 디자이너 친화적인 팔레트를 만들어내는 클러스터링 방법입니다. 이미지는 최장 변 200픽셀로 다운샘플링됩니다 — 3840×2160 사진은 200×113, 약 2만 2600개의 샘플 픽셀이 됩니다. 각 픽셀은 제곱 RGB 거리가 가장 짧은 중심점에 할당되고, 중심점은 클러스터 평균으로 갱신되며, 중심점이 더 이상 움직이지 않거나 24회 반복할 때까지 루프가 돕니다.</p>
+<h2>예시: 배너 이미지의 색을 정확하게</h2>
+<p><a href="/images/icp-banner.png">이 400 × 300 PNG</a>는 남색 배경 <code>#1E3A8A</code>, 아래 4분의 1의 흰색 띠 <code>#F8FAFC</code>, 60 × 60 주황색 사각형 <code>#F97316</code>으로만 되어 있습니다. 기본 색 수 6으로 추출하면 <code>#1E3A8A</code> 72.0%, <code>#F8FAFC</code> 25.0%, <code>#F97316</code> 3.0%로 원래 색과 면적이 그대로 나옵니다. 보이는 픽셀이 색 그룹 3개뿐이라 6가지 대신 3가지를 표시한다는 안내도 함께 나옵니다.</p>
+{/* icp-check: {"image":"icp-banner.png","k":6,"expect":["#1E3A8A 72.0%","#F8FAFC 25.0%","#F97316 3.0%"],"groups":3} */}
 
-<p>두 가지 실용적인 보정이 추가되어 있습니다. 1) ΔRGB &lt; 6인 중심점들은 병합되어 거의 똑같이 보이는 스와치가 나란히 출력되지 않도록 합니다. 2) 선택형 사전 필터가 투명 픽셀과 거의 흰색 픽셀(휘도 &gt; 0.95)을 제거해, 알고리즘이 피사체가 아닌 여백에 끌려가지 않도록 합니다.</p>
-
-<h2>예시: 작은 로고가 있는 배너</h2>
-
-<p>400×300 PNG입니다. 남색 <code>#1E3A8A</code> 배경, 아래 4분의 1에 흰색에 가까운 <code>#F8FAFC</code> 띠, 60×60 주황색 <code>#F97316</code> 정사각형(면적의 3%)이 있습니다. <strong>색상 수</strong>를 3, 빈도순으로 정렬한 결과입니다.</p>
-
+<h2>계산 방식</h2>
 <ul>
-  <li>1회차: <code>#1F3B8B</code> 72.3%, <code>#F8FAFC</code> 24.7%, <code>#F97316</code> 3.0%.</li>
-  <li>2회차(다시 추출): <code>#1E3A8A</code> 71.7%, <code>#F5F7FB</code> 25.3%, <code>#F97316</code> 3.0%.</li>
-  <li><strong>거의 흰색 제외</strong> 켬: <code>#1E3A8A</code> 95.1%, <code>#F97316</code> 4.0%, <code>#8B9AC3</code> 0.9%.</li>
-  <li>색상 수 8: 견본은 4개뿐이며, 원래 3색과 <code>#8B9AC3</code> 0.7%입니다.</li>
+  <li><strong>표본 추출</strong>: 262,144픽셀 이하 이미지는 모든 픽셀을 셉니다. 더 큰 이미지는 줄여서 읽되 부드럽게 보간하지 않으므로, 모든 표본이 원본의 실제 픽셀입니다. 경계에서 원본에 없는 중간색이 생기지 않습니다.</li>
+  <li><strong>색 그룹</strong>: 채널마다 8단계씩 32,768개 그룹으로 셉니다. <a href="https://github.com/lokesh/color-thief" target="_blank" rel="noopener">Color Thief</a>의 미디언 컷과 같은 5비트 정밀도입니다. 픽셀은 불투명도로 가중합니다.</li>
+  <li><strong>클러스터링</strong>: <a href="https://bottosson.github.io/posts/oklab/" target="_blank" rel="noopener">OKLab</a>에서 가중 k-means를 합니다. OKLab의 직선 거리는 눈에 보이는 색 차이에 가깝습니다. 초깃값은 정해진 순서로 고르며 무작위가 없습니다. ‘선명한 강조색 우선’을 켜면 색상과 채도 차이를 두 배로 셉니다.</li>
+  <li><strong>병합</strong>: 0.02 미만으로 떨어진 클러스터는 합칩니다. 0.02는 <a href="https://drafts.csswg.org/css-color-4/#binsearch" target="_blank" rel="noopener">CSS Color 4</a> 색역 매핑이 쓰는 최소 식별 차이입니다.</li>
 </ul>
+<p>코드 내보내기는 화면 순서대로 <code>palette-1</code>부터 이름을 붙이고 비율을 주석으로 적습니다. .gpl은 GIMP, <a href="https://inkscape-manuals.readthedocs.io/en/latest/palette.html" target="_blank" rel="noopener">Inkscape</a>(팔레트 폴더에 넣기), <a href="https://docs.krita.org/ko/reference_manual/dockers/palette_docker.html" target="_blank" rel="noopener">Krita</a>에서, .ase는 <a href="https://helpx.adobe.com/kr/illustrator/desktop/manage-colors/use-swatches/share-swatches-between-applications.html" target="_blank" rel="noopener">Illustrator·Photoshop·InDesign</a>의 견본으로 씁니다.</p>
 
-<p>두 번의 결과가 다른 이유는 초기 중심점을 무작위로 고르기 때문입니다. 중심점이 색 경계의 섞인 픽셀을 흡수하면 16진수 값이 한두 단계 달라집니다. <code>#8B9AC3</code>가 그런 섞인 색으로, 200×150으로 줄일 때 남색과 흰색에 가까운 색이 맞닿은 줄이 섞여 생겼습니다. 8색을 요청해도 4색만 나오는 이유는 빈 클러스터를 버리고, 차이(RGB 차의 합)가 6 미만인 중심점을 합치기 때문입니다. 거의 흰색을 제외하면 비율은 전체 이미지가 아니라 남은 픽셀 기준입니다.</p>
-
-<h2>제한</h2>
-
+<h2>다른 추출 도구와 비교</h2>
+<p>2026년 10월 2일, 위 배너와 고흐 「별이 빛나는 밤」 이미지로 확인했습니다.</p>
 <ul>
-  <li>실행할 때마다 결과가 달라질 수 있습니다. 마음에 드는 팔레트는 다시 추출하기 전에 복사해 두세요.</li>
-  <li>작은 강조 색은 색이 비슷한 큰 클러스터에 흡수될 수 있어, 색상 수를 늘려야 나타나기도 합니다.</li>
-  <li>색은 sRGB에서 평균하므로 중심점이 원본에 있는 정확한 색이 아니라 조금 탁한 혼합색일 수 있습니다.</li>
-  <li>'거의 흰색 제외'는 휘도(감마 인코딩된 RGB 값으로 계산)가 0.95를 넘는 픽셀을, '투명 픽셀 제외'는 알파가 128 미만인 픽셀을 뺍니다.</li>
+  <li><strong>vivoldi 이미지 색상 추출기</strong>는 같은 이미지를 두 번 열어도 결과가 같지만, 채널 값을 10 단위로 맞춘 색을 돌려줍니다. 배너의 남색 <code>#1E3A8A</code>는 <code>#1E3C8C</code>, 주황 <code>#F97316</code>은 <code>#FA7814</code>가 되며 비율은 나오지 않습니다.</li>
+  <li><strong>imageonline.io</strong>는 배너의 세 색을 정확히 돌려주지만 비율은 없습니다.</li>
+  <li>라이브러리 <strong>node-vibrant 4.0.4</strong>는 ‘Vibrant’, ‘Muted’ 등 6가지 역할로 색을 고르고 5비트 그룹에서 색을 다시 만들어, 배너 남색이 <code>#1C3C8C</code>가 됩니다.</li>
 </ul>
+<p>세 페이지 모두 이미지를 연 뒤 이미지를 보내는 네트워크 요청은 없었습니다(브라우저의 리소스 타이밍으로 확인).</p>
 
-<h2>출력 포맷</h2>
-
+<h2>제한 사항</h2>
 <ul>
-  <li><strong>HEX</strong> — 범용 호환 포맷. 스와치 상단을 클릭하면 복사됩니다.</li>
-  <li><strong>RGB</strong> — 공백 구분 모던 문법 `rgb(160 90 44)`. 모든 현대 브라우저에서 지원됩니다.</li>
-  <li><strong>HSL</strong> — 스와치 안에서 색상 / 채도 / 명도를 빠르게 조정할 때 편리합니다.</li>
-  <li><strong>OKLCH</strong> — 지각적으로 균일하여 디자인 토큰과 색상 회전이 필요한 컬러 파이프라인에 적합. HSL과 달리 명도 점프가 발생하지 않습니다.</li>
-  <li><strong>비중</strong> — 각 클러스터가 원본 픽셀에서 차지한 비율. 가장 큰 값은 브랜드 액센트로, 나머지는 보조 색으로 활용하기 좋습니다.</li>
+  <li>262,144픽셀이 넘는 이미지는 표본으로 세므로 몇 픽셀 크기의 작은 부분은 빠질 수 있습니다.</li>
+  <li>‘가장 많은 색조’가 원래 색과 정확히 같으려면 한 색이 그 색 그룹의 절반을 넘어야 합니다. 그렇지 않으면 그룹의 평균색입니다.</li>
+  <li>sRGB 밖의 색(Display P3 사진 등)은 sRGB로 잘립니다. 브라우저가 Display P3로 읽을 수 있으면 해당 픽셀 비율을 상태 줄에 표시합니다.</li>
+  <li>움직이는 GIF는 첫 프레임만 씁니다. HEIC는 Safari에서만 열리고, 카메라 RAW는 먼저 변환해야 합니다.</li>
 </ul>
-
-<h2>활용 시나리오</h2>
-
-<ul>
-  <li>클라이언트가 제공한 기존 브랜드 자산에서 주요 색상을 역산해 디자인 시스템을 재구성합니다.</li>
-  <li>포트폴리오 사이트나 커머스 상세 페이지에서 메인 비주얼로부터 파생한 CSS 토큰을 만듭니다.</li>
-  <li>경쟁사 분석 시, 자사와 경쟁사 랜딩 페이지의 색 구성 비율을 나란히 두고 차이를 파악합니다.</li>
-  <li>아티클 썸네일을 정한 뒤, 헤딩과 인용 블록 색을 이미지 팔레트에 맞춰 선택합니다.</li>
-</ul>
-
-<h2>프라이버시</h2>
-
-<p>모든 처리는 클라이언트에서 이루어집니다. 이미지는 HTMLImageElement로 디코딩되고, 보이지 않는 Canvas에 축소 그려지고, JavaScript에서 k-means가 실행됩니다. 이미지에 대한 어떤 바이트도 서버로 전송되지 않습니다. 확인하고 싶다면 네트워크 패널을 열어두세요. 새 이미지를 로드할 때마다 깨끗한 로그가 표시됩니다.</p>
-
-<h2>관련 도구</h2>
-
-<ul>
-  <li><a href="/ko/tools/color-palette-generator/">색 조합 생성기</a> — 하나의 기준 HEX에서 보색, 유사색, 삼각, 사각 배색을 생성.</li>
-  <li><a href="/ko/tools/color-shades-generator/">컬러 셰이드 생성기</a> — 추출한 색 하나를 50–950, 11단계 스케일로 확장.</li>
-  <li><a href="/ko/tools/color-converter/">색상 변환기</a> — HEX, RGB, HSL을 실시간 미리보기와 함께 상호 변환.</li>
-  <li><a href="/ko/tools/color-contrast-checker/">색상 명도 대비 검사기</a> — 팔레트가 준비되면 각 쌍이 WCAG AA / AAA를 만족하는지 검증.</li>
-</ul>
+<p>한 픽셀의 색만 알고 싶다면 <a href="/ko/tools/eyedropper-color-picker/">스포이드 색상 추출기</a>, 색각에 따른 보임은 <a href="/ko/tools/color-blindness-simulator/">색맹 시뮬레이터</a>, 글자 대비는 <a href="/ko/tools/color-contrast-checker/">색상 명도 대비 검사기</a>로 확인하세요.</p>

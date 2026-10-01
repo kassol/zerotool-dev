@@ -1,77 +1,80 @@
 ---
-seoTitle: "Image Color Palette Extractor — k-means in Your Browser | ZeroTool"
-seoDescription: "Extract dominant colors from any image with k-means in your browser. HEX, RGB, HSL, OKLCH, plus CSS variables and Tailwind config. No upload, no signup."
+seoTitle: "Image Color Palette Extractor – Colors & Shares | ZeroTool"
+seoDescription: "Extract a color palette from an image with each color's share of the picture. Exact colors from flat graphics, same result every run, CSS, Tailwind, .gpl, .ase."
 faqItems:
-  - question: "How does the tool extract colors?"
-    answer: "K-means clustering on the downsampled pixel RGB values. The image is rescaled to a maximum of 200×200 pixels, every visible pixel is grouped into k centroids by Euclidean RGB distance, and each centroid's mean color is reported with its share of the image."
-  - question: "Are my images uploaded anywhere?"
-    answer: "No. The image is decoded by your browser via FileReader and Canvas, and clustering runs entirely in JavaScript on your device. Open DevTools' network panel — you will see zero upload requests, only the page assets that loaded with the tool itself."
-  - question: "Which image formats can I drop in?"
-    answer: "Any format your browser can decode through an `<img>` element and Canvas: typically JPEG, PNG, WebP, GIF, SVG, BMP, plus AVIF on Chromium and HEIC on Safari. Camera RAW files are not browser-decodable; convert them to JPEG or PNG locally first."
-  - question: "Why does the palette change between runs?"
-    answer: "K-means seeds its centroids randomly. With a small `k` and a busy image two runs may converge to slightly different clusters. Click `Re-extract` for a fresh seed, or raise `k` so more centroids cover the color space deterministically."
+  - question: "Is my image uploaded?"
+    answer: "No. The browser decodes the image, the tool counts its pixels and clusters them in JavaScript in your tab, and the page sends no request with the image or the colors. Only your settings (number of colors, sort, swatch mode, filters, export format) are saved in the browser; the image and the palette are not."
+  - question: "Why do I get the same palette every time?"
+    answer: "The clustering has no random step. It starts from the heaviest color group, adds seeds in a fixed order and breaks ties by index, so the same image and the same settings always give the same colors and shares. Many extractors seed k-means at random, and their palette changes when you run them again."
+  - question: "What does the percentage on each color mean?"
+    answer: "It is the share of the visible image that belongs to that color's cluster. Pixels count with their opacity, and fully transparent pixels are not counted. Pixels removed by Ignore near-white or Ignore near-black still count in the total, so the shares then add up to less than 100% and the status line says how much was ignored."
+  - question: "Why does it show fewer colors than I asked for?"
+    answer: "The tool groups pixels into 32,768 color groups (8 levels per channel). If the visible pixels fall into fewer groups than the number you asked for, every group becomes its own color and the status line says so. Clusters that end up less than 0.02 apart in OKLab are also merged, because they would look the same."
+  - question: "Which apps open the .gpl and .ase files?"
+    answer: "The .gpl file is the GIMP palette format, which GIMP, Inkscape and Krita read. The .ase file is Adobe Swatch Exchange, which Illustrator, Photoshop and InDesign load as a swatch library; Krita and GIMP can import it too. Both files hold the colors in the order shown, named by their hex value."
 ---
 
-<h2>What this does</h2>
-
-<p>Drop in any picture — a UI mockup, a brand asset, a product photograph, a piece of stock art — and walk away with a palette that is ready to paste into your stylesheet, design tokens, or Tailwind theme. The tool clusters the visible pixels with k-means and reports each cluster as a swatch with its weight in the source image, plus four color-space readouts: HEX for design tools, RGB and HSL for legacy CSS, and OKLCH for modern color pipelines.</p>
-
-<h2>How to use</h2>
-
+<h2>How to Use</h2>
 <ol>
-  <li>Drop an image onto the upload card, click the card to pick a file, or paste with `Ctrl + V` after copying an image to your clipboard.</li>
-  <li>Tweak the controls: pick how many colors to extract (3 to 16), sort the result by frequency, hue, or lightness, and toggle filters that drop transparent pixels or near-white pixels.</li>
-  <li>Click any swatch to copy its HEX value. Click a row inside the swatch to copy that specific format — RGB, HSL, or OKLCH.</li>
-  <li>Use <strong>Copy CSS variables</strong> for a `:root { --color-1: …; }` block, <strong>Copy JSON</strong> for an array of `{hex, rgb, weight}`, or <strong>Copy Tailwind</strong> for a `theme.extend.colors.palette` snippet.</li>
+  <li>Open an image, drop one anywhere on the tool, or paste a screenshot with Ctrl+V / ⌘V.</li>
+  <li>Each card shows a color and its share of the image. The bar shows the shares side by side; the numbered dots on the preview show where each color occurs.</li>
+  <li>Set <strong>Colors</strong> from 2 to 16, the sort order, and whether a swatch shows the <strong>Most common shade</strong> or the <strong>Cluster average</strong>.</li>
+  <li>Click a swatch to copy its hex value, or a line under it to copy RGB, HSL or OKLCH. <strong>Shades</strong> and <strong>Harmonies</strong> open the color in the <a href="/tools/color-shades-generator/">Color Shades Generator</a> or the <a href="/tools/color-palette-generator/">Color Palette Generator</a>.</li>
+  <li>Under <strong>Export</strong>, copy the palette as CSS variables, SCSS, Tailwind v4 or v3, JSON or a plain list, or download a .gpl or .ase palette file.</li>
 </ol>
 
-<h2>About the algorithm</h2>
-
-<p>K-means is the simplest clustering method that still produces designer-friendly palettes. The picture is downsampled so the longest edge is 200 pixels — a 3840×2160 photograph becomes 200×113, about 22 600 sample pixels. Each pixel is assigned to the centroid with the smallest squared-RGB distance, centroids are recomputed as the mean of their cluster, and the loop runs until centroids stop moving (or 24 iterations, whichever happens first).</p>
-
-<p>Two practical refinements are layered on top: tiny clusters that drift to within ΔRGB &lt; 6 of another are merged so the output never shows duplicate-looking swatches, and the optional pre-filters drop transparent pixels and near-white pixels (luminance &gt; 0.95) so the algorithm focuses on the colors that carry visual weight rather than padding around the subject.</p>
-
-<h2>Example: A Banner with a Small Logo</h2>
-
-<p>A 400×300 PNG: a navy <code>#1E3A8A</code> background, a near-white <code>#F8FAFC</code> strip across the bottom quarter, and a 60×60 orange <code>#F97316</code> square (3% of the area). With <strong>Colors</strong> set to 3, sorted by frequency:</p>
-
+<h2>Example: a Banner with a Small Logo</h2>
+<p><a href="/images/icp-banner.png">This 400 × 300 PNG</a> has a navy background <code>#1E3A8A</code>, a near-white strip <code>#F8FAFC</code> across the bottom quarter and a 60 × 60 orange square <code>#F97316</code>. With the default 6 colors the tool returns:</p>
+{/* icp-check: {"image":"icp-banner.png","k":6,"expect":["#1E3A8A 72.0%","#F8FAFC 25.0%","#F97316 3.0%"],"groups":3} */}
 <ul>
-  <li>Run 1: <code>#1F3B8B</code> 72.3%, <code>#F8FAFC</code> 24.7%, <code>#F97316</code> 3.0%.</li>
-  <li>Run 2 (Re-extract): <code>#1E3A8A</code> 71.7%, <code>#F5F7FB</code> 25.3%, <code>#F97316</code> 3.0%.</li>
-  <li><strong>Skip near-white</strong> on: <code>#1E3A8A</code> 95.1%, <code>#F97316</code> 4.0%, <code>#8B9AC3</code> 0.9%.</li>
-  <li>Colors set to 8: only four swatches, the three source colors plus <code>#8B9AC3</code> 0.7%.</li>
+  <li><code>#1E3A8A</code> 72.0%</li>
+  <li><code>#F8FAFC</code> 25.0%</li>
+  <li><code>#F97316</code> 3.0%</li>
+</ul>
+<p>These are the exact source colors and the exact areas (86,400, 30,000 and 3,600 of 120,000 pixels). The status line adds that the visible pixels fall into only 3 color groups, so 3 colors are shown instead of 6. No navy–white blend appears from the edges, because the tool samples real pixels instead of a smoothed thumbnail.</p>
+<p>Turn on <strong>Ignore near-white</strong> and the strip drops out: <code>#1E3A8A</code> 72.0% and <code>#F97316</code> 3.0%, with 25.0% of the image reported as ignored. The shares stay of the whole image, so they still match the areas you measured.</p>
+{/* icp-check: {"image":"icp-banner.png","k":6,"ignoreWhite":true,"expect":["#1E3A8A 72.0%","#F97316 3.0%"],"ignored":"25.0%"} */}
+
+<h2>Example: The Starry Night</h2>
+<p><img src="/images/icp-starry-night.jpg" alt="Vincent van Gogh, The Starry Night, 1889" width="512" height="406" loading="lazy" style={{ maxWidth: '100%', height: 'auto' }} /></p>
+<p>Van Gogh painted <a href="https://www.moma.org/collection/works/79802" target="_blank" rel="noopener">The Starry Night</a> in June 1889; the image above is a 512-pixel copy of the public-domain Google Art Project scan on Wikimedia Commons. At 6 colors with <strong>Emphasize vivid accents</strong> on (the default), the cluster averages are:</p>
+{/* icp-check: {"image":"icp-starry-night.jpg","k":6,"pick":"average","expect":["#212728 25.7%","#637B94 21.2%","#435B85 20.9%","#263767 13.9%","#8D9F9F 11.6%","#AAAC78 6.3%"]} */}
+<p><code>#212728</code> 25.7%, <code>#637B94</code> 21.2%, <code>#435B85</code> 20.9%, <code>#263767</code> 13.9%, <code>#8D9F9F</code> 11.6% and the yellow of the stars and moon, <code>#AAAC78</code> 6.3%.</p>
+<p>With the option off, clusters follow area alone and the yellow disappears into a gray-green cluster: <code>#4C6B93</code> 20.1%, <code>#445C8B</code> 18.6%, <code>#1B1D1B</code> 17.5%, <code>#2B2D2B</code> 16.6%, <code>#6B839C</code> 16.2%, <code>#93A49B</code> 10.6% (most common shades).</p>
+{/* icp-check: {"image":"icp-starry-night.jpg","k":6,"vivid":false,"expect":["#4C6B93 20.1%","#445C8B 18.6%","#1B1D1B 17.5%","#2B2D2B 16.6%","#6B839C 16.2%","#93A49B 10.6%"]} */}
+<p>The yellow cluster's average <code>#AAAC78</code> mixes the stars with the pale sky around them; its most common shade is <code>#ABB39C</code>. For paintings and photos the average reads better; for logos and UI screenshots the most common shade gives the exact flat color.</p>
+{/* icp-check: {"image":"icp-starry-night.jpg","k":6,"expect":["#1B1D1B 25.7%","#54739C 21.2%","#4C6B93 20.9%","#33447B 13.9%","#7C93A3 11.6%","#ABB39C 6.3%"]} */}
+
+<h2>Example: a Logo on a Transparent Background</h2>
+<p><a href="/images/icp-logo-transparent.png">This 400 × 400 PNG</a> has a red circle <code>#E11D48</code> with a yellow center <code>#FACC15</code> and nothing else. At 2 colors: <code>#E11D48</code> 82.6% and <code>#FACC15</code> 17.3%, and the status line reports that 71.4% of the pixels are transparent and not counted. Pixels count with their opacity, so the anti-aliased edge cannot add a black or gray color.</p>
+{/* icp-check: {"image":"icp-logo-transparent.png","k":2,"expect":["#E11D48 82.6%","#FACC15 17.3%"],"transparent":"71.4%"} */}
+
+<h2>How the Palette Is Computed</h2>
+<ul>
+  <li><strong>Sampling.</strong> Images up to 262,144 pixels are read in full; larger ones are read at a reduced size without smoothing, so every sample is a real pixel.</li>
+  <li><strong>Color groups.</strong> Pixels are counted in 32,768 groups of 8 levels per channel, the same 5-bit precision as the median-cut quantizer in <a href="https://github.com/lokesh/color-thief" target="_blank" rel="noopener">Color Thief</a>.</li>
+  <li><strong>Clustering.</strong> The groups are clustered with weighted k-means in <a href="https://bottosson.github.io/posts/oklab/" target="_blank" rel="noopener">OKLab</a>, where straight-line distance follows how different two colors look. Seeds are chosen in a fixed order (heaviest group first, then the largest weight × squared distance), so nothing is random.</li>
+  <li><strong>Vivid accents.</strong> With the option on, hue and chroma differences count twice in the distance, so a small saturated area keeps its own cluster.</li>
+  <li><strong>Merging.</strong> Clusters less than 0.02 apart in OKLab are merged; 0.02 is the just-noticeable difference that <a href="https://drafts.csswg.org/css-color-4/#binsearch" target="_blank" rel="noopener">CSS Color 4</a> uses for gamut mapping.</li>
 </ul>
 
-<p>The two runs differ because the starting centroids are picked at random, and the hex values move by one or two steps when a centroid absorbs some of the blended pixels along the color edges. <code>#8B9AC3</code> is such a blend: scaling the image down to 200×150 mixes the navy and near-white rows where they meet. Asking for 8 colors returns 4 because empty clusters are dropped and centroids closer than 6 (summed RGB difference) are merged. With near-white skipped, the weights are shares of the remaining pixels, not of the whole image.</p>
+<h2>Export and Palette Files</h2>
+<p>Code exports name the colors <code>palette-1</code> to <code>palette-n</code> in screen order, with each share as a comment. Values can be hex, <code>rgb()</code>, <code>hsl()</code> or <code>oklch()</code>, written with just enough decimals to give back the same 8-bit color. The Tailwind v4 export is an <code>@theme</code> block (<code>bg-palette-1</code> works at once). The .gpl file follows the GIMP palette format and opens in GIMP, in <a href="https://inkscape-manuals.readthedocs.io/en/latest/palette.html" target="_blank" rel="noopener">Inkscape</a> (copy it into the palettes folder) and in <a href="https://docs.krita.org/en/reference_manual/dockers/palette_docker.html" target="_blank" rel="noopener">Krita</a>. The .ase file is Adobe Swatch Exchange, which <a href="https://helpx.adobe.com/illustrator/desktop/manage-colors/use-swatches/share-swatches-between-applications.html" target="_blank" rel="noopener">Illustrator, Photoshop and InDesign</a> load as a swatch library.</p>
+
+<h2>Compared with Other Extractors</h2>
+<p>Tested on 2 October 2026:</p>
+<ul>
+  <li><strong>Color Thief 2.7.0</strong> (npm <code>colorthief</code>, median cut) returns the three banner colors exactly but gives no shares. <strong>node-vibrant 4.0.4</strong> sorts colors into six roles (Vibrant, Muted and so on) and finds the yellow in The Starry Night, but rebuilds colors from 5-bit groups: the banner navy comes back as <code>#1C3C8C</code> instead of <code>#1E3A8A</code>.</li>
+  <li><strong>imageonline.io</strong> returns the banner colors exactly, without shares. <strong>Pantone Tools</strong> rounds every channel to multiples of 32: the banner becomes <code>#002080</code>, <code>#E0E0E0</code> and <code>#E06000</code>, plus a navy–white blend <code>#8080C0</code> that is not in the image.</li>
+  <li><strong>Coolors</strong> and <strong>ColorKit</strong> are pickers: they place five points on the image and use the colors under them, so the result depends on where the points land, not on area.</li>
+</ul>
+<p>imageonline.io and Pantone Tools made no network request with the image after it was opened (checked in the browser's resource timing list).</p>
 
 <h2>Limits</h2>
-
 <ul>
-  <li>Results can change between runs; copy the palette you like before clicking Re-extract.</li>
-  <li>A small accent can be absorbed into a larger neighboring cluster when its color is close, so it may not appear until you raise the number of colors.</li>
-  <li>Colors are averaged in sRGB, so a centroid can be a slightly duller mix of the pixels it represents rather than an exact source color.</li>
-  <li>Skip near-white drops pixels whose luminance, computed from the gamma-encoded RGB values, is above 0.95. Skip transparent drops pixels with alpha below 128.</li>
+  <li>Images above 262,144 pixels are sampled, so a detail smaller than a few pixels of the reduced image can be missed.</li>
+  <li>A most common shade is exact only when one color fills more than half of its 8-level group; otherwise it is that group's average.</li>
+  <li>Colors outside sRGB, such as in Display P3 photos, are clipped to sRGB. The status line gives the share of such pixels when the browser can read the image in Display P3.</li>
+  <li>Animated GIFs give the palette of the first frame. HEIC opens only in Safari; camera RAW files need converting first.</li>
 </ul>
-
-<h2>Output formats</h2>
-
-<ul>
-  <li><strong>HEX</strong> — the universal interop format. Click the colored top of any swatch to copy.</li>
-  <li><strong>RGB</strong> — modern space-separated syntax (`rgb(160 90 44)`), compatible with every evergreen browser.</li>
-  <li><strong>HSL</strong> — handy when you want to nudge hue, saturation, or lightness without leaving the swatch.</li>
-  <li><strong>OKLCH</strong> — perceptually uniform, ideal for design tokens and color pipelines that need to mix or rotate hues without surprises.</li>
-  <li><strong>Weight %</strong> — the share of source pixels each centroid claimed; use the dominant entry as a brand accent and the smaller ones as supporting tones.</li>
-</ul>
-
-<h2>Privacy</h2>
-
-<p>The tool runs entirely client-side. The image is decoded into an HTMLImageElement, drawn onto a hidden canvas at the sampling size, and clustered in JavaScript. Nothing about the picture is sent to any server. If you would like to verify, open the network tab and watch a clean log every time you load a new image.</p>
-
-<h2>Related tools</h2>
-
-<ul>
-  <li><a href="/tools/color-palette-generator/">Color Palette Generator</a> — start from a single base hex and generate complementary, analogous, triadic, or tetradic schemes.</li>
-  <li><a href="/tools/color-shades-generator/">Color Shades Generator</a> — expand one extracted color into an 11-step 50–950 scale.</li>
-  <li><a href="/tools/color-converter/">Color Converter</a> — translate between HEX, RGB, and HSL with a live preview.</li>
-  <li><a href="/tools/color-contrast-checker/">Color Contrast Checker</a> — once you have your palette, verify each pair meets WCAG AA / AAA against the backgrounds it will sit on.</li>
-</ul>
+<p>To pick one exact pixel instead of a palette, use the <a href="/tools/eyedropper-color-picker/">color picker</a>. To see how the palette looks to people with color vision deficiency, paste it into the <a href="/tools/color-blindness-simulator/">Color Blindness Simulator</a>, and check text on it with the <a href="/tools/color-contrast-checker/">Color Contrast Checker</a>.</p>

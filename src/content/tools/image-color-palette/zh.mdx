@@ -1,86 +1,76 @@
 ---
-seoTitle: "图像配色提取 — 浏览器内 k-means 主色提取 | ZeroTool"
-seoDescription: "从任意图片提取主色调色板，浏览器内 k-means 算法运算，输出 HEX/RGB/HSL/OKLCH，附 CSS 变量与 Tailwind 配置。零上传，纯客户端。"
+seoTitle: "图片配色提取 – 主色与占比 | ZeroTool"
+seoDescription: "从图片提取配色，显示每种颜色在画面中的占比。扁平图形取到原色，同一张图每次结果相同；可复制 HEX、RGB、HSL、OKLCH，导出 CSS、Tailwind、GIMP .gpl 与 Adobe .ase。"
 faqItems:
-  - question: "工具是怎么提取主色的？"
-    answer: "对降采样后的像素 RGB 值跑 k-means 聚类。图片先被缩到最长边 200 像素，对每个可见像素按欧式 RGB 距离归到 k 个聚类中心，输出每个聚类的均值颜色与它在原图中的占比。"
-  - question: "上传的图片会被发到服务器吗？"
-    answer: "不会。图片由浏览器的 FileReader 与 Canvas 在本地解码，k-means 完全在 JavaScript 中跑。打开开发者工具的网络面板查看——除工具自己的页面资源外，没有任何上传请求。"
-  - question: "支持哪些图片格式？"
-    answer: "凡是浏览器能通过 `<img>` 元素和 Canvas 解码的格式都支持：常见的 JPEG、PNG、WebP、GIF、SVG、BMP，以及 Chromium 上的 AVIF 与 Safari 上的 HEIC。相机 RAW 格式浏览器无法直接解码，请先在本地转换为 JPEG 或 PNG。"
-  - question: "为什么两次提取的结果可能不一样？"
-    answer: "k-means 的初始聚类中心是随机选取的。色彩复杂的图片配上较小的 `k`，两次运行可能收敛到略有不同的结果。点击「重新提取」换一组随机种子，或调高 `k`，让更多聚类中心覆盖色彩空间，结果会更稳定。"
+  - question: "图片会上传吗？"
+    answer: "不会。图片由浏览器解码，像素统计和聚类都在当前标签页里用 JavaScript 完成，页面不会发送图片或颜色。浏览器只保存你的设置（颜色数、排序、色块取值、过滤开关、导出格式），不保存图片和配色。"
+  - question: "为什么每次提取结果都一样？"
+    answer: "聚类过程没有随机步骤：从权重最大的颜色组开始，按固定顺序选种子，并列时按序号取前者，所以同一张图、同样的设置总是得到同样的颜色和占比。不少提取工具用随机初始值做 k-means，再点一次结果就会变。"
+  - question: "颜色后面的百分比是什么意思？"
+    answer: "是这一聚类在可见图像中所占的比例。像素按不透明度计权，完全透明的像素不计入。被「忽略近白色」或「忽略近黑色」去掉的像素仍算在总数里，这时占比之和小于 100%，状态栏会写明忽略了多少。"
+  - question: "为什么颜色比我设定的少？"
+    answer: "工具把像素分进 32,768 个颜色组（每个通道 8 级一组）。可见像素所在的组比设定的颜色数还少时，每组各成一种颜色，状态栏会说明。聚类后在 OKLab 中相距小于 0.02 的颜色看起来相同，也会合并。"
+  - question: ".gpl 和 .ase 文件用什么软件打开？"
+    answer: ".gpl 是 GIMP 调色板格式，GIMP、Inkscape、Krita 都能读取。.ase 是 Adobe Swatch Exchange，Illustrator、Photoshop、InDesign 可作为色板库载入，Krita 与 GIMP 也能导入。两种文件都按屏幕上的顺序保存颜色，并以 HEX 值命名。"
 ---
 
-<h2>这个工具能做什么</h2>
-
-<p>把任何图片——UI 设计稿、品牌素材、产品摄影、库存图——拖进来，得到一份可以直接粘贴到样式表、设计 token 或 Tailwind 主题里的调色板。工具用 k-means 对可见像素聚类，每个聚类输出一块色卡，附带它在原图中的占比，以及四种颜色空间表达：用于设计软件的 HEX、用于传统 CSS 的 RGB / HSL，以及用于现代色彩管线的 OKLCH。</p>
-
 <h2>使用方法</h2>
-
 <ol>
-  <li>把图片拖到上传卡片上，或点击卡片选择文件，或者复制图片后用 `Ctrl + V` 直接粘贴。</li>
-  <li>调节控件：选择要提取的颜色数量（3 到 16），按出现频率、色相或亮度排序，按需勾选「跳过透明像素」「跳过接近白色」。</li>
-  <li>点击任意色块复制它的 HEX。点击色块下方的 RGB / HSL / OKLCH 行可以复制对应格式。</li>
-  <li>整组复制：<strong>复制 CSS 变量</strong> 输出 `:root { --color-1: …; }` 代码块；<strong>复制 JSON</strong> 输出 `{hex, rgb, weight}` 数组；<strong>复制 Tailwind</strong> 输出 `theme.extend.colors.palette` 配置片段，方便直接接入 tailwind.config.js。</li>
+  <li>点击<strong>打开图片</strong>，或把图片拖到工具区任意位置，也可以用 Ctrl+V / ⌘V 粘贴截图。<strong>用示例图</strong>会载入一张小插画。</li>
+  <li>每张色卡显示一种颜色和它在图中的占比；色卡上方的条形图并排显示各颜色的占比，预览图上的编号圆点标出每种颜色出现的位置。</li>
+  <li><strong>颜色数</strong>可设 2–16。排序可选占比、色相或明度。<strong>色块取值</strong>可选「最常见的色调」或「聚类平均色」。</li>
+  <li>点击色块复制 HEX，点击下方各行复制 RGB、HSL 或 OKLCH。<strong>色阶</strong>和<strong>配色</strong>会把该颜色带到<a href="/zh/tools/color-shades-generator/">颜色色阶生成器</a>或<a href="/zh/tools/color-palette-generator/">配色生成器</a>。</li>
+  <li>在<strong>导出</strong>里复制 CSS 变量、SCSS、Tailwind v4 / v3、JSON 或色值列表，也可以下载 .gpl、.ase 调色板文件。</li>
 </ol>
 
-<h2>算法说明</h2>
+<h2>示例：《千里江山图》局部</h2>
+<p><img src="/images/icp-qianli-jiangshan.jpg" alt="王希孟《千里江山图》卷局部" width="512" height="358" loading="lazy" style={{ maxWidth: '100%', height: 'auto' }} /></p>
+<p><a href="https://www.dpm.org.cn/collection/paint/228354.html" target="_blank" rel="noopener">故宫博物院</a>介绍，北宋王希孟的《千里江山图》卷为绢本设色，承袭「青绿法」，以石青、石绿等矿物颜料为主。上图是维基共享资源上公有领域局部图的 512 像素副本。设为 6 种颜色、聚类平均色，结果是：</p>
+{/* icp-check: {"image":"icp-qianli-jiangshan.jpg","k":6,"pick":"average","expect":["#645736 26.0%","#8A7543 23.2%","#73663D 17.6%","#74744D 17.3%","#48432B 8.5%","#4E6769 7.0%"]} */}
+<p><code>#645736</code> 26.0%、<code>#8A7543</code> 23.2%、<code>#73663D</code> 17.6%、<code>#74744D</code> 17.3%、<code>#48432B</code> 8.5%、<code>#4E6769</code> 7.0%。</p>
+<p>画面大部分是泛黄的绢底，青绿只剩下 <code>#4E6769</code> 这一种灰青色，占 7.0%。这说明提取的是这张扫描图的颜色，不是颜料本身的颜色：九百多年的绢色、扫描时的白平衡都会写进结果。想做「青绿」风格的配色，可以点这张色卡的<strong>色阶</strong>，在色阶生成器里得到更亮、更饱和的同色相阶梯。</p>
+<p>关掉<strong>突出鲜艳的点缀色</strong>后，聚类只看面积，青绿分到一个更暗的组：<code>#8B7542</code> 28.3%、<code>#73633B</code> 24.0%、<code>#6B5B34</code> 20.6%、<code>#645533</code> 16.0%、<code>#53645B</code> 5.7%、<code>#4C442B</code> 5.2%（最常见的色调）。</p>
+{/* icp-check: {"image":"icp-qianli-jiangshan.jpg","k":6,"vivid":false,"expect":["#8B7542 28.3%","#73633B 24.0%","#6B5B34 20.6%","#645533 16.0%","#53645B 5.7%","#4C442B 5.2%"]} */}
 
-<p>k-means 是最简单但仍能产出可用调色板的聚类方法。图片先按最长边降到 200 像素——一张 3840×2160 的照片会变成 200×113，约 22,600 个采样像素。每个像素归到欧式 RGB 距离最近的中心，中心更新为所属聚类的均值，循环到中心不再移动（或 24 轮迭代，以先到的为准）。</p>
+<h2>示例：透明背景的 Logo</h2>
+<p>电商主图、App 图标常用透明背景的 PNG。<a href="/images/icp-logo-transparent.png">这张 400 × 400 的 PNG</a> 只有红色圆 <code>#E11D48</code> 和黄色圆心 <code>#FACC15</code>。设为 2 种颜色：<code>#E11D48</code> 82.6%、<code>#FACC15</code> 17.3%，状态栏注明 71.4% 的像素透明、不计入。</p>
+{/* icp-check: {"image":"icp-logo-transparent.png","k":2,"expect":["#E11D48 82.6%","#FACC15 17.3%"],"transparent":"71.4%"} */}
+<p>设为 6 种颜色时，多出来的 4 种是抗锯齿边缘上红黄之间的过渡色，例如 <code>#E43342</code> 0.2%。它们确实存在于图中，但占比很小；看到这类不到 1% 的颜色，把颜色数调低即可。</p>
+{/* icp-check: {"image":"icp-logo-transparent.png","k":6,"expect":["#E11D48 82.3%","#FACC15 17.0%","#E43342 0.2%","#F7B41C 0.2%","#EE7B2D 0.1%","#EA5C35 <0.1%"]} */}
 
-<p>在此基础上做了两个工程化优化：聚类间 ΔRGB &lt; 6 的近似中心会被合并，避免输出几乎相同的色卡；可选的预过滤会丢弃透明像素与接近纯白的像素（亮度 &gt; 0.95），让算法聚焦在真正承载视觉重量的颜色上，而不是被边缘留白带偏。</p>
-
-<h2>示例：带小 Logo 的横幅</h2>
-
-<p>一张 400×300 的 PNG：海军蓝 <code>#1E3A8A</code> 底色，底部四分之一是接近白色的 <code>#F8FAFC</code> 条带，另有一个 60×60 的橙色 <code>#F97316</code> 方块（占面积 3%）。<strong>颜色数量</strong>设为 3、按频率排序：</p>
-
+<h2>计算方法</h2>
 <ul>
-  <li>第 1 次：<code>#1F3B8B</code> 72.3%，<code>#F8FAFC</code> 24.7%，<code>#F97316</code> 3.0%。</li>
-  <li>第 2 次（重新提取）：<code>#1E3A8A</code> 71.7%，<code>#F5F7FB</code> 25.3%，<code>#F97316</code> 3.0%。</li>
-  <li>开启<strong>跳过接近白色</strong>：<code>#1E3A8A</code> 95.1%，<code>#F97316</code> 4.0%，<code>#8B9AC3</code> 0.9%。</li>
-  <li>颜色数量设为 8：只出现 4 个色块，即三种原色加上 <code>#8B9AC3</code> 0.7%。</li>
+  <li><strong>采样</strong>：不超过 262,144 像素的图片逐像素统计；更大的图缩小读取，且不做平滑，每个样本都是原图里的真实像素，边缘不会混出原图没有的颜色。</li>
+  <li><strong>颜色组</strong>：按每通道 8 级分成 32,768 组，与 <a href="https://github.com/lokesh/color-thief" target="_blank" rel="noopener">Color Thief</a> 的中值切割相同精度。像素按不透明度计权。</li>
+  <li><strong>聚类</strong>：在 <a href="https://bottosson.github.io/posts/oklab/" target="_blank" rel="noopener">OKLab</a> 中做加权 k-means，直线距离对应看上去的色差。种子按固定顺序选取，没有随机步骤。开启「突出鲜艳的点缀色」时，色相与彩度的差按两倍计算，小面积的饱和色能单独成组。</li>
+  <li><strong>合并</strong>：相距小于 0.02 的聚类合并，0.02 是 <a href="https://drafts.csswg.org/css-color-4/#binsearch" target="_blank" rel="noopener">CSS Color 4</a> 色域映射采用的最小可察觉差。</li>
 </ul>
 
-<p>两次结果不同，是因为初始中心随机选取，中心吸收了颜色交界处的混合像素后，十六进制值会偏一两级。<code>#8B9AC3</code> 就是这样的混合色：图片缩小到 200×150 时，海军蓝和近白色交界的那几行被混在了一起。要 8 色却只给 4 色，是因为空的聚类会被丢掉，相距小于 6（RGB 差值之和）的中心会被合并。跳过接近白色后，占比按剩下的像素计算，不按整张图。</p>
+<h2>导出与调色板文件</h2>
+<p>代码导出按屏幕顺序把颜色命名为 <code>palette-1</code> 到 <code>palette-n</code>，并把占比写在注释里。色值可选 HEX、<code>rgb()</code>、<code>hsl()</code>、<code>oklch()</code>，小数位刚好能换算回同一个 8 位颜色。上面的局部图导出为 CSS 变量：</p>
+<pre><code>{`:root {
+  --palette-1: #645736; /* 26.0% */
+  --palette-2: #8A7543; /* 23.2% */
+  --palette-3: #73663D; /* 17.6% */
+  --palette-4: #74744D; /* 17.3% */
+  --palette-5: #48432B; /* 8.5% */
+  --palette-6: #4E6769; /* 7.0% */
+}`}</code></pre>
+<p>.gpl 文件可在 GIMP、<a href="https://inkscape-manuals.readthedocs.io/en/latest/palette.html" target="_blank" rel="noopener">Inkscape</a>（放进调色板目录）与 <a href="https://docs.krita.org/zh_CN/reference_manual/dockers/palette_docker.html" target="_blank" rel="noopener">Krita</a> 中使用；.ase 文件可载入 <a href="https://helpx.adobe.com/illustrator/desktop/manage-colors/use-swatches/share-swatches-between-applications.html" target="_blank" rel="noopener">Illustrator、Photoshop 与 InDesign</a> 的色板。</p>
+
+<h2>与同类工具对比</h2>
+<p>2026 年 10 月 2 日实测：</p>
+<ul>
+  <li><strong>256-tools 的图片配色提取</strong>同样显示占比，同一张图两次结果相同。但它读取的是缩小并平滑过的图：一张由 <code>#1E3A8A</code>、<code>#F8FAFC</code>、<code>#F97316</code> 三色组成的横幅（面积 72% / 25% / 3%），给出 71.2% / 24.2% / 3%，另加两个原图中没有的混合色 <code>#475E9F</code> 与 <code>#CFD6E7</code>（各 0.8%）。本工具对<a href="/images/icp-banner.png">同一张图</a>给出准确的三色与 72.0% / 25.0% / 3.0%。</li>
+  <li><strong>Color Thief 2.7.0</strong>（npm）对这张横幅取到三种原色，但不给占比。<strong>node-vibrant 4.0.4</strong> 按「鲜艳、柔和」等 6 个角色分类，颜色由 5 位分组还原，海军蓝变成 <code>#1C3C8C</code>。</li>
+</ul>
+{/* icp-check: {"image":"icp-banner.png","k":6,"expect":["#1E3A8A 72.0%","#F8FAFC 25.0%","#F97316 3.0%"]} */}
 
 <h2>限制</h2>
-
 <ul>
-  <li>每次运行的结果可能不同，点「重新提取」前先把满意的调色板复制下来。</li>
-  <li>小块强调色和周围较大的色块颜色接近时可能被吸收，要调高颜色数量才会出现。</li>
-  <li>颜色在 sRGB 中取平均，中心可能是它所代表像素的略显灰暗的混合，不一定是原图里的某个确切颜色。</li>
-  <li>「跳过接近白色」丢掉亮度大于 0.95 的像素（亮度按未线性化的 RGB 值计算）；「跳过透明像素」丢掉 alpha 小于 128 的像素。</li>
+  <li>超过 262,144 像素的图片会抽样，只有几个像素大的细节可能漏掉。</li>
+  <li>「最常见的色调」只有在一种颜色占其颜色组一半以上时才是精确原色，否则是该组的平均色。</li>
+  <li>超出 sRGB 的颜色（如 Display P3 照片）按 sRGB 截取；浏览器能以 Display P3 读取时，状态栏会给出这类像素的比例。</li>
+  <li>动图 GIF 只取第一帧。HEIC 只有 Safari 能打开，相机 RAW 需先转换。</li>
 </ul>
-
-<h2>输出格式说明</h2>
-
-<ul>
-  <li><strong>HEX</strong>：通用互通格式，点击色卡上半部分直接复制。</li>
-  <li><strong>RGB</strong>：现代空格分隔语法 `rgb(160 90 44)`，所有现代浏览器都支持。</li>
-  <li><strong>HSL</strong>：方便在不离开色卡的情况下对色相 / 饱和度 / 亮度做小调整。</li>
-  <li><strong>OKLCH</strong>：感知均匀，适合用作设计 token；做色相旋转或互调时不会出现 HSL 那种亮度跳变。</li>
-  <li><strong>占比</strong>：每个聚类在原图像素中的占比；占比最高的通常用作品牌主色，其余作为辅助色。</li>
-</ul>
-
-<h2>典型使用场景</h2>
-
-<ul>
-  <li>从客户提供的品牌物料（海报、产品图、网页截图）反推主色调。</li>
-  <li>把摄影作品转译成网页设计 token，做摄影师作品集或电商详情页。</li>
-  <li>开发竞品分析时，对照自家产品和竞品 banner 的色彩占比差异。</li>
-  <li>给文章配图前，先抽出图片调色板，再据此选择对比度合规的标题、引言色。</li>
-</ul>
-
-<h2>隐私</h2>
-
-<p>所有处理都在浏览器内完成。图片解码到 HTMLImageElement，绘制到隐藏的 Canvas，再用 JavaScript 跑聚类。任何关于图片的字节都不会发到服务器。要验证可以打开开发者工具的网络面板，每次加载新图片时都能看到一份干净的请求日志。</p>
-
-<h2>相关工具</h2>
-
-<ul>
-  <li><a href="/zh/tools/color-palette-generator/">配色生成器</a> —— 从一个基础 HEX 出发，生成互补、类比、三角、四方等配色。</li>
-  <li><a href="/zh/tools/color-shades-generator/">颜色色阶生成器</a> —— 把提取出的某个颜色展开成 50–950 共 11 级色阶。</li>
-  <li><a href="/zh/tools/color-converter/">颜色转换器</a> —— 在 HEX / RGB / HSL 间互转，带实时预览。</li>
-  <li><a href="/zh/tools/color-contrast-checker/">颜色对比度检测器</a> —— 拿到调色板之后，逐对验证它们在前景 / 背景组合下是否满足 WCAG AA / AAA。</li>
-</ul>
+<p>只想取某一个像素的颜色，请用<a href="/zh/tools/eyedropper-color-picker/">取色器</a>；想看配色在色觉障碍者眼中的样子，可放进<a href="/zh/tools/color-blindness-simulator/">色盲模拟器</a>，文字可读性用<a href="/zh/tools/color-contrast-checker/">颜色对比度检测器</a>。</p>
