@@ -7,7 +7,7 @@ faqItems:
   - question: "Swagger 2.0 は使えますか？"
     answer: "設計上、Swagger 2.0 は非対応です。先に editor.swagger.io（Swagger Editor の内蔵コンバーター）で OpenAPI 3.x に移行してから貼り付けてください。"
   - question: "リモート $ref は解決されますか？"
-    answer: "`#/components/schemas/...` という内部参照のみ解決します。外部 URL やファイルパスへの $ref は取得しません。参照先スキーマをインライン化するか、openapi-typescript CLI を使ってください。"
+    answer: "されません。解決するのは `#/components/schemas/...`（path 型では `#/components/parameters/...` も）だけです。URL や別ファイルなど、それ以外の `$ref` はコメント付きの `unknown` になり、未解決の参照はすべてステータス欄に表示されます。先に `redocly bundle` などで仕様を 1 ファイルにまとめるか、openapi-typescript CLI を使ってください。"
   - question: "仕様はサーバーに送られますか？"
     answer: "送られません。パース、$ref 解決、TypeScript 生成のすべてがブラウザ内で完結します。バックエンドなし、仕様内容のテレメトリ送信もありません。"
   - question: "Zod スキーマも一緒に得られますか？"
@@ -74,7 +74,7 @@ export interface NewPet {
 }`}</code></pre>
 <p>必須プロパティは必須のまま、それ以外には <code>?</code> が付きます。<code>nullable: true</code> は <code>| null</code> になり、<code>format: binary</code> は <code>Blob</code> になります。<strong>path 型を含める</strong>をオンにすると、<code>getPetById</code> は <code>PathParameters &#123; id: number &#125;</code> と <code>Response200 = Pet</code> を持つ <code>Components.GetPetById</code> になります。<strong>Zod スキーマを含める</strong>をオンにして生成した <code>PetSchema</code> は（zod 3.25 で確認）、<code>status: "lost"</code> を拒否し、<code>tag: null</code> を受け付けます。</p>
 
-<h2>例：3.1 の出力で手直しが必要な箇所</h2>
+<h2>例：const・型の配列・外部参照</h2>
 <p>次の OpenAPI 3.1 スキーマは <code>const</code>、型の配列、別ファイルへの参照を使っています。</p>
 <pre><code>{`openapi: 3.1.0
 info: { title: Events, version: 1.0.0 }
@@ -91,23 +91,57 @@ components:
         note: { type: [string, 'null'] }
         owner: { $ref: 'https://example.com/schemas/user.yaml#/User' }`}</code></pre>
 <p>ツールの出力です。</p>
+{/* o2t: event */}
 <pre><code>{`export interface Event {
   id: number;
-  kind: Record<string, unknown>;
+  kind: "order.created";
   /** ISO 8601 date-time */ createdAt: string;
   note?: string | null;
-  owner?: unknown;
-}
+  owner?: unknown /* unresolved $ref: https://example.com/schemas/user.yaml#/User */;
+}`}</code></pre>
+<p><code>type: [string, "null"]</code> は <code>string | null</code> に、<code>const</code> はリテラル型 <code>"order.created"</code>（Zod では <code>z.literal("order.created")</code>）になります。<code>user.yaml</code> への参照は別のドキュメントにあり、ツールは取得しません。<code>owner</code> は <code>unknown</code> になり、参照はコメントに残ります。ステータス欄には「非対応：https://example.com/schemas/user.yaml#/User への $ref」と表示されます。先に <a href="https://redocly.com/docs/cli/commands/bundle" target="_blank" rel="noopener">redocly bundle</a> で外部ファイルを <code>components</code> にまとめてから、まとめた仕様を貼り付けてください。</p>
 
-export type unknown = unknown;`}</code></pre>
-<p><code>type: [string, "null"]</code> は正しく <code>string | null</code> になります。手直しが必要なのは 3 か所です。<code>const</code> は読み取られず、<code>kind</code> は <code>"order.created"</code> ではなく <code>Record&lt;string, unknown&gt;</code> になります。外部の <code>$ref</code> は <code>unknown</code> になり、仮置きの <code>export type unknown = unknown;</code> はコンパイルできません（TypeScript 5.9 では "Type alias name cannot be 'unknown'"）。この行を削除し、<code>owner</code> の型は手で書いてください。</p>
+<h2>例：Zod の前方参照と再帰</h2>
+<p>Zod スキーマは JavaScript の定数なので、定義する行より前では使えません。次のスキーマでは、<code>Order</code> が後で宣言される <code>Customer</code> を参照し、<code>Node</code> は自分自身を参照します。</p>
+<pre><code>{`components:
+  schemas:
+    Order:
+      type: object
+      required: [customer]
+      properties:
+        customer: { $ref: '#/components/schemas/Customer' }
+    Customer:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+    Node:
+      type: object
+      required: [value]
+      properties:
+        value: { type: string }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/Node' }`}</code></pre>
+<p>Zod の出力では、どちらの参照も <code>z.lazy</code> で包みます。スキーマを探すのはモジュールの読み込み時ではなく、データを検証するときになります。直接または他のスキーマを経由して自分自身を参照するスキーマには <code>z.ZodType&lt;Node&gt;</code> の型注釈も付けます。自分の初期化式に現れる定数の型を TypeScript は推論できないためです（エラー TS7022）。</p>
+{/* o2t: recur */}
+<pre><code>{`export const OrderSchema = z.object({
+  customer: z.lazy(() => CustomerSchema),
+});
+export const CustomerSchema = z.object({
+  name: z.string(),
+});
+export const NodeSchema: z.ZodType<Node> = z.object({
+  value: z.string(),
+  children: z.array(z.lazy(() => NodeSchema)).optional(),
+});`}</code></pre>
+<p>生成したモジュールは TypeScript 5.9 の strict モードでコンパイルでき、zod 3.25 で 3 階層のツリーを検証できます。</p>
 
 <h2>制限</h2>
 <ul>
-  <li>解決できるのは <code>#/components/schemas/...</code> の参照だけです。他のファイルや URL への参照は <code>unknown</code> になり、上の無効な <code>export type unknown = unknown;</code> 行が付きます。</li>
-  <li><code>const</code> は無視されます。リテラル型が必要なら値が 1 つの <code>enum</code> を使ってください。</li>
-  <li>英数字、<code>{'_'}</code>、<code>$</code> 以外の文字を含むスキーマ名（<code>pet-status</code> など）は <code>{'pet_status'}</code> に変わり、TypeScript 側では元のスキーマが見つからなくなります。<code>pet-status</code> という enum は <code>{'export type pet_status = unknown;'}</code> として出力されます。Zod 側では enum が残ります。</li>
-  <li>Zod スキーマは <code>components/schemas</code> の順に <code>z.lazy</code> なしで出力されます。後で宣言されるスキーマや自分自身を参照するスキーマがあると、モジュールの読み込み時に <code>ReferenceError</code> になります。宣言の順序を入れ替え、再帰する参照は <code>z.lazy(() =&gt; ...)</code> で包んでください。</li>
+  <li>解決するのは <code>#/components/schemas/...</code> の参照と、path 型での <code>#/components/parameters/...</code> だけです。それ以外の参照（URL、別ファイル、<code>#/components/responses/...</code>）は <code>unknown</code> になり、ステータス欄に一覧が出ます。</li>
+  <li>TypeScript の識別子として使えないスキーマ名は変更されます。英数字、<code>{'_'}</code>、<code>$</code> 以外の文字は <code>{'_'}</code> に（<code>pet-status</code> → <code>{'pet_status'}</code>）、数字で始まる名前は先頭に <code>{'_'}</code> を、<code>unknown</code> や <code>class</code> などのキーワードは末尾に <code>{'_'}</code> を付けます。</li>
+  <li>値がオブジェクトや配列の <code>const</code> は <code>unknown</code> になります。文字列・数値・真偽値・null はリテラル型になります。</li>
   <li><code>format: int64</code> の <code>integer</code> は <code>number</code> になり、2<sup>53</sup> を超えると精度が落ちます。API がそうした ID を文字列で送るなら <code>string</code> に変えてください。</li>
   <li>path 型が読み取るのは <code>application/json</code> のリクエストボディとレスポンスボディだけです。</li>
 </ul>

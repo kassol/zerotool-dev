@@ -1,47 +1,93 @@
 ---
-seoTitle: "AI トークンカウンター — GPT/Claude/Gemini 対応 | ZeroTool"
-seoDescription: "GPT-5、GPT-4.1、Claude Sonnet 4.6、Gemini 3、Llama 3.3、DeepSeek V3 対応の無料トークンカウンター。リアルタイムでカウントとコストを表示。アップロード不要、API キー不要。"
+seoTitle: "トークン数カウント・計算ツール | ZeroTool"
+seoDescription: "OpenAI の o200k_base・cl100k_base と DeepSeek 公式の tokenizer でトークン数をブラウザ内で正確にカウント。分割結果の表示と、GPT・Claude・Gemini・DeepSeek の料金試算に対応。"
 faqItems:
-  - question: "プロンプトはサーバーに送信されますか？"
-    answer: "送信されません。トークン化はすべてブラウザ内で実行されます。cl100k_base と o200k_base の BPE 語彙はページにバンドルされており、エンコーダーはテキストエリアの内容しか読みません。最初のページ読み込み以降、ネットワーク通信は一切発生せず、入力内容がタブから外に出ることはありません。"
-  - question: "OpenAI 以外のモデルのカウント精度はどの程度ですか？"
-    answer: "GPT-5・GPT-4.1・GPT-4o・GPT-4 Turbo・GPT-3.5 のカウントは OpenAI 公式 BPE テーブルによる精密値です。Claude・Gemini・Llama・DeepSeek は o200k_base をベースラインに、公開サンプルで校正したヒューリスティック係数を適用しており、各社公式トークナイザーとの差は通常 5〜10% 以内に収まります。請求金額に直結する用途では、各プロバイダーの count_tokens API で再確認してください。"
-  - question: "価格はリアルタイムですか？"
-    answer: "価格は 2026 年 5 月時点で人手で確認した参考値です。バッチ料金・地域別課金・プロンプトキャッシュ割引は随時変動します。予算策定の出発点として使い、本格運用前に各社の料金ページで照合してください。"
-  - question: "対応する入力サイズは？"
-    answer: "1 セッションあたり概ね 500 KB までの文章を処理できます。それを超えると、低スペック端末ではテキストエリアやトークナイザーが反応しづらくなります。バッチ処理が必要な場合は、公式トークナイザーをローカルで実行してください — OpenAI は pip install tiktoken、Claude は anthropic.tokenizers を使います。"
-  - question: "アプリで集計したトークン数とこのカウンターが一致しないのはなぜですか？"
-    answer: "本番アプリには system プロンプト、function や tool 定義、画像・音声トークン、チャット書式オーバーヘッドなどが含まれますが、本ツールはこれらを意図的に除外しています。本ツールは平文 1 ブロックを測るだけです。請求項目を調査するときは、ユーザー入力部分のみを貼り付け、アプリ側の「ユーザーメッセージのトークン数」と比較してください。"
+  - question: "どの数字が正確ですか？"
+    answer: "o200k_base、cl100k_base、DeepSeek V4 の 3 枚のカードです。OpenAI の tiktoken、DeepSeek 公式の tokenizer.json と同じ語彙とマージ規則を使い、テストで 1,500 以上の文字列のトークン ID を参照実装と照合しています。Claude、Gemini、GPT-6 はローカルで動かせる tokenizer が公開されていないため、表では o200k_base の数を目安として ≈ 付きで表示します。"
+  - question: "API の usage と数が合わないのはなぜですか？"
+    answer: "このツールが数えるのは 1 つのプレーンテキストです。実際のリクエストにはロールや区切りの記号、システムプロンプト、ツール定義、画像やファイルが加わります。OpenAI は、トークン数カウント API の結果にこうした書式用トークンが含まれ、ローカルの tokenizer では見えないと説明しています。比べたい部分だけを貼り付けるか、各社の API にリクエスト全体を渡してください。"
+  - question: "入力したテキストは送信されますか？"
+    answer: "送信されません。カウントはページ内で行います。tokenizer の語彙は本サイトの静的ファイルで、一度読み込んだ後は入力してもリクエストは発生しません。ブラウザの開発者ツールの Network タブで確認できます。"
+  - question: "日本語は英語よりトークンが多くなりますか？"
+    answer: "同じ内容なら多くなる傾向があります。下の例では、英語 89 文字の指示が o200k_base で 18 トークン、同じ意味の日本語 34 文字が 28 トークンでした。cl100k_base（GPT-4）では日本語が 38 トークンになります。モデルを選ぶときは、実際の文章でトークン数を比べてください。"
+  - question: "料金はいつの情報ですか？"
+    answer: "2026 年 10 月 1 日に OpenAI、Anthropic、Google、DeepSeek の公式料金ページで確認した米ドル単価で、日付は表の下に表示しています。円換算はしていません。料金は予告なく変わるため、予算を立てる前にリンク先を確認してください。"
 ---
 
 <h2>使い方</h2>
 <ol>
-  <li>プロンプトを入力欄に貼り付けるか入力します。カウントとコストカードはタイピングと同時に更新されます。</li>
-  <li>各モデルカードは 3 つの値を表示します — <strong>トークン数</strong>、その文章を入力として使った場合の<strong>推定コスト</strong>、そして百万トークンあたりの入力/出力料金です。</li>
-  <li><em>exact</em> ラベルのカードは OpenAI 公式 BPE エンコーダーで精密に計算します。<em>approx</em> ラベルのカードは同じエンコーダーに校正係数を掛けたもので、各社公式トークナイザーとの差は 5〜10% 以内が目安です。</li>
-  <li><em>Token Visualization</em> を開くと、exact モデルがテキストをどのように分割するかを視覚的に確認できます。色付きチップひとつがトークン 1 個。チップにホバーするとトークン ID が表示されます。</li>
-  <li><em>Copy stats</em> をクリックすると、1 行プレーンテキストのサマリーが取得できます — コードレビューやチャットでコンテキストウィンドウを共有するときに便利です。</li>
+  <li>プロンプト、文書、コードを入力欄に貼り付けるか、「ファイルを開く」でテキストファイルを読み込みます。o200k_base のトークン数は入力に合わせて更新されます。</li>
+  <li>DeepSeek V4 や cl100k_base のカードで「カウント」を押すと、その語彙（0.5 MB、0.4 MB）を読み込みます。選択は次回も保持されます。</li>
+  <li>想定する出力トークン数を入れると、表にモデルごとの入力・出力・合計の料金と、入力上限に対する使用率が出ます。</li>
+  <li>「トークン分割」で tokenizer を選ぶと、どこで区切られたかを確認できます。トークン ID の表示もできます。</li>
 </ol>
 
-<h2>トークンとは</h2>
+<h2>日本語のトークン数を比べる</h2>
+<p>議事録の要約を頼む同じ意味の指示を、英語と日本語で数えました。</p>
+{/* atc: {"text": "Summarize the meeting notes below in three lines and list the decisions and action items.", "o200k": 18, "cl100k": 18, "deepseek": 17} */}
+{/* atc: {"text": "以下の議事録を3行で要約し、決定事項と宿題を箇条書きにしてください。", "o200k": 28, "cl100k": 38, "deepseek": 25} */}
+<table>
+  <thead><tr><th>テキスト</th><th>文字数</th><th>o200k_base</th><th>cl100k_base</th><th>DeepSeek V4</th></tr></thead>
+  <tbody>
+    <tr><td>Summarize the meeting notes below in three lines and list the decisions and action items.</td><td>89</td><td>18</td><td>18</td><td>17</td></tr>
+    <tr><td>以下の議事録を3行で要約し、決定事項と宿題を箇条書きにしてください。</td><td>34</td><td>28</td><td>38</td><td>25</td></tr>
+  </tbody>
+</table>
 <p>
-  大規模言語モデルはテキストを文字や単語ではなく、トークン列として読み込みます。トークンは Byte Pair Encoding（BPE）アルゴリズムをインターネット規模のコーパスで学習させて得たサブワード単位です。<code>tokenizer</code> のような頻出英単語は 1〜2 トークンですが、URL や珍しい綴り、CJK 1 文字はそれぞれ 3 トークン以上になることがあります。料金、レート制限、コンテキストウィンドウはすべてトークン単位で計測されます。
+  英語は 3 つの tokenizer でほぼ同じですが、日本語は cl100k_base が o200k_base より 36% 多くなります。GPT-4 から GPT-4o 以降に移ると、同じ日本語のプロンプトでも入力トークンが減るということです。
 </p>
+<p>「サンプル」ボタンで入る 275 文字のレビュー依頼文では、次の結果になります。</p>
+{/* atc: {"text": "あなたはシニアエンジニアとして、PostgreSQL の分析用 DB の前に Redis のリードスルーキャッシュを追加するプルリクエストをレビューしています。\n\n集計クエリはすべて 60 秒でキャッシュされます。作成者は、ピーク時に毎分 1.2 万リクエストを受けるダッシュボードの p99 レイテンシが 1200 ms から 50 ms 未満に下がると見込んでいます。\n\nリスクの高い障害パターンを 2 つ挙げ、60 秒が財務レポートのダッシュボードに適切か判断し、マージ前に追加すべき監視指標を 1 つ示してください。各項目は 80 字以内で。", "o200k": 189, "cl100k": 242, "deepseek": 180} */}
+<ul>
+  <li>DeepSeek V4：180 トークン（1 トークンあたり 1.53 文字）</li>
+  <li>o200k_base：189 トークン（1.46 文字）</li>
+  <li>cl100k_base：242 トークン（1.14 文字）</li>
+</ul>
+{/* atc: {"text": "こんにちは、世界", "o200k": 3, "cl100k": 5, "deepseek": 7} */}
 <p>
-  本ツールが使う <code>cl100k_base</code> と <code>o200k_base</code> は OpenAI 公式テーブルで、GPT-3.5 から GPT-5 までの本番環境と完全に同一です。o200k_base は cl100k_base に対して語彙数を倍増させており、中国語・日本語・韓国語・アラビア語のトークン消費量は 20〜40% 削減されます。多言語プロンプトを多用するなら、節約は実コストに直結します。
+  ただし短い文では順位が入れ替わります。「こんにちは、世界」は o200k_base で 3、cl100k_base で 5、DeepSeek V4 で 7 トークンです。DeepSeek の tokenizer は漢字・ひらがな・カタカナが続く部分を先に 1 つのまとまりとして切り出してから分割するため、よく使われるあいさつでも複数のトークンに分かれます。少数の例から「どのモデルが安いか」を決めず、実際の文章で数えるのが確実です。
 </p>
 
-<h2>なぜローカルで数えるのか</h2>
+<h2>正確にカウントできるモデル</h2>
+<table>
+  <thead><tr><th>カード</th><th>対象モデル</th><th>根拠</th></tr></thead>
+  <tbody>
+    <tr><td>o200k_base</td><td>GPT-5.x、GPT-4.1、GPT-4o、o1、o3、o4-mini</td><td>OpenAI の <a href="https://github.com/openai/tiktoken/blob/main/tiktoken/model.py">tiktoken のモデル対応表</a></td></tr>
+    <tr><td>cl100k_base</td><td>GPT-4、GPT-3.5 Turbo、text-embedding-3</td><td>同じ対応表と <a href="https://developers.openai.com/api/docs/guides/embeddings">Embeddings ガイド</a></td></tr>
+    <tr><td>DeepSeek V4</td><td>deepseek-flash、deepseek-v4-pro</td><td>DeepSeek の<a href="https://api-docs.deepseek.com/quick_start/token_usage">オフライン計算パッケージ</a>に入っている tokenizer.json</td></tr>
+    <tr><td>≈ 目安</td><td>Claude、Gemini、GPT-6</td><td>ローカル用 tokenizer は非公開。o200k_base の数で代用</td></tr>
+  </tbody>
+</table>
 <p>
-  プロンプトをリモート API に送って数える「オンラインカウンター」は便利ですが、system プロンプトには企業秘密、顧客データ、未公開のプロダクトコピーが入っていることが日常茶飯事です。ネットワーク往復が発生した瞬間にすべて漏洩します。本ツールはブラウザ内完結で 1 バイトも端末から出さず、初回読み込み後はオフラインでも動作します。
+  Claude は Anthropic の<a href="https://platform.claude.com/docs/en/build-with-claude/token-counting">トークン数カウント API</a>（無料）で数えられますが、ドキュメント自身が結果を推定値としています。また Claude 4.7 以降は、同じテキストで以前の Claude より約 30% 多くトークンを数えると明記しています。Gemini は Google の<a href="https://ai.google.dev/gemini-api/docs/tokens">説明</a>で「1 トークンは約 4 文字」とされるだけなので、正確な数は <code>countTokens</code> で確認してください。
 </p>
 
-<h2>プロバイダー間のコスト比較</h2>
+<h2>料金の列について</h2>
 <p>
-  トークン数自体は、各社のトークナイザーがテキストを切る粒度が異なるため、直接比較できません。同じ 1,000 文字の段落が OpenAI では 250 トークン、Claude では 230 トークンになることもあれば、その逆もあります。比較に意味がある指標はコストです。各コストカードはトークン数に各社公開の百万トークンあたり入力料金を掛けて、同じ物差しで比較できるようにしています — チャット中心のアプリでは DeepSeek V3 と Llama 3.3 が単価で勝ち、複雑な推論では GPT-5 と Claude Sonnet 4.6 が「品質単価」で勝つ傾向があります。
+  単価は 2026 年 10 月 1 日に確認した標準料金（バッチ割引・キャッシュなし）で、すべて米ドルです。長い入力で単価が上がるモデルは自動で切り替えます。gpt-5.5 と GPT-6 は入力 272,000 トークン超、gemini-3.1-pro-preview は 200,000 トークン超です。DeepSeek はオフピーク（日本時間で平日 10 時〜13 時と 15 時〜19 時以外）が半額で、両方の金額を表示します。
 </p>
 
-<h2>プライバシーとネットワーク挙動</h2>
+<h2>ほかのツールとの違い</h2>
+{/* atc: {"text": "あなたはシニアエンジニアとして、PostgreSQL の分析用 DB の前に Redis のリードスルーキャッシュを追加するプルリクエストをレビューしています。", "o200k": 44, "cl100k": 56, "deepseek": 45} */}
+<p>2026 年 10 月 1 日、レビュー依頼文の 1 文目（80 文字、o200k_base 44、cl100k_base 56、DeepSeek V4 45 トークン）で確認しました。</p>
+<ul>
+  <li><strong>MiniWebtool の AI トークンカウンター（日本語版）</strong>：93 トークンと表示し、可視化では仮名 1 文字ずつに区切られていました。o200k_base（44）の 2 倍以上です。</li>
+  <li><strong>benchlm.ai</strong>：中国語の 56 文字の文で「&#126;14 tokens」と表示し、Claude・Gemini・DeepSeek をすべて 14 としていました。実際は o200k_base で 35、DeepSeek V4 で 26 です。</li>
+  <li><strong>tokencost.app</strong>：同じ中国語文で DeepSeek V4.1 Flash を「42&#126;」と表示しました。実際は 26 です。</li>
+</ul>
 <p>
-  ページの HTML と JavaScript がロードされた後、本ページはトークンデータのためのネットワーク要求を一切発行しません。BPE 語彙はページに同梱される JavaScript チャンクにバンドルされています。入力内容は HTTP 要求、アナリティクスイベント、エラーログのいずれにも記録されません。ブラウザ DevTools の Network タブで自分で検証できます — ページが ready になってから入力を続けても、新規リクエストは 0 件のままです。
+  このページの旧版は js-tiktoken を使っていました。js-tiktoken は空白のない長い文字列でマージ処理が極端に遅く、漢字 2 万字の連続で 3 分以上かかりました。新版は優先度付きキューでマージし、同じ入力を数ミリ秒で処理します。また BOM（U+FEFF）を含むテキストでも tiktoken と同じ位置で区切ります。
+</p>
+
+<h2>制限事項</h2>
+<ul>
+  <li>数えるのはプレーンテキストだけです。メッセージの書式、システムプロンプト、ツール定義、画像、PDF の分は各社の API でしか分かりません。</li>
+  <li><code>&lt;|endoftext|&gt;</code> などの OpenAI の特殊トークンは普通の文字列として数えます（7 トークン）。tiktoken の <code>encode_ordinary</code> と同じです。DeepSeek の <code>&lt;｜User｜&gt;</code> などは公式 tokenizer.json に従い 1 トークンです。</li>
+  <li>Claude、Gemini、GPT-6 の行は目安です。</li>
+  <li>DeepSeek のパッケージのサンプルは transformers で読み込みます。transformers 5.18.0 ではこのパッケージの中国語テキストが空のリストになりました。4.57.6 と tokenizers ライブラリは本ページと同じ結果です。</li>
+  <li>料金は 2026 年 10 月 1 日時点で、税、地域ごとの上乗せ、個別契約の割引は含みません。</li>
+</ul>
+
+<p>
+  関連ツール：文字数や単語数は<a href="/ja/tools/word-counter/">単語・文字数カウンター</a>、プロンプトに API キーが残っていないかは<a href="/ja/tools/secret-redactor/">APIキーマスキング</a>、バッチ用のファイルは <a href="/ja/tools/jsonl-converter/">JSONL コンバーター</a>で扱えます。
 </p>

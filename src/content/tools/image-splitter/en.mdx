@@ -45,6 +45,33 @@ In **Crop** mode, the tool picks the largest area that fits inside your image an
 
 Instagram shows a thin gap between grid posts. The tiles are cut edge to edge, so a thin line of the picture sits under each gap. For most photos this is not visible.
 
+## Worked Examples
+
+These numbers come from the tool's own layout functions.
+
+- **Cut lines.** A 4000 px wide image in 3 columns is cut at 0, 1333, 2667 and 4000 (tiles 1333, 1334 and 1333 px). A 4001 px image is cut at 0, 1334, 2667 and 4001 (1334, 1333, 1334). The extra pixels are spread across the row, not piled into the last tile.
+- **Posting order.** For a 3 × 3 profile grid, the posting numbers on the preview are:
+
+  ```text
+  9  8  7
+  6  5  4
+  3  2  1
+  ```
+
+  The tile in row `r` and column `c` (counted from 0) gets `(rows − 1 − r) × 3 + (2 − c) + 1`.
+- **When the posts come out soft.** A 3 × 3 set of 3:4 posts is 3240 × 4320 px. From a 4000 × 3000 landscape photo, the largest crop of that shape is 2250 × 3000, so the tiles are enlarged 1.44 times. The same photo as one row of three 3:4 posts (3240 × 1440) gives a 4000 × 1778 crop, which is scaled down and stays sharp.
+- **Carousel.** Five 4:5 slides form a 5400 × 1350 strip, a 4:1 shape; a 12000 × 3000 panorama fills it with no crop.
+- **Sprite sheet.** With tile size 32 × 32, margin 2 and spacing 1, the frames in each row start at x = 2, 35, 68 and 101. The same terms are used by the map editor Tiled in its [tileset format](https://doc.mapeditor.org/en/stable/reference/tmx-map-format/).
+
+## Common Problems
+
+- **The grid looks shifted after you post.** Every single post you add later moves all tiles one cell and breaks the rows; post in multiples of three to keep them aligned. Pinned posts sit at the top-left before your newest posts (Instagram allows up to three, [The Verge, June 2022](https://www.theverge.com/2022/6/7/23158443/instagram-profile-pin-three-posts-reels-tiktok-twitter)); unpin them before you check the result.
+- **The 3:4 grid ratio.** Instagram moved profile grids from squares to rectangles in January 2025 ([The Verge](https://www.theverge.com/2025/1/17/24346304/instagram-profile-grids-rectangles-squares)), and reports describe the tile as 3:4. We found no Instagram help page that states the ratio, so if a publishing tool refuses a 3:4 file, split again at 4:5.
+- **A script gives different tiles than this page.** Python 3 rounds halves to even: `round(2.5)` is 2, while JavaScript's `Math.round(2.5)` is 3. For 5 px in 2 columns, the middle cut is at 2 in Python and 3 here. Integer arithmetic, `(2 × i × L + n) // (2 × n)`, matches `Math.round`.
+- **ffmpeg drops a pixel row.** For JPEGs decoded with 4:2:0 chroma subsampling, ffmpeg's [`crop` filter](https://ffmpeg.org/ffmpeg-filters.html#crop) rounds size and position down to even values. In our test with ffmpeg 9.0.2, a 1334 × 1001 crop came out 1334 × 1000; adding `exact=1` gave 1334 × 1001.
+- **Phone photos come out sideways in other tools.** The browser applies the EXIF orientation when it decodes the image ([MDN: createImageBitmap](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap)), so tiles here come out upright. Pillow does not; call `ImageOps.exif_transpose` first. ImageMagick needs `-auto-orient`.
+- **Thin tiles at the right or bottom edge of a sprite sheet.** Margin applies at the top and left only. Turn on *Drop partial edge tiles*, or *Skip fully transparent tiles* when the border is transparent.
+
 ## File Names
 
 Tiles are named after the original file, so they sort correctly in any file manager:
