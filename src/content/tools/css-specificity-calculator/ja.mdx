@@ -7,11 +7,11 @@ faqItems:
   - question: "詳細度はどのように計算されますか？"
     answer: "a = IDセレクター数(#id)。b = クラス(.class)・属性([attr])・疑似クラス(:hover)の数。c = 要素型(div, span)・疑似要素(::before)の数。ユニバーサルセレクター(*)とコンビネータ(+, >, ~)は0です。"
   - question: "複数のセレクターを比較するには？"
-    answer: "カンマで区切って入力してください。ツールが各詳細度タプルを並べて表示します。左から順に比較し、最初に異なる列の値が大きい方が優先されます。"
+    answer: "2 つのセレクターをカンマ区切りで入力します。:is()・:where() の括弧内や属性値の引用符内のカンマでは分割しません。左の列から比較し、最初に異なる列で決まります。"
   - question: ":not()・:is()・:has()はどう扱われますか？"
-    answer: ":not()と:is()は引数の中で最も詳細度の高いセレクターを使用します。:where()は常に0です。:has()は引数の詳細度を使用します。このツールはこれらの疑似クラスを単純化して解析します。"
+    answer: ":is()・:not()・:has() は引数リストのうち最も詳細度が高いものを使うため、:is(.a, #b) は (1, 0, 0) です。:where() は常に 0。:nth-child(An+B of S) は疑似クラス 1 つに S の最大値を加えます。根拠は Selectors Level 4 §17 です。"
   - question: "インラインスタイルや!importantは含まれますか？"
-    answer: "インラインスタイル(style属性)は(a, b, c)より上位で、!importantはすべてを上書きします。このツールはセレクターの詳細度のみを計算します。"
+    answer: "含みません。詳細度はカスケードの 1 段階にすぎず、オリジンと重要度（!important）、カスケードレイヤー（@layer）、style 属性が先に比較されます（CSS Cascade 5 §6）。本ツールの結果は、それらが同じ場合の勝敗だけを決めます。"
 ---
 
 <h2>使い方</h2>
@@ -38,4 +38,26 @@ faqItems:
   <li><code>#id</code> → <code>(1, 0, 0)</code></li>
   <li><code>#id .class:hover</code> → <code>(1, 2, 0)</code></li>
   <li><code>div > p + span::before</code> → <code>(0, 0, 4)</code></li>
+</ul>
+
+<h2>関数型の疑似クラス</h2>
+<p>Selectors Level 4 §17 は次の疑似クラスに個別の規則を定めています。手計算で間違えやすいところです。</p>
+<ul>
+  <li><code>:is(.a, #b)</code> → <code>(1, 0, 0)</code>：要素が実際に <code>.a</code> に一致しても、引数のうち最も詳細度が高いものを使います。</li>
+  <li><code>:not(.a, .b.c)</code> → <code>(0, 2, 0)</code>：引数どうしは足さずに最大値を取ります。</li>
+  <li><code>article:has(> img, > .figure)</code> → <code>(0, 1, 1)</code></li>
+  <li><code>:where(#app .card) p</code> → <code>(0, 0, 1)</code>：<code>:where()</code> は常に 0 で、リセット CSS やライブラリが詳細度を下げるのに使います。</li>
+  <li><code>li:nth-child(2n+1)</code> → <code>(0, 1, 1)</code></li>
+  <li><code>li:nth-child(2n+1 of .important)</code> → <code>(0, 2, 1)</code>：疑似クラス 1 つに、<code>of</code> 以降の最大値を加えます。</li>
+  <li><code>a[href="#top"]</code> → <code>(0, 1, 1)</code>：引用符内の <code>#</code> は ID ではありません。</li>
+</ul>
+
+<h2>カスケードの中での詳細度</h2>
+<p>CSS Cascade Level 5 §6 では、オリジンと重要度、コンテキスト、style 属性、カスケードレイヤーの順に比べ、その後で詳細度と出現順を比べます。<code>!important</code> 付きの宣言や後ろの <code>@layer</code> にある宣言は、詳細度が高いセレクターにも勝ちます。</p>
+
+<h2>制限事項</h2>
+<ul>
+  <li>ネストセレクター <code>&amp;</code> はここでは 0 として数えます。実際の CSS では親ルールのセレクターリストの最大値になります（CSS Nesting §4）が、セレクター単体からは親ルールがわかりません。</li>
+  <li>構文だけを確認し、疑似クラス名が存在するかは確認しません。綴りを誤った <code>:hovr</code> も疑似クラス 1 つとして数えますが、ブラウザーはルール全体を無視します。</li>
+  <li>解析できない入力（閉じていない括弧や引用符、単独の <code>#</code> や <code>.</code>）は、理由と位置を結果カードに表示します。</li>
 </ul>

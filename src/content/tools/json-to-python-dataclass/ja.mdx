@@ -5,7 +5,7 @@ faqItems:
   - question: "このツールは何を生成しますか？"
     answer: "JSONからPythonクラス定義を生成します。標準の@dataclass（stdlib）、Pydantic v2 BaseModel、またはTypedDictから選択できます。各ネストオブジェクトは独自の名前付きクラスになります。"
   - question: "対応している出力モードは？"
-    answer: "3つのモード：@dataclass（Python stdlib、デフォルト）、Pydantic v2 BaseModel、TypedDict（Python 3.8+）。"
+    answer: "3つのモード：@dataclass（Python stdlib、デフォルト）、Pydantic v2 BaseModel、TypedDict（Python 3.8+。NotRequired を使う場合は 3.11+ か typing_extensions）。"
   - question: "JSONの型はPythonの型にどのようにマッピングされますか？"
     answer: "string→str、integer→int、float→float、boolean→bool、null→Optional[Any]、array→List[T]、ネストオブジェクト→別クラス。"
   - question: "フィールドはいつOptionalになりますか？"
@@ -88,13 +88,30 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 <ul>
   <li><strong>@dataclass</strong> は検証も変換もしません。<code>{"Root(**data)"}</code> ではネストしたオブジェクトはただの dict のままで、型が違っても受け付けます。信頼できるデータに使うか、ネストしたフィールドを自分で変換します。</li>
   <li><strong>Pydantic</strong> は型を検証し、ネストしたモデルを組み立てます。自分で管理していない API のレスポンスに向いています。<code>{"model_validate_json(raw)"}</code> でパースと検証を一度に行えます。</li>
-  <li><strong>TypedDict</strong> は型チェッカー向けに dict の型を書くだけで、実行時には何も確認しません。キーは既定ですべて必須なので、一部の要素にしかないキーは <code>{"Optional[str"}</code>] ではなく <code>{"NotRequired[str"}</code>]（Python 3.11 以降）にします。</li>
+  <li><strong>TypedDict</strong> は型チェッカー向けに dict の型を書くだけで、実行時には何も確認しません。キーは既定ですべて必須なので、ツールは一部の要素にしかないキーを <code>{"NotRequired[...]"}</code> にします（PEP 655。Python 3.11 以降は <code>typing</code>、それ以前は <code>typing_extensions</code>）。<code>{"Optional[...]"}</code> は値が <code>None</code> になりうることを表すだけで、キーは必須のままです。</li>
 </ul>
+
+<h2>例：キーが欠ける TypedDict</h2>
+
+<p><code>note</code> が 1 件目では null、2 件目では欠けていて、<code>discount</code> は 2 件目にしかない商品データ（ルートクラス名 <code>Product</code>、TypedDict モード）：</p>
+
+<pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`from typing import Any, NotRequired, Optional, TypedDict
+
+class Product(TypedDict):
+    id: int
+    sku: str
+    price: float
+    note: NotRequired[Optional[Any]]
+    discount: NotRequired[float]`}</code></pre>
+
+<p><code>price</code> は <code>2</code> と <code>1.5</code> です。PEP 484 では <code>int</code> を <code>float</code> として扱えるので、型は <code>float</code> になります。実行時の <code>Product.__required_keys__</code> は <code>{"{'id', 'sku', 'price'}"}</code>、<code>__optional_keys__</code> は <code>{"{'note', 'discount'}"}</code> です（Python 3.12 で確認）。</p>
 
 <h2>制限</h2>
 
 <ul>
-  <li><code>{"null"}</code> は <code>{"Optional[Any"}</code>] になります。<code>{"Any"}</code> を実際の型に置き換えてください。</li>
+  <li><code>{"null"}</code> は <code>{"Optional[Any]"}</code> になります。<code>{"Any"}</code> を実際の型に置き換えてください。</li>
   <li>Python の識別子として使えないキー（<code>{"user-id"}</code> や <code>{"class"}</code> のような予約語）は名前を変え、Pydantic では <code>{"Field(alias=\"user-id\")"}</code> を付けます。</li>
   <li>日付は <code>{"str"}</code> のままです。型を <code>{"datetime"}</code> に変えれば Pydantic が ISO 8601 文字列を変換します。</li>
   <li>ルートがプリミティブの配列のときはクラスを生成しません。</li>

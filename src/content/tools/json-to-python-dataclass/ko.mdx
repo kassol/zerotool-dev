@@ -5,7 +5,7 @@ faqItems:
   - question: "이 도구는 무엇을 생성하나요?"
     answer: "JSON에서 Python 클래스 정의를 생성합니다. 표준 @dataclass(stdlib), Pydantic v2 BaseModel, 또는 TypedDict 중에서 선택할 수 있습니다. 각 중첩 객체는 자체 명명된 클래스가 됩니다."
   - question: "어떤 출력 모드를 지원하나요?"
-    answer: "세 가지 모드: @dataclass(Python stdlib, 기본값), Pydantic v2 BaseModel, TypedDict(Python 3.8+)."
+    answer: "세 가지 모드: @dataclass(Python stdlib, 기본값), Pydantic v2 BaseModel, TypedDict(Python 3.8+, NotRequired를 쓰면 3.11+ 또는 typing_extensions)."
   - question: "JSON 타입은 Python 타입에 어떻게 매핑되나요?"
     answer: "string→str, integer→int, float→float, boolean→bool, null→Optional[Any], array→List[T], 중첩 객체→별도 클래스."
   - question: "필드가 Optional이 되는 경우는?"
@@ -88,13 +88,30 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 <ul>
   <li><strong>@dataclass</strong>는 검증도 변환도 하지 않습니다. <code>{"Root(**data)"}</code>에서 중첩 객체는 그냥 dict로 남고, 타입이 달라도 받아들입니다. 믿을 수 있는 데이터에 쓰거나 중첩 필드를 직접 변환하세요.</li>
   <li><strong>Pydantic</strong>은 타입을 검증하고 중첩 모델을 만듭니다. 직접 관리하지 않는 API 응답에 적합합니다. <code>{"model_validate_json(raw)"}</code>로 파싱과 검증을 한 번에 합니다.</li>
-  <li><strong>TypedDict</strong>는 타입 검사기에 dict 구조를 알려 줄 뿐 실행 시에는 아무것도 확인하지 않습니다. 모든 키가 기본적으로 필수이므로 일부 항목에만 있는 키는 <code>{"Optional[str"}</code>]이 아니라 <code>{"NotRequired[str"}</code>](Python 3.11+)로 표시해야 합니다.</li>
+  <li><strong>TypedDict</strong>는 타입 검사기에 dict 구조를 알려 줄 뿐 실행 시에는 아무것도 확인하지 않습니다. 모든 키가 기본적으로 필수이므로 도구는 일부 항목에만 있는 키를 <code>{"NotRequired[...]"}</code>로 씁니다(PEP 655, Python 3.11+는 <code>typing</code>, 그 이전은 <code>typing_extensions</code>). <code>{"Optional[...]"}</code>은 값이 <code>None</code>일 수 있다는 뜻일 뿐이고 키는 여전히 필수입니다.</li>
 </ul>
+
+<h2>예시: 키가 빠지는 TypedDict</h2>
+
+<p><code>note</code>가 첫 항목에서는 null, 둘째 항목에서는 없고, <code>discount</code>는 둘째 항목에만 있는 상품 데이터(루트 클래스 이름 <code>Product</code>, TypedDict 모드):</p>
+
+<pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`from typing import Any, NotRequired, Optional, TypedDict
+
+class Product(TypedDict):
+    id: int
+    sku: str
+    price: float
+    note: NotRequired[Optional[Any]]
+    discount: NotRequired[float]`}</code></pre>
+
+<p><code>price</code>는 <code>2</code>와 <code>1.5</code>입니다. PEP 484는 <code>int</code>를 <code>float</code> 자리에 쓸 수 있게 하므로 타입은 <code>float</code>입니다. 실행 시 <code>Product.__required_keys__</code>는 <code>{"{'id', 'sku', 'price'}"}</code>, <code>__optional_keys__</code>는 <code>{"{'note', 'discount'}"}</code>입니다(Python 3.12에서 확인).</p>
 
 <h2>제한</h2>
 
 <ul>
-  <li><code>{"null"}</code>은 <code>{"Optional[Any"}</code>]가 됩니다. <code>{"Any"}</code>를 실제 타입으로 바꾸세요.</li>
+  <li><code>{"null"}</code>은 <code>{"Optional[Any]"}</code>가 됩니다. <code>{"Any"}</code>를 실제 타입으로 바꾸세요.</li>
   <li>Python 식별자로 쓸 수 없는 키(<code>{"user-id"}</code>나 <code>{"class"}</code> 같은 예약어)는 이름을 바꾸고, Pydantic에서는 <code>{"Field(alias=\"user-id\")"}</code>를 붙입니다.</li>
   <li>날짜는 <code>{"str"}</code>로 남습니다. 타입을 <code>{"datetime"}</code>으로 바꾸면 Pydantic이 ISO 8601 문자열을 변환합니다.</li>
   <li>루트가 기본 타입 배열이면 클래스를 만들지 않습니다.</li>

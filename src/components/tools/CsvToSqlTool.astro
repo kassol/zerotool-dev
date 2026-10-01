@@ -23,6 +23,10 @@
         <option value="individual" data-i18n="individualMode">Individual INSERT</option>
       </select>
     </div>
+    <label class="cts-check">
+      <input id="cts-create" type="checkbox" />
+      <span data-i18n="createTable">Add CREATE TABLE</span>
+    </label>
   </div>
 
   {/* CSV input */}
@@ -67,6 +71,8 @@
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: 'No valid data found. Please check your CSV input.',
           errNoHeader: 'CSV must have a header row.',
+          createTable: 'Add CREATE TABLE',
+          addedColumns: 'Some rows have more cells than the header; added columns: {cols}.',
         },
         zh: {
           csvLabel: 'CSV \u8f93\u5165',
@@ -82,6 +88,8 @@
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: '\u672a\u627e\u5230\u6709\u6548\u6570\u636e\uff0c\u8bf7\u68c0\u67e5 CSV \u8f93\u5165\u3002',
           errNoHeader: 'CSV \u5fc5\u987b\u5305\u542b\u8868\u5934\u884c\u3002',
+          createTable: '添加 CREATE TABLE',
+          addedColumns: '部分行的单元格比表头多，已补充列：{cols}。',
         },
         ja: {
           csvLabel: 'CSV \u5165\u529b',
@@ -97,6 +105,8 @@
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: '\u30c7\u30fc\u30bf\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002CSV\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
           errNoHeader: 'CSV\u306b\u306f\u30d8\u30c3\u30c0\u30fc\u884c\u304c\u5fc5\u8981\u3067\u3059\u3002',
+          createTable: 'CREATE TABLE を追加',
+          addedColumns: 'ヘッダーより多いセルがある行のため、列を追加しました：{cols}。',
         },
         ko: {
           csvLabel: 'CSV \uc785\ub825',
@@ -112,6 +122,8 @@
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: '\uc720\ud6a8\ud55c \ub370\uc774\ud130\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4. CSV\ub97c \ud655\uc778\ud558\uc138\uc694.',
           errNoHeader: 'CSV\uc5d0\ub294 \ud5e4\ub354 \ud589\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.',
+          createTable: 'CREATE TABLE 추가',
+          addedColumns: '헤더보다 셀이 많은 행이 있어 열을 추가했습니다: {cols}.',
         },
       };
 
@@ -132,6 +144,7 @@
       var copyBtn    = document.getElementById('cts-copy');
       var fileInput  = document.getElementById('cts-file-input');
       var statusEl   = document.getElementById('cts-status');
+      var createEl   = document.getElementById('cts-create');
 
       csvEl.placeholder = t.placeholder;
 
@@ -144,6 +157,7 @@
         statusEl.className = 'cts-status';
       }
 
+      /* ── engine:start ── */
       /* ── CSV parser (same logic as CsvJsonTool) ── */
       function parseCsv(text) {
         var rows = [];
@@ -217,90 +231,111 @@
         return '"' + name.replace(/"/g, '""') + '"';
       }
 
-      function quoteValue(val) {
-        // empty string → NULL
-        if (val === '') return 'NULL';
-        // pure numeric (int or float) → no quotes
-        if (/^-?\d+(\.\d+)?$/.test(val)) return val;
-        // string → single-quote, escape single quotes as ''
-        return "'" + val.replace(/'/g, "''") + "'";
+      /* A column is numeric when every non-empty cell in it is a plain number; its cells are
+         written unquoted. A cell is a plain number only when the database reads it back as the same text:
+         no leading zeros (02134 would become 2134), no sign or exponent forms, at most 15
+         digits (more would lose digits in SQLite REAL / JavaScript numbers). Everything else is
+         a quoted string, which MySQL, PostgreSQL and SQLite all convert for numeric columns. */
+      function isPlainNumber(val) {
+        return /^-?(0|[1-9]\d*)(\.\d+)?$/.test(val) && val.replace(/\D/g, '').length <= 15;
       }
 
-      /* ── Main conversion ── */
+      /* MySQL's default mode reads backslash escapes in string literals (MySQL manual,
+         "String Literals", Table 11.1), so backslashes are doubled. PostgreSQL (with
+         standard_conforming_strings on, the default since 9.1) and SQLite treat backslash
+         as an ordinary character. */
+      function quoteValue(val, dialect, numeric) {
+        if (val === '') return 'NULL';
+        if (numeric && isPlainNumber(val)) return val;
+        var s = val.replace(/'/g, "''");
+        if (dialect === 'mysql') s = s.replace(/\\/g, '\\\\');
+        return "'" + s + "'";
+      }
+
+      function columnType(values, dialect) {
+        var present = values.filter(function (v) { return v !== ''; });
+        if (!present.length || !present.every(isPlainNumber)) return 'TEXT';
+        if (present.some(function (v) { return v.indexOf('.') >= 0; })) {
+          return dialect === 'mysql' ? 'DOUBLE' : dialect === 'postgresql' ? 'DOUBLE PRECISION' : 'REAL';
+        }
+        var big = present.some(function (v) { return Number(v) > 2147483647 || Number(v) < -2147483648; });
+        if (dialect === 'sqlite') return 'INTEGER';
+        if (big) return 'BIGINT';
+        return dialect === 'mysql' ? 'INT' : 'INTEGER';
+      }
+
+      /* opts: { dialect, table, mode: 'batch' | 'individual', createTable }.
+         Returns { sql, addedColumns } or { error: 'noData' | 'noHeader' }. Cells beyond the header
+         get columns named column_N (N = position), so no value is dropped. */
+      function csvToSql(text, opts) {
+        var rows = parseCsv(text.trim()).filter(function (r) {
+          return r.some(function (c) { return c !== ''; });
+        });
+        if (rows.length === 0) return { error: 'noData' };
+        var headers = rows[0].slice();
+        if (headers.every(function (h) { return h === ''; })) return { error: 'noHeader' };
+        var dataRows = rows.slice(1);
+        if (dataRows.length === 0) return { error: 'noData' };
+
+        var width = dataRows.reduce(function (w, r) { return Math.max(w, r.length); }, headers.length);
+        var addedColumns = [];
+        for (var c = headers.length; c < width; c++) {
+          var name = 'column_' + (c + 1);
+          while (headers.indexOf(name) >= 0) name += '_';
+          headers.push(name);
+          addedColumns.push(name);
+        }
+
+        var dialect = opts.dialect;
+        var qTable = quoteIdent(opts.table || 'my_table', dialect);
+        var qCols = headers.map(function (h) { return quoteIdent(h, dialect); }).join(', ');
+        var lines = [];
+        function cell(row, ci) { return row[ci] !== undefined ? row[ci] : ''; }
+        var numeric = headers.map(function (_, ci) {
+          return dataRows.every(function (r) { var v = cell(r, ci); return v === '' || isPlainNumber(v); });
+        });
+        function tuple(row) {
+          return '(' + headers.map(function (_, ci) { return quoteValue(cell(row, ci), dialect, numeric[ci]); }).join(', ') + ')';
+        }
+
+        if (opts.createTable) {
+          var defs = headers.map(function (h, ci) {
+            return quoteIdent(h, dialect) + ' ' + columnType(dataRows.map(function (r) { return cell(r, ci); }), dialect);
+          });
+          lines.push('CREATE TABLE ' + qTable + ' (' + defs.join(', ') + ');');
+        }
+        if (opts.mode === 'individual') {
+          dataRows.forEach(function (row) {
+            lines.push('INSERT INTO ' + qTable + ' (' + qCols + ') VALUES ' + tuple(row) + ';');
+          });
+        } else {
+          lines.push('INSERT INTO ' + qTable + ' (' + qCols + ') VALUES');
+          lines.push(dataRows.map(function (row) { return '  ' + tuple(row); }).join(',\n') + ';');
+        }
+        return { sql: lines.join('\n'), addedColumns: addedColumns };
+      }
+      /* ── engine:end ── */
+
       function convert() {
-        var raw = csvEl.value.trim();
-        if (!raw) {
+        if (!csvEl.value.trim()) {
           sqlEl.value = '';
           clearStatus();
           return;
         }
-
-        var rows = parseCsv(raw);
-
-        // Filter completely empty rows
-        rows = rows.filter(function (r) {
-          return r.some(function (c) { return c !== ''; });
+        var r = csvToSql(csvEl.value, {
+          dialect: dialectEl.value,
+          table: tableEl.value.trim() || 'my_table',
+          mode: modeEl.value,
+          createTable: createEl.checked,
         });
-
-        if (rows.length === 0) {
-          setStatus(t.errNoData, true);
+        if (r.error) {
+          setStatus(r.error === 'noHeader' ? t.errNoHeader : t.errNoData, true);
           sqlEl.value = '';
           return;
         }
-        if (rows.length < 1) {
-          setStatus(t.errNoHeader, true);
-          sqlEl.value = '';
-          return;
-        }
-
-        var headers = rows[0];
-        if (headers.length === 0 || headers.every(function (h) { return h === ''; })) {
-          setStatus(t.errNoHeader, true);
-          sqlEl.value = '';
-          return;
-        }
-
-        var dataRows = rows.slice(1).filter(function (r) {
-          return r.some(function (c) { return c !== ''; });
-        });
-
-        if (dataRows.length === 0) {
-          setStatus(t.errNoData, true);
-          sqlEl.value = '';
-          return;
-        }
-
-        var dialect  = dialectEl.value;
-        var table    = tableEl.value.trim() || 'my_table';
-        var mode     = modeEl.value;
-
-        var qTable   = quoteIdent(table, dialect);
-        var qCols    = headers.map(function (h) { return quoteIdent(h, dialect); }).join(', ');
-        var lines    = [];
-
-        if (mode === 'batch') {
-          var valueSets = dataRows.map(function (row) {
-            var vals = headers.map(function (_, ci) {
-              var cell = row[ci] !== undefined ? row[ci] : '';
-              return quoteValue(cell);
-            });
-            return '  (' + vals.join(', ') + ')';
-          });
-          lines.push('INSERT INTO ' + qTable + ' (' + qCols + ') VALUES');
-          lines.push(valueSets.join(',\n') + ';');
-        } else {
-          for (var ri = 0; ri < dataRows.length; ri++) {
-            var row = dataRows[ri];
-            var vals = headers.map(function (_, ci) {
-              var cell = row[ci] !== undefined ? row[ci] : '';
-              return quoteValue(cell);
-            });
-            lines.push('INSERT INTO ' + qTable + ' (' + qCols + ') VALUES (' + vals.join(', ') + ');');
-          }
-        }
-
-        sqlEl.value = lines.join('\n');
-        clearStatus();
+        sqlEl.value = r.sql;
+        if (r.addedColumns.length) setStatus(t.addedColumns.replace('{cols}', r.addedColumns.join(', ')), false);
+        else clearStatus();
         window.trackTool && window.trackTool('csv_to_sql', 'convert');
       }
 
@@ -315,6 +350,7 @@
       dialectEl.addEventListener('change', convert);
       tableEl.addEventListener('input', scheduleConvert);
       modeEl.addEventListener('change', convert);
+      createEl.addEventListener('change', convert);
 
       /* ── File upload ── */
       fileInput.addEventListener('change', function () {
@@ -379,6 +415,16 @@
     outline: none;
     border-color: var(--color-primary);
     background: var(--color-bg);
+  }
+
+  .cts-check {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2.3rem;
+    font-size: 0.88rem;
+    color: var(--color-text);
+    cursor: pointer;
   }
 
   .cts-panel { display: flex; flex-direction: column; gap: 0.4rem; }

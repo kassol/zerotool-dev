@@ -5,7 +5,7 @@ faqItems:
   - question: "What does this tool generate?"
     answer: "It generates Python class definitions from JSON. Choose between standard @dataclass (stdlib), Pydantic v2 BaseModel, or TypedDict. Each nested object becomes its own named class."
   - question: "What output modes are supported?"
-    answer: "Three modes: @dataclass (Python stdlib, default), Pydantic v2 BaseModel, and TypedDict (Python 3.8+)."
+    answer: "Three modes: @dataclass (Python stdlib, default), Pydantic v2 BaseModel, and TypedDict (Python 3.8+; NotRequired needs 3.11+ or typing_extensions)."
   - question: "How are JSON types mapped to Python types?"
     answer: "string → str, integer → int, float → float, boolean → bool, null → Optional[Any], array → List[T], nested object → separate class."
   - question: "When are fields marked as Optional?"
@@ -88,13 +88,30 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 <ul>
   <li><strong>@dataclass</strong> does not validate or convert. <code>{"Root(**data)"}</code> keeps nested objects as plain dicts and accepts wrong types. Use it when the data is already trusted, or convert nested fields yourself.</li>
   <li><strong>Pydantic</strong> validates types and builds nested models; use it for API responses you do not control. <code>{"model_validate_json(raw)"}</code> parses and validates in one step.</li>
-  <li><strong>TypedDict</strong> only describes dict types for a type checker; nothing is checked at runtime. Every key is required by default, so a key that is missing in some items should be marked <code>{"NotRequired[str"}</code>] (Python 3.11+) instead of <code>{"Optional[str"}</code>].</li>
+  <li><strong>TypedDict</strong> only describes dict types for a type checker; nothing is checked at runtime. Every key is required by default, so the tool marks a key that is missing from some items as <code>{"NotRequired[...]"}</code> (PEP 655, <code>typing</code> in Python 3.11+, <code>typing_extensions</code> before that). <code>{"Optional[...]"}</code> only means the value may be <code>None</code>; the key would still be required.</li>
 </ul>
+
+<h2>Example: TypedDict with Missing Keys</h2>
+
+<p>Two products where <code>note</code> is null in the first and absent from the second, and <code>discount</code> only appears in the second (root class name <code>Product</code>, TypedDict mode):</p>
+
+<pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`from typing import Any, NotRequired, Optional, TypedDict
+
+class Product(TypedDict):
+    id: int
+    sku: str
+    price: float
+    note: NotRequired[Optional[Any]]
+    discount: NotRequired[float]`}</code></pre>
+
+<p><code>price</code> is <code>2</code> in one item and <code>1.5</code> in the other; PEP 484 lets an <code>int</code> stand in for a <code>float</code>, so the field is <code>float</code>. At runtime <code>Product.__required_keys__</code> is <code>{"{'id', 'sku', 'price'}"}</code> and <code>__optional_keys__</code> is <code>{"{'note', 'discount'}"}</code> (checked with Python 3.12). A type checker then accepts a product without <code>discount</code> and rejects one without <code>sku</code> (mypy 2.3.1: Missing key "sku" for TypedDict "Product").</p>
 
 <h2>Limits</h2>
 
 <ul>
-  <li><code>{"null"}</code> becomes <code>{"Optional[Any"}</code>]; replace <code>{"Any"}</code> with the real type.</li>
+  <li><code>{"null"}</code> becomes <code>{"Optional[Any]"}</code>; replace <code>{"Any"}</code> with the real type.</li>
   <li>Keys that are not valid Python identifiers (for example <code>{"user-id"}</code> or keywords such as <code>{"class"}</code>) need renaming, plus <code>{"Field(alias=\"user-id\")"}</code> in Pydantic.</li>
   <li>Dates stay <code>{"str"}</code>; Pydantic converts ISO 8601 strings if you change the type to <code>{"datetime"}</code>.</li>
   <li>Arrays of primitives at the root generate no class.</li>

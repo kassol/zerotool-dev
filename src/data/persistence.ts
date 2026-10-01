@@ -49,6 +49,7 @@ export const toolPersistencePolicy = {
   'image-splitter': 'preference',
   'string-escape': 'preference',
   'color-palette-generator': 'preference',
+  'number-base': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)
