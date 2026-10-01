@@ -255,6 +255,21 @@ if (E) {
   eq('path match: ./ prefix and folder suffix', E.verify(P(H256 + '  ./iso/empty.bin'), [f('a', 'downloads/iso/empty.bin', { 'SHA-256': H256 })]).files.a.notes[0].code, 'okNamed');
   eq('path match: Windows separators', E.verify(P(H256 + '  iso\\empty.bin'), [f('a', 'iso/empty.bin', { 'SHA-256': H256 })]).files.a.status, 'ok');
   eq('path match: case-insensitive fallback', E.verify(P(H256 + '  EMPTY.BIN'), [f('a', 'empty.bin', { 'SHA-256': H256 })]).files.a.status, 'ok');
+  // Same base name in several folders of a list (Firefox SHA512SUMS: win64/ja/… and win64/ko/…):
+  // a file chosen without its folder must be compared with every entry of that name.
+  const ffList = P(SHA512A + '  win64/ja/Firefox Setup 157.0.exe\n' + SHA512A.replace('d', 'e') + '  win64/ko/Firefox Setup 157.0.exe\n', 'SHA512SUMS');
+  const vff = E.verify(ffList, [f('a', 'Firefox Setup 157.0.exe', { 'SHA-512': SHA512A.replace('d', 'e') })]);
+  eq('same base name in two folders: the matching entry wins', [vff.files.a.status, vff.files.a.notes[0].name], ['ok', 'win64/ko/Firefox Setup 157.0.exe']);
+  const vff2 = E.verify(ffList, [f('a', 'ja/Firefox Setup 157.0.exe', { 'SHA-512': SHA512A.replace('d', 'e') })]);
+  eq('a longer path picks its own entry', vff2.files.a.status, 'fail');
+  const hOf = (i) => createHash('sha256').update(String(i)).digest('hex');
+  const many = P(Array.from({ length: 5000 }, (_, i) => hOf(i) + '  dir/file-' + i + '.bin').join('\n'));
+  const manyFiles = Array.from({ length: 1000 }, (_, i) => f('k' + i, 'file-' + i + '.bin', { 'SHA-256': hOf(i) }));
+  const t0 = performance.now();
+  const vm2 = E.verify(many, manyFiles);
+  const ms = performance.now() - t0;
+  check('5,000-line list × 1,000 files verifies in under 1 s', ms < 1000, ms.toFixed(0) + ' ms');
+  eq('5,000-line list × 1,000 files', [vm2.summary.ok, vm2.summary.missing], [1000, 4000]);
   const v6 = E.verify(P(H256), [f('a', 'x', { 'SHA-256': H256B }), f('b', 'y', { 'SHA-256': H256B })]);
   eq('bare value with several files: none match', [v6.files.a.status, v6.summary.bareNoMatch], ['nomatch', 1]);
   const v7 = E.verify(P(H256), [f('a', 'x', { 'SHA-256': H256B }), f('b', 'y', { 'SHA-256': H256 })]);
