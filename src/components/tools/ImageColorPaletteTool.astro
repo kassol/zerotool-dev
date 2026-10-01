@@ -12,6 +12,7 @@ const STRINGS = {
     dropHintShort: 'or paste an image',
     dropActive: 'Drop the image to extract its colors',
     colors: 'Colors',
+    more: 'Options',
     sort: 'Sort',
     sortShare: 'Share',
     sortHue: 'Hue',
@@ -74,6 +75,7 @@ const STRINGS = {
     dropHintShort: '或粘贴图片',
     dropActive: '松开即可提取颜色',
     colors: '颜色数',
+    more: '选项',
     sort: '排序',
     sortShare: '占比',
     sortHue: '色相',
@@ -136,6 +138,7 @@ const STRINGS = {
     dropHintShort: 'または画像を貼り付け',
     dropActive: 'ドロップすると色を抽出します',
     colors: '色数',
+    more: 'オプション',
     sort: '並べ替え',
     sortShare: '割合',
     sortHue: '色相',
@@ -198,6 +201,7 @@ const STRINGS = {
     dropHintShort: '또는 이미지 붙여 넣기',
     dropActive: '놓으면 색을 추출합니다',
     colors: '색 수',
+    more: '옵션',
     sort: '정렬',
     sortShare: '비율',
     sortHue: '색상',
@@ -280,6 +284,9 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
           <input id="icp-k" type="range" min="2" max="16" step="1" value="6" />
           <output id="icp-k-out" for="icp-k">6</output>
         </label>
+        <details class="icp-more" id="icp-more" open>
+        <summary class="icp-more-sum">{T.more}</summary>
+        <div class="icp-more-body">
         <label class="icp-ctl">
           <span class="icp-ctl-label">{T.sort}</span>
           <select id="icp-sort" class="icp-select">
@@ -298,6 +305,8 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
         <label class="icp-check"><input id="icp-vivid" type="checkbox" checked /> <span>{T.vivid}</span></label>
         <label class="icp-check"><input id="icp-white" type="checkbox" /> <span>{T.ignoreWhite}</span></label>
         <label class="icp-check"><input id="icp-black" type="checkbox" /> <span>{T.ignoreBlack}</span></label>
+        </div>
+        </details>
       </div>
       <div class="icp-bar" id="icp-bar" role="img" aria-label={T.barAria}></div>
       <ol class="icp-palette" id="icp-palette"></ol>
@@ -870,6 +879,11 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
       sortSel.value = state.sort; pickSel.value = state.pick;
       vividCb.checked = state.vivid; whiteCb.checked = state.ignoreWhite; blackCb.checked = state.ignoreBlack;
       codeSel.value = state.code; valuesSel.value = state.values;
+      // Options stay open on wide screens; on phones they fold under one summary line.
+      var narrow = window.matchMedia && window.matchMedia('(max-width: 860px)');
+      function syncMore() { $('icp-more').open = !(narrow && narrow.matches); }
+      syncMore();
+      if (narrow && narrow.addEventListener) narrow.addEventListener('change', syncMore);
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg || '';
@@ -939,7 +953,7 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
           setStatus(fill(t.readFailed, { name: name, msg: e.message || e.name }), 'error');
           return false;
         }
-        img = { name: name, w: w, h: h, sw: s.w, sh: s.h, hist: buildHistogram(data), gamut: gamutShare(source, s.w, s.h) };
+        var current = img = { name: name, w: w, h: h, sw: s.w, sh: s.h, hist: buildHistogram(data), gamut: 0 };
         // preview: at most 960 px on the longer side, smoothed
         var pk = Math.min(1, 960 / Math.max(w, h));
         var pw = Math.max(1, Math.round(w * pk)), ph = Math.max(1, Math.round(h * pk));
@@ -952,8 +966,21 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
         main.hidden = false;
         exportEl.hidden = false;
         recompute(okMsg || '');
-        var r = main.getBoundingClientRect();
-        if (r.top > window.innerHeight * 0.75) window.scrollBy({ top: r.top - 80, behavior: 'auto' });
+        // The Display P3 check redraws the image with color conversion (about 0.35 s for a
+        // 28-megapixel photo), so it runs after the palette is on screen.
+        setTimeout(function () {
+          if (img !== current) return;
+          current.gamut = gamutShare(source, s.w, s.h);
+          if (current.gamut >= 0.001) render(okMsg || '');
+        }, 50);
+        // Bring the first swatches into view (phones): the compact drop bar goes just below the
+        // sticky site header.
+        var chip = paletteEl.querySelector('.icp-chip');
+        if (chip && chip.getBoundingClientRect().bottom > window.innerHeight) {
+          var header = document.querySelector('header');
+          var offset = header && /sticky|fixed/.test(getComputedStyle(header).position) ? header.getBoundingClientRect().bottom : 0;
+          window.scrollBy({ top: drop.getBoundingClientRect().top - offset - 8, behavior: 'auto' });
+        }
         return true;
       }
 
@@ -974,9 +1001,14 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
           var w = image.naturalWidth, h = image.naturalHeight;
           if (gen !== loadGen) { URL.revokeObjectURL(url); return; }
           if (!w || !h) { URL.revokeObjectURL(url); setStatus(fill(t.imgError, { name: name }), 'error'); return; }
-          var ok = setImage(image, w, h, name, '');
-          URL.revokeObjectURL(url);
-          if (ok) track('extract');
+          // decode() decodes off the main thread, so drawImage below does not block on a large JPEG.
+          var decoded = image.decode ? image.decode() : Promise.resolve();
+          decoded.catch(function () {}).then(function () {
+            if (gen !== loadGen) { URL.revokeObjectURL(url); return; }
+            var ok = setImage(image, w, h, name, '');
+            URL.revokeObjectURL(url);
+            if (ok) track('extract');
+          });
         };
         image.onerror = function () {
           URL.revokeObjectURL(url);
@@ -1267,7 +1299,7 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
   }
   .icp-ctl { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; color: var(--color-text-secondary); }
   .icp-ctl-label { font-weight: 600; color: var(--color-text); white-space: nowrap; }
-  .icp-ctl-k input { width: 110px; accent-color: var(--color-primary); }
+  .icp-ctl-k input { width: 110px; margin: 0 0 0 0.25rem; accent-color: var(--color-primary); }
   .icp-ctl-k output { min-width: 1.6em; font-family: var(--font-mono); font-weight: 700; color: var(--color-primary); }
   .icp-select {
     min-height: 34px;
@@ -1281,6 +1313,9 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
   .icp-select:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light); }
+  .icp-more { display: contents; }
+  .icp-more-sum { display: none; }
+  .icp-more-body { display: contents; }
   .icp-check { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--color-text-secondary); cursor: pointer; }
 
   .icp-bar {
@@ -1352,8 +1387,8 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
   }
   @media (hover: hover) { .icp-val:hover { background: var(--color-bg-secondary); } }
   .icp-val:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 0; }
-  .icp-links { display: flex; gap: 0.75rem; padding: 0.15rem 0.65rem 0.5rem; font-size: 0.78rem; }
-  .icp-link { color: var(--color-primary); text-decoration: none; }
+  .icp-links { display: flex; flex-wrap: wrap; gap: 0.1rem 0.75rem; padding: 0.15rem 0.65rem 0.5rem; font-size: 0.78rem; }
+  .icp-link { color: var(--color-primary); text-decoration: none; white-space: nowrap; }
   .icp-link:hover, .icp-link:focus-visible { text-decoration: underline; }
 
   .icp-preview { margin: 0; display: flex; flex-direction: column; gap: 0.4rem; position: sticky; top: 1rem; }
@@ -1403,6 +1438,17 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
 
   @media (max-width: 860px) {
     .icp-main { grid-template-columns: minmax(0, 1fr); }
+    .icp-more { display: block; flex-basis: 100%; }
+    .icp-more-sum {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--color-text);
+    }
+    .icp-more-body { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; padding-bottom: 0.25rem; }
     .icp-preview { position: static; }
     .icp-canvas { max-height: 300px; width: auto; max-width: 100%; margin: 0 auto; }
   }
