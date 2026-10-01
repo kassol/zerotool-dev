@@ -4,7 +4,7 @@
 //        the `engine:start` / `engine:end` markers, the frontmatter STRINGS table and FONT_NAMES),
 //        public/figlet-fonts/*.flf (the fonts the page loads),
 //        scripts/test-text-to-ascii-art.fixtures.json (figlet 2.2.5 output hashes),
-//        package.json
+//        src/content/tools/text-to-ascii-art/{en,zh,ja,ko}.mdx (annotated examples), package.json
 // Write: stdout only (test results). With --regenerate only: the fixtures file, plus temporary
 //        files under os.tmpdir() that are removed afterwards.
 // Exit:  0 if all PASS, 1 if any FAIL
@@ -24,7 +24,8 @@
 // are left-to-right with rows of equal width, characters reported as skipped render like a
 // missing character, tab becomes a space, copy formats (Markdown fence longer than any run of
 // backticks, # and // comments, heredoc delimiter that no line equals, trimming), download
-// names, PNG size limits, the input limit and its render time, the 4 language STRINGS tables.
+// names, PNG size limits, the input limit and its render time, every annotated example and the
+// width table in the four tool pages, the 4 language STRINGS tables.
 //
 // Run:        node scripts/test-text-to-ascii-art.mjs
 // Regenerate: node scripts/test-text-to-ascii-art.mjs --regenerate /path/to/figlet-2.2.5
@@ -98,6 +99,8 @@ const COMMAND_CASES = [
   ['Shadow', 'default', 60, 'two words'],
   ['Doom', 'default', 0, 'Hi\n'],
   ['Small', 'default', 80, 'a  b'],
+  ['Banner', 'default', 0, 'テスト'],
+  ['Standard', 'full', 0, 'Qiita'],
 ];
 
 // ---------- --regenerate ----------
@@ -286,6 +289,33 @@ eq('input limit', E.MAX_INPUT, 2000);
   for (const n of fontNames) E.renderFiglet(fonts[n], long, { layout: 'overlap' });
   const ms = performance.now() - t0;
   check('12 fonts × ' + E.MAX_INPUT + ' characters without a width limit in under 1.5 s (' + Math.round(ms) + ' ms)', ms < 1500);
+}
+
+// ---------- examples in the tool pages ----------
+// Each art block in the pages is preceded by {/* figlet: {...} */} with font, layout, width,
+// text and trim; the block must equal the engine output.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = readFileSync(join(root, 'src/content/tools/text-to-ascii-art/' + lang + '.mdx'), 'utf8');
+  const re = /\{\/\* figlet: (\{.*?\}) \*\/\}\n+```text\n([\s\S]*?)\n```/g;
+  let m, count = 0;
+  while ((m = re.exec(mdx))) {
+    count++;
+    const o = JSON.parse(m[1]);
+    const lines = E.renderFiglet(fonts[o.font], o.text, { layout: o.layout || 'default', width: o.width || 0 });
+    eq(lang + ' page example ' + count + ' (' + o.font + ', ' + JSON.stringify(o.text) + ')', m[2], E.formatOutput(lines, 'plain', true));
+  }
+  check(lang + ' page has at least 3 annotated examples', count >= 3, count);
+  // Width table rows: | Font | lines | columns | letters of ABC…Z per block at width 80 |
+  const rows = [...mdx.matchAll(/^\| (Standard|Banner|Big|Block|Doom|Lean|Mini|Script|Shadow|Slant|Small|3D-ASCII) \| (\d+) \| (\d+) \| (\d+) \|$/gm)];
+  check(lang + ' page has a width table', rows.length >= 7, rows.length);
+  for (const r of rows) {
+    const f = r[1];
+    const t = E.formatOutput(E.renderFiglet(fonts[f], 'Hello World', {}), 'plain', true).split('\n');
+    let k = 0;
+    for (let i = 1; i <= 26; i++) { if (E.renderFiglet(fonts[f], ASCII.slice(32, 32 + i), { width: 80 }).length === fonts[f].height) k = i; else break; }
+    eq(lang + ' width table ' + f, [Number(r[2]), Number(r[3]), Number(r[4])], [t.length, Math.max(...t.map((l) => l.length)), k]);
+  }
+  check(lang + ' page has no unannotated ```text block', (mdx.match(/```text\n/g) || []).length === count);
 }
 
 // ---------- STRINGS ----------
