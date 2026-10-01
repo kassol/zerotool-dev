@@ -46,6 +46,7 @@ export const toolPersistencePolicy = {
   'sprite-sheet-generator': 'preference',
   'gif-compressor': 'preference',
   'image-splitter': 'preference',
+  'string-escape': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)
