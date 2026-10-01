@@ -9,7 +9,7 @@ faqItems:
   - question: "What is the root element option?"
     answer: "XML requires a single root element that wraps all content. You can customize its name (default: 'root'). For XML to JSON conversion, the root element name becomes the top-level key in the JSON output."
   - question: "Are XML attributes supported?"
-    answer: "The current implementation focuses on element-based conversion. XML attributes are not mapped to JSON fields. If your XML uses attributes, consider pre-processing with the XML Formatter tool."
+    answer: "No. Attributes are dropped: in <book id=\"bk101\">, the id does not appear in the JSON. If you need them, rewrite the attributes as child elements before converting. JSON → XML never produces attributes either."
   - question: "Is my data sent to any server?"
     answer: "No. All conversion runs 100% in your browser. Your data never leaves your machine."
 ---
@@ -77,6 +77,68 @@ faqItems:
   <tags>api</tags>
 </root>
 ```
+
+<h3>Arrays of objects and null</h3>
+<p>Each object in an array becomes one element named after the key, and <code>null</code> becomes an empty element:</p>
+
+```json
+{"order":{"id":1001,"items":[{"sku":"A-1","qty":2},{"sku":"B-7","qty":1}],"note":null}}
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <order>
+    <id>1001</id>
+    <items>
+      <sku>A-1</sku>
+      <qty>2</qty>
+    </items>
+    <items>
+      <sku>B-7</sku>
+      <qty>1</qty>
+    </items>
+    <note></note>
+  </order>
+</root>
+```
+
+<p>
+  Keys that are not valid XML names are rewritten: characters other than ASCII letters, digits, <code>_</code>, <code>-</code> and
+  <code>.</code> become <code>_</code>, and a name that would start with a digit, <code>-</code> or <code>.</code> gets a leading
+  <code>_</code>, because XML names must start with a letter or underscore. <code>{'{"2026": "q", "first name": "Ann", "a&b": "x<y"}'}</code> becomes
+  <code>{'<_2026>q</_2026>'}</code>, <code>{'<first_name>Ann</first_name>'}</code> and <code>{'<a_b>x&lt;y</a_b>'}</code>. The root element name
+  is cleaned the same way.
+</p>
+
+<h3>XML to JSON</h3>
+<p>Pasting this XML into the right panel:</p>
+
+```xml
+<catalog>
+  <book id="bk101">
+    <author>Gambardella, Matthew</author>
+    <price>44.95</price>
+  </book>
+  <book id="bk102">
+    <author>Ralls, Kim</author>
+    <price>5.95</price>
+  </book>
+</catalog>
+```
+
+<p>gives <code>{'{"catalog": {"book": [{"author": "Gambardella, Matthew", "price": "44.95"}, {"author": "Ralls, Kim", "price": "5.95"}]}}'}</code> (indented in the tool).
+The two <code>book</code> elements form an array, the <code>id</code> attributes are gone, and <code>44.95</code> is a string.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>XML → JSON values are always strings.</strong> XML has no number or boolean type, so <code>{'<qty>2</qty>'}</code> becomes <code>"2"</code>. Empty elements such as <code>{'<b/>'}</code> become <code>""</code>.</li>
+  <li><strong>One child or many changes the shape.</strong> <code>{'<order><item>A</item></order>'}</code> gives <code>{'{"item": "A"}'}</code>, but two <code>item</code> elements give an array. Code that reads the JSON must handle both.</li>
+  <li><strong>Attributes are dropped</strong> and <strong>mixed content loses its text</strong>: <code>{'<p>Hello <b>world</b>!</p>'}</code> gives <code>{'{"p": {"b": "world"}}'}</code>. Namespace prefixes stay in the keys (<code>"x:v"</code>).</li>
+  <li><strong>Nested and empty arrays do not survive.</strong> <code>{'{"m": [[1, 2], [3]]}'}</code> flattens to three <code>{'<m>'}</code> elements, and an empty array or object writes no child element, so a round trip does not give back the original JSON.</li>
+  <li><strong>Non-ASCII keys are replaced.</strong> A key such as <code>名前</code> becomes <code>__</code>, although XML allows such names. Rename keys in the JSON first if the element names matter.</li>
+  <li><strong>XML errors come from the browser's parser</strong>, for example <code>error on line 1 at column 20: Premature end of data in tag a</code> in Chrome. To indent or minify XML without converting it, use the <a href="/tools/xml-formatter/">XML formatter</a>.</li>
+</ul>
 
 <h2>JSON vs XML</h2>
 <p>

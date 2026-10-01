@@ -60,8 +60,7 @@
           convertedToJson: 'Converted XML to JSON.',
           invalidJson: 'Invalid JSON',
           invalidXml: 'Invalid XML',
-          emptyInput: 'Input is empty.',
-          rootRequired: 'Root element name cannot be empty.'
+          emptyInput: 'Input is empty.'
         },
         zh: {
           copy: '复制', copied: '已复制！', clear: '清除',
@@ -71,8 +70,7 @@
           convertedToJson: '已将 XML 转换为 JSON。',
           invalidJson: '无效 JSON',
           invalidXml: '无效 XML',
-          emptyInput: '输入为空。',
-          rootRequired: '根元素名不能为空。'
+          emptyInput: '输入为空。'
         },
         ja: {
           copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
@@ -82,8 +80,7 @@
           convertedToJson: 'XMLをJSONに変換しました。',
           invalidJson: '無効なJSON',
           invalidXml: '無効なXML',
-          emptyInput: '入力が空です。',
-          rootRequired: 'ルート要素名は空にできません。'
+          emptyInput: '入力が空です。'
         },
         ko: {
           copy: '복사', copied: '복사됨!', clear: '지우기',
@@ -93,8 +90,7 @@
           convertedToJson: 'XML을 JSON으로 변환했습니다.',
           invalidJson: '유효하지 않은 JSON',
           invalidXml: '유효하지 않은 XML',
-          emptyInput: '입력이 비어 있습니다.',
-          rootRequired: '루트 요소 이름은 비울 수 없습니다.'
+          emptyInput: '입력이 비어 있습니다.'
         }
       };
 
@@ -123,7 +119,15 @@
         statusEl.className = 'jx-status';
       }
 
+      /* ── engine:start ── */
       /* ── JSON → XML ── */
+      // XML names cannot start with a digit, '-' or '.' (XML 1.0 §2.3 NameStartChar); prefix '_'.
+      function xmlName(key) {
+        var n = String(key).replace(/[^a-zA-Z0-9_\-\.]/g, '_') || '_key';
+        if (!/^[A-Za-z_]/.test(n)) n = '_' + n;
+        return n;
+      }
+
       function jsonToXml(val, tagName, indent, pretty) {
         var pad = pretty ? indent : '';
         var nl = pretty ? '\n' : '';
@@ -141,38 +145,39 @@
         }
         if (typeof val === 'object') {
           var children = Object.keys(val).map(function (key) {
-            var safeName = key.replace(/[^a-zA-Z0-9_\-\.]/g, '_') || '_key';
-            return jsonToXml(val[key], safeName, childIndent, pretty);
+            return jsonToXml(val[key], xmlName(key), childIndent, pretty);
           }).join(nl);
           return pad + open + nl + children + nl + pad + close;
         }
         return pad + open + String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + close;
       }
 
+      function buildXml(data, rootInput, pretty) {
+        var rootName = xmlName(String(rootInput || '').trim() || 'root');
+        var inner;
+        var nl = pretty ? '\n' : '';
+        if (Array.isArray(data)) {
+          inner = data.map(function (item) {
+            return jsonToXml(item, 'item', pretty ? '  ' : '', pretty);
+          }).join(nl);
+        } else if (typeof data === 'object' && data !== null) {
+          inner = Object.keys(data).map(function (key) {
+            return jsonToXml(data[key], xmlName(key), pretty ? '  ' : '', pretty);
+          }).join(nl);
+        } else {
+          inner = (pretty ? '  ' : '') + String(data).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+        var decl = '<?xml version="1.0" encoding="UTF-8"?>' + nl;
+        return decl + '<' + rootName + '>' + nl + inner + nl + '</' + rootName + '>';
+      }
+      /* ── engine:end ── */
+
       function convertJsonToXml() {
         var raw = jsonEl.value.trim();
         if (!raw) { clearStatus(); return; }
-        var rootName = (rootEl.value.trim() || 'root').replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-        if (!rootName) { setStatus(t.rootRequired, true); return; }
-        var pretty = prettyEl.checked;
         try {
           var data = JSON.parse(raw);
-          var inner;
-          var nl = pretty ? '\n' : '';
-          if (Array.isArray(data)) {
-            inner = data.map(function (item) {
-              return jsonToXml(item, 'item', pretty ? '  ' : '', pretty);
-            }).join(nl);
-          } else if (typeof data === 'object' && data !== null) {
-            inner = Object.keys(data).map(function (key) {
-              var safeName = key.replace(/[^a-zA-Z0-9_\-\.]/g, '_') || '_key';
-              return jsonToXml(data[key], safeName, pretty ? '  ' : '', pretty);
-            }).join(nl);
-          } else {
-            inner = (pretty ? '  ' : '') + String(data).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          }
-          var decl = '<?xml version="1.0" encoding="UTF-8"?>' + nl;
-          xmlEl.value = decl + '<' + rootName + '>' + nl + inner + nl + '</' + rootName + '>';
+          xmlEl.value = buildXml(data, rootEl.value, prettyEl.checked);
           setStatus(t.convertedToXml, false);
         } catch (e) {
           setStatus(t.invalidJson + ': ' + e.message, true);
@@ -225,7 +230,7 @@
           var parser = new DOMParser();
           var doc = parser.parseFromString(raw, 'application/xml');
           var parseErr = doc.querySelector('parsererror');
-          if (parseErr) throw new Error(parseErr.textContent.split('\n')[0]);
+          if (parseErr) throw new Error(((parseErr.querySelector('div') || parseErr).textContent || '').trim().split('\n')[0]);
           var root = doc.documentElement;
           var result = {};
           result[root.tagName] = xmlNodeToJson(root);
