@@ -301,6 +301,18 @@ for (const [l, input, id, want] of PAGE_EXAMPLES) {
   check('page ' + l + ' prints ' + JSON.stringify(want), pages[l].includes(want));
 }
 
+// The JavaScript snippet on the English page runs and matches the tool.
+{
+  const m = pages.en.match(/```js\n([\s\S]*?)```/);
+  check('en page has the toBold snippet', !!m);
+  if (m) {
+    const toBold = new Function(m[1].replace(/toBold\('Hello 42'\);.*\n?/, '') + '\nreturn toBold;')();
+    eq('en page toBold("Hello 42")', toBold('Hello 42'), '𝐇𝐞𝐥𝐥𝐨 𝟒𝟐');
+    eq('en page toBold equals the Bold style on the pangram', toBold(PANGRAM), conv(PANGRAM, 'bold'));
+    check('en page snippet comment shows the same output', m[1].includes("// '𝐇𝐞𝐥𝐥𝐨 𝟒𝟐'"));
+  }
+}
+
 // ---------- size ----------
 {
   const big = ('Fancy text 123 ').repeat(7000);
