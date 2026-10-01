@@ -1,62 +1,85 @@
 ---
-seoTitle: "SSL 証明書デコーダー — X.509 PEM をオンライン解析 | ZeroTool"
-seoDescription: "X.509 PEM 証明書を貼り付けて Subject・Issuer・有効期間・SAN・公開鍵・署名アルゴリズム・SHA-256/SHA-1/MD5 フィンガープリントを表示。無料、ブラウザ完結、アップロード不要。"
+seoTitle: "SSL証明書 内容確認・デコード | ZeroTool"
+seoDescription: "PEM・Base64 を貼り付けるか、DER・PKCS #7 ファイルを開くだけで SSL 証明書の中身を確認。SAN・有効期間・公開鍵・拡張・SCT を表示し、中間証明書の順序と署名もチェックします。"
 faqItems:
   - question: "証明書はサーバーに送信されますか？"
-    answer: "送信されません。すべての解析はブラウザ内のインライン JavaScript と Web Crypto API で完了し、PEM の内容はマシン外に出ません。本番・ステージング・社内証明書も安全に貼り付けられます。"
-  - question: "対応している証明書形式は？"
-    answer: "PEM エンコードの X.509 証明書（-----BEGIN CERTIFICATE----- 〜 -----END CERTIFICATE----- マーカー付き）のみ対応。DER バイナリは事前に openssl x509 -inform DER -in cert.der -out cert.pem で PEM 化してください。"
-  - question: "証明書チェーンや信頼性は検証できますか？"
-    answer: "できません。本ツールは単一証明書のフィールドを解析するだけです。チェーン検証は openssl verify -CAfile chain.pem cert.pem、または OS のトラストストアで行ってください。"
-  - question: "フィンガープリントの計算方法は？"
-    answer: "SHA-256・SHA-1・MD5 のいずれも証明書の DER バイト列（PEM テキストではなく）に対してダイジェストを計算します。現代の標準は SHA-256 で、SHA-1 と MD5 は旧来ツールとの互換のために表示しています。"
-  - question: "ECDSA や Ed25519 にも対応していますか？"
-    answer: "対応しています。rsaEncryption、id-ecPublicKey（prime256v1 / secp384r1 / secp521r1、secp256k1、Brainpool 系列）、Ed25519、Ed448 を認識します。"
+    answer: "送信しません。解析はページ内の JavaScript の DER パーサーで行い、フィンガープリントと署名検証にはブラウザーの Web Crypto を使います。ページ自体は他の ZeroTool のページと同じく Google Analytics と AdSense を読み込みますが、貼り付けた内容はそれらに渡りません。"
+  - question: "中間証明書を含むチェーンをまとめて貼り付けられますか？"
+    answer: "はい。入力に含まれる証明書をすべて解析し、各証明書の次にその発行元が並んでいるか、次の証明書の公開鍵で署名が検証できるかを確認します。順序が違う場合は正しい順序でコピーできます。"
+  - question: "秘密鍵が同じファイルに入っていたらどうなりますか？"
+    answer: "PRIVATE KEY、RSA PRIVATE KEY、EC PRIVATE KEY などのブロックは解析せずにスキップし、秘密鍵を含む入力はブラウザーに保存しません。.pfx / .p12（PKCS #12）は開きません。openssl pkcs12 -nokeys で証明書だけを取り出してください。"
+  - question: "表示される時刻は日本時間ですか？"
+    answer: "いいえ、すべて UTC で表示し、横に証明書内の元の値（例：270225145959Z）を並べます。日本時間は 9 時間を足した時刻です。"
+  - question: "ブラウザーがその証明書を信頼するかも分かりますか？"
+    answer: "分かりません。トラストストアを持たず、失効確認もしません。判定するのは、貼り付けたチェーンがそろっているか、順序が正しいか、署名が合っているかです。信頼の判定は openssl verify や OS の証明書ストアで行ってください。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>X.509 PEM 証明書を入力ボックスに貼り付けます。</li>
-  <li><strong>デコード</strong> をクリックすると、下にすべてのフィールドが表示されます。</li>
-  <li><strong>有効期間</strong> セクションのカラー付きステータスバッジで期限を確認（期限切れ、有効、30 日以内に期限切れ予定）。</li>
-  <li><strong>Subject</strong>、<strong>Issuer</strong>、<strong>Subject Alternative Names</strong> でホスト名カバレッジを確認。</li>
-  <li>ピンニングや監査ログ用に、<strong>コピー</strong> ボタンでフィンガープリントをクリップボードに転送。</li>
-</ol>
+## 使い方
 
-<h2>表示されるフィールド</h2>
-<ul>
-  <li><strong>有効期間</strong> — Not Before / Not After タイムスタンプとカラー付きステータス。</li>
-  <li><strong>Subject と Issuer</strong> — CN、O、OU、C、L、ST、および拡張属性（jurisdiction、business category、serialNumber）。</li>
-  <li><strong>Subject Alternative Names</strong> — DNS、IP、URI、email を種類別にグルーピング。</li>
-  <li><strong>公開鍵</strong> — アルゴリズム（RSA / EC / Ed25519 / Ed448）、鍵長（bit）、RSA exponent、EC 名前付き曲線。</li>
-  <li><strong>Key Usage と Extended Key Usage</strong> — Digital Signature、Key Encipherment、serverAuth / clientAuth、codeSigning、OCSPSigning など。</li>
-  <li><strong>Basic Constraints</strong> — CA 証明書かどうか、pathLenConstraint。</li>
-  <li><strong>署名アルゴリズム</strong> — sha256WithRSAEncryption、ecdsa-with-SHA384、Ed25519 など。</li>
-  <li><strong>フィンガープリント</strong> — SHA-256 / SHA-1 / MD5 の 16 進（コロン区切り）。</li>
-  <li><strong>シリアル番号 と バージョン</strong> — 16 進シリアル、X.509 バージョン（通常 v3）。</li>
-</ul>
+1. 証明書を入力欄に貼り付けるか、`.crt`・`.cer`・`.der`・`.pem`・`.p7b` ファイルをドロップ、または**ファイルを開く**を押します。1 枚でもチェーン全体でもかまいません。
+2. 入力すると自動で解析します。**解析**（Ctrl/⌘+Enter）で再実行できます。
+3. まずチェーンのカードで、順序・各段の署名・発行元の不足を確認します。
+4. 一覧の証明書を押すと、チェック結果、有効期間、サブジェクト、SAN、公開鍵、フィンガープリント、すべての拡張が表示されます。
+5. **ホスト名がこの証明書で使えるか確認**にホスト名を入れると、選んだ証明書が対応しているかが分かります。
 
-<h2>PEM 証明書をデコードする仕組み</h2>
-<p>
-  PEM 証明書は DER エンコードされた ASN.1 の Base64 ラッパーです。ヘッダ・フッタを除去し
-  Base64 デコードすると DER バイト列が得られ、それを ASN.1 構造に従って再帰的に解析します。
-  <code>Certificate</code> SEQUENCE には <code>tbsCertificate</code>、
-  <code>signatureAlgorithm</code>、<code>signatureValue</code> が含まれ、可視化される情報の大半は
-  TBS 部分にあります。本ツールはピュア JavaScript でこの解析器を実装しており、サーバー往復は発生しません。
-</p>
+## 実例：www.digital.go.jp の証明書チェーン
 
-<h2>主なユースケース</h2>
-<ul>
-  <li>新規 TLS 証明書をデプロイする前に SAN が必要なホスト名をすべてカバーしているか確認。</li>
-  <li>ステージング / 本番環境の証明書期限を一括チェック。</li>
-  <li>モバイルアプリや HSTS preload 申請で SHA-256 フィンガープリントによるピンニング。</li>
-  <li>署名アルゴリズム・鍵長が PCI DSS、FIPS 140-3、Mozilla Modern profile などのコンプライアンス要件を満たしているか検証。</li>
-  <li>Subject CN と SAN-only 検証の不一致デバッグ。</li>
-</ul>
+**サンプル**を押すと、2026-10-01 に `openssl s_client -showcerts` で `www.digital.go.jp`（デジタル庁）から受け取った 2 枚の証明書を読み込みます。{/* scd-check: {"chain":"www.digital.go.jp","field":"count","expect":"2"} */}
 
-<h2>本ツールの設計上の境界</h2>
-<p>
-  単一証明書をデコードするのみです。チェーン検証、CRL/OCSP 取得、失効確認、実 TLS ハンドシェイクは行いません。
-  チェーン検証は <code>openssl verify</code>、ライブ TLS 検査は
-  <code>openssl s_client -showcerts</code> や <code>nmap --script ssl-cert</code> をご利用ください。
-</p>
+| # | サブジェクト CN | 役割 | 次の証明書による署名 |
+|---|---|---|---|
+| 1 | www.digital.go.jp | サーバー証明書 | 署名を検証済み |
+| 2 | SECOM Passport for Web SR 3.0 CA | 中間 CA | 発行元は入力にない |
+
+2 枚目の発行者は `OU=Security Communication RootCA2,O=SECOM Trust Systems CO.\,LTD.,C=JP` です。{/* scd-check: {"chain":"www.digital.go.jp","index":1,"field":"issuer","expect":"OU=Security Communication RootCA2,O=SECOM Trust Systems CO.\\,LTD.,C=JP"} */}サーバーはこのルート証明書を送っていませんが、クライアントのトラストストアに入っているルートなので問題ありません（[RFC 8446 §4.4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.2) はルートの省略を認めています）。
+
+サーバー証明書で見ておきたい項目：
+
+- 終了日時は `2027-02-25 14:59:59 UTC`、日本時間では 2027 年 2 月 25 日 23:59:59 です。{/* scd-check: {"chain":"www.digital.go.jp","field":"notAfter","expect":"2027-02-25 14:59:59 UTC"} */}
+- 有効期間は **394 日**。{/* scd-check: {"chain":"www.digital.go.jp","field":"days","expect":"394"} */}開始日時 `2026-01-28 09:06:10 UTC` は 2026 年 3 月 15 日より前なので、上限は 398 日です。{/* scd-check: {"chain":"www.digital.go.jp","field":"notBefore","expect":"2026-01-28 09:06:10 UTC"} */}[CA/B フォーラム BR §6.3.2](https://github.com/cabforum/servercert/blob/main/docs/BR.md)（SC-081）により、2026 年 3 月 15 日以降に発行される公的な TLS 証明書は最長 200 日、2027 年 3 月 15 日からは 100 日、2029 年 3 月 15 日からは 47 日になります。このツールはサーバー証明書の開始日時から上限を判定し、超えていればチェック結果に出します。
+- SAN は `www.digital.go.jp` の 1 件。{/* scd-check: {"chain":"www.digital.go.jp","field":"sanCount","expect":"1"} */}`digital.go.jp` を入力すると一致しないと表示されます。{/* scd-check: {"chain":"www.digital.go.jp","field":"host","host":"digital.go.jp","expect":"nomatch"} */}
+- Certificate Transparency の SCT が 5 件あり、ログ ID とタイムスタンプを一覧にします。{/* scd-check: {"chain":"www.digital.go.jp","field":"sct","expect":"5"} */}
+
+## よくある失敗：中間証明書の並び順
+
+TLS ではサーバー証明書を先頭に、続けて各証明書の発行元を並べます（RFC 8446 §4.4.2）。nginx のドキュメントも、連結ファイルでは「サーバー証明書をチェーンの証明書より前に置く」よう求めています（[Configuring HTTPS servers](https://nginx.org/en/docs/http/configuring_https_servers.html)）。
+
+上の 2 枚を逆の順に貼ると、**順序が違うか、別のチェーンが混ざっています。サーバー証明書からの経路：#2 → #1。** と表示されます。{/* scd-check: {"chain":"www.digital.go.jp","field":"reversedPath","expect":"#2 → #1"} */}署名は検証済みのままなので、組み合わせは正しく順序だけが逆だと分かります。**正しい順序でコピー**で並べ直したファイルが手に入ります。
+
+サーバー証明書だけを貼ると、発行元がないことと、AIA に書かれた中間証明書の URL を示します。ブラウザーは AIA から補うことがありますが、[Java](https://docs.oracle.com/en/java/javase/21/security/java-pki-programmers-guide.html) は既定で無効、Go の TLS も取りに行きません（[golang/go#31773](https://go.dev/issue/31773)）。サーバー側で中間証明書を設定してください。
+
+## 拡張子と形式
+
+Windows でエクスポートした `.cer` は、バイナリの DER のことも Base64（PEM）のこともあり、拡張子では見分けられません。このツールはファイルの先頭バイトで判定し、DER や PKCS #7（`.p7b`）は PEM に変換して入力欄に表示します。読める形式：
+
+- PEM の `CERTIFICATE`、古い表記 `X509 CERTIFICATE`、OpenSSL の `TRUSTED CERTIFICATE`（[RFC 7468](https://www.rfc-editor.org/rfc/rfc7468)）。前後の文字、CRLF、余分な空白は無視します。
+- BEGIN / END 行のない Base64 だけのテキスト。
+- CSR・公開鍵・CRL は種類を表示して解析しません。CSR は [CSR デコーダー](/ja/tools/csr-decoder/)で確認できます。
+
+エラーは場所を示します。たとえば上のサーバー証明書をコピーするときに Base64 が 1 行抜けると、「0 バイト目の Certificate は 1931 バイト必要ですが、残りは 1883 バイトです」と表示されます。{/* scd-check: {"chain":"www.digital.go.jp","field":"cutNeed","expect":"1931"} */}{/* scd-check: {"chain":"www.digital.go.jp","field":"cutHave","expect":"1883"} */}
+
+## チェック項目
+
+- 外側と tbsCertificate 内の署名アルゴリズムの一致（[RFC 5280 §4.1.1.2](https://www.rfc-editor.org/rfc/rfc5280#section-4.1.1.2)）、シリアル番号が正で 20 オクテット以内か（§4.1.2.2）、時刻に秒と `Z` があるか（§4.1.2.5）。
+- 認識できないクリティカル拡張、重複した拡張（§4.2）。
+- SAN がない証明書：Chrome は [バージョン 58](https://chromestatus.com/feature/4981025180483584) で CN による照合をやめています。
+- SHA-1・MD5 署名、2048 ビット未満の RSA 鍵、発行元が CA でない・keyCertSign がない・パス長を超えている場合。
+
+公開鍵の長さは鍵そのものから求めます（P-521 は 521 ビット）。フィンガープリントは DER の SHA-256・SHA-1・MD5 に加え、公開鍵（SPKI）の SHA-256 を Base64 で出します。[RFC 7469](https://www.rfc-editor.org/rfc/rfc7469#section-2.4) の pin-sha256 形式で、Android のネットワーク セキュリティ構成や OkHttp の証明書ピンニングにそのまま使えます。
+
+## 他のツールとの違い
+
+2026-10-01 に同じ証明書で確認した結果：
+
+| ツール | 解析する場所 | チェーン（4 枚） | 気づいた点 |
+|---|---|---|---|
+| ラッコツールズ SSL証明書内容確認 | ブラウザー内 | 1 枚目だけ表示 | SAN の IP アドレスが表示されない。署名アルゴリズムは「ECDSA」とだけ表示 |
+| CertLogik | フォームを自社サーバーに送信 | 1 枚目だけ表示 | P-521 の鍵長は正しく 521 ビット |
+| このツール | ページ内 | 4 枚すべて、順序と署名を確認 | — |
+
+## 制限
+
+- トラストストアはなく、OCSP / CRL の失効確認やサーバーへの接続もしません。チェーンの取得には `openssl s_client -connect ホスト名:443 -showcerts` を使い、DNS は [DNS 確認ツール](/ja/tools/dns-lookup/)、レスポンスヘッダーは [HTTP Header アナライザー](/ja/tools/http-header-analyzer/)で確認できます。
+- 署名検証は Web Crypto で行います。対応は RSA（PKCS #1 v1.5・PSS）、P-256 / P-384 / P-521 の ECDSA、ブラウザーが対応していれば Ed25519。ML-DSA・Ed448・DSA・SM2 は解析しますが「未検証」と表示します。
+- 名前制約は表示するだけで、サーバー証明書の名前には当てはめません。
+- ファイルは 1 MB まで、1 回の入力で証明書 200 枚までです。

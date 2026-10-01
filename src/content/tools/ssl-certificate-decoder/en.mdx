@@ -1,63 +1,98 @@
 ---
-seoTitle: "SSL Certificate Decoder Online — Inspect X.509 PEM | ZeroTool"
-seoDescription: "Paste any X.509 PEM certificate to view Subject, Issuer, validity, SANs, public key, signature algorithm, and SHA-256/SHA-1/MD5 fingerprints. Free, browser-based, no upload."
+seoTitle: "Certificate Decoder for SSL/X.509 PEM and Chains | ZeroTool"
+seoDescription: "Paste a PEM, Base64, DER or PKCS #7 certificate or a whole chain. See SANs, validity, key, extensions and SCTs, and check chain order and signatures locally."
 faqItems:
-  - question: "Is my certificate uploaded anywhere?"
-    answer: "No. Parsing happens entirely in your browser via inline JavaScript and the Web Crypto API. The PEM never leaves your machine — safe for staging, internal, and production certificates."
-  - question: "Which certificate formats does this decoder accept?"
-    answer: "PEM-encoded X.509 certificates wrapped in -----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- markers. DER (raw binary) is not accepted. Convert first with: openssl x509 -inform DER -in cert.der -out cert.pem."
-  - question: "Can this verify the certificate chain or trust?"
-    answer: "No. The tool only decodes the certificate fields. To validate the chain, use openssl verify -CAfile chain.pem cert.pem, or rely on your operating system's trust store."
-  - question: "How are the fingerprints calculated?"
-    answer: "SHA-256, SHA-1, and MD5 digests are computed over the DER bytes of the certificate (not the PEM text). SHA-256 is the standard identifier today; SHA-1 and MD5 are shown for compatibility with legacy tooling."
-  - question: "Does it handle ECDSA, Ed25519, or only RSA certificates?"
-    answer: "All three. The decoder recognises rsaEncryption, id-ecPublicKey with named curves prime256v1 / secp384r1 / secp521r1 (plus secp256k1 and Brainpool variants), Ed25519, and Ed448 public keys."
+  - question: "Is the certificate uploaded anywhere?"
+    answer: "No. The decoder runs in the page: a DER parser written in JavaScript plus the browser's Web Crypto API for fingerprints and signature checks. The certificate is never sent to a server. The page itself loads Google Analytics and AdSense like other ZeroTool pages; they do not receive the text you paste."
+  - question: "Can I paste a full chain or a fullchain.pem file?"
+    answer: "Yes. Every certificate in the input is decoded. The tool checks that each certificate is followed by the one that issued it, verifies each signature with the next certificate's public key, and offers to copy the chain in the correct order when it is wrong."
+  - question: "What happens if my file also contains the private key?"
+    answer: "Blocks such as PRIVATE KEY, RSA PRIVATE KEY or EC PRIVATE KEY are skipped without being decoded, and input that contains one is not saved in the browser. PKCS #12 (.pfx / .p12) files are not opened at all. Extract the certificates first with openssl pkcs12 -nokeys."
+  - question: "Does it tell me whether a browser trusts the certificate?"
+    answer: "No. It has no trust store and does not check revocation. It tells you whether the chain you pasted is complete, ordered and correctly signed. Use openssl verify or your platform's trust store for the trust decision."
+  - question: "Why does the validity period show one day more than I expected?"
+    answer: "The validity period counts both notBefore and notAfter, as RFC 5280 defines it, and any part of a day counts as a day, as the CA/Browser Forum Baseline Requirements count it. A certificate from 00:00:00 to 23:59:59 on the 90th day is 90 days; one that ends a few minutes later is 91."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Paste your X.509 certificate (PEM format) into the input box.</li>
-  <li>Click <strong>Decode</strong>. The full set of certificate fields appears below.</li>
-  <li>Review <strong>Validity</strong> for expiry status — expired, valid, or expiring within 30 days.</li>
-  <li>Inspect <strong>Subject</strong>, <strong>Issuer</strong>, and <strong>Subject Alternative Names</strong> to confirm hostnames.</li>
-  <li>Copy any <strong>fingerprint</strong> to clipboard for pinning, troubleshooting, or audit logs.</li>
-</ol>
+## How to decode a certificate
 
-<h2>What this decoder shows</h2>
-<ul>
-  <li><strong>Validity period</strong> — Not Before / Not After timestamps plus a colour-coded status badge.</li>
-  <li><strong>Subject and Issuer</strong> — CN, O, OU, C, L, ST, plus any extension fields (jurisdiction, business category, serial number).</li>
-  <li><strong>Subject Alternative Names</strong> — DNS names, IP addresses, URIs, and email entries, grouped by type.</li>
-  <li><strong>Public key</strong> — algorithm (RSA, EC, Ed25519, Ed448), key size in bits, RSA exponent, EC named curve.</li>
-  <li><strong>Key Usage and Extended Key Usage</strong> — digital signature, key encipherment, server / client authentication, code signing, OCSP signing, and more.</li>
-  <li><strong>Basic Constraints</strong> — whether the certificate is a CA, and its path length constraint.</li>
-  <li><strong>Signature algorithm</strong> — sha256WithRSAEncryption, ecdsa-with-SHA384, Ed25519, etc.</li>
-  <li><strong>Fingerprints</strong> — SHA-256, SHA-1, MD5 hex digests with colon separators.</li>
-  <li><strong>Serial number and version</strong> — hex serial and X.509 version (typically v3).</li>
-</ul>
+1. Paste the certificate into the box, drop a `.crt`, `.cer`, `.der`, `.pem` or `.p7b` file on it, or click **Open file**. One certificate or a whole chain both work.
+2. The result appears as you type; **Decode** (Ctrl/⌘+Enter) runs it again.
+3. Read the chain card: order, signatures, and whether an issuer is missing.
+4. Click a certificate to see its checks, validity, names, key, fingerprints and every extension.
+5. Type a hostname in **Check a hostname** to see whether the selected certificate covers it.
 
-<h2>How a PEM certificate decodes</h2>
-<p>
-  A PEM certificate is a Base64 wrapper around DER-encoded ASN.1. Once stripped and
-  decoded, you get a <code>Certificate</code> SEQUENCE containing <code>tbsCertificate</code>,
-  <code>signatureAlgorithm</code>, and <code>signatureValue</code>. The TBS half holds every
-  field above. This tool walks the ASN.1 tree directly in JavaScript — no network round-trip,
-  no server-side parser.
-</p>
+## Example: the chain www.example.com sends
 
-<h2>Typical use cases</h2>
-<ul>
-  <li>Verifying SAN coverage before deploying a new TLS certificate.</li>
-  <li>Spot-checking expiry across staging and production endpoints.</li>
-  <li>Pinning by SHA-256 fingerprint in mobile apps or HSTS-preload submissions.</li>
-  <li>Confirming the signature algorithm and key strength meet a compliance policy (PCI DSS, FIPS 140-3, Mozilla Modern profile).</li>
-  <li>Debugging mismatched <code>Subject</code> CN versus modern SAN-only validators.</li>
-</ul>
+Click **Example** to load the four certificates `www.example.com` returned to `openssl s_client -showcerts` on 2026-10-01. {/* scd-check: {"chain":"www.example.com","field":"count","expect":"4"} */} The tool reports:
 
-<h2>Limits by design</h2>
-<p>
-  This tool decodes a single certificate. It does not validate the chain, fetch CRL/OCSP,
-  perform revocation checks, or speak TLS. For chain validation use
-  <code>openssl verify</code>; for live TLS inspection use <code>openssl s_client -showcerts</code>
-  or <code>nmap --script ssl-cert</code>.
-</p>
+| # | Subject CN | Role | Signed by the next certificate |
+|---|---|---|---|
+| 1 | example.com | Leaf | signature verified |
+| 2 | Cloudflare TLS Issuing ECC CA 3 | Intermediate CA | signature verified |
+| 3 | SSL.com TLS Transit ECC CA R2 | Intermediate CA | signature verified |
+| 4 | SSL.com TLS ECC Root CA 2022 | Intermediate CA | issuer not in the input |
+
+Certificate 4 is the SSL.com root in a cross-signed form: its issuer is `CN=AAA Certificate Services,O=Comodo CA Limited,L=Salford,ST=Greater Manchester,C=GB`. {/* scd-check: {"chain":"www.example.com","index":3,"field":"issuer","expect":"CN=AAA Certificate Services,O=Comodo CA Limited,L=Salford,ST=Greater Manchester,C=GB"} */} The server does not send that root, which is normal: clients that trust it already have it.
+
+For the leaf, the tool shows:
+
+- Not before `2026-09-26 22:49:11 UTC`, not after `2026-12-25 22:56:35 UTC`. {/* scd-check: {"chain":"www.example.com","field":"notAfter","expect":"2026-12-25 22:56:35 UTC"} */}
+- Validity period **91 days**. {/* scd-check: {"chain":"www.example.com","field":"days","expect":"91"} */} The span is 90 days and 7 minutes, and the [Baseline Requirements §6.3.2](https://github.com/cabforum/servercert/blob/main/docs/BR.md) count any part of a day as a day.
+- SHA-256 fingerprint `85:CA:6A:B0:68:E9:BC:CE:88:B6:C4:AA:3C:47:F7:D1:72:28:13:4A:45:7F:87:0D:38:00:E6:22:3A:0D:F0:7A`. {/* scd-check: {"chain":"www.example.com","field":"sha256","expect":"85:CA:6A:B0:68:E9:BC:CE:88:B6:C4:AA:3C:47:F7:D1:72:28:13:4A:45:7F:87:0D:38:00:E6:22:3A:0D:F0:7A"} */} It is the same value that `openssl x509 -noout -fingerprint -sha256` prints.
+- Two Certificate Transparency SCTs, with log IDs and timestamps. {/* scd-check: {"chain":"www.example.com","field":"sct","expect":"2"} */}
+- Hostname check: `www.example.com` matches the wildcard SAN `*.example.com`; `a.b.example.com` does not, because a wildcard covers exactly one label ([RFC 9525 §6.3](https://www.rfc-editor.org/rfc/rfc9525#section-6.3)).
+
+## Example: a chain in the wrong order
+
+Servers send the leaf first and each issuer after the certificate it signed ([RFC 8446 §4.4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.2)). Nginx asks for the same order in the file you give to `ssl_certificate`: "The server certificate must appear before the chained certificates" ([nginx docs](https://nginx.org/en/docs/http/configuring_https_servers.html)).
+
+Take the four certificates `letsencrypt.org` sent on the same day and paste them in reverse order. {/* scd-check: {"chain":"letsencrypt.org","field":"count","expect":"4"} */} The tool says: **Order is wrong or the input mixes chains. Path from the leaf: #4 → #3 → #2 → #1.** {/* scd-check: {"chain":"letsencrypt.org","field":"reversedPath","expect":"#4 → #3 → #2 → #1"} */} Each link still shows "signature verified", so the certificates belong together; only the order is wrong. **Copy in suggested order** gives you the file in leaf-first order.
+
+If you paste only a leaf, the chain card says the issuer is not in the input and shows the Authority Information Access URL where the CA publishes it. Browsers often download a missing intermediate that way; [Java](https://docs.oracle.com/en/java/javase/21/security/java-pki-programmers-guide.html) leaves AIA fetching off by default, and Go's TLS stack does not do it ([golang/go#31773](https://go.dev/issue/31773)), so fix the server instead.
+
+## What the tool checks
+
+| Check | Rule |
+|---|---|
+| Signature algorithm inside and outside tbsCertificate match | [RFC 5280 §4.1.1.2](https://www.rfc-editor.org/rfc/rfc5280#section-4.1.1.2) |
+| Serial number positive and at most 20 octets | RFC 5280 §4.1.2.2 |
+| UTCTime / GeneralizedTime with seconds and `Z`; UTCTime until 2049 | RFC 5280 §4.1.2.5 |
+| Unknown critical extension, duplicate extension | RFC 5280 §4.2 |
+| No SAN (browsers ignore the CN; Chrome removed CN matching in [version 58](https://chromestatus.com/feature/4981025180483584)) | RFC 9525 |
+| SHA-1 or MD5 signature, RSA key under 2048 bits | CA/B Forum Baseline Requirements |
+| Leaf validity longer than the Baseline Requirements allow for its issue date (398, 200, 100, then 47 days; ballot SC-081) | BR §6.3.2 |
+| Issuer is a CA, has keyCertSign, path length not exceeded | RFC 5280 §4.2.1.3, §4.2.1.9 |
+
+Times are shown in UTC next to the raw encoded value, so a `+0800` offset or a missing second stays visible. Key sizes come from the key itself: a P-521 key is 521 bits, not 528.
+
+The fingerprint card has SHA-256, SHA-1 and MD5 of the DER bytes, plus the SHA-256 of the SubjectPublicKeyInfo in Base64, the `pin-sha256` format from [RFC 7469](https://www.rfc-editor.org/rfc/rfc7469#section-2.4) that Android network security config and OkHttp pins use.
+
+## Input formats
+
+- PEM blocks labelled `CERTIFICATE`, the legacy `X509 CERTIFICATE`, and OpenSSL's `TRUSTED CERTIFICATE` ([RFC 7468](https://www.rfc-editor.org/rfc/rfc7468)); text around the blocks, CRLF line endings and extra spaces are ignored.
+- Base64 without the BEGIN / END lines, as some control panels show it.
+- Binary DER files and PKCS #7 bundles (`.p7b`), in PEM or DER. A loaded binary file is converted to PEM in the box.
+- Certificate signing requests, public keys and CRLs are recognised and named, not decoded. For CSRs use the [CSR Decoder](/tools/csr-decoder/).
+
+Errors point at the place. A stray character gives "Line 4, column 5: "*" is not a Base64 character". If one 64-character line of the example.com leaf is lost while copying, the message is "Certificate at byte 0 needs 1002 bytes but only 954 remain". {/* scd-check: {"chain":"www.example.com","field":"cutNeed","expect":"1002"} */}{/* scd-check: {"chain":"www.example.com","field":"cutHave","expect":"954"} */}
+
+## How it compares
+
+Tested on 2026-10-01 with the same files:
+
+| Tool | Where it decodes | Chain of 4 certificates |
+|---|---|---|
+| SSL Shopper Certificate Decoder | Sends the text to its server (`ajax_decode.php`) | "We were unable to decode this certificate" |
+| CertLogik | Posts the form to its server | Shows the first certificate only |
+| Report URI PEM Decoder | Posts the text to its server | Shows the first certificate only; rejects Base64 without the PEM header |
+| This tool | In the page | All four, with order and signature checks |
+
+SSL Shopper also shows dates without a time zone: a certificate that starts at 2026-01-01 00:00 UTC appeared as "Valid From: December 31, 2025". For certificates of internal hosts, decoding in the page keeps their host names away from third parties.
+
+## Limits
+
+- No trust store, no revocation (OCSP / CRL) check, no live TLS connection. Fetch a chain with `openssl s_client -connect host:443 -showcerts`, or look up records with the [DNS Lookup](/tools/dns-lookup/) tool and inspect response headers with the [HTTP Header Analyzer](/tools/http-header-analyzer/).
+- Signatures are verified with Web Crypto: RSA (PKCS #1 v1.5 and PSS), ECDSA on P-256, P-384 and P-521, and Ed25519 where the browser supports it. ML-DSA, Ed448, DSA, SM2, MD5 and SHA-224 signatures are decoded but reported as not checked.
+- Name constraints are shown but not applied to the leaf's names.
+- Files up to 1 MB and up to 200 certificates per input.
