@@ -1,41 +1,132 @@
 ---
-seoTitle: "PKCE Generator — OAuth 2.0 Code Verifier & Challenge | ZeroTool"
-seoDescription: "Generate cryptographically secure PKCE code_verifier and code_challenge pairs for OAuth 2.0 / 2.1 flows. S256 and plain methods, 100% browser-based — no network calls."
+seoTitle: "PKCE Generator: Code Verifier & S256 Challenge | ZeroTool"
+seoDescription: "Generate an RFC 7636 code_verifier and S256 code_challenge, see why a challenge fails, and copy the authorize URL and token cURL. Nothing leaves your browser."
 faqItems:
-  - question: "What is PKCE and why do I need it?"
-    answer: "PKCE stands for Proof Key for Code Exchange (RFC 7636). It prevents authorization code interception on public clients — mobile apps, single-page apps, CLI tools, and desktop apps where you cannot safely store a client secret. OAuth 2.1 makes PKCE mandatory for every client, not just public ones."
+  - question: "Is the verifier sent anywhere or saved?"
+    answer: "No. Random bytes come from crypto.getRandomValues and SHA-256 from crypto.subtle in this tab. The tool makes no network requests, does not write the verifier to localStorage, sessionStorage, cookies or the URL, and the page loads no analytics or ad scripts. Reloading the page discards the verifier."
+  - question: "How long should the code_verifier be?"
+    answer: "43 characters from 32 random bytes is the recipe in RFC 7636 sections 4.1 and 7.1, and it gives the 256 bits of entropy the RFC asks for. Longer verifiers (up to 128 characters) are allowed; 256 bits is already the target the RFC sets. A verifier you type by hand is valid if it has 43 to 128 characters from A-Z, a-z, 0-9 and - . _ ~, but its strength depends on how it was made."
   - question: "Should I use S256 or plain?"
-    answer: "Always S256 in production. The plain method exists only for legacy clients that genuinely cannot compute SHA-256, which is no longer a realistic constraint. RFC 7636 explicitly recommends S256 and most modern OAuth providers reject plain by default."
-  - question: "Does this tool send my verifier anywhere?"
-    answer: "No. Random bytes come from crypto.getRandomValues, hashing happens via crypto.subtle.digest, and the URL preview is concatenated as plain strings. Nothing leaves your browser, and nothing is persisted to localStorage either — the verifier is regenerated fresh each time you reload."
-  - question: "How long should the verifier be?"
-    answer: "RFC 7636 allows 43 to 128 characters using the character set [A-Z a-z 0-9 - . _ ~]. We default to 64 characters: high enough entropy to resist brute force, short enough to fit comfortably in URLs. Choose 128 if you want to maximise entropy and your provider accepts it."
-  - question: "How do I use this with my OAuth provider?"
-    answer: "Store code_verifier securely on your client (localStorage for browsers, secure storage for native apps). Send code_challenge and code_challenge_method=S256 as query parameters on the /authorize redirect. When you exchange the authorization code at /token, send the original code_verifier so the server can re-hash and compare."
+    answer: "S256. RFC 7636 section 4.2 says a client that can compute SHA-256 must use S256, RFC 9700 says S256 is currently the only method that does not expose the verifier in the authorization request, and the OAuth 2.1 draft removes plain. Some providers, such as LINE Login, accept only S256."
+  - question: "Why does my token request fail with invalid_grant?"
+    answer: "Paste the code_challenge your app sent into Check a code_challenge. The tool tells you whether it matches the verifier or was built in a known wrong way: Base64 with + / =, hex, trailing padding, the verifier itself, or a hash of the decoded random bytes. If it matches, check that code_challenge_method=S256 was sent (without it the server assumes plain), that the verifier comes from the same login attempt, and that the code was used only once."
+  - question: "Do confidential clients need PKCE too?"
+    answer: "RFC 9700 (OAuth 2.0 Security Best Current Practice, 2025) requires PKCE for public clients and recommends it for confidential clients, because it also stops authorization code injection. A confidential client still authenticates at the token endpoint; add its client secret or other credentials to the cURL command yourself."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>The tool auto-generates a 64-character <strong>code_verifier</strong> the moment the page loads.</li>
-  <li>Click <strong>Regenerate</strong> to get a fresh random verifier, or paste your own.</li>
-  <li>Pick the <strong>challenge method</strong> — keep S256 unless you have a strong reason to fall back to plain.</li>
-  <li>The <strong>code_challenge</strong> updates instantly. Copy it into your /authorize request.</li>
-  <li>Expand <strong>Authorization URL preview</strong> to plug in your endpoint, client_id, and redirect_uri.</li>
-  <li>Expand <strong>Token exchange (cURL)</strong> to grab a ready-to-run command for the /token call.</li>
-</ol>
+## How to Use
 
-<h2>Common Use Cases</h2>
-<ul>
-  <li><strong>Local OAuth debugging:</strong> Generate a verifier/challenge pair, copy the authorize URL into your browser, capture the code, and replay the token exchange with the curl preview.</li>
-  <li><strong>Native + mobile apps:</strong> Manually craft test flows for desktop / iOS / Android clients without spinning up a sample backend.</li>
-  <li><strong>Onboarding new providers:</strong> Verify that an OAuth provider accepts S256 and that your client_id is configured correctly before writing any code.</li>
-  <li><strong>Security review:</strong> Confirm the verifier character set and length against RFC 7636 with a live tool instead of reading the spec mid-review.</li>
-</ul>
+1. A 43-character `code_verifier` is generated when the page opens. Press **Generate** for a new one. Change **Length** (43–128) only if your provider asks for a specific length.
+2. Copy the verifier and keep it in your client for this one login attempt.
+3. Copy the `code_challenge`. It updates as you type or paste a verifier. Keep the method on **S256**.
+4. Open **Authorization request URL**, fill in your endpoint, `client_id`, `redirect_uri` and `scope`, and copy the URL. A random `state` (and a `nonce` when the scope contains `openid`) is filled in for you.
+5. After the redirect, paste the `code` into **Token request (cURL)** and run the command. The token request carries the verifier itself.
 
-<h2>How It Works</h2>
-<ol>
-  <li>32 random bytes from <code>crypto.getRandomValues</code> are base64url-encoded and truncated to your target length.</li>
-  <li>For S256, the verifier is UTF-8 encoded and hashed with <code>crypto.subtle.digest('SHA-256', …)</code>.</li>
-  <li>The 32-byte hash is base64url-encoded (replace + with -, / with _, strip = padding) to produce the 43-character challenge.</li>
-  <li>For plain, the challenge equals the verifier — kept for compatibility, not recommended.</li>
-</ol>
+Ctrl/⌘+Enter generates a new verifier; Ctrl/⌘+L clears the fields.
+
+The verifier and challenge follow [RFC 7636 §4.1 and §4.2](https://www.rfc-editor.org/rfc/rfc7636#section-4.1): `code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))`, base64url without `=` padding. The generator turns `n` random bytes into base64url and keeps the first characters you asked for; 43 characters use exactly 32 bytes (256 bits), the amount [RFC 7636 §7.1](https://www.rfc-editor.org/rfc/rfc7636#section-7.1) recommends. The SHA-256 here is the same function as in the [Hash Generator](/tools/hash-generator/); the difference is the base64url encoding of the raw 32 digest bytes instead of hex.
+
+## Examples You Can Reproduce
+
+**RFC 7636 Appendix B.** Paste `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` into the verifier field. The tool shows `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`, the value in [Appendix B](https://www.rfc-editor.org/rfc/rfc7636#appendix-B). The verifier is the base64url form of the 32 octets listed there, starting `116, 24, 223, 180`. If a library gives you a different challenge for this verifier, the library is wrong.
+
+**An authorization URL.** With endpoint `https://auth.example.com/authorize`, client_id `s6BhdRkqt3`, redirect_uri `https://client.example.org/cb`, scope `openid profile`, state `xyz` and nonce `n-0S6_WzA2Mj`, the tool builds:
+
+```text
+https://auth.example.com/authorize?response_type=code&client_id=s6BhdRkqt3&redirect_uri=https%3A%2F%2Fclient.example.org%2Fcb&scope=openid+profile&state=xyz&nonce=n-0S6_WzA2Mj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256
+```
+
+Values are form-encoded as [RFC 6749 Appendix B](https://www.rfc-editor.org/rfc/rfc6749#appendix-B) requires, so the space in the scope becomes `+`. `code_challenge_method` is always written out, because [RFC 7636 §4.3](https://www.rfc-editor.org/rfc/rfc7636#section-4.3) makes a missing method mean `plain`. To read a callback URL back into its parts, use the [URL Parser](/tools/url-parser/).
+
+**A verifier copied from standard Base64.** Paste `dBjftJeZ4CVP+mB92K27uhbUJU1p1r/wW1gFWFOEjXk=` and the tool stops with: *Character 13 "+" is not allowed. A verifier may only contain A–Z, a–z, 0–9 and - . _ ~ (RFC 7636 §4.1).* followed by how to convert it to base64url. Spaces, line breaks and non-ASCII characters get their own hint, and lengths outside 43–128 are reported with the actual count.
+
+## Finding a Challenge That Does Not Match
+
+When the token endpoint answers `invalid_grant`, the usual cause is a challenge built the wrong way. Open **Check a code_challenge** and paste what your app sent. For the RFC verifier above, these are the answers:
+
+| Pasted code_challenge | Result |
+|---|---|
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM` | Match |
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM=` | Padding: remove the `=` |
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw+cM=` | Standard Base64 instead of base64url |
+| `13d31e961a1ad8ec2f16b10c4c982e0876a878ad6df144566ee1894acb70f9c3` | Hex digest instead of base64url |
+| `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` | The verifier itself (plain) |
+| `38v3YOi6zQgk1xkqk6Y5dvSDoBHqZrTh3mmWHxxWvyk` | SHA-256 of the decoded random bytes, not of the verifier string |
+
+The last row is a real bug pattern: code that keeps the 32 random bytes and hashes them, instead of hashing the 43 ASCII characters it sent as the verifier. With **plain** selected, the check also recognizes the S256 value and tells you to send `code_challenge_method=S256`. For the [Base64](/tools/base64/) side of these errors, base64url is RFC 4648 §5: `-` and `_` instead of `+` and `/`, and PKCE drops the padding.
+
+## The Same Calculation in Code
+
+These functions give the RFC challenge above. The tests for this page run all three.
+
+```javascript
+// Browsers and Node.js 20+ (Web Crypto)
+const base64url = (bytes) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+function createVerifier() {
+  return base64url(crypto.getRandomValues(new Uint8Array(32))); // 43 characters
+}
+
+async function createChallenge(verifier) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(digest));
+}
+```
+
+```python
+import base64
+import hashlib
+import secrets
+
+
+def create_verifier() -> str:
+    return secrets.token_urlsafe(32)  # 32 random bytes -> 43 characters
+
+
+def create_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+```
+
+```go
+package main
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+)
+
+func createVerifier() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b) // 43 characters
+}
+
+func createChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+```
+
+In Go, `golang.org/x/oauth2` also has `GenerateVerifier`, `S256ChallengeOption` and `VerifierOption`. After login, the [JWT Decoder](/tools/jwt-decoder/) shows the claims of the ID token, including the `nonce`.
+
+## How It Differs from Other Online PKCE Generators
+
+Tested on 2026-10-01 in desktop Chromium, with the page's `fetch`, `XMLHttpRequest` and `sendBeacon` recorded while generating and checking:
+
+- **tonyxu-io.github.io/pkce-generator** (first on Bing for "pkce generator") runs locally and gets the RFC example right, but it does not validate input: a 42-character verifier, a verifier with `+`, `/` and `=`, Chinese text and an empty field all produce a challenge. The empty field gives `47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU`, the SHA-256 of nothing.
+- **Ping Identity's PKCE Code Generator** generates locally, but the verifier field is read-only, so you cannot check a verifier from your own app.
+- **Elysia Tools** posts the mode, the verifier and the challenge as JSON to `api.elysiatools.com` and shows the result the server returns, for generating as well as checking.
+- **AuthAction**, **Found Tools**, **encode64** and **ToolBada** generate locally but cannot check an existing verifier or challenge.
+
+This tool checks a pasted verifier against the RFC grammar and points at the character that breaks it, and tells you why a challenge does not match instead of only that it does not. The verifier never leaves the tab.
+
+## Limits
+
+- Methods are S256 and plain, the two that RFC 7636 defines. Generated verifiers use the 64 base64url characters, so `.` and `~` (valid in a verifier) never appear in them.
+- The entropy figure is shown only for verifiers this page generated. For a pasted verifier the tool can check the format, not how random it is.
+- The tool does not contact your authorization server. It cannot exchange the code for you; run the cURL command, which is written for a public client. Confidential clients add their client authentication.
+- Provider rules beyond RFC 7636 are not checked. For example, LINE Login accepts only S256, and Kakao and WeChat separate scopes with commas (the nonce is still added when such a scope contains `openid`).
+- A verifier belongs to one authorization request. Generate a new one for every login; reusing a fixed verifier defeats the protection, and RFC 9700 §2.1.1 encourages servers to detect and refuse constant values.
