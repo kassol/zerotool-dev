@@ -1,162 +1,440 @@
 ---
-// TextToAsciiArtTool — converts text to ASCII art using figlet.js fonts
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const FONT_NAMES = ['Standard', 'Banner', 'Big', 'Block', 'Doom', 'Lean', 'Mini', 'Script', 'Shadow', 'Slant', 'Small', '3D-ASCII'];
+const WIDTHS = [0, 40, 60, 80, 100, 120];
+
+// {name} fields are filled in by the script. lines / cols are [one, other].
+const STRINGS = {
+  en: {
+    labelText: 'Text', defaultText: 'Hello World',
+    labelFont: 'Font', labelLayout: 'Spacing', labelWidth: 'Width',
+    layouts: { default: 'Font default', full: 'Full width (-W)', fitted: 'Fitted (-k)', smush: 'Smushed (-S)', overlap: 'Overlapped (-o)' },
+    widthNone: 'No limit', widthCols: '{n} columns',
+    outputLabel: 'Output', lines: ['1 line', '{n} lines'], cols: ['1 column', '{n} columns'],
+    copy: 'Copy', copied: 'Copied!', copyFailed: 'The browser blocked copying. Select the output and copy it by hand.',
+    copyAs: 'Copy as',
+    formats: { plain: 'Plain text', markdown: 'Markdown code block', hash: '# comments (Shell, Python, YAML)', slash: '// comments (JS, C, Go, Rust)', heredoc: "Shell heredoc (cat <<'EOF')" },
+    trim: 'Trim trailing spaces and blank edge lines',
+    downloadTxt: 'Download .txt', downloadPng: 'Download PNG',
+    pngTooLarge: 'The image would be larger than a browser canvas allows. Choose a width limit or shorten the text.',
+    previewAll: 'Preview all 12 fonts', hidePreviews: 'Hide font previews', useFont: 'Use {font}', currentFont: 'Current font',
+    commandLabel: 'Same output from the figlet command (2.2.5):', commandFile: 'Uses the font file from this site:', copyCommand: 'Copy command',
+    loading: 'Loading the {font} font…', loadError: 'Could not load the {font} font ({reason}). Check your connection, then try again.', retry: 'Try again', networkError: 'network error', badFont: 'not a FIGlet font file',
+    empty: 'Type some text to see the ASCII art.',
+    tooLong: 'The text has {n} characters. The limit is {max}; shorten it to render.',
+    skipped: 'Skipped — the {font} font has no glyph for: {chars}',
+  },
+  zh: {
+    labelText: '文字', defaultText: 'Hello World',
+    labelFont: '字体', labelLayout: '字距', labelWidth: '宽度',
+    layouts: { default: '字体默认', full: '全宽（-W）', fitted: '紧贴（-k）', smush: '合并（-S）', overlap: '重叠（-o）' },
+    widthNone: '不限', widthCols: '{n} 列',
+    outputLabel: '输出', lines: ['{n} 行', '{n} 行'], cols: ['{n} 列', '{n} 列'],
+    copy: '复制', copied: '已复制！', copyFailed: '浏览器阻止了复制，请手动选中输出内容复制。',
+    copyAs: '复制为',
+    formats: { plain: '纯文本', markdown: 'Markdown 代码块', hash: '# 注释（Shell、Python、YAML）', slash: '// 注释（JS、C、Go、Rust）', heredoc: "Shell heredoc（cat <<'EOF'）" },
+    trim: '去掉行尾空格和首尾空行',
+    downloadTxt: '下载 .txt', downloadPng: '下载 PNG',
+    pngTooLarge: '图片会超出浏览器画布的尺寸上限。请设置宽度或缩短文字。',
+    previewAll: '预览全部 12 种字体', hidePreviews: '收起字体预览', useFont: '使用 {font}', currentFont: '当前字体',
+    commandLabel: '用 figlet 命令（2.2.5）得到相同输出：', commandFile: '需要本站的字体文件：', copyCommand: '复制命令',
+    loading: '正在加载 {font} 字体…', loadError: '{font} 字体加载失败（{reason}）。请检查网络后重试。', retry: '重试', networkError: '网络错误', badFont: '不是 FIGlet 字体文件',
+    empty: '输入文字即可生成 ASCII 艺术字。',
+    tooLong: '文字有 {n} 个字符，上限是 {max}。请缩短后再生成。',
+    skipped: '已跳过：{font} 字体里没有这些字符：{chars}',
+  },
+  ja: {
+    labelText: 'テキスト', defaultText: 'Hello World',
+    labelFont: 'フォント', labelLayout: '字間', labelWidth: '幅',
+    layouts: { default: 'フォント既定', full: '全幅（-W）', fitted: '詰める（-k）', smush: '結合（-S）', overlap: '重ねる（-o）' },
+    widthNone: '制限なし', widthCols: '{n} 桁',
+    outputLabel: '出力', lines: ['{n} 行', '{n} 行'], cols: ['{n} 桁', '{n} 桁'],
+    copy: 'コピー', copied: 'コピーしました', copyFailed: 'ブラウザがコピーをブロックしました。出力を選択して手動でコピーしてください。',
+    copyAs: 'コピー形式',
+    formats: { plain: 'プレーンテキスト', markdown: 'Markdown コードブロック', hash: '# コメント（Shell・Python・YAML）', slash: '// コメント（JS・C・Go・Rust）', heredoc: "Shell ヒアドキュメント（cat <<'EOF'）" },
+    trim: '行末の空白と先頭・末尾の空行を削除',
+    downloadTxt: '.txt をダウンロード', downloadPng: 'PNG をダウンロード',
+    pngTooLarge: '画像がブラウザのキャンバス上限を超えます。幅を指定するか、テキストを短くしてください。',
+    previewAll: '12 フォントをすべてプレビュー', hidePreviews: 'プレビューを閉じる', useFont: '{font} を使う', currentFont: '選択中',
+    commandLabel: 'figlet コマンド（2.2.5）で同じ出力：', commandFile: 'このサイトのフォントファイルを使います：', copyCommand: 'コマンドをコピー',
+    loading: '{font} フォントを読み込み中…', loadError: '{font} フォントを読み込めませんでした（{reason}）。接続を確認して再試行してください。', retry: '再試行', networkError: 'ネットワークエラー', badFont: 'FIGlet フォントファイルではありません',
+    empty: 'テキストを入力すると ASCII アートが表示されます。',
+    tooLong: 'テキストは {n} 文字です。上限は {max} 文字なので、短くしてください。',
+    skipped: 'スキップしました：{font} フォントにない文字：{chars}',
+  },
+  ko: {
+    labelText: '텍스트', defaultText: 'Hello World',
+    labelFont: '글꼴', labelLayout: '자간', labelWidth: '너비',
+    layouts: { default: '글꼴 기본값', full: '전체 폭 (-W)', fitted: '붙이기 (-k)', smush: '합치기 (-S)', overlap: '겹치기 (-o)' },
+    widthNone: '제한 없음', widthCols: '{n}열',
+    outputLabel: '출력', lines: ['{n}줄', '{n}줄'], cols: ['{n}열', '{n}열'],
+    copy: '복사', copied: '복사됨!', copyFailed: '브라우저가 복사를 막았습니다. 출력을 선택해 직접 복사하세요.',
+    copyAs: '복사 형식',
+    formats: { plain: '일반 텍스트', markdown: 'Markdown 코드 블록', hash: '# 주석 (Shell, Python, YAML)', slash: '// 주석 (JS, C, Go, Rust)', heredoc: "Shell heredoc (cat <<'EOF')" },
+    trim: '줄 끝 공백과 앞뒤 빈 줄 제거',
+    downloadTxt: '.txt 다운로드', downloadPng: 'PNG 다운로드',
+    pngTooLarge: '이미지가 브라우저 캔버스 한도를 넘습니다. 너비를 지정하거나 텍스트를 줄이세요.',
+    previewAll: '12개 글꼴 모두 미리 보기', hidePreviews: '미리 보기 닫기', useFont: '{font} 사용', currentFont: '현재 글꼴',
+    commandLabel: 'figlet 명령(2.2.5)으로 같은 출력:', commandFile: '이 사이트의 글꼴 파일이 필요합니다:', copyCommand: '명령 복사',
+    loading: '{font} 글꼴을 불러오는 중…', loadError: '{font} 글꼴을 불러오지 못했습니다({reason}). 연결을 확인한 뒤 다시 시도하세요.', retry: '다시 시도', networkError: '네트워크 오류', badFont: 'FIGlet 글꼴 파일이 아님',
+    empty: '텍스트를 입력하면 ASCII 아트가 나타납니다.',
+    tooLong: '텍스트가 {n}자입니다. 최대 {max}자까지 처리하므로 줄여 주세요.',
+    skipped: '건너뜀: {font} 글꼴에 없는 문자: {chars}',
+  },
+};
+
+const T = STRINGS[lang];
+const L = { ...T, lang };
 ---
 <div class="taa-wrap">
-  <div class="taa-inputs">
-    <div class="taa-field">
-      <label for="taa-input" data-i18n="inputLabel">Input Text</label>
-      <input
-        id="taa-input"
-        type="text"
-        maxlength="80"
-        placeholder="Hello World"
-        data-i18n-ph="placeholder"
-        spellcheck="false"
-        autocomplete="off"
-      />
-    </div>
+  <div class="taa-field taa-text-field">
+    <label class="tool-label" for="taa-input">{T.labelText}</label>
+    <textarea id="taa-input" class="tool-textarea taa-input" rows="2" spellcheck="false" autocomplete="off">{T.defaultText}</textarea>
+  </div>
 
+  <div class="taa-options">
     <div class="taa-field">
-      <label for="taa-font" data-i18n="fontLabel">Font</label>
-      <select id="taa-font">
-        <option value="Standard">Standard</option>
-        <option value="Banner">Banner</option>
-        <option value="Big">Big</option>
-        <option value="Block">Block</option>
-        <option value="Doom">Doom</option>
-        <option value="Lean">Lean</option>
-        <option value="Mini">Mini</option>
-        <option value="Script">Script</option>
-        <option value="Shadow">Shadow</option>
-        <option value="Slant">Slant</option>
-        <option value="Small">Small</option>
-        <option value="3D-ASCII">3D-ASCII</option>
+      <label class="tool-label" for="taa-font">{T.labelFont}</label>
+      <select id="taa-font" class="tool-input taa-select">
+        {FONT_NAMES.map((f) => <option value={f}>{f}</option>)}
+      </select>
+    </div>
+    <div class="taa-field">
+      <label class="tool-label" for="taa-layout">{T.labelLayout}</label>
+      <select id="taa-layout" class="tool-input taa-select">
+        {Object.entries(T.layouts).map(([v, label]) => <option value={v}>{label}</option>)}
+      </select>
+    </div>
+    <div class="taa-field">
+      <label class="tool-label" for="taa-width">{T.labelWidth}</label>
+      <select id="taa-width" class="tool-input taa-select">
+        {WIDTHS.map((w) => <option value={String(w)}>{w ? T.widthCols.replace('{n}', String(w)) : T.widthNone}</option>)}
       </select>
     </div>
   </div>
 
-  <div class="taa-output-wrap">
+  <div class="taa-output-box" id="taa-output-box">
     <div class="taa-output-header">
-      <span class="taa-output-label" data-i18n="outputLabel">Output</span>
-      <button id="taa-copy" class="btn-copy" disabled data-i18n="copy">Copy</button>
+      <span class="taa-output-label">{T.outputLabel} <span id="taa-size" class="taa-size"></span></span>
+      <div class="taa-copy-group">
+        <label class="taa-visually-hidden" for="taa-format">{T.copyAs}</label>
+        <select id="taa-format" class="taa-format">
+          {Object.entries(T.formats).map(([v, label]) => <option value={v}>{label}</option>)}
+        </select>
+        <button id="taa-copy" class="btn-copy" type="button" disabled>{T.copy}</button>
+      </div>
     </div>
-    <div id="taa-loading" class="taa-loading" hidden>
-      <span data-i18n="loading">Loading font…</span>
-    </div>
-    <pre id="taa-output" class="taa-output" aria-live="polite"></pre>
-    <p id="taa-skipped" class="taa-skipped" role="status" hidden></p>
+    <pre id="taa-output" class="taa-output" tabindex="0" aria-live="polite"></pre>
+    <p id="taa-skipped" class="taa-note" role="status" hidden></p>
   </div>
 
-  <div id="taa-status" class="taa-status" aria-live="polite"></div>
+  <div id="taa-status" class="tool-status taa-status" role="status" aria-live="polite"></div>
 
-  <script>
-    import figlet from 'figlet';
+  <div class="taa-actions">
+    <label class="taa-check"><input id="taa-trim" type="checkbox" checked /> {T.trim}</label>
+    <button id="taa-download-txt" class="btn-secondary" type="button" disabled>{T.downloadTxt}</button>
+    <button id="taa-download-png" class="btn-secondary" type="button" disabled>{T.downloadPng}</button>
+    <button id="taa-preview-all" class="btn-ghost" type="button" aria-expanded="false" aria-controls="taa-gallery">{T.previewAll}</button>
+  </div>
 
-    figlet.defaults({ fontPath: '/figlet-fonts' });
+  <div id="taa-command" class="taa-command" hidden>
+    <p class="taa-command-label">{T.commandLabel}</p>
+    <div class="taa-command-row">
+      <code id="taa-command-text" class="taa-command-text"></code>
+      <button id="taa-copy-command" class="btn-copy" type="button">{T.copyCommand}</button>
+    </div>
+    <p id="taa-command-file" class="taa-command-file" hidden>{T.commandFile} <a id="taa-command-file-link" href="#" download></a></p>
+  </div>
 
-    const STRINGS: Record<string, Record<string, string>> = {
-      en: {
-        inputLabel: 'Input Text',
-        placeholder: 'Hello World',
-        fontLabel: 'Font',
-        outputLabel: 'Output',
-        copy: 'Copy',
-        copied: 'Copied!',
-        loading: 'Loading font…',
-        errorRender: 'Render error.',
-        empty: 'Type something above to generate ASCII art.',
-        skipped: 'Skipped — the {font} font has no glyph for: {chars}',
-      },
-      zh: {
-        inputLabel: '输入文字',
-        placeholder: 'Hello World',
-        fontLabel: '字体',
-        outputLabel: '输出',
-        copy: '复制',
-        copied: '已复制！',
-        loading: '正在加载字体…',
-        errorRender: '渲染错误。',
-        empty: '在上方输入文字以生成 ASCII 艺术。',
-        skipped: '已跳过：{font} 字体里没有这些字符：{chars}',
-      },
-      ja: {
-        inputLabel: '入力テキスト',
-        placeholder: 'Hello World',
-        fontLabel: 'フォント',
-        outputLabel: '出力',
-        copy: 'コピー',
-        copied: 'コピー済み！',
-        loading: 'フォント読み込み中…',
-        errorRender: 'レンダリングエラー。',
-        empty: '上にテキストを入力するとASCIIアートが生成されます。',
-        skipped: 'スキップしました：{font} フォントにない文字：{chars}',
-      },
-      ko: {
-        inputLabel: '입력 텍스트',
-        placeholder: 'Hello World',
-        fontLabel: '글꼴',
-        outputLabel: '출력',
-        copy: '복사',
-        copied: '복사됨!',
-        loading: '글꼴 로드 중…',
-        errorRender: '렌더링 오류.',
-        empty: '위에 텍스트를 입력하면 ASCII 아트가 생성됩니다.',
-        skipped: '건너뜀: {font} 글꼴에 없는 문자: {chars}',
-      },
-    };
+  <div id="taa-gallery" class="taa-gallery" hidden></div>
 
-    const pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-    const t = STRINGS[pageLang] || STRINGS.en;
-
-    // Apply i18n
-    document.querySelectorAll('.taa-wrap [data-i18n]').forEach((el) => {
-      const key = (el as HTMLElement).dataset.i18n!;
-      if (t[key]) el.textContent = t[key];
-    });
-    document.querySelectorAll('.taa-wrap [data-i18n-ph]').forEach((el) => {
-      const key = (el as HTMLElement).dataset.i18nPh!;
-      if (t[key]) (el as HTMLInputElement).placeholder = t[key];
-    });
-
-    const inputEl   = document.getElementById('taa-input') as HTMLInputElement;
-    const fontEl    = document.getElementById('taa-font') as HTMLSelectElement;
-    const outputEl  = document.getElementById('taa-output') as HTMLElement;
-    const copyBtn   = document.getElementById('taa-copy') as HTMLButtonElement;
-    const statusEl  = document.getElementById('taa-status') as HTMLElement;
-    const loadingEl = document.getElementById('taa-loading') as HTMLElement;
-    const skippedEl = document.getElementById('taa-skipped') as HTMLElement;
-
-    function showSkipped(text: string, font: string) {
-      const chars = unsupportedChars(text, figlet.figFonts[font] || {});
-      skippedEl.hidden = chars.length === 0;
-      skippedEl.textContent = chars.length ? skippedMessage(t.skipped, font, chars) : '';
-    }
-
-    function showStatus(msg: string, isError: boolean) {
-      statusEl.textContent = msg;
-      statusEl.className = 'taa-status' + (isError ? ' taa-error' : '');
-    }
-
-    function setLoading(on: boolean) {
-      loadingEl.hidden = !on;
-      outputEl.style.display = on ? 'none' : '';
-    }
-
+  <script is:inline define:vars={{ S: L, FONT_NAMES }}>
+  (function () {
     /* ── engine:start ── */
-    // figlet.js looks up each UTF-16 code unit in the font and silently skips the ones the
-    // font does not define; a glyph whose rows are all empty (3D-ASCII has these for ( ) { } _
-    // and others) also draws nothing. List those characters (by code point, each once, in
-    // input order).
+    // FIGlet renderer ported from figlet 2.2.5 (figlet.c: readfont, readfontchar, smushem,
+    // smushamt, addchar, putstring, splitline and the word-break loop in main), so the output
+    // matches the `figlet` command character for character. figlet.c is BSD-3-Clause,
+    // Copyright (C) 1991-2012 Glenn Chappell, Ian Chai, John Cowan, Christiaan Keet and
+    // Claudio Matsuoka. Left-to-right fonts only; input is read as Unicode code points, as
+    // `figlet -C utf8` does.
+    var SM_EQUAL = 1, SM_LOWLINE = 2, SM_HIERARCHY = 4, SM_PAIR = 8, SM_BIGX = 16;
+    var SM_HARDBLANK = 32, SM_KERN = 64, SM_SMUSH = 128;
+    var DEUTSCH = [196, 214, 220, 228, 246, 252, 223];
+    var MAX_INPUT = 2000;
+
+    // C sscanf "%li" (strtol base 0): optional sign, 0x hex, leading 0 octal, else decimal.
+    function scanLong(s) {
+      var m = /^[ \t\n\v\f\r]*([+-]?)(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)/.exec(s);
+      if (!m) return null;
+      var body = m[2], v;
+      if (/^0[xX]/.test(body)) v = parseInt(body.slice(2), 16);
+      else if (body.length > 1 && body[0] === '0') v = parseInt(body.slice(1), 8);
+      else v = parseInt(body, 10);
+      return m[1] === '-' ? -v : v;
+    }
+
+    function parseFont(data) {
+      // myfgets() returns NULL for a last line without a line terminator, so drop it.
+      var lines = String(data).split(/\r\n|\r|\n/);
+      lines.pop();
+      var pos = 0;
+      function next() { return pos < lines.length ? lines[pos++] : null; }
+      var first = next();
+      if (first === null || first.slice(0, 4) !== 'flf2') throw new Error('not-flf');
+      var rest = first.slice(4);
+      var hardblank = rest.charAt(1);
+      var ints = [], tail = rest.slice(2), m;
+      while ((m = /^[ \t\n\v\f\r]*([+-]?[0-9]+)/.exec(tail))) { ints.push(parseInt(m[1], 10)); tail = tail.slice(m[0].length); }
+      var numsread = rest.length >= 2 ? 1 + (ints.length >= 1 ? 1 : 0) + Math.max(0, Math.min(ints.length, 7) - 2) : 0;
+      if (numsread < 5) throw new Error('not-flf');
+      var height = Math.max(1, ints[0]);
+      var smush = ints[3], cmtlines = ints[4];
+      var direction = ints.length >= 6 ? ints[5] : 0;
+      var smush2;
+      if (ints.length >= 7) smush2 = ints[6];
+      else if (smush === 0) smush2 = SM_KERN;
+      else if (smush < 0) smush2 = 0;
+      else smush2 = (smush & 31) | SM_SMUSH;
+      for (var i = 0; i < cmtlines; i++) next();
+      var chars = new Map();
+      var empty = [];
+      for (var r = 0; r < height; r++) empty.push('');
+      chars.set(0, empty);
+      function readChar() {
+        var rows = [];
+        for (var row = 0; row < height; row++) {
+          var line = next();
+          if (line === null) line = '';
+          var k = line.length - 1;
+          while (k >= 0 && /[ \t\n\v\f\r]/.test(line[k])) k--;
+          if (k >= 0) {
+            var endchar = line[k];
+            while (k >= 0 && line[k] === endchar) k--;
+          }
+          rows.push(line.slice(0, k + 1));
+        }
+        return rows;
+      }
+      for (var ord = 32; ord <= 126; ord++) chars.set(ord, readChar());
+      for (var d = 0; d < DEUTSCH.length; d++) chars.set(DEUTSCH[d], readChar());
+      for (;;) {
+        var tag = next();
+        if (tag === null) break;
+        var code = scanLong(tag);
+        if (code === null) break;
+        chars.set(code, readChar());
+      }
+      return { hardblank: hardblank, height: height, smush2: smush2, direction: direction, chars: chars };
+    }
+
+    // Horizontal layout → figlet option: default (font), full (-W), fitted (-k),
+    // smush (-S: font rules, forced on) and overlap (-o: universal overlapping).
+    function smushModeFor(font, layout) {
+      if (layout === 'full') return 0;
+      if (layout === 'fitted') return SM_KERN;
+      if (layout === 'smush') return SM_SMUSH | font.smush2;
+      if (layout === 'overlap') return SM_SMUSH;
+      return font.smush2;
+    }
+
+    // C figlet's input filter: tab → space, \n \v \f \r → line break, other C0 controls and
+    // DEL are dropped.
+    function inputCodes(text) {
+      var out = [];
+      for (var ch of String(text)) {
+        var c = ch.codePointAt(0);
+        if (c === 9 || c === 32) c = 32;
+        else if (c >= 10 && c <= 13) c = 10;
+        if ((c > 0 && c < 32 && c !== 10) || c === 127) continue;
+        out.push(c);
+      }
+      return out;
+    }
+
+    // width: figlet -w (0 = no limit). Returns the output lines without the trailing newline.
+    function renderFiglet(font, text, options) {
+      options = options || {};
+      var smushmode = smushModeFor(font, options.layout || 'default');
+      var outputwidth = options.width > 0 ? Math.floor(options.width) : Infinity;
+      var outlinelenlimit = outputwidth - 1;
+      var inchrlinelenlimit = outputwidth * 4 + 100;
+      var hardblank = font.hardblank, charheight = font.height, chars = font.chars;
+      var outputline = [], outlinelen = 0, inchrline = [];
+      var currchar = null, currcharwidth = 0, previouscharwidth = 0;
+      var result = [];
+
+      function at(s, i) { return i < s.length ? s[i] : '\0'; }
+      function clearline() {
+        outputline = [];
+        for (var i = 0; i < charheight; i++) outputline.push('');
+        outlinelen = 0;
+        inchrline = [];
+      }
+      function getletter(c) {
+        currchar = chars.has(c) ? chars.get(c) : chars.get(0);
+        previouscharwidth = currcharwidth;
+        currcharwidth = currchar[0].length;
+      }
+      function smushem(lch, rch) {
+        if (lch === ' ') return rch;
+        if (rch === ' ') return lch;
+        if (previouscharwidth < 2 || currcharwidth < 2) return '\0';
+        if ((smushmode & SM_SMUSH) === 0) return '\0';
+        if ((smushmode & 63) === 0) {
+          if (lch === hardblank) return rch;
+          if (rch === hardblank) return lch;
+          return rch;
+        }
+        if (smushmode & SM_HARDBLANK) {
+          if (lch === hardblank && rch === hardblank) return lch;
+        }
+        if (lch === hardblank || rch === hardblank) return '\0';
+        if (smushmode & SM_EQUAL) {
+          if (lch === rch) return lch;
+        }
+        if (smushmode & SM_LOWLINE) {
+          if (lch === '_' && '|/\\[]{}()<>'.indexOf(rch) >= 0) return rch;
+          if (rch === '_' && '|/\\[]{}()<>'.indexOf(lch) >= 0) return lch;
+        }
+        if (smushmode & SM_HIERARCHY) {
+          if (lch === '|' && '/\\[]{}()<>'.indexOf(rch) >= 0) return rch;
+          if (rch === '|' && '/\\[]{}()<>'.indexOf(lch) >= 0) return lch;
+          if ('/\\'.indexOf(lch) >= 0 && '[]{}()<>'.indexOf(rch) >= 0) return rch;
+          if ('/\\'.indexOf(rch) >= 0 && '[]{}()<>'.indexOf(lch) >= 0) return lch;
+          if ('[]'.indexOf(lch) >= 0 && '{}()<>'.indexOf(rch) >= 0) return rch;
+          if ('[]'.indexOf(rch) >= 0 && '{}()<>'.indexOf(lch) >= 0) return lch;
+          if ('{}'.indexOf(lch) >= 0 && '()<>'.indexOf(rch) >= 0) return rch;
+          if ('{}'.indexOf(rch) >= 0 && '()<>'.indexOf(lch) >= 0) return lch;
+          if ('()'.indexOf(lch) >= 0 && '<>'.indexOf(rch) >= 0) return rch;
+          if ('()'.indexOf(rch) >= 0 && '<>'.indexOf(lch) >= 0) return lch;
+        }
+        if (smushmode & SM_PAIR) {
+          if (lch === '[' && rch === ']') return '|';
+          if (rch === '[' && lch === ']') return '|';
+          if (lch === '{' && rch === '}') return '|';
+          if (rch === '{' && lch === '}') return '|';
+          if (lch === '(' && rch === ')') return '|';
+          if (rch === '(' && lch === ')') return '|';
+        }
+        if (smushmode & SM_BIGX) {
+          if (lch === '/' && rch === '\\') return '|';
+          if (rch === '/' && lch === '\\') return 'Y';
+          if (lch === '>' && rch === '<') return 'X';
+        }
+        return '\0';
+      }
+      function smushamt() {
+        if ((smushmode & (SM_SMUSH | SM_KERN)) === 0) return 0;
+        var maxsmush = currcharwidth;
+        for (var row = 0; row < charheight; row++) {
+          var line = outputline[row], cur = currchar[row];
+          var linebd = line.length, ch1 = at(line, linebd);
+          while (linebd > 0 && (ch1 === '\0' || ch1 === ' ')) { linebd--; ch1 = at(line, linebd); }
+          var charbd = 0, ch2 = at(cur, 0);
+          while (ch2 === ' ') { charbd++; ch2 = at(cur, charbd); }
+          var amt = charbd + outlinelen - 1 - linebd;
+          if (ch1 === '\0' || ch1 === ' ') amt++;
+          else if (ch2 !== '\0') { if (smushem(ch1, ch2) !== '\0') amt++; }
+          if (amt < maxsmush) maxsmush = amt;
+        }
+        return maxsmush;
+      }
+      function addchar(c) {
+        getletter(c);
+        var smushamount = smushamt();
+        if (outlinelen + currcharwidth - smushamount > outlinelenlimit || inchrline.length + 1 > inchrlinelenlimit) return false;
+        for (var row = 0; row < charheight; row++) {
+          var line = outputline[row], cur = currchar[row];
+          for (var k = 0; k < smushamount; k++) {
+            var column = outlinelen - smushamount + k;
+            if (column < 0) column = 0;
+            // C writes into a NUL-terminated buffer: a '\0' result ends the string there.
+            if (column < line.length) {
+              var s = smushem(line[column], at(cur, k));
+              line = s === '\0' ? line.slice(0, column) : line.slice(0, column) + s + line.slice(column + 1);
+            }
+          }
+          outputline[row] = line + cur.slice(smushamount);
+        }
+        outlinelen = outputline[0].length;
+        inchrline.push(c);
+        return true;
+      }
+      function putstring(s) {
+        var len = s.length;
+        if (outputwidth > 1 && len > outputwidth - 1) len = outputwidth - 1;
+        var out = '';
+        for (var i = 0; i < len; i++) out += s[i] === hardblank ? ' ' : s[i];
+        result.push(out);
+      }
+      function printline() {
+        for (var i = 0; i < charheight; i++) putstring(outputline[i]);
+        clearline();
+      }
+      function splitline() {
+        var i, gotspace = false, lastspace = inchrline.length - 1;
+        for (i = inchrline.length - 1; i >= 0; i--) {
+          if (!gotspace && inchrline[i] === 32) { gotspace = true; lastspace = i; }
+          if (gotspace && inchrline[i] !== 32) break;
+        }
+        var part1 = inchrline.slice(0, i + 1);
+        var part2 = inchrline.slice(lastspace + 1);
+        clearline();
+        for (i = 0; i < part1.length; i++) addchar(part1[i]);
+        printline();
+        for (i = 0; i < part2.length; i++) addchar(part2[i]);
+      }
+
+      clearline();
+      var wordbreakmode = 0;
+      var codes = inputCodes(text);
+      for (var n = 0; n < codes.length; n++) {
+        var c = codes[n], notAdded;
+        do {
+          notAdded = false;
+          if (wordbreakmode === -1) {
+            if (c === 32) break;
+            if (c === 10) { wordbreakmode = 0; break; }
+            wordbreakmode = 0;
+          }
+          if (c === 10) {
+            printline();
+            wordbreakmode = 0;
+          } else if (addchar(c)) {
+            if (c !== 32) wordbreakmode = wordbreakmode >= 2 ? 3 : 1;
+            else wordbreakmode = wordbreakmode > 0 ? 2 : 0;
+          } else if (outlinelen === 0) {
+            for (var i2 = 0; i2 < charheight; i2++) putstring(currchar[i2]);
+            wordbreakmode = -1;
+          } else if (c === 32) {
+            if (wordbreakmode === 2) splitline(); else printline();
+            wordbreakmode = -1;
+          } else {
+            if (wordbreakmode >= 2) splitline(); else printline();
+            wordbreakmode = wordbreakmode === 3 ? 1 : 0;
+            notAdded = true;
+          }
+        } while (notAdded);
+      }
+      if (outlinelen !== 0) printline();
+      return result;
+    }
+
+    // Characters that draw nothing: not in the font (figlet inserts an empty glyph), a glyph
+    // whose rows are all empty (3D-ASCII has these for ( ) { } _ and others), or a control
+    // character that figlet drops. Each code point once, in input order. Tab (a space) and
+    // line breaks are not listed.
     function unsupportedChars(text, font) {
       var out = [];
-      for (var ch of text) {
-        var missing = false;
-        for (var i = 0; i < ch.length; i++) {
-          var code = ch.charCodeAt(i);
-          var glyph = Object.prototype.hasOwnProperty.call(font, code) ? font[code] : null;
-          if (!glyph || glyph.every(function (row) { return row === ''; })) missing = true;
-        }
-        if (missing && out.indexOf(ch) === -1) out.push(ch);
+      for (var ch of String(text)) {
+        var c = ch.codePointAt(0);
+        if (c === 9 || (c >= 10 && c <= 13)) continue;
+        var dropped = (c > 0 && c < 32) || c === 127;
+        var rows = font.chars.has(c) ? font.chars.get(c) : null;
+        var blank = !rows || rows.every(function (row) { return row === ''; });
+        if ((dropped || blank) && out.indexOf(ch) === -1) out.push(ch);
       }
       return out;
     }
@@ -169,103 +447,359 @@
       });
       return template.replace('{font}', fontName).replace('{chars}', shown.join(' '));
     }
+
+    function fill(template, values) {
+      return template.replace(/\{(\w+)\}/g, function (m, k) {
+        return Object.prototype.hasOwnProperty.call(values, k) ? String(values[k]) : m;
+      });
+    }
+
+    // trim: drop trailing spaces on each line and blank lines at the start and end.
+    function formatOutput(lines, format, trim) {
+      var ls = lines.slice();
+      if (trim) {
+        ls = ls.map(function (l) { return l.replace(/ +$/, ''); });
+        while (ls.length && ls[ls.length - 1] === '') ls.pop();
+        while (ls.length && ls[0] === '') ls.shift();
+      }
+      var body = ls.join('\n');
+      if (format === 'markdown') {
+        var run = 0;
+        (body.match(/`+/g) || []).forEach(function (r) { if (r.length > run) run = r.length; });
+        var fence = '`'.repeat(Math.max(3, run + 1));
+        return fence + '\n' + body + '\n' + fence;
+      }
+      if (format === 'hash' || format === 'slash') {
+        var mark = format === 'hash' ? '#' : '//';
+        return ls.map(function (l) { return l === '' ? mark : mark + ' ' + l; }).join('\n');
+      }
+      if (format === 'heredoc') {
+        var delim = 'EOF', n = 1;
+        while (ls.indexOf(delim) >= 0) delim = 'EOF' + (++n);
+        return "cat <<'" + delim + "'\n" + body + '\n' + delim;
+      }
+      return body;
+    }
+
+    // Fonts whose glyphs equal the files in the figlet 2.2.5 distribution (checked glyph by
+    // glyph), except the code points listed. Shadow here is patorjk's 2007 revision with a
+    // wider space; Doom and 3D-ASCII are not in the distribution.
+    var DIST_FONTS = { Banner: 'banner', Big: 'big', Block: 'block', Lean: 'lean', Mini: 'mini', Script: 'script', Slant: 'slant', Small: 'small', Standard: 'standard' };
+    var DIST_DIFFERS = { Standard: [0x0CA0] };
+
+    function shellQuote(s) { return "'" + s.replace(/'/g, "'\\''") + "'"; }
+
+    // The figlet command that prints the same lines. With no width limit, -w is large enough
+    // for the widest line and for figlet's limit of 4 × width + 100 input characters per line.
+    function figletCommand(fontName, layout, width, text, lines) {
+      if (text === '') return null;
+      var parts = ['figlet'];
+      if (/[^\x00-\x7f]/.test(text)) parts.push('-C', 'utf8');
+      var differs = (DIST_DIFFERS[fontName] || []).some(function (c) { return text.indexOf(String.fromCodePoint(c)) >= 0; });
+      var useFile = !DIST_FONTS[fontName] || differs;
+      parts.push('-f', useFile ? './' + fontName + '.flf' : DIST_FONTS[fontName]);
+      var flag = { full: '-W', fitted: '-k', smush: '-S', overlap: '-o' }[layout];
+      if (flag) parts.push(flag);
+      var w = width;
+      if (!(w > 0)) {
+        var widest = 0, perLine = 0, count = 0;
+        lines.forEach(function (l) { if (l.length > widest) widest = l.length; });
+        inputCodes(text).forEach(function (c) {
+          if (c === 10) count = 0; else if (++count > perLine) perLine = count;
+        });
+        w = Math.max(80, widest + 1, Math.ceil((perLine - 100) / 4));
+      }
+      if (w !== 80) parts.push('-w', String(w));
+      if (text.charAt(0) === '-') parts.push('--');
+      parts.push(shellQuote(text));
+      return { command: parts.join(' '), fontFile: useFile ? fontName + '.flf' : null };
+    }
+
+    function downloadBase(text, fontName) {
+      var base = String(text).normalize('NFKD').replace(/[^\x00-\x7f]/g, '').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 40).replace(/-+$/, '');
+      return (base || 'ascii-art') + '-' + fontName.toLowerCase();
+    }
+
+    // PNG: 14px monospace, 17px lines, 16px padding. 2x when it fits; canvas kept within
+    // 16,384 px per side and 16,777,216 px in area (the iOS Safari limit).
+    function imageLayout(cols, rows, charWidth) {
+      var width = Math.ceil(cols * charWidth + 32), height = rows * 17 + 32;
+      function fits(s) { return width * s <= 16384 && height * s <= 16384 && width * height * s * s <= 16777216; }
+      if (fits(2)) return { width: width, height: height, scale: 2 };
+      if (fits(1)) return { width: width, height: height, scale: 1 };
+      return null;
+    }
     /* ── engine:end ── */
 
-    function render() {
-      const text = inputEl.value.trim();
-      const font = fontEl.value;
+    var input = document.getElementById('taa-input');
+    var fontSel = document.getElementById('taa-font');
+    var layoutSel = document.getElementById('taa-layout');
+    var widthSel = document.getElementById('taa-width');
+    var formatSel = document.getElementById('taa-format');
+    var trimBox = document.getElementById('taa-trim');
+    var outputEl = document.getElementById('taa-output');
+    var outputBox = document.getElementById('taa-output-box');
+    var sizeEl = document.getElementById('taa-size');
+    var skippedEl = document.getElementById('taa-skipped');
+    var statusEl = document.getElementById('taa-status');
+    var copyBtn = document.getElementById('taa-copy');
+    var txtBtn = document.getElementById('taa-download-txt');
+    var pngBtn = document.getElementById('taa-download-png');
+    var previewBtn = document.getElementById('taa-preview-all');
+    var gallery = document.getElementById('taa-gallery');
+    var commandBox = document.getElementById('taa-command');
+    var commandText = document.getElementById('taa-command-text');
+    var commandFile = document.getElementById('taa-command-file');
+    var commandFileLink = document.getElementById('taa-command-file-link');
+    var copyCommandBtn = document.getElementById('taa-copy-command');
 
-      if (!text) {
-        outputEl.textContent = '';
+    var fontCache = {};
+    function loadFont(name) {
+      if (!fontCache[name]) {
+        var p = fetch('/figlet-fonts/' + encodeURIComponent(name) + '.flf').then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        }).then(parseFont);
+        fontCache[name] = p;
+        p.catch(function () { if (fontCache[name] === p) delete fontCache[name]; });
+      }
+      return fontCache[name];
+    }
+
+    function failReason(err) {
+      var msg = err && err.message ? err.message : '';
+      if (/^HTTP \d+$/.test(msg)) return msg;
+      return msg === 'not-flf' ? S.badFont : S.networkError;
+    }
+    function count(pair, n) { return fill(pair[n === 1 ? 0 : 1], { n: n }); }
+    function options() { return { layout: layoutSel.value, width: Number(widthSel.value) }; }
+
+    function setStatus(msg, kind, retry) {
+      statusEl.textContent = msg;
+      statusEl.className = 'tool-status taa-status' + (kind ? ' ' + kind : '');
+      if (retry) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn-copy taa-retry';
+        b.textContent = S.retry;
+        b.addEventListener('click', render);
+        statusEl.appendChild(document.createTextNode(' '));
+        statusEl.appendChild(b);
+      }
+    }
+
+    var current = null; // { lines, text, font }
+    function setOutput(state) {
+      current = state;
+      var has = !!(state && state.lines.length);
+      var shown = has ? formatOutput(state.lines, 'plain', trimBox.checked) : '';
+      outputEl.textContent = shown;
+      var rows = shown ? shown.split('\n') : [];
+      var cols = rows.reduce(function (m, l) { return Math.max(m, l.length); }, 0);
+      sizeEl.textContent = rows.length ? '· ' + count(S.lines, rows.length) + ' × ' + count(S.cols, cols) : '';
+      copyBtn.disabled = txtBtn.disabled = pngBtn.disabled = !has || !shown.trim();
+      if (state && state.font) {
+        var chars = unsupportedChars(state.text, state.font);
+        skippedEl.hidden = chars.length === 0;
+        skippedEl.textContent = chars.length ? skippedMessage(S.skipped, state.fontName, chars) : '';
+      } else {
         skippedEl.hidden = true;
-        copyBtn.disabled = true;
-        showStatus(t.empty, false);
-        return;
+        skippedEl.textContent = '';
       }
-
-      setLoading(true);
-      showStatus('', false);
-
-      figlet.text(text, { font: font as figlet.Fonts }, (err, result) => {
-        setLoading(false);
-        if (err) {
-          showStatus(t.errorRender, true);
-          outputEl.textContent = '';
-          skippedEl.hidden = true;
-          copyBtn.disabled = true;
-          return;
+      var cmd = has ? figletCommand(state.fontName, state.layout, state.width, state.text, state.lines) : null;
+      commandBox.hidden = !cmd;
+      if (cmd) {
+        commandText.textContent = cmd.command;
+        commandFile.hidden = !cmd.fontFile;
+        if (cmd.fontFile) {
+          commandFileLink.textContent = cmd.fontFile;
+          commandFileLink.href = '/figlet-fonts/' + encodeURIComponent(cmd.fontFile);
         }
-        outputEl.textContent = result ?? '';
-        showSkipped(text, font);
-        copyBtn.disabled = !(result && result.trim());
-        showStatus('', false);
-      });
-    }
-
-    let _debounce: ReturnType<typeof setTimeout>;
-    function scheduleRender() {
-      clearTimeout(_debounce);
-      _debounce = setTimeout(render, 300);
-    }
-
-    let tracked = false;
-    function trackOnce() {
-      if (!tracked) {
-        tracked = true;
-        (window as any).trackTool?.('text_to_ascii_art', 'generate');
       }
     }
 
-    inputEl.addEventListener('input', () => {
-      scheduleRender();
-      trackOnce();
-    });
-    fontEl.addEventListener('change', () => { render(); });
-
-    copyBtn.addEventListener('click', () => {
-      const val = outputEl.textContent;
-      if (!val) return;
-      navigator.clipboard.writeText(val).then(() => {
-        copyBtn.textContent = t.copied;
-        setTimeout(() => { copyBtn.textContent = t.copy; }, 1500);
+    var generation = 0;
+    var galleryGeneration = 0;
+    function render() {
+      var my = ++generation;
+      var text = input.value;
+      var fontName = fontSel.value;
+      var o = options();
+      if (!text.trim()) { setOutput(null); setStatus(S.empty, 'none'); if (!gallery.hidden) renderGallery(); return; }
+      var n = Array.from(text).length;
+      if (n > MAX_INPUT) { setOutput(null); setStatus(fill(S.tooLong, { n: n, max: MAX_INPUT }), 'error'); return; }
+      var timer = setTimeout(function () { if (my === generation) setStatus(fill(S.loading, { font: fontName }), 'none'); }, 150);
+      loadFont(fontName).then(function (font) {
+        clearTimeout(timer);
+        if (my !== generation) return;
+        setOutput({ lines: renderFiglet(font, text, o), text: text, font: font, fontName: fontName, layout: o.layout, width: o.width });
+        setStatus('', '');
+      }, function (err) {
+        clearTimeout(timer);
+        if (my !== generation) return;
+        setOutput(null);
+        setStatus(fill(S.loadError, { font: fontName, reason: failReason(err) }), 'error', true);
       });
+      if (!gallery.hidden) renderGallery();
+    }
+
+    function renderGallery() {
+      var my = ++galleryGeneration;
+      var text = input.value, o = options();
+      FONT_NAMES.forEach(function (name) {
+        var card = gallery.querySelector('[data-font="' + name + '"]');
+        var pre = card.querySelector('pre');
+        var useBtn = card.querySelector('button');
+        var isCurrent = name === fontSel.value;
+        useBtn.textContent = isCurrent ? S.currentFont : fill(S.useFont, { font: name });
+        useBtn.disabled = isCurrent;
+        if (!text.trim() || Array.from(text).length > MAX_INPUT) { pre.textContent = ''; return; }
+        loadFont(name).then(function (font) {
+          if (my !== galleryGeneration) return;
+          pre.textContent = formatOutput(renderFiglet(font, text, o), 'plain', trimBox.checked);
+        }, function (err) {
+          if (my !== galleryGeneration) return;
+          pre.textContent = fill(S.loadError, { font: name, reason: failReason(err) });
+        });
+      });
+    }
+    function buildGallery() {
+      FONT_NAMES.forEach(function (name) {
+        var card = document.createElement('section');
+        card.className = 'taa-card';
+        card.setAttribute('data-font', name);
+        var head = document.createElement('div');
+        head.className = 'taa-card-head';
+        var title = document.createElement('h3');
+        title.className = 'taa-card-title';
+        title.textContent = name;
+        var use = document.createElement('button');
+        use.type = 'button';
+        use.className = 'btn-copy';
+        use.addEventListener('click', function () {
+          fontSel.value = name;
+          render();
+          outputBox.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+        head.appendChild(title);
+        head.appendChild(use);
+        var pre = document.createElement('pre');
+        pre.className = 'taa-card-pre';
+        card.appendChild(head);
+        card.appendChild(pre);
+        gallery.appendChild(card);
+      });
+    }
+
+    var debounce = null;
+    var tracked = false;
+    input.addEventListener('input', function () {
+      clearTimeout(debounce);
+      debounce = setTimeout(render, 120);
+      if (!tracked) { tracked = true; window.trackTool && window.trackTool('text_to_ascii_art', 'generate'); }
+    });
+    [fontSel, layoutSel, widthSel].forEach(function (el) { el.addEventListener('change', render); });
+    trimBox.addEventListener('change', function () { setOutput(current); if (!gallery.hidden) renderGallery(); });
+
+    // The site-wide Ctrl/⌘+L clears the text box without an input event.
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(render, 0);
     });
 
-    showStatus(t.empty, false);
+    function flash(btn, label) {
+      btn.textContent = S.copied;
+      setTimeout(function () { btn.textContent = label; }, 1500);
+    }
+    function copyText(text, btn, label) {
+      if (!navigator.clipboard) { setStatus(S.copyFailed, 'error'); return; }
+      navigator.clipboard.writeText(text).then(function () { flash(btn, label); }, function () { setStatus(S.copyFailed, 'error'); });
+    }
+    copyBtn.addEventListener('click', function () {
+      if (!current) return;
+      copyText(formatOutput(current.lines, formatSel.value, trimBox.checked), copyBtn, S.copy);
+    });
+    copyCommandBtn.addEventListener('click', function () { copyText(commandText.textContent, copyCommandBtn, S.copyCommand); });
+
+    function save(blob, name) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+    txtBtn.addEventListener('click', function () {
+      if (!current) return;
+      save(new Blob([formatOutput(current.lines, 'plain', trimBox.checked) + '\n'], { type: 'text/plain;charset=utf-8' }), downloadBase(current.text, current.fontName) + '.txt');
+    });
+    pngBtn.addEventListener('click', function () {
+      if (!current) return;
+      var rows = formatOutput(current.lines, 'plain', trimBox.checked).split('\n');
+      var cols = rows.reduce(function (m, l) { return Math.max(m, l.length); }, 0);
+      var style = getComputedStyle(outputEl);
+      var family = style.fontFamily;
+      var canvas = document.createElement('canvas');
+      var ctx = canvas.getContext('2d');
+      ctx.font = '14px ' + family;
+      var cw = ctx.measureText('M').width;
+      var size = imageLayout(cols, rows.length, cw);
+      if (!size) { setStatus(S.pngTooLarge, 'error'); return; }
+      canvas.width = size.width * size.scale;
+      canvas.height = size.height * size.scale;
+      ctx.scale(size.scale, size.scale);
+      ctx.fillStyle = getComputedStyle(outputBox).backgroundColor || '#ffffff';
+      ctx.fillRect(0, 0, size.width, size.height);
+      ctx.font = '14px ' + family;
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = style.color;
+      // One cell per character keeps the grid even when the fallback font is not monospaced.
+      rows.forEach(function (line, y) {
+        for (var x = 0; x < line.length; x++) {
+          if (line[x] !== ' ') ctx.fillText(line[x], 16 + x * cw, 16 + y * 17 + 1);
+        }
+      });
+      canvas.toBlob(function (blob) {
+        if (blob) save(blob, downloadBase(current.text, current.fontName) + '.png');
+        else setStatus(S.pngTooLarge, 'error');
+      }, 'image/png');
+    });
+
+    previewBtn.addEventListener('click', function () {
+      var open = gallery.hidden;
+      if (open && !gallery.firstChild) buildGallery();
+      gallery.hidden = !open;
+      previewBtn.setAttribute('aria-expanded', String(open));
+      previewBtn.textContent = open ? S.hidePreviews : S.previewAll;
+      if (open) renderGallery();
+    });
+
+    render();
+  })();
   </script>
 </div>
 
 <style>
   .taa-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  .taa-inputs { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+  .taa-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
 
-  .taa-field { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; min-width: 180px; }
+  .taa-input { min-height: 4.2rem; }
 
-  .taa-field label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
+  .taa-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.6rem;
   }
 
-  .taa-field input,
-  .taa-field select {
-    width: 100%;
-    font-size: 0.9rem;
-    padding: 0.55rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-  }
+  .taa-select { width: 100%; font-family: var(--font-sans); }
 
-  .taa-field input:focus,
-  .taa-field select:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .taa-output-wrap {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+  .taa-output-box {
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
     overflow: hidden;
   }
 
@@ -273,62 +807,159 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.45rem 0.75rem;
-    border-bottom: 1px solid var(--color-border);
-    background: var(--color-bg);
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--color-border-soft);
+    background: var(--color-surface);
   }
 
   .taa-output-label {
     font-size: 0.8rem;
     font-weight: 700;
-    color: var(--color-primary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .taa-loading {
-    padding: 1.5rem;
-    text-align: center;
-    font-size: 0.85rem;
-    color: var(--color-text-secondary);
+  .taa-size { font-weight: 500; color: var(--color-text-muted); }
+
+  .taa-copy-group { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+
+  .taa-format {
+    max-width: 11rem;
+    min-height: 32px;
+    font-size: 0.78rem;
+    padding: 0.2rem 0.4rem;
   }
 
   .taa-output {
     font-family: var(--font-mono);
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     line-height: 1.2;
     padding: 0.75rem;
     margin: 0;
     white-space: pre;
     overflow-x: auto;
-    min-height: 100px;
+    min-height: 5.5rem;
+    max-height: 26rem;
     color: var(--color-text);
+    background: transparent;
   }
 
-  .taa-skipped {
+  .taa-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+
+  .taa-note {
     margin: 0;
     padding: 0.45rem 0.75rem;
-    border-top: 1px solid var(--color-border);
+    border-top: 1px solid var(--color-border-soft);
     font-size: 0.82rem;
     color: #b45309;
     overflow-wrap: anywhere;
   }
 
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .taa-skipped { color: #fbbf24; }
+    :root:not([data-theme="light"]) .taa-note { color: #fbbf24; }
   }
-  [data-theme="dark"] .taa-skipped { color: #fbbf24; }
+  [data-theme="dark"] .taa-note { color: #fbbf24; }
 
-  .taa-status {
-    font-size: 0.82rem;
+  .taa-status { overflow-wrap: anywhere; }
+  .taa-status:empty { display: none; }
+
+  .taa-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+
+  .taa-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
     color: var(--color-text-secondary);
-    min-height: 1.2rem;
+    margin-right: auto;
   }
 
-  .taa-status.taa-error { color: #b45309; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .taa-status.taa-error { color: #fbbf24; }
+  .taa-command {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
-  [data-theme="dark"] .taa-status.taa-error { color: #fbbf24; }
+
+  .taa-command[hidden], .taa-command-file[hidden], .taa-gallery[hidden] { display: none; }
+
+  .taa-command-label, .taa-command-file { margin: 0; font-size: 0.82rem; color: var(--color-text-secondary); }
+
+  .taa-command-row { display: flex; align-items: flex-start; gap: 0.5rem; }
+
+  .taa-command-text {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: none;
+    padding: 0.2rem 0;
+  }
+
+  .taa-gallery { display: grid; gap: 0.6rem; }
+
+  .taa-gallery :global(.taa-card) {
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    overflow: hidden;
+  }
+
+  .taa-gallery :global(.taa-card-head) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.35rem 0.5rem 0.35rem 0.75rem;
+    border-bottom: 1px solid var(--color-border-soft);
+  }
+
+  .taa-gallery :global(.taa-card-title) {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
+
+  .taa-gallery :global(.taa-card-pre) {
+    margin: 0;
+    padding: 0.6rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    line-height: 1.2;
+    white-space: pre;
+    overflow-x: auto;
+    min-height: 2rem;
+    background: transparent;
+  }
+
+  .taa-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* Mobile: text, the three selects, the output and its Copy button stay in the first
+     screen; labels shrink. */
+  @media (max-width: 640px) {
+    .taa-wrap { gap: 0.6rem; }
+    .taa-options { gap: 0.4rem; }
+    .taa-options .tool-label { font-size: 0.78rem; }
+    .taa-select { padding-left: 0.45rem; padding-right: 0.2rem; font-size: 0.82rem; }
+    .taa-format { max-width: 7.5rem; min-height: 44px; }
+    .taa-output { min-height: 4.5rem; font-size: 0.7rem; }
+    .taa-check { margin-right: 0; flex-basis: 100%; }
+    .taa-actions .btn-secondary, .taa-actions .btn-ghost { flex: 1 1 140px; }
+    .taa-gallery :global(.taa-card-head .btn-copy) { min-height: 44px; }
+  }
 </style>

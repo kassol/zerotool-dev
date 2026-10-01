@@ -1,55 +1,82 @@
 ---
-seoTitle: "文件哈希校验 — 浏览器内 SHA-256 / MD5 计算 | ZeroTool"
-seoDescription: "在浏览器中计算本地文件的 SHA-256、SHA-1、SHA-384、SHA-512、MD5 校验和，不上传文件即可验证下载完整性，并支持与期望哈希值比对。"
+seoTitle: "文件哈希校验（MD5、SHA256）| ZeroTool"
+seoDescription: "计算任意大小文件的 SHA-256、SHA-1、SHA-512、MD5、CRC32，粘贴期望值或整份 SHA256SUMS 即可逐个核对，不一致时指出第几个字符不同。文件在浏览器里分块读取，不上传。"
 faqItems:
-  - question: "支持哪些哈希算法？"
-    answer: "SHA-1、SHA-256、SHA-384、SHA-512 通过浏览器内置 Web Crypto API 计算；MD5 使用页面内嵌的 public domain JavaScript 实现。默认勾选 SHA-256，也是新流程推荐的算法。"
-  - question: "MD5 和 SHA-1 还能用于安全校验吗？"
-    answer: "不能用于密码学意义上的安全性。两者都已被证明可构造碰撞攻击。但作为旧版完整性校验仍有意义——许多软件发布方仍同时提供 MD5 / SHA-1，把它们当作「文件是否下载完整」的提示就好，不要当作真伪证明。新流程优先选 SHA-256。"
-  - question: "文件会被上传到任何地方吗？"
-    answer: "不会。文件通过 ArrayBuffer 读入浏览器后在本地计算：SHA 系列走 Web Crypto 由浏览器原生模块执行，MD5 走本页内嵌的 JavaScript 实现。整个过程不离开当前标签页，构建产物、签名包、机密下载都可放心使用。"
-  - question: "文件大小限制是多少？"
-    answer: "按设计推荐处理 1 GB 以内的文件。浏览器对单个 ArrayBuffer 分配上限约为 2 GB，超过会受设备内存影响。TB 级归档请用命令行：Linux 用 sha256sum，macOS 用 shasum -a 256，Windows 用 certutil -hashfile <file> SHA256。"
-  - question: "为什么 MD5 在大文件上明显更慢？"
-    answer: "SHA-1/256/384/512 由浏览器原生加密模块执行，通常带硬件加速；MD5 在本工具中由纯 JavaScript 计算，因为 Web Crypto 并未实现 MD5。文件超过约 100 MB 后差距会非常明显。如果只需一种算法，建议直接用 SHA-256。"
+  - question: "文件会上传吗？"
+    answer: "不会。浏览器里的后台线程把文件按 1 MB 分块从磁盘读出来计算，页面不会把文件发到任何地方，也不保存。唯一的网络请求是从本站加载计算脚本本身。"
+  - question: "文件大小有上限吗？"
+    answer: "没有固定上限。文件按流读取，4 GB 的 ISO 也只多占约 100 MB 内存。耗时随大小增加：在 Apple M1 Max 上，1 GB 文件算 SHA-256 约 4 秒。计算完成前请不要关闭页面。"
+  - question: "下载页只给了 MD5，还可靠吗？"
+    answer: "用来发现下载损坏或不完整没有问题。但 MD5 和 SHA-1 都能被人为构造碰撞，防不了有意篡改。发布方同时给了 SHA-256 时，优先核对 SHA-256。"
+  - question: "粘贴后提示「63 位十六进制不是任何支持的哈希长度」是什么意思？"
+    answer: "每种算法的长度是固定的：CRC32 8 位、MD5 32 位、SHA-1 40 位、SHA-256 64 位、SHA-384 96 位、SHA-512 128 位。长度对不上，说明复制时少了或多了字符，请回到下载页重新复制。"
+  - question: "哈希一致就说明文件安全吗？"
+    answer: "只能说明文件和校验列表一字不差。如果攻击者能同时替换文件和列表，两者照样一致。Node.js、Ubuntu 都给校验列表做了 GPG 签名，需要更高把握时先用 GnuPG 验证列表。"
 ---
 
-<h2>使用方式</h2>
-<ol>
-  <li>把文件拖入上传区，或点击选择本地文件。</li>
-  <li>默认勾选 SHA-256；如需 SHA-1 / SHA-384 / SHA-512 / MD5 同步计算，逐项勾选即可。</li>
-  <li>点击<strong>「计算哈希」</strong>，每种算法的结果会单独成行，附带复制按钮。</li>
-  <li>验证下载完整性时，把发布方公布的期望哈希粘贴到下方输入框。工具会忽略大小写自动比对，并提示与哪一行匹配。</li>
-</ol>
+## 使用方法
 
-<h2>典型场景</h2>
-<ul>
-  <li><strong>下载校验</strong> — 验证 ISO、安装包、release 归档与项目公布的 SHA-256 一致。</li>
-  <li><strong>构建产物完整性</strong> — 检查 CI 产物、S3 对象、企业代理传输过的二进制是否被改动。</li>
-  <li><strong>跨机器文件比对</strong> — 快速判断两份二进制是否逐字节相同。</li>
-  <li><strong>兼容旧版校验</strong> — 部分发行版仍同时发布 MD5 / SHA-1，本工具一次性给出全部摘要。</li>
-</ul>
+1. 把文件拖进上方的框，或点击选择文件；可以一次选多个，也可以拖入整个文件夹。
+2. 默认马上计算 SHA-256。勾选 SHA-1、SHA-384、SHA-512、MD5 或 CRC32 会同时计算，每种算法各用一个后台线程。
+3. 在「期望的哈希值或校验列表」里粘贴下载页给的内容：一个哈希值、一行 `sha256sum` 输出，或整份 `SHA256SUMS`。也可以点「打开校验文件」直接读取。
+4. 每个文件会标出「一致」「不一致」或「列表中没有」。不一致时会写明从第几个字符开始不同，并把期望值和实际值上下对齐显示。
+5. 期望值的长度对应的算法没有勾选时（比如 32 位是 MD5），工具会自动勾选并补算。
 
-<h2>哈希是怎么算的</h2>
-<p>
-  全部在本地完成。文件通过 <code>File.arrayBuffer()</code> 一次性读入 <code>ArrayBuffer</code>，
-  SHA-1 / SHA-256 / SHA-384 / SHA-512 通过 <code>crypto.subtle.digest()</code> 走浏览器原生加密
-  模块，通常带硬件加速。MD5 没有被 Web Crypto 实现，所以由页面内嵌的 public domain MD5 例程对
-  同一段字节数据计算。最终的十六进制摘要直接渲染到结果行，不会发送到任何服务器。
-</p>
+## 实测：从 npmmirror 下载 Node.js 后核对
 
-<h2>SHA-256 与旧算法的取舍</h2>
-<p>
-  SHA-256 之所以作为默认，是因为它属于 SHA-2 家族，目前没有已知的实用碰撞攻击，并且现代工具链
-  （rustup、cargo、npm、Docker Registry、GitHub Releases、Linux 软件镜像）也都以 SHA-256 作为
-  公布标准。SHA-1 早在 2017 年的 SHAttered 攻击中被证明可碰撞；MD5 的碰撞构造更是早就工程化。
-  如果发布方只给了 MD5 / SHA-1，把它们当作「文件是否下载完整」的提示即可，不要当作真伪证明。
-</p>
+国内下载 Node.js 常用 npmmirror 镜像。2026 年 10 月 1 日核对，[npmmirror 上 v24.21.0 的 SHASUMS256.txt](https://cdn.npmmirror.com/binaries/node/v24.21.0/SHASUMS256.txt) 与 [nodejs.org 的原文件](https://nodejs.org/dist/v24.21.0/SHASUMS256.txt) 逐字节相同，共 34 行。
 
-<h2>设计边界</h2>
-<p>
-  本工具按设计只做单文件一次性哈希计算。不支持分块流式哈希、不会校验签名、不会触碰 GPG / PGP
-  密钥、也不会连接任何服务。超大归档请用 <code>sha256sum</code>（Linux）/
-  <code>shasum -a 256</code>（macOS）/ <code>certutil -hashfile</code>（Windows）。
-  需要真伪验证请用 <code>gpg --verify</code> 或 <code>cosign verify</code> 配合发布方的签名密钥。
-</p>
+从镜像下载 `node-v24.21.0-win-x64.zip`（37,618,919 字节），拖进工具，再把 34 行整份粘贴进去，结果是：
+
+```text
+node-v24.21.0-win-x64.zip   35.9 MB   ✓ 一致
+SHA-256  158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541
+与列表中 node-v24.21.0-win-x64.zip 的 SHA-256 一致（第 22 行）。
+```
+
+下方汇总显示「1 个一致 · 0 个不一致」和「列表中有 33 个文件没有选择」。其余 33 行对应其他平台的安装包，没有选择不算错误，和 Linux 上 `sha256sum -c --ignore-missing` 的处理一样。
+
+如果下载中断了，比如只拿到前 30,000,000 字节，卡片会变红，显示「不一致」和「与列表中 … 的 SHA-256 不一致（第 22 行），从第 1 个字符开始不同」。哈希值只要有一个字节不同就整体改变，所以「从第几个字符开始不同」只帮你确认没有看错，不代表文件只坏了一点。
+
+浏览器把重名文件保存成 `node-v24.21.0-win-x64 (1).zip` 时，文件名对不上列表，工具会按哈希值找到对应的行，提示「只是文件名不同」。
+
+## Windows 命令输出可以直接粘贴
+
+很多教程让 Windows 用户在命令行里算哈希，再自己逐位比对。命令的输出可以整段粘贴进来，由工具比对：
+
+```text
+certutil -hashfile node-v24.21.0-win-x64.zip SHA256
+Get-FileHash node-v24.21.0-win-x64.zip
+```
+
+`certutil` 的输出有一行说明、一行哈希、一行完成提示；[`Get-FileHash`](https://learn.microsoft.com/zh-cn/powershell/module/microsoft.powershell.utility/get-filehash) 默认算 SHA256，输出大写十六进制的表格。两种格式工具都能识别，大小写、全角数字和夹在中间的空格也不影响。反过来，勾选「大写」后复制的结果和 `Get-FileHash` 的写法一致。
+
+能识别的其他写法：`shasum --tag` 与 OpenSSL 的 `SHA256 (文件名) = 哈希`、npm `package-lock.json` 里的 `sha512-…`（Base64，[W3C SRI](https://www.w3.org/TR/SRI/) 格式）、Docker 的 `sha256:…`、SFV 校验文件里的 CRC32。粘贴的内容有误时会指出行号：多一个字符的 SHA-256 会提示「第 1 行：第 65 个字符「x」不是十六进制数字」，标着 SHA3 的值会提示不支持。
+
+## 大文件不再把整个文件读进内存
+
+浏览器自带的 Web Crypto 接口只能一次性计算整块数据。本工具旧版因此先把整个文件读进内存：1 GB 文件让页面多占约 2 GB 内存，同时勾选 MD5 时页面卡住 12 秒，3 GB 文件直接报「读取文件失败」。现在改为用 [hash-wasm](https://github.com/Daninet/hash-wasm) 在后台线程里按 1 MB 分块计算。
+
+2026 年 10 月 1 日在 Apple M1 Max 的桌面 Chromium 上实测：1 GB 文件算 SHA-256 用时 4.3 秒，页面多占约 100 MB 内存，计算期间页面照常响应。4,080,486,400 字节的 Ubuntu 24.04.5 服务器版 ISO 算出的 SHA-256 与 [Ubuntu 官方 SHA256SUMS](https://releases.ubuntu.com/24.04/SHA256SUMS) 一致。进度条显示百分比、速度和剩余时间，可以随时停止。
+
+## 与同类工具的差异
+
+2026 年 10 月 1 日在桌面 Chromium 中用同一组文件测试，并在开发者工具里查看网络请求，以下工具都没有上传文件。
+
+| 工具 | 0 字节文件 | 3 GB 文件 | 选错文件后的显示 |
+|---|---|---|---|
+| 本工具 | 正确（`e3b0c442…b855`） | 正确 | 每个文件各自一张卡片 |
+| tool.lu 文件hash计算（MD5） | 没有结果 | 80 秒后仍无结果，也无报错 | 先算 `abc.txt` 再选 0 字节文件，框里仍是上一个文件的 MD5 |
+| emn178 Online Tools | 没有结果 | 正确，83 秒 | — |
+| PiliApp（kr.piliapp.com） | 正确 | 150 秒后仍无结果，也无报错 | 只按哈希值匹配，不看文件名 |
+
+最后一列的问题最容易误导人：tool.lu 换了文件却没出新结果时，旧文件的 MD5 还留在框里；PiliApp 收到一份把两个文件的哈希写反了的列表，两个文件仍都标「일치」（一致）。本工具按文件名对应列表的行，同样的列表会让两个文件都显示「不一致」。
+
+## 限制
+
+- 支持 SHA-256、SHA-1、SHA-384、SHA-512、MD5、CRC32。SHA-224、SHA3、BLAKE2（如 Arch Linux 的 `b2sums.txt`）、BLAKE3 不计算，粘贴这类值会提示不支持。
+- 一次最多 1,000 个文件；校验列表文件不超过 1 MB。
+- 不验证 GPG 签名。哈希一致只说明文件和列表相同；要确认列表本身来自发布方，请按 [Node.js 的说明](https://github.com/nodejs/node#verifying-binaries)或 [Ubuntu 的教程](https://ubuntu.com/tutorials/how-to-verify-ubuntu)验证签名。
+- MD5、SHA-1 可以被人为构造碰撞（SHA-1 的实例见 [SHAttered](https://shattered.io/)），CRC32 只能发现意外损坏。
+- 「选择文件夹」按钮在窄屏上隐藏；拖入文件夹在支持拖放的浏览器里都可用。
+- 要算一段文字的哈希，用[哈希生成器](/zh/tools/hash-generator/)；需要带密钥的哈希，用 [HMAC 生成器](/zh/tools/hmac-generator/)。

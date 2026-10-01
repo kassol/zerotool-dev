@@ -1,62 +1,95 @@
 ---
-seoTitle: "File Hash Checker — SHA-256 & MD5 in Browser | ZeroTool"
-seoDescription: "Compute SHA-256, SHA-1, SHA-384, SHA-512, and MD5 checksums of any local file in your browser. No upload — verify download integrity privately and compare against an expected hash."
+seoTitle: "File Hash Checker: SHA-256 & MD5 Checksum Online | ZeroTool"
+seoDescription: "Get SHA-256, SHA-1, SHA-512, MD5 or CRC32 of files of any size and check them against a hash or a whole SHA256SUMS list. Streams in your browser; no upload."
 faqItems:
-  - question: "Which hash algorithms are supported?"
-    answer: "SHA-1, SHA-256, SHA-384, and SHA-512 are computed via the browser's built-in Web Crypto API. MD5 uses a bundled public-domain JavaScript routine. SHA-256 is the default and the recommended choice for new verification flows."
-  - question: "Are MD5 and SHA-1 still safe to use?"
-    answer: "No, not for cryptographic security. Both have known collision attacks. They remain useful as legacy checksums when a software vendor publishes an MD5 or SHA-1 alongside a download. Treat them as integrity hints rather than guarantees, and prefer SHA-256 when you have the choice."
   - question: "Is the file uploaded anywhere?"
-    answer: "No. The file is read into your browser as an ArrayBuffer and hashed locally. The SHA family runs on the device through Web Crypto; MD5 runs through the inline JavaScript routine bundled in this page. Nothing leaves the tab — safe for build artifacts, signed packages, and confidential downloads."
-  - question: "What is the practical file size limit?"
-    answer: "Designed for files up to about 1 GB. Beyond that, browsers cap ArrayBuffer allocation near 2 GB and performance depends on available memory. For TB-scale archives use the command line: sha256sum on Linux, shasum -a 256 on macOS, or certutil -hashfile <file> SHA256 on Windows."
-  - question: "Why is MD5 noticeably slower on large files?"
-    answer: "SHA-1/256/384/512 run inside the browser's native crypto subsystem, which is implemented in compiled code and benefits from hardware acceleration. MD5 here runs in pure JavaScript because Web Crypto does not implement it. For files above ~100 MB the wall-clock difference becomes obvious; stick with SHA-256 when only one algorithm is needed."
+    answer: "No. A background worker in your browser reads the file from disk in 1 MB pieces and hashes it. The page makes no network request with the file, and nothing is stored. The only request is for the hashing script itself, from this site."
+  - question: "Is there a file size limit?"
+    answer: "No fixed limit. The file is read as a stream, so memory use stays near 100 MB even for a 4 GB ISO. Time grows with size: on an Apple M1 Max, SHA-256 of a 1 GB file took about 4 seconds. Keep the tab open until it finishes."
+  - question: "Which hash should I use?"
+    answer: "Use the one the publisher lists. Most projects publish SHA-256 (Node.js, Ubuntu); Firefox also publishes SHA-512. If you can choose, use SHA-256. MD5 and SHA-1 have practical collision attacks and CRC32 only detects accidental damage, so use them only when they are the only value offered."
+  - question: "Why does the tool say my hash has 63 hex digits?"
+    answer: "Every supported algorithm has a fixed length: CRC32 8 hex digits, MD5 32, SHA-1 40, SHA-256 64, SHA-384 96, SHA-512 128. A value of another length lost or gained a character when it was copied. The tool reports the line and the length instead of guessing."
+  - question: "Does a matching hash prove the download is safe?"
+    answer: "It proves the file is byte-for-byte the one in the checksum list. If an attacker can change both the file and the list, both still match. Projects that sign the list (Node.js SHASUMS256.txt.asc, Ubuntu SHA256SUMS.gpg) let you check the list with GnuPG first."
 ---
 
-<h2>How to use</h2>
-<ol>
-  <li>Drop a file into the upload zone or click to pick one.</li>
-  <li>Leave SHA-256 checked, or pick additional algorithms (SHA-1, SHA-384, SHA-512, MD5).</li>
-  <li>Click <strong>Compute Hashes</strong>. Each result lands in its own row with a copy button.</li>
-  <li>To verify a download, paste the expected hash from the vendor into the bottom field. The tool reports which row it matches, case-insensitive.</li>
-</ol>
+## How to Use
 
-<h2>What this checker is for</h2>
-<ul>
-  <li><strong>Download verification</strong> — confirm an ISO, installer, or release archive matches the SHA-256 the project published.</li>
-  <li><strong>Build artifact integrity</strong> — check that a build output hasn't been altered in transit through CI artifacts, S3, or a corporate proxy.</li>
-  <li><strong>Cross-system file identity</strong> — quickly tell whether two copies of a binary are byte-identical.</li>
-  <li><strong>Legacy compatibility</strong> — many distros still publish MD5 or SHA-1 alongside SHA-256; this tool gives you all of them in one pass.</li>
-</ul>
+1. Drop one or more files on the box, or click it to choose files. A whole folder can be dropped too, or picked with **Choose a folder** on a computer.
+2. SHA-256 starts at once. Tick SHA-1, SHA-384, SHA-512, MD5 or CRC32 to compute them as well; each algorithm runs in its own worker, at the same time.
+3. Paste what the publisher gave you into **Expected hash or checksum list**: one hash, a `sha256sum` line, or the whole `SHA256SUMS` file. **Open checksum file** reads the file directly.
+4. Each file gets a badge: **OK**, **FAILED** with the first character that differs, or **Not in the list**. If the expected value needs an algorithm you did not tick (32 hex digits is MD5, for example), the tool turns it on.
+5. Use **Copy** next to a value, or **Checksum file** to copy or download all results as `SHA256SUMS`, `MD5SUMS` and so on.
 
-<h2>How the hashing works</h2>
-<p>
-  Hashing happens locally. The file is read with the <code>File.arrayBuffer()</code> API into
-  a single <code>ArrayBuffer</code>. SHA-1, SHA-256, SHA-384, and SHA-512 are then handed to
-  <code>crypto.subtle.digest()</code>, which is the browser's native, hardware-accelerated
-  implementation. MD5 is not exposed by Web Crypto, so a compact public-domain MD5 routine
-  runs over the same byte array directly in JavaScript. The resulting hex digests are
-  rendered into the result rows, never sent anywhere.
-</p>
+## Example: Checking a Node.js Download
 
-<h2>SHA-256 versus the legacy algorithms</h2>
-<p>
-  SHA-256 is the default for a reason. It is part of the SHA-2 family, has no known
-  practical collision attacks, and is what modern toolchains (rustup, cargo, npm,
-  Docker registries, GitHub Releases, Linux package mirrors) publish today. SHA-1
-  collisions have been demonstrated since 2017 (SHAttered) and MD5 collisions are
-  trivial to construct. They still have a place when the publisher only offers those
-  values, but treat them as "did this download arrive intact" hints — not as proofs
-  of authenticity.
-</p>
+Node.js puts a `SHASUMS256.txt` file in every release folder. For [v24.21.0](https://nodejs.org/dist/v24.21.0/SHASUMS256.txt) it has 34 lines, one per download. After downloading `node-v24.21.0-darwin-arm64.tar.gz` (52,909,993 bytes), drop it on the tool and paste all 34 lines. The card shows:
 
-<h2>Limits by design</h2>
-<p>
-  This tool computes hashes of a single local file in one pass. It does not stream
-  through multi-gigabyte files, sign or verify signatures, check GPG / PGP keys, or
-  reach out to any server. For huge archives use <code>sha256sum</code> (Linux),
-  <code>shasum -a 256</code> (macOS), or <code>certutil -hashfile</code> (Windows).
-  For signature verification, use <code>gpg --verify</code> or <code>cosign verify</code>
-  against the publisher's signing key.
-</p>
+```text
+node-v24.21.0-darwin-arm64.tar.gz   50.5 MB   ✓ OK
+SHA-256  bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057
+Matches the SHA-256 listed for node-v24.21.0-darwin-arm64.tar.gz (line 3).
+```
+
+Below the box: `1 OK · 0 failed` and `33 listed files were not selected`, with the first five names. That is the same result as `sha256sum -c --ignore-missing SHASUMS256.txt` on Linux, without a terminal.
+
+A download that stopped early looks different. The first 30,000,000 bytes of the same file give `FAILED` and "Does not match the SHA-256 listed for node-v24.21.0-darwin-arm64.tar.gz (line 3). First difference at character 1." The expected and actual values are shown one above the other, with the differing part highlighted.
+
+The file name is used only to pick the line. If your browser saved the file as `node-v24.21.0-darwin-arm64 (1).tar.gz`, the tool finds the line by value and says the name is different.
+
+## Example: An npm Integrity Value
+
+`package-lock.json` stores an `integrity` field in [Subresource Integrity](https://www.w3.org/TR/SRI/) form: the algorithm, a dash, and the digest in Base64. For `hash-wasm` 4.12.0 the registry gives:
+
+```text
+"integrity": "sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ=="
+```
+
+Paste the whole line. The tool decodes the Base64 to the 128-digit SHA-512 `fbfd81da…a0c755`, turns SHA-512 on, and marks `hash-wasm-4.12.0.tgz` (530,236 bytes, from the registry tarball URL) as OK. Docker digests such as `ubuntu@sha256:…` work the same way.
+
+## What You Can Paste
+
+| Source | Example |
+|---|---|
+| Bare hex, any case, full-width digits | `E3B0C442…B855` |
+| GNU `sha256sum`, `shasum`, `SHA256SUMS` | `<hash>  file.iso`, `<hash> *file.iso` |
+| BSD and OpenSSL tags | `SHA256 (file.iso) = <hash>`, `SHA2-256(file.iso)= <hash>` |
+| Windows `certutil -hashfile file SHA256` | header line, hash line, "completed successfully" |
+| PowerShell [`Get-FileHash`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash) | table or `Format-List` output (upper-case hex) |
+| GnuPG `--print-md`, old certutil | hex in groups of 2 or 8, wrapped over lines |
+| Base64, SRI, prefixed | `47DEQpj8…uFU=`, `sha512-…`, `sha256:<hash>` |
+| SFV (CRC32) | `game.zip 1A2B3C4D` |
+
+File names with a backslash or a line break are escaped in GNU lists: the line starts with `\` ([GNU coreutils output modes](https://www.gnu.org/software/coreutils/manual/html_node/cksum-output-modes.html)). The tool reads that form and writes it when it exports such names, and `shasum -a 256 -c` accepts its exported lists.
+
+Mistakes are named, not hidden. A hash with a stray `x` at the end gives "Line 1: "x" at character 65 is not a hex digit". A SHA-224 or SHA3 value is reported as unsupported. The earlier version of this tool removed spaces and searched for the computed hash inside the pasted text, so a value with an extra character still showed "Matches".
+
+## Large Files
+
+Browsers cannot hash a file in pieces with the built-in Web Crypto API ([`digest()`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest) takes the whole buffer). The old version therefore read the whole file into memory: a 1 GB file added about 2 GB to the tab, SHA-256 + MD5 froze the page for 12 seconds, and a 3 GB file failed with "Could not read the file". The tool now streams the file through [hash-wasm](https://github.com/Daninet/hash-wasm), one worker per algorithm.
+
+Measured on 2026-10-01 in desktop Chromium on an Apple M1 Max: a 1 GB file took 4.3 seconds for SHA-256, with the tab using about 100 MB more memory, and the page stayed responsive. The 4,080,486,400-byte Ubuntu 24.04.5 server ISO matched the SHA-256 in the official [`SHA256SUMS`](https://releases.ubuntu.com/24.04/SHA256SUMS). The progress line shows percent, speed and time left, and **Stop** cancels.
+
+## How It Compares
+
+Tested on 2026-10-01 in desktop Chromium with the same files, watching network requests in DevTools. None of these tools uploaded the file. The list test pastes two `sha256sum` lines whose hashes are swapped: `abc.txt` is given the hash of `empty.bin` and the other way round, so both files should fail.
+
+| Tool | Empty file | 3 GB file | Swapped two-line list |
+|---|---|---|---|
+| This tool | `e3b0c442…b855` | correct | both FAILED, by file name |
+| emn178 Online Tools (SHA256 File Checksum) | no output | correct, 83 s | no compare box |
+| BrowserTools.jp | correct | nothing after 120 s, no error | one-line box; nothing highlighted |
+| PiliApp (kr.piliapp.com) | correct | nothing after 150 s, no error | both marked "일치" (match) |
+| tool.lu (MD5) | no output | nothing after 80 s, no error | one MD5 value only |
+
+PiliApp compares values only, so a list that pairs the wrong hash with a file name still passes. BrowserTools.jp, PiliApp and tool.lu all hashed a 1 GB file but showed nothing for 3 GB; emn178 reads in pieces and finished.
+
+## Limits
+
+- **Algorithms:** SHA-256, SHA-1, SHA-384, SHA-512, MD5 and CRC32. SHA-224, SHA3, BLAKE2 (Arch Linux `b2sums.txt`) and BLAKE3 are not computed; such values are reported as unsupported.
+- **Up to 1,000 files** per session and checksum lists up to 1 MB.
+- **No signature check.** A matching hash shows the file equals the list. To trust the list, verify its signature: Node.js explains this under [Verifying binaries](https://github.com/nodejs/node#verifying-binaries), and Ubuntu in [How to verify your Ubuntu download](https://ubuntu.com/tutorials/how-to-verify-ubuntu).
+- **MD5, SHA-1 and CRC32 are weak.** MD5 and SHA-1 collisions can be made on purpose ([SHAttered](https://shattered.io/) for SHA-1). They still catch a broken download.
+- **Folder picking** uses the browser's folder dialog and is hidden on small screens; dropping a folder works wherever drag and drop does.
+- **Text, not files?** Use the [Hash Generator](/tools/hash-generator/). For a keyed hash, use the [HMAC Generator](/tools/hmac-generator/).
