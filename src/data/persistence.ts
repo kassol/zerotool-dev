@@ -23,6 +23,7 @@ export const toolPersistencePolicy = {
   'svg-optimizer': 'preference',
   'mime-type-lookup': 'preference',
   'eyedropper-color-picker': 'preference',
+  'color-blindness-simulator': 'preference',
   'qr-code-generator': 'preference',
   'zero-width-character-detector': 'disabled',
   'csr-decoder': 'disabled',
