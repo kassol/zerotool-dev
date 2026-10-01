@@ -132,7 +132,7 @@
 | HTML Minifier & Beautifier | [/tools/html-minifier](https://zerotool.dev/tools/html-minifier) |
 | MIME Type Lookup | [/tools/mime-type-lookup](https://zerotool.dev/tools/mime-type-lookup) |
 | HAR File Analyzer | [/tools/har-file-analyzer](https://zerotool.dev/tools/har-file-analyzer) |
-| Eyedropper Color Picker | [/tools/eyedropper-color-picker](https://zerotool.dev/tools/eyedropper-color-picker) |
+| Color Picker from Image & Screen | [/tools/eyedropper-color-picker](https://zerotool.dev/tools/eyedropper-color-picker) |
 | HTTP Header Analyzer | [/tools/http-header-analyzer](https://zerotool.dev/tools/http-header-analyzer) |
 | GraphQL Formatter | [/tools/graphql-formatter](https://zerotool.dev/tools/graphql-formatter) |
 | jq Playground | [/tools/jq-playground](https://zerotool.dev/tools/jq-playground) |

@@ -1,39 +1,69 @@
 ---
-seoTitle: "Eyedropper Color Picker — Pick Any Pixel | ZeroTool"
-seoDescription: "Pick colors from anywhere on your screen using the browser's native EyeDropper API. Output sRGB HEX, RGB, HSL and save a recent palette — no upload, no extension."
+seoTitle: "Color Picker from Image & Screen — Eyedropper | ZeroTool"
+seoDescription: "Pick a color from your screen, an image or a pasted screenshot, pixel-exact with a loupe. Get HEX, RGB, HSL, OKLCH and Display P3 that convert back exactly."
 faqItems:
-  - question: "Which browsers support the EyeDropper API?"
-    answer: "Chrome, Edge, and Opera (Chromium 95+) ship the EyeDropper API. Safari and Firefox do not yet support it — this tool automatically falls back to the native color input on those browsers."
-  - question: "Why does the picker need a button click?"
-    answer: "The browser requires a user gesture (a click) to open the eyedropper. You cannot trigger it from setTimeout or auto-open on page load. Click 'Pick from screen' every time you sample."
-  - question: "Can it pick colors outside the browser window?"
-    answer: "Yes. The EyeDropper API can sample any pixel on your physical screen, including other applications, as long as the picker is open."
-  - question: "Is the picked color sRGB-accurate?"
-    answer: "The API returns sRGB hex strings. Wide-gamut (P3) values from HDR screens are mapped down to sRGB. For exact color management workflows, verify with a color-managed tool."
-  - question: "Where are recent colors stored?"
-    answer: "The last 8 picks live in your browser's localStorage only. Nothing is uploaded. Clear them with 'Clear recent'."
+  - question: "Why is there no “Pick from screen” button in Firefox, Safari or on my phone?"
+    answer: "Screen picking uses the EyeDropper API, which only Chrome, Edge and Opera on desktop provide (Chrome and Edge 95+, Opera 81+; not on Linux Wayland). In other browsers the tool hides the button and makes “Open image” the main action: take a screenshot, paste it with Ctrl+V or ⌘V, and click the pixel."
+  - question: "Is the picked color the same value Photoshop or Figma shows?"
+    answer: "For an untagged image or an sRGB image, yes: the tool reads the pixel as the browser draws it in sRGB. For a wide-gamut image the browser converts to sRGB first, so HEX, RGB and HSL can be clipped. The tool then shows a warning and keeps the real color in the OKLCH and Display P3 fields."
+  - question: "Why does the HSL value have decimals?"
+    answer: "HSL rounded to whole numbers usually converts back to a different color. #1a73e8 becomes hsl(214, 82%, 51%), which is #1c74e9. The tool writes the fewest decimals that convert back to the exact same HEX, so you can paste any field into CSS and get the same pixel."
+  - question: "Is my image uploaded or stored?"
+    answer: "No. The image is decoded and read in a canvas on your device, and nothing is sent to a server. Only the last 16 picked HEX values are kept in this browser's localStorage. Use Clear next to Recent colors to remove them."
+  - question: "Can it read the color of a transparent PNG pixel?"
+    answer: "It shows the alpha value and writes HEX with an alpha byte, for example #1a80e60a. A canvas stores colors premultiplied by alpha, so the RGB of a nearly transparent pixel is approximate. Fully transparent pixels have no color, and the tool says so."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Click <strong>Pick from screen</strong>. Your cursor turns into a magnifier — click any pixel to sample.</li>
-  <li>Or use the <strong>Native picker</strong> button for a built-in color dialog (works in every browser).</li>
-  <li>The HEX, RGB, and HSL fields update in sync. Edit any field to recompute the other two.</li>
-  <li>Click <strong>Copy</strong> next to any format to send it to your clipboard.</li>
-  <li>Your last 8 sampled colors stay in the <strong>Recent colors</strong> strip — click a swatch to reload it.</li>
-</ol>
+{/* ecp-check: #1a73e8 => hsl => hsl(214.1, 81.7%, 50.6%) */}
+{/* ecp-check: #1a73e8 => oklch => oklch(57.4% 0.195 257.9) */}
+{/* ecp-check: #1a73e8 => p3 => color(display-p3 0.218 0.444 0.879) */}
+{/* ecp-check: hsl(214, 82%, 51%) => hex => #1c74e9 */}
+{/* ecp-check: oklch(62.3% 0.214 259.815) => hex => #2b7fff */}
+{/* ecp-check: #5500aa => rgb => rgb(85, 0, 170) */}
+{/* ecp-check: #1a80e60a => rgb => rgba(26, 128, 230, 0.039) */}
+{/* ecp-check: color(display-p3 1 0 0) => oklch => oklch(64.86% 0.2995 28.96) */}
 
-<h2>EyeDropper API in 60 seconds</h2>
-<p>
-  <code>EyeDropper</code> is a browser-native Web API that lets a page sample pixels from anywhere on the user's screen. The page calls <code>new EyeDropper().open()</code>; the browser opens a system-level magnifier; on click, the promise resolves to an object whose <code>sRGBHex</code> property holds the picked color.
-</p>
-<p>
-  The API is privacy-safe: the page never gets pixel data, only the single selected color. The user must initiate every pick with a click — there is no headless or scripted sampling.
-</p>
+## How to pick a color
 
-<h2>When to use which mode</h2>
-<ul>
-  <li><strong>Pick from screen</strong> — when the color lives in another app, a screenshot, or a video frame.</li>
-  <li><strong>Native picker</strong> — when you want to author a fresh color or use a familiar HSV wheel.</li>
-  <li><strong>Type into a field</strong> — when you have an exact value (e.g. from a design spec) and need its sibling formats.</li>
-</ul>
+1. **From the screen** (Chrome, Edge or Opera on a desktop): click **Pick from screen**, then click any pixel in any window. Press Esc to cancel.
+2. **From an image or screenshot** (every browser): click **Open image**, drop a file on the tool, or paste a screenshot with Ctrl+V / ⌘V. Move the pointer over the image. The loupe shows the 11 × 11 pixels around it, and a click picks the pixel in the center. With the keyboard, the arrow keys move one image pixel (Shift + arrow moves ten) and Enter picks.
+3. **Sample** sets what you read: one pixel, or the average of a 3 × 3 or 5 × 5 block. **Fit** shows the whole image, and **100%** shows one image pixel per CSS pixel.
+4. **Color dialog** opens your system color picker. You can also type or paste any CSS color into any field: `#1a73e8`, `rgb(26 115 232)`, `hsl(214 82% 51%)`, `oklch(57% 0.19 258)`, `color(display-p3 0.2 0.44 0.88)` or a name such as `teal`. The other fields update as you type.
+5. Click **Copy** next to a format. The last 16 picks stay under **Recent colors**. Click a swatch to load it again.
+
+## Examples
+
+**Check a brand color in a screenshot.** A product page shows a blue button. Paste the screenshot, click the button, and the tool reads `#1a73e8`. The other fields read `hsl(214.1, 81.7%, 50.6%)`, `oklch(57.4% 0.195 257.9)` and `color(display-p3 0.218 0.444 0.879)`. Each of these converts back to `#1a73e8`. Pickers that round HSL to whole numbers give `hsl(214, 82%, 51%)`, which is `#1c74e9`. The test reads every printed value back: 636,056 colors on a 3-step grid of the sRGB cube with the tool's own parser, and 30,000 random colors with [culori](https://culorijs.org/).
+
+**Find the HEX for a Tailwind v4 color.** Tailwind CSS 4.3 defines `--color-blue-500: oklch(62.3% 0.214 259.815)` in its `theme.css`. Paste that value into the OKLCH field. HEX shows `#2b7fff`, and the tool warns that the color is outside sRGB. HEX, RGB and HSL can only hold sRGB, so each channel is clipped. The OKLCH and Display P3 fields keep the real color.
+
+**Pick one pixel, not a blend.** A test image of 2000 × 400 px has 1-px columns that alternate between `#ff0000` and `#0000ff`. The tool reads the image at full resolution. A point sample gives `#ff0000` or `#0000ff`, and the status line names the pixel, for example “x 1000, y 200”. The 3 × 3 average gives `rgb(85, 0, 170)`: one red column and two blue ones. Use the average on photos and gradients, where single pixels are noisy.
+
+**Read a transparent pixel.** In a PNG, a pixel of `#1a73e8` with alpha 10 out of 255 came back from Chromium's canvas as `rgba(26, 128, 230, 0.039)`. A canvas stores color multiplied by alpha, so a faint pixel loses precision. The tool shows the alpha in every format and adds a note instead of hiding it.
+
+## Which color you get
+
+- **Screen.** The EyeDropper API returns an sRGB hex string ([MDN](https://developer.mozilla.org/en-US/docs/Web/API/EyeDropper/open)). On macOS, Chromium converts the sampled display color to sRGB and then to 8 bits per channel ([`skia_utils_mac.mm`](https://github.com/chromium/chromium/blob/main/skia/ext/skia_utils_mac.mm), `CGColorRefToSkColor`). On a wide-gamut display, a color outside sRGB comes back clipped.
+- **Images.** The tool draws the image into an sRGB canvas and reads the pixel. CSS Color 4 says that browsers must apply an image's embedded color profile ([§3.4](https://www.w3.org/TR/css-color-4/#tagged-images)) and must treat untagged images as sRGB ([§3.5](https://www.w3.org/TR/css-color-4/#untagged)). Browsers that can create a Display P3 canvas (Chrome and Edge 92+, Safari 15.2+, but not Firefox, per [MDN compatibility data](https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/getContext)) give the tool a second readout. When that pixel is outside sRGB, the tool shows the warning and keeps the P3 value. For example, P3 red `color(display-p3 1 0 0)` is `oklch(64.86% 0.2995 28.96)`, but its HEX can only be `#ff0000`.
+- **Conversions** use the matrices and transfer functions of the [CSS Color 4 sample code](https://drafts.csswg.org/css-color-4/conversions.js). The test compares them with [colorjs.io](https://colorjs.io/) to within 10⁻⁹.
+
+## When the browser cannot pick from the screen
+
+| Browser | EyeDropper API |
+|---|---|
+| Chrome, Edge (desktop) | 95+. Not on Linux Wayland |
+| Opera (desktop) | 81+ |
+| Firefox, Safari, Chrome on Android, iOS browsers | No |
+
+Source: MDN browser-compat-data 8.1.3 (2026-09-24). Without the API, take a screenshot and paste it into the tool. On a Mac, add Control to the shortcut, for example Control-Shift-Command-4, to copy the screenshot to the clipboard instead of saving a file ([Apple](https://support.apple.com/en-us/102646)). On Windows, PrtSc puts the whole screen on the clipboard. Windows + Shift + S opens Snipping Tool, and Ctrl+C copies the snip ([Microsoft](https://support.microsoft.com/en-us/windows/use-snipping-tool-to-capture-screenshots-00246869-1843-655f-f220-97299b865f6b)). The operating system also has a screen picker: [Digital Color Meter](https://support.apple.com/guide/digital-color-meter/welcome/mac) on macOS, and on Windows [PowerToys Color Picker](https://learn.microsoft.com/en-us/windows/powertoys/color-picker) (Win + Shift + C, copies HEX by default).
+
+## How it compares
+
+We tested on 2026-10-01 in a Chromium desktop browser with the same files. [htmlcolorcodes.com](https://htmlcolorcodes.com/image-color-picker/) drew the 2000 × 400 striped image into a 1536 × 307 canvas and reported `#90006F`. [imagecolorpicker.com](https://imagecolorpicker.com/) drew it at 529 × 105 and reported `#7f007f` at every point we clicked. Neither color occurs in the image. For the transparent pixel, imagecolorpicker.com showed `#1a80e6` and an `rgba()` value without an alpha. [eyedropper.online](https://eyedropper.online/) works only with the EyeDropper API. With the API removed, its button opened an alert that said to use Chrome, Edge or Opera. This tool reads full-resolution pixels, keeps the alpha and flags colors outside sRGB. When you need the contrast of two picked colors, use the [Color Contrast Checker](/tools/color-contrast-checker/). For a whole palette from one image, use the [Image Color Palette Extractor](/tools/image-color-palette/).
+
+## Limits
+
+- Images larger than 16,777,216 pixels are scaled down before picking, because iOS limits a canvas to 4,096 × 4,096 ([MDN](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/canvas)). The tool shows the new size.
+- Each screen pick needs a click. The API rejects `open()` without a user action (`NotAllowedError`), and it samples one pixel per call.
+- Image formats are the ones your browser can display. HEIC opens only in Safari.
+- Output formats are HEX, RGB, HSL, OKLCH and Display P3. For CMYK, Lab or HSV, convert the HEX in the [Color Converter](/tools/color-converter/).

@@ -1,39 +1,63 @@
 ---
-seoTitle: "スポイトカラーピッカー — 任意のピクセルを取得 | ZeroTool"
-seoDescription: "ブラウザネイティブの EyeDropper API で画面上のどこからでもカラーを取得。sRGB HEX、RGB、HSL を出力し、最近のカラーパレットを保存 — アップロード不要、拡張機能不要。"
+seoTitle: "スポイト カラーピッカー（画像・画面） | ZeroTool"
+seoDescription: "画面・画像・貼り付けたスクリーンショットからスポイトで色を取得。ルーペで 1 ピクセル単位に指定でき、同じ色に戻せる HEX・RGB・HSL・OKLCH・Display P3 を出力します。"
 faqItems:
-  - question: "EyeDropper API はどのブラウザでサポートされていますか？"
-    answer: "Chrome、Edge、Opera（Chromium 95+）が EyeDropper API を搭載しています。Safari と Firefox はまだ未対応で、これらのブラウザでは自動的にネイティブの color 入力にフォールバックします。"
-  - question: "なぜピッカーを開くのにボタンクリックが必要ですか？"
-    answer: "ブラウザはスポイトを開くのにユーザージェスチャー（クリック）を要求します。setTimeout やページ読み込み時の自動起動はできません。サンプリングのたびに「画面から取得」をクリックしてください。"
-  - question: "ブラウザウィンドウ外のカラーも取得できますか？"
-    answer: "はい。ピッカーが開いている間、EyeDropper API は他のアプリケーションを含む物理画面上の任意のピクセルをサンプリングできます。"
-  - question: "取得したカラーは sRGB として正確ですか？"
-    answer: "API は sRGB 16 進文字列を返します。HDR 画面のワイドガマット（P3）値は sRGB にマッピングされます。厳密なカラーマネジメントが必要な場合は、カラーマネジメント対応ツールで確認してください。"
-  - question: "最近のカラーはどこに保存されますか？"
-    answer: "直近 8 件のサンプルはブラウザの localStorage のみに保存されます。アップロードは一切ありません。「最近をクリア」で削除できます。"
+  - question: "Firefox・Safari・スマートフォンで「画面から取得」が表示されないのはなぜですか？"
+    answer: "画面からの取得は EyeDropper API を使います。提供しているのはデスクトップ版の Chrome・Edge（95 以降）と Opera（81 以降）だけで、Linux の Wayland 環境でも使えません。ほかのブラウザではボタンを隠し、「画像を開く」を主ボタンにします。スクリーンショットを撮って Ctrl+V / ⌘V で貼り付け、ピクセルをクリックしてください。"
+  - question: "Photoshop や Figma の値と一致しますか？"
+    answer: "タグのない画像や sRGB の画像なら一致します。ツールはブラウザが sRGB で描画したピクセルを読み取るためです。広色域の画像はブラウザが sRGB に変換するので、HEX・RGB・HSL が切り詰められることがあります。その場合は注意を表示し、OKLCH と Display P3 の欄に本来の色を残します。"
+  - question: "HSL に小数が付くのはなぜですか？"
+    answer: "整数に丸めた HSL は、多くの場合別の色に戻ります。デジタル庁デザインシステムの Blue-900（#0017c1）を hsl(233, 100%, 38%) と書くと #0017c2 になります。ツールは同じ HEX に戻る最小の桁数で書き出します。"
+  - question: "画像はアップロード・保存されますか？"
+    answer: "されません。画像はお使いの端末の canvas で読み取るだけです。保存するのは直近 16 件の HEX（このブラウザの localStorage）だけで、「最近の色」の「クリア」で消せます。"
+  - question: "透過 PNG のピクセルも取得できますか？"
+    answer: "できます。alpha を表示し、#1a80e60a のように透明度付きの HEX を出力します。canvas は色を alpha で乗算して保存するため、ほぼ透明なピクセルの RGB は近似値です。完全に透明なピクセルには色がないので、その旨を表示します。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li><strong>画面から取得</strong> をクリック。カーソルが拡大鏡に変わるので、任意のピクセルをクリックしてサンプリングします。</li>
-  <li>あるいは <strong>ネイティブピッカー</strong> ボタンでブラウザ組み込みのカラーダイアログを利用できます（全ブラウザで動作）。</li>
-  <li>HEX、RGB、HSL フィールドは同期して更新されます。いずれかのフィールドを編集すると他の 2 つが再計算されます。</li>
-  <li>各フォーマットの横にある <strong>コピー</strong> をクリックするとクリップボードに送られます。</li>
-  <li>直近 8 件のサンプルカラーは <strong>最近のカラー</strong> ストリップに残ります — スウォッチをクリックすると再ロードできます。</li>
-</ol>
+{/* ecp-check: #0017c1 => hsl => hsl(232.8, 100%, 37.8%) */}
+{/* ecp-check: hsl(233, 100%, 38%) => hex => #0017c2 */}
+{/* ecp-check: #0017c1 => oklch => oklch(38% 0.245 264.2) */}
+{/* ecp-check: #ffd43d => rgb => rgb(255, 212, 61) */}
+{/* ecp-check: #5500aa => rgb => rgb(85, 0, 170) */}
+{/* ecp-check: #1a80e60a => hex => #1a80e60a */}
 
-<h2>60 秒でわかる EyeDropper API</h2>
-<p>
-  <code>EyeDropper</code> はブラウザネイティブの Web API で、ページがユーザー画面上の任意の場所からピクセルをサンプリングできます。ページが <code>new EyeDropper().open()</code> を呼ぶと、ブラウザはシステムレベルの拡大鏡を開き、クリック時に Promise が、選択した色を保持する <code>sRGBHex</code> プロパティを持つオブジェクトで resolve します。
-</p>
-<p>
-  この API はプライバシー安全です：ページはピクセルデータを取得できず、選択された 1 色だけが返されます。サンプリングは必ずユーザーのクリックで開始する必要があり、ヘッドレスやスクリプトによる取得はできません。
-</p>
+## 使い方
 
-<h2>どのモードを使うか</h2>
-<ul>
-  <li><strong>画面から取得</strong> — カラーが別のアプリ、スクリーンショット、動画フレームにある場合。</li>
-  <li><strong>ネイティブピッカー</strong> — 新しいカラーを作成したり、おなじみの HSV ホイールを使いたい場合。</li>
-  <li><strong>フィールドに入力</strong> — 正確な値（デザイン仕様など）があり、別フォーマットへ変換したい場合。</li>
-</ul>
+1. **画面から取得**（デスクトップ版の Chrome・Edge・Opera）：「画面から取得」を押し、どのウィンドウでも好きなピクセルをクリックします。Esc でキャンセルできます。
+2. **画像・スクリーンショットから取得**（すべてのブラウザ）：「画像を開く」を押すか、ファイルをツールにドロップするか、スクリーンショットを Ctrl+V / ⌘V で貼り付けます。画像の上にポインターを置くと、周囲 11 × 11 ピクセルを拡大したルーペが出て、クリックで中央のピクセルを取得します。キーボードなら矢印キーで 1 ピクセル、Shift+矢印キーで 10 ピクセル動かし、Enter で取得します。
+3. **サンプル**は 1 点・3 × 3 の平均・5 × 5 の平均から選べます。「全体」は画像全体を、「100%」は画像の 1 ピクセルを CSS の 1 ピクセルで表示します。
+4. **カラーパネル**は OS のカラーピッカーを開きます。どの欄にも CSS の色をそのまま入力できます（`#0017c1`、`rgb(0 23 193)`、`oklch(38% 0.245 264.2)`、`teal` など）。
+5. 各形式の「コピー」でクリップボードへ。直近 16 件は「最近の色」に残り、色見本をクリックすると再読み込みします。
+
+## Mac でスクリーンショットから取得する
+
+Safari と Firefox には EyeDropper API がないため、スクリーンショット経由が基本です。macOS ではショートカットに control を足すと、ファイルではなくクリップボードに保存されます（例：control + shift + command + 4、[Apple サポート](https://support.apple.com/ja-jp/102646)）。そのまま本ページで ⌘V を押せば画像が入ります。画面の色をその場で数値で見たいだけなら、macOS 付属の [Digital Color Meter](https://support.apple.com/ja-jp/guide/digital-color-meter/welcome/mac) も使えます。
+
+## 例：デジタル庁デザインシステムの色を確かめる
+
+[デジタル庁デザインシステム](https://design.digital.go.jp/dads/foundations/color/)のデザイントークン（npm パッケージ [`@digital-go-jp/design-tokens`](https://github.com/digital-go-jp/design-tokens) 2.0.1）では、`--color-primitive-blue-900` が `#0017c1`、フォーカスリングに使う `--color-primitive-yellow-300` が `#ffd43d` です。このシステムで作ったサイトのボタンをスクリーンショットから取得して `#0017c1` が出れば、トークンどおりに実装されています。フォーカスインジケーターは Yellow-300 と黒の二重構造（同ページ「フォーカスカラー」）なので、ルーペで黄色の線の上に中央の枠を合わせて取得すると `rgb(255, 212, 61)` になります。
+
+同じ Blue-900 は HSL で `hsl(232.8, 100%, 37.8%)`、OKLCH で `oklch(38% 0.245 264.2)` です。HSL を整数にした `hsl(233, 100%, 38%)` は `#0017c2` で、青が 1 ずれます。このツールはどの欄も同じ HEX に戻る値を出します。テストでは、sRGB 立方体を 3 刻みで回した 636,056 色をツール自身のパーサーで、ランダムな 30,000 色を [culori](https://culorijs.org/) で読み戻し、すべて一致しました。
+
+## 例：1 ピクセルの縞模様と半透明ピクセル
+
+2000 × 400 ピクセルで、赤 `#ff0000` と青 `#0000ff` が 1 ピクセルずつ交互に並ぶテスト画像を使います。原寸の画素を読むので、1 点サンプルなら純粋な赤か青が出て、状態行に「x 1000・y 200」のように座標が出ます。3 × 3 の平均は `rgb(85, 0, 170)`（赤 1 列と青 2 列）です。写真やグラデーションでは平均のほうが安定します。
+
+PNG の `#1a73e8`・alpha 10/255 のピクセルは、Chromium の canvas から `#1a80e60a` として読み戻されました。透明に近いほど RGB の精度が落ちるので、ツールは alpha を表示し、注意書きを添えます。
+
+## どの色空間の値か
+
+- **画面**：EyeDropper API は sRGB の 16 進文字列を返します（[MDN](https://developer.mozilla.org/ja/docs/Web/API/EyeDropper/open)）。macOS 版 Chromium は取得したディスプレイの色を sRGB に変換してから 8 ビットに丸めます（[`skia_utils_mac.mm`](https://github.com/chromium/chromium/blob/main/skia/ext/skia_utils_mac.mm) の `CGColorRefToSkColor`）。広色域ディスプレイ上の sRGB 外の色は切り詰められます。
+- **画像**：sRGB の canvas に描いて読み取ります。CSS Color 4 は、埋め込みのカラープロファイルを反映して表示すること（[§3.4](https://www.w3.org/TR/css-color-4/#tagged-images)）と、プロファイルのない画像を sRGB として扱うこと（[§3.5](https://www.w3.org/TR/css-color-4/#untagged)）を定めています。Display P3 の canvas を作れるブラウザ（Chrome・Edge 92 以降、Safari 15.2 以降。Firefox は非対応）では P3 でも読み取り、sRGB の外なら注意を出して P3 の値を残します。
+- **変換式**は [CSS Color 4 のサンプルコード](https://drafts.csswg.org/css-color-4/conversions.js) どおりで、テストで [colorjs.io](https://colorjs.io/) と 10⁻⁹ 以内で一致することを確認しています。
+
+## ほかのツールとの違い
+
+2026-10-01 にデスクトップ版 Chromium で同じファイルを使って確認しました。[ラッコツールズの画像カラーピッカー](https://rakko.tools/ja/tools/image-color-picker/)は原寸で読み取るため縞模様でも正しい色が出ますが、半透明ピクセルは alpha を出さず `#1A80E6` と表示します。[imagecolorpicker.com](https://imagecolorpicker.com/) は縞模様の画像を 529 × 105 に縮小して読み取り、どこをクリックしても画像にない `#7f007f` を返しました。取得した 2 色のコントラスト比は[カラーコントラストチェッカー](/ja/tools/color-contrast-checker/)で、画像全体の配色は[画像カラーパレット抽出](/ja/tools/image-color-palette/)で確認できます。
+
+## 制限
+
+- 16,777,216 ピクセルを超える画像は縮小してから読み取ります。iOS の canvas は 4,096 × 4,096 までのためです（[MDN](https://developer.mozilla.org/ja/docs/Web/HTML/Reference/Elements/canvas)）。縮小後のサイズと、1 ピクセルが元の何ピクセルの平均かを表示します。
+- 画面からの取得は毎回クリックが必要です。ユーザー操作なしの `open()` は `NotAllowedError` で拒否され、1 回で 1 ピクセルだけを取得します。
+- 開ける画像形式はブラウザ次第で、HEIC は Safari でのみ開けます。Windows なら [PowerToys のカラーピッカー](https://learn.microsoft.com/ja-jp/windows/powertoys/color-picker)（Win + Shift + C）も画面から取得できます。
+- 出力は HEX・RGB・HSL・OKLCH・Display P3 です。CMYK・Lab・HSV が必要なら、HEX を[カラーコンバーター](/ja/tools/color-converter/)に貼り付けてください。

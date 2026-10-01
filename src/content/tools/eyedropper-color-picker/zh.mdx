@@ -1,39 +1,63 @@
 ---
-seoTitle: "屏幕吸色器 — 拾取任意像素 | ZeroTool"
-seoDescription: "通过浏览器原生 EyeDropper API 从屏幕任意位置拾取颜色。输出 sRGB HEX、RGB、HSL 并保存最近颜色调色板 — 无需上传，无需扩展程序。"
+seoTitle: "在线取色器：屏幕取色与图片取色 | ZeroTool"
+seoDescription: "在线取色器：从屏幕、图片或粘贴的截图取色，放大镜逐像素定位。输出 HEX、RGB、HSL、OKLCH、Display P3，数值能原样换算回同一颜色，超出 sRGB 和半透明像素会提示。"
 faqItems:
-  - question: "哪些浏览器支持 EyeDropper API？"
-    answer: "Chrome、Edge 和 Opera（Chromium 95+）已实现 EyeDropper API。Safari 和 Firefox 尚未支持 — 本工具在这些浏览器上会自动回退到原生 color 输入控件。"
-  - question: "为什么吸色器需要点击按钮才能触发？"
-    answer: "浏览器要求通过用户手势（点击）才能打开吸色器。不能从 setTimeout 或页面加载时自动触发。每次取色都需要点击「从屏幕吸色」。"
-  - question: "能拾取浏览器窗口外的颜色吗？"
-    answer: "可以。只要吸色器处于打开状态，EyeDropper API 可以采样物理屏幕上的任意像素，包括其他应用程序。"
-  - question: "拾取的颜色在 sRGB 下精确吗？"
-    answer: "API 返回 sRGB 十六进制字符串。HDR 屏幕的广色域（P3）值会被映射到 sRGB。需要严格色彩管理流程时，请用支持色彩管理的工具核对。"
-  - question: "最近颜色保存在哪里？"
-    answer: "最近 8 次取色仅保存在浏览器的 localStorage 中。不会上传任何数据。点击「清除最近」即可删除。"
+  - question: "为什么 Firefox、Safari 和手机上没有「从屏幕取色」按钮？"
+    answer: "屏幕取色依赖 EyeDropper API，目前只有桌面版 Chrome、Edge（95 起）和 Opera（81 起）提供，Linux Wayland 下也不可用。其他浏览器里工具会隐藏这个按钮，把「打开图片」设为主按钮：截图后按 Ctrl+V 粘贴，再点击要取的像素。"
+  - question: "截图取到的颜色和设计稿标注不一样，是工具算错了吗？"
+    answer: "先确认截图没有被缩放或压缩：聊天软件发送的图片常被压缩成 JPEG，边缘颜色会变。其次看设计稿是否用了广色域颜色。工具读取的是浏览器画到 sRGB canvas 上的像素，超出 sRGB 的颜色会被截取，此时工具会提示，并在 OKLCH 和 Display P3 字段保留真实颜色。"
+  - question: "HSL 为什么带小数？"
+    answer: "取整后的 HSL 大多换算不回原来的颜色。例如 WeUI 主色 #07c160 取整写成 hsl(149, 93%, 39%)，实际是 #07c060。工具会写出能换算回同一个 HEX 的最少位小数。"
+  - question: "图片会上传吗？取色记录存在哪里？"
+    answer: "不会上传。图片只在你电脑上的 canvas 里解码和读取。最近 16 次取到的 HEX 存在本浏览器的 localStorage，图片本身不保存；点「最近颜色」旁的「清空」即可删除。"
+  - question: "透明 PNG 的像素能取色吗？"
+    answer: "能。工具会显示 alpha，并输出带透明度的 HEX，例如 #1a80e60a。canvas 按 alpha 预乘存储颜色，几乎透明的像素 RGB 只是近似值。完全透明的像素没有颜色，工具会直接说明。"
 ---
 
-<h2>如何使用</h2>
-<ol>
-  <li>点击 <strong>从屏幕吸色</strong>。光标会变成放大镜 — 点击任意像素即可采样。</li>
-  <li>或者使用 <strong>原生拾色器</strong> 按钮打开浏览器内置的取色对话框（所有浏览器均可用）。</li>
-  <li>HEX、RGB、HSL 字段会同步更新。编辑任一字段，另外两个会自动重新计算。</li>
-  <li>点击任一格式旁边的 <strong>复制</strong> 按钮，即可将值发送到剪贴板。</li>
-  <li>最近 8 个采样颜色会保留在 <strong>最近颜色</strong> 条中 — 点击色块即可重新载入。</li>
-</ol>
+{/* ecp-check: #07c160 => hsl => hsl(148.7, 93%, 39.2%) */}
+{/* ecp-check: hsl(149, 93%, 39%) => hex => #07c060 */}
+{/* ecp-check: #07c160 => oklch => oklch(71% 0.189 151.2) */}
+{/* ecp-check: #1a80e60a => rgb => rgba(26, 128, 230, 0.039) */}
+{/* ecp-check: #5500aa => rgb => rgb(85, 0, 170) */}
+{/* ecp-check: color(display-p3 1 0 0) => hex => #ff0000 */}
 
-<h2>60 秒看懂 EyeDropper API</h2>
-<p>
-  <code>EyeDropper</code> 是浏览器原生的 Web API，允许页面从用户屏幕任意位置采样像素。页面调用 <code>new EyeDropper().open()</code>；浏览器打开系统级放大镜；点击后，Promise resolve 出一个对象，其 <code>sRGBHex</code> 属性即为所拾取的颜色。
-</p>
-<p>
-  该 API 保护隐私：页面无法获取像素数据，只能拿到用户选中的那一个颜色。每次取色必须由用户点击触发 — 没有任何无头或脚本化的采样方式。
-</p>
+## 三种取色方式
 
-<h2>不同模式如何选择</h2>
-<ul>
-  <li><strong>从屏幕吸色</strong> — 当颜色出现在其他应用、截图或视频画面里时使用。</li>
-  <li><strong>原生拾色器</strong> — 想要新建颜色或使用熟悉的 HSV 色盘时使用。</li>
-  <li><strong>在字段中输入</strong> — 已经有精确数值（如设计稿规范），想要换算到其他格式时使用。</li>
-</ul>
+1. **从屏幕取色**：桌面版 Chrome、Edge、Opera 可用。点「从屏幕取色」，再点击任意窗口里的任意像素，按 Esc 取消。
+2. **从图片或截图取色**：所有浏览器可用。点「打开图片」、把文件拖进工具，或者截图后直接按 Ctrl+V 粘贴。指针移到图上会出现放大镜，显示周围 11 × 11 个像素，点击即取中心那一个。键盘也能操作：方向键移动 1 像素，Shift+方向键移动 10 像素，Enter 取色。
+3. **系统取色板**：打开操作系统自带的颜色选择器。
+
+「取样」可选单点、3 × 3 平均或 5 × 5 平均；「适应」显示整张图，「100%」按一个图片像素对应一个 CSS 像素显示。任何一个字段都能直接粘贴 CSS 颜色，例如 `#07c160`、`rgb(7 193 96)`、`oklch(71% 0.19 151)` 或 `teal`，其余字段随之更新。最近 16 次取色显示在「最近颜色」里，点色块即可重新载入。
+
+## Windows 上的截图取色流程
+
+Windows 用户最常见的情况是：浏览器没问题，但要取的颜色在另一个程序里。可以按 PrtSc 把整个屏幕放进剪贴板，或者按 Windows + Shift + S 框选区域，再按 Ctrl+C 复制截图（[Microsoft 支持](https://support.microsoft.com/zh-cn/windows/use-snipping-tool-to-capture-screenshots-00246869-1843-655f-f220-97299b865f6b)）。回到本页按 Ctrl+V，图片就出现在工具里。Mac 上在截图快捷键里加 Control，例如 Control-Shift-Command-4，截图会存进剪贴板而不是桌面（[Apple 支持](https://support.apple.com/zh-cn/102646)）。
+
+## 实例：核对小程序导航栏颜色
+
+微信小程序 `app.json` 的 `window.navigationBarBackgroundColor` 类型是 HexColor，文档示例写法是 `"#ff00ff"`（[微信开放文档：全局配置](https://developers.weixin.qq.com/miniprogram/dev/reference/configuration/app.html)），OKLCH 之类的写法不能用。假设设计规范要求用 WeUI 的品牌绿：WeUI 2.6.26 的样式表里 `--weui-BRAND` 是 `#07c160`。对设计稿截图取色，读到 `#07c160`，HEX 可以直接写进 `app.json`。
+
+同一个颜色在其他字段是 `hsl(148.7, 93%, 39.2%)` 和 `oklch(71% 0.189 151.2)`。很多取色工具把 HSL 取整成 `hsl(149, 93%, 39%)`，换算回去是 `#07c060`，绿色通道差 1。本工具输出的每个字段都能换算回同一个 HEX：测试按 3 级步长遍历 sRGB 立方体（636,056 种颜色）用工具自己的解析器读回，另用 [culori](https://culorijs.org/) 读回 30,000 个随机颜色，全部一致。
+
+## 实例：1 像素细节与半透明像素
+
+用一张 2000 × 400 的测试图，红 `#ff0000`、蓝 `#0000ff` 两色 1 像素竖条交替。工具按原始分辨率读取，单点取样得到纯红或纯蓝，状态行写明坐标，例如「x 1000、y 200」；3 × 3 平均得到 `rgb(85, 0, 170)`，即一列红、两列蓝。照片和渐变上单个像素有噪点，用平均取样更稳。
+
+PNG 里一个 `#1a73e8`、alpha 为 10/255 的像素，在 Chromium 的 canvas 里读回 `rgba(26, 128, 230, 0.039)`。canvas 按 alpha 预乘存储，越透明精度越差，工具会显示 alpha 并加提示。
+
+## 取到的是哪个颜色空间
+
+- **屏幕**：EyeDropper API 返回 sRGB 的十六进制字符串（[MDN](https://developer.mozilla.org/zh-CN/docs/Web/API/EyeDropper/open)）。在 macOS 上，Chromium 会先把取到的显示器颜色换算成 sRGB，再按每通道 8 位取整（[`skia_utils_mac.mm`](https://github.com/chromium/chromium/blob/main/skia/ext/skia_utils_mac.mm) 的 `CGColorRefToSkColor`），广色域屏幕上超出 sRGB 的颜色会被截取。
+- **图片**：工具把图片画进 sRGB canvas 再读像素。CSS Color 4 规定浏览器要按图片内嵌的色彩配置文件显示（[§3.4](https://www.w3.org/TR/css-color-4/#tagged-images)），没有配置文件的图片按 sRGB 处理（[§3.5](https://www.w3.org/TR/css-color-4/#untagged)）。支持 Display P3 canvas 的浏览器（Chrome、Edge 92 起，Safari 15.2 起，Firefox 不支持）会多读一次 P3 值，像素超出 sRGB 时，工具给出提示，并保留 P3 值。例如 `color(display-p3 1 0 0)` 的 HEX 只能写成 `#ff0000`。
+- **换算公式**取自 [CSS Color 4 示例代码](https://drafts.csswg.org/css-color-4/conversions.js)，测试与 [colorjs.io](https://colorjs.io/) 对比，误差在 10⁻⁹ 以内。
+
+## 与同类工具的差异
+
+2026-10-01 在桌面版 Chromium 中用同一组文件实测。[StarryTool 在线取色器](https://www.starrytool.com/zh-cn/color-picker.html)同样按原图分辨率取色，也有放大镜和方向键微调。差别有两点：它的 HSL 取整，例如 `hsl(210, 80%, 50%)`；透明像素它显示 `#1A80E60A`，但不提示 RGB 是近似值。[imagecolorpicker.com](https://imagecolorpicker.com/) 把条纹测试图缩到 529 × 105 再取色，点哪里都是 `#7f007f`，原图里没有这个颜色。要比较两个取到的颜色的对比度，用[颜色对比度检测器](/zh/tools/color-contrast-checker/)；要从一张图提取整套配色，用[图像配色提取](/zh/tools/image-color-palette/)。
+
+## 限制
+
+- 超过 16,777,216 像素的图片会先缩小再取色（iOS 的 canvas 上限是 4,096 × 4,096，[MDN](https://developer.mozilla.org/zh-CN/docs/Web/HTML/Reference/Elements/canvas)），工具会写明缩小后的尺寸和每个像素平均了多少原始像素。
+- 屏幕取色每次都要点按钮。没有用户点击时，`open()` 会以 `NotAllowedError` 拒绝；每次只取一个像素。
+- 能打开的图片格式取决于浏览器，HEIC 只有 Safari 能打开。没有 EyeDropper API 时，也可以用 macOS 自带的[数码测色计](https://support.apple.com/zh-cn/guide/digital-color-meter/welcome/mac)，或 Windows 的 [PowerToys 取色器](https://learn.microsoft.com/zh-cn/windows/powertoys/color-picker)（Win + Shift + C）。
+- 只输出 HEX、RGB、HSL、OKLCH、Display P3。需要 CMYK、Lab、HSV 时，把 HEX 粘贴到[颜色转换器](/zh/tools/color-converter/)。

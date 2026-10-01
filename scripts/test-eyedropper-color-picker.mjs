@@ -2,7 +2,8 @@
 //
 // Read:  src/components/tools/EyedropperColorPickerTool.astro (the real engine block between
 //        `engine:start` / `engine:end` and the frontmatter STRINGS table, so the test cannot
-//        drift from the shipped source); src/data/persistence.ts
+//        drift from the shipped source); src/data/persistence.ts; src/content/tools/
+//        eyedropper-color-picker/*.mdx (examples marked `{/* ecp-check: … */}` are recomputed)
 // Write: stdout (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -21,7 +22,7 @@
 //
 // Run: node scripts/test-eyedropper-color-picker.mjs
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import Color from 'colorjs.io';
@@ -278,6 +279,22 @@ const script = source.slice(source.indexOf('<script'), source.indexOf('</script>
 check('script stores only through ztPersist', !/localStorage|sessionStorage|indexedDB|document\.cookie/.test(script));
 check('script makes no network requests', !/\bfetch\(|XMLHttpRequest|sendBeacon|WebSocket/.test(script));
 check('script never writes HTML', !/innerHTML|outerHTML|insertAdjacentHTML/.test(script));
+
+// ── 10. Examples on the tool pages ──
+const pageDir = join(root, 'src/content/tools/eyedropper-color-picker');
+let examples = 0;
+for (const f of readdirSync(pageDir)) {
+  const text = readFileSync(join(pageDir, f), 'utf8');
+  const re = /\{\/\* ecp-check: (.+?) => (\w+) => (.+?) \*\/\}/g;
+  let m;
+  while ((m = re.exec(text))) {
+    examples++;
+    const got = E.formatColor(E.parseColor(m[1]))[m[2]];
+    eq(`${f}: ${m[1]} → ${m[2]}`, got, m[3]);
+    check(`${f}: example value ${m[3]} appears in the page`, text.split(m[3]).length > 2);
+  }
+}
+check('tool pages carry checked examples', examples >= 8, examples + ' found');
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
