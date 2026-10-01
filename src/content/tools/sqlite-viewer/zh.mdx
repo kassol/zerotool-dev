@@ -48,6 +48,35 @@ faqItems:
 
 <p>查询结果只渲染前 1,000 行，保证页面不卡；导出的 CSV 始终包含全部行。</p>
 
+<h2>示例</h2>
+
+<p><strong>一列里存了两种类型。</strong>SQLite 的类型跟着值走，不跟着列走，所以 <code>DATETIME</code> 列可以一行存 ISO 文本、另一行存 Unix 时间戳（<a href="https://www.sqlite.org/datatype3.html">Datatypes In SQLite</a>）。直接问 SQLite：</p>
+
+<pre><code>{`SELECT typeof(created_at) AS storage_class, COUNT(*)
+FROM orders GROUP BY 1;`}</code></pre>
+
+<p>表里三行分别是 <code>{`'2026-09-01T10:00:00Z'`}</code>、<code>1759312800</code>、<code>{`'2026-09-02'`}</code> 时，结果是 <code>integer | 1</code> 和 <code>text | 2</code>，说明有两处代码用不同格式写这一列。<code>CREATE</code> 语句以 <code>STRICT</code> 结尾的表（SQLite 3.37.0 起）会拒绝这种写入，报 <code>cannot store TEXT value in INT column</code>。</p>
+
+<p><strong>正式执行前先试一遍清理语句。</strong>语句跑在内存副本上，可以先看删完还剩多少：</p>
+
+<pre><code>{`DELETE FROM sessions WHERE expires_at < unixepoch();
+SELECT COUNT(*) AS remaining FROM sessions;`}</code></pre>
+
+<p>结果区显示最后一条返回列的语句。新连接默认不检查外键（<code>PRAGMA foreign_keys</code> 返回 <code>0</code>），想让 <code>ON DELETE CASCADE</code> 生效，先执行 <code>PRAGMA foreign_keys = ON;</code>。</p>
+
+<p><strong>报错直接来自 SQLite。</strong>拼错关键字会显示 <code>{`SQL 错误：near "SELEC": syntax error`}</code>。全文检索表会显示 <code>no such module: fts5</code>：工具用的 sql.js 1.14.2（SQLite 3.49.1）没有编译 FTS5 和 R-Tree 模块。这类表的行数显示为 <code>—</code>，库里其他表照常浏览；FTS5 的文本存在 <code>notes_fts_content</code> 这类普通影子表里，可以直接读。</p>
+
+<p><strong>CSV 保持为合法文本。</strong>存着 PNG 文件头的 BLOB 在表格里显示为 <code>BLOB · 8 B · 89504E470D0A1A0A</code>，导出为 <code>89504E470D0A1A0A</code>。<code>NULL</code> 和空字符串导出后都是空字段，需要区分时先在查询里写 <code>{`COALESCE(col, '<null>')`}</code> 再导出。</p>
+
+<h2>文件内容和预期不一样时</h2>
+
+<ul>
+  <li><strong>最近写入的行不见了。</strong><a href="https://www.sqlite.org/wal.html">WAL 模式</a>下，已提交的修改先放在 <code>app.db-wal</code> 里，检查点之后才写回主文件。WAL 库的文件头第 18、19 字节都是 <code>2</code>（<a href="https://www.sqlite.org/fileformat.html">文件格式</a>）。关掉写这个库的程序，再执行 <code>{`sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"`}</code>。</li>
+  <li><strong>提示「不是 SQLite 3 数据库」。</strong>文件前 16 字节必须是 <code>SQLite format 3</code> 加一个空字节，可以用 <code>head -c 16 app.db | xxd</code> 查看。SQLCipher 在这里存随机盐值，所以加密库过不了这一步。</li>
+  <li><strong>文件超过 100 MB。</strong>先导出一个小库：<code>{`sqlite3 big.db "ATTACH 'small.db' AS s; CREATE TABLE s.orders AS SELECT * FROM orders WHERE created_at >= '2026-09-01';"`}</code>，再打开 <code>small.db</code>。</li>
+  <li><strong>复制正在使用的数据库。</strong><code>cp</code> 可能拷到写了一半的文件。<code>{`sqlite3 app.db "VACUUM INTO 'snapshot.db'"`}</code>（SQLite 3.27.0 起，见 <a href="https://www.sqlite.org/lang_vacuum.html">VACUUM</a>）会写出一个一致的单文件副本，已提交的 WAL 内容也在里面。</li>
+</ul>
+
 <h2>实现原理</h2>
 
 <p>页面先只读取文件前 100 字节，校验 SQLite 文件头。校验通过后才下载 SQLite 引擎（sql.js，压缩后约 340 KB），所以打开页面本身没有额外开销，选错文件也不会触发下载。随后整个文件作为内存数据库交给 SQLite。表结构来自 <code>pragma_table_info</code> 和 <code>pragma_index_list</code>；所有表名和列名都会加引号，名字里带空格、引号或中文都没问题。</p>

@@ -48,6 +48,35 @@ faqItems:
 
 <p>쿼리 결과는 페이지 반응성을 위해 처음 1,000행만 그립니다. CSV 내보내기에는 항상 모든 행이 들어갑니다.</p>
 
+<h2>예시</h2>
+
+<p><strong>한 열에 두 가지 타입이 들어 있는 경우.</strong> SQLite는 타입을 열이 아니라 값마다 저장하므로, <code>DATETIME</code> 열의 한 행에는 ISO 문자열이, 다른 행에는 Unix 타임스탬프가 들어갈 수 있습니다(<a href="https://www.sqlite.org/datatype3.html">Datatypes In SQLite</a>). SQLite에 직접 물어보세요.</p>
+
+<pre><code>{`SELECT typeof(created_at) AS storage_class, COUNT(*)
+FROM orders GROUP BY 1;`}</code></pre>
+
+<p>행이 <code>{`'2026-09-01T10:00:00Z'`}</code>, <code>1759312800</code>, <code>{`'2026-09-02'`}</code> 세 개라면 결과는 <code>integer | 1</code>과 <code>text | 2</code>입니다. 두 곳의 코드가 서로 다른 형식으로 이 열에 쓰고 있다는 뜻입니다. <code>CREATE</code> 문이 <code>STRICT</code>로 끝나는 테이블(SQLite 3.37.0 이상)은 이런 쓰기를 <code>cannot store TEXT value in INT column</code>으로 거부합니다.</p>
+
+<p><strong>실제로 실행하기 전에 정리 쿼리를 시험하기.</strong> 문장은 메모리 사본에서 실행되므로 삭제 후 몇 행이 남는지 먼저 볼 수 있습니다.</p>
+
+<pre><code>{`DELETE FROM sessions WHERE expires_at < unixepoch();
+SELECT COUNT(*) AS remaining FROM sessions;`}</code></pre>
+
+<p>결과 표에는 열을 반환하는 마지막 문장의 결과가 나옵니다. 새 연결에서는 외래 키 검사가 꺼져 있으므로(<code>PRAGMA foreign_keys</code>가 <code>0</code>을 반환), <code>ON DELETE CASCADE</code>가 동작하게 하려면 먼저 <code>PRAGMA foreign_keys = ON;</code>을 실행하세요.</p>
+
+<p><strong>오류는 SQLite가 그대로 돌려줍니다.</strong> 키워드를 잘못 치면 <code>{`SQL 오류: near "SELEC": syntax error`}</code>가 표시됩니다. 전문 검색 테이블은 <code>no such module: fts5</code>가 나오는데, 이 도구가 쓰는 sql.js 1.14.2(SQLite 3.49.1)에 FTS5와 R-Tree 모듈이 포함되어 있지 않기 때문입니다. 이런 테이블의 행 수는 <code>—</code>로 표시되고 나머지 테이블은 그대로 볼 수 있습니다. FTS5 본문은 <code>notes_fts_content</code> 같은 일반 섀도 테이블에 있으니 그 테이블은 읽을 수 있습니다.</p>
+
+<p><strong>CSV는 올바른 텍스트로 유지됩니다.</strong> PNG 시그니처를 담은 BLOB은 표에 <code>BLOB · 8 B · 89504E470D0A1A0A</code>로 보이고 CSV에는 <code>89504E470D0A1A0A</code>로 저장됩니다. <code>NULL</code>과 빈 문자열은 둘 다 빈 필드가 되므로, 구분이 필요하면 쿼리에서 <code>{`COALESCE(col, '<null>')`}</code>를 선택한 뒤 내보내세요.</p>
+
+<h2>파일 내용이 예상과 다를 때</h2>
+
+<ul>
+  <li><strong>최근 행이 보이지 않음.</strong> <a href="https://www.sqlite.org/wal.html">WAL 모드</a>에서는 커밋된 변경이 체크포인트 전까지 <code>app.db-wal</code>에 남아 있습니다. WAL 데이터베이스는 헤더의 18·19번째 바이트가 모두 <code>2</code>입니다(<a href="https://www.sqlite.org/fileformat.html">파일 형식</a>). 이 파일에 쓰는 앱을 닫고 <code>{`sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"`}</code>를 실행하세요.</li>
+  <li><strong>「SQLite 3 데이터베이스가 아님」 오류.</strong> 처음 16바이트는 <code>SQLite format 3</code>과 널 바이트여야 합니다. <code>head -c 16 app.db | xxd</code>로 확인할 수 있습니다. SQLCipher는 이 자리에 무작위 솔트를 두므로 암호화된 파일은 이 검사에서 걸립니다.</li>
+  <li><strong>파일이 100 MB를 넘음.</strong> 먼저 작은 추출본을 만드세요: <code>{`sqlite3 big.db "ATTACH 'small.db' AS s; CREATE TABLE s.orders AS SELECT * FROM orders WHERE created_at >= '2026-09-01';"`}</code> 그다음 <code>small.db</code>를 여세요.</li>
+  <li><strong>사용 중인 데이터베이스 복사.</strong> <code>cp</code>는 쓰다 만 파일을 복사할 수 있습니다. <code>{`sqlite3 app.db "VACUUM INTO 'snapshot.db'"`}</code>(SQLite 3.27.0 이상, <a href="https://www.sqlite.org/lang_vacuum.html">VACUUM</a>)는 커밋된 WAL 내용까지 포함한 일관된 단일 파일 사본을 씁니다.</li>
+</ul>
+
 <h2>동작 원리</h2>
 
 <p>페이지는 먼저 파일의 처음 100바이트만 읽어 SQLite 헤더를 확인합니다. SQLite 엔진(sql.js, 압축 시 약 340 KB)은 이 확인을 통과한 뒤에야 내려받으므로, 페이지를 여는 것만으로는 추가 로딩이 없고 잘못된 파일로 다운로드가 일어나지도 않습니다. 그다음 파일 전체를 인메모리 데이터베이스로 SQLite에 넘깁니다. 테이블 구조는 <code>pragma_table_info</code>와 <code>pragma_index_list</code>에서 가져오며, 모든 테이블·컬럼 이름에 따옴표를 붙이므로 공백, 따옴표, 한글이 들어간 이름도 문제없습니다.</p>

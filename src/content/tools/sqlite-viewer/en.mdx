@@ -48,6 +48,35 @@ faqItems:
 
 <p>Query results render the first 1,000 rows so the page stays responsive. The CSV export always contains every row.</p>
 
+<h2>Examples</h2>
+
+<p><strong>A column that holds two types.</strong> SQLite stores the type with each value, not with the column, so a <code>DATETIME</code> column can hold ISO text in one row and a Unix timestamp in another (<a href="https://www.sqlite.org/datatype3.html">Datatypes In SQLite</a>). Ask SQLite directly:</p>
+
+<pre><code>{`SELECT typeof(created_at) AS storage_class, COUNT(*)
+FROM orders GROUP BY 1;`}</code></pre>
+
+<p>On a table with the rows <code>{`'2026-09-01T10:00:00Z'`}</code>, <code>1759312800</code> and <code>{`'2026-09-02'`}</code>, the result grid shows <code>integer | 1</code> and <code>text | 2</code>: two code paths write the column in different formats. A table whose <code>CREATE</code> statement ends in <code>STRICT</code> (SQLite 3.37.0 and later) rejects such writes with <code>cannot store TEXT value in INT column</code>.</p>
+
+<p><strong>Trying a cleanup before running it for real.</strong> Statements run on the in-memory copy, so you can see what a delete leaves behind:</p>
+
+<pre><code>{`DELETE FROM sessions WHERE expires_at < unixepoch();
+SELECT COUNT(*) AS remaining FROM sessions;`}</code></pre>
+
+<p>The grid shows the last statement that returns columns. Foreign key enforcement is off on a new connection (<code>PRAGMA foreign_keys</code> returns <code>0</code>), so run <code>PRAGMA foreign_keys = ON;</code> first if you want <code>ON DELETE CASCADE</code> to fire.</p>
+
+<p><strong>Errors come from SQLite itself.</strong> A typo shows <code>{`SQL error: near "SELEC": syntax error`}</code>. A full-text table shows <code>no such module: fts5</code>, because the sql.js 1.14.2 build (SQLite 3.49.1) does not include the FTS5 or R-Tree modules; its row count shows <code>—</code> and the rest of the database stays browsable. FTS5 keeps its text in ordinary shadow tables such as <code>notes_fts_content</code>, which you can read.</p>
+
+<p><strong>CSV keeps text valid.</strong> A BLOB holding a PNG signature shows as <code>BLOB · 8 B · 89504E470D0A1A0A</code> in the grid and exports as <code>89504E470D0A1A0A</code>. <code>NULL</code> and the empty string both export as an empty field; select <code>{`COALESCE(col, '<null>')`}</code> before exporting if the difference matters.</p>
+
+<h2>When the file does not show what you expect</h2>
+
+<ul>
+  <li><strong>Recent rows are missing.</strong> In <a href="https://www.sqlite.org/wal.html">WAL mode</a>, committed changes sit in <code>app.db-wal</code> until a checkpoint moves them into the main file. Header bytes 18 and 19 are both <code>2</code> for a WAL database (<a href="https://www.sqlite.org/fileformat.html">file format</a>). Close the app that writes to it and run <code>{`sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"`}</code>.</li>
+  <li><strong>"Not a SQLite 3 database".</strong> The first 16 bytes must be <code>SQLite format 3</code> followed by a nul byte. Check with <code>head -c 16 app.db | xxd</code>. SQLCipher stores a random salt there, so encrypted files fail this check.</li>
+  <li><strong>The file is over 100 MB.</strong> Take a smaller extract first: <code>{`sqlite3 big.db "ATTACH 'small.db' AS s; CREATE TABLE s.orders AS SELECT * FROM orders WHERE created_at >= '2026-09-01';"`}</code>, then open <code>small.db</code>.</li>
+  <li><strong>Copying a database that is in use.</strong> <code>cp</code> can catch a half-written file. <code>{`sqlite3 app.db "VACUUM INTO 'snapshot.db'"`}</code> (SQLite 3.27.0 and later, <a href="https://www.sqlite.org/lang_vacuum.html">VACUUM</a>) writes a consistent single-file copy that includes committed WAL content.</li>
+</ul>
+
 <h2>How it works</h2>
 
 <p>The page first reads only the first 100 bytes of the file and checks the SQLite header. The SQLite engine — sql.js, about 340 KB compressed — is fetched only after that check passes, so opening the page costs nothing extra and a wrong file never triggers the download. The full file is then passed to SQLite as an in-memory database. Table structure comes from <code>pragma_table_info</code> and <code>pragma_index_list</code>, and every table and column name is quoted, so names with spaces, quotes or non-Latin characters work.</p>
