@@ -53,14 +53,14 @@ function eq(name, actual, expected) {
 }
 // Same as the Export JSON button: ok and warn entries, later keys win.
 function exported(text) {
-  const obj = {};
+  const obj = Object.create(null);
   E.parseEnv(text).forEach((e) => {
     if (e.type === 'ok' || e.type === 'warn') obj[e.key] = e.value;
   });
   return obj;
 }
 function sameAsDotenv(name, text) {
-  eq(name + ' (same as dotenv.parse)', exported(text), dotenv.parse(text));
+  eq(name + ' (same as dotenv.parse)', { ...exported(text) }, dotenv.parse(text));
 }
 function entry(text, key) {
   return E.parseEnv(text).find((e) => e.key === key);
@@ -137,6 +137,23 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   "PRIVATE='-----BEGIN-----\nMIIB\n-----END-----'\nAFTER=ok # done",
   'A=a\\nb\nB="a\\nb"\nC=\'a\\nb\'',
 ].forEach((text, n) => sameAsDotenv('fixture ' + (n + 1), text));
+
+// ---------- en tool page example ----------
+{
+  const PAGE = '# Database config\nDB_HOST=localhost\nDB_PORT=5432 # default port\nDB_PASSWORD="s3cr3t#1"\nAPI_KEY=\nAPP_ENV=development\nAPP_ENV=production\nexport NODE_ENV=production\nCOLOR=#fff\nPRIVATE_KEY="-----BEGIN KEY-----\nabc\n-----END KEY-----"\nGREETING="Hello\\nWorld"\nSINGLE=\'Hello\\nWorld\'\nmy-key=1\nBROKEN LINE\n';
+  sameAsDotenv('page example', PAGE);
+  const rows = E.parseEnv(PAGE).filter((e) => e.type !== 'comment').map((e) => [e.lineNo, e.type, e.key || '', e.type === 'error' ? e.error : (e.notes || []).join('; ')]);
+  eq('page example rows', rows, [
+    [2, 'ok', 'DB_HOST', ''], [3, 'ok', 'DB_PORT', ''], [4, 'ok', 'DB_PASSWORD', ''], [5, 'warn', 'API_KEY', 'Empty value'],
+    [6, 'ok', 'APP_ENV', ''], [7, 'warn', 'APP_ENV', 'Duplicate key'], [8, 'ok', 'NODE_ENV', ''],
+    [9, 'warn', 'COLOR', 'Text after # is a comment; quote the value to keep it; Empty value'],
+    [10, 'warn', 'PRIVATE_KEY', 'Multiline value (lines 10-12)'], [13, 'ok', 'GREETING', ''], [14, 'ok', 'SINGLE', ''],
+    [15, 'warn', 'my-key', 'Non-standard key name'], [16, 'error', '', 'Missing = sign'],
+  ]);
+  eq('page example export has 11 keys', Object.keys(exported(PAGE)).length, 11);
+  eq('__proto__ key is exported as a property', JSON.stringify(exported('__proto__=x\nA=1')), '{"__proto__":"x","A":"1"}');
+  check('Export JSON uses a null-prototype object and counts unique keys', /var obj = Object\.create\(null\);[\s\S]*?var keyCount = Object\.keys\(obj\)\.length;[\s\S]*?replace\('\{n\}', keyCount\)/.test(source));
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
