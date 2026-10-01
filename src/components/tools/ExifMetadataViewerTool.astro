@@ -1,6 +1,6 @@
 ---
 // ExifMetadataViewerTool — Pure client-side EXIF metadata reader and stripper for JPEG photos.
-// Hand-written EXIF parser — no npm dependencies. Strip mode removes APP1/APP13/APP14 marker
+// Hand-written EXIF parser — no npm dependencies. Strip mode removes APP1/APP13 marker
 // segments from the original byte stream so JPEG image data is byte-identical (no re-encoding).
 ---
 <div>
@@ -9,7 +9,7 @@
     <div id="emv-dropzone" class="emv-dropzone" tabindex="0" role="button" aria-label="Upload JPEG photo">
       <svg class="emv-dz-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="12" height="14" rx="2"/><circle cx="6" cy="9" r="1.2"/><path d="m14 13-3-3-5 5"/><line x1="17" y1="8" x2="22" y2="8"/><line x1="17" y1="12" x2="22" y2="12"/><line x1="17" y1="16" x2="22" y2="16"/></svg>
       <p id="emv-dz-hint" class="emv-dz-hint" data-i18n="dropHint">Drop a JPEG photo, click to upload, or paste (Ctrl+V)</p>
-      <p class="emv-dz-sub" data-i18n="dropSub">JPEG · up to 25 MB</p>
+      <p class="emv-dz-sub" data-i18n="dropSub">JPEG · up to 100 MB</p>
       <input type="file" id="emv-file" accept="image/jpeg,image/jpg,.jpg,.jpeg" hidden />
     </div>
 
@@ -96,7 +96,7 @@
       var STRINGS = {
         en: {
           dropHint: 'Drop a JPEG photo, click to upload, or paste (Ctrl+V)',
-          dropSub: 'JPEG · up to 25 MB',
+          dropSub: 'JPEG · up to 100 MB',
           loadAnother: 'Load another photo',
           groupCamera: 'Camera', groupDate: 'Date', groupExposure: 'Exposure', groupGps: 'GPS', groupSoftware: 'Software',
           kMake: 'Make', kModel: 'Model', kLens: 'Lens',
@@ -119,7 +119,7 @@
         },
         zh: {
           dropHint: '拖入 JPEG 照片、点击上传或粘贴 (Ctrl+V)',
-          dropSub: 'JPEG · 最大 25 MB',
+          dropSub: 'JPEG · 最大 100 MB',
           loadAnother: '加载其他照片',
           groupCamera: '相机', groupDate: '时间', groupExposure: '曝光', groupGps: 'GPS', groupSoftware: '软件',
           kMake: '品牌', kModel: '型号', kLens: '镜头',
@@ -142,7 +142,7 @@
         },
         ja: {
           dropHint: 'JPEG 写真をドロップ、クリックでアップロード、またはペースト (Ctrl+V)',
-          dropSub: 'JPEG · 最大 25 MB',
+          dropSub: 'JPEG · 最大 100 MB',
           loadAnother: '別の写真を読み込む',
           groupCamera: 'カメラ', groupDate: '日時', groupExposure: '露出', groupGps: 'GPS', groupSoftware: 'ソフトウェア',
           kMake: 'メーカー', kModel: 'モデル', kLens: 'レンズ',
@@ -165,7 +165,7 @@
         },
         ko: {
           dropHint: 'JPEG 사진을 드롭하거나 클릭해서 업로드, 또는 붙여넣기 (Ctrl+V)',
-          dropSub: 'JPEG · 최대 25 MB',
+          dropSub: 'JPEG · 최대 100 MB',
           loadAnother: '다른 사진 불러오기',
           groupCamera: '카메라', groupDate: '시간', groupExposure: '노출', groupGps: 'GPS', groupSoftware: '소프트웨어',
           kMake: '제조사', kModel: '모델', kLens: '렌즈',
@@ -325,7 +325,7 @@
         return { exif: null };
       }
 
-      /* ── Strip APP1 / APP13 / APP14 segments ── */
+      /* ── Strip APP1 / APP13 segments ── */
       function stripMetadata(buf) {
         var view = new DataView(buf);
         if (view.getUint16(0) !== 0xFFD8) return buf;
@@ -338,8 +338,10 @@
           if ((marker & 0xFF00) !== 0xFF00) break;
           var segLen = view.getUint16(pos + 2);
           var segEnd = pos + 2 + segLen;
-          if (marker === 0xFFE1 || marker === 0xFFED || marker === 0xFFEE) {
-            // Drop APP1 (EXIF/XMP), APP13 (Photoshop/IPTC), APP14 (Adobe)
+          if (marker === 0xFFE1 || marker === 0xFFED) {
+            // Drop APP1 (EXIF/XMP) and APP13 (Photoshop/IPTC). APP14 (Adobe) is kept: it holds
+            // only the colour transform flag, and CMYK / YCCK JPEGs decode with wrong colours
+            // without it.
           } else {
             keepRanges.push([pos, segEnd]);
           }

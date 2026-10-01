@@ -9,7 +9,7 @@ faqItems:
   - question: "Which formats are supported?"
     answer: "This tool is JPEG-only by design — JPEG carries the EXIF that almost every camera and phone produces. For PNG, HEIC, or TIFF use `exiftool -all=` locally; it handles every format, runs offline, and processes batches."
   - question: "Will the cleaned image lose quality?"
-    answer: "No. The tool removes EXIF, XMP, and IPTC marker segments from the original JPEG byte stream without re-encoding pixels. The cleaned file is byte-identical to the source, minus the metadata blocks."
+    answer: "No. The tool removes the EXIF, XMP and IPTC segments from the original JPEG byte stream without re-encoding pixels; the compressed image data is copied byte for byte. One visible change is possible: the EXIF Orientation tag goes with the EXIF block, so a photo that relied on it to display upright is shown in its stored orientation."
   - question: "Can I see the GPS location on a map?"
     answer: "When EXIF includes GPS coordinates the tool decodes them to decimal degrees and provides a one-click Google Maps link. The link is built locally — no third-party request runs until you click."
 ---
@@ -35,10 +35,32 @@ faqItems:
 <ul>
   <li><strong>APP1</strong> — EXIF (camera, GPS, timestamps) and XMP (Adobe metadata, edit history)</li>
   <li><strong>APP13</strong> — Photoshop / IPTC (caption, copyright, contact info)</li>
-  <li><strong>APP14</strong> — Adobe color transform marker</li>
 </ul>
 
-<p>Marker segments that the browser needs to decode the photo correctly are kept untouched: the SOI start marker, JFIF (APP0), ICC color profile (APP2), the SOS scan marker, the compressed image data, and the EOI end marker. Color appearance is preserved.</p>
+<p>Marker segments that the browser needs to decode the photo correctly are kept untouched: the SOI start marker, JFIF (APP0), ICC color profile (APP2), the Adobe color transform marker (APP14, without which CMYK JPEGs decode with wrong colors), the SOS scan marker, the compressed image data, and the EOI end marker. Color appearance is preserved.</p>
+
+<h2>Example</h2>
+
+<p>A 64 × 48 test JPEG with this EXIF (written with sharp 0.34 and checked with ExifTool 13.55) shows these rows in the tool:</p>
+
+<table>
+  <thead>
+    <tr><th>Field in the file</th><th>Shown by the tool</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Make <code>Apple</code>, Model <code>iPhone 15 Pro</code></td><td>Camera: Apple, iPhone 15 Pro</td></tr>
+    <tr><td>DateTimeOriginal <code>2026:09:30 18:42:07</code></td><td>Original: 2026-09-30 18:42:07</td></tr>
+    <tr><td>FNumber 1.78, ExposureTime 1/125, ISO 80, FocalLength 6.86</td><td>f/1.8, 1/125s, 80, 7 mm</td></tr>
+    <tr><td>GPS 48° 51′ 29.64″ N, 2° 17′ 40.20″ E, altitude 35 m</td><td>48.858233° N, 2.294500° E, 35.0 m, and an Open in Google Maps link</td></tr>
+    <tr><td>Software <code>17.6.1</code></td><td>Software: 17.6.1</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The coordinates point at the Eiffel Tower to within a few meters, which is the reason to strip before sharing. Download cleaned JPEG
+  turned the 882-byte file into a 286-byte file; reading the cleaned file again finds no EXIF, and the image is still 64 × 48.
+  The tool rounds for display (f/1.8 for 1.78, 7 mm for 6.86); <strong>Copy EXIF JSON</strong> gives the unrounded values.
+</p>
 
 <h2>What EXIF fields you may see</h2>
 
@@ -50,10 +72,19 @@ faqItems:
   <li><strong>Software</strong>: the OS or editing app that wrote the file</li>
 </ul>
 
+<h2>Limitations</h2>
+
+<ul>
+  <li><strong>Orientation is removed.</strong> Phones often store a portrait photo sideways and set Orientation 6 or 8 so viewers rotate it. The cleaned copy has no Orientation tag, so it is displayed sideways. Rotate the photo in an editor and save it before stripping, or use <code>{"exiftool -all= -tagsfromfile @ -Orientation photo.jpg"}</code>, which keeps only that tag.</li>
+  <li><strong>JPEG only, up to 100 MB.</strong> PNG, HEIC, WebP and TIFF are rejected. Pasting works only when the clipboard holds a JPEG; screenshots are usually PNG.</li>
+  <li><strong>The viewer shows a fixed set of fields:</strong> the ones in the table above. Other tags, such as the camera serial number or the time zone offset (OffsetTimeOriginal), are not listed but are removed by the download. Text tags stored with the UTF-8 type added in EXIF 3.0 are not decoded.</li>
+  <li><strong>Only APP1 and APP13 are removed.</strong> Comment segments (COM), other application segments (APP3–APP12, APP15) and any data after the end-of-image marker, such as the extra images that some phones append for HDR or depth, are kept. For a full clean, run <code>{"exiftool -all= photo.jpg"}</code> or re-save the image in an editor.</li>
+</ul>
+
 <h2>Privacy notes</h2>
 
 <ul>
-  <li>The page never uploads your photo. Confirm by opening the browser's network tab while you use the tool.</li>
+  <li>The page never uploads your photo. Confirm by opening the browser's network tab while you use the tool. Because photos can reveal where you live, this page does not load Google Analytics or AdSense, and nothing you open is saved in the browser.</li>
   <li>The Google Maps link is built locally and only opens when you click it — until then no request is made.</li>
   <li>If you want to keep the metadata for your own records, use <strong>Copy EXIF JSON</strong> before downloading the cleaned file.</li>
 </ul>
