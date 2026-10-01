@@ -16,7 +16,7 @@
     </div>
     <div class="mct-pane">
       <div class="mct-pane-header">
-        <span class="mct-pane-label" data-i18n="morseLabel">Morse Code (· and −, spaces between letters)</span>
+        <span class="mct-pane-label" data-i18n="morseLabel">Morse Code (· or ., − or -; spaces between letters, / between words)</span>
         <div class="mct-actions">
           <button id="mct-morse-to-text" class="btn-primary mct-btn-sm" type="button" data-i18n="toText">← Text</button>
           <button id="mct-copy-morse" class="btn-ghost mct-btn-sm" type="button" data-i18n="copy">Copy</button>
@@ -25,15 +25,15 @@
       <textarea id="mct-morse" class="mct-textarea" spellcheck="false" placeholder="·− −··· −·−· ···· ·−−− ··−−··"></textarea>
     </div>
   </div>
-  <div id="mct-error" class="mct-error" hidden></div>
+  <div id="mct-error" class="mct-error" role="status" aria-live="polite" hidden></div>
 
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { textLabel: 'Text', morseLabel: 'Morse Code (· and −, spaces between letters)', toMorse: '→ Morse', toText: '← Text', clear: 'Clear', copy: 'Copy', copied: 'Copied!', textPlaceholder: 'Type text here…' },
-        zh: { textLabel: '文本', morseLabel: '摩斯码（· 和 −，字母间用空格）', toMorse: '→ 摩斯码', toText: '← 文本', clear: '清除', copy: '复制', copied: '已复制！', textPlaceholder: '在此输入文本…' },
-        ja: { textLabel: 'テキスト', morseLabel: 'モールス符号（· と −、文字間はスペース）', toMorse: '→ モールス', toText: '← テキスト', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', textPlaceholder: 'テキストを入力…' },
-        ko: { textLabel: '텍스트', morseLabel: '모스 부호（· 와 −, 문자 사이 공백）', toMorse: '→ 모스', toText: '← 텍스트', clear: '지우기', copy: '복사', copied: '복사됨!', textPlaceholder: '텍스트를 입력…' }
+        en: { textLabel: 'Text', morseLabel: 'Morse Code (· or ., − or -; spaces between letters, / between words)', toMorse: '→ Morse', toText: '← Text', clear: 'Clear', copy: 'Copy', copied: 'Copied!', textPlaceholder: 'Type text here…', skipped: 'No Morse code for these characters, left out: {list}', unknown: 'Not in the table, shown as [?]: {list}' },
+        zh: { textLabel: '文本', morseLabel: '摩斯码（· 或 .，− 或 -；字母间空格，单词间 /）', toMorse: '→ 摩斯码', toText: '← 文本', clear: '清除', copy: '复制', copied: '已复制！', textPlaceholder: '在此输入文本…', skipped: '以下字符没有摩斯码，已跳过：{list}', unknown: '以下电码不在对照表中，显示为 [?]：{list}' },
+        ja: { textLabel: 'テキスト', morseLabel: 'モールス符号（· か .、− か -。文字間はスペース、単語間は /）', toMorse: '→ モールス', toText: '← テキスト', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', textPlaceholder: 'テキストを入力…', skipped: 'モールス符号がない文字を省きました：{list}', unknown: '符号表にないため [?] と表示：{list}' },
+        ko: { textLabel: '텍스트', morseLabel: '모스 부호(· 또는 ., − 또는 -; 문자 사이 공백, 단어 사이 /)', toMorse: '→ 모스', toText: '← 텍스트', clear: '지우기', copy: '복사', copied: '복사됨!', textPlaceholder: '텍스트를 입력…', skipped: '모스 부호가 없는 문자를 건너뛰었습니다: {list}', unknown: '부호표에 없어 [?]로 표시: {list}' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -54,6 +54,10 @@
       var clearBtn   = document.getElementById('mct-clear-text');
       var copyBtn    = document.getElementById('mct-copy-morse');
 
+      /* ── engine:start ── */
+      /* Codes from ITU-R M.1677-1 part I §1.1 (letters, accented e, figures,
+         13 punctuation marks); ! & ; _ $ are common amateur codes that the
+         recommendation does not list. */
       var CHAR_TO_MORSE = {
         'A': '·−', 'B': '−···', 'C': '−·−·', 'D': '−··',
         'E': '·', 'F': '··−·', 'G': '−−·', 'H': '····',
@@ -61,7 +65,7 @@
         'M': '−−', 'N': '−·', 'O': '−−−', 'P': '·−−·',
         'Q': '−−·−', 'R': '·−·', 'S': '···', 'T': '−',
         'U': '··−', 'V': '···−', 'W': '·−−', 'X': '−··−',
-        'Y': '−·−−', 'Z': '−−··',
+        'Y': '−·−−', 'Z': '−−··', 'É': '··−··',
         '0': '−−−−−', '1': '·−−−−', '2': '··−−−', '3': '···−−',
         '4': '····−', '5': '·····', '6': '−····', '7': '−−···',
         '8': '−−−··', '9': '−−−−·',
@@ -77,60 +81,101 @@
         MORSE_TO_CHAR[CHAR_TO_MORSE[c]] = c;
       });
 
-      function textToMorse(text) {
-        var words = text.toUpperCase().split(/\s+/);
-        var morseWords = words.map(function (word) {
-          var letters = word.split('');
-          var morseCodes = [];
-          for (var i = 0; i < letters.length; i++) {
-            var ch = letters[i];
-            if (CHAR_TO_MORSE[ch]) {
-              morseCodes.push(CHAR_TO_MORSE[ch]);
-            } else if (ch === ' ') {
-              morseCodes.push('/');
-            }
-            // silently skip unknown chars
-          }
-          return morseCodes.join(' ');
-        });
-        return morseWords.filter(function (w) { return w.length > 0; }).join(' / ');
+      /* Characters people use for dots and dashes when they type Morse:
+         ASCII . and -, bullets, full-width forms, the katakana middle dot and
+         long vowel mark (Japanese IME), dashes and the underscore. */
+      var DOT_CHARS = '.·•∙⋅․・･．';
+      var DASH_CHARS = '-−–—‐‑_ー－﹣';
+      var UNKNOWN_MARK = '[?]';
+
+      function pushUnique(list, item) {
+        if (list.indexOf(item) < 0) list.push(item);
       }
 
-      function morseToText(morse) {
-        var wordGroups = morse.trim().split(/\s*\/\s*/);
-        var result = [];
-        for (var wi = 0; wi < wordGroups.length; wi++) {
-          var group = wordGroups[wi].trim();
-          if (!group) continue;
-          var codes = group.split(/\s+/);
-          var word = '';
-          for (var ci = 0; ci < codes.length; ci++) {
-            var code = codes[ci];
-            if (!code) continue;
-            if (MORSE_TO_CHAR[code]) {
-              word += MORSE_TO_CHAR[code];
-            } else {
-              word += '?';
-            }
-          }
-          result.push(word);
+      /* Text → Morse. Letters are separated by one space, words by " / ".
+         Characters without a code are left out and listed in `skipped`. */
+      function textToMorse(text) {
+        var chars = Array.from(String(text).normalize('NFKC'));
+        var skipped = [];
+        var words = [];
+        var current = [];
+        function endWord() {
+          if (current.length) words.push(current.join(' '));
+          current = [];
         }
-        return result.join(' ');
+        for (var i = 0; i < chars.length; i++) {
+          var ch = chars[i];
+          if (/\s/.test(ch)) { endWord(); continue; }
+          var up = ch.toUpperCase();
+          if (CHAR_TO_MORSE[up]) {
+            current.push(CHAR_TO_MORSE[up]);
+          } else {
+            pushUnique(skipped, Array.from(up).length === 1 ? up : ch);
+          }
+        }
+        endWord();
+        return { morse: words.join(' / '), skipped: skipped };
+      }
+
+      /* Morse → text. Letters are separated by whitespace, words by / or |,
+         lines by line breaks. A group that is not in the table becomes [?]
+         and is listed in `unknown`. */
+      function morseToText(morse) {
+        var unknown = [];
+        var lines = String(morse).split(/\r?\n/).map(function (line) {
+          var words = [];
+          line.split(/[\/|]/).forEach(function (wordText) {
+            var groups = wordText.trim().split(/\s+/).filter(Boolean);
+            if (!groups.length) return;
+            var word = '';
+            groups.forEach(function (group) {
+              var code = '';
+              var ok = true;
+              Array.from(group).forEach(function (c) {
+                if (DOT_CHARS.indexOf(c) >= 0) code += '·';
+                else if (DASH_CHARS.indexOf(c) >= 0) code += '−';
+                else ok = false;
+              });
+              if (ok && MORSE_TO_CHAR[code]) {
+                word += MORSE_TO_CHAR[code];
+              } else {
+                word += UNKNOWN_MARK;
+                pushUnique(unknown, ok ? code : group);
+              }
+            });
+            words.push(word);
+          });
+          return words.join(' ');
+        });
+        return { text: lines.join('\n'), unknown: unknown };
+      }
+      /* ── engine:end ── */
+
+      function showNotice(msg) {
+        if (msg) {
+          errorEl.textContent = msg;
+          errorEl.hidden = false;
+        } else {
+          errorEl.textContent = '';
+          errorEl.hidden = true;
+        }
       }
 
       t2mBtn.addEventListener('click', function () {
         var text = textEl.value;
         if (!text.trim()) return;
-        morseEl.value = textToMorse(text);
-        errorEl.hidden = true;
+        var r = textToMorse(text);
+        morseEl.value = r.morse;
+        showNotice(r.skipped.length ? t.skipped.replace('{list}', r.skipped.join(' ')) : '');
         window.trackTool && window.trackTool('morse-code-translator', 'text-to-morse');
       });
 
       m2tBtn.addEventListener('click', function () {
         var morse = morseEl.value;
         if (!morse.trim()) return;
-        textEl.value = morseToText(morse);
-        errorEl.hidden = true;
+        var r = morseToText(morse);
+        textEl.value = r.text;
+        showNotice(r.unknown.length ? t.unknown.replace('{list}', r.unknown.join('  ')) : '');
         window.trackTool && window.trackTool('morse-code-translator', 'morse-to-text');
       });
 

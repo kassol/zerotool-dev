@@ -1,103 +1,102 @@
 ---
 seoTitle: "CSV to SQL INSERT Converter Online — Free, Browser-Side | ZeroTool"
-seoDescription: "Convert CSV data to SQL INSERT statements instantly in your browser. Supports MySQL, PostgreSQL, and SQLite dialects. Handles quoted fields, NULLs, batch mode. Free, no signup."
+seoDescription: "Convert CSV to SQL INSERT statements, with an optional CREATE TABLE, for MySQL, PostgreSQL and SQLite. Keeps leading zeros, escapes MySQL backslashes, handles quoted fields and NULLs."
 faqItems:
   - question: "What does this tool do?"
-    answer: "Converts CSV data into SQL INSERT statements. It reads the header row as column names and generates INSERT statements for each data row, quoting identifiers for the chosen dialect and doubling single quotes inside values (backslashes are not escaped; see Limits)."
+    answer: "Converts CSV data into SQL INSERT statements, and optionally a CREATE TABLE statement. The header row gives the column names; every data row becomes a row of values, quoted and escaped for the chosen dialect."
   - question: "Which SQL dialects are supported?"
-    answer: "MySQL (backtick quoting), PostgreSQL (double-quote quoting), and SQLite (double-quote quoting). The core INSERT syntax is the same; the difference is in how identifiers are quoted."
+    answer: "MySQL (backtick identifiers, backslashes in strings doubled), PostgreSQL and SQLite (double-quote identifiers, backslashes written as they are). The INSERT syntax is the same in all three."
   - question: "How are NULL values handled?"
-    answer: "Empty fields in the CSV are converted to NULL in the SQL output (without quotes), which is the standard way to represent missing values in SQL."
-  - question: "What is batch INSERT mode?"
-    answer: "Batch mode produces a single INSERT statement with multiple value rows: INSERT INTO tbl (col1) VALUES ('a'), ('b'), ('c'); — This is more efficient than running individual statements."
+    answer: "Empty fields become NULL (without quotes). A field that contains only spaces is a string, not NULL. The tool cannot produce an empty string ''."
+  - question: "Why is 02134 quoted but 10001 sometimes not?"
+    answer: "A column is written as numbers only when every non-empty cell in it is a plain number: no leading zeros, no plus sign or exponent, at most 15 digits. 02134 is not, so the whole zip column is quoted and the leading zero survives."
   - question: "Is any data sent to a server?"
     answer: "No. All conversion happens in your browser using JavaScript. No CSV data is transmitted."
 ---
 
 <h2>How to Use</h2>
 <ol>
-  <li>Paste your CSV data into the <strong>CSV Input</strong> textarea, or click <strong>Upload CSV</strong> to load a file.</li>
+  <li>Paste your CSV data into the <strong>CSV Input</strong> textarea, or click <strong>Upload CSV</strong> to load a UTF-8 file.</li>
   <li>Select your <strong>SQL Dialect</strong> (MySQL, PostgreSQL, or SQLite).</li>
   <li>Enter a <strong>Table Name</strong>. The default is <code>my_table</code>.</li>
   <li>Choose <strong>Batch INSERT</strong> (one statement, multiple rows) or <strong>Individual INSERT</strong> (one statement per row).</li>
+  <li>Tick <strong>Add CREATE TABLE</strong> if the table does not exist yet.</li>
   <li>The SQL output updates instantly. Click <strong>Copy</strong> to copy it to your clipboard.</li>
 </ol>
 
-<h2>SQL Dialect Differences</h2>
-
-<table>
-  <thead>
-    <tr>
-      <th>Dialect</th>
-      <th>Identifier quoting</th>
-      <th>Example</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>MySQL</td>
-      <td>Backticks</td>
-      <td><code>INSERT INTO `users` (`name`) VALUES ('Alice');</code></td>
-    </tr>
-    <tr>
-      <td>PostgreSQL</td>
-      <td>Double quotes</td>
-      <td><code>INSERT INTO "users" ("name") VALUES ('Alice');</code></td>
-    </tr>
-    <tr>
-      <td>SQLite</td>
-      <td>Double quotes</td>
-      <td><code>INSERT INTO "users" ("name") VALUES ('Alice');</code></td>
-    </tr>
-  </tbody>
-</table>
-
-<h2>NULL Handling</h2>
+<h2>How Values Are Written</h2>
 <ul>
-  <li>Empty CSV fields produce <code>NULL</code> (unquoted) in the SQL output.</li>
-  <li>Fields that contain only whitespace are treated as strings, not NULL.</li>
-  <li>Pure numeric values (integers and decimals) are inserted without quotes, so they are stored as numbers rather than strings.</li>
-  <li>All other values are wrapped in single quotes with internal single quotes escaped as <code>''</code>.</li>
+  <li>Empty CSV fields produce <code>NULL</code>.</li>
+  <li>A column whose non-empty cells are all plain numbers (<code>42</code>, <code>-7</code>, <code>19.90</code>) is written without quotes. A plain number has no leading zero, no <code>+</code>, no exponent and at most 15 digits.</li>
+  <li>Every other column is written as quoted strings, including its numbers, so <code>02134</code>, <code>1e5</code> and a 20-digit card number keep their exact text. MySQL, PostgreSQL and SQLite all convert a quoted number when the target column is numeric.</li>
+  <li>Single quotes are doubled (<code>O''Brien</code>) in every dialect. In MySQL, backslashes are doubled too: MySQL's default SQL mode reads <code>\n</code> inside a string as a newline (<a href="https://dev.mysql.com/doc/refman/8.4/en/string-literals.html" target="_blank" rel="noopener">MySQL 8.4 Reference Manual, String Literals</a>, Table 11.1). PostgreSQL with <code>standard_conforming_strings</code> on (the default since 9.1, <a href="https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-STRINGS" target="_blank" rel="noopener">PostgreSQL 4.1.2.1</a>) and SQLite store backslashes as written.</li>
+  <li>Cells beyond the header get extra columns named <code>column_3</code>, <code>column_4</code> and so on, and the status line lists them. Short rows are padded with <code>NULL</code>.</li>
 </ul>
 
 <h2>Example: Quotes, Leading Zeros and Empty Fields</h2>
 
-<p>Input:</p>
+<p>Input (SQLite, batch mode, table <code>customers</code>):</p>
+
+{/* sql: {"dialect":"sqlite","table":"customers","mode":"batch"} */}
 
 <pre><code>{`id,name,zip,note
 1,"O'Brien, Pat",02134,
 2,Lee,10001,"path C:\\new"`}</code></pre>
 
-<p>Output (SQLite dialect, batch mode, table name <code>{"customers"}</code>):</p>
-
-<pre><code>{`INSERT INTO "customers" ("id", "name", "zip", "note") VALUES
-  (1, 'O''Brien, Pat', 02134, NULL),
-  (2, 'Lee', 10001, 'path C:\\new');`}</code></pre>
-
-<p>Loaded into SQLite 3 with a table you create first:</p>
-
-<pre><code>{`CREATE TABLE customers (id INTEGER, name TEXT, zip TEXT, note TEXT);
--- run the INSERT above, then:
-SELECT * FROM customers;
--- 1 | O'Brien, Pat | 2134  | NULL
--- 2 | Lee          | 10001 | path C:\\new`}</code></pre>
-
-<ul>
-  <li>The quoted field <code>{"\"O'Brien, Pat\""}</code> keeps its comma, and the apostrophe is doubled (<code>{"''"}</code>).</li>
-  <li>The empty <code>{"note"}</code> becomes <code>{"NULL"}</code>; the tool cannot produce an empty string <code>{"''"}</code>.</li>
-  <li><code>{"02134"}</code> looks numeric, so it is written without quotes and the leading zero is lost — even in a TEXT column. Quote such values by hand:</li>
-</ul>
-
 <pre><code>{`INSERT INTO "customers" ("id", "name", "zip", "note") VALUES
   (1, 'O''Brien, Pat', '02134', NULL),
   (2, 'Lee', '10001', 'path C:\\new');`}</code></pre>
 
-<h2>Limits</h2>
+<p>The quoted field <code>"O'Brien, Pat"</code> keeps its comma. The empty <code>note</code> becomes <code>NULL</code>. <code>02134</code> makes the zip column a text column, so <code>10001</code> is quoted as well. Run against SQLite 3, <code>SELECT zip FROM customers</code> returns <code>02134</code> and <code>10001</code>.</p>
 
+<p>The same input in MySQL doubles the backslash, so the stored value is still <code>path C:\new</code>:</p>
+
+{/* sql: {"dialect":"mysql","table":"customers","mode":"batch"} */}
+
+<pre><code>{`id,name,zip,note
+1,"O'Brien, Pat",02134,
+2,Lee,10001,"path C:\\new"`}</code></pre>
+
+<pre><code>{`INSERT INTO \`customers\` (\`id\`, \`name\`, \`zip\`, \`note\`) VALUES
+  (1, 'O''Brien, Pat', '02134', NULL),
+  (2, 'Lee', '10001', 'path C:\\\\new');`}</code></pre>
+
+<p>If your server runs with <code>NO_BACKSLASH_ESCAPES</code> in <code>sql_mode</code>, backslashes are ordinary characters; use the PostgreSQL or SQLite output for that server instead.</p>
+
+<h2>Example: CREATE TABLE</h2>
+
+<p>With <strong>Add CREATE TABLE</strong> ticked, column types are chosen from the values: whole numbers become <code>INTEGER</code> (<code>INT</code> in MySQL, <code>BIGINT</code> beyond 2,147,483,647), numbers with a decimal point become <code>DOUBLE PRECISION</code> (<code>DOUBLE</code> in MySQL, <code>REAL</code> in SQLite), everything else <code>TEXT</code>. PostgreSQL:</p>
+
+{/* sql: {"dialect":"postgresql","table":"orders","mode":"batch","createTable":true} */}
+
+<pre><code>{`order_id,amount,paid_at
+1001,19.90,2026-09-30
+1002,5,`}</code></pre>
+
+<pre><code>{`CREATE TABLE "orders" ("order_id" INTEGER, "amount" DOUBLE PRECISION, "paid_at" TEXT);
+INSERT INTO "orders" ("order_id", "amount", "paid_at") VALUES
+  (1001, 19.90, '2026-09-30'),
+  (1002, 5, NULL);`}</code></pre>
+
+<p>Change the types before running it when they matter: money belongs in <code>NUMERIC</code> / <code>DECIMAL</code>, and dates such as <code>paid_at</code> in <code>DATE</code> or <code>TIMESTAMP</code>. No primary key or constraints are added.</p>
+
+<h2>Example: More Cells Than Headers</h2>
+
+{/* sql: {"dialect":"sqlite","table":"stock","mode":"individual"} */}
+
+<pre><code>{`sku,qty
+A-1,3,fragile
+B-2,5`}</code></pre>
+
+<pre><code>{`INSERT INTO "stock" ("sku", "qty", "column_3") VALUES ('A-1', 3, 'fragile');
+INSERT INTO "stock" ("sku", "qty", "column_3") VALUES ('B-2', 5, NULL);`}</code></pre>
+
+<p>The status line reports the added column <code>column_3</code>. Rename it in the header row if you want a real name.</p>
+
+<h2>Limits</h2>
 <ul>
-  <li>The tool writes <code>{"INSERT"}</code> statements only. It does not generate <code>{"CREATE TABLE"}</code>; create the table first with the column types you need.</li>
-  <li>MySQL treats a backslash in a string literal as an escape character unless <code>{"NO_BACKSLASH_ESCAPES"}</code> is set (<a href="https://dev.mysql.com/doc/refman/8.4/en/string-literals.html" target="_blank" rel="noopener">MySQL string literals</a>). The tool only doubles single quotes, so <code>{"C:\\new"}</code> above would be stored with a newline in MySQL. PostgreSQL (standard strings) and SQLite store it as written.</li>
-  <li>Values are typed by pattern only: <code>{"-?digits(.digits)?"}</code> is a number, everything else is a quoted string. Dates, booleans and <code>{"1e5"}</code> are written as strings.</li>
-  <li>The first row is always the header. Cells beyond the number of header columns are dropped without a warning.</li>
-  <li>Large files are converted in the browser tab in one pass; for millions of rows use the database's bulk loader (<code>{"LOAD DATA"}</code>, <code>{"COPY"}</code>, <code>{".import"}</code>).</li>
+  <li>The delimiter is a comma, and the first row is always the header. Semicolon or tab separated files need converting first.</li>
+  <li>Types are guessed from the text only. Dates, booleans and <code>1e5</code> are strings.</li>
+  <li>Table and column names are quoted as single identifiers, so <code>public.users</code> becomes one name with a dot in it.</li>
+  <li>Large files are converted in the browser tab in one pass; for millions of rows use the database's bulk loader (<code>LOAD DATA</code>, <code>COPY</code>, <code>.import</code>).</li>
 </ul>

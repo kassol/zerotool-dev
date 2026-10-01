@@ -34,7 +34,7 @@
 | HTML Entity Encoder / Decoder | [/tools/html-entity](https://zerotool.dev/tools/html-entity) |
 | YAML to JSON Converter | [/tools/yaml-json](https://zerotool.dev/tools/yaml-json) |
 | Line Tools | [/tools/line-tools](https://zerotool.dev/tools/line-tools) |
-| Number Base Converter | [/tools/number-base](https://zerotool.dev/tools/number-base) |
+| Binary to Decimal & Hex Converter | [/tools/number-base](https://zerotool.dev/tools/number-base) |
 | SQL Formatter | [/tools/sql-formatter](https://zerotool.dev/tools/sql-formatter) |
 | Aspect Ratio Calculator | [/tools/aspect-ratio](https://zerotool.dev/tools/aspect-ratio) |
 | XML Formatter | [/tools/xml-formatter](https://zerotool.dev/tools/xml-formatter) |
