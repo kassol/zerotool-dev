@@ -14,7 +14,7 @@ faqItems:
 
 <h2>How to Use</h2>
 <ol>
-  <li>To convert <strong>TOML → JSON</strong>: paste your TOML into the left panel and click <strong>TOML → JSON</strong>.</li>
+  <li>To convert <strong>TOML → JSON</strong>: paste your TOML into the left panel. The JSON updates 0.3 seconds after you stop typing; <strong>TOML → JSON</strong> converts at once.</li>
   <li>To convert <strong>JSON → TOML</strong>: paste your JSON into the right panel and click <strong>JSON → TOML</strong>.</li>
   <li>Use <strong>Ctrl+Enter</strong> (or <strong>Cmd+Enter</strong> on Mac) as a keyboard shortcut from whichever panel you're editing.</li>
   <li>Click <strong>Copy</strong> on either panel to copy the result to your clipboard.</li>
@@ -28,10 +28,61 @@ faqItems:
 host = "localhost"
 port = 5432
 enabled = true</code></pre>
-<p>Output JSON contains nested database object with host, port, and enabled fields.</p>
+<p>Output JSON: <code>{'{ "database": { "host": "localhost", "port": 5432, "enabled": true } }'}</code>, indented with two spaces.</p>
 
 <h3>Array of tables</h3>
-<p>TOML arrays of tables (using the double-bracket <code>[[table]]</code> syntax) become JSON arrays of objects. For example, two <code>[[fruits]]</code> table entries convert to a fruits array containing two objects.</p>
+<p>Two <code>[[fruits]]</code> entries become one array, and each entry keeps only the keys it has:</p>
+
+```toml
+[[fruits]]
+name = "apple"
+
+[[fruits]]
+name = "banana"
+color = "yellow"
+```
+
+```json
+{
+  "fruits": [
+    { "name": "apple" },
+    { "name": "banana", "color": "yellow" }
+  ]
+}
+```
+
+<p>(The tool indents every object over several lines; it is shortened here.) A <code>pyproject.toml</code> works the same way:
+<code>[tool.ruff.lint]</code> becomes <code>{'"tool": { "ruff": { "lint": { ... } } }'}</code>, and keys with dashes such as
+<code>requires-python</code> are kept as written.</p>
+
+<h3>JSON to TOML: a package.json</h3>
+<p>Pasting this JSON into the right panel:</p>
+
+```json
+{"name":"demo","version":"1.0.0","private":true,"scripts":{"build":"astro build","test":"node --test"},"workspaces":["packages/*"],"engines":{"node":">=22"}}
+```
+
+<p>gives:</p>
+
+```toml
+name = "demo"
+version = "1.0.0"
+private = true
+workspaces = [ "packages/*" ]
+
+[scripts]
+build = "astro build"
+test = "node --test"
+
+[engines]
+node = ">=22"
+```
+
+<p>
+  Plain values are written first and nested objects follow as <code>[tables]</code>, because in TOML every key after a table header
+  belongs to that table. Keys that are not bare words are quoted: <code>{'{"my key": 1, "a.b": 2}'}</code> becomes
+  <code>{'"my key" = 1'}</code> and <code>{'"a.b" = 2'}</code>, so a dot inside a JSON key is not turned into nesting.
+</p>
 
 <h2>TOML vs JSON</h2>
 <p>
@@ -75,3 +126,9 @@ converts to:
 - **`inf` and `nan` become `null`.** JSON has no infinity or NaN.
 - **Integers above 2^53 − 1 are rejected.** [TOML 1.0](https://toml.io/en/v1.0.0) allows 64-bit integers, but the parser stops with `integer value cannot be represented losslessly` rather than round them.
 - **JSON `null` is dropped when converting to TOML.** TOML has no null, so `{"a": null}` produces an empty document without an error. Replace nulls first.
+- **JSON `1.0` becomes TOML `1`.** `JSON.parse` does not keep the difference between `1.0` and `1`, so a float that happens to be whole is written as a TOML integer. Write `1.5`-style values or fix the type by hand if your program checks it.
+- **The JSON root must be an object.** `[1, 2]` gives `stringify can only be called with an object`, because a TOML document is always a table.
+- **Redefinitions are errors.** TOML such as `a = 1` followed by `[a]` gives `trying to redefine an already defined table or value` with the line and a caret.
+
+For the same data in YAML, use the [YAML ↔ TOML converter](/tools/yaml-toml/); to check a JSON file before converting it, use the [JSON formatter](/tools/json-formatter/).
+
