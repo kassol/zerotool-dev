@@ -66,6 +66,7 @@
           errHeaderJson: 'Header is not valid JSON.', errPayloadJson: 'Payload is not valid JSON.',
           errBase64Secret: 'Secret is not valid Base64.',
           errEmptySecret: 'Secret is required to sign the token.',
+          warnShortKey: 'The key is {bytes} bytes; RFC 7518 requires at least {min} bytes for {algo}. The token is signed, but the key is too short to rely on.',
           privacyNote: 'All processing is done locally in your browser.'
         },
         zh: {
@@ -76,6 +77,7 @@
           errHeaderJson: 'Header 不是有效的 JSON。', errPayloadJson: 'Payload 不是有效的 JSON。',
           errBase64Secret: '密钥不是有效的 Base64。',
           errEmptySecret: '请输入密钥以生成签名 Token。',
+          warnShortKey: '密钥只有 {bytes} 字节；RFC 7518 要求 {algo} 至少 {min} 字节。Token 照常签名，但这个密钥太短，不宜使用。',
           privacyNote: '所有处理均在浏览器本地完成。'
         },
         ja: {
@@ -86,6 +88,7 @@
           errHeaderJson: 'ヘッダーが有効なJSONではありません。', errPayloadJson: 'ペイロードが有効なJSONではありません。',
           errBase64Secret: '秘密鍵が有効なBase64ではありません。',
           errEmptySecret: 'トークンに署名するには秘密鍵を入力してください。',
+          warnShortKey: '鍵は {bytes} バイトです。RFC 7518 は {algo} に {min} バイト以上を求めています。署名はしますが、この鍵は短すぎます。',
           privacyNote: 'すべての処理はブラウザ内でローカルに行われます。'
         },
         ko: {
@@ -96,6 +99,7 @@
           errHeaderJson: '헤더가 유효한 JSON이 아닙니다.', errPayloadJson: '페이로드가 유효한 JSON이 아닙니다.',
           errBase64Secret: '비밀 키가 유효한 Base64가 아닙니다.',
           errEmptySecret: '토큰에 서명하려면 비밀 키를 입력해야 합니다.',
+          warnShortKey: '키가 {bytes}바이트입니다. RFC 7518은 {algo}에 {min}바이트 이상을 요구합니다. 서명은 하지만 이 키는 너무 짧습니다.',
           privacyNote: '모든 처리는 브라우저에서 로컬로 수행됩니다.'
         }
       };
@@ -162,10 +166,7 @@
         } catch (e) { /* leave as-is if invalid JSON */ }
       }
 
-      function base64url(str) {
-        return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      }
-
+      /* ── engine:start ── */
       function base64urlFromBuf(buf) {
         var bytes = new Uint8Array(buf);
         var str = '';
@@ -176,6 +177,38 @@
       function algoToWebCrypto(algo) {
         return { 'HS256': 'SHA-256', 'HS384': 'SHA-384', 'HS512': 'SHA-512' }[algo] || 'SHA-256';
       }
+
+      /* RFC 7518 §3.2: a key of the same size as the hash output (or larger) MUST be used
+         with this algorithm — 32 bytes for HS256, 48 for HS384, 64 for HS512. */
+      function minKeyBytes(algo) {
+        return { 'HS256': 32, 'HS384': 48, 'HS512': 64 }[algo] || 32;
+      }
+
+      /* Secret text → key bytes. fmt 'utf8' encodes the text; 'base64' accepts standard and
+         URL-safe Base64 with or without padding. Returns null for invalid Base64. */
+      function decodeSecret(secretStr, fmt) {
+        if (fmt !== 'base64') return new TextEncoder().encode(secretStr);
+        var b64 = secretStr.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        try {
+          var bStr = atob(b64);
+          var out = new Uint8Array(bStr.length);
+          for (var i = 0; i < bStr.length; i++) out[i] = bStr.charCodeAt(i);
+          return out;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      /* headerStr / payloadStr are signed exactly as written (UTF-8). */
+      async function signJwt(headerStr, payloadStr, keyBytes, algo, subtle) {
+        var enc = new TextEncoder();
+        var signingInput = base64urlFromBuf(enc.encode(headerStr)) + '.' + base64urlFromBuf(enc.encode(payloadStr));
+        var cryptoKey = await subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: algoToWebCrypto(algo) }, false, ['sign']);
+        var sigBuf = await subtle.sign('HMAC', cryptoKey, enc.encode(signingInput));
+        return signingInput + '.' + base64urlFromBuf(sigBuf);
+      }
+      /* ── engine:end ── */
 
       var debounceTimer = null;
 
@@ -205,11 +238,6 @@
 
         statusEl.textContent = t.generating;
 
-        var enc = new TextEncoder();
-        var headerB64 = base64url(unescape(encodeURIComponent(headerStr)));
-        var payloadB64 = base64url(unescape(encodeURIComponent(payloadStr)));
-        var signingInput = headerB64 + '.' + payloadB64;
-
         if (!secretStr) {
           secretWarnEl.textContent = t.errEmptySecret;
           resultWrap.style.display = 'none';
@@ -218,34 +246,22 @@
           return;
         }
 
+        var keyBytes = decodeSecret(secretStr, currentFmt);
+        if (!keyBytes) {
+          secretWarnEl.textContent = t.errBase64Secret;
+          resultWrap.style.display = 'none';
+          statusEl.textContent = '';
+          return;
+        }
+        var minBytes = minKeyBytes(currentAlgo);
+        if (keyBytes.length < minBytes) {
+          secretWarnEl.textContent = t.warnShortKey
+            .replace('{bytes}', keyBytes.length).replace('{min}', minBytes).replace('{algo}', currentAlgo);
+        }
+
         try {
-          var keyBytes;
-          if (currentFmt === 'base64') {
-            try {
-              var b64 = secretStr.replace(/-/g, '+').replace(/_/g, '/');
-              while (b64.length % 4) b64 += '=';
-              var bStr = atob(b64);
-              keyBytes = new Uint8Array(bStr.length);
-              for (var i = 0; i < bStr.length; i++) keyBytes[i] = bStr.charCodeAt(i);
-            } catch (e) {
-              secretWarnEl.textContent = t.errBase64Secret;
-              resultWrap.style.display = 'none';
-              statusEl.textContent = '';
-              return;
-            }
-          } else {
-            keyBytes = enc.encode(secretStr);
-          }
-
-          var cryptoKey = await crypto.subtle.importKey(
-            'raw', keyBytes,
-            { name: 'HMAC', hash: algoToWebCrypto(currentAlgo) },
-            false, ['sign']
-          );
-          var sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(signingInput));
-          var sigB64 = base64urlFromBuf(sigBuf);
-
-          resultEl.textContent = signingInput + '.' + sigB64;
+          var token = await signJwt(headerStr, payloadStr, keyBytes, currentAlgo, crypto.subtle);
+          resultEl.textContent = token;
           resultWrap.style.display = '';
           statusEl.textContent = t.generated;
           statusEl.className = 'jg-status success';
