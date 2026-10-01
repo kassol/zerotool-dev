@@ -1,229 +1,299 @@
 ---
-title: "HTML エンティティ完全ガイド：特殊文字のエンコード・デコードと XSS 対策"
-description: "HTMLエンティティの仕組み・名前付きエンティティと数値参照の違い・XSS防止のためのエスケープ方法を解説。JavaScript・Python・PHPでのエンコード実装例付き。"
+title: "HTML特殊文字一覧：記号の文字参照コード表（名前・10進・16進）"
+description: "HTMLの特殊文字・記号を文字実体参照と10進・16進の数値文字参照でコピーできる一覧表。WHATWG の一覧から生成し、名前のない日本語の記号、円記号とバックスラッシュ、Shift_JIS での文字化けも解説します。"
 pubDate: 2026-04-07
-updatedDate: 2026-09-29
+updatedDate: 2026-10-02
 lang: "ja"
-tags: ["html-entities", "html", "special-characters", "web-development", "developer-tools"]
+tags: ["html 特殊文字", "文字参照", "文字実体参照", "特殊記号", "html"]
 ---
 
-HTML エンティティは、パーサーに誤って解釈されてしまう文字を HTML で表現するための仕組みです。タグの開始と見なされる山括弧、別のエンティティの開始と見なされるアンパサンド、エンコーディングの変換によって失われる可能性のある非 ASCII 文字などが対象です。エンティティを誤ると、レイアウトの崩れ・文字化け、最悪の場合は XSS 脆弱性を招きます。
+HTML で記号や特殊文字を書く方法は最大で 4 通りあります。著作権記号なら、文字そのもの `©`、文字実体参照 `&copy;`、10 進数の数値文字参照 `&#169;`、16 進数の数値文字参照 `&#xA9;` のどれでも同じ文字になります。UTF-8 で保存したページなら記号はそのまま書けるので、文字参照が必要になるのは次の 2 つの場面です。
 
-## HTML エンティティとは
+- `<` や `&` のように、HTML の文法として解釈されてしまう文字を表示したいとき
+- 見えない空白、似た形の別の文字など、ソース上で区別したいとき
 
-HTML エンティティは `&` で始まり `;` で終わる文字列で、1文字を表します。2種類の形式があります。
+このページの一覧表は、ほかの早見表から書き写したものではありません。次の一次資料からプログラムで生成しています。
 
-**名前付きエンティティ**は説明的なキーワードを使います：
-```html
-&lt;    → <
-&gt;    → >
-&amp;   → &
-&quot;  → "
-&nbsp;  → （改行なしスペース）
-```
+- [WHATWG HTML Standard の名前付き文字参照の一覧](https://html.spec.whatwg.org/multipage/named-characters.html)（配布ファイル [entities.json](https://html.spec.whatwg.org/entities.json) の最終更新は 2025 年 11 月 12 日）。全 2,231 項目で、セミコロンで終わる名前が 2,125 個、セミコロンなしでも通る旧来の名前が 106 個です。
+- [Unicode Character Database 18.0](https://www.unicode.org/Public/UCD/latest/ucd/) のコードポイントと文字名。
 
-**数値エンティティ**は Unicode コードポイントを10進数または16進数で使います：
-```html
-&#60;   → <   (10進数)
-&#x3C;  → <   (16進数)
-&#169;  → ©
-&#x00A9; → ©
-```
+一覧で名前が「なし」の記号も、数値文字参照か文字そのものなら問題なく表示できます。
 
-どちらも同じ出力を生成します。名前付きエンティティの方が読みやすく、数値エンティティは名前付きに相当するものがない文字を含む任意の Unicode 文字に対応します。
+## HTMLで必ずエスケープする5つの特殊文字
 
-## HTML エンティティが重要な理由
+HTML の解釈を変えてしまう文字は 5 つだけです。それ以外は普通の文字として扱われます。
 
-### HTML 構造の破壊を防ぐ
+| 文字 | 問題になる場所 | 書き方 |
+|---|---|---|
+| `&` | どこでも（文字参照の始まりと見なされる） | `&amp;` |
+| `<` | 本文（タグの始まりと見なされる） | `&lt;` |
+| `>` | タグの終わり。手書きの HTML で紛らわしさを避けるため | `&gt;` |
+| `"` | ダブルクォートで囲んだ属性値の中 | `&quot;` |
+| `'` | シングルクォートで囲んだ属性値の中 | `&#39;` または `&apos;` |
 
-`<` と `>` は HTML で特別な意味を持ちます。ソースコードの表示など、リテラルの山括弧を表示する必要がある場合はエスケープが必要です：
+ブラウザが DOM を HTML に書き戻すとき（`innerHTML` を読んだとき）も同じ考え方です。[HTML の直列化アルゴリズム](https://html.spec.whatwg.org/multipage/parsing.html#serialising-html-fragments)は、本文と属性値の `&`、`<`、`>` と U+00A0（ノーブレークスペース）を置き換え、属性値ではさらに `"` を置き換えます。それ以外の文字を名前付きの参照に変えることはありません。
 
-```html
-<!-- NG: ブラウザが <strong> と <b> を本物のタグとして解析し、文字として表示されない -->
-Using <strong> instead of <b> is preferred.
+ユーザーの入力やほかのシステムから来た文字列を HTML に埋め込む場合は、[OWASP の XSS 対策チートシート](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html)にあるとおり、5 文字すべてを置き換えておけば本文でも引用符付きの属性値でも安全です。ただしこれは HTML の本文と属性値の話で、JavaScript の文字列、URL、CSS にはそれぞれ別のエスケープ規則があります。
 
-<!-- OK -->
-<p>Using &lt;strong&gt; instead of &lt;b&gt; is preferred.</p>
-```
+## 文字参照の書き方：文字実体参照と数値文字参照
 
-### XSS 脆弱性を防ぐ
+**文字実体参照**（HTML Standard の用語では「名前付き文字参照」）は、`&` + 名前 + `;` の形です。`&copy;` は ©、`&rarr;` は → になります。ソースを読んで意味が分かるのが利点ですが、名前があるのは 1,446 文字だけです（ほかに 2 つのコードポイントを出力する名前が 93 個あります）。大文字と小文字は区別され、`&Delta;` は Δ、`&delta;` は δ です。`&COPY;` は © の別名として有効ですが、`&Copy;` は名前ではないので、そのまま文字列として表示されます。
 
-ユーザーが入力したコンテンツを HTML に挿入する前にエスケープしないことは、最も一般的な Web セキュリティのバグの一つです。ユーザーが `<script>alert(1)</script>` と入力し、コードがそれをそのまま出力すれば、そのスクリプトはすべての訪問者のブラウザで実行されます。
+**数値文字参照**は、`&#` + 10 進数のコードポイント + `;`、または `&#x` + 16 進数のコードポイント + `;` の形です。Unicode の文字表は「U+2713」のように 16 進数で書かれているので、16 進数の形がそのまま対応します。チェックマーク U+2713 なら `&#x2713;`、10 進数では `&#10003;` です。数値文字参照は絵文字を含むすべての文字に使えます。😀（U+1F600）は `&#128512;` です。
 
-```html
-<!-- 危険: ユーザー入力をそのまま出力 -->
-<p>Hello, <%= username %></p>
+セミコロンは必ず付けてください。`&copy`、`&amp`、`&lt`、`&nbsp` など 106 個の旧来の名前はセミコロンがなくても認識されますが、HTML の構文エラーとして扱われ、後述のような思わぬ置き換えが起きます。
 
-<!-- 安全: HTML エンコード済み -->
-<p>Hello, <%= htmlEncode(username) %></p>
-```
+## 記号・特殊文字の一覧表
 
-HTML に挿入するユーザー入力には必ず以下の5文字をエンコードしてください：
+各行には、WHATWG の一覧がその文字に定義しているすべての名前を載せています。同じ行の名前はどれを使っても同じ文字になります。文字そのものを使いたいときは「文字」の列からコピーしてください。
 
-| 文字 | エンティティ |
-|------|---------|
-| `&` | `&amp;` |
-| `<` | `&lt;`  |
-| `>` | `&gt;`  |
-| `"` | `&quot;`|
-| `'` | `&#39;` |
+### 空白と見えない文字
 
-### ドキュメントの文字セット外の文字を表示する
+ソース上で目に見えない文字は、文字参照で書く価値がいちばん大きい種類です。`&nbsp;` は 2 つの語を同じ行に保ちます。`&shy;`（ソフトハイフン）は、ブラウザがその位置で長い単語を折り返したときだけ表示されます。全角スペース（U+3000）には名前がないので、目立たせたいときは `&#12288;` と書きます。
 
-UTF-8 が普及する前は、ISO-8859-1（Latin-1）で配信されたドキュメントでは `©`・`€`・`—` などを直接表現できず、エンティティが回避策でした。今日では UTF-8 での配信が標準ですが、簡単に入力できない文字やテキストプロセッサーに除去される可能性がある文字にはエンティティが便利です。
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| （空白） | `&nbsp;` `&NonBreakingSpace;` | `&#160;` | `&#xA0;` | NO-BREAK SPACE |
+| （空白） | `&ensp;` | `&#8194;` | `&#x2002;` | EN SPACE |
+| （空白） | `&emsp;` | `&#8195;` | `&#x2003;` | EM SPACE |
+| （空白） | `&thinsp;` `&ThinSpace;` | `&#8201;` | `&#x2009;` | THIN SPACE |
+| （見えない文字） | `&ZeroWidthSpace;` `&NegativeThinSpace;` `&NegativeThickSpace;` `&NegativeMediumSpace;` `&NegativeVeryThinSpace;` | `&#8203;` | `&#x200B;` | ZERO WIDTH SPACE |
+| （見えない文字） | `&zwnj;` | `&#8204;` | `&#x200C;` | ZERO WIDTH NON-JOINER |
+| （見えない文字） | `&zwj;` | `&#8205;` | `&#x200D;` | ZERO WIDTH JOINER |
+| （見えない文字） | `&shy;` | `&#173;` | `&#xAD;` | SOFT HYPHEN |
+| （空白） | なし | `&#12288;` | `&#x3000;` | IDEOGRAPHIC SPACE |
 
-## HTML エンティティ早見表
+### 句読点・引用符・ダッシュ
 
-### 予約文字
+英文のカギ括弧にあたる引用符やダッシュは、ワープロソフトが自動で変換する文字なので、文書から貼り付けた文章によく混じっています。全角の「‥」（二点リーダー）は `&nldr;` という名前を持っていますが、三点リーダー「…」は英文の省略記号と同じ文字で、`&hellip;` です。
 
-| 文字 | 名前 | エンティティ | 数値参照 |
-|------|------|-----------|---------|
-| `<` | 小なり記号 | `&lt;` | `&#60;` |
-| `>` | 大なり記号 | `&gt;` | `&#62;` |
-| `&` | アンパサンド | `&amp;` | `&#38;` |
-| `"` | ダブルクォート | `&quot;` | `&#34;` |
-| `'` | シングルクォート | `&#39;` | `&#x27;` |
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| `–` | `&ndash;` | `&#8211;` | `&#x2013;` | EN DASH |
+| `—` | `&mdash;` | `&#8212;` | `&#x2014;` | EM DASH |
+| `‐` | `&dash;` `&hyphen;` | `&#8208;` | `&#x2010;` | HYPHEN |
+| `‘` | `&lsquo;` `&OpenCurlyQuote;` | `&#8216;` | `&#x2018;` | LEFT SINGLE QUOTATION MARK |
+| `’` | `&rsquo;` `&rsquor;` `&CloseCurlyQuote;` | `&#8217;` | `&#x2019;` | RIGHT SINGLE QUOTATION MARK |
+| `“` | `&ldquo;` `&OpenCurlyDoubleQuote;` | `&#8220;` | `&#x201C;` | LEFT DOUBLE QUOTATION MARK |
+| `”` | `&rdquo;` `&rdquor;` `&CloseCurlyDoubleQuote;` | `&#8221;` | `&#x201D;` | RIGHT DOUBLE QUOTATION MARK |
+| `«` | `&laquo;` | `&#171;` | `&#xAB;` | LEFT-POINTING DOUBLE ANGLE QUOTATION MARK |
+| `»` | `&raquo;` | `&#187;` | `&#xBB;` | RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK |
+| `…` | `&mldr;` `&hellip;` | `&#8230;` | `&#x2026;` | HORIZONTAL ELLIPSIS |
+| `‥` | `&nldr;` | `&#8229;` | `&#x2025;` | TWO DOT LEADER |
+| `•` | `&bull;` `&bullet;` | `&#8226;` | `&#x2022;` | BULLET |
+| `·` | `&middot;` `&centerdot;` `&CenterDot;` | `&#183;` | `&#xB7;` | MIDDLE DOT |
+| `§` | `&sect;` | `&#167;` | `&#xA7;` | SECTION SIGN |
+| `¶` | `&para;` | `&#182;` | `&#xB6;` | PILCROW SIGN |
+| `†` | `&dagger;` | `&#8224;` | `&#x2020;` | DAGGER |
+| `‡` | `&ddagger;` `&Dagger;` | `&#8225;` | `&#x2021;` | DOUBLE DAGGER |
 
-### タイポグラフィ
+### 著作権・単位の記号
 
-| 文字 | 名前 | エンティティ | 用途 |
-|------|------|-----------|-----|
-| ` ` | 改行なしスペース | `&nbsp;` | 単語間の改行を防止 |
-| `—` | 全角ダッシュ | `&mdash;` | 文の区切り、範囲 |
-| `–` | 半角ダッシュ | `&ndash;` | 数値の範囲（2010–2024） |
-| `…` | 省略記号 | `&hellip;` | テキストの省略 |
-| `“` | 左ダブルクォート | `&ldquo;` | 引用 |
-| `”` | 右ダブルクォート | `&rdquo;` | 引用 |
-| `’` | アポストロフィ | `&rsquo;` | 短縮形 |
+`&angst;` は Å（U+00C5）の別名で、オングストローム記号 U+212B ではありません。日本語の文章でよく使う ℃ には名前がありません。
 
-### シンボル
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| `©` | `&copy;` `&COPY;` | `&#169;` | `&#xA9;` | COPYRIGHT SIGN |
+| `®` | `&reg;` `&REG;` `&circledR;` | `&#174;` | `&#xAE;` | REGISTERED SIGN |
+| `™` | `&trade;` `&TRADE;` | `&#8482;` | `&#x2122;` | TRADE MARK SIGN |
+| `°` | `&deg;` | `&#176;` | `&#xB0;` | DEGREE SIGN |
+| `‰` | `&permil;` | `&#8240;` | `&#x2030;` | PER MILLE SIGN |
+| `′` | `&prime;` | `&#8242;` | `&#x2032;` | PRIME |
+| `″` | `&Prime;` | `&#8243;` | `&#x2033;` | DOUBLE PRIME |
+| `℃` | なし | `&#8451;` | `&#x2103;` | DEGREE CELSIUS |
+| `Å` | `&angst;` `&Aring;` | `&#197;` | `&#xC5;` | LATIN CAPITAL LETTER A WITH RING ABOVE |
 
-| 文字 | 名前 | エンティティ |
-|------|------|-----------|
-| `©` | 著作権 | `&copy;` |
-| `®` | 登録商標 | `&reg;` |
-| `™` | 商標 | `&trade;` |
-| `€` | ユーロ | `&euro;` |
-| `£` | ポンド | `&pound;` |
-| `¥` | 円/元 | `&yen;` |
-| `°` | 度 | `&deg;` |
-| `±` | プラスマイナス | `&plusmn;` |
-| `×` | 乗算 | `&times;` |
-| `÷` | 除算 | `&divide;` |
-| `→` | 右矢印 | `&rarr;` |
+### 通貨記号
+
+半角の円記号 ¥（U+00A5）には `&yen;` がありますが、全角の ￥（U+FFE5）には名前がありません。円記号については後の節で詳しく説明します。
+
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| `¥` | `&yen;` | `&#165;` | `&#xA5;` | YEN SIGN |
+| `￥` | なし | `&#65509;` | `&#xFFE5;` | FULLWIDTH YEN SIGN |
+| `$` | `&dollar;` | `&#36;` | `&#x24;` | DOLLAR SIGN |
+| `€` | `&euro;` | `&#8364;` | `&#x20AC;` | EURO SIGN |
+| `£` | `&pound;` | `&#163;` | `&#xA3;` | POUND SIGN |
+| `¢` | `&cent;` | `&#162;` | `&#xA2;` | CENT SIGN |
+| `₩` | なし | `&#8361;` | `&#x20A9;` | WON SIGN |
 
 ### 数学記号
 
-| 文字 | 名前 | エンティティ |
-|------|------|-----------|
-| `≤` | 以下 | `&le;` |
-| `≥` | 以上 | `&ge;` |
-| `≠` | 不等号 | `&ne;` |
-| `∞` | 無限大 | `&infin;` |
-| `∑` | 総和 | `&sum;` |
-| `√` | 平方根 | `&radic;` |
+日本の教科書で使う ≦ ≧ は U+2266・U+2267 で、欧米で一般的な ≤ ≥（U+2264・U+2265）とは別の文字です。名前もそれぞれ別に用意されています。「ほぼ等しい」の ≒ は `&efDot;` です。
 
-## コードでのエンコード・デコード
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| `×` | `&times;` | `&#215;` | `&#xD7;` | MULTIPLICATION SIGN |
+| `÷` | `&div;` `&divide;` | `&#247;` | `&#xF7;` | DIVISION SIGN |
+| `±` | `&pm;` `&plusmn;` `&PlusMinus;` | `&#177;` | `&#xB1;` | PLUS-MINUS SIGN |
+| `≠` | `&ne;` `&NotEqual;` | `&#8800;` | `&#x2260;` | NOT EQUAL TO |
+| `≒` | `&fallingdotseq;` `&efDot;` | `&#8786;` | `&#x2252;` | APPROXIMATELY EQUAL TO OR THE IMAGE OF |
+| `≡` | `&equiv;` `&Congruent;` | `&#8801;` | `&#x2261;` | IDENTICAL TO |
+| `≦` | `&leqq;` `&lE;` `&LessFullEqual;` | `&#8806;` | `&#x2266;` | LESS-THAN OVER EQUAL TO |
+| `≧` | `&geqq;` `&gE;` `&GreaterFullEqual;` | `&#8807;` | `&#x2267;` | GREATER-THAN OVER EQUAL TO |
+| `≤` | `&le;` `&leq;` | `&#8804;` | `&#x2264;` | LESS-THAN OR EQUAL TO |
+| `≥` | `&ge;` `&geq;` `&GreaterEqual;` | `&#8805;` | `&#x2265;` | GREATER-THAN OR EQUAL TO |
+| `∞` | `&infin;` | `&#8734;` | `&#x221E;` | INFINITY |
+| `√` | `&radic;` `&Sqrt;` | `&#8730;` | `&#x221A;` | SQUARE ROOT |
+| `∴` | `&there4;` `&therefore;` `&Therefore;` | `&#8756;` | `&#x2234;` | THEREFORE |
+| `∵` | `&becaus;` `&because;` `&Because;` | `&#8757;` | `&#x2235;` | BECAUSE |
+| `∈` | `&in;` `&isin;` `&isinv;` `&Element;` | `&#8712;` | `&#x2208;` | ELEMENT OF |
+| `∩` | `&cap;` | `&#8745;` | `&#x2229;` | INTERSECTION |
+| `∪` | `&cup;` | `&#8746;` | `&#x222A;` | UNION |
+| `⊂` | `&sub;` `&subset;` | `&#8834;` | `&#x2282;` | SUBSET OF |
+| `∀` | `&forall;` `&ForAll;` | `&#8704;` | `&#x2200;` | FOR ALL |
+| `∃` | `&exist;` `&Exists;` | `&#8707;` | `&#x2203;` | THERE EXISTS |
 
-### JavaScript
+### 矢印
 
-ブラウザの DOM が HTML エンティティのエンコードを処理します：
+← → などの矢印には最大 5 つの名前があります。いちばん短いのは `&larr;`、`&rarr;` です。
 
-```js
-// エンコード（HTML エスケープ）
-function htmlEncode(str) {
-  const div = document.createElement('div');
-  div.appendChild(document.createTextNode(str));
-  return div.innerHTML;
-}
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| `←` | `&larr;` `&slarr;` `&leftarrow;` `&LeftArrow;` `&ShortLeftArrow;` | `&#8592;` | `&#x2190;` | LEFTWARDS ARROW |
+| `→` | `&rarr;` `&srarr;` `&rightarrow;` `&RightArrow;` `&ShortRightArrow;` | `&#8594;` | `&#x2192;` | RIGHTWARDS ARROW |
+| `↑` | `&uarr;` `&uparrow;` `&UpArrow;` `&ShortUpArrow;` | `&#8593;` | `&#x2191;` | UPWARDS ARROW |
+| `↓` | `&darr;` `&downarrow;` `&DownArrow;` `&ShortDownArrow;` | `&#8595;` | `&#x2193;` | DOWNWARDS ARROW |
+| `↔` | `&harr;` `&leftrightarrow;` `&LeftRightArrow;` | `&#8596;` | `&#x2194;` | LEFT RIGHT ARROW |
+| `⇒` | `&rArr;` `&Implies;` `&Rightarrow;` `&DoubleRightArrow;` | `&#8658;` | `&#x21D2;` | RIGHTWARDS DOUBLE ARROW |
+| `⇔` | `&iff;` `&hArr;` `&Leftrightarrow;` `&DoubleLeftRightArrow;` | `&#8660;` | `&#x21D4;` | LEFT RIGHT DOUBLE ARROW |
 
-htmlEncode('<script>alert(1)</script>');
-// "&lt;script&gt;alert(1)&lt;/script&gt;"
+### 図形・マーク
 
-// デコード（HTML アンエスケープ）
-function htmlDecode(str) {
-  const div = document.createElement('div');
-  div.innerHTML = str;
-  return div.textContent;
-}
+白抜きの □ △ ▽ ○ には名前があり、黒塗りの ■ ▲ ▼ ● にはありません。◎ ◇ ◆ も名前がないので、数値文字参照で書きます。
 
-htmlDecode('&lt;b&gt;bold&lt;/b&gt;');
-// "<b>bold</b>"
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| `○` | `&cir;` | `&#9675;` | `&#x25CB;` | WHITE CIRCLE |
+| `●` | なし | `&#9679;` | `&#x25CF;` | BLACK CIRCLE |
+| `◎` | なし | `&#9678;` | `&#x25CE;` | BULLSEYE |
+| `△` | `&xutri;` `&bigtriangleup;` | `&#9651;` | `&#x25B3;` | WHITE UP-POINTING TRIANGLE |
+| `▲` | なし | `&#9650;` | `&#x25B2;` | BLACK UP-POINTING TRIANGLE |
+| `▽` | `&xdtri;` `&bigtriangledown;` | `&#9661;` | `&#x25BD;` | WHITE DOWN-POINTING TRIANGLE |
+| `▼` | なし | `&#9660;` | `&#x25BC;` | BLACK DOWN-POINTING TRIANGLE |
+| `□` | `&squ;` `&square;` `&Square;` | `&#9633;` | `&#x25A1;` | WHITE SQUARE |
+| `■` | なし | `&#9632;` | `&#x25A0;` | BLACK SQUARE |
+| `◇` | なし | `&#9671;` | `&#x25C7;` | WHITE DIAMOND |
+| `◆` | なし | `&#9670;` | `&#x25C6;` | BLACK DIAMOND |
+| `★` | `&starf;` `&bigstar;` | `&#9733;` | `&#x2605;` | BLACK STAR |
+| `☆` | `&star;` | `&#9734;` | `&#x2606;` | WHITE STAR |
+| `♪` | `&sung;` | `&#9834;` | `&#x266A;` | EIGHTH NOTE |
+| `✓` | `&check;` `&checkmark;` | `&#10003;` | `&#x2713;` | CHECK MARK |
+
+文字参照は「どの文字か」を指定するだけです。実際に表示されるかどうかは、閲覧者の端末のフォントにその文字の字形があるかどうかで決まります。どのフォントにも字形がなければ、文字参照で書いても豆腐（□）になります。
+
+## 名前付きの参照がない日本語の記号
+
+日本語の文章でよく使う記号の多くは、WHATWG の一覧に名前がありません。WHATWG の一覧は欧文の記号、ギリシャ文字、数式記号が中心で、和文の約物や丸数字は含まれていません。下の表の記号は、文字そのものを UTF-8 で書くか、数値文字参照を使ってください。
+
+| 文字 | 文字実体参照（名前） | 10進数 | 16進数 | Unicode 名 |
+|---|---|---|---|---|
+| `〒` | なし | `&#12306;` | `&#x3012;` | POSTAL MARK |
+| `※` | なし | `&#8251;` | `&#x203B;` | REFERENCE MARK |
+| `〜` | なし | `&#12316;` | `&#x301C;` | WAVE DASH |
+| `～` | なし | `&#65374;` | `&#xFF5E;` | FULLWIDTH TILDE |
+| `・` | なし | `&#12539;` | `&#x30FB;` | KATAKANA MIDDLE DOT |
+| `①` | なし | `&#9312;` | `&#x2460;` | CIRCLED DIGIT ONE |
+| `㈱` | なし | `&#12849;` | `&#x3231;` | PARENTHESIZED IDEOGRAPH STOCK |
+| `㎡` | なし | `&#13217;` | `&#x33A1;` | SQUARE M SQUARED |
+| `「` | なし | `&#12300;` | `&#x300C;` | LEFT CORNER BRACKET |
+| `」` | なし | `&#12301;` | `&#x300D;` | RIGHT CORNER BRACKET |
+| `、` | なし | `&#12289;` | `&#x3001;` | IDEOGRAPHIC COMMA |
+| `。` | なし | `&#12290;` | `&#x3002;` | IDEOGRAPHIC FULL STOP |
+| `〆` | なし | `&#12294;` | `&#x3006;` | IDEOGRAPHIC CLOSING MARK |
+| `々` | なし | `&#12293;` | `&#x3005;` | IDEOGRAPHIC ITERATION MARK |
+
+「〜」（U+301C 波ダッシュ）と「～」（U+FF5E 全角チルダ）は見た目が似ていますが別の文字で、どちらにも名前はありません。Shift_JIS の 0x8160 は、Windows の CP932 とブラウザ（[WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#shift_jis-decoder)）では U+FF5E に、JIS X 0208 に沿った変換表（Python の `shift_jis` コーデックなど）では U+301C に変換されます。経路の違うシステムを通ったデータでは両方が混在しがちです。検索や比較で一致しないときは、数値文字参照に変換して `&#12316;` と `&#65374;` のどちらかを確認すると原因が分かります。①や㈱、㎡のような、かつて「機種依存文字」と呼ばれた記号も同じで、UTF-8 のページならそのまま書いて構いません。
+
+## 円記号 ¥ とバックスラッシュ \ の違い
+
+日本語の環境では、円記号まわりの文字が 3 つ混在します。
+
+- `\`（U+005C REVERSE SOLIDUS）：ASCII のバックスラッシュ。名前は `&bsol;`。
+- `¥`（U+00A5 YEN SIGN）：半角の円記号。名前は `&yen;`。
+- `￥`（U+FFE5 FULLWIDTH YEN SIGN）：全角の円記号。名前はなく `&#65509;`。
+
+日本の文字コード規格 JIS X 0201 は、ASCII で `\` が置かれている 0x5C に `¥` を割り当てました（Unicode の対応表 [JIS0201.TXT](https://www.unicode.org/Public/MAPPINGS/OBSOLETE/EASTASIA/JIS/JIS0201.TXT) では 0x5C が U+00A5）。そのため日本語のフォントでは `\` が `¥` の形で表示されることがあり、画面上は同じに見えても文字コードは違う、ということが起きます。価格を表示するなら、半角の `&yen;` か全角の `￥` を使い、`\` は使わないでください。
+
+Shift_JIS のページではさらに注意が必要です。[WHATWG Encoding Standard の Shift_JIS エンコーダー](https://encoding.spec.whatwg.org/#shift_jis-encoder)は、U+00A5 の ¥ を 1 バイトの 0x5C に変換します。フォームに `¥1,000` と入力して送信すると、受け取ったサーバーが CP932 として読めば `\1,000` になります。
+
+## Shift_JIS のページで © や絵文字が数値文字参照に変わる理由
+
+Shift_JIS で作られたページのフォームに ©、😀 のような Shift_JIS にない文字を入力して送信すると、サーバーには `&#169;` や `&#128512;` という文字列が届きます。ブラウザの不具合ではなく、[URL Standard のフォームエンコード](https://url.spec.whatwg.org/#string-percent-encode-after-encoding)が、ページの文字コードで表せない文字を 10 進数の数値文字参照に置き換えると決めているためです。
+
+この文字列を HTML にそのまま出力すると © や 😀 として表示されますが、エスケープしてから出力すると `&amp;#169;` になり、画面に `&#169;` が見えてしまいます。古い Shift_JIS のシステムで「© が `&#169;` と表示される」という問い合わせがあれば、まずこの経路を疑ってください。根本的な対策は、ページとフォームを UTF-8 に移行することです。
+
+## 文字参照でよくあるトラブル
+
+**URL のパラメーターが ® に変わる。** 本文中に URL を書くと、`&reg` が旧来の名前として解釈されます。
+
+{/* he-check: {"decode":"example.jp/?lang=ja&region=kanto","expect":"example.jp/?lang=ja®ion=kanto"} */}
+
+```text
+ソース：example.jp/?lang=ja&region=kanto
+表示：  example.jp/?lang=ja®ion=kanto
 ```
 
-Node.js（DOM なし）の場合はライブラリを使います：
+[HTML の構文解析の規則](https://html.spec.whatwg.org/multipage/parsing.html#named-character-reference-state)では、本文中の旧来の名前はセミコロンがなくても置き換えられます。`href` などの属性値の中では、旧来の名前の直後が `=` か英数字なら置き換えないので、リンク自体は正しく動き、表示だけが崩れます。`&amp;region` と書けばどちらでも正しく表示されます。
 
-```bash
-npm install he
+**古いページの `&#150;` が – になる。** `&#128;` から `&#159;` までの数値文字参照は、制御文字ではなく Windows-1252 の文字として解釈されます（[数値文字参照の規則](https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state)）。Windows で作られた古い英文ページの名残です。`&#0;`、サロゲート（`&#xD83D;` など）、`&#x10FFFF;` を超える値は U+FFFD（�）になります。
+
+{/* he-check: {"decode":"&#150; &#146; &#128; &#xD83D;","expect":"– ’ € �"} */}
+
+**二重エスケープ。** すでにエスケープ済みの文字列をもう一度エスケープすると、`&lt;` が `&amp;lt;` になり、画面に `&lt;` という文字が表示されます。データベースには元の文字列を保存し、HTML に出力する時点で 1 回だけエスケープするのが原則です。
+
+## ZeroTool の HTMLエンティティ変換で確かめる
+
+[HTML エンティティ エンコーダー / デコーダー](/ja/tools/html-entity/)はブラウザの中だけで動き、次の 2 つの処理をします。
+
+- **エンコード**：5 つの特殊文字を `&amp;`、`&lt;`、`&gt;`、`&quot;`、`&#39;` に置き換え、U+007F より上の文字はすべて 10 進数の数値文字参照にします。コードポイントごとに 1 つの参照を出力し、文字実体参照（名前）は出力しません。名前を使いたいときは上の一覧表を使ってください。
+- **デコード**：入力をブラウザ自身の HTML パーサーに渡すので、セミコロンなしの旧来の名前や Windows-1252 の置き換えなど、前の節の規則がすべてそのまま適用されます。
+
+たとえば、名前のない記号を含む `①〜③ ※要予約` をエンコードすると次のようになります。
+
+{/* he-check: {"encode":"①〜③ ※要予約","expect":"&#9312;&#12316;&#9314; &#8251;&#35201;&#20104;&#32004;","count":7} */}
+
+```text
+&#9312;&#12316;&#9314; &#8251;&#35201;&#20104;&#32004;
 ```
 
-```js
-import he from 'he';
+漢字も含めて 7 文字すべてが数値に変わり、出力は ASCII だけになります。文字コードが UTF-8 に対応していない古いテンプレートやメール配信システムに渡すときには役立ちますが、UTF-8 のページなら 5 つの特殊文字以外はそのまま書いたほうが読みやすく、ファイルも小さくなります。`要` は UTF-8 で 3 バイトですが、`&#35201;` は 8 バイトです。
 
-he.encode('<script>alert(1)</script>');
-// "&#x3C;script&#x3E;alert(1)&#x3C;/script&#x3E;"
+文字化けしたデータの調査にも使えます。`〜` と `～` のどちらが入っているか分からないときは、その部分をエンコードして `&#12316;` か `&#65374;` かを見れば判別できます。
 
-he.decode('&lt;b&gt;bold&lt;/b&gt;');
-// "<b>bold</b>"
+## PHP・JavaScript・Python でのエスケープ
+
+多くのテンプレートエンジンは出力時に自動でエスケープします。Vue の[テキスト展開](https://ja.vuejs.org/guide/essentials/template-syntax.html#text-interpolation)（`{{ }}`）はデータをプレーンテキストとして扱い、ブラウザの JavaScript では `innerHTML` ではなく `textContent` に代入すればタグは作られません。自分でエスケープするときは、各言語の標準関数を使ってください。
+
+PHP の [`htmlspecialchars`](https://www.php.net/manual/ja/function.htmlspecialchars.php) は、PHP 8.1.0 から既定のフラグが `ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401` になり、シングルクォートも `&#039;` に置き換えるようになりました。8.1 より前の既定値 `ENT_COMPAT` ではシングルクォートが置き換えられないので、古いバージョンでも動くコードではフラグを明示します。文字コードの引数も `'UTF-8'` と書いておくと、サーバーの設定に左右されません。
+
+```php
+echo htmlspecialchars($comment, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 ```
 
-### Python
+JavaScript には標準のエスケープ関数がありません。置き換えで書く場合は、最初に `&` を置き換えないと、自分で出力した `&lt;` の `&` までもう一度置き換えてしまいます。
 
-Python 標準ライブラリで一般的なケースを処理できます：
+```javascript
+const escapeHtml = (s) => s
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#39;');
+
+escapeHtml('<b>"送料無料"</b> & 翌日発送'); // '&lt;b&gt;&quot;送料無料&quot;&lt;/b&gt; &amp; 翌日発送'
+```
+
+Python の [`html.escape`](https://docs.python.org/ja/3/library/html.html#html.escape) は既定（`quote=True`）で 5 文字を置き換え、シングルクォートは `&#x27;` になります。
 
 ```python
 import html
 
-# エンコード
-html.escape('<script>alert(1)</script>')
-# '&lt;script&gt;alert(1)&lt;/script&gt;'
+html.escape("<b>\"送料無料\"</b> & 翌日発送")
+# '&lt;b&gt;&quot;送料無料&quot;&lt;/b&gt; &amp; 翌日発送'
 
-# シングルクォートを含めてエンコード
-html.escape("it's a test", quote=True)
-# 'it&#x27;s a test'
-
-# デコード
-html.unescape('&lt;b&gt;Hello &amp; World&lt;/b&gt;')
-# '<b>Hello & World</b>'
+html.unescape("&copy; 2026 &rarr; &#12316;")
+# '© 2026 → 〜'
 ```
 
-### PHP
-
-```php
-// HTML コンテキスト用エンコード
-htmlspecialchars('<script>alert(1)</script>', ENT_QUOTES, 'UTF-8');
-// &lt;script&gt;alert(1)&lt;/script&gt;
-
-// 適用可能なすべての文字をエンコード
-htmlentities('© 2024', ENT_QUOTES, 'UTF-8');
-// &copy; 2024
-
-// デコード
-html_entity_decode('&lt;b&gt;bold&lt;/b&gt;', ENT_QUOTES, 'UTF-8');
-// <b>bold</b>
-```
-
-## エンコードすべき場合・しなくていい場合
-
-**必ずエンコードする**：信頼できない入力（ユーザー名・検索クエリ・フォーム値・API データ）を HTML に挿入する場合。
-
-**二重エンコードしない。** コンテンツがすでにエンコードされている場合（データベースに `&lt;` として保存されている場合）、再度エンコードすると `&amp;lt;` になり、`<` ではなくリテラルの `&lt;` として表示されます。
-
-**非 ASCII テキストには UTF-8 をエンティティの代わりに使う。** UTF-8 として配信・保存すれば `©`・`€`・`→` をエンティティなしで HTML に直接使えます。レガシーまたは制約のある環境でのみエンティティが必要です。
-
-**`&nbsp;` は控えめに使う。** `&nbsp;` は HTML メールのスペースハックや改行防止によく使われますが、現代の HTML/CSS では `white-space: nowrap` や `word-break` プロパティの方が保守しやすいです。
-
-## クイック検索ツール
-
-文字のエンティティを調べたり、ソースコードで見かけたエンティティをデコードしたい場合、最速の方法は専用のエンコーダー/デコーダーです。**[ZeroTool HTML エンティティツールを試す →](/ja/tools/html-entity/)**
-
-HTML エンティティを含むテキストを貼り付けてデコード、または特殊文字を入力・貼り付けてエンティティ表現を取得できます。用途：
-- CMS エクスポートから文字化けした HTML をデコード
-- 見た目しかわからない記号の正しいエンティティを調べる
-- テンプレートのエスケープが正しく機能しているか確認
-
-## まとめ
-
-HTML エンティティは2つの重要な役割を果たします。予約文字を HTML 構造を壊さずに表示することと、ユーザー入力をエスケープして XSS を防ぐことです。現代の UTF-8 ドキュメントでは、エスケープに必要なのは基本的に `&lt;`・`&gt;`・`&amp;`・`&quot;`・`&#39;` だけで、残りの文字セットは直接挿入できます。
-
-**[HTML エンティティを即座にエンコード・デコード →](/ja/tools/html-entity/)**
+どの関数も © や → を名前付きの参照には変えません。UTF-8 で出力するなら、文字そのものが正しい HTML だからです。一覧表の名前や数値は、HTML を手で書くとき、見えない文字を書くとき、似た文字をソース上で区別したいときに使ってください。
