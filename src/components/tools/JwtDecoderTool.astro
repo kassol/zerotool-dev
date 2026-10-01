@@ -47,11 +47,17 @@
       var EXAMPLE_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjE4OTM0NTYwMDB9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
       var debounceTimer = null;
 
+      /* ── engine:start ── */
+      // Base64URL → bytes → UTF-8 text (atob alone returns one character per byte,
+      // which turns "José" into "JosÃ©").
       function b64urlDecode(str) {
         str = str.replace(/-/g, '+').replace(/_/g, '/');
         while (str.length % 4) str += '=';
         try {
-          return atob(str);
+          var bin = atob(str);
+          var bytes = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          return new TextDecoder().decode(bytes);
         } catch (e) {
           return null;
         }
@@ -62,7 +68,10 @@
       }
 
       function syntaxHighlight(obj) {
-        var json = JSON.stringify(obj, null, 2);
+        // Escape markup first: the result is written with innerHTML, and claim values
+        // come from the token.
+        var json = JSON.stringify(obj, null, 2)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g, function (match) {
           var cls = 'jv-num';
           if (/^"/.test(match)) {
@@ -79,6 +88,8 @@
           return '<span class="' + cls + '">' + match + '</span>';
         });
       }
+
+      /* ── engine:end ── */
 
       function formatTimeClaim(key, val) {
         if (['exp', 'iat', 'nbf'].indexOf(key) !== -1 && typeof val === 'number') {
