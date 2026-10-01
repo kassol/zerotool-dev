@@ -7,11 +7,11 @@ faqItems:
   - question: "HTML 이 어딘가로 업로드되나요?"
     answer: "업로드되지 않습니다. 네이티브 DOMParser API 로 브라우저 내부에서만 처리되며 마크업이 기기를 벗어나지 않습니다. 서버 통신도 없습니다."
   - question: "압축으로 얼마나 줄일 수 있나요?"
-    answer: "들여쓰기 깊이와 주석 양에 따라 다르지만 일반적인 HTML 은 15~40% 줄어듭니다. 압축 후 상태 표시줄에 원본 크기, 출력 크기, 절감률이 표시됩니다."
+    answer: "입력의 들여쓰기 양과 주석 수에 따라 달라지며, 인라인 스크립트와 스타일은 건드리지 않습니다. 아래 예시는 230바이트가 170바이트(26.1%)가 됩니다. 압축 후 상태 표시줄에 원본 크기, 출력 크기, 절감률이 표시됩니다."
   - question: "정렬은 에디터의 포맷 기능과 어떻게 다른가요?"
     answer: "정렬은 HTML 을 처음부터 다시 파싱하고 계층에 따라 들여쓰기를 새로 적용합니다. CMS / 템플릿 엔진에서 내보낸 일관되지 않은 마크업 정리, 한 줄로 압축된 HTML 펼치기, 디버깅 / diff 전 처리에 적합합니다."
   - question: "doctype, 속성 값, 인라인 이벤트 핸들러가 그대로 유지되나요?"
-    answer: "예. doctype, 모든 속성 값, boolean 속성, onclick / onload 같은 인라인 핸들러는 그대로 유지됩니다. IE 조건부 주석은 다른 주석이 제거될 때도 보존됩니다."
+    answer: "예. doctype, 모든 속성 값, boolean 속성, onclick / onload 같은 인라인 핸들러는 그대로 유지됩니다. 문서 안의 IE 조건부 주석은 다른 주석을 제거할 때도 보존됩니다. 다만 조각의 첫 요소보다 앞에 있는 조건부 주석은 삭제됩니다('제한' 참고)."
 ---
 
 <h2>사용 방법</h2>
@@ -43,15 +43,18 @@ faqItems:
 <h3>압축 후</h3>
 
 ```html
-<!doctype html><html lang="ko"><head><title>안녕하세요</title></head><body><h1>Hello World</h1><p>굵게 <strong>강조</strong> 한 문장.</p></body></html>
+<!doctype html><html lang="ko"><head>  <title>안녕하세요</title> </head> <body> <h1>Hello World</h1> <p>굵게 <strong>강조</strong> 한 문장.</p> </body></html>
 ```
+
+<p>상태 표시줄: <code>압축됨 — 230 B → 170 B (−26.1%)</code>. 주석이 사라지고 들여쓰기는 각각 공백 하나가 됩니다. 태그 사이 공백이 남는 이유는 공백만 있는 텍스트 노드를 모두 공백 하나로 남기기 때문입니다. <code>&lt;p&gt;Hello &lt;strong&gt;world&lt;/strong&gt;!&lt;/p&gt;</code>에서는 <code>&lt;strong&gt;</code> 앞의 공백이 화면에 보이므로, 도구는 어떤 공백을 지워도 되는지 판단하지 않습니다. <a href="https://github.com/terser/html-minifier-terser" target="_blank" rel="noopener">html-minifier-terser</a> 같은 빌드 시점 압축기는 <code>collapseWhitespace</code> 등의 옵션으로 더 줄일 수 있습니다.</p>
 
 <h2>압축 대상</h2>
 <ul>
   <li>태그 사이의 공백(inter-tag whitespace)을 축소합니다.</li>
   <li>HTML 주석은 제거됩니다 — IE 조건부 주석(<code>&lt;!--[if IE]&gt;</code>)은 보존됩니다.</li>
   <li><code>disabled=""</code> 와 같은 boolean 속성은 <code>disabled</code> 로 단순화됩니다.</li>
-  <li>텍스트 노드의 앞뒤 공백을 잘라내고 내부 연속 공백은 단일 공백으로 압축합니다.</li>
+  <li>텍스트 안의 연속 공백은 공백 하나로 줄입니다. 태그 사이에 공백만 있는 텍스트는 지우지 않고 공백 하나로 남깁니다. 어떤 공백이 화면에 보이는지 파서로는 알 수 없기 때문입니다.</li>
+  <li>요소 안에 텍스트만 있으면 그 텍스트의 앞뒤 공백을 제거합니다.</li>
 </ul>
 
 <h2>그대로 보존되는 항목</h2>
@@ -63,3 +66,12 @@ faqItems:
 
 <h2>HTML 을 수동으로 압축해야 할 때</h2>
 <p>최신 빌드 체인(Vite, Webpack, Astro, Next.js)은 번들 단계에서 HTML 을 자동으로 압축합니다. 이 도구는 1 회성 작업에 적합합니다 — CMS 에서 내보낸 코드, 압축 전후 크기 비교, 수작업 템플릿 점검 등. 정렬 기능은 일상적으로 사용할 수 있으며, 프로덕션 환경의 한 줄짜리 HTML 을 붙여넣어 디버깅이나 diff 를 위한 가독 가능한 사본을 얻을 수 있습니다.</p>
+
+<h2>제한</h2>
+<ul>
+  <li>텍스트만 들어 있는 요소는 그 텍스트의 앞뒤 공백이 사라집니다. <code>&lt;p&gt;&lt;strong&gt;Note: &lt;/strong&gt;read this.&lt;/p&gt;</code>는 <code>&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt;read this.&lt;/p&gt;</code>가 되어 "Note:read this."로 표시됩니다. 압축 전에 공백을 인라인 요소 밖으로 옮기세요.</li>
+  <li>줄바꿈 없는 공백(nbsp)도 일반 공백처럼 줄입니다. <code>Price:&amp;nbsp;&amp;nbsp;10&amp;nbsp;EUR</code>는 <code>Price: 10 EUR</code>가 되어 숫자와 단위 사이에서 줄이 바뀔 수 있습니다.</li>
+  <li>조각의 첫 요소보다 앞에 있는 주석은 <code>&lt;!--[if mso]&gt;</code> 같은 조건부 주석까지 포함해 삭제됩니다. 완전한 문서 안이나 첫 요소 뒤에 있으면 보존됩니다.</li>
+  <li>인라인 JavaScript와 CSS는 그대로 복사하며 압축하지 않습니다.</li>
+  <li>HTML은 브라우저의 <code>DOMParser</code>로 파싱하므로 잘못된 마크업은 고쳐진 형태로 출력되고(빠진 닫는 태그 추가, 불필요한 태그 제거), doctype은 <code>&lt;!doctype html&gt;</code>로 씁니다.</li>
+</ul>

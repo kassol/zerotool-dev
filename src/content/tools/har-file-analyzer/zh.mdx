@@ -5,7 +5,7 @@ faqItems:
   - question: "HAR 文件是什么？"
     answer: "HAR（HTTP Archive）是基于 JSON 的归档格式，记录浏览器一次会话中的全部网络请求 —— URL、方法、状态、Header、Cookie、时序与响应体。Chrome、Firefox、Safari、Edge DevTools 都可以将 Network 面板导出为 .har 文件。"
   - question: "如何从浏览器导出 HAR？"
-    answer: "Chrome / Edge DevTools 中打开 Network 面板，右键任意请求选『另存为 HAR（包含内容）』即可。Firefox 在同样的右键菜单中选『全部另存为 HAR』。Safari 在 Network 面板顶部的齿轮按钮中提供导出。"
+    answer: "Chrome / Edge DevTools 中打开 Network 面板，点击顶部操作栏的「Export HAR (sanitized)」，或右键任意请求选 Copy > Save all as HAR (sanitized)。sanitized 版本不含 Cookie、Set-Cookie 和 Authorization 请求头；要导出包含它们的版本，需先在 Settings > Preferences > Network 勾选「Allow to generate HAR with sensitive data」。Firefox 在请求的右键菜单中选『全部另存为 HAR』。Safari 在 Network 面板顶部的齿轮按钮中提供导出。"
   - question: "我的 HAR 会被上传吗？"
     answer: "不会。本工具用 FileReader 在浏览器内完整解析，不上传服务器、不登录、不追踪。点击重置按钮即清除内存中的状态，工具也不会跨页面刷新持久化任何 HAR 数据。"
   - question: "瀑布的 6 段颜色代表什么？"
@@ -38,3 +38,20 @@ faqItems:
 
 <h2>隐私</h2>
 <p>HAR 文件经常包含 Authorization、Cookie、响应体等敏感信息，上传到云端分析器有风险。ZeroTool 使用 <code>FileReader</code> + <code>JSON.parse</code> 在浏览器中完成解析，不上传、不持久化，刷新即清空。</p>
+
+<h2>示例：用 cURL 重放请求</h2>
+<p>对一条通过 HTTP/2 发送 <code>{'{"note":"costs $5"}'}</code> 的 Chrome HAR 记录，「详情」里的 cURL 标签生成：</p>
+
+```bash
+curl -X "POST" "https://api.example.com/v1/orders" -H ":authority: api.example.com" -H "content-type: application/json" -H "cookie: session=abc123" --data-raw "{\"note\":\"costs $5\"}"
+```
+
+<p>运行前先检查命令。各个值用双引号包裹，POSIX shell 会展开 <code>$5</code>，服务器收到的是 <code>{'{"note":"costs "}'}</code>（curl 8.7.1，对本地服务器实测）。请求体含 <code>$</code>、反引号或 <code>{'\\'}</code> 时，把它两侧的引号改成单引号。<code>:authority</code> 这类 HTTP/2 伪头部是从 HAR 原样复制的；curl 8.7.1 不会发送它们，没有影响，也可以删掉。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>超过 50 MB 的文件会被拒绝，提示文件过大。</li>
+  <li>文件必须是带 <code>log.entries</code> 数组的 JSON，否则提示「该 JSON 不是 HAR 归档 —— 缺少 log.entries。」</li>
+  <li>工具不会删除 Cookie 或令牌。如果 HAR 是带敏感数据导出的，「详情」、导出的 .har 子集和「全部复制为 cURL」都会包含文件里的全部请求头，包括 <code>Cookie</code> 和 <code>Authorization</code>。Chrome 默认的 sanitized 导出已不含这三个请求头。</li>
+  <li>取值为 <code>-1</code> 的时序字段表示该请求没有这个阶段（例如复用连接时没有 DNS 和连接时间），显示为 N/A。</li>
+</ul>

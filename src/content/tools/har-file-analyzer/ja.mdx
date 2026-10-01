@@ -5,7 +5,7 @@ faqItems:
   - question: "HAR ファイルとは？"
     answer: "HAR（HTTP Archive）は JSON ベースのアーカイブ形式で、ブラウザ 1 セッション分のネットワークリクエスト全件（URL・メソッド・ステータス・ヘッダー・Cookie・タイミング・ボディ）を記録します。Chrome / Firefox / Safari / Edge の DevTools から Network パネルを .har として書き出せます。"
   - question: "ブラウザから HAR を書き出すには？"
-    answer: "Chrome / Edge は Network パネルで任意の行を右クリックし『コンテンツ付き HAR として保存』、Firefox は同じ右クリックで『すべて HAR で保存』、Safari は Network パネル右上の歯車から書き出せます。"
+    answer: "Chrome / Edge の DevTools で Network パネルを開き、上部アクションバーの「Export HAR (sanitized)」をクリックするか、リクエストを右クリックして Copy > Save all as HAR (sanitized) を選びます。sanitized 版には Cookie、Set-Cookie、Authorization ヘッダーが含まれません。これらを含めて書き出すには、先に Settings > Preferences > Network の「Allow to generate HAR with sensitive data」をオンにします。Firefox はリクエストの右クリックメニューの「Save All As HAR」、Safari は Network タブの歯車アイコンから書き出せます。"
   - question: "HAR はアップロードされますか？"
     answer: "いいえ。FileReader でブラウザ内完結で解析します。サーバー送信なし、ログイン不要、トラッキングなし。リセットを押すとメモリ上の状態が消え、リロードを跨いで HAR を永続化しません。"
   - question: "ウォーターフォールの 6 色は何を表しますか？"
@@ -38,3 +38,20 @@ faqItems:
 
 <h2>プライバシー</h2>
 <p>HAR には Authorization / Cookie / レスポンスボディなど機微な情報が含まれます。クラウドアナライザへの送信はリスクが高いです。ZeroTool は <code>FileReader</code> + <code>JSON.parse</code> でブラウザ内処理し、アップロードもリロード越しの永続化も行いません。</p>
+
+<h2>例：cURL でリクエストを再送する</h2>
+<p>HTTP/2 で <code>{'{"note":"costs $5"}'}</code> を POST した Chrome の HAR エントリでは、詳細ビューの cURL タブに次が表示されます。</p>
+
+```bash
+curl -X "POST" "https://api.example.com/v1/orders" -H ":authority: api.example.com" -H "content-type: application/json" -H "cookie: session=abc123" --data-raw "{\"note\":\"costs $5\"}"
+```
+
+<p>実行前にコマンドを確認してください。値はダブルクォートで囲まれているため、POSIX シェルが <code>$5</code> を展開し、サーバーには <code>{'{"note":"costs "}'}</code> が届きます（curl 8.7.1、ローカルサーバーで確認）。ボディに <code>$</code>、バッククォート、<code>{'\\'}</code> が含まれるときは、その前後をシングルクォートに変えてください。<code>:authority</code> などの HTTP/2 疑似ヘッダーは HAR からそのままコピーされます。curl 8.7.1 はこれらを送信しないので害はありませんが、削除しても構いません。</p>
+
+<h2>制限</h2>
+<ul>
+  <li>50 MB を超えるファイルは「ファイルが大きすぎます」として読み込みません。</li>
+  <li><code>log.entries</code> 配列を持つ JSON である必要があります。それ以外の JSON では「この JSON は HAR アーカイブではありません — log.entries がありません。」と表示されます。</li>
+  <li>Cookie やトークンは削除しません。HAR が機密データ付きで書き出されている場合、詳細ビュー、書き出した .har のサブセット、「全件を cURL でコピー」にはファイル内のすべてのヘッダー（<code>Cookie</code> や <code>Authorization</code> を含む）が入ります。Chrome の既定の sanitized 書き出しでは、この 3 つのヘッダーは最初から含まれません。</li>
+  <li><code>-1</code> のタイミング値は、そのリクエストでその段階が発生しなかったことを示し（再利用した接続には DNS と接続時間がないなど）、N/A と表示されます。</li>
+</ul>

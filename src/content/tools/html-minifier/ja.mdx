@@ -7,11 +7,11 @@ faqItems:
   - question: "HTML はどこかにアップロードされますか？"
     answer: "アップロードされません。ネイティブ DOMParser API でブラウザ内処理が完結し、マークアップが端末を離れることはありません。サーバー通信もありません。"
   - question: "圧縮でどれくらい削減できますか？"
-    answer: "インデントの深さやコメントの量にもよりますが、一般的な HTML は 15〜40% 縮小します。圧縮後はステータス行に元サイズ・出力サイズ・削減率が表示されます。"
+    answer: "入力のインデント量とコメントの多さで変わり、インラインのスクリプトとスタイルには手を加えません。下の例では 234 バイトが 176 バイト（24.8%）になります。圧縮後はステータス行に元サイズ・出力サイズ・削減率が表示されます。"
   - question: "整形はエディタのフォーマット機能と何が違いますか？"
     answer: "整形は HTML をゼロから再パースして階層に沿ってインデントし直します。CMS やテンプレートエンジンから書き出された不揃いなマークアップの整理、1 行に圧縮された HTML の展開、デバッグや diff の前処理に最適です。"
   - question: "doctype・属性値・インラインイベントハンドラは保持されますか？"
-    answer: "はい。doctype、すべての属性値、boolean 属性、onclick / onload などのインラインハンドラはそのまま維持されます。IE 条件付きコメントも、他のコメントが削除されるときでも保持されます。"
+    answer: "はい。doctype、すべての属性値、boolean 属性、onclick / onload などのインラインハンドラはそのまま維持されます。文書内の IE 条件付きコメントは他のコメントを削除するときも保持されます。ただしフラグメントの最初の要素より前にある条件付きコメントは削除されます（「制限」参照）。"
 ---
 
 <h2>使い方</h2>
@@ -43,15 +43,18 @@ faqItems:
 <h3>圧縮後</h3>
 
 ```html
-<!doctype html><html lang="ja"><head><title>こんにちは</title></head><body><h1>Hello World</h1><p>太字を含む <strong>テキスト</strong>。</p></body></html>
+<!doctype html><html lang="ja"><head>  <title>こんにちは</title> </head> <body> <h1>Hello World</h1> <p>太字を含む <strong>テキスト</strong>。</p> </body></html>
 ```
+
+<p>ステータス行：<code>圧縮完了 — 234 B → 176 B (−24.8%)</code>。コメントが消え、インデントはそれぞれ 1 つのスペースになっています。タグ間のスペースが残るのは、空白だけのテキストノードをすべて 1 つのスペースとして残すためです。<code>&lt;p&gt;Hello &lt;strong&gt;world&lt;/strong&gt;!&lt;/p&gt;</code> では <code>&lt;strong&gt;</code> の前のスペースが表示されるので、ツールはどのスペースを消してよいかを判断しません。<a href="https://github.com/terser/html-minifier-terser" target="_blank" rel="noopener">html-minifier-terser</a> などビルド時の圧縮ツールは <code>collapseWhitespace</code> などのオプションでさらに削れます。</p>
 
 <h2>圧縮されるもの</h2>
 <ul>
   <li>タグ間の空白（inter-tag whitespace）が折りたたまれます。</li>
   <li>HTML コメントは削除されます — IE 条件付きコメント（<code>&lt;!--[if IE]&gt;</code>）は例外として保持されます。</li>
   <li><code>disabled=""</code> のような boolean 属性は <code>disabled</code> に簡略化されます。</li>
-  <li>テキストノードの前後空白を切り詰め、内部の連続空白は単一スペースに圧縮します。</li>
+  <li>テキスト内の連続した空白は 1 つのスペースにまとめます。タグ間の空白だけのテキストは削除せず 1 つのスペースにします。どの空白が表示されるかはパーサーでは判断できないためです。</li>
+  <li>要素の中身がテキストだけの場合、そのテキストの前後の空白を取り除きます。</li>
 </ul>
 
 <h2>そのまま保持されるもの</h2>
@@ -63,3 +66,12 @@ faqItems:
 
 <h2>HTML を手動圧縮するタイミング</h2>
 <p>モダンなビルドチェーン（Vite、Webpack、Astro、Next.js）はバンドル時に HTML を自動圧縮します。本ツールは単発の作業に向いています — CMS からエクスポートされたコード、圧縮前後のサイズ比較、手書きテンプレートの確認など。整形は日常的に使える機能で、本番環境の 1 行 HTML を貼り付けてデバッグや diff のための可読版を得られます。</p>
+
+<h2>制限</h2>
+<ul>
+  <li>中身がテキストだけの要素では、そのテキストの前後のスペースが消えます。<code>&lt;p&gt;&lt;strong&gt;Note: &lt;/strong&gt;read this.&lt;/p&gt;</code> は <code>&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt;read this.&lt;/p&gt;</code> になり、「Note:read this.」と表示されます。圧縮前にスペースをインライン要素の外へ移してください。</li>
+  <li>ノーブレークスペースも通常の空白と同じようにまとめます。<code>Price:&amp;nbsp;&amp;nbsp;10&amp;nbsp;EUR</code> は <code>Price: 10 EUR</code> になり、数値と単位の間で改行されることがあります。</li>
+  <li>フラグメントの最初の要素より前にあるコメントは、<code>&lt;!--[if mso]&gt;</code> のような条件付きコメントも含めて削除されます。完全な文書の中や最初の要素より後なら保持されます。</li>
+  <li>インラインの JavaScript と CSS はそのままコピーし、圧縮はしません。</li>
+  <li>HTML はブラウザーの <code>DOMParser</code> で解析するため、不正なマークアップは修復された形で出力され（閉じタグの補完、余分なタグの削除）、doctype は <code>&lt;!doctype html&gt;</code> と書き出されます。</li>
+</ul>

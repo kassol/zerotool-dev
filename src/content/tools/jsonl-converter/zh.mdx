@@ -60,3 +60,34 @@ faqItems:
   校验器会用 <code>JSON.parse()</code> 解析每一个非空行。解析成功的行会计入有效记录。
   解析失败的行会显示在问题面板中，包含行号、解析消息和原始行预览。
 </p>
+
+<h2>示例：三行导出数据里有一行坏了</h2>
+<p>把下面内容粘贴到 JSONL 面板，点击<strong>校验</strong>：</p>
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+<p>计数显示共 3 行、有效 2 行、错误 1 行、空行 0。问题面板列出<strong>第 2 行</strong>和浏览器的解析消息，Chrome 给出 <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code>（位置从该行行首算起），Firefox 与 Safari 的措辞不同。修好这一行或勾选<strong>只转换有效行</strong>之前，<strong>JSONL → JSON</strong> 会报错停止；勾选后输出第 1、3 条记录，并提示「已将 2 条 JSONL 记录转换为 JSON 数组。」</p>
+
+<h2>命令行等价写法</h2>
+<p>需要写进脚本时，用 <a href="https://jqlang.org/manual/" target="_blank" rel="noopener">jq</a> 完成同样的转换（jq 1.7.1 实测输出）：</p>
+
+```bash
+jq -c '.[]' data.json > data.jsonl   # JSON 数组 → JSONL
+jq -s '.' data.jsonl > data.json     # JSONL → JSON 数组
+jq -c . bad.jsonl                    # 遇到第一处错误就停止：
+# jq: parse error: Expected another key-value pair at line 2, column 28
+```
+
+<p>jq 在第一处错误处停止；本工具逐行解析，一次列出所有出错的行。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>数字由 JavaScript 的 <code>JSON.parse()</code> 解析，超过 2<sup>53</sup> 的整数在两个方向上都会丢精度：<code>{`{"order_id":9007199254740993}`}</code> 输出为 <code>9007199254740992</code>。jq 1.7 会保留原始字面量。大 ID 要原样往返，请存成字符串。</li>
+  <li><strong>JSON → JSONL</strong> 只接受顶层数组。对象或单个值会提示「JSON 输入必须是数组。」</li>
+  <li>每条记录必须写在一行内。跨多行的格式化对象，它占的每一行都会报错。工具按换行符拆分并去掉每行首尾空白，Windows 的 CRLF 文件可以直接用。</li>
+  <li>问题面板只列出前 40 个出错行，错误计数仍包含全部。</li>
+</ul>

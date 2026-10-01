@@ -58,6 +58,60 @@ export const PetSchema = z.object({
 });`}</code></pre>
 <p>若你的项目是从手写 TS 类型反推 Zod，可改用 <a href="/zh/tools/typescript-to-zod/">TypeScript 转 Zod</a>。</p>
 
+<h2>示例：内置的 Pet Store 规范</h2>
+<p>点击<strong>示例</strong>会载入一份小型 OpenAPI 3.0.3 规范，含 <code>Pet</code>、<code>NewPet</code> 两个 schema 和三个操作。输出中的 schema 部分：</p>
+<pre><code>{`export interface Pet {
+  id: number;
+  name: string;
+  tag?: string | null;
+  status: "available" | "pending" | "sold";
+  photo?: Blob;
+}
+
+export interface NewPet {
+  name: string;
+  tag?: string;
+}`}</code></pre>
+<p>必填属性保持必填，其余加 <code>?</code>；<code>nullable: true</code> 加上 <code>| null</code>；<code>format: binary</code> 变成 <code>Blob</code>。打开<strong>包含 path 类型</strong>后，<code>getPetById</code> 生成 <code>Components.GetPetById</code>，内含 <code>PathParameters &#123; id: number &#125;</code> 和 <code>Response200 = Pet</code>。打开<strong>包含 Zod schema</strong> 后，生成的 <code>PetSchema</code>（用 zod 3.25 实测）拒绝 <code>status: "lost"</code>，接受 <code>tag: null</code>。</p>
+
+<h2>示例：3.1 输出中需要手改的地方</h2>
+<p>这个 OpenAPI 3.1 schema 用了 <code>const</code>、类型数组和指向另一个文件的引用：</p>
+<pre><code>{`openapi: 3.1.0
+info: { title: Events, version: 1.0.0 }
+paths: {}
+components:
+  schemas:
+    Event:
+      type: object
+      required: [id, kind, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        kind: { const: order.created }
+        createdAt: { type: string, format: date-time }
+        note: { type: [string, 'null'] }
+        owner: { $ref: 'https://example.com/schemas/user.yaml#/User' }`}</code></pre>
+<p>工具输出：</p>
+<pre><code>{`export interface Event {
+  id: number;
+  kind: Record<string, unknown>;
+  /** ISO 8601 date-time */ createdAt: string;
+  note?: string | null;
+  owner?: unknown;
+}
+
+export type unknown = unknown;`}</code></pre>
+<p><code>type: [string, "null"]</code> 正确映射为 <code>string | null</code>。有三处需要手改：<code>const</code> 不会被读取，<code>kind</code> 退化成 <code>Record&lt;string, unknown&gt;</code>，而不是 <code>"order.created"</code>；外部 <code>$ref</code> 变成 <code>unknown</code>；占位的 <code>export type unknown = unknown;</code> 无法编译（TypeScript 5.9 报 "Type alias name cannot be 'unknown'"）。删掉这一行，再手写 <code>owner</code> 的类型。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>只解析 <code>#/components/schemas/...</code> 引用。指向其他文件或 URL 的引用会变成 <code>unknown</code>，并附带上面那行无效的 <code>export type unknown = unknown;</code>。</li>
+  <li>不支持 <code>const</code>。需要字面量类型时，改用只有一个值的 <code>enum</code>。</li>
+  <li>schema 名里含字母、数字、<code>{'_'}</code>、<code>$</code> 以外的字符（如 <code>pet-status</code>）时会被改名为 <code>{'pet_status'}</code>，TypeScript 一侧随之找不到原 schema：名为 <code>pet-status</code> 的枚举会输出成 <code>{'export type pet_status = unknown;'}</code>。Zod 一侧保留了枚举。</li>
+  <li>Zod schema 按 <code>components/schemas</code> 的顺序输出，不使用 <code>z.lazy</code>。如果某个 schema 引用了后面才声明的 schema，或引用自身，模块加载时会抛出 <code>ReferenceError</code>。需要调整声明顺序，并把递归引用包进 <code>z.lazy(() =&gt; ...)</code>。</li>
+  <li><code>format: int64</code> 的 <code>integer</code> 输出为 <code>number</code>，超过 2<sup>53</sup> 会丢精度。如果 API 把这类 ID 当字符串发送，请改成 <code>string</code>。</li>
+  <li>path 类型只读取 <code>application/json</code> 的请求体和响应体。</li>
+</ul>
+
 <h2>相关工具</h2>
 <ul>
   <li><a href="/zh/tools/openapi-validator/">OpenAPI 验证器</a> — 生成类型前先校验规范。</li>

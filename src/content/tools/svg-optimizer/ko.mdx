@@ -24,7 +24,7 @@ faqItems:
 
 <h2>제거되는 항목</h2>
 <p>
-  SVGO는 에디터 메타데이터, 주석, 숨겨진 요소, 기본 속성 등 렌더링에 영향을 주지 않는 마크업을 제거하고, 경로 데이터를 다시 쓰고, 인접 경로를 통합하며, 색상 표기를 단축합니다. 일반적인 아이콘은 40–70% 줄어들고, 절감의 대부분은 <code>convertPathData</code>, <code>mergePaths</code>, <code>cleanupNumericValues</code>에서 나옵니다.
+  SVGO는 에디터 메타데이터, 주석, 숨겨진 요소, 기본 속성 등 렌더링에 영향을 주지 않는 마크업을 제거하고, 경로 데이터를 다시 쓰고, 인접 경로를 통합하며, 색상 표기를 단축합니다. 얼마나 줄어드는지는 파일에 그런 요소가 얼마나 있는지에 달려 있습니다. 아래 예시의 내보낸 아이콘은 511바이트에서 254바이트가 됩니다.
 </p>
 
 <h2>위험한 두 토글</h2>
@@ -47,3 +47,37 @@ faqItems:
 <p>
   최적화 후 PNG로 변환하거나 React로 추출해야 한다면 <a href="/ko/tools/svg-to-png-converter/">SVG → PNG 변환기</a>와 <a href="/ko/tools/svg-to-jsx/">SVG → JSX</a>를 이어서 사용하세요.
 </p>
+
+<h2>예시: 디자인 도구에서 내보낸 아이콘</h2>
+<p>기본 토글(SVGO 4.0.1, 다중 패스 켬, 정밀도 3)에서 이 511바이트 파일은</p>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generator: Figma -->
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Check</title>
+  <defs>
+    <style>.stroke { stroke: #000000; stroke-width: 2.000000; }</style>
+  </defs>
+  <g id="icon-check">
+    <rect x="0" y="0" width="24" height="24" fill="none"/>
+    <path class="stroke" d="M 5.000000 12.000000 L 10.000000 17.000000 L 19.000000 7.000000" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
+```
+
+<p>254바이트가 됩니다.</p>
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><title>Check</title><path d="M0 0h24v24H0z"/><path stroke-linecap="round" stroke-linejoin="round" d="m5 12 5 5 9-10" style="stroke:#000;stroke-width:2"/></svg>
+```
+
+<p>XML 선언, 주석, 참조되지 않는 <code>id="icon-check"</code>가 사라졌습니다. 한 번만 쓰인 <code>.stroke</code> 클래스는 <code>style</code> 속성으로 인라인되고 <code>&lt;style&gt;</code> 블록은 삭제되었습니다. 경로는 상대 명령으로 다시 쓰였고 <code>#000000</code>은 <code>#000</code>이 되었습니다. <code>&lt;title&gt;</code>은 남습니다. SVGO 4는 기본적으로 지우지 않습니다. <strong>viewBox 제거</strong>만 켜면 <code>width="24" height="24"</code>만 남고 viewBox가 없는 출력이 되어 아이콘 크기를 조절할 수 없게 됩니다. 위험한 두 토글을 모두 켜면 viewBox는 있고 너비·높이는 없는 결과가 됩니다. <code>removeViewBox</code>가 viewBox를 지운 뒤 <code>removeDimensions</code>가 크기를 지우고 그 값으로 viewBox를 다시 쓰기 때문입니다.</p>
+
+<h2>제한</h2>
+<ul>
+  <li><strong>ID가 짧아집니다.</strong> <code>cleanupIds</code>는 참조되는 ID를 <code>a</code>, <code>b</code> 등으로 바꿉니다. <code>id="brand-gradient"</code> 그라디언트는 <code>id="a"</code>가 됩니다. 최적화한 SVG 여러 개를 한 HTML 페이지에 인라인으로 넣으면 ID가 겹쳐 한 아이콘이 다른 아이콘의 그라디언트를 쓰게 될 수 있습니다. ID 토글을 끄거나 빌드 단계에서 SVGO의 <code>prefixIds</code>로 파일마다 접두사를 붙이세요.</li>
+  <li>페이지 CSS나 JavaScript에서만 참조하는 ID와 클래스는 SVGO가 알 수 없습니다. 쓰이지 않는 ID는 지워지고 한 번만 쓰인 클래스는 인라인되므로, 외부에서 이를 지정한 스타일은 더 이상 적용되지 않습니다.</li>
+  <li>좌표는 기본적으로 소수점 셋째 자리로 반올림합니다. viewBox 배율이 작은 정밀한 그림에서 "후" 미리보기의 점이 어긋나면 정밀도를 높이세요.</li>
+  <li>한 번에 파일 하나만 처리합니다. 폴더나 CI에서는 같은 설정으로 SVGO 명령줄(<code>npx svgo -f icons/ -o dist/</code>)을 쓰세요.</li>
+</ul>

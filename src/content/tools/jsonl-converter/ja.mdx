@@ -60,3 +60,34 @@ faqItems:
   検証器は空行以外の各行を <code>JSON.parse()</code> で解析します。成功した行は有効レコードとしてカウントされます。
   失敗した行は問題パネルに表示され、行番号、パーサーメッセージ、元の行の短いプレビューを確認できます。
 </p>
+
+<h2>例：3 行のエクスポートに壊れた行が 1 つ</h2>
+<p>次の内容を JSONL パネルに貼り付けて<strong>検証</strong>をクリックします。</p>
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+<p>カウンターは全 3 行、有効 2、エラー 1、空行 0 になります。問題パネルには<strong>2 行目</strong>とブラウザのパーサーメッセージが表示され、Chrome では <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code>（位置はその行の先頭から数えた値）です。Firefox と Safari では文言が異なります。この行を直すか<strong>有効な行だけ変換</strong>をオンにするまで、<strong>JSONL → JSON</strong> はエラーで止まります。オンにすると 1 件目と 3 件目が出力され、「2 件の JSONL レコードを JSON 配列に変換しました。」と表示されます。</p>
+
+<h2>コマンドラインでの同等操作</h2>
+<p>スクリプトに組み込むなら <a href="https://jqlang.org/manual/" target="_blank" rel="noopener">jq</a> で同じ変換ができます（jq 1.7.1 の実際の出力）。</p>
+
+```bash
+jq -c '.[]' data.json > data.jsonl   # JSON 配列 → JSONL
+jq -s '.' data.jsonl > data.json     # JSONL → JSON 配列
+jq -c . bad.jsonl                    # 最初のエラーで停止する:
+# jq: parse error: Expected another key-value pair at line 2, column 28
+```
+
+<p>jq は最初のエラーで止まります。このツールは全行を解析し、エラー行をまとめて一覧にします。</p>
+
+<h2>制限</h2>
+<ul>
+  <li>数値は JavaScript の <code>JSON.parse()</code> で解析するため、2<sup>53</sup> を超える整数はどちらの方向でも精度が落ちます。<code>{`{"order_id":9007199254740993}`}</code> は <code>9007199254740992</code> になります。jq 1.7 は元のリテラルを保持します。大きな ID をそのまま往復させたい場合は文字列で保存してください。</li>
+  <li><strong>JSON → JSONL</strong> はトップレベルの配列だけを受け付けます。オブジェクトや単一の値では「JSON 入力は配列である必要があります。」と表示されます。</li>
+  <li>1 レコードは 1 行に収める必要があります。複数行に整形したオブジェクトは、またがる行がすべてエラーになります。改行で分割し各行の前後の空白を除くため、Windows の CRLF ファイルはそのまま使えます。</li>
+  <li>問題パネルに表示するのは最初の 40 行までです。エラー数のカウンターは全件を数えます。</li>
+</ul>

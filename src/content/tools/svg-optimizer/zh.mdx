@@ -24,7 +24,7 @@ faqItems:
 
 <h2>哪些内容会被去掉</h2>
 <p>
-  SVGO 会去掉编辑器元数据、注释、隐藏元素、默认属性以及其他不影响渲染的标记，同时重写 path 数据、合并相邻 path、缩短颜色值。常见图标体积一般缩小 40–70%，主要节省来自 <code>convertPathData</code>、<code>mergePaths</code> 和 <code>cleanupNumericValues</code>。
+  SVGO 会去掉编辑器元数据、注释、隐藏元素、默认属性以及其他不影响渲染的标记，同时重写 path 数据、合并相邻 path、缩短颜色值。能省多少取决于文件里这些内容有多少，下方示例中导出的图标从 511 字节降到 254 字节。
 </p>
 
 <h2>两个高风险 toggle</h2>
@@ -47,3 +47,37 @@ faqItems:
 <p>
   需要进一步转成位图或抽取到 React？把优化后的代码丢给 ZeroTool 的 <a href="/zh/tools/svg-to-png-converter/">SVG 转 PNG</a> 和 <a href="/zh/tools/svg-to-jsx/">SVG 转 JSX</a>。
 </p>
+
+<h2>示例：设计工具导出的图标</h2>
+<p>在默认开关下（SVGO 4.0.1，开启多轮优化，精度 3），这个 511 字节的文件：</p>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generator: Figma -->
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Check</title>
+  <defs>
+    <style>.stroke { stroke: #000000; stroke-width: 2.000000; }</style>
+  </defs>
+  <g id="icon-check">
+    <rect x="0" y="0" width="24" height="24" fill="none"/>
+    <path class="stroke" d="M 5.000000 12.000000 L 10.000000 17.000000 L 19.000000 7.000000" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
+```
+
+<p>变成 254 字节：</p>
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><title>Check</title><path d="M0 0h24v24H0z"/><path stroke-linecap="round" stroke-linejoin="round" d="m5 12 5 5 9-10" style="stroke:#000;stroke-width:2"/></svg>
+```
+
+<p>XML 声明、注释和没被引用的 <code>id="icon-check"</code> 都被删掉；只用了一次的 <code>.stroke</code> 类被内联成 <code>style</code> 属性，<code>&lt;style&gt;</code> 块随之删除；路径改写为相对命令，<code>#000000</code> 变成 <code>#000</code>。<code>&lt;title&gt;</code> 仍在，SVGO 4 默认不再删除它。只勾选<strong>移除 viewBox</strong> 时，输出保留 <code>width="24" height="24"</code> 而没有 viewBox，图标不再能缩放。两个有风险的开关都勾选时，结果有 viewBox、没有宽高：<code>removeViewBox</code> 先删掉 viewBox，<code>removeDimensions</code> 再删掉宽高并按宽高写回一个 viewBox。</p>
+
+<h2>限制</h2>
+<ul>
+  <li><strong>ID 会被缩短。</strong><code>cleanupIds</code> 把被引用的 ID 改成 <code>a</code>、<code>b</code> 等：<code>id="brand-gradient"</code> 的渐变会变成 <code>id="a"</code>。一个 HTML 页面内联了多个优化过的 SVG 时，ID 可能冲突，某个图标会用上另一个图标的渐变。可以取消 ID 开关，或在构建时用 SVGO 的 <code>prefixIds</code> 给每个文件加前缀。</li>
+  <li>只被页面 CSS 或 JavaScript 引用的 ID 和类，SVGO 看不到：没用到的 ID 会被删，只用一次的类会被内联，外部针对它们的样式随之失效。</li>
+  <li>坐标默认保留 3 位小数。viewBox 尺度很小的精细图形，如果「之后」预览里点位偏了，就调高精度。</li>
+  <li>一次处理一个文件。目录或 CI 场景请用 SVGO 命令行（<code>npx svgo -f icons/ -o dist/</code>），设置保持一致。</li>
+</ul>

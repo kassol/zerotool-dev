@@ -24,7 +24,7 @@ faqItems:
 
 <h2>削除される内容</h2>
 <p>
-  SVGO はエディタのメタデータ、コメント、非表示要素、既定属性など描画に影響しないマークアップを削除し、パスデータを書き直し、隣接パスを統合し、色記法を短縮します。一般的なアイコンは 40–70% の削減が見込め、その大部分は <code>convertPathData</code>・<code>mergePaths</code>・<code>cleanupNumericValues</code> によるものです。
+  SVGO はエディタのメタデータ、コメント、非表示要素、既定属性など描画に影響しないマークアップを削除し、パスデータを書き直し、隣接パスを統合し、色記法を短縮します。どれだけ減るかはファイルにそうした要素がどれだけあるかで変わります。下の例のエクスポートしたアイコンは 511 バイトから 254 バイトになります。
 </p>
 
 <h2>注意すべき 2 つのトグル</h2>
@@ -47,3 +47,37 @@ faqItems:
 <p>
   最適化後に PNG へ変換、または React へ抽出したい場合は <a href="/ja/tools/svg-to-png-converter/">SVG → PNG 変換</a> と <a href="/ja/tools/svg-to-jsx/">SVG → JSX</a> を続けて使用してください。
 </p>
+
+<h2>例：デザインツールから書き出したアイコン</h2>
+<p>既定のトグル（SVGO 4.0.1、マルチパス有効、精度 3）で、この 511 バイトのファイルは</p>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generator: Figma -->
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Check</title>
+  <defs>
+    <style>.stroke { stroke: #000000; stroke-width: 2.000000; }</style>
+  </defs>
+  <g id="icon-check">
+    <rect x="0" y="0" width="24" height="24" fill="none"/>
+    <path class="stroke" d="M 5.000000 12.000000 L 10.000000 17.000000 L 19.000000 7.000000" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
+```
+
+<p>254 バイトになります。</p>
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><title>Check</title><path d="M0 0h24v24H0z"/><path stroke-linecap="round" stroke-linejoin="round" d="m5 12 5 5 9-10" style="stroke:#000;stroke-width:2"/></svg>
+```
+
+<p>XML 宣言、コメント、参照されていない <code>id="icon-check"</code> が消えました。1 回しか使われない <code>.stroke</code> クラスは <code>style</code> 属性に展開され、<code>&lt;style&gt;</code> ブロックは削除されています。パスは相対コマンドに書き直され、<code>#000000</code> は <code>#000</code> になりました。<code>&lt;title&gt;</code> は残ります。SVGO 4 では既定で削除しません。<strong>viewBox を削除</strong>だけをオンにすると、<code>width="24" height="24"</code> が残り viewBox がない出力になり、アイコンは拡大縮小できなくなります。リスクのある 2 つのトグルを両方オンにすると、viewBox があり幅と高さがない結果になります。<code>removeViewBox</code> が viewBox を消したあと、<code>removeDimensions</code> がサイズを消して、そこから viewBox を書き戻すためです。</p>
+
+<h2>制限</h2>
+<ul>
+  <li><strong>ID は短縮されます。</strong><code>cleanupIds</code> は参照されている ID を <code>a</code>、<code>b</code> などに付け替えます。<code>id="brand-gradient"</code> のグラデーションは <code>id="a"</code> になります。最適化した SVG を 1 つの HTML に複数インラインで埋め込むと ID が衝突し、あるアイコンが別のアイコンのグラデーションを使ってしまうことがあります。ID のトグルを外すか、ビルド時に SVGO の <code>prefixIds</code> でファイルごとに接頭辞を付けてください。</li>
+  <li>ページの CSS や JavaScript からだけ参照される ID とクラスは SVGO から見えません。未使用の ID は削除され、1 回だけ使うクラスは展開されるため、外部からそれらを指定したスタイルは効かなくなります。</li>
+  <li>座標は既定で小数点以下 3 桁に丸めます。viewBox のスケールが小さい精細な図形で「後」のプレビューの点がずれる場合は精度を上げてください。</li>
+  <li>処理は 1 ファイルずつです。フォルダーや CI では SVGO のコマンドライン（<code>npx svgo -f icons/ -o dist/</code>）を同じ設定で使ってください。</li>
+</ul>

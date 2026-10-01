@@ -68,7 +68,25 @@ type Query {
 ```
 
 <h2>Why Format GraphQL?</h2>
-<p>Consistent GraphQL formatting matters for code review, schema diffs, and storing operations in <code>.graphql</code> files. Minified queries shrink wire payloads when you cannot rely on persisted queries; pretty-printed queries are easier to scan in PRs. Validating a query in isolation — before piping it to an endpoint — surfaces a typo in a fragment name in seconds rather than after a round-trip.</p>
+<p>Consistent GraphQL formatting matters for code review, schema diffs, and storing operations in <code>.graphql</code> files. Minified queries shrink wire payloads when you cannot rely on persisted queries; pretty-printed queries are easier to scan in PRs. Validating a query in isolation catches syntax mistakes such as a missing brace or an unclosed string before you send it; an undefined fragment name is not a syntax error and needs schema-aware validation.</p>
 
 <h2>Behind the Scenes</h2>
 <p>This tool runs <code>graphql-js</code> (the reference implementation maintained by The GraphQL Foundation) entirely inside your browser. <code>parse()</code> builds an AST from your text and reports the first syntax error with line and column. <code>print()</code> serializes the AST back to canonical GraphQL. <code>stripIgnoredCharacters()</code> removes every token the spec marks as ignored — that is the minified form. Nothing is sent anywhere, and there is no server round-trip.</p>
+
+<h2>Minify and Error Examples</h2>
+<p><strong>Minify</strong> on the "before" query above returns (graphql-js 16.14 <code>stripIgnoredCharacters</code>):</p>
+
+```graphql
+query GetUser($id:ID!$withPosts:Boolean!){user(id:$id){id name email posts@include(if:$withPosts){...PostSummary}}}fragment PostSummary on Post{id title publishedAt}
+```
+
+<p>Commas are ignored tokens in GraphQL, so they are removed along with the whitespace. A missing closing brace in <code>query &#123; user(id: 1) &#123; id name &#125;</code> is reported as <code>Parse error: Syntax Error: Expected Name, found &lt;EOF&gt;. (line 1, column 32)</code>, pointing at the end of the input where the parser ran out of text.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>Format drops comments.</strong> graphql-js <code>print()</code> rebuilds the text from the syntax tree, and <code># comments</code> are not part of the tree. Minify removes them too. Keep the original file if its comments matter.</li>
+  <li>Validation is syntax only. <code>&#123; user(id: $id) &#123; id &#125; &#125;</code> passes even though <code>$id</code> is never declared; checking variables and fields needs the schema.</li>
+  <li>Only the first syntax error is reported.</li>
+  <li>The 4-space option doubles the leading spaces of every output line, including lines inside <code>"""</code> block-string descriptions, so indented text inside a description gets extra spaces. Use 2 spaces when descriptions contain indented lines.</li>
+  <li>Input is limited to 10,485,760 characters.</li>
+</ul>

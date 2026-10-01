@@ -30,10 +30,10 @@ faqItems:
 
 <h2>よくある Stack の組み合わせ</h2>
 <ul>
-  <li><strong>フルスタック JavaScript：</strong>Node + React + macOS + JetBrains</li>
-  <li><strong>Python データプロジェクト：</strong>Python + JupyterNotebooks + macOS + VisualStudioCode</li>
-  <li><strong>モバイルネイティブ：</strong>Android + Java + Gradle + IntelliJ + macOS</li>
-  <li><strong>静的サイト：</strong>Node + Hugo（または Jekyll）+ macOS + VisualStudioCode</li>
+  <li><strong>フルスタック JavaScript：</strong>Node + Nextjs + macOS + JetBrains</li>
+  <li><strong>Python データプロジェクト：</strong>Python + macOS + VisualStudioCode</li>
+  <li><strong>モバイルネイティブ：</strong>Android + Java + Gradle + JetBrains + macOS</li>
+  <li><strong>静的サイト：</strong>Node + Jekyll + macOS + VisualStudioCode</li>
   <li><strong>Go サービス：</strong>Go + macOS + VisualStudioCode + JetBrains</li>
 </ul>
 
@@ -46,3 +46,42 @@ faqItems:
 <p>
   リクエスト時に github/gitignore をクロールするとネットワーク遅延とレート制限のリスクが増えます。代わりにビルド時にリポジトリのスナップショットを取り、ID を重複排除して、単一の TypeScript モジュールとして同梱します — 予測可能、監査可能、ランタイム依存ゼロ。リフレッシュは同期スクリプトを手動実行して上流から新スナップショットを取り、1 つのコミットで置き換えるだけです。
 </p>
+
+<h2>例：Node + macOS + JetBrains + VS Code</h2>
+<p><code>JetBrains</code>、<code>macOS</code>、<code>Node</code>、<code>VisualStudioCode</code> にチェックを入れ、カスタムルールに <code>{'node_modules/'}</code>、<code>.env.local</code>、<code>coverage-html/</code> の 3 行を追加します。出力は 313 行で、帰属表示のヘッダー、アルファベット順の 4 テンプレート（先頭は <code>### JetBrains.gitignore</code>）、最後の <code>### Custom additions</code> の順です。最後のブロックには <code>.env.local</code> と <code>coverage-html/</code> だけが残ります。カスタムの <code>{'node_modules/'}</code> は、Node テンプレートにまったく同じ行があるため削除されました。</p>
+<p><code>.env.local</code> は、Node テンプレートの <code>{'.env.*'}</code> がすでに一致するにもかかわらず残っています。重複判定は各行の前後の空白を除いた文字列で行い、パターンが一致する範囲は比べません。</p>
+
+<h2>書き方の落とし穴（Git で確認）</h2>
+<p>次の <code>.gitignore</code> に対する <code>git check-ignore -v</code>（Git 2.56）の結果です。</p>
+
+```text
+logs/
+!logs/keep.log
+docs/*.pdf
+build/
+/secret.txt
+```
+
+<ul>
+  <li><code>logs/keep.log</code> は <code>logs/</code> によって無視されたままです。Git は除外したディレクトリの中を見ないため、否定ルールは効きません（<a href="https://git-scm.com/docs/gitignore" target="_blank" rel="noopener">gitignore のドキュメント</a>）。例外を作るなら <code>logs/</code> ではなく <code>{'logs/*'}</code> と書きます。</li>
+  <li><code>{'docs/*.pdf'}</code> は <code>docs/a.pdf</code> を無視し、<code>docs/notes/old.pdf</code> は無視しません。途中にスラッシュがあるパターンは <code>.gitignore</code> のあるディレクトリが基準になり、<code>{'*'}</code> は <code>/</code> をまたぎません。</li>
+  <li><code>build/</code> はどの階層でも一致します（<code>build/</code> と <code>src/build/</code>）。ただしディレクトリだけです。</li>
+  <li><code>/secret.txt</code> はルートのファイルだけに一致し、<code>src/secret.txt</code> は無視されません。</li>
+</ul>
+
+<h2>すでに追跡されているファイル</h2>
+<p>ルールを追加しても、追跡中のファイルは追跡から外れません。インデックスから外してコミットします。ファイル自体はディスクに残ります。</p>
+
+```bash
+git rm -r --cached node_modules/
+git commit -m "Stop tracking node_modules"
+```
+
+<p>過去のコミットからは消えません。秘密情報をコミットしてしまった場合はまずその値を無効化し、履歴を書き換える（<code>git filter-repo</code> など）なら強制プッシュと全員の再クローンが必要です。</p>
+
+<h2>制限</h2>
+<ul>
+  <li>同梱テンプレートは 237 個です。github/gitignore のルート（言語・フレームワーク）から 162 個、<code>Global/</code>（エディター、OS、ツール）から 75 個で、<code>community/</code> は含みません。</li>
+  <li>テンプレートは同梱データを最後に更新した時点のスナップショットです。その後アップストリームで入った変更は、次の更新まで反映されません。</li>
+  <li>重複削除はファイル全体で同じ行を取り除くだけで、<code>{'node_modules'}</code> と <code>{'node_modules/'}</code> のような同等の書き方はまとめません。</li>
+</ul>

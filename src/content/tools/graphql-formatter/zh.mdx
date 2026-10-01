@@ -68,7 +68,25 @@ type Query {
 ```
 
 <h2>为什么要格式化 GraphQL？</h2>
-<p>一致的 GraphQL 格式直接影响 code review、schema diff 与 <code>.graphql</code> 文件入库。压缩后的 query 在没有 persisted query 时能减少线上传输体积；美化后的 query 在 PR 里更易扫读。把 query 单独拿出来做校验，可以在不发请求的情况下秒级定位 fragment 拼写错误。</p>
+<p>一致的 GraphQL 格式直接影响 code review、schema diff 与 <code>.graphql</code> 文件入库。压缩后的 query 在没有 persisted query 时能减少线上传输体积；美化后的 query 在 PR 里更易扫读。把 query 单独拿出来校验，可以在发请求前发现漏掉的花括号、未闭合的字符串这类语法错误；引用了不存在的 fragment 不算语法错误，要靠结合 schema 的校验。</p>
 
 <h2>实现原理</h2>
 <p>本工具在浏览器中跑 <code>graphql-js</code>（GraphQL Foundation 维护的参考实现）。<code>parse()</code> 从文本构建 AST 并在首个语法错误处报出行列号；<code>print()</code> 把 AST 序列化为规范 GraphQL；<code>stripIgnoredCharacters()</code> 按 spec 移除所有 ignored token，得到压缩形式。整个过程零网络往返，数据完全留在本地。</p>
+
+<h2>压缩与报错示例</h2>
+<p>对上面「格式化前」的查询点击<strong>压缩</strong>，得到（graphql-js 16.14 的 <code>stripIgnoredCharacters</code>）：</p>
+
+```graphql
+query GetUser($id:ID!$withPosts:Boolean!){user(id:$id){id name email posts@include(if:$withPosts){...PostSummary}}}fragment PostSummary on Post{id title publishedAt}
+```
+
+<p>逗号在 GraphQL 里属于可忽略记号，会和空白一起删掉。<code>query &#123; user(id: 1) &#123; id name &#125;</code> 少了一个右花括号，报错为 <code>解析错误: Syntax Error: Expected Name, found &lt;EOF&gt;. (行 1, 列 32)</code>，位置指向解析器读到输入末尾的地方。</p>
+
+<h2>限制</h2>
+<ul>
+  <li><strong>格式化会删除注释。</strong>graphql-js 的 <code>print()</code> 按语法树重新生成文本，<code># 注释</code>不在语法树里。压缩同样会删掉注释。注释需要保留时请留着原文件。</li>
+  <li>校验只检查语法。<code>&#123; user(id: $id) &#123; id &#125; &#125;</code> 里的 <code>$id</code> 没有声明，照样通过；检查变量和字段需要 schema。</li>
+  <li>只报告第一个语法错误。</li>
+  <li>4 空格缩进选项会把输出每一行开头的空格加倍，<code>"""</code> 块字符串描述里的行也一样，描述中缩进的文字会多出空格。描述里有缩进行时请用 2 空格。</li>
+  <li>输入上限为 10,485,760 个字符。</li>
+</ul>

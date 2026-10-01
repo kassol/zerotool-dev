@@ -5,7 +5,7 @@ faqItems:
   - question: "What is a HAR file?"
     answer: "HAR (HTTP Archive) is a JSON-based file format that records every network request a browser makes during a session — URL, method, status, headers, cookies, timings, and bodies. Chrome, Firefox, Safari, and Edge DevTools can export the current Network tab as a .har file."
   - question: "How do I export a HAR from my browser?"
-    answer: "In Chrome / Edge DevTools open the Network tab, right-click any row, and choose 'Save all as HAR with content'. Firefox uses 'Save All As HAR' in the same context menu. Safari supports it via the gear icon in the Network tab."
+    answer: "In Chrome / Edge DevTools open the Network panel and click Export HAR (sanitized) in the action bar, or right-click a request and choose Copy > Save all as HAR (sanitized). The sanitized file leaves out Cookie, Set-Cookie and Authorization headers; exporting with them requires turning on Settings > Preferences > Network > Allow to generate HAR with sensitive data. Firefox uses 'Save All As HAR' in the request context menu. Safari supports it via the gear icon in the Network tab."
   - question: "Does my HAR get uploaded?"
     answer: "No. The file is parsed entirely in your browser with FileReader. Nothing is sent to a server, no signup, no tracking. The Reset button clears the in-memory state, and the tool never persists HAR data across page loads."
   - question: "What do the six waterfall colors mean?"
@@ -38,3 +38,20 @@ faqItems:
 
 <h2>Privacy</h2>
 <p>HAR files routinely contain Authorization headers, Cookie headers, response bodies, and other sensitive material. Uploading them to a hosted analyzer is risky. ZeroTool runs the parser in your browser using <code>FileReader</code> and <code>JSON.parse</code>; nothing is uploaded and nothing is persisted across reloads.</p>
+
+<h2>Example: Replaying a Request with cURL</h2>
+<p>For a Chrome HAR entry that posts <code>{'{"note":"costs $5"}'}</code> over HTTP/2, the Detail view's cURL tab produces:</p>
+
+```bash
+curl -X "POST" "https://api.example.com/v1/orders" -H ":authority: api.example.com" -H "content-type: application/json" -H "cookie: session=abc123" --data-raw "{\"note\":\"costs $5\"}"
+```
+
+<p>Check the command before running it. The values are wrapped in double quotes, so a POSIX shell expands <code>$5</code> and the server receives <code>{'{"note":"costs "}'}</code> (curl 8.7.1, tested against a local server). Change the quotes around the body to single quotes when it contains <code>$</code>, a backtick or <code>{'\\'}</code>. HTTP/2 pseudo-headers such as <code>:authority</code> are copied from the HAR; curl 8.7.1 does not send them, so they do no harm, but you can delete them.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li>Files larger than 50 MB are refused with "File too large".</li>
+  <li>The file must be JSON with a <code>log.entries</code> array; other JSON produces "This JSON is not a HAR archive — missing log.entries."</li>
+  <li>The tool does not remove cookies or tokens. The Detail view, the exported .har subset and "Copy all as cURL" contain every header in the file, including <code>Cookie</code> and <code>Authorization</code> if the HAR was exported with sensitive data. Chrome's default sanitized export already leaves those three headers out.</li>
+  <li>Timing fields set to <code>-1</code> mean the phase did not happen for that request (for example, a reused connection has no DNS or connect time) and are shown as N/A.</li>
+</ul>

@@ -30,10 +30,10 @@ faqItems:
 
 <h2>일반적인 Stack 조합</h2>
 <ul>
-  <li><strong>풀스택 JavaScript:</strong> Node + React + macOS + JetBrains</li>
-  <li><strong>Python 데이터 프로젝트:</strong> Python + JupyterNotebooks + macOS + VisualStudioCode</li>
-  <li><strong>모바일 네이티브:</strong> Android + Java + Gradle + IntelliJ + macOS</li>
-  <li><strong>정적 사이트:</strong> Node + Hugo(또는 Jekyll) + macOS + VisualStudioCode</li>
+  <li><strong>풀스택 JavaScript:</strong> Node + Nextjs + macOS + JetBrains</li>
+  <li><strong>Python 데이터 프로젝트:</strong> Python + macOS + VisualStudioCode</li>
+  <li><strong>모바일 네이티브:</strong> Android + Java + Gradle + JetBrains + macOS</li>
+  <li><strong>정적 사이트:</strong> Node + Jekyll + macOS + VisualStudioCode</li>
   <li><strong>Go 서비스:</strong> Go + macOS + VisualStudioCode + JetBrains</li>
 </ul>
 
@@ -46,3 +46,42 @@ faqItems:
 <p>
   요청 시점에 github/gitignore를 크롤링하면 네트워크 지연과 레이트 제한 노출이 늘어납니다. 대신 빌드 시점에 저장소 스냅샷을 찍어 ID를 중복 제거하고 단일 TypeScript 모듈로 함께 배포합니다 — 예측 가능하고 감사 가능하며 런타임 의존성이 없습니다. 갱신은 동기화 스크립트를 수동 실행해 상위에서 새 스냅샷을 가져와 한 번의 커밋으로 교체합니다.
 </p>
+
+<h2>예시: Node + macOS + JetBrains + VS Code</h2>
+<p><code>JetBrains</code>, <code>macOS</code>, <code>Node</code>, <code>VisualStudioCode</code>를 선택하고 사용자 규칙에 <code>{'node_modules/'}</code>, <code>.env.local</code>, <code>coverage-html/</code> 세 줄을 넣습니다. 출력은 313줄이며 출처 헤더, 알파벳순 4개 템플릿(첫 번째는 <code>### JetBrains.gitignore</code>), 마지막 <code>### Custom additions</code> 순서입니다. 마지막 블록에는 <code>.env.local</code>과 <code>coverage-html/</code>만 남습니다. 사용자 규칙의 <code>{'node_modules/'}</code>는 Node 템플릿에 똑같은 줄이 있어서 제거되었습니다.</p>
+<p><code>.env.local</code>은 Node 템플릿의 <code>{'.env.*'}</code>가 이미 일치하는데도 남아 있습니다. 중복 판정은 각 줄의 앞뒤 공백을 뺀 텍스트로 하며, 패턴이 일치하는 범위는 비교하지 않습니다.</p>
+
+<h2>문법 함정 (Git으로 확인)</h2>
+<p>아래 <code>.gitignore</code>에 대한 <code>git check-ignore -v</code>(Git 2.56) 결과입니다.</p>
+
+```text
+logs/
+!logs/keep.log
+docs/*.pdf
+build/
+/secret.txt
+```
+
+<ul>
+  <li><code>logs/keep.log</code>는 여전히 <code>logs/</code>에 의해 무시됩니다. Git은 제외된 디렉터리 안을 보지 않으므로 부정 규칙이 적용되지 않습니다(<a href="https://git-scm.com/docs/gitignore" target="_blank" rel="noopener">gitignore 문서</a>). 예외가 필요하면 <code>logs/</code> 대신 <code>{'logs/*'}</code>를 쓰세요.</li>
+  <li><code>{'docs/*.pdf'}</code>는 <code>docs/a.pdf</code>는 무시하지만 <code>docs/notes/old.pdf</code>는 무시하지 않습니다. 중간에 슬래시가 있는 패턴은 <code>.gitignore</code>가 있는 디렉터리를 기준으로 하고, <code>{'*'}</code>는 <code>/</code>를 넘지 않습니다.</li>
+  <li><code>build/</code>는 어느 깊이에서든(<code>build/</code>, <code>src/build/</code>) 일치하지만 디렉터리에만 해당합니다.</li>
+  <li><code>/secret.txt</code>는 루트의 파일에만 일치하며 <code>src/secret.txt</code>는 무시되지 않습니다.</li>
+</ul>
+
+<h2>이미 추적 중인 파일</h2>
+<p>규칙을 추가해도 이미 추적 중인 파일은 추적에서 빠지지 않습니다. 인덱스에서 제거하고 커밋하세요. 파일은 디스크에 그대로 남습니다.</p>
+
+```bash
+git rm -r --cached node_modules/
+git commit -m "Stop tracking node_modules"
+```
+
+<p>이전 커밋에서는 지워지지 않습니다. 비밀 값을 커밋했다면 먼저 그 값을 폐기하고, 기록을 다시 쓰려면(<code>git filter-repo</code> 등) 강제 푸시와 모두의 재클론이 필요합니다.</p>
+
+<h2>제한</h2>
+<ul>
+  <li>내장 템플릿은 237개입니다. github/gitignore 루트(언어·프레임워크)에서 162개, <code>Global/</code>(에디터, OS, 도구)에서 75개이며 <code>community/</code>는 포함하지 않습니다.</li>
+  <li>템플릿은 내장 데이터를 마지막으로 갱신한 시점의 스냅샷입니다. 그 뒤 업스트림에 반영된 변경은 다음 갱신 전까지 나타나지 않습니다.</li>
+  <li>중복 제거는 파일 전체에서 같은 줄만 지우며, <code>{'node_modules'}</code>와 <code>{'node_modules/'}</code> 같은 동등한 표기는 합치지 않습니다.</li>
+</ul>
