@@ -322,8 +322,9 @@ const utf8hex = (s) => [...Buffer.from(s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDF
     const r2 = cRun(bodies);
     if (r2.error) check('cc compiles the unescape bodies', false, r2.error.slice(0, 400));
     else bodies.forEach((b, i) => eq('C unescape equals cc: ' + show(b), utf8hex(out(une('c', b))), r2.lines[i]));
-    check('cc rejects \\x41BC (hex escape sequence out of range)', !!cRun(['\\x41BC']).error);
-    check('cc rejects \\777 (octal escape sequence out of range)', !!cRun(['\\777']).error);
+    // GCC only warns about out-of-range escapes by default (Apple clang errors); -pedantic-errors makes both reject them.
+    check('cc rejects \\x41BC (hex escape sequence out of range)', !!cRun(['\\x41BC'], ['-pedantic-errors']).error);
+    check('cc rejects \\777 (octal escape sequence out of range)', !!cRun(['\\777'], ['-pedantic-errors']).error);
   } else skips.push('cc');
   const hx = une('c', '\\x41BC');
   eq('C unescape: \\x41BC reads every hex digit and overflows', [hx.error, hx.seq], ['cHexRange', '\\x41BC']);
