@@ -3,7 +3,7 @@ seoTitle: "CSV → SQL INSERT 変換ツール オンライン — 無料・ブ�
 seoDescription: "CSVデータをSQL INSERT文にブラウザ上で即座に変換。MySQL・PostgreSQL・SQLiteに対応。引用符フィールド・NULL・バッチモードを処理。無料・登録不要。"
 faqItems:
   - question: "このツールは何をしますか？"
-    answer: "CSVデータをSQL INSERT文に変換します。1行目をカラム名として読み込み、各データ行に対してINSERT文を生成します。選択したSQLダイアレクトに応じた適切な引用符とエスケープ処理を行います。"
+    answer: "CSVデータをSQL INSERT文に変換します。1行目をカラム名として読み込み、各データ行に対してINSERT文を生成します。識別子は選択したダイアレクトの引用符で囲み、値の中のシングルクォートは二重にします（バックスラッシュはエスケープしません。「制限」を参照）。"
   - question: "対応しているSQLダイアレクトは？"
     answer: "MySQL（バックティック引用）、PostgreSQL（ダブルクォート引用）、SQLite（ダブルクォート引用）に対応しています。INSERT構文は同じで、識別子の引用方法が異なります。"
   - question: "NULL値はどう処理されますか？"
@@ -58,4 +58,46 @@ faqItems:
   <li>空白のみのフィールドは文字列として扱われ、NULLにはなりません。</li>
   <li>純粋な数値（整数・小数）は引用符なしで出力され、数値型として保存されます。</li>
   <li>その他の値はシングルクォートで囲まれ、内部のシングルクォートは <code>''</code> にエスケープされます。</li>
+</ul>
+
+<h2>例：引用符・先頭のゼロ・空欄</h2>
+
+<p>入力：</p>
+
+<pre><code>{`id,name,zip,note
+1,"O'Brien, Pat",02134,
+2,Lee,10001,"path C:\\new"`}</code></pre>
+
+<p>出力（SQLite 方言、バッチモード、テーブル名 <code>{"customers"}</code>）：</p>
+
+<pre><code>{`INSERT INTO "customers" ("id", "name", "zip", "note") VALUES
+  (1, 'O''Brien, Pat', 02134, NULL),
+  (2, 'Lee', 10001, 'path C:\\new');`}</code></pre>
+
+<p>先にテーブルを作ってから SQLite 3 に読み込んだ結果：</p>
+
+<pre><code>{`CREATE TABLE customers (id INTEGER, name TEXT, zip TEXT, note TEXT);
+-- run the INSERT above, then:
+SELECT * FROM customers;
+-- 1 | O'Brien, Pat | 2134  | NULL
+-- 2 | Lee          | 10001 | path C:\\new`}</code></pre>
+
+<ul>
+  <li>引用符で囲んだ <code>{"\"O'Brien, Pat\""}</code> はカンマを保ち、アポストロフィは二重（<code>{"''"}</code>）になります。</li>
+  <li>空の <code>{"note"}</code> は <code>{"NULL"}</code> になります。空文字列 <code>{"''"}</code> は出力できません。</li>
+  <li><code>{"02134"}</code> は数値に見えるため引用符なしで書かれ、TEXT 列でも先頭の 0 が失われます。郵便番号や電話番号、社員番号のような値は手で引用符を付けてください：</li>
+</ul>
+
+<pre><code>{`INSERT INTO "customers" ("id", "name", "zip", "note") VALUES
+  (1, 'O''Brien, Pat', '02134', NULL),
+  (2, 'Lee', '10001', 'path C:\\new');`}</code></pre>
+
+<h2>制限</h2>
+
+<ul>
+  <li>出力は <code>{"INSERT"}</code> 文だけで、<code>{"CREATE TABLE"}</code> は生成しません。必要な型でテーブルを先に作ってください。</li>
+  <li>MySQL は <code>{"NO_BACKSLASH_ESCAPES"}</code> を設定しない限り、文字列リテラル中のバックスラッシュをエスケープ文字として扱います（<a href="https://dev.mysql.com/doc/refman/8.4/en/string-literals.html" target="_blank" rel="noopener">MySQL string literals</a>）。ツールはシングルクォートを二重にするだけなので、上の <code>{"C:\\new"}</code> は MySQL では改行入りで保存されます。PostgreSQL（標準文字列）と SQLite は書いたとおりに保存します。</li>
+  <li>型はパターンだけで判定します。<code>{"-?数字(.数字)?"}</code> は数値、それ以外は引用符付きの文字列です。日付、真偽値、<code>{"1e5"}</code> は文字列になります。</li>
+  <li>1 行目は常にヘッダーです。ヘッダーの列数を超えるセルは警告なしで捨てられます。</li>
+  <li>大きなファイルもブラウザのタブで一度に変換します。数百万行ならデータベースの一括ロード（<code>{"LOAD DATA"}</code>、<code>{"COPY"}</code>、<code>{".import"}</code>）を使います。</li>
 </ul>

@@ -3,7 +3,7 @@ seoTitle: "OpenAPI Validator — Validate OpenAPI 3.0 / 3.1 Specs Online | ZeroT
 seoDescription: "Validate OpenAPI 3.0 and 3.1 specs online in YAML or JSON. Check Swagger/OpenAPI structure, required fields, paths, responses, and spec summary."
 faqItems:
   - question: "What OpenAPI versions does this tool support?"
-    answer: "The validator supports OpenAPI 3.0.x and 3.1.x specifications. Swagger 2.x (OpenAPI 2.0) documents will show a version warning with a migration tip."
+    answer: "The validator accepts OpenAPI 3.0.x and 3.1.x documents but applies the 3.0 structural rules to both (see \"What It Does Not Check\"). Swagger 2.x (OpenAPI 2.0) documents will show a version warning with a migration tip."
   - question: "Can I validate YAML and JSON specs?"
     answer: "Yes. Paste either YAML or JSON — the tool auto-detects the format and parses it before validation."
   - question: "What does the validator check?"
@@ -11,7 +11,7 @@ faqItems:
   - question: "Is my API spec sent to any server?"
     answer: "No. All validation runs entirely in your browser using JavaScript. Nothing is transmitted to any server."
   - question: "What are the required fields in an OpenAPI 3.x document?"
-    answer: "openapi (version string), info.title, info.version, and paths. The servers, components, tags, and externalDocs fields are optional."
+    answer: "In OpenAPI 3.0: openapi (version string), info.title, info.version, and paths. In 3.1, paths is optional as long as components or webhooks is present, but this tool still requires paths. The servers, tags, and externalDocs fields are optional."
 ---
 
 <h2>OpenAPI Validator Online</h2>
@@ -40,3 +40,73 @@ faqItems:
   <li>Path keys that do not begin with <code>/</code> — all paths must be absolute, e.g. <code>/users/&#123;id&#125;</code>.</li>
   <li>YAML indentation errors — use the <a href="/tools/yaml-validator/">YAML Validator</a> to fix syntax issues first.</li>
 </ul>
+
+<h2>What the Validator Checks</h2>
+
+<ul>
+  <li><code>{"openapi"}</code> is present and looks like <code>{"3.x.y"}</code>; a <code>{"swagger: \"2.0\""}</code> document gets a migration hint instead.</li>
+  <li><code>{"info"}</code> exists with <code>{"title"}</code> and <code>{"version"}</code>.</li>
+  <li><code>{"paths"}</code> exists, every path key starts with <code>{"/"}</code>, and every operation (get, put, post, delete, options, head, patch, trace) has a non-empty <code>{"responses"}</code> object.</li>
+</ul>
+
+<p>Example input with three mistakes:</p>
+
+<pre><code>{`openapi: 3.0.3
+info:
+  title: Orders API
+paths:
+  orders/{id}:
+    get:
+      summary: Get one order
+  /orders:
+    post:
+      responses:
+        "201":
+          description: Created`}</code></pre>
+
+<p>Errors reported:</p>
+
+<pre><code>{`info.version            Missing required field "info.version".
+paths.orders/{id}       Path key "orders/{id}" must start with "/".
+paths.orders/{id}.get.responses
+                        Operation "GET orders/{id}" must have a non-empty "responses" object.`}</code></pre>
+
+<h2>What It Does Not Check</h2>
+
+<p>The checks above are structural only. Run a full validator such as <a href="https://redocly.com/docs/cli/commands/lint" target="_blank" rel="noopener">Redocly CLI</a> (<code>{"redocly lint openapi.yaml"}</code>) or <a href="https://github.com/stoplightio/spectral" target="_blank" rel="noopener">Spectral</a> before publishing. Two results to be aware of:</p>
+
+<ul>
+  <li><strong><code>{"$ref"}</code> targets are not resolved.</strong> This document reports "valid" although <code>{"#/components/schemas/User"}</code> does not exist, and the path parameter <code>{"id"}</code> is not declared:</li>
+</ul>
+
+<pre><code>{`openapi: 3.0.3
+info:
+  title: Broken refs
+  version: 1.0.0
+paths:
+  /users/{id}:
+    get:
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"`}</code></pre>
+
+<ul>
+  <li><strong>OpenAPI 3.1 rules are applied as if the file were 3.0.</strong> In 3.1 a document needs at least one of <code>{"paths"}</code>, <code>{"components"}</code> or <code>{"webhooks"}</code> (<a href="https://spec.openapis.org/oas/v3.1.0#openapi-object" target="_blank" rel="noopener">OpenAPI 3.1.0 §4.8.1</a>), and an operation does not have to declare <code>{"responses"}</code>. This webhooks-only 3.1 document is valid, but the tool reports <code>{"Missing required object \"paths\"."}</code>:</li>
+</ul>
+
+<pre><code>{`openapi: 3.1.0
+info:
+  title: Order events
+  version: 1.0.0
+webhooks:
+  orderCreated:
+    post:
+      responses:
+        "200":
+          description: OK`}</code></pre>
+
+<p>Schemas, parameter definitions, security schemes and examples are not validated either. YAML syntax errors are reported by the YAML parser before these checks run.</p>

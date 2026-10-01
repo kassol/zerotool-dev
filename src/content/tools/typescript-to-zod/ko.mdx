@@ -83,3 +83,64 @@ export type User = z.infer<typeof UserSchema>;
 
 export const StatusSchema = z.enum(["active", "inactive", "pending"]);
 export type Status = z.infer<typeof StatusSchema>;`}</code></pre>
+
+<h2>예시: 회원가입 폼</h2>
+
+<p>입력:</p>
+
+<pre><code>{`interface SignupForm {
+  email: string;
+  password: string;
+  nickname?: string;
+  referrer: string | null;
+  age?: number | undefined;
+  plan: "free" | "pro";
+}`}</code></pre>
+
+<p>출력:</p>
+
+<pre><code>{`import { z } from "zod";
+
+export const SignupFormSchema = z.object({
+  email: z.string(),
+  password: z.string(),
+  nickname: z.string().optional(),
+  referrer: z.union([z.string(), z.null()]),
+  age: z.union([z.number(), z.undefined()]).optional(),
+  plan: z.enum(["free", "pro"]),
+});
+export type SignupForm = z.infer<typeof SignupFormSchema>;`}</code></pre>
+
+<p>생성한 스키마로 zod 3.25에서 세 데이터를 검증한 결과:</p>
+
+<pre><code>{`SignupFormSchema.safeParse({ email: "not-an-email", password: "1", referrer: null, plan: "pro" })
+// success: true  (types match; no format rules yet)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", plan: "free" })
+// referrer: Invalid input  (string | null is required, it cannot be missing)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "ad", plan: "team" })
+// plan: Invalid enum value. Expected 'free' | 'pro', received 'team'`}</code></pre>
+
+<h2>null, undefined, optional의 차이</h2>
+
+<ul>
+  <li><code>{"prop?: T"}</code>는 <code>{".optional()"}</code>이 됩니다. 키가 없어도 됩니다.</li>
+  <li><code>{"T | null"}</code>은 <code>{"z.union([T, z.null()])"}</code>, 즉 <code>{"T.nullable()"}</code>과 같습니다. 키는 반드시 있어야 하고 값은 <code>{"null"}</code>일 수 있습니다. <code>{"referrer"}</code>가 없는 데이터는 실패합니다.</li>
+  <li>선택적이면서 null 가능(<code>{"prop?: T | null"}</code>)이면 둘 다 필요합니다. API가 그렇게 보낸다면 <code>{".nullish()"}</code>로 직접 씁니다.</li>
+</ul>
+
+<h2>TypeScript로 표현할 수 없는 규칙 추가</h2>
+
+<p>TypeScript 타입에는 형식과 범위가 없어서 위의 첫 데이터는 잘못된 이메일과 한 글자 비밀번호로도 통과합니다. 생성 후 제약을 추가하세요:</p>
+
+<pre><code>{`export const SignupFormSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  nickname: z.string().max(20).optional(),
+  referrer: z.string().nullable(),
+  age: z.number().int().min(13).optional(),
+  plan: z.enum(["free", "pro"]),
+});`}</code></pre>
+
+<p>생성한 <code>{"z.infer"}</code> 타입을 유일한 정의로 두고 원래 interface를 지우면 둘이 어긋나지 않습니다.</p>

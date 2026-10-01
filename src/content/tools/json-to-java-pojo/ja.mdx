@@ -39,3 +39,69 @@ faqItems:
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"]}`}</code></pre>
 <p>Lombokモードで生成される出力：</p>
 <pre><code>{`import java.util.List;\nimport lombok.Data;\n\n@Data\npublic class User {\n    private String firstName;\n    private int age;\n}\n\n@Data\npublic class RootObject {\n    private User user;\n    private List<String> tags;\n}`}</code></pre>
+
+<h2>例：明細を含む注文（Jackson モード）</h2>
+
+<p>入力：</p>
+
+<pre><code>{`{"order_id": 9007, "customer": {"name": "Alice", "vip": true}, "items": [{"sku": "A-1", "qty": 2, "price": 9.5}, {"sku": "B-2", "qty": 1, "price": 20}], "note": null}`}</code></pre>
+
+<p>出力（getter / setter は省略）：</p>
+
+<pre><code>{`import java.util.List;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class RootObject {
+    @JsonProperty("order_id")
+    private int orderId;
+    private Customer customer;
+    private List<ItemsItem> items;
+    private Object note;
+    // getters and setters omitted here
+}
+
+public class Customer {
+    private String name;
+    private boolean vip;
+    // ...
+}
+
+public class ItemsItem {
+    private String sku;
+    private int qty;
+    private Object price;
+    // ...
+}`}</code></pre>
+
+<p>この出力は 1 ファイルのままではコンパイルできません。<code>{"public class"}</code> は同名のファイルに置く必要があるため、<code>{"RootObject.java"}</code>・<code>{"Customer.java"}</code>・<code>{"ItemsItem.java"}</code> に分けます。分けると「アノテーションなし」モードの出力は javac 21 でそのままコンパイルできます。</p>
+
+<h2>生成後に確認すること</h2>
+
+<ul>
+  <li><code>{"price"}</code> が <code>{"Object"}</code> になっています。1 件目は <code>{"9.5"}</code>、2 件目は <code>{"20"}</code> で、ツールは <code>{"int"}</code> と <code>{"double"}</code> を <code>{"double"}</code> にまとめません。<code>{"double"}</code>、金額なら <code>{"BigDecimal"}</code> に直してください。</li>
+  <li>サンプル中の <code>{"null"}</code> は <code>{"Object"}</code> になります。実際の型に置き換えます。</li>
+  <li>整数は 2,147,483,647 を超えても <code>{"int"}</code> です。大きな ID やミリ秒のタイムスタンプは <code>{"long"}</code> にします。</li>
+  <li>Lombok モードは <code>{"@JsonProperty"}</code> を付けないため、<code>{"order_id"}</code> が <code>{"orderId"}</code> に対応しなくなります：</li>
+</ul>
+
+<pre><code>{`import java.util.List;
+import lombok.Data;
+
+@Data
+public class RootObject {
+    private int orderId;
+    private Customer customer;
+    private List<ItemsItem> items;
+    private Object note;
+}`}</code></pre>
+
+<p>Lombok モードでは <code>{"@JsonProperty"}</code> を自分で付けるか、Jackson に <code>{"PropertyNamingStrategies.SNAKE_CASE"}</code> を設定します。Gson モードは同じ目的で <code>{"@SerializedName"}</code> を使います。</p>
+
+<p>Jackson での読み込み：</p>
+
+<pre><code>{`ObjectMapper mapper = new ObjectMapper();
+RootObject order = mapper.readValue(json, RootObject.class);`}</code></pre>
+
+<p>Java 16 以降なら、小さな不変モデルはクラスの代わりに record にできます。Jackson は 2.12 から record を読めます：</p>
+
+<pre><code>{`public record Customer(String name, boolean vip) {}`}</code></pre>

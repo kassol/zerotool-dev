@@ -29,7 +29,7 @@ faqItems:
 
 | アルゴリズム | フォーマット | セキュリティ | 説明 |
 |------------|------------|------------|------|
-| bcrypt | `$2y$` | 優秀 | すべての新規環境で推奨 |
+| bcrypt | `$2a$` | 優秀 | すべての新規環境で推奨 |
 | MD5 (APR1) | `$apr1$` | 中程度 | ソルト付きApache専用MD5 |
 | SHA1 | `{SHA}` | 弱い | ソルトなし・レインボーテーブルに脆弱 |
 | 平文 | （なし）| なし | テスト専用・本番環境では使用禁止 |
@@ -53,3 +53,38 @@ Require valid-user
   <li>本番サーバーにはコストファクター10以上のbcryptを推奨します。</li>
   <li>パスワードが漏洩した場合は速やかにハッシュを再生成してください。bcryptハッシュを逆算することはできません。</li>
 </ul>
+
+<h2>出力例と確認方法</h2>
+
+<p>ユーザー <code>{"deploy"}</code>、パスワード <code>{"Correct-Horse-42"}</code> で、各アルゴリズムを 1 回ずつ生成しました（bcrypt はコスト 10）。ソルトはランダムなので、結果は毎回変わります：</p>
+
+<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
+deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
+deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
+
+<p>3 行とも Apache 付属の <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a>（2.4.67）で検証でき、APR1 の行は同じソルトで OpenSSL の結果と一致します：</p>
+
+<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
+Password for user deploy correct.
+$ htpasswd -vb .htpasswd deploy wrong
+password verification failed`}</code></pre>
+
+<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
+$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
+
+<ul>
+  <li>bcrypt のハッシュは <code>{"$2a$"}</code> で始まります。ツールは bcrypt.js を使い、Apache の <code>{"htpasswd -B"}</code> は <code>{"$2y$"}</code> を書き出します。Apache 2.4 はどちらも受け付けます。</li>
+  <li>bcrypt はパスワードの先頭 72 バイトしか使いません。</li>
+  <li>Apache のドキュメントは SHA1 をソルトなしのため安全でないとしています。同じパスワードなら、どのユーザーでも上の行と同じ値になります。</li>
+</ul>
+
+<h2>Nginx の設定</h2>
+
+<pre><code>{`location /admin/ {
+    auth_basic           "Restricted";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+}`}</code></pre>
+
+<p><a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a> によると、Nginx は <code>{"$apr1$"}</code>（MD5）、<code>{"{SHA}"}</code>、<code>{"{PLAIN}"}</code> を自前で読み、それ以外は OS の <code>{"crypt()"}</code> に渡します。そのため bcrypt は OS の <code>{"crypt()"}</code> が対応している環境（libxcrypt を使う glibc など）でだけ使えます。サーバーが bcrypt の行を受け付けない場合、Nginx には APR1 を使います。</p>
+
+<p>編集後は <code>{"nginx -t"}</code> を実行してからリロードします。ファイルはドキュメントルートの外に置き、worker ユーザーだけが読めるようにします。</p>

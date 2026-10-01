@@ -42,3 +42,60 @@ faqItems:
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"], "note": null}`}</code></pre>
 <p>@dataclassモードで生成されるコード：</p>
 <pre><code>{`from dataclasses import dataclass\nfrom typing import Any, List, Optional\n\n@dataclass\nclass User:\n    first_name: str\n    age: int\n\n@dataclass\nclass Root:\n    user: User\n    tags: List[str]\n    note: Optional[Any] = None`}</code></pre>
+
+<h2>例：ネストしたオブジェクトと欠けているキー</h2>
+
+<p>入力：</p>
+
+<pre><code>{`{"id": 7, "title": "Release notes", "author": {"name": "Alice", "email": null}, "tags": ["python", "json"], "score": 4.5, "comments": [{"user": "bob", "text": "nice"}, {"user": "carol"}]}`}</code></pre>
+
+<p>@dataclass モードの出力：</p>
+
+<pre><code>{`from dataclasses import dataclass
+from typing import Any, List, Optional
+
+@dataclass
+class Author:
+    name: str
+    email: Optional[Any] = None
+
+@dataclass
+class CommentsItem:
+    user: str
+    text: Optional[str] = None
+
+@dataclass
+class Root:
+    id: int
+    title: str
+    author: Author
+    tags: List[str]
+    score: float
+    comments: List[CommentsItem]`}</code></pre>
+
+<p>クラスは使われる前に定義される順に並びます。2 件目のコメントには <code>{"text"}</code> がないので <code>{"Optional[str] = None"}</code> になります。</p>
+
+<h2>dataclass・Pydantic・TypedDict の違い</h2>
+
+<p>3 つのモードは同じ構造を表しますが、実行時の動きが違います（Python 3.12、Pydantic 2.13 で確認）：</p>
+
+<pre><code>{`root = Root(**json.loads(raw))
+type(root.author)          # <class 'dict'>, not Author`}</code></pre>
+
+<pre><code>{`root = Root.model_validate(json.loads(raw))   # Pydantic mode
+root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre>
+
+<ul>
+  <li><strong>@dataclass</strong> は検証も変換もしません。<code>{"Root(**data)"}</code> ではネストしたオブジェクトはただの dict のままで、型が違っても受け付けます。信頼できるデータに使うか、ネストしたフィールドを自分で変換します。</li>
+  <li><strong>Pydantic</strong> は型を検証し、ネストしたモデルを組み立てます。自分で管理していない API のレスポンスに向いています。<code>{"model_validate_json(raw)"}</code> でパースと検証を一度に行えます。</li>
+  <li><strong>TypedDict</strong> は型チェッカー向けに dict の型を書くだけで、実行時には何も確認しません。キーは既定ですべて必須なので、一部の要素にしかないキーは <code>{"Optional[str"}</code>] ではなく <code>{"NotRequired[str"}</code>]（Python 3.11 以降）にします。</li>
+</ul>
+
+<h2>制限</h2>
+
+<ul>
+  <li><code>{"null"}</code> は <code>{"Optional[Any"}</code>] になります。<code>{"Any"}</code> を実際の型に置き換えてください。</li>
+  <li>Python の識別子として使えないキー（<code>{"user-id"}</code> や <code>{"class"}</code> のような予約語）は名前を変え、Pydantic では <code>{"Field(alias=\"user-id\")"}</code> を付けます。</li>
+  <li>日付は <code>{"str"}</code> のままです。型を <code>{"datetime"}</code> に変えれば Pydantic が ISO 8601 文字列を変換します。</li>
+  <li>ルートがプリミティブの配列のときはクラスを生成しません。</li>
+</ul>

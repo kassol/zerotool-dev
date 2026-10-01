@@ -38,3 +38,74 @@ faqItems:
 <pre><code>{`{"user": {"name": "Alice", "age": 30}, "tags": ["admin"]}`}</code></pre>
 <p>The tool generates:</p>
 <pre><code>{`@Serializable\ndata class User(\n    val name: String = "",\n    val age: Int = 0\n)\n\n@Serializable\ndata class RootObject(\n    val user: User = User(),\n    val tags: List<String> = emptyList()\n)`}</code></pre>
+
+<h2>Example: snake_case API Response</h2>
+
+<p>Input (an API response with snake_case keys, a null field and a large counter):</p>
+
+<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
+
+<p>Output:</p>
+
+<pre><code>{`@Serializable
+data class RootObject(
+    @SerialName("user_id")
+    val userId: Int = 0,
+    @SerialName("display_name")
+    val displayName: String = "",
+    @SerialName("is_active")
+    val isActive: Boolean = false,
+    @SerialName("last_login")
+    val lastLogin: Any? = null,
+    @SerialName("follower_count")
+    val followerCount: Int = 0,
+    val tags: List<String> = emptyList(),
+    val address: Address = Address()
+)
+
+@Serializable
+data class Address(
+    val city: String = "",
+    @SerialName("zip_code")
+    val zipCode: String = ""
+)`}</code></pre>
+
+<p>Each key that is not a valid camelCase name keeps the original JSON key in <code>{"@SerialName"}</code>. The root class comes first, then nested classes in the order they appear.</p>
+
+<h2>Example: Array of Objects</h2>
+
+<p>When the root is an array, the tool merges all objects into one class. A key that is missing from some items becomes nullable with <code>{"null"}</code> as the default:</p>
+
+<pre><code>{`[{"id": 1, "name": "Pen", "price": 1.5}, {"id": 2, "name": "Ink", "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`@Serializable
+data class RootObject(
+    val id: Int = 0,
+    val name: String = "",
+    val price: Double? = null,
+    val discount: Double? = null
+)`}</code></pre>
+
+<h2>Before You Compile</h2>
+
+<ul>
+  <li>The output has no import lines and needs the kotlinx.serialization compiler plugin (<code>{"kotlin(\"plugin.serialization\")"}</code>) — see the <a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin serialization guide</a>.</li>
+  <li>A field whose sample value is <code>{"null"}</code> is typed <code>{"Any?"}</code>. kotlinx.serialization has no serializer for <code>{"Any"}</code>, so a <code>{"@Serializable"}</code> class with such a field does not compile. Replace it with the real type, for example <code>{"String?"}</code> for a timestamp.</li>
+  <li>Whole numbers are typed <code>{"Int"}</code> even when they exceed <code>{"Int.MAX_VALUE"}</code> (2,147,483,647). <code>{"3000000000"}</code> above needs <code>{"Long"}</code>; Snowflake-style IDs need <code>{"Long"}</code> too.</li>
+  <li>Empty arrays and arrays with mixed element types become <code>{"List<Any>"}</code>; the same serializer problem applies.</li>
+  <li>A key that is an integer in one array item and a decimal in another (for example <code>{"1"}</code> and <code>{"1.5"}</code>) becomes <code>{"Any"}</code> instead of <code>{"Double"}</code>.</li>
+  <li>Dates stay <code>{"String"}</code>. JSON has no date type; parse them after decoding or add a custom serializer.</li>
+  <li>Two nested objects with the same key name (for example <code>{"a.meta"}</code> and <code>{"b.meta"}</code>) share one class built from the first object; fields that only the second one has are dropped.</li>
+</ul>
+
+<p>After fixing the types, decode with <code>{"Json.decodeFromString"}</code>:</p>
+
+<pre><code>{`import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+// lastLogin: Any? = null      ->  val lastLogin: String? = null
+// followerCount: Int = 0      ->  val followerCount: Long = 0
+
+val json = Json { ignoreUnknownKeys = true }
+val user = json.decodeFromString<RootObject>(body)`}</code></pre>

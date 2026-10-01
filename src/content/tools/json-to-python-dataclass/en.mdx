@@ -42,3 +42,60 @@ faqItems:
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"], "note": null}`}</code></pre>
 <p>The tool generates (@dataclass mode):</p>
 <pre><code>{`from dataclasses import dataclass\nfrom typing import Any, List, Optional\n\n@dataclass\nclass User:\n    first_name: str\n    age: int\n\n@dataclass\nclass Root:\n    user: User\n    tags: List[str]\n    note: Optional[Any] = None`}</code></pre>
+
+<h2>Example: Nested Objects and Missing Keys</h2>
+
+<p>Input:</p>
+
+<pre><code>{`{"id": 7, "title": "Release notes", "author": {"name": "Alice", "email": null}, "tags": ["python", "json"], "score": 4.5, "comments": [{"user": "bob", "text": "nice"}, {"user": "carol"}]}`}</code></pre>
+
+<p>Output in @dataclass mode:</p>
+
+<pre><code>{`from dataclasses import dataclass
+from typing import Any, List, Optional
+
+@dataclass
+class Author:
+    name: str
+    email: Optional[Any] = None
+
+@dataclass
+class CommentsItem:
+    user: str
+    text: Optional[str] = None
+
+@dataclass
+class Root:
+    id: int
+    title: str
+    author: Author
+    tags: List[str]
+    score: float
+    comments: List[CommentsItem]`}</code></pre>
+
+<p>Classes are ordered so that each one is defined before it is used. <code>{"text"}</code> is missing from the second comment, so it becomes <code>{"Optional[str] = None"}</code>.</p>
+
+<h2>dataclass, Pydantic or TypedDict</h2>
+
+<p>The three modes describe the same shape but behave differently at runtime (checked with Python 3.12 and Pydantic 2.13):</p>
+
+<pre><code>{`root = Root(**json.loads(raw))
+type(root.author)          # <class 'dict'>, not Author`}</code></pre>
+
+<pre><code>{`root = Root.model_validate(json.loads(raw))   # Pydantic mode
+root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre>
+
+<ul>
+  <li><strong>@dataclass</strong> does not validate or convert. <code>{"Root(**data)"}</code> keeps nested objects as plain dicts and accepts wrong types. Use it when the data is already trusted, or convert nested fields yourself.</li>
+  <li><strong>Pydantic</strong> validates types and builds nested models; use it for API responses you do not control. <code>{"model_validate_json(raw)"}</code> parses and validates in one step.</li>
+  <li><strong>TypedDict</strong> only describes dict types for a type checker; nothing is checked at runtime. Every key is required by default, so a key that is missing in some items should be marked <code>{"NotRequired[str"}</code>] (Python 3.11+) instead of <code>{"Optional[str"}</code>].</li>
+</ul>
+
+<h2>Limits</h2>
+
+<ul>
+  <li><code>{"null"}</code> becomes <code>{"Optional[Any"}</code>]; replace <code>{"Any"}</code> with the real type.</li>
+  <li>Keys that are not valid Python identifiers (for example <code>{"user-id"}</code> or keywords such as <code>{"class"}</code>) need renaming, plus <code>{"Field(alias=\"user-id\")"}</code> in Pydantic.</li>
+  <li>Dates stay <code>{"str"}</code>; Pydantic converts ISO 8601 strings if you change the type to <code>{"datetime"}</code>.</li>
+  <li>Arrays of primitives at the root generate no class.</li>
+</ul>

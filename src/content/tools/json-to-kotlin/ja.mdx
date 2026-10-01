@@ -30,3 +30,74 @@ faqItems:
   <li>配列 → <code>List&lt;T&gt;</code></li>
   <li>ネストオブジェクト → 独立した <code>data class</code></li>
 </ul>
+
+<h2>例：snake_case の API レスポンス</h2>
+
+<p>入力（snake_case のキー、null のフィールド、大きなカウンターを含む API レスポンス）：</p>
+
+<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
+
+<p>出力：</p>
+
+<pre><code>{`@Serializable
+data class RootObject(
+    @SerialName("user_id")
+    val userId: Int = 0,
+    @SerialName("display_name")
+    val displayName: String = "",
+    @SerialName("is_active")
+    val isActive: Boolean = false,
+    @SerialName("last_login")
+    val lastLogin: Any? = null,
+    @SerialName("follower_count")
+    val followerCount: Int = 0,
+    val tags: List<String> = emptyList(),
+    val address: Address = Address()
+)
+
+@Serializable
+data class Address(
+    val city: String = "",
+    @SerialName("zip_code")
+    val zipCode: String = ""
+)`}</code></pre>
+
+<p>そのまま camelCase の名前にできないキーは、<code>{"@SerialName"}</code> で元の JSON キーを残します。ルートクラスが先頭で、ネストしたクラスは出現順に続きます。</p>
+
+<h2>例：オブジェクトの配列</h2>
+
+<p>ルートが配列のときは、すべてのオブジェクトを 1 つのクラスにまとめます。一部の要素にしかないキーは null 許容になり、既定値は <code>{"null"}</code> です：</p>
+
+<pre><code>{`[{"id": 1, "name": "Pen", "price": 1.5}, {"id": 2, "name": "Ink", "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`@Serializable
+data class RootObject(
+    val id: Int = 0,
+    val name: String = "",
+    val price: Double? = null,
+    val discount: Double? = null
+)`}</code></pre>
+
+<h2>コンパイル前に直すところ</h2>
+
+<ul>
+  <li>出力には import 文がなく、kotlinx.serialization のコンパイラプラグイン（<code>{"kotlin(\"plugin.serialization\")"}</code>）が必要です。<a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin 公式のシリアライズ解説</a>を参照してください。</li>
+  <li>サンプル値が <code>{"null"}</code> のフィールドは <code>{"Any?"}</code> になります。kotlinx.serialization には <code>{"Any"}</code> 用のシリアライザーがないので、このフィールドを持つ <code>{"@Serializable"}</code> クラスはコンパイルできません。タイムスタンプなら <code>{"String?"}</code> のように実際の型に置き換えてください。</li>
+  <li>整数は <code>{"Int.MAX_VALUE"}</code>（2,147,483,647）を超えても <code>{"Int"}</code> になります。上の <code>{"3000000000"}</code> は <code>{"Long"}</code> が必要で、Snowflake 形式の ID も <code>{"Long"}</code> にします。</li>
+  <li>空配列と要素の型が混在した配列は <code>{"List<Any>"}</code> になり、同じシリアライザーの問題が起きます。</li>
+  <li>あるキーが配列のある要素では整数、別の要素では小数（<code>{"1"}</code> と <code>{"1.5"}</code> など）のとき、型は <code>{"Double"}</code> ではなく <code>{"Any"}</code> になります。</li>
+  <li>日付は <code>{"String"}</code> のままです。JSON に日付型はないので、デコード後に解析するかカスタムシリアライザーを書きます。</li>
+  <li>同じキー名のネストしたオブジェクトが 2 つある（<code>{"a.meta"}</code> と <code>{"b.meta"}</code> など）と、最初のオブジェクトから作ったクラスを共有し、2 つ目にだけあるフィールドは失われます。</li>
+</ul>
+
+<p>型を直したら <code>{"Json.decodeFromString"}</code> でデコードします：</p>
+
+<pre><code>{`import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+// lastLogin: Any? = null      ->  val lastLogin: String? = null
+// followerCount: Int = 0      ->  val followerCount: Long = 0
+
+val json = Json { ignoreUnknownKeys = true }
+val user = json.decodeFromString<RootObject>(body)`}</code></pre>

@@ -42,3 +42,60 @@ faqItems:
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"], "note": null}`}</code></pre>
 <p>@dataclass 模式下生成：</p>
 <pre><code>{`from dataclasses import dataclass\nfrom typing import Any, List, Optional\n\n@dataclass\nclass User:\n    first_name: str\n    age: int\n\n@dataclass\nclass Root:\n    user: User\n    tags: List[str]\n    note: Optional[Any] = None`}</code></pre>
+
+<h2>示例：嵌套对象与缺失的键</h2>
+
+<p>输入：</p>
+
+<pre><code>{`{"id": 7, "title": "Release notes", "author": {"name": "Alice", "email": null}, "tags": ["python", "json"], "score": 4.5, "comments": [{"user": "bob", "text": "nice"}, {"user": "carol"}]}`}</code></pre>
+
+<p>@dataclass 模式的输出：</p>
+
+<pre><code>{`from dataclasses import dataclass
+from typing import Any, List, Optional
+
+@dataclass
+class Author:
+    name: str
+    email: Optional[Any] = None
+
+@dataclass
+class CommentsItem:
+    user: str
+    text: Optional[str] = None
+
+@dataclass
+class Root:
+    id: int
+    title: str
+    author: Author
+    tags: List[str]
+    score: float
+    comments: List[CommentsItem]`}</code></pre>
+
+<p>类的顺序保证每个类在被使用前已定义。第二条评论缺少 <code>{"text"}</code>，所以它是 <code>{"Optional[str] = None"}</code>。</p>
+
+<h2>dataclass、Pydantic 还是 TypedDict</h2>
+
+<p>三种模式描述的结构相同，运行时行为不同（Python 3.12、Pydantic 2.13 实测）：</p>
+
+<pre><code>{`root = Root(**json.loads(raw))
+type(root.author)          # <class 'dict'>, not Author`}</code></pre>
+
+<pre><code>{`root = Root.model_validate(json.loads(raw))   # Pydantic mode
+root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre>
+
+<ul>
+  <li><strong>@dataclass</strong> 不校验也不转换。<code>{"Root(**data)"}</code> 里的嵌套对象仍是普通 dict，类型不对也照样接受。数据可信时再用，或者自己转换嵌套字段。</li>
+  <li><strong>Pydantic</strong> 会校验类型并构造嵌套模型，适合处理你控制不了的 API 响应。<code>{"model_validate_json(raw)"}</code> 一步完成解析和校验。</li>
+  <li><strong>TypedDict</strong> 只给类型检查器描述 dict 的结构，运行时什么都不检查。所有键默认都是必需的，只在部分元素里出现的键应写成 <code>{"NotRequired[str"}</code>]（Python 3.11+），而不是 <code>{"Optional[str"}</code>]。</li>
+</ul>
+
+<h2>限制</h2>
+
+<ul>
+  <li><code>{"null"}</code> 会变成 <code>{"Optional[Any"}</code>]，请把 <code>{"Any"}</code> 换成真实类型。</li>
+  <li>不是合法 Python 标识符的键（如 <code>{"user-id"}</code>，或 <code>{"class"}</code> 这样的关键字）需要改名，Pydantic 里再配 <code>{"Field(alias=\"user-id\")"}</code>。</li>
+  <li>日期保持为 <code>{"str"}</code>；把类型改成 <code>{"datetime"}</code> 后，Pydantic 会解析 ISO 8601 字符串。</li>
+  <li>根节点是基础类型数组时不生成类。</li>
+</ul>

@@ -39,3 +39,69 @@ faqItems:
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"]}`}</code></pre>
 <p>Lombok 模式下生成：</p>
 <pre><code>{`import java.util.List;\nimport lombok.Data;\n\n@Data\npublic class User {\n    private String firstName;\n    private int age;\n}\n\n@Data\npublic class RootObject {\n    private User user;\n    private List<String> tags;\n}`}</code></pre>
+
+<h2>示例：带嵌套明细的订单（Jackson 模式）</h2>
+
+<p>输入：</p>
+
+<pre><code>{`{"order_id": 9007, "customer": {"name": "Alice", "vip": true}, "items": [{"sku": "A-1", "qty": 2, "price": 9.5}, {"sku": "B-2", "qty": 1, "price": 20}], "note": null}`}</code></pre>
+
+<p>输出（省略了 getter / setter）：</p>
+
+<pre><code>{`import java.util.List;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class RootObject {
+    @JsonProperty("order_id")
+    private int orderId;
+    private Customer customer;
+    private List<ItemsItem> items;
+    private Object note;
+    // getters and setters omitted here
+}
+
+public class Customer {
+    private String name;
+    private boolean vip;
+    // ...
+}
+
+public class ItemsItem {
+    private String sku;
+    private int qty;
+    private Object price;
+    // ...
+}`}</code></pre>
+
+<p>这段输出不能整体存成一个文件编译：每个 <code>{"public class"}</code> 必须放在同名文件里。拆成 <code>{"RootObject.java"}</code>、<code>{"Customer.java"}</code>、<code>{"ItemsItem.java"}</code> 三个文件后，「无注解」模式的输出可以直接用 javac 21 编译。</p>
+
+<h2>生成后要检查的地方</h2>
+
+<ul>
+  <li><code>{"price"}</code> 成了 <code>{"Object"}</code>：第一个元素是 <code>{"9.5"}</code>、第二个是 <code>{"20"}</code>，工具不会把 <code>{"int"}</code> 和 <code>{"double"}</code> 合并成 <code>{"double"}</code>。请改成 <code>{"double"}</code>，金额建议用 <code>{"BigDecimal"}</code>。</li>
+  <li>样例里的 <code>{"null"}</code> 会变成 <code>{"Object"}</code>，请换成真实类型。</li>
+  <li>整数一律是 <code>{"int"}</code>，超过 2,147,483,647 也一样；大 ID 和毫秒时间戳请用 <code>{"long"}</code>。</li>
+  <li>Lombok 模式不会加 <code>{"@JsonProperty"}</code>，<code>{"order_id"}</code> 不再映射到 <code>{"orderId"}</code>：</li>
+</ul>
+
+<pre><code>{`import java.util.List;
+import lombok.Data;
+
+@Data
+public class RootObject {
+    private int orderId;
+    private Customer customer;
+    private List<ItemsItem> items;
+    private Object note;
+}`}</code></pre>
+
+<p>Lombok 模式下请自己补 <code>{"@JsonProperty"}</code>，或给 Jackson 配置 <code>{"PropertyNamingStrategies.SNAKE_CASE"}</code>。Gson 模式用 <code>{"@SerializedName"}</code> 做同样的映射。</p>
+
+<p>用 Jackson 读取 JSON：</p>
+
+<pre><code>{`ObjectMapper mapper = new ObjectMapper();
+RootObject order = mapper.readValue(json, RootObject.class);`}</code></pre>
+
+<p>Java 16 及以上，简单的不可变模型可以改用 record，Jackson 2.12 起支持读取 record：</p>
+
+<pre><code>{`public record Customer(String name, boolean vip) {}`}</code></pre>

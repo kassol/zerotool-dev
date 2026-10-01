@@ -83,3 +83,64 @@ export type User = z.infer<typeof UserSchema>;
 
 export const StatusSchema = z.enum(["active", "inactive", "pending"]);
 export type Status = z.infer<typeof StatusSchema>;`}</code></pre>
+
+<h2>Example: A Signup Form</h2>
+
+<p>Input:</p>
+
+<pre><code>{`interface SignupForm {
+  email: string;
+  password: string;
+  nickname?: string;
+  referrer: string | null;
+  age?: number | undefined;
+  plan: "free" | "pro";
+}`}</code></pre>
+
+<p>Output:</p>
+
+<pre><code>{`import { z } from "zod";
+
+export const SignupFormSchema = z.object({
+  email: z.string(),
+  password: z.string(),
+  nickname: z.string().optional(),
+  referrer: z.union([z.string(), z.null()]),
+  age: z.union([z.number(), z.undefined()]).optional(),
+  plan: z.enum(["free", "pro"]),
+});
+export type SignupForm = z.infer<typeof SignupFormSchema>;`}</code></pre>
+
+<p>Running the generated schema with zod 3.25 on three payloads:</p>
+
+<pre><code>{`SignupFormSchema.safeParse({ email: "not-an-email", password: "1", referrer: null, plan: "pro" })
+// success: true  (types match; no format rules yet)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", plan: "free" })
+// referrer: Invalid input  (string | null is required, it cannot be missing)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "ad", plan: "team" })
+// plan: Invalid enum value. Expected 'free' | 'pro', received 'team'`}</code></pre>
+
+<h2>null, undefined and Optional</h2>
+
+<ul>
+  <li><code>{"prop?: T"}</code> becomes <code>{".optional()"}</code>: the key may be missing.</li>
+  <li><code>{"T | null"}</code> becomes <code>{"z.union([T, z.null()])"}</code> — the same as <code>{"T.nullable()"}</code>: the key must be present, and its value may be <code>{"null"}</code>. A payload without <code>{"referrer"}</code> fails.</li>
+  <li><code>{"T | null"}</code> on an optional property (<code>{"prop?: T | null"}</code>) needs both; write <code>{".nullish()"}</code> by hand if that is what the API sends.</li>
+</ul>
+
+<h2>Adding the Rules TypeScript Cannot Express</h2>
+
+<p>TypeScript types have no formats or ranges, so the first payload above passes with an invalid email and a one-character password. Add refinements after generating:</p>
+
+<pre><code>{`export const SignupFormSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  nickname: z.string().max(20).optional(),
+  referrer: z.string().nullable(),
+  age: z.number().int().min(13).optional(),
+  plan: z.enum(["free", "pro"]),
+});`}</code></pre>
+
+<p>Keep the generated <code>{"z.infer"}</code> type as the single source of truth and delete the original interface, so the two cannot drift apart.</p>

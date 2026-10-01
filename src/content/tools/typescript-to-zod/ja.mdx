@@ -83,3 +83,64 @@ export type User = z.infer<typeof UserSchema>;
 
 export const StatusSchema = z.enum(["active", "inactive", "pending"]);
 export type Status = z.infer<typeof StatusSchema>;`}</code></pre>
+
+<h2>例：会員登録フォーム</h2>
+
+<p>入力：</p>
+
+<pre><code>{`interface SignupForm {
+  email: string;
+  password: string;
+  nickname?: string;
+  referrer: string | null;
+  age?: number | undefined;
+  plan: "free" | "pro";
+}`}</code></pre>
+
+<p>出力：</p>
+
+<pre><code>{`import { z } from "zod";
+
+export const SignupFormSchema = z.object({
+  email: z.string(),
+  password: z.string(),
+  nickname: z.string().optional(),
+  referrer: z.union([z.string(), z.null()]),
+  age: z.union([z.number(), z.undefined()]).optional(),
+  plan: z.enum(["free", "pro"]),
+});
+export type SignupForm = z.infer<typeof SignupFormSchema>;`}</code></pre>
+
+<p>生成したスキーマで zod 3.25 を使い 3 つのデータを検証した結果：</p>
+
+<pre><code>{`SignupFormSchema.safeParse({ email: "not-an-email", password: "1", referrer: null, plan: "pro" })
+// success: true  (types match; no format rules yet)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", plan: "free" })
+// referrer: Invalid input  (string | null is required, it cannot be missing)
+
+SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "ad", plan: "team" })
+// plan: Invalid enum value. Expected 'free' | 'pro', received 'team'`}</code></pre>
+
+<h2>null・undefined・省略可能の違い</h2>
+
+<ul>
+  <li><code>{"prop?: T"}</code> は <code>{".optional()"}</code> になります。キーがなくてもかまいません。</li>
+  <li><code>{"T | null"}</code> は <code>{"z.union([T, z.null()])"}</code>、つまり <code>{"T.nullable()"}</code> と同じです。キーは必須で、値に <code>{"null"}</code> を許します。<code>{"referrer"}</code> のないデータは失敗します。</li>
+  <li>省略可能かつ null 可（<code>{"prop?: T | null"}</code>）なら両方が必要です。API がそう返すなら <code>{".nullish()"}</code> と手で書きます。</li>
+</ul>
+
+<h2>TypeScript では書けないルールを足す</h2>
+
+<p>TypeScript の型には形式や範囲がないため、上の 1 件目は不正なメールアドレスと 1 文字のパスワードでも通ります。生成後に制約を足します：</p>
+
+<pre><code>{`export const SignupFormSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  nickname: z.string().max(20).optional(),
+  referrer: z.string().nullable(),
+  age: z.number().int().min(13).optional(),
+  plan: z.enum(["free", "pro"]),
+});`}</code></pre>
+
+<p>生成した <code>{"z.infer"}</code> の型を唯一の定義にして元の interface は消すと、両者がずれていくことを防げます。</p>
