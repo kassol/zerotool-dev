@@ -116,6 +116,7 @@ eq('--oauth2-bearer', P('curl --oauth2-bearer T http://h/').headers, ['Authoriza
 eq('-b with name=value is a Cookie header', P('curl -b "a=1; b=2" http://h/').headers, ['Cookie: a=1; b=2']);
 eq('-b without = is a cookie file, not converted', P('curl -b cookies.txt http://h/').notes, ['-b cookies.txt']);
 eq('unknown option is an error', P('curl --no-such-option http://h/').error, 'unknownOption');
+eq('-d with -F is an error, as in curl', P('curl -d a=1 -F b=2 http://h/').error, 'dataAndForm');
 eq('missing value is an error', P('curl http://h/ -H').error, 'missingValue');
 eq('no URL', P('curl -s'), null);
 eq('not curl', P('wget http://h/'), null);
