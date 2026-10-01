@@ -102,7 +102,7 @@ const py = (code, input) => execFileSync('python3', ['-c', code], { encoding: 'u
 if (!python) console.log('SKIP: python3 not found; Python samples, C escapes and code page facts not run');
 
 const space = { en: '(space)', ja: '（空白）' };
-for (const lang of ['en']) {
+for (const lang of ['en', 'ja']) {
   const page = readFileSync(join(root, 'src/content/blog/ascii-converter-guide/' + lang + '.mdx'), 'utf8');
   const printable = [...page.matchAll(/^\| (\d+) \| ([0-9A-F]{2}) \| ([0-7]{3}) \| ([01]{7}) \| (.+?) \| ([A-Z -]+) \|$/gm)];
   eq(lang + ' printable rows are 32–126', printable.map((m) => m[1]).join(' '), Array.from({ length: 95 }, (_, i) => i + 32).join(' '));
@@ -211,6 +211,8 @@ if (python) {
   eq('あ is 82 A0', r.a, 'あ');
   eq('byte 0x80 in three code pages', r.x80.join(' '), '€ \u0080 Ç');
   eq('byte 0x82 in ISO-8859-1 is C1', r.x82, '\u0082');
+  const ja = readFileSync(join(root, 'src/content/blog/ascii-converter-guide/ja.mdx'), 'utf8');
+  for (const [c, b] of Object.entries(r.dame)) eq('ja page quotes ' + c + ' ' + b, ja.includes('「' + c + '」は `' + b + '`'), true);
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
