@@ -4,6 +4,7 @@
 //        and the frontmatter STRINGS); public/vendor/qrcode.min.js (the matrix builder the page loads);
 //        public/vendor/zxing-reader.js + .wasm (an independent decoder, zxing-cpp); the engine block of
 //        src/components/tools/QrCodeDecoderTool.astro (the site's content parser, for the formats);
+//        src/content/tools/qr-code-generator/*.mdx (`{/* qrg-check: … */}` annotations)
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -14,7 +15,7 @@
 //
 // Run: node scripts/test-qr-code-generator.mjs
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
@@ -153,7 +154,7 @@ const jaText = '会議室は3階です。受付で名前をお伝えください
 const pk = E.plan(jaText, { ecl: 'L', sjis: SJIS }), pb = E.plan(jaText, { ecl: 'L' });
 eq('Japanese sentence: Kanji mode version 3, UTF-8 bytes version 4', [pk.version, pk.segments.map((s) => s.mode + s.count), pb.version], [3, ['K4', 'N1', 'K18'], 4]);
 eq('Simplified Chinese characters outside JIS X 0208 fall back to bytes', E.plan('们这', { sjis: SJIS }).segments.map((s) => s.mode), ['B']);
-for (const s of [jaText, 'カタカナー・ひらがな、漢字。', 'ＡＢＣ１２３「全角」', '東京都千代田区丸の内1-9-1', '～〜−']) {
+for (const s of [jaText, '本日のおすすめ：鯛の塩焼き定食（味噌汁・小鉢付き）です。数量限定のため、売り切れの際はご容赦ください。', 'カタカナー・ひらがな、漢字。', 'ＡＢＣ１２３「全角」', '東京都千代田区丸の内1-9-1', '～〜−']) {
   const { m, r } = await roundTrip(s, { ecl: 'M', kanji: true });
   eq('Kanji mode round trip: ' + s, r && r.text, s);
   if (m.p.segments.some((x) => x.mode === 'K')) check('Kanji segment present: ' + s, true);
@@ -281,6 +282,28 @@ const saved = /ztPersist\.save\(SLUG, \{([\s\S]*?)\}\);/.exec(script);
 eq('only options are saved, never the content', saved && [...saved[1].matchAll(/(\w+):/g)].map((m) => m[1]), ['ecl', 'size', 'quiet', 'version', 'fg', 'bg', 'transparent', 'kanji', 'cformat']);
 check('the page does not write HTML from content', !/innerHTML|insertAdjacentHTML|outerHTML/.test(script));
 check('policy is preference', /'qr-code-generator': 'preference'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+
+// ---------- tool page claims (`{/* qrg-check: {...} */}` in the mdx) ----------
+const mdxDir = join(root, 'src/content/tools/qr-code-generator');
+let annotated = 0;
+for (const f of readdirSync(mdxDir)) {
+  const mdx = readFileSync(join(mdxDir, f), 'utf8');
+  for (const m of mdx.matchAll(/\{\/\* qrg-check: (\{.*?\}) \*\/\}/g)) {
+    annotated++;
+    const c = JSON.parse(m[1]);
+    if (c.repeat) c.text = c.repeat.repeat(c.count);
+    const p = E.plan(c.text, { ecl: c.ecl || 'M', sjis: c.kanji ? SJIS : null, version: c.fixed || 0 });
+    const got = {};
+    if ('version' in c) got.version = p.ok ? p.version : null;
+    if ('modes' in c) got.modes = p.ok ? p.segments.map((s) => s.mode + s.count).join(' ') : null;
+    if ('bits' in c) got.bits = p.bits;
+    if ('over' in c) got.over = p.overBytes;
+    if ('fitsAt' in c) got.fitsAt = p.fitsAt;
+    const want = Object.fromEntries(Object.keys(got).map((k) => [k, c[k]]));
+    eq(f + ' claim ' + JSON.stringify(c.text).slice(0, 40), got, want);
+  }
+}
+check('tool pages carry checked examples', annotated >= 8, annotated);
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
