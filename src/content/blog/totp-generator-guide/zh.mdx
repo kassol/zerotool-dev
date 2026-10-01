@@ -1,185 +1,175 @@
 ---
-title: "TOTP 验证码生成器与 2FA 原理详解：时间一次性密码完整指南"
-description: "深入讲解 TOTP/2FA 原理（RFC 6238）、HMAC 计算过程、时间窗口机制，附 Node.js/Python/Go 实现代码，在线生成测试验证码。"
+title: "TOTP 原理详解：用 RFC 6238 测试向量一步步算出动态验证码"
+description: "TOTP 动态验证码的原理：按 RFC 6238 测试向量逐步计算时间步、HMAC-SHA1 与动态截取，otpauth:// 二维码里有什么，阿里云虚拟 MFA 背后的规则，以及服务端校验的时间窗口与防重放。"
 pubDate: 2026-04-07
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "zh"
-tags: ["totp", "2fa", "otp", "身份验证", "安全", "开发工具"]
+tags: ["totp", "2fa", "otp", "动态口令", "虚拟MFA", "rfc6238"]
 ---
 
-两步验证（2FA）已成为账号安全的标准配置。验证器 App 里那个每 30 秒变一次的六位数字，背后是 TOTP——基于时间的一次性密码。这篇文章讲清 TOTP 的内部原理、如何在应用里实现 2FA，以及如何在不打开验证器 App 的情况下生成测试验证码。
+验证器 App 里每 30 秒变一次的 6 位数字，用的是 TOTP（Time-Based One-Time Password，基于时间的一次性密码），定义在 [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238)。阿里云把它叫作「虚拟 MFA」，很多银行和企业系统叫「动态口令」，Google Authenticator 中文名是「谷歌身份验证器」，背后都是同一个算法：服务端和 App 事先共享一个密钥，之后各自用「密钥 + 当前时间」算 HMAC，再截成几位数字。两边密钥相同、时钟大致一致，不需要通信也能得到同样的数字。
 
-## TOTP 是什么
+这篇文章用 RFC 里现成的测试数据把一个验证码完整算一遍，再看二维码里装了什么、阿里云 RAM 的虚拟 MFA 文档里那些规则对应算法的哪一步，以及服务端校验时必须做的几件事。文中的数字都可以用 [TOTP 生成器](/zh/tools/totp-generator/)或几行 Node.js 复现。
 
-TOTP（Time-Based One-Time Password，基于时间的一次性密码）由 [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238) 定义。它生成一个短数字码（通常 6 位），具有以下特性：
+## 一个验证码是怎么算出来的
 
-- 每 30 秒更新一次
-- 只能被接受一次：服务器必须拒绝同一个码的第二次使用（[RFC 6238 §5.2](https://datatracker.ietf.org/doc/html/rfc6238#section-5.2)）
-- 需要服务器和验证器共享一个密钥
+TOTP 建立在 [RFC 4226](https://www.rfc-editor.org/rfc/rfc4226) 的 HOTP 之上：HOTP 用一个计数器算验证码，TOTP 把计数器换成「当前时间是第几个 30 秒」。RFC 6238 的测试密钥是 ASCII 字符串 `12345678901234567890`（20 字节），Base32 写作 `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`。下面用测试表里的 Unix 时间 1111111109 秒（UTC 2005-03-18 01:58:29）来算。
 
-算法是确定性的——相同的密钥和相同的时间窗口，必然产生相同的验证码。每个码只在 30 秒窗口内有效，但窗口本身挡不住重放：服务器还要记住最后接受的时间步，拒绝再次提交的同一个码。
+**第 1 步：时间步 T。** 周期 X = 30 秒，起点 T0 = 0（[RFC 6238 §4.2](https://www.rfc-editor.org/rfc/rfc6238#section-4.2)）：
 
-## TOTP 的计算过程
-
-TOTP 基于 HOTP（基于 HMAC 的一次性密码，RFC 4226）构建。核心算法：
-
-```
-T = floor(当前 Unix 时间戳 / 30)    # 时间计数器
-TOTP = HOTP(secret, T)
-HOTP = Truncate(HMAC-SHA1(secret, T))
+```text
+T = floor((1111111109 - 0) / 30) = 37037036 = 0x23523EC
 ```
 
-逐步拆解：
+T 按 8 字节大端整数参与计算：`00 00 00 00 02 35 23 ec`。
 
-1. **时间计数器：** 将当前 Unix 时间戳除以时间步长（默认 30 秒）并取整。`floor(1712500000 / 30) = 57083333`
+**第 2 步：HMAC。** 以密钥为 key、这 8 个字节为消息算 HMAC-SHA1，得到 20 字节：
 
-2. **HMAC：** 以密钥和时间计数器为输入，计算 HMAC-SHA1，得到 20 字节的哈希值。
-
-3. **动态截断：** 取哈希最后一字节，其低 4 位决定偏移量。从该偏移量取 4 字节，屏蔽最高位，得到一个 31 位整数。
-
-4. **取模：** 计算 `整数 mod 10^6`（6 位码），得到最终 OTP。
-
-服务器执行相同的计算，如果结果匹配则接受。RFC 6238 [§5.2](https://www.rfc-editor.org/rfc/rfc6238#section-5.2) 建议验证方为网络延迟最多多接受一个时间步；各库默认不同，pyotp 的 `verify()` 默认 `valid_window=0`，只认当前时间步。
-
-## 共享密钥
-
-密钥是一个 base32 编码的随机值，通常 160 位（20 字节）。扫描验证器 App 里的二维码时，二维码包含如下 URI：
-
-```
-otpauth://totp/Service:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Service&algorithm=SHA1&digits=6&period=30
+```text
+278c02e53610f84c40bd9135acd4101012410a14
 ```
 
-`secret` 参数就是 base32 编码的共享密钥。你的应用在用户开启 2FA 时生成它一次，加密存储到数据库。用户将其存入验证器 App（Google Authenticator、Authy、1Password 等）。
+**第 3 步：动态截取（Dynamic Truncation）。** 最后一个字节是 `14`，取它的低 4 位，得到偏移量 4。从第 4 个字节（从 0 数起）开始取 4 个字节：`36 10 f8 4c`。把最高位清零，得到一个 31 位正整数：`0x3610f84c` = 907081804（[RFC 4226 §5.3](https://www.rfc-editor.org/rfc/rfc4226#section-5.3)）。
 
-**密钥必须保密。** 任何人拿到密钥都能为该账号生成有效验证码。
+**第 4 步：取位数。** 对 10 的位数次方取余，不足的位在前面补 0：
 
-## 在线生成测试 TOTP 验证码
+```text
+907081804 mod 10^8 = 07081804
+907081804 mod 10^6 =   081804
+```
 
-**[在线 TOTP 生成器 →](/zh/tools/totp-generator/)**
+`07081804` 就是 [RFC 6238 附录 B](https://www.rfc-editor.org/rfc/rfc6238#appendix-B) 表中「1111111109 秒、SHA1」那一格。注意开头的 0：验证码是字符串，不是数字，存成整数的实现会把 `081804` 变成 `81804`，用户输入的 6 位数就永远对不上。
 
-输入 base32 密钥或粘贴 otpauth:// URI，立即得到当前的 TOTP 验证码，也可以填固定的 Unix 时间复现 RFC 测试向量，适合：
-- 开发阶段测试 2FA 实现
-- 验证密钥配置是否正确
-- 排查时间同步问题
+用 Node.js 自带的 crypto 就能把上面四步跑一遍：
 
-所有计算在浏览器中完成；密钥不保存，也不写进网址。
+{/* totp-run: {"lang":"node","expect":"37037036 4 907081804\n07081804\n081804"} */}
+```js
+import { createHmac } from 'node:crypto';
 
-## 在应用中实现 TOTP
+const key = Buffer.from('12345678901234567890');   // RFC 6238 测试密钥
+const T = Math.floor(1111111109 / 30);              // 第 1 步
+const msg = Buffer.alloc(8);
+msg.writeBigUInt64BE(BigInt(T));
+const h = createHmac('sha1', key).update(msg).digest(); // 第 2 步
+const offset = h[h.length - 1] & 0x0f;                  // 第 3 步
+const bin = h.readUInt32BE(offset) & 0x7fffffff;
+console.log(T, offset, bin);
+console.log(String(bin % 1e8).padStart(8, '0'));        // 第 4 步
+console.log(String(bin % 1e6).padStart(6, '0'));
+```
 
-### 开启 2FA 的流程
+在 TOTP 生成器里粘贴上面的 Base32 密钥，位数选 8，「Unix 时间（可选）」填 `1111111109`，当前验证码显示 `07081804`，上一个（T = 37037035）是 `89731029`，下一个（T = 37037037）是 `14050471`。
 
-1. 生成一个随机 20 字节密钥
-2. 编码为 base32
-3. 构建包含服务名和用户标识的 `otpauth://` URI
-4. 显示为二维码让用户扫描
-5. 要求用户输入当前验证码以确认开启成功
-6. 将密钥加密存储到数据库
+{/* totp-check: {"secret":"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ","time":1111111109,"digits":8,"expect":"07081804"} */}
+{/* totp-check: {"secret":"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ","time":1111111079,"digits":8,"expect":"89731029"} */}
+{/* totp-check: {"secret":"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ","time":1111111139,"digits":8,"expect":"14050471"} */}
 
-### Node.js 实现
+最后这个 `14050471` 恰好也是 RFC 表里 1111111111 秒那一行的值。1111111109 和 1111111111 只差 2 秒，但中间隔着 30 秒的边界 1111111110，所以落在相邻的两个时间步里，验证码完全不同。用户「刚看到就输入，还是错了」，很多时候就是跨过了这样一个边界。
+
+## 测试向量与种子长度
+
+RFC 6238 的测试表有 6 个时间点，每个时间点分别给出 SHA-1、SHA-256、SHA-512 的 8 位结果，共 18 个值。节选三行：
+
+{/* totp-check: {"secret":"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA====","time":1234567890,"algo":"SHA-256","digits":8,"expect":"91819424"} */}
+
+| Unix 时间 | T（十六进制） | SHA-1 | SHA-256 | SHA-512 |
+|---|---|---|---|---|
+| 59 | 0000000000000001 | 94287082 | 46119246 | 90693936 |
+| 1234567890 | 000000000273EF07 | 89005924 | 91819424 | 93441116 |
+| 20000000000 | 0000000027BC86AA | 65353130 | 77737706 | 47863826 |
+
+自己写实现时最容易卡住的是 SHA-256 和 SHA-512 两列。表格上方的正文只提到 20 字节的种子，但附录 A 的 Java 参考代码给 SHA-256 用的是 32 字节种子 `12345678901234567890123456789012`，给 SHA-512 用的是 64 字节种子（同一串数字重复到 64 个字符）。拿 20 字节种子去算这两列，结果一个都对不上。它们的 Base32 写法是：
+
+```text
+SHA-256：GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA====
+SHA-512：GEZDGNBVGY3TQOJQ 重复 6 次，末尾接 GEZDGNA=
+```
+
+这也符合 [RFC 6238 §5.1](https://www.rfc-editor.org/rfc/rfc6238#section-5.1) 的建议：密钥长度应当与 HMAC 输出长度相同。最后一行 20000000000 秒在 2603 年，用来检查实现有没有把时间压成 32 位整数（§4.2 要求 2038 年之后必须支持超过 32 位的时间值）。
+
+## 密钥、Base32 与 otpauth:// 二维码
+
+密钥本身是随机字节，展示给用户时用 Base32 编码（[RFC 4648 §6](https://www.rfc-editor.org/rfc/rfc4648#section-6)，字母 A–Z 加数字 2–7）。Base32 里没有 0、1、8、9，手抄的密钥里出现这几个字符，就是抄错了。[RFC 4226 §4](https://www.rfc-editor.org/rfc/rfc4226#section-4) 要求密钥至少 128 位，推荐 160 位，也就是 Base32 下 32 个字符。
+
+扫码绑定时，二维码里是一条 Google [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) 格式的 URI。发行方或账户里有中文时，按 UTF-8 百分号编码：
+
+{/* totp-uri: {"issuer":"示例公司","account":"zhangsan@example.com","expect":"otpauth://totp/%E7%A4%BA%E4%BE%8B%E5%85%AC%E5%8F%B8:zhangsan%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=%E7%A4%BA%E4%BE%8B%E5%85%AC%E5%8F%B8"} */}
+
+```text
+otpauth://totp/%E7%A4%BA%E4%BE%8B%E5%85%AC%E5%8F%B8:zhangsan%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=%E7%A4%BA%E4%BE%8B%E5%85%AC%E5%8F%B8
+```
+
+这条 URI 由 TOTP 生成器生成，与 pyotp 2.10.0 的 `provisioning_uri(name='zhangsan@example.com', issuer_name='示例公司')` 输出逐字相同。几个要点：
+
+- 标签是「发行方:账户」，两部分都不能含 `:`；`secret` 是去掉 `=` 的 Base32。
+- `algorithm`（SHA1、SHA256、SHA512）、`digits`（6 或 8）、`period`（默认 30）可以省略，省略即取默认值。
+- 同一份文档写明，Google Authenticator 会忽略 `algorithm` 和 `period`，Android 版还忽略 `digits`。服务端如果用 SHA-256 或 60 秒周期，用户拿谷歌身份验证器扫码后算出的数字可能永远对不上。除非能指定用户使用的 App，就保持 SHA-1、6 位、30 秒。SHA-1 在这里不是弱点：已知的 SHA-1 碰撞攻击并不能攻破 HMAC-SHA1（[RFC 6194 §3.3](https://www.rfc-editor.org/rfc/rfc6194#section-3.3)）。
+- `JBSWY3DPEHPK3PXP` 解码后只有 10 字节（80 位），作为文档示例没问题，正式使用达不到 RFC 4226 的下限。
+
+## 阿里云虚拟 MFA 背后的规则
+
+阿里云 RAM 的[自行绑定 MFA 设备](https://help.aliyun.com/zh/ram/user-guide/ram-users-bind-mfa-devices-by-themselves)文档写明，虚拟 MFA「通过兼容 TOTP 协议的身份验证器 App 生成动态验证码」，可以用阿里云 App，也可以用 Google Authenticator，扫码添加或手动填写账号和密钥都行。它的 [MFA 常见问题](https://help.aliyun.com/zh/ram/support/faq-about-mfa)里有几条，对照算法就很好理解：
+
+| 文档原文（节选） | 对应的算法细节 |
+|---|---|
+| 「MFA 是基于时间的，您需要检查并确保手机端的时间不存在延迟或超前」 | 第 1 步的 T 由手机时钟决定，时钟差出一个 30 秒边界，T 就不同 |
+| 「需要确保输入的是最新的、未被使用过的安全码」 | 服务端拒绝重放：同一个时间步的验证码只认一次（RFC 6238 §5.2） |
+| 「当前绑定页面打开时间过长，二维码（密钥）已过期」 | 每次打开绑定页都会生成新密钥，旧二维码里的密钥不再有效 |
+| 「多次打开 MFA 绑定页面并扫码，在手机端 MFA 设备上会显示相同的用户名，但实际安全码是不同的」 | 账户名相同，密钥不同；App 只按标签显示，分不出哪个是有效的那一条 |
+
+第四条是很常见的坑：App 里有两条一模一样的「RAM 用户名」，用户输入了旧密钥那一条的数字。按文档的建议，扫码前先删掉 App 里同名的旧条目。
+
+绑定文档还写明，阿里云从 2024 年 8 月 20 日开始陆续为所有 RAM 用户开启登录时强制 MFA；文档里的 MFA 方式对比表中，虚拟 MFA 的安全级别是「高」，通行密钥（Passkey）是「最高」，原因见本文最后一节。
+
+## 服务端校验的四条规则
+
+6 位数字能挡住攻击，靠的是服务端围绕它的规则：
+
+- **时间窗口要小。** 服务端只知道验证码到达的时间，不知道它是什么时候生成的。[RFC 6238 §5.2](https://www.rfc-editor.org/rfc/rfc6238#section-5.2) 建议同时比对传输延迟范围内的前几个时间步，并建议为网络延迟最多放宽 1 个时间步；[§6](https://www.rfc-editor.org/rfc/rfc6238#section-6) 另外讨论了时钟漂移，建议记录每个令牌检测到的偏差。各个库的默认值不同：pyotp 2.10.0 的 `verify()` 默认 `valid_window=0`，只认当前时间步，要放宽得显式传 `valid_window=1`。
+- **防重放。** §5.2 的原话是验证方「MUST NOT accept the second attempt of the OTP after the successful validation has been issued for the first OTP」。实现方法是为每个用户记下最后一次验证成功的 T，之后只接受比它新的时间步。阿里云文档里「未被使用过的安全码」说的就是这条。
+- **限制尝试次数。** 随机猜一次，每个被接受的时间步命中概率约为百万分之一。[RFC 4226 §7.3](https://www.rfc-editor.org/rfc/rfc4226#section-7.3) 要求做限流：失败若干次后锁定，或每次失败后加长等待。窗口放宽到 3 个时间步，每次猜中的概率也变成 3 倍，这也是窗口要小的原因。
+- **保护密钥。** 拿到密钥就能算出以后所有的验证码。数据库里加密存储，日志里不要打印。
+
+## 用代码实现与自测
+
+开启两步验证的流程一般是：生成随机密钥 → 拼 `otpauth://` URI → 显示二维码（同时给出 Base32 文本，方便无法扫码的用户手动添加）→ 让用户输入一次当前验证码确认 → 保存密钥。
+
+Python 用 pyotp：
+
+```python
+import pyotp  # pyotp 2.10.0
+
+secret = pyotp.random_base32()                 # 32 个字符，160 位
+totp = pyotp.TOTP(secret)
+uri = totp.provisioning_uri(name='zhangsan@example.com', issuer_name='示例公司')
+ok = totp.verify(user_code, valid_window=1)    # 当前 ±1 个时间步（默认 0）
+
+# 上线前用 RFC 向量自测：固定时间算一次
+assert pyotp.TOTP('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', digits=8).at(1111111109) == '07081804'
+```
+
+Node.js 用 otplib v13：
 
 ```js
 import { generateSecret, generateURI, verify } from 'otplib'; // otplib v13
 
-// 开启 2FA
-const secret = generateSecret(); // 例如 "JBSWY3DPEHPK3PXP"
-const otpauthUrl = generateURI({ issuer: 'MyApp', label: 'user@example.com', secret });
-
-// 生成二维码（使用 qrcode 库）
-import qrcode from 'qrcode';
-const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
-
-// 验证（登录时）
+const secret = generateSecret();
+const uri = generateURI({ issuer: '示例公司', label: 'zhangsan@example.com', secret });
 const { valid } = await verify({ secret, token: userCode });
 ```
 
-### Python 实现
+不管用哪个库，上线前都按 RFC 表自测：用能固定时间的接口（pyotp 是 `at()`）、用 RFC 的三个种子，把 18 个值比对一遍。只用 SHA-1 的话，至少比对 6 个时间点。
 
-```python
-import pyotp
-import qrcode
+## 时钟偏差
 
-# 开启 2FA
-secret = pyotp.random_base32()
-totp = pyotp.TOTP(secret)
+服务端和手机的时间要在几秒之内。手机一般自动同步，服务器要跑 NTP。阿里云 ECS 的[配置 NTP 服务](https://help.aliyun.com/zh/ecs/user-guide/alibaba-cloud-ntp-server)文档说明，基于公共镜像创建的实例默认运行 chrony（部分老旧镜像是 ntpd）；ECS 内推荐用 VPC 内网的 `ntp.cloud.aliyuncs.com`，阿里云以外的机器可以用公网的 `ntp.aliyun.com`。用 `chronyc tracking` 看 `System time` 一行，就能知道本机比 NTP 时间快或慢多少。
 
-# 生成二维码用的 OTPAuth URI
-uri = totp.provisioning_uri(name="user@example.com", issuer_name="MyApp")
-img = qrcode.make(uri)
-img.save("qr.png")
+用户反馈验证码总是错时，先看手机时间。TOTP 生成器会用页面服务器返回的 `Date` 头和本机时钟比对一次，去掉测量误差后相差超过约 3 秒就提示；它同时显示上一个和下一个验证码，能看出用户是不是正好差了一个时间步。
 
-# 验证
-is_valid = totp.verify(user_code, valid_window=1)  # 当前 ±1 个时间步（默认 0）
-```
+## TOTP 的局限
 
-### Go 实现
+TOTP 防不住实时钓鱼：假的登录页让用户输入验证码，再在同一个 30 秒内转发给真网站，就能登录。通行密钥和安全密钥用的 [WebAuthn](https://www.w3.org/TR/webauthn-2/) 凭据绑定在网站的源上，仿冒域名用不了，这就是阿里云把通行密钥列为「最高」的原因。尽管如此，TOTP 比只用密码强得多，而且离线可用，不依赖短信和推送。
 
-```go
-import "github.com/pquerna/otp/totp"
+开启 TOTP 时要同时考虑丢手机怎么办。阿里云的做法是：主账号走「提交申诉」解绑 MFA，RAM 用户由主账号或 RAM 管理员解绑，文档还建议每个 RAM 用户至少绑定两种不同类型的 MFA。自己做系统时，常见做法是开启时发放 8–10 个一次性恢复码，哈希后存储（bcrypt 或 Argon2），只展示一次，用过即作废。
 
-// 开启 2FA
-key, err := totp.Generate(totp.GenerateOpts{
-    Issuer:      "MyApp",
-    AccountName: "user@example.com",
-})
-secret := key.Secret()
-
-// 将 key.URL() 显示为二维码
-
-// 验证
-valid := totp.Validate(userCode, secret)
-```
-
-## TOTP 参数配置
-
-RFC 6238 允许修改默认参数，但不是每个验证器 App 都会读取。Google 的 [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) 写明 Google Authenticator 忽略 `algorithm` 和 `period`，Android 版还忽略 `digits`：
-
-| 参数 | 默认值 | 常见替代值 |
-|------|--------|------------|
-| 算法 | SHA-1 | SHA-256、SHA-512 |
-| 位数 | 6 | 8 |
-| 时间步长 | 30 秒 | 60 秒 |
-
-**除非有特殊需求，坚持使用默认值（SHA-1，6 位，30 秒）。** 非标准配置可能导致部分验证器 App 不兼容。SHA-1 不是这里的弱点：已知的 SHA-1 碰撞攻击攻不破 HMAC-SHA1（[RFC 6194 §3.3](https://datatracker.ietf.org/doc/html/rfc6194#section-3.3)）。真正的弱点是 6 位数字本身——每猜一次有百万分之一的机会——所以服务器必须限制失败次数（[RFC 4226 §7.3](https://datatracker.ietf.org/doc/html/rfc4226#section-7.3)）。
-
-## 时钟同步与漂移
-
-TOTP 要求服务器和客户端时钟基本同步。RFC 6238 [§6](https://www.rfc-editor.org/rfc/rfc6238#section-6) 建议验证方设定可容忍的时间步数，并记录每个令牌检测到的偏差；接受 `T-1`、`T`、`T+1` 是常见配置，但不是默认值（见上文 pyotp）。[TOTP 生成器](/zh/tools/totp-generator/)会显示上一个与下一个验证码，并在本机时钟与服务器相差超过约 3 秒时提示。
-
-如果用户设备时钟偏差较大（几分钟以上），TOTP 会失败。这在现代智能手机上很少见，但在嵌入式设备或自定义实现中值得注意。
-
-服务器时钟应使用 NTP 同步。Linux 上：
-
-```bash
-timedatectl status        # 查看当前 NTP 同步状态
-timedatectl set-ntp true  # 启用 NTP 同步
-```
-
-## TOTP 与其他 2FA 方案对比
-
-| 方案 | 安全性 | 防钓鱼 | 无外部依赖 |
-|------|--------|--------|------------|
-| TOTP | 高 | 否 | 是 |
-| 短信验证码 | 低 | 否 | 否（依赖运营商） |
-| Push 推送 | 中 | 否 | 否（依赖 App 服务器） |
-| FIDO2 / 通行密钥 | 非常高 | 是 | 是 |
-| 硬件 Token（TOTP） | 高 | 否 | 是 |
-
-TOTP 存在实时钓鱼风险（攻击者诱导用户在伪造页面输入验证码，并立即转发）。对于最高安全需求，FIDO2/WebAuthn 硬件密钥才是防钓鱼的方案。但 TOTP 相比纯密码已是质的提升，是当前大多数应用 2FA 的实用标准。
-
-## 恢复码
-
-开启 TOTP 的同时，必须提供恢复码。用户丢失验证器设备时，需要靠恢复码找回账号：
-
-- 开启时生成 8–10 个一次性恢复码
-- 以哈希形式存储（bcrypt 或 Argon2）
-- 只展示一次，提示用户离线保存
-- 每个码使用后立即失效
-
-```python
-import secrets
-
-def generate_recovery_codes(count=10):
-    return [secrets.token_hex(10) for _ in range(count)]
-```
-
-**[立即在线生成并测试 TOTP 验证码 →](/zh/tools/totp-generator/)**
+要拿已知值检查密钥或服务端实现，用 [TOTP 生成器](/zh/tools/totp-generator/)；只想单独看 HMAC 那一步，用 [HMAC 在线计算](/zh/tools/hmac-generator/)。

@@ -1,185 +1,170 @@
 ---
-title: "UUID Generator: What Is a UUID and How to Use It"
-description: "Understand UUID formats, version differences, how to generate UUIDs in code, and best practices for database keys, APIs, and distributed systems — plus a free online UUID generator."
+title: "What Is a UUID? Versions 1–8, Bit Layout and Collision Odds"
+description: "What a UUID is, per RFC 9562: the 128-bit layout, how to read the version and variant digits, all eight versions with test vectors, the v4 collision math, and how to store UUIDs."
 pubDate: 2026-04-05
-updatedDate: 2026-09-29
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["uuid", "unique-identifier", "developer-tools"]
+tags: ["uuid", "rfc-9562", "uuidv7", "database-keys", "unique-identifier"]
 ---
 
-A UUID (Universally Unique Identifier) is the standard way to generate unique IDs in distributed systems, databases, and APIs. No central coordination required — for random (v4) UUIDs the chance of two matching is small enough to ignore in practice.
+A UUID (universally unique identifier) is a 128-bit value that a program can create on its own, without asking a central server for the next number, and still expect to be different from every other UUID. The format is defined by [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562), published in May 2024, which replaced RFC 4122 and added versions 6, 7 and 8. The same values appear as GUIDs in Microsoft software and in the ITU-T X.667 / ISO/IEC 9834-8 standard.
 
-**[Generate a UUID now →](/tools/uuid-generator)**
+"Expect" is the important word. RFC 9562 [§6.8](https://www.rfc-editor.org/rfc/rfc9562#section-6.8) says that "true global uniqueness is impossible to guarantee without a shared knowledge scheme". A UUID is unique because of how it is built: a timestamp plus a clock sequence and node ID, a hash of a name, or enough random bits that a repeat is vanishingly unlikely. This guide shows the layout, all eight versions with the RFC's own test vectors, the arithmetic behind the collision odds, and the storage choices. Values from the [UUID Generator](/tools/uuid-generator/) are used throughout, and the code blocks are run by the site's tests.
 
-## What Is a UUID?
+## The 36 Characters, Field by Field
 
-A UUID is a 128-bit number, typically represented as 5 groups of hexadecimal digits separated by hyphens:
+The text form is 32 hexadecimal digits in five groups of 8, 4, 4, 4 and 12, joined by hyphens: 36 characters for 16 bytes. Here is one value made by the generator:
 
-```
-550e8400-e29b-41d4-a716-446655440000
-xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
-```
-
-- `M` — version number (1–8; [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562) added 6, 7, and 8)
-- `N` — variant bits (8, 9, a, or b)
-
-The standard format is 8-4-4-4-12: 36 characters total (including hyphens), 32 hex characters.
-
-## UUID Versions
-
-| Version | Generation method | Use case |
-|---------|------------------|----------|
-| v1 | Timestamp + MAC address | Time-sortable but may leak MAC address |
-| v3 | Namespace + name (MD5) | Deterministic — same input always produces same UUID |
-| v4 | Random | **Most common** — pure random, no information leakage |
-| v5 | Namespace + name (SHA-1) | Deterministic IDs; RFC 9562 recommends v5 over v3 |
-
-**v4 is the right choice for the vast majority of use cases.**
-
-## UUID v4 Collision Probability
-
-Generating 1 billion UUIDs per second, it would take approximately **85 years** to reach a 50% chance of a single collision. For practical purposes, collisions between properly generated v4 UUIDs can be ignored.
-
-## Generate UUIDs Online
-
-**[ZeroTool UUID Generator →](/tools/uuid-generator)**
-
-- Single or bulk generation
-- One-click copy
-- Runs entirely in your browser — nothing sent to a server
-
-## Generate UUIDs in Code
-
-### JavaScript (Node.js 18+)
-
-```js
-import { randomUUID } from 'crypto';
-
-const id = randomUUID();
-// 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+{/* uuid-check: tool-value */}
+```text
+2b0c21b3-0ad4-4d71-9433-e944db977f6b
 ```
 
-Also available in Node.js 14.17+ as `crypto.randomUUID()`.
+Each hex digit is 4 bits, so the 13th digit is bits 48–51 and the 17th digit starts at bit 64. Those two digits are the only ones a reader can interpret without knowing the version:
 
-### JavaScript (Browser)
+| Position | Digit here | Bits | Meaning |
+|---|---|---|---|
+| 13th digit | `4` | `0100` | Version 4, random ([§4.2](https://www.rfc-editor.org/rfc/rfc9562#section-4.2)) |
+| 17th digit | `9` | `1001` | The leading `10` is the RFC 9562 variant ([§4.1](https://www.rfc-editor.org/rfc/rfc9562#section-4.1)); the other two bits belong to the payload |
+| All other 30 digits | | 120 bits | Random, plus the two low bits of the 17th digit: 122 random bits in total |
 
-```js
-const id = crypto.randomUUID();
-// Supported in all modern browsers (Chrome 92+, Firefox 95+, Safari 15.4+)
-```
+RFC 9562 [§4](https://www.rfc-editor.org/rfc/rfc9562#section-4) allows uppercase, lowercase or mixed case in the text form, so a parser must accept all three. The generator writes lowercase, as `crypto.randomUUID()` does. PostgreSQL also accepts braces and missing hyphens on input and always prints the lowercase hyphenated form ([PostgreSQL 18, §8.12](https://www.postgresql.org/docs/18/datatype-uuid.html)).
 
-### Using the uuid Library (Legacy Support)
+## Version and Variant: The Only Fixed Bits
 
-```bash
-npm install uuid
-```
+The variant field says which family of layouts the rest of the bits follow. RFC 9562 Table 1 reads it from the first bits of the 17th digit:
 
-```js
-import { v4 as uuidv4 } from 'uuid';
+| 17th digit | Leading bits | Variant |
+|---|---|---|
+| `0`–`7` | `0xxx` | Reserved, Network Computing System (NCS) backward compatibility; includes the Nil UUID |
+| `8`, `9`, `a`, `b` | `10xx` | The one defined by RFC 9562 |
+| `c`, `d` | `110x` | Reserved, Microsoft backward compatibility |
+| `e`, `f` | `111x` | Reserved for the future; includes the Max UUID |
 
-const id = uuidv4();
-```
+Only the `10xx` variant has the version field, which is why a validator checks the 17th digit before trusting the 13th. Two special values sit outside the versions: the Nil UUID, all 128 bits zero ([§5.9](https://www.rfc-editor.org/rfc/rfc9562#section-5.9)), and the Max UUID, all 128 bits one, written `ffffffff-ffff-ffff-ffff-ffffffffffff` ([§5.10](https://www.rfc-editor.org/rfc/rfc9562#section-5.10)). They are useful as "no value" and "upper bound" sentinels.
 
-### Python
+## The Eight Versions
 
+Each version fills the remaining 122 bits differently. The test vectors in the last column come from [RFC 9562 Appendix A](https://www.rfc-editor.org/rfc/rfc9562#appendix-A) and Appendix B; v1, v6 and v7 all encode the same instant, 2022-02-22 14:22:22 at UTC−5.
+
+| Version | How the bits are filled | RFC test vector |
+|---|---|---|
+| 1 | 60-bit count of 100 ns intervals since 1582-10-15, split low/mid/high; 14-bit clock sequence; 48-bit node (originally a MAC address) | `c232ab00-9414-11ec-b3c8-9f6bdeced846` |
+| 2 | DCE Security; left outside RFC 9562 ([§5.2](https://www.rfc-editor.org/rfc/rfc9562#section-5.2)) | none |
+| 3 | MD5 of namespace UUID + name | `5df41881-3aed-3515-88a7-2f4a814cf09e` |
+| 4 | 122 random bits | `919108f7-52d1-4320-9bac-f847db4148a8` |
+| 5 | SHA-1 of namespace UUID + name, truncated to 128 bits | `2ed6657d-e927-568b-95e1-2665a8aea6a2` |
+| 6 | The v1 timestamp reordered most significant first, so values sort by time | `1ec9414c-232a-6b00-b3c8-9f6bdeced846` |
+| 7 | 48-bit Unix time in milliseconds, then 74 bits of random data or a counter | `017f22e2-79b0-7cc3-98c4-dc0c0c07398f` |
+| 8 | Anything the implementer chooses; only version and variant are fixed | `5c146b14-3c52-8afd-938a-375d0df1fbf6` (SHA-256 name-based example) |
+
+The v3 and v5 vectors hash the name `www.example.com` in the DNS namespace `6ba7b810-9dad-11d1-80b4-00c04fd430c8`. The same input always gives the same UUID, which is the point: two services can derive one ID for one URL or DNS name without talking to each other. RFC 9562 [§5.3](https://www.rfc-editor.org/rfc/rfc9562#section-5.3) says v5 should be used instead of v3 where possible, and §5.5 says name-based UUIDs using newer hashes such as SHA-256 must be built as v8. Python's standard library reproduces both vectors:
+
+{/* uuid-run: {"lang":"python","expect":"5df41881-3aed-3515-88a7-2f4a814cf09e\n2ed6657d-e927-568b-95e1-2665a8aea6a2\n7 4"} */}
 ```python
 import uuid
 
-# v4 (random)
-id = uuid.uuid4()
-print(str(id))  # 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
-
-# v5 (namespace-based, deterministic)
-id = uuid.uuid5(uuid.NAMESPACE_URL, 'https://zerotool.dev')
+print(uuid.uuid3(uuid.NAMESPACE_DNS, "www.example.com"))
+print(uuid.uuid5(uuid.NAMESPACE_DNS, "www.example.com"))
+print(uuid.UUID("017F22E2-79B0-7CC3-98C4-DC0C0C07398F").version,
+      uuid.UUID("2b0c21b3-0ad4-4d71-9433-e944db977f6b").version)
 ```
 
-### Go
+RFC 9562 also states preferences between the time-based versions: [§5.6](https://www.rfc-editor.org/rfc/rfc9562#section-5.6) says systems without legacy v1 data should use v7 instead of v6, and §5.7 that implementations should use v7 over v1 and v6 if possible. v7 counts in plain Unix milliseconds, leaves out the node field that leaked MAC addresses in old v1 generators, and its 48-bit timestamp lasts until about the year 10889.
 
-```go
-import "github.com/google/uuid"
+## Reading the Time Out of v1, v6 and v7
 
-id := uuid.New()
-fmt.Println(id.String())
-```
+Versions 1, 6 and 7 carry a timestamp that anyone can read back. v1 stores the 60-bit Gregorian count in three pieces with the low part first, which is why v1 values do not sort by time; v6 stores the same count high part first; v7 puts Unix milliseconds in the first 12 hex digits. This function decodes all three:
 
-### SQL (PostgreSQL)
-
-```sql
--- Generate a UUID
-SELECT gen_random_uuid();
-
--- Use UUID as a primary key
-CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL
-);
-```
-
-## UUIDs as Database Primary Keys
-
-### Advantages
-
-- **Globally unique** — no collisions across multiple services or databases
-- **No central sequence** — clients can generate IDs before writing to the database
-- **No information leakage** — unlike auto-increment IDs, they don't expose row counts
-
-### Disadvantages
-
-- **Index fragmentation** — random UUIDs cause B-tree fragmentation, making inserts slower than sequential integers
-- **Storage size** — 16 bytes vs 4–8 bytes for integers
-- **No natural ordering** — v4 UUIDs have no time-based sort order
-
-### Solution: UUID v7
-
-UUID v7, standardized in [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562#name-uuid-version-7) (May 2024), places the timestamp in the high bits, combining uniqueness with monotonic ordering. It's ideal for database primary keys. Some libraries already support it:
-
+{/* uuid-run: {"lang":"node","expect":"c232ab00 2022-02-22T19:22:22.000Z\n1ec9414c 2022-02-22T19:22:22.000Z\n017f22e2 2022-02-22T19:22:22.000Z\n2b0c21b3 no timestamp"} */}
 ```js
-// Node.js
-import { v7 as uuidv7 } from 'uuid';
-const id = uuidv7();
-// '017f22e2-79b0-7cc3-98c4-dc0c0c07398f'
-// The leading segment is a millisecond-precision timestamp — naturally sortable
+// 100 ns intervals between 1582-10-15 and 1970-01-01 (RFC 9562, Appendix A)
+const GREGORIAN_OFFSET = 122192928000000000n;
+
+function uuidTime(uuid) {
+  const hex = uuid.replace(/-/g, '').toLowerCase();
+  const version = parseInt(hex[12], 16);
+  if (version === 7) return new Date(parseInt(hex.slice(0, 12), 16));
+  let ticks;
+  if (version === 1) ticks = BigInt('0x' + hex.slice(13, 16) + hex.slice(8, 12) + hex.slice(0, 8));
+  else if (version === 6) ticks = BigInt('0x' + hex.slice(0, 12) + hex.slice(13, 16));
+  else return null;
+  return new Date(Number((ticks - GREGORIAN_OFFSET) / 10000n));
+}
+
+for (const u of [
+  'c232ab00-9414-11ec-b3c8-9f6bdeced846',
+  '1ec9414c-232a-6b00-b3c8-9f6bdeced846',
+  '017f22e2-79b0-7cc3-98c4-dc0c0c07398f',
+  '2b0c21b3-0ad4-4d71-9433-e944db977f6b',
+]) {
+  console.log(u.slice(0, 8), uuidTime(u)?.toISOString() ?? 'no timestamp');
+}
 ```
 
-## Format Variants
+The output is the same instant three times, 19:22:22 UTC, and nothing for the v4 value from the generator. That is both the strength and the cost of time-based IDs: a v7 key tells anyone who sees it when the row was created. RFC 9562 [§6.12](https://www.rfc-editor.org/rfc/rfc9562#section-6.12) advises applications not to parse UUIDs unless they must, but nothing stops someone else from doing it; if creation time is sensitive, use v4 for identifiers that leave your system. PostgreSQL 18 reads the same field with `uuid_extract_timestamp()`, which returns a value for versions 1 and 7 only.
 
+## How Likely Is a v4 Collision?
+
+A v4 UUID has 122 random bits, so there are N = 2<sup>122</sup> ≈ 5.32 × 10<sup>36</sup> possible values. When n values are drawn independently and uniformly, the chance that at least two match is the birthday problem. For n much smaller than N the standard approximation is
+
+```text
+p(n) ≈ 1 − e^(−n² / 2N)
 ```
-Standard:     550e8400-e29b-41d4-a716-446655440000
-No hyphens:   550e8400e29b41d4a716446655440000
-Uppercase:    550E8400-E29B-41D4-A716-446655440000
-URN:          urn:uuid:550e8400-e29b-41d4-a716-446655440000
-```
 
-When storing in a database, prefer a 16-byte binary form over VARCHAR — PostgreSQL's native `uuid` type, or `BINARY(16)` with `UUID_TO_BIN()` in MySQL 8.0, which has no native UUID type. It saves storage and speeds up comparisons.
+Solving for p = 0.5 gives n = √(2N ln 2) ≈ 2.71 × 10<sup>18</sup> UUIDs. At one billion UUIDs per second, reaching that many takes about 86 years. Smaller counts give tiny probabilities, because p grows with the square of n:
 
-## Validating a UUID
+{/* uuid-check: collision-table */}
+| Scenario | UUIDs generated | Chance of any duplicate |
+|---|---|---|
+| One million per second for a year | 3.16 × 10<sup>13</sup> | 9.4 × 10<sup>−11</sup> |
+| 103 trillion | 1.03 × 10<sup>14</sup> | 1 × 10<sup>−9</sup> |
+| One million for each of 8 billion people | 8 × 10<sup>15</sup> | 6.0 × 10<sup>−6</sup> |
+| One billion per second for 86 years | 2.71 × 10<sup>18</sup> | 0.5 |
 
+The math assumes good randomness. RFC 9562 [§6.9](https://www.rfc-editor.org/rfc/rfc9562#section-6.9) says implementations should use a cryptographically secure random number generator and reseed it after a process fork. Real duplicates come from that assumption failing: a generator seeded with the time, a virtual machine image cloned with its random state, or `Math.random()`-based code. The generator on this site calls `crypto.randomUUID()`, which draws from the browser's secure random source.
+
+Version 7 makes a different trade. Two v7 values can only collide if they share a millisecond, and then they have 74 random bits between them, not 122. If 1,000 independent servers each create one v7 UUID in the same millisecond, the chance that two of them match is about 2.6 × 10<sup>−17</sup>. Generators that create many values per millisecond on one machine can use a counter instead of pure randomness ([§6.2](https://www.rfc-editor.org/rfc/rfc9562#section-6.2)), which also keeps those values in order.
+
+## Storing UUIDs in a Database
+
+RFC 9562 [§6.13](https://www.rfc-editor.org/rfc/rfc9562#section-6.13) puts it plainly: as text a UUID takes 288 bits to hold 128, so databases should store the binary value where they can. The 36-character string costs 36 bytes plus length overhead; the binary form is 16 bytes, and it compares faster.
+
+- **PostgreSQL** has a native `uuid` type that stores the 128-bit value. `gen_random_uuid()` and, since PostgreSQL 18, `uuidv4()` and `uuidv7()` generate values in the database ([§9.14](https://www.postgresql.org/docs/18/functions-uuid.html)).
+- **MySQL** has no UUID column type. Use `BINARY(16)` with `UUID_TO_BIN()` and `BIN_TO_UUID()` ([MySQL 8.4 manual](https://dev.mysql.com/doc/refman/8.4/en/miscellaneous-functions.html)). MySQL's own `UUID()` returns version 1, and the manual warns that its values "are not necessarily unguessable". Passing `1` as the second argument of `UUID_TO_BIN()` swaps the time-low and time-high groups so v1 values sort by time; for any other version the swap brings no benefit.
+- **SQLite** has no UUID type either; a 16-byte `BLOB` holds the binary form.
+
+The bigger choice is the version. RFC 9562 [§2.1](https://www.rfc-editor.org/rfc/rfc9562#section-2.1) explains why v7 exists: values that are not time-ordered, such as v4, "have poor database-index locality", so each insert lands at a random place in a B-tree index instead of at its right-hand edge. A v7 key behaves much like an auto-increment column for insert order, while still being generated without coordination. §6.13 also warns against v3 and v5 as primary keys: they are derived from a "natural" value such as an email address, and when that value changes the key has to change with it.
+
+Converting between the two forms is simple. The validator below accepts the RFC 9562 variant with versions 1 to 8 plus the Nil and Max UUIDs, and turns valid input into 16 bytes:
+
+{/* uuid-run: {"lang":"node","expect":"2b0c21b3-0ad4-4d71-9433-e944db977f6b true 16\n017F22E2-79B0-7CC3-98C4-DC0C0C07398F true 16\n00000000-0000-0000-0000-000000000000 true 16\n2b0c21b3-0ad4-4d71-c433-e944db977f6b false\n2b0c21b30ad44d719433e944db977f6b false"} */}
 ```js
-// JavaScript
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-UUID_REGEX.test('550e8400-e29b-41d4-a716-446655440000'); // true
+const RFC_9562 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const NIL_OR_MAX = /^(?:00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/i;
+
+for (const s of [
+  '2b0c21b3-0ad4-4d71-9433-e944db977f6b',
+  '017F22E2-79B0-7CC3-98C4-DC0C0C07398F',
+  '00000000-0000-0000-0000-000000000000',
+  '2b0c21b3-0ad4-4d71-c433-e944db977f6b', // 17th digit c: Microsoft variant
+  '2b0c21b30ad44d719433e944db977f6b',     // no hyphens
+]) {
+  const ok = RFC_9562.test(s) || NIL_OR_MAX.test(s);
+  console.log(s, ok, ...(ok ? [Buffer.from(s.replace(/-/g, ''), 'hex').length] : []));
+}
 ```
 
-```python
-# Python
-import uuid
+The hyphen-free form is rejected here on purpose; whether to accept it, braces or a `urn:uuid:` prefix is a decision for your API, and PostgreSQL and MySQL both accept some of these forms on input.
 
-def is_valid_uuid(val):
-    try:
-        uuid.UUID(str(val))
-        return True
-    except ValueError:
-        return False
-```
+## Generating UUIDs
 
-## Summary
+- **Browsers and Node.js**: `crypto.randomUUID()` returns a lowercase v4 string. MDN lists it in Chrome and Edge 92+, Firefox 95+ and Safari 15.4+, and only in secure (HTTPS) contexts; Node.js has it since 14.17. There is no built-in v7 yet.
+- **Python**: `uuid.uuid4()`, `uuid.uuid5()` and, from Python 3.14, `uuid.uuid6()`, `uuid.uuid7()` and `uuid.uuid8()` ([docs](https://docs.python.org/3.14/library/uuid.html)).
+- **PostgreSQL 18**: `uuidv7()` as a column default keeps inserts in time order without application code.
 
-| Need | Recommended approach |
-|------|---------------------|
-| Quick generation | [ZeroTool UUID Generator](/tools/uuid-generator) |
-| Browser / Node.js | `crypto.randomUUID()` |
-| Python | `uuid.uuid4()` |
-| Database primary key (ordered) | UUID v7 or ULID |
-| Deterministic ID | UUID v5 |
+For one-off values, the [UUID Generator](/tools/uuid-generator/) makes v4 UUIDs in the browser, one at a time or up to 100 per batch, and stores none of them.
 
-UUID v4 works for the overwhelming majority of use cases. If you need database-friendly sequential IDs, consider UUID v7 or ULID.
+## UUID, GUID, ULID and Nano ID
+
+A GUID is a UUID by another name; older Microsoft APIs write it in braces and in uppercase, and the `c`/`d` variant row in the table above exists for their historic formats. A [ULID](/tools/ulid-generator/) packs the same idea as v7, a 48-bit millisecond timestamp plus 80 random bits, into 26 Crockford base32 characters; it is not a UUID and does not carry version or variant bits, though it fits a 16-byte column. A [Nano ID](/tools/nano-id-generator/) is a 21-character random string with about 126 bits of randomness and no structure at all. Pick v4 when the ID must reveal nothing, v7 when insert order and index locality matter, and v5 when the same input must always produce the same ID.

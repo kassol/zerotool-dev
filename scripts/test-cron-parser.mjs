@@ -13,7 +13,9 @@
 // day of month OR day of week when both are restricted (cronie / POSIX, sources at that section),
 // a field starting with * counts as unrestricted, month always ANDed; runs years ahead (Jan 1st,
 // Feb 29 across 2100, Feb 30 never) within a time limit; non-existent DST times skipped; a step
-// after a single number (5/10) is an error; 4-language STRINGS have the same keys.
+// after a single number (5/10) is an error; 4-language STRINGS have the same keys; the English
+// guide (src/content/blog/cron-parser-guide/en.mdx): the examples table (description and next three
+// runs from 2026-10-01 08:00 local), the */35 runs, the quoted error messages and the DST example.
 //
 // Run: node scripts/test-cron-parser.mjs
 
@@ -188,6 +190,47 @@ if (stringsMatch) {
   eq('page error: six fields', E.parseCron('0 0 * * * *').error, { code: 'fields', n: 6 });
   eq('page error: @daily is one field', E.parseCron('@daily').error, { code: 'fields', n: 1 });
   eq('page error: hour 24', E.parseCron('0 24 * * *').error, { code: 'invalid', field: 1 });
+}
+
+// ---------- en guide ----------
+{
+  const guide = readFileSync(join(root, 'src/content/blog/cron-parser-guide/en.mdx'), 'utf8');
+  const S = new Function('return ' + source.match(/var STRINGS = (\{[\s\S]*?\n {6}\});/)[1])().en;
+  const from = new Date(2026, 9, 1, 8, 0);
+  const table = guide.slice(guide.indexOf('{/* cron-check: examples */}'));
+  const rows = [...table.split('\n\n')[0].matchAll(/^\| `([^`]+)` \| (.+?) \| (.+?) \|$/gm)];
+  eq('guide examples table has 10 rows', rows.length, 10);
+  for (const [, expr, desc, shown] of rows) {
+    const parsed = E.parseCron(expr);
+    eq('guide description ' + expr, E.humanizeCron(parsed.fields), desc);
+    let lastDay = '';
+    const text = runs(expr, from, 3).map((r) => {
+      const [d, t] = r.split(' ');
+      const out = d === lastDay ? t : r;
+      lastDay = d;
+      return out;
+    }).join(', ') || 'none';
+    eq('guide runs ' + expr, text, shown);
+  }
+  const has = (name, text) => check('guide: ' + name, guide.includes(text), text);
+  eq('*/35 runs', runs('*/35 * * * *', from, 3), ['2026-10-01 08:35', '2026-10-01 09:00', '2026-10-01 09:35']);
+  has('*/35 text', 'as 08:35, 09:00 and 09:35');
+  const err = (expr) => {
+    const e = E.parseCron(expr).error;
+    const names = [S.fMinute, S.fHour, S.fDay, S.fMonth, S.fWeekday];
+    if (e.code === 'fields') return S.errFields.replace('{n}', e.n);
+    return S[e.code === 'step' ? 'errStep' : 'errUnsupported'].replace('{token}', e.token).replace('{field}', names[e.field]);
+  };
+  has('5/10 message', '`' + err('5/10 * * * *') + '`');
+  has('1#2 message', '`' + err('0 0 * * 1#2').split('. ')[0] + '`');
+  has('six fields message', '`' + err('0 0 9 ? * MON-FRI') + '`');
+  eq('@daily is one field', E.parseCron('@daily').error, { code: 'fields', n: 1 });
+  eq('5-59/10', values('5-59/10 * * * *')[0], [5, 15, 25, 35, 45, 55]);
+  eq('guide: */2 day of month and Monday', runs('0 0 */2 * 1', from, 2), ['2026-10-05 00:00', '2026-10-19 00:00']);
+  check('guide: 30 4 1,15 * 5 description quoted', guide.includes('"' + E.humanizeCron(E.parseCron('30 4 1,15 * 5').fields) + '"'));
+  eq('guide: DST gap 2027-03-14', runs('30 2 * * *', new Date(2027, 2, 13, 0, 0), 2), ['2027-03-13 02:30', '2027-03-15 02:30']);
+  has('DST text', 'lists 13 March and then 15 March');
+  check('guide: noRuns string starts as quoted', S.noRuns.startsWith('No run time found'));
 }
 
 function range(a, b) { const out = []; for (let i = a; i <= b; i++) out.push(i); return out; }
