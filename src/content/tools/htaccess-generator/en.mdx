@@ -3,11 +3,11 @@ seoTitle: ".htaccess Generator — Free Online Tool | ZeroTool"
 seoDescription: "Generate Apache .htaccess configurations instantly. Force HTTPS, set browser caching, block directory listing, add custom redirects — no signup required."
 faqItems:
   - question: "What is a .htaccess file?"
-    answer: ".htaccess is a directory-level configuration file used by Apache web servers. It lets you override server settings per directory — including URL redirects, caching rules, access control, and security headers — without editing the main server config."
+    answer: ".htaccess is a directory-level configuration file used by Apache web servers. It lets you override server settings per directory — including URL redirects, caching rules, access control, and security headers — without editing the main server config. Apache only reads the directives that the AllowOverride setting for that directory permits."
   - question: "Will this work on Nginx or other servers?"
-    answer: ".htaccess is Apache-specific. Nginx uses a different config syntax and does not read .htaccess files. If you are on Nginx, these rules need to be translated into nginx.conf directives."
-  - question: "Is it safe to deny access to .htaccess itself?"
-    answer: "Yes, and it is recommended. Exposing .htaccess publicly can reveal server configuration details. The generated block uses <Files> with Require all denied (Apache 2.4, mod_authz_core) to prevent the file from being served; the Apache 2.2 Order / Deny directives work in 2.4 only with mod_access_compat."
+    answer: ".htaccess is Apache-specific (LiteSpeed also reads it). Nginx uses a different config syntax and does not read .htaccess files. If you are on Nginx, these rules need to be translated into nginx.conf directives."
+  - question: "Why does my site return 500 Internal Server Error after uploading the file?"
+    answer: "Apache answers 500 when .htaccess contains a directive that AllowOverride does not allow for that directory, for example Options -Indexes when Options is not in AllowOverride. The error log names the directive (\"Options not allowed here\"). Remove that line or ask your host to allow it."
   - question: "What is the difference between 301 and 302 redirects?"
     answer: "301 is a permanent redirect — browsers and search engines cache it and update links. 302 is a temporary redirect — clients check back each time. Use 301 for domain migrations or canonical URL changes, and 302 for short-term redirects."
   - question: "How do I use the generated .htaccess file?"
@@ -20,14 +20,87 @@ faqItems:
   <li>Configure options within each section (cache duration, www preference, etc.).</li>
   <li>The <code>.htaccess</code> output updates in real time at the bottom.</li>
   <li>Click <strong>Copy</strong> and paste into your <code>.htaccess</code> file.</li>
+  <li>Request a few URLs with <code>curl -I</code> and check the status code and <code>Location</code> header before you rely on the rules.</li>
 </ol>
 
 <h2>What Each Section Does</h2>
 <ul>
-  <li><strong>Force HTTPS:</strong> Adds a RewriteRule that issues a 301 redirect from any <code>http://</code> request to <code>https://</code>. Requires <code>mod_rewrite</code>.</li>
-  <li><strong>WWW Redirect:</strong> Enforces a single canonical form of your domain — either always with <code>www.</code> or always without it — preventing duplicate-content issues.</li>
+  <li><strong>Force HTTPS:</strong> Adds a RewriteRule that issues a 301 redirect from any <code>http://</code> request to <code>https://</code> on the same host. Requires <code>mod_rewrite</code>.</li>
+  <li><strong>WWW Redirect:</strong> Enforces a single canonical form of your domain — either always with <code>www.</code> or always without it — preventing duplicate-content issues. The target is always <code>https://</code>, even when Force HTTPS is off.</li>
   <li><strong>Directory Index:</strong> Sets the files Apache will serve when a directory URL is requested. Listing multiple files defines a fallback order.</li>
-  <li><strong>Browser Caching:</strong> Uses <code>mod_expires</code> to tell browsers how long to cache images, CSS/JS, and fonts. Reduces repeated requests and speeds up page loads.</li>
-  <li><strong>Security:</strong> Disables directory listing (<code>Options -Indexes</code>), blocks direct access to <code>.htaccess</code> and <code>.env</code>, and optionally adds security headers: <code>X-Content-Type-Options: nosniff</code>, <code>X-Frame-Options: SAMEORIGIN</code>, <code>Referrer-Policy</code>, and <code>X-XSS-Protection: 0</code>, which turns off the old browser XSS filter as the <a href="https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-xss-protection">OWASP HTTP Headers Cheat Sheet</a> advises.</li>
+  <li><strong>Browser Caching:</strong> Uses <code>mod_expires</code> to send <code>Expires</code> and <code>Cache-Control: max-age</code> for images, CSS/JS, and fonts. Each MIME type gets its own <code>ExpiresByType</code> line, so a file only gets the header if Apache serves it with one of the listed types.</li>
+  <li><strong>Security:</strong> Disables directory listing (<code>Options -Indexes</code>), blocks direct access to <code>.htaccess</code> and <code>.env</code> with <code>Require all denied</code> (Apache 2.4), and optionally adds security headers: <code>X-Content-Type-Options: nosniff</code>, <code>X-Frame-Options: SAMEORIGIN</code>, <code>Referrer-Policy</code>, and <code>X-XSS-Protection: 0</code>, which turns off the old browser XSS filter as the <a href="https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-xss-protection">OWASP HTTP Headers Cheat Sheet</a> advises.</li>
   <li><strong>Custom Redirect:</strong> Creates a single-path redirect using the Apache <code>Redirect</code> directive. Choose 301 (permanent) or 302 (temporary).</li>
 </ul>
+
+<h2>Example: the Default Output</h2>
+<p>With the default options (Force HTTPS, Directory Index, Browser Caching, and the first three Security boxes), the tool writes the file below. We loaded it into Apache 2.4.67 with <code>AllowOverride All</code> and requested a few paths: <code>/a.ttf</code> came back with <code>Cache-Control: max-age=31536000</code>, while <code>/.env</code>, <code>/.htaccess</code> and a directory without an index file returned 403.</p>
+
+```apache
+# Force HTTPS
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# Directory Index
+DirectoryIndex index.php index.html index.htm
+
+# Browser Caching
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/gif "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  ExpiresByType text/javascript "access plus 1 month"
+  ExpiresByType font/woff "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/ttf "access plus 1 year"
+  ExpiresByType application/x-font-ttf "access plus 1 year"
+  ExpiresByType application/vnd.ms-fontobject "access plus 1 year"
+</IfModule>
+
+# Security
+Options -Indexes
+<Files ".htaccess">
+  Require all denied
+</Files>
+<Files ".env">
+  Require all denied
+</Files>
+```
+
+<p>Both <code>font/ttf</code> and <code>application/x-font-ttf</code> are listed because the <code>mime.types</code> file shipped with Apache 2.4 maps <code>.ttf</code> to <code>font/ttf</code>, while older configurations use the <code>x-</code> name. With only the old name, TTF files get no caching header.</p>
+
+<h2>Example: Remove www and Move an Old Section</h2>
+<p>Turn on WWW Redirect with <strong>Remove www</strong>, then add a Custom Redirect from <code>/old-blog</code> to <code>https://example.com/blog/</code> (301). The tool adds these blocks after Force HTTPS:</p>
+
+```apache
+# Remove www
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+  RewriteRule ^(.*)$ https://%1%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# Custom Redirect
+Redirect 301 /old-blog https://example.com/blog/
+```
+
+<p>Each rule issues its own redirect, so a visitor who types <code>http://www.example.com/old-blog</code> follows three hops: to <code>https://www.example.com/old-blog</code>, then <code>https://example.com/old-blog</code>, then <code>https://example.com/blog/</code>. That works, but it is three round trips. <code>Redirect</code> also matches everything below the path and appends the rest: in our test, <code>/old-blog/2024/post</code> went to <code>https://example.com/blog//2024/post</code> with a double slash, while <code>/old-blogger</code> was not matched. Keep the trailing slash the same on both sides to avoid that.</p>
+
+<h2>Limits and Common Errors</h2>
+<ul>
+  <li><strong>500 Internal Server Error.</strong> Every directive in <code>.htaccess</code> must be allowed by the directory's <a href="https://httpd.apache.org/docs/2.4/mod/core.html#allowoverride">AllowOverride</a> setting. With <code>AllowOverride FileInfo</code>, the <code>Options -Indexes</code> line alone made Apache return 500 for the whole directory ("Options not allowed here" in the error log).</li>
+  <li><strong>403 on every page.</strong> <code>RewriteRule</code> in <code>.htaccess</code> needs <code>Options FollowSymLinks</code> or <code>SymLinksIfOwnerMatch</code>; with both off, Apache rejects every request that reaches the rule (error AH00670).</li>
+  <li><strong>Redirect loop behind a proxy or CDN.</strong> <code>%&#123;HTTPS&#125;</code> describes the connection Apache itself receives. If a load balancer terminates TLS and talks plain HTTP to Apache, the variable is always <code>off</code> and Force HTTPS redirects forever. In that setup, test the header your proxy sets instead, or force HTTPS at the proxy.</li>
+  <li><strong>Force www on subdomains.</strong> The rule adds <code>www.</code> to any host without it: <code>blog.example.com</code> becomes <code>www.blog.example.com</code>, and an IP address gets the prefix too. Use it only when the site answers on the bare domain alone.</li>
+  <li><strong>Exact file names only.</strong> The <code>.env</code> block protects a file named exactly <code>.env</code>; <code>.env.local</code> or <code>.env.production</code> are still served. Keep such files outside the document root.</li>
+  <li>One custom redirect per output; for several, copy the <code>Redirect</code> line and edit it. There is no Basic Auth, CORS or gzip/Brotli section.</li>
+</ul>
+<p>Nginx, Caddy and other servers ignore this file. To protect a directory with a password, create the credentials file with the <a href="/tools/htpasswd-generator/">htpasswd generator</a>; for a full set of response headers, the <a href="/tools/csp-header-generator/">CSP header generator</a> covers Content-Security-Policy.</p>

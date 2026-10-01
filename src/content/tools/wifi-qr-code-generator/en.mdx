@@ -1,67 +1,83 @@
 ---
-seoTitle: "WiFi QR Code Generator — Free, Browser-Based | ZeroTool"
-seoDescription: "Generate WiFi QR codes online. Enter SSID, password, encryption — guests scan to connect instantly. 100% client-side, no upload."
+seoTitle: "WiFi QR Code Generator with Printable Card | ZeroTool"
+seoDescription: "Make a WiFi QR code guests join in one scan. Escapes ; : , \" \\ correctly, checks the 32-byte name and password limits, and prints a card with the password."
 faqItems:
-  - question: "How does a WiFi QR code work?"
-    answer: "Phones encode Wi-Fi credentials as a string formatted like WIFI:T:WPA;S:<ssid>;P:<password>;;. Modern Camera apps on iOS 11+ and Android 10+ read it natively and offer to join the network in one tap."
-  - question: "Is my Wi-Fi password safe?"
-    answer: "Yes. The QR code is generated entirely in your browser using a local QR library; nothing is uploaded to any server."
-  - question: "Which encryption types are supported?"
-    answer: "WPA / WPA2 / WPA3 (treated identically in the QR string), WEP for legacy networks, and 'None' for open Wi-Fi without a password."
-  - question: "Why doesn't the QR code work on my phone?"
-    answer: "Older devices may need a dedicated QR-scanner app. If you plan to print the code or stick it on a wall, choose error correction level H so partial dirt or wear won't prevent scanning."
-  - question: "Can I print or share this QR code?"
-    answer: "Yes. Click Download PNG, then drop the image into a flyer, business card, or printed sticker. Use Copy Wi-Fi String if you want to embed the raw payload elsewhere."
+  - question: "Is my Wi-Fi password sent anywhere?"
+    answer: "No. The string and the QR code are built in your browser with the node-qrcode library that this site serves from its own /vendor folder. The page stores nothing you type, and this tool page loads neither Google Analytics nor AdSense, because it handles a network password."
+  - question: "Which security option should I pick?"
+    answer: "WPA / WPA2 / WPA3 for almost every home and office router; it writes T:WPA, which the WPA3 specification uses for every password network. Pick WPA3 only if the router runs WPA3-Personal with no WPA2 fallback: the code adds R:1, which tells phones that support it to use WPA3 for this network from the first connection. Pick No password for an open network."
+  - question: "Why does the tool refuse a WPA network without a password?"
+    answer: "Android's own parser (WifiUriParser) throws such a code away as an invalid format, so phones would show nothing or an error. If the network really has no password, choose No password (open)."
+  - question: "My network name is in Chinese, Japanese or Korean. Will it work?"
+    answer: "Yes, if the name fits in 32 bytes of UTF-8, which is about 10 CJK characters, and the router broadcasts the name in UTF-8. The byte counter next to the field shows the length, and the tool warns above 32."
+  - question: "Can a laptop use the code?"
+    answer: "A laptop without a QR scanner needs the name and password typed. That is what the printable card is for: it prints both under the code in a monospaced font, with spaces shown as ␣."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Enter the network name (<strong>SSID</strong>) — exactly as it appears in your Wi-Fi settings, including capitalization and spaces.</li>
-  <li>Enter the <strong>password</strong>. Click the eye icon to reveal it for verification.</li>
-  <li>Pick the <strong>encryption</strong> type your router uses (WPA covers WPA / WPA2 / WPA3).</li>
-  <li>Optionally tick <strong>Hidden network</strong> if your SSID is not broadcast.</li>
-  <li>Click <strong>Generate QR Code</strong>, then scan it with any phone camera to test.</li>
-  <li>Click <strong>Download PNG</strong> to save it for printing or sharing.</li>
-</ol>
+## How to Make a WiFi QR Code
 
-<h2>The Wi-Fi QR String Format</h2>
+1. Type the **network name (SSID)** exactly as it appears in the Wi-Fi list, including capital letters and spaces. The counter on the right shows its length in bytes.
+2. Type the **password**. The eye button shows it, so you can check it against the router setting.
+3. Pick the **security**: WPA / WPA2 / WPA3 for most routers, WPA3 only, WEP for very old routers, or No password. Tick **Hidden network** if the router does not broadcast the name.
+4. The code redraws as you type. Read the warnings under it, then press **Download PNG** or **Download SVG**.
+5. Scan the result with a phone before you print it, or check the image with the [QR Code Reader](/tools/qr-code-decoder/).
+6. For a counter, a door or a guest room, fill in **Printable card** and download the card or print it.
 
-<p>Wi-Fi QR codes follow a standard plain-text format that smartphone cameras parse natively:</p>
+## What the Code Contains
 
-<pre><code>WIFI:T:WPA;S:&lt;ssid&gt;;P:&lt;password&gt;;;</code></pre>
+A Wi-Fi QR code holds one line of text that starts with `WIFI:`. The format comes from the ZXing project's [Barcode Contents](https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11) page, and the Wi-Fi Alliance later wrote it into section 7 of the [WPA3 Specification v3.5](https://www.wi-fi.org/system/files/WPA3%20Specification%20v3.5.pdf) as the WIFI URI. The tool writes the fields in the order of that specification:
 
-<ul>
-  <li><code>T</code> — encryption type (<code>WPA</code>, <code>WEP</code>, or <code>nopass</code>)</li>
-  <li><code>S</code> — SSID (network name)</li>
-  <li><code>P</code> — password (omit when <code>T</code> is <code>nopass</code>)</li>
-  <li><code>H:true</code> — optional flag for hidden networks</li>
-  <li><code>;;</code> — closing terminator</li>
-</ul>
+| Field | Written as | Meaning |
+|---|---|---|
+| `T` | `WPA`, `WEP` or `nopass` | Security type. The WPA3 specification sets `WPA` for every password network, WPA2 and WPA3 alike. |
+| `R` | `1` (WPA3 only) | Transition Disable bitmap, bit 0 = WPA3-Personal: phones that support it will not fall back to WPA2 on this network. |
+| `S` | the name | SSID, escaped. |
+| `H` | `true` | Hidden network, so the phone also probes for a name that is not broadcast. |
+| `P` | the password | Escaped; left out for an open network. |
 
-<p>Special characters (<code>{'\\'}</code>, <code>;</code>, <code>,</code>, <code>{'"'}</code>, <code>:</code>) are auto-escaped with a leading backslash so passwords containing punctuation work correctly.</p>
+ZXing escapes five characters with a backslash: `\`, `;`, `,`, `"` and `:`. Android's parser in the AOSP source ([WifiUriParser](https://android.googlesource.com/platform/packages/modules/Wifi/+/refs/heads/main/framework/java/android/net/wifi/WifiUriParser.java)) removes those backslashes again. When Android shares a network from Settings, it writes the same format (AOSP `WifiNetworkConfig.getQrCode()`).
 
-<h2>Common Use Cases</h2>
-<ul>
-  <li><strong>Cafés, restaurants, Airbnbs:</strong> print the QR on a counter card so guests skip typing.</li>
-  <li><strong>Office guest networks:</strong> stick the code on a meeting-room wall.</li>
-  <li><strong>Home setup:</strong> save it to your phone for quick sharing with visitors.</li>
-  <li><strong>IoT onboarding:</strong> bootstrap smart-home devices that scan QR codes during pairing.</li>
-</ul>
+## Examples
 
-<h2>Example: Special Characters in the SSID and Password</h2>
+{/* wqg-check: {"ssid":"Guest-WiFi","password":"welcome-2026","payload":"WIFI:T:WPA;S:Guest-WiFi;P:welcome-2026;;","warnings":[],"version":3} */}
+**A guest network.** Name `Guest-WiFi`, password `welcome-2026`, WPA. The tool writes `WIFI:T:WPA;S:Guest-WiFi;P:welcome-2026;;` and reports version 3 (29 × 29 modules) at level M. With the default 1024 px setting, the PNG is 999 × 999 px: 37 modules including the 4-module quiet zone, 27 px each.
 
-<p>SSID <code>{"Cafe;Guest"}</code>, password <code>{"p@ss:\"word\",1"}</code>, WPA. The tool writes:</p>
+{/* wqg-check: {"ssid":"Cafe;Guest","password":"p@ss:w,d","payload":"WIFI:T:WPA;S:Cafe\\;Guest;P:p@ss\\:w\\,d;;","warnings":["wEscape","wEscape"]} */}
+**Punctuation.** Name `Cafe;Guest`, password `p@ss:w,d`. The string becomes `WIFI:T:WPA;S:Cafe\;Guest;P:p@ss\:w\,d;;`. Without the backslash, a phone reads the name as `Cafe`, because `;` ends a field. The tool also notes that a reader following only the WPA3 specification would not remove the backslashes: the specification percent-encodes `;` instead, and Android does not decode percent signs.
 
-<pre><code>{`WIFI:T:WPA;S:Cafe\\;Guest;P:p@ss\\:\\"word\\"\\,1;;`}</code></pre>
+{/* wqg-check: {"ssid":"Home","password":"correct horse","security":"WPA3","payload":"WIFI:T:WPA;R:1;S:Home;P:correct horse;;","warnings":[]} */}
+**WPA3 only.** Name `Home`, password `correct horse`, WPA3 only: `WIFI:T:WPA;R:1;S:Home;P:correct horse;;`, the same string as example 2 in section 7.3 of the specification. The 8–63 character check is skipped, because WPA3's SAE handshake accepts any password.
 
-<p>Each <code>{";"}</code>, <code>{":"}</code>, <code>{"\""}</code>, <code>{","}</code> and <code>{"\\"}</code> gets a backslash, as described in <a href="https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11" target="_blank" rel="noopener">ZXing Barcode Contents</a>. Reading the code back with the site's <a href="/tools/qr-code-decoder/">QR Code Reader</a> returns the original SSID and password.</p>
+{/* wqg-check: {"ssid":"Bistro 5G","password":"1234567","warnings":["wWpaLength"]} */}
+**A password that cannot be right.** `1234567` on a WPA network gets a warning: a WPA2 passphrase is 8 to 63 printable ASCII characters, or the key itself as 64 hex digits (the limits in [hostapd's sample configuration](https://w1.fi/cgit/hostap/plain/hostapd/hostapd.conf)). The code is still drawn, in case the router runs WPA3 only.
 
-<h2>Before You Print</h2>
+{/* wqg-check: {"ssid":"咖啡店二楼访客无线网络","password":"kafei2026","warnings":["wSsidBytes","wSsidUtf8"],"bytes":33} */}
+**A name that is too long.** `咖啡店二楼访客无线网络` is 11 characters but 33 bytes in UTF-8. An SSID is at most 32 bytes (IEEE 802.11), so no router broadcasts that name, and the tool says so instead of drawing a code that can never connect.
 
-<ul>
-  <li><strong>SSID length is counted in bytes.</strong> IEEE 802.11 allows 32 bytes; a Chinese, Japanese or Korean character takes 3 bytes in UTF-8. The tool counts UTF-8 bytes and warns above 32: an 11-character CJK name is 33 bytes and gets the warning, because no router can broadcast it.</li>
-  <li><strong>Password length.</strong> A WPA2 passphrase is 8 to 63 printable ASCII characters, or the 64-hex-digit key itself (IEEE 802.11, Annex J); the tool warns outside that range. WPA3-only networks accept other passwords, so the code is still generated. A WEP key is 5 or 13 characters, or 10 or 26 hex digits.</li>
-  <li><strong>Quiet zone.</strong> The PNG has a 4-module white margin, the quiet zone ISO/IEC 18004 requires. Keep it when you crop the image for a card.</li>
-  <li><strong>Hidden networks</strong> add <code>{"H:true"}</code> so the phone also searches for a network that does not broadcast its name.</li>
-  <li><strong>The password is in the code in plain text.</strong> Anyone who photographs the card can read it with any QR reader. Print codes for a guest network, not the network your own devices use.</li>
-</ul>
+## Which Phones Read It
+
+- **Android.** On Android, Settings › Network & internet › Internet › your network › Share shows the network as a QR code ([Google help](https://support.google.com/android/answer/9075847)). Samsung's [connection guide](https://www.samsung.com/us/support/answer/ANS10002546/) has a QR code icon on the Wi-Fi screen for scanning one. The AOSP parser accepts `WPA`, `SAE`, `WEP` and `nopass`, reads `R:1`, and rejects a password network with no `P` field.
+- **iPhone.** Apple's iPhone User Guide ([Find and share your Wi-Fi password](https://support.apple.com/guide/iphone/find-and-share-your-wi-fi-password-iph96e6aa9bb/ios)) has a Show Network QR Code button in the Passwords app that others scan to join. Apple does not publish which `WIFI:` fields the Camera reads, and we have not tested an iPhone for this page.
+- **Other brands.** We found no Xiaomi or Huawei documentation of the fields they accept. Test with the phones your guests use.
+
+## The Printable Card
+
+The card is 100 mm wide. Its height grows with long names and passwords, which wrap and are never cut. The PNG is 1200 px wide, about 305 dpi, and each module is a whole number of pixels. The SVG keeps its 100 mm size when printed. Names and passwords use a monospaced font, and spaces in a password print as `␣`. Untick **Print the password on the card** to print the code and name only.
+
+A printed password belongs to a guest network. Anyone who photographs the card can read the password with any QR reader, so keep the network your own devices use off the card.
+
+## How It Differs from Other Generators
+
+We ran the same inputs through other generators on 2026-10-01:
+
+- [qifi.org](https://qifi.org/) runs in the browser and escapes correctly. With the name `咖啡店二楼访客无线网络`, it writes one byte per character, the low byte of each UTF-16 unit, so zxing-cpp read the name back as `紡洛|ｿ｢狒Qﾜ`. It gave no length warning.
+- [GenQRCode](https://genqrcode.com/generator/wifi) sends the password in a JSON request to its `/preview` endpoint before it shows the preview.
+
+This tool keeps the name in UTF-8, escapes it the way Android's parser expects, checks the 32-byte and password limits before drawing, and uploads nothing.
+
+## Limits
+
+- No WPA2-Enterprise (802.1X) fields. ZXing lists `E`, `A`, `I` and `PH2` for them, the WPA3 specification does not define them, and phones that support them differ.
+- No SAE-PK public key (`K`) or SAE password identifier (`I`).
+- Hex-looking names such as `CAFE1234` are written as typed. ZXing's old Android app read an all-hex SSID as raw bytes and suggested quotes, but the current branch of Android's WifiUriParser keeps the quotes as part of the name.
+- The quiet zone is fixed at 4 modules, the minimum ISO/IEC 18004 requires. For a code for a link or text, use the [QR Code Generator](/tools/qr-code-generator/). For a strong password to print, use the [Password Generator](/tools/password-generator/).

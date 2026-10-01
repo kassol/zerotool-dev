@@ -41,8 +41,33 @@ faqItems:
 <p>A field value containing a comma is automatically quoted:</p>
 <pre><code>{`name,description\nWidget,"Small, round widget"`}</code></pre>
 
-<h2>RFC 4180 Compliance</h2>
+<h3>Arrays, missing keys and quotes</h3>
+<p>Input JSON with an array, a two-level nested object, a missing key and a value with quotes:</p>
+<pre><code>{`[{"id":1,"name":"Ann","tags":["a","b"],"address":{"city":"Paris","geo":{"lat":48.85}}},
+ {"id":2,"name":"Bo, Jr.","note":"says \\"hi\\""}]`}</code></pre>
+<p>Output CSV with flatten on:</p>
+<pre><code>{`id,name,tags,address.city,address.geo.lat,note
+1,Ann,"[""a"",""b""]",Paris,48.85,
+2,"Bo, Jr.",,,,"says ""hi"""`}</code></pre>
+<p>Flattening follows nested objects to any depth (<code>address.geo.lat</code>). Arrays are not split into columns: <code>tags</code> is written as the JSON text <code>["a","b"]</code>, quoted because it contains <code>"</code>. The header is the union of the keys of all rows, in the order they first appear, so <code>note</code> comes last and row 1 leaves it empty. With flatten off, <code>address</code> becomes one column holding <code>{`{"city":"Paris","geo":{"lat":48.85}}`}</code>.</p>
+
+<h3>Semicolon delimiter for European Excel</h3>
+<p>Excel in locales that use a decimal comma (German, French and others) reads <code>;</code> as the list separator. <code>{`[{"sku":"A-1","price":9.5,"active":true},{"sku":"B-2","price":null}]`}</code> with the semicolon delimiter gives <code>sku;price;active</code>, <code>A-1;9.5;true</code> and <code>B-2;;</code>. Numbers keep the JSON decimal point, <code>true</code> is written as text, and <code>null</code> becomes an empty field. The Tab delimiter gives TSV, which pastes straight into spreadsheet cells.</p>
+
+<h2>Quoting and Line Breaks</h2>
 <p>
-  This tool follows the RFC 4180 CSV standard. Fields containing the delimiter, double quotes, or line breaks
-  are enclosed in double quotes. A literal double-quote is escaped as <code>""</code>.
+  Quoting follows <a href="https://www.rfc-editor.org/rfc/rfc4180#section-2" target="_blank" rel="noopener">RFC 4180 §2</a>: a field that contains the delimiter, a double quote, a line feed or a carriage return
+  is enclosed in double quotes, and a literal double quote is written as <code>""</code>. Rows are separated
+  by a line feed (LF), not the CR LF that the RFC describes; Excel, LibreOffice, pandas and Python's <code>csv</code>
+  module all read both.
 </p>
+
+<h2>Limits</h2>
+<ul>
+  <li>The input must be a JSON array. A single object gives "Input must be a JSON array of objects"; wrap it in <code>[ ]</code>. Items that are not objects, such as <code>[1,"two",null]</code>, become a single <code>value</code> column.</li>
+  <li>An empty nested object (<code>{`"meta":{}`}</code>) produces no column when flatten is on.</li>
+  <li>Integers above 2<sup>53</sup> lose precision when the JSON is parsed: <code>12345678901234567890</code> is written as <code>12345678901234567000</code>. Store long IDs as strings in the JSON.</li>
+  <li>Values starting with <code>=</code>, <code>+</code>, <code>-</code> or <code>@</code> are written unchanged, and a spreadsheet may run them as formulas (<a href="https://owasp.org/www-community/attacks/CSV_Injection" target="_blank" rel="noopener">OWASP: CSV Injection</a>). If the data comes from users, the CSV mode of <a href="/tools/string-escape/">String Escape</a> can add formula protection to single values.</li>
+  <li>The downloaded file is UTF-8 without a byte order mark. Excel on Windows may then show accented or CJK text as garbled characters when you double-click the file; use Data → From Text/CSV and choose UTF-8, or open it in another program.</li>
+</ul>
+<p>To turn CSV back into JSON, use the <a href="/tools/csv-json/">CSV to JSON Converter</a>.</p>

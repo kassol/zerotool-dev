@@ -5,13 +5,13 @@ faqItems:
   - question: "What's the difference between Open Graph and Twitter Card?"
     answer: "Open Graph (og:) is the social-preview protocol Facebook introduced; LinkedIn, Slack, Discord, iMessage, and most platforms now read it. Twitter (X) added its own twitter:* tags with card-type controls. When both are present, Twitter prefers its own tags and falls back to Open Graph for missing fields, so it is normal practice to ship both."
   - question: "What size should the og:image be?"
-    answer: "1200x630 px (1.91:1) is the safe default for Facebook, LinkedIn, and Discord. Twitter's summary_large_image expects 2:1, and 1200x600 works fine. Keep the file under 5 MB and use PNG or JPEG. Most platforms also respect og:image:width and og:image:height when serving the preview."
+    answer: "1200x630 px (1.91:1) is the common default for Facebook, LinkedIn, and Discord. X's documentation gives summary_large_image a 2:1 ratio (minimum 300x157, maximum 4096x4096) and a file under 5 MB in JPG, PNG, WEBP or GIF; SVG is not supported. og:image:width and og:image:height let a crawler lay out the card before it has downloaded the image."
   - question: "Do I need both Open Graph and Schema.org JSON-LD?"
     answer: "They serve different consumers. Open Graph powers social-platform unfurl previews. Schema.org JSON-LD powers Google rich results and crawler understanding. Their overlap (title, description, image) is small. If you want both rich snippets in search and rich previews on social, ship both — they cost almost nothing extra."
   - question: "Does this tool upload my image?"
     answer: "No. The image URL is only inserted as a string into the generated meta block and used as an img src reference inside the preview. ZeroTool uploads nothing. To draw the preview, your browser loads the image from that URL, so the image's host sees the request."
-  - question: "Why does canonical URL matter for Open Graph?"
-    answer: "Canonical URL is shared as og:url. Without it, social platforms guess from the request URL — which often differs (utm parameters, trailing slash, www vs apex). A wrong canonical fragments share counts and breaks deduplication when the same article is reachable through multiple URLs."
+  - question: "Why is the Canonical URL field written twice?"
+    answer: "The tool uses it for two separate tags: <link rel=\"canonical\"> for search engines and og:url, which the Open Graph protocol defines as the object's permanent ID. Without og:url, a platform uses the shared URL as is, so the same page with and without utm parameters or a trailing slash can collect its shares separately. If your og:url must differ from the canonical, edit that line after copying."
 ---
 
 <h2>How to Use</h2>
@@ -32,6 +32,55 @@ faqItems:
   <li><strong>Schema.org JSON-LD</strong> — minimal <code>WebPage</code>, <code>Article</code>, <code>Product</code>, or <code>Organization</code> block (name / description / url / image).</li>
 </ul>
 
+<h2>Example: the Pre-filled Output</h2>
+<p>The form opens with sample values for this site. With nothing changed, the copied block is:</p>
+
+```html
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZeroTool — Free browser-based dev utilities</title>
+<meta name="description" content="A growing library of one-task tools that run entirely in your browser. No accounts, no uploads.">
+<link rel="canonical" href="https://zerotool.dev/">
+<meta name="author" content="ZeroTool Workshop">
+<meta name="keywords" content="dev tools, meta tags, open graph, twitter card">
+<meta name="theme-color" content="#5b3d20">
+<meta name="robots" content="index, follow">
+
+<!-- Open Graph / Facebook -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="ZeroTool — Free browser-based dev utilities">
+<meta property="og:description" content="A growing library of one-task tools that run entirely in your browser. No accounts, no uploads.">
+<meta property="og:url" content="https://zerotool.dev/">
+<meta property="og:site_name" content="ZeroTool">
+<meta property="og:image" content="https://zerotool.dev/og/json-formatter.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="ZeroTool cover image">
+<meta property="og:locale" content="en_US">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@zerotooldev">
+<meta name="twitter:creator" content="@zerotooldev">
+<meta name="twitter:title" content="ZeroTool — Free browser-based dev utilities">
+<meta name="twitter:description" content="A growing library of one-task tools that run entirely in your browser. No accounts, no uploads.">
+<meta name="twitter:image" content="https://zerotool.dev/og/json-formatter.png">
+```
+
+<p>It contains the four properties <a href="https://ogp.me/">ogp.me</a> requires on every page (<code>og:title</code>, <code>og:type</code>, <code>og:image</code>, <code>og:url</code>), and <code>og:image:alt</code>, which the protocol says a page with <code>og:image</code> should have. <code>twitter:image</code> repeats the og:image because the Twitter image field was left empty. Replace every sample value before you publish; the <code>keywords</code> tag can go, since Google does not use it.</p>
+
+<h2>Example: a Blog Post With JSON-LD</h2>
+<p>Enter a title such as <code>{'Build "Notes" & tips'}</code>, choose og:type <strong>article</strong> and Schema.org type <strong>Article</strong>, and fill in the author. Quotes, ampersands and angle brackets are escaped in every attribute, so <code>og:title</code> becomes <code>{'content="Build &quot;Notes&quot; &amp; tips"'}</code>. The JSON-LD block gets <code>name</code>, <code>description</code>, <code>url</code>, <code>image</code> and an <code>author</code> object of type <code>Person</code>, and any <code>&lt;</code> in a value is written as <code>\u003c</code> so text such as a closing script tag cannot break the page you paste it into.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>Minimal JSON-LD.</strong> The block has only name, description, url, image and (for Article) author. Google's Article guide recommends <code>headline</code> and <code>datePublished</code>, and a Product is eligible for product rich results only with <code>offers</code>, <code>review</code> or <code>aggregateRating</code>; add those by hand and check the page in Google's Rich Results Test.</li>
+  <li><strong>Card and type options without their fields.</strong> The <code>player</code> and <code>app</code> card types need <code>twitter:player</code> or <code>twitter:app:&#42;</code> tags the tool does not write, and <code>product</code> is not one of the og:type values defined on ogp.me. There are no <code>article:published_time</code>, <code>og:image:type</code> or hreflang tags.</li>
+  <li><strong>robots is always written.</strong> <code>index, follow</code> is what crawlers assume anyway; delete the line unless you switch to noindex or nofollow.</li>
+  <li><strong>Counters are guides.</strong> The 60 and 160 character counters are rough limits; search results cut titles by pixel width, not a fixed character count.</li>
+  <li><strong>Previews are approximations</strong> of each platform's card layout. When Canonical URL is empty, the preview invents a domain from the site name. To see the real card, share the URL or use the platform's own debugger after the page is live.</li>
+  <li><strong>Network:</strong> your tags stay in the browser, but the previews load the image URLs you enter, so those image hosts see a request from you.</li>
+</ul>
+
 <h2>Image Specs Cheat Sheet</h2>
 <table>
   <thead>
@@ -40,7 +89,7 @@ faqItems:
   <tbody>
     <tr><td>Facebook / LinkedIn / Discord</td><td>1200x630</td><td>1.91:1</td></tr>
     <tr><td>Twitter summary_large_image</td><td>1200x600</td><td>2:1</td></tr>
-    <tr><td>Twitter summary</td><td>400x400</td><td>1:1</td></tr>
+    <tr><td>Twitter summary</td><td>at least 144x144</td><td>1:1</td></tr>
     <tr><td>Pinterest</td><td>1000x1500</td><td>2:3</td></tr>
   </tbody>
 </table>
