@@ -89,5 +89,13 @@ check('empty input throws No data', threw);
   ['en', 'zh', 'ja', 'ko'].forEach((l) => check('addedColumns has {cols} in ' + l, S[l].addedColumns.includes('{cols}')));
 }
 
+// ---------- BOM and CR inside quoted fields ----------
+eq('UTF-8 BOM is not part of the first header', md('\uFEFFname,note\nAnn,x').markdown.split('\n')[0], '| name | note |');
+eq('CRLF inside a quoted field becomes one space', md('name,note\r\nAnn,"line1\r\nline2"\r\n').markdown.split('\n')[2], '| Ann  | line1 line2 |');
+eq('lone CR inside a quoted field becomes a space', md('a\n"x\ry"').markdown.split('\n')[2], '| x y |');
+eq('en page example (center)', md('id,city,score\n1,東京,9.5\n2,"Paris, FR",\n3,Berlin', 'center').markdown.split('\n'), [
+  '| id  | city      | score |', '| :---: | :---------: | :-----: |', '| 1   | 東京        | 9.5   |', '| 2   | Paris, FR |       |', '| 3   | Berlin    |       |',
+]);
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
