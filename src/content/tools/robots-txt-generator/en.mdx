@@ -3,25 +3,63 @@ seoTitle: "Robots.txt Generator — Free Online Tool | ZeroTool"
 seoDescription: "Generate a valid robots.txt file instantly. Configure User-agent rules, Allow/Disallow paths, and Sitemap URL — no sign-up required."
 faqItems:
   - question: "What is a robots.txt file?"
-    answer: "robots.txt is a plain-text file placed at the root of a website (e.g. https://example.com/robots.txt) that tells web crawlers which pages or directories they are allowed or not allowed to access. It follows the Robots Exclusion Protocol."
+    answer: "robots.txt is a plain-text file placed at the root of a website (e.g. https://example.com/robots.txt) that tells web crawlers which pages or directories they are allowed or not allowed to access. It follows the Robots Exclusion Protocol, standardized as RFC 9309."
   - question: "Does robots.txt block all bots?"
     answer: "No. robots.txt is a convention, not a security measure. Well-behaved crawlers like Googlebot and Bingbot respect it, but malicious bots may ignore it entirely. Use server-level access controls to truly restrict content."
   - question: "What does 'Disallow: /' mean?"
-    answer: "It tells the specified User-agent to not crawl any page on the site. Using 'User-agent: *' combined with 'Disallow: /' blocks all compliant bots from the entire site."
+    answer: "It tells the specified User-agent to not crawl any page on the site. Using 'User-agent: *' combined with 'Disallow: /' blocks all compliant bots from the entire site. This is also the tool's starting state, so change it before you publish the file."
   - question: "Can I have multiple User-agent blocks?"
-    answer: "Yes. You can define separate rule sets for different crawlers. Click '+ Add User-agent Block' to add more blocks. Each block can have its own Allow/Disallow rules."
+    answer: "Yes. Click '+ Add User-agent Block' to add more. A crawler follows only the most specific group that names it, so a Googlebot block replaces the * block for Googlebot instead of adding to it; repeat any shared rules in both blocks."
   - question: "Where should I put the Sitemap directive?"
-    answer: "The Sitemap directive should appear at the end of your robots.txt file. It tells search engines where to find your XML sitemap, which helps them discover all pages you want indexed."
+    answer: "Anywhere in the file. Sitemap lines are not part of any User-agent group, so their position does not matter; the tool writes the line at the end. It tells crawlers where your XML sitemap is, which helps them discover the pages you want crawled."
 ---
 
 <h2>How to Use</h2>
 <ol>
-  <li>Choose a <strong>User-agent</strong> from the dropdown (<code>*</code> targets all bots) or type a custom bot name.</li>
-  <li>Click <strong>+ Allow</strong> or <strong>+ Disallow</strong> to add path rules.</li>
+  <li>Choose a <strong>User-agent</strong> from the dropdown (<code>&#42;</code> targets all bots, plus Googlebot and Bingbot) or pick <strong>Custom...</strong> and type a bot name such as <code>GPTBot</code>.</li>
+  <li>Click <strong>+ Allow</strong> or <strong>+ Disallow</strong> to add path rules, and type a path that starts with <code>/</code>.</li>
   <li>Optionally add more User-agent blocks for per-bot configuration.</li>
   <li>Enter your <strong>Sitemap URL</strong> if you have one.</li>
   <li>The robots.txt output updates in real time — click <strong>Copy</strong> to copy it.</li>
 </ol>
+<p>The tool opens with one block, <code>User-agent: &#42;</code> plus <code>Disallow: /</code>, which blocks the whole site. Edit or remove that rule first unless blocking everything is what you want, for example on a staging server.</p>
+
+<h2>Example: a Typical Site File</h2>
+<p>Keep the <code>&#42;</code> block, change its rule to Disallow <code>/admin/</code> and add Allow <code>/admin/public/</code>; add a second block with the custom name <code>GPTBot</code> and Disallow <code>/</code>; enter the sitemap URL. The output is:</p>
+
+```text
+User-agent: *
+Disallow: /admin/
+Allow: /admin/public/
+
+User-agent: GPTBot
+Disallow: /
+
+Sitemap: https://example.com/sitemap.xml
+```
+
+<p>Under <a href="https://www.rfc-editor.org/rfc/rfc9309">RFC 9309</a> the longest matching path wins, whatever the line order, and when an Allow and a Disallow match with the same length the Allow should win. So <code>/admin/public/help</code> may be crawled, <code>/admin/users</code> may not, and GPTBot may fetch nothing. Scrapy's Protego parser returned exactly that. Python 3.12's <code>urllib.robotparser</code> did not: it applies the first matching line in file order and reported <code>/admin/public/help</code> as blocked. If one of your own scripts uses it, put the Allow line above the Disallow line; RFC-compliant crawlers read both orders the same way.</p>
+
+<h2>Example: Allow One Crawler Only</h2>
+
+```text
+User-agent: *
+Disallow: /
+
+User-agent: Googlebot
+Disallow:
+```
+
+<p>Build it with two blocks: the default <code>&#42;</code> block with Disallow <code>/</code>, and a Googlebot block with no rules. A block without rules gets an empty <code>Disallow:</code> line, which allows everything. Googlebot reads only its own group, so the <code>&#42;</code> rule does not apply to it.</p>
+
+<h2>Limits and Things robots.txt Does Not Do</h2>
+<ul>
+  <li><strong>No validation.</strong> Paths are copied as typed. RFC 9309 paths start with <code>/</code>; a value such as <code>admin/</code> is not a valid rule. Empty paths are written as empty rules.</li>
+  <li><strong>One Sitemap line.</strong> For several sitemaps, copy the line and add the others by hand. <code>Crawl-delay</code> and other non-standard lines are not generated; Google ignores <code>Crawl-delay</code>.</li>
+  <li><strong>Wildcards</strong> <code>&#42;</code> and <code>$</code> are part of RFC 9309 and can be typed into a path, for example <code>Disallow: /&#42;?sessionid=</code>; the tool does not check them.</li>
+  <li><strong>Blocking is not removal.</strong> A disallowed URL can still appear in search results without a description if other pages link to it. To keep a page out of results, let it be crawled and send <code>noindex</code>, which the <a href="/tools/meta-tag-generator/">meta tag generator</a> can write.</li>
+  <li><strong>Size and errors.</strong> RFC 9309 asks crawlers to parse at least the first 500 KiB. If the file returns a 4xx status, crawlers may crawl everything; if it returns 5xx or cannot be reached, they should assume everything is disallowed.</li>
+</ul>
 
 <h2>Common robots.txt Patterns</h2>
 <ul>
@@ -32,5 +70,5 @@ faqItems:
 </ul>
 <p>
   After generating your file, upload it to your web server root so it is accessible at
-  <code>https://yourdomain.com/robots.txt</code>.
+  <code>https://yourdomain.com/robots.txt</code>. Each host and protocol needs its own file: rules at <code>example.com</code> do not cover <code>blog.example.com</code>.
 </p>
