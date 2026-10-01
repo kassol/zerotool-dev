@@ -1,90 +1,107 @@
 ---
-seoTitle: "htpasswd 生成ツール — ブラウザ完結・安全 | ZeroTool"
-seoDescription: "Apache htpasswdパスワードハッシュをオンラインで生成。bcrypt・MD5（APR1）・SHA1・平文に対応。ハッシュ計算はすべてブラウザ内で完結し、パスワードは送信されません。"
+seoTitle: "htpasswd 生成（Basic認証）| ZeroTool"
+seoDescription: "Basic認証用の .htpasswd の行を bcrypt $2y$・SHA-512 crypt・APR1 などで生成。Apache と Nginx で読める形式を表示し、既存ファイルでのパスワード照合やユーザーの追加・削除もできます。"
 faqItems:
-  - question: "htpasswdファイルとは何ですか？"
-    answer: "htpasswdファイルは、Apache HTTP Server（とnginxのモジュール）がHTTP基本認証のユーザー名とハッシュ済みパスワードのペアを保存するために使用します。各行のフォーマットはusername:hashed_passwordです。"
-  - question: "どのアルゴリズムを使うべきですか？"
-    answer: "bcrypt（デフォルト）を推奨します。コストファクターが設定可能で、ブルートフォース攻撃を大幅に遅らせる最も安全なオプションです。MD5（APR1）は広く使われていますが弱いです。SHA1と平文は安全でなく、新規環境では避けてください。"
-  - question: "bcryptのコストファクターとは何ですか？"
-    answer: "コストファクター（4〜12）は計算ラウンド数を制御します。値が高いほど計算に時間がかかり、ブルートフォース攻撃のコストが増します。デフォルトの10はセキュリティとサーバー性能のバランスが取れた値です。"
-  - question: "パスワードはサーバーに送信されますか？"
-    answer: "いいえ。bcryptを含むすべてのハッシュ計算は、ブラウザのJavaScriptで完結します。パスワードはこのページ外に送信されません。"
-  - question: "バッチモードとは何ですか？"
-    answer: "バッチモードでは、複数のuser:passwordペアのhtpasswdラインを一度に生成できます。コロン区切りで1行に1ペアを入力し「バッチ生成」をクリックします。"
-  - question: "生成したhtpasswdラインはどう使いますか？"
-    answer: "生成されたラインをコピーして.htpasswdファイルに追記するか、ファイルの内容として使用します。ApacheではAuthUserFileでファイルを指定し、AuthType Basicを設定します。"
+  - question: "どの形式を選べばよいですか？"
+    answer: "サーバーが読めるなら bcrypt $2y$ です。Apache 2.4 はどの OS でも読めます。Nginx は OS の crypt() に任せるため、Ubuntu 18.04 や CentOS 7 では bcrypt が通りません（2026-10-01 に Docker で確認）。その場合は SHA-512 crypt を選びます。APR1 はどの Apache・Nginx でも読める形式です。"
+  - question: "$2y$ と $2a$ は何が違いますか？"
+    answer: "ハッシュは同じで、接頭辞だけが違います。$2y$ は Apache 付属の htpasswd -B が出力する形式で、Apache の Password Formats にもこの形で書かれています。OpenBSD の crypt() は $2a$ と $2b$ しか読まないため、OpenBSD のときだけ $2a$ を選びます。$2b$ は APR が自前で扱わず OS の crypt() に回すので、macOS と Windows の Apache では失敗します。"
+  - question: "全角文字を含むパスワードは使えますか？"
+    answer: "使えます。このツールは UTF-8 でハッシュ化するので、クライアントも UTF-8 で送る必要があります。UTF-8 の端末から curl -u で送った日本語パスワードは Apache と Nginx の両方で通りました。ただし IME で入力した全角数字「２０２６」と半角の「2026」は別のバイト列なので、一致しません。"
+  - question: "bcrypt のコストはいくつにすべきですか？"
+    answer: "htpasswd の既定は 5、範囲は 4〜17 で、このツールは 10 から始まります。Basic 認証はリクエストごとにパスワードを送るため、サーバーは毎回 bcrypt を計算します。Apple M1 Max で htpasswd -v の照合 1 回は、コスト 5 で約 13 ミリ秒、10 で約 72 ミリ秒、12 で約 266 ミリ秒でした。"
+  - question: "パスワードはサーバーに送られますか？"
+    answer: "送られません。ハッシュ計算は bcrypt.js とページ内のコードでこのタブの中だけで行い、保存もしません。このページはアクセス解析や広告のスクリプトも読み込みません。生成時にブラウザの開発者ツールの Network パネルで確認できます。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li><strong>ユーザー名</strong>と<strong>パスワード</strong>を入力、または<strong>生成</strong>ボタンでランダムパスワードを作成します。</li>
-  <li><strong>アルゴリズム</strong>を選択します（bcrypt推奨）。</li>
-  <li>bcryptを使う場合、<strong>コストファクター</strong>を調整します（高いほど安全だが遅い）。</li>
-  <li><strong>htpasswdラインを生成</strong>をクリックします。</li>
-  <li>結果をコピーして <code>.htpasswd</code> ファイルに追加します。</li>
-</ol>
+## 使い方
 
-<h2>アルゴリズム比較</h2>
+1. **ユーザー名** と **パスワード** を入力します。**ランダム** を押すと 20 文字のパスワードを作ります。
+2. **形式** を選びます。ボタンの下に、その形式を読める Apache・Nginx が表示されます。
+3. bcrypt なら **コスト**、SHA-512 / SHA-256 crypt なら **ラウンド数**（htpasswd の既定は 5000）を決めます。
+4. **生成** を押し、結果を .htpasswd に 1 行として貼り付けます。同じ形式を作る `htpasswd` コマンドも表示されるので、サーバー上で作り直すこともできます。
 
-| アルゴリズム | フォーマット | セキュリティ | 説明 |
-|------------|------------|------------|------|
-| bcrypt | `$2a$` | 優秀 | すべての新規環境で推奨 |
-| MD5 (APR1) | `$apr1$` | 中程度 | ソルト付きApache専用MD5 |
-| SHA1 | `{SHA}` | 弱い | ソルトなし・レインボーテーブルに脆弱 |
-| 平文 | （なし）| なし | テスト専用・本番環境では使用禁止 |
+ハッシュ化の前に、ユーザー名の `:`、先頭の `#`、前後の空白、bcrypt が読み切れない長いパスワードなどを指摘します。**複数ユーザーをまとめて生成** は `user:password` の行をまとめてファイルにし、**htpasswd ファイルの確認・編集** は手元の行でパスワードを照合して、`htpasswd -b` と同じ規則でユーザーを追加・更新・削除します。
 
-<h2>Apache設定例</h2>
+## レンタルサーバーで Basic 認証を掛ける
+
+Apache のサーバーなら、公開ディレクトリに次の `.htaccess` を置き、生成した行を書いた `.htpasswd` を指定します。`AuthUserFile` はサーバー上の絶対パスで書きます。
 
 ```apache
-# .htaccess
 AuthType Basic
-AuthName "制限エリア"
-AuthUserFile /path/to/.htpasswd
+AuthName "Staging"
+AuthUserFile /home/example/.htpasswd
 Require valid-user
 ```
 
-<h2>バッチモード</h2>
-<p>バッチモードセクションに複数の <code>user:password</code> ペアを1行ずつ入力し、<strong>バッチ生成</strong>をクリックすると完全な <code>.htpasswd</code> ファイルを一度に生成できます。</p>
+`.htpasswd` はブラウザから取得できない場所に置きます。[htpasswd のマニュアル](https://httpd.apache.org/docs/2.4/programs/htpasswd.html) にも、パスワードファイルを Web サーバーの URI 空間に置かないようにと書かれています。
 
-<h2>セキュリティの注意点</h2>
-<ul>
-  <li><code>.htpasswd</code> ファイルは必ずドキュメントルート外に保存し、直接アクセスできないようにしてください。</li>
-  <li>本番サーバーにはコストファクター10以上のbcryptを推奨します。</li>
-  <li>パスワードが漏洩した場合は速やかにハッシュを再生成してください。bcryptハッシュを逆算することはできません。</li>
-</ul>
+ユーザー `staging`、パスワード `Sakura-2026` で生成した例です（ソルトはランダムなので、実際の結果は毎回変わります）。
 
-<h2>出力例と確認方法</h2>
+{/* htpw-check: {"line": "staging:$2y$10$8AntxzBrzybDEh8RYEl9SeY.6kqHt4ywkI7TqIKJdB/jvcjypDxmG", "password": "Sakura-2026"} */}
+{/* htpw-check: {"line": "staging:$6$yYcQBn5mlXKhcSLx$bc5EQxE5nTj.DZSc7PSfzZdkSKCG6kJDK5gCylmUSt1BO8Cw/zvPZU58KvVdoHrkvz7yIvFDQAKG6h7WfsiTD/", "password": "Sakura-2026"} */}
 
-<p>ユーザー <code>{"deploy"}</code>、パスワード <code>{"Correct-Horse-42"}</code> で、各アルゴリズムを 1 回ずつ生成しました（bcrypt はコスト 10）。ソルトはランダムなので、結果は毎回変わります：</p>
+```text
+staging:$2y$10$8AntxzBrzybDEh8RYEl9SeY.6kqHt4ywkI7TqIKJdB/jvcjypDxmG
+staging:$6$yYcQBn5mlXKhcSLx$bc5EQxE5nTj.DZSc7PSfzZdkSKCG6kJDK5gCylmUSt1BO8Cw/zvPZU58KvVdoHrkvz7yIvFDQAKG6h7WfsiTD/
+```
 
-<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
-deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
-deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
+どちらも Apache 付属の `htpasswd -vb .htpasswd staging Sakura-2026` で `Password for user staging correct.` と表示されました（SHA-512 の行は `httpd:2.4` コンテナー内の htpasswd で確認。macOS の htpasswd は SHA-2 crypt を作れないため）。
 
-<p>3 行とも Apache 付属の <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a>（2.4.67）で検証でき、APR1 の行は同じソルトで OpenSSL の結果と一致します：</p>
+## 形式と対応サーバー
 
-<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
-Password for user deploy correct.
-$ htpasswd -vb .htpasswd deploy wrong
-password verification failed`}</code></pre>
+Apache の [Password Formats](https://httpd.apache.org/docs/2.4/misc/password_encryptions.html) が挙げるのは bcrypt（`$2y$`）、APR1 MD5（`$apr1$`）、SHA-1（`{SHA}`）、CRYPT、平文の 5 つで、htpasswd は SHA-256 / SHA-512 crypt（`-2`、`-5`）も作れます。[Nginx の auth_basic_user_file](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html) は `$apr1$`、`{SHA}`、`{SSHA}`、`{PLAIN}` を自分で処理し、それ以外は OS の `crypt()` に渡します。
 
-<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
-$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
+このツールで作った行を Nginx 1.29.8（Debian 13 と Alpine 3.23 のイメージ）と Apache 2.4.68 に読ませ、2026-10-01 に `curl -u` でログインを試した結果です。
 
-<ul>
-  <li>bcrypt のハッシュは <code>{"$2a$"}</code> で始まります。ツールは bcrypt.js を使い、Apache の <code>{"htpasswd -B"}</code> は <code>{"$2y$"}</code> を書き出します。Apache 2.4 はどちらも受け付けます。</li>
-  <li>bcrypt はパスワードの先頭 72 バイトしか使いません。</li>
-  <li>Apache のドキュメントは SHA1 をソルトなしのため安全でないとしています。同じパスワードなら、どのユーザーでも上の行と同じ値になります。</li>
-</ul>
+| 形式 | Apache 2.4.68（Linux） | Nginx 1.29.8 |
+|---|---|---|
+| bcrypt `$2y$` / `$2a$` | 可 | 可（OS の crypt() 次第） |
+| SHA-512 / SHA-256 crypt | 可（macOS・Windows は不可） | 可 |
+| APR1 `$apr1$` | 可 | 可 |
+| SHA-1 `{SHA}`・CRYPT | 可（安全でない） | 可（安全でない） |
+| 平文 | 不可（Windows・NetWare のみ） | 不可 |
+| `{PLAIN}` | 不可 | 可 |
 
-<h2>Nginx の設定</h2>
+「OS の crypt() 次第」の部分は、Docker イメージで確かめました。Ubuntu 18.04 と CentOS 7.9 の `crypt()` は bcrypt を受け付けず、Ubuntu 20.04 以降、Debian 11 以降、AlmaLinux 9 は受け付けました。SHA-512 crypt はどれでも通りました。古い VPS の Nginx に Basic 認証を掛けるなら SHA-512 crypt を選ぶのが確実です。
 
-<pre><code>{`location /admin/ {
-    auth_basic           "Restricted";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-}`}</code></pre>
+## 全角文字が混ざったとき
 
-<p><a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a> によると、Nginx は <code>{"$apr1$"}</code>（MD5）、<code>{"{SHA}"}</code>、<code>{"{PLAIN}"}</code> を自前で読み、それ以外は OS の <code>{"crypt()"}</code> に渡します。そのため bcrypt は OS の <code>{"crypt()"}</code> が対応している環境（libxcrypt を使う glibc など）でだけ使えます。サーバーが bcrypt の行を受け付けない場合、Nginx には APR1 を使います。</p>
+IME がオンのまま入力すると、パスワードに全角文字が入ります。ツールは UTF-8 でハッシュ化し、「UTF-8 の 21 バイトとしてハッシュ化します」のように表示します。
 
-<p>編集後は <code>{"nginx -t"}</code> を実行してからリロードします。ファイルはドキュメントルートの外に置き、worker ユーザーだけが読めるようにします。</p>
+{/* htpw-check: {"line": "staging:$2y$10$aGvQqvoclFaLSOzptcNXjup6OTrhv6cP19/GrZ9V4ikE/Xy.muPRK", "password": "さくら２０２６"} */}
+{/* htpw-check: {"line": "staging:$2y$10$aGvQqvoclFaLSOzptcNXjup6OTrhv6cP19/GrZ9V4ikE/Xy.muPRK", "password": "さくら2026", "ok": false} */}
+{/* htpw-check: {"passwordCheck": "さくら２０２６", "format": "bcrypt-2y", "codes": "info:passNonAscii", "bytes": 21} */}
+
+```text
+staging:$2y$10$aGvQqvoclFaLSOzptcNXjup6OTrhv6cP19/GrZ9V4ikE/Xy.muPRK
+```
+
+この行は `さくら２０２６`（全角数字）から作ったもので、ブラウザのログイン画面で半角の `さくら2026` を入れても通りません。**htpasswd ファイルの確認・編集** にこの行を貼り、上のパスワード欄に両方を順に入れて **パスワードを照合** すると、一致・不一致がすぐに分かります。bcrypt が読むのは先頭 72 バイトまでで、ひらがな・漢字は 1 文字 3 バイトなので、25 文字以上になるとツールが警告します。
+
+## 既存の .htpasswd を確認する
+
+貼り付けたファイルは 1 行ずつ形式と注意点を表示します。実際のサーバーで確かめた、読み方が分かれる例です。
+
+- 同じユーザーが 2 行あるとき、Apache も Nginx も最初の行だけを使います。後ろの行を書き換えても効きません。
+- 行頭に空白があると、Apache は空白を取り除いたユーザー名で、Nginx は空白付きで読みます。
+- ハッシュの後ろに空白があると、Apache は取り除き、Nginx は比較に含めるため毎回ログインに失敗します。
+- 「#」で始まる行はどちらもコメントとして扱います。
+
+**ユーザーを追加・更新** は `htpasswd -b` と同じく、同名の行をその場で置き換え、コメントと空行を残し、新しいユーザーを末尾に足します。改行コード（LF / CRLF）も元のままです。**ユーザーを削除** は `htpasswd -D` と同じく、そのユーザーの行をすべて消します。
+
+## 他のオンライン生成ツールとの違い
+
+2026-10-01 にデスクトップ版 Chromium で試し、ページの通信を記録しました。
+
+- **株式会社ルフト「htpasswdファイル生成(作成)」**（Bing で「htpasswd 生成」1 位）は、ID とパスワードをフォームでサーバーに POST し、サーバー側で作った bcrypt `$2y$10$` の行を返します。日本語のパスワードでは「半角英数記号を入れてください。」と表示して生成せず、ID に `a:b` を入れると `a:b:$2y$10$…` を返しました。
+- **web2generators.com**（英語の検索 1 位）もユーザー名とパスワードをサーバーに POST し、出力は MD5 だけです。
+
+このツールはブラウザの中だけで計算し、既存の行でパスワードを照合でき、Apache と Nginx で読み方が分かれる行を指摘します。
+
+## 制限
+
+- 生成できるのは Apache の htpasswd が作る 7 形式と `$2a$`、`{PLAIN}` です。照合では `$1$`（MD5 crypt）と `{SSHA}` も読めます。yescrypt（`$y$`）、scrypt、`$2x$` は判別だけで、照合はできません。
+- bcrypt のコストは 4〜17（APR の上限）、SHA-2 のラウンド数はこのツールでは 1000〜1000000 です。コスト 17 はブラウザで数秒以上かかります。
+- ファイル編集はテキスト上の操作で、サーバーには書き込みません。
+- Digest 認証用の `htdigest` ファイルは形式が違うため扱いません。
