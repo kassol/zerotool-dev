@@ -97,6 +97,7 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - **退出码语义**：失败用 `process.exit(1)`，禁止吞错继续
 - **路径**：用 `import.meta.url` + `fileURLToPath` 拿绝对路径，不假设 cwd
 - **调用系统工具链的测试按 CI 环境核对**：CI 跑在 Ubuntu（`cc` 是 GCC、`bash` 4.2+），本机 macOS 是 Apple clang 与 bash 3.2，同一输入的报错 / 警告行为可能不同。断言「编译器 / 解释器拒绝某输入」时显式给出让两边一致的参数（如 GCC 默认只对超范围转义告警，要加 `-pedantic-errors`），并在合并前用与 CI 相同的工具链（或 `gcc-*` 等同类工具）跑一遍
+- **依赖运行时内置实现的测试按 CI 的 Node 版本核对**：CI 用 Node 22（`.github/workflows/ci.yml`），本机可能更新。引擎直接调用 `URL`、`Intl`、`TextDecoder` 等内置实现时，拿规范测试集（如 WPT）断言前先看运行时本身是否符合；不符合的项记 SKIP 并写明 Node 版本，不算工具失败。合并前用 `npx -y -p node@22 node scripts/test-xxx.mjs` 跑一遍
 
 ## 新增脚本约束
 
@@ -180,3 +181,4 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-10-01 — 加入 `test-image-compressor.mjs`：从 `ImageCompressorTool.astro` 抽取 `engine:start/end` 真实引擎块（`renameOut` / `resultFormat`），覆盖浏览器没有所请求格式的编码器时（HTML 标准回退为 PNG，GIF 总是如此）文件名按实际产出的 blob 类型命名并标记回退（此前 PNG 字节仍以 .webp / .gif 命名）、4 语言回退提示文案含 `{req}` `{got}`、4 语言工具页不再写「文件名仍按所选格式」，以及脚本用 innerHTML 生成的结果卡片类名（ic-card、ic-thumb、ic-dl 等）全部经 `:global` 设样式且没有残留的 scoped 规则，共 29 项；只写 stdout
 - 2026-10-01 — 加入 `test-jq-playground.mjs`：从 `JqPlaygroundTool.astro` 抽取 `engine:start/end` 真实引擎块（`countJsonValues` / `jqErrorText`），并加载 node_modules 的 jq-web 0.6.2（与 `sync-jq-web.mjs` 复制到 `public/jq-web/` 的同一构建）：多个输出按 jq 原样逐个显示（此前合并成一个数组，与只输出一个数组的过滤器无法区分）、`empty` 与无匹配的 `select` 无输出（此前报 `Cannot read properties of undefined (reading 'trim')`）、`9007199254740993` 不经 `JSON.parse` 原样输出、计数与 jq `-c` 的行数一致、编译与运行错误显示 jq 自己的 stderr、页面脚本只调用 `jq.raw(jsonText, …)`、4 语言工具页同步，共 31 项；只写 stdout
 - 2026-10-01 — 加入 `test-keycode-explorer.mjs`：从 `KeycodeExplorerTool.astro` 抽取 `engine:start/end` 中真实的 `captureFromMobileInput`，用替身 DOM 帮助函数运行：移动端降级输入框只把输入文字显示为 `key`，`code` / `keyCode` / `which` / `charCode` / `location` 显示为「—」（此前按字母推测 `KeyA`，在 AZERTY 等布局下是错的，UI Events code 规范：AZERTY 上输入 a 的键是 `KeyQ`）、4 语言移动端提示写明这些字段为空、4 语言工具页说明非 QWERTY 布局下的 `code`，共 38 项；只写 stdout
+- 2026-10-01 — `test-url-parser.mjs` 的 WPT 解析与 setter 用例在运行时自带的 `URL` 与 WPT 不一致时记 SKIP（CI 的 Node 22.23 / ada 2.9 还没有把不透明路径末尾空格编码为 `%20`，4 项失败；Node 24 全部通过）；模块规范新增「依赖运行时内置实现的测试按 CI 的 Node 版本核对」
