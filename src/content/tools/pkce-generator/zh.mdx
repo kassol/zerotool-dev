@@ -1,41 +1,134 @@
 ---
-seoTitle: "PKCE 生成器 — OAuth 2.0 code_verifier 与 challenge 在线生成 | ZeroTool"
-seoDescription: "为 OAuth 2.0 / 2.1 授权码流程生成密码学安全的 PKCE code_verifier 与 code_challenge。支持 SHA-256（S256）与 plain 方法，完全在浏览器中运行，零网络请求。"
+seoTitle: "PKCE 生成器（S256 在线生成）| ZeroTool"
+seoDescription: "按 RFC 7636 在线生成 PKCE code_verifier 与 S256 code_challenge，核对 challenge 对不上的原因，并拼出授权 URL 与换 token 的 cURL。全部在浏览器里完成。"
 faqItems:
-  - question: "PKCE 是什么？为什么需要它？"
-    answer: "PKCE 全称 Proof Key for Code Exchange（RFC 7636），用来防止 OAuth 授权码在传输过程中被截获。它对无法安全保存 client secret 的公共客户端（移动 App、SPA、CLI、桌面应用）尤其重要。OAuth 2.1 已经把 PKCE 设为所有客户端的强制要求，而不仅是公共客户端。"
-  - question: "S256 与 plain 该用哪个？"
-    answer: "生产环境永远用 S256。plain 方法只保留给历史上无法计算 SHA-256 的客户端，而这个限制在今天已经不再成立。RFC 7636 明确推荐 S256，主流 OAuth Provider 默认会拒绝 plain。"
-  - question: "这个工具会把 verifier 上传到任何地方吗？"
-    answer: "不会。随机字节来自浏览器的 crypto.getRandomValues，哈希通过 crypto.subtle.digest 完成，URL 预览是纯字符串拼接，所有计算都在浏览器内完成。verifier 也不写入 localStorage，每次刷新都会重新生成。"
-  - question: "verifier 应该多长？"
-    answer: "RFC 7636 规定 43 到 128 个字符，字符集是 [A-Z a-z 0-9 - . _ ~]。默认 64 字符是平衡点：熵足够抗暴力破解，长度又不会撑爆 URL。如果你的 Provider 接受 128 字符且想最大化熵，可以拉到上限。"
-  - question: "怎么把它接入我的 OAuth 流程？"
-    answer: "在客户端安全保存 code_verifier（浏览器用 localStorage，原生 App 用安全存储），在 /authorize 重定向时通过 query 参数携带 code_challenge 与 code_challenge_method=S256。当 /token 交换授权码时，把原始 code_verifier 回传给服务器，让它重新哈希并比对。"
+  - question: "verifier 会被上传或保存吗？"
+    answer: "不会。随机数来自 crypto.getRandomValues，SHA-256 由 crypto.subtle 在当前标签页里计算。工具不发任何网络请求，不把 verifier 写进 localStorage、sessionStorage、Cookie 或网址；本页也不加载统计与广告脚本。刷新页面后 verifier 即丢弃。"
+  - question: "code_verifier 取多长合适？"
+    answer: "默认 43 个字符，由 32 字节随机数做 base64url 得到，这正是 RFC 7636 第 4.1 节与第 7.1 节给出的做法，熵为 256 位。最长可到 128 个字符。手动粘贴的 verifier 只要是 43 到 128 个 A–Z、a–z、0–9、- . _ ~ 字符就合规，但强度取决于它是怎么生成的。"
+  - question: "S256 和 plain 选哪个？"
+    answer: "选 S256。RFC 7636 第 4.2 节规定能算 SHA-256 的客户端必须用 S256；RFC 9700 指出 S256 是目前唯一不会在授权请求里暴露 verifier 的方法；OAuth 2.1 草案已去掉 plain。飞书的 code_challenge_method 不传时默认按 plain 处理，所以请求里要明确写上 S256。"
+  - question: "换 token 时报 invalid_grant 或 PKCE 校验失败怎么办？"
+    answer: "把应用实际发出的 code_challenge 粘贴到「核对 code_challenge」。工具会判断它是否与 verifier 配对，或者属于哪种常见错误：标准 Base64、十六进制、末尾多了 =、直接用了 verifier、对解码后的随机字节做了哈希。如果一致，再检查授权请求是否带了 code_challenge_method=S256、verifier 是否来自同一次登录、code 是否只用了一次。"
+  - question: "后端有 client_secret 的应用还需要 PKCE 吗？"
+    answer: "RFC 9700（OAuth 2.0 安全最佳实践，2025 年发布）要求公开客户端必须用 PKCE，并建议机密客户端也用，因为它还能挡住授权码注入。机密客户端在 token 端点仍要做客户端认证，工具生成的 cURL 按公开客户端写，需要自己加上 client_secret 等凭据。"
 ---
 
-<h2>使用方法</h2>
-<ol>
-  <li>页面加载时自动生成一个 64 字符的 <strong>code_verifier</strong>。</li>
-  <li>点击 <strong>重新生成</strong> 获取新的随机 verifier，也可以手动粘贴你自己的。</li>
-  <li>选择 <strong>Challenge 方法</strong>——除非有充分理由，否则保持 S256。</li>
-  <li><strong>code_challenge</strong> 实时更新。复制到你的 /authorize 请求里。</li>
-  <li>展开 <strong>授权 URL 预览</strong>，填入你的端点、client_id、redirect_uri。</li>
-  <li>展开 <strong>令牌交换（cURL）</strong>，拿到可直接运行的 /token 请求命令。</li>
-</ol>
+## 用法
 
-<h2>典型场景</h2>
-<ul>
-  <li><strong>本地 OAuth 调试：</strong>生成 verifier/challenge 对，把授权 URL 复制到浏览器获取 code，再用 curl 预览回放 /token 交换。</li>
-  <li><strong>移动 / 桌面客户端：</strong>不用搭后端就能为 iOS / Android / 桌面应用手工跑通测试流程。</li>
-  <li><strong>对接新 Provider：</strong>在写一行代码之前，验证目标 Provider 接受 S256 且 client_id 已正确配置。</li>
-  <li><strong>安全评审：</strong>直接对照工具确认 verifier 字符集与长度是否符合 RFC 7636，不必中途翻规范。</li>
-</ul>
+1. 打开页面时已生成一个 43 字符的 `code_verifier`。点 **重新生成** 换一个；服务商对长度有要求时再改 **长度**（43–128）。
+2. 复制 verifier，在客户端里为这一次登录保存好。
+3. 复制 `code_challenge`，方法保持 **S256**。粘贴或修改 verifier 时它会立刻重算。
+4. 展开 **授权请求 URL**，填入授权端点、`client_id`、`redirect_uri` 与 `scope`，复制拼好的地址。随机的 `state` 已自动填好，scope 含 `openid` 时还会带上随机 `nonce`。
+5. 回调拿到 `code` 后，填进 **token 请求（cURL）** 再执行。token 请求里带的是 verifier 原文。
 
-<h2>原理</h2>
-<ol>
-  <li>用 <code>crypto.getRandomValues</code> 取 32 字节随机数，base64url 编码后截到目标长度。</li>
-  <li>S256 时，verifier 经 UTF-8 编码后用 <code>crypto.subtle.digest('SHA-256', …)</code> 计算哈希。</li>
-  <li>32 字节哈希再做 base64url 编码（+ 换 -、/ 换 _、剥掉 = padding），得到 43 字符的 challenge。</li>
-  <li>plain 模式下 challenge 等于 verifier 本身，只为兼容，不建议使用。</li>
-</ol>
+快捷键：Ctrl/⌘+Enter 重新生成，Ctrl/⌘+L 清空。
+
+计算方式见 [RFC 7636 第 4.2 节](https://www.rfc-editor.org/rfc/rfc7636#section-4.2)：`code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))`，base64url 不带 `=`。生成器取 n 字节随机数编码成 base64url，再截取所需长度；43 个字符恰好用 32 字节（256 位）。其中的 SHA-256 与 [哈希生成器](/zh/tools/hash-generator/) 是同一个函数，区别在于这里把 32 字节摘要编码成 base64url，而不是十六进制。
+
+## 示例：RFC 7636 附录 B
+
+把 `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` 粘贴到 verifier 框，工具给出 `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`，与 [附录 B](https://www.rfc-editor.org/rfc/rfc7636#appendix-B) 一致。自己写的实现算出来不是这个值，就说明编码或哈希的对象错了。
+
+把同一个 verifier 改成标准 Base64 的写法 `dBjftJeZ4CVP+mB92K27uhbUJU1p1r/wW1gFWFOEjXk=`，工具会停下并提示：*第 13 个字符「+」不允许出现。verifier 只能由 A–Z、a–z、0–9 和 - . _ ~ 组成（RFC 7636 §4.1）。* 后面附上改成 base64url 的方法。空格、换行、中文字符各有对应提示，长度不在 43–128 时会写出实际字符数。
+
+## 接入飞书开放平台
+
+飞书的 [获取授权码](https://open.feishu.cn/document/authentication-management/access-token/obtain-oauth-code) 接口支持 PKCE，文档里 `code_challenge` 的示例值正是上面的 `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`。需要注意两点：
+
+- `code_challenge_method` 可选 `S256`（推荐）和 `plain`，**不传时默认是 plain**。只传了 `code_challenge` 却漏了方法，服务器会把 challenge 当作 verifier 原文比较，换 token 必然失败。工具拼的授权 URL 总会写出 `code_challenge_method=S256`。
+- 飞书的 [获取 user_access_token（v2 版本）](https://open.feishu.cn/document/authentication-management/access-token/get-user-access-token) 页面说明：新的 v3 端点 `https://accounts.feishu.cn/oauth/v3/token` 会拒绝「授权时没传 code_challenge、换 token 时却传了 code_verifier」的请求，v2 则不拒绝。该页的错误码表里，`20049` 表示 PKCE 校验失败。
+
+该页请求示例中的 verifier 是 `TxYmzM4PHLBlqm5NtnCmwxMH8mFlRWl_ipie3O0aVzo`，粘贴进工具得到对应的 challenge `O0nS63zirsJkDT3cMvBt9oV_H48bhFpeAh4EyyILRWE`，可用来核对自己的代码。
+
+[微信网站应用登录](https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/Wechat_Login.html) 的授权链接只有 `appid`、`redirect_uri`、`response_type`、`scope`、`state`，没有 PKCE 参数；换 access_token 要带 AppSecret，只能在服务端完成。这种场景用不上 verifier，但 `state` 仍应是每次不同的随机值，可以从工具的「授权请求 URL」里取一个。
+
+## challenge 对不上时怎么查
+
+展开 **核对 code_challenge**，粘贴应用实际发出的值。以附录 B 的 verifier 为例：
+
+| 粘贴的 code_challenge | 工具的判断 |
+|---|---|
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM=` | 末尾多了 `=`，去掉即可 |
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw+cM=` | 用了标准 Base64，应改用 base64url |
+| `13d31e961a1ad8ec2f16b10c4c982e0876a878ad6df144566ee1894acb70f9c3` | 十六进制摘要，应为 base64url |
+| `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` | 直接用了 verifier（plain） |
+| `38v3YOi6zQgk1xkqk6Y5dvSDoBHqZrTh3mmWHxxWvyk` | 对解码后的 32 字节随机数做了哈希，应哈希 verifier 字符串本身 |
+
+最后一种在自己拼代码时很常见：生成时留着随机字节，算 challenge 时哈希的是字节而不是发出去的 43 个字符。base64url 的规则见 RFC 4648 第 5 节，[Base64 编码 / 解码](/zh/tools/base64/) 工具可以帮你对照两种字母表。
+
+## 用代码算同一个值
+
+下面三段代码对附录 B 的 verifier 都得到 `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`，本页的测试会实际运行它们。
+
+```javascript
+// 浏览器与 Node.js 20+（Web Crypto）
+const base64url = (bytes) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+function createVerifier() {
+  return base64url(crypto.getRandomValues(new Uint8Array(32))); // 43 个字符
+}
+
+async function createChallenge(verifier) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(digest));
+}
+```
+
+```python
+import base64
+import hashlib
+import secrets
+
+
+def create_verifier() -> str:
+    return secrets.token_urlsafe(32)  # 32 字节随机数 -> 43 个字符
+
+
+def create_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+```
+
+```go
+package main
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+)
+
+func createVerifier() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b) // 43 个字符
+}
+
+func createChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+```
+
+飞书文档里的 Go 示例用的是 `golang.org/x/oauth2` 的 `GenerateVerifier` 与 `S256ChallengeOption`，结果与上面相同。登录完成后，可以用 [JWT 解码器](/zh/tools/jwt-decoder/) 查看 ID Token 里的 `nonce`。
+
+## 与其他在线 PKCE 工具的差别
+
+2026-10-01 在桌面版 Chromium 中实测，记录页面在生成与核对时发出的 `fetch`、`XMLHttpRequest`、`sendBeacon`：
+
+- **Elysia Tools（中文版）**：生成、校验、配对验证都把模式、verifier 与 challenge 以 JSON 发到 `api.elysiatools.com`，由服务器算出结果。
+- **sosec.io**：在浏览器内运行，会检查字符集与长度，也能对比期望的 challenge；但末尾多一个 `=` 时只显示「不匹配」，不说明原因。
+- **authn.tech**：在浏览器内生成 verifier、challenge、state、nonce，没有核对已有 verifier 的入口。
+- **tonyxu-io.github.io/pkce-generator**：在浏览器内运行，附录 B 结果正确，但不做任何校验，42 个字符、带 `+ / =`、中文、空输入都会算出 challenge。
+
+本工具的差别：对粘贴的 verifier 按 RFC 语法逐字检查并指出第几个字符出错；challenge 不一致时说明是哪一种错误；verifier 不离开当前标签页。
+
+## 限制
+
+- 方法只有 RFC 7636 定义的 S256 与 plain。生成的 verifier 只用 base64url 的 64 个字符，不会出现同样合规的 `.` 和 `~`。
+- 熵只对本页生成的 verifier 显示；粘贴的 verifier 只能检查格式，无法判断随机程度。
+- 工具不连接授权服务器，不能替你换 token；cURL 按公开客户端写，机密客户端要加上客户端认证。
+- 不检查各平台在 RFC 之外的规则，例如 LINE 登录只接受 S256。微信、Kakao 的 scope 用逗号分隔，这种写法里含 `openid` 时同样会带上 nonce。
+- 每个 verifier 只对应一次授权请求。每次登录都要重新生成；固定的 verifier 起不到保护作用，RFC 9700 第 2.1.1 节也鼓励服务器识别并拒绝固定值。
