@@ -405,7 +405,15 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const notes = [...mdx.matchAll(/\{\/\* cbs-check: (\{[\s\S]*?\}) \*\/\}/g)].map((m) => JSON.parse(m[1]));
   check(lang + ' page has cbs-check annotations', notes.length >= 3, notes.length + ' found');
   for (const n of notes) {
-    if (n.hex) {
+    if (n.matrix) {
+      // Another tool's 3×3 matrix (from its page source), applied to sRGB values or in linear light.
+      const c = rgbOf(n.hex), m = n.matrix;
+      const v = n.space === 'linear' ? c.map(lin) : c.map((x) => x / 255);
+      const o = [0, 1, 2].map((r) => Math.min(1, Math.max(0, m[r * 3] * v[0] + m[r * 3 + 1] * v[1] + m[r * 3 + 2] * v[2])));
+      const out = n.space === 'linear' ? o.map(enc) : o.map((x) => Math.round(x * 255));
+      eq(lang + ' other tool matrix on ' + n.hex, 'rgb(' + out.join(', ') + ')', n.out);
+      check(lang + ' page shows ' + n.out, text.includes(n.out));
+    } else if (n.hex) {
       const got = sim(n.hex, n.type, n.severity ?? 0.6);
       eq(lang + ' ' + n.hex + ' under ' + n.type, got, n.out);
       check(lang + ' page shows ' + n.out, text.includes(n.out));
@@ -413,11 +421,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
       const colors = n.colors.map((h) => ({ rgb: rgbOf(h), hex: h, label: h }));
       const row = E.analyzePalette(colors, n.severity ?? 0.6).find((r) => r.type === n.type);
       const p = n.pair ? row.pairs.find((x) => x.i === n.pair[0] && x.j === n.pair[1]) : row.closest;
-      const got = { de: E.fmtDe(p.de), cr: E.fmtCr(p.cr), verdict: p.verdict };
-      if (n.pair === undefined) got.pair = [p.i, p.j];
-      const exp = { de: n.de, cr: n.cr, verdict: n.verdict };
-      if (n.pair === undefined) exp.pair = got.pair && n.closest ? n.closest : got.pair;
-      eq(lang + ' palette ' + n.colors.join(',') + ' ' + n.type, got, exp);
+      eq(lang + ' palette ' + n.colors.join(',') + ' ' + n.type + (n.pair ? ' pair ' + n.pair : ' closest'), { de: E.fmtDe(p.de), cr: E.fmtCr(p.cr), verdict: p.verdict }, { de: n.de, cr: n.cr, verdict: n.verdict });
+      if (n.closest) eq(lang + ' closest pair of ' + n.colors.join(','), [row.closest.i, row.closest.j], n.closest);
       check(lang + ' page shows ΔEOK ' + n.de, text.includes(n.de));
       if (n.cr) check(lang + ' page shows contrast ' + n.cr, text.includes(n.cr));
       if (n.sims) for (const [h, s] of Object.entries(n.sims)) {
