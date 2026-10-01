@@ -11,7 +11,10 @@
 // only and copies the value), single / double / unquoted values, boolean attributes, `>` and
 // `/` inside quoted values, inline style to object, on* attributes renamed to the React name
 // (onMouseOver, onDoubleClick, onKeyDown ...) and their code wrapped in an arrow function with
-// entities decoded (React throws on a string listener), void and self-closing tags, comments.
+// entities decoded (React throws on a string listener), void and self-closing tags, comments
+// (a */ inside is written as * /); the HTML attribute names from react-dom possibleStandardNames.js
+// (autocomplete, srcset, novalidate ... were copied lowercase and made React warn); the English page
+// login form example.
 //
 // Run: node scripts/test-html-to-jsx.mjs
 
@@ -120,6 +123,33 @@ eq('text containing class= is untouched', jsx('<p>class="x" for="y"</p>'), '<p>c
 eq('page example',
   jsx('<label for="email" class="lbl">Email</label>\n<input id="email" type="email" required>\n<div style="background-image: url(\'a.png\'); font-size:14px">x</div>\n<!-- footer -->'),
   '<label htmlFor="email" className="lbl">Email</label>\n<input id="email" type="email" required />\n<div style={{ backgroundImage: \'url(\\\'a.png\\\')\', fontSize: \'14px\' }}>x</div>\n{/* footer */}');
+
+// ---------- more attribute names (react-dom possibleStandardNames.js) ----------
+for (const [html, react] of [
+  ['accept-charset', 'acceptCharset'], ['autocapitalize', 'autoCapitalize'], ['autocomplete', 'autoComplete'],
+  ['autoplay', 'autoPlay'], ['cellpadding', 'cellPadding'], ['cellspacing', 'cellSpacing'], ['charset', 'charSet'],
+  ['controlslist', 'controlsList'], ['datetime', 'dateTime'], ['enterkeyhint', 'enterKeyHint'],
+  ['fetchpriority', 'fetchPriority'], ['formaction', 'formAction'], ['formenctype', 'formEncType'],
+  ['formmethod', 'formMethod'], ['formnovalidate', 'formNoValidate'], ['formtarget', 'formTarget'],
+  ['hreflang', 'hrefLang'], ['http-equiv', 'httpEquiv'], ['inputmode', 'inputMode'], ['itemprop', 'itemProp'],
+  ['itemscope', 'itemScope'], ['itemtype', 'itemType'], ['nomodule', 'noModule'], ['novalidate', 'noValidate'],
+  ['playsinline', 'playsInline'], ['popovertarget', 'popoverTarget'], ['referrerpolicy', 'referrerPolicy'],
+  ['spellcheck', 'spellCheck'], ['srcdoc', 'srcDoc'], ['srclang', 'srcLang'], ['srcset', 'srcSet'],
+]) {
+  eq('rename ' + html, jsx('<x ' + html + '="v">'), '<x ' + react + '="v">');
+  eq('rename upper-case ' + html, jsx('<x ' + html.toUpperCase() + '>'), '<x ' + react + '>');
+}
+eq('comment containing */', jsx('<!-- a */ b -->'), '{/* a * / b */}');
+
+// ---------- English page login form ----------
+{
+  const page = readFileSync(join(root, 'src/content/tools/html-to-jsx/en.mdx'), 'utf8');
+  const input = '<form action="/login" method="post" novalidate>\n  <label for="user" class="field-label">Username</label>\n  <input id="user" name="user" autocomplete="username" maxlength="32" autofocus>\n  <button type="submit" onclick="track(&quot;login&quot;)">Sign in</button>\n</form>';
+  const out = jsx(input);
+  eq('login form output', out, '<form action="/login" method="post" noValidate>\n  <label htmlFor="user" className="field-label">Username</label>\n  <input id="user" name="user" autoComplete="username" maxLength="32" autoFocus />\n  <button type="submit" onClick={(event) => { track("login") }}>Sign in</button>\n</form>');
+  check('page shows the login input', page.includes(input));
+  check('page shows the login output', page.includes(out));
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
