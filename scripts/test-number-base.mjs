@@ -524,6 +524,7 @@ if (stringsMatch) {
       if (!ex.error) check(file + ' shows ' + want, text.includes(want), 'not found in page');
     }
   }
+  check('tool pages carry examples', count >= 12, count + ' examples');
 }
 
 // ---------- page script hygiene ----------
