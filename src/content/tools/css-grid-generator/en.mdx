@@ -5,20 +5,20 @@ faqItems:
   - question: "What is CSS Grid?"
     answer: "CSS Grid is a two-dimensional layout system built into CSS. It lets you define rows and columns simultaneously, then place elements precisely within a grid container. It's ideal for page-level layouts, card grids, image galleries, and any UI that needs both horizontal and vertical structure."
   - question: "What does grid-template-columns do?"
-    answer: "grid-template-columns defines the number and size of the grid's columns. The generator pre-fills it with repeat(N, 1fr) — N equal-width columns that each take one fractional unit of the available space. You can override this with any valid value, such as 200px 1fr 2fr or auto-fill minmax(200px, 1fr)."
+    answer: "grid-template-columns defines the number and size of the grid's columns. The generator pre-fills it with repeat(N, 1fr) — N equal-width columns that each take one fractional unit of the available space. You can override this with any valid value, such as 200px 1fr 2fr or repeat(auto-fill, minmax(200px, 1fr))."
   - question: "What is the difference between column-gap and row-gap?"
-    answer: "column-gap sets the space between columns and row-gap sets the space between rows. Together they control the gutters inside the grid. You can also use the shorthand gap: row row-gap column-gap."
+    answer: "column-gap sets the space between columns and row-gap sets the space between rows. Together they control the gutters inside the grid. The shorthand is gap: <row-gap> <column-gap>; with one value, both gaps are the same."
   - question: "What is the 1fr unit?"
-    answer: "fr stands for fractional unit. It distributes the remaining free space in the grid container proportionally. For example, 1fr 2fr 1fr creates three columns where the middle column is twice as wide as the other two. It's the most common unit for responsive grid layouts."
+    answer: "fr stands for fractional unit. It distributes the remaining free space in the grid container proportionally. For example, 1fr 2fr 1fr creates three columns where the middle column is twice as wide as the other two. A 1fr track never gets narrower than its content's minimum width unless you write minmax(0, 1fr)."
   - question: "How do I make a responsive grid without media queries?"
-    answer: "Use auto-fill or auto-fit with minmax(): grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)). This creates as many columns as can fit the minimum size and stretches them to fill any remaining space — no media queries needed."
+    answer: "Use auto-fill or auto-fit with minmax(): grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)). This creates as many columns as fit the minimum size and stretches them to fill the remaining space. auto-fit also collapses the empty columns, so a few items stretch across the whole row."
 ---
 
 <h2>How to Use</h2>
 <ol>
-  <li>Set <strong>Columns</strong> and <strong>Rows</strong> — the preview and template inputs update automatically.</li>
-  <li>Adjust <strong>Column Gap</strong> and <strong>Row Gap</strong> to control gutters between cells.</li>
-  <li>Override <strong>grid-template-columns</strong> or <strong>grid-template-rows</strong> with any custom value (e.g. <code>200px 1fr auto</code>).</li>
+  <li>Set <strong>Columns</strong> (1–12) and <strong>Rows</strong> (1–8) — the preview and template inputs update automatically.</li>
+  <li>Adjust <strong>Column Gap</strong> and <strong>Row Gap</strong> to control gutters between cells. Any CSS length works, such as <code>24px</code>, <code>1.5rem</code> or <code>2%</code>.</li>
+  <li>Override <strong>grid-template-columns</strong> or <strong>grid-template-rows</strong> with any custom value (e.g. <code>200px 1fr auto</code>). Changing the column or row count rewrites the matching template field to <code>repeat(N, 1fr)</code>, so set the counts first and type the custom template last.</li>
   <li>The live <strong>Preview</strong> reflects every change instantly.</li>
   <li>Click <strong>Copy</strong> to copy the generated <code>.container &#123; ... &#125;</code> block to your clipboard.</li>
 </ol>
@@ -28,13 +28,52 @@ faqItems:
   The generator outputs a single <code>.container</code> rule with five properties:
   <code>display: grid</code>, <code>grid-template-columns</code>, <code>grid-template-rows</code>,
   <code>column-gap</code>, and <code>row-gap</code>. Paste it into your stylesheet and rename
-  <code>.container</code> to match your own class name.
+  <code>.container</code> to match your own class name. The rule describes the container only; the children are placed automatically, one per cell, in source order.
 </p>
+
+<h2>Example: the Default 3 × 2 Grid</h2>
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  column-gap: 1rem;
+  row-gap: 1rem;
+}
+```
+
+<p>In a 1000px-wide container with a 16px root font size, Chrome resolved the columns to 322.664px each: (1000 − 2 × 16) ÷ 3. The rows behave less obviously. When the container has no fixed height, <code>1fr</code> rows are sized from their content and then equalized, so one 200px-tall item made both rows 200px tall. With <code>repeat(2, auto)</code> the same items gave rows of 20px and 200px. Use <code>auto</code> rows unless you want every row to match the tallest one.</p>
+
+<h2>Example: Sidebar and Main Area</h2>
+<p>Set Columns to 2 and Rows to 3, type <code>240px 1fr</code> into grid-template-columns and <code>auto 1fr auto</code> into grid-template-rows, then set the column gap to <code>24px</code> and the row gap to <code>0</code>:</p>
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: auto 1fr auto;
+  column-gap: 24px;
+  row-gap: 0;
+}
+```
+
+<p>At 960px wide, the main column measured 696px (960 − 240 − 24). The middle row takes whatever height is left once the container has a height, for example <code>min-height: 100vh</code>, which keeps a footer at the bottom of short pages.</p>
+
+<h2>Limits and Common Surprises</h2>
+<ul>
+  <li><strong>Container only.</strong> There are no controls for <code>grid-column</code>, <code>grid-row</code>, <code>grid-template-areas</code>, named lines or alignment; spanning a header across both columns needs <code>grid-column: 1 / -1</code> on that child.</li>
+  <li><strong>Preview cell count.</strong> The preview always draws Columns × Rows cells. If your template has a different number of tracks, the extra cells go into implicit rows, just as real children would.</li>
+  <li><strong>Long content stretches 1fr.</strong> A <code>1fr</code> column has a minimum of <code>auto</code>. With an unbroken URL in the middle cell of a 600px <code>repeat(3, 1fr)</code> grid, the columns came out 9.6px, 751px and 9.6px and overflowed the container; <code>repeat(3, minmax(0, 1fr))</code> kept them at 200px each.</li>
+  <li><strong>auto-fill vs auto-fit.</strong> With two items in a 1000px container, <code>repeat(auto-fill, minmax(180px, 1fr))</code> kept five 187.2px columns (three empty), while <code>auto-fit</code> collapsed the empty ones and gave each item 492px. A container narrower than 180px overflows; <code>minmax(min(180px, 100%), 1fr)</code> prevents that.</li>
+  <li>The template and gap fields are not validated. An invalid value such as <code>repeat(3 1fr)</code> is copied as written, and the preview keeps showing the last valid template because the browser ignores the invalid value.</li>
+</ul>
+<p>The track sizing rules are in <a href="https://www.w3.org/TR/css-grid-2/">CSS Grid Layout Level 2</a>. For one-dimensional rows of items, the <a href="/tools/css-flexbox-generator/">flexbox generator</a> is often the simpler fit.</p>
 
 <h2>Common Grid Patterns</h2>
 <ul>
   <li><strong>Equal columns</strong> — <code>repeat(3, 1fr)</code> creates three equal columns.</li>
   <li><strong>Sidebar layout</strong> — <code>250px 1fr</code> gives a fixed sidebar and a flexible main area.</li>
-  <li><strong>Holy grail</strong> — <code>200px 1fr 200px</code> with matching rows for header/footer.</li>
+  <li><strong>Holy grail</strong> — <code>200px 1fr 200px</code> columns with <code>auto 1fr auto</code> rows; the header and footer children span all three columns with <code>grid-column: 1 / -1</code>.</li>
   <li><strong>Responsive tiles</strong> — <code>repeat(auto-fill, minmax(180px, 1fr))</code> auto-wraps at any screen width.</li>
 </ul>

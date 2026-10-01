@@ -1,90 +1,105 @@
 ---
-seoTitle: "htpasswd Generator Online — Free, Browser-Side, Secure | ZeroTool"
-seoDescription: "Generate Apache htpasswd password hashes online. Supports bcrypt, MD5 (APR1), SHA1, and plaintext. All hashing done client-side — passwords never leave your browser. Free, no signup."
+seoTitle: "htpasswd Generator for Apache & Nginx (bcrypt) | ZeroTool"
+seoDescription: "Make htpasswd lines in bcrypt $2y$, SHA-512 crypt or APR1, see which format your Apache or Nginx reads, and check a password against an existing htpasswd file."
 faqItems:
-  - question: "What is an htpasswd file?"
-    answer: "An htpasswd file is used by Apache HTTP Server (and nginx via htpasswd modules) to store username and hashed password pairs for HTTP Basic Authentication. Each line has the format username:hashed_password."
-  - question: "Which algorithm should I use?"
-    answer: "Use bcrypt (the default). It is the most secure option because it has a configurable cost factor that slows down brute-force attacks. MD5 (APR1) is still widely used but weaker. SHA1 and plaintext are insecure and should be avoided for new deployments."
-  - question: "What is the bcrypt cost factor?"
-    answer: "The cost factor (4–12) controls how many rounds of computation are used. Higher values take longer to compute, making brute-force attacks more expensive. The default of 10 is a good balance between security and server performance."
+  - question: "Which htpasswd format should I use?"
+    answer: "bcrypt $2y$ if the server can read it: Apache 2.4 reads it on every platform, and Nginx reads it where the system crypt() supports bcrypt (Debian 11 and later, Ubuntu 20.04 and later, Alpine, AlmaLinux 9 in our tests). On CentOS 7 or Ubuntu 18.04 Nginx cannot read bcrypt; use SHA-512 crypt there. APR1 is the one format every Apache and Nginx build reads."
+  - question: "Why does the tool write $2y$ and not $2a$?"
+    answer: "$2y$ is what Apache's own htpasswd -B writes and what the Apache Password Formats page documents. The hash is the same; only the prefix differs. Pick $2a$ only for OpenBSD, whose crypt() accepts $2a$ and $2b$ but not $2y$. Avoid $2b$ for Apache: APR handles $2a$ and $2y$ itself and passes $2b$ to the system crypt(), which fails on macOS and Windows."
+  - question: "What bcrypt cost should I choose?"
+    answer: "htpasswd uses 5 by default and accepts 4 to 17. This tool starts at 10. Basic authentication sends the password with every request, so the server runs bcrypt on every request: on an Apple M1 Max one htpasswd -v check took about 13 ms at cost 5, 72 ms at cost 10 and 266 ms at cost 12. Pick the highest cost your request rate can afford."
   - question: "Are my passwords sent to a server?"
-    answer: "No. All hashing — including bcrypt — runs entirely in your browser using JavaScript. Your passwords never leave this page."
-  - question: "What is batch mode?"
-    answer: "Batch mode lets you generate htpasswd lines for multiple user:password pairs at once. Enter one pair per line (colon-separated) and click Generate batch."
-  - question: "How do I use the generated htpasswd line?"
-    answer: "Copy the generated line and append it to your .htpasswd file, or use it as the file contents. In Apache, point to the file with AuthUserFile and set AuthType Basic."
+    answer: "No. Hashing runs in this browser tab with bcrypt.js and the page's own code; nothing is uploaded or stored, and the page loads no analytics or ad scripts. You can check this in the browser's network panel while you generate."
+  - question: "Can I use the plain text format?"
+    answer: "Only in narrow cases. Apache accepts plain text passwords only on Windows and NetWare (htpasswd manual, -p). Nginx reads plain text only with the {PLAIN} prefix, which its documentation describes as an example that should not be used. On Linux Apache a plain text line never matches."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Enter a <strong>Username</strong> and <strong>Password</strong>, or click <strong>Generate</strong> to create a random password.</li>
-  <li>Select an <strong>Algorithm</strong> (bcrypt is recommended).</li>
-  <li>If using bcrypt, adjust the <strong>cost factor</strong> (higher = more secure but slower).</li>
-  <li>Click <strong>Generate htpasswd line</strong>.</li>
-  <li>Copy the result and add it to your <code>.htpasswd</code> file.</li>
-</ol>
+## How to Use
 
-<h2>Algorithm Comparison</h2>
+1. Enter the **Username** and **Password**, or press **Random** for a 20-character password.
+2. Choose a **Format**. The note below the button says which Apache and Nginx builds read it.
+3. For bcrypt, pick the **cost**; for SHA-512 or SHA-256 crypt, the **rounds** (htpasswd default 5,000).
+4. Press **Generate line** and copy the result into the htpasswd file as one line. The matching `htpasswd` command is shown under it.
 
-| Algorithm | Format prefix | Security | Notes |
-|-----------|--------------|----------|-------|
-| bcrypt | `$2a$` | Excellent | Recommended for all new deployments |
-| MD5 (APR1) | `$apr1$` | Moderate | Apache-specific MD5 variant with salt |
-| SHA1 | `{SHA}` | Weak | No salt; vulnerable to rainbow tables |
-| Plaintext | (none) | None | For testing only — never use in production |
+Problems are listed before anything is hashed: a `:` in the username, a name that starts with `#`, spaces at either end, a password longer than bcrypt reads. **Several users at once** turns `user:password` lines into a file. **Check or edit an htpasswd file** tests a password against a line you already have, and adds, updates or removes a user the way `htpasswd -b` does.
 
-<h2>Apache Configuration Example</h2>
+## Which Format Your Server Reads
 
-```apache
-# .htaccess
-AuthType Basic
-AuthName "Restricted Area"
-AuthUserFile /path/to/.htpasswd
-Require valid-user
+Apache's [Password Formats](https://httpd.apache.org/docs/2.4/misc/password_encryptions.html) page lists bcrypt (`$2y$`), APR1 MD5 (`$apr1$`), SHA-1 (`{SHA}`), CRYPT and plain text. The [htpasswd manual](https://httpd.apache.org/docs/2.4/programs/htpasswd.html) adds SHA-256 and SHA-512 crypt (`-2`, `-5`). Nginx's [auth_basic_user_file](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html) handles `$apr1$`, `{SHA}`, `{SSHA}` and `{PLAIN}` itself and hands everything else to the system `crypt()`. Apache does the same for anything except `$2a$`, `$2y$`, `$apr1$` and `{SHA}` (`apr_password_validate` in APR's `apr_passwd.c`).
+
+So bcrypt in Nginx depends on the operating system. We loaded lines from this tool into real servers on 2026-10-01 and called `curl -u` against them:
+
+| Format | Apache 2.4.68 (Debian 13) | Apache 2.4.67 (macOS htpasswd -v) | Nginx 1.29.8 (Debian 13, Alpine 3.23) |
+|---|---|---|---|
+| bcrypt `$2y$` / `$2a$` | yes | yes | yes |
+| SHA-512 / SHA-256 crypt | yes | no | yes |
+| APR1 `$apr1$` | yes | yes | yes |
+| SHA-1 `{SHA}` | yes | yes | yes |
+| CRYPT (DES) | yes | yes | yes |
+| Plain text | no | no | no |
+| `{PLAIN}` | no | no | yes |
+
+The system `crypt()` decides the Nginx column on other systems: on CentOS 7.9 (glibc 2.17) and Ubuntu 18.04 it rejected all bcrypt hashes but accepted SHA-512 and SHA-256 crypt; Ubuntu 20.04, 22.04, 24.04, Debian 11 and AlmaLinux 9 accepted bcrypt. If a bcrypt line keeps failing on such a system while the password is right, switch to SHA-512 crypt.
+
+## Examples You Can Reproduce
+
+User `deploy`, password `Correct-Horse-42`, generated once in each recommended format (salts are random, so your lines will differ):
+
+{/* htpw-check: {"line": "deploy:$2y$10$B5ZE66PBlA9fW9mqo.EoquP8tf/AH7r2EEtgXBIZ2ceg5y2fU/0ry", "password": "Correct-Horse-42"} */}
+{/* htpw-check: {"line": "deploy:$6$HLH5kRcZe8Fqc0Le$QJkO5CYVlFo.pYo23jSa8Tx2e.OPY5bI1AuvYBQCI0auFmXvW4DMvQ86EggszD.BaG/6123jvdJ6vfSiujpkk.", "password": "Correct-Horse-42"} */}
+{/* htpw-check: {"line": "deploy:$apr1$WCk.8Wc2$rEoqVyFbdWIWrm6GZy8dK.", "password": "Correct-Horse-42"} */}
+
+```text
+deploy:$2y$10$B5ZE66PBlA9fW9mqo.EoquP8tf/AH7r2EEtgXBIZ2ceg5y2fU/0ry
+deploy:$6$HLH5kRcZe8Fqc0Le$QJkO5CYVlFo.pYo23jSa8Tx2e.OPY5bI1AuvYBQCI0auFmXvW4DMvQ86EggszD.BaG/6123jvdJ6vfSiujpkk.
+deploy:$apr1$WCk.8Wc2$rEoqVyFbdWIWrm6GZy8dK.
 ```
 
-<h2>Batch Mode</h2>
-<p>Enter multiple <code>user:password</code> pairs (one per line) in the Batch mode section and click <strong>Generate batch</strong> to produce an entire <code>.htpasswd</code> file at once.</p>
+Each line passes Apache's own check (`htpasswd -vb file deploy Correct-Horse-42` prints `Password for user deploy correct.`); the SHA-512 line was checked with htpasswd inside the `httpd:2.4` container, because macOS htpasswd has no SHA-2 crypt.
 
-<h2>Security Notes</h2>
-<ul>
-  <li>Always store <code>.htpasswd</code> outside your document root so it cannot be served directly.</li>
-  <li>Prefer bcrypt with cost ≥ 10 for production servers.</li>
-  <li>Regenerate hashes if a password is compromised — there is no way to reverse a bcrypt hash.</li>
-</ul>
+**The Apache documentation example.** Open **Check or edit an htpasswd file**, paste `myName:$2y$05$c4WoMPo3SXsafkva.HHa6uXQZWr7oboPiC2bT/r7q1BB8I2s0BRqC`, enter `myName` and `myPassword` above and press **Check password**: the result is *Line 1: the password matches myName (bcrypt $2y$, cost 5).* The same works for the `$apr1$`, `{SHA}` and CRYPT examples on that page.
 
-<h2>Example Output and How to Verify It</h2>
+{/* htpw-check: {"line": "myName:$2y$05$c4WoMPo3SXsafkva.HHa6uXQZWr7oboPiC2bT/r7q1BB8I2s0BRqC", "password": "myPassword"} */}
 
-<p>User <code>{"deploy"}</code>, password <code>{"Correct-Horse-42"}</code>, generated once with each algorithm (bcrypt at cost 10). Salts are random, so your lines will differ:</p>
+**A Docker registry.** The registry's htpasswd authentication reads only bcrypt; per its [configuration reference](https://distribution.github.io/distribution/about/configuration/), entries with other hash types are ignored. Choose bcrypt `$2y$` (Go's bcrypt package, which the registry uses, accepted the `$2y$` and `$2a$` lines from this tool in our test).
 
-<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
-deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
-deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
+## Checking and Editing an Existing File
 
-<p>All three lines verify with Apache's own <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a> 2.4.67, and the APR1 line matches OpenSSL for the same salt:</p>
+Paste a file and every user line gets its format and a note. For this file:
 
-<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
-Password for user deploy correct.
-$ htpasswd -vb .htpasswd deploy wrong
-password verification failed`}</code></pre>
+```text
+# staging
+deploy:$2y$10$B5ZE66PBlA9fW9mqo.EoquP8tf/AH7r2EEtgXBIZ2ceg5y2fU/0ry
+ ops:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=
+deploy:$apr1$WCk.8Wc2$rEoqVyFbdWIWrm6GZy8dK.
+qa:secret
+```
 
-<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
-$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
+- Line 3 starts with a space: Apache strips it and reads the user `ops`, Nginx reads ` ops`. It is also unsalted SHA-1.
+- Line 4 repeats `deploy`. Apache (`mod_authn_file`) and Nginx stop at the first match, so line 2 is the one that counts.
+- Line 5 is plain text, which Linux Apache and Nginx both reject.
 
-<ul>
-  <li>The bcrypt hashes start with <code>{"$2a$"}</code>: the tool uses bcrypt.js, while Apache's <code>{"htpasswd -B"}</code> writes <code>{"$2y$"}</code>. Apache 2.4 accepts both.</li>
-  <li>bcrypt only uses the first 72 bytes of the password.</li>
-  <li>Apache documents SHA1 as insecure because it is unsalted; the line above is the same for every user with that password.</li>
-</ul>
+**Add or update user** follows `htpasswd -b`: every line of that user is replaced where it stands, comments and blank lines stay, a new user goes to the end, and the file keeps its line endings. **Remove user** deletes every line of the user, like `htpasswd -D`. The textarea then holds the new file; copy or download it.
 
-<h2>Nginx Configuration</h2>
+## Usernames and Passwords the Servers Read Differently
 
-<pre><code>{`location /admin/ {
-    auth_basic           "Restricted";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-}`}</code></pre>
+- **Colon.** The colon separates name and hash, and htpasswd exits with code 6 for a name that contains one. Several online generators simply write `a:b:$apr1$…`, which Apache reads as user `a`.
+- **`#` at the start.** Apache and Nginx treat the line as a comment; the user can never log in.
+- **Non-ASCII text.** Servers compare bytes. This tool hashes UTF-8, so a client has to send UTF-8 as well; `curl -u` from a UTF-8 terminal did, and both servers accepted a Japanese password.
+- **Length.** bcrypt reads 72 bytes of the password, so a 25-character Chinese or Japanese password (75 bytes) is cut; the tool warns before hashing. CRYPT reads 8 bytes. htpasswd refuses passwords over 255 bytes.
 
-<p>Per <a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a>, Nginx reads <code>{"$apr1$"}</code> (MD5), <code>{"{SHA}"}</code> and <code>{"{PLAIN}"}</code> itself and passes other hashes to the operating system's <code>{"crypt()"}</code>. bcrypt therefore works only where the system <code>{"crypt()"}</code> supports it (for example glibc with libxcrypt); if bcrypt lines are rejected on your server, use APR1 for Nginx.</p>
+## How It Differs from Other Online htpasswd Generators
 
-<p>After editing, run <code>{"nginx -t"}</code> and reload. Keep the file outside the web root and readable by the worker user only.</p>
+Tested on 2026-10-01 in desktop Chromium, recording the page's network requests:
+
+- **web2generators.com** (first on Bing for "htpasswd generator") sends the username and password to its server in a POST request and returns an APR1 line. For the username `a:b` it returns `a:b:$apr1$…`.
+- **htpasswd.utils.com** hashes in the browser and its bcrypt, APR1 and SHA-1 output verified with htpasswd. It also writes `a:b:…` for `a:b`, and offers `{SHA256}` and `{SHA512}` options that neither Apache 2.4 nor Nginx 1.29 accepted when we tried them.
+
+None of the generators we tested checks a password against an existing line. This one does, flags the lines Apache and Nginx read differently, and lists which servers read each format.
+
+## Limits
+
+- Formats are the seven that Apache's htpasswd writes, plus `$2a$` and `{PLAIN}`. Checking also reads `$1$` MD5 crypt and `{SSHA}`; yescrypt (`$y$`), scrypt and `$2x$` are recognised but cannot be checked in the browser.
+- bcrypt cost is 4–17 (the APR limit); SHA-2 rounds are 1,000–1,000,000 here. At cost 17 bcrypt takes many seconds in a browser.
+- The file editor works on text; it does not write to your server.
+- Digest authentication files (`htdigest`) use another format and are not supported.

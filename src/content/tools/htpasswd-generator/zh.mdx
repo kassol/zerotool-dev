@@ -1,90 +1,104 @@
 ---
-seoTitle: "htpasswd 生成器在线工具 — 免费、浏览器端、安全 | ZeroTool"
-seoDescription: "在线生成 Apache htpasswd 密码哈希，支持 bcrypt、MD5（APR1）、SHA1 和明文。所有哈希计算在浏览器中完成，密码不会离开本地。免费无需注册。"
+seoTitle: "htpasswd 生成器（Nginx/Apache）| ZeroTool"
+seoDescription: "在线生成 htpasswd 行：bcrypt $2y$、SHA-512 crypt、APR1 等格式，标明你的 Nginx 或 Apache 能否读取，还能用已有 htpasswd 文件验证密码、增删用户。"
 faqItems:
-  - question: "htpasswd 文件是什么？"
-    answer: "htpasswd 文件被 Apache HTTP Server（以及通过模块支持的 nginx）用于存储 HTTP 基本认证的用户名和密码哈希对，每行格式为 username:hashed_password。"
-  - question: "应该使用哪种算法？"
-    answer: "推荐使用 bcrypt（默认值），它具有可配置的成本因子，能有效减缓暴力破解攻击，是最安全的选项。MD5（APR1）仍被广泛使用但安全性较弱。SHA1 和明文不安全，不建议在新部署中使用。"
-  - question: "bcrypt 成本因子是什么？"
-    answer: "成本因子（4–12）控制计算轮数。值越高，计算时间越长，使暴力破解攻击成本更高。默认值 10 在安全性和服务器性能之间取得了良好平衡。"
-  - question: "我的密码会发送到服务器吗？"
-    answer: "不会。包括 bcrypt 在内的所有哈希计算都完全在浏览器中通过 JavaScript 运行，密码不会离开此页面。"
-  - question: "批量模式是什么？"
-    answer: "批量模式允许一次为多个 user:password 对生成 htpasswd 行，每行输入一对（冒号分隔），点击「批量生成」即可。"
-  - question: "如何使用生成的 htpasswd 行？"
-    answer: "复制生成的行并追加到 .htpasswd 文件，或将其作为文件内容。在 Apache 中，用 AuthUserFile 指向该文件并设置 AuthType Basic。"
+  - question: "Nginx 用 bcrypt 生成的 htpasswd 一直登录失败，为什么？"
+    answer: "Nginx 自己只实现了 $apr1$、{SHA}、{SSHA} 和 {PLAIN}，bcrypt 要交给操作系统的 crypt()。实测 CentOS 7.9（glibc 2.17）和 Ubuntu 18.04 的 crypt() 不认 bcrypt，Debian 11 以上、Ubuntu 20.04 以上、AlmaLinux 9、Alpine 可以。系统不支持时改用 SHA-512 crypt，或 APR1。"
+  - question: "为什么输出 $2y$ 而不是 $2a$？"
+    answer: "$2y$ 是 Apache 自带 htpasswd -B 的输出，也是 Apache 文档写的 bcrypt 前缀。两者哈希相同，只有前缀不同。OpenBSD 的 crypt() 只认 $2a$ 和 $2b$，在 OpenBSD 上才选 $2a$。不要用 $2b$：Apache 的 APR 只自己处理 $2a$ 和 $2y$，$2b$ 交给系统 crypt()，在 macOS 和 Windows 上会失败。"
+  - question: "bcrypt 强度选多少？"
+    answer: "htpasswd 默认 5，范围 4 到 17；本工具默认 10。Basic 认证每个请求都带密码，服务器每个请求都要算一次 bcrypt。在 Apple M1 Max 上用 htpasswd -v 验证一次，强度 5 约 13 毫秒，10 约 72 毫秒，12 约 266 毫秒。按请求量选能承受的最高值。"
+  - question: "中文密码可以用吗？"
+    answer: "可以，但要注意两点。本工具按 UTF-8 哈希，客户端也必须按 UTF-8 发送；从 UTF-8 终端用 curl -u 实测 Apache 和 Nginx 都能通过。另外 bcrypt 只取前 72 字节，一个汉字占 3 字节，超过 24 个汉字的部分不起作用，工具会提示。"
+  - question: "密码会上传吗？"
+    answer: "不会。哈希用 bcrypt.js 和页面自带的代码在当前标签页里计算，不发送、不保存，本页也不加载统计和广告脚本。生成时可以打开浏览器开发者工具的 Network 面板核对。"
 ---
 
-<h2>使用方法</h2>
-<ol>
-  <li>输入<strong>用户名</strong>和<strong>密码</strong>，或点击<strong>随机生成</strong>创建随机密码。</li>
-  <li>选择<strong>算法</strong>（推荐 bcrypt）。</li>
-  <li>如果使用 bcrypt，可调整<strong>成本因子</strong>（越高越安全，但越慢）。</li>
-  <li>点击<strong>生成 htpasswd 行</strong>。</li>
-  <li>复制结果并添加到 <code>.htpasswd</code> 文件。</li>
-</ol>
+## 怎么用
 
-<h2>算法对比</h2>
+1. 填写 **用户名** 和 **密码**，或点 **随机** 生成 20 位密码。
+2. 选 **格式**。按钮下方会写明哪些 Apache、Nginx 能读这种格式。
+3. bcrypt 选 **强度**；SHA-512、SHA-256 crypt 设 **轮数**（htpasswd 默认 5000）。
+4. 点 **生成**，把结果作为一行粘贴进 htpasswd 文件。下方同时给出等价的 `htpasswd` 命令，方便在服务器上用同一格式重做。
 
-| 算法 | 格式前缀 | 安全性 | 说明 |
-|------|---------|--------|------|
-| bcrypt | `$2a$` | 极佳 | 推荐用于所有新部署 |
-| MD5 (APR1) | `$apr1$` | 中等 | Apache 特有的带盐 MD5 变体 |
-| SHA1 | `{SHA}` | 弱 | 无盐，易受彩虹表攻击 |
-| 明文 | （无）| 无 | 仅用于测试，生产环境禁用 |
+哈希之前，工具会先指出问题：用户名含 `:`、以 `#` 开头、首尾有空格，密码超过 bcrypt 能读的长度等。**批量生成多个用户** 把多行 `user:password` 变成整个文件；**检查或编辑 htpasswd 文件** 用已有的行验证密码，并按 `htpasswd -b` 的规则增加、更新或删除用户。
 
-<h2>Apache 配置示例</h2>
+## 先确认服务器能读哪种格式
 
-```apache
-# .htaccess
-AuthType Basic
-AuthName "受限区域"
-AuthUserFile /path/to/.htpasswd
-Require valid-user
+Apache 的 [Password Formats](https://httpd.apache.org/docs/2.4/misc/password_encryptions.html) 列出 bcrypt（`$2y$`）、APR1 MD5（`$apr1$`）、SHA-1（`{SHA}`）、CRYPT 和明文，[htpasswd 手册](https://httpd.apache.org/docs/2.4/programs/htpasswd.html) 另有 SHA-256、SHA-512 crypt（`-2`、`-5`）。[Nginx 的 auth_basic_user_file](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html) 自己处理 `$apr1$`、`{SHA}`、`{SSHA}`、`{PLAIN}`，其余交给系统 `crypt()`；Apache 除 `$2a$`、`$2y$`、`$apr1$`、`{SHA}` 外同样交给 `crypt()`（APR `apr_passwd.c` 的 `apr_password_validate`）。
+
+所以 Nginx 能不能用 bcrypt 取决于操作系统。2026-10-01 我们用 Docker 镜像里的系统 `crypt()` 逐一验证：
+
+| 系统 | bcrypt `$2y$` | SHA-512 / SHA-256 crypt | CRYPT |
+|---|---|---|---|
+| CentOS 7.9（glibc 2.17） | 不支持 | 支持 | 支持 |
+| Ubuntu 18.04 | 不支持 | 支持 | 支持 |
+| Ubuntu 20.04 / 22.04 / 24.04 | 支持 | 支持 | 支持 |
+| Debian 11 / 12 / 13 | 支持 | 支持 | 支持 |
+| AlmaLinux 9.8 | 支持 | 支持 | 支持 |
+
+再把本工具生成的行放进 Nginx 1.29.8（Debian 13 与 Alpine 3.23 镜像）和 Apache 2.4.68，用 `curl -u` 登录：bcrypt、SHA-512、SHA-256、APR1、SHA-1、CRYPT 全部通过；无前缀的明文两边都失败，`{PLAIN}` 只有 Nginx 接受。国内不少服务器还在跑 CentOS 7，在这类机器上给 Nginx 配 Basic 认证，选 **SHA-512 crypt** 最稳妥：轮数可调，又不依赖系统的 bcrypt 支持。
+
+## 示例：同一个密码的三种写法
+
+用户 `admin`，密码 `春眠不觉晓-2026`（盐是随机的，你生成的结果会不同）：
+
+{/* htpw-check: {"line": "admin:$2y$10$3LD7z4FEQ30ifzeHhZ87EOQCSf5leTn8lq.xcZedcGbgPvlZ7G1oe", "password": "春眠不觉晓-2026"} */}
+{/* htpw-check: {"line": "admin:$6$c/1gv6vIDsCOui.D$x6wo6Gy9VzP7dl8C1I8ww19k3JPp4wVtCfcGgQh7PaB/J8wmiMajLV8c9Eyu8rrLadpr.fhNXIrpidWD4Xtx10", "password": "春眠不觉晓-2026"} */}
+{/* htpw-check: {"line": "admin:$apr1$XZpeiq1G$KCu7/cf7Tz6ysV42CPgYZ1", "password": "春眠不觉晓-2026"} */}
+{/* htpw-check: {"passwordCheck": "春眠不觉晓-2026", "format": "bcrypt-2y", "codes": "info:passNonAscii", "bytes": 20} */}
+
+```text
+admin:$2y$10$3LD7z4FEQ30ifzeHhZ87EOQCSf5leTn8lq.xcZedcGbgPvlZ7G1oe
+admin:$6$c/1gv6vIDsCOui.D$x6wo6Gy9VzP7dl8C1I8ww19k3JPp4wVtCfcGgQh7PaB/J8wmiMajLV8c9Eyu8rrLadpr.fhNXIrpidWD4Xtx10
+admin:$apr1$XZpeiq1G$KCu7/cf7Tz6ysV42CPgYZ1
 ```
 
-<h2>批量模式</h2>
-<p>在批量模式区域输入多个 <code>user:password</code> 对（每行一对），点击<strong>批量生成</strong>即可一次生成完整的 <code>.htpasswd</code> 文件。</p>
+三行都通过 Apache 的 `htpasswd -vb 文件 admin 春眠不觉晓-2026` 校验（输出 `Password for user admin correct.`）；SHA-512 那一行在 `httpd:2.4` 容器里校验，因为 macOS 的 htpasswd 不支持 SHA-2 crypt。这个密码含 5 个汉字，按 UTF-8 共 20 字节，工具会提示「按 UTF-8 的 20 字节哈希」。
 
-<h2>安全建议</h2>
-<ul>
-  <li>始终将 <code>.htpasswd</code> 文件存储在文档根目录之外，防止被直接访问。</li>
-  <li>生产服务器推荐使用成本因子 ≥ 10 的 bcrypt。</li>
-  <li>密码泄露后立即重新生成哈希值——bcrypt 哈希无法逆向还原。</li>
-</ul>
+再换一个 30 个汉字的长密码选 bcrypt，工具会提示：
 
-<h2>输出示例与验证方法</h2>
+{/* htpw-check: {"passwordCheck": "白日依山尽黄河入海流欲穷千里目更上一层楼春眠不觉晓处处闻啼", "format": "bcrypt-2y", "codes": "info:passNonAscii,warn:bcrypt72"} */}
 
-<p>用户 <code>{"deploy"}</code>、密码 <code>{"Correct-Horse-42"}</code>，每种算法各生成一次（bcrypt 强度 10）。盐是随机的，你得到的结果会不同：</p>
+> bcrypt 只取前 72 字节；这个密码有 90 字节，后面的部分不起作用。
 
-<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
-deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
-deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
+也就是说，只要前 24 个汉字相同，后面写什么都能登录。需要长中文口令时改用 SHA-512 crypt，它没有这个限制。
 
-<p>三行都能通过 Apache 自带的 <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a>（2.4.67）验证，APR1 一行在相同盐值下与 OpenSSL 的结果一致：</p>
+## 检查已有文件
 
-<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
-Password for user deploy correct.
-$ htpasswd -vb .htpasswd deploy wrong
-password verification failed`}</code></pre>
+把文件粘贴进 **检查或编辑 htpasswd 文件**，每个用户行都会标出格式和提示，例如：
 
-<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
-$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
+```text
+# 测试环境
+admin:$2y$10$3LD7z4FEQ30ifzeHhZ87EOQCSf5leTn8lq.xcZedcGbgPvlZ7G1oe
+admin:$apr1$XZpeiq1G$KCu7/cf7Tz6ysV42CPgYZ1
+test:$apr1$XZpeiq1G$KCu7/cf7Tz6ysV42CPgYZ1  
+```
 
-<ul>
-  <li>bcrypt 哈希以 <code>{"$2a$"}</code> 开头：工具用的是 bcrypt.js，而 Apache 的 <code>{"htpasswd -B"}</code> 写出的是 <code>{"$2y$"}</code>。Apache 2.4 两种都接受。</li>
-  <li>bcrypt 只使用密码的前 72 个字节。</li>
-  <li>Apache 文档把 SHA1 列为不安全，因为它不加盐：同一个密码在所有用户那里得到的都是上面这一行。</li>
-</ul>
+- 第 3 行与第 2 行同名。实测 Apache 和 Nginx 都只用第一条匹配的行，第 3 行改了也不生效。
+- 第 4 行哈希后面有两个空格：Apache 读行时去掉，Nginx 把空格算进哈希，每次登录都失败。
 
-<h2>Nginx 配置</h2>
+在上方填好用户名、密码后点 **验证密码**，会告诉你密码与哪一行匹配；**增加或更新用户** 与 `htpasswd -b` 一致：同名的每一行原地替换，注释和空行保留，新用户追加到末尾，换行符（LF 或 CRLF）不变；**删除用户** 与 `htpasswd -D` 一致，删掉该用户的所有行。处理后的内容直接写回文本框，可复制或下载。
 
-<pre><code>{`location /admin/ {
-    auth_basic           "Restricted";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-}`}</code></pre>
+## 用户名的几个坑
 
-<p>按 <a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a> 的说明，Nginx 自己能读 <code>{"$apr1$"}</code>（MD5）、<code>{"{SHA}"}</code> 和 <code>{"{PLAIN}"}</code>，其他格式交给操作系统的 <code>{"crypt()"}</code>。所以 bcrypt 只在系统 <code>{"crypt()"}</code> 支持它时可用（比如带 libxcrypt 的 glibc）；如果服务器拒绝 bcrypt 行，给 Nginx 用 APR1。</p>
+- 用户名不能含 `:`：冒号是用户名和哈希的分隔符，htpasswd 遇到这种名字直接退出（退出码 6）。不少在线生成器照样输出 `a:b:$apr1$…`，Apache 会把它读成用户 `a`。
+- 以 `#` 开头的行在 Apache 和 Nginx 里都是注释，这个用户永远登录不了。
+- 首尾空格：Apache 会去掉行首空格，Nginx 不会，两边看到的用户名不一样。
+- 中文用户名可以用，但服务器按字节比较，客户端必须按 UTF-8 发送。
 
-<p>改完后运行 <code>{"nginx -t"}</code> 再 reload。文件放在网站根目录之外，只让 worker 用户可读。</p>
+## 与其他在线 htpasswd 生成器的区别
+
+2026-10-01 用桌面版 Chromium 实测，并记录页面发出的网络请求：
+
+- **在线工具大全 lddgo.net**（cn.bing.com 搜「htpasswd 在线生成」第一）点击生成时，把用户名、密码和算法以 JSON 发到 `/api/Htpasswd`，在服务器端计算。用户名填 `a:b` 照样输出 `a:b:$apr1$…`。
+- **web2generators.com**（Bing 英文结果第一）同样把用户名和密码 POST 到自己的服务器，只有 MD5。
+
+本工具只在浏览器里计算；能用已有的行验证密码，能指出 Apache 与 Nginx 读法不同的行，并写明每种格式哪些服务器能读。
+
+## 限制
+
+- 生成的格式是 Apache htpasswd 能写的 7 种，加上 `$2a$` 和 `{PLAIN}`。验证时另外支持 `$1$` MD5 crypt 和 `{SSHA}`；yescrypt（`$y$`）、scrypt、`$2x$` 只能识别，不能在浏览器里验证。
+- bcrypt 强度 4–17（APR 的上限），SHA-2 轮数这里限 1000–1000000。强度 17 在浏览器里要算很多秒。
+- 文件编辑只处理文本，不会写到服务器上。
+- Digest 认证的 `htdigest` 文件是另一种格式，不支持。
