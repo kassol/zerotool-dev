@@ -2,17 +2,19 @@
 title: "Pick Any Pixel on Your Screen with the EyeDropper API"
 description: "A developer's guide to the browser-native EyeDropper API — how it works, where it falls short, and how to use it to sample colors from screenshots, videos, and other apps."
 pubDate: 2026-05-22
+updatedDate: 2026-10-01
 lang: "en"
 tags: ["color", "css", "web-api", "design", "developer-tools"]
+noindex: true
 ---
 
-You're rebuilding a competitor's dashboard for a pitch. The reference is a 4K screenshot from their launch video plus a couple of Figma exports off Dribbble. Thirty distinct colors across the surface — sidebar fill, three button states, two tiers of muted text, a six-step chart palette. The old workflow: crop a slice, paste into Photoshop, eyedropper, copy hex, paste into Tailwind config, repeat. Thirty round-trips later you have a palette and a sore wrist.
+A common case: you have to match a palette from reference material that has no source files, such as a screenshot from a launch video, an exported mockup, or an old PDF. The old workflow is to crop a slice, paste it into an image editor, use its eyedropper, copy the hex and repeat for every color.
 
-Screen-level color picking has been a paid-tool category for years — ColorSnapper, Sip, Just Color Picker, plus a long tail of Chrome extensions that want their own permissions. As of Chromium 95, you don't need any of them for the common case. The browser ships an `EyeDropper` API that does exactly this: open a system magnifier, sample one pixel, get back an sRGB hex string. ZeroTool's [Eyedropper Color Picker](/tools/eyedropper-color-picker/) is a thin wrapper around that API with the format conversions and a recent-colors strip you'd otherwise rebuild yourself.
+Screen-level color picking used to need a separate app or a browser extension with its own permissions. Since Chrome 95, Chromium browsers ship an `EyeDropper` API that does the common case: the browser shows its own picker, the user selects one pixel, and the page gets an sRGB hex string. ZeroTool's [Color Picker from Image & Screen](/tools/eyedropper-color-picker/) uses that API, and it also reads pixels from images and pasted screenshots in browsers that do not have it.
 
 ## The EyeDropper API in 60 Seconds
 
-`EyeDropper` is a Chromium-incubated Web API now tracked by the WICG. The surface is tiny:
+`EyeDropper` is specified in a W3C Community Group draft of the WICG ([EyeDropper API](https://wicg.github.io/eyedropper-api/)). The surface is tiny:
 
 ```js
 const eyeDropper = new EyeDropper();
@@ -20,51 +22,52 @@ const result = await eyeDropper.open();
 console.log(result.sRGBHex); // "#3a7bd5"
 ```
 
-`open()` returns a Promise. The browser takes over the cursor with a system-level magnifier, the user clicks one pixel anywhere on the physical screen — including outside the browser window, across other apps — and the promise resolves with an object whose `sRGBHex` property holds a 7-character hex string. If the user presses Escape, the promise rejects with an `AbortError`.
+`open()` returns a Promise. The browser shows its picker, the user clicks one pixel anywhere on the screen, including outside the browser window, and the promise resolves with an object whose `sRGBHex` property holds the color in the `#aabbcc` form ([MDN](https://developer.mozilla.org/en-US/docs/Web/API/EyeDropper/open)). If the user presses Escape, the promise rejects with an `AbortError`.
 
 Three constraints worth internalizing before you build on top of it:
 
-- **User gesture required.** You can only call `open()` inside a click or keypress handler. There is no `setTimeout` trick, no auto-open on page load, no headless sampling. This is by design — silently reading pixels from another app would be a screen-capture exploit.
-- **One pick per call.** Each invocation samples exactly one pixel and closes the magnifier. To grab a second color, the user has to click your button again. There's no "stay open, keep sampling" mode.
-- **sRGB output only.** The returned hex is always in the sRGB color space. If the user is on a P3 display and picks from a wide-gamut image, the value is gamut-mapped down to sRGB before you see it. The API gives you no way to read the raw display-native color.
+- **User activation required.** `open()` without transient user activation rejects with `NotAllowedError`, so call it from a click or key handler. There is no auto-open on page load and no headless sampling. The spec's security section explains why: a page must not be able to "screen scrape" what the user did not intend to share, so pixel data is released only after an explicit action such as a mouse press.
+- **One pick per call.** Each call returns one color and closes the picker. To get a second color, the user has to click your button again. A second `open()` while one is open rejects with `InvalidStateError`.
+- **sRGB output only.** The result is always an sRGB hex string. On macOS, Chromium converts the sampled display color to sRGB and then to 8 bits per channel ([`skia_utils_mac.mm`](https://github.com/chromium/chromium/blob/main/skia/ext/skia_utils_mac.mm), `CGColorRefToSkColor`), so a wide-gamut color comes back clipped. The API has no way to return the Display P3 value.
 
-Browser support as of 2026: Chrome, Edge, and Opera (Chromium 95+) all ship it. Safari and Firefox do not. Capability detection is a one-liner:
+Browser support, from MDN browser-compat-data 8.1.3 (2026-09-24): Chrome and Edge 95+ and Opera 81+ on desktop. It is not available on Linux Wayland. Firefox, Safari, Chrome on Android and iOS browsers do not support it. Capability detection is a one-liner:
 
 ```js
 if ('EyeDropper' in window) {
   // EyeDropper available — wire up the screen-pick button
 } else {
-  // Fall back to <input type="color"> or show a help message
+  // Offer another path: an image or screenshot to pick from
 }
 ```
 
 ## Using the Tool
 
-Open [Eyedropper Color Picker](/tools/eyedropper-color-picker/) and you'll see three input modes:
+Open [Color Picker from Image & Screen](/tools/eyedropper-color-picker/). It has four ways in:
 
-1. **Pick from screen.** Click the button, then click any pixel on your screen. The HEX, RGB, and HSL fields fill in together. This is the EyeDropper API path — Chromium only.
-2. **Native picker.** Opens a standard `input type="color"` dialog. Works in every browser, including Safari and Firefox. Useful when you want an HSV wheel or are authoring a fresh color from scratch.
-3. **Type into a field.** Paste a known hex, RGB, or HSL value and the other two recompute. Useful for converting between formats without opening DevTools.
+1. **Pick from screen.** Click the button, then click any pixel on your screen. This is the EyeDropper path, so it appears only where the API exists.
+2. **Open image.** Open a file, drop it on the tool, or paste a screenshot with Ctrl+V / ⌘V. A loupe shows the 11 × 11 pixels around the pointer. A click, or Enter after moving with the arrow keys, picks one pixel or the 3 × 3 / 5 × 5 average. This works in every browser.
+3. **Color dialog.** Opens the system color picker through `<input type="color">`.
+4. **Type a value.** Paste any CSS color into any field (HEX, `rgb()`, `hsl()`, `oklch()`, `color(display-p3 …)` or a name). The other fields recompute.
 
-The last eight samples persist in a Recent Colors strip backed by `localStorage`. Click a swatch to reload it; clear the strip with the "Clear recent" button. Nothing leaves your browser — there is no network call in either picker path.
+Output is HEX, RGB, HSL, OKLCH and Display P3, each written so that it converts back to the same 8-bit color. The last 16 picks are kept in a Recent colors strip backed by `localStorage`. Images are not stored, and no picker path makes a network request.
 
 ## Four Concrete Use Cases
 
 ### Reverse-Engineering a Design
 
-You have a screenshot or a Figma export and you need the palette inside Tailwind, CSS variables, or a Sketch swatch. Open the reference in any window — preview app, Figma desktop, browser tab — then click "Pick from screen" and tap the color you want. The magnifier zooms enough to land on a single pixel even on a 1× display.
+You have a screenshot or a mockup export and you need its palette as CSS variables or Tailwind tokens. Open the reference in any window, click "Pick from screen", and click the color. In Firefox or Safari, paste a screenshot of the reference into the tool instead and click the color in the loupe.
 
-This replaces the ColorSnapper / Sip workflow for the 80% case. Dedicated apps still win on pinned floating palettes, hotkey-driven rapid sampling, and named libraries. For six colors on one project, the browser API is enough.
+Dedicated apps still do more: floating palettes, hotkeys, named libraries. For a handful of colors on one project, the browser is enough.
 
 ### Brand-Guide Forensics
 
-Common marketing request: "the website used to be this exact blue, we lost the source files, can you match it from this old PDF / screenshot / Wayback Machine capture?" Without original tokens, you're reading colors off rendered images. Drop the image into a browser tab, open the tool in another tab, switch back, and pick. The magnifier covers the entire screen, not just the active tab, so the image doesn't need to live inside the tool.
+A common request: "the website used to be this exact blue, we lost the source files, can you match it from this old PDF or screenshot?" Without the original tokens, you read colors off rendered images. Open the image in the tool and pick at full resolution. Use the 3 × 3 or 5 × 5 average on JPEG screenshots, where compression makes neighboring pixels differ.
 
 ### Video and Stream UI Inspection
 
-Twitch overlays, YouTube thumbnails, screen recordings of AI agents at work, conference slides — anything playing on your screen is fair game. Pause the frame, click "Pick from screen", click the pixel. Harder to do with traditional design tools, which usually want a static file.
+Video overlays, thumbnails, screen recordings and slides are all fair game. Pause the frame, click "Pick from screen", click the pixel.
 
-Subtle gotcha: the magnifier samples the pixel actually rendered to the display, so any GPU compositing, color profile, or HDR-to-SDR tone mapping applied by the OS is baked in. The color you pick is "what the user sees", not "what the source asset specified".
+The value is the pixel as it is displayed, after video decoding, scaling and compositing, and then converted to sRGB as above. It is "what the user sees", not "what the source asset specified".
 
 ### Accessibility Audits
 
@@ -72,55 +75,45 @@ Once you have a color, you usually want to check contrast against another. Pick 
 
 ## Limits and Workarounds
 
-**Safari and Firefox users.** The `EyeDropper` capability check returns false. The tool hides the "Pick from screen" button and falls back to the native picker. To sample from screen on those browsers: open the reference in Chrome temporarily, use a system utility (macOS Digital Color Meter ships with the OS, Windows PowerToys has Color Picker), or install a vetted extension.
+**Safari and Firefox users.** The `EyeDropper` capability check returns false. The tool hides "Pick from screen" and makes "Open image" the main action. Take a screenshot to the clipboard and paste it: on a Mac, add Control to the screenshot shortcut, for example Control-Shift-Command-4 ([Apple](https://support.apple.com/en-us/102646)); on Windows, PrtSc copies the whole screen ([Microsoft](https://support.microsoft.com/en-us/windows/use-snipping-tool-to-capture-screenshots-00246869-1843-655f-f220-97299b865f6b)). The operating systems also ship screen pickers: [Digital Color Meter](https://support.apple.com/guide/digital-color-meter/welcome/mac) on macOS and [PowerToys Color Picker](https://learn.microsoft.com/en-us/windows/powertoys/color-picker) (Win + Shift + C) on Windows.
 
-**DevTools already has an eyedropper.** Chrome and Firefox DevTools include a small picker inside the Styles panel — click a color swatch in the rules pane and you get an eyedropper for the current document. That picker is scoped to the inspected page: viewport pixels only, no other tabs or apps. The standalone `EyeDropper` API covers the whole physical screen.
+**No continuous sampling.** Every pick requires a fresh click on your button. Fifty colors means fifty button clicks and fifty pixel clicks. This is the user-activation rule, not a tool limitation.
 
-**No continuous sampling.** Every pick requires a fresh click on your button. Fifty colors means a hundred clicks. This is the user-gesture requirement, not a tool limitation.
+**P3 and HDR clipping.** On a wide-gamut display, a color outside sRGB is converted to sRGB and clipped before it reaches your code. If you need the wide-gamut value, pick from the image file instead: browsers that can create a Display P3 canvas (Chrome and Edge 92+, Safari 15.2+) let the tool read the P3 value and flag the clipping.
 
-**P3 and HDR clamping.** On a wide-gamut display showing a P3 image, the picked color is gamut-mapped to sRGB before it reaches your code. The hex may differ by a few percent from Photoshop's reading on the same pixel — Photoshop reads the source asset's color space; the browser reads the post-composite sRGB output. For color-managed work, verify in a color-managed tool.
-
-**Recent Colors lives in localStorage.** Clearing browser site data wipes the strip. Private to your machine, never synced.
+**Recent colors live in localStorage.** Clearing site data wipes the strip. It stays on your machine and is never synced.
 
 ## FAQ
 
-### How is this different from the eyedropper built into Chrome DevTools?
-
-DevTools' picker is bound to the inspected document — viewport pixels only, no other tabs or apps. The `EyeDropper` Web API has full physical-screen reach because the browser asks the OS for a system-level sample. Use DevTools when you're inspecting an element on the current page; use the standalone tool for everything else.
-
 ### Why can't it sample multiple pixels at once or read a region?
 
-Single-pixel, user-gesture-per-pick is the API's privacy story. Reading a region — or letting a page sample without an explicit click — would let a hostile page screenshot other apps the user has open. The WICG threat model treats single-pixel-per-gesture as the maximum defensible exposure.
+The API returns one color per user action by design. The spec's security section says an eyedropper must not let a page "screen scrape" information, and it suggests releasing pixel data only after an explicit action, showing a clear indication of eyedropper mode and letting the user exit with Esc ([EyeDropper API, Security and Privacy Considerations](https://wicg.github.io/eyedropper-api/)).
 
 ### What should Safari and Firefox users do?
 
-Two paths. The same tool exposes the native `input type="color"` picker, which covers authoring fresh colors in every browser. For actual screen sampling, use a platform utility — macOS Digital Color Meter (built in), Windows PowerToys Color Picker, or a trusted extension. There is no Web-standard fallback for screen sampling on those engines.
+Use a screenshot. Copy it to the clipboard, paste it into the tool with ⌘V or Ctrl+V and click the pixel. The tool reads it at full resolution. For live screen sampling without a browser, use Digital Color Meter on macOS or PowerToys Color Picker on Windows.
 
 ### Why does my P3 display give different values than Photoshop?
 
-Photoshop reads source asset values through its color-management pipeline using the document's ICC profile. The browser eyedropper reads the post-composite sRGB pixel the OS pushed to the display. On a P3 monitor showing a P3 asset, those two numbers don't match — Photoshop sees the wide-gamut original; the browser sees the sRGB-mapped output. Both are correct for their workflows. Color-managed work belongs in a color-managed editor; UI work that ships to sRGB targets is fine with the browser value.
+Photoshop reads the document's values in the document's color space. The EyeDropper API returns the displayed color converted to sRGB, clipped to 0–255 per channel. For a color outside sRGB, the two numbers cannot match. Pick from the exported file in a browser with Display P3 canvas support to see the P3 value.
 
-### Does the picker work on a second monitor?
+### Can a page open the eyedropper without a click?
 
-Yes. The system magnifier follows the cursor across all attached displays. Each display's color profile and gamma is applied before sampling, so the same logical color picked from two monitors can return slightly different hex values if the displays are calibrated differently.
+No. Without transient user activation, `open()` rejects with `NotAllowedError` ([MDN](https://developer.mozilla.org/en-US/docs/Web/API/EyeDropper/open)). Call it from the click or key handler that the user triggered.
 
 ### Will Recent Colors sync across browsers or devices?
 
 No. The strip is stored in `localStorage` for the current origin — per-browser, per-profile, per-device. Clearing site data deletes it. No account, no upload, no cross-device sync.
 
-### Can I use the API from an iframe or a Chrome extension?
-
-From a same-origin iframe, yes, as long as the click handler is in the iframe and the parent allows it. Cross-origin iframes need a Permissions Policy directive from the parent. From a Chrome extension content script, the API is also available, though most extensions doing screen sampling still use `chrome.tabs.captureVisibleTab` for region reads.
-
 ## Related Color Tools
 
 Once you have a hex, the next steps usually live in one of these:
 
-- [Color Converter](/tools/color-converter/) — push a hex through HEX / RGB / HSL / HSV / CMYK / OKLCH conversions for whichever format your codebase uses.
-- [Color Shades Generator](/tools/color-shades-generator/) — turn one color into a 50-to-950 tint/shade ramp suitable for a Tailwind or Material palette.
-- [Color Palette Generator](/tools/color-palette-generator/) — build complementary, analogous, triadic, and split-complementary palettes around a base color.
+- [Color Converter](/tools/color-converter/) — convert the color between formats with a live preview.
+- [Color Shades Generator](/tools/color-shades-generator/) — turn one color into a Tailwind-style ramp from light to dark.
+- [Color Palette Generator](/tools/color-palette-generator/) — build harmony palettes such as complementary, analogous and triadic around a base color.
 - [Color Contrast Checker](/tools/color-contrast-checker/) — verify a foreground/background pair passes WCAG AA or AAA, with large-text and UI-component thresholds.
 
 ---
 
-Open [Eyedropper Color Picker](/tools/eyedropper-color-picker/) next time you need a hex out of a screenshot. Free, browser-only, no trace once you close the tab.
+Open [Color Picker from Image & Screen](/tools/eyedropper-color-picker/) next time you need a hex out of a screenshot. It is free, runs in the browser, and keeps no image after you close the tab.
