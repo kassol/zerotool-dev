@@ -2,7 +2,9 @@
 title: "Cubic Bezier 生成器：别再瞎猜 CSS 缓动曲线"
 description: "拖拽两个控制点、看动画跑起来，复制 CSS / SCSS / Tailwind。附 cubic-bezier 背后的数学、设计系统标准曲线，以及那些会写到生产环境里的踩坑姿势。"
 pubDate: 2026-04-29
+updatedDate: 2026-10-01
 lang: "zh"
+noindex: true
 tags: ["css", "animation", "easing", "cubic-bezier", "developer-tools"]
 ---
 
@@ -48,7 +50,7 @@ CSS 规范定义了五个命名缓动。它们没什么神奇的——每个都�
 
 三个会改变你用法的观察：
 
-1. **`ease` 是不对称的。** 它加速的程度比减速更猛：`(0.25, 0.1, 0.25, 1)` 把 P2 顶到了上边缘。多数团队用 `ease` 时以为它是个温和的默认值，实际它更接近 `ease-out` 而不是真正平衡的曲线。
+1. **`ease` 是不对称的。** 它很快加速，然后用大部分时长减速：`(0.25, 0.1, 0.25, 1)` 把 P2 顶到了上边缘。多数团队用 `ease` 时以为它是个温和的默认值，实际它更接近 `ease-out` 而不是真正平衡的曲线。
 2. **`ease-in` 和 `ease-out` 是镜像。** `ease-in` 把 P2 钉在右上角，所以末段是直线；`ease-out` 把 P1 钉在左下角，所以前段是直线。如果你的动画两端都需要曲线，要用 `ease-in-out`（或者自定义曲线）。
 3. **`linear` 多数时候不是你想要的。** 任何有物理类比的运动（滑动、展开、淡入）用线性都会显得机械。把 `linear` 留给真正的无限循环，或者要表达「匀速进度」的进度条。
 
@@ -64,24 +66,24 @@ CSS 规范定义了五个命名缓动。它们没什么神奇的——每个都�
 | Material 3 | Standard decelerate（元素入场） | `cubic-bezier(0, 0, 0, 1)` |
 | Material 3 | Standard accelerate（元素离场） | `cubic-bezier(0.3, 0, 1, 1)` |
 | Material 2（旧版） | Standard | `cubic-bezier(0.4, 0, 0.2, 1)` |
-| iOS / UIKit | 默认缓动（`UIView` 块式动画） | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
-| Tailwind CSS | `transition-timing-function: ease-in-out` 默认值 | `cubic-bezier(0.4, 0, 0.2, 1)` |
+| Apple Core Animation | `CAMediaTimingFunction` 的 `.default`（UIView 块式动画默认是 `.easeInEaseOut`，等于 CSS `ease-in-out`） | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+| Tailwind CSS | `ease-in-out` 工具类，也是 `transition-*` 工具类的默认缓动 | `cubic-bezier(0.4, 0, 0.2, 1)` |
 
 三条要内化的模式：
 
 - **不对称 in/out 比对称 in-out 好用。** Material 的三条曲线（standard / decelerate / accelerate）对应的是 UI 元素做的三件事：保持、入场、离场。对称的 `ease-in-out` 用在入场 toast 上是错的——用户读出来是「飘忽」。
 - **入场用减速，离场用加速。** 面板滑入时，用户需要时间看清终态——结尾要慢；面板滑出时，用户已经在看下一屏——结尾要快。
-- **回弹（`Back`）曲线是标点，不是字。** `cubic-bezier(0.68, -0.55, 0.265, 1.55)` 这类曲线会过冲再回稳。它们适合一次性的注意力提示（徽章弹出），不适合反复触发的过渡（每次按钮 hover 都弹一下）。
+- **回弹（`Back`）曲线用于强调，不用于每一次过渡。** `cubic-bezier(0.68, -0.55, 0.265, 1.55)` 这类曲线会过冲再回稳。它们适合一次性的注意力提示（徽章弹出），不适合反复触发的过渡（每次按钮 hover 都弹一下）。
 
-在编辑器里点任意一个 preset，会同时看到曲线、动效小球和对应的 CSS。点几次对比一下——纸面上看似差别不大，跑起来差异立刻显形。
+在编辑器里点任意一个 preset，会同时看到曲线、动效小球和对应的 CSS。编辑器里的三个 Material 预设是 Material 2 的曲线（`0.4, 0, 0.2, 1` / `0, 0, 0.2, 1` / `0.4, 0, 1, 1`），想试 Material 3 的值，把上表的数字填进输入框。点几次对比一下——纸面上看似差别不大，跑起来差异立刻显形。
 
 ## 那些会写进生产环境的踩坑
 
-我见过的每个团队，至少都踩过下面其中一个。
+下面每一条都很容易在没察觉的情况下上线。
 
 ### 1. 用 `linear` 表达「中性」运动
 
-200 ms 的线性曲线在多数 UI 动效里都会显得卡——眼睛默认在到达点上看到减速。修法几乎永远是 `cubic-bezier(0, 0, 0.2, 1)`（Material decelerate）或类似的曲线。把 `linear` 留给真正的连续运动：旋转 spinner、跑马灯、能反映真实进度的 progress bar。
+200 ms 的线性曲线在多数 UI 动效里都会显得卡——眼睛默认在到达点上看到减速。通常的修法是换成减速曲线，比如 `cubic-bezier(0, 0, 0.2, 1)`（Material 2 decelerate）。把 `linear` 留给真正的连续运动：旋转 spinner、跑马灯、能反映真实进度的 progress bar。
 
 ### 2. 把 `ease-in-out` 设上去就收工
 
@@ -89,7 +91,7 @@ CSS 规范定义了五个命名缓动。它们没什么神奇的——每个都�
 
 ### 3. 把 `cubic-bezier(0.4, 0, 0.2, 1)` 当万能药
 
-Material 的 standard 曲线一度是 CSS 里被复制最多的片段，但它是个*通用*曲线。Material 自己的指引明确说入场用 decelerate、离场用 accelerate——多数团队只看到「standard」这个词就停下，把它套到所有过渡上。结果是「能用但平庸」的动效。修法很小：入场用 `0, 0, 0.2, 1`、离场用 `0.4, 0, 1, 1`、`0.4, 0, 0.2, 1` 只用在那些既不入场也不离场的过渡上。
+Material 2 的 standard 曲线被广泛复制，但它是个*通用*曲线。Material 2 的缓动指引让入场元素用 decelerate、离场元素用 accelerate；把 standard 套到所有过渡上，就跳过了这层区分。结果是「能用但平庸」的动效。修法很小：入场用 `0, 0, 0.2, 1`、离场用 `0.4, 0, 1, 1`、`0.4, 0, 0.2, 1` 只用在那些既不入场也不离场的过渡上。
 
 ### 4. 日常过渡用了负值或 > 1 的 Y
 
@@ -185,13 +187,13 @@ gsap.registerPlugin(CustomEase);
 CustomEase.create('enter', 'M0,0 C0,0 0.2,1 1,1');
 gsap.to('.modal', { y: 0, duration: 0.25, ease: 'enter' });
 
-// Anime.js：用 cubicBezier 这个 JS 函数
+// Anime.js 3：用字符串传入曲线
 import anime from 'animejs';
 anime({
   targets: '.modal',
   translateY: [20, 0],
   duration: 250,
-  easing: anime.cubicBezier(0, 0, 0.2, 1)
+  easing: 'cubicBezier(0, 0, 0.2, 1)'
 });
 ```
 
@@ -225,7 +227,7 @@ module.exports = {
 
 ## 这个编辑器跟同类工具的区别
 
-[`cubic-bezier.com`](https://cubic-bezier.com/) 是这个领域的标杆——Lea Verou 在 2014 年写下这个工具，从此它一直是默认参考。它把一件事做到了极致：拖两个把手、看曲线、复制四个数字。本编辑器做同样的事，再补上几件：
+[`cubic-bezier.com`](https://cubic-bezier.com/) 出自 Lea Verou，是这个领域长期以来的参考工具。它把一件事做到了极致：拖两个把手、看曲线、复制四个数字。本编辑器做同样的事，再补上几件：
 
 - **十一组设计系统 preset**，所以你不必凭记忆默写 Material 的 `(0.4, 0, 0.2, 1)` 或者从 Stack Overflow 复制粘贴。
 - **三种输出格式**（CSS / SCSS / Tailwind 配置），所以同一条曲线可以发到栈里任何消费 timing function 的层。
@@ -233,7 +235,7 @@ module.exports = {
 - **本地持久化**——昨天调到一半的曲线明天打开标签页还在（Reset 按钮一键复位）。
 - **四语言**（英文 / 中文 / 日文 / 韩文），让工作语言不一致的团队也能用。
 
-整个工具运行在浏览器里：不上传、不登录、不对曲线参数本身做埋点。整个工具就是一份 HTML + 内联 JS——view-source 看就是数学。
+整个工具运行在浏览器里：不上传、不登录；统计事件只记录工具被使用，不记录曲线参数。工具脚本内联在页面里——view-source 就能看到数学。
 
 ## 延伸阅读
 
