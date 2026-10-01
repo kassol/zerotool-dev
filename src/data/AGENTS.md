@@ -64,3 +64,4 @@ interface ToolInfo {
 - 2026-09-29 — 新增 `blog-index.mjs`（博客 noindex / draft 判定，sitemap 与 hreflang 共用）
 - 2026-09-30 — `network.ts` 新增 `optionalNetworkToolSlugs`（默认不联网、打开选项后才联网的工具，首个为 markdown-to-word 的「嵌入网络图片」）
 - 2026-09-30 — 新增 `llms.mjs` 与 `llms-input.ts`（llms 文件由构建期端点生成，工具条目随 `tools.ts` / `network.ts` / `persistence.ts` 自动更新）
+- 2026-10-01 — 新增 `deepseek-v4-tokenizer.mjs`（生成文件，勿手改）：ai-token-counter 的 DeepSeek V4 词表与合并表，由 `scripts/build-deepseek-tokenizer.mjs` 从 DeepSeek 官方 tokenizer.json 生成，页面按需动态 import（约 1.08 MB，gzip 577 KB）
