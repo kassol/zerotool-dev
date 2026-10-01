@@ -14,17 +14,48 @@ faqItems:
 
 <h2>How to Use</h2>
 <ol>
-  <li>Select <strong>Encode</strong> or <strong>Decode</strong> mode.</li>
-  <li>Paste your text or Base64 string into the input box.</li>
-  <li>Click the action button.</li>
+  <li>Select <strong>Encode</strong> or <strong>Decode</strong> mode, and <strong>Standard</strong> or <strong>URL-safe</strong> alphabet.</li>
+  <li>Type or paste your text or Base64 string into the input box. The result updates 0.3 seconds after you stop typing; the action button runs the same conversion at once.</li>
+  <li>To encode a file instead of text, drop it on the drop zone (Encode mode only). Tick <strong>Include Data URI prefix</strong> to get <code>data:&lt;mime&gt;;base64,…</code>.</li>
   <li>Copy the result with the <strong>Copy</strong> button.</li>
-  <li>Use <strong>Swap</strong> to move the output back to input for chained operations.</li>
+  <li>Use <strong>Swap</strong> to move the output back to the input, for example to check that a decoded value encodes back to the same string.</li>
 </ol>
+
+<h2>Examples</h2>
+<p>These outputs come from the tool's own encode and decode functions.</p>
+<table>
+  <thead><tr><th>Mode</th><th>Input</th><th>Output</th></tr></thead>
+  <tbody>
+    <tr><td>Encode, Standard</td><td><code>Hello, 世界</code></td><td><code>SGVsbG8sIOS4lueVjA==</code></td></tr>
+    <tr><td>Encode, URL-safe</td><td><code>Hello, 世界</code></td><td><code>SGVsbG8sIOS4lueVjA</code></td></tr>
+    <tr><td>Encode, Standard</td><td><code>{'subjects?_d'}</code></td><td><code>c3ViamVjdHM/X2Q=</code></td></tr>
+    <tr><td>Encode, URL-safe</td><td><code>{'subjects?_d'}</code></td><td><code>{'c3ViamVjdHM_X2Q'}</code></td></tr>
+    <tr><td>Encode, Standard</td><td><code>user:pass</code></td><td><code>dXNlcjpwYXNz</code></td></tr>
+    <tr><td>Decode, URL-safe</td><td><code>eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6Ikpvc8OpIn0</code></td><td><code>{`{"sub":"1234567890","name":"José"}`}</code></td></tr>
+  </tbody>
+</table>
+<p>Text is encoded as UTF-8 first, so <code>世界</code> takes six bytes and eight Base64 characters. The <code>{'subjects?_d'}</code> row shows the only difference between the two alphabets: Standard uses <code>+</code> and <code>/</code> (<a href="https://www.rfc-editor.org/rfc/rfc4648#section-4" target="_blank" rel="noopener">RFC 4648 §4</a>), URL-safe uses <code>-</code> and <code>{'_'}</code> and drops the <code>=</code> padding (<a href="https://www.rfc-editor.org/rfc/rfc4648#section-5" target="_blank" rel="noopener">RFC 4648 §5</a>). JWT segments use the URL-safe form without padding (<a href="https://www.rfc-editor.org/rfc/rfc7515#section-2" target="_blank" rel="noopener">RFC 7515 §2</a>), which is why the last row decodes a JWT payload in URL-safe mode. The <code>user:pass</code> row is the credential part of an HTTP Basic header (<a href="https://www.rfc-editor.org/rfc/rfc7617#section-2" target="_blank" rel="noopener">RFC 7617 §2</a>); the <a href="/tools/basic-auth-header-generator/">Basic Auth Header Generator</a> builds the whole header.</p>
+
+<h2>What the Decoder Accepts</h2>
+<ul>
+  <li><strong>Missing padding.</strong> <code>SGVsbG8</code> decodes to <code>Hello</code>. The browser's <code>atob()</code> follows the WHATWG <a href="https://infra.spec.whatwg.org/#forgiving-base64-decode" target="_blank" rel="noopener">forgiving-base64 decode</a>, which does not require <code>=</code>.</li>
+  <li><strong>Line breaks and spaces.</strong> MIME bodies wrap Base64 at 76 characters (<a href="https://www.rfc-editor.org/rfc/rfc2045#section-6.8" target="_blank" rel="noopener">RFC 2045 §6.8</a>). Whitespace is removed before decoding, so wrapped text works as pasted.</li>
+  <li><strong>Standard input in URL-safe mode.</strong> URL-safe mode maps <code>-</code> and <code>{'_'}</code> back to <code>+</code> and <code>/</code>, so a Standard string also decodes there. The reverse fails: <code>{'c3ViamVjdHM_X2Q'}</code> in Standard mode gives the "Invalid Base64 input" error.</li>
+</ul>
+
+<h2>Limits</h2>
+<ul>
+  <li>Decode output is UTF-8 text only. Bytes that are not valid UTF-8 give an error. Example: <code>gqCCog==</code> is <code>あい</code> in Shift_JIS (bytes <code>82 A0 82 A2</code>) and is rejected. Use <a href="/tools/text-to-binary/">Text to Binary</a> to inspect raw bytes.</li>
+  <li>A <code>=</code> in the middle of the string, or a length that leaves one character after the last group of four, is an error.</li>
+  <li>File encoding has no fixed size limit. Above 5 MB the tool shows "Large file — encoding may take a few seconds". The whole Base64 string is put into the output box, so very large files can make the page slow.</li>
+  <li>Changing Standard / URL-safe does not convert the current output again. Edit the input or press the action button.</li>
+  <li>Base64 is an encoding, not encryption. Anyone can decode it. For confidential data use <a href="/tools/aes-encrypt-decrypt/">AES Encryption</a>.</li>
+</ul>
 
 <h2>Common Use Cases</h2>
 <ul>
   <li><strong>API authentication:</strong> Basic Auth headers use Base64-encoded credentials.</li>
-  <li><strong>Data URIs:</strong> Inline images and fonts in CSS/HTML are Base64-encoded.</li>
+  <li><strong>Data URIs:</strong> Inline images and fonts in CSS/HTML are Base64-encoded. For images, <a href="/tools/image-to-base64/">Image to Base64</a> detects the type from the file bytes and can output CSS or HTML.</li>
   <li><strong>JWT tokens:</strong> The header and payload sections are Base64url-encoded.</li>
   <li><strong>Email:</strong> MIME attachments are Base64-encoded.</li>
 </ul>

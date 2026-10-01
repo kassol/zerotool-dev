@@ -15,7 +15,8 @@ faqItems:
 <h2>How to Use</h2>
 <ol>
   <li>Paste your text or HTML-encoded string into the <strong>Input</strong> box.</li>
-  <li>Click <strong>Encode</strong> to convert special characters to HTML entities, or <strong>Decode</strong> to convert entities back to characters.</li>
+  <li>Click <strong>Encode</strong> to convert special characters to HTML entities, or <strong>Decode</strong> to convert entities back to characters. After that, the output follows your typing (0.3 seconds after you stop) in the direction you last clicked. Before the first click the direction is Encode.</li>
+  <li>The status line shows how many characters were encoded or how many <code>;</code>-terminated entities were found.</li>
   <li>Click <strong>Copy</strong> to copy the result to your clipboard.</li>
 </ol>
 
@@ -42,6 +43,34 @@ faqItems:
   Non-ASCII characters are converted to numeric entities:
 </p>
 <pre><code>Caf&amp;#233; &amp;#169; 2024</code></pre>
+
+<h3>Encoding an attribute value</h3>
+<p>Input <code>{`<a title="Tom's café">`}</code> gives <code>{'&lt;a title=&quot;Tom&#39;s caf&#233;&quot;&gt;'}</code> and the status "Encoded — 6 characters converted." The apostrophe becomes <code>{'&#39;'}</code>, so the result is safe inside both single-quoted and double-quoted attributes.</p>
+
+<h3>Emoji and other characters outside the BMP</h3>
+<p><code>Ship it 🚀</code> encodes to <code>{'Ship it &#128640;'}</code>: one reference with the code point U+1F680. Some encoders loop over UTF-16 code units and write <code>{'&#55357;&#56960;'}</code> instead. Those two numbers are surrogates, which the HTML parser replaces with U+FFFD, so the rocket turns into two replacement characters.</p>
+
+<h2>What Encode Changes</h2>
+<ul>
+  <li>The five characters with meaning in markup: <code>&amp;</code> → <code>{'&amp;'}</code>, <code>&lt;</code> → <code>{'&lt;'}</code>, <code>&gt;</code> → <code>{'&gt;'}</code>, <code>"</code> → <code>{'&quot;'}</code>, <code>'</code> → <code>{'&#39;'}</code>.</li>
+  <li>Every character above U+007F, as a decimal reference. Accented letters, CJK text and emoji all become numbers, which makes the output pure ASCII. That helps when a template or e-mail system is not UTF-8 clean, but the file gets larger: <code>中</code> (3 bytes in UTF-8) becomes <code>{'&#20013;'}</code> (8 bytes). In a UTF-8 page you only need the first five.</li>
+  <li>Nothing else. Line breaks, tabs and spaces are kept. The encoder never writes named entities such as <code>{'&copy;'}</code>; the tables on this page list names for reading, not output.</li>
+</ul>
+
+<h2>How Decode Works</h2>
+<p>Decode hands the input to the browser's own HTML parser (it sets the <code>innerHTML</code> of a <code>&lt;textarea&gt;</code> and reads the text back). Tags in the input are not created or run; only character references are replaced. The result therefore follows the <a href="https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state" target="_blank" rel="noopener">HTML character reference rules</a>:</p>
+<ul>
+  <li>Every name in the <a href="https://html.spec.whatwg.org/multipage/named-characters.html" target="_blank" rel="noopener">HTML named character list</a> is recognized (2,231 entries, counting the legacy forms without a semicolon), plus decimal (<code>{'&#169;'}</code>) and hex (<code>{'&#xA9;'}</code>) forms.</li>
+  <li>Some legacy names work without the semicolon: <code>{'&copy 2024'}</code> decodes to <code>© 2024</code>. The status count only includes references that end in <code>;</code>, so it can be lower than the number actually decoded.</li>
+  <li><code>{'&#128;'}</code> to <code>{'&#159;'}</code> are mapped as Windows-1252, as the spec requires: <code>{'&#128;'}</code> becomes €. <code>{'&#0;'}</code> and surrogate numbers become U+FFFD.</li>
+</ul>
+
+<h2>Limits</h2>
+<ul>
+  <li>Encoding is for HTML text and quoted attribute values. Inside <code>&lt;script&gt;</code>, inline event handlers, CSS or URLs, other escaping rules apply. Use <a href="/tools/string-escape/">String Escape</a> for JavaScript and JSON strings and <a href="/tools/url-encode/">URL Encode</a> for query parameters.</li>
+  <li>Decoding twice is not undone: <code>{'&amp;lt;'}</code> decodes to <code>{'&lt;'}</code>, not <code>&lt;</code>. Run Decode again for double-encoded text.</li>
+  <li>The status messages are in English on every language version of this page.</li>
+</ul>
 
 <h2>Common HTML Entities</h2>
 <table>

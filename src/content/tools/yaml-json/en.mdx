@@ -16,6 +16,7 @@ faqItems:
 <ol>
   <li>To convert <strong>YAML → JSON</strong>: paste your YAML into the left panel and click <strong>YAML → JSON</strong>.</li>
   <li>To convert <strong>JSON → YAML</strong>: paste your JSON into the right panel and click <strong>JSON → YAML</strong>.</li>
+  <li>Both panels also convert on their own 0.3 seconds after you stop typing: typing in the YAML panel updates the JSON panel, and the other way round.</li>
   <li>Use <strong>Ctrl+Enter</strong> (or <strong>Cmd+Enter</strong> on Mac) as a keyboard shortcut to convert from whichever panel you're typing in.</li>
   <li>Click <strong>Copy</strong> on either panel to copy the result to your clipboard.</li>
 </ol>
@@ -31,7 +32,17 @@ age: 30
 active: true
 ```
 
-<p>Output JSON contains name, age, and active fields.</p>
+<p>Output JSON (indented with 2 spaces):</p>
+
+```json
+{
+  "name": "Alice",
+  "age": 30,
+  "active": true
+}
+```
+
+<p><code>30</code> stays a number and <code>true</code> a boolean, because plain YAML scalars are typed by their form.</p>
 
 <h3>Nested structure with arrays</h3>
 <p>Input YAML:</p>
@@ -46,7 +57,62 @@ server:
     - cache
 ```
 
-<p>Output JSON contains nested server object with features array.</p>
+<p>Output JSON:</p>
+
+```json
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "features": [
+      "auth",
+      "logging",
+      "cache"
+    ]
+  }
+}
+```
+
+<h3>JSON to YAML</h3>
+<p>Input JSON:</p>
+
+```json
+{"name":"api","version":"1.10","replicas":3,"env":{"DEBUG":"no","PORT":"8080"},"args":["--verbose","--port=8080"],"description":"line one\nline two","empty":null}
+```
+
+<p>Output YAML:</p>
+
+```yaml
+name: api
+version: '1.10'
+replicas: 3
+env:
+  DEBUG: 'no'
+  PORT: '8080'
+args:
+  - '--verbose'
+  - '--port=8080'
+description: |-
+  line one
+  line two
+empty: null
+```
+
+<p>Strings that would read back as another type (<code>'1.10'</code>, <code>'no'</code>, <code>'8080'</code>) or that start with <code>-</code> are single-quoted. A string with a line break becomes a <code>|-</code> block, and long lines are never folded. This matters for files such as Kubernetes manifests, where an environment value must stay a string.</p>
+
+<h3>Anchors and merge keys</h3>
+<p>Docker Compose files often share settings with an anchor and <code>{'<<'}</code>:</p>
+
+```yaml
+base: &base
+  image: nginx
+  restart: always
+web:
+  <<: *base
+  ports: ["80:80"]
+```
+
+<p>The JSON output has no references: <code>web</code> becomes <code>{`{"image":"nginx","restart":"always","ports":["80:80"]}`}</code>, a full copy of <code>base</code> plus its own key, and the <code>base</code> entry stays in the output as well.</p>
 
 <h3>Round-trip conversion</h3>
 <p>Paste the JSON output back into the right panel and click <strong>JSON → YAML</strong> to round-trip your data. Note that YAML comments and formatting preferences are not preserved in round-trips.</p>
@@ -76,5 +142,6 @@ The tool uses js-yaml 4.1, which follows the [YAML 1.2](https://yaml.org/spec/1.
 
 - **One document per conversion.** Input containing `---` separators fails with `expected a single document in the stream, but found more`.
 - **Duplicate keys are an error** (`duplicated mapping key`), not a silent overwrite.
+- **Errors show line and column.** A key indented one space too far gives `Invalid YAML: bad indentation of a mapping entry (2:3)` with the offending line marked; an unclosed `[` gives `unexpected end of the stream within a flow collection`. To check a file with several `---` documents, use the [YAML Validator](/tools/yaml-validator/), which reports each document separately.
 - **Comments and anchors are not kept.** Anchors and `<<` merge keys are expanded into plain copies.
 - **JSON → YAML quotes ambiguous strings** such as `'1.10'`, `'yes'`, and `'NO'`, so they stay strings when read back.

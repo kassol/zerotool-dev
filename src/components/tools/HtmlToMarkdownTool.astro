@@ -96,35 +96,53 @@ const L = labels[lang];
   var outputEl = document.getElementById('htm-output');
   var statusEl = document.getElementById('htm-status');
 
-  var td = new TurndownService({
-    headingStyle: 'atx',
-    bulletListMarker: '-',
-    codeBlockStyle: 'fenced',
-    fence: '```',
-    emDelimiter: '*',
-    strongDelimiter: '**',
-  });
+  // engine:start
+  function createConverter(TurndownService, turndownPluginGfm) {
+    var td = new TurndownService({
+      headingStyle: 'atx',
+      bulletListMarker: '-',
+      codeBlockStyle: 'fenced',
+      fence: '```',
+      emDelimiter: '*',
+      strongDelimiter: '**',
+    });
 
-  td.use(turndownPluginGfm.tables);
+    td.use(turndownPluginGfm.tables);
 
-  td.addRule('fencedCodeBlockWithLang', {
-    filter: function (node) {
-      return (
-        node.nodeName === 'PRE' &&
-        node.firstChild &&
-        node.firstChild.nodeName === 'CODE'
-      );
-    },
-    replacement: function (_content, node) {
-      var code = node.firstChild;
-      var className = code.getAttribute('class') || '';
-      var langMatch = className.match(/language-(\S+)/);
-      var lang = langMatch ? langMatch[1] : '';
-      var text = code.textContent || '';
-      if (text.charAt(text.length - 1) === '\n') text = text.slice(0, -1);
-      return '\n\n```' + lang + '\n' + text + '\n```\n\n';
-    },
-  });
+    // Same output as the plugin's tableCell rule, but a literal | is escaped
+    // and a line break inside a cell becomes <br>; both would split the row.
+    td.addRule('tableCellEscaped', {
+      filter: ['th', 'td'],
+      replacement: function (content, node) {
+        var text = content.replace(/\|/g, '\\|').replace(/ *\n */g, '<br>');
+        var index = Array.prototype.indexOf.call(node.parentNode.childNodes, node);
+        return (index === 0 ? '| ' : ' ') + text + ' |';
+      },
+    });
+
+    td.addRule('fencedCodeBlockWithLang', {
+      filter: function (node) {
+        return (
+          node.nodeName === 'PRE' &&
+          node.firstChild &&
+          node.firstChild.nodeName === 'CODE'
+        );
+      },
+      replacement: function (_content, node) {
+        var code = node.firstChild;
+        var className = code.getAttribute('class') || '';
+        var langMatch = className.match(/language-(\S+)/);
+        var lang = langMatch ? langMatch[1] : '';
+        var text = code.textContent || '';
+        if (text.charAt(text.length - 1) === '\n') text = text.slice(0, -1);
+        return '\n\n```' + lang + '\n' + text + '\n```\n\n';
+      },
+    });
+    return td;
+  }
+  // engine:end
+
+  var td = createConverter(TurndownService, turndownPluginGfm);
 
   var EXAMPLE = [
     '<h1>HTML to Markdown Example</h1>',
