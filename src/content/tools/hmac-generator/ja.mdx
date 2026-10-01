@@ -1,32 +1,81 @@
 ---
-seoTitle: "HMAC ジェネレーター — SHA-256 / SHA-512 オンライン | ZeroTool"
-seoDescription: "SHA-256・SHA-384・SHA-512でHMAC署名を生成。Hex/Base64出力対応。ブラウザ完結、データ送信なし。"
+seoTitle: "HMAC 計算・生成と署名検証 | ZeroTool"
+seoDescription: "HMAC-SHA256・SHA-512・SHA-1・MD5 をブラウザで計算。鍵はテキスト・16 進数・Base64 に対応。LINE や Chatwork の Webhook 署名を貼り付けて照合し、一致しない原因も表示します。"
 faqItems:
-  - question: "HMACとは何ですか？"
-    answer: "HMAC（ハッシュベースメッセージ認証コード）は、暗号ハッシュ関数と秘密鍵を組み合わせたメッセージ認証コードです。データの完整性とメッセージの真正性を同時に検証するために使用されます。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。このツールはすべての暗号処理にブラウザ内蔵のWeb Crypto API（SubtleCrypto）を使用します。メッセージや秘密鍵はブラウザの外に出ません。"
+  - question: "秘密鍵が送信・保存されることはありますか？"
+    answer: "ありません。SHA-1・SHA-256・SHA-384・SHA-512 はブラウザ標準の Web Crypto API、MD5 と SHA-224 はページ内のコードで計算します。通信は行わず、鍵やメッセージを localStorage・Cookie・URL にも書きません。このページはアクセス解析や広告のスクリプトも読み込みません。再読み込みすると入力は消えます。"
+  - question: "LINE の署名検証が通りません。"
+    answer: "受信したボディ文字列をそのまま使っているか確認してください。LINE の公式ドキュメントも、JSON をパースしてから文字列に戻す、整形する、エスケープを解釈する、UTF-8 以外で扱う、といった処理で検証が失敗すると説明しています。署名ヘッダーを「照合する署名」に貼り付けると、本ツールは改行の有無や JSON の整形などを順に試し、一致した原因を表示します。"
+  - question: "Chatwork の Webhook 署名はどう計算しますか？"
+    answer: "Webhook 編集画面のトークンを Base64 デコードしたバイト列を鍵にし、受信したボディの HMAC-SHA256 を Base64 にします。トークンを文字列のまま鍵にすると一致しません。形式で「Chatwork Webhook」を選ぶとデコードまで自動で行います。"
   - question: "どのアルゴリズムを選べばよいですか？"
-    answer: "SHA-256は最も広く使われており、ほとんどの用途に適しています。SHA-384とSHA-512はより大きなセキュリティマージンを提供しますが、出力が長くなります。3つともHMACでの使用には安全とされています。"
-  - question: "HexとBase64出力の違いは何ですか？"
-    answer: "どちらも同じHMACバイナリ値を異なるテキスト形式でエンコードしたものです。Hexは16進数文字（0-9, a-f）を使用し長め。Base64はより短くHTTPヘッダー（AuthorizationなどJ）やJSONでよく使われます。"
-  - question: "Webhookの署名検証に使えますか？"
-    answer: "はい。多くのサービス（GitHub、Stripe、Slackなど）はHMAC-SHA256でWebhookペイロードに署名します。生のペイロードをメッセージ、サービスのWebhookシークレットをキーとして入力し、結果を署名ヘッダーと比較してください。"
+    answer: "相手の仕様に合わせます。新しく設計するなら HMAC-SHA256 が一般的で、LINE・Chatwork・GitHub・Stripe・Slack などが使っています。HMAC-SHA1 は Twilio や GitHub の旧ヘッダー X-Hub-Signature、HMAC-MD5 は古いシステムと RFC 2104 のテストベクター用です。"
+  - question: "サーバーで署名を == で比較してもよいですか？"
+    answer: "避けてください。Node.js の crypto.timingSafeEqual（長さが違うと例外になるので先に長さを比較）、Python の hmac.compare_digest、Go の hmac.Equal、Java の MessageDigest.isEqual のような定数時間の比較を使います。本ツールの照合はブラウザ内だけで行うので、時間差は問題になりません。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>認証したい<strong>メッセージ</strong>を入力します。</li>
-  <li><strong>秘密鍵</strong>を入力します。</li>
-  <li><strong>アルゴリズム</strong>（SHA-256・SHA-384・SHA-512）を選択します。</li>
-  <li>出力形式（<strong>Hex</strong>または<strong>Base64</strong>）を選択します。</li>
-  <li><strong>Generate HMAC</strong>をクリックして結果をコピーします。</li>
-</ol>
+## 使い方
 
-<h2>主な用途</h2>
-<ul>
-  <li><strong>Webhook検証：</strong>Webhookペイロードが信頼できる送信元から署名されていることを確認。</li>
-  <li><strong>APIリクエスト署名：</strong>秘密鍵自体を送信せずにAPIリクエストの真正性を証明。</li>
-  <li><strong>データ完整性：</strong>メッセージにHMACを添付し、受信者が改ざんされていないことを確認できるようにする。</li>
-  <li><strong>セッショントークン：</strong>改ざん防止のセッション識別子を生成。</li>
-</ul>
+1. **形式**を選びます。「カスタム HMAC」は任意の鍵とメッセージで計算します。LINE・Chatwork・GitHub・Stripe などの形式を選ぶと、各サービスの規則どおりに署名対象を組み立て、送られてくるヘッダーの値をそのまま表示します。
+2. メッセージ、または受信したリクエストボディを貼り付けます。カスタムではテキスト（UTF-8）・16 進数・Base64 と、改行コード（LF / CRLF）を選べます。
+3. 鍵を入力します。カスタムでは鍵もテキスト・16 進数・Base64 を選べます。16 進数と Base64 の欄では、IME で入った全角の英数字を半角として読みます。
+4. 結果は 16 進数・Base64・base64url で同時に表示され、入力に合わせて更新されます。「HMAC を計算」か Ctrl/⌘+Enter で再計算します。
+5. 署名を検証するときは、`x-line-signature` などの値を「照合する署名」に貼り付けます。
+
+計算は [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104) の定義どおりです。鍵がブロック長（SHA-256 は 64 バイト、SHA-512 は 128 バイト）を超えると先にハッシュし、出力長より短い鍵には注意を表示します（RFC 2104 §3 は推奨していません）。
+
+## LINE の公式例で確かめる
+
+LINE Developers の「[Webhookの署名を検証する](https://developers.line.biz/ja/docs/messaging-api/verify-webhook-signature/)」には、検証ボタンで届くボディ、チャネルシークレット `8c570fa6dd201bb328f1c1eac23a96d8`、署名が載っています。形式を「LINE Messaging API」にして「例」を押すと、次の値になります。
+
+{/* hmac-check: {"preset":"line","key":"8c570fa6dd201bb328f1c1eac23a96d8","msg":"{\"destination\":\"U8e742f61d673b39c7fff3cecb7536ef0\",\"events\":[]}","expect":"header"} */}
+```text
+x-line-signature: GhRKmvmHys4Pi8DxkF4+EayaH0OqtJtaZxgTD9fMDLs=
+```
+
+ドキュメントの `openssl dgst -sha256 -hmac … -binary | openssl base64` と同じ結果です。ボディを見やすく整形してから貼ると一致せず、本ツールは「1 行に詰めた JSON と一致します」のように、どう変わったかを示します。
+
+## Chatwork はトークンをデコードしてから使う
+
+Chatwork の [Webhook ドキュメント](https://developer.chatwork.com/docs/webhook)は、「トークンをBase64デコードしたバイト列を秘密鍵とします」と定めています。説明用に `chatwork-webhook-token-sample-01` を Base64 にしたトークン `Y2hhdHdvcmstd2ViaG9vay10b2tlbi1zYW1wbGUtMDE=` と、短いボディで計算した例です。
+
+{/* hmac-check: {"preset":"chatwork","key":"Y2hhdHdvcmstd2ViaG9vay10b2tlbi1zYW1wbGUtMDE=","msg":"{\"webhook_setting_id\":\"12345\",\"webhook_event_type\":\"mention_to_me\"}","expect":"base64"} */}
+`co2OlvkgxgqT06s8DH9nYIM3DZQ+rUqAmNIBqGH6RLA=`
+
+トークンを文字列のまま鍵にすると `Sn51C3lS…` になり、ヘッダーとは一致しません。この値を貼り付けると、本ツールは「鍵をテキスト（UTF-8）として読むと一致します」と表示します。署名はリクエストパラメーター `chatwork_webhook_signature` にも入りますが、そちらは URL エンコードされているので、`%2B` などはそのまま貼り付けて構いません（自動でデコードします）。
+
+## 形式ごとの署名対象
+
+| 形式 | 署名対象 | 鍵 | 送られ方 |
+|---|---|---|---|
+| [GitHub](https://docs.github.com/ja/webhooks/using-webhooks/validating-webhook-deliveries) | ボディ | Webhook secret（テキスト） | `sha256=` + 16 進数 |
+| [Stripe](https://docs.stripe.com/webhooks#verify-manually) | `t` +「.」+ ボディ | `whsec_` を含む全体 | `t=…,v1=…` |
+| [Slack](https://docs.slack.dev/authentication/verifying-requests-from-slack) | `v0:` + タイムスタンプ +「:」+ ボディ | Signing Secret | `v0=` + 16 進数 |
+| LINE / Shopify | ボディ | チャネルシークレット / クライアントシークレット | Base64 |
+| Chatwork | ボディ | トークンを Base64 デコード | Base64 |
+
+Stripe と Slack は 5 分より古いタイムスタンプを拒否するよう求めているので、範囲外なら本ツールも注意を出します。Stripe のヘッダーを貼り付けると、タイムスタンプ欄が空のときは `t=` の値を自動で入れます。
+
+## Shift_JIS の文字列に署名するとき
+
+テキストは UTF-8 でバイト列にします。「署名」は UTF-8 では 6 バイト、Shift_JIS では `8f9096bc` の 4 バイトです。鍵 `key` での結果は次のとおりです。
+
+{/* hmac-check: {"preset":"custom","key":"key","msg":"署名","expect":"hex"} */}
+UTF-8：`8401f7fe91c2a264a4ee5d8af3d768cd8a6edcaa962441b61043d65311099296`
+
+{/* hmac-check: {"preset":"custom","key":"key","msg":"8f9096bc","msgEnc":"hex","expect":"hex"} */}
+Shift_JIS（メッセージの形式を 16 進数にして `8f9096bc`）：`6c28ecde248e521ec23726c44942d60c1899c9db1a5c7dacd25c31838b24dd18`
+
+古い連携先の仕様が Shift_JIS で署名している場合は、16 進数に変換してから入力してください。
+
+## 他の HMAC ツールとの違い
+
+2026-10-01 に GitHub ドキュメントの例で確認しました。[CoderTools](https://www.codertools.net/tools/hmac.php?lang=ja) は SHA3 や RIPEMD-160 も選べ、ブラウザ内で計算します。ただし鍵を 16 進数にして `0b0g` を入れると「無効な16進数形式です」と出るだけで何文字目かは示さず、直前の結果も画面に残ります。メッセージが空だと計算しないため、空メッセージに署名する Feishu 方式は扱えません。本ツールは誤りの位置を示し、エラー時は結果を消します。署名ヘッダーを `sha256=…` や `t=…,v1=…` の形のまま照合できます。
+
+## 制限
+
+- アルゴリズムは MD5・SHA-1・SHA-224・SHA-256・SHA-384・SHA-512。SHA-3・RIPEMD-160 は Web Crypto API にないため扱いません。
+- テキスト欄の改行はすべて LF になります。CRLF で署名された場合は改行コードを CRLF にし、それ以外の特殊なバイトは 16 進数か Base64 で入力してください。
+- ブラウザでの照合はデバッグ用です。サーバーでは受信したボディのバイト列を使い、定数時間で比較してください。JWT の HS256 も HMAC-SHA256 なので、[JWT ジェネレーター](/ja/tools/jwt-generator/)で扱えます。
+
+鍵を使わないハッシュ値は[ハッシュジェネレーター](/ja/tools/hash-generator/)、HMAC-SHA1 を使うワンタイムパスワードは[2段階認証コード生成ツール](/ja/tools/totp-generator/)を使ってください。

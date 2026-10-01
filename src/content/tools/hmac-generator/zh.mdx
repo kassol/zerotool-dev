@@ -1,32 +1,71 @@
 ---
-seoTitle: "HMAC 生成器 — SHA-256 / SHA-512 在线工具 | ZeroTool"
-seoDescription: "使用 SHA-256、SHA-384 或 SHA-512 生成 HMAC 签名，支持 Hex 和 Base64 输出。完全在浏览器中运行，数据不上传服务器。"
+seoTitle: "HMAC 在线计算与签名校验 | ZeroTool"
+seoDescription: "在线计算 HMAC-SHA256、SHA-512、SHA-1、MD5，密钥可用文本、十六进制或 Base64；内置钉钉加签、飞书签名、GitHub、Stripe 等格式，粘贴签名即可核对，验签失败时给出可能原因。"
 faqItems:
-  - question: "什么是 HMAC？"
-    answer: "HMAC（基于哈希的消息认证码）是一种将密码哈希函数与密钥相结合的消息认证码。它用于同时验证消息的数据完整性和来源真实性。"
-  - question: "我的数据会发送到服务器吗？"
-    answer: "不会。本工具使用浏览器内置的 Web Crypto API（SubtleCrypto）执行所有加密操作。你的消息和密钥不会离开浏览器。"
-  - question: "应该选择哪种算法？"
-    answer: "SHA-256 是最广泛使用的算法，适合大多数场景。SHA-384 和 SHA-512 提供更大的安全余量但输出更长。三者用于 HMAC 时均被认为是安全的。"
-  - question: "Hex 和 Base64 输出有什么区别？"
-    answer: "两者都是对同一 HMAC 二进制值的不同文本编码。Hex 使用十六进制字符（0-9, a-f），较长；Base64 更紧凑，常用于 HTTP 头部（如 Authorization）和 JSON。"
-  - question: "可以用它验证 Webhook 签名吗？"
-    answer: "可以。许多服务（GitHub、Stripe、Slack 等）使用 HMAC-SHA256 对 Webhook 载荷签名。将原始载荷作为消息输入，将服务的 Webhook 密钥作为密钥，然后将结果与签名头部对比即可。"
+  - question: "密钥会上传或保存吗？"
+    answer: "不会。SHA-1、SHA-256、SHA-384、SHA-512 用浏览器自带的 Web Crypto API 计算，MD5 和 SHA-224 用页面内的代码计算。工具不发网络请求，不把密钥和消息写进 localStorage、Cookie 或网址；本页也不加载统计和广告脚本。刷新页面后所有输入都会清空。"
+  - question: "钉钉加签和飞书签名有什么区别？"
+    answer: "两者都用 HmacSHA256 和 Base64，但用法相反。钉钉把加签密钥当 HMAC 密钥，把「毫秒时间戳 + 换行 + 密钥」当消息，结果还要 URL 编码后拼到 sign 参数。飞书把「秒级时间戳 + 换行 + 密钥」整个当 HMAC 密钥，消息为空。时间戳都要在 1 小时以内。选错格式时，本工具会在核对结果里指出。"
+  - question: "企业微信群机器人怎么加签？"
+    answer: "企业微信「消息推送」（群机器人）的文档（2025-08-07 更新）只给出带 key 参数的 Webhook 地址，没有签名或时间戳参数，安全性全靠地址保密。需要验签的场景请用钉钉或飞书机器人，或在自己的服务端加一层校验。"
+  - question: "验签总是不一致，常见原因有哪些？"
+    answer: "最常见的是参与计算的字节和发送方不同：请求体被框架解析后重新序列化、末尾多了或少了换行、换行符在 LF 和 CRLF 之间变了、时间戳单位用错（钉钉是毫秒，飞书是秒）、中文按 GBK 而不是 UTF-8 编码。把收到的签名粘贴到「要核对的签名」，工具会逐一尝试这些情况并告诉你是哪一种。"
+  - question: "服务端比较签名能直接用 == 吗？"
+    answer: "不建议。请用常数时间比较：Java 的 MessageDigest.isEqual、Python 的 hmac.compare_digest、Go 的 hmac.Equal、Node.js 的 crypto.timingSafeEqual（长度不同时会抛错，先比长度）。本工具的比较只在你的浏览器里进行，不涉及计时问题。"
 ---
 
-<h2>使用方法</h2>
-<ol>
-  <li>输入需要认证的<strong>消息</strong>。</li>
-  <li>输入你的<strong>密钥</strong>。</li>
-  <li>选择<strong>算法</strong>（SHA-256、SHA-384 或 SHA-512）。</li>
-  <li>选择输出格式（<strong>Hex</strong> 或 <strong>Base64</strong>）。</li>
-  <li>点击 <strong>Generate HMAC</strong> 并复制结果。</li>
-</ol>
+## 使用步骤
 
-<h2>常见使用场景</h2>
-<ul>
-  <li><strong>Webhook 验证：</strong>验证 Webhook 载荷是否由可信发送方签名。</li>
-  <li><strong>API 请求签名：</strong>对 API 请求签名，证明其真实性，同时无需传输密钥本身。</li>
-  <li><strong>数据完整性：</strong>为消息附加 HMAC，接收方可验证消息未被篡改。</li>
-  <li><strong>会话令牌：</strong>生成防篡改的会话标识符。</li>
-</ul>
+1. 选择**格式**。「自定义 HMAC」可以填任意密钥和消息；其余格式按钉钉、飞书、GitHub、Stripe、Slack 等平台的规则拼出签名串，并直接给出要发送或要比对的值。
+2. 填写消息或原始请求体。自定义模式下可选文本（UTF-8）、十六进制或 Base64，换行符可选 LF 或 CRLF。
+3. 填写密钥，同样可选文本、十六进制或 Base64。十六进制和 Base64 里用中文输入法打出的全角字符会按半角读取。
+4. 结果同时给出十六进制、Base64 和 base64url，输入时实时更新；点「生成 HMAC」或按 Ctrl/⌘+Enter 可重新计算。
+5. 要验签时，把收到的签名（如 `sha256=…`、`t=…,v1=…`，或钉钉的整条 URL）粘贴到「要核对的签名」。
+
+计算按 [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104) 进行：密钥超过分组长度（SHA-256 为 64 字节，SHA-512 为 128 字节）时先做一次哈希，短于输出长度时工具会提示（RFC 2104 §3 不建议这样用）。
+
+## 钉钉加签与飞书签名
+
+钉钉文档《[自定义机器人安全设置](https://open.dingtalk.com/document/orgapp/customize-robot-security-settings)》（2024-02-23 更新）的做法是：把 `timestamp + "\n" + secret` 当签名字符串，用 HmacSHA256 计算，再 Base64、再 URL 编码。时间戳单位是毫秒，与调用时间相差不能超过 1 小时。用文档示例代码里的密钥 `this is secret` 和时间戳 `1700000000000`，选「钉钉自定义机器人加签」得到：
+
+{/* hmac-check: {"preset":"dingtalk","key":"this is secret","timestamp":"1700000000000","expect":"header"} */}
+```text
+&timestamp=1700000000000&sign=sSFWELbV2YwjdDQhWZwTcWlX5BWUx5J6TPpsZmuPii0%3D
+```
+
+把这段拼在 `https://oapi.dingtalk.com/robot/send?access_token=…` 后面即可。注意末尾的 `=` 已编码成 `%3D`，`+` 和 `/` 也会编码，与 Python `urllib.parse.quote_plus` 的结果一致。
+
+飞书文档《[自定义机器人使用指南](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)》的规则正好相反：`timestamp + "\n" + 密钥` 是 HMAC 的**密钥**，被签名的消息为空，时间戳单位是秒。用文档 Java 示例的 `demo` 和 `1599360473`：
+
+{/* hmac-check: {"preset":"feishu","key":"demo","timestamp":"1599360473","expect":"base64"} */}
+`l1N0gAcBjdwBvGm1xMjOF0XSyaLRpR7tuO5dHfhAYc8=`
+
+`timestamp` 和 `sign` 都放进请求体 JSON。如果把飞书的签名按钉钉的方法算，同样的输入会得到 `DkEDUyVo…`，飞书会返回 19021「sign match fail」。在「要核对的签名」里粘贴一个按另一种方法算出的值，工具会提示「与钉钉自定义机器人加签的算法一致」。
+
+飞书的密钥里有换行。多数在线 HMAC 工具的密钥框是单行输入框，换行会被吞掉，只能先把密钥换成十六进制；本工具的飞书格式直接按文档拼接，签名串一栏会把换行显示成 ␊。
+
+企业微信「[消息推送配置说明](https://developer.work.weixin.qq.com/document/path/91770)」（2025-08-07 更新）只用 Webhook 地址里的 key 参数，没有签名参数，所以这里没有对应格式。
+
+## 中文按 GBK 编码时
+
+工具把文本按 UTF-8 转成字节。「签名」两个字在 UTF-8 里是 6 个字节，在 GBK 里是 `c7a9c3fb` 4 个字节，HMAC 自然不同。用密钥 `key`：
+
+{/* hmac-check: {"preset":"custom","key":"key","msg":"签名","expect":"hex"} */}
+UTF-8：`3139363a3f515a075646cedcdc38fb5362e3dcfa20149ddb43f9cfa1e2c99d9b`
+
+{/* hmac-check: {"preset":"custom","key":"key","msg":"c7a9c3fb","msgEnc":"hex","expect":"hex"} */}
+GBK（消息编码选十六进制，填 `c7a9c3fb`）：`6529b61f2eeb2d0d6499bc4e3bb0ab98fd519c7e4208df9781d0cc51eaa7a83f`
+
+老系统的签名规则如果写着「按 GBK 拼接」，先把原文转成 GBK 十六进制再填进来。
+
+## 与其他在线工具的差别
+
+2026-10-01 用 GitHub 文档的示例实测。[在线工具大全 lddgo](https://www.lddgo.net/encrypt/hmac) 结果正确，但每次计算都把消息和密钥以 JSON POST 到 `openapi.lddgo.net`，消息为空时提示「必填字段不能为空」，算不了飞书这种空消息的签名。[CodeShack](https://codeshack.io/hmac-generator/) 在浏览器里计算，但密钥只能填文本，输入框是单行的，也没有验签功能。本工具全部在本页计算，十六进制和 Base64 输入出错时指出第几个字符，验签不一致时给出可能原因。
+
+## 限制
+
+- 算法：MD5、SHA-1、SHA-224、SHA-256、SHA-384、SHA-512。不含 SHA-3 和国密 SM3（Web Crypto API 都不提供）。
+- 文本框会把所有换行变成 LF；发送方用 CRLF 时请选 CRLF，其他特殊字节请改用十六进制或 Base64 输入。
+- 浏览器里的比较只用于调试。服务端要用原始请求体字节和常数时间比较。JWT 的 HS256 也是 HMAC-SHA256，可用 [JWT 生成器](/zh/tools/jwt-generator/) 处理。
+
+不带密钥的摘要请用[哈希生成器](/zh/tools/hash-generator/)，基于 HMAC-SHA1 的动态验证码请用 [2FA 验证码生成器](/zh/tools/totp-generator/)。

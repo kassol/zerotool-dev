@@ -1,90 +1,98 @@
 ---
-seoTitle: "htpasswd 생성기 온라인 — 무료, 브라우저 처리, 안전 | ZeroTool"
-seoDescription: "Apache htpasswd 비밀번호 해시를 온라인으로 생성. bcrypt, MD5(APR1), SHA1, 평문 지원. 모든 해싱이 브라우저에서 처리되어 비밀번호가 전송되지 않습니다. 무료, 회원가입 불필요."
+seoTitle: "htpasswd 생성기 (Nginx·Apache) | ZeroTool"
+seoDescription: "Basic 인증용 htpasswd 줄을 bcrypt $2y$, SHA-512 crypt, APR1 등으로 만들고, Apache와 Nginx가 읽는 형식을 확인하며, 기존 파일로 비밀번호를 검증하고 사용자를 추가·삭제합니다."
 faqItems:
-  - question: "htpasswd 파일이란 무엇인가요?"
-    answer: "htpasswd 파일은 Apache HTTP Server(와 모듈을 통한 nginx)가 HTTP 기본 인증을 위해 사용자 이름과 해시된 비밀번호 쌍을 저장하는 데 사용합니다. 각 줄의 형식은 username:hashed_password입니다."
-  - question: "어떤 알고리즘을 사용해야 하나요?"
-    answer: "bcrypt(기본값)를 추천합니다. 구성 가능한 비용 인수로 무차별 대입 공격을 효과적으로 늦추는 가장 안전한 옵션입니다. MD5(APR1)는 널리 사용되지만 보안이 약합니다. SHA1과 평문은 안전하지 않으므로 새 환경에서는 피해야 합니다."
-  - question: "bcrypt 비용 인수란 무엇인가요?"
-    answer: "비용 인수(4–12)는 계산 라운드 수를 제어합니다. 값이 높을수록 계산 시간이 길어져 무차별 대입 공격 비용이 증가합니다. 기본값 10은 보안과 서버 성능 사이의 좋은 균형입니다."
+  - question: "Nginx에서 bcrypt 줄로 로그인이 안 되는 이유는?"
+    answer: "Nginx는 $apr1$, {SHA}, {SSHA}, {PLAIN}만 직접 처리하고 bcrypt는 운영체제의 crypt()에 맡깁니다. 2026-10-01 Docker로 확인한 결과 Ubuntu 18.04와 CentOS 7.9의 crypt()는 bcrypt를 받지 않았고, Ubuntu 20.04 이상, Debian 11 이상, AlmaLinux 9, Alpine은 받았습니다. 지원하지 않는 시스템에서는 SHA-512 crypt나 APR1을 쓰세요."
+  - question: "$2y$와 $2a$는 무엇이 다른가요?"
+    answer: "해시는 같고 접두사만 다릅니다. $2y$는 Apache htpasswd -B가 쓰는 형식이고 Apache Password Formats 문서도 이 형태로 적습니다. OpenBSD의 crypt()는 $2a$와 $2b$만 읽으므로 OpenBSD에서만 $2a$를 고르세요. $2b$는 APR이 직접 처리하지 않고 시스템 crypt()에 넘기므로 macOS와 Windows의 Apache에서 실패합니다."
+  - question: "한글 비밀번호를 써도 되나요?"
+    answer: "됩니다. 이 도구는 UTF-8로 해시하므로 클라이언트도 UTF-8로 보내야 합니다. UTF-8 터미널에서 curl -u로 보낸 한글 비밀번호는 Apache와 Nginx 모두 통과했습니다. 다만 bcrypt는 앞 72바이트만 쓰고 한글 한 글자는 3바이트이므로, 25자 이상이면 도구가 경고합니다."
+  - question: "bcrypt 비용은 얼마로 하나요?"
+    answer: "htpasswd 기본값은 5, 범위는 4~17이고 이 도구는 10에서 시작합니다. Basic 인증은 요청마다 비밀번호를 보내므로 서버도 요청마다 bcrypt를 계산합니다. Apple M1 Max에서 htpasswd -v 확인 한 번이 비용 5에서 약 13ms, 10에서 약 72ms, 12에서 약 266ms였습니다."
   - question: "비밀번호가 서버로 전송되나요?"
-    answer: "아니요. bcrypt를 포함한 모든 해싱은 브라우저의 JavaScript에서 완전히 처리됩니다. 비밀번호는 이 페이지를 벗어나지 않습니다."
-  - question: "일괄 모드는 무엇인가요?"
-    answer: "일괄 모드에서는 여러 user:password 쌍의 htpasswd 줄을 한 번에 생성할 수 있습니다. 콜론으로 구분된 쌍을 한 줄에 하나씩 입력하고 일괄 생성을 클릭하세요."
-  - question: "생성된 htpasswd 줄을 어떻게 사용하나요?"
-    answer: "생성된 줄을 복사하여 .htpasswd 파일에 추가하거나 파일 내용으로 사용하세요. Apache에서는 AuthUserFile로 파일을 지정하고 AuthType Basic을 설정합니다."
+    answer: "아니요. 해시는 bcrypt.js와 페이지 코드로 이 탭 안에서만 계산하고 저장하지 않습니다. 이 페이지는 분석·광고 스크립트도 불러오지 않습니다. 생성할 때 브라우저 개발자 도구의 Network 패널에서 확인할 수 있습니다."
 ---
 
-<h2>사용 방법</h2>
-<ol>
-  <li><strong>사용자 이름</strong>과 <strong>비밀번호</strong>를 입력하거나, <strong>생성</strong>을 클릭하여 임의의 비밀번호를 만듭니다.</li>
-  <li><strong>알고리즘</strong>을 선택합니다(bcrypt 권장).</li>
-  <li>bcrypt를 사용하는 경우 <strong>비용 인수</strong>를 조정합니다(높을수록 안전하지만 느림).</li>
-  <li><strong>htpasswd 줄 생성</strong>을 클릭합니다.</li>
-  <li>결과를 복사하여 <code>.htpasswd</code> 파일에 추가합니다.</li>
-</ol>
+## 사용 방법
 
-<h2>알고리즘 비교</h2>
+1. **사용자 이름**과 **비밀번호**를 입력합니다. **무작위**를 누르면 20자 비밀번호를 만듭니다.
+2. **형식**을 고릅니다. 버튼 아래에 그 형식을 읽는 Apache·Nginx가 표시됩니다.
+3. bcrypt는 **비용**, SHA-512·SHA-256 crypt는 **라운드 수**(htpasswd 기본 5000)를 정합니다.
+4. **생성**을 누르고 결과를 htpasswd 파일에 한 줄로 붙여 넣습니다. 같은 형식을 만드는 `htpasswd` 명령도 함께 보여 주므로 서버에서 다시 만들 수도 있습니다.
 
-| 알고리즘 | 형식 접두사 | 보안 | 설명 |
-|---------|-----------|------|------|
-| bcrypt | `$2a$` | 우수 | 모든 새 배포에 권장 |
-| MD5 (APR1) | `$apr1$` | 보통 | 솔트가 있는 Apache 전용 MD5 변형 |
-| SHA1 | `{SHA}` | 약함 | 솔트 없음, 레인보우 테이블에 취약 |
-| 평문 | (없음) | 없음 | 테스트 전용 — 프로덕션에서는 절대 사용 금지 |
+해시하기 전에 사용자 이름의 `:`, 맨 앞의 `#`, 앞뒤 공백, bcrypt가 다 읽지 못하는 긴 비밀번호를 먼저 알려 줍니다. **여러 사용자 한 번에 생성**은 `user:password` 여러 줄을 파일로 만들고, **htpasswd 파일 확인·편집**은 가진 줄로 비밀번호를 확인하고 `htpasswd -b`와 같은 규칙으로 사용자를 추가·변경·삭제합니다.
 
-<h2>Apache 구성 예시</h2>
+## Ubuntu 서버의 Nginx에 Basic 인증 걸기
 
-```apache
-# .htaccess
-AuthType Basic
-AuthName "제한 구역"
-AuthUserFile /path/to/.htpasswd
-Require valid-user
-```
+Nginx 설정은 다음과 같습니다.
 
-<h2>일괄 모드</h2>
-<p>일괄 모드 섹션에 여러 <code>user:password</code> 쌍을 한 줄에 하나씩 입력하고 <strong>일괄 생성</strong>을 클릭하면 전체 <code>.htpasswd</code> 파일을 한 번에 생성할 수 있습니다.</p>
-
-<h2>보안 참고사항</h2>
-<ul>
-  <li><code>.htpasswd</code> 파일은 항상 문서 루트 외부에 저장하여 직접 접근이 불가능하도록 하세요.</li>
-  <li>프로덕션 서버에는 비용 인수 10 이상의 bcrypt를 사용하세요.</li>
-  <li>비밀번호가 유출된 경우 즉시 해시를 재생성하세요 — bcrypt 해시는 역산할 수 없습니다.</li>
-</ul>
-
-<h2>출력 예시와 확인 방법</h2>
-
-<p>사용자 <code>{"deploy"}</code>, 비밀번호 <code>{"Correct-Horse-42"}</code>로 알고리즘마다 한 번씩 생성했습니다(bcrypt 비용 10). 솔트가 무작위라 결과는 매번 달라집니다:</p>
-
-<pre><code>{`deploy:$2a$10$dcc.xLys4X2SLNI20bEuOOXW0.WUF8vaI7q50pjWDVzcBU27T1H0K
-deploy:$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0
-deploy:{SHA}QTP3Zyeatz4Ck0oFIxA2hCGcmlg=`}</code></pre>
-
-<p>세 줄 모두 Apache에 포함된 <a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html" target="_blank" rel="noopener">htpasswd</a>(2.4.67)로 검증되며, APR1 줄은 같은 솔트에서 OpenSSL 결과와 일치합니다:</p>
-
-<pre><code>{`$ htpasswd -vb .htpasswd deploy Correct-Horse-42
-Password for user deploy correct.
-$ htpasswd -vb .htpasswd deploy wrong
-password verification failed`}</code></pre>
-
-<pre><code>{`$ openssl passwd -apr1 -salt qF9XBE.v Correct-Horse-42
-$apr1$qF9XBE.v$584qxBOo2Kb8pZvevslmm0`}</code></pre>
-
-<ul>
-  <li>bcrypt 해시는 <code>{"$2a$"}</code>로 시작합니다. 도구는 bcrypt.js를 쓰고, Apache의 <code>{"htpasswd -B"}</code>는 <code>{"$2y$"}</code>를 씁니다. Apache 2.4는 둘 다 받아들입니다.</li>
-  <li>bcrypt는 비밀번호의 앞 72바이트만 사용합니다.</li>
-  <li>Apache 문서는 SHA1을 솔트가 없어 안전하지 않다고 설명합니다. 같은 비밀번호면 어느 사용자든 위 줄과 같은 값이 됩니다.</li>
-</ul>
-
-<h2>Nginx 설정</h2>
-
-<pre><code>{`location /admin/ {
+```nginx
+location /admin/ {
     auth_basic           "Restricted";
     auth_basic_user_file /etc/nginx/.htpasswd;
-}`}</code></pre>
+}
+```
 
-<p><a href="https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html" target="_blank" rel="noopener">ngx_http_auth_basic_module</a>에 따르면 Nginx는 <code>{"$apr1$"}</code>(MD5), <code>{"{SHA}"}</code>, <code>{"{PLAIN}"}</code>을 직접 읽고 나머지는 운영체제의 <code>{"crypt()"}</code>에 넘깁니다. 그래서 bcrypt는 시스템 <code>{"crypt()"}</code>가 지원하는 환경(libxcrypt를 쓰는 glibc 등)에서만 동작합니다. 서버가 bcrypt 줄을 거부하면 Nginx에는 APR1을 쓰세요.</p>
+[Nginx 문서](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html)에 따르면 Nginx는 `$apr1$`, `{SHA}`, `{SSHA}`, `{PLAIN}`만 직접 처리하고 나머지는 운영체제의 `crypt()`에 넘깁니다. 그래서 bcrypt가 되는지는 배포판에 달려 있습니다. 2026-10-01 Docker 이미지의 시스템 `crypt()`로 확인한 결과입니다.
 
-<p>수정 후 <code>{"nginx -t"}</code>를 실행하고 reload하세요. 파일은 웹 루트 밖에 두고 worker 사용자만 읽을 수 있게 합니다.</p>
+| 배포판 | bcrypt | SHA-512·SHA-256 crypt |
+|---|---|---|
+| Ubuntu 18.04 | 안 됨 | 됨 |
+| Ubuntu 20.04 / 22.04 / 24.04 | 됨 | 됨 |
+| Debian 11 / 12 / 13 | 됨 | 됨 |
+| CentOS 7.9 (glibc 2.17) | 안 됨 | 됨 |
+| AlmaLinux 9.8 | 됨 | 됨 |
+
+아직 Ubuntu 18.04를 쓰는 서버라면 bcrypt 줄은 비밀번호가 맞아도 통과하지 않습니다. 이때는 **SHA-512 crypt**를 고르세요. 이 도구로 만든 줄을 실제 Nginx 1.29.8(Debian 13, Alpine 3.23 이미지)과 Apache 2.4.68에 넣고 `curl -u`로 로그인한 결과, bcrypt·SHA-512·SHA-256·APR1·SHA-1·CRYPT는 모두 통과했고, 접두사 없는 평문은 둘 다 실패했으며 `{PLAIN}`은 Nginx만 받았습니다.
+
+## 예시: 한글이 들어간 비밀번호
+
+사용자 `dev`, 비밀번호 `비밀번호-2026`으로 만든 줄입니다(솔트가 무작위라 직접 만든 결과는 다릅니다).
+
+{/* htpw-check: {"line": "dev:$2y$10$RYy2T5zioSgpcl.cMcvjteIyGsnTWTIPiSIpDoOM/iIKrBMMtVXx6", "password": "비밀번호-2026"} */}
+{/* htpw-check: {"line": "dev:$6$.BQqvpsYMcZksBEv$ecEwmGaT8W5F1nxEDwHdbVbsTnTXOcjgdeY.RI3BVhZfHgdT/C4M4tzMHTvR9KssH31z1xMF387T7kms2bief/", "password": "비밀번호-2026"} */}
+{/* htpw-check: {"line": "dev:$apr1$myiOSWeZ$vOXUZDMK1YJPDYKtP3uSY0", "password": "비밀번호-2026"} */}
+{/* htpw-check: {"passwordCheck": "비밀번호-2026", "format": "bcrypt-2y", "codes": "info:passNonAscii", "bytes": 17} */}
+
+```text
+dev:$2y$10$RYy2T5zioSgpcl.cMcvjteIyGsnTWTIPiSIpDoOM/iIKrBMMtVXx6
+dev:$6$.BQqvpsYMcZksBEv$ecEwmGaT8W5F1nxEDwHdbVbsTnTXOcjgdeY.RI3BVhZfHgdT/C4M4tzMHTvR9KssH31z1xMF387T7kms2bief/
+dev:$apr1$myiOSWeZ$vOXUZDMK1YJPDYKtP3uSY0
+```
+
+세 줄 모두 Apache htpasswd의 `htpasswd -vb .htpasswd dev 비밀번호-2026`에서 `Password for user dev correct.`가 나왔습니다(SHA-512 줄은 `httpd:2.4` 컨테이너 안의 htpasswd로 확인. macOS htpasswd는 SHA-2 crypt를 지원하지 않습니다). 한글 4자는 UTF-8로 12바이트라 이 비밀번호는 17바이트이고, 도구는 "UTF-8 17바이트로 해시합니다"라고 표시합니다. 서버는 바이트를 비교하므로, 다른 인코딩(EUC-KR 등)으로 보내는 클라이언트에서는 맞는 비밀번호도 실패합니다.
+
+## 형식별 정리
+
+- **bcrypt `$2y$`**: Apache htpasswd `-B`와 같은 출력. Apache 2.4는 모든 플랫폼에서, Nginx는 위 표처럼 OS에 따라 읽습니다. 비용 4~17.
+- **SHA-512 / SHA-256 crypt**: htpasswd `-5`, `-2`와 같은 출력. Linux의 Apache와 Nginx는 읽지만 macOS·Windows의 Apache는 못 읽습니다.
+- **APR1 `$apr1$`**: htpasswd 기본값. Apache와 Nginx가 직접 구현해 어디서나 동작하지만, 1000회 고정 MD5이고 비용 설정이 없습니다.
+- **SHA-1 `{SHA}`, CRYPT, 평문**: [Apache 문서](https://httpd.apache.org/docs/2.4/misc/password_encryptions.html)가 안전하지 않다고 적는 형식입니다. CRYPT는 앞 8자만, 평문은 Windows·NetWare의 Apache에서만 쓰입니다.
+
+## 기존 파일 확인과 편집
+
+파일을 붙여 넣으면 줄마다 형식과 주의점을 보여 줍니다. 실제 서버에서 확인한, 두 서버가 다르게 읽는 경우입니다.
+
+- 같은 사용자가 두 줄이면 Apache와 Nginx 모두 첫 줄만 씁니다.
+- 줄 앞에 공백이 있으면 Apache는 공백을 지운 이름으로, Nginx는 공백 포함 이름으로 읽습니다.
+- 해시 뒤에 공백이 있으면 Apache는 지우고 Nginx는 비교에 포함해 매번 로그인이 실패합니다.
+- 사용자 이름에 `:`가 있으면 htpasswd는 종료 코드 6으로 거부합니다. 이 도구도 생성하지 않습니다.
+
+**사용자 추가·변경**은 `htpasswd -b`처럼 같은 이름의 줄을 제자리에서 바꾸고, 주석과 빈 줄을 그대로 두고, 새 사용자는 끝에 붙입니다. 줄바꿈 방식(LF·CRLF)도 유지합니다. **사용자 삭제**는 `htpasswd -D`처럼 그 사용자의 줄을 모두 지웁니다.
+
+## 다른 온라인 생성기와의 차이
+
+2026-10-01 데스크톱 Chromium에서 페이지의 네트워크 요청을 기록하며 시험했습니다.
+
+- **다이나믹랩스 htpasswd 생성기**(Bing "htpasswd 생성" 1위)는 브라우저 안에서 계산하고, 콜론이나 공백이 든 사용자 이름을 막습니다. 다만 형식은 `{SHA}`와 `{SHA256}` 두 가지뿐이고, 페이지에 bcrypt는 "브라우저에서는 생성 불가"라고 적혀 있습니다. `{SHA256}` 줄은 Apache 2.4.68과 Nginx 1.29.8 모두에서 로그인이 실패했습니다.
+- **web2generators.com**(영어 검색 1위)은 사용자 이름과 비밀번호를 자기 서버로 POST하고 MD5만 만듭니다.
+
+이 도구는 브라우저에서 bcrypt와 SHA-512 crypt를 만들고, 기존 줄로 비밀번호를 확인하며, 두 서버가 다르게 읽는 줄을 짚어 줍니다.
+
+## 제한 사항
+
+- 생성 형식은 Apache htpasswd가 만드는 7가지와 `$2a$`, `{PLAIN}`입니다. 확인할 때는 `$1$`(MD5 crypt)와 `{SSHA}`도 읽습니다. yescrypt(`$y$`), scrypt, `$2x$`는 알아보기만 하고 확인하지 못합니다.
+- bcrypt 비용은 4~17(APR 상한), SHA-2 라운드 수는 이 도구에서 1000~1000000입니다. 비용 17은 브라우저에서 몇 초 이상 걸립니다.
+- 파일 편집은 텍스트에만 적용되며 서버에 쓰지 않습니다.
+- Digest 인증용 `htdigest` 파일은 형식이 달라 지원하지 않습니다.

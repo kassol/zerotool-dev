@@ -1,202 +1,210 @@
 ---
-title: "HMAC Generator Online: SHA-256 Message Authentication Explained"
-description: "Learn how HMAC works, when to use HMAC-SHA256 vs plain hashing, and how to generate and verify HMAC signatures in the browser and in code."
+title: "HMAC Explained: How HMAC-SHA256 Signs Webhooks and API Requests"
+description: "How HMAC works step by step (RFC 2104), why it beats hash(key + message), how GitHub, Stripe, Slack, Twilio and AWS use it, and how to verify a signature without the usual mistakes."
 pubDate: 2026-04-06
-updatedDate: 2026-09-30
+updatedDate: 2026-10-01
 lang: "en"
-tags: ["hmac", "hmac-sha256", "message-authentication", "cryptography", "developer-tools"]
+tags: ["hmac", "hmac-sha256", "message-authentication", "webhook-signature", "cryptography"]
 ---
 
-HMAC (Hash-based Message Authentication Code) solves a problem that plain hash functions cannot: proving that a message both came from a trusted sender and has not been tampered with. If you have ever debugged a webhook signature or implemented API request signing, you have worked with HMAC. This guide explains how it works, when to use it, and how to generate HMAC values without writing code.
+HMAC (hash-based message authentication code) takes a secret key and a message and returns a short tag. Anyone who holds the same key can compute the tag again and compare; anyone without the key cannot produce a valid tag for a changed message. That is the whole job: it proves that a message was produced by someone holding the key and was not altered on the way. The construction is defined in [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104) (1997) and standardized again as [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final). Webhook signatures, API request signing, signed cookies, JWTs with `HS256` and one-time passwords all run on it.
 
-## What Is HMAC?
+This guide follows one calculation through by hand, explains the design choices, and then turns to the part where most bugs live: verifying signatures from real platforms. Every value below can be reproduced in the [HMAC SHA256 Generator](/tools/hmac-generator/), and the code blocks are run by the site's tests.
 
-HMAC is a construction that combines a cryptographic hash function with a secret key to produce a message authentication code. Given a message `M` and a key `K`:
+## The Construction, Step by Step
 
-```
-HMAC(K, M) = H((K ⊕ opad) || H((K ⊕ ipad) || M))
-```
+RFC 2104 writes HMAC as:
 
-Where `H` is a hash function (SHA-256, SHA-512, etc.), `opad` and `ipad` are fixed padding constants, and `||` is concatenation.
-
-In plain terms: **HMAC binds a hash to a secret key**. Without the key, you cannot reproduce the same output. This makes HMAC fundamentally different from a plain hash:
-
-| | Plain Hash | HMAC |
-|---|---|---|
-| Requires secret key | No | Yes |
-| Detects tampering | Yes | Yes |
-| Proves the sender holds the key | No | Yes |
-| Can be forged by anyone | Yes | No |
-
-## Common Use Cases
-
-### Webhook Signature Verification
-
-GitHub and Stripe sign their webhook payloads with HMAC-SHA256 ([GitHub](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries), [Stripe](https://docs.stripe.com/webhooks#verify-manually)); Twilio uses HMAC-SHA1 in its `X-Twilio-Signature` header ([Twilio](https://www.twilio.com/docs/usage/webhooks/webhooks-security)). When a webhook arrives, you compute the HMAC of the request body using the shared secret and compare it to the signature in the header.
-
-```
-X-Hub-Signature-256: sha256=3d23ab...
+```text
+HMAC(K, m) = H( (K0 XOR opad) || H( (K0 XOR ipad) || m ) )
 ```
 
-If the signatures match, the payload is authentic and unmodified.
+- `H` is the hash function, with block size `B` (64 bytes for SHA-1 and SHA-256, 128 bytes for SHA-384 and SHA-512) and output length `L` (32 bytes for SHA-256).
+- `K0` is the key made exactly `B` bytes long: a key longer than `B` is hashed first, and a shorter key is padded with zero bytes.
+- `ipad` is the byte `0x36` repeated `B` times; `opad` is `0x5c` repeated `B` times.
+- `||` is concatenation.
 
-### API Request Signing (AWS Signature V4)
+So HMAC hashes twice. The inner hash mixes the key with the message; the outer hash mixes the key again with the inner result. Take test case 2 from [RFC 4231](https://www.rfc-editor.org/rfc/rfc4231#section-4.3): key `Jefe`, message `what do ya want for nothing?`, SHA-256. The key is 4 bytes, so `K0` is `4a 65 66 65` followed by 60 zero bytes. XOR with `0x36` gives `7c 53 50 53 36 36 …`; XOR with `0x5c` gives `16 39 3a 39 5c 5c …`. The rest is two SHA-256 calls:
 
-AWS signs API requests using HMAC-SHA256. The signature chains several HMAC operations, binding the request to a region, service, date, and secret key. The signed timestamp limits replay: AWS rejects a request that arrives more than five minutes after its timestamp ([AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing-elements.html)).
-
-### JWT Signature (HS256)
-
-JSON Web Tokens signed with the `HS256` algorithm use HMAC-SHA256. The server signs `header.payload` with a secret key. Clients include the JWT in requests; the server re-computes the HMAC and rejects any token where the signature does not match.
-
-### Cookie and Session Integrity
-
-Signed cookies use HMAC to prevent tampering. The server appends `HMAC(secret, cookie_value)` to the cookie. On subsequent requests, the server re-computes and verifies the HMAC before trusting the cookie contents.
-
-## HMAC vs Plain Hashing
-
-A plain hash like `SHA256("hello")` is public — anyone can compute it. HMAC requires knowing the secret key. This matters for:
-
-- **Webhook verification**: without HMAC, an attacker could forge payloads that hash to any value
-- **Token signing**: without HMAC, clients could modify JWT payloads and re-compute the hash
-
-Never use plain SHA256 where HMAC is needed. The overhead is negligible and the security difference is significant.
-
-## Supported Algorithms
-
-Most HMAC implementations support:
-
-| Algorithm | Output Length | Notes |
-|-----------|--------------|-------|
-| HMAC-SHA-256 | 256 bits (64 hex chars) | Default choice for most use cases |
-| HMAC-SHA-384 | 384 bits (96 hex chars) | SHA-512 cut to 384 bits; same speed as SHA-512 |
-| HMAC-SHA-512 | 512 bits (128 hex chars) | Often faster than SHA-256 on 64-bit CPUs |
-
-**Avoid HMAC-MD5 and HMAC-SHA1** for new implementations — while HMAC somewhat mitigates the collision vulnerabilities of the underlying hash, MD5 is not an approved hash, and NIST plans to retire SHA-1 by the end of 2030 ([NIST](https://www.nist.gov/news-events/news/2022/12/nist-retires-sha-1-cryptographic-algorithm)). HMAC-SHA1 is still allowed today (for example, Twilio uses it), but use SHA-256 in new designs.
-
-## Output Formats
-
-HMAC output is raw bytes that can be encoded as:
-
-- **Hex** — `3d23ab4f...` — 2 characters per byte, standard for most APIs
-- **Base64** — `kOsYLYOW...` — more compact, used in HTTP headers; JWT uses the URL-safe variant, Base64url
-
-Both encode the same underlying bytes. Use hex when debugging manually (easier to read); use Base64 when byte-efficiency matters (HTTP headers, tokens).
-
-## HMAC in Code
-
-### JavaScript (Web Crypto API)
-
+{/* hmac-run: {"lang":"node","expect":"a2e485863d27f9d864ac8d802432a1ed477d8c4c6f349d16d4e7e917c629cad7\n5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843\ntrue"} */}
 ```js
-async function hmacSha256(key, message) {
-  const enc = new TextEncoder();
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(key),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
-  return Array.from(new Uint8Array(signature))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+import { createHash, createHmac } from 'node:crypto';
+
+const key = Buffer.from('Jefe');
+const msg = Buffer.from('what do ya want for nothing?');
+const k0 = Buffer.alloc(64);           // SHA-256 block: 64 bytes
+key.copy(k0);                          // short key: pad with zeros
+const ipad = k0.map((b) => b ^ 0x36);
+const opad = k0.map((b) => b ^ 0x5c);
+
+const inner = createHash('sha256').update(ipad).update(msg).digest();
+const outer = createHash('sha256').update(opad).update(inner).digest('hex');
+console.log(inner.toString('hex'));
+console.log(outer);
+console.log(outer === createHmac('sha256', key).update(msg).digest('hex'));
+```
+
+The inner hash is `a2e48586…`, and the outer hash is `5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843`, the value printed in RFC 4231. In the generator, choose Custom HMAC, type `Jefe` as the key and the sentence as the message, and the same 64 hex digits appear.
+
+## Why Not Just Hash the Key and the Message?
+
+The obvious shortcut, `SHA-256(key || message)`, is broken for SHA-256 and the rest of the SHA-2 family. These hashes process input block by block and output their final internal state (FIPS 180-4 Merkle–Damgård design with length padding). Someone who sees `SHA-256(key || message)` can continue hashing from that state and compute `SHA-256(key || message || padding || extra)` for any `extra` they choose, without knowing the key. This is a length-extension attack, and it turns a "signature" into a forgery tool.
+
+HMAC closes that door with the outer hash: the attacker never sees the inner state, only a hash of it under a second, key-dependent prefix. RFC 2104 builds HMAC on any iterated hash and does not rely on the hash being collision resistant. That is why [RFC 6151](https://www.rfc-editor.org/rfc/rfc6151) could say in 2011 that the attacks on HMAC-MD5 "do not seem to indicate a practical vulnerability" when it is used as a MAC, even though MD5 itself is broken for collisions.
+
+## HMAC, Plain Hashes and Digital Signatures
+
+| | Plain hash (SHA-256) | HMAC | Digital signature (Ed25519, RSA) |
+|---|---|---|---|
+| Key | none | one shared secret | private key signs, public key verifies |
+| Who can create a valid tag | anyone | anyone with the secret | only the private key holder |
+| Who can verify | anyone | only secret holders | anyone with the public key |
+| Typical use | checksums, file integrity | webhooks, API signing, cookies | software releases, certificates |
+
+The verifier of an HMAC could also have created it, so HMAC cannot prove to a third party who sent a message. When that matters, use a signature. The [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) specification defines both: `v1` is HMAC-SHA256 and `v1a` is Ed25519, and it recommends the asymmetric scheme when you do not control both ends.
+
+## Choosing the Hash, the Key and the Output
+
+- **Hash**: use what the other side expects. HMAC-SHA256 is the common default. HMAC-SHA1 still appears in older protocols; NIST plans to [retire SHA-1](https://www.nist.gov/news-events/news/2022/12/nist-retires-sha-1-cryptographic-algorithm) by the end of 2030, so pick SHA-256 for new designs.
+- **Key length**: RFC 2104 §3 says keys shorter than `L` are "strongly discouraged". For HMAC-SHA256 that means at least 32 random bytes. Keys longer than the block are allowed but are hashed down to `L` bytes first, so they add nothing.
+- **Key encoding**: a key is bytes. `0b0b…0b` typed as text is 40 ASCII bytes, while the same text read as hex is 20 bytes. RFC test vectors list keys in hex; most webhook secrets are used as text, and a few platforms Base64-decode them first.
+- **Truncation**: RFC 2104 §5 allows keeping the leftmost bits of the output, but not fewer than half of it and not fewer than 80 bits. RFC 4231 test case 5 is the 128-bit truncation of HMAC-SHA256: `a3b6167473100ee06e0c796c2955552b`.
+
+## How Platforms Use HMAC
+
+Webhook providers all compute an HMAC of the raw request body, but each adds its own details:
+
+| Platform | What is signed | Key | Header |
+|---|---|---|---|
+| [GitHub](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries) | raw body | webhook secret | `X-Hub-Signature-256: sha256=<hex>` |
+| [Stripe](https://docs.stripe.com/webhooks#verify-manually) | timestamp + `.` + body | `whsec_…` secret | `Stripe-Signature: t=…,v1=<hex>` |
+| [Slack](https://docs.slack.dev/authentication/verifying-requests-from-slack) | `v0:` + timestamp + `:` + body | signing secret | `X-Slack-Signature: v0=<hex>` |
+| [Twilio](https://www.twilio.com/docs/usage/webhooks/webhooks-security) | URL + POST parameters sorted by name | auth token | `X-Twilio-Signature` (HMAC-SHA1, Base64) |
+| [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) | id + `.` + timestamp + `.` + body | Base64 after `whsec_` | `webhook-signature: v1,<Base64>` |
+
+GitHub publishes a test pair: secret `It's a Secret to Everybody`, payload `Hello, World!`. The generator's GitHub format gives:
+
+{/* hmac-check: {"preset":"github","key":"It's a Secret to Everybody","msg":"Hello, World!","expect":"header"} */}
+```text
+X-Hub-Signature-256: sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17
+```
+
+Request signing uses HMAC differently. AWS Signature Version 4 [derives its signing key](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html) through a chain of HMACs, where each output becomes the next key:
+
+```text
+DateKey              = HMAC-SHA256("AWS4" + secret, "20261001")
+DateRegionKey        = HMAC-SHA256(DateKey, "us-east-1")
+DateRegionServiceKey = HMAC-SHA256(DateRegionKey, "s3")
+SigningKey           = HMAC-SHA256(DateRegionServiceKey, "aws4_request")
+```
+
+With the made-up secret `example-secret`, the first step (key `AWS4example-secret` as text, message `20261001`) gives:
+
+{/* hmac-check: {"preset":"custom","key":"AWS4example-secret","msg":"20261001","expect":"hex"} */}
+`349e6c3373ce4b76d7901e1102a6d922b80c8d0a3d1f180e9e4758843a7b931d`
+
+The second step must take those 32 bytes as the key, not the 64 characters. Switch the key encoding to hex, paste the value, and sign `us-east-1`:
+
+{/* hmac-check: {"preset":"custom","key":"349e6c3373ce4b76d7901e1102a6d922b80c8d0a3d1f180e9e4758843a7b931d","keyEnc":"hex","msg":"us-east-1","expect":"hex"} */}
+`96edd7a4586b3532817981a8f36174b721a03abe26a8975b076c479de2306ca3`
+
+Read the key as text here and every later step is wrong. The signed timestamp also limits replay: AWS rejects a request that arrives more than five minutes after its timestamp ([AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing-elements.html)).
+
+## Verifying a Webhook Without the Usual Mistakes
+
+Three rules cover almost every verification bug.
+
+**Hash the raw bytes.** The signature covers the body exactly as it was sent. Parsing JSON and serializing it again changes spacing and key order, and some frameworks do it before your handler runs; Stripe's [troubleshooting page](https://docs.stripe.com/webhooks/signature) lists Express's `express.json()` placed before the webhook route as a cause. A final line break matters too: `Hello, World!` with a trailing newline gives `8fde2e97…` instead of GitHub's `757107ea…`.
+
+**Compare in constant time.** `==` on strings stops at the first different character, and the time it takes can leak how much of a guess was right. Use `crypto.timingSafeEqual` in Node.js (it throws when the lengths differ, so check them first), `hmac.compare_digest` in Python, or `hmac.Equal` in Go.
+
+**Check the timestamp.** A valid signed request can be replayed. Stripe and Slack sign a timestamp with the body. Stripe's libraries reject events more than five minutes old by default, and Slack's guide uses the same five-minute check. Stripe may also send several `v1` signatures while you roll a secret, so accept the request if any of them matches.
+
+A Stripe-style check in Node.js that follows all three rules:
+
+{/* hmac-run: {"lang":"node","expect":"true\nfalse\nfalse"} */}
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verify(rawBody, header, secret, now = Math.floor(Date.now() / 1000)) {
+  const items = header.split(',').map((part) => part.split('='));
+  const t = items.find(([k]) => k === 't')?.[1];
+  const sigs = items.filter(([k]) => k === 'v1').map(([, v]) => Buffer.from(v, 'hex'));
+  if (!t || Math.abs(now - Number(t)) > 300) return false;
+  const expected = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest();
+  return sigs.some((s) => s.length === expected.length && timingSafeEqual(s, expected));
 }
 
-const sig = await hmacSha256('my-secret-key', 'hello world');
-// → "90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad"
+const body = '{"id":"evt_test","object":"event"}';
+const secret = 'whsec_demo_only';
+const t = 1790000000;
+const v1 = createHmac('sha256', secret).update(`${t}.${body}`).digest('hex');
+console.log(verify(body, `t=${t},v1=${v1}`, secret, t + 60));
+console.log(verify(body + '\n', `t=${t},v1=${v1}`, secret, t + 60));
+console.log(verify(body, `t=${t},v1=${v1}`, secret, t + 600));
 ```
 
-### Node.js
+It prints `true`, then `false` for one extra byte, then `false` for a request ten minutes old. The same check for GitHub in Python, with GitHub's test values:
 
-```js
-const crypto = require('crypto');
-
-const hmac = crypto.createHmac('sha256', 'my-secret-key')
-  .update('hello world')
-  .digest('hex');
-
-console.log(hmac);
-// 90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad
-```
-
-### Python
-
+{/* hmac-run: {"lang":"python","expect":"True\nFalse"} */}
 ```python
-import hmac
 import hashlib
+import hmac
 
-key = b'my-secret-key'
-message = b'hello world'
+def verify_github(body: bytes, header: str, secret: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header)
 
-signature = hmac.new(key, message, hashlib.sha256).hexdigest()
-print(signature)
-# 90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad
+header = "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"
+print(verify_github(b"Hello, World!", header, "It's a Secret to Everybody"))
+print(verify_github(b"Hello, World!\n", header, "It's a Secret to Everybody"))
 ```
 
-### Go
+And Slack in Go, using the example from Slack's documentation:
 
+{/* hmac-run: {"lang":"go","expect":"true"} */}
 ```go
+package main
+
 import (
-    "crypto/hmac"
-    "crypto/sha256"
-    "encoding/hex"
-    "fmt"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 )
 
 func main() {
-    mac := hmac.New(sha256.New, []byte("my-secret-key"))
-    mac.Write([]byte("hello world"))
-    signature := hex.EncodeToString(mac.Sum(nil))
-    fmt.Println(signature)
+	secret := "8f742231b10e8888abcd99yyyzzz85a5"
+	ts := "1531420618"
+	body := "token=xyzz0WbapA4vBCDEFasx0q6G&team_id=T1DC2JH3J&team_domain=testteamnow&channel_id=G8PSS9T3V&channel_name=foobar&user_id=U2CERLKJA&user_name=roadrunner&command=%2Fwebhook-collect&text=&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2FT1DC2JH3J%2F397700885554%2F96rGlfmibIGlgcZRskXaIFfN&trigger_id=398738663015.47445629121.803a0bc887a14d10d2c447fce8b6703c"
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("v0:" + ts + ":" + body))
+	expected := "v0=" + hex.EncodeToString(mac.Sum(nil))
+	got := "v0=a2114d57b48eac39b9ad189dd8316235a7b4a8d21a10bd27519666489c69b503"
+	fmt.Println(hmac.Equal([]byte(expected), []byte(got)))
 }
 ```
 
-## Verifying Webhooks Correctly
+## Finding Out Why a Signature Does Not Match
 
-### Use Constant-Time Comparison
+When your code says "invalid signature" for a request you know is genuine, paste the body, the secret and the received header into the [HMAC generator](/tools/hmac-generator/). If the header does not match, it recomputes with the usual mistakes reversed and names the one that produces the received value. With GitHub's header and the body pasted with a final line break, it reports:
 
-When comparing HMAC signatures, always use a constant-time comparison function. A naive `==` comparison short-circuits on the first mismatched byte, leaking timing information that can be exploited in timing attacks.
+{/* hmac-check: {"preset":"github","key":"It's a Secret to Everybody","msg":"Hello, World!\n","expect":"hex","verify":"sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17","diagnose":"msgTrailingNewline"} */}
+*No match. Likely cause: it matches without the final line break.* The value computed from the pasted body was `8fde2e970f9163923fb1cb61bb945626ff2b4091d87e622ee3ad600160592325`.
 
-```js
-// WRONG — leaks timing information
-if (receivedSig === expectedSig) { ... }
+The other variants it tries are CRLF line breaks, spaces around the key, JSON that was minified or indented after it arrived, a hex or Base64 key read as text, key and message swapped, a timestamp different from the one in the header, and another hash (GitHub's legacy `X-Hub-Signature` is HMAC-SHA1). The calculation stays in the browser tab; the page sends nothing.
 
-// CORRECT — constant-time comparison
-const crypto = require('crypto');
-const a = Buffer.from(receivedSig);
-const b = Buffer.from(expectedSig);
-// timingSafeEqual throws if the lengths differ, so check the length first
-if (a.length === b.length && crypto.timingSafeEqual(a, b)) { ... }
-```
+## Test Vectors for Your Own Implementation
 
-### Include a Timestamp
+Before trusting new HMAC code, run it against published values:
 
-Replay attacks reuse a valid signed request. Include a timestamp in the signed payload and reject requests older than a few minutes:
+| Source | Key | Message | Expected |
+|---|---|---|---|
+| RFC 4231 test case 1 | `0b` × 20 (hex) | `Hi There` | HMAC-SHA256 `b0344c61…2e32cff7` |
+| RFC 4231 test case 2 | `Jefe` | `what do ya want for nothing?` | HMAC-SHA256 `5bdcc146…64ec3843` |
+| RFC 4231 test case 6 | `aa` × 131 (hex) | `Test Using Larger Than Block-Size Key - Hash Key First` | HMAC-SHA256 `60e43159…0ee37f54` |
+| RFC 2202 test case 1 | `0b` × 20 (hex) | `Hi There` | HMAC-SHA1 `b6173186…f146be00` |
+| GitHub docs | `It's a Secret to Everybody` | `Hello, World!` | `sha256=757107ea…8b043e17` |
+| LINE docs | `8c570fa6dd201bb328f1c1eac23a96d8` | `{"destination":"U8e742f61d673b39c7fff3cecb7536ef0","events":[]}` | `GhRKmvmHys4Pi8DxkF4+EayaH0OqtJtaZxgTD9fMDLs=` |
 
-```
-HMAC-SHA256(secret, timestamp + "." + body)
-```
-
-Stripe uses this pattern: the `Stripe-Signature` header carries the timestamp, and its libraries reject events older than 5 minutes by default. GitHub signs only the body, so GitHub deliveries have no timestamp check.
-
-## Using the Online HMAC Generator
-
-**[Try ZeroTool HMAC Generator →](/tools/hmac-generator)**
-
-Enter your message and secret key, select the algorithm (SHA-256, SHA-384, SHA-512), and get the HMAC instantly in hex or Base64. Useful for:
-
-- Debugging webhook signature mismatches by reproducing the expected value
-- Verifying your implementation matches a known test vector
-- Generating API signatures during development without writing test code
-- Teaching and exploring HMAC behavior
-
-All computation runs in the browser using the Web Crypto API — the key and message never leave your device.
-
-## Key Length and Key Management
-
-- **Minimum key length**: use at least 32 bytes (256 bits) for HMAC-SHA256. Shorter keys reduce security.
-- **Key rotation**: rotate HMAC keys periodically. Many platforms support multiple active keys with a short overlap window.
-- **Never log keys**: HMAC keys are secrets. Exclude them from application logs and error reports.
-- **Separate keys per purpose**: do not use the same key for webhook signatures and JWT signing.
-
-**[Generate and verify HMAC signatures instantly →](/tools/hmac-generator)**
+Test case 6 is the one that catches implementations that forget to hash a long key. The generator passes all of them, together with every RFC 2104, RFC 2202 and RFC 4231 vector and thousands of random inputs compared with Node.js and Python.

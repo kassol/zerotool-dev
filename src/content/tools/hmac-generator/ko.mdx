@@ -1,32 +1,78 @@
 ---
-seoTitle: "HMAC 생성기 — SHA-256 / SHA-512 온라인 | ZeroTool"
-seoDescription: "SHA-256, SHA-384, SHA-512로 HMAC 서명 생성. Hex/Base64 출력 지원. 브라우저에서 완결, 데이터 전송 없음."
+seoTitle: "HMAC 생성기 · 웹훅 서명 검증 | ZeroTool"
+seoDescription: "HMAC-SHA256, SHA-512, SHA-1, MD5를 브라우저에서 계산합니다. 키는 텍스트·16진수·Base64를 지원하고, 네이버 클라우드 API 서명과 GitHub·Stripe 웹훅 서명을 대조해 불일치 원인을 알려 줍니다."
 faqItems:
-  - question: "HMAC이란 무엇입니까?"
-    answer: "HMAC(해시 기반 메시지 인증 코드)는 암호화 해시 함수와 비밀 키를 결합한 메시지 인증 코드입니다. 데이터 무결성과 메시지의 진위성을 동시에 검증하는 데 사용됩니다."
-  - question: "데이터가 서버로 전송됩니까?"
-    answer: "아니요. 이 도구는 모든 암호화 작업에 브라우저 내장 Web Crypto API(SubtleCrypto)를 사용합니다. 메시지와 비밀 키는 브라우저 밖으로 나가지 않습니다."
-  - question: "어떤 알고리즘을 선택해야 합니까?"
-    answer: "SHA-256은 가장 널리 사용되며 대부분의 목적에 적합합니다. SHA-384와 SHA-512는 더 큰 보안 마진을 제공하지만 출력이 더 깁니다. 세 가지 모두 HMAC 사용에 안전한 것으로 간주됩니다."
-  - question: "Hex와 Base64 출력의 차이는 무엇입니까?"
-    answer: "둘 다 동일한 HMAC 바이너리 값을 다른 텍스트 형식으로 인코딩한 것입니다. Hex는 16진수 문자(0-9, a-f)를 사용하며 더 깁니다. Base64는 더 간결하고 HTTP 헤더(Authorization 등)와 JSON에서 일반적으로 사용됩니다."
-  - question: "웹훅 서명 검증에 사용할 수 있습니까?"
-    answer: "네. 많은 서비스(GitHub, Stripe, Slack 등)는 HMAC-SHA256으로 웹훅 페이로드에 서명합니다. 원시 페이로드를 메시지로, 서비스의 웹훅 시크릿을 키로 입력한 후 결과를 서명 헤더와 비교하세요."
+  - question: "비밀 키가 전송되거나 저장되나요?"
+    answer: "아니요. SHA-1, SHA-256, SHA-384, SHA-512는 브라우저의 Web Crypto API로, MD5와 SHA-224는 페이지 안의 코드로 계산합니다. 네트워크 요청을 보내지 않고 키와 메시지를 localStorage, 쿠키, URL에 쓰지 않습니다. 이 페이지는 분석이나 광고 스크립트도 불러오지 않습니다. 새로 고치면 입력이 모두 지워집니다."
+  - question: "네이버 클라우드 API 서명이 맞지 않아요."
+    answer: "서명 대상은 메서드, 공백, 경로와 쿼리 문자열, 줄바꿈, 타임스탬프(밀리초), 줄바꿈, Access Key ID 순서입니다. 쿼리 문자열을 빠뜨리거나, 헤더의 x-ncp-apigw-timestamp와 서명에 쓴 타임스탬프가 다르거나, 5분 넘게 시계가 어긋나면 실패합니다. 형식에서 네이버 클라우드 API를 고르면 서명 대상 문자열을 줄바꿈 표시와 함께 보여 줍니다."
+  - question: "웹훅 서명이 일치하지 않는 흔한 원인은?"
+    answer: "대부분 계산한 바이트가 보낸 쪽과 다릅니다. 본문을 JSON으로 파싱한 뒤 다시 직렬화했거나, 끝의 줄바꿈이 붙거나 빠졌거나, 줄바꿈이 LF와 CRLF 사이에서 바뀌었거나, 타임스탬프나 접두사를 서명 대상에 넣지 않은 경우입니다. 받은 서명을 '대조할 서명'에 붙여 넣으면 이런 경우를 차례로 시험해 원인을 알려 줍니다."
+  - question: "어떤 알고리즘을 골라야 하나요?"
+    answer: "상대 쪽 규격을 따르세요. 새로 설계한다면 HMAC-SHA256이 일반적이며 네이버 클라우드 API, GitHub, Stripe, Slack, LINE이 이를 씁니다. HMAC-SHA1은 Twilio와 GitHub의 구 헤더 X-Hub-Signature, HMAC-MD5는 오래된 시스템과 RFC 2104 테스트 벡터를 위해 있습니다."
+  - question: "서버에서 서명을 ==로 비교해도 되나요?"
+    answer: "피하세요. Java의 MessageDigest.isEqual, Node.js의 crypto.timingSafeEqual(길이가 다르면 예외가 나므로 길이부터 비교), Python의 hmac.compare_digest, Go의 hmac.Equal처럼 상수 시간 비교를 쓰세요. 이 도구의 대조는 브라우저 안에서만 하므로 시간 차는 문제가 되지 않습니다."
 ---
 
-<h2>사용 방법</h2>
-<ol>
-  <li>인증할 <strong>메시지</strong>를 입력합니다.</li>
-  <li><strong>비밀 키</strong>를 입력합니다.</li>
-  <li><strong>알고리즘</strong>(SHA-256, SHA-384, SHA-512)을 선택합니다.</li>
-  <li>출력 형식(<strong>Hex</strong> 또는 <strong>Base64</strong>)을 선택합니다.</li>
-  <li><strong>Generate HMAC</strong>을 클릭하고 결과를 복사합니다.</li>
-</ol>
+## 사용 방법
 
-<h2>주요 사용 사례</h2>
-<ul>
-  <li><strong>웹훅 검증:</strong> 웹훅 페이로드가 신뢰할 수 있는 발신자에 의해 서명되었는지 확인.</li>
-  <li><strong>API 요청 서명:</strong> 비밀 키 자체를 전송하지 않고 API 요청의 진위성 증명.</li>
-  <li><strong>데이터 무결성:</strong> 메시지에 HMAC를 첨부하여 수신자가 변조되지 않았음을 확인.</li>
-  <li><strong>세션 토큰:</strong> 변조 방지 세션 식별자 생성.</li>
-</ul>
+1. **형식**을 고릅니다. '직접 입력 HMAC'은 아무 키와 메시지로 계산합니다. 네이버 클라우드 API, GitHub, Stripe, Slack, LINE 등을 고르면 각 서비스 규칙대로 서명 대상을 만들고, 보낼 헤더 값을 바로 보여 줍니다.
+2. 메시지나 받은 요청 본문을 붙여 넣습니다. 직접 입력에서는 텍스트(UTF-8), 16진수, Base64와 줄바꿈(LF / CRLF)을 고를 수 있습니다.
+3. 키를 입력합니다. 직접 입력에서는 키도 텍스트, 16진수, Base64 중에서 고릅니다. 16진수와 Base64 칸에 한글 입력기로 들어간 전각 영숫자는 반각으로 읽습니다.
+4. 결과는 16진수, Base64, base64url로 한꺼번에 나오고 입력할 때마다 바뀝니다. 'HMAC 생성'이나 Ctrl/⌘+Enter로 다시 계산합니다.
+5. 서명을 검증할 때는 `sha256=…`, `t=…,v1=…` 같은 헤더 값을 '대조할 서명'에 붙여 넣습니다.
+
+계산은 [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104) 정의를 따릅니다. 키가 블록 길이(SHA-256은 64바이트, SHA-512는 128바이트)보다 길면 먼저 해시하고, 출력보다 짧은 키에는 안내를 띄웁니다(RFC 2104 §3은 권하지 않습니다). '자르기'는 RFC 2104 §5처럼 왼쪽부터 지정한 비트만 남깁니다.
+
+## 네이버 클라우드 API 서명 만들기
+
+네이버 클라우드 플랫폼의 [Ncloud API 공통 가이드](https://api.ncloud-docs.com/docs/common-ncpapi)는 `x-ncp-apigw-signature-v2`를 이렇게 만들라고 합니다. 메서드 + 공백 + URL(쿼리 포함) + `\n` + 타임스탬프 + `\n` + Access Key를 Secret Key로 HmacSHA256 계산한 뒤 Base64로 인코딩합니다. 타임스탬프는 밀리초이고 API Gateway와 5분 이상 차이 나면 요청이 무효가 됩니다.
+
+가이드 예시 경로 `/photos/puppy.jpg?query1=&query2`에, 실제 키 대신 자리표시자 `ACCESS_KEY_ID`와 `SECRET_KEY`, 타임스탬프 `1700000000000`을 넣으면 서명 대상과 결과는 다음과 같습니다.
+
+{/* hmac-check: {"preset":"ncp","key":"SECRET_KEY","method":"GET","uri":"/photos/puppy.jpg?query1=&query2","timestamp":"1700000000000","accessKey":"ACCESS_KEY_ID","expect":"signed"} */}
+```text
+GET /photos/puppy.jpg?query1=&query2
+1700000000000
+ACCESS_KEY_ID
+```
+
+{/* hmac-check: {"preset":"ncp","key":"SECRET_KEY","method":"GET","uri":"/photos/puppy.jpg?query1=&query2","timestamp":"1700000000000","accessKey":"ACCESS_KEY_ID","expect":"header"} */}
+`x-ncp-apigw-signature-v2: J5srbJYp9CF97yrUxy0xTrvRQBv9R8ORkITTlii4xxQ=`
+
+서명 대상 칸은 줄바꿈을 ␊로 표시하므로, 코드에서 `\n` 대신 `\r\n`이나 공백을 넣었는지 바로 보입니다. 시계 확인용 '현재 시각' 버튼은 밀리초 타임스탬프를 넣고, 10자리(초)를 넣으면 밀리초가 아니라고 알려 줍니다.
+
+## 웹훅 서명 대조하기
+
+GitHub의 [웹훅 전송 검증 문서](https://docs.github.com/ko/webhooks/using-webhooks/validating-webhook-deliveries)에는 시크릿 `It's a Secret to Everybody`, 페이로드 `Hello, World!`, 기대 서명이 실려 있습니다. 형식을 GitHub 웹훅으로 두고 '예시'를 누르면 같은 값이 나옵니다.
+
+{/* hmac-check: {"preset":"github","key":"It's a Secret to Everybody","msg":"Hello, World!","expect":"header"} */}
+```text
+X-Hub-Signature-256: sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17
+```
+
+본문을 터미널에서 복사하다 끝에 줄바꿈이 붙으면 결과가 `8fde2e97…`로 바뀝니다. 이때 원래 헤더를 붙여 넣으면 '끝의 줄바꿈을 지우면 일치합니다'라고 원인을 알려 줍니다. Stripe의 `t=…,v1=…`처럼 서명이 여러 개 들어 있는 헤더는 그중 몇 번째가 일치했는지 표시합니다.
+
+## EUC-KR 문자열에 서명할 때
+
+텍스트는 UTF-8 바이트로 바꿔 계산합니다. '서명'은 UTF-8로 6바이트, EUC-KR로는 `bcadb8ed` 4바이트입니다. 키 `key`로 계산하면 결과가 다릅니다.
+
+{/* hmac-check: {"preset":"custom","key":"key","msg":"서명","expect":"hex"} */}
+UTF-8: `cd59f4fe8cbf9974711c276d64763113446368400791e903ac9d1568fede639c`
+
+{/* hmac-check: {"preset":"custom","key":"key","msg":"bcadb8ed","msgEnc":"hex","expect":"hex"} */}
+EUC-KR(메시지 형식을 16진수로 하고 `bcadb8ed`): `d376b8c6812d18fda0d71f78b457195358b17786874e8146c98a19165bb3a0e7`
+
+오래된 연동 규격이 EUC-KR 기준이라면 16진수로 바꿔 넣으세요.
+
+## 다른 HMAC 도구와의 차이
+
+2026-10-01에 GitHub 문서 예시로 확인했습니다. [툴타다](https://tooltada.com/hmac/)는 브라우저에서 계산하지만, 키를 'Hex (16진수)'로 두고 `0b0g`나 홀수 자리 `abc`를 넣어도 오류 없이 결과를 냅니다. 확인해 보니 그 값은 키를 텍스트로 읽은 HMAC이었습니다. [Go Tools](https://go-tools.org/ko/tools/hmac-generator)는 검증 탭이 있지만 헤더 그대로의 `sha256=757107ea…`는 '일치하지 않음'으로 판정하고, 본문 끝에 줄바꿈이 붙은 경우에도 불일치만 알려 줍니다. 이 도구는 16진수·Base64 오류를 몇 번째 문자인지 알려 주고, 헤더 접두사를 읽으며, 불일치하면 가능한 원인을 찾아 줍니다.
+
+## 제한 사항
+
+- 알고리즘은 MD5, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512입니다. SHA-3와 RIPEMD-160은 Web Crypto API에 없어 지원하지 않습니다.
+- 텍스트 칸의 줄바꿈은 모두 LF가 됩니다. CRLF로 서명했다면 줄바꿈을 CRLF로 바꾸고, 그 밖의 특수한 바이트는 16진수나 Base64로 넣으세요.
+- 브라우저 안의 대조는 디버깅용입니다. 서버에서는 받은 본문 바이트를 그대로 쓰고 상수 시간으로 비교하세요. JWT의 HS256도 HMAC-SHA256이므로 [JWT 생성기](/ko/tools/jwt-generator/)에서 다룰 수 있습니다.
+
+키 없는 해시는 [해시 생성기](/ko/tools/hash-generator/), HMAC-SHA1로 만드는 일회용 코드는 [2FA 코드 생성기](/ko/tools/totp-generator/)를 쓰세요.
