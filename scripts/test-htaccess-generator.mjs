@@ -56,5 +56,12 @@ check('X-XSS-Protection is 0', /Header always set X-XSS-Protection "0"/.test(all
 check('X-XSS-Protection 1; mode=block is gone', !/mode=block/.test(all), all);
 check('other headers kept', /X-Content-Type-Options "nosniff"/.test(all) && /X-Frame-Options "SAMEORIGIN"/.test(all), all);
 
+// Apache 2.4's mime.types maps .ttf to font/ttf; a rule for application/x-font-ttf alone never
+// matches there (checked with Apache 2.4.67: no Expires header on a .ttf file).
+const cache = form({ cacheEnable: on, cacheImages: { value: '1 year' }, cacheCss: { value: '1 month' }, cacheFonts: { value: '1 year' } });
+check('TTF caching uses font/ttf', /ExpiresByType font\/ttf "access plus 1 year"/.test(cache), cache);
+check('TTF caching keeps the legacy application/x-font-ttf type', /ExpiresByType application\/x-font-ttf "access plus 1 year"/.test(cache), cache);
+check('JavaScript caching covers text/javascript', /ExpiresByType text\/javascript "access plus 1 month"/.test(cache), cache);
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
