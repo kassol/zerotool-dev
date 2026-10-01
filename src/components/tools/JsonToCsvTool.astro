@@ -25,6 +25,13 @@ const labels = {
     msgEmptyArray: 'Empty array — nothing to convert',
     msgNotArray: 'Input must be a JSON array of objects',
     msgInvalidJson: 'Invalid JSON: ',
+    formula: 'Formula guard',
+    guardOff: 'Off',
+    guardQuote: "' prefix",
+    guardTab: 'Tab prefix (Excel)',
+    bom: 'UTF-8 BOM in download (Excel)',
+    msgFormulaRisk: '{n} values start with = + - @, Tab or a line break. A spreadsheet may run them as formulas; turn on Formula guard if the data comes from other people.',
+    msgFormulaGuarded: "Formula guard added to {n} values.",
   },
   zh: {
     jsonInput: 'JSON 输入',
@@ -48,6 +55,13 @@ const labels = {
     msgEmptyArray: '空数组——无内容可转换',
     msgNotArray: '输入必须是 JSON 对象数组',
     msgInvalidJson: 'JSON 格式错误：',
+    formula: '公式防护',
+    guardOff: '关闭',
+    guardQuote: "前加 '",
+    guardTab: '前加 Tab（Excel）',
+    bom: '下载文件加 UTF-8 BOM（Excel）',
+    msgFormulaRisk: '有 {n} 个值以 = + - @、Tab 或换行开头，表格软件可能把它们当公式执行。数据来自他人时请开启公式防护。',
+    msgFormulaGuarded: '已对 {n} 个值加公式防护。',
   },
   ja: {
     jsonInput: 'JSON 入力',
@@ -71,6 +85,13 @@ const labels = {
     msgEmptyArray: '空の配列 — 変換するデータがありません',
     msgNotArray: '入力はオブジェクトの JSON 配列である必要があります',
     msgInvalidJson: '無効なJSON：',
+    formula: '数式対策',
+    guardOff: 'なし',
+    guardQuote: "' を付ける",
+    guardTab: 'タブを付ける（Excel）',
+    bom: 'ダウンロードに UTF-8 BOM を付ける（Excel）',
+    msgFormulaRisk: '{n} 個の値が = + - @、タブまたは改行で始まっています。表計算ソフトが数式として実行するおそれがあります。他人から受け取ったデータなら「数式対策」をオンにしてください。',
+    msgFormulaGuarded: '{n} 個の値に数式対策を付けました。',
   },
   ko: {
     jsonInput: 'JSON 입력',
@@ -94,6 +115,13 @@ const labels = {
     msgEmptyArray: '빈 배열 — 변환할 데이터가 없습니다',
     msgNotArray: '입력은 객체의 JSON 배열이어야 합니다',
     msgInvalidJson: '잘못된 JSON: ',
+    formula: '수식 방지',
+    guardOff: '끄기',
+    guardQuote: "' 붙이기",
+    guardTab: '탭 붙이기 (Excel)',
+    bom: '다운로드에 UTF-8 BOM 추가 (Excel)',
+    msgFormulaRisk: '{n}개 값이 = + - @, 탭 또는 줄바꿈으로 시작합니다. 스프레드시트가 수식으로 실행할 수 있으니, 다른 사람에게서 받은 데이터라면 "수식 방지"를 켜세요.',
+    msgFormulaGuarded: '{n}개 값에 수식 방지를 적용했습니다.',
   },
 };
 
@@ -109,6 +137,8 @@ const L = labels[lang];
   data-msg-empty-array={L.msgEmptyArray}
   data-msg-not-array={L.msgNotArray}
   data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-formula-risk={L.msgFormulaRisk}
+  data-msg-formula-guarded={L.msgFormulaGuarded}
 >
   <div class="jtc-config">
     <div class="jtc-config-row">
@@ -131,6 +161,21 @@ const L = labels[lang];
       <div class="jtc-tabs" id="jtc-header-tabs">
         <button type="button" class="jtc-tab active" data-header="true">{L.on}</button>
         <button type="button" class="jtc-tab" data-header="false">{L.off}</button>
+      </div>
+    </div>
+    <div class="jtc-config-row">
+      <span class="jtc-label">{L.formula}</span>
+      <div class="jtc-tabs" id="jtc-guard-tabs">
+        <button type="button" class="jtc-tab active" data-guard="off">{L.guardOff}</button>
+        <button type="button" class="jtc-tab" data-guard="quote">{L.guardQuote}</button>
+        <button type="button" class="jtc-tab" data-guard="tab">{L.guardTab}</button>
+      </div>
+    </div>
+    <div class="jtc-config-row">
+      <span class="jtc-label">{L.bom}</span>
+      <div class="jtc-tabs" id="jtc-bom-tabs">
+        <button type="button" class="jtc-tab active" data-bom="true">{L.on}</button>
+        <button type="button" class="jtc-tab" data-bom="false">{L.off}</button>
       </div>
     </div>
   </div>
@@ -177,6 +222,8 @@ const L = labels[lang];
       var MSG_EMPTY = wrap.dataset.msgEmptyArray || 'Empty array — nothing to convert';
       var MSG_NOT_ARRAY = wrap.dataset.msgNotArray || 'Input must be a JSON array of objects';
       var MSG_INVALID = wrap.dataset.msgInvalidJson || 'Invalid JSON: ';
+      var MSG_FORMULA_RISK = wrap.dataset.msgFormulaRisk || '';
+      var MSG_FORMULA_GUARDED = wrap.dataset.msgFormulaGuarded || '';
 
       var inputEl = document.getElementById('jtc-input') as HTMLTextAreaElement;
       var outputEl = document.getElementById('jtc-output') as HTMLTextAreaElement;
@@ -185,6 +232,8 @@ const L = labels[lang];
       var delimiter = ',';
       var flatten = true;
       var includeHeader = true;
+      var guard = 'off';
+      var addBom = true;
 
       var EXAMPLE = JSON.stringify([
         { id: 1, name: 'Alice', address: { city: 'NY', zip: '10001' } },
@@ -208,58 +257,92 @@ const L = labels[lang];
       wireTabs('jtc-del-tabs', 'del', function (v) { delimiter = v; });
       wireTabs('jtc-flatten-tabs', 'flatten', function (v) { flatten = v === 'true'; });
       wireTabs('jtc-header-tabs', 'header', function (v) { includeHeader = v === 'true'; });
+      wireTabs('jtc-guard-tabs', 'guard', function (v) { guard = v; });
+      wireTabs('jtc-bom-tabs', 'bom', function (v) { addBom = v === 'true'; });
 
-      function setStatus(msg: string, isError: boolean) {
+      function setStatus(msg: string, isError: boolean, isWarn?: boolean) {
         statusEl!.textContent = msg;
-        statusEl!.className = 'jtc-status ' + (isError ? 'error' : 'success');
+        statusEl!.className = 'jtc-status ' + (isError ? 'error' : isWarn ? 'warn' : 'success');
       }
 
-      function flattenObject(obj: Record<string, unknown>, prefix: string): Record<string, unknown> {
-        var result: Record<string, unknown> = {};
+      /* ── engine:start ── */
+      // Strings that a spreadsheet may run as a formula (OWASP CSV Injection): = + - @, Tab, CR,
+      // LF, and the full-width ＝＋－＠ that Japanese spreadsheets also accept. Same set as the
+      // CSV mode of String Escape.
+      var FORMULA_START = /^[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/;
+
+      function flattenObject(obj, prefix) {
+        var result = {};
         var keys = Object.keys(obj);
         for (var i = 0; i < keys.length; i++) {
           var k = keys[i];
           var val = obj[k];
           var fullKey = prefix ? prefix + '.' + k : k;
-          if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-            var sub = flattenObject(val as Record<string, unknown>, fullKey);
+          if (val !== null && typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length > 0) {
+            var sub = flattenObject(val, fullKey);
             var subKeys = Object.keys(sub);
             for (var j = 0; j < subKeys.length; j++) result[subKeys[j]] = sub[subKeys[j]];
           } else {
+            // Arrays and empty objects stay in one column as JSON text ([] / {})
             result[fullKey] = val;
           }
         }
         return result;
       }
 
-      function csvField(val: unknown, del: string): string {
+      function toRows(parsed, flatten) {
+        return parsed.map(function (item) {
+          if (item === null || typeof item !== 'object' || Array.isArray(item)) return { value: item };
+          return flatten ? flattenObject(item, '') : item;
+        });
+      }
+
+      // guard: 'off' | 'quote' (' prefix) | 'tab' (Tab prefix). Only JSON strings are guarded:
+      // numbers, booleans and JSON text are data, not text typed by a person.
+      function csvField(val, del, guard, stats) {
         if (val === null || val === undefined) return '';
         var s = typeof val === 'object' ? JSON.stringify(val) : String(val);
-        if (s.indexOf(del) !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1 || s.indexOf('\r') !== -1) {
+        var force = false;
+        if (typeof val === 'string' && FORMULA_START.test(s)) {
+          stats.formulaCells++;
+          if (guard === 'quote' || guard === 'tab') {
+            s = (guard === 'tab' ? '\t' : "'") + s;
+            force = true;
+          }
+        }
+        if (force || s.indexOf(del) !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1 || s.indexOf('\r') !== -1) {
           return '"' + s.replace(/"/g, '""') + '"';
         }
         return s;
       }
 
-      function buildCsv(rows: Record<string, unknown>[], del: string, withHeader: boolean): string {
-        var headers: string[] = [];
+      function buildCsv(rows, del, withHeader, guard) {
+        var stats = { formulaCells: 0 };
+        var headers = [];
+        var seen = Object.create(null);
         for (var i = 0; i < rows.length; i++) {
           var keys = Object.keys(rows[i]);
           for (var j = 0; j < keys.length; j++) {
-            if (headers.indexOf(keys[j]) === -1) headers.push(keys[j]);
+            if (!seen[keys[j]]) { seen[keys[j]] = true; headers.push(keys[j]); }
           }
         }
-
-        var lines: string[] = [];
-        if (withHeader) lines.push(headers.map(function (h) { return csvField(h, del); }).join(del));
-
-        for (var i = 0; i < rows.length; i++) {
-          var row = rows[i];
-          lines.push(headers.map(function (h) { return csvField(row[h], del); }).join(del));
+        var lines = [];
+        if (withHeader) lines.push(headers.map(function (h) { return csvField(h, del, guard, stats); }).join(del));
+        for (var r = 0; r < rows.length; r++) {
+          var row = rows[r];
+          lines.push(headers.map(function (h) {
+            return csvField(Object.prototype.hasOwnProperty.call(row, h) ? row[h] : undefined, del, guard, stats);
+          }).join(del));
         }
-
-        return lines.join('\n');
+        return { csv: lines.join('\n'), formulaCells: stats.formulaCells };
       }
+
+      // Excel on Windows reads a double-clicked CSV as UTF-8 only when it starts with a BOM
+      function withBom(text, on) {
+        if (!on || text.charCodeAt(0) === 0xFEFF) return text;
+        return '\uFEFF' + text;
+      }
+      /* ── engine:end ── */
 
       function convert() {
         var raw = inputEl.value.trim();
@@ -294,19 +377,16 @@ const L = labels[lang];
           return;
         }
 
-        var rows = parsed.map(function (item: unknown) {
-          if (item === null || typeof item !== 'object' || Array.isArray(item)) {
-            return { value: item };
-          }
-          if (flatten) return flattenObject(item as Record<string, unknown>, '');
-          return item as Record<string, unknown>;
-        });
-
-        var csv = buildCsv(rows, delimiter, includeHeader);
-        outputEl.value = csv;
-        var dataRows = includeHeader ? rows.length : rows.length;
-        var msg = dataRows === 1 ? MSG_ONE_ROW : MSG_ROWS.replace('{n}', String(dataRows));
-        setStatus(msg, false);
+        var rows = toRows(parsed, flatten);
+        var result = buildCsv(rows, delimiter, includeHeader, guard);
+        outputEl.value = result.csv;
+        var msg = rows.length === 1 ? MSG_ONE_ROW : MSG_ROWS.replace('{n}', String(rows.length));
+        if (result.formulaCells > 0) {
+          var note = (guard === 'off' ? MSG_FORMULA_RISK : MSG_FORMULA_GUARDED).replace('{n}', String(result.formulaCells));
+          setStatus(msg + ' · ' + note, false, guard === 'off');
+        } else {
+          setStatus(msg, false);
+        }
         window.trackTool && window.trackTool('json-to-csv', 'convert');
       }
 
@@ -345,7 +425,7 @@ const L = labels[lang];
       document.getElementById('jtc-download')!.addEventListener('click', function () {
         var text = outputEl.value;
         if (!text) return;
-        var blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+        var blob = new Blob([withBom(text, addBom)], { type: 'text/csv;charset=utf-8' });
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
         a.href = url;
@@ -455,13 +535,16 @@ const L = labels[lang];
   .jtc-status { font-size: 0.85rem; min-height: 1.2rem; }
   .jtc-status.success { color: #057a55; }
   .jtc-status.error { color: #c0392b; }
+  .jtc-status.warn { color: #b45309; }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .jtc-status.success { color: #34d399; }
     :root:not([data-theme="light"]) .jtc-status.error { color: #f87171; }
+    :root:not([data-theme="light"]) .jtc-status.warn { color: #fbbf24; }
     :root:not([data-theme="light"]) .jtc-panel textarea.error { border-color: #f87171; }
   }
   [data-theme="dark"] .jtc-status.success { color: #34d399; }
   [data-theme="dark"] .jtc-status.error { color: #f87171; }
+  [data-theme="dark"] .jtc-status.warn { color: #fbbf24; }
   [data-theme="dark"] .jtc-panel textarea.error { border-color: #f87171; }
 </style>

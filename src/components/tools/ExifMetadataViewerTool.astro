@@ -201,7 +201,7 @@
 
       /* ── EXIF tag tables ── */
       var TAG_NAMES = {
-        0x010F: 'Make', 0x0110: 'Model', 0x0131: 'Software', 0x0132: 'DateTime',
+        0x010F: 'Make', 0x0110: 'Model', 0x0112: 'Orientation', 0x0131: 'Software', 0x0132: 'DateTime',
         0x8769: 'ExifIFDPointer', 0x8825: 'GPSIFDPointer',
       };
       var EXIF_TAG_NAMES = {
@@ -325,16 +325,46 @@
         return { exif: null };
       }
 
+      /* ── Minimal APP1 that holds only Orientation ── */
+      // Big-endian TIFF header, IFD0 with one entry: tag 0x0112 (Orientation), type SHORT,
+      // count 1, value in the first two bytes of the value field; no next IFD (Exif 2.32 / 3.0).
+      function orientationApp1(orientation) {
+        var seg = new Uint8Array(36);
+        var v = new DataView(seg.buffer);
+        v.setUint16(0, 0xFFE1);
+        v.setUint16(2, 34);
+        seg.set([0x45, 0x78, 0x69, 0x66, 0, 0], 4); // "Exif\0\0"
+        seg.set([0x4D, 0x4D, 0x00, 0x2A], 10);       // "MM", 42
+        v.setUint32(14, 8);                          // IFD0 at offset 8
+        v.setUint16(18, 1);                          // 1 entry
+        v.setUint16(20, 0x0112);
+        v.setUint16(22, 3);
+        v.setUint32(24, 1);
+        v.setUint16(28, orientation);
+        v.setUint32(32, 0);                          // no IFD1
+        return seg;
+      }
+
       /* ── Strip APP1 / APP13 segments ── */
+      // Orientation 2–8 is written back in a minimal APP1 at the place of the first EXIF APP1:
+      // phones store portrait photos sideways and rely on it, and it says nothing about the
+      // person. The pixels are not re-encoded.
       function stripMetadata(buf) {
         var view = new DataView(buf);
         if (view.getUint16(0) !== 0xFFD8) return buf;
-        var keepRanges = [[0, 2]]; // SOI
+        var parsed = parseExif(buf).exif;
+        var orientation = parsed && parsed.ifd0 ? parsed.ifd0.Orientation : null;
+        var keepOrientation = typeof orientation === 'number' && orientation >= 2 && orientation <= 8;
+        var parts = [new Uint8Array(buf, 0, 2)]; // SOI
+        var placed = false;
         var pos = 2;
         while (pos < view.byteLength - 1) {
           var marker = view.getUint16(pos);
-          if (marker === 0xFFD9) { keepRanges.push([pos, view.byteLength]); break; }
-          if (marker === 0xFFDA) { keepRanges.push([pos, view.byteLength]); break; }
+          if (marker === 0xFFD9 || marker === 0xFFDA) {
+            if (keepOrientation && !placed) { parts.push(orientationApp1(orientation)); placed = true; }
+            parts.push(new Uint8Array(buf, pos));
+            break;
+          }
           if ((marker & 0xFF00) !== 0xFF00) break;
           var segLen = view.getUint16(pos + 2);
           var segEnd = pos + 2 + segLen;
@@ -342,19 +372,17 @@
             // Drop APP1 (EXIF/XMP) and APP13 (Photoshop/IPTC). APP14 (Adobe) is kept: it holds
             // only the colour transform flag, and CMYK / YCCK JPEGs decode with wrong colours
             // without it.
+            if (marker === 0xFFE1 && keepOrientation && !placed) { parts.push(orientationApp1(orientation)); placed = true; }
           } else {
-            keepRanges.push([pos, segEnd]);
+            parts.push(new Uint8Array(buf, pos, segEnd - pos));
           }
           pos = segEnd;
         }
         var totalLen = 0;
-        keepRanges.forEach(function (r) { totalLen += r[1] - r[0]; });
+        parts.forEach(function (p) { totalLen += p.length; });
         var out = new Uint8Array(totalLen);
         var off = 0;
-        keepRanges.forEach(function (r) {
-          out.set(new Uint8Array(buf, r[0], r[1] - r[0]), off);
-          off += r[1] - r[0];
-        });
+        parts.forEach(function (p) { out.set(p, off); off += p.length; });
         return out.buffer;
       }
 

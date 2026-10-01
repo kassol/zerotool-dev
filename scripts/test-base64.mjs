@@ -1,12 +1,17 @@
 // Base64 — built page localization test
 //
-// Read:  dist/{,zh/,ja/,ko/}tools/base64/index.html (run `npm run build` first)
+// Read:  dist/{,zh/,ja/,ko/}tools/base64/index.html (run `npm run build` first),
+//        src/components/tools/Base64Tool.astro, src/content/tools/base64/en.mdx
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Covers: the first HTML a visitor receives already has the page language in the
 // input and output labels, their placeholders, the Encode button and the file drop
-// zone, so non-English pages do not show English text before the script runs.
+// zone, so non-English pages do not show English text before the script runs; the lone-surrogate,
+// large-file and read-error messages and the Data URI label are in the page language (they were
+// English, and a lone surrogate showed "Invalid Base64 input" in Encode mode); switching Standard /
+// URL-safe converts the current output (it used to keep the old alphabet). The engine block is
+// read from src/components/tools/Base64Tool.astro.
 //
 // Run: node scripts/test-base64.mjs
 
@@ -58,6 +63,31 @@ for (const [lang, want] of Object.entries(expected)) {
     check(lang + ': no English label or drop text in the widget', !/Plain Text|Drop any file|Enter text to encode|Result appears here/.test(widget));
   }
 }
+
+// ---------- engine (source): lone surrogates are reported instead of "Invalid Base64 input" ----------
+const source = readFileSync(join(root, 'src/components/tools/Base64Tool.astro'), 'utf8');
+const es = source.indexOf('/* ── engine:start ── */');
+const ee = source.indexOf('/* ── engine:end ── */');
+check('engine block found', es >= 0 && ee > es);
+if (es >= 0 && ee > es) {
+  const E = new Function(source.slice(es, ee) + '\nreturn { loneSurrogateAt, switchVariant };')();
+  equal('no lone surrogate', E.loneSurrogateAt('a😀b'), -1);
+  equal('high surrogate alone', E.loneSurrogateAt('ab\uD83D'), 3);
+  equal('low surrogate alone', E.loneSurrogateAt('😀\uDE00x'), 2);
+  equal('position counts code points', E.loneSurrogateAt('😀😀\uD800'), 3);
+  equal('standard → URL-safe', E.switchVariant('+/8=', 'urlsafe'), '-_8');
+  equal('URL-safe → standard', E.switchVariant('-_8', 'standard'), '+/8=');
+  equal('round trip', E.switchVariant(E.switchVariant('YWI/Pz4+', 'urlsafe'), 'standard'), 'YWI/Pz4+');
+}
+for (const [lang, word] of Object.entries({ en: 'lone surrogate', zh: '代理项', ja: 'サロゲート', ko: '서로게이트' })) {
+  const file = join(root, 'dist', lang === 'en' ? '' : lang, 'tools/base64/index.html');
+  if (!existsSync(file)) continue;
+  const html = readFileSync(file, 'utf8');
+  check(lang + ': lone-surrogate message in the page language', html.includes(word));
+  if (lang !== 'en') check(lang + ': no English Data URI label', !/Include Data URI prefix/.test(html));
+}
+const page = readFileSync(join(root, 'src/content/tools/base64/en.mdx'), 'utf8');
+check('page no longer says variant changes do not convert again', !page.includes('does not convert the current output again'));
 
 console.log(`${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

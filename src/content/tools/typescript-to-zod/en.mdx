@@ -3,11 +3,11 @@ seoTitle: "TypeScript to Zod Schema Generator | ZeroTool"
 seoDescription: "Convert TypeScript interfaces and type aliases to Zod validation schemas instantly. Handles unions, optional fields, arrays, enums, nested objects, and cross-references. Free, runs in your browser."
 faqItems:
   - question: "What TypeScript constructs does this tool support?"
-    answer: "It supports interface and type alias declarations, including basic types (string, number, boolean, null, undefined, any, unknown), optional properties (?), union types (A | B), string enums (literal unions), arrays (T[] and Array<T>), nested inline objects, cross-references between declared types, and generic utilities like Partial<T>, Record<K, V>, Array<T>, and Promise<T>."
+    answer: "It supports interface and type alias declarations, including basic types (string, number, boolean, null, undefined, any, unknown), optional properties (?), union types (A | B), string enums (literal unions), enum declarations, extends, index signatures, recursive types, arrays (T[] and Array<T>), nested inline objects, cross-references between declared types, and generic utilities like Partial<T>, Record<K, V>, Array<T>, and Promise<T>."
   - question: "How are cross-references between types handled?"
     answer: "If you declare multiple interfaces or type aliases in the input, any reference to a declared type by name is replaced with its Schema constant. For example, a field typed as Address becomes AddressSchema in the output. Types not declared in the input become z.unknown() with a comment."
   - question: "What Zod version does the output target?"
-    answer: "The output uses APIs that exist in both Zod 3 and Zod 4: z.object(), z.string(), z.union(), z.enum(), z.array(), .optional(), z.literal(), z.record(key, value) and z.infer<>. Record types are written with an explicit key schema because Zod 4 no longer accepts z.record(value) alone. Promise<T> becomes z.promise(), which Zod 4 marks as deprecated."
+    answer: "The output uses APIs that exist in both Zod 3 and Zod 4: z.object(), z.string(), z.union(), z.enum(), z.array(), .optional(), z.literal(), z.record(key, value), .extend(), .shape, .catchall(), z.lazy(), z.ZodType and z.infer<>. Record types are written with an explicit key schema because Zod 4 no longer accepts z.record(value) alone. Promise<T> becomes z.promise(), which Zod 4 marks as deprecated."
   - question: "How does the tool handle string union types?"
     answer: "A union of string literals like \"admin\" | \"user\" | \"guest\" is automatically converted to z.enum([\"admin\", \"user\", \"guest\"]) for conciseness. Mixed unions (e.g. string | null) use z.union([z.string(), z.null()])."
   - question: "Can I convert TypeScript class or generic type definitions?"
@@ -39,7 +39,39 @@ faqItems:
   <li><strong>Intersection types</strong>: <code>A &amp; B</code> → <code>z.intersection(A, B)</code></li>
   <li><strong>Tuples</strong>: <code>[A, B]</code> → <code>z.tuple([A, B])</code></li>
   <li><strong>Literal types</strong>: <code>"value"</code>, <code>42</code>, <code>true</code> → <code>z.literal()</code></li>
+  <li><strong><code>extends</code></strong>: <code>{"interface Admin extends Base"}</code> → <code>{"BaseSchema.extend({ ... })"}</code>; a second base adds <code>{".extend(OtherSchema.shape)"}</code>. If a base is not an object schema (an intersection alias, for example), the result is <code>{"z.intersection(BaseSchema, z.object({ ... }))"}</code>.</li>
+  <li><strong>Index signatures</strong>: <code>{"[key: string]: V"}</code> next to other properties → <code>{".catchall(V)"}</code>, which checks and keeps the extra keys; on its own → <code>{"z.record(z.string(), V)"}</code>.</li>
+  <li><strong><code>enum</code> declarations</strong>: a string enum → <code>z.enum()</code> of its values; numeric or mixed members (auto-numbered from 0 or from the last number) → <code>z.union()</code> of <code>z.literal()</code> values. <code>const enum</code> and <code>declare enum</code> are read the same way.</li>
+  <li><strong>Declaration order and recursion</strong>: schemas are written dependencies first, whatever the input order. A reference that closes a cycle becomes <code>{"z.lazy(() => NameSchema)"}</code>, and each type in the cycle is written out with an explicit <code>{"z.ZodType<Name>"}</code> annotation, as the Zod documentation shows for recursive types.</li>
 </ul>
+
+<h2>Example: Recursion, extends and an Index Signature</h2>
+
+<p>Input, with <code>Category</code> declared after the type that uses it:</p>
+
+<pre><code>{`interface Menu extends Base { root: Category; [key: string]: unknown }
+interface Base { id: string }
+interface Category { name: string; children: Category[] }`}</code></pre>
+
+<p>Output (checked with the TypeScript 5.9 compiler in strict mode and loaded with Zod 3.25 and Zod 4):</p>
+
+<pre><code>{`import { z } from "zod";
+
+export const BaseSchema = z.object({
+  id: z.string(),
+});
+export type Base = z.infer<typeof BaseSchema>;
+
+export interface Category { name: string; children: Category[] }
+export const CategorySchema: z.ZodType<Category> = z.object({
+  name: z.string(),
+  children: z.array(z.lazy(() => CategorySchema)),
+});
+
+export const MenuSchema = BaseSchema.extend({
+  root: CategorySchema,
+}).catchall(z.unknown());
+export type Menu = z.infer<typeof MenuSchema>;`}</code></pre>
 
 <h2>Example</h2>
 <p>Given this TypeScript input:</p>
@@ -154,12 +186,11 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
 <p>The tool reads declarations with its own small parser rather than the TypeScript compiler, so it does not resolve types from other files and does not type-check. Check the output for these cases before you use it:</p>
 
 <ul>
-  <li><strong>Declaration order.</strong> Schemas are written in the order of the input, as <code>const</code> declarations. If <code>Order</code> uses <code>Customer</code> and <code>Customer</code> is declared later, loading the module throws <code>ReferenceError: Cannot access 'CustomerSchema' before initialization</code>. Put the dependencies first. A recursive type such as <code>{"children: Category[]"}</code> fails the same way; rewrite that field with <code>z.lazy(() =&gt; CategorySchema)</code> and an explicit type annotation, as the Zod 3 documentation shows for recursive types (Zod 4 also accepts a getter).</li>
-  <li><strong><code>extends</code> is skipped.</strong> <code>{"interface Admin extends Base"}</code> produces only the fields written inside <code>Admin</code>. Change the output to <code>{"BaseSchema.extend({ ... })"}</code>.</li>
-  <li><strong>Index signatures are skipped.</strong> <code>{"[key: string]: unknown"}</code> adds nothing to the object; use <code>.catchall()</code> or <code>z.record()</code> by hand.</li>
-  <li><strong>Unknown names become <code>z.unknown()</code>.</strong> Any type not declared in the input, including <code>Date</code>, imported types and TypeScript <code>enum</code> declarations (which are skipped), is written as <code>{"z.unknown() /* Name */"}</code>. Replace it with <code>z.date()</code>, <code>z.nativeEnum()</code> (Zod 3) or <code>z.enum()</code> (Zod 4), or the imported schema.</li>
+  <li><strong>Unknown names become <code>z.unknown()</code>.</strong> Any type not declared in the input, including <code>Date</code> and imported types, is written as <code>{"z.unknown() /* Name */"}</code>. Replace it with <code>z.date()</code> or the imported schema. A base type that is not declared gives a plain <code>z.object()</code> with the comment <code>{"/* extends Name: not declared in the input */"}</code>.</li>
+  <li><strong>Enums are copied as values.</strong> The schema checks the enum's values (<code>"RED"</code>, <code>0</code>), not the runtime enum object; if you import the enum, <code>z.nativeEnum(Color)</code> (Zod 3) or <code>z.enum(Color)</code> (Zod 4) does the same. Members with computed values such as <code>{"1 << 2"}</code> make the whole enum <code>{"z.unknown() /* enum E: computed member A */"}</code>.</li>
+  <li><strong>Index signature keys</strong> are always <code>z.string()</code>, because every key of a parsed JSON object is a string; <code>{"[id: number]: V"}</code> is converted the same way. With <code>.catchall()</code>, a declared property must also match its own schema.</li>
   <li><strong>Records with literal keys</strong> such as <code>{'Record<"read" | "write", boolean>'}</code> become <code>{'z.record(z.enum(["read", "write"]), z.boolean())'}</code>. Zod 4 then requires both keys, as TypeScript does; Zod 3 accepts an object with only one of them.</li>
-  <li><strong>Not converted:</strong> generic parameters, classes, methods (skipped), mapped and conditional types, <code>keyof</code>, <code>typeof</code> and template literal types (written as <code>z.string()</code>).</li>
+  <li><strong>Not converted:</strong> generic parameters (a recursive generic type also needs its written-out type fixed by hand), classes, methods (skipped), mapped and conditional types, <code>keyof</code>, <code>typeof</code> and template literal types (written as <code>z.string()</code>).</li>
 </ul>
 
 <p>For JSON you already have, the <a href="/tools/json-to-zod/">JSON to Zod</a> tool infers a schema from sample data instead of from types.</p>

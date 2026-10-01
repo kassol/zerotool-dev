@@ -23,6 +23,7 @@ export const toolPersistencePolicy = {
   'svg-optimizer': 'preference',
   'mime-type-lookup': 'preference',
   'eyedropper-color-picker': 'preference',
+  'color-blindness-simulator': 'preference',
   'qr-code-generator': 'preference',
   'zero-width-character-detector': 'disabled',
   'csr-decoder': 'disabled',
@@ -49,6 +50,7 @@ export const toolPersistencePolicy = {
   'image-splitter': 'preference',
   'string-escape': 'preference',
   'color-palette-generator': 'preference',
+  'image-color-palette': 'preference',
   'number-base': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 

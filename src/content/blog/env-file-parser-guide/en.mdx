@@ -1,294 +1,184 @@
 ---
-title: "Env File Parser Online: Parse and Inspect .env Files Instantly"
-description: "Parse .env files online without uploading data. Visualize key-value pairs, catch syntax errors, and export to JSON — all in your browser."
+title: ".env File: Syntax, Parser Differences, and Keeping Secrets Out of Git"
+description: "How a .env file is read: one sample file parsed by dotenv, Node's --env-file, python-dotenv, godotenv and Docker Compose, which value wins, and how to keep secrets safe."
 pubDate: 2026-04-07
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["env file", "dotenv", "environment variables", "developer-tools", "env file parser"]
+tags: [".env file", "dotenv", "environment variables", "developer-tools", "env file parser"]
 ---
 
-The `.env` file is one of the most ubiquitous files in modern development — nearly every project that follows the Twelve-Factor App methodology uses one. But `.env` files have no formal specification, and subtle syntax issues (missing quotes, stray spaces, duplicate keys) are invisible until they cause a runtime bug. An **env file parser online** lets you inspect and validate your `.env` files instantly, with no server upload and no tooling setup.
+A `.env` file is a plain-text list of `KEY=value` lines that a program reads at startup and turns into environment variables. The idea comes from the [Twelve-Factor App](https://12factor.net/config), which says configuration that changes between deploys belongs in the environment rather than in code; the file is a convenient way to fill that environment on a developer machine. Packages named dotenv read it in Node.js ([motdotla/dotenv](https://github.com/motdotla/dotenv)), Python and Go, and Docker Compose and Node.js itself have their own readers.
 
-[Parse your .env file now →](/tools/env-file-parser)
+There is no standard for the format. Each reader has its own rules, and they disagree on comments, quotes, escapes and `${VAR}` references. This guide parses one sample file with five readers, shows which value wins when the variable already exists, and lists the practices that keep the file's secrets where they belong.
 
-## What Is a .env File?
+## The format, line by line
 
-A `.env` file stores environment variables as plain text key-value pairs. The convention was popularized by the [dotenv](https://github.com/motdotla/dotenv) library for Node.js and has since spread to virtually every language ecosystem.
-
-```bash
-# Application config
-APP_NAME=MyApp
-APP_ENV=production
-APP_PORT=3000
-
-# Database
-DATABASE_URL=postgres://user:password@localhost:5432/mydb
-DATABASE_POOL_SIZE=10
-
-# API keys
-STRIPE_SECRET_KEY=sk_live_...
-SENDGRID_API_KEY=SG.xxxxxxxx
-```
-
-Libraries like `python-dotenv`, `godotenv`, `dotenv-java`, and the `dotenv` gem for Ruby mean your application reads these values at startup and injects them into `process.env` (Node.js), `os.environ` (Python), or equivalent.
-
-## .env Syntax Rules
-
-Despite its apparent simplicity, `.env` has several syntax rules that vary between implementations:
-
-### Basic Key-Value
+Most readers agree on the core:
 
 ```bash
-KEY=value
+# A comment line
+PORT=8080
+export NODE_ENV=production      # "export " is accepted and dropped
+APP_NAME="Order service"        # quotes keep spaces; the quotes are removed
+GREETING='Hello\nWorld'         # single quotes: \n stays as two characters
+MESSAGE="Hello\nWorld"          # double quotes: \n becomes a line break
+CERT="-----BEGIN CERTIFICATE-----
+MIIBszCCAVmgAwIBAgIUZ...
+-----END CERTIFICATE-----"      # a quoted value may span lines
 ```
 
-No spaces around `=`. Keys are conventionally `UPPER_SNAKE_CASE`, though lowercase is valid.
+- One assignment per line. Every value is a **string**: `PORT=8080` gives `"8080"`, and turning it into a number is the application's job.
+- Keys are conventionally `UPPER_SNAKE_CASE`. POSIX says the variables used by its standard utilities consist solely of uppercase letters, digits and underscores and do not begin with a digit, and it leaves names with lowercase letters to applications ([Base Definitions, chapter 8](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap08.html)).
+- Blank lines and lines that start with `#` are ignored.
 
-### Quoted Values
+Everything beyond this core is where readers differ.
 
-Use quotes when values contain spaces, special characters, or you want to preserve leading/trailing whitespace:
+## One file, five readers: measured differences
 
+We parsed the file below on 2026-10-02 with dotenv 16.6.1 and 18.0.5 (identical results; the [ZeroTool .env parser](/tools/env-file-parser/) follows the same rules and gives the same values), Node.js 24.14.0's built-in `util.parseEnv()` (the parser behind `node --env-file`, same result on Node 22.23.3), python-dotenv 1.2.4 (`dotenv_values()`), godotenv 1.5.1 (`godotenv.Read()`) and Docker Compose 5.1.2 (`env_file:` in a service, read with `docker compose config`). The last line ends in CRLF.
+
+{/* env-sample */}
 ```bash
-APP_DESCRIPTION="My awesome application"
-GREETING='Hello, World!'
+# sample.env
+export EXPORTED=yes
+SPACED = around equals
+HASH=abc#123
+HASH_SPACE=abc #123
+SINGLE='line1\nline2'
+DOUBLE="line1\nline2"
+MULTI="first
+second"
+BASE=https://api.example.test
+EXPANDED=${BASE}/v1
+LITERAL='${BASE}/v1'
+EQUALS=a=b=c
+EMPTY=
+PADDED=   padded   
+ESCAPED="say \"hi\""
+BACKTICK=`tick`
+DUP=first
+DUP=second
+NOEQUALS
+CRLF=value
 ```
 
-Single and double quotes are both valid. Double-quoted strings support escape sequences like `\n`, `\t`, and `\"`.
+Values are shown as JSON strings, so `\n` is a line break and `\\n` is a backslash followed by `n`. A dash means the key is not set.
 
-### Multiline Values
+{/* env-table */}
+| Key | dotenv / ZeroTool | Node `parseEnv` | python-dotenv | godotenv | Compose `env_file` |
+|---|---|---|---|---|---|
+| EXPORTED | `"yes"` | `"yes"` | `"yes"` | `"yes"` | `"yes"` |
+| SPACED | `"around equals"` | `"around equals"` | `"around equals"` | `"around equals"` | `"around equals"` |
+| HASH | `"abc"` | `"abc"` | `"abc#123"` | `"abc#123"` | `"abc#123"` |
+| HASH_SPACE | `"abc"` | `"abc"` | `"abc"` | `"abc"` | `"abc"` |
+| SINGLE | `"line1\\nline2"` | `"line1\\nline2"` | `"line1\\nline2"` | `"line1\\nline2"` | `"line1\\nline2"` |
+| DOUBLE | `"line1\nline2"` | `"line1\nline2"` | `"line1\nline2"` | `"line1\nline2"` | `"line1\nline2"` |
+| MULTI | `"first\nsecond"` | `"first\nsecond"` | `"first\nsecond"` | `"first\nsecond"` | `"first\nsecond"` |
+| EXPANDED | `"${BASE}/v1"` | `"${BASE}/v1"` | `"https://api.example.test/v1"` | `"https://api.example.test/v1"` | `"https://api.example.test/v1"` |
+| LITERAL | `"${BASE}/v1"` | `"${BASE}/v1"` | `"https://api.example.test/v1"` | `"${BASE}/v1"` | `"${BASE}/v1"` |
+| EQUALS | `"a=b=c"` | `"a=b=c"` | `"a=b=c"` | `"a=b=c"` | `"a=b=c"` |
+| PADDED | `"padded"` | `"padded"` | `"padded"` | `"padded"` | `"padded"` |
+| ESCAPED | `"say \\\"hi\\\""` | `"say \\"` | `"say \"hi\""` | `"say \"hi\\"` | `"say \"hi\""` |
+| BACKTICK | `"tick"` | `"tick"` | ``"`tick`"`` | ``"`tick`"`` | ``"`tick`"`` |
+| DUP | `"second"` | `"second"` | `"second"` | `"second"` | `"second"` |
+| NOEQUALS | — | — | `null` | error | — |
+| CRLF | `"value"` | `"value"` | `"value"` | `"value"` | `"value"` |
 
-Double-quoted values can span multiple lines:
+What the differences mean in practice:
 
-```bash
-PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
-MIIEowIBAAKCAQEA...
------END RSA PRIVATE KEY-----"
+- **`#` without a space before it.** dotenv and Node cut `HASH=abc#123` to `abc`; python-dotenv, godotenv and Compose keep `abc#123`. The [Compose documentation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/) states its rule: an inline comment after an unquoted value must be preceded by a space. A password containing `#` is the usual victim. Quote it.
+- **Escaped quotes.** Only python-dotenv and Compose turn `\"` into `"`. dotenv keeps the backslashes, godotenv drops the last quote and keeps a backslash, and Node's parser stops at the first escaped quote and returns `say \`. For values that contain double quotes, such as JSON, single-quote the whole value instead: `PAYLOAD='{"id":1}'` gives `{"id":1}` in all five.
+- **`${VAR}` references.** dotenv and Node never expand them; python-dotenv, godotenv and Compose do. python-dotenv expanded `${BASE}` even inside single quotes; godotenv and Compose treat single quotes as literal, as the Compose documentation describes. With dotenv, the README points to dotenvx for expansion.
+- **Backticks.** Only dotenv and Node treat `` `…` `` as quotes.
+- **A line without `=`.** dotenv, Node and Compose skip it; python-dotenv returns the key with value `None` (and `load_dotenv()` sets nothing); godotenv fails the whole file with `unexpected character "\n" in variable name`. The godotenv values in the table come from the same file without that line.
+- **Spaces around `=`.** All five accept `SPACED = around equals`. A shell does not: `set -a; . ./sample.env` in bash 3.2 printed `SPACED: command not found`, and kept the carriage return in the CRLF line (`$'value\r'`). If a file must also be sourced by a shell, write `KEY=value` with no spaces and quote anything else.
+
+To find disagreements in your own file between dotenv and Node's built-in reader, run this script next to it:
+
+{/* env-run: {"expect": "ESCAPED: dotenv \"say \\\\\\\"hi\\\\\\\"\", node \"say \\\\\""} */}
+```js
+// compare-env.mjs — run: node compare-env.mjs [.env]   (needs: npm install dotenv)
+import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
+import dotenv from 'dotenv';
+
+const text = readFileSync(process.argv[2] ?? '.env', 'utf8');
+const fromDotenv = dotenv.parse(text);
+const fromNode = parseEnv(text);
+const keys = new Set([...Object.keys(fromDotenv), ...Object.keys(fromNode)]);
+for (const key of keys) {
+  if (fromDotenv[key] !== fromNode[key]) {
+    console.log(`${key}: dotenv ${JSON.stringify(fromDotenv[key])}, node ${JSON.stringify(fromNode[key])}`);
+  }
+}
+// ESCAPED: dotenv "say \\\"hi\\\"", node "say \\"
 ```
 
-### Comments
+## Which value wins: the file or the existing environment
 
-Lines starting with `#` are comments. Inline comments are supported by some implementations:
+A `.env` file usually fills in defaults, so readers do not overwrite a variable that is already set. We set `PORT=3000` in the shell and loaded a file containing `PORT=8080`:
 
-```bash
-# This is a comment
-PORT=8080  # This inline comment is parsed by some libraries
+| Reader | Result | How to let the file win |
+|---|---|---|
+| dotenv `config()` | `3000` | `config({ override: true })` |
+| Node `--env-file` | `3000`; the [Node.js CLI documentation](https://nodejs.org/api/cli.html#--env-filefile) says "the value from the environment takes precedence" | — |
+| python-dotenv `load_dotenv()` | `3000` | `load_dotenv(override=True)` |
+| godotenv `Load()` | `3000` | `godotenv.Overload()` gave `8080` |
+| Compose `${PORT}` with a project `.env` | `3000` | Unset the shell variable |
+
+This is the most common reason for "I changed `.env` and nothing happened": the old value is still exported in the shell, set by the CI system, or set by the container platform. Print the variable where the program runs before you edit the file again.
+
+Compose reads a `.env` file in two different roles. The project `.env` next to `compose.yaml` supplies values for `${VAR}` substitution inside the Compose file; `env_file:` passes variables into a container. The table above used `env_file:`.
+
+## Loading a .env file in Node.js, Python and Go
+
+**Node.js 20.6 or later** reads the file without any package: `node --env-file=.env server.js`. The flag was added in v20.6.0, gained multi-line values in v20.12.0 and v21.7.0, and stopped being experimental in v22.21.0 and v24.10.0 (Node.js documentation). `process.loadEnvFile()` and `util.parseEnv()` expose the same parser. It has the escaped-quote behavior shown above.
+
+**dotenv** is still the most common choice when you need `override` or multiple files:
+
+```js
+import dotenv from 'dotenv';
+dotenv.config({ path: ['.env.local', '.env'], quiet: true });
 ```
 
-### Variable Interpolation
+Since version 17.0.0 `quiet` defaults to false (dotenv changelog), so `config()` prints a line such as `◇ injected env (17) from .env`; `quiet: true` turns it off. With several paths, the first file that sets a key wins unless `override` is set: with `A=one` in `.env.local` and `A=two` in `.env`, the call above sets `one`.
 
-Some dotenv libraries support variable expansion:
-
-```bash
-BASE_URL=https://api.example.com
-API_ENDPOINT=${BASE_URL}/v1
-```
-
-### Export Syntax
-
-The `export` prefix (for shell compatibility) is supported by most parsers:
-
-```bash
-export DATABASE_URL=postgres://localhost/mydb
-```
-
-## Common .env Syntax Mistakes
-
-These mistakes are invisible in a text editor but cause real runtime failures:
-
-**Spaces around the equals sign**
-
-```bash
-# Works in dotenv 18 (Node) and python-dotenv 1.2,
-# but `source .env` in bash fails: "KEY: command not found"
-KEY = value
-
-# Works everywhere
-KEY=value
-```
-
-**Unquoted values with special characters**
-
-```bash
-# dotenv 18 (Node) reads "abc"; python-dotenv 1.2 reads "abc#123"
-PASSWORD=abc#123
-
-# Correct
-PASSWORD="abc#123"
-```
-
-**Duplicate keys**
-
-```bash
-DATABASE_URL=postgres://dev-host/mydb
-DATABASE_URL=postgres://prod-host/mydb  # silently overwrites the first
-```
-
-**Windows-style line endings (CRLF)**
-
-`.env` files created on Windows may have `\r\n` line endings. dotenv 18 and python-dotenv 1.2 remove the `\r`. A bash `source .env` keeps it at the end of each value, so `"$KEY" = "value"` comparisons fail.
-
-**Values with equals signs**
-
-```bash
-# dotenv 18 and python-dotenv 1.2 split only at the first =,
-# so both read "abc=def=ghi"
-API_KEY=abc=def=ghi
-
-# Quotes give the same result and are clearer
-API_KEY="abc=def=ghi"
-```
-
-## Parsing .env in Code
-
-### Node.js (dotenv)
-
-```bash
-npm install dotenv
-```
-
-```javascript
-require('dotenv').config();
-
-// Now available as process.env.KEY
-console.log(process.env.DATABASE_URL);
-```
-
-Or with ES modules:
-
-```javascript
-import 'dotenv/config';
-console.log(process.env.DATABASE_URL);
-```
-
-### Python (python-dotenv)
-
-```bash
-pip install python-dotenv
-```
+**Python:** `load_dotenv()` writes into `os.environ`; `dotenv_values()` returns a dictionary and leaves the environment alone, which is handy for tests.
 
 ```python
-from dotenv import load_dotenv
-import os
+from dotenv import dotenv_values, load_dotenv
 
-load_dotenv()  # reads .env from current directory
-
-database_url = os.getenv('DATABASE_URL')
+load_dotenv()                      # does not override existing variables
+config = dotenv_values(".env")     # {"PORT": "8080", ...}, values are str or None
 ```
 
-To parse a `.env` file programmatically without loading into environment:
-
-```python
-from dotenv import dotenv_values
-
-config = dotenv_values(".env")
-print(config)  # OrderedDict of key-value pairs
-```
-
-### Go (godotenv)
-
-```bash
-go get github.com/joho/godotenv
-```
+**Go:** `godotenv.Load()` sets variables that are not already set and returns an error for a malformed file, which the NOEQUALS row shows is worth checking:
 
 ```go
-package main
-
-import (
-    "fmt"
-    "log"
-    "os"
-
-    "github.com/joho/godotenv"
-)
-
-func main() {
-    err := godotenv.Load()
-    if err != nil {
-        log.Fatal("Error loading .env file")
-    }
-    fmt.Println(os.Getenv("DATABASE_URL"))
+if err := godotenv.Load(); err != nil {
+	log.Fatalf("loading .env: %v", err)
 }
 ```
 
-### Shell (bash)
+## Keeping secrets out of Git and out of the browser
 
-```bash
-# Export all vars from .env into current shell
-set -a
-source .env
-set +a
-```
+- **Ignore the file before the first commit.** Add `.env` and `.env.*.local` to `.gitignore`, commit a `.env.example` that lists every key with a placeholder, and check with `git check-ignore -v .env`. The dotenv README answers "Should I commit my `.env` file?" with "No."
+- **If it was committed, rotate first.** Deleting the file in a new commit leaves it in history. Change every credential in it, then follow GitHub's [removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) guide to rewrite history.
+- **Know which variables reach the browser.** Front-end build tools copy some variables into the JavaScript bundle that every visitor downloads. [Vite](https://vite.dev/guide/env-and-mode) exposes only variables prefixed with `VITE_`; [Next.js](https://nextjs.org/docs/app/guides/environment-variables) inlines those prefixed with `NEXT_PUBLIC_`. Never give a secret one of these prefixes.
+- **Prefer files over variables for production secrets in containers.** The [Compose secrets guide](https://docs.docker.com/compose/how-tos/use-secrets/) notes that environment variables are visible to all processes and can end up in logs; Compose secrets are mounted as files under `/run/secrets/<name>`.
+- **Validate at startup.** Fail fast when a required key is missing or empty instead of discovering it on the first request. Schema libraries such as envalid (Node.js) and pydantic-settings (Python) do this; a ten-line check works too.
 
-## .env Best Practices
+## Checking a file with the ZeroTool .env parser
 
-**Never commit `.env` to version control.** Add it to `.gitignore` immediately. Commit a `.env.example` with placeholder values instead.
+The [.env File Parser](/tools/env-file-parser/) runs in your browser and does not upload the text, which matters for a file full of credentials. It applies dotenv's rules, so its values match the first column of the table, and it marks the lines that the other readers would read differently. For `sample.env` it reports:
 
-```bash
-# .gitignore
-.env
-.env.local
-.env.production
-```
+{/* env-notes */}
+| Line | Key | Note from the parser |
+|---|---|---|
+| 4 | HASH | Text after # is a comment; quote the value to keep it |
+| 8 | MULTI | Multiline value (lines 8-9) |
+| 14 | EMPTY | Empty value |
+| 19 | DUP | Duplicate key |
+| 20 | — | Missing = sign |
 
-**Use separate files per environment.** Many frameworks support `.env.development`, `.env.production`, `.env.test` — each loaded automatically based on `NODE_ENV` or equivalent.
-
-**Validate required variables at startup.** Libraries like [envalid](https://github.com/af/envalid) (Node.js) or [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) (Python) let you define a schema for your environment variables and fail fast if required values are missing or have wrong types.
-
-```javascript
-// envalid example
-import { cleanEnv, str, port, url } from 'envalid';
-
-const env = cleanEnv(process.env, {
-  DATABASE_URL: url(),
-  APP_PORT: port({ default: 3000 }),
-  NODE_ENV: str({ choices: ['development', 'test', 'production'] }),
-});
-```
-
-**Rotate secrets regularly.** `.env` files often contain API keys and database credentials. Treat them as sensitive material — rotate them periodically, especially after team member offboarding.
-
-## Exporting .env to JSON
-
-Converting `.env` to JSON is useful for:
-
-- Feeding config into tooling that expects JSON (AWS Lambda, Terraform `var-file`)
-- Comparing configs across environments
-- Documenting configuration in CI/CD pipelines
-
-```python
-from dotenv import dotenv_values
-import json
-
-config = dotenv_values(".env")
-print(json.dumps(dict(config), indent=2))
-```
-
-Output:
-
-```json
-{
-  "APP_NAME": "MyApp",
-  "APP_ENV": "production",
-  "APP_PORT": "3000",
-  "DATABASE_URL": "postgres://user:password@localhost:5432/mydb"
-}
-```
-
-Note that all values are strings in the JSON output — `.env` has no type system. Type coercion happens at the application layer.
-
-## Online .env File Parser
-
-For quick inspection, debugging, or format conversion without running any code, [ZeroTool's env file parser](/tools/env-file-parser) runs entirely in your browser. Paste your `.env` content to:
-
-- Visualize all key-value pairs in a clean table
-- Spot syntax errors with line-level highlighting
-- Detect duplicate keys
-- Export parsed data to JSON
-
-The tool follows dotenv's parsing rules: an `export ` prefix is dropped, `#` after an unquoted value starts a comment (a `#` right after text, as in `COLOR=#fff`, gets a note), `\n` in double quotes becomes a line break, and a quoted value can span several lines. `${VAR}` is not expanded; dotenv itself needs dotenv-expand for that.
-
-No data is sent to any server — the parsing runs entirely client-side.
-
-**[Try the env file parser →](/tools/env-file-parser)**
-
-{/* FAQ structured data is rendered via ToolLayout on the tool page */}
+The table view shows each key with its final value, and Export JSON writes the parsed keys to `env.json` (later duplicates win, as in dotenv). It does not expand `${VAR}` and does not implement the python-dotenv, godotenv or Compose rules, so use the table above to predict what those readers will do with the lines it flags.

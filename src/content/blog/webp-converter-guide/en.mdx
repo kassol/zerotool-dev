@@ -1,246 +1,218 @@
 ---
-title: "WebP Converter Online: Shrink Images Without Losing Quality"
-description: "Use a WebP converter online to cut PNG and JPEG file sizes (Google measured 26% vs PNG, 25–34% vs JPEG). Learn browser support, fallback patterns, Next.js optimization, and cwebp CLI usage."
+title: "WebP: How the Format Works, Browser Support, and Measured File Sizes"
+description: "WebP explained from the file up: lossy VP8, lossless VP8L and the RIFF container, caniuse support data, and cwebp, sharp and Chrome sizes for a photo, a text chart and a logo."
 pubDate: 2026-04-07
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["webp converter", "webp", "image optimization", "web performance", "developer-tools"]
+tags: ["webp", "webp converter", "image optimization", "web performance", "developer-tools"]
 ---
 
-A **WebP converter online** turns your PNG or JPEG images into WebP format — Google's open image format that delivers the same visual quality at smaller file sizes (Google's published tests: lossless 26% smaller than PNG, lossy 25–34% smaller than JPEG at equal SSIM), directly improving your page load times and Core Web Vitals scores. WebP is now supported by every major browser, including iOS Safari since version 14 (2020), making it safe to use in production without caveats.
+WebP is an image file format that Google announced on [30 September 2010](https://blog.chromium.org/2010/09/webp-new-image-format-for-web.html). Since November 2024 it is also described in an IETF document, [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649), which registers the media type `image/webp`. One file can hold a lossy image, a lossless image, an alpha channel, an animation, an ICC color profile and Exif or XMP metadata. Google's own studies report that lossy WebP is [25–34% smaller than JPEG at the same SSIM](https://developers.google.com/speed/webp/docs/webp_study) and lossless WebP is [26% smaller than PNG](https://developers.google.com/speed/webp/faq).
 
-## What Is WebP and Why It Matters for Performance
+Those are averages over Google's test sets. This guide shows what is inside a WebP file, where it is supported, and what happened when we converted three real images with `cwebp`, with sharp (the library behind Astro and Next.js image optimization) and with the [ZeroTool WebP Converter](/tools/webp-converter/) in Chrome. One of the three got bigger.
 
-WebP was developed by Google and released in 2010, based on the VP8 video codec. It supports:
+## Two codecs inside one RIFF container
 
-- **Lossy compression** — like JPEG, with better efficiency
-- **Lossless compression** — like PNG, with ~26% smaller files
-- **Transparency (alpha channel)** — unlike JPEG
-- **Animation** — like GIF, but far smaller
+A WebP file starts with the 12-byte header `RIFF`, a 32-bit little-endian size, and `WEBP`. After that come chunks, each with a four-character code (FourCC), a size and a payload ([WebP Container Specification](https://developers.google.com/speed/webp/docs/riff_container)). The chunk that holds the pixels tells you which codec was used:
 
-Illustrative sizes at similar visual quality (examples, not measurements; results vary by image):
+| Chunk | What it holds | Notes from the specification |
+|---|---|---|
+| `VP8 ` (with a trailing space) | Lossy image | A VP8 key frame. The [FAQ](https://developers.google.com/speed/webp/faq) says lossy WebP works only in 8-bit Y'CbCr 4:2:0, so color is stored at half resolution in both directions |
+| `VP8L` | Lossless image | WebP's own lossless codec, RGBA, alpha included |
+| `VP8X` | Feature flags and canvas size | Present when the file uses an ICC profile, alpha with a lossy image, Exif, XMP or animation |
+| `ALPH` | Alpha plane for a lossy image | Compressed losslessly by default, so a lossy photo can have exact transparency |
+| `ANIM` / `ANMF` | Animation settings and frames | Each frame can be lossy or lossless; durations are in milliseconds |
+| `ICCP`, `EXIF`, `XMP ` | Color profile and metadata | Optional |
 
-| Image type | JPEG | PNG | WebP lossy | WebP lossless |
-|-----------|------|-----|------------|---------------|
-| Photograph | 100 KB | 400 KB | ~70 KB | ~280 KB |
-| Logo with transparency | — | 50 KB | — | ~38 KB |
-| Screenshot | 200 KB | 600 KB | ~130 KB | ~420 KB |
+Two hard limits follow from the bitstreams: width and height are stored in 14 bits, so the largest WebP image is **16383 × 16383 pixels** (FAQ), and the RIFF size field limits a file to just under 4 GiB. WebP has no progressive mode like JPEG; the FAQ describes incremental decoding instead.
 
-Google's own benchmarks show WebP lossy is 25-34% smaller than JPEG and WebP lossless is 26% smaller than PNG at the same SSIM quality score.
+## How to tell which kind of WebP you have
 
-## Browser Support
+The extension does not tell you whether a `.webp` file is lossy or lossless. The chunk list does. This script prints it for any file you pass, or for three tiny samples made with `cwebp` 1.6.0 when you pass none:
 
-WebP is now universally supported:
+{/* webp-run: {"expect":"lossy.webp 4x4 lossy [VP8]\nlossless.webp 2x2 lossless [VP8L]\nlossy-alpha.webp 2x2 lossy + alpha [VP8X, ALPH, VP8]"} */}
+```js
+// webp-kind.mjs — run: node webp-kind.mjs [file.webp ...]
+import { readFileSync } from 'node:fs';
 
-| Browser | WebP support since |
-|---------|--------------------|
-| Chrome | Version 23 (2012) |
-| Firefox | Version 65 (2019) |
-| Edge | Version 18 (2018) |
-| Safari | Version 14 / iOS 14 (2020) |
-| Samsung Internet | Version 4 (2016) |
-| Opera | Version 12.1 (2012) |
-
-Global browser support is above 97% as of 2025. The only scenario where you need a fallback is if you must support IE11 or very old iOS devices (pre-iOS 14).
-
-## Converting PNG and JPEG to WebP
-
-### The `<picture>` Element Fallback Pattern
-
-The cleanest way to serve WebP with a fallback to browsers that do not support it:
-
-```html
-<picture>
-  <source srcset="/images/hero.webp" type="image/webp">
-  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
-</picture>
-```
-
-The browser loads the first `<source>` it supports and ignores the rest. The `<img>` tag is the final fallback and also provides `alt`, `width`, and `height` attributes — always include these to prevent layout shift (CLS).
-
-For responsive images with multiple sizes:
-
-```html
-<picture>
-  <source
-    type="image/webp"
-    srcset="/images/hero-480.webp 480w, /images/hero-800.webp 800w, /images/hero-1200.webp 1200w"
-    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
-  >
-  <img
-    src="/images/hero-1200.jpg"
-    srcset="/images/hero-480.jpg 480w, /images/hero-800.jpg 800w, /images/hero-1200.jpg 1200w"
-    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
-    alt="Hero image"
-    width="1200"
-    height="600"
-  >
-</picture>
-```
-
-### CSS Background Images
-
-For background images, WebP can be served using the `image-set()` function:
-
-```css
-.hero {
-  background-image: url('/images/hero.jpg');
-  background-image: image-set(
-    url('/images/hero.webp') type('image/webp'),
-    url('/images/hero.jpg') type('image/jpeg')
-  );
-}
-```
-
-Browser support for `image-set()` is broad but lags slightly behind `<picture>` — check if you need IE11 support before using it.
-
-## Framework Integration
-
-### Next.js
-
-Next.js converts images to WebP when you use the `next/image` component; AVIF is added only when you list it in `images.formats` ([Next.js docs](https://nextjs.org/docs/app/api-reference/components/image#formats)). No manual conversion needed:
-
-```jsx
-import Image from 'next/image';
-
-export default function Hero() {
-  return (
-    <Image
-      src="/images/hero.jpg"
-      alt="Hero image"
-      width={1200}
-      height={600}
-      priority
-    />
-  );
-}
-```
-
-Next.js handles format negotiation via the `Accept` request header, serves WebP to supported browsers, and caches the converted image. You keep JPEG or PNG as the source.
-
-To configure quality and formats in `next.config.js`:
-
-```javascript
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  images: {
-    formats: ['image/avif', 'image/webp'],
-    minimumCacheTTL: 31536000,
-  },
+const samples = {
+  'lossy.webp': 'UklGRjoAAABXRUJQVlA4IC4AAADQAQCdASoEAAQAAgA0JaACdLoB+AADsAD+694v/XAflofLQ/hIf+dgtVZvtKAA',
+  'lossless.webp': 'UklGRiIAAABXRUJQVlA4TBYAAAAvAUAAEA8wZvMf8x84FAIIgIImov+x',
+  'lossy-alpha.webp': 'UklGRlwAAABXRUJQVlA4WAoAAAAQAAAAAQAAAQAAQUxQSAUAAAAA////AABWUDggMAAAADACAJ0BKgIAAgACADQloAJ0ugH4AfgABh4AAP6H1/9eiDxBv26P/tLIQrr/jkAAAA==',
 };
 
-export default nextConfig;
+function describe(buf) {
+  if (buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WEBP') return 'not a WebP file';
+  const chunks = [];
+  let size = '';
+  for (let off = 12; off + 8 <= buf.length; ) {
+    const id = buf.toString('latin1', off, off + 4);
+    const len = buf.readUInt32LE(off + 4);
+    const p = off + 8;
+    if (id === 'VP8X') size = (buf.readUIntLE(p + 4, 3) + 1) + 'x' + (buf.readUIntLE(p + 7, 3) + 1);
+    if (id === 'VP8 ' && !size) size = (buf.readUInt16LE(p + 6) & 0x3fff) + 'x' + (buf.readUInt16LE(p + 8) & 0x3fff);
+    if (id === 'VP8L' && !size) {
+      const bits = buf.readUInt32LE(p + 1);
+      size = ((bits & 0x3fff) + 1) + 'x' + (((bits >>> 14) & 0x3fff) + 1);
+    }
+    chunks.push(id.trim());
+    off = p + len + (len & 1);
+  }
+  const kind = chunks.includes('ANMF') ? 'animated'
+    : chunks.includes('VP8L') ? 'lossless'
+    : chunks.includes('ALPH') ? 'lossy + alpha' : 'lossy';
+  return `${size} ${kind} [${chunks.join(', ')}]`;
+}
+
+const files = process.argv.slice(2);
+if (files.length) for (const f of files) console.log(f, describe(readFileSync(f)));
+else for (const [name, b64] of Object.entries(samples)) console.log(name, describe(Buffer.from(b64, 'base64')));
+// lossy.webp 4x4 lossy [VP8]
+// lossless.webp 2x2 lossless [VP8L]
+// lossy-alpha.webp 2x2 lossy + alpha [VP8X, ALPH, VP8]
 ```
 
-### Astro
+libwebp ships the same check as a command, `webpinfo file.webp`. Run either on a file saved by a browser and you will often see `VP8X` and `ICCP` even for a plain photo: Chrome's canvas encoder, which the ZeroTool converter uses, adds a 456-byte `ICCP` chunk plus the 10-byte `VP8X` chunk to every file. On a 2 KB icon that overhead matters; on a 40 KB photo it does not.
 
-Astro's built-in `<Image>` component does the same:
+## Measured: a photo, a text chart and a transparent logo
 
-```astro
----
-import { Image } from 'astro:assets';
-import heroImage from '../assets/hero.jpg';
----
+We converted three images on 2026-10-02 with `cwebp` 1.6.0 (Homebrew, macOS), sharp 0.34.5 (bundling libwebp 1.6.0) and the ZeroTool converter in Chrome 152. PSNR is computed over RGB against the source after decoding with `dwebp`; higher is closer, and "lossless" means every pixel matched.
 
-<Image src={heroImage} alt="Hero image" format="webp" quality={80} />
-```
+**Photo:** `kodim23.png` from the [Kodak test image set](https://r0k.us/graphics/kodak/), 768 × 512, 557,596 bytes (SHA-256 `e3111a2f…2d5baf`).
 
-For multiple formats:
+| Output | Bytes | vs PNG | PSNR |
+|---|---:|---:|---:|
+| JPEG, sharp `jpeg({ quality: 85 })` | 57,836 | −89.6% | 38.56 dB |
+| `cwebp` (default `-q 75`) | 23,544 | −95.8% | 36.75 dB |
+| `cwebp -q 85` | 37,088 | −93.3% | 38.55 dB |
+| ZeroTool, quality 85 (default) | 37,438 | −93.3% | 38.54 dB |
+| sharp `.webp()` (default quality 80) | 29,232 | −94.8% | 37.61 dB |
+| `cwebp -near_lossless 60` | 282,628 | −49.3% | 48.27 dB |
+| `cwebp -lossless` | 426,338 | −23.5% | lossless |
+| ZeroTool, quality 100 | 473,326 | −15.1% | lossless |
 
-```astro
----
-import { Picture } from 'astro:assets';
-import heroImage from '../assets/hero.jpg';
----
+At the same PSNR (38.55 vs 38.56 dB) the WebP is 35.9% smaller than the JPEG. That is one image and a different metric from Google's SSIM study, but it lands close to the published 25–34% range. The lossless result, 23.5% under the PNG, is near Google's 26% figure.
 
-<Picture
-  src={heroImage}
-  formats={['avif', 'webp']}
-  alt="Hero image"
-/>
-```
+**Text chart:** the Japanese chart from this site's [NATO phonetic alphabet](/tools/nato-phonetic-alphabet/) tool (shown on its Japanese page), `public/images/nato-phonetic-alphabet-ja.png`, 1120 × 2020, a 4-bit palette PNG of 66,664 bytes.
 
-### Vite / Build Pipeline
+{/* webp-check: {"tool":"cwebp","args":["-q","75"],"bytes":78804} */}
+{/* webp-check: {"tool":"sharp","options":{},"bytes":88940} */}
+{/* webp-check: {"tool":"cwebp","args":["-lossless"],"bytes":55210} */}
+{/* webp-check: {"tool":"sharp","options":{"lossless":true},"bytes":53514} */}
+{/* webp-check: {"tool":"cwebp","args":["-z","9"],"bytes":52090} */}
 
-For static sites using Vite, the `vite-imagetools` plugin converts images at build time:
+| Output | Bytes | vs PNG |
+|---|---:|---:|
+| `cwebp` (default `-q 75`) | 78,804 | +18.2% |
+| ZeroTool, quality 85 | 102,454 | +53.7% |
+| sharp `.webp()` | 88,940 | +33.4% |
+| ZeroTool, quality 100 | 82,628 | +23.9% |
+| `cwebp -lossless` | 55,210 | −17.2% |
+| sharp `.webp({ lossless: true })` | 53,514 | −19.7% |
+| `cwebp -z 9` (slowest lossless) | 52,090 | −21.9% |
 
-```javascript
-// vite.config.js
-import { imagetools } from 'vite-imagetools';
+Every lossy setting made this file **bigger**, and blurred the glyph edges as well. A palette PNG of flat colors and text is exactly where VP8's 4:2:0 color and block transform do worst. Only lossless WebP beat the PNG.
 
-export default {
-  plugins: [imagetools()],
-};
-```
+**Logo with transparency:** the site's `favicon.svg` rendered to a 512 × 512 PNG with sharp, 15,987 bytes, 748 semi-transparent edge pixels.
 
-```html
-<!-- In your HTML or JSX -->
-<img src="./hero.jpg?format=webp&width=1200" alt="Hero">
-```
+| Output | Bytes | vs PNG | Chunks |
+|---|---:|---:|---|
+| `cwebp` (default `-q 75`) | 5,028 | −68.5% | `VP8X`, `ALPH`, `VP8` |
+| `cwebp -lossless` | 6,582 | −58.8% | `VP8L` |
+| ZeroTool, quality 85 | 6,700 | −58.1% | `VP8X`, `ICCP`, `ALPH`, `VP8` |
+| ZeroTool, quality 100 | 27,636 | +72.9% | `VP8X`, `ICCP`, `VP8L` |
 
-## cwebp CLI
+Two lessons from these tables. First, Chrome's lossless output was the weakest lossless result: on all three images the converter's quality-100 output was larger than `cwebp -lossless`, and for the chart and the logo it was larger than the PNG. Second, the canvas stores premultiplied alpha, so the converter's lossless logo matched every opaque pixel but changed the 748 edge pixels by up to 1 level. `cwebp -lossless` matched all of them. For text, diagrams and logos, use `cwebp -lossless` (or `-z 9`) and compare the result with the PNG before you switch.
 
-Google's `cwebp` command-line encoder is the reference implementation:
+## When WebP is the wrong choice
 
-```bash
-# Install on macOS
-brew install webp
+- **Flat graphics with few colors.** As measured above, lossy WebP can be larger than a palette PNG. Try lossless and keep whichever file is smaller.
+- **Red text and thin colored lines.** With 4:2:0, color detail is stored at a quarter of the pixel count. `cwebp -sharp_yuv` uses a slower, sharper RGB-to-YUV conversion that helps edges.
+- **Re-encoding a JPEG you cannot replace.** Converting `kodim23-q85.jpg` (57,836 bytes) at quality 85 gave 37,462 bytes in the converter, but the result inherits every JPEG artifact and adds its own. Convert from the original PNG, TIFF or camera file when you have it.
+- **Metadata you need.** `cwebp` copies no metadata unless you pass `-metadata exif,icc,xmp` (the default is `none`), and the browser converter drops Exif and XMP entirely. Strip GPS data on purpose, not by accident.
+- **Animation in the browser converter.** It draws the image on a canvas once, so an animated GIF becomes a single frame. Use `gif2webp` from libwebp for animated GIFs.
 
-# Install on Ubuntu/Debian
-sudo apt-get install webp
+## Browser and operating system support
 
-# Basic conversion (quality 80, good default)
-cwebp -q 80 input.jpg -o output.webp
+From the [caniuse WebP table](https://caniuse.com/webp) (data as of 2026-10-01; 96.74% of tracked global usage has full support):
 
-# Lossless (for PNG with transparency)
-cwebp -lossless input.png -o output.webp
+| Browser | First full support | Earlier partial support |
+|---|---|---|
+| Chrome | 32 | 9–22 lossy only; 23–31 no animation |
+| Edge | 18 | — |
+| Firefox | 65 | — |
+| Safari (macOS) | 16.0 | 14.0–15.6 full, but only on macOS 11 Big Sur or later |
+| Safari (iOS) | 14.0 | — |
+| Samsung Internet | 4 | — |
+| Opera | 19 | 11.1–18 partial |
 
-# Higher quality (90) for important images
-cwebp -q 90 input.jpg -o output.webp
+Displaying WebP and *creating* WebP are separate features. The browser converter calls `canvas.toBlob(callback, 'image/webp', quality)`. MDN's compatibility data (BCD 8.1.4) lists WebP encoding for `toBlob` in Chrome 50, Edge 79 and Firefox 96, and not in Safari on any platform. In Safari the browser returns a PNG instead; the ZeroTool converter detects the wrong type and reports that WebP cannot be encoded rather than saving a PNG under a `.webp` name. Chrome and Firefox use different encoders, so the same quality setting gives different file sizes.
 
-# Batch convert all JPEGs in a directory
-for f in *.jpg; do
-  cwebp -q 80 "$f" -o "${f%.jpg}.webp"
-done
+## Serving WebP on a website
 
-# Show compression stats
-cwebp -q 80 -v input.jpg -o output.webp
-```
-
-Quality 80 is a good starting point for photographs. Quality 90+ is for images where fine detail matters (product photography, medical images). Lossless is for screenshots, diagrams, and images with text.
-
-## Impact on Core Web Vitals
-
-The Core Web Vitals are LCP, INP, and CLS ([web.dev](https://web.dev/articles/vitals)). Smaller images help most with LCP:
-
-**Largest Contentful Paint (LCP)** — The LCP element is usually a hero image. Reducing its file size by 30% directly reduces LCP time, especially on mobile connections.
-
-**First Contentful Paint** (not a Core Web Vital) — smaller images leave more bandwidth for the CSS and fonts that the first paint needs. Image size has little effect on Total Blocking Time, which measures JavaScript on the main thread.
-
-Lighthouse and PageSpeed Insights flag JPEG and PNG files that would be smaller in a modern format (older versions called this audit "Serve images in next-gen formats"), and converting them is one of the highest-impact single changes you can make for a typical content site.
-
-A rough calculation: if your homepage loads 500 KB of images and you convert them all to WebP, you save ~150-175 KB. On a 4G connection at 20 Mbps, that is ~60ms saved. On a slower connection, the impact is proportionally larger.
-
-## AVIF: The Next Step
-
-AVIF (AV1 Image File Format) is even newer than WebP — often smaller than WebP at the same quality, depending on the image. Browser support reached ~90% in 2024 (Chrome, Firefox, Safari 16+, Edge).
-
-You can serve all three formats with cascading `<source>` elements:
+If you support only browsers in the table above, a plain `<img src="hero.webp">` works. When you need a fallback, let the browser choose:
 
 ```html
 <picture>
   <source srcset="/images/hero.avif" type="image/avif">
   <source srcset="/images/hero.webp" type="image/webp">
-  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
+  <img src="/images/hero.jpg" alt="Hero" width="1200" height="600">
 </picture>
 ```
 
-AVIF encoding is significantly slower than WebP, making it better suited for build-time conversion rather than on-the-fly.
+The browser takes the first `<source>` whose `type` it supports; the `<img>` supplies `alt`, `width` and `height`, which reserve space and prevent layout shift. For CSS backgrounds, `image-set(url(hero.webp) type("image/webp"), url(hero.jpg) type("image/jpeg"))` does the same job.
 
-## Convert Your Images Now
+The other approach is server-side negotiation, which the [WebP FAQ](https://developers.google.com/speed/webp/faq) describes: browsers that can decode WebP list `image/webp` in the `Accept` request header, and the server returns WebP at the same URL. If you do this, send `Vary: Accept` ([RFC 9110 §12.5.5](https://www.rfc-editor.org/rfc/rfc9110#section-12.5.5)), or a shared cache can store the WebP and hand it to a client that did not ask for it.
 
-For a quick conversion before uploading to a CMS, sharing a prototype, or testing whether WebP is appropriate for a specific image, a browser-based tool is faster than installing cwebp or setting up a build pipeline.
+## Framework integration: Next.js, Astro and sharp
 
-[Try our WebP Converter →](/tools/webp-converter)
+**Next.js.** `next/image` converts on request. The [`formats` option](https://nextjs.org/docs/app/api-reference/components/image#formats) defaults to `['image/webp']`; add `'image/avif'` to try AVIF first. Next.js reads the `Accept` header to choose, and if you put a proxy or CDN in front of a self-hosted app you must forward that header. Animated sources are returned in their original format. The default `quality` is 75, and optimized images are cached for `minimumCacheTTL` seconds (default 14,400, four hours).
 
-Upload your PNG or JPEG, set the quality level, and download the WebP version — with a side-by-side file size comparison so you can see exactly how much you saved before committing to the format.
+```js
+// next.config.js
+module.exports = {
+  images: {
+    formats: ['image/avif', 'image/webp'],
+  },
+};
+```
+
+**Astro.** The [`<Image />` component](https://docs.astro.build/en/reference/modules/astro-assets/) produces a `.webp` file by default, and `<Picture />` uses `formats: ['webp']` unless you set another list. Astro's [default image service is sharp](https://docs.astro.build/en/guides/images/), so the sharp rows in the tables above are what an Astro build produces before any resizing.
+
+**sharp directly.** sharp's WebP defaults are quality 80 and effort 4. The text-chart table shows why it is worth passing `lossless: true` for screenshots and diagrams:
+
+```js
+import sharp from 'sharp';
+
+await sharp('photo.png').webp({ quality: 80 }).toFile('photo.webp');
+await sharp('diagram.png').webp({ lossless: true }).toFile('diagram.webp');
+```
+
+## cwebp options that change the result
+
+Install libwebp with `brew install webp` (macOS) or `sudo apt install webp` (Debian and Ubuntu). The options that mattered in our measurements, from the [cwebp documentation](https://developers.google.com/speed/webp/docs/cwebp):
+
+| Option | Effect |
+|---|---|
+| `-q 0..100` | Lossy quality; default 75 |
+| `-lossless` | Lossless VP8L |
+| `-z 0..9` | Lossless preset from fastest to slowest; `-z 9` saved another 5.7% on the chart |
+| `-near_lossless 0..100` | Lossless coding after slight preprocessing; 100 is off. At 60 the photo halved with pixel errors of at most 2 levels |
+| `-m 0..6` | Compression effort; default 4 |
+| `-sharp_yuv` | Sharper RGB-to-YUV conversion for lossy edges |
+| `-metadata all` | Copy Exif, ICC and XMP (default `none`) |
+| `-exact` | Keep RGB values in fully transparent pixels (normally changed to compress better) |
+
+A batch conversion that keeps the source files:
+
+```bash
+for f in *.jpg; do cwebp -q 80 "$f" -o "${f%.jpg}.webp"; done
+```
+
+## WebP or AVIF
+
+AVIF is the next format in the `<picture>` list. caniuse (2026-10-01) gives full AVIF support from Chrome 85, Edge 121, Firefox 93 and Safari 16.1 (macOS 13 Ventura or later), with notes that some of these versions decode still images only. The Chrome team's [image delivery guide](https://developer.chrome.com/docs/performance/insights/image-delivery), which backs Lighthouse's "Improve image delivery" insight, recommends both formats. The Next.js documentation states the trade-off it sees: AVIF "generally takes 50% longer to encode but it compresses 20% smaller compared to WebP", and it still recommends WebP for most cases because the first request for an image is slower. The common pattern is AVIF first, WebP second, JPEG or PNG last, then measure on your own images as we did above.
+
+One more operational note: in September 2023 a heap buffer overflow in libwebp, [CVE-2023-4863](https://nvd.nist.gov/vuln/detail/CVE-2023-4863), was fixed in libwebp 1.3.2 and Chrome 116.0.5845.187. Any software that decodes untrusted WebP files should use libwebp 1.3.2 or later.
+
+To try a single image without installing anything, drop it on the [WebP Converter](/tools/webp-converter/): it runs `canvas.toBlob()` in your browser, shows the before and after size, and uploads nothing. For lossless graphics, check the result against `cwebp -lossless` as shown above.

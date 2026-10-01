@@ -12,8 +12,13 @@
 // (dotenv cuts there; the parser adds a note), single / double / backtick quotes, `\n` expanded
 // only in double quotes, whitespace trimming, quoted values over several lines, unclosed quotes,
 // text after a closing quote, empty values, duplicates (last wins), CRLF; the exported object
-// equals dotenv.parse() for every fixture. Rules: https://github.com/motdotla/dotenv#what-rules-does-the-parsing-engine-follow
+// equals dotenv.parse() for every fixture; notes, errors and the status line come from the
+// 4-language STRINGS (they were English on every page). Rules: https://github.com/motdotla/dotenv#what-rules-does-the-parsing-engine-follow
 // and the LINE regex in https://github.com/motdotla/dotenv/blob/v16.6.1/lib/main.js
+//
+// Guide: the sample file, the parser-comparison table (parser, dotenv, util.parseEnv, python-dotenv
+// 1.2.4 when installed), the parser notes table and the compare-env.mjs block in
+// src/content/blog/env-file-parser-guide/en.mdx are recomputed.
 //
 // Run: node scripts/test-env-file-parser.mjs
 
@@ -153,6 +158,103 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   eq('page example export has 11 keys', Object.keys(exported(PAGE)).length, 11);
   eq('__proto__ key is exported as a property', JSON.stringify(exported('__proto__=x\nA=1')), '{"__proto__":"x","A":"1"}');
   check('Export JSON uses a null-prototype object and counts unique keys', /var obj = Object\.create\(null\);[\s\S]*?var keyCount = Object\.keys\(obj\)\.length;[\s\S]*?replace\('\{n\}', keyCount\)/.test(source));
+}
+
+// ---------- guide (src/content/blog/env-file-parser-guide/en.mdx) ----------
+// The code block after {/* env-sample */} is the sample file (its last line is read with CRLF, as the
+// guide says). In the table after {/* env-table */}, cells are JSON values in inline code ("—" = not
+// set): column 2 must equal the parser's export and dotenv.parse(), column 3 util.parseEnv() (Node's
+// --env-file parser), column 4 python-dotenv dotenv_values() when python-dotenv 1.2.4 is installed
+// (SKIP otherwise). godotenv and Compose columns were measured once (see the guide) and are not rerun.
+// The rows after {/* env-notes */} are the parser's notes for the sample. The Node block after
+// {/* env-run: {"expect":…} */} is run next to the sample (from .generated/, so `dotenv` resolves).
+{
+  const { existsSync, writeFileSync, mkdtempSync, rmSync, mkdirSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  const util = await import('node:util');
+  const rel = 'src/content/blog/env-file-parser-guide/en.mdx';
+  const text = readFileSync(join(root, rel), 'utf8');
+  const sm = text.match(/\{\/\* env-sample \*\/\}\s*```bash\n([\s\S]*?)```/);
+  check(rel + ' has the sample block', !!sm);
+  const sample = sm ? sm[1].replace(/\n(CRLF=value)\n$/, '\n$1\r\n') : '';
+  check(rel + ' sample ends with a CRLF line', sample.endsWith('CRLF=value\r\n'));
+  const tool = exported(sample);
+  const viaDotenv = dotenv.parse(sample);
+  const viaNode = typeof util.parseEnv === 'function' ? util.parseEnv(sample) : null;
+  let py = null;
+  try {
+    const out = execFileSync('python3', ['-c', 'import json,importlib.metadata as m;from dotenv import dotenv_values;import io,sys;print(m.version("python-dotenv"));print(json.dumps(dotenv_values(stream=io.StringIO(sys.stdin.read()))))'], { input: sample, stdio: ['pipe', 'pipe', 'ignore'] }).toString().split('\n');
+    if (out[0] === '1.2.4') py = JSON.parse(out[1]);
+    else console.log('SKIP python-dotenv column (installed ' + out[0] + ', guide measured 1.2.4)');
+  } catch { console.log('SKIP python-dotenv column (python-dotenv not installed)'); }
+  const cell = (c) => {
+    c = c.trim();
+    if (c === '—') return undefined;
+    const m = c.match(/^(`+)\s?([\s\S]*?)\s?\1$/);
+    return m ? JSON.parse(m[2]) : c;
+  };
+  const tableAfter = (mark) => {
+    const lines = text.slice(text.indexOf(mark)).split('\n').slice(1);
+    const first = lines.findIndex((l) => l.startsWith('|'));
+    const out = [];
+    for (let i = first; i >= 0 && i < lines.length && lines[i].startsWith('|'); i++) out.push(lines[i]);
+    return out.slice(2);
+  };
+  const rows = tableAfter('{/* env-table */}');
+  let n = 0;
+  for (const line of rows) {
+    if (!line.startsWith('| ')) break;
+    const cols = line.slice(2, -2).split(' | ');
+    const key = cols[0];
+    n++;
+    eq('guide table ' + key + ': parser', tool[key], cell(cols[1]));
+    eq('guide table ' + key + ': dotenv', viaDotenv[key], cell(cols[1]));
+    if (viaNode) eq('guide table ' + key + ': util.parseEnv', viaNode[key], cell(cols[2]));
+    if (py) eq('guide table ' + key + ': python-dotenv', py[key], cell(cols[3]));
+  }
+  check('guide table has 16 rows', n === 16, n);
+  const noteRows = tableAfter('{/* env-notes */}').map((l) => l.slice(2, -2).split(' | '));
+  const actual = E.parseEnv(sample).filter((e) => e.type === 'error' || (e.notes && e.notes.length)).map((e) => [String(e.lineNo), e.key || '—', e.type === 'error' ? e.error : e.notes.join('; ')]);
+  eq('guide notes table', noteRows, actual);
+  const run = text.match(/\{\/\* env-run: (\{.*?\}) \*\/\}\s*```js\n([\s\S]*?)```/);
+  check(rel + ' has a runnable block', !!run);
+  if (run && viaNode) {
+    const spec = JSON.parse(run[1]);
+    mkdirSync(join(root, '.generated'), { recursive: true });
+    const dir = mkdtempSync(join(root, '.generated', 'env-run-'));
+    try {
+      writeFileSync(join(dir, '.env'), sample);
+      writeFileSync(join(dir, 'compare-env.mjs'), run[2]);
+      const out = execFileSync(process.execPath, ['compare-env.mjs'], { cwd: dir }).toString().trim();
+      eq('guide compare-env.mjs output', out, spec.expect);
+      eq('guide compare-env.mjs output comment', [...run[2].matchAll(/^\/\/ (ESCAPED.+)$/gm)].map((x) => x[1]).join('\n'), out);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const tpl = [/^## What (is|are) /mi, /^## .*Online/mi, /^## .* in Code$/mi, /^## (Summary|Conclusion)/mi].filter((re) => re.test(text));
+  check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
+  check(rel + ' sample has no provider key formats', !/\b(AKIA|sk_live_|sk_test_|ghp_|xox[bp]-|AIza)/.test(text));
+}
+
+// ---------- notes and status line in the page language ----------
+// The notes, errors and the status line were English on every language version of the page
+{
+  const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+  const enKeys = Object.keys(STR.en.notes || {}).sort();
+  eq('en notes keys', enKeys, ['afterQuote', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
+  for (const lang of ['zh', 'ja', 'ko']) {
+    eq(lang + ' notes keys', Object.keys(STR[lang].notes || {}).sort(), enKeys);
+    eq(lang + ' top-level keys', Object.keys(STR[lang]).sort(), Object.keys(STR.en).sort());
+    check(lang + ' multiline keeps {from} and {to}', /\{from\}/.test(STR[lang].notes.multiline) && /\{to\}/.test(STR[lang].notes.multiline));
+  }
+  const zh = E.parseEnv('A=\nB="x\ny"\nNOEQ', STR.zh.notes);
+  eq('zh empty value', zh[0].notes, [STR.zh.notes.emptyValue]);
+  eq('zh multiline', zh[1].notes, [STR.zh.notes.multiline.replace('{from}', '2').replace('{to}', '3')]);
+  eq('zh missing =', zh[2].error, STR.zh.notes.missingEq);
+  eq('English stays the default', E.parseEnv('A=')[0].notes, ['Empty value']);
+  check('status line built from STRINGS', /t\.stValid/.test(source) && !/' valid'/.test(source));
+  check('page no longer says messages are English', !readFileSync(join(root, 'src/content/tools/env-file-parser/en.mdx'), 'utf8').includes('Messages are in English'));
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

@@ -1,84 +1,133 @@
 ---
-title: "CSS Box Shadow Generator: A Practical Guide to box-shadow"
-description: "Master CSS box-shadow with a free online generator. Learn syntax, layering, inset shadows, and real-world examples — no guesswork required."
+title: "CSS box-shadow Explained: Syntax, Blur, Spread, Inset and drop-shadow()"
+description: "How CSS box-shadow works per the spec and in Chrome: optional color, blur as a Gaussian, spread and border-radius, inset, layered shadows, filter: drop-shadow() and repaint cost."
 pubDate: 2026-04-15
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["css", "box-shadow", "developer-tools", "frontend"]
+tags: ["css box shadow", "box-shadow", "drop-shadow", "css", "frontend"]
 ---
 
-CSS `box-shadow` is one of those properties that looks simple until you actually need it. Offset? Blur? Spread? Inset? Getting it right by hand takes trial and error. A **box shadow generator** removes the guesswork so you can focus on design, not syntax.
+`box-shadow` draws one or more shadows of an element's border box. The property is defined in section 6.1 of [CSS Backgrounds and Borders Module Level 3](https://www.w3.org/TR/css-backgrounds-3/#box-shadow), and most of its surprises are spelled out there: which values are optional, what the blur number means, how spread changes rounded corners, and why a shadow never shows through a transparent box. This guide goes through the spec section by section and checks each rule in a real browser. The browser results were measured on 2026-10-02 in Chrome 152 on macOS, by applying the declarations to test elements and reading back `getComputedStyle()` or the screenshot pixels.
 
-**[Try the Box Shadow Generator →](/tools/box-shadow-generator)**
+## The syntax, value by value
 
-## The box-shadow Syntax
+The spec grammar for a single shadow is:
 
-```css
-box-shadow: [inset] <offset-x> <offset-y> [blur-radius] [spread-radius] [color];
+```text
+<shadow> = <color>? && [ <length>{2} <length [0,∞]>? <length>? ] && inset?
 ```
 
-| Value | Description |
+`&&` means the three groups may come in any order, but the lengths stay together and keep their order. A declaration is either `none` or a comma-separated list of shadows.
+
+| Part | Required | Meaning | If omitted |
+|---|---|---|---|
+| 1st length | yes | Horizontal offset; positive moves right | — |
+| 2nd length | yes | Vertical offset; positive moves down | — |
+| 3rd length | no | Blur radius; negative values are invalid | 0 (sharp edge) |
+| 4th length | no | Spread distance; negative shrinks the shadow | 0 |
+| color | no | Shadow color | `currentColor` |
+| `inset` | no | Inner shadow instead of outer | outer shadow |
+
+Here is how Chrome 152 reads a few declarations on an element whose `color` is red and `font-size` is 20px:
+
+| Declaration | Computed `box-shadow` |
 |---|---|
-| `inset` | Optional. Shadow is drawn inside the element. |
-| `offset-x` | Horizontal offset. Positive moves right, negative moves left. |
-| `offset-y` | Vertical offset. Positive moves down, negative moves up. |
-| `blur-radius` | Optional (default 0). Higher = softer shadow. Negative values are invalid. |
-| `spread-radius` | Optional (default 0). Positive expands, negative contracts. |
-| `color` | Optional; defaults to `currentcolor`. Any CSS color value. Use `rgba()` for transparency. |
+| `4px 4px` | `rgb(255, 0, 0) 4px 4px 0px 0px` |
+| `inset 2px 2px red` | `rgb(255, 0, 0) 2px 2px 0px 0px inset` |
+| `1em 0 red` | `rgb(255, 0, 0) 20px 0px 0px 0px` |
+| `0 0 -5px red` | `none` (whole declaration dropped) |
+| `2px red 2px` | `none` (color between the lengths) |
+| `1px 2px 3px 4px 5px red` | `none` (five lengths) |
 
-`inset` and the color may also come after the lengths; the lengths must stay together in this order ([MDN: box-shadow](https://developer.mozilla.org/en-US/docs/Web/CSS/box-shadow)).
+Three things follow. A shadow without a color takes the element's text color, which is why a shadow on a link can turn blue. Lengths are computed to absolute pixels, so an `em` shadow scales with the font size. An invalid shadow does not fall back to a default; the browser ignores the declaration and keeps whatever value the cascade had before.
 
-## Common Patterns
+## Blur: what the third length draws
 
-### Subtle card shadow
+The spec does not ask for a blur that ends at the blur radius. It asks for the result of "a Gaussian blur with a standard deviation equal to half the blur radius", within 5% per pixel, and notes that a straight edge then shows a color transition about twice the blur radius long, centred on the shadow's edge. So `blur 10px` means a standard deviation of 5px, and the shadow fades from about 10px inside the edge to about 10px outside it.
 
-```css
-box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
-```
+Measured on a black 100 × 100 box with `box-shadow: 0 0 10px #000` on white, the share of black in the pixels right of the box was:
 
-This two-layer approach creates a natural depth: a darker, tighter shadow close to the element plus a lighter, softer one.
+| Distance outside the edge | 0px | 2px | 5px | 8px | 10px | 15px |
+|---|---|---|---|---|---|---|
+| Darkness | 0.459 | 0.310 | 0.137 | 0.047 | 0.016 | 0 |
 
-### Inset shadow (inner glow)
+A Gaussian with σ = 5px predicts 0.5, 0.34, 0.16, 0.05, 0.02 and 0.001 at those distances. The edge itself sits at half strength, which is why a blurred shadow with zero offset and zero spread still looks larger than the box: half of the soft band lies outside it.
 
-```css
-box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
-```
+## Spread and border-radius
 
-Useful for text inputs, pressed button states, or any element that should appear sunken.
+Spread moves the shadow's straight edges outward (or inward, if negative) by the given distance, flooring the size at zero. To keep the box's shape, the spec also adds the spread to each corner radius. There is one adjustment: when the border radius is smaller than the spread, the spread added to the radius is first multiplied by 1 + (r − 1)³, where r is radius ÷ spread. The spec's own example: a 10px radius with a 20px spread gives a shadow corner of 27.5px instead of 30px.
 
-### No blur (hard shadow)
+{/* bsg-radius: {"r":10,"s":20,"out":27.5} */}
+{/* bsg-radius: {"r":10,"s":40,"out":33.125} */}
+{/* bsg-radius: {"r":0,"s":40,"out":0} */}
 
-```css
-box-shadow: 4px 4px 0 #000;
-```
+The rule keeps sharp corners sharp and makes slightly rounded boxes get only slightly rounded shadows. It is visible in pixels. With `box-shadow: 0 0 0 40px #000` on a 100 × 100 box, the black area reached along the diagonal from the box's top-left corner:
 
-Zero blur gives a sharp, offset shadow — popular in neo-brutalist UI design. The color doesn't need to be dark; try `#facc15` for a yellow accent shadow.
+| border-radius | Shadow corner radius (spec) | Black along the diagonal |
+|---|---|---|
+| 0 | 0 | 40px (a square corner) |
+| 10px | 33.125px | 30px |
+| 60px (clamped to 50px on a 100px box) | 90px | 14px (a circle) |
 
-### Glow effect
+Without the adjustment, the 10px case would give a 50px radius and stop at 25px.
 
-```css
-box-shadow: 0 0 12px 4px rgba(99, 102, 241, 0.5);
-```
+Negative spread is the usual way to put a shadow on one side only. `box-shadow: 0 10px 10px -10px #000` shrinks the shadow by 10px on every side, so the blur no longer reaches past the left, right and top edges, and the 10px downward offset pushes the remaining soft edge out below the box. Measured on a grey box: the pixels 3px left, right and above the box stayed at 253 to 255 (white), while 2px below the box was 176 and 6px below was 230. Tailwind CSS 4.3.3 uses the same trick in its default theme, so its shadows stay under the element instead of spreading sideways:
 
-Both offsets at zero, nonzero blur and spread: the shadow radiates symmetrically. Use with brand colors for hover states.
-
-## Layering Multiple Shadows
-
-You can stack shadows by separating them with commas:
+{/* bsg-tailwind */}
 
 ```css
-box-shadow:
-  0 1px 2px rgba(0, 0, 0, 0.07),
-  0 2px 4px rgba(0, 0, 0, 0.07),
-  0 4px 8px rgba(0, 0, 0, 0.07),
-  0 8px 16px rgba(0, 0, 0, 0.07);
+--shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+--shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+--shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 ```
 
-Each layer doubles in offset and radius. The result is a smooth, realistic shadow that doesn't have a single harsh edge. Tobias Ahlin describes this technique in [Smoother & sharper shadows with layered box-shadows](https://tobiasahlin.com/blog/layered-smooth-box-shadows/).
+## Inset shadows
 
-## Performance Notes
+`inset` turns the shadow around: the spec describes it as if the box "were cut out of the canvas and shifted behind it". An inner shadow is drawn inside the padding edge only, above the element's background and below its border. Spread works in reverse: a positive spread makes more shadow by shrinking the shape that casts it. With `box-shadow: inset 0 0 0 10px #000` on a grey 100 × 100 box, pixels 1 to 9px inside the edge were black and pixels 10px and further in kept the background grey, a solid 10px band.
 
-`box-shadow` triggers paint but not layout. Every frame of a `box-shadow` transition repaints the element, even if the element sits on its own compositor layer. Avoid animating `box-shadow` on low-powered devices — prefer animating `opacity` on a pseudo-element that already carries the final shadow ([Tobias Ahlin: How to animate box-shadow](https://tobiasahlin.com/blog/how-to-animate-box-shadow/)):
+That band is a practical way to draw a border that does not change layout. An inset shadow or a zero-blur outer shadow with spread (for example `0 0 0 3px` in a brand color) is often used for focus rings, since neither moves surrounding content.
+
+## Layering several shadows
+
+The list is painted front to back: "the first shadow is on top and the others are layered behind." A tight, dark shadow first and a wide, faint one after it gives a contact shadow plus ambient light, which is what the Tailwind tokens above do. Tobias Ahlin's [layered box-shadows](https://tobiasahlin.com/blog/layered-smooth-box-shadows/) article stacks four to six shadows that double in offset and blur to get a smoother falloff than one large blur.
+
+Each layer is an ordinary shadow, so you can build them one at a time in the [box shadow generator](/tools/box-shadow-generator/) and join the outputs with commas. Set horizontal 0, vertical 4, blur 6, spread −1 and opacity 10% for the first Tailwind `shadow-md` layer, then 0, 2, 4, −2, 10% for the second:
+
+{/* bsg-check: {"h":0,"v":4,"blur":6,"spread":-1,"opacity":10,"color":"#000000","inset":false,"out":"box-shadow: 0px 4px 6px -1px rgba(0, 0, 0, 0.10);"} */}
+{/* bsg-check: {"h":0,"v":2,"blur":4,"spread":-2,"opacity":10,"color":"#000000","inset":false,"out":"box-shadow: 0px 2px 4px -2px rgba(0, 0, 0, 0.10);"} */}
+
+```css
+box-shadow: 0px 4px 6px -1px rgba(0, 0, 0, 0.10);
+box-shadow: 0px 2px 4px -2px rgba(0, 0, 0, 0.10);
+
+/* combined */
+box-shadow: 0px 4px 6px -1px rgba(0, 0, 0, 0.10), 0px 2px 4px -2px rgba(0, 0, 0, 0.10);
+```
+
+The generator always writes all four lengths and an explicit `rgba()` color, so the result does not depend on the element's text color.
+
+## box-shadow versus filter: drop-shadow()
+
+The two look alike but shadow different things. `box-shadow` casts the shadow of the border box, "as if the border-box of the element were opaque", and clips it inside that box. `filter: drop-shadow()` from [Filter Effects Level 1](https://www.w3.org/TR/filter-effects-1/#funcdef-filter-drop-shadow) shadows the rendered pixels: the alpha mask of the element and all its descendants, including text and the transparent parts of a PNG.
+
+| | `box-shadow` | `filter: drop-shadow()` |
+|---|---|---|
+| Shape | Border box, with `border-radius` | Alpha mask of the rendered element |
+| Spread | Yes | No; Chrome 152 drops `drop-shadow(0 0 4px 2px red)` as invalid |
+| `inset` | Yes | No |
+| Several shadows | Comma list | One per function; chain functions instead |
+| Third length | Blur radius (σ = radius ÷ 2) | Standard deviation |
+| Side effects | None on layout or stacking | Creates a stacking context and a containing block for fixed and absolute descendants |
+
+The third row of differences is easy to miss. The spec says drop-shadow's third length is "the standard deviation instead of blur radius", so the same number blurs twice as far. Measured beside the box-shadow test above, `filter: drop-shadow(0 0 10px #000)` gave darkness 0.294 at 5px and 0.149 at 10px outside the edge, and only reached 0 at 30px; the box-shadow with blur 10px was at 0.137 and 0.016. To match a `box-shadow` blur of 10px, write `drop-shadow(0 0 5px ...)`.
+
+The clipping rule shows the other difference. On a box with a transparent background and `box-shadow: 10px 10px 0 #f00`, the area where the shadow overlaps the box stayed white; only the part outside the box was red. Use `box-shadow` for cards, buttons and panels, and `drop-shadow()` for icons, cut-out images and non-rectangular shapes.
+
+## Layout, scrolling and repaint cost
+
+The spec states that shadows "do not influence layout" and "do not trigger scrolling or increase the size of the scrollable overflow area". In Chrome 152, a full-width element with a 300px horizontal shadow left the page's `scrollWidth` unchanged, and a shadow reaching past an `overflow: auto` container did not add a scrollbar. (The compatibility table in MDN's browser-compat-data 8.1.4 still carries an older note that shadows affect layout in Chrome, Firefox and Safari; the measured Chrome behaviour follows the spec.)
+
+Animating a shadow is a different cost. In three runs of 60 animation frames that each changed `box-shadow`, Chrome's performance counters (`Performance.getMetrics`) recorded 59 or 60 style recalculations and 0 or 1 layout per run. Changing `width` the same way recorded 59 layouts every run. So a shadow animation skips layout but still repaints the element on every frame. web.dev's [animations guide](https://web.dev/articles/animations-guide) recommends animating only `transform` and `opacity`. For a hover effect, put the final shadow on a pseudo-element and fade it in (the approach in Tobias Ahlin's [How to animate box-shadow](https://tobiasahlin.com/blog/how-to-animate-box-shadow/)):
 
 ```css
 .card {
@@ -92,35 +141,36 @@ Each layer doubles in offset and radius. The result is a smooth, realistic shado
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
   opacity: 0;
   transition: opacity 0.3s;
+  pointer-events: none;
 }
 .card:hover::after {
   opacity: 1;
 }
 ```
 
-## Browser Support
+The current Candidate Recommendation also lists "animatability of box-shadow" as an at-risk feature, although browsers already interpolate it between compatible lists.
 
-`box-shadow` has universal support across all modern browsers. No prefix needed. The `inset` keyword and multiple shadows are also fully supported.
+## Forced colors and focus rings
 
-## Why Use a Generator?
+In Windows High Contrast and other forced-colors modes, `box-shadow` is forced to `none` ([CSS Color Adjust Level 1 §3.1](https://www.w3.org/TR/css-color-adjust-1/#forced-colors-properties)). A focus indicator drawn only with a shadow disappears there. Keep an outline as well; `outline: 2px solid transparent` costs nothing in normal mode and is repainted in the system color in forced-colors mode:
 
-Manually tweaking four numeric values plus a color is slow. A visual generator lets you:
+```css
+.button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.5);
+}
+```
 
-- Drag offsets and see the shadow update in real time
-- Adjust blur and spread with sliders
-- Toggle inset mode
-- Copy the CSS directly into your project
+## Using the generator
 
-The ZeroTool generator edits one shadow at a time (offsets and spread from −50 to 50 px, blur 0–100 px, opacity 0–100%). Combine several outputs with commas by hand for layered shadows.
+The [box shadow generator](/tools/box-shadow-generator/) edits one outer or inner shadow with sliders: offsets and spread from −50 to 50px, blur from 0 to 100px, opacity in whole percent, a color picker or a 6-digit hex code, and an Inset switch. It writes the four lengths in `px` and the color as `rgba()` with two decimals. On load it shows:
 
-**[Open the Box Shadow Generator →](/tools/box-shadow-generator)**
+{/* bsg-check: {"h":5,"v":5,"blur":10,"spread":0,"opacity":30,"color":"#000000","inset":false,"out":"box-shadow: 5px 5px 10px 0px rgba(0, 0, 0, 0.30);"} */}
+{/* bsg-check: {"h":0,"v":0,"blur":0,"spread":3,"opacity":50,"color":"#1a73e8","inset":false,"out":"box-shadow: 0px 0px 0px 3px rgba(26, 115, 232, 0.50);"} */}
+{/* bsg-check: {"h":0,"v":2,"blur":4,"spread":0,"opacity":15,"color":"#000000","inset":true,"out":"box-shadow: inset 0px 2px 4px 0px rgba(0, 0, 0, 0.15);"} */}
 
-## Quick Reference
+```css
+box-shadow: 5px 5px 10px 0px rgba(0, 0, 0, 0.30);
+```
 
-| Effect | CSS |
-|---|---|
-| Drop shadow | `box-shadow: 0 4px 6px rgba(0,0,0,0.1)` |
-| Inset | `box-shadow: inset 0 2px 4px rgba(0,0,0,0.15)` |
-| Glow | `box-shadow: 0 0 8px 2px rgba(99,102,241,0.4)` |
-| Hard shadow | `box-shadow: 3px 3px 0 #000` |
-| No shadow | `box-shadow: none` |
+All sliders at 0 except spread 3, color `#1a73e8` and opacity 50% give the focus ring used above, `box-shadow: 0px 0px 0px 3px rgba(26, 115, 232, 0.50);`. Turning on Inset with vertical 2, blur 4 and opacity 15% gives the sunken input style `box-shadow: inset 0px 2px 4px 0px rgba(0, 0, 0, 0.15);`. Values outside the slider ranges, other units, and `filter: drop-shadow()` need a manual edit; the [CSS filter generator](/tools/css-filter-generator/) covers the filter functions.

@@ -1,269 +1,168 @@
 ---
-title: "JSONPath Tester Online: Query JSON Data Without Writing Code"
-description: "Learn JSONPath syntax and test JSON path expressions online. Covers $ root, dot notation, filters, wildcards, and recursive descent with real examples."
+title: "JSONPath: RFC 9535 Syntax and How Libraries Differ (Tested)"
+description: "JSONPath per RFC 9535: selectors, filters and functions, plus 16 queries run through jsonpath-plus, jsonpath, jsonpath-ng and Jayway to show where results differ."
 pubDate: 2026-04-08
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["jsonpath", "json", "data", "query", "developer-tools"]
+tags: ["jsonpath", "json", "query", "rfc 9535", "developer-tools"]
 ---
 
-JSONPath is a query language for JSON, similar to XPath for XML. It lets you extract specific values from deeply nested JSON structures using a compact expression syntax. A **JSONPath tester online** lets you paste your JSON, write expressions, and instantly see the matched results — without running any code.
+JSONPath is a query language that selects values from a JSON document, the way XPath selects nodes from XML. Stefan Gössner described it in a [2007 article](https://goessner.net/articles/JsonPath/), and for seventeen years every library implemented its own reading of that article. In February 2024 the IETF published [RFC 9535](https://www.rfc-editor.org/rfc/rfc9535), a Standards Track specification of the syntax and the results.
 
-[Try our JSONPath Tester →](/tools/jsonpath-tester)
+Most libraries in use today were written before the RFC, so the same query can return different results, an empty list, or an error depending on the library. This guide covers the RFC 9535 syntax with results computed by the [ZeroTool JSONPath Tester](/tools/jsonpath-tester/), which implements the RFC, and then runs sixteen queries through five implementations so you can see exactly where they diverge.
 
-## JSONPath Syntax Basics
+## The syntax on one document
 
-Every JSONPath expression starts from the root `$` and navigates the structure using operators.
+All examples use this document:
 
-### Root and Dot Notation
-
+{/* jp-doc */}
 ```json
 {
   "store": {
     "name": "Tech Books",
     "inventory": [
-      { "title": "JavaScript: The Good Parts", "price": 29.99, "inStock": true },
+      { "title": "Refactoring", "price": 29.99, "inStock": true, "ebook": true },
       { "title": "Clean Code", "price": 34.99, "inStock": false },
-      { "title": "The Pragmatic Programmer", "price": 39.99, "inStock": true }
+      { "title": "Domain-Driven Design", "price": 39.99, "inStock": true, "ebook": false }
     ]
   }
 }
 ```
 
-| Expression | Result |
-|---|---|
-| `$.store.name` | `"Tech Books"` |
-| `$.store.inventory[0].title` | `"JavaScript: The Good Parts"` |
-| `$.store.inventory[2].price` | `39.99` |
+A query starts at the root `$` and applies segments from left to right. Each segment holds one or more selectors. The result is a **nodelist**: zero or more values, in document order for arrays. An empty nodelist is a normal result, not an error (RFC 9535 §2.1).
 
-### Bracket Notation
+{/* jp-syntax */}
+| Query | Selector (RFC 9535 section) | Result |
+|---|---|---|
+| `$.store.name` | Name, shorthand (§2.3.1, §2.5.1) | `["Tech Books"]` |
+| `$['store']['name']` | Name, bracket form | `["Tech Books"]` |
+| `$.store.inventory[*].title` | Wildcard (§2.3.2) | `["Refactoring","Clean Code","Domain-Driven Design"]` |
+| `$.store.inventory[0].title` | Index (§2.3.3) | `["Refactoring"]` |
+| `$.store.inventory[-1].title` | Negative index counts from the end | `["Domain-Driven Design"]` |
+| `$.store.inventory[5].title` | Index past the end selects nothing | `[]` |
+| `$.store.inventory[0:2].title` | Slice `start:end:step`, end excluded (§2.3.4) | `["Refactoring","Clean Code"]` |
+| `$.store.inventory[::-1].title` | Negative step walks backwards | `["Domain-Driven Design","Clean Code","Refactoring"]` |
+| `$.store.inventory[0,2].title` | Several selectors in one segment (§2.5.1) | `["Refactoring","Domain-Driven Design"]` |
+| `$..price` | Descendant segment (§2.5.2) | `[29.99,34.99,39.99]` |
+| `$.store.inventory[?@.price < 35].title` | Filter (§2.3.5) | `["Refactoring","Clean Code"]` |
 
-Equivalent to dot notation, but required when keys contain spaces or special characters:
+Bracket notation is required when a member name is not a valid shorthand name, for example `$['first name']` or `$['2026']`. Strings can use single or double quotes.
 
-```
-$.store['name']             → "Tech Books"
-$.store.inventory[0]        → first book object
-$.store.inventory[-1]       → last book object (negative indexing)
-```
+## Filters, existence tests and functions
 
-### Wildcard `*`
+A filter `[?expr]` keeps the array elements (or object member values) for which the expression is true. Inside it, `@` is the current element and `$` is the whole document. Parentheses around the whole expression, as in Gössner's `[?(@.price < 35)]`, are allowed because the RFC grammar accepts a parenthesized logical expression, but they are not needed.
 
-Match all children of an object or all elements of an array:
+{/* jp-filters */}
+| Query | What it tests | Result |
+|---|---|---|
+| `$.store.inventory[?@.price < 35].title` | Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=` | `["Refactoring","Clean Code"]` |
+| `$.store.inventory[?@.inStock == true && @.price > 30].title` | Logical AND; also `\|\|` and `!` | `["Domain-Driven Design"]` |
+| `$.store.inventory[?@.ebook].title` | Existence: the member is present, even if `false` | `["Refactoring","Domain-Driven Design"]` |
+| `$.store.inventory[?!@.ebook].title` | Absence | `["Clean Code"]` |
+| `$.store.inventory[?@.ebook == true].title` | Value test | `["Refactoring"]` |
+| `$.store.inventory[?length(@.title) > 10].title` | `length()`: characters of a string, items of an array or members of an object | `["Refactoring","Domain-Driven Design"]` |
+| `$.store.inventory[?match(@.title, 'C.*')].title` | `match()`: the whole string matches | `["Clean Code"]` |
+| `$.store.inventory[?search(@.title, 'Design')].title` | `search()`: a substring matches | `["Domain-Driven Design"]` |
+| `$[?count(@.inventory[*]) == 3].name` | `count()`: number of nodes in a nodelist; here the filter runs over the root object's member values | `["Tech Books"]` |
 
-```
-$.store.inventory[*].title
-→ ["JavaScript: The Good Parts", "Clean Code", "The Pragmatic Programmer"]
+Three rules from the RFC explain most surprises:
 
-$.store.*
-→ ["Tech Books", [...inventory array...]]
-```
+- **Existence is not truthiness.** `[?@.ebook]` selects the third book, whose `ebook` is `false`, because the member exists. Write `[?@.ebook == true]` to test the value.
+- **Comparisons never fail with an error.** Ordering a number against a string is false, and `@.missing == 'x'` is false because the left side is an empty nodelist (§2.3.5.2.2). `[?@.price < 'x']` selects nothing rather than reporting a type error.
+- **Regular expressions are I-Regexp.** `match()` and `search()` take [RFC 9485](https://www.rfc-editor.org/rfc/rfc9485) I-Regexp patterns, a deliberately small subset meant to behave the same in every regex engine. There is no `=~` operator and no `/…/i` flags. These five functions are the only ones the RFC defines (§2.4); anything else is a library extension.
 
-### Array Slices
+The RFC also defines how to name a result's location. A **normalized path** uses bracket notation only: the third title is `$['store']['inventory'][2]['title']` (§2.7). Libraries that return paths along with values should use this form if they follow the RFC.
 
-Python-style slice syntax `[start:end:step]`:
+## Five implementations, sixteen queries
 
-```
-$.store.inventory[0:2]          → first two books
-$.store.inventory[::2]          → every other book (indices 0, 2, 4...)
-$.store.inventory[-1:]          → last book only
-```
+We ran the queries below on 2026-10-02 against the document above with the ZeroTool tester (RFC 9535), [jsonpath-plus](https://github.com/JSONPath-Plus/JSONPath) 11.1.1 (`JSONPath({ path, json, wrap: true })`), [jsonpath](https://github.com/dchester/jsonpath) 1.3.0 (`jp.query`), Python [jsonpath-ng](https://github.com/h2non/jsonpath-ng) 1.8.0 (`jsonpath_ng.ext.parse`, the parser that supports filters) and Java [Jayway JsonPath](https://github.com/json-path/JsonPath) 3.0.0 (`JsonPath.parse(json).read(path)` with the default configuration). "error" means the library threw; `[]` means it returned nothing without an error.
 
-### Recursive Descent `..`
+{/* jp-compare */}
+| Query | ZeroTool (RFC 9535) | jsonpath-plus | jsonpath | jsonpath-ng | Jayway |
+|---|---|---|---|---|---|
+| `$.store.name` | `["Tech Books"]` | `["Tech Books"]` | `["Tech Books"]` | `["Tech Books"]` | `"Tech Books"` |
+| `$.store.inventory[*].title` | 3 titles | 3 titles | 3 titles | 3 titles | 3 titles |
+| `$.store.inventory[-1].title` | `["Domain-Driven Design"]` | `[]` | `[]` | `["Domain-Driven Design"]` | `"Domain-Driven Design"` |
+| `$.store.inventory[0:2].title` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` |
+| `$..price` | `[29.99,34.99,39.99]` | `[29.99,34.99,39.99]` | `[29.99,34.99,39.99]` | `[29.99,34.99,39.99]` | `[29.99,34.99,39.99]` |
+| `$.store.inventory[?(@.price < 35)].title` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` | `["Refactoring","Clean Code"]` |
+| `$.store.inventory[?@.price < 35].title` | `["Refactoring","Clean Code"]` | `[]` | error | `["Refactoring","Clean Code"]` | error |
+| `$.store.inventory[?(@.inStock == true && @.price > 30)].title` | `["Domain-Driven Design"]` | `["Domain-Driven Design"]` | `["Domain-Driven Design"]` | error | `["Domain-Driven Design"]` |
+| `$.store.inventory[?@.ebook].title` | `["Refactoring","Domain-Driven Design"]` | `[]` | error | `["Refactoring","Domain-Driven Design"]` | error |
+| `$.store.inventory[?length(@.title) > 10].title` | `["Refactoring","Domain-Driven Design"]` | `[]` | error | error | error |
+| `$.store.inventory[?match(@.title, 'C.*')].title` | `["Clean Code"]` | `[]` | error | error | error |
+| `$.store.inventory[?(@.title =~ /.*Code/)].title` | error | error | error | error | `["Clean Code"]` |
+| `$.store.inventory.length()` | error | `[]` | error | error | `3` |
+| `$.store.inventory[?(@.price > 30)]['title','price']` | `["Clean Code",34.99,"Domain-Driven Design",39.99]` | `["Clean Code",34.99,"Domain-Driven Design",39.99]` | `["Clean Code",34.99,"Domain-Driven Design",39.99]` | `["Clean Code",34.99,"Domain-Driven Design",39.99]` | two objects with `title` and `price` |
+| `store.name` | error | `["Tech Books"]` | `["Tech Books"]` | `["Tech Books"]` | `"Tech Books"` |
+| `$.store.missing` | `[]` | `[]` | `[]` | `[]` | error |
 
-The double-dot operator searches the entire tree for matching keys, regardless of nesting depth:
+What the differences mean in practice:
 
-```json
-{
-  "orders": [
-    { "id": 1, "customer": { "name": "Alice" } },
-    { "id": 2, "customer": { "name": "Bob" } }
-  ]
-}
-```
+- **Silent empty results are the dangerous ones.** jsonpath-plus returned `[]` for a negative index, a filter without parentheses, an existence test and every RFC function. Code that treats "no match" as "no data" will not notice. `[-1:]` (a slice) works in all five for the last element.
+- **`&&` versus `&`.** jsonpath-ng's extended parser rejects `&&`; its own syntax for AND is `&`. `[?(@.inStock == true & @.price > 30)]` also worked in jsonpath-plus and jsonpath, while the ZeroTool tester and Jayway rejected it, so neither spelling is portable across all five.
+- **Jayway returns shapes, not nodelists.** A definite path such as `$.store.name` returns the scalar `"Tech Books"`, an indefinite one returns a list, a missing path throws `PathNotFoundException`, and a union of member names returns objects instead of values. `Option.ALWAYS_RETURN_LIST` and `Option.SUPPRESS_EXCEPTIONS` give `["Tech Books"]` and `[]` instead. Jayway also accepts `=~` regexes and `length()` as a path function, which is why it is the only library that answers those two rows.
+- **The leading `$`.** Four libraries accept `store.name`. RFC 9535 requires `$`, and the ZeroTool tester reports `a query must start with $ (at character 1)`.
 
-```
-$..name
-→ ["Alice", "Bob"]
+If a JSONPath travels between systems, for example an expression stored in a config file and evaluated by services in different languages, restrict it to the rows where all columns agree: names, wildcards, non-negative indexes, slices, `..` and simple comparisons inside `[?( … )]`. The [JSONPath Compliance Test Suite](https://github.com/jsonpath-standard/jsonpath-compliance-test-suite) is the RFC working group's test set if you need to check a library more thoroughly.
 
-$..id
-→ [1, 2]
-```
+## Running a query in Python and Java
 
-This is especially useful for navigating deeply nested or inconsistently structured JSON responses from APIs.
+jsonpath-ng's extended parser understands negative indexes, filters with or without parentheses and `..`:
 
-### Filter Expressions `?()`
-
-Filter expressions select elements that match a condition. Use `@` to refer to the current element:
-
-```
-$.store.inventory[?(@.inStock == true)].title
-→ ["JavaScript: The Good Parts", "The Pragmatic Programmer"]
-
-$.store.inventory[?(@.price < 35)].title
-→ ["JavaScript: The Good Parts", "Clean Code"]
-
-$.store.inventory[?(@.price >= 35)]
-→ [{ "title": "The Pragmatic Programmer", ...}]
-```
-
-Supported comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`.
-
-Some implementations also support:
-- `=~` for regex matching: `[?(@.title =~ /Code/i)]`
-- `in` for membership: `[?(@.category in ['tech', 'science'])]`
-
-## Real-World JSONPath Examples
-
-### API Response Navigation
-
-REST APIs often return deeply nested data. JSONPath cuts straight to what you need:
-
-```json
-{
-  "data": {
-    "users": [
-      { "id": 1, "profile": { "email": "alice@example.com", "role": "admin" } },
-      { "id": 2, "profile": { "email": "bob@example.com", "role": "user" } }
-    ]
-  },
-  "meta": { "total": 2 }
-}
-```
-
-```
-$.data.users[*].profile.email
-→ ["alice@example.com", "bob@example.com"]
-
-$.data.users[?(@.profile.role == "admin")].id
-→ [1]
-
-$.meta.total
-→ 2
-```
-
-### Config File Queries
-
-JSON config files are common in Node.js and Python projects:
-
-```json
-{
-  "database": {
-    "host": "localhost",
-    "port": 5432,
-    "credentials": { "username": "app", "password": "secret" }
-  },
-  "cache": {
-    "host": "redis-host",
-    "port": 6379
-  }
-}
-```
-
-```
-$..host
-→ ["localhost", "redis-host"]
-
-$..port
-→ [5432, 6379]
-
-$.database.credentials.username
-→ "app"
-```
-
-### AWS / Cloud API Responses
-
-Cloud APIs return complex JSON. JSONPath helps extract specific fields:
-
-```
-$.Reservations[*].Instances[*].InstanceId
-$.Items[?(@.Status == "ACTIVE")].ResourceArn
-$..Tags[?(@.Key == "Environment")].Value
-```
-
-## JSONPath in Different Languages
-
-JSONPath is not a standard built into JSON itself — it's implemented separately in each language ecosystem.
-
-### JavaScript
-
-```javascript
-// Using jsonpath-plus
-import { JSONPath } from 'jsonpath-plus';
-
-const result = JSONPath({ path: '$.store.inventory[*].title', json: data });
-```
-
-### Python
-
+{/* jp-run: {"lang":"python"} */}
 ```python
-from jsonpath_ng import parse
+# query_store.py — run: python query_store.py   (needs: pip install jsonpath-ng)
+from jsonpath_ng.ext import parse
 
-expr = parse('$.store.inventory[*].title')
-matches = [match.value for match in expr.find(data)]
+doc = {"store": {"name": "Tech Books", "inventory": [
+    {"title": "Refactoring", "price": 29.99, "inStock": True, "ebook": True},
+    {"title": "Clean Code", "price": 34.99, "inStock": False},
+    {"title": "Domain-Driven Design", "price": 39.99, "inStock": True, "ebook": False},
+]}}
+
+for expr in [
+    "$.store.inventory[-1].title",
+    "$.store.inventory[?@.price < 35].title",
+    "$.store.inventory[?(@.inStock == true & @.price > 30)].title",
+]:
+    print(expr, [m.value for m in parse(expr).find(doc)])
+# $.store.inventory[-1].title ['Domain-Driven Design']
+# $.store.inventory[?@.price < 35].title ['Refactoring', 'Clean Code']
+# $.store.inventory[?(@.inStock == true & @.price > 30)].title ['Domain-Driven Design']
 ```
 
-### Java
+Each match also carries `m.full_path`, but in jsonpath-ng's own notation rather than an RFC normalized path. The plain `jsonpath_ng.parse` (without `.ext`) has no filters at all: every filter row above fails with `Unexpected character: ?`.
+
+In Java, decide up front whether you want Jayway's scalar results or RFC-like lists:
 
 ```java
-// Using Jayway JsonPath
-import com.jayway.jsonpath.JsonPath;
-
-List<String> titles = JsonPath.read(json, "$.store.inventory[*].title");
+Configuration conf = Configuration.defaultConfiguration()
+    .addOptions(Option.ALWAYS_RETURN_LIST, Option.SUPPRESS_EXCEPTIONS);
+DocumentContext doc = JsonPath.using(conf).parse(json);
+List<String> name = doc.read("$.store.name");      // ["Tech Books"]
+List<Object> none = doc.read("$.store.missing");   // []
 ```
 
-### Go
+## JSONPath, jq and JMESPath
 
-```go
-// Using gjson
-import "github.com/tidwall/gjson"
+Some tools that look like JSONPath are not RFC 9535:
 
-result := gjson.Get(json, "store.inventory.#.title")
-```
+- **kubectl** supports "JSONPath templates" in `-o jsonpath=`: expressions inside `{…}` plus `range` / `end` loops, and its [documentation](https://kubernetes.io/docs/reference/kubectl/jsonpath/) states that regular expressions are not supported and suggests jq instead.
+- **AWS CLI** `--query` uses [JMESPath](https://jmespath.org/), a different language (`Reservations[].Instances[].InstanceId`, no `$`), per the [AWS CLI user guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-filter.html).
+- **jq** is a full transformation language. `.store.inventory[] | select(.price < 35) | .title` matches the filter row above, and jq can also build new objects, which JSONPath cannot.
 
-### Command Line (jq)
+Use JSONPath when you only need to select values and want an expression other systems can evaluate; use jq or JMESPath when the tool you are working in expects them or when you need to reshape the output.
 
-`jq` uses its own syntax but serves a similar purpose:
+## Testing queries with the ZeroTool tester
 
-```bash
-# JSONPath equivalent: $.store.inventory[*].title
-echo "$json" | jq '.store.inventory[].title'
+The [JSONPath Tester](/tools/jsonpath-tester/) evaluates RFC 9535 in your browser as you type; the JSON is not uploaded. A single match is shown as the value itself and several matches as a JSON array, with a count such as "2 matches". An empty nodelist shows "No matches found". Syntax outside the RFC is reported with its position instead of an empty result, for example:
 
-# Filter equivalent: $.store.inventory[?(@.inStock == true)]
-echo "$json" | jq '.store.inventory[] | select(.inStock == true)'
-```
+{/* jp-errors */}
+| Query | Message |
+|---|---|
+| `$.store.inventory[?(@.title =~ /.*Code/)].title` | Unsupported syntax: the =~ operator is not part of RFC 9535; use match() or search() (at character 29) |
+| `$.store.inventory.length()` | Unsupported syntax: unexpected "(" (at character 25) |
+| `store.name` | Unsupported syntax: a query must start with $ (at character 1) |
 
-## JSONPath vs jq vs XPath
-
-| Feature | JSONPath | jq | XPath |
-|---|---|---|---|
-| Input format | JSON | JSON | XML |
-| Recursive descent | `..` | `..` | `//` |
-| Filter expressions | `?(@.x > 5)` | `select(.x > 5)` | `[@x > 5]` |
-| Transforms | No | Yes (full pipeline) | Limited |
-| Standard | [RFC 9535](https://www.rfc-editor.org/rfc/rfc9535) (2024) | None | W3C standard |
-| CLI tool | No | Yes | xmllint, xmlstarlet |
-
-JSONPath is the right choice when you need a **query** — extracting values from JSON without transforming them. Use `jq` when you need to transform or reshape data. Use XPath only for XML.
-
-## Common JSONPath Mistakes
-
-**Forgetting `$` at the start**: Every expression must begin with `$`. `store.name` is invalid; `$.store.name` is correct.
-
-**Off-by-one with array indices**: JSONPath arrays are zero-indexed. `[0]` is the first element, not `[1]`.
-
-**Confusing `.` and `..`**: A single dot navigates one level. A double dot `..` descends recursively through all levels. Using `..key` when you mean `.key` will still return results but may match unexpected nested keys.
-
-**Filter syntax variation**: `?()` filter syntax varies between implementations. Always test your expressions against your specific library.
-
-## Online JSONPath Tester
-
-Testing JSONPath expressions by running code — loading a library, parsing JSON, writing the query — takes time. Our [JSONPath Tester](/tools/jsonpath-tester) runs entirely in the browser:
-
-- Paste any JSON in the left panel
-- Write a JSONPath expression and see matches instantly
-- Matches are shown as highlighted JSON: one match on its own, several matches as an array
-
-The tester follows RFC 9535: negative indexes (`[-1]`), slices (`[0:2]`), unions (`[0,1]`), filters with nested paths (`@.profile.role`), `&&` / `||` / `!`, and the functions `length()`, `count()`, `match()`, `search()` and `value()` all work. Syntax that RFC 9535 does not define, such as script expressions `[(@.length-1)]` or `=~`, shows "Unsupported syntax" with the character position instead of an empty result.
-- No installation, no backend, no API calls
-
-**[Try the JSONPath Tester →](/tools/jsonpath-tester)**
+The tester shows values only, not normalized paths, and it does not support library extensions such as Jayway's path functions or jsonpath-plus's `@parent`. If your production library is one of those in the table, test there as well before you rely on a query.
