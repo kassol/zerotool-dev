@@ -14,6 +14,9 @@
 // throw a JsonPathError with a position instead of returning an empty result. Also the tool's
 // example pills against the sample bookstore JSON.
 //
+// Guide: tables, error messages and the Python block of src/content/blog/jsonpath-tester-guide/en.mdx
+// are recomputed (see the block at the end).
+//
 // Run: node scripts/test-jsonpath-tester.mjs
 
 import { readFileSync } from 'node:fs';
@@ -315,6 +318,72 @@ err(store, '$.store.*~');
   try { run('$.store.book[(@.length-1)]'); } catch (e) { msg = e.message; }
   check('page: script expression message', page.includes(msg) && msg.includes('(at character 14)'));
   check('invalid JSON message set as text', !/innerHTML = '<span class="jpt-error">' \+ INVALID_JSON/.test(source));
+}
+
+// ---------- guide (src/content/blog/jsonpath-tester-guide/en.mdx) ----------
+// Tables after {/* jp-syntax */}, {/* jp-filters */} and {/* jp-compare */} (ZeroTool column) are
+// recomputed with the engine on the document after {/* jp-doc */}; "error" cells must throw a
+// JsonPathError and "3 titles" means three results. The jsonpath-ng column and the jp-run Python
+// block are rerun when jsonpath-ng 1.8.0 is installed (SKIP otherwise); jsonpath-plus, jsonpath and
+// Jayway columns were measured once (see the guide). jp-errors rows must equal the tool's messages.
+{
+  const eq = (name, actual, expected) => check(name, JSON.stringify(actual) === JSON.stringify(expected), 'got ' + JSON.stringify(actual) + ', expected ' + JSON.stringify(expected));
+  const { execFileSync } = await import('node:child_process');
+  const rel = 'src/content/blog/jsonpath-tester-guide/en.mdx';
+  const text = readFileSync(join(root, rel), 'utf8');
+  const doc = JSON.parse(text.match(/\{\/\* jp-doc \*\/\}\s*```json\n([\s\S]*?)```/)[1]);
+  const tableAfter = (mark) => {
+    const lines = text.slice(text.indexOf(mark)).split('\n').slice(1);
+    const first = lines.findIndex((l) => l.startsWith('|'));
+    const out = [];
+    for (let i = first; i >= 0 && i < lines.length && lines[i].startsWith('|'); i++) out.push(lines[i]);
+    return out.slice(2).map((l) => l.slice(2, -2).split(' | ').map((c) => c.trim()));
+  };
+  const code = (c) => { const m = c.match(/^`([\s\S]*)`$/); return m ? m[1] : null; };
+  const evalCell = (q) => { try { return JSON.stringify(E.jsonpath(doc, q)); } catch (e) { return e.name === 'JsonPathError' ? 'error' : 'THROW ' + e.message; } };
+  const expectCell = (c) => (c === 'error' ? 'error' : c === '3 titles' ? null : JSON.stringify(JSON.parse(code(c))));
+  for (const mark of ['{/* jp-syntax */}', '{/* jp-filters */}']) {
+    const rows = tableAfter(mark);
+    check('guide ' + mark + ' has rows', rows.length >= 9, rows.length);
+    for (const r of rows) eq('guide ' + mark + ' ' + r[0], evalCell(code(r[0])), JSON.stringify(JSON.parse(code(r[2]))));
+  }
+  const compare = tableAfter('{/* jp-compare */}');
+  check('guide comparison table has 16 rows', compare.length === 16, compare.length);
+  let ngVersion = null;
+  try { ngVersion = execFileSync('python3', ['-c', 'import importlib.metadata as m;print(m.version("jsonpath-ng"))'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { ngVersion = null; }
+  const ngOk = ngVersion === '1.8.0';
+  if (!ngOk) console.log('SKIP jsonpath-ng checks (installed: ' + (ngVersion || 'none') + ', guide measured 1.8.0)');
+  let ng = null;
+  if (ngOk) {
+    const py = 'import json,sys\nfrom jsonpath_ng.ext import parse\nd=json.loads(sys.argv[1])\nout=[]\nfor q in json.load(sys.stdin):\n    try: out.append(json.dumps([m.value for m in parse(q).find(d)], separators=(",",":")))\n    except Exception: out.append("error")\nprint(json.dumps(out))';
+    ng = JSON.parse(execFileSync('python3', ['-c', py, JSON.stringify(doc)], { input: JSON.stringify(compare.map((r) => code(r[0]))) }).toString());
+  }
+  compare.forEach((r, i) => {
+    const q = code(r[0]);
+    const got = evalCell(q);
+    const want = expectCell(r[1]);
+    if (want === null) eq('guide compare ZeroTool ' + q, JSON.parse(got).length, 3);
+    else eq('guide compare ZeroTool ' + q, got, want);
+    if (ng) {
+      const w = expectCell(r[4]);
+      if (w === null) eq('guide compare jsonpath-ng ' + q, JSON.parse(ng[i]).length, 3);
+      else eq('guide compare jsonpath-ng ' + q, ng[i], w);
+    }
+  });
+  for (const r of tableAfter('{/* jp-errors */}')) {
+    let msg = '';
+    try { E.jsonpath(doc, code(r[0])); } catch (e) { msg = 'Unsupported syntax: ' + e.message; }
+    eq('guide error message ' + r[0], msg, r[1]);
+  }
+  const run = text.match(/\{\/\* jp-run: \{"lang":"python"\} \*\/\}\s*```python\n([\s\S]*?)```/);
+  check('guide has the Python block', !!run);
+  if (run && ngOk) {
+    const out = execFileSync('python3', ['-c', run[1]]).toString().trim();
+    const shown = [...run[1].matchAll(/^# (\$.+)$/gm)].map((x) => x[1]).join('\n');
+    eq('guide Python block output matches its comments', out, shown);
+  }
+  const tpl = [/^## What (is|are) /mi, /^## .*Online/mi, /^## .* in Code$/mi, /^## (Summary|Conclusion)/mi].filter((re) => re.test(text));
+  check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
