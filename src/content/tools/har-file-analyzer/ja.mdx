@@ -1,57 +1,100 @@
 ---
-seoTitle: "HAR ファイル オンライン解析 — ネットワークウォーターフォール可視化 | ZeroTool"
-seoDescription: "ブラウザ DevTools の HAR ファイルをドロップして、リクエストウォーターフォール、ステータスコード、ヘッダー、Cookie、ボトルネックを解析。完全ブラウザ完結、HAR はブラウザ外に出ません。"
+seoTitle: "HARファイル解析・ビューア | ZeroTool"
+seoDescription: "Chrome・Firefox・Safari で書き出した HAR ファイルをブラウザ内で解析。並べ替えできるウォーターフォール、リクエスト詳細と cURL、遅い・失敗したリクエストを確認し、Cookie やトークンをマスクしたコピーを書き出せます。アップロード不要。"
 faqItems:
-  - question: "HAR ファイルとは？"
-    answer: "HAR（HTTP Archive）は JSON ベースのアーカイブ形式で、ブラウザ 1 セッション分のネットワークリクエスト全件（URL・メソッド・ステータス・ヘッダー・Cookie・タイミング・ボディ）を記録します。Chrome / Firefox / Safari / Edge の DevTools から Network パネルを .har として書き出せます。"
-  - question: "ブラウザから HAR を書き出すには？"
-    answer: "Chrome / Edge の DevTools で Network パネルを開き、上部アクションバーの「Export HAR (sanitized)」をクリックするか、リクエストを右クリックして Copy > Save all as HAR (sanitized) を選びます。sanitized 版には Cookie、Set-Cookie、Authorization ヘッダーが含まれません。これらを含めて書き出すには、先に Settings > Preferences > Network の「Allow to generate HAR with sensitive data」をオンにします。Firefox はリクエストの右クリックメニューの「Save All As HAR」、Safari は Network タブの歯車アイコンから書き出せます。"
+  - question: "HAR ファイルはどう書き出しますか？"
+    answer: "Chrome / Edge は DevTools の Network（ネットワーク）パネルで事象を再現し、エクスポートボタンを押します。Chrome 130 以降の既定の書き出しには Cookie、Set-Cookie、Authorization ヘッダーが含まれません。含める場合は設定の「ネットワーク」で「センシティブ データを含む HAR の生成を許可する」をオンにし、エクスポートボタンを長押しして「HAR（センシティブ データを含む）をエクスポート...」を選びます。Firefox はリクエスト一覧の右クリックメニュー（英語表示では Save All As HAR）、Safari は Web インスペクタの「ネットワーク」タブの書き出しボタンを使います。"
+  - question: "Chrome の既定の書き出しなら、そのまま共有できますか？"
+    answer: "そうとは限りません。Chrome が取り除くのは 3 つのヘッダーと Cookie の一覧だけで、URL のトークン、リクエストボディのパスワード、CSRF トークンや API キーのような独自ヘッダー、レスポンスボディは残ります。ファイルを読み込むと「このファイルに含まれる機密情報」に残っている件数が出ます。"
   - question: "HAR はアップロードされますか？"
-    answer: "いいえ。FileReader でブラウザ内完結で解析します。サーバー送信なし、ログイン不要、トラッキングなし。リセットを押すとメモリ上の状態が消え、リロードを跨いで HAR を永続化しません。"
-  - question: "ウォーターフォールの 6 色は何を表しますか？"
-    answer: "Chrome DevTools 標準に揃え、HAR 1.2 spec の timings にマップします：キュー (blocked)、DNS (dns)、接続 (connect — spec 上 ssl は既に含まれます)、送信 (send)、待機 / TTFB (wait)、受信 (receive)。値が -1 のフィールドは発生していないとみなし、描画しません。"
-  - question: "entry.time が timings の合計と一致しないのはなぜ？"
-    answer: "HAR 1.2 仕様では entry.time = blocked + dns + connect + send + wait + receive（非負フィールドのみ合算、ssl は connect に既に含まれるため加えません）と定められています。一致しない場合は書き出しツールが仕様非準拠です。ZeroTool は 2ms 以下の浮動小数点誤差を許容しレンダリングします。"
-  - question: "フィルタ & エクスポートで何ができますか？"
-    answer: "ステータスコード区分（2xx/3xx/4xx/5xx/その他）、リソース種類（script / stylesheet / image / json / ...）、ドメインでフィルタ。フィルタ後のサブセットを .har として書き出し、または該当リクエスト全件を再現用 cURL としてコピーできます。"
+    answer: "されません。ファイルはこのタブの中で読み込んで解析し、内容を含むリクエストは送りません。保存もしません。このツールのページは Google アナリティクスと AdSense を読み込みません。「別のファイルを開く」かページの再読み込みでメモリから消えます。"
+  - question: "entry.time とタイミングの合計が合わないのはなぜですか？"
+    answer: "HAR 1.2 では entry.time は blocked・dns・connect・send・wait・receive の合計で、ssl は connect に含まれます。Firefox は connect に TCP の時間だけを入れ、ssl を別に足します。本ツールはエントリごとにどちらの合計が合うかを見て描画します。1.5 ms を超える差は「気づいた点」と「タイミング」タブに出ます。"
+  - question: "一部のリクエストだけを書き出せますか？"
+    answer: "できます。「リクエスト」で URL の語句、ステータス、種類で絞り込み、「マスクして書き出す」で「表示中の N 件」を選びます。書き出したファイルは HAR 1.2 なので DevTools で読み込み直せます。cURL のコピーも同じ絞り込みに従います。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>ブラウザ DevTools の Network パネルからセッションを <strong>.har</strong> として書き出します。</li>
-  <li>ファイルをドロップゾーンにドラッグ（またはクリックして選択）。解析はブラウザ内で完了します。</li>
-  <li><strong>概要</strong>（統計）／<strong>ウォーターフォール</strong>（タイミング）／<strong>詳細</strong>（ヘッダー・Cookie・ボディ）／<strong>フィルタとエクスポート</strong>（切り出しダウンロード）を切り替えます。</li>
-  <li>ウォーターフォール任意行のクリックで該当リクエストの詳細にジャンプします。</li>
-  <li><strong>リセット</strong>でメモリ上の HAR を消去できます。</li>
-</ol>
+## 使い方
 
-<h2>ウォーターフォールのフェーズ</h2>
-<p>ウォーターフォールは HAR 1.2 <code>timings</code> を 6 セグメントで描画します：</p>
-<ul>
-  <li><strong>キュー / Stalled</strong> — <code>blocked</code></li>
-  <li><strong>DNS 解決</strong> — <code>dns</code></li>
-  <li><strong>初期接続</strong> — <code>connect</code>（HAR 1.2 では <code>ssl</code> も含まれる）</li>
-  <li><strong>送信</strong> — <code>send</code></li>
-  <li><strong>待機 (TTFB)</strong> — <code>wait</code></li>
-  <li><strong>受信</strong> — <code>receive</code></li>
-</ul>
+1. DevTools の Network パネルで事象を再現し、`.har` を書き出します（ブラウザごとの手順は下のよくある質問）。
+2. 上の枠にファイルをドロップするか「HAR ファイルを選択」を押します。HAR の JSON を Ctrl+V で貼り付けても読み込めます。手元にファイルがなければ「サンプル HAR で試す」。
+3. 「概要」には機密情報の件数、ページの読み込み時間、転送量、失敗したリクエスト、遅いリクエストと大きいリクエストが並びます。
+4. 「リクエスト」がウォーターフォールです。見出しで並べ替え、URL の語句（`api -login` は「api を含み login を含まない」）、ステータス、種類で絞り込み、行を押すとヘッダー・ペイロード・レスポンス・Cookie・タイミング・cURL を確認できます。
+5. 「マスクして書き出す」で、問い合わせに添付できるコピーを保存します。「概要」の「マスク済みコピーをダウンロード」は既定の設定のまま一度で保存します。
 
-<h2>プライバシー</h2>
-<p>HAR には Authorization / Cookie / レスポンスボディなど機微な情報が含まれます。クラウドアナライザへの送信はリスクが高いです。ZeroTool は <code>FileReader</code> + <code>JSON.parse</code> でブラウザ内処理し、アップロードもリロード越しの永続化も行いません。</p>
+## サポートに「機密データを含む HAR」を求められたら
 
-<h2>例：cURL でリクエストを再送する</h2>
-<p>HTTP/2 で <code>{'{"note":"costs $5"}'}</code> を POST した Chrome の HAR エントリでは、詳細ビューの cURL タブに次が表示されます。</p>
+NTT データ イントラマートのサポートサイトの FAQ「[harファイル（ブラウザのネットワークログ）の取得方法を教えてください](https://product.intra-mart.support/hc/ja/articles/16383052015769)」は、Chrome 130 以降では「センシティブ データを含む HAR の生成を許可する」をオンにしてから書き出すよう案内しています。Cookie や Authorization が調査の手がかりになるためです。
 
-```bash
-curl -X "POST" "https://api.example.com/v1/orders" -H ":authority: api.example.com" -H "content-type: application/json" -H "cookie: session=abc123" --data-raw "{\"note\":\"costs $5\"}"
+ただ、Cookie の値そのものはログイン中のセッションを表します。本ツールのマスクは値だけを `[redacted]` に置き換え、Cookie の名前と Set-Cookie の属性（Path、Secure、HttpOnly、SameSite）は残すので、「どの Cookie が送られたか」「属性が正しいか」は読み取れます。サンプル HAR のログインリクエストはこうなります。
+
+{/* har-check: redacted-login */}
+
+```text
+set-cookie: session=[redacted]; Path=/; Secure; HttpOnly; SameSite=Lax
+{"email":"shopper@example.com","password":"[redacted]","remember":true}
+{"user":{"id":42,"name":"Demo Shopper"},"access_token":"[redacted]","expires_in":3600}
 ```
 
-<p>実行前にコマンドを確認してください。値はダブルクォートで囲まれているため、POSIX シェルが <code>$5</code> を展開し、サーバーには <code>{'{"note":"costs "}'}</code> が届きます（curl 8.7.1、ローカルサーバーで確認）。ボディに <code>$</code>、バッククォート、<code>{'\\'}</code> が含まれるときは、その前後をシングルクォートに変えてください。<code>:authority</code> などの HTTP/2 疑似ヘッダーは HAR からそのままコピーされます。curl 8.7.1 はこれらを送信しないので害はありませんが、削除しても構いません。</p>
+値まで必要かどうかは問い合わせ先に確認してください。マスクしたコピーで足りることも多いはずです。
 
-<h2>制限</h2>
-<ul>
-  <li>50 MB を超えるファイルは「ファイルが大きすぎます」として読み込みません。</li>
-  <li><code>log.entries</code> 配列を持つ JSON である必要があります。それ以外の JSON では「この JSON は HAR アーカイブではありません — log.entries がありません。」と表示されます。</li>
-  <li>Cookie やトークンは削除しません。HAR が機密データ付きで書き出されている場合、詳細ビュー、書き出した .har のサブセット、「全件を cURL でコピー」にはファイル内のすべてのヘッダー（<code>Cookie</code> や <code>Authorization</code> を含む）が入ります。Chrome の既定の sanitized 書き出しでは、この 3 つのヘッダーは最初から含まれません。</li>
-  <li><code>-1</code> のタイミング値は、そのリクエストでその段階が発生しなかったことを示し（再利用した接続には DNS と接続時間がないなど）、N/A と表示されます。</li>
-</ul>
+## マスクの範囲
+
+- Cookie、Set-Cookie、Authorization の値（Bearer などの方式名は残す）と、`cookies` 一覧のすべての値。
+- 名前が認証情報らしいヘッダー、URL パラメータ（クエリとフラグメント）、フォーム、multipart、JSON のキー（深さを問わない）。token、secret、password、session、api key、signature、csrf、`code`、`sid` などが対象で、`token_type` や `Access-Control-Allow-Credentials` は対象外です。
+- それ以外の場所にあるトークン形式の文字列。JWT、Bearer の値、GitHub・Stripe・AWS などのキー形式（[APIキーマスキング](/ja/tools/secret-redactor/) と同じ規則）です。
+- 取り除いた値がファイルの別の場所（HTML や別の URL）に出てくれば、そこも置き換えます。保存前にファイルを読み込み直し、取り除いた値が 1 つも残っていないことを確かめます。
+
+メールアドレスのような個人情報は認証情報ではないので残します。残したボディの件数を報告に出すので、必要なら「追加でマスクする名前」に `email` などを入れるか、ボディごと削除してください。
+
+## ウォーターフォールの見方
+
+各バーは `startedDateTime` から始まり、[HAR 1.2 の `timings`](https://w3c.github.io/web-performance/specs/HAR/Overview.html) に沿って最大 7 つに分かれます。キュー / ストール（`blocked`）、DNS、接続、TLS（`ssl`）、送信、待機（最初のバイトまで）、受信です。`-1` はそのフェーズがなかったことを示し、「該当なし」と表示します。縦線は DOMContentLoaded と load です。
+
+Chrome と Safari は仕様どおり TLS を `connect` に含めるので、バーではその部分を TCP と TLS に分けます。Firefox は 2 つを別々に記録し、`time` には両方を足します。
+
+{/* har-check: timing-firefox */}
+
+```text
+connect 18 ms + ssl 21 ms (time 151 ms = sum of all seven)
+```
+
+仕様の式だけで計算するツールでは、Firefox の HTTPS リクエストのバーが 21 ms 短くなり、すべてに「合計が合わない」と出ます。転送量は Chrome と Safari では `_transferSize`、Firefox では転送量全体が入っている `bodySize` から読みます。
+
+## cURL をコピーするとき
+
+Chrome DevTools の「Copy as cURL」と同じ書き方です。値は一重引用符で囲み、`'` や `!` を含むときは `$'…'` を使います。`:authority` などの HTTP/2 疑似ヘッダーと Accept-Encoding は含めず、Cookie は `-b` で渡します。「マスク後の値を使う」がオンなら、ログインリクエストは次のようになります。
+
+{/* har-check: curl-login-redacted */}
+
+```bash
+curl --url 'https://api.example.com/v1/login' \
+  -H 'accept: */*' \
+  -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36' \
+  -H 'content-type: application/json' \
+  -H 'origin: https://shop.example.com' \
+  -H 'x-csrf-token: [redacted]' \
+  --data-raw '{"email":"shopper@example.com","password":"[redacted]","remember":true}'
+```
+
+Python や Go のコードにするなら [cURL コード変換](/ja/tools/curl-to-code/) に貼り付けます。
+
+## ほかの HAR ツールとの違い
+
+2026-10-01 に同じファイル（サンプル HAR に、`x-session-id` ヘッダーと 3,200 文字より後ろに入れ子の `refresh_token` を持つリクエストを加えたもの）を読み込み、マスク後の出力から 7 つの認証情報を探しました。
+
+| ツール | 出力に残ったもの |
+|---|---|
+| haranalyzer.com（日本語版）の「機密除去済みHARをダウンロード」 | HTTP/2 の `:path` ヘッダーに残った `access_token`、`sid=` のセッション ID、`x-session-id`。ボディはすべて削除 |
+| Google Admin Toolbox HAR Analyzer のマスクボタン | リクエストボディのパスワード、`x-session-id`、入れ子の `refresh_token`、HTML と `sid=` のセッション ID |
+| Chrome の既定の書き出し | Cookie・Set-Cookie・Authorization の 3 ヘッダー以外はすべて |
+| 本ツール（既定の設定） | 7 つとも置き換え済み。メールアドレスは残り、残したボディの件数を報告 |
+
+どのツールもファイルをサーバーへ送っていませんでした。ボディを丸ごと消すと手軽ですが、不具合の原因がレスポンスの中身にあることもあります。本ツールは既定では認証情報だけを置き換え、ボディの削除は選べるようにしています。
+
+## 制限
+
+- ファイルは 300 MB まで。Apple M1 Max で 68 MB・13,253 リクエストのファイルは約 0.7 秒で開き、マスクして書き出すのに約 1.3 秒、282 MB では約 2.7 秒と約 4.5 秒かかりました。その間ページは操作できません。
+- JSON で `log.entries` 配列があり `log.version` が 1.x のファイルだけを読みます。それ以外は理由を表示します。
+- Base64 で入っているボディ（画像やフォント）の中身は調べません。
+- 判定は名前の規則によります。`value` のような一般的な名前に入った認証情報は、既知のトークン形式でなければ検出できません。その名前を「追加でマスクする名前」に入れてください。

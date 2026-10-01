@@ -1,57 +1,97 @@
 ---
-seoTitle: "HAR 文件在线分析器 — 可视化网络瀑布与性能瓶颈 | ZeroTool"
-seoDescription: "拖入浏览器 DevTools 导出的 HAR 文件，分析请求瀑布、状态码、Header / Cookie 与耗时瓶颈。纯客户端，HAR 不离开浏览器。"
+seoTitle: "HAR 文件分析：瀑布图与脱敏导出 | ZeroTool"
+seoDescription: "在浏览器里打开 Chrome、Firefox、Safari 导出的 HAR 文件：可排序的请求瀑布图、请求详情与 cURL、慢请求与失败请求，并导出去掉 Cookie、令牌和密码的脱敏副本。文件不上传。"
 faqItems:
-  - question: "HAR 文件是什么？"
-    answer: "HAR（HTTP Archive）是基于 JSON 的归档格式，记录浏览器一次会话中的全部网络请求 —— URL、方法、状态、Header、Cookie、时序与响应体。Chrome、Firefox、Safari、Edge DevTools 都可以将 Network 面板导出为 .har 文件。"
-  - question: "如何从浏览器导出 HAR？"
-    answer: "Chrome / Edge DevTools 中打开 Network 面板，点击顶部操作栏的「Export HAR (sanitized)」，或右键任意请求选 Copy > Save all as HAR (sanitized)。sanitized 版本不含 Cookie、Set-Cookie 和 Authorization 请求头；要导出包含它们的版本，需先在 Settings > Preferences > Network 勾选「Allow to generate HAR with sensitive data」。Firefox 在请求的右键菜单中选『全部另存为 HAR』。Safari 在 Network 面板顶部的齿轮按钮中提供导出。"
-  - question: "我的 HAR 会被上传吗？"
-    answer: "不会。本工具用 FileReader 在浏览器内完整解析，不上传服务器、不登录、不追踪。点击重置按钮即清除内存中的状态，工具也不会跨页面刷新持久化任何 HAR 数据。"
-  - question: "瀑布的 6 段颜色代表什么？"
-    answer: "对齐 Chrome DevTools 标准，映射到 HAR 1.2 spec 的 timings 字段：排队 (blocked)、DNS (dns)、连接 (connect —— 按 spec 已包含 ssl)、发送 (send)、等待 / TTFB (wait)、接收 (receive)。某字段为 -1 表示该阶段未发生，瀑布上不画。"
-  - question: "为什么 entry.time 与 timings 之和有时不一致？"
-    answer: "HAR 1.2 规范要求 entry.time = blocked + dns + connect + send + wait + receive（仅累加非负字段；ssl 不入和因其已包含在 connect 内）。如果不一致，是导出工具不严格。ZeroTool 容忍 2ms 内的浮点误差，依然渲染请求。"
-  - question: "筛选与导出能做什么？"
-    answer: "按状态码段（2xx/3xx/4xx/5xx/其他）、资源类型（script / stylesheet / image / json / ...）、域名筛选请求。可将筛选后的子集导出为更小的 .har 文件，或一键将匹配的请求复制为可重放的 cURL 脚本。"
+  - question: "怎么从浏览器导出 HAR？"
+    answer: "Chrome / Edge：打开开发者工具的 Network（网络）面板，复现问题后点工具栏的 Export HAR (sanitized)。从 Chrome 130 起，这个默认导出不含 Cookie、Set-Cookie 和 Authorization 请求头；需要包含时，先在 Settings > Preferences > Network 勾选 Allow to generate HAR with sensitive data，再长按导出按钮选 Export HAR (with sensitive data)。Firefox 在请求列表上右键，选导出 HAR 的菜单项（英文界面为 Save All As HAR）；Safari 用网页检查器「网络」标签页的导出按钮。"
+  - question: "Chrome 导出的 sanitized 版本能直接发给别人吗？"
+    answer: "不一定。Chrome 只删掉三个请求头和 Cookie 列表，URL 里的 token、请求体里的密码、CSRF 和 API Key 之类的自定义请求头、响应体都还在。把文件拖进来看「文件中的敏感数据」卡片，上面列出还剩多少。"
+  - question: "HAR 会被上传吗？"
+    answer: "不会。文件只在当前标签页里读取和解析，页面不会发出任何带文件内容的请求，也不会保存。这个工具页不加载 Google Analytics 和 AdSense。点「打开其他文件」或刷新页面即可从内存中清掉。"
+  - question: "为什么 entry.time 和各阶段之和对不上？"
+    answer: "HAR 1.2 规定 entry.time 等于 blocked、dns、connect、send、wait、receive 之和，ssl 算在 connect 里。Firefox 的 connect 只记 TCP，ssl 单独计入总和。工具会按每个条目实际对得上的算法来画条形；相差超过 1.5 毫秒的条目列在「发现」里，「时序」标签页写出差值。"
+  - question: "能只导出一部分请求吗？"
+    answer: "能。在「请求」里按 URL 关键字、状态码类别和资源类型筛选，然后在「脱敏与导出」选「当前显示的 N 个」。导出的是标准 HAR 1.2 文件，DevTools 可以重新导入。「复制为 cURL」也按同一筛选结果生成。"
 ---
 
-<h2>使用方法</h2>
-<ol>
-  <li>打开浏览器 DevTools，进入 Network 面板，将会话导出为 <strong>.har</strong> 文件。</li>
-  <li>将文件拖到拖拽区（或点击选择）。解析过程在你的浏览器内完成。</li>
-  <li>在 <strong>概览</strong>（统计）、<strong>瀑布</strong>（时序）、<strong>详情</strong>（Header / Cookie / Body）、<strong>筛选与导出</strong>（裁切下载）之间切换。</li>
-  <li>点击任意瀑布行可直接跳到该请求的详情视图。</li>
-  <li>点击 <strong>重置</strong> 清除内存中的 HAR 数据。</li>
-</ol>
+## 使用步骤
 
-<h2>瀑布阶段</h2>
-<p>瀑布按 HAR 1.2 <code>timings</code> 字段分 6 段绘制：</p>
-<ul>
-  <li><strong>排队 / Stalled</strong> — <code>blocked</code></li>
-  <li><strong>DNS 解析</strong> — <code>dns</code></li>
-  <li><strong>建立连接</strong> — <code>connect</code>（按 HAR 1.2 已包含 <code>ssl</code>）</li>
-  <li><strong>请求发送</strong> — <code>send</code></li>
-  <li><strong>等待（TTFB）</strong> — <code>wait</code></li>
-  <li><strong>内容下载</strong> — <code>receive</code></li>
-</ul>
+1. 在开发者工具的 Network 面板里复现问题，导出 `.har` 文件（各浏览器的做法见下方常见问题）。
+2. 把文件拖到上方框里，或点「选择 HAR 文件」，也可以直接 Ctrl+V 粘贴 HAR 的 JSON。没有文件时点「用示例 HAR 试试」。
+3. 「概览」列出文件中的敏感数据、页面加载时间、传输量、失败的请求，以及最慢、最大的请求。
+4. 「请求」是瀑布图：点表头排序，用关键字（`api -login` 表示含 api、不含 login）、状态码和资源类型筛选，点一行查看标头、载荷、响应、Cookie、时序和 cURL。
+5. 「脱敏与导出」下载可以附进工单的副本。「概览」里的「下载脱敏副本」按默认选项一步完成。
 
-<h2>隐私</h2>
-<p>HAR 文件经常包含 Authorization、Cookie、响应体等敏感信息，上传到云端分析器有风险。ZeroTool 使用 <code>FileReader</code> + <code>JSON.parse</code> 在浏览器中完成解析，不上传、不持久化，刷新即清空。</p>
+## 脱敏前后对照
 
-<h2>示例：用 cURL 重放请求</h2>
-<p>对一条通过 HTTP/2 发送 <code>{'{"note":"costs $5"}'}</code> 的 Chrome HAR 记录，「详情」里的 cURL 标签生成：</p>
+示例 HAR 是一份按 Chrome「含敏感数据」格式写的模拟抓包。脱敏后，登录请求的 Set-Cookie、请求体和响应体变成：
 
-```bash
-curl -X "POST" "https://api.example.com/v1/orders" -H ":authority: api.example.com" -H "content-type: application/json" -H "cookie: session=abc123" --data-raw "{\"note\":\"costs $5\"}"
+{/* har-check: redacted-login */}
+
+```text
+set-cookie: session=[redacted]; Path=/; Secure; HttpOnly; SameSite=Lax
+{"email":"shopper@example.com","password":"[redacted]","remember":true}
+{"user":{"id":42,"name":"Demo Shopper"},"access_token":"[redacted]","expires_in":3600}
 ```
 
-<p>运行前先检查命令。各个值用双引号包裹，POSIX shell 会展开 <code>$5</code>，服务器收到的是 <code>{'{"note":"costs "}'}</code>（curl 8.7.1，对本地服务器实测）。请求体含 <code>$</code>、反引号或 <code>{'\\'}</code> 时，把它两侧的引号改成单引号。<code>:authority</code> 这类 HTTP/2 伪头部是从 HAR 原样复制的；curl 8.7.1 不会发送它们，没有影响，也可以删掉。</p>
+Cookie 名称和 `Secure`、`HttpOnly`、`SameSite` 属性保留，排查「登录后掉线」这类问题时往往就靠它们。下一个请求在 URL 和请求头里各带一次令牌：
 
-<h2>限制</h2>
-<ul>
-  <li>超过 50 MB 的文件会被拒绝，提示文件过大。</li>
-  <li>文件必须是带 <code>log.entries</code> 数组的 JSON，否则提示「该 JSON 不是 HAR 归档 —— 缺少 log.entries。」</li>
-  <li>工具不会删除 Cookie 或令牌。如果 HAR 是带敏感数据导出的，「详情」、导出的 .har 子集和「全部复制为 cURL」都会包含文件里的全部请求头，包括 <code>Cookie</code> 和 <code>Authorization</code>。Chrome 默认的 sanitized 导出已不含这三个请求头。</li>
-  <li>取值为 <code>-1</code> 的时序字段表示该请求没有这个阶段（例如复用连接时没有 DNS 和连接时间），显示为 N/A。</li>
-</ul>
+{/* har-check: redacted-orders */}
+
+```text
+https://api.example.com/v1/orders?page=1&access_token=[redacted]
+authorization: Bearer [redacted]
+```
+
+同一个会话 ID 还出现在账户页的 HTML 和统计请求的 `sid=` 参数里，也都被替换：导出时会在整个文件里查找每一个去掉的值。导出后工具把文件重新解析一遍，报告里写明「去掉的值一个都没剩下」才算完成。
+
+邮箱这类个人信息不是凭据，默认保留；报告会写出还保留了几个请求体和响应体。需要时在「另外脱敏这些名称」里填 `email`、`phone`，或直接删除请求体 / 响应体。去掉的具体规则见工具里的说明；令牌格式（JWT、Bearer、GitHub / Stripe / AWS 等密钥）与 [API Key 脱敏工具](/zh/tools/secret-redactor/) 用同一套规则。
+
+## 场景：把 HAR 导入阿里云 PTS 压测
+
+阿里云性能测试 PTS 可以直接用 HAR 生成压测场景，按[《使用HAR文件快速开始压测》](https://help.aliyun.com/zh/pts/performance-test-pts-3-0/use-cases/how-to-use-har-file-to-quickly-start-pressure-test)的说明，上传的 HAR 必须小于 10 MB，导入后每个请求都会成为一个压测 API。浏览器导出的文件常常比这大，而且混着图片、字体和第三方统计请求。
+
+先在「请求」里输入接口域名筛选，再在「脱敏与导出」里选「当前显示的」并勾选「删除响应体」，压测用不到响应体。用示例文件算一下：
+
+{/* har-check: pts-size */}
+
+```text
+full sample: 27334 bytes
+api.example.com only, response bodies removed: 8744 bytes (3 requests)
+```
+
+注意压测会照原样重放 HAR 里的 Cookie 和 Authorization。不要把自己账号的会话上传到压测平台：导出脱敏副本，再按 PTS 文档《使用Cookie模拟登录场景》为测试账号单独配置登录态。
+
+## 瀑布图怎么读
+
+每根条形从请求的 `startedDateTime` 开始，最多分七段，对应 [HAR 1.2 的 `timings`](https://w3c.github.io/web-performance/specs/HAR/Overview.html)：排队 / 阻塞（`blocked`）、DNS、连接、TLS（`ssl`）、发送、等待（首字节时间）、接收。值为 `-1` 表示没有这个阶段，例如复用的连接没有 DNS 和连接时间，显示为「不适用」。两条竖线是 DOMContentLoaded 和 load。
+
+Chrome 和 Safari 按规范把 TLS 算在 `connect` 里，条形把这一段拆成 TCP 和 TLS；Firefox 把两者分开记，`time` 里两者都算：
+
+{/* har-check: timing-firefox */}
+
+```text
+connect 18 ms + ssl 21 ms (time 151 ms = sum of all seven)
+```
+
+只按规范计算的工具会把这类 Firefox 条目的条形画短 21 毫秒，并把每个 HTTPS 请求都标成时间对不上。传输量取 Chrome / Safari 的 `_transferSize`；Firefox 把整个传输量写在 `bodySize` 里，工具按它读取。
+
+## 和其他 HAR 工具的区别
+
+2026-10-01 用同一个文件实测（示例 HAR 加一个带 `x-session-id` 请求头、在 3,200 个字符之后嵌套 `refresh_token` 的请求），在各工具的脱敏输出里查找 7 个凭据：
+
+| 工具 | 输出里还剩下的 |
+|---|---|
+| toolbox365.cn「HAR 文件在线分析」的脱敏导出 | URL 里的 `access_token`（含 HTTP/2 的 `:path` 请求头）、`sid=` 参数里的会话 ID、`x-session-id`；请求体和响应体整段删除 |
+| Google Admin Toolbox HAR Analyzer 的脱敏按钮 | 请求体里的密码、`x-session-id`、嵌套的 `refresh_token`、HTML 和 `sid=` 里的会话 ID |
+| Chrome「Export HAR (sanitized)」 | 除 Cookie、Set-Cookie、Authorization 三个请求头外全部保留 |
+| 本工具（默认选项） | 7 个都已替换；邮箱保留，报告写明保留的请求 / 响应体数量 |
+
+三者都没有把文件传到服务器。整段删除请求体最省事，但出问题的往往正是某个接口的响应内容；本工具默认只替换凭据，响应体可以选择删除。
+
+## 限制
+
+- 文件最大 300 MB。Apple M1 Max 上 68 MB、13,253 个请求的文件约 0.7 秒打开，脱敏导出约 1.3 秒；282 MB 的文件分别约 2.7 秒和 4.5 秒，期间页面不响应。
+- 只读 JSON 格式、带 `log.entries` 数组、`log.version` 为 1.x 的文件，其他文件会报出具体原因。
+- Base64 编码的响应体（图片、字体）不检查内容。
+- 按名称规则判断。凭据放在 `value` 这类普通字段名下、又不是已知令牌格式时认不出来，请把字段名填进「另外脱敏这些名称」。cURL 命令可以贴进 [cURL 转代码工具](/zh/tools/curl-to-code/)，单个请求头可以用 [HTTP Header 分析器](/zh/tools/http-header-analyzer/) 查看。
