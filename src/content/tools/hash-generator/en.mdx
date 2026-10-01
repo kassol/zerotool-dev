@@ -14,18 +14,17 @@ faqItems:
 
 <h2>How to Use</h2>
 <ol>
-  <li>Paste or type your text into the input box.</li>
-  <li>Click <strong>Generate Hashes</strong>.</li>
-  <li>All five hash values appear instantly.</li>
-  <li>Click <strong>Copy</strong> next to any hash to copy it to clipboard.</li>
+  <li>Paste or type your text into the input box. Every character counts, including spaces and line breaks at the end.</li>
+  <li>Click <strong>Generate Hashes</strong>. The text is converted to UTF-8 bytes, and MD5, SHA-1, SHA-256, SHA-384 and SHA-512 are computed from the same bytes.</li>
+  <li>Click <strong>Copy</strong> next to a hash to copy that value. <strong>Clear</strong> empties the input and the results; nothing is stored in the browser.</li>
 </ol>
 
 <h2>Which Hash Should I Use?</h2>
 <ul>
   <li><strong>MD5:</strong> Legacy checksums and non-security file verification only.</li>
-  <li><strong>SHA-1:</strong> Deprecated for security. Still used in older git commits and certificates.</li>
+  <li><strong>SHA-1:</strong> Not safe for security uses, because collisions can be produced. Git still uses SHA-1 for object names by default.</li>
   <li><strong>SHA-256:</strong> The current standard for general cryptographic hashing, digital signatures, and TLS.</li>
-  <li><strong>SHA-512:</strong> Higher security margin, preferred on 64-bit platforms where speed is comparable to SHA-256.</li>
+  <li><strong>SHA-512:</strong> Larger output and security margin; whether it is faster or slower than SHA-256 depends on the CPU.</li>
 </ul>
 <p>
   <strong>Never use MD5 or SHA-1 for password hashing.</strong> Use a slow hash function
@@ -41,8 +40,23 @@ Hashing the five characters `hello` gives:
 | MD5 | `5d41402abc4b2a76b9719d911017c592` |
 | SHA-1 | `aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d` |
 | SHA-256 | `2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824` |
+| SHA-384 | `59e1748777448c69de6b800d7a33bbfb9ff1b463e44354c3553bcdb9c666fa90125a3c79f90397bdf5f6a13de828684f` |
+| SHA-512 | `9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca72323c3d99ba5c11d7c7acc6e14b8c5da0c4663475c2e5c3adef46f73bcdec043` |
 
 If your terminal gives a different value, look for an invisible newline. `echo "hello" | sha256sum` hashes `hello` plus a line feed and prints `5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03`; `printf 'hello' | sha256sum` matches the table. The same applies here: a trailing space or line break in the input box changes every hash.
+
+## Non-ASCII Text and Encodings
+
+The two characters `你好` are six bytes in UTF-8 (`e4 bd a0 e5 a5 bd`), and the tool gives MD5 `7eca689f0d3389d9dea66ae112e5cfd7` and SHA-256 `670d9743542cae3ea7ebe36af56bd53648b0a1126162e78d81a32934a711302e`. A program that stores the same text in GBK hashes four different bytes (`c4 e3 ba c3`) and gets MD5 `b94ae3c6d892b29cf48d9bea819b27b9`. When two systems disagree about the hash of text that looks identical, compare the bytes before suspecting the hash. Common causes:
+
+- a different encoding (GBK, Shift_JIS, UTF-16);
+- a byte order mark at the start of a file: `hello` saved as UTF-8 with BOM hashes to SHA-256 `7489ebbcc2a00056ddaaaac190bce473e5c03696ea1bd8ed83cf59a174283862`;
+- Windows line endings (`\r\n`) instead of `\n`;
+- characters that look the same but are different code points, such as a composed `é` and `e` plus a combining accent.
+
+## Why Git's SHA-1 Is Different
+
+`git hash-object` does not hash the file content alone. It hashes a header, the word `blob`, a space, the size in bytes and a NUL byte, followed by the content. For a file containing `hello` and a line feed, Git reports `ce013625030ba8dba906f756967f9e9ca394464a`, while the SHA-1 of the same six bytes is `f572d396fae9206628714fb2ce00f72e94f2258f`. This tool computes the second kind of value. Git repositories still use SHA-1 object names by default; SHA-256 repositories are an opt-in format.
 
 ## Hashing Files
 
@@ -63,4 +77,6 @@ MD5, SHA-1, and the SHA-2 family are designed to be fast, which lets an attacker
 
 - Text only, encoded as UTF-8 before hashing. The same characters in another encoding (for example GBK or Shift_JIS) produce different hashes.
 - Empty input is not hashed. For reference, the SHA-256 of an empty string is `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
-- Output is lowercase hexadecimal only.
+- Output is lowercase hexadecimal only. There is no Base64 output, which some systems expect (for example the `sha256-…` values in Subresource Integrity).
+- No secret key. A hash of a message plus a password is not a message authentication code; use the [HMAC Generator](/tools/hmac-generator/) for signed webhooks and API requests.
+- SHA-3, BLAKE2 and CRC32 are not offered here. The [File Hash Checker](/tools/file-hash-checker/) adds CRC32 for files.
