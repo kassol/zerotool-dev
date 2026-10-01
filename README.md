@@ -74,7 +74,7 @@
 | JSON to Kotlin Data Class | [/tools/json-to-kotlin](https://zerotool.dev/tools/json-to-kotlin) |
 | JSON to Java POJO | [/tools/json-to-java-pojo](https://zerotool.dev/tools/json-to-java-pojo) |
 | JSON to Go Struct | [/tools/json-to-go-struct](https://zerotool.dev/tools/json-to-go-struct) |
-| Unicode Text Converter | [/tools/unicode-text-converter](https://zerotool.dev/tools/unicode-text-converter) |
+| Fancy Text Generator | [/tools/unicode-text-converter](https://zerotool.dev/tools/unicode-text-converter) |
 | OpenAPI Validator | [/tools/openapi-validator](https://zerotool.dev/tools/openapi-validator) |
 | CSV to Markdown Table | [/tools/csv-to-markdown](https://zerotool.dev/tools/csv-to-markdown) |
 | Text to Binary Translator | [/tools/text-to-binary](https://zerotool.dev/tools/text-to-binary) |
