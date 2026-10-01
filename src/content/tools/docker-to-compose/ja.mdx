@@ -3,15 +3,17 @@ seoTitle: "Docker Run → Docker Compose 変換ツール | ZeroTool"
 seoDescription: "docker runコマンドをdocker-compose.ymlに即座に変換。ポート・ボリューム・環境変数・ネットワーク・再起動ポリシーなど対応。"
 faqItems:
   - question: "対応しているdocker runフラグは？"
-    answer: "--name、-p/--publish（ポート）、-v/--volume（ボリューム）、-e/--env（環境変数）、--network、--restart、-d（デタッチ）、--cap-add、--memory、--cpus、イメージ名とコマンドに対応しています。"
+    answer: "docker run が受け付けるすべてのオプション（Docker CLI 29.4）を読み取ります。そのうち Compose のキーがある約 60 個を変換します：ports、volumes、environment、env_file、entrypoint、user、working_dir、networks、restart、labels、extra_hosts、cap_add、devices、tmpfs など（下の対応表を参照）。残りは「変換していない」と表示します。"
   - question: "生成されるComposeファイルのバージョンは？"
     answer: "version キーは出力しません。Compose Specification ではトップレベルの version は廃止扱いで、Docker Compose v2 は指定されていても警告を出すだけです。"
   - question: "サービス名はどう決まりますか？"
     answer: "--nameを指定した場合はその値がサービス名になります。未指定の場合は、イメージ名からレジストリプレフィックスとタグを除き、スラッシュをアンダースコアに置換した名前が使われます。"
   - question: "複数行のdocker runコマンドは使えますか？"
     answer: "はい。バックスラッシュで改行したコマンドを貼り付けると正しく処理されます。"
-  - question: "対応していないフラグはどうなりますか？"
-    answer: "値を取らないフラグ（--privileged など）は読み飛ばされます。値を取り、かつ対応リストにないフラグ（--env-file .env、--entrypoint /bin/sh など）は誤って解釈され、その値がイメージ名になります。変換前にこうしたフラグを外し、対応する Compose のキーを手で追加してください。"
+  - question: "Compose のキーがないオプションはどうなりますか？"
+    answer: "値は読み取るので、イメージ名がずれることはありません。ステータス欄とファイル 1 行目のコメント（例：# Not converted: --gpus all）に表示されるので、対応する Compose の設定を手で追加してください。docker run が知らないオプションは、docker run と同じくエラーになります。"
+  - question: "名前付きボリュームは宣言されますか？"
+    answer: "はい。-v のソースが名前の場合（pgdata:/var/lib/postgresql/data など）、トップレベルの volumes: に追加します。/、.、~ で始まるパスはバインドマウントなので宣言しません。"
 ---
 
 <h2>使い方</h2>
@@ -21,19 +23,6 @@ faqItems:
   <li>右パネルで生成された <strong>docker-compose.yml</strong> を確認します。</li>
   <li><strong>コピー</strong> をクリックして <code>docker-compose.yml</code> として保存します。</li>
 </ol>
-
-<h2>対応フラグ</h2>
-<ul>
-  <li><code>--name NAME</code> — サービス名</li>
-  <li><code>-p / --publish HOST:CONTAINER</code> — ポートマッピング</li>
-  <li><code>-v / --volume HOST:CONTAINER[:mode]</code> — ボリュームマウント</li>
-  <li><code>-e / --env KEY=VALUE</code> — 環境変数</li>
-  <li><code>--network NETWORK</code> — ネットワーク</li>
-  <li><code>--restart POLICY</code> — 再起動ポリシー（no・always・unless-stopped・on-failure）</li>
-  <li><code>--cap-add CAP</code> — ケーパビリティ追加</li>
-  <li><code>--memory MEM</code> — メモリ制限（例：512m、1g）</li>
-  <li><code>--cpus N</code> — CPU制限</li>
-</ul>
 
 <h2>主な用途</h2>
 <ul>
@@ -74,16 +63,12 @@ services:
       - "POSTGRES_USER=admin"
       - "POSTGRES_PASSWORD=secret"
     restart: unless-stopped
-```
 
-コンバーターはトップレベルの `volumes:` を書きません。宣言されていない名前付きボリューム（ここでは `pgdata`）を使うサービスは Compose がエラーにするので、`docker compose up -d` の前に追加します：
-
-```yaml
 volumes:
   pgdata:
 ```
 
-`-d` は削除されます。Compose では `docker compose up -d` でデタッチするためです。`--name` はサービス名になります。スクリプトが正確なコンテナ名に依存する場合は `container_name:` を自分で追加してください。
+`pgdata` は名前付きボリュームなので、トップレベルの [`volumes:`](https://docs.docker.com/reference/compose-file/volumes/) に宣言します。この部分がないと Compose はファイルを受け付けず、`docker compose config` は `service "postgres" refers to undefined volume pgdata` と報告します。`-d` は `docker compose up -d` でデタッチするため省きます。`--name` はサービス名になります。正確なコンテナ名に依存するスクリプトがあれば `container_name:` を手で追加してください。
 
 ## 例：ポート、リソース制限、既存ネットワーク
 
@@ -104,11 +89,13 @@ services:
     restart: "on-failure:3"
     cap_add:
       - NET_ADMIN
+    stdin_open: true
+    tty: true
     deploy:
       resources:
         limits:
           memory: 512m
-          cpus: '1.5'
+          cpus: "1.5"
     command: ["npm", "start"]
 
 networks:
@@ -116,42 +103,73 @@ networks:
     external: true
 ```
 
-`--name` がないとき、サービス名はイメージ名から作られます（`ghcr.io/acme/web:1.2` → `acme_web`）。`--rm`・`-i`・`-t`・`-it` は削除されます。`--network` は外部ネットワークになるため、事前に存在している必要があります（`docker network create app-net`）。
+`--name` がないとき、サービス名はイメージから決まります（`ghcr.io/acme/web:1.2` → `acme_web`）。`-it` は短いオプション `-i` と `-t` をまとめたもので、それぞれ `stdin_open` と `tty` になります。`--rm` は省きます。`--network` は外部ネットワークになるので、事前に作成しておく必要があります（`docker network create app-net`）。`--network host`、`none`、`bridge`、`container:名前` は `network_mode:` になります。
+
+## 例：Compose のキーがないオプション
+
+```bash
+docker run -d --name web --env-file .env --entrypoint /bin/sh -u 1000:1000 -w /app --gpus all nginx:1.27 -c "nginx -g 'daemon off;'"
+```
+
+```yaml
+# Not converted: --gpus all
+services:
+  web:
+    image: "nginx:1.27"
+    entrypoint: ["/bin/sh"]
+    env_file:
+      - .env
+    user: "1000:1000"
+    working_dir: /app
+    command: ["-c", "nginx -g 'daemon off;'"]
+```
+
+`docker run` の `--entrypoint` は実行ファイルを 1 つだけ取るので、要素 1 つのリストになります。イメージの後ろの引数は `command` です。`--gpus` には 1 対 1 の Compose キーがない（GPU は `deploy.resources.reservations.devices` に書く）ため、値は読み取ってイメージ名を正しく保ち、1 行目のコメントとステータス欄に表示します。
+
+上の出力はすべて `docker compose config`（Docker Compose 5.1）を通ります。ツールのテストで各例にこの確認を実行しています。
 
 ## フラグの対応表
 
 | docker run | docker-compose.yml |
 |---|---|
-| `-p`・`--publish` | `ports:`（引用符付き、ホスト IP と `/udp` を保持） |
-| `-v`・`--volume` | `volumes:` |
-| `-e`・`--env` | `environment:` に `KEY=VALUE` の項目として出力、`KEY` だけの場合もそのまま |
-| `--network` | `networks:` と、トップレベルの `external: true` ネットワーク |
-| `--restart` | `restart:` |
-| `--cap-add` | `cap_add:` |
-| `--memory`・`-m`・`--cpus` | `deploy.resources.limits` |
-| `--name` | サービス名 |
-| `-d`・`--rm`・`-i`・`-t`・`-it` | 削除 |
-| イメージとそれ以降の引数 | `image:` と `command:`（JSON 配列） |
+| `-p`, `--publish` | `ports:` |
+| `-v`, `--volume` | `volumes:`; named volumes also in the top-level `volumes:` |
+| `-e`, `--env`, `--env-file` | `environment:`, `env_file:` |
+| `--network` | `networks:` plus a top-level `external: true` network; `host`, `none`, `bridge`, `container:…` become `network_mode:` |
+| `--entrypoint` | `entrypoint:` (one-item list) |
+| `-u`, `-w`, `-h`, `--domainname` | `user:`, `working_dir:`, `hostname:`, `domainname:` |
+| `--restart`, `--pull`, `--platform` | `restart:`, `pull_policy:`, `platform:` |
+| `-l`, `--label`, `--annotation` | `labels:`, `annotations:` |
+| `--add-host`, `--dns`, `--dns-option`, `--dns-search`, `--link`, `--expose` | `extra_hosts:`, `dns:`, `dns_opt:`, `dns_search:`, `links:`, `expose:` |
+| `--cap-add`, `--cap-drop`, `--privileged`, `--security-opt`, `--device` | `cap_add:`, `cap_drop:`, `privileged:`, `security_opt:`, `devices:` |
+| `--init`, `--read-only`, `-i`, `-t` | `init:`, `read_only:`, `stdin_open:`, `tty:` |
+| `--tmpfs`, `--volumes-from`, `--shm-size`, `--sysctl` | `tmpfs:`, `volumes_from:`, `shm_size:`, `sysctls:` |
+| `--memory`, `-m`, `--cpus` | `deploy.resources.limits` |
+| `--memory-reservation`, `--memory-swap`, `--cpu-shares`, `--cpuset-cpus`, `--pids-limit` | `mem_reservation:`, `memswap_limit:`, `cpu_shares:`, `cpuset:`, `pids_limit:` |
+| `--pid`, `--ipc`, `--uts`, `--userns`, `--cgroupns`, `--stop-signal` | `pid:`, `ipc:`, `uts:`, `userns_mode:`, `cgroup:`, `stop_signal:` |
+| `--name` | service key |
+| `-d`, `--rm`, `-q`, `--detach-keys` | dropped |
+| image and the arguments after it | `image:` and `command:` (JSON array) |
 
-表のフラグは `--flag=value` 形式でも使えます。
+オプションは `--flag value`、`--flag=value`、`-p 80:80`、`-p80:80` のほか、まとめ書き（`-dit`、`-dp 80:80`）も Docker CLI と同じく使えます。
 
-## 手で追加するフラグ
+## 手で追加するオプション
 
-表にない、値を取るフラグは誤って解釈されます。その値がイメージ名として扱われ、以降はすべて `command` になります。たとえば `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"` は `image: /bin/sh` になります。変換前にこれらのフラグを外し、対応する Compose のキーを自分で書いてください（[Compose ファイルリファレンス](https://docs.docker.com/reference/compose-file/services/)）：
+次のオプションは読み取りますが変換しません。Compose のキーの形が異なるためです（[services リファレンス](https://docs.docker.com/reference/compose-file/services/)）：
 
-| docker run | Compose のキー |
+| docker run | Compose key |
 |---|---|
-| `--env-file .env` | `env_file: [".env"]` |
-| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
-| `-u`・`--user 1000:1000` | `user: "1000:1000"` |
-| `-w`・`--workdir /app` | `working_dir: /app` |
-| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
-| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
-| `--add-host`・`-l` | `extra_hosts:`・`labels:` |
+| `--health-cmd "curl -f http://localhost/"` and the other `--health-*` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--log-driver`, `--log-opt` | `logging: { driver: …, options: { … } }` |
+| `--network-alias api`, `--ip` | `networks: { app-net: { aliases: [api], ipv4_address: … } }` |
+| `--mount` | the long syntax of `volumes:` (`type`, `source`, `target`) |
+| `--gpus` | `deploy.resources.reservations.devices` |
+| `--ulimit nofile=1024:2048` | `ulimits: { nofile: { soft: 1024, hard: 2048 } }` |
+| `--stop-timeout 30` | `stop_grace_period: 30s` |
 
 ## 制限
 
-- 1回に変換できるのは `docker run` コマンド1つです。複数のコンテナは個別に変換し、サービスブロックを1つの `services:` の下にまとめてください。
-- 名前付きボリュームはトップレベルで宣言されないため、上のように追加します。
-- 表にない、値を取るフラグがあると解析が崩れます（上記参照）。
-- コマンドは `docker run`（または `run`）で始める必要があります。`docker container run` や `podman run` は「無効なdocker runコマンド」と表示されます。
+- 1 回の変換で扱うのは `docker run` コマンド 1 つです。複数のコンテナは個別に変換し、サービスブロックを 1 つの `services:` の下にまとめてください。
+- `docker run` と `docker container run` を認識します。`podman run` は認識しません。
+- `$(...)`、`$VAR`、`&&` などのシェル構文は文字のまま残ります。変数は変換前に展開するか、結果で Compose の[変数展開](https://docs.docker.com/reference/compose-file/interpolation/)を使ってください。
+- `./data` のような相対バインドパスは、Compose では compose ファイルのディレクトリ、`docker run` ではカレントディレクトリが基準です。

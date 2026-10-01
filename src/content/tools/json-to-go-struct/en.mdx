@@ -26,8 +26,8 @@ faqItems:
 <ul>
   <li><code>null</code> → <code>interface{"{}"}</code></li>
   <li>string → <code>string</code></li>
-  <li>integer number → <code>int</code></li>
-  <li>floating-point number → <code>float64</code></li>
+  <li>number without <code>.</code> or exponent → <code>int</code></li>
+  <li>number with <code>.</code> or exponent (<code>19.0</code>, <code>1e3</code>) → <code>float64</code></li>
   <li>boolean → <code>bool</code></li>
   <li>array → <code>[]T</code></li>
   <li>nullable/optional → pointer (<code>*T</code>)</li>
@@ -108,14 +108,57 @@ type RootObject struct {
 
 For a top-level array, the struct describes one element; decode into `[]RootObject`. Keys missing from some elements become pointers with `omitempty`.
 
+## Example: Same Key Twice, Decimals, and a Key Starting With a Digit
+
+```json
+{
+  "order": { "id": "A-1001", "total": 19.0, "meta": { "createdBy": "alice", "source": "web" } },
+  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } },
+  "2fa": true
+}
+```
+
+generates
+
+```go
+type RootObject struct {
+	Order Order `json:"order"`
+	Payment Payment `json:"payment"`
+	X2fa bool `json:"2fa"`
+}
+
+type Order struct {
+	Id string `json:"id"`
+	Total float64 `json:"total"`
+	Meta Meta `json:"meta"`
+}
+
+type Meta struct {
+	CreatedBy string `json:"createdBy"`
+	Source string `json:"source"`
+}
+
+type Payment struct {
+	Status string `json:"status"`
+	Meta PaymentMeta `json:"meta"`
+}
+
+type PaymentMeta struct {
+	Provider string `json:"provider"`
+	Fee float64 `json:"fee"`
+}
+```
+
+`payment.meta` has different fields from `order.meta`, so it gets its own struct named with its parent in front, `PaymentMeta`; with the same fields, both would share `Meta`. `19.0` is written with a decimal point, so `total` is `float64`: `encoding/json` refuses to decode `19.0` into an `int` field. The tool reads the number as written through the browser's JSON source text access (Chrome 114+, Firefox 135+, Safari 18.4+); browsers without it see `19` and fall back to `int`. The key `2fa` cannot start an exported Go name, so the field is `X2fa` and the tag keeps `2fa`.
+
 ## What to Fix After Generating
 
 - `null` becomes `interface{}`. Change it to a pointer of the real type, such as `*string` or `*time.Time`, after checking the API docs.
-- A number without a fraction becomes `int`. JavaScript cannot see the `.0` in `19.0`, so a price sample like that also gives `int`; use `float64` where the API sends decimals. `int` is 64 bits on 64-bit platforms.
-- `[]` and arrays with mixed element types become `[]interface{}`.
+- A number written without `.` or an exponent becomes `int`, and `19.0` or `1e3` becomes `float64`; integers and decimals mixed in one array or key give `float64`. A sample that happens to hold only whole numbers still gives `int`, so check fields such as prices. `int` is 64 bits on 64-bit platforms.
+- `[]` and arrays with other mixed element types become `[]interface{}`.
 - Field names are not adjusted to Go initialisms: `id` becomes `Id` and `url` becomes `Url`, while [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms) recommends `ID` and `URL`. The `json` tag keeps decoding correct either way.
-- Keys that cannot start a Go identifier produce invalid code: `2fa` gives a field named `2fa`, and an empty key gives a field with no name. Rename those fields; the tag keeps the original key.
-- Two nested objects with the same key name (for example `a.meta` and `b.meta`) share one struct named `Meta`, and only the first shape is kept. Rename one and add its fields.
+- A key whose field name would not start with an upper-case letter (`2fa`, `名前`) gets an `X` prefix (`X2fa`), and two keys that give the same name (`user_id`, `userId`) get a number (`UserId2`). An empty key and keys with characters a struct tag cannot hold (such as `"` or `,`) are listed in a comment instead of a field, because `encoding/json` cannot map them by tag.
+- Generated names such as `PaymentMeta` or `Meta2` come from the JSON keys; rename them to match your domain.
 - Only `json` tags are written. Add `gorm`, `bson`, or `validate` tags yourself.
 
 ## Limits

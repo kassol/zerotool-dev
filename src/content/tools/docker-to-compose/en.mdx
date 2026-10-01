@@ -3,15 +3,17 @@ seoTitle: "Docker Run to Docker Compose Converter | ZeroTool"
 seoDescription: "Convert docker run commands to docker-compose.yml instantly. Supports ports, volumes, environment variables, networks, restart policies, and more."
 faqItems:
   - question: "What docker run flags are supported?"
-    answer: "The converter supports: --name, -p/--publish (ports), -v/--volume (volumes), -e/--env (environment variables), --network, --restart, -d (detach), --cap-add, --memory, --cpus, plus the image name and optional command."
+    answer: "It reads every option that docker run accepts (Docker CLI 29.4). About 60 of them have a Compose key and are converted: ports, volumes, environment, env_file, entrypoint, user, working_dir, networks, restart, labels, extra_hosts, cap_add, devices, tmpfs, and more; see the mapping table. The rest are listed as not converted."
   - question: "What compose file version is generated?"
     answer: "It writes no version key. The Compose Specification treats the top-level version field as obsolete, and Docker Compose v2 only prints a warning when it is present."
   - question: "How is the service name derived?"
     answer: "If you use --name in your docker run command, that value is used as the service name (no container_name is written). Otherwise, the service name is derived from the image name by stripping the registry prefix and tag, and replacing slashes with underscores."
   - question: "Does it support multi-line docker run commands?"
     answer: "Yes. Paste commands with backslash line continuations and the converter handles them correctly."
-  - question: "What about flags not listed above?"
-    answer: "Flags without a value, such as --privileged, are skipped. A flag that takes a value and is not in the supported list (for example --env-file .env or --entrypoint /bin/sh) is misread: its value becomes the image name. Remove such flags before converting and add the matching Compose keys by hand."
+  - question: "What happens to options without a Compose key?"
+    answer: "Their value is still read, so the image name stays correct. They are listed in the status line and in a comment on the first line of the file (for example # Not converted: --gpus all), so you can add the matching Compose settings by hand. An option that docker run does not know is an error, as it is in docker run."
+  - question: "Are named volumes declared?"
+    answer: "Yes. A -v source that is a name, such as pgdata:/var/lib/postgresql/data, is added to a top-level volumes: section. Paths that start with /, ., or ~ are bind mounts and are not declared."
 ---
 
 <h2>How to Use</h2>
@@ -21,19 +23,6 @@ faqItems:
   <li>Review the generated <strong>docker-compose.yml</strong> in the right panel.</li>
   <li>Click <strong>Copy</strong> and save it as <code>docker-compose.yml</code> in your project.</li>
 </ol>
-
-<h2>Supported Flags</h2>
-<ul>
-  <li><code>--name NAME</code> — Service name</li>
-  <li><code>-p / --publish HOST:CONTAINER</code> — Port mappings</li>
-  <li><code>-v / --volume HOST:CONTAINER[:mode]</code> — Volume mounts</li>
-  <li><code>-e / --env KEY=VALUE</code> — Environment variables</li>
-  <li><code>--network NETWORK</code> — Network</li>
-  <li><code>--restart POLICY</code> — Restart policy (no, always, unless-stopped, on-failure)</li>
-  <li><code>--cap-add CAP</code> — Capability additions</li>
-  <li><code>--memory MEM</code> — Memory limit (e.g. 512m, 1g)</li>
-  <li><code>--cpus N</code> — CPU limit</li>
-</ul>
 
 <h2>Common Use Cases</h2>
 <ul>
@@ -74,16 +63,12 @@ services:
       - "POSTGRES_USER=admin"
       - "POSTGRES_PASSWORD=secret"
     restart: unless-stopped
-```
 
-The converter does not write the top-level `volumes:` block. Compose rejects a service that uses an undeclared named volume (`pgdata` here), so add this before you run `docker compose up -d`:
-
-```yaml
 volumes:
   pgdata:
 ```
 
-`-d` is dropped because you detach with `docker compose up -d`. `--name` becomes the service key; add `container_name:` yourself if scripts depend on the exact container name.
+`pgdata` is a named volume, so it is declared under the top-level [`volumes:`](https://docs.docker.com/reference/compose-file/volumes/) key. Without that block Compose rejects the file: `docker compose config` reports `service "postgres" refers to undefined volume pgdata`. `-d` is dropped because you detach with `docker compose up -d`. `--name` becomes the service key; add `container_name:` yourself if scripts depend on the exact container name.
 
 ## Example: Ports, Limits, and an Existing Network
 
@@ -104,11 +89,13 @@ services:
     restart: "on-failure:3"
     cap_add:
       - NET_ADMIN
+    stdin_open: true
+    tty: true
     deploy:
       resources:
         limits:
           memory: 512m
-          cpus: '1.5'
+          cpus: "1.5"
     command: ["npm", "start"]
 
 networks:
@@ -116,42 +103,73 @@ networks:
     external: true
 ```
 
-With no `--name`, the service key comes from the image (`ghcr.io/acme/web:1.2` → `acme_web`). `--rm`, `-i`, `-t`, and `-it` are dropped. `--network` becomes an external network, so it must already exist (`docker network create app-net`).
+With no `--name`, the service key comes from the image (`ghcr.io/acme/web:1.2` → `acme_web`). `-it` is the short options `-i` and `-t` together; they become `stdin_open` and `tty`. `--rm` is dropped. `--network` becomes an external network, so it must already exist (`docker network create app-net`). `--network host`, `none`, `bridge`, and `container:NAME` become `network_mode:` instead.
+
+## Example: Options Without a Compose Key
+
+```bash
+docker run -d --name web --env-file .env --entrypoint /bin/sh -u 1000:1000 -w /app --gpus all nginx:1.27 -c "nginx -g 'daemon off;'"
+```
+
+```yaml
+# Not converted: --gpus all
+services:
+  web:
+    image: "nginx:1.27"
+    entrypoint: ["/bin/sh"]
+    env_file:
+      - .env
+    user: "1000:1000"
+    working_dir: /app
+    command: ["-c", "nginx -g 'daemon off;'"]
+```
+
+`--entrypoint` takes one executable in `docker run`, so it becomes a one-item list; the arguments after the image are the `command`. `--gpus` has no single Compose key (GPUs are reserved under `deploy.resources.reservations.devices`), so the converter reads its value, keeps the image name right, and lists it in the first-line comment and the status line.
+
+Every output above passes `docker compose config` (Docker Compose 5.1); the tool's test suite runs that check on each example.
 
 ## Flag Mapping
 
 | docker run | docker-compose.yml |
 |---|---|
-| `-p`, `--publish` | `ports:` (quoted; host IP and `/udp` kept) |
-| `-v`, `--volume` | `volumes:` |
-| `-e`, `--env` | `environment:` as `KEY=VALUE` items; a bare `KEY` is kept |
-| `--network` | `networks:` plus a top-level `external: true` network |
-| `--restart` | `restart:` |
-| `--cap-add` | `cap_add:` |
+| `-p`, `--publish` | `ports:` |
+| `-v`, `--volume` | `volumes:`; named volumes also in the top-level `volumes:` |
+| `-e`, `--env`, `--env-file` | `environment:`, `env_file:` |
+| `--network` | `networks:` plus a top-level `external: true` network; `host`, `none`, `bridge`, `container:…` become `network_mode:` |
+| `--entrypoint` | `entrypoint:` (one-item list) |
+| `-u`, `-w`, `-h`, `--domainname` | `user:`, `working_dir:`, `hostname:`, `domainname:` |
+| `--restart`, `--pull`, `--platform` | `restart:`, `pull_policy:`, `platform:` |
+| `-l`, `--label`, `--annotation` | `labels:`, `annotations:` |
+| `--add-host`, `--dns`, `--dns-option`, `--dns-search`, `--link`, `--expose` | `extra_hosts:`, `dns:`, `dns_opt:`, `dns_search:`, `links:`, `expose:` |
+| `--cap-add`, `--cap-drop`, `--privileged`, `--security-opt`, `--device` | `cap_add:`, `cap_drop:`, `privileged:`, `security_opt:`, `devices:` |
+| `--init`, `--read-only`, `-i`, `-t` | `init:`, `read_only:`, `stdin_open:`, `tty:` |
+| `--tmpfs`, `--volumes-from`, `--shm-size`, `--sysctl` | `tmpfs:`, `volumes_from:`, `shm_size:`, `sysctls:` |
 | `--memory`, `-m`, `--cpus` | `deploy.resources.limits` |
+| `--memory-reservation`, `--memory-swap`, `--cpu-shares`, `--cpuset-cpus`, `--pids-limit` | `mem_reservation:`, `memswap_limit:`, `cpu_shares:`, `cpuset:`, `pids_limit:` |
+| `--pid`, `--ipc`, `--uts`, `--userns`, `--cgroupns`, `--stop-signal` | `pid:`, `ipc:`, `uts:`, `userns_mode:`, `cgroup:`, `stop_signal:` |
 | `--name` | service key |
-| `-d`, `--rm`, `-i`, `-t`, `-it` | dropped |
+| `-d`, `--rm`, `-q`, `--detach-keys` | dropped |
 | image and the arguments after it | `image:` and `command:` (JSON array) |
 
-The `--flag=value` form works for the flags in this table.
+Options can be written as `--flag value`, `--flag=value`, `-p 80:80`, `-p80:80`, or grouped (`-dit`, `-dp 80:80`), as the Docker CLI accepts.
 
-## Flags to Add by Hand
+## Options to Add by Hand
 
-Any other flag that takes a value is misread: the converter takes its value as the image name and turns everything after it into `command`. For example, `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"` comes out as `image: /bin/sh`. Remove these flags before converting, then add the Compose keys yourself ([Compose file reference](https://docs.docker.com/reference/compose-file/services/)):
+These are read but not converted, because the Compose key has a different shape ([services reference](https://docs.docker.com/reference/compose-file/services/)):
 
 | docker run | Compose key |
 |---|---|
-| `--env-file .env` | `env_file: [".env"]` |
-| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
-| `-u`, `--user 1000:1000` | `user: "1000:1000"` |
-| `-w`, `--workdir /app` | `working_dir: /app` |
-| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
-| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
-| `--add-host`, `-l` | `extra_hosts:`, `labels:` |
+| `--health-cmd "curl -f http://localhost/"` and the other `--health-*` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--log-driver`, `--log-opt` | `logging: { driver: …, options: { … } }` |
+| `--network-alias api`, `--ip` | `networks: { app-net: { aliases: [api], ipv4_address: … } }` |
+| `--mount` | the long syntax of `volumes:` (`type`, `source`, `target`) |
+| `--gpus` | `deploy.resources.reservations.devices` |
+| `--ulimit nofile=1024:2048` | `ulimits: { nofile: { soft: 1024, hard: 2048 } }` |
+| `--stop-timeout 30` | `stop_grace_period: 30s` |
 
 ## Limits
 
 - One `docker run` command per conversion. For several containers, convert each one and put the service blocks under a single `services:` key.
-- Named volumes are not declared at the top level; add them as shown above.
-- Flags outside the mapping table that take a value break the parse, as described above.
-- The command must start with `docker run` (or just `run`). `docker container run` and `podman run` show "Not a valid docker run command".
+- `docker run` and `docker container run` are recognised; `podman run` is not.
+- Shell features such as `$(...)`, `$VAR`, and `&&` are kept as literal text. Expand variables before converting, or use Compose [interpolation](https://docs.docker.com/reference/compose-file/interpolation/) in the result.
+- Relative bind paths such as `./data` are relative to the compose file's directory in Compose, and to the current directory in `docker run`.

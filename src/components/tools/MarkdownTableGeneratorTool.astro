@@ -550,25 +550,44 @@ const L = labels[lang] ?? labels['en'];
         }
       });
 
+      /* ── engine:start ── */
+      // Columns are the keys of all objects, in the order they first appear (before: only the
+      // first object's keys). Objects and arrays in a cell are written as JSON text (before:
+      // "[object Object]"); null and missing keys are empty cells.
+      function jsonToTable(data) {
+        if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
+        if (data.length === 0) throw new Error('JSON array is empty.');
+        var headers = [];
+        var seen = Object.create(null);
+        data.forEach(function (obj, i) {
+          if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+            throw new Error('Item ' + (i + 1) + ' is not a plain object.');
+          }
+          Object.keys(obj).forEach(function (k) {
+            if (!(k in seen)) { seen[k] = true; headers.push(k); }
+          });
+        });
+        var rows = data.map(function (obj) {
+          return headers.map(function (k) {
+            if (!Object.prototype.hasOwnProperty.call(obj, k)) return '';
+            var v = obj[k];
+            if (v === null) return '';
+            if (typeof v === 'object') return JSON.stringify(v);
+            return String(v);
+          });
+        });
+        return { headers: headers, rows: rows };
+      }
+      /* ── engine:end ── */
+
       /* ── JSON Paste: parse on input ── */
       document.getElementById('mdt-json-input').addEventListener('input', function () {
         var raw = this.value.trim();
         if (!raw) { clearStatus(); return; }
         try {
-          var data = JSON.parse(raw);
-          if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
-          if (data.length === 0) throw new Error('JSON array is empty.');
-          if (typeof data[0] !== 'object' || data[0] === null || Array.isArray(data[0])) {
-            throw new Error('Each item must be a plain object.');
-          }
-
-          var headers = Object.keys(data[0]);
-          var rows = data.map(function (obj) {
-            return headers.map(function (k) {
-              var v = obj[k];
-              return v == null ? '' : String(v);
-            });
-          });
+          var table = jsonToTable(JSON.parse(raw));
+          var headers = table.headers;
+          var rows = table.rows;
 
           alignments = headers.map(function () { return 'left'; });
           buildTable({ headers: headers, rows: rows });

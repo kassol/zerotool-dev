@@ -136,13 +136,54 @@ type Message =
   | { type: "image"; url: string };
 ```
 
+## 例：同じキー名のオブジェクトが 2 つある場合
+
+```json
+{
+  "order": { "id": "A-1001", "meta": { "createdBy": "alice", "source": "web" } },
+  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } }
+}
+```
+
+から生成される型：
+
+```typescript
+interface RootObject {
+  order: Order;
+  payment: Payment;
+}
+
+interface Order {
+  id: string;
+  meta: Meta;
+}
+
+interface Meta {
+  createdBy: string;
+  source: string;
+}
+
+interface Payment {
+  status: string;
+  meta: PaymentMeta;
+}
+
+interface PaymentMeta {
+  provider: string;
+  fee: number;
+}
+```
+
+`order.meta` は `Meta` という名前になります。`payment.meta` はフィールドが違うので別のインターフェースになり、親の名前を前に付けた `PaymentMeta` になります。`order.meta` と同じフィールドなら、両方とも `Meta` を共有します。2 つをすべて省略可能なフィールドの `Meta` にまとめると、どちらの API も返さないオブジェクトまで受け入れてしまうため、形ごとに型を分けています。名前がまだ使われている場合は番号を付けます（`Meta2`）。ネストしたキーがルートと同じ名前でも、ルートは指定した名前のままです。
+
 ## 手で直すところ
 
 - `null` のフィールド：`?: null` を実際の型と `| null` に置き換えます。
 - 空配列：`[]` は `unknown[]` になるので要素の型を補います。
 - 日付：ISO 8601 文字列と Unix タイムスタンプはそれぞれ `string`・`number` のままです。
 - 識別子として使えないキー（`user-name`、`2fa`）は引用符付きで出力されます。TypeScript として有効です。
-- 同じキー名のネストしたオブジェクトが2つあると（`a.meta` と `b.meta` など）、どちらもインターフェース名 `Meta` になり、最初の形だけが残ります。一方の名前を変え、フィールドを手で追加してください。
+- `PaymentMeta` や `Meta2` のような名前は JSON のキーから作られます。用途に合わせて名前を変えてください。
+- 有効な型名にならないキー（`2fa`、空のキー）は、インターフェース名の先頭に `T` を付けます（`T2fa`）。プロパティ自体は元のキーを引用符付きで使います。
 
 ## 制限
 

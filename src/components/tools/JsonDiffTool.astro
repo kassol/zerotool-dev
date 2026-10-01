@@ -121,7 +121,14 @@ const L = labels[lang];
 
   <script is:inline>
     (function () {
-      // Deep diff: returns RFC 6902 JSON Patch ops
+      /* ── engine:start ── */
+      function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+      function pointerToken(k) { return String(k).replace(/~/g, '~0').replace(/\//g, '~1'); }
+
+      // Deep diff: returns RFC 6902 JSON Patch ops. Paths are RFC 6901 JSON Pointers, where
+      // "" is the whole document. Arrays are compared index by index; elements past the end
+      // of After are removed from the highest index down, so each remove still finds its
+      // target when the operations are applied in order.
       function diff(before, after, path) {
         path = path || '';
         var ops = [];
@@ -131,7 +138,21 @@ const L = labels[lang];
         if (typeof before !== typeof after ||
             (before === null) !== (after === null) ||
             Array.isArray(before) !== Array.isArray(after)) {
-          ops.push({ op: 'replace', path: path || '/', value: after });
+          ops.push({ op: 'replace', path: path, value: after });
+          return ops;
+        }
+
+        if (Array.isArray(before)) {
+          var common = Math.min(before.length, after.length);
+          for (var i = 0; i < common; i++) {
+            ops = ops.concat(diff(before[i], after[i], path + '/' + i));
+          }
+          for (var r = before.length - 1; r >= after.length; r--) {
+            ops.push({ op: 'remove', path: path + '/' + r });
+          }
+          for (var a = before.length; a < after.length; a++) {
+            ops.push({ op: 'add', path: path + '/' + a, value: after[a] });
+          }
           return ops;
         }
 
@@ -141,10 +162,10 @@ const L = labels[lang];
           var allKeys = Array.from(new Set(keysB.concat(keysA)));
 
           allKeys.forEach(function (k) {
-            var childPath = path + '/' + k.replace(/~/g, '~0').replace(/\//g, '~1');
-            if (!(k in before)) {
+            var childPath = path + '/' + pointerToken(k);
+            if (!hasOwn(before, k)) {
               ops.push({ op: 'add', path: childPath, value: after[k] });
-            } else if (!(k in after)) {
+            } else if (!hasOwn(after, k)) {
               ops.push({ op: 'remove', path: childPath });
             } else {
               ops = ops.concat(diff(before[k], after[k], childPath));
@@ -154,11 +175,7 @@ const L = labels[lang];
         }
 
         // Primitives that differ
-        if (path === '') {
-          ops.push({ op: 'replace', path: '/', value: after });
-        } else {
-          ops.push({ op: 'replace', path: path, value: after });
-        }
+        ops.push({ op: 'replace', path: path, value: after });
         return ops;
       }
 
@@ -177,9 +194,9 @@ const L = labels[lang];
 
           allKeys.forEach(function (k) {
             var childPath = (path ? path + '.' : '') + k;
-            if (!(k in before)) {
+            if (!hasOwn(before, k)) {
               lines.push({ type: 'add', path: childPath, value: after[k] });
-            } else if (!(k in after)) {
+            } else if (!hasOwn(after, k)) {
               lines.push({ type: 'remove', path: childPath, value: before[k] });
             } else if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) {
               if (before[k] !== null && typeof before[k] === 'object' &&
@@ -195,6 +212,8 @@ const L = labels[lang];
         }
         return lines;
       }
+
+      /* ── engine:end ── */
 
       function esc(s) {
         return String(s)

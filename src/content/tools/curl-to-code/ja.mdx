@@ -3,13 +3,13 @@ seoTitle: "cURL コード変換ツール — Python・JS・Go・PHP・Node.js | 
 seoDescription: "cURLコマンドをPython requests・JavaScript fetch・Go net/http・PHP curl・Node.js axiosコードに即座に変換。登録不要、ブラウザ完結。"
 faqItems:
   - question: "対応しているcURLフラグは？"
-    answer: "主要なcURLフラグに対応しています：-X（メソッド）、-H（ヘッダー）、-d/--data/--data-raw（リクエストボディ）、-u（Basic認証）、-L（リダイレクト追跡）、--cookie（Cookieヘッダー）、-F（マルチパートフォームデータ）。"
+    answer: "curl 8.7 のすべてのオプションを読み取ります。変換するのは -X、-H、-d / --data / --data-raw / --data-binary / --data-ascii / --data-urlencode、--json、-G、-F / --form-string（ファイルアップロードを含む）、-u、--oauth2-bearer、-A、-e、-b、-I、-L、--url、--url-query です。curl の出力だけを変えるオプション（-s、-v、-o、-i、--compressed）は省き、それ以外はコード先頭のコメントに書き出します。"
   - question: "cURLコマンドはサーバーに送信されますか？"
     answer: "いいえ。すべての解析とコード生成はJavaScriptによりブラウザ内で完結します。コマンドや認証情報がデバイス外に出ることはありません。"
   - question: "生成コードにawaitが使われる理由は？"
-    answer: "JavaScript（fetch）とNode.js（axios）の例は読みやすさのためトップレベルawaitを使用しています。実際のプロジェクトではasync関数内に記述するか、.then()チェーンを使用してください。"
+    answer: "JavaScript（fetch）のコードはブラウザのコンソールと ES モジュールで動きます。Node.js のコードは ES モジュール（import axios from 'axios'）で、トップレベル await が使えます。.mjs ファイルにするか、package.json に \"type\": \"module\" を書いたプロジェクトに置いてください。"
   - question: "Basic認証はどう処理されますか？"
-    answer: "-u user:passwordフラグを使うと、認証情報をBase64エンコードしてAuthorization: Basic ...ヘッダーとして追加します。cURLと同じ動作です。"
+    answer: "-u user:password は Authorization: Basic ヘッダーになり、値は user:password の UTF-8 バイト列を Base64 にしたもので、curl が送る値と同じです。コロンがないと curl はパスワードを尋ねるため、-u user は変換していないオプションとして表示します。"
   - question: "複数行のcURLコマンドは使えますか？"
     answer: "バックスラッシュで改行した複数行のcURLコマンドも完全対応しています。そのまま貼り付けると正しく解析されます。"
 ---
@@ -21,17 +21,6 @@ faqItems:
   <li>言語タブ（Python・JavaScript・Go・PHP・Node.js）を選択します。</li>
   <li><strong>コピー</strong> をクリックして生成コードをコピーします。</li>
 </ol>
-
-<h2>対応フラグ</h2>
-<ul>
-  <li><code>-X METHOD</code> — HTTPメソッド（GET・POST・PUT・DELETEなど）</li>
-  <li><code>-H "Header: Value"</code> — カスタムリクエストヘッダー</li>
-  <li><code>-d / --data / --data-raw</code> — リクエストボディ</li>
-  <li><code>-u user:password</code> — Basic認証</li>
-  <li><code>-L</code> — リダイレクト追跡</li>
-  <li><code>--cookie "name=value"</code> — Cookieヘッダー</li>
-  <li><code>-F "field=value"</code> — マルチパートフォームデータ</li>
-</ul>
 
 <h2>主な用途</h2>
 <ul>
@@ -60,12 +49,13 @@ headers = {
     "Authorization": "Bearer TOKEN",
 }
 
-data = '{"name": "Alice", "email": "alice@example.com"}'
+data = "{\"name\": \"Alice\", \"email\": \"alice@example.com\"}"
 
 response = requests.post(
     "https://api.example.com/users",
     headers=headers,
-    data=data
+    data=data,
+    allow_redirects=False,
 )
 print(response.text)
 ```
@@ -78,58 +68,77 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
 
 func main() {
 	body := strings.NewReader("{\"name\": \"Alice\", \"email\": \"alice@example.com\"}")
-	req, _ := http.NewRequest("POST", "https://api.example.com/users", body)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer TOKEN")
+	req, err := http.NewRequest("POST", "https://api.example.com/users", body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Authorization", "Bearer TOKEN")
 
-	client := &http.Client{}
-	resp, _ := client.Do(req)
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Println(string(respBody))
 }
 ```
 
-ボディは入力した文字列のまま渡されるので、サーバーが受け取るバイト列は curl と同じです。JavaScript と PHP のタブはそれぞれ `fetch` と curl 拡張で同じリクエストを送り、Node.js のタブは `axios` を使います。
+ボディは入力した文字列そのままなので、サーバーが受け取るバイト列は curl と同じです。`allow_redirects=False` と `http.ErrUseLastResponse` があるのは、curl は `-L` がないとリダイレクトをたどらず、requests と Go の `http.Client` は既定でたどるためです。Go のコードはエラーを捨てず、どのエラーでも `log.Fatal` で止まります。
 
-## フラグの変換方法
+## コードの確認方法
 
-| curl | 生成されるコード |
+ツールのテストでは、各サンプルコマンドをローカルの HTTP サーバーに 2 回送ります。1 回は本物の `curl`、もう 1 回は生成した Python、Go、JavaScript のコードです。サーバーはメソッド、パスとクエリ、ヘッダー、ボディを比べます。multipart のボディは境界文字列がランダムなので、パートごとに比べます。Node.js の出力は `node --check` で ES モジュールとして確認します。サンプルは複数の `-d`、`-G`、`--json`、`--data-urlencode`、`-F` のファイルアップロード、`-d @file`、Basic 認証、`HEAD`、`-L` の有無によるリダイレクト、Chrome が書く `$'...'` の引用符を含みます。
+
+## オプションの変換方法
+
+規則は [curl のマニュアル](https://curl.se/docs/manpage.html)に従います：
+
+| curl | 生成コード |
 |---|---|
-| `-X`・`--request` | HTTP メソッド（`-X` がなくボディがあれば POST） |
-| `-H`・`--header` | ヘッダー。名前と値はそのまま |
-| `-d`・`--data`・`--data-raw`・`--data-ascii` | ボディの文字列 |
+| `-X`、`--request` | HTTP メソッド。指定がなければ、データ付きのリクエストは POST |
+| `-H`、`--header` | ヘッダー（名前と値はそのまま）。`Name;` は空の値を送る |
+| `-d`、`--data`、`--data-ascii`、`--data-raw`、`--data-binary` | ボディ。複数あれば `&` でつなぐ。Content-Type ヘッダーがなければ curl と同じく `Content-Type: application/x-www-form-urlencoded` を付ける |
+| `-d @file`、`--data-binary @file` | コードがファイルを読む。`-d` は curl と同じく CR と LF を取り除く |
+| `--data-urlencode` | `name=content`、`=content`、`content` を URL エンコード（空白は `+`） |
+| `--json` | ボディ、`Content-Type: application/json`、`Accept: application/json`、POST。複数あれば `&` なしで連結 |
+| `-G`、`--get` | データをクエリ文字列に入れ、メソッドは GET |
+| `-F`、`--form` | multipart のボディ：`name=value`、`name=@file`（アップロード。`;type=`、`;filename=` に対応）、`name=<file`（ファイルの中身を値にする）。境界付きの Content-Type はライブラリが書く |
 | `-u user:password` | `Authorization: Basic …` ヘッダー（`alice:s3cret` → `Basic YWxpY2U6czNjcmV0`） |
-| `-b`・`--cookie` | `Cookie` ヘッダー |
-| `-L` | リダイレクトに追従（Python では `allow_redirects=True`） |
-| `-k`・`--insecure`・`--compressed`・`-s`・`-S`・`-i`・`-v` | 削除。生成コードは TLS の検証を有効のままにします |
+| `--oauth2-bearer`、`-A`、`-e`、`-b name=value` | `Authorization: Bearer`、`User-Agent`、`Referer`、`Cookie` ヘッダー |
+| `-I`、`--head` | HEAD リクエスト |
+| `-L` | リダイレクトをたどる。ないときはたどらない |
+| `--url`、`--url-query` | URL とクエリ文字列。スキームのない URL には curl と同じく `http://` を付ける |
+| `-s`、`-S`、`-v`、`-i`、`-o`、`-w`、`--compressed` | 省く（curl の表示や保存だけを変えるため） |
+| その他のオプションと `-k` | コード先頭のコメントとステータス欄に表示。`-k` があってもコードは TLS の検証を続ける |
+
+オプションはまとめ書き（`-sSL`）や値の直結（`-XPUT`、`-H'X: 1'`）もできます。curl 8.7 にないオプションはエラーになり、URL として読まれることはありません。
 
 ## 実行前に確認すること
 
-- **ファイルのアップロード（`-F "file=@report.pdf"`）** は正しく変換されません。`@report.pdf` という文字列をそのまま送り、boundary のない `Content-Type: multipart/form-data` ヘッダーを付けます。このヘッダーを消し、ファイルは自分で開いてください。Python の例：
-
-```python
-import requests
-
-response = requests.post(
-    "https://api.example.com/upload",
-    files={"file": open("report.pdf", "rb")},
-    data={"title": "Q1 Report"},
-)
-```
-
-- **複数の `-d`** は連結されず、最後の1つだけが残ります。`-G`（データをクエリ文字列として送る）は無視されるので、パラメーターは URL に直接書いてください。
-- **`--json`**（curl 7.82 以降）は認識されず、URL が崩れます。変換前に `-H "Content-Type: application/json" -d '…'` に書き換えてください。
-- **Go** のコードはエラーを捨てています（`req, _ :=`、`resp, _ :=`）。リクエストが失敗すると `resp` が nil になり `resp.Body.Close()` で panic します。実際のコードでは `err` を確認してください。
-- **JavaScript と Node.js** のコードはトップレベル `await` を使います。ブラウザの DevTools や ES モジュールでは動きますが、Node.js タブの `require('axios')` は CommonJS ファイルではトップレベル `await` と併用できません。`.mjs` ファイルで `import axios from 'axios'` にするか、`async` 関数で包んでください。
+- **JavaScript（fetch）** はページ内で動くため、ローカルのパスを開けません。アップロードするファイルと `@file` のボディは `<input type="file">` から取り、コメントに書いた順に選びます。fetch はリダイレクトもたどり、`Cookie` や `Host` などの[禁止ヘッダー](https://developer.mozilla.org/ja/docs/Glossary/Forbidden_request_header)はブラウザが取り除きます。
+- **JavaScript タブの `name=<file` のテキスト**は改行が CRLF で送られます。`FormData` は HTML のフォームエンコード規則に従ってテキスト値の改行をそろえるためです。Python、Go、PHP、Node.js はファイルの中身をそのまま送ります。
+- **Node.js** は axios を使い、4xx・5xx の応答で例外を投げます（curl は投げません）。`maxRedirects: 0` は `-L` なしの curl に合わせたもので、3xx の応答でも例外になります。ファイルのアップロードは `fs.openAsBlob` を使うため Node.js 19.8 以降が必要です。
+- **PHP** では同じ名前の `-F` フィールドが 1 つしか送られません。PHP の配列はキーごとに値を 1 つしか持たないためです。
+- `$VAR`、`$(...)`、パイプなどのシェル構文は展開しません。`"$TOKEN"` は文字どおり `$TOKEN` になります。
 
 ## ブラウザからリクエストをコピーする
 
-Chrome や Edge の DevTools で Network パネルを開き、リクエストを右クリックして **Copy → Copy as cURL (bash)** を選びます。Windows では bash 版を選んでください。cmd 版は `^` でエスケープするため、このコンバーターでは読めません。この方法でコピーしたリクエストには Cookie やトークンが含まれがちです。このページはアクセス解析も広告も読み込まず、変換はブラウザ内で行われます。
+Chrome や Edge の DevTools で Network パネルを開き、リクエストを右クリックして **Copy → Copy as cURL (bash)** を選びます。値に引用符や改行があるとき、この形式は `$'...'` の引用符を使い、変換ツールはそれを読み取れます。Windows でも bash 版を選んでください（cmd 版は `^` でエスケープし、このツールは読み取りません）。こうしてコピーしたリクエストには Cookie やトークンが含まれがちですが、このページはアクセス解析も広告も読み込まず、変換はブラウザ内で行います。

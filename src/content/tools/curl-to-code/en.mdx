@@ -3,13 +3,13 @@ seoTitle: "cURL to Code Converter — Python, JS, Go, PHP, Node.js | ZeroTool"
 seoDescription: "Convert cURL commands to Python requests, JavaScript fetch, Go net/http, PHP curl, and Node.js axios code instantly. No signup, runs in your browser."
 faqItems:
   - question: "What flags does the converter support?"
-    answer: "The converter supports the most common cURL flags: -X (method), -H (headers), -d/--data/--data-raw (request body), -u (basic auth), -L (follow redirects), --cookie (cookie header), and -F (multipart form data)."
+    answer: "It reads every option of curl 8.7. Converted: -X, -H, -d / --data / --data-raw / --data-binary / --data-ascii / --data-urlencode, --json, -G, -F / --form-string (including file uploads), -u, --oauth2-bearer, -A, -e, -b, -I, -L, --url, --url-query. Options that only change curl's output (-s, -v, -o, -i, --compressed) are dropped; any other option is listed in a comment at the top of the code."
   - question: "Does this send my cURL command to a server?"
     answer: "No. All parsing and code generation happen entirely in your browser using JavaScript. Your cURL commands and any secrets they contain never leave your device."
   - question: "Why does the generated code use 'await'?"
-    answer: "The JavaScript (fetch) and Node.js (axios) examples use top-level await for clarity. In a real project you would wrap them in an async function or use .then() chains."
+    answer: "The JavaScript (fetch) code runs in the browser console and in ES modules. The Node.js code is an ES module (import axios from 'axios'), where top-level await is allowed; save it as a .mjs file or in a package with \"type\": \"module\"."
   - question: "How are Basic Auth credentials handled?"
-    answer: "When you use the -u user:password flag, the converter encodes the credentials as Base64 and adds an Authorization: Basic ... header to the generated code, exactly as cURL does."
+    answer: "-u user:password becomes an Authorization: Basic header with the UTF-8 bytes of user:password in Base64, as curl sends it. Without a colon curl asks for the password, so -u user is listed as not converted."
   - question: "What if my cURL command spans multiple lines?"
     answer: "Multi-line cURL commands using backslash line continuation are fully supported. Paste the entire command and the converter will handle the line breaks."
 ---
@@ -21,17 +21,6 @@ faqItems:
   <li>Select the target language tab (Python, JavaScript, Go, PHP, or Node.js).</li>
   <li>Click <strong>Copy</strong> to copy the generated code.</li>
 </ol>
-
-<h2>Supported Flags</h2>
-<ul>
-  <li><code>-X METHOD</code> — HTTP method (GET, POST, PUT, DELETE, etc.)</li>
-  <li><code>-H "Header: Value"</code> — Custom request headers</li>
-  <li><code>-d / --data / --data-raw</code> — Request body</li>
-  <li><code>-u user:password</code> — Basic authentication</li>
-  <li><code>-L</code> — Follow redirects</li>
-  <li><code>--cookie "name=value"</code> — Cookie header</li>
-  <li><code>-F "field=value"</code> — Multipart form data</li>
-</ul>
 
 <h2>Common Use Cases</h2>
 <ul>
@@ -60,12 +49,13 @@ headers = {
     "Authorization": "Bearer TOKEN",
 }
 
-data = '{"name": "Alice", "email": "alice@example.com"}'
+data = "{\"name\": \"Alice\", \"email\": \"alice@example.com\"}"
 
 response = requests.post(
     "https://api.example.com/users",
     headers=headers,
-    data=data
+    data=data,
+    allow_redirects=False,
 )
 print(response.text)
 ```
@@ -78,58 +68,77 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
 
 func main() {
 	body := strings.NewReader("{\"name\": \"Alice\", \"email\": \"alice@example.com\"}")
-	req, _ := http.NewRequest("POST", "https://api.example.com/users", body)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer TOKEN")
+	req, err := http.NewRequest("POST", "https://api.example.com/users", body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Authorization", "Bearer TOKEN")
 
-	client := &http.Client{}
-	resp, _ := client.Do(req)
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Println(string(respBody))
 }
 ```
 
-The body is passed through as the exact string you typed, so the server receives the same bytes as with curl. The JavaScript and PHP tabs produce the same request with `fetch` and the curl extension; the Node.js tab uses `axios`.
+The body is the exact string you typed, so the server receives the same bytes as with curl. `allow_redirects=False` and `http.ErrUseLastResponse` are there because curl does not follow redirects unless you pass `-L`, while requests and Go's `http.Client` follow them by default. The Go code stops with `log.Fatal` on every error instead of discarding it.
 
-## How Flags Are Converted
+## How the Code Is Checked
+
+The tool's test suite sends each sample command twice to a local HTTP server: once with the real `curl` binary and once with the generated Python, Go, and JavaScript code. The server compares method, path and query, headers, and body; multipart bodies are compared part by part, because the boundary is random. The Node.js output is checked as an ES module with `node --check`. The samples cover several `-d` options, `-G`, `--json`, `--data-urlencode`, `-F` file uploads, `-d @file`, Basic auth, `HEAD`, redirects with and without `-L`, and the `$'...'` quoting that Chrome writes.
+
+## How Options Are Converted
+
+Rules follow the [curl manual](https://curl.se/docs/manpage.html):
 
 | curl | Generated code |
 |---|---|
-| `-X`, `--request` | HTTP method (without `-X`, a request with a body becomes POST) |
-| `-H`, `--header` | Header map, names and values unchanged |
-| `-d`, `--data`, `--data-raw`, `--data-ascii` | Body string |
+| `-X`, `--request` | HTTP method; without it, a request with data is POST |
+| `-H`, `--header` | Header, name and value unchanged; `Name;` sends an empty value |
+| `-d`, `--data`, `--data-ascii`, `--data-raw`, `--data-binary` | Body. Several of them are joined with `&`. Without a Content-Type header, `Content-Type: application/x-www-form-urlencoded` is added, as curl sends it |
+| `-d @file`, `--data-binary @file` | The code reads the file; for `-d` it removes CR and LF, as curl does |
+| `--data-urlencode` | `name=content`, `=content`, and `content` are URL-encoded (space becomes `+`) |
+| `--json` | Body, `Content-Type: application/json`, `Accept: application/json`, POST; several are joined without `&` |
+| `-G`, `--get` | The data goes into the query string and the method is GET |
+| `-F`, `--form` | Multipart body: `name=value`, `name=@file` (upload, with `;type=` and `;filename=`), `name=<file` (file text as a value). The library writes the Content-Type with its boundary |
 | `-u user:password` | `Authorization: Basic …` header (`alice:s3cret` → `Basic YWxpY2U6czNjcmV0`) |
-| `-b`, `--cookie` | `Cookie` header |
-| `-L` | Follow redirects (`allow_redirects=True` in Python) |
-| `-k`, `--insecure`, `--compressed`, `-s`, `-S`, `-i`, `-v` | Dropped; the generated code keeps TLS verification on |
+| `--oauth2-bearer`, `-A`, `-e`, `-b name=value` | `Authorization: Bearer`, `User-Agent`, `Referer`, `Cookie` headers |
+| `-I`, `--head` | HEAD request |
+| `-L` | Follow redirects; without it, the code does not follow them |
+| `--url`, `--url-query` | URL and query string; a URL without a scheme gets `http://`, as curl assumes |
+| `-s`, `-S`, `-v`, `-i`, `-o`, `-w`, `--compressed` | Dropped: they only change what curl prints or saves |
+| Any other option, and `-k` | Listed in a comment at the top of the code and in the status line. With `-k` the code keeps TLS verification on |
+
+Options can be grouped (`-sSL`) or have the value attached (`-XPUT`, `-H'X: 1'`). An option that curl 8.7 does not have is an error instead of being read as the URL.
 
 ## Check These Before You Run the Code
 
-- **File uploads (`-F "file=@report.pdf"`)** are not converted correctly: the code sends the literal text `@report.pdf` and sets a `Content-Type: multipart/form-data` header without a boundary. Delete that header and open the file yourself, for example in Python:
-
-```python
-import requests
-
-response = requests.post(
-    "https://api.example.com/upload",
-    files={"file": open("report.pdf", "rb")},
-    data={"title": "Q1 Report"},
-)
-```
-
-- **Several `-d` flags** are not joined; only the last one is kept. `-G` (send data as a query string) is ignored, so put the query in the URL instead.
-- **`--json`** (curl 7.82+) is not recognized and breaks the URL. Rewrite it as `-H "Content-Type: application/json" -d '…'` before converting.
-- **Go** output discards errors (`req, _ :=`, `resp, _ :=`). If the request fails, `resp` is nil and `resp.Body.Close()` panics. Check `err` in real code.
-- **JavaScript and Node.js** output uses top-level `await`. It runs in browser DevTools and ES modules; the Node.js tab also uses `require('axios')`, which cannot be combined with top-level `await` in a CommonJS file. Use `import axios from 'axios'` in an `.mjs` file or wrap the code in an `async` function.
+- **JavaScript (fetch)** runs in a page, which cannot open local paths. File uploads and `@file` bodies come from an `<input type="file">`, in the order the comment lists them. fetch also follows redirects, and the browser drops [forbidden request headers](https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header) such as `Cookie` and `Host`.
+- **Text from `name=<file` in the JavaScript tab** is sent with CRLF line breaks: `FormData` normalizes line breaks in text values, as the HTML form encoding rules require. Python, Go, PHP, and Node.js send the file text as is.
+- **Node.js** uses axios, which throws on 4xx and 5xx responses; curl does not. `maxRedirects: 0` mirrors curl without `-L`, so a 3xx response also throws. File uploads use `fs.openAsBlob`, which needs Node.js 19.8 or later.
+- **PHP** sends several `-F` fields with the same name only once, because a PHP array keeps one value per key.
+- Shell syntax such as `$VAR`, `$(...)`, and pipes is not expanded: `"$TOKEN"` stays the literal text `$TOKEN`.
 
 ## Copy a Request From the Browser
 
-In Chrome or Edge DevTools, open the Network panel, right-click a request, and choose **Copy → Copy as cURL (bash)**. On Windows, pick the bash variant: the cmd variant uses `^` escapes that this converter does not read. Requests copied this way often contain cookies and tokens; this page does not load analytics or ads, and the conversion runs in your browser.
+In Chrome or Edge DevTools, open the Network panel, right-click a request, and choose **Copy → Copy as cURL (bash)**. The converter reads the `$'...'` quoting that this variant uses for values with quotes or line breaks. On Windows, pick the bash variant: the cmd variant uses `^` escapes that this converter does not read. Requests copied this way often contain cookies and tokens; this page does not load analytics or ads, and the conversion runs in your browser.
