@@ -213,8 +213,9 @@ async function endToEnd(name, curlArgs, opts = {}) {
   if (!parsed || parsed.error) return;
   if (!haveCurl) { skip(name); return; }
   const keyHeaders = opts.headers || [];
-  // `sh -c` so the command is split by a real shell, exactly as a user would run it.
-  const ref = await capture(() => run('sh', ['-c', cmd + ' -s -o /dev/null']));
+  // `bash -c` so the command is split by a real shell as a user would run it (bash, not sh:
+  // Ubuntu's sh is dash, which does not read the $'...' quoting that DevTools writes).
+  const ref = await capture(() => run('bash', ['-c', cmd + ' -s -o /dev/null']));
   check(name + ': curl ran', ref.result.status === 0, ref.result.err);
   const expected = ref.requests.map((r) => summary(r, keyHeaders));
 
