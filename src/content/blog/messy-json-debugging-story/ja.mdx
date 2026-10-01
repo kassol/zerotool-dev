@@ -2,8 +2,10 @@
 title: "散らかったJSONからクリーンなAPIへ：実録デバッグ物語"
 description: "本番webhookの「サイレント失敗」を45分で追い詰めた実話。ブラウザツールでトークンを解読し、payloadをdiffし、フォーマットし、ついにバグを掴むまで。"
 pubDate: 2026-04-14
+updatedDate: 2026-10-01
 lang: "ja"
 tags: ["api-debugging", "json", "developer-workflow", "debugging-story", "web-development"]
+noindex: true
 ---
 
 物語の幕開けは、いつものように、ほぼ何の情報もないSlackメッセージだった。
@@ -31,9 +33,9 @@ tags: ["api-debugging", "json", "developer-workflow", "debugging-story", "web-de
 最初から行こう。該当時間帯のインバウンドwebhookログを当たる。
 
 ```
-[2024-01-15 14:32:18] POST /webhooks/orders — 200 OK — 23ms
-[2024-01-15 14:33:45] POST /webhooks/orders — 200 OK — 18ms
-[2024-01-15 14:34:02] POST /webhooks/orders — 200 OK — 31ms
+[2024-01-15 15:32:18] POST /webhooks/orders — 200 OK — 23ms
+[2024-01-15 15:33:45] POST /webhooks/orders — 200 OK — 18ms
+[2024-01-15 15:34:02] POST /webhooks/orders — 200 OK — 31ms
 ```
 
 3件のwebhookを受信、ack済み。エンドポイントは200を返している。表面上は問題なし — ただし注文はDBに無い。問題はステップ2だ：受信はしたが、処理が黙って失敗している。
@@ -96,7 +98,7 @@ tags: ["api-debugging", "json", "developer-workflow", "debugging-story", "web-de
 
 これでようやく頭が回り出す。すぐ目に留まったのは：
 
-- `created_at`はUnixタイムスタンプ（1705332738）。想定通りだが念のため検証する。[タイムスタンプ変換器](/ja/tools/timestamp-converter/)に貼り付け：**Jan 15, 2024, 14:32:18 UTC**。ログの時刻と一致。OK。
+- `created_at`はUnixタイムスタンプ（1705332738）。想定通りだが念のため検証する。[タイムスタンプ変換器](/ja/tools/timestamp-converter/)に貼り付け：**Jan 15, 2024, 15:32:18 UTC**。ログの時刻と一致。OK。
 - `total`はセント単位（11297 = $112.97）。アイテム価格と整合（4999 = $49.99、1299 = $12.99、2×4999+1299 = 11297）。OK。
 - `customer`内に`metadata`フィールドがある。これは要メモ — 非標準構造で、スキーマ検証段階で詰まる可能性がある。
 
@@ -155,6 +157,10 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3aH...
         "customer": {
           "type": "object",
           "required": ["id", "email"],
+          "properties": {
+            "id": { "type": "string" },
+            "email": { "type": "string" }
+          },
           "additionalProperties": false
         }
       }
@@ -165,7 +171,7 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3aH...
 
 これだ。スキーマの`customer`オブジェクトに`"additionalProperties": false`が指定されている。実際のpayloadではcustomerに`metadata`フィールドが付いている。スキーマ検証はpayloadを拒否している — だがそのエラーはwebhookハンドラ内で握り潰されていて、表に出てこなかった。
 
-実際のpayloadをこのスキーマと一緒に[JSON Schema バリデーター](/ja/tools/json-schema-validator/)に通すと裏付けが取れる：`Additional properties are not allowed ('metadata' was unexpected)`。
+実際のpayloadをこのスキーマと一緒に[JSON Schema バリデーター](/ja/tools/json-schema-validator/)に通すと裏付けが取れる：`/data/customer must NOT have additional properties (additionalProperty: "metadata")`。
 
 バグは2つあった：
 

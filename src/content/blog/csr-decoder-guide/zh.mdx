@@ -2,13 +2,15 @@
 title: "CA 为什么拒签你的 CSR——以及如何提前发现"
 description: "证书颁发机构签发 PKCS#10 请求前会检查的七件事、为什么只写 Common Name 不写 SAN 会签出一张没用的证书，以及如何自己验证 CSR 的自签名。"
 pubDate: 2026-08-02
+updatedDate: 2026-10-01
 lang: "zh"
 tags: ["csr", "pkcs10", "ssl", "x509", "developer-tools"]
+noindex: true
 ---
 
-证书是周五送到的。安装干净利落，证书链校验通过，有效期还有两年——然后每个访问站点的浏览器都抛出 `NET::ERR_CERT_COMMON_NAME_INVALID`。
+内部 CA 上有一种常见故障：证书安装干净利落，证书链校验通过——然后每个访问站点的浏览器都抛出 `NET::ERR_CERT_COMMON_NAME_INVALID`。
 
-那份 CSR 是用一份只设置了 Common Name 的配置生成的，没有 `subjectAltName`。CA 签了，因为请求本身结构上挑不出毛病；签出来的东西按 X.509 的字面规定确实是一张有效证书——一张什么都不保护的有效证书。浏览器早在多年前就不再用 Common Name 做主机名匹配了，而真正起作用的那个名字，从头到尾就没被申请过。
+那份 CSR 是用一份只设置了 Common Name 的配置生成的，没有 `subjectAltName`。内部 CA 签了，因为请求本身结构上挑不出毛病；签出来的东西按 X.509 的字面规定确实是一张有效证书——一张什么都不保护的有效证书。浏览器早在多年前就不再用 Common Name 做主机名匹配了，而真正起作用的那个名字，从头到尾就没被申请过。
 
 这类故障在浏览器拒绝连接之前的每一步都是隐形的。CSR 看着没问题，`openssl req -noout -text` 打印出的 Subject 和你预期的一模一样，CA 收了，证书是真的。
 
@@ -32,7 +34,7 @@ CSR 里永远不会有的是私钥。请求中的任何内容都无法用来冒�
 
 ## CA 会跑的七项检查
 
-其中四项来自 CA/Browser Forum 基线要求（Baseline Requirements）而非任何 RFC，这正是一份格式完全正确的 CSR 仍然会被拒的原因。
+其中六项来自 CA/Browser Forum 基线要求（Baseline Requirements）而非任何 RFC，这正是一份格式完全正确的 CSR 仍然会被拒的原因。
 
 | 检查项 | 何时被拒 | 依据 |
 |---|---|---|
@@ -40,11 +42,11 @@ CSR 里永远不会有的是私钥。请求中的任何内容都无法用来冒�
 | 密钥强度 | RSA 低于 2048 位，或 EC 曲线低于 256 位 | BR 6.1.5 |
 | 签名摘要算法 | SHA-1 或 MD5 | BR 7.1.3.2 |
 | 存在 `subjectAltName` | 请求里一个域名都没申请 | BR 7.1.4.2.1 |
-| CN 出现在 SAN 列表中 | Common Name 指定的主机不在 SAN 集合内 | 浏览器行为，不在 BR 内 |
+| CN 出现在 SAN 列表中 | Common Name 指定的主机不在 SAN 集合内 | BR（subject 里如果有 commonName，必须是 SAN 中的某个值） |
 | 通配符位置 | `*` 不是完整的最左标签 | BR 3.2.2.6 |
 | 域名可公网解析 | `.local`、`.internal`、单标签主机名、私有 IP 段 | BR 7.1.4.2.1 |
 
-第五行就是上文那场周五事故的元凶，也是唯一一项没有任何 CA 有义务替你拦下来的检查。签发一张 CN 不在 SAN 列表里的证书，在 CA 自己的校验流程中不违反任何规则——那是你的问题，由你的用户替你发现。
+上文那场事故对应第四、第五行。公开受信的 CA 不能签发没有 SAN、或 CN 不在 SAN 列表里的证书，所以这类故障出在照单签发的内部 CA 和私有 CA 上——那是你的问题，由你的用户替你发现。
 
 ## 自己验证自签名
 
@@ -129,7 +131,7 @@ if cn and cn not in names:
 
 如果证书来自 Let's Encrypt 或任何一家 ACME CA，你精心填写的 Subject 大部分会被丢掉。RFC 8555 的 finalize 阶段确实接收一份 PKCS#10 请求，但 ACME 服务器只从 SAN 列表和 CN 推导它要校验的标识符，Let's Encrypt 会直接忽略其余所有 Subject 属性。组织名、部门、国家、城市——没有一个会进入签发的证书，因为域名验证型（DV）证书按定义就不携带组织身份。
 
-由此有两个推论。第一，为 ACME 流程准备的 CSR 只需要两样东西正确：公钥和 SAN 列表，其余都是会被剥掉的装饰。第二，finalize 请求里的标识符必须是订单中已授权标识符的子集，否则服务器返回的是一份 `malformed` 问题文档而不是证书——这相当于 ACME 版本的「有 CN 无 SAN」故障，只是发现得更早，报错也更明确。
+由此有两个推论。第一，为 ACME 流程准备的 CSR 只需要两样东西正确：公钥和 SAN 列表，其余都是会被剥掉的装饰。第二，finalize 请求里的标识符必须与订单中已授权的标识符完全一致（[RFC 8555 §7.4](https://www.rfc-editor.org/rfc/rfc8555#section-7.4)），否则服务器返回的是错误而不是证书，Let's Encrypt 返回的是 `unauthorized` 类型的问题文档：`CSR does not specify same identifiers as Order`——这相当于 ACME 版本的「有 CN 无 SAN」故障，只是发现得更早，报错也更明确。
 
 大多数 ACME 客户端自己生成 CSR 且从不给你看，这是正确的默认行为。你会亲眼见到 CSR 的场合，是客户端被配置为使用预先生成的 CSR——常见于密钥存放在 HSM 中，或合规流程要求密钥必须在目标主机上生成的场景。而这恰恰是一份手工构造的 CSR 未经复核就抵达 CA 的路径。
 

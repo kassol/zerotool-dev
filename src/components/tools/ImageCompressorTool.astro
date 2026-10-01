@@ -86,6 +86,7 @@
           unsupported: 'Unsupported format — try exiftool / ImageMagick locally',
           decodeFailed: 'Could not decode this image',
           encodeFailed: 'Browser could not encode the output',
+          fellBack: 'This browser cannot encode {req}, so it saved {got}. The file name uses the real format.',
           pngNote: 'PNG is lossless — quality slider disabled',
         },
         zh: {
@@ -101,6 +102,7 @@
           unsupported: '不支持的格式 — 请用 exiftool / ImageMagick 本地处理',
           decodeFailed: '无法解码此图片',
           encodeFailed: '浏览器无法编码该输出',
+          fellBack: '当前浏览器无法编码 {req}，已保存为 {got}，文件名按实际格式命名。',
           pngNote: 'PNG 是无损格式，质量滑块不生效',
         },
         ja: {
@@ -116,6 +118,7 @@
           unsupported: '非対応フォーマット — exiftool / ImageMagick をローカルで使用してください',
           decodeFailed: 'この画像をデコードできません',
           encodeFailed: 'ブラウザが出力をエンコードできません',
+          fellBack: 'このブラウザーは {req} をエンコードできないため {got} で保存しました。ファイル名は実際の形式に合わせています。',
           pngNote: 'PNG はロスレス — 品質スライダーは無効',
         },
         ko: {
@@ -131,6 +134,7 @@
           unsupported: '지원하지 않는 포맷 — exiftool / ImageMagick을 로컬에서 사용하세요',
           decodeFailed: '이 이미지를 디코딩할 수 없습니다',
           encodeFailed: '브라우저가 출력을 인코딩할 수 없습니다',
+          fellBack: '이 브라우저는 {req}를 인코딩할 수 없어 {got}로 저장했습니다. 파일 이름은 실제 형식을 따릅니다.',
           pngNote: 'PNG는 무손실 — 품질 슬라이더 비활성화',
         },
       };
@@ -212,6 +216,7 @@
         return fmt === 'keep' ? origMime : fmt;
       }
 
+      /* ── engine:start ── */
       function extFor(mime) {
         if (mime === 'image/jpeg') return '.jpg';
         if (mime === 'image/png') return '.png';
@@ -224,6 +229,15 @@
         var base = name.replace(/\.[^.]+$/, '');
         return base + extFor(outMime);
       }
+
+      // HTML canvas toBlob() and OffscreenCanvas convertToBlob() return PNG when the browser
+      // has no encoder for the requested type (always for GIF). Name the file after the
+      // type of the blob that was produced, and report the fallback.
+      function resultFormat(name, requestedMime, blobType) {
+        var actual = blobType || requestedMime;
+        return { outName: renameOut(name, actual), mime: actual, fellBack: actual !== requestedMime };
+      }
+      /* ── engine:end ── */
 
       function canvasToBlobPromise(canvas, mime, quality) {
         if (canvas.convertToBlob) {
@@ -294,10 +308,14 @@
             // One URL per blob, tracked so we can revoke it on clear / next batch.
             // The same URL serves both the <img> thumbnail and the <a> download link.
             var url = trackUrl(URL.createObjectURL(blob));
+            var fmtInfo = resultFormat(file.name, outMime, blob.type);
             return {
               ok: true,
               origName: file.name,
-              outName: renameOut(file.name, outMime),
+              outName: fmtInfo.outName,
+              fellBack: fmtInfo.fellBack,
+              requestedMime: outMime,
+              outMime: fmtInfo.mime,
               origSize: file.size,
               outSize: blob.size,
               origDim: { w: origW, h: origH },
@@ -336,6 +354,7 @@
           '<div class="ic-card-info">' +
             '<div class="ic-card-name" title="' + esc(item.outName) + '">' + esc(item.outName) + '</div>' +
             '<div class="ic-card-sizes">' + sizesLine + '</div>' +
+            (item.fellBack ? '<div class="ic-card-note">' + esc(t.fellBack.replace('{req}', item.requestedMime).replace('{got}', item.outMime)) + '</div>' : '') +
           '</div>' +
           '<a class="btn-copy ic-dl" href="' + esc(item.url) + '" download="' + esc(item.outName) + '">' + t.download + '</a>';
         resultsEl.appendChild(card);
@@ -561,7 +580,7 @@
       flex-direction: column;
       gap: 0.6rem;
     }
-    .ic-card {
+    .ic-results :global(.ic-card) {
       display: flex;
       align-items: center;
       gap: 0.75rem;
@@ -570,19 +589,19 @@
       background: var(--color-bg-secondary);
       box-shadow: inset 0 0 0 1px var(--color-border-soft);
     }
-    .ic-card-error {
+    .ic-results :global(.ic-card-error) {
       flex-direction: column;
       align-items: flex-start;
       gap: 0.25rem;
       background: color-mix(in oklch, var(--color-danger) 8%, var(--color-bg-secondary));
       box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 35%, transparent);
     }
-    .ic-card-error .ic-card-name { color: var(--color-danger); }
-    .ic-card-err {
+    .ic-results :global(.ic-card-error .ic-card-name) { color: var(--color-danger); }
+    .ic-results :global(.ic-card-err) {
       font-size: 0.82rem;
       color: var(--color-danger);
     }
-    .ic-thumb {
+    .ic-results :global(.ic-thumb) {
       width: 52px;
       height: 52px;
       object-fit: cover;
@@ -591,14 +610,14 @@
       flex-shrink: 0;
       background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px;
     }
-    .ic-card-info {
+    .ic-results :global(.ic-card-info) {
       flex: 1;
       min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 0.2rem;
     }
-    .ic-card-name {
+    .ic-results :global(.ic-card-name) {
       font-size: 0.85rem;
       font-weight: 660;
       color: var(--color-text);
@@ -606,14 +625,18 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .ic-card-sizes {
+    .ic-results :global(.ic-card-sizes) {
       font-family: var(--font-mono);
       font-size: 0.78rem;
       color: var(--color-text-secondary);
     }
-    .ic-saved { color: var(--color-success); font-weight: 700; }
-    .ic-larger { color: var(--color-danger); font-weight: 700; }
-    .ic-dl {
+    .ic-results :global(.ic-saved) { color: var(--color-success); font-weight: 700; }
+    .ic-results :global(.ic-larger) { color: var(--color-danger); font-weight: 700; }
+    .ic-results :global(.ic-card-note) {
+      font-size: 0.78rem;
+      color: var(--color-text-muted);
+    }
+    .ic-results :global(.ic-dl) {
       flex-shrink: 0;
       text-decoration: none;
     }

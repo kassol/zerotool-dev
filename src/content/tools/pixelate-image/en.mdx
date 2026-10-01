@@ -29,6 +29,39 @@ faqItems:
   <li><strong>Solid fill</strong> — replaces the area with one flat color. The only option here that destroys the underlying pixels completely. Always use this for passwords, tokens, API keys, and anything you paste into an AI chat.</li>
 </ul>
 
+<h2>What Each Effect Does to the Pixels</h2>
+<p>
+  Each time you change a setting, the tool redraws the original image and applies the effect again, so effects never stack.
+  The numbers below come from the tool's own pixelate function.
+</p>
+<ul>
+  <li><strong>Pixelate</strong> (block size 4–64 px, default 16) splits each area into square cells, starting at the area's top-left corner, and paints each cell with the average color of its own pixels. A 2 × 2 cell with two black and two white pixels becomes <code>rgb(128, 128, 128)</code>. Color is weighted by alpha: a cell with two opaque red pixels and two fully transparent pixels becomes red at half opacity (<code>255, 0, 0, alpha 128</code>), not dark red.</li>
+  <li><strong>Edge cells shrink to fit.</strong> An area 100 px wide at block size 16 gives six 16 px columns and a last column 4 px wide (pixels 96–99). Edge cells average only their own pixels and never read pixels outside the area.</li>
+  <li><strong>Blur</strong> (radius 2–40 px, default 12) draws the area onto a small canvas of <code>ceil(width / radius)</code> × <code>ceil(height / radius)</code> pixels with smoothing on, then scales it back up. A 300 × 40 area at radius 12 keeps 25 × 4 = 100 samples. The same area pixelated at block 16 keeps 19 × 3 = 57 cells. Blur keeps about as much information as pixelation; the smoothing only hides the cell edges.</li>
+  <li><strong>Solid fill</strong> paints the area with one opaque color (default black). Nothing of the original pixels remains.</li>
+  <li>The dashed outlines are drawn only in the preview. Download and Copy image render the image again without them.</li>
+</ul>
+
+<h2>Why Pixelated Text Can Be Recovered</h2>
+<p>
+  Pixelation and blur are lossy, but an attacker does not need to reverse the math. They render guesses in the same font, apply the same filter, and compare the blocks.
+  Text in a known font is a small set of guesses, so this works well:
+</p>
+<ul>
+  <li><a href="https://github.com/spipm/Depix">Depix</a> (2020) recovers text from screenshots pixelated with a linear box filter, the same kind of filter this tool's Pixelate uses, by matching blocks against a rendered character sequence.</li>
+  <li>Bishop Fox's <a href="https://bishopfox.com/blog/unredacter-tool-never-pixelation">Unredacter</a> (2022) guesses one character at a time and also tries every grid offset, so a grid that does not line up with the text does not help.</li>
+  <li><a href="https://petsymposium.org/popets/2016/popets-2016-0047.php">Hill, Zhou, Saul and Shacham (PoPETs 2016)</a> recovered readable text under a mosaic coarser than the font, after heavy JPEG compression, and from blurred text. Their conclusion: mosaicing and blurring "are not viable approaches for text redaction."</li>
+</ul>
+<p>For faces, <a href="https://arxiv.org/abs/1609.00408">McPherson, Shokri and Shmatikov (2016)</a> trained models that identify people in mosaiced and blurred images. Use Solid fill when identity matters.</p>
+
+<h2>What Still Leaks After a Correct Redaction</h2>
+<ul>
+  <li><strong>Length.</strong> A black bar that fits the text exactly shows how many characters were there; with a monospace font, the exact count. Draw the bar wider than short secrets such as PINs.</li>
+  <li><strong>The file name.</strong> The download keeps your base name and adds <code>-pixelated</code>, so <code>passport-jane-doe.jpg</code> becomes <code>passport-jane-doe-pixelated.png</code>. Pasted images are saved as <code>pasted-image-pixelated</code>. Rename the file if the name identifies someone.</li>
+  <li><strong>The rest of the screenshot.</strong> Tab titles, the address bar, notification toasts, autocomplete lists and the same key further down a log often show the secret again.</li>
+  <li><strong>The original file.</strong> Redaction makes a new file; the original stays on disk and in any photo backup. The export is built from canvas pixels only, so it has none of the original's EXIF or GPS data and no leftover bytes from the original file, unlike the 2023 aCropalypse bugs in Google Pixel Markup (<a href="https://www.cve.org/CVERecord?id=CVE-2023-21036">CVE-2023-21036</a>) and the Windows Snipping Tool (<a href="https://www.cve.org/CVERecord?id=CVE-2023-28303">CVE-2023-28303</a>).</li>
+</ul>
+
 <h2>Common Use Cases</h2>
 <ul>
   <li><strong>Sanitizing screenshots before pasting into an AI chat, a support ticket, or a public forum</strong> — black out API keys, tokens, account IDs, email addresses, and internal URLs with Solid fill.</li>
@@ -49,6 +82,11 @@ faqItems:
   <li>Areas cannot be moved, resized, or given independent effects after being drawn — undo and redraw instead.</li>
   <li>One image at a time; there is no batch mode for multiple files.</li>
   <li>Animated GIFs export as a single static frame, by design. To get every frame as a separate image, use the <a href="/tools/gif-splitter/">GIF Splitter</a>.</li>
+  <li>One effect applies to every area at once. To pixelate faces and black out a password in the same image, download the first result, load it again and apply the second effect.</li>
+  <li>Areas smaller than 2 px in either direction are discarded, so a mis-click does not add an empty area. While <strong>Apply to entire image</strong> is on, drawing is disabled.</li>
+  <li>JPEG has no transparency: transparent areas are flattened onto white. If the browser cannot encode WebP (Safari, per MDN's compatibility data), the WebP choice is saved as a PNG file. <strong>Copy image</strong> always puts a PNG on the clipboard.</li>
+  <li>Browsers limit canvas size. If an export fails, the tool shows "Could not export — try a smaller image".</li>
+  <li>HEIC photos open only in Safari 17 and later (<a href="https://caniuse.com/heif">Can I use</a>). In other browsers, convert them to JPEG first.</li>
   <li>PDF redaction is out of scope — use a local PDF editor's redact or black-out feature instead.</li>
 </ul>
 

@@ -2,13 +2,15 @@
 title: "Why CAs Reject Your CSR — and How to Catch It First"
 description: "The seven things a certificate authority checks before it will sign a PKCS#10 request, why CN without SAN produces a useless certificate, and how to verify a CSR's self-signature yourself."
 pubDate: 2026-08-02
+updatedDate: 2026-10-01
 lang: "en"
 tags: ["csr", "pkcs10", "ssl", "x509", "developer-tools"]
+noindex: true
 ---
 
-The certificate arrived on a Friday. It installed cleanly, the chain validated, the expiry was two years out — and every browser hitting the site threw `NET::ERR_CERT_COMMON_NAME_INVALID`.
+A common failure with an internal CA: the certificate installs cleanly, the chain validates — and every browser hitting the site threw `NET::ERR_CERT_COMMON_NAME_INVALID`.
 
-The CSR had been generated from a config that set only the Common Name. No `subjectAltName`. The CA signed it because there was nothing structurally wrong with the request, and the resulting certificate was, by the letter of X.509, a valid certificate for nothing at all. Browsers stopped reading Common Name for hostname matching years ago. The name that mattered had never been requested.
+The CSR had been generated from a config that set only the Common Name. No `subjectAltName`. The internal CA signed it because there was nothing structurally wrong with the request, and the resulting certificate was, by the letter of X.509, a valid certificate for nothing at all. Browsers stopped reading Common Name for hostname matching years ago. The name that mattered had never been requested.
 
 That failure is invisible at every step until a browser refuses the connection. The CSR looked fine. `openssl req -noout -text` printed the Subject you expected. The CA accepted it. The certificate was real.
 
@@ -32,7 +34,7 @@ What a CSR never contains is the private key. Nothing in the request can be used
 
 ## The seven checks a CA will run
 
-Four of these come from the CA/Browser Forum Baseline Requirements rather than from any RFC, which is why a CSR can be perfectly well-formed and still be refused.
+Six of these come from the CA/Browser Forum Baseline Requirements rather than from any RFC, which is why a CSR can be perfectly well-formed and still be refused.
 
 | Check | Rejected when | Source |
 |---|---|---|
@@ -40,11 +42,11 @@ Four of these come from the CA/Browser Forum Baseline Requirements rather than f
 | Key strength | RSA under 2048 bits, or an EC curve under 256 bits | BR 6.1.5 |
 | Signature hash | SHA-1 or MD5 | BR 7.1.3.2 |
 | `subjectAltName` present | The request asks for no names at all | BR 7.1.4.2.1 |
-| CN appears in the SAN list | Common Name names a host the SAN set does not cover | Browser behaviour, not the BR |
+| CN appears in the SAN list | Common Name names a host the SAN set does not cover | BR (a subject commonName, if present, must be one of the SAN values) |
 | Wildcard placement | `*` is anything other than the entire leftmost label | BR 3.2.2.6 |
 | Names are publicly resolvable | `.local`, `.internal`, single-label hosts, private IP ranges | BR 7.1.4.2.1 |
 
-The fifth row is the one that produced the Friday outage above, and it is the only one no CA is obliged to catch. Issuing a certificate whose CN is absent from the SAN list breaks nothing in the CA's own validation — it is your problem, discovered by your users.
+The fourth and fifth rows are the ones behind the outage above. A publicly trusted CA may not issue a certificate without a SAN or with a CN outside the SAN list, so this failure shows up with internal and private CAs, which sign what they are given. There it is your problem, discovered by your users.
 
 ## Verifying the self-signature yourself
 
@@ -129,7 +131,7 @@ if cn and cn not in names:
 
 If certificates come from Let's Encrypt or any other ACME CA, most of the Subject you carefully filled in is discarded. RFC 8555 finalisation takes a PKCS#10 request, but the ACME server derives the identifiers it will validate from the SAN list and the CN, and Let's Encrypt ignores every other Subject attribute outright. Organisation, organisational unit, country, locality — none of them reach the issued certificate, because domain-validated certificates carry no organisation identity by definition.
 
-Two consequences follow. The first is that a CSR built for an ACME flow needs exactly two things to be right: the public key and the SAN list. Everything else is decoration that gets stripped. The second is that the identifiers in the finalise request must be a subset of the ones already authorised in the order, or the server returns a `malformed` problem document rather than a certificate — which is the ACME equivalent of the CN-without-SAN failure, caught earlier and with a clearer message.
+Two consequences follow. The first is that a CSR built for an ACME flow needs exactly two things to be right: the public key and the SAN list. Everything else is decoration that gets stripped. The second is that the identifiers in the finalise request must be exactly the set already authorised in the order ([RFC 8555 §7.4](https://www.rfc-editor.org/rfc/rfc8555#section-7.4)), or the server returns an error instead of a certificate; Let's Encrypt answers with an `unauthorized` problem document, `CSR does not specify same identifiers as Order` — which is the ACME equivalent of the CN-without-SAN failure, caught earlier and with a clearer message.
 
 Most ACME clients generate the CSR themselves and never show it to you, which is the right default. The time you see one is when a client is configured to use a pre-generated CSR — common where the key lives in an HSM or where a compliance process requires the key to be generated on the target host. That is exactly the path where a hand-built CSR reaches a CA unreviewed.
 

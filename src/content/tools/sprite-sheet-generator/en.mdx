@@ -148,6 +148,20 @@ Pixel art drawn with nearest-neighbor filtering at whole-pixel positions does no
 
 **Power of two** rounds each side of the sheet up to 256, 512, 1024 and so on. WebGL 1 needs power-of-two textures for mipmaps and repeat wrapping, and some older engines require it. WebGL 2 and most modern engines accept any size.
 
+## Common Problems, With Real Numbers
+
+The numbers below come from the tool's own layout and trim functions.
+
+- **Frames jump during the animation.** Trim cuts each image to the box of pixels with alpha above 0. A 64 × 64 frame whose character covers 30 × 44 pixels starting at (17, 10) is stored as a 30 × 44 frame with `spriteSourceSize` `{ x: 17, y: 10 }` and `sourceSize` `{ w: 64, h: 64 }`. Engine atlas loaders put the pixels back at that offset. Custom code that draws `frame` without adding the offset shifts every trimmed frame by a different amount; add the offset or turn **Trim** off.
+- **Trim does nothing.** One stray pixel decides the box. Add a single pixel with alpha 1 in the bottom-right corner of that frame and the trimmed box grows from 30 × 44 to 47 × 54. JPG and most BMP files have no alpha channel, so there is nothing to trim. A fully transparent image is stored as a 1 × 1 frame that keeps its `sourceSize`, so it still holds its place in an animation.
+- **Phaser's grid loader finds extra frames.** `load.spritesheet` reads no data file; it counts frames from the image size. Ten 32 × 32 images in Grid mode with 4 columns and 2 px spacing give a 134 × 100 sheet, and Phaser counts 4 × 3 = 12 frames: the last two are empty, so pass `endFrame: 9`. With **Power of two** on, the same sheet becomes 256 × 128 and Phaser counts 21 frames.
+- **The gap between frames is spacing plus twice the extrude.** Two 30 × 44 images with Spacing 2 and Extrude 1 are placed at x = 1 and x = 35: the first frame ends at x = 30, so 4 px separate them. Pass `margin + E` and `spacing + 2 × E` to grid loaders.
+- **Extrude does not help in Grid mode** when an image is smaller than its cell: the frame is the whole cell, and its edge is transparent. Use Packed for mixed sizes.
+- **CSS icons lose their padding.** The CSS format writes only each frame's size and position, for example `.icons-home { width: 18px; height: 20px; background-position: 0 0; }`. With Trim on, a 24 × 24 icon can become 18 × 20 and sit off-center in a row of buttons. Turn Trim off before exporting CSS. No `background-size` is written, so for HiDPI screens pack @2x images and set `background-size` to half the sheet size yourself.
+- **PixiJS cannot find the PNG.** `Assets.load` loads the file named in `meta.image` from the same folder. Renaming the PNG after export breaks it; Phaser takes the PNG URL separately and is not affected.
+- **Duplicate images are packed twice.** Remove copies from the list, or reuse one frame name in your animation definition.
+- **Very small sprites on mipmapped textures.** Each mip level halves the resolution, so 2 px of spacing protects about one level. If sprites are drawn far below their texture size, raise Spacing and Extrude or keep them on a separate texture. For phones, a 2048 or 4096 px sheet is the safe size: [WebGL2 Fundamentals](https://webgl2fundamentals.org/webgl/lessons/webgl-cross-platform-issues.html) reports that about 99% of devices supported a 4096 `MAX_TEXTURE_SIZE` in 2020.
+
 ## Limits and Scope
 
 - Up to 1,000 images, each at most 8,192 px per side. Files that are not images or fail to decode are skipped and listed by name.

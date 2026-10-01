@@ -2,6 +2,7 @@
 title: "Security Best Practices Every Web Developer Should Know"
 description: "A practical guide to web security fundamentals — hashing, HMAC, JWT, TOTP, and password storage — with hands-on browser tools for every concept."
 pubDate: 2026-04-14
+updatedDate: 2026-10-01
 lang: "en"
 tags: ["web-security", "developer-tools", "authentication", "cryptography", "best-practices"]
 ---
@@ -34,7 +35,7 @@ This one-way property is what makes hashing useful for security.
 | SHA-1 | 160 bits | No — deprecated for cryptographic use |
 | SHA-256 | 256 bits | Yes — solid for most uses |
 | SHA-512 | 512 bits | Yes — larger output, marginally harder to brute-force |
-| bcrypt | variable | Yes — specifically designed for passwords |
+| bcrypt | 184-bit hash in a 60-character string | Yes — specifically designed for passwords |
 
 Try computing hashes with the [Hash Generator](/tools/hash-generator). Paste the same input into MD5 and SHA-256 and compare the outputs. Then change one character in the input and observe how completely different the hash becomes (this is called the avalanche effect, and it's intentional).
 
@@ -51,7 +52,7 @@ A **salt** is a random value that's added to the password before hashing. Each u
 Concretely:
 ```
 # Without salt — same password, same hash
-sha256("password123") → a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3
+sha256("password123") → ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f
 
 # With salt — same password, different hash per user
 sha256("password123" + "user_alice_salt_xyz") → different hash
@@ -154,7 +155,7 @@ All the primitives above use symmetric cryptography — the same secret is used 
 
 **RSA** is the most widely used asymmetric algorithm. Common uses:
 
-- **TLS certificates** (the certificate your server presents contains a public key; the browser uses it to establish an encrypted connection without knowing your private key)
+- **TLS certificates** (the certificate your server presents contains a public key; the server signs the handshake with the matching private key and the browser checks that signature with the public key; in TLS 1.3 the encryption keys come from a separate ephemeral key exchange, per [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446))
 - **JWT with RS256** (the server signs JWTs with its private key; clients verify with the public key, allowing them to verify tokens without being trusted with the signing secret)
 - **SSH keys** (your `~/.ssh/id_rsa.pub` is a public key; the private key stays on your machine; the server stores the public key and can authenticate you without your private key ever leaving your machine)
 - **Code signing** (a software publisher signs releases with their private key; users verify with the public key)
@@ -184,7 +185,7 @@ What makes a password strong?
 
 **Use the [Password Generator](/tools/password-generator)** when you need to generate credentials: temporary passwords, API keys, service account credentials, recovery codes. Cryptographically random generation from a browser-based tool is reliable and doesn't expose the generated values to a third-party server.
 
-For the passwords your users create, use a strong password hashing function (bcrypt with cost factor ≥ 12, or Argon2id) and check passwords against a breached password database (Have I Been Pwned's API supports this as a range query that preserves privacy).
+For the passwords your users create, use a strong password hashing function (Argon2id, or bcrypt with a work factor of 10 or more, as the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) recommends) and check passwords against a breached password database (Have I Been Pwned's API supports this as a range query that preserves privacy).
 
 ---
 
@@ -199,7 +200,7 @@ For any web application with user authentication, verify:
 - [ ] RSA or ECDSA private keys stored in a secrets manager, never in source code
 - [ ] HTTPS enforced everywhere (no mixed content, HSTS header set)
 - [ ] Sensitive cookies set with HttpOnly and Secure flags
-- [ ] Password reset tokens are single-use and short-lived (≤15 minutes)
+- [ ] Password reset tokens are single-use and expire after a short period
 - [ ] Rate limiting on authentication endpoints
 
 Security is not a feature you add at the end. It's a set of decisions made at every step of design and implementation. The primitives — hashing, HMAC, JWT, TOTP, RSA — are well understood, well documented, and available in every major language's standard library.

@@ -120,14 +120,6 @@
       var indentEl = document.getElementById('hm-indent');
       var lastMode = 'minify';
 
-      var VOID_ELEMENTS = {
-        area:1, base:1, br:1, col:1, embed:1, hr:1, img:1, input:1,
-        link:1, meta:1, source:1, track:1, wbr:1,
-      };
-      var PRESERVE_ELEMENTS = {
-        script:1, style:1, pre:1, textarea:1, code:1, samp:1, kbd:1,
-      };
-
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
         statusEl.className = 'tool-status ' + (kind || 'success');
@@ -142,6 +134,27 @@
         var n = parseInt(v, 10) || 2;
         return new Array(n + 1).join(' ');
       }
+      /* ── engine:start ── */
+      var VOID_ELEMENTS = {
+        area:1, base:1, br:1, col:1, embed:1, hr:1, img:1, input:1,
+        link:1, meta:1, source:1, track:1, wbr:1,
+      };
+      var PRESERVE_ELEMENTS = {
+        script:1, style:1, pre:1, textarea:1, code:1, samp:1, kbd:1,
+      };
+
+      /* Phrasing elements: leading / trailing spaces inside them are visible text
+         ("<strong>Note: </strong>text"), so they are collapsed but not removed. */
+      var INLINE_ELEMENTS = {
+        a:1, abbr:1, b:1, bdi:1, bdo:1, button:1, cite:1, data:1, dfn:1, em:1, i:1, label:1,
+        mark:1, q:1, rp:1, rt:1, ruby:1, s:1, small:1, span:1, strong:1, sub:1, sup:1, time:1,
+        u:1, var:1, del:1, ins:1, font:1, big:1, tt:1, strike:1, output:1, option:1, legend:1,
+      };
+      /* HTML "ASCII whitespace" (Infra standard). \s would also match U+00A0, the character
+         &nbsp; stands for, and turn a non-breaking space into a normal one. */
+      var WS_RUN = /[ \t\n\f\r]+/g;
+      function wsTrim(s) { return s.replace(/^[ \t\n\f\r]+|[ \t\n\f\r]+$/g, ''); }
+
       function escapeAttr(s) {
         return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
       }
@@ -210,10 +223,11 @@
             if (node.childNodes.length === 1 && node.childNodes[0].nodeType === 3) {
               var txt = node.childNodes[0].data;
               if (mode === 'minify') {
-                var collapsed = txt.replace(/\s+/g, ' ').trim();
+                var collapsed = txt.replace(WS_RUN, ' ');
+                if (!INLINE_ELEMENTS[tag]) collapsed = wsTrim(collapsed);
                 parts.push('<' + tag + attrs + '>' + escapeText(collapsed) + '</' + tag + '>');
               } else {
-                var trimmed = txt.trim();
+                var trimmed = wsTrim(txt);
                 if (trimmed && trimmed.length < 80 && trimmed.indexOf('\n') === -1) {
                   parts.push(pad + '<' + tag + attrs + '>' + escapeText(trimmed) + '</' + tag + '>' + nl);
                 } else {
@@ -235,14 +249,14 @@
           case 3: { /* Text */
             var data = node.data;
             if (mode === 'minify') {
-              var c2 = data.replace(/\s+/g, ' ');
+              var c2 = data.replace(WS_RUN, ' ');
               /* Keep whitespace-only text nodes (collapsed to a single space).
                  They preserve inter-token spacing for inline content like
                  `<span>A</span> <span>B</span>`; dropping them would render as `AB`. */
               if (!c2) return;
               parts.push(escapeText(c2));
             } else {
-              var trimmed2 = data.trim();
+              var trimmed2 = wsTrim(data);
               if (trimmed2) parts.push(pad + escapeText(trimmed2) + nl);
             }
             return;
@@ -261,9 +275,11 @@
         }
       }
 
-      function process(raw, mode) {
-        var doc = new DOMParser().parseFromString(raw, 'text/html');
-        var indent = getIndent();
+      /* Fragment mode: the HTML parser moves some fragment content out of <body>:
+         comments before the first element go to the Document or <html>, and <title>,
+         <meta>, <link>, <style>, <script> before body content go to <head>. Serialize
+         everything except the implied html / head / body wrappers, in document order. */
+      function processDoc(doc, raw, mode, indent) {
         var parts = [];
         var fragment = isFragment(raw);
 
@@ -276,16 +292,40 @@
         }
 
         if (fragment) {
-          var body = doc.body;
-          for (var i = 0; i < body.childNodes.length; i++) {
-            serializeNode(body.childNodes[i], mode, 0, indent, parts);
+          var top = doc.childNodes;
+          for (var i = 0; i < top.length; i++) {
+            var n = top[i];
+            if (n.nodeType === 10) continue;
+            if (n === doc.documentElement) {
+              for (var j = 0; j < n.childNodes.length; j++) {
+                var c = n.childNodes[j];
+                var name = c.nodeType === 1 ? c.tagName.toLowerCase() : '';
+                if (name === 'head' || name === 'body') {
+                  for (var k = 0; k < c.childNodes.length; k++) serializeNode(c.childNodes[k], mode, 0, indent, parts);
+                } else {
+                  serializeNode(c, mode, 0, indent, parts);
+                }
+              }
+            } else {
+              serializeNode(n, mode, 0, indent, parts);
+            }
           }
-        } else if (doc.documentElement) {
-          serializeNode(doc.documentElement, mode, 0, indent, parts);
+        } else {
+          var nodes = doc.childNodes;
+          for (var m = 0; m < nodes.length; m++) {
+            if (nodes[m].nodeType === 10) continue;
+            serializeNode(nodes[m], mode, 0, indent, parts);
+          }
         }
 
         var out = parts.join('');
-        return (mode === 'minify') ? out.trim() : out.replace(/\n+$/, '\n');
+        return (mode === 'minify') ? wsTrim(out) : out.replace(/\n+$/, '\n');
+      }
+      /* ── engine:end ── */
+
+      function process(raw, mode) {
+        var doc = new DOMParser().parseFromString(raw, 'text/html');
+        return processDoc(doc, raw, mode, getIndent());
       }
 
       function run(mode) {

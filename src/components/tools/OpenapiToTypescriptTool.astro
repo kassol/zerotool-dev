@@ -21,6 +21,7 @@ const labels = {
     msgSwagger2: 'Swagger 2.0 is not supported. Migrate to OpenAPI 3.x first using editor.swagger.io.',
     msgEmpty: 'Nothing to generate. Add components/schemas or paths to the spec.',
     msgGenerated: 'Generated {n} interface(s).',
+    msgUnresolved: 'Not supported: $ref to {refs}. Only #/components/schemas/... (and #/components/parameters/... in path types) are resolved; these are typed as unknown. Bundle the spec into one file first, for example with redocly bundle.',
   },
   zh: {
     rootName: '根命名空间',
@@ -40,6 +41,7 @@ const labels = {
     msgSwagger2: '不支持 Swagger 2.0，请先用 editor.swagger.io 迁移到 OpenAPI 3.x。',
     msgEmpty: '无内容可生成。请在规范中添加 components/schemas 或 paths。',
     msgGenerated: '已生成 {n} 个接口。',
+    msgUnresolved: '不支持：$ref 指向 {refs}。只解析 #/components/schemas/...（path 类型中另含 #/components/parameters/...），这些引用按 unknown 输出。请先把规范合并成一个文件，例如用 redocly bundle。',
   },
   ja: {
     rootName: 'ルート名前空間',
@@ -59,6 +61,7 @@ const labels = {
     msgSwagger2: 'Swagger 2.0 は非対応。editor.swagger.io で OpenAPI 3.x に移行してください。',
     msgEmpty: '生成対象がありません。仕様に components/schemas または paths を追加してください。',
     msgGenerated: '{n} 個のインターフェースを生成しました。',
+    msgUnresolved: '非対応：{refs} への $ref。解決するのは #/components/schemas/...（path 型では #/components/parameters/... も）だけで、これらは unknown として出力します。先に redocly bundle などで仕様を 1 ファイルにまとめてください。',
   },
   ko: {
     rootName: '루트 네임스페이스',
@@ -78,6 +81,7 @@ const labels = {
     msgSwagger2: 'Swagger 2.0은 지원하지 않습니다. editor.swagger.io에서 OpenAPI 3.x로 마이그레이션 후 사용하세요.',
     msgEmpty: '생성할 항목이 없습니다. 스펙에 components/schemas 또는 paths를 추가하세요.',
     msgGenerated: '{n}개 인터페이스 생성 완료.',
+    msgUnresolved: '지원하지 않음: {refs}에 대한 $ref. #/components/schemas/...(path 타입에서는 #/components/parameters/...도)만 해석하며, 이 참조는 unknown으로 출력합니다. 먼저 redocly bundle 등으로 스펙을 한 파일로 합치세요.',
   },
 };
 const L = labels[lang];
@@ -93,6 +97,7 @@ const L = labels[lang];
   data-msg-swagger2={L.msgSwagger2}
   data-msg-empty={L.msgEmpty}
   data-msg-generated={L.msgGenerated}
+  data-msg-unresolved={L.msgUnresolved}
 >
   <div class="opts-config">
     <div class="opts-config-row">
@@ -174,6 +179,7 @@ components:
   const MSG_SWAGGER2 = wrap.dataset.msgSwagger2 || 'Swagger 2.0 is not supported.';
   const MSG_EMPTY = wrap.dataset.msgEmpty || 'Nothing to generate.';
   const MSG_GENERATED = wrap.dataset.msgGenerated || 'Generated {n}.';
+  const MSG_UNRESOLVED = wrap.dataset.msgUnresolved || 'Not resolved: {refs}.';
 
   const inputEl = document.getElementById('opts-input') as HTMLTextAreaElement;
   const outputCodeEl = document.getElementById('opts-output-code')!;
@@ -264,15 +270,30 @@ components:
     statusEl.className = `tool-status ${kind === 'none' ? '' : kind}`;
   }
 
+  /* ── engine:start ── */
   function pascalCase(s: string): string {
     return s
       .replace(/[^a-zA-Z0-9]+(.)/g, (_, ch) => ch.toUpperCase())
       .replace(/^(.)/, (_, ch) => ch.toUpperCase());
   }
 
+  // Names TypeScript does not accept as a type or interface name, plus reserved words.
+  const RESERVED_NAMES = new Set([
+    'any', 'unknown', 'never', 'string', 'number', 'boolean', 'symbol', 'object', 'bigint',
+    'undefined', 'void', 'null', 'true', 'false', 'this', 'break', 'case', 'catch', 'class',
+    'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'enum', 'export',
+    'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new',
+    'return', 'super', 'switch', 'throw', 'try', 'typeof', 'var', 'while', 'with',
+    'implements', 'interface', 'let', 'package', 'private', 'protected', 'public', 'static',
+    'yield', 'await', 'type', 'namespace', 'module', 'declare', 'readonly', 'keyof', 'infer',
+    'is', 'asserts', 'abstract', 'as', 'satisfies', 'z'
+  ]);
+
   function safeIdent(s: string): string {
-    // Keep ref/operationId-like names; sanitize illegal chars
-    return s.replace(/[^a-zA-Z0-9_$]/g, '_');
+    let id = s.replace(/[^a-zA-Z0-9_$]/g, '_');
+    if (!id || /^[0-9]/.test(id)) id = '_' + id;
+    if (RESERVED_NAMES.has(id)) id = id + '_';
+    return id;
   }
 
   function safeKey(k: string): string {
@@ -280,7 +301,7 @@ components:
   }
 
   function formatHint(schema: any): string {
-    if (!schema.format) return '';
+    if (!schema || !schema.format) return '';
     const f = schema.format;
     if (f === 'date-time') return '/** ISO 8601 date-time */ ';
     if (f === 'date') return '/** ISO 8601 date (YYYY-MM-DD) */ ';
@@ -292,16 +313,53 @@ components:
 
   type Ctx = {
     doc: any;
-    declared: Map<string, string>;   // name -> body (interface { ... })
+    names: Map<string, string>;      // components/schemas key -> TypeScript identifier
+    declared: Map<string, string>;   // identifier -> declaration
     declarationOrder: string[];
-    rootName: string;
     optional: boolean;
+    unsupportedRefs: Set<string>;
   };
 
-  function refToName(ref: string): string {
-    const m = /^#\/components\/schemas\/(.+)$/.exec(ref);
-    if (!m) return 'unknown';
-    return safeIdent(m[1]);
+  // components/schemas keys -> unique identifiers ("pet-status" -> "pet_status").
+  function buildNameMap(doc: any): Map<string, string> {
+    const names = new Map<string, string>();
+    const used = new Set<string>();
+    const schemas = doc?.components?.schemas;
+    if (!schemas || typeof schemas !== 'object') return names;
+    for (const key of Object.keys(schemas)) {
+      let id = safeIdent(key);
+      let n = 2;
+      while (used.has(id)) id = safeIdent(key) + '_' + n++;
+      used.add(id);
+      names.set(key, id);
+    }
+    return names;
+  }
+
+  // JSON Pointer (RFC 6901) inside a URI fragment: percent-decode, then ~1 -> / and ~0 -> ~.
+  function decodePointerToken(t: string): string {
+    let d = t;
+    try { d = decodeURIComponent(t); } catch { /* keep as is */ }
+    return d.replace(/~1/g, '/').replace(/~0/g, '~');
+  }
+
+  // Returns the components/schemas key for a local ref, or null for anything else.
+  function refToSchemaKey(ref: string, doc: any): string | null {
+    const m = /^#\/components\/schemas\/([^/]+)$/.exec(String(ref));
+    if (!m) return null;
+    const key = decodePointerToken(m[1]);
+    const schemas = doc?.components?.schemas;
+    if (!schemas || !Object.prototype.hasOwnProperty.call(schemas, key)) return null;
+    return key;
+  }
+
+  function refName(ref: string, ctx: Ctx): string | null {
+    const key = refToSchemaKey(ref, ctx.doc);
+    if (key === null) {
+      ctx.unsupportedRefs.add(String(ref));
+      return null;
+    }
+    return ctx.names.get(key) || null;
   }
 
   function isNullable(schema: any): boolean {
@@ -318,22 +376,28 @@ components:
     return schema.type;
   }
 
+  function literalTs(v: any): string {
+    if (v === null) return 'null';
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return JSON.stringify(v);
+    return 'unknown';
+  }
+
   function schemaToTs(schema: any, nameHint: string, ctx: Ctx, indent = 0): string {
     if (!schema || typeof schema !== 'object') return 'unknown';
 
     if (schema.$ref) {
-      const refName = refToName(schema.$ref);
-      ensureDeclared(refName, ctx);
-      return refName;
+      const name = refName(schema.$ref, ctx);
+      if (name === null) return `unknown /* unresolved $ref: ${String(schema.$ref).replace(/\*\//g, '*\\/')} */`;
+      return name;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(schema, 'const')) {
+      const ts = literalTs(schema.const);
+      return isNullable(schema) && schema.const !== null ? `${ts} | null` : ts;
     }
 
     if (Array.isArray(schema.enum)) {
-      const lits = schema.enum.map((v: any) => {
-        if (v === null) return 'null';
-        if (typeof v === 'string') return JSON.stringify(v);
-        return JSON.stringify(v);
-      });
-      const ts = lits.join(' | ');
+      const ts = schema.enum.map(literalTs).join(' | ');
       return isNullable(schema) ? `${ts} | null` : ts;
     }
 
@@ -371,9 +435,12 @@ components:
       case 'boolean':
         ts = 'boolean';
         break;
+      case 'null':
+        ts = 'null';
+        break;
       case 'array': {
         const itemTs = schemaToTs(schema.items || {}, `${nameHint}Item`, ctx, indent);
-        ts = itemTs.includes(' ') ? `(${itemTs})[]` : `${itemTs}[]`;
+        ts = /[\s|&]/.test(itemTs) ? `(${itemTs})[]` : `${itemTs}[]`;
         break;
       }
       case 'object':
@@ -389,7 +456,7 @@ components:
         ts = 'unknown';
     }
 
-    return nullable ? `${ts} | null` : ts;
+    return nullable && ts !== 'null' ? `${ts} | null` : ts;
   }
 
   function inlineObject(schema: any, nameHint: string, ctx: Ctx, indent: number): string {
@@ -418,74 +485,46 @@ components:
     return `{\n${lines.join('\n')}\n${closePad}}`;
   }
 
-  function ensureDeclared(name: string, ctx: Ctx): void {
-    if (ctx.declared.has(name)) return;
-    const schema = ctx.doc?.components?.schemas?.[name];
-    if (!schema) {
-      ctx.declared.set(name, `export type ${name} = unknown;`);
-      ctx.declarationOrder.push(name);
-      return;
-    }
-    // Reserve to break recursion
-    ctx.declared.set(name, '');
-    ctx.declarationOrder.push(name);
-
-    const body = renderSchemaDeclaration(name, schema, ctx);
-    ctx.declared.set(name, body);
+  function newCtx(doc: any, optional: boolean): Ctx {
+    return { doc, names: buildNameMap(doc), declared: new Map(), declarationOrder: [], optional, unsupportedRefs: new Set() };
   }
 
   function renderSchemaDeclaration(name: string, schema: any, ctx: Ctx): string {
     // If schema is an object with properties, render as interface; otherwise type alias.
     const isObjectInterface =
+      schema && typeof schema === 'object' &&
       !schema.$ref &&
       !schema.enum &&
+      !Object.prototype.hasOwnProperty.call(schema, 'const') &&
       !schema.oneOf &&
       !schema.anyOf &&
       !schema.allOf &&
+      !isNullable(schema) &&
       (getBaseType(schema) === 'object' || (!getBaseType(schema) && schema.properties));
 
     if (isObjectInterface && (schema.properties || schema.additionalProperties)) {
-      const body = inlineObject(schema, name, ctx, 0);
-      // body is `{ ... }` from inlineObject; emit it as an interface block
-      return `export interface ${name} ${body}`;
+      return `export interface ${name} ${inlineObject(schema, name, ctx, 0)}`;
     }
 
     const ts = schemaToTs(schema, name, ctx, 0);
     return `export type ${name} = ${ts};`;
   }
 
-  function generateSchemas(doc: any, optional: boolean): string {
+  function generateSchemas(doc: any, ctx: Ctx): string {
     const schemas = doc?.components?.schemas;
     if (!schemas || typeof schemas !== 'object') return '';
-
-    const ctx: Ctx = {
-      doc,
-      declared: new Map(),
-      declarationOrder: [],
-      rootName: '',
-      optional,
-    };
-
-    for (const name of Object.keys(schemas)) {
-      ensureDeclared(safeIdent(name), ctx);
+    const out: string[] = [];
+    for (const [key, schema] of Object.entries(schemas)) {
+      out.push(renderSchemaDeclaration(ctx.names.get(key)!, schema, ctx));
     }
-
-    return ctx.declarationOrder.map(n => ctx.declared.get(n)).filter(Boolean).join('\n\n');
+    return out.join('\n\n');
   }
 
-  function generatePathTypes(doc: any, optional: boolean, namespace: string): string {
+  function generatePathTypes(doc: any, namespace: string, ctx: Ctx): string {
     const paths = doc?.paths;
     if (!paths || typeof paths !== 'object') return '';
 
     const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch'];
-    const ctx: Ctx = {
-      doc,
-      declared: new Map(),
-      declarationOrder: [],
-      rootName: '',
-      optional,
-    };
-
     const operationBlocks: string[] = [];
 
     for (const [p, pathItem] of Object.entries(paths)) {
@@ -495,8 +534,8 @@ components:
         if (!op || typeof op !== 'object') continue;
 
         const opId = op.operationId
-          ? pascalCase(safeIdent(op.operationId))
-          : pascalCase(`${method}${p.replace(/[{}\/]/g, '_').replace(/_+/g, '_')}`);
+          ? safeIdent(pascalCase(String(op.operationId)))
+          : safeIdent(pascalCase(`${method}${p.replace(/[{}\/]/g, '_').replace(/_+/g, '_')}`));
 
         const lines: string[] = [`  export namespace ${opId} {`];
 
@@ -504,12 +543,11 @@ components:
         const pathLevelParams = Array.isArray((pathItem as any).parameters) ? (pathItem as any).parameters : [];
         const opParams = Array.isArray(op.parameters) ? op.parameters : [];
         const allParams = [...pathLevelParams, ...opParams].map((param: any) => {
-          if (param.$ref) {
-            const m = /^#\/components\/parameters\/(.+)$/.exec(param.$ref);
-            if (m) {
-              const ref = doc?.components?.parameters?.[m[1]];
-              return ref || param;
-            }
+          if (param && param.$ref) {
+            const m = /^#\/components\/parameters\/([^/]+)$/.exec(param.$ref);
+            const ref = m ? doc?.components?.parameters?.[decodePointerToken(m[1])] : undefined;
+            if (ref) return ref;
+            ctx.unsupportedRefs.add(String(param.$ref));
           }
           return param;
         });
@@ -535,6 +573,7 @@ components:
         // Request body
         const rb = op.requestBody;
         if (rb && typeof rb === 'object') {
+          if (rb.$ref) ctx.unsupportedRefs.add(String(rb.$ref));
           const json = rb.content?.['application/json']?.schema;
           if (json) {
             const ts = schemaToTs(json, `${opId}RequestBody`, ctx, 2);
@@ -546,6 +585,7 @@ components:
         if (op.responses && typeof op.responses === 'object') {
           for (const [code, resp] of Object.entries(op.responses)) {
             if (!resp || typeof resp !== 'object') continue;
+            if ((resp as any).$ref) ctx.unsupportedRefs.add(String((resp as any).$ref));
             const json = (resp as any).content?.['application/json']?.schema;
             if (!json) continue;
             const ts = schemaToTs(json, `${opId}Response${code}`, ctx, 2);
@@ -564,21 +604,76 @@ components:
   }
 
   // ── Zod schema generation ──
-  function schemaToZod(schema: any, ctx: Ctx, depth = 0): string {
+  type ZodCtx = Ctx & { current: string; emitted: Set<string>; cyclic: Set<string> };
+
+  // Local schema refs reachable from one schema value (not following refs).
+  function collectRefs(schema: any, doc: any, out: Set<string>): void {
+    if (!schema || typeof schema !== 'object') return;
+    if (Array.isArray(schema)) { for (const s of schema) collectRefs(s, doc, out); return; }
+    if (typeof schema.$ref === 'string') {
+      const key = refToSchemaKey(schema.$ref, doc);
+      if (key !== null) out.add(key);
+    }
+    for (const [k, v] of Object.entries(schema)) {
+      if (k === 'enum' || k === 'const' || k === 'example' || k === 'examples' || k === 'default') continue;
+      collectRefs(v, doc, out);
+    }
+  }
+
+  // Schemas that can reach themselves through refs (direct or indirect recursion).
+  function findCyclic(doc: any): Set<string> {
+    const schemas = doc?.components?.schemas || {};
+    const edges = new Map<string, Set<string>>();
+    for (const [k, v] of Object.entries(schemas)) {
+      const out = new Set<string>();
+      collectRefs(v, doc, out);
+      edges.set(k, out);
+    }
+    const cyclic = new Set<string>();
+    for (const start of edges.keys()) {
+      const stack = [...(edges.get(start) || [])];
+      const seen = new Set<string>();
+      while (stack.length) {
+        const n = stack.pop()!;
+        if (n === start) { cyclic.add(start); break; }
+        if (seen.has(n)) continue;
+        seen.add(n);
+        for (const m of edges.get(n) || []) stack.push(m);
+      }
+    }
+    return cyclic;
+  }
+
+  function schemaToZod(schema: any, ctx: ZodCtx, depth = 0): string {
     if (!schema || typeof schema !== 'object') return 'z.unknown()';
 
     if (schema.$ref) {
-      const refName = refToName(schema.$ref);
-      return `${refName}Schema`;
+      const key = refToSchemaKey(schema.$ref, ctx.doc);
+      if (key === null) {
+        ctx.unsupportedRefs.add(String(schema.$ref));
+        return 'z.unknown()';
+      }
+      const target = `${ctx.names.get(key)}Schema`;
+      // Not yet defined (forward reference) or part of a cycle: defer the lookup.
+      if (!ctx.emitted.has(key) || (ctx.cyclic.has(key) && ctx.cyclic.has(ctx.current))) {
+        return `z.lazy(() => ${target})`;
+      }
+      return target;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(schema, 'const')) {
+      const v = schema.const;
+      const lit = v === null ? 'z.null()' : (typeof v === 'object' ? 'z.unknown()' : `z.literal(${JSON.stringify(v)})`);
+      return v === null ? lit : wrapNullable(lit, schema);
     }
 
     if (Array.isArray(schema.enum)) {
-      const allStrings = schema.enum.every((v: any) => typeof v === 'string');
+      const allStrings = schema.enum.length > 0 && schema.enum.every((v: any) => typeof v === 'string');
       if (allStrings) {
         const lits = schema.enum.map((v: string) => JSON.stringify(v)).join(', ');
         return wrapNullable(`z.enum([${lits}])`, schema);
       }
-      const lits = schema.enum.map((v: any) => `z.literal(${JSON.stringify(v)})`);
+      const lits = schema.enum.map((v: any) => (v === null ? 'z.null()' : `z.literal(${JSON.stringify(v)})`));
       return wrapNullable(lits.length === 1 ? lits[0] : `z.union([${lits.join(', ')}])`, schema);
     }
 
@@ -617,6 +712,8 @@ components:
       case 'boolean':
         z = 'z.boolean()';
         break;
+      case 'null':
+        return 'z.null()';
       case 'array': {
         z = `z.array(${schemaToZod(schema.items || {}, ctx, depth + 1)})`;
         break;
@@ -652,17 +749,43 @@ components:
     return isNullable(schema) ? `${expr}.nullable()` : expr;
   }
 
-  function generateZodSchemas(doc: any, optional: boolean): string {
+  // Recursive schemas get an explicit `z.ZodType<Name>` annotation: TypeScript cannot infer the
+  // type of a const that refers to itself in its own initializer (error TS7022).
+  function generateZodSchemas(doc: any, base: Ctx): string {
     const schemas = doc?.components?.schemas;
     if (!schemas || typeof schemas !== 'object') return '';
-    const ctx: Ctx = { doc, declared: new Map(), declarationOrder: [], rootName: '', optional };
+    const ctx: ZodCtx = Object.assign(base, { current: '', emitted: new Set<string>(), cyclic: findCyclic(doc) });
     const lines = ['import { z } from \'zod\';\n'];
-    for (const [name, schema] of Object.entries(schemas)) {
-      const safeName = safeIdent(name);
-      lines.push(`export const ${safeName}Schema = ${schemaToZod(schema, ctx)};`);
+    for (const [key, schema] of Object.entries(schemas)) {
+      const name = ctx.names.get(key)!;
+      ctx.current = key;
+      const expr = schemaToZod(schema, ctx);
+      const annotation = ctx.cyclic.has(key) ? `: z.ZodType<${name}>` : '';
+      lines.push(`export const ${name}Schema${annotation} = ${expr};`);
+      ctx.emitted.add(key);
     }
     return lines.join('\n');
   }
+
+  type GenOptions = { optional: boolean; includePaths: boolean; includeZod: boolean; namespace: string };
+
+  function generateAll(doc: any, opts: GenOptions): { sections: string[]; count: number; unsupportedRefs: string[] } {
+    const ctx = newCtx(doc, opts.optional);
+    const sections: string[] = [];
+    const schemasBlock = generateSchemas(doc, ctx);
+    if (schemasBlock) sections.push(`// ── components/schemas ──\n${schemasBlock}`);
+    if (opts.includePaths) {
+      const pathsBlock = generatePathTypes(doc, opts.namespace || 'Paths', ctx);
+      if (pathsBlock) sections.push(`// ── paths ──\n${pathsBlock}`);
+    }
+    if (opts.includeZod) {
+      const zodBlock = generateZodSchemas(doc, ctx);
+      if (zodBlock) sections.push(`// ── Zod schemas ──\n${zodBlock}`);
+    }
+    const count = (schemasBlock.match(/^export (interface|type) /gm) || []).length;
+    return { sections, count, unsupportedRefs: [...ctx.unsupportedRefs] };
+  }
+  /* ── engine:end ── */
 
   // ── Main generate ──
   function generate(): void {
@@ -701,42 +824,26 @@ components:
       return;
     }
 
-    const optional = optionalEl.checked;
-    const includePaths = pathsEl.checked;
-    const includeZod = zodEl.checked;
     const rawNamespace = (rootEl.value || 'Components').trim() || 'Components';
-    const namespace = safeIdent(pascalCase(rawNamespace));
+    const result = generateAll(doc, {
+      optional: optionalEl.checked,
+      includePaths: pathsEl.checked,
+      includeZod: zodEl.checked,
+      namespace: safeIdent(pascalCase(rawNamespace)),
+    });
 
-    const sections: string[] = [];
-
-    const schemasBlock = generateSchemas(doc, optional);
-    if (schemasBlock) {
-      sections.push(`// ── components/schemas ──\n${schemasBlock}`);
-    }
-
-    if (includePaths) {
-      const pathsBlock = generatePathTypes(doc, optional, namespace || 'Paths');
-      if (pathsBlock) {
-        sections.push(`// ── paths ──\n${pathsBlock}`);
-      }
-    }
-
-    if (includeZod) {
-      const zodBlock = generateZodSchemas(doc, optional);
-      if (zodBlock) {
-        sections.push(`// ── Zod schemas ──\n${zodBlock}`);
-      }
-    }
-
-    if (sections.length === 0) {
+    if (result.sections.length === 0) {
       outputCodeEl.textContent = '';
       setStatus(MSG_EMPTY, 'info');
       return;
     }
 
-    const interfaceCount = (schemasBlock.match(/^export (interface|type) /gm) || []).length;
-    outputCodeEl.textContent = sections.join('\n\n');
-    setStatus(MSG_GENERATED.replace('{n}', String(interfaceCount)), 'success');
+    outputCodeEl.textContent = result.sections.join('\n\n');
+    let msg = MSG_GENERATED.replace('{n}', String(result.count));
+    if (result.unsupportedRefs.length) {
+      msg += ' ' + MSG_UNRESOLVED.replace('{refs}', result.unsupportedRefs.join(', '));
+    }
+    setStatus(msg, result.unsupportedRefs.length ? 'error' : 'success');
     (window as any).trackTool?.('openapi-to-typescript', 'generate');
   }
 

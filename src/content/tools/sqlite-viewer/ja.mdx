@@ -48,6 +48,35 @@ faqItems:
 
 <p>クエリ結果は画面の応答性を保つため先頭 1,000 行のみ描画します。CSV エクスポートには常に全行が含まれます。</p>
 
+<h2>実例</h2>
+
+<p><strong>1 つの列に 2 種類の型が入っている。</strong>SQLite では型は列ではなく値ごとに持つため、<code>DATETIME</code> 列のある行に ISO 形式の文字列、別の行に Unix 時刻が入ることがあります（<a href="https://www.sqlite.org/datatype3.html">Datatypes In SQLite</a>）。SQLite に直接聞きます。</p>
+
+<pre><code>{`SELECT typeof(created_at) AS storage_class, COUNT(*)
+FROM orders GROUP BY 1;`}</code></pre>
+
+<p>行が <code>{`'2026-09-01T10:00:00Z'`}</code>、<code>1759312800</code>、<code>{`'2026-09-02'`}</code> の 3 つなら、結果は <code>integer | 1</code> と <code>text | 2</code> です。2 か所のコードが別々の形式でこの列に書いています。<code>CREATE</code> 文が <code>STRICT</code> で終わるテーブル（SQLite 3.37.0 以降）は、こうした書き込みを <code>cannot store TEXT value in INT column</code> で拒否します。</p>
+
+<p><strong>本番で実行する前に削除を試す。</strong>文はメモリ上のコピーで実行されるので、削除後に何件残るかを先に確かめられます。</p>
+
+<pre><code>{`DELETE FROM sessions WHERE expires_at < unixepoch();
+SELECT COUNT(*) AS remaining FROM sessions;`}</code></pre>
+
+<p>結果欄には、列を返す最後の文の結果が出ます。新しい接続では外部キーの検査が無効（<code>PRAGMA foreign_keys</code> は <code>0</code>）なので、<code>ON DELETE CASCADE</code> を動かしたいときは先に <code>PRAGMA foreign_keys = ON;</code> を実行してください。</p>
+
+<p><strong>エラーは SQLite がそのまま返します。</strong>キーワードを打ち間違えると <code>{`SQL エラー：near "SELEC": syntax error`}</code> と表示されます。全文検索テーブルでは <code>no such module: fts5</code> になります。このツールの sql.js 1.14.2（SQLite 3.49.1）には FTS5 と R-Tree のモジュールが入っていないためです。そのテーブルの行数は <code>—</code> と表示され、他のテーブルは普通に閲覧できます。FTS5 の本文は <code>notes_fts_content</code> のような通常のシャドウテーブルにあるので、そちらは読めます。</p>
+
+<p><strong>CSV は正しいテキストのまま保たれます。</strong>PNG のシグネチャを入れた BLOB は表で <code>BLOB · 8 B · 89504E470D0A1A0A</code> と表示され、CSV には <code>89504E470D0A1A0A</code> と書き出されます。<code>NULL</code> と空文字列はどちらも空のフィールドになるため、区別したいときはクエリで <code>{`COALESCE(col, '<null>')`}</code> を選んでから書き出してください。</p>
+
+<h2>ファイルの中身が想定と違うとき</h2>
+
+<ul>
+  <li><strong>最近の行がない。</strong><a href="https://www.sqlite.org/wal.html">WAL モード</a>では、コミットした変更はチェックポイントまで <code>app.db-wal</code> に残ります。WAL のデータベースはヘッダーの 18・19 バイト目がどちらも <code>2</code> です（<a href="https://www.sqlite.org/fileformat.html">ファイル形式</a>）。書き込んでいるアプリを閉じてから <code>{`sqlite3 app.db "PRAGMA wal_checkpoint(TRUNCATE);"`}</code> を実行してください。</li>
+  <li><strong>「SQLite 3 データベースではありません」と出る。</strong>先頭 16 バイトは <code>SQLite format 3</code> とヌルバイトでなければなりません。<code>head -c 16 app.db | xxd</code> で確認できます。SQLCipher はここにランダムなソルトを置くため、暗号化されたファイルはこの確認で弾かれます。</li>
+  <li><strong>100 MB を超える。</strong>先に小さな抜粋を作ります：<code>{`sqlite3 big.db "ATTACH 'small.db' AS s; CREATE TABLE s.orders AS SELECT * FROM orders WHERE created_at >= '2026-09-01';"`}</code>。そのあと <code>small.db</code> を開いてください。</li>
+  <li><strong>使用中のデータベースをコピーする。</strong><code>cp</code> では書きかけのファイルを拾うことがあります。<code>{`sqlite3 app.db "VACUUM INTO 'snapshot.db'"`}</code>（SQLite 3.27.0 以降、<a href="https://www.sqlite.org/lang_vacuum.html">VACUUM</a>）なら、コミット済みの WAL の内容も含む一貫した 1 ファイルのコピーができます。</li>
+</ul>
+
 <h2>仕組み</h2>
 
 <p>ページはまずファイル先頭の 100 バイトだけを読み、SQLite ヘッダーを確認します。SQLite エンジン（sql.js、圧縮後約 340 KB）はこの確認を通過してから取得するため、ページを開くだけでは追加の読み込みは発生せず、別形式のファイルでダウンロードが走ることもありません。その後ファイル全体をインメモリデータベースとして SQLite に渡します。テーブル構造は <code>pragma_table_info</code> と <code>pragma_index_list</code> から取得し、テーブル名・列名はすべて引用符で囲むため、空白や引用符、日本語を含む名前も扱えます。</p>

@@ -29,6 +29,35 @@ faqItems:
   <li><strong>纯色涂黑</strong> ——用一个纯色完全覆盖该区域，是唯一彻底销毁原始像素的方式。密码、Token、API Key，以及任何要发给 AI 聊天的内容，都请用这个。</li>
 </ul>
 
+<h2>三种效果对像素做了什么</h2>
+<p>
+  每次改动设置，工具都会从原图重新绘制再套用效果，效果不会叠加。下面的数字来自工具本身的像素化函数。
+</p>
+<ul>
+  <li><strong>像素化</strong>（块大小 4–64 px，默认 16）从区域左上角开始把区域切成正方形格子，每格填上格内像素的平均色。一个 2 × 2 的格子里有两个黑像素、两个白像素，结果是 <code>rgb(128, 128, 128)</code>。颜色按透明度加权：两个不透明红像素加两个完全透明像素，结果是半透明红色（<code>255, 0, 0，alpha 128</code>），不会变成暗红。</li>
+  <li><strong>边缘格子按剩余尺寸缩小。</strong>宽 100 px 的区域用块大小 16，得到 6 列 16 px 的格子和最后一列 4 px（第 96–99 列像素）。边缘格子只平均自己的像素，不读取区域外的像素。</li>
+  <li><strong>模糊</strong>（半径 2–40 px，默认 12）先把区域画到 <code>ceil(宽 / 半径)</code> × <code>ceil(高 / 半径)</code> 的小画布上（开启平滑），再放大回原尺寸。300 × 40 的区域用半径 12，只保留 25 × 4 = 100 个采样；同一区域用块大小 16 像素化，保留 19 × 3 = 57 个格子。模糊保留的信息量和像素化差不多，平滑只是把格子边缘抹掉。</li>
+  <li><strong>纯色涂黑</strong>用一个不透明颜色（默认黑色）覆盖区域，原像素一点不剩。</li>
+  <li>虚线框只画在预览里，下载和复制图片时会重新渲染，不带虚线框。</li>
+</ul>
+
+<h2>为什么像素化的文字能被还原</h2>
+<p>像素化和模糊都会丢信息，但攻击者不需要把算式倒推回去：用同样的字体渲染候选文字，套上同样的滤镜，再逐块比对。已知字体的文字候选很少，这种猜法很有效：</p>
+<ul>
+  <li><a href="https://github.com/spipm/Depix">Depix</a>（2020）针对用线性方框滤镜像素化的截图，用渲染好的字符序列逐块匹配还原文字。本工具的像素化用的就是这类滤镜。</li>
+  <li>Bishop Fox 的 <a href="https://bishopfox.com/blog/unredacter-tool-never-pixelation">Unredacter</a>（2022）逐个字符猜测，还会遍历所有网格偏移，网格没对齐文字也挡不住。</li>
+  <li><a href="https://petsymposium.org/popets/2016/popets-2016-0047.php">Hill、Zhou、Saul、Shacham（PoPETs 2016）</a>在马赛克格子比字号还大、图片经过重度 JPEG 压缩、文字被模糊的情况下都还原出了可读文字，结论是马赛克和模糊不适合用来遮挡文字。</li>
+</ul>
+<p>人脸方面，<a href="https://arxiv.org/abs/1609.00408">McPherson、Shokri、Shmatikov（2016）</a>训练的模型能认出马赛克和模糊图片里的人。身份必须保密时用纯色涂黑。</p>
+
+<h2>正确打码之后还会泄露什么</h2>
+<ul>
+  <li><strong>长度。</strong>黑条正好盖住文字时，能看出有几个字符；等宽字体下就是准确字数。PIN 码这类短密码，黑条要画得比文字宽。</li>
+  <li><strong>文件名。</strong>下载的文件保留原文件名并加上 <code>-pixelated</code>，<code>身份证-张三.jpg</code> 会变成 <code>身份证-张三-pixelated.png</code>；粘贴的图片保存为 <code>pasted-image-pixelated</code>。文件名能认出人时先改名。</li>
+  <li><strong>截图的其他位置。</strong>标签页标题、地址栏、通知弹窗、输入联想列表，以及日志下方重复出现的同一个密钥，常常又把秘密露了出来。</li>
+  <li><strong>原文件。</strong>打码会生成新文件，原图仍在硬盘和相册备份里。导出文件只由画布像素生成，不带原图的 EXIF、GPS，也不会残留原文件的字节。2023 年的 aCropalypse 漏洞就是反例：Google Pixel 的 Markup（<a href="https://www.cve.org/CVERecord?id=CVE-2023-21036">CVE-2023-21036</a>）和 Windows 截图工具（<a href="https://www.cve.org/CVERecord?id=CVE-2023-28303">CVE-2023-28303</a>）裁剪后覆盖原文件却没截断，未裁剪的部分可以从文件末尾恢复。</li>
+</ul>
+
 <h2>常见使用场景</h2>
 <ul>
   <li><strong>把截图发给 AI 聊天、工单或论坛前脱敏</strong> ——用纯色涂黑遮住 API Key、Token、账号 ID、邮箱地址、内网地址。</li>
@@ -48,6 +77,11 @@ faqItems:
   <li>已画出的区域不能移动、缩放，也不能单独设置效果——想改就撤销重画。</li>
   <li>一次只处理一张图，没有批量模式。</li>
   <li>动图 GIF 按设计只导出静态的第一帧。需要逐帧图片可以用 <a href="/zh/tools/gif-splitter/">GIF 拆帧工具</a>。</li>
+  <li>同一时间只有一种效果作用于所有区域。想在同一张图里给人脸打马赛克、给密码涂黑，先下载第一次的结果，再载入这个文件套用第二种效果。</li>
+  <li>宽或高小于 2 px 的区域会被丢弃，误点不会留下空区域。勾选「应用到整张图片」时不能画区域。</li>
+  <li>JPEG 没有透明通道，透明区域会铺成白色。浏览器不能编码 WebP 时（按 MDN 兼容性数据，Safari 不支持），选 WebP 会保存成 PNG 文件。「复制图片」放进剪贴板的总是 PNG。</li>
+  <li>浏览器对画布尺寸有上限，导出失败时会提示「导出失败——请试试更小的图片」。</li>
+  <li>HEIC 照片只有 Safari 17 及以上能打开（<a href="https://caniuse.com/heif">Can I use</a>），其他浏览器请先转成 JPEG。</li>
   <li>不处理 PDF 打码，请用本地 PDF 编辑器自带的涂黑/编辑功能。</li>
 </ul>
 

@@ -35,6 +35,23 @@ A GIF does not store a stack of complete pictures. After the first frame, encode
 
 Exporting the raw patches gives you fragments with holes in them. The splitter keeps a running canvas, applies each disposal rule in order, and saves a copy of the canvas after every frame. Each exported PNG is the complete picture at that moment. Frames also keep their full canvas size, so frame 12 lines up with frame 1 pixel for pixel.
 
+## Example: What a Five-Frame GIF Stores
+
+A 64 × 64 GIF with a blue bar moving right, saved by Pillow 12.1.1 with frame durations of 100, 200, 50, 500 and 0 ms and a loop count of 2. The splitter's parser reads it as:
+
+```text
+#1 rect 64x64@0,0   disposal 1 delay 10cs -> 100 ms
+#2 rect 26x16@8,24  disposal 1 delay 20cs -> 200 ms
+#3 rect 26x16@18,24 disposal 1 delay 5cs  -> 50 ms
+#4 rect 26x16@28,24 disposal 1 delay 50cs -> 500 ms
+#5 rect 26x16@38,24 disposal 1 delay 0cs  -> 100 ms
+```
+
+- Only frame 1 covers the canvas. Frames 2–5 are 26 × 16 patches. Saved one by one, they would be four small strips; the splitter exports five complete 64 × 64 frames.
+- Frame 5 says 0 cs. Chromium, Firefox and WebKit play delays of 0 or 1 cs at 100 ms, so the thumbnail and the JSON show 100 ms. ffmpeg and Pillow report the raw value; a script that trusts them plays that frame much faster than any browser does.
+- The info bar shows "repeats after first play: 2": the NETSCAPE2.0 count means repeats, so the animation plays three times in total.
+- Frame 3 downloads as `spinner-frame-003.png`. With 5 columns and no spacing, the sprite sheet is 320 × 64 and the JSON durations are 100, 200, 50, 500 and 100.
+
 ## Sprite Sheets and the JSON Data
 
 The sprite sheet places the selected frames in a grid, left to right and top to bottom, with optional spacing between cells. Spacing stays transparent. The JSON looks like this:
@@ -81,7 +98,7 @@ For a pure-CSS animation, set **Columns** to the number of selected frames to ge
 
 ## Why Not Just Use ffmpeg?
 
-ffmpeg is the right tool for very large files, and it composites frames correctly. One catch: with default settings it resamples variable-delay GIFs to a constant frame rate, so a 5-frame GIF can come out as dozens of duplicated PNGs. Add `-fps_mode passthrough` to get exactly one image per frame:
+ffmpeg is the right tool for very large files, and it composites frames correctly. One catch: with default settings it resamples variable-delay GIFs to a constant frame rate. For the five-frame GIF above, ffmpeg 9.0.2 wrote 19 PNGs. Add `-fps_mode passthrough` (FFmpeg 5.1 and later; older builds use `-vsync passthrough`) to get exactly one image per frame — 5 for that file:
 
 ```bash
 ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png
@@ -98,7 +115,9 @@ The page decodes the GIF itself instead of relying on the browser's image decode
 - Frames always export at the full canvas size. Cropping and resizing are out of scope; the [Image Compressor](/tools/image-compressor/) can resize exported frames.
 - Output formats are PNG, JPG, a ZIP of either, and a PNG sprite sheet. To convert frames to WebP, use the [WebP Converter](/tools/webp-converter/).
 - Editing or re-assembling an animated GIF is out of scope. This tool only takes GIFs apart.
-- Size limits: 50 million decoded pixels, 1,000 frames, and 16,777,216 pixels per frame or sprite sheet.
+- Size limits: 50 million decoded pixels, 1,000 frames, and 16,777,216 pixels per frame or sprite sheet. A 1920 × 1080 screen recording with 60 frames is 124,416,000 decoded pixels and is refused before decoding; the page shows the ffmpeg command instead. The 16,777,216-pixel cap comes from Mobile Safari, where the [canvas-size](https://jhildenbiddle.github.io/canvas-size/#/?id=test-results) project measured 4,096 × 4,096 as the largest usable canvas.
+- The ZIP is often much larger than the GIF: each exported frame covers the full canvas, while the GIF may store only small patches. Export fewer frames with the step selector, or convert them with the [WebP Converter](/tools/webp-converter/).
+- A damaged file still opens. If the data ends inside a frame, every pixel decoded before the break is kept and the status line says the file ends early.
 
 ## Related Tools
 

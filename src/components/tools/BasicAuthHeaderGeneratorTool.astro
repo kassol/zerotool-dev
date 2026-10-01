@@ -133,6 +133,7 @@
           invalidScheme: 'Only the Basic authorization scheme is supported.',
           invalidBase64: 'Invalid Base64 token.',
           missingColon: 'Decoded credentials must contain a colon.',
+          decodedLatin1: 'The decoded bytes are not valid UTF-8, so they are shown as ISO-8859-1 (older clients send this; RFC 7617 only defines UTF-8). Check the result.',
           copyFailed: 'Copy failed. Select and copy manually.',
           privacy: 'Basic auth is Base64 encoding, not encryption. Use HTTPS when sending it.',
         },
@@ -165,6 +166,7 @@
           invalidScheme: '仅支持 Basic 授权方案。',
           invalidBase64: 'Base64 token 无效。',
           missingColon: '解码后的凭据必须包含冒号。',
+          decodedLatin1: '解码出的字节不是有效的 UTF-8，已按 ISO-8859-1 显示（旧客户端会这样发送；RFC 7617 只定义了 UTF-8）。请核对结果。',
           copyFailed: '复制失败，请手动选择复制。',
           privacy: 'Basic auth 是 Base64 编码，不是加密。发送时请使用 HTTPS。',
         },
@@ -197,6 +199,7 @@
           invalidScheme: 'Basic 認証スキームのみ対応しています。',
           invalidBase64: 'Base64 トークンが無効です。',
           missingColon: 'デコード後の認証情報にはコロンが必要です。',
+          decodedLatin1: 'デコードしたバイト列は UTF-8 として正しくないため、ISO-8859-1 として表示しています（古いクライアントはこの形式で送ります。RFC 7617 が定義するのは UTF-8 だけです）。結果を確認してください。',
           copyFailed: 'コピーに失敗しました。手動で選択してコピーしてください。',
           privacy: 'Basic auth は Base64 エンコードであり、暗号化ではありません。送信時は HTTPS を使用してください。',
         },
@@ -229,6 +232,7 @@
           invalidScheme: 'Basic 인증 스킴만 지원합니다.',
           invalidBase64: 'Base64 토큰이 유효하지 않습니다.',
           missingColon: '디코딩된 자격 증명에는 콜론이 필요합니다.',
+          decodedLatin1: '디코딩한 바이트가 올바른 UTF-8이 아니어서 ISO-8859-1로 표시했습니다(오래된 클라이언트가 이렇게 보냅니다. RFC 7617은 UTF-8만 정의합니다). 결과를 확인하세요.',
           copyFailed: '복사에 실패했습니다. 직접 선택해서 복사하세요.',
           privacy: 'Basic auth는 Base64 인코딩이며 암호화가 아닙니다. 전송할 때 HTTPS를 사용하세요.',
         },
@@ -237,7 +241,6 @@
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
       var t = STRINGS[pageLang] || STRINGS.en;
       var encoder = new TextEncoder();
-      var decoder = new TextDecoder('utf-8', { fatal: true });
 
       function byId(id) {
         return document.getElementById(id);
@@ -283,6 +286,7 @@
         return btoa(binary);
       }
 
+      /* ── engine:start ── */
       function base64ToBytes(token) {
         var normalized = token.replace(/\s+/g, '');
         if (!normalized) throw new Error('invalidBase64');
@@ -317,6 +321,26 @@
         return value;
       }
 
+      // RFC 7617 §2.1: the only charset the scheme defines is UTF-8. Older clients send
+      // ISO-8859-1, so bytes that are not valid UTF-8 are shown as ISO-8859-1 with a notice
+      // (every byte maps to U+0000–U+00FF) instead of being reported as bad Base64.
+      function decodeCredentials(input) {
+        var bytes = base64ToBytes(extractBasicToken(input));
+        var text;
+        var charset = 'utf-8';
+        try {
+          text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch (err) {
+          charset = 'iso-8859-1';
+          text = '';
+          for (var i = 0; i < bytes.length; i += 1) text += String.fromCharCode(bytes[i]);
+        }
+        var colonIndex = text.indexOf(':');
+        if (colonIndex === -1) throw new Error('missingColon');
+        return { username: text.slice(0, colonIndex), password: text.slice(colonIndex + 1), charset: charset };
+      }
+      /* ── engine:end ── */
+
       function generateHeader() {
         var username = usernameEl.value;
         var password = passwordEl.value;
@@ -343,18 +367,14 @@
       }
 
       function decodeHeader() {
-        var token;
-        var decoded;
-        var colonIndex;
+        var result;
         try {
-          token = extractBasicToken(decodeInputEl.value);
-          decoded = decoder.decode(base64ToBytes(token));
-          colonIndex = decoded.indexOf(':');
-          if (colonIndex === -1) throw new Error('missingColon');
-          decodedUsernameEl.textContent = decoded.slice(0, colonIndex);
-          decodedPasswordEl.textContent = decoded.slice(colonIndex + 1);
+          result = decodeCredentials(decodeInputEl.value);
+          decodedUsernameEl.textContent = result.username;
+          decodedPasswordEl.textContent = result.password;
           decodeOutputEl.hidden = false;
-          setStatus(decodeStatusEl, t.decoded, 'success');
+          if (result.charset === 'utf-8') setStatus(decodeStatusEl, t.decoded, 'success');
+          else setStatus(decodeStatusEl, t.decodedLatin1, 'info');
         } catch (err) {
           decodeOutputEl.hidden = true;
           setStatus(decodeStatusEl, t[err.message] || t.invalidBase64, 'error');

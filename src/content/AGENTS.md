@@ -20,7 +20,7 @@ Astro Content Collections 的根目录。包含两个 collection：`blog` 与 `t
 每篇文章一个目录，目录名是 base slug；目录下放 4 个语言文件：
 
 ```
-src/content/blog/sqlite-viewer-guide/
+src/content/blog/pkce-generator-guide/
 ├── en.mdx
 ├── zh.mdx
 ├── ja.mdx
@@ -28,10 +28,10 @@ src/content/blog/sqlite-viewer-guide/
 ```
 
 URL 由 base slug 决定：
-- `/blog/sqlite-viewer-guide/` → en.mdx
-- `/zh/blog/sqlite-viewer-guide/` → zh.mdx
-- `/ja/blog/sqlite-viewer-guide/` → ja.mdx
-- `/ko/blog/sqlite-viewer-guide/` → ko.mdx
+- `/blog/pkce-generator-guide/` → en.mdx
+- `/zh/blog/pkce-generator-guide/` → zh.mdx
+- `/ja/blog/pkce-generator-guide/` → ja.mdx
+- `/ko/blog/pkce-generator-guide/` → ko.mdx
 
 > 历史：迁移前曾用平铺命名 `{base-slug}-{lang}.mdx`（如 `csv-json-guide-zh.mdx`），URL 是 `/zh/blog/csv-json-guide-zh/`。`scripts/generate-blog-redirects.mjs` 现在生成反向 301（旧 URL → 新 URL）兼容已索引外链；几个月后可移除。
 
