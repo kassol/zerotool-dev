@@ -1,6 +1,7 @@
 // HAR Waterfall Invariant — spec-driven regression test
 //
-// Read: this file (self-contained, no external file I/O)
+// Read: src/components/tools/HarFileAnalyzerTool.astro (the engine block between the
+//       `engine:start` / `engine:end` markers; Layer 2 runs the shipped normalizeTimings)
 // Write: stdout only (test results)
 // Exit: 0 if all PASS, 1 if any FAIL
 //
@@ -13,12 +14,17 @@
 //
 // Layered design:
 //   1. specSum() — independent spec-formula computation, decoupled from source code
-//   2. mirrorPhaseSegments() / mirrorInvariant() — mirror current source phase logic
-//      (src/components/tools/HarFileAnalyzerTool.astro phaseSegments + ingest invariantOk)
+//   2. engineInvariant() — the component's normalizeTimings(): the drawn phases (TCP and TLS
+//      split from connect, or placed one after the other when the exporter counts ssl outside
+//      connect, as Firefox does) must add up to entry.time
 //   3. oldBuggyPhaseSegments() / oldBuggyInvariant() — regression guard against
 //      the Phase 3 v1 `connect + ssl` double-counting bug
 //
 // Run: node scripts/test-har-invariant.mjs
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 // ---------- spec-driven 独立计算（不依赖源算法）----------
 function specSum(timings) {
@@ -26,25 +32,16 @@ function specSum(timings) {
   return v('blocked') + v('dns') + v('connect') + v('send') + v('wait') + v('receive');
 }
 
-// ---------- mirror 当前源代码（新算法）----------
-function mirrorPhaseSegments(timings) {
-  function v(name) { var x = Number(timings[name]); return isFinite(x) ? x : -1; }
-  var blocked = v('blocked'), dns = v('dns'), connect = v('connect'), ssl = v('ssl'),
-      send = v('send'), wait = v('wait'), receive = v('receive');
-  var connectDur = connect >= 0 ? connect : (ssl >= 0 ? ssl : -1);
-  return [
-    { key: 'queued', dur: blocked },
-    { key: 'dns', dur: dns },
-    { key: 'connect', dur: connectDur },
-    { key: 'send', dur: send },
-    { key: 'wait', dur: wait },
-    { key: 'receive', dur: receive },
-  ];
-}
-function mirrorInvariant(entryTime, timings) {
-  const phases = mirrorPhaseSegments(timings);
-  const sum = phases.reduce((a, p) => a + (p.dur > 0 ? p.dur : 0), 0);
-  return { sum, ok: Math.abs(entryTime - sum) < 1.5 };
+// ---------- 组件真实引擎 ----------
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const src = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
+const a = src.indexOf('/* ── engine:start ── */');
+const b = src.indexOf('/* ── engine:end ── */');
+if (a < 0 || b < a) { console.log('FAIL: engine markers not found'); process.exit(1); }
+const { normalizeTimings } = new Function(src.slice(a, b) + '; return { normalizeTimings };')();
+function engineInvariant(entryTime, timings) {
+  const n = normalizeTimings(timings, entryTime);
+  return { sum: n.sum, ok: !n.mismatch };
 }
 
 // ---------- 旧错算法（regression guard，mirror Phase 3 v1 错误实现）----------
@@ -173,11 +170,11 @@ for (const f of fixtures) {
   console.log(`  ${expectMatch ? 'PASS' : 'FAIL'}  ${f.name}  spec_sum=${sum} entry.time=${f.entryTime} spec_within=${within} expectSpec=${f.expectSpec}`);
 }
 
-// ---------- Layer 2: new impl mirror, should match expectNew ----------
-console.log('\nLayer 2 — new source impl (mirrored) matches expectNew:');
+// ---------- Layer 2: shipped engine, should match expectNew ----------
+console.log('\nLayer 2 — shipped engine (normalizeTimings) matches expectNew:');
 let l2Pass = 0, l2Fail = 0;
 for (const f of fixtures) {
-  const r = mirrorInvariant(f.entryTime, f.timings);
+  const r = engineInvariant(f.entryTime, f.timings);
   const ok = r.ok === f.expectNew;
   if (ok) l2Pass++; else l2Fail++;
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${f.name}  src_sum=${r.sum} src_ok=${r.ok} expected=${f.expectNew}`);
@@ -197,7 +194,7 @@ for (const f of fixtures) {
 const total = fixtures.length;
 console.log(`\nSummary:`);
 console.log(`  Layer 1 (spec sum)        : PASS ${l1Pass} / FAIL ${l1Fail} / TOTAL ${total}`);
-console.log(`  Layer 2 (new impl mirror) : PASS ${l2Pass} / FAIL ${l2Fail} / TOTAL ${total}`);
+console.log(`  Layer 2 (shipped engine)  : PASS ${l2Pass} / FAIL ${l2Fail} / TOTAL ${total}`);
 console.log(`  Layer 3 (old regression)  : PASS ${l3Pass} / FAIL ${l3Fail} / TOTAL ${total}`);
 const allOk = (l1Fail + l2Fail + l3Fail) === 0;
 console.log(`\nOverall: ${allOk ? 'PASS' : 'FAIL'}`);
