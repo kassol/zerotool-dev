@@ -328,5 +328,68 @@ if (STRINGS) {
   }
 }
 
+// ---------- zh guide examples (src/content/blog/totp-generator-guide/zh.mdx) ----------
+// {/* totp-check: {"secret":"…","time":…,"algo":"SHA-1","digits":8,"expect":"…"} */}: the engine's
+// code at that Unix time; {/* totp-uri: {"issuer":"…","account":"…","expect":"…"} */}: the URI the
+// tool builds for the Key Uri Format example secret. The expected value must appear in the page
+// after the annotation (within 4000 characters). A code block preceded by
+// {/* totp-run: {"lang":"node","expect":"…"} */} is run and its stdout must equal "expect".
+{
+  const { existsSync, writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { execFileSync } = await import('node:child_process');
+  const rel = 'src/content/blog/totp-generator-guide/zh.mdx';
+  const path = join(root, rel);
+  if (!existsSync(path)) check(rel + ' exists', false);
+  else {
+    const text = readFileSync(path, 'utf8');
+    let count = 0;
+    for (const m of text.matchAll(/\{\/\* totp-check: (\{.*?\}) \*\/\}/g)) {
+      count++;
+      const spec = JSON.parse(m[1]);
+      const n = E.normalizeSecret(spec.secret);
+      check(rel + ' secret decodes: ' + spec.secret, n.ok, JSON.stringify(n));
+      if (!n.ok) continue;
+      eq(rel + ' code at ' + spec.time, await E.totpAt(n.bytes, spec.time, spec.algo || 'SHA-1', spec.digits || 6, spec.period || 30), spec.expect);
+      check(rel + ' quotes ' + spec.expect + ' after the annotation', text.slice(m.index, m.index + 4000).includes(spec.expect));
+    }
+    for (const m of text.matchAll(/\{\/\* totp-uri: (\{.*?\}) \*\/\}/g)) {
+      count++;
+      const spec = JSON.parse(m[1]);
+      eq(rel + ' URI for ' + spec.issuer, build({ issuer: spec.issuer, account: spec.account }).uri, spec.expect);
+      check(rel + ' quotes the URI after the annotation', text.slice(m.index, m.index + 4000).includes(spec.expect));
+    }
+    check(rel + ' has totp-check / totp-uri annotations', count >= 5, count);
+    let runs = 0;
+    for (const m of text.matchAll(/\{\/\* totp-run: (\{.*?\}) \*\/\}\s*```[a-z]*\n([\s\S]*?)```/g)) {
+      runs++;
+      const spec = JSON.parse(m[1]);
+      const dir = mkdtempSync(join(tmpdir(), 'totp-run-'));
+      try {
+        writeFileSync(join(dir, 'main.mjs'), m[2]);
+        eq(rel + ' code block ' + runs, execFileSync(process.execPath, [join(dir, 'main.mjs')]).toString().trim(), spec.expect);
+      } catch (e) {
+        check(rel + ' code block ' + runs, false, String(e.stderr || e.message).slice(0, 300));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    check(rel + ' has a runnable code block', runs >= 1, runs);
+    // The step-by-step numbers in the text match an independent node:crypto computation.
+    eq(rel + ' worked example (HMAC, offset, value)', (() => {
+      const msg = Buffer.alloc(8); msg.writeBigUInt64BE(BigInt(Math.floor(1111111109 / 30)));
+      const h = createHmac('sha1', Buffer.from(SEED20)).update(msg).digest();
+      const o = h[19] & 15;
+      return [h.toString('hex'), o, h.subarray(o, o + 4).toString('hex'), h.readUInt32BE(o) & 0x7fffffff];
+    })(), ['278c02e53610f84c40bd9135acd4101012410a14', 4, '3610f84c', 907081804]);
+    for (const s of ['278c02e53610f84c40bd9135acd4101012410a14', '`36 10 f8 4c`', '907081804', '0x23523EC', '000000000273EF07']) {
+      check(rel + ' contains ' + s, text.includes(s));
+    }
+    check(rel + ' is indexable (noindex lifted in the 2026-10-01 traffic review)', !/^noindex:\s*true/m.test(text));
+    const tpl = [/^## .*是什么/m, /^## .*在线/m, /^## (总结|小结)/m].filter((re) => re.test(text));
+    check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
