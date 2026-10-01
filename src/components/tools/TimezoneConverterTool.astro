@@ -162,6 +162,15 @@ const L = labels[lang] ?? labels.en;
     return FALLBACK_ZONES;
   })();
   const zoneSet = new Set(allZones);
+
+  // Intl.supportedValuesOf lists one name per zone, and the name differs between engines
+  // (V8 lists Asia/Calcutta and no UTC; Firefox lists Asia/Kolkata), so a zone counts as
+  // valid when Intl.DateTimeFormat accepts it.
+  function isZone(z) {
+    if (!z) return false;
+    if (zoneSet.has(z)) return true;
+    try { new Intl.DateTimeFormat('en-US', { timeZone: z }); return true; } catch (e) { return false; }
+  }
   datalist.innerHTML = allZones.map((z) => '<option value="' + z + '">').join('');
 
   const localZone = (function () {
@@ -177,6 +186,12 @@ const L = labels[lang] ?? labels.en;
       'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
 
+  // The current wall-clock time in `zone`, as the base time field expects it
+  function nowInZone(zone, now) {
+    const f = formatInZone(now || new Date(), zone);
+    return f ? f.local.replace(' ', 'T') : nowLocalIso();
+  }
+
   // Read datetime-local input as wall-clock time interpreted in `zone`.
   // Returns the corresponding UTC Date object.
   function wallClockToUtc(localStr, zone) {
@@ -184,14 +199,18 @@ const L = labels[lang] ?? labels.en;
     const m = localStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
     if (!m) return null;
     const y = +m[1], mo = +m[2] - 1, d = +m[3], h = +m[4], mi = +m[5], s = m[6] ? +m[6] : 0;
-    // First guess: treat the wall-clock as UTC, then back-correct by the zone offset.
+    // Try the offsets in force a day before and a day after; keep the ones that give back the
+    // same offset. Two fit in the repeated hour after a DST end: take the earlier instant.
+    // None fits in the skipped hour after a DST start: use the offset before the gap, so
+    // 02:30 on a spring-forward night reads as 03:30 (RFC 5545 3.3.5, Temporal "compatible").
     const guess = Date.UTC(y, mo, d, h, mi, s);
-    const off1 = getOffsetMin(new Date(guess), zone);
-    let utc = guess - off1 * 60 * 1000;
-    // Refine once to handle DST boundaries (offset may differ at the corrected instant).
-    const off2 = getOffsetMin(new Date(utc), zone);
-    if (off2 !== off1) utc = guess - off2 * 60 * 1000;
-    return new Date(utc);
+    const before = getOffsetMin(new Date(guess - 86400000), zone);
+    const after = getOffsetMin(new Date(guess + 86400000), zone);
+    const fits = [before, after]
+      .map((off) => guess - off * 60000)
+      .filter((t) => getOffsetMin(new Date(t), zone) * 60000 === guess - t)
+      .sort((p, q) => p - q);
+    return new Date(fits.length ? fits[0] : guess - before * 60000);
   }
 
   function getOffsetMin(date, zone) {
@@ -268,10 +287,14 @@ const L = labels[lang] ?? labels.en;
     try {
       const persisted = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
       if (Array.isArray(persisted.targets) && persisted.targets.length) {
-        state.targets = persisted.targets.filter((z) => zoneSet.has(z));
+        state.targets = persisted.targets.filter(isZone);
         if (!state.targets.length) state.targets = [localZone, 'UTC'];
       }
-      if (persisted.source && zoneSet.has(persisted.source)) state.source = persisted.source;
+      // A remembered source zone starts from the current time in that zone
+      if (persisted.source && isZone(persisted.source)) {
+        state.source = persisted.source;
+        state.base = nowInZone(state.source);
+      }
     } catch (e) {}
     parseHash();
   }
@@ -293,9 +316,9 @@ const L = labels[lang] ?? labels.en;
     const s = params.get('s');
     const z = params.get('z');
     if (t && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) state.base = t;
-    if (s && zoneSet.has(s)) state.source = s;
+    if (s && isZone(s)) state.source = s;
     if (z) {
-      const zones = z.split(',').map((x) => x.trim()).filter((x) => zoneSet.has(x));
+      const zones = z.split(',').map((x) => x.trim()).filter(isZone);
       if (zones.length) state.targets = zones;
     }
   }
@@ -323,7 +346,7 @@ const L = labels[lang] ?? labels.en;
       resultsEl.innerHTML = '';
       return;
     }
-    if (!zoneSet.has(state.source)) {
+    if (!isZone(state.source)) {
       setStatus(L.invalidZone, 'error');
       resultsEl.innerHTML = '';
       return;
@@ -443,8 +466,10 @@ const L = labels[lang] ?? labels.en;
     if (!raw) return null;
     const trimmed = raw.trim();
     if (zoneSet.has(trimmed)) return trimmed;
+    if (trimmed.indexOf('/') !== -1 && isZone(trimmed)) return trimmed;
     const lc = trimmed.toLowerCase();
-    if (ALIASES[lc] && zoneSet.has(ALIASES[lc])) return ALIASES[lc];
+    if (lc === 'utc' || lc === 'gmt') return 'UTC';
+    if (ALIASES[lc] && isZone(ALIASES[lc])) return ALIASES[lc];
     const match = allZones.find((z) => z.toLowerCase() === lc);
     if (match) return match;
     const cityMatch = allZones.find((z) => z.toLowerCase().endsWith('/' + lc.replace(/ /g, '_')));
@@ -467,7 +492,7 @@ const L = labels[lang] ?? labels.en;
   });
 
   nowBtn.addEventListener('click', () => {
-    state.base = nowLocalIso();
+    state.base = nowInZone(state.source);
     writeHash();
     render();
     window.trackTool && window.trackTool(SLUG, 'now');

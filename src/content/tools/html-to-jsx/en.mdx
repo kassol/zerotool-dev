@@ -37,6 +37,8 @@ faqItems:
 | `rowspan` | `rowSpan` |
 | `crossorigin` | `crossOrigin` |
 | `contenteditable` | `contentEditable` |
+| `autocomplete`, `novalidate`, `srcset`, `datetime`, `spellcheck` | `autoComplete`, `noValidate`, `srcSet`, `dateTime`, `spellCheck` |
+| `http-equiv`, `accept-charset` | `httpEquiv`, `acceptCharset` |
 | `<br>` | `<br />` |
 | `<img src="...">` | `<img src="..." />` |
 | `<input ...>` | `<input ... />` |
@@ -71,6 +73,28 @@ Output:
 {/* footer */}
 ```
 
+A login form shows several rules at once. The input
+
+```html
+<form action="/login" method="post" novalidate>
+  <label for="user" class="field-label">Username</label>
+  <input id="user" name="user" autocomplete="username" maxlength="32" autofocus>
+  <button type="submit" onclick="track(&quot;login&quot;)">Sign in</button>
+</form>
+```
+
+becomes
+
+```jsx
+<form action="/login" method="post" noValidate>
+  <label htmlFor="user" className="field-label">Username</label>
+  <input id="user" name="user" autoComplete="username" maxLength="32" autoFocus />
+  <button type="submit" onClick={(event) => { track("login") }}>Sign in</button>
+</form>
+```
+
+Six attribute names change (`novalidate`, `for`, `class`, `autocomplete`, `maxlength` and the boolean `autofocus`), the void `<input>` gets ` />`, and the `onclick` string becomes an arrow function with `&quot;` decoded back to `"`. Without the rename, React DOM prints a development warning such as “Invalid DOM property `autocomplete`. Did you mean `autoComplete`?”, so pasting unconverted HTML usually works but floods the console. The attribute names come from the same table React uses to suggest them (`possibleStandardNames.js` in react-dom).
+
 `data-*` and `aria-*` attributes stay hyphenated, as React expects. Numeric attributes stay strings, such as `colSpan="2"`; React accepts them.
 
 ## What You Still Change by Hand
@@ -90,3 +114,6 @@ Output:
 - **Attribute values are copied as written.** Only attribute names change, so `href="/search?for=1&class=2"` stays the same. This is what the [htmltojsx](https://github.com/reactjs/react-magic/blob/master/src/htmltojsx.js) converter does too. Two values change: `style` becomes an object, and the code of an event handler goes into `(event) => { ... }`, because React [needs a function](https://react.dev/learn/responding-to-events), not a string. Entities such as `&quot;` in that code are decoded. An `on*` attribute that is not a DOM event, such as `onfoo` on a custom element, is kept as written.
 - **Tags only.** Text between tags is copied as is, and a full document keeps its `<!DOCTYPE>`, `<html>`, `<head>`, and `<body>`. Paste only the part that goes into the component.
 - **No component wrapper.** The output is markup. Put it in the `return (...)` of your component.
+- **No HTML parsing or repair.** The converter rewrites opening tags it can match with a pattern; it does not build a DOM. Unclosed tags stay unclosed, and an attribute written twice (`class="a" CLASS="b"`) becomes two `className` props, which JSX does not allow. Paste markup that already validates.
+- **Text is not escaped.** A `<`, `>`, `{` or `}` in text is copied as is and breaks the JSX; see the table above.
+- **Comments.** A `*/` inside an HTML comment is written as `* /`, so the JSX comment does not end early.

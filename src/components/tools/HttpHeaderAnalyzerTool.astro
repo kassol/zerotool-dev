@@ -131,7 +131,7 @@
         'cross-origin-embedder-policy': { cat: 'security', desc: 'Restricts subresources to those that grant permission. Pairs with COOP for cross-origin isolation.' },
         'cross-origin-resource-policy': { cat: 'security', desc: 'Limits which origins can load this resource. Mitigates Spectre-style attacks.' },
         'expect-ct': { cat: 'security', desc: 'Deprecated. Certificate Transparency is now mandatory; this header has no effect.' },
-        'x-xss-protection': { cat: 'security', desc: 'Legacy XSS auditor. Modern browsers ignore; use CSP instead. 0 disables, 1; mode=block is the safer legacy choice.' },
+        'x-xss-protection': { cat: 'security', desc: 'Legacy XSS auditor. Current browsers ignore it; send 0 or omit it and rely on CSP, because the old auditor could itself be abused.' },
         'x-permitted-cross-domain-policies': { cat: 'security', desc: 'Restricts cross-domain policy files (Flash/PDF). Set to none unless legacy plugins needed.' },
         // Caching
         'cache-control': { cat: 'caching', desc: 'Primary caching directive. Combine no-store / no-cache / private / public / max-age / s-maxage.' },
@@ -353,6 +353,19 @@
           });
         }
 
+        // The credentials warning is only about a wildcard origin; drop it when the pasted
+        // headers name a specific origin.
+        var explicitOrigin = headers.some(function (h) {
+          return h.lower === 'access-control-allow-origin' && h.value !== '*';
+        });
+        if (explicitOrigin) {
+          headers.forEach(function (h) {
+            if (h.lower === 'access-control-allow-credentials') {
+              h.hints = h.hints.filter(function (x) { return x.text.indexOf('Credentialed CORS') !== 0; });
+            }
+          });
+        }
+
         return { type: type, statusLine: statusLine, headers: headers };
       }
 
@@ -376,7 +389,7 @@
           // containing the literal keyword (e.g. session=httponly_token) don't suppress hints.
           if (!/;\s*httponly\b/.test(v)) hints.push({ sev: 'warn', text: 'Missing HttpOnly — cookie is reachable from JavaScript.' });
           if (!/;\s*secure\b/.test(v)) hints.push({ sev: 'warn', text: 'Missing Secure — cookie can be sent over plain HTTP.' });
-          if (!/;\s*samesite\b/.test(v)) hints.push({ sev: 'info', text: 'No SameSite — browsers default to Lax but explicit is safer.' });
+          if (!/;\s*samesite\b/.test(v)) hints.push({ sev: 'info', text: 'No SameSite — Chrome treats the cookie as Lax, Firefox and Safari do not. Set it explicitly.' });
         }
         if (name === 'access-control-allow-origin' && value === '*' && type === 'response') {
           hints.push({ sev: 'info', text: 'Wildcard origin disables credentialed CORS by spec.' });

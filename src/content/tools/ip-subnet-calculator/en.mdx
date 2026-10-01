@@ -20,10 +20,40 @@ faqItems:
 
 <h2>How to Use</h2>
 <ol>
-  <li>Type an IP address with CIDR notation in the input field (e.g. <code>192.168.1.0/24</code>), or enter just an IP address and choose the prefix length from the dropdown.</li>
-  <li>Results appear instantly: network address, broadcast address, subnet mask, wildcard mask, first and last usable host, and total usable host count.</li>
-  <li>Click <strong>Copy</strong> to copy all results to your clipboard as plain text.</li>
+  <li>Type an address with a prefix, such as <code>192.168.1.0/24</code>, or type just an address and pick the prefix from the <strong>Prefix Length</strong> dropdown. When the input already has a <code>/prefix</code>, choosing another value in the dropdown rewrites it.</li>
+  <li>Results update a quarter of a second after you stop typing. Any address inside the subnet works: the host bits are cleared to find the network.</li>
+  <li>Click <strong>Copy</strong> to copy all eight results as labelled plain-text lines, for example <code>Network Address: 192.168.1.64</code>.</li>
 </ol>
+
+<h2>Examples</h2>
+<p>The results below come from the calculator's own functions.</p>
+<table>
+  <thead>
+    <tr><th>Input</th><th>Network / Broadcast</th><th>Mask / Wildcard</th><th>Usable range</th><th>Usable hosts</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>192.168.1.77/26</code></td><td>192.168.1.64 / 192.168.1.127</td><td>255.255.255.192 / 0.0.0.63</td><td>192.168.1.65 – 192.168.1.126</td><td>62</td></tr>
+    <tr><td><code>172.31.100.5/20</code></td><td>172.31.96.0 / 172.31.111.255</td><td>255.255.240.0 / 0.0.15.255</td><td>172.31.96.1 – 172.31.111.254</td><td>4,094</td></tr>
+    <tr><td><code>203.0.113.9/31</code></td><td>203.0.113.8 / 203.0.113.9</td><td>255.255.255.254 / 0.0.0.1</td><td>203.0.113.8 – 203.0.113.9</td><td>2</td></tr>
+    <tr><td><code>198.51.100.7</code> with /32 selected</td><td>198.51.100.7 / 198.51.100.7</td><td>255.255.255.255 / 0.0.0.0</td><td>198.51.100.7 – 198.51.100.7</td><td>1</td></tr>
+  </tbody>
+</table>
+<p>
+  The first row is the usual question when you see an address in a log: <code>192.168.1.77</code> with a /26 mask belongs to the
+  block that starts at <code>.64</code>, so <code>192.168.1.130</code> is in a different subnet and traffic between them goes through
+  a router. The CIDR Notation field shows the corrected form, <code>192.168.1.64/26</code>, which is what most firewall and cloud
+  consoles expect; many of them reject <code>192.168.1.77/26</code> because host bits are set.
+</p>
+<p>
+  The second row is a typical cloud subnet. The calculator counts 4,094 usable hosts, but AWS reserves the first four and the last
+  address of every VPC subnet, and Azure reserves five as well, so only 4,091 can be assigned there. Subtract those yourself when you
+  size a cloud subnet.
+</p>
+<p>
+  For /31 and /32 the calculator does not subtract a network and a broadcast address. A /31 is a point-to-point link with two usable
+  addresses (RFC 3021), and a /32 is a single host, as used in route tables and allow-lists. In these two cases the Broadcast Address
+  field just shows the last address of the block.
+</p>
 
 <h2>Output Fields Explained</h2>
 
@@ -35,7 +65,7 @@ faqItems:
 | Wildcard Mask | Bitwise inverse of the subnet mask |
 | First Usable Host | Network address + 1 |
 | Last Usable Host | Broadcast address − 1 |
-| Usable Hosts | Total addresses minus 2 (network + broadcast) |
+| Usable Hosts | Total addresses minus 2 (network + broadcast); 2 for /31 and 1 for /32 |
 | CIDR Notation | Canonical network/prefix form |
 
 <h2>Common Subnet Reference</h2>
@@ -52,6 +82,17 @@ faqItems:
 | /23 | 255.255.254.0 | 510 |
 | /22 | 255.255.252.0 | 1,022 |
 | /16 | 255.255.0.0 | 65,534 |
+
+<h2>Errors and Limitations</h2>
+<ul>
+  <li>Addresses must be four decimal numbers from 0 to 255 with no leading zeros. <code>10.0.0.01</code>, <code>0x0a.0.0.1</code> and
+  <code>10.1</code> show “Invalid IPv4 address. Use four numbers from 0 to 255 separated by dots, with no leading zeros (e.g. 10.0.0.1).”
+  This matches <code>inet_pton</code> and Node's <code>net.isIPv4</code>; it avoids guessing whether <code>010</code> means 10 or octal 8.</li>
+  <li>The prefix must be a whole number from 0 to 32. <code>/33</code>, <code>/24x</code> and <code>/024</code> show “The CIDR prefix must be a whole number from 0 to 32 (e.g. /24).”</li>
+  <li>Dotted masks are not accepted after the slash. Type <code>/26</code>, or look up the prefix for a mask in the table above.</li>
+  <li>IPv4 only. IPv6 addresses are rejected as invalid.</li>
+  <li>One subnet at a time: the tool does not split a block into smaller subnets, list every address, or check whether two ranges overlap.</li>
+</ul>
 
 <h2>Common Use Cases</h2>
 <ul>

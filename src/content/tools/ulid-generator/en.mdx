@@ -30,8 +30,53 @@ faqItems:
 ```
 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ├─ Timestamp (10 chars) ──┤├── Randomness (16 chars) ──┤
- 48-bit ms since epoch      80-bit cryptographic random
+ 48-bit ms since epoch      80 bits: random, or previous + 1
 ```
+
+<p>
+  Each character carries 5 bits in Crockford Base32 (<code>0123456789ABCDEFGHJKMNPQRSTVWXYZ</code>). Ten characters hold 50 bits,
+  two more than the 48-bit timestamp needs, which is why the first character can only be 0–7. The random part comes from
+  <code>crypto.getRandomValues</code>; within one millisecond it is the previous value plus one (see the batch example below).
+</p>
+
+<h2>Examples</h2>
+<p>The values below are produced by the tool's own generator and decoder functions.</p>
+
+<h3>Decoding a ULID</h3>
+<table>
+  <thead>
+    <tr><th>Input</th><th>Timestamp</th><th>Milliseconds (epoch)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>01ARZ3NDEKTSV4RRFFQ69G5FAV</code> (example from the ULID spec)</td><td>2016-07-30 23:54:10.259 UTC</td><td>1469922850259</td></tr>
+    <tr><td><code>7ZZZZZZZZZZZZZZZZZZZZZZZZZ</code> (largest ULID)</td><td>+010889-08-02 05:31:50.655 UTC</td><td>281474976710655</td></tr>
+    <tr><td><code>8ZZZZZZZZZZZZZZZZZZZZZZZZZ</code></td><td colspan="2">Out of range: the first character must be 0–7</td></tr>
+    <tr><td><code>01ARZ3NDEKTSV4RRFFQ69G5FAL</code></td><td colspan="2">Invalid ULID (<code>L</code> is not in the alphabet)</td></tr>
+  </tbody>
+</table>
+<p>
+  The decoder trims spaces and accepts lowercase. The milliseconds value is what <code>Date.now()</code> returned when the ULID was
+  made, so you can paste it into the <a href="/tools/timestamp-converter/">Timestamp Converter</a> to see it in your own time zone.
+  The decoder reads only the first 10 characters; the random part carries no information to decode.
+</p>
+
+<h3>A batch inside one millisecond</h3>
+<p>
+  Generating three ULIDs at 2026-10-01 09:30:00.123 UTC gives a shared timestamp prefix <code>01M3VCS7HV</code>. Only the first random
+  part is drawn from the random number generator; the next two add 1 to it:
+</p>
+<ul>
+  <li><code>01M3VCS7HV28T5CY4TQKFF0492</code></li>
+  <li><code>01M3VCS7HV28T5CY4TQKFF0493</code></li>
+  <li><code>01M3VCS7HV28T5CY4TQKFF0494</code></li>
+</ul>
+<p>
+  If the system clock moves backwards, for example after an NTP correction, the generator keeps the last timestamp and keeps counting,
+  so a later ULID never sorts before an earlier one from the same page. This is the behaviour the ULID spec describes under
+  Monotonicity and that <code>monotonicFactory()</code> in the reference JavaScript library implements. ULIDs from different browsers
+  or servers in the same millisecond are not ordered among themselves; only their timestamps are.
+</p>
+
 
 <h2>ULID vs UUID Comparison</h2>
 
@@ -45,9 +90,29 @@ faqItems:
 | Randomness bits | 80 | 122 |
 
 <h2>Why Sort Order Matters in Databases</h2>
-<p>When using random UUIDs as primary keys in B-tree indexes (PostgreSQL, MySQL), insertions become non-sequential, leading to index fragmentation and slower range queries. Using ULIDs as primary keys keeps inserts nearly sequential, improving INSERT and SELECT performance significantly on large tables.</p>
+<p>
+  With random UUIDs as primary keys in a B-tree index (PostgreSQL, MySQL InnoDB), each insert lands at a random place in the index,
+  which splits pages and spreads writes across the whole index. ULIDs created later sort later, so inserts go to the right edge of the
+  index, as they would with an auto-increment column. The same holds for UUID version 7 (RFC 9562 section 5.7), which also starts with
+  a 48-bit millisecond timestamp and fits a native <code>uuid</code> column, while a ULID is usually stored as a 26-character string or
+  as 16 bytes after decoding.
+</p>
+<p>
+  Keep in mind that the timestamp is readable by anyone who sees the ID: a public ULID tells the reader when the record was created.
+  If that is a problem, use a random <a href="/tools/uuid-generator/">UUID v4</a> for public identifiers.
+</p>
+
+<h2>Limitations</h2>
+<ul>
+  <li>At most 100 ULIDs per click. A count above 100 is treated as 100; below 1, empty or non-numeric counts give 1.</li>
+  <li>The decoder accepts only the 32 letters and digits of the alphabet. Crockford's Base32 also allows reading <code>I</code> and
+  <code>L</code> as 1 and <code>O</code> as 0, but the decoder rejects these letters as an invalid ULID rather than guessing.</li>
+  <li>There is no option for lowercase output or for converting a ULID to a UUID string or 16 raw bytes.</li>
+  <li>If the random part reaches <code>ZZZZZZZZZZZZZZZZ</code> within one millisecond, generation stops with the message “The random part overflowed within one millisecond” instead of wrapping around. With a random starting point this needs on the order of 2<sup>79</sup> ULIDs in one millisecond, so in practice it does not happen.</li>
+</ul>
 
 <h2>Related Tools</h2>
 <ul>
   <li><a href="/tools/uuid-generator/">UUID Generator</a> — generate standard UUID v4 identifiers</li>
+  <li><a href="/tools/nano-id-generator/">Nano ID Generator</a> — short random IDs without a timestamp</li>
 </ul>

@@ -503,6 +503,7 @@ const L = labels[lang] ?? labels['en'];
     window.trackTool && window.trackTool('cron_job_generator', 'update');
   }
 
+  /* ── engine:start ── */
   // ---------- Description / Humanizer ----------
   var MONTHS_EN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   var WDAYS_EN = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -515,6 +516,11 @@ const L = labels[lang] ?? labels['en'];
     });
   }
 
+  // Whole decimal numbers only: parseInt would read 1.5, 5abc and the Quartz form 1#2 as 1 or 5
+  function toInt(s) {
+    return /^\d+$/.test(s) ? Number(s) : NaN;
+  }
+
   function parseField(field, min, max, names, nameOffset) {
     if (names) field = replaceNames(field, names, nameOffset);
     var result = [];
@@ -524,18 +530,22 @@ const L = labels[lang] ?? labels['en'];
       var step = 1;
       if (part.indexOf('/') !== -1) {
         var sp = part.split('/');
-        step = parseInt(sp[1]);
+        if (sp.length !== 2) return null;
+        step = toInt(sp[1]);
         if (isNaN(step) || step < 1) return null;
         part = sp[0];
+        // cronie get_range: a step needs * or a range before it (5/10 is an error)
+        if (part !== '*' && part.indexOf('-') === -1) return null;
       }
       var lo, hi;
       if (part === '*') { lo = min; hi = max; }
       else if (part.indexOf('-') !== -1) {
         var rp = part.split('-');
-        lo = parseInt(rp[0]); hi = parseInt(rp[1]);
+        if (rp.length !== 2) return null;
+        lo = toInt(rp[0]); hi = toInt(rp[1]);
         if (isNaN(lo) || isNaN(hi)) return null;
       } else {
-        var v = parseInt(part);
+        var v = toInt(part);
         if (isNaN(v)) return null;
         lo = hi = v;
       }
@@ -546,10 +556,12 @@ const L = labels[lang] ?? labels['en'];
     return result.filter(function (v) { return seen[v] ? false : (seen[v] = true); }).sort(function (a, b) { return a - b; });
   }
 
-  function humanizeField(expr, min, max, names, nameOffset, singular, plural) {
+  // names: abbreviations accepted in the field; labels: the words shown in the description
+  function humanizeField(expr, min, max, names, nameOffset, singular, plural, labels) {
     if (expr === '*') return 'every ' + singular;
     var vals = parseField(expr, min, max, names, nameOffset);
     if (!vals) return expr;
+    var shown = labels || names;
     if (expr.indexOf('*/') === 0) {
       var step = parseInt(expr.slice(2));
       return 'every ' + step + ' ' + (step === 1 ? singular : plural);
@@ -557,11 +569,11 @@ const L = labels[lang] ?? labels['en'];
     if (/^\d+-\d+$/.test(expr)) {
       var rp2 = expr.split('-');
       var lo2 = parseInt(rp2[0]), hi2 = parseInt(rp2[1]);
-      var loName = names ? (names[lo2 - nameOffset] || lo2) : lo2;
-      var hiName = names ? (names[hi2 - nameOffset] || hi2) : hi2;
+      var loName = shown ? (shown[lo2 - nameOffset] || lo2) : lo2;
+      var hiName = shown ? (shown[hi2 - nameOffset] || hi2) : hi2;
       return loName + ' through ' + hiName;
     }
-    return vals.map(function (v) { return names ? (names[v - nameOffset] || v) : v; }).join(', ');
+    return vals.map(function (v) { return shown ? (shown[v - nameOffset] || v) : v; }).join(', ');
   }
 
   function humanizeCron(fields) {
@@ -569,8 +581,8 @@ const L = labels[lang] ?? labels['en'];
     var minH = humanizeField(min, 0, 59, null, 0, 'minute', 'minutes');
     var hrH = humanizeField(hr, 0, 23, null, 0, 'hour', 'hours');
     var domH = humanizeField(dom, 1, 31, null, 0, 'day', 'days');
-    var monH = humanizeField(mon, 1, 12, MONTH_ABBR, 1, 'month', 'months');
-    var dowH = humanizeField(dow, 0, 7, WDAY_ABBR, 0, 'day of week', 'days of week');
+    var monH = humanizeField(mon, 1, 12, MONTH_ABBR, 1, 'month', 'months', MONTHS_EN);
+    var dowH = humanizeField(dow, 0, 7, WDAY_ABBR, 0, 'day of week', 'days of week', WDAYS_EN.concat('Sunday'));
 
     var when = '';
     if (min === '0' && hr === '0') when = 'At midnight';
@@ -578,7 +590,12 @@ const L = labels[lang] ?? labels['en'];
     else if (hr === '*') when = 'At ' + minH + ' past every hour';
     else when = 'At ' + minH + ' past ' + hrH;
 
-    if (dom !== '*' && dow !== '*') when += ', on ' + domH + ' of the month and on ' + dowH;
+    if (dom !== '*' && dow !== '*') {
+      // cronie: a field that starts with * does not restrict, so the other one alone decides
+      when += (dom.charAt(0) !== '*' && dow.charAt(0) !== '*')
+        ? ', on day ' + domH + ' of the month or on ' + dowH
+        : ', on day ' + domH + ' of the month and on ' + dowH;
+    }
     else if (dom !== '*') when += ', on day ' + domH + ' of the month';
     else if (dow !== '*') when += ', on ' + dowH;
     if (mon !== '*') when += ', in ' + monH;
@@ -606,7 +623,8 @@ const L = labels[lang] ?? labels['en'];
     return null;
   }
 
-  function nextRuns(fields, count) {
+  // Runs are computed in UTC or in the browser's time zone, the same zone the list is shown in
+  function nextRuns(fields, count, utc, from) {
     var minVals = parseField(fields[0], 0, 59, null, 0);
     var hrVals = parseField(fields[1], 0, 23, null, 0);
     var domVals = parseField(fields[2], 1, 31, null, 0);
@@ -616,52 +634,54 @@ const L = labels[lang] ?? labels['en'];
     var dowSet = dowVals ? {} : null;
     if (dowVals) dowVals.forEach(function (v) { dowSet[v] = true; });
     if (!minVals || !hrVals || !domVals || !monVals) return null;
-    // POSIX: when both dom and dow are explicitly constrained (non-wildcard), use OR semantics.
-    var posixOr = fields[2] !== '*' && fields[4] !== '*' && fields[4] !== '?' && dowSet !== null;
+    // cronie (DOM_STAR / DOW_STAR): when neither day field starts with *, a day matches if
+    // either field matches; otherwise both must match.
+    var posixOr = fields[2].charAt(0) !== '*' && fields[4].charAt(0) !== '*' && dowSet !== null;
+    function mk(y, m, day, h, mi) {
+      return utc ? new Date(Date.UTC(y, m, day, h, mi, 0)) : new Date(y, m, day, h, mi, 0);
+    }
     var runs = [];
-    var d = new Date();
+    var d = new Date(from === undefined ? Date.now() : from);
     d.setSeconds(0, 0);
     d = new Date(d.getTime() + 60000);
     var limit = 100000;
     while (runs.length < count && limit-- > 0) {
-      var yr = d.getFullYear();
-      var mo = d.getMonth();
+      var yr = utc ? d.getUTCFullYear() : d.getFullYear();
+      var mo = utc ? d.getUTCMonth() : d.getMonth();
       var mon = mo + 1;
-      var dom = d.getDate();
-      var dow = d.getDay();
-      var hr = d.getHours();
-      var min = d.getMinutes();
+      var dom = utc ? d.getUTCDate() : d.getDate();
+      var dow = utc ? d.getUTCDay() : d.getDay();
+      var hr = utc ? d.getUTCHours() : d.getHours();
+      var min = utc ? d.getUTCMinutes() : d.getMinutes();
       if (monVals.indexOf(mon) === -1) {
         var nm = nextAbove(monVals, mon);
         d = nm !== null
-          ? new Date(yr, nm - 1, 1, 0, 0, 0)
-          : new Date(yr + 1, monVals[0] - 1, 1, 0, 0, 0);
+          ? mk(yr, nm - 1, 1, 0, 0)
+          : mk(yr + 1, monVals[0] - 1, 1, 0, 0);
         continue;
       }
       var domOk = domVals.indexOf(dom) !== -1;
       var dowOk = !dowSet || dowSet[dow];
-      // POSIX OR: accept if either dom or dow matches when both are constrained;
-      // otherwise require both available constraints to pass.
       var dayOk = posixOr ? (domOk || dowOk) : (domOk && dowOk);
       if (!dayOk) {
         var nd = (!posixOr && fields[2] !== '*') ? nextAbove(domVals, dom) : null;
         d = nd !== null
-          ? new Date(yr, mo, nd, 0, 0, 0)
-          : new Date(yr, mo, dom + 1, 0, 0, 0);
+          ? mk(yr, mo, nd, 0, 0)
+          : mk(yr, mo, dom + 1, 0, 0);
         continue;
       }
       if (hrVals.indexOf(hr) === -1) {
         var nh = nextAbove(hrVals, hr);
         d = nh !== null
-          ? new Date(yr, mo, dom, nh, 0, 0)
-          : new Date(yr, mo, dom + 1, 0, 0, 0);
+          ? mk(yr, mo, dom, nh, 0)
+          : mk(yr, mo, dom + 1, 0, 0);
         continue;
       }
       if (minVals.indexOf(min) === -1) {
         var nmin = nextAbove(minVals, min);
         d = nmin !== null
-          ? new Date(yr, mo, dom, hr, nmin, 0)
-          : new Date(yr, mo, dom, hr + 1, 0, 0);
+          ? mk(yr, mo, dom, hr, nmin)
+          : mk(yr, mo, dom, hr + 1, 0);
         continue;
       }
       runs.push(new Date(d));
@@ -669,11 +689,12 @@ const L = labels[lang] ?? labels['en'];
     }
     return runs;
   }
+  /* ── engine:end ── */
 
   function updateNextRuns(fields) {
     var list = document.getElementById('cjg-next-list');
     if (!list) return;
-    var runs = nextRuns(fields, 10);
+    var runs = nextRuns(fields, 10, useUtc);
     if (!runs || !runs.length) { list.innerHTML = ''; return; }
     var html = '';
     runs.forEach(function (d) {

@@ -160,5 +160,27 @@ for (const key of ['outOfRange', 'overflow']) {
 }
 check('labels passed to the script', /data-out-of-range=\{L\.outOfRange\}/.test(source) && /data-overflow=\{L\.overflow\}/.test(source));
 
+// Examples on the English tool page are engine output
+{
+  const page = readFileSync(join(root, 'src/content/tools/ulid-generator/en.mdx'), 'utf8');
+  for (const [ulid, ts, ms] of [
+    ['01ARZ3NDEKTSV4RRFFQ69G5FAV', '2016-07-30 23:54:10.259 UTC', 1469922850259],
+    ['7ZZZZZZZZZZZZZZZZZZZZZZZZZ', '+010889-08-02 05:31:50.655 UTC', 281474976710655],
+  ]) {
+    eq('page decode ' + ulid + ' ms', E.decodeUlid(ulid).ms, ms);
+    eq('page decode ' + ulid + ' time', E.formatMs(ms), ts);
+    check('page shows ' + ulid, page.includes(ulid) && page.includes(ts) && page.includes(String(ms)));
+  }
+  eq('page: 8ZZZ… out of range', E.decodeUlid('8ZZZZZZZZZZZZZZZZZZZZZZZZZ').error, 'range');
+  eq('page: L is invalid', E.decodeUlid('01ARZ3NDEKTSV4RRFFQ69G5FAL').error, 'invalid');
+  const at = Date.UTC(2026, 9, 1, 9, 30, 0, 123);
+  const next = E.createUlidFactory(() => at, (a) => a.set([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22]));
+  for (const want of ['01M3VCS7HV28T5CY4TQKFF0492', '01M3VCS7HV28T5CY4TQKFF0493', '01M3VCS7HV28T5CY4TQKFF0494']) {
+    const got = next().ulid;
+    eq('page batch example', got, want);
+    check('page shows ' + want, page.includes('<code>' + want + '</code>'));
+  }
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

@@ -85,6 +85,28 @@ eq('ja example: 予約番号 K7Q9 X2', words('K7Q9 X2'), 'Kilo Seven Quebec Nine
 eq('ja example: e-mail', words('sato.k@example.jp'),
   'Sierra Alfa Tango Oscar [?] Kilo [?] Echo X-ray Alfa Mike Papa Lima Echo [?] Juliett Papa');
 
+// ---------- en page examples ----------
+{
+  const enPage = readFileSync(join(root, 'src/content/tools/nato-phonetic-alphabet/en.mdx'), 'utf8');
+  for (const [input, out] of [
+    ['LH 400', 'Lima Hotel / Four Zero Zero'],
+    ['G-ABCD', 'Golf [?] Alfa Bravo Charlie Delta'],
+    ['ＡＢ１２', 'Alfa Bravo One Two'],
+    ['Zoë 9', 'Zulu Oscar [?] / Niner'],
+    ['F9C2', 'Foxtrot Niner Charlie Two'],
+    ['e3b0c44', 'Echo Three Bravo Zero Charlie Four Four'],
+    ['db-07', 'Delta Bravo [?] Zero Seven'],
+  ]) {
+    eq('en example: ' + input, words(input), out);
+    check('en page shows ' + out, enPage.includes(out));
+  }
+  eq('en example: LH 400 table rows', conv('LH 400').rows.map((r) => r.ch + ' = ' + r.code),
+    ['L = Lima', 'H = Hotel', '(space) = —', '4 = Four', '0 = Zero', '0 = Zero']);
+  eq('en example: LH 400 counts 5', conv('LH 400').chars, 5);
+  eq('en: line break is [?]', words('a\nb'), 'Alfa [?] Bravo');
+  check('en page: [?] code not split', !enPage.includes('{"[?"}</code>]'));
+}
+
 // ---------- 4-language STRINGS ----------
 const stringsMatch = source.match(/var STRINGS = \{([\s\S]*?)\n      \};/);
 check('STRINGS block found', !!stringsMatch);

@@ -1,11 +1,11 @@
 ---
 seoTitle: "HTTP Header Analyzer — Inspect HTTP Headers Online | ZeroTool"
-seoDescription: "Paste raw HTTP request or response headers to inspect security, caching, CORS, content, and auth metadata. 100+ header descriptions with compliance hints. Runs in your browser."
+seoDescription: "Paste raw HTTP request or response headers to inspect security, caching, CORS, content, and auth metadata. Descriptions for 88 headers, with hints. Runs in your browser."
 faqItems:
   - question: "Does this tool send my headers to a server?"
     answer: "No. Parsing and analysis run entirely in your browser via inline JavaScript. Nothing is uploaded. Paste sensitive Authorization tokens, Set-Cookie strings, or production headers without worry."
   - question: "Can it fetch headers from a URL?"
-    answer: "No — by design. URL fetching requires a backend and opens the door to abuse. Paste headers from curl -I, fetch -v, browser DevTools Network panel, or any HTTP client instead. The analyzer is the second step; capture is the first."
+    answer: "No — by design. URL fetching requires a backend and opens the door to abuse. Paste headers from curl -i, curl -v, browser DevTools Network panel, or any HTTP client instead. The analyzer is the second step; capture is the first."
   - question: "How does it detect request vs response?"
     answer: "It reads the first line. HTTP/x.x followed by a status code is a response. A method (GET, POST, …) followed by a path and HTTP/x.x is a request. If neither matches, the input is treated as header-only and all lines are parsed as headers."
   - question: "What security headers does it check?"
@@ -72,6 +72,51 @@ Access-Control-Request-Headers: Authorization, Content-Type
   <li>Set-Cookie without HttpOnly or Secure flags.</li>
   <li>Access-Control-Allow-Credentials: true paired with a wildcard origin (spec-illegal).</li>
   <li>Cache-Control combining no-store with max-age (dead weight).</li>
+</ul>
+
+<h2>Example: a response with problems</h2>
+
+<p>Pasting the following response, copied from an HTTP/2 site, produces the hints listed under it. The hint texts are quoted from the tool's output.</p>
+
+```
+HTTP/2 200
+content-type: text/html; charset=utf-8
+strict-transport-security: max-age=86400
+content-security-policy: script-src 'self' 'unsafe-inline'
+access-control-allow-origin: *
+access-control-allow-credentials: true
+set-cookie: sid=31d4d96e407aad42; Path=/
+cache-control: no-store, max-age=600
+server: nginx
+```
+
+<ul>
+  <li><strong>strict-transport-security</strong>: Warning “max-age &lt; 1 year (31536000s). Many preload lists require ≥ 1 year.”, plus notes to add includeSubDomains and preload. One day (86400 s) is far below the one year that hstspreload.org requires.</li>
+  <li><strong>content-security-policy</strong>: Warning “'unsafe-inline' defeats most XSS protection. Use nonces or hashes instead.” and a note that there is no <code>default-src</code>.</li>
+  <li><strong>access-control-allow-credentials</strong>: Warning “Credentialed CORS requires explicit Allow-Origin (no wildcard).” The Fetch Standard does not let a browser expose a credentialed response when the origin is <code>*</code>. The warning disappears when the pasted headers contain a specific origin such as <code>https://app.example.com</code>.</li>
+  <li><strong>set-cookie</strong>: Warnings for missing HttpOnly and Secure, and a note for the missing SameSite attribute: Chrome treats such a cookie as <code>SameSite=Lax</code>, while Firefox and Safari do not (MDN browser compatibility data), so the behaviour differs between browsers.</li>
+  <li><strong>cache-control</strong>: Warning that <code>no-store</code> makes <code>max-age=600</code> pointless.</li>
+  <li><strong>server</strong>: A note that the software name helps fingerprinting.</li>
+</ul>
+
+<p>The summary bar shows the message type (response), the status line, the number of headers and how many fall in the Security group. A response with no security headers at all gets a warning in the summary instead.</p>
+
+<h2>Where to copy headers from</h2>
+<ul>
+  <li><strong>curl</strong>: <code>curl -sS -D - -o /dev/null https://example.com/</code> prints the response headers of a normal GET. <code>curl -I</code> sends a HEAD request, which some servers answer with different headers.</li>
+  <li><strong>Chrome or Edge DevTools</strong>: Network panel → select the request → Headers → turn on <strong>Raw</strong> next to Response Headers or Request Headers, then copy.</li>
+  <li><strong>Firefox DevTools</strong>: Network panel → select the request → Headers → turn on the <strong>Raw</strong> switch.</li>
+</ul>
+<p>If you need the full request list with timings and bodies, export a HAR file and open it in the HAR analyzer below instead.</p>
+
+<h2>Limitations</h2>
+<ul>
+  <li>The descriptions and hint texts are in English on every language version of this page. 88 headers have a description; any other header is listed under Custom / Other without one.</li>
+  <li>HTTP/2 and HTTP/3 pseudo-headers such as <code>:status</code> and <code>:path</code>, which some tools copy as the first lines, are skipped, and without a status line the input is shown as headers only.</li>
+  <li>The first line is recognized as a request only for GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE and CONNECT.</li>
+  <li>Hints look at one header at a time, except the CORS credentials check above. The tool does not evaluate a full CSP (use the <a href="/tools/csp-header-generator/">CSP Header Generator</a>) and does not check cookie attributes beyond HttpOnly, Secure and SameSite.</li>
+  <li>The JSON view uses lowercase names, because header names are case-insensitive (RFC 9110 section 5.1), and puts repeated headers into arrays.</li>
+  <li>Nothing is fetched: the tool cannot see redirects or headers you did not paste. Because pasted headers often contain cookies and tokens, this page does not load Google Analytics or AdSense, and the input is not saved.</li>
 </ul>
 
 <h2>Related tools on ZeroTool</h2>

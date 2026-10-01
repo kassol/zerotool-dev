@@ -13,7 +13,8 @@
 // Covers: the reported inputs (10.0.0.1x, 10.0.0.01, /24x were accepted by parseInt), signs,
 // spaces, hex / octal / shorthand forms, empty parts, 256, prefix 33 / -1 / 1.5 / 024 / empty /
 // a second slash, whitespace around the slash, the dropdown prefix when there is no slash,
-// 20,000 random strings against net.isIPv4, and calculate() on /24, /31, /32, /0.
+// 20,000 random strings against net.isIPv4, and calculate() on /24, /31, /32, /0; the page
+// script (stand-in DOM): a dropdown change rewrites a typed /prefix; the English page examples.
 //
 // Run: node scripts/test-ip-subnet-calculator.mjs
 
@@ -108,6 +109,60 @@ eq('/31 has 2 usable (RFC 3021)', [E.calculate('10.0.0.1', 31).first, E.calculat
   ['10.0.0.0', '10.0.0.1', '2']);
 eq('/32', E.calculate('10.0.0.1', 32).cidr, '10.0.0.1/32');
 eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast], ['0.0.0.0', '255.255.255.255']);
+
+// ---------- page script: the dropdown rewrites a typed prefix ----------
+// render() takes the prefix after the slash over the dropdown, so the dropdown used to do
+// nothing while the input had a slash (including the 192.168.1.0/24 shown on load).
+{
+  const scriptMatch = /<script is:inline>([\s\S]*?)<\/script>/.exec(source);
+  const els = {};
+  const el = (id) => {
+    if (!els[id]) {
+      const handlers = {};
+      els[id] = {
+        id, value: '', textContent: '', hidden: false,
+        appendChild() {},
+        addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
+        fire(type) { (handlers[type] || []).forEach((fn) => fn.call(els[id], {})); },
+      };
+    }
+    return els[id];
+  };
+  const document = {
+    documentElement: { lang: 'en' },
+    getElementById: el,
+    querySelectorAll() { return []; },
+    createElement() { return {}; },
+  };
+  new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', scriptMatch[1])(
+    document, {}, {}, (fn) => fn(), () => {});
+  eq('on load', [el('isc-input').value, el('isc-prefix').value, el('isc-hosts').textContent], ['192.168.1.0/24', '24', '254']);
+  el('isc-prefix').value = '26';
+  el('isc-prefix').fire('change');
+  eq('dropdown /26 rewrites the input', [el('isc-input').value, el('isc-cidr').textContent, el('isc-hosts').textContent], ['192.168.1.0/26', '192.168.1.0/26', '62']);
+  el('isc-input').value = '10.1.2.3';
+  el('isc-input').fire('input');
+  eq('no slash: dropdown prefix used', el('isc-cidr').textContent, '10.1.2.0/26');
+  el('isc-prefix').value = '30';
+  el('isc-prefix').fire('change');
+  eq('no slash: dropdown change keeps the input', [el('isc-input').value, el('isc-cidr').textContent], ['10.1.2.3', '10.1.2.0/30']);
+  el('isc-input').value = '198.51.100.7/24x';
+  el('isc-input').fire('input');
+  eq('bad prefix error text', [el('isc-error').hidden, el('isc-error').textContent], [false, 'The CIDR prefix must be a whole number from 0 to 32 (e.g. /24).']);
+}
+
+// ---------- examples on the English tool page ----------
+{
+  const page = readFileSync(join(root, 'src/content/tools/ip-subnet-calculator/en.mdx'), 'utf8');
+  for (const [input, dd] of [['192.168.1.77/26', 24], ['172.31.100.5/20', 24], ['203.0.113.9/31', 24], ['198.51.100.7', 32]]) {
+    const p = E.parseInput(input, dd);
+    const r = E.calculate(p.ip, p.prefix);
+    const row = `<td>${r.network} / ${r.broadcast}</td><td>${r.mask} / ${r.wildcard}</td><td>${r.first} – ${r.last}</td><td>${r.usable}</td>`;
+    check('page row for ' + input, page.includes(row), row);
+  }
+  for (const bad of ['10.0.0.01', '0x0a.0.0.1', '10.1']) eq('page invalid ' + bad, E.parseInput(bad, 24).error, 'ip');
+  for (const bad of ['10.0.0.0/33', '10.0.0.0/24x', '10.0.0.0/024', '10.0.0.0/255.255.255.0']) eq('page invalid ' + bad, E.parseInput(bad, 24).error, 'cidr');
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

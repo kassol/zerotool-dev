@@ -301,5 +301,21 @@ err(store, '$.store.*~');
   check('count element uses matchCountText', /countEl\.textContent = matchCountText\(/.test(source));
 }
 
+// ---------- English page examples and the invalid-JSON message ----------
+{
+  const EJ = new Function(block + '\nreturn { jsonpath };')();
+  const page = readFileSync(join(root, 'src/content/tools/jsonpath-tester/en.mdx'), 'utf8');
+  const sample = JSON.parse(source.split('const SAMPLE_JSON = `')[1].split('`')[0]);
+  const run = (q) => EJ.jsonpath(sample, q);
+  check('page: price < 10 titles', JSON.stringify(run('$.store.book[?@.price < 10].title')) === '["Sayings of the Century","Moby Dick"]');
+  check('page: last author', JSON.stringify(run('$.store.book[-1].author')) === '["J. R. R. Tolkien"]');
+  check('page: ..price', JSON.stringify(run('$..price')) === '[8.95,12.99,8.99,22.99,19.95]');
+  check('page: isbn filter is empty', run('$.store.book[?@.isbn].title').length === 0);
+  let msg = '';
+  try { run('$.store.book[(@.length-1)]'); } catch (e) { msg = e.message; }
+  check('page: script expression message', page.includes(msg) && msg.includes('(at character 14)'));
+  check('invalid JSON message set as text', !/innerHTML = '<span class="jpt-error">' \+ INVALID_JSON/.test(source));
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
