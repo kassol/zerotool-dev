@@ -1,244 +1,185 @@
 ---
-title: "WebP変換完全ガイド：画像を圧縮してWebパフォーマンスを改善する"
-description: "WebPコンバーターを使ってPNG・JPEGのファイルサイズを削減する方法（Google の公表値：PNG 比 26%、JPEG 比 25〜34%）を解説。ブラウザサポート・フォールバックパターン・Next.js最適化・cwebp CLIの使い方まで紹介。"
+title: "WebPとは？JPEG・PNGとの違いと対応状況、小さくならない画像を実測で解説"
+description: "WebPとは何かを、ファイルの中身（VP8・VP8L）、caniuse の対応状況、WordPress と PageSpeed Insights での扱い、写真・日本語スクリーンショット・一覧表の変換実測で解説します。"
 pubDate: 2026-04-07
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "ja"
-tags: ["webp converter", "webp", "image optimization", "web performance", "developer-tools"]
+tags: ["webp", "webp converter", "image optimization", "web performance", "developer-tools"]
 ---
 
-**WebPコンバーター**は、PNG・JPEGをWebP形式に変換します。GoogleのオープンなWebP形式は、同等の画質でより小さいファイルサイズ（Google の公表値：ロスレスは PNG 比 26%、ロッシーは同じ SSIM で JPEG 比 25〜34% 小さい）を実現し、ページロード時間とCore Web Vitalsのスコアを直接改善します。WebPはiOS Safari 14（2020年）を含むすべての主要ブラウザでサポートされており、注意事項なしに本番環境で使用できます。
+WebP（拡張子 `.webp`）は、Google が [2010 年 9 月 30 日](https://blog.chromium.org/2010/09/webp-new-image-format-for-web.html)に発表した画像形式です。2024 年 11 月には IETF の [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649) として仕様が文書化され、メディアタイプ `image/webp` が登録されました。1 つの形式で、JPEG のような非可逆圧縮、PNG のような可逆圧縮、透過（アルファチャンネル）、GIF のようなアニメーションを扱えます。
 
-## WebPとは、なぜパフォーマンスに重要なのか
+「JPEG や PNG より軽い」とよく紹介されますが、Google が公表している数字は平均値です。[WebP Lossy Study](https://developers.google.com/speed/webp/docs/webp_study) では同じ SSIM で JPEG より 25〜34% 小さく、[FAQ](https://developers.google.com/speed/webp/faq) では可逆 WebP は PNG より 26% 小さいとしています。この記事では WebP の中身を確認したうえで、写真、日本語の画面スクリーンショット、文字の多い一覧表を実際に変換し、小さくなる画像とならない画像を数字で示します。
 
-WebPはGoogleが2010年にVP8ビデオコーデックをベースに開発しました。サポートする機能：
+## WebPとは：1 つの形式に 2 つの圧縮方式
 
-- **非可逆圧縮** — JPEGと同様、より高い効率
-- **可逆圧縮** — PNGと同様、約26%小さいファイル
-- **透過（アルファチャンネル）** — JPEGにはない機能
-- **アニメーション** — GIFと同様、ただしはるかに小さい
+WebP ファイルは RIFF という入れ物の中に「チャンク」と呼ばれる区画を並べた構造です（[WebP Container Specification](https://developers.google.com/speed/webp/docs/riff_container)）。画素データがどのチャンクに入っているかで、非可逆か可逆かが決まります。
 
-同程度の画質でのサイズの目安（実測値ではない例。画像によって変わります）：
+| チャンク | 中身 | ポイント |
+|---|---|---|
+| `VP8 `（末尾は半角スペース） | 非可逆の画像 | 動画コーデック VP8 のキーフレーム。色は Y'CbCr 4:2:0 だけで、色差は縦横とも半分の解像度で記録される（FAQ） |
+| `VP8L` | 可逆の画像 | WebP 独自の可逆圧縮。RGBA で、透過も含む |
+| `ALPH` | 非可逆画像の透過情報 | 写真を非可逆にしても、透過部分は既定で可逆のまま保存される |
+| `VP8X` | 拡張機能のフラグとキャンバスサイズ | ICC プロファイル、透過、Exif、XMP、アニメーションを使うときに付く |
+| `ANIM` / `ANMF` | アニメーションの設定と各フレーム | フレームごとに非可逆と可逆を混ぜられる |
+| `ICCP`・`EXIF`・`XMP ` | カラープロファイルとメタデータ | 省略可 |
 
-| 画像タイプ | JPEG | PNG | WebP（非可逆） | WebP（可逆） |
-|-----------|------|-----|------------|---------------|
-| 写真 | 100 KB | 400 KB | 約70 KB | 約280 KB |
-| 透過ロゴ | — | 50 KB | — | 約38 KB |
-| スクリーンショット | 200 KB | 600 KB | 約130 KB | 約420 KB |
+幅と高さは 14 ビットで記録されるため、最大サイズは **16383 × 16383 ピクセル**です（FAQ）。JPEG のプログレッシブ表示に当たる機能はなく、FAQ では代わりに「インクリメンタルデコード」を挙げています。
 
-Googleのベンチマークによると、WebP（非可逆）はJPEGより25〜34%小さく、WebP（可逆）は同じSSIM品質スコアでPNGより26%小さいです。
+拡張子が同じ `.webp` でも、非可逆か可逆かはファイル名からは分かりません。libwebp に含まれる `webpinfo` でチャンクを表示すると確認できます。下は、後述の画面スクリーンショットを本サイトの WebP 変換ツール（Chrome、品質 85）で変換したファイルの結果です。
 
-## ブラウザサポート
-
-WebPは現在すべてのブラウザで対応しています：
-
-| ブラウザ | WebPサポート開始 |
-|---------|--------------------|
-| Chrome | バージョン23（2012年） |
-| Firefox | バージョン65（2019年） |
-| Edge | バージョン18（2018年） |
-| Safari | バージョン14 / iOS 14（2020年） |
-| Samsung Internet | バージョン4（2016年） |
-| Opera | バージョン12.1（2012年） |
-
-2025年時点でグローバルなブラウザサポートは97%以上です。フォールバックが必要なのはIE11や非常に古いiOSデバイス（iOS 14以前）をサポートする場合のみです。
-
-## PNGとJPEGをWebPに変換する
-
-### `<picture>`要素によるフォールバックパターン
-
-WebPを提供しつつ、非対応ブラウザへのフォールバックを行う最もクリーンな方法：
-
-```html
-<picture>
-  <source srcset="/images/hero.webp" type="image/webp">
-  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
-</picture>
+```text
+$ webpinfo ja-shot.webp
+File: ja-shot.webp
+RIFF HEADER:
+  File size:  66640
+Chunk VP8X at offset     12, length     18
+  ICCP: 1
+  Alpha: 0
+  EXIF: 0
+  XMP: 0
+  Animation: 0
+  Canvas size 2044 x 1190
+Chunk ICCP at offset     30, length    464
+Chunk VP8  at offset    494, length  66146
+  Width: 2044
+  Height: 1190
+  Alpha: 0
+  Animation: 0
+  Format: Lossy (1)
+No error detected.
 ```
 
-ブラウザは最初にサポートする`<source>`を読み込み、残りを無視します。`<img>`タグが最後のフォールバックで、`alt`・`width`・`height`属性も提供します。これらは常に含めてレイアウトシフト（CLS）を防ぎましょう。
+`VP8 ` があるので非可逆です。透過のない画像なのに `VP8X` と `ICCP` が付いているのは、Chrome の canvas エンコーダーが 456 バイトのカラープロファイル（チャンク見出しを含めて 464 バイト）を必ず書き込むためです。同じ画像を `cwebp -q 85` で変換すると `VP8 ` チャンクだけの 65,812 バイトになりました。
 
-複数サイズのレスポンシブ画像の場合：
+## JPEG・PNG・GIF との違い
 
-```html
-<picture>
-  <source
-    type="image/webp"
-    srcset="/images/hero-480.webp 480w, /images/hero-800.webp 800w, /images/hero-1200.webp 1200w"
-    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
-  >
-  <img
-    src="/images/hero-1200.jpg"
-    srcset="/images/hero-480.jpg 480w, /images/hero-800.jpg 800w, /images/hero-1200.jpg 1200w"
-    sizes="(max-width: 600px) 480px, (max-width: 1000px) 800px, 1200px"
-    alt="Hero image"
-    width="1200"
-    height="600"
-  >
-</picture>
-```
+| 項目 | WebP | JPEG | PNG | GIF |
+|---|---|---|---|---|
+| 非可逆圧縮 | ○（VP8） | ○ | × | × |
+| 可逆圧縮 | ○（VP8L） | × | ○ | ○（256 色まで） |
+| 透過 | ○（8 ビット） | × | ○ | 1 ビット（透明か不透明か） |
+| アニメーション | ○ | × | APNG のみ | ○ |
+| 非可逆時の色の記録 | 4:2:0 固定 | 4:4:4 なども選べる | — | — |
+| 最大サイズ | 16383 × 16383 | 65535 × 65535 | 2^31 − 1 | 65535 × 65535 |
 
-### CSSの背景画像
+JPEG と違って非可逆 WebP は色差を必ず間引くため、赤い細字や色付きの細線は輪郭がにじみやすくなります。`cwebp -sharp_yuv` は RGB から YUV への変換を遅いけれど正確な方法に切り替えるオプションで、こうした画像で試す価値があります。
 
-背景画像にはCSSの`image-set()`関数でWebPを提供できます：
+## 実測：写真・日本語スクリーンショット・一覧表
 
-```css
-.hero {
-  background-image: url('/images/hero.jpg');
-  background-image: image-set(
-    url('/images/hero.webp') type('image/webp'),
-    url('/images/hero.jpg') type('image/jpeg')
-  );
-}
-```
+2026 年 10 月 2 日に、`cwebp` 1.6.0（macOS、Homebrew）と本サイトの [WebP 変換ツール](/ja/tools/webp-converter/)（Chrome 152 の `canvas.toBlob()`）で 3 枚の画像を変換しました。PSNR は `dwebp` で復号した画素を元画像と比べた値で、大きいほど元に近く、「可逆」は全画素が一致したことを表します。
 
-## フレームワーク統合
+**写真：** [Kodak のテスト画像](https://r0k.us/graphics/kodak/) `kodim14.png`（768 × 512、692,201 バイト、SHA-256 `55a94550…0ba6e`）。
 
-### Next.js
+| 出力 | バイト数 | PNG 比 | PSNR |
+|---|---:|---:|---:|
+| JPEG（sharp 0.34.5、品質 85） | 112,852 | −83.7% | 34.63 dB |
+| `cwebp`（既定の `-q 75`） | 67,054 | −90.3% | 33.68 dB |
+| `cwebp -q 85` | 100,676 | −85.5% | 36.47 dB |
+| 本サイトのツール、品質 85（既定） | 101,000 | −85.4% | 36.46 dB |
+| `cwebp -lossless` | 518,266 | −25.1% | 可逆 |
+| 本サイトのツール、品質 100 | 556,092 | −19.7% | 可逆 |
 
-Next.js は `next/image` コンポーネントを使うと画像を WebP に変換します。AVIF は `images.formats` に追加した場合だけです（[Next.js ドキュメント](https://nextjs.org/docs/app/api-reference/components/image#formats)）。手動での変換は不要です：
+品質 85 同士で比べると、WebP は JPEG より 10.8% 小さく、PSNR は 1.84 dB 高くなりました。可逆の `cwebp -lossless` は PNG より 25.1% 小さく、Google の「26%」に近い結果です。
 
-```jsx
-import Image from 'next/image';
+**日本語の画面スクリーンショット：** 本サイトの日本語版 WebP 変換ツールのページを撮った PNG（2044 × 1190、197,067 バイト）。見出し「WebP 変換器」や説明文の細い漢字が並ぶ、ブログや社内マニュアルに貼る典型的な画像です。
 
-export default function Hero() {
-  return (
-    <Image
-      src="/images/hero.jpg"
-      alt="Hero image"
-      width={1200}
-      height={600}
-      priority
-    />
-  );
-}
-```
+| 出力 | バイト数 | PNG 比 | PSNR |
+|---|---:|---:|---:|
+| JPEG（sharp、品質 85） | 136,519 | −30.7% | 43.65 dB |
+| `cwebp`（既定の `-q 75`） | 52,144 | −73.5% | 43.82 dB |
+| `cwebp -q 85` | 65,812 | −66.6% | 46.09 dB |
+| 本サイトのツール、品質 85 | 66,640 | −66.2% | — |
+| `cwebp -lossless` | 76,730 | −61.1% | 可逆 |
+| `cwebp -z 9`（最も遅い可逆設定） | 73,542 | −62.7% | 可逆 |
+| 本サイトのツール、品質 100 | 267,920 | +36.0% | — |
 
-Next.jsは`Accept`リクエストヘッダーでフォーマットのネゴシエーションを行い、サポートされているブラウザにはWebPを提供し、変換された画像をキャッシュします。ソースにはJPEGまたはPNGを保持できます。
+スクリーンショットは WebP が最も効いた画像です。`cwebp` 既定の `-q 75` は、PSNR がほぼ同じ JPEG の 4 割以下の大きさでした。可逆でも PNG より 6 割小さくなっています。
 
-`next.config.js`での品質とフォーマットの設定：
+ツールの 2 行に PSNR がないのは、このスクリーンショットに ICC カラープロファイルが埋め込まれていたためです。ブラウザは canvas に描く時点で色を sRGB に変換するので、出力の画素値は元の PNG と最大 17 段階ずれ、品質 100 でも「元と同じ画素」にはなりません（色の見え方を合わせるための変換です）。反対に `cwebp` は既定（`-metadata none`）でプロファイルを捨てて画素値だけを符号化するので、sRGB 以外のプロファイルが付いた画像は表示色が変わる可能性があります。プロファイルを残すには `cwebp -metadata icc` を指定します。
 
-```javascript
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  images: {
-    formats: ['image/avif', 'image/webp'],
-    minimumCacheTTL: 31536000,
-  },
-};
+**文字の多い一覧表：** 本サイトの[NATO フォネティックコード](/ja/tools/nato-phonetic-alphabet/)のページに載せている一覧表 `nato-phonetic-alphabet-ja.png`（1120 × 2020、16 色パレットの PNG、66,664 バイト）。
 
-export default nextConfig;
-```
+{/* webp-check: {"tool":"cwebp","args":["-q","75"],"bytes":78804} */}
+{/* webp-check: {"tool":"cwebp","args":["-lossless"],"bytes":55210} */}
+{/* webp-check: {"tool":"cwebp","args":["-z","9"],"bytes":52090} */}
+{/* webp-check: {"tool":"sharp","options":{},"bytes":88940} */}
+{/* webp-check: {"tool":"sharp","options":{"lossless":true},"bytes":53514} */}
 
-### Astro
+| 出力 | バイト数 | PNG 比 |
+|---|---:|---:|
+| `cwebp`（既定の `-q 75`） | 78,804 | +18.2% |
+| 本サイトのツール、品質 85 | 102,454 | +53.7% |
+| 本サイトのツール、品質 100 | 82,628 | +23.9% |
+| sharp の既定（品質 80） | 88,940 | +33.4% |
+| `cwebp -lossless` | 55,210 | −17.2% |
+| sharp `lossless: true` | 53,514 | −19.7% |
+| `cwebp -z 9` | 52,090 | −21.9% |
 
-Astroの組み込み`<Image>`コンポーネントも同様の機能を持ちます：
+色数の少ない図表は、非可逆 WebP にすると**大きくなりました**。少ない色をパレットで持つ PNG のほうが有利な画像で、文字の縁もにじみます。小さくできたのは可逆 WebP だけです。また、ツールの品質 100（Chrome の可逆エンコーダー）は 3 枚とも `cwebp -lossless` より大きく、図表とスクリーンショットでは元の PNG さえ上回りました。図やロゴを可逆で変換するときは `cwebp -lossless` か `-z 9` を使い、PNG と大きさを比べてから置き換えるのが確実です。
 
-```astro
----
-import { Image } from 'astro:assets';
-import heroImage from '../assets/hero.jpg';
----
+## WebPにしても小さくならない・困るケース
 
-<Image src={heroImage} alt="Hero image" format="webp" quality={80} />
-```
+- **色数の少ない図表・ロゴ：** 上の一覧表のとおり、非可逆では大きくなることがあります。可逆で変換し、小さいほうを使います。
+- **既に JPEG になっている写真の再変換：** 劣化が重なります。元の PNG やカメラの原本があればそちらから変換します。
+- **Exif・GPS 情報：** `cwebp` は既定でメタデータをコピーしません（`-metadata` の既定は `none`）。本サイトのツールも Exif と XMP を書き出しません。撮影日時を残したいなら `-metadata exif` を付け、位置情報を消したいなら既定のままで構いません。
+- **アニメーション GIF：** 本サイトのツールは画像を canvas に 1 回描くだけなので、最初のフレームだけの静止画になります。アニメーションを保ったまま変換するには libwebp の `gif2webp` を使います。
+- **Safari で変換したい：** WebP の表示と作成は別の機能です。MDN の互換性データ（BCD 8.1.4）では、`canvas.toBlob()` での WebP 書き出しは Chrome 50、Edge 79、Firefox 96 が対応し、Safari はどのバージョンも未対応です。Safari では本サイトのツールは PNG を `.webp` として保存せず、エラーを表示します。
 
-複数フォーマットの場合：
+## 対応状況：ブラウザ・WordPress・PageSpeed Insights
 
-```astro
----
-import { Picture } from 'astro:assets';
-import heroImage from '../assets/hero.jpg';
----
+[caniuse の WebP](https://caniuse.com/webp)（2026 年 10 月 1 日時点のデータ）では、全面対応しているブラウザの利用率は世界全体で 96.74% です。
 
-<Picture
-  src={heroImage}
-  formats={['avif', 'webp']}
-  alt="Hero image"
-/>
-```
+| ブラウザ | 全面対応 | それ以前 |
+|---|---|---|
+| Chrome | 32 | 9〜22 は非可逆のみ、23〜31 はアニメーションなし |
+| Edge | 18 | — |
+| Firefox | 65 | — |
+| Safari（macOS） | 16.0 | 14.0〜15.6 も全面対応だが macOS 11 Big Sur 以降が必要 |
+| Safari（iOS） | 14.0 | — |
+| Samsung Internet | 4 | — |
 
-### Vite / ビルドパイプライン
+古い Mac でも、Safari 14〜15 なら macOS 11 Big Sur 以降であれば表示できます。社内に macOS 10.15 以前の Mac が残っている場合は、`<picture>` で JPEG や PNG を併記しておきます（後述）。
 
-Viteを使用した静的サイトでは、`vite-imagetools`プラグインがビルド時に画像を変換します：
+**WordPress：** WordPress 5.8（2021 年）で WebP 画像をアップロードして使えるようになりました。ただし公式の開発者ノート「[WordPress 5.8 adds WebP support](https://make.wordpress.org/core/2021/06/07/wordpress-5-8-adds-webp-support/)」は「ホスティングサービスが WebP に対応していれば」という条件を付けています。サーバーの画像ライブラリ（GD や Imagick）が WebP に対応していないと、サムネイルなどが作られません。アップロードした JPEG を自動で変換したい場合は、WordPress のパフォーマンスチームが公開しているプラグイン [Modern Image Formats](https://wordpress.org/plugins/webp-uploads/)（バージョン 2.7.1、WordPress 6.9 以上）があります。説明によると、サーバーが AVIF に対応していれば AVIF、そうでなければ WebP を生成し、対象は新しくアップロードした画像だけで、既存の画像は再生成するまで変わりません。
 
-```javascript
-// vite.config.js
-import { imagetools } from 'vite-imagetools';
+**PageSpeed Insights：** Lighthouse 13.5.0 の日本語表示では、画像の指摘は「画像配信を改善する」というインサイトにまとめられ、該当する画像には「最新の画像形式（WebP、AVIF）を使用するか、画像の圧縮率を高くすると、この画像のダウンロード サイズが改善する可能性があります。」と表示されます。WordPress サイトでは、同じ指摘に Performance Lab プラグインを使った JPEG から WebP への自動変換が案内されます。ただし上の一覧表のように、形式を変えるだけで小さくなるとは限りません。指摘された画像を実際に変換して大きさを比べてください。
 
-export default {
-  plugins: [imagetools()],
-};
-```
+## WebPへの変換方法
 
-```html
-<!-- HTMLまたはJSXで -->
-<img src="./hero.jpg?format=webp&width=1200" alt="Hero">
-```
+**ブラウザで 1 枚ずつ：** [WebP 変換ツール](/ja/tools/webp-converter/)に画像をドロップすると、ブラウザの中で `canvas.toBlob()` を実行し、変換前後のサイズを表示します。画像はサーバーに送信されません。品質は 0〜100 で、Chrome では 100 にすると可逆（`VP8L`）になります。WebP から PNG への逆変換もできます。
 
-## cwebp CLI
+**コマンドラインでまとめて：** Mac なら `brew install webp`、Ubuntu・Debian なら `sudo apt install webp` で `cwebp` が入ります。[cwebp のドキュメント](https://developers.google.com/speed/webp/docs/cwebp)にある主なオプションは次のとおりです。
 
-Googleの`cwebp`コマンドラインエンコーダーがリファレンス実装です：
+| オプション | 効果 |
+|---|---|
+| `-q 0〜100` | 非可逆の品質。既定は 75 |
+| `-lossless` | 可逆で圧縮 |
+| `-z 0〜9` | 可逆のプリセット。9 が最も遅く、最も小さい |
+| `-sharp_yuv` | 細い線や色付き文字のにじみを抑える RGB→YUV 変換 |
+| `-metadata exif,icc,xmp` | メタデータを残す（既定は `none`） |
+
+フォルダ内の PNG を元ファイルを残したまま変換する例です。
 
 ```bash
-# macOSにインストール
-brew install webp
-
-# Ubuntu/Debianにインストール
-sudo apt-get install webp
-
-# 基本的な変換（品質80、良いデフォルト）
-cwebp -q 80 input.jpg -o output.webp
-
-# 可逆（透過PNGの場合）
-cwebp -lossless input.png -o output.webp
-
-# 高品質（90）で重要な画像
-cwebp -q 90 input.jpg -o output.webp
-
-# ディレクトリ内の全JPEGをバッチ変換
-for f in *.jpg; do
-  cwebp -q 80 "$f" -o "${f%.jpg}.webp"
-done
-
-# 圧縮統計の表示
-cwebp -q 80 -v input.jpg -o output.webp
+for f in *.png; do cwebp -q 80 "$f" -o "${f%.png}.webp"; done
 ```
 
-品質80は写真のデフォルトとして適切です。品質90以上は細部が重要な画像（商品写真・医療画像）向けです。可逆はスクリーンショット・図・テキストを含む画像向けです。
+**ビルド時に自動で：** Astro の [`<Image />`](https://docs.astro.build/en/reference/modules/astro-assets/) は既定で `.webp` を出力し、既定の画像サービスは sharp です。Next.js の `next/image` は [`formats`](https://nextjs.org/docs/app/api-reference/components/image#formats) の既定が `['image/webp']` で、リクエストの `Accept` ヘッダーを見て WebP を返します。上の表の sharp の行は、こうしたフレームワークがリサイズ前に出力する大きさの目安になります。
 
-## Core Web Vitalsへの影響
+## Webサイトで配信するときの注意
 
-WebPはCore Web Vitalsの2つの指標に直接影響します：
-
-**Largest Contentful Paint（LCP）** — LCP要素は通常ヒーロー画像です。ファイルサイズを30%削減することで、特にモバイル接続でのLCP時間が直接短縮されます。
-
-**First Contentful Paint**（Core Web Vitals ではない）— 画像が小さいほど、最初の描画に必要な CSS やフォントに帯域を回せます。Total Blocking Time はメインスレッドの JavaScript を測る指標で、画像サイズの影響はほとんどありません。
-
-Lighthouse と PageSpeed Insights は、新しい形式にすれば小さくなる JPEG・PNG を指摘します（以前のバージョンでは「次世代フォーマットでの画像の配信」という監査名でした）。一般的なコンテンツサイトで最も効果的な改善の一つです。
-
-大まかな計算：ホームページが500KBの画像を読み込み、すべてWebPに変換すると約150〜175KBを節約できます。4G接続（20Mbps）では約60msの節約になります。低速な接続では効果はさらに大きくなります。
-
-## AVIF：次のステップ
-
-AVIF（AV1 Image File Format）はWebPよりさらに新しく、同じ品質では WebP より小さくなることが多いですが、差は画像によって変わります。2024年時点でブラウザサポートは約90%に達しています（Chrome・Firefox・Safari 16+・Edge）。
-
-3種類すべてのフォーマットをカスケードした`<source>`要素で提供できます：
+上の表のブラウザだけを対象にするなら `<img src="photo.webp">` で十分です。古い Mac なども考えるなら、ブラウザに選ばせます。
 
 ```html
 <picture>
-  <source srcset="/images/hero.avif" type="image/avif">
-  <source srcset="/images/hero.webp" type="image/webp">
-  <img src="/images/hero.jpg" alt="Hero image" width="1200" height="600">
+  <source srcset="/images/photo.webp" type="image/webp">
+  <img src="/images/photo.jpg" alt="商品写真" width="1200" height="800">
 </picture>
 ```
 
-AVIFのエンコードはWebPより大幅に遅いため、オンザフライではなくビルド時の変換に向いています。
+ブラウザは `type` を理解できる最初の `<source>` を使い、どれも使えなければ `<img>` を表示します。`width` と `height` を書いておくと、読み込み中のレイアウトのずれを防げます。
 
-## 今すぐ画像を変換する
+もう 1 つの方法は、同じ URL でサーバーが形式を切り替えるやり方です。WebP を表示できるブラウザはリクエストの `Accept` ヘッダーに `image/webp` を含めるので（WebP FAQ）、サーバーはそれを見て WebP を返せます。この場合は `Vary: Accept`（[RFC 9110 12.5.5 節](https://www.rfc-editor.org/rfc/rfc9110#section-12.5.5)）を付けないと、CDN などの共有キャッシュが WebP を保存し、WebP を要求していない端末に返してしまうことがあります。
 
-CMSへのアップロード前の素早い変換、プロトタイプの共有、特定の画像にWebPが適しているか確認したい場合には、ブラウザベースのツールがcwebpのインストールやビルドパイプラインの設定より速い選択肢です。
-
-[WebPコンバーターを試す →](/ja/tools/webp-converter/)
-
-PNG・JPEGをアップロードし、品質レベルを設定してWebP版をダウンロードするだけです。並べて表示されるファイルサイズ比較で、フォーマット採用前にどれだけ節約できるか確認できます。
+最後にセキュリティの話です。2023 年 9 月、libwebp のヒープバッファオーバーフロー [CVE-2023-4863](https://nvd.nist.gov/vuln/detail/CVE-2023-4863) が libwebp 1.3.2 と Chrome 116.0.5845.187 で修正されました。外部から受け取った WebP を処理するサーバーやアプリでは、libwebp 1.3.2 以降を使っているか確認してください。
