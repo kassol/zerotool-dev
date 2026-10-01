@@ -100,14 +100,57 @@ type RootObject struct {
 
 顶层是数组时，结构体描述的是单个元素，解码到 `[]RootObject`。在部分元素中缺失的键会变成带 `omitempty` 的指针。
 
+## 示例：同名键、小数与数字开头的键
+
+```json
+{
+  "order": { "id": "A-1001", "total": 19.0, "meta": { "createdBy": "alice", "source": "web" } },
+  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } },
+  "2fa": true
+}
+```
+
+生成
+
+```go
+type RootObject struct {
+	Order Order `json:"order"`
+	Payment Payment `json:"payment"`
+	X2fa bool `json:"2fa"`
+}
+
+type Order struct {
+	Id string `json:"id"`
+	Total float64 `json:"total"`
+	Meta Meta `json:"meta"`
+}
+
+type Meta struct {
+	CreatedBy string `json:"createdBy"`
+	Source string `json:"source"`
+}
+
+type Payment struct {
+	Status string `json:"status"`
+	Meta PaymentMeta `json:"meta"`
+}
+
+type PaymentMeta struct {
+	Provider string `json:"provider"`
+	Fee float64 `json:"fee"`
+}
+```
+
+`payment.meta` 的字段与 `order.meta` 不同，所以单独生成结构体，名称前加父级：`PaymentMeta`；字段相同时两者共用 `Meta`。`19.0` 带小数点，所以 `total` 是 `float64`：`encoding/json` 拒绝把 `19.0` 解码到 `int` 字段。工具通过浏览器的 JSON 源文本访问（Chrome 114+、Firefox 135+、Safari 18.4+）读取数字的原始写法；不支持的浏览器只能看到 `19`，仍生成 `int`。键 `2fa` 不能作为导出名称的开头，所以字段名是 `X2fa`，标签保留 `2fa`。
+
 ## 生成后需要修改的地方
 
 - `null` 生成 `interface{}`。对照 API 文档后改成实际类型的指针，如 `*string`、`*time.Time`。
-- 没有小数部分的数字生成 `int`。JavaScript 看不到 `19.0` 里的 `.0`，所以这样的价格样本也会得到 `int`；API 会返回小数的字段请用 `float64`。在 64 位平台上 `int` 是 64 位。
-- `[]` 以及元素类型混杂的数组生成 `[]interface{}`。
+- 不带 `.` 或指数的数字生成 `int`，`19.0`、`1e3` 生成 `float64`；同一数组或同一键里整数与小数混合时生成 `float64`。样本里碰巧都是整数的字段（如价格）仍是 `int`，请核对。在 64 位平台上 `int` 是 64 位。
+- `[]` 以及其他元素类型混杂的数组生成 `[]interface{}`。
 - 字段名不会按 Go 的缩写惯例调整：`id` 变成 `Id`、`url` 变成 `Url`，而 [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms) 建议写成 `ID`、`URL`。无论哪种写法，`json` 标签都能保证解码正确。
-- 不能作为 Go 标识符开头的键会生成无效代码：`2fa` 得到字段名 `2fa`，空键得到没有名字的字段。请给这些字段改名，标签会保留原始键名。
-- 两个嵌套对象键名相同（如 `a.meta` 和 `b.meta`）时共用一个名为 `Meta` 的结构体，只保留第一个对象的结构。请给其中一个改名并补字段。
+- 字段名开头不是大写字母时（`2fa`、`名前`）加前缀 `X`（`X2fa`）；两个键生成同一字段名时（`user_id`、`userId`）加数字（`UserId2`）。空键以及含结构体标签无法容纳的字符（如 `"`、`,`）的键改为写在注释里，因为 `encoding/json` 无法通过标签映射它们。
+- `PaymentMeta`、`Meta2` 这类名称由 JSON 键名生成，可按业务含义改名。
 - 只生成 `json` 标签，`gorm`、`bson`、`validate` 等标签需要自己加。
 
 ## 限制
