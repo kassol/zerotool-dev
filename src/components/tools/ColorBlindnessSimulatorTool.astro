@@ -17,6 +17,7 @@ const labels = {
     protanomalySub: 'Red-weak', deuteranomalySub: 'Green-weak', tritanomalySub: 'Blue-weak',
     achromatopsiaSub: 'No color', achromatomalySub: 'Low color',
     copied: 'Copied!', changeImage: 'Change image',
+    severity: 'Severity of the -anomaly types',
   },
   zh: {
     colorTab: '颜色', imageTab: '图片',
@@ -32,6 +33,7 @@ const labels = {
     protanomalySub: '红锥细胞异常', deuteranomalySub: '绿锥细胞异常', tritanomalySub: '蓝锥细胞异常',
     achromatopsiaSub: '无色彩视觉', achromatomalySub: '色彩视觉减弱',
     copied: '已复制！', changeImage: '更换图片',
+    severity: '色弱类型的严重程度',
   },
   ja: {
     colorTab: 'カラー', imageTab: '画像',
@@ -47,6 +49,7 @@ const labels = {
     protanomalySub: '赤弱感', deuteranomalySub: '緑弱感', tritanomalySub: '青弱感',
     achromatopsiaSub: '色覚なし', achromatomalySub: '低色覚',
     copied: 'コピー済み', changeImage: '画像を変更',
+    severity: '色弱タイプの程度',
   },
   ko: {
     colorTab: '색상', imageTab: '이미지',
@@ -62,6 +65,7 @@ const labels = {
     protanomalySub: '적추체 이상', deuteranomalySub: '녹추체 이상', tritanomalySub: '청추체 이상',
     achromatopsiaSub: '무색각', achromatomalySub: '저색각',
     copied: '복사됨!', changeImage: '이미지 변경',
+    severity: '색약 유형의 정도',
   },
 };
 
@@ -110,6 +114,12 @@ const types = [
     </button>
   </div>
 
+  <label class="cbs-severity">
+    <span class="cbs-severity-label">{L.severity}</span>
+    <input id="cbs-severity" type="range" min="1" max="9" step="1" value="6" />
+    <output id="cbs-severity-out" for="cbs-severity">0.6</output>
+  </label>
+
   <div class="cbs-grid" id="cbs-grid">
     {types.map(t => (
       <div class={`cbs-card ${t.key === 'original' ? 'cbs-card-original' : ''}`} data-type={t.key}>
@@ -142,43 +152,125 @@ const types = [
   var fileInput = document.getElementById('cbs-file');
   var changeBtn = document.getElementById('cbs-change-image');
   var grid = document.getElementById('cbs-grid');
+  var severityInput = document.getElementById('cbs-severity');
+  var severityOut = document.getElementById('cbs-severity-out');
+  var mode = 'color';
 
   var currentHex = '#e74c3c';
 
-  /* ── CVD simulation matrices (Viénot 1999 / Brettel 1997) ── */
-  var P = [0.567,0.433,0, 0.558,0.442,0, 0,0.242,0.758];
-  var D = [0.625,0.375,0, 0.700,0.300,0, 0,0.300,0.700];
-  var T = [0.950,0.050,0, 0,0.433,0.567, 0,0.475,0.525];
-  var A = [0.2126,0.7152,0.0722, 0.2126,0.7152,0.0722, 0.2126,0.7152,0.0722];
-  var I = [1,0,0, 0,1,0, 0,0,1];
+  /* ── engine:start ── */
+  /* CVD simulation: Machado, Oliveira & Fernandes (2009), "A Physiologically-based Model for
+     Simulation of Color Vision Deficiency", IEEE TVCG 15(6). Matrices for severity 0.0–1.0 from
+     the authors' supplement (inf.ufrgs.br/~oliveira/pubs_files/CVD_Simulation/). The model is
+     linear in RGB, so pixels are converted with the sRGB EOTF first, multiplied, clipped and
+     encoded back (same pipeline as the colorspace R package with linear = TRUE, and as Chrome
+     DevTools, whose feColorMatrix filters run in linearRGB). */
+  var MACHADO = {
+    protan: [
+      [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      [0.856167, 0.182038, -0.038205, 0.029342, 0.955115, 0.015544, -0.00288, -0.001563, 1.004443],
+      [0.734766, 0.334872, -0.069637, 0.05184, 0.919198, 0.028963, -0.004928, -0.004209, 1.009137],
+      [0.630323, 0.465641, -0.095964, 0.069181, 0.890046, 0.040773, -0.006308, -0.007724, 1.014032],
+      [0.539009, 0.579343, -0.118352, 0.082546, 0.866121, 0.051332, -0.007136, -0.011959, 1.019095],
+      [0.458064, 0.679578, -0.137642, 0.092785, 0.846313, 0.060902, -0.007494, -0.016807, 1.024301],
+      [0.38545, 0.769005, -0.154455, 0.100526, 0.829802, 0.069673, -0.007442, -0.02219, 1.029632],
+      [0.319627, 0.849633, -0.169261, 0.106241, 0.815969, 0.07779, -0.007025, -0.028051, 1.035076],
+      [0.259411, 0.923008, -0.18242, 0.110296, 0.80434, 0.085364, -0.006276, -0.034346, 1.040622],
+      [0.203876, 0.990338, -0.194214, 0.112975, 0.794542, 0.092483, -0.005222, -0.041043, 1.046265],
+      [0.152286, 1.052583, -0.204868, 0.114503, 0.786281, 0.099216, -0.003882, -0.048116, 1.051998]
+    ],
+    deutan: [
+      [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      [0.866435, 0.177704, -0.044139, 0.049567, 0.939063, 0.01137, -0.003453, 0.007233, 0.99622],
+      [0.760729, 0.319078, -0.079807, 0.090568, 0.889315, 0.020117, -0.006027, 0.013325, 0.992702],
+      [0.675425, 0.43385, -0.109275, 0.125303, 0.847755, 0.026942, -0.00795, 0.018572, 0.989378],
+      [0.605511, 0.52856, -0.134071, 0.155318, 0.812366, 0.032316, -0.009376, 0.023176, 0.9862],
+      [0.547494, 0.607765, -0.155259, 0.181692, 0.781742, 0.036566, -0.01041, 0.027275, 0.983136],
+      [0.498864, 0.674741, -0.173604, 0.205199, 0.754872, 0.039929, -0.011131, 0.030969, 0.980162],
+      [0.457771, 0.731899, -0.18967, 0.226409, 0.731012, 0.042579, -0.011595, 0.034333, 0.977261],
+      [0.422823, 0.781057, -0.203881, 0.245752, 0.709602, 0.044646, -0.011843, 0.037423, 0.974421],
+      [0.392952, 0.82361, -0.216562, 0.263559, 0.69021, 0.046232, -0.01191, 0.040281, 0.97163],
+      [0.367322, 0.860646, -0.227968, 0.280085, 0.672501, 0.047413, -0.01182, 0.04294, 0.968881]
+    ],
+    tritan: [
+      [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      [0.92667, 0.092514, -0.019184, 0.021191, 0.964503, 0.014306, 0.008437, 0.054813, 0.93675],
+      [0.89572, 0.13333, -0.02905, 0.029997, 0.9454, 0.024603, 0.013027, 0.104707, 0.882266],
+      [0.905871, 0.127791, -0.033662, 0.026856, 0.941251, 0.031893, 0.01341, 0.148296, 0.838294],
+      [0.948035, 0.08949, -0.037526, 0.014364, 0.946792, 0.038844, 0.010853, 0.193991, 0.795156],
+      [1.017277, 0.027029, -0.044306, -0.006113, 0.958479, 0.047634, 0.006379, 0.248708, 0.744913],
+      [1.104996, -0.046633, -0.058363, -0.032137, 0.971635, 0.060503, 0.001336, 0.317922, 0.680742],
+      [1.193214, -0.109812, -0.083402, -0.058496, 0.97941, 0.079086, -0.002346, 0.403492, 0.598854],
+      [1.257728, -0.139648, -0.118081, -0.078003, 0.975409, 0.102594, -0.003316, 0.501214, 0.502102],
+      [1.278864, -0.125333, -0.153531, -0.084748, 0.957674, 0.127074, -0.000989, 0.601151, 0.399838],
+      [1.255528, -0.076749, -0.178779, -0.078411, 0.930809, 0.147602, 0.004733, 0.691367, 0.3039]
+    ]
+  };
+  /* Achromatopsia: Rec. 709 / sRGB luminance in linear light. Achromatomaly has no published
+     matrix; it is a 50% linear-light mix of the original and achromatopsia. */
+  var ACHROMA = [0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722];
+  var IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  var CVD_TYPES = ['protanopia', 'deuteranopia', 'tritanopia', 'protanomaly', 'deuteranomaly', 'tritanomaly', 'achromatopsia', 'achromatomaly'];
 
-  function lerp(a, b, t) {
-    return a.map(function (v, i) { return v * (1 - t) + b[i] * t; });
+  /* severity applies to the three -anomaly types (0–1, rounded to the table's 0.1 steps);
+     the -opia types are severity 1.0. */
+  function cvdMatrix(type, severity) {
+    var idx = Math.round(Math.max(0, Math.min(1, severity)) * 10);
+    switch (type) {
+      case 'protanopia': return MACHADO.protan[10].slice();
+      case 'deuteranopia': return MACHADO.deutan[10].slice();
+      case 'tritanopia': return MACHADO.tritan[10].slice();
+      case 'protanomaly': return MACHADO.protan[idx].slice();
+      case 'deuteranomaly': return MACHADO.deutan[idx].slice();
+      case 'tritanomaly': return MACHADO.tritan[idx].slice();
+      case 'achromatopsia': return ACHROMA.slice();
+      case 'achromatomaly': return IDENTITY.map(function (v, i) { return (v + ACHROMA[i]) / 2; });
+    }
+    throw new Error('Unknown CVD type: ' + type);
   }
 
-  var TYPES = {
-    protanopia: P, deuteranopia: D, tritanopia: T,
-    protanomaly: lerp(I, P, 0.6), deuteranomaly: lerp(I, D, 0.6), tritanomaly: lerp(I, T, 0.6),
-    achromatopsia: A, achromatomaly: lerp(I, A, 0.5),
-  };
-  var TYPE_KEYS = Object.keys(TYPES);
+  var TO_LINEAR = new Float64Array(256);
+  for (var li = 0; li < 256; li++) {
+    var lc = li / 255;
+    TO_LINEAR[li] = lc <= 0.04045 ? lc / 12.92 : Math.pow((lc + 0.055) / 1.055, 2.4);
+  }
+  function toSrgb8(c) {
+    if (!(c > 0)) return 0;
+    if (c >= 1) return 255;
+    return Math.round(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055));
+  }
+
+  function simulateRgb(rgb, m) {
+    var r = TO_LINEAR[rgb[0]], g = TO_LINEAR[rgb[1]], b = TO_LINEAR[rgb[2]];
+    return [
+      toSrgb8(m[0] * r + m[1] * g + m[2] * b),
+      toSrgb8(m[3] * r + m[4] * g + m[5] * b),
+      toSrgb8(m[6] * r + m[7] * g + m[8] * b)
+    ];
+  }
+
+  /* RGBA bytes in place; alpha is left as is. */
+  function simulatePixels(px, m) {
+    for (var i = 0; i < px.length; i += 4) {
+      var r = TO_LINEAR[px[i]], g = TO_LINEAR[px[i + 1]], b = TO_LINEAR[px[i + 2]];
+      px[i] = toSrgb8(m[0] * r + m[1] * g + m[2] * b);
+      px[i + 1] = toSrgb8(m[3] * r + m[4] * g + m[5] * b);
+      px[i + 2] = toSrgb8(m[6] * r + m[7] * g + m[8] * b);
+    }
+    return px;
+  }
+  /* ── engine:end ── */
+
+  var TYPE_KEYS = CVD_TYPES;
+  var severity = 0.6;
 
   /* ── Color utilities ── */
   function hexToRgb(hex) {
     return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
   }
 
-  function rgbToHex(r, g, b) {
-    function c(v) { return ('0' + Math.round(Math.max(0, Math.min(255, v))).toString(16)).slice(-2); }
-    return '#' + c(r) + c(g) + c(b);
-  }
-
-  function simColor(rgb, m) {
-    return [
-      m[0] * rgb[0] + m[1] * rgb[1] + m[2] * rgb[2],
-      m[3] * rgb[0] + m[4] * rgb[1] + m[5] * rgb[2],
-      m[6] * rgb[0] + m[7] * rgb[1] + m[8] * rgb[2],
-    ];
+  function rgbToHex(rgb) {
+    return '#' + rgb.map(function (v) { return ('0' + v.toString(16)).slice(-2); }).join('');
   }
 
   function normalizeHex(s) {
@@ -197,8 +289,7 @@ const types = [
 
     setCard('original', currentHex, null);
     TYPE_KEYS.forEach(function (key) {
-      var sim = simColor(rgb, TYPES[key]);
-      setCard(key, rgbToHex(sim[0], sim[1], sim[2]), null);
+      setCard(key, rgbToHex(simulateRgb(rgb, cvdMatrix(key, severity))), null);
     });
 
     window.trackTool && window.trackTool('color-blindness-simulator', 'simulate_color');
@@ -225,6 +316,21 @@ const types = [
   }
 
   /* ── Image mode ── */
+  var srcData = null;
+  function renderImage() {
+    if (!srcData) return;
+    var w = srcData.width, h = srcData.height;
+    var tc = document.createElement('canvas');
+    tc.width = w; tc.height = h;
+    var tctx = tc.getContext('2d');
+    TYPE_KEYS.forEach(function (key) {
+      var d = new ImageData(new Uint8ClampedArray(srcData.data), w, h);
+      simulatePixels(d.data, cvdMatrix(key, severity));
+      tctx.putImageData(d, 0, 0);
+      setCard(key, null, tc.toDataURL());
+    });
+  }
+
   var srcCanvas = document.createElement('canvas');
   var srcCtx = srcCanvas.getContext('2d');
   var MAX_DIM = 600;
@@ -246,23 +352,8 @@ const types = [
 
         setCard('original', null, srcCanvas.toDataURL());
 
-        var srcData = srcCtx.getImageData(0, 0, w, h);
-        var tc = document.createElement('canvas');
-        tc.width = w; tc.height = h;
-        var tctx = tc.getContext('2d');
-        TYPE_KEYS.forEach(function (key) {
-          var d = new ImageData(new Uint8ClampedArray(srcData.data), w, h);
-          var px = d.data;
-          var m = TYPES[key];
-          for (var i = 0; i < px.length; i += 4) {
-            var r = px[i], g = px[i + 1], b = px[i + 2];
-            px[i]     = m[0] * r + m[1] * g + m[2] * b;
-            px[i + 1] = m[3] * r + m[4] * g + m[5] * b;
-            px[i + 2] = m[6] * r + m[7] * g + m[8] * b;
-          }
-          tctx.putImageData(d, 0, 0);
-          setCard(key, null, tc.toDataURL());
-        });
+        srcData = srcCtx.getImageData(0, 0, w, h);
+        renderImage();
 
         dropzone.hidden = true;
         changeBtn.hidden = false;
@@ -274,7 +365,8 @@ const types = [
   }
 
   /* ── Tab switching ── */
-  function setMode(mode) {
+  function setMode(next) {
+    mode = next;
     tabColor.classList.toggle('cbs-tab-active', mode === 'color');
     tabImage.classList.toggle('cbs-tab-active', mode === 'image');
     colorPanel.hidden = mode !== 'color';
@@ -299,6 +391,12 @@ const types = [
       picker.value = v;
       updateColor();
     }
+  });
+
+  severityInput.addEventListener('input', function () {
+    severity = Number(severityInput.value) / 10;
+    severityOut.textContent = severity.toFixed(1);
+    if (mode === 'image') renderImage(); else updateColor();
   });
 
   /* ── File input wiring ── */
@@ -475,6 +573,25 @@ const types = [
 
   .cbs-change-btn { align-self: flex-start; }
   .cbs-change-btn[hidden] { display: none; }
+
+  /* ── Severity ── */
+  .cbs-severity {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+  }
+
+  .cbs-severity input { flex: 1 1 160px; max-width: 260px; min-height: 24px; }
+
+  .cbs-severity output {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--color-text);
+    min-width: 2.5ch;
+  }
 
   /* ── Grid ── */
   .cbs-grid {

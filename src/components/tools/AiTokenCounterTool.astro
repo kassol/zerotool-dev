@@ -1,678 +1,1303 @@
 ---
-// AiTokenCounterTool — count tokens and estimate cost across major LLMs.
-// All BPE tokenization runs in the browser via js-tiktoken; vocabularies
-// are dynamically imported so initial JS payload stays small.
+// AiTokenCounterTool — count tokens with the tokenizers that are published for local use
+// (OpenAI o200k_base / cl100k_base, DeepSeek V4) and estimate API cost from official prices.
+// Vocabularies are loaded on demand as separate chunks; text never leaves the page.
+interface Props {
+  lang?: string;
+}
+const { lang = 'en' } = Astro.props;
+
+/* ── strings:start ── */
+const STRINGS = {
+  en: {
+    inputLabel: 'Text to count',
+    placeholder: 'Paste a prompt, a document or code…',
+    sample: 'Sample',
+    openFile: 'Open file',
+    clear: 'Clear',
+    copyStats: 'Copy stats',
+    copied: 'Copied',
+    copyFailed: 'Copy failed. Select the text and copy it manually.',
+    statChars: 'characters',
+    statBytes: 'UTF-8 bytes',
+    statWords: 'words',
+    statLines: 'lines',
+    exact: 'exact',
+    notLocal: 'no local tokenizer',
+    tokens: 'tokens',
+    charsPerToken: '{n} chars / token',
+    loadTokenizer: 'Count ({size})',
+    loading: 'Loading tokenizer…',
+    loadFailed: 'Could not load the {name} tokenizer: {msg}',
+    retry: 'Retry',
+    counting: 'Counting… {pct}%',
+    idle: 'Type or paste text. Counts update as you type.',
+    done: 'Counted {chars} characters in {ms} ms.',
+    o200kModels: 'GPT-5.5, GPT-5.4, GPT-4.1, GPT-4o, o3, o4-mini',
+    cl100kModels: 'GPT-4, GPT-3.5 Turbo, text-embedding-3',
+    deepseekModels: 'deepseek-flash, deepseek-v4-pro',
+    otherTitle: 'Claude, Gemini, GPT-6',
+    otherBody: 'No tokenizer is published for local use. Get the exact count from the provider’s free token counting endpoint. The table below uses the o200k_base count as a rough reference for these models.',
+    costHeading: 'Cost by model',
+    outputLabel: 'Expected output tokens',
+    colModel: 'Model',
+    colTokens: 'Input tokens',
+    colContext: 'Context used',
+    colInput: 'Input',
+    colOutput: 'Output',
+    colTotal: 'Total',
+    refMark: '≈',
+    refNote: '≈ = o200k_base count used as a reference. These models use their own tokenizers; the real count differs. Anthropic says Claude 4.7 and later produce about 30% more tokens than earlier Claude models for the same text.',
+    needsTokenizer: 'load {name}',
+    offPeak: 'off-peak {cost}',
+    longContext: '{price} rate above {limit} input tokens',
+    overLimit: 'over the {limit} input limit',
+    priceNote: 'Standard (non-batch, uncached) prices per 1M tokens, checked {date} on the official pricing pages: {links}. Prices change; check the page before you budget.',
+    vizHeading: 'Token view',
+    vizTokenizer: 'Tokenizer',
+    vizShowIds: 'Show token ids',
+    vizHint: 'Each box is one token. Boxes in ⟨⟩ hold bytes that are only part of a character; the next token completes it.',
+    vizMore: 'Showing the first {shown} of {total} tokens.',
+    vizEmpty: 'No tokens yet.',
+    fileTooBig: 'The file is {size}. Files up to {max} are read.',
+    fileNotText: 'The file is not UTF-8 text.',
+    largeInput: 'Large input: counting runs in steps so the page stays responsive.',
+    statsTitle: 'Token count',
+    statsPrices: 'Prices checked {date}',
+  },
+  zh: {
+    inputLabel: '要计算的文本',
+    placeholder: '粘贴 prompt、文档或代码…',
+    sample: '示例',
+    openFile: '打开文件',
+    clear: '清空',
+    copyStats: '复制统计',
+    copied: '已复制',
+    copyFailed: '复制失败，请手动选中文本复制。',
+    statChars: '字符',
+    statBytes: 'UTF-8 字节',
+    statWords: '词',
+    statLines: '行',
+    exact: '精确',
+    notLocal: '无本地分词器',
+    tokens: '个 token',
+    charsPerToken: '每个 token {n} 个字符',
+    loadTokenizer: '计算（{size}）',
+    loading: '正在加载分词器…',
+    loadFailed: '{name} 分词器加载失败：{msg}',
+    retry: '重试',
+    counting: '计算中… {pct}%',
+    idle: '输入或粘贴文本，数量随输入实时更新。',
+    done: '已计算 {chars} 个字符，用时 {ms} ms。',
+    o200kModels: 'GPT-5.5、GPT-5.4、GPT-4.1、GPT-4o、o3、o4-mini',
+    cl100kModels: 'GPT-4、GPT-3.5 Turbo、text-embedding-3',
+    deepseekModels: 'deepseek-flash、deepseek-v4-pro',
+    otherTitle: 'Claude、Gemini、GPT-6',
+    otherBody: '这些模型没有公开可在本地运行的分词器，精确数量请用厂商免费的 token 计数接口获取。下表对它们用 o200k_base 的数量作粗略参考。',
+    costHeading: '各模型费用',
+    outputLabel: '预计输出 token 数',
+    colModel: '模型',
+    colTokens: '输入 token',
+    colContext: '上下文占用',
+    colInput: '输入',
+    colOutput: '输出',
+    colTotal: '合计',
+    refMark: '≈',
+    refNote: '≈ 表示用 o200k_base 的数量作参考。这些模型使用各自的分词器，实际数量不同。Anthropic 说明 Claude 4.7 及以后的模型对同一段文本约多产生 30% 的 token。',
+    needsTokenizer: '加载 {name}',
+    offPeak: '空闲时段 {cost}',
+    longContext: '输入超过 {limit} token 时按 {price} 计价',
+    overLimit: '超过 {limit} 输入上限',
+    priceNote: '标准（非批量、未命中缓存）每百万 token 价格，{date} 在官方价格页核对：{links}。价格会变，做预算前请再看一眼原页面。',
+    vizHeading: 'Token 切分',
+    vizTokenizer: '分词器',
+    vizShowIds: '显示 token id',
+    vizHint: '每个方框是一个 token。⟨⟩ 中是只占半个字符的字节，下一个 token 补齐这个字符。',
+    vizMore: '只显示前 {shown} 个，共 {total} 个 token。',
+    vizEmpty: '还没有 token。',
+    fileTooBig: '文件大小 {size}，只读取 {max} 以内的文件。',
+    fileNotText: '文件不是 UTF-8 文本。',
+    largeInput: '输入较大：分段计算，页面不会卡住。',
+    statsTitle: 'Token 数',
+    statsPrices: '价格核对日期 {date}',
+  },
+  ja: {
+    inputLabel: 'カウントするテキスト',
+    placeholder: 'プロンプト、文書、コードを貼り付け…',
+    sample: 'サンプル',
+    openFile: 'ファイルを開く',
+    clear: 'クリア',
+    copyStats: '結果をコピー',
+    copied: 'コピーしました',
+    copyFailed: 'コピーできませんでした。テキストを選択して手動でコピーしてください。',
+    statChars: '文字',
+    statBytes: 'UTF-8 バイト',
+    statWords: '語',
+    statLines: '行',
+    exact: '正確',
+    notLocal: 'ローカル tokenizer なし',
+    tokens: 'トークン',
+    charsPerToken: '1 トークンあたり {n} 文字',
+    loadTokenizer: 'カウント（{size}）',
+    loading: 'tokenizer を読み込み中…',
+    loadFailed: '{name} の tokenizer を読み込めませんでした：{msg}',
+    retry: '再試行',
+    counting: 'カウント中… {pct}%',
+    idle: 'テキストを入力または貼り付けると、入力に合わせて数が更新されます。',
+    done: '{chars} 文字を {ms} ms でカウントしました。',
+    o200kModels: 'GPT-5.5、GPT-5.4、GPT-4.1、GPT-4o、o3、o4-mini',
+    cl100kModels: 'GPT-4、GPT-3.5 Turbo、text-embedding-3',
+    deepseekModels: 'deepseek-flash、deepseek-v4-pro',
+    otherTitle: 'Claude・Gemini・GPT-6',
+    otherBody: 'ローカルで動かせる tokenizer は公開されていません。正確な数は各社の無料のトークン数カウント API で確認してください。下の表では o200k_base の数を目安として使います。',
+    costHeading: 'モデル別の料金',
+    outputLabel: '想定する出力トークン数',
+    colModel: 'モデル',
+    colTokens: '入力トークン',
+    colContext: 'コンテキスト使用率',
+    colInput: '入力',
+    colOutput: '出力',
+    colTotal: '合計',
+    refMark: '≈',
+    refNote: '≈ は o200k_base の数を目安として使った値です。これらのモデルは独自の tokenizer を使うため、実際の数は異なります。Anthropic によると、Claude 4.7 以降は同じテキストで以前の Claude より約 30% 多くトークンを数えます。',
+    needsTokenizer: '{name} を読み込む',
+    offPeak: 'オフピーク {cost}',
+    longContext: '入力 {limit} トークン超は {price} の単価',
+    overLimit: '入力上限 {limit} を超過',
+    priceNote: '標準（バッチなし・キャッシュなし）の 100 万トークンあたり単価。{date} に公式料金ページで確認：{links}。料金は変わるため、予算を立てる前に元のページを確認してください。',
+    vizHeading: 'トークン分割',
+    vizTokenizer: 'tokenizer',
+    vizShowIds: 'トークン ID を表示',
+    vizHint: '枠 1 つが 1 トークンです。⟨⟩ 内は 1 文字の一部だけのバイトで、次のトークンが残りを持ちます。',
+    vizMore: '{total} トークン中、最初の {shown} 個を表示しています。',
+    vizEmpty: 'まだトークンがありません。',
+    fileTooBig: 'ファイルは {size} です。{max} までのファイルを読み込みます。',
+    fileNotText: 'UTF-8 のテキストファイルではありません。',
+    largeInput: '入力が大きいため、ページが固まらないよう分けてカウントします。',
+    statsTitle: 'トークン数',
+    statsPrices: '料金確認日 {date}',
+  },
+  ko: {
+    inputLabel: '셀 텍스트',
+    placeholder: '프롬프트, 문서, 코드를 붙여넣으세요…',
+    sample: '예시',
+    openFile: '파일 열기',
+    clear: '지우기',
+    copyStats: '결과 복사',
+    copied: '복사됨',
+    copyFailed: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.',
+    statChars: '문자',
+    statBytes: 'UTF-8 바이트',
+    statWords: '단어',
+    statLines: '줄',
+    exact: '정확',
+    notLocal: '로컬 토크나이저 없음',
+    tokens: '토큰',
+    charsPerToken: '토큰당 {n}자',
+    loadTokenizer: '계산 ({size})',
+    loading: '토크나이저 불러오는 중…',
+    loadFailed: '{name} 토크나이저를 불러오지 못했습니다: {msg}',
+    retry: '다시 시도',
+    counting: '계산 중… {pct}%',
+    idle: '텍스트를 입력하거나 붙여넣으면 입력에 맞춰 수가 바뀝니다.',
+    done: '{chars}자를 {ms} ms에 계산했습니다.',
+    o200kModels: 'GPT-5.5, GPT-5.4, GPT-4.1, GPT-4o, o3, o4-mini',
+    cl100kModels: 'GPT-4, GPT-3.5 Turbo, text-embedding-3',
+    deepseekModels: 'deepseek-flash, deepseek-v4-pro',
+    otherTitle: 'Claude · Gemini · GPT-6',
+    otherBody: '로컬에서 실행할 수 있는 토크나이저가 공개되지 않았습니다. 정확한 수는 각 회사의 무료 토큰 계산 API로 확인하세요. 아래 표는 이 모델들에 o200k_base 수를 참고값으로 씁니다.',
+    costHeading: '모델별 비용',
+    outputLabel: '예상 출력 토큰 수',
+    colModel: '모델',
+    colTokens: '입력 토큰',
+    colContext: '컨텍스트 사용률',
+    colInput: '입력',
+    colOutput: '출력',
+    colTotal: '합계',
+    refMark: '≈',
+    refNote: '≈ 는 o200k_base 수를 참고값으로 쓴 결과입니다. 이 모델들은 각자의 토크나이저를 쓰므로 실제 수는 다릅니다. Anthropic에 따르면 Claude 4.7 이후 모델은 같은 텍스트에서 이전 Claude보다 토큰이 약 30% 많습니다.',
+    needsTokenizer: '{name} 불러오기',
+    offPeak: '비혼잡 시간 {cost}',
+    longContext: '입력 {limit} 토큰 초과 시 {price} 단가',
+    overLimit: '입력 한도 {limit} 초과',
+    priceNote: '표준(배치·캐시 미적용) 100만 토큰당 가격, {date}에 공식 가격 페이지에서 확인: {links}. 가격은 바뀌므로 예산을 잡기 전에 원본 페이지를 확인하세요.',
+    vizHeading: '토큰 분할',
+    vizTokenizer: '토크나이저',
+    vizShowIds: '토큰 ID 표시',
+    vizHint: '상자 하나가 토큰 하나입니다. ⟨⟩ 안은 한 글자의 일부 바이트이며, 다음 토큰이 나머지를 가집니다.',
+    vizMore: '전체 {total}개 토큰 중 처음 {shown}개를 표시합니다.',
+    vizEmpty: '아직 토큰이 없습니다.',
+    fileTooBig: '파일 크기가 {size}입니다. {max} 이하 파일만 읽습니다.',
+    fileNotText: 'UTF-8 텍스트 파일이 아닙니다.',
+    largeInput: '입력이 커서 페이지가 멈추지 않도록 나눠서 계산합니다.',
+    statsTitle: '토큰 수',
+    statsPrices: '가격 확인일 {date}',
+  },
+};
+
+const SAMPLES = {
+  en: [
+    'You are a senior engineer reviewing a pull request that adds a Redis read-through cache in front of a Postgres analytics database.',
+    '',
+    'The cache uses a 60-second TTL on every aggregate query. The author expects p99 latency to fall from 1200 ms to under 50 ms for a dashboard that serves 12k requests per minute.',
+    '',
+    'List the two highest-risk failure modes, say whether 60 seconds suits a financial reporting dashboard, and name one metric to add before merging. Keep each item under 80 words.',
+  ].join('\n'),
+  zh: [
+    '你是一名资深后端工程师，正在评审一个合并请求：在 PostgreSQL 分析库前面加一层 Redis 读穿缓存。',
+    '',
+    '所有聚合查询的缓存时间都是 60 秒。作者预计看板接口的 p99 延迟会从 1200 毫秒降到 50 毫秒以下，高峰期每分钟 1.2 万次请求。',
+    '',
+    '请列出两个风险最高的故障场景，判断 60 秒是否适合财务报表看板，并给出合并前应加的一项监控指标。每条不超过 80 字。',
+  ].join('\n'),
+  ja: [
+    'あなたはシニアエンジニアとして、PostgreSQL の分析用 DB の前に Redis のリードスルーキャッシュを追加するプルリクエストをレビューしています。',
+    '',
+    '集計クエリはすべて 60 秒でキャッシュされます。作成者は、ピーク時に毎分 1.2 万リクエストを受けるダッシュボードの p99 レイテンシが 1200 ms から 50 ms 未満に下がると見込んでいます。',
+    '',
+    'リスクの高い障害パターンを 2 つ挙げ、60 秒が財務レポートのダッシュボードに適切か判断し、マージ前に追加すべき監視指標を 1 つ示してください。各項目は 80 字以内で。',
+  ].join('\n'),
+  ko: [
+    '당신은 PostgreSQL 분석 DB 앞에 Redis 리드스루 캐시를 추가하는 풀 리퀘스트를 검토하는 시니어 엔지니어입니다.',
+    '',
+    '모든 집계 쿼리는 60초 동안 캐시됩니다. 작성자는 피크 시 분당 1.2만 건의 요청을 받는 대시보드의 p99 지연 시간이 1200ms에서 50ms 미만으로 줄어든다고 예상합니다.',
+    '',
+    '위험이 가장 큰 장애 시나리오 두 가지를 들고, 60초가 재무 보고 대시보드에 적절한지 판단하고, 병합 전에 추가할 모니터링 지표 하나를 제시하세요. 각 항목은 80자 이내로 작성하세요.',
+  ].join('\n'),
+};
+/* ── strings:end ── */
+
+const L = (STRINGS as Record<string, typeof STRINGS.en>)[lang] || STRINGS.en;
+const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
 ---
 
-<div class="atc-wrap"
-  data-msg-paste=""
-  data-msg-empty=""
-  data-msg-tokens-shown=""
-  data-msg-chars=""
-  data-msg-words=""
-  data-msg-loading=""
-  data-msg-copied=""
-  data-msg-copy-stats=""
-  data-msg-show-viz=""
-  data-msg-hide-viz=""
-  data-msg-viz-hint=""
->
-  <section class="atc-input-section">
-    <label for="atc-input" class="tool-label" data-i18n="inputLabel">Prompt or context</label>
-    <textarea
-      id="atc-input"
-      class="tool-textarea"
-      rows="6"
-      spellcheck="false"
-      autocapitalize="off"
-      autocorrect="off"
-      placeholder="Paste your prompt or context here…"
-      data-i18n-attr="placeholder|inputPlaceholder"
-    ></textarea>
-    <div class="atc-input-meta">
-      <div class="atc-input-actions">
-        <button id="atc-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
-        <button id="atc-sample" class="btn-ghost" type="button" data-i18n="loadSample">Load sample</button>
-        <button id="atc-copy-stats" class="btn-secondary" type="button" data-i18n="copyStats">Copy stats</button>
-      </div>
-      <span class="atc-input-stats" aria-live="polite">
-        <span data-i18n="charsLabel">chars</span>:&nbsp;<span id="atc-chars" class="atc-stat-num">0</span>
-        <span class="atc-stat-sep">·</span>
-        <span data-i18n="wordsLabel">words</span>:&nbsp;<span id="atc-words" class="atc-stat-num">0</span>
-      </span>
+<div class="atc-wrap" data-lang={lang} data-strings={JSON.stringify(L)} data-sample={sample}>
+  <div class="atc-input-head">
+    <label for="atc-input" class="tool-label atc-input-label">{L.inputLabel}</label>
+    <div class="atc-toolbar">
+      <button id="atc-sample" class="btn-ghost" type="button">{L.sample}</button>
+      <label class="btn-ghost atc-open">
+        {L.openFile}
+        <input type="file" id="atc-file" class="atc-sr" accept=".txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.yaml,.yml,.xml,.html,.js,.ts,.py,.go,.rs,.java,.c,.cpp,.h,.sql,.log,text/*" />
+      </label>
+      <button id="atc-clear" class="btn-ghost" type="button">{L.clear}</button>
     </div>
+  </div>
+  <textarea
+    id="atc-input"
+    class="tool-textarea atc-input"
+    rows="6"
+    spellcheck="false"
+    autocapitalize="off"
+    autocorrect="off"
+    placeholder={L.placeholder}
+  ></textarea>
+  <div class="atc-stats" aria-live="polite">
+    <span class="atc-stat-main"><strong id="atc-sum">—</strong> {L.tokens} (o200k_base)</span>
+    <span><strong id="atc-chars">0</strong> {L.statChars}</span>
+    <span><strong id="atc-bytes">0</strong> {L.statBytes}</span>
+    <span><strong id="atc-words">0</strong> {L.statWords}</span>
+    <span><strong id="atc-lines">0</strong> {L.statLines}</span>
+  </div>
+
+  <div class="atc-cards">
+    <article class="atc-card" data-enc="o200k">
+      <header class="atc-card-head">
+        <h3 class="atc-card-title">o200k_base</h3>
+        <span class="atc-tag atc-tag--exact">{L.exact}</span>
+      </header>
+      <p class="atc-card-count"><span class="atc-num" id="atc-n-o200k">—</span> <span class="atc-unit">{L.tokens}</span></p>
+      <p class="atc-card-ratio" id="atc-r-o200k"></p>
+      <p class="atc-card-models">{L.o200kModels}</p>
+    </article>
+    <article class="atc-card" data-enc="deepseek">
+      <header class="atc-card-head">
+        <h3 class="atc-card-title">DeepSeek V4</h3>
+        <span class="atc-tag atc-tag--exact">{L.exact}</span>
+      </header>
+      <p class="atc-card-count"><span class="atc-num" id="atc-n-deepseek">—</span> <span class="atc-unit">{L.tokens}</span></p>
+      <p class="atc-card-ratio" id="atc-r-deepseek"></p>
+      <button type="button" class="btn-secondary atc-load" data-load="deepseek" hidden></button>
+      <p class="atc-card-models">{L.deepseekModels}</p>
+    </article>
+    <article class="atc-card" data-enc="cl100k">
+      <header class="atc-card-head">
+        <h3 class="atc-card-title">cl100k_base</h3>
+        <span class="atc-tag atc-tag--exact">{L.exact}</span>
+      </header>
+      <p class="atc-card-count"><span class="atc-num" id="atc-n-cl100k">—</span> <span class="atc-unit">{L.tokens}</span></p>
+      <p class="atc-card-ratio" id="atc-r-cl100k"></p>
+      <button type="button" class="btn-secondary atc-load" data-load="cl100k" hidden></button>
+      <p class="atc-card-models">{L.cl100kModels}</p>
+    </article>
+    <article class="atc-card atc-card--other">
+      <header class="atc-card-head">
+        <h3 class="atc-card-title">{L.otherTitle}</h3>
+        <span class="atc-tag atc-tag--other">{L.notLocal}</span>
+      </header>
+      <p class="atc-card-models">{L.otherBody}</p>
+    </article>
+  </div>
+  <p id="atc-status" class="atc-status" role="status" aria-live="polite">{L.idle}</p>
+
+  <section class="atc-cost" aria-labelledby="atc-cost-h">
+    <div class="atc-cost-head">
+      <h2 id="atc-cost-h" class="atc-h2">{L.costHeading}</h2>
+      <label class="atc-out">
+        <span>{L.outputLabel}</span>
+        <input id="atc-out" type="number" class="tool-input atc-out-input" min="0" step="1" value="1000" inputmode="numeric" />
+      </label>
+    </div>
+    <div class="atc-table-wrap">
+      <table class="atc-table">
+        <thead>
+          <tr>
+            <th scope="col">{L.colModel}</th>
+            <th scope="col" class="atc-r">{L.colTokens}</th>
+            <th scope="col" class="atc-r">{L.colContext}</th>
+            <th scope="col" class="atc-r">{L.colInput}</th>
+            <th scope="col" class="atc-r">{L.colOutput}</th>
+            <th scope="col" class="atc-r">{L.colTotal}</th>
+          </tr>
+        </thead>
+        <tbody id="atc-tbody"></tbody>
+      </table>
+    </div>
+    <p class="atc-note">{L.refNote}</p>
+    <p class="atc-note" id="atc-price-note"></p>
   </section>
 
-  <section class="atc-cards-section">
-    <h2 class="atc-section-heading" data-i18n="resultsHeading">Token counts &amp; cost</h2>
-    <div id="atc-cards" class="atc-cards-grid"></div>
-    <p class="atc-pricing-note" data-i18n="pricingNote">
-      Prices are reference values reviewed in May 2026. Verify on each provider's pricing page.
-    </p>
+  <section class="atc-viz" aria-labelledby="atc-viz-h">
+    <div class="atc-viz-head">
+      <h2 id="atc-viz-h" class="atc-h2">{L.vizHeading}</h2>
+      <label class="atc-viz-opt">
+        <span>{L.vizTokenizer}</span>
+        <select id="atc-viz-enc" class="tool-input atc-viz-select">
+          <option value="o200k">o200k_base</option>
+          <option value="deepseek">DeepSeek V4</option>
+          <option value="cl100k">cl100k_base</option>
+        </select>
+      </label>
+      <label class="atc-viz-opt atc-viz-check">
+        <input type="checkbox" id="atc-viz-ids" />
+        <span>{L.vizShowIds}</span>
+      </label>
+    </div>
+    <p class="atc-note">{L.vizHint}</p>
+    <p class="atc-note" id="atc-viz-meta"></p>
+    <div id="atc-viz" class="atc-viz-body"></div>
   </section>
 
-  <section class="atc-viz-section">
-    <button id="atc-viz-toggle" class="btn-secondary" type="button" aria-expanded="false" aria-controls="atc-viz-body">
-      <span data-i18n="showViz">Show token visualization</span>
-    </button>
-    <div id="atc-viz-body" class="atc-viz-body" hidden>
-      <p class="atc-viz-meta" id="atc-viz-meta"></p>
-      <div id="atc-viz-chips" class="atc-viz-chips" role="list"></div>
-    </div>
-  </section>
+  <div class="atc-foot">
+    <button id="atc-copy" class="btn-secondary" type="button">{L.copyStats}</button>
+  </div>
 </div>
 
-<script is:inline>
-  (function () {
-    var STRINGS = {
-      en: {
-        inputLabel: 'Prompt or context',
-        inputPlaceholder: 'Paste your prompt or context here…',
-        clear: 'Clear',
-        loadSample: 'Load sample',
-        copyStats: 'Copy stats',
-        charsLabel: 'chars',
-        wordsLabel: 'words',
-        resultsHeading: 'Token counts & cost',
-        pricingNote: "Prices are reference values reviewed in May 2026. Verify on each provider's pricing page.",
-        showViz: 'Show token visualization',
-        hideViz: 'Hide token visualization',
-        msgEmpty: 'Type or paste text to see token counts.',
-        msgTokensShown: 'Showing {shown} of {total} tokens — collapse and paste a shorter sample to render all chips.',
-        msgLoading: 'Loading tokenizer…',
-        msgCopied: 'Copied!',
-        msgVizHint: 'Each chip is one token from the GPT-4.1 / GPT-4o tokenizer (o200k_base). Hover a chip to see its token id.',
-        tagExact: 'exact',
-        tagApprox: 'approx',
-        tokensSuffix: 'tokens',
-        rateInput: 'in',
-        rateOutput: 'out',
-        per1M: '/ 1M'
-      },
-      zh: {
-        inputLabel: 'Prompt 或上下文',
-        inputPlaceholder: '把 prompt 或上下文粘贴到这里…',
-        clear: '清空',
-        loadSample: '加载示例',
-        copyStats: '复制统计',
-        charsLabel: '字符',
-        wordsLabel: '词',
-        resultsHeading: 'Token 数与成本',
-        pricingNote: '价格为 2026 年 5 月人工核对的参考值，请以厂商定价页为准。',
-        showViz: '显示 token 可视化',
-        hideViz: '隐藏 token 可视化',
-        msgEmpty: '输入或粘贴文本即可查看 token 数。',
-        msgTokensShown: '已显示 {shown} / {total} 个 token — 折叠后粘贴更短文本可渲染全部。',
-        msgLoading: '正在加载 tokenizer…',
-        msgCopied: '已复制！',
-        msgVizHint: '每个 chip 是 GPT-4.1 / GPT-4o tokenizer（o200k_base）切出的一个 token。悬停查看 token id。',
-        tagExact: '精确',
-        tagApprox: '近似',
-        tokensSuffix: '个 token',
-        rateInput: '输入',
-        rateOutput: '输出',
-        per1M: '/ 百万'
-      },
-      ja: {
-        inputLabel: 'プロンプト・コンテキスト',
-        inputPlaceholder: 'プロンプトやコンテキストをここに貼り付け…',
-        clear: 'クリア',
-        loadSample: 'サンプル読込',
-        copyStats: '統計をコピー',
-        charsLabel: '文字',
-        wordsLabel: '単語',
-        resultsHeading: 'トークン数とコスト',
-        pricingNote: '価格は 2026 年 5 月時点の参考値。各社の料金ページで再確認してください。',
-        showViz: 'トークン可視化を表示',
-        hideViz: 'トークン可視化を非表示',
-        msgEmpty: 'テキストを入力または貼り付けるとトークン数が表示されます。',
-        msgTokensShown: '{total} 件中 {shown} 件のトークンを表示中 — 折りたたんで短いテキストを貼り付けると全件描画できます。',
-        msgLoading: 'tokenizer を読み込み中…',
-        msgCopied: 'コピーしました！',
-        msgVizHint: '各チップは GPT-4.1 / GPT-4o tokenizer（o200k_base）が分割したトークン 1 個。チップにホバーするとトークン ID を表示。',
-        tagExact: '精密',
-        tagApprox: '近似',
-        tokensSuffix: 'トークン',
-        rateInput: '入力',
-        rateOutput: '出力',
-        per1M: '/ 100 万'
-      },
-      ko: {
-        inputLabel: '프롬프트 또는 컨텍스트',
-        inputPlaceholder: '여기에 프롬프트나 컨텍스트를 붙여넣으세요…',
-        clear: '지우기',
-        loadSample: '샘플 불러오기',
-        copyStats: '통계 복사',
-        charsLabel: '문자',
-        wordsLabel: '단어',
-        resultsHeading: '토큰 수와 비용',
-        pricingNote: '가격은 2026년 5월 기준 참고 값. 각 제공자 가격 페이지에서 다시 확인하세요.',
-        showViz: '토큰 시각화 표시',
-        hideViz: '토큰 시각화 숨김',
-        msgEmpty: '텍스트를 입력하거나 붙여넣으면 토큰 수가 표시됩니다.',
-        msgTokensShown: '{total}개 중 {shown}개 토큰을 표시 중 — 접고 더 짧은 텍스트를 붙여넣으면 모두 렌더됩니다.',
-        msgLoading: 'tokenizer 로드 중…',
-        msgCopied: '복사 완료!',
-        msgVizHint: '각 칩은 GPT-4.1 / GPT-4o tokenizer(o200k_base)가 분할한 토큰 1개. 칩 위에 마우스를 올리면 토큰 ID 표시.',
-        tagExact: '정확',
-        tagApprox: '근사',
-        tokensSuffix: '토큰',
-        rateInput: '입력',
-        rateOutput: '출력',
-        per1M: '/ 100만'
-      }
-    };
-
-    var lang = (document.documentElement.lang || 'en').slice(0, 2);
-    var t = STRINGS[lang] || STRINGS.en;
-
-    document.querySelectorAll('.atc-wrap [data-i18n]').forEach(function (el) {
-      var key = el.getAttribute('data-i18n');
-      if (t[key]) el.textContent = t[key];
-    });
-    document.querySelectorAll('.atc-wrap [data-i18n-attr]').forEach(function (el) {
-      var spec = el.getAttribute('data-i18n-attr');
-      if (!spec) return;
-      var parts = spec.split('|');
-      if (parts.length === 2 && t[parts[1]]) el.setAttribute(parts[0], t[parts[1]]);
-    });
-
-    var wrap = document.querySelector('.atc-wrap');
-    if (wrap) {
-      wrap.dataset.msgEmpty = t.msgEmpty;
-      wrap.dataset.msgTokensShown = t.msgTokensShown;
-      wrap.dataset.msgLoading = t.msgLoading;
-      wrap.dataset.msgCopied = t.msgCopied;
-      wrap.dataset.msgCopyStats = t.copyStats;
-      wrap.dataset.msgShowViz = t.showViz;
-      wrap.dataset.msgHideViz = t.hideViz;
-      wrap.dataset.msgVizHint = t.msgVizHint;
-      wrap.dataset.tagExact = t.tagExact;
-      wrap.dataset.tagApprox = t.tagApprox;
-      wrap.dataset.tokensSuffix = t.tokensSuffix;
-      wrap.dataset.rateInput = t.rateInput;
-      wrap.dataset.rateOutput = t.rateOutput;
-      wrap.dataset.per1M = t.per1M;
-    }
-  })();
-</script>
-
 <script>
-  import { Tiktoken } from 'js-tiktoken/lite';
+  /* ── engine:start ── */
+  // Unicode White_Space (PropList.txt). OpenAI's tiktoken (Rust regex) and Hugging Face tokenizers
+  // (Oniguruma) both read \s as this set; JavaScript's \s adds U+FEFF and leaves out U+0085, so a
+  // byte-order mark or NEL would split differently. Rewriting \s and \S makes the browser regex
+  // match the reference implementations.
+  var WHITE_SPACE = '\\t-\\r \\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000';
 
-  const SLUG = 'ai-token-counter';
+  function unicodeWhiteSpace(pattern) {
+    var out = '';
+    var inClass = false;
+    for (var i = 0; i < pattern.length; i++) {
+      var ch = pattern[i];
+      if (ch === '\\') {
+        var nx = pattern[i + 1];
+        if (nx === 's') { out += inClass ? WHITE_SPACE : '[' + WHITE_SPACE + ']'; i++; continue; }
+        if (nx === 'S') {
+          if (inClass) throw new Error('\\S inside a character class is not supported');
+          out += '[^' + WHITE_SPACE + ']';
+          i++;
+          continue;
+        }
+        out += ch + (nx === undefined ? '' : nx);
+        i++;
+        continue;
+      }
+      if (ch === '[' && !inClass) inClass = true;
+      else if (ch === ']' && inClass) inClass = false;
+      out += ch;
+    }
+    return out;
+  }
 
-  // Pricing reviewed 2026-05. All values per 1M tokens, USD.
-  // Sources: provider pricing pages and 2026 industry surveys. Treat as
-  // budget reference, not invoice — providers adjust headline rates and
-  // batch tiers without notice.
-  const MODELS = [
-    { id: 'gpt-5',         label: 'GPT-5',             rank: 'o200k', exact: true,  factor: 1.0,  inUsd: 1.25, outUsd: 10.00 },
-    { id: 'gpt-4.1',       label: 'GPT-4.1',           rank: 'o200k', exact: true,  factor: 1.0,  inUsd: 5.00, outUsd: 15.00 },
-    { id: 'gpt-4o',        label: 'GPT-4o',            rank: 'o200k', exact: true,  factor: 1.0,  inUsd: 2.50, outUsd: 10.00 },
-    { id: 'claude-4.6',    label: 'Claude Sonnet 4.6', rank: 'o200k', exact: false, factor: 0.97, inUsd: 3.00, outUsd: 15.00 },
-    { id: 'gemini-3',      label: 'Gemini 3 Pro',      rank: 'o200k', exact: false, factor: 1.01, inUsd: 2.00, outUsd: 12.00 },
-    { id: 'deepseek-v3',   label: 'DeepSeek V3',       rank: 'o200k', exact: false, factor: 0.98, inUsd: 0.27, outUsd: 1.10 },
+  function base64ToBytes(b64) {
+    var bin = atob(b64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  // Min-heap of (rank, position) pairs; ties go to the lower position. Both tiktoken and
+  // tokenizers merge the lowest-ranked pair first and, among equal ranks, the leftmost one.
+  function createHeap() {
+    var r = []; var p = []; var e = [];
+    function less(i, j) { return r[i] < r[j] || (r[i] === r[j] && p[i] < p[j]); }
+    function swap(i, j) {
+      var t = r[i]; r[i] = r[j]; r[j] = t;
+      t = p[i]; p[i] = p[j]; p[j] = t;
+      t = e[i]; e[i] = e[j]; e[j] = t;
+    }
+    return {
+      size: function () { return r.length; },
+      push: function (rank, pos, extra) {
+        r.push(rank); p.push(pos); e.push(extra);
+        var i = r.length - 1;
+        while (i > 0) {
+          var pa = (i - 1) >> 1;
+          if (!less(i, pa)) break;
+          swap(i, pa); i = pa;
+        }
+      },
+      pop: function () {
+        var top = [r[0], p[0], e[0]];
+        var last = r.length - 1;
+        swap(0, last);
+        r.pop(); p.pop(); e.pop();
+        var i = 0; var n = r.length;
+        for (;;) {
+          var c = 2 * i + 1;
+          if (c >= n) break;
+          if (c + 1 < n && less(c + 1, c)) c++;
+          if (!less(c, i)) break;
+          swap(c, i); i = c;
+        }
+        return top;
+      },
+    };
+  }
+
+  // tiktoken encodings (o200k_base, cl100k_base). Same algorithm as tiktoken's byte_pair_encode:
+  // a regex piece that is itself a token stays whole; otherwise merge the adjacent pair whose
+  // concatenation has the lowest rank until no pair is a token. js-tiktoken implements this with a
+  // linear scan per merge, which takes minutes on a 20,000-character run of CJK text; the heap keeps
+  // it O(n log n).
+  function createTiktokenEncoding(name, ranks) {
+    var rankOf = new Map();
+    var bytesOf = [];
+    var lines = ranks.bpe_ranks.split('\n');
+    for (var li = 0; li < lines.length; li++) {
+      if (!lines[li]) continue;
+      var parts = lines[li].split(' ');
+      var offset = parseInt(parts[1], 10);
+      for (var k = 2; k < parts.length; k++) {
+        var bin = atob(parts[k]);
+        rankOf.set(bin, offset + k - 2);
+        var bytes = new Uint8Array(bin.length);
+        for (var b = 0; b < bin.length; b++) bytes[b] = bin.charCodeAt(b);
+        bytesOf[offset + k - 2] = bytes;
+      }
+    }
+    var pattern = new RegExp(unicodeWhiteSpace(ranks.pat_str), 'gu');
+    var encoder = new TextEncoder();
+
+    function latin1(bytes) {
+      var s = '';
+      for (var i = 0; i < bytes.length; i += 4096) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 4096));
+      return s;
+    }
+
+    function merge(s, out) {
+      var n = s.length;
+      var whole = rankOf.get(s);
+      if (whole !== undefined) { out.push(whole); return; }
+      var next = new Int32Array(n); var prev = new Int32Array(n); var alive = new Uint8Array(n);
+      for (var i = 0; i < n; i++) { next[i] = i + 1 < n ? i + 1 : -1; prev[i] = i - 1; alive[i] = 1; }
+      var endOf = function (i) { return next[i] < 0 ? n : next[i]; };
+      var heap = createHeap();
+      for (var j = 0; j + 1 < n; j++) {
+        var r = rankOf.get(s.slice(j, j + 2));
+        if (r !== undefined) heap.push(r, j, j + 2);
+      }
+      while (heap.size()) {
+        var top = heap.pop();
+        var a = top[1];
+        if (!alive[a] || next[a] < 0) continue;
+        var q = next[a];
+        if (endOf(q) !== top[2]) continue;
+        alive[q] = 0;
+        next[a] = next[q];
+        if (next[q] >= 0) prev[next[q]] = a;
+        var pa = prev[a];
+        if (pa >= 0) {
+          var r1 = rankOf.get(s.slice(pa, endOf(a)));
+          if (r1 !== undefined) heap.push(r1, pa, endOf(a));
+        }
+        if (next[a] >= 0) {
+          var r2 = rankOf.get(s.slice(a, endOf(next[a])));
+          if (r2 !== undefined) heap.push(r2, a, endOf(next[a]));
+        }
+      }
+      for (var x = 0; x >= 0; x = next[x]) out.push(rankOf.get(s.slice(x, endOf(x))));
+    }
+
+    return {
+      name: name,
+      // Special tokens such as <|endoftext|> are counted as ordinary text, like tiktoken's
+      // encode_ordinary. The API treats them as text in user content.
+      pieces: function (text) {
+        pattern.lastIndex = 0;
+        return text.match(pattern) || [];
+      },
+      encodePiece: function (piece, out) { merge(latin1(encoder.encode(piece)), out); },
+      tokenBytes: function (id) { return bytesOf[id] || new Uint8Array(0); },
+    };
+  }
+
+  // DeepSeek V4 (Hugging Face tokenizers format): added tokens are matched first, then three
+  // "Isolated" regex splits run in sequence, then byte-level BPE applies merges by merge rank.
+  // The data module is generated from DeepSeek's official tokenizer.json by
+  // scripts/build-deepseek-tokenizer.mjs.
+  function createHfBpeEncoding(name, mod) {
+    var raw = base64ToBytes(mod.DATA);
+    var read = function (i) { return (raw[i * 3] << 16) | (raw[i * 3 + 1] << 8) | raw[i * 3 + 2]; };
+    var byteIds = new Int32Array(256);
+    for (var b = 0; b < 256; b++) byteIds[b] = read(b);
+    var count = mod.MERGE_COUNT;
+    var first = mod.FIRST_MERGE_ID;
+    var left = new Int32Array(count);
+    var right = new Int32Array(count);
+    var SHIFT = 1 << 21;
+    if (mod.VOCAB_SIZE > SHIFT) throw new Error('vocabulary too large for the pair key');
+    var pairRank = new Map();
+    for (var i = 0; i < count; i++) {
+      left[i] = read(256 + i * 2);
+      right[i] = read(256 + i * 2 + 1);
+      pairRank.set(left[i] * SHIFT + right[i], i);
+    }
+    var byteOfId = new Map();
+    for (var bb = 0; bb < 256; bb++) byteOfId.set(byteIds[bb], bb);
+    var addedText = new Map();
+    var added = mod.ADDED_TOKENS.slice().sort(function (x, y) { return y[1].length - x[1].length; });
+    var firstChars = new Set();
+    added.forEach(function (a) { firstChars.add(a[1][0]); addedText.set(a[0], a[1]); });
+    var splitters = mod.SPLIT_PATTERNS.map(function (p) { return new RegExp(unicodeWhiteSpace(p), 'gu'); });
+    var encoder = new TextEncoder();
+    var bytesCache = new Map();
+
+    function splitAll(pieces, re) {
+      var out = [];
+      for (var i = 0; i < pieces.length; i++) {
+        var piece = pieces[i];
+        re.lastIndex = 0;
+        var last = 0; var m;
+        while ((m = re.exec(piece)) !== null) {
+          if (m[0].length === 0) { re.lastIndex++; continue; }
+          if (m.index > last) out.push(piece.slice(last, m.index));
+          out.push(m[0]);
+          last = m.index + m[0].length;
+        }
+        if (last < piece.length) out.push(piece.slice(last));
+      }
+      return out;
+    }
+
+    function merge(bytes, out) {
+      var n = bytes.length;
+      if (n === 1) { out.push(byteIds[bytes[0]]); return; }
+      var ids = new Int32Array(n); var next = new Int32Array(n); var prev = new Int32Array(n); var alive = new Uint8Array(n);
+      for (var i = 0; i < n; i++) { ids[i] = byteIds[bytes[i]]; next[i] = i + 1 < n ? i + 1 : -1; prev[i] = i - 1; alive[i] = 1; }
+      var heap = createHeap();
+      for (var j = 0; j + 1 < n; j++) {
+        var r = pairRank.get(ids[j] * SHIFT + ids[j + 1]);
+        if (r !== undefined) heap.push(r, j, 0);
+      }
+      while (heap.size()) {
+        var top = heap.pop();
+        var rank = top[0]; var a = top[1];
+        if (!alive[a]) continue;
+        var q = next[a];
+        if (q < 0 || left[rank] !== ids[a] || right[rank] !== ids[q]) continue;
+        ids[a] = first + rank;
+        alive[q] = 0;
+        next[a] = next[q];
+        if (next[q] >= 0) prev[next[q]] = a;
+        var pa = prev[a];
+        if (pa >= 0) {
+          var r1 = pairRank.get(ids[pa] * SHIFT + ids[a]);
+          if (r1 !== undefined) heap.push(r1, pa, 0);
+        }
+        if (next[a] >= 0) {
+          var r2 = pairRank.get(ids[a] * SHIFT + ids[next[a]]);
+          if (r2 !== undefined) heap.push(r2, a, 0);
+        }
+      }
+      for (var x = 0; x >= 0; x = next[x]) out.push(ids[x]);
+    }
+
+    function plainPieces(text, out) {
+      var pieces = [text];
+      for (var s = 0; s < splitters.length; s++) pieces = splitAll(pieces, splitters[s]);
+      for (var i = 0; i < pieces.length; i++) out.push(pieces[i]);
+    }
+
+    function tokenBytes(id) {
+      var hit = bytesCache.get(id);
+      if (hit) return hit;
+      var result;
+      if (addedText.has(id)) result = encoder.encode(addedText.get(id));
+      else if (byteOfId.has(id)) result = new Uint8Array([byteOfId.get(id)]);
+      else if (id >= first && id < first + count) {
+        var l = tokenBytes(left[id - first]); var rr = tokenBytes(right[id - first]);
+        result = new Uint8Array(l.length + rr.length);
+        result.set(l, 0); result.set(rr, l.length);
+      } else result = new Uint8Array(0);
+      bytesCache.set(id, result);
+      return result;
+    }
+
+    return {
+      name: name,
+      // Pieces are strings, except added tokens (such as <｜User｜>), which are their token id.
+      // The official tokenizer.json recognises them inside the text, so they count as 1 token.
+      pieces: function (text) {
+        var out = [];
+        var start = 0;
+        var i = 0;
+        while (i < text.length) {
+          if (firstChars.has(text[i])) {
+            var hit = null;
+            for (var k = 0; k < added.length; k++) {
+              if (text.startsWith(added[k][1], i)) { hit = added[k]; break; }
+            }
+            if (hit) {
+              if (i > start) plainPieces(text.slice(start, i), out);
+              out.push(hit[0]);
+              i += hit[1].length;
+              start = i;
+              continue;
+            }
+          }
+          i++;
+        }
+        if (start < text.length) plainPieces(text.slice(start), out);
+        return out;
+      },
+      encodePiece: function (piece, out) {
+        if (typeof piece === 'number') { out.push(piece); return; }
+        merge(encoder.encode(piece), out);
+      },
+      tokenBytes: tokenBytes,
+    };
+  }
+
+  // Encode everything at once (tests, small inputs). The page uses encodeSteps() instead.
+  function encodeAll(enc, text) {
+    var pieces = enc.pieces(text);
+    var out = [];
+    for (var i = 0; i < pieces.length; i++) enc.encodePiece(pieces[i], out);
+    return out;
+  }
+
+  // Encode in slices so a large input does not block the page: returns a function that encodes up
+  // to `budgetMs` of work and reports { done, ids, progress }.
+  function encodeSteps(enc, text, now) {
+    var pieces = enc.pieces(text);
+    var ids = [];
+    var i = 0;
+    var cache = new Map();
+    return function step(budgetMs) {
+      var t0 = now();
+      while (i < pieces.length) {
+        var piece = pieces[i++];
+        if (typeof piece === 'string' && piece.length <= 32) {
+          var hit = cache.get(piece);
+          if (!hit) { hit = []; enc.encodePiece(piece, hit); if (cache.size < 100000) cache.set(piece, hit); }
+          for (var k = 0; k < hit.length; k++) ids.push(hit[k]);
+        } else {
+          enc.encodePiece(piece, ids);
+        }
+        if ((i & 255) === 0 && now() - t0 > budgetMs) break;
+      }
+      return { done: i >= pieces.length, ids: ids, progress: pieces.length ? i / pieces.length : 1 };
+    };
+  }
+
+  var wordSegmenter = null;
+  function textStats(text) {
+    var chars = 0;
+    for (var _c of text) chars++;
+    var bytes = new TextEncoder().encode(text).length;
+    var words = 0;
+    if (text) {
+      if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+        if (!wordSegmenter) wordSegmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+        for (var seg of wordSegmenter.segment(text)) if (seg.isWordLike) words++;
+      } else {
+        var m = text.match(/\S+/g);
+        words = m ? m.length : 0;
+      }
+    }
+    var lines = text ? text.split(/\r\n|\r|\n/).length : 0;
+    return { chars: chars, bytes: bytes, words: words, lines: lines };
+  }
+
+  // Prices: USD per 1M tokens, standard tier, uncached input. Checked 2026-10-01 on
+  // developers.openai.com/api/docs/pricing, platform.claude.com/docs/en/about-claude/pricing,
+  // ai.google.dev/gemini-api/docs/pricing and api-docs.deepseek.com/quick_start/pricing (USD) /
+  // api-docs.deepseek.com/zh-cn/quick_start/pricing (CNY). Context: input limit from each model page.
+  // enc: the tokenizer that gives this model's exact count; ref: no local tokenizer, use o200k as a
+  // reference. long: price for the whole request when input tokens exceed `over`.
+  var PRICES_CHECKED = '2026-10-01';
+  var PRICE_SOURCES = [
+    ['OpenAI', 'https://developers.openai.com/api/docs/pricing'],
+    ['Anthropic', 'https://platform.claude.com/docs/en/about-claude/pricing'],
+    ['Google', 'https://ai.google.dev/gemini-api/docs/pricing'],
+    ['DeepSeek', 'https://api-docs.deepseek.com/quick_start/pricing'],
+  ];
+  var MODELS = [
+    { id: 'gpt-6-sol', provider: 'OpenAI', enc: 'ref', input: 2, output: 10, limit: 922000, long: { over: 272000, input: 4, output: 15 } },
+    { id: 'gpt-6-luna', provider: 'OpenAI', enc: 'ref', input: 0.1, output: 0.5, limit: 922000, long: { over: 272000, input: 0.2, output: 0.75 } },
+    { id: 'gpt-5.5', provider: 'OpenAI', enc: 'o200k', input: 5, output: 30, limit: 1050000, long: { over: 272000, input: 10, output: 45 } },
+    { id: 'gpt-5.4-mini', provider: 'OpenAI', enc: 'o200k', input: 0.75, output: 4.5, limit: 272000 },
+    { id: 'gpt-4.1', provider: 'OpenAI', enc: 'o200k', input: 2, output: 8, limit: 1047576 },
+    { id: 'gpt-4o', provider: 'OpenAI', enc: 'o200k', input: 2.5, output: 10, limit: 128000 },
+    { id: 'text-embedding-3-small', provider: 'OpenAI', enc: 'cl100k', input: 0.02, output: null, limit: 8192 },
+    { id: 'claude-opus-5-5', provider: 'Anthropic', enc: 'ref', input: 4, output: 20, limit: 1000000 },
+    { id: 'claude-sonnet-5-5', provider: 'Anthropic', enc: 'ref', input: 2, output: 10, limit: 1000000 },
+    { id: 'claude-haiku-4-5', provider: 'Anthropic', enc: 'ref', input: 1, output: 5, limit: 200000 },
+    { id: 'gemini-3.8-flash', provider: 'Google', enc: 'ref', input: 0.75, output: 3.75, limit: 1048576 },
+    { id: 'gemini-3.1-pro-preview', provider: 'Google', enc: 'ref', input: 2, output: 12, limit: 1048576, long: { over: 200000, input: 4, output: 18 } },
+    { id: 'deepseek-flash', provider: 'DeepSeek', enc: 'deepseek', input: 0.3, output: 1.2, limit: 1000000, offPeak: 0.5, cny: { input: 2, output: 8 } },
+    { id: 'deepseek-v4-pro', provider: 'DeepSeek', enc: 'deepseek', input: 1.32, output: 3.96, limit: 1000000, offPeak: 0.5, cny: { input: 9, output: 27 } },
   ];
 
-  const SAMPLE_PROMPT = `You are a senior staff engineer reviewing a pull request that introduces a new caching layer in front of a Postgres analytics database.
+  // Cost of one request. Returns null parts when the model has no output price.
+  function costFor(model, inputTokens, outputTokens, currency) {
+    var rate = currency === 'CNY' && model.cny ? model.cny : model;
+    var inRate = rate.input;
+    var outRate = rate.output;
+    var longApplied = false;
+    if (model.long && inputTokens > model.long.over && currency !== 'CNY') {
+      inRate = model.long.input; outRate = model.long.output; longApplied = true;
+    }
+    var input = inputTokens * inRate / 1e6;
+    var output = outRate == null ? null : outputTokens * outRate / 1e6;
+    return { input: input, output: output, total: input + (output || 0), long: longApplied, over: inputTokens > model.limit };
+  }
 
-The PR adds a Redis-based read-through cache with a 60-second TTL on every aggregate query. The author argues this will reduce p99 latency from 1200ms to under 50ms for the dashboard endpoint that serves 12k requests per minute at peak.
+  // Money with at most 4 significant digits (the inputs are exact; the prices are not finer than
+  // that), and never in exponent form.
+  function formatMoney(value, symbol) {
+    if (value == null) return '—';
+    if (value === 0) return symbol + '0';
+    if (value < 0.000001) return '<' + symbol + '0.000001';
+    var digits = value >= 1 ? 2 : Math.min(8, Math.max(2, 3 - Math.floor(Math.log10(value))));
+    var f = Math.pow(10, digits);
+    // Scale by (1 + 1e-12) so binary rounding (3.045 is stored as 3.04499…) rounds half up.
+    var rounded = Math.round(value * f * (1 + 1e-12)) / f;
+    return symbol + rounded.toFixed(digits).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  }
 
-Please walk through:
-1. The two highest-risk failure modes you would flag.
-2. Whether 60 seconds is the right TTL given the data freshness expectations of a financial reporting dashboard.
-3. One concrete observability hook the author should add before merging.
+  function formatPercent(part, whole) {
+    if (!whole) return '—';
+    var p = part / whole * 100;
+    if (p === 0) return '0%';
+    if (p < 0.01) return '<0.01%';
+    return (p < 10 ? p.toFixed(2) : p < 100 ? p.toFixed(1) : p.toFixed(0)) + '%';
+  }
 
-Return your answer as a numbered list, with each item under 80 words.`;
+  // How a token shows in the token view: its text when its bytes are complete UTF-8, otherwise the
+  // bytes in hex inside ⟨⟩ (a character split across tokens, common for CJK and emoji in cl100k).
+  var strictDecoder = null;
+  function tokenLabel(bytes) {
+    if (!strictDecoder) strictDecoder = new TextDecoder('utf-8', { fatal: true });
+    try {
+      var s = strictDecoder.decode(bytes);
+      return { text: s.replace(/ /g, '\u00B7').replace(/\r/g, '\u240D').replace(/\n/g, '\u21B5').replace(/\t/g, '\u2192'), partial: false };
+    } catch (e) {
+      var hex = [];
+      for (var i = 0; i < bytes.length; i++) hex.push(bytes[i].toString(16).padStart(2, '0'));
+      return { text: '\u27E8' + hex.join(' ') + '\u27E9', partial: true };
+    }
+  }
 
-  const wrap = document.querySelector('.atc-wrap') as HTMLElement | null;
-  if (!wrap) throw new Error('atc wrap missing');
+  function fill(template, values) {
+    return template.replace(/\{(\w+)\}/g, function (m, k) { return values[k] != null ? String(values[k]) : m; });
+  }
+  /* ── engine:end ── */
 
-  const inputEl = document.getElementById('atc-input') as HTMLTextAreaElement;
-  const clearBtn = document.getElementById('atc-clear') as HTMLButtonElement;
-  const sampleBtn = document.getElementById('atc-sample') as HTMLButtonElement;
-  const copyStatsBtn = document.getElementById('atc-copy-stats') as HTMLButtonElement;
-  const charsEl = document.getElementById('atc-chars')!;
-  const wordsEl = document.getElementById('atc-words')!;
-  const cardsEl = document.getElementById('atc-cards')!;
-  const vizToggle = document.getElementById('atc-viz-toggle') as HTMLButtonElement;
-  const vizBody = document.getElementById('atc-viz-body') as HTMLElement;
-  const vizMeta = document.getElementById('atc-viz-meta')!;
-  const vizChips = document.getElementById('atc-viz-chips')!;
+  const SLUG = 'ai-token-counter';
+  const MAX_FILE = 20 * 1024 * 1024;
+  const VIZ_LIMIT = 2000;
+  const SIZE_LABEL: Record<string, string> = { cl100k: '0.4 MB', deepseek: '0.5 MB', o200k: '0.9 MB' };
+  const NAMES: Record<string, string> = { o200k: 'o200k_base', cl100k: 'cl100k_base', deepseek: 'DeepSeek V4' };
 
-  const T = {
-    tagExact: wrap.dataset.tagExact || 'exact',
-    tagApprox: wrap.dataset.tagApprox || 'approx',
-    tokensSuffix: wrap.dataset.tokensSuffix || 'tokens',
-    rateInput: wrap.dataset.rateInput || 'in',
-    rateOutput: wrap.dataset.rateOutput || 'out',
-    per1M: wrap.dataset.per1M || '/ 1M',
-    msgEmpty: wrap.dataset.msgEmpty || '',
-    msgTokensShown: wrap.dataset.msgTokensShown || '',
-    msgLoading: wrap.dataset.msgLoading || '',
-    msgCopied: wrap.dataset.msgCopied || '',
-    msgShowViz: wrap.dataset.msgShowViz || 'Show token visualization',
-    msgHideViz: wrap.dataset.msgHideViz || 'Hide token visualization',
-    msgVizHint: wrap.dataset.msgVizHint || ''
-  };
+  const wrap = document.querySelector('.atc-wrap') as HTMLElement;
+  const S = JSON.parse(wrap.dataset.strings || '{}');
+  const lang = wrap.dataset.lang || 'en';
+  const numberFmt = new Intl.NumberFormat(lang === 'en' ? 'en-US' : lang);
+  const input = document.getElementById('atc-input') as HTMLTextAreaElement;
+  const statusEl = document.getElementById('atc-status') as HTMLElement;
+  const tbody = document.getElementById('atc-tbody') as HTMLElement;
+  const outInput = document.getElementById('atc-out') as HTMLInputElement;
+  const vizEl = document.getElementById('atc-viz') as HTMLElement;
+  const vizMeta = document.getElementById('atc-viz-meta') as HTMLElement;
+  const vizEnc = document.getElementById('atc-viz-enc') as HTMLSelectElement;
+  const vizIds = document.getElementById('atc-viz-ids') as HTMLInputElement;
+  const copyBtn = document.getElementById('atc-copy') as HTMLButtonElement;
+  const fileInput = document.getElementById('atc-file') as HTMLInputElement;
 
-  // ── Card scaffolding ────────────────────────────────────────────────
-  function escapeHtml(s: string): string {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[c];
+  type Enc = { name: string; pieces: (t: string) => any[]; encodePiece: (p: any, out: number[]) => void; tokenBytes: (id: number) => Uint8Array };
+  const encodings: Record<string, Enc | null> = { o200k: null, cl100k: null, deepseek: null };
+  const loading: Record<string, Promise<Enc> | null> = { o200k: null, cl100k: null, deepseek: null };
+  const failed: Record<string, string | null> = { o200k: null, cl100k: null, deepseek: null };
+  const wanted: Record<string, boolean> = { o200k: true, cl100k: false, deepseek: false };
+  const results: Record<string, number[] | null> = { o200k: null, cl100k: null, deepseek: null };
+  let lastStats = { chars: 0, bytes: 0, words: 0, lines: 0 };
+  let generation = 0;
+
+  function load(key: string): Promise<Enc> {
+    if (encodings[key]) return Promise.resolve(encodings[key] as Enc);
+    if (loading[key]) return loading[key] as Promise<Enc>;
+    failed[key] = null;
+    const p = (async () => {
+      let enc: Enc;
+      if (key === 'o200k') {
+        const ranks = (await import('js-tiktoken/ranks/o200k_base')).default;
+        enc = createTiktokenEncoding('o200k_base', ranks);
+      } else if (key === 'cl100k') {
+        const ranks = (await import('js-tiktoken/ranks/cl100k_base')).default;
+        enc = createTiktokenEncoding('cl100k_base', ranks);
+      } else {
+        const mod = await import('../../data/deepseek-v4-tokenizer.mjs');
+        enc = createHfBpeEncoding('DeepSeek V4', mod);
+      }
+      encodings[key] = enc;
+      return enc;
+    })();
+    loading[key] = p;
+    p.catch((e) => { failed[key] = e && e.message ? e.message : String(e); loading[key] = null; renderCards(); });
+    return p;
+  }
+
+  function persist() {
+    window.ztPersist?.save?.(SLUG, {
+      text: input.value,
+      cl100k: wanted.cl100k,
+      deepseek: wanted.deepseek,
+      out: outInput.value,
+      viz: vizEnc.value,
+      ids: vizIds.checked,
     });
   }
 
-  function buildCards(): void {
-    const html = MODELS.map(function (m) {
-      const tagClass = m.exact ? 'atc-tag--exact' : 'atc-tag--approx';
-      const tagText = m.exact ? T.tagExact : T.tagApprox;
-      return [
-        '<article class="atc-card" data-model="', m.id, '">',
-          '<header class="atc-card-head">',
-            '<h3 class="atc-card-title">', escapeHtml(m.label), '</h3>',
-            '<span class="atc-tag ', tagClass, '">', escapeHtml(tagText), '</span>',
-          '</header>',
-          '<div class="atc-card-tokens">',
-            '<span class="atc-card-num" id="atc-tok-', m.id, '">—</span>',
-            '<span class="atc-card-num-suffix">', escapeHtml(T.tokensSuffix), '</span>',
-          '</div>',
-          '<div class="atc-card-cost" id="atc-cost-', m.id, '">—</div>',
-          '<dl class="atc-card-rates">',
-            '<div><dt>', escapeHtml(T.rateInput), '</dt><dd>$', m.inUsd.toFixed(2), ' ', escapeHtml(T.per1M), '</dd></div>',
-            '<div><dt>', escapeHtml(T.rateOutput), '</dt><dd>$', m.outUsd.toFixed(2), ' ', escapeHtml(T.per1M), '</dd></div>',
-          '</dl>',
-        '</article>'
-      ].join('');
-    }).join('');
-    cardsEl.innerHTML = html;
+  function setStatus(text: string, kind = '') {
+    statusEl.textContent = text;
+    statusEl.dataset.kind = kind;
   }
 
-  buildCards();
-
-  // ── Tokenizer (lazy) ────────────────────────────────────────────────
-  let o200kEnc: any = null;
-  let loadingPromise: Promise<any> | null = null;
-
-  async function getEncoder(): Promise<any> {
-    if (o200kEnc) return o200kEnc;
-    if (loadingPromise) return loadingPromise;
-    loadingPromise = (async () => {
-      const ranks = (await import('js-tiktoken/ranks/o200k_base')).default;
-      o200kEnc = new Tiktoken(ranks);
-      return o200kEnc;
-    })();
-    return loadingPromise;
+  function renderCards() {
+    for (const key of ['o200k', 'cl100k', 'deepseek']) {
+      const numEl = document.getElementById('atc-n-' + key) as HTMLElement;
+      const ratioEl = document.getElementById('atc-r-' + key) as HTMLElement;
+      const btn = wrap.querySelector(`[data-load="${key}"]`) as HTMLButtonElement | null;
+      const ids = results[key];
+      numEl.textContent = ids ? numberFmt.format(ids.length) : '—';
+      if (key === 'o200k') (document.getElementById('atc-sum') as HTMLElement).textContent = numEl.textContent;
+      ratioEl.textContent = ids && ids.length && lastStats.chars ? fill(S.charsPerToken, { n: (lastStats.chars / ids.length).toFixed(2) }) : '';
+      if (btn) {
+        const show = !wanted[key] || !!failed[key];
+        btn.hidden = !show;
+        if (failed[key]) btn.textContent = S.retry;
+        else btn.textContent = fill(S.loadTokenizer, { size: SIZE_LABEL[key] });
+        btn.disabled = !!loading[key] && !failed[key];
+      }
+    }
   }
 
-  // Pre-warm at idle so the first keystroke isn't slow.
-  if (typeof (window as any).requestIdleCallback === 'function') {
-    (window as any).requestIdleCallback(() => { void getEncoder(); }, { timeout: 4000 });
-  } else {
-    setTimeout(() => { void getEncoder(); }, 800);
+  function countFor(model: any): { n: number | null; ref: boolean } {
+    if (model.enc === 'ref') return { n: results.o200k ? results.o200k.length : null, ref: true };
+    const ids = results[model.enc];
+    return { n: ids ? ids.length : null, ref: false };
   }
 
-  // ── Counting & rendering ────────────────────────────────────────────
-  function countWords(text: string): number {
-    if (!text) return 0;
-    const m = text.match(/\S+/g);
-    return m ? m.length : 0;
+  function cell(text: string, cls = 'atc-r') {
+    const td = document.createElement('td');
+    td.className = cls;
+    td.textContent = text;
+    return td;
   }
 
-  function formatCost(usd: number): string {
-    if (!isFinite(usd) || usd <= 0) return '$0.00';
-    if (usd < 0.0001) return '< $0.0001';
-    if (usd < 0.01) return '$' + usd.toFixed(6);
-    if (usd < 1) return '$' + usd.toFixed(4);
-    return '$' + usd.toFixed(2);
+  function renderTable() {
+    const out = Math.max(0, Math.floor(Number(outInput.value) || 0));
+    tbody.textContent = '';
+    for (const m of MODELS) {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.scope = 'row';
+      const name = document.createElement('span');
+      name.className = 'atc-model';
+      name.textContent = m.id;
+      const prov = document.createElement('span');
+      prov.className = 'atc-prov';
+      prov.textContent = m.provider + ' · ' + (m.enc === 'ref' ? S.notLocal : NAMES[m.enc]);
+      th.append(name, prov);
+      tr.append(th);
+      const { n, ref } = countFor(m);
+      if (n == null) {
+        const td = cell(fill(S.needsTokenizer, { name: NAMES[m.enc === 'ref' ? 'o200k' : m.enc] }), 'atc-r atc-muted');
+        td.colSpan = 5;
+        tr.append(td);
+        tbody.append(tr);
+        continue;
+      }
+      const mark = ref ? S.refMark + ' ' : '';
+      tr.append(cell(mark + numberFmt.format(n)));
+      const ctx = cell(formatPercent(n, m.limit));
+      const c = costFor(m, n, out, 'USD');
+      if (c.over) {
+        ctx.classList.add('atc-warn');
+        ctx.title = fill(S.overLimit, { limit: numberFmt.format(m.limit) });
+        ctx.textContent += ' ⚠';
+      }
+      tr.append(ctx);
+      const inCell = cell(mark + formatMoney(c.input, '$'));
+      const outCell = cell(c.output == null ? '—' : mark + formatMoney(c.output, '$'));
+      const totalCell = cell(mark + formatMoney(c.total, '$'));
+      if (c.long && m.long) {
+        totalCell.title = fill(S.longContext, { limit: numberFmt.format(m.long.over), price: '$' + m.long.input + ' / $' + m.long.output });
+        totalCell.textContent += ' *';
+      }
+      if (m.offPeak) {
+        const sub = document.createElement('span');
+        sub.className = 'atc-sub';
+        sub.textContent = fill(S.offPeak, { cost: formatMoney(c.total * m.offPeak, '$') });
+        totalCell.append(sub);
+        if (lang === 'zh' && m.cny) {
+          const cny = costFor(m, n, out, 'CNY');
+          const sub2 = document.createElement('span');
+          sub2.className = 'atc-sub';
+          sub2.textContent = formatMoney(cny.total, '¥') + ' / ' + fill(S.offPeak, { cost: formatMoney(cny.total * m.offPeak, '¥') });
+          totalCell.append(sub2);
+        }
+      }
+      tr.append(inCell, outCell, totalCell);
+      tbody.append(tr);
+    }
   }
 
-  let lastBaseTokens = 0;
-  let lastTokensArr: number[] | null = null;
+  function renderPriceNote() {
+    const el = document.getElementById('atc-price-note') as HTMLElement;
+    el.textContent = '';
+    const parts = fill(S.priceNote, { date: PRICES_CHECKED, links: '\u0000' }).split('\u0000');
+    el.append(parts[0]);
+    PRICE_SOURCES.forEach(([label, href], i) => {
+      const a = document.createElement('a');
+      a.href = href;
+      a.textContent = label;
+      a.rel = 'noopener';
+      a.target = '_blank';
+      el.append(a);
+      if (i < PRICE_SOURCES.length - 1) el.append(', ');
+    });
+    el.append(parts[1] || '');
+  }
 
-  async function update(): Promise<void> {
-    const text = inputEl.value || '';
-    const chars = text.length;
-    const words = countWords(text);
-    charsEl.textContent = String(chars);
-    wordsEl.textContent = String(words);
-
-    if (!text) {
-      MODELS.forEach(function (m) {
-        const tokEl = document.getElementById('atc-tok-' + m.id);
-        const costEl = document.getElementById('atc-cost-' + m.id);
-        if (tokEl) tokEl.textContent = '—';
-        if (costEl) costEl.textContent = '—';
-      });
-      lastBaseTokens = 0;
-      lastTokensArr = null;
-      renderViz();
+  function renderViz() {
+    const key = vizEnc.value;
+    const enc = encodings[key];
+    const ids = results[key];
+    vizEl.textContent = '';
+    if (!enc || !ids) {
+      vizMeta.textContent = wanted[key] ? '' : fill(S.needsTokenizer, { name: NAMES[key] });
       return;
     }
+    if (!ids.length) { vizMeta.textContent = S.vizEmpty; return; }
+    const shown = Math.min(ids.length, VIZ_LIMIT);
+    vizMeta.textContent = ids.length > shown ? fill(S.vizMore, { shown: numberFmt.format(shown), total: numberFmt.format(ids.length) }) : '';
+    const frag = document.createDocumentFragment();
+    const showIds = vizIds.checked;
+    for (let i = 0; i < shown; i++) {
+      const id = ids[i];
+      const label = tokenLabel(enc.tokenBytes(id));
+      const span = document.createElement('span');
+      span.className = 'atc-chip' + (label.partial ? ' atc-chip--partial' : '');
+      span.style.setProperty('--atc-h', String((id * 37) % 360));
+      span.title = 'id ' + id;
+      span.textContent = showIds ? label.text + ' ' + id : label.text;
+      frag.append(span);
+    }
+    vizEl.append(frag);
+  }
 
-    const enc = await getEncoder();
-    // Cancel if a newer keystroke landed while the encoder was loading —
-    // otherwise stale results can clobber the freshly-typed input.
-    if (text !== inputEl.value) return;
-    const tokens: number[] = enc.encode(text);
-    lastBaseTokens = tokens.length;
-    lastTokensArr = tokens;
-
-    MODELS.forEach(function (m) {
-      const count = m.exact ? tokens.length : Math.max(0, Math.round(tokens.length * m.factor));
-      const cost = (count / 1_000_000) * m.inUsd;
-      const tokEl = document.getElementById('atc-tok-' + m.id);
-      const costEl = document.getElementById('atc-cost-' + m.id);
-      if (tokEl) tokEl.textContent = m.exact ? count.toLocaleString() : '≈ ' + count.toLocaleString();
-      if (costEl) costEl.textContent = formatCost(cost);
-    });
-
+  function renderAll() {
+    renderCards();
+    renderTable();
     renderViz();
   }
 
-  // ── Token Visualization ─────────────────────────────────────────────
-  const VIZ_CAP = 200;
-  let vizOpen = false;
-
-  function renderViz(): void {
-    if (!vizOpen) return;
-    if (!lastTokensArr || lastTokensArr.length === 0) {
-      vizMeta.textContent = T.msgEmpty;
-      vizChips.innerHTML = '';
+  async function run() {
+    const gen = ++generation;
+    const text = input.value;
+    lastStats = textStats(text);
+    (document.getElementById('atc-chars') as HTMLElement).textContent = numberFmt.format(lastStats.chars);
+    (document.getElementById('atc-bytes') as HTMLElement).textContent = numberFmt.format(lastStats.bytes);
+    (document.getElementById('atc-words') as HTMLElement).textContent = numberFmt.format(lastStats.words);
+    (document.getElementById('atc-lines') as HTMLElement).textContent = numberFmt.format(lastStats.lines);
+    if (!text) {
+      results.o200k = results.cl100k = results.deepseek = null;
+      setStatus(S.idle);
+      renderAll();
       return;
     }
-    const total = lastTokensArr.length;
-    const shown = Math.min(total, VIZ_CAP);
-
-    const meta = total > VIZ_CAP
-      ? T.msgTokensShown.replace('{shown}', String(shown)).replace('{total}', String(total))
-      : T.msgVizHint;
-    vizMeta.textContent = meta;
-
-    void renderChipsAsync(lastTokensArr.slice(0, shown));
-  }
-
-  async function renderChipsAsync(tokens: number[]): Promise<void> {
-    const enc = await getEncoder();
-    const parts: string[] = [];
-    for (let i = 0; i < tokens.length; i++) {
-      const id = tokens[i];
-      let str = '';
-      try { str = enc.decode([id]); } catch (_) { str = '?'; }
-      const display = str.replace(/ /g, '·').replace(/\n/g, '↵');
-      const hue = (id * 37) % 360;
-      parts.push(
-        '<span class="atc-chip" role="listitem" title="id ' + id + '" style="--atc-h:' + hue + '">' +
-        escapeHtml(display) +
-        '</span>'
-      );
-    }
-    vizChips.innerHTML = parts.join('');
-  }
-
-  vizToggle.addEventListener('click', function () {
-    vizOpen = !vizOpen;
-    vizBody.hidden = !vizOpen;
-    vizToggle.setAttribute('aria-expanded', vizOpen ? 'true' : 'false');
-    const labelEl = vizToggle.querySelector('span');
-    if (labelEl) labelEl.textContent = vizOpen ? T.msgHideViz : T.msgShowViz;
-    if (vizOpen) renderViz();
-  });
-
-  // ── Persistence ─────────────────────────────────────────────────────
-  function persist(): void {
-    if (window.ztPersist && window.ztPersist.save) {
-      window.ztPersist.save(SLUG, { text: inputEl.value || '' });
-    }
-  }
-
-  function loadPersisted(): void {
-    if (window.ztPersist && window.ztPersist.load) {
-      const data = window.ztPersist.load(SLUG) || {};
-      if (data && typeof data.text === 'string' && data.text) {
-        inputEl.value = data.text;
+    const keys = ['o200k', 'deepseek', 'cl100k'].filter((k) => wanted[k]);
+    let loadingShown = false;
+    for (const key of keys) {
+      if (!encodings[key]) {
+        if (!loadingShown) { setStatus(S.loading); loadingShown = true; }
+        try { await load(key); } catch (e: any) {
+          if (gen !== generation) return;
+          setStatus(fill(S.loadFailed, { name: NAMES[key], msg: e && e.message ? e.message : String(e) }), 'error');
+          continue;
+        }
+        if (gen !== generation) return;
       }
     }
+    const tCount = performance.now();
+    const big = text.length > 200000;
+    if (big) setStatus(S.largeInput);
+    const fresh: Record<string, number[] | null> = { o200k: null, cl100k: null, deepseek: null };
+    for (const key of keys) {
+      const enc = encodings[key];
+      if (!enc) continue;
+      const step = encodeSteps(enc, text, () => performance.now());
+      for (;;) {
+        const r = step(big ? 30 : 1e9);
+        if (r.done) { fresh[key] = r.ids; break; }
+        setStatus(fill(S.counting, { pct: Math.floor(r.progress * 100) }));
+        await new Promise((res) => setTimeout(res, 0));
+        if (gen !== generation) return;
+      }
+    }
+    if (gen !== generation) return;
+    for (const key of ['o200k', 'cl100k', 'deepseek']) results[key] = fresh[key];
+    setStatus(fill(S.done, { chars: numberFmt.format(lastStats.chars), ms: Math.max(1, Math.round(performance.now() - tCount)) }));
+    renderAll();
   }
 
-  // ── Events ──────────────────────────────────────────────────────────
-  let debounceId: number | null = null;
-  inputEl.addEventListener('input', function () {
-    if (debounceId) window.clearTimeout(debounceId);
-    debounceId = window.setTimeout(function () {
-      void update();
-      persist();
-      if (window.trackTool) window.trackTool('ai-token-counter', 'count');
-    }, 80) as unknown as number;
-  });
+  let timer = 0;
+  function schedule(delay = 120) {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => { void run(); persist(); }, delay);
+  }
 
-  clearBtn.addEventListener('click', function () {
-    inputEl.value = '';
-    if (window.ztPersist && window.ztPersist.clear) window.ztPersist.clear(SLUG);
-    void update();
-    inputEl.focus();
+  input.addEventListener('input', () => {
+    schedule(input.value.length > 200000 ? 400 : 120);
+    if (window.trackTool) window.trackTool(SLUG, 'count');
   });
-
-  sampleBtn.addEventListener('click', function () {
-    inputEl.value = SAMPLE_PROMPT;
+  outInput.addEventListener('input', () => { renderTable(); persist(); });
+  vizEnc.addEventListener('change', () => {
+    const key = vizEnc.value;
+    if (!wanted[key]) { wanted[key] = true; schedule(0); } else renderViz();
     persist();
-    void update();
-    if (window.trackTool) window.trackTool('ai-token-counter', 'sample');
   });
+  vizIds.addEventListener('change', () => { renderViz(); persist(); });
 
-  copyStatsBtn.addEventListener('click', async function () {
-    if (!lastTokensArr) return;
-    const lines = MODELS.map(function (m) {
-      const count = m.exact ? lastBaseTokens : Math.max(0, Math.round(lastBaseTokens * m.factor));
-      const cost = (count / 1_000_000) * m.inUsd;
-      const tag = m.exact ? T.tagExact : T.tagApprox;
-      return m.label + ' (' + tag + '): ' + count.toLocaleString() + ' ' + T.tokensSuffix + ' · ' + formatCost(cost);
+  wrap.querySelectorAll<HTMLButtonElement>('[data-load]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.load as string;
+      wanted[key] = true;
+      failed[key] = null;
+      renderCards();
+      schedule(0);
+      if (window.trackTool) window.trackTool(SLUG, 'load-' + key);
     });
-    const summary = lines.join('\n');
-    try {
-      await navigator.clipboard.writeText(summary);
-      const original = copyStatsBtn.textContent;
-      copyStatsBtn.textContent = T.msgCopied;
-      setTimeout(function () { copyStatsBtn.textContent = original; }, 1400);
-      if (window.trackTool) window.trackTool('ai-token-counter', 'copy-stats');
-    } catch (_) {}
   });
 
-  // ── Boot ────────────────────────────────────────────────────────────
-  loadPersisted();
-  void update();
+  (document.getElementById('atc-sample') as HTMLButtonElement).addEventListener('click', () => {
+    input.value = wrap.dataset.sample || '';
+    schedule(0);
+    if (window.trackTool) window.trackTool(SLUG, 'sample');
+  });
+
+  (document.getElementById('atc-clear') as HTMLButtonElement).addEventListener('click', () => {
+    input.value = '';
+    window.ztPersist?.clear?.(SLUG);
+    schedule(0);
+    input.focus();
+  });
+
+  // The page-wide Ctrl/Cmd+L shortcut empties the textarea without an input event.
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) window.setTimeout(() => schedule(0), 0);
+  });
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    if (file.size > MAX_FILE) {
+      setStatus(fill(S.fileTooBig, { size: (file.size / 1048576).toFixed(1) + ' MB', max: '20 MB' }), 'error');
+      return;
+    }
+    try {
+      const buf = await file.arrayBuffer();
+      input.value = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+      schedule(0);
+      if (window.trackTool) window.trackTool(SLUG, 'file');
+    } catch (_) {
+      setStatus(S.fileNotText, 'error');
+    }
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    const lines = [S.statsTitle + ' — ' + numberFmt.format(lastStats.chars) + ' ' + S.statChars + ', ' + numberFmt.format(lastStats.bytes) + ' ' + S.statBytes];
+    for (const key of ['o200k', 'deepseek', 'cl100k']) {
+      if (results[key]) lines.push(NAMES[key] + ': ' + numberFmt.format((results[key] as number[]).length) + ' ' + S.tokens);
+    }
+    lines.push(fill(S.statsPrices, { date: PRICES_CHECKED }));
+    const textOut = lines.join('\n');
+    const original = copyBtn.textContent;
+    try {
+      await navigator.clipboard.writeText(textOut);
+      copyBtn.textContent = S.copied;
+      window.setTimeout(() => { copyBtn.textContent = original; }, 1400);
+      if (window.trackTool) window.trackTool(SLUG, 'copy-stats');
+    } catch (_) {
+      setStatus(S.copyFailed, 'error');
+    }
+  });
+
+  // Boot
+  const saved = window.ztPersist?.load?.(SLUG) || {};
+  if (typeof saved.text === 'string') input.value = saved.text;
+  if (saved.cl100k) wanted.cl100k = true;
+  if (saved.deepseek) wanted.deepseek = true;
+  if (saved.out != null && saved.out !== '') outInput.value = String(saved.out);
+  if (saved.viz && ['o200k', 'cl100k', 'deepseek'].includes(saved.viz)) vizEnc.value = saved.viz;
+  if (saved.ids) vizIds.checked = true;
+  renderPriceNote();
+  renderAll();
+  if (input.value) void run();
+  else {
+    const warm = () => { void load('o200k').then(renderCards, () => {}); };
+    if (typeof (window as any).requestIdleCallback === 'function') (window as any).requestIdleCallback(warm, { timeout: 3000 });
+    else window.setTimeout(warm, 800);
+  }
 </script>
 
 <style is:global>
-  .atc-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
+  .atc-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .atc-sr {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
+  .atc-input-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap;
+  }
+  .atc-input-label { margin: 0; }
+  .atc-toolbar { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .atc-open { position: relative; cursor: pointer; }
+  .atc-open:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .atc-input { min-height: 140px; }
+  .atc-stats {
+    display: flex; flex-wrap: wrap; gap: 0.25rem 1rem;
+    font-size: 0.85rem; color: var(--color-text-muted);
+  }
+  .atc-stats strong { font-family: var(--font-mono); color: var(--color-text); font-weight: 600; }
+  .atc-stat-main { color: var(--color-text); }
+  .atc-stat-main strong { font-size: 1.05rem; font-weight: 700; }
 
-  .atc-input-section { display: flex; flex-direction: column; gap: 0.5rem; }
-  .atc-input-section .tool-textarea { min-height: 140px; }
-
-  .atc-input-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem 0.75rem;
-  }
-  .atc-input-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-  }
-  .atc-input-stats {
-    font-size: 0.85rem;
-    color: var(--color-text-muted);
-    font-family: var(--font-sans);
-  }
-  .atc-stat-num { font-family: var(--font-mono); color: var(--color-text); font-weight: 600; }
-  .atc-stat-sep { margin: 0 0.4rem; color: var(--color-border); }
-
-  .atc-cards-section { display: flex; flex-direction: column; gap: 0.6rem; }
-  .atc-section-heading {
-    margin: 0;
-    font-family: var(--font-display);
-    font-size: 1.1rem;
-    color: var(--color-text);
-  }
-  .atc-cards-grid {
+  .atc-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-    gap: 0.75rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.6rem;
   }
   .atc-card {
     background: var(--color-bg-secondary);
     border-radius: var(--radius-md);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    padding: 0.85rem 0.95rem 0.9rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    min-width: 0;
+    padding: 0.7rem 0.8rem;
+    display: flex; flex-direction: column; gap: 0.3rem; min-width: 0;
   }
-  .atc-card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .atc-card-title {
-    margin: 0;
-    font-family: var(--font-sans);
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--color-text);
-  }
+  .atc-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; flex-wrap: wrap; }
+  .atc-card-title { margin: 0; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; color: var(--color-text); }
+  .atc-card--other .atc-card-title { font-family: var(--font-sans); }
   .atc-tag {
-    font-size: 0.66rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 0.16rem 0.5rem;
-    border-radius: var(--radius-pill);
-    line-height: 1;
+    font-size: 0.7rem; font-weight: 700; padding: 0.15rem 0.45rem;
+    border-radius: var(--radius-pill); line-height: 1.2;
   }
-  .atc-tag--exact {
-    background: color-mix(in oklch, var(--color-success) 18%, transparent);
-    color: var(--color-success);
-  }
-  .atc-tag--approx {
-    background: var(--color-surface-muted);
-    color: var(--color-text-muted);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
-  }
-  .atc-card-tokens {
-    display: flex;
-    align-items: baseline;
-    gap: 0.35rem;
-    flex-wrap: wrap;
-  }
-  .atc-card-num {
-    font-family: var(--font-mono);
-    font-size: 1.55rem;
-    font-weight: 700;
-    color: var(--color-text);
-    line-height: 1.05;
-    word-break: break-all;
-  }
-  .atc-card-num-suffix {
-    font-size: 0.78rem;
-    color: var(--color-text-muted);
-  }
-  .atc-card-cost {
-    font-family: var(--font-mono);
-    font-size: 1rem;
-    color: var(--color-primary);
-    font-weight: 700;
-    word-break: break-all;
-  }
-  .atc-card-rates {
-    margin: 0;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.25rem 0.75rem;
-    font-size: 0.78rem;
-    color: var(--color-text-muted);
-  }
-  .atc-card-rates > div { display: flex; gap: 0.3rem; min-width: 0; }
-  .atc-card-rates dt {
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .atc-card-rates dd {
-    margin: 0;
-    font-family: var(--font-mono);
-    overflow-wrap: anywhere;
-  }
+  .atc-tag--exact { background: color-mix(in oklch, var(--color-success) 16%, transparent); color: var(--color-text); }
+  .atc-tag--other { background: var(--color-surface-muted); color: var(--color-text-muted); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .atc-card-count { margin: 0; display: flex; align-items: baseline; gap: 0.3rem; flex-wrap: wrap; }
+  .atc-num { font-family: var(--font-mono); font-size: 1.5rem; font-weight: 700; color: var(--color-text); line-height: 1.1; overflow-wrap: anywhere; }
+  .atc-unit { font-size: 0.8rem; color: var(--color-text-muted); }
+  .atc-card-ratio { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); min-height: 1em; }
+  .atc-card-models { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); line-height: 1.45; }
+  .atc-load { align-self: flex-start; }
+  .atc-load[hidden] { display: none; }
 
-  .atc-pricing-note {
-    font-size: 0.78rem;
-    color: var(--color-text-muted);
-    margin: 0.25rem 0 0;
-  }
+  .atc-status { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+  .atc-status[data-kind="error"] { color: var(--color-error); }
 
-  .atc-viz-section { display: flex; flex-direction: column; gap: 0.6rem; }
+  .atc-h2 { margin: 0; font-family: var(--font-display); font-size: 1.05rem; color: var(--color-text); }
+  .atc-cost, .atc-viz { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
+  .atc-cost-head, .atc-viz-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  .atc-out, .atc-viz-opt { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--color-text-muted); }
+  .atc-out-input { width: 8.5rem; }
+  .atc-viz-select { width: auto; }
+  .atc-viz-check input { margin: 0; }
+  .atc-table-wrap { overflow-x: auto; }
+  .atc-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .atc-table th, .atc-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--color-border-soft); text-align: left; vertical-align: top; }
+  .atc-table thead th { font-size: 0.75rem; color: var(--color-text-muted); font-weight: 600; white-space: nowrap; }
+  .atc-table .atc-r { text-align: right; font-family: var(--font-mono); white-space: nowrap; }
+  .atc-table thead .atc-r { font-family: var(--font-sans); }
+  .atc-model { display: block; font-family: var(--font-mono); font-weight: 600; color: var(--color-text); }
+  .atc-prov { display: block; font-size: 0.72rem; color: var(--color-text-muted); font-weight: 400; }
+  .atc-sub { display: block; font-size: 0.72rem; color: var(--color-text-muted); }
+  .atc-muted { color: var(--color-text-muted); font-family: var(--font-sans) !important; }
+  .atc-warn { color: var(--color-error); }
+  .atc-note { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); line-height: 1.5; }
+  .atc-note a { color: var(--color-primary); }
+
   .atc-viz-body {
-    background: var(--color-bg-secondary);
-    border-radius: var(--radius-md);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    padding: 0.85rem 0.95rem 0.95rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
+    display: flex; flex-wrap: wrap; gap: 0.2rem; max-height: 22rem; overflow: auto;
+    font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.5;
+    background: var(--color-bg-secondary); border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft); padding: 0.6rem;
   }
-  .atc-viz-meta {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--color-text-muted);
-  }
-  .atc-viz-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.2rem;
-    line-height: 1.6;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-  }
+  .atc-viz-body:empty { display: none; }
   .atc-chip {
     --atc-h: 200;
-    background: oklch(82% 0.07 var(--atc-h));
-    color: oklch(28% 0.05 var(--atc-h));
-    padding: 0.05rem 0.32rem;
-    border-radius: 4px;
-    border: 1px solid oklch(70% 0.08 var(--atc-h));
-    white-space: pre;
+    background: oklch(90% 0.05 var(--atc-h));
+    color: oklch(25% 0.04 var(--atc-h));
+    border: 1px solid oklch(75% 0.07 var(--atc-h));
+    padding: 0 0.3rem; border-radius: 4px; white-space: pre;
   }
-
+  .atc-chip--partial { border-style: dashed; }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .atc-chip {
-      background: oklch(35% 0.05 var(--atc-h));
-      color: oklch(92% 0.04 var(--atc-h));
-      border-color: oklch(45% 0.06 var(--atc-h));
+      background: oklch(33% 0.05 var(--atc-h)); color: oklch(94% 0.03 var(--atc-h)); border-color: oklch(48% 0.06 var(--atc-h));
     }
   }
   [data-theme="dark"] .atc-chip {
-    background: oklch(35% 0.05 var(--atc-h));
-    color: oklch(92% 0.04 var(--atc-h));
-    border-color: oklch(45% 0.06 var(--atc-h));
+    background: oklch(33% 0.05 var(--atc-h)); color: oklch(94% 0.03 var(--atc-h)); border-color: oklch(48% 0.06 var(--atc-h));
   }
+  .atc-foot { display: flex; justify-content: flex-end; }
 
+  @media (max-width: 900px) {
+    .atc-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 640px) {
-    .atc-input-meta {
-      flex-direction: column;
-      align-items: flex-start;
+    .atc-input { min-height: 96px; height: 96px; }
+    .atc-input-head { flex-wrap: nowrap; justify-content: flex-end; }
+    .atc-input-label {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
     }
-    .atc-input-actions { width: 100%; }
-    .atc-input-actions .btn-secondary,
-    .atc-input-actions .btn-ghost { flex: 1 1 110px; }
-    .atc-card-num { font-size: 1.35rem; }
+    .atc-toolbar .btn-ghost { padding-inline: 0.6rem; }
+    .atc-cards { gap: 0.45rem; }
+    .atc-card { padding: 0.55rem 0.6rem; }
+    .atc-num { font-size: 1.25rem; }
+    .atc-card--other { grid-column: 1 / -1; }
+    .atc-viz-check { min-height: 44px; }
+    .atc-table { font-size: 0.8rem; }
   }
 </style>

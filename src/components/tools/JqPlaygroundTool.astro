@@ -270,16 +270,52 @@ const EXAMPLES: { label: string; filter: string }[] = [
         copyBtn.disabled = true;
       }
 
-      function showResult(value, count) {
-        var out = JSON.stringify(value, null, 2);
-        if (out === undefined) {
+      /* ── engine:start ── */
+      // Number of top-level JSON values in jq's output stream (jq prints one value per output,
+      // each followed by a newline; a single array is one value).
+      function countJsonValues(text) {
+        var n = 0, i = 0, len = text.length;
+        while (i < len) {
+          var c = text.charAt(i);
+          if (c === ' ' || c === '\n' || c === '\t' || c === '\r') { i++; continue; }
+          n++;
+          if (c === '"') {
+            i++;
+            while (i < len && text.charAt(i) !== '"') i += text.charAt(i) === '\\' ? 2 : 1;
+            i++;
+          } else if (c === '[' || c === '{') {
+            var depth = 0;
+            for (; i < len; i++) {
+              var d = text.charAt(i);
+              if (d === '"') {
+                i++;
+                while (i < len && text.charAt(i) !== '"') i += text.charAt(i) === '\\' ? 2 : 1;
+              } else if (d === '[' || d === '{') depth++;
+              else if (d === ']' || d === '}') { depth--; if (depth === 0) { i++; break; } }
+            }
+          } else {
+            while (i < len && !/[\s\[\]{}"]/.test(text.charAt(i))) i++;
+          }
+        }
+        return n;
+      }
+
+      // jq-web throws "Non-zero exit code: N" with jq's own message in .stderr.
+      function jqErrorText(e) {
+        if (e && typeof e.stderr === 'string' && e.stderr) return e.stderr.replace(/^undefined/, '');
+        return e && e.message ? e.message : String(e);
+      }
+      /* ── engine:end ── */
+
+      function showOutput(text) {
+        if (text === undefined || text === null || !String(text).trim()) {
           codeEl.innerHTML = '<span class="jqp-no-output">' + L.noOutput + '</span>';
           countEl.textContent = '';
           copyBtn.disabled = true;
           return;
         }
-        codeEl.innerHTML = highlightJson(out);
-        countEl.textContent = count > 0 ? fmtCount(count) : '';
+        codeEl.innerHTML = highlightJson(text);
+        countEl.textContent = fmtCount(countJsonValues(text));
         copyBtn.disabled = false;
       }
 
@@ -295,27 +331,19 @@ const EXAMPLES: { label: string; filter: string }[] = [
           return;
         }
 
-        var data;
-        try { data = JSON.parse(jsonText); }
+        try { JSON.parse(jsonText); }
         catch (e) { showError(L.invalidJson + ': ' + e.message); return; }
 
-        if (!filter) {
-          showResult(data, 1);
-          return;
-        }
-
+        // The input text goes to jq unchanged (not through JSON.parse), so integers beyond
+        // 2^53 and number literals such as 1.000 print the way jq prints them.
         ensureJq().then(function (jq) {
-          var result;
-          try { result = jq.json(data, filter); }
+          var text;
+          try { text = jq.raw(jsonText, filter || '.', []); }
           catch (e) {
-            showError(L.errorPrefix + ' ' + (e && e.message ? e.message : String(e)));
+            showError(L.errorPrefix + ' ' + jqErrorText(e));
             return;
           }
-          // jq-web returns: single value for one output, array for multiple.
-          // We can't distinguish 1-vs-many reliably from return type alone,
-          // so we just count = Array.isArray(result) ? result.length : 1.
-          var count = Array.isArray(result) ? result.length : 1;
-          showResult(result, count);
+          showOutput(text);
           if (window.trackTool) window.trackTool(SLUG, 'run');
         }).catch(function () {
           // engine load failed; status already set

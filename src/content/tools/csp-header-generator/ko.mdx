@@ -11,25 +11,30 @@ faqItems:
   - question: "'strict-dynamic'은 어떤 역할을 하나요?"
     answer: "nonce나 해시로 신뢰된 스크립트가 런타임에 다른 스크립트를 모든 CDN 호스트를 나열하지 않고도 로드할 수 있게 합니다. 모던 앱에서 권장되는 패턴이며, 자식 스크립트에 대해 호스트 기반 허용 목록을 무효화하고 일반적인 우회를 차단합니다."
   - question: "생성된 헤더는 어디에 배포해야 하나요?"
-    answer: "원본 서버에서 `Content-Security-Policy`를 전송하세요(Nginx `add_header`, Apache `Header set`, Cloudflare Transform Rules, Vercel `headers` 등). HTML `<meta http-equiv>` 형태는 정적 호스트용 대안이지만 `frame-ancestors`, `report-uri`, `report-to`, `sandbox`는 `<meta>`에서 무시됩니다."
+    answer: "원본 서버에서 `Content-Security-Policy`를 전송하세요(Nginx `add_header`, Apache `Header set`, Cloudflare Transform Rules, Vercel `headers` 등). HTML `<meta http-equiv>` 형태는 정적 호스트용 대안입니다. CSP Level 3에서는 `<meta>` 안의 `frame-ancestors`, `report-uri`, `sandbox`가 무시되므로 도구는 그 탭에서 이들을 뺍니다. `report-to`는 `<meta>`에서도 동작하지만 엔드포인트는 `Reporting-Endpoints` 헤더로 정의합니다."
 ---
 
 <h2>사용 방법</h2>
 <ol>
-  <li><strong>프리셋</strong>을 선택합니다. Strict는 OWASP의 "strict CSP" 권장 구성, Empty는 빈 정책에서 시작합니다.</li>
+  <li><strong>프리셋</strong>을 선택합니다. Strict는 web.dev에서 설명하는 nonce 기반 strict CSP를 따르고, Empty는 빈 정책에서 시작합니다.</li>
   <li><strong>모드</strong>를 전환합니다. Report-Only로 시작해 위반은 보고하되 실제 사용자 흐름은 막지 않도록 합니다.</li>
   <li>각 지시문에서 키워드 칩(<code>'self'</code>, <code>'strict-dynamic'</code>, <code>'none'</code>) 또는 스킴 칩(<code>https:</code>, <code>data:</code>)을 클릭하거나, 호스트/경로를 입력하고 <kbd>Enter</kbd>를 누르세요.</li>
-  <li><strong>해시 계산기</strong>로 특정 인라인 스크립트/스타일을 허용하는 해시를 만들고, <code>+ nonce</code> 버튼으로 새 nonce를 즉시 추가할 수 있습니다.</li>
+  <li><strong>해시 계산기</strong>로 특정 인라인 스크립트/스타일을 허용하는 해시를 만들고, <code>+ nonce</code> 버튼은 서버가 응답마다 값을 채워 넣을 <code>{"'nonce-{RANDOM}'"}</code> 자리표시자를 추가합니다.</li>
   <li>출력 탭을 전환해 필요한 형식을 복사하세요: <strong>HTTP 헤더</strong>, <strong>HTML &lt;meta&gt;</strong>, <strong>Express (helmet)</strong>, <strong>Nginx</strong> <code>add_header</code>.</li>
 </ol>
 
 <h2>Strict CSP 시작 구성</h2>
-<p>Strict 프리셋은 세 가지 규칙으로 짜여 있습니다: <code>script-src</code>에 <code>'self' 'strict-dynamic'</code>, <code>object-src</code>에 <code>'none'</code>, <code>base-uri</code>에 <code>'self'</code>. 요청별 nonce 또는 스크립트별 해시와 결합하면 대부분의 반사형/저장형 XSS 페이로드를 차단할 수 있습니다. 피싱 형 공격까지 막고 싶다면 <code>form-action</code>은 <code>'self'</code>, <code>frame-ancestors</code>는 <code>'none'</code>으로 잠그세요.</p>
+<p>Strict 프리셋은 web.dev에서 설명하는 nonce 기반 <a href="https://web.dev/articles/strict-csp" target="_blank" rel="noopener">strict CSP</a>를 따릅니다. HTTP 헤더 탭의 출력은 다음과 같습니다.</p>
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`}</code></pre>
+<p><code>{"'nonce-{RANDOM}'"}</code>는 자리표시자이며 그대로는 쓸 수 없습니다. 서버가 응답마다 128비트 이상의 새 무작위 값으로 바꾸고, 렌더링하는 각 <code>&lt;script&gt;</code>의 <code>nonce="…"</code>에 같은 값을 써야 합니다. 정책에 자리표시자가 남아 있는 동안 도구는 경고를 표시합니다. 고정된 nonce 하나를 정적 설정에 붙여 넣지 마세요. 한 번 본 사람은 누구나 주입한 스크립트에서 다시 쓸 수 있습니다.</p>
+<p>이전 버전의 이 프리셋은 <code>'self'</code>를 썼지만 자리표시자로 바꿨습니다. <code>'strict-dynamic'</code>이 있으면 CSP Level 3은 일치하는 nonce나 해시가 없는 한 HTML 파서가 삽입한 스크립트를 모두 차단하고, <code>'self'</code>와 호스트 소스는 더 이상 확인하지 않습니다(<a href="https://www.w3.org/TR/CSP3/#strict-dynamic-usage" target="_blank" rel="noopener">CSP3 §8.2</a>). 그래서 <code>script-src 'self' 'strict-dynamic'</code>만으로는 현재 Chrome, Firefox, Safari에서 스크립트가 하나도 실행되지 않으며, 도구는 이제 이 조합에 경고를 띄웁니다. nonce를 설정할 수 없는 정적 빌드 사이트라면 자리표시자를 지우고 해시 계산기로 인라인 스크립트마다 해시를 추가하거나, '중간' 프리셋에서 시작하세요.</p>
+<p><strong>Express (helmet)</strong> 탭은 응답마다 값을 만드는 부분까지 출력합니다. <code>crypto.randomBytes(16).toString('base64')</code>를 <code>res.locals.cspNonce</code>에 저장하는 미들웨어를 추가하고 <code>script-src</code>에 함수를 넘기는데, <a href="https://github.com/helmetjs/helmet#readme" target="_blank" rel="noopener">helmet README</a>에 나오는 방식입니다. 템플릿에서는 이 값을 각 script 태그에 출력해야 합니다. <strong>Nginx</strong> 탭은 자리표시자를 그대로 두고 주석을 붙입니다. Nginx는 애플리케이션이 렌더링하는 HTML에 같은 nonce를 넣을 수 없기 때문입니다.</p>
 
 <h2>흔한 함정</h2>
 <ul>
-  <li><strong><code>'none'</code>은 단독으로만 작동합니다.</strong> 다른 소스와 함께 적으면 브라우저가 해당 지시문을 무시합니다.</li>
-  <li><strong><code>frame-ancestors</code>는 HTTP 헤더 전용.</strong> <code>&lt;meta&gt;</code>로 보내면 무시되며, <code>report-uri</code>, <code>report-to</code>, <code>sandbox</code>도 동일합니다.</li>
+  <li><strong><code>'none'</code>은 단독으로만 효과가 있습니다.</strong> 다른 소스와 함께 적으면 <code>'none'</code>은 효과가 없고 다른 소스는 허용됩니다.</li>
+  <li><strong>HTTP 헤더 전용 지시문이 있습니다.</strong> <a href="https://www.w3.org/TR/CSP3/#meta-element" target="_blank" rel="noopener">CSP3 §3.3</a>에 따라 <code>&lt;meta&gt;</code> 안의 <code>frame-ancestors</code>, <code>report-uri</code>, <code>sandbox</code>는 무시되고 Report-Only 모드도 없습니다. 도구는 <code>&lt;meta&gt;</code> 탭에서 이들을 빼고 경고합니다.</li>
+  <li><strong><code>'strict-dynamic'</code>에는 nonce나 해시가 필요합니다.</strong> 없으면 페이지의 스크립트가 모두 차단되며, 도구가 이를 알려 줍니다.</li>
   <li><strong>해시/nonce가 있으면 <code>'unsafe-inline'</code>은 무시됩니다.</strong> 최신 브라우저는 더 안전한 쪽을 우선합니다.</li>
   <li><strong><code>default-src</code>는 반드시 정의하세요.</strong> 누락된 fetch 지시문은 <code>default-src</code>로 폴백하며, 이것이 없으면 새로 추가될 지시문에도 폴백이 적용되지 않습니다.</li>
   <li><strong>커스텀 호스트에 세미콜론을 넣지 마세요.</strong> 세미콜론은 정책을 끊어 이후 모든 지시문을 손상시킵니다.</li>

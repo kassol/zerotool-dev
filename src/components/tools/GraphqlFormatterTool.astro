@@ -197,10 +197,57 @@
         return indentSel.value === '4' ? '    ' : '  ';
       }
 
-      function reindent(text, indent) {
-        if (indent === '  ') return text;
-        return text.replace(/^( +)/gm, function (m) { return m + m; });
+      /* ── engine:start ── */
+      // Offsets [start, end) of every block string ("""...""") in a parsed document.
+      function blockStringRanges(ast) {
+        var ranges = [];
+        (function walk(node) {
+          if (!node || typeof node !== 'object') return;
+          if (Array.isArray(node)) { for (var i = 0; i < node.length; i++) walk(node[i]); return; }
+          if (node.kind === 'StringValue' && node.block && node.loc) ranges.push([node.loc.start, node.loc.end]);
+          for (var k in node) if (k !== 'loc' && Object.prototype.hasOwnProperty.call(node, k)) walk(node[k]);
+        })(ast);
+        return ranges;
       }
+
+      // graphql-js print() indents by 2 spaces per level. For another indent width, change only
+      // that structural indentation. Lines inside a block string keep whatever follows the
+      // indentation of the line that opens it: the GraphQL spec removes the common indentation
+      // of a block string, so changing the relative indentation would change the string value.
+      function reindent(text, indent, ranges) {
+        if (indent === '  ') return text;
+        var lines = text.split('\n');
+        var out = [];
+        var offset = 0;
+        var lineStarts = [];
+        for (var i = 0; i < lines.length; i++) { lineStarts.push(offset); offset += lines[i].length + 1; }
+        function lineIndexAt(pos) {
+          var lo = 0, hi = lineStarts.length - 1;
+          while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (lineStarts[mid] <= pos) lo = mid; else hi = mid - 1; }
+          return lo;
+        }
+        var base = new Array(lines.length);
+        (ranges || []).forEach(function (r) {
+          var open = lineIndexAt(r[0]);
+          var close = lineIndexAt(r[1] - 1);
+          var openIndent = /^ */.exec(lines[open])[0].length;
+          for (var j = open + 1; j <= close; j++) base[j] = openIndent;
+        });
+        function convert(n) { return new Array(Math.floor(n / 2) + 1).join(indent) + (n % 2 ? ' ' : ''); }
+        for (var k = 0; k < lines.length; k++) {
+          var line = lines[k];
+          if (base[k] !== undefined) {
+            var b = base[k];
+            if (line.slice(0, b) === new Array(b + 1).join(' ')) out.push(convert(b) + line.slice(b));
+            else out.push(line);
+          } else {
+            var n = /^ */.exec(line)[0].length;
+            out.push(convert(n) + line.slice(n));
+          }
+        }
+        return out.join('\n');
+      }
+      /* ── engine:end ── */
 
       function doFormat() {
         var raw = readInput().trim();
@@ -211,7 +258,7 @@
           try {
             var ast = lib.parse(new lib.Source(raw));
             var printed = lib.print(ast);
-            output.value = reindent(printed, indentStr());
+            output.value = reindent(printed, indentStr(), blockStringRanges(lib.parse(printed)));
             setStatus(t.formatted + ' ' + t.stats(ast.definitions.length, output.value.length), 'success');
             window.trackTool && window.trackTool('graphql_formatter', 'format');
           } catch (e) { reportError(e); }
