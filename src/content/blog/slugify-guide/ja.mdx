@@ -1,171 +1,156 @@
 ---
-title: "URLスラッグジェネレーター：SEOフレンドリーなスラッグの作り方と注意点"
-description: "URLスラッグとは何か、SEOへの影響、Unicode・スペース・特殊文字を含む文字列のスラッグ化をオンラインで行う方法を解説。プログラムでの実装も紹介。"
+title: "URLスラッグとは？WordPressの日本語スラッグとGoogleの推奨ルールを実例で確認"
+description: "URL スラッグの意味、Google 検索セントラルの URL 構造のガイド、WordPress が日本語タイトルから作るスラッグ（パーセントエンコードと 200 文字の上限）、全角英数字や【】の扱い、スラッグ変換ライブラリの違いを実行結果で解説。"
 pubDate: 2026-04-07
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "ja"
 noindex: true
-tags: ["slugify", "url-slug", "seo", "developer-tools"]
+tags: ["スラッグ", "url slug", "slugify", "wordpress", "パーマリンク"]
 ---
 
-URLスラッグは特定のページを識別するURLの人間が読める部分です。スラッグを正しく設定することはSEO、可読性、リンクの安定性にとって重要です。このガイドでは、スラッグの生成の仕組み、Unicodeのようなエッジケース、プログラムで文字列をスラッグ化する方法を解説します。
+URL スラッグは、URL のパスのうち 1 つのページを単語で表す部分です。`https://example.com/blog/slug-setting-guide/` なら `slug-setting-guide` がスラッグです。Django のドキュメントは「Slug は新聞用語で、文字・数字・アンダースコア・ハイフンだけでできた短いラベル」と説明しています（[SlugField](https://docs.djangoproject.com/en/6.1/ref/models/fields/#slugfield)）。WordPress では投稿の「スラッグ」、Shopify では「ハンドル」という欄で編集します。
 
-## URLスラッグとは
+日本語のサイトでは、スラッグをどう決めるかがそのまま「日本語の URL にするか、英語やローマ字にするか」という問題になります。この記事では、Google のドキュメントが実際に書いていること、WordPress が日本語タイトルから作るスラッグ、全角文字や【】が入ったときの結果、ライブラリごとの違いを、実際に動かした結果で確認します。ライブラリの結果は 2026-10-02 に実行したもので、ZeroTool の結果は[スラッグ変換](/ja/tools/slugify/)の出力です。
 
-`https://example.com/blog/how-to-slugify-a-string` というURLの場合、スラッグは `how-to-slugify-a-string` です。スラッグは：
+## スラッグは URL のどこにあるか
 
-- 小文字
-- ハイフン区切り（スペースやアンダースコアは不使用）
-- 特殊文字なし（`!`、`@`、`#` など）
-- 短く説明的
+スラッグはパスの 1 区切り（または最後の区切り）です。RFC 3986 は URL をスキーム、オーソリティ、パス、クエリ、フラグメントに分けており（[3 節](https://www.rfc-editor.org/rfc/rfc3986#section-3)）、スラッグはパスに入ります。
 
-優れたスラッグはユーザーがページを訪れる前にその関連性を伝えるため、クリック率が向上します。
+```text
+https://example.com/slug-setting-guide/              WordPress のパーマリンク「投稿名」（/%postname%/）
+https://shop.example.com/products/health-potion       Shopify の商品ハンドル
+```
 
-## スラッグがSEOに重要な理由
+英小文字・数字・ハイフンだけのスラッグがよく使われるのは、これらが RFC 3986 の非予約文字（`A–Z a–z 0–9 - . _ ~`、[2.3 節](https://www.rfc-editor.org/rfc/rfc3986#section-2.3)）で、エンコードが一切いらないからです。アドレスバーでも、メールでも、ログでも同じ形で読めます。日本語を使うと、この性質がなくなります。
 
-検索エンジンはURL構造を読みます。`/product/1234` はGoogleに何も伝えませんが、`/product/mechanical-keyboard-rgb` はそのページが特定の製品についてだと伝えます。主要なルール：
+## Google 検索セントラルが書いていること
 
-- 可能であれば**プライマリキーワードをスラッグに含める**
-- **短くする** — Googleは検索結果で長いURLを切り詰める
-- **a、the、andのような機能語を避ける** — 意味を追加しない場合
-- **アンダースコアではなくハイフンを使う** — Google は URL 内の単語をハイフンで区切ることを推奨しています（[Google 検索セントラル](https://developers.google.com/search/docs/crawling-indexing/url-structure?hl=ja)）
-- **公開後は301リダイレクトなしにスラッグを変更しない** — 壊れたリンクはSEO価値を失います
+Google の「[Google 検索における URL 構造のベスト プラクティス](https://developers.google.com/search/docs/crawling-indexing/url-structure?hl=ja)」のうち、スラッグに関係する項目は次の 5 つです。
 
-## スラッグ化の仕組み
+| 項目 | ドキュメントの内容 |
+|---|---|
+| わかりやすい URL を使用する | 長い ID 番号ではなく意味のある単語を使う |
+| オーディエンスの言語を使用する | 「オーディエンスが日本語で検索している場合は、URL に日本語の単語を使用してください」。例は `https://example.com/ペパーミント` |
+| 必要に応じてパーセント エンコードを行う | リンクの `href` では「ASCII 以外の文字はパーセント エンコードを行う必要があります」 |
+| 単語を区切るのにハイフンを使用する | アンダースコアではなくハイフン。アンダースコアは `format_date` のような関数名でまとめて扱う語に使われてきたため |
+| URL は大文字と小文字が区別される | `/APPLE` と `/apple` は別の URL |
 
-標準的なスラッグ化パイプライン：
+つまり Google は日本語のスラッグを認めています。そのうえで、リンクに書くときはパーセントエンコードした形を推奨しています。
 
-1. **小文字化** — `"Hello World"` → `"hello world"`
-2. **Unicode正規化** — 文字を基本形に分解（`é` → `e` + 結合アクセント）
-3. **非ASCIIの除去または音訳** — `"café"` → `"cafe"`、`"über"` → `"uber"`
-4. **スペースとセパレーターをハイフンに置換**
-5. **残りの特殊文字を削除** — `[a-z0-9-]` のみ残す
-6. **複数のハイフンを折りたたむ** — `"hello--world"` → `"hello-world"`
-7. **先頭と末尾のハイフンを削除** — `"-hello-"` → `"hello"`
+書いていないことも大事です。文字数の上限、「a」「the」のような語を除くこと、キーワードを入れることは、このページには出てきません。「スラッグは 60 文字以内」といった目安は運用上の好みで、Google の要件ではありません。
 
-### 変換例
+## WordPress は日本語タイトルをどうスラッグにするか
 
-| 入力 | 出力 |
-|-------|--------|
-| `Hello World` | `hello-world` |
-| `What's New in 2024?` | `whats-new-in-2024` |
-| `café au lait` | `cafe-au-lait` |
-| `C++ Programming` | `c-programming` |
-| `  spaces   everywhere  ` | `spaces-everywhere` |
-| `日本語` | *（削除 — ASCII相当なし）* |
+WordPress は投稿が下書き（`draft`）のあいだはスラッグを確定させません。`wp_insert_post()` は `draft`・`pending`・`auto-draft` の投稿では空のスラッグを空のままにし、公開などほかの状態で保存されたときにタイトルから `sanitize_title()` で作ります（[post.php](https://github.com/WordPress/wordpress-develop/blob/7.1.2/src/wp-includes/post.php)）。中身は `remove_accents()` と `sanitize_title_with_dashes()` です（[formatting.php](https://github.com/WordPress/wordpress-develop/blob/7.1.2/src/wp-includes/formatting.php)）。後者は WordPress 7.1.2 で次の処理をします。
 
-中国語、日本語、その他のCJK文字は基本的なASCIIのみスラッグ化では通常削除されます。多言語コンテンツには、CJKをローマ字化しようとするのではなく、URL構造に言語プレフィックスを含めてください（`/ja/tools/slugify`）。
+1. HTML タグを除き、小文字にする。
+2. ASCII 以外の文字を UTF-8 のパーセントエンコード（16 進は小文字）にし、エンコード後 200 文字で打ち切る。
+3. 曲がった引用符や ©・®・° などを消し、`/` と `.` をハイフンにする。
+4. `a–z`・`0–9`・`%`・空白・`_`・`-` 以外を消し、空白をハイフンにまとめる。
 
-## コードでスラッグ化する
+7.1.2 の関数をそのまま動かした結果です（ロケールは `ja`）。
 
-### JavaScript
+| タイトル | WordPress が作るスラッグ |
+|---|---|
+| `WordPress入門` | `wordpress%e5%85%a5%e9%96%80` |
+| `ペパーミント` | `%e3%83%9a%e3%83%91%e3%83%bc%e3%83%9f%e3%83%b3%e3%83%88` |
+| `日本語　タイトル`（全角スペース） | `%e6%97%a5%e6%9c%ac%e8%aa%9e%e3%80%80%e3%82%bf%e3%82%a4%e3%83%88%e3%83%ab` |
+| `ＷｏｒｄＰｒｅｓｓ入門`（全角英字） | `%ef%bd%97%ef%bd%8f%ef%bd%92%ef%bd%84%ef%bd%90%ef%bd%92%ef%bd%85%ef%bd%93%ef%bd%93%e5%85%a5%e9%96%80` |
+| `【2026年版】スラッグ設定ガイド` | `%e3%80%902026%e5%b9%b4%e7%89%88%e3%80%91%e3%82%b9%e3%83%a9%e3%83%83%e3%82%b0%e8%a8%ad%e5%ae%9a%e3%82%ac%e3%82%a4%e3%83%89` |
 
+日本語のサイトで気をつける点が 4 つあります。
+
+- **全角スペースはハイフンにならない。** 変換されるのは半角スペースと、ノーブレークスペースなど一部の空白だけです。全角スペース（`%e3%80%80`）はそのまま残ります。
+- **全角英字は小文字にはなるが、半角にはならない。** `ＷｏｒｄＰｒｅｓｓ` は 1 文字 9 桁のエンコードになり、`wordpress` とは別のスラッグです。
+- **【】や「」は消えない。** 削除の対象は欧文の引用符や記号が中心で、和文の括弧はエンコードされて残ります。上の例は 17 文字のタイトルが 189 文字のスラッグになっています。
+- **約 22 文字で切れる。** かな・漢字は 1 文字 9 桁なので、200 文字の上限に 22 文字で届きます。長い日本語タイトルはスラッグの途中で切れます。
+
+同じスラッグの投稿が既にあれば `wp_unique_post_slug()` が `-2`、`-3` を付けます。公開済みの投稿のスラッグを変えると、WordPress は古いスラッグを `_wp_old_slug` として保存し、古い URL が 404 になる場面では `wp_old_slug_redirect()` が 301 で新しい URL へ転送します（[query.php](https://github.com/WordPress/wordpress-develop/blob/7.1.2/src/wp-includes/query.php)）。
+
+## 日本語・ローマ字・英語の 3 つの選択肢
+
+**日本語のまま使う。** Google の推奨に沿っていて、検索結果やアドレスバーでは日本語で表示されます。ただし、実際の URL はエンコードされた長い文字列です。
+
+{/* sl-run: {"lang":"node","expect":"スラッグ設定ガイド 9 81\n【2026年版】スラッグ設定ガイド 17 121\nWordPress入門 11 27"} */}
 ```js
-function slugify(text) {
-  return text
-    .normalize('NFD')                         // アクセント文字を分解
-    .replace(/[\u0300-\u036f]/g, '')          // 結合アクセントを削除
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')            // 英数字以外を削除
-    .replace(/[\s_-]+/g, '-')                 // スペース/ハイフンを折りたたむ
-    .replace(/^-+|-+$/g, '');                 // ハイフンをトリム
+for (const raw of ['スラッグ設定ガイド', '【2026年版】スラッグ設定ガイド', 'ＷｏｒｄＰｒｅｓｓ入門']) {
+  const title = raw.normalize('NFKC'); // 全角英数字を半角に
+  console.log(title, title.length, encodeURIComponent(title).length);
 }
-
-slugify('Hello, World!')        // "hello-world"
-slugify('café au lait')        // "cafe-au-lait"
-slugify('  extra  spaces  ')   // "extra-spaces"
+// スラッグ設定ガイド 9 81
+// 【2026年版】スラッグ設定ガイド 17 121
+// WordPress入門 11 27
 ```
 
-本番環境では、より広いUnicode音訳を処理する [`slugify`](https://www.npmjs.com/package/slugify) npmパッケージの使用を検討してください。
+ブラウザによっては URL をコピーすると `%E3%82%B9…` の形で貼り付けられ、SNS やチャットでは読めない文字列になります。16 進の大文字・小文字は RFC 3986 では同じ意味で、作る側は大文字にすべきとされています（[2.1 節](https://www.rfc-editor.org/rfc/rfc3986#section-2.1)）。WordPress は小文字、Google の例は大文字ですが、指すページは同じです。
 
-### Python
+**ローマ字にする。** 自動変換は当てになりません。python-slugify 9.1.2（内部で text-unidecode を使用）は `東京` を `dong-jing`、`ペパーミント` を `hehaminto` に変換します。漢字は中国語の読みになり、半濁音も落ちます。ヘボン式などで正しく書くなら、編集者が手で入力するしかありません。
 
-```python
-import re
-import unicodedata
+**英語にする。** ASCII だけを残す変換ツール（ZeroTool もその 1 つ）は日本語を削除します。英単語が混ざっていればそれだけが残り、日本語だけのタイトルは空になります。
 
-def slugify(text: str) -> str:
-    text = unicodedata.normalize('NFD', text)
-    text = text.encode('ascii', 'ignore').decode('ascii')
-    text = text.lower().strip()
-    text = re.sub(r'[^\w\s-]', '', text)
-    text = re.sub(r'[\s_-]+', '-', text)
-    text = re.sub(r'^-+|-+$', '', text)
-    return text
+{/* sl-check: {"input":"東京 Travel Guide 2026","slug":"travel-guide-2026"} */}
+{/* sl-check: {"input":"ペパーミント","slug":""} */}
+{/* sl-check: {"input":"【2026年版】スラッグ設定ガイド","slug":"2026"} */}
 
-print(slugify('Hello, World!'))   # hello-world
-print(slugify('café au lait'))    # cafe-au-lait
-```
+| タイトル | ZeroTool の結果 |
+|---|---|
+| `東京 Travel Guide 2026` | `travel-guide-2026` |
+| `ペパーミント` | 空（ツールは「結果が空です」と表示） |
+| `【2026年版】スラッグ設定ガイド` | `2026` |
 
-Djangoには独自バージョンが含まれています：`from django.utils.text import slugify`。
+3 行目のように、数字だけが残ると意味のないスラッグになります。日本語タイトルの記事では、スラッグを `slug-setting-guide` のように英語で書き、ツールは確認用に使うのが現実的です。
 
-### Go
+## 全角英数字は先に半角へ
 
-```go
-import (
-    "regexp"
-    "strings"
-    "golang.org/x/text/unicode/norm"
-    "golang.org/x/text/transform"
-)
+IME が全角モードのまま `ＷｏｒｄＰｒｅｓｓ入門` や `Ｎｏｄｅ．ｊｓ ２０` と入力すると、見た目は英数字でも Unicode では別の文字です。WordPress はエンコードし、ZeroTool は ASCII 以外として削除します。NFKC 正規化で半角にすれば、どちらも期待どおりになります。
 
-func slugify(s string) string {
-    // アクセントを正規化して削除
-    t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
-        return r >= '\u0300' && r <= '\u036f'
-    }))
-    result, _, _ := transform.String(t, s)
+{/* sl-check: {"input":"ＷｏｒｄＰｒｅｓｓ入門","slug":""} */}
+{/* sl-check: {"input":"WordPress入門","slug":"wordpress"} */}
+{/* sl-check: {"input":"Ｎｏｄｅ．ｊｓ ２０","slug":""} */}
+{/* sl-check: {"input":"Node.js 20","slug":"node-js-20"} */}
 
-    result = strings.ToLower(result)
-    re := regexp.MustCompile(`[^a-z0-9\s-]`)
-    result = re.ReplaceAllString(result, "")
-    re2 := regexp.MustCompile(`[\s-]+`)
-    result = re2.ReplaceAllString(result, "-")
-    return strings.Trim(result, "-")
-}
-```
+| 入力 | そのまま | NFKC で半角にしてから |
+|---|---|---|
+| `ＷｏｒｄＰｒｅｓｓ入門` | 空 | `wordpress` |
+| `Ｎｏｄｅ．ｊｓ ２０` | 空 | `node-js-20` |
 
-## オンラインスラッグツールの使い方
+上のコードの `normalize('NFKC')` がその処理です。Python なら `unicodedata.normalize('NFKC', s)` です。
 
-**[ZeroTool スラッグ化ツールを試す →](/ja/tools/slugify/)**
+## スラッグ変換ライブラリで結果が変わる
 
-任意のテキストを貼り付けると、即座にURL安全なスラッグが得られます。役立つ場面：
+同じタイトルでも、ライブラリによってスラッグは変わります。WordPress は 7.1.2（ロケール `ja`）、Django は 6.1.1 の `django.utils.text.slugify`、python-slugify は 9.1.2、npm の `slugify` は 1.6.9（`{ lower: true, strict: true }`）、`@sindresorhus/slugify` は 3.0.1 です。
 
-- 公開前のブログ記事や製品ページのスラッグ生成
-- 不一致な命名を持つインポートコンテンツのバッチクリーニング
-- CMSやフレームワークの組み込みスラッグ化が期待する出力と一致するか確認
-- コンテンツ移行中の素早いサニティチェック
+{/* sl-check: {"input":"C++ vs C#","slug":"c-plus-plus-vs-c-hash"} */}
+{/* sl-check: {"input":"Node.js 20.0","slug":"node-js-20-0"} */}
 
-このツールは `&` `@` `#` `%` `+` といくつかの通貨・商標記号を単語に置き換え（`Rock & Roll` → `rock-and-roll`）、それ以外の英字と数字以外の文字は選んだ区切り文字（`-`、`_`、`.`）に置き換えるので、上のコードとは結果が違います。`John's Guide` は `john-s-guide`、`Node.js 20.0` は `node-js-20-0` になります。アクセント付きのラテン文字は変換され（`é` → `e`、`ß` → `ss`）、それ以外の ASCII 外の文字は削除されるため、日本語だけを入力すると空になります。
+| タイトル | ZeroTool | WordPress | Django | python-slugify | slugify（npm） | @sindresorhus/slugify |
+|---|---|---|---|---|---|---|
+| `東京 Travel Guide 2026` | `travel-guide-2026` | `%e6%9d%b1%e4%ba%ac-travel-guide-2026` | `travel-guide-2026` | `dong-jing-travel-guide-2026` | `travel-guide-2026` | `travel-guide-2026` |
+| `ＷｏｒｄＰｒｅｓｓ入門` | 空 | （上の表のとおりエンコード） | `wordpress` | `wordpressru-men` | 空 | 空 |
+| `Node.js 20.0` | `node-js-20-0` | `node-js-20-0` | `nodejs-200` | `node-js-20-0` | `nodejs-200` | `node-js-20-0` |
+| `C++ vs C#` | `c-plus-plus-vs-c-hash` | `c-vs-c` | `c-vs-c` | `c-vs-c` | `c-vs-c` | `c-vs-c` |
 
-サインアップ不要、レート制限なし — 計算はブラウザで実行されます。
+Django は ASCII に変換するとき NFKD 正規化を使うので、全角英字が半角になって `wordpress` が残ります。`allow_unicode=True` を付けると日本語も残り、`wordpress入門` になります。python-slugify の `ru-men` は「入門」の中国語読みです。
 
-## 一般的なエッジケース
+どれが正しいということはありませんが、移行のときに問題になります。WordPress で作ったスラッグを Django の `slugify` で作り直すと、`node-js-20-0` が `nodejs-200` に変わり、外部からのリンクが切れます。スラッグは一度作ったら保存し、タイトルから作り直さないのが原則です。
 
-### アポストロフィと所有格
+## 公開後にスラッグを変えるとき
 
-`"John's Guide"` → `"john-s-guide"` ではなく `"johns-guide"` になるべきです。単語セパレーターを置換する前にアポストロフィを削除してください。
+Google は「[リダイレクトと Google 検索](https://developers.google.com/search/docs/crawling-indexing/301-redirects?hl=ja)」で、「検索エンジンの結果に表示されるページの URL を変更する必要がある場合は、可能な限りサーバー側の永続的なリダイレクトを使用することをおすすめします」としています。ステータスコードは 301 か 308 です。
 
-### 数値とバージョン
+- WordPress の投稿は、前述の `_wp_old_slug` の仕組みで自動的に 301 になります。
+- Shopify は「[URL リダイレクト](https://help.shopify.com/ja/manual/online-store/menus-and-links/url-redirect)」で、古いパスが 404 を返すときだけ転送できます。
+- 静的サイトはルールを自分で書きます。Cloudflare Pages なら `_redirects` に `/blog/old-slug/ /blog/new-slug/ 301` のような行を足します。日本語の古いスラッグは、エンコードした形で書くと確実です。
 
-`"Node.js 20.0"` → `"nodejs-200"` （ドットが削除される）。バージョン番号が重要な場合は、入力に `"node-js-v20"` を使用するか、ドットを特別に処理してください。
+古い URL への転送は残し続けてください。過去のメールや SNS の投稿、他サイトのリンクは更新されません。
 
-### 全Unicode入力
+## スラッグを決めるときのチェックリスト
 
-入力全体がCJKやアラビア語の場合、除去後に出力は空文字列になります。スラッグジェネレーターが空でない結果を生成することを常に検証し、必要に応じて数値IDにフォールバックしてください。
+- 日本語にするか英語にするかをサイト全体で決める。日本語なら、共有したときにエンコードされた URL になることを受け入れる。
+- 単語の区切りはハイフン。アンダースコアは使わない。
+- 全角英数字は半角にしてから入力する。全角スペースや【】をスラッグに残さない。
+- 長い日本語タイトルをそのままスラッグにしない（WordPress では約 22 文字で切れる）。
+- 記号（`&`・`+`・`#`）をどう書くかを決め、サイト全体で 1 つの変換方法を使う。
+- スラッグは保存し、タイトルから作り直さない。変えたら 301 か 308 で転送する。
 
-### 末尾スラッシュ
-
-一部のフレームワークは末尾スラッシュを追加します（`/blog/my-post/`）。早い段階で規約を決め、重複コンテンツのインデックスを避けるために301リダイレクトで強制してください。
-
-## スラッグのベストプラクティスチェックリスト
-
-- 小文字、ハイフン区切りのみ
-- プライマリキーワードを含める（ただしキーワードの詰め込みはしない）
-- キーワードを含めたうえでできるだけ短く（Google は長さの上限を定めていません）
-- キーワードフレーズの一部でない限り機能語を除く
-- スラッグに日付を含めない（時間が経つと古くなり、管理の負担が増える）
-- スラッグを変更したら即座に301リダイレクト
-
-**[ZeroToolで即座にURL安全なスラッグを生成 →](/ja/tools/slugify/)**
+タイトルが英語のスラッグでどうなるかを確かめるには[スラッグ変換](/ja/tools/slugify/)、`user_login_count` のような識別子を作るなら[テキストケース変換](/ja/tools/text-case/)が使えます。
