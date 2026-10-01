@@ -3,13 +3,13 @@ seoTitle: "Markdown 目录生成器 — GitHub / GitLab / Jekyll 锚点 | ZeroTo
 seoDescription: "从 Markdown 标题生成可点击目录，支持 GitHub / GitLab / Jekyll / Bitbucket 锚点风格，可通过 <!-- toc --> 标记原位更新。完全在浏览器中运行，零上传。"
 faqItems:
   - question: "为什么要选锚点风格？"
-    answer: "不同平台把标题转成锚点（slug）的算法不一样。GitHub 保留 Unicode、把空格换成连字符；GitLab 类似但会把连续连字符合并；Jekyll/kramdown 经典模式会先去掉所有非 ASCII；Bitbucket 给每个锚点加上 markdown- 前缀。用错风格生成的目录，链接点过去就是 404。"
+    answer: "各平台把标题转成锚点的规则不同。GitHub 和 GitLab 保留 Unicode 字母和下划线，删掉标点，每个空格换成一个连字符；Jekyll 默认的 GFM 解析器也一样；kramdown 自己的解析器只保留 ASCII；Bitbucket Cloud 给每个锚点加 markdown-header- 前缀。用错规则生成的目录，链接会失效。"
   - question: "支持中文、日文、韩文标题吗？"
-    answer: "GitHub、GitLab、Bitbucket 三个风格都保留 Unicode 字母，中文 / 日文 / 한글 标题原样进锚点。Jekyll classic 默认会把非 ASCII 全部剥掉，如果目标平台是 Jekyll，建议切到 GitHub 风格以保留原始标题。"
+    answer: "GitHub、GitLab、Jekyll（GFM）和 Bitbucket Cloud 都支持：中文、日文、韩文字母会留在锚点里。kramdown 风格（设成 input: kramdown 的 Jekyll 或 kramdown 站点）会删掉所有非 ASCII 字符，什么都不剩的标题得到 section、section-1 这样的 id。"
   - question: "标记模式（Marker mode）怎么更新已有目录？"
     answer: "打开标记模式后，工具会在文档中找 <!-- toc --> ... <!-- /toc --> 一对注释，把中间的内容整段替换成新生成的 TOC，标记之外的内容一律不动。如果还没有标记，工具会在第一个标题之前插入一个新的标记块，复制粘贴回原文即可。每次输入变动都会重新生成。"
   - question: "标题重复怎么办？"
-    answer: "重复锚点会自动去重。GitHub / GitLab / Jekyll 在重复项后追加 -1、-2、-3……；Bitbucket 用 _1、_2、_3 以匹配它原生的渲染规则。生成出来的目录链接永远指向唯一的目标位置。"
+    answer: "文档里每个标题都会得到唯一的 id，包括不在最小 / 最大级别范围内的标题，因为渲染器会把它们都算进去。GitHub 和 GitLab 追加 -1、-2，并跳过已被占用的编号；Jekyll 和 kramdown 按基础名分别计数追加 -1、-2；Bitbucket Cloud 用 _1、_2。"
   - question: "代码块里的 # 会被当成标题吗？"
     answer: "不会。被三反引号 ``` 或三个波浪号 ~~~ 包围的代码块内容一律按代码处理，不会被识别为标题。已存在的 <!-- toc --> ... <!-- /toc --> 区段也会被跳过，所以可以反复运行生成器而不会出现旧 TOC 嵌套。"
 ---
@@ -18,19 +18,22 @@ faqItems:
 
 <ol>
   <li>把 Markdown 粘贴到左侧输入区。</li>
-  <li>在 <strong>锚点风格</strong> 里选目标平台 — GitHub / Hugo、GitLab、Jekyll 或 Bitbucket。</li>
+  <li>在 <strong>锚点风格</strong> 里选目标平台：GitHub / Hugo、GitLab、Jekyll（kramdown GFM）、kramdown 或 Bitbucket Cloud。</li>
   <li>用 <strong>最小标题级别</strong> 与 <strong>最大标题级别</strong> 圈定要进 TOC 的层级范围。</li>
   <li>如果文档标题由模板单独渲染，关掉 <strong>包含 H1</strong>。</li>
   <li>直接复制生成的目录；或者打开 <strong>标记模式</strong>，得到带 <code>&lt;!-- toc --&gt;</code> 标记的完整 Markdown。</li>
 </ol>
 
-<h2>四种锚点风格</h2>
+<h2>五种锚点风格</h2>
+
+<p>工具提供五种锚点风格，按你的渲染器选择：</p>
 
 <ul>
-  <li><strong>GitHub / Hugo</strong> — 转小写、去标点、空格转连字符、保留 Unicode。Hugo 自 v0.62 起的 goldmark 渲染器默认与 GitHub 一致。</li>
-  <li><strong>GitLab</strong> — 同 GitHub，但把连续多个连字符合并为一个，匹配 GitLab Flavored Markdown。</li>
-  <li><strong>Jekyll（kramdown 经典）</strong> — 先剥掉所有非 ASCII 字符再生成 slug。仅在 Jekyll 站没有切换到支持 Unicode 的 slugger 时使用。</li>
-  <li><strong>Bitbucket</strong> — 每个锚点都带 <code>markdown-</code> 前缀，重复项用 <code>_N</code> 而非 <code>-N</code>。</li>
+  <li><strong>GitHub / Hugo</strong>：转小写；保留字母、组合符号、数字、<code>{'_'}</code>、<code>-</code> 和空格；每个空格换成 <code>-</code>。连续空格变成连续连字符，首尾的连字符保留。这就是 <a href="https://github.com/Flet/github-slugger" target="_blank" rel="noopener">github-slugger</a> 2.0.0 的规则，工具以它为基准测试。Hugo 的 Goldmark 渲染器默认 <code>autoHeadingIDType: github</code>。</li>
+  <li><strong>GitLab</strong>：规则相同，见 <a href="https://docs.gitlab.com/user/markdown/#heading-anchors" target="_blank" rel="noopener">GitLab 标题锚点文档</a>（GitLab 17.0 起）。连续连字符不合并：<code>a --- b</code> 变成 <code>a-----b</code>。</li>
+  <li><strong>Jekyll（kramdown GFM）</strong>：Jekyll 默认 <code>input: GFM</code>，使用 <a href="https://github.com/kramdown/parser-gfm/blob/master/lib/kramdown/parser/gfm.rb" target="_blank" rel="noopener">kramdown-parser-gfm</a>，与 GitHub 一样保留 Unicode，另外把 Tab 也换成连字符，去重按每个基础名计数。</li>
+  <li><strong>kramdown（input: kramdown）</strong>：kramdown 自己的解析器（<a href="https://github.com/gettalong/kramdown/blob/master/lib/kramdown/converter/base.rb" target="_blank" rel="noopener">basic_generate_id</a>）。先删掉第一个 ASCII 字母之前的字符，只保留 <code>a-z</code>、<code>0-9</code>、空格和连字符，什么都不剩时用 <code>section</code>。</li>
+  <li><strong>Bitbucket Cloud</strong>：每个锚点以 <code>markdown-header-</code> 开头（Atlassian 问题 <a href="https://jira.atlassian.com/browse/BCLOUD-8276" target="_blank" rel="noopener">BCLOUD-8276</a>），重复项用 <code>_N</code>。Atlassian 没有公开其余规则，工具在前缀之后沿用 GitHub 规则。Bitbucket Data Center 不给标题加 id。</li>
 </ul>
 
 <h2>标记模式</h2>
@@ -81,8 +84,50 @@ faqItems:
 
 <h3>重复标题</h3>
 
-<p>两个 <code>## 示例</code> 在 GitHub / GitLab / Jekyll 下分别变成 <code>#示例</code> 和 <code>#示例-1</code>；Bitbucket 下变成 <code>#markdown-示例</code> 和 <code>#markdown-示例_1</code>。</p>
+<p>两个 <code>## 示例</code> 在 GitHub / GitLab / Jekyll 下分别变成 <code>#示例</code> 和 <code>#示例-1</code>；Bitbucket Cloud 下变成 <code>#markdown-header-示例</code> 和 <code>#markdown-header-示例_1</code>；kramdown 风格下中文被删光，变成 <code>#section</code> 和 <code>#section-1</code>。</p>
 
 <h3>跳过 H1</h3>
 
 <p>如果你的静态站从 frontmatter 渲染 H1，关掉 <strong>包含 H1</strong>，TOC 会从第一个 H2 开始，整体缩进降一级。</p>
+
+<h2>同一份文档，不同平台</h2>
+
+<p>这份文档有重复的 <code>### Examples</code>、标点和一个中文标题。最小级别 2、最大级别 3 时：</p>
+
+<pre><code>{`# Install Guide
+## Requirements
+### Examples
+## Usage
+### Examples
+## Q&A: what's new?
+## 安装 (Install)`}</code></pre>
+
+<p>GitHub、GitLab 和 Jekyll（GFM）得到相同的目录：</p>
+
+{/* mtoc: {"md":"# Install Guide\n## Requirements\n### Examples\n## Usage\n### Examples\n## Q&A: what's new?\n## 安装 (Install)","opts":{"style":"github","minLevel":2,"maxLevel":3}} */}
+<pre><code>{`- [Requirements](#requirements)
+  - [Examples](#examples)
+- [Usage](#usage)
+  - [Examples](#examples-1)
+- [Q&A: what's new?](#qa-whats-new)
+- [安装 (Install)](#安装-install)`}</code></pre>
+
+<p>kramdown 风格下 <code>安装</code> 被删掉，只剩 <code>install</code>：</p>
+
+{/* mtoc: {"md":"# Install Guide\n## Requirements\n### Examples\n## Usage\n### Examples\n## Q&A: what's new?\n## 安装 (Install)","opts":{"style":"kramdown","minLevel":2,"maxLevel":3}} */}
+<pre><code>{`- [Requirements](#requirements)
+  - [Examples](#examples)
+- [Usage](#usage)
+  - [Examples](#examples-1)
+- [Q&A: what's new?](#qa-whats-new)
+- [安装 (Install)](#install)`}</code></pre>
+
+<p>Bitbucket Cloud 的 id 与 GitHub 相同，只是前面加了 <code>markdown-header-</code>，第二个 <code>Examples</code> 变成 <code>#markdown-header-examples_1</code>。</p>
+
+<h2>限制</h2>
+
+<ul>
+  <li>工具读取 ATX（<code>#</code>）和 setext（<code>===</code>、<code>---</code>）标题，不读取用 HTML 写的标题（<code>&lt;h2&gt;</code>）。行内 Markdown 用简单规则去除，强调里套链接这类少见写法可能在目录文字里留下多余字符。</li>
+  <li>不读取自定义 id（kramdown 和 Hugo 的 <code>## 标题 &#123;#custom-id&#125;</code>），工具只计算自动生成的 id。</li>
+  <li>这里没有列出的渲染器（例如 VS Code）可能用不同规则。提交长目录前先点一个生成的链接确认。</li>
+</ul>
