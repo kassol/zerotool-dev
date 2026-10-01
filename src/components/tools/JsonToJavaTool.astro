@@ -200,6 +200,7 @@ const L = labels[lang];
         statusEl.className = 'jjp-status';
       }
 
+      /* ── engine:start ── */
       function toPascalCase(str) {
         return str
           .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
@@ -217,6 +218,7 @@ const L = labels[lang];
 
       function boxPrimitive(t) {
         if (t === 'int') return 'Integer';
+        if (t === 'long') return 'Long';
         if (t === 'double') return 'Double';
         if (t === 'boolean') return 'Boolean';
         return t;
@@ -226,7 +228,8 @@ const L = labels[lang];
         if (value === null) return 'Object';
         if (typeof value === 'boolean') return 'boolean';
         if (typeof value === 'number') {
-          return Number.isInteger(value) ? 'int' : 'double';
+          if (!Number.isInteger(value)) return 'double';
+          return (value > 2147483647 || value < -2147483648) ? 'long' : 'int';
         }
         if (typeof value === 'string') return 'String';
 
@@ -248,7 +251,7 @@ const L = labels[lang];
             mergeObjectsToClass(objectItems, itemClassName, classes);
             if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
           }
-          var elType = boxPrimitive(primitiveTypes.length === 1 ? primitiveTypes[0] : 'Object');
+          var elType = boxPrimitive(primitiveTypes.length === 0 ? 'Object' : mergeTypes(primitiveTypes));
           return 'List<' + elType + '>';
         }
 
@@ -259,6 +262,16 @@ const L = labels[lang];
         }
 
         return 'Object';
+      }
+
+      // Several sample values for one field: int, long and double widen to the widest of them
+      // (9.5 and 20 → double); any other mix stays Object.
+      function mergeTypes(types) {
+        if (types.length === 1) return types[0];
+        var numeric = ['int', 'long', 'double'];
+        for (var i = 0; i < types.length; i++) if (numeric.indexOf(types[i]) === -1) return 'Object';
+        if (types.indexOf('double') !== -1) return 'double';
+        return types.indexOf('long') !== -1 ? 'long' : 'int';
       }
 
       function buildClass(obj, name, classes) {
@@ -301,7 +314,7 @@ const L = labels[lang];
               if (types.indexOf(t) === -1) types.push(t);
             }
           }
-          var type = types.length === 1 ? types[0] : 'Object';
+          var type = mergeTypes(types);
           var fieldName = toCamelCase(k);
           fields.push({ key: k, fieldName: fieldName, type: type });
         }
@@ -409,6 +422,7 @@ const L = labels[lang];
         result += blocks.join('\n\n');
         return result;
       }
+      /* ── engine:end ── */
 
       function clearOutput() {
         outputCodeEl.textContent = '';

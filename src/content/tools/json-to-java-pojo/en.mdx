@@ -7,7 +7,7 @@ faqItems:
   - question: "What annotation modes are supported?"
     answer: "Four modes: None (pure POJO with getters/setters), Jackson (@JsonProperty), Gson (@SerializedName), and Lombok (@Data). Annotations are added only when the JSON key differs from the camelCase field name."
   - question: "How are JSON types mapped to Java types?"
-    answer: "string → String, integer → int, float/double → double, boolean → boolean, null → Object, array → List<T>, nested object → separate class."
+    answer: "string → String, integer → int (long when the value is outside the int range), float/double → double, a field that mixes int and double samples → double, boolean → boolean, null → Object, array → List<T>, nested object → separate class."
   - question: "When is the List import added?"
     answer: "import java.util.List is automatically included whenever an array field is present in the output."
   - question: "Is my data sent to a server?"
@@ -27,7 +27,8 @@ faqItems:
 <ul>
   <li><code>null</code> → <code>Object</code></li>
   <li>string → <code>String</code></li>
-  <li>integer number → <code>int</code></li>
+  <li>integer number → <code>int</code>; outside −2,147,483,648 to 2,147,483,647 → <code>long</code></li>
+  <li>a field whose samples mix integers and decimals → the wider type (<code>double</code>); other mixes → <code>Object</code></li>
   <li>floating-point number → <code>double</code></li>
   <li>boolean → <code>boolean</code></li>
   <li>array → <code>List&lt;T&gt;</code></li>
@@ -38,7 +39,7 @@ faqItems:
 <p>Given this JSON:</p>
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"]}`}</code></pre>
 <p>The tool generates (Lombok mode):</p>
-<pre><code>{`import java.util.List;\nimport lombok.Data;\n\n@Data\npublic class User {\n    private String firstName;\n    private int age;\n}\n\n@Data\npublic class RootObject {\n    private User user;\n    private List<String> tags;\n}`}</code></pre>
+<pre><code>{`import java.util.List;\nimport lombok.Data;\n\n@Data\npublic class RootObject {\n    private User user;\n    private List<String> tags;\n}\n\n@Data\npublic class User {\n    private String firstName;\n    private int age;\n}`}</code></pre>
 
 <h2>Example: Order With Nested Items (Jackson Mode)</h2>
 
@@ -69,18 +70,24 @@ public class Customer {
 public class ItemsItem {
     private String sku;
     private int qty;
-    private Object price;
+    private double price;
     // ...
 }`}</code></pre>
 
 <p>Javac rejects this output as one file: each <code>{"public class"}</code> must live in a file of the same name. Split it into <code>{"RootObject.java"}</code>, <code>{"Customer.java"}</code> and <code>{"ItemsItem.java"}</code>; the "No annotations" output then compiles with javac 21 as is.</p>
 
+<p>
+  Classes come out in the order they are first met: the root class, then each nested class. Array elements that are objects are
+  merged into one class named after the key plus <code>Item</code> (<code>items</code> → <code>ItemsItem</code>); a field that appears
+  only in some elements is still included, so the class covers every sample.
+</p>
+
 <h2>What to Check After Generating</h2>
 
 <ul>
-  <li><code>{"price"}</code> is <code>{"Object"}</code>: the first item has <code>{"9.5"}</code> and the second <code>{"20"}</code>, and the tool does not widen <code>{"int"}</code> and <code>{"double"}</code> to <code>{"double"}</code>. Change it to <code>{"double"}</code> or <code>{"BigDecimal"}</code> (for money).</li>
+  <li><code>{"price"}</code> is <code>{"double"}</code>: the first item has <code>{"9.5"}</code> and the second <code>{"20"}</code>, and the tool widens <code>{"int"}</code> and <code>{"double"}</code> to <code>{"double"}</code>. For money, change it to <code>{"BigDecimal"}</code>; a binary <code>{"double"}</code> cannot hold 0.1 exactly.</li>
   <li><code>{"null"}</code> in the sample becomes <code>{"Object"}</code>. Replace it with the real type.</li>
-  <li>Whole numbers become <code>{"int"}</code> even above 2,147,483,647; use <code>{"long"}</code> for large IDs and timestamps in milliseconds.</li>
+  <li>A whole number outside the int range in the sample, such as the millisecond timestamp <code>{"1730000000000"}</code>, becomes <code>{"long"}</code>. If the sample has a small ID that can grow later, change <code>{"int"}</code> to <code>{"long"}</code> yourself.</li>
   <li>Lombok mode does not add <code>{"@JsonProperty"}</code>, so <code>{"order_id"}</code> no longer maps to <code>{"orderId"}</code>:</li>
 </ul>
 
@@ -105,3 +112,14 @@ RootObject order = mapper.readValue(json, RootObject.class);`}</code></pre>
 <p>On Java 16 and later, a small immutable model can be a record instead of a class; Jackson 2.12+ reads records:</p>
 
 <pre><code>{`public record Customer(String name, boolean vip) {}`}</code></pre>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>Names are not made unique.</strong> Two different objects under the same key (for example <code>address</code> in both <code>billing</code> and <code>shipping</code>) share one class; the first one seen wins and fields of the second are missing. Rename one key or edit the class.</li>
+  <li><strong>Keys that are not Java identifiers</strong> are turned into camelCase by dropping other characters (<code>first-name</code> → <code>firstName</code>), but a key that starts with a digit or is a Java keyword (<code>class</code>, <code>default</code>) produces a field javac rejects. The None mode then has no annotation to keep the original name.</li>
+  <li><strong>Primitive types cannot be null.</strong> <code>int</code>, <code>long</code>, <code>double</code> and <code>boolean</code> fields read a missing or <code>null</code> value as 0 or false with Jackson's default settings. Use <code>Integer</code>, <code>Long</code> and so on when absence matters.</li>
+  <li><strong>A root array of primitives</strong> such as <code>[1, 2]</code> generates no class; the output is the comment <code>{"// Array of primitives — no class to generate"}</code>.</li>
+  <li><strong>Lombok mode adds only <code>@Data</code>.</strong> It writes no <code>@JsonProperty</code> or <code>@SerializedName</code>, so snake_case keys need a naming strategy or hand-added annotations, as shown above.</li>
+</ul>
+<p>For the same JSON as Kotlin or TypeScript types, use the <a href="/tools/json-to-kotlin/">JSON to Kotlin</a> or <a href="/tools/json-to-typescript/">JSON to TypeScript</a> generator.</p>
+
