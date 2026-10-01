@@ -7,7 +7,7 @@ lang: "en"
 tags: ["csp", "web-security", "xss-prevention", "developer-tools"]
 ---
 
-The day a security review lands on your desk usually plays out the same way. Someone runs Mozilla Observatory or a Lighthouse audit against your production app. The report flags a missing `Content-Security-Policy` header. You open MDN, scan thirty-something directives, write a "looks reasonable" policy, and ship it. Two days later your error tracker fills up with broken stripe.js, broken Google Fonts, and a Sentry inbox that scrolls forever. You roll back the policy. Six months later the same thing happens again.
+A common way CSP work starts: a scan with Mozilla Observatory or a similar checker reports a missing `Content-Security-Policy` header, someone writes a policy that looks reasonable after skimming MDN, and it goes straight to enforcement. Payment widgets, web fonts and error-tracking scripts then start failing, the policy is rolled back, and the header stays missing until the next review.
 
 CSP is one of the most powerful browser-side defenses against cross-site scripting and clickjacking, and one of the easiest things to get wrong. The directive set is large, the syntax is unforgiving, three different header names ship subtly different behavior, and the relationship between hashes, nonces, and `'unsafe-inline'` is not obvious until you have read the spec twice. ZeroTool's [CSP Header Generator](/tools/csp-header-generator/) gives you a workbench: pick a preset, click the keyword chips you need, paste an inline script to compute its hash, and copy the result as an HTTP header, an HTML `<meta>` tag, an Express middleware snippet, or an Nginx directive. This guide walks through how to use it, the design decisions baked into the strict preset, and the pitfalls the tool's validation panel exists to flag.
 
@@ -15,7 +15,7 @@ CSP is one of the most powerful browser-side defenses against cross-site scripti
 
 A Content Security Policy is an HTTP response header. The browser parses it once when a page loads and uses it to allow or block every resource that page tries to fetch — scripts, stylesheets, images, fonts, frames, connections, prefetches. Without a CSP a page can load any URL it wants. With a strict CSP a page can only load what you have explicitly trusted, which means even when an attacker manages to inject a `<script>` tag into your HTML, the browser refuses to execute it. The same mechanism protects against framing attacks via `frame-ancestors`, base-tag hijacking via `base-uri`, and form exfiltration via `form-action`.
 
-CSP does not replace input sanitization, output encoding, or template auto-escaping. It is the last line of defense, and it is the line that catches XSS payloads that slipped through everything else. Modern guidance from the [W3C CSP3 spec](https://www.w3.org/TR/CSP3/), Google's CSP Evaluator, and OWASP's strict CSP guide all converge on the same skeleton: nonces or hashes for inline scripts, `'strict-dynamic'` so descendant scripts inherit trust, `'self'` for first-party resources, and `'none'` for `object-src` because legacy plugin content is the single largest XSS bypass surface.
+CSP does not replace input sanitization, output encoding, or template auto-escaping. It is the last line of defense, and it is the line that catches XSS payloads that slipped through everything else. Modern guidance from the [W3C CSP3 spec](https://www.w3.org/TR/CSP3/), Google's CSP Evaluator, and OWASP's strict CSP guide all converge on the same skeleton: nonces or hashes for inline scripts, `'strict-dynamic'` so descendant scripts inherit trust, `'self'` for first-party resources, and `'none'` for `object-src` because plugin content is a known way around script restrictions.
 
 ## Five common workflows
 
@@ -31,7 +31,7 @@ Each of these starts from a different preset because the trade-off between secur
 
 ## How the workbench is laid out
 
-When you open the page the toolbar at the top picks the preset and the mode. The Strict preset matches the OWASP "strict CSP" recommendation: `'self'` plus `'strict-dynamic'` on `script-src`, `'none'` on `object-src`, `'self'` on `base-uri` and `form-action`. Moderate adds `'unsafe-inline'` to `style-src` because legacy CSS-in-JS libraries still emit inline styles, and adds `https:` to `img-src` because most product sites pull images from a few CDNs. Basic gives you only `default-src 'self'` so you can build the policy directive by directive. Empty starts blank for the cases where you already know exactly what you want.
+When you open the page the toolbar at the top picks the preset and the mode; the page starts in Enforce mode with the Strict preset. Strict sets `script-src 'self' 'strict-dynamic'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. It is a starting point for the nonce-based strict CSP that [web.dev](https://web.dev/articles/strict-csp) and OWASP describe, not that policy itself: in browsers that support `'strict-dynamic'`, the `'self'` next to it is ignored, so until you add a nonce or hash to `script-src` no script on the page runs. Moderate adds `'unsafe-inline'` to `style-src` because legacy CSS-in-JS libraries still emit inline styles, and adds `https:` to `img-src` because most product sites pull images from a few CDNs. Basic gives you only `default-src 'self'` so you can build the policy directive by directive. Empty starts blank for the cases where you already know exactly what you want.
 
 The Mode toggle switches between `Content-Security-Policy` (Enforce) and `Content-Security-Policy-Report-Only` (Report-Only). Report-Only sends violation reports to your `report-uri` or `report-to` endpoint without blocking anything. This is the mode you deploy first.
 
@@ -62,7 +62,7 @@ The hash calculator on the page is for the static case. For the dynamic case, cl
 
 The two combine well with `'strict-dynamic'`. Once a script is trusted (via hash or nonce), `'strict-dynamic'` says any script that script loads is also trusted, transitively. This means you do not have to enumerate every CDN your trusted script might pull from. It also stops a class of bypasses where an attacker abuses a legitimately allow-listed CDN to host their own payload, because `'strict-dynamic'` overrides host-based allow-lists for descendant scripts.
 
-A subtle point: when a hash or nonce is present in `script-src`, modern browsers ignore `'unsafe-inline'`. This is the spec's "strict mode": if you are sophisticated enough to use hashes or nonces, the browser treats `'unsafe-inline'` as a backwards-compatibility hint for older browsers and otherwise discards it. The validation panel in the tool surfaces this as an info-level note so you do not panic when you see both keywords listed.
+A subtle point: when a hash or nonce is present in `script-src`, browsers that support CSP Level 2 or later ignore `'unsafe-inline'` in that directive, while older browsers that do not understand hashes and nonces still honor it, so the pair stays backwards compatible. The validation panel in the tool surfaces this as an info-level note so you do not panic when you see both keywords listed.
 
 ## The five pitfalls the validator watches for
 
@@ -72,11 +72,11 @@ The CSP3 spec is clear: when `'none'` appears in a source list, every other sour
 
 ### `frame-ancestors` is HTTP-only
 
-The HTML `<meta http-equiv="Content-Security-Policy">` tag exists, but four directives are deliberately ignored when CSP arrives that way: `frame-ancestors`, `sandbox`, `report-uri`, and `report-to`. The reason is that these directives need to take effect before the document is fully parsed, and the meta tag is parsed mid-document. If you need framing protection on a static host like GitHub Pages, you have to send a real header — usually via a CDN or a worker.
+The HTML `<meta http-equiv="Content-Security-Policy">` tag exists, but [CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element) does not support three directives there: `frame-ancestors`, `report-uri` and `sandbox`. The Report-Only header has no `<meta>` form at all. The tool also leaves `report-to` out of its `<meta>` output. If you need framing protection on a static host like GitHub Pages, you have to send a real header — usually via a CDN or a worker.
 
 ### Missing `default-src` removes your fallback
 
-Several fetch directives (`script-src`, `style-src`, `img-src`, etc.) fall back to `default-src` when not specified. New directives added in future CSP revisions also fall back to `default-src` for compatibility. If you skip `default-src` entirely, your policy is brittle: the day a browser ships a new directive, your site silently allows it. Even a single `default-src 'self'` line is better than none.
+Fetch directives (`script-src`, `style-src`, `img-src`, `connect-src` and the rest) fall back to `default-src` when they are not specified. Document and navigation directives such as `base-uri`, `form-action` and `frame-ancestors` do not fall back, so they must be written out. If you skip `default-src`, any fetch directive you forgot is unrestricted. Even a single `default-src 'self'` line is better than none.
 
 ### `http:` is not the same as "no policy"
 
@@ -96,7 +96,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'stric
 ```
 
 ```apache
-# Apache: in .htaccess or httpd.conf, "always" is implicit
+# Apache: in .htaccess or httpd.conf; "always" also covers error responses
 Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
 ```
 
@@ -114,7 +114,7 @@ app.use(helmet.contentSecurityPolicy({
 }));
 ```
 
-```toml
+```text
 # Cloudflare Pages _headers file
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'
@@ -133,13 +133,13 @@ Almost every successful CSP deployment follows the same shape:
 5. **Switch to enforce** by changing the header name from `Content-Security-Policy-Report-Only` to `Content-Security-Policy`. The tool's Mode toggle does this for you in one click.
 6. **Keep collecting reports** even after enforcement. New SDKs, new third-party scripts, new pages will trip the policy. The reporting endpoint is your early-warning system.
 
-The two failure modes that derail this plan are skipping step 1 (going straight to Enforce on day one) and treating the report endpoint as write-only (collecting reports but never reading them). The tool encourages step 1 by defaulting to Report-Only mode when you pick the Strict preset for the first time. The reporting endpoint is on you.
+The two failure modes that derail this plan are skipping step 1 (going straight to Enforce on day one) and treating the report endpoint as write-only (collecting reports but never reading them). The tool opens in Enforce mode, so switch the Mode toggle to Report-Only before you copy the first header. The reporting endpoint is on you.
 
 ## How this differs from existing CSP tools
 
-[Report URI's CSP Wizard](https://report-uri.com/home/generate) and [csper.io](https://csper.io/) both build policies by watching real traffic from your site, which is great if you have already deployed CSP and want to refine it. They are not great if you are starting from zero and want a sane preset on day one. The OWASP CSP Generator is a JSON form with no preview and no validation. The various Chrome extensions that show your current site's CSP are useful for inspection but not for authoring.
+[Report URI's CSP Wizard](https://report-uri.com/home/generate) builds a policy from the violation reports your site sends, which is useful once a Report-Only header is live and less useful on day one, when there are no reports yet. Browser extensions that show a site's current CSP are useful for inspection but not for authoring.
 
-ZeroTool's tool is smaller in scope and cleaner in execution. There is no account, no traffic capture, no telemetry — your policy never leaves the browser tab. The validation panel surfaces the five pitfalls that actually break deployments instead of cataloguing every theoretical violation. The hash calculator runs in the browser via SubtleCrypto so you can paste production code without worrying about it being logged. The four output formats cover the deployment surfaces you actually use, in the syntax those surfaces actually accept.
+ZeroTool's tool is smaller in scope and cleaner in execution. There is no account and no traffic capture — your policy never leaves the browser tab. The validation panel surfaces the five pitfalls that actually break deployments instead of cataloguing every theoretical violation. The hash calculator runs in the browser via SubtleCrypto so you can paste production code without worrying about it being logged. The four output formats cover the deployment surfaces you actually use, in the syntax those surfaces actually accept.
 
 ## Further reading
 

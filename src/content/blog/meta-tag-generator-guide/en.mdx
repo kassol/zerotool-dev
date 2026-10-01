@@ -2,6 +2,7 @@
 title: "Meta Tag Generator: One Page, Four Audiences"
 description: "Build a complete <head> meta block — Open Graph, Twitter Card, Schema.org JSON-LD, and SEO basics. Covers og:image specs, canonical URL pitfalls, and platform-specific quirks."
 pubDate: 2026-05-05
+updatedDate: 2026-10-01
 lang: "en"
 tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
 ---
@@ -25,17 +26,17 @@ These layers are not redundant. Each was designed by a different vendor and answ
 
 ## The Required Five for Social Cards
 
-Of the dozens of meta tags you can ship, five carry most of the weight when a link gets shared:
+The [Open Graph protocol](https://ogp.me/) names four required properties — `og:title`, `og:type`, `og:image` and `og:url` — and a description is what most previews show under the title:
 
 ```html
-<title>Article title — Brand</title>
-<meta name="description" content="One-sentence pitch under 160 chars.">
-<link rel="canonical" href="https://example.com/article/">
-<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:title" content="Article title">
 <meta property="og:type" content="article">
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:url" content="https://example.com/article/">
+<meta name="description" content="One-sentence pitch under 160 chars.">
 ```
 
-Everything else is sugar. If you only have time to write five lines, write these five.
+If you only have time to write five lines, write these five.
 
 ## og:image: The Spec That Catches Everyone
 
@@ -43,13 +44,13 @@ The single most common reason a Slack or Discord preview looks broken is an `og:
 
 **Size.** 1200x630 pixels (1.91:1) is the safe default and what Facebook, LinkedIn, and Discord render most reliably. Twitter's `summary_large_image` expects 2:1, so 1200x600 also works. Anything smaller than 200x200 is rejected outright by some scrapers.
 
-**Format.** PNG or JPEG. WebP support is patchy. SVG is ignored by every social scraper despite being legal HTML.
+**Format.** PNG or JPEG are the safe choice. X lists JPG, PNG, WEBP and GIF for card images, and SVG is not supported by X or Facebook even though it is a valid image on the web.
 
-**Absolute URL.** `og:image` must be an absolute URL with scheme and host. Relative paths like `/og/article.png` fail silently — Facebook's debugger reports "image not found" without telling you why.
+**Absolute URL.** `og:image` must be an absolute URL with scheme and host. A relative path like `/og/article.png` is not a valid value, and scrapers will not resolve it the way a browser would.
 
 **Reachability.** The scraper fetches the URL on demand. If your CDN is slow, behind a CAPTCHA, or returns the image with `Content-Type: text/html` instead of `image/png`, the preview falls back to a generic site thumbnail.
 
-**Cache.** Facebook caches the scrape result for hours, sometimes days. After fixing an `og:image`, hit the [Sharing Debugger](https://developers.facebook.com/tools/debug/) and click "Scrape Again" to force a refresh.
+**Cache.** Facebook caches the scrape result. After fixing an `og:image`, open the [Sharing Debugger](https://developers.facebook.com/tools/debug/) and click "Scrape Again" to force a refresh.
 
 Always declare width and height alongside the image:
 
@@ -60,11 +61,11 @@ Always declare width and height alongside the image:
 <meta property="og:image:alt" content="Article cover with the title in large white serif on a green background.">
 ```
 
-The dimensions help Discord and Slack reserve layout space before the image loads. The alt text is read by screen readers when the unfurl appears in chat.
+Declared dimensions let a scraper lay out the preview without downloading the image first, and `og:image:alt` describes the image for people who cannot see it.
 
 ## Canonical URL: Why Wrong Values Fragment Share Counts
 
-`<link rel="canonical">` doubles as `og:url`. It tells crawlers and unfurl bots which URL is the authoritative one when the same page is reachable through multiple paths.
+`<link rel="canonical">` and `og:url` are separate tags that should carry the same value. The canonical link tells search engines which URL is authoritative; `og:url` tells Facebook which URL a share belongs to when the same page is reachable through multiple paths.
 
 Common reasons the same article has multiple URLs:
 
@@ -73,7 +74,7 @@ Common reasons the same article has multiple URLs:
 - `?utm_source=twitter` and the bare URL
 - `https://example.com/post` and `https://example.com/post?ref=newsletter`
 
-If two of these get shared, Facebook treats them as separate links. Each accumulates its own share count. The author looks at the lower number and assumes the post flopped. Setting a canonical URL on the page collapses all variants into one record.
+If two of these get shared without an `og:url`, Facebook can treat them as separate links with separate share counts. Setting `og:url` to the canonical URL on every variant makes Facebook attribute the shares to that one URL.
 
 The canonical URL must include the trailing slash if your routing serves it that way. ZeroTool's static build always emits trailing slashes; mismatching them in canonical breaks the dedupe.
 
@@ -85,7 +86,7 @@ JSON-LD is just JSON inside a `<script type="application/ld+json">`. Google's ri
 - Always include `"@type"` matching one of [Schema.org's types](https://schema.org/docs/full.html).
 - All URLs must be absolute.
 - Dates use ISO 8601 (`2026-05-05`, not `May 5 2026`).
-- Repeated structured fields (authors, breadcrumb items) are arrays even when there is one element.
+- Fields that take several values (such as `author`) can be arrays; a single value can be written directly.
 
 A minimal `Article`:
 
@@ -113,7 +114,7 @@ Four free tools cover the four audiences:
 | Tool | What it tests | URL |
 |------|---------------|-----|
 | Facebook Sharing Debugger | og:* tags, scrape result, cached preview | https://developers.facebook.com/tools/debug/ |
-| Twitter Card Validator | twitter:* tags (legacy but functional) | https://cards-dev.twitter.com/validator |
+| X (Twitter) Card Validator | the preview function was removed; post to a test account to see the card | https://cards-dev.twitter.com/validator |
 | LinkedIn Post Inspector | og:* tags rendered as LinkedIn would | https://www.linkedin.com/post-inspector/ |
 | Google Rich Results Test | JSON-LD eligibility, structured-data warnings | https://search.google.com/test/rich-results |
 
@@ -123,17 +124,17 @@ The fifth check is `view-source:` (Cmd+Option+U in Chrome). Look for duplicate `
 
 ## Common Pitfalls
 
-**Multiple `og:image` tags.** Some scrapers pick the first, some the last, some merge them. Ship exactly one canonical image and let the platform pick from the smaller variants you might also list with `og:image:secure_url`.
+**Multiple `og:image` tags.** The Open Graph protocol allows them as an array, and the first one is preferred when there is a conflict. Put the image you want shown first. `og:image:secure_url` is the HTTPS address of the same image, not a smaller variant.
 
-**`og:url` does not match the actual URL.** This is fatal. Fix the canonical URL before debugging anything else.
+**`og:url` points to a different page.** Facebook builds the preview from the page at `og:url`, so a template that leaves the home page URL in `og:url` makes every article share look like the home page.
 
 **Setting `robots: noindex` and expecting og:* to still surface.** They will — social scrapers do not read robots — but search engines will not index the page, so the rich preview never shows up in SERPs.
 
-**Hard-coded `og:image:width` that disagrees with the actual file.** Discord trusts the declared dimensions and uses them to pick layout. If the file is 1200x600 but you declared 1200x630, the preview crops oddly.
+**Hard-coded `og:image:width` that disagrees with the actual file.** Keep the declared dimensions in sync with the image, or leave them out, so the preview is not laid out for the wrong aspect ratio.
 
-**JSON-LD with trailing commas or unescaped quotes.** Most JS validators accept it; Google's strict parser rejects the page as ineligible for rich results. Run the output through a JSON linter before shipping.
+**JSON-LD with trailing commas or unescaped quotes.** That is invalid JSON: `JSON.parse` rejects it, and Google's Rich Results Test reports a parsing error instead of the structured data. Run the output through a JSON linter before shipping.
 
-**Two pages with identical canonical URLs.** Crawlers pick one and ignore the other entirely. This usually happens when a CMS template forgets to update the canonical for paginated archive pages.
+**Two pages with identical canonical URLs.** A canonical tells search engines that the pages are duplicates, so only one of them is likely to be indexed. This usually happens when a CMS template forgets to update the canonical for paginated archive pages.
 
 ## Generating It Inline
 

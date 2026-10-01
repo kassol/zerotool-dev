@@ -7,7 +7,7 @@ lang: "en"
 tags: ["mime-type", "content-type", "file-upload", "web-security", "developer-tools"]
 ---
 
-A user uploads `invoice.pdf` to your form. Your server stores it in S3 with whatever `Content-Type` the browser claimed. A week later somebody reports the link triggers a download dialog instead of opening inline. You check the object metadata: `Content-Type: application/octet-stream`. The browser had no idea what the file was, but it cheerfully told your code anyway.
+A common upload bug: a form accepts `invoice.pdf`, the server copies whatever `Content-Type` the browser sent into object storage, and later the stored object turns out to carry `application/octet-stream` (some clients and storage SDKs fall back to it when they do not recognize a file), so the link downloads instead of opening inline. Nothing on the server ever checked what the bytes were.
 
 That single line of metadata is the slip every upload bug starts with. The fix is a habit: confirm the byte-level type before you trust the extension, the form field, or `File.type`.
 
@@ -23,7 +23,7 @@ A media type — the formal name in RFC 6838 — does two completely different t
 | HTTP `Accept` header | Tells the server which formats the client can consume | API returns XML to a JSON-only client and parsing blows up |
 | `Content-Disposition` filename guess | Browser picks an extension when saving | `report` saved with no extension, OS shrugs |
 | Email MIME parts | Mailers pick a renderer for attachments | Excel files open in the browser as gibberish |
-| File system extended attributes (macOS `kMDItemContentType`) | Finder picks the open-with app | `.heic` opens in TextEdit |
+| File system metadata (macOS Uniform Type Identifiers such as `com.adobe.pdf`) | Finder picks the open-with app; macOS maps UTIs to and from MIME types | A file with the wrong extension opens in the wrong app |
 | API metadata (S3, R2, Azure Blob) | CDN sets the egress `Content-Type` | Same headers, same display problems, but now cached |
 
 A lookup table flattens those six surfaces into one decision: given an extension or a recognized file format, what string belongs in the slot? That is the search panel in the tool — type `.pdf`, get `application/pdf`; type `application/json`, see the extension `.json`; type `image` and the whole `image/*` family fans out.
@@ -84,7 +84,7 @@ Three subtleties bite people:
 2. **Some magics sit at non-zero offsets.** MP4 hides `ftyp` at byte 4 — a 64-byte read catches it easily. Tar's `ustar` lives at byte 257 and ISO 9660 has `CD001` at byte 32769; both demand a larger initial slice. The browser tool sniffs the first 64 bytes, which means it identifies MP4 but skips tar and ISO. If you need either, fall back to `file(1)` locally.
 3. **Plain text formats have no fixed header.** CSV, JSON, SQL, plain text — there is nothing to look at. You can guess via entropy, BOM markers, or content sniffing (the way browsers used to over-aggressively do until WHATWG locked it down), but no signature is going to confirm a file is JSON without parsing it.
 
-The Sniff file tab in the tool runs a tight loop over about thirty signatures, all client-side. Drop a file in and it reads only the first 64 bytes — enough for the common web formats it ships with — and reports the first match. The browser's own `File.type` is shown alongside, so when they disagree you see which one to trust.
+The Sniff file tab in the tool runs a tight loop over 37 signatures, all client-side. Drop a file in and it reads only the first 64 bytes — enough for the common web formats it ships with — and reports the first match. The browser's own `File.type` is shown alongside, so when they disagree you see which one to trust.
 
 ## A real upload-validation pipeline
 
@@ -155,7 +155,7 @@ The browser tool covers the same `file --mime-type --brief` style of check for t
 
 **Setting `Content-Type: application/octet-stream` on everything.** Storage SDKs default to this when they cannot guess. Browsers respond by downloading instead of rendering, even for images and PDFs. Always set a real type before writing to object storage.
 
-**Forgetting the charset on `text/*`.** A `text/csv` without `charset=utf-8` will be interpreted as the user's locale default. Excel on Windows will guess GBK and your customer support tickets will start.
+**Forgetting the charset on `text/*`.** Without a `charset` parameter (or a BOM), a browser may decode `text/csv` or `text/plain` with a locale-dependent default. Excel is a separate case: the HTTP header is not saved with the downloaded file, so a UTF-8 CSV without a BOM opens in the system code page, for example GBK on Simplified Chinese Windows. Send `charset=utf-8` and add a BOM to CSV files meant for Excel.
 
 **Mixing up `application/javascript` and `text/javascript`.** RFC 9239 (2022) made `text/javascript` the only standard value and explicitly marked `application/javascript` and every other historical alias obsolete. Browsers still execute scripts served under the older types out of compatibility, but if you control the response headers, `text/javascript; charset=utf-8` is the right answer.
 
@@ -175,13 +175,13 @@ The mistake is using it as a default for files you do know — that breaks the i
 
 ## How this lookup differs from the alternatives
 
-`mimetype.io` is the closest analogue in the browser world and also runs detection client-side via the File API. It is a strong reference, and the practical difference is in shape rather than privacy: ZeroTool ships a 240-entry curated catalog with category-tinted chips, a 4-language UI, and a result panel that puts the sniffed MIME, likely extension, raw hex, and the browser-reported type side by side for upload-validation work.
+`mimetype.io` is a large reference of MIME types and extensions. ZeroTool's tool is narrower: a 155-entry curated catalog with category chips, a 4-language UI, and a sniffer whose result panel puts the sniffed MIME, likely extension, raw hex and the browser-reported type side by side for upload-validation work.
 
-`codeshack.io/mime-type-lookup` is a fast static list with no sniffer. Useful for the "what's the Content-Type of `.xyz`" question, but it does not include byte-level file identification.
+Static lookup lists answer "what's the Content-Type of `.xyz`" but do not identify a file from its bytes.
 
 `file(1)` and `libmagic` are the gold standard, with hundreds of signatures including formats this tool deliberately skips. If you regularly handle CAD files, scientific data, or niche archive variants, install `libmagic` locally. For day-to-day web development the browser tool covers the routine cases without leaving the tab.
 
-The tradeoff is deliberate: about 240 lookup entries and roughly 30 byte-level signatures, weighted toward the formats actually seen on the modern web. Everything runs client-side, nothing uploads, the database is baked into the page at build time.
+The tradeoff is deliberate: 155 lookup entries and 37 byte-level signatures, weighted toward the formats actually seen on the modern web. Everything runs client-side, nothing uploads, the database is baked into the page at build time.
 
 ## Further reading
 
