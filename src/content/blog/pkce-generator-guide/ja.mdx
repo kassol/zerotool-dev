@@ -4,10 +4,11 @@ description: "code_verifier と code_challenge をブラウザで生成し、/au
 pubDate: 2026-05-11
 updatedDate: 2026-10-01
 lang: "ja"
+noindex: true
 tags: ["oauth", "pkce", "authentication", "security", "developer-tools"]
 ---
 
-昨日まで問題なく動いていた認可コードフローを引き継いだ。週末に同僚がモバイル SDK をアップグレードした結果、新しい端末では毎回 `invalid_grant` でログインが失敗するようになった。Web 側は問題ない。サーバーログを見ると `/token` 呼び出しに `code_verifier` が含まれていない。新しい SDK の changelog を開く――上流ライブラリが「ひっそり保存していた client secret」を PKCE に置き換えており、移行は「気付かれずに行われる」想定だった。モバイル担当が気付かなかったのはテスト機にセッションがキャッシュされていたから。チームがこの回帰に気付くまでに、「SHA-256 は verifier なのか challenge なのか」を巡って三時間が消えていた。
+PKCE の不具合は典型的にはこう現れる。Web では認可コードフローが動くのに、モバイル SDK を更新したあと新しい端末でのログインがすべて `invalid_grant` で終わり、サーバーログには `/token` リクエストに `code_verifier` がない、あるいは先に送った challenge とハッシュが一致しない値が届いたと記録される。セッションがキャッシュされた端末は動き続けるのでテストで見落としやすく、調査はたいてい「どちらの値をハッシュし、どちらをどこへ送るのか」という問いから始まる。
 
 PKCE は Proof Key for Code Exchange の略で、**server secret を持たないクライアント**でも認可リクエストの発行元であることを証明できるようにする OAuth の拡張仕様。RFC 7636 が 2015 年にモバイル・ネイティブアプリのために導入した。[RFC 9700](https://www.rfc-editor.org/rfc/rfc9700#section-2.1.1)（2025 年）はパブリッククライアントに PKCE を必須とし、コンフィデンシャルクライアントにも推奨している。[OAuth 2.1 ドラフト](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) はすべてのクライアントに要求し、例外は OpenID Connect の nonce を正しく実装していると認可サーバーが判断できるコンフィデンシャルクライアントだけだ。仕組み自体は段落一つで説明できるほど小さい。しかしハッピーパスのテストは通るのに、実クライアントが最初のリトライをした瞬間に静かに壊れる――そんな実装ミスが起きやすい仕様でもある。ZeroTool の [PKCE ジェネレーター](/ja/tools/pkce-generator/) はブラウザ内でペアを生成し、`/authorize` URL と `/token` 交換用の `curl` を同時に表示する。verifier が仕様の文字セットを外れていれば challenge の計算自体を拒否し、ログにある challenge が一致しないときはその原因も示す。
 
@@ -81,7 +82,7 @@ Base64url は base64 の小改造：`+` → `-`、`/` → `_`、末尾の `=` �
 
 **3. 再試行で verifier を使い回す。** 認可フロー一回につき新しい verifier/challenge ペア。ユーザーが同意画面を閉じてしまい `/authorize` をリトライする場合、必ず新しい verifier を作る――サーバーは中断された前回の verifier を覚えている可能性がある。
 
-**4. verifier の保管場所を誤る。** SPA なら、下のブラウザ向けサンプルのように `sessionStorage` に置き、トークン取得が終わったら削除する。verifier は同じタブでリダイレクトを一度またげれば十分だ。[`sessionStorage`](https://developer.mozilla.org/ja/docs/Web/API/Window/sessionStorage) はそのタブに属し、タブを閉じると消える。`localStorage` はログイン後も残り、同じオリジンのすべてのタブで共有されるので、二つのタブで同時にログインすると verifier を上書きし合う。どちらもスクリプト注入は防げない。オリジン上で動く JavaScript なら両方とも読める。ネイティブアプリはプラットフォームの安全ストレージを使う（iOS は Keychain、Android は EncryptedSharedPreferences）。verifier を平文でディスクに書かないこと。
+**4. verifier の保管場所を誤る。** SPA なら、下のブラウザ向けサンプルのように `sessionStorage` に置き、トークン取得が終わったら削除する。verifier は同じタブでリダイレクトを一度またげれば十分だ。[`sessionStorage`](https://developer.mozilla.org/ja/docs/Web/API/Window/sessionStorage) はそのタブに属し、タブを閉じると消える。`localStorage` はログイン後も残り、同じオリジンのすべてのタブで共有されるので、二つのタブで同時にログインすると verifier を上書きし合う。どちらもスクリプト注入は防げない。オリジン上で動く JavaScript なら両方とも読める。ネイティブアプリはプラットフォームの安全ストレージを使う（iOS は Keychain、Android は Android Keystore の鍵で暗号化）。verifier を平文でディスクに書かないこと。
 
 **5.「S256 は面倒だから」と `plain` を選ぶ。** 上記の数行が S256 の完全な実装で、OAuth ライブラリにも入っている。仕様に `plain` の出番はない。RFC 7636 §4.2 は SHA-256 を計算できないクライアントにしか認めず、[RFC 9700 §2.1.1](https://www.rfc-editor.org/rfc/rfc9700#section-2.1.1) は認可リクエストで verifier をさらさない方式は現在 S256 だけだとし、OAuth 2.1 ドラフト §7.5.2 は禁止している。サーバー側の扱いはまちまちで、[LINE ログイン](https://developers.line.biz/ja/docs/line-login/integrate-pkce/) は S256 しか受け付けない一方、Keycloak はクライアント設定で `plain` を選べ、飛書は method がないと `plain` として扱う。
 

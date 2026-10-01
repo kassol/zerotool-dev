@@ -4,10 +4,11 @@ description: "别再凭文件扩展名做上传校验。IANA 媒体类型注册�
 pubDate: 2026-05-21
 updatedDate: 2026-05-21
 lang: "zh"
+noindex: true
 tags: ["mime-type", "content-type", "file-upload", "web-security", "developer-tools"]
 ---
 
-用户给表单上传 `invoice.pdf`，服务端把浏览器声明的 `Content-Type` 一并写进 S3。一周后有人反馈链接点开是下载弹窗而不是内联预览。你查对象元数据，发现写着 `Content-Type: application/octet-stream`：浏览器其实根本没认出文件是什么，只是顺嘴报给了你的代码。
+一个常见的上传问题：表单接收 `invoice.pdf`，服务端把浏览器发来的 `Content-Type` 原样写进对象存储，后来发现存下来的对象标的是 `application/octet-stream`（有些客户端和存储 SDK 认不出文件时会退回这个值），链接于是变成下载而不是直接打开。服务端从头到尾没有检查过文件的字节到底是什么。
 
 几乎所有上传 bug 都是从这行错误的元数据开始的。修法只有一种习惯：在信任扩展名、表单字段或 `File.type` 之前，先从字节层面确认真实类型。
 
@@ -23,7 +24,7 @@ tags: ["mime-type", "content-type", "file-upload", "web-security", "developer-to
 | HTTP `Accept` 请求头 | 告诉服务端客户端能消费哪些格式 | 服务端给只吃 JSON 的客户端回了 XML，解析直接炸 |
 | `Content-Disposition` 推断文件名 | 浏览器保存时选扩展名 | `report` 落地后没扩展名，操作系统两眼一抹黑 |
 | 邮件 MIME 段 | 邮件客户端为附件挑渲染器 | Excel 附件在浏览器里渲染成乱码 |
-| 文件系统扩展属性（macOS 的 `kMDItemContentType`） | Finder 选默认打开方式 | `.heic` 被 TextEdit 打开 |
+| 文件系统元数据（macOS 的统一类型标识符，如 `com.adobe.pdf`） | Finder 据此选默认打开方式；macOS 会在 UTI 和 MIME 类型之间互相映射 | 扩展名不对的文件用错误的应用打开 |
 | 对象存储元数据（S3、R2、Azure Blob） | CDN 出口设置 `Content-Type` | 同样的头、同样的显示问题，但这次被缓存住了 |
 
 查询表把这六个场景压成一个决策：给定一个扩展名或者一个已识别的文件格式，对应的字符串到底是什么？这就是工具里搜索面板做的事——输 `.pdf` 拿到 `application/pdf`，输 `application/json` 看到对应扩展名是 `.json`，输 `image` 就把整个 `image/*` 家族展开。
@@ -84,7 +85,7 @@ Magic bytes 是 Unix 上 `file(1)` 从 1973 年起就在用的格式识别手段
 2. **部分魔数不在 0 偏移。** MP4 把 `ftyp` 藏在第 4 字节——读 64 字节足够命中。Tar 的 `ustar` 在第 257 字节，ISO 9660 的 `CD001` 在第 32769 字节，两者都得切更大的片段。浏览器端工具只嗅前 64 字节，所以能识别 MP4，但识别不了 tar 和 ISO。要处理这两类格式，退回到本地的 `file(1)` 即可。
 3. **纯文本格式没有固定头。** CSV、JSON、SQL、纯文本，根本没东西可看。可以靠熵值、BOM 标记或内容嗅探来猜（浏览器以前就是这么过度激进，直到 WHATWG 把规则收紧），但没有任何签名能在不解析的前提下证明一个文件是 JSON。
 
-工具里的 Sniff file 标签会在客户端串行跑三十多个签名。把文件丢进去，只读前 64 字节——足够覆盖工具内置的常见 Web 格式——给出第一个命中。浏览器自己的 `File.type` 会并排显示，两者不一致时一眼就能看出该信哪个。
+工具里的 Sniff file 标签会在客户端串行跑 37 个签名。把文件丢进去，只读前 64 字节——足够覆盖工具内置的常见 Web 格式——给出第一个命中。浏览器自己的 `File.type` 会并排显示，两者不一致时一眼就能看出该信哪个。
 
 ## 一条真实可用的上传校验流水线
 
@@ -155,7 +156,7 @@ xxd -l 16 mystery.bin
 
 **所有文件都设 `Content-Type: application/octet-stream`。** 各家存储 SDK 在猜不出类型时默认用这个值。浏览器看到这个值就直接下载，不会内联渲染——图片和 PDF 全中招。写入对象存储前永远设置一个真实的类型。
 
-**忘了给 `text/*` 加 charset。** 没有 `charset=utf-8` 的 `text/csv` 会按用户系统区域设置解释。Windows 上的 Excel 会按 GBK 猜，然后你的客服工单就开始涌进来。
+**忘了给 `text/*` 加 charset。** 没有 `charset` 参数（也没有 BOM）时，浏览器可能按与地区相关的默认编码解码 `text/csv` 或 `text/plain`。Excel 是另一回事：HTTP 头不会随下载的文件保存，没有 BOM 的 UTF-8 CSV 会按系统代码页打开，比如简体中文 Windows 上的 GBK。所以要发 `charset=utf-8`，给 Excel 用的 CSV 再加上 BOM。
 
 **`application/javascript` 和 `text/javascript` 混用。** RFC 9239（2022）把 `text/javascript` 定为唯一标准值，明确把 `application/javascript` 以及一众历史别名标记为废弃。浏览器出于兼容性仍然会执行老类型下的脚本，但只要响应头你说了算，`text/javascript; charset=utf-8` 就是正确答案。
 
@@ -175,13 +176,13 @@ xxd -l 16 mystery.bin
 
 ## 这个查询工具和同类产品的差异
 
-`mimetype.io` 是浏览器世界里最接近的对照，同样通过 File API 在客户端做检测。它是一份扎实的参考；真正的差异不在隐私层面，而在产品形态：ZeroTool 内置 240 条经过整理的目录、带分类色块、4 语言界面，结果面板会把嗅探出的 MIME、推断扩展名、原始 hex 字节、浏览器自报类型并排展示，专为上传校验这种活儿设计。
+`mimetype.io` 是一份很全的 MIME 类型与扩展名参考。ZeroTool 的工具范围更窄：155 条精选目录、按类别的标签、4 种语言界面，外加一个嗅探器，结果面板把嗅探出的 MIME、可能的扩展名、原始十六进制和浏览器报告的类型并排列出，方便做上传校验。
 
-`codeshack.io/mime-type-lookup` 是一份静态速查表，没有嗅探器。回答「`.xyz` 的 Content-Type 是啥」够用，但不做字节级文件识别。
+静态速查表能回答「`.xyz` 的 Content-Type 是什么」，但不能根据字节识别文件。
 
 `file(1)` 和 `libmagic` 是金标准，签名数以百计，覆盖了这个工具刻意没收的格式。如果你日常处理 CAD 文件、科学数据或冷门归档变体，在本地装 `libmagic`。日常 Web 开发的常规场景，浏览器工具不用离开当前标签页就能搞定。
 
-这种权衡是有意为之：约 240 条查询条目、约 30 条字节级签名，重心压在现代 Web 实际遇到的格式上。所有运算都在客户端完成，文件不上传，数据库在构建时直接打进页面。
+这种权衡是有意为之：155 条查询条目、37 条字节级签名，重心压在现代 Web 实际遇到的格式上。所有运算都在客户端完成，文件不上传，数据库在构建时直接打进页面。
 
 ## 延伸阅读
 

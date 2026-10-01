@@ -2,11 +2,13 @@
 title: "Markdown 目次ジェネレーター：1 ファイル、4 つのアンカー方言"
 description: "GitHub・GitLab・Jekyll・Bitbucket で実際に動く Markdown 目次を生成。アンカー slug アルゴリズム、重複処理規則、マーカー方式の原位置更新、そしてリンクを密かに壊すクロスプラットフォーム罠まで網羅。"
 pubDate: 2026-05-05
+updatedDate: 2026-10-01
 lang: "ja"
+noindex: true
 tags: ["markdown", "documentation", "github", "gitlab", "developer-tools"]
 ---
 
-12 セクションの README を書き上げて GitHub にプッシュした矢先、同僚が GitLab で同じファイルを開いた途端 TOC のリンクが全部死んでいる——あるいは Jekyll サイトを Hugo に移行したら、半分のアンカーが大文字小文字レベルでこっそり変わっていた。Markdown は一文字も変わっていないのに、アンカーは別物になっている。
+TOC が壊れる典型的なパターン：README は GitHub では問題なく表示されるのに、同じファイルを Bitbucket で開いたり、slug ルールの違う Jekyll サイトでビルドしたりすると、TOC のリンクがどこにも飛ばなくなる。Markdown は一字一句同じでも、見出しの id は別物になっている。
 
 Markdown 目次の生成は一見すると 1 行で済む話だ。見出しを読み、slug 化し、リンクに組み立てる——最初の 80% は確かにそれで終わる。罠は残りの 20% にある。レンダラーごとに slugify ルールが違い、重複処理の作法が違い、Unicode に対するスタンスが違う。違うターゲット用に作った TOC は、TOC が無いより悪い：エディタ上では正しく見えるのに、レンダリングされた瞬間に折れる。
 
@@ -16,16 +18,16 @@ Markdown 目次の生成は一見すると 1 行で済む話だ。見出しを�
 
 Markdown 仕様には「見出しアンカー」という概念がそもそもない。CommonMark は見出しの HTML レンダリングを意図的に実装側に委ねており、「見出しから slug を生成する」機能を提供するレンダラーは各自でアルゴリズムを書いた。方言間の差は、もはや単一 TOC ジェネレーターで全方位カバーできないレベルまで広がっている——ターゲットを 1 つ選ぶしかない。
 
-実運用の約 98% をカバーする 4 つの方言：
+このツールが対応する 4 つの方言：
 
 | レンダラー | どこで見るか | アンカー形式 |
 |---|---|---|
-| **GitHub Flavored Markdown** | github.com、gh-pages、Discourse、Gitiles | 小文字化、句読点除去、ハイフン化、Unicode 保持 |
-| **GitLab Flavored Markdown** | gitlab.com、GitLab セルフホスト | GitHub と同じ + 連続ハイフンを 1 つに圧縮 |
-| **kramdown / Jekyll classic** | 古めの Jekyll サイト | 小文字化、非 ASCII 除去、ハイフン化 |
-| **Bitbucket** | bitbucket.org | 全アンカーに `markdown-` プレフィックス、重複は `_N` |
+| **GitHub** | github.com の README、issue、wiki | 小文字化、`-` と `_` 以外の記号を除去、空白をハイフンに、Unicode の文字は保持 |
+| **GitLab** | gitlab.com、GitLab セルフマネージド | GitHub と同じ処理のあと、2 個以上連続するハイフンを 1 個にまとめる |
+| **kramdown（`input: kramdown`）** | kramdown 独自のパーサーに切り替えた Jekyll サイト | 先頭の英字以外を除去、ASCII の英数字・空白・ハイフンだけを残して小文字化。空になったら `section` |
+| **Bitbucket Cloud** | bitbucket.org | すべての id に `markdown-header-` プレフィックス、重複は `_N` |
 
-Hugo + goldmark（v0.62 以降のデフォルト）は GitHub ルールにかなり近い——アンカーが折れるケースは実運用ではあまり見ないが、句読点まわりのエッジケースで微妙に外れることはある。他の現代的レンダラー（Discourse、Gitea、Forgejo）は同じ基本アルゴリズムにバリエーションを乗せている。MkDocs は独自の toc 拡張と pymdownx 系を持つ。4 方言テーブルに無いターゲットを使うなら、TOC をコミットする前に実際のレンダラーで試走しておくこと。アドホック用途では GitHub 形式が最も安全な既定値——ただし kramdown classic slugger を使い続けている Jekyll サイトと、すべての Bitbucket リポジトリは GitHub と互換ではない。
+表について 2 点補足する。Jekyll の既定は GFM パーサー（`kramdown: input: GFM`）で、見出し id は GitHub のルールに従い Unicode を保持する（[kramdown-parser-gfm](https://github.com/kramdown/parser-gfm)）。ASCII だけを残す行が当てはまるのは `input: kramdown` に切り替えたサイトだけだ。また、**このツールの Bitbucket オプションは現在 `markdown-` プレフィックスを出力する**が、Bitbucket Cloud が実際に付ける id は `markdown-header-...` なので、ツールが直るまでは生成したリンクの `markdown-` を `markdown-header-` に書き換えてほしい。Hugo（goldmark、v0.60 からの既定レンダラー）や MkDocs には独自の id ルールがある。表にないターゲットでは、TOC をコミットする前にレンダリング後のページで実際の id を確認すること。
 
 ## slugify アルゴリズム、4 通りの実装
 
@@ -38,7 +40,7 @@ Hugo + goldmark（v0.62 以降のデフォルト）は GitHub ルールにかな
 | GitHub | `quick-start-setting-up-sso-auth-20` |
 | GitLab | `quick-start-setting-up-sso-auth-20` |
 | Jekyll | `quick-start-setting-up-sso-auth-20` |
-| Bitbucket | `markdown-quick-start-setting-up-sso-auth-20` |
+| Bitbucket Cloud | `markdown-header-quick-start-setting-up-sso-auth-20` |
 
 ここまでは一致。次に Unicode の見出し：`## クイックスタート`
 
@@ -46,10 +48,10 @@ Hugo + goldmark（v0.62 以降のデフォルト）は GitHub ルールにかな
 |---|---|
 | GitHub | `クイックスタート` |
 | GitLab | `クイックスタート` |
-| Jekyll | （slug 後は空——kramdown はレンダリング側でフォールバックの id を割り当てる） |
-| Bitbucket | `markdown-クイックスタート` |
+| kramdown（`input: kramdown`） | `section`（ASCII が 1 文字も残らない） |
+| Bitbucket Cloud | ここでは示さない。Python-Markdown の slug 処理で非 ASCII が除去されるため、レンダリング後の id を確認すること |
 
-Jekyll classic はこの一歩でこける。サイトが既定の `auto_ids` 付き `kramdown` を使っていて、見出しに非 ASCII を含むと、該当アンカーは空になるか、レンダラー側でフォールバックの一般 id が振られる。Jekyll 側の修正は Unicode 対応の slugger に乗り換えること——較新版 kramdown と Jekyll プラグイン系にバリアントがある。レンダラー側がアンカーに Unicode を保持するようになったら、本ジェネレーターを GitHub 形式に切り替えれば TOC が一致する。古い Jekyll 同梱のクラシック kramdown は設計上 ASCII-only。アップグレードできないなら、見出しから非 ASCII を外す方が良い——レンダラーに勝手に書き換えられる TOC をコミットするよりまし。
+kramdown 独自のパーサーはここで破綻する。ASCII の英字を含まない見出しはすべて `section`、`section-1`……になる（[kramdown auto_ids](https://kramdown.gettalong.org/converter/html.html#auto-ids)）。このツールの Jekyll オプションはこうしたアンカーを空のままにするので、どちらにしてもリンクは飛ばない。Jekyll サイトに非 ASCII の見出しがあるなら、既定の `input: GFM` を使い、TOC は GitHub 形式で生成すること。
 
 最後にもう 1 ケース——重複した見出し：
 
@@ -62,8 +64,8 @@ Jekyll classic はこの一歩でこける。サイトが既定の `auto_ids` �
 
 | 形式 | アンカー |
 |---|---|
-| GitHub / GitLab / Jekyll | `examples`、`curl`、`examples-1`、`python` |
-| Bitbucket | `markdown-examples`、`markdown-curl`、`markdown-examples_1`、`markdown-python` |
+| GitHub / GitLab / kramdown | `examples`、`curl`、`examples-1`、`python` |
+| Bitbucket Cloud | `markdown-header-examples`、`markdown-header-curl`、`markdown-header-examples_1`、`markdown-header-python` |
 
 Bitbucket だけ仲間外れ。重複カウンターをハイフンではなくアンダースコアで付ける。他の主要レンダラーは全部 `-N`。
 
@@ -76,7 +78,7 @@ TOC でよくある罠が「stale TOC」差分。2,000 行のオペレーショ�
 
 本ツールの marker mode はパターン 1 の実装。Markdown を貼り付け、Marker mode を on にすれば、マーカー間に再生成された TOC を含む完全な Markdown が返る。マーカーがまだ無いドキュメントなら、最初の見出しの直前に新しいマーカー付きブロックが挿入されるので、一度コミットすればそれ以降はマーカー運用に乗る。
 
-この約束事は [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)（webpack docs、Mocha、Sass などが採用する npm パッケージ）、[`gh-md-toc`](https://github.com/ekalinin/github-markdown-toc)（Kubernetes ドキュメントが使う shell ツール）、各種エディタプラグインの慣例と揃えた形。HTML コメントマーカーは可搬性が高い：GitHub、GitLab、Bitbucket でも、HTML コメントをコメントとして扱う SSG ならどれでも認識する。
+`<!-- toc -->` / `<!-- /toc -->` は npm パッケージ [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc) が使うマーカーなので、ここで用意したファイルはあとから `markdown-toc -i` で保守できる。GitHub と GitLab は HTML コメントを表示しない。Bitbucket Cloud は生の HTML をエスケープするため、マーカーが文字として表示される。
 
 ## いずれぶつかる 5 つの罠
 
@@ -88,7 +90,7 @@ TOC でよくある罠が「stale TOC」差分。2,000 行のオペレーショ�
 
 3. **見出し内のインライン書式**。`## **Important**: Backups` の TOC ラベルは太字を含み、アンカーは平文を使うべき。これを取り違えると `\`code\`` を anchor の一部に取り込んだりする。slug 用にはインライン syntax を剥ぎ、ラベルには元の Markdown を残すのが正解。
 
-4. **H レベルをまたぐ重複見出し**。`## Examples` と `### Examples` は両方とも `examples` に slug 化され、2 つ目は `examples-1` に。同 H レベル内でしか重複処理しないジェネレーターは、レベル跨ぎでリンクを壊す。
+4. **H レベルをまたぐ重複見出し**。`## Examples` と `### Examples` は両方とも `examples` に slug 化され、2 つ目は `examples-1` になる。レンダラーは TOC に含めない見出しも含めて文書内のすべての見出しを数えるが、このツールは選んだレベル範囲内の見出ししか数えない。H1 を除外していて文書に `# Examples` と `## Examples` があると、ツールは `#examples` にリンクし、GitHub はこの H2 に `examples-1` を割り当てる。
 
 5. **マーカーが既存のケース**。ドキュメントに既に `<!-- toc -->` ... `<!-- /toc -->` がある状態で素朴に "挿入" すると、TOC が 2 つになる。正しい挙動は既存マーカーを検出してその中身を置換すること、append ではない。
 
@@ -96,7 +98,7 @@ TOC でよくある罠が「stale TOC」差分。2,000 行のオペレーショ�
 
 ### pre-commit hook：コミット時に TOC を再生成
 
-TOC を同期し続ける一番きれいな方法は、コミット時に古い TOC で fail させて、ワンキー修復を用意すること。`markdown-toc`（npm）や類似 CLI と `pre-commit` hook の組み合わせ：
+TOC を同期し続ける一番きれいな方法は、コミット時に古い TOC で fail させて、ワンキー修復を用意すること。`markdown-toc`（npm）と `pre-commit` hook の組み合わせ（スクリプトは GNU の `md5sum` を使う。macOS では `md5 -q` に置き換える）：
 
 ```bash
 #!/bin/sh
@@ -134,14 +136,12 @@ jobs:
 
 ### Jekyll：slugger を TOC に揃える
 
-Jekyll サイトに非 ASCII の見出しがあるなら、TOC をコミットする前に slugger を調整：
+Jekyll サイトに非 ASCII の見出しがあるなら、Jekyll の既定である GFM パーサーを使う（変えていたら戻す）：
 
 ```yaml
 # _config.yml
 kramdown:
-  syntax_highlighter: rouge
-  toc_levels: 1..3
-  transliterate: false
+  input: GFM
 ```
 
 その上で GitHub 形式で TOC を生成すれば、結果アンカーと一致する。
@@ -155,18 +155,20 @@ TOC ジェネレーターを選ぶときに体感差が出る項目と、本ツ�
 | フェンスドコードブロック（``` と `~~~`）をスキップ | する |
 | ATX と setext の両見出し | 両方 |
 | 既存の `<!-- toc -->` ブロックをインプレース置換 | する |
-| 1 ページに 4 形式のアンカー | GitHub / GitLab / Jekyll / Bitbucket |
+| 1 ページに 4 形式のアンカー | GitHub / GitLab / Jekyll（kramdown パーサー）/ Bitbucket（プレフィックスに `header-` の追加が必要、上記参照） |
 | Bitbucket の `_N` 重複処理 | する |
+| レベル範囲外の見出しも重複判定に数える | しない（落とし穴 4 参照） |
 | アンカーには inline Markdown を剥がし、ラベルには残す | する |
 | 見出しレベルフィルター + H1 トグル | あり |
 | 完全にブラウザ内で動作 | する |
 
-ワークフローがサーバーサイド寄りで CLI が欲しいなら、[`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)（npm、GitHub 形式）が最も実戦投入されている選択肢——webpack docs、Mocha、Sass、Prettier などが採用。Web 上で貼ってコピーしたいだけなら、本ツールの 4 形式サポートとマーカー認識置換が「方言を選び間違えて作り直す」往復を 1 周省いてくれる。
+ワークフローがサーバーサイド寄りで CLI が欲しいなら、[`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)（npm、GitHub 形式）が同じマーカーを使う。Web 上で貼ってコピーするだけなら、ここの 4 形式対応とマーカー認識の置換で、ターゲットが GitHub でない場合の手戻りを減らせる。
 
 ## 関連リンク
 
 - [GitHub Flavored Markdown 仕様](https://github.github.com/gfm/) — 仕様自体はアンカー slug を定義しない（それは GitHub レンダラーの挙動）が、slug ルールが依拠する見出しとコードブロックの解析を規定している
 - [kramdown auto_ids](https://kramdown.gettalong.org/converter/html.html#auto-ids) — Jekyll の slug ルールの権威ドキュメント
 - [GitLab Flavored Markdown リファレンス](https://docs.gitlab.com/ee/user/markdown.html) — CommonMark 上での GitLab 拡張
-- [Bitbucket Markdown リファレンス](https://support.atlassian.com/bitbucket-cloud/docs/use-mark-up-in-comments-and-pull-request-descriptions/) — アンカープレフィックスと重複ルール
+- [Python-Markdown toc 拡張](https://python-markdown.github.io/extensions/toc/) — Bitbucket Cloud の id が従う slug 処理と `_N` の重複処理
+- [kramdown-parser-gfm](https://github.com/kramdown/parser-gfm) — Jekyll が既定で使う GFM パーサーと、その GitHub 形式の見出し id
 - ZeroTool [Slugify](/ja/tools/slugify/)、[Markdown Linter](/ja/tools/markdown-linter/)、[Markdown テーブルジェネレーター](/ja/tools/markdown-table-generator/) — Markdown ワークフローの姉妹ツール

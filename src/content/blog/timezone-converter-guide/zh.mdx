@@ -2,11 +2,13 @@
 title: "时区转换：IANA、夏令时与让工程师头疼的 UTC 偏移"
 description: "拆解 IANA 时区、夏令时切换与 UTC 偏移背后的真实机制，附 JavaScript、Python、Go、Java、SQL 的可直接复用的转换代码。"
 pubDate: 2026-05-06
+updatedDate: 2026-10-01
 lang: "zh"
+noindex: true
 tags: ["时区", "iana", "dst", "datetime", "开发工具"]
 ---
 
-"上午 9 点 PT" 在二月份是 UTC-08:00，到了四月就变成 UTC-07:00；一份跨过春季夏令时切换的日历邀约会悄无声息地偏移一小时。按本地时钟跑的回填任务，会在秋季回拨那天跑两遍。巴西 2019 年取消夏令时之后，圣保罗的客户在订单历史里看到一段一小时的空白。每个 bug 的修法都从同一个词开始：**IANA**。
+"上午 9 点 PT" 在二月份是 UTC-08:00，到了四月就变成 UTC-07:00；一份跨过春季夏令时切换的日历邀约会悄无声息地偏移一小时。按本地挂钟时间跑的回填任务，在秋季回拨那天重复的那一小时里可能跑两次。写死了巴西旧夏令时规则的代码，在巴西 2019 年取消夏令时后会把圣保罗时间算错一小时。这些问题的解法都从同一个词开始：**IANA**。
 
 本文讲清楚时区运算的真实机制，以及怎么不自己手搓夏令时表也能完成跨时区转换。
 
@@ -42,7 +44,7 @@ IANA 时区数据库（也叫 `tz`、`zoneinfo` 或 Olson 数据库）记录了 
 
 - Linux 上的 glibc 和 musl
 - macOS 与 iOS
-- Windows 10+（通过 ICU）
+- Windows 有自己的时区数据；Windows 10 起自带的 ICU 库也包含 IANA tzdata
 - Java 的 `java.time` 包
 - Python 的 `zoneinfo` 模块（Python 3.9+）
 - 现代浏览器，通过 `Intl.DateTimeFormat` 暴露
@@ -123,7 +125,7 @@ fmt.Println(local.UTC().Format(time.RFC3339))
 // 2026-05-06T13:30:00Z
 ```
 
-`time.LoadLocation` 读系统的 tzdata。在缺少 `/usr/share/zoneinfo` 的 scratch 或 distroless 容器镜像里，这个调用会返回 error，忽略 error 的代码会默默退化成 UTC。要么装 `tzdata` 包、要么把 `zoneinfo` 拷进镜像，要么在 Go 1.15+ 里 `import "time/tzdata"`，把数据库直接嵌进二进制。
+`time.LoadLocation` 读系统的 tzdata。在缺少 `/usr/share/zoneinfo` 的 scratch 或 distroless 容器镜像里，这个调用会返回错误和一个 nil 的 `*Location`；忽略错误的代码接着在 `time.Date` 或 `Time.In` 里 panic。解决办法：安装 `tzdata` 包，把 `zoneinfo` 拷进镜像，或者在 Go 1.15+ 里 import `time/tzdata`，把数据库嵌进二进制。
 
 ## Java 里的转换
 
@@ -168,10 +170,10 @@ MySQL 安装时会建好时区表，但**不会**填充数据。在你用 `mysql
 ## 常见坑
 
 - **把本地时间存进数据库。** 存 UTC；如果之后还要还原本地时钟，用单独一列存 IANA 时区。
-- **拿偏移当标识符。** `+05:30` 没法告诉你用户是在印度（无夏令时）、斯里兰卡（无夏令时），还是尼泊尔某地（`+05:45`）。存 IANA。
+- **拿偏移当标识符。** `+05:30` 没法告诉你用户是在印度还是斯里兰卡，偏移也说明不了将来的夏令时变化。存 IANA。
 - **相信 `new Date('2026-05-06')`。** 按 ES5 规范，纯日期 ISO 字符串解析为 UTC 零点；但带时间不带偏移的字符串（`'2026-05-06 09:30'`）解析为本地时间。永远显式带上偏移消除歧义。
 - **写死 "America/Los_Angeles 是 UTC-08:00"。** 从春天到秋天它都是 UTC-07:00。
-- **跑 cron 时无视夏令时。** 02:30 的每日任务一年里有一天跑零次，另一天跑两次。如果时机重要，用 UTC 写 cron 表达式。
+- **跑 cron 时无视夏令时。** 在美国时区，春季拨快那天没有 02:30，秋季回拨那天 01:30 出现两次；这些时刻的任务是跳过、跑一次还是跑两次，取决于 cron 的实现。如果时机重要，按 UTC 排程。
 
 ## 小结
 

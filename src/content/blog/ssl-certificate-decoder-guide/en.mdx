@@ -2,11 +2,13 @@
 title: "SSL Certificate Decoder: A Practical Guide to X.509 PEM Inspection"
 description: "Decode any X.509 PEM certificate to read Subject, Issuer, SANs, validity, key type, signature algorithm, and fingerprints — without uploading the file or running OpenSSL."
 pubDate: 2026-05-11
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["ssl-certificate-decoder", "x509", "tls", "developer-tools"]
 ---
 
-A wildcard renewal is half an hour from going live, the staging endpoint is throwing `SSL_ERROR_BAD_CERT_DOMAIN`, and the only thing you have in your terminal scrollback is a PEM block. You want to see the SAN list, the expiry, and the SHA-256 fingerprint before the deploy window closes. `openssl x509 -text` works, but five flags later you are still scrolling for the one field that matters. A focused decoder is faster.
+A common moment for a certificate decoder: a staging endpoint returns `SSL_ERROR_BAD_CERT_DOMAIN` shortly before a deploy, and all you have is a PEM block. You want the SAN list, the expiry and the SHA-256 fingerprint. `openssl x509 -text` shows them, along with everything else; a focused decoder puts those fields first.
 
 [Decode a certificate now →](/tools/ssl-certificate-decoder)
 
@@ -45,13 +47,13 @@ The decoder colour-codes these states inline. The `Days Left` row is what most o
 
 ## Subject vs Issuer vs SAN — the Modern Hostname Story
 
-A 2026 browser does not look at the Subject `CN` to match a hostname. It looks at the `Subject Alternative Name` (SAN) extension. Chrome dropped CN fallback in 58, Firefox in 48, Safari in iOS 13. If you have a cert with `CN=example.com` but no SAN entry, every major browser will reject it.
+Browsers do not use the Subject `CN` to match a hostname; they use the `Subject Alternative Name` (SAN) extension. Chrome stopped falling back to the CN in version 58, and Apple requires the name in the SAN since iOS 13 and macOS 10.15. If you have a cert with `CN=example.com` but no SAN entry, current browsers reject it.
 
 So when you decode a cert, read in this order:
 
 1. **SAN** — what hostnames will this certificate actually cover?
 2. **Subject** — is the CN consistent? (Mostly for human reading; CAs still set it.)
-3. **Issuer** — who signed this? (Tells you whether to expect Let's Encrypt R3, DigiCert Global Root, ZeroSSL, etc.)
+3. **Issuer** — who signed this? (Tells you whether to expect a Let's Encrypt intermediate such as R10 or E5, DigiCert, ZeroSSL, etc.)
 
 A typical Let's Encrypt cert today has SAN entries for the apex (`example.com`) and the `www` subdomain. A wildcard cert has `*.example.com` as a SAN — not as the CN. The decoder groups SAN entries by type (DNS, IP, URI, email) so you can spot mis-issued wildcards quickly.
 
@@ -63,7 +65,7 @@ For a TLS server certificate you'd expect:
 
 ```
 Key Usage: digitalSignature, keyEncipherment
-EKU      : serverAuth, clientAuth
+EKU      : serverAuth (some certificates also carry clientAuth)
 ```
 
 For a CA certificate (intermediate or root) you'd expect:
@@ -81,11 +83,11 @@ The fingerprints in the decoder are SHA-256, SHA-1, and MD5 digests of the full 
 
 | Hash | What it's for in 2026 |
 |------|----------------------|
-| SHA-256 | The default identifier. HSTS preload submissions, certificate pinning in mobile apps, Subresource Integrity for some standards, and `openssl x509 -fingerprint -sha256` all expect this. |
+| SHA-256 | The default identifier; `openssl x509 -fingerprint -sha256` prints it, and most current tools and inventories record it. |
 | SHA-1 | Legacy tooling: older monitoring scripts, internal CMDBs that have not migrated, some IDS/IPS signatures. Don't use for new pinning. |
 | MD5 | Compatibility with very old `openssl` output. Cryptographically broken — read-only purposes only. |
 
-For pinning, copy the SHA-256 row. For grepping log files where someone wrote down a hash, the decoder gives you all three so you don't have to guess.
+To identify a certificate file, use the SHA-256 row. Certificate pinning usually pins the SHA-256 hash of the public key (SPKI), not of the whole certificate, so it survives renewals with the same key; this decoder does not compute the SPKI hash. For grepping log files where someone wrote down a hash, the decoder gives you all three fingerprints so you don't have to guess.
 
 ## RSA, ECDSA, and Ed25519 — What the Public Key Field Tells You
 
@@ -101,11 +103,11 @@ For RSA, the key bytes are themselves an ASN.1 SEQUENCE `{ modulus, exponent }`.
 
 For ECDSA you get the named curve OID. The three you will see in practice:
 
-- `prime256v1` (also called `P-256` or `secp256r1`) — the default for Let's Encrypt ECDSA chains
+- `prime256v1` (also called `P-256` or `secp256r1`) — the default ECDSA curve for Certbot keys since Certbot 2.0
 - `secp384r1` (`P-384`) — what some EV certs and Windows endpoints prefer
 - `secp521r1` (`P-521`) — rare in the wild; mostly internal compliance
 
-Ed25519 certs are still uncommon for public web TLS (Chrome only added support in version 109) but show up in internal mesh TLS, code signing, and SSH. The decoder labels them by OID so you don't have to memorise the hex.
+Ed25519 certificates are not used for public web TLS today, because the CA/Browser Forum Baseline Requirements allow only RSA and ECDSA keys for publicly trusted TLS certificates; they appear in private PKI and internal mesh TLS. The decoder labels them by OID so you don't have to memorise it.
 
 ## Bundle Files and What Comes Out
 
@@ -117,7 +119,7 @@ The ZeroTool decoder takes the first certificate in the input and decodes it, wi
 
 A few patterns are worth flagging in operational reviews:
 
-- **`notAfter` more than 13 months from `notBefore` on a public TLS leaf.** Apple, Mozilla, and Google all cap public TLS lifetimes at 398 days since September 2020. Longer means either a non-public CA, a misconfigured private PKI, or an old cert from before the cap.
+- **A validity period longer than the current cap on a public TLS leaf.** The CA/Browser Forum Baseline Requirements limited public TLS certificates to 398 days from September 2020 and, with ballot SC-081, to 200 days for certificates issued from 15 March 2026. A longer period means a non-public CA, a misconfigured private PKI, or an old certificate.
 - **Missing SAN but populated CN.** As noted above, browsers will reject this — useful for catching legacy internal-CA workflows that are about to break a new deployment.
 - **CA = true on a server cert.** Either the cert is mis-issued or you are looking at an intermediate that someone confused with the leaf.
 - **OCSP URLs in the AIA but no `OCSP Must-Staple` flag.** Fine for most deployments, but if your environment requires stapling enforcement you need to add `OCSP Must-Staple` (OID 1.3.6.1.5.5.7.1.24) at issuance time.
@@ -136,7 +138,7 @@ openssl x509 -in cert.pem -noout -dates -subject -issuer -ext subjectAltName
 
 Pasting a production certificate into an unknown web tool is a soft-leak: even though the certificate is public information that any TLS client receives, the *act of pasting* tells the server that someone at your company is debugging that cert at that moment. Some compliance regimes flag that pattern in audit logs.
 
-The ZeroTool decoder runs entirely in the browser tab. The PEM never reaches a server — there is no network request after the initial page load. You can verify this by opening DevTools → Network, pasting a PEM, decoding it, and confirming the request count does not change.
+The ZeroTool decoder runs entirely in the browser tab: the PEM is never sent anywhere. The page itself loads analytics and ads like the rest of the site, but none of those requests carry the certificate. You can verify this by opening DevTools → Network, pasting a PEM, decoding it, and checking that no new request contains it.
 
 ## Further Reading
 

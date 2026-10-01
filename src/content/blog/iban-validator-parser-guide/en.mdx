@@ -2,11 +2,13 @@
 title: "IBAN Validator: Catching the Wrong Bank Account Before It Costs You"
 description: "Inside the mod-97 algorithm, the country-by-country BBAN structure, and the OCR-era pitfalls that bounce SEPA payments. With a free browser-side IBAN checker."
 pubDate: 2026-05-13
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["iban-validator-parser", "iban", "sepa", "payments", "developer-tools"]
 ---
 
-It is Monday morning, the supplier's invoice landed in your inbox as a scanned PDF, and the IBAN your OCR pulled out reads `DE89 3704 0044 0532 O130 00`. Notice the letter `O` in the second-to-last group? You almost did not. Your last accounts-payable batch bounced an EUR 12,500 payment because of the same trick — a `0` that became an `O` somewhere between the printer and the OCR — and the bank charged 25 EUR for the return.
+A common accounts-payable failure: an IBAN read by OCR from a scanned invoice comes out as `DE89 3704 0044 0532 O130 00`. The letter `O` in the second-to-last group is easy to miss, and a payment sent with it is rejected or returned by the bank.
 
 A single mod-97 check would have caught it. The IBAN standard was designed for exactly this scenario.
 
@@ -54,9 +56,9 @@ Why 97? Three reasons:
 
 - **Prime.** Picking a prime modulus maximises the chance that an arbitrary digit error changes the remainder, because no smaller factor can absorb the error.
 - **Two digits.** A remainder mod 97 fits in two characters, which is what the standard allocates.
-- **High coverage of common typos.** It catches every single-character error and every transposition of two adjacent digits with overwhelming probability — formal analyses put the joint coverage above 99.5%.
+- **High coverage of common typos.** ISO/IEC 7064 MOD 97-10, the scheme the IBAN uses, is designed to detect every single-character substitution and every transposition of two adjacent characters.
 
-The clever bit is the **rotation** in step 2. Without it, you would only catch errors in the BBAN; the country code would be ignored by the modulo. Rotating the country and check digits to the end means they are part of the integer that gets divided, so swapping `DE` for `FR` or fat-fingering the check digits also breaks the math.
+The **rotation** in step 2 moves the check digits to the end, where ISO/IEC 7064 expects them. The country code is part of the number that gets divided, so swapping `DE` for `FR` or fat-fingering the check digits also breaks the math.
 
 ## The BBAN Is Where Countries Get Creative
 
@@ -73,11 +75,11 @@ Beyond the 4-character prefix, the BBAN format is national. The SWIFT IBAN Regis
 | Italy (IT) | 27 | 1-letter national check + 5-digit bank + 5-digit branch + 12-char account |
 | Saudi Arabia (SA) | 24 | 2-digit bank + 18-char account |
 | Brazil (BR) | 29 | 8-digit bank + 5-digit branch + 10-digit account + 1-letter account type + 1-char holder |
-| Mauritius (MU) | 30 | 4-letter bank + 4-digit branch + 15-digit account + 3-letter reserved |
+| Mauritius (MU) | 30 | 6-char bank code (4 letters + 2 digits) + 2-digit branch + 12-digit account + `000` + 3-letter currency |
 
 Two patterns stand out:
 
-**The Latin block (FR, IT, BE, MC, MR, PT, SM, ST, TN)** all embed an extra **national** check digit inside the BBAN — independent of the mod-97 at the IBAN level. France's `RIB key` is a separate mod-97 over the bank + branch + account. Italy's first BBAN character is a CIN letter (`A`–`Z`) computed via a position-weighted table. If you only do the IBAN mod-97 you'll catch most errors, but some single-character mistakes inside the BBAN still pass at the IBAN level and only fail when the bank runs the national check. That is why validation libraries that claim "100% accuracy" almost always lie — they validate the IBAN structure but skip the national-level checks.
+**The Latin block (FR, IT, BE, MC, MR, PT, SM, ST, TN)** all embed an extra **national** check digit inside the BBAN — independent of the mod-97 at the IBAN level. France's `RIB key` is a separate mod-97 over the bank + branch + account. Italy's first BBAN character is a CIN letter (`A`–`Z`) computed via a position-weighted table. The IBAN mod-97 already catches every single-character substitution, so the national check adds most value elsewhere: when the national account number is typed and the IBAN is generated from it, a wrong digit produces an IBAN with valid check digits, and only the national check rejects it.
 
 **The English-speaking block (GB, IE, MT)** uses **letters for the bank code**. Those letters are the start of bank short names (`WEST`, `BARC`, `LOYD`, `HSBC`), which is why parsing a GB IBAN gives you something more readable than a German one: you can guess `BARC` is Barclays without a lookup table.
 
@@ -97,19 +99,19 @@ Scanned invoices fail in predictable ways. The most common substitutions:
 | `B` | `8` | Compressed bank statement output |
 | `Z` | `2` | Continental European handwriting |
 
-The mod-97 catches every single one of these because changing one digit by one position changes the remainder. ZeroTool's validator will tell you *which* substitution likely happened — the error message points at "Checksum failed, check digits or account body are wrong." From there you scan for the visually-similar pair.
+The mod-97 catches every one of these, because each is a single-character substitution. ZeroTool's validator reports "Checksum failed (mod 97 ≠ 1). Check digits or account body are wrong." It does not say which character is wrong; scan the IBAN for the visually similar pairs above.
 
 ### Whitespace and zero-width characters
 
-Copy-paste from PDF or Outlook frequently brings in non-breaking spaces (`U+00A0`), zero-width joiners (`U+200D`), and the occasional BOM. Most homegrown IBAN check scripts only strip ASCII space and break on these. ZeroTool's normaliser strips every code point that is not `A`–`Z` or `0`–`9` before checking, which is the correct rule per ISO 13616 — the spec says any non-alphanumeric in the human-readable form is presentational.
+Copy-paste from PDF or Outlook frequently brings in non-breaking spaces (`U+00A0`), zero-width joiners (`U+200D`), and the occasional BOM. Scripts that only strip ASCII spaces break on these. ZeroTool's normaliser uppercases the input and removes every character that is not `A`–`Z` or `0`–`9` before checking. ISO 13616 defines an electronic format with no separators and a printed format grouped in fours with spaces, so removing spaces is expected; removing other characters is a convenience that also hides stray punctuation.
 
 ### Leading zero loss
 
-Spreadsheets are an IBAN's enemy. Excel will happily reformat `0123` to `123` because it thinks the cell is a number. By the time the IBAN gets back to a payment system, the length is wrong and the mod-97 fails. The fix is structural — store IBANs as text columns and never parse them as numbers — but a validator catches the symptom.
+A full IBAN starts with letters, so spreadsheets keep it as text. The damage happens in the parts: national account numbers and bank codes stored in separate columns lose their leading zeros when Excel converts them to numbers (`0123` becomes `123`), and an IBAN rebuilt from those columns has the wrong length. Store every part as text.
 
 ### Wrong country code
 
-`DE` for German and `DK` for Danish are right next to each other on most keyboards, and the IBAN lengths differ by 4 characters. If someone copy-pastes a German IBAN body under a Danish prefix, the length check fails immediately. The validator surfaces this with a specific error: "Wrong length for Denmark: expected 18, got 22."
+`DE` (Germany) and `DK` (Denmark) differ by one letter, and their IBAN lengths differ by 4 characters. If someone puts a German IBAN body under a Danish prefix, the length check fails immediately. The validator surfaces this with a specific error: "Wrong length for Denmark: expected 18, got 22."
 
 ### Lowercase letters
 
@@ -166,12 +168,12 @@ For a more defensive setup, debounce the validator if you also call a paid IBAN 
 
 You have three places to put an IBAN validator: a client-side library, a SaaS API, or a browser tool.
 
-| Option | Latency | Coverage | Cost | Privacy |
-|--------|---------|----------|------|---------|
-| `iban` (npm, ~28KB) | < 1ms | mod-97 + length | Free | Client-side |
-| ZeroTool IBAN Validator & Parser | < 1ms | mod-97 + length + BBAN split | Free | Client-side |
-| iban.com REST API | ~150ms | mod-97 + bank lookup + IBAN-to-BIC | Paid (per call) | Server-to-server |
-| openiban.com REST API | ~200ms | mod-97 + length | Free, rate-limited | Server-to-server |
+| Option | Coverage | Cost | Privacy |
+|--------|----------|------|---------|
+| `iban` (npm) | mod-97 + length | Free | Client-side |
+| ZeroTool IBAN Validator & Parser | mod-97 + length + BBAN split | Free | Client-side |
+| iban.com REST API | mod-97 + bank lookup + IBAN-to-BIC | Paid (per call) | Server-to-server |
+| openiban.com REST API | mod-97 + length | Free, rate-limited | Server-to-server |
 
 The right answer depends on what question you are asking. For a free form on a personal project, the npm library or the ZeroTool page are both fine. For a payment processor moving real money, the API tier — with its national-check-digit coverage and IBAN-to-BIC mapping — earns its fee back the first time it catches an issue your local validator missed.
 

@@ -2,11 +2,13 @@
 title: "为什么 event.keyCode 在骗你：现代 JavaScript 键盘事件指南"
 description: "别再瞎猜 event.key、event.code 和 keyCode 该用哪个。看清浏览器到底触发了什么、修饰键在何时翻面、为什么输入法合成会破坏单键处理器、以及如何写出在非 QWERTY 布局下也能用的快捷键。"
 pubDate: 2026-05-23
+updatedDate: 2026-10-01
 lang: "zh"
+noindex: true
 tags: ["javascript", "keyboard", "developer-tools", "ui", "events"]
 ---
 
-上周五你接好了一个命令面板。Cmd+K 打开它，`/` 聚焦搜索框，Esc 关闭。在你的 QWERTY MacBook 上一切顺畅。周一早上，一位法国同事汇报说她的 AZERTY 键盘按下去毫无反应，紧接着德国 PM 告诉你不按 Shift 根本打不出 `/`。你打开 DevTools，把 `console.log(e.key, e.code, e.keyCode)` 塞进处理函数，灌下三杯咖啡，开始琢磨为什么 `e.key === "/"` 有时是斜杠、有时是 "Shift"、有时干脆是 `Dead`。
+一个典型的快捷键 bug：命令面板在 QWERTY 的 Mac 上用 Cmd+K 打开、`/` 聚焦搜索，一切正常；但使用法语 AZERTY 布局的同事反映 `/` 要按 Shift，快捷键根本不触发。在处理函数里打印 `e.key, e.code, e.keyCode`，看到的值会随布局、修饰键和死键一起变化。
 
 [打开 JavaScript Keycode Explorer →](/zh/tools/keycode-explorer/)
 
@@ -20,7 +22,7 @@ tags: ["javascript", "keyboard", "developer-tools", "ui", "events"]
 |---|---|---|---|
 | `event.key` | 应用键盘布局和修饰键之后产生的字符或命名动作 | 用户期望屏幕上出现这个字符 | `"a"`，按住 Shift 则是 `"A"` |
 | `event.code` | 标准美式 QWERTY 上的物理按键位置 | 用户的手指落在键盘上同一个物理位置 | `"KeyA"` |
-| `event.keyCode` | 一套追溯到 PS/2 扫描码的遗留数字映射 | 你还活在 2003 年 | `65` |
+| `event.keyCode` | 遗留的数字编码，实际上就是该键的 Windows 虚拟键码 | 你还想停留在 2003 年 | `65` |
 
 整个混乱可以压成一句话：**`key` 回答的是"用户产生了什么字符？"，`code` 回答的是"用户的手指落在键盘的哪个位置？"**，而 `keyCode` 在现代浏览器里两个都答不准。
 
@@ -40,7 +42,7 @@ Keycode Explorer 把这三者并排展现。在捕获区按任意键，你会看
 
 `event.code` 是基于美式 QWERTY 布局的物理按键位置。当用户的肌肉记忆指向键盘上的某个位置而非某个字符时，它就是正确选择。两个经典场景：
 
-- **WASD 游戏操控**。在 AZERTY 上，W 所在的位置是 QWERTY 的 Z。如果你判断 `event.key === "w"`，法国玩家按 Z 才能前进。如果你判断 `event.code === "KeyW"`，物理位置不会因为布局而漂移。
+- **WASD 游戏操控。** 在 AZERTY 上，WASD 那几个位置的键印着 Z、Q、S、D。如果判断 `event.key === "w"`，法国玩家得去最下面一排找 W；判断 `event.code === "KeyW"`，物理位置就不变。
 - **不带修饰键的快捷键**。`event.code === "Slash"` 永远匹配物理上的 `/` 键，不管用户是不是要按 Shift 才能打出这个字符。再配合 `e.shiftKey === false`，绑定就很精确。
 
 `event.code` 的取值来自 [UI Events code Values](https://www.w3.org/TR/uievents-code/) 规范。它们长得像 `KeyA`、`Digit1`、`Numpad9`、`ArrowDown`、`IntlBackslash`、`Lang1`。没必要去背这份清单——按一下键，Keycode Explorer 立刻把对应取值显示出来。
@@ -93,13 +95,13 @@ document.addEventListener('keydown', (e) => {
 });
 ```
 
-复制，粘贴，删掉与你的绑定无关的条件，搞定。这套写法没什么神奇之处——但拿到形状正确的样板代码，能把"我这边没问题、他们那边不灵"这类 bug 砍掉八成左右。
+复制、粘贴，删掉跟你的绑定无关的条件，就完成了。这个模式没有任何特别之处。
 
 ## 输入法合成不是你能绕过去的 bug
 
 在 macOS 上的 Chrome 里打开 Explorer，激活日文或中文输入法。输入 "kanji"——你会得到一连串 `event.isComposing === true` 且 `event.key === "Process"` 的 `keydown` 事件。输入法正在把你的按键收集到候选窗里；浏览器在告诉你"先别把它们当字符处理"。Explorer 把 `isComposing` 直接放在属性网格里，你能眼看着它翻面。
 
-规则很短：**当 `event.isComposing === true`，你的单键处理函数必须早返回。** 否则在合成「日本語」的时候按 `n` 触发"跳到下一项"，快捷键不仅会触发，还会把那个按键从输入法里抢走，于是它就成了一种安静地写进 `Sentry`、被标记为 `keystroke disappeared`、谁也不会修的 bug——因为团队里没人用输入法。
+规则很简单：**`event.isComposing === true` 时，单键处理函数必须提前返回。** 否则在输入「日本語」的过程中按 `n`，会触发「跳到下一个」并吞掉 IME 的这次按键——团队里没人用输入法时，这种 bug 很容易被漏掉。
 
 Explorer 生成的代码片段目前不会自动注入 `isComposing` 守卫，这个决定属于你的处理函数语义。但只要你在属性网格里看到 `Process` 和 `isComposing: true`，必要的守卫长什么样就一目了然：
 
@@ -114,7 +116,7 @@ document.addEventListener('keydown', (e) => {
 
 Explorer 对这一点很坦白：移动端的物理键盘事件并不可靠。iOS Safari 和大多数 Android 浏览器上的软键盘在字符输入时不会稳定触发 `keydown`，用户拿到的反而是聚焦字段上的 `input` 事件，里面是最终的字符串。Keycode Explorer 会检测粗指针（触摸设备），呈现一个单字符 `<input>` 作为兜底，读取 input 事件并推断出一个 `key` 值，但遗留的 `keyCode` / `which` 字段无法老实填出来。
 
-这是有意为之。我们不会为移动端伪造 `KeyboardEvent` 数据——Web 平台压根没法把软键盘从未产出的布局/扫描码信息恢复出来。要做完整的键盘事件审视，就用桌面浏览器。要做移动端键盘交互，就围绕 `input` 和 `beforeinput` 事件设计——这才是触摸设备上真正的契约。
+Web 平台没法还原软键盘根本没产生的布局或扫描码信息。在这种退化模式下，Explorer 把你输入的字符显示为 `key`，而 `code` 一栏只是根据这个字符推测出来的（`a` 显示 `KeyA`，其他显示 `—`），不要把它当成真实的 `code` 值。要完整查看键盘事件，请用桌面浏览器；要处理移动端键盘，请围绕 `input` 和 `beforeinput` 事件设计，那才是触屏设备上真正可靠的约定。
 
 ## 实用配方
 
@@ -166,7 +168,7 @@ document.addEventListener('keydown', (e) => {
 
 ## 关于 `keypress` 的一句话
 
-旧代码里你还会看到 `keypress`。新代码不要再用它。`keypress` 在 2017 年从 UI Events 规范里被删除，实现也不一致——它只在产生字符的按键上触发，对输入法输入触发不稳定，给你的字符是 `charCode`，而 `charCode` 同样是已废弃属性。Explorer 只监听 `keydown`。文本输入的现代原语是聚焦字段上的 `input` / `beforeinput`；快捷键的现代原语是 `keydown`。
+老代码里还能看到 `keypress`，新代码别再用。UI Events 规范把 `keypress` 标为已弃用，各浏览器的实现也不一致——它只对能产生字符的键触发，IME 输入时触发不可靠，给出的 `charCode` 也已弃用。Explorer 只监听 `keydown`。文本输入用聚焦字段上的 `input` / `beforeinput`，快捷键用 `keydown`。
 
 ## 最近按键：一个小小的 UX 技巧
 
@@ -178,7 +180,7 @@ Toptal 的 `keycode.info` 是经典参考，至今仍然能用。Explorer 的差
 
 - **所有属性同时展示**。`keycode.info` 把现代值放在显眼位置；Explorer 把 `key`、`code`、`keyCode`、`which`、`charCode`、`location`、`repeat`、`isComposing` 全部放进同一张网格，一眼审视一次按键。
 - **修饰键实时呈现**。按住 Shift+Alt 不去按字符键——四枚 pill 在每次 keydown 上更新，让你在真正按下按键之前就能确认修饰键状态。
-- **匹配当前按键的代码片段**。其他工具都打印静态查找表。Explorer 输出的是一段为你最近按下的"按键+修饰键"组合定制的 `keydown` 监听函数，包括在你想要"不带 Ctrl 的按键"时显式加上 `e.ctrlKey === false`。
+- **跟当前按键匹配的代码片段。** Explorer 会针对你刚按下的具体按键与修饰键组合生成一个 `keydown` 监听器，需要排除 Ctrl 时还会特意写上 `e.ctrlKey === false`。
 - **输入法和 `isComposing` 可见**。多数参考工具不暴露 `isComposing`。Explorer 暴露，因为这个标志是输入法相关快捷键 bug 的最大单一来源。
 - **100% 客户端，多语言 SEO 文案**。Explorer 有四个地址——`/tools/keycode-explorer/`、`/zh/tools/keycode-explorer/`、`/ja/tools/keycode-explorer/`、`/ko/tools/keycode-explorer/`——共享同一套 JavaScript 引擎和本地化 UI 文案。
 

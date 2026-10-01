@@ -2,11 +2,13 @@
 title: "Timezone Converter: IANA, DST, and the UTC Offsets That Burn Engineers"
 description: "How IANA timezones, DST transitions, and UTC offsets actually work — plus copy-paste conversion code for JavaScript, Python, Go, Java, and SQL."
 pubDate: 2026-05-06
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["timezone", "iana", "dst", "datetime", "developer-tools"]
 ---
 
-"9 AM PT" means UTC-08:00 in February and UTC-07:00 in April, and a calendar invite that crosses the spring DST transition silently shifts by an hour. A backfill job that uses local wall clock runs twice on the fall-back day. A São Paulo customer sees a one-hour gap in order history after Brazil abolished DST in 2019. The fix in every case starts with the same word: **IANA**.
+"9 AM PT" means UTC-08:00 in February and UTC-07:00 in April, and a calendar invite that crosses the spring DST transition silently shifts by an hour. A backfill job that uses local wall clock can run twice in the repeated hour on the fall-back day. Code that hardcoded Brazil's old DST rules shows São Paulo times an hour off after Brazil abolished DST in 2019. The fix in every case starts with the same word: **IANA**.
 
 This guide unpacks how timezone math actually works and how to convert between zones without rolling your own DST table.
 
@@ -42,7 +44,7 @@ The IANA Time Zone Database (sometimes called `tz`, `zoneinfo`, or the Olson dat
 
 - glibc and musl on Linux
 - macOS and iOS
-- Windows 10+ via ICU
+- Windows ships its own time zone data; since Windows 10 the bundled ICU library also carries IANA tzdata
 - Java's `java.time` package
 - Python's `zoneinfo` module (Python 3.9+)
 - Modern browsers, exposed via `Intl.DateTimeFormat`
@@ -123,7 +125,7 @@ fmt.Println(local.UTC().Format(time.RFC3339))
 // 2026-05-06T13:30:00Z
 ```
 
-`time.LoadLocation` reads the system tzdata. On scratch or distroless container images that ship without `/usr/share/zoneinfo`, the call returns an error and any code that ignores it falls through to UTC. Either install the `tzdata` package, copy `zoneinfo` into the image, or import `time/tzdata` in Go 1.15+ to embed the database in your binary.
+`time.LoadLocation` reads the system tzdata. On scratch or distroless container images that ship without `/usr/share/zoneinfo`, the call returns an error and a nil `*Location`; code that discards the error then panics in `time.Date` or `Time.In`. Either install the `tzdata` package, copy `zoneinfo` into the image, or import `time/tzdata` in Go 1.15+ to embed the database in your binary.
 
 ## Conversion in Java
 
@@ -168,10 +170,10 @@ Sending "9 AM PT" leaves every recipient guessing. Better options, in order:
 ## Common Mistakes
 
 - **Storing local times in the database.** Store UTC; store the IANA zone in a separate column if you need to recover the wall clock later.
-- **Using offsets as identifiers.** `+05:30` does not tell you whether the user is in India (no DST) or Sri Lanka (no DST) or somewhere in Nepal (`+05:45`). Store IANA.
+- **Using offsets as identifiers.** `+05:30` does not tell you whether the user is in India or Sri Lanka, and an offset says nothing about future DST changes. Store IANA.
 - **Trusting `new Date('2026-05-06')`.** A date-only ISO string parses as midnight UTC per ES5, but a string with time but no offset (`'2026-05-06 09:30'`) parses as local time. Always include an explicit offset to remove the ambiguity.
 - **Hardcoding "America/Los_Angeles is UTC-08:00".** It's UTC-07:00 from spring through fall.
-- **Ignoring DST when scheduling cron.** A 02:30 daily job runs zero times one day a year and twice another. If timing matters, use UTC cron expressions.
+- **Ignoring DST when scheduling cron.** In US zones, 02:30 does not exist on the spring-forward day and 01:30 happens twice on the fall-back day; whether a job at those times is skipped, run once or run twice depends on the cron implementation. If timing matters, schedule in UTC.
 
 ## Summary
 

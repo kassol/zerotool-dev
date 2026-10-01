@@ -2,11 +2,13 @@
 title: "Markdown 目录生成器：一个文件，四种锚点方言"
 description: "为 GitHub、GitLab、Jekyll、Bitbucket 生成真正能点的 Markdown 目录。覆盖锚点 slug 算法、重复处理规则、基于 marker 的原位更新，以及那些会悄悄把链接打死的跨平台陷阱。"
 pubDate: 2026-05-05
+updatedDate: 2026-10-01
 lang: "zh"
+noindex: true
 tags: ["markdown", "documentation", "github", "gitlab", "developer-tools"]
 ---
 
-你写完一份 12 节的 README，推到 GitHub，过一会同事在 GitLab 打开同一个文件——TOC 里的链接全死了。或者你把 Jekyll 站迁到 Hugo，发现一半锚点的大小写悄悄变了。Markdown 一字未改，锚点已经是另一套。
+目录失效的常见情形：README 在 GitHub 上显示正常，同一个文件放到 Bitbucket 上看，或者交给另一套 slug 规则的 Jekyll 站构建，TOC 链接就再也跳不到位置了。Markdown 一字未改，标题 id 已经是另一套。
 
 Markdown 目录生成看起来是一行就能写完的事情：读出标题、做 slug、拼成链接，前 80% 的工作确实如此。陷阱在剩下的 20%——每个渲染器都有自己一套 slugify 规则、自己一套重复处理方式、自己对 Unicode 的态度。给错目标平台生成的 TOC 比没有 TOC 还糟糕：在编辑器里看一切正常，碰到渲染器才暴露。
 
@@ -16,16 +18,16 @@ Markdown 目录生成看起来是一行就能写完的事情：读出标题、�
 
 Markdown 规范里压根没提"标题锚点"这件事。CommonMark 刻意把标题的 HTML 渲染留给具体实现，而所有支持"从标题生成 slug"的渲染器都各写各的算法。各方言之间的差异已经大到不能用同一份 TOC 通杀——必须挑一个目标。
 
-覆盖大约 98% 实际渲染场景的四种方言：
+本工具提供的四种方言：
 
 | 渲染器 | 出现在哪儿 | 锚点风格 |
 |---|---|---|
-| **GitHub Flavored Markdown** | github.com、gh-pages、Discourse、Gitiles | 转小写、去标点、连字符、保留 Unicode |
-| **GitLab Flavored Markdown** | gitlab.com 与 GitLab 自托管 | 同 GitHub + 多个连字符压缩 |
-| **kramdown / Jekyll classic** | 老一些的 Jekyll 站 | 转小写、剥掉非 ASCII、连字符 |
-| **Bitbucket** | bitbucket.org | 每个锚点都加 `markdown-` 前缀，重复用 `_N` |
+| **GitHub** | github.com 的 README、issue 和 wiki | 转小写，去掉除 `-` 和 `_` 以外的标点，空格变连字符，保留 Unicode 字母 |
+| **GitLab** | gitlab.com、自托管 GitLab | 同 GitHub，然后把两个及以上连续的连字符合并为一个 |
+| **kramdown（`input: kramdown`）** | 改用 kramdown 自带解析器的 Jekyll 站 | 去掉开头的非字母字符，只留 ASCII 字母、数字、空格和连字符，转小写；结果为空时用 `section` |
+| **Bitbucket Cloud** | bitbucket.org | 每个 id 都加 `markdown-header-` 前缀，重复用 `_N` |
 
-Hugo 配 goldmark（v0.62 之后的默认渲染器）跟 GitHub 规则很接近——接近到大多数情况你看不出锚点会断，只是涉及标点的边角情况会有偏移。其他渲染器（Discourse、Gitea、Forgejo）都在同一套算法基础上略做改动；MkDocs 自己有一套 toc 扩展和 pymdownx 变体。如果你的目标不在这四种方言表里，提交 TOC 之前最好在真实渲染器上小跑一次。GitHub 风格在临时场景里是最安全的兜底——除了仍在用 kramdown classic slugger 的 Jekyll 站和所有 Bitbucket 仓库，这两类不跟 GitHub 兼容。
+关于这张表有两点说明。Jekyll 默认用 GFM 解析器（`kramdown: input: GFM`），它生成的标题 id 遵循 GitHub 规则、保留 Unicode（见 [kramdown-parser-gfm](https://github.com/kramdown/parser-gfm)）；只有站点改成 `input: kramdown` 时才适用只留 ASCII 的那一行。另外，**本工具的 Bitbucket 选项目前写的是 `markdown-` 前缀**，而 Bitbucket Cloud 渲染出来的 id 是 `markdown-header-...`；工具修复之前，请在生成的链接里把 `markdown-` 改成 `markdown-header-`。Hugo（goldmark，v0.60 起的默认渲染器）和 MkDocs 有各自的 id 规则；目标不在本表里时，提交 TOC 前先看一下渲染后页面里的实际 id。
 
 ## slugify 算法的四种走法
 
@@ -38,7 +40,7 @@ Hugo 配 goldmark（v0.62 之后的默认渲染器）跟 GitHub 规则很接近�
 | GitHub | `quick-start-setting-up-sso-auth-20` |
 | GitLab | `quick-start-setting-up-sso-auth-20` |
 | Jekyll | `quick-start-setting-up-sso-auth-20` |
-| Bitbucket | `markdown-quick-start-setting-up-sso-auth-20` |
+| Bitbucket Cloud | `markdown-header-quick-start-setting-up-sso-auth-20` |
 
 到这里都还一致。换一个 Unicode 标题：`## 快速开始`
 
@@ -46,10 +48,10 @@ Hugo 配 goldmark（v0.62 之后的默认渲染器）跟 GitHub 规则很接近�
 |---|---|
 | GitHub | `快速开始` |
 | GitLab | `快速开始` |
-| Jekyll | （slug 后为空——kramdown 渲染时会兜底分配一个 id） |
-| Bitbucket | `markdown-快速开始` |
+| kramdown（`input: kramdown`） | `section`（没有剩下任何 ASCII 字符） |
+| Bitbucket Cloud | 不在此列出：它的 Python-Markdown slug 规则会去掉非 ASCII 字符，请以渲染后的 id 为准 |
 
-Jekyll classic 在这一步翻车。如果你的站点用 `kramdown` 默认 `auto_ids`，标题里又含任何非 ASCII 字符，每个这样的锚点要么是空，要么由渲染器兜底分配一个通用 id。Jekyll 端的修复路径是升级到支持 Unicode 的 slugger——较新版本 kramdown 和一些 Jekyll 插件都有变体；当渲染器开始保留 Unicode 后，把这个生成器切到 GitHub 风格，让 TOC 跟它对齐。老 Jekyll 自带的经典 kramdown 按设计就是 ASCII-only；如果升不动，索性把非 ASCII 从标题里拿掉，别提交一份会被渲染器悄悄改写的 TOC。
+kramdown 自带解析器在这一步翻车：所有不含 ASCII 字母的标题都会变成 `section`、`section-1`……（见 [kramdown auto_ids](https://kramdown.gettalong.org/converter/html.html#auto-ids)）。本工具的 Jekyll 选项则会把这类锚点留空，两种情况下链接都跳不到位置。Jekyll 站有非 ASCII 标题时，用默认的 `input: GFM`，并按 GitHub 风格生成 TOC。
 
 再看一种情况——重复标题：
 
@@ -62,8 +64,8 @@ Jekyll classic 在这一步翻车。如果你的站点用 `kramdown` 默认 `aut
 
 | 风格 | 锚点 |
 |---|---|
-| GitHub / GitLab / Jekyll | `examples`、`curl`、`examples-1`、`python` |
-| Bitbucket | `markdown-examples`、`markdown-curl`、`markdown-examples_1`、`markdown-python` |
+| GitHub / GitLab / kramdown | `examples`、`curl`、`examples-1`、`python` |
+| Bitbucket Cloud | `markdown-header-examples`、`markdown-header-curl`、`markdown-header-examples_1`、`markdown-header-python` |
 
 Bitbucket 是个异类：重复计数器用下划线 `_` 而不是连字符 `-`，其他主流渲染器都是 `-N`。
 
@@ -76,7 +78,7 @@ TOC 的常见踩坑是"过期 TOC"产生的脏 diff：你给一份 2000 行的�
 
 本工具的 marker 模式实现的是第一种。把文档贴进来，打开 Marker 模式，就能拿到一份完整 Markdown，TOC 已重新生成放在标记之间。如果你的文档还没标记，工具会在第一个标题之前插入一个新标记块，提交一次之后就能持续走 marker 流程。
 
-这套约定与 [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)（webpack 文档、Mocha、Sass 等几十个主流项目使用的 npm 包）和 [`gh-md-toc`](https://github.com/ekalinin/github-markdown-toc)（Kubernetes 文档使用的 shell 工具）以及若干编辑器插件一致。HTML 注释标记是可移植的——GitHub、GitLab、Bitbucket 都不会渲染它，任何把 HTML 注释当注释处理的静态站点生成器也都能识别。
+`<!-- toc -->` / `<!-- /toc -->` 是 npm 包 [`markdown-toc`](https://github.com/jonschlinkert/markdown-toc) 使用的标记，所以在这里准备好的文件之后可以用 `markdown-toc -i` 维护。GitHub 和 GitLab 不会显示 HTML 注释；Bitbucket Cloud 会转义原始 HTML，标记会以文本形式显示出来。
 
 ## 五个迟早会撞上的陷阱
 
@@ -88,7 +90,7 @@ TOC 的常见踩坑是"过期 TOC"产生的脏 diff：你给一份 2000 行的�
 
 3. **标题里的 inline 格式**。`## **Important**: Backups` 应该生成的 TOC label 含粗体、anchor 用纯文本。处理不好可能就把 `\`code\`` 当 anchor 的一部分；正确做法是给 slug 剥掉 inline 语法，给 label 保留原 markdown。
 
-4. **跨 H 级别的重复标题**。`## Examples` 和 `### Examples` 都 slug 成 `examples`，第二个就要变 `examples-1`。有些生成器只在同一 H 级别内去重，结果跨级别就坏。
+4. **跨 H 级别的重复标题**。`## Examples` 和 `### Examples` 都 slug 成 `examples`，第二个就要变 `examples-1`。渲染器会统计文档里的所有标题，包括你没放进 TOC 的；本工具只统计所选级别范围内的标题，所以排除了 H1 时，如果文档里有 `# Examples` 和 `## Examples`，工具会链接到 `#examples`，而 GitHub 给这个 H2 分配的是 `examples-1`。
 
 5. **标记已经存在的情况**。如果文档里已经有一对 `<!-- toc -->` ... `<!-- /toc -->`，朴素的"插入"会再追加一份 TOC，结果一文档两 TOC。正确行为是检测到已有标记后，替换标记之间的内容，而不是 append。
 
@@ -96,7 +98,7 @@ TOC 的常见踩坑是"过期 TOC"产生的脏 diff：你给一份 2000 行的�
 
 ### pre-commit hook：commit 时自动重生成 TOC
 
-让 TOC 永远跟上的最干净办法是：commit 时如果 TOC 过期就 fail，再给一键修复。配 `markdown-toc`（npm）或类似 CLI + `pre-commit` hook：
+让 TOC 永远跟上的最干净办法是：commit 时如果 TOC 过期就 fail，再给一键修复。配 `markdown-toc`（npm）+ `pre-commit` hook（脚本用的是 GNU `md5sum`，macOS 上改用 `md5 -q`）：
 
 ```bash
 #!/bin/sh
@@ -134,14 +136,12 @@ jobs:
 
 ### Jekyll：让 slugger 跟 TOC 对齐
 
-如果你的 Jekyll 站标题里有任何非 ASCII，先调整 slugger 再提交 TOC：
+如果你的 Jekyll 站标题里有非 ASCII 字符，保留（或改回）Jekyll 默认的 GFM 解析器：
 
 ```yaml
 # _config.yml
 kramdown:
-  syntax_highlighter: rouge
-  toc_levels: 1..3
-  transliterate: false
+  input: GFM
 ```
 
 之后用 GitHub 风格生成 TOC——它会跟最终渲染出来的锚点对齐。
@@ -155,18 +155,20 @@ kramdown:
 | 跳过围栏代码块（``` 与 `~~~`） | 是 |
 | ATX 与 setext 标题 | 都支持 |
 | 原位替换已有 `<!-- toc -->` 块 | 是 |
-| 同一页面内四种锚点风格 | GitHub / GitLab / Jekyll / Bitbucket |
+| 同一页面内四种锚点风格 | GitHub / GitLab / Jekyll（kramdown 解析器）/ Bitbucket（前缀需补上 `header-`，见上文） |
 | Bitbucket 的 `_N` 去重 | 是 |
+| 去重时计入级别范围以外的标题 | 否（见陷阱 4） |
 | anchor 用清洗后的纯文本，label 保留原 inline 格式 | 是 |
 | 标题层级过滤 + H1 开关 | 是 |
 | 完全在浏览器中运行 | 是 |
 
-如果你的工作流偏服务端、想要 CLI，[`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)（npm，GitHub 风格）是经过最多生产验证的选择——webpack docs、Mocha、Sass、Prettier 等都在用。Web 端临时贴一下复制走，本工具的四风格 + 标记感知替换能省掉"挑错风格再返工"的来回。
+如果你的工作流偏服务端、想要 CLI，[`markdown-toc`](https://github.com/jonschlinkert/markdown-toc)（npm，GitHub 风格）用的是同一套标记。Web 端临时贴一下复制走，本工具的四风格 + 标记感知替换能省掉"挑错风格再返工"的来回。
 
 ## 延伸阅读
 
 - [GitHub Flavored Markdown 规范](https://github.github.com/gfm/) — 规范本身不定义 anchor slug（那是 GitHub 渲染器自身行为），但它框定了 slug 规则赖以工作的标题与代码块解析
 - [kramdown auto_ids](https://kramdown.gettalong.org/converter/html.html#auto-ids) — Jekyll slug 规则的权威定义
 - [GitLab Flavored Markdown 参考](https://docs.gitlab.com/ee/user/markdown.html) — GitLab 在 CommonMark 上的扩展
-- [Bitbucket Markdown 参考](https://support.atlassian.com/bitbucket-cloud/docs/use-mark-up-in-comments-and-pull-request-descriptions/) — anchor 前缀和去重规则
+- [Python-Markdown toc 扩展](https://python-markdown.github.io/extensions/toc/) — Bitbucket Cloud 的 id 所遵循的 slug 规则和 `_N` 去重
+- [kramdown-parser-gfm](https://github.com/kramdown/parser-gfm) — Jekyll 默认使用的 GFM 解析器及其 GitHub 风格的标题 id
 - ZeroTool [Slugify](/zh/tools/slugify/)、[Markdown Linter](/zh/tools/markdown-linter/)、[Markdown 表格生成器](/zh/tools/markdown-table-generator/) — Markdown 工作流的姊妹工具

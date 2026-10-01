@@ -2,11 +2,13 @@
 title: "SSL 証明書デコーダー:X.509 PEM の現場速見ガイド"
 description: "X.509 PEM 証明書をブラウザでデコードし、Subject・Issuer・SAN・有効期間・鍵タイプ・署名アルゴリズム・フィンガープリントを確認。アップロード不要、OpenSSL コマンドも不要。"
 pubDate: 2026-05-11
+updatedDate: 2026-10-01
 lang: "ja"
+noindex: true
 tags: ["ssl-certificate-decoder", "x509", "tls", "developer-tools"]
 ---
 
-ワイルドカード証明書の差し替えまで残り 30 分、ステージング環境では `SSL_ERROR_BAD_CERT_DOMAIN` が出ている。手元のターミナル履歴に残っているのは PEM ブロックひとつだけ。デプロイ枠が閉じる前に SAN リスト、有効期限、SHA-256 フィンガープリントを確認したい。`openssl x509 -text` でも見られるが、フラグを 5 つ打ったあとも本当に欲しい一行を探してスクロールしている——そんなとき、用途を絞ったデコーダーのほうが速い。
+証明書デコーダーがよく使われる場面：デプロイ直前にステージング環境が `SSL_ERROR_BAD_CERT_DOMAIN` を返し、手元には PEM ブロックしかない。見たいのは SAN の一覧、有効期限、SHA-256 フィンガープリントだ。`openssl x509 -text` でも見られるが、ほかの全フィールドと一緒に出てくる。専用のデコーダーはこれらを先頭に出す。
 
 [証明書をすぐデコード →](/ja/tools/ssl-certificate-decoder/)
 
@@ -45,13 +47,13 @@ ZeroTool のデコーダーは、純粋な JavaScript で書かれた小さな A
 
 ## Subject・Issuer・SAN——現代のホスト名照合ルール
 
-2026 年のブラウザはホスト名照合で Subject CN を**見ない**。`Subject Alternative Name`(SAN)拡張だけを見る。Chrome は 58 で CN フォールバックを廃止、Firefox は 48、Safari は iOS 13。`CN=example.com` のみで SAN がない証明書は、主要ブラウザがいずれも拒否する。
+ブラウザーはホスト名の照合に Subject の `CN` を使わず、`Subject Alternative Name`（SAN）拡張を使う。Chrome はバージョン 58 で CN へのフォールバックをやめ、Apple は iOS 13 と macOS 10.15 から名前が SAN にあることを求めている。`CN=example.com` だけで SAN がない証明書は、現在のブラウザーでは拒否される。
 
 だから証明書をデコードしたらこの順で読む:
 
 1. **SAN**——この証明書は実際にどのホスト名をカバーするのか?
 2. **Subject**——CN は一致しているか?(主に人間向け。CA はまだ埋める習慣だ)
-3. **Issuer**——誰が署名したか?(Let's Encrypt R3、DigiCert Global Root、ZeroSSL、社内 CA のどれを想定するかが決まる)
+3. **Issuer**——誰が署名したか？（Let's Encrypt の中間証明書 R10 や E5、DigiCert、ZeroSSL などのどれを想定すべきかが分かる）
 
 今日の典型的な Let's Encrypt 証明書は、SAN にネイキッドドメイン(`example.com`)と `www` サブドメインの両方を持つ。ワイルドカード証明書では `*.example.com` が SAN であり、CN ではない。デコーダーは SAN エントリを種別(DNS、IP、URI、email)でグルーピングして表示するので、誤発行のワイルドカード証明書が一目でわかる。
 
@@ -63,7 +65,7 @@ TLS サーバー証明書なら典型的にはこうなる:
 
 ```
 Key Usage: digitalSignature, keyEncipherment
-EKU      : serverAuth, clientAuth
+EKU      : serverAuth (some certificates also carry clientAuth)
 ```
 
 CA 証明書(中間または root)ならこうだ:
@@ -81,11 +83,11 @@ Basic Constraints: CA = true
 
 | ハッシュ | 2026 年の実用途 |
 |---------|----------------|
-| SHA-256 | 現在の標準識別子。HSTS preload 申請、モバイルアプリの証明書ピンニング、いくつかの規格における SRI、`openssl x509 -fingerprint -sha256` のすべてが SHA-256 を想定。 |
+| SHA-256 | 標準の識別子。`openssl x509 -fingerprint -sha256` が出力し、現在のほとんどのツールや台帳もこれを記録する。 |
 | SHA-1 | レガシーツール:古い監視スクリプト、未移行の社内 CMDB、一部の IDS/IPS シグネチャ。新規のピンニング用途では使わない。 |
 | MD5 | かなり古い `openssl` 出力との互換のため。暗号学的には破られている——読み取り照合用途のみ。 |
 
-ピンニング目的なら SHA-256 行をコピー。誰かがログに書き残したハッシュを grep したいときは、デコーダーが 3 種類すべてを出すので、相手がどれを使ったかを推測しなくて済む。
+証明書ファイルを識別するなら SHA-256 の行を使う。証明書ピンニングは通常、証明書全体ではなく公開鍵（SPKI）の SHA-256 ハッシュを固定するので、同じ鍵で更新しても有効なままだ。このデコーダーは SPKI ハッシュを計算しない。誰かがログに書き残したハッシュを探すなら、3 種類のフィンガープリントが全部出るので推測しなくて済む。
 
 ## RSA・ECDSA・Ed25519——公開鍵フィールドが教えてくれること
 
@@ -101,11 +103,11 @@ RSA の鍵バイト列はそれ自体が ASN.1 SEQUENCE `{ modulus, exponent }` 
 
 ECDSA は名前付き曲線 OID を表示する。実務で遭遇する 3 種類:
 
-- `prime256v1`(別名 `P-256`、`secp256r1`)——Let's Encrypt の ECDSA チェーンのデフォルト
+- `prime256v1`（別名 `P-256`、`secp256r1`）——Certbot 2.0 以降が既定で生成する ECDSA 鍵の曲線
 - `secp384r1`(`P-384`)——一部 EV 証明書や Windows エンドポイントが好む
 - `secp521r1`(`P-521`)——実環境では稀。主に内部コンプライアンス用途
 
-Ed25519 証明書は公開 web TLS ではまだ一般的ではない(Chrome が対応したのは 109 から)が、内部メッシュ TLS、コード署名、SSH では見かける。デコーダーは OID でラベル付けするので、hex を暗記する必要はない。
+Ed25519 証明書は現在、公開 Web の TLS では使われない。CA/Browser Forum の Baseline Requirements が、公的に信頼される TLS 証明書に RSA と ECDSA の鍵しか認めていないためだ。プライベート PKI や社内のメッシュ TLS で見かける。デコーダーは OID でラベル付けするので覚えなくていい。
 
 ## バンドルファイルと処理範囲
 
@@ -117,7 +119,7 @@ ZeroTool のデコーダーは、入力の**最初の証明書のみ**をデコ�
 
 運用レビューで次のパターンは赤フラグだ:
 
-- **公開 TLS リーフ証明書の `notAfter` が `notBefore` から 13 か月以上離れている**。Apple、Mozilla、Google は 2020 年 9 月から公開 TLS 寿命を 398 日に上限統一した。それより長ければ、非公開 CA、設定ミスの私的 PKI、または上限導入前の古い証明書のいずれかだ。
+- **公開 TLS リーフ証明書の有効期間が現在の上限を超えている。** CA/Browser Forum の Baseline Requirements は 2020 年 9 月から公開 TLS 証明書を 398 日以内に制限し、投票 SC-081 により 2026 年 3 月 15 日以降に発行する証明書は 200 日以内になった。これより長ければ、非公開 CA、設定を誤ったプライベート PKI、または古い証明書だ。
 - **CN は埋まっているが SAN がない**。前述のとおりブラウザは拒否する——新規デプロイを壊しそうなレガシー内部 CA フローを発見するのに便利。
 - **サーバー証明書に CA = true**。誤発行か、リーフと取り違えた中間証明書のどちらかだ。
 - **AIA に OCSP URL があるが OCSP Must-Staple フラグがない**。ほとんどのデプロイでは問題ないが、stapling を必須化する環境なら発行時に OCSP Must-Staple 拡張(OID 1.3.6.1.5.5.7.1.24)を追加する必要がある。
@@ -136,7 +138,7 @@ openssl x509 -in cert.pem -noout -dates -subject -issuer -ext subjectAltName
 
 本番証明書を見慣れない Web ツールに貼り付ける行為はソフトリークだ:証明書自体は公開情報で TLS クライアント全員が受け取るとはいえ、**貼り付けたという行為**そのものが「今この瞬間、御社の誰かがこの証明書をデバッグ中」と相手のサーバーに伝える。一部のコンプライアンス枠組みではこのパターンを監査ログにマークする。
 
-ZeroTool のデコーダーはブラウザタブ内で完結する。PEM はサーバーに届かない——初回ページロード後のネットワークリクエストは発生しない。DevTools → Network を開き、PEM を貼って Decode し、リクエスト数が変わらないことを確認すれば自分で検証できる。
+ZeroTool のデコーダーはブラウザータブ内で完結し、PEM はどこにも送られない。ページ自体はサイトのほかのページと同じく解析と広告のスクリプトを読み込むが、それらのリクエストに証明書は含まれない。DevTools → Network を開き、PEM を貼ってデコードし、新しいリクエストに含まれていないことを確認できる。
 
 ## 関連リソース
 

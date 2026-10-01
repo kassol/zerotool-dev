@@ -2,7 +2,9 @@
 title: "Meta 标签生成器：一个页面，四类受众"
 description: "一键生成完整 <head> Meta 区块——Open Graph、Twitter 卡片、Schema.org JSON-LD 与 SEO 基础项。覆盖 og:image 规范、canonical URL 易踩坑点与各平台差异。"
 pubDate: 2026-05-05
+updatedDate: 2026-10-01
 lang: "zh"
+noindex: true
 tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
 ---
 
@@ -25,17 +27,17 @@ tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
 
 ## 社交卡片必备的五行
 
-可写的 meta 标签有几十个，但当链接被分享出去时，五行承担了大部分工作量：
+[Open Graph 协议](https://ogp.me/) 规定了四个必需属性：`og:title`、`og:type`、`og:image`、`og:url`；再加上多数预览显示在标题下方的描述：
 
 ```html
-<title>文章标题 — 品牌名</title>
-<meta name="description" content="一句话简介，控制在 160 字符以内。">
-<link rel="canonical" href="https://example.com/article/">
-<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:title" content="Article title">
 <meta property="og:type" content="article">
+<meta property="og:image" content="https://example.com/og/article.png">
+<meta property="og:url" content="https://example.com/article/">
+<meta name="description" content="One-sentence pitch under 160 chars.">
 ```
 
-其余都是锦上添花。如果只来得及写五行，就写这五行。
+如果只来得及写五行，就写这五行。
 
 ## og:image：把所有人都坑过的规范
 
@@ -43,13 +45,13 @@ Slack 或 Discord 的预览看起来不对劲，最常见的原因就是 `og:ima
 
 **尺寸**。1200x630 像素（1.91:1）是 Facebook、LinkedIn、Discord 渲染最稳定的安全默认值；Twitter 的 `summary_large_image` 期望 2:1，所以 1200x600 也行。小于 200x200 的图会被部分抓取器直接拒绝。
 
-**格式**。PNG 或 JPEG。WebP 支持参差不齐，SVG 虽然是合法 HTML 但每一个社交抓取器都会忽略。
+**格式**。PNG 或 JPEG 最稳妥。X 的卡片图片支持 JPG、PNG、WEBP 和 GIF；SVG 虽然在网页上是合法图片，X 和 Facebook 都不支持。
 
-**绝对 URL**。`og:image` 必须是带 scheme 与 host 的绝对 URL。`/og/article.png` 这样的相对路径会静默失败——Facebook 调试器会报「图片找不到」却不告诉你为什么。
+**绝对 URL**。`og:image` 必须是带 scheme 与 host 的绝对 URL。`/og/article.png` 这样的相对路径不是合法取值，抓取器也不会像浏览器那样去补全它。
 
 **可达性**。抓取器按需拉取这个 URL。如果你的 CDN 慢、被 CAPTCHA 挡住、或返回的 `Content-Type` 错成 `text/html` 而不是 `image/png`，预览就会回退到一个通用站点缩略图。
 
-**缓存**。Facebook 会把抓取结果缓存数小时甚至数天。修好 `og:image` 之后，到 [Sharing Debugger](https://developers.facebook.com/tools/debug/) 点 Scrape Again 强制刷新。
+**缓存**。Facebook 会缓存抓取结果。修好 `og:image` 之后，到 [Sharing Debugger](https://developers.facebook.com/tools/debug/) 点「Scrape Again」强制刷新。
 
 每张图都要同时声明宽高：
 
@@ -60,11 +62,11 @@ Slack 或 Discord 的预览看起来不对劲，最常见的原因就是 `og:ima
 <meta property="og:image:alt" content="文章封面，标题以大号白色衬线字体显示在绿色背景上。">
 ```
 
-宽高让 Discord 和 Slack 在图片加载前预留布局空间；alt 会在 unfurl 出现在聊天里时被屏幕阅读器朗读。
+声明尺寸后，抓取器不必先下载图片就能排好预览；`og:image:alt` 为看不到图片的人描述图片内容。
 
 ## Canonical URL：错值会拆散你的分享数
 
-`<link rel="canonical">` 同时承担 `og:url` 的角色，告诉爬虫和 unfurl 机器人：当同一页面通过多条路径都能访问时，哪个 URL 才是权威版本。
+`<link rel="canonical">` 和 `og:url` 是两个独立的标签，应当写同一个值。canonical 告诉搜索引擎哪个 URL 是权威版本；同一页面能通过多个路径访问时，`og:url` 告诉 Facebook 一次分享归到哪个 URL。
 
 同一篇文章出现多个 URL 的常见原因：
 
@@ -73,7 +75,7 @@ Slack 或 Discord 的预览看起来不对劲，最常见的原因就是 `og:ima
 - `?utm_source=twitter` 与不带参数的版本
 - `https://example.com/post` 和 `https://example.com/post?ref=newsletter`
 
-其中两个被分享出去时，Facebook 会把它们当成不同链接，各自累计分享数。作者看着较低的那个数字，以为这篇没火。在页面上设置 canonical URL，就能把所有变体折叠成一条记录。
+没有 `og:url` 时，其中两个被分享出去，Facebook 可能把它们当成不同链接，各自累计分享数。在每个变体上把 `og:url` 设为 canonical URL，Facebook 就会把分享都算到这一个 URL 上。
 
 如果路由带尾部斜杠，canonical URL 也必须带。ZeroTool 的静态构建始终输出尾部斜杠，canonical 不一致就会破坏去重。
 
@@ -85,7 +87,7 @@ JSON-LD 不过是塞进 `<script type="application/ld+json">` 的 JSON。Google 
 - 必须有 `"@type"`，匹配 [Schema.org 列出的类型](https://schema.org/docs/full.html) 之一。
 - 所有 URL 必须是绝对 URL。
 - 日期用 ISO 8601（写 `2026-05-05`，不要写 `May 5 2026`）。
-- 重复的结构化字段（作者、面包屑项）即使只有一个元素也要用数组。
+- 可以有多个值的字段（比如 `author`）可以写成数组，只有一个值时直接写即可。
 
 最小化的 `Article`：
 
@@ -113,7 +115,7 @@ Schema.org 文档里那些字段不必每个都写。Google 在富结果资格�
 | 工具 | 验证内容 | URL |
 |------|----------|-----|
 | Facebook Sharing Debugger | og:* 标签、抓取结果、缓存预览 | https://developers.facebook.com/tools/debug/ |
-| Twitter Card Validator | twitter:* 标签（被 X 弃用，但仍可用） | https://cards-dev.twitter.com/validator |
+| X（Twitter）Card Validator | 预览功能已移除；用测试账号发一条帖子查看卡片 | https://cards-dev.twitter.com/validator |
 | LinkedIn Post Inspector | 模拟 LinkedIn 渲染 og:* 标签 | https://www.linkedin.com/post-inspector/ |
 | Google Rich Results Test | JSON-LD 资格、结构化数据警告 | https://search.google.com/test/rich-results |
 
@@ -123,17 +125,17 @@ Discord 和 Slack 没有公开调试器——它们抓取并激进缓存，最�
 
 ## 常见踩坑
 
-**多个 `og:image` 标签**。不同抓取器有的取首个、有的取末个、有的合并。务必只发一张主图；如果还要列尺寸更小的备选，用 `og:image:secure_url` 来声明。
+**多个 `og:image` 标签**。Open Graph 协议允许把它们作为数组，冲突时优先取第一个。把想展示的图放在最前面。`og:image:secure_url` 是同一张图的 HTTPS 地址，不是小尺寸版本。
 
-**`og:url` 与实际 URL 不一致**。这是致命错误，先修 canonical URL 再去查别的。
+**`og:url` 指向了别的页面**。Facebook 按 `og:url` 指向的页面生成预览，模板如果把首页 URL 留在 `og:url` 里，每篇文章分享出去都会显示成首页。
 
 **设了 `robots: noindex` 还指望 og:* 起效**。og:* 仍会工作——社交抓取器不读 robots——但搜索引擎不会索引这个页面，富预览也不会出现在 SERP 里。
 
-**写死的 `og:image:width` 与实际文件尺寸不符**。Discord 信任你声明的尺寸来排版。如果文件是 1200x600 而你声明了 1200x630，预览会被怪异裁切。
+**写死的 `og:image:width` 与实际文件尺寸不符**。声明的尺寸要和图片保持一致，否则干脆不写，免得预览按错误的宽高比排版。
 
-**JSON-LD 带尾随逗号或未转义引号**。多数 JS 验证器接受，但 Google 的严格解析器会判定页面没有富结果资格。发布前用 JSON linter 跑一遍。
+**JSON-LD 带尾随逗号或未转义引号**。这不是合法 JSON：`JSON.parse` 会拒绝，Google 富媒体搜索结果测试会报解析错误，读不到结构化数据。上线前先用 JSON 校验器过一遍。
 
-**两个页面用了相同的 canonical URL**。爬虫会挑一个，彻底忽略另一个。这通常发生在 CMS 模板忘了为分页归档页更新 canonical。
+**两个页面用了相同的 canonical URL**。canonical 等于告诉搜索引擎这两页是重复的，通常只有一个会被收录。这多半发生在 CMS 模板忘了为分页归档页更新 canonical 的时候。
 
 ## 内联生成
 
