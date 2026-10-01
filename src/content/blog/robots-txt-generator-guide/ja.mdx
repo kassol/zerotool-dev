@@ -2,6 +2,7 @@
 title: "robots.txtジェネレーター完全ガイド：クローラー制御とSEOへの影響"
 description: "オンラインrobots.txtジェネレーターで検索エンジンクローラーを制御。ディレクティブの解説、よくある設定パターン、SEOに悪影響を与えるミスの回避法を解説。"
 pubDate: 2026-04-07
+updatedDate: 2026-10-01
 lang: "ja"
 tags: ["robots.txt", "robots-txt-generator", "seo", "web-crawlers", "developer-tools"]
 ---
@@ -42,7 +43,7 @@ User-agent: *
 | `facebookexternalhit` | Facebookリンクプレビュー |
 | `Twitterbot` | Twitter/Xカード |
 | `GPTBot` | OpenAIトレーニングクローラー |
-| `Claude-Web` | Anthropic Webクローラー |
+| `ClaudeBot` | Anthropic 学習用クローラー |
 
 ### Disallow
 
@@ -69,7 +70,7 @@ Allow: /wp-admin/admin-ajax.php
 
 ### Sitemap
 
-元の仕様にはありませんが、主要クローラーすべてがサポートしています。ファイルの末尾に置いてください。
+RFC 9309 にはない（[sitemaps.org のプロトコル](https://www.sitemaps.org/protocol.html#submit_robots)で定義）ものの、主要クローラーすべてがサポートしています。`User-agent` グループに属さないため、ファイル内のどこに書いても構いません。
 
 ```
 Sitemap: https://yourdomain.com/sitemap.xml
@@ -78,7 +79,7 @@ Sitemap: https://yourdomain.com/news-sitemap.xml
 
 ### Crawl-delay
 
-クローラーにリクエスト間のN秒待機を依頼します。Googleはこのディレクティブを無視します（代わりにSearch Consoleでクロールレートを設定）。BingなどはBlacklistします。
+クローラーにリクエスト間のN秒待機を依頼します。Googleはこのディレクティブを無視し、Search Console のクロール頻度設定も2024年1月に廃止しました。Googlebot を一時的に減速させるには 500・503・429 を返します。Bing などはこのディレクティブを尊重します。
 
 ```
 User-agent: Bingbot
@@ -134,7 +135,7 @@ Sitemap: https://yourdomain.com/sitemap.xml
 User-agent: GPTBot
 Disallow: /
 
-User-agent: Claude-Web
+User-agent: ClaudeBot
 Disallow: /
 
 User-agent: CCBot
@@ -168,7 +169,7 @@ Sitemap: https://yourdomain.com/page-sitemap.xml
 
 ### Google Search Console
 
-Search Consoleの**設定 → robots.txt**に移動します。内蔵テスターは入力したURLにどのルールが適用されるかを表示し、構文エラーをフラグします。URLを送信すると、Googlebotがクロールするかどうかを教えてくれます。
+Search Consoleの**設定 → robots.txt**に移動します。robots.txt レポートには、ホストごとに Google が取得したバージョン、取得日時、解析エラーと警告が表示されます。旧 robots.txt テスターは2023年12月に廃止されたため、個別 URL の判定はできません。1ページ単位なら URL 検査ツールを使います。
 
 ### 手動チェック
 
@@ -186,7 +187,7 @@ curl -I https://yourdomain.com/robots.txt
 curl https://yourdomain.com/robots.txt
 ```
 
-プログラムによるテストには、Googleが提供する[robots.txtパーサーライブラリ](https://github.com/google/robotstxt)（Go製）を使ってください。これがGooglebotが実際に使用する実装です。
+プログラムによるテストには、Googleが提供する[robots.txtパーサーライブラリ](https://github.com/google/robotstxt)（C++製）を使ってください。Google はこれを本番のクローラーで使っているコードだと説明しています。
 
 ## SEOを傷つける一般的なミス
 
@@ -216,14 +217,14 @@ Disallow: /sitemap.xml
 
 **6. 間違ったContent-Type**
 
-ファイルは `text/plain` として配信される必要があります。一部のサーバーは `text/html` として配信しており、一部のクローラーはこれを拒否します。
+ファイルは UTF-8 の `text/plain` として配信してください。[Google の robots.txt ドキュメント](https://developers.google.com/search/docs/crawling-indexing/robots/robots_txt?hl=ja)もこの形式を前提にしています。
 
 ## 覚えておく構文ルール
 
 - 1行に1ディレクティブ
 - `#` で始まる行はコメント
-- 空行が異なる `User-agent` 値のルールグループを区切る
-- ディレクティブは大文字小文字を区別しない。パスはLinuxサーバーでは大文字小文字を区別する
+- ルールの後に `User-agent` 行が来ると新しいグループが始まる（グループ間の空行は読みやすさのため）
+- ディレクティブ名は大文字小文字を区別しない。パスの照合はサーバーの種類に関係なく大文字小文字を区別する（RFC 9309）
 - 推奨される最大ファイルサイズは500KB（Googleの実際の制限）
 - UTF-8エンコーディングのみ
 
@@ -233,4 +234,4 @@ Disallow: /sitemap.xml
 
 [robots.txtジェネレーターを試す →](/ja/tools/robots-txt-generator/)
 
-ジェネレーターを使えば、設定するボットを選択し、ブロックしたいパスにチェックを入れ、サイトマップURLを切り替えるだけで、正しい構文の即デプロイ可能なファイルが出力されます。サイトのルートに貼り付けて、5分以内にSearch Consoleで確認できます。
+ジェネレーターでは `User-agent` ブロック（`*`、Googlebot、Bingbot、任意の名前）を追加し、各ブロックに `Allow` と `Disallow` のパスを加え、Sitemap URL を指定するとファイルが出力されます。サイトのルートに置いたら、Search Console の robots.txt レポートで確認してください。

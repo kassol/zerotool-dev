@@ -2,7 +2,9 @@
 title: ".htaccess 생성기: mod_rewrite 없이 Apache 설정 파일 만들기"
 description: "HTTPS 리다이렉트·CORS·캐시·Basic 인증 등 .htaccess 핵심 규칙 완전 해설. 자주 하는 실수와 온라인에서 정확한 .htaccess를 즉시 생성하는 방법을 소개합니다."
 pubDate: 2026-04-07
+updatedDate: 2026-10-01
 lang: "ko"
+noindex: true
 tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tools"]
 ---
 
@@ -10,7 +12,7 @@ tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tool
 
 ## .htaccess의 용도와 사용 시점
 
-`.htaccess`는 `AllowOverride`가 활성화된 Apache 서버에서만 동작합니다. Nginx·LiteSpeed·CDN 전용 구성에서는 사용할 수 없습니다. Nginx에는 디렉터리별 설정 파일에 해당하는 것이 없으며, 규칙은 `server {}` 블록에 작성합니다.
+`.htaccess`는 `AllowOverride`가 활성화된 Apache 서버에서만 동작합니다. Nginx나 CDN 전용 구성에서는 사용할 수 없습니다(LiteSpeed Web Server는 `.htaccess`를 읽습니다). Nginx에는 디렉터리별 설정 파일에 해당하는 것이 없으며, 규칙은 `server {}` 블록에 작성합니다.
 
 `.htaccess`가 적합한 경우:
 
@@ -136,14 +138,13 @@ htpasswd -c /path/to/.htpasswd username
 
 ### Gzip 압축
 
-텍스트 기반 응답을 압축하여 전송 크기를 줄입니다. HTML·CSS·JavaScript에서 보통 60~80% 절감 효과가 있습니다:
+텍스트 기반 응답을 압축하여 전송 크기를 줄입니다. WOFF와 WOFF2 폰트는 이미 압축되어 있으므로 대상에서 뺍니다:
 
 ```apache
 <IfModule mod_deflate.c>
   AddOutputFilterByType DEFLATE text/html text/plain text/css
   AddOutputFilterByType DEFLATE application/javascript application/json
   AddOutputFilterByType DEFLATE application/xml image/svg+xml
-  AddOutputFilterByType DEFLATE font/woff2 font/woff
 </IfModule>
 ```
 
@@ -204,15 +205,14 @@ RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,L]
   # MIME 타입 스니핑 방지
   Header always set X-Content-Type-Options "nosniff"
 
-  # 오래된 브라우저의 XSS 필터 활성화
-  Header always set X-XSS-Protection "1; mode=block"
+  # 오래된 XSS 필터 끄기(OWASP와 MDN은 0을 권장)
+  Header always set X-XSS-Protection "0"
 
   # 리퍼러 정책
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
-  # 서버 시그니처 제거
+  # PHP 버전 헤더 제거(Server 헤더는 여기서 지울 수 없음, 메인 설정에서 ServerTokens Prod 지정)
   Header always unset X-Powered-By
-  Header always unset Server
 </IfModule>
 ```
 
@@ -252,20 +252,20 @@ curl -I https://yourdomain.com/static/app.js
 
 ## 자주 하는 실수
 
-**1. `RewriteEngine On` 누락** — `RewriteRule`을 사용하는 모든 블록의 첫 줄에 이 줄이 필요합니다. 빠뜨리면 500 에러가 발생합니다.
+**1. `RewriteEngine On` 누락** — `RewriteRule`을 사용하는 모든 블록의 첫 줄에 이 줄이 필요합니다. 빠뜨리면 mod_rewrite가 규칙을 조용히 무시합니다. 500 에러가 난다면 mod_rewrite 자체가 로드되지 않은 것입니다.
 
-**2. 규칙 순서 중요** — Apache는 규칙을 위에서 아래로 처리하고 `[L]`이 있는 첫 번째 매치에서 멈춥니다. 광범위한 규칙보다 더 구체적인 규칙을 먼저 배치하세요.
+**2. 규칙 순서 중요** — Apache는 규칙을 위에서 아래로 처리하며 `[L]`은 해당 회차의 처리를 끝냅니다. `.htaccess`에서는 다시 쓴 URL이 규칙을 한 번 더 거치므로, 처리를 멈추려면 `[END]`(Apache 2.4.3 이상)를 사용하세요. 광범위한 규칙보다 더 구체적인 규칙을 먼저 배치하세요.
 
 **3. 무한 리다이렉트 루프** — HTTPS 리다이렉트가 이미 HTTPS인 경우에도 실행되면 루프가 발생합니다. 항상 `%{HTTPS} off` 또는 `%{HTTP:X-Forwarded-Proto} !https`를 확인하세요.
 
-**4. .htpasswd 경로** — 상대 URL이 아닌 절대 서버 경로를 사용하세요. 상대 경로는 대부분의 설정에서 작동하지 않습니다.
+**4. .htpasswd 경로** — 파일 시스템의 절대 경로를 사용하세요. `AuthUserFile`의 상대 경로는 `.htaccess`가 있는 디렉터리가 아니라 `ServerRoot`를 기준으로 해석됩니다.
 
 **5. `mod_rewrite`가 활성화되지 않음** — Ubuntu/Debian에서는 `sudo a2enmod rewrite && sudo systemctl restart apache2`를 실행하세요.
 
 ## 추측 없이 .htaccess 구성하기
 
-위의 규칙은 실제 사용 사례의 90%를 커버하지만, 리다이렉트·인증·캐시 규칙을 올바르게 조합하려면 신중한 순서 지정과 문법이 필요합니다.
+리다이렉트·인증·캐시 규칙을 올바르게 조합하려면 신중한 순서 지정과 문법이 필요합니다.
 
 [htaccess 생성기 사용해보기 →](/ko/tools/htaccess-generator/)
 
-필요한 규칙을 선택하고 도메인과 경로를 입력하면 올바른 순서·문법 오류 없음·각 블록 설명 주석이 있는 프로덕션 준비 완료된 `.htaccess` 파일이 생성됩니다.
+생성기가 다루는 항목은 HTTPS, www 유무, `DirectoryIndex`, 브라우저 캐시, 몇 가지 보안 규칙, `Redirect` 1개이며 각 블록 앞에 블록 이름 주석이 붙습니다. 압축, CORS, 인증, 오류 페이지, 핫링크 방지는 생성기에 없으므로 위 예제에서 복사하세요.

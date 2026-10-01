@@ -2,7 +2,9 @@
 title: "Htaccess Generator Online: Apache Rules Without the Manual"
 description: "Use an htaccess generator online to create 301 redirects, HTTPS rewrites, CORS headers, and caching rules for Apache without memorizing mod_rewrite syntax."
 pubDate: 2026-04-07
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tools"]
 ---
 
@@ -10,7 +12,7 @@ An **htaccess generator online** produces valid Apache `.htaccess` configuration
 
 ## What .htaccess Does and When to Use It
 
-`.htaccess` only works on Apache servers with `AllowOverride` enabled. If you are on Nginx, LiteSpeed, or a CDN-only setup, these rules do not apply — Nginx has no equivalent per-directory config file; its rules go in `server {}` blocks.
+`.htaccess` only works on Apache servers with `AllowOverride` enabled. If you are on Nginx or a CDN-only setup, these rules do not apply (LiteSpeed Web Server does read `.htaccess`) — Nginx has no equivalent per-directory config file; its rules go in `server {}` blocks.
 
 When `.htaccess` is the right tool:
 
@@ -136,14 +138,13 @@ To protect a single file instead of the whole directory:
 
 ### Gzip Compression
 
-Compress text-based responses to reduce transfer size — typically 60-80% for HTML, CSS, and JavaScript:
+Compress text-based responses to reduce transfer size. WOFF and WOFF2 fonts are already compressed, so leave them out:
 
 ```apache
 <IfModule mod_deflate.c>
   AddOutputFilterByType DEFLATE text/html text/plain text/css
   AddOutputFilterByType DEFLATE application/javascript application/json
   AddOutputFilterByType DEFLATE application/xml image/svg+xml
-  AddOutputFilterByType DEFLATE font/woff2 font/woff
 </IfModule>
 ```
 
@@ -204,15 +205,14 @@ RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,L]
   # Prevent MIME type sniffing
   Header always set X-Content-Type-Options "nosniff"
 
-  # Enable XSS filter in older browsers
-  Header always set X-XSS-Protection "1; mode=block"
+  # Turn off the legacy XSS auditor (OWASP and MDN advise 0)
+  Header always set X-XSS-Protection "0"
 
   # Referrer policy
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
-  # Remove server signature
+  # Remove the PHP version header (the Server header cannot be removed here; set ServerTokens Prod in the main config)
   Header always unset X-Powered-By
-  Header always unset Server
 </IfModule>
 ```
 
@@ -252,20 +252,20 @@ curl -I https://yourdomain.com/static/app.js
 
 ## Common Mistakes
 
-**1. Missing `RewriteEngine On`** — Every block using `RewriteRule` needs this line first. Forgetting it produces a 500 error.
+**1. Missing `RewriteEngine On`** — Every block using `RewriteRule` needs this line first. Without it, mod_rewrite ignores the rules silently. A 500 error instead means mod_rewrite is not loaded at all.
 
-**2. Rule order matters** — Apache processes rules top to bottom and stops at the first match with `[L]`. Put more specific rules before broad ones.
+**2. Rule order matters** — Apache processes rules top to bottom, and `[L]` ends the current pass. In `.htaccess`, a rewritten URL goes through the rules again, so use `[END]` (Apache 2.4.3+) when you need processing to stop. Put more specific rules before broad ones.
 
 **3. Infinite redirect loops** — If your HTTPS redirect runs even when already on HTTPS, you get a redirect loop. Always check `%{HTTPS} off` or `%{HTTP:X-Forwarded-Proto} !https`.
 
-**4. Path to .htpasswd** — Use an absolute server path, not a relative URL. Relative paths break on most setups.
+**4. Path to .htpasswd** — Use an absolute file-system path. Apache resolves a relative `AuthUserFile` path against `ServerRoot`, not against the directory that holds `.htaccess`.
 
 **5. `mod_rewrite` not enabled** — On Ubuntu/Debian, run `sudo a2enmod rewrite && sudo systemctl restart apache2`.
 
 ## Build Your .htaccess Without Guesswork
 
-The rules above cover 90% of real-world use cases, but combining them correctly — especially when mixing redirects, authentication, and cache rules — requires careful ordering and syntax.
+Combining these rules correctly — especially when mixing redirects, authentication, and cache rules — requires careful ordering and syntax.
 
 [Try our Htaccess Generator →](/tools/htaccess-generator)
 
-Select the rules you need, fill in your domain and paths, and get a production-ready `.htaccess` file with correct ordering, no syntax errors, and comments explaining each block.
+The generator covers HTTPS, www or non-www, `DirectoryIndex`, browser caching, a few security rules, and one `Redirect`; each block starts with a comment line that names it. Compression, CORS, authentication, error pages, and hotlink protection are not in the generator, so copy them from the examples above.

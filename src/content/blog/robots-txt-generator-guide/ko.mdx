@@ -2,6 +2,7 @@
 title: "robots.txt 생성기 완전 가이드: 웹 크롤러 제어와 SEO 영향"
 description: "온라인 robots.txt 생성기로 검색 엔진 크롤러를 제어하세요. 디렉티브 설명, 일반적인 설정 패턴, SEO에 악영향을 주는 실수 방지 방법까지 상세 안내."
 pubDate: 2026-04-07
+updatedDate: 2026-10-01
 lang: "ko"
 tags: ["robots.txt", "robots-txt-generator", "seo", "web-crawlers", "developer-tools"]
 ---
@@ -42,7 +43,7 @@ User-agent: *
 | `facebookexternalhit` | Facebook 링크 미리보기 |
 | `Twitterbot` | Twitter/X 카드 |
 | `GPTBot` | OpenAI 학습 크롤러 |
-| `Claude-Web` | Anthropic 웹 크롤러 |
+| `ClaudeBot` | Anthropic 학습용 크롤러 |
 
 ### Disallow
 
@@ -69,7 +70,7 @@ Allow: /wp-admin/admin-ajax.php
 
 ### Sitemap
 
-원래 명세에는 없지만 모든 주요 크롤러가 지원합니다. 파일 끝에 위치시키세요.
+RFC 9309에는 없지만([sitemaps.org 프로토콜](https://www.sitemaps.org/protocol.html#submit_robots)에서 정의) 모든 주요 크롤러가 지원합니다. `User-agent` 그룹에 속하지 않으므로 파일 어디에 두어도 됩니다.
 
 ```
 Sitemap: https://yourdomain.com/sitemap.xml
@@ -78,7 +79,7 @@ Sitemap: https://yourdomain.com/news-sitemap.xml
 
 ### Crawl-delay
 
-크롤러에게 요청 간 N초 대기를 요청합니다. Google은 이 디렉티브를 무시합니다(대신 Search Console에서 크롤 속도 설정). Bing 등 일부는 존중합니다.
+크롤러에게 요청 간 N초 대기를 요청합니다. Google은 이 디렉티브를 무시하며, Search Console의 크롤링 속도 설정도 2024년 1월에 없앴습니다. Googlebot을 잠시 늦추려면 500, 503, 429를 반환하세요. Bing 등 일부는 존중합니다.
 
 ```
 User-agent: Bingbot
@@ -134,7 +135,7 @@ Sitemap: https://yourdomain.com/sitemap.xml
 User-agent: GPTBot
 Disallow: /
 
-User-agent: Claude-Web
+User-agent: ClaudeBot
 Disallow: /
 
 User-agent: CCBot
@@ -168,7 +169,7 @@ Sitemap: https://yourdomain.com/page-sitemap.xml
 
 ### Google Search Console
 
-Search Console의 **설정 → robots.txt**로 이동합니다. 내장 테스터는 입력한 URL에 어떤 규칙이 적용되는지 표시하고 구문 오류를 표시합니다. URL을 제출하면 Googlebot이 크롤할지 알려줍니다.
+Search Console의 **설정 → robots.txt**로 이동합니다. robots.txt 보고서는 호스트별로 Google이 가져온 버전, 가져온 시각, 파싱 오류와 경고를 보여 줍니다. 예전 robots.txt 테스터는 2023년 12월에 종료되어 개별 URL은 판정하지 않습니다. 페이지 하나를 확인하려면 URL 검사 도구를 쓰세요.
 
 ### 수동 확인
 
@@ -186,7 +187,7 @@ curl -I https://yourdomain.com/robots.txt
 curl https://yourdomain.com/robots.txt
 ```
 
-프로그래밍 방식 테스트에는 Google이 제공하는 [robots.txt 파서 라이브러리](https://github.com/google/robotstxt)(Go)를 사용하세요. 이것이 Googlebot이 실제로 사용하는 구현입니다.
+프로그래밍 방식 테스트에는 Google이 제공하는 [robots.txt 파서 라이브러리](https://github.com/google/robotstxt)(C++)를 사용하세요. Google은 이것이 실제 크롤러에서 쓰는 코드라고 설명합니다.
 
 ## SEO를 해치는 일반적인 실수
 
@@ -216,14 +217,14 @@ Disallow: /sitemap.xml
 
 **6. 잘못된 Content-Type**
 
-파일은 `text/plain`으로 제공되어야 합니다. 일부 서버는 `text/html`로 제공하며, 일부 크롤러는 이를 거부합니다.
+파일은 UTF-8 `text/plain`으로 제공하세요. [Google의 robots.txt 문서](https://developers.google.com/search/docs/crawling-indexing/robots/robots_txt?hl=ko)도 이 형식을 전제로 합니다.
 
 ## 기억해야 할 문법 규칙
 
 - 줄당 하나의 디렉티브
 - `#`으로 시작하는 줄은 주석
-- 빈 줄이 다른 `User-agent` 값의 규칙 그룹을 구분
-- 디렉티브는 대소문자를 구분하지 않음; 경로는 Linux 서버에서 대소문자를 구분
+- 규칙 뒤에 오는 `User-agent` 줄이 새 그룹을 시작함(그룹 사이 빈 줄은 가독성용)
+- 디렉티브 이름은 대소문자를 구분하지 않음; 경로 매칭은 서버 종류와 관계없이 대소문자를 구분(RFC 9309)
 - 권장 최대 파일 크기는 500KB (Google의 실제 제한)
 - UTF-8 인코딩만 허용
 
@@ -233,4 +234,4 @@ Disallow: /sitemap.xml
 
 [robots.txt 생성기 사용해보기 →](/ko/tools/robots-txt-generator/)
 
-생성기를 사용하면 구성할 봇을 선택하고, 차단할 경로에 체크하고, 사이트맵 URL을 토글하면 올바른 구문의 바로 배포 가능한 파일이 출력됩니다. 사이트 루트에 붙여넣고 5분 이내에 Search Console로 확인하세요.
+생성기에서 `User-agent` 블록(`*`, Googlebot, Bingbot, 직접 입력)을 추가하고 블록마다 `Allow`·`Disallow` 경로를 넣은 뒤 Sitemap URL을 지정하면 파일이 출력됩니다. 사이트 루트에 올린 뒤 Search Console의 robots.txt 보고서로 확인하세요.

@@ -2,6 +2,7 @@
 title: ".htaccessジェネレーター：mod_rewriteを暗記せずにApache設定を生成"
 description: "HTTPSリダイレクト・CORS・キャッシュ・Basic認証など.htaccessの主要ルールを解説。よくあるミスと、オンラインで正確な.htaccessを即生成する方法を紹介します。"
 pubDate: 2026-04-07
+updatedDate: 2026-10-01
 lang: "ja"
 tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tools"]
 ---
@@ -10,7 +11,7 @@ tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tool
 
 ## .htaccess の用途と使うべき場面
 
-`.htaccess` は `AllowOverride` が有効な Apache サーバーでのみ動作します。Nginx・LiteSpeed・CDN のみの構成では使えません。Nginx にはディレクトリごとの設定ファイルに相当するものがなく、ルールは `server {}` ブロックに書きます。
+`.htaccess` は `AllowOverride` が有効な Apache サーバーでのみ動作します。Nginx や CDN のみの構成では使えません（LiteSpeed Web Server は `.htaccess` を読み込みます）。Nginx にはディレクトリごとの設定ファイルに相当するものがなく、ルールは `server {}` ブロックに書きます。
 
 `.htaccess` が適切な場面：
 
@@ -136,14 +137,13 @@ htpasswd -c /path/to/.htpasswd username
 
 ### Gzip 圧縮
 
-テキストベースのレスポンスを圧縮して転送サイズを削減します。HTML・CSS・JavaScript で通常 60〜80% の削減効果があります：
+テキストベースのレスポンスを圧縮して転送サイズを削減します。WOFF と WOFF2 のフォントはすでに圧縮済みなので対象から外します：
 
 ```apache
 <IfModule mod_deflate.c>
   AddOutputFilterByType DEFLATE text/html text/plain text/css
   AddOutputFilterByType DEFLATE application/javascript application/json
   AddOutputFilterByType DEFLATE application/xml image/svg+xml
-  AddOutputFilterByType DEFLATE font/woff2 font/woff
 </IfModule>
 ```
 
@@ -204,15 +204,14 @@ RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,L]
   # MIME タイプスニッフィングを防止
   Header always set X-Content-Type-Options "nosniff"
 
-  # 古いブラウザの XSS フィルターを有効化
-  Header always set X-XSS-Protection "1; mode=block"
+  # 古い XSS フィルターを無効化（OWASP と MDN は 0 を推奨）
+  Header always set X-XSS-Protection "0"
 
   # リファラーポリシー
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
-  # サーバーシグネチャを削除
+  # PHP のバージョンヘッダーを削除（Server ヘッダーはここでは消せません。メイン設定で ServerTokens Prod を指定）
   Header always unset X-Powered-By
-  Header always unset Server
 </IfModule>
 ```
 
@@ -252,20 +251,20 @@ curl -I https://yourdomain.com/static/app.js
 
 ## よくあるミス
 
-**1. `RewriteEngine On` の漏れ** — `RewriteRule` を使うすべてのブロックの先頭にこの行が必要です。忘れると 500 エラーになります。
+**1. `RewriteEngine On` の漏れ** — `RewriteRule` を使うすべてのブロックの先頭にこの行が必要です。忘れると mod_rewrite はルールを黙って無視します。500 エラーになる場合は、mod_rewrite 自体が読み込まれていません。
 
-**2. ルールの順序** — Apache はルールを上から下に処理し、`[L]` が付いた最初のマッチで停止します。広いルールより前に特定のルールを置いてください。
+**2. ルールの順序** — Apache はルールを上から下に処理し、`[L]` はその回の処理を終えます。`.htaccess` では書き換え後の URL がもう一度ルールを通るため、処理を止めたいときは `[END]`（Apache 2.4.3 以降）を使います。広いルールより前に特定のルールを置いてください。
 
 **3. 無限リダイレクトループ** — HTTPS リダイレクトが既に HTTPS の場合にも実行されるとループになります。必ず `%{HTTPS} off` または `%{HTTP:X-Forwarded-Proto} !https` を確認してください。
 
-**4. .htpasswd へのパス** — 相対 URL ではなく絶対サーバーパスを使ってください。相対パスはほとんどの設定で機能しません。
+**4. .htpasswd へのパス** — ファイルシステムの絶対パスを使ってください。`AuthUserFile` の相対パスは `.htaccess` のあるディレクトリではなく `ServerRoot` を基準に解決されます。
 
 **5. `mod_rewrite` が有効になっていない** — Ubuntu/Debian では `sudo a2enmod rewrite && sudo systemctl restart apache2` を実行してください。
 
 ## 推測なしで .htaccess を構築する
 
-上記のルールは実際のユースケースの 90% をカバーしますが、リダイレクト・認証・キャッシュルールを正しく組み合わせるには、慎重な順序付けと構文が必要です。
+リダイレクト・認証・キャッシュルールを正しく組み合わせるには、慎重な順序付けと構文が必要です。
 
 [htaccess ジェネレーターを試す →](/ja/tools/htaccess-generator/)
 
-必要なルールを選択し、ドメインとパスを入力するだけで、正しい順序・構文エラーなし・各ブロックの説明コメント付きのプロダクション対応 `.htaccess` ファイルが生成されます。
+ジェネレーターが扱うのは HTTPS、www の有無、`DirectoryIndex`、ブラウザキャッシュ、いくつかのセキュリティルール、1件の `Redirect` で、各ブロックの先頭にはブロック名のコメントが入ります。圧縮・CORS・認証・エラーページ・直リンク防止はジェネレーターにないため、上の例からコピーしてください。
