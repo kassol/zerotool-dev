@@ -87,6 +87,7 @@ const STRINGS = {
     durS: '{n} s',
     durMin: '{n} min',
     durH: '{n} h',
+    durD: '{n} days',
     vMatch: 'Match: the pasted value equals the computed HMAC ({enc}).',
     vMatchOf: 'Match: signature {i} of {n} in the header equals the computed HMAC ({enc}).',
     vUpper: 'The bytes match, but the hex is uppercase. Code that compares strings (GitHub, Stripe, Slack examples) expects lowercase.',
@@ -221,14 +222,15 @@ const STRINGS = {
     nBodyHashOk: 'URL 中的 bodySHA256 与这个请求体一致。',
     nBodyHashBad: 'URL 中的 bodySHA256 与这个请求体不一致（请求体的 SHA-256：{hex}）。',
     nSvixKeyLen: '解码后的密钥为 {n} 字节，Standard Webhooks 规定 24 到 64 字节。',
-    nTsOld: '时间戳已过去 {age}，该平台只接受 {limit} 以内。',
-    nTsFuture: '时间戳比现在晚 {age}，该平台只接受 {limit} 以内。',
+    nTsOld: '时间戳已过去 {age}，该平台只接受 {limit}以内的时间戳。',
+    nTsFuture: '时间戳比现在晚 {age}，该平台只接受 {limit}以内的时间戳。',
     nTsLooksMs: '这个时间戳有 13 位，像毫秒；该平台用秒。',
     nTsLooksS: '这个时间戳有 10 位，像秒；该平台用毫秒。',
     nTsFromHeader: '时间戳取自粘贴内容里的 t=。',
     durS: '{n} 秒',
     durMin: '{n} 分钟',
     durH: '{n} 小时',
+    durD: '{n} 天',
     vMatch: '一致：粘贴的值与计算出的 HMAC 相同（{enc}）。',
     vMatchOf: '一致：请求头里 {n} 个签名中的第 {i} 个与计算出的 HMAC 相同（{enc}）。',
     vUpper: '字节一致，但十六进制是大写。按字符串比较的代码（GitHub、Stripe、Slack 示例）要求小写。',
@@ -296,7 +298,7 @@ const STRINGS = {
   ja: {
     format: '形式',
     algorithm: 'アルゴリズム',
-    example: '例を入れる',
+    example: '例',
     message: 'メッセージ',
     body: 'リクエストボディ（受信したまま）',
     formBody: 'POST パラメーター（フォーム）または JSON ボディ',
@@ -371,6 +373,7 @@ const STRINGS = {
     durS: '{n} 秒',
     durMin: '{n} 分',
     durH: '{n} 時間',
+    durD: '{n} 日',
     vMatch: '一致：貼り付けた値は計算した HMAC と同じです（{enc}）。',
     vMatchOf: '一致：ヘッダー内の {n} 個の署名のうち {i} 番目が計算した HMAC と同じです（{enc}）。',
     vUpper: 'バイト列は一致しますが、16 進数が大文字です。文字列で比較するコード（GitHub・Stripe・Slack の例）は小文字を前提にしています。',
@@ -513,6 +516,7 @@ const STRINGS = {
     durS: '{n}초',
     durMin: '{n}분',
     durH: '{n}시간',
+    durD: '{n}일',
     vMatch: '일치: 붙여 넣은 값이 계산한 HMAC과 같습니다({enc}).',
     vMatchOf: '일치: 헤더의 서명 {n}개 중 {i}번째가 계산한 HMAC과 같습니다({enc}).',
     vUpper: '바이트는 같지만 16진수가 대문자입니다. 문자열로 비교하는 코드(GitHub·Stripe·Slack 예제)는 소문자를 전제로 합니다.',
@@ -675,8 +679,6 @@ const order = ORDER[lang];
     </div>
   </div>
 
-  <p id="hmac-status" class="tool-status none" role="status" aria-live="polite"></p>
-
   <div id="hmac-results" class="hmac-results" hidden>
     <div class="hmac-row hmac-row-main" id="hmac-row-preset" hidden>
       <span class="hmac-row-label">{L.outPreset}</span>
@@ -699,6 +701,8 @@ const order = ORDER[lang];
       <button class="btn-copy" type="button" data-copy="hmac-out-b64url">{L.copy}</button>
     </div>
   </div>
+
+  <p id="hmac-status" class="tool-status none" role="status" aria-live="polite"></p>
 
   <p id="hmac-preset-note" class="hmac-note" hidden></p>
 
@@ -1382,8 +1386,9 @@ const order = ORDER[lang];
 
     function duration(sec) {
       if (sec < 120) return fmt(S.durS, { n: sec });
-      if (sec < 7200) return fmt(S.durMin, { n: Math.round(sec / 60) });
-      return fmt(S.durH, { n: Math.round(sec / 3600) });
+      if (sec < 3600) return fmt(S.durMin, { n: Math.round(sec / 60) });
+      if (sec < 172800) return fmt(S.durH, { n: Math.round(sec / 3600) });
+      return fmt(S.durD, { n: Math.round(sec / 86400) });
     }
 
     function fieldName(field, presetId) {
@@ -1928,10 +1933,11 @@ const order = ORDER[lang];
 
   @media (max-width: 640px) {
     .hmac-top {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr) 6.6rem auto;
+      gap: 0.4rem;
     }
 
-    .hmac-sel-preset { grid-column: 1 / -1; }
+    .hmac-top #hmac-example { padding-inline: 0.7rem; }
 
     .hmac-top .hmac-cap {
       position: absolute;
@@ -1944,15 +1950,23 @@ const order = ORDER[lang];
 
     .hmac-top #hmac-example { min-height: 44px; }
 
-    .hmac-msg { min-height: 80px; }
+    .hmac-msg { min-height: 76px; height: 76px; }
 
     .hmac-mini { min-height: 32px; }
 
+    .hmac-head .hmac-meta { display: none; }
+
     .hmac-row {
+      grid-template-columns: 4.4rem minmax(0, 1fr) auto;
+      gap: 0.4rem;
+      padding: 0.35rem 0.5rem;
+    }
+
+    .hmac-row-main {
       grid-template-columns: minmax(0, 1fr) auto;
     }
 
-    .hmac-row-label { grid-column: 1 / -1; }
+    .hmac-row-main .hmac-row-label { grid-column: 1 / -1; }
 
     .hmac-details summary { min-height: 44px; align-items: center; }
   }
