@@ -425,7 +425,12 @@ const utf8hex = (s) => [...Buffer.from(s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDF
   eq('CSV: quotes only when needed', [esc('csv', 'abc').output, esc('csv', 'a,b').output, esc('csv', 'say "hi"').output], ['abc', '"a,b"', '"say ""hi"""']);
   const f = esc('csv', '=HYPERLINK("http://x")');
   check('CSV: formula start is reported', hasNote(f, 'csvFormulaRisk'));
-  eq('CSV: formula guard adds \'', esc('csv', '=1+1', { csvFormula: true }).output, "'=1+1");
+  // The two examples and the tab example on the OWASP CSV Injection page (checked 2026-10-01).
+  eq('CSV: OWASP example 1 with the \' guard', esc('csv', '=1+2";=1+2', { csvFormula: 'quote' }).output, '"\'=1+2"";=1+2"');
+  eq('CSV: OWASP example 2 with the \' guard', esc('csv', '=1+2\'" ;,=1+2', { csvFormula: 'quote' }).output, '"\'=1+2\'"" ;,=1+2"');
+  eq('CSV: OWASP Excel-resistant tab guard', esc('csv', '=1+2', { csvFormula: 'tab' }).output, '"\t=1+2"');
+  check('CSV: full-width ＝ and a leading LF are formula starts too', hasNote(esc('csv', '＝1+1'), 'csvFormulaRisk') && hasNote(esc('csv', '\n=1'), 'csvFormulaRisk'));
+  eq('CSV: no guard for plain text', esc('csv', 'abc', { csvFormula: 'quote' }).output, 'abc');
   eq('CSV unescape errors', [une('csv', '"abc').error, une('csv', '"a"b"').error, une('csv', 'a"b').error], ['csvUnclosed', 'csvAfterQuote', 'csvBareQuote']);
   const nq = une('csv', 'a,b,c');
   eq('CSV unescape of an unquoted row', [out(nq), hasNote(nq, 'csvNotQuoted'), (nq.notes.find((n) => n.key === 'csvFields') || {}).n], ['a,b,c', true, 3]);

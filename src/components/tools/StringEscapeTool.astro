@@ -13,7 +13,7 @@ const STRINGS = {
     quote: 'Quote', nonAscii: 'Non-ASCII', nonAsciiEscape: '\\uXXXX', nonAsciiBraces: '\\u{…}', nonAsciiKeep: 'Keep as is',
     cOctal: 'UTF-8 bytes (\\ooo)', cUcn: '\\u / \\U', jsonAscii: 'Escape non-ASCII as \\uXXXX', pyAscii: 'ASCII only, like ascii()',
     htmlNonAscii: 'Encode non-ASCII as &#x…;', xmlAttr: 'Attribute value (also tab and line breaks)',
-    delim: 'Delimiter', delimComma: 'Comma', delimSemicolon: 'Semicolon', delimTab: 'Tab', csvAlways: 'Always quote', csvFormula: "Guard formulas with '",
+    delim: 'Delimiter', delimComma: 'Comma', delimSemicolon: 'Semicolon', delimTab: 'Tab', csvAlways: 'Always quote', csvFormula: 'Formula guard', guardOff: 'Off', guardQuote: "' prefix", guardTab: 'Tab prefix (Excel)',
     dialect: 'Dialect', sqlStandard: 'Standard (PostgreSQL, SQLite, SQL Server, Oracle)', sqlMysql: 'MySQL / MariaDB',
     chars: ['1 character', '{n} characters'], escaped: 'Escaped: {from} → {to}.', unescaped: 'Unescaped: {from} → {to}.',
     atPos: 'at position {pos}', atLine: 'at line {line}, column {col}',
@@ -66,8 +66,9 @@ const STRINGS = {
       htmlControl: 'The text contains {n} control character(s). HTML does not allow them in text, raw or as references.',
       xmlUnknownEntity: '{seq} is not one of the five XML entities and was left as is ({n} in total). Other names need a DTD; for HTML entities choose HTML.',
       xmlBareAmp: '{n} & not followed by a reference was left as is. Well-formed XML writes it as &amp;.',
-      csvFormulaRisk: 'The value starts with {ch}. Spreadsheet apps may run it as a formula (CSV injection). Turn on "Guard formulas" to prevent that.',
-      csvFormulaGuarded: "Added ' before {ch} so spreadsheet apps show the value as text.",
+      csvFormulaRisk: 'The value starts with {ch}. Spreadsheet apps may run it as a formula (CSV injection). Choose a formula guard to prevent that.',
+      csvFormulaGuarded: "Added ' before {ch} and quoted the field, as in OWASP's CSV sanitization. OWASP notes that Excel may drop the ' after the file is saved and opened again.",
+      csvFormulaTab: 'Added a tab before {ch} inside the quotes, the Excel-resistant form OWASP gives. The tab stays in the data.',
       csvNotQuoted: 'The value is not quoted, so there is nothing to unescape.',
       csvFields: 'Read as CSV it holds {n} fields.',
       sqlOwasp: 'Escaping does not reliably prevent SQL injection; OWASP lists it as "strongly discouraged". In application code, use parameterized queries.',
@@ -87,7 +88,7 @@ const STRINGS = {
     quote: '引号', nonAscii: '非 ASCII', nonAsciiEscape: '\\uXXXX', nonAsciiBraces: '\\u{…}', nonAsciiKeep: '保留原字符',
     cOctal: 'UTF-8 字节（\\ooo）', cUcn: '\\u / \\U', jsonAscii: '非 ASCII 字符写成 \\uXXXX', pyAscii: '只输出 ASCII（同 ascii()）',
     htmlNonAscii: '非 ASCII 字符写成 &#x…;', xmlAttr: '属性值（制表符和换行也转义）',
-    delim: '分隔符', delimComma: '逗号', delimSemicolon: '分号', delimTab: '制表符', csvAlways: '总是加引号', csvFormula: "公式前加 ' 防护",
+    delim: '分隔符', delimComma: '逗号', delimSemicolon: '分号', delimTab: '制表符', csvAlways: '总是加引号', csvFormula: '公式防护', guardOff: '关闭', guardQuote: "前加 '", guardTab: '前加 Tab（Excel）',
     dialect: '方言', sqlStandard: '标准（PostgreSQL、SQLite、SQL Server、Oracle）', sqlMysql: 'MySQL / MariaDB',
     chars: ['{n} 个字符', '{n} 个字符'], escaped: '已转义：{from} → {to}。', unescaped: '已反转义：{from} → {to}。',
     atPos: '（第 {pos} 个字符）', atLine: '（第 {line} 行第 {col} 列）',
@@ -140,8 +141,9 @@ const STRINGS = {
       htmlControl: '文本里有 {n} 个控制字符，HTML 文本里不允许它们出现，原样或写成引用都不行。',
       xmlUnknownEntity: '{seq} 不是 XML 的 5 个预定义实体之一，已保持原样（共 {n} 处）。其他实体名需要 DTD；HTML 实体请选 HTML 格式。',
       xmlBareAmp: '{n} 个后面不是引用的 & 已保持原样。格式良好的 XML 要写成 &amp;。',
-      csvFormulaRisk: '值以 {ch} 开头，表格软件可能把它当公式执行（CSV 注入）。打开「公式前加 \' 防护」可避免。',
-      csvFormulaGuarded: "已在 {ch} 前加 '，表格软件会把它当文本显示。",
+      csvFormulaRisk: '值以 {ch} 开头，表格软件可能把它当公式执行（CSV 注入）。选择一种公式防护可避免。',
+      csvFormulaGuarded: "已在 {ch} 前加 ' 并给字段加引号，做法同 OWASP 的 CSV 清理建议。OWASP 也提醒：Excel 保存后重新打开，' 可能被去掉。",
+      csvFormulaTab: '已在引号内的 {ch} 前加一个 Tab，这是 OWASP 给出的对 Excel 更可靠的写法。Tab 会留在数据里。',
       csvNotQuoted: '这个值没有加引号，不需要反转义。',
       csvFields: '按 CSV 读取，它包含 {n} 个字段。',
       sqlOwasp: '转义并不能可靠地防止 SQL 注入，OWASP 把它列为「强烈不建议」的做法。应用代码里请使用参数化查询。',
@@ -161,7 +163,7 @@ const STRINGS = {
     quote: '引用符', nonAscii: '非 ASCII', nonAsciiEscape: '\\uXXXX', nonAsciiBraces: '\\u{…}', nonAsciiKeep: 'そのまま',
     cOctal: 'UTF-8 バイト（\\ooo）', cUcn: '\\u / \\U', jsonAscii: '非 ASCII を \\uXXXX にする', pyAscii: 'ASCII のみ（ascii() と同じ）',
     htmlNonAscii: '非 ASCII を &#x…; にする', xmlAttr: '属性値（タブと改行もエスケープ）',
-    delim: '区切り', delimComma: 'カンマ', delimSemicolon: 'セミコロン', delimTab: 'タブ', csvAlways: '常に引用符で囲む', csvFormula: "数式の前に ' を付ける",
+    delim: '区切り', delimComma: 'カンマ', delimSemicolon: 'セミコロン', delimTab: 'タブ', csvAlways: '常に引用符で囲む', csvFormula: '数式対策', guardOff: 'なし', guardQuote: "' を付ける", guardTab: 'タブを付ける（Excel）',
     dialect: '方言', sqlStandard: '標準（PostgreSQL・SQLite・SQL Server・Oracle）', sqlMysql: 'MySQL / MariaDB',
     chars: ['{n} 文字', '{n} 文字'], escaped: 'エスケープ：{from} → {to}。', unescaped: 'アンエスケープ：{from} → {to}。',
     atPos: '（{pos} 文字目）', atLine: '（{line} 行 {col} 列目）',
@@ -214,8 +216,9 @@ const STRINGS = {
       htmlControl: 'テキストに制御文字が {n} 個あります。HTML のテキストでは、そのままでも参照でも使えません。',
       xmlUnknownEntity: '{seq} は XML の 5 つの定義済み実体ではないため、そのままにしました（計 {n} 箇所）。ほかの名前には DTD が必要です。HTML の実体なら HTML を選んでください。',
       xmlBareAmp: '参照になっていない & {n} 個はそのままにしました。整形式の XML では &amp; と書きます。',
-      csvFormulaRisk: '値が {ch} で始まっています。表計算ソフトが数式として実行するおそれがあります（CSV インジェクション）。「数式の前に \' を付ける」をオンにすると防げます。',
-      csvFormulaGuarded: "{ch} の前に ' を付けました。表計算ソフトは文字列として表示します。",
+      csvFormulaRisk: '値が {ch} で始まっています。表計算ソフトが数式として実行するおそれがあります（CSV インジェクション）。「数式対策」を選ぶと防げます。',
+      csvFormulaGuarded: "{ch} の前に ' を付け、フィールドを引用符で囲みました（OWASP の CSV サニタイズと同じ）。OWASP は、Excel で保存して開き直すと ' が消えることがあると注意しています。",
+      csvFormulaTab: '引用符の中で {ch} の前にタブを付けました。OWASP が Excel 向けに示す、より確実な方法です。タブはデータに残ります。',
       csvNotQuoted: 'この値は引用符で囲まれていないため、アンエスケープするものはありません。',
       csvFields: 'CSV として読むと {n} 個のフィールドになります。',
       sqlOwasp: 'エスケープでは SQL インジェクションを確実には防げず、OWASP は「強く非推奨」としています。アプリケーションのコードではプレースホルダ（パラメータ化クエリ）を使ってください。',
@@ -235,7 +238,7 @@ const STRINGS = {
     quote: '따옴표', nonAscii: '비 ASCII', nonAsciiEscape: '\\uXXXX', nonAsciiBraces: '\\u{…}', nonAsciiKeep: '그대로',
     cOctal: 'UTF-8 바이트 (\\ooo)', cUcn: '\\u / \\U', jsonAscii: '비 ASCII 문자를 \\uXXXX로', pyAscii: 'ASCII만 (ascii()와 같음)',
     htmlNonAscii: '비 ASCII 문자를 &#x…;로', xmlAttr: '속성 값 (탭과 줄 바꿈도 이스케이프)',
-    delim: '구분자', delimComma: '쉼표', delimSemicolon: '세미콜론', delimTab: '탭', csvAlways: '항상 따옴표', csvFormula: "수식 앞에 ' 붙이기",
+    delim: '구분자', delimComma: '쉼표', delimSemicolon: '세미콜론', delimTab: '탭', csvAlways: '항상 따옴표', csvFormula: '수식 방지', guardOff: '끄기', guardQuote: "' 붙이기", guardTab: '탭 붙이기 (Excel)',
     dialect: '방언', sqlStandard: '표준 (PostgreSQL, SQLite, SQL Server, Oracle)', sqlMysql: 'MySQL / MariaDB',
     chars: ['{n}자', '{n}자'], escaped: '이스케이프: {from} → {to}.', unescaped: '언이스케이프: {from} → {to}.',
     atPos: '({pos}번째 문자)', atLine: '({line}행 {col}열)',
@@ -288,8 +291,9 @@ const STRINGS = {
       htmlControl: '텍스트에 제어 문자가 {n}개 있습니다. HTML 텍스트에서는 그대로든 참조로든 쓸 수 없습니다.',
       xmlUnknownEntity: '{seq}는 XML의 미리 정의된 다섯 엔티티가 아니어서 그대로 두었습니다(모두 {n}곳). 다른 이름은 DTD가 필요합니다. HTML 엔티티라면 HTML을 고르세요.',
       xmlBareAmp: '참조가 아닌 & {n}개는 그대로 두었습니다. 올바른 XML에서는 &amp;로 씁니다.',
-      csvFormulaRisk: '값이 {ch}로 시작합니다. 스프레드시트 프로그램이 수식으로 실행할 수 있습니다(CSV 인젝션). "수식 앞에 \' 붙이기"를 켜면 막을 수 있습니다.',
-      csvFormulaGuarded: "{ch} 앞에 '를 붙였습니다. 스프레드시트 프로그램은 텍스트로 보여 줍니다.",
+      csvFormulaRisk: '값이 {ch}로 시작합니다. 스프레드시트 프로그램이 수식으로 실행할 수 있습니다(CSV 인젝션). "수식 방지"를 고르면 막을 수 있습니다.',
+      csvFormulaGuarded: "{ch} 앞에 '를 붙이고 필드를 따옴표로 감쌌습니다(OWASP의 CSV 정리 방법과 같음). OWASP는 Excel에서 저장 후 다시 열면 '가 사라질 수 있다고 경고합니다.",
+      csvFormulaTab: '따옴표 안의 {ch} 앞에 탭을 붙였습니다. OWASP가 Excel용으로 제시하는 더 확실한 방법이며, 탭은 데이터에 남습니다.',
       csvNotQuoted: '따옴표로 감싸지 않은 값이라 언이스케이프할 것이 없습니다.',
       csvFields: 'CSV로 읽으면 필드가 {n}개입니다.',
       sqlOwasp: '이스케이프로는 SQL 인젝션을 확실히 막을 수 없고, OWASP는 이를 "강력히 권장하지 않음"으로 분류합니다. 애플리케이션 코드에서는 파라미터화 쿼리를 쓰세요.',
@@ -339,7 +343,8 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
     <label class="se-opt" data-mode="csv" data-dir="both"><span>{L.delim}</span>
       <select class="se-mini" data-opt="csvDelim"><option value=",">{L.delimComma}</option><option value=";">{L.delimSemicolon}</option><option value={'\t'}>{L.delimTab}</option></select></label>
     <label class="se-opt" data-mode="csv" data-dir="escape"><input type="checkbox" data-opt="csvAlways" /><span>{L.csvAlways}</span></label>
-    <label class="se-opt" data-mode="csv" data-dir="escape"><input type="checkbox" data-opt="csvFormula" /><span>{L.csvFormula}</span></label>
+    <label class="se-opt" data-mode="csv" data-dir="escape"><span>{L.csvFormula}</span>
+      <select class="se-mini" data-opt="csvFormula"><option value="off">{L.guardOff}</option><option value="quote">{L.guardQuote}</option><option value="tab">{L.guardTab}</option></select></label>
     <label class="se-opt" data-mode="sql" data-dir="both"><span>{L.dialect}</span>
       <select class="se-mini" data-opt="sqlDialect"><option value="standard">{L.sqlStandard}</option><option value="mysql">{L.sqlMysql}</option></select></label>
   </div>
@@ -381,7 +386,7 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
         pyQuote: "'", pyAscii: false,
         htmlNonAscii: false,
         xmlAttr: false,
-        csvDelim: ',', csvAlways: false, csvFormula: false,
+        csvDelim: ',', csvAlways: false, csvFormula: 'off',
         sqlDialect: 'standard'
       };
 
@@ -945,15 +950,21 @@ const MODE_LIST = ['json', 'js', 'java', 'c', 'python', 'html', 'xml', 'csv', 's
       }
 
       // ── CSV (RFC 4180 §2; OWASP CSV Injection) ───────────────────────────────────
-      var FORMULA_START = /^[=+\-@\t\r]/;
+      // Characters that make a spreadsheet read a cell as a formula (OWASP CSV Injection),
+      // including the full-width forms that some locales (e.g. Japanese Excel) accept.
+      var FORMULA_START = /^[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/;
+      var CONTROL_NAMES = { '\t': 'Tab', '\r': 'CR', '\n': 'LF' };
       function csvEscape(text, o) {
-        var delim = o.csvDelim || ',', notes = [], v = text;
+        var delim = o.csvDelim || ',', notes = [], v = text, guarded = false;
         if (FORMULA_START.test(v)) {
-          var first = v.charAt(0) === '\t' ? 'Tab' : v.charAt(0) === '\r' ? 'CR' : v.charAt(0);
-          if (o.csvFormula) { v = "'" + v; notes.push({ key: 'csvFormulaGuarded', ch: first }); }
-          else notes.push({ key: 'csvFormulaRisk', ch: first });
+          var first = CONTROL_NAMES[v.charAt(0)] || v.charAt(0);
+          if (o.csvFormula === 'quote' || o.csvFormula === 'tab') {
+            v = (o.csvFormula === 'tab' ? '\t' : "'") + v;
+            guarded = true;
+            notes.push({ key: o.csvFormula === 'tab' ? 'csvFormulaTab' : 'csvFormulaGuarded', ch: first });
+          } else notes.push({ key: 'csvFormulaRisk', ch: first });
         }
-        var need = o.csvAlways || v.indexOf(delim) >= 0 || /["\r\n]/.test(v);
+        var need = guarded || o.csvAlways || v.indexOf(delim) >= 0 || /["\r\n]/.test(v);
         return done(need ? '"' + v.replace(/"/g, '""') + '"' : v, notes);
       }
       function csvUnescape(text, o) {
