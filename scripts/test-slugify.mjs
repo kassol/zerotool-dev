@@ -138,5 +138,25 @@ t("John's Guide", 'john-s-guide');
 t('你好', '');
 t('日本語 Guide', 'guide');
 
+// en tool page: Examples and comparison tables
+t('10 Tips & Tricks for Node.js (2026 Edition)!', '10-tips-and-tricks-for-node-js-2026-edition');
+t('Crème Brûlée: A 30-Minute Recipe', 'creme-brulee-a-30-minute-recipe');
+t('Straße in Łódź', 'strasse-in-lodz');
+t('C++ vs C# — Which One?', 'c-plus-plus-vs-c-hash-which-one');
+t('東京 Travel Guide 2026', 'travel-guide-2026');
+t('user_profile.v2', 'user-profile-v2');
+t('fooBar 123 $#%', 'foobar-123-hash-percent');
+t('я люблю единорогов', '');
+t('I ♥ Dogs', 'i-dogs');
+t('Fußgängerübergänge', 'fussgangerubergange');
+t('Conway\u2019s Law', 'conways-law');
+t("Conway's Law", 'conway-s-law');
+{
+  const got = E.slugify('10 Tips & Tricks for Node.js (2026 Edition)!', { separator: '_', lowercase: false, trim: true });
+  check('page example, underscore + case kept', got === '10_Tips_and_Tricks_for_Node_js_2026_Edition', got);
+  const dot = E.slugify('..', { separator: '.', lowercase: true, trim: false });
+  check('page FAQ: punctuation-only input with Trim off and dot separator gives "."', dot === '.', dot);
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

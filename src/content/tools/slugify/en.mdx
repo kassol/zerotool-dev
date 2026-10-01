@@ -9,16 +9,40 @@ faqItems:
   - question: "Can I use underscores instead of hyphens?"
     answer: "Yes. Use the Separator dropdown to choose between hyphen (-), underscore (_), or dot (.)."
   - question: "Is the result safe to use directly in a URL path?"
-    answer: "Yes. The output contains only alphanumeric characters and the chosen separator, making it safe for use in URL paths without percent-encoding."
+    answer: "Yes. The output contains only ASCII letters, digits and the chosen separator, so it needs no percent-encoding. One edge case: with Trim off and the dot separator, input made only of punctuation can give a single dot, which browsers treat as a dot segment and remove from the path."
+  - question: "Does the slug change if I edit the title later?"
+    answer: "Yes, the slug is recomputed from whatever text is in the box. If the old URL is already published, keep the old slug or add a 301 redirect from it; changing a published slug breaks inbound links."
 ---
 
 <h2>How to Use</h2>
 <ol>
-  <li>Type or paste your text into the input box.</li>
+  <li>Type or paste your text into the input box. A title, a file name or a full sentence all work.</li>
   <li>Choose your preferred separator (hyphen, underscore, or dot).</li>
-  <li>Toggle Lowercase and Trim options as needed.</li>
-  <li>The slug updates in real time — click <strong>Copy</strong> to copy it.</li>
+  <li>Toggle Lowercase and Trim options as needed. Both are on by default.</li>
+  <li>The slug updates in real time — click <strong>Copy</strong> to copy it. If every character was removed, a warning says the result is empty.</li>
 </ol>
+
+<h2>Examples</h2>
+<p>Each row was produced by the tool's own function with the default options (hyphen, Lowercase on, Trim on):</p>
+<table>
+  <thead><tr><th>Input</th><th>Slug</th></tr></thead>
+  <tbody>
+    <tr><td><code>{"10 Tips & Tricks for Node.js (2026 Edition)!"}</code></td><td><code>{"10-tips-and-tricks-for-node-js-2026-edition"}</code></td></tr>
+    <tr><td><code>{"Crème Brûlée: A 30-Minute Recipe"}</code></td><td><code>{"creme-brulee-a-30-minute-recipe"}</code></td></tr>
+    <tr><td><code>{"Straße in Łódź"}</code></td><td><code>{"strasse-in-lodz"}</code></td></tr>
+    <tr><td><code>{"C++ vs C# — Which One?"}</code></td><td><code>{"c-plus-plus-vs-c-hash-which-one"}</code></td></tr>
+    <tr><td><code>{"東京 Travel Guide 2026"}</code></td><td><code>{"travel-guide-2026"}</code></td></tr>
+    <tr><td><code>{"user_profile.v2"}</code></td><td><code>{"user-profile-v2"}</code></td></tr>
+  </tbody>
+</table>
+<p>
+  What happens in order: the text is decomposed (NFD) and combining marks are dropped; the symbols and letters in the tables below
+  are replaced; any other non-ASCII character is deleted; every remaining character that is not a letter, digit, space,
+  hyphen, underscore or dot becomes a space; runs of spaces become one separator; and runs of <code>-</code>, <code>{"_"}</code> and <code>.</code>
+  collapse into one separator. That last step is why <code>{"user_profile.v2"}</code> loses its underscore and dot: existing
+  separators are normalised to the one you picked. With Lowercase off and the underscore separator, the first example gives
+  <code>{"10_Tips_and_Tricks_for_Node_js_2026_Edition"}</code>, a common form for file names and Python identifiers.
+</p>
 
 <h2>Character Mappings</h2>
 <p>Symbols become a separate word, so Rock &amp; Roll gives <code>{"rock-and-roll"}</code> and Tom&amp;Jerry gives <code>{"tom-and-jerry"}</code>. Accented letters lose their marks (Unicode NFD decomposition, then combining marks are removed): é → e, ñ → n, <code>{"Łódź"}</code> → <code>{"lodz"}</code>, <code>{"Tiếng Việt"}</code> → <code>{"tieng-viet"}</code>. Letters that do not decompose use the second table, with values from <a href="https://github.com/sindresorhus/transliterate" rel="noopener">sindresorhus/transliterate</a>. Uppercase letters keep their case (Ø → O, Œ → OE) until Lowercase is applied.</p>
@@ -64,8 +88,32 @@ faqItems:
   <li>Non-Latin scripts are removed, so input written only in Chinese, Japanese or Korean gives an empty slug.</li>
   <li>Apostrophes act as separators: <code>{"John's Guide"}</code> → <code>{"john-s-guide"}</code>.</li>
   <li>With Trim off, separators at the start and end stay: <code>{"Hello World!"}</code> → <code>{"hello-world-"}</code>.</li>
+  <li>Words are never shortened and stop words (a, the, of) are kept. There is no length limit, so a long sentence gives a long slug; trim it by hand if your CMS caps slug length.</li>
+  <li><code>#</code> becomes the word <code>hash</code>, so <code>{"C#"}</code> gives <code>{"c-hash"}</code> rather than <code>{"c-sharp"}</code>. Edit such names before converting.</li>
+  <li>The tool converts one string at a time; each line break counts as a space, so pasting a list produces one long slug.</li>
 </ul>
 
+<h2>Differences From sindresorhus/slugify</h2>
+<p>
+  <a href="https://github.com/sindresorhus/slugify" rel="noopener">sindresorhus/slugify</a>, a widely used npm package, shares the
+  <code>&amp;</code> → <code>and</code> rule and the letter table, but the README examples show where results part ways. The same inputs here give:
+</p>
+<table>
+  <thead><tr><th>Input</th><th>sindresorhus/slugify (README)</th><th>This tool</th></tr></thead>
+  <tbody>
+    <tr><td><code>{"fooBar 123 $#%"}</code></td><td><code>{"foo-bar-123"}</code></td><td><code>{"foobar-123-hash-percent"}</code></td></tr>
+    <tr><td><code>{"я люблю единорогов"}</code></td><td><code>{"ya-lyublyu-edinorogov"}</code></td><td>empty (Cyrillic is removed)</td></tr>
+    <tr><td><code>{"I ♥ Dogs"}</code></td><td><code>{"i-love-dogs"}</code></td><td><code>{"i-dogs"}</code></td></tr>
+  </tbody>
+</table>
+<p>
+  The package also splits camelCase and, through <a href="https://github.com/sindresorhus/transliterate" rel="noopener">transliterate</a>,
+  turns <code>Fußgängerübergänge</code> into <code>fussgaengeruebergaenge</code>; this tool gives <code>fussgangerubergange</code>. A straight
+  apostrophe is a separator here (<code>{"Conway's Law"}</code> → <code>{"conway-s-law"}</code>), while the curly one is deleted
+  (<code>{"Conway’s Law"}</code> → <code>{"conways-law"}</code>). If your site already has published URLs, match the generator that made them,
+  and use this page for one-off slugs or to check what a title would turn into. To encode a string for a query parameter instead of a path,
+  use the <a href="/tools/url-encode/">URL encoder</a>.
+</p>
 <h2>When to Use Slugs</h2>
 <ul>
   <li><strong>Blog post URLs:</strong> <code>/blog/how-to-use-slugs</code></li>
