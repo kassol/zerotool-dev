@@ -11,25 +11,30 @@ faqItems:
   - question: "'strict-dynamic' は何を意味しますか？"
     answer: "nonce か hash で信頼されたスクリプトが、実行時に他のスクリプトを CDN 一覧なしで読み込めるようにします。モダンアプリで推奨される方式で、ホストベースの許可リストを上書きし、典型的なバイパス手段を塞ぎます。"
   - question: "生成したヘッダーはどこに置けばよいですか？"
-    answer: "オリジンサーバーから `Content-Security-Policy` を送出します（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` など）。HTML `<meta http-equiv>` は静的ホスト向けのフォールバックですが、`frame-ancestors`・`report-uri`・`report-to`・`sandbox` は <meta> では無視されます。"
+    answer: "オリジンサーバーから `Content-Security-Policy` を送出します（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` など）。HTML `<meta http-equiv>` は静的ホスト向けのフォールバックです。CSP Level 3 では `<meta>` 内の `frame-ancestors`・`report-uri`・`sandbox` は無視されるため、ツールはそのタブから除きます。`report-to` は `<meta>` でも有効ですが、エンドポイントは `Reporting-Endpoints` ヘッダーで定義します。"
 ---
 
 <h2>使い方</h2>
 <ol>
-  <li><strong>プリセット</strong>を選びます。Strict は OWASP の「strict CSP」推奨に対応し、Empty は空のポリシーから始めます。</li>
+  <li><strong>プリセット</strong>を選びます。Strict は web.dev で解説されている nonce ベースの strict CSP に沿った構成で、Empty は空のポリシーから始めます。</li>
   <li><strong>モード</strong>を切り替えます。最初は Report-Only にして、違反を計測しつつ実ユーザーをブロックしないようにします。</li>
   <li>各ディレクティブで、キーワードチップ（<code>'self'</code>、<code>'strict-dynamic'</code>、<code>'none'</code>）やスキームチップ（<code>https:</code>、<code>data:</code>）をクリック、もしくはホスト・パスを入力して <kbd>Enter</kbd> を押します。</li>
-  <li><strong>ハッシュ計算機</strong>で特定のインラインスクリプト / スタイルを許可するためのハッシュを生成。<code>+ nonce</code> ボタンでリクエストごとの nonce を追加できます。</li>
+  <li><strong>ハッシュ計算機</strong>で特定のインラインスクリプト / スタイルを許可するためのハッシュを生成。<code>+ nonce</code> ボタンは、サーバーがレスポンスごとに値を入れる <code>{"'nonce-{RANDOM}'"}</code> プレースホルダーを追加します。</li>
   <li>出力タブを切り替えて必要な形式（<strong>HTTP ヘッダー</strong>、<strong>HTML &lt;meta&gt;</strong>、<strong>Express (helmet)</strong>、<strong>Nginx</strong> <code>add_header</code>）をコピー。</li>
 </ol>
 
 <h2>Strict CSP のスタート構成</h2>
-<p>Strict プリセットは三本柱です：<code>script-src</code> に <code>'self' 'strict-dynamic'</code>、<code>object-src</code> に <code>'none'</code>、<code>base-uri</code> に <code>'self'</code>。これに nonce か hash を組み合わせれば、典型的な反射型・蓄積型 XSS のほとんどを防げます。フィッシング系の悪用を抑えたければ、<code>form-action</code> を <code>'self'</code>、<code>frame-ancestors</code> を <code>'none'</code> にしましょう。</p>
+<p>Strict プリセットは web.dev で解説されている nonce ベースの <a href="https://web.dev/articles/strict-csp" target="_blank" rel="noopener">strict CSP</a> に沿っています。HTTP ヘッダータブの出力は次のとおりです。</p>
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`}</code></pre>
+<p><code>{"'nonce-{RANDOM}'"}</code> はプレースホルダーで、そのままでは使えません。サーバーはレスポンスごとに 128 ビット以上の新しいランダム値に置き換え、同じ値をレンダリングする各 <code>&lt;script&gt;</code> の <code>nonce="…"</code> に書き込む必要があります。ポリシーにプレースホルダーが残っている間、ツールは警告を表示します。固定の nonce を静的な設定に貼り付けないでください。一度見た人なら誰でも、注入したスクリプトで使い回せます。</p>
+<p>以前のこのプリセットは <code>'self'</code> を使っていましたが、プレースホルダーに置き換えました。<code>'strict-dynamic'</code> があると、CSP Level 3 は一致する nonce かハッシュがない限り HTML パーサーが挿入したスクリプトをすべてブロックし、<code>'self'</code> やホストソースを確認しなくなります（<a href="https://www.w3.org/TR/CSP3/#strict-dynamic-usage" target="_blank" rel="noopener">CSP3 §8.2</a>）。そのため <code>script-src 'self' 'strict-dynamic'</code> だけでは、現行の Chrome・Firefox・Safari でスクリプトが 1 つも実行されません。ツールはこの組み合わせに警告を出すようになりました。nonce を設定できない静的ビルドのサイトでは、プレースホルダーを削除してハッシュ計算機で各インラインスクリプトのハッシュを追加するか、「中程度」プリセットから始めてください。</p>
+<p><strong>Express (helmet)</strong> タブはレスポンスごとの処理まで出力します。<code>crypto.randomBytes(16).toString('base64')</code> を <code>res.locals.cspNonce</code> に入れるミドルウェアを追加し、<code>script-src</code> に関数を渡します。<a href="https://github.com/helmetjs/helmet#readme" target="_blank" rel="noopener">helmet の README</a> にある書き方です。テンプレート側では、この値を各 script タグに出力してください。<strong>Nginx</strong> タブはプレースホルダーを残してコメントを付けます。Nginx はアプリケーションが出力する HTML に同じ nonce を書き込めないためです。</p>
 
 <h2>よくある落とし穴</h2>
 <ul>
-  <li><strong><code>'none'</code> は単独でしか使えません。</strong> 他のソースと併記するとそのディレクティブごと無視されます。</li>
-  <li><strong><code>frame-ancestors</code> は HTTP ヘッダー専用。</strong> <code>&lt;meta&gt;</code> 経由では無視されます。<code>report-uri</code>・<code>report-to</code>・<code>sandbox</code> も同様です。</li>
+  <li><strong><code>'none'</code> は単独でしか効きません。</strong> 他のソースと並べると <code>'none'</code> は効果がなく、他のソースは許可されます。</li>
+  <li><strong>HTTP ヘッダー専用のディレクティブがあります。</strong> <a href="https://www.w3.org/TR/CSP3/#meta-element" target="_blank" rel="noopener">CSP3 §3.3</a> では <code>&lt;meta&gt;</code> 内の <code>frame-ancestors</code>・<code>report-uri</code>・<code>sandbox</code> は無視され、Report-Only もありません。ツールは <code>&lt;meta&gt;</code> タブからこれらを除き、警告を出します。</li>
+  <li><strong><code>'strict-dynamic'</code> には nonce かハッシュが必要です。</strong> ないとページ上のスクリプトがすべてブロックされます。ツールが警告します。</li>
   <li><strong>hash / nonce があると <code>'unsafe-inline'</code> は無効化されます。</strong> モダンブラウザは安全側を優先します。</li>
   <li><strong><code>default-src</code> は必ず定義すること。</strong> 未指定の fetch 系ディレクティブは <code>default-src</code> をフォールバックします。これがないと将来追加されたディレクティブにフォールバックが効きません。</li>
   <li><strong>カスタムホストにセミコロンは入れられません。</strong> セミコロンはポリシー全体を切ってしまいます。</li>

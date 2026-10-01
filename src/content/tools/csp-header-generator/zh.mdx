@@ -11,25 +11,30 @@ faqItems:
   - question: "'strict-dynamic' 起什么作用？"
     answer: "它允许已经被 nonce 或 hash 信任的脚本在运行时再加载其他脚本，而无需一一列出 CDN 主机。这是现代应用推荐的模式，会覆盖基于主机的白名单，从而堵住绕过路径。"
   - question: "生成的头部应该部署到哪里？"
-    answer: "请从源站发出 `Content-Security-Policy`（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` 等都可以）。HTML `<meta http-equiv>` 仅作为静态托管的兜底；它不支持 `frame-ancestors`、`report-uri`、`report-to`、`sandbox`。"
+    answer: "请从源站发出 `Content-Security-Policy`（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` 等都可以）。HTML `<meta http-equiv>` 仅作为静态托管的兜底；CSP Level 3 规定 `<meta>` 里的 `frame-ancestors`、`report-uri`、`sandbox` 无效，工具在该页签中会去掉它们。`report-to` 在 `<meta>` 中仍有效，但它的端点要由 `Reporting-Endpoints` 头部定义。"
 ---
 
 <h2>使用步骤</h2>
 <ol>
-  <li>选择一个<strong>预设</strong>。Strict 对应 OWASP 的「strict CSP」推荐配置，Empty 让你从空白策略开始。</li>
+  <li>选择一个<strong>预设</strong>。Strict 采用 web.dev 介绍的基于 nonce 的 strict CSP，Empty 让你从空白策略开始。</li>
   <li>切换<strong>模式</strong>。先用 Report-Only：浏览器只上报违规，不阻断真实用户。</li>
   <li>逐条指令：点击关键字芯片（<code>'self'</code>、<code>'strict-dynamic'</code>、<code>'none'</code>）、协议芯片（<code>https:</code>、<code>data:</code>），或在输入框里写主机/路径后按 <kbd>Enter</kbd>。</li>
-  <li>用<strong>hash 计算器</strong>为某段 inline script / style 生成 SHA-256/384/512 哈希；或点击 <code>+ nonce</code> 生成一次性 nonce。</li>
+  <li>用<strong>hash 计算器</strong>为某段 inline script / style 生成 SHA-256/384/512 哈希；或点击 <code>+ nonce</code> 加入 <code>{"'nonce-{RANDOM}'"}</code> 占位符，由服务器在每次响应时填入真实值。</li>
   <li>切换输出页签复制需要的形式：<strong>HTTP header</strong>、<strong>HTML &lt;meta&gt;</strong>、<strong>Express (helmet)</strong>、<strong>Nginx</strong> <code>add_header</code>。</li>
 </ol>
 
 <h2>Strict CSP 起步配置</h2>
-<p>Strict 预设围绕三条规则展开：<code>script-src</code> 写 <code>'self' 'strict-dynamic'</code>，<code>object-src</code> 写 <code>'none'</code>，<code>base-uri</code> 写 <code>'self'</code>。再配合按请求生成的 nonce 或按脚本计算的 hash，足以拦下绝大多数反射型与存储型 XSS 注入。如果想进一步压制 phishing 类攻击，把 <code>form-action</code> 写成 <code>'self'</code>，<code>frame-ancestors</code> 写成 <code>'none'</code>。</p>
+<p>Strict 预设采用 web.dev 介绍的基于 nonce 的 <a href="https://web.dev/articles/strict-csp" target="_blank" rel="noopener">strict CSP</a>。HTTP header 页签输出：</p>
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`}</code></pre>
+<p><code>{"'nonce-{RANDOM}'"}</code> 是占位符，不是可用的值。服务器必须在每次响应时把它换成至少 128 位的新随机值，并把同一个值写进它渲染的每个 <code>&lt;script&gt;</code> 的 <code>nonce="…"</code>。只要策略里还有占位符，工具就会显示警告。不要把一个固定的 nonce 写进静态配置：任何人看到一次就能在注入的脚本里重复使用。</p>
+<p>早期版本的这个预设写的是 <code>'self'</code>，现在换成了占位符。原因是有 <code>'strict-dynamic'</code> 时，CSP Level 3 会拦截 HTML 解析器插入的所有脚本，除非带有匹配的 nonce 或 hash，并且不再检查 <code>'self'</code> 和主机源（<a href="https://www.w3.org/TR/CSP3/#strict-dynamic-usage" target="_blank" rel="noopener">CSP3 §8.2</a>）。所以单独的 <code>script-src 'self' 'strict-dynamic'</code> 在当前的 Chrome、Firefox、Safari 里一个脚本都不会执行，工具现在会对这种组合给出警告。如果站点是无法设置 nonce 的静态构建，删掉占位符，用 hash 计算器为每段内联脚本加 hash，或者从「适中」预设开始。</p>
+<p><strong>Express (helmet)</strong> 页签替你完成按响应生成这一步：它加一个中间件，把 <code>crypto.randomBytes(16).toString('base64')</code> 存进 <code>res.locals.cspNonce</code>，并给 <code>script-src</code> 传一个函数，这是 <a href="https://github.com/helmetjs/helmet#readme" target="_blank" rel="noopener">helmet README</a> 里的写法。模板仍要把这个值输出到每个 script 标签上。<strong>Nginx</strong> 页签保留占位符并加一行注释，因为 Nginx 无法把同一个 nonce 写进应用渲染出的 HTML。</p>
 
 <h2>容易踩的坑</h2>
 <ul>
-  <li><strong><code>'none'</code> 必须独占。</strong> 与其他源同列时，浏览器会把整条指令视为无效。</li>
-  <li><strong><code>frame-ancestors</code> 仅在 HTTP 头部生效。</strong> 在 <code>&lt;meta&gt;</code> 里写它会被浏览器忽略，<code>report-uri</code>、<code>report-to</code>、<code>sandbox</code> 同理。</li>
+  <li><strong><code>'none'</code> 只能单独使用。</strong> 与其他源同列时 <code>'none'</code> 不起作用，其他源照常放行。</li>
+  <li><strong>有些指令只在 HTTP 头部生效。</strong> <a href="https://www.w3.org/TR/CSP3/#meta-element" target="_blank" rel="noopener">CSP3 §3.3</a> 规定 <code>&lt;meta&gt;</code> 里的 <code>frame-ancestors</code>、<code>report-uri</code>、<code>sandbox</code> 无效，也没有 Report-Only 模式。工具会在 <code>&lt;meta&gt;</code> 页签去掉它们并提示。</li>
+  <li><strong><code>'strict-dynamic'</code> 必须搭配 nonce 或 hash。</strong> 没有时页面上的脚本会全部被拦截，工具会提示。</li>
   <li><strong>hash / nonce 会让 <code>'unsafe-inline'</code> 失效。</strong> 现代浏览器会优先采用更安全的策略。</li>
   <li><strong>务必声明 <code>default-src</code>。</strong> 缺失的 fetch 指令会回退到 <code>default-src</code>；没有它，未来新增的指令也得不到任何兜底。</li>
   <li><strong>自定义主机不能包含分号。</strong> 分号会终止策略，把后续指令一并破坏。</li>
