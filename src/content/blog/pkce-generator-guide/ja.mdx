@@ -1,15 +1,15 @@
 ---
 title: "PKCE ジェネレーター：OAuth 認可コードフローを正しく組むための実践ガイド"
-description: "code_verifier と code_challenge をブラウザで生成し、/authorize と /token に正しく組み込み、モバイル・SPA のログインを静かに壊す PKCE の四つの落とし穴を回避する。"
+description: "code_verifier と code_challenge をブラウザで生成し、/authorize と /token に正しく組み込み、モバイル・SPA のログインを静かに壊す PKCE の五つの落とし穴を回避する。"
 pubDate: 2026-05-11
-updatedDate: 2026-05-11
+updatedDate: 2026-10-01
 lang: "ja"
 tags: ["oauth", "pkce", "authentication", "security", "developer-tools"]
 ---
 
 昨日まで問題なく動いていた認可コードフローを引き継いだ。週末に同僚がモバイル SDK をアップグレードした結果、新しい端末では毎回 `invalid_grant` でログインが失敗するようになった。Web 側は問題ない。サーバーログを見ると `/token` 呼び出しに `code_verifier` が含まれていない。新しい SDK の changelog を開く――上流ライブラリが「ひっそり保存していた client secret」を PKCE に置き換えており、移行は「気付かれずに行われる」想定だった。モバイル担当が気付かなかったのはテスト機にセッションがキャッシュされていたから。チームがこの回帰に気付くまでに、「SHA-256 は verifier なのか challenge なのか」を巡って三時間が消えていた。
 
-PKCE は Proof Key for Code Exchange の略で、**server secret を持たないクライアント**でも認可リクエストの発行元であることを証明できるようにする OAuth の拡張仕様。RFC 7636 が 2015 年にモバイル・ネイティブアプリのために導入し、OAuth 2.1 では Confidential を含むすべてのクライアントで必須化された。仕組み自体は段落一つで説明できるほど小さい。しかしハッピーパスのテストは通るのに、実クライアントが最初のリトライをした瞬間に静かに壊れる――そんな実装ミスが起きやすい仕様でもある。ZeroTool の [PKCE ジェネレーター](/ja/tools/pkce-generator/) はブラウザ内でペアを生成し、`/authorize` URL と `/token` 交換用の `curl` を同時に表示し、verifier が仕様の文字セットを外れていれば challenge の計算自体を拒否する。
+PKCE は Proof Key for Code Exchange の略で、**server secret を持たないクライアント**でも認可リクエストの発行元であることを証明できるようにする OAuth の拡張仕様。RFC 7636 が 2015 年にモバイル・ネイティブアプリのために導入した。[RFC 9700](https://www.rfc-editor.org/rfc/rfc9700#section-2.1.1)（2025 年）はパブリッククライアントに PKCE を必須とし、コンフィデンシャルクライアントにも推奨している。[OAuth 2.1 ドラフト](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) はすべてのクライアントに要求し、例外は OpenID Connect の nonce を正しく実装していると認可サーバーが判断できるコンフィデンシャルクライアントだけだ。仕組み自体は段落一つで説明できるほど小さい。しかしハッピーパスのテストは通るのに、実クライアントが最初のリトライをした瞬間に静かに壊れる――そんな実装ミスが起きやすい仕様でもある。ZeroTool の [PKCE ジェネレーター](/ja/tools/pkce-generator/) はブラウザ内でペアを生成し、`/authorize` URL と `/token` 交換用の `curl` を同時に表示する。verifier が仕様の文字セットを外れていれば challenge の計算自体を拒否し、ログにある challenge が一致しないときはその原因も示す。
 
 ## PKCE が実際に守っているもの
 
@@ -29,21 +29,21 @@ verifier は秘密、challenge は公開コミットメント。この二つの�
 | SPA（React / Vue / SvelteKit ハイドレート済み） | ブラウザで同じ問題。JS 上のものは拡張機能と DevTools に丸見え | `code_verifier` のみ――Public Client |
 | ローカル callback サーバー付き CLI | `http://127.0.0.1:PORT` のループバックリダイレクトはローカルの任意プロセスが奪える | `code_verifier` のみ――Public Client |
 | デスクトップアプリ（Electron・ネイティブ） | URL ハンドラはシステム規模で登録可能 | `code_verifier` のみ |
-| Confidential Web App（サーバーレンダリング） | OAuth 2.1 は**すべての**クライアントに PKCE を要求。サーバーに secret があっても多層防御として | `code_verifier` **と** `client_secret` 両方 |
+| Confidential Web App（サーバーレンダリング） | RFC 9700 §2.1.1 は推奨。OAuth 2.1 ドラフト §7.5.1.1 は、クライアントが OpenID Connect の nonce を正しく実装しているとサーバーが判断できる場合を除き必須 | `code_verifier` **と** `client_secret` 両方 |
 
-最後の行が OAuth 2.0 から 2.1 へ移行する際に多くのチームが見落とす落とし穴。サーバー側に `client_secret` を保持する Express バックエンドであっても、2.1 時代は PKCE を併用する。脅威モデルが「secret は漏れ得る」と仮定しているからだ。PKCE はその秘密に依存しない第二の保険になる。
+最後の行が OAuth 2.1 へ移行するチームの見落としやすい点。サーバー側に `client_secret` を保持する Express バックエンドでも PKCE を使うべきだ。secret はクライアントを認証するだけで、盗んだ認可コードをそのクライアントのセッションに差し込む攻撃は防げないが、PKCE は防げる。そのため RFC 9700 はコンフィデンシャルクライアントにも PKCE を推奨し、OAuth 2.1 ドラフトは OpenID Connect の nonce という一つの例外を除いて必須とし、例外に当たる場合も推奨している。
 
 ## ワークベンチを一度通して見る
 
-[PKCE ジェネレーター](/ja/tools/pkce-generator/) を開くと、スクリプトが動いた瞬間に verifier がレンダリングされる。デフォルトは RFC 7636 §4.1 が定める `[A-Z a-z 0-9 - . _ ~]` の文字セットからランダムに 64 文字。**再生成** をクリックすれば即座に新しい verifier と、その challenge が同じフレームで再計算される。
+[PKCE ジェネレーター](/ja/tools/pkce-generator/) を開くと、スクリプトが動いた瞬間に verifier がレンダリングされる。デフォルトは 43 文字。`crypto.getRandomValues` で得た 32 バイトの乱数を base64url にしたもので、RFC 7636 §4.1 と §7.1 が示す作り方そのもの（256 ビット）だ。プロバイダーが長さを指定していれば **長さ** を 43〜128 の範囲で変える。verifier の上の行に長さとエントロピーが出る。**新しく生成**（または Ctrl/⌘+Enter）で新しい verifier になり、challenge もすぐに再計算される。自分のアプリの verifier を貼り付ければ、RFC の文法で 1 文字ずつ調べて最初に問題のある文字を示す。
 
-その下の **Challenge メソッド** の行に二つの pill がある。`S256` がデフォルトでチェック済み。`plain` が残っているのは、SHA-256 を計算できないクライアント向けに RFC 7636 が認めているため。ただし現代の主要 OAuth プロバイダーはデフォルトで `plain` を拒否し、OAuth 2.1 は新規導入でこれを禁じている。`S256` を選び、もう片方の存在は忘れていい。
+**新しく生成** の隣が方式の選択で、`S256` と `plain` がある。既定は `S256`。[RFC 7636 §4.2](https://www.rfc-editor.org/rfc/rfc7636#section-4.2) は S256 を使えるクライアントに S256 を義務づけ、`plain` は SHA-256 を計算できないクライアントにしか認めていない。OAuth 2.1 ドラフト §7.5.2 は `plain` を禁止した。ただしサーバーがみなこれを強制するわけではない。たとえば飛書（Feishu）の [認可コード取得 API](https://open.feishu.cn/document/authentication-management/access-token/obtain-oauth-code) は `plain` を受け付け、`code_challenge_method` がなければ `plain` として扱う。`S256` を選び、方式は毎回明示しよう。
 
-**Code Challenge** カードに表示されるのが実際に `/authorize` に乗せる値。ここからコピーする。再生成のたびに末尾の数文字が変わる――新しい verifier の新しいハッシュだからだ。
+**code_challenge** のカードに表示されるのが実際に `/authorize` に乗せる値。ここからコピーする。verifier を作り直すたびに値が変わる――新しい verifier の新しいハッシュだからだ。
 
-下部の `<details>` パネル二つはコピー可能なプレビュー。**Authorization URL preview** は認可エンドポイント・client_id・redirect_uri を埋め込むテンプレート。完成形は `response_type=code`・現在の challenge・`code_challenge_method=S256`・プレースホルダの `state`・`scope=openid profile` を含む完全な `/authorize` URL。これをブラウザのアドレス欄に貼ればフロー第一段を再現でき、ログイン後にリダイレクト URL から `code` を拾える。
+下の三つのパネルにはそれぞれ役割がある。**code_challenge を照合** は、アプリが実際に送った値を貼り付けると、verifier と一致するか、典型的な誤り（末尾の `=`、標準 Base64、16 進数のダイジェスト、verifier そのもの、デコードした乱数バイト列のハッシュ）のどれかを判定する。**認可リクエスト URL** は認可エンドポイント・`client_id`・`redirect_uri`・`scope` を入れると、`response_type=code`・現在の challenge・`code_challenge_method`・ランダムな `state`、scope に `openid` があればランダムな `nonce` を含む完全な `/authorize` URL を作る。これをブラウザのアドレス欄に貼ればフロー第一段を実行でき、ログイン後にリダイレクト URL から `code` を拾える。
 
-**Token exchange (cURL)** はそれに対応する `/token` リクエストを生成する。`code_verifier` body パラメータに入るのはページが生成した乱数――**challenge ではない**。`AUTHORIZATION_CODE_FROM_REDIRECT` を実際に取得した値に置き換えてコマンドを実行。verifier と challenge が正しくペアになっていて code が新鮮なら、プロバイダーは access token を返す。一致しなければ `invalid_grant`――本番で PKCE が壊れているときと同じエラー、それを再現するためにこのワークベンチがある。
+**トークンリクエスト（cURL）** はそれに対応する `/token` リクエストを生成する。リダイレクトで受け取った `code` を code 欄に貼り付けてコマンドを実行する。`code_verifier` body パラメータに入るのは verifier そのもの――**challenge ではない**。verifier と challenge が正しくペアになっていて code が新鮮なら、プロバイダーはトークンを返す。一致しなければ `invalid_grant`――本番で PKCE が壊れているときと同じエラーだ。まず **code_challenge を照合** で調べよう。
 
 ## 暗号処理は本当に数行で済む
 
@@ -67,37 +67,37 @@ function base64url(bytes) {
 }
 ```
 
-この手順で出る verifier は常に 43 文字――32 バイトをパディングなしの base64 で表すとちょうど 43 文字になる。RFC 7636 は 43〜128 文字を許容しているので 43 は最小値かつ完全に合法。ZeroTool が 64 文字をデフォルトにしているのは「少し多めのエントロピーは安く買える」のと、一部プロバイダーが「短すぎるトークン」を奇妙に弾く挙動を示すから。
+この手順で出る verifier は常に 43 文字――32 バイトをパディングなしの base64 で表すとちょうど 43 文字になる。RFC 7636 は 43〜128 文字を許容しているので 43 は最小値かつ完全に合法。ツールの既定値も 43 文字だ。RFC 7636 §7.1 は 256 ビット以上のエントロピーを求めており、32 バイトの乱数でちょうど満たせる。
 
 ハッシュは [SubtleCrypto](https://developer.mozilla.org/ja/docs/Web/API/SubtleCrypto/digest) で計算する。Web Crypto API の一部で、ページが HTTPS で配信されていれば現代の主要ブラウザはすべて使える。`crypto.subtle` が見つからない場合（よくあるのは `http://` で開いてしまったとき）、ツールは実行を拒否しインラインのステータスメッセージで HTTPS への切り替えを促す。
 
-Base64url は base64 の小改造：`+` → `-`、`/` → `_`、末尾の `=` パディングを削る。RFC 7636 がこの形式を指定し、仕様準拠のプロバイダーはこの形式しか受け付けない。**ここでのエンコードミスは最も典型的な静かなバグ**。標準の `btoa()` の出力は `+` や `/` を含むため、challenge の文字セットを厳密に検証するプロバイダーは無慈悲にリクエストを弾く――エラー文面では何が悪いのか分からない。
+Base64url は base64 の小改造：`+` → `-`、`/` → `_`、末尾の `=` パディングを削る。RFC 7636 が指定するのはこの形式だ。**ここでのエンコードミスは典型的な静かなバグ**。標準の `btoa()` の出力は `+` や `/` を含み末尾に `=` が付くので、サーバーが verifier から計算する base64url のハッシュとは決して一致せず、トークン取得は曖昧なエラーで失敗する。その値を **code_challenge を照合** に貼れば、どのエンコードの誤りかをツールが示す。
 
 ## ログインを静かに壊す五つのミス
 
-**1. challenge を `/token` に送ってしまう。** `/authorize` は challenge、`/token` は verifier。どちらも 43 文字の base64url 文字列なので、入れ替えても見た目で分からない。私がデバッグしてきた PKCE 障害チケットは結局すべてこれだった。覚え方：challenge は**公開コミット**したもの、verifier は**自分が秘密に持っていたことを証明する**もの。
+**1. challenge を `/token` に送ってしまう。** `/authorize` は challenge、`/token` は verifier。どちらも 43 文字の base64url 文字列なので、入れ替えても見た目で分からない。覚え方：challenge は**公開コミット**したもの、verifier は**自分が秘密に持っていたことを証明する**もの。
 
-**2. `code_challenge_method` の不整合。** `/authorize` で `S256` を宣言したのに、クライアント側で SHA-256 を計算し忘れて生 verifier を challenge として送ってしまった場合、サーバーは `/token` で受け取った verifier をハッシュしてから「あなたが challenge として送ってきた生 verifier」と比べるので、当然一致しない。method を両方のリクエストで揃えるか、グローバルに S256 をデフォルトにして二度と確認しないこと。
+**2. `code_challenge_method` の不整合。** `/authorize` で `S256` を宣言したのに、クライアント側で SHA-256 を計算し忘れて生 verifier を challenge として送ってしまった場合、サーバーは `/token` で受け取った verifier をハッシュしてから「あなたが challenge として送ってきた生 verifier」と比べるので、当然一致しない。method を送り忘れるのは逆向きの同じ誤りだ。[RFC 7636 §4.3](https://www.rfc-editor.org/rfc/rfc7636#section-4.3) では `code_challenge_method` がなければ `plain` とみなされ、正しい S256 の challenge が verifier そのものと比較される。method は challenge と必ずセットで送り、全体の既定を S256 にすること。
 
 **3. 再試行で verifier を使い回す。** 認可フロー一回につき新しい verifier/challenge ペア。ユーザーが同意画面を閉じてしまい `/authorize` をリトライする場合、必ず新しい verifier を作る――サーバーは中断された前回の verifier を覚えている可能性がある。
 
-**4. verifier の保管がずさん。** SPA なら `localStorage` が現実的な選択。verifier は寿命が数分と短く、脅威モデル上も JS を制御できる攻撃者は何でもできる前提だ。ネイティブアプリはプラットフォームの安全ストレージを使う（iOS は Keychain、Android は EncryptedSharedPreferences）。verifier を平文でディスクに書かないこと。
+**4. verifier の保管場所を誤る。** SPA なら、下のブラウザ向けサンプルのように `sessionStorage` に置き、トークン取得が終わったら削除する。verifier は同じタブでリダイレクトを一度またげれば十分だ。[`sessionStorage`](https://developer.mozilla.org/ja/docs/Web/API/Window/sessionStorage) はそのタブに属し、タブを閉じると消える。`localStorage` はログイン後も残り、同じオリジンのすべてのタブで共有されるので、二つのタブで同時にログインすると verifier を上書きし合う。どちらもスクリプト注入は防げない。オリジン上で動く JavaScript なら両方とも読める。ネイティブアプリはプラットフォームの安全ストレージを使う（iOS は Keychain、Android は EncryptedSharedPreferences）。verifier を平文でディスクに書かないこと。
 
-**5.「S256 は面倒だから」と `plain` を選ぶ。** 上記の数行が S256 の完全な実装。あらゆる OAuth ライブラリに既に入っている。Okta・Auth0・Keycloak・Cognito・Spotify・Google などのプロバイダーは新規 client 登録時に `plain` を拒否する。2026 年に `plain` を選ぶ正しい場面は存在しない。
+**5.「S256 は面倒だから」と `plain` を選ぶ。** 上記の数行が S256 の完全な実装で、OAuth ライブラリにも入っている。仕様に `plain` の出番はない。RFC 7636 §4.2 は SHA-256 を計算できないクライアントにしか認めず、[RFC 9700 §2.1.1](https://www.rfc-editor.org/rfc/rfc9700#section-2.1.1) は認可リクエストで verifier をさらさない方式は現在 S256 だけだとし、OAuth 2.1 ドラフト §7.5.2 は禁止している。サーバー側の扱いはまちまちで、[LINE ログイン](https://developers.line.biz/ja/docs/line-login/integrate-pkce/) は S256 しか受け付けない一方、Keycloak はクライアント設定で `plain` を選べ、飛書は method がないと `plain` として扱う。
 
 ## 主要プロバイダーへの組み込み
 
 `code_challenge` のパラメータ形状はプロバイダー間で共通――RFC 7636 が標準化している。違いは登録手続きだけ：「Public Client」や「Allow PKCE」のチェックを入れるか、どの `redirect_uri` スキームを許可するか。
 
-**Auth0** は PKCE を透過的に扱う。アプリを Native か Single Page Application として登録し Authorization Code Grant を有効化すれば、Auth0 が自動的に `code_challenge` を期待する。エンドポイントは `https://YOUR_TENANT.auth0.com/authorize` と `https://YOUR_TENANT.auth0.com/oauth/token`。
+**Auth0** は [ドキュメント](https://auth0.com/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) で、client secret を保存できないアプリ（ネイティブアプリやシングルページアプリ）向けに PKCE 付き認可コードフローを説明しており、SDK がパラメータを付けてくれる。エンドポイントは `https://YOUR_TENANT.auth0.com/authorize` と `https://YOUR_TENANT.auth0.com/oauth/token`。
 
-**Okta** はアプリの General Settings タブで `Use PKCE` を有効化する必要がある。エンドポイントは `https://YOUR_OKTA_DOMAIN/oauth2/v1/authorize` と `https://YOUR_OKTA_DOMAIN/oauth2/v1/token`。`client_secret` を持つ Confidential Web App であっても、OAuth 2.1 のガイダンスに沿って `code_verifier` を送るべき。
+**Okta** の [Authorization Code with PKCE ガイド](https://developer.okta.com/docs/guides/implement-grant-type/authcodepkce/main/) は、パブリッククライアント用のアプリ種別である Native Application か Single-Page Application の統合を作るところから始まる。org 認可サーバーを使う場合、エンドポイントは `https://YOUR_OKTA_DOMAIN/oauth2/v1/authorize` と `https://YOUR_OKTA_DOMAIN/oauth2/v1/token`。
 
-**Keycloak** は OpenID Connect クライアント設定で client ごとに PKCE を有効化する。`Proof Key for Code Exchange Code Challenge Method` を `S256` に設定。エンドポイントは realm パターン `https://YOUR_KEYCLOAK/realms/YOUR_REALM/protocol/openid-connect/{authorize,token}`。
+**Keycloak** はクライアントごとの **PKCE method** で設定する（[Server Administration Guide](https://www.keycloak.org/docs/latest/server_admin/index.html)）。空欄ならクライアントがパラメータを送ったときだけ PKCE を適用し、`S256` か `plain` を選ぶとその方式が必須になる。`S256` を選ぶ。エンドポイントは realm パターン `https://YOUR_KEYCLOAK/realms/YOUR_REALM/protocol/openid-connect/{authorize,token}`。
 
-**AWS Cognito** は Public Client（secret なし）で PKCE をサポート。Hosted UI は `https://YOUR_DOMAIN.auth.us-west-2.amazoncognito.com/login`、token エンドポイントは `/oauth2/token`。
+**Amazon Cognito** は認可コードグラントで [PKCE をサポート](https://docs.aws.amazon.com/cognito/latest/developerguide/using-pkce-in-authorization-code.html)している。challenge は認可エンドポイント `https://YOUR_DOMAIN.auth.REGION.amazoncognito.com/oauth2/authorize` に、verifier は `/oauth2/token` に送る。
 
-**Spotify** はバックエンドなしの Authorization Code Flow で PKCE を要求する。詳細は [Authorization Code with PKCE Flow](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)。管理画面に「Enable PKCE」トグルは無く、パラメータを送るだけでよい。
+**Spotify** は [Authorization Code with PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow) を、モバイルアプリ、シングルページアプリなど client secret を安全に保存できないアプリに推奨するフローとしている。パラメータはほかと同じだ。
 
 ## 三つの実装スニペット
 
@@ -169,15 +169,16 @@ curl -X POST https://acme.example/token \
 
 公開された PKCE ジェネレーターのほとんどはすでに JS で暗号処理を完結している――そこは難しくない。違いはツールが周囲に何を一緒に提供するかだ。
 
-`tonyxu-io.github.io/pkce-generator` は事実上のリファレンス実装。UI は最小限、出力は正確、英語のみ。みんながブックマークしているあれだ。Ping Identity の [PKCE Code Generator](https://developer.pingidentity.com/en/tools/pkce-code-generator.html) は同じものに Ping のブランディングを被せたもの。`oauth.com/playground` はインタラクティブだが自社のテスト issuer に対するラウンドトリップを丸ごと組み立てる――学習用には素晴らしいが、自前のプロバイダーをデバッグするには重い。どれも `/token` 段の `curl` を渡さないし、日本語・中国語・韓国語でも動かない。
+`tonyxu-io.github.io/pkce-generator` はみんながブックマークしているあれだ。UI は最小限、RFC 7636 の例の出力は正確、英語のみ。2026-10-01 に試したところ入力の検証はなく、42 文字、`+ / =` を含む verifier、空欄のどれでも challenge が出た。Ping Identity の [PKCE Code Generator](https://developer.pingidentity.com/en/tools/pkce-code-generator.html) はブラウザ内で生成するが、verifier 欄が読み取り専用なので自分のアプリの verifier は照合できない。`oauth.com/playground` はインタラクティブだが自社のテスト issuer に対するラウンドトリップを丸ごと組み立てる――学習用には素晴らしいが、自前のプロバイダーをデバッグするには重い。
 
-ZeroTool のツールはその空白を埋める。ジェネレーターと貼り付け可能な `/token` `curl` を結びつけ、実際の自社プロバイダーへ交換を再生できるようにし、verifier の文字セットをライブで検証し、同じインターフェイスを四言語で提供する。verifier はページ読み込みごとに再生成され、`localStorage` には決して書かれない――persistence policy が `disabled` に設定してある。デバッグセッションの合間にタブを再読み込みすれば前の verifier は消える――OAuth helper に期待される「無状態」挙動と一致する。
+ZeroTool のツールはその空白を埋める。ジェネレーターと貼り付け可能な `/token` `curl` を結びつけて実際の自社プロバイダーへ交換を再生できるようにし、貼り付けた verifier を RFC の文法で検証し、ログの challenge が一致しない原因を示し、同じインターフェイスを四言語で提供する。verifier はページ読み込みごとに新しく生成され、`localStorage`・`sessionStorage`・URL には書かれない――persistence policy が `disabled` に設定してあり、ページはアクセス解析と広告のスクリプトも読み込まない。デバッグセッションの合間にタブを再読み込みすれば前の verifier は消える――OAuth helper に期待される「無状態」挙動と一致する。
 
 ## 関連資料
 
 - [RFC 7636 — Proof Key for Code Exchange](https://datatracker.ietf.org/doc/html/rfc7636) — 原典
-- [OAuth 2.1 draft](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) — PKCE を必須化した統合版
+- [OAuth 2.1 ドラフト](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) — OpenID Connect の nonce を使うコンフィデンシャルクライアント（§7.5.1.1）を除き PKCE を必須とし、`plain` を禁止（§7.5.2）
+- [RFC 9700 — OAuth 2.0 Security Best Current Practice](https://www.rfc-editor.org/rfc/rfc9700) — パブリッククライアントは PKCE 必須、コンフィデンシャルクライアントは推奨（§2.1.1）
 - [Web Crypto API：SubtleCrypto.digest](https://developer.mozilla.org/ja/docs/Web/API/SubtleCrypto/digest) — MDN 日本語版、SHA-256 呼び出しのリファレンス
-- [JWT デコーダー](/ja/tools/jwt-decoder/) — PKCE 交換成功後に `/token` が返した access token を確認
+- [JWT デコーダー](/ja/tools/jwt-decoder/) — PKCE 交換成功後に `/token` が返した ID トークン、または JWT 形式の access token を確認
 - [JWT ジェネレーター](/ja/tools/jwt-generator/) — リソースサーバーのテスト用に自分で HS256 トークンを発行
 - [ハッシュジェネレーター](/ja/tools/hash-generator/) — SHA-256・SHA-384・SHA-512 を手動で計算したいときに
