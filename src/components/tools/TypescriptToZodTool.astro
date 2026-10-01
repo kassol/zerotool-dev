@@ -250,7 +250,7 @@ const L = labels[lang];
           }
 
           /* single-char punctuation */
-          if ('{}[](),;:?|&=<>!'.indexOf(ch) !== -1) {
+          if ('{}[](),;:?|&=<>!-'.indexOf(ch) !== -1) {
             tokens.push({ t: 'PUNCT', v: ch, p: i });
             i++;
             continue;
@@ -261,6 +261,7 @@ const L = labels[lang];
         }
 
         tokens.push({ t: 'EOF', v: '', p: i });
+        tokens.src = src;
         return tokens;
       }
 
@@ -300,9 +301,12 @@ const L = labels[lang];
             decls.push(parseInterface(p));
           } else if (p.isKW('type')) {
             decls.push(parseTypeAlias(p));
+          } else if (p.isKW('enum') || (p.isKW('const') && p.tok[p.pos + 1].v === 'enum')) {
+            if (p.isKW('const')) p.next();
+            decls.push(parseEnum(p));
           } else if (p.isKW('import') || p.isKW('const') || p.isKW('let') ||
                      p.isKW('var') || p.isKW('function') || p.isKW('class') ||
-                     p.isKW('enum') || p.isKW('namespace') || p.isKW('module')) {
+                     p.isKW('namespace') || p.isKW('module')) {
             /* skip to next top-level — consume until '{' and balance, or until ';' */
             skipStatement(p);
           } else if (p.pt() !== 'EOF') {
@@ -335,20 +339,40 @@ const L = labels[lang];
         }
       }
 
+      /* Source text of tokens [from, p.pos) — written out for recursive declarations */
+      function sliceSource(p, from) {
+        var last = p.tok[p.pos - 1];
+        var len = last.v.length + (last.t === 'STRING' || last.t === 'TEMPLATE' ? 2 : 0);
+        return p.tok.src.slice(p.tok[from].p, last.p + len);
+      }
+
       function parseInterface(p) {
+        var from = p.pos;
         p.next(); /* interface */
         var name = expectIdent(p);
         /* skip type params */
         if (p.pv() === '<') skipAngle(p);
-        /* skip extends */
-        if (p.isKW('extends')) { p.next(); while (p.pv() !== '{' && p.pt() !== 'EOF') p.next(); }
+        /* extends A, B<T>, ns.C — keep the last identifier of each base, drop type arguments */
+        var bases = [];
+        if (p.isKW('extends')) {
+          p.next();
+          var base = null;
+          while (p.pv() !== '{' && p.pt() !== 'EOF') {
+            if (p.pv() === '<') { skipAngle(p); continue; }
+            if (p.pv() === ',') { if (base) bases.push(base); base = null; p.next(); continue; }
+            if (p.pt() === 'IDENT' || p.pt() === 'KW') base = p.pv();
+            p.next();
+          }
+          if (base) bases.push(base);
+        }
         p.eat('{');
         var members = parseMembers(p);
         p.eat('}');
-        return { kind: 'interface', name: name, members: members };
+        return { kind: 'interface', name: name, bases: bases, members: members, text: sliceSource(p, from) };
       }
 
       function parseTypeAlias(p) {
+        var from = p.pos;
         p.next(); /* type */
         var name = expectIdent(p);
         /* skip type params */
@@ -356,7 +380,39 @@ const L = labels[lang];
         p.eat('=');
         var te = parseTypeExpr(p);
         p.maybe(';');
-        return { kind: 'type', name: name, te: te };
+        return { kind: 'type', name: name, te: te, text: sliceSource(p, from) };
+      }
+
+      /* enum E { A, B = 5, C = "c" } — constant members only; anything else marks the enum computed */
+      function parseEnum(p) {
+        p.next(); /* enum */
+        var name = expectIdent(p);
+        p.eat('{');
+        var members = [];
+        var computed = null;
+        var next = 0; /* value of the next auto-numbered member; null after a string member */
+        while (p.pv() !== '}' && p.pt() !== 'EOF') {
+          var mt = p.next();
+          var mname = mt.v;
+          var value;
+          if (p.maybe('=')) {
+            var init = [];
+            while (p.pv() !== ',' && p.pv() !== '}' && p.pt() !== 'EOF') init.push(p.next());
+            if (init.length === 1 && init[0].t === 'STRING') value = init[0].v;
+            else if (init.length === 1 && init[0].t === 'NUMBER' && isFinite(Number(init[0].v))) value = Number(init[0].v);
+            else if (init.length === 2 && init[0].v === '-' && init[1].t === 'NUMBER' && isFinite(Number(init[1].v))) value = -Number(init[1].v);
+            else if (computed === null) computed = mname;
+          } else {
+            value = next;
+          }
+          if (typeof value === 'number') next = value + 1;
+          else if (value !== undefined) next = null;
+          if (value === null && computed === null) computed = mname;
+          members.push({ name: mname, value: value });
+          p.maybe(',');
+        }
+        p.eat('}');
+        return { kind: 'enum', name: name, members: members, computed: computed };
       }
 
       function expectIdent(p) {
@@ -380,6 +436,8 @@ const L = labels[lang];
       function parseMembers(p) {
         var members = [];
         while (p.pv() !== '}' && p.pt() !== 'EOF') {
+          /* readonly modifier (a property may also be named readonly) */
+          if (p.isKW('readonly') && ':?('.indexOf(p.tok[p.pos + 1].v) === -1) p.next();
           /* index / mapped type signature: [key: T]: V */
           if (p.pv() === '[') {
             p.next(); /* [ */
@@ -390,7 +448,7 @@ const L = labels[lang];
               /* index signature: [key: string]: value */
               p.next(); /* key name */
               p.eat(':');
-              p.next(); /* key type */
+              parseTypeExpr(p); /* key type: every key of a JSON object is a string */
               p.eat(']');
               p.eat(':');
               var vte = parseTypeExpr(p);
@@ -412,9 +470,6 @@ const L = labels[lang];
             }
             continue;
           }
-
-          /* skip readonly */
-          if (p.isKW('readonly')) p.next();
 
           /* property key */
           var kt = p.peek();
@@ -509,6 +564,7 @@ const L = labels[lang];
 
         /* number literal */
         if (t.t === 'NUMBER') { p.next(); return { kind: 'lit', v: t.v, lt: 'n' }; }
+        if (t.v === '-' && p.tok[p.pos + 1].t === 'NUMBER') { p.next(); return { kind: 'lit', v: '-' + p.next().v, lt: 'n' }; }
 
         /* template literal → treat as string */
         if (t.t === 'TEMPLATE') { p.next(); return { kind: 'prim', n: 'string' }; }
@@ -574,41 +630,155 @@ const L = labels[lang];
 
       /* ── CODE GENERATOR ── */
 
+      /* Declarations are written dependencies first (otherwise a schema would read a const before
+         its initialization). References that close a cycle use z.lazy(), and every declaration in a
+         cycle gets its TypeScript type written out and a z.ZodType<T> annotation, as the Zod
+         documentation shows for recursive types. */
       function generate(ast) {
         if (ast.decls.length === 0) throw new Error(MSG_NO_DECL);
 
-        var names = {};
-        ast.decls.forEach(function (d) { names[d.name] = 1; });
+        var byName = {};
+        ast.decls.forEach(function (d) { if (!Object.prototype.hasOwnProperty.call(byName, d.name)) byName[d.name] = d; });
+        ast.decls.forEach(function (d) { d.deps = declDeps(d, byName); });
+        var cyclic = cyclicNames(ast.decls, byName);
 
+        var order = [];
+        function visit(d) {
+          if (d.state) return;
+          d.state = 1;
+          d.deps.forEach(function (n) { visit(byName[n]); });
+          d.state = 2;
+          order.push(d);
+        }
+        ast.decls.forEach(visit);
+
+        var ctx = { names: byName, defined: {}, cyclic: cyclic, isObject: {} };
         var parts = ['import { z } from "zod";'];
-
-        ast.decls.forEach(function (d, i) {
+        order.forEach(function (d) {
           parts.push('');
-          var expr = d.kind === 'interface'
-            ? genObj(d.members, '', names)
-            : genType(d.te, '', names);
-          parts.push('export const ' + d.name + 'Schema = ' + expr + ';');
-          parts.push('export type ' + d.name + ' = z.infer<typeof ' + d.name + 'Schema>;');
+          var expr = genDecl(d, ctx);
+          if (cyclic[d.name]) {
+            parts.push('export ' + d.text);
+            parts.push('export const ' + d.name + 'Schema: z.ZodType<' + d.name + '> = ' + expr + ';');
+          } else {
+            parts.push('export const ' + d.name + 'Schema = ' + expr + ';');
+            parts.push('export type ' + d.name + ' = z.infer<typeof ' + d.name + 'Schema>;');
+          }
+          ctx.defined[d.name] = true;
         });
 
         return parts.join('\n');
       }
 
-      function genObj(members, ind, names) {
+      function declDeps(d, byName) {
+        var out = [];
+        function add(n) { if (Object.prototype.hasOwnProperty.call(byName, n) && out.indexOf(n) === -1) out.push(n); }
+        function walk(node) {
+          if (!node || typeof node !== 'object') return;
+          if (node.kind === 'ref') add(node.name);
+          ['elem', 'inner', 'kt', 'vt', 'te', 'vte'].forEach(function (k) { walk(node[k]); });
+          (node.types || node.items || node.members || []).forEach(walk);
+        }
+        if (d.kind === 'interface') { d.bases.forEach(add); d.members.forEach(walk); }
+        else if (d.kind === 'type') walk(d.te);
+        return out;
+      }
+
+      /* Names in a dependency cycle (Tarjan's strongly connected components) */
+      function cyclicNames(decls, byName) {
+        var index = 0, stack = [], idx = {}, low = {}, on = {}, out = {};
+        function strong(d) {
+          idx[d.name] = low[d.name] = index++;
+          stack.push(d.name); on[d.name] = true;
+          d.deps.forEach(function (n) {
+            if (!(n in idx)) { strong(byName[n]); low[d.name] = Math.min(low[d.name], low[n]); }
+            else if (on[n]) low[d.name] = Math.min(low[d.name], idx[n]);
+          });
+          if (low[d.name] === idx[d.name]) {
+            var comp = [], w;
+            do { w = stack.pop(); on[w] = false; comp.push(w); } while (w !== d.name);
+            if (comp.length > 1 || d.deps.indexOf(d.name) !== -1) comp.forEach(function (n) { out[n] = true; });
+          }
+        }
+        decls.forEach(function (d) { if (!(d.name in idx)) strong(d); });
+        return out;
+      }
+
+      function genDecl(d, ctx) {
+        if (d.kind === 'enum') return genEnum(d);
+        if (d.kind === 'type') {
+          ctx.isObject[d.name] = d.te && d.te.kind === 'obj' && !isRecordOnly(d.te.members) && !ctx.cyclic[d.name];
+          return genType(d.te, '', ctx);
+        }
+        var declared = d.bases.filter(function (b) { return Object.prototype.hasOwnProperty.call(ctx.names, b); });
+        var missing = d.bases.filter(function (b) { return !Object.prototype.hasOwnProperty.call(ctx.names, b); });
+        var note = missing.length ? ' /* extends ' + missing.join(', ') + ': not declared in the input */' : '';
+        if (!declared.length) {
+          ctx.isObject[d.name] = !isRecordOnly(d.members) && !ctx.cyclic[d.name];
+          return genObj(d.members, '', ctx) + note;
+        }
+        var allObjects = declared.every(function (b) { return ctx.defined[b] && ctx.isObject[b]; });
+        if (allObjects) {
+          var expr = declared[0] + 'Schema';
+          for (var i = 1; i < declared.length; i++) expr += '.extend(' + declared[i] + 'Schema.shape)';
+          expr += '.extend(' + genShape(d.members, '', ctx) + ')';
+          var ix = indexValue(d.members, '', ctx);
+          if (ix) expr += '.catchall(' + ix + ')';
+          ctx.isObject[d.name] = !ctx.cyclic[d.name];
+          return expr + note;
+        }
+        var own = genObj(d.members, '', ctx, true);
+        for (var j = declared.length - 1; j >= 0; j--) own = 'z.intersection(' + genRef(declared[j], ctx) + ', ' + own + ')';
+        ctx.isObject[d.name] = false;
+        return own + note;
+      }
+
+      function genEnum(d) {
+        if (d.computed !== null) return 'z.unknown() /* enum ' + d.name + ': computed member ' + d.computed + ' */';
+        if (!d.members.length) return 'z.never()';
+        var lits = d.members.map(function (m) { return typeof m.value === 'string' ? JSON.stringify(m.value) : String(m.value); });
+        if (d.members.every(function (m) { return typeof m.value === 'string'; })) return 'z.enum([' + lits.join(', ') + '])';
+        if (lits.length === 1) return 'z.literal(' + lits[0] + ')';
+        return 'z.union([' + lits.map(function (l) { return 'z.literal(' + l + ')'; }).join(', ') + '])';
+      }
+
+      function genRef(name, ctx) {
+        return ctx.defined[name] ? name + 'Schema' : 'z.lazy(() => ' + name + 'Schema)';
+      }
+
+      function isRecordOnly(members) {
+        var props = members.filter(function (m) { return m.kind === 'prop'; });
+        return props.length === 0 && members.some(function (m) { return m.kind === 'index'; });
+      }
+
+      function indexValue(members, ind, ctx) {
+        for (var i = 0; i < members.length; i++) {
+          if (members[i].kind === 'index') return genType(members[i].vte, ind, ctx);
+        }
+        return null;
+      }
+
+      function genShape(members, ind, ctx) {
         var pi = ind + '  ';
-        var lines = ['z.object({'];
+        var lines = ['{'];
         members.forEach(function (m) {
-          if (m.kind === 'index') return;
           if (m.kind !== 'prop') return;
-          var expr = genType(m.te, pi + '  ', names);
+          var expr = genType(m.te, pi + '  ', ctx);
           if (m.opt) expr += '.optional()';
           lines.push(pi + m.key + ': ' + expr + ',');
         });
-        lines.push(ind + '})');
+        lines.push(ind + '}');
         return lines.join('\n');
       }
 
-      function genType(node, ind, names) {
+      /* An object type. Index signatures: with properties → .catchall(V), on their own → z.record. */
+      function genObj(members, ind, ctx, keepObject) {
+        var ix = indexValue(members, ind, ctx);
+        if (ix && !keepObject && isRecordOnly(members)) return 'z.record(z.string(), ' + ix + ')';
+        return 'z.object(' + genShape(members, ind, ctx) + ')' + (ix ? '.catchall(' + ix + ')' : '');
+      }
+
+      function genType(node, ind, ctx) {
         if (!node) return 'z.unknown()';
         switch (node.kind) {
           case 'prim': return genPrim(node.n);
@@ -619,27 +789,27 @@ const L = labels[lang];
             if (allStrLit && node.types.length >= 2) {
               return 'z.enum([' + node.types.map(function (t) { return t.v; }).join(', ') + '])';
             }
-            var exprs = node.types.map(function (t) { return genType(t, ind + '  ', names); });
+            var exprs = node.types.map(function (t) { return genType(t, ind + '  ', ctx); });
             if (exprs.join(', ').length < 80) return 'z.union([' + exprs.join(', ') + '])';
             return 'z.union([\n' + exprs.map(function (e) { return ind + '  ' + e; }).join(',\n') + ',\n' + ind + '])';
           }
           case 'inter': {
             if (node.types.length === 2) {
-              return 'z.intersection(' + genType(node.types[0], ind, names) + ', ' + genType(node.types[1], ind, names) + ')';
+              return 'z.intersection(' + genType(node.types[0], ind, ctx) + ', ' + genType(node.types[1], ind, ctx) + ')';
             }
-            var r = genType(node.types[0], ind, names);
-            for (var i = 1; i < node.types.length; i++) r = 'z.intersection(' + r + ', ' + genType(node.types[i], ind, names) + ')';
+            var r = genType(node.types[0], ind, ctx);
+            for (var i = 1; i < node.types.length; i++) r = 'z.intersection(' + r + ', ' + genType(node.types[i], ind, ctx) + ')';
             return r;
           }
-          case 'array': return 'z.array(' + genType(node.elem, ind, names) + ')';
-          case 'obj': return genObj(node.members, ind, names);
-          case 'tuple': return 'z.tuple([' + node.items.map(function (t) { return genType(t, ind, names); }).join(', ') + '])';
+          case 'array': return 'z.array(' + genType(node.elem, ind, ctx) + ')';
+          case 'obj': return genObj(node.members, ind, ctx);
+          case 'tuple': return 'z.tuple([' + node.items.map(function (t) { return genType(t, ind, ctx); }).join(', ') + '])';
           case 'ref':
-            return names[node.name] ? node.name + 'Schema' : 'z.unknown() /* ' + node.name + ' */';
-          case 'partial': return genType(node.inner, ind, names) + '.partial()';
+            return Object.prototype.hasOwnProperty.call(ctx.names, node.name) ? genRef(node.name, ctx) : 'z.unknown() /* ' + node.name + ' */';
+          case 'partial': return genType(node.inner, ind, ctx) + '.partial()';
           /* Zod 4 needs the key schema; Zod 3 accepts it too */
-          case 'record': return 'z.record(' + genType(node.kt, ind, names) + ', ' + genType(node.vt, ind, names) + ')';
-          case 'promise': return 'z.promise(' + genType(node.inner, ind, names) + ')';
+          case 'record': return 'z.record(' + genType(node.kt, ind, ctx) + ', ' + genType(node.vt, ind, ctx) + ')';
+          case 'promise': return 'z.promise(' + genType(node.inner, ind, ctx) + ')';
           default: return 'z.unknown()';
         }
       }

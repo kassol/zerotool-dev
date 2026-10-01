@@ -20,7 +20,8 @@ faqItems:
   <li>选择<strong>分隔符</strong>：逗号（默认）、分号或 Tab。</li>
   <li>切换<strong>展开嵌套对象</strong>，将嵌套字段展开为点号路径列（如 <code>address.city</code>）。</li>
   <li>切换<strong>包含表头</strong>来决定是否输出表头行。</li>
-  <li>点击<strong>复制</strong>或<strong>下载 .csv</strong> 保存结果。</li>
+  <li>数据来自他人时选择<strong>公式防护</strong>（见下文），默认关闭。</li>
+  <li>点击<strong>复制</strong>或<strong>下载 .csv</strong> 保存结果。下载的文件默认带 UTF-8 BOM，可在「下载文件加 UTF-8 BOM」关闭。</li>
 </ol>
 
 <h2>示例</h2>
@@ -41,3 +42,24 @@ faqItems:
 <p>
   本工具遵循 RFC 4180 CSV 标准。含有分隔符、双引号或换行的字段用双引号包裹，字段内的双引号转义为 <code>""</code>。行与行之间用 LF 换行，而不是 RFC 4180 写的 CR LF；Excel、LibreOffice、pandas 都能读取。
 </p>
+
+<h2>公式防护</h2>
+<p>
+  以 <code>=</code>、<code>+</code>、<code>-</code>、<code>@</code>、Tab 或换行开头的单元格，在表格软件里打开时可能被当作公式执行（<a href="https://owasp.org/www-community/attacks/CSV_Injection" target="_blank" rel="noopener">OWASP：CSV Injection</a>）。工具会统计这类字符串值并在状态栏提示。开启<strong>公式防护</strong>后，这些值会按 OWASP 的建议加前缀并加引号：<strong>前加 '</strong> 加 <code>'</code>，<strong>前加 Tab（Excel）</strong> 加一个 Tab（OWASP 说明 Excel 保存后重新打开时 Tab 不会丢）。输入：
+</p>
+<pre><code>{`[{"name":"Ann","comment":"=HYPERLINK(\"http://example.com\",\"Click\")"}]`}</code></pre>
+<p>选「前加 '」时输出：</p>
+<pre><code>{`name,comment
+Ann,"'=HYPERLINK(""http://example.com"",""Click"")"`}</code></pre>
+<p>只处理 JSON 字符串，<code>-5</code> 这类数字、布尔值和写成 JSON 文本的数组 / 对象保持不变。公式防护会改变数据（如 <code>+86 10 1234 5678</code> 这样的电话号码也会加前缀），所以默认关闭，需要时状态栏会提示。</p>
+
+<h2>Excel 与 BOM</h2>
+<p>
+  下载的文件默认以 UTF-8 BOM（字节 <code>EF BB BF</code>）开头。微软支持页面 <a href="https://support.microsoft.com/en-us/office/opening-csv-utf-8-files-correctly-in-excel-8a935af5-3416-4edd-ba7e-3dfd2bc4a032" target="_blank" rel="noopener">Opening CSV UTF-8 files correctly in Excel</a> 写明：带 BOM 的 UTF-8 CSV 可以直接打开；没有 BOM 时，Windows 版 Excel 双击打开会按系统代码页读取，中文会显示成乱码。不认 BOM 的程序可能把它读进第一个列名（Python 用 <code>encoding="utf-8"</code> 打开得到 <code>\ufeffid</code>，用 <code>"utf-8-sig"</code> 则会去掉），这时关闭「下载文件加 UTF-8 BOM」。<strong>复制</strong>的内容不含 BOM。
+</p>
+
+<h2>注意事项</h2>
+<ul>
+  <li>空的嵌套对象和数组不展开：<code>{`"meta":{}`}</code> 得到 <code>meta</code> 列，值为 <code>{`{}`}</code>。</li>
+  <li>超过 2<sup>53</sup> 的整数在解析 JSON 时会丢失精度，长 ID 请在 JSON 里写成字符串。</li>
+</ul>

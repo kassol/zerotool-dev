@@ -67,7 +67,7 @@
           pastePrompt: 'Paste HTTP headers above and click Analyze.',
           analyzed: 'Parsed {n} header{s}.', empty: 'No headers found.',
           copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', analyzeFirst: 'Analyze first.',
-          catStatus: 'Status', catGeneral: 'General', catSecurity: 'Security', catCaching: 'Caching',
+          catStatus: 'Status', catPseudo: 'HTTP/2 · HTTP/3 pseudo-headers', catGeneral: 'General', catSecurity: 'Security', catCaching: 'Caching',
           catContent: 'Content', catCors: 'CORS', catAuth: 'Auth', catCookie: 'Cookie',
           catRange: 'Range', catTransport: 'Transport', catProxy: 'Proxy', catCustom: 'Custom / Other',
           hintWarn: 'Warning', hintInfo: 'Note', hintOk: 'OK',
@@ -81,7 +81,7 @@
           pastePrompt: '请粘贴 HTTP 头部后点击分析。',
           analyzed: '已解析 {n} 个标头。', empty: '未找到标头。',
           copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', analyzeFirst: '请先分析。',
-          catStatus: '状态行', catGeneral: '通用', catSecurity: '安全', catCaching: '缓存',
+          catStatus: '状态行', catPseudo: 'HTTP/2 · HTTP/3 伪首部', catGeneral: '通用', catSecurity: '安全', catCaching: '缓存',
           catContent: '内容', catCors: 'CORS', catAuth: '鉴权', catCookie: 'Cookie',
           catRange: '范围', catTransport: '传输', catProxy: '代理', catCustom: '自定义 / 其他',
           hintWarn: '警告', hintInfo: '提示', hintOk: '正常',
@@ -95,7 +95,7 @@
           pastePrompt: 'HTTP ヘッダーを貼り付けて分析をクリック。',
           analyzed: '{n} 件のヘッダーを解析しました。', empty: 'ヘッダーが見つかりません。',
           copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピー失敗。', analyzeFirst: 'まず分析してください。',
-          catStatus: 'ステータス', catGeneral: '一般', catSecurity: 'セキュリティ', catCaching: 'キャッシュ',
+          catStatus: 'ステータス', catPseudo: 'HTTP/2 · HTTP/3 疑似ヘッダー', catGeneral: '一般', catSecurity: 'セキュリティ', catCaching: 'キャッシュ',
           catContent: 'コンテンツ', catCors: 'CORS', catAuth: '認証', catCookie: 'Cookie',
           catRange: 'レンジ', catTransport: '転送', catProxy: 'プロキシ', catCustom: 'カスタム / その他',
           hintWarn: '警告', hintInfo: '注意', hintOk: 'OK',
@@ -109,7 +109,7 @@
           pastePrompt: 'HTTP 헤더를 붙여넣고 분석을 클릭하세요.',
           analyzed: '{n} 개의 헤더를 분석했습니다.', empty: '헤더를 찾을 수 없습니다.',
           copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', analyzeFirst: '먼저 분석하세요.',
-          catStatus: '상태', catGeneral: '일반', catSecurity: '보안', catCaching: '캐싱',
+          catStatus: '상태', catPseudo: 'HTTP/2 · HTTP/3 의사 헤더', catGeneral: '일반', catSecurity: '보안', catCaching: '캐싱',
           catContent: '콘텐츠', catCors: 'CORS', catAuth: '인증', catCookie: '쿠키',
           catRange: '범위', catTransport: '전송', catProxy: '프록시', catCustom: '사용자 정의 / 기타',
           hintWarn: '경고', hintInfo: '참고', hintOk: 'OK',
@@ -219,7 +219,7 @@
         'allow': { cat: 'general', desc: 'Methods allowed for the resource. Returned in 405.' },
       };
 
-      var CATEGORY_ORDER = ['status', 'security', 'caching', 'content', 'cors', 'auth', 'cookie', 'general', 'range', 'transport', 'proxy', 'custom'];
+      var CATEGORY_ORDER = ['status', 'pseudo', 'security', 'caching', 'content', 'cors', 'auth', 'cookie', 'general', 'range', 'transport', 'proxy', 'custom'];
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
       var t = STRINGS[pageLang] || STRINGS.en;
@@ -321,6 +321,16 @@
         return out;
       }
 
+      // HTTP/2 and HTTP/3 pseudo-headers, as browser developer tools copy them (":status: 200")
+      var PSEUDO_DB = {
+        ':status': { type: 'response', desc: 'HTTP/2 and HTTP/3 response status code, in place of the HTTP/1.1 status line (RFC 9113 §8.3.2, RFC 9114 §4.3.2).' },
+        ':method': { type: 'request', desc: 'Request method, in place of the HTTP/1.1 request line (RFC 9113 §8.3.1).' },
+        ':scheme': { type: 'request', desc: 'Scheme of the target URI, such as https (RFC 9113 §8.3.1).' },
+        ':authority': { type: 'request', desc: 'Host and optional port of the target URI; replaces Host (RFC 9113 §8.3.1).' },
+        ':path': { type: 'request', desc: 'Path and query of the target URI (RFC 9113 §8.3.1).' },
+        ':protocol': { type: 'request', desc: 'Protocol for an extended CONNECT, such as websocket (RFC 8441 §4).' },
+      };
+
       function parseHeaders(rawText) {
         var lines = unfoldHeaders(rawText).filter(function (l) { return l.trim().length > 0; });
         if (lines.length === 0) return { type: 'unknown', statusLine: null, headers: [] };
@@ -331,11 +341,30 @@
         if (type !== 'unknown') {
           statusLine = lines[0];
           headerLines = lines.slice(1);
+        } else {
+          for (var pi = 0; pi < lines.length; pi++) {
+            var pm = /^\s*(:[A-Za-z]+)\s*:/.exec(lines[pi]);
+            var pd = pm && PSEUDO_DB[pm[1].toLowerCase()];
+            if (pd) { type = pd.type; break; }
+          }
         }
 
         var headers = [];
         for (var i = 0; i < headerLines.length; i++) {
           var line = headerLines[i];
+          var pseudo = /^\s*(:[^:\s]+)\s*:(.*)$/.exec(line);
+          if (pseudo) {
+            var pname = pseudo[1].toLowerCase();
+            headers.push({
+              name: pname,
+              value: pseudo[2].trim(),
+              lower: pname,
+              cat: 'pseudo',
+              desc: PSEUDO_DB[pname] ? PSEUDO_DB[pname].desc : 'Not a pseudo-header defined for HTTP/2 or HTTP/3.',
+              hints: [],
+            });
+            continue;
+          }
           var idx = line.indexOf(':');
           if (idx === -1) continue;
           var name = line.slice(0, idx).trim();
@@ -415,7 +444,7 @@
       }
 
       function localizedCategory(cat) {
-        var map = { status: t.catStatus, general: t.catGeneral, security: t.catSecurity, caching: t.catCaching,
+        var map = { status: t.catStatus, pseudo: t.catPseudo, general: t.catGeneral, security: t.catSecurity, caching: t.catCaching,
           content: t.catContent, cors: t.catCors, auth: t.catAuth, cookie: t.catCookie,
           range: t.catRange, transport: t.catTransport, proxy: t.catProxy, custom: t.catCustom };
         return map[cat] || cat;

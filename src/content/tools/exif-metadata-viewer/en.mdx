@@ -9,7 +9,7 @@ faqItems:
   - question: "Which formats are supported?"
     answer: "This tool is JPEG-only by design — JPEG carries the EXIF that almost every camera and phone produces. For PNG, HEIC, or TIFF use `exiftool -all=` locally; it handles every format, runs offline, and processes batches."
   - question: "Will the cleaned image lose quality?"
-    answer: "No. The tool removes the EXIF, XMP and IPTC segments from the original JPEG byte stream without re-encoding pixels; the compressed image data is copied byte for byte. One visible change is possible: the EXIF Orientation tag goes with the EXIF block, so a photo that relied on it to display upright is shown in its stored orientation."
+    answer: "No. The tool removes the EXIF, XMP and IPTC segments from the original JPEG byte stream without re-encoding pixels; the compressed image data is copied byte for byte. The Orientation tag is the one exception: it is written back in a new 36-byte EXIF block that holds nothing else, so a portrait photo still displays upright."
   - question: "Can I see the GPS location on a map?"
     answer: "When EXIF includes GPS coordinates the tool decodes them to decimal degrees and provides a one-click Google Maps link. The link is built locally — no third-party request runs until you click."
 ---
@@ -24,7 +24,7 @@ faqItems:
 <ol>
   <li>Drop a JPEG photo onto the upload area, click to pick a file, or paste an image with <code>Ctrl + V</code>.</li>
   <li>Inspect the parsed EXIF: camera body and lens, exposure settings, original timestamp, GPS coordinates with a Maps link, and the editing software that touched the file.</li>
-  <li>Click <strong>Download cleaned JPEG</strong> to save a copy with all EXIF, XMP, and IPTC marker segments removed. The image data itself is byte-identical — pixels are not re-encoded.</li>
+  <li>Click <strong>Download cleaned JPEG</strong> to save a copy with all EXIF, XMP, and IPTC marker segments removed (only the Orientation tag is written back). The image data itself is byte-identical — pixels are not re-encoded.</li>
   <li>Optionally use <strong>Copy EXIF JSON</strong> to grab the parsed metadata as JSON for analysis or auditing.</li>
 </ol>
 
@@ -38,6 +38,8 @@ faqItems:
 </ul>
 
 <p>Marker segments that the browser needs to decode the photo correctly are kept untouched: the SOI start marker, JFIF (APP0), ICC color profile (APP2), the Adobe color transform marker (APP14, without which CMYK JPEGs decode with wrong colors), the SOS scan marker, the compressed image data, and the EOI end marker. Color appearance is preserved.</p>
+
+<p>If the photo has an Orientation tag with a value from 2 to 8, the tool writes a new APP1 in place of the old one that holds only that tag (IFD0 tag 0x0112 in the Exif 2.32 and 3.0 standard, 36 bytes). Phones store a portrait photo sideways and set Orientation 6 or 8 so viewers rotate it; without the tag the cleaned copy would be shown sideways. The tag only says how to rotate the image. The result is the same as <code>{"exiftool -all= -tagsfromfile @ -Orientation photo.jpg"}</code>.</p>
 
 <h2>Example</h2>
 
@@ -75,7 +77,7 @@ faqItems:
 <h2>Limitations</h2>
 
 <ul>
-  <li><strong>Orientation is removed.</strong> Phones often store a portrait photo sideways and set Orientation 6 or 8 so viewers rotate it. The cleaned copy has no Orientation tag, so it is displayed sideways. Rotate the photo in an editor and save it before stripping, or use <code>{"exiftool -all= -tagsfromfile @ -Orientation photo.jpg"}</code>, which keeps only that tag.</li>
+  <li><strong>Orientation is kept.</strong> It is the only tag left in the cleaned copy (see above). Value 1 (upright) and values outside 1–8 are not written back. An orientation stored only in XMP is removed with the XMP block.</li>
   <li><strong>JPEG only, up to 100 MB.</strong> PNG, HEIC, WebP and TIFF are rejected. Pasting works only when the clipboard holds a JPEG; screenshots are usually PNG.</li>
   <li><strong>The viewer shows a fixed set of fields:</strong> the ones in the table above. Other tags, such as the camera serial number or the time zone offset (OffsetTimeOriginal), are not listed but are removed by the download. Text tags stored with the UTF-8 type added in EXIF 3.0 are not decoded.</li>
   <li><strong>Only APP1 and APP13 are removed.</strong> Comment segments (COM), other application segments (APP3–APP12, APP15) and any data after the end-of-image marker, such as the extra images that some phones append for HDR or depth, are kept. For a full clean, run <code>{"exiftool -all= photo.jpg"}</code> or re-save the image in an editor.</li>
