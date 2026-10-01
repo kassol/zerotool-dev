@@ -106,5 +106,70 @@ all('hello world', {
   camel: 'helloWorld', pascal: 'HelloWorld', kebab: 'hello-world', snake: 'hello_world', constant: 'HELLO_WORLD',
 });
 
-console.log(passes + ' passed, ' + failures + ' failed');
+// ---------- guide examples (src/content/blog/text-case-guide/{en,ja}.mdx) ----------
+// Annotation {/* tc-check: {"input":"…","camel":"…",…} */}: each listed format must equal the
+// engine's output, and the value must appear in the page text after the annotation (within
+// 4000 characters). Code blocks preceded by {/* tc-run: {"lang":"node|python","expect":"…"} */}
+// are run and their stdout must equal "expect"; a missing python3 is a SKIP.
+let skips = 0;
+{
+  const { existsSync, writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { execFileSync } = await import('node:child_process');
+  const hasPython = (() => { try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+  for (const lang of ['en', 'ja']) {
+    const rel = 'src/content/blog/text-case-guide/' + lang + '.mdx';
+    const path = join(root, rel);
+    if (!existsSync(path)) { check(rel + ' exists', false); continue; }
+    const text = readFileSync(path, 'utf8');
+    let count = 0;
+    for (const m of text.matchAll(/\{\/\* tc-check: (\{.*?\}) \*\/\}/g)) {
+      count++;
+      let spec;
+      try { spec = JSON.parse(m[1]); } catch (e) { check(rel + ' annotation is JSON', false, m[1]); continue; }
+      const after = text.slice(m.index, m.index + 4000);
+      for (const id of Object.keys(spec)) {
+        if (id === 'input') continue;
+        if (!conv[id]) { check(rel + ' unknown format ' + id, false); continue; }
+        eq(rel + ' ' + id + '(' + JSON.stringify(spec.input) + ')', conv[id](spec.input), spec[id]);
+        check(rel + ' quotes ' + spec[id] + ' after the annotation', after.includes(spec[id]), spec[id]);
+      }
+    }
+    check(rel + ' has tc-check annotations', count >= 10, count);
+    let runs = 0;
+    for (const m of text.matchAll(/\{\/\* tc-run: (\{.*?\}) \*\/\}\s*```[a-z]*\n([\s\S]*?)```/g)) {
+      runs++;
+      const spec = JSON.parse(m[1]);
+      const name = rel + ' ' + spec.lang + ' block ' + runs;
+      if (spec.lang === 'python' && !hasPython) { skips++; console.log('SKIP: ' + name + ' — python3 not installed'); continue; }
+      const dir = mkdtempSync(join(tmpdir(), 'text-case-run-'));
+      try {
+        const file = join(dir, spec.lang === 'python' ? 'main.py' : 'main.mjs');
+        writeFileSync(file, m[2]);
+        const out = execFileSync(spec.lang === 'python' ? 'python3' : process.execPath, [file]).toString();
+        eq(name, out.trim(), spec.expect);
+        // Comments in the block that show output must match what it printed.
+        const shown = [...m[2].matchAll(/^# (.+)$/gm)].map((x) => x[1]).filter((l) => !/[=(]/.test(l));
+        if (spec.lang === 'python' && shown.length) eq(name + ' output comments', shown.join('\n'), out.trim());
+        const jsShown = [...m[2].matchAll(/console\.log\(.*\); *\/\/ (.+)$/gm)].map((x) => x[1]);
+        if (spec.lang === 'node' && jsShown.length) eq(name + ' output comments', jsShown.join('\n'), out.trim());
+      } catch (e) {
+        check(name, false, String(e.stderr || e.message).slice(0, 300));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    check(rel + ' has runnable code blocks', runs >= 2, runs);
+    const tpl = [/^## What (is|are) /mi, /^## .*Online/mi, /^## .* in Code$/mi, /^## (Summary|Conclusion|まとめ)/mi].filter((re) => re.test(text));
+    check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
+  }
+  const ja = join(root, 'src/content/blog/text-case-guide/ja.mdx');
+  if (existsSync(ja)) {
+    const text = readFileSync(ja, 'utf8');
+    check('ja guide uses the local term キャメルケース', /キャメルケース/.test(text));
+    check('ja guide is indexable (noindex removed after the local rewrite)', !/^noindex:\s*true/m.test(text));
+  }
+}
+
+console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);
