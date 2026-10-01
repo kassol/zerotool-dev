@@ -69,6 +69,7 @@ const msgs = (r) => r.errors.map((e) => e.path + ' ' + e.message);
 // ---------- schemas wired as the page wires them ----------
 check('component imports the three schema files',
   ['oas-3.0-2024-10-18.json', 'oas-3.1-2026-08-03.json', 'oas-3.2-2026-08-30.json'].every((f) => source.includes(f)));
+check('page script defines escHtml (used by the renderers)', /function escHtml\(/.test(source));
 eq('3.0 schema is the official draft-04 file', SCHEMAS['3.0'].id, 'https://spec.openapis.org/oas/3.0/schema/2024-10-18');
 eq('3.1 schema id', SCHEMAS['3.1'].$id, 'https://spec.openapis.org/oas/3.1/schema/2026-08-03');
 eq('3.2 schema id', SCHEMAS['3.2'].$id, 'https://spec.openapis.org/oas/3.2/schema/2026-08-30');
