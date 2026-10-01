@@ -9,14 +9,18 @@
 // Covers: a JPEG written by sharp with IFD0 / Exif / GPS tags is parsed and formatted as the page
 // says; the strip pass removes APP1 and APP13 and keeps APP0, APP2, APP14 (Adobe; CMYK JPEGs
 // decode with wrong colours without it, and it used to be removed), COM and the scan data byte
-// for byte; the Orientation tag goes with APP1 (the page says so); the drop-zone text states
+// for byte; Orientation 2–8 is written back in a minimal APP1 in place of the old one (it used to
+// be removed, so portrait phone photos were shown sideways), checked for all 8 values in big- and
+// little-endian files with sharp and, when installed, exiftool; the drop-zone text states
 // the same 100 MB limit the code enforces (it used to say 25 MB); the page stays `disabled`.
 //
 // Run: node scripts/test-exif-metadata-viewer.mjs
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -56,6 +60,30 @@ function markers(buf) {
 // Insert a segment right after SOI
 const insert = (jpeg, seg) => Buffer.concat([jpeg.subarray(0, 2), seg, jpeg.subarray(2)]);
 const segment = (marker, payload) => Buffer.concat([Buffer.from([0xFF, marker, (payload.length + 2) >> 8, (payload.length + 2) & 255]), payload]);
+// Replace the APP1 of a JPEG with a little-endian (II) one: IFD0 = Make ("Canon") + Orientation,
+// laid out by hand so the test does not rely on the tool's own writer
+function withLittleEndianExif(jpeg, orientation) {
+  const t = Buffer.alloc(8 + 2 + 2 * 12 + 4 + 6);
+  t.write('II', 0, 'latin1'); t.writeUInt16LE(42, 2); t.writeUInt32LE(8, 4);
+  t.writeUInt16LE(2, 8);
+  t.writeUInt16LE(0x010F, 10); t.writeUInt16LE(2, 12); t.writeUInt32LE(6, 14); t.writeUInt32LE(38, 18);
+  t.writeUInt16LE(0x0112, 22); t.writeUInt16LE(3, 24); t.writeUInt32LE(1, 26); t.writeUInt16LE(orientation, 30);
+  t.writeUInt32LE(0, 34);
+  t.write('Canon\0', 38, 'latin1');
+  const app1 = segment(0xE1, Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), t]));
+  const parts = [jpeg.subarray(0, 2)];
+  let pos = 2;
+  let placed = false;
+  while (pos < jpeg.length) {
+    const m = jpeg.readUInt16BE(pos);
+    if (m === 0xFFDA) { if (!placed) parts.push(app1); parts.push(jpeg.subarray(pos)); break; }
+    const end = pos + 2 + jpeg.readUInt16BE(pos + 2);
+    if (m === 0xFFE1) { if (!placed) { parts.push(app1); placed = true; } }
+    else parts.push(jpeg.subarray(pos, end));
+    pos = end;
+  }
+  return Buffer.concat(parts);
+}
 
 // ---------- the page example ----------
 const photo = await sharp({ create: { width: 64, height: 48, channels: 3, background: { r: 200, g: 120, b: 40 } } })
@@ -97,11 +125,55 @@ eq('APP14 and COM kept', after.includes('FFEE') && after.includes('FFFE'), true)
 const scanAt = (b) => b.indexOf(Buffer.from([0xFF, 0xDA]));
 eq('scan data copied byte for byte', Buffer.from(E.stripMetadata(ab(mixed))).subarray(scanAt(Buffer.from(E.stripMetadata(ab(mixed))))).equals(mixed.subarray(scanAt(mixed))), true);
 
-// ---------- Orientation goes with APP1 ----------
-const rotated = await sharp({ create: { width: 64, height: 48, channels: 3, background: '#c87828' } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
-eq('input orientation 6', (await sharp(rotated).metadata()).orientation, 6);
-eq('orientation removed', (await sharp(Buffer.from(E.stripMetadata(ab(rotated)))).metadata()).orientation ?? null, null);
-eq('page says orientation is removed', page.includes('<strong>Orientation is removed.</strong>'), true);
+// ---------- Orientation is written back in a minimal APP1 ----------
+// Phones store portrait photos sideways with Orientation 6 or 8. The cleaned copy keeps that one
+// tag (IFD0 0x0112, Exif 2.32 / 3.0) in a new APP1 that holds nothing else, so it still displays
+// upright; the scan data is not re-encoded. Read back with sharp (libexif via libvips) and, when
+// installed, exiftool.
+const hasExiftool = spawnSync('exiftool', ['-ver']).status === 0;
+for (const o of [1, 2, 3, 4, 5, 6, 7, 8]) {
+  for (const le of [false, true]) {
+    const base = await sharp({ create: { width: 64, height: 48, channels: 3, background: '#c87828' } })
+      .jpeg()
+      .withExif({ IFD0: { Make: 'Apple', Model: 'iPhone 15 Pro' }, IFD3: { GPSLatitudeRef: 'N', GPSLatitude: '48/1 51/1 2964/100' } })
+      .withMetadata({ orientation: o })
+      .toBuffer();
+    // sharp writes big-endian TIFF; flip to little-endian by hand-building the APP1 for the LE case
+    const src = le ? withLittleEndianExif(base, o) : base;
+    const label = 'orientation ' + o + (le ? ' (II)' : ' (MM)');
+    eq(label + ': input has it', (await sharp(src).metadata()).orientation, o);
+    const out = Buffer.from(E.stripMetadata(ab(src)));
+    const m = await sharp(out).metadata();
+    eq(label + ': kept', m.orientation ?? 1, o);
+    const p = E.parseExif(ab(out)).exif;
+    eq(label + ': nothing else left', o === 1 ? p : p && { ifd0: p.ifd0, exif: p.exif, gps: p.gps }, o === 1 ? null : { ifd0: { Orientation: o }, exif: {}, gps: {} });
+    eq(label + ': scan data unchanged', out.subarray(scanAt(out)).equals(src.subarray(scanAt(src))), true);
+    eq(label + ': at most one APP1', markers(ab(out)).filter((x) => x === 'FFE1').length, o === 1 ? 0 : 1);
+    if (o !== 1) eq(label + ': new APP1 takes the place of the old one', markers(ab(out)), markers(ab(src)));
+    if (hasExiftool && !le) {
+      const dir = mkdtempSync(join(tmpdir(), 'emv-'));
+      const f = join(dir, 'x.jpg');
+      writeFileSync(f, out);
+      const r = spawnSync('exiftool', ['-j', '-n', '-EXIF:all', f], { encoding: 'utf8' });
+      rmSync(dir, { recursive: true, force: true });
+      const tags = JSON.parse(r.stdout)[0];
+      delete tags.SourceFile;
+      eq(label + ': exiftool sees only Orientation', tags, o === 1 ? {} : { Orientation: o });
+    }
+  }
+}
+if (!hasExiftool) console.log('SKIP: exiftool not installed (orientation read back with sharp only)');
+// With a JFIF APP0 in front, the orientation APP1 stays after it
+const jfif = segment(0xE0, Buffer.from([0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]));
+const rotatedJfif = insert(await sharp({ create: { width: 64, height: 48, channels: 3, background: '#c87828' } }).jpeg().withMetadata({ orientation: 6 }).toBuffer(), jfif);
+const outJfif = Buffer.from(E.stripMetadata(ab(rotatedJfif)));
+eq('JFIF file: APP0 then the orientation APP1', markers(ab(outJfif)).slice(0, 2), ['FFE0', 'FFE1']);
+eq('JFIF file: orientation 6 kept', (await sharp(outJfif).metadata()).orientation, 6);
+// A broken or unusual value is not copied
+const odd = withLittleEndianExif(photo, 9);
+eq('orientation 9 is not copied', E.parseExif(E.stripMetadata(ab(odd))).exif, null);
+eq('page says orientation is kept', page.includes('<strong>Orientation is kept.</strong>'), true);
+eq('page no longer says orientation is removed', page.includes('Orientation is removed'), false);
 
 // ---------- UI text and sensitivity ----------
 eq('size limit in code is 100 MB', /file\.size > 100 \* 1024 \* 1024/.test(source), true);
