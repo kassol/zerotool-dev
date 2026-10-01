@@ -1,125 +1,126 @@
 ---
 title: "File Hash Checker：ブラウザで SHA-256 を計算してダウンロードを検証する"
-description: "Web Crypto でローカルファイルの SHA-256 / SHA-1 / SHA-384 / SHA-512 / MD5 をその場で計算。アップロードゼロで配布元のハッシュと突き合わせる。"
+description: "サイズを問わずローカルファイルの SHA-256・SHA-1・SHA-384・SHA-512・MD5・CRC32 をブラウザで分割して計算し、期待値や SHA256SUMS と照合。アップロードしません。"
 pubDate: 2026-05-12
+updatedDate: 2026-10-01
 lang: "ja"
 tags: ["file-hash-checker", "sha-256", "checksum", "developer-tools"]
+noindex: true
 ---
 
-PostgreSQL 18 の macOS DMG を 12 分かけてダウンロードし終わる。リリースページには SHA-256 が添えてある。インストーラーを叩く前にハッシュを確認したいが、今手元にあるのは借り物の Mac で `shasum` も `$PATH` に通っていない。フッターに「we don't store your file」と書かれた怪しいオンラインハッシャーに 320 MB の DMG を投げ込むのは賢い選択ではない。ローカルでファイルを読み、1 バイトもネットに出さないブラウザベースのハッシャー — それが正解だ。
+よくあるのは、配布ページのダウンロードリンクの横に SHA-256 が書かれていて、実行前に確かめたいがターミナルは開きたくない、という場面です。この記事では、照合で何がわかるのか、ブラウザーがファイルをアップロードせずにどうハッシュ値を計算するのか、値が合わないときにどうするかを説明します。
 
-日本の開発現場でも似たケースは多い。Qiita や Zenn の記事から配布物のリンクを踏んだ後、本文に貼られた SHA-256 を突き合わせたい場面。あるいは社内プロキシ環境で HTTPS の再暗号化が走り、転送中にバイナリの一部が書き換わっている疑いがあるとき。どちらも、ハッシュ照合は数秒で答えを出す。
-
-[ファイルを今すぐ検証する →](/ja/tools/file-hash-checker/)
+[ファイルを照合する →](/ja/tools/file-hash-checker/)
 
 ## なぜチェックサムが必要なのか
 
-暗号学的ハッシュ関数は、任意のバイト列を短く固定長の指紋に圧縮する。ダウンロード検証で役立つのは次の 2 つの性質だ。
+暗号学的ハッシュ関数は、任意のバイト列から固定長の「指紋」を作ります。ダウンロードの検証に使うのは次の 2 つの性質です。
 
-- **決定性** — 同じバイト列は常に同じハッシュを返す。
-- **アバランシェ効果** — 入力を 1 ビット変えるだけで、出力は全面的に別物になる。
+- **決定性**：同じバイト列からは必ず同じハッシュ値が出る。
+- **雪崩効果**：入力のどこか 1 ビットが変わると、出力全体が変わる。
 
-合わせると、CDN プロキシがインストーラーに広告 iframe を 1 枚埋め込んだだけで SHA-256 は変わる。社内プロキシが透過的にペイロードを書き換えても同じ。ダウンロードが最後の 1 MB で切れても同じ。配布元が公開したハッシュと自分の機械で計算したハッシュを照合する — 再ダウンロードせずにこれら全部を検出できる最安手段だ。
+そのため、途中で切れたダウンロード、ミラー上で壊れたファイル、プロキシに書き換えられたファイルは、どれも SHA-256 が変わります。配布元の値と手元で計算した値を比べれば、再ダウンロードせずにこれらを見つけられます。
 
-ただしハッシュ単体は **真正性の証明にはならない**。それには署名が必要だ。だが「自分の手元にあるファイルが配布元の出したファイルと同一である」というのは、署名検証も含む後続のすべての前提条件である。
+ただし、それだけでは**出どころ**の証明にはなりません。それにはチェックサム一覧への署名が必要です。とはいえ「手元のファイルが配布元の一覧と同じ」ことは、その先のすべての前提です。
 
 ## SHA-256 とレガシーアルゴリズムの違い
 
-ZeroTool の File Hash Checker は 5 つのアルゴリズムを 1 パスで計算する。これらは互換ではない。簡易対照表を以下に示す。
+ZeroTool のファイルハッシュ値確認ツールは 6 種類のアルゴリズムを計算します。互いに置き換えはききません。
 
-| アルゴリズム | 出力長 | 衝突耐性 | 現実の用途 |
+| アルゴリズム | 出力 | 衝突耐性 | 見かける場面 |
 |---|---|---|---|
-| MD5 | 128 bit | 破られている（2004） | 互換性チェックサム専用 |
-| SHA-1 | 160 bit | 破られている（2017、SHAttered） | 互換性チェックサム専用 |
-| SHA-256 | 256 bit | 強い | 現代の標準：npm registry / Docker Hub digest / GitHub Releases / Homebrew formula の sha256 / 各種 Linux ディストリのミラー |
-| SHA-384 | 384 bit | 強い | TLS 1.3 一部の暗号スイートとコード署名 |
-| SHA-512 | 512 bit | 強い | Linux カーネル tarball、一部の BSD ports、衝突余裕を厚く取りたい場面 |
+| CRC32 | 32 ビット | なし（誤り検出用） | SFV ファイル、ZIP の各エントリーの CRC-32 欄（[APPNOTE](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT)） |
+| MD5 | 128 ビット | 破られている（2004） | 古い配布ページ |
+| SHA-1 | 160 ビット | 破られている（2017、[SHAttered](https://shattered.io/)） | 古い配布ページ、Git のオブジェクト ID |
+| SHA-256 | 256 ビット | 強い | Node.js の `SHASUMS256.txt`、Ubuntu の `SHA256SUMS` |
+| SHA-384 | 384 ビット | 強い | [W3C SRI 仕様](https://www.w3.org/TR/SRI/)の例 |
+| SHA-512 | 512 ビット | 強い | Firefox の `SHA512SUMS`、npm の `integrity` |
 
-MD5 と SHA-1 が「破られている」とは、攻撃者が **異なる 2 ファイルで同じハッシュ値を意図的に作れる** ということだ。この性質が失われると、ハッシュは「誰もこのファイルに手を入れていない」を証明できなくなる。「転送中に偶発的な破損が起きていない」ことしか言えない。これが ZeroTool が UI 上で MD5 と SHA-1 を *legacy* とラベリングしている理由のすべて — まだ有用な情報を返すが、「配布元が署名したファイル」を保証する役割は終わっている。
+MD5 と SHA-1 が「破られている」とは、ハッシュ値が同じ別々のファイルを攻撃者が作れるという意味です。MD5 が一致すれば偶発的な破損がないことはわかりますが、誰も意図的に書き換えていないことまではわかりません。ツールが MD5 と SHA-1 に「旧式」と表示するのはそのためです。
 
-新たに方針を決めるなら SHA-256 で固定。配布元が MD5 しか公開していない場合は MD5 も算出するが、結果は「転送が無事だった」という弱いヒントとして扱い、安全保証ではないと割り切る。そして相手にはアップグレードを促す。
+方針を決めるなら SHA-256 にしてください。配布元が MD5 しか出していなければそれを照合し、転送の確認として扱ったうえで SHA-256 の掲載を頼みましょう。
 
 ## ブラウザはどうハッシュを計算しているのか
 
-ツールは `File.arrayBuffer()` でファイルを 1 度メモリに読み込む。そこから二手に分かれる。
+ブラウザー標準の [`crypto.subtle.digest()`](https://developer.mozilla.org/ja/docs/Web/API/SubtleCrypto/digest) は、データ全体を 1 つのバッファーで受け取ります。少しずつ渡す方法はありません。このツールの旧版はその通りに `File.arrayBuffer()` でファイル全体をメモリに読み込んでいたため、1 GB でタブのメモリが約 2 GB 増え、3 GB では失敗していました。
 
-- `SHA-1`、`SHA-256`、`SHA-384`、`SHA-512` は `crypto.subtle.digest()` に直接渡す。この呼び出しはブラウザ組み込みの暗号サブシステムへ直行し、現代の主流デスクトップブラウザではすべて OS レベルで加速される。プラットフォームがサポートする場合は CPU のハードウェア SHA アクセラレーションも使う — x86 なら Intel SHA-NI、Apple Silicon と近年の ARM チップなら ARMv8 Cryptography Extensions。
-- `MD5` は Web Crypto API がそもそも提供していない。ページに組み込まれたコンパクトなパブリックドメイン MD5 実装が、同じ `Uint8Array` を純粋な JavaScript で処理する。同じ入力に対して SHA 系より遅く、100 MB を超えるファイルでは 5〜10 倍の差が出る。ハードウェアアクセラレーションの恩恵を受けられないからだ。
+現在はストリームで計算します。チェックしたアルゴリズムごとに Web Worker を 1 つ使い、`file.stream()` で 1 MB ずつ読み、途中の状態を保てる [hash-wasm](https://github.com/Daninet/hash-wasm) に渡します。メモリはワーカーごとに 1 ブロック分程度です。2026 年 10 月 1 日、Apple M1 Max のデスクトップ版 Chromium で、1 GB の SHA-256 は 4.3 秒、メモリの増加は約 100 MB でした。4,080,486,400 バイトの Ubuntu 24.04.5 サーバー版 ISO も公式の値と一致しました。
 
-アップロード処理は一切ない。バックエンドに同期する Service Worker もない。IndexedDB への永続化もない。ファイルはタブのメモリに置かれ、リロードすれば消える。*Clear* を押せばそのコピーすら破棄される。
+アップロードも保存もしません。通信は計算用スクリプトを読み込む 1 回だけです。同じ考え方を短く書くと次のようになります。
 
 ```javascript
-// SHA 系に対するツールの最小等価実装
+import { createSHA256 } from 'hash-wasm';
+
 async function sha256(file) {
-  const buf = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(digest))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+  const hasher = await createSHA256();
+  hasher.init();
+  const reader = file.stream().getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    hasher.update(value);
+  }
+  return hasher.digest('hex');
 }
 ```
 
-同じ結果をシェルで欲しい場合、3 プラットフォームで大半をカバーできる。
+`new Blob(['abc'])` を渡すと、FIPS 180-2 のテスト値 `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad` が返ります。
+
+コマンドで同じ結果を得るには次のようにします。
 
 ```bash
-# Linux（coreutils）
-sha256sum postgresql-18.0.dmg
+# Linux（GNU coreutils）
+sha256sum ubuntu-24.04.5-wsl-amd64.wsl
 
-# macOS（BSD utils）
-shasum -a 256 postgresql-18.0.dmg
+# macOS
+shasum -a 256 ubuntu-24.04.5-wsl-amd64.wsl
 
-# Windows（Vista 以降に標準搭載）
-certutil -hashfile postgresql-18.0.dmg SHA256
+# Windows
+certutil -hashfile ubuntu-24.04.5-wsl-amd64.wsl SHA256
+Get-FileHash ubuntu-24.04.5-wsl-amd64.wsl
 ```
 
-出力フォーマットは異なる（Linux/macOS は連続した小文字 hex、Windows は空白入りの大文字）が、根底のハッシュ値は同じだ。ツールの照合フィールドは **すべての空白文字を除去して小文字化** してから比較するので、`certutil` の生出力（`AA BB CC …`）をそのまま貼り付けても、`sha256sum` のトリム済み hex を貼り付けても、どちらでも ✓ を返す。
+出力の形はそれぞれ違います。`sha256sum` と `shasum` はハッシュ値とファイル名、`certutil` は説明の行・ハッシュの行・完了メッセージ、`Get-FileHash` は大文字の16進数の表です。ツールの照合欄はこれらに加え、`SHA256SUMS` 全体、`SHA256 (ファイル) = …` 形式のタグ行、Base64 / SRI も読み取り、値全体で比較します。
 
-## 実例：Linux ディストロ ISO を検証する
+## 実例：JAIST ミラーの Ubuntu WSL イメージを照合する
 
-直近の Debian 13 testing 週次 ISO を例に取る。ミラーページには `SHA256SUMS` ファイルが置かれ、ISO ごとに 1 行ずつ並ぶ。
+2026 年 10 月 1 日に確認したところ、JAIST ミラーの `ubuntu-releases/24.04/SHA256SUMS` は [releases.ubuntu.com の SHA256SUMS](https://releases.ubuntu.com/24.04/SHA256SUMS) とバイト単位で同じで、9 行ありました。8 行目は次の通りです。
 
+```text
+bb415d824822c4b878125729af451a5d18fb13d1cf5cbed9a7393ad64ac6039e *ubuntu-24.04.5-wsl-amd64.wsl
 ```
-4e3a1c...d2  debian-13.0.0-amd64-netinst.iso
-```
 
-日本国内の場合 JAIST や山形大学などのミラーから引くことも多いが、`SHA256SUMS` も同じミラーディレクトリから取ること — ハッシュだけ別ソースから持ってきて本体と突き合わせるのは、よくある自爆パターンだ。
+`ubuntu-24.04.5-wsl-amd64.wsl`（388,975,696 バイト）をツールにドロップし、9 行を照合欄に貼り付けると、SHA-256 の計算が自動で始まり、カードに「一覧の ubuntu-24.04.5-wsl-amd64.wsl の SHA-256 と一致します（8 行目）。」と出ます。ほかの 8 行は選んでいないファイルとして数えられ、`sha256sum -c --ignore-missing` と同じ扱いです。
 
-ISO を File Hash Checker にドラッグし、デフォルトの SHA-256 のまま *Compute Hashes* を押す。1 行の結果が返る。`SHA256SUMS` から該当行の hex をコピー、照合フィールドに貼り付け、`Matches SHA-256 ✓` を確認する。最近のラップトップで 700 MB の ISO なら 2 秒未満で終わる — `crypto.subtle.digest` の SHA-256 はそれくらい速い。
+値が合わず「不一致」と表示されたら、次の順に確かめます。
 
-`No match against any computed hash ✗` が返る場合、機械的に対処する。
+1. 64 桁を全部、正しい行からコピーしたか。1 文字欠けたり増えたりした場合は、不一致ではなく桁数や文字の誤りとして表示されます。
+2. できれば別のミラーからダウンロードし直す。転送中の破損がいちばん多い原因です。
+3. チェックサム一覧に署名があれば、一覧の値を信じる前に署名を検証する。Ubuntu は `SHA256SUMS.gpg` と[検証手順](https://ubuntu.com/tutorials/how-to-verify-ubuntu)を公開しています。一覧が改ざんされていれば、ハッシュ値の一致には意味がありません。
 
-1. コピーした SHA-256 が完全な 64 文字 hex であることを再確認。途中で途切れていたり、別ファイルの行を取っていないか。
-2. 別のミラーから再ダウンロードする。一時的な転送破損が最大の原因だ。とくに弱回線やプロキシ経由ではよく起きる。
-3. ミラーが分離署名（`SHA256SUMS.gpg`）も公開しているなら、まずプロジェクトのリリース鍵で `gpg --verify` をかける。改ざんされた `SHA256SUMS` 上のハッシュが一致しても無意味だ — 署名のステップなしには、ハッシュは「ダウンロードが壊れていない」以上を保証しない。
-
-この最後の点こそが、ZeroTool の File Hash Checker がハッシュ計算で範囲を区切る理由だ。署名検証には配布元の GPG または Sigstore 鍵が必要で、正しい実行場所は自分の端末上の `gpg --verify` または `cosign verify` である。秘密鍵の貼り付けを要求するブラウザツールは、はるかに信頼しにくいものになる。
+ツールはハッシュの計算までです。署名の検証には配布元の OpenPGP 公開鍵が必要なので、手元の `gpg --verify` で行ってください。
 
 ## ツールが解決しないエッジケース
 
-このブラウザハッシャーが守備範囲外とする場面を列挙しておく。別の道具を使うべき判断材料に。
+- **巨大なファイルは時間がかかる。** サイズの上限はありませんが、時間はサイズに比例し、終わるまでタブを開いておく必要があります。
+- **フォルダーには 1 つのハッシュ値がない。** フォルダーをドロップすると、中のファイルを 1 つずつ（最大 1,000 件）計算し、相対パスを保って `SHA256SUMS` とファイル名で照合します。フォルダー全体の指紋が必要なら、`.tar.gz` や `.zip` にまとめてから計算してください。
+- **ダウンロードしながらの計算。** ツールが読むのはディスク上にあるファイルです。受信しながら計算するのはコマンドラインの仕事（`curl … | sha256sum`）です。
+- **ほかのアルゴリズムと用途。** SHA-224・SHA3・BLAKE2・BLAKE3 は計算せず、非対応と表示します。鍵付きの完全性確認は [HMAC ジェネレーター](/ja/tools/hmac-generator/)、パスワードの保存は [Bcrypt ジェネレーター](/ja/tools/bcrypt-generator/)、ファイルではなく文字列のハッシュは[ハッシュジェネレーター](/ja/tools/hash-generator/)を使ってください。
 
-- **約 1 GB を超えるファイル**。ブラウザは単一の `ArrayBuffer` の確保を 2 GB 付近で打ち切り、それよりずっと早い段階でスワップが始まる。1 GB を超えるとツールはソフト警告を出すが、30 GB のゲームパッチはこのウィジェットの仕事ではない。`sha256sum` / `shasum -a 256` / `certutil -hashfile` を使うこと。
-- **ディレクトリ／アーカイブのハッシュ**。ディレクトリには正規のバイトストリームがない。ツリー全体を検証したいなら、まずアーカイブ化（`.tar.gz`、`.zip`）してからハッシュする。ディレクトリ単位で指紋を取りたい場合は `b3sum --recursive`（BLAKE3）のようなツールがある。
-- **ネットワーク入力をストリーミングしながらのハッシュ**。ダウンロードしながらハッシュを蓄積するのはサーバー側か CLI の仕事（`curl … | sha256sum` のような）。Web Crypto は完全に読み込み終わった `ArrayBuffer` を必要とする。
-- **HMAC、パスワードハッシュ、または新しい木構造ハッシュ（BLAKE3 / SHA-3）**。これらは別系統の問題だ：[HMAC Generator](/ja/tools/hmac-generator/) は共有鍵付きの完全性検証、[Bcrypt Generator](/ja/tools/bcrypt-generator/) はパスワード保管、[Hash Generator](/ja/tools/hash-generator/) は短いテキスト（パスワード、ペイロード、サンプル文字列）のハッシングを担当する。
+## ブラウザーのツールが便利な場面
 
-## なぜスタンドアロンのツールが多くの場面で `sha256sum` より勝つのか
+ターミナルに慣れた開発者なら `sha256sum` を使います。ただ、ダウンロードはそれ以外の場面でも起きます。Windows の PC、管理された業務端末、同僚の手伝いなどです。ブラウザーのツールはそうした場面に向いています。
 
-CLI を流暢に扱う開発者は、迷わず `sha256sum` を叩く。だが PostgreSQL DMG、YubiKey ドライバー、Tailscale インストーラーをダウンロードする動作の多くは、ユーザーがシェルにいない、Windows 主力で WSL を入れていない、あるいは同僚を横で手伝っているという場面で起きる。ブラウザツールはこういう場面のために存在する。
+- macOS・Windows・Linux・ChromeOS で同じページを使える。
+- インストールも管理者権限もいらない。
+- ディスク上のファイルをそのまま扱い、ファイルやフォルダーをドロップできる。
+- 値 1 つでも一覧全体でも貼り付ければファイル名で照合でき、64 文字を目で比べなくて済む。
 
-- macOS / Windows / Linux / ChromeOS で同じ操作感。
-- 何かをインストールするための管理者権限が要らない。
-- すでにディスク上にあるファイルに対して計算するので、再ダウンロード不要。
-- ドラッグ&ドロップが使える。多くの CLI にはない機能だ。
-- 期待ハッシュを貼り付けて比較できる。これは `diff <(sha256sum file | cut -d' ' -f1) <(echo "expected")` の暗記より親切だ。
-- 日本では特に「macOS で Homebrew 経由ではない単発バイナリ」「Windows 主力の開発者が一時的に検証したいケース」で差が出る。
-
-明示的に **担当しない** 範囲：TB 級アーカイブのストリーミングハッシュ、署名検証、CI の完全性チェックの代替。これらはパイプラインに置くべきもので、ブラウザタブで完結させるものではない。
+署名の検証や、CI での完全性チェックの代わりにはなりません。
 
 ## さらに読む
 
-- [Hash Generator](/ja/tools/hash-generator/) — 同じアルゴリズム群を短いテキスト入力（パスワード、ペイロード、サンプル文字列）に対して使う場合。
-- [HMAC Generator](/ja/tools/hmac-generator/) — 共有秘密鍵がある状況で、裸のハッシュではなく鍵付き完全性検証が必要なとき。
-- [SSL Certificate Decoder](/ja/tools/ssl-certificate-decoder/) — TLS エンドポイント背後の署名アイデンティティを検証する。ファイルペイロードそのものではない。
-- [SubtleCrypto.digest on MDN](https://developer.mozilla.org/ja/docs/Web/API/SubtleCrypto/digest) — ツールの SHA パスが依拠する仕様文書。
-- [SHAttered：実用的な初の SHA-1 衝突](https://shattered.io/) — 2017 年に SHA-1 を新規セキュリティ用途から退役させた論文。
+- [ファイルハッシュ値確認ツール](/ja/tools/file-hash-checker/)：ツール本体。例と、他のブラウザー上のツールとの比較があります。
+- [GNU coreutils：cksum の出力形式](https://www.gnu.org/software/coreutils/manual/html_node/cksum-output-modes.html)：`sha256sum` の行の形式、`*` のバイナリー印、ファイル名のエスケープ。
+- [MDN：SubtleCrypto.digest](https://developer.mozilla.org/ja/docs/Web/API/SubtleCrypto/digest)：ブラウザーの一括計算 API。
+- [SHAttered](https://shattered.io/)：2017 年の SHA-1 衝突。
