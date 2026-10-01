@@ -1,41 +1,135 @@
 ---
-seoTitle: "PKCE ジェネレーター — OAuth 2.0 code_verifier と challenge | ZeroTool"
-seoDescription: "OAuth 2.0 / 2.1 認可コードフロー向けの PKCE code_verifier と code_challenge を暗号学的に安全に生成。SHA-256（S256）と plain 方式に対応、100% ブラウザ完結。"
+seoTitle: "PKCE ジェネレーター（S256）| ZeroTool"
+seoDescription: "RFC 7636 の PKCE code_verifier と S256 の code_challenge を生成。手元の verifier の形式チェック、challenge が一致しない原因の判定、認可 URL とトークン取得の cURL 作成まで。処理はすべてブラウザ内。"
 faqItems:
-  - question: "PKCE とは何か、なぜ必要なのか？"
-    answer: "PKCE は Proof Key for Code Exchange（RFC 7636）の略で、OAuth フロー中に認可コードが横取りされるのを防ぐ仕組み。client_secret を安全に保管できないパブリッククライアント（モバイルアプリ、SPA、CLI、デスクトップアプリ）で特に重要。OAuth 2.1 では公共クライアントだけでなくすべてのクライアントに必須。"
-  - question: "S256 と plain、どちらを選ぶ？"
-    answer: "本番では常に S256。plain は SHA-256 を計算できない歴史的クライアント向けに残されたメソッドで、現代では実質的に不要。RFC 7636 も S256 を明確に推奨し、主要な OAuth プロバイダーは plain をデフォルトで拒否する。"
-  - question: "このツールは verifier を外部に送信する？"
-    answer: "送信しない。乱数は crypto.getRandomValues、ハッシュは crypto.subtle.digest、URL プレビューは単純な文字列連結で、すべてブラウザ内で完結。verifier は localStorage にも保存されず、リロードのたびに新規生成される。"
-  - question: "verifier の長さは？"
-    answer: "RFC 7636 で 43〜128 文字、文字セットは [A-Z a-z 0-9 - . _ ~]。デフォルトの 64 文字はブルートフォース耐性と URL 長のバランス点。プロバイダーが 128 文字を受け入れる場合は最大化してもよい。"
-  - question: "自分の OAuth フローにどう組み込む？"
-    answer: "クライアント側で code_verifier を安全に保管（ブラウザは localStorage、ネイティブは安全ストレージ）。/authorize リダイレクト時に code_challenge と code_challenge_method=S256 をクエリパラメータで送信し、/token で認可コードと交換する際に元の code_verifier を返却すれば、サーバーが再ハッシュして照合する。"
+  - question: "verifier が送信・保存されることはありますか？"
+    answer: "ありません。乱数は crypto.getRandomValues、SHA-256 は crypto.subtle でこのタブの中で計算します。ツールはネットワーク通信を行わず、verifier を localStorage・sessionStorage・Cookie・URL に書き込みません。このページはアクセス解析と広告のスクリプトも読み込みません。再読み込みすると verifier は消えます。"
+  - question: "code_verifier の長さはどれくらいが適切ですか？"
+    answer: "既定の 43 文字は 32 バイトの乱数を base64url にしたもので、RFC 7636 の 4.1 節と 7.1 節が推奨する作り方です（256 ビット）。128 文字まで伸ばせます。手入力した verifier は A〜Z、a〜z、0〜9 と - . _ ~ の 43〜128 文字なら形式上は有効ですが、強度は作り方次第です。"
+  - question: "S256 と plain のどちらを使えばよいですか？"
+    answer: "S256 です。RFC 7636 の 4.2 節は SHA-256 を計算できるクライアントに S256 を義務づけ、RFC 9700 は認可リクエストに verifier をさらさない方式は現在 S256 だけだとしています。OAuth 2.1 のドラフトは plain を禁止しました。LINE ログインも S256 だけをサポートしています。"
+  - question: "トークン取得で invalid_grant になります。何を確認すればよいですか？"
+    answer: "アプリが実際に送った code_challenge を「code_challenge を照合」に貼り付けてください。verifier と一致するか、標準 Base64・16 進数・末尾の =・verifier そのもの・デコードした乱数バイト列のハッシュといった典型的な誤りのどれかを判定します。一致する場合は、code_challenge_method=S256 を送ったか、verifier が同じログイン試行のものか、code を一度しか使っていないかを確認してください。"
+  - question: "client_secret を持つサーバー側アプリでも PKCE は必要ですか？"
+    answer: "RFC 9700（OAuth 2.0 セキュリティのベストプラクティス、2025 年）は、パブリッククライアントには PKCE を必須とし、コンフィデンシャルクライアントにも推奨しています。認可コードの差し込み攻撃も防げるためです。コンフィデンシャルクライアントはトークンエンドポイントでのクライアント認証も必要です。cURL はパブリッククライアント向けなので、client_secret などは自分で追加してください。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>ページ読み込み時に 64 文字の <strong>code_verifier</strong> が自動生成される。</li>
-  <li><strong>再生成</strong> ボタンで新しいランダム verifier を取得、または独自の値を貼り付け。</li>
-  <li><strong>Challenge メソッド</strong> を選択 — 明確な理由がない限り S256 のまま。</li>
-  <li><strong>code_challenge</strong> はリアルタイムで更新。/authorize リクエストにコピー。</li>
-  <li><strong>認可 URL プレビュー</strong> を展開してエンドポイント・client_id・redirect_uri を入力。</li>
-  <li><strong>トークン交換（cURL）</strong> を展開すれば、/token への即実行可能なコマンドが手に入る。</li>
-</ol>
+## 使い方
 
-<h2>主な用途</h2>
-<ul>
-  <li><strong>ローカル OAuth デバッグ：</strong>verifier/challenge ペアを生成し、認可 URL をブラウザに貼って code を取得、curl プレビューで /token 交換を再現。</li>
-  <li><strong>モバイル・デスクトップクライアント：</strong>バックエンドを立てずに iOS / Android / デスクトップアプリのテストフローを手動で実行。</li>
-  <li><strong>新規プロバイダー対応：</strong>コードを書く前にプロバイダーが S256 を受け入れること、client_id 設定が正しいことを検証。</li>
-  <li><strong>セキュリティレビュー：</strong>仕様書を開かずにライブツールで verifier の文字セットと長さが RFC 7636 に準拠しているか確認。</li>
-</ul>
+1. ページを開くと 43 文字の `code_verifier` ができています。別の値が必要なら **新しく生成** を押します。プロバイダーが長さを指定している場合だけ **長さ**（43〜128）を変えてください。
+2. verifier をコピーし、今回のログイン 1 回分としてクライアント側に保持します。
+3. `code_challenge` をコピーします。方式は **S256** のままにします。verifier を貼り付けたり書き換えたりすると即座に再計算されます。
+4. **認可リクエスト URL** を開き、認可エンドポイント、`client_id`、`redirect_uri`、`scope` を入れて URL をコピーします。ランダムな `state` は入力済みで、scope に `openid` があればランダムな `nonce` も付きます。
+5. リダイレクトで受け取った `code` を **トークンリクエスト（cURL）** に入れて実行します。トークンリクエストには verifier そのものを載せます。
 
-<h2>仕組み</h2>
-<ol>
-  <li><code>crypto.getRandomValues</code> で 32 バイトの乱数を取得し、base64url エンコード後に目的の長さに切り詰める。</li>
-  <li>S256 では、verifier を UTF-8 エンコードしてから <code>crypto.subtle.digest('SHA-256', …)</code> でハッシュ計算。</li>
-  <li>32 バイトのハッシュを base64url エンコード（+ を -、/ を _、= パディングを除去）して 43 文字の challenge を生成。</li>
-  <li>plain モードでは challenge は verifier と同一。互換性のためだけに残されている。</li>
-</ol>
+Ctrl/⌘+Enter で新しく生成、Ctrl/⌘+L で入力欄を空にします。
+
+## PKCE とは
+
+PKCE（Proof Key for Code Exchange、[RFC 7636](https://www.rfc-editor.org/rfc/rfc7636)）は、認可コードを横取りされても使えないようにする仕組みです。クライアントはログインのたびに秘密のランダム文字列 `code_verifier` を作り、そのハッシュ値 `code_challenge` だけを認可リクエストに付けます。トークンを受け取るときに verifier を送り、サーバーはハッシュを計算し直して最初の challenge と一致するか確かめます。認可コードだけを盗んだ攻撃者は verifier を知らないので、トークンを取得できません。
+
+計算式は [RFC 7636 の 4.2 節](https://www.rfc-editor.org/rfc/rfc7636#section-4.2)にある `code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))` で、base64url には `=` を付けません。このツールは n バイトの乱数を base64url にして必要な長さだけ切り出します。43 文字ならちょうど 32 バイト（256 ビット）です。SHA-256 自体は [ハッシュジェネレーター](/ja/tools/hash-generator/) と同じ関数で、違いは 32 バイトのダイジェストを 16 進数ではなく base64url で表す点です。
+
+## RFC 7636 付録 B の例で確かめる
+
+verifier 欄に `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` を貼り付けると、`E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM` と表示されます。[付録 B](https://www.rfc-editor.org/rfc/rfc7636#appendix-B) の値と同じです。自分の実装でこの値にならなければ、エンコードかハッシュの対象が間違っています。
+
+同じ verifier を標準 Base64 の書き方 `dBjftJeZ4CVP+mB92K27uhbUJU1p1r/wW1gFWFOEjXk=` にすると、ツールは計算を止めて「*13 文字目の「+」は使えません。verifier に使えるのは A〜Z、a〜z、0〜9 と - . _ ~ だけです（RFC 7636 §4.1）。*」と表示し、base64url への直し方を続けて示します。全角文字や、空白・改行にも専用のメッセージがあり、43〜128 文字の範囲外なら実際の文字数を示します。
+
+## LINE ログインに PKCE を組み込む
+
+LINE Developers の「[LINEログインをPKCE対応する](https://developers.line.biz/ja/docs/line-login/integrate-pkce/)」では、認可 URL に `code_challenge` と `code_challenge_method` を付け、「アクセストークンを発行する」エンドポイントのリクエストボディに `code_verifier` を加える 4 つの手順が説明されています。押さえておきたい点は次のとおりです。
+
+- **S256 のみ**：RFC 7636 は plain も定義していますが、LINE ログインはセキュリティ上の理由で S256 だけをサポートすると明記しています。`https://access.line.me/.well-known/openid-configuration` の `code_challenge_methods_supported` も `["S256"]` です。
+- **code_challenge は任意**：指定しなければ PKCE なしのフローになります。付け忘れてもエラーにならないので、実装後に認可 URL を [URL パーサー](/ja/tools/url-parser/) などで確認してください。
+- **ドキュメントの例で検算できる**：手順 1 の verifier `wJKN8qz5t8SSI9lMFhBB6qwNkQBkuPZoCxzRhwLRUo1` をツールに貼ると、手順 2 に載っている `BSCQwo_m8Wf0fpjmwkIKmPAJ1A7tiuRSNDnXzODS7QI` が出ます。
+- **もう 1 つのメリット**：同ページによると、PKCE を実装した LINE ログインのウェブアプリに Yahoo! JAPAN アプリからアクセスすると自動ログインが有効になります。
+
+## challenge が一致しないときの調べ方
+
+**code_challenge を照合** を開き、アプリが実際に送った値を貼り付けます。付録 B の verifier に対しては次のように判定されます。
+
+| 貼り付けた code_challenge | 判定 |
+|---|---|
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM=` | 末尾の `=` が余分 |
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw+cM=` | 標準 Base64 になっている |
+| `13d31e961a1ad8ec2f16b10c4c982e0876a878ad6df144566ee1894acb70f9c3` | 16 進数のダイジェストになっている |
+| `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` | verifier そのもの（plain） |
+| `38v3YOi6zQgk1xkqk6Y5dvSDoBHqZrTh3mmWHxxWvyk` | デコードした 32 バイトの乱数をハッシュしている |
+
+最後の行は自作の実装でよく起きます。乱数バイト列を保持しておき、送った 43 文字ではなくバイト列のほうをハッシュしてしまう誤りです。plain を選んだ状態では、貼り付けた値が S256 の結果なら `code_challenge_method=S256` を送るよう案内します。パラメータがないとサーバーは plain とみなすからです（[RFC 7636 4.3 節](https://www.rfc-editor.org/rfc/rfc7636#section-4.3)）。
+
+## コードで同じ値を求める
+
+付録 B の verifier に対して、次の 3 つはどれも `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM` を返します。このページのテストで実際に実行しています。
+
+```javascript
+// ブラウザと Node.js 20 以降（Web Crypto）
+const base64url = (bytes) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+function createVerifier() {
+  return base64url(crypto.getRandomValues(new Uint8Array(32))); // 43 文字
+}
+
+async function createChallenge(verifier) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(digest));
+}
+```
+
+```python
+import base64
+import hashlib
+import secrets
+
+
+def create_verifier() -> str:
+    return secrets.token_urlsafe(32)  # 32 バイトの乱数 -> 43 文字
+
+
+def create_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+```
+
+```go
+package main
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+)
+
+func createVerifier() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b) // 43 文字
+}
+
+func createChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+```
+
+LINE のサンプルは Node.js の `crypto.createHash('sha256')` で Base64 にしてから `+`、`/`、`=` を置き換えていますが、結果は同じです。ログイン後の ID トークンに入った `nonce` は [JWT デコーダー](/ja/tools/jwt-decoder/) で確認できます。
+
+## ほかのオンライン PKCE ツールとの違い
+
+2026-10-01 にデスクトップ版 Chromium で、生成と照合のあいだにページが発行した `fetch`・`XMLHttpRequest`・`sendBeacon` を記録して確かめました。
+
+- **Found Tools**（「PKCE code_verifier ジェネレーター」）と **encode64** の日本語版：ブラウザ内で生成しますが、verifier 欄は読み取り専用で、手元の verifier や challenge を照合する機能はありません。
+- **Elysia Tools**：生成も照合も、モード・verifier・challenge を JSON で `api.elysiatools.com` に送り、サーバーが返した結果を表示します。
+- **tonyxu-io.github.io/pkce-generator**：ブラウザ内で動き、付録 B の値も正しく出ますが、入力を検証しません。42 文字、`+ / =` を含む値、全角文字、空欄のどれでも challenge が出ます。
+
+このツールは、貼り付けた verifier を RFC の文法で 1 文字ずつ調べて問題の位置を示し、challenge が一致しないときは原因の種類まで示します。verifier はタブの外に出ません。
+
+## 制限
+
+- 方式は RFC 7636 が定める S256 と plain だけです。生成する verifier は base64url の 64 文字だけを使うので、同じく有効な `.` と `~` は含まれません。
+- エントロピーの表示はこのページで生成した verifier だけです。貼り付けた verifier については形式しか判定できず、ランダムさはわかりません。
+- 認可サーバーには接続しないので、トークン取得の代行はできません。cURL はパブリッククライアント向けで、コンフィデンシャルクライアントはクライアント認証を加えてください。
+- RFC 7636 以外の各社独自ルール（LINE ログインの S256 限定など）はチェックしません。
+- verifier は認可リクエスト 1 回ごとに作り直してください。固定の verifier では保護になりません。RFC 9700 の 2.1.1 節も、サーバーが固定値を見つけて拒否するよう促しています。

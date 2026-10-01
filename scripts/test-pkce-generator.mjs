@@ -34,10 +34,14 @@
 //   literal OPAQUE_STATE) and nonce only with the openid scope; existing query kept, duplicate
 //   PKCE parameters replaced; endpoints that are not http(s) URLs or carry a fragment are errors
 //   (before the fix: "example.com/authorize" produced a broken URL silently); empty optional
-//   values omitted; redirect_uri round trip.
+//   values omitted; redirect_uri round trip; a comma-separated scope with openid (Kakao, WeChat)
+//   gets a nonce.
 // - Token request cURL: exact string, shell quoting round trip through /bin/sh.
 // - No storage, URL or network access in the component script; persistence policy disabled.
 // - 4-language STRINGS tables have the same keys and {placeholders}.
+// - Examples on the 4 tool pages: the RFC pair, the quoted "+" error message (STRINGS output),
+//   the Feishu (zh) and LINE (ja) pairs, every row of the challenge diagnosis table and the en
+//   authorization URL are what the engine produces.
 // - Code blocks on the 4 tool pages: JavaScript, Python and Go produce the RFC challenge and a
 //   valid 43-character verifier (Python / Go are skipped when not installed).
 //
@@ -248,6 +252,32 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
   }
 }
 
+// ── Examples quoted on the tool pages ───────────────────────────────────────
+{
+  const fmt = (t, o) => String(t).replace(/\{(\w+)\}/g, (m, k) => (k in o ? o[k] : m));
+  const authUrl = E.buildAuthUrl({
+    endpoint: 'https://auth.example.com/authorize', clientId: 's6BhdRkqt3', redirectUri: 'https://client.example.org/cb',
+    scope: 'openid profile', state: 'xyz', nonce: 'n-0S6_WzA2Mj', challenge: RFC_CHALLENGE, method: 'S256',
+  }).url;
+  const pairs = { zh: [[FEISHU_VERIFIER, FEISHU_CHALLENGE]], ja: [[LINE_VERIFIER, LINE_CHALLENGE]] };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/pkce-generator/' + lang + '.mdx'), 'utf8');
+    check(lang + ': page shows the RFC verifier and challenge', mdx.includes(RFC_VERIFIER) && mdx.includes(RFC_CHALLENGE));
+    if (STRINGS) check(lang + ': quoted error message is the tool output', mdx.includes(fmt(STRINGS[lang].errChar, { pos: 13, ch: '+' })));
+    for (const [v, c] of pairs[lang] || []) {
+      check(lang + ': page shows ' + v.slice(0, 8) + '… and its challenge', mdx.includes(v) && mdx.includes(c));
+      eq(lang + ': ' + v.slice(0, 8) + '… challenge computed by the engine', await E.computeChallenge(v, 'S256'), c);
+    }
+    const rows = [...mdx.matchAll(/^\| `([A-Za-z0-9_+=/-]{43,64})` \|/gm)].map((m) => m[1]);
+    const codes = [];
+    for (const r of rows) codes.push((await E.diagnoseChallenge(RFC_VERIFIER, r, 'S256')).code);
+    const expectCodes = lang === 'en' ? ['match', 'padding', 'base64', 'hex', 'plain', 'rawBytes'] : ['padding', 'base64', 'hex', 'plain', 'rawBytes'];
+    eq(lang + ': diagnosis table rows give the stated results', codes, expectCodes);
+  }
+  const en = readFileSync(join(root, 'src/content/tools/pkce-generator/en.mdx'), 'utf8');
+  check('en: authorization URL example is the engine output', en.includes(authUrl), authUrl);
+}
+
 // ── Code blocks on the tool pages ───────────────────────────────────────────
 {
   let hasPython = true;
@@ -260,6 +290,7 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const mdx = readFileSync(join(root, 'src/content/tools/pkce-generator/' + lang + '.mdx'), 'utf8');
     const js = (mdx.match(/```(?:javascript|js)\n([\s\S]*?)```/) || [])[1];
+    check(lang + ': page has a JavaScript block', !!js);
     if (js) {
       const fns = new Function(js + '\nreturn { createVerifier, createChallenge };')();
       eq(lang + ': JavaScript createChallenge(RFC verifier)', await fns.createChallenge(RFC_VERIFIER), RFC_CHALLENGE);
@@ -267,12 +298,14 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
       eq(lang + ': JavaScript createVerifier() is a valid 43-character verifier', [v.length, E.validateVerifier(v).code], [43, 'ok']);
     }
     const py = (mdx.match(/```python\n([\s\S]*?)```/) || [])[1];
+    check(lang + ': page has a Python block', !!py);
     if (py && hasPython) {
       const out = execFileSync('python3', ['-c', py + '\nimport sys\nprint(create_challenge(sys.argv[1]))\nprint(create_verifier())\n', RFC_VERIFIER]).toString().trim().split('\n');
       eq(lang + ': Python create_challenge(RFC verifier)', out[0], RFC_CHALLENGE);
       eq(lang + ': Python create_verifier() is a valid 43-character verifier', [out[1].length, E.validateVerifier(out[1]).code], [43, 'ok']);
     }
     const go = (mdx.match(/```go\n([\s\S]*?)```/) || [])[1];
+    check(lang + ': page has a Go block', !!go);
     if (go && hasGo) {
       let out = goDone.get(go);
       if (!out) {

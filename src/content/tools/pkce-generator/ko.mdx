@@ -1,41 +1,130 @@
 ---
-seoTitle: "PKCE 생성기 — OAuth 2.0 code_verifier 및 challenge | ZeroTool"
-seoDescription: "OAuth 2.0 / 2.1 인증 코드 흐름을 위한 암호학적으로 안전한 PKCE code_verifier 및 code_challenge 생성. SHA-256(S256)·plain 방식 지원, 100% 브라우저 완결."
+seoTitle: "PKCE 생성기 (S256 온라인) | ZeroTool"
+seoDescription: "RFC 7636 PKCE code_verifier와 S256 code_challenge를 생성하고, 가진 verifier의 형식과 challenge 불일치 원인을 확인하고, 인가 URL과 토큰 요청 cURL까지 만듭니다. 모든 계산은 브라우저 안에서."
 faqItems:
-  - question: "PKCE란 무엇이며 왜 필요한가요?"
-    answer: "PKCE는 Proof Key for Code Exchange(RFC 7636)의 약자로, OAuth 흐름에서 인증 코드 가로채기를 막는 메커니즘입니다. client_secret을 안전하게 보관할 수 없는 퍼블릭 클라이언트(모바일 앱, SPA, CLI, 데스크톱 앱)에서 특히 중요합니다. OAuth 2.1은 퍼블릭 클라이언트뿐 아니라 모든 클라이언트에 PKCE를 의무화합니다."
-  - question: "S256과 plain 중 어느 것을 써야 하나요?"
-    answer: "프로덕션에서는 항상 S256입니다. plain은 SHA-256을 계산할 수 없는 과거 클라이언트를 위해 남겨진 방식으로 현대에는 실질적인 의미가 없습니다. RFC 7636도 S256을 명확히 권장하며, 주요 OAuth 제공자는 plain을 기본적으로 거부합니다."
-  - question: "이 도구가 verifier를 외부로 전송하나요?"
-    answer: "아닙니다. 난수는 crypto.getRandomValues, 해시는 crypto.subtle.digest, URL 미리보기는 단순 문자열 결합으로 모두 브라우저 내에서 처리됩니다. verifier는 localStorage에도 저장되지 않으며 새로고침할 때마다 새로 생성됩니다."
-  - question: "verifier 길이는 어느 정도가 적절한가요?"
-    answer: "RFC 7636은 43~128자, 문자 집합은 [A-Z a-z 0-9 - . _ ~]을 허용합니다. 기본값 64자는 무차별 대입 공격에 충분한 엔트로피와 URL 길이 사이의 균형점입니다. 제공자가 128자를 받아들이고 최대 엔트로피를 원한다면 상한을 사용해도 됩니다."
-  - question: "내 OAuth 흐름에 어떻게 통합하나요?"
-    answer: "클라이언트 측에 code_verifier를 안전하게 보관(브라우저는 localStorage, 네이티브는 안전 저장소)하고, /authorize 리다이렉트 시 code_challenge와 code_challenge_method=S256을 쿼리 파라미터로 전송하세요. /token에서 인증 코드를 교환할 때 원본 code_verifier를 다시 보내면 서버가 재해싱해 비교합니다."
+  - question: "verifier가 서버로 전송되거나 저장되나요?"
+    answer: "아니요. 난수는 crypto.getRandomValues로, SHA-256은 crypto.subtle로 이 탭 안에서 계산합니다. 도구는 네트워크 요청을 보내지 않고, verifier를 localStorage, sessionStorage, 쿠키, URL에 쓰지 않습니다. 이 페이지는 분석·광고 스크립트도 불러오지 않습니다. 새로 고치면 verifier는 사라집니다."
+  - question: "code_verifier 길이는 얼마가 적당한가요?"
+    answer: "기본값 43자는 32바이트 난수를 base64url로 인코딩한 것으로, RFC 7636 4.1절과 7.1절이 권장하는 방법입니다(256비트). 128자까지 늘릴 수 있습니다. 직접 입력한 verifier는 A–Z, a–z, 0–9와 - . _ ~로 된 43~128자면 형식상 유효하지만, 강도는 만든 방법에 달려 있습니다."
+  - question: "S256과 plain 중 무엇을 써야 하나요?"
+    answer: "S256입니다. RFC 7636 4.2절은 SHA-256을 계산할 수 있는 클라이언트에 S256을 요구하고, RFC 9700은 인가 요청에 verifier를 드러내지 않는 방식이 현재 S256뿐이라고 설명합니다. OAuth 2.1 초안은 plain을 금지했습니다. 네이버와 카카오의 OIDC 메타데이터도 S256만 지원한다고 밝힙니다."
+  - question: "토큰 요청이 invalid_grant로 실패합니다. 무엇을 확인해야 하나요?"
+    answer: "앱이 실제로 보낸 code_challenge를 \"code_challenge 대조\"에 붙여 넣으세요. verifier와 짝이 맞는지, 아니면 표준 Base64, 16진수, 끝의 =, verifier 그대로, 디코딩한 난수 바이트의 해시 같은 흔한 실수 중 무엇인지 알려 줍니다. 일치한다면 code_challenge_method=S256을 보냈는지, verifier가 같은 로그인 시도의 것인지, code를 한 번만 썼는지 확인하세요."
+  - question: "client_secret이 있는 서버 앱에도 PKCE가 필요한가요?"
+    answer: "RFC 9700(OAuth 2.0 보안 모범 사례, 2025년)은 퍼블릭 클라이언트에는 PKCE를 필수로, 컨피덴셜 클라이언트에는 권장으로 정하고 있습니다. 인가 코드 주입 공격도 막아 주기 때문입니다. 컨피덴셜 클라이언트는 토큰 엔드포인트에서 클라이언트 인증도 해야 합니다. 도구의 cURL은 퍼블릭 클라이언트 기준이므로 client_secret 등은 직접 추가하세요."
 ---
 
-<h2>사용 방법</h2>
-<ol>
-  <li>페이지 로드 시 64자 <strong>code_verifier</strong>가 자동 생성됩니다.</li>
-  <li><strong>재생성</strong> 버튼으로 새 랜덤 verifier를 받거나 직접 붙여넣을 수 있습니다.</li>
-  <li><strong>Challenge 방식</strong>을 선택하세요. 명확한 이유가 없다면 S256을 유지합니다.</li>
-  <li><strong>code_challenge</strong>는 실시간으로 갱신됩니다. /authorize 요청에 복사하세요.</li>
-  <li><strong>인증 URL 미리보기</strong>를 펼쳐 엔드포인트, client_id, redirect_uri를 입력하세요.</li>
-  <li><strong>토큰 교환(cURL)</strong>을 펼치면 /token 호출용 실행 가능한 명령을 바로 받을 수 있습니다.</li>
-</ol>
+## 사용법
 
-<h2>주요 사용 사례</h2>
-<ul>
-  <li><strong>로컬 OAuth 디버깅:</strong> verifier/challenge 쌍을 생성하고 인증 URL을 브라우저에 붙여 code를 얻은 다음 curl 미리보기로 /token 교환을 재현합니다.</li>
-  <li><strong>모바일·데스크톱 클라이언트:</strong> 백엔드를 띄우지 않고 iOS / Android / 데스크톱 앱의 테스트 흐름을 수동으로 실행합니다.</li>
-  <li><strong>새 제공자 연동:</strong> 코드를 작성하기 전에 제공자가 S256을 받아들이고 client_id 설정이 올바른지 검증합니다.</li>
-  <li><strong>보안 리뷰:</strong> 사양 문서를 열지 않고 라이브 도구로 verifier 문자 집합과 길이가 RFC 7636을 따르는지 확인합니다.</li>
-</ul>
+1. 페이지를 열면 43자 `code_verifier`가 만들어져 있습니다. 새 값이 필요하면 **새로 생성**을 누릅니다. 제공자가 길이를 정해 둔 경우에만 **길이**(43~128)를 바꾸세요.
+2. verifier를 복사해 이번 로그인 한 번을 위해 클라이언트에 보관합니다.
+3. `code_challenge`를 복사합니다. 방식은 **S256** 그대로 둡니다. verifier를 붙여 넣거나 고치면 바로 다시 계산됩니다.
+4. **인가 요청 URL**을 펼쳐 인가 엔드포인트, `client_id`, `redirect_uri`, `scope`를 넣고 URL을 복사합니다. 무작위 `state`는 미리 채워져 있고, scope에 `openid`가 있으면 무작위 `nonce`도 붙습니다.
+5. 리디렉션으로 받은 `code`를 **토큰 요청(cURL)**에 넣고 실행합니다. 토큰 요청에는 verifier 원문이 들어갑니다.
 
-<h2>작동 원리</h2>
-<ol>
-  <li><code>crypto.getRandomValues</code>로 32바이트 난수를 받아 base64url로 인코딩한 뒤 원하는 길이로 자릅니다.</li>
-  <li>S256은 verifier를 UTF-8로 인코딩한 다음 <code>crypto.subtle.digest('SHA-256', …)</code>로 해시를 계산합니다.</li>
-  <li>32바이트 해시를 다시 base64url로 인코딩(+ → -, / → _, = 패딩 제거)하면 43자 challenge가 만들어집니다.</li>
-  <li>plain 모드에서는 challenge가 verifier와 동일합니다. 호환성을 위해서만 남아 있으며 권장하지 않습니다.</li>
-</ol>
+Ctrl/⌘+Enter는 새로 생성, Ctrl/⌘+L은 입력란 비우기입니다.
+
+계산식은 [RFC 7636 4.2절](https://www.rfc-editor.org/rfc/rfc7636#section-4.2)의 `code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))`이며, base64url에는 `=`를 붙이지 않습니다. 생성기는 n바이트 난수를 base64url로 바꾼 뒤 필요한 길이만큼 자릅니다. 43자는 정확히 32바이트(256비트)입니다. SHA-256 자체는 [해시 생성기](/ko/tools/hash-generator/)와 같은 함수이고, 여기서는 32바이트 다이제스트를 16진수가 아니라 base64url로 표기한다는 점만 다릅니다.
+
+## RFC 7636 부록 B로 확인하기
+
+verifier 칸에 `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk`를 붙여 넣으면 `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`가 나옵니다. [부록 B](https://www.rfc-editor.org/rfc/rfc7636#appendix-B)의 값과 같습니다. 직접 만든 구현이 이 값을 내지 못한다면 인코딩이나 해시 대상이 잘못된 것입니다.
+
+같은 verifier를 표준 Base64 표기 `dBjftJeZ4CVP+mB92K27uhbUJU1p1r/wW1gFWFOEjXk=`로 넣으면, 도구는 계산을 멈추고 *13번째 문자 "+"는 쓸 수 없습니다. verifier에는 A–Z, a–z, 0–9와 - . _ ~만 쓸 수 있습니다(RFC 7636 §4.1).*라고 표시한 뒤 base64url로 고치는 방법을 덧붙입니다. 한글 같은 비 ASCII 문자, 공백과 줄바꿈에도 각각 안내가 있고, 43~128자를 벗어나면 실제 글자 수를 알려 줍니다.
+
+## 네이버·카카오 로그인에서 PKCE 쓰기
+
+**네이버**: [네이버 로그인 개발가이드](https://developers.naver.com/docs/login/devguide/devguide.md)의 3.5절 "Open ID Connect로 네이버 로그인 연동하기"에 PKCE가 나옵니다. 기존 OAuth 2.0 API와 다른 경로인 `https://nid.naver.com/oauth2/authorize`에 `scope=openid`(필수), `code_challenge`, `code_challenge_method`를 보내고, `https://nid.naver.com/oauth2/token`에 "PKCE로 동작하는 경우" `code_verifier`를 추가합니다. 표에 적힌 `code_challenge_method`의 기본값은 S256으로, 매개변수가 없으면 plain으로 보는 RFC 7636 4.3절과 다릅니다. 다른 서버로 옮길 때를 생각해 S256을 항상 명시하는 편이 안전하며, 이 도구의 인가 URL도 그렇게 만듭니다.
+
+**카카오**: OIDC 메타데이터(`https://kauth.kakao.com/.well-known/openid-configuration`)는 `code_challenge_methods_supported: ["S256"]`을 반환하지만, [카카오 로그인 REST API 문서](https://developers.kakao.com/docs/latest/ko/kakaologin/rest-api)의 "인가 코드 받기" 요청 매개변수 표(client_id, redirect_uri, response_type, scope, prompt, login_hint, service_terms, state, nonce)에는 `code_challenge`가 없습니다(2026-10-01 확인). PKCE에 기대기 전에 테스트 앱으로 실제 동작을 확인하세요. 카카오의 `scope`는 쉼표로 구분하는데, 이 도구는 `openid,profile_nickname`처럼 쉼표로 적어도 `openid`를 인식해 `nonce`를 붙입니다. `state`는 요청마다 고유해야 한다고 문서에 적혀 있으니, 도구가 만드는 무작위 값을 그대로 쓸 수 있습니다.
+
+인가 URL이 의도대로 만들어졌는지는 [URL 파서](/ko/tools/url-parser/)로 매개변수를 하나씩 펼쳐 확인할 수 있습니다.
+
+## challenge가 맞지 않을 때
+
+**code_challenge 대조**를 펼쳐 앱이 실제로 보낸 값을 붙여 넣습니다. 부록 B의 verifier 기준으로 다음과 같이 판정합니다.
+
+| 붙여 넣은 code_challenge | 판정 |
+|---|---|
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM=` | 끝의 `=`가 불필요 |
+| `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw+cM=` | 표준 Base64로 인코딩함 |
+| `13d31e961a1ad8ec2f16b10c4c982e0876a878ad6df144566ee1894acb70f9c3` | 16진수 다이제스트 |
+| `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` | verifier 그대로(plain) |
+| `38v3YOi6zQgk1xkqk6Y5dvSDoBHqZrTh3mmWHxxWvyk` | 디코딩한 32바이트 난수를 해시함 |
+
+마지막 경우는 직접 구현할 때 자주 생깁니다. 난수 바이트를 보관해 두었다가, 실제로 보낸 43자 문자열 대신 바이트를 해시하는 실수입니다. plain을 선택한 상태에서 S256 결과를 붙여 넣으면 `code_challenge_method=S256`을 보내라고 안내합니다. 표준 Base64와 base64url의 차이는 [Base64 인코드 / 디코드](/ko/tools/base64/)에서 두 알파벳을 비교해 볼 수 있습니다.
+
+## 코드로 같은 값 구하기
+
+부록 B의 verifier에 대해 아래 세 가지는 모두 `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`를 돌려줍니다. 이 페이지의 테스트가 실제로 실행합니다.
+
+```javascript
+// 브라우저와 Node.js 20 이상(Web Crypto)
+const base64url = (bytes) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+function createVerifier() {
+  return base64url(crypto.getRandomValues(new Uint8Array(32))); // 43자
+}
+
+async function createChallenge(verifier) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(digest));
+}
+```
+
+```python
+import base64
+import hashlib
+import secrets
+
+
+def create_verifier() -> str:
+    return secrets.token_urlsafe(32)  # 32바이트 난수 -> 43자
+
+
+def create_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+```
+
+```go
+package main
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+)
+
+func createVerifier() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b) // 43자
+}
+
+func createChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+```
+
+로그인 뒤 ID 토큰에 들어 있는 `nonce`는 [JWT 디코더](/ko/tools/jwt-decoder/)로 확인할 수 있습니다.
+
+## 다른 온라인 PKCE 도구와의 차이
+
+2026-10-01 데스크톱 Chromium에서, 생성·대조하는 동안 페이지가 보낸 `fetch`, `XMLHttpRequest`, `sendBeacon`을 기록해 확인했습니다.
+
+- **ToolBada**(OAuth PKCE 생성기)와 **encode64** 한국어판: 브라우저 안에서 생성하지만, 가지고 있는 verifier나 challenge를 대조하는 기능은 없습니다.
+- **Elysia Tools**: 생성과 검증 모두 모드, verifier, challenge를 JSON으로 `api.elysiatools.com`에 보내고 서버가 돌려준 결과를 보여 줍니다.
+- **tonyxu-io.github.io/pkce-generator**: 브라우저 안에서 동작하고 부록 B 값도 맞지만, 입력을 검증하지 않습니다. 42자, `+ / =`가 섞인 값, 한글, 빈칸 모두 challenge가 나옵니다.
+
+이 도구는 붙여 넣은 verifier를 RFC 문법으로 한 글자씩 검사해 문제 위치를 알려 주고, challenge가 맞지 않을 때 원인의 종류까지 보여 줍니다. verifier는 탭 밖으로 나가지 않습니다.
+
+## 제한
+
+- 방식은 RFC 7636이 정의한 S256과 plain뿐입니다. 생성하는 verifier는 base64url의 64개 문자만 쓰므로, 똑같이 유효한 `.`와 `~`는 나오지 않습니다.
+- 엔트로피는 이 페이지에서 생성한 verifier에만 표시합니다. 붙여 넣은 verifier는 형식만 판정할 수 있고 무작위성은 알 수 없습니다.
+- 인가 서버에 연결하지 않으므로 토큰 교환을 대신할 수 없습니다. cURL은 퍼블릭 클라이언트 기준이며, 컨피덴셜 클라이언트는 클라이언트 인증을 더해야 합니다.
+- 제공자별 규칙(네이버의 기본값 S256 등)은 검사하지 않습니다.
+- verifier는 인가 요청 한 번마다 새로 만드세요. 고정된 verifier는 보호 효과가 없고, RFC 9700 2.1.1절도 서버가 고정값을 찾아 거부하도록 권합니다.
