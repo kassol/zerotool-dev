@@ -102,7 +102,7 @@ const placeholders = { en: ['(space)', '(invisible)'], ja: ['（空白）', '（
 const none = { en: 'none', ja: 'なし' };
 let python = true;
 try { execFileSync('python3', ['-c', 'import html'], { stdio: 'ignore' }); } catch { python = false; }
-for (const lang of ['en']) {
+for (const lang of ['en', 'ja']) {
   const page = readFileSync(join(root, 'src/content/blog/html-entity-guide/' + lang + '.mdx'), 'utf8');
   for (const [k, v] of Object.entries(counts)) {
     eq(lang + ' guide quotes ' + k, page.includes(v.toLocaleString('en-US')), true);
