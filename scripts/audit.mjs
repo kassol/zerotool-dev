@@ -615,7 +615,7 @@ const SENSITIVE_EXEMPT = {
   'ai-token-counter': '"token" means LLM tokens; the input is prompt text, not a credential',
   'barcode-generator': '"bearer" is the ITF bearer bar, not an auth scheme',
   'markdown-to-word': '"credentials" is the fetch option `credentials: \'omit\'` for web images',
-  'url-parser': 'general URL parser; the password field only shows URL userinfo when a URL has it',
+  'url-parser': 'general URL parser; a password appears only when the pasted URL carries one, is masked until revealed, and is neither stored nor sent',
   'qr-code-decoder': 'general QR reader; a Wi-Fi password appears only when the scanned code holds one',
   'ssl-certificate-decoder': 'decodes public X.509 certificates; the tool takes no private keys',
 };

@@ -159,8 +159,9 @@ const L = labels[lang] ?? labels.en;
         <select id="mtoc-anchor" class="tool-input mtoc-select">
           <option value="github">GitHub / Hugo</option>
           <option value="gitlab">GitLab</option>
-          <option value="jekyll">Jekyll</option>
-          <option value="bitbucket">Bitbucket</option>
+          <option value="jekyll">Jekyll (kramdown GFM)</option>
+          <option value="kramdown">kramdown (input: kramdown)</option>
+          <option value="bitbucket">Bitbucket Cloud</option>
         </select>
       </div>
 
@@ -258,6 +259,7 @@ const L = labels[lang] ?? labels.en;
   var HEAD_PRE = wrap.getAttribute('data-headings-plural-pre') || '';
   var HEAD_POST = wrap.getAttribute('data-headings-plural-post') || ' headings';
 
+  /* ── engine:start ── */
   // ── Heading parser ────────────────────────────────────────────────
   function parseHeadings(md) {
     var lines = md.split('\n');
@@ -281,7 +283,8 @@ const L = labels[lang] ?? labels.en;
       if (/<!--\s*\/toc\s*-->/i.test(line)) { inTocMarker = false; continue; }
       if (inTocMarker) continue;
       // ATX heading
-      var atx = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+      // CommonMark: the closing #-sequence must follow a space or tab ("## C#" keeps its #).
+      var atx = line.match(/^ {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/);
       if (atx) {
         headings.push({ level: atx[1].length, text: cleanInline(atx[2]) });
         continue;
@@ -315,51 +318,73 @@ const L = labels[lang] ?? labels.en;
   }
 
   // ── Slugify per platform ──────────────────────────────────────────
+  // GitHub: github-slugger 2.0.0 (lowercase, drop everything except letters, marks, decimal
+  // digits, connector punctuation such as "_", "-" and space, then each space becomes "-").
+  // Its table is Unicode \p{Alphabetic}\p{M}\p{Nd}\p{Pc}. GitLab 17.0+ documents the same rules.
+  // Jekyll: kramdown-parser-gfm generate_gfm_header_id (Jekyll's default input is GFM); same
+  // character set (Ruby \p{Word}), tabs also become "-".
+  // kramdown: kramdown's own parser (input: kramdown), basic_generate_id: drop leading non-letters,
+  // keep only ASCII a-z 0-9 space "-", empty -> "section".
+  // Bitbucket Cloud: "markdown-header-" prefix (Atlassian BCLOUD-8276); the rest of its rules
+  // are not documented, so the GitHub rule is used for the remainder.
+  var GITHUB_STRIP = /[^\p{Alphabetic}\p{M}\p{Nd}\p{Pc} \-]/gu;
+  var GFM_STRIP = /[^\p{Alphabetic}\p{M}\p{Nd}\p{Pc} \t\-]/gu;
+
   function slugifyGithub(text) {
-    var s = text.toLowerCase();
-    // Strip everything except letters, numbers (incl. unicode), spaces, hyphens
-    s = s.replace(/[^\p{L}\p{N}\s\-]/gu, '');
-    s = s.replace(/\s+/g, '-');
-    s = s.replace(/^-+|-+$/g, '');
-    return s;
-  }
-  function slugifyGitlab(text) {
-    var s = slugifyGithub(text);
-    return s.replace(/-+/g, '-');
+    return text.toLowerCase().replace(GITHUB_STRIP, '').replace(/ /g, '-');
   }
   function slugifyJekyll(text) {
-    var s = text.toLowerCase();
-    // Jekyll/kramdown classic: ASCII only
-    s = s.replace(/[^\x00-\x7F]/g, '');
-    s = s.replace(/[^a-z0-9\s\-]/g, '');
-    s = s.replace(/\s+/g, '-');
-    s = s.replace(/^-+|-+$/g, '');
+    return text.toLowerCase().replace(GFM_STRIP, '').replace(/[ \t]/g, '-');
+  }
+  function slugifyKramdown(text) {
+    var s = text.replace(/^[^a-zA-Z]+/, '');
+    s = s.replace(/[^a-zA-Z0-9 \-]/g, '');
+    s = s.replace(/ /g, '-').toLowerCase();
     return s;
   }
-  function slugifyBitbucket(text) {
-    return 'markdown-' + slugifyGithub(text);
-  }
   function slugify(text, style) {
-    if (style === 'gitlab') return slugifyGitlab(text);
     if (style === 'jekyll') return slugifyJekyll(text);
-    if (style === 'bitbucket') return slugifyBitbucket(text);
+    if (style === 'kramdown') return slugifyKramdown(text);
+    if (style === 'bitbucket') return 'markdown-header-' + slugifyGithub(text);
     return slugifyGithub(text);
   }
 
+  // Unique ids for every heading of the document, in document order (renderers count all
+  // headings, not only the ones shown in the TOC).
   function dedupe(slugs, style) {
-    var counts = {};
     var out = [];
-    var sep = style === 'bitbucket' ? '_' : '-';
-    for (var i = 0; i < slugs.length; i++) {
-      var base = slugs[i];
-      if (base === '') { out.push(''); continue; }
-      if (!(base in counts)) {
-        counts[base] = 0;
-        out.push(base);
-      } else {
-        counts[base] += 1;
-        out.push(base + sep + counts[base]);
+    var counts = Object.create(null);
+    var i, base;
+    if (style === 'jekyll' || style === 'kramdown') {
+      // kramdown: a per-base counter; the result is not checked against earlier ids, so
+      // "Install", "Install-1", "Install" gives install, install-1, install-1.
+      for (i = 0; i < slugs.length; i++) {
+        base = slugs[i];
+        if (style === 'kramdown' && base === '') base = 'section';
+        if (style === 'jekyll' && base === '') { out.push(''); continue; }
+        if (!(base in counts)) { counts[base] = 0; out.push(base); }
+        else { counts[base] += 1; out.push(base + '-' + counts[base]); }
       }
+      return out;
+    }
+    if (style === 'bitbucket') {
+      for (i = 0; i < slugs.length; i++) {
+        base = slugs[i];
+        if (!(base in counts)) { counts[base] = 0; out.push(base); }
+        else { counts[base] += 1; out.push(base + '_' + counts[base]); }
+      }
+      return out;
+    }
+    // github-slugger BananaSlug.slug(): bump the counter until the result is unused.
+    for (i = 0; i < slugs.length; i++) {
+      base = slugs[i];
+      var result = base;
+      while (result in counts) {
+        counts[base]++;
+        result = base + '-' + counts[base];
+      }
+      counts[result] = 0;
+      out.push(result);
     }
     return out;
   }
@@ -378,12 +403,15 @@ const L = labels[lang] ?? labels.en;
     var bullet = opts.bullet;
     var indentChars = opts.indent === 'tab' ? '\t' : (opts.indent === '4' ? '    ' : '  ');
 
+    var allSlugs = dedupe(headings.map(function (h) { return slugify(h.text, opts.style); }), opts.style);
     var filtered = [];
+    var finalSlugs = [];
     for (var i = 0; i < headings.length; i++) {
       var h = headings[i];
       if (h.level < minL || h.level > maxL) continue;
       if (!includeH1 && h.level === 1) continue;
       filtered.push(h);
+      finalSlugs.push(allSlugs[i]);
     }
     if (filtered.length === 0) return '';
 
@@ -392,8 +420,6 @@ const L = labels[lang] ?? labels.en;
       if (filtered[j].level < baseLevel) baseLevel = filtered[j].level;
     }
 
-    var rawSlugs = filtered.map(function (h) { return slugify(h.text, opts.style); });
-    var finalSlugs = dedupe(rawSlugs, opts.style);
 
     var lines = [];
     for (var k = 0; k < filtered.length; k++) {
@@ -435,6 +461,7 @@ const L = labels[lang] ?? labels.en;
     var newDoc = prefix + '<!-- toc -->\n' + toc + '\n<!-- /toc -->\n\n' + suffix;
     return { md: newDoc, status: 'inserted' };
   }
+  /* ── engine:end ── */
 
   function headingCountLabel(n) {
     if (n === 1) return HEAD_SINGULAR;

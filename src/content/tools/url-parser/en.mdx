@@ -1,39 +1,69 @@
 ---
-seoTitle: "URL Parser — Free Online URL Structure Analyzer | ZeroTool"
-seoDescription: "Parse any URL into its components: protocol, host, port, pathname, query parameters, and hash. Instant, browser-native. No server required."
+seoTitle: "URL Parser: Break Down Host, Path & Query Params | ZeroTool"
+seoDescription: "Split any URL into scheme, host, port, path, query and fragment with your browser's parser. See what it normalizes, where RFC 3986 differs, and edit params."
 faqItems:
-  - question: "What is a URL parser?"
-    answer: "A URL parser breaks a URL string into its individual structural components: protocol (scheme), username, password, hostname, port, pathname, search string, hash fragment, and origin. This makes it easy to inspect and debug URLs used in APIs, links, and web applications."
-  - question: "Which URL components does this tool show?"
-    answer: "Protocol, Username, Password, Host (hostname + port), Hostname, Port, Pathname, Search (full query string), Hash, Origin, and the Full URL. Query parameters are also displayed as a separate key-value table."
-  - question: "Does this tool send my URL to a server?"
-    answer: "No. All parsing is done entirely in your browser using the built-in JavaScript URL API. Nothing leaves your device."
-  - question: "What URL formats are supported?"
-    answer: "Any URL with a valid scheme — http, https, ftp, ws, wss, and custom protocols like myapp://. The URL must include a scheme; bare hostnames like 'example.com' without 'https://' will be flagged as invalid."
-  - question: "How can I use this for debugging?"
-    answer: "Paste a URL from a browser address bar, an API response, or a log file. The tool instantly shows every component so you can verify the correct host, path, or query parameter values without writing any code."
+  - question: "Which parser does this tool use?"
+    answer: "Your browser's own URL parser, the same one behind new URL() in JavaScript. It follows the WHATWG URL Standard, so the parts you see are the parts the browser uses when it opens the link or sends a fetch request. A second reading splits the text with the RFC 3986 Appendix B regular expression, and the tool warns when that reading finds a different host."
+  - question: "Why does example.com/path show an error?"
+    answer: "A URL needs a scheme such as https://. Without one, new URL() throws, so the tool says why and offers a button that parses the text as https://example.com/path. Relative links such as /api/users or ../img/logo.png need a base URL instead; type one under Base URL. Watch for localhost:3000/api: it does parse, but as the scheme localhost: with no host, and the tool points that out."
+  - question: "Why is the port empty when my URL says :443?"
+    answer: "443 is the default port for https, so the URL Standard drops it from the URL. The request still goes to port 443. The same applies to 80 for http and ws, 443 for wss and 21 for ftp. The tool shows the default port as a placeholder and adds a note when it removed one."
+  - question: "Does editing a parameter re-encode the rest of my URL?"
+    answer: "No. Parameters you do not touch keep their original text byte for byte, including a key without '=', an invalid escape such as %zz and bytes that are not UTF-8. Only the pair you edit or add is encoded, the way URLSearchParams encodes it (a space becomes +)."
+  - question: "Is my URL sent or stored anywhere?"
+    answer: "No. Parsing runs in this tab with the browser's URL and TextDecoder APIs. The page makes no request with your URL and does not save it. A password in the URL is masked until you press Show."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Paste or type any URL into the input field.</li>
-  <li>The tool parses it instantly as you type — no button needed.</li>
-  <li>Click <strong>Copy</strong> next to any field to copy that value.</li>
-  <li>If the URL has query parameters, they appear in a separate key-value table below.</li>
-</ol>
+## How to Use
 
-<h2>What Each Field Means</h2>
-<p>
-  The URL <code>https://user:pass@example.com:8080/path?key=val#section</code> breaks down as:
-</p>
-<ul>
-  <li><strong>Protocol</strong> — <code>https:</code> (the scheme)</li>
-  <li><strong>Username / Password</strong> — credentials embedded in the URL</li>
-  <li><strong>Host</strong> — <code>example.com:8080</code> (hostname + port)</li>
-  <li><strong>Hostname</strong> — <code>example.com</code> (no port)</li>
-  <li><strong>Port</strong> — <code>8080</code> (empty if default for the scheme)</li>
-  <li><strong>Pathname</strong> — <code>/path</code></li>
-  <li><strong>Search</strong> — <code>?key=val</code> (full query string)</li>
-  <li><strong>Hash</strong> — <code>#section</code></li>
-  <li><strong>Origin</strong> — <code>https://example.com:8080</code> (scheme + host)</li>
-</ul>
+1. Paste a URL into the box. It is parsed as you type; there is no button to press.
+2. Read the **Normalized URL** first: it is the exact string the browser would use. The notes under it list every change the parser made and every warning.
+3. Check the fields. **Copy** copies one value; **Copy as JSON** copies all of them with the decoded parameters.
+4. To change the URL, edit a field and press Enter, or edit a key or value in **Query parameters**. The URL in the box is rebuilt, and the tool tells you when the browser ignored or changed what you typed (port `99999` is ignored; port `8080abc` is stored as `8080`).
+5. For a relative link, open **Base URL** and enter the page it appears on. The result is what `new URL(link, base)` returns.
+
+## What the parser changes
+
+Browsers do not take a URL literally. The [WHATWG URL Standard](https://url.spec.whatwg.org/) strips spaces, deletes tabs and newlines, lowercases the host, converts international domains to Punycode, resolves `.` and `..`, removes default ports and percent-encodes some characters. The tool lists each change.
+
+{/* up-check: {"input":"https://user:pass@example.com:443/a/./b/../c?q=a+b&q=2&flag&x=%zz#frag","fields":{"href":"https://user:pass@example.com/a/c?q=a+b&q=2&flag&x=%zz#frag","port":""},"notes":["userinfo","password","defaultPort","dotSegments","badPercent"],"params":[["q","a b"],["q","2"],["flag",""],["x","%zz"]]} */}
+
+Paste `https://user:pass@example.com:443/a/./b/../c?q=a+b&q=2&flag&x=%zz#frag` and the normalized URL becomes `https://user:pass@example.com/a/c?q=a+b&q=2&flag&x=%zz#frag`. The notes say that port 443 was dropped because it is the default, that `/a/./b/../c` resolved to `/a/c`, and that the `%` at position 63 is not followed by two hex digits. Browsers keep that `%` as it is; `decodeURIComponent()` throws on it. The URL also carries a password. [RFC 3986 §3.2.1](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1) deprecates the `user:password` form and says applications should not show what follows the colon in clear text, so the password field is masked until you press **Show**.
+
+The query table shows four parameters: `q` twice (`a b`, then `2`), `flag` with no `=`, and `x` whose value stays `%zz`. The `+` is decoded as a space because query strings follow the [application/x-www-form-urlencoded](https://url.spec.whatwg.org/#urlencoded-parsing) rules, the same rules as `URLSearchParams`.
+
+## When the browser and your server disagree
+
+Libraries on the server often follow [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986) instead of the URL Standard, and a few inputs split differently. The tool compares the host it gets with the host from the [RFC 3986 Appendix B](https://www.rfc-editor.org/rfc/rfc3986#appendix-B) regular expression and warns when they differ.
+
+{/* up-check: {"input":"http://evil.example\\@good.example/login","fields":{"hostname":"evil.example","pathname":"/@good.example/login"},"notes":["backslash","rfcHost"],"rfcHost":"good.example","rfcValid":false} */}
+
+`http://evil.example\@good.example/login` is the classic case. For http, https, ws, wss, ftp and file URLs, the browser reads the backslash as a slash, so the host is `evil.example` and the path is `/@good.example/login`. RFC 3986 does not allow a backslash in a URI at all, and a parser that splits by Appendix B takes everything before the last `@` as user info and reads the host as `good.example`. On 2026-10-01, Python 3.12's `urllib.parse.urlsplit()` returned the hostname `good.example`, curl 8.7.1 sent `Host: good.example`, and Go 1.27's `net/url` refused the URL with `invalid userinfo`. If one component checks the host and another fetches the URL, the request can reach a host that was never approved.
+
+{/* up-check: {"input":"http://0x7f.1/admin","fields":{"hostname":"127.0.0.1","href":"http://127.0.0.1/admin"},"notes":["ipv4"]} */}
+
+The same applies to IPv4 shorthand. `http://0x7f.1/admin` is `http://127.0.0.1/admin` to a browser, because the URL Standard's IPv4 parser accepts hexadecimal, octal and shortened forms. RFC 3986 treats `0x7f.1` as a host name.
+
+{/* up-check: {"input":"localhost:3000/api","fields":{"protocol":"localhost:","hostname":"","pathname":"3000/api"},"notes":["schemeLooksLikeHost"]} */}
+
+Two more cases come up often. `localhost:3000/api` parses without an error, but as the scheme `localhost:` with the path `3000/api` and no host, so a `fetch` built from it fails in a confusing way; the tool offers to parse it as `https://localhost:3000/api`. And `https://раураl.com/signin` looks like a familiar brand, but the browser sends `xn--l-7sba6dbr.com`, and the tool reports that the label `раураl` mixes Cyrillic and Latin letters, the pattern [Unicode UTS #39](https://www.unicode.org/reports/tr39/) and [Chrome's IDN policy](https://chromium.googlesource.com/chromium/src/+/main/docs/idn.md) treat as a look-alike.
+
+{/* up-check: {"input":"https://раураl.com/signin","fields":{"hostname":"xn--l-7sba6dbr.com"},"notes":["idn","mixedScript"],"unicode":"раураl.com"} */}
+
+## Editing without side effects
+
+A tool that rebuilds the query with `URLSearchParams.toString()` re-encodes every pair, so the URL changes even when you edit nothing: `flag` becomes `flag=`, `%zz` becomes `%25zz`, and an invalid UTF-8 escape such as `%E4%B8` becomes `%EF%BF%BD`. This tool keeps each untouched pair as it was and encodes only the pair you change. Field edits go through the browser's own setters (`url.port = …`), so you get the result the browser accepts, with a note when it rejects or trims a value.
+
+## How it compares
+
+On 2026-10-01 we pasted the same eight URLs into the tools at the top of Bing's results for "url parser". codeshack.io showed `evil.example` for the backslash URL, `127.0.0.1` for `0x7f.1` and `localhost:` as a protocol without any remark, and showed empty fields for `example.com/path` without an error. Tooltada (Korean) offers query editing, but its rebuilt URL turned `flag` into `flag=` and `%E4%B8` into `%EF%BF%BD` before any edit. Web ToolBox (Japanese) reported `example.com/path` only as "無効なURLです" (invalid URL). Their fields match the browser's URL parser, as this tool's do; the difference is that this tool explains what the parser did and where an RFC 3986 parser would read the URL differently.
+
+## Limits
+
+- The result is your browser's. Node.js 24 passes 888 of the 896 parsing cases in the [web-platform-tests URL suite](https://github.com/web-platform-tests/wpt/tree/master/url) (the 8 others are `xn--` edge cases), and browser results are published on [wpt.fyi](https://wpt.fyi/results/url); an older browser may differ on edge cases.
+- The RFC 3986 reading is a regular-expression split plus a character check, not a model of any one library; test your server-side library with the URL itself.
+- There is no Public Suffix List, so the tool does not split `shop.example.co.uk` into subdomain and registrable domain.
+- Look-alike warnings cover mixed scripts and Cyrillic or Greek labels made of Latin look-alikes. A domain that only swaps `rn` for `m` gets no warning.
+- The query table shows the first 500 parameters.
+
+To encode or decode a single value, use [URL Encode / Decode](/tools/url-encode/). To check the host of a parsed URL, look it up with [DNS Lookup](/tools/dns-lookup/); for OAuth redirect URLs, the [PKCE Generator](/tools/pkce-generator/) builds the authorization request, and the [HAR File Analyzer](/tools/har-file-analyzer/) shows the URLs a page really requested.

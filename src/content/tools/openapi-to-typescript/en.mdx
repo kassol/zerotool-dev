@@ -7,7 +7,7 @@ faqItems:
   - question: "What about Swagger 2.0?"
     answer: "Swagger 2.0 is not supported by design. Migrate your spec to OpenAPI 3.x first using editor.swagger.io (Swagger Editor's built-in converter), then paste the upgraded spec here."
   - question: "Are remote `$ref` URLs resolved?"
-    answer: "Only internal refs in the form `#/components/schemas/...` are resolved. Cross-document references to URLs or filesystem paths are not fetched. Inline the referenced schemas first, or use the openapi-typescript CLI for that workflow."
+    answer: "No. Only `#/components/schemas/...` refs are resolved (plus `#/components/parameters/...` in path types). Any other `$ref`, such as a URL or another file, becomes `unknown` with a comment, and the status bar lists every unresolved reference. Bundle the spec into one file first, for example with `redocly bundle`, or use the openapi-typescript CLI."
   - question: "Where does my spec go?"
     answer: "Nowhere. Parsing, $ref resolution, and TypeScript generation all happen entirely in your browser. No backend, no telemetry of spec content, no upload."
   - question: "Can I get Zod schemas as well?"
@@ -74,7 +74,7 @@ export interface NewPet {
 }`}</code></pre>
 <p>Required properties stay required, everything else gets <code>?</code>, <code>nullable: true</code> adds <code>| null</code>, and <code>format: binary</code> becomes <code>Blob</code>. With <strong>Include path types</strong> on, <code>getPetById</code> becomes <code>Components.GetPetById</code> with <code>PathParameters &#123; id: number &#125;</code> and <code>Response200 = Pet</code>. With <strong>Include Zod schemas</strong> on, the generated <code>PetSchema</code> (checked with zod 3.25) rejects <code>status: "lost"</code> and accepts <code>tag: null</code>.</p>
 
-<h2>Example: Where 3.1 Output Needs Editing</h2>
+<h2>Example: const, Type Arrays and an External Reference</h2>
 <p>This OpenAPI 3.1 schema uses <code>const</code>, a type array and a reference to another file:</p>
 <pre><code>{`openapi: 3.1.0
 info: { title: Events, version: 1.0.0 }
@@ -91,23 +91,57 @@ components:
         note: { type: [string, 'null'] }
         owner: { $ref: 'https://example.com/schemas/user.yaml#/User' }`}</code></pre>
 <p>The tool outputs:</p>
+{/* o2t: event */}
 <pre><code>{`export interface Event {
   id: number;
-  kind: Record<string, unknown>;
+  kind: "order.created";
   /** ISO 8601 date-time */ createdAt: string;
   note?: string | null;
-  owner?: unknown;
-}
+  owner?: unknown /* unresolved $ref: https://example.com/schemas/user.yaml#/User */;
+}`}</code></pre>
+<p><code>type: [string, "null"]</code> becomes <code>string | null</code> and <code>const</code> becomes the literal type <code>"order.created"</code> (in Zod, <code>z.literal("order.created")</code>). The reference to <code>user.yaml</code> is in another document, which the tool does not fetch. It types <code>owner</code> as <code>unknown</code>, keeps the reference in a comment, and the status bar shows "Not supported: $ref to https://example.com/schemas/user.yaml#/User". Run <a href="https://redocly.com/docs/cli/commands/bundle" target="_blank" rel="noopener">redocly bundle</a> first to pull external files into <code>components</code>, then paste the bundled spec.</p>
 
-export type unknown = unknown;`}</code></pre>
-<p><code>type: [string, "null"]</code> maps correctly to <code>string | null</code>. Three lines need manual work: <code>const</code> is not read, so <code>kind</code> falls back to <code>Record&lt;string, unknown&gt;</code> instead of <code>"order.created"</code>; the external <code>$ref</code> becomes <code>unknown</code>; and the placeholder <code>export type unknown = unknown;</code> does not compile (TypeScript 5.9: "Type alias name cannot be 'unknown'"). Delete that line and type <code>owner</code> by hand.</p>
+<h2>Example: Forward References and Recursion in Zod</h2>
+<p>A Zod schema is a JavaScript constant, so it cannot be used before the line that defines it. With these schemas, <code>Order</code> refers to <code>Customer</code>, which is declared later, and <code>Node</code> refers to itself:</p>
+<pre><code>{`components:
+  schemas:
+    Order:
+      type: object
+      required: [customer]
+      properties:
+        customer: { $ref: '#/components/schemas/Customer' }
+    Customer:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+    Node:
+      type: object
+      required: [value]
+      properties:
+        value: { type: string }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/Node' }`}</code></pre>
+<p>The Zod output wraps both references in <code>z.lazy</code>, which looks the schema up when data is parsed rather than when the module loads. A schema that refers to itself, directly or through other schemas, also gets a <code>z.ZodType&lt;Node&gt;</code> annotation, because TypeScript cannot infer the type of a constant that appears in its own initializer (error TS7022):</p>
+{/* o2t: recur */}
+<pre><code>{`export const OrderSchema = z.object({
+  customer: z.lazy(() => CustomerSchema),
+});
+export const CustomerSchema = z.object({
+  name: z.string(),
+});
+export const NodeSchema: z.ZodType<Node> = z.object({
+  value: z.string(),
+  children: z.array(z.lazy(() => NodeSchema)).optional(),
+});`}</code></pre>
+<p>The generated module compiles with TypeScript 5.9 in strict mode, and zod 3.25 parses a three-level tree with it.</p>
 
 <h2>Limits</h2>
 <ul>
-  <li>Only <code>#/components/schemas/...</code> references are resolved. References to other files or URLs become <code>unknown</code> plus the invalid <code>export type unknown = unknown;</code> line shown above.</li>
-  <li><code>const</code> is ignored. Use a single-value <code>enum</code> if you need a literal type.</li>
-  <li>Schema names with characters other than letters, digits, <code>{'_'}</code> and <code>$</code> (for example <code>pet-status</code>) are renamed to <code>{'pet_status'}</code>, and the TypeScript side then loses the schema: an enum named <code>pet-status</code> is emitted as <code>{'export type pet_status = unknown;'}</code>. The Zod output keeps the enum.</li>
-  <li>Zod schemas are emitted in the order of <code>components/schemas</code> without <code>z.lazy</code>. If a schema refers to one declared later, or to itself, the module throws a <code>ReferenceError</code> when it loads. Reorder the declarations and wrap recursive references in <code>z.lazy(() =&gt; ...)</code>.</li>
+  <li>Only <code>#/components/schemas/...</code> references are resolved, plus <code>#/components/parameters/...</code> in path types. Other references (URLs, other files, <code>#/components/responses/...</code>) are typed as <code>unknown</code> and listed in the status bar.</li>
+  <li>Schema names that are not valid TypeScript identifiers are renamed: characters other than letters, digits, <code>{'_'}</code> and <code>$</code> become <code>{'_'}</code> (<code>pet-status</code> → <code>{'pet_status'}</code>), names that start with a digit get a leading <code>{'_'}</code>, and keywords such as <code>unknown</code> or <code>class</code> get a trailing <code>{'_'}</code>.</li>
+  <li>A <code>const</code> with an object or array value is typed as <code>unknown</code>; string, number, boolean and null values become literal types.</li>
   <li><code>integer</code> with <code>format: int64</code> becomes <code>number</code>, which loses precision above 2<sup>53</sup>. Change such IDs to <code>string</code> if the API sends them as strings.</li>
   <li>Path types read only <code>application/json</code> request and response bodies.</li>
 </ul>

@@ -1,410 +1,1543 @@
 ---
-// No props needed — i18n handled client-side via document.documentElement.lang
+// UrlParserTool — splits a URL with the browser's own parser (WHATWG URL Standard), explains
+// what the parser changed, compares the host with an RFC 3986 reading, decodes the query with
+// the application/x-www-form-urlencoded rules and lets the user edit components and parameters.
+// Nothing is stored or sent: no ztPersist, no network requests. A password in the URL is
+// masked until the user reveals it.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    label: 'URL',
+    placeholder: 'Paste a URL, e.g. https://example.com/search?q=url+parser#results',
+    example: 'Example',
+    exampleUrl: 'https://user@shop.example.com:443/products/../search?q=red+shoes&size=9&size=10&gift#reviews',
+    clear: 'Clear',
+    baseSummary: 'Base URL (for relative links)',
+    basePlaceholder: 'https://example.com/docs/',
+    ok: 'Valid URL, parsed by your browser (WHATWG URL Standard).',
+    okBase: 'Valid relative URL, resolved against the base URL.',
+    copy: 'Copy',
+    copied: 'Copied!',
+    copyFailed: 'Copy failed. Select the text and copy it by hand.',
+    copyJson: 'Copy as JSON',
+    show: 'Show',
+    hide: 'Hide',
+    normalized: 'Normalized URL',
+    fields: { href: 'Full URL', protocol: 'Protocol', username: 'Username', password: 'Password', host: 'Host', hostname: 'Hostname', port: 'Port', pathname: 'Path', search: 'Query', hash: 'Fragment', origin: 'Origin' },
+    portDefault: '{port} (default)',
+    portNone: 'none',
+    unicodeHost: 'Reads as {host}',
+    decodedHash: 'Decoded: {text}',
+    readOnly: 'read-only',
+    editHint: 'Edit a field and press Enter to rebuild the URL.',
+    editIgnored: '{field}: the browser ignored “{value}”, so the URL did not change.',
+    editAdjusted: '{field}: “{value}” was stored as “{actual}”.',
+    queryTitle: 'Query parameters ({n})',
+    queryEmpty: 'No query parameters.',
+    queryLimit: 'Showing the first {shown} of {n} parameters.',
+    key: 'Key',
+    value: 'Value',
+    remove: 'Remove',
+    removeAria: 'Remove parameter {n}',
+    addParam: 'Add parameter',
+    rawLabel: 'Raw: {raw}',
+    flagPlus: '+ is a space',
+    flagNoEq: 'no “=”',
+    flagRepeat: 'key {i} of {n}',
+    flagBadPercent: 'bad %',
+    flagBadUtf8: 'not UTF-8',
+    segmentsTitle: 'Path segments ({n})',
+    flagSlash: 'encoded “/”',
+    rfcTitle: 'RFC 3986 reading',
+    rfcValid: 'Valid RFC 3986 URI reference.',
+    rfcInvalid: 'Not a valid RFC 3986 URI: {reason} at position {pos} (“{ch}”).',
+    rfcParts: { scheme: 'Scheme', authority: 'Authority', userinfo: 'User info', host: 'Host', port: 'Port', path: 'Path', query: 'Query', fragment: 'Fragment' },
+    rfcAbsent: '(none)',
+    rfcReasons: {
+      char: 'character not allowed in a URI',
+      nonAscii: 'non-ASCII character (allowed in an IRI, RFC 3987, but a URI must percent-encode it)',
+      percent: '“%” not followed by two hex digits',
+      scheme: 'invalid scheme',
+      userinfo: '“@”, “[” or “]” in the user info',
+      ipLiteral: 'malformed IP address in brackets',
+      bracket: '“[” or “]” outside a bracketed IP address',
+      port: 'port that is not all digits',
+      hash: 'a second “#”',
+    },
+    space: 'space',
+    parseAs: 'Parse as {url}',
+    errors: {
+      noScheme: 'Not a URL: it has no scheme such as https://, so new URL() rejects it.',
+      schemeRelative: 'Scheme-relative URL (starts with //). Add a scheme or a base URL.',
+      relative: 'Relative URL: it needs a base URL. Enter one under “Base URL”.',
+      badScheme: 'The scheme before “:” must start with a letter and use only letters, digits, “+”, “-” and “.”.',
+      emptyHost: 'The host is empty. {scheme} URLs need a host.',
+      badPort: 'The port “{detail}” is not a number.',
+      portRange: 'The port {detail} is larger than 65535.',
+      badIpv6: 'The IPv6 address {detail} is not valid.',
+      badHostChar: 'The host contains “{detail}”, which a host name cannot contain.',
+      badIpv4: 'The host {detail} ends in a number, so the browser reads it as an IPv4 address, and it is not a valid one.',
+      badIdn: 'The host {detail} cannot be converted to an internationalized domain name (UTS #46).',
+      badBase: 'The base URL is not a valid absolute URL.',
+      invalid: 'The browser’s URL parser rejects this input.',
+    },
+    notes: {
+      base: 'Resolved against the base URL {base}.',
+      userinfo: 'The URL has a user name before “@”. The host that receives the request is {host}.',
+      userinfoHost: '“{user}” before “@” is a user name, not the site. The request goes to {host}.',
+      password: 'The URL carries a password, masked below as RFC 3986 §3.2.1 advises. That section deprecates “user:password” in URLs, and fetch() refuses URLs with credentials.',
+      idn: 'Internationalized domain: the browser sends {ascii} (Punycode), which reads as {unicode}.',
+      mixedScript: 'The label “{label}” mixes {scripts} letters. Look-alike domains use this trick (Unicode UTS #39), so check the address letter by letter.',
+      lookalike: 'The label “{label}” uses only {scripts} letters that look like Latin ones. Check the address letter by letter.',
+      risky: 'A {scheme} URL does not point to a web server. This page only shows its parts and never opens it.',
+      opaqueHost: 'For a non-special scheme the host is opaque: no IDN conversion, and non-ASCII is percent-encoded ({host}).',
+      trimmed: 'Leading or trailing spaces and control characters were removed.',
+      tabNl: 'Tabs and line breaks inside the URL were removed, as browsers do.',
+      backslash: 'A “\\” before the query was read as “/”. Browsers do this for http, https, ws, wss, ftp and file URLs; RFC 3986 parsers do not.',
+      slashes: 'The scheme should be followed by exactly two slashes; this URL has {count}. Browsers correct it for special schemes.',
+      schemeLooksLikeHost: 'This is read as the scheme “{scheme}” with no host, because the URL has no “https://”.',
+      ipv4: 'The host {raw} is read as the IPv4 address {host}. Browsers accept hex, octal and shortened forms; RFC 3986 treats {raw} as a name.',
+      ipv6: 'The IPv6 address {raw} is written in its compressed form {host}.',
+      hostChanged: 'The host {raw} is normalized to {host}.',
+      defaultPort: 'Port {raw} is the default for this scheme, so it is dropped. The request still goes to port {port}.',
+      portChanged: 'Port {raw} is written as {port}.',
+      dotSegments: 'The path {raw} has “.” or “..” segments and resolves to {path}.',
+      encoded: 'Percent-encoded by the parser: {list}.',
+      rfcHost: 'A parser that splits URLs by RFC 3986 Appendix B reads the host as “{rfcHost}”, not {host}. Check what your server-side library does with this URL.',
+      rfcNoAuthority: 'Without “//” an RFC 3986 parser sees no host at all; browsers read {host} as the host.',
+      badPercent: '“%” at position {pos} is not followed by two hex digits. Browsers keep it; decodeURIComponent() throws on it.',
+      badUtf8: 'Some percent-escapes are not valid UTF-8. They decode to “�” (U+FFFD), as URLSearchParams does.',
+      semicolon: 'The query contains “;”. Browsers and URLSearchParams split only on “&”.',
+    },
+  },
+  zh: {
+    label: 'URL',
+    placeholder: '粘贴 URL，例如 https://example.com/search?q=url+parser#results',
+    example: '示例',
+    exampleUrl: 'https://www.example.cn:443/商品/../搜索?q=蓝牙+耳机&utm_source=weixin&page=2&page=3#评论',
+    clear: '清空',
+    baseSummary: '基准 URL（用于相对链接）',
+    basePlaceholder: 'https://example.com/docs/',
+    ok: '有效 URL，由浏览器按 WHATWG URL 标准解析。',
+    okBase: '有效的相对 URL，已按基准 URL 补全。',
+    copy: '复制',
+    copied: '已复制',
+    copyFailed: '复制失败，请手动选中文字复制。',
+    copyJson: '复制为 JSON',
+    show: '显示',
+    hide: '隐藏',
+    normalized: '规范化后的 URL',
+    fields: { href: '完整 URL', protocol: '协议', username: '用户名', password: '密码', host: '主机', hostname: '主机名', port: '端口', pathname: '路径', search: '查询串', hash: '片段', origin: '源（origin）' },
+    portDefault: '{port}（默认）',
+    portNone: '无',
+    unicodeHost: '对应 {host}',
+    decodedHash: '解码后：{text}',
+    readOnly: '只读',
+    editHint: '修改字段后按 Enter，URL 会重新拼好。',
+    editIgnored: '{field}：浏览器没有接受“{value}”，URL 未改变。',
+    editAdjusted: '{field}：“{value}”被保存为“{actual}”。',
+    queryTitle: '查询参数（{n}）',
+    queryEmpty: '没有查询参数。',
+    queryLimit: '只显示前 {shown} 个参数，共 {n} 个。',
+    key: '键',
+    value: '值',
+    remove: '删除',
+    removeAria: '删除第 {n} 个参数',
+    addParam: '添加参数',
+    rawLabel: '原文：{raw}',
+    flagPlus: '+ 即空格',
+    flagNoEq: '没有“=”',
+    flagRepeat: '同名第 {i}/{n} 个',
+    flagBadPercent: '% 无效',
+    flagBadUtf8: '不是 UTF-8',
+    segmentsTitle: '路径分段（{n}）',
+    flagSlash: '含编码的“/”',
+    rfcTitle: '按 RFC 3986 读取',
+    rfcValid: '是合法的 RFC 3986 URI 引用。',
+    rfcInvalid: '不是合法的 RFC 3986 URI：第 {pos} 个字符“{ch}”处{reason}。',
+    rfcParts: { scheme: '协议', authority: '授权部分', userinfo: '用户信息', host: '主机', port: '端口', path: '路径', query: '查询串', fragment: '片段' },
+    rfcAbsent: '（无）',
+    rfcReasons: {
+      char: '出现 URI 不允许的字符',
+      nonAscii: '出现非 ASCII 字符（IRI，即 RFC 3987 允许；URI 必须先百分号编码）',
+      percent: '“%”后面不是两位十六进制数',
+      scheme: '协议名不合法',
+      userinfo: '用户信息里有“@”“[”或“]”',
+      ipLiteral: '方括号里的 IP 地址格式不对',
+      bracket: '方括号出现在 IP 地址以外的位置',
+      port: '端口不全是数字',
+      hash: '出现第二个“#”',
+    },
+    space: '空格',
+    parseAs: '按 {url} 解析',
+    errors: {
+      noScheme: '不是完整的 URL：缺少 https:// 这样的协议，new URL() 会拒绝。',
+      schemeRelative: '协议相对 URL（以 // 开头），需要补上协议或填写基准 URL。',
+      relative: '相对 URL 需要基准 URL，请在“基准 URL”里填写。',
+      badScheme: '“:”前的协议名必须以字母开头，只能包含字母、数字、“+”“-”和“.”。',
+      emptyHost: '主机为空。{scheme} URL 必须有主机。',
+      badPort: '端口“{detail}”不是数字。',
+      portRange: '端口 {detail} 超过 65535。',
+      badIpv6: 'IPv6 地址 {detail} 不合法。',
+      badHostChar: '主机里有“{detail}”，主机名不能包含这个字符。',
+      badIpv4: '主机 {detail} 以数字结尾，浏览器把它当作 IPv4 地址读取，但它不是合法的 IPv4 地址。',
+      badIdn: '主机 {detail} 无法转换为国际化域名（UTS #46）。',
+      badBase: '基准 URL 不是合法的绝对 URL。',
+      invalid: '浏览器的 URL 解析器拒绝了这段输入。',
+    },
+    notes: {
+      base: '已按基准 URL {base} 补全。',
+      userinfo: 'URL 在“@”前带有用户名，实际接收请求的主机是 {host}。',
+      userinfoHost: '“@”前的“{user}”只是用户名，不是网站。请求会发往 {host}。',
+      password: 'URL 里带有密码，下方按 RFC 3986 §3.2.1 的建议遮住显示。该节不建议在 URL 里写“用户:密码”，fetch() 也会拒绝带凭据的 URL。',
+      idn: '国际化域名：浏览器实际发送 {ascii}（Punycode），对应 {unicode}。',
+      mixedScript: '“{label}”混用了 {scripts} 字母，仿冒域名常用这种手法（Unicode UTS #39），请逐个字母核对。',
+      lookalike: '“{label}”全部由形似拉丁字母的 {scripts} 字母组成，请逐个字母核对。',
+      risky: '{scheme} URL 不指向网站服务器。本页只拆分显示，不会打开它。',
+      opaqueHost: '非特殊协议的主机按原样保存：不做国际化域名转换，非 ASCII 字符会被百分号编码（{host}）。',
+      trimmed: '已去掉首尾的空格和控制字符。',
+      tabNl: '已去掉 URL 中间的制表符和换行，浏览器也这样处理。',
+      backslash: '查询串之前的“\\”被当作“/”。浏览器对 http、https、ws、wss、ftp、file 这样处理，按 RFC 3986 实现的解析器不会。',
+      slashes: '协议后面应该正好是两个斜杠，这里有 {count} 个。浏览器会为特殊协议自动纠正。',
+      schemeLooksLikeHost: '因为没有写“https://”，这里被读成协议“{scheme}”，没有主机。',
+      ipv4: '主机 {raw} 被读成 IPv4 地址 {host}。浏览器接受十六进制、八进制和省略写法；RFC 3986 把 {raw} 当作域名。',
+      ipv6: 'IPv6 地址 {raw} 被写成压缩形式 {host}。',
+      hostChanged: '主机 {raw} 被规范化为 {host}。',
+      defaultPort: '端口 {raw} 是该协议的默认端口，所以被省略；请求仍然发往 {port} 端口。',
+      portChanged: '端口 {raw} 被写成 {port}。',
+      dotSegments: '路径 {raw} 含“.”或“..”分段，解析后为 {path}。',
+      encoded: '解析器做了百分号编码：{list}。',
+      rfcHost: '按 RFC 3986 附录 B 拆分的解析器会把主机读成“{rfcHost}”，而不是 {host}。请确认服务端用的库怎样处理这个 URL。',
+      rfcNoAuthority: '没有“//”时，RFC 3986 解析器读不到主机；浏览器把 {host} 当作主机。',
+      badPercent: '第 {pos} 个字符的“%”后面不是两位十六进制数。浏览器原样保留，decodeURIComponent() 会报错。',
+      badUtf8: '有些百分号编码不是合法的 UTF-8，解码后显示为“�”（U+FFFD），与 URLSearchParams 一致。',
+      semicolon: '查询串里有“;”。浏览器和 URLSearchParams 只按“&”拆分。',
+    },
+  },
+  ja: {
+    label: 'URL',
+    placeholder: 'URL を貼り付け（例：https://example.com/search?q=url+parser#results）',
+    example: 'サンプル',
+    exampleUrl: 'https://例え.jp/検索/./結果?q=ラーメン+東京&page=2&page=3&ref#地図',
+    clear: 'クリア',
+    baseSummary: 'ベース URL（相対 URL 用）',
+    basePlaceholder: 'https://example.com/docs/',
+    ok: '有効な URL です。ブラウザーが WHATWG URL Standard に沿って解析しました。',
+    okBase: '有効な相対 URL です。ベース URL を基準に解決しました。',
+    copy: 'コピー',
+    copied: 'コピーしました',
+    copyFailed: 'コピーできませんでした。テキストを選択して手動でコピーしてください。',
+    copyJson: 'JSON でコピー',
+    show: '表示',
+    hide: '隠す',
+    normalized: '正規化後の URL',
+    fields: { href: 'URL 全体', protocol: 'スキーム', username: 'ユーザー名', password: 'パスワード', host: 'ホスト', hostname: 'ホスト名', port: 'ポート', pathname: 'パス', search: 'クエリ', hash: 'フラグメント', origin: 'オリジン' },
+    portDefault: '{port}（既定）',
+    portNone: 'なし',
+    unicodeHost: '表記は {host}',
+    decodedHash: 'デコード：{text}',
+    readOnly: '読み取り専用',
+    editHint: '項目を書き換えて Enter を押すと URL を組み直します。',
+    editIgnored: '{field}：ブラウザーが「{value}」を受け付けなかったため、URL は変わっていません。',
+    editAdjusted: '{field}：「{value}」は「{actual}」として保存されました。',
+    queryTitle: 'クエリパラメータ（{n}）',
+    queryEmpty: 'クエリパラメータはありません。',
+    queryLimit: '全 {n} 個のうち先頭 {shown} 個を表示しています。',
+    key: 'キー',
+    value: '値',
+    remove: '削除',
+    removeAria: '{n} 番目のパラメータを削除',
+    addParam: 'パラメータを追加',
+    rawLabel: '元の表記：{raw}',
+    flagPlus: '+ は空白',
+    flagNoEq: '「=」なし',
+    flagRepeat: '同じキーの {i}/{n} 番目',
+    flagBadPercent: '% が不正',
+    flagBadUtf8: 'UTF-8 ではない',
+    segmentsTitle: 'パスのセグメント（{n}）',
+    flagSlash: 'エンコードされた「/」',
+    rfcTitle: 'RFC 3986 での読み方',
+    rfcValid: 'RFC 3986 の URI 参照として有効です。',
+    rfcInvalid: 'RFC 3986 の URI としては無効です：{pos} 文字目「{ch}」で{reason}。',
+    rfcParts: { scheme: 'スキーム', authority: 'オーソリティ', userinfo: 'ユーザー情報', host: 'ホスト', port: 'ポート', path: 'パス', query: 'クエリ', fragment: 'フラグメント' },
+    rfcAbsent: '（なし）',
+    rfcReasons: {
+      char: 'URI に使えない文字があります',
+      nonAscii: '非 ASCII 文字があります（IRI、RFC 3987 では使えますが、URI ではパーセントエンコードが必要です）',
+      percent: '「%」の後が 16 進 2 桁ではありません',
+      scheme: 'スキームが不正です',
+      userinfo: 'ユーザー情報に「@」「[」「]」があります',
+      ipLiteral: '角かっこ内の IP アドレスが不正です',
+      bracket: '角かっこが IP アドレス以外の位置にあります',
+      port: 'ポートが数字だけではありません',
+      hash: '2 つ目の「#」があります',
+    },
+    space: '空白',
+    parseAs: '{url} として解析',
+    errors: {
+      noScheme: 'URL ではありません。https:// などのスキームがないため、new URL() が受け付けません。',
+      schemeRelative: 'スキーム相対 URL（// で始まる）です。スキームを付けるか、ベース URL を入力してください。',
+      relative: '相対 URL です。「ベース URL」に基準となる URL を入力してください。',
+      badScheme: '「:」の前のスキームは英字で始まり、英数字と「+」「-」「.」だけで書く必要があります。',
+      emptyHost: 'ホストが空です。{scheme} の URL にはホストが必要です。',
+      badPort: 'ポート「{detail}」が数字ではありません。',
+      portRange: 'ポート {detail} が 65535 を超えています。',
+      badIpv6: 'IPv6 アドレス {detail} が不正です。',
+      badHostChar: 'ホストに「{detail}」が含まれています。ホスト名には使えない文字です。',
+      badIpv4: 'ホスト {detail} は末尾が数字なので IPv4 アドレスとして読まれますが、有効な IPv4 アドレスではありません。',
+      badIdn: 'ホスト {detail} を国際化ドメイン名（UTS #46）に変換できません。',
+      badBase: 'ベース URL が有効な絶対 URL ではありません。',
+      invalid: 'ブラウザーの URL パーサーがこの入力を受け付けません。',
+    },
+    notes: {
+      base: 'ベース URL {base} を基準に解決しました。',
+      userinfo: '「@」の前にユーザー名があります。リクエストを受け取るホストは {host} です。',
+      userinfoHost: '「@」の前の「{user}」はユーザー名で、サイトではありません。リクエストは {host} に送られます。',
+      password: 'URL にパスワードが含まれています。RFC 3986 §3.2.1 の勧めに従い、下では伏せ字で表示します。同節は URL に「ユーザー:パスワード」を書く形式を非推奨とし、fetch() も認証情報入りの URL を拒否します。',
+      idn: '国際化ドメイン名です。ブラウザーが送るのは {ascii}（Punycode）で、表記は {unicode} です。',
+      mixedScript: '「{label}」は {scripts} の文字が混在しています。なりすましドメインの典型的な手口（Unicode UTS #39）なので、1 文字ずつ確認してください。',
+      lookalike: '「{label}」はラテン文字に似た {scripts} の文字だけでできています。1 文字ずつ確認してください。',
+      risky: '{scheme} の URL は Web サーバーを指していません。このページは構成要素を表示するだけで、開きません。',
+      opaqueHost: '特別スキーム以外のホストはそのまま扱われ、IDN 変換はされず、非 ASCII 文字はパーセントエンコードされます（{host}）。',
+      trimmed: '前後の空白と制御文字を取り除きました。',
+      tabNl: 'URL 内のタブと改行を取り除きました（ブラウザーも同じ処理をします）。',
+      backslash: 'クエリより前の「\\」は「/」として読まれました。ブラウザーは http、https、ws、wss、ftp、file でこう扱いますが、RFC 3986 のパーサーは扱いません。',
+      slashes: 'スキームの後はスラッシュ 2 つが正しい形ですが、この URL は {count} つです。特別スキームではブラウザーが補正します。',
+      schemeLooksLikeHost: '「https://」がないため、スキーム「{scheme}」でホストのない URL として読まれています。',
+      ipv4: 'ホスト {raw} は IPv4 アドレス {host} として読まれます。ブラウザーは 16 進・8 進・省略形を受け付けますが、RFC 3986 では {raw} は名前扱いです。',
+      ipv6: 'IPv6 アドレス {raw} は圧縮形式 {host} で書かれます。',
+      hostChanged: 'ホスト {raw} は {host} に正規化されました。',
+      defaultPort: 'ポート {raw} はこのスキームの既定値なので省略されます。リクエストはそのまま {port} 番ポートに送られます。',
+      portChanged: 'ポート {raw} は {port} と書かれます。',
+      dotSegments: 'パス {raw} の「.」「..」が解決され、{path} になりました。',
+      encoded: 'パーサーがパーセントエンコードした文字：{list}。',
+      rfcHost: 'RFC 3986 付録 B の正規表現で分割するパーサーは、ホストを {host} ではなく「{rfcHost}」と読みます。サーバー側のライブラリがこの URL をどう扱うか確認してください。',
+      rfcNoAuthority: '「//」がないと、RFC 3986 のパーサーにはホストがありません。ブラウザーは {host} をホストとして読みます。',
+      badPercent: '{pos} 文字目の「%」の後が 16 進 2 桁ではありません。ブラウザーはそのまま残し、decodeURIComponent() はエラーになります。',
+      badUtf8: 'UTF-8 として不正なパーセントエンコードがあります。URLSearchParams と同じく「�」（U+FFFD）として表示します。',
+      semicolon: 'クエリに「;」があります。ブラウザーと URLSearchParams は「&」でしか区切りません。',
+    },
+  },
+  ko: {
+    label: 'URL',
+    placeholder: 'URL 붙여넣기 (예: https://example.com/search?q=url+parser#results)',
+    example: '예시',
+    exampleUrl: 'https://search.example.co.kr:443/검색?query=부산+맛집&sort=sim&start=11&start=21#리뷰',
+    clear: '지우기',
+    baseSummary: '기준 URL (상대 링크용)',
+    basePlaceholder: 'https://example.com/docs/',
+    ok: '유효한 URL입니다. 브라우저가 WHATWG URL 표준대로 분석했습니다.',
+    okBase: '유효한 상대 URL입니다. 기준 URL로 완성했습니다.',
+    copy: '복사',
+    copied: '복사됨',
+    copyFailed: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.',
+    copyJson: 'JSON으로 복사',
+    show: '보기',
+    hide: '숨기기',
+    normalized: '정규화된 URL',
+    fields: { href: '전체 URL', protocol: '프로토콜', username: '사용자 이름', password: '비밀번호', host: '호스트', hostname: '호스트 이름', port: '포트', pathname: '경로', search: '쿼리', hash: '프래그먼트', origin: '오리진' },
+    portDefault: '{port} (기본값)',
+    portNone: '없음',
+    unicodeHost: '표기: {host}',
+    decodedHash: '디코딩: {text}',
+    readOnly: '읽기 전용',
+    editHint: '항목을 고친 뒤 Enter를 누르면 URL을 다시 조립합니다.',
+    editIgnored: '{field}: 브라우저가 “{value}”를 받아들이지 않아 URL이 바뀌지 않았습니다.',
+    editAdjusted: '{field}: “{value}”가 “{actual}”(으)로 저장되었습니다.',
+    queryTitle: '쿼리 파라미터 ({n})',
+    queryEmpty: '쿼리 파라미터가 없습니다.',
+    queryLimit: '전체 {n}개 중 앞의 {shown}개만 표시합니다.',
+    key: '키',
+    value: '값',
+    remove: '삭제',
+    removeAria: '{n}번째 파라미터 삭제',
+    addParam: '파라미터 추가',
+    rawLabel: '원문: {raw}',
+    flagPlus: '+는 공백',
+    flagNoEq: '“=” 없음',
+    flagRepeat: '같은 키 {i}/{n}',
+    flagBadPercent: '잘못된 %',
+    flagBadUtf8: 'UTF-8 아님',
+    segmentsTitle: '경로 세그먼트 ({n})',
+    flagSlash: '인코딩된 “/”',
+    rfcTitle: 'RFC 3986 기준 해석',
+    rfcValid: '유효한 RFC 3986 URI 참조입니다.',
+    rfcInvalid: 'RFC 3986 URI로는 유효하지 않습니다: {pos}번째 문자 “{ch}”에서 {reason}.',
+    rfcParts: { scheme: '스킴', authority: '권한(authority)', userinfo: '사용자 정보', host: '호스트', port: '포트', path: '경로', query: '쿼리', fragment: '프래그먼트' },
+    rfcAbsent: '(없음)',
+    rfcReasons: {
+      char: 'URI에 쓸 수 없는 문자가 있습니다',
+      nonAscii: 'ASCII가 아닌 문자가 있습니다(IRI, RFC 3987에서는 허용되지만 URI는 퍼센트 인코딩해야 합니다)',
+      percent: '“%” 뒤가 16진수 두 자리가 아닙니다',
+      scheme: '스킴이 올바르지 않습니다',
+      userinfo: '사용자 정보에 “@”, “[”, “]”가 있습니다',
+      ipLiteral: '대괄호 안의 IP 주소 형식이 틀렸습니다',
+      bracket: '대괄호가 IP 주소가 아닌 곳에 있습니다',
+      port: '포트가 숫자로만 되어 있지 않습니다',
+      hash: '두 번째 “#”가 있습니다',
+    },
+    space: '공백',
+    parseAs: '{url}(으)로 분석',
+    errors: {
+      noScheme: 'URL이 아닙니다. https:// 같은 스킴이 없어서 new URL()이 거부합니다.',
+      schemeRelative: '스킴 상대 URL(//로 시작)입니다. 스킴을 붙이거나 기준 URL을 입력하세요.',
+      relative: '상대 URL입니다. “기준 URL”에 기준이 될 주소를 입력하세요.',
+      badScheme: '“:” 앞의 스킴은 영문자로 시작하고 영문자, 숫자, “+”, “-”, “.”만 쓸 수 있습니다.',
+      emptyHost: '호스트가 비어 있습니다. {scheme} URL에는 호스트가 필요합니다.',
+      badPort: '포트 “{detail}”가 숫자가 아닙니다.',
+      portRange: '포트 {detail}가 65535보다 큽니다.',
+      badIpv6: 'IPv6 주소 {detail}가 올바르지 않습니다.',
+      badHostChar: '호스트에 “{detail}”가 있습니다. 호스트 이름에 쓸 수 없는 문자입니다.',
+      badIpv4: '호스트 {detail}는 숫자로 끝나서 IPv4 주소로 읽히지만, 올바른 IPv4 주소가 아닙니다.',
+      badIdn: '호스트 {detail}를 국제화 도메인 이름(UTS #46)으로 변환할 수 없습니다.',
+      badBase: '기준 URL이 올바른 절대 URL이 아닙니다.',
+      invalid: '브라우저의 URL 파서가 이 입력을 거부합니다.',
+    },
+    notes: {
+      base: '기준 URL {base}로 완성했습니다.',
+      userinfo: '“@” 앞에 사용자 이름이 있습니다. 요청을 받는 호스트는 {host}입니다.',
+      userinfoHost: '“@” 앞의 “{user}”는 사용자 이름일 뿐 사이트가 아닙니다. 요청은 {host}로 갑니다.',
+      password: 'URL에 비밀번호가 들어 있어 RFC 3986 §3.2.1의 권고대로 아래에서는 가려서 보여 줍니다. 같은 절은 URL에 “사용자:비밀번호”를 쓰는 형식을 권장하지 않으며, fetch()도 인증 정보가 든 URL을 거부합니다.',
+      idn: '국제화 도메인입니다. 브라우저가 실제로 보내는 값은 {ascii}(Punycode)이고, 표기는 {unicode}입니다.',
+      mixedScript: '“{label}”에 {scripts} 문자가 섞여 있습니다. 사칭 도메인에서 흔히 쓰는 방법(Unicode UTS #39)이니 한 글자씩 확인하세요.',
+      lookalike: '“{label}”는 라틴 문자와 닮은 {scripts} 문자로만 되어 있습니다. 한 글자씩 확인하세요.',
+      risky: '{scheme} URL은 웹 서버를 가리키지 않습니다. 이 페이지는 구성 요소만 보여 주고 열지 않습니다.',
+      opaqueHost: '특수 스킴이 아니면 호스트를 그대로 다룹니다. IDN 변환을 하지 않고, ASCII가 아닌 문자는 퍼센트 인코딩합니다({host}).',
+      trimmed: '앞뒤 공백과 제어 문자를 지웠습니다.',
+      tabNl: 'URL 안의 탭과 줄바꿈을 지웠습니다(브라우저도 같게 처리합니다).',
+      backslash: '쿼리 앞의 “\\”를 “/”로 읽었습니다. 브라우저는 http, https, ws, wss, ftp, file에서 이렇게 처리하지만, RFC 3986 파서는 그렇지 않습니다.',
+      slashes: '스킴 뒤에는 슬래시가 정확히 두 개여야 하는데, 이 URL은 {count}개입니다. 특수 스킴이면 브라우저가 고쳐 읽습니다.',
+      schemeLooksLikeHost: '“https://”가 없어서 스킴 “{scheme}”에 호스트가 없는 URL로 읽혔습니다.',
+      ipv4: '호스트 {raw}는 IPv4 주소 {host}로 읽힙니다. 브라우저는 16진수, 8진수, 줄인 형식을 받아들이지만 RFC 3986에서는 {raw}를 이름으로 봅니다.',
+      ipv6: 'IPv6 주소 {raw}는 압축 형식 {host}로 씁니다.',
+      hostChanged: '호스트 {raw}가 {host}로 정규화되었습니다.',
+      defaultPort: '포트 {raw}는 이 스킴의 기본값이라 생략됩니다. 요청은 그대로 {port}번 포트로 갑니다.',
+      portChanged: '포트 {raw}는 {port}로 씁니다.',
+      dotSegments: '경로 {raw}의 “.”, “..” 세그먼트가 처리되어 {path}가 되었습니다.',
+      encoded: '파서가 퍼센트 인코딩한 문자: {list}.',
+      rfcHost: 'RFC 3986 부록 B대로 나누는 파서는 호스트를 {host}가 아니라 “{rfcHost}”로 읽습니다. 서버 쪽 라이브러리가 이 URL을 어떻게 처리하는지 확인하세요.',
+      rfcNoAuthority: '“//”가 없으면 RFC 3986 파서는 호스트를 찾지 못합니다. 브라우저는 {host}를 호스트로 읽습니다.',
+      badPercent: '{pos}번째 문자 “%” 뒤가 16진수 두 자리가 아닙니다. 브라우저는 그대로 두고, decodeURIComponent()는 오류를 냅니다.',
+      badUtf8: 'UTF-8로 올바르지 않은 퍼센트 인코딩이 있습니다. URLSearchParams처럼 “�”(U+FFFD)로 표시합니다.',
+      semicolon: '쿼리에 “;”가 있습니다. 브라우저와 URLSearchParams는 “&”로만 나눕니다.',
+    },
+  },
+};
+
+const L = STRINGS[lang];
+const F = L.fields;
+const ROWS: Array<{ field: string; editable: boolean }> = [
+  { field: 'protocol', editable: true },
+  { field: 'hostname', editable: true },
+  { field: 'port', editable: true },
+  { field: 'pathname', editable: true },
+  { field: 'search', editable: false },
+  { field: 'hash', editable: true },
+  { field: 'username', editable: true },
+  { field: 'password', editable: true },
+  { field: 'host', editable: false },
+  { field: 'origin', editable: false },
+];
 ---
-<div>
-  <div class="up-wrap">
-    <div class="up-input-section">
-      <label for="up-input" data-i18n="label">Enter a URL</label>
-      <input
-        id="up-input"
-        type="text"
-        placeholder="https://example.com:8080/path/to/page?key=value&foo=bar#section"
-        spellcheck="false"
-        autocomplete="off"
-      />
-      <div class="up-actions">
-        <button id="up-example" class="btn-ghost" data-i18n="loadExample">Load Example</button>
-        <button id="up-clear" class="btn-ghost" data-i18n="clear">Clear</button>
-      </div>
+<div class="up-wrap" id="up-wrap">
+  <div class="up-input-head">
+    <label class="tool-label" for="up-input">{L.label}</label>
+    <div class="up-head-btns">
+      <button id="up-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+      <button id="up-clear" class="btn-ghost btn-sm" type="button">{L.clear}</button>
     </div>
+  </div>
+  <textarea
+    id="up-input"
+    class="tool-textarea up-input"
+    rows="2"
+    spellcheck="false"
+    autocapitalize="off"
+    autocorrect="off"
+    autocomplete="off"
+    placeholder={L.placeholder}
+  ></textarea>
+  <details id="up-base-box" class="up-base">
+    <summary>{L.baseSummary}</summary>
+    <input id="up-base" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.basePlaceholder} aria-label={L.baseSummary} />
+  </details>
 
-    <div id="up-status" class="up-status" aria-live="polite"></div>
-
-    <div id="up-results" class="up-results"></div>
+  <div class="up-status-row">
+    <p id="up-status" class="tool-status none" role="status" aria-live="polite"></p>
+    <button id="up-suggest" class="btn-secondary btn-sm" type="button" hidden></button>
   </div>
 
-  <script is:inline>
-    (function () {
-      var STRINGS = {
-        en: {
-          label: 'Enter a URL',
-          loadExample: 'Load Example',
-          clear: 'Clear',
-          invalidUrl: 'Invalid URL. Make sure it includes a scheme (e.g. https://).',
-          parsedOk: 'Parsed successfully.',
-          queryParams: 'Query Parameters',
-          copy: 'Copy',
-          copied: 'Copied!',
-          thField: 'Field',
-          thValue: 'Value',
-          thKey: 'Key',
-          fields: {
-            protocol: 'Protocol',
-            username: 'Username',
-            password: 'Password',
-            host: 'Host',
-            hostname: 'Hostname',
-            port: 'Port',
-            pathname: 'Pathname',
-            search: 'Search',
-            hash: 'Hash',
-            origin: 'Origin',
-            href: 'Full URL',
-          },
-        },
-        zh: {
-          label: '输入 URL',
-          loadExample: '加载示例',
-          clear: '清空',
-          invalidUrl: 'URL 格式无效。请确保包含协议（如 https://）。',
-          parsedOk: '解析成功。',
-          queryParams: '查询参数',
-          copy: '复制',
-          copied: '已复制！',
-          thField: '字段',
-          thValue: '值',
-          thKey: '键',
-          fields: {
-            protocol: '协议',
-            username: '用户名',
-            password: '密码',
-            host: '主机',
-            hostname: '主机名',
-            port: '端口',
-            pathname: '路径',
-            search: '查询字符串',
-            hash: '哈希',
-            origin: '来源',
-            href: '完整 URL',
-          },
-        },
-        ja: {
-          label: 'URLを入力',
-          loadExample: 'サンプルを読み込む',
-          clear: 'クリア',
-          invalidUrl: 'URLが無効です。スキームを含めてください（例：https://）。',
-          parsedOk: '解析しました。',
-          queryParams: 'クエリパラメータ',
-          copy: 'コピー',
-          copied: 'コピーしました！',
-          thField: 'フィールド',
-          thValue: '値',
-          thKey: 'キー',
-          fields: {
-            protocol: 'プロトコル',
-            username: 'ユーザー名',
-            password: 'パスワード',
-            host: 'ホスト',
-            hostname: 'ホスト名',
-            port: 'ポート',
-            pathname: 'パス',
-            search: 'クエリ文字列',
-            hash: 'ハッシュ',
-            origin: 'オリジン',
-            href: '完全なURL',
-          },
-        },
-        ko: {
-          label: 'URL 입력',
-          loadExample: '예시 불러오기',
-          clear: '지우기',
-          invalidUrl: '잘못된 URL입니다. 스키마를 포함했는지 확인하세요 (예: https://).',
-          parsedOk: '파싱 완료.',
-          queryParams: '쿼리 파라미터',
-          copy: '복사',
-          copied: '복사됨!',
-          thField: '필드',
-          thValue: '값',
-          thKey: '키',
-          fields: {
-            protocol: '프로토콜',
-            username: '사용자명',
-            password: '비밀번호',
-            host: '호스트',
-            hostname: '호스트명',
-            port: '포트',
-            pathname: '경로',
-            search: '쿼리 문자열',
-            hash: '해시',
-            origin: '오리진',
-            href: '전체 URL',
-          },
-        },
-      };
+  <div id="up-results" class="up-results" hidden>
+    <div class="up-href">
+      <div class="up-href-head">
+        <span class="up-href-label">{L.normalized}</span>
+        <button class="btn-copy" type="button" data-copy="href">{L.copy}</button>
+      </div>
+      <code id="up-href" class="up-href-text"></code>
+    </div>
+    <ul id="up-notes" class="up-notes" hidden></ul>
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
+    <p class="up-hint">{L.editHint}</p>
+    <div class="up-fields" role="group" aria-label={L.normalized}>
+      {ROWS.map(({ field, editable }) => (
+        <div class="up-row" data-row={field}>
+          <label class="up-field" for={`up-f-${field}`}>{F[field as keyof typeof F]}</label>
+          <div class="up-cell">
+            <input
+              id={`up-f-${field}`}
+              class="up-value"
+              data-field={field}
+              type={field === 'password' ? 'password' : 'text'}
+              readonly={!editable}
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              autocomplete="off"
+              data-1p-ignore
+              data-lpignore="true"
+              title={editable ? undefined : L.readOnly}
+            />
+            <span class="up-sub" data-sub={field} hidden></span>
+          </div>
+          <div class="up-row-btns">
+            {field === 'password' && <button id="up-reveal" class="btn-ghost btn-sm" type="button" aria-pressed="false">{L.show}</button>}
+            <button class="btn-copy" type="button" data-copy={field}>{L.copy}</button>
+          </div>
+        </div>
+      ))}
+    </div>
 
-      // Apply i18n to static elements
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
+    <section class="up-section">
+      <div class="up-section-head">
+        <h3 id="up-query-title" class="up-section-title"></h3>
+        <button id="up-copy-json" class="btn-copy" type="button">{L.copyJson}</button>
+      </div>
+      <p id="up-query-note" class="up-muted" hidden></p>
+      <div id="up-params" class="up-params"></div>
+      <button id="up-add" class="btn-ghost btn-sm up-add" type="button">+ {L.addParam}</button>
+    </section>
 
-      var EXAMPLE_URL = 'https://user:pass@example.com:8080/path/to/page?key=value&foo=bar#section';
+    <section id="up-seg-section" class="up-section" hidden>
+      <h3 id="up-seg-title" class="up-section-title"></h3>
+      <ol id="up-segments" class="up-segments"></ol>
+    </section>
 
-      var FIELD_KEYS = ['protocol','username','password','host','hostname','port','pathname','search','hash','origin','href'];
-
-      function copyText(text, btn) {
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t.copy; }, 1500);
-        });
-      }
-
-      function buildTable(parsed) {
-        var table = document.createElement('table');
-        table.className = 'up-table';
-
-        var thead = document.createElement('thead');
-        var thRow = document.createElement('tr');
-        [t.thField, t.thValue, ''].forEach(function(h) {
-          var th = document.createElement('th');
-          th.textContent = h;
-          thRow.appendChild(th);
-        });
-        thead.appendChild(thRow);
-        table.appendChild(thead);
-
-        var tbody = document.createElement('tbody');
-
-        FIELD_KEYS.forEach(function (key) {
-          var val = parsed[key] || '';
-          var isEmpty = val === '' || val === null;
-
-          var tr = document.createElement('tr');
-          if (isEmpty) tr.className = 'up-row-empty';
-
-          var tdLabel = document.createElement('td');
-          tdLabel.className = 'up-field';
-          tdLabel.textContent = t.fields[key] || key;
-          tr.appendChild(tdLabel);
-
-          var tdVal = document.createElement('td');
-          tdVal.className = 'up-value' + (isEmpty ? ' up-empty' : '');
-          tdVal.textContent = isEmpty ? '—' : val;
-          tr.appendChild(tdVal);
-
-          var tdCopy = document.createElement('td');
-          tdCopy.className = 'up-copy-cell';
-          if (!isEmpty) {
-            var btn = document.createElement('button');
-            btn.className = 'btn-copy';
-            btn.textContent = t.copy;
-            btn.addEventListener('click', function () { copyText(val, btn); });
-            tdCopy.appendChild(btn);
-          }
-          tr.appendChild(tdCopy);
-
-          tbody.appendChild(tr);
-        });
-
-        table.appendChild(tbody);
-        return table;
-      }
-
-      function buildQueryTable(parsed) {
-        var entries = [];
-        parsed.searchParams.forEach(function (v, k) {
-          entries.push([k, v]);
-        });
-        if (entries.length === 0) return null;
-
-        var section = document.createElement('div');
-        section.className = 'up-query-section';
-
-        var h = document.createElement('div');
-        h.className = 'up-section-title';
-        h.textContent = t.queryParams + ' (' + entries.length + ')';
-        section.appendChild(h);
-
-        var table = document.createElement('table');
-        table.className = 'up-table';
-
-        var thead = document.createElement('thead');
-        var thRow = document.createElement('tr');
-        [t.thKey, t.thValue, ''].forEach(function(label) {
-          var th = document.createElement('th');
-          th.textContent = label;
-          thRow.appendChild(th);
-        });
-        thead.appendChild(thRow);
-        table.appendChild(thead);
-
-        var tbody = document.createElement('tbody');
-        entries.forEach(function (pair) {
-          var tr = document.createElement('tr');
-
-          var tdKey = document.createElement('td');
-          tdKey.className = 'up-field';
-          tdKey.textContent = pair[0];
-          tr.appendChild(tdKey);
-
-          var tdVal = document.createElement('td');
-          tdVal.className = 'up-value';
-          tdVal.textContent = pair[1];
-          tr.appendChild(tdVal);
-
-          var tdCopy = document.createElement('td');
-          tdCopy.className = 'up-copy-cell';
-          var btn = document.createElement('button');
-          btn.className = 'btn-copy';
-          btn.textContent = t.copy;
-          btn.addEventListener('click', (function (v) {
-            return function () { copyText(v, btn); };
-          })(pair[1]));
-          tdCopy.appendChild(btn);
-          tr.appendChild(tdCopy);
-
-          tbody.appendChild(tr);
-        });
-
-        table.appendChild(tbody);
-        section.appendChild(table);
-        return section;
-      }
-
-      function parse() {
-        var raw = document.getElementById('up-input').value.trim();
-        var statusEl = document.getElementById('up-status');
-        var resultsEl = document.getElementById('up-results');
-        resultsEl.innerHTML = '';
-
-        if (!raw) {
-          statusEl.textContent = '';
-          statusEl.className = 'up-status';
-          return;
-        }
-
-        var parsed;
-        try {
-          parsed = new URL(raw);
-        } catch (e) {
-          statusEl.textContent = t.invalidUrl;
-          statusEl.className = 'up-status error';
-          return;
-        }
-
-        statusEl.textContent = t.parsedOk;
-        statusEl.className = 'up-status success';
-
-        resultsEl.appendChild(buildTable(parsed));
-
-        var querySection = buildQueryTable(parsed);
-        if (querySection) resultsEl.appendChild(querySection);
-
-        window.trackTool && window.trackTool('url-parser', 'parse');
-      }
-
-      document.getElementById('up-input').addEventListener('input', parse);
-
-      document.getElementById('up-example').addEventListener('click', function () {
-        document.getElementById('up-input').value = EXAMPLE_URL;
-        parse();
-      });
-
-      document.getElementById('up-clear').addEventListener('click', function () {
-        document.getElementById('up-input').value = '';
-        document.getElementById('up-status').textContent = '';
-        document.getElementById('up-status').className = 'up-status';
-        document.getElementById('up-results').innerHTML = '';
-      });
-    })();
-  </script>
+    <details class="up-rfc">
+      <summary id="up-rfc-summary"></summary>
+      <dl id="up-rfc-parts" class="up-rfc-parts"></dl>
+    </details>
+  </div>
 </div>
 
+<script is:inline define:vars={{ S: L }}>
+  (function () {
+    /* ── engine:start ── */
+    /* URL Standard (url.spec.whatwg.org): special schemes and their default ports. */
+    var SPECIAL = { 'ftp:': '21', 'file:': '', 'http:': '80', 'https:': '443', 'ws:': '80', 'wss:': '443' };
+    var FIELDS = ['href', 'protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash', 'origin'];
+    var RISKY = { 'javascript:': 1, 'data:': 1, 'vbscript:': 1, 'file:': 1 };
+    var enc = new TextEncoder();
+
+    function isSpecial(protocol) { return Object.prototype.hasOwnProperty.call(SPECIAL, protocol); }
+
+    /* Position (1-based, in code points) of a UTF-16 index, for messages. */
+    function cpPos(str, index) { return Array.from(str.slice(0, index)).length + 1; }
+
+    /* URL Standard basic URL parser, first steps: strip leading and trailing C0 control or
+       space, then remove every ASCII tab or newline. */
+    function stripInput(raw) {
+      var trimmed = raw.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+      var text = trimmed.replace(/[\t\n\r]/g, '');
+      return { text: text, trimmed: trimmed !== raw, tabNl: text !== trimmed };
+    }
+
+    function splitHostPort(authority) {
+      if (authority.charAt(0) === '[') {
+        var close = authority.indexOf(']');
+        if (close >= 0) {
+          var after = authority.slice(close + 1);
+          return { host: authority.slice(0, close + 1), port: after.charAt(0) === ':' ? after.slice(1) : null };
+        }
+        return { host: authority, port: null };
+      }
+      var colon = authority.lastIndexOf(':');
+      if (colon < 0) return { host: authority, port: null };
+      return { host: authority.slice(0, colon), port: authority.slice(colon + 1) };
+    }
+
+    /* Raw pieces of an absolute URL, walked the way the WHATWG parser walks them: special
+       schemes read "\" as "/" before the query and skip any number of slashes. */
+    function rawParts(text) {
+      var m = /^([A-Za-z][A-Za-z0-9+.\-]*):/.exec(text);
+      if (!m) return null;
+      var protocol = m[1].toLowerCase() + ':';
+      var special = isSpecial(protocol);
+      var rest = text.slice(m[0].length);
+      var cut = rest.search(/[?#]/);
+      var before = cut < 0 ? rest : rest.slice(0, cut);
+      var tail = cut < 0 ? '' : rest.slice(cut);
+      var head = special ? before.replace(/\\/g, '/') : before;
+      var slashes = /^\/*/.exec(head)[0].length;
+      var out = { protocol: protocol, special: special, slashes: slashes, hasAuthority: false,
+        userinfo: null, host: '', port: null, path: '', query: null, fragment: null,
+        backslash: special && before.indexOf('\\') >= 0 };
+      var authorityAndPath = null;
+      if (special && protocol !== 'file:') authorityAndPath = head.slice(slashes);
+      else if (slashes >= 2) authorityAndPath = head.slice(2);
+      else out.path = head;
+      if (authorityAndPath !== null) {
+        out.hasAuthority = true;
+        var slash = authorityAndPath.indexOf('/');
+        var authority = slash < 0 ? authorityAndPath : authorityAndPath.slice(0, slash);
+        out.path = slash < 0 ? '' : authorityAndPath.slice(slash);
+        var at = authority.lastIndexOf('@');
+        if (at >= 0) { out.userinfo = authority.slice(0, at); authority = authority.slice(at + 1); }
+        var hp = splitHostPort(authority);
+        out.host = hp.host;
+        out.port = hp.port;
+      }
+      var hashAt = tail.indexOf('#');
+      if (tail.charAt(0) === '?') out.query = hashAt < 0 ? tail.slice(1) : tail.slice(1, hashAt);
+      if (hashAt >= 0) out.fragment = tail.slice(hashAt + 1);
+      return out;
+    }
+
+    /* RFC 3986 Appendix B: the regular expression for splitting any URI reference. */
+    var RFC_B = /^(([^:\/?#]+):)?(\/\/([^\/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?$/;
+    function rfcSplit(text) {
+      var m = RFC_B.exec(text);
+      var r = { scheme: m[2] === undefined ? null : m[2], authority: m[4] === undefined ? null : m[4],
+        userinfo: null, host: null, port: null,
+        path: m[5], query: m[7] === undefined ? null : m[7], fragment: m[9] === undefined ? null : m[9] };
+      if (r.authority !== null) {
+        var a = r.authority;
+        var at = a.lastIndexOf('@');
+        if (at >= 0) { r.userinfo = a.slice(0, at); a = a.slice(at + 1); }
+        var hp = splitHostPort(a);
+        r.host = hp.host;
+        r.port = hp.port;
+      }
+      return r;
+    }
+
+    /* RFC 3986 §2–§3 character rules on the text as typed. Returns null for a valid URI
+       or relative reference, otherwise the first problem. */
+    var RFC_ALLOWED = /[A-Za-z0-9\-._~!$&'()*+,;=:@\/?#\[\]%]/;
+    function rfcCheck(text) {
+      var problems = [];
+      function add(index, reason) {
+        problems.push({ index: index, pos: cpPos(text, index), ch: Array.from(text.slice(index))[0], reason: reason });
+      }
+      for (var i = 0; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (c === '%') {
+          if (!/^[0-9A-Fa-f]{2}$/.test(text.substr(i + 1, 2))) { add(i, 'percent'); break; }
+          continue;
+        }
+        if (!RFC_ALLOWED.test(c)) { add(i, /[\u0000-\u007f]/.test(c) ? 'char' : 'nonAscii'); break; }
+      }
+      var r = rfcSplit(text);
+      var offset = 0;
+      if (r.scheme !== null) {
+        if (!/^[A-Za-z][A-Za-z0-9+.\-]*$/.test(r.scheme)) add(0, 'scheme');
+        offset = r.scheme.length + 1;
+      }
+      if (r.authority !== null) {
+        var aStart = offset + 2;
+        var hostStart = aStart;
+        if (r.userinfo !== null) {
+          var bad = r.userinfo.search(/[@\[\]]/);
+          if (bad >= 0) add(aStart + bad, 'userinfo');
+          hostStart = aStart + r.userinfo.length + 1;
+        }
+        var host = r.host;
+        if (host.charAt(0) === '[') {
+          if (!/^\[([0-9A-Fa-f:.]+|v[0-9A-Fa-f]+\.[A-Za-z0-9\-._~!$&'()*+,;=:]+)\]$/.test(host)) add(hostStart, 'ipLiteral');
+        } else {
+          var hb = host.search(/[\[\]]/);
+          if (hb >= 0) add(hostStart + hb, 'bracket');
+        }
+        if (r.port !== null && !/^[0-9]*$/.test(r.port)) add(hostStart + host.length + 1, 'port');
+        offset = aStart + r.authority.length;
+      } else if (r.scheme === null) {
+        var firstSeg = r.path.split('/')[0];
+        if (firstSeg.indexOf(':') >= 0) add(firstSeg.indexOf(':'), 'scheme');
+      }
+      var pb = r.path.search(/[\[\]]/);
+      if (pb >= 0) add(offset + pb, 'bracket');
+      offset += r.path.length;
+      if (r.query !== null) {
+        var qb = r.query.search(/[\[\]]/);
+        if (qb >= 0) add(offset + 1 + qb, 'bracket');
+        offset += 1 + r.query.length;
+      }
+      if (r.fragment !== null) {
+        var fb = r.fragment.search(/[#\[\]]/);
+        if (fb >= 0) add(offset + 1 + fb, r.fragment.charAt(fb) === '#' ? 'hash' : 'bracket');
+      }
+      if (!problems.length) return null;
+      problems.sort(function (a, b) { return a.index - b.index; });
+      return problems[0];
+    }
+
+    /* RFC 3492 Punycode decoding, to show an IDN host in Unicode. */
+    function punyDecode(input) {
+      var base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700;
+      function adapt(delta, numPoints, first) {
+        delta = first ? Math.floor(delta / damp) : delta >> 1;
+        delta += Math.floor(delta / numPoints);
+        var k = 0;
+        while (delta > ((base - tMin) * tMax) >> 1) { delta = Math.floor(delta / (base - tMin)); k += base; }
+        return k + Math.floor((base - tMin + 1) * delta / (delta + skew));
+      }
+      var output = [], n = 128, bias = 72, i = 0;
+      var basic = input.lastIndexOf('-');
+      if (basic < 0) basic = 0;
+      for (var j = 0; j < basic; j++) {
+        var cj = input.charCodeAt(j);
+        if (cj >= 0x80) return null;
+        output.push(cj);
+      }
+      for (var idx = basic > 0 ? basic + 1 : 0; idx < input.length;) {
+        var oldi = i, w = 1;
+        for (var k = base; ; k += base) {
+          if (idx >= input.length) return null;
+          var cp = input.charCodeAt(idx++);
+          var digit = cp >= 48 && cp <= 57 ? cp - 22 : cp >= 65 && cp <= 90 ? cp - 65 : cp >= 97 && cp <= 122 ? cp - 97 : base;
+          if (digit >= base) return null;
+          i += digit * w;
+          var t = k <= bias ? tMin : k >= bias + tMax ? tMax : k - bias;
+          if (digit < t) break;
+          w *= base - t;
+          if (i > 0x7fffffff || w > 0x7fffffff) return null;
+        }
+        var len = output.length + 1;
+        bias = adapt(i - oldi, len, oldi === 0);
+        n += Math.floor(i / len);
+        i %= len;
+        if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) return null;
+        output.splice(i++, 0, n);
+      }
+      return String.fromCodePoint.apply(null, output);
+    }
+
+    function hostToUnicode(hostname) {
+      var idn = false;
+      var labels = hostname.split('.').map(function (label) {
+        if (!/^xn--/i.test(label)) return label;
+        var dec = punyDecode(label.slice(4));
+        if (dec === null) return label;
+        idn = true;
+        return dec;
+      });
+      return { unicode: labels.join('.'), idn: idn };
+    }
+
+    /* Scripts of the letters in a label, for UTS #39 §5.2 restriction levels. */
+    var SCRIPTS = ['Latin', 'Cyrillic', 'Greek', 'Han', 'Hiragana', 'Katakana', 'Hangul', 'Bopomofo', 'Arabic', 'Hebrew', 'Thai', 'Devanagari', 'Armenian', 'Georgian'];
+    var SCRIPT_RE = SCRIPTS.map(function (s) { return new RegExp('\\p{Script=' + s + '}', 'u'); });
+    function scriptsOf(label) {
+      var found = [];
+      Array.from(label).forEach(function (ch) {
+        if (!/\p{L}/u.test(ch)) return;
+        var name = 'Other';
+        for (var i = 0; i < SCRIPTS.length; i++) if (SCRIPT_RE[i].test(ch)) { name = SCRIPTS[i]; break; }
+        if (found.indexOf(name) < 0) found.push(name);
+      });
+      return found;
+    }
+    /* UTS #39 "Highly Restrictive": one script, or Latin + Han + Hiragana + Katakana,
+       Latin + Han + Bopomofo, Latin + Han + Hangul. */
+    var ALLOWED_MIX = [['Latin', 'Han', 'Hiragana', 'Katakana'], ['Latin', 'Han', 'Bopomofo'], ['Latin', 'Han', 'Hangul']];
+    /* Cyrillic and Greek lowercase letters that look like Latin letters in common fonts. */
+    var LOOKALIKE = /^[аеорсухіјѕԁһӏԛԝԍοαικνρτυχϲ]+$/u;
+    function hostScriptWarnings(unicodeHost) {
+      var out = [];
+      unicodeHost.split('.').forEach(function (label) {
+        var scripts = scriptsOf(label);
+        if (scripts.length > 1) {
+          var ok = ALLOWED_MIX.some(function (set) { return scripts.every(function (s) { return set.indexOf(s) >= 0; }); });
+          if (!ok) out.push({ kind: 'mixedScript', label: label, scripts: scripts });
+        } else if (scripts.length === 1 && (scripts[0] === 'Cyrillic' || scripts[0] === 'Greek')) {
+          var letters = Array.from(label).filter(function (ch) { return /\p{L}/u.test(ch); }).join('');
+          if (LOOKALIKE.test(letters)) out.push({ kind: 'lookalike', label: label, scripts: scripts });
+        }
+      });
+      return out;
+    }
+
+    /* URL Standard percent-decode on the UTF-8 bytes of a string ("%" without two hex digits
+       stays), then UTF-8 decode without BOM. Invalid sequences become U+FFFD, as in
+       URLSearchParams, and are reported. */
+    function percentDecode(str, plusAsSpace) {
+      var bytes = enc.encode(str);
+      var out = new Uint8Array(bytes.length);
+      var n = 0, badPercent = false;
+      for (var i = 0; i < bytes.length; i++) {
+        var b = bytes[i];
+        if (plusAsSpace && b === 0x2b) { out[n++] = 0x20; continue; }
+        if (b === 0x25) {
+          if (i + 2 < bytes.length && /^[0-9A-Fa-f]{2}$/.test(String.fromCharCode(bytes[i + 1], bytes[i + 2]))) {
+            out[n++] = parseInt(String.fromCharCode(bytes[i + 1], bytes[i + 2]), 16);
+            i += 2;
+            continue;
+          }
+          badPercent = true;
+        }
+        out[n++] = b;
+      }
+      var view = out.subarray(0, n);
+      var text, badUtf8 = false;
+      try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(view); }
+      catch (e) { badUtf8 = true; text = new TextDecoder('utf-8', { ignoreBOM: true }).decode(view); }
+      return { text: text, badPercent: badPercent, badUtf8: badUtf8 };
+    }
+
+    /* application/x-www-form-urlencoded parser (URL Standard §5.1) that keeps each pair's
+       raw text, so a rebuilt query can leave untouched pairs byte for byte. */
+    function parseQuery(search) {
+      var q = search.charAt(0) === '?' ? search.slice(1) : search;
+      var pairs = [];
+      if (q === '') return pairs;
+      var seen = {};
+      q.split('&').forEach(function (seq) {
+        if (seq === '') return;
+        var eq = seq.indexOf('=');
+        var rawKey = eq < 0 ? seq : seq.slice(0, eq);
+        var rawValue = eq < 0 ? '' : seq.slice(eq + 1);
+        var k = percentDecode(rawKey, true);
+        var v = percentDecode(rawValue, true);
+        var count = seen['$' + k.text] = (seen['$' + k.text] || 0) + 1;
+        pairs.push({ raw: seq, rawKey: rawKey, rawValue: rawValue, key: k.text, value: v.text, hasEq: eq >= 0,
+          plus: seq.indexOf('+') >= 0, badPercent: k.badPercent || v.badPercent, badUtf8: k.badUtf8 || v.badUtf8,
+          semicolon: seq.indexOf(';') >= 0, occurrence: count });
+      });
+      pairs.forEach(function (p) { p.total = seen['$' + p.key]; });
+      return pairs;
+    }
+
+    /* Rebuild a query string. Untouched pairs keep their raw text; edited or added pairs are
+       encoded as URLSearchParams does (space as "+"). */
+    function serializeQuery(pairs) {
+      var parts = [];
+      pairs.forEach(function (p) {
+        if (p.removed) return;
+        if (!p.edited && typeof p.raw === 'string') { parts.push(p.raw); return; }
+        if (p.key === '' && p.value === '') return;
+        parts.push(new URLSearchParams([[p.key, p.value]]).toString());
+      });
+      return parts.join('&');
+    }
+
+    /* Set one component through the URL setter and report what the browser did with it. */
+    function setComponent(href, field, value) {
+      var u = new URL(href);
+      var before = u.href;
+      var old = u[field];
+      u[field] = value;
+      var actual = u[field];
+      function norm(s) {
+        if (field === 'protocol') return s.replace(/:.*$/, '').toLowerCase();
+        if (field === 'hash') return s.replace(/^#/, '');
+        if (field === 'search') return s.replace(/^\?/, '');
+        return s;
+      }
+      var changed = u.href !== before;
+      var status = 'ok';
+      if (!changed && norm(value) !== norm(old)) status = 'ignored';
+      else if (changed && norm(value) !== norm(actual)) status = 'adjusted';
+      return { href: u.href, status: status, actual: actual };
+    }
+
+    /* Characters of a raw path, query or fragment that the browser percent-encodes. Each
+       distinct character is checked with the running browser's own parser. */
+    function encodedChars(raw, part, protocol) {
+      if (raw === null || raw === undefined || raw === '') return [];
+      var probeBase = protocol + '//h/';
+      var list = [];
+      Array.from(raw).forEach(function (ch) {
+        if (ch === '%' || list.some(function (x) { return x.ch === ch; })) return;
+        var probe;
+        try {
+          if (part === 'path') probe = new URL(probeBase + 'a' + ch + 'b').pathname;
+          else if (part === 'query') probe = new URL(probeBase + '?a' + ch + 'b').search;
+          else probe = new URL(probeBase + '#a' + ch + 'b').hash;
+        } catch (e) { return; }
+        if (probe.indexOf('a' + ch + 'b') >= 0) return;
+        var hex = Array.from(enc.encode(ch)).map(function (b) { return '%' + (b < 16 ? '0' : '') + b.toString(16).toUpperCase(); }).join('');
+        list.push({ ch: ch, enc: hex });
+      });
+      return list;
+    }
+
+    function hostType(url) {
+      var h = url.hostname;
+      if (h === '') return 'empty';
+      if (h.charAt(0) === '[') return 'ipv6';
+      if (!isSpecial(url.protocol)) return 'opaque';
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return 'ipv4';
+      return 'domain';
+    }
+
+    /* Why `new URL()` refused the input; the parser itself only reports failure. */
+    function diagnoseFailure(text, hasBase) {
+      var m = /^([A-Za-z][A-Za-z0-9+.\-]*):/.exec(text);
+      if (!m) {
+        if (/^(\/\/|\\\\)/.test(text)) return { code: 'schemeRelative', suggestion: 'https:' + text.replace(/^\\\\/, '//') };
+        if (/^[\/\\.?#]/.test(text)) return { code: hasBase ? 'invalid' : 'relative' };
+        var first = text.split(/[\/?#\\]/)[0];
+        var hostish = first.replace(/^[^@]*@/, '').replace(/:\d*$/, '');
+        if (!/\s/.test(first) && (/^[^.\s]+(\.[^.\s]+)+$/.test(hostish) || /^localhost$/i.test(hostish) || /^\[[0-9A-Fa-f:.]+\]$/.test(hostish))) {
+          var s = 'https://' + text;
+          try { new URL(s); return { code: 'noScheme', suggestion: s }; } catch (e) { /* not fixable by a scheme */ }
+          return { code: 'noScheme' };
+        }
+        var colon = text.indexOf(':');
+        var stop = text.search(/[\/?#]/);
+        if (colon > 0 && (stop < 0 || colon < stop)) return { code: 'badScheme' };
+        return { code: hasBase ? 'invalid' : 'relative' };
+      }
+      var parts = rawParts(text);
+      var scheme = parts.protocol.slice(0, -1);
+      if (parts.special && parts.protocol !== 'file:' && parts.host === '') return { code: 'emptyHost', scheme: scheme };
+      if (parts.port !== null && parts.port !== '' && !/^[0-9]+$/.test(parts.port)) return { code: 'badPort', detail: parts.port };
+      if (parts.port !== null && /^[0-9]+$/.test(parts.port) && Number(parts.port) > 65535) return { code: 'portRange', detail: parts.port };
+      if (parts.host.charAt(0) === '[') return { code: 'badIpv6', detail: parts.host };
+      var decodedHost = parts.special ? percentDecode(parts.host).text : parts.host;
+      var forbidden = parts.special ? /[\u0000-\u001f \u007f#\/:<>?@\[\\\]\^|%]/ : /[\u0000\t\n\r #\/:<>?@\[\\\]\^|]/;
+      var fb = forbidden.exec(decodedHost);
+      if (fb) return { code: 'badHostChar', detail: fb[0] };
+      if (parts.special) {
+        var labels = decodedHost.split('.');
+        if (labels.length > 1 && labels[labels.length - 1] === '') labels.pop();
+        if (/^(0[xX][0-9A-Fa-f]*|[0-9]+)$/.test(labels[labels.length - 1])) return { code: 'badIpv4', detail: decodedHost };
+        return { code: 'badIdn', detail: decodedHost };
+      }
+      return { code: 'invalid' };
+    }
+
+    function analyze(input, base) {
+      var stripped = stripInput(input);
+      var text = stripped.text;
+      var baseText = base ? stripInput(base).text : '';
+      var res = { input: input, text: text, ok: false, notes: [], usedBase: false, error: null };
+      if (text === '') { res.error = { code: 'empty' }; return res; }
+      /* Same as new URL(input, base): with a base, even "http:foo" is resolved against it. */
+      var url = null, alone = null;
+      try { alone = new URL(text); } catch (e) { alone = null; }
+      if (baseText) {
+        var baseUrl;
+        try { baseUrl = new URL(baseText); } catch (e2) { res.error = { code: 'badBase' }; return res; }
+        try { url = new URL(text, baseUrl); } catch (e3) { url = null; }
+        res.usedBase = !!url && (!alone || alone.href !== url.href);
+      } else {
+        url = alone;
+      }
+      if (!url) { res.error = diagnoseFailure(text, !!baseText); return res; }
+      res.ok = true;
+      var fields = {};
+      FIELDS.forEach(function (f) { fields[f] = url[f]; });
+      res.fields = fields;
+      res.special = isSpecial(url.protocol);
+      res.defaultPort = res.special ? SPECIAL[url.protocol] : '';
+      res.effectivePort = url.port || res.defaultPort;
+      res.hostType = hostType(url);
+      var uni = res.hostType === 'domain' ? hostToUnicode(url.hostname) : { unicode: url.hostname, idn: false };
+      res.hostUnicode = uni.unicode;
+      res.params = parseQuery(url.search);
+      res.opaquePath = url.pathname.charAt(0) !== '/';
+      res.segments = res.opaquePath || url.pathname === '/' || url.pathname === '' ? [] : url.pathname.slice(1).split('/').map(function (seg) {
+        var d = percentDecode(seg);
+        return { raw: seg, text: d.text, badUtf8: d.badUtf8, encodedSlash: /%2f/i.test(seg) };
+      });
+      var fragment = url.hash ? percentDecode(url.hash.slice(1)) : null;
+      res.fragmentText = fragment ? fragment.text : '';
+      res.rfc = { error: rfcCheck(text), split: rfcSplit(text) };
+
+      var notes = res.notes;
+      function note(code, data, level) { notes.push({ code: code, data: data || {}, level: level || 'info' }); }
+      var raw = res.usedBase ? null : rawParts(text);
+      var rfc = res.rfc.split;
+      var user = percentDecode(url.username).text;
+
+      if (res.usedBase) note('base', { base: baseText });
+      if (url.username || url.password) {
+        note(user.indexOf('.') >= 0 && !url.password ? 'userinfoHost' : 'userinfo', { host: url.hostname, user: user }, 'warn');
+      }
+      if (url.password) note('password', {}, 'warn');
+      if (uni.idn) note('idn', { unicode: uni.unicode, ascii: url.hostname });
+      hostScriptWarnings(uni.unicode).forEach(function (w) {
+        note(w.kind, { label: w.label, scripts: w.scripts.join(' + ') }, 'warn');
+      });
+      if (RISKY[url.protocol]) note('risky', { scheme: url.protocol }, 'warn');
+      if (res.hostType === 'opaque' && url.hostname.indexOf('%') >= 0) note('opaqueHost', { host: url.hostname });
+      if (stripped.trimmed) note('trimmed');
+      if (stripped.tabNl) note('tabNl');
+      if (raw) {
+        if (raw.backslash) note('backslash', {}, 'warn');
+        if (raw.special && raw.protocol !== 'file:' && raw.slashes !== 2) note('slashes', { count: raw.slashes });
+        if (!res.special && /^(localhost|[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+)$/i.test(url.protocol.slice(0, -1)) && /^\d/.test(raw.path)) {
+          note('schemeLooksLikeHost', { scheme: url.protocol.slice(0, -1), suggestion: 'https://' + text }, 'warn');
+        }
+        if (raw.hasAuthority) {
+          var rawHost = raw.host;
+          var lower = rawHost.toLowerCase();
+          if (res.hostType === 'ipv4' && lower !== url.hostname) note('ipv4', { raw: rawHost, host: url.hostname }, 'warn');
+          else if (res.hostType === 'ipv6' && lower !== url.hostname) note('ipv6', { raw: rawHost, host: url.hostname });
+          else if (res.hostType === 'domain' && lower !== url.hostname && rawHost !== uni.unicode) note('hostChanged', { raw: rawHost, host: url.hostname });
+          if (raw.port !== null && url.port === '' && res.special) note('defaultPort', { raw: raw.port, port: res.defaultPort });
+          else if (raw.port !== null && raw.port !== url.port) note('portChanged', { raw: raw.port, port: url.port });
+        }
+        var segs = raw.path.split(raw.special ? /[\/\\]/ : /\//);
+        if (segs.some(function (s) { return /^(\.|%2e){1,2}$/i.test(s); }) && raw.path !== url.pathname) {
+          note('dotSegments', { raw: raw.path, path: url.pathname });
+        }
+        var list = encodedChars(raw.hasAuthority || raw.path.charAt(0) === '/' ? raw.path : '', 'path', url.protocol)
+          .concat(encodedChars(raw.query, 'query', url.protocol))
+          .concat(encodedChars(raw.fragment, 'fragment', url.protocol));
+        var seenCh = {};
+        list = list.filter(function (x) { if (seenCh[x.ch]) return false; seenCh[x.ch] = 1; return true; });
+        if (list.length) note('encoded', { list: list });
+        /* An RFC 3986 parser reads the authority with Appendix B; compare the host it gets. */
+        if (raw.hasAuthority && rfc.authority !== null) {
+          var same;
+          try { same = new URL(url.protocol + '//' + rfc.host + '/').hostname === url.hostname; } catch (e) { same = false; }
+          if (!same) note('rfcHost', { rfcHost: rfc.host, host: url.hostname }, 'warn');
+        } else if (raw.hasAuthority && url.hostname !== '') {
+          note('rfcNoAuthority', { host: url.hostname });
+        }
+      }
+      var badPct = /%(?![0-9A-Fa-f]{2})/.exec(text);
+      if (badPct) note('badPercent', { pos: cpPos(text, badPct.index) }, 'warn');
+      if (res.params.some(function (p) { return p.badUtf8; }) || res.segments.some(function (s) { return s.badUtf8; }) || (fragment && fragment.badUtf8)) {
+        note('badUtf8', {}, 'warn');
+      }
+      if (res.params.some(function (p) { return p.semicolon; })) note('semicolon');
+      return res;
+    }
+
+    /* JSON summary of a successful analysis (Copy as JSON). */
+    function toJson(res) {
+      var obj = {};
+      FIELDS.forEach(function (f) { obj[f] = res.fields[f]; });
+      if (res.hostUnicode !== res.fields.hostname) obj.hostnameUnicode = res.hostUnicode;
+      obj.effectivePort = res.effectivePort;
+      obj.pathSegments = res.segments.map(function (s) { return s.text; });
+      obj.query = res.params.map(function (p) { return [p.key, p.value]; });
+      obj.fragment = res.fragmentText;
+      return JSON.stringify(obj, null, 2);
+    }
+    /* ── engine:end ── */
+
+    var MAX_PARAMS = 500;
+    var $ = function (id) { return document.getElementById(id); };
+    var inputEl = $('up-input');
+    var baseBox = $('up-base-box');
+    var baseEl = $('up-base');
+    var statusEl = $('up-status');
+    var suggestBtn = $('up-suggest');
+    var notesEl = $('up-notes');
+    var resultsEl = $('up-results');
+    var hrefEl = $('up-href');
+    var paramsEl = $('up-params');
+    var queryTitle = $('up-query-title');
+    var queryNote = $('up-query-note');
+    var segSection = $('up-seg-section');
+    var segTitle = $('up-seg-title');
+    var segList = $('up-segments');
+    var rfcSummary = $('up-rfc-summary');
+    var rfcParts = $('up-rfc-parts');
+    var revealBtn = $('up-reveal');
+    var current = null;
+    var editMessage = null;
+    var suggestion = null;
+    var trackTimer = null;
+
+    function fmt(s, vars) {
+      return String(s).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] !== undefined ? vars[k] : m; });
+    }
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+    function showChar(ch) { return ch === ' ' ? S.space : ch; }
+
+    function copyText(text, btn) {
+      function done(ok) {
+        if (!ok) { setStatus(S.copyFailed, 'error'); return; }
+        btn.textContent = S.copied;
+        setTimeout(function () { btn.textContent = btn.getAttribute('data-label') || S.copy; }, 1500);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallbackCopy(text)); });
+      } else {
+        done(fallbackCopy(text));
+      }
+    }
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = 'tool-status ' + kind;
+    }
+
+    function noteText(n) {
+      var d = n.data;
+      if (n.code === 'encoded') {
+        return fmt(S.notes.encoded, { list: d.list.slice(0, 8).map(function (x) { return '“' + showChar(x.ch) + '” → ' + x.enc; }).join(', ') + (d.list.length > 8 ? ' …' : '') });
+      }
+      return fmt(S.notes[n.code], d);
+    }
+
+    function renderNotes(res) {
+      notesEl.textContent = '';
+      var sorted = res.notes.filter(function (n) { return n.level === 'warn'; }).concat(res.notes.filter(function (n) { return n.level !== 'warn'; }));
+      sorted.forEach(function (n) {
+        var li = el('li', 'up-note up-note--' + n.level, noteText(n));
+        if (n.code === 'schemeLooksLikeHost') {
+          var b = el('button', 'btn-ghost btn-sm up-note-btn', fmt(S.parseAs, { url: n.data.suggestion }));
+          b.type = 'button';
+          b.addEventListener('click', function () { inputEl.value = n.data.suggestion; render(); });
+          li.appendChild(b);
+        }
+        notesEl.appendChild(li);
+      });
+      notesEl.hidden = sorted.length === 0;
+    }
+
+    function renderFields(res) {
+      var f = res.fields;
+      hrefEl.textContent = f.href;
+      document.querySelectorAll('#up-wrap .up-value').forEach(function (inp) {
+        var field = inp.getAttribute('data-field');
+        if (document.activeElement !== inp) inp.value = f[field];
+        var row = inp.closest('.up-row');
+        row.classList.toggle('up-row--empty', f[field] === '' || (field === 'origin' && f[field] === 'null'));
+        var sub = row.querySelector('[data-sub]');
+        var subText = '';
+        if (field === 'hostname' && res.hostUnicode !== f.hostname) subText = fmt(S.unicodeHost, { host: res.hostUnicode });
+        if (field === 'hash' && f.hash && res.fragmentText !== f.hash.slice(1)) subText = fmt(S.decodedHash, { text: res.fragmentText });
+        sub.textContent = subText;
+        sub.hidden = subText === '';
+        if (field === 'port') inp.placeholder = res.defaultPort ? fmt(S.portDefault, { port: res.defaultPort }) : S.portNone;
+      });
+    }
+
+    function badge(text, warn) { return el('span', 'up-badge' + (warn ? ' up-badge--warn' : ''), text); }
+
+    function applyQuery(pairs) {
+      var q = serializeQuery(pairs);
+      var r = setComponent(current.fields.href, 'search', q ? '?' + q : '');
+      inputEl.value = r.href;
+      render();
+    }
+
+    function paramRow(p, index, isNew) {
+      var row = el('div', 'up-param' + (isNew ? ' up-param--new' : ''));
+      var num = el('span', 'up-param-num', isNew ? '+' : String(index + 1));
+      row.appendChild(num);
+      var keyIn = el('input', 'up-param-input up-param-key');
+      var valIn = el('input', 'up-param-input up-param-val');
+      [keyIn, valIn].forEach(function (inp) {
+        inp.type = 'text';
+        inp.spellcheck = false;
+        inp.setAttribute('autocomplete', 'off');
+        inp.setAttribute('autocapitalize', 'off');
+      });
+      keyIn.value = isNew ? '' : p.key;
+      valIn.value = isNew ? '' : p.value;
+      keyIn.placeholder = S.key;
+      valIn.placeholder = S.value;
+      keyIn.setAttribute('aria-label', S.key + ' ' + (index + 1));
+      valIn.setAttribute('aria-label', S.value + ' ' + (index + 1));
+      var committed = false;
+      /* Commit when Enter is pressed or focus leaves the row, so key and value can both be
+         edited before the URL is rebuilt. */
+      function commit() {
+        if (committed) return;
+        var pairs = current.params.map(function (x) { return Object.assign({}, x); });
+        if (isNew) {
+          addingParam = false;
+          if (keyIn.value === '' && valIn.value === '') { renderParams(current); return; }
+          pairs.push({ key: keyIn.value, value: valIn.value, edited: true });
+        } else {
+          if (keyIn.value === p.key && valIn.value === p.value) return;
+          pairs[index].key = keyIn.value;
+          pairs[index].value = valIn.value;
+          pairs[index].edited = true;
+        }
+        committed = true;
+        applyQuery(pairs);
+      }
+      row.addEventListener('focusout', function (e) {
+        if (!e.relatedTarget || !row.contains(e.relatedTarget)) commit();
+      });
+      [keyIn, valIn].forEach(function (inp) {
+        inp.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { keyIn.value = isNew ? '' : p.key; valIn.value = isNew ? '' : p.value; }
+        });
+      });
+      var cells = el('div', 'up-param-cells');
+      cells.appendChild(keyIn);
+      cells.appendChild(valIn);
+      if (!isNew) {
+        var meta = el('div', 'up-param-meta');
+        if (p.raw !== p.key + (p.hasEq ? '=' : '') + p.value) meta.appendChild(el('code', 'up-param-raw', fmt(S.rawLabel, { raw: p.raw })));
+        if (p.plus) meta.appendChild(badge(S.flagPlus));
+        if (!p.hasEq) meta.appendChild(badge(S.flagNoEq));
+        if (p.total > 1) meta.appendChild(badge(fmt(S.flagRepeat, { i: p.occurrence, n: p.total })));
+        if (p.badPercent) meta.appendChild(badge(S.flagBadPercent, true));
+        if (p.badUtf8) meta.appendChild(badge(S.flagBadUtf8, true));
+        if (meta.childNodes.length) cells.appendChild(meta);
+      }
+      row.appendChild(cells);
+      var actions = el('div', 'up-param-btns');
+      if (!isNew) {
+        var copy = el('button', 'btn-copy', S.copy);
+        copy.type = 'button';
+        copy.addEventListener('click', function () { copyText(p.value, copy); });
+        var rm = el('button', 'btn-ghost btn-sm up-param-rm', '×');
+        rm.type = 'button';
+        rm.title = S.remove;
+        rm.setAttribute('aria-label', fmt(S.removeAria, { n: index + 1 }));
+        rm.addEventListener('click', function () {
+          var pairs = current.params.map(function (x) { return Object.assign({}, x); });
+          pairs[index].removed = true;
+          applyQuery(pairs);
+        });
+        actions.appendChild(copy);
+        actions.appendChild(rm);
+      }
+      row.appendChild(actions);
+      return row;
+    }
+
+    var addingParam = false;
+    function renderParams(res) {
+      paramsEl.textContent = '';
+      var n = res.params.length;
+      queryTitle.textContent = fmt(S.queryTitle, { n: n });
+      var shown = Math.min(n, MAX_PARAMS);
+      for (var i = 0; i < shown; i++) paramsEl.appendChild(paramRow(res.params[i], i, false));
+      if (addingParam) {
+        var nr = paramRow(null, n, true);
+        paramsEl.appendChild(nr);
+      }
+      if (n === 0 && !addingParam) { queryNote.textContent = S.queryEmpty; queryNote.hidden = false; }
+      else if (n > MAX_PARAMS) { queryNote.textContent = fmt(S.queryLimit, { shown: MAX_PARAMS, n: n }); queryNote.hidden = false; }
+      else queryNote.hidden = true;
+    }
+
+    function renderSegments(res) {
+      segList.textContent = '';
+      segSection.hidden = res.segments.length === 0;
+      segTitle.textContent = fmt(S.segmentsTitle, { n: res.segments.length });
+      res.segments.forEach(function (s) {
+        var li = el('li', 'up-seg');
+        li.appendChild(el('code', 'up-seg-text', s.text === '' ? '∅' : s.text));
+        if (s.raw !== s.text) li.appendChild(el('code', 'up-param-raw', fmt(S.rawLabel, { raw: s.raw })));
+        if (s.encodedSlash) li.appendChild(badge(S.flagSlash, true));
+        if (s.badUtf8) li.appendChild(badge(S.flagBadUtf8, true));
+        segList.appendChild(li);
+      });
+    }
+
+    function renderRfc(res) {
+      var e = res.rfc.error;
+      rfcSummary.textContent = S.rfcTitle + ' · ' + (e ? fmt(S.rfcInvalid, { reason: S.rfcReasons[e.reason], pos: e.pos, ch: showChar(e.ch) }) : S.rfcValid);
+      rfcParts.textContent = '';
+      var sp = res.rfc.split;
+      ['scheme', 'authority', 'userinfo', 'host', 'port', 'path', 'query', 'fragment'].forEach(function (k) {
+        rfcParts.appendChild(el('dt', '', S.rfcParts[k]));
+        var v = sp[k];
+        rfcParts.appendChild(el('dd', v === null ? 'up-muted' : '', v === null ? S.rfcAbsent : (v === '' ? '""' : v)));
+      });
+    }
+
+    function render() {
+      var res = analyze(inputEl.value, baseEl.value);
+      current = res;
+      suggestion = null;
+      suggestBtn.hidden = true;
+      if (!res.ok) {
+        resultsEl.hidden = true;
+        notesEl.hidden = true;
+        notesEl.textContent = '';
+        addingParam = false;
+        if (res.error.code === 'empty') { setStatus('', 'none'); return; }
+        var err = res.error;
+        setStatus(fmt(S.errors[err.code], { detail: showChar(err.detail || ''), scheme: err.scheme || '' }), 'error');
+        if (err.suggestion) {
+          suggestion = err.suggestion;
+          suggestBtn.textContent = fmt(S.parseAs, { url: err.suggestion });
+          suggestBtn.hidden = false;
+        }
+        if (err.code === 'relative' || err.code === 'schemeRelative') baseBox.open = true;
+        return;
+      }
+      setStatus(editMessage || (res.usedBase ? S.okBase : S.ok), editMessage ? 'info' : 'success');
+      editMessage = null;
+      renderNotes(res);
+      renderFields(res);
+      renderParams(res);
+      renderSegments(res);
+      renderRfc(res);
+      resultsEl.hidden = false;
+      clearTimeout(trackTimer);
+      trackTimer = setTimeout(function () { window.trackTool && window.trackTool('url-parser', 'parse'); }, 1500);
+    }
+
+    function applyField(field, value) {
+      if (!current || !current.ok) return;
+      if (value === current.fields[field]) return;
+      var r = setComponent(current.fields.href, field, value);
+      if (r.status === 'ignored') editMessage = fmt(S.editIgnored, { field: S.fields[field], value: value });
+      else if (r.status === 'adjusted') editMessage = fmt(S.editAdjusted, { field: S.fields[field], value: value, actual: r.actual });
+      inputEl.value = r.href;
+      render();
+    }
+
+    inputEl.addEventListener('input', function () { addingParam = false; render(); });
+    baseEl.addEventListener('input', render);
+    document.querySelectorAll('#up-wrap .up-value').forEach(function (inp) {
+      if (inp.readOnly) return;
+      inp.addEventListener('change', function () { applyField(inp.getAttribute('data-field'), inp.value); });
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); applyField(inp.getAttribute('data-field'), inp.value); }
+        if (e.key === 'Escape' && current && current.ok) { inp.value = current.fields[inp.getAttribute('data-field')]; }
+      });
+    });
+    document.querySelectorAll('#up-wrap [data-copy]').forEach(function (btn) {
+      btn.setAttribute('data-label', btn.textContent);
+      btn.addEventListener('click', function () {
+        if (current && current.ok) copyText(current.fields[btn.getAttribute('data-copy')], btn);
+      });
+    });
+    var jsonBtn = $('up-copy-json');
+    jsonBtn.setAttribute('data-label', jsonBtn.textContent);
+    jsonBtn.addEventListener('click', function () { if (current && current.ok) copyText(toJson(current), jsonBtn); });
+    $('up-add').addEventListener('click', function () {
+      if (!current || !current.ok) return;
+      addingParam = true;
+      renderParams(current);
+      var inputs = paramsEl.querySelectorAll('.up-param--new input');
+      if (inputs.length) inputs[0].focus();
+    });
+    revealBtn.addEventListener('click', function () {
+      var pw = $('up-f-password');
+      var showing = pw.type === 'text';
+      pw.type = showing ? 'password' : 'text';
+      revealBtn.textContent = showing ? S.show : S.hide;
+      revealBtn.setAttribute('aria-pressed', showing ? 'false' : 'true');
+    });
+    suggestBtn.addEventListener('click', function () {
+      if (!suggestion) return;
+      inputEl.value = suggestion;
+      render();
+    });
+    $('up-example').addEventListener('click', function () {
+      inputEl.value = S.exampleUrl;
+      baseEl.value = '';
+      render();
+    });
+    $('up-clear').addEventListener('click', function () {
+      inputEl.value = '';
+      baseEl.value = '';
+      render();
+      inputEl.focus();
+    });
+    /* ToolLayout clears text inputs on Ctrl/⌘+L; re-render once it has. */
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(render, 0);
+    });
+    if (inputEl.value) render();
+  })();
+</script>
+
 <style>
-  .up-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .up-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+  .up-wrap [hidden] { display: none !important; }
 
-  .up-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+  .up-input-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .up-input-head .tool-label { margin: 0; }
+  .up-head-btns { display: flex; gap: 0.4rem; flex-wrap: nowrap; }
 
-  .up-input-section label {
+  .up-input { min-height: 0; resize: vertical; word-break: break-all; }
+
+  .up-base summary {
+    cursor: pointer;
     font-size: 0.82rem;
-    font-weight: 600;
     color: var(--color-text-secondary);
+    width: fit-content;
   }
+  .up-base .tool-input { margin-top: 0.4rem; width: 100%; }
 
-  .up-input-section input {
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid var(--color-border);
+  .up-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .up-status-row .tool-status { margin: 0; overflow-wrap: anywhere; }
+
+  .up-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .up-notes :global(.up-note) {
+    font-size: 0.82rem;
+    line-height: 1.45;
+    padding: 0.4rem 0.6rem;
     border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
+    overflow-wrap: anywhere;
+    background: color-mix(in oklch, var(--color-primary) 7%, transparent);
     color: var(--color-text);
   }
-  .up-input-section input:focus { outline: none; border-color: #6366f1; background: var(--color-bg); }
+  .up-notes :global(.up-note--warn) {
+    background: color-mix(in oklch, var(--color-danger) 9%, transparent);
+    color: var(--color-danger);
+  }
+  .up-notes :global(.up-note-btn) { margin-left: 0.5rem; }
 
-  .up-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+  .up-results { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
 
-  .up-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .up-status.success { color: #057a55; }
-  .up-status.error { color: #c0392b; }
-
-  .up-results { display: flex; flex-direction: column; gap: 1rem; }
-
-  .up-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
-    border: 1px solid var(--color-border);
+  .up-href {
+    padding: 0.55rem 0.75rem;
     border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .up-href-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .up-href-label { font-size: 0.78rem; font-weight: 700; color: var(--color-text-secondary); }
+  .up-href-text {
+    display: block;
+    margin-top: 0.3rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    word-break: break-all;
+    background: none;
+    padding: 0;
+  }
+
+  .up-hint { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
+
+  .up-fields {
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
     overflow: hidden;
   }
+  .up-row {
+    display: grid;
+    grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.6rem;
+    border-top: 1px solid var(--color-border-light);
+  }
+  .up-row:first-child { border-top: 0; }
+  .up-field { margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--color-text-secondary); }
+  .up-cell { display: flex; flex-direction: column; min-width: 0; }
+  .up-wrap .up-value {
+    width: 100%;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    padding: 0.3rem 0.45rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text);
+  }
+  .up-wrap .up-value:not([readonly]):hover { border-color: var(--color-border); }
+  .up-wrap .up-value:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 18%, transparent); }
+  .up-wrap .up-value[readonly] { color: var(--color-text-secondary); }
+  .up-row--empty .up-field { color: var(--color-text-muted); }
+  .up-sub { font-size: 0.76rem; color: var(--color-text-muted); padding: 0 0.45rem; overflow-wrap: anywhere; }
+  .up-row-btns { display: flex; gap: 0.3rem; align-items: center; }
 
-  .up-table thead tr {
+  .up-section { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+  .up-section-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .up-section-title { margin: 0; font-family: var(--font-sans); font-size: 0.88rem; font-weight: 700; color: var(--color-text-secondary); }
+  .up-muted { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+
+  .up-params { display: flex; flex-direction: column; gap: 0.4rem; }
+  .up-params :global(.up-param) {
+    display: grid;
+    grid-template-columns: 1.6rem minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    align-items: start;
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
-    border-bottom: 1px solid var(--color-border);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
-
-  .up-table th {
-    text-align: left;
-    padding: 0.45rem 0.75rem;
-    font-size: 0.78rem;
-    font-weight: 600;
+  .up-params :global(.up-param-num) { font-size: 0.78rem; font-weight: 700; color: var(--color-text-muted); padding-top: 0.4rem; }
+  .up-params :global(.up-param-cells) { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0.4rem; min-width: 0; }
+  .up-params :global(.up-param-input) {
+    width: 100%;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    padding: 0.3rem 0.45rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .up-params :global(.up-param-input:focus) { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 18%, transparent); }
+  .up-params :global(.up-param-meta) { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+  .up-params :global(.up-param-btns) { display: flex; gap: 0.3rem; }
+  .up-wrap :global(.up-param-raw) {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    color: var(--color-text-muted);
+    background: none;
+    padding: 0;
+    overflow-wrap: anywhere;
+  }
+  .up-wrap :global(.up-badge) {
+    font-size: 0.72rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
     color: var(--color-text-secondary);
-  }
-
-  .up-table td {
-    padding: 0.4rem 0.75rem;
-    border-top: 1px solid var(--color-border);
-    vertical-align: middle;
-  }
-
-  .up-field {
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    width: 110px;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
     white-space: nowrap;
   }
+  .up-wrap :global(.up-badge--warn) { color: var(--color-danger); }
+  .up-add { align-self: flex-start; }
 
-  .up-value {
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    color: var(--color-text);
-    word-break: break-all;
+  .up-segments { margin: 0; padding-left: 1.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
+  .up-segments :global(.up-seg) { font-size: 0.84rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }
+  .up-segments :global(.up-seg-text) { font-family: var(--font-mono); overflow-wrap: anywhere; background: none; padding: 0; }
+
+  .up-rfc summary { cursor: pointer; font-size: 0.84rem; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+  .up-rfc-parts { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 0.25rem 0.75rem; margin: 0.5rem 0 0; font-size: 0.82rem; }
+  .up-rfc-parts :global(dt) { color: var(--color-text-secondary); font-weight: 600; }
+  .up-rfc-parts :global(dd) { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+
+  @media (max-width: 640px) {
+    .up-input { min-height: 76px; }
+    .up-row { grid-template-columns: minmax(0, 1fr) auto; padding: 0.35rem 0.5rem; }
+    .up-field { grid-column: 1 / -1; }
+    .up-cell { grid-column: 1; }
+    .up-row-btns { grid-column: 2; grid-row: 2; }
+    .up-wrap .up-value { min-height: 44px; }
+    .up-params :global(.up-param-cells) { grid-template-columns: minmax(0, 1fr); }
+    .up-params :global(.up-param-input) { min-height: 44px; }
+    .up-params :global(.up-param-rm) { min-width: 44px; }
+    .up-rfc-parts { grid-template-columns: minmax(0, 1fr); }
+    .up-base summary, .up-rfc summary { padding: 0.2rem 0; }
   }
-
-  .up-empty { color: var(--color-text-muted); font-family: inherit; font-size: 0.85rem; }
-
-  .up-row-empty td { opacity: 0.55; }
-
-  .up-copy-cell { width: 64px; text-align: right; }
-
-  .up-section-title {
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: var(--color-text-secondary);
-    margin-bottom: 0.4rem;
-  }
-
-  .up-query-section { display: flex; flex-direction: column; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .up-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .up-status.error { color: #f87171; }
-  }
-  [data-theme="dark"] .up-status.success { color: #34d399; }
-  [data-theme="dark"] .up-status.error { color: #f87171; }
 </style>
