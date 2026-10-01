@@ -1,356 +1,894 @@
 ---
-// NumberBaseTool — reusable widget, no props needed
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// {name} fields are filled by the inline script. baseNames covers the four
+// common bases; every other base uses `baseN`.
+const STRINGS = {
+  en: {
+    inputBase: 'Input base', number: 'Number', placeholder: 'e.g. 255, 0xFF, 1111_0000, -42, 0.1',
+    baseNames: { 2: 'Binary', 8: 'Octal', 10: 'Decimal', 16: 'Hexadecimal' },
+    baseShort: { 2: 'Binary', 8: 'Octal', 10: 'Decimal', 16: 'Hex' },
+    baseN: 'Base {n}', otherBases: 'Other bases', outOther: 'Base',
+    copy: 'Copy', copied: 'Copied!', copyFail: 'Copy failed. Select the value and copy it by hand.', clear: 'Clear',
+    optGroup: 'Digit grouping', groupNone: 'None', groupUnderscore: '1111_0000', groupSpace: '1111 0000',
+    optPrefix: 'Prefix 0b / 0o / 0x', optLower: 'Lowercase a–z',
+    optWidth: 'Two\u2019s complement', widthOff: 'Off', widthBits: '{n}-bit', optSigned: 'Read input as signed',
+    twosBin: '{n}-bit binary', twosHex: '{n}-bit hex',
+    stepsSummary: 'Show the working', stepsTarget: 'Divide the decimal value by',
+    stepsExpand: 'Positional expansion, base {base} to decimal:', stepLine: '{digit} \u00d7 {base}^{power} = {product}', stepsSum: 'Sum = {sum}',
+    stepsDivide: 'Repeated division, decimal to base {base}:', divLine: '{dividend} \u00f7 {base} = {quotient}, remainder {remainder}', divRead: 'Remainders read from bottom to top: {result}',
+    stepsZero: 'The value is 0, so every base writes it as 0.', stepsTooLong: 'Steps are shown for integers of up to 64 digits.', stepsFraction: 'Steps cover the integer part. The fraction digits come from repeated multiplication by the base.',
+    okInt: 'Read as {baseName}: {bits} bits.', okPlain: 'Read as {baseName}.',
+    notePrefix: 'The {prefix} prefix was read as {baseName}.', notePrefixDigits: '\u201c{prefix}\u201d was read as two base-{base} digits, not as a prefix.',
+    noteHash: 'The leading # was ignored.', noteFullwidth: 'Full-width characters were read as ASCII.',
+    noteRepeat: 'Digits in parentheses repeat forever: 0.0(0011) means 0.000110011\u2026',
+    noteTruncated: 'A fraction marked \u2026 does not end within 64 digits; the digits shown are cut off, not rounded.',
+    noteSignedNeg: 'The {n}-bit pattern has its top bit set, so it was read as {value}.',
+    twosRange: 'Outside the {n}-bit range ({min} to {max}).', twosFraction: 'Two\u2019s complement needs an integer.',
+    twosInfo: '{n}-bit: unsigned {unsigned}, signed {signed}.',
+    err: {
+      invalidDigit: '\u201c{char}\u201d at position {pos} is not a base-{base} digit (allowed: {allowed}).',
+      hintHex: ' Hexadecimal? Choose base 16 or type 0x first.',
+      invalidChar: '\u201c{char}\u201d at position {pos} cannot appear in a number.',
+      sepPlace: 'Separator \u201c{char}\u201d at position {pos} must sit between two digits.',
+      comma: 'Comma at position {pos}: commas are read only as thousands separators in base 10 (1,000,000). Use . as the decimal point.',
+      secondPoint: 'Second decimal point at position {pos}.',
+      signPlace: 'Sign \u201c{char}\u201d at position {pos}: a sign can only come first.',
+      noDigits: 'No digits to convert.',
+      prefixMismatch: '{prefix} is the {prefixName} prefix, but the input base is {base}. Choose {prefixName} or Decimal, or delete the prefix.',
+      tooLong: 'The number has more than {max} digits.',
+      signedFraction: 'Signed (two\u2019s complement) input must be an integer.',
+      signedRange: '{value} is outside the signed {n}-bit range ({min} to {max}).',
+      signedWide: 'The input needs {bits} bits; a {n}-bit pattern has {n}.'
+    }
+  },
+  zh: {
+    inputBase: '输入进制', number: '数字', placeholder: '如 255、0xFF、1111_0000、-42、0.1',
+    baseNames: { 2: '二进制', 8: '八进制', 10: '十进制', 16: '十六进制' },
+    baseShort: { 2: '二进制', 8: '八进制', 10: '十进制', 16: '十六进制' },
+    baseN: '{n} 进制', otherBases: '其他进制', outOther: '进制',
+    copy: '复制', copied: '已复制！', copyFail: '复制失败，请手动选中数值复制。', clear: '清除',
+    optGroup: '数位分组', groupNone: '不分组', groupUnderscore: '1111_0000', groupSpace: '1111 0000',
+    optPrefix: '加前缀 0b / 0o / 0x', optLower: '字母小写',
+    optWidth: '补码', widthOff: '关', widthBits: '{n} 位', optSigned: '按有符号数读取输入',
+    twosBin: '{n} 位二进制', twosHex: '{n} 位十六进制',
+    stepsSummary: '显示计算过程', stepsTarget: '十进制值除以',
+    stepsExpand: '按权展开，{base} 进制转十进制：', stepLine: '{digit} \u00d7 {base}^{power} = {product}', stepsSum: '求和 = {sum}',
+    stepsDivide: '除基取余，十进制转 {base} 进制：', divLine: '{dividend} \u00f7 {base} = {quotient} 余 {remainder}', divRead: '余数从下往上读：{result}',
+    stepsZero: '值为 0，任何进制都写作 0。', stepsTooLong: '计算过程只对 64 位数字以内的整数显示。', stepsFraction: '过程只覆盖整数部分；小数部分按「乘基取整」得到。',
+    okInt: '按{baseName}读取：{bits} 个二进制位。', okPlain: '按{baseName}读取。',
+    notePrefix: '前缀 {prefix} 按{baseName}读取。', notePrefixDigits: '「{prefix}」按 {base} 进制的两个数字读取，不是前缀。',
+    noteHash: '开头的 # 已忽略。', noteFullwidth: '全角字符已按半角读取。',
+    noteRepeat: '括号内的数字无限循环：0.0(0011) 即 0.000110011…',
+    noteTruncated: '标 … 的小数在 64 位内没有结束，显示的数字是截断的，没有四舍五入。',
+    noteSignedNeg: '这个 {n} 位模式的最高位是 1，按有符号数读作 {value}。',
+    twosRange: '超出 {n} 位的范围（{min} 到 {max}）。', twosFraction: '补码只适用于整数。',
+    twosInfo: '{n} 位：无符号 {unsigned}，有符号 {signed}。',
+    err: {
+      invalidDigit: '第 {pos} 个字符「{char}」不是 {base} 进制的数字（可用：{allowed}）。',
+      hintHex: ' 如果是十六进制，请选 16 进制或在前面加 0x。',
+      invalidChar: '第 {pos} 个字符「{char}」不能出现在数字里。',
+      sepPlace: '第 {pos} 个字符是分隔符「{char}」，它只能夹在两个数字之间。',
+      comma: '第 {pos} 个字符是逗号：逗号只在十进制里作千位分隔符（1,000,000）。小数点请用 .。',
+      secondPoint: '第 {pos} 个字符是第二个小数点。',
+      signPlace: '第 {pos} 个字符是符号「{char}」，符号只能写在最前面。',
+      noDigits: '没有可转换的数字。',
+      prefixMismatch: '{prefix} 是{prefixName}前缀，但输入进制是 {base}。请改选{prefixName}或十进制，或删掉前缀。',
+      tooLong: '数字超过 {max} 位。',
+      signedFraction: '按有符号数（补码）读取时，输入必须是整数。',
+      signedRange: '{value} 超出 {n} 位有符号整数的范围（{min} 到 {max}）。',
+      signedWide: '输入需要 {bits} 个二进制位，{n} 位模式只有 {n} 位。'
+    }
+  },
+  ja: {
+    inputBase: '入力の基数', number: '数値', placeholder: '例：255、0xFF、1111_0000、-42、0.1',
+    baseNames: { 2: '2進数', 8: '8進数', 10: '10進数', 16: '16進数' },
+    baseShort: { 2: '2進数', 8: '8進数', 10: '10進数', 16: '16進数' },
+    baseN: '{n}進数', otherBases: 'その他の基数', outOther: '基数',
+    copy: 'コピー', copied: 'コピー済み！', copyFail: 'コピーできませんでした。値を選択して手動でコピーしてください。', clear: 'クリア',
+    optGroup: '桁区切り', groupNone: 'なし', groupUnderscore: '1111_0000', groupSpace: '1111 0000',
+    optPrefix: '接頭辞 0b / 0o / 0x', optLower: '英字を小文字に',
+    optWidth: '2の補数', widthOff: 'オフ', widthBits: '{n}ビット', optSigned: '入力を符号付きで読む',
+    twosBin: '{n}ビット 2進数', twosHex: '{n}ビット 16進数',
+    stepsSummary: '計算過程を表示', stepsTarget: '10進数の値を割る基数',
+    stepsExpand: '位取りの展開（{base}進数 → 10進数）：', stepLine: '{digit} \u00d7 {base}^{power} = {product}', stepsSum: '合計 = {sum}',
+    stepsDivide: '繰り返し割り算（10進数 → {base}進数）：', divLine: '{dividend} \u00f7 {base} = {quotient} 余り {remainder}', divRead: '余りを下から上へ読む：{result}',
+    stepsZero: '値は 0 なので、どの基数でも 0 です。', stepsTooLong: '計算過程は 64 桁以内の整数で表示します。', stepsFraction: '過程は整数部のみです。小数部は基数を掛ける操作の繰り返しで求めます。',
+    okInt: '{baseName}として読み取り：{bits} ビット。', okPlain: '{baseName}として読み取り。',
+    notePrefix: '接頭辞 {prefix} を{baseName}として読み取りました。', notePrefixDigits: '「{prefix}」は接頭辞ではなく{base}進数の 2 桁として読み取りました。',
+    noteHash: '先頭の # は無視しました。', noteFullwidth: '全角文字は半角として読み取りました。',
+    noteRepeat: '括弧内の数字は無限に繰り返します：0.0(0011) は 0.000110011…',
+    noteTruncated: '… の付いた小数は 64 桁以内で終わりません。表示した桁は切り捨てで、四捨五入していません。',
+    noteSignedNeg: 'この {n} ビットのパターンは最上位ビットが 1 なので、符号付きで {value} と読みました。',
+    twosRange: '{n} ビットの範囲（{min} ～ {max}）の外です。', twosFraction: '2の補数は整数にだけ使えます。',
+    twosInfo: '{n} ビット：符号なし {unsigned}、符号付き {signed}。',
+    err: {
+      invalidDigit: '{pos} 文字目の「{char}」は{base}進数の数字ではありません（使える文字：{allowed}）。',
+      hintHex: ' 16進数なら基数 16 を選ぶか、先頭に 0x を付けてください。',
+      invalidChar: '{pos} 文字目の「{char}」は数値に使えません。',
+      sepPlace: '{pos} 文字目の区切り「{char}」は数字と数字の間にしか置けません。',
+      comma: '{pos} 文字目のカンマ：カンマは 10 進数の 3 桁区切り（1,000,000）としてだけ読みます。小数点は . を使ってください。',
+      secondPoint: '{pos} 文字目は 2 つ目の小数点です。',
+      signPlace: '{pos} 文字目の符号「{char}」：符号は先頭にしか置けません。',
+      noDigits: '変換する数字がありません。',
+      prefixMismatch: '{prefix} は{prefixName}の接頭辞ですが、入力の基数は {base} です。{prefixName}か10進数を選ぶか、接頭辞を消してください。',
+      tooLong: '{max} 桁を超えています。',
+      signedFraction: '符号付き（2の補数）で読むときは整数を入力してください。',
+      signedRange: '{value} は符号付き {n} ビットの範囲（{min} ～ {max}）の外です。',
+      signedWide: '入力は {bits} ビット必要です。{n} ビットのパターンは {n} ビットしかありません。'
+    }
+  },
+  ko: {
+    inputBase: '입력 진법', number: '숫자', placeholder: '예: 255, 0xFF, 1111_0000, -42, 0.1',
+    baseNames: { 2: '2진수', 8: '8진수', 10: '10진수', 16: '16진수' },
+    baseShort: { 2: '2진수', 8: '8진수', 10: '10진수', 16: '16진수' },
+    baseN: '{n}진수', otherBases: '그 밖의 진법', outOther: '진법',
+    copy: '복사', copied: '복사됨!', copyFail: '복사하지 못했습니다. 값을 선택해 직접 복사하세요.', clear: '지우기',
+    optGroup: '자릿수 구분', groupNone: '없음', groupUnderscore: '1111_0000', groupSpace: '1111 0000',
+    optPrefix: '접두사 0b / 0o / 0x', optLower: '영문 소문자',
+    optWidth: '2의 보수', widthOff: '끄기', widthBits: '{n}비트', optSigned: '입력을 부호 있는 수로 읽기',
+    twosBin: '{n}비트 2진수', twosHex: '{n}비트 16진수',
+    stepsSummary: '계산 과정 보기', stepsTarget: '10진수 값을 나눌 진법',
+    stepsExpand: '자리값 전개({base}진수 → 10진수):', stepLine: '{digit} \u00d7 {base}^{power} = {product}', stepsSum: '합 = {sum}',
+    stepsDivide: '반복 나눗셈(10진수 → {base}진수):', divLine: '{dividend} \u00f7 {base} = {quotient} 나머지 {remainder}', divRead: '나머지를 아래에서 위로 읽기: {result}',
+    stepsZero: '값이 0이므로 어느 진법에서도 0입니다.', stepsTooLong: '계산 과정은 64자리 이하의 정수에만 표시합니다.', stepsFraction: '과정은 정수 부분만 다룹니다. 소수 부분은 진법을 곱하는 계산을 반복해 구합니다.',
+    okInt: '{baseName}로 읽음: {bits}비트.', okPlain: '{baseName}로 읽음.',
+    notePrefix: '접두사 {prefix}를 보고 {baseName}로 읽었습니다.', notePrefixDigits: '“{prefix}”는 접두사가 아니라 {base}진수 숫자 두 자리로 읽었습니다.',
+    noteHash: '앞의 #은 무시했습니다.', noteFullwidth: '전각 문자를 반각으로 읽었습니다.',
+    noteRepeat: '괄호 안의 숫자는 끝없이 반복됩니다: 0.0(0011)은 0.000110011…',
+    noteTruncated: '…가 붙은 소수는 64자리 안에서 끝나지 않습니다. 표시된 자리는 잘라 낸 값이며 반올림하지 않았습니다.',
+    noteSignedNeg: '이 {n}비트 패턴은 최상위 비트가 1이므로 부호 있는 수 {value}로 읽었습니다.',
+    twosRange: '{n}비트 범위({min} ~ {max})를 벗어납니다.', twosFraction: '2의 보수는 정수에만 쓸 수 있습니다.',
+    twosInfo: '{n}비트: 부호 없음 {unsigned}, 부호 있음 {signed}.',
+    err: {
+      invalidDigit: '{pos}번째 문자 “{char}”는 {base}진수 숫자가 아닙니다(사용 가능: {allowed}).',
+      hintHex: ' 16진수라면 16진법을 고르거나 앞에 0x를 붙이세요.',
+      invalidChar: '{pos}번째 문자 “{char}”는 숫자에 쓸 수 없습니다.',
+      sepPlace: '{pos}번째 구분 기호 “{char}”는 두 숫자 사이에만 올 수 있습니다.',
+      comma: '{pos}번째 문자는 쉼표입니다. 쉼표는 10진수의 세 자리 구분(1,000,000)으로만 읽습니다. 소수점은 .을 쓰세요.',
+      secondPoint: '{pos}번째 문자는 두 번째 소수점입니다.',
+      signPlace: '{pos}번째 부호 “{char}”: 부호는 맨 앞에만 올 수 있습니다.',
+      noDigits: '변환할 숫자가 없습니다.',
+      prefixMismatch: '{prefix}는 {prefixName} 접두사인데 입력 진법은 {base}입니다. {prefixName}나 10진수를 고르거나 접두사를 지우세요.',
+      tooLong: '{max}자리를 넘습니다.',
+      signedFraction: '부호 있는 수(2의 보수)로 읽으려면 정수를 입력하세요.',
+      signedRange: '{value}는 부호 있는 {n}비트 범위({min} ~ {max})를 벗어납니다.',
+      signedWide: '입력에 {bits}비트가 필요합니다. {n}비트 패턴은 {n}비트뿐입니다.'
+    }
+  }
+} as const;
+
+const T = STRINGS[lang];
+const otherBases = Array.from({ length: 35 }, (_, i) => i + 2).filter((b) => ![2, 8, 10, 16].includes(b));
+const allBases = Array.from({ length: 35 }, (_, i) => i + 2);
+const baseLabel = (b: number) => b in T.baseNames ? `${T.baseNames[b as 2 | 8 | 10 | 16]} (${b})` : T.baseN.replace('{n}', String(b));
+const widths = [8, 16, 32, 64, 128];
+const resultBases = [10, 2, 16, 8] as const;
 ---
+
 <div>
   <div class="nb-wrap">
-    <div class="nb-input-section">
-      <div class="nb-field">
-        <label for="nb-base-select" data-i18n="inputBase">Input Base</label>
-        <select id="nb-base-select">
-          <option value="2" data-i18n="binary">Binary (base 2)</option>
-          <option value="8" data-i18n="octal">Octal (base 8)</option>
-          <option value="10" selected data-i18n="decimal">Decimal (base 10)</option>
-          <option value="16" data-i18n="hexadecimal">Hexadecimal (base 16)</option>
+    <div class="nb-in-row">
+      <div class="nb-field nb-field-base">
+        <label class="tool-label" for="nb-base">{T.inputBase}</label>
+        <select id="nb-base" class="tool-input">
+          {[2, 8, 10, 16].map((b) => <option value={b} selected={b === 10}>{baseLabel(b)}</option>)}
+          <optgroup label={T.otherBases}>
+            {otherBases.map((b) => <option value={b}>{baseLabel(b)}</option>)}
+          </optgroup>
         </select>
       </div>
-
-      <div class="nb-field">
-        <label for="nb-input" data-i18n="number">Number</label>
-        <input
-          id="nb-input"
-          type="text"
-          placeholder="Enter a decimal number..."
-          spellcheck="false"
-          autocomplete="off"
-        />
+      <div class="nb-field nb-field-num">
+        <label class="tool-label" for="nb-input">{T.number}</label>
+        <input id="nb-input" class="tool-input" type="text" placeholder={T.placeholder} spellcheck="false" autocomplete="off" autocapitalize="off" />
       </div>
     </div>
 
-    <div id="nb-status" class="nb-status" aria-live="polite"></div>
+    <div id="nb-status" class="tool-status nb-status" aria-live="polite"></div>
 
     <div class="nb-results">
-      <div class="nb-result" data-base="2">
-        <label for="nb-out-bin" data-i18n="binary">Binary</label>
-        <div class="nb-input-row">
-          <input id="nb-out-bin" type="text" readonly spellcheck="false" />
-          <button class="btn-copy" data-copy="nb-out-bin" data-i18n="copy">Copy</button>
+      {resultBases.map((b) => (
+        <div class="nb-row" data-base={b}>
+          <span class="nb-key" id={`nb-key-${b}`}>{T.baseShort[b]}</span>
+          <output id={`nb-out-${b}`} class="nb-value" aria-labelledby={`nb-key-${b}`}></output>
+          <button class="btn-copy" type="button" data-copy={`nb-out-${b}`}>{T.copy}</button>
         </div>
+      ))}
+      <div class="nb-row nb-row-other" data-base="other">
+        <span class="nb-key">
+          <label class="nb-sr" for="nb-other-base">{T.outOther}</label>
+          <select id="nb-other-base" class="nb-other-select">
+            {allBases.map((b) => <option value={b} selected={b === 36}>{T.baseN.replace('{n}', String(b))}</option>)}
+          </select>
+        </span>
+        <output id="nb-out-other" class="nb-value" aria-label={T.outOther}></output>
+        <button class="btn-copy" type="button" data-copy="nb-out-other">{T.copy}</button>
       </div>
-
-      <div class="nb-result" data-base="8">
-        <label for="nb-out-oct" data-i18n="octal">Octal</label>
-        <div class="nb-input-row">
-          <input id="nb-out-oct" type="text" readonly spellcheck="false" />
-          <button class="btn-copy" data-copy="nb-out-oct" data-i18n="copy">Copy</button>
-        </div>
+      <div class="nb-row nb-twos" hidden>
+        <span class="nb-key" id="nb-key-twos-bin"></span>
+        <output id="nb-out-twos-bin" class="nb-value" aria-labelledby="nb-key-twos-bin"></output>
+        <button class="btn-copy" type="button" data-copy="nb-out-twos-bin">{T.copy}</button>
       </div>
-
-      <div class="nb-result" data-base="10">
-        <label for="nb-out-dec" data-i18n="decimal">Decimal</label>
-        <div class="nb-input-row">
-          <input id="nb-out-dec" type="text" readonly spellcheck="false" />
-          <button class="btn-copy" data-copy="nb-out-dec" data-i18n="copy">Copy</button>
-        </div>
+      <div class="nb-row nb-twos" hidden>
+        <span class="nb-key" id="nb-key-twos-hex"></span>
+        <output id="nb-out-twos-hex" class="nb-value" aria-labelledby="nb-key-twos-hex"></output>
+        <button class="btn-copy" type="button" data-copy="nb-out-twos-hex">{T.copy}</button>
       </div>
-
-      <div class="nb-result" data-base="16">
-        <label for="nb-out-hex" data-i18n="hexadecimal">Hexadecimal</label>
-        <div class="nb-input-row">
-          <input id="nb-out-hex" type="text" readonly spellcheck="false" />
-          <button class="btn-copy" data-copy="nb-out-hex" data-i18n="copy">Copy</button>
-        </div>
-      </div>
+      <p id="nb-twos-info" class="nb-twos-info" hidden></p>
     </div>
 
-    <div class="nb-actions">
-      <button id="nb-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+    <div class="nb-opts">
+      <label class="nb-opt">{T.optGroup}
+        <select id="nb-group" class="nb-small-select">
+          <option value="none">{T.groupNone}</option>
+          <option value="underscore">{T.groupUnderscore}</option>
+          <option value="space">{T.groupSpace}</option>
+        </select>
+      </label>
+      <label class="nb-opt"><input type="checkbox" id="nb-prefix" /> {T.optPrefix}</label>
+      <label class="nb-opt"><input type="checkbox" id="nb-lower" /> {T.optLower}</label>
+      <label class="nb-opt">{T.optWidth}
+        <select id="nb-width" class="nb-small-select">
+          <option value="0">{T.widthOff}</option>
+          {widths.map((w) => <option value={w}>{T.widthBits.replace('{n}', String(w))}</option>)}
+        </select>
+      </label>
+      <label class="nb-opt"><input type="checkbox" id="nb-signed" disabled /> {T.optSigned}</label>
+      <button id="nb-clear" class="btn-ghost nb-clear" type="button">{T.clear}</button>
     </div>
+
+    <details class="nb-steps" id="nb-steps">
+      <summary>{T.stepsSummary}</summary>
+      <label class="nb-opt nb-steps-target">{T.stepsTarget}
+        <select id="nb-steps-base" class="nb-small-select">
+          {allBases.map((b) => <option value={b} selected={b === 2}>{b}</option>)}
+        </select>
+      </label>
+      <pre id="nb-steps-out" class="nb-steps-out"></pre>
+    </details>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          inputBase: 'Input Base', number: 'Number', copy: 'Copy', copied: 'Copied!', clear: 'Clear',
-          binary: 'Binary (base 2)', octal: 'Octal (base 8)', decimal: 'Decimal (base 10)', hexadecimal: 'Hexadecimal (base 16)',
-          converted: 'Converted.',
-          invalidInput: function(base) { return 'Invalid input for base ' + base + '.'; },
-          placeholders: {
-            '2': 'Enter a binary number (0-1)...',
-            '8': 'Enter an octal number (0-7)...',
-            '10': 'Enter a decimal number...',
-            '16': 'Enter a hex number (0-9, A-F)...'
-          }
-        },
-        zh: {
-          inputBase: '输入进制', number: '数字', copy: '复制', copied: '已复制！', clear: '清除',
-          binary: '二进制 (base 2)', octal: '八进制 (base 8)', decimal: '十进制 (base 10)', hexadecimal: '十六进制 (base 16)',
-          converted: '已转换。',
-          invalidInput: function(base) { return '无效的 ' + base + ' 进制输入。'; },
-          placeholders: {
-            '2': '输入二进制数（0-1）...',
-            '8': '输入八进制数（0-7）...',
-            '10': '输入十进制数...',
-            '16': '输入十六进制数（0-9, A-F）...'
-          }
-        },
-        ja: {
-          inputBase: '入力基数', number: '数値', copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
-          binary: '2進数 (base 2)', octal: '8進数 (base 8)', decimal: '10進数 (base 10)', hexadecimal: '16進数 (base 16)',
-          converted: '変換しました。',
-          invalidInput: function(base) { return 'base ' + base + ' の無効な入力です。'; },
-          placeholders: {
-            '2': '2進数を入力（0-1）...',
-            '8': '8進数を入力（0-7）...',
-            '10': '10進数を入力...',
-            '16': '16進数を入力（0-9, A-F）...'
-          }
-        },
-        ko: {
-          inputBase: '입력 진법', number: '숫자', copy: '복사', copied: '복사됨!', clear: '지우기',
-          binary: '2진수 (base 2)', octal: '8진수 (base 8)', decimal: '10진수 (base 10)', hexadecimal: '16진수 (base 16)',
-          converted: '변환 완료.',
-          invalidInput: function(base) { return base + '진법에 유효하지 않은 입력입니다.'; },
-          placeholders: {
-            '2': '2진수를 입력하세요 (0-1)...',
-            '8': '8진수를 입력하세요 (0-7)...',
-            '10': '10진수를 입력하세요...',
-            '16': '16진수를 입력하세요 (0-9, A-F)...'
-          }
-        }
-      };
+      /* ── engine:start ── */
+      var DIGITS = '0123456789abcdefghijklmnopqrstuvwxyz';
+      var MAX_DIGITS = 20000;
+      var MAX_FRAC = 64;
+      var PREFIX_BASE = { b: 2, o: 8, x: 16 };
+      var SEPARATORS = { ' ': 1, '\t': 1, '\n': 1, '\r': 1, '_': 1, "'": 1 };
+      var SPACES = { '\u00a0': 1, '\u2007': 1, '\u2009': 1, '\u202f': 1, '\u205f': 1, '\u3000': 1 };
+      var MINUS = { '\u2212': 1, '\u2010': 1, '\u2011': 1, '\u2012': 1, '\u2013': 1, '\ufe63': 1 };
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
-
-      var inputEl = document.getElementById('nb-input');
-      var baseSelect = document.getElementById('nb-base-select');
-      var statusEl = document.getElementById('nb-status');
-      var outBin = document.getElementById('nb-out-bin');
-      var outOct = document.getElementById('nb-out-oct');
-      var outDec = document.getElementById('nb-out-dec');
-      var outHex = document.getElementById('nb-out-hex');
-
-      var validators = {
-        '2': /^-?[01]+$/,
-        '8': /^-?[0-7]+$/,
-        '10': /^-?[0-9]+$/,
-        '16': /^-?[0-9a-fA-F]+$/,
-      };
-
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'nb-status ' + (isError ? 'error' : 'success');
+      function fill(tpl, fields) {
+        return String(tpl).replace(/\{(\w+)\}/g, function (m, k) {
+          return fields && fields[k] !== undefined ? String(fields[k]) : m;
+        });
       }
 
-      function clearStatus() {
-        statusEl.textContent = '';
-        statusEl.className = 'nb-status';
+      // Map full-width ASCII (U+FF01–FF5E), wide spaces and minus signs to
+      // ASCII. Other characters are left alone, so superscripts and circled
+      // digits are rejected instead of silently read as digits.
+      function asciiChar(ch) {
+        var cp = ch.codePointAt(0);
+        if (cp >= 0xff01 && cp <= 0xff5e) return { c: String.fromCharCode(cp - 0xfee0), wide: true };
+        if (SPACES[ch]) return { c: ' ', wide: cp === 0x3000 };
+        if (MINUS[ch]) return { c: '-', wide: cp === 0xfe63 };
+        return { c: ch, wide: false };
+      }
+
+      function digitValue(c) {
+        var i = DIGITS.indexOf(c.toLowerCase());
+        return c.length === 1 && i >= 0 ? i : -1;
+      }
+
+      function allowedDigits(base) {
+        if (base <= 10) return '0\u2013' + (base - 1);
+        return '0\u20139, A\u2013' + DIGITS.charAt(base - 1).toUpperCase();
+      }
+
+      function parseDigits(s, base) {
+        var B = BigInt(base);
+        var chunk = 1, size = base;
+        while (size * base < 9007199254740991 && chunk < 15) { size *= base; chunk++; }
+        var value = 0n;
+        for (var i = 0; i < s.length; i += chunk) {
+          var part = s.slice(i, i + chunk);
+          value = value * (B ** BigInt(part.length)) + BigInt(parseInt(part, base));
+        }
+        return value;
+      }
+
+      function gcd(a, b) {
+        while (b) { var t = a % b; a = b; b = t; }
+        return a;
+      }
+
+      function bitLength(n) {
+        if (n < 0n) n = -n;
+        return n === 0n ? 0 : n.toString(2).length;
+      }
+
+      // Parse `raw` as a number in `base` (2–36). Returns
+      //   { empty: true } for blank input,
+      //   { error: { code, ...fields } }, or
+      //   { n, d, readBase, intDigits, fracDigits, notes }
+      // where the value is the reduced fraction n / d (d > 0).
+      // opts.signedWidth > 0 reads a non-negative input as an n-bit two's
+      // complement pattern.
+      function parseNumber(raw, base, opts) {
+        opts = opts || {};
+        var chars = [];
+        var wide = false;
+        var pos = 0;
+        for (var ch of String(raw)) {
+          pos++;
+          var a = asciiChar(ch);
+          if (a.wide) wide = true;
+          chars.push({ c: a.c, orig: ch, pos: pos });
+        }
+        var isSpace = function (c) { return c === ' ' || c === '\t' || c === '\n' || c === '\r'; };
+        var start = 0, end = chars.length;
+        while (start < end && isSpace(chars[start].c)) start++;
+        while (end > start && isSpace(chars[end - 1].c)) end--;
+        if (start === end) return { empty: true };
+
+        var notes = [];
+        var i = start;
+        var neg = false;
+        if (chars[i].c === '+' || chars[i].c === '-') { neg = chars[i].c === '-'; i++; }
+
+        var readBase = base;
+        var afterPrefix = false;
+        if (i + 1 < end && chars[i].c === '0' && PREFIX_BASE[chars[i + 1].c.toLowerCase()]) {
+          var letter = chars[i + 1].c.toLowerCase();
+          var pBase = PREFIX_BASE[letter];
+          var prefix = '0' + letter;
+          if (pBase === base) {
+            i += 2; afterPrefix = true;
+          } else if (base === 10) {
+            readBase = pBase; i += 2; afterPrefix = true;
+            notes.push({ code: 'prefix', prefix: prefix, base: pBase });
+          } else if (digitValue(letter) < base) {
+            notes.push({ code: 'prefixDigits', prefix: chars[i].orig + chars[i + 1].orig, base: base });
+          } else {
+            return { error: { code: 'prefixMismatch', prefix: prefix, prefixBase: pBase, base: base, pos: chars[i].pos } };
+          }
+        } else if (base === 16 && i < end && chars[i].c === '#') {
+          i++;
+          notes.push({ code: 'hash' });
+        }
+
+        var intDigits = '', fracDigits = '';
+        var part = 'int';
+        var prevDigit = false;
+        var pendingSep = null;
+        var commas = [];
+        var intSepFree = 0;
+        for (; i < end; i++) {
+          var c = chars[i].c;
+          var v = digitValue(c);
+          if (v >= 0 && v < readBase) {
+            if (part === 'int') intDigits += c.toLowerCase(); else fracDigits += c.toLowerCase();
+            prevDigit = true; pendingSep = null; afterPrefix = false;
+            continue;
+          }
+          if (SEPARATORS[c] || c === ',') {
+            if (c === ',' && (readBase !== 10 || part === 'frac')) {
+              return { error: { code: 'comma', pos: chars[i].pos } };
+            }
+            var okAfterPrefix = afterPrefix && c === '_';
+            if ((!prevDigit && !okAfterPrefix) || pendingSep) {
+              return { error: { code: 'sepPlace', char: chars[i].orig, pos: chars[i].pos } };
+            }
+            if (c === ',') commas.push({ at: intDigits.length, pos: chars[i].pos });
+            pendingSep = chars[i]; prevDigit = false; afterPrefix = false;
+            continue;
+          }
+          if (c === '.') {
+            if (part === 'frac') return { error: { code: 'secondPoint', pos: chars[i].pos } };
+            if (pendingSep) return { error: { code: 'sepPlace', char: pendingSep.orig, pos: pendingSep.pos } };
+            part = 'frac'; prevDigit = false; afterPrefix = false;
+            continue;
+          }
+          if (c === '+' || c === '-') return { error: { code: 'signPlace', char: chars[i].orig, pos: chars[i].pos } };
+          if (v >= 0) {
+            return { error: { code: 'invalidDigit', char: chars[i].orig, pos: chars[i].pos, base: readBase, hex: readBase === 10 && v < 16 } };
+          }
+          return { error: { code: 'invalidChar', char: chars[i].orig, pos: chars[i].pos } };
+        }
+        if (pendingSep) return { error: { code: 'sepPlace', char: pendingSep.orig, pos: pendingSep.pos } };
+        if (!intDigits && !fracDigits) return { error: { code: 'noDigits' } };
+        if (intDigits.length + fracDigits.length > MAX_DIGITS) return { error: { code: 'tooLong', max: MAX_DIGITS } };
+        if (commas.length) {
+          var prevAt = 0;
+          for (var k = 0; k < commas.length; k++) {
+            var len = commas[k].at - prevAt;
+            if ((k === 0 && (len < 1 || len > 3)) || (k > 0 && len !== 3)) return { error: { code: 'comma', pos: commas[k].pos } };
+            prevAt = commas[k].at;
+          }
+          if (intDigits.length - prevAt !== 3) return { error: { code: 'comma', pos: commas[commas.length - 1].pos } };
+        }
+        if (wide) notes.unshift({ code: 'fullwidth' });
+
+        var ip = intDigits ? parseDigits(intDigits, readBase) : 0n;
+        var n, d;
+        if (fracDigits) {
+          d = BigInt(readBase) ** BigInt(fracDigits.length);
+          n = ip * d + parseDigits(fracDigits, readBase);
+          var g = gcd(n, d);
+          if (g > 1n) { n /= g; d /= g; }
+        } else {
+          n = ip; d = 1n;
+        }
+        if (neg) n = -n;
+
+        var w = opts.signedWidth || 0;
+        if (w) {
+          var W = BigInt(w);
+          var min = -(1n << (W - 1n)), max = (1n << (W - 1n)) - 1n;
+          if (fracDigits) return { error: { code: 'signedFraction' } };
+          if (n < 0n) {
+            if (n < min) return { error: { code: 'signedRange', value: n.toString(), n: w, min: min.toString(), max: max.toString() } };
+          } else if (bitLength(n) > w) {
+            return { error: { code: 'signedWide', bits: bitLength(n), n: w } };
+          } else if (n > max) {
+            n -= 1n << W;
+            notes.push({ code: 'signedNeg', n: w, value: n.toString() });
+          }
+        }
+        return { n: n, d: d, readBase: readBase, intDigits: intDigits || '0', fracDigits: fracDigits, notes: notes };
+      }
+
+      function groupDigits(s, size, sep) {
+        if (!sep || s.length <= size) return s;
+        var out = '';
+        var first = s.length % size || size;
+        out = s.slice(0, first);
+        for (var i = first; i < s.length; i += size) out += sep + s.slice(i, i + size);
+        return out;
+      }
+
+      function groupSizeFor(base) { return base === 10 ? 3 : 4; }
+
+      // Write n / d in `base`. opts: { group: 'none' | 'underscore' | 'space',
+      // prefix: bool (0b / 0o / 0x for bases 2, 8, 16), lower: bool }.
+      // A repeating fraction is written with the repeating block in
+      // parentheses; a fraction that neither ends nor repeats within MAX_FRAC
+      // digits is cut and marked with an ellipsis.
+      function formatValue(n, d, base, opts) {
+        opts = opts || {};
+        var neg = n < 0n;
+        var a = neg ? -n : n;
+        var ip = a / d;
+        var r = a % d;
+        var s = ip.toString(base);
+        var sep = opts.group === 'underscore' ? '_' : opts.group === 'space' ? ' ' : '';
+        s = groupDigits(s, groupSizeFor(base), sep);
+        var frac = '', repeating = false, truncated = false;
+        if (r !== 0n) {
+          var B = BigInt(base);
+          var seen = new Map();
+          var digits = '';
+          while (r !== 0n) {
+            var key = r.toString(36);
+            if (seen.has(key)) {
+              var at = seen.get(key);
+              digits = digits.slice(0, at) + '(' + digits.slice(at) + ')';
+              repeating = true;
+              break;
+            }
+            if (digits.length >= MAX_FRAC) { digits += '\u2026'; truncated = true; break; }
+            seen.set(key, digits.length);
+            r *= B;
+            digits += DIGITS.charAt(Number(r / d));
+            r %= d;
+          }
+          frac = '.' + digits;
+        }
+        var text = s + frac;
+        text = opts.lower ? text : text.toUpperCase();
+        var prefix = opts.prefix ? ({ 2: '0b', 8: '0o', 16: '0x' })[base] || '' : '';
+        return { text: (neg ? '-' : '') + prefix + text, repeating: repeating, truncated: truncated };
+      }
+
+      // N-bit two's complement pattern of an integer value. Accepts
+      // -2^(N-1) .. 2^N - 1 (the signed and the unsigned range together).
+      function twosComplement(n, d, width, opts) {
+        opts = opts || {};
+        if (d !== 1n) return { error: 'fraction' };
+        var W = BigInt(width);
+        var min = -(1n << (W - 1n));
+        var max = (1n << W) - 1n;
+        if (n < min || n > max) return { error: 'range', min: min.toString(), max: max.toString() };
+        var u = BigInt.asUintN(width, n);
+        var sep = opts.group === 'underscore' ? '_' : opts.group === 'space' ? ' ' : '';
+        var bin = groupDigits(u.toString(2).padStart(width, '0'), 4, sep);
+        var hex = groupDigits(u.toString(16).padStart(width / 4, '0'), 4, sep);
+        if (!opts.lower) hex = hex.toUpperCase();
+        if (opts.prefix) { bin = '0b' + bin; hex = '0x' + hex; }
+        return { bin: bin, hex: hex, unsigned: u.toString(), signed: BigInt.asIntN(width, n).toString() };
+      }
+
+      // Positional expansion of an integer digit string to decimal.
+      function stepsToDecimal(digits, base) {
+        if (digits.length > 64) return null;
+        var B = BigInt(base);
+        var terms = [];
+        var sum = 0n;
+        for (var i = 0; i < digits.length; i++) {
+          var power = digits.length - 1 - i;
+          var v = BigInt(digitValue(digits.charAt(i)));
+          var product = v * B ** BigInt(power);
+          sum += product;
+          terms.push({ digit: digits.charAt(i).toUpperCase(), power: power, product: product.toString() });
+        }
+        return { terms: terms, sum: sum.toString() };
+      }
+
+      // Repeated division of a non-negative integer by `base`.
+      function stepsFromDecimal(n, base) {
+        if (n < 0n) n = -n;
+        if (n.toString(10).length > 64) return null;
+        var B = BigInt(base);
+        var rows = [];
+        while (n > 0n) {
+          var q = n / B, r = n % B;
+          rows.push({ dividend: n.toString(), quotient: q.toString(), remainder: r.toString(), digit: DIGITS.charAt(Number(r)).toUpperCase() });
+          n = q;
+        }
+        return { rows: rows, result: rows.map(function (x) { return x.digit; }).reverse().join('') || '0' };
+      }
+      /* ── engine:end ── */
+
+      var SLUG = 'number-base';
+      var $ = function (id) { return document.getElementById(id); };
+      var inputEl = $('nb-input');
+      var baseEl = $('nb-base');
+      var statusEl = $('nb-status');
+      var otherBaseEl = $('nb-other-base');
+      var groupEl = $('nb-group');
+      var prefixEl = $('nb-prefix');
+      var lowerEl = $('nb-lower');
+      var widthEl = $('nb-width');
+      var signedEl = $('nb-signed');
+      var stepsEl = $('nb-steps');
+      var stepsBaseEl = $('nb-steps-base');
+      var stepsOut = $('nb-steps-out');
+      var twosRows = document.querySelectorAll('.nb-twos');
+      var twosInfo = $('nb-twos-info');
+      var outs = { 10: $('nb-out-10'), 2: $('nb-out-2'), 16: $('nb-out-16'), 8: $('nb-out-8') };
+      var last = null;
+
+      function baseName(b) { return t.baseNames[b] || fill(t.baseN, { n: b }); }
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg;
+        statusEl.className = 'tool-status nb-status' + (kind ? ' ' + kind : '');
+      }
+
+      function errorText(e) {
+        var f = {};
+        for (var k in e) f[k] = e[k];
+        if (e.code === 'invalidDigit') f.allowed = allowedDigits(e.base);
+        if (e.code === 'prefixMismatch') f.prefixName = baseName(e.prefixBase);
+        var msg = fill(t.err[e.code], f);
+        if (e.code === 'invalidDigit' && e.hex) msg += t.err.hintHex;
+        return msg;
+      }
+
+      function noteText(nt) {
+        switch (nt.code) {
+          case 'fullwidth': return t.noteFullwidth;
+          case 'hash': return t.noteHash;
+          case 'prefix': return fill(t.notePrefix, { prefix: nt.prefix, baseName: baseName(nt.base) });
+          case 'prefixDigits': return fill(t.notePrefixDigits, nt);
+          case 'signedNeg': return fill(t.noteSignedNeg, nt);
+        }
+        return '';
+      }
+
+      function readOpts() {
+        return { group: groupEl.value, prefix: prefixEl.checked, lower: lowerEl.checked };
+      }
+
+      function saveState() {
+        if (!window.ztPersist) return;
+        window.ztPersist.save(SLUG, {
+          base: baseEl.value, other: otherBaseEl.value, group: groupEl.value, prefix: prefixEl.checked,
+          lower: lowerEl.checked, width: widthEl.value, signed: signedEl.checked, steps: stepsBaseEl.value
+        });
+      }
+
+      function loadState() {
+        var s = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+        var setSel = function (el, v) { if (v !== undefined && el.querySelector('option[value="' + v + '"]')) el.value = String(v); };
+        setSel(baseEl, s.base); setSel(otherBaseEl, s.other); setSel(groupEl, s.group);
+        setSel(widthEl, s.width); setSel(stepsBaseEl, s.steps);
+        prefixEl.checked = !!s.prefix; lowerEl.checked = !!s.lower; signedEl.checked = !!s.signed;
       }
 
       function clearOutputs() {
-        outBin.value = '';
-        outOct.value = '';
-        outDec.value = '';
-        outHex.value = '';
+        Object.keys(outs).forEach(function (b) { outs[b].textContent = ''; });
+        $('nb-out-other').textContent = '';
+        $('nb-out-twos-bin').textContent = '';
+        $('nb-out-twos-hex').textContent = '';
+        twosInfo.hidden = true;
+        stepsOut.textContent = '';
+        last = null;
       }
 
-      function highlightActiveBase(base) {
-        document.querySelectorAll('.nb-result').forEach(function (el) {
-          el.classList.toggle('nb-active', el.getAttribute('data-base') === base);
+      function highlight(readBase) {
+        document.querySelectorAll('.nb-row').forEach(function (row) {
+          var b = row.getAttribute('data-base');
+          var on = b === String(readBase) || (b === 'other' && otherBaseEl.value === String(readBase) && !outs[readBase]);
+          row.classList.toggle('nb-active', on);
         });
       }
 
-      function bigIntToBase(n, base) {
-        if (n === 0n) return '0';
-        var negative = n < 0n;
-        if (negative) n = -n;
-        var digits = '';
-        var chars = '0123456789ABCDEF';
-        var b = BigInt(base);
-        while (n > 0n) {
-          digits = chars[Number(n % b)] + digits;
-          n = n / b;
+      function renderSteps() {
+        if (!last || !stepsEl.open) { if (!last) stepsOut.textContent = ''; return; }
+        var lines = [];
+        var r = last;
+        if (r.n === 0n) { stepsOut.textContent = t.stepsZero; return; }
+        if (r.readBase !== 10) {
+          var exp = stepsToDecimal(r.intDigits.replace(/^0+(?=.)/, ''), r.readBase);
+          if (!exp) { stepsOut.textContent = t.stepsTooLong; return; }
+          lines.push(fill(t.stepsExpand, { base: r.readBase }));
+          exp.terms.forEach(function (x) { lines.push('  ' + fill(t.stepLine, { digit: x.digit, base: r.readBase, power: x.power, product: x.product })); });
+          lines.push('  ' + fill(t.stepsSum, { sum: exp.sum }));
+          lines.push('');
         }
-        return negative ? '-' + digits : digits;
+        var target = Number(stepsBaseEl.value);
+        var ip = (r.n < 0n ? -r.n : r.n) / r.d;
+        var div = stepsFromDecimal(ip, target);
+        if (!div) { stepsOut.textContent = t.stepsTooLong; return; }
+        if (target !== 10 && target !== r.readBase) {
+          lines.push(fill(t.stepsDivide, { base: target }));
+          div.rows.forEach(function (x) { lines.push('  ' + fill(t.divLine, { dividend: x.dividend, base: target, quotient: x.quotient, remainder: x.remainder })); });
+          lines.push('  ' + fill(t.divRead, { result: div.result }));
+        }
+        if (r.d !== 1n) { lines.push(''); lines.push(t.stepsFraction); }
+        stepsOut.textContent = lines.join('\n').trim();
+      }
+
+      var trackTimer = null, lastTracked = '';
+      function track(raw) {
+        clearTimeout(trackTimer);
+        trackTimer = setTimeout(function () {
+          if (raw === lastTracked) return;
+          lastTracked = raw;
+          window.trackTool && window.trackTool('number_base', 'convert');
+        }, 1500);
       }
 
       function convert() {
-        var raw = inputEl.value.trim();
-        if (!raw) {
-          clearOutputs();
-          clearStatus();
-          return;
+        var base = Number(baseEl.value);
+        var width = Number(widthEl.value);
+        signedEl.disabled = !width;
+        var signedWidth = width && signedEl.checked ? width : 0;
+        var r = parseNumber(inputEl.value, base, { signedWidth: signedWidth });
+        twosRows.forEach(function (row) { row.hidden = !width; });
+        if (width) {
+          $('nb-key-twos-bin').textContent = fill(t.twosBin, { n: width });
+          $('nb-key-twos-hex').textContent = fill(t.twosHex, { n: width });
         }
+        if (r.empty) { clearOutputs(); setStatus('', ''); highlight(base); return; }
+        if (r.error) { clearOutputs(); setStatus(errorText(r.error), 'error'); highlight(base); return; }
 
-        var base = baseSelect.value;
-
-        // Strip common prefixes for convenience
-        var cleaned = raw;
-        if (base === '16') cleaned = cleaned.replace(/^0x/i, '');
-        if (base === '2') cleaned = cleaned.replace(/^0b/i, '');
-        if (base === '8') cleaned = cleaned.replace(/^0o/i, '');
-
-        if (!validators[base].test(cleaned)) {
-          clearOutputs();
-          setStatus(t.invalidInput(base), true);
-          return;
+        last = r;
+        var o = readOpts();
+        var repeating = false, truncated = false;
+        function put(el, b) {
+          var f = formatValue(r.n, r.d, b, o);
+          el.textContent = f.text;
+          repeating = repeating || f.repeating;
+          truncated = truncated || f.truncated;
         }
+        Object.keys(outs).forEach(function (b) { put(outs[b], Number(b)); });
+        put($('nb-out-other'), Number(otherBaseEl.value));
 
-        try {
-          // Parse using BigInt for arbitrary precision
-          var isNegative = cleaned.startsWith('-');
-          var abs = isNegative ? cleaned.slice(1) : cleaned;
-          var value = BigInt(0);
-          var b = BigInt(parseInt(base));
-          for (var i = 0; i < abs.length; i++) {
-            var ch = abs[i].toUpperCase();
-            var digit = ch >= '0' && ch <= '9' ? ch.charCodeAt(0) - 48 : ch.charCodeAt(0) - 55;
-            value = value * b + BigInt(digit);
+        if (width) {
+          var tc = twosComplement(r.n, r.d, width, o);
+          if (tc.error) {
+            $('nb-out-twos-bin').textContent = '';
+            $('nb-out-twos-hex').textContent = '';
+            twosInfo.textContent = tc.error === 'fraction' ? t.twosFraction : fill(t.twosRange, { n: width, min: tc.min, max: tc.max });
+          } else {
+            $('nb-out-twos-bin').textContent = tc.bin;
+            $('nb-out-twos-hex').textContent = tc.hex;
+            twosInfo.textContent = fill(t.twosInfo, { n: width, unsigned: tc.unsigned, signed: tc.signed });
           }
-          if (isNegative) value = -value;
-
-          outBin.value = bigIntToBase(value, 2);
-          outOct.value = bigIntToBase(value, 8);
-          outDec.value = value.toString(10);
-          outHex.value = bigIntToBase(value, 16);
-
-          setStatus(t.converted, false);
-          window.trackTool && window.trackTool('number_base', 'convert');
-        } catch (e) {
-          clearOutputs();
-          setStatus('Error: ' + e.message, true);
+          twosInfo.hidden = false;
+        } else {
+          twosInfo.hidden = true;
         }
+
+        var signedRead = r.notes.some(function (nt) { return nt.code === 'signedNeg'; });
+        var parts = [r.d === 1n && !signedRead ? fill(t.okInt, { baseName: baseName(r.readBase), bits: bitLength(r.n) }) : fill(t.okPlain, { baseName: baseName(r.readBase) })];
+        r.notes.forEach(function (nt) { parts.push(noteText(nt)); });
+        if (repeating) parts.push(t.noteRepeat);
+        if (truncated) parts.push(t.noteTruncated);
+        setStatus(parts.join(' '), r.notes.length || repeating || truncated ? 'info' : 'success');
+        highlight(r.readBase);
+        renderSteps();
+        track(inputEl.value);
       }
 
+      function onOption() { saveState(); convert(); }
+
       inputEl.addEventListener('input', convert);
-
-      baseSelect.addEventListener('change', function () {
-        inputEl.placeholder = t.placeholders[this.value];
-        highlightActiveBase(this.value);
-        convert();
+      [baseEl, otherBaseEl, groupEl, prefixEl, lowerEl, widthEl, signedEl].forEach(function (el) {
+        el.addEventListener('change', onOption);
       });
+      stepsBaseEl.addEventListener('change', function () { saveState(); renderSteps(); });
+      stepsEl.addEventListener('toggle', renderSteps);
 
-      document.getElementById('nb-clear').addEventListener('click', function () {
+      $('nb-clear').addEventListener('click', function () {
         inputEl.value = '';
-        clearOutputs();
-        clearStatus();
+        convert();
         inputEl.focus();
       });
 
-      document.querySelectorAll('.nb-wrap .btn-copy[data-copy]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var id = btn.getAttribute('data-copy');
-          var val = document.getElementById(id).value;
-          if (!val) return;
-          navigator.clipboard.writeText(val).then(function () {
-            btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = t.copy; }, 1500);
-          });
-          window.trackTool && window.trackTool('number_base', 'copy');
-        });
-      });
-
-      // Keyboard shortcut: Ctrl/Cmd+K to clear
+      // The page-wide Ctrl/Cmd+L shortcut empties the text input; refresh the
+      // outputs and status after it runs.
       document.addEventListener('keydown', function (e) {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-          var active = document.activeElement;
-          if (active && active.closest('.nb-wrap')) {
-            e.preventDefault();
-            document.getElementById('nb-clear').click();
-          }
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
+          setTimeout(function () { if (!inputEl.value) convert(); }, 0);
         }
       });
 
-      // Init
-      inputEl.placeholder = t.placeholders[baseSelect.value];
-      highlightActiveBase(baseSelect.value);
+      function copyText(text) {
+        if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+        return new Promise(function (resolve, reject) {
+          var ta = document.createElement('textarea');
+          ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+          document.body.removeChild(ta);
+          ok ? resolve() : reject(new Error('copy'));
+        });
+      }
+
+      document.querySelectorAll('.nb-wrap .btn-copy[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var val = $(btn.getAttribute('data-copy')).textContent;
+          if (!val) return;
+          copyText(val).then(function () {
+            btn.textContent = t.copied;
+            setTimeout(function () { btn.textContent = t.copy; }, 1500);
+            window.trackTool && window.trackTool('number_base', 'copy');
+          }, function () { setStatus(t.copyFail, 'error'); });
+        });
+      });
+
+      loadState();
+      convert();
     })();
   </script>
 </div>
 
 <style>
-  .nb-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .nb-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  .nb-input-section { display: flex; flex-direction: column; gap: 0.75rem; }
+  .nb-in-row {
+    display: grid;
+    grid-template-columns: minmax(10rem, 13rem) 1fr;
+    gap: 0.6rem;
+    align-items: end;
+  }
 
   .nb-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .nb-field .tool-input { width: 100%; }
+  #nb-input { font-size: 1rem; }
 
-  .nb-field label {
+  .nb-status { overflow-wrap: anywhere; }
+
+  .nb-results { display: flex; flex-direction: column; gap: 0.4rem; }
+
+  .nb-row {
+    display: grid;
+    grid-template-columns: 7.5rem 1fr auto;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.3rem 0.4rem 0.3rem 0.75rem;
+    min-height: 44px;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .nb-row[hidden] { display: none; }
+
+  .nb-row.nb-active { box-shadow: inset 0 0 0 1px var(--color-primary); }
+  .nb-row.nb-active .nb-key { color: var(--color-primary); }
+
+  .nb-key {
     font-size: 0.82rem;
     font-weight: 600;
     color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
-  .nb-field select,
-  .nb-field input {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+  .nb-value {
     font-family: var(--font-mono);
-    font-size: 0.9rem;
-    background: var(--color-bg-secondary);
+    font-size: 0.95rem;
     color: var(--color-text);
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    user-select: all;
   }
 
-  .nb-field select:focus,
-  .nb-field input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
-
-  .nb-results { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .nb-result { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .nb-result label {
+  .nb-other-select,
+  .nb-small-select {
+    font: inherit;
     font-size: 0.82rem;
+    padding: 0.2rem 0.3rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .nb-other-select:focus-visible,
+  .nb-small-select:focus-visible,
+  .nb-steps summary:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .nb-twos-info {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    overflow-wrap: anywhere;
+  }
+
+  .nb-opts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+  }
+
+  .nb-opt { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .nb-clear { margin-left: auto; }
+
+  .nb-steps summary {
+    cursor: pointer;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
-  .nb-result.nb-active label {
-    color: var(--color-primary);
-  }
+  .nb-steps-target { margin: 0.5rem 0; font-size: 0.85rem; color: var(--color-text-secondary); }
 
-  .nb-input-row { display: flex; gap: 0.5rem; }
-
-  .nb-input-row input {
-    flex: 1;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+  .nb-steps-out {
+    margin: 0;
+    padding: 0.75rem;
+    max-height: 22rem;
+    overflow: auto;
     font-family: var(--font-mono);
-    font-size: 0.9rem;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
-    color: var(--color-text);
   }
 
-  .nb-result.nb-active .nb-input-row input {
-    border-color: var(--color-primary);
+  .nb-steps-out:empty { display: none; }
+
+  .nb-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
-  .nb-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-
-  .nb-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .nb-status.success { color: #057a55; }
-  .nb-status.error { color: #c0392b; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .nb-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .nb-status.error { color: #f87171; }
-  }
-  [data-theme="dark"] .nb-status.success { color: #34d399; }
-  [data-theme="dark"] .nb-status.error { color: #f87171; }
 </style>
