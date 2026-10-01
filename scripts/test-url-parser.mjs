@@ -450,5 +450,21 @@ for (const rel of pages) {
 }
 check('pages carry up-check annotations', annotations >= 12, annotations);
 
+// The guide's JavaScript block: every `console.log(x); // value` prints the value in the comment.
+{
+  const guide = readFileSync(join(root, 'src/content/blog/url-parser-guide/en.mdx'), 'utf8');
+  const block = (guide.match(/```js\n([\s\S]*?)```/) || [])[1];
+  if (!block) check('guide has a JavaScript block', false);
+  else {
+    const expected = [...block.matchAll(/console\.log\(.*\); \/\/ (.*)$/gm)].map((m) => m[1]);
+    const printed = [];
+    new Function('console', block)({ log: (v) => printed.push(typeof v === 'string' ? v : JSON.stringify(v)) });
+    check('guide JavaScript block has 7 checked lines', expected.length === 7, expected.length);
+    expected.forEach((e, i) => check(`guide JS line ${i + 1} prints ${e}`, printed[i] === e, printed[i]));
+  }
+  const tpl = [/^## What (is|are) /m, /^## .*Online/m, /^## .* in Code/m, /^## (Summary|Conclusion)/m].filter((re) => re.test(guide));
+  check('guide has no template headings', tpl.length === 0, tpl.map(String));
+}
+
 console.log(`\n${passes} passed, ${failures} failed${skips ? `, ${skips} skipped` : ''}`);
 process.exit(failures ? 1 : 0);
