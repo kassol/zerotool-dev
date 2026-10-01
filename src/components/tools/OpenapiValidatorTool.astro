@@ -53,6 +53,27 @@ paths:
   <script>
     import jsyaml from 'js-yaml';
 
+    /* Ajv and the schemas (about 100 KB of JSON) load on the first validation. */
+    let validatorsPromise: Promise<any> | null = null;
+    function loadValidators(): Promise<any> {
+      if (!validatorsPromise) {
+        validatorsPromise = Promise.all([
+          import('ajv'),
+          import('ajv/dist/2020'),
+          import('ajv-formats'),
+          import('../../data/openapi-schemas/oas-3.0-2024-10-18.json'),
+          import('../../data/openapi-schemas/oas-3.1-2026-08-03.json'),
+          import('../../data/openapi-schemas/oas-3.2-2026-08-30.json'),
+        ]).then(function (m: any[]) {
+          return createValidators(
+            { Ajv: m[0].default, Ajv2020: m[1].default, addFormats: m[2].default },
+            { '3.0': m[3].default, '3.1': m[4].default, '3.2': m[5].default }
+          );
+        });
+      }
+      return validatorsPromise;
+    }
+
     const STRINGS = {
       en: {
         msgEmpty: 'Paste an OpenAPI spec above and click Validate.',
@@ -66,7 +87,9 @@ paths:
         specServers: 'Servers',
         errorsFound: 'error(s) found',
         errPath: 'Path',
-        errMessage: 'Message'
+        errMessage: 'Message',
+        notices: 'Not checked',
+        loadFailed: 'Could not load the validator. Check your connection and try again.'
       },
       zh: {
         msgEmpty: '请在上方粘贴 OpenAPI 规范，然后点击验证。',
@@ -80,7 +103,9 @@ paths:
         specServers: '服务器',
         errorsFound: '个错误',
         errPath: '路径',
-        errMessage: '信息'
+        errMessage: '信息',
+        notices: '未检查',
+        loadFailed: '校验器加载失败，请检查网络后重试。'
       },
       ja: {
         msgEmpty: '上にOpenAPI仕様を貼り付けて検証をクリックしてください。',
@@ -94,7 +119,9 @@ paths:
         specServers: 'サーバー',
         errorsFound: '件のエラー',
         errPath: 'パス',
-        errMessage: 'メッセージ'
+        errMessage: 'メッセージ',
+        notices: '未確認',
+        loadFailed: '検証プログラムを読み込めませんでした。接続を確認して再試行してください。'
       },
       ko: {
         msgEmpty: '위에 OpenAPI 스펙을 붙여넣고 검증을 클릭하세요.',
@@ -108,7 +135,9 @@ paths:
         specServers: '서버',
         errorsFound: '개 오류 발견',
         errPath: '경로',
-        errMessage: '메시지'
+        errMessage: '메시지',
+        notices: '확인하지 않음',
+        loadFailed: '검증기를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.'
       }
     };
 
@@ -120,72 +149,337 @@ paths:
     const validateBtn = document.getElementById('ov-validate')!;
     const clearBtn   = document.getElementById('ov-clear')!;
 
-    const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
+    /* ── engine:start ── */
+    /* Structure: the official OpenAPI JSON Schemas (spec.openapis.org; 3.0 is draft-04 and is
+       converted to draft-07 for Ajv, 3.1 / 3.2 are draft 2020-12). These schemas do not follow
+       $ref and do not check rules written only in prose, so three checks are added: every
+       internal $ref points to something, path template names match path parameters, and
+       operationId values are unique. External references are listed, not fetched. */
+    var METHODS = {
+      '3.0': ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'],
+      '3.1': ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'],
+      '3.2': ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace', 'query'],
+    };
 
-    function escHtml(s: string): string {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    function validateSpec(doc: any): { path: string; message: string }[] {
-      const errors: { path: string; message: string }[] = [];
-
-      if (!doc.openapi && !doc.swagger) {
-        errors.push({ path: 'openapi', message: 'Missing required field "openapi".' });
-      } else if (doc.swagger) {
-        errors.push({ path: 'swagger', message: 'Swagger 2.x detected. Migrate to OpenAPI 3.x: replace "swagger: \\"2.0\\"" with "openapi: \\"3.0.3\\"" and update "definitions" to "components/schemas".' });
-        return errors;
-      } else if (!/^3\.\d+\.\d+$/.test(String(doc.openapi))) {
-        errors.push({ path: 'openapi', message: 'Field "openapi" must be a 3.x.y version string (e.g. "3.0.3" or "3.1.0"). Got: ' + doc.openapi });
-      }
-
-      if (!doc.info || typeof doc.info !== 'object') {
-        errors.push({ path: 'info', message: 'Missing required object "info".' });
-      } else {
-        if (!doc.info.title) errors.push({ path: 'info.title', message: 'Missing required field "info.title".' });
-        if (!doc.info.version) errors.push({ path: 'info.version', message: 'Missing required field "info.version".' });
-      }
-
-      if (!doc.paths || typeof doc.paths !== 'object') {
-        errors.push({ path: 'paths', message: 'Missing required object "paths".' });
-      } else {
-        Object.keys(doc.paths).forEach(function (p) {
-          if (!p.startsWith('/')) {
-            errors.push({ path: 'paths.' + p, message: 'Path key "' + p + '" must start with "/".' });
-          }
-          const pathItem = doc.paths[p];
-          if (pathItem && typeof pathItem === 'object') {
-            HTTP_METHODS.forEach(function (method) {
-              const op = pathItem[method];
-              if (op && typeof op === 'object') {
-                if (!op.responses || typeof op.responses !== 'object' || Object.keys(op.responses).length === 0) {
-                  errors.push({ path: 'paths.' + p + '.' + method + '.responses', message: 'Operation "' + method.toUpperCase() + ' ' + p + '" must have a non-empty "responses" object.' });
-                }
-              }
-            });
+    /* draft-04 → draft-07: `id` becomes `$id`, boolean exclusiveMinimum / exclusiveMaximum
+       become the numeric form. Keys under properties / patternProperties / definitions are
+       names, not keywords, and are left alone. */
+    function fromDraft04(schema) {
+      function walk(node) {
+        if (Array.isArray(node)) return node.map(walk);
+        if (!node || typeof node !== 'object') return node;
+        var out = {};
+        Object.keys(node).forEach(function (k) {
+          var v = node[k];
+          if (k === 'properties' || k === 'patternProperties' || k === 'definitions') {
+            var map = {};
+            Object.keys(v).forEach(function (name) { map[name] = walk(v[name]); });
+            out[k] = map;
+          } else if (k === 'id' && typeof v === 'string') {
+            out.$id = v;
+          } else if (k === '$schema') {
+            out.$schema = 'http://json-schema.org/draft-07/schema#';
+          } else if ((k === 'exclusiveMinimum' || k === 'exclusiveMaximum') && typeof v === 'boolean') {
+            // handled with minimum / maximum below
+          } else {
+            out[k] = walk(v);
           }
         });
+        if (node.exclusiveMinimum === true && typeof node.minimum === 'number') { out.exclusiveMinimum = node.minimum; delete out.minimum; }
+        if (node.exclusiveMaximum === true && typeof node.maximum === 'number') { out.exclusiveMaximum = node.maximum; delete out.maximum; }
+        return out;
       }
+      return walk(schema);
+    }
 
+    /* The 3.1 / 3.2 schemas point Schema Objects at `{ "$dynamicRef": "#meta" }`, whose anchor is
+       $defs/schema. Only the schema-base variants override that anchor; on its own the dynamic
+       reference resolves to $defs/schema. Ajv does not resolve this $dynamicRef correctly (it
+       validated Schema Objects against the root), so it is replaced with the equivalent static $ref. */
+    function staticDynamicRefs(schema) {
+      var anchorPath = null;
+      Object.keys(schema.$defs || {}).forEach(function (k) {
+        if (schema.$defs[k] && schema.$defs[k].$dynamicAnchor === 'meta') anchorPath = '#/$defs/' + k;
+      });
+      function walk(node) {
+        if (Array.isArray(node)) return node.map(walk);
+        if (!node || typeof node !== 'object') return node;
+        var out = {};
+        Object.keys(node).forEach(function (k) {
+          if (k === '$dynamicRef' && node[k] === '#meta' && anchorPath) out.$ref = anchorPath;
+          else if (k === '$dynamicAnchor') return;
+          else out[k] = walk(node[k]);
+        });
+        return out;
+      }
+      return walk(schema);
+    }
+
+    /* lib: { Ajv, Ajv2020, addFormats }; schemas: { '3.0', '3.1', '3.2' } (official JSON). */
+    function createValidators(lib, schemas) {
+      function prepare(ajv) {
+        lib.addFormats(ajv);
+        ajv.addFormat('media-range', true);
+        return ajv;
+      }
+      var cache = {};
+      return function (version) {
+        if (!schemas[version]) return null;
+        if (!cache[version]) {
+          var ajv = version === '3.0'
+            ? prepare(new lib.Ajv({ allErrors: true, strict: false }))
+            : prepare(new lib.Ajv2020({ allErrors: true, strict: false }));
+          cache[version] = ajv.compile(version === '3.0' ? fromDraft04(schemas[version]) : staticDynamicRefs(schemas[version]));
+        }
+        return cache[version];
+      };
+    }
+
+    function versionOf(doc) {
+      var v = doc.openapi;
+      if (typeof v !== 'string') return null;
+      var m = /^(3\.[0-2])\.\d+(-.+)?$/.exec(v);
+      return m ? m[1] : null;
+    }
+
+    function pointerOf(segments) {
+      return '#' + segments.map(function (s) { return '/' + String(s).replace(/~/g, '~0').replace(/\//g, '~1'); }).join('');
+    }
+    function segmentsOf(pointer) {
+      if (pointer === '' ) return [];
+      return pointer.slice(1).split('/').map(function (s) { return s.replace(/~1/g, '/').replace(/~0/g, '~'); });
+    }
+
+    /* Ajv reports every failed branch of a oneOf / anyOf. Keep the errors that explain the
+       problem: drop the oneOf / anyOf summary and the "must have $ref" branch (Reference Object)
+       when another error exists at the same place or deeper, and drop exact duplicates. */
+    function simplifyErrors(errors) {
+      function deeperOrSame(a, b) { return a === b || a.indexOf(b + '/') === 0 || b === ''; }
+      var kept = errors.filter(function (e) {
+        var isSummary = e.keyword === 'oneOf' || e.keyword === 'anyOf' || e.keyword === 'if' || e.keyword === 'not';
+        var isRefBranch = e.keyword === 'required' && e.params && e.params.missingProperty === '$ref';
+        if (!isSummary && !isRefBranch) return true;
+        return !errors.some(function (o) {
+          if (o === e) return false;
+          var oSummary = o.keyword === 'oneOf' || o.keyword === 'anyOf' || o.keyword === 'if' || o.keyword === 'not';
+          var oRef = o.keyword === 'required' && o.params && o.params.missingProperty === '$ref';
+          return !oSummary && !oRef && deeperOrSame(o.instancePath, e.instancePath);
+        });
+      });
+      var seen = {};
+      return kept.filter(function (e) {
+        var key = e.instancePath + '|' + e.keyword + '|' + JSON.stringify(e.params);
+        if (seen[key]) return false;
+        seen[key] = true;
+        return true;
+      });
+    }
+    function describe(e) {
+      var p = e.params || {};
+      var unknown = e.keyword === 'additionalProperties' ? p.additionalProperty : e.keyword === 'unevaluatedProperties' ? p.unevaluatedProperty : null;
+      if (unknown !== null && e.instancePath === '/paths') return 'Path "' + unknown + '" must start with "/".';
+      if (e.keyword === 'required') return 'Missing required field "' + p.missingProperty + '".';
+      if (e.keyword === 'additionalProperties') return 'Unknown field "' + p.additionalProperty + '".';
+      if (e.keyword === 'unevaluatedProperties') return 'Unknown field "' + p.unevaluatedProperty + '".';
+      if (e.keyword === 'propertyNames') return 'Field name not allowed here.';
+      if (e.keyword === 'type') return 'Must be ' + (Array.isArray(p.type) ? p.type.join(' or ') : p.type) + '.';
+      if (e.keyword === 'enum') return 'Must be one of: ' + p.allowedValues.map(function (v) { return JSON.stringify(v); }).join(', ') + '.';
+      if (e.keyword === 'const') return 'Must be ' + JSON.stringify(p.allowedValue) + '.';
+      if (e.keyword === 'pattern') return 'Does not match the pattern ' + p.pattern + '.';
+      if (e.keyword === 'format') return 'Not a valid ' + p.format + '.';
+      if (e.keyword === 'oneOf' || e.keyword === 'anyOf') return 'Does not match any allowed form of this object.';
+      return e.message ? e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.' : e.keyword;
+    }
+    function schemaErrors(validate, doc) {
+      if (validate(doc)) return [];
+      return simplifyErrors(validate.errors || []).map(function (e) {
+        var path = e.instancePath === '' ? '#' : '#' + e.instancePath;
+        return { path: path, message: describe(e) };
+      });
+    }
+
+    /* Value at a JSON Pointer fragment ("#/components/schemas/Pet"); undefined if absent. */
+    function resolveLocal(doc, ref) {
+      var frag;
+      try { frag = decodeURIComponent(ref.slice(1)); } catch (_e) { return undefined; }
+      if (frag !== '' && frag.charAt(0) !== '/') return undefined;
+      var node = doc;
+      var segs = segmentsOf(frag);
+      for (var i = 0; i < segs.length; i++) {
+        if (node === null || typeof node !== 'object' || !Object.prototype.hasOwnProperty.call(node, segs[i])) return undefined;
+        node = node[segs[i]];
+      }
+      return node;
+    }
+
+    /* Keys whose values are example data, not part of the description. `examples` is data when
+       it is an array (Schema Object) and a map of Example Objects otherwise, whose `value` is data. */
+    var DATA_KEYS = { example: 1, default: 1, enum: 1, const: 1 };
+    function refChecks(doc) {
+      var errors = [], notices = [];
+      function walk(node, segs) {
+        if (Array.isArray(node)) { node.forEach(function (v, i) { walk(v, segs.concat(i)); }); return; }
+        if (!node || typeof node !== 'object') return;
+        Object.keys(node).forEach(function (k) {
+          var v = node[k];
+          if (k === '$ref' && typeof v === 'string') {
+            var at = pointerOf(segs.concat('$ref'));
+            if (v.charAt(0) !== '#') {
+              notices.push({ path: at, message: 'External reference "' + v + '" was not checked (only references inside this document are resolved).' });
+            } else if (v.length > 1 && v.charAt(1) !== '/') {
+              notices.push({ path: at, message: 'Anchor reference "' + v + '" was not checked.' });
+            } else if (resolveLocal(doc, v) === undefined) {
+              errors.push({ path: at, message: 'Reference "' + v + '" does not point to anything in this document.' });
+            }
+            return;
+          }
+          if (DATA_KEYS[k] || /^x-/.test(k)) return;
+          if (k === 'examples') {
+            if (!v || typeof v !== 'object' || Array.isArray(v)) return;
+            Object.keys(v).forEach(function (name) {
+              var ex = v[name];
+              if (!ex || typeof ex !== 'object') return;
+              var copy = {};
+              Object.keys(ex).forEach(function (ek) { if (ek !== 'value') copy[ek] = ex[ek]; });
+              walk(copy, segs.concat(k, name));
+            });
+            return;
+          }
+          walk(v, segs.concat(k));
+        });
+      }
+      walk(doc, []);
+      return { errors: errors, notices: notices };
+    }
+
+    /* Follows internal $ref chains; returns undefined for external or broken references. */
+    function deref(doc, node) {
+      for (var i = 0; i < 20 && node && typeof node === 'object' && typeof node.$ref === 'string'; i++) {
+        if (node.$ref.charAt(0) !== '#') return undefined;
+        node = resolveLocal(doc, node.$ref);
+      }
+      return node;
+    }
+
+    function operationsOf(item, version) {
+      var ops = [];
+      (METHODS[version] || METHODS['3.0']).forEach(function (m) {
+        if (item[m] && typeof item[m] === 'object') ops.push({ method: m, op: item[m] });
+      });
+      if (version === '3.2' && item.additionalOperations && typeof item.additionalOperations === 'object') {
+        Object.keys(item.additionalOperations).forEach(function (m) {
+          if (item.additionalOperations[m] && typeof item.additionalOperations[m] === 'object') ops.push({ method: m, op: item.additionalOperations[m], extra: true });
+        });
+      }
+      return ops;
+    }
+
+    /* Path Templating: every {name} in a path needs an `in: path` parameter on the Path Item or
+       the operation, and every `in: path` parameter must appear in the path. */
+    function pathChecks(doc, version) {
+      var errors = [];
+      var paths = doc.paths;
+      if (!paths || typeof paths !== 'object') return errors;
+      Object.keys(paths).forEach(function (p) {
+        var item = deref(doc, paths[p]);
+        if (!item || typeof item !== 'object') return;
+        var names = [];
+        var re = /\{([^{}]+)\}/g, m;
+        while ((m = re.exec(p))) if (names.indexOf(m[1]) < 0) names.push(m[1]);
+        function collect(list, out) {
+          if (!Array.isArray(list)) return true;
+          for (var i = 0; i < list.length; i++) {
+            var prm = deref(doc, list[i]);
+            if (!prm || typeof prm !== 'object') return false;
+            if (prm.in === 'path' && typeof prm.name === 'string') out[prm.name] = true;
+          }
+          return true;
+        }
+        var shared = {};
+        if (!collect(item.parameters, shared)) return;
+        operationsOf(item, version).forEach(function (o) {
+          var declared = Object.assign({}, shared);
+          if (!collect(o.op.parameters, declared)) return;
+          var label = o.method.toUpperCase() + ' ' + p;
+          var base = pointerOf(['paths', p]).slice(0);
+          names.forEach(function (n) {
+            if (!declared[n]) errors.push({ path: base + '/' + (o.extra ? 'additionalOperations/' : '') + o.method, message: label + ': path parameter "' + n + '" is not declared (add a parameter with in: path, name: ' + n + ').' });
+          });
+          Object.keys(declared).forEach(function (n) {
+            if (names.indexOf(n) < 0) errors.push({ path: base + '/' + (o.extra ? 'additionalOperations/' : '') + o.method, message: label + ': parameter "' + n + '" is declared with in: path but the path has no {' + n + '}.' });
+          });
+        });
+      });
       return errors;
     }
 
-    function countOps(paths: any): number {
-      let count = 0;
-      if (!paths || typeof paths !== 'object') return 0;
-      Object.values(paths).forEach(function (pathItem: any) {
-        if (pathItem && typeof pathItem === 'object') {
-          HTTP_METHODS.forEach(function (m) { if (pathItem[m]) count++; });
-        }
+    function operationIdChecks(doc, version) {
+      var errors = [], seen = {};
+      function visit(item, segs) {
+        item = deref(doc, item);
+        if (!item || typeof item !== 'object') return;
+        operationsOf(item, version).forEach(function (o) {
+          var id = o.op.operationId;
+          if (typeof id !== 'string') return;
+          var at = pointerOf(segs.concat(o.extra ? ['additionalOperations', o.method] : [o.method], 'operationId'));
+          if (seen[id]) errors.push({ path: at, message: 'operationId "' + id + '" is already used at ' + seen[id] + '; it must be unique.' });
+          else seen[id] = at;
+        });
+      }
+      ['paths', 'webhooks'].forEach(function (k) {
+        var map = doc[k];
+        if (map && typeof map === 'object') Object.keys(map).forEach(function (p) { visit(map[p], [k, p]); });
+      });
+      return errors;
+    }
+
+    function countOps(doc, version) {
+      var count = 0;
+      if (!doc.paths || typeof doc.paths !== 'object') return 0;
+      Object.keys(doc.paths).forEach(function (p) {
+        var item = deref(doc, doc.paths[p]);
+        if (item && typeof item === 'object') count += operationsOf(item, version).length;
       });
       return count;
     }
 
-    function renderValid(doc: any): void {
+    /* Returns { version, errors, notices }. getValidator(version) returns a compiled validator. */
+    function validateOpenApi(doc, getValidator) {
+      if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+        return { version: null, errors: [{ path: '#', message: 'Document must be a YAML/JSON object.' }], notices: [] };
+      }
+      if (doc.swagger !== undefined && doc.openapi === undefined) {
+        return { version: null, notices: [], errors: [{ path: '#/swagger', message: 'Swagger 2.0 document. This tool checks OpenAPI 3.0, 3.1 and 3.2; convert it first (for example with swagger2openapi).' }] };
+      }
+      if (doc.openapi === undefined) {
+        return { version: null, notices: [], errors: [{ path: '#', message: 'Missing required field "openapi".' }] };
+      }
+      var version = versionOf(doc);
+      if (!version) {
+        return { version: null, notices: [], errors: [{ path: '#/openapi', message: 'Field "openapi" must be a version string such as "3.0.4", "3.1.1" or "3.2.0" (quote it in YAML). Got: ' + JSON.stringify(doc.openapi) + '.' }] };
+      }
+      var errors = schemaErrors(getValidator(version), doc);
+      var refs = refChecks(doc);
+      errors = errors.concat(refs.errors, pathChecks(doc, version), operationIdChecks(doc, version));
+      return { version: version, errors: errors, notices: refs.notices };
+    }
+    /* ── engine:end ── */
+
+    function renderNotices(notices: { path: string; message: string }[]): string {
+      if (!notices.length) return '';
+      let html = '<div class="ov-notices"><p class="ov-notices-title">' + escHtml(t.notices) + '</p><ul>';
+      notices.forEach(function (n) {
+        html += '<li><code class="ov-err-path">' + escHtml(n.path) + '</code> ' + escHtml(n.message) + '</li>';
+      });
+      return html + '</ul></div>';
+    }
+
+    function renderValid(doc: any, result: any): void {
       const title = (doc.info && doc.info.title) || '—';
       const version = (doc.info && doc.info.version) || '—';
       const oasVersion = doc.openapi || '—';
       const pathCount = doc.paths ? Object.keys(doc.paths).length : 0;
-      const opCount = countOps(doc.paths);
+      const opCount = countOps(doc, result.version);
       const servers = doc.servers;
 
       let html = '<div class="ov-valid-header">';
@@ -208,11 +502,12 @@ paths:
       }
 
       html += '</div>';
+      html += renderNotices(result.notices);
       resultEl.innerHTML = html;
       resultEl.className = 'ov-result ov-result--valid';
     }
 
-    function renderErrors(errors: { path: string; message: string }[]): void {
+    function renderErrors(errors: { path: string; message: string }[], notices: { path: string; message: string }[]): void {
       let html = '<div class="ov-invalid-header">';
       html += '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
       html += '<span>' + escHtml(t.msgInvalid) + ' — ' + errors.length + ' ' + escHtml(t.errorsFound) + '</span>';
@@ -238,34 +533,37 @@ paths:
       resultEl.className = 'ov-result';
     }
 
-    function doValidate(): void {
+    let runId = 0;
+    async function doValidate(): Promise<void> {
       const raw = inputEl.value.trim();
+      const id = ++runId;
       if (!raw) {
         renderEmpty();
         return;
       }
-
       let doc: any;
       try {
         doc = jsyaml.load(raw);
       } catch (e: any) {
-        renderErrors([{ path: '(parse)', message: 'Parse error: ' + e.message }]);
+        renderErrors([{ path: '(parse)', message: 'Parse error: ' + e.message }], []);
         (window as any).trackTool?.('openapi-validator', 'validate_error');
         return;
       }
-
-      if (!doc || typeof doc !== 'object') {
-        renderErrors([{ path: '(root)', message: 'Document must be a YAML/JSON object.' }]);
-        (window as any).trackTool?.('openapi-validator', 'validate_error');
+      let getValidator: any;
+      try {
+        getValidator = await loadValidators();
+      } catch (e: any) {
+        validatorsPromise = null;
+        renderErrors([{ path: '(load)', message: t.loadFailed + ' ' + (e && e.message ? e.message : '') }], []);
         return;
       }
-
-      const errors = validateSpec(doc);
-      if (errors.length === 0) {
-        renderValid(doc);
+      if (id !== runId) return;
+      const result = validateOpenApi(doc, getValidator);
+      if (result.errors.length === 0) {
+        renderValid(doc, result);
         (window as any).trackTool?.('openapi-validator', 'validate_success');
       } else {
-        renderErrors(errors);
+        renderErrors(result.errors, result.notices);
         (window as any).trackTool?.('openapi-validator', 'validate_error');
       }
     }
@@ -359,13 +657,11 @@ paths:
 
   .ov-result { min-height: 2rem; }
 
-  .ov-empty {
+  .ov-result :global(.ov-empty) {
     color: var(--color-text-muted);
     font-size: 0.9rem;
     margin: 0;
   }
-
-  .ov-err-msg { color: var(--color-danger, #dc2626); }
 
   /* Valid panel */
   .ov-result--valid {
@@ -375,33 +671,33 @@ paths:
     background: var(--color-bg-secondary);
   }
 
-  .ov-valid-header {
+  .ov-result :global(.ov-valid-header) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     font-weight: 700;
-    color: #16a34a;
+    color: #15803d;
     margin-bottom: 0.75rem;
     font-size: 0.95rem;
   }
 
-  .ov-info-grid { display: flex; flex-direction: column; gap: 0.35rem; }
+  .ov-result :global(.ov-info-grid) { display: flex; flex-direction: column; gap: 0.35rem; }
 
-  .ov-info-row {
+  .ov-result :global(.ov-info-row) {
     display: flex;
     gap: 0.75rem;
     font-size: 0.9rem;
     flex-wrap: wrap;
   }
 
-  .ov-info-key {
+  .ov-result :global(.ov-info-key) {
     color: var(--color-text-secondary);
     font-weight: 600;
     min-width: 9rem;
     flex-shrink: 0;
   }
 
-  .ov-info-val {
+  .ov-result :global(.ov-info-val) {
     color: var(--color-text);
     font-family: var(--font-mono);
     font-size: 0.87rem;
@@ -416,7 +712,7 @@ paths:
     background: var(--color-bg-secondary);
   }
 
-  .ov-invalid-header {
+  .ov-result :global(.ov-invalid-header) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -426,13 +722,13 @@ paths:
     font-size: 0.95rem;
   }
 
-  .ov-err-table {
+  .ov-result :global(.ov-err-table) {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.87rem;
   }
 
-  .ov-err-table th {
+  .ov-result :global(.ov-err-table th) {
     text-align: left;
     padding: 0.3rem 0.5rem;
     font-size: 0.78rem;
@@ -443,34 +739,45 @@ paths:
     border-bottom: 1px solid var(--color-border);
   }
 
-  .ov-err-table td {
+  .ov-result :global(.ov-err-table td) {
     padding: 0.4rem 0.5rem;
     border-bottom: 1px solid var(--color-border);
     vertical-align: top;
     color: var(--color-text);
   }
 
-  .ov-err-table tr:last-child td { border-bottom: none; }
+  .ov-result :global(.ov-err-table tr:last-child td) { border-bottom: none; }
 
-  .ov-err-path {
+  .ov-result :global(.ov-err-path) {
     font-family: var(--font-mono);
     font-size: 0.82rem;
     color: #dc2626;
     background: var(--color-bg-icon);
     padding: 0.1rem 0.35rem;
     border-radius: 3px;
-    white-space: nowrap;
+    word-break: break-all;
   }
+
+  .ov-result :global(.ov-notices) {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+  }
+  .ov-result :global(.ov-notices-title) { margin: 0 0 0.3rem; font-weight: 600; }
+  .ov-result :global(.ov-notices ul) { margin: 0; padding-left: 1.2rem; }
+  .ov-result :global(.ov-notices li) { margin: 0.2rem 0; }
 
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .ov-result--valid { border-color: #16a34a; }
-    :root:not([data-theme="light"]) .ov-result--invalid { border-color: #b91c1c; }
-    :root:not([data-theme="light"]) .ov-err-path { color: #f87171; }
-    :root:not([data-theme="light"]) .ov-invalid-header { color: #f87171; }
+    :global(:root:not([data-theme="light"])) .ov-result--valid { border-color: #16a34a; }
+    :global(:root:not([data-theme="light"])) .ov-result--invalid { border-color: #b91c1c; }
+    :global(:root:not([data-theme="light"])) .ov-result :global(.ov-valid-header) { color: #4ade80; }
+    :global(:root:not([data-theme="light"])) .ov-result :global(.ov-err-path) { color: #f87171; }
+    :global(:root:not([data-theme="light"])) .ov-result :global(.ov-invalid-header) { color: #f87171; }
   }
 
-  [data-theme="dark"] .ov-result--valid { border-color: #16a34a; }
-  [data-theme="dark"] .ov-result--invalid { border-color: #b91c1c; }
-  [data-theme="dark"] .ov-err-path { color: #f87171; }
-  [data-theme="dark"] .ov-invalid-header { color: #f87171; }
+  :global([data-theme="dark"]) .ov-result--valid { border-color: #16a34a; }
+  :global([data-theme="dark"]) .ov-result--invalid { border-color: #b91c1c; }
+  :global([data-theme="dark"]) .ov-result :global(.ov-valid-header) { color: #4ade80; }
+  :global([data-theme="dark"]) .ov-result :global(.ov-err-path) { color: #f87171; }
+  :global([data-theme="dark"]) .ov-result :global(.ov-invalid-header) { color: #f87171; }
 </style>
