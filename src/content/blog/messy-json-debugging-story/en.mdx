@@ -2,8 +2,10 @@
 title: "From Messy JSON to Clean APIs: A Real-World Debugging Story"
 description: "A walkthrough of a realistic API debugging session — using browser tools to decode tokens, diff responses, format payloads, and finally fix the bug."
 pubDate: 2026-04-14
+updatedDate: 2026-10-01
 lang: "en"
 tags: ["api-debugging", "json", "developer-workflow", "debugging-story", "web-development"]
+noindex: true
 ---
 
 It started, as these things often do, with a Slack message that said almost nothing useful.
@@ -31,9 +33,9 @@ The system in question had three main stages:
 Start at the beginning. Check the logs for inbound webhooks in the relevant time window.
 
 ```
-[2024-01-15 14:32:18] POST /webhooks/orders — 200 OK — 23ms
-[2024-01-15 14:33:45] POST /webhooks/orders — 200 OK — 18ms
-[2024-01-15 14:34:02] POST /webhooks/orders — 200 OK — 31ms
+[2024-01-15 15:32:18] POST /webhooks/orders — 200 OK — 23ms
+[2024-01-15 15:33:45] POST /webhooks/orders — 200 OK — 18ms
+[2024-01-15 15:34:02] POST /webhooks/orders — 200 OK — 31ms
 ```
 
 Three webhooks received and acknowledged. The endpoint returned 200. So far, so good — except the orders aren't in the database. The problem is in step 2: the webhook was received but processing failed silently.
@@ -96,7 +98,7 @@ This is unreadable as a single line. The first thing to do — always — is run
 
 Now I can actually think. A few things immediately stand out:
 
-- `created_at` is a Unix timestamp (1705332738). That's expected — but let me verify. Paste it into a [Timestamp Converter](/tools/timestamp-converter): **Jan 15, 2024, 14:32:18 UTC**. Matches the log entry. Good.
+- `created_at` is a Unix timestamp (1705332738). That's expected — but let me verify. Paste it into a [Timestamp Converter](/tools/timestamp-converter): **Jan 15, 2024, 15:32:18 UTC**. Matches the log entry. Good.
 - `total` is in cents (11297 = $112.97). That's consistent with the item prices (4999 = $49.99, 1299 = $12.99, 2×4999+1299 = 11297). Good.
 - There's a `metadata` field nested inside `customer`. This is worth noting — it's non-standard structure that a schema validation step might choke on.
 
@@ -155,6 +157,10 @@ Pull the JSON schema the handler validates against:
         "customer": {
           "type": "object",
           "required": ["id", "email"],
+          "properties": {
+            "id": { "type": "string" },
+            "email": { "type": "string" }
+          },
           "additionalProperties": false
         }
       }
@@ -165,7 +171,7 @@ Pull the JSON schema the handler validates against:
 
 There it is. The `customer` object in the schema has `"additionalProperties": false`. The actual payload has a `metadata` field on the customer object. Schema validation is rejecting the payload — but the error was being swallowed in the webhook handler instead of surfaced.
 
-Running the actual payload through a [JSON Schema Validator](/tools/json-schema-validator) with this schema confirms: validation fails with `Additional properties are not allowed ('metadata' was unexpected)`.
+Running the actual payload through a [JSON Schema Validator](/tools/json-schema-validator) with this schema confirms: validation fails with `/data/customer must NOT have additional properties (additionalProperty: "metadata")`.
 
 Two bugs:
 1. The payment provider updated their webhook format to include customer metadata, and nobody updated the schema
