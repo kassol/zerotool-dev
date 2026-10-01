@@ -6,7 +6,9 @@
 //        src/content/tools/hmac-generator/{lang}.mdx and src/content/blog/hmac-generator-guide/{lang}.mdx
 //        (every `{/* hmac-check: {...} */}` annotation is recomputed and the value must appear in
 //        the page text after it)
-// Write: stdout only (test results); python3 is fed JSON on stdin when it is installed
+// Write: stdout only (test results); python3 is fed JSON on stdin when it is installed; code
+//        blocks marked hmac-run are written to a temporary directory under the OS temp dir, run
+//        with node / python3 / go, and the directory is removed
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Sources: RFC 2104 (HMAC; §2 keys longer than B are hashed first, §3 keys shorter than L are
@@ -28,9 +30,10 @@
 //
 // Run: node scripts/test-hmac-generator.mjs
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 
@@ -446,6 +449,44 @@ check('visible(): CR, LF and tab are shown', E.visible('a\r\n\tb') === 'a␍␊\
   }
   if (count) check(`${count} hmac-check annotations found`, count > 0);
   else skip('page annotations', 'no hmac-check annotations yet');
+
+  // Code blocks marked {/* hmac-run: {"lang":"node|python|go","expect":"…"} */} are run and
+  // their stdout must equal "expect". A missing toolchain is a SKIP.
+  const has = (cmd, args) => { try { execFileSync(cmd, args, { stdio: 'ignore' }); return true; } catch { return false; } };
+  const tool = { node: true, python: has('python3', ['--version']), go: has('go', ['version']) };
+  let runs = 0;
+  for (const file of files) {
+    if (!existsSync(file)) continue;
+    const text = readFileSync(file, 'utf8');
+    const re = /\{\/\* hmac-run: (\{.*?\}) \*\/\}\s*```[a-z]*\n([\s\S]*?)```/g;
+    let m;
+    while ((m = re.exec(text))) {
+      runs++;
+      const spec = JSON.parse(m[1]);
+      const name = `${file.replace(root + '/', '')}: ${spec.lang} block ${runs}`;
+      if (!tool[spec.lang]) { skip(name, `${spec.lang} not installed`); continue; }
+      const dir = mkdtempSync(join(tmpdir(), 'hmac-run-'));
+      try {
+        let out;
+        if (spec.lang === 'node') {
+          writeFileSync(join(dir, 'main.mjs'), m[2]);
+          out = execFileSync(process.execPath, [join(dir, 'main.mjs')]).toString();
+        } else if (spec.lang === 'python') {
+          writeFileSync(join(dir, 'main.py'), m[2]);
+          out = execFileSync('python3', [join(dir, 'main.py')]).toString();
+        } else {
+          writeFileSync(join(dir, 'main.go'), m[2]);
+          out = execFileSync('go', ['run', join(dir, 'main.go')], { cwd: dir, env: { ...process.env, GO111MODULE: 'off', GOFLAGS: '' } }).toString();
+        }
+        check(name, out.trim() === spec.expect, out.trim());
+      } catch (e) {
+        check(name, false, String(e.stderr || e.message).slice(0, 300));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  if (!runs) skip('code blocks', 'no hmac-run annotations');
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? `, ${skips} skipped` : ''}`);
