@@ -52,7 +52,7 @@
         <div class="chmod-result-row">
           <label class="chmod-result-label" for="chmod-symbolic" data-i18n="symbolic">Symbolic</label>
           <div class="chmod-result-value">
-            <input type="text" id="chmod-symbolic" class="chmod-symbolic-input" value="rwxr-xr-x" maxlength="9" spellcheck="false" autocomplete="off" />
+            <input type="text" id="chmod-symbolic" class="chmod-symbolic-input" value="rwxr-xr-x" maxlength="11" spellcheck="false" autocomplete="off" />
             <button id="chmod-copy-symbolic" class="btn-copy" type="button" data-i18n="copy">Copy</button>
           </div>
         </div>
@@ -184,6 +184,7 @@
         return digits;
       }
 
+      /* ── engine:start ── */
       function buildSymbolic(digits, special) {
         // special: digit 0-7 (4=setuid, 2=setgid, 1=sticky)
         var sym = '';
@@ -209,20 +210,33 @@
         return special > 0 ? (special + '' + base) : base;
       }
 
-      function buildSymCmd(digits) {
+      // Special bits: s after u= / g= (setuid / setgid), and a separate +t for the sticky bit.
+      // o+t and o=...t are ignored by BSD/macOS chmod; +t works there and in GNU coreutils.
+      function buildSymCmd(digits, special) {
         var classes = ['u', 'g', 'o'];
-        var perms = ['r', 'w', 'x'];
         var parts = [];
+        special = special || 0;
         for (var i = 0; i < 3; i++) {
           var d = digits[i];
           var p = '';
           if (d & 4) p += 'r';
           if (d & 2) p += 'w';
           if (d & 1) p += 'x';
+          if (i === 0 && (special & 4)) p += 's';
+          if (i === 1 && (special & 2)) p += 's';
           parts.push(classes[i] + '=' + p);
         }
+        if (special & 1) parts.push('+t');
         return 'chmod ' + parts.join(',') + ' filename';
       }
+
+      // Accept a mode string copied from ls -l: drop the file-type character in front
+      // (- d l b c p s) and the ACL / extended-attribute / SELinux marker after it (+ @ .).
+      function stripLsDecorations(raw) {
+        var m = /^[-dlbcps]?([-rwxsStT]{9})[+@.]?$/.exec(raw);
+        return m ? m[1] : raw;
+      }
+      /* ── engine:end ── */
 
       function buildDescription(digits, special) {
         var classNames = [t.owner, t.group, t.others];
@@ -252,7 +266,7 @@
         document.getElementById('chmod-numeric').value = numeric;
         document.getElementById('chmod-symbolic').value = symbolic;
         document.getElementById('chmod-command').textContent = 'chmod ' + numeric + ' filename';
-        document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits);
+        document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits, special);
         document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? numeric : ('0' + numeric));
         document.getElementById('chmod-description').textContent = buildDescription(digits, special);
 
@@ -360,7 +374,7 @@
             var special = getSpecialBits();
             document.getElementById('chmod-symbolic').value = buildSymbolic(digits, special);
             document.getElementById('chmod-command').textContent = 'chmod ' + raw + ' filename';
-            document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits);
+            document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits, special);
             document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? raw : ('0' + raw));
             document.getElementById('chmod-description').textContent = buildDescription(digits, special);
             setError('chmod-numeric', '');
@@ -379,7 +393,7 @@
       // Symbolic input
       var symbolicInput = document.getElementById('chmod-symbolic');
       symbolicInput.addEventListener('input', function () {
-        var raw = this.value;
+        var raw = stripLsDecorations(this.value.trim());
         if (raw.length === 9) {
           if (applySymbolicToState(raw)) {
             var digits = calcDigits();
@@ -387,7 +401,7 @@
             var numeric = buildNumericStr(digits, special);
             document.getElementById('chmod-numeric').value = numeric;
             document.getElementById('chmod-command').textContent = 'chmod ' + numeric + ' filename';
-            document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits);
+            document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits, special);
             document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? numeric : ('0' + numeric));
             document.getElementById('chmod-description').textContent = buildDescription(digits, special);
             setError('chmod-symbolic', '');

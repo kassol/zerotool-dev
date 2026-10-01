@@ -16,8 +16,9 @@ faqItems:
 <ol>
   <li>Toggle the <strong>Read</strong>, <strong>Write</strong>, and <strong>Execute</strong> checkboxes for Owner, Group, and Others.</li>
   <li>The numeric value, symbolic notation, and chmod command update instantly.</li>
-  <li>Alternatively, type a numeric value (e.g., <code>644</code>) into the input field and the checkboxes will update to match.</li>
-  <li>Click <strong>Copy</strong> next to any output to copy it to your clipboard.</li>
+  <li>Alternatively, type a numeric value (e.g., <code>644</code> or <code>2775</code>) into the Numeric field, or a mode string into the Symbolic field, and the checkboxes update to match. The Symbolic field also takes a string copied from <code>ls -l</code>, such as <code>drwxrwxrwt</code> or <code>-rw-r--r--@</code>; the file-type letter and the trailing marker are dropped.</li>
+  <li>Tick <strong>Setuid</strong>, <strong>Setgid</strong> or <strong>Sticky</strong> to add the fourth (leading) digit.</li>
+  <li>Click <strong>Copy</strong> next to any output to copy it to your clipboard. Replace <code>filename</code> with your path.</li>
 </ol>
 
 <h2>Common Permissions</h2>
@@ -52,3 +53,44 @@ faqItems:
 <p>SSH refuses to use a private key if its permissions are too open. Lock it down to owner-only:</p>
 <pre><code>chmod 600 ~/.ssh/id_rsa   # Owner: read+write, no one else</code></pre>
 <p>Result: <code>rw-------</code>. SSH requires 600 or stricter for private key files.</p>
+
+<h2>Special Bits: Setuid, Setgid and Sticky</h2>
+<p>
+  The optional first digit adds 4 for setuid, 2 for setgid and 1 for the sticky bit. In the mode string they replace the
+  execute position: <code>s</code> when execute is also set, <code>S</code> when it is not (for others, <code>t</code> and
+  <code>T</code>). These are real values from a Debian system with GNU coreutils 9.1, and the tool gives the same strings:
+</p>
+<table>
+  <thead><tr><th>Path</th><th>ls -l</th><th>Numeric</th><th>Symbolic cmd from the tool</th></tr></thead>
+  <tbody>
+    <tr><td><code>/tmp</code></td><td><code>drwxrwxrwt</code></td><td><code>1777</code></td><td><code>chmod u=rwx,g=rwx,o=rwx,+t</code></td></tr>
+    <tr><td><code>/usr/bin/passwd</code></td><td><code>-rwsr-xr-x</code></td><td><code>4755</code></td><td><code>chmod u=rwxs,g=rx,o=rx</code></td></tr>
+    <tr><td>a team directory</td><td><code>drwxrwsr-x</code></td><td><code>2775</code></td><td><code>chmod u=rwx,g=rwxs,o=rx</code></td></tr>
+  </tbody>
+</table>
+<p>
+  The sticky bit on <code>/tmp</code> lets everyone create files but only the owner delete them. Setuid on <code>passwd</code>
+  makes it run as its owner (root) so users can change their own password. Setgid on a directory makes new files take the
+  directory's group; on Linux a new subdirectory inherits the setgid bit too, so a shared project folder stays shared.
+  The sticky bit is written as a separate <code>+t</code> because BSD and macOS <code>chmod</code> ignore <code>o+t</code>;
+  <code>+t</code> works on both. The symbolic commands for all eight combinations of special bits were run through GNU and macOS <code>chmod</code> to confirm the resulting mode.
+</p>
+
+<h2>Limits and Gotchas</h2>
+<ul>
+  <li><strong>Absolute modes only.</strong> The tool outputs the full mode (<code>u=…,g=…,o=…</code>). It does not build relative changes such as <code>chmod g+w</code> or <code>a-x</code>, and it does not show <code>X</code> (execute only for directories).</li>
+  <li><strong><code>chmod 755</code> does not clear setgid on a directory with GNU chmod.</strong> The coreutils manual says the setuid and setgid bits of a directory are kept unless you clear them explicitly. On GNU coreutils 9.1, a <code>2755</code> directory stays <code>2755</code> after <code>chmod 755</code>; <code>chmod 00755</code> or <code>chmod g-s</code> clears it. The same applies to the <code>u=…,g=…</code> command.</li>
+  <li><strong>Numeric input needs 3 or 4 digits</strong> from 0 to 7. Other characters are removed as you type, and fewer than 3 digits shows "Invalid octal".</li>
+  <li><strong>The find command matches exactly.</strong> <code>find . -type f -perm 0644</code> lists files whose mode is exactly 644. To find files that have at least those bits, use <code>-perm -644</code>; to find files with any of them, <code>-perm /644</code> (GNU find).</li>
+  <li><strong>Permissions are only part of access.</strong> ACLs (the <code>+</code> after the mode in <code>ls -l</code>), SELinux, mount options such as <code>noexec</code>, and the permissions of every parent directory can still deny access.</li>
+</ul>
+
+<h2>Why New Files Get 644 and 755</h2>
+<p>
+  Programs usually create files with mode 666 and directories with 777, and the kernel removes the bits set in the
+  <code>umask</code>. With the common umask <code>022</code>, a new file becomes <code>644</code> and a new directory
+  <code>755</code>; with <code>077</code>, a file becomes <code>600</code>. If files keep coming out with the wrong mode, check
+  <code>umask</code> before running <code>chmod</code> on them one by one. For private keys, OpenSSH refuses a key that group or
+  others can read ("Permissions 0644 … are too open"), so <code>600</code> or <code>400</code> is required.
+</p>
+
