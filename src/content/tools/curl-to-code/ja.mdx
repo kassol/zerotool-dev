@@ -40,3 +40,96 @@ faqItems:
   <li><strong>チーム共有：</strong>cURLに不慣れなメンバーにリクエスト内容を説明。</li>
   <li><strong>開発効率化：</strong>ボイラープレートを手書きせずHTTPリクエストを素早く実装。</li>
 </ul>
+
+## 例：JSON の POST リクエスト
+
+```bash
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer TOKEN" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+```
+
+**Python** の出力：
+
+```python
+import requests
+
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer TOKEN",
+}
+
+data = '{"name": "Alice", "email": "alice@example.com"}'
+
+response = requests.post(
+    "https://api.example.com/users",
+    headers=headers,
+    data=data
+)
+print(response.text)
+```
+
+**Go** の出力：
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+func main() {
+	body := strings.NewReader("{\"name\": \"Alice\", \"email\": \"alice@example.com\"}")
+	req, _ := http.NewRequest("POST", "https://api.example.com/users", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer TOKEN")
+
+	client := &http.Client{}
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(respBody))
+}
+```
+
+ボディは入力した文字列のまま渡されるので、サーバーが受け取るバイト列は curl と同じです。JavaScript と PHP のタブはそれぞれ `fetch` と curl 拡張で同じリクエストを送り、Node.js のタブは `axios` を使います。
+
+## フラグの変換方法
+
+| curl | 生成されるコード |
+|---|---|
+| `-X`・`--request` | HTTP メソッド（`-X` がなくボディがあれば POST） |
+| `-H`・`--header` | ヘッダー。名前と値はそのまま |
+| `-d`・`--data`・`--data-raw`・`--data-ascii` | ボディの文字列 |
+| `-u user:password` | `Authorization: Basic …` ヘッダー（`alice:s3cret` → `Basic YWxpY2U6czNjcmV0`） |
+| `-b`・`--cookie` | `Cookie` ヘッダー |
+| `-L` | リダイレクトに追従（Python では `allow_redirects=True`） |
+| `-k`・`--insecure`・`--compressed`・`-s`・`-S`・`-i`・`-v` | 削除。生成コードは TLS の検証を有効のままにします |
+
+## 実行前に確認すること
+
+- **ファイルのアップロード（`-F "file=@report.pdf"`）** は正しく変換されません。`@report.pdf` という文字列をそのまま送り、boundary のない `Content-Type: multipart/form-data` ヘッダーを付けます。このヘッダーを消し、ファイルは自分で開いてください。Python の例：
+
+```python
+import requests
+
+response = requests.post(
+    "https://api.example.com/upload",
+    files={"file": open("report.pdf", "rb")},
+    data={"title": "Q1 Report"},
+)
+```
+
+- **複数の `-d`** は連結されず、最後の1つだけが残ります。`-G`（データをクエリ文字列として送る）は無視されるので、パラメーターは URL に直接書いてください。
+- **`--json`**（curl 7.82 以降）は認識されず、URL が崩れます。変換前に `-H "Content-Type: application/json" -d '…'` に書き換えてください。
+- **Go** のコードはエラーを捨てています（`req, _ :=`、`resp, _ :=`）。リクエストが失敗すると `resp` が nil になり `resp.Body.Close()` で panic します。実際のコードでは `err` を確認してください。
+- **JavaScript と Node.js** のコードはトップレベル `await` を使います。ブラウザの DevTools や ES モジュールでは動きますが、Node.js タブの `require('axios')` は CommonJS ファイルではトップレベル `await` と併用できません。`.mjs` ファイルで `import axios from 'axios'` にするか、`async` 関数で包んでください。
+
+## ブラウザからリクエストをコピーする
+
+Chrome や Edge の DevTools で Network パネルを開き、リクエストを右クリックして **Copy → Copy as cURL (bash)** を選びます。Windows では bash 版を選んでください。cmd 版は `^` でエスケープするため、このコンバーターでは読めません。この方法でコピーしたリクエストには Cookie やトークンが含まれがちです。このページはアクセス解析も広告も読み込まず、変換はブラウザ内で行われます。

@@ -40,3 +40,96 @@ faqItems:
   <li><strong>팀 협업:</strong> cURL에 익숙하지 않은 팀원에게 요청 내용 설명.</li>
   <li><strong>빠른 개발:</strong> 보일러플레이트 없이 HTTP 요청 빠르게 구현.</li>
 </ul>
+
+## 예시: JSON POST 요청
+
+```bash
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer TOKEN" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+```
+
+**Python** 출력:
+
+```python
+import requests
+
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer TOKEN",
+}
+
+data = '{"name": "Alice", "email": "alice@example.com"}'
+
+response = requests.post(
+    "https://api.example.com/users",
+    headers=headers,
+    data=data
+)
+print(response.text)
+```
+
+**Go** 출력:
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+func main() {
+	body := strings.NewReader("{\"name\": \"Alice\", \"email\": \"alice@example.com\"}")
+	req, _ := http.NewRequest("POST", "https://api.example.com/users", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer TOKEN")
+
+	client := &http.Client{}
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(respBody))
+}
+```
+
+본문은 입력한 문자열 그대로 전달되므로 서버가 받는 바이트는 curl과 같습니다. JavaScript와 PHP 탭은 각각 `fetch`와 curl 확장으로 같은 요청을 보내고, Node.js 탭은 `axios`를 씁니다.
+
+## 플래그 변환 방식
+
+| curl | 생성되는 코드 |
+|---|---|
+| `-X`, `--request` | HTTP 메서드(`-X` 없이 본문이 있으면 POST) |
+| `-H`, `--header` | 헤더, 이름과 값 그대로 |
+| `-d`, `--data`, `--data-raw`, `--data-ascii` | 본문 문자열 |
+| `-u user:password` | `Authorization: Basic …` 헤더(`alice:s3cret` → `Basic YWxpY2U6czNjcmV0`) |
+| `-b`, `--cookie` | `Cookie` 헤더 |
+| `-L` | 리다이렉트 따라가기(Python에서는 `allow_redirects=True`) |
+| `-k`, `--insecure`, `--compressed`, `-s`, `-S`, `-i`, `-v` | 제거, 생성된 코드는 TLS 검증을 켠 상태로 유지 |
+
+## 실행 전에 확인할 것
+
+- **파일 업로드(`-F "file=@report.pdf"`)** 는 제대로 변환되지 않습니다. 코드가 `@report.pdf`라는 글자를 그대로 보내고, boundary 없는 `Content-Type: multipart/form-data` 헤더를 붙입니다. 이 헤더를 지우고 파일은 직접 여세요. Python 예:
+
+```python
+import requests
+
+response = requests.post(
+    "https://api.example.com/upload",
+    files={"file": open("report.pdf", "rb")},
+    data={"title": "Q1 Report"},
+)
+```
+
+- **여러 개의 `-d`** 는 합쳐지지 않고 마지막 것만 남습니다. `-G`(데이터를 쿼리 문자열로 전송)는 무시되므로 파라미터를 URL에 직접 쓰세요.
+- **`--json`**(curl 7.82 이상)은 인식되지 않고 URL을 망가뜨립니다. 변환 전에 `-H "Content-Type: application/json" -d '…'`로 바꾸세요.
+- **Go** 코드는 오류를 버립니다(`req, _ :=`, `resp, _ :=`). 요청이 실패하면 `resp`가 nil이 되어 `resp.Body.Close()`에서 panic이 납니다. 실제 코드에서는 `err`를 확인하세요.
+- **JavaScript와 Node.js** 코드는 최상위 `await`를 씁니다. 브라우저 DevTools와 ES 모듈에서는 동작하지만, Node.js 탭의 `require('axios')`는 CommonJS 파일에서 최상위 `await`와 함께 쓸 수 없습니다. `.mjs` 파일에서 `import axios from 'axios'`로 바꾸거나 `async` 함수로 감싸세요.
+
+## 브라우저에서 요청 복사하기
+
+Chrome이나 Edge DevTools의 Network 패널에서 요청을 오른쪽 클릭하고 **Copy → Copy as cURL (bash)** 를 고르세요. Windows에서는 bash 버전을 고르세요. cmd 버전은 `^`로 이스케이프하므로 이 변환기가 읽지 못합니다. 이렇게 복사한 요청에는 쿠키와 토큰이 들어 있는 경우가 많습니다. 이 페이지는 분석 도구와 광고를 불러오지 않으며 변환은 브라우저 안에서 이루어집니다.

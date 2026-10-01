@@ -5,13 +5,13 @@ faqItems:
   - question: "対応しているdocker runフラグは？"
     answer: "--name、-p/--publish（ポート）、-v/--volume（ボリューム）、-e/--env（環境変数）、--network、--restart、-d（デタッチ）、--cap-add、--memory、--cpus、イメージ名とコマンドに対応しています。"
   - question: "生成されるComposeファイルのバージョンは？"
-    answer: "version 3.8形式のdocker-compose.ymlを生成します。旧来のdocker-compose CLIと新しいdocker composeプラグインの両方と広く互換性があります。"
+    answer: "version キーは出力しません。Compose Specification ではトップレベルの version は廃止扱いで、Docker Compose v2 は指定されていても警告を出すだけです。"
   - question: "サービス名はどう決まりますか？"
     answer: "--nameを指定した場合はその値がサービス名になります。未指定の場合は、イメージ名からレジストリプレフィックスとタグを除き、スラッシュをアンダースコアに置換した名前が使われます。"
   - question: "複数行のdocker runコマンドは使えますか？"
     answer: "はい。バックスラッシュで改行したコマンドを貼り付けると正しく処理されます。"
   - question: "対応していないフラグはどうなりますか？"
-    answer: "非対応フラグは無視されます。--security-optや--deviceなどの高度なオプションは生成後のcomposeファイルに手動で追加してください。"
+    answer: "値を取らないフラグ（--privileged など）は読み飛ばされます。値を取り、かつ対応リストにないフラグ（--env-file .env、--entrypoint /bin/sh など）は誤って解釈され、その値がイメージ名になります。変換前にこうしたフラグを外し、対応する Compose のキーを手で追加してください。"
 ---
 
 <h2>使い方</h2>
@@ -42,3 +42,116 @@ faqItems:
   <li><strong>マルチサービス：</strong>各サービスブロックを個別に生成して1つのcomposeに統合。</li>
   <li><strong>CI/CD：</strong>docker runのシェルスクリプトを宣言型composeファイルに置き換え。</li>
 </ul>
+
+## 例：PostgreSQL コンテナ
+
+入力：
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=myapp \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5432:5432 \
+  -v pgdata:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  postgres:16-alpine
+```
+
+出力：
+
+```yaml
+services:
+  postgres:
+    image: "postgres:16-alpine"
+    ports:
+      - "5432:5432"
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+    environment:
+      - "POSTGRES_DB=myapp"
+      - "POSTGRES_USER=admin"
+      - "POSTGRES_PASSWORD=secret"
+    restart: unless-stopped
+```
+
+コンバーターはトップレベルの `volumes:` を書きません。宣言されていない名前付きボリューム（ここでは `pgdata`）を使うサービスは Compose がエラーにするので、`docker compose up -d` の前に追加します：
+
+```yaml
+volumes:
+  pgdata:
+```
+
+`-d` は削除されます。Compose では `docker compose up -d` でデタッチするためです。`--name` はサービス名になります。スクリプトが正確なコンテナ名に依存する場合は `container_name:` を自分で追加してください。
+
+## 例：ポート、リソース制限、既存ネットワーク
+
+```bash
+docker run --rm -it --network app-net -p 127.0.0.1:8080:80/tcp \
+  --restart on-failure:3 --memory 512m --cpus 1.5 --cap-add NET_ADMIN \
+  ghcr.io/acme/web:1.2 npm start
+```
+
+```yaml
+services:
+  acme_web:
+    image: "ghcr.io/acme/web:1.2"
+    ports:
+      - "127.0.0.1:8080:80/tcp"
+    networks:
+      - app-net
+    restart: "on-failure:3"
+    cap_add:
+      - NET_ADMIN
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.5'
+    command: ["npm", "start"]
+
+networks:
+  app-net:
+    external: true
+```
+
+`--name` がないとき、サービス名はイメージ名から作られます（`ghcr.io/acme/web:1.2` → `acme_web`）。`--rm`・`-i`・`-t`・`-it` は削除されます。`--network` は外部ネットワークになるため、事前に存在している必要があります（`docker network create app-net`）。
+
+## フラグの対応表
+
+| docker run | docker-compose.yml |
+|---|---|
+| `-p`・`--publish` | `ports:`（引用符付き、ホスト IP と `/udp` を保持） |
+| `-v`・`--volume` | `volumes:` |
+| `-e`・`--env` | `environment:` に `KEY=VALUE` の項目として出力、`KEY` だけの場合もそのまま |
+| `--network` | `networks:` と、トップレベルの `external: true` ネットワーク |
+| `--restart` | `restart:` |
+| `--cap-add` | `cap_add:` |
+| `--memory`・`-m`・`--cpus` | `deploy.resources.limits` |
+| `--name` | サービス名 |
+| `-d`・`--rm`・`-i`・`-t`・`-it` | 削除 |
+| イメージとそれ以降の引数 | `image:` と `command:`（JSON 配列） |
+
+表のフラグは `--flag=value` 形式でも使えます。
+
+## 手で追加するフラグ
+
+表にない、値を取るフラグは誤って解釈されます。その値がイメージ名として扱われ、以降はすべて `command` になります。たとえば `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"` は `image: /bin/sh` になります。変換前にこれらのフラグを外し、対応する Compose のキーを自分で書いてください（[Compose ファイルリファレンス](https://docs.docker.com/reference/compose-file/services/)）：
+
+| docker run | Compose のキー |
+|---|---|
+| `--env-file .env` | `env_file: [".env"]` |
+| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
+| `-u`・`--user 1000:1000` | `user: "1000:1000"` |
+| `-w`・`--workdir /app` | `working_dir: /app` |
+| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
+| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--add-host`・`-l` | `extra_hosts:`・`labels:` |
+
+## 制限
+
+- 1回に変換できるのは `docker run` コマンド1つです。複数のコンテナは個別に変換し、サービスブロックを1つの `services:` の下にまとめてください。
+- 名前付きボリュームはトップレベルで宣言されないため、上のように追加します。
+- 表にない、値を取るフラグがあると解析が崩れます（上記参照）。
+- コマンドは `docker run`（または `run`）で始める必要があります。`docker container run` や `podman run` は「無効なdocker runコマンド」と表示されます。

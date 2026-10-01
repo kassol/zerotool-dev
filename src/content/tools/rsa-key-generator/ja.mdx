@@ -9,7 +9,7 @@ faqItems:
   - question: "どのキーサイズを選ぶべきですか？"
     answer: "2048ビットは現在の業界最低基準で、ほとんどの用途に十分です。長期利用や高いセキュリティが求められる場合は4096ビットを選んでください。生成には少し時間がかかります。"
   - question: "PEM形式とは何ですか？"
-    answer: "PEM（Privacy Enhanced Mail）はBase64エンコードされたDER証明書を-----BEGIN/END-----ヘッダーで囲んだ形式です。TLS証明書・SSHキー・APIキーで最もよく使われます。"
+    answer: "PEM（Privacy Enhanced Mail）は Base64 でエンコードした DER データを -----BEGIN/END----- の行で囲んだ形式で、ラベルが中身（PUBLIC KEY、PRIVATE KEY、CERTIFICATE）を示します。OpenSSL、nginx、多くの TLS ソフトウェアが鍵と証明書をこの形式で扱います。"
   - question: "JWK形式とは何ですか？"
     answer: "JWK（JSON Web Key）はRFC 7517で定義された鍵のJSON表現です。OAuth 2.0・OIDC・JWT認証フローで広く使われています。"
 ---
@@ -29,3 +29,58 @@ faqItems:
   <li>共有するのは<strong>公開鍵</strong>だけにしてください——公開鍵は公開されることを前提に設計されています。</li>
   <li>このツールはテスト・開発用途に適しています。本番環境では専用の鍵管理サービス（AWS KMS、HashiCorp Vaultなど）を使ってください。</li>
 </ul>
+
+## 出力の形式
+
+**PEM** では、公開鍵は SubjectPublicKeyInfo（`-----BEGIN PUBLIC KEY-----`）、秘密鍵は暗号化なしの PKCS#8（`-----BEGIN PRIVATE KEY-----`）で出力されます。OpenSSL 3.6 はどちらもそのまま読めます（`Private-Key: (2048 bit, 2 primes)`）。PKCS#1（`-----BEGIN RSA PRIVATE KEY-----`）しか受け付けない古いソフトウェアでは変換が必要です。コマンドは下にあります。
+
+**JWK**（[RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)）はブラウザの Web Crypto API がエクスポートする形式です。RSA-OAEP で生成した公開鍵は次のとおりです（モジュラスは省略）：
+
+```json
+{
+  "alg": "RSA-OAEP-256",
+  "e": "AQAB",
+  "ext": true,
+  "key_ops": ["encrypt"],
+  "kty": "RSA",
+  "n": "6mqtvNrIisYdKt30jcmQN_za5t3OYQJ-8uhu_DkGEF5iZE4SrseP1CkxnD1yDEdgdD3E…"
+}
+```
+
+RSASSA-PKCS1-v1_5 を選ぶと公開鍵の JWK は `"alg": "RS256"`、`"key_ops": ["verify"]` になります。出力に `kid` と `use` はありません。JWT のヘッダーは `kid` で鍵を指すため、JWKS エンドポイントで公開する前に `kid` を追加してください。
+
+## OpenSSH と OpenSSL で使う
+
+次のコマンドは、ダウンロードしたファイルに対して macOS の OpenSSH と OpenSSL 3.6.1 で実行して確認しました。秘密鍵ファイルを他人が読める状態だと `ssh-keygen` は拒否する（「Permissions 0644 … are too open」）ので、先に権限を絞ります：
+
+```bash
+chmod 600 private-key.pem
+
+# OpenSSH public key for ~/.ssh/authorized_keys
+ssh-keygen -y -f private-key.pem
+ssh-keygen -i -m PKCS8 -f public-key.pem      # same result from the public key
+
+# PKCS#1 ("BEGIN RSA PRIVATE KEY") for older software
+openssl rsa -in private-key.pem -traditional -out private-key-pkcs1.pem
+
+# Inspect the key
+openssl pkey -in private-key.pem -noout -text
+```
+
+## 鍵長とアルゴリズムの選び方
+
+| 鍵長 | セキュリティ強度（[NIST SP 800-57 Part 1 Rev. 5](https://csrc.nist.gov/pubs/sp/800/57/pt1/r5/final) 表 2） |
+|---|---|
+| 1024 ビット | 80 ビット、使用不可 |
+| 2048 ビット | 112 ビット |
+| 3072 ビット | 128 ビット（このツールにはなし） |
+| 4096 ビット | 128 と 192 ビットの間 |
+
+アルゴリズムの設定は、ブラウザが鍵に許す用途と JWK の記載を決めます。**RSA-OAEP**（SHA-256）は暗号化用、**RSASSA-PKCS1-v1_5**（SHA-256、JWT の `RS256`）は署名用です。PEM ファイルにはアルゴリズムの情報がないため、OpenSSL では同じ PEM 鍵をどちらの用途にも使えます。
+
+## 制限
+
+- 鍵長は 2048 と 4096 のみで、公開指数は常に 65537（`AQAB`）です。
+- 秘密鍵の PEM はパスフレーズで暗号化されません。保護された場所に保存するか、`openssl pkcs8 -topk8 -in private-key.pem -out encrypted.pem` で暗号化してください。
+- OpenSSH 形式の秘密鍵、証明書、CSR は出力しません。`ssh-keygen` と `openssl req` を使ってください。
+- 生成はメインスレッドで行われ、4096 ビットは 2048 ビットより明らかに時間がかかります。

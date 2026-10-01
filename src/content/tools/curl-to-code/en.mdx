@@ -40,3 +40,96 @@ faqItems:
   <li><strong>Onboarding:</strong> Help teammates who are unfamiliar with cURL understand what a request does.</li>
   <li><strong>Testing:</strong> Quickly scaffold HTTP calls without writing boilerplate by hand.</li>
 </ul>
+
+## Example: A JSON POST
+
+```bash
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer TOKEN" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+```
+
+**Python** output:
+
+```python
+import requests
+
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer TOKEN",
+}
+
+data = '{"name": "Alice", "email": "alice@example.com"}'
+
+response = requests.post(
+    "https://api.example.com/users",
+    headers=headers,
+    data=data
+)
+print(response.text)
+```
+
+**Go** output:
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+func main() {
+	body := strings.NewReader("{\"name\": \"Alice\", \"email\": \"alice@example.com\"}")
+	req, _ := http.NewRequest("POST", "https://api.example.com/users", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer TOKEN")
+
+	client := &http.Client{}
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(respBody))
+}
+```
+
+The body is passed through as the exact string you typed, so the server receives the same bytes as with curl. The JavaScript and PHP tabs produce the same request with `fetch` and the curl extension; the Node.js tab uses `axios`.
+
+## How Flags Are Converted
+
+| curl | Generated code |
+|---|---|
+| `-X`, `--request` | HTTP method (without `-X`, a request with a body becomes POST) |
+| `-H`, `--header` | Header map, names and values unchanged |
+| `-d`, `--data`, `--data-raw`, `--data-ascii` | Body string |
+| `-u user:password` | `Authorization: Basic …` header (`alice:s3cret` → `Basic YWxpY2U6czNjcmV0`) |
+| `-b`, `--cookie` | `Cookie` header |
+| `-L` | Follow redirects (`allow_redirects=True` in Python) |
+| `-k`, `--insecure`, `--compressed`, `-s`, `-S`, `-i`, `-v` | Dropped; the generated code keeps TLS verification on |
+
+## Check These Before You Run the Code
+
+- **File uploads (`-F "file=@report.pdf"`)** are not converted correctly: the code sends the literal text `@report.pdf` and sets a `Content-Type: multipart/form-data` header without a boundary. Delete that header and open the file yourself, for example in Python:
+
+```python
+import requests
+
+response = requests.post(
+    "https://api.example.com/upload",
+    files={"file": open("report.pdf", "rb")},
+    data={"title": "Q1 Report"},
+)
+```
+
+- **Several `-d` flags** are not joined; only the last one is kept. `-G` (send data as a query string) is ignored, so put the query in the URL instead.
+- **`--json`** (curl 7.82+) is not recognized and breaks the URL. Rewrite it as `-H "Content-Type: application/json" -d '…'` before converting.
+- **Go** output discards errors (`req, _ :=`, `resp, _ :=`). If the request fails, `resp` is nil and `resp.Body.Close()` panics. Check `err` in real code.
+- **JavaScript and Node.js** output uses top-level `await`. It runs in browser DevTools and ES modules; the Node.js tab also uses `require('axios')`, which cannot be combined with top-level `await` in a CommonJS file. Use `import axios from 'axios'` in an `.mjs` file or wrap the code in an `async` function.
+
+## Copy a Request From the Browser
+
+In Chrome or Edge DevTools, open the Network panel, right-click a request, and choose **Copy → Copy as cURL (bash)**. On Windows, pick the bash variant: the cmd variant uses `^` escapes that this converter does not read. Requests copied this way often contain cookies and tokens; this page does not load analytics or ads, and the conversion runs in your browser.

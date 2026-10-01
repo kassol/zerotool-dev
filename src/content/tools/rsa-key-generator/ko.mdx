@@ -9,7 +9,7 @@ faqItems:
   - question: "어떤 키 크기를 선택해야 하나요?"
     answer: "2048비트는 현재 업계 최소 기준으로 대부분의 사용 사례에 충분합니다. 장기 사용 키나 더 높은 보안이 필요한 경우 4096비트를 선택하세요. 생성 시간이 더 오래 걸립니다."
   - question: "PEM 형식이란 무엇인가요?"
-    answer: "PEM(Privacy Enhanced Mail)은 Base64로 인코딩된 DER 인증서를 -----BEGIN/END----- 헤더로 감싼 형식입니다. TLS 인증서, SSH 키, API 키에서 가장 일반적으로 사용됩니다."
+    answer: "PEM(Privacy Enhanced Mail)은 Base64로 인코딩한 DER 데이터를 -----BEGIN/END----- 줄로 감싼 형식이며, 라벨이 내용(PUBLIC KEY, PRIVATE KEY, CERTIFICATE)을 나타냅니다. OpenSSL, nginx, 대부분의 TLS 소프트웨어가 키와 인증서를 이 형식으로 다룹니다."
   - question: "JWK 형식이란 무엇인가요?"
     answer: "JWK(JSON Web Key)는 RFC 7517에서 정의한 암호화 키의 JSON 표현입니다. OAuth 2.0, OIDC, JWT 인증 흐름에서 널리 사용됩니다."
 ---
@@ -29,3 +29,58 @@ faqItems:
   <li><strong>공개 키</strong>만 공유하세요 — 공개 키는 공개되도록 설계되었습니다.</li>
   <li>이 도구는 테스트와 개발 용도에 적합합니다. 프로덕션 환경에서는 전용 비밀 관리 서비스(AWS KMS, HashiCorp Vault 등)를 사용하세요.</li>
 </ul>
+
+## 출력 형식
+
+**PEM**은 공개 키를 SubjectPublicKeyInfo(`-----BEGIN PUBLIC KEY-----`), 개인 키를 암호화하지 않은 PKCS#8(`-----BEGIN PRIVATE KEY-----`)로 출력합니다. OpenSSL 3.6은 둘 다 바로 읽습니다(`Private-Key: (2048 bit, 2 primes)`). PKCS#1(`-----BEGIN RSA PRIVATE KEY-----`)만 받는 오래된 소프트웨어는 변환이 필요합니다. 명령은 아래에 있습니다.
+
+**JWK**([RFC 7517](https://www.rfc-editor.org/rfc/rfc7517))는 브라우저 Web Crypto API가 내보내는 형식입니다. RSA-OAEP로 만든 공개 키는 다음과 같습니다(모듈러스는 줄임):
+
+```json
+{
+  "alg": "RSA-OAEP-256",
+  "e": "AQAB",
+  "ext": true,
+  "key_ops": ["encrypt"],
+  "kty": "RSA",
+  "n": "6mqtvNrIisYdKt30jcmQN_za5t3OYQJ-8uhu_DkGEF5iZE4SrseP1CkxnD1yDEdgdD3E…"
+}
+```
+
+RSASSA-PKCS1-v1_5를 고르면 공개 키 JWK는 `"alg": "RS256"`, `"key_ops": ["verify"]`가 됩니다. 출력에는 `kid`와 `use`가 없습니다. JWT 헤더는 `kid`로 키를 찾으므로 JWKS 엔드포인트에 공개하기 전에 `kid`를 추가하세요.
+
+## OpenSSH와 OpenSSL에서 쓰기
+
+아래 명령은 내려받은 파일로 macOS의 OpenSSH와 OpenSSL 3.6.1에서 실행해 확인했습니다. 다른 사용자가 읽을 수 있는 개인 키 파일은 `ssh-keygen`이 거부하므로("Permissions 0644 … are too open") 먼저 권한을 줄이세요:
+
+```bash
+chmod 600 private-key.pem
+
+# OpenSSH public key for ~/.ssh/authorized_keys
+ssh-keygen -y -f private-key.pem
+ssh-keygen -i -m PKCS8 -f public-key.pem      # same result from the public key
+
+# PKCS#1 ("BEGIN RSA PRIVATE KEY") for older software
+openssl rsa -in private-key.pem -traditional -out private-key-pkcs1.pem
+
+# Inspect the key
+openssl pkey -in private-key.pem -noout -text
+```
+
+## 키 길이와 알고리즘 고르기
+
+| 키 길이 | 보안 강도([NIST SP 800-57 Part 1 Rev. 5](https://csrc.nist.gov/pubs/sp/800/57/pt1/r5/final) 표 2) |
+|---|---|
+| 1024비트 | 80비트, 사용 불가 |
+| 2048비트 | 112비트 |
+| 3072비트 | 128비트(이 도구에는 없음) |
+| 4096비트 | 128과 192비트 사이 |
+
+알고리즘 설정은 브라우저가 키에 허용하는 용도와 JWK의 내용을 정합니다. **RSA-OAEP**(SHA-256)는 암호화용, **RSASSA-PKCS1-v1_5**(SHA-256, JWT의 `RS256`)는 서명용입니다. PEM 파일에는 알고리즘 정보가 없으므로 OpenSSL에서는 같은 PEM 키를 두 용도에 모두 쓸 수 있습니다.
+
+## 제한 사항
+
+- 키 길이는 2048과 4096뿐이며 공개 지수는 항상 65537(`AQAB`)입니다.
+- 개인 키 PEM은 암호로 보호되지 않습니다. 보호된 위치에 저장하거나 `openssl pkcs8 -topk8 -in private-key.pem -out encrypted.pem`으로 암호화하세요.
+- OpenSSH 형식 개인 키, 인증서, CSR은 출력하지 않습니다. `ssh-keygen`과 `openssl req`를 쓰세요.
+- 생성은 메인 스레드에서 이루어지며 4096비트는 2048비트보다 눈에 띄게 오래 걸립니다.

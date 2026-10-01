@@ -7,9 +7,9 @@ faqItems:
   - question: "Is the comparison case-sensitive?"
     answer: "Yes. 'Apple' and 'apple' are treated as different lines. To make a case-insensitive comparison, convert your text to lowercase first using our Text Case Converter tool."
   - question: "How does numeric sort work?"
-    answer: "Lines starting with a number are sorted by their numeric value. Non-numeric lines are sorted alphabetically and placed at the end."
+    answer: "Each line is read with JavaScript parseFloat, which takes the leading number (10px reads as 10, 1,000 as 1, 0x10 as 0). Lines with no leading number are sorted alphabetically and placed at the end."
   - question: "Is there a line limit?"
-    answer: "There is no hard limit — processing happens entirely in your browser. Files with tens of thousands of lines process instantly on modern devices."
+    answer: "No limit is set. Processing happens in your browser, so its memory is the only limit."
   - question: "Is my data sent anywhere?"
     answer: "No. All processing runs 100% in your browser using JavaScript. Your data never leaves your machine."
 ---
@@ -50,7 +50,7 @@ date</code></pre>
 100 items</code></pre>
 
 <h3>Combine operations</h3>
-<p>You can chain operations: first <strong>Trim Lines</strong> to clean whitespace, then <strong>Remove Duplicates</strong>, then <strong>Sort A→Z</strong>. Copy the output back to input between steps or use the output directly.</p>
+<p>You can chain operations: first <strong>Trim Lines</strong> to clean whitespace, then <strong>Remove Duplicates</strong>, then <strong>Sort A→Z</strong>. Each button reads the Input box, so copy the output back to the input between steps.</p>
 
 <h2>Common Use Cases</h2>
 <p>
@@ -58,3 +58,131 @@ date</code></pre>
   sorting log entries, preparing word lists, cleaning CSV columns,
   and any task where you need to manipulate text line by line.
 </p>
+
+## How Each Button Works
+
+Every button reads the **Input** box and writes the **Output** box; the input is never changed. To run several steps (trim, then remove duplicates, then sort), copy the output back into the input between steps.
+
+| Button | Rule |
+|---|---|
+| Remove Duplicates | Keeps the first copy of each line in its original order. Lines must match exactly, including case and spaces. Same result as `awk '!seen[$0]++'` |
+| Sort A→Z / Z→A | `String.prototype.localeCompare` with the browser's default locale |
+| Sort Numeric | Reads each line with `parseFloat`; lines it cannot read go to the end, sorted A→Z |
+| Reverse | Flips the line order |
+| Shuffle | Random order (each click differs) |
+| Trim Lines | Removes leading and trailing whitespace from every line |
+| Remove Empty | Deletes lines that are empty or contain only whitespace |
+
+## Example: Sorting and Deduplicating a Mixed List
+
+Input (the last line ends with a space):
+
+```text
+banana
+Apple
+apple
+Cherry
+_x
+10
+9
+éclair
+Zebra
+apple
+apple 
+```
+
+**Sort A→Z** (English browser locale):
+
+```text
+_x
+10
+9
+apple
+apple
+Apple
+apple 
+banana
+Cherry
+éclair
+Zebra
+```
+
+The order follows the locale, not byte values: lowercase and uppercase sit together, `é` sorts next to `e`, and `10` comes before `9` because the comparison is by character, not by number. A shell `LC_ALL=C sort` gives byte order instead:
+
+```text
+10
+9
+Apple
+Cherry
+Zebra
+_x
+apple
+apple
+apple 
+banana
+éclair
+```
+
+**Remove Duplicates** on the same input drops one `apple` and keeps `apple ` (trailing space) as a different line:
+
+```text
+banana
+Apple
+apple
+Cherry
+_x
+10
+9
+éclair
+Zebra
+apple 
+```
+
+Click **Trim Lines** first, copy the result back, then remove duplicates if trailing spaces should not count.
+
+## Example: What Sort Numeric Reads
+
+```text
+1,000
+v2
+-3
+1e3
+10px
+3
+0x10
+ 4
+```
+
+becomes
+
+```text
+-3
+0x10
+1,000
+3
+ 4
+10px
+1e3
+v2
+```
+
+`parseFloat` reads the leading number and stops at the first character it cannot use: `0x10` is read as `0`, `1,000` as `1`, `10px` as `10`, and `1e3` as `1000`. ` 4` keeps its leading space. `v2` does not start with a number, so it goes to the end.
+
+## Command-Line Equivalents
+
+| Task | Shell | Difference from this tool |
+|---|---|---|
+| Remove duplicates, keep order | `awk '!seen[$0]++' file.txt` | Same result |
+| Remove adjacent duplicates | `sort file.txt \| uniq` | Output is sorted |
+| Sort | `sort file.txt` | Follows `LC_COLLATE`; `LC_ALL=C` gives byte order |
+| Sort numerically | `sort -n file.txt` | Different rules for `1,000`, `0x10`, and `1e3` |
+| Reverse | `tac file.txt` (GNU) / `tail -r file.txt` (macOS) | Same result |
+| Remove blank lines | `sed '/^[[:space:]]*$/d' file.txt` | Same result |
+| Trim each line | `sed 's/^[[:space:]]*//;s/[[:space:]]*$//' file.txt` | Same result for ASCII whitespace |
+
+## Limits
+
+- No case-insensitive mode. To ignore case, convert the text first with the [Text Case Converter](/tools/text-case/).
+- Lines are split on line feeds; pasted Windows line endings are normalized by the browser's text box.
+- Alphabetical order depends on the browser's language setting, so two machines can sort accented or mixed-case lines differently.
+- No line limit is set; the browser's memory is the limit.

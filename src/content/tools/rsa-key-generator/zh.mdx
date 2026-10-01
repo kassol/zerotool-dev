@@ -9,7 +9,7 @@ faqItems:
   - question: "应该选择哪种密钥长度？"
     answer: "2048 位是当前行业最低标准，足以应对大多数场景。4096 位适合长期使用的密钥或有更高安全要求的场景，但生成耗时明显更长。"
   - question: "PEM 格式是什么？"
-    answer: "PEM（Privacy Enhanced Mail）是 Base64 编码的 DER 证书，用 -----BEGIN/END----- 头部包裹。是 TLS 证书、SSH 密钥和 API 密钥最常见的格式。"
+    answer: "PEM（Privacy Enhanced Mail）是用 -----BEGIN/END----- 行包裹的 Base64 编码 DER 数据，标签写明里面是什么（PUBLIC KEY、PRIVATE KEY、CERTIFICATE）。OpenSSL、nginx 和大多数 TLS 软件都用这种格式保存密钥和证书。"
   - question: "JWK 格式是什么？"
     answer: "JWK（JSON Web Key）是 RFC 7517 定义的密钥 JSON 表示格式，常用于 OAuth 2.0、OIDC 和 JWT 认证流程。"
 ---
@@ -29,3 +29,58 @@ faqItems:
   <li>只需分享<strong>公钥</strong>——它本就是设计为公开的。</li>
   <li>此工具适合测试和开发使用。生产环境请使用专用密钥管理服务（AWS KMS、HashiCorp Vault 等）。</li>
 </ul>
+
+## 输出格式
+
+**PEM** 输出的公钥是 SubjectPublicKeyInfo（`-----BEGIN PUBLIC KEY-----`），私钥是未加密的 PKCS#8（`-----BEGIN PRIVATE KEY-----`）。OpenSSL 3.6 可以直接读取（`Private-Key: (2048 bit, 2 primes)`）。只认 PKCS#1（`-----BEGIN RSA PRIVATE KEY-----`）的旧软件需要先转换，命令见下文。
+
+**JWK**（[RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)）是浏览器 Web Crypto API 导出的格式。用 RSA-OAEP 生成的公钥如下（模数已截短）：
+
+```json
+{
+  "alg": "RSA-OAEP-256",
+  "e": "AQAB",
+  "ext": true,
+  "key_ops": ["encrypt"],
+  "kty": "RSA",
+  "n": "6mqtvNrIisYdKt30jcmQN_za5t3OYQJ-8uhu_DkGEF5iZE4SrseP1CkxnD1yDEdgdD3E…"
+}
+```
+
+选 RSASSA-PKCS1-v1_5 时，公钥 JWK 为 `"alg": "RS256"`、`"key_ops": ["verify"]`。输出里没有 `kid` 和 `use`；放到 JWKS 端点前请加上 `kid`，因为 JWT 头部按 `kid` 查找公钥。
+
+## 配合 OpenSSH 与 OpenSSL 使用
+
+以下命令在 macOS 的 OpenSSH 与 OpenSSL 3.6.1 上对下载的文件实际运行过。私钥文件别人可读时 `ssh-keygen` 会拒绝（「Permissions 0644 … are too open」），先收紧权限：
+
+```bash
+chmod 600 private-key.pem
+
+# OpenSSH public key for ~/.ssh/authorized_keys
+ssh-keygen -y -f private-key.pem
+ssh-keygen -i -m PKCS8 -f public-key.pem      # same result from the public key
+
+# PKCS#1 ("BEGIN RSA PRIVATE KEY") for older software
+openssl rsa -in private-key.pem -traditional -out private-key-pkcs1.pem
+
+# Inspect the key
+openssl pkey -in private-key.pem -noout -text
+```
+
+## 选择长度和算法
+
+| 密钥长度 | 安全强度（[NIST SP 800-57 Part 1 Rev. 5](https://csrc.nist.gov/pubs/sp/800/57/pt1/r5/final) 表 2） |
+|---|---|
+| 1024 位 | 80 位，已不允许使用 |
+| 2048 位 | 112 位 |
+| 3072 位 | 128 位（本工具不提供） |
+| 4096 位 | 介于 128 与 192 位之间 |
+
+算法选项决定浏览器允许密钥做什么，也决定 JWK 里的声明：**RSA-OAEP**（SHA-256）用于加密，**RSASSA-PKCS1-v1_5**（SHA-256，对应 JWT 的 `RS256`）用于签名。PEM 文件不携带算法信息，OpenSSL 可以把同一个 PEM 密钥用于两种用途。
+
+## 限制
+
+- 只有 2048 和 4096 位；公钥指数固定为 65537（`AQAB`）。
+- 私钥 PEM 没有用口令加密。请把文件放在受保护的位置，或用 `openssl pkcs8 -topk8 -in private-key.pem -out encrypted.pem` 加密。
+- 不输出 OpenSSH 私钥格式，也不生成证书或 CSR；这些请用 `ssh-keygen` 和 `openssl req`。
+- 生成在主线程进行，4096 位明显比 2048 位慢。

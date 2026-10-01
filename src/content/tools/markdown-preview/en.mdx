@@ -9,7 +9,7 @@ faqItems:
   - question: "Can I copy the rendered HTML?"
     answer: "Yes. Click the Copy HTML button above the preview pane to copy the rendered HTML to clipboard."
   - question: "Does it support GitHub Flavored Markdown (GFM)?"
-    answer: "Yes — tables, strikethrough, and task lists are supported."
+    answer: "Partly. Tables (without column alignment), strikethrough, and task lists with a lowercase x work. Autolinks, nested lists, and HTML sanitizing do not; see the comparison table below."
 ---
 
 <h2>How to Use</h2>
@@ -37,3 +37,62 @@ faqItems:
   <li>Task lists: <code>- [x] done</code> / <code>- [ ] todo</code></li>
   <li>Horizontal rule: <code>---</code></li>
 </ul>
+
+## Example: What the Preview Does With Edge Cases
+
+The preview uses a small built-in parser, not a full CommonMark or GitHub renderer. This input:
+
+````markdown
+# Release notes
+
+See https://example.com and `a **b** c`.
+
+- Parent
+  - Child
+- [X] Done
+- [x] done
+
+3. third
+4. fourth
+
+| Item | Price |
+|:-----|------:|
+| Widget | $9.99 |
+| a \| b | 1 |
+
+<b>raw</b> and <img src=x alt=y>
+````
+
+produces this HTML (the **Copy HTML** output):
+
+```html
+<h1>Release notes</h1><p>See https://example.com and <code>a <strong>b</strong> c</code>.</p><ul><li>Parent</li></ul><p>  - Child</p><ul><li>[X] Done</li><li><label><input type="checkbox" disabled="" checked=""> done</label></li></ul><ol><li>third</li><li>fourth</li></ol><table><thead><tr><th>Item</th><th>Price</th></tr></thead><tbody><tr><td>Widget</td><td>$9.99</td></tr><tr><td>a \</td><td>b</td><td>1</td></tr></tbody></table><p><b>raw</b> and <img src="x" alt="y"></p>
+```
+
+Compared with GitHub ([GFM spec](https://github.github.com/gfm/)):
+
+| Input | GitHub | This preview |
+|---|---|---|
+| Bare URL `https://example.com` | Link (autolink extension) | Plain text |
+| `**b**` inside backticks | Literal `**b**` | Bold inside the code span |
+| Indented `- Child` | Nested list | Separate paragraph |
+| `[X]` (capital X) | Checked task | Literal text; only lowercase `[x]` works |
+| `3.` as the first item | List starts at 3 | List starts at 1 |
+| `:---` / `---:` alignment | Left / right aligned | Alignment ignored |
+| Backslash-escaped pipe in a cell | Literal pipe | Splits the cell |
+| Raw HTML | Sanitized | Inserted as written |
+
+## Raw HTML Is Not Sanitized
+
+HTML tags in paragraphs are inserted into the preview and into the copied HTML without filtering. An `<img src=x onerror=...>` from pasted text runs in this page, and **Copy HTML** carries it into wherever you paste. Do not preview Markdown from sources you do not trust, and sanitize the HTML (for example with DOMPurify) before publishing it.
+
+## Images Load From the Network
+
+`![alt](https://…)` creates an `<img>` that your browser fetches from that address, so the image host sees your IP address and browser details. Text and the rest of the document stay in your browser.
+
+## Limits
+
+- One level of lists; no nested lists or multi-paragraph list items.
+- No autolinks, footnotes, reference-style links, or heading anchors.
+- Code blocks are highlighted for JavaScript, TypeScript, Python, Go, PHP, Ruby, Java, Bash, JSON, HTML/XML, CSS, and Markdown.
+- For a document that must look exactly like GitHub, check it in GitHub's own preview before publishing.

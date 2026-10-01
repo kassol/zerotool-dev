@@ -5,13 +5,13 @@ faqItems:
   - question: "支持哪些 docker run 参数？"
     answer: "支持：--name、-p/--publish（端口）、-v/--volume（卷）、-e/--env（环境变量）、--network、--restart、-d（后台运行）、--cap-add、--memory、--cpus，以及镜像名和可选命令。"
   - question: "生成的 Compose 文件版本是什么？"
-    answer: "生成 version 3.8 格式的 docker-compose.yml，与近期版本的 Docker Compose（旧版 docker-compose CLI 和新版 docker compose 插件）广泛兼容。"
+    answer: "不写 version 字段。Compose 规范把顶层 version 视为过时字段，Docker Compose v2 遇到它只会打印警告。"
   - question: "服务名称如何确定？"
-    answer: "如果 docker run 命令中使用了 --name，则以该值作为服务名。否则，服务名从镜像名称派生：去除 registry 前缀和 tag，将斜杠替换为下划线。"
+    answer: "如果 docker run 命令中使用了 --name，则以该值作为服务名（不会写 container_name）。否则，服务名从镜像名称派生：去除 registry 前缀和 tag，将斜杠替换为下划线。"
   - question: "支持多行 docker run 命令吗？"
     answer: "支持。粘贴使用反斜杠换行的命令，转换器会正确处理。"
   - question: "不支持的参数怎么处理？"
-    answer: "不支持的参数会被静默忽略。转换器专注于最常用的参数。--security-opt 或 --device 等高级选项需要手动添加到生成的 compose 文件中。"
+    answer: "不带值的参数（如 --privileged）会被跳过。带值且不在支持列表里的参数（如 --env-file .env、--entrypoint /bin/sh）会被读错：它的值会变成镜像名。转换前请删掉这类参数，再手动补对应的 Compose 字段。"
 ---
 
 <h2>使用方法</h2>
@@ -42,3 +42,116 @@ faqItems:
   <li><strong>多服务部署：</strong>分别生成各服务块，合并为完整的 compose 文件。</li>
   <li><strong>CI/CD：</strong>用声明式 compose 文件替代脆弱的 docker run shell 脚本。</li>
 </ul>
+
+## 示例：PostgreSQL 容器
+
+输入：
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=myapp \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5432:5432 \
+  -v pgdata:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  postgres:16-alpine
+```
+
+输出：
+
+```yaml
+services:
+  postgres:
+    image: "postgres:16-alpine"
+    ports:
+      - "5432:5432"
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+    environment:
+      - "POSTGRES_DB=myapp"
+      - "POSTGRES_USER=admin"
+      - "POSTGRES_PASSWORD=secret"
+    restart: unless-stopped
+```
+
+转换器不会写顶层的 `volumes:`。服务引用了没有声明的具名卷（这里是 `pgdata`）时，Compose 会报错，所以运行 `docker compose up -d` 前要补上：
+
+```yaml
+volumes:
+  pgdata:
+```
+
+`-d` 被去掉，因为 Compose 用 `docker compose up -d` 后台运行。`--name` 变成服务名；如果脚本依赖确切的容器名，请自己加 `container_name:`。
+
+## 示例：端口、资源限制与已有网络
+
+```bash
+docker run --rm -it --network app-net -p 127.0.0.1:8080:80/tcp \
+  --restart on-failure:3 --memory 512m --cpus 1.5 --cap-add NET_ADMIN \
+  ghcr.io/acme/web:1.2 npm start
+```
+
+```yaml
+services:
+  acme_web:
+    image: "ghcr.io/acme/web:1.2"
+    ports:
+      - "127.0.0.1:8080:80/tcp"
+    networks:
+      - app-net
+    restart: "on-failure:3"
+    cap_add:
+      - NET_ADMIN
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.5'
+    command: ["npm", "start"]
+
+networks:
+  app-net:
+    external: true
+```
+
+没有 `--name` 时，服务名取自镜像（`ghcr.io/acme/web:1.2` → `acme_web`）。`--rm`、`-i`、`-t`、`-it` 会被去掉。`--network` 生成的是外部网络，需要事先存在（`docker network create app-net`）。
+
+## 参数对照
+
+| docker run | docker-compose.yml |
+|---|---|
+| `-p`、`--publish` | `ports:`（加引号，保留宿主 IP 与 `/udp`） |
+| `-v`、`--volume` | `volumes:` |
+| `-e`、`--env` | `environment:`，写成 `KEY=VALUE` 列表项；只有 `KEY` 时原样保留 |
+| `--network` | `networks:`，并在顶层声明 `external: true` 网络 |
+| `--restart` | `restart:` |
+| `--cap-add` | `cap_add:` |
+| `--memory`、`-m`、`--cpus` | `deploy.resources.limits` |
+| `--name` | 服务名 |
+| `-d`、`--rm`、`-i`、`-t`、`-it` | 去掉 |
+| 镜像及其后的参数 | `image:` 与 `command:`（JSON 数组） |
+
+表中参数也支持 `--flag=value` 写法。
+
+## 需要手动补的参数
+
+表外带值的参数会被读错：转换器把它的值当成镜像名，后面的内容全部变成 `command`。例如 `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"` 会得到 `image: /bin/sh`。转换前先删掉这些参数，再自己写对应的 Compose 字段（[Compose 文件参考](https://docs.docker.com/reference/compose-file/services/)）：
+
+| docker run | Compose 字段 |
+|---|---|
+| `--env-file .env` | `env_file: [".env"]` |
+| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
+| `-u`、`--user 1000:1000` | `user: "1000:1000"` |
+| `-w`、`--workdir /app` | `working_dir: /app` |
+| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
+| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--add-host`、`-l` | `extra_hosts:`、`labels:` |
+
+## 限制
+
+- 一次只转换一条 `docker run`。多个容器请分别转换，再把服务块放到同一个 `services:` 下。
+- 具名卷不会在顶层声明，需按上文手动补。
+- 表外带值的参数会打乱解析，见上文。
+- 命令须以 `docker run`（或直接 `run`）开头；`docker container run`、`podman run` 会提示「无效的 docker run 命令」。

@@ -29,3 +29,86 @@ faqItems:
   <li>nullable/선택적 → 포인터 (<code>*T</code>)</li>
   <li>중첩 객체 → 독립적으로 명명된 <code>struct</code></li>
 </ul>
+
+## 예시: API 응답
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": { "city": "New York", "country": "US", "zip_code": "10001" },
+    "last_login": null
+  }
+}
+```
+
+에서 다음이 생성됩니다:
+
+```go
+type RootObject struct {
+	User User `json:"user"`
+}
+
+type User struct {
+	Id int `json:"id"`
+	Name string `json:"name"`
+	Email string `json:"email"`
+	IsActive bool `json:"is_active"`
+	Roles []string `json:"roles"`
+	Address Address `json:"address"`
+	LastLogin interface{} `json:"last_login"`
+}
+
+type Address struct {
+	City string `json:"city"`
+	Country string `json:"country"`
+	ZipCode string `json:"zip_code"`
+}
+```
+
+`snake_case` 키는 `CamelCase` 필드 이름이 되고 `json` 태그에 원래 키가 남아 `encoding/json`이 양방향으로 매핑합니다. 필드가 정렬되어 있지 않으므로 `gofmt`(또는 저장할 때 포맷하는 편집기)로 태그를 맞추세요. 표준 라이브러리로 디코딩합니다:
+
+```go
+var root RootObject
+if err := json.Unmarshal(data, &root); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(root.User.Name) // Alice
+```
+
+## 예시: 최상위가 배열인 경우
+
+```json
+[{"sku": "A1", "qty": 2}, {"sku": "B2", "note": "gift"}]
+```
+
+에서 다음이 생성됩니다:
+
+```go
+type RootObject struct {
+	Sku string `json:"sku"`
+	Qty *int `json:"qty,omitempty"`
+	Note *string `json:"note,omitempty"`
+}
+```
+
+최상위가 배열이면 구조체는 요소 하나를 나타내므로 `[]RootObject`로 디코딩합니다. 일부 요소에 없는 키는 `omitempty`가 붙은 포인터가 됩니다.
+
+## 생성 후 고칠 부분
+
+- `null`은 `interface{}`가 됩니다. API 문서를 확인한 뒤 `*string`, `*time.Time` 같은 실제 타입의 포인터로 바꾸세요.
+- 소수부가 없는 숫자는 `int`가 됩니다. JavaScript는 `19.0`의 `.0`을 구별하지 못하므로 그런 가격 샘플도 `int`가 됩니다. 소수를 보내는 필드는 `float64`로 바꾸세요. 64비트 플랫폼에서 `int`는 64비트입니다.
+- `[]`과 요소 타입이 섞인 배열은 `[]interface{}`가 됩니다.
+- 필드 이름은 Go의 약어 관례에 맞게 조정되지 않습니다. `id`는 `Id`, `url`은 `Url`이 되지만 [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms)는 `ID`, `URL`을 권장합니다. 어느 쪽이든 `json` 태그 덕분에 디코딩은 올바르게 동작합니다.
+- Go 식별자의 첫 글자로 쓸 수 없는 키는 잘못된 코드를 만듭니다. `2fa`는 필드 이름 `2fa`가 되고, 빈 키는 이름 없는 필드가 됩니다. 이름을 바꾸세요(태그에는 원래 키가 남습니다).
+- 키 이름이 같은 중첩 객체가 둘 있으면(`a.meta`와 `b.meta` 등) `Meta`라는 구조체 하나를 같이 쓰고 첫 번째 모양만 남습니다. 하나의 이름을 바꾸고 필드를 추가하세요.
+- `json` 태그만 생성됩니다. `gorm`, `bson`, `validate` 태그는 직접 추가하세요.
+
+## 제한 사항
+
+- 입력은 유효한 JSON이어야 합니다. 오류 메시지에 위치가 표시됩니다(끝 쉼표라면 `Expected double-quoted property name in JSON at position 8`).
+- 타입은 붙여넣은 샘플에서만 결정됩니다.

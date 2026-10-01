@@ -5,13 +5,13 @@ faqItems:
   - question: "어떤 docker run 플래그를 지원하나요?"
     answer: "--name, -p/--publish(포트), -v/--volume(볼륨), -e/--env(환경변수), --network, --restart, -d(백그라운드), --cap-add, --memory, --cpus, 이미지 이름과 명령어를 지원합니다."
   - question: "생성되는 Compose 파일 버전은?"
-    answer: "version 3.8 형식의 docker-compose.yml을 생성합니다. 기존 docker-compose CLI와 새로운 docker compose 플러그인 모두와 호환됩니다."
+    answer: "version 키를 쓰지 않습니다. Compose Specification은 최상위 version을 더 이상 쓰지 않는 필드로 보며, Docker Compose v2는 이 값이 있으면 경고만 출력합니다."
   - question: "서비스 이름은 어떻게 결정되나요?"
     answer: "--name을 지정하면 해당 값이 서비스 이름이 됩니다. 그렇지 않으면 이미지 이름에서 레지스트리 접두사와 태그를 제거하고 슬래시를 언더스코어로 바꾼 이름을 사용합니다."
   - question: "여러 줄 docker run 명령어도 지원하나요?"
     answer: "네. 백슬래시로 줄을 연속한 명령어를 붙여넣으면 올바르게 처리됩니다."
   - question: "지원하지 않는 플래그는 어떻게 되나요?"
-    answer: "지원하지 않는 플래그는 자동으로 무시됩니다. --security-opt나 --device 같은 고급 옵션은 생성된 compose 파일에 수동으로 추가해야 합니다."
+    answer: "값이 없는 플래그(--privileged 등)는 건너뜁니다. 값을 받으면서 지원 목록에 없는 플래그(--env-file .env, --entrypoint /bin/sh 등)는 잘못 해석되어 그 값이 이미지 이름이 됩니다. 변환 전에 이런 플래그를 빼고 대응하는 Compose 키를 직접 추가하세요."
 ---
 
 <h2>사용 방법</h2>
@@ -42,3 +42,116 @@ faqItems:
   <li><strong>멀티 서비스:</strong> 각 서비스 블록을 생성하여 하나의 compose 파일로 통합.</li>
   <li><strong>CI/CD:</strong> docker run 쉘 스크립트를 선언적 compose 파일로 대체.</li>
 </ul>
+
+## 예시: PostgreSQL 컨테이너
+
+입력:
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=myapp \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5432:5432 \
+  -v pgdata:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  postgres:16-alpine
+```
+
+출력:
+
+```yaml
+services:
+  postgres:
+    image: "postgres:16-alpine"
+    ports:
+      - "5432:5432"
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+    environment:
+      - "POSTGRES_DB=myapp"
+      - "POSTGRES_USER=admin"
+      - "POSTGRES_PASSWORD=secret"
+    restart: unless-stopped
+```
+
+변환기는 최상위 `volumes:` 블록을 쓰지 않습니다. 선언되지 않은 이름 있는 볼륨(여기서는 `pgdata`)을 쓰는 서비스는 Compose가 거부하므로 `docker compose up -d` 전에 추가하세요:
+
+```yaml
+volumes:
+  pgdata:
+```
+
+`-d`는 제거됩니다. Compose에서는 `docker compose up -d`로 백그라운드 실행하기 때문입니다. `--name`은 서비스 이름이 됩니다. 스크립트가 정확한 컨테이너 이름에 의존한다면 `container_name:`을 직접 추가하세요.
+
+## 예시: 포트, 리소스 제한, 기존 네트워크
+
+```bash
+docker run --rm -it --network app-net -p 127.0.0.1:8080:80/tcp \
+  --restart on-failure:3 --memory 512m --cpus 1.5 --cap-add NET_ADMIN \
+  ghcr.io/acme/web:1.2 npm start
+```
+
+```yaml
+services:
+  acme_web:
+    image: "ghcr.io/acme/web:1.2"
+    ports:
+      - "127.0.0.1:8080:80/tcp"
+    networks:
+      - app-net
+    restart: "on-failure:3"
+    cap_add:
+      - NET_ADMIN
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.5'
+    command: ["npm", "start"]
+
+networks:
+  app-net:
+    external: true
+```
+
+`--name`이 없으면 서비스 이름은 이미지에서 만들어집니다(`ghcr.io/acme/web:1.2` → `acme_web`). `--rm`, `-i`, `-t`, `-it`는 제거됩니다. `--network`는 외부 네트워크가 되므로 미리 만들어 두어야 합니다(`docker network create app-net`).
+
+## 플래그 대응표
+
+| docker run | docker-compose.yml |
+|---|---|
+| `-p`, `--publish` | `ports:` (따옴표 포함, 호스트 IP와 `/udp` 유지) |
+| `-v`, `--volume` | `volumes:` |
+| `-e`, `--env` | `environment:`에 `KEY=VALUE` 항목으로 출력, `KEY`만 있어도 그대로 유지 |
+| `--network` | `networks:`와 최상위 `external: true` 네트워크 |
+| `--restart` | `restart:` |
+| `--cap-add` | `cap_add:` |
+| `--memory`, `-m`, `--cpus` | `deploy.resources.limits` |
+| `--name` | 서비스 이름 |
+| `-d`, `--rm`, `-i`, `-t`, `-it` | 제거 |
+| 이미지와 그 뒤의 인수 | `image:`와 `command:`(JSON 배열) |
+
+표의 플래그는 `--flag=value` 형식도 지원합니다.
+
+## 직접 추가해야 하는 플래그
+
+표에 없고 값을 받는 플래그는 잘못 해석됩니다. 그 값이 이미지 이름으로 쓰이고 뒤에 오는 내용은 모두 `command`가 됩니다. 예를 들어 `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"`는 `image: /bin/sh`가 됩니다. 변환 전에 이런 플래그를 빼고, 대응하는 Compose 키를 직접 작성하세요([Compose 파일 레퍼런스](https://docs.docker.com/reference/compose-file/services/)):
+
+| docker run | Compose 키 |
+|---|---|
+| `--env-file .env` | `env_file: [".env"]` |
+| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
+| `-u`, `--user 1000:1000` | `user: "1000:1000"` |
+| `-w`, `--workdir /app` | `working_dir: /app` |
+| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
+| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--add-host`, `-l` | `extra_hosts:`, `labels:` |
+
+## 제한 사항
+
+- 한 번에 `docker run` 명령 하나만 변환합니다. 컨테이너가 여러 개라면 각각 변환한 뒤 서비스 블록을 하나의 `services:` 아래에 모으세요.
+- 이름 있는 볼륨은 최상위에 선언되지 않으므로 위와 같이 추가하세요.
+- 표에 없고 값을 받는 플래그가 있으면 파싱이 깨집니다(위 참조).
+- 명령은 `docker run`(또는 `run`)으로 시작해야 합니다. `docker container run`, `podman run`은 "잘못된 docker run 명령어"라고 표시됩니다.

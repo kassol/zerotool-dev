@@ -38,4 +38,87 @@ faqItems:
 <p>Given this JSON:</p>
 <pre><code>{`{"name": "Alice", "age": 30, "address": {"city": "London"}}`}</code></pre>
 <p>The tool generates:</p>
-<pre><code>{`type Address struct {\n\tCity string \`json:"city"\`\n}\n\ntype RootObject struct {\n\tName    string  \`json:"name"\`\n\tAge     int     \`json:"age"\`\n\tAddress Address \`json:"address"\`\n}`}</code></pre>
+<pre><code>{`type RootObject struct {\n\tName string \`json:\"name\"\`\n\tAge int \`json:\"age\"\`\n\tAddress Address \`json:\"address\"\`\n}\n\ntype Address struct {\n\tCity string \`json:\"city\"\`\n}`}</code></pre>
+
+## Example: An API Response
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": { "city": "New York", "country": "US", "zip_code": "10001" },
+    "last_login": null
+  }
+}
+```
+
+generates
+
+```go
+type RootObject struct {
+	User User `json:"user"`
+}
+
+type User struct {
+	Id int `json:"id"`
+	Name string `json:"name"`
+	Email string `json:"email"`
+	IsActive bool `json:"is_active"`
+	Roles []string `json:"roles"`
+	Address Address `json:"address"`
+	LastLogin interface{} `json:"last_login"`
+}
+
+type Address struct {
+	City string `json:"city"`
+	Country string `json:"country"`
+	ZipCode string `json:"zip_code"`
+}
+```
+
+`snake_case` keys become `CamelCase` field names, and the `json` tag keeps the original key, so `encoding/json` maps them both ways. The fields are not aligned; run `gofmt` (or save in an editor that runs it) to line up the tags. Decode with the standard library:
+
+```go
+var root RootObject
+if err := json.Unmarshal(data, &root); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(root.User.Name) // Alice
+```
+
+## Example: A Top-Level Array
+
+```json
+[{"sku": "A1", "qty": 2}, {"sku": "B2", "note": "gift"}]
+```
+
+generates
+
+```go
+type RootObject struct {
+	Sku string `json:"sku"`
+	Qty *int `json:"qty,omitempty"`
+	Note *string `json:"note,omitempty"`
+}
+```
+
+For a top-level array, the struct describes one element; decode into `[]RootObject`. Keys missing from some elements become pointers with `omitempty`.
+
+## What to Fix After Generating
+
+- `null` becomes `interface{}`. Change it to a pointer of the real type, such as `*string` or `*time.Time`, after checking the API docs.
+- A number without a fraction becomes `int`. JavaScript cannot see the `.0` in `19.0`, so a price sample like that also gives `int`; use `float64` where the API sends decimals. `int` is 64 bits on 64-bit platforms.
+- `[]` and arrays with mixed element types become `[]interface{}`.
+- Field names are not adjusted to Go initialisms: `id` becomes `Id` and `url` becomes `Url`, while [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms) recommends `ID` and `URL`. The `json` tag keeps decoding correct either way.
+- Keys that cannot start a Go identifier produce invalid code: `2fa` gives a field named `2fa`, and an empty key gives a field with no name. Rename those fields; the tag keeps the original key.
+- Two nested objects with the same key name (for example `a.meta` and `b.meta`) share one struct named `Meta`, and only the first shape is kept. Rename one and add its fields.
+- Only `json` tags are written. Add `gorm`, `bson`, or `validate` tags yourself.
+
+## Limits
+
+- The input must be valid JSON; the error message gives the position, for example `Expected double-quoted property name in JSON at position 8` for a trailing comma.
+- Types come only from the sample you paste.

@@ -32,3 +32,82 @@ faqItems:
 </ul>
 
 <p>関連ツール：<a href="/ja/tools/json-formatter/">JSONフォーマッター</a> — diff前にJSONを整形・検証する。</p>
+
+## 例
+
+**変更前：**
+
+```json
+{"name":"Alice","status":"pending","legacy_id":12345,"tags":["a","b","c"],"profile":{"age":30,"city":"Paris"}}
+```
+
+**変更後**（キーの順序が変わり、`status` を変更、`legacy_id` を削除、`role` を追加、最初のタグを削除）：
+
+```json
+{"status":"active","name":"Alice","role":"admin","tags":["b","c"],"profile":{"age":31,"city":"Paris"}}
+```
+
+**ビジュアル差分：**
+
+```text
+~status: "pending" → "active"
+−legacy_id: 12345
+~tags.0: "a" → "b"
+~tags.1: "b" → "c"
+−tags.2: "c"
+~profile.age: 30 → 31
++role: "admin"
+```
+
+**JSON Patch：**
+
+```json
+[
+  { "op": "replace", "path": "/status", "value": "active" },
+  { "op": "remove", "path": "/legacy_id" },
+  { "op": "replace", "path": "/tags/0", "value": "b" },
+  { "op": "replace", "path": "/tags/1", "value": "c" },
+  { "op": "remove", "path": "/tags/2" },
+  { "op": "replace", "path": "/profile/age", "value": 31 },
+  { "op": "add", "path": "/role", "value": "admin" }
+]
+```
+
+キーの順序は結果に影響しません。`name` は位置が変わっても報告されません。この patch を Python の `jsonpatch` 1.33 で適用すると 変更後のドキュメントになります：
+
+```python
+import jsonpatch  # pip install jsonpatch
+
+before = {"name": "Alice", "status": "pending", "legacy_id": 12345,
+          "tags": ["a", "b", "c"], "profile": {"age": 30, "city": "Paris"}}
+patch = jsonpatch.JsonPatch([...])  # paste the patch from the tool
+after = patch.apply(before)
+```
+
+## 配列の比較方法
+
+配列は内容ではなくインデックスで比較されます。`["a","b","c"]` から最初のタグを外すと、`remove /tags/0` 1件ではなく、置換2件と削除1件として表示されます。patch は正しいものの、必要以上に長くなります。
+
+1つだけ、適用に失敗する patch が出るケースがあります。同じ配列から2つ以上の要素を削除すると、削除操作がインデックスの昇順に並びます。`[1,2,3]` → `[1]` では `remove /1` の次に `remove /2` が出力されます。1件目の適用後に配列は `[1,3]` になり `/2` が存在しないため、RFC 6902 の処理はエラーで止まります（`jsonpatch` は `JsonPatchConflict` を送出）。適用前に、これらの `remove` の順序を逆にしてください。
+
+## パスと JSON Pointer のエスケープ
+
+patch のパスは JSON Pointer（[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)）で、`~` は `~0`、`/` は `~1` と書きます。`{"a/b":1,"m~n":2,"list":[1,2,3]}` → `{"a/b":2,"list":[1,2,3,4],"x":null}` の結果：
+
+```json
+[
+  { "op": "replace", "path": "/a~1b", "value": 2 },
+  { "op": "remove", "path": "/m~0n" },
+  { "op": "add", "path": "/list/3", "value": 4 },
+  { "op": "add", "path": "/x", "value": null }
+]
+```
+
+ビジュアル差分はキーをドットでつないで表示します（`profile.age`、`list.3`）。読みやすさのための表記なので、コードでは JSON Patch のパスを使ってください。
+
+## 制限
+
+- ルートの型が異なる場合（オブジェクトと配列、または異なるスカラー同士）、`{ "op": "replace", "path": "/", ... }` が出力されます。RFC 6901 では `/` は空文字列という名前のメンバーを指し、ドキュメント全体は空のパス `""` です。そのため `jsonpatch` はこの操作を拒否します。パスを `""` に直すか、ドキュメントを直接置き換えてください。
+- move と copy の操作は生成しません。キー名の変更は `remove` と `add` として表示されます。
+- オブジェクトの配列を `id` フィールドで対応付けることはしません。
+- 両方とも有効な JSON である必要があります。ステータス行にどちらの解析に失敗したかが表示されます（例：`変更前 JSON の解析エラー：Expected double-quoted property name in JSON at position 7`）。

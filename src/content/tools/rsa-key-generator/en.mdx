@@ -9,7 +9,7 @@ faqItems:
   - question: "Which key size should I choose?"
     answer: "2048-bit is the current industry minimum and is sufficient for most use cases. Choose 4096-bit for long-lived keys or when regulations require higher security margins. 4096-bit generation takes noticeably longer."
   - question: "What is the PEM format?"
-    answer: "PEM (Privacy Enhanced Mail) is a Base64-encoded DER certificate wrapped in -----BEGIN/END----- headers. It is the most common format for TLS certificates, SSH keys, and API keys."
+    answer: "PEM (Privacy Enhanced Mail) is Base64-encoded DER data wrapped in -----BEGIN/END----- lines; the label says what is inside (PUBLIC KEY, PRIVATE KEY, CERTIFICATE). It is the usual format for keys and certificates in OpenSSL, nginx, and most TLS software."
   - question: "What is the JWK format?"
     answer: "JWK (JSON Web Key) is a JSON representation of cryptographic keys defined by RFC 7517. It is commonly used in OAuth 2.0, OIDC, and JWT authentication flows."
 ---
@@ -29,3 +29,58 @@ faqItems:
   <li>Share only your <strong>public key</strong> — it is designed to be public.</li>
   <li>This tool generates keys for testing and development. For production use, manage keys with a dedicated secret manager (AWS KMS, HashiCorp Vault, etc.).</li>
 </ul>
+
+## What the Output Looks Like
+
+**PEM** gives the public key as SubjectPublicKeyInfo (`-----BEGIN PUBLIC KEY-----`) and the private key as unencrypted PKCS#8 (`-----BEGIN PRIVATE KEY-----`). OpenSSL 3.6 reads both directly (`Private-Key: (2048 bit, 2 primes)`). Older software that expects PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`) needs a conversion; see the commands below.
+
+**JWK** ([RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) is what the browser's Web Crypto API exports. A public key generated with RSA-OAEP looks like this (modulus shortened):
+
+```json
+{
+  "alg": "RSA-OAEP-256",
+  "e": "AQAB",
+  "ext": true,
+  "key_ops": ["encrypt"],
+  "kty": "RSA",
+  "n": "6mqtvNrIisYdKt30jcmQN_za5t3OYQJ-8uhu_DkGEF5iZE4SrseP1CkxnD1yDEdgdD3E…"
+}
+```
+
+With RSASSA-PKCS1-v1_5 the public JWK has `"alg": "RS256"` and `"key_ops": ["verify"]`. The output has no `kid` or `use`; add a `kid` before publishing the key in a JWKS endpoint, because JWT headers refer to keys by `kid`.
+
+## Use the Keys With OpenSSH and OpenSSL
+
+These commands were run on the downloaded files with OpenSSH on macOS and OpenSSL 3.6.1. `ssh-keygen` refuses a private key file that others can read ("Permissions 0644 … are too open"), so restrict it first:
+
+```bash
+chmod 600 private-key.pem
+
+# OpenSSH public key for ~/.ssh/authorized_keys
+ssh-keygen -y -f private-key.pem
+ssh-keygen -i -m PKCS8 -f public-key.pem      # same result from the public key
+
+# PKCS#1 ("BEGIN RSA PRIVATE KEY") for older software
+openssl rsa -in private-key.pem -traditional -out private-key-pkcs1.pem
+
+# Inspect the key
+openssl pkey -in private-key.pem -noout -text
+```
+
+## Choosing Size and Algorithm
+
+| Key size | Security strength ([NIST SP 800-57 Part 1 Rev. 5](https://csrc.nist.gov/pubs/sp/800/57/pt1/r5/final), Table 2) |
+|---|---|
+| 1024-bit | 80 bits, no longer allowed |
+| 2048-bit | 112 bits |
+| 3072-bit | 128 bits (not offered here) |
+| 4096-bit | between 128 and 192 bits |
+
+The algorithm setting decides what the browser lets the key do and what the JWK says: **RSA-OAEP** (with SHA-256) for encryption, **RSASSA-PKCS1-v1_5** (with SHA-256, JWT `RS256`) for signatures. The PEM files carry no algorithm, so OpenSSL can use the same PEM key for either purpose.
+
+## Limits
+
+- Key sizes 2048 and 4096 only; the public exponent is always 65537 (`AQAB`).
+- The private key PEM is not encrypted with a passphrase. Store the file somewhere protected, or encrypt it with `openssl pkcs8 -topk8 -in private-key.pem -out encrypted.pem`.
+- No OpenSSH private key format and no certificate or CSR output; use `ssh-keygen` and `openssl req` for those.
+- Generation runs on the main thread; 4096-bit keys take noticeably longer than 2048-bit keys.

@@ -40,3 +40,96 @@ faqItems:
   <li><strong>团队协作：</strong>帮助不熟悉 cURL 的队友理解请求内容。</li>
   <li><strong>快速开发：</strong>无需手写样板代码，快速搭建 HTTP 调用。</li>
 </ul>
+
+## 示例：JSON POST 请求
+
+```bash
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer TOKEN" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+```
+
+**Python** 输出：
+
+```python
+import requests
+
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer TOKEN",
+}
+
+data = '{"name": "Alice", "email": "alice@example.com"}'
+
+response = requests.post(
+    "https://api.example.com/users",
+    headers=headers,
+    data=data
+)
+print(response.text)
+```
+
+**Go** 输出：
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+func main() {
+	body := strings.NewReader("{\"name\": \"Alice\", \"email\": \"alice@example.com\"}")
+	req, _ := http.NewRequest("POST", "https://api.example.com/users", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer TOKEN")
+
+	client := &http.Client{}
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(respBody))
+}
+```
+
+请求体按你输入的字符串原样传入，服务器收到的字节与用 curl 时相同。JavaScript、PHP 标签分别用 `fetch` 和 curl 扩展发出同样的请求；Node.js 标签使用 `axios`。
+
+## 参数如何转换
+
+| curl | 生成的代码 |
+|---|---|
+| `-X`、`--request` | HTTP 方法（没有 `-X` 但带请求体时为 POST） |
+| `-H`、`--header` | 请求头，名称和值不变 |
+| `-d`、`--data`、`--data-raw`、`--data-ascii` | 请求体字符串 |
+| `-u user:password` | `Authorization: Basic …` 头（`alice:s3cret` → `Basic YWxpY2U6czNjcmV0`） |
+| `-b`、`--cookie` | `Cookie` 头 |
+| `-L` | 跟随重定向（Python 中为 `allow_redirects=True`） |
+| `-k`、`--insecure`、`--compressed`、`-s`、`-S`、`-i`、`-v` | 去掉；生成的代码保持 TLS 校验开启 |
+
+## 运行前请检查
+
+- **文件上传（`-F "file=@report.pdf"`）** 转换不正确：代码会发送字面文本 `@report.pdf`，并设置一个没有 boundary 的 `Content-Type: multipart/form-data` 头。请删掉这个头，自己打开文件，例如 Python：
+
+```python
+import requests
+
+response = requests.post(
+    "https://api.example.com/upload",
+    files={"file": open("report.pdf", "rb")},
+    data={"title": "Q1 Report"},
+)
+```
+
+- **多个 `-d`** 不会拼接，只保留最后一个。`-G`（把数据作为查询字符串发送）会被忽略，请直接把参数写进 URL。
+- **`--json`**（curl 7.82 起）无法识别，会弄乱 URL。转换前改写成 `-H "Content-Type: application/json" -d '…'`。
+- **Go** 代码丢弃了错误（`req, _ :=`、`resp, _ :=`）。请求失败时 `resp` 为 nil，`resp.Body.Close()` 会 panic。实际代码中请检查 `err`。
+- **JavaScript 与 Node.js** 代码使用顶层 `await`，可以在浏览器控制台和 ES 模块中运行；Node.js 标签还用了 `require('axios')`，在 CommonJS 文件里不能与顶层 `await` 一起用。请在 `.mjs` 文件中改用 `import axios from 'axios'`，或把代码包进 `async` 函数。
+
+## 从浏览器复制请求
+
+在 Chrome 或 Edge 开发者工具的 Network 面板中右键一个请求，选择 **Copy → Copy as cURL (bash)**。Windows 上请选 bash 版本：cmd 版本用 `^` 转义，本工具无法读取。这样复制的请求常带 Cookie 和令牌；本页不加载统计与广告，转换在浏览器内完成。

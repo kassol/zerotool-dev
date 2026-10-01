@@ -3,7 +3,7 @@ seoTitle: "Markdown プレビュー — 無料オンライン | ZeroTool"
 seoDescription: "リアルタイムHTMLプレビュー付きMarkdownエディタ。GFMテーブル・タスクリスト・コードブロック対応。無料。"
 faqItems:
   - question: "GFM（GitHub Flavored Markdown）に対応していますか？"
-    answer: "はい。テーブル、タスクリスト、打ち消し線、シンタックスハイライト付きフェンスコードブロックなどGFM拡張に対応しています。"
+    answer: "一部対応です。テーブル（列の配置は無視）、打ち消し線、小文字 x のタスクリスト、ハイライト付きのフェンスコードブロックは使えます。自動リンクや入れ子のリストには対応せず、HTML のサニタイズもしません。下の比較表を参照してください。"
   - question: "データはサーバーに送信されますか？"
     answer: "いいえ。Markdownのパースはすべてブラウザ内で行われます。"
   - question: "結果のHTMLをコピーできますか？"
@@ -23,3 +23,62 @@ faqItems:
 <h2>Markdownについて</h2>
 <p>Markdownは2004年にJohn Gruberが作成した軽量マークアップ言語です。読みやすいプレーンテキストでHTMLコンテンツを作成でき、README、ドキュメント、ブログ記事などで広く使われています。</p>
 <p>GitHub、GitLab、Slack、Notionなど多くのプラットフォームがMarkdownレンダリングをサポートしています。</p>
+
+## 例：境界ケースをプレビューがどう扱うか
+
+プレビューは小さな内蔵パーサーを使っており、CommonMark や GitHub の完全なレンダラーではありません。次の入力：
+
+````markdown
+# Release notes
+
+See https://example.com and `a **b** c`.
+
+- Parent
+  - Child
+- [X] Done
+- [x] done
+
+3. third
+4. fourth
+
+| Item | Price |
+|:-----|------:|
+| Widget | $9.99 |
+| a \| b | 1 |
+
+<b>raw</b> and <img src=x alt=y>
+````
+
+から生成される HTML（「HTML コピー」の内容）：
+
+```html
+<h1>Release notes</h1><p>See https://example.com and <code>a <strong>b</strong> c</code>.</p><ul><li>Parent</li></ul><p>  - Child</p><ul><li>[X] Done</li><li><label><input type="checkbox" disabled="" checked=""> done</label></li></ul><ol><li>third</li><li>fourth</li></ol><table><thead><tr><th>Item</th><th>Price</th></tr></thead><tbody><tr><td>Widget</td><td>$9.99</td></tr><tr><td>a \</td><td>b</td><td>1</td></tr></tbody></table><p><b>raw</b> and <img src="x" alt="y"></p>
+```
+
+GitHub との比較（[GFM 仕様](https://github.github.com/gfm/)）：
+
+| 入力 | GitHub | このプレビュー |
+|---|---|---|
+| 裸の URL `https://example.com` | リンク（autolink 拡張） | プレーンテキスト |
+| バッククォート内の `**b**` | `**b**` のまま | コード内で太字になる |
+| インデントした `- Child` | 入れ子のリスト | 別の段落 |
+| `[X]`（大文字 X） | チェック済みタスク | 文字のまま。小文字の `[x]` のみ有効 |
+| 先頭項目が `3.` | 3 から始まるリスト | 1 から始まるリスト |
+| `:---` / `---:` の配置 | 左寄せ / 右寄せ | 配置は無視 |
+| セル内のバックスラッシュでエスケープした縦棒 | 縦棒の文字 | セルが分割される |
+| 生の HTML | サニタイズされる | そのまま挿入 |
+
+## 生の HTML はサニタイズされない
+
+段落内の HTML タグは、プレビューにもコピーした HTML にもフィルターなしで入ります。貼り付けたテキストの `<img src=x onerror=...>` はこのページで実行され、「HTML コピー」で貼り付け先にも持ち込まれます。信頼できない Markdown はプレビューせず、公開前に HTML をサニタイズしてください（DOMPurify など）。
+
+## 画像はネットワークから読み込まれる
+
+`![alt](https://…)` は `<img>` になり、ブラウザがその URL から画像を取得します。画像のサーバーには IP アドレスとブラウザの情報が伝わります。テキストや文書の残りはブラウザ内にとどまります。
+
+## 制限
+
+- リストは1階層のみで、入れ子のリストや複数段落の項目には対応しません。
+- 自動リンク、脚注、参照形式のリンク、見出しアンカーには対応しません。
+- コードブロックのハイライト対象は JavaScript、TypeScript、Python、Go、PHP、Ruby、Java、Bash、JSON、HTML/XML、CSS、Markdown です。
+- GitHub での表示と完全に一致させたい文書は、公開前に GitHub 自身のプレビューで確認してください。

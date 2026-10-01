@@ -62,7 +62,94 @@ text-lg font-semibold text-center uppercase tracking-wider
 
 <h2>使用限制</h2>
 <p>
-  本工具使用内置映射表而非完整 CSS 解析器，覆盖约 80% 的常见工具类场景。
+  本工具使用内置映射表而非完整 CSS 解析器。
   自定义颜色、多值 transition、CSS 变量和 calc() 等复杂值会以 <code>/* keep: ... */</code> 注释形式保留，
   您可以手动处理或使用 Tailwind 的任意值语法（<code>p-[13px]</code>、<code>text-[#ff6600]</code>）转换。
 </p>
+
+## 示例：带悬停状态与媒体查询的按钮
+
+```css
+.btn {
+  margin: 0 auto;
+  padding: 16px 24px;
+  color: #3b82f6;
+  background-color: #ffffff;
+  width: 50%;
+  max-width: 64rem;
+  line-height: 1.5;
+  border: 1px solid #e5e7eb;
+  margin-top: 13px;
+  transition: all 0.2s;
+}
+.btn:hover { background-color: #2563eb; }
+@media (min-width: 768px) { .btn { padding: 2rem; } }
+```
+
+转换结果：
+
+```
+/* .btn */
+my-0 mx-auto py-4 px-6 text-blue-500 bg-white w-1/2 leading-normal border border-solid transition
+/* keep: max-width: 64rem */
+/* keep: margin-top: 13px */
+
+/* .btn:hover */
+bg-blue-600
+
+/* @media (min-width: 768px) */
+/* keep: .btn { padding: 2rem */
+```
+
+发生了什么，以及怎样补全类名（[Tailwind 文档](https://tailwindcss.com/docs/)）：
+
+- `16px 24px` 变成 `py-4 px-6`：像素值除以 16 得到 rem，间距每一级是 0.25rem。
+- `#3b82f6`、`#ffffff`、`#2563eb` 对上了默认色板（`blue-500`、`white`、`blue-600`）。
+- `border: 1px solid #e5e7eb` 变成 `border border-solid`，颜色被丢掉，也没有 `keep` 注释。请补上 `border-gray-200`。
+- `transition: all 0.2s` 变成 `transition`，而 Tailwind 的 `transition` 是固定的一组属性、时长 150 ms。请改写成 `transition-all duration-200`。
+- `max-width: 64rem` 被保留为注释，尽管 `max-w-5xl` 就是 64rem。不在工具映射表里的值即使有对应类名也会保留。
+- `.btn:hover` 被单独分组。请加上 `hover:` 前缀：`hover:bg-blue-600`。
+- `@media` 里的规则没有被解析。`min-width: 768px` 是默认的 `md` 断点，写成 `md:p-8`。
+
+补全后的类名：
+
+```html
+<button class="mx-auto mt-[13px] mb-0 py-4 px-6 md:p-8 text-blue-500 bg-white hover:bg-blue-600
+               w-1/2 max-w-5xl leading-normal border border-solid border-gray-200
+               transition-all duration-200">
+```
+
+## 示例：不带选择器的常见声明
+
+```css
+padding: 0.5rem 1rem;
+margin: 0;
+top: 0;
+z-index: 10;
+overflow: hidden;
+position: sticky;
+opacity: 0.5;
+cursor: pointer;
+grid-template-columns: repeat(3, 1fr);
+flex: 1;
+height: 100vh;
+font-size: 14px;
+```
+
+转换结果：
+
+```
+py-2 px-4 m-0 top-0 z-10 overflow-hidden sticky opacity-50 cursor-pointer grid-cols-3 flex-1 h-screen text-sm
+```
+
+## 任意值
+
+不在默认刻度里的值可以写在方括号里：`mt-[13px]`、`max-w-[60rem]`、`text-[#ff6600]`、`grid-cols-[200px_1fr]`（下划线代表空格）。转换器不会生成这种写法，而是留下 `keep` 注释，由你决定用任意值还是最接近的刻度。
+
+## 限制
+
+- 基于一张映射表，没有完整的 CSS 解析器：简写属性只读取一部分（见上面的 border）。
+- 带伪类的选择器会单独分组，不会写出 `hover:`、`focus:` 或响应式前缀。
+- `@media` 等包含嵌套规则的 at 规则不会被解析。
+- CSS 变量、`calc()` 和默认色板之外的颜色会保留为注释。
+- Tailwind v4 改了一些工具类的名字（如阴影和圆角刻度），使用 v4 时请对照[升级指南](https://tailwindcss.com/docs/upgrade-guide)。

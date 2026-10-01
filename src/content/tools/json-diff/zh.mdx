@@ -32,3 +32,82 @@ faqItems:
 </ul>
 
 <p>相关工具：<a href="/zh/tools/json-formatter/">JSON 格式化</a> — 在差异对比前格式化并验证 JSON。</p>
+
+## 示例
+
+**输入前：**
+
+```json
+{"name":"Alice","status":"pending","legacy_id":12345,"tags":["a","b","c"],"profile":{"age":30,"city":"Paris"}}
+```
+
+**输入后**（键顺序变了，`status` 改了，删除 `legacy_id`，新增 `role`，去掉第一个标签）：
+
+```json
+{"status":"active","name":"Alice","role":"admin","tags":["b","c"],"profile":{"age":31,"city":"Paris"}}
+```
+
+**可视化差异：**
+
+```text
+~status: "pending" → "active"
+−legacy_id: 12345
+~tags.0: "a" → "b"
+~tags.1: "b" → "c"
+−tags.2: "c"
+~profile.age: 30 → 31
++role: "admin"
+```
+
+**JSON Patch：**
+
+```json
+[
+  { "op": "replace", "path": "/status", "value": "active" },
+  { "op": "remove", "path": "/legacy_id" },
+  { "op": "replace", "path": "/tags/0", "value": "b" },
+  { "op": "replace", "path": "/tags/1", "value": "c" },
+  { "op": "remove", "path": "/tags/2" },
+  { "op": "replace", "path": "/profile/age", "value": 31 },
+  { "op": "add", "path": "/role", "value": "admin" }
+]
+```
+
+键顺序不影响结果：`name` 换了位置但不会被报告。这个 patch 用 Python 的 `jsonpatch` 1.33 应用后得到「输入后」的文档：
+
+```python
+import jsonpatch  # pip install jsonpatch
+
+before = {"name": "Alice", "status": "pending", "legacy_id": 12345,
+          "tags": ["a", "b", "c"], "profile": {"age": 30, "city": "Paris"}}
+patch = jsonpatch.JsonPatch([...])  # paste the patch from the tool
+after = patch.apply(before)
+```
+
+## 数组如何比较
+
+数组按下标比较，而不是按内容。从 `["a","b","c"]` 去掉第一个标签，会显示为两次替换加一次删除，而不是一条 `remove /tags/0`。patch 仍然正确，只是比需要的长。
+
+有一种情况生成的 patch 会失败：同一个数组删除两个及以上元素时，删除操作按下标从小到大排列。`[1,2,3]` → `[1]` 会得到先 `remove /1` 再 `remove /2`。第一条执行后数组变成 `[1,3]`，`/2` 已不存在，按 RFC 6902 处理会报错停止（`jsonpatch` 抛出 `JsonPatchConflict`）。应用前请把这些 `remove` 的顺序倒过来。
+
+## 路径与 JSON Pointer 转义
+
+patch 里的路径是 JSON Pointer（[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)）：`~` 写成 `~0`，`/` 写成 `~1`。`{"a/b":1,"m~n":2,"list":[1,2,3]}` → `{"a/b":2,"list":[1,2,3,4],"x":null}` 的结果：
+
+```json
+[
+  { "op": "replace", "path": "/a~1b", "value": 2 },
+  { "op": "remove", "path": "/m~0n" },
+  { "op": "add", "path": "/list/3", "value": 4 },
+  { "op": "add", "path": "/x", "value": null }
+]
+```
+
+可视化差异用点号连接键名（`profile.age`、`list.3`），只是方便阅读；代码里请使用 JSON Patch 中的路径。
+
+## 限制
+
+- 根节点类型不同时（对象对数组，或两个不同的标量），工具会写出 `{ "op": "replace", "path": "/", ... }`。按 RFC 6901，`/` 指向名为空字符串的成员，整个文档应写作空路径 `""`，所以 `jsonpatch` 会拒绝这条操作。请把路径改成 `""`，或直接替换整个文档。
+- 不生成 move、copy 操作；改名的键显示为 `remove` 加 `add`。
+- 对象数组不会按 `id` 字段配对。
+- 两边都必须是合法 JSON，状态栏会指出哪一边解析失败，例如 `前 JSON 解析错误：Expected double-quoted property name in JSON at position 7`。

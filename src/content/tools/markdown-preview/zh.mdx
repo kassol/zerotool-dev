@@ -9,7 +9,7 @@ faqItems:
   - question: "可以复制渲染后的 HTML 吗？"
     answer: "可以。点击预览面板上方的「Copy HTML」按钮即可将渲染后的 HTML 复制到剪贴板。"
   - question: "支持 GitHub 风格的 Markdown（GFM）吗？"
-    answer: "支持。包括表格、删除线和任务列表。"
+    answer: "部分支持：表格（不支持列对齐）、删除线、小写 x 的任务列表可以用；自动链接、嵌套列表不支持，也不过滤 HTML，详见下方对比表。"
 ---
 
 <h2>使用方法</h2>
@@ -37,3 +37,62 @@ faqItems:
   <li>任务列表：<code>- [x] 已完成</code> / <code>- [ ] 待办</code></li>
   <li>水平线：<code>---</code></li>
 </ul>
+
+## 示例：预览如何处理边界情况
+
+预览用的是一个内置的小型解析器，不是完整的 CommonMark 或 GitHub 渲染器。下面的输入：
+
+````markdown
+# Release notes
+
+See https://example.com and `a **b** c`.
+
+- Parent
+  - Child
+- [X] Done
+- [x] done
+
+3. third
+4. fourth
+
+| Item | Price |
+|:-----|------:|
+| Widget | $9.99 |
+| a \| b | 1 |
+
+<b>raw</b> and <img src=x alt=y>
+````
+
+得到的 HTML（即「复制 HTML」的内容）：
+
+```html
+<h1>Release notes</h1><p>See https://example.com and <code>a <strong>b</strong> c</code>.</p><ul><li>Parent</li></ul><p>  - Child</p><ul><li>[X] Done</li><li><label><input type="checkbox" disabled="" checked=""> done</label></li></ul><ol><li>third</li><li>fourth</li></ol><table><thead><tr><th>Item</th><th>Price</th></tr></thead><tbody><tr><td>Widget</td><td>$9.99</td></tr><tr><td>a \</td><td>b</td><td>1</td></tr></tbody></table><p><b>raw</b> and <img src="x" alt="y"></p>
+```
+
+与 GitHub 的对比（[GFM 规范](https://github.github.com/gfm/)）：
+
+| 输入 | GitHub | 本预览 |
+|---|---|---|
+| 裸网址 `https://example.com` | 链接（autolink 扩展） | 纯文本 |
+| 反引号里的 `**b**` | 原样显示 `**b**` | 代码里变成粗体 |
+| 缩进的 `- Child` | 嵌套列表 | 单独的段落 |
+| `[X]`（大写 X） | 已勾选的任务 | 原样文本，只认小写 `[x]` |
+| 首项写 `3.` | 列表从 3 开始 | 列表从 1 开始 |
+| `:---` / `---:` 对齐 | 左 / 右对齐 | 忽略对齐 |
+| 单元格里用反斜杠转义的竖线 | 竖线字符 | 把单元格拆开 |
+| 原始 HTML | 经过过滤 | 原样插入 |
+
+## 原始 HTML 不会被过滤
+
+段落里的 HTML 标签会原样插入预览和复制出的 HTML。从别处粘贴的 `<img src=x onerror=...>` 会在本页执行，「复制 HTML」也会把它带到你粘贴的地方。不要预览来源不可信的 Markdown，发布前请先过滤 HTML（例如用 DOMPurify）。
+
+## 图片会联网加载
+
+`![alt](https://…)` 生成的 `<img>` 会由浏览器从该地址下载，图片服务器能看到你的 IP 和浏览器信息。文字和文档其余部分留在浏览器里。
+
+## 限制
+
+- 列表只有一层，不支持嵌套列表和多段落列表项。
+- 不支持自动链接、脚注、引用式链接和标题锚点。
+- 代码块高亮支持 JavaScript、TypeScript、Python、Go、PHP、Ruby、Java、Bash、JSON、HTML/XML、CSS 和 Markdown。
+- 需要和 GitHub 显示完全一致的文档，发布前请在 GitHub 自己的预览里再看一遍。

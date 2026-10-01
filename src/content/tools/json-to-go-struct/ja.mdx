@@ -29,3 +29,86 @@ faqItems:
   <li>nullable/省略可能 → ポインタ（<code>*T</code>）</li>
   <li>ネストオブジェクト → 独立した名前付き <code>struct</code></li>
 </ul>
+
+## 例：API レスポンス
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": { "city": "New York", "country": "US", "zip_code": "10001" },
+    "last_login": null
+  }
+}
+```
+
+から次の構造体が生成されます。
+
+```go
+type RootObject struct {
+	User User `json:"user"`
+}
+
+type User struct {
+	Id int `json:"id"`
+	Name string `json:"name"`
+	Email string `json:"email"`
+	IsActive bool `json:"is_active"`
+	Roles []string `json:"roles"`
+	Address Address `json:"address"`
+	LastLogin interface{} `json:"last_login"`
+}
+
+type Address struct {
+	City string `json:"city"`
+	Country string `json:"country"`
+	ZipCode string `json:"zip_code"`
+}
+```
+
+`snake_case` のキーは `CamelCase` のフィールド名になり、`json` タグに元のキーが残るので、`encoding/json` で双方向に対応します。フィールドは揃えられていないため、`gofmt`（または保存時に整形するエディタ）でタグを揃えてください。標準ライブラリでデコードします：
+
+```go
+var root RootObject
+if err := json.Unmarshal(data, &root); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(root.User.Name) // Alice
+```
+
+## 例：トップレベルが配列の場合
+
+```json
+[{"sku": "A1", "qty": 2}, {"sku": "B2", "note": "gift"}]
+```
+
+から次の構造体が生成されます。
+
+```go
+type RootObject struct {
+	Sku string `json:"sku"`
+	Qty *int `json:"qty,omitempty"`
+	Note *string `json:"note,omitempty"`
+}
+```
+
+トップレベルが配列のとき、構造体は要素1つ分を表すので `[]RootObject` にデコードします。一部の要素にないキーは `omitempty` 付きのポインタになります。
+
+## 生成後に直すところ
+
+- `null` は `interface{}` になります。API ドキュメントを確認して `*string` や `*time.Time` など実際の型のポインタに変えてください。
+- 小数部のない数値は `int` になります。JavaScript は `19.0` の `.0` を区別できないため、そうした価格のサンプルも `int` になります。小数を返すフィールドは `float64` にしてください。64 ビット環境では `int` は 64 ビットです。
+- `[]` と要素の型が混在する配列は `[]interface{}` になります。
+- フィールド名は Go の頭字語の慣習に合わせて調整されません。`id` は `Id`、`url` は `Url` になりますが、[Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms) は `ID`・`URL` を推奨しています。どちらでも `json` タグがあるのでデコードは正しく動きます。
+- Go の識別子の先頭に使えないキーは無効なコードになります。`2fa` はフィールド名 `2fa` に、空のキーは名前のないフィールドになります。名前を変えてください（タグには元のキーが残ります）。
+- 同じキー名のネストしたオブジェクトが2つあると（`a.meta` と `b.meta` など）、`Meta` という1つの構造体を共有し、最初の形だけが残ります。一方の名前を変え、フィールドを追加してください。
+- 出力されるのは `json` タグだけです。`gorm`・`bson`・`validate` のタグは自分で追加します。
+
+## 制限
+
+- 入力は有効な JSON である必要があります。エラーメッセージには位置が出ます（末尾のカンマなら `Expected double-quoted property name in JSON at position 8`）。
+- 型は貼り付けたサンプルだけから決まります。

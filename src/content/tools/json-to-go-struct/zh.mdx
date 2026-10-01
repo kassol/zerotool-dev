@@ -31,3 +31,86 @@ faqItems:
   <li>可空/可选 → 指针（<code>*T</code>）</li>
   <li>嵌套对象 → 独立的命名 <code>struct</code></li>
 </ul>
+
+## 示例：API 响应
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "is_active": true,
+    "roles": ["admin", "editor"],
+    "address": { "city": "New York", "country": "US", "zip_code": "10001" },
+    "last_login": null
+  }
+}
+```
+
+生成：
+
+```go
+type RootObject struct {
+	User User `json:"user"`
+}
+
+type User struct {
+	Id int `json:"id"`
+	Name string `json:"name"`
+	Email string `json:"email"`
+	IsActive bool `json:"is_active"`
+	Roles []string `json:"roles"`
+	Address Address `json:"address"`
+	LastLogin interface{} `json:"last_login"`
+}
+
+type Address struct {
+	City string `json:"city"`
+	Country string `json:"country"`
+	ZipCode string `json:"zip_code"`
+}
+```
+
+`snake_case` 键名转成 `CamelCase` 字段名，`json` 标签保留原始键名，`encoding/json` 编解码时两边都能对上。字段没有对齐，用 `gofmt`（或保存时自动格式化的编辑器）整理即可。用标准库解码：
+
+```go
+var root RootObject
+if err := json.Unmarshal(data, &root); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(root.User.Name) // Alice
+```
+
+## 示例：顶层是数组
+
+```json
+[{"sku": "A1", "qty": 2}, {"sku": "B2", "note": "gift"}]
+```
+
+生成：
+
+```go
+type RootObject struct {
+	Sku string `json:"sku"`
+	Qty *int `json:"qty,omitempty"`
+	Note *string `json:"note,omitempty"`
+}
+```
+
+顶层是数组时，结构体描述的是单个元素，解码到 `[]RootObject`。在部分元素中缺失的键会变成带 `omitempty` 的指针。
+
+## 生成后需要修改的地方
+
+- `null` 生成 `interface{}`。对照 API 文档后改成实际类型的指针，如 `*string`、`*time.Time`。
+- 没有小数部分的数字生成 `int`。JavaScript 看不到 `19.0` 里的 `.0`，所以这样的价格样本也会得到 `int`；API 会返回小数的字段请用 `float64`。在 64 位平台上 `int` 是 64 位。
+- `[]` 以及元素类型混杂的数组生成 `[]interface{}`。
+- 字段名不会按 Go 的缩写惯例调整：`id` 变成 `Id`、`url` 变成 `Url`，而 [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms) 建议写成 `ID`、`URL`。无论哪种写法，`json` 标签都能保证解码正确。
+- 不能作为 Go 标识符开头的键会生成无效代码：`2fa` 得到字段名 `2fa`，空键得到没有名字的字段。请给这些字段改名，标签会保留原始键名。
+- 两个嵌套对象键名相同（如 `a.meta` 和 `b.meta`）时共用一个名为 `Meta` 的结构体，只保留第一个对象的结构。请给其中一个改名并补字段。
+- 只生成 `json` 标签，`gorm`、`bson`、`validate` 等标签需要自己加。
+
+## 限制
+
+- 输入必须是合法 JSON，报错信息会给出位置，例如末尾多一个逗号时显示 `Expected double-quoted property name in JSON at position 8`。
+- 类型只来自你粘贴的样本。

@@ -5,13 +5,13 @@ faqItems:
   - question: "What docker run flags are supported?"
     answer: "The converter supports: --name, -p/--publish (ports), -v/--volume (volumes), -e/--env (environment variables), --network, --restart, -d (detach), --cap-add, --memory, --cpus, plus the image name and optional command."
   - question: "What compose file version is generated?"
-    answer: "The converter generates docker-compose.yml using version 3.8 format, which is widely compatible with recent versions of Docker Compose (both the legacy docker-compose CLI and the newer docker compose plugin)."
+    answer: "It writes no version key. The Compose Specification treats the top-level version field as obsolete, and Docker Compose v2 only prints a warning when it is present."
   - question: "How is the service name derived?"
-    answer: "If you use --name in your docker run command, that value is used as the service name. Otherwise, the service name is derived from the image name by stripping the registry prefix and tag, and replacing slashes with underscores."
+    answer: "If you use --name in your docker run command, that value is used as the service name (no container_name is written). Otherwise, the service name is derived from the image name by stripping the registry prefix and tag, and replacing slashes with underscores."
   - question: "Does it support multi-line docker run commands?"
     answer: "Yes. Paste commands with backslash line continuations and the converter handles them correctly."
   - question: "What about flags not listed above?"
-    answer: "Unsupported flags are silently ignored. The converter focuses on the most common flags used in docker run commands. You may need to manually add advanced options like --security-opt or --device to the generated compose file."
+    answer: "Flags without a value, such as --privileged, are skipped. A flag that takes a value and is not in the supported list (for example --env-file .env or --entrypoint /bin/sh) is misread: its value becomes the image name. Remove such flags before converting and add the matching Compose keys by hand."
 ---
 
 <h2>How to Use</h2>
@@ -42,3 +42,116 @@ faqItems:
   <li><strong>Multi-service setup:</strong> Generate individual service blocks and combine them into a single compose file.</li>
   <li><strong>CI/CD:</strong> Replace fragile shell scripts of docker run commands with a declarative compose file.</li>
 </ul>
+
+## Example: A PostgreSQL Container
+
+Input:
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=myapp \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5432:5432 \
+  -v pgdata:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  postgres:16-alpine
+```
+
+Output:
+
+```yaml
+services:
+  postgres:
+    image: "postgres:16-alpine"
+    ports:
+      - "5432:5432"
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+    environment:
+      - "POSTGRES_DB=myapp"
+      - "POSTGRES_USER=admin"
+      - "POSTGRES_PASSWORD=secret"
+    restart: unless-stopped
+```
+
+The converter does not write the top-level `volumes:` block. Compose rejects a service that uses an undeclared named volume (`pgdata` here), so add this before you run `docker compose up -d`:
+
+```yaml
+volumes:
+  pgdata:
+```
+
+`-d` is dropped because you detach with `docker compose up -d`. `--name` becomes the service key; add `container_name:` yourself if scripts depend on the exact container name.
+
+## Example: Ports, Limits, and an Existing Network
+
+```bash
+docker run --rm -it --network app-net -p 127.0.0.1:8080:80/tcp \
+  --restart on-failure:3 --memory 512m --cpus 1.5 --cap-add NET_ADMIN \
+  ghcr.io/acme/web:1.2 npm start
+```
+
+```yaml
+services:
+  acme_web:
+    image: "ghcr.io/acme/web:1.2"
+    ports:
+      - "127.0.0.1:8080:80/tcp"
+    networks:
+      - app-net
+    restart: "on-failure:3"
+    cap_add:
+      - NET_ADMIN
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.5'
+    command: ["npm", "start"]
+
+networks:
+  app-net:
+    external: true
+```
+
+With no `--name`, the service key comes from the image (`ghcr.io/acme/web:1.2` → `acme_web`). `--rm`, `-i`, `-t`, and `-it` are dropped. `--network` becomes an external network, so it must already exist (`docker network create app-net`).
+
+## Flag Mapping
+
+| docker run | docker-compose.yml |
+|---|---|
+| `-p`, `--publish` | `ports:` (quoted; host IP and `/udp` kept) |
+| `-v`, `--volume` | `volumes:` |
+| `-e`, `--env` | `environment:` as `KEY=VALUE` items; a bare `KEY` is kept |
+| `--network` | `networks:` plus a top-level `external: true` network |
+| `--restart` | `restart:` |
+| `--cap-add` | `cap_add:` |
+| `--memory`, `-m`, `--cpus` | `deploy.resources.limits` |
+| `--name` | service key |
+| `-d`, `--rm`, `-i`, `-t`, `-it` | dropped |
+| image and the arguments after it | `image:` and `command:` (JSON array) |
+
+The `--flag=value` form works for the flags in this table.
+
+## Flags to Add by Hand
+
+Any other flag that takes a value is misread: the converter takes its value as the image name and turns everything after it into `command`. For example, `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"` comes out as `image: /bin/sh`. Remove these flags before converting, then add the Compose keys yourself ([Compose file reference](https://docs.docker.com/reference/compose-file/services/)):
+
+| docker run | Compose key |
+|---|---|
+| `--env-file .env` | `env_file: [".env"]` |
+| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
+| `-u`, `--user 1000:1000` | `user: "1000:1000"` |
+| `-w`, `--workdir /app` | `working_dir: /app` |
+| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
+| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--add-host`, `-l` | `extra_hosts:`, `labels:` |
+
+## Limits
+
+- One `docker run` command per conversion. For several containers, convert each one and put the service blocks under a single `services:` key.
+- Named volumes are not declared at the top level; add them as shown above.
+- Flags outside the mapping table that take a value break the parse, as described above.
+- The command must start with `docker run` (or just `run`). `docker container run` and `podman run` show "Not a valid docker run command".

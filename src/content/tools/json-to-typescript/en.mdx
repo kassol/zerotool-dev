@@ -28,7 +28,7 @@ faqItems:
 
 <h2>Type Inference Rules</h2>
 <ul>
-  <li><code>null</code> → <code>null</code></li>
+  <li><code>null</code> → optional <code>null</code> (<code>field?: null</code>)</li>
   <li>string → <code>string</code></li>
   <li>number → <code>number</code></li>
   <li>boolean → <code>boolean</code></li>
@@ -42,4 +42,110 @@ faqItems:
 <p>Given this JSON:</p>
 <pre><code>{`{"user": {"name": "Alice", "age": 30}, "tags": ["admin", "user"]}`}</code></pre>
 <p>The tool generates:</p>
-<pre><code>{`interface User {\n  name: string;\n  age: number;\n}\n\ninterface RootObject {\n  user: User;\n  tags: string[];\n}`}</code></pre>
+<pre><code>{`interface RootObject {\n  user: User;\n  tags: string[];\n}\n\ninterface User {\n  name: string;\n  age: number;\n}`}</code></pre>
+
+## Example: An API Response
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "roles": ["admin", "editor"],
+    "preferences": { "theme": "dark", "notifications": true },
+    "lastLogin": null
+  },
+  "pagination": { "page": 1, "perPage": 20, "total": 143 }
+}
+```
+
+generates
+
+```typescript
+interface RootObject {
+  user: User;
+  pagination: Pagination;
+}
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  roles: string[];
+  preferences: Preferences;
+  lastLogin?: null;
+}
+
+interface Preferences {
+  theme: string;
+  notifications: boolean;
+}
+
+interface Pagination {
+  page: number;
+  perPage: number;
+  total: number;
+}
+```
+
+The root interface comes first, then each nested interface in the order it is found. A `null` value is typed `null` and marked optional, because one sample cannot show what the field holds when it is set. After checking the API docs, change it to something like `lastLogin: string | null`.
+
+## Example: Arrays With Different Shapes
+
+```json
+{
+  "items": [
+    { "id": 1, "name": "a", "tags": [] },
+    { "id": 2, "price": 9.5, "tags": ["x", 1] }
+  ],
+  "messages": [
+    { "type": "text", "content": "hi" },
+    { "type": "image", "url": "/a.png" }
+  ]
+}
+```
+
+generates
+
+```typescript
+interface RootObject {
+  items: ItemsItem[];
+  messages: MessagesItem[];
+}
+
+interface ItemsItem {
+  id: number;
+  name?: string;
+  tags: (unknown[] | (string | number)[]);
+  price?: number;
+}
+
+interface MessagesItem {
+  type: string;
+  content?: string;
+  url?: string;
+}
+```
+
+All objects in an array are merged: a key that is missing from some elements gets `?`. The `messages` array is really two shapes keyed by `type`. The merged interface accepts invalid mixes such as a text message with a `url`, so rewrite it as a discriminated union ([TypeScript Handbook: Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#discriminated-unions)):
+
+```typescript
+type Message =
+  | { type: "text"; content: string }
+  | { type: "image"; url: string };
+```
+
+## What to Refine by Hand
+
+- `null` fields: replace `?: null` with the real type plus `| null`.
+- Empty arrays: `[]` gives `unknown[]`; supply the element type.
+- Dates: ISO 8601 strings and Unix timestamps stay `string` and `number`.
+- Keys that are not valid identifiers (`user-name`, `2fa`) are written in quotes, which is valid TypeScript.
+- Two nested objects with the same key name (for example `a.meta` and `b.meta`) both get the interface name `Meta`, and only the first shape is kept. Rename one of them and add its fields by hand.
+
+## Limits
+
+- The input must be valid JSON (no comments or trailing commas); the error message gives the position.
+- Types come only from the sample you paste. A field that is a string in your sample but sometimes a number in production stays `string`.
+- With **Use type instead of interface**, each declaration is written as `type Name = { ... }`; the status line still says "interfaces".

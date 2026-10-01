@@ -63,6 +63,92 @@ text-lg font-semibold text-center uppercase tracking-wider
 <h2>Limitations</h2>
 <p>
   This tool uses a built-in mapping table rather than a full CSS parser.
-  It covers roughly 80% of typical utility-class use cases.
   Complex values such as custom colors, multi-value transitions, CSS variables, and calc() expressions are left as <code>/* keep: ... */</code> comments for you to handle manually or convert using Tailwind's arbitrary value syntax (<code>p-[13px]</code>, <code>text-[#ff6600]</code>).
 </p>
+
+## Example: A Button With a Hover State and a Media Query
+
+```css
+.btn {
+  margin: 0 auto;
+  padding: 16px 24px;
+  color: #3b82f6;
+  background-color: #ffffff;
+  width: 50%;
+  max-width: 64rem;
+  line-height: 1.5;
+  border: 1px solid #e5e7eb;
+  margin-top: 13px;
+  transition: all 0.2s;
+}
+.btn:hover { background-color: #2563eb; }
+@media (min-width: 768px) { .btn { padding: 2rem; } }
+```
+
+converts to
+
+```
+/* .btn */
+my-0 mx-auto py-4 px-6 text-blue-500 bg-white w-1/2 leading-normal border border-solid transition
+/* keep: max-width: 64rem */
+/* keep: margin-top: 13px */
+
+/* .btn:hover */
+bg-blue-600
+
+/* @media (min-width: 768px) */
+/* keep: .btn { padding: 2rem */
+```
+
+What happened, and how to finish the class list ([Tailwind docs](https://tailwindcss.com/docs/)):
+
+- `16px 24px` became `py-4 px-6`: pixel values are divided by 16 to get rem, and one spacing step is 0.25rem.
+- `#3b82f6`, `#ffffff`, and `#2563eb` matched default palette colors (`blue-500`, `white`, `blue-600`).
+- `border: 1px solid #e5e7eb` became `border border-solid`; the color was dropped without a `keep` comment. Add `border-gray-200`.
+- `transition: all 0.2s` became `transition`, which in Tailwind is a fixed list of properties with a 150 ms duration. Write `transition-all duration-200` instead.
+- `max-width: 64rem` was kept although `max-w-5xl` is 64rem. Values that do not match the tool's table are kept even when a class exists.
+- `.btn:hover` became its own group. Add the `hover:` prefix: `hover:bg-blue-600`.
+- The rule inside `@media` was not parsed. `min-width: 768px` is the default `md` breakpoint, so write `md:p-8`.
+
+Finished classes:
+
+```html
+<button class="mx-auto mt-[13px] mb-0 py-4 px-6 md:p-8 text-blue-500 bg-white hover:bg-blue-600
+               w-1/2 max-w-5xl leading-normal border border-solid border-gray-200
+               transition-all duration-200">
+```
+
+## Example: Common Declarations Without a Selector
+
+```css
+padding: 0.5rem 1rem;
+margin: 0;
+top: 0;
+z-index: 10;
+overflow: hidden;
+position: sticky;
+opacity: 0.5;
+cursor: pointer;
+grid-template-columns: repeat(3, 1fr);
+flex: 1;
+height: 100vh;
+font-size: 14px;
+```
+
+converts to
+
+```
+py-2 px-4 m-0 top-0 z-10 overflow-hidden sticky opacity-50 cursor-pointer grid-cols-3 flex-1 h-screen text-sm
+```
+
+## Arbitrary Values
+
+For a value outside the default scale, Tailwind accepts the value in square brackets: `mt-[13px]`, `max-w-[60rem]`, `text-[#ff6600]`, `grid-cols-[200px_1fr]` (an underscore stands for a space). The converter never writes these; it leaves a `keep` comment so you can decide between an arbitrary value and the nearest scale step.
+
+## Limits
+
+- One mapping table, no CSS parser: shorthand values are only partly read (see the border example).
+- Selectors with pseudo-classes become separate groups; no `hover:`, `focus:`, or responsive prefixes are written.
+- `@media` and other at-rules with nested rules are not parsed.
+- CSS variables, `calc()`, and colors outside the default palette are kept as comments.
+- Tailwind v4 renamed some utilities (for example the shadow and radius scales). Check the [upgrade guide](https://tailwindcss.com/docs/upgrade-guide) if you use v4.

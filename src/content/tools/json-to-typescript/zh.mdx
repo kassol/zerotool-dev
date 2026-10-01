@@ -28,7 +28,7 @@ faqItems:
 
 <h2>类型推断规则</h2>
 <ul>
-  <li><code>null</code> → <code>null</code></li>
+  <li><code>null</code> → 可选的 <code>null</code>（<code>field?: null</code>）</li>
   <li>字符串 → <code>string</code></li>
   <li>数字 → <code>number</code></li>
   <li>布尔值 → <code>boolean</code></li>
@@ -42,4 +42,110 @@ faqItems:
 <p>输入以下 JSON：</p>
 <pre><code>{`{"user": {"name": "Alice", "age": 30}, "tags": ["admin", "user"]}`}</code></pre>
 <p>工具生成：</p>
-<pre><code>{`interface User {\n  name: string;\n  age: number;\n}\n\ninterface RootObject {\n  user: User;\n  tags: string[];\n}`}</code></pre>
+<pre><code>{`interface RootObject {\n  user: User;\n  tags: string[];\n}\n\ninterface User {\n  name: string;\n  age: number;\n}`}</code></pre>
+
+## 示例：API 响应
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "roles": ["admin", "editor"],
+    "preferences": { "theme": "dark", "notifications": true },
+    "lastLogin": null
+  },
+  "pagination": { "page": 1, "perPage": 20, "total": 143 }
+}
+```
+
+生成：
+
+```typescript
+interface RootObject {
+  user: User;
+  pagination: Pagination;
+}
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  roles: string[];
+  preferences: Preferences;
+  lastLogin?: null;
+}
+
+interface Preferences {
+  theme: string;
+  notifications: boolean;
+}
+
+interface Pagination {
+  page: number;
+  perPage: number;
+  total: number;
+}
+```
+
+根接口排在最前，嵌套接口按出现顺序跟在后面。`null` 值会被写成类型 `null` 并标为可选，因为一个样本看不出字段有值时是什么类型。对照 API 文档后，改成 `lastLogin: string | null` 之类的写法。
+
+## 示例：数组元素结构不同
+
+```json
+{
+  "items": [
+    { "id": 1, "name": "a", "tags": [] },
+    { "id": 2, "price": 9.5, "tags": ["x", 1] }
+  ],
+  "messages": [
+    { "type": "text", "content": "hi" },
+    { "type": "image", "url": "/a.png" }
+  ]
+}
+```
+
+生成：
+
+```typescript
+interface RootObject {
+  items: ItemsItem[];
+  messages: MessagesItem[];
+}
+
+interface ItemsItem {
+  id: number;
+  name?: string;
+  tags: (unknown[] | (string | number)[]);
+  price?: number;
+}
+
+interface MessagesItem {
+  type: string;
+  content?: string;
+  url?: string;
+}
+```
+
+数组中的所有对象会合并：只在部分元素里出现的键加 `?`。`messages` 实际上是按 `type` 区分的两种结构，合并后的接口会接受「text 消息带 `url`」这类无效组合，建议改写成可辨识联合类型（[TypeScript 手册：Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#discriminated-unions)）：
+
+```typescript
+type Message =
+  | { type: "text"; content: string }
+  | { type: "image"; url: string };
+```
+
+## 需要手动调整的地方
+
+- `null` 字段：把 `?: null` 改成真实类型加 `| null`。
+- 空数组：`[]` 生成 `unknown[]`，需要补上元素类型。
+- 日期：ISO 8601 字符串和 Unix 时间戳分别保持 `string`、`number`。
+- 不是合法标识符的键（`user-name`、`2fa`）会加引号输出，这在 TypeScript 中是合法的。
+- 两个嵌套对象的键名相同（如 `a.meta` 和 `b.meta`）时，都会得到接口名 `Meta`，只保留第一个对象的结构。请给其中一个改名并手动补字段。
+
+## 限制
+
+- 输入必须是合法 JSON（不能有注释或末尾逗号），报错信息会给出位置。
+- 类型只来自你粘贴的样本。样本里是字符串、线上有时是数字的字段，仍会是 `string`。
+- 勾选**使用 type 替代 interface** 后，每个声明写成 `type Name = { ... }`；状态栏仍显示「接口」。

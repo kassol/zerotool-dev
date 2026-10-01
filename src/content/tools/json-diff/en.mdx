@@ -32,3 +32,82 @@ faqItems:
 </ul>
 
 <p>Related tool: <a href="/tools/json-formatter/">JSON Formatter</a> — prettify and validate JSON before diffing.</p>
+
+## Example
+
+**Before:**
+
+```json
+{"name":"Alice","status":"pending","legacy_id":12345,"tags":["a","b","c"],"profile":{"age":30,"city":"Paris"}}
+```
+
+**After** (keys reordered, `status` changed, `legacy_id` removed, `role` added, first tag dropped):
+
+```json
+{"status":"active","name":"Alice","role":"admin","tags":["b","c"],"profile":{"age":31,"city":"Paris"}}
+```
+
+**Visual Diff:**
+
+```text
+~status: "pending" → "active"
+−legacy_id: 12345
+~tags.0: "a" → "b"
+~tags.1: "b" → "c"
+−tags.2: "c"
+~profile.age: 30 → 31
++role: "admin"
+```
+
+**JSON Patch:**
+
+```json
+[
+  { "op": "replace", "path": "/status", "value": "active" },
+  { "op": "remove", "path": "/legacy_id" },
+  { "op": "replace", "path": "/tags/0", "value": "b" },
+  { "op": "replace", "path": "/tags/1", "value": "c" },
+  { "op": "remove", "path": "/tags/2" },
+  { "op": "replace", "path": "/profile/age", "value": 31 },
+  { "op": "add", "path": "/role", "value": "admin" }
+]
+```
+
+Key order does not matter: `name` moved but is not reported. The patch applies cleanly with Python's `jsonpatch` 1.33 and gives the After document:
+
+```python
+import jsonpatch  # pip install jsonpatch
+
+before = {"name": "Alice", "status": "pending", "legacy_id": 12345,
+          "tags": ["a", "b", "c"], "profile": {"age": 30, "city": "Paris"}}
+patch = jsonpatch.JsonPatch([...])  # paste the patch from the tool
+after = patch.apply(before)
+```
+
+## How Arrays Are Compared
+
+Arrays are compared by index, not by content. Dropping the first tag from `["a","b","c"]` shows up as two replacements and one removal instead of a single `remove /tags/0`. The patch is still correct; it is just longer than necessary.
+
+One case produces a patch that fails: when two or more elements are removed from the same array, the removals are listed in ascending index order. For `[1,2,3]` → `[1]` the tool writes `remove /1` then `remove /2`. After the first operation the array is `[1,3]`, so `/2` no longer exists and RFC 6902 processing stops with an error (`jsonpatch` raises `JsonPatchConflict`). Reverse the order of those `remove` operations before applying the patch.
+
+## Paths and JSON Pointer Escaping
+
+Patch paths are JSON Pointers ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)): `~` is written `~0` and `/` is written `~1`. For `{"a/b":1,"m~n":2,"list":[1,2,3]}` → `{"a/b":2,"list":[1,2,3,4],"x":null}` the tool gives:
+
+```json
+[
+  { "op": "replace", "path": "/a~1b", "value": 2 },
+  { "op": "remove", "path": "/m~0n" },
+  { "op": "add", "path": "/list/3", "value": 4 },
+  { "op": "add", "path": "/x", "value": null }
+]
+```
+
+The Visual Diff joins keys with dots (`profile.age`, `list.3`) for reading only; use the paths from the JSON Patch in code.
+
+## Limits
+
+- When the root types differ (an object compared with an array, or two different scalars), the tool writes `{ "op": "replace", "path": "/", ... }`. In RFC 6901, `/` points to a member named with the empty string, not to the whole document (that is the empty path `""`), so `jsonpatch` rejects this operation. Change the path to `""` or replace the document directly.
+- No move or copy operations are generated; a renamed key appears as `remove` plus `add`.
+- Arrays of objects are not matched by an `id` field.
+- Both inputs must be valid JSON. The status line names the side that failed, for example `Before JSON parse error: Expected double-quoted property name in JSON at position 7`.

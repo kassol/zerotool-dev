@@ -28,7 +28,7 @@ faqItems:
 
 <h2>型推論ルール</h2>
 <ul>
-  <li><code>null</code> → <code>null</code></li>
+  <li><code>null</code> → 省略可能な <code>null</code>（<code>field?: null</code>）</li>
   <li>文字列 → <code>string</code></li>
   <li>数値 → <code>number</code></li>
   <li>真偽値 → <code>boolean</code></li>
@@ -42,4 +42,110 @@ faqItems:
 <p>以下のJSONを入力すると:</p>
 <pre><code>{`{"user": {"name": "Alice", "age": 30}, "tags": ["admin", "user"]}`}</code></pre>
 <p>次のように生成されます:</p>
-<pre><code>{`interface User {\n  name: string;\n  age: number;\n}\n\ninterface RootObject {\n  user: User;\n  tags: string[];\n}`}</code></pre>
+<pre><code>{`interface RootObject {\n  user: User;\n  tags: string[];\n}\n\ninterface User {\n  name: string;\n  age: number;\n}`}</code></pre>
+
+## 例：API レスポンス
+
+```json
+{
+  "user": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "roles": ["admin", "editor"],
+    "preferences": { "theme": "dark", "notifications": true },
+    "lastLogin": null
+  },
+  "pagination": { "page": 1, "perPage": 20, "total": 143 }
+}
+```
+
+から次の型が生成されます。
+
+```typescript
+interface RootObject {
+  user: User;
+  pagination: Pagination;
+}
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  roles: string[];
+  preferences: Preferences;
+  lastLogin?: null;
+}
+
+interface Preferences {
+  theme: string;
+  notifications: boolean;
+}
+
+interface Pagination {
+  page: number;
+  perPage: number;
+  total: number;
+}
+```
+
+ルートのインターフェースが先頭に来て、ネストしたインターフェースは見つかった順に続きます。`null` の値は型 `null` として出力され、省略可能になります。1つのサンプルからは値があるときの型がわからないためです。API ドキュメントを確認して `lastLogin: string | null` のように直してください。
+
+## 例：形の異なる要素を含む配列
+
+```json
+{
+  "items": [
+    { "id": 1, "name": "a", "tags": [] },
+    { "id": 2, "price": 9.5, "tags": ["x", 1] }
+  ],
+  "messages": [
+    { "type": "text", "content": "hi" },
+    { "type": "image", "url": "/a.png" }
+  ]
+}
+```
+
+から次の型が生成されます。
+
+```typescript
+interface RootObject {
+  items: ItemsItem[];
+  messages: MessagesItem[];
+}
+
+interface ItemsItem {
+  id: number;
+  name?: string;
+  tags: (unknown[] | (string | number)[]);
+  price?: number;
+}
+
+interface MessagesItem {
+  type: string;
+  content?: string;
+  url?: string;
+}
+```
+
+配列内のオブジェクトはすべてマージされ、一部の要素にしかないキーには `?` が付きます。`messages` は実際には `type` で区別される2つの形です。マージ後のインターフェースは「`url` を持つ text メッセージ」のような不正な組み合わせも通すので、判別可能なユニオン型に書き直します（[TypeScript Handbook: Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#discriminated-unions)）：
+
+```typescript
+type Message =
+  | { type: "text"; content: string }
+  | { type: "image"; url: string };
+```
+
+## 手で直すところ
+
+- `null` のフィールド：`?: null` を実際の型と `| null` に置き換えます。
+- 空配列：`[]` は `unknown[]` になるので要素の型を補います。
+- 日付：ISO 8601 文字列と Unix タイムスタンプはそれぞれ `string`・`number` のままです。
+- 識別子として使えないキー（`user-name`、`2fa`）は引用符付きで出力されます。TypeScript として有効です。
+- 同じキー名のネストしたオブジェクトが2つあると（`a.meta` と `b.meta` など）、どちらもインターフェース名 `Meta` になり、最初の形だけが残ります。一方の名前を変え、フィールドを手で追加してください。
+
+## 制限
+
+- 入力は有効な JSON である必要があります（コメントや末尾のカンマは不可）。エラーメッセージに位置が表示されます。
+- 型は貼り付けたサンプルだけから決まります。サンプルでは文字列でも本番で数値になることがあるフィールドは `string` のままです。
+- **interface の代わりに type を使用**を選ぶと、各宣言は `type Name = { ... }` になります。
