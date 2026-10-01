@@ -1,1065 +1,2052 @@
 ---
-// SvgOptimizerTool — minify SVG markup with SVGO v4 in the browser.
-// SVGO is loaded lazily on first Optimize click (~190KB gzipped browser bundle),
-// so the tool page itself stays light. All processing is local.
+// SvgOptimizerTool — optimizes SVG with SVGO 4 in a Web Worker, compares the rendering
+// before and after, and flags changes that can break the file where it is used.
+// Nothing is uploaded. SVGO loads on first use (worker bundle, about 195 KB gzip).
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// strings:start
+const STRINGS = {
+  en: {
+    dropTitle: 'Drop SVG files here, or click to choose',
+    dropHint: 'Several files at once (.svg, .svgz). You can also paste code below or press Ctrl+V anywhere on the page.',
+    codeLabel: 'SVG code',
+    codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    run: 'Optimize', example: 'Example', clear: 'Clear',
+    working: 'Optimizing {done} of {total}…',
+    loading: 'Loading SVGO…',
+    doneOne: '{name}: {before} → {after} ({delta}).',
+    doneMany: '{n} files: {before} → {after} ({delta}).',
+    failedMany: '{n} failed.',
+    delta: '{sign}{pct}%',
+    gzip: 'gzip {before} → {after}',
+    engine: 'SVGO {v}',
+    check: {
+      pending: 'Comparing the rendering…',
+      same: 'Renders the same ({w} × {h} px compared).',
+      minor: 'Small differences in {pct}% of pixels. Check the red areas below.',
+      changed: 'Looks different: {pct}% of pixels changed. Check the red areas below.',
+      beforeFailed: 'The original does not render in this browser, so it was not compared.',
+      afterFailed: 'The optimized SVG does not render in this browser.',
+      skipped: 'Larger than 10 MB, so the rendering was not compared.'
+    },
+    before: 'Original', after: 'Optimized', diff: 'Difference (red = changed pixels)',
+    copyAs: 'Copy as', fmtSvg: 'SVG markup', fmtUri: 'Data URI (URL-encoded)', fmtBase64: 'Data URI (Base64)', fmtCss: 'CSS background-image', fmtJsx: 'React component (JSX)',
+    copy: 'Copy', copied: 'Copied', copyFail: 'Copy failed. Select the code and copy it.',
+    download: 'Download .svg', zip: 'Download all (.zip)',
+    code: 'Output ({chars} characters)',
+    jsxNote: 'For TypeScript, forwardRef or memo, paste the SVG into SVG to JSX.',
+    thFile: 'File', thBefore: 'Before', thAfter: 'After', thSaved: 'Saved', thCheck: 'Rendering', thSave: 'Save',
+    rowSame: 'Same', rowMinor: 'Small differences', rowChanged: 'Different', rowFailed: 'Not compared', rowPending: '…', rowError: 'Error',
+    settings: 'Settings', reset: 'Reset to defaults',
+    precision: 'Decimal places', prefix: 'Prefix IDs', prefixPh: 'e.g. logo-',
+    prefixHint: 'Adds the prefix to every ID so several inlined SVGs on one page do not clash.',
+    multipass: 'Multipass', pretty: 'Pretty print',
+    p: {
+      cleanupIds: 'Shorten and remove IDs', convertColors: 'Shorten colors', removeComments: 'Remove comments', mergePaths: 'Merge paths',
+      removeViewBox: 'Remove viewBox', removeDimensions: 'Remove width/height', removeTitle: 'Remove <title>', removeScripts: 'Remove scripts and event handlers'
+    },
+    allPlugins: 'All SVGO plugins',
+    presetHead: 'preset-default ({n} plugins, on by default)',
+    extraHead: 'Other built-in plugins (off by default)',
+    paramNote: 'Not offered because they need parameters: {names}.',
+    configHead: 'Use these settings in your build (svgo.config.mjs)',
+    copyConfig: 'Copy config',
+    err: {
+      empty: 'The SVG is empty.',
+      notSvg: 'No <svg> element found.',
+      rootNotSvg: 'The root element is <{name}>, not <svg>. Paste only the <svg>…</svg> part.',
+      xml: 'Not valid XML (line {line}, column {column}): {reason}',
+      svgo: 'SVGO stopped with an error: {message}',
+      load: 'SVGO could not be loaded: {message}',
+      read: 'Could not read {name}.',
+      tooLarge: '{name} is larger than 50 MB.',
+      gzip: '{name} is gzip-compressed and this browser cannot decompress it.'
+    },
+    note: {
+      fixXmlns: 'Added the missing xmlns="http://www.w3.org/2000/svg". Without it the file does not open as an image.',
+      fixXlink: 'Added the missing xmlns:xlink declaration.',
+      htmlEntity: '{names} is an HTML entity that XML does not define, so browsers reject the original file. SVGO wrote the character itself.',
+      entities: 'The entities declared in the DOCTYPE were expanded and the DOCTYPE removed.',
+      idsGone: 'IDs removed or renamed ({n}): {items}. CSS, JavaScript or <use href="file.svg#id"> outside this file that refers to them stops working. Untick "Shorten and remove IDs" to keep them.',
+      classesGone: 'Classes removed ({n}): {items}. SVGO moved one-off class styles into the elements. Page CSS that targets these classes no longer matches; untick inlineStyles and minifyStyles under All SVGO plugins to keep them.',
+      viewBoxGone: 'No viewBox: the SVG stays {w} × {h} px and no longer scales with CSS width or height.',
+      sizeGone: 'No width or height: the size now comes from CSS or the container. An inline <svg> fills the available width.',
+      titleGone: 'The <title> was removed. Screen readers use it as the name of the image; add aria-label or alt where you use it.',
+      noXmlns: 'No xmlns: this markup works pasted inline into HTML, but not as a .svg file or in <img>.',
+      scriptsKept: 'Scripts, event attributes or javascript: links found ({n}). SVGO keeps them; they run when the SVG is opened directly, inlined or embedded with <object>, but not in <img>. Tick "Remove scripts and event handlers" to strip them.',
+      scriptsRemoved: 'Scripts, event attributes or javascript: links removed ({n}).',
+      external: 'Refers to external files: {urls}. SVGO keeps the links. The previews cannot load them (browsers do not load external files into an SVG image), so the comparison does not cover them.',
+      animation: 'Contains animation. The previews and the comparison show the first frame only.',
+      raster: '{size} ({pct}% of the result) is embedded bitmap data. SVGO does not recompress bitmaps; compress the image before embedding it.',
+      lowPrecision: 'With {p} decimal places points can move visibly. Check the comparison.',
+      unchanged: 'SVGO found nothing to change.',
+      larger: 'The result is {delta} bytes larger than the original. This happens with already optimized files and when transforms are written into path data. Keep the original file.',
+      skipped: 'Skipped files that are not SVG: {names}.'
+    }
+  },
+  zh: {
+    dropTitle: '把 SVG 文件拖到这里，或点击选择',
+    dropHint: '可一次选多个文件（.svg、.svgz）。也可以在下方粘贴代码，或在页面任意位置按 Ctrl+V。',
+    codeLabel: 'SVG 代码',
+    codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    run: '压缩', example: '示例', clear: '清空',
+    working: '正在压缩第 {done} / {total} 个…',
+    loading: '正在加载 SVGO…',
+    doneOne: '{name}：{before} → {after}（{delta}）。',
+    doneMany: '{n} 个文件：{before} → {after}（{delta}）。',
+    failedMany: '{n} 个失败。',
+    delta: '{sign}{pct}%',
+    gzip: 'gzip {before} → {after}',
+    engine: 'SVGO {v}',
+    check: {
+      pending: '正在比对渲染结果…',
+      same: '渲染结果相同（按 {w} × {h} px 比对）。',
+      minor: '有 {pct}% 的像素略有不同，请看下方红色区域。',
+      changed: '看起来不同：{pct}% 的像素有变化，请看下方红色区域。',
+      beforeFailed: '原文件在当前浏览器中无法渲染，未做比对。',
+      afterFailed: '压缩后的 SVG 在当前浏览器中无法渲染。',
+      skipped: '文件超过 10 MB，未比对渲染结果。'
+    },
+    before: '原文件', after: '压缩后', diff: '差异（红色为有变化的像素）',
+    copyAs: '复制格式', fmtSvg: 'SVG 代码', fmtUri: 'Data URI（URL 编码）', fmtBase64: 'Data URI（Base64）', fmtCss: 'CSS background-image', fmtJsx: 'React 组件（JSX）',
+    copy: '复制', copied: '已复制', copyFail: '复制失败，请选中代码手动复制。',
+    download: '下载 .svg', zip: '全部下载（.zip）',
+    code: '输出（{chars} 个字符）',
+    jsxNote: '需要 TypeScript、forwardRef 或 memo 时，把 SVG 粘贴到 SVG 转 JSX 工具。',
+    thFile: '文件', thBefore: '压缩前', thAfter: '压缩后', thSaved: '减少', thCheck: '渲染', thSave: '保存',
+    rowSame: '相同', rowMinor: '略有不同', rowChanged: '不同', rowFailed: '未比对', rowPending: '…', rowError: '出错',
+    settings: '设置', reset: '恢复默认',
+    precision: '小数位数', prefix: 'ID 前缀', prefixPh: '例如 logo-',
+    prefixHint: '给每个 ID 加前缀，同一页面内联多个 SVG 时 ID 不会冲突。',
+    multipass: '多轮优化', pretty: '格式化输出',
+    p: {
+      cleanupIds: '缩短并删除 ID', convertColors: '缩写颜色', removeComments: '删除注释', mergePaths: '合并路径',
+      removeViewBox: '删除 viewBox', removeDimensions: '删除 width/height', removeTitle: '删除 <title>', removeScripts: '删除脚本和事件属性'
+    },
+    allPlugins: '全部 SVGO 插件',
+    presetHead: 'preset-default（{n} 个，默认开启）',
+    extraHead: '其他内置插件（默认关闭）',
+    paramNote: '以下插件需要参数，未提供开关：{names}。',
+    configHead: '在构建中使用这组设置（svgo.config.mjs）',
+    copyConfig: '复制配置',
+    err: {
+      empty: 'SVG 内容为空。',
+      notSvg: '没有找到 <svg> 元素。',
+      rootNotSvg: '根元素是 <{name}>，不是 <svg>。请只粘贴 <svg>…</svg> 部分。',
+      xml: '不是合法的 XML（第 {line} 行第 {column} 列）：{reason}',
+      svgo: 'SVGO 报错：{message}',
+      load: 'SVGO 加载失败：{message}',
+      read: '无法读取 {name}。',
+      tooLarge: '{name} 超过 50 MB。',
+      gzip: '{name} 是 gzip 压缩文件，当前浏览器无法解压。'
+    },
+    note: {
+      fixXmlns: '已补上缺少的 xmlns="http://www.w3.org/2000/svg"。没有它，文件无法作为图片打开。',
+      fixXlink: '已补上缺少的 xmlns:xlink 声明。',
+      htmlEntity: '{names} 是 HTML 实体，XML 没有定义，浏览器打不开原文件。SVGO 已改写成字符本身。',
+      entities: 'DOCTYPE 中声明的实体已展开，DOCTYPE 已删除。',
+      idsGone: '{n} 个 ID 被删除或改名：{items}。文件外的 CSS、JavaScript 或 <use href="file.svg#id"> 引用它们时会失效。要保留，请取消「缩短并删除 ID」。',
+      classesGone: '{n} 个 class 被删除：{items}。SVGO 把只用一次的 class 样式写进了元素。页面 CSS 选不中这些 class；要保留，请在「全部 SVGO 插件」里取消 inlineStyles 和 minifyStyles。',
+      viewBoxGone: '没有 viewBox：SVG 固定为 {w} × {h} px，用 CSS 改宽高时不再缩放。',
+      sizeGone: '没有 width 和 height：尺寸改由 CSS 或容器决定，内联 <svg> 会撑满可用宽度。',
+      titleGone: '已删除 <title>。读屏软件用它作为图片名称；使用时请补 aria-label 或 alt。',
+      noXmlns: '没有 xmlns：这段代码内联到 HTML 中可用，但作为 .svg 文件或放进 <img> 时无法显示。',
+      scriptsKept: '含有 {n} 处脚本、事件属性或 javascript: 链接。SVGO 会保留它们；直接打开、内联或用 <object> 嵌入时会执行，放在 <img> 里不执行。要去掉，请勾选「删除脚本和事件属性」。',
+      scriptsRemoved: '已删除 {n} 处脚本、事件属性或 javascript: 链接。',
+      external: '引用了外部文件：{urls}。SVGO 保留这些链接。预览无法加载它们（浏览器不会为 SVG 图片加载外部文件），比对不包含这部分。',
+      animation: '含有动画。预览和比对只看第一帧。',
+      raster: '其中 {size}（占结果的 {pct}%）是内嵌的位图数据。SVGO 不会重新压缩位图，请先压缩图片再嵌入。',
+      lowPrecision: '保留 {p} 位小数时，图形上的点可能明显移动，请看比对结果。',
+      unchanged: 'SVGO 没有可改的内容。',
+      larger: '结果比原文件大 {delta} 字节。已经优化过的文件、或把 transform 写进路径数据时会这样。请保留原文件。',
+      skipped: '已跳过不是 SVG 的文件：{names}。'
+    }
+  },
+  ja: {
+    dropTitle: 'SVG ファイルをここにドロップ、またはクリックして選択',
+    dropHint: '複数ファイルをまとめて処理できます（.svg・.svgz）。下にコードを貼り付けるか、ページ上で Ctrl+V でも読み込めます。',
+    codeLabel: 'SVG コード',
+    codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    run: '圧縮', example: 'サンプル', clear: 'クリア',
+    working: '{total} 件中 {done} 件目を圧縮中…',
+    loading: 'SVGO を読み込み中…',
+    doneOne: '{name}：{before} → {after}（{delta}）。',
+    doneMany: '{n} ファイル：{before} → {after}（{delta}）。',
+    failedMany: '{n} 件は失敗しました。',
+    delta: '{sign}{pct}%',
+    gzip: 'gzip {before} → {after}',
+    engine: 'SVGO {v}',
+    check: {
+      pending: '描画結果を比較中…',
+      same: '描画結果は同じです（{w} × {h} px で比較）。',
+      minor: '{pct}% のピクセルにわずかな差があります。下の赤い部分を確認してください。',
+      changed: '見た目が変わっています：{pct}% のピクセルに差があります。下の赤い部分を確認してください。',
+      beforeFailed: '元のファイルがこのブラウザで描画できないため、比較していません。',
+      afterFailed: '最適化後の SVG がこのブラウザで描画できません。',
+      skipped: '10 MB を超えるため、描画結果は比較していません。'
+    },
+    before: '元のファイル', after: '最適化後', diff: '差分（赤 = 変化したピクセル）',
+    copyAs: 'コピー形式', fmtSvg: 'SVG マークアップ', fmtUri: 'Data URI（URL エンコード）', fmtBase64: 'Data URI（Base64）', fmtCss: 'CSS background-image', fmtJsx: 'React コンポーネント（JSX）',
+    copy: 'コピー', copied: 'コピーしました', copyFail: 'コピーできませんでした。コードを選択してコピーしてください。',
+    download: '.svg をダウンロード', zip: 'すべてダウンロード（.zip）',
+    code: '出力（{chars} 文字）',
+    jsxNote: 'TypeScript・forwardRef・memo が必要なら、SVG を SVG → JSX コンバーターに貼り付けてください。',
+    thFile: 'ファイル', thBefore: '元', thAfter: '後', thSaved: '削減', thCheck: '描画', thSave: '保存',
+    rowSame: '同じ', rowMinor: 'わずかな差', rowChanged: '差あり', rowFailed: '未比較', rowPending: '…', rowError: 'エラー',
+    settings: '設定', reset: '初期設定に戻す',
+    precision: '小数点以下の桁数', prefix: 'ID の接頭辞', prefixPh: '例：logo-',
+    prefixHint: 'すべての ID に接頭辞を付け、1 ページに複数の SVG をインラインで置いても ID が衝突しないようにします。',
+    multipass: 'マルチパス', pretty: '整形して出力',
+    p: {
+      cleanupIds: 'ID を短縮・削除', convertColors: '色の表記を短縮', removeComments: 'コメントを削除', mergePaths: 'パスを結合',
+      removeViewBox: 'viewBox を削除', removeDimensions: 'width/height を削除', removeTitle: '<title> を削除', removeScripts: 'スクリプトとイベント属性を削除'
+    },
+    allPlugins: 'SVGO の全プラグイン',
+    presetHead: 'preset-default（{n} 個、既定で有効）',
+    extraHead: 'その他の組み込みプラグイン（既定で無効）',
+    paramNote: 'パラメーターが必要なため、スイッチは用意していません：{names}。',
+    configHead: 'この設定をビルドで使う（svgo.config.mjs）',
+    copyConfig: '設定をコピー',
+    err: {
+      empty: 'SVG が空です。',
+      notSvg: '<svg> 要素が見つかりません。',
+      rootNotSvg: 'ルート要素が <svg> ではなく <{name}> です。<svg>…</svg> の部分だけを貼り付けてください。',
+      xml: 'XML として正しくありません（{line} 行 {column} 列）：{reason}',
+      svgo: 'SVGO がエラーで停止しました：{message}',
+      load: 'SVGO を読み込めませんでした：{message}',
+      read: '{name} を読み込めませんでした。',
+      tooLarge: '{name} は 50 MB を超えています。',
+      gzip: '{name} は gzip 圧縮されていますが、このブラウザでは展開できません。'
+    },
+    note: {
+      fixXmlns: '欠けていた xmlns="http://www.w3.org/2000/svg" を補いました。これがないと画像として開けません。',
+      fixXlink: '欠けていた xmlns:xlink の宣言を補いました。',
+      htmlEntity: '{names} は XML で定義されていない HTML の文字参照のため、元のファイルはブラウザで開けません。SVGO は文字そのものに書き換えました。',
+      entities: 'DOCTYPE で宣言された実体を展開し、DOCTYPE を削除しました。',
+      idsGone: '{n} 個の ID が削除または変更されました：{items}。このファイルの外にある CSS・JavaScript・<use href="file.svg#id"> がこれらを参照していると動かなくなります。残す場合は「ID を短縮・削除」をオフにしてください。',
+      classesGone: '{n} 個の class が削除されました：{items}。一度しか使われない class のスタイルを SVGO が要素に書き込みました。ページの CSS からこれらの class を指定できなくなります。残す場合は「SVGO の全プラグイン」で inlineStyles と minifyStyles をオフにしてください。',
+      viewBoxGone: 'viewBox がありません：SVG は {w} × {h} px に固定され、CSS で幅や高さを変えても拡大縮小しません。',
+      sizeGone: 'width と height がありません：大きさは CSS や親要素で決まり、インラインの <svg> は使える幅いっぱいに広がります。',
+      titleGone: '<title> を削除しました。スクリーンリーダーは画像の名前としてこれを読み上げます。使う場所で aria-label や alt を指定してください。',
+      noXmlns: 'xmlns がありません：HTML にインラインで貼るなら動きますが、.svg ファイルや <img> では表示されません。',
+      scriptsKept: 'スクリプト・イベント属性・javascript: リンクが {n} か所あります。SVGO はこれらを残します。直接開く、インラインで置く、<object> で埋め込むと実行され、<img> では実行されません。削除するには「スクリプトとイベント属性を削除」をオンにしてください。',
+      scriptsRemoved: 'スクリプト・イベント属性・javascript: リンクを {n} か所削除しました。',
+      external: '外部ファイルを参照しています：{urls}。SVGO はリンクを残します。プレビューでは読み込めない（ブラウザは SVG 画像から外部ファイルを読み込まない）ため、比較の対象外です。',
+      animation: 'アニメーションを含みます。プレビューと比較は最初のフレームだけです。',
+      raster: 'うち {size}（結果の {pct}%）は埋め込まれたビットマップです。SVGO はビットマップを再圧縮しません。埋め込む前に画像を圧縮してください。',
+      lowPrecision: '小数点以下 {p} 桁だと点の位置が目に見えてずれることがあります。比較結果を確認してください。',
+      unchanged: 'SVGO が変更できる箇所はありませんでした。',
+      larger: '結果は元のファイルより {delta} バイト大きくなりました。最適化済みのファイルや、transform をパスデータに書き込んだ場合に起こります。元のファイルを使ってください。',
+      skipped: 'SVG ではないファイルをスキップしました：{names}。'
+    }
+  },
+  ko: {
+    dropTitle: 'SVG 파일을 여기에 끌어 놓거나 클릭해서 선택',
+    dropHint: '여러 파일을 한 번에 처리합니다(.svg, .svgz). 아래에 코드를 붙여 넣거나 페이지 어디서든 Ctrl+V를 눌러도 됩니다.',
+    codeLabel: 'SVG 코드',
+    codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
+    run: '최적화', example: '예시', clear: '지우기',
+    working: '{total}개 중 {done}번째 최적화 중…',
+    loading: 'SVGO 불러오는 중…',
+    doneOne: '{name}: {before} → {after} ({delta}).',
+    doneMany: '파일 {n}개: {before} → {after} ({delta}).',
+    failedMany: '{n}개는 실패했습니다.',
+    delta: '{sign}{pct}%',
+    gzip: 'gzip {before} → {after}',
+    engine: 'SVGO {v}',
+    check: {
+      pending: '렌더링 결과 비교 중…',
+      same: '렌더링 결과가 같습니다({w} × {h} px로 비교).',
+      minor: '픽셀의 {pct}%에 작은 차이가 있습니다. 아래 빨간 부분을 확인하세요.',
+      changed: '모양이 달라졌습니다: 픽셀의 {pct}%가 바뀌었습니다. 아래 빨간 부분을 확인하세요.',
+      beforeFailed: '원본이 이 브라우저에서 렌더링되지 않아 비교하지 않았습니다.',
+      afterFailed: '최적화한 SVG가 이 브라우저에서 렌더링되지 않습니다.',
+      skipped: '10 MB가 넘어 렌더링 결과를 비교하지 않았습니다.'
+    },
+    before: '원본', after: '최적화 후', diff: '차이(빨강 = 바뀐 픽셀)',
+    copyAs: '복사 형식', fmtSvg: 'SVG 마크업', fmtUri: 'Data URI(URL 인코딩)', fmtBase64: 'Data URI(Base64)', fmtCss: 'CSS background-image', fmtJsx: 'React 컴포넌트(JSX)',
+    copy: '복사', copied: '복사됨', copyFail: '복사하지 못했습니다. 코드를 선택해서 복사하세요.',
+    download: '.svg 다운로드', zip: '모두 다운로드(.zip)',
+    code: '출력({chars}자)',
+    jsxNote: 'TypeScript, forwardRef, memo가 필요하면 SVG를 SVG → JSX 변환기에 붙여 넣으세요.',
+    thFile: '파일', thBefore: '전', thAfter: '후', thSaved: '절감', thCheck: '렌더링', thSave: '저장',
+    rowSame: '같음', rowMinor: '작은 차이', rowChanged: '다름', rowFailed: '비교 안 함', rowPending: '…', rowError: '오류',
+    settings: '설정', reset: '기본값으로',
+    precision: '소수 자릿수', prefix: 'ID 접두사', prefixPh: '예: logo-',
+    prefixHint: '모든 ID에 접두사를 붙여 한 페이지에 SVG 여러 개를 인라인으로 넣어도 ID가 겹치지 않게 합니다.',
+    multipass: '여러 번 실행', pretty: '보기 좋게 출력',
+    p: {
+      cleanupIds: 'ID 줄이기·삭제', convertColors: '색상 표기 줄이기', removeComments: '주석 삭제', mergePaths: '경로 합치기',
+      removeViewBox: 'viewBox 삭제', removeDimensions: 'width/height 삭제', removeTitle: '<title> 삭제', removeScripts: '스크립트·이벤트 속성 삭제'
+    },
+    allPlugins: 'SVGO 전체 플러그인',
+    presetHead: 'preset-default({n}개, 기본 사용)',
+    extraHead: '그 밖의 내장 플러그인(기본 사용 안 함)',
+    paramNote: '매개변수가 필요해 스위치로 제공하지 않습니다: {names}.',
+    configHead: '이 설정을 빌드에서 쓰기(svgo.config.mjs)',
+    copyConfig: '설정 복사',
+    err: {
+      empty: 'SVG가 비어 있습니다.',
+      notSvg: '<svg> 요소를 찾을 수 없습니다.',
+      rootNotSvg: '루트 요소가 <svg>가 아니라 <{name}>입니다. <svg>…</svg> 부분만 붙여 넣으세요.',
+      xml: '올바른 XML이 아닙니다({line}행 {column}열): {reason}',
+      svgo: 'SVGO가 오류로 멈췄습니다: {message}',
+      load: 'SVGO를 불러오지 못했습니다: {message}',
+      read: '{name}을(를) 읽지 못했습니다.',
+      tooLarge: '{name}은(는) 50 MB를 넘습니다.',
+      gzip: '{name}은(는) gzip으로 압축되어 있는데 이 브라우저에서는 풀 수 없습니다.'
+    },
+    note: {
+      fixXmlns: '빠진 xmlns="http://www.w3.org/2000/svg"를 추가했습니다. 이것이 없으면 이미지로 열리지 않습니다.',
+      fixXlink: '빠진 xmlns:xlink 선언을 추가했습니다.',
+      htmlEntity: '{names}은(는) XML에 정의되지 않은 HTML 엔티티라서 원본 파일은 브라우저에서 열리지 않습니다. SVGO가 문자 자체로 바꿨습니다.',
+      entities: 'DOCTYPE에 선언된 엔티티를 풀어 쓰고 DOCTYPE을 삭제했습니다.',
+      idsGone: 'ID {n}개가 삭제되거나 바뀌었습니다: {items}. 이 파일 밖의 CSS, JavaScript, <use href="file.svg#id">가 이 ID를 가리키면 작동하지 않습니다. 남기려면 「ID 줄이기·삭제」를 끄세요.',
+      classesGone: 'class {n}개가 삭제되었습니다: {items}. 한 번만 쓰인 class의 스타일을 SVGO가 요소에 직접 넣었습니다. 페이지 CSS로 이 class를 선택할 수 없게 됩니다. 남기려면 「SVGO 전체 플러그인」에서 inlineStyles와 minifyStyles를 끄세요.',
+      viewBoxGone: 'viewBox가 없습니다: SVG가 {w} × {h} px로 고정되어 CSS로 너비나 높이를 바꿔도 크기가 바뀌지 않습니다.',
+      sizeGone: 'width와 height가 없습니다: 크기는 CSS나 부모 요소가 정하며, 인라인 <svg>는 쓸 수 있는 너비를 모두 채웁니다.',
+      titleGone: '<title>을 삭제했습니다. 스크린 리더는 이것을 이미지 이름으로 읽습니다. 쓰는 곳에서 aria-label이나 alt를 지정하세요.',
+      noXmlns: 'xmlns가 없습니다: HTML에 인라인으로 넣으면 작동하지만 .svg 파일이나 <img>에서는 보이지 않습니다.',
+      scriptsKept: '스크립트, 이벤트 속성, javascript: 링크가 {n}곳 있습니다. SVGO는 이를 그대로 둡니다. 직접 열거나 인라인으로 넣거나 <object>로 넣으면 실행되고, <img>에서는 실행되지 않습니다. 지우려면 「스크립트·이벤트 속성 삭제」를 켜세요.',
+      scriptsRemoved: '스크립트, 이벤트 속성, javascript: 링크 {n}곳을 삭제했습니다.',
+      external: '외부 파일을 참조합니다: {urls}. SVGO는 링크를 그대로 둡니다. 미리보기에서는 불러올 수 없어(브라우저는 SVG 이미지에서 외부 파일을 불러오지 않음) 비교 대상에서 빠집니다.',
+      animation: '애니메이션이 있습니다. 미리보기와 비교는 첫 프레임만 봅니다.',
+      raster: '그중 {size}(결과의 {pct}%)는 내장된 비트맵 데이터입니다. SVGO는 비트맵을 다시 압축하지 않으니 넣기 전에 이미지를 압축하세요.',
+      lowPrecision: '소수 {p}자리로 줄이면 점의 위치가 눈에 띄게 바뀔 수 있습니다. 비교 결과를 확인하세요.',
+      unchanged: 'SVGO가 바꿀 부분이 없었습니다.',
+      larger: '결과가 원본보다 {delta}바이트 큽니다. 이미 최적화된 파일이거나 transform을 경로 데이터에 써 넣은 경우에 생깁니다. 원본 파일을 쓰세요.',
+      skipped: 'SVG가 아닌 파일은 건너뛰었습니다: {names}.'
+    }
+  }
+};
+// strings:end
+
+const T = STRINGS[lang];
+const PRESET_PLUGINS = [
+  'removeDoctype', 'removeXMLProcInst', 'removeComments', 'removeDeprecatedAttrs',
+  'removeMetadata', 'removeEditorsNSData', 'cleanupAttrs', 'mergeStyles', 'inlineStyles',
+  'minifyStyles', 'cleanupIds', 'removeUselessDefs', 'cleanupNumericValues', 'convertColors',
+  'removeUnknownsAndDefaults', 'removeNonInheritableGroupAttrs', 'removeUselessStrokeAndFill',
+  'cleanupEnableBackground', 'removeHiddenElems', 'removeEmptyText', 'convertShapeToPath',
+  'convertEllipseToCircle', 'moveElemsAttrsToGroup', 'moveGroupAttrsToElems', 'collapseGroups',
+  'convertPathData', 'convertTransform', 'removeEmptyAttrs', 'removeEmptyContainers',
+  'mergePaths', 'removeUnusedNS', 'sortAttrs', 'sortDefsChildren', 'removeDesc'
+];
+const EXTRA_PLUGINS = [
+  'removeViewBox', 'removeDimensions', 'removeTitle', 'removeScripts', 'removeXMLNS',
+  'removeXlink', 'removeStyleElement', 'removeRasterImages', 'removeOffCanvasPaths',
+  'reusePaths', 'convertStyleToAttrs', 'convertOneStopGradients', 'cleanupListOfValues'
+];
+const MAIN_PLUGINS = ['cleanupIds', 'convertColors', 'removeComments', 'mergePaths', 'removeViewBox', 'removeDimensions', 'removeTitle', 'removeScripts'] as const;
+const PARAM_PLUGINS = ['addAttributesToSVGElement', 'addClassesToSVGElement', 'removeAttributesBySelector', 'removeAttrs', 'removeElementsByAttr'];
+const fill = (tpl: string, vars: Record<string, string | number>) => tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
 ---
 
-<div class="svgo-wrap">
-  <div class="svgo-tabs" role="tablist">
-    <button
-      id="svgo-tab-paste"
-      class="svgo-tab svgo-tab--active"
-      role="tab"
-      aria-selected="true"
-      aria-controls="svgo-panel-paste"
-      type="button"
-      data-i18n="tabPaste"
-    >Paste SVG</button>
-    <button
-      id="svgo-tab-upload"
-      class="svgo-tab"
-      role="tab"
-      aria-selected="false"
-      aria-controls="svgo-panel-upload"
-      type="button"
-      data-i18n="tabUpload"
-    >Upload File</button>
-  </div>
-
-  <div id="svgo-panel-paste" class="svgo-panel" role="tabpanel">
-    <label for="svgo-input" class="tool-label" data-i18n="inputLabel">SVG markup</label>
-    <textarea
-      id="svgo-input"
-      class="tool-textarea svgo-input"
-      rows="7"
-      spellcheck="false"
-      autocapitalize="off"
-      autocorrect="off"
-      placeholder="Paste your SVG markup here…"
-      data-i18n-attr="placeholder|inputPlaceholder"
-    ></textarea>
-  </div>
-
-  <div id="svgo-panel-upload" class="svgo-panel" hidden role="tabpanel">
-    <div id="svgo-drop" class="svgo-drop" role="button" tabindex="0">
-      <div class="svgo-drop-inner">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
-        <p data-i18n="dropHint">Drop an SVG file here, or click to select</p>
-        <p class="svgo-drop-hint" data-i18n="dropHint2">.svg files only</p>
-      </div>
-      <input id="svgo-file" type="file" accept=".svg,image/svg+xml" class="svgo-file-input" aria-label="Select SVG file" />
+<div class="svgo-wrap" id="svgo-wrap" data-lang={lang} data-strings={JSON.stringify(T)}>
+  <div class="svgo-input">
+    <label class="svgo-drop" id="svgo-drop" for="svgo-file">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <span class="svgo-drop-text">
+        <span class="svgo-drop-title">{T.dropTitle}</span>
+        <span class="svgo-drop-hint">{T.dropHint}</span>
+      </span>
+    </label>
+    <input id="svgo-file" class="svgo-sr" type="file" accept=".svg,.svgz,image/svg+xml" multiple />
+    <label for="svgo-input" class="tool-label">{T.codeLabel}</label>
+    <textarea id="svgo-input" class="tool-textarea svgo-code-in" rows="4" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder={T.codePh}></textarea>
+    <div class="svgo-actions">
+      <button id="svgo-run" class="btn-primary" type="button">{T.run}</button>
+      <button id="svgo-example" class="btn-ghost" type="button">{T.example}</button>
+      <button id="svgo-clear" class="btn-ghost" type="button">{T.clear}</button>
     </div>
   </div>
 
-  <div class="svgo-controls">
-    <div class="svgo-controls-head">
-      <h2 class="svgo-controls-heading" data-i18n="pluginsHeading">Plugins</h2>
-      <button id="svgo-reset" class="btn-ghost svgo-reset" type="button" data-i18n="resetBtn">Reset</button>
+  <div id="svgo-status" class="tool-status svgo-status" role="status" aria-live="polite"></div>
+
+  <section id="svgo-result" class="svgo-result" hidden>
+    <div class="svgo-summary">
+      <span id="svgo-sizes" class="svgo-sizes"></span>
+      <span id="svgo-saved" class="svgo-saved"></span>
+      <span id="svgo-gzip" class="svgo-gzip"></span>
+      <span id="svgo-engine" class="svgo-engine"></span>
     </div>
-    <div class="svgo-toggle-grid">
-      <label class="svgo-toggle">
-        <input type="checkbox" data-plugin="cleanupIds" checked />
-        <span class="svgo-toggle-text" data-i18n="pluginCleanupIds">Clean unused IDs</span>
-      </label>
-      <label class="svgo-toggle">
-        <input type="checkbox" data-plugin="convertColors" checked />
-        <span class="svgo-toggle-text" data-i18n="pluginConvertColors">Shorten colors</span>
-      </label>
-      <label class="svgo-toggle">
-        <input type="checkbox" data-plugin="removeComments" checked />
-        <span class="svgo-toggle-text" data-i18n="pluginRemoveComments">Remove comments</span>
-      </label>
-      <label class="svgo-toggle">
-        <input type="checkbox" data-plugin="removeViewBox" />
-        <span class="svgo-toggle-text" data-i18n="pluginRemoveViewBox">Remove viewBox</span>
-        <span class="svgo-warn" aria-hidden="true">!</span>
-      </label>
-      <label class="svgo-toggle">
-        <input type="checkbox" data-plugin="removeDimensions" />
-        <span class="svgo-toggle-text" data-i18n="pluginRemoveDimensions">Remove width/height</span>
-      </label>
-      <label class="svgo-toggle">
-        <input type="checkbox" data-plugin="mergePaths" checked />
-        <span class="svgo-toggle-text" data-i18n="pluginMergePaths">Merge paths</span>
-      </label>
-      <label class="svgo-toggle">
-        <input type="checkbox" data-plugin="multipass" checked />
-        <span class="svgo-toggle-text" data-i18n="pluginMultipass">Multipass</span>
-      </label>
-      <label class="svgo-toggle svgo-toggle--slider">
-        <span class="svgo-toggle-text">
-          <span data-i18n="pluginPrecision">Precision</span>
-          <span class="svgo-precision-val" id="svgo-precision-val">3</span>
-        </span>
-        <input type="range" id="svgo-precision" min="0" max="5" step="1" value="3" />
+    <div class="svgo-out-actions">
+      <button id="svgo-download" class="btn-secondary" type="button">{T.download}</button>
+      <button id="svgo-copy" class="btn-copy" type="button">{T.copy}</button>
+      <label class="svgo-format">
+        <span>{T.copyAs}</span>
+        <select id="svgo-format" class="tool-input">
+          <option value="svg">{T.fmtSvg}</option>
+          <option value="uri">{T.fmtUri}</option>
+          <option value="base64">{T.fmtBase64}</option>
+          <option value="css">{T.fmtCss}</option>
+          <option value="jsx">{T.fmtJsx}</option>
+        </select>
       </label>
     </div>
-
-    <button
-      id="svgo-toggle-advanced"
-      class="btn-ghost svgo-advanced-btn"
-      type="button"
-      aria-expanded="false"
-      aria-controls="svgo-advanced-body"
-    >
-      <span data-i18n="showAllPlugins">Show all 34 plugins</span>
-    </button>
-    <div id="svgo-advanced-body" class="svgo-advanced-body" hidden>
-      <p class="svgo-advanced-hint">Advanced — raw SVGO plugin names. Defaults match SVGO preset-default.</p>
-      <div id="svgo-advanced-grid" class="svgo-advanced-grid"></div>
+    <p id="svgo-check" class="svgo-check" aria-live="polite"></p>
+    <ul id="svgo-notes" class="svgo-notes"></ul>
+    <div class="svgo-compare">
+      <figure class="svgo-fig">
+        <figcaption>{T.before}</figcaption>
+        <div class="svgo-preview"><img id="svgo-img-before" alt={T.before} /></div>
+      </figure>
+      <figure class="svgo-fig">
+        <figcaption>{T.after}</figcaption>
+        <div class="svgo-preview"><img id="svgo-img-after" alt={T.after} /></div>
+      </figure>
+      <figure id="svgo-fig-diff" class="svgo-fig" hidden>
+        <figcaption>{T.diff}</figcaption>
+        <div class="svgo-preview svgo-preview--plain"><canvas id="svgo-diff"></canvas></div>
+      </figure>
     </div>
-  </div>
-
-  <div class="svgo-actions">
-    <button id="svgo-optimize" class="btn-primary" type="button" data-i18n="optimizeBtn">Optimize SVG</button>
-    <span id="svgo-status" class="tool-status none" aria-live="polite" data-i18n="statusReady">Ready</span>
-  </div>
-
-  <div id="svgo-result" class="svgo-result" hidden>
-    <div class="svgo-result-grid">
-      <article class="svgo-result-card">
-        <header class="svgo-result-head">
-          <span class="svgo-result-label" data-i18n="previewBefore">Before</span>
-          <span id="svgo-bytes-before" class="svgo-result-bytes">—</span>
-        </header>
-        <div id="svgo-preview-before" class="svgo-preview"></div>
-      </article>
-      <article class="svgo-result-card">
-        <header class="svgo-result-head">
-          <span class="svgo-result-label" data-i18n="previewAfter">After</span>
-          <span id="svgo-bytes-after" class="svgo-result-bytes">—</span>
-          <span id="svgo-saved" class="svgo-saved"></span>
-        </header>
-        <div id="svgo-preview-after" class="svgo-preview"></div>
-      </article>
-    </div>
-
-    <div class="svgo-output-actions">
-      <button id="svgo-copy" class="btn-copy" type="button" data-i18n="copyOutput">Copy output</button>
-      <button id="svgo-download" class="btn-secondary" type="button" data-i18n="downloadSvg">Download .svg</button>
-    </div>
-
-    <details class="svgo-output-details">
-      <summary data-i18n="showOutputCode">Show optimized code</summary>
-      <pre class="svgo-output-pre"><code id="svgo-output-code"></code></pre>
+    <details class="svgo-code" id="svgo-code-box">
+      <summary id="svgo-code-summary"></summary>
+      <p id="svgo-jsx-note" class="svgo-jsx-note" hidden>{T.jsxNote}</p>
+      <pre class="svgo-pre"><code id="svgo-code"></code></pre>
     </details>
-  </div>
+  </section>
+
+  <section id="svgo-batch" class="svgo-batch" hidden>
+    <div class="svgo-table-wrap">
+      <table class="svgo-table">
+        <thead><tr><th scope="col">{T.thFile}</th><th scope="col">{T.thBefore}</th><th scope="col">{T.thAfter}</th><th scope="col">{T.thSaved}</th><th scope="col">{T.thCheck}</th><th scope="col"><span class="svgo-sr">{T.thSave}</span></th></tr></thead>
+        <tbody id="svgo-rows"></tbody>
+      </table>
+    </div>
+    <button id="svgo-zip" class="btn-secondary" type="button">{T.zip}</button>
+  </section>
+
+  <section class="svgo-settings" aria-labelledby="svgo-settings-h">
+    <div class="svgo-settings-head">
+      <h2 id="svgo-settings-h" class="svgo-settings-title">{T.settings}</h2>
+      <button id="svgo-reset" class="btn-ghost svgo-reset" type="button">{T.reset}</button>
+    </div>
+    <div class="svgo-toggles">
+      {MAIN_PLUGINS.map((p) => (
+        <label class="svgo-toggle"><input type="checkbox" data-plugin={p} /><span>{T.p[p]}</span>{RISKY.has(p) && <span class="svgo-warn" aria-hidden="true">!</span>}</label>
+      ))}
+      <label class="svgo-toggle"><input type="checkbox" id="svgo-multipass" /><span>{T.multipass}</span></label>
+      <label class="svgo-toggle"><input type="checkbox" id="svgo-pretty" /><span>{T.pretty}</span></label>
+    </div>
+    <div class="svgo-fields">
+      <div class="svgo-field">
+        <label for="svgo-precision" class="tool-label">{T.precision} <output id="svgo-precision-val" class="svgo-num">3</output></label>
+        <input id="svgo-precision" type="range" min="0" max="8" step="1" value="3" />
+      </div>
+      <div class="svgo-field">
+        <label for="svgo-prefix" class="tool-label">{T.prefix}</label>
+        <input id="svgo-prefix" class="tool-input" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder={T.prefixPh} aria-describedby="svgo-prefix-hint" />
+        <p id="svgo-prefix-hint" class="svgo-hint">{T.prefixHint}</p>
+      </div>
+    </div>
+    <details class="svgo-all">
+      <summary>{T.allPlugins}</summary>
+      <h3 class="svgo-sub">{fill(T.presetHead, { n: PRESET_PLUGINS.length })}</h3>
+      <div class="svgo-plugin-grid">
+        {PRESET_PLUGINS.map((p) => (
+          <label class="svgo-plugin"><input type="checkbox" data-plugin={p} /><code>{p}</code></label>
+        ))}
+      </div>
+      <h3 class="svgo-sub">{T.extraHead}</h3>
+      <div class="svgo-plugin-grid">
+        {EXTRA_PLUGINS.map((p) => (
+          <label class="svgo-plugin"><input type="checkbox" data-plugin={p} /><code>{p}</code></label>
+        ))}
+      </div>
+      <p class="svgo-hint">{fill(T.paramNote, { names: PARAM_PLUGINS.join(', ') })}</p>
+    </details>
+    <details class="svgo-all">
+      <summary>{T.configHead}</summary>
+      <pre class="svgo-pre"><code id="svgo-config"></code></pre>
+      <button id="svgo-copy-config" class="btn-copy" type="button">{T.copyConfig}</button>
+    </details>
+  </section>
 </div>
 
-<script is:inline>
-  (function () {
-    var STRINGS = {
-      en: {
-        tabPaste: 'Paste SVG',
-        tabUpload: 'Upload File',
-        inputLabel: 'SVG markup',
-        inputPlaceholder: 'Paste your SVG markup here…',
-        dropHint: 'Drop an SVG file here, or click to select',
-        dropHint2: '.svg files only',
-        pluginsHeading: 'Plugins',
-        resetBtn: 'Reset',
-        pluginCleanupIds: 'Clean unused IDs',
-        pluginConvertColors: 'Shorten colors',
-        pluginRemoveComments: 'Remove comments',
-        pluginRemoveViewBox: 'Remove viewBox',
-        pluginRemoveDimensions: 'Remove width/height',
-        pluginMergePaths: 'Merge paths',
-        pluginMultipass: 'Multipass',
-        pluginPrecision: 'Precision',
-        showAllPlugins: 'Show all 34 plugins',
-        hideAllPlugins: 'Hide advanced plugins',
-        advancedHint: 'Advanced — raw SVGO plugin names. Defaults match SVGO preset-default.',
-        optimizeBtn: 'Optimize SVG',
-        statusReady: 'Ready',
-        statusOptimizing: 'Optimizing…',
-        statusEmpty: 'Paste or upload an SVG.',
-        statusInvalid: 'Does not look like valid SVG markup.',
-        statusFileError: 'Please drop a .svg file.',
-        statusOptimized: 'Optimized: {before} → {after} ({delta})',
-        statusLarger: 'Result is larger: {before} → {after} ({delta})',
-        statusError: 'Optimization failed: {msg}',
-        previewBefore: 'Before',
-        previewAfter: 'After',
-        savedLabel: 'saved',
-        largerLabel: 'larger',
-        showOutputCode: 'Show optimized code',
-        copyOutput: 'Copy output',
-        downloadSvg: 'Download .svg',
-        copied: 'Copied!'
-      },
-      zh: {
-        tabPaste: '粘贴 SVG',
-        tabUpload: '上传文件',
-        inputLabel: 'SVG 代码',
-        inputPlaceholder: '在这里粘贴 SVG 代码…',
-        dropHint: '拖放 SVG 文件到这里，或点击选择',
-        dropHint2: '仅支持 .svg 文件',
-        pluginsHeading: '插件',
-        resetBtn: '重置',
-        pluginCleanupIds: '清理无引用 ID',
-        pluginConvertColors: '颜色短名',
-        pluginRemoveComments: '去注释',
-        pluginRemoveViewBox: '去 viewBox',
-        pluginRemoveDimensions: '去 width/height',
-        pluginMergePaths: '合并 path',
-        pluginMultipass: '多次优化',
-        pluginPrecision: '精度',
-        showAllPlugins: '显示全部 34 个插件',
-        hideAllPlugins: '隐藏高级插件',
-        advancedHint: '高级 — SVGO 原始插件名，默认值对齐 preset-default。',
-        optimizeBtn: '压缩 SVG',
-        statusReady: '待优化',
-        statusOptimizing: '优化中…',
-        statusEmpty: '请粘贴或上传 SVG。',
-        statusInvalid: '看起来不是有效 SVG 代码。',
-        statusFileError: '请拖放 .svg 文件。',
-        statusOptimized: '优化完成：{before} → {after}（{delta}）',
-        statusLarger: '结果更大：{before} → {after}（{delta}）',
-        statusError: '优化失败：{msg}',
-        previewBefore: '优化前',
-        previewAfter: '优化后',
-        savedLabel: '节省',
-        largerLabel: '增加',
-        showOutputCode: '显示优化后代码',
-        copyOutput: '复制结果',
-        downloadSvg: '下载 .svg',
-        copied: '已复制'
-      },
-      ja: {
-        tabPaste: 'SVG を貼り付け',
-        tabUpload: 'ファイルをアップロード',
-        inputLabel: 'SVG マークアップ',
-        inputPlaceholder: 'SVG マークアップをここに貼り付け…',
-        dropHint: 'SVG ファイルをドロップ、またはクリックで選択',
-        dropHint2: '.svg ファイルのみ',
-        pluginsHeading: 'プラグイン',
-        resetBtn: 'リセット',
-        pluginCleanupIds: '未使用 ID を削除',
-        pluginConvertColors: '色記法を短縮',
-        pluginRemoveComments: 'コメントを削除',
-        pluginRemoveViewBox: 'viewBox を削除',
-        pluginRemoveDimensions: 'width/height を削除',
-        pluginMergePaths: 'パスを統合',
-        pluginMultipass: '反復最適化',
-        pluginPrecision: '小数桁数',
-        showAllPlugins: 'すべてのプラグイン (34) を表示',
-        hideAllPlugins: '詳細プラグインを隠す',
-        advancedHint: '詳細 — SVGO 原本のプラグイン名。既定値は preset-default と同じ。',
-        optimizeBtn: 'SVG を最適化',
-        statusReady: '準備完了',
-        statusOptimizing: '最適化中…',
-        statusEmpty: 'SVG を貼り付けまたはアップロードしてください。',
-        statusInvalid: '有効な SVG マークアップではないようです。',
-        statusFileError: '.svg ファイルをドロップしてください。',
-        statusOptimized: '最適化完了: {before} → {after} ({delta})',
-        statusLarger: '結果が増加: {before} → {after} ({delta})',
-        statusError: '最適化に失敗: {msg}',
-        previewBefore: '最適化前',
-        previewAfter: '最適化後',
-        savedLabel: '削減',
-        largerLabel: '増加',
-        showOutputCode: '最適化後のコードを表示',
-        copyOutput: '出力をコピー',
-        downloadSvg: '.svg をダウンロード',
-        copied: 'コピーしました'
-      },
-      ko: {
-        tabPaste: 'SVG 붙여넣기',
-        tabUpload: '파일 업로드',
-        inputLabel: 'SVG 마크업',
-        inputPlaceholder: '여기에 SVG 마크업 붙여넣기…',
-        dropHint: 'SVG 파일을 드롭, 또는 클릭하여 선택',
-        dropHint2: '.svg 파일만 지원',
-        pluginsHeading: '플러그인',
-        resetBtn: '재설정',
-        pluginCleanupIds: '미사용 ID 정리',
-        pluginConvertColors: '색상 단축',
-        pluginRemoveComments: '주석 제거',
-        pluginRemoveViewBox: 'viewBox 제거',
-        pluginRemoveDimensions: 'width/height 제거',
-        pluginMergePaths: '경로 통합',
-        pluginMultipass: '다중 패스',
-        pluginPrecision: '정밀도',
-        showAllPlugins: '모든 34개 플러그인 표시',
-        hideAllPlugins: '고급 플러그인 숨기기',
-        advancedHint: '고급 — SVGO 원본 플러그인 이름. 기본값은 preset-default와 동일.',
-        optimizeBtn: 'SVG 최적화',
-        statusReady: '준비됨',
-        statusOptimizing: '최적화 중…',
-        statusEmpty: 'SVG를 붙여넣거나 업로드하세요.',
-        statusInvalid: '유효한 SVG 마크업이 아닌 것 같습니다.',
-        statusFileError: '.svg 파일을 드롭하세요.',
-        statusOptimized: '최적화 완료: {before} → {after} ({delta})',
-        statusLarger: '결과가 더 큼: {before} → {after} ({delta})',
-        statusError: '최적화 실패: {msg}',
-        previewBefore: '최적화 전',
-        previewAfter: '최적화 후',
-        savedLabel: '절감',
-        largerLabel: '증가',
-        showOutputCode: '최적화된 코드 표시',
-        copyOutput: '결과 복사',
-        downloadSvg: '.svg 다운로드',
-        copied: '복사됨'
+<script>
+  // @ts-nocheck
+  import SvgoWorker from './svg-optimizer.worker.js?worker';
+  import { runSvgo } from './svg-optimizer-run.js';
+
+  /* ── engine:start ── */
+  // ── copied verbatim from SvgToPngConverterTool.astro (scripts/test-svg-optimizer.mjs compares the source) ──
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  var XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+  var ABS_UNITS = { '': 1, px: 1, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, pt: 4 / 3, pc: 16 };
+
+  function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+  function parseLength(value, fontSize) {
+    if (value == null) return null;
+    var s = String(value).trim();
+    if (s === '' || s.toLowerCase() === 'auto') return null;
+    var m = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$/i.exec(s);
+    if (!m) return { px: null, unit: s };
+    var n = parseFloat(m[1]);
+    var unit = m[2].toLowerCase();
+    var px;
+    if (hasOwn(ABS_UNITS, unit)) px = n * ABS_UNITS[unit];
+    else if (unit === 'em') px = n * fontSize;
+    else if (unit === 'rem') px = n * 16;
+    else return { px: null, unit: unit };
+    if (!(px > 0) || !isFinite(px)) return { px: null, unit: 'invalid' };
+    return { px: px };
+  }
+
+  function parseStyle(style) {
+    var out = {};
+    String(style || '').split(';').forEach(function (decl) {
+      var i = decl.indexOf(':');
+      if (i < 0) return;
+      var key = decl.slice(0, i).trim().toLowerCase();
+      var value = decl.slice(i + 1).replace(/!important\s*$/i, '').trim();
+      if (key) out[key] = value;
+    });
+    return out;
+  }
+
+  function parseViewBox(value) {
+    if (value == null) return null;
+    var parts = String(value).trim().split(/[\s,]+/);
+    if (parts.length !== 4) return null;
+    var n = parts.map(Number);
+    if (n.some(function (x) { return !isFinite(x); })) return null;
+    if (!(n[2] > 0) || !(n[3] > 0)) return null;
+    return { x: n[0], y: n[1], width: n[2], height: n[3] };
+  }
+
+  function intrinsicSize(attrs) {
+    var style = parseStyle(attrs.style);
+    var fsLen = parseLength(hasOwn(style, 'font-size') ? style['font-size'] : attrs['font-size'], 16);
+    var fontSize = fsLen && fsLen.px ? fsLen.px : 16;
+    var notes = [];
+    function dim(name) {
+      var raw = hasOwn(style, name) ? style[name] : attrs[name];
+      var len = parseLength(raw, fontSize);
+      if (len && len.px == null) notes.push({ code: 'relativeSize', attr: name, value: String(raw).trim() });
+      return len && len.px != null ? len.px : null;
+    }
+    var w = dim('width');
+    var h = dim('height');
+    var vb = parseViewBox(attrs.viewBox);
+    var source = 'size';
+    if (w == null || h == null) {
+      if (vb) {
+        if (w != null) h = w * vb.height / vb.width;
+        else if (h != null) w = h * vb.width / vb.height;
+        else { w = vb.width; h = vb.height; source = 'viewBox'; }
+      } else {
+        if (w == null && h == null) source = 'default';
+        if (w == null) w = 300;
+        if (h == null) h = 150;
       }
-    };
+    }
+    return { width: w, height: h, viewBox: vb, source: source, notes: notes };
+  }
 
-    var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-    var t = STRINGS[pageLang] || STRINGS.en;
-
-    document.querySelectorAll('.svgo-wrap [data-i18n]').forEach(function (el) {
-      var key = el.getAttribute('data-i18n');
-      if (t[key]) el.textContent = t[key];
+  function decodeXml(s) {
+    return String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, function (m, e) {
+      var k = e.toLowerCase();
+      if (k === 'amp') return '&';
+      if (k === 'lt') return '<';
+      if (k === 'gt') return '>';
+      if (k === 'quot') return '"';
+      if (k === 'apos') return "'";
+      var cp = k.charAt(1) === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+      return cp > 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : m;
     });
-    document.querySelectorAll('.svgo-wrap [data-i18n-attr]').forEach(function (el) {
-      var spec = el.getAttribute('data-i18n-attr');
-      if (!spec) return;
-      var parts = spec.split('|');
-      if (parts.length === 2 && t[parts[1]]) el.setAttribute(parts[0], t[parts[1]]);
+  }
+
+  function skipDeclaration(src, i) {
+    var depth = 0, quote = null;
+    for (var j = i + 2; j < src.length; j++) {
+      var c = src.charAt(j);
+      if (quote) { if (c === quote) quote = null; continue; }
+      if (c === '"' || c === "'") quote = c;
+      else if (c === '[') depth++;
+      else if (c === ']') depth--;
+      else if (c === '>' && depth <= 0) return j + 1;
+    }
+    return src.length;
+  }
+
+  var TAG_NAME = /[A-Za-z_][\w.\-]*(?::[\w.\-]+)?/y;
+
+  var ATTR_NAME = /[^\s=\/>]+/y;
+
+  var SPACE = /\s/;
+
+  function readStartTag(src, i) {
+    TAG_NAME.lastIndex = i + 1;
+    var m = TAG_NAME.exec(src);
+    if (!m) return null;
+    var n = src.length;
+    var tag = { name: m[0], start: i, attrs: [], selfClosing: false, closeStart: n, end: n };
+    var j = i + 1 + m[0].length;
+    while (j < n) {
+      while (j < n && SPACE.test(src.charAt(j))) j++;
+      var c = src.charAt(j);
+      if (c === '>') { tag.closeStart = j; tag.end = j + 1; return tag; }
+      if (c === '/' && src.charAt(j + 1) === '>') { tag.closeStart = j; tag.end = j + 2; tag.selfClosing = true; return tag; }
+      ATTR_NAME.lastIndex = j;
+      var am = ATTR_NAME.exec(src);
+      if (!am) { j++; continue; }
+      var start = j;
+      j += am[0].length;
+      var k = j;
+      while (k < n && SPACE.test(src.charAt(k))) k++;
+      if (src.charAt(k) !== '=') { tag.attrs.push({ name: am[0], value: '', rawValue: '', quote: '', start: start, end: j }); continue; }
+      k++;
+      while (k < n && SPACE.test(src.charAt(k))) k++;
+      var q = src.charAt(k), raw, end;
+      if (q === '"' || q === "'") {
+        var close = src.indexOf(q, k + 1);
+        if (close < 0) close = n;
+        raw = src.slice(k + 1, close);
+        end = Math.min(n, close + 1);
+      } else {
+        q = '';
+        var e = k;
+        while (e < n && !SPACE.test(src.charAt(e)) && src.charAt(e) !== '>') e++;
+        raw = src.slice(k, e);
+        end = e;
+      }
+      tag.attrs.push({ name: am[0], value: decodeXml(raw), rawValue: raw, quote: q, start: start, end: end });
+      j = end;
+    }
+    return tag;
+  }
+
+  function scanMarkup(src) {
+    var tags = [];
+    var i = 0, n = src.length, e;
+    while (i < n) {
+      var lt = src.indexOf('<', i);
+      if (lt < 0) break;
+      if (src.startsWith('<!--', lt)) { e = src.indexOf('-->', lt + 4); i = e < 0 ? n : e + 3; continue; }
+      if (src.startsWith('<![CDATA[', lt)) { e = src.indexOf(']]>', lt + 9); i = e < 0 ? n : e + 3; continue; }
+      if (src.startsWith('<?', lt)) { e = src.indexOf('?>', lt + 2); i = e < 0 ? n : e + 2; continue; }
+      if (src.startsWith('<!', lt)) { i = skipDeclaration(src, lt); continue; }
+      if (src.charAt(lt + 1) === '/') { e = src.indexOf('>', lt); i = e < 0 ? n : e + 1; continue; }
+      var tag = readStartTag(src, lt);
+      if (!tag) { i = lt + 1; continue; }
+      tags.push(tag);
+      i = tag.end;
+    }
+    return tags;
+  }
+
+  function attrOf(tag, names) {
+    for (var i = 0; i < tag.attrs.length; i++) if (names.indexOf(tag.attrs[i].name) >= 0) return tag.attrs[i];
+    return null;
+  }
+
+  function isLocalRef(url) {
+    var u = String(url).trim().toLowerCase();
+    return u === '' || u.charAt(0) === '#' || u.indexOf('data:') === 0;
+  }
+
+  function cssRefs(css, refs) {
+    var importRe = /@import\s+(?:url\(\s*)?(['"]?)([^'")\s;]+)\1/gi, m;
+    while ((m = importRe.exec(css))) if (!isLocalRef(m[2])) refs.imports.push(decodeXml(m[2]));
+    var rest = css.replace(/@import[^;]*;?/gi, '');
+    var urlRe = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
+    while ((m = urlRe.exec(rest))) if (!isLocalRef(m[2])) refs.css.push(decodeXml(m[2]));
+  }
+
+  function analyzeSvg(text) {
+    var src = String(text == null ? '' : text);
+    if (src.charCodeAt(0) === 0xFEFF) src = src.slice(1);
+    if (!src.trim()) return { error: { code: 'empty' } };
+    var tags = scanMarkup(src);
+    if (!tags.length) return { error: { code: 'notSvg' } };
+    var root = tags[0];
+    if (root.name !== 'svg') return { error: { code: 'rootNotSvg', name: root.name } };
+    var attrs = {};
+    root.attrs.forEach(function (a) { attrs[a.name] = a.value; });
+    var fixes = [];
+    if (!hasOwn(attrs, 'xmlns')) fixes.push('xmlns');
+    if (/\bxlink:/.test(src) && src.indexOf('xmlns:xlink') < 0) fixes.push('xlink');
+    var refs = { images: [], uses: [], css: [], imports: [], foreignObject: false, script: false };
+    var strip = [];
+    var styleText = [];
+    tags.forEach(function (tag) {
+      var local = tag.name.split(':').pop();
+      if (local === 'image' || local === 'feImage') {
+        var href = attrOf(tag, ['href', 'xlink:href']);
+        if (href && !isLocalRef(href.value)) { refs.images.push(href.value); strip.push(href); }
+      } else if (local === 'use') {
+        var ref = attrOf(tag, ['href', 'xlink:href']);
+        if (ref && !isLocalRef(ref.value)) refs.uses.push(ref.value);
+      } else if (local === 'foreignObject') {
+        refs.foreignObject = true;
+      } else if (local === 'script') {
+        refs.script = true;
+      } else if (local === 'style' && !tag.selfClosing) {
+        var close = src.indexOf('</', tag.end);
+        styleText.push(src.slice(tag.end, close < 0 ? src.length : close).replace(/<!\[CDATA\[|\]\]>/g, ''));
+      }
+      tag.attrs.forEach(function (a) {
+        if (a.name === 'style') styleText.push(a.value);
+        if (/^on/i.test(a.name)) refs.script = true;
+      });
+    });
+    cssRefs(styleText.join('\n'), refs);
+    return { source: src, tags: tags, root: root, attrs: attrs, size: intrinsicSize(attrs), fixes: fixes, refs: refs, strip: strip };
+  }
+
+  function num(n) { return String(Math.round(n * 10000) / 10000); }
+
+  function buildSvg(text, analysis, plan) {
+    var src = analysis.source;
+    var root = analysis.root;
+    var edits = [];
+    function removeAttr(a) {
+      var s = a.start;
+      while (s > 0 && SPACE.test(src.charAt(s - 1))) s--;
+      edits.push({ start: s, end: a.end, text: '' });
+    }
+    var add = [];
+    var hasViewBox = !!analysis.size.viewBox;
+    root.attrs.forEach(function (a) {
+      if (a.name === 'width' || a.name === 'height' || (a.name === 'viewBox' && !hasViewBox)) removeAttr(a);
+      else if (a.name === 'style') {
+        var kept = a.rawValue.split(';').map(function (d) { return d.trim(); }).filter(function (d) {
+          if (!d) return false;
+          var key = d.split(':')[0].trim().toLowerCase();
+          return key !== 'width' && key !== 'height';
+        }).join(';');
+        if (kept === a.rawValue) return;
+        if (kept) edits.push({ start: a.start, end: a.end, text: 'style=' + (a.quote || '"') + kept + (a.quote || '"') });
+        else removeAttr(a);
+      }
+    });
+    if (analysis.fixes.indexOf('xmlns') >= 0) add.push('xmlns="' + SVG_NS + '"');
+    if (analysis.fixes.indexOf('xlink') >= 0) add.push('xmlns:xlink="' + XLINK_NS + '"');
+    if (!hasViewBox) add.push('viewBox="0 0 ' + num(analysis.size.width) + ' ' + num(analysis.size.height) + '"');
+    add.push('width="' + plan.width + '"', 'height="' + plan.height + '"');
+    edits.push({ start: root.closeStart, end: root.closeStart, text: ' ' + add.join(' ') });
+    analysis.strip.forEach(removeAttr);
+    edits.sort(function (a, b) { return b.start - a.start || b.end - a.end; });
+    var out = src;
+    edits.forEach(function (e) { out = out.slice(0, e.start) + e.text + out.slice(e.end); });
+    return out;
+  }
+
+  function uniqueNames(names) {
+    var seen = {};
+    return names.map(function (n) {
+      var key = n.toLowerCase();
+      if (!hasOwn(seen, key)) { seen[key] = 1; return n; }
+      seen[key]++;
+      var dot = n.lastIndexOf('.');
+      return dot > 0 ? n.slice(0, dot) + '-' + seen[key] + n.slice(dot) : n + '-' + seen[key];
+    });
+  }
+
+  // ── copied verbatim from GifSplitterTool.astro (scripts/test-svg-optimizer.mjs compares the source) ──
+  var crcTable = (function () {
+    var table = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+    return table;
+  })();
+
+  function crc32(buf) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function zipStore(files) {
+    var enc = new TextEncoder();
+    var locals = [];
+    var centrals = [];
+    var offset = 0;
+    files.forEach(function (f) {
+      var nameBytes = enc.encode(f.name);
+      var data = f.data;
+      var crc = crc32(data);
+      var size = data.length;
+      var lh = new Uint8Array(30 + nameBytes.length);
+      var dv = new DataView(lh.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 0x0800, true); // bit 11 = UTF-8
+      dv.setUint16(8, 0, true);      // method STORED
+      dv.setUint16(10, 0, true);
+      dv.setUint16(12, 0x21, true);  // mdate (1980-01-01 minimum nonzero)
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, size, true);
+      dv.setUint32(22, size, true);
+      dv.setUint16(26, nameBytes.length, true);
+      dv.setUint16(28, 0, true);
+      lh.set(nameBytes, 30);
+      locals.push(lh, data);
+
+      var ch = new Uint8Array(46 + nameBytes.length);
+      var cv = new DataView(ch.buffer);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0x0800, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint16(12, 0, true);
+      cv.setUint16(14, 0x21, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, size, true);
+      cv.setUint32(24, size, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint16(30, 0, true);
+      cv.setUint16(32, 0, true);
+      cv.setUint16(34, 0, true);
+      cv.setUint16(36, 0, true);
+      cv.setUint32(38, 0, true);
+      cv.setUint32(42, offset, true);
+      ch.set(nameBytes, 46);
+      centrals.push(ch);
+
+      offset += lh.length + size;
     });
 
-    var wrap = document.querySelector('.svgo-wrap');
-    if (wrap) {
-      Object.keys(t).forEach(function (k) {
-        wrap.dataset['msg' + k.charAt(0).toUpperCase() + k.slice(1)] = t[k];
+    var localTotal = locals.reduce(function (s, c) { return s + c.length; }, 0);
+    var centralTotal = centrals.reduce(function (s, c) { return s + c.length; }, 0);
+    var eocd = new Uint8Array(22);
+    var dv2 = new DataView(eocd.buffer);
+    dv2.setUint32(0, 0x06054b50, true);
+    dv2.setUint16(4, 0, true);
+    dv2.setUint16(6, 0, true);
+    dv2.setUint16(8, files.length, true);
+    dv2.setUint16(10, files.length, true);
+    dv2.setUint32(12, centralTotal, true);
+    dv2.setUint32(16, localTotal, true);
+    dv2.setUint16(20, 0, true);
+
+    var out = new Uint8Array(localTotal + centralTotal + 22);
+    var p = 0;
+    locals.forEach(function (c) { out.set(c, p); p += c.length; });
+    centrals.forEach(function (c) { out.set(c, p); p += c.length; });
+    out.set(eocd, p);
+    return out;
+  }
+
+  // ── copied verbatim from ImageToBase64Tool.astro (scripts/test-svg-optimizer.mjs compares the source) ──
+  var URL_RAW = /[A-Za-z0-9\-._~!$'()*+,;=:@\/? ]/;
+
+  function percentEncodeBytes(bytes) {
+    var parts = [];
+    var lastNonSpace = bytes.length - 1;
+    while (lastNonSpace >= 0 && bytes[lastNonSpace] === 0x20) lastNonSpace--;
+    var chunk = '';
+    for (var i = 0; i < bytes.length; i++) {
+      var b = bytes[i];
+      var c = String.fromCharCode(b);
+      if (b < 0x80 && URL_RAW.test(c) && !(b === 0x20 && i > lastNonSpace)) chunk += c;
+      else chunk += '%' + (b < 16 ? '0' : '') + b.toString(16).toUpperCase();
+      if (chunk.length > 8192) { parts.push(chunk); chunk = ''; }
+    }
+    parts.push(chunk);
+    return parts.join('');
+  }
+
+  // ── copied verbatim from SvgToJsxTool.astro (scripts/test-svg-optimizer.mjs compares the source) ──
+  var SVG_ATTR_MAP = {
+    'stroke-width':          'strokeWidth',
+    'stroke-linecap':        'strokeLinecap',
+    'stroke-linejoin':       'strokeLinejoin',
+    'stroke-dasharray':      'strokeDasharray',
+    'stroke-dashoffset':     'strokeDashoffset',
+    'stroke-miterlimit':     'strokeMiterlimit',
+    'stroke-opacity':        'strokeOpacity',
+    'fill-rule':             'fillRule',
+    'fill-opacity':          'fillOpacity',
+    'clip-rule':             'clipRule',
+    'clip-path':             'clipPath',
+    'color-interpolation':   'colorInterpolation',
+    'color-rendering':       'colorRendering',
+    'dominant-baseline':     'dominantBaseline',
+    'enable-background':     'enableBackground',
+    'flood-color':           'floodColor',
+    'flood-opacity':         'floodOpacity',
+    'font-family':           'fontFamily',
+    'font-size':             'fontSize',
+    'font-size-adjust':      'fontSizeAdjust',
+    'font-stretch':          'fontStretch',
+    'font-style':            'fontStyle',
+    'font-variant':          'fontVariant',
+    'font-weight':           'fontWeight',
+    'glyph-orientation-horizontal': 'glyphOrientationHorizontal',
+    'glyph-orientation-vertical':   'glyphOrientationVertical',
+    'image-rendering':       'imageRendering',
+    'letter-spacing':        'letterSpacing',
+    'lighting-color':        'lightingColor',
+    'marker-end':            'markerEnd',
+    'marker-mid':            'markerMid',
+    'marker-start':          'markerStart',
+    'overline-position':     'overlinePosition',
+    'overline-thickness':    'overlineThickness',
+    'paint-order':           'paintOrder',
+    'pointer-events':        'pointerEvents',
+    'shape-rendering':       'shapeRendering',
+    'stop-color':            'stopColor',
+    'stop-opacity':          'stopOpacity',
+    'strikethrough-position':   'strikethroughPosition',
+    'strikethrough-thickness':  'strikethroughThickness',
+    'text-anchor':           'textAnchor',
+    'text-decoration':       'textDecoration',
+    'text-rendering':        'textRendering',
+    'underline-position':    'underlinePosition',
+    'underline-thickness':   'underlineThickness',
+    'unicode-bidi':          'unicodeBidi',
+    'vector-effect':         'vectorEffect',
+    'word-spacing':          'wordSpacing',
+    'writing-mode':          'writingMode',
+    // HTML attrs also valid in SVG
+    'class':                 'className',
+    'tabindex':              'tabIndex',
+    'crossorigin':           'crossOrigin',
+  };
+
+  function toCamelCase(attr) {
+    return attr.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+  }
+
+  function jsxAttrName(name) {
+    var lower = name.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(SVG_ATTR_MAP, lower)) return SVG_ATTR_MAP[lower];
+    if (/^[a-z]+(?:-[a-z]+)+$/.test(name) && !/^(data|aria)-/.test(name)) return toCamelCase(name);
+    return name;
+  }
+
+  var ATTR_RE = /(\s+)([^\s"'>\/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
+
+  function processAttrs(attrStr) {
+    if (!attrStr) return '';
+    return attrStr.replace(ATTR_RE, function (_, space, name, rawValue) {
+      if (name === 'xmlns' || name.indexOf('xmlns:') === 0) return '';
+      if (rawValue === undefined) return space + jsxAttrName(name);
+      var quote = rawValue.charAt(0);
+      var quoted = quote === '"' || quote === "'";
+      return space + jsxAttrName(name) + '=' + (quoted ? rawValue : '"' + rawValue + '"');
+    });
+  }
+
+  var TAG_RE = /<([a-zA-Z][a-zA-Z0-9.-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/g;
+
+  function indent(str, spaces) {
+    var pad = new Array(spaces + 1).join(' ');
+    return str.split('\n').map(function (l) { return l ? pad + l : l; }).join('\n');
+  }
+
+  function svgToJsx(svgStr, compName, useTs, useForwardRef, useMemo) {
+    if (!svgStr.trim()) return '';
+
+    // 1. Remove XML declaration
+    var result = svgStr.replace(/<\?xml[^?]*\?>/g, '').trim();
+
+    // 2. Transform all tags: process attrs, ensure self-closing. The first <svg> gets
+    //    ref={ref} and {...props} after its own attributes, so caller props win
+    //    (svgr's default expandProps: 'end').
+    var spreadDone = false;
+    result = result.replace(TAG_RE, function (match, tag, attrs, selfClose) {
+      var processed = processAttrs(attrs || '');
+      if (!spreadDone && tag === 'svg') {
+        spreadDone = true;
+        processed += useForwardRef ? ' ref={ref} {...props}' : ' {...props}';
+      }
+      return '<' + tag + processed + (selfClose ? ' />' : '>');
+    });
+
+    // 4. Indent the SVG body
+    result = indent(result, 4);
+
+    // 5. Build component
+    var nl = '\n';
+    var propsType = useTs ? ': React.SVGProps<SVGSVGElement>' : '';
+    var fcType    = useTs ? ': React.FC<React.SVGProps<SVGSVGElement>>' : '';
+
+    var importLine = useTs ? "import React from 'react';" : "import React from 'react';";
+    var memoImport = useMemo    ? ', memo'       : '';
+    var frImport   = useForwardRef ? ', forwardRef' : '';
+
+    // Build imports
+    var imports;
+    if (useMemo || useForwardRef) {
+      imports = "import React" + (useForwardRef || useMemo ? ', { ' + [useForwardRef && 'forwardRef', useMemo && 'memo'].filter(Boolean).join(', ') + ' }' : '') + " from 'react';";
+    } else {
+      imports = "import React from 'react';";
+    }
+
+    var innerFn;
+    if (useForwardRef) {
+      if (useTs) {
+        innerFn = 'const ' + compName + ' = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function ' + compName + '(props, ref) {' + nl
+          + '  return (' + nl + result + nl + '  );' + nl + '});';
+      } else {
+        innerFn = 'const ' + compName + ' = forwardRef(function ' + compName + '(props, ref) {' + nl
+          + '  return (' + nl + result + nl + '  );' + nl + '});';
+      }
+    } else {
+      if (useTs) {
+        innerFn = 'const ' + compName + fcType + ' = function(props) {' + nl
+          + '  return (' + nl + result + nl + '  );' + nl + '};';
+      } else {
+        innerFn = 'function ' + compName + '(props) {' + nl
+          + '  return (' + nl + result + nl + '  );' + nl + '}';
+      }
+    }
+
+    var exportLine;
+    if (useMemo) {
+      exportLine = nl + nl + 'export default memo(' + compName + ');';
+    } else {
+      exportLine = nl + nl + 'export default ' + compName + ';';
+    }
+
+    return imports + nl + nl + innerFn + exportLine;
+  }
+
+  // ── SVG Optimizer engine ──
+  // SVGO 4 preset-default, in SVGO's order (svgo/plugins/preset-default.js; the test
+  // compares this list with the installed SVGO).
+  var PRESET_PLUGINS = [
+    'removeDoctype', 'removeXMLProcInst', 'removeComments', 'removeDeprecatedAttrs',
+    'removeMetadata', 'removeEditorsNSData', 'cleanupAttrs', 'mergeStyles', 'inlineStyles',
+    'minifyStyles', 'cleanupIds', 'removeUselessDefs', 'cleanupNumericValues', 'convertColors',
+    'removeUnknownsAndDefaults', 'removeNonInheritableGroupAttrs', 'removeUselessStrokeAndFill',
+    'cleanupEnableBackground', 'removeHiddenElems', 'removeEmptyText', 'convertShapeToPath',
+    'convertEllipseToCircle', 'moveElemsAttrsToGroup', 'moveGroupAttrsToElems', 'collapseGroups',
+    'convertPathData', 'convertTransform', 'removeEmptyAttrs', 'removeEmptyContainers',
+    'mergePaths', 'removeUnusedNS', 'sortAttrs', 'sortDefsChildren', 'removeDesc'
+  ];
+  // Built-in plugins outside preset-default that work without parameters. They run after
+  // preset-default in this order.
+  var EXTRA_PLUGINS = [
+    'removeViewBox', 'removeDimensions', 'removeTitle', 'removeScripts', 'removeXMLNS',
+    'removeXlink', 'removeStyleElement', 'removeRasterImages', 'removeOffCanvasPaths',
+    'reusePaths', 'convertStyleToAttrs', 'convertOneStopGradients', 'cleanupListOfValues'
+  ];
+  // Built-in plugins that need parameters (element names, attributes, selectors) and are
+  // not offered as switches. prefixIds has its own field.
+  var PARAM_PLUGINS = ['addAttributesToSVGElement', 'addClassesToSVGElement', 'removeAttributesBySelector', 'removeAttrs', 'removeElementsByAttr'];
+  // The switches shown above the full plugin list.
+  var MAIN_PLUGINS = ['cleanupIds', 'convertColors', 'removeComments', 'mergePaths', 'removeViewBox', 'removeDimensions', 'removeTitle', 'removeScripts'];
+  var MAX_PRECISION = 8;
+  var DEFAULT_PRECISION = 3;
+  var MAX_FILE_BYTES = 50 * 1024 * 1024;
+  var CHECK_MAX_BYTES = 10 * 1024 * 1024;
+  var RENDER_SIDE = 400;
+  // A pixel counts as changed when a premultiplied channel or alpha differs by more than
+  // this (out of 255). Up to 0.1 % changed pixels is anti-aliasing noise; above 1 % the
+  // change is visible.
+  var PIXEL_THRESHOLD = 24;
+  var SAME_RATIO = 0.001;
+  var MINOR_RATIO = 0.01;
+  var FORMATS = ['svg', 'uri', 'base64', 'css', 'jsx'];
+
+  function defaultSettings() {
+    var preset = {};
+    PRESET_PLUGINS.forEach(function (p) { preset[p] = true; });
+    var extras = {};
+    EXTRA_PLUGINS.forEach(function (p) { extras[p] = false; });
+    return { preset: preset, extras: extras, multipass: true, precision: DEFAULT_PRECISION, pretty: false, prefix: '', format: 'svg' };
+  }
+
+  // Accepts the saved object of this version and of the previous one (flat booleans plus
+  // `advanced`); anything unknown or of the wrong type falls back to the default.
+  function normalizeSettings(saved) {
+    var s = defaultSettings();
+    if (!saved || typeof saved !== 'object') return s;
+    function bool(v, d) { return typeof v === 'boolean' ? v : d; }
+    var preset = saved.preset && typeof saved.preset === 'object' ? saved.preset : saved.advanced && typeof saved.advanced === 'object' ? saved.advanced : null;
+    var extras = saved.extras && typeof saved.extras === 'object' ? saved.extras : null;
+    PRESET_PLUGINS.forEach(function (p) {
+      if (preset && hasOwn(preset, p)) s.preset[p] = bool(preset[p], true);
+      if (hasOwn(saved, p)) s.preset[p] = bool(saved[p], s.preset[p]);
+    });
+    EXTRA_PLUGINS.forEach(function (p) {
+      if (extras && hasOwn(extras, p)) s.extras[p] = bool(extras[p], false);
+      if (hasOwn(saved, p)) s.extras[p] = bool(saved[p], s.extras[p]);
+    });
+    s.multipass = bool(saved.multipass, s.multipass);
+    s.pretty = bool(saved.pretty, s.pretty);
+    var pr = Number(saved.precision);
+    if (Number.isInteger(pr) && pr >= 0 && pr <= MAX_PRECISION) s.precision = pr;
+    if (typeof saved.prefix === 'string') s.prefix = cleanPrefix(saved.prefix);
+    if (FORMATS.indexOf(saved.format) >= 0) s.format = saved.format;
+    return s;
+  }
+
+  // An ID prefix must keep the IDs valid XML names: letters, digits, - _ . and no leading
+  // digit, hyphen or period.
+  function cleanPrefix(value) {
+    return String(value || '').replace(/[^A-Za-z0-9_.\-]/g, '').replace(/^[0-9.\-]+/, '').slice(0, 40);
+  }
+
+  function buildConfig(s) {
+    var overrides = {};
+    PRESET_PLUGINS.forEach(function (p) { if (!s.preset[p]) overrides[p] = false; });
+    var plugins = [Object.keys(overrides).length ? { name: 'preset-default', params: { overrides: overrides } } : 'preset-default'];
+    EXTRA_PLUGINS.forEach(function (p) { if (s.extras[p]) plugins.push(p); });
+    if (s.prefix) plugins.push({ name: 'prefixIds', params: { prefix: s.prefix, delim: '', prefixClassNames: false } });
+    var config = { multipass: !!s.multipass, floatPrecision: s.precision };
+    if (s.pretty) config.js2svg = { pretty: true, indent: 2, eol: 'lf' };
+    config.plugins = plugins;
+    return config;
+  }
+
+  // The same settings as an svgo.config.mjs file for the SVGO command line or a bundler plugin.
+  function configSource(s, version) {
+    var config = buildConfig(s);
+    var lines = [];
+    lines.push('// svgo.config.mjs — SVGO ' + (version || '4') + ' (made with zerotool.dev/tools/svg-optimizer/)');
+    lines.push('// npx svgo@' + (version || '4') + ' --config svgo.config.mjs -f icons -o icons-min');
+    lines.push('export default {');
+    lines.push('  multipass: ' + config.multipass + ',');
+    lines.push('  floatPrecision: ' + config.floatPrecision + ',');
+    if (config.js2svg) lines.push('  js2svg: { pretty: true, indent: 2, eol: \'lf\' },');
+    lines.push('  plugins: [');
+    config.plugins.forEach(function (p) {
+      if (typeof p === 'string') { lines.push('    ' + JSON.stringify(p).replace(/"/g, '\'') + ','); return; }
+      if (p.name === 'preset-default') {
+        lines.push('    {');
+        lines.push('      name: \'preset-default\',');
+        lines.push('      params: {');
+        lines.push('        overrides: {');
+        Object.keys(p.params.overrides).forEach(function (k) { lines.push('          ' + k + ': false,'); });
+        lines.push('        },');
+        lines.push('      },');
+        lines.push('    },');
+        return;
+      }
+      lines.push('    { name: \'prefixIds\', params: { prefix: ' + JSON.stringify(p.params.prefix).replace(/"/g, '\'') + ', delim: \'\', prefixClassNames: false } },');
+    });
+    lines.push('  ],');
+    lines.push('};');
+    return lines.join('\n') + '\n';
+  }
+
+  function utf8Length(s) {
+    var n = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c < 0x80) n += 1;
+      else if (c < 0x800) n += 2;
+      else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xFC00) === 0xDC00) { n += 4; i++; }
+      else n += 3;
+    }
+    return n;
+  }
+
+  // Insert attributes at the end of the root start tag.
+  function addRootAttrs(src, root, attrs) {
+    if (!attrs.length) return src;
+    return src.slice(0, root.closeStart) + ' ' + attrs.join(' ') + src.slice(root.closeStart);
+  }
+
+  // What the input needs before SVGO sees it: the root must be <svg>, and a missing
+  // xmlns (common when SVG is copied out of HTML) is added so the result opens as a file.
+  function prepareInput(text) {
+    var a = analyzeSvg(text);
+    if (a.error) return { error: a.error };
+    var add = [];
+    if (a.fixes.indexOf('xmlns') >= 0) add.push('xmlns="' + SVG_NS + '"');
+    if (a.fixes.indexOf('xlink') >= 0) add.push('xmlns:xlink="' + XLINK_NS + '"');
+    return { text: addRootAttrs(a.source, a.root, add), fixes: a.fixes.slice(), analysis: a };
+  }
+
+  var XML_ENTITIES = { amp: 1, lt: 1, gt: 1, quot: 1, apos: 1 };
+  var ANIMATION_TAGS = { animate: 1, animateTransform: 1, animateMotion: 1, set: 1 };
+  var RASTER_DATA = /^\s*data:image\/(?:png|jpe?g|gif|webp|avif|bmp)/i;
+
+  // Facts about one SVG source that the notes compare before and after.
+  function collectInfo(text) {
+    var src = String(text == null ? '' : text);
+    var tags = scanMarkup(src);
+    var info = { ids: [], classes: [], viewBox: false, width: false, height: false, xmlns: false, title: 0, scripts: 0, animation: false, rasterBytes: 0, entities: false, htmlEntities: [], foreign: false };
+    var seenId = {}, seenClass = {};
+    var styleText = [];
+    tags.forEach(function (tag, index) {
+      var local = tag.name.split(':').pop();
+      if (index === 0) {
+        tag.attrs.forEach(function (a) {
+          if (a.name === 'viewBox') info.viewBox = true;
+          if (a.name === 'width') info.width = true;
+          if (a.name === 'height') info.height = true;
+          if (a.name === 'xmlns') info.xmlns = true;
+        });
+      }
+      if (local === 'title') info.title++;
+      if (local === 'script') info.scripts++;
+      if (local === 'foreignObject') info.foreign = true;
+      if (hasOwn(ANIMATION_TAGS, local)) info.animation = true;
+      if (local === 'style' && !tag.selfClosing) {
+        var close = src.indexOf('</', tag.end);
+        styleText.push(src.slice(tag.end, close < 0 ? src.length : close));
+      }
+      tag.attrs.forEach(function (a) {
+        var name = a.name;
+        if (/^on/i.test(name)) info.scripts++;
+        if ((name === 'href' || name === 'xlink:href') && /^javascript:/i.test(a.value.replace(/[\s\u0000-\u001F]/g, ''))) info.scripts++;
+        if ((name === 'href' || name === 'xlink:href') && RASTER_DATA.test(a.value)) info.rasterBytes += a.value.length;
+        if (name === 'id' && a.value && !hasOwn(seenId, a.value)) { seenId[a.value] = 1; info.ids.push(a.value); }
+        if (name === 'class') a.value.split(/\s+/).forEach(function (c) { if (c && !hasOwn(seenClass, c)) { seenClass[c] = 1; info.classes.push(c); } });
+        if (name === 'style') styleText.push(a.value);
+      });
+    });
+    if (/@keyframes|(^|[;{\s])animation(-name)?\s*:/i.test(styleText.join('\n'))) info.animation = true;
+    var declared = {};
+    var doctype = /<!DOCTYPE[\s\S]*?\[([\s\S]*?)\]\s*>/i.exec(src);
+    if (doctype) {
+      var entRe = /<!ENTITY\s+([^\s%]+)/g, m;
+      while ((m = entRe.exec(doctype[1]))) { declared[m[1]] = 1; info.entities = true; }
+    }
+    var refRe = /&([A-Za-z][A-Za-z0-9]*);/g, r, seenEnt = {};
+    while ((r = refRe.exec(src))) {
+      var n = r[1];
+      if (!hasOwn(XML_ENTITIES, n) && !hasOwn(declared, n) && !hasOwn(seenEnt, n)) { seenEnt[n] = 1; info.htmlEntities.push(n); }
+    }
+    return info;
+  }
+
+  function missing(before, after) {
+    var keep = {};
+    after.forEach(function (x) { keep[x] = 1; });
+    return before.filter(function (x) { return !hasOwn(keep, x); });
+  }
+
+  // Notes for one file: what was changed that can break something, and what the checks
+  // cannot see. `prep` comes from prepareInput, `output` is SVGO's result.
+  function inspect(prep, output, settings) {
+    var notes = [];
+    var before = collectInfo(prep.text);
+    var after = collectInfo(output);
+    var a = prep.analysis;
+    if (prep.fixes.indexOf('xmlns') >= 0 && !settings.extras.removeXMLNS) notes.push({ code: 'fixXmlns' });
+    if (prep.fixes.indexOf('xlink') >= 0) notes.push({ code: 'fixXlink' });
+    if (before.htmlEntities.length) notes.push({ code: 'htmlEntity', names: before.htmlEntities.map(function (e) { return '&' + e + ';'; }) });
+    if (before.entities) notes.push({ code: 'entities' });
+    var ids = missing(before.ids, after.ids);
+    if (ids.length) notes.push({ code: 'idsGone', n: ids.length, items: ids.map(function (x) { return '#' + x; }), prefixed: !!settings.prefix });
+    var classes = missing(before.classes, after.classes);
+    if (classes.length) notes.push({ code: 'classesGone', n: classes.length, items: classes.map(function (x) { return '.' + x; }) });
+    if (before.viewBox && !after.viewBox) notes.push({ code: 'viewBoxGone', w: num(a.size.width), h: num(a.size.height) });
+    if ((before.width || before.height) && !after.width && !after.height) notes.push({ code: 'sizeGone' });
+    if (before.title > after.title) notes.push({ code: 'titleGone' });
+    if (!after.xmlns) notes.push({ code: 'noXmlns' });
+    if (after.scripts) notes.push({ code: 'scriptsKept', n: after.scripts });
+    else if (before.scripts) notes.push({ code: 'scriptsRemoved', n: before.scripts });
+    var r = a.refs;
+    var ext = r.images.concat(r.uses, r.imports, r.css);
+    if (ext.length) notes.push({ code: 'external', urls: ext });
+    if (after.animation) notes.push({ code: 'animation' });
+    var bytes = utf8Length(output);
+    if (after.rasterBytes > 1024 && after.rasterBytes / bytes > 0.2) notes.push({ code: 'raster', bytes: after.rasterBytes, pct: Math.round(after.rasterBytes / bytes * 100) });
+    if (settings.precision <= 1) notes.push({ code: 'lowPrecision', p: settings.precision });
+    // Compared with the input SVGO received, so an added xmlns does not count as growth.
+    if (output === prep.text) notes.push({ code: 'unchanged' });
+    else if (bytes > utf8Length(prep.text)) notes.push({ code: 'larger', delta: bytes - utf8Length(prep.text) });
+    return notes;
+  }
+
+  // SVGO's parser errors carry a line and column; other errors only a message.
+  function errorInfo(err) {
+    if (!err) return { code: 'svgo', message: '' };
+    if (err.name === 'SvgoParserError' || (err.line != null && err.column != null)) {
+      return { code: 'xml', line: err.line, column: err.column, reason: err.reason || err.message };
+    }
+    return { code: 'svgo', message: err.message || String(err) };
+  }
+
+  // Both renders are drawn at this size: the original's own size scaled so the long side
+  // is RENDER_SIDE px.
+  function renderPlan(size) {
+    var w = size.width, h = size.height;
+    var k = RENDER_SIDE / Math.max(w, h);
+    return { width: Math.max(1, Math.round(w * k)), height: Math.max(1, Math.round(h * k)) };
+  }
+
+  // Compare two RGBA buffers of the same size. Colors are premultiplied by alpha, so a
+  // fully transparent pixel matches any other fully transparent pixel.
+  function compareImageData(a, b, threshold) {
+    var thr = threshold == null ? PIXEL_THRESHOLD : threshold;
+    var max = 0, changed = 0, total = Math.floor(a.length / 4);
+    for (var i = 0; i < a.length; i += 4) {
+      var aa = a[i + 3] / 255, ba = b[i + 3] / 255;
+      var d = Math.abs(a[i + 3] - b[i + 3]);
+      for (var c = 0; c < 3; c++) {
+        var dc = Math.abs(a[i + c] * aa - b[i + c] * ba);
+        if (dc > d) d = dc;
+      }
+      if (d > max) max = d;
+      if (d > thr) changed++;
+    }
+    return { max: Math.round(max), changed: changed, total: total, ratio: total ? changed / total : 0 };
+  }
+
+  function verdict(cmp) {
+    if (cmp.ratio <= SAME_RATIO) return 'same';
+    if (cmp.ratio <= MINOR_RATIO) return 'minor';
+    return 'changed';
+  }
+
+  // Changed pixels in red over a faded copy of the original.
+  function diffMask(a, b, threshold) {
+    var thr = threshold == null ? PIXEL_THRESHOLD : threshold;
+    var out = new Uint8ClampedArray(a.length);
+    for (var i = 0; i < a.length; i += 4) {
+      var aa = a[i + 3] / 255, ba = b[i + 3] / 255;
+      var d = Math.abs(a[i + 3] - b[i + 3]);
+      for (var c = 0; c < 3; c++) {
+        var dc = Math.abs(a[i + c] * aa - b[i + c] * ba);
+        if (dc > d) d = dc;
+      }
+      if (d > thr) { out[i] = 220; out[i + 1] = 30; out[i + 2] = 30; out[i + 3] = 255; }
+      else {
+        var g = Math.round(255 - (255 - (a[i] * 0.3 + a[i + 1] * 0.59 + a[i + 2] * 0.11)) * aa * 0.25);
+        out[i] = g; out[i + 1] = g; out[i + 2] = g; out[i + 3] = 255;
+      }
+    }
+    return out;
+  }
+
+  function componentName(fileName) {
+    var stem = String(fileName || '').replace(/\.svgz?$/i, '');
+    var words = stem.split(/[^A-Za-z0-9]+/).filter(Boolean);
+    var name = words.map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join('');
+    if (!name) return 'SvgIcon';
+    if (/^[0-9]/.test(name)) name = 'Svg' + name;
+    return name;
+  }
+
+  function outputName(fileName) {
+    var base = String(fileName || '').replace(/\.svgz?$/i, '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim();
+    return (base || 'optimized') + '.svg';
+  }
+
+  function base64FromBytes(bytes) {
+    var parts = [];
+    for (var i = 0; i < bytes.length; i += 0x8000) {
+      parts.push(String.fromCharCode.apply(null, Array.prototype.slice.call(bytes.subarray(i, i + 0x8000))));
+    }
+    return btoa(parts.join(''));
+  }
+
+  // The optimized SVG in the format chosen under "Copy as".
+  function formatOutput(format, svg, fileName) {
+    var bytes = new TextEncoder().encode(svg);
+    if (format === 'uri') return 'data:image/svg+xml,' + percentEncodeBytes(bytes);
+    if (format === 'base64') return 'data:image/svg+xml;base64,' + base64FromBytes(bytes);
+    if (format === 'css') return 'background-image: url("data:image/svg+xml,' + percentEncodeBytes(bytes) + '");';
+    if (format === 'jsx') return svgToJsx(svg, componentName(fileName), false, false, false);
+    return svg;
+  }
+
+  // gzip size as a web server would send it (CompressionStream, default level).
+  function gzipSize(text) {
+    if (typeof CompressionStream === 'undefined') return Promise.resolve(null);
+    var stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Response(stream).arrayBuffer().then(function (buf) { return buf.byteLength; }, function () { return null; });
+  }
+
+  // .svgz files are gzip-compressed SVG (SVG 1.1, section 1.2).
+  function isGzip(bytes) { return bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b; }
+
+  function looksLikeSvgText(text) { return /<svg[\s>\/]/i.test(String(text || '').slice(0, 65536)); }
+  /* ── engine:end ── */
+
+  // ── page wiring ──
+  var SLUG = 'svg-optimizer';
+  var EXAMPLE = '<?xml version="1.0" encoding="UTF-8"?>\n<!-- Generator: Figma -->\n<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">\n  <title>Check</title>\n  <defs>\n    <style>.stroke { stroke: #000000; stroke-width: 2.000000; }</style>\n  </defs>\n  <g id="icon-check">\n    <rect x="0" y="0" width="24" height="24" fill="none"/>\n    <path class="stroke" d="M 5.000000 12.000000 L 10.000000 17.000000 L 19.000000 7.000000" stroke-linecap="round" stroke-linejoin="round"/>\n  </g>\n</svg>\n';
+  var wrap = document.getElementById('svgo-wrap');
+  var T = JSON.parse(wrap.dataset.strings || '{}');
+  var LANG = wrap.dataset.lang || 'en';
+  function $(id) { return document.getElementById(id); }
+  var inputEl = $('svgo-input'), fileEl = $('svgo-file'), dropEl = $('svgo-drop');
+  var runBtn = $('svgo-run'), exampleBtn = $('svgo-example'), clearBtn = $('svgo-clear');
+  var statusEl = $('svgo-status'), resultEl = $('svgo-result');
+  var sizesEl = $('svgo-sizes'), savedEl = $('svgo-saved'), gzipEl = $('svgo-gzip'), engineEl = $('svgo-engine');
+  var downloadBtn = $('svgo-download'), copyBtn = $('svgo-copy'), formatEl = $('svgo-format');
+  var checkEl = $('svgo-check'), notesEl = $('svgo-notes');
+  var imgBefore = $('svgo-img-before'), imgAfter = $('svgo-img-after'), diffFig = $('svgo-fig-diff'), diffCanvas = $('svgo-diff');
+  var codeSummary = $('svgo-code-summary'), codeEl = $('svgo-code'), jsxNote = $('svgo-jsx-note');
+  var batchEl = $('svgo-batch'), rowsEl = $('svgo-rows'), zipBtn = $('svgo-zip');
+  var precisionEl = $('svgo-precision'), precisionVal = $('svgo-precision-val'), prefixEl = $('svgo-prefix');
+  var multipassEl = $('svgo-multipass'), prettyEl = $('svgo-pretty');
+  var configEl = $('svgo-config'), copyConfigBtn = $('svgo-copy-config'), resetBtn = $('svgo-reset');
+  var pluginBoxes = Array.prototype.slice.call(wrap.querySelectorAll('input[data-plugin]'));
+
+  function fill(tpl, vars) {
+    return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; });
+  }
+  function nf(n, d) { return new Intl.NumberFormat(LANG, { maximumFractionDigits: d || 0 }).format(n); }
+  function formatBytes(n) {
+    if (n < 1024) return nf(n) + ' B';
+    if (n < 1024 * 1024) return nf(n / 1024, 1) + ' KB';
+    return nf(n / 1024 / 1024, 2) + ' MB';
+  }
+  function formatDelta(before, after) {
+    if (!before) return fill(T.delta, { sign: '', pct: '0' });
+    var pct = (after - before) / before * 100;
+    return fill(T.delta, { sign: pct > 0 ? '+' : pct < 0 ? '−' : '', pct: nf(Math.abs(pct), 1) });
+  }
+  function shortList(items) {
+    var shown = items.slice(0, 5).map(function (u) { return u.length > 60 ? u.slice(0, 57) + '…' : u; });
+    return shown.join(', ') + (items.length > 5 ? ' (+' + (items.length - 5) + ')' : '');
+  }
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'tool-status svgo-status' + (kind ? ' ' + kind : '');
+  }
+  function errorText(e) {
+    if (!e) return '';
+    var tpl = T.err[e.code] || T.err.svgo;
+    return fill(tpl, e);
+  }
+  function noteText(n) {
+    var vars = {};
+    for (var k in n) if (hasOwn(n, k)) vars[k] = n[k];
+    if (n.items) vars.items = shortList(n.items);
+    if (n.urls) vars.urls = shortList(n.urls);
+    if (n.names) vars.names = shortList(n.names);
+    if (n.bytes != null) vars.size = formatBytes(n.bytes);
+    if (n.delta != null) vars.delta = nf(n.delta);
+    return fill(T.note[n.code], vars);
+  }
+
+  // ── settings ──
+  var settings = normalizeSettings(window.ztPersist && window.ztPersist.load ? window.ztPersist.load(SLUG) : null);
+  function settingOf(name) { return PRESET_PLUGINS.indexOf(name) >= 0 ? settings.preset[name] : settings.extras[name]; }
+  function syncSettingsUi() {
+    pluginBoxes.forEach(function (cb) { cb.checked = !!settingOf(cb.dataset.plugin); });
+    multipassEl.checked = settings.multipass;
+    prettyEl.checked = settings.pretty;
+    precisionEl.value = String(settings.precision);
+    precisionVal.textContent = String(settings.precision);
+    if (document.activeElement !== prefixEl) prefixEl.value = settings.prefix;
+    formatEl.value = settings.format;
+    configEl.textContent = configSource(settings, svgoVersion);
+  }
+  function settingsChanged(rerun) {
+    if (window.ztPersist && window.ztPersist.save) window.ztPersist.save(SLUG, settings);
+    syncSettingsUi();
+    if (rerun) scheduleRun(200);
+  }
+  pluginBoxes.forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      var name = cb.dataset.plugin;
+      if (PRESET_PLUGINS.indexOf(name) >= 0) settings.preset[name] = cb.checked; else settings.extras[name] = cb.checked;
+      settingsChanged(true);
+    });
+  });
+  multipassEl.addEventListener('change', function () { settings.multipass = multipassEl.checked; settingsChanged(true); });
+  prettyEl.addEventListener('change', function () { settings.pretty = prettyEl.checked; settingsChanged(true); });
+  precisionEl.addEventListener('input', function () { settings.precision = Number(precisionEl.value); settingsChanged(true); });
+  prefixEl.addEventListener('input', function () { settings.prefix = cleanPrefix(prefixEl.value); settingsChanged(true); });
+  prefixEl.addEventListener('blur', function () { prefixEl.value = settings.prefix; });
+  formatEl.addEventListener('change', function () { settings.format = formatEl.value; settingsChanged(false); renderActive(); });
+  resetBtn.addEventListener('click', function () { var f = settings.format; settings = defaultSettings(); settings.format = f; settingsChanged(true); });
+
+  // ── SVGO in a worker ──
+  var svgoVersion = '';
+  var worker = null, workerBroken = false, mainSvgo = null;
+  var nextId = 1, pending = {};
+  function startWorker() {
+    if (worker || workerBroken) return worker;
+    try {
+      worker = new SvgoWorker();
+      worker.onmessage = function (e) {
+        var msg = e.data || {};
+        var p = pending[msg.id];
+        if (!p) return;
+        delete pending[msg.id];
+        if (msg.version) svgoVersion = msg.version;
+        p.resolve(msg);
+      };
+      worker.onerror = function (e) {
+        workerBroken = true;
+        worker = null;
+        var all = pending; pending = {};
+        Object.keys(all).forEach(function (id) { all[id].reject(new Error((e && e.message) || 'worker')); });
+      };
+    } catch (e) { workerBroken = true; worker = null; }
+    return worker;
+  }
+  function stopWorker() {
+    if (worker) worker.terminate();
+    worker = null;
+    var all = pending; pending = {};
+    Object.keys(all).forEach(function (id) { all[id].reject(new Error('cancelled')); });
+  }
+  function optimizeText(text, config) {
+    var w = startWorker();
+    if (w) {
+      return new Promise(function (resolve, reject) {
+        var id = nextId++;
+        pending[id] = { resolve: resolve, reject: reject };
+        w.postMessage({ id: id, text: text, config: config });
+      }).catch(function (e) {
+        if (e && e.message === 'cancelled') throw e;
+        return optimizeOnMain(text, config);
       });
     }
-
-    var hint = document.querySelector('.svgo-advanced-hint');
-    if (hint) hint.textContent = t.advancedHint;
-  })();
-</script>
-
-<script>
-  const SLUG = 'svg-optimizer';
-
-  // SVGO preset-default plugin list (33 entries) — see svgo.dev/docs/preset-default.
-  // The 4 we expose as primary toggles (cleanupIds, convertColors, removeComments,
-  // mergePaths) are excluded from the advanced grid to avoid double controls.
-  const PRESET_DEFAULT_OTHER = [
-    'removeDoctype',
-    'removeXMLProcInst',
-    'removeDeprecatedAttrs',
-    'removeMetadata',
-    'removeEditorsNSData',
-    'cleanupAttrs',
-    'mergeStyles',
-    'inlineStyles',
-    'minifyStyles',
-    'removeUselessDefs',
-    'cleanupNumericValues',
-    'removeUnknownsAndDefaults',
-    'removeNonInheritableGroupAttrs',
-    'removeUselessStrokeAndFill',
-    'cleanupEnableBackground',
-    'removeHiddenElems',
-    'removeEmptyText',
-    'convertShapeToPath',
-    'convertEllipseToCircle',
-    'moveElemsAttrsToGroup',
-    'moveGroupAttrsToElems',
-    'collapseGroups',
-    'convertPathData',
-    'convertTransform',
-    'removeEmptyAttrs',
-    'removeEmptyContainers',
-    'removeUnusedNS',
-    'sortAttrs',
-    'sortDefsChildren',
-    'removeDesc'
-  ];
-
-  type State = {
-    cleanupIds: boolean;
-    convertColors: boolean;
-    removeComments: boolean;
-    removeViewBox: boolean;
-    removeDimensions: boolean;
-    mergePaths: boolean;
-    multipass: boolean;
-    precision: number;
-    advanced: Record<string, boolean>;
-  };
-
-  function defaultState(): State {
-    const advanced: Record<string, boolean> = {};
-    PRESET_DEFAULT_OTHER.forEach((p) => { advanced[p] = true; });
-    return {
-      cleanupIds: true,
-      convertColors: true,
-      removeComments: true,
-      removeViewBox: false,
-      removeDimensions: false,
-      mergePaths: true,
-      multipass: true,
-      precision: 3,
-      advanced,
-    };
+    return optimizeOnMain(text, config);
+  }
+  function optimizeOnMain(text, config) {
+    var load = mainSvgo ? Promise.resolve(mainSvgo) : import('svgo/browser').then(function (m) { mainSvgo = m; return m; });
+    return load.then(function (svgo) {
+      var r = runSvgo(svgo, text, config);
+      if (r.version) svgoVersion = r.version;
+      return r;
+    });
   }
 
-  const wrap = document.querySelector('.svgo-wrap') as HTMLElement | null;
-  if (!wrap) throw new Error('svgo wrap missing');
+  // ── items ──
+  // item: { name, text, fromFile, prep, data, error, notes, before, after, gzipBefore, gzipAfter, check }
+  var items = [], active = 0, gen = 0, skipped = [], blobUrls = [], lastTrack = 0;
 
-  const T = {
-    statusReady: wrap.dataset.msgStatusReady || 'Ready',
-    statusOptimizing: wrap.dataset.msgStatusOptimizing || 'Optimizing…',
-    statusEmpty: wrap.dataset.msgStatusEmpty || 'Paste or upload an SVG.',
-    statusInvalid: wrap.dataset.msgStatusInvalid || 'Does not look like valid SVG.',
-    statusFileError: wrap.dataset.msgStatusFileError || 'Please drop a .svg file.',
-    statusOptimized: wrap.dataset.msgStatusOptimized || 'Optimized: {before} → {after} ({delta})',
-    statusLarger: wrap.dataset.msgStatusLarger || 'Result is larger: {before} → {after} ({delta})',
-    statusError: wrap.dataset.msgStatusError || 'Optimization failed: {msg}',
-    savedLabel: wrap.dataset.msgSavedLabel || 'saved',
-    largerLabel: wrap.dataset.msgLargerLabel || 'larger',
-    copied: wrap.dataset.msgCopied || 'Copied!',
-    showAll: wrap.dataset.msgShowAllPlugins || 'Show all 34 plugins',
-    hideAll: wrap.dataset.msgHideAllPlugins || 'Hide advanced plugins',
-  };
+  function itemsFromText(text) {
+    items = text.trim() ? [{ name: '', text: text, fromFile: false }] : [];
+    skipped = [];
+    active = 0;
+  }
 
-  // Refs
-  const tabPaste = document.getElementById('svgo-tab-paste') as HTMLButtonElement;
-  const tabUpload = document.getElementById('svgo-tab-upload') as HTMLButtonElement;
-  const panelPaste = document.getElementById('svgo-panel-paste') as HTMLElement;
-  const panelUpload = document.getElementById('svgo-panel-upload') as HTMLElement;
-  const inputEl = document.getElementById('svgo-input') as HTMLTextAreaElement;
-  const dropEl = document.getElementById('svgo-drop') as HTMLElement;
-  const fileEl = document.getElementById('svgo-file') as HTMLInputElement;
-  const optimizeBtn = document.getElementById('svgo-optimize') as HTMLButtonElement;
-  const resetBtn = document.getElementById('svgo-reset') as HTMLButtonElement;
-  const statusEl = document.getElementById('svgo-status') as HTMLElement;
-  const precisionEl = document.getElementById('svgo-precision') as HTMLInputElement;
-  const precisionVal = document.getElementById('svgo-precision-val') as HTMLElement;
-  const advancedBtn = document.getElementById('svgo-toggle-advanced') as HTMLButtonElement;
-  const advancedBody = document.getElementById('svgo-advanced-body') as HTMLElement;
-  const advancedGrid = document.getElementById('svgo-advanced-grid') as HTMLElement;
-  const resultEl = document.getElementById('svgo-result') as HTMLElement;
-  const bytesBeforeEl = document.getElementById('svgo-bytes-before') as HTMLElement;
-  const bytesAfterEl = document.getElementById('svgo-bytes-after') as HTMLElement;
-  const savedEl = document.getElementById('svgo-saved') as HTMLElement;
-  const previewBeforeEl = document.getElementById('svgo-preview-before') as HTMLElement;
-  const previewAfterEl = document.getElementById('svgo-preview-after') as HTMLElement;
-  const outputCodeEl = document.getElementById('svgo-output-code') as HTMLElement;
-  const copyBtn = document.getElementById('svgo-copy') as HTMLButtonElement;
-  const downloadBtn = document.getElementById('svgo-download') as HTMLButtonElement;
-  const primaryToggles = Array.from(
-    document.querySelectorAll<HTMLInputElement>('.svgo-toggle input[type="checkbox"][data-plugin]')
-  );
-
-  let state: State = defaultState();
-  let lastOutput = '';
-
-  // Build advanced grid
-  PRESET_DEFAULT_OTHER.forEach((name) => {
-    const wrapEl = document.createElement('label');
-    wrapEl.className = 'svgo-adv-toggle';
-    wrapEl.innerHTML =
-      '<input type="checkbox" data-adv-plugin="' + name + '" checked />' +
-      '<code>' + name + '</code>';
-    advancedGrid.appendChild(wrapEl);
-  });
-
-  // Persistence (preference policy — plugin config survives Clear)
-  function loadPersisted(): void {
-    if (window.ztPersist && window.ztPersist.load) {
-      const saved = window.ztPersist.load(SLUG) as Partial<State> | null;
-      if (saved && typeof saved === 'object') {
-        state = { ...defaultState(), ...saved, advanced: { ...defaultState().advanced, ...(saved.advanced || {}) } };
+  function readFile(file) {
+    if (file.size > MAX_FILE_BYTES) return Promise.resolve({ name: file.name, error: { code: 'tooLarge', name: file.name } });
+    return file.arrayBuffer().then(function (buf) {
+      var bytes = new Uint8Array(buf);
+      if (isGzip(bytes)) {
+        if (typeof DecompressionStream === 'undefined') return { name: file.name, error: { code: 'gzip', name: file.name } };
+        var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+        return new Response(stream).text().then(function (text) { return { name: file.name, text: text, fromFile: true }; });
       }
-    }
-    // Reflect into UI
-    primaryToggles.forEach((cb) => {
-      const key = cb.getAttribute('data-plugin') as keyof State;
-      if (key && typeof state[key] === 'boolean') cb.checked = state[key] as boolean;
+      return { name: file.name, text: new TextDecoder().decode(bytes), fromFile: true };
+    }).catch(function () { return { name: file.name, error: { code: 'read', name: file.name } }; });
+  }
+
+  function loadFiles(list) {
+    var files = Array.prototype.slice.call(list || []);
+    if (!files.length) return;
+    var svgFiles = [], other = [];
+    files.forEach(function (f) {
+      if (/\.svgz?$/i.test(f.name) || f.type === 'image/svg+xml') svgFiles.push(f); else other.push(f.name || '?');
     });
-    precisionEl.value = String(state.precision);
-    precisionVal.textContent = String(state.precision);
-    Object.keys(state.advanced).forEach((p) => {
-      const cb = advancedGrid.querySelector<HTMLInputElement>('[data-adv-plugin="' + p + '"]');
-      if (cb) cb.checked = state.advanced[p];
+    if (!svgFiles.length) { skipped = other; setStatus(fill(T.note.skipped, { names: shortList(other) }), 'error'); return; }
+    Promise.all(svgFiles.map(readFile)).then(function (read) {
+      items = read;
+      skipped = other;
+      active = 0;
+      inputEl.value = '';
+      run();
     });
   }
 
-  function persist(): void {
-    if (window.ztPersist && window.ztPersist.save) {
-      window.ztPersist.save(SLUG, state);
+  var timer = null;
+  function scheduleRun(delay) {
+    clearTimeout(timer);
+    if (!items.length) return;
+    timer = setTimeout(run, delay);
+  }
+
+  function run() {
+    clearTimeout(timer);
+    var my = ++gen;
+    if (Object.keys(pending).length) stopWorker();
+    var config = buildConfig(settings);
+    var list = items;
+    if (!list.length) { resetView(); return; }
+    blobUrls.forEach(function (u) { URL.revokeObjectURL(u); });
+    blobUrls = [];
+    list.forEach(function (x) { x.check = null; });
+    batchEl.hidden = list.length < 2;
+    renderRows();
+    var i = 0;
+    if (!svgoVersion && !mainSvgo) setStatus(T.loading, 'info');
+    (function next() {
+      if (my !== gen) return;
+      if (i >= list.length) { finish(my); return; }
+      var item = list[i++];
+      if (list.length > 1) setStatus(fill(T.working, { done: i, total: list.length }), 'info');
+      item.data = null; item.notes = []; item.check = null;
+      if (item.error && !item.text) { renderRow(item); next(); return; }
+      item.error = null;
+      item.prep = prepareInput(item.text);
+      if (item.prep.error) { item.error = item.prep.error; renderRow(item); next(); return; }
+      optimizeText(item.prep.text, config).then(function (res) {
+        if (my !== gen) return;
+        if (res.error) item.error = errorInfo(res.error);
+        else {
+          item.data = res.data;
+          item.before = utf8Length(item.text);
+          item.after = utf8Length(res.data);
+          item.notes = inspect(item.prep, res.data, settings);
+        }
+        renderRow(item);
+        if (item === list[active]) renderActive();
+        next();
+      }, function (e) {
+        if (my !== gen) return;
+        if (e && e.message === 'cancelled') return;
+        item.error = { code: 'load', message: (e && e.message) || '' };
+        renderRow(item);
+        next();
+      });
+    })();
+  }
+
+  function finish(my) {
+    var ok = items.filter(function (x) { return x.data != null; });
+    var failed = items.length - ok.length;
+    if (items.length === 1) {
+      var it = items[0];
+      if (it.error) setStatus(errorText(it.error), 'error');
+      else setStatus(fill(T.doneOne, { name: it.name || 'SVG', before: formatBytes(it.before), after: formatBytes(it.after), delta: formatDelta(it.before, it.after) }), it.after < it.before ? 'success' : 'info');
+    } else {
+      var b = 0, a = 0;
+      ok.forEach(function (x) { b += x.before; a += x.after; });
+      var msg = fill(T.doneMany, { n: items.length, before: formatBytes(b), after: formatBytes(a), delta: formatDelta(b, a) });
+      if (failed) msg += ' ' + fill(T.failedMany, { n: failed });
+      setStatus(msg, ok.length ? (failed ? 'info' : 'success') : 'error');
     }
+    if (skipped.length) setStatus(statusEl.textContent + ' ' + fill(T.note.skipped, { names: shortList(skipped) }), 'info');
+    batchEl.hidden = items.length < 2;
+    configEl.textContent = configSource(settings, svgoVersion);
+    renderActive();
+    if (ok.length && window.trackTool && Date.now() - lastTrack > 5000) { lastTrack = Date.now(); window.trackTool(SLUG, 'optimize'); }
+    var r = resultEl.hidden ? statusEl : resultEl;
+    var box = r.getBoundingClientRect();
+    if (box.top > window.innerHeight - 80) r.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    // Rendering checks, one file at a time, the shown one first.
+    var order = items.slice(active).concat(items.slice(0, active)).filter(function (x) { return x.data != null; });
+    (function nextCheck() {
+      if (my !== gen || !order.length) return;
+      var item = order.shift();
+      renderCheck(item).then(function () {
+        if (my !== gen) return;
+        renderRow(item);
+        if (item === items[active]) renderActive();
+        nextCheck();
+      });
+    })();
+    if (ok.length) ok.forEach(function (x) {
+      Promise.all([gzipSize(x.text), gzipSize(x.data)]).then(function (g) {
+        if (my !== gen) return;
+        x.gzipBefore = g[0]; x.gzipAfter = g[1];
+        if (x === items[active]) renderSummary(x);
+      });
+    });
   }
 
-  // Tab switching
-  function setTab(which: 'paste' | 'upload'): void {
-    const isPaste = which === 'paste';
-    tabPaste.classList.toggle('svgo-tab--active', isPaste);
-    tabUpload.classList.toggle('svgo-tab--active', !isPaste);
-    tabPaste.setAttribute('aria-selected', isPaste ? 'true' : 'false');
-    tabUpload.setAttribute('aria-selected', isPaste ? 'false' : 'true');
-    panelPaste.hidden = !isPaste;
-    panelUpload.hidden = isPaste;
+  // ── rendering check ──
+  function loadImage(svg) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+      var img = new Image();
+      img.onload = function () { resolve({ img: img, url: url }); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('render')); };
+      img.src = url;
+    });
   }
-  tabPaste.addEventListener('click', () => setTab('paste'));
-  tabUpload.addEventListener('click', () => setTab('upload'));
+  function pixels(img, w, h) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, w, h);
+    return ctx.getImageData(0, 0, w, h).data;
+  }
+  function renderCheck(item) {
+    item.check = { state: 'pending' };
+    if (item.before > CHECK_MAX_BYTES || item.after > CHECK_MAX_BYTES) { item.check = { state: 'skipped' }; return Promise.resolve(); }
+    var aBefore = item.prep.analysis;
+    var aAfter = analyzeSvg(item.data);
+    var plan = renderPlan(aBefore.size);
+    var beforeSvg = buildSvg(item.prep.text, aBefore, plan);
+    var afterSvg = aAfter.error ? null : buildSvg(item.data, aAfter, plan);
+    return Promise.allSettled([loadImage(beforeSvg), afterSvg ? loadImage(afterSvg) : Promise.reject(new Error('render'))]).then(function (res) {
+      var b = res[0].status === 'fulfilled' ? res[0].value : null;
+      var a = res[1].status === 'fulfilled' ? res[1].value : null;
+      item.check = { state: 'pending', plan: plan, beforeUrl: b && b.url, afterUrl: a && a.url };
+      if (b) blobUrls.push(b.url);
+      if (a) blobUrls.push(a.url);
+      if (!b) { item.check.state = 'beforeFailed'; return; }
+      if (!a) { item.check.state = 'afterFailed'; return; }
+      try {
+        var pa = pixels(b.img, plan.width, plan.height);
+        var pb = pixels(a.img, plan.width, plan.height);
+        var cmp = compareImageData(pa, pb);
+        item.check.cmp = cmp;
+        item.check.state = verdict(cmp);
+        if (item.check.state !== 'same') item.check.diff = diffMask(pa, pb);
+      } catch (e) {
+        item.check.state = 'afterFailed';
+      }
+    });
+  }
 
-  // File / drag-drop
-  dropEl.addEventListener('click', (e) => { if (e.target !== fileEl) fileEl.click(); });
-  dropEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileEl.click(); }
+  // ── output ──
+  function outputText(item) { return formatOutput(settings.format, item.data, item.name || 'icon.svg'); }
+
+  function renderSummary(item) {
+    sizesEl.textContent = formatBytes(item.before) + ' → ' + formatBytes(item.after);
+    savedEl.textContent = formatDelta(item.before, item.after);
+    savedEl.className = 'svgo-saved' + (item.after >= item.before ? ' svgo-saved--up' : '');
+    gzipEl.textContent = item.gzipBefore && item.gzipAfter ? fill(T.gzip, { before: formatBytes(item.gzipBefore), after: formatBytes(item.gzipAfter) }) : '';
+    engineEl.textContent = svgoVersion ? fill(T.engine, { v: svgoVersion }) : '';
+  }
+
+  function renderActive() {
+    var item = items[active];
+    if (!item || item.data == null) {
+      resultEl.hidden = true;
+      if (item && item.error && items.length > 1) setStatus(errorText(item.error), 'error');
+      return;
+    }
+    resultEl.hidden = false;
+    renderSummary(item);
+    notesEl.replaceChildren();
+    item.notes.forEach(function (n) {
+      var li = document.createElement('li');
+      li.textContent = noteText(n);
+      li.className = 'svgo-note svgo-note--' + n.code;
+      notesEl.appendChild(li);
+    });
+    notesEl.hidden = !item.notes.length;
+    var c = item.check;
+    var state = c ? c.state : 'pending';
+    var vars = {};
+    if (c && c.plan) { vars.w = c.plan.width; vars.h = c.plan.height; }
+    if (c && c.cmp) vars.pct = nf(c.cmp.ratio * 100, 2);
+    checkEl.textContent = fill(T.check[state], vars);
+    checkEl.className = 'svgo-check svgo-check--' + state;
+    imgBefore.src = c && c.beforeUrl ? c.beforeUrl : '';
+    imgAfter.src = c && c.afterUrl ? c.afterUrl : '';
+    imgBefore.hidden = !(c && c.beforeUrl);
+    imgAfter.hidden = !(c && c.afterUrl);
+    if (c && c.diff) {
+      diffCanvas.width = c.plan.width; diffCanvas.height = c.plan.height;
+      diffCanvas.getContext('2d').putImageData(new ImageData(c.diff, c.plan.width, c.plan.height), 0, 0);
+      diffFig.hidden = false;
+    } else diffFig.hidden = true;
+    var out = outputText(item);
+    codeEl.textContent = out.length > 200000 ? out.slice(0, 200000) + '\n…' : out;
+    codeSummary.textContent = fill(T.code, { chars: nf(out.length) });
+    jsxNote.hidden = settings.format !== 'jsx';
+  }
+
+  function checkLabel(item) {
+    if (item.error) return T.rowError;
+    var s = item.check ? item.check.state : 'pending';
+    if (s === 'same') return T.rowSame;
+    if (s === 'minor') return T.rowMinor;
+    if (s === 'changed') return T.rowChanged;
+    if (s === 'pending') return T.rowPending;
+    return T.rowFailed;
+  }
+
+  function renderRow(item) {
+    if (items.length < 2) return;
+    var index = items.indexOf(item);
+    if (index < 0) return;
+    var tr = rowsEl.children[index];
+    if (!tr || tr.dataset.index !== String(index)) { renderRows(); return; }
+    var cells = tr.children;
+    cells[1].textContent = item.text != null ? formatBytes(utf8Length(item.text)) : '—';
+    cells[2].textContent = item.data != null ? formatBytes(item.after) : '—';
+    cells[3].textContent = item.data != null ? formatDelta(item.before, item.after) : '';
+    cells[4].textContent = checkLabel(item);
+    cells[4].title = item.error ? errorText(item.error) : '';
+    cells[5].firstChild.disabled = item.data == null;
+  }
+
+  function renderRows() {
+    rowsEl.replaceChildren();
+    if (items.length < 2) return;
+    items.forEach(function (item, index) {
+      var tr = document.createElement('tr');
+      tr.dataset.index = String(index);
+      if (index === active) tr.className = 'svgo-row--active';
+      var nameTd = document.createElement('td');
+      var pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'svgo-pick';
+      pick.textContent = item.name;
+      pick.addEventListener('click', function () { active = index; renderRows(); renderActive(); });
+      nameTd.appendChild(pick);
+      tr.appendChild(nameTd);
+      for (var k = 0; k < 4; k++) tr.appendChild(document.createElement('td'));
+      var dl = document.createElement('td');
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn-sm svgo-row-dl';
+      btn.textContent = '.svg';
+      btn.setAttribute('aria-label', T.download + ' ' + item.name);
+      btn.addEventListener('click', function () { if (item.data != null) saveBlob(new Blob([item.data], { type: 'image/svg+xml' }), outputName(item.name)); });
+      dl.appendChild(btn);
+      tr.appendChild(dl);
+      rowsEl.appendChild(tr);
+    });
+    items.forEach(renderRow);
+  }
+
+  function saveBlob(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  function copyText(text, btn, label) {
+    function done(ok) {
+      if (ok) {
+        btn.textContent = T.copied;
+        setTimeout(function () { btn.textContent = label; }, 1400);
+      } else setStatus(T.copyFail, 'error');
+    }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      done(ok);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+    else fallback();
+  }
+
+  downloadBtn.addEventListener('click', function () {
+    var item = items[active];
+    if (!item || item.data == null) return;
+    saveBlob(new Blob([item.data], { type: 'image/svg+xml' }), outputName(item.name));
+    if (window.trackTool) window.trackTool(SLUG, 'download');
   });
-  fileEl.addEventListener('change', () => {
-    if (fileEl.files && fileEl.files[0]) readFile(fileEl.files[0]);
+  copyBtn.addEventListener('click', function () {
+    var item = items[active];
+    if (!item || item.data == null) return;
+    copyText(outputText(item), copyBtn, T.copy);
+    if (window.trackTool) window.trackTool(SLUG, 'copy');
   });
-  dropEl.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropEl.classList.add('svgo-drop--over');
+  copyConfigBtn.addEventListener('click', function () { copyText(configSource(settings, svgoVersion), copyConfigBtn, T.copyConfig); });
+  zipBtn.addEventListener('click', function () {
+    var ok = items.filter(function (x) { return x.data != null; });
+    if (!ok.length) return;
+    var enc = new TextEncoder();
+    var names = uniqueNames(ok.map(function (x) { return outputName(x.name); }));
+    saveBlob(new Blob([zipStore(ok.map(function (x, i) { return { name: names[i], data: enc.encode(x.data) }; }))], { type: 'application/zip' }), 'svgo-optimized.zip');
+    if (window.trackTool) window.trackTool(SLUG, 'zip');
   });
-  dropEl.addEventListener('dragleave', () => dropEl.classList.remove('svgo-drop--over'));
-  dropEl.addEventListener('drop', (e) => {
+
+  function resetView() {
+    gen++;
+    clearTimeout(timer);
+    items = []; skipped = []; active = 0;
+    blobUrls.forEach(function (u) { URL.revokeObjectURL(u); });
+    blobUrls = [];
+    resultEl.hidden = true;
+    batchEl.hidden = true;
+    rowsEl.replaceChildren();
+    setStatus('', '');
+  }
+
+  // ── input ──
+  var typing = null;
+  inputEl.addEventListener('input', function () {
+    clearTimeout(typing);
+    typing = setTimeout(function () {
+      if (!inputEl.value.trim()) { resetView(); return; }
+      itemsFromText(inputEl.value);
+      run();
+    }, 450);
+  });
+  runBtn.addEventListener('click', function () {
+    if (inputEl.value.trim() && !(items.length && items[0].fromFile)) itemsFromText(inputEl.value);
+    if (!items.length) { setStatus(T.err.empty, 'error'); inputEl.focus(); return; }
+    run();
+  });
+  exampleBtn.addEventListener('click', function () {
+    inputEl.value = EXAMPLE;
+    itemsFromText(EXAMPLE);
+    run();
+  });
+  clearBtn.addEventListener('click', function () { inputEl.value = ''; fileEl.value = ''; resetView(); inputEl.focus(); });
+  fileEl.addEventListener('change', function () { loadFiles(fileEl.files); fileEl.value = ''; });
+
+  function hasFiles(e) { return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0; }
+  wrap.addEventListener('dragover', function (e) { if (!hasFiles(e)) return; e.preventDefault(); dropEl.classList.add('svgo-drop--over'); });
+  wrap.addEventListener('dragleave', function (e) { if (!wrap.contains(e.relatedTarget)) dropEl.classList.remove('svgo-drop--over'); });
+  wrap.addEventListener('drop', function (e) {
+    if (!hasFiles(e)) return;
     e.preventDefault();
     dropEl.classList.remove('svgo-drop--over');
-    const f = e.dataTransfer && e.dataTransfer.files[0];
-    if (f) readFile(f);
+    loadFiles(e.dataTransfer.files);
   });
-
-  function readFile(file: File): void {
-    if (!file.name.toLowerCase().endsWith('.svg') && file.type !== 'image/svg+xml') {
-      setStatus(T.statusFileError, 'error');
+  document.addEventListener('paste', function (e) {
+    var t = e.target;
+    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return;
+    var cd = e.clipboardData;
+    if (!cd) return;
+    if (cd.files && cd.files.length) {
+      var svg = Array.prototype.filter.call(cd.files, function (f) { return f.type === 'image/svg+xml' || /\.svgz?$/i.test(f.name); });
+      if (svg.length) { e.preventDefault(); loadFiles(svg); }
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = String(ev.target && ev.target.result || '');
+    var text = cd.getData('text/plain');
+    if (looksLikeSvgText(text)) {
+      e.preventDefault();
       inputEl.value = text;
-      setTab('paste');
-      setStatus(T.statusReady, 'none');
-    };
-    reader.onerror = () => setStatus(T.statusFileError, 'error');
-    reader.readAsText(file);
-  }
-
-  // Toggles
-  primaryToggles.forEach((cb) => {
-    cb.addEventListener('change', () => {
-      const key = cb.getAttribute('data-plugin') as keyof State;
-      if (!key) return;
-      (state as any)[key] = cb.checked;
-      persist();
-    });
-  });
-  precisionEl.addEventListener('input', () => {
-    state.precision = Number(precisionEl.value);
-    precisionVal.textContent = String(state.precision);
-    persist();
-  });
-  advancedGrid.addEventListener('change', (e) => {
-    const tgt = e.target as HTMLInputElement;
-    if (tgt && tgt.dataset.advPlugin) {
-      state.advanced[tgt.dataset.advPlugin] = tgt.checked;
-      persist();
+      itemsFromText(text);
+      run();
     }
   });
-
-  resetBtn.addEventListener('click', () => {
-    state = defaultState();
-    loadPersisted(); // also re-renders UI
-    persist();
-    setStatus(T.statusReady, 'none');
+  // Ctrl/Cmd+L (ToolLayout) empties text fields in the widget; the ID prefix is a setting.
+  document.addEventListener('keydown', function (e) {
+    if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+    if (!wrap.contains(document.activeElement)) return;
+    setTimeout(function () { prefixEl.value = settings.prefix; resetView(); }, 0);
   });
 
-  advancedBtn.addEventListener('click', () => {
-    const open = advancedBody.hidden;
-    advancedBody.hidden = !open;
-    advancedBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    const labelEl = advancedBtn.querySelector('span');
-    if (labelEl) labelEl.textContent = open ? T.hideAll : T.showAll;
-  });
-
-  // Status
-  function setStatus(msg: string, kind: 'success' | 'error' | 'info' | 'none'): void {
-    statusEl.textContent = msg;
-    statusEl.className = 'tool-status ' + kind;
-  }
-
-  function formatBytes(n: number): string {
-    if (n < 1024) return n + ' B';
-    if (n < 1024 * 1024) return (n / 1024).toFixed(2) + ' KB';
-    return (n / (1024 * 1024)).toFixed(2) + ' MB';
-  }
-
-  function formatDelta(before: number, after: number): { delta: string; isLarger: boolean } {
-    const ratio = before === 0 ? 0 : (before - after) / before;
-    const isLarger = after > before;
-    const sign = isLarger ? '+' : '↓';
-    const pct = Math.abs(ratio * 100).toFixed(1);
-    const label = isLarger ? T.largerLabel : T.savedLabel;
-    return { delta: sign + pct + '% ' + label, isLarger };
-  }
-
-  // Lazy SVGO loader
-  let svgoMod: any = null;
-  let svgoLoading: Promise<any> | null = null;
-  async function getSvgo(): Promise<any> {
-    if (svgoMod) return svgoMod;
-    if (svgoLoading) return svgoLoading;
-    svgoLoading = import('svgo/browser').then((mod) => {
-      svgoMod = mod;
-      return mod;
-    });
-    return svgoLoading;
-  }
-
-  function buildConfig(): any {
-    const overrides: Record<string, any> = {
-      cleanupIds: state.cleanupIds ? {} : false,
-      convertColors: state.convertColors ? {} : false,
-      removeComments: state.removeComments ? {} : false,
-      mergePaths: state.mergePaths ? {} : false,
-    };
-    Object.keys(state.advanced).forEach((p) => {
-      if (!state.advanced[p]) overrides[p] = false;
-    });
-    const plugins: any[] = [{ name: 'preset-default', params: { overrides } }];
-    if (state.removeViewBox) plugins.push('removeViewBox');
-    if (state.removeDimensions) plugins.push('removeDimensions');
-    return {
-      multipass: state.multipass,
-      floatPrecision: state.precision,
-      plugins,
-    };
-  }
-
-  function isSvgish(text: string): boolean {
-    return /<svg[\s>]/i.test(text);
-  }
-
-  function renderPreviewImg(host: HTMLElement, svg: string): void {
-    host.replaceChildren();
-    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const img = document.createElement('img');
-    img.alt = '';
-    img.src = url;
-    const revoke = () => URL.revokeObjectURL(url);
-    img.onload = revoke;
-    img.onerror = revoke;
-    host.appendChild(img);
-  }
-
-  async function optimize(): Promise<void> {
-    // Always reset the result panel at the start of a new run — including
-    // when input validation fails — so a previous pass's preview and
-    // action buttons cannot be mistaken for the current attempt's result.
-    resultEl.hidden = true;
-    lastOutput = '';
-    previewBeforeEl.replaceChildren();
-    previewAfterEl.replaceChildren();
-    outputCodeEl.textContent = '';
-
-    const input = inputEl.value.trim();
-    if (!input) {
-      setStatus(T.statusEmpty, 'error');
-      return;
-    }
-    if (!isSvgish(input)) {
-      setStatus(T.statusInvalid, 'error');
-      return;
-    }
-
-    setStatus(T.statusOptimizing, 'info');
-    optimizeBtn.disabled = true;
-
-    let mod: any;
-    try {
-      mod = await getSvgo();
-    } catch (err: any) {
-      setStatus(T.statusError.replace('{msg}', String(err && err.message || err)), 'error');
-      optimizeBtn.disabled = false;
-      return;
-    }
-
-    let output = input;
-    try {
-      const result = mod.optimize(input, buildConfig());
-      output = result.data || input;
-    } catch (err: any) {
-      setStatus(T.statusError.replace('{msg}', String(err && err.message || err)), 'error');
-      optimizeBtn.disabled = false;
-      return;
-    }
-
-    optimizeBtn.disabled = false;
-    lastOutput = output;
-
-    const beforeBytes = new Blob([input]).size;
-    const afterBytes = new Blob([output]).size;
-    const beforeFmt = formatBytes(beforeBytes);
-    const afterFmt = formatBytes(afterBytes);
-    const { delta, isLarger } = formatDelta(beforeBytes, afterBytes);
-
-    bytesBeforeEl.textContent = beforeFmt;
-    bytesAfterEl.textContent = afterFmt;
-    savedEl.textContent = delta;
-    savedEl.className = 'svgo-saved' + (isLarger ? ' svgo-saved--larger' : '');
-    // Render previews via <img src="blob:"> rather than innerHTML so a
-    // pasted SVG containing <script> or onload= cannot execute in this
-    // document (self-XSS hardening). The blob URL is revoked once the
-    // image has loaded.
-    renderPreviewImg(previewBeforeEl, input);
-    renderPreviewImg(previewAfterEl, output);
-    outputCodeEl.textContent = output;
-
-    resultEl.hidden = false;
-
-    const tpl = isLarger ? T.statusLarger : T.statusOptimized;
-    const msg = tpl
-      .replace('{before}', beforeFmt)
-      .replace('{after}', afterFmt)
-      .replace('{delta}', delta);
-    setStatus(msg, isLarger ? 'info' : 'success');
-
-    if (window.trackTool) window.trackTool('svg-optimizer', 'optimize');
-  }
-  optimizeBtn.addEventListener('click', () => { void optimize(); });
-
-  // Copy / Download
-  copyBtn.addEventListener('click', async () => {
-    if (!lastOutput) return;
-    try {
-      await navigator.clipboard.writeText(lastOutput);
-      const original = copyBtn.textContent;
-      copyBtn.classList.add('copied');
-      copyBtn.textContent = T.copied;
-      setTimeout(() => {
-        copyBtn.classList.remove('copied');
-        copyBtn.textContent = original;
-      }, 1400);
-      if (window.trackTool) window.trackTool('svg-optimizer', 'copy');
-    } catch (_) {}
-  });
-
-  downloadBtn.addEventListener('click', () => {
-    if (!lastOutput) return;
-    const blob = new Blob([lastOutput], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'optimized.svg';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    if (window.trackTool) window.trackTool('svg-optimizer', 'download');
-  });
-
-  // Boot
-  loadPersisted();
-  setStatus(T.statusReady, 'none');
+  syncSettingsUi();
 </script>
 
-<style is:global>
-  .svgo-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
+<style>
+  .svgo-wrap { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
   .svgo-wrap [hidden] { display: none !important; }
-
-  /* ── Tabs ── */
-  .svgo-tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--color-border-soft);
-  }
-  .svgo-tab {
-    padding: 0.5rem 1rem;
-    font-size: 0.88rem;
-    font-weight: 600;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-    transition: color var(--transition-fast), border-color var(--transition-fast);
-  }
-  .svgo-tab:hover { color: var(--color-text); }
-  .svgo-tab--active {
-    color: var(--color-primary);
-    border-bottom-color: var(--color-primary);
+  .svgo-sr {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
 
-  /* ── Panels ── */
-  .svgo-panel { display: flex; flex-direction: column; gap: 0.4rem; }
-  .svgo-input { min-height: 140px; }
-
-  /* ── Drop zone ── */
+  .svgo-input { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
   .svgo-drop {
-    position: relative;
+    display: flex; align-items: center; gap: 0.8rem;
+    padding: 0.75rem 1rem;
     border: 2px dashed var(--color-border);
     border-radius: var(--radius-md);
-    padding: 1.4rem 1rem;
-    text-align: center;
-    cursor: pointer;
     background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
     transition: border-color var(--transition-fast), background-color var(--transition-fast);
   }
-  .svgo-drop:hover,
-  .svgo-drop--over {
-    border-color: var(--color-primary);
-    background: var(--color-surface);
-  }
-  .svgo-drop-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-    color: var(--color-text-secondary);
-    pointer-events: none;
-  }
-  .svgo-drop-inner p { margin: 0; font-size: 0.92rem; }
-  .svgo-drop-hint { font-size: 0.78rem; color: var(--color-text-secondary); }
-  .svgo-file-input {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-  }
+  .svgo-drop:hover, .svgo-drop--over { border-color: var(--color-primary); background: var(--color-surface); }
+  .svgo-wrap:has(.svgo-sr:focus-visible) .svgo-drop { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .svgo-drop svg { flex: none; color: var(--color-primary); }
+  .svgo-drop-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+  .svgo-drop-title { font-weight: 700; color: var(--color-text); font-size: 0.95rem; }
+  .svgo-drop-hint { font-size: 0.8rem; line-height: 1.4; }
+  .svgo-code-in { min-height: 96px; font-size: 0.82rem; }
+  .svgo-actions { display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: center; }
+  .svgo-status:empty { display: none; }
 
-  /* ── Controls ── */
-  .svgo-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    padding: 0.85rem 0.95rem 0.95rem;
-    background: var(--color-bg-secondary);
-    border-radius: var(--radius-md);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
-  }
-  .svgo-controls-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-  .svgo-controls-heading {
-    margin: 0;
-    font-size: 0.92rem;
-    font-weight: 700;
-    color: var(--color-text);
-    font-family: var(--font-sans);
-  }
-  .svgo-reset {
-    font-size: 0.78rem;
-    min-height: 32px;
-    padding: 0.2rem 0.7rem;
-  }
+  .svgo-result { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+  .svgo-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.9rem; }
+  .svgo-sizes { font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem; color: var(--color-text); }
+  .svgo-saved { font-family: var(--font-mono); font-weight: 800; color: var(--color-success); }
+  .svgo-saved--up { color: var(--color-danger); }
+  .svgo-gzip, .svgo-engine { font-family: var(--font-mono); font-size: 0.82rem; color: var(--color-text-secondary); }
+  .svgo-engine { margin-left: auto; }
+  .svgo-out-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+  .svgo-format { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; color: var(--color-text-secondary); }
+  .svgo-format select { width: auto; min-width: 12rem; }
 
-  .svgo-toggle-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-    gap: 0.4rem 0.75rem;
+  .svgo-check {
+    margin: 0; padding: 0.55rem 0.75rem; border-radius: var(--radius-md);
+    font-size: 0.88rem; font-weight: 650;
+    background: var(--color-bg-secondary); color: var(--color-text-secondary);
+    box-shadow: inset 3px 0 0 var(--color-border);
   }
-  .svgo-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    cursor: pointer;
-    font-size: 0.88rem;
-    color: var(--color-text);
-    padding: 0.25rem 0;
-    user-select: none;
-  }
-  .svgo-toggle input[type="checkbox"] { flex-shrink: 0; }
-  .svgo-toggle-text {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.35rem;
-    flex-wrap: wrap;
-    line-height: 1.3;
-  }
-  .svgo-warn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--color-accent);
-    color: var(--color-primary-contrast);
-    font-size: 0.68rem;
-    font-weight: 800;
-    font-style: normal;
-  }
-  .svgo-toggle--slider {
-    grid-column: 1 / -1;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.35rem;
-  }
-  .svgo-toggle--slider .svgo-toggle-text {
-    justify-content: space-between;
-    width: 100%;
-  }
-  .svgo-precision-val {
-    font-family: var(--font-mono);
-    font-weight: 700;
-    color: var(--color-primary);
-  }
+  .svgo-check--same { color: var(--color-success); box-shadow: inset 3px 0 0 var(--color-success); }
+  .svgo-check--minor, .svgo-check--beforeFailed, .svgo-check--skipped { color: var(--color-text); box-shadow: inset 3px 0 0 var(--color-accent); }
+  .svgo-check--changed, .svgo-check--afterFailed { color: var(--color-danger); box-shadow: inset 3px 0 0 var(--color-danger); }
 
-  .svgo-advanced-btn {
-    align-self: flex-start;
-    font-size: 0.82rem;
-    min-height: 32px;
-    padding: 0.2rem 0.7rem;
-  }
-  .svgo-advanced-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    border-top: 1px dashed var(--color-border-soft);
-    padding-top: 0.6rem;
-  }
-  .svgo-advanced-hint {
-    margin: 0;
-    font-size: 0.78rem;
-    color: var(--color-text-secondary);
-  }
-  .svgo-advanced-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-    gap: 0.3rem 0.7rem;
-  }
-  .svgo-adv-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    user-select: none;
-  }
-  .svgo-adv-toggle code {
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    color: var(--color-text);
-    background: transparent;
-    padding: 0;
-  }
-
-  /* ── Actions ── */
-  .svgo-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.85rem;
-    flex-wrap: wrap;
-  }
-  .svgo-actions .tool-status { flex: 1 1 auto; min-width: 160px; }
-
-  /* ── Result ── */
-  .svgo-result {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-  }
-  .svgo-result-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
-    gap: 0.85rem;
-  }
-  .svgo-result-card {
-    background: var(--color-bg-secondary);
-    border-radius: var(--radius-md);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    padding: 0.7rem 0.85rem 0.85rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.55rem;
-    min-width: 0;
-  }
-  .svgo-result-head {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .svgo-result-label {
-    font-size: 0.74rem;
-    font-weight: 700;
-    color: var(--color-primary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .svgo-result-bytes {
-    font-family: var(--font-mono);
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--color-text);
-  }
-  .svgo-saved {
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--color-success);
-    margin-left: auto;
-  }
-  .svgo-saved--larger { color: var(--color-danger); }
-
-  .svgo-preview {
-    background:
-      repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px,
-      var(--color-surface);
-    border-radius: var(--radius-sm);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    min-height: 140px;
-    max-height: 240px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    padding: 0.5rem;
-  }
-  .svgo-preview svg,
-  .svgo-preview img {
-    max-width: 100%;
-    max-height: 220px;
-  }
-
-  .svgo-output-actions {
-    display: flex;
-    gap: 0.55rem;
-    flex-wrap: wrap;
-  }
-
-  .svgo-output-details summary {
-    cursor: pointer;
-    font-size: 0.85rem;
-    color: var(--color-text-secondary);
-    font-weight: 600;
-    padding: 0.35rem 0;
-  }
-  .svgo-output-details summary:hover { color: var(--color-primary); }
-  .svgo-output-pre {
-    background: var(--color-bg-secondary);
-    border-radius: var(--radius-md);
-    box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    padding: 0.85rem;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    color: var(--color-text);
-    max-height: 280px;
-    overflow: auto;
-  }
-  .svgo-output-pre code {
-    background: transparent;
-    color: inherit;
-    white-space: pre-wrap;
+  .svgo-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
+  .svgo-notes :global(.svgo-note) {
+    font-size: 0.85rem; line-height: 1.5; color: var(--color-text);
+    padding: 0.45rem 0.7rem; border-radius: var(--radius-md);
+    background: var(--color-surface-muted); box-shadow: inset 0 0 0 1px var(--color-border-soft);
     overflow-wrap: anywhere;
   }
 
+  .svgo-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0.75rem; }
+  .svgo-fig { margin: 0; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+  .svgo-fig figcaption { font-size: 0.75rem; font-weight: 700; color: var(--color-primary); text-transform: uppercase; letter-spacing: 0.05em; }
+  .svgo-preview {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 140px; max-height: 260px; padding: 0.5rem; overflow: hidden;
+    border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    background:
+      repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px,
+      var(--color-surface);
+  }
+  .svgo-preview--plain { background: #fff; }
+  .svgo-preview img, .svgo-preview canvas { max-width: 100%; max-height: 240px; width: auto; height: auto; object-fit: contain; }
+
+  .svgo-code summary, .svgo-all summary { cursor: pointer; font-size: 0.88rem; font-weight: 650; color: var(--color-text-secondary); padding: 0.35rem 0; }
+  .svgo-code summary:hover, .svgo-all summary:hover { color: var(--color-primary); }
+  .svgo-jsx-note { margin: 0.2rem 0 0.4rem; font-size: 0.82rem; color: var(--color-text-secondary); }
+  .svgo-pre {
+    margin: 0.3rem 0; max-height: 300px; overflow: auto; padding: 0.85rem;
+    background: var(--color-bg-secondary); border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-text);
+  }
+  .svgo-pre code { background: transparent; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  .svgo-batch { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
+  .svgo-table-wrap { width: 100%; overflow-x: auto; }
+  .svgo-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .svgo-table th, .svgo-table :global(td) { padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid var(--color-border-soft); white-space: nowrap; }
+  .svgo-table th { font-size: 0.75rem; color: var(--color-text-secondary); font-weight: 700; }
+  .svgo-table :global(td:nth-child(2)), .svgo-table :global(td:nth-child(3)), .svgo-table :global(td:nth-child(4)) { font-family: var(--font-mono); }
+  .svgo-table :global(.svgo-row--active td) { background: var(--color-surface-muted); }
+  .svgo-table :global(.svgo-pick) {
+    background: none; border: 0; padding: 0; font: inherit; color: var(--color-primary); cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; text-align: left;
+  }
+
+  .svgo-settings {
+    display: flex; flex-direction: column; gap: 0.7rem;
+    padding: 0.85rem 0.95rem 0.95rem; border-radius: var(--radius-md);
+    background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .svgo-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+  .svgo-settings-title { margin: 0; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 750; color: var(--color-text); }
+  .svgo-reset { font-size: 0.8rem; min-height: 32px; padding: 0.2rem 0.75rem; }
+  .svgo-toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0.25rem 0.9rem; }
+  .svgo-toggle { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; color: var(--color-text); cursor: pointer; padding: 0.2rem 0; }
+  .svgo-toggle input { flex: none; }
+  .svgo-warn {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--color-accent); color: var(--color-primary-contrast); font-size: 0.68rem; font-weight: 800;
+  }
+  .svgo-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 0.7rem 1.2rem; }
+  .svgo-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+  .svgo-num { font-family: var(--font-mono); font-weight: 750; color: var(--color-primary); margin-left: 0.3rem; }
+  .svgo-hint { margin: 0; font-size: 0.78rem; line-height: 1.45; color: var(--color-text-secondary); }
+  .svgo-sub { margin: 0.6rem 0 0.35rem; font-family: var(--font-sans); font-size: 0.82rem; font-weight: 700; color: var(--color-text-secondary); }
+  .svgo-plugin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 0.15rem 0.8rem; }
+  .svgo-plugin { display: flex; align-items: center; gap: 0.45rem; cursor: pointer; min-width: 0; }
+  .svgo-plugin code { font-family: var(--font-mono); font-size: 0.78rem; background: transparent; padding: 0; color: var(--color-text); overflow-wrap: anywhere; }
+
   @media (max-width: 640px) {
-    .svgo-toggle-grid { grid-template-columns: 1fr; }
-    .svgo-result-grid { grid-template-columns: 1fr; }
-    .svgo-actions { flex-direction: column; align-items: stretch; }
-    .svgo-actions .tool-status { min-width: 0; }
+    .svgo-drop { padding: 0.6rem 0.75rem; }
+    .svgo-drop-hint { font-size: 0.76rem; }
+    .svgo-code-in { min-height: 96px; }
+    .svgo-format { width: 100%; }
+    .svgo-format select { flex: 1; min-width: 0; }
+    .svgo-engine { margin-left: 0; }
+    .svgo-reset { min-height: 44px; }
+    .svgo-table :global(.svgo-pick) { min-height: 24px; max-width: 9rem; }
   }
 </style>
