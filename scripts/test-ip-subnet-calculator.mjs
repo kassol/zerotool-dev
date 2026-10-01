@@ -1,7 +1,9 @@
 // IP Subnet Calculator — strict dotted-decimal IPv4 and a 0–32 integer prefix
 //
 // Read:  src/components/tools/IpSubnetCalculatorTool.astro (extracts the real engine block
-//        between the `engine:start` / `engine:end` markers)
+//        between the `engine:start` / `engine:end` markers); src/content/tools/ip-subnet-calculator/en.mdx;
+//        src/content/blog/ip-subnet-calculator-guide/{en,ja,ko}.mdx (`isc-check` / `isc-bin` /
+//        `isc-run` annotations; the en Python block runs when python3 is installed)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -162,6 +164,113 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
   }
   for (const bad of ['10.0.0.01', '0x0a.0.0.1', '10.1']) eq('page invalid ' + bad, E.parseInput(bad, 24).error, 'ip');
   for (const bad of ['10.0.0.0/33', '10.0.0.0/24x', '10.0.0.0/024', '10.0.0.0/255.255.255.0']) eq('page invalid ' + bad, E.parseInput(bad, 24).error, 'cidr');
+}
+
+// ---------- guide: ip-subnet-calculator-guide en / ja / ko ----------
+// `isc-check` annotations: the calculator's output for the input matches every listed field,
+// and each listed value appears in the guide. `isc-bin` blocks: each binary row equals the
+// dotted-decimal value on the same row, and the network / broadcast rows are the AND / OR of
+// the address and the mask. The en guide's Python block (marked `isc-run`) prints the value
+// in each `# -> ` comment (run when python3 is installed). The three versions are indexable,
+// have no template headings, and the cloud reserved-address tables add up.
+{
+  const { spawnSync } = await import('node:child_process');
+  const python = (() => { const r = spawnSync('python3', ['--version'], { encoding: 'utf8' }); return !r.error && r.status === 0; })();
+  for (const lang of ['en', 'ja', 'ko']) {
+    const file = `src/content/blog/ip-subnet-calculator-guide/${lang}.mdx`;
+    const guide = readFileSync(join(root, file), 'utf8');
+    const fm = guide.match(/^---\n([\s\S]*?)\n---/)[1];
+    check(lang + ' guide is indexable', !/^noindex:\s*true/m.test(fm) && !/^draft:\s*true/m.test(fm));
+    const tpl = [/^## What (is|are) /m, /^## .*Online/m, /^## .* in Code/m, /^## (Summary|Conclusion)/m].filter((re) => re.test(guide));
+    check(lang + ' guide has no template headings', tpl.length === 0, tpl.map(String));
+
+    const checks = [...guide.matchAll(/\{\/\* isc-check: (\{.*?\}) \*\/\}/g)].map((m) => JSON.parse(m[1]));
+    check(lang + ' guide has isc-check annotations', checks.length >= 8, checks.length);
+    const body = guide.replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+    for (const c of checks) {
+      const p = E.parseInput(c.in, c.prefix ?? 24);
+      if (p.error) { check(`${lang} ${c.in} parses`, false, p.error); continue; }
+      const r = E.calculate(p.ip, p.prefix);
+      for (const k of Object.keys(c)) {
+        if (k === 'in' || k === 'prefix') continue;
+        eq(`${lang} ${c.in} ${k}`, r[k], c[k]);
+        check(`${lang} ${c.in} ${k} value is in the text`, body.includes(c[k]), c[k]);
+      }
+    }
+
+    const binBlocks = [...guide.matchAll(/\{\/\* isc-bin \*\/\}[\s\S]*?```text\n([\s\S]*?)```/g)].map((m) => m[1]);
+    check(lang + ' guide has a binary block', binBlocks.length === 1, binBlocks.length);
+    for (const blk of binBlocks) {
+      const rows = blk.trim().split('\n').map((line) => {
+        const m = line.match(/([01][01.|]{34,35})\s+(\d+\.\d+\.\d+\.\d+)/);
+        return m && { bits: m[1].replace(/\|/g, ''), ip: m[2] };
+      });
+      check(lang + ' binary block rows parse', rows.length === 4 && rows.every(Boolean), blk);
+      if (rows.length !== 4 || !rows.every(Boolean)) continue;
+      for (const row of rows) {
+        const n = parseInt(row.bits.replace(/\./g, ''), 2) >>> 0;
+        eq(`${lang} binary ${row.ip}`, n, E.ipToInt(row.ip));
+      }
+      const [addr, mask, net, bc] = rows.map((x) => E.ipToInt(x.ip));
+      eq(lang + ' binary network = address AND mask', net, (addr & mask) >>> 0);
+      eq(lang + ' binary broadcast = network OR ~mask', bc, (net | (~mask >>> 0)) >>> 0);
+      // Display columns: CJK, kana and Hangul take two columns in a monospace font.
+      const cols = (s) => [...s].reduce((w, ch) => w + (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}ー]/u.test(ch) ? 2 : 1), 0);
+      const barCol = blk.split('\n').filter((l) => l.includes('|')).map((l) => cols(l.slice(0, l.indexOf('|'))));
+      check(lang + ' binary bar aligned', new Set(barCol).size === 1, barCol);
+      const prefix = rows[1].bits.replace(/\./g, '').indexOf('0');
+      const pre = blk.split('\n')[0];
+      const bitsBeforeBar = pre.slice(0, pre.indexOf('|')).replace(/[^01]/g, '').length;
+      eq(lang + ' binary bar sits at the prefix', bitsBeforeBar, prefix);
+    }
+  }
+
+  // en / ja / ko cloud tables, row by row (provider → reserved, then usable counts per prefix)
+  const cloud = {
+    en: { cols: [24, 28], rows: [['Classic subnet', 2], ['AWS VPC', 5], ['Azure Virtual Network', 5], ['Google Cloud VPC', 4]] },
+    ja: { cols: [24, 28], rows: [['一般的な LAN', 2], ['AWS VPC', 5], ['Azure Virtual Network', 5], ['Google Cloud VPC', 4]] },
+    ko: { cols: [24, 26], rows: [['일반 LAN', 2], ['AWS VPC', 5], ['Azure Virtual Network', 5], ['Google Cloud VPC', 4], ['네이버 클라우드 플랫폼 VPC', 7]] },
+  };
+  for (const [lang, t] of Object.entries(cloud)) {
+    const guide = readFileSync(join(root, `src/content/blog/ip-subnet-calculator-guide/${lang}.mdx`), 'utf8');
+    for (const [name, reserved] of t.rows) {
+      const line = guide.split('\n').find((l) => l.startsWith('|') && l.includes(name));
+      if (!line) { check(`${lang} cloud row ${name}`, false, 'missing'); continue; }
+      const cells = line.split('|').map((s) => s.trim());
+      const nums = cells.filter((s) => /^\d+$/.test(s)).map(Number);
+      eq(`${lang} cloud row ${name} usable`, nums.slice(0, 2), t.cols.map((p) => 2 ** (32 - p) - reserved));
+    }
+  }
+  // ko: the NCP quote (/24 249, /25 121, /26 57) is 7 fewer than the block size.
+  {
+    const ko = readFileSync(join(root, 'src/content/blog/ip-subnet-calculator-guide/ko.mdx'), 'utf8');
+    for (const [p, n] of [[24, 249], [25, 121], [26, 57]]) {
+      check(`ko NCP /${p} ${n}`, ko.includes(`/${p}인 경우 ${n}개`) && 2 ** (32 - p) - 7 === n);
+    }
+  }
+  // en: the "How many subnets" table and the Gaussian / mask tables are arithmetic.
+  {
+    const en = readFileSync(join(root, 'src/content/blog/ip-subnet-calculator-guide/en.mdx'), 'utf8');
+    for (let p = 25; p <= 30; p++) {
+      const row = `| /${p} | ${p - 24} | ${2 ** (p - 24)} | ${2 ** (32 - p)} | ${2 ** (32 - p) - 2} |`;
+      check('en subnet table row /' + p, en.includes(row), row);
+    }
+    for (const [lang, file] of [['en', 'en'], ['ja', 'ja'], ['ko', 'ko']]) {
+      const g = readFileSync(join(root, `src/content/blog/ip-subnet-calculator-guide/${file}.mdx`), 'utf8');
+      for (let k = 0; k <= 8; k++) {
+        const v = (0xff << (8 - k)) & 0xff;
+        const row = `| ${k} | \`${v.toString(2).padStart(8, '0')}\` | ${v} | ${256 - v} |`;
+        check(`${lang} octet table row ${k}`, g.includes(row), row);
+      }
+    }
+    if (python) {
+      const block = en.match(/\{\/\* isc-run \*\/\}\s*```python\n([\s\S]*?)```/)[1];
+      const expected = [...block.matchAll(/# -> (.*)$/gm)].map((m) => m[1]);
+      const r = spawnSync('python3', ['-c', block], { encoding: 'utf8' });
+      check('en guide Python block runs', r.status === 0, r.stderr);
+      eq('en guide Python block output', r.stdout.trim().split('\n'), expected);
+    } else console.log('SKIP: en guide Python block — python3 not installed');
+  }
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
