@@ -7,7 +7,7 @@ faqItems:
   - question: "类型间的交叉引用如何处理？"
     answer: "如果输入中声明了多个 interface 或 type alias，对某个已声明类型名称的引用会被替换为对应的 Schema 常量。例如，字段类型为 Address 的会在输出中变为 AddressSchema。输入中未声明的类型则变为 z.unknown()（附带注释）。"
   - question: "生成的 Schema 兼容哪个版本的 Zod？"
-    answer: "输出只用 Zod 3 与 Zod 4 都有的 API：z.object()、z.string()、z.union()、z.enum()、z.array()、z.optional()、z.literal()、z.record(键, 值) 和 z.infer<>。Record 类型总是写出键的 schema，因为 Zod 4 不再接受只有值的 z.record()。Promise<T> 生成的 z.promise() 在 Zod 4 中已标为弃用。"
+    answer: "输出只用 Zod 3 与 Zod 4 都有的 API：z.object()、z.string()、z.union()、z.enum()、z.array()、z.optional()、z.literal()、z.record(键, 值)、.extend()、.shape、.catchall()、z.lazy()、z.ZodType 和 z.infer<>。Record 类型总是写出键的 schema，因为 Zod 4 不再接受只有值的 z.record()。Promise<T> 生成的 z.promise() 在 Zod 4 中已标为弃用。"
   - question: "字符串联合类型如何处理？"
     answer: "字符串字面量联合（如 \"admin\" | \"user\" | \"guest\"）会自动转换为 z.enum([\"admin\", \"user\", \"guest\"]) 以保持简洁。混合联合类型（如 string | null）则使用 z.union([z.string(), z.null()])。"
   - question: "可以转换 TypeScript class 或泛型类型吗？"
@@ -39,6 +39,10 @@ faqItems:
   <li><strong>交叉类型</strong>：<code>A &amp; B</code> → <code>z.intersection(A, B)</code></li>
   <li><strong>元组</strong>：<code>[A, B]</code> → <code>z.tuple([A, B])</code></li>
   <li><strong>字面量类型</strong>：<code>"value"</code>、<code>42</code>、<code>true</code> → <code>z.literal()</code></li>
+  <li><strong><code>extends</code></strong>：<code>{"interface Admin extends Base"}</code> → <code>{"BaseSchema.extend({ ... })"}</code>，第二个父类型追加 <code>{".extend(OtherSchema.shape)"}</code>；父类型不是对象 schema（如交叉类型别名）时写成 <code>{"z.intersection(BaseSchema, z.object({ ... }))"}</code>。未在输入中声明的父类型生成普通 <code>z.object()</code> 并加注释。</li>
+  <li><strong>索引签名</strong>：与其他属性并存的 <code>{"[key: string]: V"}</code> → <code>{".catchall(V)"}</code>（校验并保留多出来的键）；只有索引签名时 → <code>{"z.record(z.string(), V)"}</code>。键总是 <code>z.string()</code>，因为解析出的 JSON 对象的键都是字符串。</li>
+  <li><strong><code>enum</code> 声明</strong>：字符串枚举 → 取值的 <code>z.enum()</code>；数字或混合成员（从 0 或上一个数字自动递增）→ <code>z.literal()</code> 的 <code>z.union()</code>。<code>const enum</code>、<code>declare enum</code> 同样处理；含 <code>{"1 << 2"}</code> 这类计算值的枚举整体写成 <code>z.unknown()</code> 并加注释。</li>
+  <li><strong>声明顺序与递归</strong>：不论输入顺序，被依赖的 schema 先输出。形成环的引用写成 <code>{"z.lazy(() => NameSchema)"}</code>，环上的每个类型照原文写出并加 <code>{"z.ZodType<Name>"}</code> 标注（Zod 文档里递归类型的写法）。输出已用 TypeScript 5.9 严格模式编译，并在 Zod 3.25 与 Zod 4 下加载验证。</li>
 </ul>
 
 <h2>示例</h2>
