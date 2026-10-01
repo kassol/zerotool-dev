@@ -3,13 +3,13 @@ seoTitle: "cURL 코드 변환기 — Python·JS·Go·PHP·Node.js | ZeroTool"
 seoDescription: "cURL 명령어를 Python requests, JavaScript fetch, Go net/http, PHP curl, Node.js axios 코드로 즉시 변환. 회원가입 불필요, 브라우저에서 실행."
 faqItems:
   - question: "어떤 cURL 플래그를 지원하나요?"
-    answer: "가장 일반적인 cURL 플래그를 지원합니다: -X(메서드), -H(헤더), -d/--data/--data-raw(요청 본문), -u(기본 인증), -L(리다이렉트 추적), --cookie(쿠키 헤더), -F(멀티파트 폼 데이터)."
+    answer: "curl 8.7의 모든 옵션을 읽습니다. 변환하는 옵션은 -X, -H, -d / --data / --data-raw / --data-binary / --data-ascii / --data-urlencode, --json, -G, -F / --form-string(파일 업로드 포함), -u, --oauth2-bearer, -A, -e, -b, -I, -L, --url, --url-query입니다. curl의 출력만 바꾸는 옵션(-s, -v, -o, -i, --compressed)은 빼고, 그 밖의 옵션은 코드 맨 위 주석에 적습니다."
   - question: "cURL 명령어가 서버로 전송되나요?"
     answer: "아니요. 모든 파싱과 코드 생성은 JavaScript를 통해 브라우저 내에서 완전히 처리됩니다. 명령어나 포함된 인증 정보는 기기 밖으로 나가지 않습니다."
   - question: "생성된 코드에 await가 사용되는 이유는?"
-    answer: "JavaScript(fetch)와 Node.js(axios) 예시는 가독성을 위해 최상위 await를 사용합니다. 실제 프로젝트에서는 async 함수로 감싸거나 .then() 체인을 사용해야 합니다."
+    answer: "JavaScript(fetch) 코드는 브라우저 콘솔과 ES 모듈에서 실행됩니다. Node.js 코드는 ES 모듈(import axios from 'axios')이라 최상위 await를 쓸 수 있습니다. .mjs 파일로 저장하거나 package.json에 \"type\": \"module\"이 있는 프로젝트에 두세요."
   - question: "Basic Auth 인증은 어떻게 처리되나요?"
-    answer: "-u user:password 플래그를 사용하면 인증 정보를 Base64로 인코딩하여 Authorization: Basic ... 헤더로 추가합니다. cURL과 동일한 방식입니다."
+    answer: "-u user:password는 Authorization: Basic 헤더가 되며, 값은 user:password의 UTF-8 바이트를 Base64로 바꾼 것으로 curl이 보내는 값과 같습니다. 콜론이 없으면 curl이 비밀번호를 물어보므로 -u user는 변환하지 않은 옵션으로 표시합니다."
   - question: "여러 줄로 된 cURL 명령어도 지원하나요?"
     answer: "완전히 지원됩니다. 백슬래시로 줄을 연속한 여러 줄 cURL 명령어를 그대로 붙여넣으면 올바르게 처리됩니다."
 ---
@@ -21,17 +21,6 @@ faqItems:
   <li>언어 탭(Python, JavaScript, Go, PHP, Node.js)을 선택합니다.</li>
   <li><strong>복사</strong>를 클릭하여 생성된 코드를 복사합니다.</li>
 </ol>
-
-<h2>지원 플래그</h2>
-<ul>
-  <li><code>-X METHOD</code> — HTTP 메서드 (GET, POST, PUT, DELETE 등)</li>
-  <li><code>-H "Header: Value"</code> — 커스텀 요청 헤더</li>
-  <li><code>-d / --data / --data-raw</code> — 요청 본문</li>
-  <li><code>-u user:password</code> — 기본 인증</li>
-  <li><code>-L</code> — 리다이렉트 추적</li>
-  <li><code>--cookie "name=value"</code> — 쿠키 헤더</li>
-  <li><code>-F "field=value"</code> — 멀티파트 폼 데이터</li>
-</ul>
 
 <h2>주요 사용 사례</h2>
 <ul>
@@ -60,12 +49,13 @@ headers = {
     "Authorization": "Bearer TOKEN",
 }
 
-data = '{"name": "Alice", "email": "alice@example.com"}'
+data = "{\"name\": \"Alice\", \"email\": \"alice@example.com\"}"
 
 response = requests.post(
     "https://api.example.com/users",
     headers=headers,
-    data=data
+    data=data,
+    allow_redirects=False,
 )
 print(response.text)
 ```
@@ -78,58 +68,77 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
 
 func main() {
 	body := strings.NewReader("{\"name\": \"Alice\", \"email\": \"alice@example.com\"}")
-	req, _ := http.NewRequest("POST", "https://api.example.com/users", body)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer TOKEN")
+	req, err := http.NewRequest("POST", "https://api.example.com/users", body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Authorization", "Bearer TOKEN")
 
-	client := &http.Client{}
-	resp, _ := client.Do(req)
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Println(string(respBody))
 }
 ```
 
-본문은 입력한 문자열 그대로 전달되므로 서버가 받는 바이트는 curl과 같습니다. JavaScript와 PHP 탭은 각각 `fetch`와 curl 확장으로 같은 요청을 보내고, Node.js 탭은 `axios`를 씁니다.
+본문은 입력한 문자열 그대로라서 서버가 받는 바이트는 curl과 같습니다. `allow_redirects=False`와 `http.ErrUseLastResponse`가 있는 이유는 curl이 `-L` 없이는 리다이렉트를 따라가지 않지만 requests와 Go의 `http.Client`는 기본으로 따라가기 때문입니다. Go 코드는 오류를 버리지 않고 모든 오류에서 `log.Fatal`로 멈춥니다.
 
-## 플래그 변환 방식
+## 코드 검증 방법
 
-| curl | 생성되는 코드 |
+도구의 테스트는 각 예시 명령을 로컬 HTTP 서버로 두 번 보냅니다. 한 번은 실제 `curl`, 한 번은 생성한 Python, Go, JavaScript 코드입니다. 서버는 메서드, 경로와 쿼리, 헤더, 본문을 비교합니다. multipart 본문은 경계 문자열이 무작위라서 파트별로 비교합니다. Node.js 출력은 `node --check`로 ES 모듈인지 확인합니다. 예시는 여러 개의 `-d`, `-G`, `--json`, `--data-urlencode`, `-F` 파일 업로드, `-d @file`, Basic 인증, `HEAD`, `-L` 유무에 따른 리다이렉트, Chrome이 쓰는 `$'...'` 따옴표를 포함합니다.
+
+## 옵션 변환 방식
+
+규칙은 [curl 매뉴얼](https://curl.se/docs/manpage.html)을 따릅니다:
+
+| curl | 생성 코드 |
 |---|---|
-| `-X`, `--request` | HTTP 메서드(`-X` 없이 본문이 있으면 POST) |
-| `-H`, `--header` | 헤더, 이름과 값 그대로 |
-| `-d`, `--data`, `--data-raw`, `--data-ascii` | 본문 문자열 |
+| `-X`, `--request` | HTTP 메서드. 없으면 데이터가 있는 요청은 POST |
+| `-H`, `--header` | 헤더(이름과 값 그대로). `Name;`은 빈 값을 보냄 |
+| `-d`, `--data`, `--data-ascii`, `--data-raw`, `--data-binary` | 본문. 여러 개면 `&`로 연결. Content-Type 헤더가 없으면 curl과 같이 `Content-Type: application/x-www-form-urlencoded`를 붙임 |
+| `-d @file`, `--data-binary @file` | 코드가 파일을 읽음. `-d`는 curl과 같이 CR과 LF를 제거 |
+| `--data-urlencode` | `name=content`, `=content`, `content`를 URL 인코딩(공백은 `+`) |
+| `--json` | 본문, `Content-Type: application/json`, `Accept: application/json`, POST. 여러 개면 `&` 없이 이어 붙임 |
+| `-G`, `--get` | 데이터를 쿼리 문자열에 넣고 메서드는 GET |
+| `-F`, `--form` | multipart 본문: `name=value`, `name=@file`(업로드, `;type=`과 `;filename=` 지원), `name=<file`(파일 내용을 값으로). 경계가 있는 Content-Type은 라이브러리가 씀 |
 | `-u user:password` | `Authorization: Basic …` 헤더(`alice:s3cret` → `Basic YWxpY2U6czNjcmV0`) |
-| `-b`, `--cookie` | `Cookie` 헤더 |
-| `-L` | 리다이렉트 따라가기(Python에서는 `allow_redirects=True`) |
-| `-k`, `--insecure`, `--compressed`, `-s`, `-S`, `-i`, `-v` | 제거, 생성된 코드는 TLS 검증을 켠 상태로 유지 |
+| `--oauth2-bearer`, `-A`, `-e`, `-b name=value` | `Authorization: Bearer`, `User-Agent`, `Referer`, `Cookie` 헤더 |
+| `-I`, `--head` | HEAD 요청 |
+| `-L` | 리다이렉트를 따라감. 없으면 따라가지 않음 |
+| `--url`, `--url-query` | URL과 쿼리 문자열. 스킴이 없는 URL에는 curl처럼 `http://`를 붙임 |
+| `-s`, `-S`, `-v`, `-i`, `-o`, `-w`, `--compressed` | 뺌(curl의 출력이나 저장만 바꿈) |
+| 그 밖의 옵션과 `-k` | 코드 맨 위 주석과 상태 표시줄에 표시. `-k`가 있어도 코드는 TLS 검증을 유지 |
+
+옵션은 묶어 쓰거나(`-sSL`) 값을 붙여 쓸 수 있습니다(`-XPUT`, `-H'X: 1'`). curl 8.7에 없는 옵션은 오류가 나며 URL로 읽히지 않습니다.
 
 ## 실행 전에 확인할 것
 
-- **파일 업로드(`-F "file=@report.pdf"`)** 는 제대로 변환되지 않습니다. 코드가 `@report.pdf`라는 글자를 그대로 보내고, boundary 없는 `Content-Type: multipart/form-data` 헤더를 붙입니다. 이 헤더를 지우고 파일은 직접 여세요. Python 예:
-
-```python
-import requests
-
-response = requests.post(
-    "https://api.example.com/upload",
-    files={"file": open("report.pdf", "rb")},
-    data={"title": "Q1 Report"},
-)
-```
-
-- **여러 개의 `-d`** 는 합쳐지지 않고 마지막 것만 남습니다. `-G`(데이터를 쿼리 문자열로 전송)는 무시되므로 파라미터를 URL에 직접 쓰세요.
-- **`--json`**(curl 7.82 이상)은 인식되지 않고 URL을 망가뜨립니다. 변환 전에 `-H "Content-Type: application/json" -d '…'`로 바꾸세요.
-- **Go** 코드는 오류를 버립니다(`req, _ :=`, `resp, _ :=`). 요청이 실패하면 `resp`가 nil이 되어 `resp.Body.Close()`에서 panic이 납니다. 실제 코드에서는 `err`를 확인하세요.
-- **JavaScript와 Node.js** 코드는 최상위 `await`를 씁니다. 브라우저 DevTools와 ES 모듈에서는 동작하지만, Node.js 탭의 `require('axios')`는 CommonJS 파일에서 최상위 `await`와 함께 쓸 수 없습니다. `.mjs` 파일에서 `import axios from 'axios'`로 바꾸거나 `async` 함수로 감싸세요.
+- **JavaScript(fetch)**는 페이지 안에서 실행되므로 로컬 경로를 열 수 없습니다. 업로드할 파일과 `@file` 본문은 `<input type="file">`에서 가져오며, 주석에 적힌 순서대로 고릅니다. fetch는 리다이렉트도 따라가고, `Cookie`, `Host` 같은 [금지된 요청 헤더](https://developer.mozilla.org/ko/docs/Glossary/Forbidden_request_header)는 브라우저가 뺍니다.
+- **JavaScript 탭의 `name=<file` 텍스트**는 CRLF 줄바꿈으로 전송됩니다. `FormData`가 HTML 폼 인코딩 규칙에 따라 텍스트 값의 줄바꿈을 맞추기 때문입니다. Python, Go, PHP, Node.js는 파일 내용을 그대로 보냅니다.
+- **Node.js**는 axios를 쓰며 4xx, 5xx 응답에서 예외를 던집니다(curl은 던지지 않음). `maxRedirects: 0`은 `-L` 없는 curl에 맞춘 것이라 3xx 응답에서도 예외가 납니다. 파일 업로드는 `fs.openAsBlob`을 쓰므로 Node.js 19.8 이상이 필요합니다.
+- **PHP**에서는 같은 이름의 `-F` 필드가 하나만 전송됩니다. PHP 배열은 키마다 값을 하나만 가지기 때문입니다.
+- `$VAR`, `$(...)`, 파이프 같은 셸 문법은 펼치지 않습니다. `"$TOKEN"`은 글자 그대로 `$TOKEN`이 됩니다.
 
 ## 브라우저에서 요청 복사하기
 
-Chrome이나 Edge DevTools의 Network 패널에서 요청을 오른쪽 클릭하고 **Copy → Copy as cURL (bash)** 를 고르세요. Windows에서는 bash 버전을 고르세요. cmd 버전은 `^`로 이스케이프하므로 이 변환기가 읽지 못합니다. 이렇게 복사한 요청에는 쿠키와 토큰이 들어 있는 경우가 많습니다. 이 페이지는 분석 도구와 광고를 불러오지 않으며 변환은 브라우저 안에서 이루어집니다.
+Chrome이나 Edge 개발자 도구의 Network 패널에서 요청을 오른쪽 클릭하고 **Copy → Copy as cURL (bash)**를 고릅니다. 값에 따옴표나 줄바꿈이 있으면 이 형식은 `$'...'` 따옴표를 쓰며, 변환기는 이를 읽습니다. Windows에서도 bash 버전을 고르세요. cmd 버전은 `^`로 이스케이프하며 이 변환기는 읽지 않습니다. 이렇게 복사한 요청에는 쿠키와 토큰이 들어 있는 경우가 많지만, 이 페이지는 분석 도구와 광고를 불러오지 않으며 변환은 브라우저에서 이루어집니다.

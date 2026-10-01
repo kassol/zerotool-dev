@@ -155,16 +155,104 @@ const L = labels[lang];
         statusEl.className = 'jgs-status';
       }
 
-      /* Convert snake_case or camelCase to PascalCase for Go exported names */
+      /* ── engine:start ── */
+      function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+      // JSON.parse turns 19.0 into 19, which looks like an integer. Where the browser passes the
+      // source text to the reviver (JSON.parse source text access; Chrome 114+, Firefox 135+, Safari 18.4+),
+      // a number written with "." or an exponent is kept as a JsonFloat so it maps to float64.
+      function JsonFloat(value) { this.value = value; }
+      function parseJson(raw) {
+        return JSON.parse(raw, function (k, v, ctx) {
+          if (typeof v === 'number' && ctx && typeof ctx.source === 'string' && /[.eE]/.test(ctx.source)) return new JsonFloat(v);
+          return v;
+        });
+      }
+      function isObject(v) {
+        return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof JsonFloat);
+      }
+
+      // Exported Go names must start with an upper-case letter; a name that does not after
+      // conversion (2fa, 名前) gets an "X" prefix so encoding/json can see the field.
       function toPascalCase(str) {
-        return str
-          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+        var name = String(str)
+          .replace(/[^\p{L}\p{N}]+(.)/gu, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/[^\p{L}\p{N}]/gu, '')
           .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+        if (!/^\p{Lu}/u.test(name)) name = 'X' + name;
+        return name;
+      }
+
+      // encoding/json ignores a tag name with characters outside this set and uses the Go field
+      // name instead (isValidTag in encoding/json/encode.go); an empty tag name does the same.
+      function validTagName(k) {
+        if (k === '') return false;
+        for (var i = 0; i < k.length; i++) {
+          var c = k.charAt(i);
+          if ('!#$%&()*+-./:;<=>?@[]^_{|}~ '.indexOf(c) >= 0) continue;
+          if (!/[\p{L}\p{N}]/u.test(c)) return false;
+        }
+        return true;
+      }
+
+      // Declarations are kept in the order they are first reached (root first). A nested object
+      // gets the PascalCase of its key; when that name is used by a struct with different fields,
+      // the parent's name is put in front (b.meta → BMeta), then a number is added. An object with
+      // the same fields as an earlier one of the same key reuses that struct. The root name is
+      // reserved.
+      function newState(rootName) {
+        var reserved = {};
+        reserved[rootName] = true;
+        return { list: [], byName: Object.create(null), reserved: reserved };
+      }
+      function openSlot(state) {
+        var slot = { name: null, base: null, sig: null, fields: null };
+        state.list.push(slot);
+        return slot;
+      }
+      function closeSlot(state, slot, base, parent, fields, fixedName) {
+        var sig = fields.join('\n');
+        if (fixedName) {
+          slot.name = fixedName; slot.base = base; slot.sig = sig; slot.fields = fields;
+          state.byName[fixedName] = slot;
+          return fixedName;
+        }
+        for (var i = 0; i < state.list.length; i++) {
+          var other = state.list[i];
+          if (other !== slot && other.base === base && other.sig === sig) {
+            state.list.splice(state.list.indexOf(slot), 1);
+            return other.name;
+          }
+        }
+        var candidates = [base];
+        if (parent) candidates.push(parent + base);
+        var name = null;
+        for (var c = 0; c < candidates.length && !name; c++) {
+          if (!state.byName[candidates[c]] && !state.reserved[candidates[c]]) name = candidates[c];
+        }
+        for (var n = 2; !name; n++) {
+          if (!state.byName[base + n] && !state.reserved[base + n]) name = base + n;
+        }
+        slot.name = name; slot.base = base; slot.sig = sig; slot.fields = fields;
+        state.byName[name] = slot;
+        return name;
+      }
+
+      // Several element / value types: int and float64 together become float64; anything else
+      // mixed becomes interface{}.
+      function combineTypes(types) {
+        if (types.length === 1) return types[0];
+        var bare = types.map(function (t) { return t.replace(/^\*/, ''); });
+        if (bare.every(function (t) { return t === 'int' || t === 'float64'; })) {
+          return (types.some(function (t) { return t.charAt(0) === '*'; }) ? '*' : '') + 'float64';
+        }
+        return 'interface{}';
       }
 
       /* Infer Go type from a JS value. nullable=true wraps in pointer. */
-      function inferGoType(value, key, structs, nullable) {
+      function inferGoType(value, key, parent, state, nullable) {
         if (value === null) return 'interface{}';
+        if (value instanceof JsonFloat) return nullable ? '*float64' : 'float64';
         if (typeof value === 'boolean') return nullable ? '*bool' : 'bool';
         if (typeof value === 'number') {
           var base = Number.isInteger(value) ? 'int' : 'float64';
@@ -175,109 +263,130 @@ const L = labels[lang];
         if (Array.isArray(value)) {
           if (value.length === 0) return '[]interface{}';
           var objectItems = [];
-          var primitiveTypes = [];
+          var types = [];
           for (var i = 0; i < value.length; i++) {
             var item = value[i];
-            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+            if (isObject(item)) {
               objectItems.push(item);
             } else {
-              var t = inferGoType(item, key + 'Item', structs, item === null);
-              if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
+              var t = inferGoType(item, key + 'Item', parent, state, item === null);
+              if (types.indexOf(t) === -1) types.push(t);
             }
           }
           if (objectItems.length > 0) {
-            var itemName = toPascalCase(key) + 'Item';
-            mergeObjectsToStruct(objectItems, itemName, structs);
-            if (primitiveTypes.indexOf(itemName) === -1) primitiveTypes.push(itemName);
+            var itemName = mergeObjects(objectItems, toPascalCase(key) + 'Item', parent, state, null);
+            if (types.indexOf(itemName) === -1) types.push(itemName);
           }
-          var elType = primitiveTypes.length === 1 ? primitiveTypes[0] : 'interface{}';
-          return '[]' + elType;
+          return '[]' + combineTypes(types);
         }
 
-        if (typeof value === 'object') {
-          var structName = toPascalCase(key);
-          buildStruct(value, structName, structs);
+        if (isObject(value)) {
+          var structName = buildStruct(value, toPascalCase(key), parent, state, null);
           return nullable ? '*' + structName : structName;
         }
 
         return 'interface{}';
       }
 
-      function buildStruct(obj, name, structs) {
-        if (structs[name]) return;
-        structs[name] = null;
-
-        var fields = [];
-        var keys = Object.keys(obj);
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          var v = obj[k];
-          var goType = inferGoType(v, k, structs, v === null);
-          var fieldName = toPascalCase(k);
-          fields.push('\t' + fieldName + ' ' + goType + ' `json:"' + k + '"`');
-        }
-        structs[name] = fields;
+      function fieldLines(entries) {
+        // entries: [{ key, type, omitempty }]
+        var used = Object.create(null);
+        var lines = [];
+        entries.forEach(function (e) {
+          if (!validTagName(e.key)) {
+            lines.push('\t// JSON key ' + JSON.stringify(e.key) + ' cannot be named in a struct tag');
+            return;
+          }
+          var fieldName = toPascalCase(e.key);
+          if (used[fieldName]) {
+            var n = 2;
+            while (used[fieldName + n]) n++;
+            fieldName = fieldName + n;
+          }
+          used[fieldName] = true;
+          lines.push('\t' + fieldName + ' ' + e.type + ' `json:"' + e.key + (e.omitempty ? ',omitempty' : '') + '"`');
+        });
+        return lines;
       }
 
-      function mergeObjectsToStruct(objects, name, structs) {
-        if (structs[name]) return;
-        structs[name] = null;
+      function buildStruct(obj, base, parent, state, fixedName) {
+        var slot = openSlot(state);
+        var context = fixedName || base;
+        var entries = Object.keys(obj).map(function (k) {
+          var v = obj[k];
+          return { key: k, type: inferGoType(v, k, context, state, v === null), omitempty: false };
+        });
+        return closeSlot(state, slot, base, parent, fieldLines(entries), fixedName);
+      }
 
-        var allKeys = {};
+      function mergeObjects(objects, base, parent, state, fixedName) {
+        var slot = openSlot(state);
+        var context = fixedName || base;
+        var info = Object.create(null);
+        var order = [];
         for (var i = 0; i < objects.length; i++) {
           var ks = Object.keys(objects[i]);
           for (var j = 0; j < ks.length; j++) {
-            if (!allKeys[ks[j]]) allKeys[ks[j]] = { count: 0, hasNull: false };
-            allKeys[ks[j]].count++;
-          }
-          // check for null values
-          for (var kk in objects[i]) {
-            if (objects[i][kk] === null) allKeys[kk].hasNull = true;
+            if (!(ks[j] in info)) { info[ks[j]] = { count: 0, hasNull: false }; order.push(ks[j]); }
+            info[ks[j]].count++;
+            if (objects[i][ks[j]] === null) info[ks[j]].hasNull = true;
           }
         }
 
-        var fields = [];
-        var keyList = Object.keys(allKeys);
-        for (var ki = 0; ki < keyList.length; ki++) {
-          var k = keyList[ki];
-          var presentInAll = allKeys[k].count === objects.length;
-          var nullable = !presentInAll || allKeys[k].hasNull;
+        var entries = order.map(function (k) {
+          var presentInAll = info[k].count === objects.length;
+          var nullable = !presentInAll || info[k].hasNull;
           var types = [];
+          var nested = [];
           for (var oi = 0; oi < objects.length; oi++) {
-            if (objects[oi].hasOwnProperty(k)) {
-              var t = inferGoType(objects[oi][k], k, structs, nullable);
-              if (types.indexOf(t) === -1) types.push(t);
-            }
+            if (!hasOwn(objects[oi], k)) continue;
+            var v = objects[oi][k];
+            if (isObject(v)) { nested.push(v); continue; }
+            if (v === null && objects.some(function (o) { return hasOwn(o, k) && o[k] !== null; })) continue;
+            var t = inferGoType(v, k, context, state, nullable);
+            if (types.indexOf(t) === -1) types.push(t);
           }
-          var goType = types.length === 1 ? types[0] : 'interface{}';
+          if (nested.length) {
+            var nt = nested.length === 1
+              ? buildStruct(nested[0], toPascalCase(k), context, state, null)
+              : mergeObjects(nested, toPascalCase(k), context, state, null);
+            nt = nullable ? '*' + nt : nt;
+            if (types.indexOf(nt) === -1) types.push(nt);
+          }
+          var goType = combineTypes(types);
           // If not present in all, wrap in pointer if not already
-          if (!presentInAll && !goType.startsWith('*') && !goType.startsWith('[]') && goType !== 'interface{}') {
+          if (!presentInAll && goType.charAt(0) !== '*' && goType.slice(0, 2) !== '[]' && goType !== 'interface{}') {
             goType = '*' + goType;
           }
-          var fieldName = toPascalCase(k);
-          // omitempty for optional fields
-          var tag = presentInAll ? '`json:"' + k + '"`' : '`json:"' + k + ',omitempty"`';
-          fields.push('\t' + fieldName + ' ' + goType + ' ' + tag);
-        }
-        structs[name] = fields;
+          return { key: k, type: goType, omitempty: !presentInAll };
+        });
+        return closeSlot(state, slot, base, parent, fieldLines(entries), fixedName);
       }
 
-      function renderStructs(structs) {
+      function renderStructs(state) {
         var lines = [];
-        var names = Object.keys(structs);
-        for (var i = 0; i < names.length; i++) {
-          var name = names[i];
-          var fields = structs[name];
-          if (fields === null) continue;
-          lines.push('type ' + name + ' struct {');
-          for (var j = 0; j < fields.length; j++) {
-            lines.push(fields[j]);
-          }
+        state.list.forEach(function (slot) {
+          lines.push('type ' + slot.name + ' struct {');
+          for (var j = 0; j < slot.fields.length; j++) lines.push(slot.fields[j]);
           lines.push('}');
           lines.push('');
-        }
+        });
         return lines.join('\n').trimEnd();
       }
+
+      // Returns { code, count }; count is 0 when the root is not an object (a type alias).
+      function generateGo(parsed, rootName) {
+        var state = newState(rootName);
+        if (isObject(parsed)) {
+          buildStruct(parsed, rootName, '', state, rootName);
+        } else if (Array.isArray(parsed) && parsed.some(isObject)) {
+          mergeObjects(parsed.filter(isObject), rootName, '', state, rootName);
+        } else {
+          return { code: 'type ' + rootName + ' = ' + inferGoType(parsed, rootName, '', state, parsed === null), count: 0 };
+        }
+        return { code: renderStructs(state), count: state.list.length };
+      }
+      /* ── engine:end ── */
 
       function convert() {
         var raw = inputEl.value.trim();
@@ -286,7 +395,7 @@ const L = labels[lang];
 
         var parsed;
         try {
-          parsed = JSON.parse(raw);
+          parsed = parseJson(raw);
         } catch (e) {
           inputEl.classList.add('error');
           outputCodeEl.textContent = '';
@@ -296,36 +405,10 @@ const L = labels[lang];
 
         inputEl.classList.remove('error');
         var rootName = rootNameEl.value.trim() || 'RootObject';
-        var structs = {};
-
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildStruct(parsed, rootName, structs);
-        } else if (Array.isArray(parsed)) {
-          var objectItems = parsed.filter(function (v) {
-            return v !== null && typeof v === 'object' && !Array.isArray(v);
-          });
-          if (objectItems.length > 0) {
-            mergeObjectsToStruct(objectItems, rootName, structs);
-          } else {
-            var t = inferGoType(parsed, rootName, structs, false);
-            outputCodeEl.textContent = 'type ' + rootName + ' = ' + t;
-            setStatus(MSG_GENERATED, false);
-            window.trackTool && window.trackTool('json-to-go-struct', 'generate');
-            return;
-          }
-        } else {
-          var t2 = inferGoType(parsed, rootName, structs, parsed === null);
-          outputCodeEl.textContent = 'type ' + rootName + ' = ' + t2;
-          setStatus(MSG_GENERATED, false);
-          window.trackTool && window.trackTool('json-to-go-struct', 'generate');
-          return;
-        }
-
-        var result = renderStructs(structs);
-        outputCodeEl.textContent = result;
-        var count = Object.keys(structs).length;
-        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
-        setStatus(msg, false);
+        var result = generateGo(parsed, rootName);
+        outputCodeEl.textContent = result.code;
+        if (result.count === 0) setStatus(MSG_GENERATED, false);
+        else setStatus(result.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', result.count), false);
         window.trackTool && window.trackTool('json-to-go-struct', 'generate');
       }
 

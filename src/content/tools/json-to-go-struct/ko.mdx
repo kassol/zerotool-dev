@@ -98,14 +98,57 @@ type RootObject struct {
 
 최상위가 배열이면 구조체는 요소 하나를 나타내므로 `[]RootObject`로 디코딩합니다. 일부 요소에 없는 키는 `omitempty`가 붙은 포인터가 됩니다.
 
+## 예시: 같은 키 이름, 소수, 숫자로 시작하는 키
+
+```json
+{
+  "order": { "id": "A-1001", "total": 19.0, "meta": { "createdBy": "alice", "source": "web" } },
+  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } },
+  "2fa": true
+}
+```
+
+생성 결과
+
+```go
+type RootObject struct {
+	Order Order `json:"order"`
+	Payment Payment `json:"payment"`
+	X2fa bool `json:"2fa"`
+}
+
+type Order struct {
+	Id string `json:"id"`
+	Total float64 `json:"total"`
+	Meta Meta `json:"meta"`
+}
+
+type Meta struct {
+	CreatedBy string `json:"createdBy"`
+	Source string `json:"source"`
+}
+
+type Payment struct {
+	Status string `json:"status"`
+	Meta PaymentMeta `json:"meta"`
+}
+
+type PaymentMeta struct {
+	Provider string `json:"provider"`
+	Fee float64 `json:"fee"`
+}
+```
+
+`payment.meta`는 `order.meta`와 필드가 달라 별도 구조체가 되며, 부모 이름을 앞에 붙인 `PaymentMeta`가 됩니다(필드가 같으면 둘이 `Meta`를 함께 씀). `19.0`은 소수점으로 쓰였으므로 `total`은 `float64`입니다. `encoding/json`은 `19.0`을 `int` 필드로 디코딩하지 않습니다. 도구는 브라우저의 JSON 원본 텍스트 접근(Chrome 114+, Firefox 135+, Safari 18.4+)으로 숫자가 쓰인 모양을 읽습니다. 지원하지 않는 브라우저에서는 `19`로 보여 `int`가 됩니다. 키 `2fa`는 내보내는 이름의 첫 글자로 쓸 수 없어 필드 이름은 `X2fa`, 태그는 `2fa` 그대로입니다.
+
 ## 생성 후 고칠 부분
 
 - `null`은 `interface{}`가 됩니다. API 문서를 확인한 뒤 `*string`, `*time.Time` 같은 실제 타입의 포인터로 바꾸세요.
-- 소수부가 없는 숫자는 `int`가 됩니다. JavaScript는 `19.0`의 `.0`을 구별하지 못하므로 그런 가격 샘플도 `int`가 됩니다. 소수를 보내는 필드는 `float64`로 바꾸세요. 64비트 플랫폼에서 `int`는 64비트입니다.
-- `[]`과 요소 타입이 섞인 배열은 `[]interface{}`가 됩니다.
+- `.`이나 지수가 없는 숫자는 `int`, `19.0`이나 `1e3`은 `float64`가 됩니다. 같은 배열이나 키에 정수와 소수가 섞이면 `float64`입니다. 샘플이 우연히 정수뿐인 필드(가격 등)는 `int`로 남으니 확인하세요. 64비트 플랫폼에서 `int`는 64비트입니다.
+- `[]`과 그 밖에 요소 타입이 섞인 배열은 `[]interface{}`가 됩니다.
 - 필드 이름은 Go의 약어 관례에 맞게 조정되지 않습니다. `id`는 `Id`, `url`은 `Url`이 되지만 [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms)는 `ID`, `URL`을 권장합니다. 어느 쪽이든 `json` 태그 덕분에 디코딩은 올바르게 동작합니다.
-- Go 식별자의 첫 글자로 쓸 수 없는 키는 잘못된 코드를 만듭니다. `2fa`는 필드 이름 `2fa`가 되고, 빈 키는 이름 없는 필드가 됩니다. 이름을 바꾸세요(태그에는 원래 키가 남습니다).
-- 키 이름이 같은 중첩 객체가 둘 있으면(`a.meta`와 `b.meta` 등) `Meta`라는 구조체 하나를 같이 쓰고 첫 번째 모양만 남습니다. 하나의 이름을 바꾸고 필드를 추가하세요.
+- 필드 이름이 대문자로 시작하지 않는 키(`2fa`, `名前`)는 앞에 `X`를 붙입니다(`X2fa`). 같은 필드 이름이 되는 두 키(`user_id`, `userId`)에는 번호를 붙입니다(`UserId2`). 빈 키와 구조체 태그에 쓸 수 없는 문자(`"`, `,` 등)가 있는 키는 `encoding/json`이 태그로 연결할 수 없으므로 필드 대신 주석에 적습니다.
+- `PaymentMeta`, `Meta2` 같은 이름은 JSON 키에서 만들어집니다. 용도에 맞게 이름을 바꾸세요.
 - `json` 태그만 생성됩니다. `gorm`, `bson`, `validate` 태그는 직접 추가하세요.
 
 ## 제한 사항

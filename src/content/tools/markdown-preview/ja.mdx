@@ -3,11 +3,13 @@ seoTitle: "Markdown プレビュー — 無料オンライン | ZeroTool"
 seoDescription: "リアルタイムHTMLプレビュー付きMarkdownエディタ。GFMテーブル・タスクリスト・コードブロック対応。無料。"
 faqItems:
   - question: "GFM（GitHub Flavored Markdown）に対応していますか？"
-    answer: "一部対応です。テーブル（列の配置は無視）、打ち消し線、小文字 x のタスクリスト、ハイライト付きのフェンスコードブロックは使えます。自動リンクや入れ子のリストには対応せず、HTML のサニタイズもしません。下の比較表を参照してください。"
+    answer: "生の HTML 以外は対応しています。レンダラーは micromark と GFM 拡張で、CommonMark と GFM 仕様のテストに通っています。列の配置付きテーブル、タスクリスト、打ち消し線、URL の自動リンク、脚注、入れ子のリストが使えます。GitHub は details や br など一部の HTML タグをフィルターしたうえで表示しますが、このプレビューはすべての HTML タグを文字として表示します。"
+  - question: "HTML が文字のまま表示されるのはなぜですか？"
+    answer: "プレビューは zerotool.dev 上で動いており、他のツールの入力もこのサイトのブラウザストレージに保存されています。貼り付けたテキストの onerror 付き img タグを描画すると、このサイトでコードが実行されるため、生の HTML はすべてエスケープします。javascript:、data:、vbscript:、file: のリンク先は空になります。リンク・画像・強調は Markdown の記法で書いてください。"
   - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。Markdownのパースはすべてブラウザ内で行われます。"
+    answer: "いいえ。Markdownのパースはすべてブラウザ内で行われます。ネットワークに出るのは ![alt](https://…) で指定した画像の読み込みだけです。"
   - question: "結果のHTMLをコピーできますか？"
-    answer: "はい。「HTML をコピー」ボタンで生成されたHTMLソースをコピーできます。"
+    answer: "はい。「HTML をコピー」でレンダラーが生成した HTML をコピーできます。プレビュー用のハイライト用タグは含まれず、生の HTML はエスケープされた文字として入ります。"
   - question: "画像も表示できますか？"
     answer: "はい。外部URL画像（https://...）はプレビューに表示されます。ローカル画像は外部からアクセスできないため表示されません。"
 ---
@@ -22,11 +24,14 @@ faqItems:
 
 <h2>Markdownについて</h2>
 <p>Markdownは2004年にJohn Gruberが作成した軽量マークアップ言語です。読みやすいプレーンテキストでHTMLコンテンツを作成でき、README、ドキュメント、ブログ記事などで広く使われています。</p>
-<p>GitHub、GitLab、Slack、Notionなど多くのプラットフォームがMarkdownレンダリングをサポートしています。</p>
 
-## 例：境界ケースをプレビューがどう扱うか
+## レンダラー
 
-プレビューは小さな内蔵パーサーを使っており、CommonMark や GitHub の完全なレンダラーではありません。次の入力：
+プレビューは [micromark](https://github.com/micromark/micromark) 4 と [micromark-extension-gfm](https://github.com/micromark/micromark-extension-gfm) 3 を使います。micromark は CommonMark に完全準拠し仕様のテストに通るとしています。GFM 拡張は [GFM 仕様](https://github.github.com/gfm/) のうち GitHub が使う 5 つの機能（テーブル、タスクリスト、打ち消し線、自動リンク、脚注）を加えます。プレビュー内のリンクは新しいタブで開くので、クリックしても書きかけの内容は消えません。
+
+## 例
+
+次の入力：
 
 ````markdown
 # Release notes
@@ -49,28 +54,53 @@ See https://example.com and `a **b** c`.
 <b>raw</b> and <img src=x alt=y>
 ````
 
+
 から生成される HTML（「HTML コピー」の内容）：
 
 ```html
-<h1>Release notes</h1><p>See https://example.com and <code>a <strong>b</strong> c</code>.</p><ul><li>Parent</li></ul><p>  - Child</p><ul><li>[X] Done</li><li><label><input type="checkbox" disabled="" checked=""> done</label></li></ul><ol><li>third</li><li>fourth</li></ol><table><thead><tr><th>Item</th><th>Price</th></tr></thead><tbody><tr><td>Widget</td><td>$9.99</td></tr><tr><td>a \</td><td>b</td><td>1</td></tr></tbody></table><p><b>raw</b> and <img src="x" alt="y"></p>
+<h1>Release notes</h1>
+<p>See <a href="https://example.com">https://example.com</a> and <code>a **b** c</code>.</p>
+<ul>
+<li>Parent
+<ul>
+<li>Child</li>
+</ul>
+</li>
+<li><input type="checkbox" disabled="" checked="" /> Done</li>
+<li><input type="checkbox" disabled="" checked="" /> done</li>
+</ul>
+<ol start="3">
+<li>third</li>
+<li>fourth</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th align="left">Item</th>
+<th align="right">Price</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left">Widget</td>
+<td align="right">$9.99</td>
+</tr>
+<tr>
+<td align="left">a | b</td>
+<td align="right">1</td>
+</tr>
+</tbody>
+</table>
+<p>&lt;b&gt;raw&lt;/b&gt; and &lt;img src=x alt=y&gt;</p>
 ```
 
-GitHub との比較（[GFM 仕様](https://github.github.com/gfm/)）：
+1 行ずつ見ると、裸の URL はリンクになり（GFM の自動リンク）、バッククォート内のアスタリスクはそのまま残ります（コードは強調として解析されません）。インデントした `- Child` は入れ子のリスト、`[X]` と `[x]` はどちらもチェック済みのタスクです。`3.` から始まるリストは開始番号が `start` 属性に入ります。区切り行のコロンで左寄せ・右寄せが決まり、`\|` はセル内の縦棒としてセルを分割しません。最後の行の生の HTML は文字として出力されます。
 
-| 入力 | GitHub | このプレビュー |
-|---|---|---|
-| 裸の URL `https://example.com` | リンク（autolink 拡張） | プレーンテキスト |
-| バッククォート内の `**b**` | `**b**` のまま | コード内で太字になる |
-| インデントした `- Child` | 入れ子のリスト | 別の段落 |
-| `[X]`（大文字 X） | チェック済みタスク | 文字のまま。小文字の `[x]` のみ有効 |
-| 先頭項目が `3.` | 3 から始まるリスト | 1 から始まるリスト |
-| `:---` / `---:` の配置 | 左寄せ / 右寄せ | 配置は無視 |
-| セル内のバックスラッシュでエスケープした縦棒 | 縦棒の文字 | セルが分割される |
-| 生の HTML | サニタイズされる | そのまま挿入 |
+## 生の HTML は文字として表示
 
-## 生の HTML はサニタイズされない
+[CommonMark](https://spec.commonmark.org/0.31.2/#raw-html) では Markdown に HTML タグを書けます。GitHub はその一部をフィルターしたうえで表示し、[レンダリングの流れ](https://github.com/github/markup#github-markup)で script タグ、インラインスタイル、class / id 属性を取り除きます。このプレビューはより厳しい方法を取り、生の HTML をすべてエスケープします（micromark の既定の動作）。理由はプレビューが動く場所です。zerotool.dev では他のツールが入力をブラウザのストレージに保存しており、同じオリジンのページから読めます。生の HTML を描画すると、貼り付けたテキストの `<img src=x onerror=…>` がこのサイトでスクリプトとして実行されます。エスケープすれば、テキスト内のマークアップがページの要素になることはなく、コピーした HTML を別のページに貼っても安全です。
 
-段落内の HTML タグは、プレビューにもコピーした HTML にもフィルターなしで入ります。貼り付けたテキストの `<img src=x onerror=...>` はこのページで実行され、「HTML コピー」で貼り付け先にも持ち込まれます。信頼できない Markdown はプレビューせず、公開前に HTML をサニタイズしてください（DOMPurify など）。
+URL も同様です。リンクは相対 URL と `http`、`https`、`mailto`、`irc`、`ircs`、`xmpp`、画像は相対 URL と `http`、`https` だけを残し、`javascript:` や `data:` などは `href` / `src` が空になります（リンクの文字は残ります）。`<details>`、`<kbd>`、`<br>` を効かせたい文書は GitHub 自身のプレビューで確認してください。
 
 ## 画像はネットワークから読み込まれる
 
@@ -78,7 +108,8 @@ GitHub との比較（[GFM 仕様](https://github.github.com/gfm/)）：
 
 ## 制限
 
-- リストは1階層のみで、入れ子のリストや複数段落の項目には対応しません。
-- 自動リンク、脚注、参照形式のリンク、見出しアンカーには対応しません。
-- コードブロックのハイライト対象は JavaScript、TypeScript、Python、Go、PHP、Ruby、Java、Bash、JSON、HTML/XML、CSS、Markdown です。
-- GitHub での表示と完全に一致させたい文書は、公開前に GitHub 自身のプレビューで確認してください。
+- 生の HTML は描画しないため（上記）、HTML タグに頼る文書は GitHub と表示が異なります。
+- 見出しに `id` のアンカーは付きません（GitHub はページ表示時に付けます）。
+- `:tada:` のような絵文字ショートコード、`@メンション`、`#123` のような Issue 参照は GFM 仕様外の GitHub の機能で、文字のまま表示されます。
+- 数式（`$…$`）と Mermaid の図は描画しません。
+- コードブロックのハイライト対象は JavaScript、TypeScript、Python、Go、PHP、Ruby、Java、Bash、JSON、HTML/XML、CSS、Markdown です。それ以外は通常のコードとして表示します。

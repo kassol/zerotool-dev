@@ -3,15 +3,17 @@ seoTitle: "Docker Run 转 Docker Compose 工具 | ZeroTool"
 seoDescription: "即时将 docker run 命令转换为 docker-compose.yml。支持端口映射、卷挂载、环境变量、网络、重启策略等。"
 faqItems:
   - question: "支持哪些 docker run 参数？"
-    answer: "支持：--name、-p/--publish（端口）、-v/--volume（卷）、-e/--env（环境变量）、--network、--restart、-d（后台运行）、--cap-add、--memory、--cpus，以及镜像名和可选命令。"
+    answer: "读取 docker run 接受的全部选项（Docker CLI 29.4）。其中约 60 个有对应的 Compose 字段，会被转换：ports、volumes、environment、env_file、entrypoint、user、working_dir、networks、restart、labels、extra_hosts、cap_add、devices、tmpfs 等，见下方对照表。其余列为未转换。"
   - question: "生成的 Compose 文件版本是什么？"
     answer: "不写 version 字段。Compose 规范把顶层 version 视为过时字段，Docker Compose v2 遇到它只会打印警告。"
   - question: "服务名称如何确定？"
     answer: "如果 docker run 命令中使用了 --name，则以该值作为服务名（不会写 container_name）。否则，服务名从镜像名称派生：去除 registry 前缀和 tag，将斜杠替换为下划线。"
   - question: "支持多行 docker run 命令吗？"
     answer: "支持。粘贴使用反斜杠换行的命令，转换器会正确处理。"
-  - question: "不支持的参数怎么处理？"
-    answer: "不带值的参数（如 --privileged）会被跳过。带值且不在支持列表里的参数（如 --env-file .env、--entrypoint /bin/sh）会被读错：它的值会变成镜像名。转换前请删掉这类参数，再手动补对应的 Compose 字段。"
+  - question: "没有对应 Compose 字段的选项怎么处理？"
+    answer: "照样读取它的值，镜像名不会被读错。这些选项列在状态栏和文件第一行的注释里（如 # Not converted: --gpus all），可据此手动补 Compose 设置。docker run 不认识的选项会报错，与 docker run 一致。"
+  - question: "会声明具名卷吗？"
+    answer: "会。-v 的来源是名字时（如 pgdata:/var/lib/postgresql/data），写入顶层 volumes:。以 /、.、~ 开头的是绑定挂载，不声明。"
 ---
 
 <h2>使用方法</h2>
@@ -21,19 +23,6 @@ faqItems:
   <li>在右侧面板查看生成的 <strong>docker-compose.yml</strong>。</li>
   <li>点击<strong>复制</strong>，将内容保存为项目中的 <code>docker-compose.yml</code>。</li>
 </ol>
-
-<h2>支持的参数</h2>
-<ul>
-  <li><code>--name NAME</code> — 服务名称</li>
-  <li><code>-p / --publish HOST:CONTAINER</code> — 端口映射</li>
-  <li><code>-v / --volume HOST:CONTAINER[:mode]</code> — 卷挂载</li>
-  <li><code>-e / --env KEY=VALUE</code> — 环境变量</li>
-  <li><code>--network NETWORK</code> — 网络</li>
-  <li><code>--restart POLICY</code> — 重启策略（no、always、unless-stopped、on-failure）</li>
-  <li><code>--cap-add CAP</code> — 添加 Linux 能力</li>
-  <li><code>--memory MEM</code> — 内存限制（如 512m、1g）</li>
-  <li><code>--cpus N</code> — CPU 限制</li>
-</ul>
 
 <h2>常见使用场景</h2>
 <ul>
@@ -74,16 +63,12 @@ services:
       - "POSTGRES_USER=admin"
       - "POSTGRES_PASSWORD=secret"
     restart: unless-stopped
-```
 
-转换器不会写顶层的 `volumes:`。服务引用了没有声明的具名卷（这里是 `pgdata`）时，Compose 会报错，所以运行 `docker compose up -d` 前要补上：
-
-```yaml
 volumes:
   pgdata:
 ```
 
-`-d` 被去掉，因为 Compose 用 `docker compose up -d` 后台运行。`--name` 变成服务名；如果脚本依赖确切的容器名，请自己加 `container_name:`。
+`pgdata` 是具名卷，所以写进顶层 [`volumes:`](https://docs.docker.com/reference/compose-file/volumes/)。少了这一段 Compose 会拒绝文件：`docker compose config` 报 `service "postgres" refers to undefined volume pgdata`。`-d` 被省略，后台运行用 `docker compose up -d`。`--name` 成为服务名；脚本依赖确切容器名时请自行加 `container_name:`。
 
 ## 示例：端口、资源限制与已有网络
 
@@ -104,11 +89,13 @@ services:
     restart: "on-failure:3"
     cap_add:
       - NET_ADMIN
+    stdin_open: true
+    tty: true
     deploy:
       resources:
         limits:
           memory: 512m
-          cpus: '1.5'
+          cpus: "1.5"
     command: ["npm", "start"]
 
 networks:
@@ -116,42 +103,73 @@ networks:
     external: true
 ```
 
-没有 `--name` 时，服务名取自镜像（`ghcr.io/acme/web:1.2` → `acme_web`）。`--rm`、`-i`、`-t`、`-it` 会被去掉。`--network` 生成的是外部网络，需要事先存在（`docker network create app-net`）。
+没有 `--name` 时服务名取自镜像（`ghcr.io/acme/web:1.2` → `acme_web`）。`-it` 是短选项 `-i` 与 `-t` 的组合，分别转为 `stdin_open` 与 `tty`；`--rm` 被省略。`--network` 转为外部网络，须事先存在（`docker network create app-net`）。`--network host`、`none`、`bridge`、`container:名称` 则转为 `network_mode:`。
+
+## 示例：没有对应 Compose 字段的选项
+
+```bash
+docker run -d --name web --env-file .env --entrypoint /bin/sh -u 1000:1000 -w /app --gpus all nginx:1.27 -c "nginx -g 'daemon off;'"
+```
+
+```yaml
+# Not converted: --gpus all
+services:
+  web:
+    image: "nginx:1.27"
+    entrypoint: ["/bin/sh"]
+    env_file:
+      - .env
+    user: "1000:1000"
+    working_dir: /app
+    command: ["-c", "nginx -g 'daemon off;'"]
+```
+
+`docker run` 的 `--entrypoint` 只接受一个可执行文件，所以转为只有一项的列表；镜像之后的参数是 `command`。`--gpus` 没有单一的 Compose 字段（GPU 写在 `deploy.resources.reservations.devices`），转换器读取它的值、保证镜像名正确，并在第一行注释与状态栏列出。
+
+以上输出都通过 `docker compose config`（Docker Compose 5.1）；工具的测试会对每个示例运行这项检查。
 
 ## 参数对照
 
 | docker run | docker-compose.yml |
 |---|---|
-| `-p`、`--publish` | `ports:`（加引号，保留宿主 IP 与 `/udp`） |
-| `-v`、`--volume` | `volumes:` |
-| `-e`、`--env` | `environment:`，写成 `KEY=VALUE` 列表项；只有 `KEY` 时原样保留 |
-| `--network` | `networks:`，并在顶层声明 `external: true` 网络 |
-| `--restart` | `restart:` |
-| `--cap-add` | `cap_add:` |
-| `--memory`、`-m`、`--cpus` | `deploy.resources.limits` |
-| `--name` | 服务名 |
-| `-d`、`--rm`、`-i`、`-t`、`-it` | 去掉 |
-| 镜像及其后的参数 | `image:` 与 `command:`（JSON 数组） |
+| `-p`, `--publish` | `ports:` |
+| `-v`, `--volume` | `volumes:`; named volumes also in the top-level `volumes:` |
+| `-e`, `--env`, `--env-file` | `environment:`, `env_file:` |
+| `--network` | `networks:` plus a top-level `external: true` network; `host`, `none`, `bridge`, `container:…` become `network_mode:` |
+| `--entrypoint` | `entrypoint:` (one-item list) |
+| `-u`, `-w`, `-h`, `--domainname` | `user:`, `working_dir:`, `hostname:`, `domainname:` |
+| `--restart`, `--pull`, `--platform` | `restart:`, `pull_policy:`, `platform:` |
+| `-l`, `--label`, `--annotation` | `labels:`, `annotations:` |
+| `--add-host`, `--dns`, `--dns-option`, `--dns-search`, `--link`, `--expose` | `extra_hosts:`, `dns:`, `dns_opt:`, `dns_search:`, `links:`, `expose:` |
+| `--cap-add`, `--cap-drop`, `--privileged`, `--security-opt`, `--device` | `cap_add:`, `cap_drop:`, `privileged:`, `security_opt:`, `devices:` |
+| `--init`, `--read-only`, `-i`, `-t` | `init:`, `read_only:`, `stdin_open:`, `tty:` |
+| `--tmpfs`, `--volumes-from`, `--shm-size`, `--sysctl` | `tmpfs:`, `volumes_from:`, `shm_size:`, `sysctls:` |
+| `--memory`, `-m`, `--cpus` | `deploy.resources.limits` |
+| `--memory-reservation`, `--memory-swap`, `--cpu-shares`, `--cpuset-cpus`, `--pids-limit` | `mem_reservation:`, `memswap_limit:`, `cpu_shares:`, `cpuset:`, `pids_limit:` |
+| `--pid`, `--ipc`, `--uts`, `--userns`, `--cgroupns`, `--stop-signal` | `pid:`, `ipc:`, `uts:`, `userns_mode:`, `cgroup:`, `stop_signal:` |
+| `--name` | service key |
+| `-d`, `--rm`, `-q`, `--detach-keys` | dropped |
+| image and the arguments after it | `image:` and `command:` (JSON array) |
 
-表中参数也支持 `--flag=value` 写法。
+选项可以写成 `--flag value`、`--flag=value`、`-p 80:80`、`-p80:80`，也可以合写（`-dit`、`-dp 80:80`），与 Docker CLI 相同。
 
-## 需要手动补的参数
+## 需要手动补的选项
 
-表外带值的参数会被读错：转换器把它的值当成镜像名，后面的内容全部变成 `command`。例如 `docker run -d --name web --entrypoint /bin/sh -u 1000 -w /app nginx -c "echo hello"` 会得到 `image: /bin/sh`。转换前先删掉这些参数，再自己写对应的 Compose 字段（[Compose 文件参考](https://docs.docker.com/reference/compose-file/services/)）：
+以下选项会被读取但不转换，因为 Compose 字段的结构不同（[services 参考](https://docs.docker.com/reference/compose-file/services/)）：
 
-| docker run | Compose 字段 |
+| docker run | Compose key |
 |---|---|
-| `--env-file .env` | `env_file: [".env"]` |
-| `--entrypoint /bin/sh` | `entrypoint: /bin/sh` |
-| `-u`、`--user 1000:1000` | `user: "1000:1000"` |
-| `-w`、`--workdir /app` | `working_dir: /app` |
-| `--network-alias api` | `networks: { app-net: { aliases: [api] } }` |
-| `--health-cmd "curl -f http://localhost/"` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
-| `--add-host`、`-l` | `extra_hosts:`、`labels:` |
+| `--health-cmd "curl -f http://localhost/"` and the other `--health-*` | `healthcheck: { test: ["CMD-SHELL", "curl -f http://localhost/"] }` |
+| `--log-driver`, `--log-opt` | `logging: { driver: …, options: { … } }` |
+| `--network-alias api`, `--ip` | `networks: { app-net: { aliases: [api], ipv4_address: … } }` |
+| `--mount` | the long syntax of `volumes:` (`type`, `source`, `target`) |
+| `--gpus` | `deploy.resources.reservations.devices` |
+| `--ulimit nofile=1024:2048` | `ulimits: { nofile: { soft: 1024, hard: 2048 } }` |
+| `--stop-timeout 30` | `stop_grace_period: 30s` |
 
 ## 限制
 
-- 一次只转换一条 `docker run`。多个容器请分别转换，再把服务块放到同一个 `services:` 下。
-- 具名卷不会在顶层声明，需按上文手动补。
-- 表外带值的参数会打乱解析，见上文。
-- 命令须以 `docker run`（或直接 `run`）开头；`docker container run`、`podman run` 会提示「无效的 docker run 命令」。
+- 每次转换一条 `docker run` 命令。多个容器请分别转换，再把服务块合并到同一个 `services:` 下。
+- 识别 `docker run` 与 `docker container run`，不识别 `podman run`。
+- `$(...)`、`$VAR`、`&&` 等 shell 语法按原文保留。请先展开变量，或在结果里使用 Compose 的[变量插值](https://docs.docker.com/reference/compose-file/interpolation/)。
+- `./data` 这类相对绑定路径，在 Compose 里相对 compose 文件所在目录，在 `docker run` 里相对当前目录。

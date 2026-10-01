@@ -136,13 +136,54 @@ type Message =
   | { type: "image"; url: string };
 ```
 
+## 示例：两个对象用了同一个键名
+
+```json
+{
+  "order": { "id": "A-1001", "meta": { "createdBy": "alice", "source": "web" } },
+  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } }
+}
+```
+
+生成
+
+```typescript
+interface RootObject {
+  order: Order;
+  payment: Payment;
+}
+
+interface Order {
+  id: string;
+  meta: Meta;
+}
+
+interface Meta {
+  createdBy: string;
+  source: string;
+}
+
+interface Payment {
+  status: string;
+  meta: PaymentMeta;
+}
+
+interface PaymentMeta {
+  provider: string;
+  fee: number;
+}
+```
+
+`order.meta` 得到名称 `Meta`。`payment.meta` 字段不同，所以单独生成一个接口，名称前加上父级：`PaymentMeta`。若它的字段与 `order.meta` 相同，两者共用 `Meta`。把两者合并成一个所有字段都可选的 `Meta`，会接受两个接口都不会返回的对象，所以每种结构各有自己的类型。名称仍被占用时加数字（`Meta2`）。即使嵌套键与根名称相同，根接口也保留你填写的名称。
+
 ## 需要手动调整的地方
 
 - `null` 字段：把 `?: null` 改成真实类型加 `| null`。
 - 空数组：`[]` 生成 `unknown[]`，需要补上元素类型。
 - 日期：ISO 8601 字符串和 Unix 时间戳分别保持 `string`、`number`。
 - 不是合法标识符的键（`user-name`、`2fa`）会加引号输出，这在 TypeScript 中是合法的。
-- 两个嵌套对象的键名相同（如 `a.meta` 和 `b.meta`）时，都会得到接口名 `Meta`，只保留第一个对象的结构。请给其中一个改名并手动补字段。
+- `PaymentMeta`、`Meta2` 这类名称由 JSON 键名生成，可按业务含义改名。
+- 键名无法生成合法类型名时（`2fa`、空键名），接口名加前缀 `T`（`T2fa`）；属性本身仍用带引号的原键名。
 
 ## 限制
 

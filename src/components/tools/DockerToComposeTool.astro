@@ -37,10 +37,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { inputLabel: 'docker run Command', outputLabel: 'docker-compose.yml', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', convert: 'Convert', msgInvalidCmd: 'Not a valid docker run command', msgConverted: 'Converted.' },
-        zh: { inputLabel: 'docker run 命令', outputLabel: 'docker-compose.yml', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', convert: '转换', msgInvalidCmd: '无效的 docker run 命令', msgConverted: '已转换。' },
-        ja: { inputLabel: 'docker run コマンド', outputLabel: 'docker-compose.yml', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', convert: '変換', msgInvalidCmd: '無効なdocker runコマンド', msgConverted: '変換しました。' },
-        ko: { inputLabel: 'docker run 명령어', outputLabel: 'docker-compose.yml', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', convert: '변환', msgInvalidCmd: '잘못된 docker run 명령어', msgConverted: '변환 완료.' }
+        en: { inputLabel: 'docker run Command', outputLabel: 'docker-compose.yml', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', convert: 'Convert', msgInvalidCmd: 'Not a valid docker run command', msgConverted: 'Converted.', msgUnknownFlag: 'Unknown option {flag}. docker run would reject it too.', msgMissingValue: 'Option {flag} needs a value.', msgNotConverted: 'Converted. Not converted (listed in the first line of the file): {flags}' },
+        zh: { inputLabel: 'docker run 命令', outputLabel: 'docker-compose.yml', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', convert: '转换', msgInvalidCmd: '无效的 docker run 命令', msgConverted: '已转换。', msgUnknownFlag: '未知选项 {flag}，docker run 也会拒绝它。', msgMissingValue: '选项 {flag} 缺少值。', msgNotConverted: '已转换。未转换的选项（列在文件第一行）：{flags}' },
+        ja: { inputLabel: 'docker run コマンド', outputLabel: 'docker-compose.yml', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', convert: '変換', msgInvalidCmd: '無効なdocker runコマンド', msgConverted: '変換しました。', msgUnknownFlag: '不明なオプション {flag}。docker run でもエラーになります。', msgMissingValue: 'オプション {flag} に値がありません。', msgNotConverted: '変換しました。変換していないオプション（ファイルの 1 行目に記載）：{flags}' },
+        ko: { inputLabel: 'docker run 명령어', outputLabel: 'docker-compose.yml', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', convert: '변환', msgInvalidCmd: '잘못된 docker run 명령어', msgConverted: '변환 완료.', msgUnknownFlag: '알 수 없는 옵션 {flag}. docker run에서도 오류가 납니다.', msgMissingValue: '옵션 {flag}에 값이 없습니다.', msgNotConverted: '변환 완료. 변환하지 않은 옵션(파일 첫 줄에 표시): {flags}' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -73,6 +73,7 @@
         statusEl.className = 'dtc-status';
       }
 
+      /* ── engine:start ── */
       /* ── Tokenizer (same as curl tool) ── */
       function tokenize(cmd) {
         var tokens = [];
@@ -125,97 +126,219 @@
         return name || 'app';
       }
 
+      /* ── Option table ── */
+      // Every option of `docker run` (Docker CLI 29.4, `docker run --help`). `v: 1` means the
+      // option takes a value. `key` is the Compose service key it maps to (Compose Specification,
+      // services reference) and `kind` how the value is written: list (append), scalar (string),
+      // int, bool (true), or one of the special cases handled in parseDockerRun. Options with no
+      // key are reported as not converted; `drop` means it has no meaning in a Compose file.
+      var OPTIONS = {
+        'add-host': { v: 1, key: 'extra_hosts', kind: 'list' },
+        'annotation': { v: 1, key: 'annotations', kind: 'list' },
+        'attach': { v: 1, short: 'a' },
+        'blkio-weight': { v: 1 }, 'blkio-weight-device': { v: 1 },
+        'cap-add': { v: 1, key: 'cap_add', kind: 'list' },
+        'cap-drop': { v: 1, key: 'cap_drop', kind: 'list' },
+        'cgroup-parent': { v: 1, key: 'cgroup_parent', kind: 'scalar' },
+        'cgroupns': { v: 1, key: 'cgroup', kind: 'scalar' },
+        'cidfile': { v: 1 },
+        'cpu-period': { v: 1, key: 'cpu_period', kind: 'int' },
+        'cpu-quota': { v: 1, key: 'cpu_quota', kind: 'int' },
+        'cpu-rt-period': { v: 1, key: 'cpu_rt_period', kind: 'scalar' },
+        'cpu-rt-runtime': { v: 1, key: 'cpu_rt_runtime', kind: 'scalar' },
+        'cpu-shares': { v: 1, short: 'c', key: 'cpu_shares', kind: 'int' },
+        'cpus': { v: 1, kind: 'cpus' },
+        'cpuset-cpus': { v: 1, key: 'cpuset', kind: 'scalar' },
+        'cpuset-mems': { v: 1 },
+        'detach': { short: 'd', drop: true },
+        'detach-keys': { v: 1, drop: true },
+        'device': { v: 1, key: 'devices', kind: 'list' },
+        'device-cgroup-rule': { v: 1, key: 'device_cgroup_rules', kind: 'list' },
+        'device-read-bps': { v: 1 }, 'device-read-iops': { v: 1 },
+        'device-write-bps': { v: 1 }, 'device-write-iops': { v: 1 },
+        'dns': { v: 1, key: 'dns', kind: 'list' },
+        'dns-option': { v: 1, key: 'dns_opt', kind: 'list' },
+        'dns-search': { v: 1, key: 'dns_search', kind: 'list' },
+        'domainname': { v: 1, key: 'domainname', kind: 'scalar' },
+        'entrypoint': { v: 1, kind: 'entrypoint' },
+        'env': { v: 1, short: 'e', key: 'environment', kind: 'list' },
+        'env-file': { v: 1, key: 'env_file', kind: 'list' },
+        'expose': { v: 1, key: 'expose', kind: 'list' },
+        'gpus': { v: 1 },
+        'group-add': { v: 1, key: 'group_add', kind: 'list' },
+        'health-cmd': { v: 1 }, 'health-interval': { v: 1 }, 'health-retries': { v: 1 },
+        'health-start-interval': { v: 1 }, 'health-start-period': { v: 1 }, 'health-timeout': { v: 1 },
+        'help': {},
+        'hostname': { v: 1, short: 'h', key: 'hostname', kind: 'scalar' },
+        'init': { key: 'init', kind: 'bool' },
+        'interactive': { short: 'i', key: 'stdin_open', kind: 'bool' },
+        'ip': { v: 1 }, 'ip6': { v: 1 },
+        'ipc': { v: 1, key: 'ipc', kind: 'scalar' },
+        'isolation': { v: 1, key: 'isolation', kind: 'scalar' },
+        'label': { v: 1, short: 'l', key: 'labels', kind: 'list' },
+        'label-file': { v: 1 },
+        'link': { v: 1, key: 'links', kind: 'list' },
+        'link-local-ip': { v: 1 },
+        'log-driver': { v: 1 }, 'log-opt': { v: 1 },
+        'mac-address': { v: 1, key: 'mac_address', kind: 'scalar' },
+        'memory': { v: 1, short: 'm', kind: 'memory' },
+        'memory-reservation': { v: 1, key: 'mem_reservation', kind: 'scalar' },
+        'memory-swap': { v: 1, key: 'memswap_limit', kind: 'scalar' },
+        'memory-swappiness': { v: 1, key: 'mem_swappiness', kind: 'int' },
+        'mount': { v: 1 },
+        'name': { v: 1, kind: 'name' },
+        'network': { v: 1, kind: 'network' },
+        'net': { v: 1, kind: 'network' },
+        'network-alias': { v: 1 },
+        'no-healthcheck': {},
+        'oom-kill-disable': { key: 'oom_kill_disable', kind: 'bool' },
+        'oom-score-adj': { v: 1, key: 'oom_score_adj', kind: 'int' },
+        'pid': { v: 1, key: 'pid', kind: 'scalar' },
+        'pids-limit': { v: 1, key: 'pids_limit', kind: 'int' },
+        'platform': { v: 1, key: 'platform', kind: 'scalar' },
+        'privileged': { key: 'privileged', kind: 'bool' },
+        'publish': { v: 1, short: 'p', key: 'ports', kind: 'list' },
+        'publish-all': { short: 'P' },
+        'pull': { v: 1, key: 'pull_policy', kind: 'scalar' },
+        'quiet': { short: 'q', drop: true },
+        'read-only': { key: 'read_only', kind: 'bool' },
+        'restart': { v: 1, key: 'restart', kind: 'scalar' },
+        'rm': { drop: true },
+        'runtime': { v: 1, key: 'runtime', kind: 'scalar' },
+        'security-opt': { v: 1, key: 'security_opt', kind: 'list' },
+        'shm-size': { v: 1, key: 'shm_size', kind: 'scalar' },
+        'sig-proxy': {},
+        'stop-signal': { v: 1, key: 'stop_signal', kind: 'scalar' },
+        'stop-timeout': { v: 1 },
+        'storage-opt': { v: 1 },
+        'sysctl': { v: 1, key: 'sysctls', kind: 'list' },
+        'tmpfs': { v: 1, key: 'tmpfs', kind: 'list' },
+        'tty': { short: 't', key: 'tty', kind: 'bool' },
+        'ulimit': { v: 1 },
+        'use-api-socket': {},
+        'user': { v: 1, short: 'u', key: 'user', kind: 'scalar' },
+        'userns': { v: 1, key: 'userns_mode', kind: 'scalar' },
+        'uts': { v: 1, key: 'uts', kind: 'scalar' },
+        'volume': { v: 1, short: 'v', kind: 'volume' },
+        'volume-driver': { v: 1 },
+        'volumes-from': { v: 1, key: 'volumes_from', kind: 'list' },
+        'workdir': { v: 1, short: 'w', key: 'working_dir', kind: 'scalar' },
+      };
+      var SHORT = {};
+      Object.keys(OPTIONS).forEach(function (name) {
+        if (OPTIONS[name].short) SHORT[OPTIONS[name].short] = name;
+      });
+      // Order of keys in the generated service, after image.
+      var KEY_ORDER = ['entrypoint', 'ports', 'expose', 'volumes', 'volumes_from', 'tmpfs', 'environment', 'env_file',
+        'networks', 'network_mode', 'restart', 'user', 'working_dir', 'hostname', 'domainname', 'extra_hosts',
+        'dns', 'dns_opt', 'dns_search', 'labels', 'annotations', 'links', 'cap_add', 'cap_drop', 'privileged',
+        'security_opt', 'devices', 'device_cgroup_rules', 'group_add', 'init', 'read_only', 'stdin_open', 'tty',
+        'shm_size', 'pids_limit', 'cpu_shares', 'cpu_period', 'cpu_quota', 'cpu_rt_period', 'cpu_rt_runtime',
+        'cpuset', 'mem_reservation', 'memswap_limit', 'mem_swappiness', 'oom_kill_disable', 'oom_score_adj',
+        'pid', 'ipc', 'uts', 'userns_mode', 'cgroup', 'cgroup_parent', 'isolation', 'mac_address', 'runtime',
+        'sysctls', 'stop_signal', 'platform', 'pull_policy'];
+      var NETWORK_MODES = /^(host|none|bridge|default|container:.+|service:.+)$/;
+
+      // A -v source that is a volume name, not a path: Docker names match [a-zA-Z0-9][a-zA-Z0-9_.-]+
+      // (moby daemon/names); paths start with / . ~ or a Windows drive letter.
+      function namedVolume(spec) {
+        var parts = spec.split(':');
+        if (parts.length < 2) return null;
+        return /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(parts[0]) ? parts[0] : null;
+      }
+
       /* ── Parser ── */
       function parseDockerRun(cmd) {
         var tokens = tokenize(cmd.trim());
         if (!tokens.length) return null;
 
-        // Skip 'docker' and 'run'
         var i = 0;
         if (tokens[i] === 'docker') i++;
+        if (tokens[i] === 'container') i++;
         if (i >= tokens.length || tokens[i] !== 'run') return null;
         i++;
 
         var result = {
-          name: null,
-          ports: [],
-          volumes: [],
-          envs: [],
-          network: null,
-          restart: null,
-          capAdd: [],
-          memory: null,
-          cpus: null,
-          image: null,
-          command: [],
+          name: null, image: null, command: [], keys: {}, entrypoint: null,
+          volumes: [], namedVolumes: [], network: null, networkMode: null,
+          memory: null, cpus: null, unconverted: [],
         };
+
+        function apply(name, value, written) {
+          var opt = OPTIONS[name];
+          if (opt.drop) return;
+          if (!opt.kind) { result.unconverted.push(written); return; }
+          switch (opt.kind) {
+            case 'list':
+              (result.keys[opt.key] = result.keys[opt.key] || []).push(value);
+              break;
+            case 'scalar': result.keys[opt.key] = value; break;
+            case 'int': result.keys[opt.key] = /^-?\d+$/.test(value) ? parseInt(value, 10) : value; break;
+            case 'bool':
+              if (value === null || value === 'true') result.keys[opt.key] = true;
+              else if (value === 'false') delete result.keys[opt.key];
+              else result.unconverted.push(written);
+              break;
+            case 'name': result.name = value; break;
+            case 'entrypoint': result.entrypoint = value; break;
+            case 'memory': result.memory = value; break;
+            case 'cpus': result.cpus = value; break;
+            case 'volume':
+              result.volumes.push(value);
+              var vol = namedVolume(value);
+              if (vol && result.namedVolumes.indexOf(vol) < 0) result.namedVolumes.push(vol);
+              break;
+            case 'network':
+              if (NETWORK_MODES.test(value)) { result.networkMode = value; result.network = null; }
+              else { result.network = value; result.networkMode = null; }
+              break;
+          }
+        }
 
         while (i < tokens.length) {
           var tok = tokens[i];
-
-          if (tok === '--name') {
-            i++;
-            result.name = tokens[i] || null;
-          } else if (tok === '-p' || tok === '--publish') {
-            i++;
-            if (tokens[i]) result.ports.push(tokens[i]);
-          } else if (tok === '-v' || tok === '--volume') {
-            i++;
-            if (tokens[i]) result.volumes.push(tokens[i]);
-          } else if (tok === '-e' || tok === '--env') {
-            i++;
-            if (tokens[i]) result.envs.push(tokens[i]);
-          } else if (tok === '--network') {
-            i++;
-            result.network = tokens[i] || null;
-          } else if (tok === '--restart') {
-            i++;
-            result.restart = tokens[i] || null;
-          } else if (tok === '-d' || tok === '--detach') {
-            // ignore
-          } else if (tok === '--cap-add') {
-            i++;
-            if (tokens[i]) result.capAdd.push(tokens[i]);
-          } else if (tok === '--memory' || tok === '-m') {
-            i++;
-            result.memory = tokens[i] || null;
-          } else if (tok === '--cpus') {
-            i++;
-            result.cpus = tokens[i] || null;
-          } else if (tok === '--rm' || tok === '-i' || tok === '-t' || tok === '-it' || tok === '-ti') {
-            // ignore
-          } else if (tok.startsWith('--env=')) {
-            result.envs.push(tok.slice('--env='.length));
-          } else if (tok.startsWith('-e=')) {
-            result.envs.push(tok.slice('-e='.length));
-          } else if (tok.startsWith('--name=')) {
-            result.name = tok.slice('--name='.length);
-          } else if (tok.startsWith('--network=')) {
-            result.network = tok.slice('--network='.length);
-          } else if (tok.startsWith('--restart=')) {
-            result.restart = tok.slice('--restart='.length);
-          } else if (tok.startsWith('--memory=') || tok.startsWith('-m=')) {
-            result.memory = tok.slice(tok.indexOf('=') + 1);
-          } else if (tok.startsWith('--cpus=')) {
-            result.cpus = tok.slice('--cpus='.length);
-          } else if (tok.startsWith('--cap-add=')) {
-            result.capAdd.push(tok.slice('--cap-add='.length));
-          } else if (tok.startsWith('-p=') || tok.startsWith('--publish=')) {
-            result.ports.push(tok.slice(tok.indexOf('=') + 1));
-          } else if (tok.startsWith('-v=') || tok.startsWith('--volume=')) {
-            result.volumes.push(tok.slice(tok.indexOf('=') + 1));
-          } else if (!tok.startsWith('-')) {
-            // First non-flag = image, rest = command
-            result.image = tok;
-            i++;
-            while (i < tokens.length) {
-              result.command.push(tokens[i]);
+          if (tok === '--') { i++; tok = tokens[i]; if (tok === undefined) break; }
+          else if (tok.length > 1 && tok.charAt(0) === '-') {
+            if (tok.slice(0, 2) === '--') {
+              var eqIdx = tok.indexOf('=');
+              var name = eqIdx >= 0 ? tok.slice(2, eqIdx) : tok.slice(2);
+              var opt = OPTIONS[name];
+              if (!opt) return { error: 'unknownFlag', flag: '--' + name };
+              var value = null;
+              if (eqIdx >= 0) value = tok.slice(eqIdx + 1);
+              else if (opt.v) {
+                if (i + 1 >= tokens.length) return { error: 'missingValue', flag: tok };
+                value = tokens[++i];
+              }
+              apply(name, value, '--' + name + (value === null ? '' : (eqIdx >= 0 ? '=' : ' ') + value));
               i++;
+              continue;
             }
-            break;
+            // Short options: a group such as -dit, where the first option that takes a value
+            // takes the rest of the group (-p80:80, -e=A=1) or the next token (-dp 80:80).
+            var j = 1;
+            while (j < tok.length) {
+              var letter = tok.charAt(j);
+              var long = SHORT[letter];
+              if (!long) return { error: 'unknownFlag', flag: '-' + letter };
+              if (!OPTIONS[long].v) { apply(long, null, '-' + letter); j++; continue; }
+              var rest = tok.slice(j + 1);
+              var v;
+              if (rest) v = rest.charAt(0) === '=' ? rest.slice(1) : rest;
+              else {
+                if (i + 1 >= tokens.length) return { error: 'missingValue', flag: '-' + letter };
+                v = tokens[++i];
+              }
+              apply(long, v, '-' + letter + ' ' + v);
+              break;
+            }
+            i++;
+            continue;
           }
-          // unknown flags: skip with their value if they look like --flag value
-          i++;
+          // First non-option token is the image; everything after it is the command.
+          result.image = tok;
+          result.command = tokens.slice(i + 1);
+          break;
         }
 
         if (!result.image) return null;
@@ -223,72 +346,68 @@
       }
 
       /* ── YAML helpers ── */
+      // Plain scalars that YAML would read as something other than a string, or that contain
+      // characters with a meaning in YAML, are double-quoted.
       function yamlStr(s) {
-        // Quote if needed
-        if (/[:#\[\]{},&*?|<>=!%@`]/.test(s) || s.indexOf('"') >= 0 || s === '' || /^\s|\s$/.test(s)) {
+        if (/[:#\[\]{},&*?|<>=!%@`'"\\]/.test(s) || s === '' || /^\s|\s$/.test(s) || /^[-?]/.test(s) ||
+            /^(true|false|yes|no|on|off|y|n|null|~)$/i.test(s) ||
+            /^[-+]?(\d[\d_]*(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/.test(s) || /^0[xo]/i.test(s) || /^[-+]?\.(inf|nan)$/i.test(s)) {
           return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
         }
         return s;
+      }
+      function yamlValue(v) {
+        if (v === true) return 'true';
+        if (typeof v === 'number') return String(v);
+        return yamlStr(v);
+      }
+      function jsonList(arr) {
+        return '[' + arr.map(function (c) {
+          return '"' + c.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+        }).join(', ') + ']';
       }
 
       /* ── YAML generator ── */
       function generateCompose(p) {
         var serviceName = p.name || deriveServiceName(p.image);
         var lines = [];
+        if (p.unconverted && p.unconverted.length) {
+          lines.push('# Not converted: ' + p.unconverted.join(', ').replace(/[\r\n]+/g, ' '));
+        }
+
+        var keys = {};
+        Object.keys(p.keys || {}).forEach(function (k) { keys[k] = p.keys[k]; });
+        if (p.entrypoint !== null && p.entrypoint !== undefined) keys.entrypoint = [p.entrypoint];
+        if (p.volumes.length) keys.volumes = p.volumes;
+        if (p.network) keys.networks = [p.network];
+        if (p.networkMode) keys.network_mode = p.networkMode;
 
         lines.push('services:');
         lines.push('  ' + yamlStr(serviceName) + ':');
         lines.push('    image: ' + yamlStr(p.image));
 
-        if (p.ports.length) {
-          lines.push('    ports:');
-          p.ports.forEach(function (port) {
-            lines.push('      - ' + yamlStr(port));
-          });
-        }
-
-        if (p.volumes.length) {
-          lines.push('    volumes:');
-          p.volumes.forEach(function (vol) {
-            lines.push('      - ' + yamlStr(vol));
-          });
-        }
-
-        if (p.envs.length) {
-          lines.push('    environment:');
-          p.envs.forEach(function (env) {
-            lines.push('      - ' + yamlStr(env));
-          });
-        }
-
-        if (p.network) {
-          lines.push('    networks:');
-          lines.push('      - ' + yamlStr(p.network));
-        }
-
-        if (p.restart) {
-          lines.push('    restart: ' + yamlStr(p.restart));
-        }
-
-        if (p.capAdd.length) {
-          lines.push('    cap_add:');
-          p.capAdd.forEach(function (cap) {
-            lines.push('      - ' + yamlStr(cap));
-          });
-        }
+        KEY_ORDER.forEach(function (k) {
+          if (!(k in keys)) return;
+          var v = keys[k];
+          if (k === 'entrypoint') { lines.push('    entrypoint: ' + jsonList(v)); return; }
+          if (Array.isArray(v)) {
+            lines.push('    ' + k + ':');
+            v.forEach(function (item) { lines.push('      - ' + yamlStr(item)); });
+          } else {
+            lines.push('    ' + k + ': ' + yamlValue(v));
+          }
+        });
 
         if (p.memory || p.cpus) {
           lines.push('    deploy:');
           lines.push('      resources:');
           lines.push('        limits:');
           if (p.memory) lines.push('          memory: ' + yamlStr(p.memory));
-          if (p.cpus) lines.push("          cpus: '" + p.cpus + "'");
+          if (p.cpus) lines.push('          cpus: ' + yamlStr(p.cpus));
         }
 
         if (p.command.length) {
-          lines.push('    command: [' + p.command.map(function (c) {
-            return '"' + c.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-          }).join(', ') + ']');
+          lines.push('    command: ' + jsonList(p.command));
         }
 
         if (p.network) {
@@ -298,8 +417,15 @@
           lines.push('    external: true');
         }
 
+        if (p.namedVolumes && p.namedVolumes.length) {
+          lines.push('');
+          lines.push('volumes:');
+          p.namedVolumes.forEach(function (v) { lines.push('  ' + yamlStr(v) + ':'); });
+        }
+
         return lines.join('\n');
       }
+      /* ── engine:end ── */
 
       /* ── Main convert ── */
       function convert() {
@@ -313,8 +439,15 @@
           return;
         }
 
+        if (parsed.error) {
+          outputCodeEl.textContent = '';
+          setStatus((parsed.error === 'missingValue' ? t.msgMissingValue : t.msgUnknownFlag).replace('{flag}', parsed.flag), true);
+          return;
+        }
+
         outputCodeEl.textContent = generateCompose(parsed);
-        setStatus(t.msgConverted, false);
+        if (parsed.unconverted.length) setStatus(t.msgNotConverted.replace('{flags}', parsed.unconverted.join(', ')), false);
+        else setStatus(t.msgConverted, false);
         window.trackTool && window.trackTool('docker-to-compose', 'convert');
       }
 

@@ -98,14 +98,57 @@ type RootObject struct {
 
 トップレベルが配列のとき、構造体は要素1つ分を表すので `[]RootObject` にデコードします。一部の要素にないキーは `omitempty` 付きのポインタになります。
 
+## 例：同じキー名、小数、数字で始まるキー
+
+```json
+{
+  "order": { "id": "A-1001", "total": 19.0, "meta": { "createdBy": "alice", "source": "web" } },
+  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } },
+  "2fa": true
+}
+```
+
+から生成される構造体：
+
+```go
+type RootObject struct {
+	Order Order `json:"order"`
+	Payment Payment `json:"payment"`
+	X2fa bool `json:"2fa"`
+}
+
+type Order struct {
+	Id string `json:"id"`
+	Total float64 `json:"total"`
+	Meta Meta `json:"meta"`
+}
+
+type Meta struct {
+	CreatedBy string `json:"createdBy"`
+	Source string `json:"source"`
+}
+
+type Payment struct {
+	Status string `json:"status"`
+	Meta PaymentMeta `json:"meta"`
+}
+
+type PaymentMeta struct {
+	Provider string `json:"provider"`
+	Fee float64 `json:"fee"`
+}
+```
+
+`payment.meta` は `order.meta` とフィールドが違うので別の構造体になり、親の名前を前に付けた `PaymentMeta` になります（同じフィールドなら両方で `Meta` を共有）。`19.0` は小数点付きで書かれているので `total` は `float64` です。`encoding/json` は `19.0` を `int` のフィールドにデコードしません。ツールはブラウザの JSON ソーステキストアクセス（Chrome 114+、Firefox 135+、Safari 18.4+）で数値の書き方を読みます。対応していないブラウザでは `19` に見えるため `int` のままです。キー `2fa` はエクスポートされる名前の先頭に使えないので、フィールド名は `X2fa`、タグは `2fa` のままです。
+
 ## 生成後に直すところ
 
 - `null` は `interface{}` になります。API ドキュメントを確認して `*string` や `*time.Time` など実際の型のポインタに変えてください。
-- 小数部のない数値は `int` になります。JavaScript は `19.0` の `.0` を区別できないため、そうした価格のサンプルも `int` になります。小数を返すフィールドは `float64` にしてください。64 ビット環境では `int` は 64 ビットです。
-- `[]` と要素の型が混在する配列は `[]interface{}` になります。
+- `.` や指数のない数値は `int`、`19.0` や `1e3` は `float64` になります。同じ配列やキーに整数と小数が混ざると `float64` です。サンプルがたまたま整数だけのフィールド（価格など）は `int` のままなので確認してください。64 ビット環境では `int` は 64 ビットです。
+- `[]` と、それ以外で要素の型が混在する配列は `[]interface{}` になります。
 - フィールド名は Go の頭字語の慣習に合わせて調整されません。`id` は `Id`、`url` は `Url` になりますが、[Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#initialisms) は `ID`・`URL` を推奨しています。どちらでも `json` タグがあるのでデコードは正しく動きます。
-- Go の識別子の先頭に使えないキーは無効なコードになります。`2fa` はフィールド名 `2fa` に、空のキーは名前のないフィールドになります。名前を変えてください（タグには元のキーが残ります）。
-- 同じキー名のネストしたオブジェクトが2つあると（`a.meta` と `b.meta` など）、`Meta` という1つの構造体を共有し、最初の形だけが残ります。一方の名前を変え、フィールドを追加してください。
+- フィールド名が大文字で始まらないキー（`2fa`、`名前`）は先頭に `X` を付けます（`X2fa`）。同じフィールド名になる 2 つのキー（`user_id`、`userId`）には番号を付けます（`UserId2`）。空のキーや、構造体タグに書けない文字（`"`、`,` など）を含むキーは、`encoding/json` がタグで対応付けられないため、フィールドではなくコメントに書きます。
+- `PaymentMeta` や `Meta2` のような名前は JSON のキーから作られます。用途に合わせて名前を変えてください。
 - 出力されるのは `json` タグだけです。`gorm`・`bson`・`validate` のタグは自分で追加します。
 
 ## 制限

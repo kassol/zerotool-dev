@@ -136,13 +136,54 @@ type Message =
   | { type: "image"; url: string };
 ```
 
+## 예시: 같은 키 이름의 객체가 둘인 경우
+
+```json
+{
+  "order": { "id": "A-1001", "meta": { "createdBy": "alice", "source": "web" } },
+  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } }
+}
+```
+
+생성 결과
+
+```typescript
+interface RootObject {
+  order: Order;
+  payment: Payment;
+}
+
+interface Order {
+  id: string;
+  meta: Meta;
+}
+
+interface Meta {
+  createdBy: string;
+  source: string;
+}
+
+interface Payment {
+  status: string;
+  meta: PaymentMeta;
+}
+
+interface PaymentMeta {
+  provider: string;
+  fee: number;
+}
+```
+
+`order.meta`는 `Meta`라는 이름을 받습니다. `payment.meta`는 필드가 달라 별도 인터페이스가 되며, 부모 이름을 앞에 붙여 `PaymentMeta`가 됩니다. `order.meta`와 필드가 같다면 둘이 `Meta`를 함께 씁니다. 둘을 모든 필드가 선택적인 `Meta` 하나로 합치면 어느 API도 돌려주지 않는 객체까지 받아들이므로, 모양마다 타입을 따로 둡니다. 이름이 이미 쓰였으면 번호를 붙입니다(`Meta2`). 중첩된 키가 루트와 이름이 같아도 루트는 지정한 이름을 유지합니다.
+
 ## 직접 다듬을 부분
 
 - `null` 필드: `?: null`을 실제 타입과 `| null`로 바꿉니다.
 - 빈 배열: `[]`은 `unknown[]`이 되므로 요소 타입을 채웁니다.
 - 날짜: ISO 8601 문자열과 Unix 타임스탬프는 각각 `string`, `number`로 남습니다.
 - 식별자로 쓸 수 없는 키(`user-name`, `2fa`)는 따옴표로 감싸 출력되며 TypeScript에서 유효합니다.
-- 키 이름이 같은 중첩 객체가 둘 있으면(`a.meta`와 `b.meta` 등) 둘 다 인터페이스 이름 `Meta`를 받고 첫 번째 모양만 남습니다. 하나의 이름을 바꾸고 필드를 직접 추가하세요.
+- `PaymentMeta`, `Meta2` 같은 이름은 JSON 키에서 만들어집니다. 용도에 맞게 이름을 바꾸세요.
+- 올바른 타입 이름이 되지 않는 키(`2fa`, 빈 키)는 인터페이스 이름 앞에 `T`를 붙입니다(`T2fa`). 속성 자체는 원래 키를 따옴표로 감싸 씁니다.
 
 ## 제한 사항
 
