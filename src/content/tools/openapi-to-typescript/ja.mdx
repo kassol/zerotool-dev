@@ -58,6 +58,60 @@ export const PetSchema = z.object({
 });`}</code></pre>
 <p>OpenAPI 仕様ではなく既存の手書き TS 型から Zod を作りたい場合は <a href="/ja/tools/typescript-to-zod/">TypeScript → Zod</a> を使ってください。</p>
 
+<h2>例：組み込みの Pet Store 仕様</h2>
+<p><strong>サンプル</strong>を押すと、<code>Pet</code> と <code>NewPet</code> の 2 スキーマと 3 つのオペレーションを持つ小さな OpenAPI 3.0.3 仕様が読み込まれます。出力のスキーマ部分です。</p>
+<pre><code>{`export interface Pet {
+  id: number;
+  name: string;
+  tag?: string | null;
+  status: "available" | "pending" | "sold";
+  photo?: Blob;
+}
+
+export interface NewPet {
+  name: string;
+  tag?: string;
+}`}</code></pre>
+<p>必須プロパティは必須のまま、それ以外には <code>?</code> が付きます。<code>nullable: true</code> は <code>| null</code> になり、<code>format: binary</code> は <code>Blob</code> になります。<strong>path 型を含める</strong>をオンにすると、<code>getPetById</code> は <code>PathParameters &#123; id: number &#125;</code> と <code>Response200 = Pet</code> を持つ <code>Components.GetPetById</code> になります。<strong>Zod スキーマを含める</strong>をオンにして生成した <code>PetSchema</code> は（zod 3.25 で確認）、<code>status: "lost"</code> を拒否し、<code>tag: null</code> を受け付けます。</p>
+
+<h2>例：3.1 の出力で手直しが必要な箇所</h2>
+<p>次の OpenAPI 3.1 スキーマは <code>const</code>、型の配列、別ファイルへの参照を使っています。</p>
+<pre><code>{`openapi: 3.1.0
+info: { title: Events, version: 1.0.0 }
+paths: {}
+components:
+  schemas:
+    Event:
+      type: object
+      required: [id, kind, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        kind: { const: order.created }
+        createdAt: { type: string, format: date-time }
+        note: { type: [string, 'null'] }
+        owner: { $ref: 'https://example.com/schemas/user.yaml#/User' }`}</code></pre>
+<p>ツールの出力です。</p>
+<pre><code>{`export interface Event {
+  id: number;
+  kind: Record<string, unknown>;
+  /** ISO 8601 date-time */ createdAt: string;
+  note?: string | null;
+  owner?: unknown;
+}
+
+export type unknown = unknown;`}</code></pre>
+<p><code>type: [string, "null"]</code> は正しく <code>string | null</code> になります。手直しが必要なのは 3 か所です。<code>const</code> は読み取られず、<code>kind</code> は <code>"order.created"</code> ではなく <code>Record&lt;string, unknown&gt;</code> になります。外部の <code>$ref</code> は <code>unknown</code> になり、仮置きの <code>export type unknown = unknown;</code> はコンパイルできません（TypeScript 5.9 では "Type alias name cannot be 'unknown'"）。この行を削除し、<code>owner</code> の型は手で書いてください。</p>
+
+<h2>制限</h2>
+<ul>
+  <li>解決できるのは <code>#/components/schemas/...</code> の参照だけです。他のファイルや URL への参照は <code>unknown</code> になり、上の無効な <code>export type unknown = unknown;</code> 行が付きます。</li>
+  <li><code>const</code> は無視されます。リテラル型が必要なら値が 1 つの <code>enum</code> を使ってください。</li>
+  <li>英数字、<code>{'_'}</code>、<code>$</code> 以外の文字を含むスキーマ名（<code>pet-status</code> など）は <code>{'pet_status'}</code> に変わり、TypeScript 側では元のスキーマが見つからなくなります。<code>pet-status</code> という enum は <code>{'export type pet_status = unknown;'}</code> として出力されます。Zod 側では enum が残ります。</li>
+  <li>Zod スキーマは <code>components/schemas</code> の順に <code>z.lazy</code> なしで出力されます。後で宣言されるスキーマや自分自身を参照するスキーマがあると、モジュールの読み込み時に <code>ReferenceError</code> になります。宣言の順序を入れ替え、再帰する参照は <code>z.lazy(() =&gt; ...)</code> で包んでください。</li>
+  <li><code>format: int64</code> の <code>integer</code> は <code>number</code> になり、2<sup>53</sup> を超えると精度が落ちます。API がそうした ID を文字列で送るなら <code>string</code> に変えてください。</li>
+  <li>path 型が読み取るのは <code>application/json</code> のリクエストボディとレスポンスボディだけです。</li>
+</ul>
+
 <h2>関連ツール</h2>
 <ul>
   <li><a href="/ja/tools/openapi-validator/">OpenAPI バリデーター</a> — 型生成前に仕様を検証。</li>

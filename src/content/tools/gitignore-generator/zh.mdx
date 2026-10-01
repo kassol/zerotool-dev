@@ -30,10 +30,10 @@ faqItems:
 
 <h2>常见 Stack 组合</h2>
 <ul>
-  <li><strong>全栈 JavaScript：</strong>Node + React + macOS + JetBrains</li>
-  <li><strong>Python 数据项目：</strong>Python + JupyterNotebooks + macOS + VisualStudioCode</li>
-  <li><strong>移动端原生：</strong>Android + Java + Gradle + IntelliJ + macOS</li>
-  <li><strong>静态站点：</strong>Node + Hugo（或 Jekyll）+ macOS + VisualStudioCode</li>
+  <li><strong>全栈 JavaScript：</strong>Node + Nextjs + macOS + JetBrains</li>
+  <li><strong>Python 数据项目：</strong>Python + macOS + VisualStudioCode</li>
+  <li><strong>移动端原生：</strong>Android + Java + Gradle + JetBrains + macOS</li>
+  <li><strong>静态站点：</strong>Node + Jekyll + macOS + VisualStudioCode</li>
   <li><strong>Go 服务：</strong>Go + macOS + VisualStudioCode + JetBrains</li>
 </ul>
 
@@ -46,3 +46,42 @@ faqItems:
 <p>
   请求时去抓 github/gitignore 会带来网络延迟与速率限制风险。我们在构建期一次性快照仓库、去重 ID、打成单个 TypeScript 模块——可预测、可审计、零运行时依赖。刷新时手动跑同步脚本，从上游拉新快照后一次 commit 即可。
 </p>
+
+<h2>示例：Node + macOS + JetBrains + VS Code</h2>
+<p>勾选 <code>JetBrains</code>、<code>macOS</code>、<code>Node</code>、<code>VisualStudioCode</code>，再在自定义规则里加三行：<code>{'node_modules/'}</code>、<code>.env.local</code>、<code>coverage-html/</code>。输出共 313 行：开头是来源说明，接着按字母顺序排列 4 个模板（<code>### JetBrains.gitignore</code> 在最前），最后的 <code>### Custom additions</code> 只剩 <code>.env.local</code> 和 <code>coverage-html/</code>。自定义的 <code>{'node_modules/'}</code> 被去掉了，因为 Node 模板里已有完全相同的一行。</p>
+<p><code>.env.local</code> 保留了下来，尽管 Node 模板的 <code>{'.env.*'}</code> 已经能匹配它。去重比较的是每行去掉首尾空白后的文本，不比较规则匹配的范围。</p>
+
+<h2>语法陷阱（用 Git 实测）</h2>
+<p>对下面这个 <code>.gitignore</code>，<code>git check-ignore -v</code>（Git 2.56）的结果是：</p>
+
+```text
+logs/
+!logs/keep.log
+docs/*.pdf
+build/
+/secret.txt
+```
+
+<ul>
+  <li><code>logs/keep.log</code> 仍被 <code>logs/</code> 忽略。Git 不会进入已排除的目录，所以否定规则不生效（见 <a href="https://git-scm.com/docs/gitignore" target="_blank" rel="noopener">gitignore 文档</a>）。需要例外时把 <code>logs/</code> 改成 <code>{'logs/*'}</code>。</li>
+  <li><code>{'docs/*.pdf'}</code> 忽略 <code>docs/a.pdf</code>，不忽略 <code>docs/notes/old.pdf</code>：中间带斜杠的规则相对 <code>.gitignore</code> 所在目录，<code>{'*'}</code> 不跨越 <code>/</code>。</li>
+  <li><code>build/</code> 在任意层级都匹配（<code>build/</code> 和 <code>src/build/</code>），但只匹配目录。</li>
+  <li><code>/secret.txt</code> 只匹配根目录下的文件，<code>src/secret.txt</code> 不被忽略。</li>
+</ul>
+
+<h2>已经被跟踪的文件</h2>
+<p>新规则不会让 Git 停止跟踪已跟踪的文件。把它们从索引里移除再提交，文件仍留在磁盘上：</p>
+
+```bash
+git rm -r --cached node_modules/
+git commit -m "Stop tracking node_modules"
+```
+
+<p>这不会从历史提交中删除文件。如果提交过密钥，先更换密钥；改写历史（例如用 <code>git filter-repo</code>）需要强制推送，所有人重新克隆。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>内置 237 个模板：162 个来自 github/gitignore 根目录（语言与框架），75 个来自 <code>Global/</code>（编辑器、操作系统、工具）。不含 <code>community/</code> 目录。</li>
+  <li>模板是上次更新内置包时的快照，上游之后合并的改动要等下次更新才会出现。</li>
+  <li>去重只删除整个文件中重复出现的相同行，不会合并等价的写法，比如 <code>{'node_modules'}</code> 和 <code>{'node_modules/'}</code>。</li>
+</ul>

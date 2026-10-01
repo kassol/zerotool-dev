@@ -3,7 +3,7 @@ seoTitle: "jq Playground Online — Test jq Filters in Browser | ZeroTool"
 seoDescription: "Run jq filters against JSON in your browser with the official jq 1.7 engine. Pipe, select, map, group_by, sort, reduce — no install, no upload, no signup."
 faqItems:
   - question: "Is this the real jq or a JavaScript reimplementation?"
-    answer: "This is the official jq 1.7 C source compiled to WebAssembly via jq-web. Filter output matches the jq command-line tool byte-for-byte. The engine downloads once (about 1MB compressed) and is cached by your browser for every subsequent visit."
+    answer: "This is the official jq 1.7 C source compiled to WebAssembly via jq-web. Filters are evaluated by jq itself, so they behave as in the jq CLI; the display differs in a few places (see Limits). The engine downloads once (about 1MB compressed) and is cached by your browser for every subsequent visit."
   - question: "What jq features are supported?"
     answer: "Full jq 1.7 syntax — pipes, select, map, group_by, sort_by, reduce, foreach, try/catch, custom function definitions (def), recursive descent (..), string operations, math, date functions, and every built-in. If a filter works in the jq CLI, it works here."
   - question: "Are my JSON and filter expression sent to a server?"
@@ -53,3 +53,25 @@ faqItems:
   <code>group_by(.tag) | map(&#123;tag: .[0].tag, count: length&#125;)</code> to bucket events,
   <code>[.[] | .duration_ms] | add / length</code> to average a numeric field.
 </p>
+
+<h2>Example: An Order Payload</h2>
+<p>With this JSON in the input panel:</p>
+
+```json
+{"order_id": 9007199254740993, "items": [{"sku":"A","qty":2},{"sku":"B","qty":1}]}
+```
+
+<ul>
+  <li><code>.items | map(.qty) | add</code> → <code>3</code> (1 value)</li>
+  <li><code>.items[] | .sku</code> → shown as <code>["A", "B"]</code> (2 values). The jq CLI prints two separate lines, <code>"A"</code> and <code>"B"</code>.</li>
+  <li><code>.a +</code> (an incomplete filter) → <code>jq: error: syntax error, unexpected end of file … jq: 1 compile error</code>, the same compile error the CLI prints.</li>
+</ul>
+
+<h2>Limits</h2>
+<ul>
+  <li>The input is parsed with JavaScript <code>JSON.parse()</code> before jq sees it, so integers above 2<sup>53</sup> lose precision: <code>{'.order_id'}</code> above shows <code>9007199254740992</code>. The jq 1.7 CLI prints <code>9007199254740993</code>.</li>
+  <li>When a filter produces several values, the result panel shows them as one JSON array. A filter that produces one array (<code>[.items[] | .sku]</code>) looks the same, and the counter reports the number of array items in both cases.</li>
+  <li>A filter that produces no output, such as <code>empty</code> or a <code>select</code> that matches nothing at the top level, shows <code>jq error: Cannot read properties of undefined (reading 'trim')</code> instead of an empty result.</li>
+  <li>Command-line options are not available: no <code>-r</code> raw strings, <code>--arg</code>, <code>--slurp</code> or <code>--stream</code>. Results are always shown as pretty-printed JSON.</li>
+  <li>The engine (<code>jq.wasm</code>, about 2.8 MB, about 1 MB gzipped) loads the first time you run a filter.</li>
+</ul>

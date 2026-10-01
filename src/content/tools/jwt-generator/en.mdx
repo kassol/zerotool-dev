@@ -64,11 +64,20 @@ jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"])
 
 <p><code>{"iat"}</code> 1767225600 is 2026-01-01 00:00:00 UTC and <code>{"exp"}</code> is one hour later, so a library that checks expiry rejects the token today. The tool does not add or check <code>{"iat"}</code>, <code>{"exp"}</code> or <code>{"nbf"}</code>; write the timestamps you need yourself (Unix seconds, <a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank" rel="noopener">RFC 7519 §4.1</a>).</p>
 
+<h2>Choosing a Key</h2>
+
+<p>An HMAC-signed JWT is only as strong as its secret. Anyone who holds one token can try candidate secrets offline until a signature matches; hashcat has a mode for exactly this (mode 16500, "JWT (JSON Web Token)"). <a href="https://www.rfc-editor.org/rfc/rfc8725#section-3.5" target="_blank" rel="noopener">RFC 8725 §3.5</a>, the JWT best-practice document, warns that human-memorable passwords must not be used as HMAC keys. Generate random bytes instead and paste them in Base64 mode:</p>
+
+<pre><code>{`openssl rand -base64 32   # HS256
+openssl rand -base64 64   # HS512`}</code></pre>
+
+<p>Select <strong>Base64</strong> under the secret field so the tool signs with the decoded 32 or 64 bytes, the same bytes your server should load. If the server reads the key as a plain string instead, keep UTF-8 mode and paste the same text.</p>
+
 <h2>Limits</h2>
 
 <ul>
   <li>Only HMAC algorithms (HS256, HS384, HS512). RS256 and ES256 tokens need a private key and are not supported.</li>
-  <li><a href="https://www.rfc-editor.org/rfc/rfc7518#section-3.2" target="_blank" rel="noopener">RFC 7518 §3.2</a> requires a key at least as long as the hash output: 32 bytes for HS256, 48 for HS384, 64 for HS512. The tool accepts shorter secrets without a warning.</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc7518#section-3.2" target="_blank" rel="noopener">RFC 7518 §3.2</a> requires a key at least as long as the hash output: 32 bytes for HS256, 48 for HS384, 64 for HS512. The tool still signs with a shorter secret but shows a warning with the byte count; the default sample secret <code>your-256-bit-secret</code> is only 19 bytes and triggers it.</li>
   <li>In Base64 mode the secret is decoded first (standard or URL-safe alphabet, padding optional). Use it when the server stores the key as Base64; otherwise the signature will not match.</li>
   <li>Do not paste production signing secrets into any web page. Use a dedicated test secret.</li>
 </ul>

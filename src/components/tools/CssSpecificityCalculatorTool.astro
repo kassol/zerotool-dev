@@ -29,7 +29,8 @@
           id: 'ID', cls: 'Class / Attr / Pseudo-class', elem: 'Element / Pseudo-element',
           specificity: 'Specificity', noInput: 'Enter a CSS selector above.',
           copyBtn: 'Copy', copied: 'Copied!',
-          note: 'Note: :not(), :is(), :has() use their argument\'s specificity — simplified here.'
+          note: 'Compare left to right: the first column that differs decides. :where() counts 0; :is(), :not(), :has() count as their most specific argument.',
+          invalid: 'Not a valid selector: {msg}'
         },
         zh: {
           inputLabel: 'CSS 选择器',
@@ -38,7 +39,8 @@
           id: 'ID', cls: '类 / 属性 / 伪类', elem: '元素 / 伪元素',
           specificity: '优先级', noInput: '请在上方输入 CSS 选择器。',
           copyBtn: '复制', copied: '已复制!',
-          note: '注意：:not()、:is()、:has() 使用参数的优先级 — 此处为简化计算。'
+          note: '从左往右比较，第一个不同的列决定胜负。:where() 计 0；:is()、:not()、:has() 取参数中优先级最高的一项。',
+          invalid: '不是有效的选择器：{msg}'
         },
         ja: {
           inputLabel: 'CSS セレクター',
@@ -47,7 +49,8 @@
           id: 'ID', cls: 'クラス / 属性 / 疑似クラス', elem: '要素 / 疑似要素',
           specificity: '詳細度', noInput: '上にCSSセレクターを入力してください。',
           copyBtn: 'コピー', copied: 'コピー済み!',
-          note: '注意: :not()・:is()・:has() は引数の詳細度を使用 — ここでは簡略化しています。'
+          note: '左の列から比較し、最初に異なる列で決まります。:where() は 0、:is()・:not()・:has() は引数のうち最も詳細度が高いものを使います。',
+          invalid: '有効なセレクターではありません：{msg}'
         },
         ko: {
           inputLabel: 'CSS 선택자',
@@ -56,7 +59,8 @@
           id: 'ID', cls: '클래스 / 속성 / 가상 클래스', elem: '요소 / 가상 요소',
           specificity: '명시도', noInput: '위에 CSS 선택자를 입력하세요.',
           copyBtn: '복사', copied: '복사됨!',
-          note: '참고: :not(), :is(), :has()는 인수의 명시도를 사용 — 여기서는 단순화됨.'
+          note: '왼쪽 열부터 비교하며 처음 달라지는 열이 결정합니다. :where()는 0, :is()·:not()·:has()는 인수 중 명시도가 가장 높은 것을 씁니다.',
+          invalid: '올바른 선택자가 아닙니다: {msg}'
         }
       };
 
@@ -75,58 +79,195 @@
       var inputEl = document.getElementById('csc-input');
       var resultsEl = document.getElementById('csc-results');
 
-      // Parse specificity: returns {a, b, c}
-      function parseSpec(raw) {
-        var s = raw.trim();
+      /* ── engine:start ── */
+      /* Specificity per Selectors Level 4 §17: a = IDs, b = classes, attributes
+         and pseudo-classes, c = type selectors and pseudo-elements; `*` and
+         combinators count 0. :is() / :not() / :has() count as their most
+         specific argument, :where() counts 0, :nth-child(An+B of S) /
+         :nth-last-child() count one pseudo-class plus the most specific S.
+         ::slotted(), :host() and :host-context() add their argument (CSS Scoping).
+         `&` counts 0 here: its real value is that of the parent rule, which a
+         lone selector does not show. */
+      var LEGACY_PSEUDO_ELEMENTS = { before: 1, after: 1, 'first-line': 1, 'first-letter': 1 };
+      var MAX_OF_ARGS = { is: 1, not: 1, has: 1, matches: 1, '-webkit-any': 1, '-moz-any': 1 };
+
+      function cssError(msg, pos) {
+        var e = new SyntaxError(msg + ' (position ' + (pos + 1) + ')');
+        e.position = pos;
+        return e;
+      }
+
+      /* Index just past a quoted string that starts at i. */
+      function skipString(s, i) {
+        var q = s[i];
+        i++;
+        while (i < s.length && s[i] !== q) {
+          if (s[i] === '\\') i++;
+          i++;
+        }
+        if (i >= s.length) throw cssError('Unclosed string', i - 1);
+        return i + 1;
+      }
+
+      /* Index of the bracket that closes the one at i (`(` or `[`). */
+      function matchClose(s, i) {
+        var stack = [];
+        for (var j = i; j < s.length; j++) {
+          var ch = s[j];
+          if (ch === '\\') { j++; continue; }
+          if (ch === '"' || ch === "'") { j = skipString(s, j) - 1; continue; }
+          if (ch === '(' || ch === '[') stack.push(ch === '(' ? ')' : ']');
+          else if (ch === ')' || ch === ']') {
+            if (stack.pop() !== ch) throw cssError('Unexpected "' + ch + '"', j);
+            if (!stack.length) return j;
+          }
+        }
+        throw cssError('Missing "' + (s[i] === '(' ? ')' : ']') + '"', i);
+      }
+
+      /* Split at commas that are not inside brackets or strings; each item
+         keeps its start index so errors can point into the original text. */
+      function splitRanges(text) {
+        var parts = [], depth = 0, start = 0;
+        function push(end) {
+          var raw = text.slice(start, end);
+          var lead = raw.length - raw.replace(/^\s+/, '').length;
+          var trimmed = raw.trim();
+          if (trimmed) parts.push({ text: trimmed, start: start + lead });
+        }
+        for (var i = 0; i < text.length; i++) {
+          var ch = text[i];
+          if (ch === '\\') { i++; continue; }
+          if (ch === '"' || ch === "'") {
+            var q = ch;
+            i++;
+            while (i < text.length && text[i] !== q) { if (text[i] === '\\') i++; i++; }
+            continue;
+          }
+          if (ch === '(' || ch === '[') depth++;
+          else if ((ch === ')' || ch === ']') && depth > 0) depth--;
+          else if (ch === ',' && depth === 0) { push(i); start = i + 1; }
+        }
+        push(text.length);
+        return parts;
+      }
+      function splitSelectorList(text) {
+        return splitRanges(text).map(function (p) { return p.text; });
+      }
+
+      function isIdentChar(ch) {
+        return /[A-Za-z0-9_-]/.test(ch) || ch.charCodeAt(0) >= 0x80;
+      }
+      /* Read a CSS identifier (with escapes) at i; return the index after it. */
+      function readIdent(s, i) {
+        var start = i;
+        while (i < s.length) {
+          if (s[i] === '\\') {
+            if (i + 1 >= s.length) throw cssError('Escape at end of input', i);
+            i++;
+            if (/[0-9a-fA-F]/.test(s[i])) {
+              var n = 0;
+              while (n < 6 && i < s.length && /[0-9a-fA-F]/.test(s[i])) { i++; n++; }
+              if (i < s.length && /\s/.test(s[i])) i++;
+            } else {
+              i++;
+            }
+          } else if (isIdentChar(s[i])) {
+            i++;
+          } else {
+            break;
+          }
+        }
+        if (i === start || s.slice(start, i) === '-') throw cssError('Expected a name', start);
+        return i;
+      }
+
+      function maxSpec(list) {
+        var best = { a: 0, b: 0, c: 0 };
+        for (var i = 0; i < list.length; i++) {
+          var x = list[i];
+          if (x.a > best.a || (x.a === best.a && (x.b > best.b || (x.b === best.b && x.c > best.c)))) best = x;
+        }
+        return best;
+      }
+      function listSpec(text, offset) {
+        var items = splitRanges(text);
+        if (!items.length) throw cssError('Empty argument', offset);
+        return maxSpec(items.map(function (item) { return complexSpec(item.text, offset + item.start); }));
+      }
+
+      function complexSpec(sel, offset) {
+        offset = offset || 0;
         var a = 0, b = 0, c = 0;
-
-        // Remove pseudo-elements (::xxx) — count as element (c)
-        s = s.replace(/::[\w-]+/g, function () { c++; return ' '; });
-
-        // Legacy single-colon pseudo-elements
-        s = s.replace(/:(?:first-line|first-letter|before|after)\b/g, function () { c++; return ' '; });
-
-        // ID selectors
-        s = s.replace(/#[\w-]+/g, function () { a++; return ' '; });
-
-        // Attribute selectors [...]
-        s = s.replace(/\[[^\]]*\]/g, function () { b++; return ' '; });
-
-        // Class selectors
-        s = s.replace(/\.[\w-]+/g, function () { b++; return ' '; });
-
-        // Functional pseudo-classes with parens (:not(), :is(), :has(), :nth-child(), etc.)
-        // Recursively parse inner selector for specificity pseudo-classes
-        s = s.replace(/:[\w-]+\(([^)]*)\)/g, function (_match, inner) {
-          // :where() has 0 specificity
-          if (/^:where\(/.test(_match)) return ' ';
-          // For :not(), :is(), :has() — use argument specificity (simplified: single simple selector)
-          var innerSpec = parseSpec(inner);
-          a += innerSpec.a;
-          b += innerSpec.b;
-          c += innerSpec.c;
-          return ' ';
-        });
-
-        // Remaining pseudo-classes (:hover, :focus, :nth-child without parens already removed above)
-        s = s.replace(/:[\w-]+/g, function () { b++; return ' '; });
-
-        // Remove combinators and universal selector
-        s = s.replace(/[>~+*&|]/g, ' ');
-
-        // Count remaining element type selectors
-        var elems = s.match(/[a-zA-Z][\w-]*/g);
-        c += (elems || []).length;
-
+        var s = sel;
+        var i = 0;
+        function add(x) { a += x.a; b += x.b; c += x.c; }
+        try {
+          while (i < s.length) {
+            var ch = s[i];
+            if (/\s/.test(ch) || ch === '>' || ch === '+' || ch === '~' || ch === '*' || ch === '&') { i++; continue; }
+            if (ch === '|') { i += s[i + 1] === '|' ? 2 : 1; continue; }
+            if (ch === '#') { i = readIdent(s, i + 1); a++; continue; }
+            if (ch === '.') { i = readIdent(s, i + 1); b++; continue; }
+            if (ch === '[') { i = matchClose(s, i) + 1; b++; continue; }
+            if (ch === ':') {
+              var pseudoElement = s[i + 1] === ':';
+              var nameStart = i + (pseudoElement ? 2 : 1);
+              var nameEnd = readIdent(s, nameStart);
+              var name = s.slice(nameStart, nameEnd).toLowerCase();
+              var arg = null, argStart = 0;
+              i = nameEnd;
+              if (s[i] === '(') {
+                var close = matchClose(s, i);
+                argStart = i + 1;
+                arg = s.slice(argStart, close);
+                i = close + 1;
+              }
+              if (pseudoElement || (arg === null && LEGACY_PSEUDO_ELEMENTS[name])) {
+                c++;
+                if (pseudoElement && name === 'slotted' && arg !== null) add(listSpec(arg, offset + argStart));
+                continue;
+              }
+              if (arg === null) { b++; continue; }
+              if (name === 'where') continue;
+              if (MAX_OF_ARGS[name]) { add(listSpec(arg, offset + argStart)); continue; }
+              b++;
+              if (name === 'nth-child' || name === 'nth-last-child') {
+                var of = /\sof\s/i.exec(arg);
+                if (of) add(listSpec(arg.slice(of.index + of[0].length), offset + argStart + of.index + of[0].length));
+              } else if (name === 'host' || name === 'host-context') {
+                add(listSpec(arg, offset + argStart));
+              }
+              continue;
+            }
+            if (isIdentChar(ch) || ch === '\\') {
+              i = readIdent(s, i);
+              if (s[i] === '|' && s[i + 1] !== '|') { i++; continue; }
+              c++;
+              continue;
+            }
+            throw cssError('Unexpected "' + ch + '"', i);
+          }
+        } catch (e) {
+          if (e && typeof e.position === 'number' && !e.shifted) {
+            var shifted = cssError(e.message.replace(/ \(position \d+\)$/, ''), e.position + offset);
+            shifted.shifted = true;
+            throw shifted;
+          }
+          throw e;
+        }
         return { a: a, b: b, c: c };
       }
 
-      function specValue(spec) {
-        return spec.a * 10000 + spec.b * 100 + spec.c;
+      /* Specificity of one selector (no top-level commas). */
+      function specificity(sel) {
+        if (!sel.trim()) throw cssError('Empty selector', 0);
+        return complexSpec(sel, 0);
       }
+      /* ── engine:end ── */
 
       function escHtml(str) {
-        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       }
 
       function renderResults(selectors) {
@@ -136,19 +277,26 @@
         }
 
         var specs = selectors.map(function (sel) {
-          return { sel: sel, spec: parseSpec(sel) };
+          try { return { sel: sel, spec: specificity(sel) }; }
+          catch (e) { return { sel: sel, error: e.message || String(e) }; }
         });
+        var valid = specs.filter(function (x) { return !x.error; });
 
-        var maxVal = Math.max.apply(null, specs.map(function (s) { return specValue(s.spec); })) || 1;
-        var maxA = Math.max.apply(null, specs.map(function (s) { return s.spec.a; })) || 1;
-        var maxB = Math.max.apply(null, specs.map(function (s) { return s.spec.b; })) || 1;
-        var maxC = Math.max.apply(null, specs.map(function (s) { return s.spec.c; })) || 1;
+        var maxA = Math.max.apply(null, valid.map(function (s) { return s.spec.a; }).concat([1]));
+        var maxB = Math.max.apply(null, valid.map(function (s) { return s.spec.b; }).concat([1]));
+        var maxC = Math.max.apply(null, valid.map(function (s) { return s.spec.c; }).concat([1]));
 
         var html = '';
         specs.forEach(function (item) {
+          if (item.error) {
+            html += '<div class="csc-result-card csc-result-error">';
+            html += '<code class="csc-selector">' + escHtml(item.sel) + '</code>';
+            html += '<p class="csc-error-msg">' + escHtml(t.invalid.replace('{msg}', item.error)) + '</p>';
+            html += '</div>';
+            return;
+          }
           var s = item.spec;
           var tupleStr = '(' + s.a + ', ' + s.b + ', ' + s.c + ')';
-          var barPct = maxVal > 0 ? Math.round((specValue(s) / (maxVal * 1.2 || 1)) * 100) : 0;
 
           html += '<div class="csc-result-card">';
           html += '<div class="csc-result-header">';
@@ -172,9 +320,9 @@
           // Visual bar
           html += '<div class="csc-bar-wrap">';
           html += '<div class="csc-bar-track">';
-          var aPct = maxA > 0 ? Math.round((s.a / maxA) * 100) : 0;
-          var bPct = maxB > 0 ? Math.round((s.b / maxB) * 100) : 0;
-          var cPct = maxC > 0 ? Math.round((s.c / maxC) * 100) : 0;
+          var aPct = Math.round((s.a / maxA) * 100);
+          var bPct = Math.round((s.b / maxB) * 100);
+          var cPct = Math.round((s.c / maxC) * 100);
           html += '<div class="csc-bar-seg csc-bar-a" style="width:' + aPct + '%" title="' + t.id + ': ' + s.a + '"></div>';
           html += '<div class="csc-bar-seg csc-bar-b" style="width:' + bPct + '%" title="' + t.cls + ': ' + s.b + '"></div>';
           html += '<div class="csc-bar-seg csc-bar-c" style="width:' + cPct + '%" title="' + t.elem + ': ' + s.c + '"></div>';
@@ -182,11 +330,11 @@
           html += '</div>';
 
           // Copy button
-          html += '<button class="csc-copy-btn" data-val="' + escHtml(tupleStr) + '">' + t.copyBtn + '</button>';
+          html += '<button class="csc-copy-btn" type="button" data-val="' + escHtml(tupleStr) + '">' + t.copyBtn + '</button>';
           html += '</div>';
         });
 
-        if (specs.length > 1) {
+        if (valid.length > 1) {
           html += '<p class="csc-note">' + t.note + '</p>';
         }
 
@@ -210,7 +358,7 @@
         clearTimeout(_timer);
         _timer = setTimeout(function () {
           var raw = inputEl.value;
-          var parts = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+          var parts = splitSelectorList(raw);
           renderResults(parts);
           if (parts.length) window.trackTool && window.trackTool('css-specificity-calculator', 'calc');
         }, 200);
@@ -261,13 +409,13 @@
 
   .csc-results { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  .csc-empty {
+  .csc-results :global(.csc-empty) {
     color: var(--color-text-muted);
     font-size: 0.9rem;
     margin: 0;
   }
 
-  .csc-result-card {
+  .csc-results :global(.csc-result-card) {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     padding: 0.85rem 1rem;
@@ -277,7 +425,7 @@
     gap: 0.6rem;
   }
 
-  .csc-result-header {
+  .csc-results :global(.csc-result-header) {
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -285,7 +433,7 @@
     justify-content: space-between;
   }
 
-  .csc-selector {
+  .csc-results :global(.csc-selector) {
     font-family: var(--font-mono);
     font-size: 0.9rem;
     color: var(--color-text);
@@ -295,7 +443,7 @@
     word-break: break-all;
   }
 
-  .csc-tuple {
+  .csc-results :global(.csc-tuple) {
     font-family: var(--font-mono);
     font-size: 1rem;
     font-weight: 700;
@@ -303,13 +451,13 @@
     white-space: nowrap;
   }
 
-  .csc-badges {
+  .csc-results :global(.csc-badges) {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
   }
 
-  .csc-badge {
+  .csc-results :global(.csc-badge) {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
@@ -320,24 +468,24 @@
     cursor: help;
   }
 
-  .csc-badge-label {
+  .csc-results :global(.csc-badge-label) {
     font-family: var(--font-mono);
     font-weight: 700;
     opacity: 0.75;
   }
 
-  .csc-badge-val {
+  .csc-results :global(.csc-badge-val) {
     font-family: var(--font-mono);
     font-size: 0.95rem;
   }
 
-  .csc-badge-id   { background: #ede9fe; color: #5b21b6; }
-  .csc-badge-cls  { background: #dbeafe; color: #1d4ed8; }
-  .csc-badge-elem { background: #dcfce7; color: #166534; }
+  .csc-results :global(.csc-badge-id) { background: #ede9fe; color: #5b21b6; }
+  .csc-results :global(.csc-badge-cls) { background: #dbeafe; color: #1d4ed8; }
+  .csc-results :global(.csc-badge-elem) { background: #dcfce7; color: #166534; }
 
-  .csc-bar-wrap { width: 100%; }
+  .csc-results :global(.csc-bar-wrap) { width: 100%; }
 
-  .csc-bar-track {
+  .csc-results :global(.csc-bar-track) {
     display: flex;
     gap: 3px;
     height: 8px;
@@ -346,17 +494,17 @@
     background: var(--color-border);
   }
 
-  .csc-bar-seg {
+  .csc-results :global(.csc-bar-seg) {
     border-radius: 4px;
     min-width: 0;
     transition: width 0.2s ease;
   }
 
-  .csc-bar-a { background: #7c3aed; }
-  .csc-bar-b { background: #2563eb; }
-  .csc-bar-c { background: #16a34a; }
+  .csc-results :global(.csc-bar-a) { background: #7c3aed; }
+  .csc-results :global(.csc-bar-b) { background: #2563eb; }
+  .csc-results :global(.csc-bar-c) { background: #16a34a; }
 
-  .csc-copy-btn {
+  .csc-results :global(.csc-copy-btn) {
     align-self: flex-start;
     padding: 0.3rem 0.8rem;
     font-size: 0.82rem;
@@ -368,21 +516,30 @@
     transition: border-color 0.15s;
   }
 
-  .csc-copy-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .csc-results :global(.csc-copy-btn:hover) { border-color: var(--color-primary); color: var(--color-primary); }
 
-  .csc-note {
+  .csc-results :global(.csc-note) {
     font-size: 0.78rem;
     color: var(--color-text-muted);
     margin: 0;
   }
 
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .csc-badge-id   { background: #3b1f6b; color: #c4b5fd; }
-    :root:not([data-theme="light"]) .csc-badge-cls  { background: #1e3a6b; color: #93c5fd; }
-    :root:not([data-theme="light"]) .csc-badge-elem { background: #14432a; color: #86efac; }
+    :global(:root:not([data-theme="light"])) .csc-results :global(.csc-badge-id) { background: #3b1f6b; color: #c4b5fd; }
+    :global(:root:not([data-theme="light"])) .csc-results :global(.csc-badge-cls) { background: #1e3a6b; color: #93c5fd; }
+    :global(:root:not([data-theme="light"])) .csc-results :global(.csc-badge-elem) { background: #14432a; color: #86efac; }
   }
 
-  [data-theme="dark"] .csc-badge-id   { background: #3b1f6b; color: #c4b5fd; }
-  [data-theme="dark"] .csc-badge-cls  { background: #1e3a6b; color: #93c5fd; }
-  [data-theme="dark"] .csc-badge-elem { background: #14432a; color: #86efac; }
+  :global([data-theme="dark"]) .csc-results :global(.csc-badge-id) { background: #3b1f6b; color: #c4b5fd; }
+  :global([data-theme="dark"]) .csc-results :global(.csc-badge-cls) { background: #1e3a6b; color: #93c5fd; }
+  :global([data-theme="dark"]) .csc-results :global(.csc-badge-elem) { background: #14432a; color: #86efac; }
+  .csc-results :global(.csc-error-msg) {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #b91c1c;
+  }
+  :global([data-theme="dark"]) .csc-results :global(.csc-error-msg) { color: #fca5a5; }
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme="light"])) .csc-results :global(.csc-error-msg) { color: #fca5a5; }
+  }
 </style>

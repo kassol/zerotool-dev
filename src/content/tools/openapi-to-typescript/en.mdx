@@ -58,6 +58,60 @@ export const PetSchema = z.object({
 });`}</code></pre>
 <p>Pair this output with <a href="/tools/typescript-to-zod/">TypeScript to Zod</a> when you want to keep schemas in sync with hand-written types instead of an OpenAPI spec.</p>
 
+<h2>Example: The Built-in Pet Store Spec</h2>
+<p>Click <strong>Example</strong> to load a small OpenAPI 3.0.3 spec with <code>Pet</code> and <code>NewPet</code> schemas and three operations. The schema section of the output:</p>
+<pre><code>{`export interface Pet {
+  id: number;
+  name: string;
+  tag?: string | null;
+  status: "available" | "pending" | "sold";
+  photo?: Blob;
+}
+
+export interface NewPet {
+  name: string;
+  tag?: string;
+}`}</code></pre>
+<p>Required properties stay required, everything else gets <code>?</code>, <code>nullable: true</code> adds <code>| null</code>, and <code>format: binary</code> becomes <code>Blob</code>. With <strong>Include path types</strong> on, <code>getPetById</code> becomes <code>Components.GetPetById</code> with <code>PathParameters &#123; id: number &#125;</code> and <code>Response200 = Pet</code>. With <strong>Include Zod schemas</strong> on, the generated <code>PetSchema</code> (checked with zod 3.25) rejects <code>status: "lost"</code> and accepts <code>tag: null</code>.</p>
+
+<h2>Example: Where 3.1 Output Needs Editing</h2>
+<p>This OpenAPI 3.1 schema uses <code>const</code>, a type array and a reference to another file:</p>
+<pre><code>{`openapi: 3.1.0
+info: { title: Events, version: 1.0.0 }
+paths: {}
+components:
+  schemas:
+    Event:
+      type: object
+      required: [id, kind, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        kind: { const: order.created }
+        createdAt: { type: string, format: date-time }
+        note: { type: [string, 'null'] }
+        owner: { $ref: 'https://example.com/schemas/user.yaml#/User' }`}</code></pre>
+<p>The tool outputs:</p>
+<pre><code>{`export interface Event {
+  id: number;
+  kind: Record<string, unknown>;
+  /** ISO 8601 date-time */ createdAt: string;
+  note?: string | null;
+  owner?: unknown;
+}
+
+export type unknown = unknown;`}</code></pre>
+<p><code>type: [string, "null"]</code> maps correctly to <code>string | null</code>. Three lines need manual work: <code>const</code> is not read, so <code>kind</code> falls back to <code>Record&lt;string, unknown&gt;</code> instead of <code>"order.created"</code>; the external <code>$ref</code> becomes <code>unknown</code>; and the placeholder <code>export type unknown = unknown;</code> does not compile (TypeScript 5.9: "Type alias name cannot be 'unknown'"). Delete that line and type <code>owner</code> by hand.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li>Only <code>#/components/schemas/...</code> references are resolved. References to other files or URLs become <code>unknown</code> plus the invalid <code>export type unknown = unknown;</code> line shown above.</li>
+  <li><code>const</code> is ignored. Use a single-value <code>enum</code> if you need a literal type.</li>
+  <li>Schema names with characters other than letters, digits, <code>{'_'}</code> and <code>$</code> (for example <code>pet-status</code>) are renamed to <code>{'pet_status'}</code>, and the TypeScript side then loses the schema: an enum named <code>pet-status</code> is emitted as <code>{'export type pet_status = unknown;'}</code>. The Zod output keeps the enum.</li>
+  <li>Zod schemas are emitted in the order of <code>components/schemas</code> without <code>z.lazy</code>. If a schema refers to one declared later, or to itself, the module throws a <code>ReferenceError</code> when it loads. Reorder the declarations and wrap recursive references in <code>z.lazy(() =&gt; ...)</code>.</li>
+  <li><code>integer</code> with <code>format: int64</code> becomes <code>number</code>, which loses precision above 2<sup>53</sup>. Change such IDs to <code>string</code> if the API sends them as strings.</li>
+  <li>Path types read only <code>application/json</code> request and response bodies.</li>
+</ul>
+
 <h2>Related tools</h2>
 <ul>
   <li><a href="/tools/openapi-validator/">OpenAPI Validator</a> — sanity-check the spec before generating types.</li>

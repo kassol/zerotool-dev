@@ -268,6 +268,7 @@ const L = labels[lang] ?? labels['en'];
     var fg = '#1f2937';
     var bg = '#f9fafb';
 
+    /* ── engine:start ── */
     /* ── Hex utilities ── */
     function normalizeHex(s) {
       s = (s || '').trim();
@@ -361,17 +362,31 @@ const L = labels[lang] ?? labels['en'];
       };
     }
 
+    /* WCAG compares the exact ratio with the threshold (Understanding 1.4.3:
+       4.499:1 does not meet 4.5:1), so the display truncates instead of rounding. */
+    function formatRatio(r) {
+      return (Math.floor(r * 100 + 1e-9) / 100).toFixed(2);
+    }
+    function roundRgb(rgb) {
+      var c = clampRgb(rgb);
+      return { r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b) };
+    }
+
     /* Suggestion: keep hue & chroma, search lightness for target ratio.
        Tries both directions (lower/raise L) and picks the one that succeeds.
-       BISECTION_ITERS = 22: each iteration halves the L window, so 22 steps
-       resolve to ~2.4e-7 in OKLCH L — well below the precision needed for
-       8-bit sRGB output (≈ 1/255 ≈ 4e-3). 22 also caps the cost at well
-       under 1ms per call so the suggestion runs synchronously on input. */
+       Every trial is rounded to the 8-bit colour that will be shown and copied,
+       and the ratio is measured on that rounded colour, so the suggestion
+       passes as a hex value. Clamping out-of-gamut colours can make the ratio
+       non-monotonic in L, so after bisection the result is checked again and,
+       if needed, L is stepped further until the rounded colour passes.
+       BISECTION_ITERS = 22 resolves L to ~2.4e-7, far below one 8-bit step. */
     var BISECTION_ITERS = 22;
+    var WALK_STEP = 1 / 512;
     function suggestFix(fgRgb, bgRgb, target) {
       var fgLch = rgbToOklch(fgRgb);
       var directions = [-1, 1];
       var best = null;
+      function at(L) { return roundRgb(oklchToRgb({ L: L, C: fgLch.C, h: fgLch.h })); }
 
       for (var d = 0; d < directions.length; d++) {
         var dir = directions[d];
@@ -382,10 +397,7 @@ const L = labels[lang] ?? labels['en'];
         // Bisect: find smallest L delta from start that meets target.
         for (var i = 0; i < BISECTION_ITERS; i++) {
           var mid = (lo + hi) / 2;
-          var trial = clampRgb(oklchToRgb({ L: mid, C: fgLch.C, h: fgLch.h }));
-          var r = contrast(trial, bgRgb);
-          if (r >= target) {
-            // Closer to start passes — narrow the window toward start.
+          if (contrast(at(mid), bgRgb) >= target) {
             hi = mid;
           } else {
             lo = mid;
@@ -393,9 +405,14 @@ const L = labels[lang] ?? labels['en'];
         }
 
         var finalL = hi;
-        var finalRgb = clampRgb(oklchToRgb({ L: finalL, C: fgLch.C, h: fgLch.h }));
+        var finalRgb = at(finalL);
         var actualRatio = contrast(finalRgb, bgRgb);
-        if (actualRatio >= target * 0.99) {
+        while (actualRatio < target && finalL !== endL) {
+          finalL = dir < 0 ? Math.max(0, finalL - WALK_STEP) : Math.min(1, finalL + WALK_STEP);
+          finalRgb = at(finalL);
+          actualRatio = contrast(finalRgb, bgRgb);
+        }
+        if (actualRatio >= target) {
           var deltaL = Math.abs(finalL - startL);
           if (!best || deltaL < best.deltaL) {
             best = { rgb: finalRgb, ratio: actualRatio, deltaL: deltaL };
@@ -412,6 +429,8 @@ const L = labels[lang] ?? labels['en'];
       }
       return best;
     }
+
+    /* ── engine:end ── */
 
     /* ── DOM update ── */
     function setStatus(el, ratio, threshold) {
@@ -433,7 +452,7 @@ const L = labels[lang] ?? labels['en'];
       preview.style.backgroundColor = bg;
       preview.style.color = fg;
 
-      ratioVal.textContent = ratio.toFixed(2) + ' : 1';
+      ratioVal.textContent = formatRatio(ratio) + ' : 1';
 
       var headline = ratio >= 7 ? 'AAA' : ratio >= 4.5 ? 'AA' : null;
       if (headline) {
@@ -455,7 +474,7 @@ const L = labels[lang] ?? labels['en'];
         var hex = rgbToHex(fix.rgb.r, fix.rgb.g, fix.rgb.b);
         sugSw.style.background = hex;
         sugHex.textContent = hex.toUpperCase();
-        sugRatio.textContent = '→ ' + fix.ratio.toFixed(2) + ' : 1';
+        sugRatio.textContent = '→ ' + formatRatio(fix.ratio) + ' : 1';
         sugWrap.hidden = false;
         applyBtn.dataset.hex = hex;
         copyFix.dataset.hex = hex;

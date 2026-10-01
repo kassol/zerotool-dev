@@ -60,3 +60,34 @@ faqItems:
   The validator parses every non-empty line with <code>JSON.parse()</code>. Successful lines are counted as valid records.
   Failed lines appear in the issue panel with the line number, parser message, and a short preview of the original line.
 </p>
+
+<h2>Example: One Bad Line in a Three-Line Export</h2>
+<p>Paste this into the JSONL panel and click <strong>Validate</strong>:</p>
+
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+<p>The counters show 3 lines, 2 valid, 1 error, 0 empty. The issue panel lists <strong>Line 2</strong> with the browser's parser message; Chrome reports <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code> (the position counts from the start of that line). Firefox and Safari word the message differently. <strong>JSONL → JSON</strong> stops with an error until you fix the line or tick <strong>Convert valid lines only</strong>; with the option on, the tool outputs records 1 and 3 and reports "Converted 2 JSONL records to a JSON array."</p>
+
+<h2>Command-Line Equivalents</h2>
+<p>For repeatable scripts, <a href="https://jqlang.org/manual/" target="_blank" rel="noopener">jq</a> does the same conversions (jq 1.7.1 output):</p>
+
+```bash
+jq -c '.[]' data.json > data.jsonl   # JSON array → JSONL
+jq -s '.' data.jsonl > data.json     # JSONL → JSON array
+jq -c . bad.jsonl                    # stops at the first bad line:
+# jq: parse error: Expected another key-value pair at line 2, column 28
+```
+
+<p>jq stops at the first error. The tool parses every line and lists all failing lines at once.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li>Numbers are parsed with JavaScript <code>JSON.parse()</code>, so integers above 2<sup>53</sup> lose precision in both directions: <code>{`{"order_id":9007199254740993}`}</code> comes out as <code>9007199254740992</code>. jq 1.7 keeps the original literal. Store large IDs as strings if they must survive the round trip.</li>
+  <li><strong>JSON → JSONL</strong> accepts only a top-level array. An object or a single value produces "JSON input must be an array."</li>
+  <li>Each record must sit on one line. A pretty-printed object spread across several lines fails on every line it spans. Lines are split on line feeds and trimmed, so Windows CRLF files work.</li>
+  <li>The issue panel shows the first 40 failing lines; the error counter still counts all of them.</li>
+</ul>

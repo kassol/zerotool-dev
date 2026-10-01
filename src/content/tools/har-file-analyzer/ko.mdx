@@ -5,7 +5,7 @@ faqItems:
   - question: "HAR 파일이란 무엇인가요?"
     answer: "HAR(HTTP Archive)는 JSON 기반 아카이브 형식으로 브라우저 한 세션의 모든 네트워크 요청 — URL, 메서드, 상태, 헤더, 쿠키, 타이밍, 본문 — 을 기록합니다. Chrome, Firefox, Safari, Edge DevTools 모두 Network 패널을 .har로 내보낼 수 있습니다."
   - question: "브라우저에서 HAR을 어떻게 내보내나요?"
-    answer: "Chrome / Edge DevTools에서 Network 패널을 열고 임의의 행을 우클릭한 뒤 'Save all as HAR with content'를 선택합니다. Firefox는 같은 메뉴의 'Save All As HAR', Safari는 Network 패널 우측 상단 톱니바퀴에서 내보낼 수 있습니다."
+    answer: "Chrome / Edge DevTools에서 Network 패널을 열고 상단 작업 표시줄의 'Export HAR (sanitized)'를 누르거나, 요청을 우클릭해 Copy > Save all as HAR (sanitized)를 선택합니다. sanitized 파일에는 Cookie, Set-Cookie, Authorization 헤더가 빠집니다. 이를 포함해 내보내려면 먼저 Settings > Preferences > Network에서 'Allow to generate HAR with sensitive data'를 켜야 합니다. Firefox는 요청 우클릭 메뉴의 'Save All As HAR', Safari는 Network 패널 우측 상단 톱니바퀴에서 내보낼 수 있습니다."
   - question: "HAR이 업로드되나요?"
     answer: "아니요. FileReader로 브라우저 내에서 완전히 파싱합니다. 서버 전송 없음, 가입 불필요, 추적 없음. 리셋을 누르면 메모리 상태가 지워지고, 페이지 리로드를 통해 HAR을 영구 저장하지도 않습니다."
   - question: "워터폴의 6가지 색은 무엇을 의미하나요?"
@@ -38,3 +38,20 @@ faqItems:
 
 <h2>개인정보 보호</h2>
 <p>HAR에는 Authorization, Cookie, 응답 본문 등 민감한 정보가 자주 포함됩니다. 호스팅된 분석기에 업로드하는 것은 위험합니다. ZeroTool은 <code>FileReader</code> + <code>JSON.parse</code>로 브라우저 내에서 처리하며 업로드도 리로드를 넘어선 저장도 하지 않습니다.</p>
+
+<h2>예시: cURL로 요청 다시 보내기</h2>
+<p>HTTP/2로 <code>{'{"note":"costs $5"}'}</code>를 POST한 Chrome HAR 항목이라면 상세 보기의 cURL 탭은 다음을 만듭니다.</p>
+
+```bash
+curl -X "POST" "https://api.example.com/v1/orders" -H ":authority: api.example.com" -H "content-type: application/json" -H "cookie: session=abc123" --data-raw "{\"note\":\"costs $5\"}"
+```
+
+<p>실행 전에 명령을 확인하세요. 값이 큰따옴표로 감싸져 있어 POSIX 셸이 <code>$5</code>를 확장하고, 서버는 <code>{'{"note":"costs "}'}</code>를 받습니다(curl 8.7.1, 로컬 서버로 확인). 본문에 <code>$</code>, 백틱, <code>{'\\'}</code>가 있으면 본문 양쪽 따옴표를 작은따옴표로 바꾸세요. <code>:authority</code> 같은 HTTP/2 의사 헤더는 HAR에서 그대로 복사됩니다. curl 8.7.1은 이를 보내지 않으므로 문제는 없지만 지워도 됩니다.</p>
+
+<h2>제한</h2>
+<ul>
+  <li>50MB를 넘는 파일은 '파일이 너무 큽니다'로 거부됩니다.</li>
+  <li><code>log.entries</code> 배열이 있는 JSON이어야 합니다. 다른 JSON은 '이 JSON은 HAR 아카이브가 아닙니다 — log.entries 누락.'으로 표시됩니다.</li>
+  <li>쿠키나 토큰을 지우지 않습니다. HAR를 민감한 데이터 포함으로 내보냈다면 상세 보기, 내보낸 .har 하위 집합, '전체 cURL 복사'에 파일의 모든 헤더(<code>Cookie</code>, <code>Authorization</code> 포함)가 들어갑니다. Chrome의 기본 sanitized 내보내기에는 이 세 헤더가 처음부터 빠져 있습니다.</li>
+  <li>값이 <code>-1</code>인 타이밍 필드는 해당 요청에 그 단계가 없었다는 뜻이며(재사용한 연결에는 DNS·연결 시간이 없음 등) N/A로 표시됩니다.</li>
+</ul>

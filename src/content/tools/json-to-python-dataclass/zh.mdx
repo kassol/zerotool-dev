@@ -5,7 +5,7 @@ faqItems:
   - question: "这个工具生成什么？"
     answer: "从 JSON 生成 Python 类定义，可选标准 @dataclass（stdlib）、Pydantic v2 BaseModel 或 TypedDict。每个嵌套对象都会成为独立的命名类。"
   - question: "支持哪些输出模式？"
-    answer: "三种模式：@dataclass（Python 标准库，默认）、Pydantic v2 BaseModel、TypedDict（Python 3.8+）。"
+    answer: "三种模式：@dataclass（Python 标准库，默认）、Pydantic v2 BaseModel、TypedDict（Python 3.8+；用到 NotRequired 时需 3.11+ 或 typing_extensions）。"
   - question: "JSON 类型如何映射到 Python 类型？"
     answer: "string→str、integer→int、float→float、boolean→bool、null→Optional[Any]、array→List[T]、嵌套对象→独立类。"
   - question: "何时字段标记为 Optional？"
@@ -88,13 +88,30 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 <ul>
   <li><strong>@dataclass</strong> 不校验也不转换。<code>{"Root(**data)"}</code> 里的嵌套对象仍是普通 dict，类型不对也照样接受。数据可信时再用，或者自己转换嵌套字段。</li>
   <li><strong>Pydantic</strong> 会校验类型并构造嵌套模型，适合处理你控制不了的 API 响应。<code>{"model_validate_json(raw)"}</code> 一步完成解析和校验。</li>
-  <li><strong>TypedDict</strong> 只给类型检查器描述 dict 的结构，运行时什么都不检查。所有键默认都是必需的，只在部分元素里出现的键应写成 <code>{"NotRequired[str"}</code>]（Python 3.11+），而不是 <code>{"Optional[str"}</code>]。</li>
+  <li><strong>TypedDict</strong> 只给类型检查器描述 dict 的结构，运行时什么都不检查。所有键默认都是必需的，工具把只在部分元素里出现的键写成 <code>{"NotRequired[...]"}</code>（PEP 655，Python 3.11+ 在 <code>typing</code> 中，更早版本用 <code>typing_extensions</code>）。<code>{"Optional[...]"}</code> 只表示值可以是 <code>None</code>，键仍然必需。</li>
 </ul>
+
+<h2>示例：带缺失键的 TypedDict</h2>
+
+<p>两个商品：<code>note</code> 在第一个里为 null、在第二个里缺失，<code>discount</code> 只出现在第二个里（根类名 <code>Product</code>，TypedDict 模式）：</p>
+
+<pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`from typing import Any, NotRequired, Optional, TypedDict
+
+class Product(TypedDict):
+    id: int
+    sku: str
+    price: float
+    note: NotRequired[Optional[Any]]
+    discount: NotRequired[float]`}</code></pre>
+
+<p><code>price</code> 一个是 <code>2</code>、一个是 <code>1.5</code>，PEP 484 允许 <code>int</code> 当作 <code>float</code> 使用，所以字段是 <code>float</code>。运行时 <code>Product.__required_keys__</code> 为 <code>{"{'id', 'sku', 'price'}"}</code>，<code>__optional_keys__</code> 为 <code>{"{'note', 'discount'}"}</code>（Python 3.12 实测）。</p>
 
 <h2>限制</h2>
 
 <ul>
-  <li><code>{"null"}</code> 会变成 <code>{"Optional[Any"}</code>]，请把 <code>{"Any"}</code> 换成真实类型。</li>
+  <li><code>{"null"}</code> 会变成 <code>{"Optional[Any]"}</code>，请把 <code>{"Any"}</code> 换成真实类型。</li>
   <li>不是合法 Python 标识符的键（如 <code>{"user-id"}</code>，或 <code>{"class"}</code> 这样的关键字）需要改名，Pydantic 里再配 <code>{"Field(alias=\"user-id\")"}</code>。</li>
   <li>日期保持为 <code>{"str"}</code>；把类型改成 <code>{"datetime"}</code> 后，Pydantic 会解析 ISO 8601 字符串。</li>
   <li>根节点是基础类型数组时不生成类。</li>

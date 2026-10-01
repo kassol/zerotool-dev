@@ -4,10 +4,11 @@ description: "지시문, 해시, nonce로 프로덕션급 Content-Security-Polic
 pubDate: 2026-05-09
 updatedDate: 2026-05-09
 lang: "ko"
+noindex: true
 tags: ["csp", "web-security", "xss-prevention", "developer-tools"]
 ---
 
-보안 리뷰가 책상 위에 떨어지는 날의 전개는 보통 똑같다. 누군가 프로덕션에 Mozilla Observatory나 Lighthouse를 돌린다. 보고서는 `Content-Security-Policy` 헤더가 빠졌다고 표시한다. MDN을 열어 30개 남짓한 지시문을 훑어보고 "그럴듯한" 정책을 작성해 배포한다. 이틀 뒤 에러 트래커는 망가진 stripe.js, 로드 안 되는 Google Fonts로 가득하고 Sentry 인박스는 끝없이 스크롤된다. 정책을 롤백한다. 6개월 뒤 같은 일이 반복된다.
+CSP 작업은 흔히 이렇게 시작된다. Mozilla Observatory 같은 검사 도구가 `Content-Security-Policy` 헤더가 없다고 보고하고, 누군가 MDN을 훑어본 뒤 그럴듯한 정책을 써서 바로 강제 모드로 배포한다. 그러면 결제 위젯, 웹 폰트, 오류 추적 스크립트가 줄줄이 깨지고, 정책은 롤백되며, 헤더는 다음 리뷰까지 빠진 채로 남는다.
 
 CSP는 크로스사이트 스크립팅과 클릭재킹에 대한 가장 강력한 브라우저 측 방어 수단 중 하나이고, 가장 망치기 쉬운 수단 중 하나이기도 하다. 지시문이 많고, 구문은 너그럽지 않으며, 비슷한 이름의 헤더 셋이 미묘하게 다른 동작을 하고, 해시·nonce·`'unsafe-inline'`의 관계는 명세를 두 번 읽지 않으면 명확하지 않다. ZeroTool의 [CSP 헤더 생성기](/ko/tools/csp-header-generator/)는 작업대를 제공한다: 프리셋을 고르고, 필요한 키워드 칩을 클릭하고, 인라인 스크립트를 붙여넣어 해시를 계산하고, 결과를 HTTP 헤더, HTML `<meta>` 태그, Express 미들웨어 스니펫, Nginx 지시문 형태로 복사한다. 본 가이드는 사용법, 엄격 프리셋에 담긴 설계 결정, 그리고 검증 패널이 가리키는 함정들을 설명한다.
 
@@ -15,7 +16,7 @@ CSP는 크로스사이트 스크립팅과 클릭재킹에 대한 가장 강력�
 
 Content Security Policy는 HTTP 응답 헤더다. 브라우저는 페이지 로드 시 한 번 파싱한 뒤, 그 페이지가 가져오려는 모든 리소스—스크립트, 스타일시트, 이미지, 폰트, 프레임, 커넥션, prefetch—를 허용할지 차단할지 결정한다. CSP가 없으면 페이지는 어떤 URL이든 가져올 수 있다. 엄격한 CSP가 있으면 페이지는 명시적으로 신뢰한 것만 가져올 수 있고, 공격자가 HTML에 `<script>` 태그를 주입하더라도 브라우저가 실행을 거부한다. 같은 메커니즘이 `frame-ancestors`로 프레이밍 공격을, `base-uri`로 base 태그 하이재킹을, `form-action`으로 폼 데이터 유출을 막는다.
 
-CSP는 입력 새니타이즈, 출력 인코딩, 템플릿 자동 이스케이프를 대체하지 않는다. 마지막 방어선이며, 다른 모든 것을 빠져나간 XSS 페이로드를 잡아내는 선이다. 현대의 [W3C CSP3 명세](https://www.w3.org/TR/CSP3/), Google의 CSP Evaluator, OWASP의 strict CSP 가이드는 모두 같은 골격으로 수렴한다: 인라인 스크립트엔 nonce 또는 해시, 자식 스크립트가 신뢰를 상속받도록 `'strict-dynamic'`, 1차 자원엔 `'self'`, `object-src`엔 `'none'`—레거시 플러그인 콘텐츠가 단연 최대 XSS 우회 표면이기 때문이다.
+CSP는 입력 새니타이즈, 출력 인코딩, 템플릿 자동 이스케이프를 대체하지 않는다. 마지막 방어선이며, 다른 모든 것을 빠져나간 XSS 페이로드를 잡아내는 선이다. 현대의 [W3C CSP3 명세](https://www.w3.org/TR/CSP3/), Google의 CSP Evaluator, OWASP의 strict CSP 가이드는 모두 같은 골격으로 수렴한다: 인라인 스크립트엔 nonce 또는 해시, 자식 스크립트가 신뢰를 상속받도록 `'strict-dynamic'`, 1차 자원엔 `'self'`, `object-src`엔 `'none'`—플러그인 콘텐츠는 스크립트 제한을 우회하는 알려진 경로이기 때문이다.
 
 ## 다섯 가지 흔한 작업 흐름
 
@@ -31,7 +32,7 @@ CSP는 입력 새니타이즈, 출력 인코딩, 템플릿 자동 이스케이�
 
 ## 작업대 레이아웃
 
-페이지를 열면 상단 툴바가 프리셋과 모드를 담당한다. Strict 프리셋은 OWASP의 "strict CSP" 권고에 대응한다: `script-src`에 `'self' 'strict-dynamic'`, `object-src`에 `'none'`, `base-uri`와 `form-action`에 `'self'`. Moderate는 `style-src`에 `'unsafe-inline'`을 더한다—오래된 CSS-in-JS 라이브러리는 여전히 인라인 스타일을 내보낸다. `img-src`엔 `https:`도 추가, 대부분의 프로덕트 사이트는 몇 개 CDN에서 이미지를 가져오기 때문이다. Basic은 `default-src 'self'` 한 줄만 주고 지시문을 한 줄씩 쌓아 가게 한다. Empty는 정확히 무엇을 쓸지 이미 알고 있는 경우를 위한 백지다.
+페이지를 열면 상단 툴바에서 프리셋과 모드를 고른다. 처음 상태는 Strict 프리셋의 Enforce 모드다. Strict는 `script-src 'self' 'strict-dynamic'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`을 설정한다. 이는 [web.dev](https://web.dev/articles/strict-csp)와 OWASP가 설명하는 nonce 기반 strict CSP의 출발점일 뿐, 그 정책 자체는 아니다. `'strict-dynamic'`을 지원하는 브라우저에서는 옆의 `'self'`가 무시되므로, `script-src`에 nonce나 해시를 넣기 전까지 페이지의 스크립트는 하나도 실행되지 않는다. Moderate는 `style-src`에 `'unsafe-inline'`을 더하고(오래된 CSS-in-JS 라이브러리가 여전히 인라인 스타일을 내보내므로), `img-src`에 `https:`를 더한다(대부분의 제품 사이트가 여러 CDN에서 이미지를 가져오므로). Basic은 `default-src 'self'`만 두어 지시문을 하나씩 쌓게 하고, Empty는 원하는 것이 정확히 정해져 있을 때 빈 상태에서 시작한다.
 
 Mode 토글은 `Content-Security-Policy`(강제 Enforce)와 `Content-Security-Policy-Report-Only`(보고만)를 전환한다. Report-Only는 위반을 `report-uri` 또는 `report-to` 엔드포인트로 보내기만 하고 아무것도 막지 않는다. 이것이 **먼저** 배포하는 모드다.
 
@@ -62,7 +63,7 @@ Mode 토글은 `Content-Security-Policy`(강제 Enforce)와 `Content-Security-Po
 
 두 가지 모두 `'strict-dynamic'`과 잘 결합한다. 어떤 스크립트가 신뢰되면(해시 또는 nonce 경유), `'strict-dynamic'`이 "그 스크립트가 로드하는 어떤 스크립트도 신뢰한다"고 추이적으로 선언한다. 즉, 그 신뢰된 스크립트가 가져올 수 있는 모든 CDN을 일일이 나열할 필요가 없다. 또한 공격자가 합법적으로 허용 목록에 오른 CDN에 자기 페이로드를 호스팅하는 종류의 우회를 막아준다—`'strict-dynamic'`이 자식 스크립트에 대해 호스트 기반 허용 목록을 무효화하기 때문이다.
 
-미묘한 점: `script-src`에 해시나 nonce가 있으면 현대 브라우저는 `'unsafe-inline'`을 무시한다. 이것이 명세의 "strict mode"다: 해시나 nonce를 쓸 만큼 정교하다면, 브라우저는 `'unsafe-inline'`을 구형 브라우저용 호환 힌트로 취급하고 그 외에는 버린다. 도구의 검증 패널은 이를 정보 수준의 노트로 표면화한다—두 키워드가 함께 나열되어도 당황하지 않게 말이다.
+미묘한 점: `script-src`에 해시나 nonce가 있으면 CSP Level 2 이상을 지원하는 브라우저는 그 지시문의 `'unsafe-inline'`을 무시한다. 해시와 nonce를 모르는 오래된 브라우저는 `'unsafe-inline'`을 따르므로, 둘을 함께 두어도 하위 호환이 유지된다. 도구의 검증 패널은 이를 정보 수준 메모로 보여 주므로 두 키워드가 함께 보여도 당황할 필요 없다.
 
 ## 검증기가 지켜보는 다섯 가지 함정
 
@@ -72,11 +73,11 @@ CSP3 명세는 분명하다: 소스 목록에 `'none'`이 있으면 다른 모�
 
 ### `frame-ancestors`는 HTTP 전용
 
-HTML `<meta http-equiv="Content-Security-Policy">` 태그는 존재하지만, CSP가 그 경로로 도착할 때 의도적으로 무시되는 네 가지 지시문이 있다: `frame-ancestors`, `sandbox`, `report-uri`, `report-to`. 이유는 이 지시문들이 문서가 완전히 파싱되기 전에 효력을 발휘해야 하는데, meta 태그는 문서 중간에서 파싱되기 때문이다. GitHub Pages 같은 정적 호스트에서 프레이밍 보호가 필요하면 진짜 헤더를 보내야 한다—보통 CDN이나 worker를 통해서.
+HTML `<meta http-equiv="Content-Security-Policy">` 태그는 존재하지만, [CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element)은 그 안에서 `frame-ancestors`, `report-uri`, `sandbox` 세 지시문을 지원하지 않는다. Report-Only 헤더는 `<meta>` 형태 자체가 없다. 도구는 `<meta>` 출력에서 `report-to`도 뺀다. GitHub Pages 같은 정적 호스트에서 프레임 삽입을 막으려면 실제 헤더를 보내야 한다—보통 CDN이나 워커를 통해서다.
 
 ### `default-src` 누락은 폴백을 잃는다
 
-여러 fetch 지시문(`script-src`, `style-src`, `img-src` 등)은 명시되지 않으면 `default-src`로 폴백한다. 미래 CSP 개정에서 추가되는 새 지시문도 호환을 위해 `default-src`로 폴백한다. `default-src`를 완전히 빼면 정책이 취약하다: 브라우저가 새 지시문을 출시하는 날, 사이트는 조용히 그것을 허용해버린다. `default-src 'self'` 한 줄이라도 없는 것보단 낫다.
+fetch 지시문(`script-src`, `style-src`, `img-src`, `connect-src` 등)은 지정하지 않으면 `default-src`로 대체된다. `base-uri`, `form-action`, `frame-ancestors` 같은 문서·탐색 지시문은 대체되지 않으므로 따로 써야 한다. `default-src`를 빼면 깜빡한 fetch 지시문은 제한이 없어진다. `default-src 'self'` 한 줄이라도 없는 것보다 낫다.
 
 ### `http:`는 "정책 없음"과 같지 않다
 
@@ -96,7 +97,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'stric
 ```
 
 ```apache
-# Apache: .htaccess 또는 httpd.conf, "always"는 암묵적
+# Apache: .htaccess 또는 httpd.conf. "always"로 오류 응답에도 붙임
 Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
 ```
 
@@ -114,7 +115,7 @@ app.use(helmet.contentSecurityPolicy({
 }));
 ```
 
-```toml
+```text
 # Cloudflare Pages _headers 파일
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'
@@ -133,13 +134,13 @@ Vercel은 같은 문자열을 `vercel.json`의 `headers` 배열에 붙여넣는�
 5. **enforce로 전환**한다—헤더 이름을 `Content-Security-Policy-Report-Only`에서 `Content-Security-Policy`로 바꾼다. 도구의 Mode 토글이 한 번 클릭으로 처리해준다.
 6. **enforce 후에도 보고서 수집을 계속한다**. 새 SDK, 새 서드파티 스크립트, 새 페이지가 정책에 걸린다. 보고 엔드포인트는 조기 경보 시스템이다.
 
-이 계획을 탈선시키는 두 가지 실패 모드: 1단계 건너뛰기(첫날 바로 Enforce), 보고 엔드포인트를 쓰기 전용으로 취급(보고서를 수집하지만 읽지 않음). 도구는 Strict 프리셋을 처음 고르면 Mode를 Report-Only로 기본 설정해 1단계를 권장한다. 보고 엔드포인트는 본인의 책임이다.
+이 계획을 탈선시키는 두 가지 실패 모드: 1단계 건너뛰기(첫날 바로 Enforce), 보고 엔드포인트를 쓰기 전용으로 취급(보고를 모으기만 하고 읽지 않음). 도구는 Enforce 모드로 열리므로 첫 헤더를 복사하기 전에 모드를 Report-Only로 바꾸자. 보고 엔드포인트는 직접 마련해야 한다.
 
 ## 기존 CSP 도구와의 차이
 
-[Report URI의 CSP Wizard](https://report-uri.com/home/generate)와 [csper.io](https://csper.io/)는 사이트의 실제 트래픽을 관찰해 정책을 만든다—이미 CSP를 배포했고 다듬고 싶을 때 좋다. 0에서 출발해 첫날에 합리적인 프리셋이 필요하다면 그리 좋지 않다. OWASP CSP Generator는 미리보기와 검증이 없는 JSON 폼이다. 현재 사이트의 CSP를 보여주는 Chrome 확장 다수는 점검에는 유용하지만 작성에는 부적합하다.
+[Report URI의 CSP Wizard](https://report-uri.com/home/generate)는 사이트가 보내는 위반 보고서로 정책을 만든다. Report-Only 헤더를 배포한 뒤에는 유용하지만, 아직 보고서가 없는 첫날에는 쓸모가 적다. 사이트의 현재 CSP를 보여 주는 브라우저 확장은 확인용으로는 좋아도 작성용은 아니다.
 
-ZeroTool의 도구는 범위가 더 작고 실행이 더 깔끔하다. 계정도 없고 트래픽 캡처도 없고 텔레메트리도 없다—정책은 브라우저 탭을 떠나지 않는다. 검증 패널은 모든 이론적 위반을 카탈로그하지 않고 실제로 배포를 부수는 다섯 가지 함정만 표면화한다. 해시 계산기는 SubtleCrypto로 브라우저에서 돈다, 그래서 프로덕션 코드를 붙여넣어도 로깅을 걱정할 필요가 없다. 네 개 출력 형식은 실제로 배포하는 표면을, 그 표면이 실제로 받아들이는 구문으로 덮는다.
+ZeroTool의 도구는 범위가 더 작고 실행이 더 깔끔하다. 계정도 없고 트래픽 캡처도 없다—정책은 브라우저 탭을 떠나지 않는다. 검증 패널은 모든 이론적 위반을 카탈로그하지 않고 실제로 배포를 부수는 다섯 가지 함정만 표면화한다. 해시 계산기는 SubtleCrypto로 브라우저에서 돈다, 그래서 프로덕션 코드를 붙여넣어도 로깅을 걱정할 필요가 없다. 네 개 출력 형식은 실제로 배포하는 표면을, 그 표면이 실제로 받아들이는 구문으로 덮는다.
 
 ## 더 읽기
 

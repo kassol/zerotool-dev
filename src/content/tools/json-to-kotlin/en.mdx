@@ -1,15 +1,15 @@
 ---
 seoTitle: "JSON to Kotlin Data Class Generator | ZeroTool"
-seoDescription: "Generate Kotlin data classes from JSON instantly. Handles nested objects, arrays, nullable fields, and custom root class names. Free, runs in your browser."
+seoDescription: "Generate Kotlin data classes for kotlinx.serialization from JSON. Imports included, Int / Long / Double by value, JsonElement for unknown types, nested classes. Runs in your browser."
 faqItems:
   - question: "What does this tool generate?"
-    answer: "It generates Kotlin data class declarations annotated with @Serializable (kotlinx.serialization). Each nested object becomes its own named data class."
+    answer: "Kotlin data classes annotated with @Serializable for kotlinx.serialization, with the import lines they need. Each nested object becomes its own class. The output compiles with the kotlinx.serialization compiler plugin and decodes the sample with the default Json configuration."
   - question: "How are nullable fields handled?"
-    answer: "If a JSON field's value is null, the corresponding Kotlin type is marked nullable (e.g. String?). Fields missing from some array items are also marked nullable and use null as the default."
+    answer: "If a JSON field's value is null, the Kotlin type is marked nullable (e.g. String?). Fields missing from some array items are also nullable and default to null. A field that is only ever null becomes JsonElement?, because the sample does not show its real type."
   - question: "What are the default values for each type?"
-    answer: "String defaults to empty string \"\", Int to 0, Double to 0.0, Boolean to false, List to emptyList(), nullable types to null, and nested data classes call their zero-arg constructor."
-  - question: "Why are @SerialName annotations added?"
-    answer: "When a JSON key cannot be represented as a valid Kotlin identifier (e.g. contains hyphens or spaces), or when camelCase conversion changes the name, @SerialName preserves the original JSON key name."
+    answer: "String defaults to \"\", Int to 0, Long to 0L, Double to 0.0, Boolean to false, List to emptyList(), JsonElement to JsonNull, nullable types to null, and nested classes call their no-argument constructor. Defaults let a missing key decode instead of failing."
+  - question: "Why does the output use JsonElement instead of Any?"
+    answer: "kotlinx.serialization has no serializer for Any, so a @Serializable class with an Any field does not compile. JsonElement is the type the library provides for JSON of unknown shape. It is used for null-only fields, empty arrays and values whose type differs between samples."
   - question: "Is my data sent to a server?"
     answer: "No. The entire conversion runs in your browser. No data leaves your machine."
 ---
@@ -17,37 +17,36 @@ faqItems:
 <h2>How to Use</h2>
 <ol>
   <li>Paste or type your JSON into the left panel. The tool validates it in real time.</li>
-  <li>Optionally set a <strong>Root class name</strong> (default: <code>RootObject</code>).</li>
+  <li>Optionally set a <strong>Root class name</strong> (default: <code>RootObject</code>). Spaces and symbols are removed and the name is written in PascalCase.</li>
   <li>Click <strong>Generate Kotlin</strong> or wait for real-time conversion.</li>
-  <li>Click <strong>Copy</strong> to copy the output to your clipboard.</li>
+  <li>Click <strong>Copy</strong> to copy the output, imports included, into a <code>.kt</code> file.</li>
 </ol>
 
 <h2>Type Mapping</h2>
 <ul>
-  <li><code>null</code> → <code>Any?</code></li>
-  <li>string → <code>String</code></li>
-  <li>integer number → <code>Int</code></li>
-  <li>floating-point number → <code>Double</code></li>
-  <li>boolean → <code>Boolean</code></li>
-  <li>array → <code>List&lt;T&gt;</code></li>
-  <li>nested object → separate <code>data class</code></li>
+  <li>string → <code>String</code>; boolean → <code>Boolean</code></li>
+  <li>whole number from −2,147,483,648 to 2,147,483,647 → <code>Int</code>; larger → <code>Long</code>; beyond the <code>Long</code> range → <code>Double</code></li>
+  <li>number written with a decimal point or exponent (<code>9.5</code>, <code>19.0</code>, <code>1e3</code>) → <code>Double</code></li>
+  <li>array → <code>List&lt;T&gt;</code>; <code>Int</code>, <code>Long</code> and <code>Double</code> elements widen to the largest; other mixes, and empty arrays, give <code>List&lt;JsonElement&gt;</code></li>
+  <li><code>null</code> → nullable type; a field that is only <code>null</code> → <code>JsonElement?</code></li>
+  <li>nested object → separate <code>data class</code>; an empty object <code>{"{}"}</code> → <code>class Name</code> (a data class needs at least one property)</li>
 </ul>
-
-<h2>Example</h2>
-<p>Given this JSON:</p>
-<pre><code>{`{"user": {"name": "Alice", "age": 30}, "tags": ["admin"]}`}</code></pre>
-<p>The tool generates:</p>
-<pre><code>{`@Serializable\ndata class User(\n    val name: String = "",\n    val age: Int = 0\n)\n\n@Serializable\ndata class RootObject(\n    val user: User = User(),\n    val tags: List<String> = emptyList()\n)`}</code></pre>
 
 <h2>Example: snake_case API Response</h2>
 
-<p>Input (an API response with snake_case keys, a null field and a large counter):</p>
+<p>Input with snake_case keys, a null field, a counter above <code>Int.MAX_VALUE</code> and a rating written as <code>4.0</code>:</p>
 
-<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "rating": 4.0, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
 
 <p>Output:</p>
 
-<pre><code>{`@Serializable
+<pre><code>{`import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+
+@Serializable
 data class RootObject(
     @SerialName("user_id")
     val userId: Int = 0,
@@ -56,9 +55,10 @@ data class RootObject(
     @SerialName("is_active")
     val isActive: Boolean = false,
     @SerialName("last_login")
-    val lastLogin: Any? = null,
+    val lastLogin: JsonElement? = null,
     @SerialName("follower_count")
-    val followerCount: Int = 0,
+    val followerCount: Long = 0L,
+    val rating: Double = 0.0,
     val tags: List<String> = emptyList(),
     val address: Address = Address()
 )
@@ -70,42 +70,86 @@ data class Address(
     val zipCode: String = ""
 )`}</code></pre>
 
-<p>Each key that is not a valid camelCase name keeps the original JSON key in <code>{"@SerialName"}</code>. The root class comes first, then nested classes in the order they appear.</p>
+<p>Each key whose camelCase name differs from the JSON key keeps the original in <code>{"@SerialName"}</code>. Kotlin keywords used as keys (<code>class</code>, <code>in</code>, <code>fun</code>) are written in backticks. <code>last_login</code> is only ever <code>null</code> in the sample, so it is <code>JsonElement?</code>; change it to <code>String?</code> once you know it holds a timestamp.</p>
 
 <h2>Example: Array of Objects</h2>
 
-<p>When the root is an array, the tool merges all objects into one class. A key that is missing from some items becomes nullable with <code>{"null"}</code> as the default:</p>
+<p>When the root is an array, the tool merges all objects into one class. <code>price</code> is <code>2</code> in one item and <code>1.5</code> in the other, so it becomes <code>Double</code>. A key that is missing from some items becomes nullable with <code>{"null"}</code> as the default:</p>
 
-<pre><code>{`[{"id": 1, "name": "Pen", "price": 1.5}, {"id": 2, "name": "Ink", "discount": 0.1}]`}</code></pre>
+{/* kt: {} */}
 
-<pre><code>{`@Serializable
+<pre><code>{`[{"id": 1, "name": "Pen", "price": 2}, {"id": 2, "name": "Ink", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
 data class RootObject(
     val id: Int = 0,
     val name: String = "",
-    val price: Double? = null,
+    val price: Double = 0.0,
     val discount: Double? = null
 )`}</code></pre>
 
-<h2>Before You Compile</h2>
+<p>The status line reminds you to decode this input as <code>{"List<RootObject>"}</code>.</p>
 
+<h2>Example: Same Key, Different Objects</h2>
+
+<p>Two nested objects called <code>meta</code> with different fields get two classes. The second takes its parent's name as a prefix:</p>
+
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"order": {"id": 7, "meta": {"source": "web"}}, "payment": {"meta": {"method": "card", "last4": "4242"}}}`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
+data class RootObject(
+    val order: Order = Order(),
+    val payment: Payment = Payment()
+)
+
+@Serializable
+data class Order(
+    val id: Int = 0,
+    val meta: Meta = Meta()
+)
+
+@Serializable
+data class Meta(
+    val source: String = ""
+)
+
+@Serializable
+data class Payment(
+    val meta: PaymentMeta = PaymentMeta()
+)
+
+@Serializable
+data class PaymentMeta(
+    val method: String = "",
+    val last4: String = ""
+)`}</code></pre>
+
+<h2>Decoding</h2>
+
+<p>Add the serialization plugin and the JSON library to your build (see the <a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin serialization guide</a>), then decode:</p>
+
+<pre><code>{`import kotlinx.serialization.json.Json
+
+val user = Json.decodeFromString<RootObject>(body)
+val items = Json.decodeFromString<List<RootObject>>(arrayBody)
+
+// tolerate keys the sample did not have
+val lenient = Json { ignoreUnknownKeys = true }`}</code></pre>
+
+<p>The default <code>Json</code> rejects keys that are not in the class. Every example on this page was compiled with Kotlin 2.4.20 and kotlinx.serialization 1.11.0 and decoded with that default configuration.</p>
+
+<h2>Limitations</h2>
 <ul>
-  <li>The output has no import lines and needs the kotlinx.serialization compiler plugin (<code>{"kotlin(\"plugin.serialization\")"}</code>) — see the <a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin serialization guide</a>.</li>
-  <li>A field whose sample value is <code>{"null"}</code> is typed <code>{"Any?"}</code>. kotlinx.serialization has no serializer for <code>{"Any"}</code>, so a <code>{"@Serializable"}</code> class with such a field does not compile. Replace it with the real type, for example <code>{"String?"}</code> for a timestamp.</li>
-  <li>Whole numbers are typed <code>{"Int"}</code> even when they exceed <code>{"Int.MAX_VALUE"}</code> (2,147,483,647). <code>{"3000000000"}</code> above needs <code>{"Long"}</code>; Snowflake-style IDs need <code>{"Long"}</code> too.</li>
-  <li>Empty arrays and arrays with mixed element types become <code>{"List<Any>"}</code>; the same serializer problem applies.</li>
-  <li>A key that is an integer in one array item and a decimal in another (for example <code>{"1"}</code> and <code>{"1.5"}</code>) becomes <code>{"Any"}</code> instead of <code>{"Double"}</code>.</li>
-  <li>Dates stay <code>{"String"}</code>. JSON has no date type; parse them after decoding or add a custom serializer.</li>
-  <li>Two nested objects with the same key name (for example <code>{"a.meta"}</code> and <code>{"b.meta"}</code>) share one class built from the first object; fields that only the second one has are dropped.</li>
+  <li>Types come from one sample. An ID that is small in the sample is typed <code>Int</code> even if production IDs exceed 2,147,483,647; change it to <code>Long</code> yourself.</li>
+  <li>The browser parses JSON numbers as 64-bit floating point, so integers above 9,007,199,254,740,991 lose digits before the type is chosen. The type is still <code>Long</code>, but check the range by hand.</li>
+  <li><code>19.0</code> is recognised as a decimal only in browsers that give <code>JSON.parse</code> the source text (Chrome 114+, Firefox 135+, Safari 18.4+). Older browsers type it <code>Int</code>.</li>
+  <li><code>JsonElement</code> fields work with the <code>Json</code> format only, not with CBOR or ProtoBuf.</li>
+  <li>Dates stay <code>String</code>. JSON has no date type; parse them after decoding or add a custom serializer.</li>
+  <li>Every property has a default value, so a missing key decodes silently. Remove a default if that key must be present.</li>
 </ul>
-
-<p>After fixing the types, decode with <code>{"Json.decodeFromString"}</code>:</p>
-
-<pre><code>{`import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-
-// lastLogin: Any? = null      ->  val lastLogin: String? = null
-// followerCount: Int = 0      ->  val followerCount: Long = 0
-
-val json = Json { ignoreUnknownKeys = true }
-val user = json.decodeFromString<RootObject>(body)`}</code></pre>

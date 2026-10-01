@@ -2,11 +2,13 @@
 title: "프로처럼 HTTP 헤더 읽기: 실전 가이드"
 description: "HTTP 원시 헤더를 붙여넣고 보안, 캐싱, CORS, 쿠키 메타데이터를 한 번에 점검하기. 카테고리 이해, 컴플라이언스 함정, 그리고 코드가 이미 보내고 있는 헤더를 제대로 활용하는 방법."
 pubDate: 2026-05-23
+updatedDate: 2026-10-01
 lang: "ko"
+noindex: true
 tags: ["http", "security-headers", "cors", "web-development", "developer-tools"]
 ---
 
-CDN가 방금 설정 변경을 적용했고, 스테이징 응답에 40개의 헤더가 실려 있다. 절반은 익숙해 보이고, 몇 개는 의심스럽고, 나머지는 한 번도 자세히 읽어본 적이 없다. 브라우저 DevTools 네트워크 패널은 그것들을 주석 없이 긴 목록으로 보여줄 뿐이다 — 스크롤하고, 복사하고, 무엇이 바뀌었는지 파악하려고 문서에 붙여넣는다. 중복된 `Cache-Control`이나 누락된 `includeSubDomains` 지시자를 발견할 즈음에는, 풀 리퀘스트 리뷰는 이미 머지된 상태다.
+흔한 점검 상황: CDN이나 프록시 설정을 바꾼 뒤 스테이징 응답에 헤더가 수십 개 붙어 있다. DevTools는 설명 없이 나열만 하므로, 중복된 `Cache-Control`, 너무 짧은 HSTS `max-age`, `Secure` 없는 쿠키를 찾으려면 모든 줄을 읽어야 한다.
 
 [원시 헤더를 분석기에 붙여넣기 →](/ko/tools/http-header-analyzer/)
 
@@ -14,7 +16,7 @@ CDN가 방금 설정 변경을 적용했고, 스테이징 응답에 40개의 헤
 
 ## HTTP 헤더의 실체
 
-HTTP 메시지는 상태 줄(응답) 또는 메서드 줄(요청)로 시작하고, 0개 이상의 헤더, 빈 줄, 그리고 선택적인 본문이 뒤따른다. 각 헤더는 한 줄에 `이름: 값` 쌍으로 표시된다. HTTP/2와 HTTP/3은 바이너리 프레이밍 계층을 사용하지만, 도구가 헤더를 직렬화하는 순간 — `curl -I`, `fetch -v`, DevTools의 "Copy as headers" 액션, Nginx 디버그 로그, 서비스 메시 trace — 텍스트 형태를 다시 얻게 된다. 분석기는 그 직렬화된 형태를 입력으로 받는다.
+HTTP 메시지는 상태 줄(응답) 또는 메서드 줄(요청)로 시작하고, 0개 이상의 헤더, 빈 줄, 그리고 선택적인 본문이 뒤따른다. 각 헤더는 한 줄에 `이름: 값` 쌍으로 표시된다. HTTP/2와 HTTP/3은 바이너리 프레이밍 계층을 사용하지만, 도구가 헤더를 직렬화하는 순간 — `curl -I`, DevTools의 "Copy as headers" 액션, Nginx 디버그 로그, 서비스 메시 trace — 텍스트 형태를 다시 얻게 된다. 분석기는 그 직렬화된 형태를 입력으로 받는다.
 
 목록은 무해해 보인다. 실제로는 모든 헤더가 클라이언트, 오리진 서버, 중간 캐시, 브라우저 기능, 분석 도구 사이의 계약이며, 그중 하나라도 잘못 설정하면 예측 가능한 실패 모드가 발생한다:
 
@@ -73,7 +75,7 @@ HTTP 메시지는 상태 줄(응답) 또는 메서드 줄(요청)로 시작하�
 
 ### 7. 쿠키
 
-`Cookie`(요청)와 `Set-Cookie`(응답). 보안은 플래그가 책임진다: `HttpOnly`로 JavaScript 접근 거부, `Secure`로 HTTPS 요구, `SameSite`로 크로스 사이트 전송 제어, `Path` / `Domain` / `Expires` / `Max-Age`로 수명 범위 지정. 분석기는 `HttpOnly`나 `Secure`가 없는 `Set-Cookie`를 모두 플래그한다. XSS가 세션 토큰을 탈취하는 표준 경로이기 때문이다.
+`Cookie`(요청)와 `Set-Cookie`(응답). 보안은 플래그가 책임진다: `HttpOnly`로 JavaScript 접근 거부, `Secure`로 HTTPS 요구, `SameSite`로 크로스 사이트 전송 제어, `Path` / `Domain` / `Expires` / `Max-Age`로 수명 범위 지정. 분석기는 `HttpOnly`나 `Secure`가 없는 `Set-Cookie`를 모두 플래그한다. `HttpOnly`가 없는 쿠키는 주입된 JavaScript가 읽을 수 있고, `Secure`가 없는 쿠키는 평문 HTTP로도 전송되기 때문이다.
 
 ### 8. 전송 / 범위 / 프록시 / 일반 / 사용자 정의
 
@@ -144,7 +146,7 @@ dev 환경은 `Access-Control-Allow-Origin: *`를 보낸다. 프로덕션이 세
 
 ### "쿠키가 설정되었는데 브라우저가 다시 보내지 않는다"
 
-`Set-Cookie: session=abc; HttpOnly; SameSite=None`은 괜찮아 보인다 — `Secure`가 빠진 것을 알아채기 전까지는. 브라우저는 `Secure` 없는 `SameSite=None`을 조용히 거부한다. 분석기는 `SameSite` 값과 무관하게 `Secure` 누락 경고를 띄운다. `Secure`가 더 안전한 기본값이기 때문이다.
+`Set-Cookie: session=abc; HttpOnly; SameSite=None`은 괜찮아 보인다 — `Secure`가 빠진 것을 알아채기 전까지는. Chrome(80 버전부터)과 현재 주요 브라우저는 `Secure` 없는 `SameSite=None` 쿠키를 거부한다. 응답에 오류는 없고 쿠키가 저장되지 않을 뿐이다. 분석기는 `SameSite` 값과 무관하게 `Secure` 누락 경고를 띄운다. `Secure`가 더 안전한 기본값이기 때문이다.
 
 ### "Cache-Control에 no-store와 max-age가 둘 다 있다"
 
@@ -152,12 +154,12 @@ dev 환경은 `Access-Control-Allow-Origin: *`를 보낸다. 프로덕션이 세
 
 ## ZeroTool과 다른 헤더 도구의 차이
 
-기존 도구는 대부분 두 진영으로 나뉜다. **URL 페치 도구**(`securityheaders.com`, KeyCDN, dnschecker 등)는 URL을 입력받아 자체 서버에서 호출하고 응답을 보고한다. 일회성 공개 사이트 감사에는 유용하지만, 대상이 서드파티 백엔드에서 도달 가능해야 한다 — VPN 뒤의 스테이징 URL, 내부 서비스, 배포 전인 것은 도울 수 없다. **붙여넣기 기반 도구**(`mockoon.com`, `outstanding.tools` 등)는 제공된 문자열을 파싱한다. ZeroTool의 HTTP Header 분석기는 이 두 번째 진영에 속한다.
+기존 도구는 대부분 두 진영으로 나뉜다. **URL 페치 도구**(`securityheaders.com`, KeyCDN, dnschecker 등)는 URL을 입력받아 자체 서버에서 호출하고 응답을 보고한다. 일회성 공개 사이트 감사에는 유용하지만, 대상이 서드파티 백엔드에서 도달 가능해야 한다 — VPN 뒤의 스테이징 URL, 내부 서비스, 배포 전인 것은 도울 수 없다. **붙여넣기 기반 도구**는 제공된 문자열을 파싱한다. ZeroTool의 HTTP Header 분석기는 이 두 번째 진영에 속한다.
 
 ZeroTool이 그 위에 더하는 것:
 
 - **각 헤더에 인라인된 컴플라이언스 힌트**. 페이지 하단의 보안 점수가 아니다. 힌트는 무엇을 바꿔야 하고 왜 그래야 하는지를 알려준다 — 단순한 알파벳 등급이 아니다.
-- **요청 / 응답 자동 감지**. curl `-I` 출력과 `fetch -v` 출력 모두 모드 전환 없이 그대로 동작한다.
+- **요청 / 응답 자동 감지**. curl `-I` 출력과 복사한 요청 헤더 블록 모두 모드 전환 없이 그대로 동작한다.
 - **분류별 + 원본 + JSON 탭**. 같은 붙여넣기 하나가 보안 리뷰, 스테이징 대 프로덕션 diff, 다운스트림 도구용 JSON 내보내기를 모두 구동한다.
 - **100% 클라이언트사이드**. 붙여넣은 Authorization 토큰과 Set-Cookie 문자열은 브라우저를 떠나지 않는다. DevTools 네트워크 패널을 열고 Analyze를 클릭해 검증할 수 있다 — 아웃바운드 요청이 0개다.
 

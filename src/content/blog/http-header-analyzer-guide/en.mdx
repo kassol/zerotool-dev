@@ -2,11 +2,13 @@
 title: "Read HTTP Headers Like a Pro: A Practical Guide"
 description: "Paste raw HTTP headers and inspect security, caching, CORS, and cookie metadata in one pass. Learn the categories, the compliance traps, and how to use the headers your code is already sending."
 pubDate: 2026-05-23
+updatedDate: 2026-10-01
 lang: "en"
+noindex: true
 tags: ["http", "security-headers", "cors", "web-development", "developer-tools"]
 ---
 
-Your CDN just shipped a config change and the staging response now carries forty headers. Half of them look familiar, a few look suspicious, and the rest you've never read carefully. The browser DevTools Network panel will show them in a long list with no annotation — you scroll, copy, and paste them into a doc to make sense of what changed. By the time you find the duplicated `Cache-Control` or the missing `includeSubDomains` directive, the pull request review has already been merged.
+A common review situation: after a CDN or proxy configuration change, a staging response carries dozens of headers. DevTools lists them without annotation, so finding a duplicated `Cache-Control`, a short HSTS `max-age` or a cookie without `Secure` means reading every line.
 
 [Paste raw headers into the analyzer →](/tools/http-header-analyzer)
 
@@ -14,7 +16,7 @@ This guide walks through what HTTP headers actually do, the categories they fall
 
 ## What an HTTP Header Actually Is
 
-An HTTP message is a status line (response) or a method line (request), followed by zero or more headers, an empty line, and an optional body. Each header is a `Name: value` pair on its own line. HTTP/2 and HTTP/3 use a binary framing layer, but the moment a tool serializes the headers — `curl -I`, `fetch -v`, the DevTools "Copy as headers" action, an Nginx debug log, a service-mesh trace — you get the textual form back. That serialized form is what the analyzer eats.
+An HTTP message is a status line (response) or a method line (request), followed by zero or more headers, an empty line, and an optional body. Each header is a `Name: value` pair on its own line. HTTP/2 and HTTP/3 use a binary framing layer, but the moment a tool serializes the headers — `curl -I`, the DevTools "Copy as headers" action, an Nginx debug log, a service-mesh trace — you get the textual form back. That serialized form is what the analyzer eats.
 
 The list looks innocent. In practice every header is a contract between two parties — the client, the origin server, intermediate caches, browser features, and analytics — and getting one wrong has predictable failure modes:
 
@@ -73,7 +75,7 @@ What the body is. `Content-Type` is the primary one — note the difference betw
 
 ### 7. Cookie
 
-`Cookie` (request) and `Set-Cookie` (response). The flags carry the security: `HttpOnly` to deny JavaScript access, `Secure` to require HTTPS, `SameSite` to control cross-site sending, and `Path` / `Domain` / `Expires` / `Max-Age` to scope the lifetime. The analyzer flags any `Set-Cookie` without `HttpOnly` or `Secure` because that combination is how session tokens get exfiltrated by XSS.
+`Cookie` (request) and `Set-Cookie` (response). The flags carry the security: `HttpOnly` to deny JavaScript access, `Secure` to require HTTPS, `SameSite` to control cross-site sending, and `Path` / `Domain` / `Expires` / `Max-Age` to scope the lifetime. The analyzer flags any `Set-Cookie` without `HttpOnly` or `Secure` because a cookie without `HttpOnly` can be read by injected JavaScript, and one without `Secure` can travel over plain HTTP.
 
 ### 8. Transport / Range / Proxy / General / Custom
 
@@ -145,7 +147,7 @@ The dev environment sends `Access-Control-Allow-Origin: *`. Production starts se
 
 ### "The cookie is set but the browser isn't sending it back"
 
-`Set-Cookie: session=abc; HttpOnly; SameSite=None` looks fine, until you notice `Secure` is missing. Browsers refuse `SameSite=None` without `Secure`, silently. The analyzer surfaces the missing-Secure warning regardless of `SameSite` value because `Secure` is the safer default.
+`Set-Cookie: session=abc; HttpOnly; SameSite=None` looks fine, until you notice `Secure` is missing. Chrome (since version 80) and other current browsers reject a `SameSite=None` cookie that lacks `Secure`; the response shows no error, the cookie is just never stored. The analyzer surfaces the missing-Secure warning regardless of `SameSite` value because `Secure` is the safer default.
 
 ### "Cache-Control has both no-store and max-age"
 
@@ -153,12 +155,12 @@ A reverse proxy injects `Cache-Control: no-store` for an authenticated route whi
 
 ## ZeroTool vs. Other Header Tools
 
-Most existing tools fall into two camps. URL-fetcher tools (e.g., `securityheaders.com`, KeyCDN, dnschecker) take a URL, hit it from their server, and report on the response. They are useful for one-off public-site audits but require the target to be reachable from a third-party backend — no help for staging URLs behind a VPN, internal services, or anything pre-deploy. Paste-based tools (e.g., `mockoon.com`, `outstanding.tools`) parse a string you provide; ZeroTool's HTTP Header Analyzer is in this second camp.
+Most existing tools fall into two camps. URL-fetcher tools (e.g., `securityheaders.com`, KeyCDN, dnschecker) take a URL, hit it from their server, and report on the response. They are useful for one-off public-site audits but require the target to be reachable from a third-party backend — no help for staging URLs behind a VPN, internal services, or anything pre-deploy. Paste-based tools parse a string you provide; ZeroTool's HTTP Header Analyzer is in this second camp.
 
 What ZeroTool adds on top:
 
 - **Compliance hints inline with each header**, not just a security score at the bottom of the page. The hint tells you what to change and why, not just a letter grade.
-- **Auto-detect request vs. response**, so a curl `-I` output and a `fetch -v` output both work without flipping a mode toggle.
+- **Auto-detect request vs. response**, so a curl `-I` output and a copied request block both work without flipping a mode toggle.
 - **Categorized + Raw + JSON tabs**, so the same paste can drive a security review, a diff between staging and prod, or a JSON export for downstream tooling.
 - **100% client-side**. The Authorization tokens and Set-Cookie strings you paste never leave your browser. Verify by opening DevTools Network — no outbound requests are made when you click Analyze.
 

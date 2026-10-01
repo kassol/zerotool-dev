@@ -7,11 +7,11 @@ faqItems:
   - question: "HTML 会被上传吗？"
     answer: "不会。处理全部在浏览器中通过原生 DOMParser API 完成，标记永远不会离开你的设备，没有任何服务器往返。"
   - question: "压缩通常能减少多少体积？"
-    answer: "典型 HTML 文件可缩减 15%–40%，具体取决于缩进深度和注释密度。每次压缩后状态栏会显示原始体积、输出体积与节省百分比。"
+    answer: "取决于输入的缩进量和注释多少，内联脚本与样式不会被改动。下方示例从 211 字节压到 159 字节（24.6%）。每次压缩后状态栏会显示原始体积、输出体积与节省百分比。"
   - question: "美化和我编辑器里的格式化有什么不同？"
     answer: "美化会从头重新解析并按层级缩进——适合统一来自 CMS / 模板引擎导出的不规范代码，或展开一行式压缩 HTML 进行调试与 diff。"
   - question: "doctype、属性值和内联事件处理函数会保留吗？"
-    answer: "会。doctype、所有属性值、布尔属性以及 onclick / onload 等内联处理函数原样保留。IE 条件注释即使在压缩时也保留。"
+    answer: "会。doctype、所有属性值、布尔属性以及 onclick / onload 等内联处理函数原样保留。文档内部的 IE 条件注释在压缩时保留；放在片段第一个元素之前的条件注释会被丢掉（见「限制」）。"
 ---
 
 <h2>使用方法</h2>
@@ -43,15 +43,18 @@ faqItems:
 <h3>压缩后</h3>
 
 ```html
-<!doctype html><html lang="zh"><head><title>你好</title></head><body><h1>Hello World</h1><p>一段 <strong>加粗</strong> 文本。</p></body></html>
+<!doctype html><html lang="zh"><head>  <title>你好</title> </head> <body> <h1>Hello World</h1> <p>一段 <strong>加粗</strong> 文本。</p> </body></html>
 ```
+
+<p>状态栏：<code>已压缩 — 211 B → 159 B (−24.6%)</code>。注释被删除，每段缩进变成一个空格。标签之间的空格之所以保留，是因为工具把只含空白的文本节点一律保留为一个空格：在 <code>&lt;p&gt;Hello &lt;strong&gt;world&lt;/strong&gt;!&lt;/p&gt;</code> 里，<code>&lt;strong&gt;</code> 前的空格是看得见的，工具不去判断哪些空格可以安全删掉。<a href="https://github.com/terser/html-minifier-terser" target="_blank" rel="noopener">html-minifier-terser</a> 这类构建期压缩器可以用 <code>collapseWhitespace</code> 等选项删得更多。</p>
 
 <h2>会被压缩的内容</h2>
 <ul>
   <li>标签之间的空白（inter-tag whitespace）会折叠。</li>
   <li>HTML 注释被删除——IE 条件注释（<code>&lt;!--[if IE]&gt;</code>）除外。</li>
   <li><code>disabled=""</code> 这类布尔属性会简化为 <code>disabled</code>。</li>
-  <li>文本节点首尾空白被裁掉，内部多个空白折叠为单个空格。</li>
+  <li>文本中连续的空白折叠为一个空格。标签之间只有空白的文本变成一个空格，不会删掉，因为解析器无法判断哪些空格是可见的。</li>
+  <li>元素内只有文本时，文本首尾的空白被去掉。</li>
 </ul>
 
 <h2>会原样保留的内容</h2>
@@ -63,3 +66,12 @@ faqItems:
 
 <h2>什么时候手动压缩 HTML</h2>
 <p>现代构建链路（Vite、Webpack、Astro、Next.js）通常会在 bundle 阶段自动压缩 HTML。这个工具适合一次性场景——从 CMS 导出的代码、想对比压缩前后体积、或检查手写模板。美化则是日常使用：把生产环境的一行式 HTML 粘进来，拿到可读副本用于调试或 diff。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>元素内只有文本时，文本首尾的空格会被删掉。<code>&lt;p&gt;&lt;strong&gt;Note: &lt;/strong&gt;read this.&lt;/p&gt;</code> 会变成 <code>&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt;read this.&lt;/p&gt;</code>，显示为「Note:read this.」。压缩前把空格移到行内元素外面。</li>
+  <li>不换行空格按普通空格折叠：<code>Price:&amp;nbsp;&amp;nbsp;10&amp;nbsp;EUR</code> 变成 <code>Price: 10 EUR</code>，数字和单位之间可能被断行。</li>
+  <li>片段里第一个元素之前的注释会被丢掉，包括 <code>&lt;!--[if mso]&gt;</code> 这类条件注释。在完整文档里或第一个元素之后则保留。</li>
+  <li>内联 JavaScript 与 CSS 原样复制，不做压缩。</li>
+  <li>HTML 由浏览器的 <code>DOMParser</code> 解析，不合法的标记输出时已被修正（补上缺失的结束标签、丢掉多余的标签），doctype 写成 <code>&lt;!doctype html&gt;</code>。</li>
+</ul>

@@ -68,7 +68,25 @@ type Query {
 ```
 
 <h2>なぜ GraphQL を整形するのか</h2>
-<p>一貫した GraphQL の整形は、コードレビュー、スキーマ diff、<code>.graphql</code> ファイルの保管に直結します。永続化クエリを使えない環境では minify によって通信量を減らせます。整形されたクエリは PR 上で読みやすく、クエリを単体で検証することで fragment 名のタイプミスをリクエストを送る前に発見できます。</p>
+<p>一貫した GraphQL の整形は、コードレビュー、スキーマ diff、<code>.graphql</code> ファイルの保管に直結します。永続化クエリを使えない環境では minify によって通信量を減らせます。整形されたクエリは PR 上で読みやすく、クエリを単体で検証すると、閉じかっこの不足や閉じていない文字列といった構文エラーを送信前に見つけられます。存在しない fragment 名は構文エラーではないため、スキーマを使った検証が必要です。</p>
 
 <h2>内部の仕組み</h2>
 <p>本ツールはブラウザ内で <code>graphql-js</code>（GraphQL Foundation 管理の公式リファレンス実装）を動かします。<code>parse()</code> がテキストから AST を構築し、最初の構文エラーを行・列で報告。<code>print()</code> が AST を規範的な GraphQL に再シリアライズ。<code>stripIgnoredCharacters()</code> が spec で ignored とされるトークンをすべて除去して圧縮版を返します。ネットワーク往復ゼロ、データは端末内に留まります。</p>
+
+<h2>圧縮とエラーの例</h2>
+<p>上の「整形前」のクエリで<strong>圧縮</strong>を押すと、次のようになります（graphql-js 16.14 の <code>stripIgnoredCharacters</code>）。</p>
+
+```graphql
+query GetUser($id:ID!$withPosts:Boolean!){user(id:$id){id name email posts@include(if:$withPosts){...PostSummary}}}fragment PostSummary on Post{id title publishedAt}
+```
+
+<p>GraphQL ではカンマは無視されるトークンなので、空白と一緒に削除されます。閉じ波かっこが 1 つ足りない <code>query &#123; user(id: 1) &#123; id name &#125;</code> は <code>解析エラー: Syntax Error: Expected Name, found &lt;EOF&gt;. (行 1, 列 32)</code> と表示され、パーサーが入力の終わりに達した位置を指します。</p>
+
+<h2>制限</h2>
+<ul>
+  <li><strong>整形するとコメントが消えます。</strong>graphql-js の <code>print()</code> は構文木から文字列を作り直し、<code># コメント</code>は構文木に含まれません。圧縮でもコメントは削除されます。コメントが必要なら元のファイルを残してください。</li>
+  <li>検証は構文だけです。<code>&#123; user(id: $id) &#123; id &#125; &#125;</code> は <code>$id</code> が宣言されていなくても通ります。変数やフィールドの確認にはスキーマが必要です。</li>
+  <li>報告される構文エラーは最初の 1 件だけです。</li>
+  <li>4 スペースのオプションは出力の各行頭のスペースを 2 倍にします。<code>"""</code> のブロック文字列（説明文）の行も対象になるため、説明文内のインデントにスペースが増えます。説明文にインデントした行がある場合は 2 スペースを使ってください。</li>
+  <li>入力の上限は 10,485,760 文字です。</li>
+</ul>

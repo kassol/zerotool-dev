@@ -3,7 +3,7 @@ seoTitle: "jq Playground オンライン — ブラウザで jq フィルタを�
 seoDescription: "公式 jq 1.7 エンジンで JSON に対し jq フィルタを実行。pipe / select / map / group_by / sort / reduce 完全対応、インストール・アップロード・登録不要。"
 faqItems:
   - question: "これは本物の jq ですか、それとも JavaScript 再実装ですか？"
-    answer: "公式 jq 1.7 の C ソースを jq-web 経由で WebAssembly にコンパイルした版です。フィルタ出力はコマンドライン jq とバイト単位で一致します。エンジンは初回約 1MB ダウンロード、以降はブラウザキャッシュにより遅延ゼロで動作します。"
+    answer: "公式 jq 1.7 の C ソースを jq-web 経由で WebAssembly にコンパイルした版です。フィルタは jq 本体が評価するため CLI と同じように動きますが、表示はいくつかの点で異なります（「制限」参照）。エンジンは初回約 1MB ダウンロード、以降はブラウザキャッシュにより遅延ゼロで動作します。"
   - question: "どの jq 機能に対応していますか？"
     answer: "jq 1.7 構文をフル対応 — pipe、select、map、group_by、sort_by、reduce、foreach、try/catch、カスタム関数 def、再帰下降 ..、文字列・数学・日付関数、全ビルトイン。CLI で動作するフィルタはここでも動きます。"
   - question: "JSON とフィルタはサーバーに送信されますか？"
@@ -52,3 +52,25 @@ faqItems:
   <code>group_by(.tag) | map(&#123;tag: .[0].tag, count: length&#125;)</code> でイベントを tag 別にバケット化、
   <code>[.[] | .duration_ms] | add / length</code> で数値フィールドの平均を計算。
 </p>
+
+<h2>例：注文データ</h2>
+<p>入力パネルに次の JSON を入れた場合です。</p>
+
+```json
+{"order_id": 9007199254740993, "items": [{"sku":"A","qty":2},{"sku":"B","qty":1}]}
+```
+
+<ul>
+  <li><code>.items | map(.qty) | add</code> → <code>3</code>（1 個の値）</li>
+  <li><code>.items[] | .sku</code> → <code>["A", "B"]</code> と表示（2 個の値）。jq CLI は <code>"A"</code> と <code>"B"</code> を別々の行に出力します。</li>
+  <li><code>.a +</code>（途中までのフィルタ）→ <code>jq: error: syntax error, unexpected end of file … jq: 1 compile error</code>。CLI と同じコンパイルエラーです。</li>
+</ul>
+
+<h2>制限</h2>
+<ul>
+  <li>入力は jq に渡す前に JavaScript の <code>JSON.parse()</code> で解析するため、2<sup>53</sup> を超える整数は精度が落ちます。上の <code>{'.order_id'}</code> は <code>9007199254740992</code> と表示され、jq 1.7 の CLI では <code>9007199254740993</code> です。</li>
+  <li>フィルタが複数の値を出すと、結果パネルには 1 つの JSON 配列として表示されます。配列を 1 つだけ出すフィルタ（<code>[.items[] | .sku]</code>）と見た目は同じで、カウンターもどちらも配列の要素数を数えます。</li>
+  <li>出力のないフィルタ（<code>empty</code> や、トップレベルで何も一致しない <code>select</code>）は空の結果ではなく <code>jq error: Cannot read properties of undefined (reading 'trim')</code> と表示されます。</li>
+  <li>コマンドラインオプションは使えません。<code>-r</code> の生文字列、<code>--arg</code>、<code>--slurp</code>、<code>--stream</code> はなく、結果は常に整形した JSON で表示されます。</li>
+  <li>エンジン <code>jq.wasm</code>（約 2.8 MB、gzip 後約 1 MB）は最初にフィルタを実行したときに読み込まれます。</li>
+</ul>

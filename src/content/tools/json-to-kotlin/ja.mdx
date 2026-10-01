@@ -1,45 +1,52 @@
 ---
 seoTitle: "JSON → Kotlin データクラス ジェネレーター | ZeroTool"
-seoDescription: "JSONからKotlin data classを即座に生成。ネストオブジェクト・配列・Nullable・カスタムクラス名対応。無料、ブラウザ完結。"
+seoDescription: "JSONからkotlinx.serialization用のKotlin data classを生成。import付き、値に応じてInt / Long / Double、型が決まらない値はJsonElement、ネストオブジェクト対応。ブラウザで動作。"
 faqItems:
-  - question: "このツールは何を生成しますか？"
-    answer: "@Serializable アノテーション付きの Kotlin data class 宣言（kotlinx.serialization 用）を生成します。ネストされたオブジェクトはそれぞれ独立した名前付き data class になります。"
-  - question: "Nullable フィールドはどう処理されますか？"
-    answer: "JSON フィールドの値が null の場合、対応する Kotlin 型は nullable になります（例：String?）。配列内の一部アイテムに存在しないフィールドも nullable としてマークされ、デフォルト値は null になります。"
-  - question: "各型のデフォルト値は何ですか？"
-    answer: "String は空文字列 \"\"、Int は 0、Double は 0.0、Boolean は false、List は emptyList()、nullable 型は null、ネスト data class はゼロ引数コンストラクターを呼び出します。"
+  - question: "何が生成されますか？"
+    answer: "@Serializable（kotlinx.serialization）を付けた Kotlin の data class と、必要な import です。ネストしたオブジェクトはそれぞれ別のクラスになります。kotlinx.serialization のコンパイラプラグインを入れればそのままコンパイルでき、既定の Json 設定でサンプルをデコードできます。"
+  - question: "Nullable なフィールドはどう扱われますか？"
+    answer: "値が null のフィールドは Nullable 型（例: String?）になります。配列の一部の要素にしかないキーも Nullable で、既定値は null です。サンプルで常に null のフィールドは、本当の型がわからないため JsonElement? になります。"
+  - question: "各型の既定値は？"
+    answer: "String は \"\"、Int は 0、Long は 0L、Double は 0.0、Boolean は false、List は emptyList()、JsonElement は JsonNull、Nullable 型は null、ネストしたクラスは引数なしコンストラクターです。既定値があるため、キーが欠けていてもデコードできます。"
+  - question: "Any ではなく JsonElement を使うのはなぜですか？"
+    answer: "kotlinx.serialization には Any のシリアライザーがなく、Any のフィールドを持つ @Serializable クラスはコンパイルできません。JsonElement は形が決まらない JSON のためにライブラリが用意している型で、常に null のフィールド、空配列、サンプル間で型が異なる値に使います。"
   - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。すべての変換はブラウザ内で実行され、データはブラウザ外に出ません。"
+    answer: "いいえ。変換はすべてブラウザ内で行われ、データは端末の外に出ません。"
 ---
 
 <h2>使い方</h2>
 <ol>
-  <li>左パネルにJSONを貼り付けるか入力します。リアルタイムで検証されます。</li>
-  <li>任意で<strong>ルートクラス名</strong>を設定します（デフォルト：<code>RootObject</code>）。</li>
+  <li>左側に JSON を貼り付けるか入力します。リアルタイムで検証されます。</li>
+  <li>必要なら<strong>ルートクラス名</strong>を設定します（既定は <code>RootObject</code>）。空白や記号は取り除かれ、PascalCase になります。</li>
   <li><strong>Kotlin を生成</strong>をクリックするか、リアルタイム変換を待ちます。</li>
-  <li><strong>コピー</strong>をクリックして出力をクリップボードにコピーします。</li>
+  <li><strong>コピー</strong>で import を含む出力をコピーし、<code>.kt</code> ファイルに貼り付けます。</li>
 </ol>
 
 <h2>型マッピング</h2>
 <ul>
-  <li><code>null</code> → <code>Any?</code></li>
-  <li>文字列 → <code>String</code></li>
-  <li>整数 → <code>Int</code></li>
-  <li>浮動小数点数 → <code>Double</code></li>
-  <li>真偽値 → <code>Boolean</code></li>
-  <li>配列 → <code>List&lt;T&gt;</code></li>
-  <li>ネストオブジェクト → 独立した <code>data class</code></li>
+  <li>文字列 → <code>String</code>、真偽値 → <code>Boolean</code></li>
+  <li>−2,147,483,648〜2,147,483,647 の整数 → <code>Int</code>、それより大きい → <code>Long</code>、<code>Long</code> の範囲外 → <code>Double</code></li>
+  <li>小数点か指数を含む数値（<code>9.5</code>、<code>19.0</code>、<code>1e3</code>）→ <code>Double</code></li>
+  <li>配列 → <code>List&lt;T&gt;</code>。<code>Int</code>・<code>Long</code>・<code>Double</code> が混ざると最も広い型、それ以外の混在と空配列は <code>List&lt;JsonElement&gt;</code></li>
+  <li><code>null</code> → Nullable 型、常に <code>null</code> のフィールド → <code>JsonElement?</code></li>
+  <li>ネストしたオブジェクト → 別の <code>data class</code>、空オブジェクト <code>{"{}"}</code> → <code>class Name</code>（data class にはプロパティが 1 つ以上必要）</li>
 </ul>
 
 <h2>例：snake_case の API レスポンス</h2>
 
-<p>入力（snake_case のキー、null のフィールド、大きなカウンターを含む API レスポンス）：</p>
+<p>snake_case のキー、null のフィールド、<code>Int.MAX_VALUE</code> を超えるカウンター、<code>4.0</code> と書かれた評価を含む入力：</p>
 
-<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "rating": 4.0, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
 
 <p>出力：</p>
 
-<pre><code>{`@Serializable
+<pre><code>{`import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+
+@Serializable
 data class RootObject(
     @SerialName("user_id")
     val userId: Int = 0,
@@ -48,9 +55,10 @@ data class RootObject(
     @SerialName("is_active")
     val isActive: Boolean = false,
     @SerialName("last_login")
-    val lastLogin: Any? = null,
+    val lastLogin: JsonElement? = null,
     @SerialName("follower_count")
-    val followerCount: Int = 0,
+    val followerCount: Long = 0L,
+    val rating: Double = 0.0,
     val tags: List<String> = emptyList(),
     val address: Address = Address()
 )
@@ -62,42 +70,86 @@ data class Address(
     val zipCode: String = ""
 )`}</code></pre>
 
-<p>そのまま camelCase の名前にできないキーは、<code>{"@SerialName"}</code> で元の JSON キーを残します。ルートクラスが先頭で、ネストしたクラスは出現順に続きます。</p>
+<p>camelCase 名が JSON キーと異なるフィールドは <code>{"@SerialName"}</code> で元のキーを保持します。キーに使われた Kotlin のキーワード（<code>class</code>、<code>in</code>、<code>fun</code>）はバッククォートで囲みます。<code>last_login</code> はサンプルでは <code>null</code> だけなので <code>JsonElement?</code> になります。タイムスタンプだとわかったら <code>String?</code> に変えてください。</p>
 
 <h2>例：オブジェクトの配列</h2>
 
-<p>ルートが配列のときは、すべてのオブジェクトを 1 つのクラスにまとめます。一部の要素にしかないキーは null 許容になり、既定値は <code>{"null"}</code> です：</p>
+<p>ルートが配列のときは、すべてのオブジェクトを 1 つのクラスにまとめます。<code>price</code> は <code>2</code> と <code>1.5</code> なので <code>Double</code> になります。一部の要素にしかないキーは Nullable で、既定値は <code>{"null"}</code> です。</p>
 
-<pre><code>{`[{"id": 1, "name": "Pen", "price": 1.5}, {"id": 2, "name": "Ink", "discount": 0.1}]`}</code></pre>
+{/* kt: {} */}
 
-<pre><code>{`@Serializable
+<pre><code>{`[{"id": 1, "name": "Pen", "price": 2}, {"id": 2, "name": "Ink", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
 data class RootObject(
     val id: Int = 0,
     val name: String = "",
-    val price: Double? = null,
+    val price: Double = 0.0,
     val discount: Double? = null
 )`}</code></pre>
 
-<h2>コンパイル前に直すところ</h2>
+<p>ステータス行に <code>{"List<RootObject>"}</code> としてデコードするよう表示されます。</p>
 
+<h2>例：同じ名前のキー、異なるオブジェクト</h2>
+
+<p>フィールドの異なる <code>meta</code> が 2 つあると、クラスも 2 つ生成され、2 つ目には親の名前が前に付きます。</p>
+
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"order": {"id": 7, "meta": {"source": "web"}}, "payment": {"meta": {"method": "card", "last4": "4242"}}}`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
+data class RootObject(
+    val order: Order = Order(),
+    val payment: Payment = Payment()
+)
+
+@Serializable
+data class Order(
+    val id: Int = 0,
+    val meta: Meta = Meta()
+)
+
+@Serializable
+data class Meta(
+    val source: String = ""
+)
+
+@Serializable
+data class Payment(
+    val meta: PaymentMeta = PaymentMeta()
+)
+
+@Serializable
+data class PaymentMeta(
+    val method: String = "",
+    val last4: String = ""
+)`}</code></pre>
+
+<h2>デコード</h2>
+
+<p>ビルド設定にシリアライゼーションプラグインと JSON ライブラリを追加し（<a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin のシリアライゼーションガイド</a>参照）、次のようにデコードします。</p>
+
+<pre><code>{`import kotlinx.serialization.json.Json
+
+val user = Json.decodeFromString<RootObject>(body)
+val items = Json.decodeFromString<List<RootObject>>(arrayBody)
+
+// サンプルにないキーを許容する
+val lenient = Json { ignoreUnknownKeys = true }`}</code></pre>
+
+<p>既定の <code>Json</code> はクラスにないキーをエラーにします。このページの例はすべて Kotlin 2.4.20 と kotlinx.serialization 1.11.0 でコンパイルし、既定の設定でデコードできることを確認しています。</p>
+
+<h2>制限事項</h2>
 <ul>
-  <li>出力には import 文がなく、kotlinx.serialization のコンパイラプラグイン（<code>{"kotlin(\"plugin.serialization\")"}</code>）が必要です。<a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin 公式のシリアライズ解説</a>を参照してください。</li>
-  <li>サンプル値が <code>{"null"}</code> のフィールドは <code>{"Any?"}</code> になります。kotlinx.serialization には <code>{"Any"}</code> 用のシリアライザーがないので、このフィールドを持つ <code>{"@Serializable"}</code> クラスはコンパイルできません。タイムスタンプなら <code>{"String?"}</code> のように実際の型に置き換えてください。</li>
-  <li>整数は <code>{"Int.MAX_VALUE"}</code>（2,147,483,647）を超えても <code>{"Int"}</code> になります。上の <code>{"3000000000"}</code> は <code>{"Long"}</code> が必要で、Snowflake 形式の ID も <code>{"Long"}</code> にします。</li>
-  <li>空配列と要素の型が混在した配列は <code>{"List<Any>"}</code> になり、同じシリアライザーの問題が起きます。</li>
-  <li>あるキーが配列のある要素では整数、別の要素では小数（<code>{"1"}</code> と <code>{"1.5"}</code> など）のとき、型は <code>{"Double"}</code> ではなく <code>{"Any"}</code> になります。</li>
-  <li>日付は <code>{"String"}</code> のままです。JSON に日付型はないので、デコード後に解析するかカスタムシリアライザーを書きます。</li>
-  <li>同じキー名のネストしたオブジェクトが 2 つある（<code>{"a.meta"}</code> と <code>{"b.meta"}</code> など）と、最初のオブジェクトから作ったクラスを共有し、2 つ目にだけあるフィールドは失われます。</li>
+  <li>型は 1 つのサンプルだけから決まります。サンプルで小さい ID は <code>Int</code> になるので、本番の ID が 2,147,483,647 を超えるなら <code>Long</code> に直してください。</li>
+  <li>ブラウザーは JSON の数値を 64 ビット浮動小数点で読むため、9,007,199,254,740,991 を超える整数は型を決める前に桁が落ちます。型は <code>Long</code> のままですが、範囲は手で確認してください。</li>
+  <li><code>19.0</code> を小数と判定できるのは、<code>JSON.parse</code> にソーステキストを渡すブラウザー（Chrome 114+、Firefox 135+、Safari 18.4+）だけです。古いブラウザーでは <code>Int</code> になります。</li>
+  <li><code>JsonElement</code> のフィールドは <code>Json</code> 形式でだけ使え、CBOR や ProtoBuf では使えません。</li>
+  <li>日付は <code>String</code> のままです。JSON に日付型はないので、デコード後に解析するかカスタムシリアライザーを追加してください。</li>
+  <li>すべてのプロパティに既定値があるため、キーが欠けても黙って既定値になります。必須のキーは既定値を削除してください。</li>
 </ul>
-
-<p>型を直したら <code>{"Json.decodeFromString"}</code> でデコードします：</p>
-
-<pre><code>{`import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-
-// lastLogin: Any? = null      ->  val lastLogin: String? = null
-// followerCount: Int = 0      ->  val followerCount: Long = 0
-
-val json = Json { ignoreUnknownKeys = true }
-val user = json.decodeFromString<RootObject>(body)`}</code></pre>

@@ -23,6 +23,7 @@ export const toolPersistencePolicy = {
   'svg-optimizer': 'preference',
   'mime-type-lookup': 'preference',
   'eyedropper-color-picker': 'preference',
+  'qr-code-generator': 'preference',
   'zero-width-character-detector': 'disabled',
   'csr-decoder': 'disabled',
   'secret-redactor': 'disabled',
@@ -48,6 +49,7 @@ export const toolPersistencePolicy = {
   'image-splitter': 'preference',
   'string-escape': 'preference',
   'color-palette-generator': 'preference',
+  'number-base': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

@@ -7,11 +7,11 @@ faqItems:
   - question: "Does my HTML get uploaded anywhere?"
     answer: "No. Processing runs entirely in your browser using the native DOMParser API. The markup never leaves your device — there is no server round-trip."
   - question: "How much size reduction can I expect from minification?"
-    answer: "Typical HTML files shrink 15–40% depending on indentation depth and comment density. The exact savings (original size, output size, percent) appear in the status bar after each minify."
+    answer: "It depends on how much indentation and how many comments the input has, and inline script and style are not touched. The worked example below goes from 200 to 150 bytes (25%). The exact savings (original size, output size, percent) appear in the status bar after each minify."
   - question: "What does Beautify do differently from formatting in my editor?"
     answer: "Beautify re-parses and re-indents your HTML from scratch — useful for normalizing inconsistently formatted markup, expanding one-line minified HTML, or applying a consistent style across exported output from a CMS or template engine."
   - question: "Does it preserve the HTML5 doctype, attribute values, and inline event handlers?"
-    answer: "Yes. The doctype, all attribute values, boolean attributes, and inline handlers like onclick / onload are kept exactly as written. IE conditional comments are preserved even when other comments are stripped."
+    answer: "Yes. The doctype, all attribute values, boolean attributes, and inline handlers like onclick / onload are kept exactly as written. IE conditional comments inside the document are kept when other comments are stripped; a conditional comment placed before the first element of a fragment is dropped (see Limits)."
 ---
 
 <h2>How to Use</h2>
@@ -43,15 +43,18 @@ faqItems:
 <h3>After minify</h3>
 
 ```html
-<!doctype html><html lang="en"><head><title>Hello</title></head><body><h1>Hello World</h1><p>Some <strong>bold</strong> text.</p></body></html>
+<!doctype html><html lang="en"><head>  <title>Hello</title> </head> <body> <h1>Hello World</h1> <p>Some <strong>bold</strong> text.</p> </body></html>
 ```
+
+<p>Status bar: <code>Minified — 200 B → 150 B (−25.0%)</code>. The comment is gone and each run of indentation became one space. The spaces between tags stay because the tool keeps every whitespace-only text node as a single space: in <code>&lt;p&gt;Hello &lt;strong&gt;world&lt;/strong&gt;!&lt;/p&gt;</code> the space before <code>&lt;strong&gt;</code> is visible, and the tool does not try to decide which spaces are safe to drop. Build-time minifiers such as <a href="https://github.com/terser/html-minifier-terser" target="_blank" rel="noopener">html-minifier-terser</a> remove more with options like <code>collapseWhitespace</code>.</p>
 
 <h2>What Gets Minified</h2>
 <ul>
   <li>Whitespace between tags (inter-tag whitespace) is collapsed.</li>
   <li>HTML comments are removed — except IE conditional comments (<code>&lt;!--[if IE]&gt;</code>).</li>
   <li>Boolean attribute values like <code>disabled=""</code> are simplified to <code>disabled</code>.</li>
-  <li>Trailing whitespace inside text nodes is trimmed; internal runs collapse to single spaces.</li>
+  <li>Whitespace runs in text collapse to a single space. Whitespace-only text between tags becomes one space; it is not removed, because the parser cannot tell which of those spaces are visible.</li>
+  <li>When an element contains only text, the leading and trailing whitespace of that text is removed.</li>
 </ul>
 
 <h2>What Stays Verbatim</h2>
@@ -63,3 +66,12 @@ faqItems:
 
 <h2>When to Minify Production HTML</h2>
 <p>Most modern build pipelines minify HTML as part of the bundler step (Vite, Webpack, Astro, Next.js). Use this tool when you need a one-off minify — pasting from a CMS export, comparing before/after sizes, or sanity-checking a hand-written template. Beautify is the daily driver: paste minified HTML from production, get a readable copy to debug or diff.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li>An element that contains only text loses the leading and trailing spaces of that text. <code>&lt;p&gt;&lt;strong&gt;Note: &lt;/strong&gt;read this.&lt;/p&gt;</code> becomes <code>&lt;p&gt;&lt;strong&gt;Note:&lt;/strong&gt;read this.&lt;/p&gt;</code>, which renders as "Note:read this." Put the space outside the inline element before minifying.</li>
+  <li>Non-breaking spaces are collapsed like ordinary spaces: <code>Price:&amp;nbsp;&amp;nbsp;10&amp;nbsp;EUR</code> becomes <code>Price: 10 EUR</code>, so the line may now wrap between the number and the unit.</li>
+  <li>Comments that come before the first element of a fragment are dropped, including conditional comments such as <code>&lt;!--[if mso]&gt;</code>. Inside a full document or after the first element they are kept.</li>
+  <li>Inline JavaScript and CSS are copied as they are. They are not minified.</li>
+  <li>The HTML is parsed by the browser's <code>DOMParser</code>, so invalid markup comes out repaired (missing end tags added, stray tags dropped), and the doctype is written as <code>&lt;!doctype html&gt;</code>.</li>
+</ul>

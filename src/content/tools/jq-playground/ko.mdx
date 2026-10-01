@@ -3,7 +3,7 @@ seoTitle: "jq 플레이그라운드 온라인 — 브라우저에서 jq 필터 �
 seoDescription: "공식 jq 1.7 엔진으로 JSON에 jq 필터를 실행. pipe, select, map, group_by, sort, reduce 완전 지원, 설치·업로드·가입 불필요."
 faqItems:
   - question: "이것은 진짜 jq인가요, JavaScript 재구현인가요?"
-    answer: "공식 jq 1.7 C 소스를 jq-web으로 WebAssembly에 컴파일한 버전입니다. 필터 출력은 명령행 jq와 바이트 단위로 동일합니다. 엔진은 첫 방문에 약 1MB 다운로드되고, 이후 브라우저 캐시로 지연 없이 실행됩니다."
+    answer: "공식 jq 1.7 C 소스를 jq-web으로 WebAssembly에 컴파일한 버전입니다. 필터는 jq 본체가 평가하므로 CLI와 같이 동작하지만, 표시 방식은 몇 가지 점에서 다릅니다('제한' 참고). 엔진은 첫 방문에 약 1MB 다운로드되고, 이후 브라우저 캐시로 지연 없이 실행됩니다."
   - question: "어떤 jq 기능을 지원하나요?"
     answer: "jq 1.7 문법 전체 — pipe, select, map, group_by, sort_by, reduce, foreach, try/catch, 사용자 함수 def, 재귀 하강 .., 문자열·수학·날짜 함수, 모든 빌트인. CLI에서 동작하는 모든 필터가 여기서 동작합니다."
   - question: "내 JSON과 필터가 서버로 전송되나요?"
@@ -52,3 +52,25 @@ faqItems:
   <code>group_by(.tag) | map(&#123;tag: .[0].tag, count: length&#125;)</code>로 이벤트를 tag별로 버킷화,
   <code>[.[] | .duration_ms] | add / length</code>로 숫자 필드의 평균 계산.
 </p>
+
+<h2>예시: 주문 데이터</h2>
+<p>입력 패널에 다음 JSON을 넣은 경우입니다.</p>
+
+```json
+{"order_id": 9007199254740993, "items": [{"sku":"A","qty":2},{"sku":"B","qty":1}]}
+```
+
+<ul>
+  <li><code>.items | map(.qty) | add</code> → <code>3</code>(값 1개)</li>
+  <li><code>.items[] | .sku</code> → <code>["A", "B"]</code>로 표시(값 2개). jq CLI는 <code>"A"</code>와 <code>"B"</code>를 각각 다른 줄에 출력합니다.</li>
+  <li><code>.a +</code>(미완성 필터) → <code>jq: error: syntax error, unexpected end of file … jq: 1 compile error</code>. CLI와 같은 컴파일 오류입니다.</li>
+</ul>
+
+<h2>제한</h2>
+<ul>
+  <li>입력은 jq에 넘기기 전에 JavaScript <code>JSON.parse()</code>로 파싱하므로 2<sup>53</sup>을 넘는 정수는 정밀도가 떨어집니다. 위의 <code>{'.order_id'}</code>는 <code>9007199254740992</code>로 표시되며, jq 1.7 CLI는 <code>9007199254740993</code>을 출력합니다.</li>
+  <li>필터가 여러 값을 내면 결과 패널은 하나의 JSON 배열로 보여 줍니다. 배열 하나만 내는 필터(<code>[.items[] | .sku]</code>)와 모양이 같고, 카운터도 둘 다 배열 요소 수를 셉니다.</li>
+  <li>출력이 없는 필터(<code>empty</code>, 최상위에서 아무것도 일치하지 않는 <code>select</code>)는 빈 결과 대신 <code>jq error: Cannot read properties of undefined (reading 'trim')</code>를 표시합니다.</li>
+  <li>명령줄 옵션은 쓸 수 없습니다. <code>-r</code> 원시 문자열, <code>--arg</code>, <code>--slurp</code>, <code>--stream</code>이 없으며 결과는 항상 정렬된 JSON으로 표시됩니다.</li>
+  <li>엔진 <code>jq.wasm</code>(약 2.8MB, gzip 시 약 1MB)은 필터를 처음 실행할 때 불러옵니다.</li>
+</ul>

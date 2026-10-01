@@ -202,6 +202,7 @@ const L = labels[lang];
         statusEl.className = 'jpdc-status';
       }
 
+      /* ── engine:start ── */
       function toPascalCase(str) {
         return str
           .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
@@ -272,7 +273,7 @@ const L = labels[lang];
           var type = inferPythonType(v, k, classes, visiting, imp);
           var optional = (v === null);
           if (optional) imp.optional = true;
-          fields.push({ key: k, type: type, optional: optional });
+          fields.push({ key: k, type: type, optional: optional, missing: false, nullable: optional });
         }
         // Insert AFTER children so child classes appear first in output
         classes[name] = fields;
@@ -297,15 +298,23 @@ const L = labels[lang];
         for (var ki = 0; ki < keyList.length; ki++) {
           var k = keyList[ki];
           var vals = allKeys[k];
-          var optional = vals.length < totalCount;
+          var missing = vals.length < totalCount;
+          var nullable = false;
 
           var types = [];
           for (var vi = 0; vi < vals.length; vi++) {
-            if (vals[vi] === null) { optional = true; continue; }
+            if (vals[vi] === null) { nullable = true; continue; }
             var t = inferPythonType(vals[vi], k, classes, visiting, imp);
             if (types.indexOf(t) === -1) types.push(t);
           }
 
+          // PEP 484 lets int stand in for float, so int and float together are float.
+          if (types.length === 2 && types.indexOf('int') >= 0 && types.indexOf('float') >= 0) types = ['float'];
+          // An empty array says nothing about the element type; drop List[Any] when another
+          // sample gives a typed list.
+          if (types.indexOf('List[Any]') >= 0 && types.some(function (x) { return x !== 'List[Any]' && x.indexOf('List[') === 0; })) {
+            types = types.filter(function (x) { return x !== 'List[Any]'; });
+          }
           if (types.length === 0) {
             imp.any = true;
             types = ['Any'];
@@ -319,8 +328,9 @@ const L = labels[lang];
             type = 'Union[' + types.join(', ') + ']';
           }
 
+          var optional = missing || nullable;
           if (optional) imp.optional = true;
-          fields.push({ key: k, type: type, optional: optional });
+          fields.push({ key: k, type: type, optional: optional, missing: missing, nullable: nullable });
         }
         // Insert AFTER children so child classes appear first in output
         classes[name] = fields;
@@ -364,17 +374,17 @@ const L = labels[lang];
             }
           }
         } else {
+          /* TypedDict: a key missing from some samples is NotRequired (PEP 655); a key whose
+             value can be null is Optional. Keys keep their JSON order. */
           lines.push('class ' + name + '(TypedDict):');
-          if (ordered.length === 0) {
+          if (fields.length === 0) {
             lines.push('    pass');
           } else {
-            for (var i = 0; i < ordered.length; i++) {
-              var f = ordered[i];
-              if (f.optional) {
-                lines.push('    ' + f.key + ': Optional[' + f.type + ']');
-              } else {
-                lines.push('    ' + f.key + ': ' + f.type);
-              }
+            for (var i = 0; i < fields.length; i++) {
+              var f = fields[i];
+              var tt = f.nullable ? 'Optional[' + f.type + ']' : f.type;
+              if (f.missing) tt = 'NotRequired[' + tt + ']';
+              lines.push('    ' + f.key + ': ' + tt);
             }
           }
         }
@@ -461,33 +471,24 @@ const L = labels[lang];
 
         // Collect typing imports by scanning classes
         var hasOptional = false, hasList = false, hasAny = false, hasUnion = false, hasTypedDict = needTypedDict;
+        var hasNotRequired = false;
         for (var i = 0; i < names.length; i++) {
           var fields = classes[names[i]];
           if (!fields) continue;
           for (var j = 0; j < fields.length; j++) {
             var f = fields[j];
-            if (f.optional) hasOptional = true;
+            if (needTypedDict ? f.nullable : f.optional) hasOptional = true;
+            if (needTypedDict && f.missing) hasNotRequired = true;
             var t = f.type;
             if (t.indexOf('List[') !== -1) hasList = true;
             if (t.indexOf('Any') !== -1) hasAny = true;
             if (t.indexOf('Union[') !== -1) hasUnion = true;
           }
         }
-        // Also check for Optional usage from optional fields
-        if (!hasOptional) {
-          for (var i = 0; i < names.length; i++) {
-            var fields = classes[names[i]];
-            if (!fields) continue;
-            for (var j = 0; j < fields.length; j++) {
-              if (fields[j].optional) { hasOptional = true; break; }
-            }
-            if (hasOptional) break;
-          }
-        }
-
         var typingParts = [];
         if (hasAny) typingParts.push('Any');
         if (hasList) typingParts.push('List');
+        if (hasNotRequired) typingParts.push('NotRequired');
         if (hasOptional) typingParts.push('Optional');
         if (hasTypedDict) typingParts.push('TypedDict');
         if (hasUnion) typingParts.push('Union');
@@ -508,6 +509,24 @@ const L = labels[lang];
         return result;
       }
 
+      /* Classes for an object or an array of objects; null for other roots. */
+      function generatePython(parsed, rootName, mode) {
+        var classes = {}, visiting = {}, imp = {};
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          buildClass(parsed, rootName, classes, visiting, imp);
+        } else if (Array.isArray(parsed)) {
+          var objectItems = parsed.filter(function (v) {
+            return v !== null && typeof v === 'object' && !Array.isArray(v);
+          });
+          if (!objectItems.length) return null;
+          mergeObjectsToClass(objectItems, rootName, classes, visiting, imp);
+        } else {
+          return null;
+        }
+        return { code: renderAll(classes, mode), count: Object.keys(classes).length };
+      }
+      /* ── engine:end ── */
+
       function convert() {
         var raw = inputEl.value.trim();
         if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
@@ -524,35 +543,17 @@ const L = labels[lang];
 
         inputEl.classList.remove('error');
         var rootName = rootNameEl.value.trim() || 'Root';
-        var classes = {};
-        var visiting = {};
-        var imp = {};
-
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildClass(parsed, rootName, classes, visiting, imp);
-        } else if (Array.isArray(parsed)) {
-          var objectItems = parsed.filter(function (v) {
-            return v !== null && typeof v === 'object' && !Array.isArray(v);
-          });
-          if (objectItems.length > 0) {
-            mergeObjectsToClass(objectItems, rootName, classes, visiting, imp);
-          } else {
-            outputCodeEl.textContent = '# Array of primitives — no class to generate';
-            setStatus(MSG_GENERATED, false);
-            window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
-            return;
-          }
-        } else {
-          outputCodeEl.textContent = '# Primitive value — no class to generate';
+        var r = generatePython(parsed, rootName, currentMode);
+        if (!r) {
+          outputCodeEl.textContent = Array.isArray(parsed)
+            ? '# Array of primitives — no class to generate'
+            : '# Primitive value — no class to generate';
           setStatus(MSG_GENERATED, false);
           window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
           return;
         }
-
-        var result = renderAll(classes, currentMode);
-        outputCodeEl.textContent = result;
-        var count = Object.keys(classes).length;
-        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
+        outputCodeEl.textContent = r.code;
+        var msg = r.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', r.count);
         setStatus(msg, false);
         window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
       }

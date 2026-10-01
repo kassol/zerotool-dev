@@ -1,34 +1,35 @@
 ---
 seoTitle: "CSS Specificity Calculator — (a, b, c) Selector Weights | ZeroTool"
-seoDescription: "Calculate CSS selector specificity as (a, b, c) tuples instantly. Compare multiple selectors, see visual breakdowns by ID, class, and element. Free, browser-based."
+seoDescription: "Calculate CSS selector specificity as (a, b, c) per Selectors Level 4, including :is(), :not(), :has(), :where() and :nth-child(of S). Compare selectors side by side in your browser."
 faqItems:
   - question: "What is CSS specificity?"
     answer: "CSS specificity determines which style rule wins when multiple rules target the same element. It is expressed as a three-part tuple (a, b, c) where a counts ID selectors, b counts class/attribute/pseudo-class selectors, and c counts element type and pseudo-element selectors."
   - question: "How is specificity calculated?"
-    answer: "a = number of ID selectors (#id). b = number of class (.class), attribute ([attr]), and pseudo-class (:hover) selectors. c = number of element type (div, span) and pseudo-element (::before) selectors. The universal selector (*) and combinators (+, >, ~) contribute nothing."
+    answer: "a = number of ID selectors (#id). b = number of class (.class), attribute ([attr]), and pseudo-class (:hover) selectors. c = number of element type (div, span) and pseudo-element (::before) selectors. The universal selector (*) and combinators (space, >, +, ~) contribute nothing."
   - question: "How do I compare two selectors?"
-    answer: "Enter both selectors separated by a comma. The tool shows each specificity tuple side-by-side. Compare a column-by-column left to right — higher value in the first differing column wins."
-  - question: "What about :not(), :is(), and :has()?"
-    answer: ":not() and :is() take the specificity of their most specific argument. :where() always contributes zero specificity. :has() uses the specificity of its argument. This tool applies a simplified single-argument parse for these pseudo-classes."
+    answer: "Enter both selectors separated by a comma. Commas inside :is(), :where() or an attribute value do not split the input. Compare the tuples column by column from the left; the first column that differs decides."
+  - question: "What about :not(), :is(), :has() and :where()?"
+    answer: ":is(), :not() and :has() take the specificity of the most specific selector in their argument list, so :is(.a, #b) counts as (1, 0, 0). :where() always counts zero. :nth-child(An+B of S) counts one pseudo-class plus the most specific selector in S. These are the rules of Selectors Level 4 §17."
   - question: "Does inline style or !important count?"
-    answer: "Inline styles (style attribute) sit above (a, b, c) and !important overrides everything. This tool only calculates selector specificity — inline styles and !important are out of scope."
+    answer: "No. Specificity is only one step of the cascade. Origin and importance (!important), cascade layers (@layer) and the style attribute are compared before specificity (CSS Cascade 5 §6), so this tool's result only decides between rules that tie on those steps."
 ---
 
 <h2>How to Use</h2>
 <ol>
   <li>Type a CSS selector into the input field, for example <code>#nav .item:hover</code>.</li>
   <li>The specificity tuple <code>(a, b, c)</code> and a color-coded breakdown appear immediately.</li>
-  <li>To compare selectors, separate them with commas: <code>#nav .item, .item:hover</code>.</li>
+  <li>To compare selectors, separate them with commas: <code>#nav .item, .item:hover</code>. A comma inside <code>:is()</code>, <code>:where()</code>, <code>:not()</code> or a quoted attribute value stays part of that selector.</li>
   <li>Click <strong>Copy</strong> next to any result to copy the tuple to the clipboard.</li>
+  <li>If a selector cannot be parsed (an unclosed bracket or string, a lone <code>#</code> or <code>.</code>), the card says what is wrong and where.</li>
 </ol>
 
 <h2>Reading the (a, b, c) Tuple</h2>
 <ul>
   <li><strong>a — ID</strong>: Each <code>#id</code> selector adds 1 here.</li>
   <li><strong>b — Class / Attribute / Pseudo-class</strong>: Each <code>.class</code>, <code>[attr]</code>, or <code>:pseudo-class</code> adds 1.</li>
-  <li><strong>c — Element / Pseudo-element</strong>: Each tag name or <code>::pseudo-element</code> adds 1.</li>
+  <li><strong>c — Element / Pseudo-element</strong>: Each tag name or <code>::pseudo-element</code> adds 1. The legacy one-colon forms <code>:before</code>, <code>:after</code>, <code>:first-line</code> and <code>:first-letter</code> are pseudo-elements too.</li>
 </ul>
-<p>Compare left to right. The first column where two selectors differ decides which one wins. <code>(1,0,0)</code> always beats <code>(0,99,99)</code>.</p>
+<p>Compare left to right. The first column where two selectors differ decides which one wins. <code>(1,0,0)</code> always beats <code>(0,99,99)</code>. If all three columns are equal, the rule that appears later in the stylesheet wins.</p>
 
 <h2>Common Examples</h2>
 <ul>
@@ -38,4 +39,38 @@ faqItems:
   <li><code>#id</code> → <code>(1, 0, 0)</code></li>
   <li><code>#id .class:hover</code> → <code>(1, 2, 0)</code></li>
   <li><code>div > p + span::before</code> → <code>(0, 0, 4)</code></li>
+  <li><code>a[href="#top"]</code> → <code>(0, 1, 1)</code> — the <code>#</code> inside the quoted value is not an ID.</li>
+</ul>
+
+<h2>Functional Pseudo-classes</h2>
+<p>Selectors Level 4 §17 gives these pseudo-classes their own rules, and they are where hand counting usually goes wrong:</p>
+<ul>
+  <li><code>:is(.a, #b)</code> → <code>(1, 0, 0)</code> — the most specific argument counts, even if the element matched <code>.a</code>.</li>
+  <li><code>:not(.a, .b.c)</code> → <code>(0, 2, 0)</code> — the arguments are compared, never added up.</li>
+  <li><code>article:has(> img, > .figure)</code> → <code>(0, 1, 1)</code></li>
+  <li><code>:where(#app .card) p</code> → <code>(0, 0, 1)</code> — <code>:where()</code> always counts zero, which is why reset and library styles use it.</li>
+  <li><code>li:nth-child(2n+1)</code> → <code>(0, 1, 1)</code></li>
+  <li><code>li:nth-child(2n+1 of .important)</code> → <code>(0, 2, 1)</code> — one pseudo-class plus the most specific selector after <code>of</code>.</li>
+  <li><code>::slotted(span.note)</code> → <code>(0, 1, 2)</code> and <code>:host(.dark)</code> → <code>(0, 2, 0)</code> — CSS Scoping adds the argument to the pseudo-element or pseudo-class.</li>
+</ul>
+
+<h2>A Worked Example</h2>
+<p>A component library ships <code>:where(.btn) {'{'} color: gray {'}'}</code> and your app adds <code>.btn {'{'} color: navy {'}'}</code>. The library rule is <code>(0, 0, 0)</code> and yours is <code>(0, 1, 0)</code>, so navy wins no matter which file loads last. If the library had written <code>.ui .btn</code> instead, it would be <code>(0, 2, 0)</code> and you would need a second class or a cascade layer to override it.</p>
+
+<h2>Where Specificity Sits in the Cascade</h2>
+<p>CSS Cascade Level 5 §6 sorts declarations by origin and importance, then by context, then the <code>style</code> attribute, then cascade layer, and only then by specificity and order of appearance. A declaration marked <code>!important</code> or placed in a later <code>@layer</code> can beat a selector with a higher tuple. This tool calculates the specificity step only.</p>
+
+<h2>Limitations</h2>
+<ul>
+  <li>The nesting selector <code>&amp;</code> counts as zero here. In real CSS it has the specificity of the parent rule's most specific selector (CSS Nesting §4), which a single selector on its own does not show.</li>
+  <li>The tool checks the structure of the selector, not whether a pseudo-class name exists. An unknown name such as <code>:hovr</code> still counts as one pseudo-class, while a browser would drop the whole rule.</li>
+  <li>Inline styles, <code>!important</code> and <code>@layer</code> are outside the calculation, as described above.</li>
+</ul>
+
+<h2>Sources</h2>
+<ul>
+  <li><a href="https://www.w3.org/TR/selectors-4/#specificity-rules" target="_blank" rel="noopener">Selectors Level 4 §17, Calculating a selector's specificity</a></li>
+  <li><a href="https://www.w3.org/TR/css-cascade-5/#cascade-sort" target="_blank" rel="noopener">CSS Cascading and Inheritance Level 5 §6.1, Cascade sorting order</a></li>
+  <li><a href="https://www.w3.org/TR/css-nesting-1/#nest-selector" target="_blank" rel="noopener">CSS Nesting Module §4, the nesting selector</a></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/CSS/Specificity" target="_blank" rel="noopener">MDN: Specificity</a></li>
 </ul>

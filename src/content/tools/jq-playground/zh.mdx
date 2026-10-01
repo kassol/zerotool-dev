@@ -3,7 +3,7 @@ seoTitle: "jq 在线 Playground — 浏览器测试 jq 过滤器 | ZeroTool"
 seoDescription: "在浏览器中用官方 jq 1.7 引擎测试过滤器，支持 pipe、select、map、group_by、sort、reduce 等完整语法，零安装零上传零账号。"
 faqItems:
   - question: "这是真正的 jq 吗，还是 JavaScript 重写版？"
-    answer: "这是 jq 1.7 官方 C 源码通过 jq-web 编译成 WebAssembly 的版本。过滤结果与命令行 jq 完全一致。引擎首次访问下载约 1MB，浏览器缓存后再次访问零延迟。"
+    answer: "这是 jq 1.7 官方 C 源码通过 jq-web 编译成 WebAssembly 的版本。过滤器由 jq 本身求值，行为与命令行一致；显示方式有几处不同（见「限制」）。引擎首次访问下载约 1MB，浏览器缓存后再次访问零延迟。"
   - question: "支持哪些 jq 语法？"
     answer: "完整 jq 1.7 —— pipe、select、map、group_by、sort_by、reduce、foreach、try/catch、自定义函数 def、递归下降 ..、字符串/数学/日期函数和所有内置函数。命令行 jq 能跑的过滤器这里都能跑。"
   - question: "我的 JSON 和过滤器会被上传吗？"
@@ -52,3 +52,25 @@ faqItems:
   <code>group_by(.tag) | map(&#123;tag: .[0].tag, count: length&#125;)</code> 按 tag 分桶；
   <code>[.[] | .duration_ms] | add / length</code> 算平均耗时。
 </p>
+
+<h2>示例：订单数据</h2>
+<p>在输入区放入这段 JSON：</p>
+
+```json
+{"order_id": 9007199254740993, "items": [{"sku":"A","qty":2},{"sku":"B","qty":1}]}
+```
+
+<ul>
+  <li><code>.items | map(.qty) | add</code> → <code>3</code>（1 个值）</li>
+  <li><code>.items[] | .sku</code> → 显示为 <code>["A", "B"]</code>（2 个值）。命令行 jq 输出的是两行：<code>"A"</code> 和 <code>"B"</code>。</li>
+  <li><code>.a +</code>（不完整的过滤器）→ <code>jq: error: syntax error, unexpected end of file … jq: 1 compile error</code>，与命令行的编译错误相同。</li>
+</ul>
+
+<h2>限制</h2>
+<ul>
+  <li>输入先经 JavaScript <code>JSON.parse()</code> 解析再交给 jq，超过 2<sup>53</sup> 的整数会丢精度：上例 <code>{'.order_id'}</code> 显示 <code>9007199254740992</code>，jq 1.7 命令行输出 <code>9007199254740993</code>。</li>
+  <li>过滤器产出多个值时，结果区把它们显示成一个 JSON 数组。只产出一个数组的过滤器（<code>[.items[] | .sku]</code>）看起来完全一样，计数也都按数组元素算。</li>
+  <li>没有输出的过滤器（如 <code>empty</code>，或顶层 <code>select</code> 一个都没匹配）会显示 <code>jq error: Cannot read properties of undefined (reading 'trim')</code>，而不是空结果。</li>
+  <li>没有命令行选项：不支持 <code>-r</code> 原始字符串、<code>--arg</code>、<code>--slurp</code>、<code>--stream</code>。结果总是以格式化 JSON 显示。</li>
+  <li>引擎 <code>jq.wasm</code> 约 2.8 MB（gzip 后约 1 MB），第一次运行过滤器时加载。</li>
+</ul>

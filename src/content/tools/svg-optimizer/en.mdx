@@ -24,7 +24,7 @@ faqItems:
 
 <h2>What gets removed</h2>
 <p>
-  SVGO removes editor metadata, comments, hidden elements, default attributes, and other markup that does not affect rendering. It also rewrites path data, merges adjacent paths, and shortens color values. Real-world icons typically shrink by 40–70%, with the bulk of the savings coming from <code>convertPathData</code>, <code>mergePaths</code>, and <code>cleanupNumericValues</code>.
+  SVGO removes editor metadata, comments, hidden elements, default attributes, and other markup that does not affect rendering. It also rewrites path data, merges adjacent paths, and shortens color values. How much you save depends on how much of that the file carries; the exported icon in the example below goes from 511 to 254 bytes.
 </p>
 
 <h2>The two risky toggles</h2>
@@ -47,3 +47,37 @@ faqItems:
 <p>
   Need to convert SVG to a raster format afterwards, or extract it for React? Use ZeroTool's <a href="/tools/svg-to-png-converter/">SVG to PNG Converter</a> and <a href="/tools/svg-to-jsx/">SVG to JSX</a> on the optimized output.
 </p>
+
+<h2>Example: An Icon Exported from a Design Tool</h2>
+<p>With the default toggles (SVGO 4.0.1, multipass on, precision 3), this 511-byte file:</p>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generator: Figma -->
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Check</title>
+  <defs>
+    <style>.stroke { stroke: #000000; stroke-width: 2.000000; }</style>
+  </defs>
+  <g id="icon-check">
+    <rect x="0" y="0" width="24" height="24" fill="none"/>
+    <path class="stroke" d="M 5.000000 12.000000 L 10.000000 17.000000 L 19.000000 7.000000" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
+```
+
+<p>becomes 254 bytes:</p>
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><title>Check</title><path d="M0 0h24v24H0z"/><path stroke-linecap="round" stroke-linejoin="round" d="m5 12 5 5 9-10" style="stroke:#000;stroke-width:2"/></svg>
+```
+
+<p>The XML declaration, the comment and the unused <code>id="icon-check"</code> are gone. The one-off <code>.stroke</code> class was inlined into a <code>style</code> attribute and the <code>&lt;style&gt;</code> block removed. The path was rewritten with relative commands, and <code>#000000</code> became <code>#000</code>. <code>&lt;title&gt;</code> stays: SVGO 4 no longer removes it by default. Ticking only <strong>Remove viewBox</strong> leaves <code>width="24" height="24"</code> and no viewBox, so the icon no longer scales. Ticking both risky toggles ends with a viewBox and no width or height: <code>removeViewBox</code> drops the viewBox, then <code>removeDimensions</code> removes the size and writes a viewBox back from it.</p>
+
+<h2>Limits</h2>
+<ul>
+  <li><strong>IDs are shortened.</strong> <code>cleanupIds</code> renames referenced IDs to <code>a</code>, <code>b</code> and so on: a gradient with <code>id="brand-gradient"</code> becomes <code>id="a"</code>. If several optimized SVGs are inlined in one HTML page, their IDs can collide and one icon picks up another's gradient. Untick the IDs toggle, or give each file a prefix with SVGO's <code>prefixIds</code> in your build.</li>
+  <li>IDs and classes that only your page CSS or JavaScript refers to are invisible to SVGO. Unused IDs are removed and single-use classes are inlined, so styles that target them from outside stop working.</li>
+  <li>Coordinates are rounded to 3 decimal places by default. For detailed artwork at small viewBox scales, raise the precision if the after preview shows shifted points.</li>
+  <li>One file at a time. For folders or CI, use the SVGO command line (<code>npx svgo -f icons/ -o dist/</code>) with the same settings.</li>
+</ul>

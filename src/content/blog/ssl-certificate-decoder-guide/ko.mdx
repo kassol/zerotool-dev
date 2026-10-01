@@ -2,11 +2,13 @@
 title: "SSL 인증서 디코더: X.509 PEM 현장 점검 실전 가이드"
 description: "X.509 PEM 인증서를 브라우저에서 디코딩하여 Subject, Issuer, SAN, 유효 기간, 키 타입, 서명 알고리즘, 지문을 확인. 업로드 불필요, OpenSSL 명령도 불필요."
 pubDate: 2026-05-11
+updatedDate: 2026-10-01
 lang: "ko"
+noindex: true
 tags: ["ssl-certificate-decoder", "x509", "tls", "developer-tools"]
 ---
 
-와일드카드 갱신 배포까지 30분, 스테이징 엔드포인트는 `SSL_ERROR_BAD_CERT_DOMAIN`을 던지고 있고, 터미널 스크롤백에 남아 있는 건 PEM 블록 하나뿐이다. 배포 윈도우가 닫히기 전에 SAN 목록과 만료 시각, SHA-256 지문을 봐야 한다. `openssl x509 -text`도 답을 주지만, 플래그 다섯 개를 친 뒤에도 정작 보고 싶은 한 줄을 찾아 스크롤하고 있다. 이런 순간에는 용도가 좁혀진 디코더가 더 빠르다.
+인증서 디코더가 자주 쓰이는 순간: 배포 직전 스테이징 엔드포인트가 `SSL_ERROR_BAD_CERT_DOMAIN`을 반환하고, 손에 있는 건 PEM 블록뿐이다. 보고 싶은 건 SAN 목록, 만료일, SHA-256 지문이다. `openssl x509 -text`로도 볼 수 있지만 다른 모든 필드와 함께 나온다. 전용 디코더는 이 항목들을 맨 앞에 보여 준다.
 
 [지금 인증서 디코드 →](/ko/tools/ssl-certificate-decoder/)
 
@@ -45,13 +47,13 @@ ZeroTool 디코더는 평범한 JavaScript로 작성된 작은 ASN.1 파서로 �
 
 ## Subject vs Issuer vs SAN — 현대 호스트명 매칭의 진짜 규칙
 
-2026년의 브라우저는 호스트명 매칭에서 Subject CN을 **보지 않는다**. `Subject Alternative Name`(SAN) 확장만 본다. Chrome은 58에서 CN 폴백을 제거했고, Firefox는 48, Safari는 iOS 13. `CN=example.com`만 있고 SAN이 없는 인증서는 모든 주요 브라우저가 거절한다.
+브라우저는 호스트 이름 대조에 Subject의 `CN`을 쓰지 않고 `Subject Alternative Name`(SAN) 확장을 쓴다. Chrome은 58 버전부터 CN으로 대체하지 않으며, Apple은 iOS 13과 macOS 10.15부터 이름이 SAN에 있어야 한다. `CN=example.com`만 있고 SAN 항목이 없는 인증서는 현재 브라우저에서 거부된다.
 
 그래서 인증서를 디코드할 때는 이 순서로 읽는다:
 
 1. **SAN** — 이 인증서가 실제로 커버하는 호스트명은 어떤 것인가?
 2. **Subject** — CN이 일관성 있는가? (주로 사람용. CA는 여전히 채우는 관행)
-3. **Issuer** — 누가 서명했는가? (Let's Encrypt R3, DigiCert Global Root, ZeroSSL, 또는 사내 CA 중 무엇을 예상해야 하는지가 결정된다)
+3. **Issuer** — 누가 서명했는가? (Let's Encrypt 중간 인증서 R10·E5, DigiCert, ZeroSSL 등 무엇을 예상해야 하는지 알 수 있다.)
 
 오늘 전형적인 Let's Encrypt 인증서는 SAN에 루트 도메인(`example.com`)과 `www` 서브도메인을 함께 담는다. 와일드카드 인증서는 `*.example.com`이 SAN이고, CN이 아니다. 디코더는 SAN 항목을 종류(DNS, IP, URI, email)별로 그룹화하므로 잘못 발급된 와일드카드를 빠르게 찾아낼 수 있다.
 
@@ -63,7 +65,7 @@ TLS 서버 인증서에서 기대하는 조합:
 
 ```
 Key Usage: digitalSignature, keyEncipherment
-EKU      : serverAuth, clientAuth
+EKU      : serverAuth (some certificates also carry clientAuth)
 ```
 
 CA 인증서(중간 또는 루트)에서 기대하는 조합:
@@ -81,11 +83,11 @@ Basic Constraints: CA = true
 
 | 해시 | 2026년의 실제 용도 |
 |------|--------------------|
-| SHA-256 | 현 시점의 기본 식별자. HSTS preload 제출, 모바일 앱 인증서 핀닝, 일부 표준의 SRI, `openssl x509 -fingerprint -sha256`이 전부 SHA-256을 가정한다. |
+| SHA-256 | 기본 식별자. `openssl x509 -fingerprint -sha256`이 출력하며, 현재 대부분의 도구와 자산 목록도 이를 기록한다. |
 | SHA-1 | 레거시 도구: 오래된 모니터링 스크립트, 마이그레이션이 끝나지 않은 사내 CMDB, 일부 IDS/IPS 시그니처. 새로운 핀닝 용도로는 사용 금지. |
 | MD5 | 아주 오래된 `openssl` 출력과의 호환. 암호학적으로 깨졌으므로 읽기 전용 대조 용도에만. |
 
-핀닝 용도라면 SHA-256 행을 복사한다. 누군가 로그에 적어 둔 해시를 grep으로 찾을 때, 디코더가 세 가지를 모두 보여주므로 상대가 어떤 것을 썼는지 추측할 필요가 없다.
+인증서 파일을 식별하려면 SHA-256 행을 쓴다. 인증서 피닝은 보통 인증서 전체가 아니라 공개 키(SPKI)의 SHA-256 해시를 고정하므로 같은 키로 갱신해도 유지된다. 이 디코더는 SPKI 해시를 계산하지 않는다. 누군가 로그에 적어 둔 해시를 찾을 때는 세 가지 지문을 모두 보여 주므로 추측할 필요가 없다.
 
 ## RSA, ECDSA, Ed25519 — 공개 키 필드가 알려주는 것
 
@@ -101,11 +103,11 @@ RSA의 키 바이트는 자체적으로 다시 ASN.1 SEQUENCE `{ modulus, expone
 
 ECDSA는 이름 곡선 OID를 표시한다. 실무에서 만나는 세 가지:
 
-- `prime256v1`(`P-256` 또는 `secp256r1`로도 불림) — Let's Encrypt ECDSA 체인의 기본
+- `prime256v1`(`P-256`, `secp256r1`라고도 함) — Certbot 2.0부터 기본으로 생성하는 ECDSA 키 곡선
 - `secp384r1`(`P-384`) — 일부 EV 인증서와 Windows 엔드포인트가 선호
 - `secp521r1`(`P-521`) — 외부에서는 드물고, 주로 내부 컴플라이언스 용도
 
-Ed25519 인증서는 공개 web TLS에서는 아직 흔치 않다(Chrome이 109에서야 추가). 하지만 내부 메시 TLS, 코드 서명, SSH에서는 보인다. 디코더는 OID로 라벨을 붙이므로 hex를 외울 필요는 없다.
+Ed25519 인증서는 현재 공개 웹 TLS에서 쓰이지 않는다. CA/브라우저 포럼 Baseline Requirements가 공개적으로 신뢰되는 TLS 인증서에 RSA와 ECDSA 키만 허용하기 때문이다. 사설 PKI와 내부 메시 TLS에서 볼 수 있다. 디코더는 OID로 표시하므로 외울 필요가 없다.
 
 ## 번들 파일과 도구의 처리 범위
 
@@ -117,7 +119,7 @@ ZeroTool 디코더는 입력의 **첫 번째 인증서만** 디코드하며, 상
 
 운영 리뷰에서 다음 패턴은 빨간 깃발이다:
 
-- **공개 TLS 리프 인증서의 `notAfter`가 `notBefore`로부터 13개월 이상 떨어져 있다**. 2020년 9월부터 Apple, Mozilla, Google이 일제히 공개 TLS 수명 상한을 398일로 통일했다. 그 이상이라면 비공개 CA, 설정이 잘못된 사내 PKI, 또는 상한 도입 전의 오래된 인증서 중 하나다.
+- **공개 TLS 리프 인증서의 유효 기간이 현재 상한을 넘음.** CA/브라우저 포럼 Baseline Requirements는 2020년 9월부터 공개 TLS 인증서를 398일 이내로 제한했고, 투표 SC-081로 2026년 3월 15일 이후 발급분은 200일 이내가 되었다. 이보다 길면 비공개 CA, 설정이 잘못된 사설 PKI, 또는 오래된 인증서다.
 - **CN은 채워져 있지만 SAN이 없음**. 위에서 언급했듯 브라우저는 거부한다 — 새 배포를 깨뜨릴 만한 레거시 내부 CA 흐름을 발견하는 데 유용하다.
 - **서버 인증서에 CA = true**. 잘못 발급되었거나, 리프로 착각된 중간 인증서이거나 둘 중 하나다.
 - **AIA에 OCSP URL은 있지만 OCSP Must-Staple 플래그가 없음**. 대부분의 배포에서는 문제없지만 stapling 강제 환경이라면 발급 시점에 OCSP Must-Staple 확장(OID 1.3.6.1.5.5.7.1.24)을 추가해야 한다.
@@ -136,7 +138,7 @@ openssl x509 -in cert.pem -noout -dates -subject -issuer -ext subjectAltName
 
 운영 인증서를 낯선 웹 도구에 붙여 넣는 행위는 소프트 누설이다. 인증서 자체는 공개 정보이며 모든 TLS 클라이언트가 받는 데이터지만, **붙여 넣는 행위 자체**가 "지금 이 순간 우리 회사의 누군가가 그 인증서를 디버깅 중"이라는 사실을 상대 서버에 전달한다. 일부 컴플라이언스 프레임워크는 이 패턴을 감사 로그에 표시한다.
 
-ZeroTool 디코더는 브라우저 탭 안에서 완결된다. PEM은 어떤 서버에도 도달하지 않는다 — 초기 페이지 로드 이후 네트워크 요청은 발생하지 않는다. DevTools → Network를 열고 PEM을 붙여 디코드한 뒤, 요청 횟수가 변하지 않는 것을 확인하면 직접 검증할 수 있다.
+ZeroTool 디코더는 브라우저 탭 안에서만 동작하며 PEM은 어디로도 전송되지 않는다. 페이지 자체는 사이트의 다른 페이지처럼 분석·광고 스크립트를 불러오지만, 그 요청들에 인증서는 들어가지 않는다. DevTools → Network를 열고 PEM을 붙여 디코드한 뒤 새 요청에 포함되지 않았는지 확인할 수 있다.
 
 ## 더 읽을거리
 

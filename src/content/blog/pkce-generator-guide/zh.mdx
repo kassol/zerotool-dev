@@ -4,10 +4,11 @@ description: "在浏览器里生成 code_verifier 与 code_challenge，正确接
 pubDate: 2026-05-11
 updatedDate: 2026-10-01
 lang: "zh"
+noindex: true
 tags: ["oauth", "pkce", "authentication", "security", "developer-tools"]
 ---
 
-你接手了一个昨天还跑得好好的授权码流程。同事周末升级了一版移动 SDK，今天每台新设备登录都报 `invalid_grant`，但 Web 端正常。服务端日志显示 `/token` 调用没带 `code_verifier`。打开 SDK changelog 才发现：上游库把原来悄悄存着的 client secret 换成了 PKCE，本想做"无感迁移"。移动同学没注意到，是因为测试机还有缓存的 session。等问题被发现，团队已经在工位上吵了三个小时——SHA-256 到底是 verifier 还是 challenge。
+PKCE 出问题的典型样子是这样的：授权码流程在网页端正常，移动端 SDK 升级后，新设备每次登录都以 `invalid_grant` 结束，服务端日志显示 `/token` 请求没带 `code_verifier`，或者带的值哈希后对不上之前发出的 challenge。有缓存会话的设备照常可用，测试时很容易漏掉；排查往往从「哪个值要做哈希、哪个值发到哪里」这个问题开始。
 
 PKCE 全称 Proof Key for Code Exchange，是 OAuth 的扩展，让那些**身上没有 server secret 的客户端**也能证明授权请求是自己发起的。RFC 7636 在 2015 年为移动和原生应用引入。[RFC 9700](https://www.rfc-editor.org/rfc/rfc9700#section-2.1.1)（2025 年）要求公开客户端必须用 PKCE、建议机密客户端也用；[OAuth 2.1 草案](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) 要求所有客户端都用，唯一例外是授权服务器确信其正确实现了 OpenID Connect nonce 的机密客户端。机制小得能一段话讲清，又容易写错——错得能通过 happy-path 测试，等真实客户端第一次重试就崩盘。ZeroTool 的 [PKCE 生成器](/zh/tools/pkce-generator/) 在你的浏览器里就把这对值算好，同时给出 `/authorize` URL 与 `/token` 交换的 `curl` 命令；遇到不符合 RFC 字符集的 verifier 会拒绝计算 challenge，日志里的 challenge 对不上时还能告诉你原因。
 
@@ -81,7 +82,7 @@ Base64url 是 base64 的小改版：`+` 换 `-`，`/` 换 `_`，结尾的 `=` pa
 
 **3. 跨次重试复用 verifier。** 每一次授权流程都该有自己的 verifier/challenge 对。如果用户取消了授权同意页、你重发 `/authorize`，要起一个新的 verifier——服务端有可能把你上一次发起、自己已经放弃的 verifier 记在那里。
 
-**4. verifier 存错地方。** SPA 用 `sessionStorage`，像下面浏览器示例那样，换完 token 就删掉。verifier 只需要在同一个标签页里撑过一次重定向。[`sessionStorage`](https://developer.mozilla.org/zh-CN/docs/Web/API/Window/sessionStorage) 属于当前标签页，关闭标签页即清除；`localStorage` 在登录结束后仍然留着，而且同源的所有标签页共用，两个标签页同时登录会互相覆盖 verifier。两者都挡不住脚本注入：同源下运行的任何 JavaScript 都能读到。原生 App 走平台安全存储（iOS Keychain、Android EncryptedSharedPreferences），别明文落盘。
+**4. verifier 存错地方。** SPA 用 `sessionStorage`，像下面浏览器示例那样，换完 token 就删掉。verifier 只需要在同一个标签页里撑过一次重定向。[`sessionStorage`](https://developer.mozilla.org/zh-CN/docs/Web/API/Window/sessionStorage) 属于当前标签页，关闭标签页即清除；`localStorage` 在登录结束后仍然留着，而且同源的所有标签页共用，两个标签页同时登录会互相覆盖 verifier。两者都挡不住脚本注入：同源下运行的任何 JavaScript 都能读到。原生 App 走平台安全存储（iOS Keychain、Android 用 Android Keystore 中的密钥加密），别明文落盘。
 
 **5. 嫌 S256 麻烦改用 `plain`。** 上面那五行就是 S256 的完整实现，OAuth 库也都内置了。规范没给 `plain` 留余地：RFC 7636 §4.2 只允许算不了 SHA-256 的客户端用它；[RFC 9700 §2.1.1](https://www.rfc-editor.org/rfc/rfc9700#section-2.1.1) 指出 S256 是目前唯一不会在授权请求里暴露 verifier 的方法；OAuth 2.1 草案 §7.5.2 直接禁止。服务器的做法各不相同：[LINE 登录](https://developers.line.biz/ja/docs/line-login/integrate-pkce/) 只接受 S256，Keycloak 仍可把 `plain` 设为客户端要求的方法，飞书在缺省 method 时按 `plain` 处理。
 

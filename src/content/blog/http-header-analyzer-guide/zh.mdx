@@ -2,11 +2,13 @@
 title: "像高手一样读懂 HTTP 头部：一份实战指南"
 description: "粘贴 HTTP 原始头部，一次性看清安全、缓存、CORS 与 Cookie 元数据。理解分类、识别合规陷阱，把代码已经发出去的头部真正用上。"
 pubDate: 2026-05-23
+updatedDate: 2026-10-01
 lang: "zh"
+noindex: true
 tags: ["http", "security-headers", "cors", "web-development", "developer-tools"]
 ---
 
-CDN 刚推了一次配置变更，预发响应里突然冒出四十个头部。一半眼熟，几个可疑，剩下你从来没仔细读过。浏览器 DevTools Network 面板把它们摊成一长串、不带任何注释——你只能滚屏、复制，再粘到文档里慢慢琢磨改了什么。等终于发现重复的 `Cache-Control` 或缺失的 `includeSubDomains` 指令，PR 已经合进了主干。
+常见的检查场景：CDN 或代理改了配置后，预发环境的响应里带着几十个头部。DevTools 只是原样列出，没有任何说明，要找出重复的 `Cache-Control`、太短的 HSTS `max-age` 或缺 `Secure` 的 cookie，只能逐行读。
 
 [把原始头部粘进分析器 →](/zh/tools/http-header-analyzer/)
 
@@ -14,7 +16,7 @@ CDN 刚推了一次配置变更，预发响应里突然冒出四十个头部。�
 
 ## HTTP 头部到底是什么
 
-一个 HTTP 报文由状态行（响应）或方法行（请求）开头，接若干头部，一个空行，再加上可选的报文体。每个头部都是单独一行的 `名称: 值`。HTTP/2 与 HTTP/3 在底层换成了二进制帧，但只要工具把头部序列化出来——`curl -I`、`fetch -v`、DevTools 的「Copy as headers」、Nginx 调试日志、服务网格 trace——你拿到的就是文本形态。分析器吃的就是这种文本。
+一个 HTTP 报文由状态行（响应）或方法行（请求）开头，接若干头部，一个空行，再加上可选的报文体。每个头部都是单独一行的 `名称: 值`。HTTP/2 与 HTTP/3 在底层换成了二进制帧，但只要工具把头部序列化出来——`curl -I`、DevTools 的「Copy as headers」、Nginx 调试日志、服务网格 trace——你拿到的就是文本形态。分析器吃的就是这种文本。
 
 清单看着平平无奇，实际上每个头部都是多方之间的约定：客户端、源服务器、中间缓存、浏览器特性、统计平台。任意一个写错都会触发一组可预测的故障：
 
@@ -73,7 +75,7 @@ CDN 刚推了一次配置变更，预发响应里突然冒出四十个头部。�
 
 ### 7. Cookie
 
-`Cookie`（请求）与 `Set-Cookie`（响应）。安全靠 flag 守住：`HttpOnly` 阻止 JavaScript 读取，`Secure` 强制 HTTPS，`SameSite` 控制跨站发送，`Path` / `Domain` / `Expires` / `Max-Age` 决定生命周期。分析器对任何缺 `HttpOnly` 或 `Secure` 的 `Set-Cookie` 都会给出警告，因为这正是 XSS 偷走会话令牌的标准路径。
+`Cookie`（请求）与 `Set-Cookie`（响应）。安全靠 flag 守住：`HttpOnly` 阻止 JavaScript 读取，`Secure` 强制 HTTPS，`SameSite` 控制跨站发送，`Path` / `Domain` / `Expires` / `Max-Age` 决定生命周期。分析器对任何缺 `HttpOnly` 或 `Secure` 的 `Set-Cookie` 都会给出警告，因为缺 `HttpOnly` 的 cookie 能被注入的 JavaScript 读到，缺 `Secure` 的 cookie 会走明文 HTTP。
 
 ### 8. 传输 / 范围 / 代理 / 通用 / 自定义
 
@@ -144,7 +146,7 @@ dev 环境用 `Access-Control-Allow-Origin: *`，生产新接口要读会话 coo
 
 ### 「cookie 写进去了，浏览器却不回传」
 
-`Set-Cookie: session=abc; HttpOnly; SameSite=None` 看着没问题——直到你发现少了 `Secure`。浏览器对 `SameSite=None` 又没 `Secure` 的 cookie 一律静默拒绝。无论 `SameSite` 是什么值，分析器都会提醒缺 `Secure`，因为 `Secure` 在任何场景下都是更稳妥的默认。
+`Set-Cookie: session=abc; HttpOnly; SameSite=None` 看着没问题——直到你发现少了 `Secure`。Chrome（80 版起）和其他现行浏览器会拒绝带 `SameSite=None` 却没有 `Secure` 的 cookie；响应里不会报错，只是 cookie 根本没存下来。无论 `SameSite` 是什么值，分析器都会提醒缺 `Secure`，因为 `Secure` 在任何场景下都是更稳妥的默认。
 
 ### 「Cache-Control 同时含 no-store 与 max-age」
 
@@ -152,12 +154,12 @@ dev 环境用 `Access-Control-Allow-Origin: *`，生产新接口要读会话 coo
 
 ## ZeroTool 与其他头部工具
 
-现有工具大致分两阵营。**URL 抓取类**（如 `securityheaders.com`、KeyCDN、dnschecker）让你输入 URL，由它们的后端去请求并出报告。适合一次性公开站点审计，但要求目标对第三方后端可达——内网预发、VPN 后的服务、未发布的版本都用不了。**粘贴类**（如 `mockoon.com`、`outstanding.tools`）解析你提供的字符串；ZeroTool 的 HTTP Header 分析器属于第二阵营。
+现有工具大致分两阵营。**URL 抓取类**（如 `securityheaders.com`、KeyCDN、dnschecker）让你输入 URL，由它们的后端去请求并出报告。适合一次性公开站点审计，但要求目标对第三方后端可达——内网预发、VPN 后的服务、未发布的版本都用不了。**粘贴类**解析你提供的字符串；ZeroTool 的 HTTP Header 分析器属于第二阵营。
 
 ZeroTool 在此之上提供的差异化：
 
 - **合规提示就嵌在每个头部卡片里**，不是页面底部给个安全打分。提示告诉你改什么、为什么，而不是丢出一个 A/B/C 字母分。
-- **自动识别请求 vs 响应**，curl `-I` 的输出与 `fetch -v` 的输出都不用切换模式就能直接粘。
+- **自动识别请求 vs 响应**，curl `-I` 的输出和复制来的请求头块都不用切换模式就能直接粘。
 - **分类 / 原文 / JSON 三个标签**，同一段粘贴可以驱动安全审查、预发对生产的 diff、或导出 JSON 给下游工具。
 - **100% 客户端**。你粘的 Authorization 与 Set-Cookie 字符串不会离开浏览器。点 Analyze 后打开 DevTools Network 即可验证——零出站请求。
 

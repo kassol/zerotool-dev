@@ -1,47 +1,52 @@
 ---
 seoTitle: "JSON 转 Kotlin 数据类生成器 | ZeroTool"
-seoDescription: "从 JSON 即时生成 Kotlin data class，支持嵌套对象、数组、可空字段和自定义根类名。免费，在浏览器中运行。"
+seoDescription: "从 JSON 生成 kotlinx.serialization 用的 Kotlin data class：自带 import，按数值选 Int / Long / Double，类型不确定时用 JsonElement，支持嵌套对象。在浏览器中运行。"
 faqItems:
   - question: "这个工具生成什么？"
-    answer: "生成带有 @Serializable 注解的 Kotlin data class 声明（使用 kotlinx.serialization）。每个嵌套对象都会成为独立的命名 data class。"
-  - question: "如何处理可空字段？"
-    answer: "如果 JSON 字段的值为 null，对应的 Kotlin 类型将标记为可空（如 String?）。数组中某些元素缺少的字段也会标记为可空，默认值为 null。"
+    answer: "生成带 @Serializable 注解的 Kotlin data class（kotlinx.serialization）以及所需的 import。每个嵌套对象生成一个独立的类。输出在启用 kotlinx.serialization 编译器插件后可以直接编译，并能用默认的 Json 配置解码样本。"
+  - question: "可空字段怎么处理？"
+    answer: "JSON 值为 null 的字段在 Kotlin 中标为可空（如 String?）。数组里部分元素缺少的字段同样可空，默认值为 null。样本里始终为 null 的字段生成 JsonElement?，因为样本看不出它的真实类型。"
   - question: "各类型的默认值是什么？"
-    answer: "String 默认为空字符串 \"\"，Int 为 0，Double 为 0.0，Boolean 为 false，List 为 emptyList()，可空类型为 null，嵌套 data class 调用零参数构造函数。"
-  - question: "为什么会添加 @SerialName 注解？"
-    answer: "当 JSON 键无法直接用作有效的 Kotlin 标识符（如含连字符或空格），或驼峰转换改变了名称时，@SerialName 会保留原始 JSON 键名。"
+    answer: "String 为 \"\"，Int 为 0，Long 为 0L，Double 为 0.0，Boolean 为 false，List 为 emptyList()，JsonElement 为 JsonNull，可空类型为 null，嵌套类调用无参构造。有默认值时缺少的键可以正常解码。"
+  - question: "为什么用 JsonElement 而不用 Any？"
+    answer: "kotlinx.serialization 没有 Any 的序列化器，带 Any 字段的 @Serializable 类无法编译。JsonElement 是该库为任意形状的 JSON 提供的类型，用于始终为 null 的字段、空数组以及在样本间类型不同的值。"
   - question: "数据会发送到服务器吗？"
-    answer: "不会。所有转换都在浏览器中运行，数据不离开本地。"
+    answer: "不会。转换完全在浏览器中进行，数据不会离开你的设备。"
 ---
 
 <h2>使用方法</h2>
 <ol>
-  <li>将 JSON 粘贴或输入到左侧面板，工具会实时验证。</li>
-  <li>可选：设置<strong>根类名称</strong>（默认：<code>RootObject</code>）。</li>
-  <li>点击<strong>生成 Kotlin</strong> 或等待实时转换。</li>
-  <li>点击<strong>复制</strong>将输出复制到剪贴板。</li>
+  <li>在左侧粘贴或输入 JSON，工具会实时校验。</li>
+  <li>可选：设置<strong>根类名</strong>（默认 <code>RootObject</code>），空格与符号会被去掉并转成 PascalCase。</li>
+  <li>点击<strong>生成 Kotlin</strong>，或等待实时转换。</li>
+  <li>点击<strong>复制</strong>，把包含 import 的输出粘贴到 <code>.kt</code> 文件。</li>
 </ol>
 
 <h2>类型映射</h2>
 <ul>
-  <li><code>null</code> → <code>Any?</code></li>
-  <li>字符串 → <code>String</code></li>
-  <li>整数 → <code>Int</code></li>
-  <li>浮点数 → <code>Double</code></li>
-  <li>布尔值 → <code>Boolean</code></li>
-  <li>数组 → <code>List&lt;T&gt;</code></li>
-  <li>嵌套对象 → 独立的 <code>data class</code></li>
+  <li>字符串 → <code>String</code>；布尔 → <code>Boolean</code></li>
+  <li>−2,147,483,648 到 2,147,483,647 的整数 → <code>Int</code>；更大 → <code>Long</code>；超出 <code>Long</code> 范围 → <code>Double</code></li>
+  <li>写有小数点或指数的数字（<code>9.5</code>、<code>19.0</code>、<code>1e3</code>）→ <code>Double</code></li>
+  <li>数组 → <code>List&lt;T&gt;</code>；<code>Int</code>、<code>Long</code>、<code>Double</code> 混合时取最宽的类型；其他混合与空数组 → <code>List&lt;JsonElement&gt;</code></li>
+  <li><code>null</code> → 可空类型；始终为 <code>null</code> 的字段 → <code>JsonElement?</code></li>
+  <li>嵌套对象 → 独立的 <code>data class</code>；空对象 <code>{"{}"}</code> → <code>class Name</code>（data class 至少要有一个属性）</li>
 </ul>
 
 <h2>示例：snake_case 的 API 响应</h2>
 
-<p>输入（键名为 snake_case，含一个 null 字段和一个很大的计数）：</p>
+<p>输入含 snake_case 键、一个 null 字段、一个超过 <code>Int.MAX_VALUE</code> 的计数和写成 <code>4.0</code> 的评分：</p>
 
-<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "rating": 4.0, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
 
 <p>输出：</p>
 
-<pre><code>{`@Serializable
+<pre><code>{`import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+
+@Serializable
 data class RootObject(
     @SerialName("user_id")
     val userId: Int = 0,
@@ -50,9 +55,10 @@ data class RootObject(
     @SerialName("is_active")
     val isActive: Boolean = false,
     @SerialName("last_login")
-    val lastLogin: Any? = null,
+    val lastLogin: JsonElement? = null,
     @SerialName("follower_count")
-    val followerCount: Int = 0,
+    val followerCount: Long = 0L,
+    val rating: Double = 0.0,
     val tags: List<String> = emptyList(),
     val address: Address = Address()
 )
@@ -64,42 +70,86 @@ data class Address(
     val zipCode: String = ""
 )`}</code></pre>
 
-<p>无法直接作为 camelCase 名称的键，会用 <code>{"@SerialName"}</code> 保留原 JSON 键名。根类排在最前，嵌套类按出现顺序排列。</p>
+<p>camelCase 名与 JSON 键不同的字段用 <code>{"@SerialName"}</code> 保留原键。用作键的 Kotlin 关键字（<code>class</code>、<code>in</code>、<code>fun</code>）会加反引号。<code>last_login</code> 在样本里只有 <code>null</code>，所以是 <code>JsonElement?</code>；确认它是时间戳后改成 <code>String?</code>。</p>
 
 <h2>示例：对象数组</h2>
 
-<p>根节点是数组时，工具把所有对象合并成一个类。只在部分元素中出现的键会变成可空类型，默认值为 <code>{"null"}</code>：</p>
+<p>根是数组时，所有对象合并为一个类。<code>price</code> 一个是 <code>2</code>、一个是 <code>1.5</code>，合并为 <code>Double</code>。部分元素缺少的键可空，默认 <code>{"null"}</code>：</p>
 
-<pre><code>{`[{"id": 1, "name": "Pen", "price": 1.5}, {"id": 2, "name": "Ink", "discount": 0.1}]`}</code></pre>
+{/* kt: {} */}
 
-<pre><code>{`@Serializable
+<pre><code>{`[{"id": 1, "name": "Pen", "price": 2}, {"id": 2, "name": "Ink", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
 data class RootObject(
     val id: Int = 0,
     val name: String = "",
-    val price: Double? = null,
+    val price: Double = 0.0,
     val discount: Double? = null
 )`}</code></pre>
 
-<h2>编译前要改的地方</h2>
+<p>状态栏会提示按 <code>{"List<RootObject>"}</code> 解码。</p>
 
+<h2>示例：同名键、不同对象</h2>
+
+<p>两个名为 <code>meta</code>、字段不同的嵌套对象会生成两个类，第二个以父级名为前缀：</p>
+
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"order": {"id": 7, "meta": {"source": "web"}}, "payment": {"meta": {"method": "card", "last4": "4242"}}}`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
+data class RootObject(
+    val order: Order = Order(),
+    val payment: Payment = Payment()
+)
+
+@Serializable
+data class Order(
+    val id: Int = 0,
+    val meta: Meta = Meta()
+)
+
+@Serializable
+data class Meta(
+    val source: String = ""
+)
+
+@Serializable
+data class Payment(
+    val meta: PaymentMeta = PaymentMeta()
+)
+
+@Serializable
+data class PaymentMeta(
+    val method: String = "",
+    val last4: String = ""
+)`}</code></pre>
+
+<h2>解码</h2>
+
+<p>在构建配置里加入序列化插件和 JSON 库（见 <a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin 序列化指南</a>），然后解码：</p>
+
+<pre><code>{`import kotlinx.serialization.json.Json
+
+val user = Json.decodeFromString<RootObject>(body)
+val items = Json.decodeFromString<List<RootObject>>(arrayBody)
+
+// 允许样本里没有的键
+val lenient = Json { ignoreUnknownKeys = true }`}</code></pre>
+
+<p>默认的 <code>Json</code> 遇到类里没有的键会报错。本页所有示例都用 Kotlin 2.4.20 与 kotlinx.serialization 1.11.0 编译，并用默认配置解码通过。</p>
+
+<h2>限制</h2>
 <ul>
-  <li>输出不含 import 语句，并且需要 kotlinx.serialization 编译器插件（<code>{"kotlin(\"plugin.serialization\")"}</code>），见 <a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin 官方序列化文档</a>。</li>
-  <li>样例值为 <code>{"null"}</code> 的字段会被推断为 <code>{"Any?"}</code>。kotlinx.serialization 没有 <code>{"Any"}</code> 的序列化器，带这种字段的 <code>{"@Serializable"}</code> 类无法编译。请换成真实类型，比如时间戳用 <code>{"String?"}</code>。</li>
-  <li>整数一律推断为 <code>{"Int"}</code>，即使超过 <code>{"Int.MAX_VALUE"}</code>（2,147,483,647）。上例的 <code>{"3000000000"}</code> 要改成 <code>{"Long"}</code>，雪花算法生成的 ID 同样要用 <code>{"Long"}</code>。</li>
-  <li>空数组和元素类型混杂的数组会变成 <code>{"List<Any>"}</code>，同样有序列化器的问题。</li>
-  <li>同一个键在数组的一个元素里是整数、另一个元素里是小数（如 <code>{"1"}</code> 和 <code>{"1.5"}</code>）时，类型会变成 <code>{"Any"}</code>，不是 <code>{"Double"}</code>。</li>
-  <li>日期保持为 <code>{"String"}</code>。JSON 没有日期类型，解码后再解析，或者写自定义序列化器。</li>
-  <li>两个嵌套对象键名相同（如 <code>{"a.meta"}</code> 和 <code>{"b.meta"}</code>）时，会共用按第一个对象生成的类，只在第二个对象里出现的字段会丢失。</li>
+  <li>类型只看一份样本。样本里较小的 ID 会生成 <code>Int</code>，生产环境的 ID 若超过 2,147,483,647，需要自己改成 <code>Long</code>。</li>
+  <li>浏览器按 64 位浮点数解析 JSON 数字，大于 9,007,199,254,740,991 的整数在判断类型前就丢了精度。类型仍为 <code>Long</code>，范围需要自己核对。</li>
+  <li>只有向 <code>JSON.parse</code> 提供源文本的浏览器（Chrome 114+、Firefox 135+、Safari 18.4+）能把 <code>19.0</code> 识别为小数，旧浏览器会生成 <code>Int</code>。</li>
+  <li><code>JsonElement</code> 字段只适用于 <code>Json</code> 格式，不适用于 CBOR、ProtoBuf。</li>
+  <li>日期保持 <code>String</code>。JSON 没有日期类型，解码后自行解析或加自定义序列化器。</li>
+  <li>每个属性都有默认值，缺少的键会静默解码成默认值。必须出现的键请删掉默认值。</li>
 </ul>
-
-<p>改好类型后用 <code>{"Json.decodeFromString"}</code> 解码：</p>
-
-<pre><code>{`import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-
-// lastLogin: Any? = null      ->  val lastLogin: String? = null
-// followerCount: Int = 0      ->  val followerCount: Long = 0
-
-val json = Json { ignoreUnknownKeys = true }
-val user = json.decodeFromString<RootObject>(body)`}</code></pre>
