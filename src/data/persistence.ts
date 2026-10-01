@@ -50,6 +50,7 @@ export const toolPersistencePolicy = {
   'image-splitter': 'preference',
   'string-escape': 'preference',
   'color-palette-generator': 'preference',
+  'image-color-palette': 'preference',
   'number-base': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
