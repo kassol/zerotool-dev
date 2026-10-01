@@ -15,6 +15,13 @@
           spellcheck="false"
           inputmode="numeric"
         />
+        <select id="tc-unit" class="tc-unit" aria-label="Unit">
+          <option value="auto" data-i18n="unitAuto">Auto</option>
+          <option value="s" data-i18n="unitS">Seconds</option>
+          <option value="ms" data-i18n="unitMs">Milliseconds</option>
+          <option value="us" data-i18n="unitUs">Microseconds</option>
+          <option value="ns" data-i18n="unitNs">Nanoseconds</option>
+        </select>
         <button id="tc-ts-convert" class="btn-primary" data-i18n="convert">Convert</button>
         <button id="tc-ts-now" class="btn-secondary" data-i18n="now">Now</button>
       </div>
@@ -44,16 +51,44 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { tsToDate: 'Timestamp → Date', dateToTs: 'Date → Timestamp', convert: 'Convert', now: 'Now', copy: 'Copy', copied: 'Copied!', errNum: 'Invalid timestamp. Please enter a valid Unix timestamp or date.', errRange: 'Timestamp out of range.', errDate: 'Invalid date.' },
-        zh: { tsToDate: '时间戳 → 日期', dateToTs: '日期 → 时间戳', convert: '转换', now: '当前时间', copy: '复制', copied: '已复制！', errNum: '无效的时间戳，请输入有效的 Unix 时间戳或日期。', errRange: '时间戳超出范围。', errDate: '无效的日期。' },
-        ja: { tsToDate: 'タイムスタンプ → 日付', dateToTs: '日付 → タイムスタンプ', convert: '変換', now: '現在時刻', copy: 'コピー', copied: 'コピー済み！', errNum: '無効なタイムスタンプです。有効な Unix タイムスタンプまたは日付を入力してください。', errRange: 'タイムスタンプが範囲外です。', errDate: '無効な日付です。' },
-        ko: { tsToDate: '타임스탬프 → 날짜', dateToTs: '날짜 → 타임스탬프', convert: '변환', now: '현재 시간', copy: '복사', copied: '복사됨!', errNum: '잘못된 타임스탬프입니다. 유효한 Unix 타임스탬프나 날짜를 입력하세요.', errRange: '타임스탬프가 범위를 벗어났습니다.', errDate: '잘못된 날짜입니다.' },
+        en: { unit: 'Unit', unitAuto: 'Auto unit', unitS: 'Seconds', unitMs: 'Milliseconds', unitUs: 'Microseconds', unitNs: 'Nanoseconds', readAs: 'Read as {unit} ({n} digits). Choose the unit if this is wrong.', tsToDate: 'Timestamp → Date', dateToTs: 'Date → Timestamp', convert: 'Convert', now: 'Now', copy: 'Copy', copied: 'Copied!', errNum: 'Invalid timestamp. Please enter a valid Unix timestamp or date.', errRange: 'Timestamp out of range.', errDate: 'Invalid date.' },
+        zh: { unit: '单位', unitAuto: '自动判断单位', unitS: '秒', unitMs: '毫秒', unitUs: '微秒', unitNs: '纳秒', readAs: '按{unit}读取（{n} 位）。如有误，请选择单位。', tsToDate: '时间戳 → 日期', dateToTs: '日期 → 时间戳', convert: '转换', now: '当前时间', copy: '复制', copied: '已复制！', errNum: '无效的时间戳，请输入有效的 Unix 时间戳或日期。', errRange: '时间戳超出范围。', errDate: '无效的日期。' },
+        ja: { unit: '単位', unitAuto: '単位を自動判定', unitS: '秒', unitMs: 'ミリ秒', unitUs: 'マイクロ秒', unitNs: 'ナノ秒', readAs: '{unit}として読み取りました（{n} 桁）。違う場合は単位を選んでください。', tsToDate: 'タイムスタンプ → 日付', dateToTs: '日付 → タイムスタンプ', convert: '変換', now: '現在時刻', copy: 'コピー', copied: 'コピー済み！', errNum: '無効なタイムスタンプです。有効な Unix タイムスタンプまたは日付を入力してください。', errRange: 'タイムスタンプが範囲外です。', errDate: '無効な日付です。' },
+        ko: { unit: '단위', unitAuto: '단위 자동 판단', unitS: '초', unitMs: '밀리초', unitUs: '마이크로초', unitNs: '나노초', readAs: '{unit}(으)로 읽었습니다({n}자리). 틀리면 단위를 고르세요.', tsToDate: '타임스탬프 → 날짜', dateToTs: '날짜 → 타임스탬프', convert: '변환', now: '현재 시간', copy: '복사', copied: '복사됨!', errNum: '잘못된 타임스탬프입니다. 유효한 Unix 타임스탬프나 날짜를 입력하세요.', errRange: '타임스탬프가 범위를 벗어났습니다.', errDate: '잘못된 날짜입니다.' },
       };
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
       var t = STRINGS[pageLang] || STRINGS.en;
       document.querySelectorAll('[data-i18n]').forEach(function(el) {
         var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
       });
+      var unitSel = document.getElementById('tc-unit');
+      unitSel.setAttribute('aria-label', t.unit);
+
+      /* ── engine:start ── */
+      // Integer digits decide the unit: present-day values have 10 (s), 13 (ms), 16 (µs) and
+      // 19 (ns) digits. A chosen unit overrides this. Integer parts go through BigInt so that
+      // nanosecond values above 2^53 keep their millisecond part; like Date, the result is cut
+      // toward zero.
+      var UNIT_DIV = { us: 1000n, ns: 1000000n };
+      var MAX_MS = 8640000000000000;
+      function readTimestamp(raw, unit) {
+        var text = String(raw).trim();
+        if (!text) return { error: 'empty' };
+        var m = /^([+-]?)([0-9]+)(?:\.([0-9]*))?$/.exec(text);
+        if (!m) return { error: 'num' };
+        var digits = m[2].length;
+        var u = unit !== 'auto' ? unit : digits <= 12 ? 's' : digits <= 15 ? 'ms' : digits <= 18 ? 'us' : 'ns';
+        var neg = m[1] === '-';
+        var ms;
+        if (u === 's') ms = Number(m[2] + '.' + (m[3] || '0')) * 1000;
+        else if (u === 'ms') ms = Number(m[2] + '.' + (m[3] || '0'));
+        else ms = Number(BigInt(m[2]) / UNIT_DIV[u]);
+        ms = Math.trunc(ms);
+        if (neg) ms = -ms;
+        if (!isFinite(ms) || Math.abs(ms) > MAX_MS) return { error: 'range' };
+        return { ms: ms === 0 ? 0 : ms, unit: u, digits: digits, auto: unit === 'auto' };
+      }
+      /* ── engine:end ── */
 
       var tsInput = document.getElementById('tc-ts-input');
       var tsStatus = document.getElementById('tc-ts-status');
@@ -106,16 +141,20 @@
         var raw = tsInput.value.trim();
         tsResults.innerHTML = '';
         if (!raw) { tsStatus.textContent = ''; tsStatus.className = 'tc-status'; return; }
-        var num = Number(raw);
-        if (isNaN(num) || raw === '') { setStatus(tsStatus, t.errNum, true); return; }
-
-        // Auto-detect ms vs s: 13+ digits = milliseconds
-        var ms = raw.replace('.','').length >= 13 ? num : num * 1000;
+        var read = readTimestamp(raw, unitSel.value);
+        if (read.error === 'num') { setStatus(tsStatus, t.errNum, true); return; }
+        if (read.error === 'range') { setStatus(tsStatus, t.errRange, true); return; }
+        var ms = read.ms;
         var d = new Date(ms);
-        if (isNaN(d.getTime())) { setStatus(tsStatus, t.errRange, true); return; }
 
-        setStatus(tsStatus, '', false);
-        tsStatus.className = 'tc-status';
+        var unitName = { s: t.unitS, ms: t.unitMs, us: t.unitUs, ns: t.unitNs }[read.unit];
+        if (read.auto) {
+          tsStatus.textContent = t.readAs.replace('{unit}', unitName).replace('{n}', String(read.digits));
+          tsStatus.className = 'tc-status info';
+        } else {
+          tsStatus.textContent = '';
+          tsStatus.className = 'tc-status';
+        }
 
         var tzLabel = fmtOffset(d.getTimezoneOffset());
 
@@ -136,10 +175,12 @@
         window.trackTool && window.trackTool('timestamp_converter', 'ts_to_date');
       });
       tsInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') convertTs(); });
+      unitSel.addEventListener('change', function () { if (tsInput.value.trim()) convertTs(); });
 
       document.getElementById('tc-ts-now').addEventListener('click', function () {
         var now = Date.now();
-        tsInput.value = Math.floor(now / 1000).toString();
+        var u = unitSel.value;
+        tsInput.value = u === 'ms' ? String(now) : u === 'us' ? String(now) + '000' : u === 'ns' ? String(now) + '000000' : Math.floor(now / 1000).toString();
         convertTs();
       });
 
@@ -214,6 +255,17 @@
   .tc-status { font-size: 0.85rem; min-height: 1.2rem; }
   .tc-status.success { color: #057a55; }
   .tc-status.error { color: #c0392b; }
+  .tc-status.info { color: var(--color-text-secondary); }
+
+  .tc-unit {
+    padding: 0.5rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  @media (max-width: 640px) { .tc-unit { min-height: 44px; } }
 
   .tc-results { display: flex; flex-direction: column; gap: 0.4rem; }
 

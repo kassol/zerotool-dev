@@ -10,6 +10,8 @@ faqItems:
     answer: "The tool collects the union of all keys across every row and uses that as the header. Missing values for any row are output as empty strings."
   - question: "How are special characters handled?"
     answer: "Fields containing the delimiter, double quotes, or newlines are automatically wrapped in double quotes per RFC 4180. A literal double-quote inside a field is escaped as two consecutive double-quotes."
+  - question: "Why does Excel show garbled characters?"
+    answer: "Excel on Windows reads a double-clicked CSV as UTF-8 only when the file starts with a byte order mark. The download adds one by default; if you turned it off, open the file with Data → From Text/CSV and choose UTF-8."
   - question: "Is my data sent to a server?"
     answer: "No. All conversion happens entirely in your browser. No data leaves your machine."
 ---
@@ -20,7 +22,8 @@ faqItems:
   <li>Choose a <strong>delimiter</strong>: comma (default), semicolon, or tab.</li>
   <li>Toggle <strong>Flatten nested objects</strong> to expand nested keys into dot-path columns (e.g. <code>address.city</code>).</li>
   <li>Toggle <strong>Include header</strong> to add or suppress the header row.</li>
-  <li>Click <strong>Copy</strong> to copy the CSV or <strong>Download .csv</strong> to save the file.</li>
+  <li>Choose a <strong>Formula guard</strong> if the data comes from other people (see below). It is off by default.</li>
+  <li>Click <strong>Copy</strong> to copy the CSV or <strong>Download .csv</strong> to save the file. The download starts with a UTF-8 byte order mark unless you turn <strong>UTF-8 BOM in download</strong> off.</li>
 </ol>
 
 <h2>Worked Examples</h2>
@@ -62,12 +65,32 @@ faqItems:
   module all read both.
 </p>
 
+<h2>Formula Guard</h2>
+<p>
+  A cell that starts with <code>=</code>, <code>+</code>, <code>-</code> or <code>@</code>, a Tab or a line break can be run as a formula when the CSV is opened in a spreadsheet
+  (<a href="https://owasp.org/www-community/attacks/CSV_Injection" target="_blank" rel="noopener">OWASP: CSV Injection</a>). The tool counts such string values and the status line reports them. With the guard on, each of them gets a prefix and is quoted, as the OWASP page recommends:
+  <strong>' prefix</strong> adds <code>'</code>, and <strong>Tab prefix (Excel)</strong> adds a Tab, which OWASP gives as the form Excel keeps after the file is saved and opened again. Input:
+</p>
+<pre><code>{`[{"name":"Ann","comment":"=HYPERLINK(\"http://example.com\",\"Click\")"}]`}</code></pre>
+<p>Output with the <code>'</code> prefix:</p>
+<pre><code>{`name,comment
+Ann,"'=HYPERLINK(""http://example.com"",""Click"")"`}</code></pre>
+<p>
+  Only JSON strings are changed. Numbers such as <code>-5</code>, booleans, and arrays or objects written as JSON text are left as they are. The guard also changes the data: a phone number such as <code>+81 3 1234 5678</code> keeps the prefix, so the guard is off by default and the status line tells you when it would apply.
+</p>
+
+<h2>Excel and the Byte Order Mark</h2>
+<p>
+  The downloaded file starts with the UTF-8 byte order mark (bytes <code>EF BB BF</code>) by default. Microsoft's support page
+  <a href="https://support.microsoft.com/en-us/office/opening-csv-utf-8-files-correctly-in-excel-8a935af5-3416-4edd-ba7e-3dfd2bc4a032" target="_blank" rel="noopener">Opening CSV UTF-8 files correctly in Excel</a> says a UTF-8 CSV opens normally when it was saved with a BOM; without one, Excel on Windows reads a double-clicked file in the system code page, and accented or CJK text appears garbled.
+  Programs that do not expect a BOM can read it as part of the first header name: Python's <code>open(..., encoding="utf-8")</code> gives <code>\ufeffid</code>, while <code>encoding="utf-8-sig"</code> removes it. Turn the option off for those. <strong>Copy</strong> never adds a BOM.
+</p>
+
 <h2>Limits</h2>
 <ul>
   <li>The input must be a JSON array. A single object gives "Input must be a JSON array of objects"; wrap it in <code>[ ]</code>. Items that are not objects, such as <code>[1,"two",null]</code>, become a single <code>value</code> column.</li>
-  <li>An empty nested object (<code>{`"meta":{}`}</code>) produces no column when flatten is on.</li>
+  <li>Empty nested objects and arrays are not expanded: <code>{`"meta":{}`}</code> gives a <code>meta</code> column holding <code>{`{}`}</code>.</li>
   <li>Integers above 2<sup>53</sup> lose precision when the JSON is parsed: <code>12345678901234567890</code> is written as <code>12345678901234567000</code>. Store long IDs as strings in the JSON.</li>
-  <li>Values starting with <code>=</code>, <code>+</code>, <code>-</code> or <code>@</code> are written unchanged, and a spreadsheet may run them as formulas (<a href="https://owasp.org/www-community/attacks/CSV_Injection" target="_blank" rel="noopener">OWASP: CSV Injection</a>). If the data comes from users, the CSV mode of <a href="/tools/string-escape/">String Escape</a> can add formula protection to single values.</li>
-  <li>The downloaded file is UTF-8 without a byte order mark. Excel on Windows may then show accented or CJK text as garbled characters when you double-click the file; use Data → From Text/CSV and choose UTF-8, or open it in another program.</li>
+  <li>Rows are separated by LF. Excel, LibreOffice, pandas and Python's <code>csv</code> module read it; tools that require CR LF need a conversion.</li>
 </ul>
 <p>To turn CSV back into JSON, use the <a href="/tools/csv-json/">CSV to JSON Converter</a>.</p>

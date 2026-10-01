@@ -1,214 +1,179 @@
 ---
-title: "IP Subnet Calculator Online: CIDR, Subnetting, and Host Ranges Explained"
-description: "Calculate IPv4 subnets instantly online. Enter any CIDR notation and get network address, broadcast, host range, and usable hosts. Free subnet calculator with no signup."
+title: "Subnetting Explained: Subnet Masks, CIDR Prefixes and VLSM in Binary"
+description: "Subnetting worked in binary: mask and prefix conversion, finding the network of any address, RFC 950 and RFC 4632 CIDR, VLSM, /31 and /32, and cloud reserved addresses."
 pubDate: 2026-04-13
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["subnet-calculator", "cidr", "ipv4", "networking", "developer-tools"]
+tags: ["subnetting", "subnet mask", "cidr", "vlsm", "ipv4"]
 ---
 
-IP subnetting is one of those topics every developer and sysadmin eventually has to understand. Whether you're configuring VPCs in AWS, splitting a corporate network, or debugging why two hosts can't reach each other, subnet math comes up constantly. This guide explains CIDR notation, subnet masks, and how to calculate network parameters — with an online tool that does the math for you.
+Subnetting is splitting one IPv4 block into smaller blocks by moving the boundary between the network part and the host part of the address to the right. Every calculation in it comes down to one 32-bit pattern of ones followed by zeros. Write that pattern in dotted decimal and it is a subnet mask; count its ones and it is a prefix length. This guide works through the binary first, then the standards behind it, a variable-length plan for a real block, the `/31` and `/32` exceptions, and the extra addresses cloud providers hold back.
 
-## What Is Subnetting?
+Every network value below was produced by the [IP Subnet Calculator](/tools/ip-subnet-calculator/), and the test suite recomputes them from the calculator's code. The example addresses come from the private ranges in [RFC 1918](https://www.rfc-editor.org/rfc/rfc1918) and the documentation ranges in [RFC 5737](https://www.rfc-editor.org/rfc/rfc5737) (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), which are never routed on the internet.
 
-A subnet (subnetwork) is a logical subdivision of an IP network. Subnetting allows you to divide a large IP address block into smaller, manageable segments. Benefits include:
+## A mask and a prefix are the same 32 bits
 
-- **Isolation** — traffic within a subnet stays local; inter-subnet traffic routes through a gateway
-- **Security** — firewalls and ACLs can enforce rules at subnet boundaries
-- **Efficiency** — smaller broadcast domains reduce unnecessary traffic
-- **Address management** — allocate just enough addresses to each segment
+[RFC 950](https://www.rfc-editor.org/rfc/rfc950) (August 1985) introduced the subnet mask: a 32-bit value with a one in every bit position that belongs to the network and subnet fields. RFC 950 allowed the subnet bits to be non-contiguous but recommended that they be contiguous and placed directly after the network number. [RFC 4632](https://www.rfc-editor.org/rfc/rfc4632), the current CIDR document, removed that choice: "The only outstanding constraint is that the mask must be left contiguous." Because the ones are always contiguous, a mask can be written as a single number, the prefix length after the slash.
 
-## CIDR Notation Explained
+Inside one octet, a contiguous mask can only take nine values:
 
-CIDR (Classless Inter-Domain Routing) notation expresses an IP address and its routing prefix together:
+| Ones in the octet | Binary | Decimal | Block size in that octet |
+|---|---|---|---|
+| 0 | `00000000` | 0 | 256 |
+| 1 | `10000000` | 128 | 128 |
+| 2 | `11000000` | 192 | 64 |
+| 3 | `11100000` | 224 | 32 |
+| 4 | `11110000` | 240 | 16 |
+| 5 | `11111000` | 248 | 8 |
+| 6 | `11111100` | 252 | 4 |
+| 7 | `11111110` | 254 | 2 |
+| 8 | `11111111` | 255 | 1 |
 
-```
-192.168.1.0/24
-│           │
-└─ Network  └─ Prefix length (bits)
-   address
-```
+To turn a prefix into a mask, fill whole octets with 255 for every 8 bits, look up the remainder in the table, and pad with zeros. `/20` is 8 + 8 + 4: `255.255.240.0`. To go the other way, add the ones octet by octet: `255.255.255.192` is 8 + 8 + 8 + 2 = `/26`. A value such as `255.255.255.200` (`11001000`) has a zero between ones and is not a valid mask.
 
-The `/24` means the first 24 bits are the **network portion**; the remaining 8 bits are the **host portion**. This determines how many hosts can exist in the subnet.
+The wildcard mask used in Cisco ACLs and OSPF network statements is the bitwise inverse: subtract each octet from 255, so `/20` becomes `0.0.15.255`. The last column of the table is the step between subnets in the octet where the mask changes, `256 − mask octet`. It is the shortcut for the next section.
 
-### Prefix Length to Host Count
+## Finding the subnet an address belongs to
 
-| CIDR | Subnet Mask | Usable Hosts | Common Use |
-|------|-------------|--------------|------------|
-| `/8` | 255.0.0.0 | 16,777,214 | Large ISP blocks |
-| `/16` | 255.255.0.0 | 65,534 | Corporate networks |
-| `/24` | 255.255.255.0 | 254 | Typical office LAN |
-| `/25` | 255.255.255.128 | 126 | Split a /24 in half |
-| `/26` | 255.255.255.192 | 62 | Small segment |
-| `/27` | 255.255.255.224 | 30 | VLAN segment |
-| `/28` | 255.255.255.240 | 14 | Small team |
-| `/29` | 255.255.255.248 | 6 | Tiny segment |
-| `/30` | 255.255.255.252 | 2 | Router-to-router |
-| `/31` | 255.255.255.254 | 2 (no network or broadcast address) | Point-to-point ([RFC 3021](https://www.rfc-editor.org/rfc/rfc3021)) |
-| `/32` | 255.255.255.255 | 1 | Host route |
+A router finds the network of an address with a bitwise AND of the address and the mask. Take `172.31.100.5/20`:
 
-**Usable hosts = 2^(32 - prefix) - 2** (subtract network and broadcast addresses). The formula applies to `/0`–`/30`; `/31` and `/32` are the exceptions in the table.
+{/* isc-check: {"in":"172.31.100.5/20","network":"172.31.96.0","broadcast":"172.31.111.255","mask":"255.255.240.0","wildcard":"0.0.15.255","first":"172.31.96.1","last":"172.31.111.254","usable":"4,094"} */}
 
-## Key Subnet Parameters
+{/* isc-bin */}
 
-Given `192.168.10.64/26`:
-
-| Parameter | Value | How It's Calculated |
-|-----------|-------|---------------------|
-| Network Address | `192.168.10.64` | IP AND subnet mask |
-| Subnet Mask | `255.255.255.192` | 26 ones, 6 zeros in binary |
-| Broadcast Address | `192.168.10.127` | All host bits set to 1 |
-| First Usable Host | `192.168.10.65` | Network + 1 |
-| Last Usable Host | `192.168.10.126` | Broadcast - 1 |
-| Usable Hosts | `62` | 2^6 - 2 |
-| Wildcard Mask | `0.0.0.63` | Inverted subnet mask |
-
-### Binary Breakdown
-
-```
-IP:      11000000.10101000.00001010.01000000  (192.168.10.64)
-Mask:    11111111.11111111.11111111.11000000  (255.255.255.192)
-Network: 11000000.10101000.00001010.01000000  (192.168.10.64)
-Bcast:   11000000.10101000.00001010.01111111  (192.168.10.127)
+```text
+Address    10101100.00011111.0110|0100.00000101   172.31.100.5
+Mask       11111111.11111111.1111|0000.00000000   255.255.240.0
+Network    10101100.00011111.0110|0000.00000000   172.31.96.0
+Broadcast  10101100.00011111.0110|1111.11111111   172.31.111.255
 ```
 
-The first 26 bits are fixed (network); the last 6 bits vary (host space).
+The bar marks the end of the 20-bit prefix. The network row keeps the bits to the left of it and sets the 12 host bits to 0; the broadcast row sets them to 1.
 
-## Subnetting in Practice
+The shortcut does the same in decimal. The interesting octet is the third one, where the mask is 240, so subnets step by 256 − 240 = 16: `.0`, `.16`, `.32`, `.48`, `.64`, `.80`, `.96`, `.112`. The address has 100 in that octet, and 100 lies between 96 and 112, so the network is `172.31.96.0` and the broadcast address is one below the next network, `172.31.111.255`. Twelve host bits give 2^12 = 4,096 addresses, and 4,094 of them are usable once the all-zeros network address and the all-ones broadcast address are removed. The calculator returns exactly these values: first host `172.31.96.1`, last host `172.31.111.254`, wildcard `0.0.15.255`.
 
-### AWS VPC Design
+The same steps answer the question you get from a log line. With a `/27` mask, `198.51.100.200` steps by 32 in the last octet, and 200 falls in the block that starts at 192:
 
-AWS requires you to specify a CIDR block for each VPC and subnet. A typical setup:
+{/* isc-check: {"in":"198.51.100.200/27","network":"198.51.100.192","broadcast":"198.51.100.223","usable":"30"} */}
 
-```
-VPC:          10.0.0.0/16    (65,536 addresses)
-├─ Public:    10.0.1.0/24    (251 usable — internet-facing)
-├─ Private:   10.0.2.0/24    (251 usable — app tier)
-└─ Database:  10.0.3.0/24    (251 usable — RDS, isolated)
-```
+The network is `198.51.100.192`, the broadcast `198.51.100.223`, and 30 hosts are usable. An address such as `198.51.100.230` is in the next subnet, so traffic between the two goes through a router even though both addresses look alike.
 
-AWS reserves 5 addresses per subnet (the first 4 and the last one), leaving 251 usable per `/24` ([Amazon VPC: Subnet CIDR blocks](https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html)).
+## How many subnets, how many hosts
 
-### Kubernetes Pod CIDR
+Borrowing *n* bits from the host part gives 2^n subnets, and each keeps 2^(h) addresses, where *h* is the number of host bits left. For a `/24`:
 
-K8s clusters require non-overlapping CIDRs for nodes, pods, and services:
+| Prefix | Borrowed bits | Subnets in a /24 | Addresses each | Usable hosts each |
+|---|---|---|---|---|
+| /25 | 1 | 2 | 128 | 126 |
+| /26 | 2 | 4 | 64 | 62 |
+| /27 | 3 | 8 | 32 | 30 |
+| /28 | 4 | 16 | 16 | 14 |
+| /29 | 5 | 32 | 8 | 6 |
+| /30 | 6 | 64 | 4 | 2 |
 
-```yaml
-# kubeadm config snippet
-networking:
-  podSubnet: 10.244.0.0/16      # Pod IPs
-  serviceSubnet: 10.96.0.0/12   # ClusterIP services
-```
+Older textbooks subtract 2 from the subnet count as well. That comes from RFC 950, which said the values of all zeros and all ones in the subnet field "should not be assigned to actual (physical) subnets" (in its 6-bit example, "any value except 0 and 63"). [RFC 1878](https://www.rfc-editor.org/rfc/rfc1878) (December 1995) marked this as history: "This practice is obsolete! Modern software will be able to utilize all definable networks." The host count still loses two addresses, because the network and broadcast addresses inside each subnet keep their meaning. The exceptions are `/31` and `/32`, covered below.
 
-Ensure these don't overlap with your node network or VPC CIDR.
+## What CIDR changed
 
-### Docker Networks
+Before CIDR, the first bits of an address fixed its network size: class A was a `/8`, class B a `/16`, class C a `/24`. An organisation that needed 2,000 addresses got a class B with 65,536, or several class C networks that each took a separate route. RFC 4632 (2006, which replaced RFC 1519 from 1993) writes every network as a prefix with an explicit length, so a block can be any power of two from one address to 2^32. Its own example: the legacy class B network `172.16.0.0` "is defined as the prefix 172.16.0.0/16".
 
-```bash
-# Create a custom bridge network
-docker network create \
-  --driver bridge \
-  --subnet 172.20.0.0/24 \
-  --gateway 172.20.0.1 \
-  my-network
-```
+Two consequences matter in day-to-day work. First, aggregation: `192.168.0.0/24` and `192.168.1.0/24` are the two halves of `192.168.0.0/23` (mask `255.255.254.0`, from `192.168.0.0` to `192.168.1.255`), so one route can cover both.
 
-Check for overlap with existing networks using `docker network ls` and `ip route`.
+{/* isc-check: {"in":"192.168.0.0/23","network":"192.168.0.0","broadcast":"192.168.1.255","mask":"255.255.254.0","usable":"510"} */}
 
-## Subnet Math Without a Calculator
+Second, longest-match forwarding (RFC 4632 §5.1: "Forwarding in the Internet is done on a longest-match basis"). If a routing table holds both `10.0.0.0/8` and `10.20.1.0/24`, a packet for `10.20.1.9` follows the `/24`, because it matches more bits. This is why an overlapping subnet does not fail loudly: the more specific route quietly wins, and part of the bigger network becomes unreachable from that router.
 
-### Finding the Network Address
+## VLSM: carving one block for several networks
+
+Variable-length subnet masking means giving each network the prefix it needs instead of cutting the whole block into equal pieces. Suppose a site has `10.20.0.0/22` (1,024 addresses) and needs a user LAN with 300 hosts, a server LAN with 120, a Wi-Fi LAN with 50, a management network with 10, and two router-to-router links.
+
+1. Size each network: the smallest prefix whose usable count covers the hosts. 300 needs 9 host bits, a `/23` (510 usable); 120 needs a `/25` (126); 50 needs a `/26` (62); 10 needs a `/28` (14); each link takes a `/31`.
+2. Sort from largest to smallest and allocate in that order. A block of 2^h addresses has to start on a multiple of 2^h. Placing the large blocks first keeps every later block aligned without gaps.
+3. Write each network down and check it.
+
+{/* isc-check: {"in":"10.20.0.0/23","network":"10.20.0.0","broadcast":"10.20.1.255","usable":"510"} */}
+{/* isc-check: {"in":"10.20.2.0/25","network":"10.20.2.0","broadcast":"10.20.2.127","usable":"126"} */}
+{/* isc-check: {"in":"10.20.2.128/26","network":"10.20.2.128","broadcast":"10.20.2.191","usable":"62"} */}
+{/* isc-check: {"in":"10.20.2.192/28","network":"10.20.2.192","broadcast":"10.20.2.207","usable":"14"} */}
+{/* isc-check: {"in":"10.20.2.208/31","network":"10.20.2.208","broadcast":"10.20.2.209","usable":"2"} */}
+{/* isc-check: {"in":"10.20.2.210/31","network":"10.20.2.210","broadcast":"10.20.2.211","usable":"2"} */}
+
+| Network | Hosts needed | Allocation | Range (network – broadcast) | Usable |
+|---|---|---|---|---|
+| Users | 300 | `10.20.0.0/23` | 10.20.0.0 – 10.20.1.255 | 510 |
+| Servers | 120 | `10.20.2.0/25` | 10.20.2.0 – 10.20.2.127 | 126 |
+| Wi-Fi | 50 | `10.20.2.128/26` | 10.20.2.128 – 10.20.2.191 | 62 |
+| Management | 10 | `10.20.2.192/28` | 10.20.2.192 – 10.20.2.207 | 14 |
+| Link 1 | 2 | `10.20.2.208/31` | 10.20.2.208 – 10.20.2.209 | 2 |
+| Link 2 | 2 | `10.20.2.210/31` | 10.20.2.210 – 10.20.2.211 | 2 |
+
+Everything from `10.20.2.212` to `10.20.3.255` is still free: a `/30`, a `/29` and a `/27` up to the end of `10.20.2.x`, then the whole `10.20.3.0/24`. If the small networks had been allocated first, the `/23` could not start at `10.20.0.4`: it must start at an address whose third octet is even and whose fourth octet is 0.
+
+## /31 and /32: blocks with no broadcast address
+
+A point-to-point link has exactly two ends, and nothing on it needs a broadcast. With a `/30`, half of its four addresses are spent on the network and broadcast. [RFC 3021](https://www.rfc-editor.org/rfc/rfc3021) (Standards Track, December 2000) allows a 31-bit mask on such links and states that the two addresses "MUST be interpreted as host addresses".
+
+{/* isc-check: {"in":"203.0.113.9/31","network":"203.0.113.8","broadcast":"203.0.113.9","first":"203.0.113.8","last":"203.0.113.9","usable":"2"} */}
+{/* isc-check: {"in":"198.51.100.7","prefix":32,"network":"198.51.100.7","broadcast":"198.51.100.7","usable":"1"} */}
+
+The calculator follows RFC 3021: for `203.0.113.9/31` it reports 2 usable hosts, `203.0.113.8` and `203.0.113.9`. It still fills the Broadcast Address row, and for `/31` and `/32` that row just repeats the last address of the block. A `/32` is a single address; it appears in host routes, loopback interfaces, and allow-lists. Type `198.51.100.7` and pick `/32` in the dropdown, and every address field shows `198.51.100.7` with 1 usable host. Python's `ipaddress` module applies the same rules: `hosts()` on a `/31` returns both addresses and on a `/32` returns the one address.
+
+## Cloud subnets reserve more than two addresses
+
+Cloud VPCs take extra addresses from every subnet for their own router and DNS, so the usable count is lower than the calculator's figure:
+
+| Provider | Addresses reserved per subnet | Usable in a /24 | Usable in a /28 | Subnet size limits |
+|---|---|---|---|---|
+| Classic subnet (calculator) | 2: network, broadcast | 254 | 14 | — |
+| [AWS VPC](https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html) | 5: the first four and the last | 251 | 11 | /28 to /16 |
+| [Azure Virtual Network](https://learn.microsoft.com/en-us/azure/virtual-network/virtual-networks-faq) | 5: network, gateway, two for Azure DNS, broadcast | 251 | 11 | smallest /29, largest /2 |
+| [Google Cloud VPC](https://cloud.google.com/vpc/docs/subnets) | 4 in the primary range: network, gateway, second-to-last, broadcast | 252 | 12 | /29 to /4 |
+
+AWS documents the five addresses for `10.0.0.0/24` as the network address, `.1` for the VPC router, `.2` for the DNS server, `.3` "for future use", and `.255`: "We do not support broadcast in a VPC, therefore we reserve this address." AWS also normalises a subnet entered with host bits set, the same way the calculator does: its example turns `100.68.0.18/18` into `100.68.0.0/18`. Google Cloud reserves nothing in secondary IPv4 ranges. So the `172.31.100.5/20` example above has 4,094 usable hosts on a classic LAN, 4,091 in an AWS or Azure subnet, and 4,092 in a Google Cloud primary range. Subtract the provider's reservation yourself when you size a cloud subnet.
+
+## Checking a plan with Python's ipaddress
+
+{/* isc-run */}
 
 ```python
-def network_address(ip: str, prefix: int) -> str:
-    parts = [int(x) for x in ip.split('.')]
-    mask = [(0xFF << (8 - max(min(prefix - i * 8, 8), 0))) & 0xFF 
-            for i in range(4)]
-    return '.'.join(str(p & m) for p, m in zip(parts, mask))
+import ipaddress as ip
 
-print(network_address('192.168.10.100', 26))  # 192.168.10.64
+lan = ip.ip_network("10.20.0.0/22")
+print([str(n) for n in lan.subnets(new_prefix=24)])  # -> ['10.20.0.0/24', '10.20.1.0/24', '10.20.2.0/24', '10.20.3.0/24']
+print(ip.ip_network("10.20.0.0/23").overlaps(ip.ip_network("10.20.1.0/24")))  # -> True
+print(list(ip.collapse_addresses([ip.ip_network("192.168.0.0/24"), ip.ip_network("192.168.1.0/24")])))  # -> [IPv4Network('192.168.0.0/23')]
+print(ip.ip_network("0.0.0.0/255.255.240.0").prefixlen)  # -> 20
+print(ip.ip_interface("172.31.100.5/20").network)  # -> 172.31.96.0/20
+print([str(h) for h in ip.ip_network("203.0.113.8/31").hosts()])  # -> ['203.0.113.8', '203.0.113.9']
+try:
+    ip.ip_network("10.0.0.1/24")
+except ValueError as e:
+    print(e)  # -> 10.0.0.1/24 has host bits set
 ```
 
-### Python `ipaddress` Module
+`ip_network` is strict: `10.0.0.1/24` is a valid interface address but not a network, because a host bit is set. Use `ip_interface` when you hold an address with its prefix, or pass `strict=False`. The calculator takes the lenient route: any address inside the subnet works, and the CIDR Notation field shows the network form, `10.0.0.0/24`. The output above was produced with Python 3.12.
 
-Python's stdlib handles all subnet math:
+## Mistakes that keep coming back
 
-```python
-import ipaddress
+- **Dotted masks where a prefix is expected.** The calculator takes `/28` after the slash and rejects `/255.255.255.240`; Python accepts both forms. Convert with the first table.
+- **Leading zeros.** `10.0.0.010` is rejected by `inet_pton`, Python, and this calculator. Some older parsers read `010` as octal 8, so the same string can mean two different hosts.
+- **Overlapping plans.** A VPC peering or VPN between two networks that both use `10.0.0.0/16` will not work; [AWS](https://docs.aws.amazon.com/vpc/latest/peering/vpc-peering-basics.html) refuses to create a peering connection between VPCs "that have matching or overlapping IPv4 or IPv6 CIDR blocks". Pick distinct ranges early; besides RFC 1918, Azure accepts the shared address space `100.64.0.0/10` from [RFC 6598](https://www.rfc-editor.org/rfc/rfc6598) as private.
+- **Wildcard and subnet masks swapped.** An ACL line written with `255.255.255.0` where `0.0.0.255` was meant matches a completely different set of addresses.
 
-net = ipaddress.IPv4Network('192.168.10.64/26', strict=False)
+## Practice problems
 
-print(net.network_address)    # 192.168.10.64
-print(net.broadcast_address)  # 192.168.10.127
-print(net.netmask)            # 255.255.255.192
-print(net.num_addresses)      # 64
-print(list(net.hosts())[:3])  # [IPv4Address('192.168.10.65'), IPv4Address('192.168.10.66'), IPv4Address('192.168.10.67')]
+Work each one by hand, then type the input into the calculator to check:
 
-# Check if an IP is in the subnet
-ip = ipaddress.IPv4Address('192.168.10.80')
-print(ip in net)  # True
+{/* isc-check: {"in":"10.170.70.19/28","network":"10.170.70.16","broadcast":"10.170.70.31","usable":"14"} */}
+{/* isc-check: {"in":"172.16.45.200/21","network":"172.16.40.0","broadcast":"172.16.47.255","mask":"255.255.248.0","usable":"2,046"} */}
+{/* isc-check: {"in":"203.0.113.77/29","network":"203.0.113.72","broadcast":"203.0.113.79","usable":"6"} */}
+{/* isc-check: {"in":"100.64.13.37/10","network":"100.64.0.0","broadcast":"100.127.255.255","mask":"255.192.0.0","usable":"4,194,302"} */}
 
-# Subdivide into /28 subnets
-for subnet in net.subnets(new_prefix=28):
-    print(subnet)
-# 192.168.10.64/28
-# 192.168.10.80/28
-# 192.168.10.96/28
-# 192.168.10.112/28
-```
+| Question | Answer |
+|---|---|
+| Network of `10.170.70.19` with mask `255.255.255.240`? | `/28`, step 16: network `10.170.70.16`, broadcast `10.170.70.31`, 14 hosts |
+| Mask, network and hosts for `172.16.45.200/21`? | `255.255.248.0`, step 8 in the third octet: `172.16.40.0` to `172.16.47.255`, 2,046 hosts |
+| Which `/29` holds `203.0.113.77`? | `203.0.113.72/29`, broadcast `203.0.113.79`, hosts `.73` to `.78`, 6 usable |
+| How large is `100.64.0.0/10`? | Mask `255.192.0.0`, `100.64.0.0` to `100.127.255.255`, 4,194,302 usable |
 
-### Go `net` Package
-
-```go
-import "net"
-
-_, ipNet, err := net.ParseCIDR("192.168.10.64/26")
-if err != nil {
-    panic(err)
-}
-
-fmt.Println(ipNet.IP)     // 192.168.10.64 (network address)
-fmt.Println(ipNet.Mask)   // ffffffc0 (hex mask)
-
-// Check containment
-testIP := net.ParseIP("192.168.10.80")
-fmt.Println(ipNet.Contains(testIP))  // true
-```
-
-## Private IP Address Ranges
-
-These ranges are reserved for internal use (RFC 1918):
-
-| Range | CIDR | Size |
-|-------|------|------|
-| 10.0.0.0 – 10.255.255.255 | `10.0.0.0/8` | ~16M addresses |
-| 172.16.0.0 – 172.31.255.255 | `172.16.0.0/12` | ~1M addresses |
-| 192.168.0.0 – 192.168.255.255 | `192.168.0.0/16` | 65,536 addresses |
-
-Always use private ranges for internal infrastructure. Public IPs route on the internet; private IPs do not.
-
-## Common Subnetting Mistakes
-
-**Forgetting reserved addresses**: Every subnet loses 2 addresses (network + broadcast). A `/29` has 8 addresses total but only 6 usable.
-
-**Overlapping subnets**: `10.0.1.0/24` and `10.0.0.0/16` overlap — every address in the /24 is also in the /16. A router picks the longest matching prefix, so traffic for the /24 never reaches a network that owns the /16. Many platforms refuse overlaps outright; for example, AWS cannot peer two VPCs whose CIDR blocks overlap.
-
-**Off-by-one on host ranges**: First usable host is network+1, last is broadcast-1. A `/24` has hosts `.1` through `.254`, not `.0` through `.255`.
-
-**CIDR alignment**: A subnet must start on a boundary aligned to its prefix length. `10.0.0.1/24` is fine as an interface address, but as a network it has a host bit set; the correct network form is `10.0.0.0/24`. Python's `ipaddress.ip_network('10.0.0.1/24')` raises `10.0.0.1/24 has host bits set`.
-
-## Using the Online Subnet Calculator
-
-**[Try ZeroTool IP Subnet Calculator →](/tools/ip-subnet-calculator)**
-
-Enter any IPv4 address with CIDR notation (or pick the prefix from the list) and instantly get:
-
-- Network address and broadcast address
-- Subnet mask and wildcard mask
-- First and last usable host
-- Usable host count
-- The normalized CIDR notation
-
-No signup, runs in the browser. It handles IPv4 only. Useful for quick VPC planning, network debugging, and subnet allocation during architecture reviews.
-
-**[Calculate IPv4 subnets instantly →](/tools/ip-subnet-calculator)**
+The [IP Subnet Calculator](/tools/ip-subnet-calculator/) takes an address with a prefix (or an address plus a prefix from the dropdown) and returns the network, broadcast, both masks, the first and last host, and the usable count. It handles one IPv4 subnet at a time: it does not split a block, list addresses, or compare two ranges, so use the Python snippets above for those.

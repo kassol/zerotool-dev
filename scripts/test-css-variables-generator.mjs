@@ -1,14 +1,16 @@
 // CSS Variables Generator — declarations and escaped highlight markup
 //
 // Read:  src/components/tools/CssVariablesGeneratorTool.astro (runs the real tokenDecls(),
-//        plainCss() and highlightCss() between the `engine:start` / `engine:end` markers)
+//        plainCss() and highlightCss() between the `engine:start` / `engine:end` markers),
+//        src/content/tools/css-variables-generator/en.mdx
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Before the fix generate() built the CSS string and put it into innerHTML without escaping, so a
 // token value such as `<img src=x onerror=…>` became an element. The highlight output is parsed with
 // parse5: only span elements, and its text equals the plain CSS that Copy uses. The default output is
-// the example quoted on the English tool page.
+// the example quoted on the English tool page. A prefix without -- gets it and spaces inside a name
+// become hyphens (both used to produce declarations the browser drops).
 //
 // Run: node scripts/test-css-variables-generator.mjs
 
@@ -38,6 +40,13 @@ check('default prefix', plainCss(tokenDecls('--', colors)) === ':root {\n  --pri
 check('prefix without trailing hyphen gets one', tokenDecls('--brand', [{ name: 'primary', value: 'red' }])[0][0] === '--brand-primary');
 check('prefix with trailing hyphen', tokenDecls('--brand-', [{ name: 'primary', value: 'red' }])[0][0] === '--brand-primary');
 check('empty prefix falls back to --', tokenDecls('', [{ name: 'x', value: '1' }])[0][0] === '--x');
+// A custom property name must start with -- (CSS Custom Properties Level 1 §2); a prefix typed
+// without it used to produce declarations the browser drops
+check('prefix without -- gets it', tokenDecls('brand', [{ name: 'primary', value: 'red' }])[0][0] === '--brand-primary', tokenDecls('brand', [{ name: 'primary', value: 'red' }])[0][0]);
+check('prefix with one hyphen', tokenDecls('-brand', [{ name: 'primary', value: 'red' }])[0][0] === '--brand-primary');
+check('prefix with spaces around', tokenDecls('  --ds ', [{ name: 'gap', value: '4px' }])[0][0] === '--ds-gap');
+check('spaces inside a name become hyphens', tokenDecls('--', [{ name: 'primary  color', value: 'red' }])[0][0] === '--primary-color');
+check('page no longer says a prefix without -- is dropped', !/a prefix without <code>--<\/code> produces/.test(readFileSync(join(root, 'src/content/tools/css-variables-generator/en.mdx'), 'utf8')));
 check('rows without a name are skipped', tokenDecls('--', [{ name: '  ', value: '1' }, { name: 'a', value: '' }]).length === 1);
 check('empty root block', plainCss([]) === ':root {\n}');
 

@@ -337,6 +337,8 @@ const L = labels[lang] ?? labels['en'];
           }
         });
         pos.addEventListener('input', update);
+        /* move the row once editing is done, not on every keystroke */
+        pos.addEventListener('change', function () { sortStops(); });
         remove.addEventListener('click', function () {
           if (getStopCount() <= 2) return;
           stopEl.remove();
@@ -359,6 +361,7 @@ const L = labels[lang] ?? labels['en'];
           return (parseInt(a.querySelector('.cgg-stop-pos').value) || 0) -
                  (parseInt(b.querySelector('.cgg-stop-pos').value) || 0);
         });
+        /* Array.prototype.sort is stable, so equal positions keep their order */
         stops.forEach(function (s) { stopsEl.appendChild(s); });
       }
 
@@ -388,16 +391,27 @@ const L = labels[lang] ?? labels['en'];
       /* Build gradient CSS */
       function buildStopList() {
         var stops = stopsEl.querySelectorAll('.cgg-stop');
-        var parts = [];
+        var list = [];
         stops.forEach(function (s) {
-          var color = s.querySelector('.cgg-stop-picker').value;
-          var pos   = parseInt(s.querySelector('.cgg-stop-pos').value) || 0;
-          parts.push(color + ' ' + pos + '%');
+          list.push({ color: s.querySelector('.cgg-stop-picker').value, pos: s.querySelector('.cgg-stop-pos').value });
         });
-        return parts;
+        return stopList(list);
       }
 
       /* ── engine:start ── */
+      /* Stops in position order (stable, so equal positions keep their list order and hard edges
+         stay), each clamped to 0–100%. A later stop with a smaller position would otherwise be moved
+         up to the one before it by CSS (CSS Images 3, color stop fixup). */
+      function stopList(stops) {
+        return stops
+          .map(function (s, i) {
+            var p = parseInt(s.pos, 10);
+            return { color: s.color, pos: isNaN(p) ? 0 : Math.min(100, Math.max(0, p)), i: i };
+          })
+          .sort(function (a, b) { return a.pos - b.pos || a.i - b.i; })
+          .map(function (s) { return s.color + ' ' + s.pos + '%'; });
+      }
+
       /* 0deg (the Top button) is a real angle: `parseInt(v) || 90` used to turn it into 90deg. */
       function readAngle(value, fallback) {
         var n = parseInt(value, 10);

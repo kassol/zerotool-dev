@@ -12,7 +12,10 @@
 // may match) for a set of expressions; the "UTC" list used to evaluate the schedule in the
 // browser's time zone and only print it in UTC, so with TZ=Asia/Tokyo `0 9 * * 1-5` showed
 // 00:00 UTC; local mode still evaluates in local time; the description says "or" when either day
-// field may match; the next-run examples on the English page.
+// field may match; checkExpression accepts weekday 7 (cronie: 0 and 7 are Sunday; the typed
+// expression used to reject it) and reports the field and value of the first bad field, which the
+// page uses for the free-text Minute box (it used to be copied unchecked); 4-language
+// exprErrorField; the next-run examples on the English page.
 //
 // Run: node scripts/test-cron-job-generator.mjs
 
@@ -33,7 +36,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   console.error('FAIL: could not locate the engine block in CronJobGeneratorTool.astro');
   process.exit(1);
 }
-const E = new Function(source.slice(startIndex, endIndex) + '\nreturn { parseField, humanizeCron, nextRuns, MONTH_ABBR, WDAY_ABBR };')();
+const E = new Function(source.slice(startIndex, endIndex) + '\nreturn { parseField, humanizeCron, nextRuns, checkExpression, MONTH_ABBR, WDAY_ABBR };')();
 
 let failures = 0;
 let passes = 0;
@@ -104,6 +107,21 @@ eq('local (Asia/Tokyo): 0 9 * * 1-5 runs at 09:00 JST = 00:00 UTC',
 eq('either day field: or', E.humanizeCron('0 0 1,15 * 1'.split(' ')), 'At midnight, on day 1, 15 of the month or on Monday');
 eq('day field starts with *: and', /and on Monday$/.test(E.humanizeCron('0 0 */2 * 1'.split(' '))), true);
 eq('weekdays 9', E.humanizeCron('0 9 * * 1-5'.split(' ')), 'At 9:00, on Monday through Friday');
+
+// ---------- typed expression and the Minute box ----------
+// cronie crontab(5): day of week 0–7, 0 or 7 is Sunday. The typed expression used to reject 7.
+eq('weekday 7 accepted', E.checkExpression('0 9 * * 7').parts, ['0', '9', '*', '*', '7']);
+eq('weekday range to 7', E.checkExpression('0 9 * * 5-7').parts, ['0', '9', '*', '*', '5-7']);
+eq('weekday 8 rejected', E.checkExpression('0 9 * * 8'), { error: 'val', field: 4, value: '8' });
+eq('minute 75 rejected with its field', E.checkExpression('75 * * * *'), { error: 'val', field: 0, value: '75' });
+eq('four fields', E.checkExpression('* * * *'), { error: 'len' });
+eq('extra spaces', E.checkExpression('  0  9 * * 1 ').parts, ['0', '9', '*', '*', '1']);
+eq('7 and 0 run on the same days', E.nextRuns('0 9 * * 7'.split(' '), 3, true, Date.UTC(2026, 9, 1)).map((d) => d.toISOString()), E.nextRuns('0 9 * * 0'.split(' '), 3, true, Date.UTC(2026, 9, 1)).map((d) => d.toISOString()));
+eq('5-7 means Friday to Sunday', E.nextRuns('0 9 * * 5-7'.split(' '), 3, true, Date.UTC(2026, 9, 1)).map((d) => d.getUTCDay()), [5, 6, 0]);
+const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n  \});/.exec(source)[1])();
+for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' has exprErrorField with placeholders', /\{field\}/.test(STR[lang].exprErrorField || '') && /\{value\}/.test(STR[lang].exprErrorField || ''), true);
+eq('page no longer says 7 is rejected', page.includes('it rejects 7'), false);
+eq('page no longer says the Minute box is copied as is', page.includes('without an error message'), false);
 
 // ---------- English page examples ----------
 for (const [expr, runs] of [

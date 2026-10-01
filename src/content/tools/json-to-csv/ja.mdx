@@ -20,7 +20,8 @@ faqItems:
   <li><strong>区切り文字</strong>を選択：カンマ（デフォルト）、セミコロン、またはタブ。</li>
   <li><strong>ネストオブジェクトを展開</strong>をオンにすると、ネストキーをドットパスの列（例：<code>address.city</code>）に展開します。</li>
   <li><strong>ヘッダーを含める</strong>でヘッダー行の有無を切り替えます。</li>
-  <li><strong>コピー</strong>でクリップボードに、<strong>.csv をダウンロード</strong>でファイルとして保存します。</li>
+  <li>他人から受け取ったデータなら<strong>数式対策</strong>を選びます（後述）。既定はオフです。</li>
+  <li><strong>コピー</strong>でクリップボードに、<strong>.csv をダウンロード</strong>でファイルとして保存します。ダウンロードは既定で UTF-8 の BOM 付きです（「ダウンロードに UTF-8 BOM を付ける」でオフ）。</li>
 </ol>
 
 <h2>例</h2>
@@ -41,3 +42,24 @@ faqItems:
 <p>
   このツールはRFC 4180 CSV標準に従います。区切り文字・ダブルクォート・改行を含むフィールドはダブルクォートで囲まれ、フィールド内のダブルクォートは<code>""</code>にエスケープされます。行区切りは RFC 4180 の CR LF ではなく LF です（Excel・LibreOffice・pandas はどちらも読めます）。
 </p>
+
+<h2>数式対策</h2>
+<p>
+  <code>=</code>、<code>+</code>、<code>-</code>、<code>@</code>、タブ、改行で始まるセルは、表計算ソフトで開いたときに数式として実行されるおそれがあります（<a href="https://owasp.org/www-community/attacks/CSV_Injection" target="_blank" rel="noopener">OWASP: CSV Injection</a>）。全角の <code>＝</code> などにも反応します。ツールはこうした文字列の値を数えてステータス欄に表示します。<strong>数式対策</strong>をオンにすると、OWASP の推奨どおり前置文字を付けて引用符で囲みます。<strong>' を付ける</strong> は <code>'</code>、<strong>タブを付ける（Excel）</strong> はタブを付けます（OWASP によれば、Excel で保存して開き直してもタブは残ります）。入力：
+</p>
+<pre><code>{`[{"name":"Ann","comment":"=HYPERLINK(\"http://example.com\",\"Click\")"}]`}</code></pre>
+<p>「' を付ける」の出力：</p>
+<pre><code>{`name,comment
+Ann,"'=HYPERLINK(""http://example.com"",""Click"")"`}</code></pre>
+<p>対象は JSON の文字列だけで、<code>-5</code> などの数値、真偽値、JSON テキストとして書かれる配列・オブジェクトは変わりません。電話番号 <code>+81 3 1234 5678</code> のような値にも前置文字が付き、データが変わるため、既定ではオフです。該当する値があるとステータス欄に表示されます。</p>
+
+<h2>Excel と BOM</h2>
+<p>
+  ダウンロードしたファイルは既定で UTF-8 の BOM（バイト <code>EF BB BF</code>）で始まります。Microsoft のサポートページ <a href="https://support.microsoft.com/en-us/office/opening-csv-utf-8-files-correctly-in-excel-8a935af5-3416-4edd-ba7e-3dfd2bc4a032" target="_blank" rel="noopener">Opening CSV UTF-8 files correctly in Excel</a> は、BOM 付きで保存された UTF-8 の CSV はそのまま開けると説明しています。BOM がないと、Windows 版 Excel はダブルクリックで開いた CSV をシステムのコードページ（日本語環境では Shift_JIS）で読み、日本語が文字化けします。BOM を想定しないプログラムは BOM を最初の列名の一部として読むことがあります（Python で <code>encoding="utf-8"</code> なら <code>\ufeffid</code>、<code>"utf-8-sig"</code> なら取り除かれます）。その場合は「ダウンロードに UTF-8 BOM を付ける」をオフにしてください。<strong>コピー</strong>した内容には BOM は付きません。
+</p>
+
+<h2>制限</h2>
+<ul>
+  <li>空のネストオブジェクトと配列は展開しません。<code>{`"meta":{}`}</code> は <code>meta</code> 列になり、値は <code>{`{}`}</code> です。</li>
+  <li>2<sup>53</sup> を超える整数は JSON の解析時に精度が落ちます。長い ID は JSON 側で文字列にしてください。</li>
+</ul>

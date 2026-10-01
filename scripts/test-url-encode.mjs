@@ -8,7 +8,11 @@
 // Covers: encode / decode through the action button; Swap moves the result into the input box
 // and switches the mode (it used to keep the mode, so pressing the button again encoded the
 // result a second time); a decode error clears the old result instead of leaving it next to the
-// error; every example row on the English page is the output of the same built-ins.
+// error; errors give the position and cause in the page language (they used to be the browser's
+// English "URI malformed"): a bad %, a byte run that is not UTF-8, a lone surrogate; decoding
+// agrees with decodeURIComponent on 3,000 random inputs (same result or both fail); the Space as +
+// option encodes like URLSearchParams and decodes + as a space; 4-language STRINGS share keys;
+// every example row on the English page is the output of the same built-ins.
 //
 // Run: node scripts/test-url-encode.mjs
 
@@ -35,6 +39,7 @@ function makePage() {
         addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
         fire(type) { (handlers[type] || []).forEach((fn) => fn.call(els[id], { target: els[id] })); },
         getAttribute() { return null; },
+        setAttribute() {},
       };
     }
     return els[id];
@@ -104,11 +109,50 @@ p.run('a%20b');
 eq('decode before error', p.el('url-output').value, 'a b');
 p.run('100%');
 eq('error clears output', p.el('url-output').value, '');
-eq('error status', p.el('url-status').textContent, 'Error: URI malformed');
-for (const bad of ['%zz', '%E4%B8', '%C4%E3']) {
-  p.run(bad);
-  eq('error for ' + bad, p.el('url-status').textContent, 'Error: URI malformed');
+// Errors name the position and the cause in the page language (they used to be the browser's
+// English "URI malformed")
+eq('error: lone %', p.el('url-status').textContent, 'Position 4: "%" must be followed by two hexadecimal digits ("%").');
+p.run('%zz');
+eq('error: %zz', p.el('url-status').textContent, 'Position 1: "%" must be followed by two hexadecimal digits ("%zz").');
+p.run('%E4%B8');
+eq('error: cut UTF-8', p.el('url-status').textContent, 'Position 1: %E4%B8 is not valid UTF-8. Text saved in GBK, Shift_JIS or EUC-KR cannot be decoded here.');
+p.run('ok%E4%B8%ADx%C4%E3');
+eq('error: GBK after valid text', p.el('url-status').textContent, 'Position 13: %C4%E3 is not valid UTF-8. Text saved in GBK, Shift_JIS or EUC-KR cannot be decoded here.');
+p.setMode('encode');
+p.run('a\uD83D b');
+eq('error: lone surrogate', p.el('url-status').textContent, 'Position 2: a lone surrogate (half of an emoji or other character) cannot be encoded.');
+eq('error: lone surrogate clears output', p.el('url-output').value, '');
+
+// decoding agrees with decodeURIComponent wherever that succeeds
+p.setMode('decode');
+let seed = 11;
+const rand = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+const pieces = ['a', ' ', '+', '%20', '%2B', '%E4%B8%AD', '%F0%9F%98%80', '%EF%BB%BF', '%41', '%e4%b8%ad', '%C4', '%zz', '%', '~', '中'];
+let agree = true;
+for (let i = 0; i < 3000 && agree; i++) {
+  const text = Array.from({ length: 1 + rand(6) }, () => pieces[rand(pieces.length)]).join('');
+  let want = null;
+  try { want = decodeURIComponent(text); } catch { want = null; }
+  const got = p.run(text);
+  const failed = p.el('url-status').className.includes('error');
+  if (want === null ? !failed : got !== want) { agree = false; eq('agrees with decodeURIComponent: ' + text, failed ? 'error' : got, want); }
 }
+if (agree) passes++;
+
+// + as space (application/x-www-form-urlencoded, as URLSearchParams)
+p = makePage();
+p.el('url-plus').checked = true;
+p.el('url-plus').fire('change');
+eq('form encode', p.run('a b+c'), 'a+b%2Bc');
+eq('form encode matches URLSearchParams', p.run("Zoë O'Brien (admin)!*~"), new URLSearchParams([['', "Zoë O'Brien (admin)!*~"]]).toString().slice(1));
+p.setMode('decode');
+eq('form decode', p.run('a+b%20c%2B'), 'a b c+');
+p.el('url-plus').checked = false;
+p.el('url-plus').fire('change');
+eq('plus kept when the option is off', p.run('a+b'), 'a+b');
+const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' keys', JSON.stringify(Object.keys(STR[lang]).sort()), JSON.stringify(Object.keys(STR.en).sort()));
+eq('page no longer says there is no + option', page.includes('There is no option for + as space'), false);
 
 // English page examples
 const rows = [

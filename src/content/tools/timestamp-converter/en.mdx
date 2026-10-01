@@ -1,11 +1,11 @@
 ---
 seoTitle: "Unix Timestamp Converter — Free Online | ZeroTool"
-seoDescription: "Convert Unix timestamps to human-readable dates and vice versa. Supports seconds and milliseconds. Shows UTC and local time. Free, browser-based."
+seoDescription: "Convert Unix timestamps to human-readable dates and vice versa. Supports seconds, milliseconds, microseconds and nanoseconds. Shows UTC and local time. Free, browser-based."
 faqItems:
   - question: "What is a Unix timestamp?"
     answer: "A Unix timestamp (also called Epoch time) is the number of seconds elapsed since January 1, 1970 00:00:00 UTC. It is the universal time reference in computing."
   - question: "Seconds or milliseconds — how do I tell?"
-    answer: "A 10-digit number is almost certainly seconds (valid until 2286). A 13-digit number is milliseconds. This tool auto-detects based on digit count."
+    answer: "A 10-digit number is almost certainly seconds (valid until 2286). A 13-digit number is milliseconds, 16 digits microseconds and 19 digits nanoseconds. This tool picks the unit from the digit count and shows which one it used; you can also choose the unit."
   - question: "Why does local time differ from UTC?"
     answer: "UTC is the global reference point. Local time is UTC adjusted for your browser's timezone offset."
   - question: "Is this tool accurate for all timezones?"
@@ -37,16 +37,17 @@ faqItems:
 
 ## Examples
 
-The converter decides the unit by counting digits: 13 or more digits are read as milliseconds, fewer as seconds.
+With the unit set to <strong>Auto unit</strong>, the converter counts the digits before any decimal point: up to 12 digits are seconds, 13–15 milliseconds, 16–18 microseconds, and 19 or more nanoseconds. Present-day values have 10, 13, 16 and 19 digits. The status line says which unit it used; choose a unit from the list to override it.
 
 | Input | Read as | ISO 8601 (UTC) |
 |---|---|---|
 | `1700000000` | seconds | `2023-11-14T22:13:20.000Z` |
 | `1700000000123` | milliseconds | `2023-11-14T22:13:20.123Z` |
 | `2147483647` | seconds | `2038-01-19T03:14:07.000Z` |
-| `1700000000123456` | milliseconds (wrong) | `+055840-11-08T22:15:23.456Z` |
+| `1700000000123456` | microseconds | `2023-11-14T22:13:20.123Z` |
+| `1700000000123456789` | nanoseconds | `2023-11-14T22:13:20.123Z` |
 
-`2147483647` is the largest value a signed 32-bit integer can hold, which is where the Year 2038 problem starts. The last row is a microsecond timestamp: the tool reads it as milliseconds and returns a date in the year 55840. Divide microseconds by 1,000 before converting.
+`2147483647` is the largest value a signed 32-bit integer can hold, which is where the Year 2038 problem starts. The last two rows are a microsecond timestamp (Python `time.time_ns() // 1000`, PostgreSQL internals) and a nanosecond one (Go `time.Now().UnixNano()`, `date +%s%N`); digits below the millisecond are dropped, because a JavaScript date holds whole milliseconds. Nanosecond values are larger than 2<sup>53</sup>, so the tool reads them as big integers instead of floating-point numbers.
 
 ### What each result row means
 
@@ -94,8 +95,8 @@ datetime.datetime.fromtimestamp(1700000000, datetime.timezone.utc)  # 2023-11-14
 
 ## Limits
 
-- **Unit detection by length only.** Microsecond and nanosecond timestamps are not recognized; convert them to milliseconds first.
+- **Automatic unit by length only.** A millisecond value from before 2001-09-09 has 12 digits and is read as seconds, and a seconds value of 13 digits or more (after year 33658) is read as milliseconds. Choose the unit in those cases.
+- **Digits only.** Exponents (`1e10`), hexadecimal and thousands separators are rejected; a decimal part is accepted.
 - **Date to Timestamp uses your local time zone.** The date picker value is read in your browser's time zone, so the same picker value gives different timestamps on computers set to different zones.
 - **No leap seconds.** Unix time ignores leap seconds, as does JavaScript's `Date`.
-- **Range.** JavaScript dates cover ±8,640,000,000,000,000 ms from the epoch, about 273,790 years each way ([ECMA-262 §21.4.1.1](https://tc39.es/ecma262/#sec-time-values-and-time-range)). `8640000000000000` converts to `+275760-09-13T00:00:00.000Z`; one more millisecond gives "Timestamp out of range."
-- **Seconds with 13 digits.** A seconds value of 13 digits or more (after year 33658) is read as milliseconds.
+- **Range.** JavaScript dates cover ±8,640,000,000,000,000 ms from the epoch, about 273,790 years each way ([ECMA-262 §21.4.1.1](https://tc39.es/ecma262/#sec-time-values-and-time-range)). With the unit set to milliseconds, `8640000000000000` converts to `+275760-09-13T00:00:00.000Z`; one more millisecond gives "Timestamp out of range."

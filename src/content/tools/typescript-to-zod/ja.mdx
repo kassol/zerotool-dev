@@ -7,7 +7,7 @@ faqItems:
   - question: "型間の相互参照はどのように処理されますか？"
     answer: "入力に複数のinterfaceまたはtype aliasが宣言されている場合、宣言済み型名への参照は対応するSchemaの定数に変換されます。例えばAddress型のフィールドはAddressSchemaになります。入力で宣言されていない型はz.unknown()（コメント付き）になります。"
   - question: "生成されるスキーマはどのZodバージョンに対応していますか？"
-    answer: "出力にはZod 3とZod 4の両方にあるz.object()、z.string()、z.union()、z.enum()、z.array()、z.optional()、z.literal()、z.record(キー, 値)、z.infer<>などのAPIだけを使います。Zod 4は値だけのz.record()を受け付けないため、Recordには常にキーのスキーマを書きます。Promise<T>から生成するz.promise()はZod 4で非推奨です。"
+    answer: "出力にはZod 3とZod 4の両方にあるz.object()、z.string()、z.union()、z.enum()、z.array()、z.optional()、z.literal()、z.record(キー, 値)、.extend()、.shape、.catchall()、z.lazy()、z.ZodType、z.infer<>などのAPIだけを使います。Zod 4は値だけのz.record()を受け付けないため、Recordには常にキーのスキーマを書きます。Promise<T>から生成するz.promise()はZod 4で非推奨です。"
   - question: "文字列Union型はどのように変換されますか？"
     answer: "文字列リテラルのUnion（例：\"admin\" | \"user\" | \"guest\"）は簡潔にするためz.enum([\"admin\", \"user\", \"guest\"])に自動変換されます。混合Union（例：string | null）はz.union([z.string(), z.null()])を使用します。"
   - question: "TypeScriptのclassやジェネリック型定義は変換できますか？"
@@ -39,6 +39,10 @@ faqItems:
   <li><strong>交差型</strong>：<code>A &amp; B</code> → <code>z.intersection(A, B)</code></li>
   <li><strong>タプル</strong>：<code>[A, B]</code> → <code>z.tuple([A, B])</code></li>
   <li><strong>リテラル型</strong>：<code>"value"</code>、<code>42</code>、<code>true</code> → <code>z.literal()</code></li>
+  <li><strong><code>extends</code></strong>：<code>{"interface Admin extends Base"}</code> → <code>{"BaseSchema.extend({ ... })"}</code>。2 つ目の基底型は <code>{".extend(OtherSchema.shape)"}</code> を追加します。基底型がオブジェクトのスキーマでない場合（交差型の別名など）は <code>{"z.intersection(BaseSchema, z.object({ ... }))"}</code> です。入力にない基底型は通常の <code>z.object()</code> にコメントを付けます。</li>
+  <li><strong>インデックスシグネチャ</strong>：他のプロパティと並ぶ <code>{"[key: string]: V"}</code> → <code>{".catchall(V)"}</code>（余分なキーを検証して残す）。インデックスシグネチャだけなら <code>{"z.record(z.string(), V)"}</code>。JSON を解析したオブジェクトのキーは文字列なので、キーは常に <code>z.string()</code> です。</li>
+  <li><strong><code>enum</code> 宣言</strong>：文字列 enum → 値の <code>z.enum()</code>。数値や混在のメンバー（0 または直前の数値から自動採番）→ <code>z.literal()</code> の <code>z.union()</code>。<code>const enum</code>、<code>declare enum</code> も同じです。<code>{"1 << 2"}</code> のような計算値を含む enum は全体を <code>z.unknown()</code> にしてコメントを付けます。</li>
+  <li><strong>宣言順と再帰</strong>：入力の順序に関係なく、依存先のスキーマから出力します。循環を閉じる参照は <code>{"z.lazy(() => NameSchema)"}</code> になり、循環に含まれる型は元の宣言を書き出して <code>{"z.ZodType<Name>"}</code> の型注釈を付けます（Zod のドキュメントにある再帰型の書き方）。出力は TypeScript 5.9 の strict モードでコンパイルし、Zod 3.25 と Zod 4 で読み込んで確認しています。</li>
 </ul>
 
 <h2>サンプル</h2>

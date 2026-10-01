@@ -137,7 +137,7 @@ const L = labels[lang] ?? labels['en'];
         placeholder={L.customAlphabetPlaceholder}
         spellcheck="false"
         autocomplete="off"
-        maxlength="256"
+        maxlength="4096"
       />
     </div>
   </div>
@@ -200,21 +200,45 @@ const L = labels[lang] ?? labels['en'];
         customRow.style.display = alphabetEl.value === 'custom' ? '' : 'none';
       });
 
+      /* ── engine:start ── */
+      // Custom alphabets are split into code points, so an emoji is one symbol (nanoid's
+      // customAlphabet works per UTF-16 code unit and would emit half of one), and may have more
+      // than 256 symbols. Each symbol takes a 32-bit random value; values at or above the largest
+      // multiple of the alphabet size are discarded, so there is no modulo bias.
+      function alphabetSymbols(text) {
+        var seen = {};
+        var out = [];
+        Array.from(text).forEach(function (c) {
+          if (!Object.prototype.hasOwnProperty.call(seen, c)) { seen[c] = true; out.push(c); }
+        });
+        return out;
+      }
+
+      function randomId(symbols, size, rand) {
+        var n = symbols.length;
+        var limit = Math.floor(4294967296 / n) * n;
+        var out = '';
+        var got = 0;
+        while (got < size) {
+          var buf = rand(Math.min(16384, Math.max(16, size - got + 8)));
+          for (var i = 0; i < buf.length && got < size; i++) {
+            if (buf[i] >= limit) continue;
+            out += symbols[buf[i] % n];
+            got++;
+          }
+        }
+        return out;
+      }
+      /* ── engine:end ── */
+
       /* ── Generate ── */
       function getAlphabet() {
         var preset = alphabetEl.value;
-        if (preset === 'custom') {
-          var chars = customAlphaEl.value;
-          /* deduplicate */
-          var seen = {};
-          var deduped = '';
-          for (var i = 0; i < chars.length; i++) {
-            if (!seen[chars[i]]) { seen[chars[i]] = true; deduped += chars[i]; }
-          }
-          return deduped;
-        }
+        if (preset === 'custom') return alphabetSymbols(customAlphaEl.value);
         return PRESETS[preset] || PRESETS['url-safe'];
       }
+
+      function cryptoRand(n) { return crypto.getRandomValues(new Uint32Array(n)); }
 
       function showError(msg) {
         errEl.textContent = msg;
@@ -239,9 +263,11 @@ const L = labels[lang] ?? labels['en'];
           return;
         }
 
-        var gen = alpha === PRESETS['url-safe']
-          ? function () { return window.__nanoid.nanoid(size); }
-          : window.__nanoid.customAlphabet(alpha, size);
+        var gen = Array.isArray(alpha)
+          ? function () { return randomId(alpha, size, cryptoRand); }
+          : alpha === PRESETS['url-safe']
+            ? function () { return window.__nanoid.nanoid(size); }
+            : window.__nanoid.customAlphabet(alpha, size);
 
         var newItems = [];
         for (var i = 0; i < count; i++) {

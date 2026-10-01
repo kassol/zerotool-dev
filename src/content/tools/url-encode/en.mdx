@@ -7,9 +7,9 @@ faqItems:
   - question: "What is the difference between encodeURI and encodeURIComponent?"
     answer: "encodeURI is meant for a whole URL and leaves the separators ; , / ? : @ & = + $ # unencoded. encodeURIComponent is meant for one part, such as a query value, and encodes those separators too. Both leave letters, digits and - _ . ! ~ * ' ( ) unencoded. This tool uses encodeURIComponent."
   - question: "Why does decoding leave + signs in the output?"
-    answer: "decodeURIComponent only reverses %XX sequences. The + for space comes from HTML form encoding (application/x-www-form-urlencoded), not from percent-encoding, so a+b decodes to a+b. Replace + with %20 first, or decode the value with URLSearchParams in your code."
-  - question: "Why do I get 'Error: URI malformed'?"
-    answer: "The browser's decodeURIComponent stops at the first % that is not followed by two hex digits, or at bytes that are not valid UTF-8. Examples: 100%, %zz, a cut-off sequence such as %E4%B8, and GBK or Shift_JIS bytes such as %C4%E3."
+    answer: "decodeURIComponent only reverses %XX sequences. The + for space comes from HTML form encoding (application/x-www-form-urlencoded), not from percent-encoding, so a+b decodes to a+b by default. Turn on Space as + (form data) to read + as a space, as URLSearchParams does."
+  - question: "Why does decoding fail?"
+    answer: "Either a % is not followed by two hex digits (100%, %zz), or the bytes are not valid UTF-8: a cut-off sequence such as %E4%B8, or GBK or Shift_JIS bytes such as %C4%E3. The error message gives the position and the part that failed."
   - question: "Is my data sent to any server?"
     answer: "No. The conversion runs in your browser with JavaScript's built-in encodeURIComponent and decodeURIComponent. The last input is kept in this browser's local storage so it is still there when you come back; Clear removes it."
 ---
@@ -57,19 +57,17 @@ faqItems:
   unreserved. <code>encodeURIComponent</code> also leaves <code>! ' ( ) *</code> unencoded (fourth example). Most servers accept
   them, but some request-signing schemes (OAuth 1.0 signatures, AWS Signature Version 4) require them as <code>%21 %27 %28 %29 %2A</code>.
   Encode those five by hand when a signature check fails.</li>
-  <li><strong>Spaces become <code>%20</code>, not <code>+</code>.</strong> HTML forms and <code>URLSearchParams</code> write a
-  space as <code>+</code> (WHATWG URL Standard, application/x-www-form-urlencoded). Both forms are read as a space by form decoders,
-  but this tool's decoder only reverses <code>%XX</code>, so a <code>+</code> stays a plus sign (last example).</li>
+  <li><strong>Spaces become <code>%20</code>, not <code>+</code>, unless you choose form data.</strong> HTML forms and <code>URLSearchParams</code> write a
+  space as <code>+</code> (WHATWG URL Standard, application/x-www-form-urlencoded). By default this tool's decoder only reverses <code>%XX</code>, so a <code>+</code> stays a plus sign (last example).
+  With <strong>Space as + (form data)</strong> on, encoding follows <code>URLSearchParams</code>: <code>a b+c</code> becomes <code>a+b%2Bc</code>, and <code>! ' ( ) ~</code> are encoded too.
+  Decoding then reads <code>+</code> as a space: <code>a+b%20c</code> becomes <code>a b c</code>.</li>
 </ul>
 
 <h2>Limitations</h2>
 <ul>
-  <li>Decoding fails with <code>Error: URI malformed</code> when a <code>%</code> is not followed by two hex digits
-  (<code>100%</code>, <code>%zz</code>), when a UTF-8 sequence is cut short (<code>%E4%B8</code>), or when the bytes come from another
-  encoding such as GBK or Shift_JIS (<code>%C4%E3</code>). The error text comes from the browser, so it is in English on every page
-  and its wording differs between browsers.</li>
-  <li>Encoding fails with the same error for text that contains a lone UTF-16 surrogate, which can appear when a string is cut in the
-  middle of an emoji.</li>
-  <li>There is no option for <code>+</code> as space, for <code>encodeURI</code> behaviour, or for legacy encodings. Only UTF-8 is
+  <li>Decoding stops at the first problem and names its position: <code>100%</code> gives <code>{'Position 4: "%" must be followed by two hexadecimal digits ("%").'}</code>, and
+  <code>%C4%E3</code> (GBK bytes) gives <code>Position 1: %C4%E3 is not valid UTF-8.</code> Text in GBK, Shift_JIS or EUC-KR cannot be decoded; only UTF-8 is
   supported, as in RFC 3986 section 2.5 for new URI schemes.</li>
+  <li>Encoding stops at a lone UTF-16 surrogate, which can appear when a string is cut in the middle of an emoji.</li>
+  <li>There is no <code>encodeURI</code> mode, which leaves <code>; , / ? : @ &amp; = + $ #</code> unencoded for a whole URL.</li>
 </ul>

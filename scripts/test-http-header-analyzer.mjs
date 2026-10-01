@@ -6,7 +6,9 @@
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Covers: request / response / header-only detection, obs-fold, HTTP/2 pseudo-headers skipped; the
+// Covers: HTTP/2 and HTTP/3 pseudo-headers listed in their own group with RFC references and
+// setting the message type (they used to be dropped); request / response / header-only
+// detection, obs-fold; the
 // hints for the problem response on the English page; the credentials warning is dropped when the
 // pasted headers name a specific Allow-Origin (it used to show for every credentialed response);
 // the X-XSS-Protection description no longer recommends `1; mode=block`; the SameSite note no
@@ -48,7 +50,21 @@ eq('response', E.parseHeaders('HTTP/1.1 404 Not Found\nX-A: 1').type, 'response'
 eq('request', E.parseHeaders('OPTIONS /api HTTP/1.1\nHost: a').type, 'request');
 eq('PROPFIND is not recognized', E.parseHeaders('PROPFIND /a HTTP/1.1\nHost: a').type, 'unknown');
 eq('obs-fold', E.parseHeaders('X-Long: a\n  b').headers[0].value, 'a b');
-eq('HTTP/2 pseudo-headers skipped', E.parseHeaders(':status: 200\ncontent-type: text/plain').headers.map((h) => h.name), ['content-type']);
+// HTTP/2 and HTTP/3 pseudo-headers (RFC 9113 §8.3, RFC 9114 §4.3, RFC 8441 :protocol) are listed
+// in their own group and set the message type; they used to be dropped
+const h2res = E.parseHeaders(':status: 200\ncontent-type: text/plain\nset-cookie: a=b');
+eq('pseudo-header kept', h2res.headers.map((h) => [h.name, h.value, h.cat]), [[':status', '200', 'pseudo'], ['content-type', 'text/plain', 'content'], ['set-cookie', 'a=b', 'cookie']]);
+eq(':status makes a response', h2res.type, 'response');
+eq(':status has a description', /RFC 9113/.test(h2res.headers[0].desc), true);
+const h2req = E.parseHeaders(':method: GET\n:authority: example.com\n:scheme: https\n:path: /a?b=1\naccept: */*');
+eq(':method makes a request', h2req.type, 'request');
+eq('request pseudo-headers', h2req.headers.filter((h) => h.cat === 'pseudo').map((h) => h.name + '=' + h.value), [':method=GET', ':authority=example.com', ':scheme=https', ':path=/a?b=1']);
+eq(':protocol (RFC 8441)', /8441/.test(E.parseHeaders(':protocol: websocket').headers[0].desc), true);
+eq('unknown pseudo-header named as such', E.parseHeaders(':foo: 1').headers[0].desc, 'Not a pseudo-header defined for HTTP/2 or HTTP/3.');
+eq('status line still wins', E.parseHeaders('HTTP/2 200\n:status: 200').type, 'response');
+eq('value with colons', E.parseHeaders(':path: /a:b').headers[0].value, '/a:b');
+eq('category order has pseudo after status', source.includes("var CATEGORY_ORDER = ['status', 'pseudo',"), true);
+for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' has catPseudo', new RegExp('catPseudo: \'').test(source.split('\n        ' + lang + ': {')[1] || ''), true);
 eq('header count', Object.keys(E.HEADER_DB).length, 88);
 eq('unknown header is custom', E.parseHeaders('X-Request-Id: 7f3a').headers[0].cat, 'custom');
 

@@ -7,7 +7,7 @@ faqItems:
   - question: "타입 간의 상호 참조는 어떻게 처리되나요?"
     answer: "입력에 여러 interface 또는 type alias가 선언된 경우, 선언된 타입 이름에 대한 참조는 해당 Schema 상수로 변환됩니다. 예를 들어 Address 타입의 필드는 출력에서 AddressSchema가 됩니다. 입력에서 선언되지 않은 타입은 z.unknown()(주석 포함)이 됩니다."
   - question: "생성된 스키마는 어떤 Zod 버전과 호환되나요?"
-    answer: "출력은 Zod 3와 Zod 4 모두에 있는 z.object(), z.string(), z.union(), z.enum(), z.array(), z.optional(), z.literal(), z.record(키, 값), z.infer<> 등의 API만 사용합니다. Zod 4는 값만 받는 z.record()를 허용하지 않으므로 Record에는 항상 키 스키마를 씁니다. Promise<T>에서 생성되는 z.promise()는 Zod 4에서 사용 중단(deprecated) 표시가 있습니다."
+    answer: "출력은 Zod 3와 Zod 4 모두에 있는 z.object(), z.string(), z.union(), z.enum(), z.array(), z.optional(), z.literal(), z.record(키, 값), .extend(), .shape, .catchall(), z.lazy(), z.ZodType, z.infer<> 등의 API만 사용합니다. Zod 4는 값만 받는 z.record()를 허용하지 않으므로 Record에는 항상 키 스키마를 씁니다. Promise<T>에서 생성되는 z.promise()는 Zod 4에서 사용 중단(deprecated) 표시가 있습니다."
   - question: "문자열 유니언 타입은 어떻게 변환되나요?"
     answer: "문자열 리터럴의 유니언(예: \"admin\" | \"user\" | \"guest\")은 간결하게 z.enum([\"admin\", \"user\", \"guest\"])로 자동 변환됩니다. 혼합 유니언(예: string | null)은 z.union([z.string(), z.null()])을 사용합니다."
   - question: "TypeScript class나 제네릭 타입 정의를 변환할 수 있나요?"
@@ -39,6 +39,10 @@ faqItems:
   <li><strong>교차 타입</strong>: <code>A &amp; B</code> → <code>z.intersection(A, B)</code></li>
   <li><strong>튜플</strong>: <code>[A, B]</code> → <code>z.tuple([A, B])</code></li>
   <li><strong>리터럴 타입</strong>: <code>"value"</code>, <code>42</code>, <code>true</code> → <code>z.literal()</code></li>
+  <li><strong><code>extends</code></strong>: <code>{"interface Admin extends Base"}</code> → <code>{"BaseSchema.extend({ ... })"}</code>. 두 번째 상위 타입은 <code>{".extend(OtherSchema.shape)"}</code>를 덧붙입니다. 상위 타입이 객체 스키마가 아니면(교차 타입 별칭 등) <code>{"z.intersection(BaseSchema, z.object({ ... }))"}</code>가 됩니다. 입력에 선언되지 않은 상위 타입은 일반 <code>z.object()</code>에 주석을 붙입니다.</li>
+  <li><strong>인덱스 시그니처</strong>: 다른 속성과 함께 있는 <code>{"[key: string]: V"}</code> → <code>{".catchall(V)"}</code>(추가 키를 검사하고 유지), 인덱스 시그니처만 있으면 <code>{"z.record(z.string(), V)"}</code>. 파싱한 JSON 객체의 키는 모두 문자열이므로 키는 항상 <code>z.string()</code>입니다.</li>
+  <li><strong><code>enum</code> 선언</strong>: 문자열 enum → 값의 <code>z.enum()</code>, 숫자 또는 혼합 멤버(0 또는 직전 숫자부터 자동 증가) → <code>z.literal()</code>의 <code>z.union()</code>. <code>const enum</code>, <code>declare enum</code>도 같습니다. <code>{"1 << 2"}</code> 같은 계산 값이 있는 enum은 전체를 <code>z.unknown()</code>으로 쓰고 주석을 붙입니다.</li>
+  <li><strong>선언 순서와 재귀</strong>: 입력 순서와 관계없이 의존하는 스키마를 먼저 출력합니다. 순환을 닫는 참조는 <code>{"z.lazy(() => NameSchema)"}</code>가 되고, 순환에 속한 타입은 원래 선언을 그대로 쓰고 <code>{"z.ZodType<Name>"}</code> 타입 주석을 붙입니다(Zod 문서의 재귀 타입 작성법). 출력은 TypeScript 5.9 strict 모드로 컴파일하고 Zod 3.25와 Zod 4에서 불러와 확인했습니다.</li>
 </ul>
 
 <h2>예시</h2>

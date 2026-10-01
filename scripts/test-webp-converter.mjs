@@ -12,6 +12,8 @@
 // - "Download All" starts one download per file; the label no longer says ZIP (it never made one).
 // - canvas.toBlob falls back to PNG when the browser has no encoder for the requested type
 //   (HTML spec; Safari has no WebP encoder). The result is rejected instead of being saved as .webp.
+// - Errors, hints, the drop-zone text, the quality label and the status line come from the 4-language
+//   STRINGS (they were English on every page).
 // - Error cards use textContent with the raw file name (before the fix the name was HTML-escaped
 //   first, so "a&b.png" showed as "a&amp;b.png").
 //
@@ -58,7 +60,13 @@ if (sm) {
   const S = new Function('return ' + sm[1])();
   const keys = Object.keys(S.en).sort().join(',');
   for (const l of ['zh', 'ja', 'ko']) check(`STRINGS ${l} keys match en`, Object.keys(S[l]).sort().join(',') === keys);
+  for (const k of ['hintTo', 'hintFrom', 'dropText', 'dropAction', 'errFormat', 'errNotWebp', 'errFailed', 'errEncoder', 'errLoad', 'statusOk', 'statusFail']) check('STRINGS has ' + k, typeof S.en[k] === 'string');
 }
+// Errors, hints and the status line were English on every page
+check('no English error literals in the script', !/error: '[A-Z]/.test(script));
+check('no English hint literals', !/hintEl\.textContent = '/.test(script));
+check('status line from STRINGS', !/' file\(s\) converted'/.test(script));
+check('quality label from STRINGS', /data-i18n="qualityLabel"/.test(src));
 
 // ---------- guide examples (src/content/blog/webp-converter-guide/{en,ja}.mdx) ----------
 // {/* webp-check: {"tool":"cwebp"|"sharp", "args":[…] | "options":{…}, "bytes":N} */} annotations
