@@ -1,170 +1,143 @@
 ---
-title: "URL Slug Generator: How to Slugify Strings for SEO-Friendly URLs"
-description: "Learn what URL slugs are, why they matter for SEO, and how to slugify any string online — including Unicode, spaces, and special characters."
+title: "URL Slug Guide: Google's Rules, WordPress and Shopify Slugs, and Why Slugifiers Disagree"
+description: "What a URL slug is, what Google's URL guidance actually says, how WordPress and Shopify build slugs, how non-ASCII slugs are encoded, and how six slugifiers handle the same titles."
 pubDate: 2026-04-06
-updatedDate: 2026-09-30
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["slugify", "url-slug", "seo", "developer-tools"]
+tags: ["url slug", "slugify", "seo", "wordpress", "permalinks"]
 ---
 
-A URL slug is the human-readable part of a URL that identifies a specific page. Getting slugs right matters for SEO, readability, and link stability. This guide explains how slug generation works, covers edge cases like Unicode characters, and shows you how to slugify strings programmatically.
+A URL slug is the part of a URL path that names one page in words, usually derived from the page title. In `https://example.com/blog/creme-brulee-a-30-minute-recipe/`, the slug is `creme-brulee-a-30-minute-recipe`. Django's documentation puts it briefly: "Slug is a newspaper term. A slug is a short label for something, containing only letters, numbers, underscores or hyphens" ([SlugField](https://docs.djangoproject.com/en/6.1/ref/models/fields/#slugfield)). CMSs keep it in its own editable field: WordPress calls it the slug, Shopify calls it the handle.
 
-## What Is a URL Slug?
+Most advice about slugs repeats a few rules of thumb. This guide sticks to what can be checked: what Google's documentation says, what WordPress and Shopify actually do with a title, how non-ASCII slugs end up in the URL, and how six slugify implementations disagree on the same input. The slugify outputs below were run on 2026-10-02 with the versions named in each section; the ZeroTool outputs come from the [Slugify tool](/tools/slugify/).
 
-In a URL like `https://example.com/blog/how-to-slugify-a-string`, the slug is `how-to-slugify-a-string`. Slugs are:
+## Where the Slug Sits in a URL
 
-- Lowercase
-- Hyphen-separated (no spaces or underscores)
-- Free of special characters (`!`, `@`, `#`, etc.)
-- Short and descriptive
+A slug is one path segment, or the last of several. RFC 3986 splits a URL into scheme, authority, path, query and fragment ([§3](https://www.rfc-editor.org/rfc/rfc3986#section-3)); the slug lives in the path. Two common patterns:
 
-Good slugs improve click-through rates because they signal relevance before a user even visits the page.
+```text
+https://example.com/2026/10/creme-brulee-a-30-minute-recipe/   WordPress, "Month and name" permalinks
+https://shop.example.com/products/health-potion                 Shopify product handle
+```
 
-## Why Slugs Matter for SEO
+Slugs usually contain only lower-case ASCII letters, digits and hyphens. Those characters are all in RFC 3986's unreserved set (`A–Z a–z 0–9 - . _ ~`, [§2.3](https://www.rfc-editor.org/rfc/rfc3986#section-2.3)), so they never need percent-encoding. That is the practical reason slugs look the way they do: a slug made of unreserved characters reads the same in the address bar, in an email, in a log file and in a sitemap.
 
-Search engines read URL structure. A URL like `/product/1234` tells Google nothing; `/product/mechanical-keyboard-rgb` tells it the page is about a specific product. Key rules:
+## What Google's URL Guidance Says
 
-- **Include the primary keyword** in the slug when possible
-- **Keep it short** — Google truncates long URLs in search results
-- **Avoid stop words** like "a", "the", "and" when they add no meaning
-- **Use hyphens, not underscores** — Google recommends hyphens to separate words in URLs ([Google Search Central](https://developers.google.com/search/docs/crawling-indexing/url-structure))
-- **Never change slugs after publishing** without a 301 redirect — broken links lose SEO equity
+Google's page [URL structure best practices for Google Search](https://developers.google.com/search/docs/crawling-indexing/url-structure) has five recommendations that apply to slugs:
 
-## How Slugification Works
+| Recommendation | Google's example |
+|---|---|
+| Use descriptive URLs: "readable words rather than long ID numbers" | `/wiki/Aviation` instead of `/index.php?topic=42&area=3a5ebc…` |
+| Use your audience's language, transliterated if applicable | `/lebensmittel/pfefferminz` for German, `/ペパーミント` for Japanese |
+| Use percent encoding as necessary; non-ASCII characters "should be percent encoded" in links | `/gem%C3%BCse` rather than `/gemüse` in `href` |
+| Use hyphens to separate words, not underscores | `/summer-clothing/` rather than `/summer_clothing/` or `/greendress` |
+| URLs are case sensitive | `/APPLE` and `/apple` are different URLs |
 
-A standard slugify pipeline:
+The hyphen rule comes with a reason: underscores are "commonly used for denoting concepts that should be kept together", as in function names such as `format_date`. The case rule is why most slugifiers lowercase: if your server treats `/Apple` and `/apple` as the same page, Google still sees two URLs.
 
-1. **Lowercase** — `"Hello World"` → `"hello world"`
-2. **Normalize Unicode** — decompose characters to base form (`é` → `e` + combining accent)
-3. **Strip non-ASCII or transliterate** — `"café"` → `"cafe"`, `"über"` → `"uber"`
-4. **Replace spaces and separators** with hyphens
-5. **Remove remaining special characters** — only `[a-z0-9-]` survives
-6. **Collapse multiple hyphens** — `"hello--world"` → `"hello-world"`
-7. **Trim leading/trailing hyphens** — `"-hello-"` → `"hello"`
+Just as useful is what the page does not say. It gives no length limit, says nothing about removing stop words such as "a" or "the", and does not ask for keywords in the URL. Advice like "keep slugs under 60 characters" is a style choice, not a Google requirement.
 
-### Example Transformations
+## How WordPress Builds a Slug
 
-| Input | Output |
-|-------|--------|
-| `Hello World` | `hello-world` |
-| `What's New in 2024?` | `whats-new-in-2024` |
-| `café au lait` | `cafe-au-lait` |
-| `C++ Programming` | `c-programming` |
-| `  spaces   everywhere  ` | `spaces-everywhere` |
-| `日本語` | *(removed — no ASCII equivalent)* |
+WordPress does not fix the slug while a post is a draft: `wp_insert_post()` leaves an empty `post_name` empty for `draft`, `pending` and `auto-draft` posts, and calls `sanitize_title()` on the title once the post is saved with another status, such as `publish` ([post.php](https://github.com/WordPress/wordpress-develop/blob/7.1.2/src/wp-includes/post.php)). `sanitize_title()` runs `remove_accents()` and then `sanitize_title_with_dashes()` ([formatting.php](https://github.com/WordPress/wordpress-develop/blob/7.1.2/src/wp-includes/formatting.php)). In WordPress 7.1.2 that function:
 
-Chinese, Japanese, and other CJK characters are typically removed in basic ASCII-only slugify. For multilingual content, include the language prefix in the URL structure (`/ja/tools/slugify`) rather than trying to romanize CJK.
+1. Strips HTML tags and lowercases the text.
+2. Percent-encodes every non-ASCII character in lower-case hex, and stops at 200 encoded characters.
+3. Deletes curly quotes, ©, ®, °, … and similar signs; turns `/` and `.` into `-`, and `×` into `x`.
+4. Deletes everything except `a–z`, `0–9`, `%`, spaces, `_` and `-`; turns spaces into hyphens; collapses repeated hyphens and trims them from both ends.
 
-## Slugify in Code
+Running the real functions from 7.1.2 (with an `en_US` locale) on a few titles:
 
-### JavaScript
+| Title | WordPress slug |
+|---|---|
+| `Rock & Roll` | `rock-roll` |
+| `John's Guide` | `johns-guide` |
+| `Node.js 20.0` | `node-js-20-0` |
+| `Fußgängerübergänge` | `fusgangerubergange` |
+| `東京 Travel Guide 2026` | `%e6%9d%b1%e4%ba%ac-travel-guide-2026` |
 
+Two results are worth knowing. `ß` becomes a single `s` because `remove_accents()` maps it that way unless the site locale is German; with `de_DE` the same title gives `fussgaengeruebergaenge`. And non-Latin text is kept, percent-encoded, which is exactly the form Google recommends for links. Because each Japanese or Chinese character takes 9 encoded characters, the 200-character cap cuts a long CJK title after about 22 characters.
+
+If two posts get the same slug, `wp_unique_post_slug()` appends `-2`, `-3` and so on. When you edit the slug of a published post, WordPress stores the old one as `_wp_old_slug`, and `wp_old_slug_redirect()` answers the old URL with a 301 whenever it would otherwise be a 404 ([query.php](https://github.com/WordPress/wordpress-develop/blob/7.1.2/src/wp-includes/query.php)).
+
+## How Shopify Builds a Handle
+
+Shopify documents its handle rules in the [Liquid basics](https://shopify.dev/docs/api/liquid/basics#object-handles): handles are always lower case; whitespace and special characters become a hyphen; runs of them become a single hyphen; leading ones are removed. Duplicates are "auto-incremented by one", so a second product called Potion gets `potion-1`, where WordPress would use `-2`.
+
+Two details matter later. "Changing the resource title doesn't update the handle", so a renamed product keeps its old URL until someone edits the handle. And when the handle is edited, the old path needs a redirect: Shopify's [URL redirects](https://help.shopify.com/en/manual/online-store/menus-and-links/url-redirect) work "only from broken URLs", meaning paths that now return 404, and an automation or app that changes handles through the Admin API has to create the redirect itself (Shopify Flow's [Create redirect URL](https://help.shopify.com/en/manual/shopify-flow/reference/actions/create-redirect-url) action uses the `urlRedirectCreate` mutation).
+
+## Non-ASCII Slugs: Keep, Transliterate or Drop
+
+Google explicitly allows slugs in the audience's language, so a Japanese site can use `/ペパーミント` and a German one `/gemüse`. On the wire, and in any link you write, the path is percent-encoded UTF-8:
+
+{/* sl-run: {"lang":"node","expect":"ペパーミント 6 54 %E3%83%9A%E3%83%91%E3%83%BC%E3%83%9F%E3%83%B3%E3%83%88\ngemüse 6 11 gem%C3%BCse"} */}
 ```js
-function slugify(text) {
-  return text
-    .normalize('NFD')                         // decompose accented chars
-    .replace(/[\u0300-\u036f]/g, '')          // strip combining accents
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')            // remove non-alphanumeric
-    .replace(/[\s_-]+/g, '-')                 // collapse spaces/hyphens
-    .replace(/^-+|-+$/g, '');                 // trim hyphens
+for (const word of ['ペパーミント', 'gemüse']) {
+  const encoded = encodeURIComponent(word);
+  console.log(word, word.length, encoded.length, encoded);
 }
-
-slugify('Hello, World!')        // "hello-world"
-slugify('café au lait')        // "cafe-au-lait"
-slugify('  extra  spaces  ')   // "extra-spaces"
+// ペパーミント 6 54 %E3%83%9A%E3%83%91%E3%83%BC%E3%83%9F%E3%83%B3%E3%83%88
+// gemüse 6 11 gem%C3%BCse
 ```
 
-For production use, consider the [`slugify`](https://www.npmjs.com/package/slugify) npm package, which handles a wider range of Unicode transliterations.
+Browsers show the decoded form in the address bar, but copying the URL into chat or a spreadsheet often pastes the encoded one. RFC 3986 treats upper- and lower-case hex as equivalent and asks producers to use upper case ([§2.1](https://www.rfc-editor.org/rfc/rfc3986#section-2.1)); WordPress writes lower case, Google's examples upper case, and both point to the same resource.
 
-### Python
+The alternatives each lose something:
 
-```python
-import re
-import unicodedata
+- **Transliterate.** Accented Latin letters transliterate well (`crème` → `creme`). Other scripts do not: python-slugify, which uses the text-unidecode tables, turns `東京` into `dong-jing`, the Mandarin reading, not the Japanese "Tokyo".
+- **Drop.** ASCII-only slugifiers delete the characters. `東京 Travel Guide 2026` becomes `travel-guide-2026`, and a title written entirely in Japanese becomes an empty string. Always check for an empty result and fall back to an ID or a hand-written slug.
+- **Write the slug by hand.** For CJK titles this is usually the best option: a short English or romanized slug chosen by an editor.
 
-def slugify(text: str) -> str:
-    text = unicodedata.normalize('NFD', text)
-    text = text.encode('ascii', 'ignore').decode('ascii')
-    text = text.lower().strip()
-    text = re.sub(r'[^\w\s-]', '', text)
-    text = re.sub(r'[\s_-]+', '-', text)
-    text = re.sub(r'^-+|-+$', '', text)
-    return text
+## One Title, Six Slugifiers
 
-print(slugify('Hello, World!'))   # hello-world
-print(slugify('café au lait'))    # cafe-au-lait
-```
+The same titles through six implementations. WordPress is 7.1.2 with `en_US`; Django is 6.1.1 (`django.utils.text.slugify`); python-slugify is 9.1.2; `slugify` is the npm package 1.6.9 with `{ lower: true, strict: true }`; `@sindresorhus/slugify` is 3.0.1.
 
-Django ships its own version: `from django.utils.text import slugify`.
+{/* sl-check: {"input":"Rock & Roll","slug":"rock-and-roll"} */}
+{/* sl-check: {"input":"C++ vs C#","slug":"c-plus-plus-vs-c-hash"} */}
+{/* sl-check: {"input":"Fußgängerübergänge","slug":"fussgangerubergange"} */}
+{/* sl-check: {"input":"John's Guide","slug":"john-s-guide"} */}
+{/* sl-check: {"input":"Node.js 20.0","slug":"node-js-20-0"} */}
+{/* sl-check: {"input":"10% off @ Café","slug":"10-percent-off-at-cafe"} */}
+{/* sl-check: {"input":"東京 Travel Guide 2026","slug":"travel-guide-2026"} */}
 
-### Go
+| Title | ZeroTool | WordPress | Django | python-slugify | slugify (npm) | @sindresorhus/slugify |
+|---|---|---|---|---|---|---|
+| `Rock & Roll` | `rock-and-roll` | `rock-roll` | `rock-roll` | `rock-roll` | `rock-and-roll` | `rock-and-roll` |
+| `C++ vs C#` | `c-plus-plus-vs-c-hash` | `c-vs-c` | `c-vs-c` | `c-vs-c` | `c-vs-c` | `c-vs-c` |
+| `Fußgängerübergänge` | `fussgangerubergange` | `fusgangerubergange` | `fugangerubergange` | `fussgangerubergange` | `fussgangerubergange` | `fussgaengeruebergaenge` |
+| `John's Guide` | `john-s-guide` | `johns-guide` | `johns-guide` | `john-s-guide` | `johns-guide` | `johns-guide` |
+| `Node.js 20.0` | `node-js-20-0` | `node-js-20-0` | `nodejs-200` | `node-js-20-0` | `nodejs-200` | `node-js-20-0` |
+| `10% off @ Café` | `10-percent-off-at-cafe` | `10-off-cafe` | `10-off-cafe` | `10-off-cafe` | `10percent-off-cafe` | `10-off-cafe` |
+| `東京 Travel Guide 2026` | `travel-guide-2026` | `%e6%9d%b1%e4%ba%ac-travel-guide-2026` | `travel-guide-2026` | `dong-jing-travel-guide-2026` | `travel-guide-2026` | `travel-guide-2026` |
 
-```go
-import (
-    "regexp"
-    "strings"
-    "golang.org/x/text/unicode/norm"
-    "golang.org/x/text/transform"
-)
+No row gives the same slug in all six. The disagreements fall into four groups:
 
-func slugify(s string) string {
-    // Normalize and strip accents
-    t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
-        return r >= '\u0300' && r <= '\u036f'
-    }))
-    result, _, _ := transform.String(t, s)
+- **Symbols.** Most implementations delete `&`, `+`, `#`, `%` and `@`. ZeroTool and both npm packages write some of them as words; the `slugify` package even glues `percent` to the number.
+- **Dots and apostrophes.** Django and `slugify` with `strict` delete dots, so `Node.js 20.0` becomes `nodejs-200` and the version number is unreadable; the other four turn the dot into a hyphen. Apostrophes split the other way: python-slugify and ZeroTool treat a straight `'` as a separator (`john-s-guide`), the other four delete it (`johns-guide`).
+- **German letters.** Django's ASCII mode drops `ß` entirely (`fugangerubergange`); WordPress turns it into one `s`; @sindresorhus/slugify uses German rules for `ä ö ü` as well.
+- **CJK.** Kept and encoded, transliterated with Chinese readings, or deleted.
 
-    result = strings.ToLower(result)
-    re := regexp.MustCompile(`[^a-z0-9\s-]`)
-    result = re.ReplaceAllString(result, "")
-    re2 := regexp.MustCompile(`[\s-]+`)
-    result = re2.ReplaceAllString(result, "-")
-    return strings.Trim(result, "-")
-}
-```
+None of these is wrong in itself. What matters is consistency: if your site's published URLs came from WordPress, a migration script that regenerates slugs with Django's `slugify` will change `node-js-20-0` into `nodejs-200` and break every inbound link to that page. Generate slugs once, store them, and never recompute them from titles.
 
-## Using the Online Slugify Tool
+## Changing a Slug After Publishing
 
-**[Try ZeroTool Slugify →](/tools/slugify)**
+Google's advice for a URL that has to change is a permanent server-side redirect: "If you need to change the URL of a page as it is shown in search engine results, we recommend that you use a permanent server-side redirect whenever possible" ([Redirects and Google Search](https://developers.google.com/search/docs/crawling-indexing/301-redirects)). That means status 301 or 308 from the old slug to the new one.
 
-Paste any text and get the URL-safe slug instantly. Useful for:
+- WordPress does this for posts automatically through `_wp_old_slug`, as described above.
+- In Shopify, check under Content > Menus > URL redirects that the old handle has a redirect; it can only exist while the old path returns 404.
+- Static sites need an explicit rule. On Cloudflare Pages, for example, a line such as `/blog/old-slug/ /blog/new-slug/ 301` in `_redirects` does it.
 
-- Generating slugs for blog posts or product pages before publishing
-- Batch-cleaning imported content that has inconsistent naming
-- Verifying that your CMS or framework's built-in slugifier matches your expected output
-- Quick sanity checks during content migrations
+Keep the redirect indefinitely. Links in old emails, chat logs and other sites do not get updated.
 
-The tool turns `&` `@` `#` `%` `+` and a few currency and trademark signs into words (`Rock & Roll` → `rock-and-roll`) and replaces every other character that is not a letter or digit with the separator you choose (`-`, `_`, or `.`), so its output differs from the code above: `John's Guide` becomes `john-s-guide` and `Node.js 20.0` becomes `node-js-20-0`. Accented Latin letters are transliterated (`é` → `e`, `ß` → `ss`); other non-ASCII characters are removed, so Chinese, Japanese, or Korean input gives an empty slug.
+## A Slug Checklist
 
-No signup, no rate limits — computation runs in the browser.
+- Lower-case ASCII letters, digits and hyphens, unless you have chosen to use the audience's language and accept percent-encoded links.
+- Hyphens between words, as Google recommends, not underscores.
+- Readable words that describe the page; length is your choice, not a Google rule.
+- Check for an empty or near-empty result when titles may be written in non-Latin scripts.
+- Decide how symbols such as `&`, `+` and `#` should read (`c-plus-plus` or `c`) and use one slugifier for the whole site.
+- Store the slug; never regenerate it from the title.
+- 301 or 308 from every old slug you retire.
 
-## Common Edge Cases
-
-### Apostrophes and Possessives
-
-`"John's Guide"` → should become `"johns-guide"`, not `"john-s-guide"`. Strip apostrophes before replacing word separators.
-
-### Numbers and Versions
-
-`"Node.js 20.0"` → `"nodejs-200"` (the dot is stripped). If version numbers matter, use `"node-js-v20"` as your input, or handle dots specially.
-
-### All-Unicode Input
-
-If the entire input is CJK or Arabic, the output will be an empty string after stripping. Always validate that your slug generator produces a non-empty result, and fall back to a numeric ID if needed.
-
-### Trailing Slashes
-
-Some frameworks add trailing slashes (`/blog/my-post/`). Decide on a convention early and enforce it with 301 redirects to avoid duplicate content indexing.
-
-## Slug Best Practices Checklist
-
-- Lowercase, hyphen-separated only
-- Primary keyword included (but not keyword-stuffed)
-- As short as the keyword allows (Google sets no length limit)
-- No stop words unless they're part of the keyword phrase
-- No dates in slugs (they age poorly and create maintenance burden)
-- 301 redirect any slug changes immediately
-
-**[Generate URL-safe slugs instantly with ZeroTool →](/tools/slugify)**
+To see what a title turns into before you publish, paste it into [Slugify](/tools/slugify/). To build an identifier such as `user_login_count` rather than a URL slug, use the [Text Case Converter](/tools/text-case/).
