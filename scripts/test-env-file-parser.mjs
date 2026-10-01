@@ -12,7 +12,8 @@
 // (dotenv cuts there; the parser adds a note), single / double / backtick quotes, `\n` expanded
 // only in double quotes, whitespace trimming, quoted values over several lines, unclosed quotes,
 // text after a closing quote, empty values, duplicates (last wins), CRLF; the exported object
-// equals dotenv.parse() for every fixture. Rules: https://github.com/motdotla/dotenv#what-rules-does-the-parsing-engine-follow
+// equals dotenv.parse() for every fixture; notes, errors and the status line come from the
+// 4-language STRINGS (they were English on every page). Rules: https://github.com/motdotla/dotenv#what-rules-does-the-parsing-engine-follow
 // and the LINE regex in https://github.com/motdotla/dotenv/blob/v16.6.1/lib/main.js
 //
 // Run: node scripts/test-env-file-parser.mjs
@@ -153,6 +154,26 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   eq('page example export has 11 keys', Object.keys(exported(PAGE)).length, 11);
   eq('__proto__ key is exported as a property', JSON.stringify(exported('__proto__=x\nA=1')), '{"__proto__":"x","A":"1"}');
   check('Export JSON uses a null-prototype object and counts unique keys', /var obj = Object\.create\(null\);[\s\S]*?var keyCount = Object\.keys\(obj\)\.length;[\s\S]*?replace\('\{n\}', keyCount\)/.test(source));
+}
+
+// ---------- notes and status line in the page language ----------
+// The notes, errors and the status line were English on every language version of the page
+{
+  const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+  const enKeys = Object.keys(STR.en.notes || {}).sort();
+  eq('en notes keys', enKeys, ['afterQuote', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
+  for (const lang of ['zh', 'ja', 'ko']) {
+    eq(lang + ' notes keys', Object.keys(STR[lang].notes || {}).sort(), enKeys);
+    eq(lang + ' top-level keys', Object.keys(STR[lang]).sort(), Object.keys(STR.en).sort());
+    check(lang + ' multiline keeps {from} and {to}', /\{from\}/.test(STR[lang].notes.multiline) && /\{to\}/.test(STR[lang].notes.multiline));
+  }
+  const zh = E.parseEnv('A=\nB="x\ny"\nNOEQ', STR.zh.notes);
+  eq('zh empty value', zh[0].notes, [STR.zh.notes.emptyValue]);
+  eq('zh multiline', zh[1].notes, [STR.zh.notes.multiline.replace('{from}', '2').replace('{to}', '3')]);
+  eq('zh missing =', zh[2].error, STR.zh.notes.missingEq);
+  eq('English stays the default', E.parseEnv('A=')[0].notes, ['Empty value']);
+  check('status line built from STRINGS', /t\.stValid/.test(source) && !/' valid'/.test(source));
+  check('page no longer says messages are English', !readFileSync(join(root, 'src/content/tools/env-file-parser/en.mdx'), 'utf8').includes('Messages are in English'));
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
