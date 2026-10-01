@@ -448,7 +448,7 @@ for (const rel of pages) {
     }
   }
 }
-// PAGES_ANNOTATION_CHECK
+check('pages carry up-check annotations', annotations >= 12, annotations);
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? `, ${skips} skipped` : ''}`);
 process.exit(failures ? 1 : 0);
