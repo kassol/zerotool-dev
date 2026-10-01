@@ -16,6 +16,7 @@ const labels = {
     msgGenerated: 'Generated.',
     msgGenOne: 'Generated 1 data class.',
     msgGenMany: 'Generated {n} data classes.',
+    msgRootList: 'The root is an array: decode it as {type}.',
   },
   zh: {
     rootName: '根类名称',
@@ -30,6 +31,7 @@ const labels = {
     msgGenerated: '已生成。',
     msgGenOne: '已生成 1 个 data class。',
     msgGenMany: '已生成 {n} 个 data class。',
+    msgRootList: '根是数组：按 {type} 解码。',
   },
   ja: {
     rootName: 'ルートクラス名',
@@ -44,6 +46,7 @@ const labels = {
     msgGenerated: '生成しました。',
     msgGenOne: '1 個のデータクラスを生成しました。',
     msgGenMany: '{n} 個のデータクラスを生成しました。',
+    msgRootList: 'ルートが配列なので {type} としてデコードしてください。',
   },
   ko: {
     rootName: '루트 클래스 이름',
@@ -58,6 +61,7 @@ const labels = {
     msgGenerated: '생성 완료.',
     msgGenOne: '데이터 클래스 1개를 생성했습니다.',
     msgGenMany: '데이터 클래스 {n}개를 생성했습니다.',
+    msgRootList: '루트가 배열이므로 {type}로 디코딩하세요.',
   },
 };
 
@@ -72,6 +76,7 @@ const L = labels[lang];
   data-msg-generated={L.msgGenerated}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
+  data-msg-root-list={L.msgRootList}
 >
   <div class="jkt-config">
     <div class="jkt-config-row">
@@ -123,6 +128,7 @@ const L = labels[lang];
       var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 data class.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} data classes.';
+      var MSG_ROOT_LIST = wrap ? wrap.dataset.msgRootList : 'The root is an array: decode it as {type}.';
 
       var inputEl = document.getElementById('jkt-input');
       var outputCodeEl = document.getElementById('jkt-output-code');
@@ -155,144 +161,263 @@ const L = labels[lang];
         statusEl.className = 'jkt-status';
       }
 
+      /* ── engine:start ── */
+      /* Generates kotlinx.serialization data classes that compile with the
+         serialization plugin and decode the sample with the default Json
+         configuration. Values whose type cannot be fixed from the sample
+         (null, an empty array, mixed types) become JsonElement, the type
+         kotlinx.serialization provides for arbitrary JSON (Any has no serializer). */
+      function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+      // JSON.parse turns 19.0 into 19. Where the browser passes the source text to the reviver
+      // (JSON.parse source text access; Chrome 114+, Firefox 135+, Safari 18.4+), a number
+      // written with "." or an exponent is kept as a JsonFloat so it maps to Double.
+      function JsonFloat(value) { this.value = value; }
+      function parseJson(raw) {
+        return JSON.parse(raw, function (k, v, ctx) {
+          if (typeof v === 'number' && ctx && typeof ctx.source === 'string' && /[.eE]/.test(ctx.source)) return new JsonFloat(v);
+          return v;
+        });
+      }
+      function isObject(v) {
+        return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof JsonFloat);
+      }
+
+      // Hard keywords cannot be used as names without backticks (Kotlin grammar, "Keywords and operators").
+      var HARD_KEYWORDS = ['as', 'break', 'class', 'continue', 'do', 'else', 'false', 'for', 'fun', 'if', 'in',
+        'interface', 'is', 'null', 'object', 'package', 'return', 'super', 'this', 'throw', 'true', 'try',
+        'typealias', 'typeof', 'val', 'var', 'when', 'while'];
+      // Class names that would hide a type the generated code uses.
+      var RESERVED_TYPES = ['Any', 'Boolean', 'Double', 'Int', 'Long', 'String', 'List', 'Unit', 'Nothing',
+        'JsonElement', 'JsonNull', 'Serializable', 'SerialName'];
+
+      function words(str) {
+        return String(str).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      }
       function toPascalCase(str) {
-        return str
-          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
-          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+        var name = words(str).map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join('');
+        if (!/^\p{L}/u.test(name)) name = 'X' + name;
+        return name;
       }
-
       function toCamelCase(str) {
-        var pascal = toPascalCase(str);
-        return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+        var ws = words(str);
+        var name = ws.map(function (w, i) {
+          return i === 0 ? w.charAt(0).toLowerCase() + w.slice(1) : w.charAt(0).toUpperCase() + w.slice(1);
+        }).join('');
+        if (!/^\p{L}/u.test(name)) name = '_' + name;
+        return name;
+      }
+      function className(str) {
+        var name = toPascalCase(str);
+        return RESERVED_TYPES.indexOf(name) >= 0 ? name + 'Value' : name;
       }
 
-      /* Infer Kotlin type from a JS value */
-      function inferKotlinType(value, key, classes) {
-        if (value === null) return 'Any?';
+      // Kotlin string literal: \t \b \n \r \" \\ \$ are escapes; other control characters use \uXXXX.
+      function kotlinString(s) {
+        var out = '"';
+        for (var i = 0; i < s.length; i++) {
+          var c = s.charAt(i), code = s.charCodeAt(i);
+          if (c === '"') out += '\\"';
+          else if (c === '\\') out += '\\\\';
+          else if (c === '$') out += '\\$';
+          else if (c === '\n') out += '\\n';
+          else if (c === '\r') out += '\\r';
+          else if (c === '\t') out += '\\t';
+          else if (c === '\b') out += '\\b';
+          else if (code < 0x20 || code === 0x7f || code === 0x2028 || code === 0x2029) out += '\\u' + ('000' + code.toString(16)).slice(-4);
+          else out += c;
+        }
+        return out + '"';
+      }
+
+      function newState(rootName) {
+        var reserved = {};
+        reserved[rootName] = true;
+        RESERVED_TYPES.forEach(function (t) { reserved[t] = true; });
+        return { list: [], byName: Object.create(null), reserved: reserved, uses: {} };
+      }
+      function openSlot(state) {
+        var slot = { name: null, base: null, sig: null, fields: null };
+        state.list.push(slot);
+        return slot;
+      }
+      // A nested object gets the PascalCase of its key; when that name is taken by a class with
+      // different fields, the parent's name is put in front (meta in Payment → PaymentMeta), then
+      // a number is added. An object with the same fields as an earlier one of the same key
+      // reuses that class.
+      function closeSlot(state, slot, base, parent, fields, fixedName) {
+        var sig = JSON.stringify(fields);
+        if (fixedName) {
+          slot.name = fixedName; slot.base = base; slot.sig = sig; slot.fields = fields;
+          state.byName[fixedName] = slot;
+          return fixedName;
+        }
+        for (var i = 0; i < state.list.length; i++) {
+          var other = state.list[i];
+          if (other !== slot && other.base === base && other.sig === sig) {
+            state.list.splice(state.list.indexOf(slot), 1);
+            return other.name;
+          }
+        }
+        var candidates = [base];
+        if (parent) candidates.push(parent + base);
+        var name = null;
+        for (var c = 0; c < candidates.length && !name; c++) {
+          if (!state.byName[candidates[c]] && !state.reserved[candidates[c]]) name = candidates[c];
+        }
+        for (var n = 2; !name; n++) {
+          if (!state.byName[base + n] && !state.reserved[base + n]) name = base + n;
+        }
+        slot.name = name; slot.base = base; slot.sig = sig; slot.fields = fields;
+        state.byName[name] = slot;
+        return name;
+      }
+
+      var NUMERIC = ['Int', 'Long', 'Double'];
+      function numberType(v) {
+        if (v instanceof JsonFloat) return 'Double';
+        if (!Number.isInteger(v)) return 'Double';
+        if (v >= -2147483648 && v <= 2147483647) return 'Int';
+        if (Math.abs(v) <= 9223372036854775807) return 'Long';
+        return 'Double';
+      }
+      // Several types for one value: numbers widen (Int < Long < Double); anything else mixed is JsonElement.
+      function combineTypes(types, state) {
+        if (types.length === 0) { state.uses.JsonElement = true; return 'JsonElement'; }
+        if (types.length === 1) return types[0];
+        if (types.every(function (t) { return NUMERIC.indexOf(t) >= 0; })) {
+          return NUMERIC[Math.max.apply(null, types.map(function (t) { return NUMERIC.indexOf(t); }))];
+        }
+        state.uses.JsonElement = true;
+        return 'JsonElement';
+      }
+      function addType(types, t) { if (types.indexOf(t) < 0) types.push(t); }
+
+      /* Base type (without ?) of a non-null value. */
+      function inferType(value, key, parent, state) {
+        if (value instanceof JsonFloat || typeof value === 'number') return numberType(value);
         if (typeof value === 'boolean') return 'Boolean';
-        if (typeof value === 'number') {
-          return Number.isInteger(value) ? 'Int' : 'Double';
-        }
         if (typeof value === 'string') return 'String';
-
         if (Array.isArray(value)) {
-          if (value.length === 0) return 'List<Any>';
-          var objectItems = [];
-          var primitiveTypes = [];
-          for (var i = 0; i < value.length; i++) {
-            var item = value[i];
-            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
-              objectItems.push(item);
-            } else {
-              var t = inferKotlinType(item, key + 'Item', classes);
-              if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
-            }
-          }
-          if (objectItems.length > 0) {
-            var itemClassName = toPascalCase(key) + 'Item';
-            mergeObjectsToClass(objectItems, itemClassName, classes);
-            if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
-          }
-          var elType = primitiveTypes.length === 1 ? primitiveTypes[0] : 'Any';
-          return 'List<' + elType + '>';
+          var types = [], objects = [], hasNull = false;
+          value.forEach(function (item) {
+            if (item === null) hasNull = true;
+            else if (isObject(item)) objects.push(item);
+            else addType(types, inferType(item, key, parent, state));
+          });
+          if (objects.length) addType(types, mergeObjects(objects, className(key) + 'Item', parent, state, null));
+          return 'List<' + combineTypes(types, state) + (hasNull ? '?' : '') + '>';
         }
-
-        if (typeof value === 'object') {
-          var className = toPascalCase(key);
-          buildClass(value, className, classes);
-          return className;
-        }
-
-        return 'Any';
+        if (isObject(value)) return buildClass([value], className(key), parent, state, null);
+        state.uses.JsonElement = true;
+        return 'JsonElement';
       }
 
-      function buildClass(obj, name, classes) {
-        if (classes[name]) return;
-        classes[name] = null; // reserve
-
-        var fields = [];
-        var keys = Object.keys(obj);
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          var v = obj[k];
-          var typeName = inferKotlinType(v, k, classes);
-          var isNullable = v === null;
-          if (isNullable && typeName === 'Any?') { /* already nullable */ }
-          else if (isNullable) { typeName = typeName + '?'; }
-          var fieldName = toCamelCase(k);
-          // add @SerialName if key differs
-          var annotation = fieldName !== k ? '    @SerialName("' + k + '")\n' : '';
-          fields.push(annotation + '    val ' + fieldName + ': ' + typeName + ' = ' + defaultValue(typeName));
-        }
-        classes[name] = fields;
-      }
-
-      function mergeObjectsToClass(objects, name, classes) {
-        if (classes[name]) return;
-        classes[name] = null;
-
-        var allKeys = {};
-        for (var i = 0; i < objects.length; i++) {
-          var ks = Object.keys(objects[i]);
-          for (var j = 0; j < ks.length; j++) {
-            if (!allKeys[ks[j]]) allKeys[ks[j]] = 0;
-            allKeys[ks[j]]++;
-          }
-        }
-
-        var fields = [];
-        var keyList = Object.keys(allKeys);
-        for (var ki = 0; ki < keyList.length; ki++) {
-          var k = keyList[ki];
-          var presentInAll = allKeys[k] === objects.length;
-          var types = [];
-          for (var oi = 0; oi < objects.length; oi++) {
-            if (objects[oi].hasOwnProperty(k)) {
-              var t = inferKotlinType(objects[oi][k], k, classes);
-              if (types.indexOf(t) === -1) types.push(t);
-            }
-          }
-          var typeName = types.length === 1 ? types[0] : 'Any';
-          if (!presentInAll && !typeName.endsWith('?')) typeName = typeName + '?';
-          var fieldName = toCamelCase(k);
-          var annotation = fieldName !== k ? '    @SerialName("' + k + '")\n' : '';
-          fields.push(annotation + '    val ' + fieldName + ': ' + typeName + ' = ' + defaultValue(typeName));
-        }
-        classes[name] = fields;
-      }
-
-      function defaultValue(type) {
-        if (type.endsWith('?')) return 'null';
-        if (type === 'Boolean') return 'false';
+      function defaultValue(type, nullable, state) {
+        if (nullable) return 'null';
         if (type === 'Int') return '0';
+        if (type === 'Long') return '0L';
         if (type === 'Double') return '0.0';
+        if (type === 'Boolean') return 'false';
         if (type === 'String') return '""';
-        if (type.startsWith('List<')) return 'emptyList()';
+        if (type.indexOf('List<') === 0) return 'emptyList()';
+        if (type === 'JsonElement') { state.uses.JsonNull = true; return 'JsonNull'; }
         return type + '()';
       }
 
-      function renderClasses(classes) {
-        var lines = [];
-        var names = Object.keys(classes);
-        for (var i = 0; i < names.length; i++) {
-          var name = names[i];
-          var fields = classes[name];
-          if (fields === null) continue;
-          lines.push('@Serializable');
-          if (fields.length === 0) {
-            lines.push('data class ' + name + '()');
-          } else {
-            lines.push('data class ' + name + '(');
-            for (var j = 0; j < fields.length; j++) {
-              var comma = j < fields.length - 1 ? ',' : '';
-              lines.push(fields[j] + comma);
-            }
-            lines.push(')');
+      function fieldLines(entries, state) {
+        var used = Object.create(null);
+        return entries.map(function (e) {
+          var name = toCamelCase(e.key);
+          if (used[name]) {
+            var n = 2;
+            while (used[name + n]) n++;
+            name = name + n;
           }
-          lines.push('');
-        }
-        return lines.join('\n').trimEnd();
+          used[name] = true;
+          var lines = [];
+          if (name !== e.key) {
+            state.uses.SerialName = true;
+            lines.push('    @SerialName(' + kotlinString(e.key) + ')');
+          }
+          var ident = HARD_KEYWORDS.indexOf(name) >= 0 ? '`' + name + '`' : name;
+          lines.push('    val ' + ident + ': ' + e.type + (e.nullable ? '?' : '') + ' = ' + defaultValue(e.type, e.nullable, state));
+          return lines.join('\n');
+        });
       }
+
+      /* One class from one or more sample objects. A key is nullable when it is null in any sample
+         or missing from some samples. */
+      function buildClass(objects, base, parent, state, fixedName) {
+        return mergeObjects(objects, base, parent, state, fixedName);
+      }
+      function mergeObjects(objects, base, parent, state, fixedName) {
+        var slot = openSlot(state);
+        var context = fixedName || base;
+        var info = Object.create(null);
+        var order = [];
+        objects.forEach(function (o) {
+          Object.keys(o).forEach(function (k) {
+            if (!(k in info)) { info[k] = { count: 0, hasNull: false }; order.push(k); }
+            info[k].count++;
+            if (o[k] === null) info[k].hasNull = true;
+          });
+        });
+        var entries = order.map(function (k) {
+          var types = [], nested = [];
+          objects.forEach(function (o) {
+            if (!hasOwn(o, k) || o[k] === null) return;
+            if (isObject(o[k])) nested.push(o[k]);
+            else addType(types, inferType(o[k], k, context, state));
+          });
+          if (nested.length) addType(types, mergeObjects(nested, className(k), context, state, null));
+          return {
+            key: k,
+            type: combineTypes(types, state),
+            nullable: info[k].hasNull || info[k].count < objects.length,
+          };
+        });
+        return closeSlot(state, slot, base, parent, fieldLines(entries, state), fixedName);
+      }
+
+      function render(state, body) {
+        var imports = [];
+        if (state.uses.SerialName) imports.push('import kotlinx.serialization.SerialName');
+        if (state.uses.Serializable) imports.push('import kotlinx.serialization.Serializable');
+        if (state.uses.JsonElement) imports.push('import kotlinx.serialization.json.JsonElement');
+        if (state.uses.JsonNull) imports.push('import kotlinx.serialization.json.JsonNull');
+        return (imports.length ? imports.join('\n') + '\n\n' : '') + body;
+      }
+
+      /* Returns { code, count, rootType }. count is the number of classes; rootType is the type
+         to pass to Json.decodeFromString (List<Root> when the root is an array of objects). */
+      function generateKotlin(parsed, rootInput) {
+        var rootName = className(rootInput || 'RootObject');
+        var state = newState(rootName);
+        var rootType = rootName;
+        if (isObject(parsed)) {
+          buildClass([parsed], rootName, '', state, rootName);
+        } else if (Array.isArray(parsed) && parsed.some(isObject)) {
+          var hasOther = parsed.some(function (v) { return !isObject(v); });
+          mergeObjects(parsed.filter(isObject), rootName, '', state, rootName);
+          rootType = 'List<' + rootName + '>';
+          if (hasOther) {
+            state.uses.JsonElement = true;
+            rootType = 'List<JsonElement>';
+          }
+        } else {
+          var t = parsed === null ? 'JsonElement?' : inferType(parsed, rootName, '', state);
+          if (parsed === null) state.uses.JsonElement = true;
+          return { code: render(state, 'typealias ' + rootName + ' = ' + t), count: 0, rootType: rootName };
+        }
+        state.uses.Serializable = true;
+        var blocks = state.list.map(function (slot) {
+          if (!slot.fields.length) return '@Serializable\nclass ' + slot.name;
+          return '@Serializable\ndata class ' + slot.name + '(\n' + slot.fields.join(',\n') + '\n)';
+        });
+        return { code: render(state, blocks.join('\n\n')), count: state.list.length, rootType: rootType };
+      }
+      /* ── engine:end ── */
 
       function convert() {
         var raw = inputEl.value.trim();
@@ -301,7 +426,7 @@ const L = labels[lang];
 
         var parsed;
         try {
-          parsed = JSON.parse(raw);
+          parsed = parseJson(raw);
         } catch (e) {
           inputEl.classList.add('error');
           outputCodeEl.textContent = '';
@@ -310,36 +435,11 @@ const L = labels[lang];
         }
 
         inputEl.classList.remove('error');
-        var rootName = rootNameEl.value.trim() || 'RootObject';
-        var classes = {};
-
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildClass(parsed, rootName, classes);
-        } else if (Array.isArray(parsed)) {
-          var objectItems = parsed.filter(function (v) {
-            return v !== null && typeof v === 'object' && !Array.isArray(v);
-          });
-          if (objectItems.length > 0) {
-            mergeObjectsToClass(objectItems, rootName, classes);
-          } else {
-            var t = inferKotlinType(parsed, rootName, classes);
-            outputCodeEl.textContent = 'typealias ' + rootName + ' = ' + t;
-            setStatus(MSG_GENERATED, false);
-            window.trackTool && window.trackTool('json-to-kotlin', 'generate');
-            return;
-          }
-        } else {
-          var t2 = inferKotlinType(parsed, rootName, classes);
-          outputCodeEl.textContent = 'typealias ' + rootName + ' = ' + t2;
-          setStatus(MSG_GENERATED, false);
-          window.trackTool && window.trackTool('json-to-kotlin', 'generate');
-          return;
-        }
-
-        var result = renderClasses(classes);
-        outputCodeEl.textContent = result;
-        var count = Object.keys(classes).length;
-        var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
+        var r = generateKotlin(parsed, rootNameEl.value.trim() || 'RootObject');
+        outputCodeEl.textContent = r.code;
+        var msg = r.count === 0 ? MSG_GENERATED
+          : r.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', r.count);
+        if (r.rootType.indexOf('List<') === 0) msg += ' ' + MSG_ROOT_LIST.replace('{type}', r.rootType);
         setStatus(msg, false);
         window.trackTool && window.trackTool('json-to-kotlin', 'generate');
       }

@@ -1,43 +1,52 @@
 ---
 seoTitle: "JSON → Kotlin 데이터 클래스 생성기 | ZeroTool"
-seoDescription: "JSON에서 Kotlin data class를 즉시 생성. 중첩 객체, 배열, nullable 필드, 커스텀 루트 클래스 이름 지원. 무료, 브라우저에서 실행."
+seoDescription: "JSON에서 kotlinx.serialization용 Kotlin data class를 생성. import 포함, 값에 따라 Int / Long / Double, 타입을 알 수 없는 값은 JsonElement, 중첩 객체 지원. 브라우저에서 실행."
 faqItems:
-  - question: "이 도구는 무엇을 생성하나요?"
-    answer: "@Serializable 어노테이션이 있는 Kotlin data class 선언(kotlinx.serialization용)을 생성합니다. 중첩된 각 객체는 독립적으로 명명된 data class가 됩니다."
+  - question: "무엇을 생성하나요?"
+    answer: "@Serializable(kotlinx.serialization)이 붙은 Kotlin data class와 필요한 import를 생성합니다. 중첩 객체마다 별도의 클래스가 만들어집니다. kotlinx.serialization 컴파일러 플러그인을 켜면 그대로 컴파일되고, 기본 Json 설정으로 샘플을 디코딩할 수 있습니다."
   - question: "nullable 필드는 어떻게 처리되나요?"
-    answer: "JSON 필드 값이 null이면 해당 Kotlin 타입은 nullable로 표시됩니다(예: String?). 일부 배열 항목에 없는 필드도 nullable로 표시되며 기본값은 null입니다."
+    answer: "값이 null인 필드는 nullable 타입(예: String?)이 됩니다. 배열의 일부 요소에만 있는 키도 nullable이며 기본값은 null입니다. 샘플에서 항상 null인 필드는 실제 타입을 알 수 없으므로 JsonElement?가 됩니다."
+  - question: "타입별 기본값은?"
+    answer: "String은 \"\", Int는 0, Long은 0L, Double은 0.0, Boolean은 false, List는 emptyList(), JsonElement는 JsonNull, nullable 타입은 null, 중첩 클래스는 인수 없는 생성자입니다. 기본값이 있어 키가 빠져도 디코딩됩니다."
+  - question: "Any 대신 JsonElement를 쓰는 이유는?"
+    answer: "kotlinx.serialization에는 Any용 시리얼라이저가 없어서 Any 필드가 있는 @Serializable 클래스는 컴파일되지 않습니다. JsonElement는 형태를 알 수 없는 JSON을 위해 라이브러리가 제공하는 타입으로, 항상 null인 필드, 빈 배열, 샘플마다 타입이 다른 값에 씁니다."
   - question: "데이터가 서버로 전송되나요?"
-    answer: "아니요. 모든 변환은 브라우저에서 실행되며 데이터는 브라우저 밖으로 나가지 않습니다."
+    answer: "아니요. 변환은 모두 브라우저에서 이루어지며 데이터는 기기를 떠나지 않습니다."
 ---
 
 <h2>사용 방법</h2>
 <ol>
-  <li>JSON을 왼쪽 패널에 붙여넣거나 입력합니다. 실시간으로 유효성이 검사됩니다.</li>
-  <li>선택적으로 <strong>루트 클래스 이름</strong>을 설정합니다 (기본값: <code>RootObject</code>).</li>
-  <li><strong>Kotlin 생성</strong>을 클릭하거나 실시간 변환을 기다립니다.</li>
-  <li><strong>복사</strong>를 클릭하여 출력을 클립보드에 복사합니다.</li>
+  <li>왼쪽에 JSON을 붙여 넣거나 입력합니다. 실시간으로 검증합니다.</li>
+  <li>필요하면 <strong>루트 클래스 이름</strong>을 정합니다(기본값 <code>RootObject</code>). 공백과 기호는 제거되고 PascalCase로 바뀝니다.</li>
+  <li><strong>Kotlin 생성</strong>을 누르거나 실시간 변환을 기다립니다.</li>
+  <li><strong>복사</strong>로 import를 포함한 출력을 복사해 <code>.kt</code> 파일에 붙여 넣습니다.</li>
 </ol>
 
 <h2>타입 매핑</h2>
 <ul>
-  <li><code>null</code> → <code>Any?</code></li>
-  <li>문자열 → <code>String</code></li>
-  <li>정수 → <code>Int</code></li>
-  <li>부동소수점 → <code>Double</code></li>
-  <li>불리언 → <code>Boolean</code></li>
-  <li>배열 → <code>List&lt;T&gt;</code></li>
-  <li>중첩 객체 → 독립적인 <code>data class</code></li>
+  <li>문자열 → <code>String</code>, 불리언 → <code>Boolean</code></li>
+  <li>−2,147,483,648~2,147,483,647 정수 → <code>Int</code>, 더 크면 → <code>Long</code>, <code>Long</code> 범위 밖 → <code>Double</code></li>
+  <li>소수점이나 지수가 있는 숫자(<code>9.5</code>, <code>19.0</code>, <code>1e3</code>) → <code>Double</code></li>
+  <li>배열 → <code>List&lt;T&gt;</code>. <code>Int</code>·<code>Long</code>·<code>Double</code>이 섞이면 가장 넓은 타입, 그 밖의 혼합과 빈 배열은 <code>List&lt;JsonElement&gt;</code></li>
+  <li><code>null</code> → nullable 타입, 항상 <code>null</code>인 필드 → <code>JsonElement?</code></li>
+  <li>중첩 객체 → 별도 <code>data class</code>, 빈 객체 <code>{"{}"}</code> → <code>class Name</code>(data class는 속성이 하나 이상 필요)</li>
 </ul>
 
 <h2>예시: snake_case API 응답</h2>
 
-<p>입력(snake_case 키, null 필드, 큰 카운터가 있는 API 응답):</p>
+<p>snake_case 키, null 필드, <code>Int.MAX_VALUE</code>를 넘는 카운터, <code>4.0</code>으로 쓴 평점이 있는 입력:</p>
 
-<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"user_id": 1024, "display_name": "Alice", "is_active": true, "last_login": null, "follower_count": 3000000000, "rating": 4.0, "tags": ["admin", "editor"], "address": {"city": "Tokyo", "zip_code": "100-0001"}}`}</code></pre>
 
 <p>출력:</p>
 
-<pre><code>{`@Serializable
+<pre><code>{`import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+
+@Serializable
 data class RootObject(
     @SerialName("user_id")
     val userId: Int = 0,
@@ -46,9 +55,10 @@ data class RootObject(
     @SerialName("is_active")
     val isActive: Boolean = false,
     @SerialName("last_login")
-    val lastLogin: Any? = null,
+    val lastLogin: JsonElement? = null,
     @SerialName("follower_count")
-    val followerCount: Int = 0,
+    val followerCount: Long = 0L,
+    val rating: Double = 0.0,
     val tags: List<String> = emptyList(),
     val address: Address = Address()
 )
@@ -60,42 +70,86 @@ data class Address(
     val zipCode: String = ""
 )`}</code></pre>
 
-<p>그대로 camelCase 이름이 될 수 없는 키는 <code>{"@SerialName"}</code>으로 원래 JSON 키를 남깁니다. 루트 클래스가 맨 앞에 오고, 중첩 클래스는 나타난 순서대로 이어집니다.</p>
+<p>camelCase 이름이 JSON 키와 다른 필드는 <code>{"@SerialName"}</code>으로 원래 키를 유지합니다. 키로 쓰인 Kotlin 키워드(<code>class</code>, <code>in</code>, <code>fun</code>)는 백틱으로 감쌉니다. <code>last_login</code>은 샘플에서 <code>null</code>뿐이라 <code>JsonElement?</code>가 됩니다. 타임스탬프임을 알면 <code>String?</code>으로 바꾸세요.</p>
 
 <h2>예시: 객체 배열</h2>
 
-<p>루트가 배열이면 모든 객체를 하나의 클래스로 합칩니다. 일부 항목에만 있는 키는 nullable이 되고 기본값은 <code>{"null"}</code>입니다:</p>
+<p>루트가 배열이면 모든 객체를 하나의 클래스로 합칩니다. <code>price</code>가 <code>2</code>와 <code>1.5</code>이므로 <code>Double</code>이 됩니다. 일부 요소에만 있는 키는 nullable이며 기본값은 <code>{"null"}</code>입니다.</p>
 
-<pre><code>{`[{"id": 1, "name": "Pen", "price": 1.5}, {"id": 2, "name": "Ink", "discount": 0.1}]`}</code></pre>
+{/* kt: {} */}
 
-<pre><code>{`@Serializable
+<pre><code>{`[{"id": 1, "name": "Pen", "price": 2}, {"id": 2, "name": "Ink", "price": 1.5, "discount": 0.1}]`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
 data class RootObject(
     val id: Int = 0,
     val name: String = "",
-    val price: Double? = null,
+    val price: Double = 0.0,
     val discount: Double? = null
 )`}</code></pre>
 
-<h2>컴파일 전에 고칠 부분</h2>
+<p>상태 표시줄에 <code>{"List<RootObject>"}</code>로 디코딩하라는 안내가 나옵니다.</p>
 
+<h2>예시: 같은 이름의 키, 다른 객체</h2>
+
+<p>필드가 다른 <code>meta</code> 객체가 두 개 있으면 클래스도 두 개가 생성되고, 두 번째에는 부모 이름이 앞에 붙습니다.</p>
+
+{/* kt: {"roundTrip": true} */}
+
+<pre><code>{`{"order": {"id": 7, "meta": {"source": "web"}}, "payment": {"meta": {"method": "card", "last4": "4242"}}}`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
+data class RootObject(
+    val order: Order = Order(),
+    val payment: Payment = Payment()
+)
+
+@Serializable
+data class Order(
+    val id: Int = 0,
+    val meta: Meta = Meta()
+)
+
+@Serializable
+data class Meta(
+    val source: String = ""
+)
+
+@Serializable
+data class Payment(
+    val meta: PaymentMeta = PaymentMeta()
+)
+
+@Serializable
+data class PaymentMeta(
+    val method: String = "",
+    val last4: String = ""
+)`}</code></pre>
+
+<h2>디코딩</h2>
+
+<p>빌드 설정에 직렬화 플러그인과 JSON 라이브러리를 추가하고(<a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin 직렬화 가이드</a> 참고) 다음처럼 디코딩합니다.</p>
+
+<pre><code>{`import kotlinx.serialization.json.Json
+
+val user = Json.decodeFromString<RootObject>(body)
+val items = Json.decodeFromString<List<RootObject>>(arrayBody)
+
+// 샘플에 없던 키 허용
+val lenient = Json { ignoreUnknownKeys = true }`}</code></pre>
+
+<p>기본 <code>Json</code>은 클래스에 없는 키를 오류로 처리합니다. 이 페이지의 예시는 모두 Kotlin 2.4.20과 kotlinx.serialization 1.11.0으로 컴파일하고 기본 설정으로 디코딩되는 것을 확인했습니다.</p>
+
+<h2>제한 사항</h2>
 <ul>
-  <li>출력에는 import 문이 없고 kotlinx.serialization 컴파일러 플러그인(<code>{"kotlin(\"plugin.serialization\")"}</code>)이 필요합니다. <a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin 공식 직렬화 문서</a>를 참고하세요.</li>
-  <li>샘플 값이 <code>{"null"}</code>인 필드는 <code>{"Any?"}</code>가 됩니다. kotlinx.serialization에는 <code>{"Any"}</code>용 직렬화기가 없어서 이런 필드가 있는 <code>{"@Serializable"}</code> 클래스는 컴파일되지 않습니다. 타임스탬프라면 <code>{"String?"}</code>처럼 실제 타입으로 바꾸세요.</li>
-  <li>정수는 <code>{"Int.MAX_VALUE"}</code>(2,147,483,647)를 넘어도 <code>{"Int"}</code>가 됩니다. 위의 <code>{"3000000000"}</code>은 <code>{"Long"}</code>이 필요하고, Snowflake 방식 ID도 <code>{"Long"}</code>으로 바꿉니다.</li>
-  <li>빈 배열과 원소 타입이 섞인 배열은 <code>{"List<Any>"}</code>가 되며 같은 직렬화기 문제가 생깁니다.</li>
-  <li>같은 키가 배열의 한 항목에서는 정수, 다른 항목에서는 소수(<code>{"1"}</code>과 <code>{"1.5"}</code> 등)이면 타입이 <code>{"Double"}</code>이 아니라 <code>{"Any"}</code>가 됩니다.</li>
-  <li>날짜는 <code>{"String"}</code>으로 남습니다. JSON에는 날짜 타입이 없으니 디코딩 후 파싱하거나 사용자 정의 직렬화기를 씁니다.</li>
-  <li>키 이름이 같은 중첩 객체가 둘 있으면(<code>{"a.meta"}</code>와 <code>{"b.meta"}</code> 등) 첫 번째 객체로 만든 클래스를 함께 쓰고, 두 번째에만 있는 필드는 사라집니다.</li>
+  <li>타입은 샘플 하나로만 정합니다. 샘플의 ID가 작으면 <code>Int</code>가 되므로, 실제 ID가 2,147,483,647을 넘는다면 <code>Long</code>으로 바꾸세요.</li>
+  <li>브라우저는 JSON 숫자를 64비트 부동소수점으로 읽기 때문에 9,007,199,254,740,991보다 큰 정수는 타입을 정하기 전에 자릿수를 잃습니다. 타입은 <code>Long</code>이지만 범위는 직접 확인하세요.</li>
+  <li><code>19.0</code>을 소수로 판단하는 것은 <code>JSON.parse</code>에 원본 텍스트를 넘겨주는 브라우저(Chrome 114+, Firefox 135+, Safari 18.4+)뿐입니다. 오래된 브라우저에서는 <code>Int</code>가 됩니다.</li>
+  <li><code>JsonElement</code> 필드는 <code>Json</code> 포맷에서만 동작하며 CBOR, ProtoBuf에서는 쓸 수 없습니다.</li>
+  <li>날짜는 <code>String</code>으로 남습니다. JSON에는 날짜 타입이 없으므로 디코딩 후 파싱하거나 커스텀 시리얼라이저를 추가하세요.</li>
+  <li>모든 속성에 기본값이 있어 키가 빠져도 조용히 기본값이 됩니다. 꼭 있어야 하는 키는 기본값을 지우세요.</li>
 </ul>
-
-<p>타입을 고친 뒤 <code>{"Json.decodeFromString"}</code>으로 디코딩합니다:</p>
-
-<pre><code>{`import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-
-// lastLogin: Any? = null      ->  val lastLogin: String? = null
-// followerCount: Int = 0      ->  val followerCount: Long = 0
-
-val json = Json { ignoreUnknownKeys = true }
-val user = json.decodeFromString<RootObject>(body)`}</code></pre>
