@@ -1,32 +1,77 @@
 ---
-seoTitle: "HMAC Generator — SHA-256 / SHA-512 Online | ZeroTool"
-seoDescription: "Generate HMAC signatures using SHA-256, SHA-384, or SHA-512. Hex and Base64 output. Runs entirely in your browser — no data sent to servers."
+seoTitle: "HMAC SHA256 Generator & Webhook Signature Check | ZeroTool"
+seoDescription: "Compute HMAC-SHA256, SHA-512, SHA-1 or MD5 with text, hex or Base64 keys, and check a GitHub, Stripe, Slack or LINE webhook signature with the likely cause of a mismatch."
 faqItems:
-  - question: "What is HMAC?"
-    answer: "HMAC (Hash-based Message Authentication Code) is a type of message authentication code that combines a cryptographic hash function with a secret key. It is used to verify both the data integrity and the authenticity of a message."
-  - question: "Is my data sent to any server?"
-    answer: "No. The tool uses the browser's built-in Web Crypto API (SubtleCrypto) for all cryptographic operations. Your message and secret key never leave your browser."
-  - question: "Which algorithm should I choose?"
-    answer: "SHA-256 is the most widely used and is suitable for most purposes. SHA-384 and SHA-512 provide larger security margins but produce longer outputs. All three are considered secure for HMAC use."
-  - question: "What is the difference between Hex and Base64 output?"
-    answer: "Both encode the same binary HMAC value in different text formats. Hex uses lowercase hexadecimal digits (0-9, a-f) and is longer. Base64 is more compact and is commonly used in HTTP headers (e.g. Authorization) and JSON."
-  - question: "Can I use this to verify webhook signatures?"
-    answer: "Yes. Many services (GitHub, Stripe, Slack) use HMAC-SHA256 to sign webhook payloads. Enter the raw payload as the message and the service's webhook secret as the key, then compare the result to the signature header."
+  - question: "Is my secret key sent anywhere or saved?"
+    answer: "No. SHA-1, SHA-256, SHA-384 and SHA-512 run on the browser's Web Crypto API, and MD5 and SHA-224 run on code inside the page. The tool makes no network requests and does not write the key or message to localStorage, cookies or the URL. This page also loads no analytics or ad scripts. Reloading the page clears every field."
+  - question: "Why does my webhook signature not match?"
+    answer: "In most cases the bytes you hash are not the bytes the sender signed: the body was parsed and serialized again, a final line break was added or removed, line breaks changed between LF and CRLF, or the timestamp or prefix is missing from the signed string. Paste the signature header into Signature to check. If it does not match, the tool tries these variants and tells you which one produces the pasted value."
+  - question: "Which algorithm should I use?"
+    answer: "Use the one the other side expects. For a new design, HMAC-SHA256 is the common choice: GitHub, Stripe, Slack, Shopify, LINE and DingTalk use it. HMAC-SHA1 is still used by Twilio and by GitHub's legacy X-Hub-Signature header. HMAC-MD5 is included for old systems and for the RFC 2104 test vectors."
+  - question: "Should the key be text, hex or Base64?"
+    answer: "Follow the platform's documentation. GitHub, Stripe, Slack and LINE use the secret string as text, including any prefix such as whsec_. Chatwork and Standard Webhooks (Svix) Base64-decode the secret first. RFC test vectors list keys in hex. If the tool finds that your pasted signature matches another key encoding, it says so."
+  - question: "Is it safe to compare signatures with ==?"
+    answer: "Not in server code. Use a constant-time comparison: crypto.timingSafeEqual in Node.js (it throws when the lengths differ, so check the length first), hmac.compare_digest in Python, or hmac.Equal in Go. GitHub's documentation gives the same advice. The comparison in this tool runs only in your browser, so timing does not matter here."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Enter the <strong>message</strong> to authenticate.</li>
-  <li>Enter your <strong>secret key</strong>.</li>
-  <li>Choose the <strong>algorithm</strong> (SHA-256, SHA-384, or SHA-512).</li>
-  <li>Choose the output format (<strong>Hex</strong> or <strong>Base64</strong>).</li>
-  <li>Click <strong>Generate HMAC</strong> and copy the result.</li>
-</ol>
+## How to Use
 
-<h2>Common Use Cases</h2>
-<ul>
-  <li><strong>Webhook verification:</strong> Verify that a webhook payload was signed by a trusted sender.</li>
-  <li><strong>API request signing:</strong> Sign API requests to prove authenticity without sending the secret key itself.</li>
-  <li><strong>Data integrity:</strong> Attach an HMAC to a message so recipients can verify it was not tampered with.</li>
-  <li><strong>Session tokens:</strong> Generate tamper-proof session identifiers.</li>
-</ul>
+1. Pick a **Format**. *Custom HMAC* takes any key and message. The other formats build the signed string the way GitHub, Stripe, Slack, Shopify, Standard Webhooks, Twilio, LINE, Chatwork, Feishu, DingTalk or NAVER Cloud do, and show the header value to send or expect.
+2. Paste the message or the raw request body. In Custom mode choose whether it is text (UTF-8), hex or Base64, and whether line breaks are LF or CRLF.
+3. Enter the key. In Custom mode choose text, hex or Base64 for it too. Full-width characters typed by a Japanese, Chinese or Korean IME are read as ASCII in hex and Base64 fields.
+4. Read the result as hex, Base64 and base64url. The result updates as you type; **Generate HMAC** (or Ctrl/⌘+Enter) runs it again.
+5. To check a webhook, paste the header value, for example `sha256=…` or `t=…,v1=…`, into **Signature to check**.
+
+The result is HMAC as defined in [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104): a key longer than the hash block (64 bytes for SHA-256, 128 for SHA-512) is hashed first, and a shorter key is padded with zeros. The tool tells you when either happens, and when a key is shorter than the output, which RFC 2104 §3 discourages. **Truncate to** keeps the leftmost bits, as in RFC 2104 §5 and the RFC 4231 test case 5.
+
+## Examples You Can Reproduce
+
+**GitHub's published test values.** GitHub's guide to [validating webhook deliveries](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries) gives the secret `It's a Secret to Everybody` and the payload `Hello, World!`. Choose *GitHub webhook* (or press **Example**) and the tool shows:
+
+{/* hmac-check: {"preset":"github","key":"It's a Secret to Everybody","msg":"Hello, World!","expect":"header"} */}
+```text
+X-Hub-Signature-256: sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17
+```
+
+That is the value in GitHub's documentation. The same check works with Slack's example (signing secret `8f742231b10e8888abcd99yyyzzz85a5`, timestamp `1531420618`, result `v0=a2114d57…`) and LINE's example; both load with **Example** in their formats.
+
+**A body with one extra line break.** Copy the payload from a terminal and the line often ends with a newline. With `Hello, World!` plus a line break, the same secret gives:
+
+{/* hmac-check: {"preset":"github","key":"It's a Secret to Everybody","msg":"Hello, World!\n","expect":"hex","verify":"sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17","diagnose":"msgTrailingNewline"} */}
+`8fde2e970f9163923fb1cb61bb945626ff2b4091d87e622ee3ad600160592325`
+
+Paste GitHub's `sha256=757107ea…` header into **Signature to check** and the tool answers *No match. Likely cause: it matches without the final line break. The sender signed the body without it.* The note under the result also says that the body ends with a line break. Other causes the checker tries: CRLF instead of LF, spaces around the key, JSON that was minified or indented after it arrived, a hex or Base64 key read as text, key and message swapped, a Stripe timestamp that differs from `t=` in the header, and another algorithm (GitHub's legacy `X-Hub-Signature` is HMAC-SHA1).
+
+**RFC 4231 test vectors with a hex key.** Test case 1 uses twenty `0x0b` bytes as the key and `Hi There` as data. Set the key encoding to Hex and paste `0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b`:
+
+{/* hmac-check: {"preset":"custom","key":"0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b","keyEnc":"hex","msg":"Hi There","expect":"hex"} */}
+`b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7`
+
+This equals the HMAC-SHA-256 line in [RFC 4231 §4.2](https://www.rfc-editor.org/rfc/rfc4231#section-4.2). Left as text, the same 40 characters are 40 ASCII bytes and the result is `0dff03ee…`, which is why the encoding selector matters. Test case 5 (`0c` × 20, `Test With Truncation`) truncated to 128 bits gives `a3b6167473100ee06e0c796c2955552b`. The tests for this page check every RFC 2104, RFC 2202 and RFC 4231 vector, plus random inputs against Node.js `crypto.createHmac` and Python `hmac`.
+
+## Signing Formats
+
+| Format | Signed string | Key | Sent as |
+|---|---|---|---|
+| [GitHub](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries) | raw body | secret as text | `sha256=` + hex |
+| [Stripe](https://docs.stripe.com/webhooks#verify-manually) | `t` + `.` + body | whole `whsec_…` string | `t=…,v1=…` (hex) |
+| [Slack](https://docs.slack.dev/authentication/verifying-requests-from-slack) | `v0:` + timestamp + `:` + body | signing secret | `v0=` + hex |
+| [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) | id `.` timestamp `.` body | Base64 after `whsec_` | `v1,` + Base64 |
+| [Shopify](https://shopify.dev/docs/apps/build/webhooks/subscribe/https) | raw body | client secret | Base64 |
+| [Twilio](https://www.twilio.com/docs/usage/webhooks/webhooks-security) | URL + sorted POST parameters | auth token | Base64 of HMAC-SHA1 |
+
+Stripe and Slack expect you to reject timestamps more than 5 minutes old, and the tool warns when the timestamp is outside that window. For Twilio form bodies, parameters are percent-decoded, sorted by name and appended as name + value; for a JSON body only the URL is signed and the tool checks its `bodySHA256` against the body.
+
+## How It Differs From Other HMAC Pages
+
+Tested on 2026-10-01 with GitHub's example. [CodeShack](https://codeshack.io/hmac-generator/) and [devglan](https://www.devglan.com/online-tools/hmac-sha256-online) both give the correct `757107ea…`. CodeShack computes in the browser, takes the key only as text in a single-line field, and has no verifier. devglan sends the message and the secret key to its server in a POST request, both to generate and to verify, and when the message is empty it keeps showing the previous result. Its verifier accepts a bare value; `sha256=…` as copied from the header is rejected with "MAC must be hex or Base64 encoded". This tool computes everything in the tab, accepts hex and Base64 keys with the position of any invalid character, and explains a mismatch instead of only reporting it.
+
+## Limits
+
+- Algorithms: MD5, SHA-1, SHA-224, SHA-256, SHA-384 and SHA-512. SHA-3, RIPEMD-160 and SM3 are not included; the Web Crypto API has none of them.
+- A text box turns every line break into LF. If the sender used CRLF, choose CRLF. For other exact bytes, paste the message as hex or Base64.
+- Text is encoded as UTF-8. A message stored as Shift_JIS, GBK or EUC-KR must be pasted as hex.
+- The checker runs in your browser. On your server, compare in constant time, and use the raw body bytes before any JSON parsing; the [JWT Generator](/tools/jwt-generator/) covers HS256 tokens, which are HMAC-SHA256 too.
+- Feishu, DingTalk and NAVER Cloud formats sign a request you send, so there is no body field for them.
+
+For a plain digest without a key, use the [Hash Generator](/tools/hash-generator/); for one-time codes built on HMAC-SHA1, use the [TOTP Generator](/tools/totp-generator/).
