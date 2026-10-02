@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-02 — 本批发版收尾复核：补齐 jq 同步脚本的源码补丁与 classic worker 说明；sprite-sheet 测试清单更新为实际 1277 项，四语言 draft 指南的 PNG-only / 不支持 WebP 说法改为 PNG / WebP（浏览器支持编码时）；HTTP Header Analyzer 四语言元数据的 100+ 标头与组件注释改为实际 `HEADER_DB` 的 88 项。仅修正文案漏改，保留指南 draft 与历史变更日志。
+
 - 2026-04-26 — 初始化 AGENTS.md 体系（根 + 6 子目录），梳理 CI/CD、Cloudflare、GA4/GSC/AdSense 集成关系
 - 2026-04-26 — 加入 `scripts/audit.mjs` 与 `.github/workflows/ci.yml`；将 `src/content/blog/AGENTS.md` 合并迁移到 `src/content/AGENTS.md` 规避 Astro collection schema 冲突
 - 2026-04-27 — 删除 `src/pages/tools/AGENTS.md`（Astro 把 `src/pages/` 下 .md 当作页面渲染，曾以 `/tools/AGENTS/` 公网泄漏并进入 sitemap）；slug 重命名约定上提至「全局规范」第 10 条；目录索引中 `src/pages/tools/` 不再标记子 AGENTS.md

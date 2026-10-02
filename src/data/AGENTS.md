@@ -58,6 +58,8 @@ interface ToolInfo {
 
 ## 变更日志
 
+- 2026-10-02 — 发版收尾复核：实际执行 `HttpHeaderAnalyzerTool.astro` 的 `HEADER_DB` 声明确认 88 项，`tools.ts` 四语言 description 的 100+ 改为 88。
+
 - 2026-04-26 — 初版
 - 2026-09-26 — `ToolInfo.slug` 注释改为指向 `toolRoutes()` 注入的工具路由（原 `pages/{lang}/tools/[slug].astro` 已删除）
 - 2026-09-27 — 新增 `guides.ts`（工具 → 指南博客目录映射）

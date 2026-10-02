@@ -126,6 +126,8 @@ faqItems:                # 可选，结构化 FAQ
 
 ## 变更日志
 
+- 2026-10-02 — 发版收尾复核：sprite-sheet-generator-guide 四语言草稿的对比表与限制段改为支持 PNG / WebP（取决于浏览器编码能力），保留 draft 状态与其他正文。
+
 - 2026-04-26 — 初版（合并自 `src/content/blog/AGENTS.md`，迁移到此处规避 Astro collection schema 冲突）
 - 2026-04-27 — 博客结构 B-migration：平铺 `{slug}-{lang}.mdx` → 目录 `{slug}/{lang}.mdx`，对齐 tools collection 风格；`_redirects` 大幅瘦身（~2470 → ~1100 条），脱离 CF Pages 2100 限制
 - 2026-09-25 — `public/og/` 改为构建产物并移出 git，博客图片不再放该目录
