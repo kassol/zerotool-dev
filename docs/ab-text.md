@@ -25,7 +25,42 @@ Shared AGENTS change logs and final site validation belong to the release branch
   Idle cancellation button is hidden. Evidence: `regex-{red,green}.log`,
   `regex-{baseline,current,browser}.json` in the external task evidence directory.
 
+## B-DIFF-QUADRATIC-MEMORY design
+
+- Replace the full LCS table with four rolling Uint32 rows. Propagate the old
+  equal-first / add-on-tie traceback's crossing column at the middle row, then
+  recurse on the two ranges. Release the rows before recursion.
+- Prototype verification: 16,129 exhaustive pairs and 10,000 seeded random
+  pairs have the exact old operation sequence. Keep the old pairing tests.
+- Run comparison and row indexing in a terminable Blob Worker. Page both views
+  by 100 rows; keep complete counts and result data in the Worker. Cancel,
+  input, swap, clear and pagehide invalidate the prior generation.
+
+### Verification and stop point
+
+- Real Compare-click regression: red 5,982 pass / 3 fail (including the old
+  traceback oracle); final targeted run 6,052 pass / 0 fail on Node 22.23.3.
+  Evidence: `diff-oracle-red.log`, `diff-expanded-green.log`, `diff-final-green.log`
+  in the external task evidence directory. Existing assertions remain.
+- Tests execute the actual Blob Worker through worker_threads. Coverage includes
+  four-language counts, 100-row pages, line numbers, both views, pairing,
+  stale page replies, input/cancel/swap/clear/pagehide invalidation and Worker failure.
+- Actual Astro Container preview serves the current component after the preview
+  CSS-import fix. This is not full browser acceptance for Diff.
+- Not completed: view changes during calculation and rapid-page race tests;
+  four-language content updates; the fixed 10,000-line-per-side benchmark.
+  Worker-inclusive comparable peak heap collection is unresolved, so neither
+  the 50% peak reduction nor the 100 ms main-thread target is verified.
+
+## B-ZEROWIDTH-DOM-VOLUME
+
+No implementation or new regression/benchmark was started. Full scanning,
+visualization and the existing download behavior remain unchanged.
+
 ## Release handoff
 
 The fixed item list remains read-only. These changes do not close the items;
 production build, complete tests and production evidence remain release-line work.
+Work stopped at the user's closeout request after the one final Diff targeted run.
+No full build, merge, push, tag or release was run. Keep the worktree and evidence.
+Regex still needs comparable before/after heap evidence, including its Worker.

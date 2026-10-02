@@ -19,6 +19,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { Worker as ThreadWorker } from 'node:worker_threads';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/DiffCheckerTool.astro'), 'utf8');
@@ -50,6 +52,24 @@ eq('mixed', E.splitLines('a\r\nb\nc\rd'), ['a', 'b', 'c', 'd']);
 eq('trailing newline keeps an empty last line', E.splitLines('a\r\n'), ['a', '']);
 const diffOf = (a, b) => E.lcs(E.splitLines(a), E.splitLines(b));
 eq('CR LF text equals LF text', diffOf('x\r\ny\r\nz', 'x\ny\nz').every((op) => op.type === 'equal'), true);
+
+// Small independent oracle preserves the previous equal-first / add-on-tie traceback.
+function oldLcs(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+  const result = []; let i = a.length, j = b.length;
+  while (i || j) {
+    if (i && j && a[i - 1] === b[j - 1]) result.push({ type: 'equal', val: a[--i] }), j--;
+    else if (j && (!i || dp[i][j - 1] >= dp[i - 1][j])) result.push({ type: 'add', val: b[--j] });
+    else result.push({ type: 'del', val: a[--i] });
+  }
+  return result.reverse();
+}
+const lists = [[]];
+for (let n = 1; n <= 5; n++) for (let mask = 0; mask < 2 ** n; mask++)
+  lists.push(Array.from({ length: n }, (_, i) => 'ab'[(mask >> i) & 1]));
+for (const a of lists) for (const b of lists) eq('old traceback ' + JSON.stringify([a, b]), E.lcs(a, b), oldLcs(a, b));
 
 // ---------- pairing ----------
 const sbs = (a, b) => E.pairRows(diffOf(a, b)).map((r) => [r.left.type, r.left.ln, r.left.val, r.right.type, r.right.ln, r.right.val]);
@@ -111,6 +131,106 @@ for (let t = 0; t < 2000; t++) {
 const page = readFileSync(join(root, 'src/content/tools/diff-checker/en.mdx'), 'utf8');
 eq('page no longer says pairing is adjacent-only', page.includes('pairs only adjacent lines'), false);
 eq('page no longer says CR LF marks every line', page.includes('marks **every** line as changed'), false);
+
+// The real Compare click must return before the O(n*m) work and expose cancellation.
+function pageHarness(lang = 'en', options = {}) {
+  const nodes = new Map(), blobs = new Map(), workers = [], events = {}, timers = new Map();
+  let serial = 0;
+  function element() { return { value: '', textContent: '', innerHTML: '', className: '', hidden: false, disabled: false,
+    style: {}, scrollHeight: 160, listeners: {}, classList: { add() {}, remove() {} },
+    addEventListener(k, f) { this.listeners[k] = f; }, setAttribute() {} }; }
+  class BrowserWorker {
+    constructor(url) {
+      if (options.throwWorker) throw new Error('Worker blocked');
+      this.thread = new ThreadWorker(`const {parentPort}=require('node:worker_threads'); const self={postMessage:v=>parentPort.postMessage(v)}; ${blobs.get(url)}; parentPort.on('message',data=>self.onmessage({data}));`, { eval: true });
+      this.thread.on('message', data => { this.result = data; this.responses = (this.responses || 0) + 1; this.onmessage?.({ data }); });
+      this.thread.on('error', error => this.onerror?.(error)); workers.push(this);
+    }
+    postMessage(data) { this.sent = data; this.thread.postMessage(data); }
+    terminate() { this.terminated = true; return this.thread.terminate(); }
+  }
+  const context = vm.createContext({ document: { documentElement: { lang }, querySelectorAll: () => [],
+    getElementById(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); }, addEventListener() {} },
+    window: { addEventListener(k, f) { events[k] = f; } }, Worker: options.noWorker ? undefined : BrowserWorker,
+    Blob: class { constructor(parts) { this.source = parts.join(''); } },
+    URL: { createObjectURL(b) { const id = 'blob:' + blobs.size; blobs.set(id, b.source); return id; }, revokeObjectURL() {} },
+    setTimeout(f, ms) { const id = ++serial; timers.set(id, { f, ms }); return id; }, clearTimeout(id) { timers.delete(id); }, console });
+  vm.runInContext(source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], context);
+  function click(id, timeout = 100) { context.callback = nodes.get(id)?.listeners.click; vm.runInContext('callback()', context, { timeout }); }
+  return { nodes, workers, events, click, input(id, value) { nodes.get(id).value = value; nodes.get(id).listeners.input(); },
+    async compare(a, b) {
+      nodes.get('diff-original').value = a; nodes.get('diff-modified').value = b; click('diff-compare');
+      const w = workers.at(-1);
+      await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('No worker result')), 10000);
+        const receive = w.onmessage; w.onmessage = e => { receive(e); clearTimeout(timer); resolve(); }; }); return w.result;
+    }, async close() { await Promise.all(workers.map(w => w.terminate())); } };
+}
+const p = pageHarness();
+p.nodes.get('diff-original').value = Array.from({ length: 2500 }, (_, i) => 'original-' + i).join('\n');
+p.nodes.get('diff-modified').value = Array.from({ length: 2500 }, (_, i) => 'modified-' + i).join('\n');
+let blocked = false;
+try { p.click('diff-compare'); } catch (err) { blocked = err.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT'; }
+eq('real Compare entry returns without quadratic main-thread work', blocked, false);
+eq('real Compare starts a terminable worker', p.workers.length > 0, true);
+eq('real page exposes cancel', !!p.nodes.get('diff-cancel')?.listeners.click, true);
+if (p.workers.length) { p.click('diff-cancel'); eq('cancel terminates actual worker', p.workers.at(-1).terminated, true); }
+await p.close();
+
+async function waitFor(predicate) {
+  const end = Date.now() + 10000;
+  while (!predicate()) {
+    if (Date.now() > end) throw new Error('Worker response timed out');
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const h = pageHarness(lang);
+  const a = Array.from({ length: 205 }, (_, i) => 'row-' + i).join('\n');
+  const r = await h.compare(a, a);
+  eq(lang + ' complete count', [r.total, r.adds, r.dels], [205, 0, 0]);
+  eq(lang + ' first page bounded', r.rows.length, 100);
+  eq(lang + ' idle cancel hidden', h.nodes.get('diff-cancel').hidden, true);
+  eq(lang + ' navigation available', h.nodes.get('diff-pages').hidden, false);
+  const w = h.workers.at(-1);
+  let replies = w.responses;
+  h.click('diff-next'); await waitFor(() => w.responses > replies);
+  eq(lang + ' page two line numbers', [w.result.rows[0].origLn, w.result.rows.at(-1).modLn], [101, 200]);
+  replies = w.responses; h.click('diff-next'); await waitFor(() => w.responses > replies);
+  eq(lang + ' last page complete', [w.result.rows.length, h.nodes.get('diff-next').disabled], [5, true]);
+  replies = w.responses; h.click('diff-prev'); await waitFor(() => w.responses > replies);
+  eq(lang + ' previous page', w.result.page, 1);
+  replies = w.responses; h.click('diff-view-side'); await waitFor(() => w.responses > replies);
+  eq(lang + ' switch resets page and pairs', [w.result.page, w.result.rows[0].left.ln, w.result.rows[0].right.ln], [0, 1, 1]);
+  const old = h.nodes.get('diff-output').innerHTML;
+  w.onmessage({ data: { ...w.result, request: w.result.request - 1, rows: [] } });
+  eq(lang + ' stale page ignored', h.nodes.get('diff-output').innerHTML, old);
+  h.input('diff-original', 'new');
+  w.onmessage({ data: w.result });
+  eq(lang + ' changed input clears old pages', [w.terminated, h.nodes.get('diff-output').innerHTML, h.nodes.get('diff-pages').hidden], [true, '', true]);
+  const changed = await h.compare('k\na\nb\nz', 'k\nA\nB\nz');
+  eq(lang + ' real side pairing', changed.rows.map(r => [r.left.val, r.right.val]), [['k','k'],['a','A'],['b','B'],['z','z']]);
+  for (const action of ['diff-cancel', 'diff-swap', 'diff-clear', 'pagehide']) {
+    await h.compare('left', 'right'); const pending = h.workers.at(-1);
+    if (action === 'pagehide') h.events.pagehide(); else h.click(action);
+    pending.onmessage({ data: pending.result });
+    eq(lang + ' ' + action + ' invalidates late reply', [pending.terminated, h.nodes.get('diff-output').innerHTML, h.nodes.get('diff-pages').hidden], [true, '', true]);
+  }
+  await h.close();
+}
+for (const options of [{ noWorker: true }, { throwWorker: true }]) {
+  const h = pageHarness('zh', options);
+  h.nodes.get('diff-original').value = 'a'; h.click('diff-compare');
+  eq('unavailable worker is explicit', h.nodes.get('diff-status').textContent.includes('Web Worker'), true);
+  eq('unavailable worker restores controls', [h.nodes.get('diff-compare').disabled, h.nodes.get('diff-cancel').hidden], [false, true]);
+  await h.close();
+}
+const fail = pageHarness();
+fail.nodes.get('diff-original').value = 'a'; fail.click('diff-compare');
+fail.workers.at(-1).onerror(new Error('Worker failure'));
+eq('worker error clears result', [fail.nodes.get('diff-output').innerHTML, fail.nodes.get('diff-status').textContent], ['', 'Comparison failed. Try again.']);
+fail.nodes.get('diff-original').value = ''; fail.nodes.get('diff-modified').value = ''; fail.click('diff-compare');
+eq('empty input starts no new worker', fail.workers.length, 1);
+await fail.close();
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
