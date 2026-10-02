@@ -1,79 +1,112 @@
 ---
-seoTitle: "jq Playground Online — Test jq Filters in Browser | ZeroTool"
-seoDescription: "Run jq filters against JSON in your browser with the official jq 1.7 engine. Pipe, select, map, group_by, sort, reduce — no install, no upload, no signup."
+seoTitle: "jq Playground Online — Run jq 1.7.1 in Browser | ZeroTool"
+seoDescription: "Run jq 1.7.1 filters in your browser with -r, -s, -n, --arg and JSON Lines. Output, stderr and exit codes match the jq CLI; error hints show the bad spot."
 faqItems:
-  - question: "Is this the real jq or a JavaScript reimplementation?"
-    answer: "This is the official jq 1.7 C source compiled to WebAssembly via jq-web. Filters are evaluated by jq itself, so they behave as in the jq CLI; the display differs in a few places (see Limits). The engine downloads once (about 1MB compressed) and is cached by your browser for every subsequent visit."
-  - question: "What jq features are supported?"
-    answer: "Full jq 1.7 syntax — pipes, select, map, group_by, sort_by, reduce, foreach, try/catch, custom function definitions (def), recursive descent (..), string operations, math, date functions, and every built-in. If a filter works in the jq CLI, it works here."
-  - question: "Are my JSON and filter expression sent to a server?"
-    answer: "No. The jq engine runs entirely in your browser via WebAssembly. Your JSON and filter never leave the device. Open DevTools → Network and you will see only the one-time jq.wasm download — no request payloads."
-  - question: "What is the maximum JSON size?"
-    answer: "About 50MB is the practical ceiling — beyond that, browser memory and parsing time become noticeable. For multi-gigabyte JSON streams use the jq command-line tool with --stream."
-  - question: "How is this different from JSONPath Tester?"
-    answer: "JSONPath is a path query language for picking nodes by location. jq is a full transformation language with pipes, conditionals, math, and function definitions. Use JSONPath Tester for simple lookups; use jq for shaping, filtering, aggregating, and reformatting JSON."
+  - question: "Is this the real jq or a JavaScript copy?"
+    answer: "It is jq 1.7.1 itself: the official C source compiled to WebAssembly by jq-web 0.6.2. The page runs it the way `jq FLAGS FILTER input.json` runs, and our test suite compares 71 filters byte for byte (output, error text, exit code) with the jq 1.7.1 command line, plus the 239 examples of the jq 1.7.1 manual that do not read environment variables."
+  - question: "Why jq 1.7.1 and not 1.8?"
+    answer: "1.7.1 is the jq that Ubuntu 24.04, Debian 13 and macOS (/usr/bin/jq) ship, so a filter tested here behaves the same on those machines. jq 1.8 adds trim, ltrim, rtrim, trimstr, toboolean, skip, add/1 and @urid and changes a few behaviours; when a filter uses a 1.8 function, the page says so."
+  - question: "Is my JSON uploaded?"
+    answer: "No. jq runs in a Web Worker in your tab. The only network requests are the jq engine files the first time you use the tool (jq.wasm, about 1 MB compressed). The share link carries the filter, the options and the variable names, never the input or the variable values."
+  - question: "How big can the input be?"
+    answer: "Files up to 200 MB. Inputs over 2 MB do not run on every keystroke; press Run. The output panel renders the first 1 MB and Copy / Download give the whole output. A filter that runs longer than 10 seconds (plus 1 second per MB of input) is stopped."
+  - question: "My filter works here but not in my shell. Why?"
+    answer: "Usually quoting. Copy the command from the Command line box: it puts the filter in single quotes and escapes any single quote inside it, which is what bash and zsh need. PowerShell and cmd.exe quote differently. Also check `jq --version`: on jq 1.8 a few results differ."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Paste or type your JSON into the <strong>JSON Input</strong> panel (a sample users dataset is preloaded).</li>
-  <li>Type a jq filter in the <strong>jq Filter</strong> field, or click one of the <strong>Example</strong> pills.</li>
-  <li>Results render with JSON syntax highlighting under <strong>Result</strong>.</li>
-  <li>Click <strong>Copy</strong> to copy the formatted output to your clipboard.</li>
-</ol>
+## How to use
 
-<h2>jq Cheat Sheet</h2>
-<ul>
-  <li><code>.</code> — the identity filter, returns the input unchanged</li>
-  <li><code>.field</code> — extract a property value</li>
-  <li><code>.field?</code> — extract optionally (no error when field is missing)</li>
-  <li><code>.[]</code> — iterate over array or object values</li>
-  <li><code>.[start:end]</code> — array slice</li>
-  <li><code>f | g</code> — pipe output of f into g</li>
-  <li><code>f, g</code> — produce both f and g outputs</li>
-  <li><code>select(cond)</code> — keep values where cond is true</li>
-  <li><code>map(f)</code> — apply f to each element of an array</li>
-  <li><code>group_by(.k)</code> — group an array by key</li>
-  <li><code>sort_by(.k)</code> — sort an array by key</li>
-  <li><code>length</code>, <code>keys</code>, <code>values</code>, <code>type</code>, <code>has(k)</code> — introspection</li>
-  <li><code>add</code>, <code>min</code>, <code>max</code>, <code>unique</code> — aggregation</li>
-  <li><code>tonumber</code>, <code>tostring</code>, <code>ascii_downcase</code>, <code>split("/")</code> — conversion</li>
-  <li><code>reduce</code>, <code>foreach</code>, <code>def</code> — control flow and custom functions</li>
-</ul>
+1. Type a filter in **jq filter**. The output updates as you type.
+2. Paste JSON into **Input**, or open a file. Several JSON values in a row (JSON Lines, NDJSON) are fine, as they are for the jq command.
+3. Turn on options the way you would pass them to jq: `-r` for raw strings, `-s` to read every input into one array, `-n` to start from `null` and read input with `input` / `inputs`, `-R` for plain text lines, `-c` for one value per line.
+4. Add variables with **+ Variable**: `--arg` passes a string, `--argjson` passes JSON.
+5. Read the result, stderr and the exit code under **Output**. The **Command line** box shows the same run as a shell command, so you can paste it into a terminal.
 
-<h2>Common Use Cases</h2>
-<p>
-  jq is the standard tool for shell pipelines that touch JSON: API responses from <code>curl</code>, Kubernetes
-  manifests, CI/CD logs, AWS CLI output, infrastructure-as-code state, and analytics exports. This playground
-  is for prototyping a filter on a small sample before piping a giant file through the CLI — copy the filter
-  out and use it verbatim with <code>jq -r '...'</code>.
-</p>
-<p>
-  Typical recipes: <code>.items | map(&#123;id, name&#125;)</code> to flatten API list responses,
-  <code>group_by(.tag) | map(&#123;tag: .[0].tag, count: length&#125;)</code> to bucket events,
-  <code>[.[] | .duration_ms] | add / length</code> to average a numeric field.
-</p>
+You can also paste a whole command such as `curl -s URL | jq -r --arg id 7 '.items[] | select(.id == ($id|tonumber))'` into the filter box. The page offers to take over its filter, options and variables, and lists file names and options it cannot use.
 
-<h2>Example: An Order Payload</h2>
-<p>With this JSON in the input panel:</p>
+## Example: open pull requests by one author
+
+A GitHub REST API list response (shortened) in Input, `-r` on, and a variable `who` = `octocat`:
 
 ```json
-{"order_id": 9007199254740993, "items": [{"sku":"A","qty":2},{"sku":"B","qty":1}]}
+[{"number":42,"title":"Fix login redirect","draft":false,"user":{"login":"octocat"}},
+ {"number":43,"title":"WIP: new parser","draft":true,"user":{"login":"hubot"}},
+ {"number":44,"title":"Bump jq to 1.7.1","draft":false,"user":{"login":"octocat"}}]
 ```
 
-<ul>
-  <li><code>.items | map(.qty) | add</code> → <code>3</code> (1 value)</li>
-  <li><code>.items[] | .sku</code> → two lines, <code>"A"</code> and <code>"B"</code> (2 values), as the jq CLI prints them. <code>[.items[] | .sku]</code> gives one array instead, and the counter says 1 value.</li>
-  <li><code>.order_id</code> → <code>9007199254740993</code>. The input text goes to jq unchanged, so integers above 2<sup>53</sup> keep every digit.</li>
-  <li><code>.items[] | select(.qty &gt; 5)</code> → "(no output)", because no item matches.</li>
-  <li><code>.a +</code> (an incomplete filter) → <code>jq: error: syntax error, unexpected end of file … jq: 1 compile error</code>, the same compile error the CLI prints.</li>
-</ul>
+{/* jqp-check: {"input": "[{\"number\":42,\"title\":\"Fix login redirect\",\"draft\":false,\"user\":{\"login\":\"octocat\"}},\n {\"number\":43,\"title\":\"WIP: new parser\",\"draft\":true,\"user\":{\"login\":\"hubot\"}},\n {\"number\":44,\"title\":\"Bump jq to 1.7.1\",\"draft\":false,\"user\":{\"login\":\"octocat\"}}]", "filter": ".[] | select(.draft | not) | select(.user.login == $who) | \"#\\(.number)\\t\\(.title)\"", "flags": {"r": true}, "args": [{"type": "string", "name": "who", "value": "octocat"}], "stdout": "#42\tFix login redirect\n#44\tBump jq to 1.7.1\n", "command": "jq -r --arg who octocat '.[] | select(.draft | not) | select(.user.login == $who) | \"#\\(.number)\\t\\(.title)\"' input.json"} */}
 
-<h2>Limits</h2>
-<ul>
-  <li>The input must be a single JSON value. It is checked with JavaScript <code>JSON.parse()</code> first, so a stream of values (JSON Lines) is rejected, although the jq CLI reads it.</li>
-  <li>Several outputs are shown one after another, each pretty-printed, as the jq CLI prints them. The counter counts top-level values.</li>
-  <li>A filter with no output, such as <code>empty</code> or a <code>select</code> that matches nothing, shows "(no output)".</li>
-  <li>Command-line options are not available: no <code>-r</code> raw strings, <code>--arg</code>, <code>--slurp</code> or <code>--stream</code>. Results are always shown as pretty-printed JSON.</li>
-  <li>The engine (<code>jq.wasm</code>, about 2.8 MB, about 1 MB gzipped) loads the first time you run a filter.</li>
-</ul>
+```
+.[] | select(.draft | not) | select(.user.login == $who) | "#\(.number)\t\(.title)"
+```
+
+Output (2 lines, tab-separated):
+
+```
+#42	Fix login redirect
+#44	Bump jq to 1.7.1
+```
+
+The Command line box reads `jq -r --arg who octocat '.[] | select(.draft | not) | …' input.json`. If you call the API with GitHub CLI instead, note that `gh api … --jq` does not run jq: it uses gojq, a Go reimplementation, and prints top-level strings raw as if `-r` were on ([go-gh `pkg/jq`](https://github.com/cli/go-gh/blob/trunk/pkg/jq/jq.go)). The [gojq README](https://github.com/itchyny/gojq#difference-to-jq) lists the differences: it does not keep object key order, has no `-S`, `-a` or `--seq`, and keeps integer precision in arithmetic where jq does not.
+
+## Example: summarise JSON Lines logs
+
+Access logs often have one JSON object per line. With `-s` (slurp) and `-c`:
+
+{/* jqp-check: {"input": "{\"ts\":\"2026-10-01T09:00:01Z\",\"path\":\"/api/orders\",\"status\":200,\"ms\":42}\n{\"ts\":\"2026-10-01T09:00:02Z\",\"path\":\"/api/orders\",\"status\":500,\"ms\":1203}\n{\"ts\":\"2026-10-01T09:00:02Z\",\"path\":\"/health\",\"status\":200,\"ms\":3}\n{\"ts\":\"2026-10-01T09:00:03Z\",\"path\":\"/api/orders\",\"status\":200,\"ms\":57}", "filter": "group_by(.path) | map({path: .[0].path, requests: length, errors: map(select(.status >= 500)) | length, avg_ms: (map(.ms) | add / length)})", "flags": {"s": true, "c": true}, "stdout": "[{\"path\":\"/api/orders\",\"requests\":3,\"errors\":1,\"avg_ms\":434},{\"path\":\"/health\",\"requests\":1,\"errors\":0,\"avg_ms\":3}]\n"} */}
+
+```
+{"ts":"2026-10-01T09:00:01Z","path":"/api/orders","status":200,"ms":42}
+{"ts":"2026-10-01T09:00:02Z","path":"/api/orders","status":500,"ms":1203}
+{"ts":"2026-10-01T09:00:02Z","path":"/health","status":200,"ms":3}
+{"ts":"2026-10-01T09:00:03Z","path":"/api/orders","status":200,"ms":57}
+```
+
+```
+group_by(.path) | map({path: .[0].path, requests: length,
+  errors: map(select(.status >= 500)) | length, avg_ms: (map(.ms) | add / length)})
+```
+
+```
+[{"path":"/api/orders","requests":3,"errors":1,"avg_ms":434},{"path":"/health","requests":1,"errors":0,"avg_ms":3}]
+```
+
+`-s` holds every line in memory. For large files, `-n` with `reduce inputs as $r (…)` reads one value at a time; the **Options: --arg, -s, -n, -R** group in Examples has both forms.
+
+## When jq stops with an error
+
+jq prints the values it produced before the error, then the error on stderr, and exits with code 5. The page keeps both:
+
+{/* jqp-check: {"input": "{\"items\":[{\"id\":1,\"tags\":[\"a\"]},{\"id\":2,\"tags\":null},{\"id\":3,\"tags\":[\"b\",\"c\"]}]}", "filter": ".items[] | .tags[]", "flags": {}, "stdout": "\"a\"\n", "stderr": "jq: error (at input.json:1): Cannot iterate over null (null)\n", "exit": 5, "hint": ["iterateNull"], "shown": ["Cannot iterate over null (null)"]} */}
+
+`.items[] | .tags[]` on `{"items":[{"id":1,"tags":["a"]},{"id":2,"tags":null},{"id":3,"tags":["b","c"]}]}` outputs `"a"`, then `jq: error (at input.json:1): Cannot iterate over null (null)` and exit code 5. The hint below suggests `.tags[]?` or `(.tags // [])[]`. For a JSON syntax error, **Show in input** selects the token jq stopped at; jq reports the position in bytes, and the page converts it so that `{"日本":1 x}` selects the `x`. For a filter error, **Show in filter** selects the reported line.
+
+The page also catches mistakes jq only reports as `unexpected INVALID_CHARACTER`: curly quotes from a word processor, fullwidth `｜` or `．` from an input method, and a filter still wrapped in shell quotes.
+
+## Same result as your terminal
+
+Each run is `jq FLAGS FILTER input.json`, where input.json holds the input plus a final newline. Our test suite runs 71 cases (options, variables, JSON Lines, syntax and runtime errors, `halt_error`, `-e`, `--seq`, `--stream`) through this page's engine and through jq 1.7.1, and compares stdout, stderr and the exit code byte for byte. It also runs the 241 examples of the jq 1.7.1 manual; all match except the two that read `$PAGER` from the environment.
+
+Which jq do you have? Run `jq --version`. Ubuntu 24.04 ([jq 1.7.1-3ubuntu0.24.04](https://packages.ubuntu.com/noble/jq)), Debian 13 ([1.7.1-6](https://packages.debian.org/trixie/jq)) and macOS 27 (`/usr/bin/jq` prints `jq-1.7.1-apple`) have 1.7.1. Homebrew has [1.8.2](https://formulae.brew.sh/formula/jq). jq 1.8.0 ([NEWS](https://github.com/jqlang/jq/blob/jq-1.8.2/NEWS.md)) added `trim`, `ltrim`, `rtrim`, `trimstr`, `toboolean`, `skip`, `add/1` and `@urid`, made `ltrimstr` error on non-strings and `limit` error on a negative count, and changed how `-1 as $x | …` binds. Large integers are kept as written, but arithmetic uses doubles in 1.7.1:
+
+{/* jqp-check: {"input": "{\"order_id\": 9007199254740993}", "filter": ".order_id, .order_id + 0", "flags": {}, "stdout": "9007199254740993\n9007199254740992\n"} */}
+
+`.order_id, .order_id + 0` on `{"order_id": 9007199254740993}` prints `9007199254740993` and then `9007199254740992`.
+
+## How it compares (tested 2026-10-02)
+
+We ran the same inputs on three other jq pages in Chromium:
+
+- **[play.jqlang.org](https://play.jqlang.org/)** (the jq project's playground; jqplay.org now redirects there) runs jq 1.8 in the browser: `trim` works and no request carried our input. It shows output and error together, as here, and stopped `repeat(1)` with "Operation timed out" after about 30 seconds. Use it when you run jq 1.8.
+- **jqkungfu.com** runs jq.wasm locally. For `.[] | .a` on `[{"a":1},2]` it showed `1` without the error; `9007199254740993` came back as `9007199254740992`; after a JSON syntax error the previous output stayed on screen.
+- **jsonwiz.com/jq-online** loads `jq-wasm@0.3.1` from esm.sh, which answered 404, so every run showed "Failed to fetch dynamically imported module".
+
+## Limits
+
+- No files besides the input: `--slurpfile`, `--rawfile`, `-f`, `-L`, `import` and `include` are not available; `--args` / `--jsonargs` are left out.
+- `$ENV` and `env` show the WebAssembly runtime's fixed environment (HOME=/home/web_user), not yours. `now` and the local-time functions use your browser's clock.
+- Inputs over 2 MB run only when you press Run; files over 2 MB are not shown in the editor. Output over 1 MB is cut in the panel (Copy and Download are complete).
+- A filter is stopped after 10 seconds plus 1 second per MB of input. A run that exhausts memory or recurses too deep restarts the engine.
+- Colour (`-C`) is ignored; output is not colourised.
+
+Related tools: [JSONPath Tester](/tools/jsonpath-tester/) for path queries, [JSON Formatter](/tools/json-formatter/) to pretty-print, [JSONL Converter](/tools/jsonl-converter/) between JSON arrays and JSON Lines, [JSON Diff](/tools/json-diff/) to compare two outputs.
