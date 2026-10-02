@@ -436,6 +436,17 @@ for (const u of ['ms', 's', 'min', 'h']) check('STRINGS unit ' + u, /\{n\}/.test
 const script = source.slice(source.indexOf('<script'));
 check('component script uses no storage, cookies or network',
   !/localStorage|sessionStorage|ztPersist|document\.cookie|fetch\(|XMLHttpRequest|sendBeacon|location\.hash|innerHTML/.test(script));
+{
+  // Elements built by the script carry no Astro scope attribute; their rules must be :global (DESIGN.md).
+  const style = source.slice(source.indexOf('<style>'));
+  const dyn = new Set();
+  for (const m of script.matchAll(/className = '([^']+)'/g)) for (const c of m[1].split(/\s+/)) if (c.startsWith('bcg-')) dyn.add(c);
+  for (const m of script.matchAll(/className = '([a-z-]+--)' \+/g)) dyn.add(m[1]);
+  for (const c of dyn) {
+    if (c === 'bcg-result') continue; // static element
+    check('dynamic class .' + c + ' has a :global rule', style.includes(':global(.' + c));
+  }
+}
 check('worker uses no network beyond importScripts', !/fetch\(|XMLHttpRequest|sendBeacon/.test(workerSrc));
 check("persistence policy stays 'disabled'", /'bcrypt-generator': 'disabled'/.test(read('src/data/persistence.ts')));
 check('privacy line matches the About page promise (no analytics or ads)', /no analytics or ads/.test(STRINGS.en.privacy));
