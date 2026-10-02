@@ -1,787 +1,988 @@
 ---
-// OpenapiValidatorTool — pure client-side OpenAPI 3.x validator
----
-<div>
-  <div class="ov-wrap">
-    <div class="ov-field">
-      <label for="ov-input" data-i18n="inputLabel">OpenAPI Spec (YAML or JSON)</label>
-      <textarea
-        id="ov-input"
-        rows="16"
-        spellcheck="false"
-        autocomplete="off"
-        placeholder="openapi: &quot;3.0.3&quot;
+// OpenapiValidatorTool — validates Swagger 2.0 and OpenAPI 3.0 / 3.1 / 3.2 descriptions in the
+// browser: official JSON Schema per version, $ref across several files, and the rules the schemas
+// cannot express (path parameters, operationId, security schemes, server variables, examples,
+// unused components). Parsing and checks run in a Web Worker (openapi-validator.worker.js);
+// the engine is openapi-validator-engine.js. Nothing is uploaded.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// strings:start
+const STRINGS = {
+  en: {
+    inputLabel: 'Main document (YAML or JSON)',
+    inputPh: 'openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0\npaths: {}',
+    validate: 'Validate', open: 'Open files', folder: 'Open folder', example: 'Example', clear: 'Clear',
+    dropHint: 'Drop .yaml / .json files here. With several files, the one with an openapi or swagger field becomes the main document.',
+    idle: 'Paste an OpenAPI or Swagger document, or open files.',
+    loading: 'Loading the validator…', running: 'Validating…',
+    autoOff: 'Large input ({mb} MB): press Validate to check it.',
+    resultOk: '{spec} {version}: valid, no errors.',
+    resultBad: '{spec} {version}: not valid.',
+    resultParse: 'The document could not be read.',
+    counts: '{e} errors · {w} warnings · {i} notes', took: '{s} s',
+    failed: 'The validator stopped: {err}',
+    readFail: 'Could not read {file}.', skipped: 'Skipped {n} files that are not .yaml, .yml or .json.',
+    tooBig: 'Files larger than {mb} MB in total are not loaded.',
+    filesTitle: 'Other files referenced by $ref ({n})',
+    filesHint: 'Name each file by the path its $ref uses, relative to the main document (for example schemas/pet.yaml). Files are not uploaded.',
+    fileName: 'File path', fileText: 'Content of {file}', addFile: 'Add file', remove: 'Remove',
+    addMissing: 'Add {file}', mainFile: 'Main file name',
+    filterAll: 'All', levelError: 'Error', levelWarning: 'Warning', levelInfo: 'Note',
+    jump: 'Show line {line} in {file}', showAll: 'Show all {n}', copy: 'Copy results', copied: 'Copied', copyFail: 'Copy failed.',
+    summaryTitle: 'Summary', sumTitle: 'API title', sumVersion: 'API version', sumSpec: 'Specification',
+    sumPaths: 'Paths', sumOps: 'Operations', sumWebhooks: 'Webhooks', sumComponents: 'Components', sumServers: 'Servers', sumFiles: 'Files',
+    msg: {
+      'parse.yaml': 'YAML / JSON syntax error: {reason}.',
+      'doc.notObject': 'The document must be a YAML or JSON object (key: value pairs at the top level).',
+      'doc.swaggerVersion': 'swagger is {got}; the only Swagger version is "2.0". OpenAPI 3 documents use openapi: 3.x.y.',
+      'doc.noVersion': 'No "openapi" field (OpenAPI 3) or "swagger" field (Swagger 2.0) at the top level.',
+      'doc.badOpenapi': '"openapi" must be a version string such as "3.0.4", "3.1.1" or "3.2.0" (quote it in YAML). Got {got}.',
+      'schema.pathSlash': 'Path "{name}" must start with "/".',
+      'schema.required': 'Missing required field "{name}".',
+      'schema.requiredOneOf': 'Needs one of these fields: {names}.',
+      'schema.unknown': 'Field "{name}" is not allowed here.',
+      'schema.propertyName': 'Name "{name}" is not allowed here.',
+      'schema.type': 'Must be {type}.',
+      'schema.fieldType': '"{field}" must be {type}.',
+      'schema.fieldEnum': '"{field}" must be one of: {values}.',
+      'schema.enum': 'Must be one of: {values}.',
+      'schema.const': 'Must be {value}.',
+      'schema.pattern': 'Does not match the pattern {pattern}.',
+      'schema.format': 'Not a valid {format}.',
+      'schema.oneOf': 'Does not match any allowed form of this object.',
+      'schema.exampleBoth': '"example" and "examples" cannot be used together.',
+      'schema.limit': 'Breaks {keyword}: {limit}.',
+      'schema.unique': 'Items {i} and {j} are the same; items must be unique.',
+      'schema.false': 'Nothing is allowed here.',
+      'schema.other': 'Fails "{keyword}". {text}',
+      'schema.typeList30': 'OpenAPI 3.0 does not allow a list of types. Use one type with nullable: true; type lists such as [string, "null"] need OpenAPI 3.1.',
+      'schema.nullable31': '"nullable" is an OpenAPI 3.0 keyword and has no effect in 3.1 and later. Add "null" to type instead, for example type: [string, "null"].',
+      'ref.missing': 'Reference "{ref}" does not point to anything in this document.',
+      'ref.missingInFile': 'Reference "{ref}" does not point to anything in {file}.',
+      'ref.url': 'Reference "{ref}" is a URL. It was not fetched or checked.',
+      'ref.missingFile': 'Reference "{ref}" needs the file {file}. Add it under Other files to check it.',
+      'ref.anchor': 'Anchor reference "{ref}" was not checked.',
+      'ref.bad': 'Reference "{ref}" has invalid percent-encoding.',
+      'file.unused': '{file} is not referenced from the main document, so it was not checked.',
+      'bundle.truncated': 'The referenced files are too large to combine (more than {limit} objects); structure checks stop there.',
+      'path.undeclared': '{op}: path parameter "{name}" is not declared. Add a parameter with in: path and name: {name}.',
+      'path.extra': '{op}: parameter "{name}" has in: path, but the path has no {{name}}.',
+      'path.equivalent': 'Path "{path}" is the same template as "{other}" (only the parameter names differ). The specification does not allow both.',
+      'path.query': 'Path "{path}" contains a query string. Describe query parameters with in: query instead.',
+      'param.duplicate': 'Parameter "{name}" (in: {in}) is already item {other} of this list. Each name and location can appear only once.',
+      'opid.duplicate': 'operationId "{id}" is already used at {at}; it must be unique.',
+      'tag.duplicate': 'Tag "{name}" is already item {other} of tags; tag names must be unique.',
+      'security.undefined': 'Security scheme "{name}" is not declared in {container}.',
+      'server.varUndefined': 'Variable {{name}} in "{url}" has no entry in variables, so the URL cannot be expanded.',
+      'server.varRepeated': 'Variable {{name}} appears more than once in the URL (not allowed in OpenAPI 3.2).',
+      'server.varUnused': 'Variable "{name}" is not used in the server URL.',
+      'server.enumEmpty': 'The enum of variable "{name}" is empty.',
+      'server.defaultNotInEnum': 'Default "{value}" of variable "{name}" is not in its enum.',
+      'example.mismatch': 'Example does not match the schema{where}: {detail}{more}',
+      atPath: ' at {path}', moreErrors: ' (+{n} more)',
+      'example.schemaInvalid': 'Example not checked: its schema is not valid (see the errors above).',
+      'example.budget': 'Example checks stopped after {seconds} s; the remaining examples were not checked.',
+      'component.unused': '{kind} "{name}" is not referenced anywhere.',
+      'component.unusedMaybe': 'Some referenced files were not provided, so a component reported as unused may be used by them.',
+      'number.big': 'Integer {raw} is larger than 2^53. JavaScript tools, this one included, read it as an approximate value.',
+      'swagger.convert': 'Swagger 2.0 document, checked against the Swagger 2.0 schema. To move to OpenAPI 3, convert it (for example: npx swagger2openapi swagger.yaml -o openapi.yaml) and validate the result.',
+    },
+    kinds: { schemas: 'Schema', responses: 'Response', parameters: 'Parameter', examples: 'Example', requestBodies: 'Request body', headers: 'Header', securitySchemes: 'Security scheme', links: 'Link', callbacks: 'Callback', pathItems: 'Path item', mediaTypes: 'Media type', definitions: 'Definition', securityDefinitions: 'Security definition' },
+    yamlReasons: {
+      'duplicated mapping key': 'the same key appears twice in one mapping',
+      'bad indentation of a mapping entry': 'bad indentation of a key',
+      'bad indentation of a sequence entry': 'bad indentation of a list item',
+      'end of the stream or a document separator is expected': 'unexpected text; check indentation and quotes',
+      'expected a single document in the stream, but found more': 'more than one document (---) in the input',
+      'unexpected end of the stream within a flow collection': 'a { or [ is not closed',
+      'missed comma between flow collection entries': 'missing comma between items in { } or [ ]',
+      'tab characters must not be used in indentation': 'tabs are not allowed in indentation',
+      'can not read a block mapping entry; a multiline key may not be an implicit key': 'a key spans several lines or a colon is missing',
+      'can not read an implicit mapping pair; a colon is missed': 'a colon after a key is missing',
+      'unexpected end of the stream within a double quoted scalar': 'a "…" string is not closed',
+      'unexpected end of the stream within a single quoted scalar': "a '…' string is not closed",
+      'unknown escape sequence': 'unknown escape sequence in a "…" string',
+    },
+  },
+  zh: {
+    inputLabel: '主文档（YAML 或 JSON）',
+    inputPh: 'openapi: 3.1.0\ninfo:\n  title: 我的 API\n  version: 1.0.0\npaths: {}',
+    validate: '校验', open: '打开文件', folder: '打开文件夹', example: '示例', clear: '清空',
+    dropHint: '把 .yaml / .json 文件拖到这里。多个文件时，含 openapi 或 swagger 字段的那个作为主文档。',
+    idle: '粘贴 OpenAPI 或 Swagger 文档，或打开文件。',
+    loading: '正在加载校验程序…', running: '正在校验…',
+    autoOff: '内容较大（{mb} MB），点击「校验」后开始检查。',
+    resultOk: '{spec} {version}：有效，没有错误。',
+    resultBad: '{spec} {version}：无效。',
+    resultParse: '无法读取该文档。',
+    counts: '错误 {e} · 警告 {w} · 提示 {i}', took: '{s} 秒',
+    failed: '校验程序中止：{err}',
+    readFail: '无法读取 {file}。', skipped: '跳过了 {n} 个不是 .yaml、.yml 或 .json 的文件。',
+    tooBig: '文件合计超过 {mb} MB，未载入。',
+    filesTitle: '$ref 引用的其他文件（{n}）',
+    filesHint: '每个文件按 $ref 里写的路径命名，路径相对于主文档（例如 schemas/pet.yaml）。文件不会上传。',
+    fileName: '文件路径', fileText: '{file} 的内容', addFile: '添加文件', remove: '移除',
+    addMissing: '添加 {file}', mainFile: '主文件名',
+    filterAll: '全部', levelError: '错误', levelWarning: '警告', levelInfo: '提示',
+    jump: '在 {file} 中显示第 {line} 行', showAll: '显示全部 {n} 条', copy: '复制结果', copied: '已复制', copyFail: '复制失败。',
+    summaryTitle: '概要', sumTitle: 'API 名称', sumVersion: 'API 版本', sumSpec: '规范',
+    sumPaths: '路径', sumOps: '接口', sumWebhooks: 'Webhook', sumComponents: '组件', sumServers: '服务器', sumFiles: '文件',
+    msg: {
+      'parse.yaml': 'YAML / JSON 语法错误：{reason}。',
+      'doc.notObject': '文档顶层必须是对象（key: value 形式）。',
+      'doc.swaggerVersion': 'swagger 的值是 {got}；Swagger 只有 "2.0" 一个版本。OpenAPI 3 文档请写 openapi: 3.x.y。',
+      'doc.noVersion': '顶层没有 "openapi" 字段（OpenAPI 3）或 "swagger" 字段（Swagger 2.0）。',
+      'doc.badOpenapi': '"openapi" 必须是 "3.0.4"、"3.1.1"、"3.2.0" 这样的版本字符串（YAML 中加引号）。实际值：{got}。',
+      'schema.pathSlash': '路径 "{name}" 必须以 "/" 开头。',
+      'schema.required': '缺少必填字段 "{name}"。',
+      'schema.requiredOneOf': '需要以下字段之一：{names}。',
+      'schema.unknown': '此处不允许字段 "{name}"。',
+      'schema.propertyName': '此处不允许名称 "{name}"。',
+      'schema.type': '类型应为 {type}。',
+      'schema.fieldType': '"{field}" 的类型应为 {type}。',
+      'schema.fieldEnum': '"{field}" 只能取以下值之一：{values}。',
+      'schema.enum': '只能取以下值之一：{values}。',
+      'schema.const': '必须是 {value}。',
+      'schema.pattern': '不符合格式 {pattern}。',
+      'schema.format': '不是有效的 {format}。',
+      'schema.oneOf': '不符合该对象允许的任何一种写法。',
+      'schema.exampleBoth': '"example" 与 "examples" 不能同时使用。',
+      'schema.limit': '不满足 {keyword}: {limit}。',
+      'schema.unique': '第 {i} 项与第 {j} 项相同，列表项不能重复。',
+      'schema.false': '此处不允许任何值。',
+      'schema.other': '未通过 "{keyword}"。{text}',
+      'schema.typeList30': 'OpenAPI 3.0 不允许把 type 写成列表。请写单个类型并加 nullable: true；[string, "null"] 这类写法要 OpenAPI 3.1。',
+      'schema.nullable31': '"nullable" 是 OpenAPI 3.0 的关键字，在 3.1 及以后不起作用。请把 "null" 加进 type，例如 type: [string, "null"]。',
+      'ref.missing': '引用 "{ref}" 在本文档中找不到目标。',
+      'ref.missingInFile': '引用 "{ref}" 在 {file} 中找不到目标。',
+      'ref.url': '引用 "{ref}" 是网址，未下载也未检查。',
+      'ref.missingFile': '引用 "{ref}" 需要文件 {file}。在「其他文件」中添加后即可检查。',
+      'ref.anchor': '锚点引用 "{ref}" 未检查。',
+      'ref.bad': '引用 "{ref}" 的百分号编码无效。',
+      'file.unused': '{file} 没有被主文档引用，未检查。',
+      'bundle.truncated': '被引用的文件太大，无法合并（超过 {limit} 个对象），结构检查到此为止。',
+      'path.undeclared': '{op}：路径参数 "{name}" 没有声明。请添加 in: path、name: {name} 的参数。',
+      'path.extra': '{op}：参数 "{name}" 写了 in: path，但路径里没有 {{name}}。',
+      'path.equivalent': '路径 "{path}" 与 "{other}" 是同一个模板（只有参数名不同），规范不允许两者并存。',
+      'path.query': '路径 "{path}" 带有查询字符串。查询参数应写成 in: query 的参数。',
+      'param.duplicate': '参数 "{name}"（in: {in}）已在本列表第 {other} 项出现。同一名称与位置只能出现一次。',
+      'opid.duplicate': 'operationId "{id}" 已在 {at} 使用，必须唯一。',
+      'tag.duplicate': '标签 "{name}" 已在 tags 第 {other} 项声明，标签名必须唯一。',
+      'security.undefined': '安全方案 "{name}" 没有在 {container} 中声明。',
+      'server.varUndefined': '"{url}" 中的变量 {{name}} 没有在 variables 中定义，地址无法展开。',
+      'server.varRepeated': '变量 {{name}} 在地址中出现了不止一次（OpenAPI 3.2 不允许）。',
+      'server.varUnused': '变量 "{name}" 没有出现在服务器地址中。',
+      'server.enumEmpty': '变量 "{name}" 的 enum 为空。',
+      'server.defaultNotInEnum': '变量 "{name}" 的默认值 "{value}" 不在 enum 中。',
+      'example.mismatch': '示例与 schema 不符{where}：{detail}{more}',
+      atPath: '（位置 {path}）', moreErrors: '（另有 {n} 处）',
+      'example.schemaInvalid': '未检查该示例：它的 schema 本身有误（见上方错误）。',
+      'example.budget': '示例检查在 {seconds} 秒后停止，其余示例未检查。',
+      'component.unused': '{kind} "{name}" 没有被任何地方引用。',
+      'component.unusedMaybe': '有被引用的文件没有提供，标为未使用的组件可能正被这些文件使用。',
+      'number.big': '整数 {raw} 超过 2^53，JavaScript 工具（包括本工具）读到的是近似值。',
+      'swagger.convert': 'Swagger 2.0 文档，已按 Swagger 2.0 的 schema 校验。如需迁移到 OpenAPI 3，可先转换（例如 npx swagger2openapi swagger.yaml -o openapi.yaml），再校验转换结果。',
+    },
+    kinds: { schemas: 'Schema', responses: '响应', parameters: '参数', examples: '示例', requestBodies: '请求体', headers: '响应头', securitySchemes: '安全方案', links: 'Link', callbacks: '回调', pathItems: '路径项', mediaTypes: '媒体类型', definitions: '定义', securityDefinitions: '安全定义' },
+    yamlReasons: {
+      'duplicated mapping key': '同一层级出现了重复的键',
+      'bad indentation of a mapping entry': '键的缩进不对',
+      'bad indentation of a sequence entry': '列表项的缩进不对',
+      'end of the stream or a document separator is expected': '出现了多余的文本，请检查缩进和引号',
+      'expected a single document in the stream, but found more': '输入中有多个文档（---）',
+      'unexpected end of the stream within a flow collection': '{ 或 [ 没有闭合',
+      'missed comma between flow collection entries': '{ } 或 [ ] 中的项之间缺少逗号',
+      'tab characters must not be used in indentation': '缩进中不能使用制表符',
+      'can not read a block mapping entry; a multiline key may not be an implicit key': '键跨了多行，或缺少冒号',
+      'can not read an implicit mapping pair; a colon is missed': '键后面缺少冒号',
+      'unexpected end of the stream within a double quoted scalar': '双引号字符串没有闭合',
+      'unexpected end of the stream within a single quoted scalar': '单引号字符串没有闭合',
+      'unknown escape sequence': '双引号字符串中有未知的转义序列',
+    },
+  },
+  ja: {
+    inputLabel: 'メインのドキュメント（YAML または JSON）',
+    inputPh: 'openapi: 3.1.0\ninfo:\n  title: サンプル API\n  version: 1.0.0\npaths: {}',
+    validate: '検証', open: 'ファイルを開く', folder: 'フォルダを開く', example: 'サンプル', clear: 'クリア',
+    dropHint: '.yaml / .json ファイルをここにドロップ。複数のときは openapi または swagger フィールドを持つファイルがメインになります。',
+    idle: 'OpenAPI / Swagger のドキュメントを貼り付けるか、ファイルを開いてください。',
+    loading: '検証プログラムを読み込んでいます…', running: '検証しています…',
+    autoOff: '大きな入力（{mb} MB）です。「検証」を押すと確認します。',
+    resultOk: '{spec} {version}：有効です。エラーはありません。',
+    resultBad: '{spec} {version}：無効です。',
+    resultParse: 'ドキュメントを読み込めませんでした。',
+    counts: 'エラー {e} · 警告 {w} · 情報 {i}', took: '{s} 秒',
+    failed: '検証プログラムが停止しました：{err}',
+    readFail: '{file} を読み込めませんでした。', skipped: '.yaml / .yml / .json 以外の {n} ファイルをスキップしました。',
+    tooBig: '合計 {mb} MB を超えるファイルは読み込みません。',
+    filesTitle: '$ref で参照する他のファイル（{n}）',
+    filesHint: '各ファイルには $ref に書かれたパス（メインのドキュメントからの相対パス。例：schemas/pet.yaml）を付けてください。ファイルはアップロードされません。',
+    fileName: 'ファイルのパス', fileText: '{file} の内容', addFile: 'ファイルを追加', remove: '削除',
+    addMissing: '{file} を追加', mainFile: 'メインのファイル名',
+    filterAll: 'すべて', levelError: 'エラー', levelWarning: '警告', levelInfo: '情報',
+    jump: '{file} の {line} 行目を表示', showAll: '全 {n} 件を表示', copy: '結果をコピー', copied: 'コピーしました', copyFail: 'コピーできませんでした。',
+    summaryTitle: '概要', sumTitle: 'API 名', sumVersion: 'API バージョン', sumSpec: '仕様',
+    sumPaths: 'パス', sumOps: 'オペレーション', sumWebhooks: 'Webhook', sumComponents: 'コンポーネント', sumServers: 'サーバー', sumFiles: 'ファイル',
+    msg: {
+      'parse.yaml': 'YAML / JSON の構文エラー：{reason}。',
+      'doc.notObject': 'ドキュメントの最上位はオブジェクト（key: value の形）である必要があります。',
+      'doc.swaggerVersion': 'swagger の値が {got} です。Swagger のバージョンは "2.0" だけです。OpenAPI 3 では openapi: 3.x.y と書きます。',
+      'doc.noVersion': '最上位に "openapi"（OpenAPI 3）または "swagger"（Swagger 2.0）フィールドがありません。',
+      'doc.badOpenapi': '"openapi" は "3.0.4"、"3.1.1"、"3.2.0" のようなバージョン文字列にしてください（YAML では引用符で囲む）。実際の値：{got}。',
+      'schema.pathSlash': 'パス "{name}" は "/" で始める必要があります。',
+      'schema.required': '必須フィールド "{name}" がありません。',
+      'schema.requiredOneOf': '次のフィールドのどれかが必要です：{names}。',
+      'schema.unknown': 'ここではフィールド "{name}" を使えません。',
+      'schema.propertyName': 'ここでは名前 "{name}" を使えません。',
+      'schema.type': '型は {type} である必要があります。',
+      'schema.fieldType': '"{field}" の型は {type} である必要があります。',
+      'schema.fieldEnum': '"{field}" は次のいずれかにしてください：{values}。',
+      'schema.enum': '次のいずれかにしてください：{values}。',
+      'schema.const': '{value} である必要があります。',
+      'schema.pattern': 'パターン {pattern} に一致しません。',
+      'schema.format': '有効な {format} ではありません。',
+      'schema.oneOf': 'このオブジェクトで許される形のどれにも一致しません。',
+      'schema.exampleBoth': '"example" と "examples" は同時に使えません。',
+      'schema.limit': '{keyword}: {limit} を満たしていません。',
+      'schema.unique': '{i} 番目と {j} 番目の項目が同じです。項目は重複できません。',
+      'schema.false': 'ここには何も書けません。',
+      'schema.other': '"{keyword}" を満たしていません。{text}',
+      'schema.typeList30': 'OpenAPI 3.0 では type を配列にできません。型を 1 つにして nullable: true を付けてください。[string, "null"] のような書き方は OpenAPI 3.1 からです。',
+      'schema.nullable31': '"nullable" は OpenAPI 3.0 のキーワードで、3.1 以降では効果がありません。type に "null" を加えてください（例：type: [string, "null"]）。',
+      'ref.missing': '参照 "{ref}" の参照先がこのドキュメント内にありません。',
+      'ref.missingInFile': '参照 "{ref}" の参照先が {file} にありません。',
+      'ref.url': '参照 "{ref}" は URL です。取得も確認もしていません。',
+      'ref.missingFile': '参照 "{ref}" にはファイル {file} が必要です。「他のファイル」に追加すると確認できます。',
+      'ref.anchor': 'アンカー参照 "{ref}" は確認していません。',
+      'ref.bad': '参照 "{ref}" のパーセントエンコーディングが不正です。',
+      'file.unused': '{file} はメインのドキュメントから参照されていないため、確認していません。',
+      'bundle.truncated': '参照先のファイルが大きすぎて結合できません（オブジェクト数 {limit} 超）。構造の確認はここまでです。',
+      'path.undeclared': '{op}：パスパラメーター "{name}" が宣言されていません。in: path、name: {name} のパラメーターを追加してください。',
+      'path.extra': '{op}：パラメーター "{name}" は in: path ですが、パスに {{name}} がありません。',
+      'path.equivalent': 'パス "{path}" は "{other}" と同じテンプレートです（パラメーター名が違うだけ）。仕様では両方を置けません。',
+      'path.query': 'パス "{path}" にクエリ文字列が含まれています。クエリパラメーターは in: query で書いてください。',
+      'param.duplicate': 'パラメーター "{name}"（in: {in}）はこのリストの {other} 番目にもあります。同じ名前と場所の組み合わせは 1 回だけです。',
+      'opid.duplicate': 'operationId "{id}" は {at} で使われています。一意である必要があります。',
+      'tag.duplicate': 'タグ "{name}" は tags の {other} 番目で宣言済みです。タグ名は一意である必要があります。',
+      'security.undefined': 'セキュリティスキーム "{name}" が {container} に宣言されていません。',
+      'server.varUndefined': '"{url}" の変数 {{name}} が variables にないため、URL を展開できません。',
+      'server.varRepeated': '変数 {{name}} が URL に 2 回以上出てきます（OpenAPI 3.2 では不可）。',
+      'server.varUnused': '変数 "{name}" はサーバーの URL で使われていません。',
+      'server.enumEmpty': '変数 "{name}" の enum が空です。',
+      'server.defaultNotInEnum': '変数 "{name}" のデフォルト値 "{value}" が enum にありません。',
+      'example.mismatch': 'サンプル値がスキーマと一致しません{where}：{detail}{more}',
+      atPath: '（{path}）', moreErrors: '（ほか {n} 件）',
+      'example.schemaInvalid': 'このサンプル値は確認していません。スキーマ自体に誤りがあります（上のエラーを参照）。',
+      'example.budget': 'サンプル値の確認は {seconds} 秒で打ち切りました。残りは確認していません。',
+      'component.unused': '{kind} "{name}" はどこからも参照されていません。',
+      'component.unusedMaybe': '参照先のファイルが一部ないため、未使用と表示したコンポーネントがそのファイルで使われている可能性があります。',
+      'number.big': '整数 {raw} は 2^53 を超えています。JavaScript のツール（このツールも含む）では近似値として読まれます。',
+      'swagger.convert': 'Swagger 2.0 のドキュメントです。Swagger 2.0 のスキーマで検証しました。OpenAPI 3 に移行するなら変換して（例：npx swagger2openapi swagger.yaml -o openapi.yaml）、結果を検証してください。',
+    },
+    kinds: { schemas: 'スキーマ', responses: 'レスポンス', parameters: 'パラメーター', examples: 'サンプル', requestBodies: 'リクエストボディ', headers: 'ヘッダー', securitySchemes: 'セキュリティスキーム', links: 'リンク', callbacks: 'コールバック', pathItems: 'パスアイテム', mediaTypes: 'メディアタイプ', definitions: '定義', securityDefinitions: 'セキュリティ定義' },
+    yamlReasons: {
+      'duplicated mapping key': '同じ階層に同じキーが 2 回あります',
+      'bad indentation of a mapping entry': 'キーのインデントがずれています',
+      'bad indentation of a sequence entry': 'リスト項目のインデントがずれています',
+      'end of the stream or a document separator is expected': '余分な文字があります。インデントと引用符を確認してください',
+      'expected a single document in the stream, but found more': '入力に複数のドキュメント（---）があります',
+      'unexpected end of the stream within a flow collection': '{ または [ が閉じていません',
+      'missed comma between flow collection entries': '{ } や [ ] の項目の間にカンマがありません',
+      'tab characters must not be used in indentation': 'インデントにタブは使えません',
+      'can not read a block mapping entry; a multiline key may not be an implicit key': 'キーが複数行にまたがっているか、コロンがありません',
+      'can not read an implicit mapping pair; a colon is missed': 'キーの後のコロンがありません',
+      'unexpected end of the stream within a double quoted scalar': '"…" の文字列が閉じていません',
+      'unexpected end of the stream within a single quoted scalar': "'…' の文字列が閉じていません",
+      'unknown escape sequence': '"…" の文字列に不明なエスケープがあります',
+    },
+  },
+  ko: {
+    inputLabel: '메인 문서 (YAML 또는 JSON)',
+    inputPh: 'openapi: 3.1.0\ninfo:\n  title: 샘플 API\n  version: 1.0.0\npaths: {}',
+    validate: '검증', open: '파일 열기', folder: '폴더 열기', example: '예제', clear: '지우기',
+    dropHint: '.yaml / .json 파일을 여기에 놓으세요. 여러 파일이면 openapi 또는 swagger 필드가 있는 파일이 메인 문서가 됩니다.',
+    idle: 'OpenAPI 또는 Swagger 문서를 붙여넣거나 파일을 여세요.',
+    loading: '검증기를 불러오는 중…', running: '검증하는 중…',
+    autoOff: '큰 입력({mb} MB)입니다. 「검증」을 누르면 확인합니다.',
+    resultOk: '{spec} {version}: 유효합니다. 오류가 없습니다.',
+    resultBad: '{spec} {version}: 유효하지 않습니다.',
+    resultParse: '문서를 읽을 수 없습니다.',
+    counts: '오류 {e} · 경고 {w} · 정보 {i}', took: '{s}초',
+    failed: '검증기가 중단되었습니다: {err}',
+    readFail: '{file}을(를) 읽을 수 없습니다.', skipped: '.yaml, .yml, .json이 아닌 파일 {n}개를 건너뛰었습니다.',
+    tooBig: '합계 {mb} MB를 넘는 파일은 불러오지 않습니다.',
+    filesTitle: '$ref로 참조하는 다른 파일 ({n})',
+    filesHint: '각 파일 이름은 $ref에 적힌 경로(메인 문서 기준 상대 경로, 예: schemas/pet.yaml)로 정하세요. 파일은 업로드되지 않습니다.',
+    fileName: '파일 경로', fileText: '{file} 내용', addFile: '파일 추가', remove: '삭제',
+    addMissing: '{file} 추가', mainFile: '메인 파일 이름',
+    filterAll: '전체', levelError: '오류', levelWarning: '경고', levelInfo: '정보',
+    jump: '{file}의 {line}번째 줄 보기', showAll: '{n}개 모두 보기', copy: '결과 복사', copied: '복사됨', copyFail: '복사하지 못했습니다.',
+    summaryTitle: '요약', sumTitle: 'API 이름', sumVersion: 'API 버전', sumSpec: '사양',
+    sumPaths: '경로', sumOps: '오퍼레이션', sumWebhooks: '웹훅', sumComponents: '컴포넌트', sumServers: '서버', sumFiles: '파일',
+    msg: {
+      'parse.yaml': 'YAML / JSON 문법 오류: {reason}.',
+      'doc.notObject': '문서 최상위는 객체(key: value 형태)여야 합니다.',
+      'doc.swaggerVersion': 'swagger 값이 {got}입니다. Swagger 버전은 "2.0"뿐입니다. OpenAPI 3 문서는 openapi: 3.x.y로 씁니다.',
+      'doc.noVersion': '최상위에 "openapi"(OpenAPI 3) 또는 "swagger"(Swagger 2.0) 필드가 없습니다.',
+      'doc.badOpenapi': '"openapi"는 "3.0.4", "3.1.1", "3.2.0" 같은 버전 문자열이어야 합니다(YAML에서는 따옴표로 감싸기). 실제 값: {got}.',
+      'schema.pathSlash': '경로 "{name}"은(는) "/"로 시작해야 합니다.',
+      'schema.required': '필수 필드 "{name}"이(가) 없습니다.',
+      'schema.requiredOneOf': '다음 필드 중 하나가 필요합니다: {names}.',
+      'schema.unknown': '여기에는 필드 "{name}"을(를) 쓸 수 없습니다.',
+      'schema.propertyName': '여기에는 이름 "{name}"을(를) 쓸 수 없습니다.',
+      'schema.type': '타입은 {type}이어야 합니다.',
+      'schema.fieldType': '"{field}"의 타입은 {type}이어야 합니다.',
+      'schema.fieldEnum': '"{field}"은(는) 다음 중 하나여야 합니다: {values}.',
+      'schema.enum': '다음 중 하나여야 합니다: {values}.',
+      'schema.const': '{value}이어야 합니다.',
+      'schema.pattern': '패턴 {pattern}과(와) 맞지 않습니다.',
+      'schema.format': '올바른 {format}이(가) 아닙니다.',
+      'schema.oneOf': '이 객체에 허용된 어떤 형태와도 맞지 않습니다.',
+      'schema.exampleBoth': '"example"과 "examples"는 함께 쓸 수 없습니다.',
+      'schema.limit': '{keyword}: {limit} 조건을 어깁니다.',
+      'schema.unique': '{i}번째와 {j}번째 항목이 같습니다. 항목은 중복될 수 없습니다.',
+      'schema.false': '여기에는 아무 값도 쓸 수 없습니다.',
+      'schema.other': '"{keyword}"을(를) 통과하지 못했습니다. {text}',
+      'schema.typeList30': 'OpenAPI 3.0에서는 type을 배열로 쓸 수 없습니다. 타입 하나에 nullable: true를 붙이세요. [string, "null"] 같은 표기는 OpenAPI 3.1부터입니다.',
+      'schema.nullable31': '"nullable"은 OpenAPI 3.0 키워드라 3.1 이후에는 효과가 없습니다. type에 "null"을 추가하세요(예: type: [string, "null"]).',
+      'ref.missing': '참조 "{ref}"의 대상이 이 문서에 없습니다.',
+      'ref.missingInFile': '참조 "{ref}"의 대상이 {file}에 없습니다.',
+      'ref.url': '참조 "{ref}"는 URL입니다. 가져오지도 확인하지도 않았습니다.',
+      'ref.missingFile': '참조 "{ref}"에는 파일 {file}이(가) 필요합니다. 「다른 파일」에 추가하면 확인합니다.',
+      'ref.anchor': '앵커 참조 "{ref}"는 확인하지 않았습니다.',
+      'ref.bad': '참조 "{ref}"의 퍼센트 인코딩이 잘못되었습니다.',
+      'file.unused': '{file}은(는) 메인 문서에서 참조하지 않아 확인하지 않았습니다.',
+      'bundle.truncated': '참조한 파일이 너무 커서 합칠 수 없습니다(객체 {limit}개 초과). 구조 확인은 여기까지입니다.',
+      'path.undeclared': '{op}: 경로 파라미터 "{name}"이(가) 선언되지 않았습니다. in: path, name: {name} 파라미터를 추가하세요.',
+      'path.extra': '{op}: 파라미터 "{name}"은(는) in: path인데 경로에 {{name}}이(가) 없습니다.',
+      'path.equivalent': '경로 "{path}"는 "{other}"와 같은 템플릿입니다(파라미터 이름만 다름). 사양상 둘 다 둘 수 없습니다.',
+      'path.query': '경로 "{path}"에 쿼리 문자열이 있습니다. 쿼리 파라미터는 in: query로 쓰세요.',
+      'param.duplicate': '파라미터 "{name}"(in: {in})이(가) 이 목록의 {other}번째에도 있습니다. 같은 이름과 위치는 한 번만 쓸 수 있습니다.',
+      'opid.duplicate': 'operationId "{id}"는 {at}에서 이미 쓰였습니다. 고유해야 합니다.',
+      'tag.duplicate': '태그 "{name}"은(는) tags의 {other}번째에 이미 선언되었습니다. 태그 이름은 고유해야 합니다.',
+      'security.undefined': '보안 스킴 "{name}"이(가) {container}에 선언되지 않았습니다.',
+      'server.varUndefined': '"{url}"의 변수 {{name}}이(가) variables에 없어 URL을 완성할 수 없습니다.',
+      'server.varRepeated': '변수 {{name}}이(가) URL에 두 번 이상 나옵니다(OpenAPI 3.2에서는 불가).',
+      'server.varUnused': '변수 "{name}"이(가) 서버 URL에 쓰이지 않았습니다.',
+      'server.enumEmpty': '변수 "{name}"의 enum이 비어 있습니다.',
+      'server.defaultNotInEnum': '변수 "{name}"의 기본값 "{value}"이(가) enum에 없습니다.',
+      'example.mismatch': '예제가 스키마와 맞지 않습니다{where}: {detail}{more}',
+      atPath: ' ({path})', moreErrors: ' (외 {n}건)',
+      'example.schemaInvalid': '이 예제는 확인하지 않았습니다. 스키마 자체에 오류가 있습니다(위 오류 참고).',
+      'example.budget': '예제 확인을 {seconds}초에서 멈췄습니다. 나머지 예제는 확인하지 않았습니다.',
+      'component.unused': '{kind} "{name}"을(를) 참조하는 곳이 없습니다.',
+      'component.unusedMaybe': '참조한 파일 일부가 없어서, 미사용으로 표시된 컴포넌트를 그 파일이 쓰고 있을 수 있습니다.',
+      'number.big': '정수 {raw}는 2^53보다 큽니다. JavaScript 도구(이 도구 포함)는 근삿값으로 읽습니다.',
+      'swagger.convert': 'Swagger 2.0 문서이며 Swagger 2.0 스키마로 검증했습니다. OpenAPI 3로 옮기려면 변환한 뒤(예: npx swagger2openapi swagger.yaml -o openapi.yaml) 결과를 다시 검증하세요.',
+    },
+    kinds: { schemas: '스키마', responses: '응답', parameters: '파라미터', examples: '예제', requestBodies: '요청 본문', headers: '헤더', securitySchemes: '보안 스킴', links: '링크', callbacks: '콜백', pathItems: '경로 항목', mediaTypes: '미디어 타입', definitions: '정의', securityDefinitions: '보안 정의' },
+    yamlReasons: {
+      'duplicated mapping key': '같은 단계에 같은 키가 두 번 있습니다',
+      'bad indentation of a mapping entry': '키의 들여쓰기가 맞지 않습니다',
+      'bad indentation of a sequence entry': '목록 항목의 들여쓰기가 맞지 않습니다',
+      'end of the stream or a document separator is expected': '불필요한 텍스트가 있습니다. 들여쓰기와 따옴표를 확인하세요',
+      'expected a single document in the stream, but found more': '입력에 문서(---)가 여러 개 있습니다',
+      'unexpected end of the stream within a flow collection': '{ 또는 [가 닫히지 않았습니다',
+      'missed comma between flow collection entries': '{ } 또는 [ ] 안의 항목 사이에 쉼표가 없습니다',
+      'tab characters must not be used in indentation': '들여쓰기에 탭을 쓸 수 없습니다',
+      'can not read a block mapping entry; a multiline key may not be an implicit key': '키가 여러 줄에 걸쳐 있거나 콜론이 없습니다',
+      'can not read an implicit mapping pair; a colon is missed': '키 뒤에 콜론이 없습니다',
+      'unexpected end of the stream within a double quoted scalar': '"…" 문자열이 닫히지 않았습니다',
+      'unexpected end of the stream within a single quoted scalar': "'…' 문자열이 닫히지 않았습니다",
+      'unknown escape sequence': '"…" 문자열에 알 수 없는 이스케이프가 있습니다',
+    },
+  },
+};
+// strings:end
+
+const EXAMPLE = `openapi: 3.1.0
 info:
-  title: My API
-  version: &quot;1.0.0&quot;
+  title: Orders API
+  version: 1.0.0
+servers:
+  - url: https://{region}.api.example.com/v1
+    variables:
+      region:
+        default: eu
+        enum: [us, eu]
+security:
+  - bearerAuth: []
 paths:
-  /users:
+  /orders/{orderId}:
     get:
-      summary: List users
+      operationId: getOrder
       responses:
-        &quot;200&quot;:
-          description: OK"
-      ></textarea>
-    </div>
+        "200":
+          description: One order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+              example:
+                id: 42
+                status: shipped
+                total: "19.90"
+components:
+  schemas:
+    Order:
+      type: object
+      required: [id, status, total]
+      properties:
+        id: {type: integer}
+        status: {type: string, enum: [pending, paid, shipped]}
+        total: {type: number}
+    Customer:
+      type: object
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+`;
 
-    <div class="ov-actions">
-      <button id="ov-validate" type="button" data-i18n="validate">Validate</button>
-      <button id="ov-clear" type="button" data-i18n="clear">Clear</button>
-    </div>
+const T = STRINGS[lang];
+---
 
-    <div id="ov-result" class="ov-result" aria-live="polite"></div>
+<div class="oav-wrap" id="oav-wrap" data-strings={JSON.stringify(T)} data-example={EXAMPLE}>
+  <div class="oav-bar">
+    <button id="oav-validate" class="btn-primary" type="button">{T.validate}</button>
+    <button id="oav-open" class="btn-secondary" type="button">{T.open}</button>
+    <button id="oav-folder" class="btn-ghost oav-desktop" type="button">{T.folder}</button>
+    <button id="oav-example" class="btn-ghost" type="button">{T.example}</button>
+    <button id="oav-clear" class="btn-ghost" type="button">{T.clear}</button>
+    <input id="oav-file" type="file" multiple accept=".yaml,.yml,.json,application/json,application/yaml,text/yaml" hidden />
+    <input id="oav-dir" type="file" webkitdirectory multiple hidden />
   </div>
 
-  <script is:inline>
-    /* Apply i18n synchronously to prevent FOUC */
-    (function () {
-      var STRINGS = {
-        en: { inputLabel: 'OpenAPI Spec (YAML or JSON)', clear: 'Clear', validate: 'Validate' },
-        zh: { inputLabel: 'OpenAPI 规范（YAML 或 JSON）', clear: '清空', validate: '验证' },
-        ja: { inputLabel: 'OpenAPI 仕様（YAML または JSON）', clear: 'クリア', validate: '検証' },
-        ko: { inputLabel: 'OpenAPI 스펙 (YAML 또는 JSON)', clear: '지우기', validate: '검증' }
-      };
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('.ov-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-    })();
-  </script>
+  <div class="oav-main" id="oav-drop">
+    <label for="oav-input" class="tool-label oav-label">{T.inputLabel} <span class="oav-rootname" id="oav-rootname"></span></label>
+    <textarea id="oav-input" class="tool-textarea oav-input" rows="12" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder={T.inputPh} aria-describedby="oav-status"></textarea>
+    <p class="oav-hint oav-desktop">{T.dropHint}</p>
+  </div>
 
-  <script>
-    import jsyaml from 'js-yaml';
+  <p id="oav-status" class="oav-status" role="status" aria-live="polite">{T.idle}</p>
 
-    /* Ajv and the schemas (about 100 KB of JSON) load on the first validation. */
-    let validatorsPromise: Promise<any> | null = null;
-    function loadValidators(): Promise<any> {
-      if (!validatorsPromise) {
-        validatorsPromise = Promise.all([
-          import('ajv'),
-          import('ajv/dist/2020'),
-          import('ajv-formats'),
-          import('../../data/openapi-schemas/oas-3.0-2024-10-18.json'),
-          import('../../data/openapi-schemas/oas-3.1-2026-08-03.json'),
-          import('../../data/openapi-schemas/oas-3.2-2026-08-30.json'),
-        ]).then(function (m: any[]) {
-          return createValidators(
-            { Ajv: m[0].default, Ajv2020: m[1].default, addFormats: m[2].default },
-            { '3.0': m[3].default, '3.1': m[4].default, '3.2': m[5].default }
-          );
-        });
-      }
-      return validatorsPromise;
-    }
+  <div id="oav-results" class="oav-results" hidden>
+    <div class="oav-filters" role="group">
+      <button type="button" class="oav-filter" data-level="all" aria-pressed="true"></button>
+      <button type="button" class="oav-filter" data-level="error" aria-pressed="false"></button>
+      <button type="button" class="oav-filter" data-level="warning" aria-pressed="false"></button>
+      <button type="button" class="oav-filter" data-level="info" aria-pressed="false"></button>
+      <button type="button" id="oav-copy" class="btn-copy oav-copy">{T.copy}</button>
+    </div>
+    <ol id="oav-list" class="oav-list"></ol>
+    <button type="button" id="oav-more" class="btn-ghost oav-more" hidden></button>
+    <div id="oav-missing" class="oav-missing" hidden></div>
+    <section id="oav-summary" class="oav-summary" hidden>
+      <h3 class="oav-sub">{T.summaryTitle}</h3>
+      <dl id="oav-summary-list"></dl>
+    </section>
+  </div>
 
-    const STRINGS = {
-      en: {
-        msgEmpty: 'Paste an OpenAPI spec above and click Validate.',
-        msgValid: 'Valid OpenAPI spec',
-        msgInvalid: 'Invalid OpenAPI spec',
-        specTitle: 'API Title',
-        specVersion: 'Version',
-        specOas: 'OpenAPI Version',
-        specPaths: 'Paths',
-        specOps: 'Operations',
-        specServers: 'Servers',
-        errorsFound: 'error(s) found',
-        errPath: 'Path',
-        errMessage: 'Message',
-        notices: 'Not checked',
-        loadFailed: 'Could not load the validator. Check your connection and try again.'
-      },
-      zh: {
-        msgEmpty: '请在上方粘贴 OpenAPI 规范，然后点击验证。',
-        msgValid: 'OpenAPI 规范有效',
-        msgInvalid: 'OpenAPI 规范无效',
-        specTitle: 'API 名称',
-        specVersion: '版本',
-        specOas: 'OpenAPI 版本',
-        specPaths: '路径数',
-        specOps: '接口数',
-        specServers: '服务器',
-        errorsFound: '个错误',
-        errPath: '路径',
-        errMessage: '信息',
-        notices: '未检查',
-        loadFailed: '校验器加载失败，请检查网络后重试。'
-      },
-      ja: {
-        msgEmpty: '上にOpenAPI仕様を貼り付けて検証をクリックしてください。',
-        msgValid: '有効なOpenAPI仕様',
-        msgInvalid: '無効なOpenAPI仕様',
-        specTitle: 'API タイトル',
-        specVersion: 'バージョン',
-        specOas: 'OpenAPI バージョン',
-        specPaths: 'パス数',
-        specOps: 'オペレーション数',
-        specServers: 'サーバー',
-        errorsFound: '件のエラー',
-        errPath: 'パス',
-        errMessage: 'メッセージ',
-        notices: '未確認',
-        loadFailed: '検証プログラムを読み込めませんでした。接続を確認して再試行してください。'
-      },
-      ko: {
-        msgEmpty: '위에 OpenAPI 스펙을 붙여넣고 검증을 클릭하세요.',
-        msgValid: '유효한 OpenAPI 스펙',
-        msgInvalid: '유효하지 않은 OpenAPI 스펙',
-        specTitle: 'API 제목',
-        specVersion: '버전',
-        specOas: 'OpenAPI 버전',
-        specPaths: '경로',
-        specOps: '오퍼레이션',
-        specServers: '서버',
-        errorsFound: '개 오류 발견',
-        errPath: '경로',
-        errMessage: '메시지',
-        notices: '확인하지 않음',
-        loadFailed: '검증기를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.'
-      }
-    };
-
-    const pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-    const t = (STRINGS as any)[pageLang] || STRINGS.en;
-
-    const inputEl    = document.getElementById('ov-input') as HTMLTextAreaElement;
-    const resultEl   = document.getElementById('ov-result')!;
-    const validateBtn = document.getElementById('ov-validate')!;
-    const clearBtn   = document.getElementById('ov-clear')!;
-
-    /* ── engine:start ── */
-    /* Structure: the official OpenAPI JSON Schemas (spec.openapis.org; 3.0 is draft-04 and is
-       converted to draft-07 for Ajv, 3.1 / 3.2 are draft 2020-12). These schemas do not follow
-       $ref and do not check rules written only in prose, so three checks are added: every
-       internal $ref points to something, path template names match path parameters, and
-       operationId values are unique. External references are listed, not fetched. */
-    var METHODS = {
-      '3.0': ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'],
-      '3.1': ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'],
-      '3.2': ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace', 'query'],
-    };
-
-    /* draft-04 → draft-07: `id` becomes `$id`, boolean exclusiveMinimum / exclusiveMaximum
-       become the numeric form. Keys under properties / patternProperties / definitions are
-       names, not keywords, and are left alone. */
-    function fromDraft04(schema) {
-      function walk(node) {
-        if (Array.isArray(node)) return node.map(walk);
-        if (!node || typeof node !== 'object') return node;
-        var out = {};
-        Object.keys(node).forEach(function (k) {
-          var v = node[k];
-          if (k === 'properties' || k === 'patternProperties' || k === 'definitions') {
-            var map = {};
-            Object.keys(v).forEach(function (name) { map[name] = walk(v[name]); });
-            out[k] = map;
-          } else if (k === 'id' && typeof v === 'string') {
-            out.$id = v;
-          } else if (k === '$schema') {
-            out.$schema = 'http://json-schema.org/draft-07/schema#';
-          } else if ((k === 'exclusiveMinimum' || k === 'exclusiveMaximum') && typeof v === 'boolean') {
-            // handled with minimum / maximum below
-          } else {
-            out[k] = walk(v);
-          }
-        });
-        if (node.exclusiveMinimum === true && typeof node.minimum === 'number') { out.exclusiveMinimum = node.minimum; delete out.minimum; }
-        if (node.exclusiveMaximum === true && typeof node.maximum === 'number') { out.exclusiveMaximum = node.maximum; delete out.maximum; }
-        return out;
-      }
-      return walk(schema);
-    }
-
-    /* The 3.1 / 3.2 schemas point Schema Objects at `{ "$dynamicRef": "#meta" }`, whose anchor is
-       $defs/schema. Only the schema-base variants override that anchor; on its own the dynamic
-       reference resolves to $defs/schema. Ajv does not resolve this $dynamicRef correctly (it
-       validated Schema Objects against the root), so it is replaced with the equivalent static $ref. */
-    function staticDynamicRefs(schema) {
-      var anchorPath = null;
-      Object.keys(schema.$defs || {}).forEach(function (k) {
-        if (schema.$defs[k] && schema.$defs[k].$dynamicAnchor === 'meta') anchorPath = '#/$defs/' + k;
-      });
-      function walk(node) {
-        if (Array.isArray(node)) return node.map(walk);
-        if (!node || typeof node !== 'object') return node;
-        var out = {};
-        Object.keys(node).forEach(function (k) {
-          if (k === '$dynamicRef' && node[k] === '#meta' && anchorPath) out.$ref = anchorPath;
-          else if (k === '$dynamicAnchor') return;
-          else out[k] = walk(node[k]);
-        });
-        return out;
-      }
-      return walk(schema);
-    }
-
-    /* lib: { Ajv, Ajv2020, addFormats }; schemas: { '3.0', '3.1', '3.2' } (official JSON). */
-    function createValidators(lib, schemas) {
-      function prepare(ajv) {
-        lib.addFormats(ajv);
-        ajv.addFormat('media-range', true);
-        return ajv;
-      }
-      var cache = {};
-      return function (version) {
-        if (!schemas[version]) return null;
-        if (!cache[version]) {
-          var ajv = version === '3.0'
-            ? prepare(new lib.Ajv({ allErrors: true, strict: false }))
-            : prepare(new lib.Ajv2020({ allErrors: true, strict: false }));
-          cache[version] = ajv.compile(version === '3.0' ? fromDraft04(schemas[version]) : staticDynamicRefs(schemas[version]));
-        }
-        return cache[version];
-      };
-    }
-
-    function versionOf(doc) {
-      var v = doc.openapi;
-      if (typeof v !== 'string') return null;
-      var m = /^(3\.[0-2])\.\d+(-.+)?$/.exec(v);
-      return m ? m[1] : null;
-    }
-
-    function pointerOf(segments) {
-      return '#' + segments.map(function (s) { return '/' + String(s).replace(/~/g, '~0').replace(/\//g, '~1'); }).join('');
-    }
-    function segmentsOf(pointer) {
-      if (pointer === '' ) return [];
-      return pointer.slice(1).split('/').map(function (s) { return s.replace(/~1/g, '/').replace(/~0/g, '~'); });
-    }
-
-    /* Ajv reports every failed branch of a oneOf / anyOf. Keep the errors that explain the
-       problem: drop the oneOf / anyOf summary and the "must have $ref" branch (Reference Object)
-       when another error exists at the same place or deeper, and drop exact duplicates. */
-    function simplifyErrors(errors) {
-      function deeperOrSame(a, b) { return a === b || a.indexOf(b + '/') === 0 || b === ''; }
-      var kept = errors.filter(function (e) {
-        var isSummary = e.keyword === 'oneOf' || e.keyword === 'anyOf' || e.keyword === 'if' || e.keyword === 'not';
-        var isRefBranch = e.keyword === 'required' && e.params && e.params.missingProperty === '$ref';
-        if (!isSummary && !isRefBranch) return true;
-        return !errors.some(function (o) {
-          if (o === e) return false;
-          var oSummary = o.keyword === 'oneOf' || o.keyword === 'anyOf' || o.keyword === 'if' || o.keyword === 'not';
-          var oRef = o.keyword === 'required' && o.params && o.params.missingProperty === '$ref';
-          return !oSummary && !oRef && deeperOrSame(o.instancePath, e.instancePath);
-        });
-      });
-      var seen = {};
-      return kept.filter(function (e) {
-        var key = e.instancePath + '|' + e.keyword + '|' + JSON.stringify(e.params);
-        if (seen[key]) return false;
-        seen[key] = true;
-        return true;
-      });
-    }
-    function describe(e) {
-      var p = e.params || {};
-      var unknown = e.keyword === 'additionalProperties' ? p.additionalProperty : e.keyword === 'unevaluatedProperties' ? p.unevaluatedProperty : null;
-      if (unknown !== null && e.instancePath === '/paths') return 'Path "' + unknown + '" must start with "/".';
-      if (e.keyword === 'required') return 'Missing required field "' + p.missingProperty + '".';
-      if (e.keyword === 'additionalProperties') return 'Unknown field "' + p.additionalProperty + '".';
-      if (e.keyword === 'unevaluatedProperties') return 'Unknown field "' + p.unevaluatedProperty + '".';
-      if (e.keyword === 'propertyNames') return 'Field name not allowed here.';
-      if (e.keyword === 'type') return 'Must be ' + (Array.isArray(p.type) ? p.type.join(' or ') : p.type) + '.';
-      if (e.keyword === 'enum') return 'Must be one of: ' + p.allowedValues.map(function (v) { return JSON.stringify(v); }).join(', ') + '.';
-      if (e.keyword === 'const') return 'Must be ' + JSON.stringify(p.allowedValue) + '.';
-      if (e.keyword === 'pattern') return 'Does not match the pattern ' + p.pattern + '.';
-      if (e.keyword === 'format') return 'Not a valid ' + p.format + '.';
-      if (e.keyword === 'oneOf' || e.keyword === 'anyOf') return 'Does not match any allowed form of this object.';
-      return e.message ? e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.' : e.keyword;
-    }
-    function schemaErrors(validate, doc) {
-      if (validate(doc)) return [];
-      return simplifyErrors(validate.errors || []).map(function (e) {
-        var path = e.instancePath === '' ? '#' : '#' + e.instancePath;
-        return { path: path, message: describe(e) };
-      });
-    }
-
-    /* Value at a JSON Pointer fragment ("#/components/schemas/Pet"); undefined if absent. */
-    function resolveLocal(doc, ref) {
-      var frag;
-      try { frag = decodeURIComponent(ref.slice(1)); } catch (_e) { return undefined; }
-      if (frag !== '' && frag.charAt(0) !== '/') return undefined;
-      var node = doc;
-      var segs = segmentsOf(frag);
-      for (var i = 0; i < segs.length; i++) {
-        if (node === null || typeof node !== 'object' || !Object.prototype.hasOwnProperty.call(node, segs[i])) return undefined;
-        node = node[segs[i]];
-      }
-      return node;
-    }
-
-    /* Keys whose values are example data, not part of the description. `examples` is data when
-       it is an array (Schema Object) and a map of Example Objects otherwise, whose `value` is data. */
-    var DATA_KEYS = { example: 1, default: 1, enum: 1, const: 1 };
-    function refChecks(doc) {
-      var errors = [], notices = [];
-      function walk(node, segs) {
-        if (Array.isArray(node)) { node.forEach(function (v, i) { walk(v, segs.concat(i)); }); return; }
-        if (!node || typeof node !== 'object') return;
-        Object.keys(node).forEach(function (k) {
-          var v = node[k];
-          if (k === '$ref' && typeof v === 'string') {
-            var at = pointerOf(segs.concat('$ref'));
-            if (v.charAt(0) !== '#') {
-              notices.push({ path: at, message: 'External reference "' + v + '" was not checked (only references inside this document are resolved).' });
-            } else if (v.length > 1 && v.charAt(1) !== '/') {
-              notices.push({ path: at, message: 'Anchor reference "' + v + '" was not checked.' });
-            } else if (resolveLocal(doc, v) === undefined) {
-              errors.push({ path: at, message: 'Reference "' + v + '" does not point to anything in this document.' });
-            }
-            return;
-          }
-          if (DATA_KEYS[k] || /^x-/.test(k)) return;
-          if (k === 'examples') {
-            if (!v || typeof v !== 'object' || Array.isArray(v)) return;
-            Object.keys(v).forEach(function (name) {
-              var ex = v[name];
-              if (!ex || typeof ex !== 'object') return;
-              var copy = {};
-              Object.keys(ex).forEach(function (ek) { if (ek !== 'value') copy[ek] = ex[ek]; });
-              walk(copy, segs.concat(k, name));
-            });
-            return;
-          }
-          walk(v, segs.concat(k));
-        });
-      }
-      walk(doc, []);
-      return { errors: errors, notices: notices };
-    }
-
-    /* Follows internal $ref chains; returns undefined for external or broken references. */
-    function deref(doc, node) {
-      for (var i = 0; i < 20 && node && typeof node === 'object' && typeof node.$ref === 'string'; i++) {
-        if (node.$ref.charAt(0) !== '#') return undefined;
-        node = resolveLocal(doc, node.$ref);
-      }
-      return node;
-    }
-
-    function operationsOf(item, version) {
-      var ops = [];
-      (METHODS[version] || METHODS['3.0']).forEach(function (m) {
-        if (item[m] && typeof item[m] === 'object') ops.push({ method: m, op: item[m] });
-      });
-      if (version === '3.2' && item.additionalOperations && typeof item.additionalOperations === 'object') {
-        Object.keys(item.additionalOperations).forEach(function (m) {
-          if (item.additionalOperations[m] && typeof item.additionalOperations[m] === 'object') ops.push({ method: m, op: item.additionalOperations[m], extra: true });
-        });
-      }
-      return ops;
-    }
-
-    /* Path Templating: every {name} in a path needs an `in: path` parameter on the Path Item or
-       the operation, and every `in: path` parameter must appear in the path. */
-    function pathChecks(doc, version) {
-      var errors = [];
-      var paths = doc.paths;
-      if (!paths || typeof paths !== 'object') return errors;
-      Object.keys(paths).forEach(function (p) {
-        var item = deref(doc, paths[p]);
-        if (!item || typeof item !== 'object') return;
-        var names = [];
-        var re = /\{([^{}]+)\}/g, m;
-        while ((m = re.exec(p))) if (names.indexOf(m[1]) < 0) names.push(m[1]);
-        function collect(list, out) {
-          if (!Array.isArray(list)) return true;
-          for (var i = 0; i < list.length; i++) {
-            var prm = deref(doc, list[i]);
-            if (!prm || typeof prm !== 'object') return false;
-            if (prm.in === 'path' && typeof prm.name === 'string') out[prm.name] = true;
-          }
-          return true;
-        }
-        var shared = {};
-        if (!collect(item.parameters, shared)) return;
-        operationsOf(item, version).forEach(function (o) {
-          var declared = Object.assign({}, shared);
-          if (!collect(o.op.parameters, declared)) return;
-          var label = o.method.toUpperCase() + ' ' + p;
-          var base = pointerOf(['paths', p]).slice(0);
-          names.forEach(function (n) {
-            if (!declared[n]) errors.push({ path: base + '/' + (o.extra ? 'additionalOperations/' : '') + o.method, message: label + ': path parameter "' + n + '" is not declared (add a parameter with in: path, name: ' + n + ').' });
-          });
-          Object.keys(declared).forEach(function (n) {
-            if (names.indexOf(n) < 0) errors.push({ path: base + '/' + (o.extra ? 'additionalOperations/' : '') + o.method, message: label + ': parameter "' + n + '" is declared with in: path but the path has no {' + n + '}.' });
-          });
-        });
-      });
-      return errors;
-    }
-
-    function operationIdChecks(doc, version) {
-      var errors = [], seen = {};
-      function visit(item, segs) {
-        item = deref(doc, item);
-        if (!item || typeof item !== 'object') return;
-        operationsOf(item, version).forEach(function (o) {
-          var id = o.op.operationId;
-          if (typeof id !== 'string') return;
-          var at = pointerOf(segs.concat(o.extra ? ['additionalOperations', o.method] : [o.method], 'operationId'));
-          if (seen[id]) errors.push({ path: at, message: 'operationId "' + id + '" is already used at ' + seen[id] + '; it must be unique.' });
-          else seen[id] = at;
-        });
-      }
-      ['paths', 'webhooks'].forEach(function (k) {
-        var map = doc[k];
-        if (map && typeof map === 'object') Object.keys(map).forEach(function (p) { visit(map[p], [k, p]); });
-      });
-      return errors;
-    }
-
-    function countOps(doc, version) {
-      var count = 0;
-      if (!doc.paths || typeof doc.paths !== 'object') return 0;
-      Object.keys(doc.paths).forEach(function (p) {
-        var item = deref(doc, doc.paths[p]);
-        if (item && typeof item === 'object') count += operationsOf(item, version).length;
-      });
-      return count;
-    }
-
-    /* Returns { version, errors, notices }. getValidator(version) returns a compiled validator. */
-    function validateOpenApi(doc, getValidator) {
-      if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
-        return { version: null, errors: [{ path: '#', message: 'Document must be a YAML/JSON object.' }], notices: [] };
-      }
-      if (doc.swagger !== undefined && doc.openapi === undefined) {
-        return { version: null, notices: [], errors: [{ path: '#/swagger', message: 'Swagger 2.0 document. This tool checks OpenAPI 3.0, 3.1 and 3.2; convert it first (for example with swagger2openapi).' }] };
-      }
-      if (doc.openapi === undefined) {
-        return { version: null, notices: [], errors: [{ path: '#', message: 'Missing required field "openapi".' }] };
-      }
-      var version = versionOf(doc);
-      if (!version) {
-        return { version: null, notices: [], errors: [{ path: '#/openapi', message: 'Field "openapi" must be a version string such as "3.0.4", "3.1.1" or "3.2.0" (quote it in YAML). Got: ' + JSON.stringify(doc.openapi) + '.' }] };
-      }
-      var errors = schemaErrors(getValidator(version), doc);
-      var refs = refChecks(doc);
-      errors = errors.concat(refs.errors, pathChecks(doc, version), operationIdChecks(doc, version));
-      return { version: version, errors: errors, notices: refs.notices };
-    }
-    /* ── engine:end ── */
-
-    function escHtml(s: string): string {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    function renderNotices(notices: { path: string; message: string }[]): string {
-      if (!notices.length) return '';
-      let html = '<div class="ov-notices"><p class="ov-notices-title">' + escHtml(t.notices) + '</p><ul>';
-      notices.forEach(function (n) {
-        html += '<li><code class="ov-err-path">' + escHtml(n.path) + '</code> ' + escHtml(n.message) + '</li>';
-      });
-      return html + '</ul></div>';
-    }
-
-    function renderValid(doc: any, result: any): void {
-      const title = (doc.info && doc.info.title) || '—';
-      const version = (doc.info && doc.info.version) || '—';
-      const oasVersion = doc.openapi || '—';
-      const pathCount = doc.paths ? Object.keys(doc.paths).length : 0;
-      const opCount = countOps(doc, result.version);
-      const servers = doc.servers;
-
-      let html = '<div class="ov-valid-header">';
-      html += '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
-      html += '<span>' + escHtml(t.msgValid) + '</span>';
-      html += '</div>';
-
-      html += '<div class="ov-info-grid">';
-      html += '<div class="ov-info-row"><span class="ov-info-key">' + escHtml(t.specTitle) + '</span><span class="ov-info-val">' + escHtml(title) + '</span></div>';
-      html += '<div class="ov-info-row"><span class="ov-info-key">' + escHtml(t.specVersion) + '</span><span class="ov-info-val">' + escHtml(String(version)) + '</span></div>';
-      html += '<div class="ov-info-row"><span class="ov-info-key">' + escHtml(t.specOas) + '</span><span class="ov-info-val">' + escHtml(String(oasVersion)) + '</span></div>';
-      html += '<div class="ov-info-row"><span class="ov-info-key">' + escHtml(t.specPaths) + '</span><span class="ov-info-val">' + pathCount + '</span></div>';
-      html += '<div class="ov-info-row"><span class="ov-info-key">' + escHtml(t.specOps) + '</span><span class="ov-info-val">' + opCount + '</span></div>';
-
-      if (servers && Array.isArray(servers) && servers.length > 0) {
-        const serverUrls = servers.map((s: any) => s.url || '').filter(Boolean).join(', ');
-        if (serverUrls) {
-          html += '<div class="ov-info-row"><span class="ov-info-key">' + escHtml(t.specServers) + '</span><span class="ov-info-val">' + escHtml(serverUrls) + '</span></div>';
-        }
-      }
-
-      html += '</div>';
-      html += renderNotices(result.notices);
-      resultEl.innerHTML = html;
-      resultEl.className = 'ov-result ov-result--valid';
-    }
-
-    function renderErrors(errors: { path: string; message: string }[], notices: { path: string; message: string }[]): void {
-      let html = '<div class="ov-invalid-header">';
-      html += '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
-      html += '<span>' + escHtml(t.msgInvalid) + ' — ' + errors.length + ' ' + escHtml(t.errorsFound) + '</span>';
-      html += '</div>';
-
-      html += '<table class="ov-err-table">';
-      html += '<thead><tr><th>' + escHtml(t.errPath) + '</th><th>' + escHtml(t.errMessage) + '</th></tr></thead>';
-      html += '<tbody>';
-      errors.forEach(function (e) {
-        html += '<tr>';
-        html += '<td><code class="ov-err-path">' + escHtml(e.path) + '</code></td>';
-        html += '<td>' + escHtml(e.message) + '</td>';
-        html += '</tr>';
-      });
-      html += '</tbody></table>';
-
-      resultEl.innerHTML = html;
-      resultEl.className = 'ov-result ov-result--invalid';
-    }
-
-    function renderEmpty(): void {
-      resultEl.innerHTML = '<p class="ov-empty">' + escHtml(t.msgEmpty) + '</p>';
-      resultEl.className = 'ov-result';
-    }
-
-    let runId = 0;
-    async function doValidate(): Promise<void> {
-      const raw = inputEl.value.trim();
-      const id = ++runId;
-      if (!raw) {
-        renderEmpty();
-        return;
-      }
-      let doc: any;
-      try {
-        doc = jsyaml.load(raw);
-      } catch (e: any) {
-        renderErrors([{ path: '(parse)', message: 'Parse error: ' + e.message }], []);
-        (window as any).trackTool?.('openapi-validator', 'validate_error');
-        return;
-      }
-      let getValidator: any;
-      try {
-        getValidator = await loadValidators();
-      } catch (e: any) {
-        validatorsPromise = null;
-        renderErrors([{ path: '(load)', message: t.loadFailed + ' ' + (e && e.message ? e.message : '') }], []);
-        return;
-      }
-      if (id !== runId) return;
-      const result = validateOpenApi(doc, getValidator);
-      if (result.errors.length === 0) {
-        renderValid(doc, result);
-        (window as any).trackTool?.('openapi-validator', 'validate_success');
-      } else {
-        renderErrors(result.errors, result.notices);
-        (window as any).trackTool?.('openapi-validator', 'validate_error');
-      }
-    }
-
-    /* Prevent textarea blur before click fires (eliminates first-click race) */
-    validateBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    validateBtn.addEventListener('click', doValidate);
-
-    clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    clearBtn.addEventListener('click', () => {
-      inputEl.value = '';
-      renderEmpty();
-    });
-
-    inputEl.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        doValidate();
-      }
-    });
-
-    renderEmpty();
-  </script>
+  <details id="oav-files" class="oav-files">
+    <summary id="oav-files-title"></summary>
+    <p class="oav-hint">{T.filesHint}</p>
+    <div id="oav-file-list" class="oav-file-list"></div>
+    <button type="button" id="oav-add" class="btn-ghost oav-add">{T.addFile}</button>
+  </details>
 </div>
 
+<script>
+  // @ts-nocheck
+  import ValidatorWorker from './openapi-validator.worker.js?worker';
+  import { formatMessage, pickRoot } from './openapi-validator-format.js';
+
+  var wrap = document.getElementById('oav-wrap');
+  var T = JSON.parse(wrap.dataset.strings);
+  var EXAMPLE = wrap.dataset.example;
+  var $ = function (id) { return document.getElementById(id); };
+  var input = $('oav-input'), statusEl = $('oav-status'), results = $('oav-results'), list = $('oav-list');
+  var moreBtn = $('oav-more'), summaryBox = $('oav-summary'), summaryList = $('oav-summary-list');
+  var filesBox = $('oav-files'), fileList = $('oav-file-list'), filesTitle = $('oav-files-title'), missingBox = $('oav-missing');
+  var rootNameEl = $('oav-rootname');
+
+  var AUTO_LIMIT = 2 * 1024 * 1024;
+  var LOAD_LIMIT = 50 * 1024 * 1024;
+  var LIST_LIMIT = 300;
+  var state = { rootName: 'openapi.yaml', extra: [], last: null, filter: 'all', showAll: false };
+
+  function fill(tpl, args) {
+    return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return args && args[k] !== undefined ? String(args[k]) : m; });
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function setStatus(text, kind) {
+    statusEl.textContent = text;
+    statusEl.className = 'oav-status' + (kind ? ' oav-status--' + kind : '');
+  }
+
+  /* ── files ── */
+  function normName(n) {
+    var out = [];
+    String(n || '').replace(/\\/g, '/').split('/').forEach(function (s) {
+      if (s === '' || s === '.') return;
+      if (s === '..' && out.length && out[out.length - 1] !== '..') out.pop(); else out.push(s);
+    });
+    return out.join('/');
+  }
+  function renderFiles() {
+    filesTitle.textContent = fill(T.filesTitle, { n: state.extra.length });
+    rootNameEl.textContent = state.extra.length ? '— ' + state.rootName : '';
+    fileList.textContent = '';
+    state.extra.forEach(function (f, i) {
+      var box = el('div', 'oav-file');
+      var row = el('div', 'oav-file-row');
+      var nameId = 'oav-fname-' + i, textId = 'oav-ftext-' + i;
+      var lab = el('label', 'tool-label oav-sr', T.fileName);
+      lab.htmlFor = nameId;
+      var name = el('input', 'tool-input oav-fname');
+      name.id = nameId; name.type = 'text'; name.value = f.name; name.spellcheck = false; name.autocomplete = 'off';
+      name.setAttribute('aria-label', T.fileName);
+      name.addEventListener('change', function () { f.name = normName(name.value) || f.name; name.value = f.name; schedule(0); });
+      var rm = el('button', 'btn-ghost oav-remove', T.remove);
+      rm.type = 'button';
+      rm.addEventListener('click', function () { state.extra.splice(i, 1); renderFiles(); schedule(0); });
+      row.append(lab, name, rm);
+      var ta = el('textarea', 'tool-textarea oav-ftext');
+      ta.id = textId; ta.rows = 6; ta.spellcheck = false; ta.value = f.text;
+      ta.setAttribute('aria-label', fill(T.fileText, { file: f.name }));
+      ta.addEventListener('input', function () { f.text = ta.value; schedule(); });
+      box.append(row, ta);
+      fileList.append(box);
+    });
+  }
+  function addExtra(name, text, open) {
+    name = normName(name);
+    var existing = state.extra.find(function (f) { return f.name === name; });
+    if (existing) existing.text = text; else state.extra.push({ name: name, text: text });
+    renderFiles();
+    if (open) filesBox.open = true;
+  }
+
+  async function loadFiles(fileArr) {
+    var picked = [], skipped = 0, total = 0;
+    for (var i = 0; i < fileArr.length; i++) {
+      var f = fileArr[i];
+      var path = normName(f.webkitRelativePath || f.relPath || f.name);
+      if (!/\.(ya?ml|json)$/i.test(path)) { skipped++; continue; }
+      total += f.size;
+      if (total > LOAD_LIMIT) { setStatus(fill(T.tooBig, { mb: LOAD_LIMIT / 1048576 }), 'error'); return; }
+      picked.push({ path: path, file: f });
+    }
+    if (!picked.length) { if (skipped) setStatus(fill(T.skipped, { n: skipped }), 'error'); return; }
+    // strip a common top folder (folder picker gives "folder/…")
+    var parts = picked.map(function (p) { return p.path.split('/'); });
+    while (parts.every(function (p) { return p.length > 1 && p[0] === parts[0][0]; })) parts.forEach(function (p) { p.shift(); });
+    var files = {};
+    for (var j = 0; j < picked.length; j++) {
+      try { files[parts[j].join('/')] = await picked[j].file.text(); }
+      catch (_e) { setStatus(fill(T.readFail, { file: picked[j].path }), 'error'); return; }
+    }
+    var root = pickRoot(files);
+    state.rootName = root;
+    input.value = files[root];
+    state.extra = [];
+    Object.keys(files).forEach(function (n) { if (n !== root) state.extra.push({ name: n, text: files[n] }); });
+    renderFiles();
+    if (state.extra.length) filesBox.open = false;
+    if (skipped) setStatus(fill(T.skipped, { n: skipped }));
+    run();
+  }
+
+  /* ── worker ── */
+  var worker = null, seq = 0, pending = null, runFallback = null;
+  function startWorker() {
+    if (worker) return worker;
+    try {
+      worker = new ValidatorWorker();
+      worker.onmessage = function (e) {
+        var d = e.data || {};
+        if (!pending || d.id !== pending.id) return;
+        var p = pending; pending = null;
+        p.resolve(d);
+      };
+      worker.onerror = function (e) {
+        if (pending) { var p = pending; pending = null; p.resolve({ error: (e && e.message) || 'worker error' }); }
+        stopWorker();
+      };
+    } catch (_e) { worker = null; }
+    return worker;
+  }
+  function stopWorker() { if (worker) { worker.terminate(); worker = null; } }
+  function validateIn(inputObj) {
+    var id = ++seq;
+    if (pending) { stopWorker(); pending.resolve(null); pending = null; }
+    var w = startWorker();
+    if (!w) {
+      return (runFallback || (runFallback = import('./openapi-validator-run.js'))).then(function (m) {
+        return id === seq ? m.runValidation(inputObj) : null;
+      });
+    }
+    return new Promise(function (resolve) {
+      pending = { id: id, resolve: resolve };
+      w.postMessage({ id: id, input: inputObj });
+    });
+  }
+
+  /* ── run ── */
+  var timer = null, firstRun = true;
+  function schedule(delay) {
+    clearTimeout(timer);
+    var size = input.value.length + state.extra.reduce(function (s, f) { return s + f.text.length; }, 0);
+    if (!input.value.trim()) { showIdle(); return; }
+    if (size > AUTO_LIMIT && delay !== 0) { setStatus(fill(T.autoOff, { mb: (size / 1048576).toFixed(1) })); return; }
+    timer = setTimeout(run, delay === undefined ? 500 : delay);
+  }
+  function showIdle() {
+    clearTimeout(timer);
+    seq++;
+    if (pending) { stopWorker(); pending.resolve(null); pending = null; }
+    state.last = null;
+    results.hidden = true;
+    setStatus(T.idle);
+  }
+
+  async function run() {
+    clearTimeout(timer);
+    var text = input.value;
+    if (!text.trim()) { showIdle(); return; }
+    var files = {};
+    files[state.rootName] = text;
+    state.extra.forEach(function (f) { if (f.name && f.name !== state.rootName) files[f.name] = f.text; });
+    setStatus(firstRun ? T.loading : T.running, 'busy');
+    var myId = seq + 1;
+    var started = performance.now();
+    var res = await validateIn({ root: state.rootName, files: files });
+    if (!res || myId !== seq) return;
+    firstRun = false;
+    if (res.error) { setStatus(fill(T.failed, { err: res.error }), 'error'); results.hidden = true; return; }
+    state.last = res.result;
+    state.showAll = false;
+    render(res.result, (performance.now() - started) / 1000);
+    var r = res.result;
+    var errs = r.problems.filter(function (p) { return p.level === 'error'; }).length;
+    window.trackTool && window.trackTool('openapi-validator', errs ? 'validate_error' : 'validate_success');
+  }
+
+  function counts(problems) {
+    var c = { error: 0, warning: 0, info: 0 };
+    problems.forEach(function (p) { c[p.level]++; });
+    return c;
+  }
+  function levelLabel(l) { return l === 'error' ? T.levelError : l === 'warning' ? T.levelWarning : T.levelInfo; }
+
+  function render(r, secs) {
+    var c = counts(r.problems);
+    var spec = r.kind === 'swagger' ? 'Swagger' : 'OpenAPI';
+    var head;
+    if (!r.version) head = T.resultParse;
+    else head = fill(c.error ? T.resultBad : T.resultOk, { spec: spec, version: r.summary ? r.summary.specVersion : r.version, e: c.error });
+    setStatus(head + ' ' + fill(T.counts, { e: c.error, w: c.warning, i: c.info }) + ' · ' + fill(T.took, { s: secs.toFixed(secs < 1 ? 2 : 1) }), c.error ? 'error' : 'ok');
+    results.hidden = false;
+    wrap.querySelectorAll('.oav-filter').forEach(function (b) {
+      var l = b.dataset.level;
+      b.textContent = l === 'all' ? T.filterAll + ' ' + r.problems.length : levelLabel(l) + ' ' + c[l];
+      b.setAttribute('aria-pressed', String(state.filter === l));
+      b.disabled = l !== 'all' && c[l] === 0;
+    });
+    renderList();
+    renderMissing(r);
+    renderSummary(r);
+  }
+
+  function renderList() {
+    var r = state.last;
+    if (!r) return;
+    list.textContent = '';
+    var items = r.problems.filter(function (p) { return state.filter === 'all' || p.level === state.filter; });
+    var shown = state.showAll ? items : items.slice(0, LIST_LIMIT);
+    var frag = document.createDocumentFragment();
+    shown.forEach(function (p) {
+      var li = el('li', 'oav-item oav-item--' + p.level);
+      var badge = el('span', 'oav-badge oav-badge--' + p.level, levelLabel(p.level));
+      var loc = el('button', 'oav-loc', (state.extra.length ? p.file + ':' : '') + p.line + ':' + p.col);
+      loc.type = 'button';
+      loc.setAttribute('aria-label', fill(T.jump, { line: p.line, file: p.file }));
+      loc.addEventListener('click', function () { jump(p); });
+      var msg = el('span', 'oav-msg', formatMessage(p, T));
+      li.append(badge, loc, msg);
+      if (p.code !== 'parse.yaml' && p.path && p.path !== '#') li.append(el('code', 'oav-ptr', p.path));
+      if (p.code === 'parse.yaml') {
+        var src = lineText(p.file, p.line);
+        if (src !== null) li.append(el('code', 'oav-ptr oav-src', p.line + ' | ' + src));
+      }
+      frag.append(li);
+    });
+    list.append(frag);
+    moreBtn.hidden = shown.length === items.length;
+    moreBtn.textContent = fill(T.showAll, { n: items.length });
+  }
+
+  function textOf(file) {
+    if (file === state.rootName) return input.value;
+    var f = state.extra.find(function (x) { return x.name === file; });
+    return f ? f.text : null;
+  }
+  function lineText(file, line) {
+    var t = textOf(file);
+    if (t === null) return null;
+    var s = t.replace(/^\uFEFF/, '').split('\n')[line - 1];
+    return s === undefined ? null : s.replace(/\r$/, '').slice(0, 200);
+  }
+
+  function jump(p) {
+    var ta = input, t = input.value;
+    if (p.file !== state.rootName) {
+      var idx = state.extra.findIndex(function (x) { return x.name === p.file; });
+      if (idx < 0) return;
+      filesBox.open = true;
+      ta = $('oav-ftext-' + idx);
+      if (!ta) return;
+      t = ta.value;
+    }
+    var bom = t.charCodeAt(0) === 0xfeff ? 1 : 0;
+    var start = Math.min(t.length, (p.offset || 0) + bom);
+    var end = t.indexOf('\n', start);
+    if (end < 0) end = t.length;
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(start, end);
+    var lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+    var before = t.slice(0, start).split('\n').length - 1;
+    ta.scrollTop = Math.max(0, before * lh - ta.clientHeight / 3);
+    var rect = ta.getBoundingClientRect();
+    if (rect.top < 0 || rect.bottom > window.innerHeight) ta.scrollIntoView({ block: 'center' });
+  }
+
+  function renderMissing(r) {
+    missingBox.textContent = '';
+    var need = [];
+    r.problems.forEach(function (p) {
+      if (p.code === 'ref.missingFile' && need.indexOf(p.args.file) < 0) need.push(p.args.file);
+    });
+    missingBox.hidden = !need.length;
+    need.slice(0, 12).forEach(function (f) {
+      var b = el('button', 'btn-ghost btn-sm oav-addmissing', fill(T.addMissing, { file: f }));
+      b.type = 'button';
+      b.addEventListener('click', function () {
+        addExtra(f, '', true);
+        var idx = state.extra.findIndex(function (x) { return x.name === normName(f); });
+        var ta = $('oav-ftext-' + idx);
+        if (ta) { ta.focus(); ta.scrollIntoView({ block: 'center' }); }
+      });
+      missingBox.append(b);
+    });
+  }
+
+  function renderSummary(r) {
+    var s = r.summary;
+    summaryBox.hidden = !s;
+    summaryList.textContent = '';
+    if (!s) return;
+    var rows = [
+      [T.sumTitle, s.title || '—'], [T.sumVersion, s.apiVersion || '—'],
+      [T.sumSpec, (r.kind === 'swagger' ? 'Swagger ' : 'OpenAPI ') + s.specVersion],
+      [T.sumPaths, String(s.paths)], [T.sumOps, String(s.operations)],
+    ];
+    if (s.webhooks) rows.push([T.sumWebhooks, String(s.webhooks)]);
+    rows.push([T.sumComponents, String(s.components)]);
+    if (s.servers.length) rows.push([T.sumServers, s.servers.slice(0, 5).join('\n')]);
+    if (r.files.length > 1) rows.push([T.sumFiles, String(r.files.length)]);
+    rows.forEach(function (row) {
+      var d = el('div', 'oav-sum-row');
+      d.append(el('dt', '', row[0]), el('dd', '', row[1]));
+      summaryList.append(d);
+    });
+  }
+
+  function reportText() {
+    var r = state.last;
+    if (!r) return '';
+    return r.problems.map(function (p) {
+      return p.file + ':' + p.line + ':' + p.col + '\t' + levelLabel(p.level) + '\t' + formatMessage(p, T) + (p.path && p.path !== '#' ? '\t' + p.path : '');
+    }).join('\n');
+  }
+
+  /* ── events ── */
+  $('oav-validate').addEventListener('click', function () { run(); });
+  input.addEventListener('input', function () { schedule(); });
+  $('oav-example').addEventListener('click', function () {
+    input.value = EXAMPLE;
+    state.rootName = 'openapi.yaml';
+    state.extra = [];
+    renderFiles();
+    run();
+  });
+  $('oav-clear').addEventListener('click', function () {
+    input.value = '';
+    state.extra = [];
+    state.rootName = 'openapi.yaml';
+    renderFiles();
+    showIdle();
+    input.focus();
+  });
+  $('oav-open').addEventListener('click', function () { $('oav-file').click(); });
+  $('oav-folder').addEventListener('click', function () { $('oav-dir').click(); });
+  $('oav-file').addEventListener('change', function (e) { loadFiles(Array.from(e.target.files || [])); e.target.value = ''; });
+  $('oav-dir').addEventListener('change', function (e) { loadFiles(Array.from(e.target.files || [])); e.target.value = ''; });
+  $('oav-add').addEventListener('click', function () {
+    var n = 1;
+    while (state.extra.some(function (f) { return f.name === 'schemas/file-' + n + '.yaml'; })) n++;
+    addExtra('schemas/file-' + n + '.yaml', '', true);
+    var ta = $('oav-ftext-' + (state.extra.length - 1));
+    if (ta) ta.focus();
+  });
+  wrap.querySelectorAll('.oav-filter').forEach(function (b) {
+    b.addEventListener('click', function () {
+      state.filter = b.dataset.level;
+      state.showAll = false;
+      wrap.querySelectorAll('.oav-filter').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      renderList();
+    });
+  });
+  moreBtn.addEventListener('click', function () { state.showAll = true; renderList(); });
+  $('oav-copy').addEventListener('click', async function () {
+    var btn = this, text = reportText();
+    var ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (_e) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.append(ta); ta.select();
+      try { ok = document.execCommand('copy'); } catch (_e2) { ok = false; }
+      ta.remove();
+    }
+    btn.textContent = ok ? T.copied : T.copyFail;
+    setTimeout(function () { btn.textContent = T.copy; }, 1500);
+  });
+
+  // drag and drop anywhere on the tool
+  wrap.addEventListener('dragover', function (e) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') >= 0) { e.preventDefault(); wrap.classList.add('oav-dragging'); }
+  });
+  wrap.addEventListener('dragleave', function (e) { if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('oav-dragging'); });
+  wrap.addEventListener('drop', async function (e) {
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    wrap.classList.remove('oav-dragging');
+    var items = Array.from(e.dataTransfer.items || []);
+    var entries = items.map(function (it) { return it.webkitGetAsEntry ? it.webkitGetAsEntry() : null; }).filter(Boolean);
+    if (entries.length && entries.some(function (en) { return en.isDirectory; })) {
+      var out = [];
+      async function walk(entry, prefix) {
+        if (entry.isFile) {
+          var f = await new Promise(function (res, rej) { entry.file(res, rej); });
+          f.relPath = prefix + entry.name;
+          out.push(f);
+        } else if (entry.isDirectory) {
+          var reader = entry.createReader();
+          var batch;
+          do {
+            batch = await new Promise(function (res, rej) { reader.readEntries(res, rej); });
+            for (var k = 0; k < batch.length; k++) await walk(batch[k], prefix + entry.name + '/');
+          } while (batch.length);
+        }
+      }
+      for (var i = 0; i < entries.length; i++) await walk(entries[i], '');
+      loadFiles(out);
+    } else {
+      loadFiles(Array.from(e.dataTransfer.files));
+    }
+  });
+
+  // site-wide Ctrl/⌘+L clears the text fields; drop the extra files and the results with them
+  document.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+      setTimeout(function () { state.extra = []; state.rootName = 'openapi.yaml'; renderFiles(); showIdle(); }, 0);
+    }
+  });
+
+  renderFiles();
+</script>
+
 <style>
-  .ov-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .oav-wrap { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+  .oav-wrap.oav-dragging { outline: 2px dashed var(--color-primary); outline-offset: 6px; border-radius: var(--radius-md); }
+  .oav-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .oav-main { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+  .oav-label { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }
+  .oav-rootname { font-family: var(--font-mono); font-weight: 500; color: var(--color-text-muted); text-transform: none; letter-spacing: 0; }
+  .oav-input { min-height: 260px; tab-size: 2; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+  .oav-hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+  .oav-status { margin: 0; font-size: 0.9rem; color: var(--color-text-secondary); min-height: 1.3rem; }
+  .oav-status--ok { color: var(--color-success); font-weight: 650; }
+  .oav-status--error { color: var(--color-danger); font-weight: 650; }
+  .oav-status--busy { color: var(--color-primary); }
 
-  .ov-field { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .ov-field label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+  .oav-results { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+  .oav-results[hidden] { display: none; }
+  .oav-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .oav-filter {
+    min-height: 30px; padding: 0.2rem 0.75rem; border-radius: var(--radius-pill); border: 0;
+    background: var(--color-bg-secondary); color: var(--color-text-secondary); font: inherit; font-size: 0.85rem; font-weight: 650;
+    box-shadow: inset 0 0 0 1px var(--color-border-soft); cursor: pointer;
   }
+  .oav-filter[aria-pressed="true"] { background: var(--color-primary); color: var(--color-primary-contrast); box-shadow: none; }
+  .oav-filter:disabled { opacity: 0.5; cursor: default; }
+  .oav-filter:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .oav-copy { margin-left: auto; }
 
-  .ov-field textarea {
-    padding: 0.65rem 0.85rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 0.87rem;
-    line-height: 1.55;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    width: 100%;
-    resize: vertical;
-    min-height: 240px;
+  .oav-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .oav-list :global(.oav-item) {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0.3rem 0.6rem; align-items: baseline;
+    padding: 0.5rem 0.65rem; border-radius: var(--radius-md); background: var(--color-surface);
+    box-shadow: inset 3px 0 0 var(--oav-level, var(--color-border)), inset 0 0 0 1px var(--color-border-soft);
   }
-
-  .ov-field textarea:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
+  .oav-list :global(.oav-item--error) { --oav-level: var(--color-danger); }
+  .oav-list :global(.oav-item--warning) { --oav-level: var(--color-accent); }
+  .oav-list :global(.oav-item--info) { --oav-level: var(--color-text-muted); }
+  .oav-list :global(.oav-badge) { font-size: 0.75rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.03em; color: var(--oav-level); white-space: nowrap; }
+  .oav-list :global(.oav-loc) {
+    font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-primary); background: none; border: 0; padding: 0;
+    cursor: pointer; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap;
   }
-
-  .ov-actions {
-    display: flex;
-    gap: 0.5rem;
+  .oav-list :global(.oav-loc:focus-visible) { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 3px; }
+  .oav-list :global(.oav-msg) { font-size: 0.9rem; color: var(--color-text); overflow-wrap: anywhere; }
+  .oav-list :global(.oav-ptr) {
+    grid-column: 3; font-family: var(--font-mono); font-size: 0.76rem; color: var(--color-text-muted);
+    overflow-wrap: anywhere; background: none; padding: 0;
   }
+  .oav-list :global(.oav-src) { white-space: pre-wrap; }
+  .oav-more { align-self: flex-start; }
+  .oav-more[hidden] { display: none; }
+  .oav-missing { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .oav-missing[hidden] { display: none; }
 
-  .ov-actions button {
-    padding: 0.45rem 1.1rem;
-    font-size: 0.9rem;
-    font-weight: 600;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  .oav-summary { padding: 0.75rem 0.9rem; border-radius: var(--radius-md); background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .oav-summary[hidden] { display: none; }
+  .oav-sub { margin: 0 0 0.4rem; font-size: 0.9rem; font-family: var(--font-sans); }
+  .oav-summary :global(dl) { margin: 0; display: grid; gap: 0.25rem; }
+  .oav-summary :global(.oav-sum-row) { display: grid; grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr); gap: 0.75rem; font-size: 0.88rem; }
+  .oav-summary :global(dt) { color: var(--color-text-secondary); font-weight: 650; }
+  .oav-summary :global(dd) { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; overflow-wrap: anywhere; white-space: pre-line; }
+
+  .oav-files { border-radius: var(--radius-md); background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); padding: 0.55rem 0.8rem; }
+  .oav-files summary { cursor: pointer; font-weight: 650; font-size: 0.9rem; min-height: 24px; }
+  .oav-files[open] summary { margin-bottom: 0.4rem; }
+  .oav-file-list { display: flex; flex-direction: column; gap: 0.75rem; margin: 0.5rem 0; }
+  .oav-file-list :global(.oav-file) { display: flex; flex-direction: column; gap: 0.35rem; }
+  .oav-file-list :global(.oav-file-row) { display: flex; gap: 0.5rem; align-items: center; }
+  .oav-file-list :global(.oav-fname) { flex: 1 1 auto; min-width: 0; }
+  .oav-file-list :global(.oav-ftext) { min-height: 120px; white-space: pre; overflow-x: auto; }
+  .oav-file-list :global(.oav-sr) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (max-width: 640px) {
+    .oav-desktop { display: none; }
+    .oav-input { min-height: 0; height: 190px; }
+    .oav-bar { gap: 0.4rem; }
+    .oav-bar :global(button) { flex: 1 1 auto; }
+    .oav-filter { min-height: 32px; }
+    .oav-list :global(.oav-item) { grid-template-columns: auto minmax(0, 1fr); }
+    .oav-list :global(.oav-msg), .oav-list :global(.oav-ptr) { grid-column: 1 / -1; }
+    .oav-list :global(.oav-loc) { min-height: 24px; }
+    .oav-summary :global(.oav-sum-row) { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .oav-files summary { min-height: 32px; display: flex; align-items: center; }
   }
-
-  #ov-validate {
-    background: var(--color-primary);
-    border-color: var(--color-primary);
-    color: #fff;
-  }
-
-  #ov-validate:hover { opacity: 0.88; }
-
-  #ov-clear {
-    background: var(--color-bg);
-    color: var(--color-text-secondary);
-  }
-
-  #ov-clear:hover {
-    border-color: var(--color-primary);
-    color: var(--color-primary);
-  }
-
-  .ov-result { min-height: 2rem; }
-
-  .ov-result :global(.ov-empty) {
-    color: var(--color-text-muted);
-    font-size: 0.9rem;
-    margin: 0;
-  }
-
-  /* Valid panel */
-  .ov-result--valid {
-    border: 1px solid #22c55e;
-    border-radius: var(--radius-sm);
-    padding: 0.85rem 1rem;
-    background: var(--color-bg-secondary);
-  }
-
-  .ov-result :global(.ov-valid-header) {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 700;
-    color: #15803d;
-    margin-bottom: 0.75rem;
-    font-size: 0.95rem;
-  }
-
-  .ov-result :global(.ov-info-grid) { display: flex; flex-direction: column; gap: 0.35rem; }
-
-  .ov-result :global(.ov-info-row) {
-    display: flex;
-    gap: 0.75rem;
-    font-size: 0.9rem;
-    flex-wrap: wrap;
-  }
-
-  .ov-result :global(.ov-info-key) {
-    color: var(--color-text-secondary);
-    font-weight: 600;
-    min-width: 9rem;
-    flex-shrink: 0;
-  }
-
-  .ov-result :global(.ov-info-val) {
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    font-size: 0.87rem;
-    word-break: break-all;
-  }
-
-  /* Invalid panel */
-  .ov-result--invalid {
-    border: 1px solid #ef4444;
-    border-radius: var(--radius-sm);
-    padding: 0.85rem 1rem;
-    background: var(--color-bg-secondary);
-  }
-
-  .ov-result :global(.ov-invalid-header) {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 700;
-    color: #dc2626;
-    margin-bottom: 0.75rem;
-    font-size: 0.95rem;
-  }
-
-  .ov-result :global(.ov-err-table) {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.87rem;
-  }
-
-  .ov-result :global(.ov-err-table th) {
-    text-align: left;
-    padding: 0.3rem 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .ov-result :global(.ov-err-table td) {
-    padding: 0.4rem 0.5rem;
-    border-bottom: 1px solid var(--color-border);
-    vertical-align: top;
-    color: var(--color-text);
-  }
-
-  .ov-result :global(.ov-err-table tr:last-child td) { border-bottom: none; }
-
-  .ov-result :global(.ov-err-path) {
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    color: #dc2626;
-    background: var(--color-bg-icon);
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
-    word-break: break-all;
-  }
-
-  .ov-result :global(.ov-notices) {
-    margin-top: 0.75rem;
-    font-size: 0.85rem;
-    color: var(--color-text-secondary);
-  }
-  .ov-result :global(.ov-notices-title) { margin: 0 0 0.3rem; font-weight: 600; }
-  .ov-result :global(.ov-notices ul) { margin: 0; padding-left: 1.2rem; }
-  .ov-result :global(.ov-notices li) { margin: 0.2rem 0; }
-
-  @media (prefers-color-scheme: dark) {
-    :global(:root:not([data-theme="light"])) .ov-result--valid { border-color: #16a34a; }
-    :global(:root:not([data-theme="light"])) .ov-result--invalid { border-color: #b91c1c; }
-    :global(:root:not([data-theme="light"])) .ov-result :global(.ov-valid-header) { color: #4ade80; }
-    :global(:root:not([data-theme="light"])) .ov-result :global(.ov-err-path) { color: #f87171; }
-    :global(:root:not([data-theme="light"])) .ov-result :global(.ov-invalid-header) { color: #f87171; }
-  }
-
-  :global([data-theme="dark"]) .ov-result--valid { border-color: #16a34a; }
-  :global([data-theme="dark"]) .ov-result--invalid { border-color: #b91c1c; }
-  :global([data-theme="dark"]) .ov-result :global(.ov-valid-header) { color: #4ade80; }
-  :global([data-theme="dark"]) .ov-result :global(.ov-err-path) { color: #f87171; }
-  :global([data-theme="dark"]) .ov-result :global(.ov-invalid-header) { color: #f87171; }
 </style>
