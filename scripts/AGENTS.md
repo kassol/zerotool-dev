@@ -117,6 +117,7 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-02 — `test-color-shades-generator.mjs` 407 → 1079 项（只写 stdout，Node 22 与 24 都通过）：用替身 DOM 执行组件整段客户端脚本与 `ToolLayout.astro` 的真实快捷键脚本，派发 input / change / click / keydown 事件。四语言覆盖初始 11 个色块复制、全部复制与下载字节，合法输入改为 `#ZZZ` / 非法 `rgb()` / 空输入后清空并禁用出口，无效时切换导出与色值格式、Ctrl/Cmd+L 清空、文本与拾色器恢复；直接派发 click 另验证空结果的处理器守卫。
 - 2026-10-02 — 发版收尾复核：`sync-jq-web.mjs` 条目补上真实的源码补丁、classic worker 与 `run()` 调用；sprite-sheet 回归条目按实际测试更新为 1277 项并补列新增覆盖。
 
 - 2026-04-26 — 初版
