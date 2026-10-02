@@ -2,7 +2,9 @@
 //
 // Read:  src/components/tools/CssVariablesGeneratorTool.astro (runs the real tokenDecls(),
 //        plainCss() and highlightCss() between the `engine:start` / `engine:end` markers),
-//        src/content/tools/css-variables-generator/en.mdx
+//        src/content/tools/css-variables-generator/en.mdx,
+//        src/content/blog/css-variables-generator-guide/en.mdx (the default output, `cvg-check`
+//        prefix/rows → css block, and the `cvg-sass` example compiled with the installed Dart Sass)
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -58,6 +60,42 @@ check('highlight text equals the plain CSS', r.text === plainCss(decls), JSON.st
 const d = inspect(highlightCss(tokenDecls('--', colors)));
 check('default highlight text', d.text === plainCss(tokenDecls('--', colors)), JSON.stringify(d.text));
 check('empty highlight text', inspect(highlightCss([])).text === ':root {\n}');
+
+// ---------- the css variables guide (en) ----------
+// `cvg-default`: the next css block equals the output for the component's pre-filled rows (read from
+// the GROUPS defaults in the source). `cvg-check`: prefix and rows → the next css block.
+// `cvg-sass`: the next scss block compiled with the installed Dart Sass equals the css block after it.
+{
+  const guide = readFileSync(join(root, 'src/content/blog/css-variables-generator-guide/en.mdx'), 'utf8');
+  const fm = guide.match(/^---\n([\s\S]*?)\n---/)[1];
+  check('en guide is indexable', !/^noindex:\s*true/m.test(fm) && !/^draft:\s*true/m.test(fm));
+  const tpl = [/^## What (is|are) /m, /^## .*Online/m, /^## .* in Code/m, /^## (Summary|Conclusion)/m].filter((re) => re.test(guide));
+  check('en guide has no template headings', tpl.length === 0, tpl.map(String).join(' '));
+
+  const defaults = [...source.matchAll(/\{ name: '([^']+)', value: '([^']*)' \}/g)].map((m) => ({ name: m[1], value: m[2] }));
+  check('component has 16 pre-filled rows', defaults.length === 16, defaults.length);
+  const def = guide.match(/\{\/\* cvg-default \*\/\}\s*```css\n([\s\S]*?)```/);
+  check('en guide has cvg-default', !!def);
+  if (def) check('default output in the guide', def[1].trimEnd() === plainCss(tokenDecls('--', defaults)), def[1]);
+
+  const marks = [...guide.matchAll(/\{\/\* cvg-check: (\{.*?\}) \*\/\}\s*```css\n([\s\S]*?)```/g)];
+  check('en guide has cvg-check annotations', marks.length >= 1 && marks.length === (guide.match(/cvg-check:/g) || []).length, marks.length);
+  for (const m of marks) {
+    const c = JSON.parse(m[1]);
+    const out = plainCss(tokenDecls(c.prefix, c.tokens.map(([name, value]) => ({ name, value }))));
+    check('guide output ' + m[1], out === m[2].trimEnd(), JSON.stringify(out));
+  }
+
+  const sassBlock = guide.match(/\{\/\* cvg-sass \*\/\}\s*```scss\n([\s\S]*?)```\s*```css\n([\s\S]*?)```/);
+  check('en guide has cvg-sass', !!sassBlock);
+  if (sassBlock) {
+    const sass = await import('sass');
+    const version = JSON.parse(readFileSync(join(root, 'node_modules/sass/package.json'), 'utf8')).version;
+    check('guide names the installed Dart Sass version', guide.includes('Dart Sass ' + version), version);
+    const css = sass.compileString(sassBlock[1]).css;
+    check('Sass output in the guide', css.trim() === sassBlock[2].trim(), css);
+  }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
