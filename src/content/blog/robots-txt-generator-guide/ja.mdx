@@ -1,237 +1,143 @@
 ---
-title: "robots.txtジェネレーター完全ガイド：クローラー制御とSEOへの影響"
-description: "オンラインrobots.txtジェネレーターで検索エンジンクローラーを制御。ディレクティブの解説、よくある設定パターン、SEOに悪影響を与えるミスの回避法を解説。"
+title: "robots.txtの書き方と読まれ方：RFC 9309・WordPress・AIクローラー対策まで"
+description: "robots.txtをRFC 9309とGoogleの仕様で解説。従うグループは1つ、長いルールが勝つ、5xxは全拒否。WordPressの仮想robots.txt、エックスサーバーのAIクローラー遮断設定との違いも実測付きで。"
 pubDate: 2026-04-07
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "ja"
-tags: ["robots.txt", "robots-txt-generator", "seo", "web-crawlers", "developer-tools"]
+tags: ["robots.txt", "rfc 9309", "クローラー", "seo", "wordpress"]
 ---
 
-**オンラインrobots.txtジェネレーター**を使えば、ディレクティブを暗記したりサイト全体をサイレントにブロックする構文エラーのリスクを冒したりせずに、数秒で有効な `robots.txt` ファイルを作成できます。このファイルはドメインのルートに置かれ、他のURLに触れる前に検索エンジンクローラーが最初に読むものです。
+robots.txt は、サイトのルートに置くテキストファイルで、クローラーに「どの URL を取得してよいか」を伝えます。1994 年に始まった慣習ですが、2022 年 9 月に IETF の標準 [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309) になりました。書式は単純でも、つまずきやすい規則が 3 つあります。クローラーが従うのは 1 つのグループだけ、行の順番ではなく長いルールが勝つ、そしてサーバーエラーは「全部禁止」とみなされる、の 3 つです。
 
-## robots.txtが実際にすること
+この記事では、それぞれの規則を実際のファイルで確かめます。判定は 2026-10-02 に 2 つのライブラリで行いました。Scrapy が標準で使う [Protego](https://github.com/scrapy/protego) 0.7.0 と、Python 3.12 の `urllib.robotparser` です。両者の結果が食い違う箇所では、RFC と Google の仕様に沿っているのは Protego のほうです。
 
-`robots.txt` は[Robots Exclusion Protocol](https://www.rfc-editor.org/rfc/rfc9309)を実装したプレーンテキストファイルです。すべての準拠クローラーはクロール前に `https://yourdomain.com/robots.txt` を取得します。パスをブロックすると、行儀の良いボットはそれをスキップします。悪意のあるスクレイパーは完全に無視します — そのため `robots.txt` はセキュリティメカニズムではありません。
+## 置き場所と、日本で誰が読むか
 
-このファイルには2つの役割があります：
+クローラーが取りに来るのは、ホストの直下にある小文字の `/robots.txt` だけです（[RFC 9309 2.3 節](https://www.rfc-editor.org/rfc/rfc9309#section-2.3)）。効力はスキーム・ホスト・ポートが同じ URL に限られます。Google の解説（[Google による robots.txt の仕様の解釈](https://developers.google.com/crawling/docs/robots-txt/robots-txt-spec?hl=ja)）にあるとおり、`https://example.jp/robots.txt` は `http://example.jp/` にも `https://blog.example.jp/` にも効きません。サブディレクトリに置いた `/blog/robots.txt` は読まれないので、レンタルサーバーで WordPress を `/blog/` に入れている場合も、robots.txt はドメイン直下に置く必要があります。
 
-1. **クロールバジェットの保護** — 管理パネル、重複コンテンツ、検索結果ページを無駄にしないようクローラーに伝える。
-2. **サイトマップの指示** — `Sitemap:` ディレクティブで手動送信なしにGoogleとBingにサイトマップの場所を正確に伝える。
+日本のウェブ検索で見れば、読む相手はまず Googlebot です。Yahoo! JAPAN は 2010 年 7 月に検索エンジンとして Google を採用すると発表しており（[ヤフー株式会社のプレスリリース](https://www.lycorp.co.jp/news/archive/Y/ja/ja20100727_A.pdf)）、この構成である限り、Yahoo! 検索のウェブ結果に出るかどうかは Google のクロールで決まります。そのうえで Bing の Bingbot、Apple の Applebot、各社の AI クローラーが同じファイルを読みます。
 
-`robots.txt` が*しない*こと：他の場所からリンクされているページが検索結果に表示されるのを防ぐことはできません。ページのインデックス除外にはHTMLのmetaタグの `noindex` か `X-Robots-Tag` ヘッダーを使ってください。
+ファイルは UTF-8 のプレーンテキストにします。Google は UTF-8 以外の文字を無視することがあると書いています。日本語のパスを含むルールは、比較の前に UTF-8 でパーセントエンコードされます。そのため `Disallow: /ブログ/下書き/` と書いても、`/%E3%83%96%E3%83%AD%E3%82%B0/%E4%B8%8B%E6%9B%B8%E3%81%8D/a` へのリクエストは正しく止まります。Shift_JIS で保存すると、このバイト列が一致しなくなります。
 
-## コアディレクティブの解説
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /ブログ/下書き/\n","ua":"anybot","paths":[["/%E3%83%96%E3%83%AD%E3%82%B0/%E4%B8%8B%E6%9B%B8%E3%81%8D/a",false,false],["/%E3%83%96%E3%83%AD%E3%82%B0/",true,true]]} */}
 
-### User-agent
+もう 1 つの前提として、robots.txt は「お願い」であってアクセス制限ではありません。RFC 9309 の 3 節は、パスを書けばむしろ公開されると注意しています。管理画面の URL を隠す目的には使えず、守りたいページには Basic 認証などが必要です。また、クロールを止めてもインデックスからは消えません。Google は、ブロックした URL でも他ページからリンクされていればスニペットなしで表示することがあると説明しています。検索結果から外すには、ページをクロールさせたうえで `noindex` を返します。robots.txt で同じページを止めると、クローラーは `noindex` を読めなくなります。
 
-次のルールを適用するクローラーを指定します。`*` はすべてのクローラーにマッチします。
+## クローラーが従うのは 1 つのグループだけ
 
-```
+グループとは、1 行以上の `User-agent` とそれに続くルールのまとまりです。クローラーは自分の名前（プロダクトトークン）に一致するグループを探し、見つかればそのグループだけに従います。`*` のグループを使うのは、名前で一致するグループが 1 つもないときだけです（[RFC 9309 2.2.1 節](https://www.rfc-editor.org/rfc/rfc9309#section-2.2.1)）。Google も、`*` と名前付きのグループは合成しないと明記しています。
+
+会員ページ `/mypage/` を全クローラーに禁止し、「Bing には検索結果ページも止めたい」と Bingbot 用のブロックを足した例です。ZeroTool のジェネレーターでそのまま作れます。
+
+{/* rtg-build: {"blocks":[{"ua":"*","rules":[["Disallow","/mypage/"]]},{"ua":"Bingbot","rules":[["Disallow","/search/"]]}]} */}
+
+```text
 User-agent: *
-```
+Disallow: /mypage/
 
-現実のボット一覧：
-
-| ボット | 運営者 |
-|-----|----------|
-| `Googlebot` | Google（一般） |
-| `Googlebot-Image` | Google画像 |
-| `Googlebot-Video` | Google動画 |
-| `Bingbot` | Microsoft Bing |
-| `Slurp` | Yahoo Search |
-| `DuckDuckBot` | DuckDuckGo |
-| `facebookexternalhit` | Facebookリンクプレビュー |
-| `Twitterbot` | Twitter/Xカード |
-| `GPTBot` | OpenAIトレーニングクローラー |
-| `ClaudeBot` | Anthropic 学習用クローラー |
-
-### Disallow
-
-パスプレフィックスをブロックします。空の `Disallow:` 値は「すべてを許可」を意味します。
-
-```
-User-agent: *
-Disallow: /admin/
-Disallow: /private/
-Disallow: /search?
-```
-
-ディレクトリの末尾スラッシュに注意 — なければ `/admin` が `/administrator` にもマッチします。
-
-### Allow
-
-より具体的なパスのために `Disallow` を上書きします。ディレクトリをブロックしながら内部の1ファイルを公開したい場合に便利です。
-
-```
-User-agent: *
-Disallow: /wp-admin/
-Allow: /wp-admin/admin-ajax.php
-```
-
-### Sitemap
-
-RFC 9309 にはない（[sitemaps.org のプロトコル](https://www.sitemaps.org/protocol.html#submit_robots)で定義）ものの、主要クローラーすべてがサポートしています。`User-agent` グループに属さないため、ファイル内のどこに書いても構いません。
-
-```
-Sitemap: https://yourdomain.com/sitemap.xml
-Sitemap: https://yourdomain.com/news-sitemap.xml
-```
-
-### Crawl-delay
-
-クローラーにリクエスト間のN秒待機を依頼します。Googleはこのディレクティブを無視し、Search Console のクロール頻度設定も2024年1月に廃止しました。Googlebot を一時的に減速させるには 500・503・429 を返します。Bing などはこのディレクティブを尊重します。
-
-```
 User-agent: Bingbot
-Crawl-delay: 5
+Disallow: /search/
 ```
 
-## よくあるrobots.txtパターン
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /mypage/\n\nUser-agent: Bingbot\nDisallow: /search/\n","ua":"Bingbot","paths":[["/mypage/",true,true],["/search/?q=a",false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /mypage/\n\nUser-agent: Bingbot\nDisallow: /search/\n","ua":"Googlebot","paths":[["/mypage/",false,false],["/search/",true,true]]} */}
 
-### すべてを許可（デフォルトの健全な設定）
+両パーサーとも、Bingbot は `/mypage/` を取得してよい、Googlebot は `/mypage/` を取得できない、と判定しました。Bingbot は自分のグループしか読まないので、`*` の `Disallow: /mypage/` は効かなくなります。Bing のヘルプも、Bingbot は自分用のセクションを見つけると汎用セクションを無視するので、共通のルールを繰り返し書くよう求めています（[How to Create a robots.txt File](https://www.bing.com/webmasters/help/how-to-create-a-robots-txt-file-cb7c31ec)）。Bingbot のブロックにも `Disallow: /mypage/` を書けば直ります。
 
-```
-User-agent: *
-Disallow:
+同じ名前のグループが複数あれば 1 つに合成されます。また Google は、`User-agent` / `Allow` / `Disallow` 以外の行（`Sitemap` など）はグループを区切らないと説明しています。空行にも区切りの意味はありません。
 
-Sitemap: https://yourdomain.com/sitemap.xml
-```
+## Allow と Disallow：行の順番ではなく長さで決まる
 
-空の `Disallow` は「自由にクロールしてください」というシグナルです。ほとんどのマーケティングサイトの正しい出発点です。
+選ばれたグループの中では、URL のパスの先頭から一致するルールのうち、一致したバイト数が最も多いものが使われます。ファイル内の順番は関係ありません。長さが同じ `Allow` と `Disallow` がぶつかったときは、RFC では `Allow` を使うべき（SHOULD）、Google は「制限の少ないほう」を使う、としています（[RFC 9309 2.2.2 節](https://www.rfc-editor.org/rfc/rfc9309#section-2.2.2)）。どのルールにも一致しなければ取得してよい、という扱いです。
 
-### 管理・ステージングパスをブロック
+特殊文字は 2 つで、`*` は任意の文字列、`$` は URL の末尾を表します。ルールはもともと前方一致なので、末尾の `*` は意味を持ちません。
 
-```
-User-agent: *
-Disallow: /admin/
-Disallow: /staging/
-Disallow: /internal/
-Disallow: /?preview=true
+具体例として WordPress を見ます。WordPress は、ドキュメントルートに robots.txt ファイルがないとき、PHP で仮想の robots.txt を返します。[`do_robots()`](https://github.com/WordPress/wordpress-develop/blob/trunk/src/wp-includes/functions.php) が `Disallow: /wp-admin/` と `Allow: /wp-admin/admin-ajax.php` を書き、サイトが検索エンジンに公開されていればサイトマップの行が加わります。これはジェネレーターで次のように再現できます。
 
-Sitemap: https://yourdomain.com/sitemap.xml
-```
+{/* rtg-build: {"blocks":[{"ua":"*","rules":[["Disallow","/wp-admin/"],["Allow","/wp-admin/admin-ajax.php"]]}],"sitemap":"https://example.jp/wp-sitemap.xml"} */}
 
-### Eコマース：ファセットナビゲーションをブロック
-
-`/shop?color=red&size=M` のようなファセットURLは、クロールバジェットを消耗する何千もの準重複ページを作ります。
-
-```
-User-agent: *
-Disallow: /search
-Disallow: /cart
-Disallow: /checkout
-Disallow: /account
-Disallow: /wishlist
-Allow: /search/landing-page
-
-Sitemap: https://yourdomain.com/sitemap.xml
-```
-
-### AIトレーニングクローラーをブロック
-
-コンテンツをモデルトレーニングに使わせたくない場合：
-
-```
-User-agent: GPTBot
-Disallow: /
-
-User-agent: ClaudeBot
-Disallow: /
-
-User-agent: CCBot
-Disallow: /
-
-User-agent: Google-Extended
-Disallow: /
-
-User-agent: *
-Disallow:
-
-Sitemap: https://yourdomain.com/sitemap.xml
-```
-
-### WordPress固有のルール
-
-```
+```text
 User-agent: *
 Disallow: /wp-admin/
-Disallow: /wp-login.php
-Disallow: /xmlrpc.php
-Disallow: /wp-json/
 Allow: /wp-admin/admin-ajax.php
 
-Sitemap: https://yourdomain.com/sitemap.xml
-Sitemap: https://yourdomain.com/post-sitemap.xml
-Sitemap: https://yourdomain.com/page-sitemap.xml
+Sitemap: https://example.jp/wp-sitemap.xml
 ```
 
-## robots.txtの検証
+ここに、サイト内検索の結果ページ（WordPress では `?s=` パラメーター）を止める `Disallow: /*?s=` を足したファイルで判定すると、次のようになりました。
 
-### Google Search Console
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /wp-admin/\nAllow: /wp-admin/admin-ajax.php\nDisallow: /*?s=\n\nSitemap: https://example.jp/wp-sitemap.xml\n","ua":"Googlebot","paths":[["/wp-admin/admin-ajax.php",false,true],["/wp-admin/options.php",false,false],["/?s=%E3%83%A9%E3%83%BC%E3%83%A1%E3%83%B3",true,false],["/blog/?s=test",true,false],["/2026/10/hello/",true,true]]} */}
 
-Search Consoleの**設定 → robots.txt**に移動します。robots.txt レポートには、ホストごとに Google が取得したバージョン、取得日時、解析エラーと警告が表示されます。旧 robots.txt テスターは2023年12月に廃止されたため、個別 URL の判定はできません。1ページ単位なら URL 検査ツールを使います。
+| パス | 決め手になるルール（RFC 9309） | Protego | urllib.robotparser |
+|---|---|---|---|
+| `/wp-admin/admin-ajax.php` | `Allow: /wp-admin/admin-ajax.php`（24 バイト）が `Disallow: /wp-admin/`（10）より長い | 許可 | 拒否 |
+| `/wp-admin/options.php` | `Disallow: /wp-admin/` | 拒否 | 拒否 |
+| `/?s=ラーメン`（エンコード済み） | `Disallow: /*?s=` | 拒否 | 許可 |
+| `/blog/?s=test` | `Disallow: /*?s=` | 拒否 | 許可 |
+| `/2026/10/hello/` | 一致なし | 許可 | 許可 |
 
-### 手動チェック
+`urllib.robotparser` は RFC 以前の流儀で、ファイルの上から最初に一致した行を使い、`*` と `$` を解釈しません。そのため WordPress 標準の robots.txt でさえ `admin-ajax.php` を拒否と判定します。自作のスクリプトでこのモジュールを使っているなら、`Allow` を対応する `Disallow` より上に書き、ワイルドカードを避けてください。Googlebot や Bingbot の判定とは一致しません。
 
-```bash
-curl -I https://yourdomain.com/robots.txt
-# 期待値: HTTP/2 200 と Content-Type: text/plain
+もう 1 つ注意したいのは、末尾のスラッシュがないルールも前方一致だという点です。`Disallow: /member` は `/members` も `/member-list.html` も止めます。また、パスの大文字・小文字は区別されるので、`Disallow: /Admin/` では `/admin/` は止まりません。
+
+## 取得できないときの扱いと、レンタルサーバーで起きること
+
+ルールの中身と同じくらい大事なのが、ファイルを取得できなかったときの挙動です。
+
+| `/robots.txt` の応答 | RFC 9309 | Google |
+|---|---|---|
+| 2xx | 解釈できるルールに従う | 同じ。不正な行は無視。HTML が返ってきても、ルールを抜き出そうとする |
+| 3xx | 5 回以上リダイレクトをたどる | 5 回たどってだめなら 404 扱い |
+| 4xx | 「利用不可」。何でも取得してよい（MAY） | 429 以外の 4xx は「制限なし」 |
+| 5xx・タイムアウト | 「到達不能」。全部禁止とみなす | 最初の 12 時間はクロール停止。その後 30 日は最後に取得できた版を使い、それ以降はサイトが正常なら robots.txt がないものとして扱う |
+| サイズ | 少なくとも 500 KiB は解析する | 500 KiB を超えた部分は無視 |
+| キャッシュ | 24 時間を超えて古い版を使わない（到達不能時を除く） | 通常は最長 24 時間。`Cache-Control: max-age` で増減することがある |
+
+共用レンタルサーバーで問題になりやすいのは 4xx と 5xx の行です。WAF や国外 IP 制限がクローラーの robots.txt 取得に 403 を返すと、Google は「制限なし」と解釈して全部クロールします。逆に、メンテナンス中に `/robots.txt` まで 503 を返すと、Google はそのホストのクロールを止めます。ブラウザでページが見えていても起こるので、メンテナンス画面の設定では `/robots.txt` を除外しておくと安全です。
+
+## AI クローラー：robots.txt とエックスサーバーの「AIクローラー遮断設定」
+
+AI 各社は、学習用・自社検索用・ユーザーの依頼による取得用に、別々のトークンを用意するようになりました。
+
+| トークン | 運営 | 拒否したときの意味（各社の公式文書） |
+|---|---|---|
+| `GPTBot` | OpenAI | 学習に使わないでほしいという意思表示（[OpenAI のクローラー一覧](https://platform.openai.com/docs/bots)） |
+| `OAI-SearchBot` | OpenAI | ChatGPT 検索の回答に表示されない（ナビゲーション用のリンクは除く） |
+| `ClaudeBot` / `Claude-SearchBot` / `Claude-User` | Anthropic | 学習・検索用インデックス・ユーザーの依頼による取得。3 つとも robots.txt に従う（[Anthropic ヘルプ](https://support.claude.com/en/articles/8896518-does-anthropic-crawl-data-from-the-web-and-how-can-site-owners-block-the-crawler)） |
+| `Google-Extended` | Google | Gemini の学習とグラウンディング。Google 検索への掲載や順位には影響しない（[Google の一般的なクローラー](https://developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers)） |
+| `Applebot-Extended` | Apple | Apple の基盤モデルの学習。それ自体はクロールしない（[About Applebot](https://support.apple.com/en-us/119829)） |
+| `PerplexityBot` | Perplexity | Perplexity の検索結果（[Perplexity Crawlers](https://docs.perplexity.ai/guides/bots)） |
+| `CCBot` | Common Crawl | 公開クロールデータ。学習データの供給源として使われることが多い（[CCBot](https://commoncrawl.org/ccbot)） |
+
+`Google-Extended` と `Applebot-Extended` は制御用のトークンで、アクセスログには現れません。普段の Googlebot や Applebot が取得したデータの使い道を、このトークンへのルールで決めます。
+
+エックスサーバーには、サーバーパネルの[「AIクローラー遮断設定」](https://www.xserver.ne.jp/manual/man_server_ai_crawler.php)があります。マニュアルによれば、これは robots.txt ではなく、対象のクローラーからのアクセスそのものを遮断する機能で、初期状態は OFF、ドメインごとに設定します。遮断対象には `GPTBot` や `ClaudeBot` だけでなく、`OAI-SearchBot`、`Claude-SearchBot`、`PerplexityBot`、`ChatGPT-User`、`Claude-User` も含まれます。ON にすると学習を止められる一方で、ChatGPT や Claude、Perplexity の検索・引用からも外れることになります。「学習には使わせないが AI 検索には出たい」なら、robots.txt で `GPTBot`、`ClaudeBot`、`Google-Extended`、`CCBot` だけを拒否するほうが目的に合います。ただし robots.txt は依頼にすぎないので、従わないクローラーはサーバー側で止めるしかありません。
+
+## 公開前後の確認方法
+
+Search Console の [robots.txt レポート](https://support.google.com/webmasters/answer/6062598?hl=ja)（設定 → robots.txt）には、プロパティの上位 20 ホストについて、Google が取得した robots.txt、取得日時、解析できなかった行が表示されます。修正後に再クロールをリクエストすることもできます。個別の URL を判定する機能はないので、1 ページ単位では URL 検査ツールを使います。以前の「robots.txt テスター」は 2023 年に提供終了しました。Bing Webmaster Tools には今も [robots.txt テスター](https://www.bing.com/webmasters/help/robots-txt-tester-623520ca)があり、Bingbot として URL を判定して、止めている行を表示します。
+
+手元で確かめるなら、ファイルを取得して RFC に沿ったパーサーにかけます。
+
+```python
+from protego import Protego
+import urllib.request
+
+body = urllib.request.urlopen("https://example.jp/robots.txt").read().decode("utf-8")
+rp = Protego.parse(body)
+for path in ["/wp-admin/admin-ajax.php", "/?s=test", "/mypage/"]:
+    print(path, rp.can_fetch("https://example.jp" + path, "Googlebot"))
 ```
 
-404が返る場合、Googleはサイトを完全にクロール可能として扱います。5xxが返る場合、Googleはリトライし、クロールを一時停止する可能性があります。
+`curl -sI https://example.jp/robots.txt` でステータスが 200、`Content-Type` が `text/plain` であることも見ておきます。WordPress の仮想 robots.txt は `text/plain; charset=utf-8` を返します。
 
-### ルールに対する特定URLのテスト
+## ZeroTool のジェネレーターで書くときの注意
 
-```bash
-# ファイルを取得して手動で確認
-curl https://yourdomain.com/robots.txt
-```
+[robots.txt ジェネレーター](/ja/tools/robots-txt-generator/)では、ブロックごとに `*`・Googlebot・Bingbot を選ぶか、「カスタム」で任意のトークンを入力し、許可・拒否の行とサイトマップ URL を足していきます。この記事のファイル例はすべてこのツールで作り、テストでツールのコードと照合しています。
 
-プログラムによるテストには、Googleが提供する[robots.txtパーサーライブラリ](https://github.com/google/robotstxt)（C++製）を使ってください。Google はこれを本番のクローラーで使っているコードだと説明しています。
+- 開いた直後は `User-agent: *` と `Disallow: /`、つまりサイト全体の拒否になっています。ステージング環境には合っていますが、本番に置く前に必ず書き換えてください。
+- ルールのないブロックは空の `Disallow:` として出力され、そのクローラーにはすべて許可になります。
+- 1 ブロックに入れられる User-agent は 1 つです。パスは入力どおりに出力され、`/` で始まっているか、ワイルドカードが意図どおりかは検査しません。
+- サイトマップは 1 行だけ末尾に書きます。`Crawl-delay` は出力しません（Google は読みませんが、Bing は 1〜20 秒の範囲で従います）。
 
-## SEOを傷つける一般的なミス
-
-**1. CSSとJavaScriptをブロックする**
-
-古いSEOアドバイスではクロールバジェットを保護するために `/wp-content/` をブロックすることを推奨していました。しかし現在GoogleはページのJavaScriptとCSSをレンダリングしてコンテンツを理解する*必要*があります。これらのファイルをブロックするとGooglebotは壊れたページを見ることになります。
-
-**2. ローンチ前にサイト全体をdisallowする**
-
-多くのCMSツールは開発モードで `Disallow: /` を含む状態で出荷されます。開発者はローンチ時に変更するのを忘れます。サイトが公開され、リンクされても、Googleがクロールできないためランキングされません。
-
-**3. 機密データを隠すのにrobots.txtを使う**
-
-`robots.txt` に記載されたディレクトリは公開されています。セキュリティ研究者や悪意のある人物は積極的に `robots.txt` を読んで隠れたパスを探しています。機密ルートはクローラーのルールではなく認証で保護してください。
-
-**4. ディレクトリの末尾スラッシュがない**
-
-`Disallow: /admin` は `/admin` と `/administrator` の両方をブロックします。`Disallow: /admin/` を使ってルールを正確にスコープしてください。
-
-**5. サイトマップURLをブロックする**
-
-```
-# 間違い — サイトマップ自体をブロックしてしまう
-User-agent: *
-Disallow: /sitemap.xml
-```
-
-**6. 間違ったContent-Type**
-
-ファイルは UTF-8 の `text/plain` として配信してください。[Google の robots.txt ドキュメント](https://developers.google.com/search/docs/crawling-indexing/robots/robots_txt?hl=ja)もこの形式を前提にしています。
-
-## 覚えておく構文ルール
-
-- 1行に1ディレクティブ
-- `#` で始まる行はコメント
-- ルールの後に `User-agent` 行が来ると新しいグループが始まる（グループ間の空行は読みやすさのため）
-- ディレクティブ名は大文字小文字を区別しない。パスの照合はサーバーの種類に関係なく大文字小文字を区別する（RFC 9309）
-- 推奨される最大ファイルサイズは500KB（Googleの実際の制限）
-- UTF-8エンコーディングのみ
-
-## 推測なしでファイルを作成
-
-手動で `robots.txt` を書くとエラーが起きやすいです。スラッシュの欠落や `Allow`/`Disallow` ルールの順序の間違いが予期しない結果を生みます。同じパスに `Allow` と `Disallow` の両方がマッチする場合の正しいルールは、**長い方のマッチが勝つ** — ファイル内の順序ではありません。
-
-[robots.txtジェネレーターを試す →](/ja/tools/robots-txt-generator/)
-
-ジェネレーターでは `User-agent` ブロック（`*`、Googlebot、Bingbot、任意の名前）を追加し、各ブロックに `Allow` と `Disallow` のパスを加え、Sitemap URL を指定するとファイルが出力されます。サイトのルートに置いたら、Search Console の robots.txt レポートで確認してください。
+WordPress の場合、ドキュメントルートに robots.txt を置くと、サーバーがそのファイルを返すので仮想 robots.txt は使われなくなります。生成したファイルに `Allow: /wp-admin/admin-ajax.php` とサイトマップの行を残しておくと、元の動作を保てます。検索結果から外したいページには、robots.txt ではなく [meta タグ生成ツール](/ja/tools/meta-tag-generator/)で作る `noindex` を使ってください。
