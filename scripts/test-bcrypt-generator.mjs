@@ -475,7 +475,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const t = mdx.indexOf('{/* bcg-compat */}');
   check(`${lang}.mdx has the compatibility table`, t >= 0);
   if (t >= 0) {
-    const rows = mdx.slice(t).split('\n').filter((l) => /^\| \S/.test(l)).slice(2, 40);
+    const rows = mdx.slice(t).split('\n').filter((l) => /^\| \S/.test(l)).slice(1, 40);
     let checked = 0;
     for (const row of rows) {
       const cells = row.split('|').slice(1, -1).map((s) => s.trim());
