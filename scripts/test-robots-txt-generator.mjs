@@ -146,7 +146,8 @@ function pyOk(code) {
   try { execFileSync(PY, ['-c', code], { stdio: 'ignore' }); return true; } catch { return false; }
 }
 const hasPython = pyOk('import urllib.robotparser');
-const hasProtego = hasPython && pyOk('import protego');
+// Expected Protego results were recorded with 0.7.0; only that release is compared.
+const hasProtego = hasPython && pyOk('import importlib.metadata as m, sys; sys.exit(0 if m.version("protego") == "0.7.0" else 1)');
 const PARSE = `
 import json, sys, urllib.robotparser as rp
 cases = json.load(sys.stdin)
