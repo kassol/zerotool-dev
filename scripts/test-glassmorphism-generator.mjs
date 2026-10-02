@@ -116,4 +116,139 @@ test('generated code highlights keep unscoped styles; local images and settings 
   const script = source.split('<script is:inline')[1].split('</script>')[0];
   assert.doesNotMatch(script, /innerHTML|fetch\(|XMLHttpRequest|localStorage|sessionStorage|ztPersist|sendBeacon/);
 });
+for (const [lang, fill, expected] of [['en', '#112233', '16.14'], ['zh', '#003366', '12.60'], ['ja', '#0017c1', '11.09'], ['ko', '#002244', '16.00']]) {
+  const text = readFileSync(new URL(`../src/content/tools/glassmorphism-generator/${lang}.mdx`, import.meta.url), 'utf8');
+  for (const match of text.matchAll(/\{\/\* gsg-check: (.*?) \*\/\}/g)) {
+    const example = JSON.parse(match[1]);
+    test(`${lang} documented CSS matches the real output`, () => {
+      const css = ctx.exportCode({ ...defaults, ...example.settings }, 'css');
+      assert.ok(css.includes(example.contains));
+      assert.ok(text.includes(example.contains));
+      const block = text.slice(match.index + match[0].length).match(/```css\n([\s\S]*?)```/)[1];
+      for (const line of block.trim().split('\n')) assert.ok(css.includes(line.trim()), line);
+    });
+  }
+  test(`${lang} fallback contrasts and SEO fit the page contract`, () => {
+    const ratio = (Math.floor(ctx.worstContrast([0, 0, 0, 255], fill, 100, '#fff').ratio * 100) / 100).toFixed(2);
+    assert.equal(ratio, expected);
+    assert.ok(text.includes(`${ratio}:1`));
+    assert.ok(text.includes('18.88:1'));
+    assert.ok(text.match(/seoTitle: "(.*?)"/)[1].length <= (lang === 'en' ? 60 : 30));
+    if (lang === 'en') assert.ok(text.match(/seoDescription: "(.*?)"/)[1].length >= 150 && text.match(/seoDescription: "(.*?)"/)[1].length <= 160);
+    const body = text.split('---')[2].replace(/```[\s\S]*?```/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/<[^>]*>/g, '');
+    const words = lang === 'en' ? body.trim().split(/\s+/).length : (body.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) || []).length + (body.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || []).length;
+    const bounds = { en: [600, 1000], zh: [900, 1500], ja: [1300, 2200], ko: [1100, 1900] }[lang];
+    assert.ok(words >= bounds[0] && words <= bounds[1], `${words} outside ${bounds}`);
+  });
+}
+// Drive the actual inline script through inputs and observable outputs.
+// Canvas is a fixed opaque black background here; real filtering is checked in Ego.
+function mount({ filterSupport = true, canvasFilter = true, reduced = false, forced = false } = {}) {
+  class Node {
+    constructor(value = '') { this.value = this.defaultValue = String(value); this.dataset = {}; this.style = {}; this.children = []; this.handlers = {}; this.attributes = {}; this._text = ''; }
+    addEventListener(name, fn) { (this.handlers[name] ||= []).push(fn); }
+    async fire(name) { for (const fn of this.handlers[name] || []) await fn({ target: this }); }
+    setAttribute(name, value) { this.attributes[name] = value; }
+    get textContent() { return this._text + this.children.map(n => n.textContent).join(''); }
+    set textContent(value) { this._text = String(value); this.children = []; }
+    append(node) { this.children.push(node); }
+    replaceChildren() { this.children = []; this._text = ''; }
+    getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; }
+    select() {} focus() {} remove() {} click() {}
+    getContext() { return this.context ||= { ...(canvasFilter ? { filter: '' } : {}), fillRect() {}, drawImage() {}, beginPath() {}, arc() {}, fill() {}, save() {}, translate() {}, scale() {}, restore() {}, createLinearGradient() { return { addColorStop() {} }; }, getImageData() { return { data: [0, 0, 0, 255] }; } }; }
+  }
+  const nodes = {};
+  const colors = ['bg', 'border', 'shadow', 'text', 'fallback'].map(key => {
+    const node = nodes[key] = new Node(defaults[key]); node.dataset.hex = key;
+    const swatch = nodes[`swatch-${key}`] = new Node(defaults[key]); swatch.dataset.color = key;
+    return node;
+  });
+  const ranges = ['alpha', 'blur', 'saturation', 'borderAlpha', 'borderWidth', 'radius', 'shadowAlpha'].map(key => {
+    const node = nodes[key] = new Node(defaults[key]); node.dataset.range = key; node.dataset.unit = '';
+    nodes[`${key}-val`] = new Node(); return node;
+  });
+  for (const key of ['copy', 'code', 'status', 'card', 'scene', 'contrast-values', 'image', 'reset', 'opaque']) nodes[key] = new Node();
+  nodes['preview-canvas'] = new Node(); nodes['preview-canvas'].clientWidth = nodes['preview-canvas'].clientHeight = 100;
+  nodes.state = new Node('normal'); nodes.format = new Node('css'); nodes.preset = new Node('sunset'); nodes.file = new Node(); nodes.file.files = [];
+  const wrap = new Node();
+  wrap.querySelector = selector => selector.startsWith('#gsg-') ? nodes[selector.slice(5)] : nodes[`swatch-${selector.match(/"(.*?)"/)[1]}`];
+  wrap.querySelectorAll = selector => selector === '[data-color]' ? colors.map(n => nodes[`swatch-${n.dataset.hex}`]) : selector === '[data-hex]' ? colors : selector === '[data-range]' ? ranges : selector.startsWith('input[') ? [...colors, ...ranges, ...colors.map(n => nodes[`swatch-${n.dataset.hex}`])] : [...colors, ...ranges, nodes.opaque, nodes.state, nodes.format];
+  const media = {};
+  const requests = [], images = [], clipboard = [];
+  let pendingFrame;
+  const context = vm.createContext({ L: strings.en, document: { currentScript: { closest() { return wrap; } }, createElement() { return new Node(); }, addEventListener() {}, execCommand() { return false; } },
+    window: {}, navigator: { clipboard: { async writeText(text) { clipboard.push(text); } } },
+    matchMedia(query) { return media[query] = { matches: query.includes('forced') ? forced : reduced, addEventListener(name, fn) { this.change = fn; } }; },
+    CSS: { supports() { return filterSupport; } }, getComputedStyle() { return { paddingLeft: '16' }; },
+    requestAnimationFrame(fn) { pendingFrame = fn; return 1; }, cancelAnimationFrame() {}, ResizeObserver: class { observe() {} },
+    URL: { createObjectURL() { return 'blob:local'; }, revokeObjectURL(url) { requests.push(url); } },
+    Image: class { constructor() { this.naturalWidth = this.naturalHeight = 10; images.push(this); } decode() { return new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); } }, setTimeout(fn) { fn(); }
+  });
+  vm.runInContext('(function () {' + source.split('    (function () {')[1].split('</script>')[0], context);
+  return { nodes, media, images, requests, clipboard, context, async input(key, value) { nodes[key].value = String(value); await nodes[key].fire('input'); if (pendingFrame) { const fn = pendingFrame; pendingFrame = null; fn(); } } };
+}
+const ui = mount();
+await ui.input('bg', '#badcolor');
+test('invalid color clears code, hides stale preview and disables copy', () => {
+  assert.equal(ui.nodes.copy.disabled, true);
+  assert.equal(ui.nodes.card.hidden, true);
+  assert.equal(ui.nodes.code.textContent, '');
+  assert.equal(ui.nodes.bg.attributes['aria-invalid'], 'true');
+  assert.match(ui.nodes.status.textContent, /position 5/);
+});
+await ui.input('bg', '#fff');
+test('valid color recovers the preview and copy', () => {
+  assert.equal(ui.nodes.copy.disabled, false);
+  assert.equal(ui.nodes.card.hidden, false);
+  assert.match(ui.nodes.code.textContent, /rgba\(255, 255, 255, 0.15\)/);
+});
+for (const state of ['unsupported', 'reduced']) {
+  await ui.input('state', state);
+  test(`preview ${state} uses the opaque fallback`, () => {
+    assert.equal(ui.nodes.card.style.background, '#ffffff');
+    assert.equal(ui.nodes.card.style.backdropFilter, 'none');
+  });
+}
+await ui.input('state', 'normal'); ui.nodes.opaque.checked = true; await ui.input('opaque', '');
+test('manual opaque override changes exported code and displayed contrast together', () => {
+  assert.doesNotMatch(ui.nodes.code.textContent, /@supports/);
+  assert.equal(ui.nodes.card.style.backdropFilter, 'none');
+  assert.match(ui.nodes['contrast-values'].textContent, /Glass: 18.88:1/);
+});
+for (const options of [{ reduced: true }, { filterSupport: false }, { forced: true }, { canvasFilter: false }]) {
+  const page = mount(options);
+  test(`system or browser fallback ${JSON.stringify(options)} is visible`, () => {
+    if (options.canvasFilter === false) assert.match(page.nodes['contrast-values'].textContent, /cannot be estimated/);
+    else if (options.forced) assert.match(page.nodes['contrast-values'].textContent, /System|system/);
+    else {
+      assert.equal(page.nodes.card.style.backdropFilter, 'none');
+      assert.match(page.nodes['contrast-values'].textContent, /Glass: 18.88:1/);
+    }
+  });
+}
+await ui.nodes.reset.fire('click'); await ui.nodes.copy.fire('click');
+test('reset restores defaults and clipboard receives complete CSS', () => {
+  assert.equal(ui.nodes.opaque.checked, false);
+  assert.equal(ui.nodes.bg.value, '#ffffff');
+  assert.equal(ui.clipboard[0], ui.nodes.code.textContent);
+});
+await ui.input('format', 'tailwind'); await ui.nodes.copy.fire('click');
+test('format switch copies Tailwind rather than previous CSS', () => assert.match(ui.clipboard[1], /^@utility glass/));
+ui.context.navigator.clipboard.writeText = async () => { throw new Error('denied'); };
+await ui.nodes.copy.fire('click');
+test('clipboard denial and failed fallback are reported', () => assert.match(ui.nodes.status.textContent, /Copy failed/));
+ui.nodes.file.files = [{ size: 1 }]; const loading = ui.nodes.file.fire('change');
+await ui.nodes.reset.fire('click'); ui.images[0].resolve(); await loading;
+test('late image load cannot undo reset and its blob URL is released', () => {
+  assert.equal(ui.nodes.preset.value, 'sunset');
+  assert.equal(ui.nodes.status.textContent, '');
+  assert.deepEqual(ui.requests, ['blob:local']);
+});
+ui.nodes.file.files = [{ size: 21 * 1024 * 1024 }]; await ui.nodes.file.fire('change');
+test('image file limit is enforced before decoding', () => assert.match(ui.nodes.status.textContent, /20 MB/));
+ui.nodes.file.files = [{ size: 1 }]; const badImage = ui.nodes.file.fire('change'); ui.images[1].reject(new Error('decode')); await badImage;
+test('image decode failure has a recoverable message and releases the URL', () => {
+  assert.match(ui.nodes.status.textContent, /Cannot display/);
+  assert.equal(ui.requests.length, 2);
+});
 console.log(`${count} passed`);

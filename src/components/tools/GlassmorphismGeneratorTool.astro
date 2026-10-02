@@ -26,32 +26,32 @@ const ranges = [
 ---
 <div class="gsg-wrap">
   <div class="gsg-controls">
-    {colors.map(({ key, value }) => <div class="gsg-field" data-field={key}>
+    {colors.slice(0, 1).map(({ key, value }) => <div class="gsg-field" data-field={key}>
       <label class="tool-label" for={`gsg-${key}`}>{L[key as keyof typeof L]}</label>
       <div class="gsg-color-row">
         <input class="gsg-swatch" type="color" value={value} data-color={key} aria-label={L[key as keyof typeof L]} />
         <input class="tool-input" type="text" id={`gsg-${key}`} value={value} data-hex={key} spellcheck="false" autocomplete="off" aria-describedby="gsg-status" />
       </div>
     </div>)}
-    {ranges.map(({ key, value, max, step, unit }) => <div class="gsg-field" data-field={key}>
+    {ranges.slice(0, 3).map(({ key, value, max, step, unit }) => <div class="gsg-field" data-field={key}>
       <label class="tool-label" for={`gsg-${key}`}>{L[key as keyof typeof L]} <output id={`gsg-${key}-val`}>{value}{unit}</output></label>
       <input type="range" id={`gsg-${key}`} data-range={key} data-unit={unit} min="0" max={max} step={step || 1} value={value} />
     </div>)}
   </div>
   <div class="gsg-preview-section">
-    <div class="gsg-toolbar">
-      <label class="gsg-off"><input id="gsg-opaque" type="checkbox" />{L.opaque}</label>
-      <label class="gsg-state-label tool-label" for="gsg-state">{L.state}</label>
-      <select id="gsg-state" class="tool-input"><option value="normal">{L.normal}</option><option value="unsupported">{L.unsupported}</option><option value="reduced">{L.reduced}</option></select>
+    <div class="gsg-output-header">
+      <label for="gsg-format" class="tool-label">{L.output}</label>
+      <select id="gsg-format" class="tool-input"><option value="css">CSS</option><option value="tailwind">{L.tailwind}</option></select>
+      <button id="gsg-copy" class="btn-copy" type="button">{L.copy}</button>
     </div>
     <div id="gsg-preview-canvas" class="gsg-preview-canvas">
       <canvas id="gsg-scene" aria-hidden="true"></canvas>
       <div id="gsg-card" class="gsg-card"><strong>{L.title}</strong><span>{L.subtitle}</span></div>
     </div>
-    <div class="gsg-output-header">
-      <label for="gsg-format" class="tool-label">{L.output}</label>
-      <select id="gsg-format" class="tool-input"><option value="css">CSS</option><option value="tailwind">{L.tailwind}</option></select>
-      <button id="gsg-copy" class="btn-copy" type="button">{L.copy}</button>
+    <div class="gsg-toolbar">
+      <label class="gsg-off"><input id="gsg-opaque" type="checkbox" />{L.opaque}</label>
+      <label class="gsg-state-label tool-label" for="gsg-state">{L.state}</label>
+      <select id="gsg-state" class="tool-input"><option value="normal">{L.normal}</option><option value="unsupported">{L.unsupported}</option><option value="reduced">{L.reduced}</option></select>
     </div>
     <p id="gsg-status" class="tool-status" role="status"></p>
     <details class="gsg-code-details"><summary>CSS / Tailwind v4</summary><pre class="gsg-pre"><code id="gsg-code"></code></pre></details>
@@ -62,6 +62,19 @@ const ranges = [
       <button id="gsg-reset" type="button" class="btn-ghost">{L.reset}</button>
     </div>
     <p class="gsg-note">{L.imageLocal}</p>
+    <details class="gsg-options"><summary>{L.advanced}</summary><div class="gsg-controls">
+      {colors.slice(1).map(({ key, value }) => <div class="gsg-field" data-field={key}>
+        <label class="tool-label" for={`gsg-${key}`}>{L[key as keyof typeof L]}</label>
+        <div class="gsg-color-row">
+          <input class="gsg-swatch" type="color" value={value} data-color={key} aria-label={L[key as keyof typeof L]} />
+          <input class="tool-input" type="text" id={`gsg-${key}`} value={value} data-hex={key} spellcheck="false" autocomplete="off" aria-describedby="gsg-status" />
+        </div>
+      </div>)}
+      {ranges.slice(3).map(({ key, value, max, step, unit }) => <div class="gsg-field" data-field={key}>
+        <label class="tool-label" for={`gsg-${key}`}>{L[key as keyof typeof L]} <output id={`gsg-${key}-val`}>{value}{unit}</output></label>
+        <input type="range" id={`gsg-${key}`} data-range={key} data-unit={unit} min="0" max={max} step={step || 1} value={value} />
+      </div>)}
+    </div></details>
     <div class="gsg-contrast"><strong>{L.contrast}</strong><div id="gsg-contrast-values"></div><p class="gsg-note">{L.scope}</p></div>
   </div>
   <script is:inline define:vars={{ L }}>
@@ -132,7 +145,7 @@ const ranges = [
         return s;
       }
       function drawScene() {
-        scene.width = Math.round($('preview-canvas').clientWidth); scene.height = 200;
+        scene.width = Math.round($('preview-canvas').clientWidth); scene.height = Math.round($('preview-canvas').clientHeight);
         var ctx = scene.getContext('2d');
         ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, scene.width, scene.height);
         if (image) {
@@ -162,11 +175,13 @@ const ranges = [
       }
       function contrast(s) {
         var area = $('preview-canvas').getBoundingClientRect(), rect = card.getBoundingClientRect();
-        var x = Math.max(0, Math.round(rect.left - area.left + 24)), y = Math.max(0, Math.round(rect.top - area.top + 24));
-        var w = Math.min(scene.width - x, Math.max(1, Math.floor(rect.width - 48))), h = Math.min(scene.height - y, Math.max(1, Math.floor(rect.height - 48)));
+        var inset = parseFloat(getComputedStyle(card).paddingLeft) + s.borderWidth;
+        var x = Math.max(0, Math.round(rect.left - area.left + inset)), y = Math.max(0, Math.round(rect.top - area.top + inset));
+        var w = Math.min(scene.width - x, Math.max(1, Math.floor(rect.width - inset * 2))), h = Math.min(scene.height - y, Math.max(1, Math.floor(rect.height - inset * 2)));
         var filtered = filteredScene(s), output = $('contrast-values'); output.replaceChildren();
         var glass = filtered ? worstContrast(filtered.getContext('2d').getImageData(x, y, w, h).data, s.bg, s.alpha, s.text) : null;
         var off = worstContrast([0, 0, 0, 255], s.fallback, 100, s.text);
+        if (s.opaque || reduced.matches || !supports) glass = off;
         for (var entry of [['normal', glass], ['unsupported', off], ['reduced', off]]) {
           var line = document.createElement('div'); line.dataset.state = entry[0];
           line.textContent = entry[1] ? L[entry[0]] + ': ' + (Math.floor(entry[1].ratio * 100) / 100).toFixed(2) + ':1 · ' + (entry[1].aa ? L.pass : L.fail) : L.unavailable;
@@ -247,7 +262,7 @@ const ranges = [
 </div>
 <style is:global>
   .gsg-wrap { display: flex; flex-direction: column; gap: 1rem; }
-  .gsg-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.8rem 1rem; }
+  .gsg-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.8rem 1rem; }
   .gsg-field { display: flex; flex-direction: column; gap: 0.25rem; }
   .gsg-field output { float: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .gsg-color-row { display: flex; gap: 0.5rem; }
@@ -267,7 +282,8 @@ const ranges = [
   .gsg-output-header #gsg-copy { margin-left: auto; }
   .gsg-note { font-size: 0.82rem; color: var(--color-text-secondary); margin: 0; line-height: 1.5; }
   .gsg-contrast { font-size: 0.85rem; line-height: 1.6; }
-  .gsg-code-details summary { cursor: pointer; min-height: 28px; font-size: 0.85rem; }
+  .gsg-code-details summary, .gsg-options summary { cursor: pointer; min-height: 28px; font-size: 0.85rem; }
+  .gsg-options .gsg-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 0.8rem; }
   .gsg-pre { margin-top: 0.5rem; background: var(--color-bg-secondary); padding: 1rem; font: 0.82rem/1.6 var(--font-mono); }
   .gsg-hl-sel { color: #7c3aed; } .gsg-hl-prop { color: #0369a1; }
   @media (prefers-color-scheme: dark) {
@@ -280,6 +296,14 @@ const ranges = [
   }
   @media (max-width: 640px) {
     .gsg-swatch { width: 44px; height: 44px; }
-    .gsg-controls { grid-template-columns: 1fr; }
+    .gsg-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem 0.75rem; }
+    .gsg-wrap { gap: 0.5rem; }
+    .gsg-preview-canvas, #gsg-scene { height: 120px; }
+    .gsg-card { padding: 16px; min-height: 88px; }
+    .gsg-off { min-height: 44px; }
+    .gsg-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.4rem; }
+    .gsg-state-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .gsg-toolbar #gsg-state { width: 100%; }
+    .gsg-background .tool-label { width: 100%; }
   }
 </style>
