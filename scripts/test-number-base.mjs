@@ -28,6 +28,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/NumberBaseTool.astro'), 'utf8');
@@ -125,7 +127,7 @@ eq('mixed-case hex', F('aBcD', 16, 10), '43981');
   const outs = [2, 8, 16, 36].map((b) => E.formatValue(r.n, r.d, b, {}).text.length);
   const ms = performance.now() - t0;
   eq('20,000-digit decimal parses to BigInt', r.n, BigInt(big));
-  check('20,000-digit decimal converts to 4 bases in under 2 s', ms < 2000, Math.round(ms) + ' ms');
+  check('20,000-digit decimal converts to 4 bases in under 2 s', ms < 2000 * PERF_SLACK, Math.round(ms) + ' ms');
   check('20,000-digit decimal has 66,439 binary digits', outs[0] === 66439, outs[0]);
   eq('20,001 digits is rejected', P('7'.repeat(E.MAX_DIGITS + 1), 10).error, { code: 'tooLong', max: E.MAX_DIGITS });
 }

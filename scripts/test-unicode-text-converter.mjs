@@ -22,6 +22,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/UnicodeTextConverterTool.astro'), 'utf8');
@@ -319,7 +321,7 @@ for (const [l, input, id, want] of PAGE_EXAMPLES) {
   const t0 = performance.now();
   for (const id of E.STYLE_IDS) E.convert(E.analyze(big).source, id);
   const ms = performance.now() - t0;
-  check('105,000 characters × 23 styles in under 3 s (' + Math.round(ms) + ' ms)', ms < 3000);
+  check('105,000 characters × 23 styles in under 3 s (' + Math.round(ms) + ' ms)', ms < 3000 * PERF_SLACK);
 }
 
 // ---------- strings ----------

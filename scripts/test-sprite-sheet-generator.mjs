@@ -31,6 +31,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import sharp from 'sharp';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SpriteSheetGeneratorTool.astro'), 'utf8');
@@ -316,7 +318,7 @@ function checkPacking(label, sizes, opts, res) {
   const bigRes = E.packMaxRects(big, { maxWidth: 2048, spacing: 2, extrude: 1 });
   const ms = Date.now() - t0;
   checkPacking('pack: 1000 sprites invariants', big, { maxWidth: 2048, spacing: 2, extrude: 1 }, bigRes);
-  check('pack: 1000 sprites under 5 s', ms < 5000, ms + ' ms');
+  check('pack: 1000 sprites under 5 s', ms < 5000 * PERF_SLACK, ms + ' ms');
   check('pack: 1000 sprites near square (aspect ≤ 2)', Math.max(bigRes.width, bigRes.height) / Math.min(bigRes.width, bigRes.height) <= 2,
     bigRes.width + '×' + bigRes.height);
   check('pack: 1000 sprites fill ≥ 65%', E.fillRatio(big, bigRes.width, bigRes.height) >= 0.65);

@@ -46,6 +46,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const componentPath = join(root, 'src/components/tools/AiTokenCounterTool.astro');
@@ -236,7 +238,7 @@ for (const l of LONG) {
     const ids = E.encodeAll(enc[key], l.text);
     const ms = performance.now() - t0;
     check(`${key} ${l.name}: ids match the reference`, ref && ids.length === ref[key][0] && sha(ids) === ref[key][1], `${ids.length} vs ${ref && ref[key][0]}`);
-    check(`${key} ${l.name}: under 5 s`, ms < 5000, Math.round(ms) + ' ms');
+    check(`${key} ${l.name}: under 5 s`, ms < 5000 * PERF_SLACK, Math.round(ms) + ' ms');
   }
 }
 
