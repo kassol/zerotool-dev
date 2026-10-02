@@ -1,134 +1,166 @@
 ---
-seoTitle: "OpenAPI Validator — Validate OpenAPI 3.0 / 3.1 / 3.2 Specs Online | ZeroTool"
-seoDescription: "Validate OpenAPI 3.0, 3.1 and 3.2 documents in YAML or JSON against the official JSON Schemas, with $ref, path parameter and operationId checks. Runs in your browser."
+seoTitle: "OpenAPI Validator Online — Swagger 2.0 to OpenAPI 3.2 | ZeroTool"
+seoDescription: "Validate OpenAPI 3.0/3.1/3.2 and Swagger 2.0 YAML or JSON with line numbers: official schemas, $ref across files, path params, examples. Nothing is uploaded."
 faqItems:
-  - question: "What OpenAPI versions does this tool support?"
-    answer: "OpenAPI 3.0.x, 3.1.x and 3.2.x. Each document is checked against the official JSON Schema for its version from spec.openapis.org, so 3.1 rules (paths optional when components or webhooks exist, responses optional) apply to 3.1 files. Swagger 2.0 documents get a conversion hint."
-  - question: "Can I validate YAML and JSON specs?"
-    answer: "Yes. Paste either YAML or JSON. Quote the version in YAML (openapi: \"3.0.3\" or 3.0.3 both work, but openapi: 3.0 is read as a number and rejected)."
-  - question: "What does the validator check?"
-    answer: "The whole structure defined by the official schema (required fields, allowed fields, value types, response and parameter shapes), plus three rules the schema cannot express: every internal $ref points to something, every {name} in a path has a matching in: path parameter and the other way round, and operationId values are unique."
-  - question: "Does it follow $ref?"
-    answer: "References inside the document (#/components/...) are resolved and reported if they point to nothing. External references such as ./schemas/pet.yaml or https://... are listed under Not checked; the tool does not fetch files."
-  - question: "Is my API spec sent to any server?"
-    answer: "No. Validation runs in your browser. The validator code and the three schemas are loaded from this site on the first click; your document is not uploaded."
+  - question: "Which versions does the validator support?"
+    answer: "Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2. The tool reads the swagger or openapi field and checks the document against the official JSON Schema for that version: the Swagger 2.0 schema from the OpenAPI Initiative repository and the 3.0 (2024-10-18), 3.1 (2026-08-03) and 3.2 (2026-08-30) schemas from spec.openapis.org."
+  - question: "Is my API description uploaded?"
+    answer: "No. Parsing and all checks run in a Web Worker in your browser. External $ref URLs are not fetched; files you add under Other files stay in the page."
+  - question: "My spec uses $ref to other files. Can it check them?"
+    answer: "Yes. Open several files or a whole folder, or add files by hand under Other files and name each one by the path its $ref uses (for example schemas/pet.yaml). References are resolved across the files, and problems are reported in the file where the text is. References to URLs and to files you did not add are listed as notes."
+  - question: "What is the difference between an error and a warning?"
+    answer: "Errors break a MUST in the specification or the official schema, so other tools may reject the document. Warnings are SHOULD rules and likely mistakes: examples that do not match their schema, unused components, server variables that are not defined. Notes list what was not checked."
+  - question: "Why does version: 2024-01-15 pass here but fail in some validators?"
+    answer: "The validator reads YAML with the YAML 1.2 core schema, as Redocly CLI, Spectral and swagger-parser do, so an unquoted date is a string. Parsers that use YAML 1.1 timestamps turn it into a date, and the schema then rejects info.version."
 ---
 
-<h2>OpenAPI Validator Online</h2>
-<p>Paste an OpenAPI 3.0, 3.1 or 3.2 document in YAML or JSON and check it before you hand it to API gateways, SDK generators or documentation tools. The tool picks the official JSON Schema that matches the <code>openapi</code> field, validates the document with Ajv, and then runs the checks the schema cannot do on its own.</p>
+<p>Paste an OpenAPI or Swagger document, open the files, or drop a folder. The validator checks it against the official JSON Schema for its version, follows <code>$ref</code> between files, and adds the rules that the schemas cannot express. Every problem shows the line and column; click it to select that line in the editor.</p>
 
-<h2>How to Use</h2>
+<h2>How to use</h2>
 <ol>
-  <li>Paste your OpenAPI spec (YAML or JSON) into the editor.</li>
-  <li>Click <strong>Validate</strong> or press <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.</li>
-  <li>If valid, a summary panel shows the API title, version, OpenAPI version, path count and operation count.</li>
-  <li>If invalid, each error is listed with its location as a JSON Pointer (the same syntax as <code>$ref</code>) and a description.</li>
-  <li>References the tool did not follow are listed under <strong>Not checked</strong>.</li>
+  <li>Paste YAML or JSON into the editor, click <strong>Open files</strong> or <strong>Open folder</strong>, or drop files on the tool. With several files, the one that has an <code>openapi</code> or <code>swagger</code> field becomes the main document.</li>
+  <li>The check runs while you type (inputs under 2 MB) or when you click <strong>Validate</strong> or press <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.</li>
+  <li>Read the list: <strong>Error</strong>, <strong>Warning</strong> and <strong>Note</strong>, each with line:column, a message and the JSON Pointer of the field. Filter by level, or copy the list as tab-separated text.</li>
+  <li>If a <code>$ref</code> needs a file you have not added, click the <strong>Add</strong> button that appears and paste its content.</li>
 </ol>
 
-<h2>What the Validator Checks</h2>
-<ul>
-  <li><strong>Structure</strong>, against the official schemas published at <a href="https://spec.openapis.org/" target="_blank" rel="noopener">spec.openapis.org</a>: 3.0 (schema 2024-10-18), 3.1 (2026-08-03) and 3.2 (2026-08-30). Required and unknown fields, value types, the shape of parameters, responses, security schemes and so on. Field names starting with <code>x-</code> are allowed everywhere the specification allows extensions.</li>
-  <li><strong>Internal <code>$ref</code></strong>: <code>#/components/schemas/User</code> must exist in the document. <code>~1</code>, <code>~0</code> and percent-encoding in the pointer are decoded. <code>$ref</code> inside <code>example</code>, <code>default</code> or an Example Object's <code>value</code> is data and is skipped.</li>
-  <li><strong>Path parameters</strong>: each <code>&#123;name&#125;</code> in a path needs a parameter with <code>in: path</code> on the Path Item or the operation, and each <code>in: path</code> parameter must appear in the path (Path Templating in the specification).</li>
-  <li><strong>operationId</strong> must be unique across <code>paths</code> and <code>webhooks</code>.</li>
-</ul>
+<h2>Example: a 3.1 description with four problems</h2>
+<p>This is the built-in example. The <code>version</code> field is an unquoted date, which YAML 1.2 reads as a string, so it is not reported.</p>
 
-<p>Example input with three mistakes:</p>
-
-{/* ov: {"errors": ["#/info Missing required field \"version\".", "#/paths Path \"orders/{id}\" must start with \"/\".", "#/paths/orders~1{id}/get GET orders/{id}: path parameter \"id\" is not declared (add a parameter with in: path, name: id)."]} */}
-
-<pre><code>{`openapi: 3.0.3
-info:
-  title: Orders API
-paths:
-  orders/{id}:
-    get:
-      summary: Get one order
-  /orders:
-    post:
-      responses:
-        "201":
-          description: Created`}</code></pre>
-
-<p>Errors reported:</p>
-
-<pre><code>{`#/info
-    Missing required field "version".
-#/paths
-    Path "orders/{id}" must start with "/".
-#/paths/orders~1{id}/get
-    GET orders/{id}: path parameter "id" is not declared (add a parameter with in: path, name: id).`}</code></pre>
-
-<p>The <code>get</code> operation has no <code>responses</code> either, but the path key itself is invalid, so the schema does not look inside it. Fix the reported errors and validate again.</p>
-
-<p>A reference to a schema that does not exist and an undeclared path parameter:</p>
-
-{/* ov: {"errors": ["#/paths/~1users~1{id}/get/responses/200/content/application~1json/schema/$ref Reference \"#/components/schemas/User\" does not point to anything in this document.", "#/paths/~1users~1{id}/get GET /users/{id}: path parameter \"id\" is not declared (add a parameter with in: path, name: id)."]} */}
-
-<pre><code>{`openapi: 3.0.3
-info:
-  title: Broken refs
-  version: 1.0.0
-paths:
-  /users/{id}:
-    get:
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/User"`}</code></pre>
-
-<pre><code>{`#/paths/~1users~1{id}/get/responses/200/content/application~1json/schema/$ref
-    Reference "#/components/schemas/User" does not point to anything in this document.
-#/paths/~1users~1{id}/get
-    GET /users/{id}: path parameter "id" is not declared (add a parameter with in: path, name: id).`}</code></pre>
-
-<p>A 3.1 document with only <code>webhooks</code> is valid: OpenAPI 3.1 requires at least one of <code>paths</code>, <code>components</code> or <code>webhooks</code> (<a href="https://spec.openapis.org/oas/v3.1.0#openapi-object" target="_blank" rel="noopener">OpenAPI 3.1.0 §4.8.1</a>), and <code>responses</code> is optional:</p>
-
-{/* ov: {"errors": []} */}
-
+{/* ov */}
 <pre><code>{`openapi: 3.1.0
 info:
-  title: Order events
-  version: 1.0.0
-webhooks:
-  orderCreated:
-    post:
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object`}</code></pre>
-
-<h2>What It Does Not Check</h2>
-
-<p>An external reference is listed, not fetched. This document is reported as valid with one entry under Not checked:</p>
-
-{/* ov: {"errors": []} */}
-
-<pre><code>{`openapi: 3.0.3
-info:
-  title: Pets
-  version: 1.0.0
+  title: Orders API
+  version: 2026-10-02
+security:
+  - bearerAuth: []
 paths:
-  /pets:
+  /orders/{orderId}:
     get:
+      operationId: getOrder
       responses:
         "200":
-          description: OK
+          description: One order
           content:
             application/json:
               schema:
-                $ref: "./schemas/pet.yaml"`}</code></pre>
+                $ref: "#/components/schemas/Order"
+              example:
+                id: 42
+                total: "19.90"
+components:
+  schemas:
+    Order:
+      type: object
+      required: [id, total]
+      properties:
+        id: {type: integer}
+        total: {type: number}
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer`}</code></pre>
 
+{/* ov-out */}
+<pre><code>{`6:5  Error  Security scheme "bearerAuth" is not declared in components.securitySchemes.
+9:5  Error  GET /orders/{orderId}: path parameter "orderId" is not declared. Add a parameter with in: path and name: orderId.
+20:17  Warning  Example does not match the schema at /total: Must be number.
+30:5  Warning  Security scheme "bearer" is not referenced anywhere.`}</code></pre>
+
+<p>The official 3.1 schema accepts this document: a security requirement is a map of names, and the schema does not compare those names with <code>components.securitySchemes</code>. The two errors come from the extra rules below.</p>
+
+<h2>What is checked</h2>
+<table>
+  <thead><tr><th>Check</th><th>Level</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>Structure: required and unknown fields, types, parameter and response shapes</td><td>Error</td><td>Official JSON Schema for the version</td></tr>
+    <tr><td>Schema Objects in 3.1 / 3.2 (for example <code>required: true</code> on a property, <code>type: int</code>)</td><td>Error</td><td>JSON Schema 2020-12 meta-schema, which 3.1 adopts</td></tr>
+    <tr><td>Every <code>$ref</code> points to something, in this file or another one</td><td>Error</td><td>Reference Object</td></tr>
+    <tr><td>Each <code>{'{name}'}</code> in a path has an <code>in: path</code> parameter, and the other way round</td><td>Error</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#parameter-object" target="_blank" rel="noopener">Parameter Object</a></td></tr>
+    <tr><td>Paths that differ only in parameter names</td><td>Error</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#paths-object" target="_blank" rel="noopener">Paths Object</a></td></tr>
+    <tr><td>Duplicate parameters (same name and <code>in</code>), duplicate operationId, duplicate tag names</td><td>Error</td><td>Operation, Path Item and OpenAPI Objects</td></tr>
+    <tr><td>Security requirements name a declared scheme</td><td>Error</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#security-requirement-object" target="_blank" rel="noopener">Security Requirement Object</a></td></tr>
+    <tr><td>Server variable default inside its enum</td><td>Error in 3.1+, warning in 3.0 (MUST vs SHOULD)</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#server-variable-object" target="_blank" rel="noopener">Server Variable Object</a></td></tr>
+    <tr><td>Examples match their schema (readOnly is not required in requests, writeOnly not in responses)</td><td>Warning</td><td>SHOULD in Parameter and Media Type Objects</td></tr>
+    <tr><td>Unused components, undefined or unused server variables, query strings in path keys, <code>nullable</code> in 3.1</td><td>Warning</td><td>Common mistakes that the linters below also report</td></tr>
+  </tbody>
+</table>
+
+<h2>Example: two paths that are the same template</h2>
+<p>GitHub publishes its REST API description as <a href="https://github.com/github/rest-api-description" target="_blank" rel="noopener">api.github.com.yaml</a> (9.9 MB, main branch on 2026-10-02). The validator finds 2 errors in it: two pairs of attestation paths that differ only by the parameter name. Redocly CLI 2.57.0 and Spectral 6.17.0 report the same two pairs. This excerpt reproduces one:</p>
+
+{/* ov */}
+<pre><code>{`openapi: 3.0.3
+info:
+  title: Attestations (excerpt)
+  version: 1.1.4
+paths:
+  /orgs/{org}/attestations/{attestation_id}:
+    delete:
+      parameters:
+        - {name: org, in: path, required: true, schema: {type: string}}
+        - {name: attestation_id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "204": {description: Deleted}
+  /orgs/{org}/attestations/{subject_digest}:
+    get:
+      parameters:
+        - {name: org, in: path, required: true, schema: {type: string}}
+        - {name: subject_digest, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: OK}`}</code></pre>
+
+{/* ov-out */}
+<pre><code>{`13:3  Error  Path "/orgs/{org}/attestations/{subject_digest}" is the same template as "/orgs/{org}/attestations/{attestation_id}" (only the parameter names differ). The specification does not allow both.`}</code></pre>
+
+<p>A router cannot tell <code>/orgs/acme/attestations/42</code> apart for these two paths. On the full file the tool also lists 187 examples that do not match their schema and 7 unused schemas. It took 2.7 seconds in Node.js 24 on an Apple M1 Max; the page runs the same code in a Web Worker, so the page stays usable.</p>
+
+<h2>Swagger 2.0 and YAML details</h2>
+<p>Swagger 2.0 documents are checked against the Swagger 2.0 schema with the same reference, path parameter, security and example rules. A note suggests converting with <a href="https://github.com/Mermade/oas-kit" target="_blank" rel="noopener">swagger2openapi</a> if you want OpenAPI 3.</p>
+
+{/* ov */}
+<pre><code>{`swagger: "2.0"
+info:
+  title: Pets
+  version: "1.0"
+paths:
+  /pets/{petId}:
+    get:
+      parameters:
+        - {name: id, in: path, required: true, type: integer}
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: "#/definitions/Pett"
+definitions:
+  Pet:
+    type: object`}</code></pre>
+
+{/* ov-out */}
+<pre><code>{`1:1  Note  Swagger 2.0 document, checked against the Swagger 2.0 schema. To move to OpenAPI 3, convert it (for example: npx swagger2openapi swagger.yaml -o openapi.yaml) and validate the result.
+7:5  Error  GET /pets/{petId}: path parameter "petId" is not declared. Add a parameter with in: path and name: petId.
+7:5  Error  GET /pets/{petId}: parameter "id" has in: path, but the path has no {id}.
+14:13  Error  Reference "#/definitions/Pett" does not point to anything in this document.
+16:3  Warning  Definition "Pet" is not referenced anywhere.`}</code></pre>
+
+<p>YAML is read with the <a href="https://yaml.org/spec/1.2.2/#1023-core-schema" target="_blank" rel="noopener">YAML 1.2 core schema</a>, plus merge keys (<code>{'<<: *anchor'}</code>). A key that appears twice in one mapping is a syntax error with its line, in JSON input too. Integers larger than 2<sup>53</sup>, such as <code>maximum: 9223372036854775807</code>, get a note because JavaScript reads them as approximate values.</p>
+
+<h2>How it compares</h2>
+<p>We ran the same test file through other validators on 2026-10-02. It had four errors (an undeclared path parameter, an undeclared security scheme, two equivalent paths, <code>required: true</code> on a property) and an unquoted date in <code>info.version</code>.</p>
 <ul>
-  <li>The official schemas do not validate the contents of Schema Objects in detail (the 3.1 and 3.2 schemas only require an object or boolean), so a misspelled keyword inside a schema is not reported.</li>
-  <li>Rules written only in prose are not checked, except the three listed above. Examples are not validated against their schemas, and security requirements are not matched against security schemes.</li>
-  <li>For style rules (naming, descriptions, tags) run a linter such as <a href="https://redocly.com/docs/cli/commands/lint" target="_blank" rel="noopener">Redocly CLI</a> or <a href="https://github.com/stoplightio/spectral" target="_blank" rel="noopener">Spectral</a>.</li>
-  <li>YAML syntax errors are reported by the YAML parser before these checks run; the <a href="/tools/yaml-validator/">YAML Validator</a> shows the line.</li>
+  <li><strong>Redocly CLI 2.57.0</strong> and <strong>Spectral 6.17.0</strong> (<code>spectral:oas</code>) found all four. They also apply style rules (summaries, 4XX responses, license, servers), and both flag example strings for XML media types; this tool treats a string example of a non-JSON media type as the serialized form and does not compare it with the schema. On the 9.9 MB GitHub description Spectral took 32 s and Redocly 5 s.</li>
+  <li><strong>swagger-parser 13.1.0</strong> reported the document as valid.</li>
+  <li><strong>Swagger Editor 5.8.9</strong> (editor.swagger.io) checks in the browser and found the path parameter and the <code>required</code> problem, not the equivalent paths or the undeclared scheme.</li>
+  <li><strong>ApiNotes</strong> (apinotes.io, first Bing result for "openapi validator") sent the document to <code>api.apinotes.io</code> and reported <code>info.version</code> "must be string", a false error caused by reading the date as a timestamp.</li>
+  <li><strong>APIMatic</strong> validates through its VS Code extension, which needs an APIMatic account and an internet connection (its documentation), so we did not test it.</li>
 </ul>
 
-<p>All eleven example documents in the OpenAPI Initiative's <a href="https://github.com/OAI/learn.openapis.org/tree/main/examples" target="_blank" rel="noopener">learn.openapis.org examples</a> (petstore, uspto, tictactoe, the 3.2 query example and others) validate with no errors.</p>
+<h2>Limits</h2>
+<ul>
+  <li>No style rules. For naming, descriptions or a team ruleset, run Redocly CLI or Spectral after this check.</li>
+  <li>URLs in <code>$ref</code> are not fetched; add the files instead. Anchor references (<code>#name</code>) are not checked.</li>
+  <li>Example checks stop after 4 seconds on very large descriptions, with a note. Each example reports its first mismatch and a count of the rest.</li>
+  <li>Inputs over 2 MB are checked when you click Validate; files over 50 MB in total are not loaded.</li>
+</ul>
+<p>Related tools: generate types with <a href="/tools/openapi-to-typescript/">OpenAPI to TypeScript</a>, check a payload against a schema with the <a href="/tools/json-schema-validator/">JSON Schema Validator</a>, or find YAML syntax errors with the <a href="/tools/yaml-validator/">YAML Validator</a>.</p>

@@ -1,79 +1,142 @@
 ---
-seoTitle: "JSON Schema 验证器 — 在线验证 JSON 是否符合 Schema | ZeroTool"
-seoDescription: "在线验证 JSON 数据是否符合 JSON Schema，支持 Draft-07 和 Draft 2020-12，显示错误路径（如 /items/0/name）和详细信息。免费，纯浏览器端运行，数据不离开本地。"
+seoTitle: "JSON Schema 在线校验工具 | ZeroTool"
+seoDescription: "按 JSON Schema（draft-04 至 2020-12）校验 JSON、YAML 或 JSON Lines，错误定位到数据行和 Schema 关键字，并提示大整数、重复键和全角标点。在浏览器内运行，不上传。"
 faqItems:
-  - question: "支持哪些 JSON Schema 草案版本？"
-    answer: "支持 Draft-07（最广泛使用，兼容 OpenAPI 3.0 及众多验证工具）和 Draft 2020-12（最新规范）。验证前可通过下拉菜单切换版本。"
-  - question: "会校验 format（email、date、uuid）吗？"
-    answer: "会，两个草案都会。以下 format 由 ajv-formats 校验：email, uri, uri-reference, uri-template, date, time, date-time, duration, hostname, ipv4, ipv6, uuid, json-pointer, relative-json-pointer, regex。例如 \"not-an-email\" 不符合 \"format\": \"email\"。idn-email、iri 和自定义名称等其他 format 不校验。Draft 2020-12 默认把 format 当作注解，允许校验器选择是否校验；本工具选择校验。"
-  - question: "/user/age 这样的错误路径是什么意思？"
-    answer: "错误路径遵循 JSON Pointer 语法（RFC 6901）。/user/age 表示 user 对象内的 age 属性验证失败。根对象用 / 表示，数组元素路径格式如 /items/0、/items/1 等。"
-  - question: "什么是 JSON Schema？"
-    answer: "JSON Schema 是用于注解和验证 JSON 文档的规范。它允许你定义 JSON 对象的预期结构、类型、必填字段、值范围和格式要求。广泛应用于 API 请求/响应验证、配置文件验证和数据管道校验等场景。"
-  - question: "可以验证以数组为根节点的 JSON 吗？"
-    answer: "可以。将 Schema 设置为描述数组的格式，例如 {\"type\": \"array\", \"items\": {\"type\": \"string\"}}，然后粘贴类似 [\"a\", \"b\"] 的 JSON 数组即可。"
-  - question: "数据会上传到服务器吗？"
-    answer: "不会。验证完全在浏览器中通过 AJV 库完成，Schema 和 JSON 数据不会离开本地设备。"
+  - question: "支持哪些 JSON Schema 版本？"
+    answer: "draft-04、draft-06、draft-07、2019-09 和 2020-12。工具按 $schema 判断版本；没有 $schema 时按 2020-12 校验，与 Python jsonschema、Go santhosh-tekuri/jsonschema 的默认一致。也可以在菜单里指定版本，与 $schema 不一致时会给出提示。"
+  - question: "数据会上传吗？"
+    answer: "不会。Schema 和数据在浏览器标签页里由 Ajv 校验，工具不会把它们发到任何服务器，也不会下载 $ref 指向的网址：被引用的 Schema 请粘贴到“被引用的 Schema”里。浏览器只保存草案菜单和“检查 format”开关这两项设置。"
+  - question: "19 位的订单号为什么校验结果不对？"
+    answer: "浏览器用 JSON.parse 读数字，超过 2^53（9007199254740992）的整数会丢失精度，例如 1842390023517843457 会变成 1842390023517843500。工具会在提示里写出原值和读到的值。这类 ID 建议在接口里用字符串传输，Schema 写成 \"type\": \"string\" 加 pattern。"
+  - question: "会检查 format 吗？"
+    answer: "“检查 format”打开时（默认）会检查 email、uri、date、date-time、time、duration、hostname、ipv4、ipv6、uuid 等 15 种（ajv-formats 实现）。idn-email、iri 等其他 format 直接通过，并在提示里列出。关闭开关后 format 只作注解，这也是 2020-12 规范和 Python jsonschema 的默认做法。"
+  - question: "同一份 Schema 在别的工具里结果不同，以哪个为准？"
+    answer: "先看结果下方的提示。常见原因有：草案版本不同；draft-07 里与 $ref 并列的关键字按规范应被忽略；nullable 是 OpenAPI 3.0 的关键字，不属于 JSON Schema；format 是否检查；pattern 按 ECMA-262 正则执行，\\d 只匹配半角数字，而 Python 的 re 里 \\d 也匹配全角数字。"
 ---
 
-<h2>使用方法</h2>
-<ol>
-  <li>在左侧粘贴 <strong>JSON Schema</strong>，在右侧粘贴 <strong>JSON 数据</strong>。</li>
-  <li>通过下拉菜单选择 Schema 草案版本（Draft-07 或 Draft 2020-12）。</li>
-  <li>点击 <strong>Validate</strong>（或按 <kbd>Ctrl</kbd>+<kbd>Enter</kbd>）。</li>
-  <li>若数据合法，绿色提示表示数据符合 Schema。</li>
-  <li>若数据不合法，每条错误显示对应的 <strong>JSON 路径</strong>、错误信息和附加参数。</li>
-</ol>
+## 使用方法
 
-<p>点击 <strong>Load Example</strong> 可自动填入示例 User Schema 和对应 JSON，快速体验工具功能。</p>
+1. 在左边粘贴或打开 **Schema**，右边粘贴 **数据**。两边都接受 JSON 或 YAML，数据还接受 JSON Lines（每行一个 JSON）。也可以把文件拖到输入框上。
+2. 输入时自动校验；**验证** 按钮（或 Ctrl/⌘+Enter）会重新校验。超过 1 MB 的输入只在点按钮时校验。
+3. 错误按数据中的位置分组。点路径会在数据框里选中对应的值，点 `Schema #/…` 会在 Schema 框里选中对应的关键字。
+4. Schema 里的 `$ref` 指向另一个文件时，打开 **被引用的 Schema**，把那个文件粘贴进去。工具不会下载网址。
 
-<h2>读懂错误输出</h2>
+## 示例：订单回调里的 19 位订单号
 
-<p>每条验证错误包含以下三部分：</p>
-<ul>
-  <li><strong>路径</strong> — JSON Pointer 格式的失败值路径（如 <code>/items/0/price</code>，根节点为 <code>(root)</code>）。</li>
-  <li><strong>信息</strong> — AJV 输出的通俗错误描述（如 <em>must be integer</em>、<em>must have required property 'name'</em>）。</li>
-  <li><strong>参数</strong> — 附加上下文，如允许的类型、最小值或所需的正则模式。</li>
-</ul>
+雪花算法生成的订单号常有 19 位，超出 JavaScript 数字能精确表示的范围（2^53）。下面这份回调数据有五处问题：
 
-<h2>常用 JSON Schema 关键字</h2>
-<ul>
-  <li><code>type</code> — 限制 JSON 类型：<code>string</code>、<code>number</code>、<code>integer</code>、<code>boolean</code>、<code>array</code>、<code>object</code>、<code>null</code>。</li>
-  <li><code>required</code> — 对象中必须包含的属性名数组。</li>
-  <li><code>properties</code> — 为对象的各命名属性定义约束。</li>
-  <li><code>additionalProperties: false</code> — 拒绝 <code>properties</code> 以外的任何属性。</li>
-  <li><code>minimum</code> / <code>maximum</code> — 数值范围约束。</li>
-  <li><code>minLength</code> / <code>maxLength</code> — 字符串长度约束。</li>
-  <li><code>pattern</code> — 用正则验证字符串（如 <code>"^[a-z]+"</code>）。</li>
-  <li><code>enum</code> — 限制为固定的值集合。</li>
-  <li><code>format</code> — 校验字符串格式，如 <code>email</code>、<code>date</code>、<code>uuid</code>（见下文）。</li>
-  <li><code>items</code> — 定义数组元素的 Schema。</li>
-</ul>
-
-<h2>format 校验</h2>
-<p>本工具在 Draft-07 与 Draft 2020-12 下都校验 <code>format</code> 关键字，支持以下格式（由 <a href="https://github.com/ajv-validator/ajv-formats" rel="noopener">ajv-formats</a> 实现）：<code>email</code>、<code>uri</code>、<code>uri-reference</code>、<code>uri-template</code>、<code>date</code>、<code>time</code>、<code>date-time</code>、<code>duration</code>、<code>hostname</code>、<code>ipv4</code>、<code>ipv6</code>、<code>uuid</code>、<code>json-pointer</code>、<code>relative-json-pointer</code>、<code>regex</code>。不符合的值会报 <em>must match format "email"</em>。</p>
-<ul>
-  <li>其他格式（<code>idn-email</code>、<code>idn-hostname</code>、<code>iri</code>、<code>iri-reference</code> 和自定义名称）不校验，直接通过。</li>
-  <li><code>format</code> 只对字符串生效，数字配 <code>"format": "email"</code> 也会通过。</li>
-  <li>同一个 Schema 在其他校验器上的结果可能不同。<a href="https://json-schema.org/draft/2020-12/json-schema-validation" rel="noopener">JSON Schema 2020-12</a>（Validation 第 7.2 节）默认把 <code>format</code> 当作注解，是否校验由实现决定；<a href="https://json-schema.org/draft-07/json-schema-validation" rel="noopener">Draft-07</a>（第 7.2 节）同样允许实现选择。如果生产环境的校验器不校验 format，这里不通过的数据在那边可能通过。</li>
-  <li><code>date-time</code> 与 <code>time</code> 必须带时区（<code>Z</code> 或 <code>+08:00</code>），与 RFC 3339 一致。</li>
-</ul>
-
-<h2>示例 Schema</h2>
-
+{/* jsv-ex: {} */}
 ```json
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["name", "age"],
+  "required": ["orderId", "mobile", "amount", "status"],
   "properties": {
-    "name":  { "type": "string", "minLength": 1 },
-    "age":   { "type": "integer", "minimum": 0 },
-    "email": { "type": "string" }
-  },
-  "additionalProperties": false
+    "orderId": { "type": "integer", "maximum": 9007199254740991 },
+    "mobile": { "type": "string", "pattern": "^1[3-9][0-9]{9}$" },
+    "amount": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["待支付", "已支付", "已退款"] },
+    "receiver": { "type": "string", "minLength": 2, "maxLength": 10 }
+  }
 }
 ```
+```json
+{
+  "orderId": 1842390023517843457,
+  "mobile": "1381234567",
+  "amount": 19.9,
+  "status": "已发货",
+  "receiver": "张"
+}
+```
+```text
+5 个错误，涉及 5 个位置（Draft 2020-12）。
+/orderId (第 2 行第 14 列): 必须 ≤ 9007199254740991，实际是 1842390023517843500  Schema #/properties/orderId/maximum
+/mobile (第 3 行第 13 列): 不匹配正则 ^1[3-9][0-9]{9}$  Schema #/properties/mobile/pattern
+/amount (第 4 行第 13 列): 必须是 integer，实际是 number  Schema #/properties/amount/type
+/status (第 5 行第 13 列): 必须是 "待支付", "已支付", "已退款" 之一  Schema #/properties/status/enum
+/receiver (第 6 行第 15 列): 至少 2 个字符，实际 1 个  Schema #/properties/receiver/minLength
+* 数据的 /orderId 中的数字 1842390023517843457（第 2 行）超过 2^53，JavaScript 读成了 1842390023517843500，验证的是 1842390023517843500。
+```
 
-<p>合法数据：<code>{'{"name":"Alice","age":30}'}</code><br />
-非法数据：<code>{'{"name":"","age":-1,"extra":true}'}</code> — 会产生三条错误。</p>
+`orderId` 的提示说明了问题所在：数据里写的是 1842390023517843457，校验的却是 1842390023517843500。不加 `maximum` 时这个字段会“通过”，但通过的是另一个数。Python jsonschema 用任意精度整数，会按原值判断；浏览器里的校验器都做不到，本工具能做的是把被改写的数字指出来。`amount` 以分为单位时应是整数，19.9 被 `"type": "integer"` 拦下；`minLength` 按 Unicode 字符计数，“张”是 1 个字符。
+
+## 示例：输入法打出的全角标点
+
+在中文输入法下手写 JSON，最容易混进全角冒号、全角逗号和中文引号。`JSON.parse` 只会说“Unexpected token”，本工具会指出是哪个字符、在第几行第几列：
+
+{/* jsv-ex: {} */}
+```json
+{ "type": "object", "properties": { "city": { "type": "string" } } }
+```
+```json
+{
+  "name": "张三",
+  "city": “上海”
+}
+```
+```text
+数据不是有效的 JSON、YAML 或 JSON Lines。
+第 3 行第 11 列："“" 是中文引号，JSON 要用英文双引号（"）
+```
+
+点击这条错误，数据框会选中出错的字符。全角冒号 `：` 和全角空格同样会单独提示。
+
+## 示例：YAML 配置文件
+
+配置文件常用 YAML。下面的 Schema 和数据都是 YAML，Schema 用 `unevaluatedProperties: false` 拦下拼错的键：
+
+{/* jsv-ex: {} */}
+```yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+required: [appName, port]
+properties:
+  appName: { type: string }
+  port: { type: integer, minimum: 1, maximum: 65535 }
+  launchDate: { type: string, format: date }
+unevaluatedProperties: false
+```
+```yaml
+appName: 订单服务
+port: "8080"
+launchDate: 2026-10-01
+prot: 8081
+```
+```text
+2 个错误，涉及 2 个位置（Draft 2020-12）。
+/port: 必须是 integer，实际是 string  Schema #/properties/port/type
+（根）: 不允许属性 "prot"（unevaluatedProperties）  Schema #/unevaluatedProperties
+* Schema 按 YAML 读取（1 个文档）。日期和 yes / no 保持为字符串（YAML 1.2 core schema）。
+* 数据按 YAML 读取（1 个文档）。日期和 yes / no 保持为字符串（YAML 1.2 core schema）。
+```
+
+YAML 按 1.2 core schema 读取，所以 `2026-10-01` 仍是字符串，能通过 `format: date`；加了引号的 `"8080"` 是字符串，不是整数。YAML 的错误只显示路径，不显示行号。
+
+## 错误怎么归并
+
+Ajv 会把 `oneOf` / `anyOf` 每个失败分支的错误全部列出。比如“银行卡或银行账户”两种支付方式，银行卡号写错时，Ajv 会给出 5 条错误，其中 3 条来自根本不相关的账户分支。本工具只在 `/payment` 显示 1 条错误，并展开 **最接近的分支**（错误最少的分支，`const` 判别字段不符的分支排在后面），其他分支折叠起来；分支写成 `$ref` 时同样有效。`if` / `then` 不满足时，直接显示 `then` 里的错误，并标注“经由 then”。
+
+## 和其他在线工具的对比
+
+2026-10-02 用同一组输入测试了 cn.bing.com 搜索“json schema 校验”排名第一的在线工具大全（lddgo.net），默认规范为 Draft-07：
+
+| 输入 | 正确结果 | lddgo.net | 本工具 |
+|---|---|---|---|
+| draft-07 中 `$ref` 旁边写 `maxLength` | 忽略 `maxLength`，通过 | 报 `maxLength` 错误 | 通过，并提示被忽略 |
+| `"required": ["constructor"]` 校验 `{}` | 不通过 | 校验正确 | 不通过 |
+| `"nullable": true` 的字符串字段传 `null` | 不通过 | 校验正确 | 不通过，并提示 |
+| 带 2020-12 `$schema` 的 Schema | 正常校验 | invalid schema : no schema with key or ref | 按 2020-12 校验 |
+| YAML 数据 | — | 不支持 | 支持 |
+
+两者都在浏览器里运行，测试中都没有发出包含数据的请求。lddgo.net 把错误显示为 Ajv 的原始 JSON 对象。
+
+## 限制
+
+- 校验器是 Ajv 8.18（ajv-formats 3.0.1、ajv-draft-04 1.0.0）。在官方 [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite) 中，draft-07 通过 928/929 项，2020-12 通过 1,249/1,301 项，失败项是 Ajv 本身的限制：`$dynamicRef`（25 项）、`unevaluatedItems` 与 `contains` 组合、名为 `__proto__` 的属性等。Schema 用到 `$dynamicRef` 时会提示。
+- `$ref` 指向的网址不会被下载。
+- 超过 2^53 的整数会丢精度；重复的键只保留最后一个值。两者都会提示，并写出行号。
+- 超过 1 MB 的输入需要点“验证”；超过 20 MB 的文件不读取。
+- `pattern` 按 ECMA-262 正则（`u` 标志）执行，`\d` 只匹配半角数字 0–9。
+
+需要从样例数据生成 Schema，可以用 [JSON 转 JSON Schema](/zh/tools/json-to-json-schema/)；只检查 YAML 语法，用 [YAML 语法验证器](/zh/tools/yaml-validator/)；校验整份接口文档，用 [OpenAPI 验证器](/zh/tools/openapi-validator/)。

@@ -618,6 +618,7 @@ const SENSITIVE_EXEMPT = {
   'url-parser': 'general URL parser; a password appears only when the pasted URL carries one, is masked until revealed, and is neither stored nor sent',
   'qr-code-decoder': 'general QR reader; a Wi-Fi password appears only when the scanned code holds one',
   'ssl-certificate-decoder': 'decodes public X.509 certificates; PEM private-key blocks and PKCS #8 / PKCS #12 files are detected and skipped, never decoded, and input that contains them is not saved',
+  'openapi-validator': '"bearer" is an HTTP security scheme in the built-in example; the input is an API description, which names schemes but holds no credentials, and is neither stored nor sent',
 };
 
 function checkSensitiveToolsDisabled() {

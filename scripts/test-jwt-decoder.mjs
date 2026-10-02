@@ -135,14 +135,15 @@ eq('highlight spans kept', E.syntaxHighlight({ a: 1, b: true, c: null, d: 'x' })
 
   // code blocks
   let pyjwt = false;
-  try { execFileSync('python3', ['-c', 'import jwt'], { stdio: 'ignore' }); pyjwt = true; } catch {}
+  // The guide's expected output was recorded with PyJWT 2.10.1; error texts differ between releases.
+  try { pyjwt = execFileSync('python3', ['-c', 'import jwt;print(jwt.__version__)'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() === '2.10.1'; } catch {}
   const re = /\{\/\* jwt-run: (\{.*?\}) \*\/\}\s*```[a-z]*\n([\s\S]*?)```/g;
   let m; let runs = 0;
   while ((m = re.exec(guide))) {
     runs++;
     const spec = JSON.parse(m[1]);
     const name = 'guide ' + spec.lang + ' block ' + runs;
-    if (spec.lang === 'python' && !pyjwt) { skip(name, 'python3 with PyJWT not installed'); continue; }
+    if (spec.lang === 'python' && !pyjwt) { skip(name, 'python3 with PyJWT 2.10.1 not installed'); continue; }
     const dir = mkdtempSync(join(tmpdir(), 'jwt-run-'));
     try {
       const file = join(dir, spec.lang === 'node' ? 'main.mjs' : 'main.py');

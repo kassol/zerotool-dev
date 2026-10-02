@@ -73,7 +73,12 @@ function makeEl(id) {
   return node;
 }
 function el(id) { return (els[id] ||= makeEl(id)); }
-const fieldDefaults = { 'cfg-direction': 'row', 'cfg-wrap': 'nowrap', 'cfg-justify': 'flex-start', 'cfg-align-items': 'flex-start', 'cfg-align-content': 'flex-start', 'cfg-gap': '1rem', 'cfg-items': '4' };
+// The drop-down defaults are the CSS initial values, so the copied rule changes nothing the
+// browser would not do anyway: flex-direction row and flex-wrap nowrap (CSS Flexbox Level 1
+// §5.1, §5.2), justify-content / align-items / align-content normal (CSS Box Alignment Level 3
+// §6.1, §6.3, §5.4; in a flex container align-items normal and align-content normal behave as
+// stretch, and justify-content normal as flex-start).
+const fieldDefaults = { 'cfg-direction': 'row', 'cfg-wrap': 'nowrap', 'cfg-justify': 'normal', 'cfg-align-items': 'normal', 'cfg-align-content': 'normal', 'cfg-gap': '1rem', 'cfg-items': '4' };
 for (const [id, v] of Object.entries(fieldDefaults)) el(id).value = v;
 // The select defaults above must be the ones marked `selected` in the component.
 for (const [id, v] of Object.entries(fieldDefaults)) {
@@ -88,12 +93,18 @@ const doc = { currentScript: null, querySelector: () => wrap, getElementById: el
 new Function('document', 'window', 'navigator', 'setTimeout', pageScript)(doc, {}, {}, () => {});
 
 const onLoad = el('cfg-code').textContent;
-check('output on load', onLoad === '.container {\n  display: flex;\n  flex-direction: row;\n  flex-wrap: nowrap;\n  justify-content: flex-start;\n  align-items: flex-start;\n  align-content: flex-start;\n  gap: 1rem;\n}', JSON.stringify(onLoad));
+check('output on load', onLoad === '.container {\n  display: flex;\n  flex-direction: row;\n  flex-wrap: nowrap;\n  justify-content: normal;\n  align-items: normal;\n  align-content: normal;\n  gap: 1rem;\n}', JSON.stringify(onLoad));
+check('preview uses the initial values on load', el('cfg-preview').style.alignItems === 'normal' && el('cfg-preview').style.alignContent === 'normal' && el('cfg-preview').style.justifyContent === 'normal');
+for (const id of ['cfg-justify', 'cfg-align-items', 'cfg-align-content']) {
+  const sel = new RegExp('<select id="' + id + '"[\\s\\S]*?</select>').exec(source)[0];
+  check(id + ' keeps flex-start as an option', /<option value="flex-start">flex-start<\/option>/.test(sel));
+  check(id + ' lists normal first', /^<select[^>]*>\s*<option value="normal" selected>normal/.test(sel), sel.slice(0, 120));
+}
 check('preview has 4 items on load', el('cfg-preview').children.length === 4);
 
 function generate(c) {
   const map = { dir: 'cfg-direction', wrap: 'cfg-wrap', justify: 'cfg-justify', alignItems: 'cfg-align-items', alignContent: 'cfg-align-content', gap: 'cfg-gap', items: 'cfg-items' };
-  const full = { dir: 'row', wrap: 'nowrap', justify: 'flex-start', alignItems: 'flex-start', alignContent: 'flex-start', gap: '1rem', items: 4, ...c };
+  const full = { dir: 'row', wrap: 'nowrap', justify: 'normal', alignItems: 'normal', alignContent: 'normal', gap: '1rem', items: 4, ...c };
   for (const [k, id] of Object.entries(map)) { el(id).value = String(full[k]); el(id).fire(k === 'gap' || k === 'items' ? 'input' : 'change'); }
   return el('cfg-code').textContent;
 }

@@ -1,212 +1,293 @@
 ---
-title: "Security Best Practices Every Web Developer Should Know"
-description: "A practical guide to web security fundamentals — hashing, HMAC, JWT, TOTP, and password storage — with hands-on browser tools for every concept."
+title: "Web Security Best Practices: The OWASP Top 10:2025 as a Working Checklist"
+description: "Web security best practices mapped to the OWASP Top 10:2025: access control, injection, XSS, CSRF, password storage, sessions, security headers, tokens, dependencies and logging, with runnable code."
 pubDate: 2026-04-14
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["web-security", "developer-tools", "authentication", "cryptography", "best-practices"]
+tags: ["web-security", "owasp", "best-practices", "authentication", "developer-tools"]
 ---
 
-Security is one of those topics that most developers agree is important and very few feel they fully understand. This is partly because the vocabulary is intimidating — cryptography, salting, HMAC, TOTP, asymmetric keys — and partly because the consequences of getting it wrong aren't usually visible until something bad happens.
+Most web security best practices come down to a short list of mistakes that keep recurring, and the [OWASP Top 10](https://owasp.org/Top10/2025/) is the most widely used record of them. This guide takes the 2025 edition and turns each category into practices you can apply and check in a web application: the control, the reason, and a piece of code or configuration you can run. Detailed guidance comes from the [OWASP Cheat Sheet Series](https://cheatsheetseries.owasp.org/) and MDN; each section links the page it relies on.
 
-This guide cuts through the vocabulary and focuses on the practical decisions you make as a web developer: how to store passwords, how to sign data, how to authenticate users, how to generate and verify tokens. For each concept, there's a working browser tool you can use to test your understanding and verify your implementations.
+All code blocks below were run on 2026-10-02 (Node.js 22 and 24, Python 3.12), and the printed output shown under each one is what they produced.
 
-This won't make you a cryptographer. But it will give you a working model of the security primitives that matter most in day-to-day web development.
+## The OWASP Top 10:2025 at a Glance
 
----
+| Rank | Category | Covered in |
+|---|---|---|
+| A01 | Broken Access Control | Access control |
+| A02 | Security Misconfiguration | Security headers |
+| A03 | Software Supply Chain Failures | Dependencies |
+| A04 | Cryptographic Failures | Passwords; tokens and signatures |
+| A05 | Injection | Injection; cross-site scripting |
+| A06 | Insecure Design | Throughout: most controls below are design decisions |
+| A07 | Authentication Failures | Passwords and login; sessions |
+| A08 | Software or Data Integrity Failures | Tokens and signatures; dependencies |
+| A09 | Security Logging and Alerting Failures | Logging and errors |
+| A10 | Mishandling of Exceptional Conditions | Logging and errors |
 
-## Hashing: The Foundation of Everything
+Two changes from the 2021 edition matter for planning. A03 widens what used to be "Vulnerable and Outdated Components" to all supply chain failures, not only known vulnerabilities, and A10 is new: OWASP describes it as improper error handling, logical errors and failing open, with CWEs such as error messages containing sensitive information and "Not Failing Securely" ([A10:2025](https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/)). Cross-site scripting has been part of the Injection category since 2021.
 
-A hash function takes an input of arbitrary length and produces a fixed-length output. The same input always produces the same output. Different inputs (almost always) produce different outputs. And — critically — you cannot reverse a hash to get the original input.
+## Access Control: Deny by Default, Check Every Object
 
-This one-way property is what makes hashing useful for security.
+Broken access control is A01 for the second edition in a row. The typical bug is not a missing login check but a missing *ownership* check: the user is logged in, requests `/api/invoices/1043`, and gets someone else's invoice because the handler only looked up the ID. This is often called IDOR (insecure direct object reference).
 
-**What hashing is for:**
-- Storing passwords (never store plaintext passwords — store hashes)
-- Verifying file integrity (compare the hash of a downloaded file against a known-good hash)
-- Generating deterministic identifiers (hash a structured input to get a consistent ID)
-- Detecting data tampering (if the hash of received data matches the hash of expected data, the data wasn't modified)
+- Enforce access on the server for every request. Hiding a button in the UI is not a control.
+- Deny by default: a new route should be inaccessible until a rule allows it.
+- Scope queries to the caller: `WHERE id = ? AND owner_id = ?` instead of fetching by ID and checking later, so a forgotten check fails closed.
+- Use unguessable identifiers where the ID is visible, but treat them as a second layer. A random UUID that leaks through a shared link still needs an ownership check behind it.
+- Test with two accounts: log in as user A, replay user B's requests, and expect 403 or 404.
 
-**Common hash algorithms:**
+## Injection: Parameterized Queries
 
-| Algorithm | Output Length | Use Today? |
-|-----------|--------------|------------|
-| MD5 | 128 bits | No — collisions found, don't use for security |
-| SHA-1 | 160 bits | No — deprecated for cryptographic use |
-| SHA-256 | 256 bits | Yes — solid for most uses |
-| SHA-512 | 512 bits | Yes — larger output, marginally harder to brute-force |
-| bcrypt | 184-bit hash in a 60-character string | Yes — specifically designed for passwords |
+SQL injection happens when user input is concatenated into a query string, so the database reads data as code. The fix in the [OWASP SQL Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html) is the first one it lists: prepared statements with parameterized queries. The difference is easy to see in a few lines of Python with the standard `sqlite3` module:
 
-Try computing hashes with the [Hash Generator](/tools/hash-generator). Paste the same input into MD5 and SHA-256 and compare the outputs. Then change one character in the input and observe how completely different the hash becomes (this is called the avalanche effect, and it's intentional).
-
-**Important caveat on password hashing:** Never use plain SHA-256 or MD5 to hash passwords. These algorithms are fast, which is exactly what you don't want for passwords — fast hashing means attackers can try billions of passwords per second with commodity hardware. Use bcrypt, scrypt, or Argon2 for passwords. These are designed to be deliberately slow and computationally expensive.
-
----
-
-## Salting: Why Hashing Passwords Isn't Enough by Itself
-
-If you hash the same password with the same algorithm, you always get the same hash. This means an attacker who steals your hashed password database can use precomputed tables (rainbow tables) to look up common passwords. `password123` always hashes to the same SHA-256 value, so if that value appears in the database, the attacker knows the password without doing any per-user computation.
-
-A **salt** is a random value that's added to the password before hashing. Each user gets a unique salt, stored alongside their hash. Now two users with the same password get different hashes. Rainbow tables don't help because they'd need a separate table for every possible salt value.
-
-Concretely:
-```
-# Without salt — same password, same hash
-sha256("password123") → ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f
-
-# With salt — same password, different hash per user
-sha256("password123" + "user_alice_salt_xyz") → different hash
-sha256("password123" + "user_bob_salt_abc") → different hash again
-```
-
-Modern password hashing libraries (bcrypt, Argon2) handle salt generation automatically. You don't manage it manually — but understanding why it exists helps you evaluate whether a library is doing it correctly.
-
----
-
-## HMAC: Signing Data to Prove It Hasn't Changed
-
-A hash alone tells you that a piece of data maps to a specific output. But it doesn't tell you who created that data or whether it came from someone you trust.
-
-**HMAC (Hash-based Message Authentication Code)** combines a hash with a secret key. The output is a signature that proves two things simultaneously: the data's content (like a regular hash) and that the person who created it had the secret key.
-
-This is used extensively in web APIs:
-
-- Webhook signatures (Stripe, GitHub, and others sign their webhook payloads with HMAC so you can verify the payload came from them)
-- API request signing (AWS Signature Version 4 uses HMAC to sign API requests)
-- Cookie tampering prevention (sign the cookie content with HMAC, verify on each request)
-
-Try it with the [HMAC Generator](/tools/hmac-generator). Generate the HMAC of a message with a secret key, then modify one character in the message and regenerate. The HMAC changes completely. Now try regenerating the original HMAC without knowing the secret key — you can't.
-
-**How webhook verification works in practice:**
-
+{/* ws-run: {"lang":"python","expect":"string-built: [(1, 'admin'), (2, 'user')]\nparameterized: []"} */}
 ```python
-import hmac
-import hashlib
-
-def verify_webhook(payload: bytes, signature: str, secret: str) -> bool:
-    expected = hmac.new(
-        secret.encode(),
-        payload,
-        hashlib.sha256
-    ).hexdigest()
-    # Use hmac.compare_digest to prevent timing attacks
-    return hmac.compare_digest(expected, signature)
+import sqlite3
+db = sqlite3.connect(':memory:')
+db.execute('CREATE TABLE users (id INTEGER, email TEXT, role TEXT)')
+db.executemany('INSERT INTO users VALUES (?, ?, ?)',
+               [(1, 'ana@example.com', 'admin'), (2, 'bo@example.com', 'user')])
+email = "nobody@example.com' OR '1'='1"
+unsafe = f"SELECT id, role FROM users WHERE email = '{email}'"
+print('string-built:', db.execute(unsafe).fetchall())
+print('parameterized:', db.execute('SELECT id, role FROM users WHERE email = ?', (email,)).fetchall())
 ```
 
-Note `hmac.compare_digest` instead of `==`. Timing attacks are real: a naive string comparison returns early as soon as it finds a mismatch, leaking information about how many characters matched. `compare_digest` runs in constant time regardless of where the mismatch occurs.
-
----
-
-## JWT: Compact Claims Tokens
-
-JSON Web Tokens are the dominant format for carrying authentication claims in modern web applications. A JWT consists of three base64url-encoded JSON objects separated by dots: a header, a payload, and a signature.
-
 ```
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+string-built: [(1, 'admin'), (2, 'user')]
+parameterized: []
 ```
 
-The header contains the algorithm. The payload contains claims. The signature (computed using the secret or private key) prevents tampering.
+The string-built query returns every user; the parameterized one looks for a user whose email really is `nobody@example.com' OR '1'='1` and finds none. Escaping quotes by hand is not a substitute: OWASP lists it last, as "strongly discouraged", and says it "CANNOT guarantee" protection. Placeholders cannot stand in for table or column names, so map those through an allow-list. The same principle covers shell commands (pass an argument array, not a string, to `execFile` or `subprocess.run`) and LDAP or NoSQL queries.
 
-Use the [JWT Decoder](/tools/jwt-decoder) to inspect any JWT. The decoder shows you the header and payload without needing the secret.
+## Cross-Site Scripting: Encode Output, Then Add CSP
 
-**Critical security rules for JWTs:**
+XSS is injection into HTML. The primary defence in the [OWASP XSS Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html) is output encoding for the context the data lands in. Templating engines such as React JSX, Vue templates, Jinja2 and Go `html/template` do this by default; the risk sits in the escape hatches (`dangerouslySetInnerHTML`, `v-html`, `|safe`, `innerHTML`).
 
-**1. Always validate the signature.** Decode ≠ validate. Any library can decode a JWT without knowing the secret — the claims in an unvalidated JWT tell you nothing about authenticity. Your backend must verify the signature against the expected secret or public key on every request.
+{/* ws-run: {"lang":"node","expect":"<p>Hello, <img src=x onerror=alert(document.cookie)></p>\n<p>Hello, &lt;img src=x onerror=alert(document.cookie)&gt;</p>\n<input value=\"&quot; autofocus onfocus=&quot;alert(1)\">"} */}
+```js
+const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const name = '<img src=x onerror=alert(document.cookie)>';
+console.log(`<p>Hello, ${name}</p>`);
+console.log(`<p>Hello, ${escapeHtml(name)}</p>`);
+const attr = '" autofocus onfocus="alert(1)';
+console.log(`<input value="${escapeHtml(attr)}">`);
+```
 
-**2. Check the `exp` (expiry) claim.** A JWT with a past expiry date should be rejected, even if the signature is valid. Many bugs look like "why is this user authenticated after logout?" — check whether your validation path actually enforces `exp`.
+```
+<p>Hello, <img src=x onerror=alert(document.cookie)></p>
+<p>Hello, &lt;img src=x onerror=alert(document.cookie)&gt;</p>
+<input value="&quot; autofocus onfocus=&quot;alert(1)">
+```
 
-**3. Be careful with `alg: none`.** Some JWT libraries historically accepted tokens with `"alg": "none"` in the header, bypassing signature verification entirely. Make sure your library rejects `none` explicitly.
+HTML encoding is right for element content and quoted attributes. It is wrong for a URL in `href` (check the scheme: `javascript:` survives HTML encoding), for JavaScript inside a `<script>` block, and for CSS. When users may submit HTML, sanitize it with a maintained library such as DOMPurify instead of writing filters.
 
-**4. Don't store JWTs in localStorage for sensitive applications.** localStorage is accessible from JavaScript, which means an XSS vulnerability can steal all tokens. HttpOnly cookies are better for high-value authentication tokens — JavaScript can't read them.
+A Content Security Policy is the second layer: if an injection slips through, the browser refuses to run the script. A nonce-based strict policy, as recommended on [web.dev](https://web.dev/articles/strict-csp), needs a new random nonce on every response:
 
-**5. Keep the payload minimal.** Everything in the JWT payload is base64-encoded, not encrypted. Anyone who has the token can read the claims. Don't put secrets, passwords, or sensitive PII in the payload.
+{/* ws-run: {"lang":"node","expect":"24 true\nscript-src 'nonce-{nonce}' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"} */}
+```js
+import { randomBytes } from 'node:crypto';
+const nonce = randomBytes(16).toString('base64');
+const csp = [
+  `script-src 'nonce-${nonce}' 'strict-dynamic'`,
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+console.log(nonce.length, csp.startsWith("script-src 'nonce-"));
+console.log(csp.replace(nonce, '{nonce}'));
+```
 
----
+Each allowed `<script>` then carries `nonce="…"` with the same value. Start with `Content-Security-Policy-Report-Only` to see what would break. The [CSP Header Generator](/tools/csp-header-generator/) builds this policy from its Strict preset, warns that its `'nonce-{RANDOM}'` placeholder must be replaced by the server on each response, and outputs Express and Nginx snippets.
 
-## TOTP: Time-Based One-Time Passwords (How Authenticator Apps Work)
+## CSRF: SameSite Cookies and Fetch Metadata
 
-Two-factor authentication is now a basic security requirement for any application with user accounts. Understanding how it works under the hood helps you implement it correctly and debug it when it breaks.
+Cross-site request forgery makes a logged-in user's browser send a state-changing request from another site. Two browser features now carry most of the defence:
 
-**TOTP (Time-Based One-Time Password, RFC 6238)** works as follows:
+- **SameSite cookies.** With `SameSite=Lax`, the session cookie is not sent on cross-site POSTs, and Chrome applies `Lax` to cookies that do not set the attribute ([MDN: SameSite](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#samesitesamesite-value)). Set it explicitly; other browsers' defaults differ.
+- **Fetch Metadata.** Browsers send `Sec-Fetch-Site` (`same-origin`, `same-site`, `cross-site` or `none`). The [OWASP CSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html) recommends rejecting non-safe methods when it is `cross-site`, with an `Origin` check as a mandatory fallback for browsers that do not send it. Go 1.25 ships this as `http.CrossOriginProtection`.
 
-1. During setup, the server generates a secret (usually 20 random bytes, encoded as base32)
-2. That secret is shared with the user's authenticator app (via QR code)
-3. Both the server and the authenticator app now share the same secret
-4. To generate a code, both sides compute `HMAC-SHA1(secret, floor(current_time / 30))`
-5. The result is truncated to a 6-digit number
-6. Since both sides use the same secret and the same current 30-second window, they get the same 6-digit code
+{/* ws-run: {"lang":"node","expect":"allow\nreject\nallow\nreject"} */}
+```js
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+function csrfDecision(method, headers, expectedOrigin) {
+  const site = headers['sec-fetch-site'];
+  if (site !== undefined) {
+    return site === 'cross-site' && !SAFE_METHODS.has(method) ? 'reject' : 'allow';
+  }
+  const origin = headers['origin']; // browsers without Fetch Metadata: compare Origin
+  if (origin === undefined) return SAFE_METHODS.has(method) ? 'allow' : 'reject';
+  return origin === expectedOrigin ? 'allow' : 'reject';
+}
+const me = 'https://app.example.com';
+console.log(csrfDecision('POST', { 'sec-fetch-site': 'same-origin' }, me));
+console.log(csrfDecision('POST', { 'sec-fetch-site': 'cross-site' }, me));
+console.log(csrfDecision('GET', { 'sec-fetch-site': 'cross-site' }, me));
+console.log(csrfDecision('POST', { origin: 'https://evil.example' }, me));
+```
 
-The QR code is just a URI encoding of the secret and some metadata: `otpauth://totp/Issuer:user@example.com?secret=BASE32SECRET&issuer=Issuer&algorithm=SHA1&digits=6&period=30`
+Rejecting a POST that carries neither header is a choice; OWASP leaves it to the application. This only works if GET requests never change state. Synchronizer tokens remain the standard answer when you must support old clients or same-site attackers (a compromised subdomain counts as `same-site`).
 
-Test TOTP generation with the [TOTP Generator](/tools/totp-generator). Generate a secret, then watch the code change every 30 seconds. This is exactly what happens inside your Google Authenticator or Authy app.
+## Passwords and Login
 
-**Common TOTP implementation mistakes:**
+The [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) gives concrete minimums:
 
-- Not allowing a small time window (±1 period) to account for clock drift between client and server
-- Not preventing code reuse within the same 30-second window
-- Storing the TOTP secret in plaintext (encrypt it or store it in a secrets manager)
-- Using a very long period (300 seconds instead of 30) — more convenient but a much larger attack window
+| Algorithm | Minimum parameters | When |
+|---|---|---|
+| Argon2id | 19 MiB memory, 2 iterations, parallelism 1 | first choice |
+| scrypt | N = 2^17, r = 8, p = 1 | when Argon2id is unavailable |
+| bcrypt | work factor 10 or more, input limit 72 bytes | legacy systems |
+| PBKDF2-HMAC-SHA-256 | 600,000 iterations | when FIPS-140 compliance is required |
 
----
+Plain SHA-256, even with a salt, is not on the list: it is designed to be fast, which helps an attacker with a stolen database. Node.js 22 has no built-in Argon2, but scrypt is in `node:crypto`:
 
-## Asymmetric Cryptography: RSA Keys for Signatures and Encryption
+{/* ws-run: {"lang":"node","expect":"6 83\ntrue false"} */}
+```js
+import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
+// OWASP minimum for scrypt: N = 2^17, r = 8, p = 1 (128 MiB per hash).
+const params = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
+function hashPassword(password) {
+  const salt = randomBytes(16);
+  const key = scryptSync(password.normalize('NFC'), salt, 32, params);
+  return `scrypt$17$8$1$${salt.toString('base64')}$${key.toString('base64')}`;
+}
+function verifyPassword(password, stored) {
+  const [, , , , salt, key] = stored.split('$');
+  const actual = scryptSync(password.normalize('NFC'), Buffer.from(salt, 'base64'), 32, params);
+  return timingSafeEqual(actual, Buffer.from(key, 'base64'));
+}
+const stored = hashPassword('correct horse battery staple');
+console.log(stored.split('$').length, stored.length);
+console.log(verifyPassword('correct horse battery staple', stored), verifyPassword('Correct horse battery staple', stored));
+```
 
-All the primitives above use symmetric cryptography — the same secret is used to both create and verify. Asymmetric cryptography uses two mathematically linked keys: a public key and a private key. What one encrypts, only the other can decrypt. What one signs, the other can verify.
+Storing the parameters with the hash lets you raise them later and rehash on the next successful login. The default `maxmem` of 32 MiB is too small for these parameters, so it is raised here. With bcrypt, remember the 72-byte limit: a password in Japanese or Korean reaches it after 24 characters in UTF-8. The [Bcrypt Generator](/tools/bcrypt-generator/) on this site hashes and verifies with a cost factor from 4 to 14 (default 12) in a Web Worker, which is useful to see how long each cost takes on your hardware.
 
-**RSA** is the most widely used asymmetric algorithm. Common uses:
+For the login flow itself, NIST SP 800-63B (revision 4) asks verifiers to require at least 15 characters when the password is the only factor, to accept at least 64, to check new passwords against breached and common ones, and to drop composition rules and forced periodic changes ([SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html)). Add rate limiting or lockout on failed attempts, return the same message for "unknown user" and "wrong password", and offer a second factor. Time-based one-time passwords (RFC 6238) are the common one; the [TOTP Generator](/tools/totp-generator/) shows the code for a secret and can reproduce the RFC 6238 test vectors at a fixed time, which helps when an implementation disagrees with an authenticator app. The [Password Generator](/tools/password-generator/) makes random passwords for test accounts and service credentials.
 
-- **TLS certificates** (the certificate your server presents contains a public key; the server signs the handshake with the matching private key and the browser checks that signature with the public key; in TLS 1.3 the encryption keys come from a separate ephemeral key exchange, per [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446))
-- **JWT with RS256** (the server signs JWTs with its private key; clients verify with the public key, allowing them to verify tokens without being trusted with the signing secret)
-- **SSH keys** (your `~/.ssh/id_rsa.pub` is a public key; the private key stays on your machine; the server stores the public key and can authenticate you without your private key ever leaving your machine)
-- **Code signing** (a software publisher signs releases with their private key; users verify with the public key)
+## Sessions and Cookies
 
-Generate an RSA key pair with the [RSA Key Generator](/tools/rsa-key-generator). Note how the public key is derived from the private key — they're not independent; they're two sides of the same mathematical object.
+| Practice | Why | Source |
+|---|---|---|
+| Session IDs with at least 64 bits of entropy from a CSPRNG | prevents guessing | [OWASP Session Management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) |
+| New session ID after login and any privilege change | prevents session fixation | same |
+| `__Host-` prefix: `Secure`, `Path=/`, no `Domain` | stops subdomains from setting or overriding it | same; [MDN Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie) |
+| `HttpOnly` | script cannot read it after an XSS | MDN |
+| Idle and absolute timeouts, server-side invalidation on logout | limits stolen sessions | OWASP |
 
-**Private key handling — non-negotiable rules:**
+{/* ws-run: {"lang":"node","expect":"43\nSet-Cookie: __Host-session=<id>; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=28800"} */}
+```js
+import { randomBytes } from 'node:crypto';
+const sessionId = randomBytes(32).toString('base64url'); // 256 bits, OWASP minimum is 64
+console.log(sessionId.length);
+console.log(`Set-Cookie: __Host-session=${'<id>'}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=28800`);
+```
 
-- Never commit private keys to version control. Not even temporarily. Not even in a private repository.
-- Never send private keys through plaintext channels (email, Slack, etc.)
-- Store private keys in a secrets manager (AWS Secrets Manager, HashiCorp Vault, Google Secret Manager)
-- Rotate keys when any person who had access leaves the organization
+OWASP's own example uses `SameSite=Strict`, which also withholds the cookie when a user follows a link to your site from elsewhere, so they arrive logged out. `Lax` keeps those links working and still blocks cross-site POSTs; pick `Strict` for admin areas. To read what a browser actually sends, paste a `Cookie` header into the [Cookie Parser](/tools/cookie-parser/).
 
-The asymmetry that makes public-key cryptography powerful is also what makes it unforgiving. You can share the public key freely — post it on your website, include it in API responses, hardcode it in client apps. But compromise the private key and you've invalidated all the security guarantees that depended on it.
+## Security Headers
 
----
+Missing headers are a large share of A02, Security Misconfiguration. The values below are those in the [OWASP HTTP Headers Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html):
 
-## Password Generation: What "Strong" Actually Means
+```
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+Content-Security-Policy: script-src 'nonce-…' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+X-XSS-Protection: 0
+```
 
-The weakest link in most security systems is user-chosen passwords. When you give users the option to choose their own password, a substantial portion will choose `password123`, their dog's name, or their birth year. When you generate passwords for them or enforce complexity requirements, the results are usually better but not always what you'd want.
+- HSTS makes the browser use HTTPS for the domain for the given time (two years here). Add `includeSubDomains` and `preload` only when every subdomain serves HTTPS, because the preload list is built into browsers.
+- CSP `frame-ancestors` makes `X-Frame-Options` obsolete for clickjacking protection in supporting browsers; OWASP recommends `frame-ancestors` where possible and `X-Frame-Options: DENY` otherwise.
+- `X-XSS-Protection: 0` turns off the old XSS filter, which OWASP and MDN note can create XSS holes in otherwise safe pages; rely on CSP instead.
+- Remove or minimise `Server` and `X-Powered-By`, which only help an attacker fingerprint the stack.
 
-What makes a password strong?
+To check a deployment, run `curl -sI https://your.site/` and paste the response into the [HTTP Header Analyzer](/tools/http-header-analyzer/), which describes 88 headers and flags weak values such as an HSTS `max-age` under a year, `'unsafe-inline'` in a CSP, or a cookie without `HttpOnly` or `Secure`.
 
-**Length is the primary factor.** An 8-character password from a 95-character alphabet has about 53 bits of entropy. A 16-character password from the same alphabet has about 105 bits. The attacker's cost doubles for every bit of entropy. Length is the most effective lever.
+## Tokens and Signatures
 
-**Randomness matters more than complexity.** A random 12-character password of lowercase letters is stronger than a predictably "complex" password like `P@ssw0rd!1`. Password complexity requirements often make passwords harder to remember without making them harder to guess, because humans create predictable patterns.
+**JWT.** A JSON Web Token is only as trustworthy as its verification. Pin the algorithm you issue instead of reading it from the token: libraries that trusted the header once accepted `"alg":"none"` and tokens signed with an RSA public key used as an HMAC secret (RFC 8725 §2.1). Also check `exp`, `nbf`, `iss` and `aud`.
 
-**Use the [Password Generator](/tools/password-generator)** when you need to generate credentials: temporary passwords, API keys, service account credentials, recovery codes. Cryptographically random generation from a browser-based tool is reliable and doesn't expose the generated values to a third-party server.
+{/* ws-run: {"lang":"node","expect":"rejected alg none\nrejected alg HS256"} */}
+```js
+const ALLOWED = new Set(['ES256']); // the one algorithm this service issues
+function checkHeader(token) {
+  const header = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString());
+  if (!ALLOWED.has(header.alg)) throw new Error(`rejected alg ${header.alg}`);
+  return header.alg;
+}
+const forged = Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64url') + '.' +
+  Buffer.from('{"sub":"admin"}').toString('base64url') + '.';
+try { checkHeader(forged); } catch (e) { console.log(e.message); }
+const hs = Buffer.from('{"alg":"HS256"}').toString('base64url') + '.e30.sig';
+try { checkHeader(hs); } catch (e) { console.log(e.message); }
+```
 
-For the passwords your users create, use a strong password hashing function (Argon2id, or bcrypt with a work factor of 10 or more, as the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) recommends) and check passwords against a breached password database (Have I Been Pwned's API supports this as a range query that preserves privacy).
+The [JWT Decoder](/tools/jwt-decoder/) shows the header and claims of a token you are debugging; decoding is not verification, and anyone can decode a JWT, so never put secrets in the payload.
 
----
+**Webhook signatures.** Services such as GitHub sign webhook bodies with HMAC-SHA256. Verify against the raw request body, before any JSON parsing, and compare in constant time:
 
-## Putting It Together: A Secure Authentication Checklist
+{/* ws-run: {"lang":"node","expect":"sha256=f1aab482559ab296dbba65113bba6e01249123308c781999de2bd181c07303ff\ntrue false false"} */}
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+const secret = 'demo-webhook-secret';
+const body = '{"event":"order.paid","id":42}';
+const header = 'sha256=' + createHmac('sha256', secret).update(body).digest('hex');
+function verify(rawBody, signatureHeader) {
+  const expected = Buffer.from('sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex'));
+  const received = Buffer.from(signatureHeader);
+  return received.length === expected.length && timingSafeEqual(received, expected);
+}
+console.log(header);
+console.log(verify(body, header), verify(body + '\n', header), verify(JSON.stringify(JSON.parse(body), null, 2), header));
+```
 
-For any web application with user authentication, verify:
+A trailing newline or re-serialized JSON breaks the signature, which is the most common reason a correct secret "does not match". The [HMAC Generator](/tools/hmac-generator/) computes the same value (GitHub format, secret as text) and, when a pasted signature differs, tries the usual causes such as a trailing newline or reformatted JSON.
 
-- [ ] Passwords stored as bcrypt/Argon2id hashes with per-user salts (never plaintext or plain SHA-256)
-- [ ] JWTs validated on every request (signature + expiry + issuer + audience)
-- [ ] Webhook payloads verified with HMAC before processing
-- [ ] TOTP or other 2FA available (required for admin accounts)
-- [ ] RSA or ECDSA private keys stored in a secrets manager, never in source code
-- [ ] HTTPS enforced everywhere (no mixed content, HSTS header set)
-- [ ] Sensitive cookies set with HttpOnly and Secure flags
-- [ ] Password reset tokens are single-use and expire after a short period
-- [ ] Rate limiting on authentication endpoints
+## Dependencies and the Supply Chain
 
-Security is not a feature you add at the end. It's a set of decisions made at every step of design and implementation. The primitives — hashing, HMAC, JWT, TOTP, RSA — are well understood, well documented, and available in every major language's standard library.
+A03 covers vulnerable components and tampered builds. The practices that pay off most:
 
-The main source of security vulnerabilities in web applications isn't a lack of cryptographic knowledge. It's misapplication of correct primitives: using a fast hash where a slow one is needed, forgetting to validate a JWT signature, storing a secret in an environment that's too accessible.
+- Commit the lockfile and install with `npm ci` (or `pip install --require-hashes`) in CI, so a build cannot silently pick up a new version.
+- Run `npm audit`, `pip-audit` or GitHub Dependabot, and treat fixes for exploitable advisories like any other bug.
+- Grant CI tokens the least scope they need and pin third-party GitHub Actions to a commit SHA.
+- For scripts loaded from a CDN, add Subresource Integrity. The `integrity` value is the base64 SHA-384 of the exact file:
 
-Understanding the primitives deeply enough to apply them correctly is the practical goal. The tools above help you build and verify that understanding. Use them — and when something looks wrong, format it, decode it, and read the actual values before you assume anything.
+{/* ws-run: {"lang":"node","expect":"sha384-M5mGpKxRozBpvsX+PXs0ssm1NdoBYDPN4gQsyCwq+RTqmuLt5T6LWQKklQd4sArc"} */}
+```js
+import { createHash } from 'node:crypto';
+const script = 'console.log("hello");\n';
+console.log('sha384-' + createHash('sha384').update(script).digest('base64'));
+```
 
-Security is always in the details.
+`openssl dgst -sha384 -binary file.js | openssl base64 -A` gives the same value for the same bytes. If the CDN serves a different file, the browser refuses to run it. Note that the [Hash Generator](/tools/hash-generator/) outputs hexadecimal, which is the right format for checksums but not for `integrity`.
+
+## Logging and Errors
+
+A09 and A10 are two sides of the same coin: record enough to notice an attack, and fail without giving one away.
+
+- Log authentication failures, access-control denials and input validation failures with a timestamp, user and source, and alert on spikes.
+- Never log passwords, session IDs, tokens or full payment data. Before pasting a log into a ticket or an AI assistant, run it through the [Secret Redactor](/tools/secret-redactor/), which replaces keys and tokens with placeholders.
+- Return generic errors to clients and keep stack traces server-side.
+- Fail closed: when an authorization service times out or a signature check throws, deny the request instead of falling through to "allowed".
+- Make multi-step operations atomic. OWASP's A10 advice is that a transaction interrupted part way must be rolled back completely, not resumed, so an exception does not leave, for example, a debit without the matching credit.
+
+## A Checklist You Can Verify
+
+| Check | How to verify |
+|---|---|
+| Every object lookup is scoped to the caller | replay another account's request; expect 403 or 404 |
+| No query is built by string concatenation | grep for SQL keywords next to `+` or template strings |
+| Templates escape by default; raw-HTML escape hatches are reviewed | grep for `innerHTML`, `dangerouslySetInnerHTML`, `v-html`, `\|safe` |
+| CSP with nonces is enforced | response headers contain `Content-Security-Policy` with `'nonce-` |
+| Cross-site POSTs are rejected | send a POST with `Sec-Fetch-Site: cross-site`; expect 403 |
+| Passwords use Argon2id, scrypt or bcrypt at OWASP minimums | read the stored hash prefix and parameters |
+| Session cookie is `__Host-`, `Secure`, `HttpOnly`, `SameSite` | inspect `Set-Cookie` after login; session ID changes at login |
+| HSTS, `nosniff`, `Referrer-Policy` are present | `curl -sI` plus the HTTP Header Analyzer |
+| JWT algorithm is pinned and claims are checked | send a token with `"alg":"none"`; expect 401 |
+| Lockfile is enforced and audits run in CI | CI log shows `npm ci` and an audit step |
+| Logs contain no secrets | search logs for `Authorization:` and `password` |
+
+Run through it before each release, and again when the next edition of the OWASP Top 10 changes the categories.

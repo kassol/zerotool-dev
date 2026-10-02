@@ -14,8 +14,15 @@
 //   what icoPack() writes for PNGs of the quoted byte sizes;
 // - `fav-files` annotations: the file order, and the "N files · X KB" line the tool shows for
 //   the quoted byte sizes;
+// - buildManifest(): with an app name, the manifest meets each manifest item of Chrome's install
+//   criteria (web.dev "What does it take to be installable?": name or short_name, start_url,
+//   display in fullscreen / standalone / minimal-ui / window-controls-overlay, a 192px and a
+//   512px icon, no prefer_related_applications); every icon is "any" (the package has no
+//   safe-zone image, so nothing is declared maskable); an empty name omits the keys instead of
+//   writing "", and the page has the field labels and the missing-name warning in 4 languages;
 // - the HTML snippet and the site.webmanifest quoted in the guides equal the tool's output with
-//   default settings (theme color #ffffff, transparent background);
+//   default settings (theme color #ffffff, transparent background) and the name in the
+//   `fav-manifest` annotation; the manifest row of the file table is its byte length;
 // - the guides are indexable and have no template headings.
 //
 // Run: node scripts/test-favicon-generator.mjs
@@ -58,10 +65,42 @@ check('ICO sizes', JSON.stringify(ICO_SIZES) === '[16,32,48]', JSON.stringify(IC
 const icoPack = new Function(extractFunction('icoPack') + '\nreturn icoPack;')();
 const crcBlock = source.slice(source.indexOf('var crcTable'), source.indexOf('function zipPack'));
 const zipPack = new Function('TextEncoder', crcBlock + extractFunction('zipPack') + '\nreturn zipPack;')(TextEncoder);
-const state = { themeColor: '#ffffff', bgMode: 'transparent', bgColor: '#0ea5e9' };
+const state = { themeColor: '#ffffff', bgMode: 'transparent', bgColor: '#0ea5e9', appName: '', shortName: '' };
 const buildHtmlSnippet = new Function('state', extractFunction('buildHtmlSnippet') + '\nreturn buildHtmlSnippet;')(state);
-const manifestExpr = /var manifest = (JSON\.stringify\(\{[\s\S]*?\}, null, 2\));/.exec(source)[1];
-const manifest = new Function('state', 'return ' + manifestExpr + ';')(state);
+const buildManifest = new Function(extractFunction('buildManifest') + '\nreturn buildManifest;')();
+const manifest = buildManifest(state);
+
+// Chrome's install criteria for the manifest itself (web.dev/articles/install-criteria, 2024-09-19).
+function installProblems(m) {
+  const out = [];
+  if (!m.name && !m.short_name) out.push('name or short_name');
+  if (typeof m.start_url !== 'string' || !m.start_url) out.push('start_url');
+  if (!['fullscreen', 'standalone', 'minimal-ui', 'window-controls-overlay'].includes(m.display)) out.push('display');
+  const any = (m.icons || []).filter((i) => (i.purpose || 'any').split(/\s+/).includes('any'));
+  for (const px of ['192x192', '512x512']) if (!any.some((i) => i.sizes.split(/\s+/).includes(px))) out.push('icon ' + px);
+  if (m.prefer_related_applications === true) out.push('prefer_related_applications');
+  return out;
+}
+{
+  const named = JSON.parse(buildManifest({ ...state, appName: '  Example Site ', shortName: 'Example' }));
+  check('named manifest meets the install criteria', installProblems(named).length === 0, installProblems(named).join(', '));
+  check('name is trimmed', named.name === 'Example Site' && named.short_name === 'Example', JSON.stringify([named.name, named.short_name]));
+  check('start_url is the site root', named.start_url === '/', named.start_url);
+  check('no icon is declared maskable', named.icons.every((i) => i.purpose === 'any'), JSON.stringify(named.icons.map((i) => i.purpose)));
+  check('icons point at files in the package', named.icons.every((i) => /^\/android-chrome-(192|512)\.png$/.test(i.src)));
+  const nameOnly = JSON.parse(buildManifest({ ...state, appName: 'Example Site', shortName: '' }));
+  check('empty short_name is omitted', !('short_name' in nameOnly) && installProblems(nameOnly).length === 0, JSON.stringify(nameOnly));
+  const unnamed = JSON.parse(manifest);
+  check('empty name: keys omitted, not ""', !('name' in unnamed) && !('short_name' in unnamed), JSON.stringify(unnamed));
+  check('empty name: only the name criterion fails', installProblems(unnamed).join() === 'name or short_name', installProblems(unnamed).join());
+  check('background color follows the color background', JSON.parse(buildManifest({ ...state, appName: 'x', bgMode: 'color' })).background_color === '#0ea5e9');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const block = new RegExp('\\n        ' + lang + ': \\{([\\s\\S]*?)\\n        \\}').exec(source);
+    for (const key of ['appName', 'shortName', 'nameHint', 'nameMissing', 'maskableNote']) {
+      check(lang + ' STRINGS has ' + key, !!block && new RegExp('\\b' + key + ': \'').test(block[1]));
+    }
+  }
+}
 
 // File names in the order runGenerate() pushes them.
 const genBody = extractFunction('runGenerate');
@@ -124,10 +163,11 @@ for (const lang of ['en', 'ja']) {
 
   const htmlBlocks = [...text.matchAll(/```html\n([\s\S]*?)\n```/g)].map((m) => m[1]);
   check(lang + ': quotes the tool HTML snippet', htmlBlocks.includes(buildHtmlSnippet()));
-  const jsonBlocks = [...text.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);
-  check(lang + ': quotes the tool manifest', jsonBlocks.includes(manifest));
-  check(lang + ': says the tool writes "any maskable"', JSON.parse(manifest).icons.every((i) => i.purpose === 'any maskable'));
-  check(lang + ': manifest has no start_url (guide asks to add it)', !('start_url' in JSON.parse(manifest)));
+  const fm2 = /\{\/\* fav-manifest: (.+?) \*\/\}\s*```json\n([\s\S]*?)\n```/.exec(text);
+  check(lang + ': has a fav-manifest annotation before a json block', !!fm2);
+  const guideManifest = fm2 ? buildManifest({ ...state, ...JSON.parse(fm2[1]) }) : '';
+  if (fm2) check(lang + ': quotes the tool manifest', fm2[2] === guideManifest, fm2[2]);
+  check(lang + ': no json block declares "any maskable"', ![...text.matchAll(/```json\n([\s\S]*?)\n```/g)].some((m) => /"purpose": "any maskable"/.test(m[1])));
 
   for (const m of text.matchAll(/\{\/\* fav-ico: (.+?) \*\/\}/g)) {
     const spec = JSON.parse(m[1]);
@@ -146,6 +186,9 @@ for (const lang of ['en', 'ja']) {
   for (const m of text.matchAll(/\{\/\* fav-files: (.+?) \*\/\}/g)) {
     const spec = JSON.parse(m[1]);
     check(lang + ': fav-files names match the package order', JSON.stringify(spec.names) === JSON.stringify(names), spec.names.join());
+    const mBytes = new TextEncoder().encode(guideManifest).length;
+    const mi = spec.names.indexOf('site.webmanifest');
+    check(lang + ': manifest bytes equal the quoted manifest', spec.letter[mi] === mBytes && spec.emoji[mi] === mBytes, mBytes);
     check(lang + ': letter stats line', statsLine(spec.letter) === spec.letterStats, statsLine(spec.letter));
     check(lang + ': emoji stats line', statsLine(spec.emoji) === spec.emojiStats, statsLine(spec.emoji));
     check(lang + ': stats lines are quoted', text.includes('「' + spec.emojiStats + '」') || text.includes('"' + spec.emojiStats + '"'));

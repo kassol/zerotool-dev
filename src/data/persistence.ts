@@ -25,6 +25,7 @@ export const toolPersistencePolicy = {
   'eyedropper-color-picker': 'preference',
   'color-blindness-simulator': 'preference',
   'qr-code-generator': 'preference',
+  'protobuf-to-json': 'preference',
   'zero-width-character-detector': 'disabled',
   'csr-decoder': 'disabled',
   'secret-redactor': 'disabled',
@@ -52,6 +53,7 @@ export const toolPersistencePolicy = {
   'color-palette-generator': 'preference',
   'image-color-palette': 'preference',
   'number-base': 'preference',
+  'json-schema-validator': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)

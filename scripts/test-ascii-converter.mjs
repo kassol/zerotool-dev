@@ -55,6 +55,15 @@ function throws(name, fn, message) {
 const toCodes = (s, fmt) => [...s].map((c) => formatCode(c.codePointAt(0), fmt)).join(' ');
 const toText = (s) => s.trim().split(/[\s,]+/).filter(Boolean).map((t) => String.fromCodePoint(parseCode(t))).join('');
 
+// Each format label shows a sample for 'A'; it must be what the tool writes for 'A'
+// (binary is not padded to 8 bits, so the label read 0b01000001 against an output of 0b1000001).
+{
+  const fmtOf = { fmtHex: 'hex', fmtOctal: 'oct', fmtBinary: 'bin' };
+  const labels = [...source.matchAll(/(fmtHex|fmtOctal|fmtBinary)(?:": "|: '|">)[^'"<]*?\(([^)]+)\)/g)];
+  eq('format labels found (markup + 4 languages × 3)', labels.length, 15);
+  for (const m of labels) eq('label sample ' + m[0], m[2], formatCode(65, fmtOf[m[1]]));
+}
+
 eq('decimal', toCodes('Hi!', 'dec'), '72 105 33');
 eq('hex', toCodes('Hi!', 'hex'), '0x48 0x69 0x21');
 eq('octal', toCodes('Hi!', 'oct'), '0o110 0o151 0o41');

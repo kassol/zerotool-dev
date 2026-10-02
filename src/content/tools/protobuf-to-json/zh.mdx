@@ -1,127 +1,127 @@
 ---
-seoTitle: "Protobuf 转 JSON 工具 — 免费在线 | ZeroTool"
-seoDescription: "将 Protocol Buffers Schema 转换为示例 JSON，或解码 Protobuf 二进制数据为 JSON。支持 proto3、嵌套消息和枚举。浏览器端运行，数据不离开本地。"
+seoTitle: "Protobuf转JSON在线解析 | ZeroTool"
+seoDescription: "Protobuf 二进制在线解析为 JSON，有没有 .proto 都能解：支持十六进制、Base64、gRPC 帧，int64 和 Timestamp 按 ProtoJSON 输出不丢精度，也能把 JSON 编码回二进制。"
 faqItems:
-  - question: "什么是 Protocol Buffers（Protobuf）？"
-    answer: "Protocol Buffers 是 Google 的语言中立、平台无关的结构化数据序列化机制，是 JSON 和 XML 的更快、更小的替代方案。你在 .proto 文件中定义数据结构，然后用生成的代码读写该数据。"
-  - question: "我的数据会上传到服务器吗？"
-    answer: "不会。所有解析和解码完全在浏览器中通过 protobufjs 库完成，你的 Schema 和二进制数据不会离开你的设备。"
-  - question: "「Schema → 示例 JSON」模式是什么？"
-    answer: "粘贴 .proto Schema，选择一个消息类型，工具会生成带默认值的示例 JSON 对象——空字符串、零数字、空数组。用于在没有真实数据时了解消息结构。"
-  - question: "「二进制 → JSON」支持哪些格式？"
-    answer: "工具同时接受十六进制（如 0a 05 41 6c 69 63 65）和 Base64 编码的 Protobuf 二进制数据，十六进制字节之间的空格和冒号会被自动忽略。"
-  - question: "为什么 int64 显示成字符串？"
-    answer: "proto3 的 JSON 映射规定 int64、uint64、sint64、fixed64、sfixed64 输出为十进制字符串，因为 JSON 数字读进 JavaScript 后只在 2^53 以内是精确的。页面在 protobuf.js 之外还加载了 long.js，超过 2^53 的值也保留每一位：18446744073709551615 解码后是字符串 18446744073709551615。int32 与 uint32 仍是 JSON 数字。"
-  - question: "支持哪种 proto 语法？"
-    answer: "以 proto3 为主要目标，底层 protobufjs 库也可以处理基本的 proto2 语法，但推荐使用 proto3。"
+  - question: "没有 .proto 文件能解析吗？"
+    answer: "能。Schema 留空时按 protoc --decode_raw 的方式解码，输出字段编号、数字、字符串和嵌套消息。字段名、枚举名、有符号和 64 位类型以及 Timestamp 这类知名类型需要 .proto，因为二进制里没有这些信息。"
+  - question: "为什么 int64 输出成字符串？"
+    answer: "ProtoJSON 规定 int64、uint64、sint64、fixed64、sfixed64 写成十进制字符串。JavaScript 把 JSON 数字读成 double，超过 2^53 就会丢位，雪花 ID 1830000000000000123 会变成 1830000000000000000。本工具用 BigInt 解码 64 位字段，数字一位不丢。"
+  - question: "输出里为什么少了某些字段？"
+    answer: "ProtoJSON 不输出取默认值（0、空字符串、false、枚举第一个值）的 proto3 普通字段。勾选“输出默认值字段”即可显示。字段编号不在 Schema 里的未知字段无法写进 ProtoJSON，“说明”里会逐个列出编号和字节位置。"
+  - question: "gRPC 抓包数据怎么解？"
+    answer: "直接粘贴。gRPC 帧选“自动”时，工具会去掉每条消息前 5 字节的帧头，逐条解码；gRPC-Web 的 trailers 帧显示在说明里，压缩标志为 01 的帧会先用 gzip 解压。"
+  - question: "数据会上传吗？"
+    answer: "不会。解析、解码和编码都在浏览器里完成。页面只保存选项，不保存 Schema、字节或 JSON。"
 ---
 
-<h2>使用方法</h2>
-<h3>Schema → 示例 JSON（默认模式）</h3>
-<ol>
-  <li>在左侧面板粘贴 <code>.proto</code> Schema。</li>
-  <li>工具自动检测所有消息类型并填充下拉列表。</li>
-  <li>选择一个消息类型，点击 <strong>生成 JSON</strong>。</li>
-  <li>右侧出现带默认字段值的示例 JSON。</li>
-</ol>
+## 使用方法
 
-<h3>二进制 → JSON 模式</h3>
-<ol>
-  <li>使用顶部切换按钮切换到「二进制 → JSON」模式。</li>
-  <li>在上方文本框粘贴 <code>.proto</code> Schema。</li>
-  <li>在第二个文本框粘贴编码后的二进制数据（hex 或 base64）。</li>
-  <li>选择消息类型，点击 <strong>解码二进制</strong>。</li>
-</ol>
+1. 在“Protobuf 字节”中粘贴数据。支持十六进制、Base64（标准或 URL 安全）、Python 字节串 `b'\n\x05Alice'`、protoc 风格的八进制转义串，以及 `[10, 5, 65]` 这样的字节列表。“格式”选“自动”时，状态栏会写明按哪种格式读取。“打开文件”可以载入 2 MB 以内的 `.bin`、`.pb` 文件。
+2. 在“.proto Schema”中粘贴定义。它 import 的自有文件用“添加 .proto 文件”加入；`google/protobuf/*.proto` 知名类型已内置。
+3. 选择“消息类型”。工具默认选中没有被其他类型引用的类型，一般就是顶层消息。选“不用 Schema（原始解码）”则只看编号。
+4. 输入即出结果。“JSON → 二进制”把 ProtoJSON 编码回字节，“示例 JSON”列出某个类型的全部字段。
 
-## Proto3 语法快速参考
+## 示例：接口返回的雪花 ID
+
+下面是一个用户服务的回包定义，`id` 是 64 位雪花 ID：
 
 ```proto
 syntax = "proto3";
 
-package myapp;
+package api.user.v1;
 
-message User {
-  string id = 1;
-  string name = 2;
-  int32 age = 3;
-  repeated string roles = 4;
-  Address address = 5;
-  UserStatus status = 6;
+message GetUserReply {
+  int64 id = 1;
+  string nickname = 2;
+  int32 level = 3;
+  bool vip = 4;
+  repeated string tags = 5;
+  Profile profile = 6;
 }
 
-message Address {
-  string street = 1;
-  string city = 2;
-  string country_code = 3;
-}
-
-enum UserStatus {
-  UNKNOWN = 0;
-  ACTIVE = 1;
-  INACTIVE = 2;
+message Profile {
+  string city = 1;
 }
 ```
 
-<h2>字段类型参考</h2>
-<ul>
-  <li><strong>标量类型：</strong><code>double</code>、<code>float</code>、<code>int32</code>、<code>int64</code>、<code>uint32</code>、<code>uint64</code>、<code>bool</code>、<code>string</code>、<code>bytes</code></li>
-  <li><strong>重复字段：</strong>在任意字段前加 <code>repeated</code>——对应 JSON 数组</li>
-  <li><strong>嵌套消息：</strong>使用另一个消息类型作为字段类型</li>
-  <li><strong>枚举：</strong>用 <code>enum</code> 定义，第一个值必须为 0</li>
-  <li><strong>oneof：</strong>一组字段中同一时刻只能设置一个</li>
-</ul>
+抓到的 18 字节是 `08 fb 80 dc 97 de e9 dd b2 19 12 06 e5 b0 8f e7 8e 8b`。按 `api.user.v1.GetUserReply` 解码：
 
-<h2>隐私</h2>
-<p>所有处理在客户端完成，Schema 和二进制数据不会被上传或存储。</p>
-
-## 示例：解码二进制消息
-
-加载默认的 `demo.Person` schema，切到 **Binary → JSON**，粘贴下面的 hex（47 字节）：
-
-```
-0a 06 e5 bc a0 e4 bc 9f 10 1c 1a 13 7a 68 61 6e 67 77 65 69 40 65 78 61 6d 70 6c 65 2e 63 6e 22 0c 12 06 e6 9d ad e5 b7 9e 1a 02 43 4e 28 01
-```
-
-输出：
-
+{/* pbj-check: {"schema": "syntax = \"proto3\";\n\npackage api.user.v1;\n\nmessage GetUserReply {\n  int64 id = 1;\n  string nickname = 2;\n  int32 level = 3;\n  bool vip = 4;\n  repeated string tags = 5;\n  Profile profile = 6;\n}\n\nmessage Profile {\n  string city = 1;\n}\n", "input": "08 fb 80 dc 97 de e9 dd b2 19 12 06 e5 b0 8f e7 8e 8b", "type": "api.user.v1.GetUserReply"} */}
 ```json
 {
-  "name": "张伟",
-  "age": 28,
-  "emails": [
-    "zhangwei@example.cn"
-  ],
-  "address": {
-    "city": "杭州",
-    "country": "CN"
-  },
-  "status": "ACTIVE"
+  "id": "1830000000000000123",
+  "nickname": "小王"
 }
 ```
 
-中文按 UTF-8 编码，「张伟」占 6 个字节（`e5 bc a0 e4 bc 9f`）。`address.street` 不在二进制里，所以输出里没有：解码结果只列出实际发送的字段。同一 schema 在 **Schema → Sample JSON** 模式下得到 `{"emails": [], "name": "", "age": 0, "address": null, "status": "UNKNOWN"}`。
+`id` 是字符串，这是 [ProtoJSON 格式](https://protobuf.dev/programming-guides/json/) 对 64 位整数的规定。如果后端把它写成 JSON 数字，前端 `JSON.parse` 得到的是 `1830000000000000000`，末尾三位已经变了。
 
-## 与官方 JSON 映射的差异
+`level`、`vip`、`tags` 没有出现，因为它们是默认值。如果服务端用 Go 框架 Kratos v2，它的 JSON 编解码器（v2.8.4 的 `encoding/json/json.go`）调用 protojson 并设置了 `EmitUnpopulated: true`，接口会输出这些字段。勾选“输出默认值字段”可以对照：
 
-`protoc` 生成的代码输出的是 [ProtoJSON 格式](https://protobuf.dev/programming-guides/json/)，本工具（protobuf.js 8.0.1，用页面实际加载的浏览器版本核对）在以下几处不同：
+{/* pbj-check: {"schema": "syntax = \"proto3\";\n\npackage api.user.v1;\n\nmessage GetUserReply {\n  int64 id = 1;\n  string nickname = 2;\n  int32 level = 3;\n  bool vip = 4;\n  repeated string tags = 5;\n  Profile profile = 6;\n}\n\nmessage Profile {\n  string city = 1;\n}\n", "input": "08 fb 80 dc 97 de e9 dd b2 19 12 06 e5 b0 8f e7 8e 8b", "type": "api.user.v1.GetUserReply", "opts": {"defaults": true}} */}
+```json
+{
+  "id": "1830000000000000123",
+  "nickname": "小王",
+  "level": 0,
+  "vip": false,
+  "tags": []
+}
+```
 
-| 情况 | 官方 ProtoJSON | 本工具 |
-|---|---|---|
-| 字段名 | lowerCamelCase（`country_code` → `countryCode`），解析时两种都接受 | 保持 `.proto` 里的写法（`country_code`） |
-| `int64` / `uint64` / `sint64` / `fixed64` / `sfixed64` | 十进制字符串 | 十进制字符串，完整精度（`"9007199254740993"`、`"18446744073709551615"`）；样例模式显示 `"0"` |
-| 枚举 | 名称（`"ACTIVE"`） | 名称；schema 里没定义的数值保留为数字（`7`） |
-| `bytes` | 标准 Base64 | 标准 Base64 |
-| `map<K, V>` | JSON 对象 | JSON 对象 |
-| 样例模式下的嵌套消息 | — | `null`；在下拉框里选嵌套类型才能看到它的字段 |
+区别只有一处：protojson 的 `EmitUnpopulated` 会把未设置的消息字段写成 `"profile": null`，本工具的选项与 protojson 的 `EmitDefaultValues`、Python 的 `always_print_fields_with_no_presence` 一致，不输出它。
 
-## 解码抓到的 gRPC 数据
+## 示例：手里没有 .proto
 
-gRPC 给每条消息加 5 字节前缀：1 字节压缩标志加 4 字节大端长度（[gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)）。粘贴前去掉这 5 个字节；标志为 `01` 时要先解压。服务端开了反射的话，`grpcurl` 不需要 `.proto` 文件就能调用并输出 JSON。
+把 Schema 清空，原始视图选“JSON，附其他解读”，同样的字节变成：
+
+{/* pbj-check: {"input": "08 fb 80 dc 97 de e9 dd b2 19 12 06 e5 b0 8f e7 8e 8b", "raw": "readings"} */}
+```json
+{
+  "1": {
+    "uint64": "1830000000000000123",
+    "sint64": "-915000000000000062"
+  },
+  "2": "小王"
+}
+```
+
+线路格式里 varint 不带类型，同一组字节按 `int64` 读是正数，按 `sint64`（zigzag 编码）读就是负数。字段 2 是合法 UTF-8 文本，直接显示为字符串。选“protoc --decode_raw”视图，输出与 `protoc --decode_raw` 逐字相同，中文会显示成八进制转义。
+
+## 示例：JSON 编码回二进制，带多余字段
+
+联调时前端多传了一个 `avatar_url`：
+
+```json
+{"id": "1830000000000000123", "nickname": "小王", "avatar_url": "https://example.com/a.png"}
+```
+
+在“JSON → 二进制”中直接报错，并给出位置：
+
+{/* pbj-check: {"schema": "syntax = \"proto3\";\n\npackage api.user.v1;\n\nmessage GetUserReply {\n  int64 id = 1;\n  string nickname = 2;\n  int32 level = 3;\n  bool vip = 4;\n  repeated string tags = 5;\n  Profile profile = 6;\n}\n\nmessage Profile {\n  string city = 1;\n}\n", "mode": "encode", "type": "api.user.v1.GetUserReply", "json": "{\"id\": \"1830000000000000123\", \"nickname\": \"小王\", \"avatar_url\": \"https://example.com/a.png\"}", "error": "unknownField", "lang": "zh"} */}
+```text
+api.user.v1.GetUserReply（第 1 行第 49 列）：api.user.v1.GetUserReply 没有字段“avatar_url”。
+```
+
+Kratos v2 的反序列化设置了 `DiscardUnknown: true`，服务端会静默丢掉这个字段。勾选“忽略未知字段”得到同样的结果，说明里会写明忽略了哪个字段：
+
+{/* pbj-check: {"schema": "syntax = \"proto3\";\n\npackage api.user.v1;\n\nmessage GetUserReply {\n  int64 id = 1;\n  string nickname = 2;\n  int32 level = 3;\n  bool vip = 4;\n  repeated string tags = 5;\n  Profile profile = 6;\n}\n\nmessage Profile {\n  string city = 1;\n}\n", "mode": "encode", "type": "api.user.v1.GetUserReply", "json": "{\"id\": \"1830000000000000123\", \"nickname\": \"小王\", \"avatar_url\": \"https://example.com/a.png\"}", "opts": {"ignoreUnknown": true}} */}
+```text
+08 fb 80 dc 97 de e9 dd b2 19 12 06 e5 b0 8f e7 8e 8b
+```
+
+编码结果与抓到的字节完全一致。字段名写 `nickname`、枚举写名称或数字、int64 写字符串或数字都可以；输出可选十六进制、Base64、Python 字节串、C 数组，也可加 gRPC 帧头或下载为 `.bin`。
+
+## 与其他在线工具的区别
+
+2026-10-02 用本页英文版的订单示例（含 Timestamp 与超过 2^53 的 int64）实测。365 工具箱（toolbox365.cn）和 codertools.net 都用 protobufjs 解析 .proto：带 `import "google/protobuf/timestamp.proto"` 时，365 工具箱报“no such Type or Enum 'google.protobuf.Timestamp'”，codertools 的消息类型列表为空；去掉 Timestamp 字段后，两者都把 `order_id` 输出成 `"9007199254740992"`（比真实值小 1），字段名保持下划线写法。365 工具箱的无 Schema 模式数值准确，并列出多种解读，但粘贴带 gRPC 帧头的数据时报“偏移 1 处 field number 为 0”，需要手工去掉前 5 字节。以上工具都没有把数据发到服务器。
 
 ## 限制
 
-- **schema 必须自包含。** `import` 不会去拉取：只写了 import 行的 `google.protobuf.Timestamp` 字段会报 `no such Type or Enum 'google.protobuf.Timestamp'`。把被引用的消息一起粘贴进来。这样粘贴的常用类型按普通消息显示（`{"seconds": "1695427584"}`），不是官方映射的 RFC 3339 字符串。
-- **二进制里没有类型名。** 选错消息类型往往也能解码成功，只是字段对不上：`Customer` 的字节 `0a 05 41 6c 69 63 65` 按 `Order` 解码得到 `{"order_id": "Alice"}`。解码后检查字段是否合理。
-- **数据被截断时报错**，例如 `index out of range: 2 + 16 > 3`。
-- **自动判断 hex 或 Base64**：只含十六进制字符且长度为偶数的输入按 hex 读，其余按 Base64。恰好只由十六进制字符组成的 Base64 会被误读，这种输入先转成 hex。
-- **样例模式只显示默认值**：空字符串、0、空数组和空 map、第一个枚举值，嵌套消息为 `null`，`oneof` 字段不出现。
+- **只接受 .proto 源文件**。`protoc --descriptor_set_out` 生成的描述符集合和文本格式消息都不能载入。内置的 import 只有 `any`、`duration`、`empty`、`field_mask`、`struct`、`timestamp`、`wrappers`；`google/api/annotations.proto` 等其他文件里如果有用到的类型，需要手动添加。扩展 `descriptor.proto` 的自定义选项会被忽略，选项不影响字节。
+- **未知字段不进 JSON**。说明里列出编号、线路类型和字节位置，并给出能无未知字段解码的消息类型。
+- **类型选错也可能“成功”**。二进制不带类型名，选错类型时常会解出奇怪的值，注意说明里的未知字段提示。
+- 嵌套最多 100 层，打开的文件不超过 2 MB；压缩帧只支持 gzip。
+- 支持 proto2 与 editions 2023/2024：组、required、封闭枚举、扩展（`"[pkg.ext]"`）、字段存在性、packed 与 expanded、delimited 消息。proto3 的 `string` 如果不是合法 UTF-8 会报错并给出字节位置，二进制数据应改用 `bytes`。
+
+相关工具：用 [HAR 文件分析器](/zh/tools/har-file-analyzer/) 查看抓包，用 [Base64 编码 / 解码](/zh/tools/base64/) 转换载荷，用 [JSON Schema 验证器](/zh/tools/json-schema-validator/) 检查 JSON。
