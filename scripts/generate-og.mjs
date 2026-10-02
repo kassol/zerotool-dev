@@ -460,15 +460,18 @@ async function main() {
     }
   }
 
+  async function render(job) {
+    await sharp(Buffer.from(job.svg))
+      .png({ compressionLevel: 9, palette: false })
+      .toFile(join(outputDir, job.fileName));
+    process.stdout.write(`  [${job.kind}] ${job.fileName}\n`);
+  }
+  // Render the first image alone: fontconfig initialisation (reached through librsvg text layout)
+  // is not thread-safe, and parallel first renders crashed CI once with a segfault (exit 139).
   let next = 0;
+  if (jobs.length) await render(jobs[next++]);
   async function worker() {
-    while (next < jobs.length) {
-      const job = jobs[next++];
-      await sharp(Buffer.from(job.svg))
-        .png({ compressionLevel: 9, palette: false })
-        .toFile(join(outputDir, job.fileName));
-      process.stdout.write(`  [${job.kind}] ${job.fileName}\n`);
-    }
+    while (next < jobs.length) await render(jobs[next++]);
   }
   await Promise.all(Array.from({ length: Math.min(availableParallelism(), jobs.length) }, worker));
   const generated = jobs.length;
