@@ -1,244 +1,212 @@
 ---
-title: "CSSグリッドジェネレーター：コードを書かずにグリッドレイアウトを視覚的に設計"
-description: "オンラインCSSグリッドジェネレーターでレイアウトを視覚的に設計してCSSをエクスポート。grid-template-columns、rows、gap、レスポンシブパターンを解説。"
+title: "CSS Gridの使い方：fr・minmax・名前付きエリア・auto-fillとauto-fit・subgridを実測で解説"
+description: "CSSグリッドレイアウトの使い方を仕様とChromeの実測で解説。frとminmax()、1frの列がURLで崩れる理由、-1の意味、全角スペースで無効になるエリア指定、auto-fillとauto-fitの違い、subgrid、縦書き。"
 pubDate: 2026-04-08
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "ja"
-tags: ["css-grid", "css", "layout", "grid-generator", "developer-tools"]
+tags: ["CSS Grid", "グリッドレイアウト", "CSS", "レイアウト", "フロントエンド"]
 ---
 
-CSSグリッドはCSSで最も強力なレイアウトシステムですが、グリッドプロパティを手書きするのは面倒です——カラム数、ギャップサイズ、名前付きテンプレートエリアを繰り返し調整するときは特に。**CSSグリッドジェネレーター**を使えば、レイアウトを視覚的に設定して必要なCSSをそのままコピーできます。
+CSS Grid（グリッドレイアウト）は、コンテナの子要素を行と列の両方向に同時に並べる仕組みです。仕様は [CSS Grid Layout Module Level 2](https://www.w3.org/TR/css-grid-2/)（勧告候補草案）で、Level 1 の内容をすべて含み、subgrid が加わっています。「`1fr` の列が均等にならない」「`-1` を指定したのに最後まで届かない」「`auto-fill` と `auto-fit` は何が違うのか」といった、使い方の解説記事でよく取り上げられる疑問は、どれも仕様の特定の節に答えがあります。この記事では仕様の該当箇所を示しながら、Chrome 152（macOS、2026 年 10 月 2 日）でテスト用の要素に宣言を当て、`getComputedStyle()` と `getBoundingClientRect()` で読み取った値で確かめます。
 
-[CSSグリッドジェネレーターを試す →](/ja/tools/css-grid-generator/)
+基本機能のブラウザ対応はもう心配いりません。`display: grid` は Chrome 57・Firefox 52・Safari 10.1・Edge 16、iOS Safari 10.3 以降で使え、グリッドでの `gap` は Chrome 66・Firefox 61・Safari 12 以降です（MDN browser-compat-data 8.1.4）。subgrid は後半で扱います。
 
-## CSSグリッドの仕組み
+## グリッドの用語：ライン・トラック・セル・エリア
 
-CSSグリッドはコンテナを2次元レイアウトシステムに変えます。Flexbox（単一軸でアイテムを並べる）と異なり、グリッドは行と列の両方を同時に明示的に制御できます。
+仕様の 3 章で定義されている 4 つの言葉を押さえておくと、残りの説明が読みやすくなります。
+
+- **グリッドライン**：区切り線。3 列なら縦のラインは 4 本で、開始側から 1〜4、終了側から −1〜−4 の番号が付きます。
+- **トラック**：隣り合う 2 本のラインに挟まれた行または列。
+- **セル**：1 行と 1 列が交わる部分。
+- **グリッドエリア**：4 本のラインで囲まれた、1 つ以上のセルからなる長方形。
+
+列の並びは `grid-template-columns`、行の並びは `grid-template-rows` に書きます。幅 1000px のコンテナに次の指定をすると、
+
+```css
+.container {
+  display: grid;
+  width: 1000px;
+  grid-template-columns: 200px 1fr 1fr;
+}
+```
+
+Chrome の計算値は `200px 400px 400px` で、縦のラインは 0・200・600・1000px の位置に引かれます。子要素はライン番号（`grid-column: 2 / 4` で 2 列目と 3 列目）、名前、または HTML の順に 1 セルずつ自動で配置されます。
+
+## 列と行のサイズ指定：fr・auto・minmax()
+
+トラックのサイズに書ける値は次のとおりです（7.2.1 節）。
+
+| 値 | 意味 |
+|---|---|
+| `240px`・`20%`・`15rem` | 固定サイズ。% はコンテナのコンテンツボックスに対する割合 |
+| `1fr` | ほかのトラックを決めたあとに残った空きの取り分 |
+| `auto` | 中身に合わせ、余りがあれば広がる |
+| `min-content`・`max-content` | 中身がはみ出さない最小・最大のサイズ |
+| `minmax(最小, 最大)` | 最小と最大のあいだ |
+| `fit-content(300px)` | `auto` と同様だが引数より大きくならない |
+
+`repeat(3, 1fr)` は `1fr 1fr 1fr` の省略形です。fr の取り分は gap を差し引いてから計算されるので、幅 1000px・`column-gap: 16px` の `repeat(3, 1fr)` は 1 列あたり (1000 − 2 × 16) ÷ 3 = 322.67px になり、Chrome の値は 322.664px でした。
+
+行はもう少しわかりにくい動きをします。コンテナの高さは普通決まっていないからです。幅 600px、`grid-template-rows: repeat(2, 1fr)` のグリッドに 6 個の要素を入れ、1 個だけ高さ 200px、残りを 20px にすると、2 行とも 200px になりました。高さが確定していないとき、`1fr` の行は中身からサイズを決めたうえで最大の行にそろえられます。同じ要素で `repeat(2, auto)` にすると `200px 20px` です。中身に合わせたいだけなら `auto` を使います。指定していない（暗黙の）行も `auto` です。
+
+## 1frの列がはみ出す理由：英単語・URLと日本語の違い
+
+7.2.4 節には、`minmax()` の外に書いた fr は「自動の最小値を持つ（つまり `minmax(auto, <flex>)`）」とあります。グリッドアイテムの自動最小サイズ（6.6 節）はおおむね min-content 幅、つまり中身の中でいちばん長い単語・URL・画像・表の幅で、トラックはそれより小さくなりません。
+
+ここで日本語と英語の違いが出ます。日本語の文章はほぼどの文字のあいだでも改行できるので、min-content は 1 文字分しかありません。幅 600px の `repeat(3, 1fr)` で、真ん中のセルに次の内容を入れて比べました（16px、ヒラギノ角ゴシック）。
+
+| 真ん中のセルの中身 | Chrome の列幅 |
+|---|---|
+| 「お問い合わせフォームの送信ボタンを押すと確認画面が表示されます。」 | `200px 200px 200px` |
+| 「詳しくは https://www.example.co.jp/support/faq/contact-form-troubleshooting/ をご覧ください。」 | `107.297px 385.398px 107.305px` |
+| 幅 750px の改行できない要素 | `9.20312px 750px 9.25px`（コンテナから 168px はみ出す） |
+
+日本語だけの文章なら均等のままですが、URL が 1 本入っただけで列幅が崩れ、改行できない要素がコンテナより広いと、はみ出します。英語の長い単語、型番、メールアドレスも同じです。対策は 2 つあります。
+
+```css
+/* トラックの最小値を 0 にする */
+.container {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 長い文字列をどこでも改行できるようにする */
+.cell {
+  overflow-wrap: anywhere;
+}
+```
+
+`minmax(0, 1fr)` にすると列は `200px 200px 200px` に保たれますが、750px の要素は自分のセルからはみ出したままです（コンテナのスクロール幅は 950px）。URL の例では `overflow-wrap: anywhere` を付けるだけで `200px 200px 200px` に戻りました。`anywhere` は min-content の計算にも効くので、グリッドの列幅そのものが変わります。画像には `max-width: 100%`、コードブロックには `overflow: auto` を合わせます。
+
+## 明示的グリッドと暗黙的グリッド、-1 の意味
+
+自分で並べたトラックが**明示的グリッド**です（7.1 節）。その外に要素を置いたり、セルより要素が多かったりすると、ブラウザが**暗黙のトラック**を足します（7.5 節）。そのサイズは `grid-auto-rows`・`grid-auto-columns`（初期値はどちらも `auto`）で決まり、`grid-auto-flow` で行を足すか列を足すかを選びます。
+
+ここで負のライン番号に注意が必要です。8.3 節には、負の数は「明示的グリッドの終了側の辺から」数えるとあります。`-1` はグリッド全体の最後ではなく、明示的グリッドの最後のラインです。200px の明示的な列を 3 本、`grid-auto-columns: 100px`、見出しに `grid-column: 1 / -1`、別の要素に `grid-column: 5` を指定して確かめました。
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: repeat(3, 200px);
+  grid-auto-columns: 100px;
+}
+.header { grid-column: 1 / -1; }
+.far    { grid-column: 5; }
+```
+
+列は `200px 200px 200px 100px 100px` になり、`.far` は x = 700px の 5 列目に入りましたが、見出しは最初の 600px にしか広がりません。あとから増える列まで覆いたいなら、明示的な列を十分に用意するか `1 / span 5` のように書きます。
+
+## 名前付きエリアでヘッダー・サイドバー・メイン・フッターを組む
+
+企業サイトや管理画面でよく見る「ヘッダー・サイドバー・メイン・フッター」の 4 分割は、`grid-template-areas` で図のように書けます（7.3 節）。文字列 1 つが 1 行、単語 1 つが 1 セル、`.` は空きセルです。
+
+```css
+.app {
+  display: grid;
+  width: 960px;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 60px 300px 40px;
+  grid-template-areas:
+    "head head"
+    "side main"
+    "foot foot";
+  column-gap: 24px;
+}
+.app > header { grid-area: head; }
+.app > nav    { grid-area: side; }
+.app > main   { grid-area: main; }
+.app > footer { grid-area: foot; }
+```
+
+Chrome では `main` が x = 264px、y = 60px、696 × 300px に置かれ、ヘッダーとフッターは 960px の全幅に広がりました。HTML の並び順は関係ありません。エリアを定義すると、その前後のラインに `main-start`・`main-end` という名前も付くので（7.3.2 節）、`grid-column: main-start / main-end` でも同じ位置に入ります。逆に `[content-start] 600px [content-end]` のように `〜-start`／`〜-end` のラインを書くと、`content` というエリアがあるものとして `grid-column: content` で指定できます（7.3.3 節）。
+
+エリアの文字列には、宣言ごと無効になる書き方があります。無効になった宣言はブラウザに捨てられ、それより前に効いていた値が残ります。
+
+- 行ごとのセル数がそろっていない：3 行目を `"foot"` だけにすると、Chrome の計算値は `none` でした。
+- エリアが長方形でない：`"a b" "b a"` は受け付けられませんでした。仕様には、長方形でないエリアは「将来のバージョンで認められるかもしれない」とあります。
+- 区切りに全角スペースを入れた：日本語入力のまま `"header　header" "side main"` と打つと、全角スペース（U+3000）は区切りではなく名前の一部になります。1 行目は `header　header` という名前のセル 1 つになり、2 行目の 2 セルと数が合わないので、計算値は `none` でした。1 行だけなら有効な宣言として通ってしまい、`header　header` という見覚えのない名前のエリアができます。
+
+全角スペースは `grid-template-columns: 200px　1fr` のような値でも宣言を無効にし、全角数字の `２００px` も同様でした。エディタで全角スペースを表示する設定にしておくと見つけやすくなります。
+
+## auto-fill と auto-fit の違い
+
+`repeat()` の回数の代わりに `auto-fill` か `auto-fit` を書くと、入るだけの列が作られます（7.2.3.2 節）。数は gap を含めてコンテナからはみ出さない最大の本数で、最大値が fr の `minmax()` では最小値を使って数えます。幅 1000px、gap 16px、`minmax(180px, 1fr)` なら floor((1000 + 16) ÷ (180 + 16)) = 5 列です。
+
+2 つの違いは、要素が入っていない列の扱いだけです。要素 2 個で比べました。
+
+| 指定 | Chrome の列 | 2 個目の要素 |
+|---|---|---|
+| `repeat(auto-fill, minmax(180px, 1fr))` | 187.2px が 5 列（うち 3 列は空） | x = 203.2px、幅 187.2px |
+| `repeat(auto-fit, minmax(180px, 1fr))` | `492px 492px 0px 0px 0px` | x = 508px、幅 492px |
+
+`auto-fill` は空の列も幅を持ち続けるので、商品が 2 個しかない一覧でもカードの大きさが変わらず、右側が空きます。`auto-fit` は空の列を 0 につぶし（その gap もつぶれます）、2 個が横いっぱいに広がります。列が全部埋まるだけ要素があれば、結果は同じです。
+
+どちらも、コンテナが最小値より狭いときには役に立ちません。幅 150px のコンテナでは 180px の列が 1 本でき、30px はみ出しました。スマートフォンの細い画面を想定するなら `minmax(min(180px, 100%), 1fr)` と書くと 150px の列 1 本に収まります。`min()` は Chrome 79・Firefox 75・Safari 11.1 以降で使えます。
+
+## subgrid でカードの見出しとボタンの高さを揃える
+
+グリッドアイテムを入れ子のグリッドにしても、トラックは親と無関係です。そのため、見出しの長さが違うカードを並べると、下のボタンの位置がずれます。Level 2 の `subgrid`（9 章）を使うと、親の複数のトラックにまたがるアイテムが、そのトラックを自分の行として使えます。
+
+```css
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  column-gap: 20px;
+}
+.card {
+  display: grid;
+  grid-row: span 3;               /* 見出し・本文・ボタン */
+  grid-template-rows: subgrid;
+}
+```
+
+見出しの高さが 24・72・48px、本文が 80・80・120px、ボタン欄が 30px のカード 3 枚で試すと、各カードが独自に `auto auto auto` の行を持つ場合、ボタン欄の上端は y = 104・152・168px でばらばらでした。`grid-template-rows: subgrid` にすると 3 枚とも y = 192px にそろい、親の行は `72px 120px 30px`、つまり各行がいちばん高いカードに合わせた高さになりました。
+
+subgrid は Chrome・Edge 117、Firefox 71、Safari・iOS Safari 16 以降で使えます（MDN browser-compat-data 8.1.4）。対応していないブラウザでは `subgrid` が無効な値として無視され、各カードが独自の行に戻るだけなので、表示は崩れず、ボタンの位置がそろわない状態になります。
+
+## 縦書きでのグリッド
+
+グリッドの「列」はインライン方向（文字が進む向き）、「行」はブロック方向に沿います。`writing-mode: vertical-rl` のコンテナで確かめると、その意味がわかります。
+
+```css
+.tategaki {
+  writing-mode: vertical-rl;
+  display: grid;
+  height: 400px;
+  grid-template-columns: 100px 200px;
+  grid-template-rows: 50px 80px;
+}
+```
+
+Chrome では、`grid-template-columns` の 100px と 200px が上から下へ縦に積まれ、`grid-template-rows` の 50px と 80px が右から左へ並びました。1 個目の要素は右上（x = 80px、50 × 100px）、3 個目はその左（x = 0、80 × 100px）です。縦書きのページで「列を横に並べたい」なら `grid-template-rows` を使う、と覚えておくと混乱しません。
+
+## ジェネレーターで書き出す
+
+[CSSグリッドジェネレーター](/ja/tools/css-grid-generator/)は、コンテナのルールだけを書き出します。列数（1〜12）と行数（1〜8）の数値欄、列と行の gap の入力欄、`grid-template-columns` と `grid-template-rows` の自由入力欄があります。列数や行数を変えると対応するテンプレート欄が `repeat(N, 1fr)` に書き換わるので、先に数を決めてから最後にテンプレートを打ち込みます。開いたときの出力は次のとおりです。
+
+{/* cgg-check: {"cols":3,"rows":2,"colGap":"1rem","rowGap":"1rem"} */}
 
 ```css
 .container {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: auto;
-  gap: 1.5rem;
+  grid-template-rows: repeat(2, 1fr);
+  column-gap: 1rem;
+  row-gap: 1rem;
 }
 ```
 
-これで3カラムのグリッドが作成され、各カラムが利用可能な幅を均等に分割し、セル間に1.5remのギャップが入ります。
+この `1fr` の行は、上で見たとおりすべての行を最も高い行にそろえます。ヘッダー・サイドバー・メイン・フッターの骨組みなら、列数 2・行数 3 にしてから、テンプレートと gap を入れます。
 
-## グリッドの主要プロパティ
-
-### `grid-template-columns` と `grid-template-rows`
-
-グリッドのトラック構造を定義します。よく使うパターン：
-
-| パターン | CSS | 結果 |
-|---|---|---|
-| 均等カラム | `repeat(3, 1fr)` | 3等幅カラム |
-| 固定＋流動 | `240px 1fr` | サイドバー＋メインコンテンツ |
-| 名前付きライン | `[sidebar] 240px [main] 1fr` | 各トラックの前のグリッドラインに名前を付ける |
-| 自動充填 | `repeat(auto-fill, minmax(200px, 1fr))` | レスポンシブカードグリッド |
-| 混合単位 | `200px 1fr 2fr` | 固定＋流動2カラム |
-
-### `gap`（旧 `grid-gap`）
-
-トラック間のスペースを制御します。行と列のギャップを個別に設定できます：
+{/* cgg-check: {"cols":2,"rows":3,"colGap":"24px","rowGap":"0","tmplCols":"240px minmax(0, 1fr)","tmplRows":"auto 1fr auto"} */}
 
 ```css
-gap: 1rem;           /* 両方向に同じギャップ */
-gap: 1rem 2rem;      /* row-gap column-gap */
-row-gap: 1rem;
-column-gap: 2rem;
-```
-
-### `grid-column` と `grid-row`
-
-グリッド内でアイテムを明示的に配置：
-
-```css
-.hero {
-  grid-column: 1 / -1;   /* 全幅にスパン */
-  grid-row: 1 / 3;       /* 2行にスパン */
-}
-
-.sidebar {
-  grid-column: 1;
-  grid-row: 2 / 5;
-}
-
-.main {
-  grid-column: 2 / -1;
-  grid-row: 2 / 5;
-}
-```
-
-`-1` は明示的グリッドの最後のラインを指すため、`1 / -1` はカラム数に関わらず明示的なカラムすべてにまたがります。自動配置で作られた暗黙のカラムは含まれません。
-
-### `grid-template-areas`
-
-名前付きエリアで複雑なレイアウトを可読に：
-
-```css
-.layout {
+.container {
   display: grid;
-  grid-template-columns: 240px 1fr;
-  grid-template-rows: 60px 1fr 40px;
-  grid-template-areas:
-    "header  header"
-    "sidebar main"
-    "footer  footer";
-}
-
-.header  { grid-area: header; }
-.sidebar { grid-area: sidebar; }
-.main    { grid-area: main; }
-.footer  { grid-area: footer; }
-```
-
-`grid-template-areas` の各文字列は1行を表します。同じ名前を繰り返すと複数セルにスパンします。`.` は空セルを表します。
-
-## よく使うグリッドパターン
-
-### カードグリッド（自動レスポンシブ）
-
-最も一般的なユースケース：メディアクエリなしで利用可能スペースを埋め自然に折り返すカードグリッド。
-
-```css
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.5rem;
-}
-```
-
-`auto-fill` は収まる限りカラムを生成します。`minmax(280px, 1fr)` で各カードは最小280px幅を保ちながら利用可能スペースに拡張します。
-
-### ホーリーグレイルレイアウト
-
-ヘッダーとフッター付きの古典的な3カラムレイアウト：
-
-```css
-.page {
-  display: grid;
-  grid-template-columns: 200px 1fr 160px;
+  grid-template-columns: 240px minmax(0, 1fr);
   grid-template-rows: auto 1fr auto;
-  grid-template-areas:
-    "header  header  header"
-    "nav     main    aside"
-    "footer  footer  footer";
-  min-height: 100vh;
+  column-gap: 24px;
+  row-gap: 0;
 }
 ```
 
-### メイソンリー風グリッド
-
-真のメイソンリーにはJavaScriptが必要ですが、近似できます：
-
-```css
-.masonry {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: 10px;
-  gap: 10px;
-}
-
-/* 各アイテムはコンテンツの高さに応じて行をスパン */
-.item { grid-row-end: span 20; }    /* 短い */
-.item.tall { grid-row-end: span 35; } /* 長い */
-```
-
-### ダッシュボードグリッド
-
-```css
-.dashboard {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  gap: 1rem;
-}
-
-.widget-full    { grid-column: span 12; }
-.widget-half    { grid-column: span 6; }
-.widget-third   { grid-column: span 4; }
-.widget-quarter { grid-column: span 3; }
-```
-
-## グリッドレイアウトをレスポンシブにする
-
-### メディアクエリを使う方法
-
-```css
-.grid {
-  display: grid;
-  grid-template-columns: 1fr;          /* モバイルは1カラム */
-  gap: 1rem;
-}
-
-@media (min-width: 640px) {
-  .grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (min-width: 1024px) {
-  .grid { grid-template-columns: repeat(4, 1fr); }
-}
-```
-
-### auto-fill + minmax（メディアクエリなし）
-
-```css
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-  gap: 1rem;
-}
-```
-
-`min(100%, 280px)` は非常に狭い画面でのオーバーフローを防ぎます——`minmax` のよくある落とし穴です。
-
-### 名前付きエリア＋メディアクエリ
-
-```css
-.layout {
-  display: grid;
-  grid-template-areas:
-    "header"
-    "main"
-    "sidebar"
-    "footer";
-}
-
-@media (min-width: 768px) {
-  .layout {
-    grid-template-columns: 1fr 300px;
-    grid-template-areas:
-      "header  header"
-      "main    sidebar"
-      "footer  footer";
-  }
-}
-```
-
-## グリッドとFlexbox：使い分け
-
-どちらも現代的なレイアウトツールです。区別はシンプルです：
-
-- **グリッド**：2次元レイアウト。行と列の両方を制御。ページ構造、ダッシュボード、カードグリッド、フォームレイアウトに使います。
-- **Flexbox**：1次元。アイテムは単一軸に沿って並びます。ナビゲーションバー、ボタングループ、単一要素のセンタリング、行内のアイテム整列に使います。
-
-組み合わせても機能します——グリッドレイアウトの中にFlexコンテナを入れることも、その逆も可能です。
-
-## グリッドレイアウトのデバッグ
-
-Chrome、Firefox、EdgeはすべてDevToolsにグリッドインスペクターを内蔵しています。Elementsパネルでグリッドコンテナの横にある `grid` バッジをクリックすると、グリッドラインがページ上に重ねて表示され、カラム/行番号とギャップが確認できます。
-
-FirefoxのGridインスペクターは特に強力で、名前付きエリアのハイライトと複数の同時グリッドオーバーレイをサポートしています。
-
-## CSSグリッドジェネレーターを使う
-
-複雑なレイアウトで `grid-template-columns`、`grid-template-rows`、`gap` の値を手動で設定するのは試行錯誤になりがちです。[CSSグリッドジェネレーター](/ja/tools/css-grid-generator/)なら：
-
-- カラム数（1〜12）と行数（1〜8）を設定すると、テンプレートは `repeat(n, 1fr)` になる
-- `grid-template-columns` と `grid-template-rows` を直接入力して上書きできる（任意の単位、`minmax()`、`repeat()`）
-- カラム間と行間の gap を別々に設定
-- `.container` のCSSブロックをコピーしてすぐに貼り付け
-
-**[CSSグリッドジェネレーターを試す →](/ja/tools/css-grid-generator/)**
+メイン列を `minmax(0, 1fr)` にしておけば、記事中の長い URL で列が押し広げられません。コンテナに `min-height: 100vh` を足すと、中身が少ないページでもフッターが下端に来ます。`grid-template-areas`、子要素の配置（`grid-area`・`grid-column`）、揃え、subgrid の入力欄はないので、コピーしたあとに書き足します。プレビューは常に「列数 × 行数」個のセルを描くので、テンプレートの列数と違うと余ったセルは暗黙の行に回ります。テンプレートと gap の欄は検証されず、`repeat(3 1fr)` のような無効な値も全角スペース入りの値もそのまま出力されます。このときプレビューは、ブラウザが無効な値を無視するため、最後に有効だったテンプレートのままです。
