@@ -1,208 +1,283 @@
 ---
-title: "Regex Cheat Sheet with Live Tester"
-description: "A practical regex reference covering character classes, quantifiers, anchors, groups, and lookaheads — with examples and a free online regex tester."
+title: "Regex Cheat Sheet: Syntax, Flags and Engine Differences (JS, Python, PCRE, Go)"
+description: "Regex cheat sheet with tested examples: classes, Unicode u and v flags, anchors, lazy and possessive quantifiers, named groups, lookbehind, and where JavaScript, Python, PCRE2 and Go differ."
 pubDate: 2026-04-03
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["regex", "cheat-sheet", "developer-tools"]
+tags: ["regex", "regular expressions", "cheat-sheet", "javascript", "python"]
 ---
 
-Regular expressions are one of those skills that pay off every time you need to search, validate, or transform text. This cheat sheet covers the most-used patterns with examples you can test immediately.
+This regex cheat sheet lists the syntax you use every week and, for each piece, what four common engines do with it: JavaScript (`RegExp`, ECMAScript), Python's `re` module, PCRE2 (the library behind PHP's `preg_*` functions and `grep -P`) and Go's `regexp` package (RE2 syntax). Most of the syntax is shared. The differences sit in a few places: what `\d`, `\w` and `\b` mean for non-English text, what `$` does before a final newline, named-group syntax, lookbehind, and possessive quantifiers.
 
-**[Open the live regex tester →](/tools/regex-tester)**
+Every result in the tables was produced by running the pattern, not copied from documentation: Node.js 22 and 24 for JavaScript, Python 3.12, PCRE2 10.49 (`pcre2test`) and Go 1.27, on 2026-10-02. "error" means the engine refuses to compile the pattern. You can paste any pattern that uses only the `g`, `i`, `m` and `s` flags into the [Regex Tester](/tools/regex-tester/) on this site, which runs your browser's own `RegExp`; it has no checkboxes for `u`, `v`, `y` or `d`, so the Unicode examples below need a console or a script.
 
-## Character Classes
+## Characters and Character Classes
 
-| Pattern | Matches |
-|---------|---------|
-| `.` | Any character except newline |
-| `\d` | Digit `[0-9]` |
-| `\D` | Non-digit |
-| `\w` | Word character `[a-zA-Z0-9_]` |
-| `\W` | Non-word character |
-| `\s` | Whitespace (space, tab, newline) |
-| `\S` | Non-whitespace |
-| `[abc]` | One of: a, b, or c |
-| `[^abc]` | Not a, b, or c |
-| `[a-z]` | Lowercase letter a through z |
-| `[A-Z]` | Uppercase letter A through Z |
-| `[0-9]` | Digit 0 through 9 |
+| Syntax | Meaning | Example |
+|---|---|---|
+| `.` | Any character except a line terminator | `a.c` matches `abc`, not `a\nc` (without `s`) |
+| `\d` / `\D` | Digit / not a digit | `\d+` in `Order 66 shipped 2026-10-02` finds `66`, `2026`, `10`, `02` |
+| `\w` / `\W` | Word character / not one | see the Unicode note below |
+| `\s` / `\S` | Whitespace / not whitespace | JavaScript and Python include U+3000 and U+00A0; Go and PCRE2 do not |
+| `[abc]` | One of a, b, c | `gr[ae]y` matches `gray` and `grey` |
+| `[^abc]` | Any character except a, b, c | `[^,]+` splits on commas |
+| `[a-z]` | Range by code point | `[a-z]` does not include `é` |
+| `\t` `\n` `\r` | Tab, line feed, carriage return | `\r?\n` matches both line endings |
+| `\u00e9` / `\x{e9}` | Character by code point | `\u` works in JavaScript and Python; PCRE2 and Go use `\x{...}` |
+| `\.` `\*` `\(` … | Literal metacharacter | escape `. * + ? ( ) [ ] { } ^ $ \| \ /` |
 
-## Anchors
+{/* rx: {"p":"\\d+","f":"","s":"Order 66 shipped 2026-10-02","js":["66","2026","10","02"],"py":["66","2026","10","02"],"go":["66","2026","10","02"],"pcre":["66","2026","10","02"]} */}
+{/* rx: {"p":"\\s","f":"","s":"a\u3000b\u00a0c","js":["\u3000","\u00a0"],"py":["\u3000","\u00a0"],"go":[],"pcre":[]} */}
+{/* rx: {"p":"\\u00e9","f":"","s":"café","js":["é"],"py":["é"],"go":"error","pcre":"error"} */}
+{/* rx: {"p":"\\x{e9}","f":"","s":"café","py":"error","go":["é"],"pcre":["é"]} */}
 
-| Pattern | Matches |
-|---------|---------|
-| `^` | Start of string (or line in multiline mode) |
-| `$` | End of string (or line in multiline mode) |
-| `\b` | Word boundary |
-| `\B` | Non-word boundary |
+The class shorthands are where engines disagree most. The same pattern, `\w+`, run on `naïve café`:
 
-```
-/^\d{5}$/    → matches exactly a 5-digit ZIP code
-/\bword\b/   → matches "word" but not "password"
-```
+{/* rx: {"p":"\\w+","f":"","s":"naïve café","js":["na","ve","caf"],"py":["naïve","café"],"go":["na","ve","caf"],"pcre":["na","ve","caf"]} */}
 
-## Quantifiers
+| Engine | Result | Why |
+|---|---|---|
+| JavaScript | `na`, `ve`, `caf` | `\w` is `[A-Za-z0-9_]`, even with the `u` flag |
+| Python 3 (`str` pattern) | `naïve`, `café` | `\w` is any Unicode alphanumeric plus `_`; `re.ASCII` restores `[a-zA-Z0-9_]` ([Python docs](https://docs.python.org/3/library/re.html)) |
+| PCRE2 | `na`, `ve`, `caf` | ASCII unless the pattern is compiled with Unicode properties (UCP) |
+| Go | `na`, `ve`, `caf` | `\w` is `[0-9A-Za-z_]` ([regexp/syntax](https://pkg.go.dev/regexp/syntax)) |
 
-| Pattern | Meaning |
-|---------|---------|
-| `*` | 0 or more |
-| `+` | 1 or more |
-| `?` | 0 or 1 (optional) |
-| `{n}` | Exactly n times |
-| `{n,}` | n or more times |
-| `{n,m}` | Between n and m times |
+The same split applies to `\d`: Python's `\d` matches any Unicode decimal digit, so `re.fullmatch(r'\d{3}', '１２３')` succeeds on full-width digits, while the other three engines only match `0`–`9`. If you validate input with Python and display it with JavaScript, write `[0-9]` instead of `\d` and both sides agree.
 
-**Greedy vs lazy:** by default quantifiers are greedy (match as much as possible). Add `?` to make them lazy:
+## Unicode: the u and v Flags
 
-```
-<.+>    → greedy: matches <b>bold</b> entirely
-<.+?>   → lazy: matches <b> then </b> separately
-```
+Without a flag, a JavaScript regex works on UTF-16 code units. An emoji outside the Basic Multilingual Plane is two units, so `/^.$/` does not match `😀`; `/^.$/u` does. The `u` flag also turns on Unicode property escapes. Without it, `\p{L}` is read as the letter `p` followed by `{L}`, which is why the Regex Tester (no `u` checkbox) finds the literal text `p{L}` rather than letters.
 
-## Groups and Alternation
+{/* rx: {"p":"^.$","f":"","s":"😀","js":[]} */}
+{/* rx: {"p":"^.$","f":"u","s":"😀","js":["😀"]} */}
+{/* rx: {"p":"\\p{L}+","f":"u","s":"naïve café 東京","js":["naïve","café","東京"],"go":["naïve","café","東京"],"pcre":["naïve","café","東京"],"py":"error"} */}
+{/* rx: {"p":"\\p{L}","f":"","s":"p{L} a","js":["p{L}"]} */}
+{/* rx: {"p":"\\p{Lu}","f":"u","s":"É ж Ж e","js":["É","Ж"]} */}
+{/* rx: {"p":"\\P{ASCII}","f":"u","s":"a-é-1","js":["é"]} */}
+{/* rx: {"p":"\\bcafé\\b","f":"u","s":"café au lait","js":[]} */}
 
-| Pattern | Meaning |
-|---------|---------|
-| `(abc)` | Capture group |
-| `(?:abc)` | Non-capturing group |
-| `a\|b` | Alternation: a or b |
-| `\1` | Backreference to group 1 |
+| Syntax (needs `u` or `v`) | Meaning | Example |
+|---|---|---|
+| `\p{L}` | Any letter in any script | `\p{L}+` on `naïve café 東京` finds `naïve`, `café`, `東京` |
+| `\p{Lu}` / `\p{Ll}` | Upper / lower case letter | `\p{Lu}` matches `É` and `Ж` |
+| `\p{Nd}` | Decimal digit in any script | includes `１` (U+FF11) |
+| `\p{Script=Greek}` | Characters of one script | `\p{sc=Han}` for Chinese characters |
+| `\P{...}` | Negation | `\P{ASCII}` finds anything outside ASCII |
+| `\u{1F600}` | Code point above U+FFFF | only with `u` or `v` |
 
+Python's `re` has no `\p{...}` at all (it raises `bad escape \p`); the third-party `regex` module adds it. PCRE2 and Go accept `\p{L}` without any flag.
+
+The `v` flag (`unicodeSets`, Chrome 112, Firefox 116, Safari 17, Node.js 20 per [MDN browser compatibility data](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/unicodeSets)) replaces `u` and adds set operations inside a class: `--` for difference and `&&` for intersection. `[\p{L}--[a-z]]+` on `abcÄÖ東` matches `ÄÖ東`, letters that are not ASCII lower case. `[\p{Nd}--[0-9]]` on `１2３` finds `１` and `３`, the digits that are not ASCII. None of the other three engines reads this syntax the same way, so keep it in JavaScript.
+
+{/* rx: {"p":"[\\p{L}--[a-z]]+","f":"v","s":"abcÄÖ東","js":["ÄÖ東"]} */}
+{/* rx: {"p":"[\\p{Nd}--[0-9]]","f":"v","s":"１2３","js":["１","３"]} */}
+
+One trap stays even with `u` or `v`: `\w`, `\d` and `\b` remain ASCII. `/\bcafé\b/u` does not match `café au lait`, because `é` is not a word character, so there is no boundary between `é` and the space.
+
+## Anchors and Word Boundaries
+
+| Syntax | JavaScript | Python | PCRE2 | Go |
+|---|---|---|---|---|
+| `^` | Start of input; start of each line with `m` | Same | Same | Same (`(?m)`) |
+| `$` | End of input; end of each line with `m` | End, **or before a final `\n`** | End, **or before a final `\n`** | End of input |
+| `\A` | not supported | Start of input | Start of input | Start of input |
+| `\z` | not supported | Python 3.14+ (`\Z` before that) | End of input | End of input |
+| `\b` / `\B` | Boundary between `\w` and `\W` | Same, with Unicode `\w` | Same, ASCII `\w` | Same, ASCII `\w` |
+
+{/* rx: {"p":"\\d+$","f":"","s":"42\n","js":[],"py":["42"],"go":[],"pcre":["42"]} */}
+{/* rx: {"p":"\\bcafé\\b","f":"","s":"café au lait","js":[],"py":["café"],"go":[],"pcre":[]} */}
+{/* rx: {"p":"\\bcat\\b","f":"","s":"cat concat cat.","js":["cat","cat"],"py":["cat","cat"],"go":["cat","cat"],"pcre":["cat","cat"]} */}
+{/* rx: {"p":"^\\w+","f":"m","s":"alpha\nbeta","js":["alpha","beta"],"py":["alpha","beta"],"go":["alpha","beta"],"pcre":["alpha","beta"]} */}
+
+The `$` row matters for validation. `\d+$` matches the string `"42\n"` in Python and PCRE2 but not in JavaScript or Go. A form field that should contain only digits passes a Python check with a trailing newline. Use `re.fullmatch()` in Python, or `\Z` / `\z`, when you mean "nothing after this".
+
+`\bcat\b` on `cat concat cat.` finds the first and last `cat` and skips the one inside `concat`. With `m`, `^\w+` on two lines finds `alpha` and `beta`; without `m` it finds only `alpha`.
+
+## Quantifiers: Greedy, Lazy and Possessive
+
+| Syntax | Meaning |
+|---|---|
+| `*` `+` `?` | 0 or more, 1 or more, 0 or 1 (greedy: as many as possible) |
+| `{n}` `{n,}` `{n,m}` | Exactly n, at least n, between n and m |
+| `*?` `+?` `??` `{n,m}?` | Lazy: as few as possible |
+| `*+` `++` `?+` `{n,m}+` | Possessive: as many as possible, never give back |
+| `(?>...)` | Atomic group: same idea for a whole group |
+
+{/* rx: {"p":"<.+>","f":"","s":"<b>bold</b>","js":["<b>bold</b>"],"py":["<b>bold</b>"],"go":["<b>bold</b>"],"pcre":["<b>bold</b>"]} */}
+{/* rx: {"p":"<.+?>","f":"","s":"<b>bold</b>","js":["<b>","</b>"],"py":["<b>","</b>"],"go":["<b>","</b>"],"pcre":["<b>","</b>"]} */}
+{/* rx: {"p":"\\d+0","f":"","s":"1000","js":["1000"],"py":["1000"],"go":["1000"],"pcre":["1000"]} */}
+{/* rx: {"p":"\\d++0","f":"","s":"1000","js":"error","py":[],"go":"error","pcre":[]} */}
+{/* rx: {"p":"(?>\\d+)0","f":"","s":"1000","js":"error","py":[],"go":"error","pcre":[]} */}
+
+`<.+>` on `<b>bold</b>` matches the whole string; `<.+?>` matches `<b>` and `</b>` separately. Possessive quantifiers show their effect in `\d+0` versus `\d++0` on `1000`: the greedy version backs off one digit so the final `0` can match, the possessive one, `\d++0`, keeps all four digits and fails, and so does the atomic group `(?>\d+)0`. Python supports possessive quantifiers and atomic groups since 3.11; PCRE2 has had them for a long time; JavaScript and Go reject both.
+
+## Groups, Named Groups and Backreferences
+
+| Feature | JavaScript | Python | PCRE2 | Go |
+|---|---|---|---|---|
+| Capture `( )`, non-capture `(?: )` | yes | yes | yes | yes |
+| Named group | `(?<year>...)` | `(?P<year>...)` | both | both |
+| Backreference in pattern | `\1`, `\k<year>` | `\1`, `(?P=year)` | `\1`, `\k<year>` | not supported |
+| Group in replacement | `$1`, `$<year>` | `\1`, `\g<year>` | (host language) | `${1}`, `${year}` |
+
+{/* rx: {"p":"(?<year>\\d{4})-(?<month>\\d{2})","f":"","s":"2026-10","js":["2026-10"],"py":"error","go":["2026-10"],"pcre":["2026-10"]} */}
+{/* rx: {"p":"(?P<year>\\d{4})-(?P<month>\\d{2})","f":"","s":"2026-10","js":"error","py":["2026-10"],"go":["2026-10"],"pcre":["2026-10"]} */}
+{/* rx: {"p":"\\b(\\w+) \\1\\b","f":"","s":"the the cat sat sat","js":["the the","sat sat"],"py":["the the","sat sat"],"go":"error","pcre":["the the","sat sat"]} */}
+
+A pattern copied from a Python script into JavaScript fails on `(?P<`, and the reverse fails on `(?<`. The Python form, `(?P<year>\d{4})-(?P<month>\d{2})`, compiles in Python, PCRE2 and Go. Write `(?P<name>...)` only when the pattern must also run in Python, PCRE2 and Go. The repeated-word pattern `\b(\w+) \1\b` finds `the the` and `sat sat`, but Go cannot compile it: RE2 leaves out backreferences so that matching stays linear in the input length.
+
+The Regex Tester lists groups by number (Group 1, Group 2), also for named groups. In code, named groups come back on `match.groups`:
+
+{/* rx-run: {"lang":"node","expect":"2026 10\n2026/10/02\n[[0,10],[5,7]]"} */}
 ```js
-// Extract year, month, day from a date string
-const match = '2026-04-03'.match(/(\d{4})-(\d{2})-(\d{2})/);
-// match[1] = '2026', match[2] = '04', match[3] = '03'
+const m = '2026-10-02'.match(/(?<year>\d{4})-(?<month>\d{2})-\d{2}/d);
+console.log(m.groups.year, m.groups.month);
+console.log('2026-10-02'.replace(/(?<y>\d+)-(?<m>\d+)-(?<d>\d+)/, '$<y>/$<m>/$<d>'));
+// The d flag (hasIndices) adds start and end offsets for the match and each group.
+console.log(JSON.stringify([m.indices[0], m.indices.groups.month]));
 ```
 
-## Lookaheads and Lookbehinds
+## Lookahead and Lookbehind
 
-| Pattern | Meaning |
-|---------|---------|
-| `(?=abc)` | Positive lookahead — followed by abc |
-| `(?!abc)` | Negative lookahead — not followed by abc |
-| `(?<=abc)` | Positive lookbehind — preceded by abc |
-| `(?<!abc)` | Negative lookbehind — not preceded by abc |
+| Syntax | Meaning |
+|---|---|
+| `(?=...)` | Followed by |
+| `(?!...)` | Not followed by |
+| `(?<=...)` | Preceded by |
+| `(?<!...)` | Not preceded by |
 
-```
-/\d+(?= dollars)/   → matches digits only when followed by " dollars"
-/(?<=\$)\d+/        → matches digits only when preceded by "$"
-```
+Lookahead works the same in JavaScript, Python and PCRE2. Lookbehind is where they part:
 
-Lookbehind requires ES2018+ in JavaScript.
+{/* rx: {"p":"(?<=\\$)\\d+(?:\\.\\d\\d)?","f":"","s":"$19.99 or 20","js":["19.99"],"py":["19.99"],"go":"error","pcre":["19.99"]} */}
+{/* rx: {"p":"(?<=USD |\\$)\\d+","f":"","s":"USD 30 and $5","js":["30","5"],"py":"error","go":"error","pcre":["30","5"]} */}
+{/* rx: {"p":"(?<=\\$\\s*)\\d+","f":"","s":"$ 5","js":["5"],"py":"error","go":"error","pcre":"error"} */}
+{/* rx: {"p":"(?<=\\$\\s{0,3})\\d+","f":"","s":"$ 5","js":["5"],"py":"error","go":"error","pcre":["5"]} */}
+
+| Pattern | JavaScript | Python | PCRE2 10.49 | Go |
+|---|---|---|---|---|
+| `(?<=\$)\d+(?:\.\d\d)?` on `$19.99 or 20` | `19.99` | `19.99` | `19.99` | error |
+| `(?<=USD \|\$)\d+` (branches of different length) | `30`, `5` | error | `30`, `5` | error |
+| `(?<=\$\s{0,3})\d+` (bounded length) | `5` | error | `5` | error |
+| `(?<=\$\s*)\d+` (unbounded) | `5` | error | error | error |
+
+JavaScript accepts any lookbehind (Safari only since 16.4, per MDN). Python requires a fixed width, so even two alternatives of different length fail with `look-behind requires fixed-width pattern`. PCRE2 accepts alternatives of different length and, since 10.43, bounded variable length ([pcre2pattern](https://www.pcre.org/current/doc/html/pcre2pattern.html)). Go has no lookaround at all. A common workaround that works everywhere is to capture instead: `\$\s*(\d+)` and read group 1.
+
+A typical lookahead use is a password rule, here checked on three lines with the `m` flag:
+
+{/* rx: {"p":"^(?=.*\\d)(?=.*[a-z]).{8,}$","f":"m","s":"password1\npassword\n12345678a","js":["password1","12345678a"],"py":["password1","12345678a"],"go":"error","pcre":["password1","12345678a"]} */}
+
+`^(?=.*\d)(?=.*[a-z]).{8,}$` keeps `password1` and `12345678a` and drops `password`. Composition rules like this are discouraged for real passwords: [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html) asks verifiers not to impose them. Length and a check against breached passwords work better.
 
 ## Flags
 
-| Flag | Effect |
-|------|--------|
-| `i` | Case-insensitive |
-| `g` | Global — find all matches |
-| `m` | Multiline — `^` and `$` match line boundaries |
-| `s` | Dotall — `.` also matches newline |
-| `u` | Unicode mode |
+| JavaScript | Python | Effect |
+|---|---|---|
+| `g` | (use `findall` / `finditer`) | Find every match, not just the first |
+| `i` | `re.I`, `(?i)` | Ignore case |
+| `m` | `re.M`, `(?m)` | `^` and `$` match at line breaks |
+| `s` | `re.S`, `(?s)` | `.` also matches line terminators |
+| `u` | (always on for `str`) | Code points instead of UTF-16 units, `\p{...}` |
+| `v` | none | `u` plus class set operations |
+| `y` | (`pattern.match(s, pos)`) | Sticky: match only at `lastIndex` |
+| `d` | (`match.span()`) | Record start and end indices |
+| none | `re.X`, `(?x)` | Verbose: ignore whitespace, allow `#` comments |
+| none | `re.A` | ASCII-only `\w`, `\d`, `\s`, `\b` |
 
+Inline modifiers for part of a pattern, `(?i:...)`, arrived in JavaScript with ES2025 (Chrome 125, Firefox 132, Safari 26, Node.js 23 per MDN). Node.js 22 still throws `Invalid group` on `/(?i:a)b/`. Python, PCRE2 and Go have had inline flags for years.
+
+The sticky flag is easiest to see in a tiny tokenizer: each `exec` must start exactly where the previous token ended.
+
+{/* rx-run: {"lang":"node","expect":"num:12 op:+ num:7"} */}
 ```js
-/hello/i.test('Hello World')  // true
-'abc abc'.match(/abc/g)       // ['abc', 'abc']
+const token = /(?<num>\d+)|(?<op>[+*\/-])|\s+/y;
+const src = '12 + 7';
+const out = [];
+let m;
+while (token.lastIndex < src.length && (m = token.exec(src))) {
+  if (m.groups.num) out.push('num:' + m.groups.num);
+  if (m.groups.op) out.push('op:' + m.groups.op);
+}
+console.log(out.join(' '));
 ```
 
-## Common Patterns
+## Common Patterns, Tested
 
-### Email (basic)
-```
-/^[^\s@]+@[^\s@]+\.[^\s@]+$/
-```
+Each pattern below was run with the `g` and `m` flags on the inputs shown, one per line; the Regex Tester gives the same matches. The "misses" column lists real inputs the pattern gets wrong.
 
-### URL
-```
-/https?:\/\/(www\.)?[-a-zA-Z0-9@:%._+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_+.~#?&/=]*)/
-```
+{/* rx: {"p":"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$","f":"m","s":"user@example.com\nfirst.last+tag@sub.example.co.uk\nuser@localhost\na@b.c\nuser@@example.com\nuser@example..com","js":["user@example.com","first.last+tag@sub.example.co.uk","a@b.c","user@example..com"],"py":["user@example.com","first.last+tag@sub.example.co.uk","a@b.c","user@example..com"],"go":["user@example.com","first.last+tag@sub.example.co.uk","a@b.c","user@example..com"],"pcre":["user@example.com","first.last+tag@sub.example.co.uk","a@b.c","user@example..com"]} */}
 
-### IPv4 Address
-```
-/^(\d{1,3}\.){3}\d{1,3}$/
-```
+| Goal | Pattern | Accepts | Rejects | Misses |
+|---|---|---|---|---|
+| Email (loose) | `^[^\s@]+@[^\s@]+\.[^\s@]+$` | `user@example.com`, `first.last+tag@sub.example.co.uk`, `a@b.c` | `user@localhost`, `user@@example.com` | accepts `user@example..com` |
+| IPv4, shape only | `^(\d{1,3}\.){3}\d{1,3}$` | `192.168.0.1` | `1.2.3` | accepts `999.999.999.999` and `192.168.001.1` |
+| IPv4, 0–255 | `^((25[0-5]\|2[0-4]\d\|1\d\d\|[1-9]?\d)\.){3}(25[0-5]\|2[0-4]\d\|1\d\d\|[1-9]?\d)$` | `192.168.0.1`, `255.255.255.255` | `999.999.999.999`, `192.168.001.1` | none for dotted decimal |
+| Hex colour | `^#([0-9a-fA-F]{3}\|[0-9a-fA-F]{6})$` | `#fff`, `#1a73e8` | `#12345g` | rejects valid 4- and 8-digit forms `#ffff`, `#1a73e880` |
+| ISO date | `^\d{4}-(0[1-9]\|1[0-2])-(0[1-9]\|[12]\d\|3[01])$` | `2026-10-02` | `2026-13-01` | accepts `2026-02-31` |
+| Semantic version (from [semver.org](https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string)) | see below | `1.0.0-alpha+001`, `2.0.0-rc.1` | `01.0.0`, `1.2.3-01` | none known |
 
-This checks the shape only: `999.999.999.999` also matches. To limit each part to 0–255, use `/^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/`.
+{/* rx: {"p":"^(\\d{1,3}\\.){3}\\d{1,3}$","f":"m","s":"192.168.0.1\n999.999.999.999\n192.168.001.1\n1.2.3","js":["192.168.0.1","999.999.999.999","192.168.001.1"],"py":["192.168.0.1","999.999.999.999","192.168.001.1"],"go":["192.168.0.1","999.999.999.999","192.168.001.1"],"pcre":["192.168.0.1","999.999.999.999","192.168.001.1"]} */}
+{/* rx: {"p":"^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$","f":"m","s":"192.168.0.1\n999.999.999.999\n192.168.001.1\n255.255.255.255","js":["192.168.0.1","255.255.255.255"],"py":["192.168.0.1","255.255.255.255"],"go":["192.168.0.1","255.255.255.255"],"pcre":["192.168.0.1","255.255.255.255"]} */}
+{/* rx: {"p":"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$","f":"m","s":"#fff\n#1a73e8\n#1a73e880\n#ffff\n#12345g","js":["#fff","#1a73e8"],"py":["#fff","#1a73e8"],"go":["#fff","#1a73e8"],"pcre":["#fff","#1a73e8"]} */}
+{/* rx: {"p":"^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$","f":"m","s":"2026-10-02\n2026-02-31\n2026-13-01","js":["2026-10-02","2026-02-31"],"py":["2026-10-02","2026-02-31"],"go":["2026-10-02","2026-02-31"],"pcre":["2026-10-02","2026-02-31"]} */}
+{/* rx: {"p":"^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$","f":"m","s":"1.0.0-alpha+001\n01.0.0\n1.2.3-01\n2.0.0-rc.1","js":["1.0.0-alpha+001","2.0.0-rc.1"],"py":["1.0.0-alpha+001","2.0.0-rc.1"],"go":["1.0.0-alpha+001","2.0.0-rc.1"],"pcre":["1.0.0-alpha+001","2.0.0-rc.1"]} */}
 
-### Hex Color
 ```
-/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
-```
-
-### US Phone Number
-```
-/^(\+1\s?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/
+^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$
 ```
 
-### Slug (URL-friendly string)
-```
-/^[a-z0-9]+(?:-[a-z0-9]+)*$/
-```
+A pattern that circulates as "the URL regex", `https?:\/\/(www\.)?[-a-zA-Z0-9@:%._+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_+.~#?&/=]*)`, shows why these patterns age badly. On `https://example.photography/x https://例え.jp/ https://www.example.com/a?b=1` it finds only the last URL: the top-level domain is limited to six letters (`.photography` has eleven) and the host to ASCII.
 
-### Semver
-```
-/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?$/
-```
+{/* rx: {"p":"https?:\\/\\/(www\\.)?[-a-zA-Z0-9@:%._+~#=]{2,256}\\.[a-z]{2,6}\\b([-a-zA-Z0-9@:%_+.~#?&/=]*)","f":"","s":"https://example.photography/x https://例え.jp/ https://www.example.com/a?b=1","js":["https://www.example.com/a?b=1"],"py":["https://www.example.com/a?b=1"],"go":["https://www.example.com/a?b=1"]} */}
 
-## Using Regex in Code
+For URLs, parse instead of matching: `new URL()` in JavaScript or `urllib.parse.urlsplit()` in Python, and check the parts you care about. The [URL Parser](/tools/url-parser/) shows what the browser's parser makes of a string. The same goes for dates: the date pattern above accepts 31 February, which only a date library catches.
 
-### JavaScript
+## Checking a Pattern Before You Ship It
 
-```js
-// Test if a string matches
-/^\d+$/.test('123')       // true
-/^\d+$/.test('12a')       // false
+A pattern is only as good as the strings you tried it on. Before a regex goes into a validator or a log filter, run it against three lists: strings that must match, strings that must not, and strings you are unsure about (empty input, a trailing newline, full-width digits, an emoji, a very long line). Paste them one per line into the [Regex Tester](/tools/regex-tester/) with the `g` and `m` flags on: the status line counts the matches, the highlighted copy shows which lines matched, and the list below gives each match with its index and numbered groups. For the email pattern above, the six test lines give "4 matches found", and the highlight shows at once that `user@example..com` slipped through.
 
-// Find first match
-'hello world'.match(/\w+/)    // ['hello']
+Two details of the tool are worth knowing. The index is a UTF-16 offset, as in JavaScript, so an emoji before a match adds 2. And the tool always searches globally; unchecking `g` only stops the list after the first match.
 
-// Find all matches
-'hello world'.match(/\w+/g)   // ['hello', 'world']
+Long patterns are easier to review in Python's verbose mode, where whitespace is ignored and `#` starts a comment:
 
-// Replace
-'foo bar'.replace(/\b\w/g, c => c.toUpperCase())  // 'Foo Bar'
-
-// Split
-'one, two,three'.split(/,\s*/)  // ['one', 'two', 'three']
-```
-
-### Python
-
+{/* rx-run: {"lang":"python","expect":"('2026', '10', '02')\nNone"} */}
 ```python
 import re
-
-# Test
-bool(re.match(r'^\d+$', '123'))        # True
-
-# Find first
-re.search(r'\d+', 'abc123def')         # match object
-re.search(r'\d+', 'abc123def').group() # '123'
-
-# Find all
-re.findall(r'\d+', 'a1 b22 c333')      # ['1', '22', '333']
-
-# Replace
-re.sub(r'\s+', '-', 'hello world')     # 'hello-world'
+iso_date = re.compile(r'''
+    (\d{4}) -          # year
+    (0[1-9]|1[0-2]) -  # month 01-12
+    (0[1-9]|[12]\d|3[01])  # day 01-31, not checked against the month
+''', re.X)
+print(iso_date.fullmatch('2026-10-02').groups())
+print(iso_date.fullmatch('2026-10-02\n'))
 ```
 
-## Test Your Regex Live
+JavaScript has no verbose flag; build long patterns from smaller strings with `new RegExp(part1 + part2)` and name the parts.
 
-Writing a pattern? Test it before shipping — edge cases are easy to miss.
+## Catastrophic Backtracking
 
-**[ZeroTool Regex Tester →](/tools/regex-tester)**
+JavaScript, Python and PCRE2 use backtracking engines. A nested quantifier such as `^(a+)+$` on a string of `a`s that ends in `!` makes them try every way to split the `a`s between the two `+` before failing. On an Apple M1 Max under heavy load (2026-10-02), `/^(a+)+$/.test()` in Node.js 24 took about 30 ms for 22 `a`s, 460 ms for 26 and 2 s for 28: four times longer for every two extra characters. Python's `re.match` took 680 ms at 24.
 
-- Paste your pattern and test string
-- See all matches highlighted in real time
-- Supports flags: `g`, `i`, `m`, `s`
-- Shows capture group results
+Go's `regexp` compiled the same pattern and answered `false` for 1,000,000 `a`s in 36 ms, because RE2 guarantees time linear in the input. The cost is the missing backreferences and lookaround seen above.
 
-## Debugging Tips
+Three habits avoid the problem in backtracking engines: do not nest quantifiers over the same characters (`(a+)+`, `(\w+\s?)*`), use a possessive quantifier or atomic group where the engine has one, and cap input length before matching user-supplied text.
 
-1. **Start simple** — build the pattern piece by piece
-2. **Use raw strings in Python** — `r'\d+'` avoids double-escaping
-3. **Escape special chars** — `.`, `*`, `+`, `?`, `(`, `)`, `[`, `]`, `{`, `}`, `^`, `$`, `|`, `\` all need escaping when used literally
-4. **Anchor when you mean it** — `/\d+/` matches digits anywhere; `/^\d+$/` requires the entire string to be digits
-5. **Test with boundary cases** — empty string, all matches, no match, overlapping patterns
+## Escaping a Literal String
 
-Regex is powerful but can become unmaintainable fast. If a pattern exceeds ~60 characters, consider breaking it into named sub-patterns or using a parser library instead.
+To search for user text such as `1.5*2 (x)` inside a larger pattern, escape it first. Python has `re.escape()`, which returns `1\.5\*2\ \(x\)`. JavaScript gained `RegExp.escape()` in ES2025 (Chrome 136, Firefox 134, Safari 18.2, Node.js 24); it returns `\x31\.5\*2\x20\(x\)`, escaping a leading digit and spaces so the result is safe after `\1` or inside a `v`-flag class. On older runtimes, the usual replacement is a one-liner:
+
+{/* rx-run: {"lang":"node","expect":"1\\.5\\*2 \\(x\\)\ntrue"} */}
+```js
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&');
+console.log(escape('1.5*2 (x)'));
+console.log(new RegExp('^' + escape('1.5*2 (x)') + '$').test('1.5*2 (x)'));
+```
+
+{/* rx-run: {"lang":"python","expect":"1\\.5\\*2\\ \\(x\\)\nTrue\nNone"} */}
+```python
+import re
+print(re.escape('1.5*2 (x)'))
+print(bool(re.fullmatch(r'\d{3}', '１２３')))
+print(re.fullmatch(r'\d+', '42\n'))
+```
+
+The Python block also shows the two Unicode points from earlier in one place: full-width digits pass `\d`, and `fullmatch` rejects the trailing newline that `$` lets through.
