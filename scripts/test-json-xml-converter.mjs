@@ -1,102 +1,102 @@
-// JSON ↔ XML Converter — JSON → XML output and element names
-//
-// Read:  src/components/tools/JsonXmlConverterTool.astro (extracts the real engine block
-//        between the `engine:start` / `engine:end` markers)
-// Write: a temporary file under os.tmpdir() when xmllint is available (removed); stdout
-// Exit:  0 if all PASS, 1 if any FAIL
-//
-// Covers: the examples on the en tool page (simple object, nested object with an array of
-// objects and null, top-level array as <item>, array of strings, compact output); key names
-// that are not valid XML names. Before the fix a key or root name starting with a digit, '-'
-// or '.' was written as is (<2026>, <123_data>), which is not well-formed XML (XML 1.0 §2.3:
-// a name must start with a letter, '_' or ':'); it now gets a '_' prefix. 2,000 random objects
-// produce only tag names matching NameStartChar NameChar*. When xmllint is installed, the page
-// examples and 200 random outputs are also checked with `xmllint --noout`; otherwise SKIP.
-// XML → JSON uses the browser's DOMParser and is not tested here.
-//
-// Run: node scripts/test-json-xml-converter.mjs
+// Read: complete JsonXmlConverterTool.astro inline script. Write: stdout only.
+// Real click/input handlers; XML DOM substitutes are not a DOMParser implementation.
+// Actual DOMParser acceptance is checked separately in ego-browser.
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const source = readFileSync(join(root, 'src/components/tools/JsonXmlConverterTool.astro'), 'utf8');
-const a = source.indexOf('/* ── engine:start ── */');
-const b = source.indexOf('/* ── engine:end ── */');
-if (a < 0 || b <= a) { console.error('FAIL: engine block not found'); process.exit(1); }
-const E = new Function(source.slice(a, b) + '\nreturn { buildXml, xmlName };')();
-
-let passes = 0, failures = 0;
-function eq(name, got, want) {
-  if (got === want) { passes++; console.log('PASS ' + name); }
-  else { failures++; console.log('FAIL ' + name + '\n  got:      ' + JSON.stringify(got) + '\n  expected: ' + JSON.stringify(want)); }
+const source = readFileSync(new URL('../src/components/tools/JsonXmlConverterTool.astro', import.meta.url), 'utf8');
+let passed = 0, failed = 0;
+async function test(name, fn) { try { await fn(); passed++; } catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); } }
+function text(value, type = 3) { return { nodeType: type, nodeValue: value, textContent: value }; }
+function node(name, children = [], attrs = []) {
+  return { nodeType: 1, tagName: name, attributes: attrs, childNodes: children, textContent: children.map(n => n.textContent).join('') };
 }
-const D = '<?xml version="1.0" encoding="UTF-8"?>\n';
-const x = (j, pretty = true, rootName = 'root') => E.buildXml(JSON.parse(j), rootName, pretty);
-
-const pageCases = [
-  ['simple object', '{"name": "Alice", "age": 30, "active": true}',
-    D + '<root>\n  <name>Alice</name>\n  <age>30</age>\n  <active>true</active>\n</root>'],
-  ['nested object', '{"server": {"host": "localhost", "port": 8080}}',
-    D + '<root>\n  <server>\n    <host>localhost</host>\n    <port>8080</port>\n  </server>\n</root>'],
-  ['array of strings', '{"tags": ["js", "xml", "api"]}',
-    D + '<root>\n  <tags>js</tags>\n  <tags>xml</tags>\n  <tags>api</tags>\n</root>'],
-  ['order with items and null', '{"order":{"id":1001,"items":[{"sku":"A-1","qty":2},{"sku":"B-7","qty":1}],"note":null}}',
-    D + '<root>\n  <order>\n    <id>1001</id>\n    <items>\n      <sku>A-1</sku>\n      <qty>2</qty>\n    </items>\n    <items>\n      <sku>B-7</sku>\n      <qty>1</qty>\n    </items>\n    <note></note>\n  </order>\n</root>'],
-  ['top-level array uses item', '[{"id":1},{"id":2}]',
-    D + '<root>\n  <item>\n    <id>1</id>\n  </item>\n  <item>\n    <id>2</id>\n  </item>\n</root>'],
-  ['key names fixed and text escaped', '{"2026":"q","first name":"Ann","a&b":"x<y"}',
-    D + '<root>\n  <_2026>q</_2026>\n  <first_name>Ann</first_name>\n  <a_b>x&lt;y</a_b>\n</root>'],
-];
-for (const [name, j, want] of pageCases) eq(name, x(j), want);
-eq('compact output', x('{"a":1}', false, '123 data'), '<?xml version="1.0" encoding="UTF-8"?><_123_data><a>1</a></_123_data>');
-eq('root name default', x('{"a":1}', false, '   '), '<?xml version="1.0" encoding="UTF-8"?><root><a>1</a></root>');
-for (const [k, want] of [['-x', '_-x'], ['.x', '_.x'], ['9', '_9'], ['', '_key'], ['ok', 'ok'], ['_ok', '_ok'], ['名前', '__']]) eq('xmlName ' + JSON.stringify(k), E.xmlName(k), want);
-
-// Random keys: every tag name must be a valid (ASCII) XML name
-let seed = 7;
-const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-const alphabet = 'aZ09_-.: &<>"\'é名1';
-const randKey = () => { let s = ''; const n = Math.floor(rnd() * 5); for (let i = 0; i < n; i++) s += alphabet[Math.floor(rnd() * alphabet.length)]; return s; };
-const randVal = (d) => {
-  const r = rnd();
-  if (d > 2 || r < 0.4) return r < 0.1 ? null : r < 0.2 ? 42 : 'v<&>' + randKey();
-  if (r < 0.7) { const o = {}; for (let i = 0; i < 3; i++) o[randKey()] = randVal(d + 1); return o; }
-  return [randVal(d + 1), randVal(d + 1)];
-};
-const NAME = /^[A-Za-z_:][A-Za-z0-9_:.\-]*$/;
-let bad = 0;
-const samples = [];
-for (let i = 0; i < 2000; i++) {
-  const v = {}; v[randKey()] = randVal(0); v[randKey()] = randVal(0);
-  const out = E.buildXml(v, randKey(), rnd() < 0.5);
-  if (i < 200) samples.push(out);
-  for (const m of out.matchAll(/<\/?([^\s>?/]+)/g)) if (!NAME.test(m[1])) { bad++; if (bad < 4) console.log('  bad name: ' + m[1]); }
+function page(lang = 'en', root = node('root')) {
+  const elements = new Map(), copied = [], timers = new Map(); let id = 0;
+  const get = key => {
+    if (!elements.has(key)) { const events = {}; elements.set(key, { value: '', checked: false, disabled: false, textContent: '',
+      addEventListener(k, fn) { events[k] = fn; }, fire(k) { events[k]?.({}); }, click() { if (!this.disabled) this.fire('click'); } }); }
+    return elements.get(key);
+  };
+  get('jx-root').value = 'root'; get('jx-pretty').checked = true;
+  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
+    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [] }, window: {},
+    navigator: { clipboard: { writeText: async v => copied.push(v) } },
+    DOMParser: class { parseFromString() { return { documentElement: root, querySelector: () => null }; } },
+    setTimeout(fn) { timers.set(++id, fn); return id; }, clearTimeout(i) { timers.delete(i); }
+  });
+  return { get, copied, flush() { const jobs = [...timers.values()]; timers.clear(); jobs.forEach(fn => fn()); } };
 }
-eq('2,000 random objects: all tag names are valid XML names', bad, 0);
+const decl = '<?xml version="1.0" encoding="UTF-8"?>';
+for (const [raw, xml] of [
+  ['{"name":"Alice","age":30}', '<root><name>Alice</name><age>30</age></root>'],
+  ['{"tags":["a","b"]}', '<root><tags>a</tags><tags>b</tags></root>'],
+  ['[{"id":1},{"id":2}]', '<root><item><id>1</id></item><item><id>2</id></item></root>'],
+  ['{"empty":{},"note":null}', '<root><empty></empty><note></note></root>'],
+  ['{"中文":"甲","名前":"乙","한글":"丙","é":"丁"}', '<root><中文>甲</中文><名前>乙</名前><한글>丙</한글><é>丁</é></root>'],
+  ['{"é":"x","a·b":"y"}', '<root><é>x</é><a·b>y</a·b></root>'],
+  ['{"a-b":"x<&>"}', '<root><a-b>x&lt;&amp;&gt;</a-b></root>']
+]) await test('compatible JSON → XML ' + raw, () => { const p = page(); p.get('jx-pretty').checked = false;
+  p.get('jx-json').value = raw; p.get('jx-to-xml').click(); assert.equal(p.get('jx-xml').value, decl + xml); });
 
-let hasXmllint = true;
-try { execFileSync('xmllint', ['--version'], { stdio: 'ignore' }); } catch { hasXmllint = false; }
-if (!hasXmllint) {
-  console.log('SKIP xmllint well-formedness (xmllint not installed)');
-} else {
-  const dir = mkdtempSync(join(tmpdir(), 'jx-test-'));
-  try {
-    const all = pageCases.map((c) => x(c[1])).concat(samples);
-    let ok = 0;
-    all.forEach((xml, i) => {
-      const f = join(dir, i + '.xml');
-      writeFileSync(f, xml);
-      try { execFileSync('xmllint', ['--noout', f], { stdio: 'pipe' }); ok++; } catch (e) { console.log('  not well-formed:\n' + xml.slice(0, 300)); }
-    });
-    eq('xmllint accepts page examples and 200 random outputs', ok, all.length);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const [raw, path] of [
+    ['{"a":[[1,2],[3]]}', '$["a"][0]'], ['{"a":[]}', '$["a"]'], ['[]', '$'],
+    ['{"a":[1,[]]}', '$["a"][1]'], ['{"a":{"b":[]}}', '$["a"]["b"]'],
+    ['{"first name":1,"first_name":2}', '$["first name"]'], ['{"a b":1,"a?b":2}', '$["a b"]'],
+    ['{"2026":1}', '$["2026"]'], ['{"":1}', '$[""]'], ['{"ns:key":1}', '$["ns:key"]'],
+    ['{"x":"a\\u0000b"}', '$["x"]']
+  ]) await test(lang + ' reject and clear ' + raw, async () => {
+    const p = page(lang); p.get('jx-json').value = '{"ok":1}'; p.get('jx-to-xml').click();
+    p.get('jx-json').value = raw; p.get('jx-to-xml').click();
+    assert.equal(p.get('jx-xml').value, ''); assert.equal(p.get('jx-copy-xml').disabled, true);
+    assert.ok(p.get('jx-status').textContent.includes(path), p.get('jx-status').textContent);
+    p.get('jx-copy-xml').click(); assert.equal(p.copied.length, 0);
+  });
+  for (const [root, path] of [
+    [node('root', [node('entry', [], [{ name: 'id', value: '7' }])]), '/root/entry[1]/@id'],
+    [node('root', [text('before'), node('b', [text('after')])]), '/root'],
+    [node('root', [text('before', 4), node('b', [text('after')])]), '/root'],
+    [node('root', [node('entry', [text('inside'), node('b')])]), '/root/entry[1]']
+  ]) await test(lang + ' XML attribute/mixed content rejection ' + path, () => {
+    const p = page(lang, root); p.get('jx-json').value = '{"stale":1}'; p.get('jx-xml').value = '<root/>';
+    p.get('jx-to-json').click(); assert.equal(p.get('jx-json').value, '');
+    assert.equal(p.get('jx-copy-json').disabled, true); assert.ok(p.get('jx-status').textContent.includes(path));
+  });
 }
-
-console.log(`\n${passes} passed, ${failures} failed`);
-process.exit(failures ? 1 : 0);
+await test('XML repeated and prototype-named elements keep every value', () => {
+  const p = page('en', node('root', [node('hasOwnProperty', [text('a')]), node('hasOwnProperty', [text('b')]), node('__proto__', [text('c')]), node('constructor', [text('d')])]));
+  p.get('jx-xml').value = '<root/>'; p.get('jx-to-json').click();
+  assert.deepEqual(JSON.parse(p.get('jx-json').value), JSON.parse('{"root":{"hasOwnProperty":["a","b"],"__proto__":"c","constructor":"d"}}'));
+});
+await test('leaf CDATA remains text; formatting whitespace around elements is ignored', () => {
+  const p = page('en', node('root', [text('\n  '), node('a', [text(' x ', 4)]), text('\n')]));
+  p.get('jx-xml').value = '<root/>'; p.get('jx-to-json').click(); assert.deepEqual(JSON.parse(p.get('jx-json').value), { root: { a: ' x ' } });
+});
+await test('invalid root name rejects; empty root name keeps the default', () => {
+  const p = page(); p.get('jx-json').value = '{"a":1}'; p.get('jx-root').value = '123 data'; p.get('jx-to-xml').click();
+  assert.equal(p.get('jx-xml').value, ''); assert.match(p.get('jx-status').textContent, /\$/);
+  p.get('jx-root').value = ''; p.get('jx-to-xml').click(); assert.match(p.get('jx-xml').value, /<root>/);
+});
+await test('both empty inputs and pending edits invalidate old opposite output', () => {
+  const p = page(); p.get('jx-json').value = '{"a":1}'; p.get('jx-to-xml').click(); p.get('jx-json').value = ''; p.get('jx-to-xml').click();
+  assert.equal(p.get('jx-xml').value, ''); p.get('jx-json').value = '{"a":1}'; p.get('jx-to-xml').click();
+  p.get('jx-json').fire('input'); assert.equal(p.get('jx-xml').value, '');
+  p.get('jx-xml').value = '<root/>'; p.get('jx-to-json').click(); p.get('jx-xml').value = ''; p.get('jx-to-json').click();
+  assert.equal(p.get('jx-json').value, '');
+});
+await test('opposite edit cancels the pending conversion', () => {
+  const p = page('en', node('root', [node('new', [text('value')])]));
+  p.get('jx-json').value = '{"old":1}'; p.get('jx-json').fire('input');
+  p.get('jx-xml').value = '<root><new>value</new></root>'; p.get('jx-xml').fire('input'); p.flush();
+  assert.deepEqual(JSON.parse(p.get('jx-json').value), { root: { new: 'value' } });
+  assert.equal(p.get('jx-xml').value, '<root><new>value</new></root>');
+});
+await test('clear cancels both pending timers', () => {
+  const p = page(); p.get('jx-json').value = '{"a":1}'; p.get('jx-json').fire('input');
+  p.get('jx-clear').click(); p.flush();
+  assert.equal(p.get('jx-json').value, ''); assert.equal(p.get('jx-xml').value, '');
+  assert.equal(p.get('jx-status').textContent, '');
+});
+console.log(`${passed} passed, ${failed} failed`); process.exitCode = failed ? 1 : 0;

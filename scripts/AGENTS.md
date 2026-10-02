@@ -117,6 +117,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-02 — `test-json-xml-converter.mjs` 改为运行组件完整内联脚本与双向按钮入口，覆盖 Unicode 元素名、路径拒绝、空对象与输出失效生命周期；Node 22.23.3 为 73 项通过。XML 解析使用节点替身，真实 DOMParser 验收尚未完成；旧日志里的名称替换规则已由本条对应的路径拒绝规则替代。
+
 - 2026-10-02 — 新增 `test-jsonl-converter.mjs`，在 vm 中运行组件完整内联脚本与按钮入口，覆盖双向数字原文、重复键、逐行错误、复制/下载缓存和文件读取/延迟校验生命周期；Node 22.23.3 为 41 项通过。未做浏览器或整站验收。
 
 - 2026-10-02 — protobuf 页面运行时清理：`test-protobuf-to-json.mjs` 改为无 Long 的页面 vm 与独立 Long-enabled 对照 vm（304 → 336 项）；五种 64 位类型增加编码与解码的上下界 / 超过 2^53 回归。下方历史记录中的双 vendor 页面加载检查已被替换；protoc / Python fixtures 保持原样。IndexNow 忽略路径测试改用仍存在的 protobuf vendor。

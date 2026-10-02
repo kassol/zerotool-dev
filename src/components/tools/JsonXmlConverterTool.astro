@@ -60,7 +60,12 @@
           convertedToJson: 'Converted XML to JSON.',
           invalidJson: 'Invalid JSON',
           invalidXml: 'Invalid XML',
-          emptyInput: 'Input is empty.'
+          emptyInput: 'Input is empty.',
+          nameLoss: '{path}: this name cannot be used as an XML element name.',
+          arrayLoss: '{path}: empty or nested arrays cannot be represented by repeated XML elements.',
+          charLoss: '{path}: the value contains a character forbidden in XML 1.0.',
+          attributeLoss: '{path}: XML attributes cannot be represented by this JSON mapping.',
+          mixedLoss: '{path}: mixed text and child elements cannot be represented by this JSON mapping.'
         },
         zh: {
           copy: '复制', copied: '已复制！', clear: '清除',
@@ -70,7 +75,12 @@
           convertedToJson: '已将 XML 转换为 JSON。',
           invalidJson: '无效 JSON',
           invalidXml: '无效 XML',
-          emptyInput: '输入为空。'
+          emptyInput: '输入为空。',
+          nameLoss: '{path}：该名称不能用作 XML 元素名。',
+          arrayLoss: '{path}：空数组或嵌套数组无法用重复 XML 元素表示。',
+          charLoss: '{path}：值包含 XML 1.0 禁止的字符。',
+          attributeLoss: '{path}：当前 JSON 映射无法表示 XML 属性。',
+          mixedLoss: '{path}：当前 JSON 映射无法表示文本与子元素混排。'
         },
         ja: {
           copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
@@ -80,7 +90,12 @@
           convertedToJson: 'XMLをJSONに変換しました。',
           invalidJson: '無効なJSON',
           invalidXml: '無効なXML',
-          emptyInput: '入力が空です。'
+          emptyInput: '入力が空です。',
+          nameLoss: '{path}：この名前はXML要素名に使用できません。',
+          arrayLoss: '{path}：空配列と入れ子の配列は繰り返しXML要素で表現できません。',
+          charLoss: '{path}：XML 1.0で禁止されている文字が含まれています。',
+          attributeLoss: '{path}：このJSON変換規則ではXML属性を表現できません。',
+          mixedLoss: '{path}：このJSON変換規則ではテキストと子要素の混在を表現できません。'
         },
         ko: {
           copy: '복사', copied: '복사됨!', clear: '지우기',
@@ -90,7 +105,12 @@
           convertedToJson: 'XML을 JSON으로 변환했습니다.',
           invalidJson: '유효하지 않은 JSON',
           invalidXml: '유효하지 않은 XML',
-          emptyInput: '입력이 비어 있습니다.'
+          emptyInput: '입력이 비어 있습니다.',
+          nameLoss: '{path}: 이 이름은 XML 요소 이름으로 사용할 수 없습니다.',
+          arrayLoss: '{path}: 빈 배열과 중첩 배열은 반복 XML 요소로 표현할 수 없습니다.',
+          charLoss: '{path}: XML 1.0에서 금지된 문자가 포함되어 있습니다.',
+          attributeLoss: '{path}: 현재 JSON 변환 규칙으로 XML 속성을 표현할 수 없습니다.',
+          mixedLoss: '{path}: 현재 JSON 변환 규칙으로 텍스트와 자식 요소의 혼합을 표현할 수 없습니다.'
         }
       };
 
@@ -121,14 +141,24 @@
 
       /* ── engine:start ── */
       /* ── JSON → XML ── */
-      // XML names cannot start with a digit, '-' or '.' (XML 1.0 §2.3 NameStartChar); prefix '_'.
-      function xmlName(key) {
-        var n = String(key).replace(/[^a-zA-Z0-9_\-\.]/g, '_') || '_key';
-        if (!/^[A-Za-z_]/.test(n)) n = '_' + n;
+      // XML 1.0 §2.3 NCName ranges: preserve names verbatim; namespaces need a separate mapping.
+      function xmlName(key, path) {
+        var n = String(key);
+        if (!/^[A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u{10000}-\u{EFFFF}][A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u{10000}-\u{EFFFF}0-9.\-\u00B7\u0300-\u036F\u203F-\u2040]*$/u.test(n)) {
+          throw new Error(t.nameLoss.replace('{path}', path));
+        }
         return n;
       }
 
-      function jsonToXml(val, tagName, indent, pretty) {
+      function xmlText(value, path) {
+        var text = String(value);
+        if (/[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u.test(text)) {
+          throw new Error(t.charLoss.replace('{path}', path));
+        }
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r/g, '&#13;');
+      }
+
+      function jsonToXml(val, tagName, indent, pretty, path) {
         var pad = pretty ? indent : '';
         var nl = pretty ? '\n' : '';
         var childIndent = pretty ? indent + '  ' : '';
@@ -139,33 +169,37 @@
           return pad + open + close;
         }
         if (Array.isArray(val)) {
-          return val.map(function (item) {
-            return jsonToXml(item, tagName, indent, pretty);
+          if (!val.length) throw new Error(t.arrayLoss.replace('{path}', path));
+          return val.map(function (item, index) {
+            var itemPath = path + '[' + index + ']';
+            if (Array.isArray(item)) throw new Error(t.arrayLoss.replace('{path}', itemPath));
+            return jsonToXml(item, tagName, indent, pretty, itemPath);
           }).join(nl);
         }
         if (typeof val === 'object') {
           var children = Object.keys(val).map(function (key) {
-            return jsonToXml(val[key], xmlName(key), childIndent, pretty);
+            var childPath = path + '[' + JSON.stringify(key) + ']';
+            return jsonToXml(val[key], xmlName(key, childPath), childIndent, pretty, childPath);
           }).join(nl);
+          if (!children) return pad + open + close;
           return pad + open + nl + children + nl + pad + close;
         }
-        return pad + open + String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + close;
+        return pad + open + xmlText(val, path) + close;
       }
 
       function buildXml(data, rootInput, pretty) {
-        var rootName = xmlName(String(rootInput || '').trim() || 'root');
+        var rootName = xmlName(String(rootInput || '').trim() || 'root', '$');
         var inner;
         var nl = pretty ? '\n' : '';
         if (Array.isArray(data)) {
-          inner = data.map(function (item) {
-            return jsonToXml(item, 'item', pretty ? '  ' : '', pretty);
-          }).join(nl);
+          inner = jsonToXml(data, 'item', pretty ? '  ' : '', pretty, '$');
         } else if (typeof data === 'object' && data !== null) {
           inner = Object.keys(data).map(function (key) {
-            return jsonToXml(data[key], xmlName(key), pretty ? '  ' : '', pretty);
+            var path = '$[' + JSON.stringify(key) + ']';
+            return jsonToXml(data[key], xmlName(key, path), pretty ? '  ' : '', pretty, path);
           }).join(nl);
         } else {
-          inner = (pretty ? '  ' : '') + String(data).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          inner = (pretty ? '  ' : '') + xmlText(data, '$');
         }
         var decl = '<?xml version="1.0" encoding="UTF-8"?>' + nl;
         return decl + '<' + rootName + '>' + nl + inner + nl + '</' + rootName + '>';
@@ -173,11 +207,15 @@
       /* ── engine:end ── */
 
       function convertJsonToXml() {
+        cancelPending();
+        xmlEl.value = '';
+        copyXmlBtn.disabled = true;
         var raw = jsonEl.value.trim();
         if (!raw) { clearStatus(); return; }
         try {
           var data = JSON.parse(raw);
           xmlEl.value = buildXml(data, rootEl.value, prettyEl.checked);
+          copyXmlBtn.disabled = false;
           setStatus(t.convertedToXml, false);
         } catch (e) {
           setStatus(t.invalidJson + ': ' + e.message, true);
@@ -185,33 +223,23 @@
       }
 
       /* ── XML → JSON ── */
-      function xmlNodeToJson(node) {
-        if (node.nodeType === 3) { // Text node
-          var text = node.nodeValue.trim();
-          return text === '' ? undefined : text;
+      function xmlNodeToJson(node, path) {
+        if (node.attributes.length) {
+          throw new Error(t.attributeLoss.replace('{path}', path + '/@' + node.attributes[0].name));
         }
-        if (node.nodeType !== 1) return undefined; // Not element
-
-        var obj = {};
-        var children = Array.from(node.childNodes).filter(function (n) {
-          return n.nodeType === 1 || (n.nodeType === 3 && n.nodeValue.trim() !== '');
-        });
-
-        if (children.length === 0) {
-          return node.textContent;
-        }
-
+        var obj = Object.create(null);
+        var children = Array.from(node.childNodes);
         var elemChildren = children.filter(function (n) { return n.nodeType === 1; });
-        var textChildren = children.filter(function (n) { return n.nodeType === 3; });
-
-        if (elemChildren.length === 0 && textChildren.length > 0) {
-          return node.textContent;
+        if (!elemChildren.length) return node.textContent;
+        if (children.some(function (n) { return (n.nodeType === 3 || n.nodeType === 4) && n.nodeValue.trim() !== ''; })) {
+          throw new Error(t.mixedLoss.replace('{path}', path));
         }
-
+        var indices = Object.create(null);
         elemChildren.forEach(function (child) {
-          var childVal = xmlNodeToJson(child);
           var tag = child.tagName;
-          if (obj.hasOwnProperty(tag)) {
+          indices[tag] = (indices[tag] || 0) + 1;
+          var childVal = xmlNodeToJson(child, path + '/' + tag + '[' + indices[tag] + ']');
+          if (Object.prototype.hasOwnProperty.call(obj, tag)) {
             if (!Array.isArray(obj[tag])) obj[tag] = [obj[tag]];
             obj[tag].push(childVal);
           } else {
@@ -223,6 +251,9 @@
       }
 
       function convertXmlToJson() {
+        cancelPending();
+        jsonEl.value = '';
+        copyJsonBtn.disabled = true;
         var raw = xmlEl.value.trim();
         if (!raw) { clearStatus(); return; }
         var pretty = prettyEl.checked;
@@ -232,9 +263,10 @@
           var parseErr = doc.querySelector('parsererror');
           if (parseErr) throw new Error(((parseErr.querySelector('div') || parseErr).textContent || '').trim().split('\n')[0]);
           var root = doc.documentElement;
-          var result = {};
-          result[root.tagName] = xmlNodeToJson(root);
+          var result = Object.create(null);
+          result[root.tagName] = xmlNodeToJson(root, '/' + root.tagName);
           jsonEl.value = JSON.stringify(result, null, pretty ? 2 : undefined);
+          copyJsonBtn.disabled = false;
           setStatus(t.convertedToJson, false);
         } catch (e) {
           setStatus(t.invalidXml + ': ' + e.message, true);
@@ -243,14 +275,24 @@
 
       /* ── Real-time (debounced 400ms) ── */
       var _jxJsonTimer = null;
-      jsonEl.addEventListener('input', function () {
+      var _jxXmlTimer = null;
+      function cancelPending() {
         clearTimeout(_jxJsonTimer);
+        clearTimeout(_jxXmlTimer);
+      }
+      jsonEl.addEventListener('input', function () {
+        cancelPending();
+        xmlEl.value = '';
+        copyXmlBtn.disabled = true;
+        copyJsonBtn.disabled = !jsonEl.value;
         _jxJsonTimer = setTimeout(convertJsonToXml, 400);
       });
 
-      var _jxXmlTimer = null;
       xmlEl.addEventListener('input', function () {
-        clearTimeout(_jxXmlTimer);
+        cancelPending();
+        jsonEl.value = '';
+        copyJsonBtn.disabled = true;
+        copyXmlBtn.disabled = !xmlEl.value;
         _jxXmlTimer = setTimeout(convertXmlToJson, 400);
       });
 
@@ -266,13 +308,16 @@
       });
 
       document.getElementById('jx-clear').addEventListener('click', function () {
+        cancelPending();
         jsonEl.value = '';
         xmlEl.value = '';
+        copyJsonBtn.disabled = true;
+        copyXmlBtn.disabled = true;
         clearStatus();
       });
 
       copyJsonBtn.addEventListener('click', function () {
-        if (!jsonEl.value) return;
+        if (copyJsonBtn.disabled || !jsonEl.value) return;
         navigator.clipboard.writeText(jsonEl.value).then(function () {
           copyJsonBtn.textContent = t.copied;
           setTimeout(function () { copyJsonBtn.textContent = t.copy; }, 1500);
@@ -280,7 +325,7 @@
       });
 
       copyXmlBtn.addEventListener('click', function () {
-        if (!xmlEl.value) return;
+        if (copyXmlBtn.disabled || !xmlEl.value) return;
         navigator.clipboard.writeText(xmlEl.value).then(function () {
           copyXmlBtn.textContent = t.copied;
           setTimeout(function () { copyXmlBtn.textContent = t.copy; }, 1500);

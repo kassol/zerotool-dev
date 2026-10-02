@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-02 — json-xml-converter 保留合法 Unicode 元素名与空对象元素；不可映射名称、空/嵌套数组、XML 禁止字符、属性及混合文本按路径拒绝，失败或编辑后清空旧输出并停用复制。Node 22.23.3 定向入口测试 73 项通过（XML 节点替身）；真实 DOMParser、四语言正文同步与整站验收尚未完成，未发布。
+
 - 2026-10-02 — jsonl-converter 双向转换保留数字原文（大整数、指数、-0、溢出数字），重复键取最后一值；复制与下载仅使用成功转换缓存，编辑、失败、清空与过期文件回调使缓存失效。Node 22.23.3 定向入口测试 41 项通过；四语言正文同步、浏览器与整站验收尚未完成，未发布。
 
 - 2026-10-02 — 修复 bcrypt-generator 的 worker 缓存回归：v1.138.56 页面发送 bench / hash，固定 URL 缓存的旧 worker 只处理 generate / verify，导致按钮停在 0%。组件构建期按 worker 源码 SHA-256 生成版本 URL；worker 继续接受 generate / verify，兼容缓存的旧页面。回归测试预置 v1.138.55 原始 worker 并运行实际客户端 factory，验证新 URL 下的计时、生成与校验，以及四语言构建产物的内容哈希。
