@@ -97,6 +97,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 模块规范
 
+- `test-bcrypt-generator.mjs` 用 fixture 中 v1.138.55 的原始 worker 预置固定 URL 缓存，运行页面真实 factory，验证新版 URL 绕开旧缓存并完成 bench / hash / 验签；另验证新版 worker 接受旧页面 generate / verify 请求。构建后校验四语言 HTML 内的 worker URL 与发布文件内容哈希相符。
+
 - **副作用清晰**：脚本注释开头必须写明读写哪些文件
 - **idempotent**：重复运行不应产生差异（`generate-blog-redirects.mjs` 当前是 append 模式，依赖 `astro build` 每次重写 `_redirects` 实现幂等）
 - **退出码语义**：失败用 `process.exit(1)`，禁止吞错继续

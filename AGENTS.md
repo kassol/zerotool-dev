@@ -173,6 +173,7 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-02 — 修复 bcrypt-generator 的 worker 缓存回归：v1.138.56 页面发送 bench / hash，固定 URL 缓存的旧 worker 只处理 generate / verify，导致按钮停在 0%。组件构建期按 worker 源码 SHA-256 生成版本 URL；worker 继续接受 generate / verify，兼容缓存的旧页面。回归测试预置 v1.138.55 原始 worker 并运行实际客户端 factory，验证新 URL 下的计时、生成与校验，以及四语言构建产物的内容哈希。
 - 2026-10-02 — 本批发版收尾复核：补齐 jq 同步脚本的源码补丁与 classic worker 说明；sprite-sheet 测试清单更新为实际 1277 项，四语言 draft 指南的 PNG-only / 不支持 WebP 说法改为 PNG / WebP（浏览器支持编码时）；HTTP Header Analyzer 四语言元数据的 100+ 标头与组件注释改为实际 `HEADER_DB` 的 88 项。仅修正文案漏改，保留指南 draft 与历史变更日志。
 
 - 2026-04-26 — 初始化 AGENTS.md 体系（根 + 6 子目录），梳理 CI/CD、Cloudflare、GA4/GSC/AdSense 集成关系

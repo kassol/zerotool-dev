@@ -3,6 +3,7 @@
 //   { id, type: 'bench', cost }          -> { id, type: 'result', ms }
 //   { id, type: 'hash', password, salt } -> { id, type: 'progress', p } … { id, type: 'result', hash, ms }
 // Errors come back as { id, type: 'error', message }. Tested by scripts/test-bcrypt-generator.mjs.
+// Cached pages from before v1.138.56 still send generate / verify.
 importScripts('/vendor/bcryptjs.min.js');
 
 var bcrypt = self.dcodeIO.bcrypt;
@@ -12,7 +13,11 @@ function now() { return self.performance && self.performance.now ? self.performa
 self.onmessage = function (e) {
   var d = e.data || {}, id = d.id;
   try {
-    if (d.type === 'bench') {
+    if (d.type === 'generate') {
+      self.postMessage({ id: id, type: 'result', hash: bcrypt.hashSync(d.password, d.rounds) });
+    } else if (d.type === 'verify') {
+      self.postMessage({ id: id, type: 'result', match: bcrypt.compareSync(d.password, d.hash) });
+    } else if (d.type === 'bench') {
       var cost = d.cost || 8;
       bcrypt.hashSync('warm-up', '$2b$04$abcdefghijklmnopqrstuu');
       var t0 = now();

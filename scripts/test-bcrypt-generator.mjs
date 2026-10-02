@@ -20,13 +20,14 @@
 // Python bcrypt 4.2.0 checks fresh engine hashes and recomputes fixed-salt hashes; passlib 1.7.4
 // checks them too.
 //
-// Run: node scripts/test-bcrypt-generator.mjs
+// Run: npm run build && node scripts/test-bcrypt-generator.mjs
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -64,11 +65,19 @@ function skip(name, why) { skips++; console.log('SKIP: ' + name + ' — ' + why)
 // ── The vendored library and the worker, loaded like a browser Worker ──────────────────
 const vendorSrc = read('public/vendor/bcryptjs.min.js');
 const workerSrc = read('public/vendor/bcrypt-worker.js');
+const builtWorker = read('dist/vendor/bcrypt-worker.js');
+const builtURL = '/vendor/bcrypt-worker.js?v=' + createHash('sha256').update(builtWorker).digest('hex').slice(0, 16);
+check('published worker matches source', builtWorker === workerSrc);
+for (const lang of ['', 'zh/', 'ja/', 'ko/']) {
+  const html = read(`dist/${lang}tools/bcrypt-generator/index.html`);
+  check(`${lang || 'en/'}built page passes the published content URL to Worker`,
+    html.includes('const WORKER_URL = ' + JSON.stringify(builtURL)) && /new Worker\(WORKER_URL\)/.test(html));
+}
 const ref = { self: { crypto: globalThis.crypto }, crypto: globalThis.crypto, setTimeout, clearTimeout };
 vm.runInNewContext(vendorSrc, ref);
 const BC = ref.dcodeIO.bcrypt;
 
-function makeWorker() {
+function makeWorker(code = workerSrc) {
   const ctx = { crypto: globalThis.crypto, setTimeout, clearTimeout, performance, Date };
   ctx.self = ctx;
   ctx.imported = [];
@@ -80,13 +89,62 @@ function makeWorker() {
   const w = { onmessage: null, onerror: null, terminated: false, ctx };
   ctx.postMessage = (data) => { if (!w.terminated && w.onmessage) setTimeout(() => w.onmessage({ data: structuredClone(data) }), 0); };
   vm.createContext(ctx);
-  vm.runInContext(workerSrc, ctx);
+  vm.runInContext(code, ctx);
   w.postMessage = (data) => { const d = structuredClone(data); setTimeout(() => { if (!w.terminated) ctx.onmessage({ data: d }); }, 0); };
   w.terminate = () => { w.terminated = true; };
   return w;
 }
 const client = E.createClient(makeWorker);
 const hashIn = async (password, salt) => (await client.run({ type: 'hash', password, salt })).hash;
+
+// Keep the old unversioned response fresh in a URL-keyed cache. Run the actual page factory.
+{
+  const urlCode = source.match(/^const WORKER_URL = .*;$/m)?.[0] || '';
+  const urlFor = (code) => new Function('createHash', 'workerSource', urlCode + '\nreturn typeof WORKER_URL === "undefined" ? null : WORKER_URL;')(createHash, code);
+  const url = urlFor(workerSrc);
+  check('worker content changes its URL', url !== null && url !== urlFor(FX.legacyWorker) && url !== urlFor(workerSrc + '\n'));
+  const cache = new Map([['/vendor/bcrypt-worker.js', FX.legacyWorker]]);
+  const requests = [];
+  function Worker(path) { requests.push(path); return makeWorker(cache.get(path) || workerSrc); }
+  const factoryCode = source.match(/var factory = function \(\) \{.*?\};/)[0];
+  const factory = new Function('Worker', 'WORKER_URL', factoryCode + '\nreturn factory;')(Worker, url);
+  const old = makeWorker(FX.legacyWorker);
+  const replies = [];
+  old.onmessage = ({ data }) => replies.push(data);
+  // A legacy call acts as a queue barrier: the two new-protocol calls before it are ignored.
+  old.postMessage({ id: 1, type: 'bench', cost: 4 });
+  old.postMessage({ id: 2, type: 'hash', password: 'cache-check', salt: '$2b$04$abcdefghijklmnopqrstuu' });
+  await new Promise((resolve) => {
+    old.onmessage = ({ data }) => { replies.push(data); resolve(); };
+    old.postMessage({ id: 3, type: 'generate', password: 'cache-check', rounds: 4 });
+  });
+  check('v55 cached worker ignores bench/hash but still answers generate', replies.length === 1 && replies[0].id === 3);
+  old.terminate();
+  const c = E.createClient(factory);
+  let timer;
+  try {
+    const result = await Promise.race([
+      (async () => {
+        const b = await c.run({ type: 'bench', cost: 4 });
+        const h = await c.run({ type: 'hash', password: 'cache-check', salt: '$2b$04$abcdefghijklmnopqrstuu' });
+        const parsed = E.parseHash(h.hash);
+        const v = await c.run({ type: 'hash', password: 'cache-check', salt: E.verifySalt(parsed, 'cache-check').salt });
+        return typeof b.ms === 'number' && E.judge(parsed, v.hash) && BC.compareSync('cache-check', h.hash);
+      })(),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), 2000); }),
+    ]);
+    check('page completes bench, generation and verification with the old URL cached', result);
+    check('page requests a distinct content-versioned URL', requests.length === 1 && requests[0] === url && !cache.has(requests[0]));
+  } finally { clearTimeout(timer); c.cancel(); }
+  const h = await client.run({ type: 'generate', password: 'legacy-client', rounds: 4 }).catch(() => ({}));
+  check('new worker generates for a cached old page', typeof h.hash === 'string' && BC.compareSync('legacy-client', h.hash));
+  for (const password of ['legacy-client', 'wrong']) {
+    const r = await client.run({ type: 'verify', password, hash: h.hash }).catch(() => ({}));
+    check('new worker verifies for a cached old page: ' + password, r.match === (password === 'legacy-client'));
+  }
+  const error = await client.run({ type: 'generate', password: null, rounds: 4 }).then(() => null, (e) => e.message);
+  check('legacy errors retain the result/error envelope', /Illegal arguments/.test(error || ''));
+}
 
 check('bcryptjs vendor loads in a page-like context', BC && typeof BC.hash === 'function');
 {

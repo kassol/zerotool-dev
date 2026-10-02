@@ -10,7 +10,7 @@
 src/
 ├── components/         通用组件（顶层，含工具页主体 ToolPage.astro）+ tools/（每个工具的交互组件 + registry.ts）
 ├── content/            Content Collections（blog + tools），见 content/AGENTS.md
-│   ├── blog/           MDX 博客文章（多语言后缀文件）
+│   ├── blog/           MDX 博客文章（{base-slug}/{en,zh,ja,ko}.mdx）
 │   ├── tools/          工具内容（每 slug × 4 lang）
 │   └── config.ts       Content Collections schema
 ├── data/               tools.ts 注册表 + icons.ts → 见子 AGENTS.md
@@ -48,5 +48,6 @@ src/
 
 ## 变更日志
 
+- 2026-10-02 — bcrypt worker URL 在构建期按源码 SHA-256 生成版本参数，协议更新自动避开旧缓存；worker 保留 generate / verify 旧协议以兼容已缓存页面。修正博客目录说明。
 - 2026-04-26 — 初版
 - 2026-09-26 — 工具页路由改为 `astro.config.mjs` 的 `toolRoutes()` 按 registry 注入（每工具一个入口），删除 `pages/tools/[slug].astro` 与 `pages/{lang}/tools/[slug].astro`；`registry.ts` 改为 slug → 组件文件名；新增 `components/ToolPage.astro`
