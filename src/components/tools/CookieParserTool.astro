@@ -133,6 +133,7 @@ const STRINGS = {
       notUtf8: 'The percent-encoded bytes are not UTF-8; the value is shown as is.',
       bothLifetimes: 'Both Max-Age and Expires are set: Max-Age wins.',
       twoDigitYear: 'Two-digit year in Expires, read as {year}.',
+      expiresZone: 'Expires is always read as GMT; “{zone}” is ignored. Date#toString() output shifts the expiry by the time-zone offset; use toUTCString().',
       capped400: 'Lifetime over 400 days: browsers cap it at 400 days (RFC 6265bis §5.5; Chrome since version 104).',
       domainEmpty: 'Empty Domain attribute: treated as host-only.',
       domainDotOnly: 'Domain=. is an empty domain: RFC 6265bis makes the cookie host-only, but Chrome 152 rejects it.',
@@ -334,6 +335,7 @@ const STRINGS = {
       notUtf8: '百分号编码的字节不是 UTF-8，按原文显示。',
       bothLifetimes: '同时设置了 Max-Age 和 Expires：以 Max-Age 为准。',
       twoDigitYear: 'Expires 用了两位年份，按 {year} 年读取。',
+      expiresZone: 'Expires 一律按 GMT 读取，“{zone}”会被忽略。用 Date#toString() 生成的时间会差一个时区偏移，请改用 toUTCString()。',
       capped400: '有效期超过 400 天：浏览器会截到 400 天（RFC 6265bis §5.5；Chrome 104 起）。',
       domainEmpty: 'Domain 属性为空：按 host-only 处理。',
       domainDotOnly: 'Domain=. 等于空域名：RFC 6265bis 按 host-only 处理，但 Chrome 152 会拒收。',
@@ -535,6 +537,7 @@ const STRINGS = {
       notUtf8: 'パーセントエンコードされたバイト列が UTF-8 ではないため、そのまま表示しています。',
       bothLifetimes: 'Max-Age と Expires の両方があります：Max-Age が優先されます。',
       twoDigitYear: 'Expires の年が 2 桁で、{year} 年として読みます。',
+      expiresZone: 'Expires は常に GMT として読まれ、「{zone}」は無視されます。Date#toString() の出力だと時差の分だけずれるので、toUTCString() を使ってください。',
       capped400: '有効期間が 400 日を超えています：ブラウザーは 400 日に切り詰めます（RFC 6265bis §5.5、Chrome は 104 以降）。',
       domainEmpty: 'Domain が空：host-only として扱います。',
       domainDotOnly: 'Domain=. は空のドメインです：RFC 6265bis では host-only ですが、Chrome 152 は拒否します。',
@@ -736,6 +739,7 @@ const STRINGS = {
       notUtf8: '퍼센트 인코딩된 바이트가 UTF-8이 아니라서 원문 그대로 표시합니다.',
       bothLifetimes: 'Max-Age와 Expires가 모두 있습니다: Max-Age가 우선합니다.',
       twoDigitYear: 'Expires의 연도가 두 자리라서 {year}년으로 읽습니다.',
+      expiresZone: 'Expires는 항상 GMT로 읽히며 “{zone}”은 무시됩니다. Date#toString() 출력은 시차만큼 어긋나므로 toUTCString()을 쓰세요.',
       capped400: '유효 기간이 400일을 넘습니다: 브라우저가 400일로 줄입니다(RFC 6265bis §5.5, Chrome은 104부터).',
       domainEmpty: 'Domain 속성이 비어 있음: host-only로 처리합니다.',
       domainDotOnly: 'Domain=.은 빈 도메인입니다: RFC 6265bis는 host-only로 처리하지만 Chrome 152는 거부합니다.',
@@ -1392,6 +1396,9 @@ const T = STRINGS[lang] ?? STRINGS.en;
           res.expiry = { type: 'persistent', ms: Math.min(ex.ms, capAt), capped: ex.ms > capAt, source: 'expires', given: ex.ms };
         }
         if (ex.twoDigit) res.issues.push({ code: 'twoDigitYear', sev: 'info', vars: { year: new Date(ex.ms).getUTCFullYear() } });
+        // Cookie dates are always GMT: an offset such as Date#toString()'s "GMT+0900" is ignored.
+        var zone = /GMT[+-]\d{2}:?\d{2}|(?:^|\s)[+-]\d{4}\b|\b(?:KST|JST|CST|CET|EST|EDT|PST|PDT|IST)\b/.exec(ex.value);
+        if (zone) res.issues.push({ code: 'expiresZone', sev: 'warn', vars: { zone: zone[0].trim() } });
       }
       if (res.expiry.capped) res.issues.push({ code: 'capped400', sev: 'info' });
 

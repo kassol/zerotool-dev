@@ -189,6 +189,13 @@ for (const c of fx.cases) {
   check('a comma after an Expires date is one cookie for the browser (Chromium kept j only)', c.stored.length === 1 && c.stored[0].name === 'j' && r.name === 'j' && r.expiry.type === 'persistent');
   eq('… while splitCombined (for Headers.get output) splits only at ", k="', E.splitCombined(c.lines[0]), ['j=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT', 'k=2']);
 }
+{
+  const d = fx.dateToString;
+  eq('Date#toString() as Expires: "GMT+0900" is read as GMT, like Chromium', new Date(analyze(d.line, 'https://www.example.co.kr/').expiry.ms).toISOString(), d.expiresUtc);
+  eq('… and the offset is flagged', analyze(d.line).issues.find((i) => i.code === 'expiresZone').vars.zone, 'GMT+0900');
+  check('a GMT date is not flagged, "+0900" is', !codes(analyze(d.utcLine)).includes('expiresZone') && codes(analyze('a=1; Expires=Wed, 21 Oct 2026 07:28:00 +0900')).includes('expiresZone'));
+  eq('toUTCString() as Expires', new Date(analyze(d.utcLine, 'https://www.example.co.kr/').expiry.ms).toISOString(), d.utcExpiresUtc);
+}
 // Cookie header order: Chromium's headers for six request paths.
 {
   const now = NOW;
@@ -290,6 +297,7 @@ for (const c of fx.cases) {
   if (ver !== '1.1.1') skip('cookie package comparison', `installed ${ver}, recorded 1.1.1`);
   else {
     const cookie = createRequire(pkg)('./dist/index.js');
+    eq('cookie 1.1.1: first wins, quotes kept', { ...cookie.parse('sid=new; sid=old; q="a b"; d=x y') }, { sid: 'new', q: '"a b"', d: 'x y' });
     let seed = 20261002;
     const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
     const pick = (s) => s[Math.floor(rnd() * s.length)];
@@ -318,6 +326,17 @@ for (const c of fx.cases) {
       const t = cookie.parseSetCookie(l), m = analyze(l);
       eq(`parseSetCookie agrees on ${l}`, [m.name, m.decoded.text, m.secure, m.httpOnly, (m.sameSite === 'Default' ? undefined : m.sameSite.toLowerCase())], [t.name, t.value || '', !!t.secure, !!t.httpOnly, t.sameSite]);
     }
+  }
+}
+
+// ── cookie 0.7.2 (what cookie-parser 1.4.7, Express's middleware, depends on) ──
+{
+  const pkg = join(root, 'node_modules/cookie/package.json');
+  const ver = existsSync(pkg) ? JSON.parse(readFileSync(pkg, 'utf8')).version : null;
+  if (ver !== '0.7.2') skip('cookie 0.7.2 claims', `installed ${ver}, recorded 0.7.2`);
+  else {
+    const old = createRequire(pkg)('./index.js');
+    eq('cookie 0.7.2: first wins, quotes removed, spaces kept', { ...old.parse('sid=new; sid=old; q="a b"; d=x y') }, { sid: 'new', q: 'a b', d: 'x y' });
   }
 }
 
