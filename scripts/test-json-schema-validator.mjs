@@ -509,7 +509,9 @@ for (const [text, code, line, col] of SYN) {
   const KNOWN_DIFF = [['2020-12', { properties: { ['__proto__']: { type: 'number' } } }, JSON.parse('{"__proto__":"foo"}')]];
   const DIGIT = ['2020-12', { type: 'string', pattern: '^\\d{3}-\\d{4}$' }, '１０５-００１１'];
   CORPUS.push(['4', { type: 'object', required: ['score'], properties: { score: { type: 'number', minimum: 0, maximum: 100, exclusiveMaximum: true }, rank: { const: 'A' } } }, { score: 99, rank: 'B' }]);
-  if (!ver || !/^4\./.test(ver)) skip('Python jsonschema comparison (' + py + ': ' + (ver || 'not installed') + ')');
+  // The corpus was checked against 4.26.0; other 4.x releases differ (4.10.3 on Ubuntu runners gets
+  // $recursiveRef wrong), so only that version is compared.
+  if (ver !== '4.26.0') skip('Python jsonschema comparison (' + py + ': ' + (ver || 'not installed') + ', corpus checked against 4.26.0)');
   else {
     const script = 'import json,sys\nfrom jsonschema import Draft4Validator as V4, Draft6Validator as V6, Draft7Validator as V7, Draft201909Validator as V19, Draft202012Validator as V20\nM={"4":V4,"6":V6,"7":V7,"2019-09":V19,"2020-12":V20}\nprint(json.dumps([M[d](s).is_valid(x) for d,s,x in json.load(sys.stdin)]))';
     const enc = (list) => JSON.stringify(list.map(([d, s, x]) => [d, s, x]));
