@@ -1,324 +1,236 @@
 ---
-title: "CSS Variables Generator Online: Master Custom Properties for Theming"
-description: "Use a CSS variables generator online to build design token systems, dark mode themes, and component styles. Learn syntax, scope, JS access, and Sass comparison."
+title: "CSS Variables Explained: Custom Properties, var() Fallbacks, @property and Dark Mode"
+description: "How CSS variables (custom properties) work per the spec and in Chrome: inheritance, var() fallbacks, invalid values, @property, JavaScript access, Sass differences and dark mode."
 pubDate: 2026-04-07
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["css variables", "css custom properties", "css variables generator", "css", "developer-tools"]
+tags: ["css variables", "css custom properties", "var()", "@property", "css"]
 ---
 
-A **CSS variables generator online** helps you define custom properties for colors, spacing, typography, and other design tokens without writing repetitive declarations by hand. CSS custom properties — commonly called CSS variables — are natively supported in every modern browser and have become the standard way to build themeable, maintainable stylesheets. Understanding how they work and where to use them is one of the highest-leverage CSS skills you can have.
+CSS variables are officially called **custom properties**: properties whose names start with two hyphens, read back with the `var()` function. They are defined in [CSS Custom Properties for Cascading Variables Module Level 1](https://www.w3.org/TR/css-variables-1/), a Candidate Recommendation, and typed custom properties with `@property` come from [CSS Properties and Values API Level 1](https://www.w3.org/TR/css-properties-values-api-1/). Custom properties and `var()` work in Chrome 49, Edge 15, Firefox 31 and Safari 9.1 and later (MDN browser-compat-data 8.1.4).
 
-## CSS Custom Properties Syntax
+Because they take part in the cascade and are substituted late, custom properties behave differently from preprocessor variables in a few ways that cause real bugs: a fallback that is never used, a declaration that resets to zero, a variable that does nothing inside a media query. This guide goes through the spec sections behind those cases and checks each one in a browser. All measurements were taken on 2026-10-02 in Chrome 152 on macOS, by applying the declarations to test elements and reading `getComputedStyle()`.
 
-The syntax has two parts: declaration and usage.
+## Declaring and reading a custom property
 
-**Declaration** — define a property with a double-hyphen prefix:
-
-```css
-:root {
-  --color-primary: #3b82f6;
-  --color-primary-dark: #2563eb;
-  --spacing-base: 16px;
-  --font-size-lg: 1.125rem;
-  --border-radius: 6px;
-}
-```
-
-**Usage** — reference the property with `var()`:
-
-```css
-.button {
-  background-color: var(--color-primary);
-  padding: var(--spacing-base);
-  border-radius: var(--border-radius);
-  font-size: var(--font-size-lg);
-}
-```
-
-The `var()` function accepts an optional fallback as a second argument — used if the custom property is undefined:
-
-```css
-.button {
-  color: var(--color-text, #111827);
-  font-family: var(--font-sans, system-ui, sans-serif);
-}
-```
-
-Fallbacks can be chained (the last value is a static fallback):
-
-```css
-.button {
-  color: var(--button-color, var(--color-primary, #3b82f6));
-}
-```
-
-## :root Scope vs Component Scope
-
-CSS custom properties cascade and inherit like any other CSS property. `:root` matches the document's root element (`<html>`) with the specificity of a class, so variables declared there are inherited by every element. You can also define variables at any other scope.
-
-### Global design tokens in :root
+A custom property is declared like any other property, on any selector, and read with `var()`:
 
 ```css
 :root {
-  /* Color palette */
-  --blue-50: #eff6ff;
-  --blue-500: #3b82f6;
-  --blue-900: #1e3a8a;
-
-  /* Semantic color tokens */
-  --color-primary: var(--blue-500);
-  --color-background: #ffffff;
-  --color-text: #111827;
-  --color-text-muted: #6b7280;
-
-  /* Spacing scale */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-4: 1rem;
-  --space-8: 2rem;
-
-  /* Typography */
-  --font-size-sm: 0.875rem;
-  --font-size-base: 1rem;
-  --font-size-xl: 1.25rem;
-
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --brand: #3b82f6;
+  --space-4: 16px;
+}
+.button {
+  background: var(--brand);
+  padding: var(--space-4);
 }
 ```
 
-### Component-scoped variables
+Section 2 sets the rules for names and values:
 
-Override or extend globals within a component:
+- The name must start with `--`. After that almost anything goes, including digits and non-ASCII letters.
+- Names are **case-sensitive**. `--brand` and `--Brand` are different properties. With `--primary: red` set, `color: var(--Primary, rgb(1, 2, 3))` computed to `rgb(1, 2, 3)`: the fallback, because `--Primary` did not exist.
+- The value is a sequence of tokens that is not checked against any property grammar when it is declared. `--x: 10px`, `--x: 1px solid` and `--x: if you like` are all valid declarations; whether they work depends on where they are used.
+
+The browser keeps the value almost as written. Reading back a few declarations with `getPropertyValue()`:
+
+| Declaration | `getPropertyValue()` returned |
+|---|---|
+| `--x:   10px  ;` | `"10px"` (leading and trailing spaces removed) |
+| `--y: calc( 1px + 2px );` | `"calc( 1px + 2px )"` (not evaluated) |
+| `--z: #3B82F6;` | `"#3B82F6"` (case kept) |
+| `--foo: ;` | `""` (an empty but valid value) |
+
+An unregistered custom property is never computed to a length or a colour. It is only text until a `var()` puts it into a real property.
+
+## Inheritance and scope
+
+Custom properties are inherited. A value set on an element applies to all its descendants until one of them sets the property again. With `--space: 8px` on an outer element and `--space: 16px` on an inner one, a `padding: var(--space)` inside the inner element computed to 16px, and the same rule directly inside the outer element computed to 8px. This is how component-level overrides work:
 
 ```css
+:root  { --radius: 8px; }
+.card  { border-radius: var(--radius); }
+.compact { --radius: 4px; }  /* every .card inside .compact uses 4px */
+```
+
+`:root` matches the `html` element and has the specificity of one class, (0, 1, 0). A rule such as `.theme-dark { --bg: #111111; }` applied to the same `html` element has equal specificity, so whichever comes later in the stylesheet wins. With `:root { --bg: white; }` first and `.theme-dark` after it, adding the `theme-dark` class to `html` changed the computed `--bg` from `white` to `#111111`.
+
+## var() fallbacks
+
+`var()` takes an optional second argument (§3):
+
+```css
+.box { padding: var(--gap, 8px); }
+.text { font-family: var(--font, Inter, sans-serif); }
+.nested { margin: var(--m, var(--space-2, 4px)); }
+```
+
+Everything after the first comma is the fallback, commas included, so `var(--font, Inter, sans-serif)` with `--font` undefined computed to the font list `Inter, sans-serif`. A fallback can itself contain `var()`.
+
+The fallback is used only when the variable holds the **guaranteed-invalid value** (§2.2). That happens when the property was never declared on the element or its ancestors, when it was set to `initial`, or when it is part of a dependency cycle (§2.3). It does **not** happen when the variable has a value that makes no sense for the property where it is used. Three measurements on an element whose parent had `color: green`:
+
+| Declarations on the element | Computed `color` |
+|---|---|
+| `--foo: initial; color: var(--foo, red)` | red (fallback used) |
+| `--foo: ; color: var(--foo, red)` | green (empty value substituted, declaration invalid) |
+| `--a: var(--b); --b: var(--a); padding: var(--a, 6px)` | padding 6px (cycle, so fallback used) |
+
+The second row is the one that surprises people. Section 2.2 notes that `--foo: ;` "is a valid (empty) value, not the guaranteed-invalid value", so the fallback is skipped, `color: ` with nothing after it is not a valid colour, and the element ends up with the inherited green. Why it is green and not red is the subject of the next section.
+
+## Invalid at computed-value time
+
+When a property contains `var()`, the browser cannot check it at parse time, because it does not know the variable's value yet. It keeps the declaration and checks it after substitution. If the result is invalid, the declaration becomes **invalid at computed-value time** (§3.1), and the property gets its inherited value if it is an inherited property, or its initial value if it is not. It does not fall back to an earlier declaration in the cascade.
+
+| Declarations | Computed value |
+|---|---|
+| `--gap: red; padding: var(--gap, 8px)` | `padding: 0px` |
+| `padding: var(--undefined-gap, 8px)` | `padding: 8px` |
+| `padding: 4px; padding: red` | `padding: 4px` |
+| `--gap: red; padding: 4px; padding: var(--gap)` | `padding: 0px` |
+| parent `color: rgb(0, 0, 255)`; child `--c: 20px; color: var(--c)` | child `color: rgb(0, 0, 255)` |
+
+Compare the third and fourth rows. A plainly invalid `padding: red` is dropped when the stylesheet is parsed, so the earlier `padding: 4px` still applies. `padding: var(--gap)` is accepted at parse time and wins the cascade; only later does it turn out to be `padding: red`, and by then the 4px declaration has already lost. Padding is not inherited, so it resets to its initial value, 0. Colour is inherited, so the last row shows the parent's blue.
+
+The practical consequence: a fallback inside `var()` protects you from a missing variable, not from a wrong one. If a token can be set to an unsuitable value, register its type.
+
+## Registering a type with @property
+
+`@property` gives a custom property a syntax, an initial value and an inheritance setting:
+
+```css
+@property --gap {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 8px;
+}
+```
+
+With this registration in place:
+
+- `--gap: red; padding: var(--gap, 20px)` computed to `padding: 8px`. The value `red` does not match `<length>`, so `--gap` takes its initial value (§2.4 of the Properties and Values API), which is a valid length; neither the fallback nor the reset to 0 applies.
+- With `inherits: false`, a child of an element that set `--gap: 20px` read `8px`. An unregistered property in the same position read the inherited `20px`.
+- The computed value is now a real value: a registered `<length>` declared as `calc(1px + 2px)` read back as `"3px"`.
+- It can be animated. Animating a registered `<color>` property from red to blue and pausing at 25% gave `rgb(191, 0, 64)`. The same animation on an unregistered property read `red` at 25% and `blue` at 60%: unregistered values cannot be interpolated, so they flip at the midpoint.
+
+`@property` works in Chrome and Edge 85, Firefox 128 and Safari 16.4 and later (MDN browser-compat-data 8.1.4). In older browsers the rule is ignored and the property behaves as an unregistered one, so keep a sensible value declared normally as well.
+
+## Reading and writing from JavaScript
+
+`getComputedStyle()` returns the computed value, which for an unregistered property is the substituted token text, and `style.setProperty()` writes an inline value:
+
+```js
+const el = document.querySelector('.card');
+getComputedStyle(el).getPropertyValue('--radius'); // "8px"
+el.style.setProperty('--radius', '24px');
+getComputedStyle(el).getPropertyValue('--radius'); // "24px"
+document.documentElement.style.setProperty('--brand', '#e11d48');
+```
+
+`el.style.getPropertyValue()` reads only the inline style, so it returns an empty string for a value set in a stylesheet. Remember the case-sensitivity: `getPropertyValue('--Radius')` returns `""`. Setting a property on `:root` re-themes the whole page in one call, because every element inherits it and recomputes the declarations that use it.
+
+## CSS variables vs Sass variables
+
+Sass variables exist only while the stylesheet is compiled; the output contains plain values. CSS variables exist in the browser, follow the DOM, and can change at run time. Compiled with Dart Sass 1.105.1:
+
+{/* cvg-sass */}
+
+```scss
+$space: 8px;
+:root {
+  --space: $space;
+  --space-i: #{$space};
+}
 .card {
-  --card-padding: var(--space-4);
-  --card-radius: 8px;
-  --card-shadow: var(--shadow-md);
-
-  padding: var(--card-padding);
-  border-radius: var(--card-radius);
-  box-shadow: var(--card-shadow);
+  padding: $space * 2;
+  margin: calc(var(--space) * 2);
 }
-
-/* Compact card variant — only override what changes */
-.card--compact {
-  --card-padding: var(--space-2);
+@media (min-width: $space * 100) {
+  .card { padding: $space * 3; }
 }
 ```
 
-This pattern means a `.card--compact` only needs one line instead of redeclaring all properties.
-
-## Dark Mode with CSS Variables
-
-CSS variables make dark mode implementation clean and maintainable. Instead of duplicating selectors, you redefine token values under a theme selector.
-
-### Using `prefers-color-scheme`
-
 ```css
 :root {
-  --color-background: #ffffff;
-  --color-surface: #f9fafb;
-  --color-text: #111827;
-  --color-text-muted: #6b7280;
-  --color-border: #e5e7eb;
-  --color-primary: #3b82f6;
+  --space: $space;
+  --space-i: 8px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: #0f172a;
-    --color-surface: #1e293b;
-    --color-text: #f1f5f9;
-    --color-text-muted: #94a3b8;
-    --color-border: #334155;
-    --color-primary: #60a5fa;
+.card {
+  padding: 16px;
+  margin: calc(var(--space) * 2);
+}
+
+@media (min-width: 800px) {
+  .card {
+    padding: 24px;
   }
 }
 ```
 
-Every element using `var(--color-background)` automatically switches without additional CSS.
+Two differences show up. Sass leaves custom property values alone, so `--space: $space` is written out literally and the browser gets a variable containing the text `$space`; interpolation with `#{$space}` is needed to copy the Sass value in. And Sass can compute a media query, while CSS cannot: `var()` is only allowed in property values, and Chrome's `matchMedia('(min-width: var(--bp))')` returned `false` even with `--bp: 10px` set on the root, while `(min-width: 10px)` returned `true`. Breakpoints have to stay as literal values (or Sass variables).
 
-### Using a data attribute (user-toggled theme)
+The usual split is to keep the token values in one place and emit them as custom properties, using Sass, if at all, only for things CSS cannot do, such as loops and media query values.
 
-```css
-:root,
-[data-theme="light"] {
-  --color-background: #ffffff;
-  --color-text: #111827;
-}
+## Dark mode with custom properties
 
-[data-theme="dark"] {
-  --color-background: #0f172a;
-  --color-text: #f1f5f9;
-}
-```
-
-Toggle in JavaScript:
-
-```javascript
-const toggleTheme = () => {
-  const current = document.documentElement.getAttribute('data-theme');
-  document.documentElement.setAttribute(
-    'data-theme',
-    current === 'dark' ? 'light' : 'dark'
-  );
-};
-```
-
-## JavaScript Access to CSS Variables
-
-CSS custom properties can be read and written from JavaScript using the CSSOM, enabling dynamic theming at runtime.
-
-### Reading a CSS variable
-
-```javascript
-// Read from :root (or any element)
-const root = document.documentElement;
-const primaryColor = getComputedStyle(root)
-  .getPropertyValue('--color-primary')
-  .trim();
-
-console.log(primaryColor); // "#3b82f6"
-```
-
-### Writing a CSS variable
-
-```javascript
-// Set on :root — affects all elements using this variable
-document.documentElement.style.setProperty('--color-primary', '#8b5cf6');
-
-// Set on a specific element — only affects that element and its children
-const card = document.querySelector('.card');
-card.style.setProperty('--card-padding', '2rem');
-```
-
-### Dynamic theming example
-
-```javascript
-// Apply a user-selected accent color across the entire UI
-function setAccentColor(hex) {
-  const root = document.documentElement;
-  root.style.setProperty('--color-primary', hex);
-
-  // Derive a darker variant for hover states with color-mix()
-  root.style.setProperty('--color-primary-dark', `color-mix(in srgb, ${hex} 90%, black)`);
-}
-
-// Reset to stylesheet default
-function resetAccentColor() {
-  document.documentElement.style.removeProperty('--color-primary');
-  document.documentElement.style.removeProperty('--color-primary-dark');
-}
-```
-
-## CSS Variables vs Sass Variables
-
-Sass variables (`$variable`) and CSS custom properties (`--variable`) solve different problems and are often used together.
-
-| Feature | CSS Custom Properties | Sass Variables |
-|---------|----------------------|----------------|
-| Runtime access from JS | Yes | No (compiled away) |
-| Can be changed after compile | Yes | No |
-| Inherits through DOM | Yes | No concept |
-| Works in calc() | Yes | Yes (at compile time) |
-| Browser DevTools visibility | Yes | No |
-| Works without a build step | Yes | No |
-| Conditional via media query | Yes | Limited |
-
-**Use both:** Sass variables are useful for values that never change at runtime (breakpoints, z-index scales, font stacks). CSS custom properties are for anything that might change based on theme, component state, or user preference.
-
-```scss
-// Sass: compile-time constants
-$brand-blue: #3b82f6;
-$breakpoint-md: 768px;
-$z-modal: 1000;
-
-// These become CSS variables at runtime
-:root {
-  --color-primary: #{$brand-blue};
-  --font-size-base: 1rem;
-}
-```
-
-## Design Token Patterns
-
-Design tokens are named values that represent design decisions — color, spacing, typography, shadow, border radius. CSS custom properties are the native implementation layer for design tokens in the browser.
-
-### Three-tier token system
+Custom properties make theming a matter of swapping values, not rewriting rules:
 
 ```css
 :root {
-  /* Tier 1: Primitive tokens — raw values */
-  --color-blue-500: #3b82f6;
-  --color-blue-700: #1d4ed8;
-  --color-gray-900: #111827;
-
-  /* Tier 2: Semantic tokens — meaning, not value */
-  --color-action: var(--color-blue-500);
-  --color-action-hover: var(--color-blue-700);
-  --color-text-primary: var(--color-gray-900);
-
-  /* Tier 3: Component tokens — most specific */
-  --button-bg: var(--color-action);
-  --button-bg-hover: var(--color-action-hover);
-  --button-text: #ffffff;
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --text: #111827;
 }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111827; --text: #f9fafb; }
+}
+:root[data-theme="dark"]  { --bg: #111827; --text: #f9fafb; }
+:root[data-theme="light"] { --bg: #ffffff; --text: #111827; }
+
+body { background: var(--bg); color: var(--text); }
 ```
 
-This lets you retheme at the semantic level (change `--color-action`) without touching component tokens.
+The media query follows the operating system, and the `data-theme` attribute lets a toggle override it; `:root[data-theme]` has higher specificity than `:root`, so it wins over the media query block regardless of order. `color-scheme` tells the browser to draw form controls and scrollbars in the matching scheme.
 
-### Spacing scale
+Newer browsers can do the same without a second block, using `light-dark()`, which picks one of two colours based on the element's used colour scheme. With `color-scheme: light dark` on a light system, `color: light-dark(#111111, #eeeeee)` computed to `rgb(17, 17, 17)`; on a child with `color-scheme: dark` it computed to `rgb(238, 238, 238)`. `light-dark()` works in Chrome 123, Firefox 120 and Safari 17.5 and later, and it only accepts colours, so spacing or shadow tokens that change between themes still need custom properties.
+
+## Generating a token block with the generator
+
+The [CSS variables generator](/tools/css-variables-generator/) builds one `:root` block from four fixed groups (Colors, Typography, Spacing, Border Radius). Each row has a name and a value, colour rows also have a colour picker, and every group has an **+ Add Token** button. With the default prefix `--` and the pre-filled rows it writes:
+
+{/* cvg-default */}
 
 ```css
 :root {
-  --space-px: 1px;
-  --space-0: 0;
-  --space-1: 0.25rem;   /* 4px */
-  --space-2: 0.5rem;    /* 8px */
-  --space-3: 0.75rem;   /* 12px */
-  --space-4: 1rem;      /* 16px */
-  --space-6: 1.5rem;    /* 24px */
-  --space-8: 2rem;      /* 32px */
-  --space-12: 3rem;     /* 48px */
-  --space-16: 4rem;     /* 64px */
+  --primary: #3b82f6;
+  --secondary: #6366f1;
+  --bg: #ffffff;
+  --text: #111827;
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "Fira Code", monospace;
+  --font-size-base: 16px;
+  --font-size-lg: 18px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-4: 16px;
+  --space-8: 32px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
 }
 ```
 
-### Using variables in calc()
+The prefix field adds a namespace. The tool adds the missing hyphens, so `ds`, `--ds` and `--ds-` all give names such as `--ds-primary`, and spaces inside a name become hyphens. Values are copied as typed, so a token can refer to another:
 
-CSS variables work inside `calc()`, enabling responsive calculations:
+{/* cvg-check: {"prefix":"ds","tokens":[["primary","#3b82f6"],["space 2","8px"],["space-4","calc(var(--ds-space-2) * 2)"]]} */}
 
 ```css
 :root {
-  --container-padding: 1rem;
-  --sidebar-width: 280px;
-}
-
-.main-content {
-  /* Subtract sidebar and gap from total width */
-  width: calc(100% - var(--sidebar-width) - var(--container-padding) * 2);
+  --ds-primary: #3b82f6;
+  --ds-space-2: 8px;
+  --ds-space-4: calc(var(--ds-space-2) * 2);
 }
 ```
 
-## Browser Support
-
-Every major browser has supported CSS custom properties since April 2017, when Edge 15 shipped them ([MDN browser compatibility data](https://developer.mozilla.org/en-US/docs/Web/CSS/--*#browser_compatibility)):
-
-- Chrome 49+
-- Firefox 31+
-- Safari 9.1+
-- Edge 15+
-
-IE11 does not support CSS custom properties — use a PostCSS fallback or accept the degraded experience for IE11 users (at this point, a very small minority).
-
-## Build Your Token System Now
-
-Defining a complete set of design tokens from scratch — with semantic naming, fallback values, and dark mode variants — takes time to do correctly. A generator lets you configure your color palette, spacing scale, and typography settings and outputs a `:root {}` block ready to paste into your stylesheet.
-
-[Try our CSS Variables Generator →](/tools/css-variables-generator)
-
-Configure your brand colors, spacing scale, and font sizes, then export a production-ready CSS custom properties block. Use it as the foundation of your design system or drop it into an existing project to start consolidating hardcoded values.
+The output follows the rules above, so the same caveats apply. Names are case-sensitive, and two rows with the same name both appear in the block (the later one wins). Values are not validated, so a colour typed as `#3b82f` is copied as is and makes every property that uses it invalid at computed-value time. The colour picker follows only 3- and 6-digit hex values; `rgb()` or `oklch()` values are copied correctly but the swatch does not update. There is no output for a dark theme, `@property` registrations or media queries. Copy the colour rows into a second block by hand, as in the dark mode example above.
