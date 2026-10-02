@@ -1,134 +1,167 @@
 ---
-seoTitle: "OpenAPI バリデーター — OpenAPI 3.0 / 3.1 / 3.2 仕様をオンラインで検証 | ZeroTool"
-seoDescription: "OpenAPI 3.0・3.1・3.2 の文書（YAML/JSON）を公式 JSON Schema で検証し、$ref・パスパラメーター・operationId も確認。ブラウザで動作します。"
+seoTitle: "OpenAPI・Swagger 検証 | ZeroTool"
+seoDescription: "Swagger 2.0 と OpenAPI 3.0・3.1・3.2（YAML/JSON）をブラウザで検証。公式スキーマ、ファイルをまたぐ $ref、パスパラメーター、サンプル値とスキーマの一致を行番号付きで表示。アップロードなし。"
 faqItems:
-  - question: "対応している OpenAPI のバージョンは？"
-    answer: "OpenAPI 3.0.x、3.1.x、3.2.x です。文書ごとにバージョンに対応する公式 JSON Schema（spec.openapis.org）で検証するので、3.1 のファイルには 3.1 の規則（components か webhooks があれば paths は省略可、responses も省略可）が適用されます。Swagger 2.0 の文書には変換を促すメッセージを出します。"
-  - question: "YAML と JSON の両方を検証できますか？"
-    answer: "できます。YAML のバージョンは openapi: \"3.0.3\" でも 3.0.3 でも構いませんが、openapi: 3.0 は数値として読まれるためエラーになります。"
-  - question: "何を確認しますか？"
-    answer: "公式 Schema が定める構造全体（必須フィールド、使えるフィールド、値の型、レスポンスやパラメーターの形）と、Schema では表せない 3 つの規則です。文書内の $ref が実在するものを指すこと、パス中の {name} ごとに in: path のパラメーターがあること（逆も同様）、operationId が重複しないこと。"
-  - question: "$ref はたどりますか？"
-    answer: "文書内の参照（#/components/...）は解決し、指す先がなければエラーにします。./schemas/pet.yaml や https://... のような外部参照は「未確認」に一覧表示し、ファイルは取得しません。"
-  - question: "API 仕様がサーバーに送信されますか？"
-    answer: "いいえ。検証はブラウザー内で行います。最初のクリック時に検証プログラムと 3 つの Schema をこのサイトから読み込みますが、文書はアップロードしません。"
+  - question: "対応しているバージョンは？"
+    answer: "Swagger 2.0 と OpenAPI 3.0・3.1・3.2 です。swagger または openapi フィールドを読み、そのバージョンの公式 JSON Schema で検証します。Swagger 2.0 は OpenAPI Initiative のリポジトリにあるスキーマ、3.0（2024-10-18）・3.1（2026-08-03）・3.2（2026-08-30）は spec.openapis.org が公開しているスキーマです。"
+  - question: "仕様書はアップロードされますか？"
+    answer: "されません。解析とすべての確認はブラウザ内の Web Worker で行います。$ref の URL は取得せず、「他のファイル」に追加したファイルもページの中だけで使います。"
+  - question: "$ref で分割したファイルもまとめて確認できますか？"
+    answer: "できます。複数のファイルやフォルダをまとめて開くか、「他のファイル」に $ref と同じパス（例：schemas/pet.yaml）で追加してください。参照をファイルをまたいで解決し、問題はその記述があるファイルと行に表示します。追加していないファイルや URL への参照は「情報」に出ます。"
+  - question: "エラーと警告の違いは？"
+    answer: "エラーは仕様の MUST や公式スキーマに反するもので、他のツールが読み込みを拒む可能性があります。警告は SHOULD の規則とよくある誤り（サンプル値がスキーマと合わない、使われていないコンポーネント、未定義のサーバー変数など）です。情報には確認しなかった内容を出します。"
+  - question: "XML のサンプル値が警告にならないのはなぜですか？"
+    answer: "OpenAPI 3.x では、JSON や YAML で自然に表せないメディアタイプのサンプル値は文字列で書くと定めています。application/xml などの文字列サンプルはシリアライズ済みの本文とみなし、スキーマとは比べません。"
 ---
 
-<h2>OpenAPI バリデーター</h2>
-<p>YAML または JSON の OpenAPI 3.0・3.1・3.2 文書を貼り付け、API ゲートウェイや SDK ジェネレーター、ドキュメントツールに渡す前に確認できます。<code>openapi</code> フィールドに合う公式 JSON Schema を選んで Ajv で検証し、Schema だけでは確認できない点を追加で調べます。</p>
+<p>OpenAPI や Swagger の仕様書を貼り付けるか、ファイル・フォルダを開いてください。バージョンに合った公式 JSON Schema で構造を検証し、ファイルをまたいで <code>$ref</code> をたどり、スキーマだけでは表せない規則も確認します。問題には行と列が付き、クリックするとエディターのその行を選択します。</p>
 
 <h2>使い方</h2>
 <ol>
-  <li>OpenAPI 仕様（YAML または JSON）をエディターに貼り付けます。</li>
-  <li><strong>検証</strong>をクリックするか <kbd>Ctrl</kbd>+<kbd>Enter</kbd> を押します。</li>
-  <li>有効なら、API タイトル、バージョン、OpenAPI バージョン、パス数、オペレーション数を表示します。</li>
-  <li>無効なら、エラーごとに位置を JSON Pointer（<code>$ref</code> と同じ書き方）で示します。</li>
-  <li>たどらなかった参照は<strong>未確認</strong>に一覧表示します。</li>
+  <li>YAML か JSON を貼り付けるか、「ファイルを開く」「フォルダを開く」を押すか、ツールの上にファイルをドロップします。複数のときは <code>openapi</code> または <code>swagger</code> フィールドを持つファイルがメインになります。</li>
+  <li>2 MB までの入力は入力中に自動で検証します。それより大きいときは「検証」を押すか <kbd>Ctrl</kbd>+<kbd>Enter</kbd>。</li>
+  <li>結果はエラー・警告・情報の 3 段階です。段階ごとに絞り込めます。「結果をコピー」でタブ区切りのテキストとしてレビューやチケットに貼れます。</li>
+  <li>まだ追加していないファイルを <code>$ref</code> が参照していると「… を追加」ボタンが出ます。押して内容を貼り付けます。</li>
 </ol>
 
-<h2>バリデーターが確認すること</h2>
-<ul>
-  <li><strong>構造</strong>：<a href="https://spec.openapis.org/" target="_blank" rel="noopener">spec.openapis.org</a> が公開する公式 Schema で検証します。3.0（Schema 2024-10-18）、3.1（2026-08-03）、3.2（2026-08-30）。必須フィールドと未知のフィールド、値の型、パラメーター・レスポンス・セキュリティスキームなどの形を確認します。<code>x-</code> で始まるフィールドは、仕様が拡張を認める場所ならどこでも使えます。</li>
-  <li><strong>文書内の <code>$ref</code></strong>：<code>#/components/schemas/User</code> が文書内に存在する必要があります。ポインターの <code>~1</code>・<code>~0</code>・パーセントエンコードは先にデコードします。<code>example</code>、<code>default</code>、Example オブジェクトの <code>value</code> 内の <code>$ref</code> はデータなので確認しません。</li>
-  <li><strong>パスパラメーター</strong>：パス中の <code>&#123;name&#125;</code> ごとに、Path Item かオペレーションに <code>in: path</code> のパラメーターが必要です。逆に <code>in: path</code> のパラメーターはパスに現れる必要があります（仕様の Path Templating）。</li>
-  <li><strong>operationId</strong> は <code>paths</code> と <code>webhooks</code> 全体で一意である必要があります。</li>
-</ul>
+<h2>実例：e-Gov 法令API Version 2 の仕様書</h2>
+<p>デジタル庁の e-Gov 法令API Version 2 は、Swagger UI の画面から仕様書 <code>lawapi-v2.yaml</code>（OpenAPI 3.0.3、info.version 2.1.139、2026-10-02 取得）を読み込んでいます。このファイルを検証するとエラーは 0 件、警告は JSON のサンプル値 5 件でした。そのひとつが、法令番号の年 <code>law_num_year</code> を <code>type: integer</code> と定義しながら、サンプルでは <code>"11"</code> と文字列で書いている箇所です。該当部分を抜き出すと次のとおりです。</p>
 
-<p>3 か所に誤りがある入力：</p>
-
-{/* ov: {"errors": ["#/info Missing required field \"version\".", "#/paths Path \"orders/{id}\" must start with \"/\".", "#/paths/orders~1{id}/get GET orders/{id}: path parameter \"id\" is not declared (add a parameter with in: path, name: id)."]} */}
-
+{/* ov */}
 <pre><code>{`openapi: 3.0.3
 info:
-  title: Orders API
+  title: 法令API Version 2（抜粋）
+  version: 2.1.139
 paths:
-  orders/{id}:
+  /law_data/{law_id_or_num_or_revision_id}:
     get:
-      summary: Get one order
-  /orders:
-    post:
-      responses:
-        "201":
-          description: Created`}</code></pre>
-
-<p>報告されるエラー：</p>
-
-<pre><code>{`#/info
-    Missing required field "version".
-#/paths
-    Path "orders/{id}" must start with "/".
-#/paths/orders~1{id}/get
-    GET orders/{id}: path parameter "id" is not declared (add a parameter with in: path, name: id).`}</code></pre>
-
-<p><code>get</code> オペレーションにも <code>responses</code> がありませんが、パスのキー自体が無効なので Schema はその中を確認しません。報告されたエラーを直してから再度検証してください。</p>
-
-<p>存在しない Schema への参照と、宣言されていないパスパラメーター：</p>
-
-{/* ov: {"errors": ["#/paths/~1users~1{id}/get/responses/200/content/application~1json/schema/$ref Reference \"#/components/schemas/User\" does not point to anything in this document.", "#/paths/~1users~1{id}/get GET /users/{id}: path parameter \"id\" is not declared (add a parameter with in: path, name: id)."]} */}
-
-<pre><code>{`openapi: 3.0.3
-info:
-  title: Broken refs
-  version: 1.0.0
-paths:
-  /users/{id}:
-    get:
+      parameters:
+        - name: law_id_or_num_or_revision_id
+          in: path
+          required: true
+          schema: {type: string}
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"`}</code></pre>
+                $ref: "#/components/schemas/law_info"
+              examples:
+                example_law_data_json:
+                  value:
+                    law_id: 411AC0000000127
+                    law_num_year: "11"
+                    law_num_num: "127"
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/law_info"
+              examples:
+                example_law_data_xml:
+                  value: <law_info><law_num_year>11</law_num_year></law_info>
+components:
+  schemas:
+    law_info:
+      type: object
+      properties:
+        law_id: {type: string}
+        law_num_year:
+          description: 法令番号の年
+          type: integer
+        law_num_num: {type: string}`}</code></pre>
 
-<pre><code>{`#/paths/~1users~1{id}/get/responses/200/content/application~1json/schema/$ref
-    Reference "#/components/schemas/User" does not point to anything in this document.
-#/paths/~1users~1{id}/get
-    GET /users/{id}: path parameter "id" is not declared (add a parameter with in: path, name: id).`}</code></pre>
+{/* ov-out */}
+<pre><code>{`24:21  警告  サンプル値がスキーマと一致しません（/law_num_year）：型は integer である必要があります。`}</code></pre>
 
-<p><code>webhooks</code> だけの 3.1 文書は有効です。OpenAPI 3.1 は <code>paths</code>・<code>components</code>・<code>webhooks</code> のいずれかを必須とし（<a href="https://spec.openapis.org/oas/v3.1.0#openapi-object" target="_blank" rel="noopener">OpenAPI 3.1.0 §4.8.1</a>）、<code>responses</code> も省略できます。</p>
+<p>XML のサンプル値は文字列で書かれたシリアライズ済みの本文なので、比較しません（OpenAPI 3.x の Example Object の説明どおり）。元のファイル全体では、Spectral 6.17.0 がサンプル値の不一致を 21 件エラーにし、そのうち 16 件はこの XML 文字列への「type must be object」でした。Redocly CLI 2.57.0 も同じ 16 件を警告にしています。サンプル値の警告は仕様違反ではないため、文書自体は有効と判定されます。</p>
 
-{/* ov: {"errors": []} */}
+<h2>実例：3.0 の書き方のまま 3.1 に上げたスキーマ</h2>
+<p>OpenAPI 3.1 のスキーマは JSON Schema 2020-12 そのものです。3.1 の公式スキーマはスキーマの中身をほとんど確かめないので、このツールは各スキーマを 2020-12 のメタスキーマでも検証します。プロパティに <code>required: true</code> を書く、<code>type: int</code> と書く、3.0 の <code>nullable</code> を残す、といった誤りが見つかります。</p>
 
+{/* ov */}
 <pre><code>{`openapi: 3.1.0
 info:
-  title: Order events
+  title: 会員 API
   version: 1.0.0
-webhooks:
-  orderCreated:
-    post:
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object`}</code></pre>
+paths: {}
+components:
+  schemas:
+    Member:
+      type: object
+      properties:
+        name:
+          type: string
+          required: true
+        kana:
+          type: string
+          nullable: true
+        age:
+          type: int`}</code></pre>
 
-<h2>確認しないこと</h2>
+{/* ov-out */}
+<pre><code>{`8:5  警告  スキーマ "Member" はどこからも参照されていません。
+13:11  エラー  "required" の型は array である必要があります。
+16:11  警告  "nullable" は OpenAPI 3.0 のキーワードで、3.1 以降では効果がありません。type に "null" を加えてください（例：type: [string, "null"]）。
+18:11  エラー  "type" は次のいずれかにしてください："array", "boolean", "integer", "null", "number", "object", "string"。`}</code></pre>
 
-<p>外部参照は一覧に載せるだけで取得しません。次の文書は有効と判定され、「未確認」に 1 件表示されます。</p>
+<h2>実例：サーバー URL とセキュリティスキーム</h2>
+<p>ステージごとに URL を切り替える書き方では、<code>variables</code> の書き漏れや、<code>enum</code> にないデフォルト値がよく起きます。3.0 の仕様ではデフォルト値は enum に含まれるべき（SHOULD）なので警告、3.1 以降は MUST なのでエラーです。セキュリティ要件の名前が宣言と違う場合はどのバージョンでもエラーです。</p>
 
-{/* ov: {"errors": []} */}
-
+{/* ov */}
 <pre><code>{`openapi: 3.0.3
 info:
-  title: Pets
+  title: 予約 API
   version: 1.0.0
+servers:
+  - url: https://{stage}.example.jp/{version}
+    variables:
+      stage:
+        default: prod
+        enum: [dev, stg]
 paths:
-  /pets:
+  /reservations:
     get:
+      security:
+        - api_key: []
       responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "./schemas/pet.yaml"`}</code></pre>
+        "200": {description: OK}
+components:
+  securitySchemes:
+    apiKey: {type: apiKey, in: header, name: X-API-Key}`}</code></pre>
 
+{/* ov-out */}
+<pre><code>{`6:5  警告  "https://{stage}.example.jp/{version}" の変数 {version} が variables にないため、URL を展開できません。
+9:9  警告  変数 "stage" のデフォルト値 "prod" が enum にありません。
+15:11  エラー  セキュリティスキーム "api_key" が components.securitySchemes に宣言されていません。
+20:5  警告  セキュリティスキーム "apiKey" はどこからも参照されていません。`}</code></pre>
+
+<h2>確認する規則</h2>
+<table>
+  <thead><tr><th>規則</th><th>段階</th><th>根拠</th></tr></thead>
+  <tbody>
+    <tr><td>必須・未知のフィールド、型、パラメーターやレスポンスの形</td><td>エラー</td><td>バージョンごとの公式 JSON Schema</td></tr>
+    <tr><td>3.1・3.2 のスキーマオブジェクト</td><td>エラー</td><td>JSON Schema 2020-12 のメタスキーマ</td></tr>
+    <tr><td><code>$ref</code> の参照先が存在する（別ファイルも含む）</td><td>エラー</td><td>Reference Object</td></tr>
+    <tr><td>パステンプレートと <code>in: path</code> の対応、パラメーター名だけが違うパス、重複したパラメーター・operationId・タグ名</td><td>エラー</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#paths-object" target="_blank" rel="noopener">Paths Object</a>、<a href="https://spec.openapis.org/oas/v3.1.1.html#parameter-object" target="_blank" rel="noopener">Parameter Object</a> の MUST</td></tr>
+    <tr><td>セキュリティ要件のスキームが宣言済み</td><td>エラー</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#security-requirement-object" target="_blank" rel="noopener">Security Requirement Object</a></td></tr>
+    <tr><td>サーバー変数のデフォルト値が enum に含まれる</td><td>3.1 以降はエラー、3.0 は警告</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#server-variable-object" target="_blank" rel="noopener">Server Variable Object</a></td></tr>
+    <tr><td>サンプル値とスキーマの一致、未使用のコンポーネント、未定義・未使用のサーバー変数、パスのクエリ文字列</td><td>警告</td><td>仕様の SHOULD と、Redocly・Spectral も報告するよくある誤り</td></tr>
+  </tbody>
+</table>
+<p>YAML は <a href="https://yaml.org/spec/1.2.2/#1023-core-schema" target="_blank" rel="noopener">YAML 1.2 の Core Schema</a> で読みます。引用符なしの <code>version: 2026-10-02</code> は文字列のままです。同じ階層に同じキーが 2 回あると、JSON でも行番号付きの構文エラーになります。マージキー（<code>{'<<: *anchor'}</code>）も使えます。</p>
+
+<h2>他のツールとの違い</h2>
+<p>2026-10-02 に、同じテスト用の仕様書で比べました。中身は、宣言していないパスパラメーター、宣言していないセキュリティスキーム、パラメーター名だけが違う 2 つのパス、プロパティの <code>required: true</code> の 4 つのエラーと、引用符なしの日付の <code>info.version</code> です。</p>
 <ul>
-  <li>公式 Schema は Schema オブジェクトの中身を細かく検証しません（3.1・3.2 はオブジェクトか真偽値であることだけを求めます）。Schema 内のキーワードの綴り間違いは報告されません。</li>
-  <li>上の 3 つ以外の、本文にだけ書かれた規則は確認しません。例の値を Schema で検証することも、セキュリティ要件をセキュリティスキームと照合することもしません。</li>
-  <li>命名・説明・タグなどのスタイルは <a href="https://redocly.com/docs/cli/commands/lint" target="_blank" rel="noopener">Redocly CLI</a> や <a href="https://github.com/stoplightio/spectral" target="_blank" rel="noopener">Spectral</a> などのリンターで確認してください。</li>
-  <li>YAML の構文エラーは先に YAML パーサーが報告します。行番号は <a href="/ja/tools/yaml-validator/">YAML バリデーター</a>で確認できます。</li>
+  <li>Redocly CLI 2.57.0 と Spectral 6.17.0 は 4 件とも検出しました。summary や 4XX レスポンスなどのスタイル規則も多数出ます。swagger-parser 13.1.0 は有効と判定しました。</li>
+  <li>Swagger Editor 5.8.9（editor.swagger.io）はブラウザ内で動き、パスパラメーターと <code>required</code> は検出しましたが、同じテンプレートのパスと未宣言のスキームは出ませんでした。</li>
+  <li>アサリツールズの OpenAPI（Swagger）検証ツールは通信なしで動きますが、<code>"200"</code> と <code>"204"</code> を「無効なステータスコードです」と誤って報告し、4 件のエラーはどれも出ませんでした。</li>
 </ul>
 
-<p>OpenAPI Initiative の <a href="https://github.com/OAI/learn.openapis.org/tree/main/examples" target="_blank" rel="noopener">learn.openapis.org のサンプル</a> 11 件（petstore、uspto、tictactoe、3.2 の query サンプルなど）はすべてエラーなしで検証されます。</p>
+<h2>制限</h2>
+<ul>
+  <li>命名や説明文などのスタイル規則は扱いません。チームのルールは、このツールの後で Redocly CLI や Spectral を使ってください。</li>
+  <li><code>$ref</code> の URL は取得しないので、ファイルを追加してください。アンカー参照（<code>#name</code>）は確認しません。</li>
+  <li>非常に大きな仕様書では、サンプル値の確認を 4 秒で打ち切り、その旨を表示します。2 MB を超える入力は「検証」を押したときに確認し、合計 50 MB を超えるファイルは読み込みません。</li>
+</ul>
+<p>関連ツール：型を生成する <a href="/ja/tools/openapi-to-typescript/">OpenAPI → TypeScript ジェネレーター</a>、リクエストの JSON を確かめる <a href="/ja/tools/json-schema-validator/">JSON Schema バリデーター</a>、インデントの誤りを探す <a href="/ja/tools/yaml-validator/">YAML バリデーター</a>。</p>

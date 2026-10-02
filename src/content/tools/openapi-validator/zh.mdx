@@ -1,77 +1,85 @@
 ---
-seoTitle: "OpenAPI 验证器 — 在线验证 OpenAPI 3.0 / 3.1 / 3.2 规范 | ZeroTool"
-seoDescription: "按官方 JSON Schema 验证 OpenAPI 3.0、3.1、3.2 文档（YAML 或 JSON），并检查 $ref、路径参数与 operationId。在浏览器中运行。"
+seoTitle: "OpenAPI/Swagger 校验器 | ZeroTool"
+seoDescription: "在线校验 Swagger 2.0 与 OpenAPI 3.0/3.1/3.2（YAML/JSON）：官方 Schema、跨文件 $ref、路径参数、安全方案、示例与 schema 是否一致，错误带行号。文件不上传。"
 faqItems:
-  - question: "支持哪些 OpenAPI 版本？"
-    answer: "OpenAPI 3.0.x、3.1.x 和 3.2.x。每个文档按其版本对应的官方 JSON Schema（spec.openapis.org）校验，所以 3.1 文件适用 3.1 的规则（有 components 或 webhooks 时 paths 可省略，responses 可省略）。Swagger 2.0 文档会提示先转换。"
-  - question: "可以验证 YAML 和 JSON 吗？"
-    answer: "可以，粘贴 YAML 或 JSON 都行。YAML 里的版本号写 openapi: \"3.0.3\" 或 3.0.3 都可以，但 openapi: 3.0 会被读成数字并报错。"
-  - question: "验证器检查哪些内容？"
-    answer: "官方 Schema 定义的全部结构（必填字段、允许的字段、值类型、响应与参数的形式），以及 Schema 表达不了的三条规则：文档内的 $ref 必须指向存在的内容，路径里的每个 {name} 都要有对应的 in: path 参数（反之亦然），operationId 不能重复。"
-  - question: "会解析 $ref 吗？"
-    answer: "会解析文档内的引用（#/components/...），指向不存在的内容时报错。./schemas/pet.yaml、https://... 这类外部引用列在「未检查」下，工具不会去获取文件。"
-  - question: "API 规范会发送到服务器吗？"
-    answer: "不会。验证在浏览器中进行。首次点击时从本站加载校验代码与三份 Schema，你的文档不会上传。"
+  - question: "支持哪些版本？"
+    answer: "Swagger 2.0 与 OpenAPI 3.0、3.1、3.2。工具读取 swagger 或 openapi 字段，按对应版本的官方 JSON Schema 校验：Swagger 2.0 用 OpenAPI Initiative 仓库里的 schema，3.0（2024-10-18）、3.1（2026-08-03）、3.2（2026-08-30）用 spec.openapis.org 发布的版本。"
+  - question: "文档会上传吗？"
+    answer: "不会。解析和全部检查都在浏览器的 Web Worker 里完成。$ref 指向的网址不会被下载，在「其他文件」里添加的文件也只留在本页。"
+  - question: "$ref 引用了别的文件，能一起检查吗？"
+    answer: "能。可以一次打开多个文件或整个文件夹，也可以在「其他文件」里手动添加，文件名写成 $ref 里的路径（例如 schemas/pet.yaml）。引用会跨文件解析，问题标在原文所在的文件和行。没有提供的文件和网址引用列为提示。"
+  - question: "错误和警告有什么区别？"
+    answer: "错误违反了规范的 MUST 或官方 schema，其他工具可能会拒收文档；警告是 SHOULD 规则和常见失误，例如示例与 schema 不符、组件没有被引用、服务器变量没有定义；提示列出没有检查的内容。"
+  - question: "springdoc 生成的文档里 type 写成了列表，为什么报错？"
+    answer: "OpenAPI 3.0 的 type 只能是一个字符串，可为空要写 nullable: true；type: [string, \"null\"] 是 OpenAPI 3.1 的写法。把 openapi 字段改成 3.1.x 也要同时检查其他 3.0 写法。"
 ---
 
-<h2>在线 OpenAPI 验证器</h2>
-<p>粘贴 YAML 或 JSON 格式的 OpenAPI 3.0、3.1 或 3.2 文档，在交给 API 网关、SDK 生成器或文档工具之前先检查一遍。工具按 <code>openapi</code> 字段选择对应的官方 JSON Schema，用 Ajv 校验，再补上 Schema 本身做不到的检查。</p>
+<p>把 Swagger 或 OpenAPI 文档粘贴进来，或打开文件、拖入整个文件夹。工具按版本选用官方 JSON Schema 校验结构，跨文件解析 <code>$ref</code>，再补上 schema 表达不了的规则。每条问题都带行号和列号，点一下就在编辑框里选中那一行。</p>
 
-<h2>使用方法</h2>
+<h2>使用步骤</h2>
 <ol>
-  <li>把 OpenAPI 规范（YAML 或 JSON）粘贴到编辑框。</li>
-  <li>点击<strong>验证</strong>或按 <kbd>Ctrl</kbd>+<kbd>Enter</kbd>。</li>
-  <li>有效时，摘要面板显示 API 名称、版本、OpenAPI 版本、路径数和接口数。</li>
-  <li>无效时，逐条列出错误，位置写成 JSON Pointer（与 <code>$ref</code> 的写法相同）。</li>
-  <li>工具没有跟进的引用列在<strong>未检查</strong>下。</li>
+  <li>粘贴 YAML 或 JSON，或点「打开文件」「打开文件夹」，也可以直接把文件拖到工具上。多个文件时，含 <code>openapi</code> 或 <code>swagger</code> 字段的文件作为主文档。</li>
+  <li>2 MB 以内的内容边输入边校验；更大的内容点「校验」或按 <kbd>Ctrl</kbd>+<kbd>Enter</kbd>。</li>
+  <li>结果分为错误、警告、提示三级，可以按级别筛选，也可以把整份结果复制成制表符分隔的文本，贴进工单或代码评审。</li>
+  <li>如果某个 <code>$ref</code> 需要的文件还没添加，结果下方会出现「添加 …」按钮，点击后粘贴内容即可。</li>
 </ol>
 
-<h2>校验器检查什么</h2>
-<ul>
-  <li><strong>结构</strong>：按 <a href="https://spec.openapis.org/" target="_blank" rel="noopener">spec.openapis.org</a> 发布的官方 Schema 校验，3.0（Schema 2024-10-18）、3.1（2026-08-03）、3.2（2026-08-30）。包括必填与未知字段、值类型、参数、响应、安全方案等的形式。以 <code>x-</code> 开头的字段在规范允许扩展的位置都可以使用。</li>
-  <li><strong>文档内的 <code>$ref</code></strong>：<code>#/components/schemas/User</code> 必须在文档中存在。指针中的 <code>~1</code>、<code>~0</code> 与百分号编码会先解码。<code>example</code>、<code>default</code> 和 Example 对象的 <code>value</code> 里的 <code>$ref</code> 属于数据，不检查。</li>
-  <li><strong>路径参数</strong>：路径里的每个 <code>&#123;name&#125;</code> 都要在 Path Item 或接口上有 <code>in: path</code> 参数，每个 <code>in: path</code> 参数也必须出现在路径中（规范的 Path Templating 一节）。</li>
-  <li><strong>operationId</strong> 在 <code>paths</code> 与 <code>webhooks</code> 中不能重复。</li>
-</ul>
+<h2>示例一：swag 生成的 Swagger 2.0</h2>
+<p>Gin 项目常用 <a href="https://github.com/swaggo/swag" target="_blank" rel="noopener">swaggo/swag</a> 从注释生成文档，它的 README 写明输出是 Swagger 2.0。下面是按 swag 输出格式写的一份 <code>docs/swagger.yaml</code>：路由写的是 <code>{'{accountId}'}</code>，注释里的 <code>@Param</code> 却叫 <code>id</code>；处理函数加了 <code>@Security ApiKeyAuth</code>，<code>main.go</code> 里漏写了对应的 <code>@securityDefinitions.apikey</code>。</p>
 
-<p>有三处错误的输入：</p>
-
-{/* ov: {"errors": ["#/info Missing required field \"version\".", "#/paths Path \"orders/{id}\" must start with \"/\".", "#/paths/orders~1{id}/get GET orders/{id}: path parameter \"id\" is not declared (add a parameter with in: path, name: id)."]} */}
-
-<pre><code>{`openapi: 3.0.3
+{/* ov */}
+<pre><code>{`basePath: /api/v1
+definitions:
+  model.Account:
+    properties:
+      id:
+        example: 1
+        type: integer
+      name:
+        example: 张三
+        type: string
+    type: object
 info:
-  title: Orders API
+  contact: {}
+  title: 账户服务 API
+  version: "1.0"
 paths:
-  orders/{id}:
+  /accounts/{accountId}:
     get:
-      summary: Get one order
-  /orders:
-    post:
+      parameters:
+      - description: 账户 ID
+        in: path
+        name: id
+        required: true
+        type: integer
       responses:
-        "201":
-          description: Created`}</code></pre>
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Account'
+      security:
+      - ApiKeyAuth: []
+      summary: 查询账户
+swagger: "2.0"`}</code></pre>
 
-<p>报告的错误：</p>
+{/* ov-out */}
+<pre><code>{`18:5  错误  GET /accounts/{accountId}：路径参数 "accountId" 没有声明。请添加 in: path、name: accountId 的参数。
+18:5  错误  GET /accounts/{accountId}：参数 "id" 写了 in: path，但路径里没有 {id}。
+31:9  错误  安全方案 "ApiKeyAuth" 没有在 securityDefinitions 中声明。
+33:1  提示  Swagger 2.0 文档，已按 Swagger 2.0 的 schema 校验。如需迁移到 OpenAPI 3，可先转换（例如 npx swagger2openapi swagger.yaml -o openapi.yaml），再校验转换结果。`}</code></pre>
 
-<pre><code>{`#/info
-    Missing required field "version".
-#/paths
-    Path "orders/{id}" must start with "/".
-#/paths/orders~1{id}/get
-    GET orders/{id}: path parameter "id" is not declared (add a parameter with in: path, name: id).`}</code></pre>
+<p>这三处错误单靠 Swagger 2.0 的官方 schema 都查不出来：schema 只管字段的形状，不会把参数名和路径模板对照，也不会去 <code>securityDefinitions</code> 里找名字。</p>
 
-<p><code>get</code> 接口也缺少 <code>responses</code>，但它所在的路径键本身无效，Schema 不会再往里检查。改正报告的错误后再验证一次即可看到。</p>
+<h2>示例二：springdoc 输出的 3.0 文档里混进了 3.1 写法</h2>
+<p>Spring Boot 项目用 <a href="https://springdoc.org/" target="_blank" rel="noopener">springdoc-openapi</a> 时，文档默认在 <code>/v3/api-docs</code>（YAML 在 <code>/v3/api-docs.yaml</code>）。导出后手工改过的文件常见两类问题：在 <code>openapi: 3.0.x</code> 里写 3.1 的类型列表，示例值的类型与 schema 不一致。</p>
 
-<p>引用了不存在的 Schema，且路径参数未声明：</p>
-
-{/* ov: {"errors": ["#/paths/~1users~1{id}/get/responses/200/content/application~1json/schema/$ref Reference \"#/components/schemas/User\" does not point to anything in this document.", "#/paths/~1users~1{id}/get GET /users/{id}: path parameter \"id\" is not declared (add a parameter with in: path, name: id)."]} */}
-
-<pre><code>{`openapi: 3.0.3
+{/* ov */}
+<pre><code>{`openapi: 3.0.1
 info:
-  title: Broken refs
-  version: 1.0.0
+  title: 订单服务
+  version: v1
 paths:
-  /users/{id}:
+  /orders:
     get:
       responses:
         "200":
@@ -79,56 +87,81 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"`}</code></pre>
+                $ref: "#/components/schemas/Order"
+components:
+  schemas:
+    Order:
+      type: object
+      properties:
+        remark:
+          type: [string, "null"]
+        amount:
+          type: number
+          example: "¥19.90"`}</code></pre>
 
-<pre><code>{`#/paths/~1users~1{id}/get/responses/200/content/application~1json/schema/$ref
-    Reference "#/components/schemas/User" does not point to anything in this document.
-#/paths/~1users~1{id}/get
-    GET /users/{id}: path parameter "id" is not declared (add a parameter with in: path, name: id).`}</code></pre>
+{/* ov-out */}
+<pre><code>{`21:11  错误  OpenAPI 3.0 不允许把 type 写成列表。请写单个类型并加 nullable: true；[string, "null"] 这类写法要 OpenAPI 3.1。
+24:11  警告  示例与 schema 不符：类型应为 number。`}</code></pre>
 
-<p>只有 <code>webhooks</code> 的 3.1 文档是有效的：OpenAPI 3.1 要求 <code>paths</code>、<code>components</code>、<code>webhooks</code> 至少有一个（<a href="https://spec.openapis.org/oas/v3.1.0#openapi-object" target="_blank" rel="noopener">OpenAPI 3.1.0 §4.8.1</a>），<code>responses</code> 也可以省略：</p>
+<h2>示例三：3.1 文档的服务器变量与重复路径</h2>
+<p>下面的 <code>version</code> 没加引号，YAML 1.2 把它读成字符串，所以不报错。真正的问题是变量默认值不在 <code>enum</code> 里（3.1 规定 MUST），以及两条只差参数名的路径。</p>
 
-{/* ov: {"errors": []} */}
-
+{/* ov */}
 <pre><code>{`openapi: 3.1.0
 info:
-  title: Order events
-  version: 1.0.0
-webhooks:
-  orderCreated:
-    post:
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object`}</code></pre>
-
-<h2>它不检查什么</h2>
-
-<p>外部引用只列出，不获取。下面的文档判为有效，「未检查」下列出一条：</p>
-
-{/* ov: {"errors": []} */}
-
-<pre><code>{`openapi: 3.0.3
-info:
-  title: Pets
-  version: 1.0.0
+  title: 门店 API
+  version: 2026-10-02
+servers:
+  - url: https://{env}.api.example.cn/v1
+    variables:
+      env:
+        default: prod
+        enum: [test, pre]
 paths:
-  /pets:
+  /stores/{storeId}:
     get:
+      parameters:
+        - {name: storeId, in: path, required: true, schema: {type: string}}
       responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "./schemas/pet.yaml"`}</code></pre>
+        "200": {description: OK}
+  /stores/{id}:
+    delete:
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "204": {description: 已删除}`}</code></pre>
 
+{/* ov-out */}
+<pre><code>{`9:9  错误  变量 "env" 的默认值 "prod" 不在 enum 中。
+18:3  错误  路径 "/stores/{id}" 与 "/stores/{storeId}" 是同一个模板（只有参数名不同），规范不允许两者并存。`}</code></pre>
+
+<h2>检查项与依据</h2>
+<table>
+  <thead><tr><th>检查</th><th>级别</th><th>依据</th></tr></thead>
+  <tbody>
+    <tr><td>字段是否必填、是否允许、类型与结构</td><td>错误</td><td>各版本官方 JSON Schema</td></tr>
+    <tr><td>3.1 / 3.2 的 Schema Object（如属性上的 <code>required: true</code>）</td><td>错误</td><td>JSON Schema 2020-12 元 schema</td></tr>
+    <tr><td><code>$ref</code> 能找到目标（含其他文件）</td><td>错误</td><td>Reference Object</td></tr>
+    <tr><td>路径模板与 <code>in: path</code> 参数一一对应、只差参数名的路径、重复参数、重复 operationId 与标签名</td><td>错误</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#paths-object" target="_blank" rel="noopener">Paths Object</a>、<a href="https://spec.openapis.org/oas/v3.1.1.html#parameter-object" target="_blank" rel="noopener">Parameter Object</a> 中的 MUST</td></tr>
+    <tr><td>安全需求引用的方案已声明</td><td>错误</td><td><a href="https://spec.openapis.org/oas/v3.1.1.html#security-requirement-object" target="_blank" rel="noopener">Security Requirement Object</a></td></tr>
+    <tr><td>服务器变量默认值在 enum 内</td><td>3.1 起为错误，3.0 为警告</td><td>3.0.4 写 SHOULD，3.1.1 写 MUST</td></tr>
+    <tr><td>示例与 schema 一致、组件未被引用、变量未定义或未使用、路径里带查询串、3.1 里的 <code>nullable</code></td><td>警告</td><td>规范的 SHOULD 与 Redocly、Spectral 也会报的常见失误</td></tr>
+  </tbody>
+</table>
+
+<h2>与其他工具的差异</h2>
+<p>2026-10-02 我们用同一份测试文档（含未声明的路径参数、未声明的安全方案、两条等价路径、属性上的 <code>required: true</code>，<code>info.version</code> 是不带引号的日期）对比了几款工具：</p>
 <ul>
-  <li>官方 Schema 不细查 Schema 对象的内容（3.1、3.2 的 Schema 只要求是对象或布尔值），Schema 里拼错的关键字不会报出。</li>
-  <li>除上面三条外，只写在正文里的规则不检查。示例值不按其 Schema 校验，安全需求也不与安全方案对照。</li>
-  <li>命名、描述、标签等风格规则请用 <a href="https://redocly.com/docs/cli/commands/lint" target="_blank" rel="noopener">Redocly CLI</a> 或 <a href="https://github.com/stoplightio/spectral" target="_blank" rel="noopener">Spectral</a> 之类的 linter。</li>
-  <li>YAML 语法错误由 YAML 解析器先报出；<a href="/zh/tools/yaml-validator/">YAML 验证器</a>会给出行号。</li>
+  <li>命令行的 Redocly CLI 2.57.0 与 Spectral 6.17.0 都找出了四处问题，另外还有大量风格规则；swagger-parser 13.1.0 判为有效。</li>
+  <li>Elysia Tools 的 OpenAPI / Swagger 校验器把文档 POST 到 <code>api.elysiatools.com</code>，只报了一条「info.version 必须是非空字符串」，这是把日期读成时间戳造成的误报。</li>
+  <li>AppKits 的 Swagger/OpenAPI 校验工具在本地运行，同样误报 <code>/info/version</code>；把日期加上引号后显示「验证通过，0 个错误」，四处问题都没有发现。</li>
 </ul>
 
-<p>OpenAPI Initiative 的 <a href="https://github.com/OAI/learn.openapis.org/tree/main/examples" target="_blank" rel="noopener">learn.openapis.org 示例</a>中的全部 11 份文档（petstore、uspto、tictactoe、3.2 query 示例等）验证结果均为无错误。</p>
+<h2>限制</h2>
+<ul>
+  <li>不做命名、描述等风格检查，团队规则请在本工具之后跑 Redocly CLI 或 Spectral。</li>
+  <li>不下载 <code>$ref</code> 里的网址，请把文件添加进来；锚点引用（<code>#name</code>）不检查。</li>
+  <li>非 JSON 媒体类型（如 <code>application/xml</code>）的字符串示例视为序列化后的原文，不与 schema 比对。</li>
+  <li>超大文档的示例检查 4 秒后停止并给出提示；超过 2 MB 的内容需点「校验」，文件合计超过 50 MB 不载入。</li>
+</ul>
+<p>相关工具：用 <a href="/zh/tools/openapi-to-typescript/">OpenAPI 转 TypeScript 生成器</a>生成类型，用 <a href="/zh/tools/json-schema-validator/">JSON Schema 验证器</a>检查请求体，用 <a href="/zh/tools/yaml-validator/">YAML 语法验证器</a>定位缩进错误。</p>

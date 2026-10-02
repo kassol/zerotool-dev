@@ -1,127 +1,152 @@
 ---
-seoTitle: "Protobuf to JSON Converter — Free Online | ZeroTool"
-seoDescription: "Convert Protocol Buffers schema to sample JSON, or decode Protobuf binary data to JSON. Supports proto3 syntax, nested messages, and enums. Browser-based, no data sent to server."
+seoTitle: "Protobuf to JSON Decoder, With or Without .proto | ZeroTool"
+seoDescription: "Decode Protobuf bytes to JSON with or without a .proto file. Hex, Base64 or gRPC frames in; ProtoJSON out with int64 and Timestamp intact. Encode JSON back too."
 faqItems:
-  - question: "What is Protocol Buffers (Protobuf)?"
-    answer: "Protocol Buffers is Google's language-neutral, platform-neutral mechanism for serializing structured data — think of it as a faster, smaller alternative to JSON or XML. You define your data structure once in a .proto file, then use generated code to read and write that data."
-  - question: "Is my data sent to a server?"
-    answer: "No. All parsing and decoding happens entirely in your browser using the protobufjs library. Your schema and binary data never leave your machine."
-  - question: "What is Schema → Sample JSON mode?"
-    answer: "Paste a .proto schema, select a message type, and the tool generates a sample JSON object with default values — empty strings, zero numbers, and empty arrays. Useful for understanding the structure of a message without having real data."
-  - question: "What formats does Binary → JSON accept?"
-    answer: "The tool accepts both hexadecimal (e.g. 0a 05 41 6c 69 63 65) and Base64-encoded Protobuf binary data. Whitespace and colons between hex pairs are ignored."
+  - question: "Do I need the .proto file to decode Protobuf?"
+    answer: "No. Leave the schema box empty and the tool decodes the wire format like protoc --decode_raw: you get field numbers, numbers, strings and nested messages. Field names, enum names, signed and 64-bit types and well-known types such as Timestamp need the .proto, because the bytes do not carry them."
   - question: "Why are int64 values shown as strings?"
-    answer: "The proto3 JSON mapping writes int64, uint64, sint64, fixed64 and sfixed64 as decimal strings, because a JSON number read into JavaScript is exact only up to 2^53. The page loads long.js together with protobuf.js, so values above 2^53 keep every digit: 18446744073709551615 decodes to the string 18446744073709551615. int32 and uint32 stay JSON numbers."
-  - question: "Which proto syntax is supported?"
-    answer: "proto3 is the primary target. Basic proto2 syntax is also handled by the underlying protobufjs library, but proto3 is recommended."
+    answer: "The ProtoJSON format writes int64, uint64, sint64, fixed64 and sfixed64 as decimal strings, because JavaScript reads JSON numbers as doubles and loses digits above 2^53. The tool decodes 64-bit fields with BigInt, so 9007199254740993 stays 9007199254740993."
+  - question: "Why is a field missing from the JSON output?"
+    answer: "ProtoJSON leaves out proto3 fields that hold their default value (0, empty string, false, first enum value) unless they are optional or in a oneof. Turn on Show fields with default values to print them. Fields whose numbers are not in the schema cannot appear in ProtoJSON at all; the Notes list each one with its byte offset."
+  - question: "How do I decode a gRPC or gRPC-Web payload?"
+    answer: "Paste it as captured. With gRPC frame set to Auto, the tool removes the 5-byte header of each message, decodes every message in the body, shows gRPC-Web trailers in the notes and gunzips frames whose compressed flag is set. grpc-web-text bodies are Base64 and can be pasted directly."
+  - question: "Is my data uploaded?"
+    answer: "No. Parsing, decoding and encoding run in your browser. The page stores only your option choices, not the schema, the bytes or the JSON."
 ---
 
-<h2>How to Use</h2>
-<h3>Schema → Sample JSON (default mode)</h3>
-<ol>
-  <li>Paste your <code>.proto</code> schema in the left panel.</li>
-  <li>The tool auto-detects all message types and populates the dropdown.</li>
-  <li>Select a message type and click <strong>Generate JSON</strong>.</li>
-  <li>A sample JSON with default field values appears on the right.</li>
-</ol>
+## How to Use
 
-<h3>Binary → JSON mode</h3>
-<ol>
-  <li>Switch to the <strong>Binary → JSON</strong> mode using the toggle.</li>
-  <li>Paste your <code>.proto</code> schema in the top textarea.</li>
-  <li>Paste your encoded binary data (hex or base64) in the second textarea.</li>
-  <li>Select the message type and click <strong>Decode Binary</strong>.</li>
-</ol>
+1. Paste the Protobuf bytes into **Protobuf bytes**. Hex, Base64 (standard or URL-safe), a Python bytes literal such as `b'\n\x05Alice'`, a protoc-style octal string or a list like `[10, 5, 65]` all work; **Format: Auto** picks one and says which in the status line. **Open file** loads a binary `.bin` or `.pb` file up to 2 MB.
+2. Paste the `.proto` file into **.proto schema**. If it imports other files of your own, add them with **Add .proto files**; the `google/protobuf/*.proto` well-known types are built in.
+3. Pick the **Message type**. The tool preselects the first type that no other type uses as a field, which is usually the top-level message. Choose **No schema (raw decode)** to see the bytes without names.
+4. The JSON appears as you type. **JSON → Binary** turns ProtoJSON back into bytes, and **Sample JSON** prints every field of a type with a placeholder value.
 
-## Proto3 Syntax Quick Reference
+## Example: an Order Message
 
-```proto
-syntax = "proto3";
+The example loaded on this page is an `Order` from a small shop schema with an `int64` id above 2^53, a `google.protobuf.Timestamp` and a `map<string, string>`. Decoded as `shop.v1.Order`, the 76 bytes give:
 
-package myapp;
-
-message User {
-  string id = 1;
-  string name = 2;
-  int32 age = 3;
-  repeated string roles = 4;
-  Address address = 5;
-  UserStatus status = 6;
-}
-
-message Address {
-  string street = 1;
-  string city = 2;
-  string country_code = 3;
-}
-
-enum UserStatus {
-  UNKNOWN = 0;
-  ACTIVE = 1;
-  INACTIVE = 2;
-}
-```
-
-<h2>Field Types Reference</h2>
-<ul>
-  <li><strong>Scalar types:</strong> <code>double</code>, <code>float</code>, <code>int32</code>, <code>int64</code>, <code>uint32</code>, <code>uint64</code>, <code>bool</code>, <code>string</code>, <code>bytes</code></li>
-  <li><strong>Repeated fields:</strong> prefix any field with <code>repeated</code> — maps to JSON arrays</li>
-  <li><strong>Nested messages:</strong> use another message type as a field type</li>
-  <li><strong>Enums:</strong> define with <code>enum</code>, first value must be 0</li>
-  <li><strong>oneof:</strong> only one field in a group can be set at a time</li>
-</ul>
-
-<h2>Privacy</h2>
-<p>All processing is client-side. Your schema and binary data are never uploaded or stored.</p>
-
-## Example: Decode a Binary Message
-
-With the default `demo.Person` schema loaded, switch to **Binary → JSON** and paste this hex (44 bytes):
-
-```
-0a 05 41 6c 69 63 65 10 1e 1a 11 61 6c 69 63 65 40 65 78 61 6d 70 6c 65 2e 63 6f 6d 22 0c 12 06 41 75 73 74 69 6e 1a 02 55 53 28 01
-```
-
-Output:
-
+{/* pbj-check: {"schema": "example", "input": "example", "type": "shop.v1.Order"} */}
 ```json
 {
-  "name": "Alice",
-  "age": 30,
-  "emails": [
-    "alice@example.com"
+  "orderId": "9007199254740993",
+  "customerName": "Ada Lovelace",
+  "items": [
+    {
+      "sku": "BK-1843",
+      "quantity": 2,
+      "unitPrice": 19.99
+    }
   ],
-  "address": {
-    "city": "Austin",
-    "country": "US"
-  },
-  "status": "ACTIVE"
+  "status": "STATUS_PAID",
+  "createdAt": "2026-10-01T08:30:00.250Z",
+  "labels": {
+    "channel": "web"
+  }
 }
 ```
 
-The same bytes as Base64 (`CgVBbGljZRAeGhFhbGljZUBleGFtcGxlLmNvbSIMEgZBdXN0aW4aAlVTKAE=`) give the same result. `address.street` is missing because it is not in the binary: decoded output lists only the fields that were sent. In **Schema → Sample JSON** mode the same schema gives `{"emails": [], "name": "", "age": 0, "address": null, "status": "UNKNOWN"}`.
+Each line follows the [ProtoJSON format](https://protobuf.dev/programming-guides/json/): `order_id` becomes `orderId`, the 64-bit id is a string, the enum is its name, the Timestamp is an RFC 3339 string in UTC with 3 fraction digits, and the map is a JSON object. `Number(9007199254740993)` in JavaScript is `9007199254740992`, because [`Number.MAX_SAFE_INTEGER`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER) is 2^53 − 1; that is why the format uses strings.
 
-## How the Output Differs From the Official JSON Mapping
+## Example: No .proto at Hand
 
-The [ProtoJSON format](https://protobuf.dev/programming-guides/json/) that `protoc`-generated code prints differs from this tool's output in a few places (tool: protobuf.js 8.0.1, checked in the browser build the page loads):
+With **No schema (raw decode)** the same bytes print with field numbers. The **protoc --decode_raw** view gives exactly what `protoc --decode_raw` prints:
 
-| Case | Official ProtoJSON | This tool |
-|---|---|---|
-| Field names | lowerCamelCase (`country_code` → `countryCode`); parsers accept both | Names as written in the `.proto` (`country_code`) |
-| `int64` / `uint64` / `sint64` / `fixed64` / `sfixed64` | Decimal string | Decimal string at full precision (`"9007199254740993"`, `"18446744073709551615"`); sample mode shows `"0"` |
-| Enum | Name (`"ACTIVE"`) | Name; a number the schema does not define stays a number (`7`) |
-| `bytes` | Standard Base64 | Standard Base64 |
-| `map<K, V>` | JSON object | JSON object |
-| Nested message in sample mode | — | `null`; select the nested type in the dropdown to see its fields |
+{/* pbj-check: {"input": "example", "raw": "protoc"} */}
+```text
+1: 9007199254740993
+2: "Ada Lovelace"
+3 {
+  1: "BK-1843"
+  2: 2
+  3: 0x4033fd70a3d70a3d
+}
+4: 1
+5 {
+  1: 1790843400
+  2: 250000000
+}
+6 {
+  1: "channel"
+  2: "web"
+}
+```
 
-## Decoding Captured gRPC Payloads
+`0x4033fd70a3d70a3d` is the 64-bit pattern of the double 19.99, and `5 { 1: 1790843400 2: 250000000 }` is the Timestamp's seconds and nanos. **JSON with other readings** shows each number as its other possible types (sint64, sfixed64, double, float), so you can tell a signed field from an unsigned one. Note that protoc prefers a nested message over a string: the two bytes `hi` read as field 13 with value 105. The JSON views show readable text as a string instead.
 
-gRPC sends each message with a 5-byte prefix: a 1-byte compressed flag and a 4-byte big-endian length ([gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)). Remove those 5 bytes before pasting, and decompress the message first if the flag is `01`. If the server has reflection enabled, `grpcurl` can call it and print JSON without any `.proto` file.
+## Example: A gRPC-Web Response
+
+A `application/grpc-web-text` response is Base64 of the gRPC frames, the last one carrying the trailers. Copied from the browser's network panel, this body:
+
+```text
+AAAAAEwIgYCAgICAgBASDEFkYSBMb3ZlbGFjZRoUCgdCSy0xODQzEAIZPQrXo3D9M0AgASoLCIi0+NUGEIDlmncyDgoHY2hhbm5lbBIDd2VigAAAAB5ncnBjLXN0YXR1czowDQpncnBjLW1lc3NhZ2U6DQo=
+```
+
+decodes to the same order. The tool removes the 5-byte header (flag and big-endian length, as in [gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)), and lists `grpc-status:0` from the trailers frame, whose flag has its top bit set ([gRPC-Web](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-WEB.md)), in the notes:
+
+{/* pbj-check: {"schema": "example", "input": "AAAAAEwIgYCAgICAgBASDEFkYSBMb3ZlbGFjZRoUCgdCSy0xODQzEAIZPQrXo3D9M0AgASoLCIi0+NUGEIDlmncyDgoHY2hhbm5lbBIDd2VigAAAAB5ncnBjLXN0YXR1czowDQpncnBjLW1lc3NhZ2U6DQo=", "type": "shop.v1.Order", "opts": {"protoNames": true}} */}
+```json
+{
+  "order_id": "9007199254740993",
+  "customer_name": "Ada Lovelace",
+  "items": [
+    {
+      "sku": "BK-1843",
+      "quantity": 2,
+      "unit_price": 19.99
+    }
+  ],
+  "status": "STATUS_PAID",
+  "created_at": "2026-10-01T08:30:00.250Z",
+  "labels": {
+    "channel": "web"
+  }
+}
+```
+
+This run used **Field names: As in .proto**. A streaming response with several messages prints as a JSON array.
+
+## Example: JSON Back to Bytes
+
+In **JSON → Binary**, this ProtoJSON (note the `+09:00` offset, which ProtoJSON allows on input):
+
+```json
+{"orderId": "42", "customerName": "Ada", "status": "STATUS_SHIPPED", "createdAt": "2026-10-01T17:30:00+09:00"}
+```
+
+encodes to 17 bytes, the same as `protoc --encode=shop.v1.Order` for that message:
+
+{/* pbj-check: {"schema": "example", "mode": "encode", "type": "shop.v1.Order", "json": "{\"orderId\": \"42\", \"customerName\": \"Ada\", \"status\": \"STATUS_SHIPPED\", \"createdAt\": \"2026-10-01T17:30:00+09:00\"}"} */}
+```text
+08 2a 12 03 41 64 61 20 02 2a 06 08 88 b4 f8 d5 06
+```
+
+Both `orderId` and `order_id` are accepted, and so are enum numbers and int64 as JSON numbers. Mistakes are reported with the line and column: `"status": "PAID"` is rejected as not a value of `shop.v1.Status`, followed by the valid names, and a misspelled key such as `customer_Name` gets a *Did you mean “customerName”?* hint. **Add gRPC frame** prefixes the 5-byte header, and the output can be hex, Base64, a Python bytes literal or a C array, or downloaded as a `.bin` file.
+
+## What the Output Follows
+
+The decoder and encoder were checked on 140 random messages against protoc 36.2 and Python protobuf 7.36.2 `json_format`, including proto2 groups and extensions and edition 2023 features (139 match; the one Python rejects, the tool rejects too):
+
+| Data | JSON |
+|---|---|
+| int64, uint64, sint64, fixed64, sfixed64 | decimal string |
+| float, double | number; `"NaN"`, `"Infinity"`, `"-Infinity"`; floats print the shortest form (`0.1`, not `0.10000000149011612`) |
+| bytes | standard Base64 |
+| enum | name; a number the schema does not define stays a number |
+| Timestamp, Duration, FieldMask | `"2026-10-01T08:30:00Z"`, `"1.5s"`, `"user.displayName"` |
+| Struct, Value, ListValue, wrappers | plain JSON values |
+| Any | `"@type"` plus the fields, or `"value"` for a well-known type |
+| default values | left out for proto3 fields without presence |
+
+## How It Differs From Other Online Decoders
+
+Tested on 2026-10-02 with the order above. egohero.com and codertools.net use a .proto: with the Timestamp import, egohero stops with *no such Type or Enum 'google.protobuf.Timestamp'* and codertools lists no message types; with the Timestamp field removed, both print `"order_id": "9007199254740992"` (one less than the real id) and snake_case names. jsontotable.org in Base64 Binary mode printed `"id": 123` and a name that is not in the input; only `"originalLength": 76` was right. pawitp's Protobuf Decoder reads the bytes without a schema, strips the gRPC header and shows sint and double readings, but takes no .proto. None of them sent the input to a server.
 
 ## Limits
 
-- **The schema must be self-contained.** `import` lines are not fetched: a field of type `google.protobuf.Timestamp` with only the import line fails with `no such Type or Enum 'google.protobuf.Timestamp'`. Paste the imported messages into the same box. Well-known types pasted this way are shown as plain messages (`{"seconds": "1695427584"}`), not as the RFC 3339 string of the official mapping.
-- **The binary carries no type name.** Decoding with the wrong message type often succeeds and shows wrong fields: the `Customer` bytes `0a 05 41 6c 69 63 65` decoded as `Order` give `{"order_id": "Alice"}`. Check that the fields make sense.
-- **Truncated input fails** with an error such as `index out of range: 2 + 16 > 3`.
-- **Hex or Base64 is detected automatically**: input made only of hex digits with an even length is read as hex, anything else as Base64. A Base64 string that happens to contain only hex digits is misread as hex; convert such input to hex first.
-- **Sample mode shows defaults only**: empty strings, zeros, empty arrays and maps, the first enum value, and `null` for nested messages. `oneof` fields do not appear.
+- **Schemas are `.proto` source.** A compiled descriptor set (`protoc --descriptor_set_out`) or text-format messages cannot be loaded. Bundled imports are `any`, `duration`, `empty`, `field_mask`, `struct`, `timestamp` and `wrappers`; other imports, such as `google/api/annotations.proto`, must be added if a type comes from them. Custom options that extend `descriptor.proto` are ignored, since options do not change the bytes.
+- **Unknown fields are not in the JSON.** ProtoJSON has no place for them; the notes list each with its field number, wire type and byte offset, and suggest message types that decode the bytes without any.
+- **Wrong type, valid output.** Bytes carry no type name, so decoding with the wrong message often succeeds with odd values. Check the notes for unknown fields.
+- **Nesting depth is 100** and opened files are limited to 2 MB. Compressed gRPC frames are gunzipped; other `grpc-encoding` values are not supported.
+- **proto2 and editions** (2023, 2024) are supported for groups, required fields, closed enums, extensions (`"[pkg.ext]"`), field presence, packed and expanded repeated fields and delimited messages. A proto3 `string` that is not valid UTF-8 is an error with its byte offset; use `bytes` for binary data.
+
+Related: inspect captured traffic in the [HAR Analyzer & Viewer](/tools/har-file-analyzer/), convert payloads with [Base64 Encode / Decode](/tools/base64/), and validate JSON with the [JSON Schema Validator](/tools/json-schema-validator/).

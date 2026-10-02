@@ -1,626 +1,3213 @@
 ---
-// ProtobufToJsonTool — Protobuf schema/binary → JSON converter using protobufjs
+// ProtobufToJsonTool — decodes Protobuf bytes to ProtoJSON (protobuf.dev/programming-guides/json)
+// with or without a .proto schema, encodes ProtoJSON back to bytes, and prints a sample JSON
+// for a message type. protobuf.js (public/vendor/protobuf.min.js) only parses the .proto text
+// into reflection objects; the wire decoder, the ProtoJSON printer and parser, and the encoder
+// are the engine block below, so 64-bit values use BigInt and every error carries a byte offset
+// or a JSON line and column. Inputs are not stored or sent; ztPersist keeps only the options.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    modeDecode: 'Binary → JSON',
+    modeEncode: 'JSON → Binary',
+    modeSample: 'Sample JSON',
+    modesAria: 'Mode',
+    example: 'Example',
+    clear: 'Clear',
+    bytesLabel: 'Protobuf bytes',
+    bytesPh: 'Hex (0a 05 41 6c 69 63 65), Base64 (CgVBbGljZQ==), an escaped string (b\'\\n\\x05Alice\') or a byte list ([10, 5, 65])',
+    openBin: 'Open file',
+    jsonLabel: 'ProtoJSON',
+    jsonPh: '{ "orderId": "42", "customerName": "Ada" }',
+    fmtLabel: 'Format',
+    fmtAuto: 'Auto',
+    fmtHex: 'Hex',
+    fmtBase64: 'Base64',
+    fmtEscaped: 'Escaped string',
+    fmtDecimal: 'Byte list',
+    grpcLabel: 'gRPC frame',
+    grpcAuto: 'Auto',
+    grpcYes: 'Yes',
+    grpcNo: 'No',
+    typeLabel: 'Message type',
+    typeRaw: 'No schema (raw decode)',
+    typeNone: '— add a .proto schema —',
+    runDecode: 'Decode',
+    runEncode: 'Encode',
+    runSample: 'Generate',
+    outLabel: 'Output',
+    copy: 'Copy',
+    copied: 'Copied!',
+    copyFailed: 'Copy failed. Select the text and copy it by hand.',
+    download: 'Download .bin',
+    useAsInput: 'Edit and encode',
+    optNames: 'Field names',
+    optNamesJson: 'lowerCamelCase (ProtoJSON)',
+    optNamesProto: 'As in .proto',
+    optDefaults: 'Show fields with default values',
+    optEnumNum: 'Enums as numbers',
+    optIndent: 'Indent',
+    optIndentNone: 'Compact',
+    optRawView: 'Raw view',
+    optRawJson: 'JSON',
+    optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON with other readings',
+    optIgnoreUnknown: 'Ignore unknown fields',
+    optOutFmt: 'Output',
+    optFrame: 'Add gRPC frame',
+    schemaLabel: '.proto schema',
+    schemaHintDecode: 'Optional for decoding: without it, fields show as numbers.',
+    schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
+    addProto: 'Add .proto files',
+    extraFiles: 'Imported files',
+    removeFile: 'Remove {name}',
+    mainFile: 'main.proto',
+    wktNote: 'google/protobuf/*.proto well-known types are built in.',
+    notesTitle: 'Notes',
+    st: {
+      decoded: 'Decoded {n} bytes as {type} ({fmt}).',
+      decodedRaw: 'Decoded {n} bytes without a schema ({fmt}).',
+      decodedFrames: 'Decoded {count} gRPC messages as {type}.',
+      encoded: 'Encoded {type}: {n} bytes.',
+      sampled: 'Sample JSON for {type}.',
+      empty: 'Paste Protobuf bytes, or open a binary file.',
+      emptyJson: 'Paste ProtoJSON to encode.',
+      needSchema: 'Encoding needs a .proto schema and a message type.',
+      needSchemaSample: 'Paste a .proto schema to list its message types.',
+      noTypes: 'The schema has no message types.',
+      error: 'Error',
+    },
+    fmtName: { hex: 'hex', base64: 'Base64', escaped: 'escaped string', decimal: 'byte list', file: 'file' },
+    wire: { 0: 'varint', 1: '64-bit', 2: 'length-delimited', 3: 'start group', 4: 'end group', 5: '32-bit' },
+    err: {
+      hexOdd: 'Hex input has an odd number of digits ({n}). Each byte needs two digits.',
+      hexChar: '“{ch}” at line {line}, column {col} is not a hex digit.',
+      hexToken: '“{tok}” at line {line}, column {col} is not a byte written as 0x00–0xFF.',
+      b64Char: '“{ch}” at line {line}, column {col} is not a Base64 character.',
+      b64Mixed: 'The Base64 text mixes the standard (+ /) and URL-safe (- _) alphabets.',
+      b64Length: '{n} Base64 characters cannot be decoded: a group of 4 can end with 2 or 3 characters, never 1.',
+      b64Pad: 'The “=” padding is too long or not at the end.',
+      escUnknown: 'Unknown escape “\\{ch}” at line {line}, column {col}.',
+      escBad: 'The escape at line {line}, column {col} is incomplete or above 255.',
+      escQuote: 'The string is not closed: add the closing quote.',
+      decToken: '“{tok}” at line {line}, column {col} is not a byte value (-128 to 255).',
+      fileTooBig: '{name} is {size} bytes; files up to 2 MB can be opened.',
+      grpcBad: 'Not a sequence of gRPC frames: the frame at byte {offset} declares {len} bytes, but {have} remain.',
+      grpcFlags: 'Byte {offset}: {flag} is not a gRPC frame flag (00, 01, 80 or 81).',
+      grpcCompressed: 'The gRPC frame at byte {offset} is compressed (flag 01) and could not be gunzipped: {detail}',
+      truncVarint: 'Byte {offset}: the input ends inside a varint.',
+      longVarint: 'Byte {offset}: a varint is longer than 10 bytes.',
+      lenOverrun: 'Byte {offset}: length {len} runs past the end of the enclosing message ({avail} bytes left).',
+      truncFixed: 'Byte {offset}: a fixed-size value needs {need} bytes, but only {avail} are left.',
+      fieldZero: 'Byte {offset}: field number 0 does not exist. The bytes may not be Protobuf, may start at the wrong offset, or may still carry a frame header.',
+      wireType: 'Byte {offset}: wire type {wt} does not exist (field {num}).',
+      endGroup: 'Byte {offset}: end-group tag for field {num} without a matching start.',
+      groupOpen: 'Group field {num} is still open at byte {offset}.',
+      tooDeep: 'Byte {offset}: messages are nested more than 100 levels deep.',
+      badUtf8: 'Byte {offset}: string field {path} is not valid UTF-8, which {syntax} requires. Binary data belongs in a bytes field.',
+      tsRange: '{path}: Timestamp seconds {value} is outside 0001-01-01 to 9999-12-31.',
+      nanosRange: '{path}: nanos {value} is outside the allowed range.',
+      durationRange: '{path}: Duration seconds {value} is outside ±315,576,000,000.',
+      durationSign: '{path}: Duration seconds and nanos have different signs.',
+      fieldMaskPath: '{path}: FieldMask path “{value}” cannot be written in lowerCamelCase JSON.',
+      valueEmpty: '{path}: google.protobuf.Value has no kind set.',
+      valueNonFinite: '{path}: google.protobuf.Value cannot hold {value} in JSON.',
+      schemaSyntax: '{file}, line {line}: {detail}',
+      schemaUnresolved: 'Type “{type}” is not defined{where}.',
+      schemaUnresolvedHint: ' Add the files it imports: {list}.',
+      schemaExtend: 'Extension target not found: {detail}',
+      schemaOther: '{detail}',
+      noType: 'Message type “{type}” is not in the schema.',
+      jsonUnexpected: 'JSON line {line}, column {col}: unexpected “{ch}”.',
+      jsonEnd: 'JSON ends too early (line {line}, column {col}).',
+      jsonNumber: 'JSON line {line}, column {col}: invalid number.',
+      jsonEscape: 'JSON line {line}, column {col}: invalid escape in a string.',
+      jsonControl: 'JSON line {line}, column {col}: control character inside a string; write it as \\n or \\u00XX.',
+      jsonTrailing: 'JSON line {line}, column {col}: extra text after the JSON value.',
+      expectObject: '{path} (line {line}, column {col}): expected a JSON object for {type}.',
+      expectArray: '{path} (line {line}, column {col}): repeated field expects a JSON array.',
+      expectString: '{path} (line {line}, column {col}): expected a JSON string.',
+      expectBool: '{path} (line {line}, column {col}): expected true or false.',
+      expectNumber: '{path} (line {line}, column {col}): expected a number or a numeric string.',
+      notInteger: '{path} (line {line}, column {col}): {value} is not an integer.',
+      intRange: '{path} (line {line}, column {col}): {value} is outside the {type} range ({min} to {max}).',
+      floatRange: '{path} (line {line}, column {col}): {value} is outside the {type} range.',
+      badBase64: '{path} (line {line}, column {col}): bytes field is not valid Base64.',
+      badEnum: '{path} (line {line}, column {col}): “{value}” is not a value of {enum}. Values: {list}.',
+      enumUnknownNumber: '{path} (line {line}, column {col}): {value} is not defined in closed enum {enum}.',
+      badMapKey: '{path} (line {line}, column {col}): map key “{value}” is not a valid {type}.',
+      unknownField: '{path} (line {line}, column {col}): {type} has no field “{name}”.{hint}',
+      unknownFieldHint: ' Did you mean “{name}”?',
+      dupField: '{path} (line {line}, column {col}): field “{name}” is set twice (also as “{other}”).',
+      oneofTwice: '{path} (line {line}, column {col}): oneof {oneof} already has “{other}”; set only one of its fields.',
+      nullInArray: '{path} (line {line}, column {col}): null is not allowed inside a repeated field.',
+      nullInMap: '{path} (line {line}, column {col}): null is not allowed as a map value.',
+      loneSurrogate: '{path} (line {line}, column {col}): the string has an unpaired surrogate (\\uD800–\\uDFFF), which is not valid UTF-8.',
+      badTimestamp: '{path} (line {line}, column {col}): “{value}” is not an RFC 3339 timestamp such as 2026-10-01T08:30:00Z.',
+      badDuration: '{path} (line {line}, column {col}): “{value}” is not a duration such as 1.5s or -0.25s.',
+      badFieldMask: '{path} (line {line}, column {col}): FieldMask path “{value}” must be lowerCamelCase without “_”.',
+      anyNoType: '{path} (line {line}, column {col}): an Any object needs "@type".',
+      anyUnknownType: '{path} (line {line}, column {col}): Any type “{value}” is not in the schema.',
+      topNull: 'The JSON value is null; a message needs an object.',
+    },
+    note: {
+      ambiguousHex: 'Read as hex. The same text is also valid Base64; choose Base64 under Format if that is what it is.',
+      grpcFrames: 'Removed gRPC framing: {count} message(s), each with a 5-byte header (flag + length).',
+      grpcTrailers: 'gRPC-Web trailers: {text}',
+      grpcGunzip: 'Message {i} was gzip-compressed (flag 01) and has been decompressed.',
+      unknownField: '{path}: field {num} ({wire}, {len} bytes) at byte {offset} is not in the schema. ProtoJSON has no place for unknown fields, so the output leaves it out.',
+      wireMismatch: '{path}: field {num} “{name}” arrived as {got}, but the schema says {exp}. It was kept as an unknown field.',
+      closedEnum: '{path}: {value} is not a value of closed enum {enum}, so it is kept as an unknown field (proto2 rule).',
+      requiredMissing: '{path} is required (proto2) but missing.',
+      utf8Lenient: '{path}: not valid UTF-8; shown with U+FFFD replacement characters ({syntax} does not check UTF-8).',
+      anyUnknown: '{path}: Any type “{url}” is not in the schema, so its value is shown as Base64 (not valid ProtoJSON). Add the .proto that defines it.',
+      importMissing: 'import "{path}" in {from} is not loaded. Add it with “Add .proto files” if a type comes from it.',
+      optionExtDropped: '{n} custom option extension(s) ignored: google/protobuf/descriptor.proto is not loaded, and options do not change the wire format.',
+      betterTypes: 'Types that decode these bytes with no unknown fields: {list}.',
+      sampleOneof: 'oneof {name}: the sample sets {used}. Other choices: {others}.',
+      valuePrecision: '{path}: google.protobuf.Value stores numbers as double, so {value} becomes {stored}.',
+      ignoredField: '{path}: unknown field “{name}” ignored.',
+      rawHint: 'Decoded without a schema, so fields are numbered. Paste the .proto and pick a message type to get names, enums and 64-bit types.',
+      rawStrings: 'Raw JSON: length-delimited values that are readable text are shown as strings, others as nested objects when they parse as a message, otherwise as "base64:…". protoc --decode_raw prefers nested messages.',
+      more: '{n} more notes not shown.',
+    },
+  },
+  zh: {
+    modeDecode: '二进制 → JSON',
+    modeEncode: 'JSON → 二进制',
+    modeSample: '示例 JSON',
+    modesAria: '模式',
+    example: '示例',
+    clear: '清空',
+    bytesLabel: 'Protobuf 字节',
+    bytesPh: '十六进制（0a 05 41 6c 69 63 65）、Base64（CgVBbGljZQ==）、转义字符串（b\'\\n\\x05Alice\'）或字节列表（[10, 5, 65]）',
+    openBin: '打开文件',
+    jsonLabel: 'ProtoJSON',
+    jsonPh: '{ "orderId": "42", "customerName": "Ada" }',
+    fmtLabel: '格式',
+    fmtAuto: '自动',
+    fmtHex: '十六进制',
+    fmtBase64: 'Base64',
+    fmtEscaped: '转义字符串',
+    fmtDecimal: '字节列表',
+    grpcLabel: 'gRPC 帧',
+    grpcAuto: '自动',
+    grpcYes: '有',
+    grpcNo: '无',
+    typeLabel: '消息类型',
+    typeRaw: '不用 Schema（原始解码）',
+    typeNone: '— 先粘贴 .proto Schema —',
+    runDecode: '解码',
+    runEncode: '编码',
+    runSample: '生成',
+    outLabel: '输出',
+    copy: '复制',
+    copied: '已复制！',
+    copyFailed: '复制失败，请手动选中文本复制。',
+    download: '下载 .bin',
+    useAsInput: '编辑后编码',
+    optNames: '字段名',
+    optNamesJson: 'lowerCamelCase（ProtoJSON）',
+    optNamesProto: '与 .proto 相同',
+    optDefaults: '输出默认值字段',
+    optEnumNum: '枚举输出数字',
+    optIndent: '缩进',
+    optIndentNone: '紧凑',
+    optRawView: '原始视图',
+    optRawJson: 'JSON',
+    optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON，附其他解读',
+    optIgnoreUnknown: '忽略未知字段',
+    optOutFmt: '输出',
+    optFrame: '加 gRPC 帧头',
+    schemaLabel: '.proto Schema',
+    schemaHintDecode: '解码时可不填：没有 Schema 时字段显示为编号。',
+    schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
+    addProto: '添加 .proto 文件',
+    extraFiles: '被导入的文件',
+    removeFile: '移除 {name}',
+    mainFile: 'main.proto',
+    wktNote: 'google/protobuf/*.proto 知名类型已内置。',
+    notesTitle: '说明',
+    st: {
+      decoded: '已按 {type} 解码 {n} 字节（{fmt}）。',
+      decodedRaw: '已在没有 Schema 的情况下解码 {n} 字节（{fmt}）。',
+      decodedFrames: '已按 {type} 解码 {count} 条 gRPC 消息。',
+      encoded: '已编码 {type}：{n} 字节。',
+      sampled: '{type} 的示例 JSON。',
+      empty: '粘贴 Protobuf 字节，或打开二进制文件。',
+      emptyJson: '粘贴要编码的 ProtoJSON。',
+      needSchema: '编码需要 .proto Schema 和消息类型。',
+      needSchemaSample: '粘贴 .proto Schema 后会列出其中的消息类型。',
+      noTypes: 'Schema 中没有消息类型。',
+      error: '错误',
+    },
+    fmtName: { hex: '十六进制', base64: 'Base64', escaped: '转义字符串', decimal: '字节列表', file: '文件' },
+    wire: { 0: 'varint', 1: '64 位', 2: '长度前缀', 3: '组开始', 4: '组结束', 5: '32 位' },
+    err: {
+      hexOdd: '十六进制输入有 {n} 个数字，是奇数。每个字节要两位。',
+      hexChar: '第 {line} 行第 {col} 列的“{ch}”不是十六进制数字。',
+      hexToken: '第 {line} 行第 {col} 列的“{tok}”不是 0x00–0xFF 形式的字节。',
+      b64Char: '第 {line} 行第 {col} 列的“{ch}”不是 Base64 字符。',
+      b64Mixed: 'Base64 文本混用了标准字母表（+ /）和 URL 安全字母表（- _）。',
+      b64Length: '{n} 个 Base64 字符无法解码：4 个一组的最后一组只能剩 2 或 3 个字符，不能只剩 1 个。',
+      b64Pad: '“=” 填充过长，或不在末尾。',
+      escUnknown: '第 {line} 行第 {col} 列的转义“\\{ch}”无法识别。',
+      escBad: '第 {line} 行第 {col} 列的转义不完整或超过 255。',
+      escQuote: '字符串没有结束引号。',
+      decToken: '第 {line} 行第 {col} 列的“{tok}”不是字节值（-128 到 255）。',
+      fileTooBig: '{name} 有 {size} 字节，只能打开 2 MB 以内的文件。',
+      grpcBad: '不是 gRPC 帧序列：第 {offset} 字节处的帧声明长度 {len}，但只剩 {have} 字节。',
+      grpcFlags: '第 {offset} 字节：{flag} 不是 gRPC 帧标志（00、01、80 或 81）。',
+      grpcCompressed: '第 {offset} 字节处的 gRPC 帧已压缩（标志 01），gzip 解压失败：{detail}',
+      truncVarint: '第 {offset} 字节：输入在 varint 中间结束。',
+      longVarint: '第 {offset} 字节：varint 超过 10 字节。',
+      lenOverrun: '第 {offset} 字节：长度 {len} 超出所在消息的结尾（只剩 {avail} 字节）。',
+      truncFixed: '第 {offset} 字节：需要 {need} 字节的值，只剩 {avail} 字节。',
+      fieldZero: '第 {offset} 字节：字段号 0 不存在。这些字节可能不是 Protobuf、起始位置不对，或者还带着帧头。',
+      wireType: '第 {offset} 字节：线路类型 {wt} 不存在（字段 {num}）。',
+      endGroup: '第 {offset} 字节：字段 {num} 的组结束标签没有对应的开始标签。',
+      groupOpen: '组字段 {num} 到第 {offset} 字节仍未结束。',
+      tooDeep: '第 {offset} 字节：消息嵌套超过 100 层。',
+      badUtf8: '第 {offset} 字节：字符串字段 {path} 不是合法 UTF-8，而 {syntax} 要求 UTF-8。二进制数据应放在 bytes 字段。',
+      tsRange: '{path}：Timestamp 秒数 {value} 超出 0001-01-01 至 9999-12-31。',
+      nanosRange: '{path}：nanos {value} 超出允许范围。',
+      durationRange: '{path}：Duration 秒数 {value} 超出 ±315,576,000,000。',
+      durationSign: '{path}：Duration 的 seconds 与 nanos 符号不同。',
+      fieldMaskPath: '{path}：FieldMask 路径“{value}”无法写成 lowerCamelCase JSON。',
+      valueEmpty: '{path}：google.protobuf.Value 没有设置任何类型。',
+      valueNonFinite: '{path}：google.protobuf.Value 在 JSON 中不能表示 {value}。',
+      schemaSyntax: '{file} 第 {line} 行：{detail}',
+      schemaUnresolved: '类型“{type}”未定义{where}。',
+      schemaUnresolvedHint: '请添加它导入的文件：{list}。',
+      schemaExtend: '找不到扩展的目标：{detail}',
+      schemaOther: '{detail}',
+      noType: 'Schema 中没有消息类型“{type}”。',
+      jsonUnexpected: 'JSON 第 {line} 行第 {col} 列：意外的“{ch}”。',
+      jsonEnd: 'JSON 提前结束（第 {line} 行第 {col} 列）。',
+      jsonNumber: 'JSON 第 {line} 行第 {col} 列：数字格式不对。',
+      jsonEscape: 'JSON 第 {line} 行第 {col} 列：字符串中的转义不合法。',
+      jsonControl: 'JSON 第 {line} 行第 {col} 列：字符串里有控制字符，请写成 \\n 或 \\u00XX。',
+      jsonTrailing: 'JSON 第 {line} 行第 {col} 列：JSON 值后面还有多余内容。',
+      expectObject: '{path}（第 {line} 行第 {col} 列）：{type} 需要 JSON 对象。',
+      expectArray: '{path}（第 {line} 行第 {col} 列）：repeated 字段需要 JSON 数组。',
+      expectString: '{path}（第 {line} 行第 {col} 列）：需要 JSON 字符串。',
+      expectBool: '{path}（第 {line} 行第 {col} 列）：需要 true 或 false。',
+      expectNumber: '{path}（第 {line} 行第 {col} 列）：需要数字或数字字符串。',
+      notInteger: '{path}（第 {line} 行第 {col} 列）：{value} 不是整数。',
+      intRange: '{path}（第 {line} 行第 {col} 列）：{value} 超出 {type} 范围（{min} 到 {max}）。',
+      floatRange: '{path}（第 {line} 行第 {col} 列）：{value} 超出 {type} 范围。',
+      badBase64: '{path}（第 {line} 行第 {col} 列）：bytes 字段不是合法的 Base64。',
+      badEnum: '{path}（第 {line} 行第 {col} 列）：“{value}”不是 {enum} 的值。可选值：{list}。',
+      enumUnknownNumber: '{path}（第 {line} 行第 {col} 列）：{value} 不在封闭枚举 {enum} 中。',
+      badMapKey: '{path}（第 {line} 行第 {col} 列）：map 键“{value}”不是合法的 {type}。',
+      unknownField: '{path}（第 {line} 行第 {col} 列）：{type} 没有字段“{name}”。{hint}',
+      unknownFieldHint: '是不是“{name}”？',
+      dupField: '{path}（第 {line} 行第 {col} 列）：字段“{name}”重复设置（另一处写作“{other}”）。',
+      oneofTwice: '{path}（第 {line} 行第 {col} 列）：oneof {oneof} 已经设置了“{other}”，只能设置其中一个字段。',
+      nullInArray: '{path}（第 {line} 行第 {col} 列）：repeated 字段里不能有 null。',
+      nullInMap: '{path}（第 {line} 行第 {col} 列）：map 的值不能是 null。',
+      loneSurrogate: '{path}（第 {line} 行第 {col} 列）：字符串含有不成对的代理项（\\uD800–\\uDFFF），不是合法 UTF-8。',
+      badTimestamp: '{path}（第 {line} 行第 {col} 列）：“{value}”不是 RFC 3339 时间戳，例如 2026-10-01T08:30:00Z。',
+      badDuration: '{path}（第 {line} 行第 {col} 列）：“{value}”不是时长，例如 1.5s 或 -0.25s。',
+      badFieldMask: '{path}（第 {line} 行第 {col} 列）：FieldMask 路径“{value}”必须是 lowerCamelCase，不能含“_”。',
+      anyNoType: '{path}（第 {line} 行第 {col} 列）：Any 对象需要 "@type"。',
+      anyUnknownType: '{path}（第 {line} 行第 {col} 列）：Any 类型“{value}”不在 Schema 中。',
+      topNull: 'JSON 值是 null，消息需要对象。',
+    },
+    note: {
+      ambiguousHex: '已按十六进制读取。同样的文本也是合法 Base64；如果它是 Base64，请在“格式”里选 Base64。',
+      grpcFrames: '已去掉 gRPC 分帧：{count} 条消息，每条前有 5 字节帧头（标志 + 长度）。',
+      grpcTrailers: 'gRPC-Web trailers：{text}',
+      grpcGunzip: '第 {i} 条消息经过 gzip 压缩（标志 01），已解压。',
+      unknownField: '{path}：第 {offset} 字节处的字段 {num}（{wire}，{len} 字节）不在 Schema 中。ProtoJSON 无法表示未知字段，输出中没有它。',
+      wireMismatch: '{path}：字段 {num}“{name}”的线路类型是 {got}，Schema 规定为 {exp}，已作为未知字段保留。',
+      closedEnum: '{path}：{value} 不是封闭枚举 {enum} 的值，按 proto2 规则作为未知字段保留。',
+      requiredMissing: '{path} 是 required 字段（proto2），但没有出现。',
+      utf8Lenient: '{path}：不是合法 UTF-8，以 U+FFFD 替换字符显示（{syntax} 不检查 UTF-8）。',
+      anyUnknown: '{path}：Any 类型“{url}”不在 Schema 中，其 value 以 Base64 显示（不是合法 ProtoJSON）。请添加定义它的 .proto。',
+      importMissing: '{from} 中的 import "{path}" 未加载。如果有类型来自它，请用“添加 .proto 文件”加入。',
+      optionExtDropped: '已忽略 {n} 个自定义选项扩展：没有加载 google/protobuf/descriptor.proto，而选项不影响线路格式。',
+      betterTypes: '能把这些字节解码且没有未知字段的类型：{list}。',
+      sampleOneof: 'oneof {name}：示例设置了 {used}，其他可选：{others}。',
+      valuePrecision: '{path}：google.protobuf.Value 以 double 存数字，{value} 会变成 {stored}。',
+      ignoredField: '{path}：已忽略未知字段“{name}”。',
+      rawHint: '没有 Schema，字段以编号显示。粘贴 .proto 并选择消息类型后，可以看到字段名、枚举名和 64 位类型。',
+      rawStrings: '原始 JSON：长度前缀的值如果是可读文本就显示为字符串；否则能按消息解析的显示为嵌套对象，其余显示为 "base64:…"。protoc --decode_raw 优先按嵌套消息显示。',
+      more: '还有 {n} 条说明未显示。',
+    },
+  },
+  ja: {
+    modeDecode: 'バイナリ → JSON',
+    modeEncode: 'JSON → バイナリ',
+    modeSample: 'サンプル JSON',
+    modesAria: 'モード',
+    example: '例',
+    clear: 'クリア',
+    bytesLabel: 'Protobuf のバイト列',
+    bytesPh: '16 進（0a 05 41 6c 69 63 65）、Base64（CgVBbGljZQ==）、エスケープ文字列（b\'\\n\\x05Alice\'）、バイト列（[10, 5, 65]）',
+    openBin: 'ファイルを開く',
+    jsonLabel: 'ProtoJSON',
+    jsonPh: '{ "orderId": "42", "customerName": "Ada" }',
+    fmtLabel: '形式',
+    fmtAuto: '自動',
+    fmtHex: '16 進',
+    fmtBase64: 'Base64',
+    fmtEscaped: 'エスケープ文字列',
+    fmtDecimal: 'バイト列',
+    grpcLabel: 'gRPC フレーム',
+    grpcAuto: '自動',
+    grpcYes: 'あり',
+    grpcNo: 'なし',
+    typeLabel: 'メッセージ型',
+    typeRaw: 'スキーマなし（raw デコード）',
+    typeNone: '— .proto スキーマを貼り付け —',
+    runDecode: 'デコード',
+    runEncode: 'エンコード',
+    runSample: '生成',
+    outLabel: '出力',
+    copy: 'コピー',
+    copied: 'コピーしました',
+    copyFailed: 'コピーできませんでした。テキストを選択して手動でコピーしてください。',
+    download: '.bin を保存',
+    useAsInput: '編集してエンコード',
+    optNames: 'フィールド名',
+    optNamesJson: 'lowerCamelCase（ProtoJSON）',
+    optNamesProto: '.proto のまま',
+    optDefaults: 'デフォルト値のフィールドも出力',
+    optEnumNum: 'enum を数値で出力',
+    optIndent: 'インデント',
+    optIndentNone: 'なし',
+    optRawView: 'raw 表示',
+    optRawJson: 'JSON',
+    optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON（ほかの解釈も表示）',
+    optIgnoreUnknown: '未知のフィールドを無視',
+    optOutFmt: '出力',
+    optFrame: 'gRPC フレームを付ける',
+    schemaLabel: '.proto スキーマ',
+    schemaHintDecode: 'デコードでは省略可。なしの場合はフィールド番号で表示します。',
+    schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
+    addProto: '.proto を追加',
+    extraFiles: 'import されるファイル',
+    removeFile: '{name} を削除',
+    mainFile: 'main.proto',
+    wktNote: 'google/protobuf/*.proto の Well-Known Types は組み込み済みです。',
+    notesTitle: '補足',
+    st: {
+      decoded: '{n} バイトを {type} としてデコードしました（{fmt}）。',
+      decodedRaw: '{n} バイトをスキーマなしでデコードしました（{fmt}）。',
+      decodedFrames: '{count} 件の gRPC メッセージを {type} としてデコードしました。',
+      encoded: '{type} をエンコードしました：{n} バイト。',
+      sampled: '{type} のサンプル JSON です。',
+      empty: 'Protobuf のバイト列を貼り付けるか、バイナリファイルを開いてください。',
+      emptyJson: 'エンコードする ProtoJSON を貼り付けてください。',
+      needSchema: 'エンコードには .proto スキーマとメッセージ型が必要です。',
+      needSchemaSample: '.proto スキーマを貼り付けるとメッセージ型が一覧に出ます。',
+      noTypes: 'スキーマにメッセージ型がありません。',
+      error: 'エラー',
+    },
+    fmtName: { hex: '16 進', base64: 'Base64', escaped: 'エスケープ文字列', decimal: 'バイト列', file: 'ファイル' },
+    wire: { 0: 'varint', 1: '64 ビット', 2: '長さ付き', 3: 'グループ開始', 4: 'グループ終了', 5: '32 ビット' },
+    err: {
+      hexOdd: '16 進の桁数が {n} で奇数です。1 バイトは 2 桁です。',
+      hexChar: '{line} 行 {col} 列の「{ch}」は 16 進の数字ではありません。',
+      hexToken: '{line} 行 {col} 列の「{tok}」は 0x00～0xFF 形式のバイトではありません。',
+      b64Char: '{line} 行 {col} 列の「{ch}」は Base64 の文字ではありません。',
+      b64Mixed: '標準（+ /）と URL セーフ（- _）の Base64 アルファベットが混在しています。',
+      b64Length: 'Base64 の {n} 文字はデコードできません。4 文字単位の最後は 2 文字か 3 文字で、1 文字は余りません。',
+      b64Pad: '「=」のパディングが長すぎるか、末尾にありません。',
+      escUnknown: '{line} 行 {col} 列のエスケープ「\\{ch}」は使えません。',
+      escBad: '{line} 行 {col} 列のエスケープが不完全か、255 を超えています。',
+      escQuote: '文字列の閉じ引用符がありません。',
+      decToken: '{line} 行 {col} 列の「{tok}」はバイト値（-128～255）ではありません。',
+      fileTooBig: '{name} は {size} バイトです。開けるのは 2 MB までです。',
+      grpcBad: 'gRPC フレームの並びではありません。{offset} バイト目のフレームは長さ {len} ですが、残りは {have} バイトです。',
+      grpcFlags: '{offset} バイト目：{flag} は gRPC フレームのフラグ（00、01、80、81）ではありません。',
+      grpcCompressed: '{offset} バイト目の gRPC フレームは圧縮（フラグ 01）されており、gzip で展開できませんでした：{detail}',
+      truncVarint: '{offset} バイト目：varint の途中で入力が終わっています。',
+      longVarint: '{offset} バイト目：varint が 10 バイトを超えています。',
+      lenOverrun: '{offset} バイト目：長さ {len} が親メッセージの終わりを越えています（残り {avail} バイト）。',
+      truncFixed: '{offset} バイト目：{need} バイトの値ですが、残りは {avail} バイトです。',
+      fieldZero: '{offset} バイト目：フィールド番号 0 は存在しません。Protobuf ではないか、開始位置がずれているか、フレームヘッダーが残っている可能性があります。',
+      wireType: '{offset} バイト目：ワイヤタイプ {wt} は存在しません（フィールド {num}）。',
+      endGroup: '{offset} バイト目：フィールド {num} のグループ終了タグに対応する開始がありません。',
+      groupOpen: 'グループフィールド {num} が {offset} バイト目までに閉じていません。',
+      tooDeep: '{offset} バイト目：メッセージの入れ子が 100 段を超えています。',
+      badUtf8: '{offset} バイト目：string フィールド {path} が UTF-8 として正しくありません（{syntax} は UTF-8 を要求します）。バイナリは bytes フィールドに入れます。',
+      tsRange: '{path}：Timestamp の秒 {value} が 0001-01-01～9999-12-31 の範囲外です。',
+      nanosRange: '{path}：nanos {value} が範囲外です。',
+      durationRange: '{path}：Duration の秒 {value} が ±315,576,000,000 の範囲外です。',
+      durationSign: '{path}：Duration の seconds と nanos の符号が違います。',
+      fieldMaskPath: '{path}：FieldMask のパス「{value}」は lowerCamelCase の JSON にできません。',
+      valueEmpty: '{path}：google.protobuf.Value に値の種類が設定されていません。',
+      valueNonFinite: '{path}：google.protobuf.Value は JSON で {value} を表せません。',
+      schemaSyntax: '{file} {line} 行：{detail}',
+      schemaUnresolved: '型「{type}」が定義されていません{where}。',
+      schemaUnresolvedHint: ' import しているファイルを追加してください：{list}。',
+      schemaExtend: '拡張対象が見つかりません：{detail}',
+      schemaOther: '{detail}',
+      noType: 'メッセージ型「{type}」はスキーマにありません。',
+      jsonUnexpected: 'JSON {line} 行 {col} 列：「{ch}」は予期しない文字です。',
+      jsonEnd: 'JSON が途中で終わっています（{line} 行 {col} 列）。',
+      jsonNumber: 'JSON {line} 行 {col} 列：数値の書き方が正しくありません。',
+      jsonEscape: 'JSON {line} 行 {col} 列：文字列内のエスケープが正しくありません。',
+      jsonControl: 'JSON {line} 行 {col} 列：文字列に制御文字があります。\\n や \\u00XX と書いてください。',
+      jsonTrailing: 'JSON {line} 行 {col} 列：JSON の値の後に余分な文字があります。',
+      expectObject: '{path}（{line} 行 {col} 列）：{type} には JSON オブジェクトが必要です。',
+      expectArray: '{path}（{line} 行 {col} 列）：repeated フィールドには JSON 配列が必要です。',
+      expectString: '{path}（{line} 行 {col} 列）：JSON 文字列が必要です。',
+      expectBool: '{path}（{line} 行 {col} 列）：true か false が必要です。',
+      expectNumber: '{path}（{line} 行 {col} 列）：数値か数値の文字列が必要です。',
+      notInteger: '{path}（{line} 行 {col} 列）：{value} は整数ではありません。',
+      intRange: '{path}（{line} 行 {col} 列）：{value} は {type} の範囲（{min}～{max}）外です。',
+      floatRange: '{path}（{line} 行 {col} 列）：{value} は {type} の範囲外です。',
+      badBase64: '{path}（{line} 行 {col} 列）：bytes フィールドが正しい Base64 ではありません。',
+      badEnum: '{path}（{line} 行 {col} 列）：「{value}」は {enum} の値ではありません。値：{list}。',
+      enumUnknownNumber: '{path}（{line} 行 {col} 列）：{value} は closed enum {enum} に定義されていません。',
+      badMapKey: '{path}（{line} 行 {col} 列）：map のキー「{value}」は {type} として正しくありません。',
+      unknownField: '{path}（{line} 行 {col} 列）：{type} にフィールド「{name}」はありません。{hint}',
+      unknownFieldHint: '「{name}」のことですか？',
+      dupField: '{path}（{line} 行 {col} 列）：フィールド「{name}」が 2 回指定されています（もう一方は「{other}」）。',
+      oneofTwice: '{path}（{line} 行 {col} 列）：oneof {oneof} には「{other}」が設定済みです。どれか 1 つだけにしてください。',
+      nullInArray: '{path}（{line} 行 {col} 列）：repeated フィールドの要素に null は使えません。',
+      nullInMap: '{path}（{line} 行 {col} 列）：map の値に null は使えません。',
+      loneSurrogate: '{path}（{line} 行 {col} 列）：対になっていないサロゲート（\\uD800～\\uDFFF）があり、UTF-8 にできません。',
+      badTimestamp: '{path}（{line} 行 {col} 列）：「{value}」は 2026-10-01T08:30:00Z のような RFC 3339 のタイムスタンプではありません。',
+      badDuration: '{path}（{line} 行 {col} 列）：「{value}」は 1.5s や -0.25s のような期間ではありません。',
+      badFieldMask: '{path}（{line} 行 {col} 列）：FieldMask のパス「{value}」は「_」を含まない lowerCamelCase で書きます。',
+      anyNoType: '{path}（{line} 行 {col} 列）：Any のオブジェクトには "@type" が必要です。',
+      anyUnknownType: '{path}（{line} 行 {col} 列）：Any の型「{value}」はスキーマにありません。',
+      topNull: 'JSON の値が null です。メッセージにはオブジェクトが必要です。',
+    },
+    note: {
+      ambiguousHex: '16 進として読みました。同じ文字列は Base64 としても正しいので、Base64 なら「形式」で Base64 を選んでください。',
+      grpcFrames: 'gRPC のフレームを外しました：{count} 件、各 5 バイトのヘッダー（フラグ + 長さ）。',
+      grpcTrailers: 'gRPC-Web trailers：{text}',
+      grpcGunzip: '{i} 件目のメッセージは gzip 圧縮（フラグ 01）だったので展開しました。',
+      unknownField: '{path}：{offset} バイト目のフィールド {num}（{wire}、{len} バイト）はスキーマにありません。ProtoJSON には未知のフィールドを書く場所がないため、出力には含めていません。',
+      wireMismatch: '{path}：フィールド {num}「{name}」が {got} で届きましたが、スキーマでは {exp} です。未知のフィールドとして残しました。',
+      closedEnum: '{path}：{value} は closed enum {enum} の値ではないため、proto2 の規則で未知のフィールドとして残しました。',
+      requiredMissing: '{path} は required（proto2）ですが、ありません。',
+      utf8Lenient: '{path}：UTF-8 として正しくないため、U+FFFD の置換文字で表示しています（{syntax} は UTF-8 を検査しません）。',
+      anyUnknown: '{path}：Any の型「{url}」がスキーマにないため、value を Base64 のまま表示しています（正しい ProtoJSON ではありません）。定義している .proto を追加してください。',
+      importMissing: '{from} の import "{path}" が読み込まれていません。そこから型を使う場合は「.proto を追加」で入れてください。',
+      optionExtDropped: 'カスタムオプションの拡張 {n} 件を無視しました。google/protobuf/descriptor.proto がなく、オプションはワイヤ形式に影響しません。',
+      betterTypes: 'このバイト列を未知のフィールドなしでデコードできる型：{list}。',
+      sampleOneof: 'oneof {name}：サンプルは {used} を設定しています。ほかの候補：{others}。',
+      valuePrecision: '{path}：google.protobuf.Value は数値を double で持つため、{value} は {stored} になります。',
+      ignoredField: '{path}：未知のフィールド「{name}」を無視しました。',
+      rawHint: 'スキーマなしでデコードしたため、フィールドは番号で表示しています。.proto を貼り付けて型を選ぶと、名前・enum・64 ビット型が分かります。',
+      rawStrings: 'raw JSON：長さ付きの値は、読める文字列なら文字列、メッセージとして読めるなら入れ子のオブジェクト、どちらでもなければ "base64:…" で表示します。protoc --decode_raw は入れ子のメッセージを優先します。',
+      more: 'ほかに {n} 件あります（表示省略）。',
+    },
+  },
+  ko: {
+    modeDecode: '바이너리 → JSON',
+    modeEncode: 'JSON → 바이너리',
+    modeSample: '샘플 JSON',
+    modesAria: '모드',
+    example: '예제',
+    clear: '지우기',
+    bytesLabel: 'Protobuf 바이트',
+    bytesPh: '16진수(0a 05 41 6c 69 63 65), Base64(CgVBbGljZQ==), 이스케이프 문자열(b\'\\n\\x05Alice\'), 바이트 목록([10, 5, 65])',
+    openBin: '파일 열기',
+    jsonLabel: 'ProtoJSON',
+    jsonPh: '{ "orderId": "42", "customerName": "Ada" }',
+    fmtLabel: '형식',
+    fmtAuto: '자동',
+    fmtHex: '16진수',
+    fmtBase64: 'Base64',
+    fmtEscaped: '이스케이프 문자열',
+    fmtDecimal: '바이트 목록',
+    grpcLabel: 'gRPC 프레임',
+    grpcAuto: '자동',
+    grpcYes: '있음',
+    grpcNo: '없음',
+    typeLabel: '메시지 타입',
+    typeRaw: '스키마 없음(raw 디코딩)',
+    typeNone: '— .proto 스키마를 붙여넣으세요 —',
+    runDecode: '디코딩',
+    runEncode: '인코딩',
+    runSample: '생성',
+    outLabel: '출력',
+    copy: '복사',
+    copied: '복사됨!',
+    copyFailed: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.',
+    download: '.bin 다운로드',
+    useAsInput: '편집 후 인코딩',
+    optNames: '필드 이름',
+    optNamesJson: 'lowerCamelCase(ProtoJSON)',
+    optNamesProto: '.proto 그대로',
+    optDefaults: '기본값 필드도 출력',
+    optEnumNum: 'enum을 숫자로',
+    optIndent: '들여쓰기',
+    optIndentNone: '압축',
+    optRawView: 'raw 보기',
+    optRawJson: 'JSON',
+    optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON(다른 해석 포함)',
+    optIgnoreUnknown: '알 수 없는 필드 무시',
+    optOutFmt: '출력',
+    optFrame: 'gRPC 프레임 추가',
+    schemaLabel: '.proto 스키마',
+    schemaHintDecode: '디코딩에는 선택 사항입니다. 없으면 필드가 번호로 표시됩니다.',
+    schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
+    addProto: '.proto 파일 추가',
+    extraFiles: 'import되는 파일',
+    removeFile: '{name} 제거',
+    mainFile: 'main.proto',
+    wktNote: 'google/protobuf/*.proto 잘 알려진 타입(WKT)은 내장되어 있습니다.',
+    notesTitle: '참고',
+    st: {
+      decoded: '{n}바이트를 {type}(으)로 디코딩했습니다({fmt}).',
+      decodedRaw: '{n}바이트를 스키마 없이 디코딩했습니다({fmt}).',
+      decodedFrames: 'gRPC 메시지 {count}개를 {type}(으)로 디코딩했습니다.',
+      encoded: '{type} 인코딩 완료: {n}바이트.',
+      sampled: '{type}의 샘플 JSON입니다.',
+      empty: 'Protobuf 바이트를 붙여넣거나 바이너리 파일을 여세요.',
+      emptyJson: '인코딩할 ProtoJSON을 붙여넣으세요.',
+      needSchema: '인코딩하려면 .proto 스키마와 메시지 타입이 필요합니다.',
+      needSchemaSample: '.proto 스키마를 붙여넣으면 메시지 타입 목록이 나타납니다.',
+      noTypes: '스키마에 메시지 타입이 없습니다.',
+      error: '오류',
+    },
+    fmtName: { hex: '16진수', base64: 'Base64', escaped: '이스케이프 문자열', decimal: '바이트 목록', file: '파일' },
+    wire: { 0: 'varint', 1: '64비트', 2: '길이 접두', 3: '그룹 시작', 4: '그룹 끝', 5: '32비트' },
+    err: {
+      hexOdd: '16진수 자릿수가 {n}개로 홀수입니다. 1바이트는 두 자리입니다.',
+      hexChar: '{line}행 {col}열의 “{ch}”는 16진수 숫자가 아닙니다.',
+      hexToken: '{line}행 {col}열의 “{tok}”는 0x00–0xFF 형식의 바이트가 아닙니다.',
+      b64Char: '{line}행 {col}열의 “{ch}”는 Base64 문자가 아닙니다.',
+      b64Mixed: '표준(+ /)과 URL-safe(- _) Base64 문자가 섞여 있습니다.',
+      b64Length: 'Base64 {n}자는 디코딩할 수 없습니다. 4자 묶음의 마지막은 2자나 3자여야 하며 1자만 남을 수 없습니다.',
+      b64Pad: '“=” 패딩이 너무 길거나 끝에 있지 않습니다.',
+      escUnknown: '{line}행 {col}열의 이스케이프 “\\{ch}”를 알 수 없습니다.',
+      escBad: '{line}행 {col}열의 이스케이프가 불완전하거나 255를 넘습니다.',
+      escQuote: '문자열의 닫는 따옴표가 없습니다.',
+      decToken: '{line}행 {col}열의 “{tok}”는 바이트 값(-128~255)이 아닙니다.',
+      fileTooBig: '{name}은(는) {size}바이트입니다. 2MB까지 열 수 있습니다.',
+      grpcBad: 'gRPC 프레임 연속이 아닙니다. {offset}바이트의 프레임은 길이 {len}인데 남은 바이트는 {have}입니다.',
+      grpcFlags: '{offset}바이트: {flag}는 gRPC 프레임 플래그(00, 01, 80, 81)가 아닙니다.',
+      grpcCompressed: '{offset}바이트의 gRPC 프레임은 압축(플래그 01)되어 있으며 gzip 해제에 실패했습니다: {detail}',
+      truncVarint: '{offset}바이트: varint 중간에서 입력이 끝났습니다.',
+      longVarint: '{offset}바이트: varint가 10바이트를 넘습니다.',
+      lenOverrun: '{offset}바이트: 길이 {len}이(가) 바깥 메시지의 끝을 넘습니다(남은 바이트 {avail}).',
+      truncFixed: '{offset}바이트: {need}바이트 값인데 남은 바이트는 {avail}입니다.',
+      fieldZero: '{offset}바이트: 필드 번호 0은 없습니다. Protobuf가 아니거나 시작 위치가 어긋났거나 프레임 헤더가 남아 있을 수 있습니다.',
+      wireType: '{offset}바이트: 와이어 타입 {wt}은(는) 없습니다(필드 {num}).',
+      endGroup: '{offset}바이트: 필드 {num}의 그룹 끝 태그에 맞는 시작 태그가 없습니다.',
+      groupOpen: '그룹 필드 {num}이(가) {offset}바이트까지 닫히지 않았습니다.',
+      tooDeep: '{offset}바이트: 메시지 중첩이 100단계를 넘습니다.',
+      badUtf8: '{offset}바이트: string 필드 {path}가 올바른 UTF-8이 아닙니다({syntax}는 UTF-8을 요구). 바이너리는 bytes 필드에 넣어야 합니다.',
+      tsRange: '{path}: Timestamp 초 {value}이(가) 0001-01-01~9999-12-31 범위를 벗어납니다.',
+      nanosRange: '{path}: nanos {value}이(가) 허용 범위를 벗어납니다.',
+      durationRange: '{path}: Duration 초 {value}이(가) ±315,576,000,000을 벗어납니다.',
+      durationSign: '{path}: Duration의 seconds와 nanos 부호가 다릅니다.',
+      fieldMaskPath: '{path}: FieldMask 경로 “{value}”는 lowerCamelCase JSON으로 쓸 수 없습니다.',
+      valueEmpty: '{path}: google.protobuf.Value에 값 종류가 설정되지 않았습니다.',
+      valueNonFinite: '{path}: google.protobuf.Value는 JSON에서 {value}을(를) 나타낼 수 없습니다.',
+      schemaSyntax: '{file} {line}행: {detail}',
+      schemaUnresolved: '타입 “{type}”이(가) 정의되지 않았습니다{where}.',
+      schemaUnresolvedHint: ' import하는 파일을 추가하세요: {list}.',
+      schemaExtend: '확장 대상을 찾을 수 없습니다: {detail}',
+      schemaOther: '{detail}',
+      noType: '메시지 타입 “{type}”이(가) 스키마에 없습니다.',
+      jsonUnexpected: 'JSON {line}행 {col}열: 예상하지 못한 “{ch}”.',
+      jsonEnd: 'JSON이 중간에 끝났습니다({line}행 {col}열).',
+      jsonNumber: 'JSON {line}행 {col}열: 숫자 형식이 잘못되었습니다.',
+      jsonEscape: 'JSON {line}행 {col}열: 문자열의 이스케이프가 잘못되었습니다.',
+      jsonControl: 'JSON {line}행 {col}열: 문자열에 제어 문자가 있습니다. \\n이나 \\u00XX로 쓰세요.',
+      jsonTrailing: 'JSON {line}행 {col}열: JSON 값 뒤에 불필요한 내용이 있습니다.',
+      expectObject: '{path}({line}행 {col}열): {type}에는 JSON 객체가 필요합니다.',
+      expectArray: '{path}({line}행 {col}열): repeated 필드에는 JSON 배열이 필요합니다.',
+      expectString: '{path}({line}행 {col}열): JSON 문자열이 필요합니다.',
+      expectBool: '{path}({line}행 {col}열): true 또는 false가 필요합니다.',
+      expectNumber: '{path}({line}행 {col}열): 숫자나 숫자 문자열이 필요합니다.',
+      notInteger: '{path}({line}행 {col}열): {value}은(는) 정수가 아닙니다.',
+      intRange: '{path}({line}행 {col}열): {value}이(가) {type} 범위({min}~{max})를 벗어납니다.',
+      floatRange: '{path}({line}행 {col}열): {value}이(가) {type} 범위를 벗어납니다.',
+      badBase64: '{path}({line}행 {col}열): bytes 필드가 올바른 Base64가 아닙니다.',
+      badEnum: '{path}({line}행 {col}열): “{value}”는 {enum}의 값이 아닙니다. 값: {list}.',
+      enumUnknownNumber: '{path}({line}행 {col}열): {value}은(는) closed enum {enum}에 정의되어 있지 않습니다.',
+      badMapKey: '{path}({line}행 {col}열): map 키 “{value}”는 올바른 {type}이(가) 아닙니다.',
+      unknownField: '{path}({line}행 {col}열): {type}에 “{name}” 필드가 없습니다.{hint}',
+      unknownFieldHint: ' “{name}”을(를) 말씀하셨나요?',
+      dupField: '{path}({line}행 {col}열): “{name}” 필드가 두 번 지정되었습니다(다른 쪽은 “{other}”).',
+      oneofTwice: '{path}({line}행 {col}열): oneof {oneof}에는 이미 “{other}”가 있습니다. 하나만 지정하세요.',
+      nullInArray: '{path}({line}행 {col}열): repeated 필드의 요소로 null을 쓸 수 없습니다.',
+      nullInMap: '{path}({line}행 {col}열): map 값으로 null을 쓸 수 없습니다.',
+      loneSurrogate: '{path}({line}행 {col}열): 짝이 없는 서로게이트(\\uD800–\\uDFFF)가 있어 UTF-8이 될 수 없습니다.',
+      badTimestamp: '{path}({line}행 {col}열): “{value}”는 2026-10-01T08:30:00Z 같은 RFC 3339 타임스탬프가 아닙니다.',
+      badDuration: '{path}({line}행 {col}열): “{value}”는 1.5s, -0.25s 같은 기간이 아닙니다.',
+      badFieldMask: '{path}({line}행 {col}열): FieldMask 경로 “{value}”는 “_” 없는 lowerCamelCase여야 합니다.',
+      anyNoType: '{path}({line}행 {col}열): Any 객체에는 "@type"이 필요합니다.',
+      anyUnknownType: '{path}({line}행 {col}열): Any 타입 “{value}”이(가) 스키마에 없습니다.',
+      topNull: 'JSON 값이 null입니다. 메시지에는 객체가 필요합니다.',
+    },
+    note: {
+      ambiguousHex: '16진수로 읽었습니다. 같은 텍스트가 Base64로도 유효하므로 Base64라면 “형식”에서 Base64를 고르세요.',
+      grpcFrames: 'gRPC 프레임을 제거했습니다: 메시지 {count}개, 각각 5바이트 헤더(플래그 + 길이).',
+      grpcTrailers: 'gRPC-Web trailers: {text}',
+      grpcGunzip: '{i}번째 메시지는 gzip 압축(플래그 01)이라 해제했습니다.',
+      unknownField: '{path}: {offset}바이트의 필드 {num}({wire}, {len}바이트)은(는) 스키마에 없습니다. ProtoJSON에는 알 수 없는 필드를 쓸 자리가 없어 출력에서 빠집니다.',
+      wireMismatch: '{path}: 필드 {num} “{name}”이(가) {got}(으)로 왔지만 스키마는 {exp}입니다. 알 수 없는 필드로 남겼습니다.',
+      closedEnum: '{path}: {value}은(는) closed enum {enum}의 값이 아니어서 proto2 규칙에 따라 알 수 없는 필드로 남겼습니다.',
+      requiredMissing: '{path}은(는) required(proto2) 필드인데 없습니다.',
+      utf8Lenient: '{path}: 올바른 UTF-8이 아니어서 U+FFFD 대체 문자로 표시합니다({syntax}는 UTF-8을 검사하지 않음).',
+      anyUnknown: '{path}: Any 타입 “{url}”이(가) 스키마에 없어 value를 Base64로 표시합니다(올바른 ProtoJSON이 아님). 정의된 .proto를 추가하세요.',
+      importMissing: '{from}의 import "{path}"가 로드되지 않았습니다. 여기서 오는 타입이 있으면 “.proto 파일 추가”로 넣으세요.',
+      optionExtDropped: '사용자 정의 옵션 확장 {n}개를 무시했습니다. google/protobuf/descriptor.proto가 없고, 옵션은 와이어 형식을 바꾸지 않습니다.',
+      betterTypes: '이 바이트를 알 수 없는 필드 없이 디코딩하는 타입: {list}.',
+      sampleOneof: 'oneof {name}: 샘플은 {used}를 설정했습니다. 다른 선택지: {others}.',
+      valuePrecision: '{path}: google.protobuf.Value는 숫자를 double로 저장하므로 {value}은(는) {stored}이(가) 됩니다.',
+      ignoredField: '{path}: 알 수 없는 필드 “{name}”을(를) 무시했습니다.',
+      rawHint: '스키마 없이 디코딩해 필드를 번호로 표시합니다. .proto를 붙여넣고 메시지 타입을 고르면 이름, enum, 64비트 타입이 보입니다.',
+      rawStrings: 'raw JSON: 길이 접두 값은 읽을 수 있는 텍스트면 문자열로, 메시지로 파싱되면 중첩 객체로, 둘 다 아니면 "base64:…"로 표시합니다. protoc --decode_raw는 중첩 메시지를 우선합니다.',
+      more: '참고 {n}개를 더 표시하지 않았습니다.',
+    },
+  },
+};
+const L = STRINGS[lang];
+
+const EXAMPLE_SCHEMA = `syntax = "proto3";
+
+package shop.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message Order {
+  int64 order_id = 1;
+  string customer_name = 2;
+  repeated LineItem items = 3;
+  Status status = 4;
+  google.protobuf.Timestamp created_at = 5;
+  map<string, string> labels = 6;
+}
+
+message LineItem {
+  string sku = 1;
+  uint32 quantity = 2;
+  double unit_price = 3;
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_PAID = 1;
+  STATUS_SHIPPED = 2;
+}
+`;
+// protoc --encode=shop.v1.Order of the order in the tool page examples
+const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 6c 61 63 65 1a 14 0a 07 42 4b 2d 31 38 34 33 10 02 19 3d 0a d7 a3 70 fd 33 40 20 01 2a 0b 08 88 b4 f8 d5 06 10 80 e5 9a 77 32 0e 0a 07 63 68 61 6e 6e 65 6c 12 03 77 65 62';
 ---
-<div>
-  {/* long.js first: the protobufjs browser bundle reads window.Long when it loads and
-      needs it to decode 64-bit integers without losing precision */}
+<div class="pbj" id="pbj">
   <script is:inline src="/vendor/long.min.js"></script>
-  {/* Load protobufjs pre-built browser bundle (80KB / ~24KB gzipped) */}
   <script is:inline src="/vendor/protobuf.min.js"></script>
 
-  <div class="pb-wrap">
-    {/* Mode toggle */}
-    <div class="pb-toolbar">
-      <div class="pb-mode-toggle" role="group">
-        <button id="pb-mode-sample" class="pb-mode-btn pb-mode-active" data-i18n="modeSample">Schema → Sample JSON</button>
-        <button id="pb-mode-binary" class="pb-mode-btn" data-i18n="modeBinary">Binary → JSON</button>
+  <div class="pbj-bar">
+    <div class="pbj-modes" role="group" aria-label={L.modesAria}>
+      <button type="button" class="pbj-mode" data-mode="decode" aria-pressed="true">{L.modeDecode}</button>
+      <button type="button" class="pbj-mode" data-mode="encode" aria-pressed="false">{L.modeEncode}</button>
+      <button type="button" class="pbj-mode" data-mode="sample" aria-pressed="false">{L.modeSample}</button>
+    </div>
+    <div class="pbj-bar-actions">
+      <button type="button" id="pbj-example" class="btn-ghost">{L.example}</button>
+      <button type="button" id="pbj-clear" class="btn-ghost">{L.clear}</button>
+    </div>
+  </div>
+
+  <div class="pbj-grid" data-mode="decode">
+    <div class="pbj-input">
+      <div class="pbj-only-decode">
+        <div class="pbj-head pbj-head-in">
+          <label class="tool-label" for="pbj-bytes">{L.bytesLabel}</label>
+        </div>
+        <textarea id="pbj-bytes" class="tool-textarea pbj-ta pbj-ta-bytes" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.bytesPh}></textarea>
       </div>
-      <button id="pb-copy" class="btn-secondary" data-i18n="copy">Copy JSON</button>
-      <button id="pb-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+      <div class="pbj-only-encode">
+        <div class="pbj-head pbj-head-in">
+          <label class="tool-label" for="pbj-json">{L.jsonLabel}</label>
+        </div>
+        <textarea id="pbj-json" class="tool-textarea pbj-ta pbj-ta-json" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.jsonPh}></textarea>
+      </div>
     </div>
 
-    <div class="pb-panes">
-      {/* Left panel */}
-      <div class="pb-left">
-        <div class="pb-field">
-          <label class="pb-label" for="pb-schema" data-i18n="schemaLabel">Proto Schema</label>
-          <textarea
-            id="pb-schema"
-            spellcheck="false"
-            class="pb-textarea pb-schema-ta"
-            data-i18n-ph="schemaPlaceholder"
-            placeholder='syntax = "proto3"; message Person { string name = 1; }'
-          ></textarea>
-        </div>
+    <div class="pbj-inopts">
+      <label class="pbj-opt pbj-only-decode"><span>{L.fmtLabel}</span>
+        <select id="pbj-fmt" class="tool-input pbj-select">
+          <option value="auto">{L.fmtAuto}</option>
+          <option value="hex">{L.fmtHex}</option>
+          <option value="base64">{L.fmtBase64}</option>
+          <option value="escaped">{L.fmtEscaped}</option>
+          <option value="decimal">{L.fmtDecimal}</option>
+        </select>
+      </label>
+      <label class="pbj-opt pbj-only-decode"><span>{L.grpcLabel}</span>
+        <select id="pbj-grpc" class="tool-input pbj-select">
+          <option value="auto">{L.grpcAuto}</option>
+          <option value="yes">{L.grpcYes}</option>
+          <option value="no">{L.grpcNo}</option>
+        </select>
+      </label>
+      <button type="button" id="pbj-open-bin" class="btn-secondary btn-sm pbj-only-decode">{L.openBin}</button>
+      <input type="file" id="pbj-bin-file" class="pbj-file" tabindex="-1" aria-hidden="true" />
+      <label class="pbj-check pbj-only-encode"><input type="checkbox" id="pbj-ignore-unknown" /><span>{L.optIgnoreUnknown}</span></label>
+    </div>
 
-        {/* Binary input (hidden in sample mode) */}
-        <div id="pb-binary-section" class="pb-field pb-hidden">
-          <label class="pb-label" for="pb-binary" data-i18n="binaryLabel">Binary Data (hex or base64)</label>
-          <textarea
-            id="pb-binary"
-            spellcheck="false"
-            class="pb-textarea pb-binary-ta"
-            data-i18n-ph="binaryPlaceholder"
-            placeholder="0a 05 41 6c 69 63 65 10 1e"
-          ></textarea>
-        </div>
-
-        {/* Message type selector */}
-        <div class="pb-field">
-          <label class="pb-label" for="pb-msgtype" data-i18n="msgTypeLabel">Message Type</label>
-          <select id="pb-msgtype" class="pb-select">
-            <option value="" data-i18n="msgTypePlaceholder">— parse schema first —</option>
-          </select>
-        </div>
-
-        <button id="pb-run" class="btn-primary" data-i18n="runBtn">Generate JSON</button>
+    <div class="pbj-run">
+      <label class="tool-label pbj-type-label" for="pbj-type">{L.typeLabel}</label>
+      <div class="pbj-run-row">
+        <select id="pbj-type" class="tool-input pbj-select pbj-type"></select>
+        <button type="button" id="pbj-go" class="btn-primary">{L.runDecode}</button>
       </div>
+    </div>
 
-      {/* Right panel: output */}
-      <div class="pb-right">
-        <div class="pb-field" style="flex:1">
-          <div class="pb-label-row">
-            <span class="pb-label" data-i18n="outputLabel">JSON Output</span>
-            <span id="pb-status" class="pb-status" aria-live="polite"></span>
-          </div>
-          <pre id="pb-output" class="pb-output"><span class="pb-hint" data-i18n="outputHint">JSON output will appear here.</span></pre>
-        </div>
+    <div class="pbj-out">
+      <div class="pbj-head">
+        <span class="tool-label" id="pbj-out-label">{L.outLabel}</span>
+        <button type="button" id="pbj-copy" class="btn-copy">{L.copy}</button>
+      </div>
+      <p id="pbj-status" class="tool-status pbj-status" role="status" aria-live="polite"></p>
+      <pre id="pbj-output" class="pbj-output" tabindex="0" aria-labelledby="pbj-out-label"></pre>
+      <div class="pbj-outopts">
+        <label class="pbj-opt pbj-only-decode pbj-only-typed"><span>{L.optNames}</span>
+          <select id="pbj-names" class="tool-input pbj-select">
+            <option value="json">{L.optNamesJson}</option>
+            <option value="proto">{L.optNamesProto}</option>
+          </select>
+        </label>
+        <label class="pbj-check pbj-only-typed"><input type="checkbox" id="pbj-defaults" /><span>{L.optDefaults}</span></label>
+        <label class="pbj-check pbj-only-typed"><input type="checkbox" id="pbj-enumnum" /><span>{L.optEnumNum}</span></label>
+        <label class="pbj-opt pbj-only-decode pbj-only-raw"><span>{L.optRawView}</span>
+          <select id="pbj-rawview" class="tool-input pbj-select">
+            <option value="json">{L.optRawJson}</option>
+            <option value="readings">{L.optRawReadings}</option>
+            <option value="protoc">{L.optRawProtoc}</option>
+          </select>
+        </label>
+        <label class="pbj-opt pbj-not-encode"><span>{L.optIndent}</span>
+          <select id="pbj-indent" class="tool-input pbj-select">
+            <option value="2">2</option>
+            <option value="4">4</option>
+            <option value="0">{L.optIndentNone}</option>
+          </select>
+        </label>
+        <label class="pbj-opt pbj-only-encode"><span>{L.optOutFmt}</span>
+          <select id="pbj-outfmt" class="tool-input pbj-select">
+            <option value="hex">{L.fmtHex}</option>
+            <option value="base64">{L.fmtBase64}</option>
+            <option value="escaped">{L.fmtEscaped}</option>
+            <option value="carray">C array</option>
+          </select>
+        </label>
+        <label class="pbj-check pbj-only-encode"><input type="checkbox" id="pbj-frame" /><span>{L.optFrame}</span></label>
+        <button type="button" id="pbj-download" class="btn-secondary btn-sm pbj-only-encode">{L.download}</button>
+        <button type="button" id="pbj-use" class="btn-secondary btn-sm pbj-only-sample">{L.useAsInput}</button>
+      </div>
+      <div id="pbj-notes-wrap" class="pbj-notes-wrap" hidden>
+        <p class="pbj-notes-title">{L.notesTitle}</p>
+        <ul id="pbj-notes" class="pbj-notes"></ul>
+      </div>
+    </div>
+
+    <div class="pbj-schema">
+      <div class="pbj-head">
+        <label class="tool-label" for="pbj-schema">{L.schemaLabel}</label>
+        <button type="button" id="pbj-add-proto" class="btn-ghost btn-sm">{L.addProto}</button>
+        <input type="file" id="pbj-proto-files" class="pbj-file" accept=".proto,text/plain" multiple tabindex="-1" aria-hidden="true" />
+      </div>
+      <p class="pbj-hint pbj-only-decode">{L.schemaHintDecode} {L.wktNote}</p>
+      <p class="pbj-hint pbj-not-decode">{L.wktNote}</p>
+      <textarea id="pbj-schema" class="tool-textarea pbj-ta pbj-ta-schema" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.schemaPh}></textarea>
+      <div id="pbj-files-wrap" class="pbj-files-wrap" hidden>
+        <span class="pbj-files-title">{L.extraFiles}</span>
+        <ul id="pbj-files" class="pbj-files"></ul>
       </div>
     </div>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ S: L, EXAMPLE_SCHEMA, EXAMPLE_BYTES }}>
     (function () {
-      var STRINGS = {
-        en: {
-          modeSample: 'Schema → Sample JSON',
-          modeBinary: 'Binary → JSON',
-          copy: 'Copy JSON',
-          clear: 'Clear',
-          copied: 'Copied!',
-          schemaLabel: 'Proto Schema',
-          binaryLabel: 'Binary Data (hex or base64)',
-          msgTypeLabel: 'Message Type',
-          outputLabel: 'JSON Output',
-          runBtn: 'Generate JSON',
-          decodeBtnLabel: 'Decode Binary',
-          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
-          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\nor Base64: CgVBbGljZRAe',
-          msgTypePlaceholder: '— parse schema first —',
-          outputHint: 'JSON output will appear here.',
-          errNoLib: 'protobufjs not loaded.',
-          errNoSchema: 'Paste a .proto schema first.',
-          errNoType: 'Select a message type.',
-          errNoBinary: 'Paste binary data (hex or base64).',
-          errParse: 'Schema error: ',
-          errDecode: 'Decode error: ',
-          statusSample: 'Sample JSON generated',
-          statusDecoded: 'Binary decoded',
-          noMessages: 'No message types found in schema.',
-        },
-        zh: {
-          modeSample: 'Schema → 示例 JSON',
-          modeBinary: '二进制 → JSON',
-          copy: '复制 JSON',
-          clear: '清除',
-          copied: '已复制！',
-          schemaLabel: 'Proto Schema',
-          binaryLabel: '二进制数据（hex 或 base64）',
-          msgTypeLabel: '消息类型',
-          outputLabel: 'JSON 输出',
-          runBtn: '生成 JSON',
-          decodeBtnLabel: '解码二进制',
-          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
-          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\n或 Base64: CgVBbGljZRAe',
-          msgTypePlaceholder: '— 请先解析 Schema —',
-          outputHint: 'JSON 输出将显示在此处。',
-          errNoLib: 'protobufjs 未加载。',
-          errNoSchema: '请先粘贴 .proto Schema。',
-          errNoType: '请选择消息类型。',
-          errNoBinary: '请粘贴二进制数据（hex 或 base64）。',
-          errParse: 'Schema 错误：',
-          errDecode: '解码错误：',
-          statusSample: '示例 JSON 已生成',
-          statusDecoded: '二进制已解码',
-          noMessages: 'Schema 中未找到消息类型。',
-        },
-        ja: {
-          modeSample: 'Schema → サンプルJSON',
-          modeBinary: 'バイナリ → JSON',
-          copy: 'JSONをコピー',
-          clear: 'クリア',
-          copied: 'コピー済み！',
-          schemaLabel: 'Proto Schema',
-          binaryLabel: 'バイナリデータ（hexまたはbase64）',
-          msgTypeLabel: 'メッセージタイプ',
-          outputLabel: 'JSON 出力',
-          runBtn: 'JSONを生成',
-          decodeBtnLabel: 'バイナリをデコード',
-          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
-          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\nまたはBase64: CgVBbGljZRAe',
-          msgTypePlaceholder: '— まずSchemaをパース —',
-          outputHint: 'JSON出力はここに表示されます。',
-          errNoLib: 'protobufjsが読み込まれていません。',
-          errNoSchema: 'まず.proto Schemaを貼り付けてください。',
-          errNoType: 'メッセージタイプを選択してください。',
-          errNoBinary: 'バイナリデータを貼り付けてください。',
-          errParse: 'Schemaエラー：',
-          errDecode: 'デコードエラー：',
-          statusSample: 'サンプルJSON生成完了',
-          statusDecoded: 'バイナリデコード完了',
-          noMessages: 'Schemaにメッセージタイプが見つかりません。',
-        },
-        ko: {
-          modeSample: 'Schema → 샘플 JSON',
-          modeBinary: '바이너리 → JSON',
-          copy: 'JSON 복사',
-          clear: '지우기',
-          copied: '복사됨!',
-          schemaLabel: 'Proto Schema',
-          binaryLabel: '바이너리 데이터 (hex 또는 base64)',
-          msgTypeLabel: '메시지 타입',
-          outputLabel: 'JSON 출력',
-          runBtn: 'JSON 생성',
-          decodeBtnLabel: '바이너리 디코드',
-          schemaPlaceholder: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 age = 2;\n  repeated string emails = 3;\n}',
-          binaryPlaceholder: 'Hex: 0a 05 41 6c 69 63 65 10 1e\n또는 Base64: CgVBbGljZRAe',
-          msgTypePlaceholder: '— 먼저 Schema를 파싱하세요 —',
-          outputHint: 'JSON 출력이 여기에 표시됩니다.',
-          errNoLib: 'protobufjs가 로드되지 않았습니다.',
-          errNoSchema: '먼저 .proto Schema를 붙여넣으세요.',
-          errNoType: '메시지 타입을 선택하세요.',
-          errNoBinary: '바이너리 데이터를 붙여넣으세요.',
-          errParse: 'Schema 오류: ',
-          errDecode: '디코딩 오류: ',
-          statusSample: '샘플 JSON 생성됨',
-          statusDecoded: '바이너리 디코딩됨',
-          noMessages: 'Schema에서 메시지 타입을 찾을 수 없습니다.',
-        }
-      };
-
-      var lang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[lang] || STRINGS.en;
-
-      // Apply i18n
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key] && typeof t[key] === 'string') el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph');
-        if (t[key] && typeof t[key] === 'string') el.placeholder = t[key];
-      });
-      // Update the select placeholder
-      var placeholderOpt = document.querySelector('#pb-msgtype option[value=""]');
-      if (placeholderOpt) placeholderOpt.textContent = t.msgTypePlaceholder;
-      // Update output hint
-      var hint = document.querySelector('.pb-hint');
-      if (hint) hint.textContent = t.outputHint;
-
-      var schemaEl  = document.getElementById('pb-schema');
-      var binaryEl  = document.getElementById('pb-binary');
-      var msgSel    = document.getElementById('pb-msgtype');
-      var runBtn    = document.getElementById('pb-run');
-      var copyBtn   = document.getElementById('pb-copy');
-      var clearBtn  = document.getElementById('pb-clear');
-      var outputEl  = document.getElementById('pb-output');
-      var statusEl  = document.getElementById('pb-status');
-      var binSection = document.getElementById('pb-binary-section');
-      var modeSampleBtn = document.getElementById('pb-mode-sample');
-      var modeBinaryBtn = document.getElementById('pb-mode-binary');
-
-      var mode = 'sample'; // 'sample' | 'binary'
-      var currentRoot = null;
-      var parseTimer = null;
-
-      function setStatus(msg, isErr) {
-        statusEl.textContent = msg;
-        statusEl.className = isErr ? 'pb-status pb-status-err' : 'pb-status pb-status-ok';
-      }
-
-      function escHtml(s) {
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      }
-
-      function syntaxHighlight(json) {
-        return json
-          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-            function(match) {
-              var cls = 'pb-num';
-              if (/^"/.test(match)) {
-                cls = /:$/.test(match) ? 'pb-key' : 'pb-str';
-              } else if (/true|false/.test(match)) {
-                cls = 'pb-bool';
-              } else if (/null/.test(match)) {
-                cls = 'pb-null';
-              }
-              return '<span class="' + cls + '">' + match + '</span>';
-            });
-      }
-
       /* ── engine:start ── */
-      // proto3 JSON mapping (protobuf.dev/programming-guides/json): int64, uint64, sint64,
-      // fixed64 and sfixed64 are decimal strings; enums are names; bytes are Base64.
-      // longs: String prints a full-precision string only when protobuf.util.Long is set,
-      // which the browser build takes from window.Long (/vendor/long.min.js, loaded first).
-      var DECODE_OPTIONS = { defaults: false, longs: String, enums: String, bytes: String };
-      var SAMPLE_OPTIONS = {
-        defaults: true, longs: String, enums: String, bytes: String,
-        arrays: true, objects: true, oneofs: true
+      // Wire format: protobuf.dev/programming-guides/encoding. JSON mapping:
+      // protobuf.dev/programming-guides/json. Errors are thrown as pbErr(code, args); the page
+      // turns the code into a sentence in its own language.
+      function pbErr(code, args) {
+        var e = new Error(code);
+        e.pbCode = code;
+        e.pbArgs = args || {};
+        return e;
+      }
+
+      function lineColOf(text, index) {
+        var line = 1, col = 1;
+        for (var i = 0; i < index && i < text.length; i++) {
+          if (text.charCodeAt(i) === 10) { line++; col = 1; } else col++;
+        }
+        return { line: line, col: col };
+      }
+      function atText(text, index, extra) {
+        var lc = lineColOf(text, index);
+        var o = { line: lc.line, col: lc.col, index: index };
+        if (extra) for (var k in extra) o[k] = extra[k];
+        return o;
+      }
+
+      // ---------- Base64 ----------
+      var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      var B64V = {};
+      for (var bi = 0; bi < 64; bi++) B64V[B64[bi]] = bi;
+      B64V['-'] = 62; B64V['_'] = 63;
+
+      function toBase64(bytes) {
+        var out = '', i = 0, n = bytes.length;
+        for (; i + 2 < n; i += 3) {
+          var v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+          out += B64[v >> 18] + B64[(v >> 12) & 63] + B64[(v >> 6) & 63] + B64[v & 63];
+        }
+        if (i < n) {
+          var w = bytes[i] << 16 | (i + 1 < n ? bytes[i + 1] << 8 : 0);
+          out += B64[w >> 18] + B64[(w >> 12) & 63] + (i + 1 < n ? B64[(w >> 6) & 63] : '=') + '=';
+        }
+        return out;
+      }
+
+      // Standard or URL-safe alphabet, padding optional (RFC 4648 sections 4 and 5).
+      function fromBase64(text, start) {
+        var vals = [], pad = 0, std = false, url = false;
+        for (var i = start || 0; i < text.length; i++) {
+          var c = text[i];
+          if (c === ' ' || c === '\n' || c === '\r' || c === '\t') continue;
+          if (c === '=') { pad++; continue; }
+          if (pad) throw pbErr('b64Pad', {});
+          var v = B64V[c];
+          if (v === undefined) throw pbErr('b64Char', atText(text, i, { ch: c }));
+          if (c === '+' || c === '/') std = true;
+          if (c === '-' || c === '_') url = true;
+          vals.push(v);
+        }
+        if (std && url) throw pbErr('b64Mixed', {});
+        if (vals.length % 4 === 1) throw pbErr('b64Length', { n: vals.length });
+        if (pad > 2 || (pad && (vals.length + pad) % 4 !== 0)) throw pbErr('b64Pad', {});
+        var out = new Uint8Array(Math.floor(vals.length * 3 / 4));
+        var o = 0;
+        for (var j = 0; j < vals.length; j += 4) {
+          var a = vals[j], b = vals[j + 1], c2 = vals[j + 2], d = vals[j + 3];
+          out[o++] = (a << 2) | (b >> 4);
+          if (c2 !== undefined) out[o++] = ((b & 15) << 4) | (c2 >> 2);
+          if (d !== undefined) out[o++] = ((c2 & 3) << 6) | d;
+        }
+        return out;
+      }
+
+      // ---------- byte input ----------
+      function isHexDigit(c) { return /[0-9a-fA-F]/.test(c); }
+
+      function fromHex(text) {
+        var tokens = [], re = /[^\s,{}\[\]();]+/g, m;
+        while ((m = re.exec(text))) tokens.push({ s: m[0], i: m.index });
+        var prefixed = tokens.length > 0 && tokens.every(function (t) { return /^0[xX][0-9a-fA-F]{1,2}$/.test(t.s); });
+        if (prefixed && tokens.length > 1) {
+          return Uint8Array.from(tokens.map(function (t) { return parseInt(t.s.slice(2), 16); }));
+        }
+        var body = text, skipTo = -1;
+        var lead = /^\s*0[xX]/.exec(text);
+        if (lead) skipTo = lead[0].length;
+        var nibbles = [];
+        for (var i = 0; i < body.length; i++) {
+          if (i < skipTo) continue;
+          var c = body[i];
+          if (c === ' ' || c === '\n' || c === '\r' || c === '\t' || c === ':') continue;
+          if (!isHexDigit(c)) throw pbErr('hexChar', atText(text, i, { ch: c }));
+          nibbles.push(parseInt(c, 16));
+        }
+        if (nibbles.length % 2) throw pbErr('hexOdd', { n: nibbles.length });
+        var out = new Uint8Array(nibbles.length / 2);
+        for (var k = 0; k < out.length; k++) out[k] = nibbles[2 * k] * 16 + nibbles[2 * k + 1];
+        return out;
+      }
+
+      function pushUtf8(out, cp) {
+        if (cp < 0x80) out.push(cp);
+        else if (cp < 0x800) out.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
+        else if (cp < 0x10000) out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+        else out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+      }
+
+      // C / Python / protoc text escapes: \n \r \t \v \f \a \b \\ \' \" \? \xHH and octal \ooo.
+      function fromEscaped(text) {
+        var s = text, start = 0, end = text.length;
+        while (start < end && /\s/.test(s[start])) start++;
+        while (end > start && /\s/.test(s[end - 1])) end--;
+        if (s[start] === 'b' && (s[start + 1] === "'" || s[start + 1] === '"')) start++;
+        if (s[start] === "'" || s[start] === '"') {
+          if (end - start < 2 || s[end - 1] !== s[start]) throw pbErr('escQuote', {});
+          start++; end--;
+        }
+        var out = [];
+        var SIMPLE = { n: 10, r: 13, t: 9, v: 11, f: 12, a: 7, b: 8, '\\': 92, "'": 39, '"': 34, '?': 63 };
+        for (var i = start; i < end; i++) {
+          var c = s[i];
+          if (c !== '\\') {
+            var cp = s.codePointAt(i);
+            if (cp > 0xffff) i++;
+            pushUtf8(out, cp);
+            continue;
+          }
+          var at = i;
+          var e = s[++i];
+          if (e === undefined || i >= end) throw pbErr('escBad', atText(text, at));
+          if (SIMPLE[e] !== undefined) { out.push(SIMPLE[e]); continue; }
+          if (e === '\n') continue;
+          if (e === 'x' || e === 'X') {
+            var hx = '';
+            while (hx.length < 2 && i + 1 < end && isHexDigit(s[i + 1])) hx += s[++i];
+            if (!hx) throw pbErr('escBad', atText(text, at));
+            out.push(parseInt(hx, 16));
+            continue;
+          }
+          if (/[0-7]/.test(e)) {
+            var oc = e;
+            while (oc.length < 3 && i + 1 < end && /[0-7]/.test(s[i + 1])) oc += s[++i];
+            var ov = parseInt(oc, 8);
+            if (ov > 255) throw pbErr('escBad', atText(text, at));
+            out.push(ov);
+            continue;
+          }
+          throw pbErr('escUnknown', atText(text, at, { ch: e }));
+        }
+        return Uint8Array.from(out);
+      }
+
+      function fromDecimal(text) {
+        var out = [], re = /[^\s,\[\]{}()]+/g, m;
+        while ((m = re.exec(text))) {
+          if (!/^[-+]?\d+$/.test(m[0])) throw pbErr('decToken', atText(text, m.index, { tok: m[0] }));
+          var v = parseInt(m[0], 10);
+          if (v < -128 || v > 255) throw pbErr('decToken', atText(text, m.index, { tok: m[0] }));
+          out.push(v < 0 ? v + 256 : v);
+        }
+        return Uint8Array.from(out);
+      }
+
+      function detectFormat(text) {
+        var t = text.trim();
+        if (/^data:[^,]*;base64,/i.test(t)) return 'base64';
+        if (/^b?['"]/.test(t) || /\\(x[0-9a-fA-F]|[0-7]|[nrtvfab\\'"])/.test(t)) return 'escaped';
+        if (/[,\[\]{}]/.test(t) && /^[\[{(]?\s*[-+]?\d{1,3}(\s*[,\s]\s*[-+]?\d{1,3})*\s*,?\s*[\]})]?$/.test(t)) return 'decimal';
+        try { fromHex(t); return 'hex'; } catch (e) { /* not hex */ }
+        return 'base64';
+      }
+
+      // Returns { bytes, format, ambiguous }: ambiguous when auto read the text as hex
+      // although it is also valid Base64.
+      function readBytes(text, format) {
+        var fmt = format && format !== 'auto' ? format : detectFormat(text);
+        var bytes;
+        if (fmt === 'hex') bytes = fromHex(text);
+        else if (fmt === 'escaped') bytes = fromEscaped(text);
+        else if (fmt === 'decimal') bytes = fromDecimal(text);
+        else {
+          var dm = /^\s*data:[^,]*;base64,/i.exec(text);
+          bytes = fromBase64(text, dm ? dm[0].length : 0);
+          fmt = 'base64';
+        }
+        var ambiguous = false;
+        if ((!format || format === 'auto') && fmt === 'hex') {
+          var t = text.trim();
+          if (/^[A-Za-z0-9]+$/.test(t) && t.length % 4 === 0) {
+            try { fromBase64(t); ambiguous = true; } catch (e) { /* hex only */ }
+          }
+        }
+        return { bytes: bytes, format: fmt, ambiguous: ambiguous };
+      }
+
+      // ---------- gRPC framing (github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md) ----------
+      // Length-Prefixed-Message: 1-byte flag (bit 0 compressed; gRPC-Web sets bit 7 on the
+      // trailers frame) + 4-byte big-endian length + payload.
+      function splitFrames(bytes, strict) {
+        var p = 0, frames = [];
+        while (p < bytes.length) {
+          var flag = bytes[p];
+          if (flag & 0x7e) {
+            if (strict) throw pbErr('grpcFlags', { offset: p, flag: ('0' + flag.toString(16)).slice(-2) });
+            return null;
+          }
+          if (bytes.length - p < 5) {
+            if (strict) throw pbErr('grpcBad', { offset: p, len: '?', have: bytes.length - p });
+            return null;
+          }
+          var len = bytes[p + 1] * 0x1000000 + (bytes[p + 2] << 16) + (bytes[p + 3] << 8) + bytes[p + 4];
+          if (p + 5 + len > bytes.length) {
+            if (strict) throw pbErr('grpcBad', { offset: p, len: len, have: bytes.length - p - 5 });
+            return null;
+          }
+          frames.push({ flag: flag, offset: p, payload: bytes.subarray(p + 5, p + 5 + len) });
+          p += 5 + len;
+        }
+        return frames.length ? frames : null;
+      }
+
+      // mode: 'auto' | 'yes' | 'no'. A Protobuf message never starts with 0x00 or 0x01 (field 0),
+      // so auto only strips frames that start with a gRPC flag byte and cover the input exactly.
+      function unframe(bytes, mode) {
+        if (mode === 'no' || !bytes.length) return null;
+        if (mode === 'yes') return splitFrames(bytes, true);
+        var f = bytes[0];
+        if (f !== 0 && f !== 1 && f !== 0x80 && f !== 0x81) return null;
+        return splitFrames(bytes, false);
+      }
+
+      function frameBytes(payload) {
+        var out = new Uint8Array(payload.length + 5);
+        var n = payload.length;
+        out[1] = (n >>> 24) & 255; out[2] = (n >>> 16) & 255; out[3] = (n >>> 8) & 255; out[4] = n & 255;
+        out.set(payload, 5);
+        return out;
+      }
+
+      // ---------- schema ----------
+      function stripProtoComments(text) {
+        var out = '', i = 0, n = text.length, q = '';
+        while (i < n) {
+          var c = text[i], d = text[i + 1];
+          if (q) {
+            out += c;
+            if (c === '\\' && i + 1 < n) { out += d; i += 2; continue; }
+            if (c === q) q = '';
+            i++;
+            continue;
+          }
+          if (c === '"' || c === "'") { q = c; out += c; i++; continue; }
+          if (c === '/' && d === '/') { while (i < n && text[i] !== '\n') i++; continue; }
+          if (c === '/' && d === '*') { var j = text.indexOf('*/', i + 2); i = j < 0 ? n : j + 2; out += ' '; continue; }
+          out += c;
+          i++;
+        }
+        return out;
+      }
+
+      // 'proto2' (also the default without a syntax line, as in protoc), 'proto3', '2023', '2024'
+      function fileSyntax(text) {
+        var m = /^\s*(syntax|edition)\s*=\s*(["'])([^"']*)\2/m.exec(stripProtoComments(text));
+        if (!m) return 'proto2';
+        if (m[1] === 'syntax') return m[3] === 'proto3' ? 'proto3' : 'proto2';
+        return m[3];
+      }
+
+      // Feature defaults per edition (google/protobuf/descriptor.proto FeatureSet defaults).
+      var EDITION_DEFAULTS = {
+        proto2: { field_presence: 'EXPLICIT', enum_type: 'CLOSED', utf8_validation: 'NONE' },
+        proto3: { field_presence: 'IMPLICIT', enum_type: 'OPEN', utf8_validation: 'VERIFY' },
+        2023: { field_presence: 'EXPLICIT', enum_type: 'OPEN', utf8_validation: 'VERIFY' },
+        2024: { field_presence: 'EXPLICIT', enum_type: 'OPEN', utf8_validation: 'VERIFY' },
       };
 
-      function parseBinaryText(raw) {
-        var hexStr = raw.replace(/[\s:]/g, '');
-        if (/^[0-9a-fA-F]+$/.test(hexStr) && hexStr.length % 2 === 0) {
-          var bytes = new Uint8Array(hexStr.length / 2);
-          for (var i = 0; i < hexStr.length; i += 2) {
-            bytes[i / 2] = parseInt(hexStr.substr(i, 2), 16);
-          }
-          return bytes;
+      function schemaParseError(e, file) {
+        var msg = String(e && e.message || e);
+        var m = /^(.*) \((?:([^,()]+), )?line (\d+)\)$/.exec(msg);
+        if (m) return pbErr('schemaSyntax', { file: m[2] || file, line: +m[3], detail: m[1] });
+        return pbErr('schemaOther', { detail: msg + ' (' + file + ')' });
+      }
+
+      function definesAny(root, def) {
+        var ns = def && def.nested && def.nested.google && def.nested.google.nested &&
+          def.nested.google.nested.protobuf && def.nested.google.nested.protobuf.nested;
+        if (!ns) return false;
+        return Object.keys(ns).some(function (k) { return !!root.lookup('google.protobuf.' + k); });
+      }
+
+      // files: [{ name, text }]. Returns the context every other engine function takes.
+      function buildSchema(pb, files) {
+        var root = new pb.Root();
+        var syntax = {}, needed = [], warnings = [];
+        files.forEach(function (f) {
+          syntax[f.name] = fileSyntax(f.text);
+          var res;
+          pb.parse.filename = f.name;
+          try { res = pb.parse(f.text, root, { keepCase: true }); }
+          catch (e) { throw schemaParseError(e, f.name); }
+          finally { pb.parse.filename = null; }
+          (res.imports || []).concat(res.weakImports || []).forEach(function (p) { needed.push({ path: p, from: f.name }); });
+        });
+        function provided(p) {
+          return files.some(function (f) {
+            return f.name === p || p.slice(-(f.name.length + 1)) === '/' + f.name || f.name.slice(-(p.length + 1)) === '/' + p;
+          });
         }
-        var binary = atob(raw.replace(/\s/g, ''));
-        var buf = new Uint8Array(binary.length);
-        for (var j = 0; j < binary.length; j++) buf[j] = binary.charCodeAt(j);
-        return buf;
+        var missing = [];
+        needed.forEach(function (n) {
+          if (provided(n.path) || pb.common[n.path] || n.path === 'google/protobuf/descriptor.proto') return;
+          if (!missing.some(function (m) { return m.path === n.path; })) missing.push(n);
+        });
+        // Well-known types are added unless the schema defines them itself.
+        // Added type by type into one google.protobuf namespace: merging a second "google"
+        // namespace through Root.addJSON fails in the vendor build.
+        var wktNs = null;
+        Object.keys(pb.common).forEach(function (p) {
+          if (!/^google\/protobuf\/\w+\.proto$/.test(p) || definesAny(root, pb.common[p])) return;
+          wktNs = wktNs || root.define('google.protobuf');
+          wktNs.addJSON(pb.common[p].nested.google.nested.protobuf.nested);
+        });
+        // Custom options (extend google.protobuf.FieldOptions ...) need descriptor.proto, which
+        // is not bundled; options do not change the wire format, so such extensions are dropped.
+        var dropped = (root.deferred || []).filter(function (f) { return /^\.?google\.protobuf\.\w*Options$/.test(f.extend); });
+        dropped.forEach(function (f) { if (f.parent) f.parent.remove(f); });
+        if (dropped.length) warnings.push({ code: 'optionExtDropped', args: { n: dropped.length } });
+        try {
+          root.resolveAll();
+        } catch (e) {
+          var msg = String(e && e.message || e);
+          var u = /no such (?:type|Type or Enum)[: ]+'?([\w.]+)'?(?: in (?:\w+ )?\.?([\w.]+))?/.exec(msg);
+          if (u) throw pbErr('schemaUnresolved', { type: u[1], where: u[2] || '', missing: missing.map(function (m) { return m.path; }) });
+          var x = /unresolvable extensions: (.*)/.exec(msg);
+          if (x) throw pbErr('schemaExtend', { detail: x[1] });
+          throw pbErr('schemaOther', { detail: msg });
+        }
+        missing.forEach(function (m) { warnings.push({ code: 'importMissing', args: { path: m.path, from: m.from } }); });
+        var types = [];
+        (function walk(ns) {
+          (ns.nestedArray || []).forEach(function (o) {
+            if (o instanceof pb.Type && !o.group && o.filename && syntax[o.filename] !== undefined) types.push(o);
+            if (o.nestedArray) walk(o);
+          });
+        })(root);
+        var referenced = new Set();
+        types.forEach(function (t) {
+          t.fieldsArray.forEach(function (f) { if (f.resolvedType instanceof pb.Type) referenced.add(f.resolvedType); });
+        });
+        var top = types.filter(function (t) { return !referenced.has(t); })[0] || types[0];
+        return {
+          pb: pb, root: root, syntax: syntax, warnings: warnings,
+          types: types.map(function (t) { return t.fullName.slice(1); }),
+          defaultType: top ? top.fullName.slice(1) : null,
+          info: new Map(), sorted: new Map(), names: new Map(), enumNames: new Map(), notes: [],
+        };
       }
 
-      function decodeMessage(MsgType, bytes) {
-        return MsgType.toObject(MsgType.decode(bytes), DECODE_OPTIONS);
+      function lookupType(ctx, name) {
+        var t = ctx.root.lookup(name.replace(/^\./, ''), [ctx.pb.Type]);
+        if (!t) throw pbErr('noType', { type: name });
+        return t;
       }
 
-      function sampleMessage(MsgType) {
-        return MsgType.toObject(MsgType.create({}), SAMPLE_OPTIONS);
+      function syntaxOf(ctx, obj) {
+        for (var o = obj; o; o = o.parent) if (o.filename && ctx.syntax[o.filename]) return ctx.syntax[o.filename];
+        return 'proto3';
+      }
+      function featureOf(ctx, obj, name) {
+        for (var o = obj; o; o = o.parent) {
+          var fs = o.options && o.options.features;
+          if (fs && fs[name] !== undefined) return fs[name];
+        }
+        return EDITION_DEFAULTS[syntaxOf(ctx, obj)][name];
+      }
+
+      // protoc ToJsonName: drop each "_" and upper-case the character after it.
+      function toJsonName(name) {
+        var out = '', up = false;
+        for (var i = 0; i < name.length; i++) {
+          var c = name[i];
+          if (c === '_') { up = true; continue; }
+          out += up ? c.toUpperCase() : c;
+          up = false;
+        }
+        return out;
+      }
+
+      var WIRE = { double: 1, float: 5, int32: 0, int64: 0, uint32: 0, uint64: 0, sint32: 0, sint64: 0,
+        fixed32: 5, fixed64: 1, sfixed32: 5, sfixed64: 1, bool: 0, string: 2, bytes: 2 };
+      var LONG = { int64: 1, uint64: 1, sint64: 1, fixed64: 1, sfixed64: 1 };
+
+      function enumClosed(ctx, en) {
+        var syn = syntaxOf(ctx, en);
+        if (syn === 'proto2') return true;
+        if (syn === 'proto3') return false;
+        return featureOf(ctx, en, 'enum_type') === 'CLOSED';
+      }
+
+      function valueInfo(ctx, typeName, rt, src) {
+        var pb = ctx.pb;
+        var isMsg = rt instanceof pb.Type, isEnum = rt instanceof pb.Enum;
+        var syn = syntaxOf(ctx, src);
+        return {
+          kind: isMsg ? 'message' : isEnum ? 'enum' : 'scalar',
+          type: isMsg || isEnum ? null : typeName,
+          rt: rt || null,
+          wire: isMsg ? 2 : isEnum ? 0 : WIRE[typeName],
+          closed: isEnum ? enumClosed(ctx, rt) : false,
+          utf8: typeName === 'string' && (syn === 'proto3' || (syn !== 'proto2' && featureOf(ctx, src, 'utf8_validation') !== 'NONE')),
+          syntax: syn,
+        };
+      }
+
+      function finfo(ctx, field) {
+        var fi = ctx.info.get(field);
+        if (fi) return fi;
+        var pb = ctx.pb;
+        field.resolve();
+        var src = field.declaringField || field;
+        var rt = field.resolvedType;
+        var vi = valueInfo(ctx, field.type, rt, src);
+        var syn = vi.syntax;
+        var protoName = src.name;
+        if (vi.kind === 'message' && rt.group) protoName = rt.name.toLowerCase();
+        var ext = !!field.declaringField;
+        var oneof = field.partOf && !field.partOf.isProto3Optional ? field.partOf : null;
+        var isMap = !!field.map;
+        var repeated = !!field.repeated && !isMap;
+        var presence = 'none', required = false;
+        if (!repeated && !isMap) {
+          if (vi.kind === 'message' || field.partOf) presence = 'explicit';
+          else if (syn === 'proto3') presence = 'implicit';
+          else if (syn === 'proto2') presence = 'explicit';
+          else presence = featureOf(ctx, src, 'field_presence') === 'IMPLICIT' ? 'implicit' : 'explicit';
+          required = syn === 'proto2' ? src.rule === 'required' : (syn !== 'proto3' && featureOf(ctx, src, 'field_presence') === 'LEGACY_REQUIRED');
+        }
+        fi = {
+          field: field, num: field.id, protoName: ext ? src.fullName.slice(1) : protoName,
+          jsonName: ext ? null : (src.options && typeof src.options.json_name === 'string' ? src.options.json_name : toJsonName(protoName)),
+          key: ext ? '[' + src.fullName.slice(1) + ']' : null,
+          map: isMap, repeated: repeated, kind: vi.kind, type: vi.type, rt: vi.rt, closed: vi.closed, utf8: vi.utf8,
+          syntax: syn, presence: presence, required: required, oneof: oneof,
+          delimited: vi.kind === 'message' && !!field.delimited,
+          wire: vi.kind === 'message' ? (field.delimited ? 3 : 2) : vi.wire,
+          packable: (repeated && vi.kind !== 'message' && vi.type !== 'string' && vi.type !== 'bytes'),
+          packed: false,
+          defaultValue: field.options && field.options['default'] !== undefined ? field.options['default'] : undefined,
+        };
+        fi.packed = fi.packable && !!field.packed;
+        if (isMap) {
+          fi.mapKey = field.keyType;
+          fi.mapVal = valueInfo(ctx, field.type, rt, src);
+          fi.kind = 'map';
+        }
+        ctx.info.set(field, fi);
+        return fi;
+      }
+
+      function sortedFields(ctx, type) {
+        var s = ctx.sorted.get(type);
+        if (s) return s;
+        s = type.fieldsArray.slice().sort(function (a, b) { return a.id - b.id; }).map(function (f) { return finfo(ctx, f); });
+        ctx.sorted.set(type, s);
+        return s;
+      }
+
+      function fieldNames(ctx, type) {
+        var m = ctx.names.get(type);
+        if (m) return m;
+        m = new Map();
+        sortedFields(ctx, type).forEach(function (fi) {
+          if (fi.key) m.set(fi.key, fi);
+          else { m.set(fi.jsonName, fi); m.set(fi.protoName, fi); }
+        });
+        ctx.names.set(type, m);
+        return m;
+      }
+
+      function enumNameOf(ctx, en, v) {
+        var m = ctx.enumNames.get(en);
+        if (!m) {
+          m = new Map();
+          Object.keys(en.values).forEach(function (k) { if (!m.has(en.values[k])) m.set(en.values[k], k); });
+          ctx.enumNames.set(en, m);
+        }
+        return m.get(v);
+      }
+      function enumDefault(en) {
+        var k = Object.keys(en.values)[0];
+        return k === undefined ? 0 : en.values[k];
+      }
+
+      // ---------- wire reader ----------
+      function Reader(buf) {
+        this.buf = buf;
+        this.dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+        this.pos = 0;
+        this.lo = 0;
+        this.hi = 0;
+      }
+
+      // Reads a varint into r.lo / r.hi (unsigned 32-bit halves). Like protoc, bits past 64 in
+      // the 10th byte are dropped; an 11th byte is an error. Tags use r.lo only: protoc reads
+      // a tag as a 32-bit varint and drops higher bits.
+      function readVarint(r, end) {
+        var buf = r.buf, pos = r.pos, start = pos, lo = 0, hi = 0, b;
+        for (var i = 0; ; i++) {
+          if (i === 10) throw pbErr('longVarint', { offset: start });
+          if (pos >= end) throw pbErr('truncVarint', { offset: start });
+          b = buf[pos++];
+          if (i < 4) lo |= (b & 0x7f) << (7 * i);
+          else if (i === 4) { lo |= (b & 0x0f) << 28; hi |= (b & 0x7f) >>> 4; }
+          else hi |= (b & 0x7f) << (7 * i - 32);
+          if (b < 0x80) break;
+        }
+        r.pos = pos;
+        r.lo = lo >>> 0;
+        r.hi = hi >>> 0;
+      }
+      function u64(r) { return (BigInt(r.hi) << 32n) | BigInt(r.lo); }
+
+      function need(r, end, n) {
+        if (r.pos + n > end) throw pbErr('truncFixed', { offset: r.pos, need: n, avail: end - r.pos });
+      }
+      function readLen(r, end) {
+        var at = r.pos;
+        readVarint(r, end);
+        var avail = end - r.pos;
+        if (r.hi || r.lo > avail) throw pbErr('lenOverrun', { offset: at, len: String(u64(r)), avail: avail });
+        return r.lo;
+      }
+
+      var UTF8 = null, UTF8_LENIENT = null;
+      function utf8Decode(bytes, fatal) {
+        if (!UTF8) {
+          UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+          UTF8_LENIENT = new TextDecoder('utf-8', { ignoreBOM: true });
+        }
+        return (fatal ? UTF8 : UTF8_LENIENT).decode(bytes);
+      }
+      function utf8Encode(s) { return new TextEncoder().encode(s); }
+
+      function readScalar(ctx, vi, r, end, path) {
+        var dv = r.dv, v;
+        switch (vi.kind === 'enum' ? 'enum' : vi.type) {
+          case 'int32': case 'enum': readVarint(r, end); return r.lo | 0;
+          case 'uint32': readVarint(r, end); return r.lo;
+          case 'sint32': readVarint(r, end); return (r.lo >>> 1) ^ -(r.lo & 1);
+          case 'int64': readVarint(r, end); return BigInt.asIntN(64, u64(r));
+          case 'uint64': readVarint(r, end); return u64(r);
+          case 'sint64': readVarint(r, end); v = u64(r); return (v >> 1n) ^ -(v & 1n);
+          case 'bool': readVarint(r, end); return (r.lo | r.hi) !== 0;
+          case 'fixed32': need(r, end, 4); v = dv.getUint32(r.pos, true); r.pos += 4; return v;
+          case 'sfixed32': need(r, end, 4); v = dv.getInt32(r.pos, true); r.pos += 4; return v;
+          case 'float': need(r, end, 4); v = dv.getFloat32(r.pos, true); r.pos += 4; return v;
+          case 'fixed64': need(r, end, 8); v = dv.getBigUint64(r.pos, true); r.pos += 8; return v;
+          case 'sfixed64': need(r, end, 8); v = dv.getBigInt64(r.pos, true); r.pos += 8; return v;
+          case 'double': need(r, end, 8); v = dv.getFloat64(r.pos, true); r.pos += 8; return v;
+          case 'bytes': {
+            var n = readLen(r, end);
+            v = r.buf.subarray(r.pos, r.pos + n);
+            r.pos += n;
+            return v;
+          }
+          case 'string': {
+            var len = readLen(r, end), at = r.pos;
+            var b = r.buf.subarray(at, at + len);
+            r.pos += len;
+            if (vi.utf8) {
+              try { return utf8Decode(b, true); }
+              catch (e) { throw pbErr('badUtf8', { offset: at, path: path, syntax: vi.syntax }); }
+            }
+            v = utf8Decode(b, false);
+            try { utf8Decode(b, true); } catch (e) { ctx.notes.push({ code: 'utf8Lenient', args: { path: path, syntax: vi.syntax } }); }
+            return v;
+          }
+        }
+        throw pbErr('schemaOther', { detail: 'unsupported type ' + vi.type });
+      }
+
+      function newMsg(type) { return { type: type, f: new Map(), unknown: [] }; }
+
+      // Skips one field value; records it in list (unknown fields) when list is given.
+      function skipValue(r, end, wt, num, tagAt, depth, list, note) {
+        var start = r.pos;
+        if (wt === 0) readVarint(r, end);
+        else if (wt === 1) { need(r, end, 8); r.pos += 8; }
+        else if (wt === 5) { need(r, end, 4); r.pos += 4; }
+        else if (wt === 2) { var n = readLen(r, end); r.pos += n; }
+        else if (wt === 3) skipGroup(r, end, num, depth + 1);
+        if (list) list.push({ num: num, wt: wt, offset: tagAt, start: start, end: r.pos, note: note || null });
+      }
+      function skipGroup(r, end, num, depth) {
+        if (depth > 100) throw pbErr('tooDeep', { offset: r.pos });
+        for (;;) {
+          if (r.pos >= end) throw pbErr('groupOpen', { num: num, offset: end });
+          var at = r.pos;
+          readVarint(r, end);
+          var wt = r.lo & 7, n = r.lo >>> 3;
+          if (n === 0) throw pbErr('fieldZero', { offset: at });
+          if (wt === 4) { if (n === num) return; throw pbErr('endGroup', { offset: at, num: n }); }
+          if (wt > 5) throw pbErr('wireType', { offset: at, wt: wt, num: n });
+          skipValue(r, end, wt, n, at, depth, null);
+        }
+      }
+
+      function joinPath(path, name) { return path ? path + '.' + name : name; }
+
+      function setSingular(msg, fi, value) {
+        if (fi.oneof) fi.oneof.fieldsArray.forEach(function (o) { if (o.id !== fi.num) msg.f.delete(o.id); });
+        msg.f.set(fi.num, value);
+      }
+
+      function mapKeyId(k) { return typeof k === 'bigint' ? 'n' + k : typeof k + ':' + String(k); }
+      function defScalar(type) {
+        if (LONG[type]) return 0n;
+        if (type === 'bool') return false;
+        if (type === 'string') return '';
+        if (type === 'bytes') return new Uint8Array(0);
+        return 0;
+      }
+      function defaultOf(vi) {
+        if (vi.kind === 'enum') return enumDefault(vi.rt);
+        return defScalar(vi.type);
+      }
+      function isDefault(vi, v) {
+        if (vi.kind === 'enum') return v === 0;
+        if (typeof v === 'bigint') return v === 0n;
+        if (typeof v === 'number') return v === 0 && !Object.is(v, -0);
+        if (typeof v === 'boolean') return !v;
+        if (typeof v === 'string') return v === '';
+        if (v instanceof Uint8Array) return v.length === 0;
+        return false;
+      }
+
+      function decodeMsg(ctx, type, r, end, path, depth, msg, groupNum) {
+        if (depth > 100) throw pbErr('tooDeep', { offset: r.pos, path: path });
+        var byId = type.fieldsById;
+        while (r.pos < end) {
+          var tagAt = r.pos;
+          readVarint(r, end);
+          var wt = r.lo & 7, num = r.lo >>> 3;
+          if (num === 0) throw pbErr('fieldZero', { offset: tagAt, path: path });
+          if (wt === 4) {
+            if (groupNum === num) return msg;
+            throw pbErr('endGroup', { offset: tagAt, num: num, path: path });
+          }
+          if (wt > 5) throw pbErr('wireType', { offset: tagAt, wt: wt, num: num, path: path });
+          var field = byId[num];
+          if (!field) { skipValue(r, end, wt, num, tagAt, depth, msg.unknown, null); continue; }
+          readField(ctx, finfo(ctx, field), msg, r, end, wt, tagAt, joinPath(path, finfo(ctx, field).protoName), depth);
+        }
+        if (groupNum !== undefined && groupNum !== null) throw pbErr('groupOpen', { num: groupNum, offset: end, path: path });
+        return msg;
+      }
+
+      function readSub(ctx, fi, sub, r, end, wt, path, depth) {
+        if (wt === 3) return decodeMsg(ctx, fi.rt, r, end, path, depth + 1, sub, fi.num);
+        var len = readLen(r, end);
+        var e = r.pos + len;
+        decodeMsg(ctx, fi.rt, r, e, path, depth + 1, sub, null);
+        r.pos = e;
+        return sub;
+      }
+
+      function readField(ctx, fi, msg, r, end, wt, tagAt, path, depth) {
+        var mismatch = function () {
+          skipValue(r, end, wt, fi.num, tagAt, depth, msg.unknown, { code: 'wireMismatch', name: fi.protoName, got: wt, exp: fi.map ? 2 : fi.wire });
+        };
+        if (fi.map) {
+          if (wt !== 2) return mismatch();
+          var len = readLen(r, end);
+          var entry = decodeMapEntry(ctx, fi, r, r.pos + len, path, depth, msg, tagAt);
+          if (!entry) return;
+          var m = msg.f.get(fi.num);
+          if (!m) { m = new Map(); msg.f.set(fi.num, m); }
+          m.set(mapKeyId(entry[0]), entry);
+          return;
+        }
+        if (fi.kind === 'message') {
+          if (wt !== fi.wire) return mismatch();
+          if (fi.repeated) {
+            var arr = msg.f.get(fi.num);
+            if (!arr) { arr = []; msg.f.set(fi.num, arr); }
+            var sub = newMsg(fi.rt);
+            readSub(ctx, fi, sub, r, end, wt, path + '[' + arr.length + ']', depth);
+            arr.push(sub);
+          } else {
+            var cur = msg.f.get(fi.num) || newMsg(fi.rt);
+            setSingular(msg, fi, cur);
+            readSub(ctx, fi, cur, r, end, wt, path, depth);
+          }
+          return;
+        }
+        if (fi.repeated && fi.packable && wt === 2) {
+          var plen = readLen(r, end), pend = r.pos + plen;
+          var list = msg.f.get(fi.num);
+          if (!list) { list = []; msg.f.set(fi.num, list); }
+          while (r.pos < pend) {
+            var at = r.pos;
+            var pv = readScalar(ctx, fi, r, pend, path);
+            if (fi.closed && enumNameOf(ctx, fi.rt, pv) === undefined) {
+              msg.unknown.push({ num: fi.num, wt: 0, offset: at, start: at, end: r.pos, note: { code: 'closedEnum', value: pv, enumName: fi.rt.fullName.slice(1) } });
+              continue;
+            }
+            list.push(pv);
+          }
+          return;
+        }
+        if (wt !== fi.wire) return mismatch();
+        var vstart = r.pos;
+        var v = readScalar(ctx, fi, r, end, path);
+        if (fi.closed && enumNameOf(ctx, fi.rt, v) === undefined) {
+          msg.unknown.push({ num: fi.num, wt: wt, offset: tagAt, start: vstart, end: r.pos, note: { code: 'closedEnum', value: v, enumName: fi.rt.fullName.slice(1) } });
+          return;
+        }
+        if (fi.repeated) {
+          var a2 = msg.f.get(fi.num);
+          if (!a2) { a2 = []; msg.f.set(fi.num, a2); }
+          a2.push(v);
+        } else setSingular(msg, fi, v);
+      }
+
+      function decodeMapEntry(ctx, fi, r, end, path, depth, msg, tagAt) {
+        var key, val, hasKey = false, hasVal = false, vi = fi.mapVal;
+        var keyVi = { kind: 'scalar', type: fi.mapKey, utf8: fi.mapVal.syntax !== 'proto2' && fi.mapKey === 'string', syntax: fi.syntax };
+        var start = r.pos;
+        while (r.pos < end) {
+          var at = r.pos;
+          readVarint(r, end);
+          var wt = r.lo & 7, num = r.lo >>> 3;
+          if (num === 0) throw pbErr('fieldZero', { offset: at, path: path });
+          if (wt === 4) throw pbErr('endGroup', { offset: at, num: num, path: path });
+          if (wt > 5) throw pbErr('wireType', { offset: at, wt: wt, num: num, path: path });
+          if (num === 1 && wt === WIRE[fi.mapKey]) { key = readScalar(ctx, keyVi, r, end, path); hasKey = true; }
+          else if (num === 2 && wt === vi.wire) {
+            if (vi.kind === 'message') {
+              val = val || newMsg(vi.rt);
+              var len = readLen(r, end), e = r.pos + len;
+              decodeMsg(ctx, vi.rt, r, e, path, depth + 1, val, null);
+              r.pos = e;
+            } else val = readScalar(ctx, vi, r, end, path);
+            hasVal = true;
+          } else skipValue(r, end, wt, num, at, depth, null);
+        }
+        if (!hasKey) key = defScalar(fi.mapKey);
+        if (!hasVal) val = vi.kind === 'message' ? newMsg(vi.rt) : defaultOf(vi);
+        if (vi.kind === 'enum' && vi.closed && enumNameOf(ctx, vi.rt, val) === undefined) {
+          msg.unknown.push({ num: fi.num, wt: 2, offset: tagAt, start: start, end: end, note: { code: 'closedEnum', value: val, enumName: vi.rt.fullName.slice(1) } });
+          r.pos = end;
+          return null;
+        }
+        r.pos = end;
+        return [key, val];
+      }
+
+      // Decodes bytes as typeName. Returns the message tree; ctx.notes collects notes.
+      function decodeTyped(ctx, typeName, bytes) {
+        var type = lookupType(ctx, typeName);
+        ctx.notes = [];
+        ctx.buf = bytes;
+        var r = new Reader(bytes);
+        return decodeMsg(ctx, type, r, bytes.length, '', 0, newMsg(type), null);
+      }
+
+      function collectUnknown(ctx, msg, path, out) {
+        msg.unknown.forEach(function (u) { out.push({ path: path || msg.type.fullName.slice(1), u: u }); });
+        sortedFields(ctx, msg.type).forEach(function (fi) {
+          if (!msg.f.has(fi.num)) return;
+          var v = msg.f.get(fi.num), p = joinPath(path, fi.protoName);
+          if (fi.map) { if (fi.mapVal.kind === 'message') v.forEach(function (e) { collectUnknown(ctx, e[1], p + '[' + String(e[0]) + ']', out); }); }
+          else if (fi.kind === 'message') {
+            if (fi.repeated) v.forEach(function (s, i) { collectUnknown(ctx, s, p + '[' + i + ']', out); });
+            else collectUnknown(ctx, v, p, out);
+          }
+        });
+        return out;
+      }
+
+      // ---------- ProtoJSON printer ----------
+      function JNum(s) { this.s = s; }
+      function JObj(e) { this.e = e || []; }
+
+      function shortestFloat(v) {
+        for (var p = 1; p <= 9; p++) {
+          var x = Number(v.toPrecision(p));
+          if (Math.fround(x) === v) return x;
+        }
+        return v;
+      }
+      function numText(v) { return Object.is(v, -0) ? '-0' : String(v); }
+      function floatJson(v, single) {
+        if (v !== v) return 'NaN';
+        if (v === Infinity) return 'Infinity';
+        if (v === -Infinity) return '-Infinity';
+        return new JNum(numText(single ? shortestFloat(v) : v));
+      }
+      function scalarJson(type, v) {
+        if (LONG[type]) return String(v);
+        if (type === 'float') return floatJson(v, true);
+        if (type === 'double') return floatJson(v, false);
+        if (type === 'bool' || type === 'string') return v;
+        if (type === 'bytes') return toBase64(v);
+        return new JNum(String(v));
+      }
+
+      function getF(msg, num, dflt) { return msg.f.has(num) ? msg.f.get(num) : dflt; }
+
+      var TS_MIN = -62135596800n, TS_MAX = 253402300799n, DUR_MAX = 315576000000n;
+      function fracText(n) {
+        if (!n) return '';
+        if (n % 1000000 === 0) return '.' + String(n / 1000000).padStart(3, '0');
+        if (n % 1000 === 0) return '.' + String(n / 1000).padStart(6, '0');
+        return '.' + String(n).padStart(9, '0');
+      }
+      function timestampText(s, n) {
+        return new Date(Number(s) * 1000).toISOString().slice(0, 19) + fracText(n) + 'Z';
+      }
+      function fieldMaskJson(path, p) {
+        if (!/^[a-z0-9_.]*$/.test(p) || /_(?![a-z])/.test(p)) throw pbErr('fieldMaskPath', { path: path, value: p });
+        return toJsonName(p);
+      }
+
+      var WRAPPERS = { DoubleValue: 'double', FloatValue: 'float', Int64Value: 'int64', UInt64Value: 'uint64',
+        Int32Value: 'int32', UInt32Value: 'uint32', BoolValue: 'bool', StringValue: 'string', BytesValue: 'bytes' };
+      var SPECIAL = { Timestamp: 1, Duration: 1, FieldMask: 1, Struct: 1, Value: 1, ListValue: 1, Any: 1 };
+      function wktName(type) {
+        var f = type.fullName;
+        return f.indexOf('.google.protobuf.') === 0 ? f.slice(17) : null;
+      }
+      function hasSpecialJson(type) {
+        var w = wktName(type);
+        return !!w && (SPECIAL[w] || WRAPPERS[w]) ? true : false;
+      }
+
+      function wktJson(ctx, msg, w, opts, path, depth) {
+        if (WRAPPERS[w]) return scalarJson(WRAPPERS[w], getF(msg, 1, defScalar(WRAPPERS[w])));
+        if (w === 'Timestamp') {
+          var s = getF(msg, 1, 0n), n = getF(msg, 2, 0);
+          if (s < TS_MIN || s > TS_MAX) throw pbErr('tsRange', { path: path, value: String(s) });
+          if (n < 0 || n > 999999999) throw pbErr('nanosRange', { path: path, value: n });
+          return timestampText(s, n);
+        }
+        if (w === 'Duration') {
+          var ds = getF(msg, 1, 0n), dn = getF(msg, 2, 0);
+          if (ds > DUR_MAX || ds < -DUR_MAX) throw pbErr('durationRange', { path: path, value: String(ds) });
+          if (dn > 999999999 || dn < -999999999) throw pbErr('nanosRange', { path: path, value: dn });
+          if ((ds > 0n && dn < 0) || (ds < 0n && dn > 0)) throw pbErr('durationSign', { path: path });
+          var neg = ds < 0n || dn < 0;
+          return (neg ? '-' : '') + String(ds < 0n ? -ds : ds) + fracText(Math.abs(dn)) + 's';
+        }
+        if (w === 'FieldMask') return getF(msg, 1, []).map(function (p) { return fieldMaskJson(path, p); }).join(',');
+        if (w === 'Struct') {
+          var o = new JObj();
+          getF(msg, 1, new Map()).forEach(function (e) { o.e.push([e[0], valueJson(ctx, e[1], opts, path + '[' + e[0] + ']', depth + 1)]); });
+          return o;
+        }
+        if (w === 'Value') return valueJson(ctx, msg, opts, path, depth);
+        if (w === 'ListValue') return getF(msg, 1, []).map(function (v, i) { return valueJson(ctx, v, opts, path + '[' + i + ']', depth + 1); });
+        if (w === 'Any') return anyJson(ctx, msg, opts, path, depth);
+        return null;
+      }
+
+      function valueJson(ctx, msg, opts, path, depth) {
+        if (msg.f.has(1)) return null;
+        if (msg.f.has(2)) {
+          var d = msg.f.get(2);
+          if (!isFinite(d)) throw pbErr('valueNonFinite', { path: path, value: String(d) });
+          return new JNum(numText(d));
+        }
+        if (msg.f.has(3)) return msg.f.get(3);
+        if (msg.f.has(4)) return msg.f.get(4);
+        if (msg.f.has(5)) return wktJson(ctx, msg.f.get(5), 'Struct', opts, path, depth + 1);
+        if (msg.f.has(6)) return wktJson(ctx, msg.f.get(6), 'ListValue', opts, path, depth + 1);
+        throw pbErr('valueEmpty', { path: path });
+      }
+
+      function anyJson(ctx, msg, opts, path, depth) {
+        var url = getF(msg, 1, ''), value = getF(msg, 2, new Uint8Array(0));
+        if (!url && !value.length) return new JObj();
+        var name = url.slice(url.lastIndexOf('/') + 1);
+        var inner = name ? ctx.root.lookup(name, [ctx.pb.Type]) : null;
+        if (!inner) {
+          ctx.notes.push({ code: 'anyUnknown', args: { path: path, url: url } });
+          return new JObj([['@type', url], ['value', toBase64(value)]]);
+        }
+        var r = new Reader(ctx.buf && value.buffer === ctx.buf.buffer ? ctx.buf : value);
+        var start = r.buf === value ? 0 : value.byteOffset - ctx.buf.byteOffset;
+        r.pos = start;
+        var sub = decodeMsg(ctx, inner, r, start + value.length, path, depth + 1, newMsg(inner), null);
+        var body = msgJson(ctx, sub, opts, path, depth + 1);
+        if (hasSpecialJson(inner)) return new JObj([['@type', url], ['value', body]]);
+        return new JObj([['@type', url]].concat(body.e));
+      }
+
+      // opts: { protoNames, defaults, enumNumbers }
+      function msgJson(ctx, msg, opts, path, depth) {
+        depth = depth || 0;
+        var w = wktName(msg.type);
+        if (w && (SPECIAL[w] || WRAPPERS[w])) return wktJson(ctx, msg, w, opts, path, depth);
+        var o = new JObj();
+        sortedFields(ctx, msg.type).forEach(function (fi) {
+          var name = fi.key || (opts.protoNames ? fi.protoName : fi.jsonName);
+          var p = joinPath(path, fi.protoName);
+          var has = msg.f.has(fi.num), v = msg.f.get(fi.num);
+          if (fi.map) {
+            if ((has && v.size) || opts.defaults) {
+              var mo = new JObj();
+              if (has) v.forEach(function (e) {
+                var k = String(e[0]);
+                mo.e.push([k, valJson(ctx, fi.mapVal, e[1], opts, p + '[' + k + ']', depth)]);
+              });
+              o.e.push([name, mo]);
+            }
+            return;
+          }
+          if (fi.repeated) {
+            if ((has && v.length) || (opts.defaults && !fi.key)) {
+              o.e.push([name, (v || []).map(function (x, i) { return valJson(ctx, fi, x, opts, p + '[' + i + ']', depth); })]);
+            }
+            return;
+          }
+          if (has) {
+            if (fi.presence === 'implicit' && isDefault(fi, v) && !opts.defaults) return;
+            o.e.push([name, valJson(ctx, fi, v, opts, p, depth)]);
+            return;
+          }
+          if (fi.required) ctx.notes.push({ code: 'requiredMissing', args: { path: p } });
+          if (fi.presence === 'implicit' && opts.defaults) o.e.push([name, valJson(ctx, fi, defaultOf(fi), opts, p, depth)]);
+        });
+        return o;
+      }
+
+      function valJson(ctx, vi, v, opts, path, depth) {
+        if (vi.kind === 'message') return msgJson(ctx, v, opts, path, depth + 1);
+        if (vi.kind === 'enum') {
+          if (vi.rt.fullName === '.google.protobuf.NullValue') return null;
+          if (opts.enumNumbers) return new JNum(String(v));
+          var n = enumNameOf(ctx, vi.rt, v);
+          return n !== undefined ? n : new JNum(String(v));
+        }
+        return scalarJson(vi.type, v);
+      }
+
+      // Serializes a JSON tree. With html, wraps tokens in spans for highlighting.
+      function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+      function stringifyJson(v, indent, html) {
+        var out = [];
+        function tok(cls, s) { out.push(html ? '<span class="pbj-' + cls + '">' + escHtml(s) + '</span>' : s); }
+        function nl(level) { if (indent) out.push('\n' + ' '.repeat(indent * level)); }
+        function ser(x, level) {
+          if (x === null) return tok('null', 'null');
+          if (typeof x === 'boolean') return tok('bool', String(x));
+          if (typeof x === 'string') return tok('str', JSON.stringify(x));
+          if (x instanceof JNum) return tok('num', x.s);
+          if (Array.isArray(x)) {
+            if (!x.length) return out.push('[]');
+            out.push('[');
+            x.forEach(function (y, i) { if (i) out.push(','); nl(level + 1); ser(y, level + 1); });
+            nl(level);
+            out.push(']');
+            return;
+          }
+          if (!x.e.length) return out.push('{}');
+          out.push('{');
+          x.e.forEach(function (kv, i) {
+            if (i) out.push(',');
+            nl(level + 1);
+            tok('key', JSON.stringify(kv[0]));
+            out.push(indent ? ': ' : ':');
+            ser(kv[1], level + 1);
+          });
+          nl(level);
+          out.push('}');
+        }
+        ser(v, 0);
+        return out.join('');
+      }
+
+      // ---------- decoding without a schema (protoc --decode_raw) ----------
+      // Parses bytes [start, end) as fields; throws on anything protoc's UnknownFieldSet parser
+      // rejects. groupNum ends at the matching END_GROUP.
+      function parseRaw(buf, start, end, depth, groupNum) {
+        var r = new Reader(buf);
+        r.pos = start;
+        var fields = parseRawFields(r, end, depth, groupNum);
+        return fields;
+      }
+      function parseRawFields(r, end, depth, groupNum) {
+        if (depth > 100) throw pbErr('tooDeep', { offset: r.pos });
+        var fields = [];
+        for (;;) {
+          if (r.pos >= end) {
+            if (groupNum !== null && groupNum !== undefined) throw pbErr('groupOpen', { num: groupNum, offset: end });
+            return fields;
+          }
+          var at = r.pos;
+          readVarint(r, end);
+          var wt = r.lo & 7, num = r.lo >>> 3;
+          if (num === 0) throw pbErr('fieldZero', { offset: at });
+          if (wt === 4) {
+            if (groupNum === num) return fields;
+            throw pbErr('endGroup', { offset: at, num: num });
+          }
+          if (wt > 5) throw pbErr('wireType', { offset: at, wt: wt, num: num });
+          var f = { num: num, wt: wt, offset: at };
+          if (wt === 0) { readVarint(r, end); f.v = u64(r); }
+          else if (wt === 1) { need(r, end, 8); f.v = r.dv.getBigUint64(r.pos, true); r.pos += 8; }
+          else if (wt === 5) { need(r, end, 4); f.v = r.dv.getUint32(r.pos, true); r.pos += 4; }
+          else if (wt === 2) { var n = readLen(r, end); f.v = r.buf.subarray(r.pos, r.pos + n); f.start = r.pos; r.pos += n; }
+          else f.v = parseRawFields(r, end, depth + 1, num);
+          fields.push(f);
+        }
+      }
+      function rawNested(f, depth) {
+        if (f.nested !== undefined) return f.nested;
+        f.nested = null;
+        if (f.v.length && depth < 100) {
+          try { f.nested = parseRawFields(Object.assign(new Reader(f.v), {}), f.v.length, depth + 1, null); }
+          catch (e) { f.nested = null; }
+        }
+        return f.nested;
+      }
+      function hex(n, width) { return n.toString(16).padStart(width, '0'); }
+      function cEscape(bytes) {
+        var s = '';
+        for (var i = 0; i < bytes.length; i++) {
+          var b = bytes[i];
+          if (b === 10) s += '\\n';
+          else if (b === 13) s += '\\r';
+          else if (b === 9) s += '\\t';
+          else if (b === 34) s += '\\"';
+          else if (b === 39) s += "\\'";
+          else if (b === 92) s += '\\\\';
+          else if (b < 0x20 || b >= 0x7f) s += '\\' + b.toString(8).padStart(3, '0');
+          else s += String.fromCharCode(b);
+        }
+        return s;
+      }
+      // Same text as `protoc --decode_raw` (TextFormat::Printer::PrintUnknownFields).
+      function rawText(fields, level, depth) {
+        level = level || 0;
+        depth = depth || 0;
+        var pad = '  '.repeat(level), out = '';
+        fields.forEach(function (f) {
+          if (f.wt === 0) out += pad + f.num + ': ' + f.v + '\n';
+          else if (f.wt === 5) out += pad + f.num + ': 0x' + hex(f.v, 8) + '\n';
+          else if (f.wt === 1) out += pad + f.num + ': 0x' + hex(f.v, 16) + '\n';
+          else if (f.wt === 3) out += pad + f.num + ' {\n' + rawText(f.v, level + 1, depth + 1) + pad + '}\n';
+          else {
+            var nested = rawNested(f, depth);
+            if (nested) out += pad + f.num + ' {\n' + rawText(nested, level + 1, depth + 1) + pad + '}\n';
+            else out += pad + f.num + ': "' + cEscape(f.v) + '"\n';
+          }
+        });
+        return out;
+      }
+      function readableText(bytes) {
+        var s;
+        try { s = utf8Decode(bytes, true); } catch (e) { return null; }
+        return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(s) ? null : s;
+      }
+      function bigJson(v) { return v <= 9007199254740991n && v >= -9007199254740991n ? new JNum(String(v)) : String(v); }
+      // readings: each number also shown as the other types that share its wire type.
+      function rawReadings(f) {
+        if (f.wt === 0) {
+          var o = new JObj([['uint64', bigJson(f.v)], ['sint64', bigJson((f.v >> 1n) ^ -(f.v & 1n))]]);
+          var signed = BigInt.asIntN(64, f.v);
+          if (signed !== f.v) o.e.push(['int64', bigJson(signed)]);
+          return o;
+        }
+        var dv = new DataView(new ArrayBuffer(8));
+        if (f.wt === 5) {
+          dv.setUint32(0, f.v, true);
+          return new JObj([['hex', '0x' + hex(f.v, 8)], ['fixed32', new JNum(String(f.v))], ['sfixed32', new JNum(String(dv.getInt32(0, true)))], ['float', floatJson(dv.getFloat32(0, true), true)]]);
+        }
+        dv.setBigUint64(0, f.v, true);
+        return new JObj([['hex', '0x' + hex(f.v, 16)], ['fixed64', bigJson(f.v)], ['sfixed64', bigJson(dv.getBigInt64(0, true))], ['double', floatJson(dv.getFloat64(0, true), false)]]);
+      }
+      function rawJson(fields, depth, readings) {
+        depth = depth || 0;
+        var o = new JObj(), index = new Map();
+        fields.forEach(function (f) {
+          var v;
+          if (readings && (f.wt === 0 || f.wt === 1 || f.wt === 5)) v = rawReadings(f);
+          else if (f.wt === 0) v = bigJson(f.v);
+          else if (f.wt === 5) v = '0x' + hex(f.v, 8);
+          else if (f.wt === 1) v = '0x' + hex(f.v, 16);
+          else if (f.wt === 3) v = rawJson(f.v, depth + 1, readings);
+          else {
+            var text = f.v.length ? readableText(f.v) : '';
+            var nested = text === null ? rawNested(f, depth) : null;
+            v = text !== null ? text : nested ? rawJson(nested, depth + 1, readings) : 'base64:' + toBase64(f.v);
+          }
+          var k = String(f.num);
+          if (!index.has(k)) { index.set(k, o.e.length); o.e.push([k, v]); }
+          else {
+            var slot = o.e[index.get(k)];
+            if (!slot.multi) { slot[1] = [slot[1]]; slot.multi = true; }
+            slot[1].push(v);
+          }
+        });
+        return o;
+      }
+
+      // ---------- JSON parser (keeps number text and positions) ----------
+      function parseJsonText(text) {
+        var i = 0, n = text.length;
+        function fail(code, at) { var lc = lineColOf(text, at); throw pbErr(code, { line: lc.line, col: lc.col, ch: text[at] || '' }); }
+        function ws() { while (i < n) { var c = text.charCodeAt(i); if (c === 32 || c === 9 || c === 10 || c === 13 || (c === 0xfeff && i === 0)) i++; else break; } }
+        function value() {
+          ws();
+          if (i >= n) fail('jsonEnd', i);
+          var c = text[i], at = i;
+          if (c === '{') {
+            i++;
+            var e = [];
+            ws();
+            if (text[i] === '}') { i++; return { t: 'obj', e: e, at: at }; }
+            for (;;) {
+              ws();
+              if (text[i] !== '"') fail(i >= n ? 'jsonEnd' : 'jsonUnexpected', i);
+              var kAt = i, k = str();
+              ws();
+              if (text[i] !== ':') fail(i >= n ? 'jsonEnd' : 'jsonUnexpected', i);
+              i++;
+              var v = value();
+              e.push({ k: k.v, at: kAt, v: v });
+              ws();
+              if (text[i] === ',') { i++; continue; }
+              if (text[i] === '}') { i++; return { t: 'obj', e: e, at: at }; }
+              fail(i >= n ? 'jsonEnd' : 'jsonUnexpected', i);
+            }
+          }
+          if (c === '[') {
+            i++;
+            var a = [];
+            ws();
+            if (text[i] === ']') { i++; return { t: 'arr', a: a, at: at }; }
+            for (;;) {
+              a.push(value());
+              ws();
+              if (text[i] === ',') { i++; continue; }
+              if (text[i] === ']') { i++; return { t: 'arr', a: a, at: at }; }
+              fail(i >= n ? 'jsonEnd' : 'jsonUnexpected', i);
+            }
+          }
+          if (c === '"') return str();
+          if (text.startsWith('true', i)) { i += 4; return { t: 'bool', v: true, at: at }; }
+          if (text.startsWith('false', i)) { i += 5; return { t: 'bool', v: false, at: at }; }
+          if (text.startsWith('null', i)) { i += 4; return { t: 'null', at: at }; }
+          if (c === '-' || (c >= '0' && c <= '9')) {
+            var m = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/.exec(text.slice(i, i + 400));
+            if (!m || /[0-9.eE+-]/.test(text[i + m[0].length] || '')) fail('jsonNumber', at);
+            i += m[0].length;
+            return { t: 'num', s: m[0], at: at };
+          }
+          fail('jsonUnexpected', at);
+        }
+        function str() {
+          var at = i, s = '', lone = false;
+          i++;
+          for (;;) {
+            if (i >= n) fail('jsonEnd', i);
+            var c = text.charCodeAt(i);
+            if (c === 34) { i++; break; }
+            if (c < 0x20) fail('jsonControl', i);
+            if (c === 92) {
+              var e = text[i + 1];
+              var MAP = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+              if (MAP[e] !== undefined) { s += MAP[e]; i += 2; continue; }
+              if (e === 'u' && /^[0-9a-fA-F]{4}$/.test(text.substr(i + 2, 4))) { s += String.fromCharCode(parseInt(text.substr(i + 2, 4), 16)); i += 6; continue; }
+              fail('jsonEscape', i);
+            }
+            s += text[i];
+            i++;
+          }
+          for (var k = 0; k < s.length; k++) {
+            var cc = s.charCodeAt(k);
+            if (cc >= 0xd800 && cc <= 0xdbff) {
+              var nx = s.charCodeAt(k + 1);
+              if (nx >= 0xdc00 && nx <= 0xdfff) { k++; continue; }
+              lone = true;
+            } else if (cc >= 0xdc00 && cc <= 0xdfff) lone = true;
+          }
+          return { t: 'str', v: s, at: at, lone: lone };
+        }
+        var root = value();
+        ws();
+        if (i < n) fail('jsonTrailing', i);
+        root.text = text;
+        return root;
+      }
+
+      // ---------- ProtoJSON parser ----------
+      function jErr(ctx, code, node, args) {
+        var lc = lineColOf(ctx.jsonText || '', node && node.at || 0);
+        args = args || {};
+        args.line = lc.line;
+        args.col = lc.col;
+        return pbErr(code, args);
+      }
+
+      var INT_RANGE = {
+        int32: [-2147483648n, 2147483647n], sint32: [-2147483648n, 2147483647n], sfixed32: [-2147483648n, 2147483647n],
+        uint32: [0n, 4294967295n], fixed32: [0n, 4294967295n],
+        int64: [-9223372036854775808n, 9223372036854775807n], sint64: [-9223372036854775808n, 9223372036854775807n],
+        sfixed64: [-9223372036854775808n, 9223372036854775807n],
+        uint64: [0n, 18446744073709551615n], fixed64: [0n, 18446744073709551615n],
+        enum: [-2147483648n, 2147483647n],
+      };
+      // Exact integer from a JSON number literal, including forms such as 1e2 and 1.0.
+      function exactInt(s) {
+        var m = /^(-)?(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(s);
+        if (!m) return undefined;
+        var digits = m[2] + (m[3] || ''), exp = (m[4] ? parseInt(m[4], 10) : 0) - (m[3] || '').length;
+        digits = digits.replace(/^0+(?=\d)/, '');
+        if (/^0+$/.test(digits)) return 0n;
+        if (exp < 0) {
+          var cut = digits.length + exp;
+          if (cut <= 0 || !/^0*$/.test(digits.slice(cut))) return null;
+          digits = digits.slice(0, cut);
+          exp = 0;
+        }
+        if (exp > 40) return m[1] ? -(10n ** 41n) : 10n ** 41n;
+        var v = BigInt(digits) * 10n ** BigInt(exp);
+        return m[1] ? -v : v;
+      }
+      var NUMRE = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
+
+      function intFromJson(ctx, type, node, path) {
+        var s;
+        if (node.t === 'num') s = node.s;
+        else if (node.t === 'str') s = node.v;
+        else throw jErr(ctx, 'expectNumber', node, { path: path });
+        var v = exactInt(s);
+        if (v === undefined) throw jErr(ctx, 'expectNumber', node, { path: path, value: s });
+        if (v === null) throw jErr(ctx, 'notInteger', node, { path: path, value: s });
+        var rg = INT_RANGE[type];
+        if (v < rg[0] || v > rg[1]) throw jErr(ctx, 'intRange', node, { path: path, value: s, type: type, min: String(rg[0]), max: String(rg[1]) });
+        return LONG[type] ? v : Number(v);
+      }
+      function floatFromJson(ctx, type, node, path) {
+        var x;
+        if (node.t === 'num') x = Number(node.s);
+        else if (node.t === 'str') {
+          if (node.v === 'NaN') return NaN;
+          if (node.v === 'Infinity') return Infinity;
+          if (node.v === '-Infinity') return -Infinity;
+          if (!NUMRE.test(node.v)) throw jErr(ctx, 'expectNumber', node, { path: path, value: node.v });
+          x = Number(node.v);
+        } else throw jErr(ctx, 'expectNumber', node, { path: path });
+        var shown = node.t === 'num' ? node.s : node.v;
+        if (!isFinite(x)) throw jErr(ctx, 'floatRange', node, { path: path, value: shown, type: type });
+        if (type === 'float') {
+          var f = Math.fround(x);
+          if (!isFinite(f)) throw jErr(ctx, 'floatRange', node, { path: path, value: shown, type: type });
+          return f;
+        }
+        return x;
+      }
+      function scalarFromJson(ctx, vi, node, path) {
+        var t = vi.type;
+        if (t === 'float' || t === 'double') return floatFromJson(ctx, t, node, path);
+        if (t === 'bool') { if (node.t !== 'bool') throw jErr(ctx, 'expectBool', node, { path: path }); return node.v; }
+        if (t === 'string') {
+          if (node.t !== 'str') throw jErr(ctx, 'expectString', node, { path: path });
+          if (node.lone) throw jErr(ctx, 'loneSurrogate', node, { path: path });
+          return node.v;
+        }
+        if (t === 'bytes') {
+          if (node.t !== 'str') throw jErr(ctx, 'expectString', node, { path: path });
+          try { return fromBase64(node.v); } catch (e) { throw jErr(ctx, 'badBase64', node, { path: path }); }
+        }
+        return intFromJson(ctx, t, node, path);
+      }
+      function enumFromJson(ctx, vi, node, path, opts) {
+        var en = vi.rt;
+        if (en.fullName === '.google.protobuf.NullValue' && (node.t === 'null' || (node.t === 'str' && node.v === 'NULL_VALUE'))) return 0;
+        if (node.t === 'str') {
+          if (Object.prototype.hasOwnProperty.call(en.values, node.v)) return en.values[node.v];
+          if (opts.ignoreUnknown) return undefined;
+          var names = Object.keys(en.values);
+          throw jErr(ctx, 'badEnum', node, { path: path, value: node.v, enum: en.fullName.slice(1), list: names.slice(0, 12).join(', ') + (names.length > 12 ? ', …' : '') });
+        }
+        if (node.t === 'num') {
+          var v = intFromJson(ctx, 'enum', node, path);
+          if (vi.closed && enumNameOf(ctx, en, v) === undefined) throw jErr(ctx, 'enumUnknownNumber', node, { path: path, value: node.s, enum: en.fullName.slice(1) });
+          return v;
+        }
+        throw jErr(ctx, 'expectString', node, { path: path });
+      }
+      function valFromJson(ctx, vi, node, path, opts, depth) {
+        if (vi.kind === 'message') return msgFromJson(ctx, vi.rt, node, path, opts, depth + 1);
+        if (vi.kind === 'enum') return enumFromJson(ctx, vi, node, path, opts);
+        return scalarFromJson(ctx, vi, node, path);
+      }
+      function mapKeyFromJson(ctx, type, ent, path) {
+        var k = ent.k, node = { at: ent.at };
+        if (type === 'string') return k;
+        if (type === 'bool') {
+          if (k === 'true') return true;
+          if (k === 'false') return false;
+          throw jErr(ctx, 'badMapKey', node, { path: path, value: k, type: type });
+        }
+        if (!/^-?(0|[1-9]\d*)$/.test(k)) throw jErr(ctx, 'badMapKey', node, { path: path, value: k, type: type });
+        var v = BigInt(k), rg = INT_RANGE[type];
+        if (v < rg[0] || v > rg[1]) throw jErr(ctx, 'badMapKey', node, { path: path, value: k, type: type });
+        return LONG[type] ? v : Number(v);
+      }
+      function suggestField(ctx, type, name) {
+        var want = name.replace(/_/g, '').toLowerCase(), hit = null;
+        sortedFields(ctx, type).forEach(function (fi) {
+          if (!hit && !fi.key && fi.jsonName.replace(/_/g, '').toLowerCase() === want) hit = fi.jsonName;
+        });
+        return hit;
+      }
+
+      function msgFromJson(ctx, type, node, path, opts, depth) {
+        depth = depth || 0;
+        if (depth > 100) throw jErr(ctx, 'tooDeep', node, { path: path, offset: '-' });
+        var full = type.fullName.slice(1);
+        var w = wktName(type);
+        if (w && (SPECIAL[w] || WRAPPERS[w] || w === 'Empty')) return wktFromJson(ctx, type, w, node, path, opts, depth);
+        if (node.t !== 'obj') throw jErr(ctx, 'expectObject', node, { path: path || full, type: full });
+        var msg = newMsg(type), names = fieldNames(ctx, type), seen = new Map(), oneofs = new Map();
+        node.e.forEach(function (ent) {
+          var fi = names.get(ent.k);
+          var keyNode = { at: ent.at };
+          if (!fi) {
+            if (opts.ignoreUnknown) { ctx.notes.push({ code: 'ignoredField', args: { path: path || full, name: ent.k } }); return; }
+            var hint = suggestField(ctx, type, ent.k);
+            throw jErr(ctx, 'unknownField', keyNode, { path: path || full, type: full, name: ent.k, hint: hint });
+          }
+          if (seen.has(fi.num)) throw jErr(ctx, 'dupField', keyNode, { path: path || full, name: ent.k, other: seen.get(fi.num) });
+          seen.set(fi.num, ent.k);
+          var p = joinPath(path, fi.protoName), vn = ent.v;
+          if (vn.t === 'null') {
+            var valueType = fi.kind === 'message' && !fi.repeated && fi.rt.fullName === '.google.protobuf.Value';
+            var nullEnum = fi.kind === 'enum' && !fi.repeated && fi.rt.fullName === '.google.protobuf.NullValue';
+            if (!valueType && !nullEnum) return;
+          }
+          if (fi.oneof) {
+            if (oneofs.has(fi.oneof.name)) throw jErr(ctx, 'oneofTwice', keyNode, { path: path || full, oneof: fi.oneof.name, other: oneofs.get(fi.oneof.name) });
+            oneofs.set(fi.oneof.name, ent.k);
+          }
+          if (fi.map) {
+            if (vn.t !== 'obj') throw jErr(ctx, 'expectObject', vn, { path: p, type: 'map<' + fi.mapKey + ', …>' });
+            var m = new Map();
+            vn.e.forEach(function (me) {
+              var k = mapKeyFromJson(ctx, fi.mapKey, me, p);
+              if (me.v.t === 'null') throw jErr(ctx, 'nullInMap', me.v, { path: p + '[' + me.k + ']' });
+              var v = valFromJson(ctx, fi.mapVal, me.v, p + '[' + me.k + ']', opts, depth);
+              if (v === undefined) return;
+              m.set(mapKeyId(k), [k, v]);
+            });
+            msg.f.set(fi.num, m);
+            return;
+          }
+          if (fi.repeated) {
+            if (vn.t !== 'arr') throw jErr(ctx, 'expectArray', vn, { path: p });
+            var arr = [];
+            vn.a.forEach(function (x, i) {
+              if (x.t === 'null') throw jErr(ctx, 'nullInArray', x, { path: p + '[' + i + ']' });
+              var v = valFromJson(ctx, fi, x, p + '[' + i + ']', opts, depth);
+              if (v !== undefined) arr.push(v);
+            });
+            msg.f.set(fi.num, arr);
+            return;
+          }
+          var val = valFromJson(ctx, fi, vn, p, opts, depth);
+          if (val !== undefined) msg.f.set(fi.num, val);
+        });
+        return msg;
+      }
+
+      function parseTimestamp(ctx, node, path) {
+        if (node.t !== 'str') throw jErr(ctx, 'expectString', node, { path: path });
+        var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(node.v);
+        var bad = function () { return jErr(ctx, 'badTimestamp', node, { path: path, value: node.v }); };
+        if (!m) throw bad();
+        var y = +m[1], mo = +m[2], d = +m[3], h = +m[4], mi = +m[5], s = +m[6];
+        if (mo < 1 || mo > 12 || d < 1 || h > 23 || mi > 59 || s > 59) throw bad();
+        var date = new Date(0);
+        date.setUTCFullYear(y, mo - 1, d);
+        if (date.getUTCMonth() !== mo - 1) throw bad();
+        date.setUTCHours(h, mi, s, 0);
+        var secs = BigInt(Math.round(date.getTime() / 1000));
+        if (m[8] !== 'Z') {
+          var off = (+m[8].slice(1, 3)) * 3600 + (+m[8].slice(4, 6)) * 60;
+          if (+m[8].slice(1, 3) > 23 || +m[8].slice(4, 6) > 59) throw bad();
+          secs -= BigInt(m[8][0] === '+' ? off : -off);
+        }
+        if (secs < TS_MIN || secs > TS_MAX) throw bad();
+        return [secs, m[7] ? +(m[7] + '000000000').slice(0, 9) : 0];
+      }
+
+      function wktFromJson(ctx, type, w, node, path, opts, depth) {
+        var full = type.fullName.slice(1);
+        var msg = newMsg(type);
+        var label = path || full;
+        if (WRAPPERS[w]) {
+          if (node.t === 'null') throw jErr(ctx, 'topNull', node, {});
+          var wv = scalarFromJson(ctx, { kind: 'scalar', type: WRAPPERS[w] }, node, label);
+          msg.f.set(1, wv);
+          return msg;
+        }
+        if (w === 'Empty') {
+          if (node.t !== 'obj') throw jErr(ctx, 'expectObject', node, { path: label, type: full });
+          if (node.e.length) throw jErr(ctx, 'unknownField', { at: node.e[0].at }, { path: label, type: full, name: node.e[0].k, hint: null });
+          return msg;
+        }
+        if (w === 'Timestamp') {
+          var ts = parseTimestamp(ctx, node, label);
+          msg.f.set(1, ts[0]); msg.f.set(2, ts[1]);
+          return msg;
+        }
+        if (w === 'Duration') {
+          if (node.t !== 'str') throw jErr(ctx, 'expectString', node, { path: label });
+          var dm = /^(-)?(\d+)(?:\.(\d{1,9}))?s$/.exec(node.v);
+          if (!dm) throw jErr(ctx, 'badDuration', node, { path: label, value: node.v });
+          var sec = BigInt(dm[2]), nanos = dm[3] ? +(dm[3] + '000000000').slice(0, 9) : 0;
+          if (sec > DUR_MAX) throw jErr(ctx, 'badDuration', node, { path: label, value: node.v });
+          if (dm[1]) { sec = -sec; nanos = nanos ? -nanos : 0; }
+          msg.f.set(1, sec); msg.f.set(2, nanos);
+          return msg;
+        }
+        if (w === 'FieldMask') {
+          if (node.t !== 'str') throw jErr(ctx, 'expectString', node, { path: label });
+          var paths = node.v === '' ? [] : node.v.split(',').map(function (p) {
+            if (!/^[A-Za-z0-9.]+$/.test(p)) throw jErr(ctx, 'badFieldMask', node, { path: label, value: p });
+            return p.replace(/[A-Z]/g, function (c) { return '_' + c.toLowerCase(); });
+          });
+          msg.f.set(1, paths);
+          return msg;
+        }
+        if (w === 'Struct') {
+          if (node.t !== 'obj') throw jErr(ctx, 'expectObject', node, { path: label, type: full });
+          var vt = lookupType(ctx, 'google.protobuf.Value');
+          var m = new Map();
+          node.e.forEach(function (e) { m.set('string:' + e.k, [e.k, valueFromJson(ctx, vt, e.v, label + '[' + e.k + ']', opts, depth + 1)]); });
+          msg.f.set(1, m);
+          return msg;
+        }
+        if (w === 'ListValue') {
+          if (node.t !== 'arr') throw jErr(ctx, 'expectArray', node, { path: label });
+          var vt2 = lookupType(ctx, 'google.protobuf.Value');
+          msg.f.set(1, node.a.map(function (x, i) { return valueFromJson(ctx, vt2, x, label + '[' + i + ']', opts, depth + 1); }));
+          return msg;
+        }
+        if (w === 'Value') return valueFromJson(ctx, type, node, label, opts, depth);
+        if (w === 'Any') return anyFromJson(ctx, type, node, label, opts, depth);
+        return msg;
+      }
+
+      function valueFromJson(ctx, vt, node, path, opts, depth) {
+        var msg = newMsg(vt);
+        if (node.t === 'null') msg.f.set(1, 0);
+        else if (node.t === 'num') {
+          var d = Number(node.s);
+          if (!isFinite(d)) throw jErr(ctx, 'floatRange', node, { path: path, value: node.s, type: 'double' });
+          var exact = exactInt(node.s);
+          if (typeof exact === 'bigint' && BigInt(Math.trunc(d)) !== exact && Number.isInteger(d)) {
+            ctx.notes.push({ code: 'valuePrecision', args: { path: path, value: node.s, stored: String(d) } });
+          }
+          msg.f.set(2, d);
+        } else if (node.t === 'str') {
+          if (node.lone) throw jErr(ctx, 'loneSurrogate', node, { path: path });
+          msg.f.set(3, node.v);
+        } else if (node.t === 'bool') msg.f.set(4, node.v);
+        else if (node.t === 'obj') msg.f.set(5, wktFromJson(ctx, lookupType(ctx, 'google.protobuf.Struct'), 'Struct', node, path, opts, depth + 1));
+        else msg.f.set(6, wktFromJson(ctx, lookupType(ctx, 'google.protobuf.ListValue'), 'ListValue', node, path, opts, depth + 1));
+        return msg;
+      }
+
+      function anyFromJson(ctx, type, node, path, opts, depth) {
+        var msg = newMsg(type);
+        if (node.t !== 'obj') throw jErr(ctx, 'expectObject', node, { path: path, type: 'google.protobuf.Any' });
+        var typeEnt = null, rest = [];
+        node.e.forEach(function (e) { if (e.k === '@type') typeEnt = e; else rest.push(e); });
+        if (!typeEnt) {
+          if (!rest.length) return msg;
+          throw jErr(ctx, 'anyNoType', node, { path: path });
+        }
+        if (typeEnt.v.t !== 'str') throw jErr(ctx, 'expectString', typeEnt.v, { path: path + '.@type' });
+        var url = typeEnt.v.v, name = url.slice(url.lastIndexOf('/') + 1);
+        var inner = name ? ctx.root.lookup(name, [ctx.pb.Type]) : null;
+        if (!inner) throw jErr(ctx, 'anyUnknownType', typeEnt.v, { path: path, value: url });
+        var sub;
+        var emptyWithValue = wktName(inner) === 'Empty' && rest.some(function (e) { return e.k === 'value'; });
+        if (hasSpecialJson(inner) || emptyWithValue) {
+          var valEnt = null;
+          rest.forEach(function (e) {
+            if (e.k === 'value') valEnt = e;
+            else throw jErr(ctx, 'unknownField', { at: e.at }, { path: path, type: 'google.protobuf.Any', name: e.k, hint: null });
+          });
+          if (!valEnt) throw jErr(ctx, 'unknownField', node, { path: path, type: 'google.protobuf.Any', name: 'value', hint: null });
+          sub = msgFromJson(ctx, inner, valEnt.v, path, opts, depth + 1);
+        } else {
+          sub = msgFromJson(ctx, inner, { t: 'obj', e: rest, at: node.at }, path, opts, depth + 1);
+        }
+        msg.f.set(1, url);
+        msg.f.set(2, encodeToBytes(ctx, sub));
+        return msg;
+      }
+
+      // Parses ProtoJSON text into a message tree of typeName.
+      function fromJsonText(ctx, typeName, text, opts) {
+        var type = lookupType(ctx, typeName);
+        ctx.notes = [];
+        ctx.jsonText = text;
+        var node = parseJsonText(text);
+        if (node.t === 'null' && !hasSpecialJson(type)) throw pbErr('topNull', {});
+        return msgFromJson(ctx, type, node, '', opts || {}, 0);
+      }
+
+      // ---------- encoder ----------
+      function wVarNum(out, n) {
+        while (n > 127) { out.push((n % 128) | 128); n = Math.floor(n / 128); }
+        out.push(n);
+      }
+      function wVarBig(out, v) {
+        v = BigInt.asUintN(64, v);
+        while (v > 127n) { out.push(Number(v & 127n) | 128); v >>= 7n; }
+        out.push(Number(v));
+      }
+      function wTag(out, num, wt) { wVarNum(out, num * 8 + wt); }
+      var SCRATCH = new DataView(new ArrayBuffer(8));
+      function wFixed(out, n) { for (var i = 0; i < n; i++) out.push(SCRATCH.getUint8(i)); }
+      function wBytes(out, b) { wVarNum(out, b.length); for (var i = 0; i < b.length; i++) out.push(b[i]); }
+
+      function wScalar(out, vi, v) {
+        switch (vi.kind === 'enum' ? 'enum' : vi.type) {
+          case 'int32': case 'enum': if (v < 0) wVarBig(out, BigInt(v)); else wVarNum(out, v); return;
+          case 'uint32': wVarNum(out, v >>> 0); return;
+          case 'sint32': wVarNum(out, ((v << 1) ^ (v >> 31)) >>> 0); return;
+          case 'int64': case 'uint64': wVarBig(out, v); return;
+          case 'sint64': wVarBig(out, (v << 1n) ^ (v >> 63n)); return;
+          case 'bool': out.push(v ? 1 : 0); return;
+          case 'fixed32': SCRATCH.setUint32(0, v, true); wFixed(out, 4); return;
+          case 'sfixed32': SCRATCH.setInt32(0, v, true); wFixed(out, 4); return;
+          case 'float': SCRATCH.setFloat32(0, v, true); wFixed(out, 4); return;
+          case 'fixed64': SCRATCH.setBigUint64(0, v, true); wFixed(out, 8); return;
+          case 'sfixed64': SCRATCH.setBigInt64(0, v, true); wFixed(out, 8); return;
+          case 'double': SCRATCH.setFloat64(0, v, true); wFixed(out, 8); return;
+          case 'string': wBytes(out, utf8Encode(v)); return;
+          case 'bytes': wBytes(out, v); return;
+        }
+      }
+      function wValue(out, ctx, vi, num, v, delimited) {
+        if (vi.kind === 'message') {
+          if (delimited) { wTag(out, num, 3); encodeInto(out, ctx, v); wTag(out, num, 4); return; }
+          var body = [];
+          encodeInto(body, ctx, v);
+          wTag(out, num, 2);
+          wVarNum(out, body.length);
+          for (var i = 0; i < body.length; i++) out.push(body[i]);
+          return;
+        }
+        wTag(out, num, vi.wire);
+        wScalar(out, vi, v);
+      }
+      // Fields in field-number order, packed repeated scalars as one record, like protoc.
+      function encodeInto(out, ctx, msg) {
+        sortedFields(ctx, msg.type).forEach(function (fi) {
+          if (!msg.f.has(fi.num)) return;
+          var v = msg.f.get(fi.num);
+          if (fi.map) {
+            // Map entries sorted by key, as protoc's deterministic serialization does
+            // (strings by UTF-8 bytes, numbers by value, false before true).
+            Array.from(v.values()).sort(function (x, y) { return compareKeys(x[0], y[0]); }).forEach(function (e) {
+              var ent = [];
+              wValue(ent, ctx, { kind: 'scalar', type: fi.mapKey, wire: WIRE[fi.mapKey] }, 1, e[0], false);
+              wValue(ent, ctx, fi.mapVal, 2, e[1], false);
+              wTag(out, fi.num, 2);
+              wVarNum(out, ent.length);
+              for (var i = 0; i < ent.length; i++) out.push(ent[i]);
+            });
+            return;
+          }
+          if (fi.repeated) {
+            if (!v.length) return;
+            if (fi.packed) {
+              var body = [];
+              v.forEach(function (x) { wScalar(body, fi, x); });
+              wTag(out, fi.num, 2);
+              wVarNum(out, body.length);
+              for (var j = 0; j < body.length; j++) out.push(body[j]);
+            } else v.forEach(function (x) { wValue(out, ctx, fi, fi.num, x, fi.delimited); });
+            return;
+          }
+          if (fi.presence === 'implicit' && isDefault(fi, v)) return;
+          wValue(out, ctx, fi, fi.num, v, fi.delimited);
+        });
+        if (msg.unknown.length && ctx.buf) {
+          msg.unknown.forEach(function (u) { for (var i = u.offset; i < u.end; i++) out.push(ctx.buf[i]); });
+        }
+      }
+      function compareKeys(a, b) {
+        if (typeof a === 'string') {
+          var x = utf8Encode(a), y = utf8Encode(b), n = Math.min(x.length, y.length);
+          for (var i = 0; i < n; i++) if (x[i] !== y[i]) return x[i] - y[i];
+          return x.length - y.length;
+        }
+        if (typeof a === 'boolean') return (a ? 1 : 0) - (b ? 1 : 0);
+        return a < b ? -1 : a > b ? 1 : 0;
+      }
+      function encodeToBytes(ctx, msg) {
+        var out = [];
+        encodeInto(out, ctx, msg);
+        return Uint8Array.from(out);
+      }
+
+      // ---------- sample JSON ----------
+      function sampleScalar(ctx, vi, opts, fi) {
+        if (vi.kind === 'enum') {
+          if (vi.rt.fullName === '.google.protobuf.NullValue') return null;
+          var dv = fi && typeof fi.defaultValue === 'string' && vi.rt.values[fi.defaultValue] !== undefined ? vi.rt.values[fi.defaultValue] : enumDefault(vi.rt);
+          return opts.enumNumbers ? new JNum(String(dv)) : enumNameOf(ctx, vi.rt, dv);
+        }
+        var t = vi.type, d = fi && fi.defaultValue;
+        if (d !== undefined && d !== null && t !== 'bytes') {
+          if (LONG[t]) return String(d);
+          if (t === 'string') return String(d);
+          if (t === 'bool') return !!d;
+          if (typeof d === 'number') return t === 'float' || t === 'double' ? floatJson(d, t === 'float') : new JNum(String(d));
+        }
+        if (LONG[t]) return '0';
+        if (t === 'bool') return false;
+        if (t === 'string' || t === 'bytes') return '';
+        return new JNum('0');
+      }
+      function sampleValue(ctx, vi, opts, stack, fi) {
+        if (vi.kind !== 'message') return sampleScalar(ctx, vi, opts, fi);
+        return sampleJson(ctx, vi.rt, opts, stack);
+      }
+      function sampleKey(type) {
+        if (type === 'string') return 'key';
+        if (type === 'bool') return 'true';
+        return '0';
+      }
+      function sampleJson(ctx, type, opts, stack) {
+        stack = stack || [];
+        var w = wktName(type);
+        if (w === 'Timestamp') return '1970-01-01T00:00:00Z';
+        if (w === 'Duration') return '0s';
+        if (w === 'FieldMask') return '';
+        if (w === 'Struct' || w === 'Any' || w === 'Empty') return new JObj();
+        if (w === 'Value') return null;
+        if (w === 'ListValue') return [];
+        if (w && WRAPPERS[w]) return sampleScalar(ctx, { kind: 'scalar', type: WRAPPERS[w] }, opts);
+        if (stack.indexOf(type) >= 0 || stack.length > 8) return new JObj();
+        var o = new JObj(), done = new Map(), inner = stack.concat([type]);
+        sortedFields(ctx, type).forEach(function (fi) {
+          if (fi.oneof) {
+            var used = done.get(fi.oneof);
+            if (used) { used.others.push(fi.protoName); return; }
+            done.set(fi.oneof, { used: fi.protoName, others: [] });
+          }
+          var name = fi.key || (opts.protoNames ? fi.protoName : fi.jsonName);
+          var v;
+          if (fi.map) v = new JObj([[sampleKey(fi.mapKey), sampleValue(ctx, fi.mapVal, opts, inner)]]);
+          else {
+            var one = sampleValue(ctx, fi, opts, inner, fi);
+            v = fi.repeated ? [one] : one;
+          }
+          o.e.push([name, v]);
+        });
+        done.forEach(function (d, oneof) {
+          if (d.others.length) ctx.notes.push({ code: 'sampleOneof', args: { name: oneof.name, used: d.used, others: d.others.join(', ') } });
+        });
+        return o;
+      }
+      function sampleFor(ctx, typeName, opts) {
+        ctx.notes = [];
+        return sampleJson(ctx, lookupType(ctx, typeName), opts || {}, []);
+      }
+
+      // Types whose decode of bytes has no unknown fields, most matched fields first.
+      function rankTypes(ctx, bytes, limit) {
+        var hits = [];
+        ctx.types.slice(0, 300).forEach(function (name) {
+          var saveNotes = ctx.notes;
+          try {
+            var msg = decodeTyped(ctx, name, bytes);
+            var unknown = collectUnknown(ctx, msg, '', []);
+            if (!unknown.length && msg.f.size) hits.push({ name: name, known: countFields(ctx, msg) });
+          } catch (e) { /* does not fit */ }
+          ctx.notes = saveNotes;
+        });
+        hits.sort(function (a, b) { return b.known - a.known; });
+        return hits.slice(0, limit || 5).map(function (h) { return h.name; });
+      }
+      function countFields(ctx, msg) {
+        var n = 0;
+        msg.f.forEach(function (v, num) {
+          n++;
+          var fi = finfo(ctx, msg.type.fieldsById[num]);
+          if (fi.kind === 'message') (fi.repeated ? v : [v]).forEach(function (s) { n += countFields(ctx, s); });
+        });
+        return n;
+      }
+
+      // ---------- output formats for encoded bytes ----------
+      function formatBytes(bytes, fmt) {
+        var parts = [], i;
+        if (fmt === 'base64') return toBase64(bytes);
+        if (fmt === 'carray') {
+          for (i = 0; i < bytes.length; i++) parts.push('0x' + hex(bytes[i], 2));
+          return '{ ' + parts.join(', ') + ' }';
+        }
+        if (fmt === 'escaped') {
+          // Python bytes repr()
+          var hasSingle = false, hasDouble = false;
+          for (i = 0; i < bytes.length; i++) { if (bytes[i] === 39) hasSingle = true; if (bytes[i] === 34) hasDouble = true; }
+          var q = hasSingle && !hasDouble ? '"' : "'";
+          var s = 'b' + q;
+          for (i = 0; i < bytes.length; i++) {
+            var b = bytes[i];
+            if (b === 92 || b === q.charCodeAt(0)) s += '\\' + String.fromCharCode(b);
+            else if (b === 9) s += '\\t';
+            else if (b === 10) s += '\\n';
+            else if (b === 13) s += '\\r';
+            else if (b < 32 || b >= 127) s += '\\x' + hex(b, 2);
+            else s += String.fromCharCode(b);
+          }
+          return s + q;
+        }
+        for (i = 0; i < bytes.length; i++) parts.push(hex(bytes[i], 2));
+        return parts.join(' ');
+      }
+
+      // gzip-compressed gRPC frames (flag 01). Async: uses DecompressionStream.
+      function gunzip(bytes) {
+        var ds = new DecompressionStream('gzip');
+        var stream = new Blob([bytes]).stream().pipeThrough(ds);
+        return new Response(stream).arrayBuffer().then(function (b) { return new Uint8Array(b); });
       }
       /* ── engine:end ── */
 
-      function showJson(obj) {
-        var json = JSON.stringify(obj, null, 2);
-        outputEl.innerHTML = syntaxHighlight(json);
+      var pb = window.protobuf;
+      var SLUG = 'protobuf-to-json';
+      function $(id) { return document.getElementById(id); }
+      var els = {
+        grid: document.querySelector('.pbj-grid'), modes: document.querySelectorAll('.pbj-mode'),
+        bytes: $('pbj-bytes'), json: $('pbj-json'), schema: $('pbj-schema'), type: $('pbj-type'), go: $('pbj-go'),
+        fmt: $('pbj-fmt'), grpc: $('pbj-grpc'), ignoreUnknown: $('pbj-ignore-unknown'),
+        names: $('pbj-names'), defaults: $('pbj-defaults'), enumNum: $('pbj-enumnum'), rawView: $('pbj-rawview'),
+        indent: $('pbj-indent'), outFmt: $('pbj-outfmt'), frame: $('pbj-frame'),
+        output: $('pbj-output'), status: $('pbj-status'), notes: $('pbj-notes'), notesWrap: $('pbj-notes-wrap'),
+        copy: $('pbj-copy'), download: $('pbj-download'), use: $('pbj-use'),
+        openBin: $('pbj-open-bin'), binFile: $('pbj-bin-file'), addProto: $('pbj-add-proto'), protoFiles: $('pbj-proto-files'),
+        files: $('pbj-files'), filesWrap: $('pbj-files-wrap'), example: $('pbj-example'), clear: $('pbj-clear'),
+      };
+      var prefs = { mode: 'decode', fmt: 'auto', grpc: 'auto', names: 'json', defaults: false, enumNum: false,
+        rawView: 'json', indent: '2', outFmt: 'hex', frame: false, ignoreUnknown: false };
+      var saved = (window.ztPersist && window.ztPersist.load(SLUG)) || {};
+      Object.keys(prefs).forEach(function (k) { if (saved[k] !== undefined && typeof saved[k] === typeof prefs[k]) prefs[k] = saved[k]; });
+      if (['decode', 'encode', 'sample'].indexOf(prefs.mode) < 0) prefs.mode = 'decode';
+      function savePrefs() { if (window.ztPersist) window.ztPersist.save(SLUG, prefs); }
+
+      var state = { ctx: null, schemaErr: null, files: [], gen: 0, timer: 0, trackTimer: 0, outText: '', lastBytes: null };
+
+      function fmt(tpl, args) {
+        return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return args && args[k] !== undefined && args[k] !== null ? String(args[k]) : m; });
+      }
+      function errText(e) {
+        if (!e || !e.pbCode) return String(e && e.message || e);
+        var a = Object.assign({}, e.pbArgs), code = e.pbCode;
+        var tpl = S.err[code] || code;
+        if (code === 'schemaUnresolved') {
+          a.where = a.where ? ' (' + a.where + ')' : '';
+          var t = fmt(tpl, a);
+          if (a.missing && a.missing.length) t += fmt(S.err.schemaUnresolvedHint, { list: a.missing.join(', ') });
+          return t;
+        }
+        if (code === 'unknownField') a.hint = a.hint ? fmt(S.err.unknownFieldHint, { name: a.hint }) : '';
+        var text = fmt(tpl, a);
+        if (a.path && tpl.indexOf('{path}') < 0) text += ' (' + a.path + ')';
+        return text;
+      }
+      function noteText(n) {
+        var a = Object.assign({}, n.args);
+        return fmt(S.note[n.code] || n.code, a);
+      }
+      function unknownNote(item) {
+        var u = item.u, len = u.end - u.start;
+        if (u.note && u.note.code === 'wireMismatch') {
+          return fmt(S.note.wireMismatch, { path: item.path, num: u.num, name: u.note.name, got: S.wire[u.note.got], exp: S.wire[u.note.exp] });
+        }
+        if (u.note && u.note.code === 'closedEnum') return fmt(S.note.closedEnum, { path: item.path, value: u.note.value, enum: u.note.enumName });
+        return fmt(S.note.unknownField, { path: item.path, num: u.num, wire: S.wire[u.wt], len: len, offset: u.offset });
       }
 
-      function showError(msg) {
-        outputEl.innerHTML = '<span class="pb-error">' + escHtml(msg) + '</span>';
+      function setStatus(text, kind) {
+        els.status.textContent = text;
+        els.status.className = 'tool-status pbj-status' + (kind ? ' ' + kind : '');
+      }
+      function setNotes(list) {
+        els.notes.innerHTML = '';
+        var shown = list.slice(0, 30);
+        shown.forEach(function (t) { var li = document.createElement('li'); li.textContent = t; els.notes.appendChild(li); });
+        if (list.length > shown.length) {
+          var more = document.createElement('li');
+          more.textContent = fmt(S.note.more, { n: list.length - shown.length });
+          els.notes.appendChild(more);
+        }
+        els.notesWrap.hidden = !list.length;
+      }
+      function showText(text, html) {
+        state.outText = text;
+        if (html !== undefined) els.output.innerHTML = html; else els.output.textContent = text;
+        els.output.classList.remove('pbj-output-error');
+      }
+      function showError(e, notes) {
+        var msg = errText(e);
+        state.outText = '';
+        state.lastBytes = null;
+        els.output.textContent = msg;
+        els.output.classList.add('pbj-output-error');
+        setStatus(S.st.error + ': ' + msg, 'error');
+        setNotes(notes || []);
+      }
+      function showEmpty(text) {
+        state.outText = '';
+        state.lastBytes = null;
+        els.output.textContent = '';
+        els.output.classList.remove('pbj-output-error');
+        setStatus(text, 'none');
+        setNotes([]);
+      }
+      function track() {
+        clearTimeout(state.trackTimer);
+        state.trackTimer = setTimeout(function () { if (window.trackTool) window.trackTool('protobuf_to_json', prefs.mode); }, 1500);
       }
 
-      // Mode switching
-      modeSampleBtn.addEventListener('click', function() {
-        mode = 'sample';
-        modeSampleBtn.classList.add('pb-mode-active');
-        modeBinaryBtn.classList.remove('pb-mode-active');
-        binSection.classList.add('pb-hidden');
-        runBtn.textContent = t.runBtn;
-      });
+      // ---------- schema ----------
+      function schemaFiles() {
+        var files = [];
+        if (els.schema.value.trim()) files.push({ name: S.mainFile, text: els.schema.value });
+        state.files.forEach(function (f) { files.push(f); });
+        return files;
+      }
+      function rebuildSchema() {
+        var files = schemaFiles();
+        state.ctx = null;
+        state.schemaErr = null;
+        if (files.length) {
+          try { state.ctx = buildSchema(pb, files); } catch (e) { state.schemaErr = e; }
+        }
+        fillTypes();
+      }
+      function fillTypes() {
+        var prev = els.type.value, types = state.ctx ? state.ctx.types : [];
+        els.type.innerHTML = '';
+        function add(value, label) { var o = document.createElement('option'); o.value = value; o.textContent = label; els.type.appendChild(o); }
+        if (prefs.mode === 'decode') add('', S.typeRaw);
+        else if (!types.length) add('', S.typeNone);
+        types.forEach(function (t) { add(t, t); });
+        if (prev && types.indexOf(prev) >= 0) els.type.value = prev;
+        else if (state.ctx && state.ctx.defaultType) els.type.value = state.ctx.defaultType;
+        else els.type.value = '';
+        syncRawFlag();
+      }
+      function syncRawFlag() {
+        els.grid.setAttribute('data-raw', prefs.mode === 'decode' && !els.type.value ? '1' : '0');
+      }
 
-      modeBinaryBtn.addEventListener('click', function() {
-        mode = 'binary';
-        modeBinaryBtn.classList.add('pb-mode-active');
-        modeSampleBtn.classList.remove('pb-mode-active');
-        binSection.classList.remove('pb-hidden');
-        runBtn.textContent = t.decodeBtnLabel;
-      });
+      function ctxOrStatus(emptyText) {
+        if (state.schemaErr) { showError(state.schemaErr); return null; }
+        if (!state.ctx) { showEmpty(emptyText); return null; }
+        if (!state.ctx.types.length) { showEmpty(S.st.noTypes); return null; }
+        if (!els.type.value) { showEmpty(emptyText); return null; }
+        return state.ctx;
+      }
+      function schemaNotes(ctx) {
+        return ctx ? ctx.warnings.map(noteText) : [];
+      }
 
-      // Collect all message type names from a parsed root
-      function collectMessageNames(ns, prefix) {
-        var names = [];
-        if (!ns || !ns.nestedArray) return names;
-        ns.nestedArray.forEach(function(item) {
-          var fullName = prefix ? prefix + '.' + item.name : item.name;
-          var pb = window.protobuf;
-          var isType = (pb && pb.Type && item instanceof pb.Type) ||
-            (Array.isArray(item.fieldsArray) && item.fields !== null && typeof item.fields === 'object');
-          if (isType) {
-            names.push(fullName);
+      // ---------- runs ----------
+      function decodeOpts() { return { protoNames: prefs.names === 'proto', defaults: prefs.defaults, enumNumbers: prefs.enumNum }; }
+      function indentOf() { return parseInt(prefs.indent, 10) || 0; }
+
+      function runDecode(gen) {
+        var text = els.bytes.value;
+        if (!text.trim()) return showEmpty(S.st.empty);
+        var parsed, frames;
+        try {
+          parsed = readBytes(text, prefs.fmt);
+          frames = unframe(parsed.bytes, prefs.grpc);
+        } catch (e) { return showError(e); }
+        var notes = [];
+        if (parsed.ambiguous) notes.push(S.note.ambiguousHex);
+        var payloads = [parsed.bytes], compressed = [];
+        if (frames) {
+          payloads = [];
+          frames.forEach(function (f) {
+            if (f.flag & 0x80) {
+              var tr = new TextDecoder().decode(f.payload).replace(/\r?\n/g, '  ').trim();
+              notes.push(fmt(S.note.grpcTrailers, { text: tr }));
+            } else {
+              if (f.flag & 1) compressed.push({ i: payloads.length, offset: f.offset });
+              payloads.push(f.payload);
+            }
+          });
+          notes.unshift(fmt(S.note.grpcFrames, { count: payloads.length }));
+        }
+        if (!compressed.length) return finishDecode(gen, parsed, payloads, notes, !!frames);
+        Promise.all(compressed.map(function (c) {
+          return gunzip(payloads[c.i]).then(function (b) { payloads[c.i] = b; notes.push(fmt(S.note.grpcGunzip, { i: c.i + 1 })); }, function (err) {
+            throw pbErr('grpcCompressed', { offset: c.offset, detail: String(err && err.message || err) });
+          });
+        })).then(function () {
+          if (gen === state.gen) finishDecode(gen, parsed, payloads, notes, true);
+        }, function (e) { if (gen === state.gen) showError(e, notes); });
+      }
+
+      function finishDecode(gen, parsed, payloads, notes, framed) {
+        var fmtName = S.fmtName[parsed.format] || parsed.format;
+        var typeName = els.type.value;
+        var total = payloads.reduce(function (s, p) { return s + p.length; }, 0);
+        if (!typeName) {
+          if (state.schemaErr && els.schema.value.trim()) notes.push(errText(state.schemaErr));
+          var trees = [], texts = [];
+          for (var i = 0; i < payloads.length; i++) {
+            var fields;
+            try { fields = parseRaw(payloads[i], 0, payloads[i].length, 0, null); }
+            catch (e) { return showError(e, notes); }
+            if (prefs.rawView === 'protoc') texts.push(rawText(fields));
+            else trees.push(rawJson(fields, 0, prefs.rawView === 'readings'));
           }
-          // Recurse into namespaces/messages
-          if (item.nestedArray) {
-            names = names.concat(collectMessageNames(item, fullName));
+          if (!state.ctx) notes.push(S.note.rawHint);
+          if (prefs.rawView === 'protoc') {
+            showText(texts.join('\n'));
+          } else {
+            notes.push(S.note.rawStrings);
+            var tree = trees.length === 1 ? trees[0] : trees;
+            showText(stringifyJson(tree, indentOf(), false), stringifyJson(tree, indentOf(), true));
           }
-        });
-        return names;
-      }
-
-      // Parse schema and populate dropdown
-      function parseSchema(schemaText) {
-        var pb = window.protobuf;
-        if (!pb) { setStatus(t.errNoLib, true); return; }
-        if (!schemaText.trim()) {
-          currentRoot = null;
-          msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
+          setStatus(fmt(S.st.decodedRaw, { n: total, fmt: fmtName }), 'success');
+          setNotes(notes);
+          track();
           return;
         }
-        try {
-          var result = pb.parse(schemaText, { keepCase: true });
-          currentRoot = result.root;
-          var names = collectMessageNames(currentRoot, '');
-          if (names.length === 0) {
-            msgSel.innerHTML = '<option value="">' + escHtml(t.noMessages) + '</option>';
-            setStatus(t.noMessages, true);
-            return;
+        var ctx = state.ctx, opts = decodeOpts(), out = [];
+        var schemaWarn = schemaNotes(ctx);
+        for (var j = 0; j < payloads.length; j++) {
+          try {
+            var msg = decodeTyped(ctx, typeName, payloads[j]);
+            out.push(msgJson(ctx, msg, opts, '', 0));
+            collectUnknown(ctx, msg, '', []).forEach(function (u) { notes.push(unknownNote(u)); });
+            ctx.notes.forEach(function (n) { notes.push(noteText(n)); });
+            if (j === 0 && collectUnknown(ctx, msg, '', []).length) {
+              var better = rankTypes(ctx, payloads[0]).filter(function (n) { return n !== typeName; });
+              if (better.length) notes.push(fmt(S.note.betterTypes, { list: better.join(', ') }));
+            }
+          } catch (e) {
+            var hint = [];
+            if (j === 0 && e.pbCode && !/^(ts|nanos|duration|fieldMask|value)/.test(e.pbCode)) {
+              var fits = rankTypes(ctx, payloads[0]).filter(function (n) { return n !== typeName; });
+              if (fits.length) hint.push(fmt(S.note.betterTypes, { list: fits.join(', ') }));
+            }
+            return showError(e, notes.concat(hint, schemaWarn));
           }
-          var prevSelected = msgSel.value;
-          msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
-          names.forEach(function(n) {
-            var opt = document.createElement('option');
-            opt.value = n;
-            opt.textContent = n;
-            msgSel.appendChild(opt);
-          });
-          // Restore or auto-select first
-          if (prevSelected && names.indexOf(prevSelected) !== -1) {
-            msgSel.value = prevSelected;
-          } else {
-            msgSel.value = names[0];
-          }
-          setStatus('', false);
-        } catch(e) {
-          currentRoot = null;
-          msgSel.innerHTML = '<option value="">' + escHtml(t.msgTypePlaceholder) + '</option>';
-          setStatus(t.errParse + e.message, true);
         }
+        var tree2 = out.length === 1 ? out[0] : out;
+        showText(stringifyJson(tree2, indentOf(), false), stringifyJson(tree2, indentOf(), true));
+        setStatus(payloads.length > 1
+          ? fmt(S.st.decodedFrames, { count: payloads.length, type: typeName })
+          : fmt(S.st.decoded, { n: total, type: typeName, fmt: fmtName }), 'success');
+        setNotes(notes.concat(schemaWarn));
+        track();
       }
 
-      // Auto-parse on schema change (debounced 400ms)
-      schemaEl.addEventListener('input', function() {
-        clearTimeout(parseTimer);
-        parseTimer = setTimeout(function() {
-          parseSchema(schemaEl.value);
-        }, 400);
-      });
-
-      // Generate sample JSON from message type
-      function generateSample() {
-        var pb = window.protobuf;
-        if (!pb) { showError(t.errNoLib); return; }
-        if (!schemaEl.value.trim()) { showError(t.errNoSchema); return; }
-        if (!currentRoot) {
-          try { parseSchema(schemaEl.value); } catch(e) {}
-          if (!currentRoot) return;
-        }
-        var typeName = msgSel.value;
-        if (!typeName) { showError(t.errNoType); return; }
+      function runEncode() {
+        var ctx = ctxOrStatus(S.st.needSchema);
+        if (!ctx) return;
+        var text = els.json.value;
+        if (!text.trim()) return showEmpty(S.st.emptyJson);
+        var bytes;
         try {
-          var MsgType = currentRoot.lookupType(typeName);
-          showJson(sampleMessage(MsgType));
-          setStatus(t.statusSample, false);
-          window.trackTool && window.trackTool('protobuf_to_json', 'generate_sample');
-        } catch(e) {
-          showError(t.errParse + e.message);
-          setStatus(t.errParse + e.message, true);
-        }
+          var msg = fromJsonText(ctx, els.type.value, text, { ignoreUnknown: prefs.ignoreUnknown });
+          ctx.buf = null;
+          bytes = encodeToBytes(ctx, msg);
+        } catch (e) { return showError(e, schemaNotes(ctx)); }
+        var n = bytes.length;
+        if (prefs.frame) bytes = frameBytes(bytes);
+        state.lastBytes = bytes;
+        showText(formatBytes(bytes, prefs.outFmt));
+        setStatus(fmt(S.st.encoded, { type: els.type.value, n: n }), 'success');
+        setNotes(ctx.notes.map(noteText).concat(schemaNotes(ctx)));
+        track();
       }
 
-      // Decode binary data
-      function decodeBinary() {
-        var pb = window.protobuf;
-        if (!pb) { showError(t.errNoLib); return; }
-        if (!schemaEl.value.trim()) { showError(t.errNoSchema); return; }
-        if (!currentRoot) {
-          try { parseSchema(schemaEl.value); } catch(e) {}
-          if (!currentRoot) return;
-        }
-        var typeName = msgSel.value;
-        if (!typeName) { showError(t.errNoType); return; }
-        var rawBinary = binaryEl.value.trim();
-        if (!rawBinary) { showError(t.errNoBinary); return; }
-        try {
-          var MsgType = currentRoot.lookupType(typeName);
-          showJson(decodeMessage(MsgType, parseBinaryText(rawBinary)));
-          setStatus(t.statusDecoded, false);
-          window.trackTool && window.trackTool('protobuf_to_json', 'decode_binary');
-        } catch(e) {
-          showError(t.errDecode + e.message);
-          setStatus(t.errDecode + e.message, true);
-        }
+      function runSample() {
+        var ctx = ctxOrStatus(S.st.needSchemaSample);
+        if (!ctx) return;
+        var tree;
+        try { tree = sampleFor(ctx, els.type.value, { protoNames: prefs.names === 'proto', enumNumbers: prefs.enumNum }); }
+        catch (e) { return showError(e, schemaNotes(ctx)); }
+        showText(stringifyJson(tree, indentOf(), false), stringifyJson(tree, indentOf(), true));
+        setStatus(fmt(S.st.sampled, { type: els.type.value }), 'success');
+        setNotes(ctx.notes.map(noteText).concat(schemaNotes(ctx)));
+        track();
       }
 
-      runBtn.addEventListener('click', function() {
-        if (mode === 'sample') generateSample();
-        else decodeBinary();
-      });
+      function run() {
+        clearTimeout(state.timer);
+        var gen = ++state.gen;
+        if (!pb) return showEmpty('protobuf.js failed to load.');
+        if (prefs.mode === 'encode') runEncode();
+        else if (prefs.mode === 'sample') runSample();
+        else runDecode(gen);
+      }
+      function schedule(ms) { clearTimeout(state.timer); state.timer = setTimeout(run, ms); }
 
-      // Copy output JSON
-      copyBtn.addEventListener('click', function() {
-        var text = outputEl.textContent;
-        if (!text || text === t.outputHint) return;
-        navigator.clipboard.writeText(text).then(function() {
-          copyBtn.textContent = t.copied;
-          setTimeout(function() { copyBtn.textContent = t.copy; }, 1500);
+      // ---------- mode and options ----------
+      function setMode(mode) {
+        prefs.mode = mode;
+        els.modes.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-mode') === mode ? 'true' : 'false'); });
+        els.grid.setAttribute('data-mode', mode);
+        els.go.textContent = mode === 'encode' ? S.runEncode : mode === 'sample' ? S.runSample : S.runDecode;
+        fillTypes();
+      }
+      els.modes.forEach(function (b) {
+        b.addEventListener('click', function () {
+          var mode = b.getAttribute('data-mode');
+          if (mode === 'encode' && !els.json.value.trim()) fillJsonFromBytes();
+          setMode(mode);
+          savePrefs();
+          run();
         });
-        window.trackTool && window.trackTool('protobuf_to_json', 'copy_json');
       });
 
-      var DEFAULT_SCHEMA = [
-        'syntax = "proto3";',
-        '',
-        'package demo;',
-        '',
-        'message Person {',
-        '  string name = 1;',
-        '  int32 age = 2;',
-        '  repeated string emails = 3;',
-        '  Address address = 4;',
-        '  Status status = 5;',
-        '}',
-        '',
-        'message Address {',
-        '  string street = 1;',
-        '  string city = 2;',
-        '  string country = 3;',
-        '}',
-        '',
-        'enum Status {',
-        '  UNKNOWN = 0;',
-        '  ACTIVE = 1;',
-        '  INACTIVE = 2;',
-        '}',
-      ].join('\n');
+      // Prefills the JSON box from the decoded bytes, so switching to encode starts from data.
+      function fillJsonFromBytes() {
+        if (!state.ctx || !els.bytes.value.trim()) return;
+        var typeName = els.type.value || state.ctx.defaultType;
+        if (!typeName) return;
+        try {
+          var bytes = readBytes(els.bytes.value, prefs.fmt).bytes;
+          var frames = unframe(bytes, prefs.grpc);
+          if (frames) bytes = frames[0].payload;
+          var msg = decodeTyped(state.ctx, typeName, bytes);
+          els.json.value = stringifyJson(msgJson(state.ctx, msg, decodeOpts(), '', 0), 2, false);
+        } catch (e) { /* leave empty */ }
+      }
 
-      clearBtn.addEventListener('click', function() {
-        schemaEl.value = DEFAULT_SCHEMA;
-        binaryEl.value = '';
-        currentRoot = null;
-        outputEl.innerHTML = '<span class="pb-hint">' + escHtml(t.outputHint) + '</span>';
-        setStatus('', false);
-        parseSchema(DEFAULT_SCHEMA);
-        if (window.protobuf) generateSample();
+      function bindOpt(el, key, isCheck) {
+        if (isCheck) el.checked = !!prefs[key]; else el.value = prefs[key];
+        el.addEventListener('change', function () {
+          prefs[key] = isCheck ? el.checked : el.value;
+          savePrefs();
+          run();
+        });
+      }
+      bindOpt(els.fmt, 'fmt'); bindOpt(els.grpc, 'grpc'); bindOpt(els.names, 'names'); bindOpt(els.defaults, 'defaults', true);
+      bindOpt(els.enumNum, 'enumNum', true); bindOpt(els.rawView, 'rawView'); bindOpt(els.indent, 'indent');
+      bindOpt(els.outFmt, 'outFmt'); bindOpt(els.frame, 'frame', true); bindOpt(els.ignoreUnknown, 'ignoreUnknown', true);
+
+      els.type.addEventListener('change', function () { syncRawFlag(); run(); });
+      els.go.addEventListener('click', run);
+      els.bytes.addEventListener('input', function () { schedule(250); });
+      els.json.addEventListener('input', function () { schedule(300); });
+      els.schema.addEventListener('input', function () {
+        clearTimeout(state.schemaTimer);
+        state.schemaTimer = setTimeout(function () { rebuildSchema(); run(); }, 400);
       });
 
-      // Default schema example
-      schemaEl.value = DEFAULT_SCHEMA;
+      // ---------- files ----------
+      function renderFiles() {
+        els.files.innerHTML = '';
+        state.files.forEach(function (f, i) {
+          var li = document.createElement('li');
+          li.className = 'pbj-file-chip';
+          var name = document.createElement('span');
+          name.textContent = f.name;
+          var x = document.createElement('button');
+          x.type = 'button';
+          x.className = 'pbj-file-x';
+          x.textContent = '×';
+          x.setAttribute('aria-label', fmt(S.removeFile, { name: f.name }));
+          x.addEventListener('click', function () { state.files.splice(i, 1); renderFiles(); rebuildSchema(); run(); });
+          li.appendChild(name);
+          li.appendChild(x);
+          els.files.appendChild(li);
+        });
+        els.filesWrap.hidden = !state.files.length;
+      }
+      function addProtoFiles(list) {
+        var arr = Array.prototype.slice.call(list || []);
+        if (!arr.length) return;
+        Promise.all(arr.map(function (file) {
+          return file.text().then(function (text) { return { name: file.webkitRelativePath || file.name, text: text }; });
+        })).then(function (loaded) {
+          loaded.forEach(function (f) {
+            var i = state.files.findIndex(function (g) { return g.name === f.name; });
+            if (i >= 0) state.files[i] = f; else state.files.push(f);
+          });
+          if (!els.schema.value.trim() && state.files.length) {
+            var first = state.files.shift();
+            els.schema.value = first.text;
+          }
+          renderFiles();
+          rebuildSchema();
+          run();
+        });
+      }
+      function loadBinary(file) {
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) { showError(pbErr('fileTooBig', { name: file.name, size: file.size })); return; }
+        file.arrayBuffer().then(function (buf) {
+          els.bytes.value = formatBytes(new Uint8Array(buf), 'hex');
+          if (prefs.fmt !== 'auto' && prefs.fmt !== 'hex') { prefs.fmt = 'auto'; els.fmt.value = 'auto'; savePrefs(); }
+          if (prefs.mode !== 'decode') setMode('decode');
+          run();
+        });
+      }
+      els.openBin.addEventListener('click', function () { els.binFile.click(); });
+      els.binFile.addEventListener('change', function () { loadBinary(els.binFile.files[0]); els.binFile.value = ''; });
+      els.addProto.addEventListener('click', function () { els.protoFiles.click(); });
+      els.protoFiles.addEventListener('change', function () { addProtoFiles(els.protoFiles.files); els.protoFiles.value = ''; });
+      function dropZone(el, onFiles) {
+        el.addEventListener('dragover', function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') >= 0) e.preventDefault(); });
+        el.addEventListener('drop', function (e) {
+          if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+          e.preventDefault();
+          onFiles(e.dataTransfer.files);
+        });
+      }
+      dropZone(els.bytes, function (files) { loadBinary(files[0]); });
+      dropZone(els.schema, addProtoFiles);
 
-      // Parse default schema after load
-      setTimeout(function() {
-        parseSchema(schemaEl.value);
-        if (window.protobuf) generateSample();
-      }, 100);
+      // ---------- copy, download, buttons ----------
+      function copyText(text) {
+        function fallback() {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+          document.body.removeChild(ta);
+          return ok ? Promise.resolve() : Promise.reject();
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).catch(fallback);
+        return fallback();
+      }
+      els.copy.addEventListener('click', function () {
+        if (!state.outText) return;
+        copyText(state.outText).then(function () {
+          els.copy.textContent = S.copied;
+          setTimeout(function () { els.copy.textContent = S.copy; }, 1500);
+        }, function () { setStatus(S.copyFailed, 'error'); });
+      });
+      els.download.addEventListener('click', function () {
+        if (!state.lastBytes) return;
+        var url = URL.createObjectURL(new Blob([state.lastBytes], { type: 'application/octet-stream' }));
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = (els.type.value || 'message').split('.').pop() + '.bin';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      });
+      els.use.addEventListener('click', function () {
+        if (!state.outText) return;
+        els.json.value = state.outText;
+        setMode('encode');
+        savePrefs();
+        run();
+        els.json.focus();
+      });
+
+      function loadExample() {
+        els.schema.value = EXAMPLE_SCHEMA;
+        els.bytes.value = EXAMPLE_BYTES;
+        state.files = [];
+        renderFiles();
+        rebuildSchema();
+        if (state.ctx) els.type.value = 'shop.v1.Order';
+        syncRawFlag();
+        els.json.value = '';
+        fillJsonFromBytes();
+        run();
+      }
+      els.example.addEventListener('click', loadExample);
+      els.clear.addEventListener('click', function () {
+        els.schema.value = '';
+        els.bytes.value = '';
+        els.json.value = '';
+        state.files = [];
+        renderFiles();
+        rebuildSchema();
+        run();
+      });
+      // The page-wide Ctrl/Cmd+L shortcut empties the text boxes; drop loaded files and refresh.
+      document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && document.querySelector('.tool-widget') &&
+          document.querySelector('.tool-widget').contains(document.activeElement)) {
+          setTimeout(function () { state.files = []; renderFiles(); rebuildSchema(); run(); }, 0);
+        }
+      });
+
+      setMode(prefs.mode);
+      loadExample();
     })();
   </script>
 </div>
 
 <style>
-  .pb-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+.pbj { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
 
-  .pb-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+.pbj-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.pbj-bar-actions { display: flex; gap: 0.4rem; }
+.pbj-modes {
+  display: inline-flex;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-secondary);
+  outline: 1px solid var(--color-border-soft);
+  outline-offset: -1px;
+  padding: 3px;
+  gap: 2px;
+}
+.pbj-mode {
+  min-height: 34px;
+  padding: 0.3rem 0.85rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: 650 0.84rem/1.2 var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pbj-mode:hover { color: var(--color-text); }
+.pbj-mode[aria-pressed="true"] { background: var(--color-primary); color: var(--color-primary-contrast); }
+.pbj-mode:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+.pbj-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "input out"
+    "inopts out"
+    "run out"
+    "schema out";
+  grid-template-rows: auto auto auto 1fr;
+  gap: 0.7rem 1rem;
+  align-items: start;
+}
+.pbj-input { grid-area: input; min-width: 0; }
+.pbj-inopts { grid-area: inopts; }
+.pbj-run { grid-area: run; min-width: 0; }
+.pbj-out { grid-area: out; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.pbj-schema { grid-area: schema; min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+
+.pbj-head { display: flex; align-items: center; gap: 0.5rem; min-height: 1.6rem; margin-bottom: 0.25rem; }
+.pbj-head .tool-label { margin: 0; flex: 1 1 auto; }
+.pbj-ta { width: 100%; box-sizing: border-box; font-family: var(--font-mono); font-size: 0.83rem; line-height: 1.5; resize: vertical; }
+.pbj-ta-bytes { min-height: 116px; }
+.pbj-ta-json { min-height: 220px; }
+.pbj-ta-schema { min-height: 300px; }
+
+.pbj-inopts, .pbj-outopts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.9rem; }
+.pbj-opt { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--color-text-secondary); }
+.pbj-check { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; color: var(--color-text-secondary); cursor: pointer; }
+.pbj-select { width: auto; min-height: 34px; padding-top: 0.25rem; padding-bottom: 0.25rem; font-size: 0.82rem; }
+.pbj-file { display: none; }
+
+.pbj-run-row { display: flex; gap: 0.5rem; align-items: stretch; }
+.pbj-type { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); }
+.pbj-run-row .btn-primary { flex: 0 0 auto; }
+
+.pbj-status { margin: 0; overflow-wrap: anywhere; }
+.pbj-output {
+  margin: 0;
+  min-height: 260px;
+  max-height: 620px;
+  overflow: auto;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre;
+  color: var(--color-text);
+  tab-size: 2;
+}
+.pbj-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.pbj-output.pbj-output-error { white-space: pre-wrap; color: var(--color-danger); }
+.pbj-grid[data-mode="encode"] .pbj-output { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 160px; }
+
+.pbj-output :global(.pbj-key) { color: #0b6a99; }
+.pbj-output :global(.pbj-str) { color: #1d7a36; }
+.pbj-output :global(.pbj-num) { color: #b0391a; }
+.pbj-output :global(.pbj-bool) { color: #7a3fc4; }
+.pbj-output :global(.pbj-null) { color: var(--color-text-muted); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .pbj-output :global(.pbj-key) { color: #7dd3fc; }
+  :root:not([data-theme="light"]) .pbj-output :global(.pbj-str) { color: #86efac; }
+  :root:not([data-theme="light"]) .pbj-output :global(.pbj-num) { color: #fca5a5; }
+  :root:not([data-theme="light"]) .pbj-output :global(.pbj-bool) { color: #c4b5fd; }
+}
+:global([data-theme="dark"]) .pbj-output :global(.pbj-key) { color: #7dd3fc; }
+:global([data-theme="dark"]) .pbj-output :global(.pbj-str) { color: #86efac; }
+:global([data-theme="dark"]) .pbj-output :global(.pbj-num) { color: #fca5a5; }
+:global([data-theme="dark"]) .pbj-output :global(.pbj-bool) { color: #c4b5fd; }
+
+.pbj-notes-wrap { font-size: 0.82rem; color: var(--color-text-secondary); }
+.pbj-notes-title { margin: 0.2rem 0 0.25rem; font-weight: 700; color: var(--color-text); }
+.pbj-notes { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; overflow-wrap: anywhere; }
+
+.pbj-hint { margin: 0; font-size: 0.8rem; color: var(--color-text-muted); }
+.pbj-files-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--color-text-secondary); }
+.pbj-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.pbj-files :global(.pbj-file-chip) {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.1rem 0.2rem 0.1rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-secondary);
+  outline: 1px solid var(--color-border-soft);
+  outline-offset: -1px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.pbj-files :global(.pbj-file-x) {
+  min-width: 24px; min-height: 24px;
+  border: 0; border-radius: var(--radius-pill);
+  background: transparent; color: var(--color-text-secondary);
+  cursor: pointer; font-size: 1rem; line-height: 1;
+}
+.pbj-files :global(.pbj-file-x:hover) { color: var(--color-danger); }
+
+/* visibility by mode and decoder kind */
+.pbj-grid[data-mode="decode"] .pbj-only-encode,
+.pbj-grid[data-mode="decode"] .pbj-only-sample,
+.pbj-grid[data-mode="decode"] .pbj-not-decode,
+.pbj-grid[data-mode="encode"] .pbj-only-decode,
+.pbj-grid[data-mode="encode"] .pbj-only-sample,
+.pbj-grid[data-mode="encode"] .pbj-only-typed,
+.pbj-grid[data-mode="encode"] .pbj-not-encode,
+.pbj-grid[data-mode="sample"] .pbj-only-decode,
+.pbj-grid[data-mode="sample"] .pbj-only-encode,
+.pbj-grid[data-mode="sample"] .pbj-only-raw,
+.pbj-grid[data-raw="1"] .pbj-only-typed,
+.pbj-grid[data-raw="0"] .pbj-only-raw { display: none; }
+.pbj-grid[data-mode="sample"] .pbj-input,
+.pbj-grid[data-mode="sample"] .pbj-inopts { display: none; }
+
+@media (max-width: 860px) {
+  .pbj-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "input" "run" "out" "inopts" "schema";
+    grid-template-rows: none;
   }
-
-  .pb-mode-toggle {
-    display: flex;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-    flex-shrink: 0;
-  }
-
-  .pb-mode-btn {
-    padding: 0.35rem 0.75rem;
-    font-size: 0.82rem;
-    font-weight: 500;
-    background: var(--color-bg);
-    color: var(--color-text-muted);
-    border: none;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-    white-space: nowrap;
-  }
-
-  .pb-mode-btn:first-child { border-right: 1px solid var(--color-border); }
-  .pb-mode-btn:hover { background: var(--color-bg-secondary); color: var(--color-text); }
-  .pb-mode-btn.pb-mode-active { background: var(--color-primary); color: #fff; }
-
-  .pb-panes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    align-items: start;
-  }
-
-  @media (max-width: 640px) {
-    .pb-panes { grid-template-columns: 1fr; }
-  }
-
-  .pb-left, .pb-right { display: flex; flex-direction: column; gap: 0.5rem; }
-
-  .pb-field { display: flex; flex-direction: column; gap: 0.25rem; }
-  .pb-field.pb-hidden { display: none; }
-
-  .pb-label-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .pb-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .pb-textarea {
-    font-family: var(--font-mono);
-    font-size: 0.83rem;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.55;
-    box-sizing: border-box;
-    width: 100%;
-  }
-
-  .pb-schema-ta { min-height: 220px; }
-  .pb-binary-ta { min-height: 80px; }
-
-  .pb-textarea:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
-
-  .pb-select {
-    font-size: 0.86rem;
-    padding: 0.4rem 0.65rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    width: 100%;
-  }
-
-  .pb-select:focus { outline: none; border-color: var(--color-primary); }
-
-  .pb-status {
-    font-size: 0.78rem;
-    font-weight: 500;
-    margin-left: auto;
-  }
-  .pb-status-ok   { color: var(--color-success, #22c55e); }
-  .pb-status-err  { color: #ef4444; }
-
-  .pb-output {
-    min-height: 280px;
-    max-height: 460px;
-    overflow: auto;
-    padding: 0.75rem 1rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    font-family: var(--font-mono);
-    font-size: 0.84rem;
-    line-height: 1.55;
-    white-space: pre;
-    margin: 0;
-    color: var(--color-text);
-  }
-
-  .pb-hint  { color: var(--color-text-muted); font-style: italic; }
-  .pb-error { color: #ef4444; white-space: pre-wrap; }
-
-  /* JSON syntax highlighting */
-  .pb-key   { color: #7dd3fc; }
-  .pb-str   { color: #86efac; }
-  .pb-num   { color: #fca5a5; }
-  .pb-bool  { color: #c4b5fd; }
-  .pb-null  { color: #94a3b8; }
-
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) .pb-key  { color: #0369a1; }
-    :root:not([data-theme="dark"]) .pb-str  { color: #15803d; }
-    :root:not([data-theme="dark"]) .pb-num  { color: #b91c1c; }
-    :root:not([data-theme="dark"]) .pb-bool { color: #7c3aed; }
-    :root:not([data-theme="dark"]) .pb-null { color: #64748b; }
-  }
-  [data-theme="light"] .pb-key  { color: #0369a1; }
-  [data-theme="light"] .pb-str  { color: #15803d; }
-  [data-theme="light"] .pb-num  { color: #b91c1c; }
-  [data-theme="light"] .pb-bool { color: #7c3aed; }
-  [data-theme="light"] .pb-null { color: #64748b; }
+  .pbj-ta-schema { min-height: 220px; }
+}
+@media (max-width: 640px) {
+  .pbj-bar { gap: 0.4rem; }
+  .pbj-modes { flex: 1 1 100%; }
+  .pbj-mode { flex: 1 1 0; min-height: 40px; padding: 0.3rem 0.4rem; white-space: normal; }
+  .pbj-bar-actions { flex: 1 1 100%; }
+  .pbj-bar-actions .btn-ghost { flex: 1 1 0; }
+  .pbj-head-in { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .pbj-type-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .pbj-ta-bytes { min-height: 92px; }
+  .pbj-ta-json { min-height: 140px; }
+  .pbj-select { min-height: 44px; }
+  .pbj-check { min-height: 44px; }
+  .pbj-output { min-height: 200px; max-height: 480px; }
+}
 </style>
