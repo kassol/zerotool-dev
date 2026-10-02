@@ -2,7 +2,7 @@
 title: "CSP ヘッダージェネレーター：厳格な Content Security Policy を、痛みなく構築する"
 description: "ディレクティブ・hash・nonce で本番グレードの Content-Security-Policy ヘッダーを構築。strict モードテンプレートと Express / Nginx スニペット付き。"
 pubDate: 2026-05-09
-updatedDate: 2026-05-09
+updatedDate: 2026-10-02
 lang: "ja"
 noindex: true
 tags: ["csp", "web-security", "xss-prevention", "developer-tools"]
@@ -32,18 +32,18 @@ CSP は入力サニタイズ、出力エンコード、テンプレート自動�
 
 ## 作業台のレイアウト
 
-ページを開くと、上部のツールバーでプリセットとモードを選ぶ。初期状態は Strict プリセットの Enforce モードだ。Strict は `script-src 'self' 'strict-dynamic'`、`object-src 'none'`、`base-uri 'self'`、`form-action 'self'`、`frame-ancestors 'none'` を設定する。これは [web.dev](https://web.dev/articles/strict-csp) や OWASP が説明する nonce ベースの strict CSP の出発点であって、そのポリシーそのものではない。`'strict-dynamic'` に対応したブラウザでは隣の `'self'` が無視されるため、`script-src` に nonce か hash を加えるまでページのスクリプトは一つも実行されない。Moderate は `style-src` に `'unsafe-inline'` を加える（古い CSS-in-JS ライブラリがまだインラインスタイルを出すため）。`img-src` には `https:` を加える（多くのプロダクトサイトが複数の CDN から画像を取るため）。Basic は `default-src 'self'` だけで、ディレクティブを一つずつ組み立てる用途。Empty は空から始め、欲しいものが正確に分かっている場合に使う。
+ページを開くと、上部のツールバーでプリセットとモードを選ぶ。初期状態は Strict プリセットの Enforce モードだ。Strict は `script-src 'nonce-{RANDOM}' 'strict-dynamic'`、`object-src 'none'`、`base-uri 'self'`、`form-action 'self'`、`frame-ancestors 'none'` を設定する。`script-src` の形は [web.dev](https://web.dev/articles/strict-csp) が説明する nonce ベースの strict CSP に合わせている。`'nonce-{RANDOM}'` はプレースホルダーで、サーバーがレスポンスごとに新しいランダム値に置き換え、同じ値を各 `<script nonce="…">` に入れる必要がある。置き換えないままではブラウザーが無視し、ページのスクリプトは一つも実行されない。Moderate は `style-src` に `'unsafe-inline'` を加える（古い CSS-in-JS ライブラリがまだインラインスタイルを出すため）。`img-src` には `https:` を加える（多くのプロダクトサイトが複数の CDN から画像を取るため）。Basic は `default-src 'self'` だけで、ディレクティブを一つずつ組み立てる用途。Empty は空から始め、欲しいものが正確に分かっている場合に使う。
 
 Mode トグルは `Content-Security-Policy`（強制 Enforce）と `Content-Security-Policy-Report-Only`（レポートのみ）を切り替える。Report-Only は違反を `report-uri` または `report-to` エンドポイントに送るだけで、何もブロックしない。これが**最初に**デプロイすべきモードだ。
 
-ツールバーの下、各ディレクティブはカードになっている。各カードには三段のソース選択器がある：キーワード（`'self'`、`'none'`、`'strict-dynamic'`、`'unsafe-inline'`、`'unsafe-eval'`）、スキーム（`https:`、`data:`、`blob:`、`mediastream:`）、そしてホスト・パス・hash・nonce 用の自由入力欄。`+ nonce` ボタンは `crypto.getRandomValues` で新しい base64 トークンを生成する。チップをクリックでソースをトグル、タグの × でそのソースを削除。
+ツールバーの下、各ディレクティブはカードになっている。各カードには三段のソース選択器がある：キーワード（`'self'`、`'none'`、`'strict-dynamic'`、`'unsafe-inline'`、`'unsafe-eval'`）、スキーム（`https:`、`data:`、`blob:`、`mediastream:`）、そしてホスト・パス・hash・nonce 用の自由入力欄。`+ nonce` ボタンはプレースホルダー `'nonce-{RANDOM}'` を挿入する。実際の値はサーバーがレスポンスごとに入れる。チップをクリックでソースをトグル、タグの × でそのソースを削除。
 
 フォーム下部の hash 計算機は、インライン `<script>` または `<style>` ブロックの中身——タグの開閉間にある正確なバイト列——を受け取り、[Web Crypto API](https://developer.mozilla.org/ja/docs/Web/API/SubtleCrypto/digest) 経由で SHA-256 / SHA-384 / SHA-512 を計算する。出力は CSP が期待する形式：`'sha256-<base64>'`。ドロップダウンで選んだ `script-src` か `style-src` に、ワンクリックで追加できる。
 
 出力パネルは四つのタブを持つ：
 
 - **HTTP header**——オリジンサーバーが実際に送出する形式。これが正規。
-- **HTML `<meta>`**——ヘッダーを設定できない静的ホスティング向けのフォールバック。`<meta>` 経由で CSP を送ると `frame-ancestors`、`report-uri`、`report-to`、`sandbox` がサイレントに無視されることをツールが警告する。
+- **HTML `<meta>`**——ヘッダーを設定できない静的ホスティング向けのフォールバック。`<meta>` 経由で CSP を送ると `frame-ancestors`、`report-uri`、`sandbox` は無視されるため、ツールはこの3つをこの形式から外して警告する。`report-to` は残し、エンドポイント名を `Reporting-Endpoints` HTTP ヘッダーで定義する必要があると表示する。
 - **Express (helmet)**——helmet を使う Node サーバーへの即組み込みコード。`useDefaults: false` に注目——これがないとあなたのポリシーが helmet の組み込みデフォルトと暗黙にマージされる。
 - **Nginx**——`add_header ... always;` ディレクティブ。`always` フラグが重要。これがないと Nginx はエラーレスポンスのヘッダーをスキップし、500 ページが無防備になる。
 
@@ -59,7 +59,7 @@ Mode トグルは `Content-Security-Policy`（強制 Enforce）と `Content-Secu
 
 **nonce** はサーバーがリクエストごとに生成するランダムな base64 トークン。サーバーは `'nonce-XYZ'` を含むヘッダーを発行し、レンダリングする全 `<script nonce="XYZ">` タグに同じ `XYZ` を貼る。ブラウザは `nonce` 属性が一致するスクリプトを実行し、それ以外をブロックする。サーバーレンダリング HTML でインライン内容が変わるケース（CSRF トークン、ユーザー ID、ページ別ブートストラップ）には nonce が正しい。
 
-ページの hash 計算機は静的ケースのため。動的ケースでは `+ nonce` でサンプル nonce を生成し、サーバー側でリクエスト時に置き換える。
+ページの hash 計算機は静的ケースのため。動的ケースでは `+ nonce` でプレースホルダーを入れ、サーバー側でレスポンスごとに置き換える。
 
 両者は `'strict-dynamic'` とよく組み合わさる。あるスクリプトが信頼されると（hash か nonce 経由で）、`'strict-dynamic'` は「そのスクリプトが読み込む任意のスクリプトも信頼する」と推移的に宣言する。つまり、信頼済みスクリプトが引っ張りうる CDN を一つずつ列挙する必要がない。ホスト許可リストが派生スクリプトに対して上書きされるので、攻撃者が正規に許可された CDN に自身のペイロードを置くという一連のバイパスも塞げる。
 
@@ -73,7 +73,7 @@ CSP3 仕様は明確だ：`'none'` がソースリストに現れたら、他の
 
 ### `frame-ancestors` は HTTP のみ
 
-HTML の `<meta http-equiv="Content-Security-Policy">` タグは存在するが、[CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element) では `frame-ancestors`、`report-uri`、`sandbox` の 3 つをそこではサポートしない。Report-Only ヘッダーには `<meta>` 形式そのものがない。ツールは `<meta>` 出力から `report-to` も外す。GitHub Pages のような静的ホストでフレーム埋め込みを防ぎたいなら、本物のヘッダーを送る必要がある——通常は CDN か worker 経由だ。
+HTML の `<meta http-equiv="Content-Security-Policy">` タグは存在するが、[CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element) では `frame-ancestors`、`report-uri`、`sandbox` の 3 つをそこではサポートしない。Report-Only ヘッダーには `<meta>` 形式そのものがない。ツールは `<meta>` 出力からこの3つを外し、`report-to` は残す。GitHub Pages のような静的ホストでフレーム埋め込みを防ぎたいなら、本物のヘッダーを送る必要がある——通常は CDN か worker 経由だ。
 
 ### `default-src` の欠落でフォールバックを失う
 
@@ -93,12 +93,12 @@ CSP はディレクティブをセミコロンで区切る。ホストやパス�
 
 ```nginx
 # Nginx：通常 server { } ブロック内
-add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
 ```
 
 ```apache
 # Apache：.htaccess または httpd.conf。"always" でエラー応答にも付与
-Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
+Header always set Content-Security-Policy "default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
 ```
 
 ```javascript
@@ -118,7 +118,7 @@ app.use(helmet.contentSecurityPolicy({
 ```text
 # Cloudflare Pages の _headers ファイル
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'
 ```
 
 Vercel は同じ文字列を `vercel.json` の `headers` 配列に貼り付ける。Netlify は `netlify.toml` に追加。S3 + CloudFront への静的書き出しは CloudFront のレスポンスヘッダーポリシーで設定。要点は、ポリシーテキストはどこでも同じで、変わるのは外殻の設定構文だけ。

@@ -2,7 +2,7 @@
 title: "CSP 头部生成器：构建严格的内容安全策略，告别繁琐"
 description: "用指令、hash 与 nonce 构建生产级 Content-Security-Policy 头部——含严格模式模板、Express / Nginx 片段。"
 pubDate: 2026-05-09
-updatedDate: 2026-05-09
+updatedDate: 2026-10-02
 lang: "zh"
 noindex: true
 tags: ["csp", "web-security", "xss-prevention", "developer-tools"]
@@ -32,18 +32,18 @@ CSP 不是用来代替输入清洗、输出编码或模板自动转义的。它�
 
 ## 工作台布局
 
-打开页面后，顶部工具栏负责选预设和模式；页面默认是 Strict 预设、Enforce 模式。Strict 设置 `script-src 'self' 'strict-dynamic'`、`object-src 'none'`、`base-uri 'self'`、`form-action 'self'` 和 `frame-ancestors 'none'`。它是 [web.dev](https://web.dev/articles/strict-csp) 与 OWASP 所说的基于 nonce 的 strict CSP 的起点，并不是那条策略本身：在支持 `'strict-dynamic'` 的浏览器里，旁边的 `'self'` 会被忽略，所以在你给 `script-src` 加上 nonce 或 hash 之前，页面上的脚本一个都不会执行。Moderate 在 `style-src` 里加 `'unsafe-inline'`，因为老的 CSS-in-JS 库仍会输出内联样式；`img-src` 加 `https:`，因为大多数产品站点会从几个 CDN 拉图。Basic 只给 `default-src 'self'`，让你逐个指令搭策略。Empty 从空白开始，适合你已经确切知道要什么的情况。
+打开页面后，顶部工具栏负责选预设和模式；页面默认是 Strict 预设、Enforce 模式。Strict 设置 `script-src 'nonce-{RANDOM}' 'strict-dynamic'`、`object-src 'none'`、`base-uri 'self'`、`form-action 'self'` 和 `frame-ancestors 'none'`，`script-src` 的写法取自 [web.dev](https://web.dev/articles/strict-csp) 所说的基于 nonce 的 strict CSP。`'nonce-{RANDOM}'` 是占位符：服务器必须在每次响应时把它换成新的随机值，并把同一个值写进每个 `<script nonce="…">`。不替换的话浏览器会忽略它，页面上的脚本一个都不会执行。Moderate 在 `style-src` 里加 `'unsafe-inline'`，因为老的 CSS-in-JS 库仍会输出内联样式；`img-src` 加 `https:`，因为大多数产品站点会从几个 CDN 拉图。Basic 只给 `default-src 'self'`，让你逐个指令搭策略。Empty 从空白开始，适合你已经确切知道要什么的情况。
 
 Mode 开关切换的是 `Content-Security-Policy`（强制 Enforce）和 `Content-Security-Policy-Report-Only`（仅上报）。Report-Only 把违规上报到你 `report-uri` 或 `report-to` 端点，但不阻断任何请求。这是你**先**部署的模式。
 
-工具栏下面，每条指令都是一张卡片。每张卡片里有三排来源选择器：关键字（`'self'`、`'none'`、`'strict-dynamic'`、`'unsafe-inline'`、`'unsafe-eval'`）、协议（`https:`、`data:`、`blob:`、`mediastream:`），以及一个自由输入框，用来写主机、路径、hash 或 nonce。`+ nonce` 按钮通过 `crypto.getRandomValues` 生成一个新的 base64 token。点芯片切换源开关，点标签上的 × 移除某个源。
+工具栏下面，每条指令都是一张卡片。每张卡片里有三排来源选择器：关键字（`'self'`、`'none'`、`'strict-dynamic'`、`'unsafe-inline'`、`'unsafe-eval'`）、协议（`https:`、`data:`、`blob:`、`mediastream:`），以及一个自由输入框，用来写主机、路径、hash 或 nonce。`+ nonce` 按钮插入占位符 `'nonce-{RANDOM}'`，由服务器按响应替换成真正的随机值。点芯片切换源开关，点标签上的 × 移除某个源。
 
 表单底部的 hash 计算器接收 inline `<script>` 或 `<style>` 块的内容——也就是开闭标签之间的精确字节，然后调用 [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest) 跑 SHA-256 / SHA-384 / SHA-512。输出是 CSP 期望的格式：`'sha256-<base64>'`。点一下就能加进 `script-src` 或 `style-src`，看你下拉里选的是哪个。
 
 输出面板有四个 tab：
 
 - **HTTP header**——你的源服务器实际下发的形式，是规范形态。
-- **HTML `<meta>`**——给那些没法设置头部的静态托管做兜底。工具会提醒你，CSP 通过 `<meta>` 下发时，`frame-ancestors`、`report-uri`、`report-to`、`sandbox` 会被静默忽略。
+- **HTML `<meta>`**——给那些没法设置头部的静态托管做兜底。CSP 通过 `<meta>` 下发时，`frame-ancestors`、`report-uri`、`sandbox` 会被忽略，工具在这一栏去掉这三个指令并给出提示；`report-to` 保留，并提示它的端点名要由 `Reporting-Endpoints` HTTP 头部定义。
 - **Express (helmet)**——给 Node 服务器用 helmet 的即插即用代码。注意 `useDefaults: false`，这样你的策略就不会和 helmet 内建默认值悄悄合并。
 - **Nginx**——`add_header ... always;` 指令。`always` 标志很关键，没它的话 Nginx 会跳过错误响应的头部，导致 500 页面没有保护。
 
@@ -59,7 +59,7 @@ inline `<script>...</script>` 块是 CSP 上线被回滚的头号原因。最简
 
 **nonce** 是服务器为每次请求生成的随机 base64 token。服务器在头部里写 `'nonce-XYZ'`，并把同一个 `XYZ` 盖在它渲染的每一个 `<script nonce="XYZ">` 标签上。浏览器执行 `nonce` 属性匹配的脚本，其余一律拦下。nonce 是服务端渲染 HTML 中 inline 内容会变的场景（CSRF token、用户 ID、按页面定制的引导脚本）的正确选择。
 
-页面上的 hash 计算器服务于静态场景。动态场景下，点 `+ nonce` 生成一个示例 nonce，再在服务器侧按请求替换。
+页面上的 hash 计算器服务于静态场景。动态场景下，点 `+ nonce` 插入占位符，再在服务器侧按响应替换。
 
 两者跟 `'strict-dynamic'` 配合得很好。一旦某个脚本被信任（通过 hash 或 nonce），`'strict-dynamic'` 就声明：这个脚本接下来加载的任何脚本也都信任，呈传递关系。这意味着你不必把这个被信任脚本可能拉的每一个 CDN 都列进白名单。它还堵住了一类绕过——攻击者利用一个被合法白名单的 CDN 来托管自己的载荷，因为 `'strict-dynamic'` 会让派生脚本不再受基于主机的白名单约束。
 
@@ -73,7 +73,7 @@ CSP3 规范说得很明白：当 `'none'` 出现在某个源列表里，其他�
 
 ### `frame-ancestors` 仅 HTTP 生效
 
-HTML `<meta http-equiv="Content-Security-Policy">` 标签是存在的，但 [CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element) 规定有三个指令在这里不受支持：`frame-ancestors`、`report-uri` 和 `sandbox`。Report-Only 头部则根本没有 `<meta>` 形式。工具在 `<meta>` 输出里也会去掉 `report-to`。如果你要在 GitHub Pages 这类静态托管上做防嵌套保护，就得发真正的头部——通常借助 CDN 或 worker。
+HTML `<meta http-equiv="Content-Security-Policy">` 标签是存在的，但 [CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element) 规定有三个指令在这里不受支持：`frame-ancestors`、`report-uri` 和 `sandbox`。Report-Only 头部则根本没有 `<meta>` 形式。工具在 `<meta>` 输出里去掉这三个指令，`report-to` 保留。如果你要在 GitHub Pages 这类静态托管上做防嵌套保护，就得发真正的头部——通常借助 CDN 或 worker。
 
 ### 缺失 `default-src` 让你失去兜底
 
@@ -93,12 +93,12 @@ CSP 用分号分隔指令。主机或路径里出现一个分号，就会终结�
 
 ```nginx
 # Nginx：通常写在 server { } 块内
-add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
 ```
 
 ```apache
 # Apache：写在 .htaccess 或 httpd.conf；"always" 让错误响应也带上头部
-Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
+Header always set Content-Security-Policy "default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
 ```
 
 ```javascript
@@ -118,7 +118,7 @@ app.use(helmet.contentSecurityPolicy({
 ```text
 # Cloudflare Pages _headers 文件
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'
 ```
 
 Vercel 把同一字符串贴到 `vercel.json` 的 `headers` 数组里。Netlify 加到 `netlify.toml`。导出到 S3 + CloudFront 的静态站，在 CloudFront 的 response-headers policy 里配。要点是：策略文本到处都一样，变的只是外层配置语法。

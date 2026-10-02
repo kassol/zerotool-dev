@@ -1,155 +1,230 @@
 ---
-title: "CSP Header Generator: Build Strict Content Security Policy Without the Pain"
-description: "Build production-grade Content-Security-Policy headers with directives, hashes, and nonces — plus strict-mode templates and Express/Nginx snippets."
+title: "Content Security Policy: A Strict, Nonce-Based CSP Tested in Chrome"
+description: "How Content Security Policy decides what runs, why nonce plus strict-dynamic beats allowlists, what Chrome 152 blocks and logs, and how to roll a policy out with Report-Only first."
 pubDate: 2026-05-09
-updatedDate: 2026-05-09
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["csp", "web-security", "xss-prevention", "developer-tools"]
+tags: ["csp", "content-security-policy", "web-security", "xss-prevention"]
 ---
 
-A common way CSP work starts: a scan with Mozilla Observatory or a similar checker reports a missing `Content-Security-Policy` header, someone writes a policy that looks reasonable after skimming MDN, and it goes straight to enforcement. Payment widgets, web fonts and error-tracking scripts then start failing, the policy is rolled back, and the header stays missing until the next review.
+Content Security Policy (CSP) is a response header that tells the browser which scripts, styles, images, frames and connections a page may use. A browser that receives `Content-Security-Policy: script-src 'nonce-abc123' 'strict-dynamic'` will run only the `<script>` elements that carry `nonce="abc123"`, plus whatever those scripts load, and will refuse an injected `<script>alert(1)</script>` even if an attacker manages to get it into the HTML. The current specification is the W3C [Content Security Policy Level 3](https://www.w3.org/TR/CSP3/) Working Draft of 16 September 2026.
 
-CSP is one of the most powerful browser-side defenses against cross-site scripting and clickjacking, and one of the easiest things to get wrong. The directive set is large, the syntax is unforgiving, three different header names ship subtly different behavior, and the relationship between hashes, nonces, and `'unsafe-inline'` is not obvious until you have read the spec twice. ZeroTool's [CSP Header Generator](/tools/csp-header-generator/) gives you a workbench: pick a preset, click the keyword chips you need, paste an inline script to compute its hash, and copy the result as an HTTP header, an HTML `<meta>` tag, an Express middleware snippet, or an Nginx directive. This guide walks through how to use it, the design decisions baked into the strict preset, and the pitfalls the tool's validation panel exists to flag.
+CSP limits what an injected payload can do; it does not stop the injection. Output encoding and template escaping still come first, and the policy is the layer that catches what gets past them.
 
-## Why a CSP at all
+Every browser result in this guide comes from a small Node test server and Chrome 152 on macOS, run on 2 October 2026. The policies and outputs quoted for ZeroTool's [CSP Header Generator](/tools/csp-header-generator/) are the generator's actual output, and this site's tests recompute them from the generator's code.
 
-A Content Security Policy is an HTTP response header. The browser parses it once when a page loads and uses it to allow or block every resource that page tries to fetch — scripts, stylesheets, images, fonts, frames, connections, prefetches. Without a CSP a page can load any URL it wants. With a strict CSP a page can only load what you have explicitly trusted, which means even when an attacker manages to inject a `<script>` tag into your HTML, the browser refuses to execute it. The same mechanism protects against framing attacks via `frame-ancestors`, base-tag hijacking via `base-uri`, and form exfiltration via `form-action`.
+## How the browser applies a policy
 
-CSP does not replace input sanitization, output encoding, or template auto-escaping. It is the last line of defense, and it is the line that catches XSS payloads that slipped through everything else. Modern guidance from the [W3C CSP3 spec](https://www.w3.org/TR/CSP3/), Google's CSP Evaluator, and OWASP's strict CSP guide all converge on the same skeleton: nonces or hashes for inline scripts, `'strict-dynamic'` so descendant scripts inherit trust, `'self'` for first-party resources, and `'none'` for `object-src` because plugin content is a known way around script restrictions.
-
-## Five common workflows
-
-| Scenario | Starting preset | Notable directive setup |
-|---|---|---|
-| Greenfield SPA, no third-party CDNs | Strict | `script-src 'self' 'strict-dynamic'` + per-request nonce |
-| Marketing site with Google Fonts and Analytics | Moderate | `font-src 'self' fonts.gstatic.com`, `script-src` with hashes for inline GA bootstrap |
-| Legacy app with inline event handlers everywhere | Basic in Report-Only | Watch the violation reports, then add `'unsafe-hashes'` for the specific handlers you cannot rewrite |
-| Internal admin tool, want to lock down framing | Strict | `frame-ancestors 'none'` so it cannot be embedded anywhere |
-| API gateway response previewer | Strict + report-only | `default-src 'self'`, `connect-src 'self'`, then enforce after one week of clean reports |
-
-Each of these starts from a different preset because the trade-off between security and breakage is different. A marketing site that breaks because Google Analytics stops loading is worse than one with a slightly looser policy. An admin panel that lets attackers iframe it into a phishing kit is unacceptable. The tool's preset selector encodes those four positions on the curve so you can pick a starting point and adjust from there.
-
-## How the workbench is laid out
-
-When you open the page the toolbar at the top picks the preset and the mode; the page starts in Enforce mode with the Strict preset. Strict sets `script-src 'self' 'strict-dynamic'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. It is a starting point for the nonce-based strict CSP that [web.dev](https://web.dev/articles/strict-csp) and OWASP describe, not that policy itself: in browsers that support `'strict-dynamic'`, the `'self'` next to it is ignored, so until you add a nonce or hash to `script-src` no script on the page runs. Moderate adds `'unsafe-inline'` to `style-src` because legacy CSS-in-JS libraries still emit inline styles, and adds `https:` to `img-src` because most product sites pull images from a few CDNs. Basic gives you only `default-src 'self'` so you can build the policy directive by directive. Empty starts blank for the cases where you already know exactly what you want.
-
-The Mode toggle switches between `Content-Security-Policy` (Enforce) and `Content-Security-Policy-Report-Only` (Report-Only). Report-Only sends violation reports to your `report-uri` or `report-to` endpoint without blocking anything. This is the mode you deploy first.
-
-Below the toolbar, every directive is a card. Each card has three rows of source pickers: keywords (`'self'`, `'none'`, `'strict-dynamic'`, `'unsafe-inline'`, `'unsafe-eval'`), schemes (`https:`, `data:`, `blob:`, `mediastream:`), and a free-form input for hosts, paths, hashes, and nonces. The `+ nonce` button generates a fresh base64 token using `crypto.getRandomValues`. Clicking a chip toggles the source on; clicking the × on a tag removes it.
-
-The hash calculator at the bottom of the form takes the contents of an inline `<script>` or `<style>` block — exactly the bytes between the opening and closing tags — and runs them through SHA-256, SHA-384, or SHA-512 via the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest). The output is the format CSP expects: `'sha256-<base64>'`. One click adds it to `script-src` or `style-src`, depending on which one you picked from the dropdown.
-
-The output panel renders four tabs:
-
-- **HTTP header** — what your origin server sends. This is the canonical form.
-- **HTML `<meta>`** — a fallback for static hosts where you cannot set headers. The tool warns you that `frame-ancestors`, `report-uri`, `report-to`, and `sandbox` are silently ignored when CSP is delivered via `<meta>`.
-- **Express (helmet)** — drop-in code for Node servers using helmet. Note `useDefaults: false` so your policy is not silently merged with helmet's built-in defaults.
-- **Nginx** — `add_header ... always;` directive. The `always` flag matters because without it Nginx skips the header on error responses, leaving the 500 page unprotected.
-
-The validation list under the output flags suspicious combinations live: `'none'` mixed with other sources, `'unsafe-inline'` neutered by hashes, `frame-ancestors` placed in a `<meta>` policy, missing `default-src`, `http:` schemes that allow insecure fetches.
-
-## Hashes vs. nonces, and why you usually want both
-
-Inline `<script>...</script>` blocks are the single most common reason CSP rollouts get rolled back. The naive fix is to add `'unsafe-inline'` to `script-src`. That works, but it disables the part of CSP that catches XSS — the entire point of the policy.
-
-The correct fix is to allow specific inline scripts. Two mechanisms do this:
-
-A **hash** is the SHA-256 (or 384 or 512) digest of the exact bytes inside the `<script>` tag, base64-encoded. If the script content changes by one character, the hash no longer matches and the browser blocks it. Hashes are deterministic and cache-friendly: you can precompute them at build time and ship them in a static header. Hashes are the right choice for analytics snippets, critical CSS, and any inline content that ships with the page and rarely changes.
-
-A **nonce** is a random base64 token your server generates per request. The server emits a header containing `'nonce-XYZ'` and stamps the same `XYZ` on every `<script nonce="XYZ">` tag it renders. Browsers execute scripts whose `nonce` attribute matches; everything else is blocked. Nonces are the right choice for server-rendered HTML where the inline content varies (CSRF tokens, user IDs, page-specific bootstraps).
-
-The hash calculator on the page is for the static case. For the dynamic case, click `+ nonce` to generate a sample nonce and replace it server-side at request time.
-
-The two combine well with `'strict-dynamic'`. Once a script is trusted (via hash or nonce), `'strict-dynamic'` says any script that script loads is also trusted, transitively. This means you do not have to enumerate every CDN your trusted script might pull from. It also stops a class of bypasses where an attacker abuses a legitimately allow-listed CDN to host their own payload, because `'strict-dynamic'` overrides host-based allow-lists for descendant scripts.
-
-A subtle point: when a hash or nonce is present in `script-src`, browsers that support CSP Level 2 or later ignore `'unsafe-inline'` in that directive, while older browsers that do not understand hashes and nonces still honor it, so the pair stays backwards compatible. The validation panel in the tool surfaces this as an info-level note so you do not panic when you see both keywords listed.
-
-## The five pitfalls the validator watches for
-
-### `'none'` must be alone
-
-The CSP3 spec is clear: when `'none'` appears in a source list, every other source is dropped. Writing `script-src 'none' https://cdn.example.com` is a bug — the browser ignores the CDN. The validator flags this as a hard warning.
-
-### `frame-ancestors` is HTTP-only
-
-The HTML `<meta http-equiv="Content-Security-Policy">` tag exists, but [CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element) does not support three directives there: `frame-ancestors`, `report-uri` and `sandbox`. The Report-Only header has no `<meta>` form at all. The tool also leaves `report-to` out of its `<meta>` output. If you need framing protection on a static host like GitHub Pages, you have to send a real header — usually via a CDN or a worker.
-
-### Missing `default-src` removes your fallback
-
-Fetch directives (`script-src`, `style-src`, `img-src`, `connect-src` and the rest) fall back to `default-src` when they are not specified. Document and navigation directives such as `base-uri`, `form-action` and `frame-ancestors` do not fall back, so they must be written out. If you skip `default-src`, any fetch directive you forgot is unrestricted. Even a single `default-src 'self'` line is better than none.
-
-### `http:` is not the same as "no policy"
-
-It is tempting to write `img-src https: http:` so your CDN works in dev and prod. The `http:` scheme allows insecure fetches over plaintext, which means a coffee-shop attacker with a Wi-Fi pineapple can MITM the response and replace your image with anything. Use `https:` only, and use `upgrade-insecure-requests` if you need to deal with legacy `http://` URLs in your own HTML. The validator highlights `http:` sources as info-level warnings.
-
-### Custom hosts cannot contain semicolons
-
-CSP uses semicolons to separate directives. A semicolon inside a host or path terminates the policy and turns every directive after it into garbage. The tool refuses to add sources that contain semicolons.
-
-## Deploying the generated header
-
-Once you have a policy you like, the four output tabs cover the common deployment surfaces. Here is the rough mental model for each.
-
-```nginx
-# Nginx: usually inside the server { } block
-add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
-```
-
-```apache
-# Apache: in .htaccess or httpd.conf; "always" also covers error responses
-Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
-```
-
-```javascript
-// Express + helmet
-const helmet = require('helmet');
-app.use(helmet.contentSecurityPolicy({
-  useDefaults: false,
-  directives: {
-    "default-src": ["'self'"],
-    "script-src": ["'self'", "'strict-dynamic'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
-    "object-src": ["'none'"],
-    "base-uri": ["'self'"],
-  }
-}));
-```
+A policy is a list of directives separated by semicolons. Each directive names a resource type and a source list:
 
 ```text
-# Cloudflare Pages _headers file
-/*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'
+Content-Security-Policy: default-src 'self'; img-src 'self' data:; object-src 'none'
 ```
 
-For Vercel, paste the same string into `vercel.json`'s `headers` array. For Netlify, add it to `netlify.toml`. For static export to S3 + CloudFront, configure CloudFront response-headers policies. The point is that the policy text is the same everywhere; only the wrapping config syntax changes.
+When the browser needs to load or run something, it looks up the matching directive. If that directive is not in the policy, it walks a fallback list defined in CSP3 §6.8.3. A few of them:
 
-## A staged rollout plan that actually works
+| Request | Directives checked, in order |
+|---|---|
+| `<script>` element (inline or `src`) | `script-src-elem`, `script-src`, `default-src` |
+| Inline event handler such as `onclick` | `script-src-attr`, `script-src`, `default-src` |
+| `<style>` element or stylesheet | `style-src-elem`, `style-src`, `default-src` |
+| Worker | `worker-src`, `child-src`, `script-src`, `default-src` |
+| `<iframe>` | `frame-src`, `child-src`, `default-src` |
+| `fetch()`, XHR, WebSocket | `connect-src`, `default-src` |
+| Image, font, media, manifest, `<object>` | `img-src`, `font-src`, `media-src`, `manifest-src`, `object-src`, each falling back to `default-src` |
 
-Almost every successful CSP deployment follows the same shape:
+Chrome reports the fallback in its console. When a page had only `script-src`, the message for a blocked file read: "Note that 'script-src-elem' was not explicitly set, so 'script-src' is used as a fallback."
 
-1. **Pick the Strict preset** in the tool, deploy as `Content-Security-Policy-Report-Only` with a `report-uri` (or `report-to` group) endpoint. Do not enforce yet.
-2. **Watch reports** for one to two weeks. You will see violations from genuine code paths (an inline `onclick`, a forgotten CDN), browser extensions injecting scripts, and prerender bots.
-3. **Triage**: violations from your own code get fixed (move inline handlers to addEventListener, add a hash for the analytics snippet you cannot move). Violations from extensions get filtered server-side. Violations from prerender bots usually mean tightening one directive.
-4. **Tighten**: rebuild the policy in the tool with the lessons from step 3. Maybe `script-src` needs a hash for one specific inline boot snippet. Maybe `connect-src` needs your error tracker's domain.
-5. **Switch to enforce** by changing the header name from `Content-Security-Policy-Report-Only` to `Content-Security-Policy`. The tool's Mode toggle does this for you in one click.
-6. **Keep collecting reports** even after enforcement. New SDKs, new third-party scripts, new pages will trip the policy. The reporting endpoint is your early-warning system.
+`base-uri`, `form-action` and `frame-ancestors` are not fetch directives and have no fallback. A policy with only `default-src 'self'` still lets an injected `<base href>` rewrite relative script URLs and lets any site frame the page. Write those three explicitly.
 
-The two failure modes that derail this plan are skipping step 1 (going straight to Enforce on day one) and treating the report endpoint as write-only (collecting reports but never reading them). The tool opens in Enforce mode, so switch the Mode toggle to Report-Only before you copy the first header. The reporting endpoint is on you.
+## Why allowlists fail and what makes a policy strict
 
-## How this differs from existing CSP tools
+The older style of policy lists the hosts a page may load scripts from, such as `script-src 'self' https://cdn.example.com https://www.googleapis.com`. Google's [Strict CSP guide](https://web.dev/articles/strict-csp) calls these allowlist CSPs and says they "require a lot of customization and can be bypassed by attackers". CSP3 §8.2 makes the same point about host-based policies on large origins such as CDNs: any script an allowed host serves, including ones the site never meant to use, passes the check.
 
-[Report URI's CSP Wizard](https://report-uri.com/home/generate) builds a policy from the violation reports your site sends, which is useful once a Report-Only header is live and less useful on day one, when there are no reports yet. Browser extensions that show a site's current CSP are useful for inspection but not for authoring.
+A strict policy trusts individual script elements instead of hosts. The nonce-based version from web.dev is three directives:
 
-ZeroTool's tool is smaller in scope and cleaner in execution. There is no account and no traffic capture — your policy never leaves the browser tab. The validation panel surfaces the five pitfalls that actually break deployments instead of cataloguing every theoretical violation. The hash calculator runs in the browser via SubtleCrypto so you can paste production code without worrying about it being logged. The four output formats cover the deployment surfaces you actually use, in the syntax those surfaces actually accept.
+```text
+Content-Security-Policy:
+  script-src 'nonce-{RANDOM}' 'strict-dynamic';
+  object-src 'none';
+  base-uri 'none';
+```
 
-## Further reading
+- `'nonce-{RANDOM}'` allows each `<script>` whose `nonce` attribute carries the same value. web.dev requires the value to be cryptographically random ("ideally 128+ bits in length"), new for every response, and base64-encoded.
+- `'strict-dynamic'` lets a trusted script add more scripts with `document.createElement('script')`, so tag managers and widgets keep working without listing their hosts. CSP3 §8.2 describes the two effects: scripts requested by non-"parser-inserted" script elements are allowed, and host sources, scheme sources, `'self'` and `'unsafe-inline'` are ignored when loading script.
+- `object-src 'none'` blocks plugins, and `base-uri 'none'` blocks injected `<base>` tags.
 
-- [W3C Content Security Policy Level 3](https://www.w3.org/TR/CSP3/) — the spec.
-- [OWASP Content Security Policy Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html) — practical defense in depth.
-- [Google's Strict CSP guide](https://web.dev/articles/strict-csp) — the case for nonces + `'strict-dynamic'`.
-- [MDN: Content-Security-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy) — directive reference.
-- [ZeroTool Meta Tag Generator](/tools/meta-tag-generator/) — companion tool for the SEO/social half of your `<head>` block.
-- [ZeroTool Hash Generator](/tools/hash-generator/) — when you need raw SHA-256 outside the CSP context.
-- [ZeroTool .htaccess Generator](/tools/htaccess-generator/) — for the Apache deployment surface.
-- [ZeroTool Robots.txt Generator](/tools/robots-txt-generator/) — the other half of crawler control.
+A hash-based variant replaces the nonce with `'sha256-…'` values for each inline script. It suits static pages, where no server can write a new nonce into every response.
 
-CSP is not a one-and-done configuration. It is a living policy that changes as your dependencies, third-party scripts, and threat model change. Keep the generator open in a tab during the next security review.
+## What a nonce-based policy blocks in Chrome 152
+
+The test server sent this header with a fresh 16-byte nonce on each request:
+
+```text
+Content-Security-Policy: script-src 'nonce-<random>' 'strict-dynamic'; object-src 'none'; base-uri 'none'
+```
+
+The page tried seven things. A recorder script listening for `securitypolicyviolation` events wrote down what ran and what was blocked:
+
+| What the page did | Result | Directive in the violation |
+|---|---|---|
+| Inline `<script nonce="…">` | Ran | — |
+| That script appended a `<script src="/dyn.js">` with `createElement` | Ran | — |
+| That script called `document.write('<script src="/dw.js">')` | Blocked | `script-src-elem` |
+| That script called `eval()` | Threw `EvalError` | `script-src` |
+| Inline `<script>` without a nonce | Blocked | `script-src-elem` |
+| `<script src="/self.js">` from the same origin, no nonce | Blocked | `script-src-elem` |
+| `<button onclick="…">`, clicked by the trusted script | Blocked | `script-src-attr` |
+
+The `document.write` row is the parser-inserted rule in action: a script written into the parser is treated like markup, so `'strict-dynamic'` does not cover it. Chrome's messages for the last two rows:
+
+```text
+Loading the script 'http://127.0.0.1:8851/self.js' violates the following Content Security Policy directive: "script-src 'nonce-…' 'strict-dynamic'". Note that 'script-src-elem' was not explicitly set, so 'script-src' is used as a fallback. The action has been blocked.
+
+Executing inline event handler violates the following Content Security Policy directive 'script-src 'nonce-…' 'strict-dynamic''. … Note that hashes do not apply to event handlers, style attributes and javascript: navigations unless the 'unsafe-hashes' keyword is present. The action has been blocked.
+```
+
+Before enforcing a policy like this, move every `onclick=""` and `javascript:` URL into script, and replace `document.write` of scripts with `createElement`.
+
+web.dev also gives a fallback for old browsers: `script-src 'nonce-{random}' 'strict-dynamic' https: 'unsafe-inline'`. With that header, Chrome still blocked an inline script without a nonce and logged "Note that 'unsafe-inline' is ignored if either a hash or nonce value is present in the source list." Browsers that understand nonces ignore the two fallback keywords, so they cost nothing.
+
+## A server that sends a new nonce on every response
+
+The nonce has to be generated per response by whatever renders the HTML. This complete Node server does it with no dependencies:
+
+{/* csp-run */}
+```js
+// server.mjs: run with `node server.mjs`, then open http://localhost:8080/
+import http from 'node:http';
+import { randomBytes } from 'node:crypto';
+
+const server = http.createServer((req, res) => {
+  if (req.url === '/widget.js') {
+    res.setHeader('Content-Type', 'text/javascript');
+    return res.end("document.body.append('widget loaded');");
+  }
+  const nonce = randomBytes(16).toString('base64'); // 128 bits, new for every response
+  res.setHeader('Content-Security-Policy',
+    `script-src 'nonce-${nonce}' 'strict-dynamic'; object-src 'none'; base-uri 'none'`);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(`<!doctype html>
+<script nonce="${nonce}">
+  const s = document.createElement('script');
+  s.src = '/widget.js';   // allowed: created by a trusted script
+  document.head.append(s);
+</script>
+<script>document.body.append('injected')</script>`);
+});
+
+server.listen(8080);
+```
+
+The second inline script has no nonce and is blocked, which is the behavior an injected script would get. Two details matter. The nonce must not be cached: a CDN that caches the HTML also caches the header and the nonce, and from then on every visitor gets the same value. And a nonce in a static file is a fixed string, not a nonce, which is why static sites use hashes.
+
+## Hashes for inline scripts that never change
+
+A hash source is the base64 SHA-256, SHA-384 or SHA-512 of the exact text between `<script>` and `</script>`. For this inline script:
+
+```html
+<script>document.documentElement.classList.add('js');</script>
+```
+
+{/* csp-hash: document.documentElement.classList.add('js'); */}
+the source is `'sha256-/x7W7R75k8Roq0WaVRQX9blP4OufE5xbAdzklGxsgpw='`.
+
+Any change to the text changes the hash, whitespace included. With one leading space, `<script> document…` hashes to `'sha256-tI4westzC+wr8k85EJ92dUyc/69jHuItpG4a/NvBSjw='` and the original hash no longer matches. In the test, Chrome blocked the edited copy and its console message included the hash it would have accepted, which is the fastest way to fix a mismatch caused by a build step that reformats inline code. Hashes cover inline `<script>` elements only; event handler attributes need `'unsafe-hashes'`, and `'unsafe-hashes'` exists to let you migrate, not to keep.
+
+## Using the CSP Header Generator
+
+The generator opens on its Strict preset in Enforce mode. Copied as an HTTP header without changes, it produces:
+
+{/* csp-check: strict header */}
+```text
+Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+```
+
+It keeps the web.dev structure for `script-src` and adds directives for other resource types, so it is stricter than web.dev's three-directive policy in some places and different in one. `style-src 'self'` blocks inline `<style>` and `style=""` attributes, which many CSS-in-JS libraries and analytics snippets use; switch to Moderate or add a hash if they break. `base-uri 'self'` allows a `<base>` pointing at your own origin, where web.dev uses `'none'`.
+
+`'nonce-{RANDOM}'` is a placeholder and the validation panel says so in a warning. Sending it unchanged is the most likely deployment mistake, so it was tested: with the Strict output as the response header, Chrome logged
+
+```text
+The source list for the Content Security Policy directive 'script-src' contains an invalid source: ''nonce-{RANDOM}''. It will be ignored.
+```
+
+and then blocked every script on the page, including ones with a nonce attribute. The `+ nonce` button on each directive card inserts the same placeholder; the tool never generates a nonce value itself, because a value copied from a web page would be the same on every response.
+
+The four output tabs handle the placeholder differently:
+
+- **HTTP header** and **HTML `<meta>`** copy it as is.
+- **Express (helmet)** replaces it with a function that reads `res.locals.cspNonce`, and adds a middleware that sets `res.locals.cspNonce = crypto.randomBytes(16).toString('base64')` for every request. Render that value into each `<script nonce="…">`. The code passes `useDefaults: false`, so helmet does not merge its own defaults into your policy.
+- **Nginx** prefixes the `add_header … always;` line with a comment explaining that Nginx cannot write the matching nonce into HTML your application renders, so the header belongs in the application.
+
+The validation panel reacts to the policy as you edit it. Before 1 October 2026 the Strict preset was `script-src 'self' 'strict-dynamic'` with no nonce; if a saved policy still has that, the panel now warns that "every `<script>` on the page is blocked", and Chrome agrees. Its message for that policy ended with "Note that 'strict-dynamic' is present, so host-based allowlisting is disabled."
+
+The hash calculator takes the contents of an inline script or style, computes the SHA-256, SHA-384 or SHA-512 with the Web Crypto API, and adds the source to `script-src` or `style-src`. It hashes the UTF-8 bytes of exactly what you paste, so paste what is between the tags, not the tags themselves.
+
+The generator's directive list still offers `navigate-to` and `prefetch-src`. Neither appears in the 16 September 2026 CSP3 draft, so do not rely on them.
+
+## `<meta>` delivery and its limits
+
+A policy can also be delivered in the page: `<meta http-equiv="Content-Security-Policy" content="…">`. CSP3 §3.3 says the Report-Only header has no `<meta>` form and that "Neither are the report-uri, frame-ancestors, and sandbox directives" supported there. It also notes that a `<meta>` policy does not apply to content that comes before it, so the tag must be the first thing in `<head>`.
+
+A test page with all three directives in a `<meta>` policy produced these console errors in Chrome, and the rest of the policy was enforced:
+
+```text
+The Content Security Policy directive 'frame-ancestors' is ignored when delivered via a <meta> element.
+The Content Security Policy directive 'report-uri' is ignored when delivered via a <meta> element.
+The Content Security Policy directive 'sandbox' is ignored when delivered via a <meta> element.
+```
+
+The generator's `<meta>` tab drops exactly those three directives and keeps `report-to`. With the Strict preset it outputs:
+
+{/* csp-check: strict meta */}
+```html
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests">
+```
+
+Clickjacking protection therefore needs a real header, from a CDN, a reverse proxy or a Pages `_headers` file.
+
+## Report-Only first, then enforce
+
+`Content-Security-Policy-Report-Only` evaluates the same policy without blocking anything. In the test, the page with a Report-Only strict policy ran both its unauthorized scripts; Chrome logged each one at info level with "The policy is report-only, so the violation has been logged but no further action has been taken", and the `securitypolicyviolation` events had `disposition: "report"`.
+
+Reports reach you through `report-uri` or `report-to`:
+
+- `report-uri /csp-report` delivered one POST per violation within seconds, with `Content-Type: application/csp-report` and a body containing `document-uri`, `violated-directive`, `effective-directive`, `original-policy`, `disposition`, `blocked-uri` (`inline` for inline scripts), `line-number` and `source-file`.
+- `report-to` names an endpoint declared in a `Reporting-Endpoints` header and uses the Reporting API. CSP3 deprecates `report-uri` in its favor and says that when `report-to` is present, `report-uri` is ignored. In this test the endpoint was plain `http://127.0.0.1`. A policy with only `report-to`, and a policy with both directives, produced no report at all within 75 seconds of the visit, while the `report-uri`-only policy delivered at once. Check that your own endpoint receives `report-to` reports, over HTTPS, before you drop `report-uri`.
+
+A rollout that follows web.dev and the [OWASP CSP Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html):
+
+1. Add nonces (or hashes) to every inline and external script your templates emit, and move inline event handlers into script.
+2. Send the policy as `Content-Security-Policy-Report-Only` with a reporting endpoint. In the generator, switch Mode to Report-Only before copying; the page opens in Enforce.
+3. Read the reports. Violations from your own pages need a nonce, a hash or a code change. Violations whose source is a browser extension can be filtered out.
+4. When reports from your own code stop, send the same policy as `Content-Security-Policy`, and keep the reporting directive so new third-party code shows up.
+
+## Setting the header on common servers
+
+The policy text is the same everywhere; what changes is how each server sends it.
+
+```nginx
+# Nginx: only for static pages with hash sources; nonces must come from the application
+add_header Content-Security-Policy "script-src 'sha256-/x7W7R75k8Roq0WaVRQX9blP4OufE5xbAdzklGxsgpw=' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" always;
+```
+
+The [Nginx documentation](https://nginx.org/en/docs/http/ngx_http_headers_module.html) says `add_header` applies only to 200, 201, 204, 206, 301, 302, 303, 304, 307 and 308 responses unless `always` is given, and that `add_header` directives are inherited from the previous level "if and only if there are no add_header directives defined on the current level". A `location` block with its own `add_header` for caching therefore drops the CSP set at the `server` level. Since Nginx 1.29.3, `add_header_inherit merge` changes that rule.
+
+```apache
+# Apache httpd: "always" also covers error responses and ErrorDocument redirects
+Header always set Content-Security-Policy "script-src 'sha256-/x7W7R75k8Roq0WaVRQX9blP4OufE5xbAdzklGxsgpw=' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+```
+
+[mod_headers](https://httpd.apache.org/docs/2.4/mod/mod_headers.html) keeps two tables, `onsuccess` (the default) and `always`, and only headers in `always` are added "to the response even on error".
+
+## Sources
+
+- [W3C Content Security Policy Level 3](https://www.w3.org/TR/CSP3/) (Working Draft, 16 September 2026): §3.3 the `<meta>` element, §6.5 reporting directives, §6.8.3 fetch directive fallback lists, §8.2 usage of `'strict-dynamic'`
+- [web.dev: Mitigate cross-site scripting with a strict Content Security Policy](https://web.dev/articles/strict-csp)
+- [OWASP Content Security Policy Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html)
+- [Nginx ngx_http_headers_module](https://nginx.org/en/docs/http/ngx_http_headers_module.html), [Apache mod_headers](https://httpd.apache.org/docs/2.4/mod/mod_headers.html)
+
+Related tools: [Hash Generator](/tools/hash-generator/) for SHA-256 outside the CSP context, [.htaccess Generator](/tools/htaccess-generator/) for Apache security headers, and [Meta Tag Generator](/tools/meta-tag-generator/) for the rest of the `<head>`.

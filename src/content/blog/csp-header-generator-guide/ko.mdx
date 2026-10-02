@@ -2,7 +2,7 @@
 title: "CSP 헤더 생성기: 고통 없이 엄격한 Content Security Policy 만들기"
 description: "지시문, 해시, nonce로 프로덕션급 Content-Security-Policy 헤더를 구축하세요 — 엄격 모드 템플릿과 Express / Nginx 스니펫 포함."
 pubDate: 2026-05-09
-updatedDate: 2026-05-09
+updatedDate: 2026-10-02
 lang: "ko"
 noindex: true
 tags: ["csp", "web-security", "xss-prevention", "developer-tools"]
@@ -32,18 +32,18 @@ CSP는 입력 새니타이즈, 출력 인코딩, 템플릿 자동 이스케이�
 
 ## 작업대 레이아웃
 
-페이지를 열면 상단 툴바에서 프리셋과 모드를 고른다. 처음 상태는 Strict 프리셋의 Enforce 모드다. Strict는 `script-src 'self' 'strict-dynamic'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`을 설정한다. 이는 [web.dev](https://web.dev/articles/strict-csp)와 OWASP가 설명하는 nonce 기반 strict CSP의 출발점일 뿐, 그 정책 자체는 아니다. `'strict-dynamic'`을 지원하는 브라우저에서는 옆의 `'self'`가 무시되므로, `script-src`에 nonce나 해시를 넣기 전까지 페이지의 스크립트는 하나도 실행되지 않는다. Moderate는 `style-src`에 `'unsafe-inline'`을 더하고(오래된 CSS-in-JS 라이브러리가 여전히 인라인 스타일을 내보내므로), `img-src`에 `https:`를 더한다(대부분의 제품 사이트가 여러 CDN에서 이미지를 가져오므로). Basic은 `default-src 'self'`만 두어 지시문을 하나씩 쌓게 하고, Empty는 원하는 것이 정확히 정해져 있을 때 빈 상태에서 시작한다.
+페이지를 열면 상단 툴바에서 프리셋과 모드를 고른다. 처음 상태는 Strict 프리셋의 Enforce 모드다. Strict는 `script-src 'nonce-{RANDOM}' 'strict-dynamic'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`을 설정한다. `script-src`의 형태는 [web.dev](https://web.dev/articles/strict-csp)가 설명하는 nonce 기반 strict CSP를 따른다. `'nonce-{RANDOM}'`은 자리표시자이므로 서버가 응답마다 새 무작위 값으로 바꾸고, 같은 값을 각 `<script nonce="…">`에 넣어야 한다. 바꾸지 않으면 브라우저가 무시하므로 페이지의 스크립트는 하나도 실행되지 않는다. Moderate는 `style-src`에 `'unsafe-inline'`을 더하고(오래된 CSS-in-JS 라이브러리가 여전히 인라인 스타일을 내보내므로), `img-src`에 `https:`를 더한다(대부분의 제품 사이트가 여러 CDN에서 이미지를 가져오므로). Basic은 `default-src 'self'`만 두어 지시문을 하나씩 쌓게 하고, Empty는 원하는 것이 정확히 정해져 있을 때 빈 상태에서 시작한다.
 
 Mode 토글은 `Content-Security-Policy`(강제 Enforce)와 `Content-Security-Policy-Report-Only`(보고만)를 전환한다. Report-Only는 위반을 `report-uri` 또는 `report-to` 엔드포인트로 보내기만 하고 아무것도 막지 않는다. 이것이 **먼저** 배포하는 모드다.
 
-툴바 아래, 모든 지시문은 카드다. 각 카드에는 세 줄의 소스 선택기가 있다: 키워드(`'self'`, `'none'`, `'strict-dynamic'`, `'unsafe-inline'`, `'unsafe-eval'`), 스킴(`https:`, `data:`, `blob:`, `mediastream:`), 호스트·경로·해시·nonce용 자유 입력란. `+ nonce` 버튼은 `crypto.getRandomValues`로 새 base64 토큰을 생성한다. 칩을 클릭해 소스를 토글하고, 태그의 ×로 소스를 제거한다.
+툴바 아래, 모든 지시문은 카드다. 각 카드에는 세 줄의 소스 선택기가 있다: 키워드(`'self'`, `'none'`, `'strict-dynamic'`, `'unsafe-inline'`, `'unsafe-eval'`), 스킴(`https:`, `data:`, `blob:`, `mediastream:`), 호스트·경로·해시·nonce용 자유 입력란. `+ nonce` 버튼은 자리표시자 `'nonce-{RANDOM}'`을 넣는다. 실제 값은 서버가 응답마다 채운다. 칩을 클릭해 소스를 토글하고, 태그의 ×로 소스를 제거한다.
 
 폼 하단의 해시 계산기는 인라인 `<script>` 또는 `<style>` 블록의 내용—여는 태그와 닫는 태그 사이의 정확한 바이트—을 받아 [Web Crypto API](https://developer.mozilla.org/ko/docs/Web/API/SubtleCrypto/digest)로 SHA-256 / SHA-384 / SHA-512를 돌린다. 출력은 CSP가 기대하는 형식: `'sha256-<base64>'`. 드롭다운에서 고른 `script-src`나 `style-src`에 한 번에 추가된다.
 
 출력 패널은 네 개 탭을 렌더링한다:
 
 - **HTTP header**—오리진 서버가 실제로 보내는 형식. 이것이 정규 형태.
-- **HTML `<meta>`**—헤더를 설정할 수 없는 정적 호스트용 폴백. CSP가 `<meta>`로 전달될 때 `frame-ancestors`, `report-uri`, `report-to`, `sandbox`가 조용히 무시된다는 것을 도구가 경고한다.
+- **HTML `<meta>`**—헤더를 설정할 수 없는 정적 호스트용 폴백. CSP가 `<meta>`로 전달될 때 `frame-ancestors`, `report-uri`, `sandbox`는 무시되므로, 도구는 이 세 지시문을 이 형식에서 빼고 경고한다. `report-to`는 남기고, 엔드포인트 이름을 `Reporting-Endpoints` HTTP 헤더로 정의해야 한다고 알려 준다.
 - **Express (helmet)**—helmet을 쓰는 Node 서버용 즉시 사용 코드. `useDefaults: false`에 주의—이게 없으면 정책이 helmet의 내장 기본값과 조용히 병합된다.
 - **Nginx**—`add_header ... always;` 지시문. `always` 플래그가 중요하다—없으면 Nginx가 에러 응답에서 헤더를 건너뛰어 500 페이지가 무방비가 된다.
 
@@ -59,7 +59,7 @@ Mode 토글은 `Content-Security-Policy`(강제 Enforce)와 `Content-Security-Po
 
 **nonce**는 서버가 요청별로 생성하는 무작위 base64 토큰이다. 서버는 `'nonce-XYZ'`가 담긴 헤더를 발행하고, 렌더링하는 모든 `<script nonce="XYZ">` 태그에 같은 `XYZ`를 찍는다. 브라우저는 `nonce` 속성이 일치하는 스크립트를 실행하고 나머지는 차단한다. nonce는 인라인 콘텐츠가 가변적인 서버 렌더링 HTML(CSRF 토큰, 사용자 ID, 페이지별 부트스트랩)에 적합하다.
 
-페이지의 해시 계산기는 정적 케이스를 위한 것이다. 동적 케이스에서는 `+ nonce`로 샘플 nonce를 만들고 서버 측에서 요청 시점에 교체한다.
+페이지의 해시 계산기는 정적 케이스를 위한 것이다. 동적 케이스에서는 `+ nonce`로 자리표시자를 넣고 서버 측에서 응답마다 교체한다.
 
 두 가지 모두 `'strict-dynamic'`과 잘 결합한다. 어떤 스크립트가 신뢰되면(해시 또는 nonce 경유), `'strict-dynamic'`이 "그 스크립트가 로드하는 어떤 스크립트도 신뢰한다"고 추이적으로 선언한다. 즉, 그 신뢰된 스크립트가 가져올 수 있는 모든 CDN을 일일이 나열할 필요가 없다. 또한 공격자가 합법적으로 허용 목록에 오른 CDN에 자기 페이로드를 호스팅하는 종류의 우회를 막아준다—`'strict-dynamic'`이 자식 스크립트에 대해 호스트 기반 허용 목록을 무효화하기 때문이다.
 
@@ -73,7 +73,7 @@ CSP3 명세는 분명하다: 소스 목록에 `'none'`이 있으면 다른 모�
 
 ### `frame-ancestors`는 HTTP 전용
 
-HTML `<meta http-equiv="Content-Security-Policy">` 태그는 존재하지만, [CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element)은 그 안에서 `frame-ancestors`, `report-uri`, `sandbox` 세 지시문을 지원하지 않는다. Report-Only 헤더는 `<meta>` 형태 자체가 없다. 도구는 `<meta>` 출력에서 `report-to`도 뺀다. GitHub Pages 같은 정적 호스트에서 프레임 삽입을 막으려면 실제 헤더를 보내야 한다—보통 CDN이나 워커를 통해서다.
+HTML `<meta http-equiv="Content-Security-Policy">` 태그는 존재하지만, [CSP Level 3 §3.3](https://www.w3.org/TR/CSP3/#meta-element)은 그 안에서 `frame-ancestors`, `report-uri`, `sandbox` 세 지시문을 지원하지 않는다. Report-Only 헤더는 `<meta>` 형태 자체가 없다. 도구는 `<meta>` 출력에서 이 세 지시문을 빼고 `report-to`는 남긴다. GitHub Pages 같은 정적 호스트에서 프레임 삽입을 막으려면 실제 헤더를 보내야 한다—보통 CDN이나 워커를 통해서다.
 
 ### `default-src` 누락은 폴백을 잃는다
 
@@ -93,12 +93,12 @@ CSP는 세미콜론으로 지시문을 구분한다. 호스트나 경로 안의 
 
 ```nginx
 # Nginx: 보통 server { } 블록 안에
-add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'" always;
 ```
 
 ```apache
 # Apache: .htaccess 또는 httpd.conf. "always"로 오류 응답에도 붙임
-Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
+Header always set Content-Security-Policy "default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'"
 ```
 
 ```javascript
@@ -118,7 +118,7 @@ app.use(helmet.contentSecurityPolicy({
 ```text
 # Cloudflare Pages _headers 파일
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'strict-dynamic'; object-src 'none'; base-uri 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'
 ```
 
 Vercel은 같은 문자열을 `vercel.json`의 `headers` 배열에 붙여넣는다. Netlify는 `netlify.toml`에 추가한다. S3 + CloudFront로 정적 내보내기를 하면 CloudFront 응답 헤더 정책에 설정한다. 요점은 정책 텍스트가 어디서나 같다는 것이고, 바뀌는 건 외피의 설정 구문뿐이다.

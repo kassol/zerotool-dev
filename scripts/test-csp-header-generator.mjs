@@ -1,7 +1,9 @@
 // CSP Header Generator — the Strict preset no longer outputs a policy that blocks every script
 //
 // Read:  src/components/tools/CspHeaderGeneratorTool.astro (extracts the real engine block
-//        between the `engine:start` / `engine:end` markers), the 4 tool page mdx files
+//        between the `engine:start` / `engine:end` markers), the 4 tool page mdx files,
+//        src/content/blog/csp-header-generator-guide/{en,zh,ja,ko}.mdx (section 9; the en `csp-run`
+//        server is written to a temp directory, started on a free port and fetched)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -204,6 +206,81 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' page shows the actual Strict header output', mdx.includes(E.buildOutput(stateFor('strict'), 'header', T)), lang);
   check(lang + ' page explains why strict-dynamic needs a nonce (CSP3 §8.2 link)', mdx.includes('https://www.w3.org/TR/CSP3/#strict-dynamic-usage'), lang);
   check(lang + ' page no longer says report-to is ignored in <meta>', !/`frame-ancestors`[、，,・]\s*`report-uri`[、，,・]\s*`report-to`/.test(mdx), lang);
+}
+
+// ── 9. the content security policy guide (en) and the other language versions ──
+// `csp-check: strict header|meta` → the next code block equals the Strict preset output in that tab.
+// `csp-hash: <script text>` → the hash quoted after it is the tool's computeHash() algorithm (SHA-256
+// of the UTF-8 bytes, base64); the one-leading-space variant and the Nginx / Apache samples use the
+// same values. `csp-run` → the Node server in the next js block is started on a free port and fetched.
+{
+  const guide = readFileSync(join(root, 'src/content/blog/csp-header-generator-guide/en.mdx'), 'utf8');
+  const fm = guide.match(/^---\n([\s\S]*?)\n---/)[1];
+  check('en guide is indexable', !/^noindex:\s*true/m.test(fm) && !/^draft:\s*true/m.test(fm));
+  const tpl = [/^## What (is|are) /m, /^## .*Online/m, /^## .* in Code/m, /^## (Summary|Conclusion)/m].filter((re) => re.test(guide));
+  check('en guide has no template headings', tpl.length === 0, tpl.map(String).join(' '));
+  const strict = stateFor('strict');
+  for (const [tag, format] of [['strict header', 'header'], ['strict meta', 'meta']]) {
+    const m = guide.match(new RegExp('\\{/\\* csp-check: ' + tag + ' \\*/\\}\\s*```\\w+\\n([\\s\\S]*?)```'));
+    check('en guide has csp-check: ' + tag, !!m);
+    if (m) eq('en guide ' + tag + ' output', m[1].trimEnd(), E.buildOutput(Object.assign({}, strict, { format }), format, T));
+  }
+  const { createHash } = await import('node:crypto');
+  const sha = (s) => "'sha256-" + createHash('sha256').update(s, 'utf8').digest('base64') + "'";
+  const hm = guide.match(/\{\/\* csp-hash: (.+?) \*\/\}\s*\nthe source is `('sha256-[^`]+')`/);
+  check('en guide has csp-hash', !!hm);
+  if (hm) {
+    eq('en guide hash', hm[2], sha(hm[1]));
+    check('en guide quotes the script it hashes', guide.includes('<script>' + hm[1] + '</script>'));
+    check('en guide one-space hash', guide.includes('hashes to `' + sha(' ' + hm[1]) + '`'), sha(' ' + hm[1]));
+    check('nginx sample uses the same hash', guide.includes('add_header Content-Security-Policy "script-src ' + hm[2] + " 'strict-dynamic'"));
+    check('apache sample uses the same hash', guide.includes('Header always set Content-Security-Policy "script-src ' + hm[2] + " 'strict-dynamic'"));
+  }
+  check('en guide quotes the placeholder warning shown by the tool', T.warnNoncePlaceholder.includes('placeholder'));
+  check('en guide quotes the old-preset warning text', guide.includes('every `<script>` on the page is blocked') && T.warnStrictDynamicNoNonce.includes('every <script> on the page is blocked'));
+
+  const run = guide.match(/\{\/\* csp-run \*\/\}\s*```js\n([\s\S]*?)```/);
+  check('en guide has csp-run', !!run);
+  if (run) {
+    const { writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'csp-guide-'));
+    const file = join(dir, 'server.mjs');
+    check('csp-run listens on 8080', run[1].includes('server.listen(8080);'));
+    writeFileSync(file, run[1].replace('server.listen(8080);', 'server.listen(0);\nexport { server };'));
+    const { server } = await import(file);
+    await new Promise((r) => (server.listening ? r() : server.once('listening', r)));
+    const base = 'http://127.0.0.1:' + server.address().port;
+    const seen = new Set();
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(base + '/');
+      const csp = res.headers.get('content-security-policy');
+      const html = await res.text();
+      const nonce = (csp.match(/'nonce-([^']+)'/) || [])[1];
+      check('csp-run response ' + i + ' has a valid nonce-source', NONCE_RE.test("'nonce-" + nonce + "'"), csp);
+      check('csp-run response ' + i + ' nonce has 128 bits', nonce && Buffer.from(nonce, 'base64').length === 16, nonce);
+      check('csp-run response ' + i + ' policy', csp === `script-src 'nonce-${nonce}' 'strict-dynamic'; object-src 'none'; base-uri 'none'`, csp);
+      check('csp-run response ' + i + ' trusted script carries the nonce', html.includes(`<script nonce="${nonce}">`));
+      check('csp-run response ' + i + ' has one script without a nonce', (html.match(/<script>/g) || []).length === 1);
+      seen.add(nonce);
+    }
+    check('csp-run gives each response a new nonce', seen.size === 2);
+    const w = await fetch(base + '/widget.js');
+    check('csp-run serves widget.js as text/javascript', w.headers.get('content-type') === 'text/javascript');
+    await new Promise((r) => server.close(r));
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // zh / ja / ko keep their text but no longer describe the pre-2026-10-01 Strict preset or a
+  // generated nonce, and do not say report-to is dropped from <meta>.
+  for (const lang of ['zh', 'ja', 'ko']) {
+    const g = readFileSync(join(root, 'src/content/blog/csp-header-generator-guide', lang + '.mdx'), 'utf8');
+    check(lang + ' guide no longer describes Strict as self + strict-dynamic', !/Strict\s*(设置|は|는)\s*`script-src 'self'/.test(g) && g.includes("`script-src 'nonce-{RANDOM}' 'strict-dynamic'`"));
+    check(lang + ' guide no longer says + nonce uses getRandomValues', !g.includes('getRandomValues'));
+    check(lang + " guide no longer lists report-to among the directives <meta> ignores", !/`frame-ancestors`[、，,]\s*`report-uri`[、，,]\s*`report-to`/.test(g));
+    check(lang + ' guide no longer says the tool drops report-to from <meta>', !/report-to`?\s*(也|も|도)/.test(g));
+    check(lang + " guide server samples have a nonce or hash with 'strict-dynamic'", !/(add_header|Header always set|Content-Security-Policy:) [^\n]*'self' 'strict-dynamic'/.test(g));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
