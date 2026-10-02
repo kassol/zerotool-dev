@@ -1,484 +1,1064 @@
 ---
+// Bcrypt Generator & Checker — bcrypt hashes made and checked in a Web Worker in the browser.
+// Engine (between engine:start / engine:end) is tested by scripts/test-bcrypt-generator.mjs,
+// together with public/vendor/bcrypt-worker.js and the cross-library fixture.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
-const labels = {
+const STRINGS = {
   en: {
-    modeGenerate: 'Generate',
-    modeVerify: 'Verify',
+    tabGen: 'Generate',
+    tabVer: 'Check',
     password: 'Password',
-    passwordPh: 'Enter plaintext password',
-    costFactor: 'Cost Factor',
-    timeEst: 'Estimated time',
-    generate: 'Generate Hash',
-    generating: 'Generating…',
-    hashOutput: 'Hash',
+    passwordPh: 'Password to hash',
+    verPwPh: 'Password to check',
+    prefix: 'Prefix',
+    cost: 'Cost',
+    generate: 'Generate hash',
+    verify: 'Check password',
+    cancel: 'Cancel',
+    example: 'Example',
     copy: 'Copy',
-    copied: 'Copied!',
-    hashInput: 'Hash to Verify',
-    hashInputPh: 'Enter bcrypt hash ($2b$…)',
-    verify: 'Verify',
-    verifying: 'Verifying…',
-    resultMatch: 'Match',
-    resultNoMatch: 'No Match',
-    errEmpty: 'Password is required',
-    errInvalidHash: 'Invalid hash format',
-    privacy: 'All hashing is done 100% in your browser. Passwords never leave this page.',
+    copied: 'Copied',
+    copyFail: 'Copy failed. Select the text and copy it by hand.',
+    hashLabel: 'bcrypt hash',
+    hashPh: '$2b$12$… or a stored value such as {bcrypt}$2a$10$…',
+    'opt_$2b$': '$2b$ — Python, Node.js, OpenBSD',
+    'opt_$2y$': '$2y$ — PHP, Laravel, Symfony, htpasswd',
+    'opt_$2a$': '$2a$ — Go, Spring Security',
+    'note_$2b$': 'Python bcrypt, Node.js bcrypt, bcryptjs, Go, Spring Security and PHP password_verify() accept $2b$. Laravel’s Hash::check() throws “This password does not use the Bcrypt algorithm.” for it unless HASH_VERIFY=false.',
+    'note_$2y$': 'PHP, Laravel, Symfony, Python bcrypt, bcryptjs, Go and Spring Security accept $2y$. Node.js bcrypt 6.0.0 returns false for every $2y$ hash; use $2b$ for Node.js.',
+    'note_$2a$': '$2a$ runs the same algorithm as $2b$ for UTF-8 passwords. Go and Spring Security write it. Laravel’s Hash::check() rejects it unless HASH_VERIFY=false.',
+    meta: '{chars} characters · {bytes} of 72 bytes (UTF-8)',
+    estimating: 'Measuring the speed of this browser…',
+    estimate: 'Cost {cost} takes about {time} in this browser.',
+    working: 'Hashing… {pct}%',
+    done: 'Done in {time} (cost {cost}).',
+    cancelled: 'Cancelled.',
+    workerFail: 'The hashing worker failed: {msg}',
+    needPassword: 'Enter a password first.',
+    needHash: 'Paste a bcrypt hash first.',
+    partPrefix: 'Prefix',
+    partCost: 'Cost',
+    partSalt: 'Salt (16 bytes)',
+    partSum: 'Hash (23 bytes)',
+    costRounds: '2^{cost} = {rounds} rounds',
+    issue_empty: 'The password is empty. Spring Security 7 and Symfony return false when they check an empty password.',
+    issue_over72: 'bcrypt uses only the first 72 bytes. This password is {bytes} bytes, so everything after “{tail}” is ignored. Python bcrypt 5, Go and Spring Security 6.3+ refuse to hash it; PHP, Node.js bcrypt and bcryptjs cut it without a warning.',
+    issue_split: 'The 72-byte limit falls inside “{ch}”, so only part of that character counts.',
+    issue_nul: 'The password contains a NUL character (U+0000). PHP password_hash() refuses it and password_verify() stops reading at it; this page, Python bcrypt, Node.js, Go and Spring Security include it.',
+    issue_space: 'The password starts or ends with a space or line break. It is part of the password.',
+    err_notBcrypt: 'This is not a bcrypt hash; it looks like {scheme}.',
+    err_springOther: 'Spring Security stored this value with the {id} encoder, not bcrypt.',
+    err_prefix: 'A bcrypt hash starts with $2a$, $2b$ or $2y$. Character {pos} is “{ch}”.',
+    err_minor: '“$2{ch}$” is not a bcrypt revision. Use $2a$, $2b$ or $2y$.',
+    err_cost: 'Characters {pos}–{pos2} must be a two-digit cost such as 10 or 12; found “{got}”.',
+    err_costRange: 'Cost {cost} is outside 04–31.',
+    err_sep: 'Character {pos} should be “$”; found “{ch}”.',
+    err_char: 'Character {pos} (“{ch}”) is not in the bcrypt alphabet: . / A–Z a–z 0–9.',
+    err_short: 'A bcrypt hash is {want} characters; this one is {got}. Part of it was probably cut off when it was copied.',
+    err_long: 'A bcrypt hash is {want} characters; this one is {got}. Remove the extra characters at the end.',
+    scheme_argon2: 'Argon2 ($argon2…)',
+    scheme_scrypt: 'scrypt',
+    scheme_yescrypt: 'yescrypt ($y$)',
+    scheme_sha512crypt: 'SHA-512 crypt ($6$)',
+    scheme_sha256crypt: 'SHA-256 crypt ($5$)',
+    scheme_md5crypt: 'MD5 crypt ($1$)',
+    scheme_apr1: 'Apache APR1 MD5 ($apr1$)',
+    scheme_phpass: 'phpass ($P$ / $H$, WordPress before 6.8)',
+    scheme_pbkdf2: 'Django PBKDF2 (pbkdf2_sha256$)',
+    scheme_ldap: 'LDAP {SHA} / {SSHA}',
+    scheme_hex: 'a {bits}-bit hex digest such as {algo}',
+    note_trim: 'Removed spaces or line breaks around the hash.',
+    note_quotes: 'Removed the quotes around the hash.',
+    note_backslash: 'Removed the backslashes before each $.',
+    note_dollar: 'Replaced $$ with $ (Docker Compose writes a literal $ as $$).',
+    note_spring: 'Removed the {bcrypt} id that Spring Security’s DelegatingPasswordEncoder stores in front of the hash.',
+    note_htpasswd: 'Took the hash after “{user}:” from an htpasswd line.',
+    note_django: 'Removed Django’s “bcrypt$” prefix.',
+    note_djangoSha: 'Django BCryptSHA256PasswordHasher: the password is hashed with SHA-256 first and the hex digest is checked with bcrypt.',
+    note_2x: '$2x$ marks hashes made with crypt_blowfish’s old sign-extension bug. For passwords that are all ASCII the result equals $2a$, so the check runs as $2a$.',
+    note_2: '$2$ is the original 1999 revision; it hashes the password without the trailing NUL byte.',
+    note_ncSalt: 'The last salt character “{ch}” sets padding bits that must be zero; the canonical character is “{fix}”. Python bcrypt raises “Invalid salt” for this hash, and PHP, Node.js and Spring Security report a mismatch even for the right password.',
+    note_ncSum: 'The last character “{ch}” sets padding bits that must be zero; the canonical character is “{fix}”. PHP, Python, Node.js, Go and Spring Security compare the string and report a mismatch even for the right password.',
+    note_costTime: 'Cost {cost}: checking takes about {time} in this browser.',
+    'note_lib_$2y$': 'Node.js bcrypt 6.0.0 returns false for $2y$ hashes. The $2b$ form below works there.',
+    'note_lib_$2a$': 'Laravel’s Hash::check() throws for $2a$ hashes unless HASH_VERIFY=false. The $2y$ form below works there.',
+    'note_lib_$2b$': 'Laravel’s Hash::check() throws for $2b$ hashes unless HASH_VERIFY=false. The $2y$ form below works there.',
+    res_match: 'Match: this password produces this hash.',
+    res_noMatch: 'No match: this password does not produce this hash.',
+    res_matchNc: 'The password is right, but the hash has non-zero padding bits, so most libraries will still report a mismatch. Store the canonical hash below.',
+    res_unsupported2x: 'Cannot check: the password has non-ASCII characters, and the $2x$ bug hashed those bytes differently. This page does not reproduce the bug.',
+    res_72: 'Only the first 72 bytes were compared: any password that starts with the same 72 bytes gives the same result.',
+    canonical: 'Canonical hash',
+    variants: 'The same hash with another prefix',
+    variantsHint: 'Changing the prefix between $2a$, $2b$ and $2y$ keeps the hash valid for UTF-8 passwords shorter than 256 bytes; all three run the same algorithm.',
+    privacy: 'Hashing runs in a Web Worker in this tab. Passwords and hashes are not sent anywhere or saved, and this page loads no analytics or ads.',
+    ms: '{n} ms', s: '{n} s', min: '{n} min', h: '{n} h',
   },
   zh: {
-    modeGenerate: '生成',
-    modeVerify: '验证',
-    password: '明文密码',
-    passwordPh: '输入明文密码',
-    costFactor: '计算轮次',
-    timeEst: '预估耗时',
-    generate: '生成 Hash',
-    generating: '生成中…',
-    hashOutput: 'Hash 值',
+    tabGen: '生成',
+    tabVer: '校验',
+    password: '密码',
+    passwordPh: '要加密的密码',
+    verPwPh: '要校验的密码',
+    prefix: '前缀',
+    cost: '成本',
+    generate: '生成哈希',
+    verify: '校验密码',
+    cancel: '取消',
+    example: '示例',
     copy: '复制',
-    copied: '已复制！',
-    hashInput: '待验证的 Hash',
-    hashInputPh: '输入 bcrypt hash（$2b$…）',
-    verify: '验证',
-    verifying: '验证中…',
-    resultMatch: '匹配',
-    resultNoMatch: '不匹配',
-    errEmpty: '请输入密码',
-    errInvalidHash: 'Hash 格式无效',
-    privacy: '所有哈希计算在浏览器中完成，密码不离开本页。',
+    copied: '已复制',
+    copyFail: '复制失败，请手动选中文字复制。',
+    hashLabel: 'bcrypt 哈希',
+    hashPh: '$2b$12$…，或 {bcrypt}$2a$10$… 这样的存储值',
+    'opt_$2b$': '$2b$ — Python、Node.js、OpenBSD',
+    'opt_$2y$': '$2y$ — PHP、Laravel、Symfony、htpasswd',
+    'opt_$2a$': '$2a$ — Go、Spring Security',
+    'note_$2b$': 'Python bcrypt、Node.js bcrypt、bcryptjs、Go、Spring Security 和 PHP 的 password_verify() 都认 $2b$。Laravel 的 Hash::check() 遇到它会抛出 “This password does not use the Bcrypt algorithm.”，除非设置 HASH_VERIFY=false。',
+    'note_$2y$': 'PHP、Laravel、Symfony、Python bcrypt、bcryptjs、Go、Spring Security 都认 $2y$。Node.js 的 bcrypt 6.0.0 对所有 $2y$ 哈希都返回 false，给 Node.js 用请选 $2b$。',
+    'note_$2a$': '对 UTF-8 密码，$2a$ 与 $2b$ 的算法完全相同。Go 和 Spring Security 默认写这个前缀。Laravel 的 Hash::check() 会拒绝它，除非设置 HASH_VERIFY=false。',
+    meta: '{chars} 个字符 · 占 72 字节中的 {bytes} 字节（UTF-8）',
+    estimating: '正在测量本浏览器的速度…',
+    estimate: '成本 {cost} 在本浏览器约需 {time}。',
+    working: '计算中… {pct}%',
+    done: '完成，用时 {time}（成本 {cost}）。',
+    cancelled: '已取消。',
+    workerFail: '哈希计算线程出错：{msg}',
+    needPassword: '请先输入密码。',
+    needHash: '请先粘贴 bcrypt 哈希。',
+    partPrefix: '前缀',
+    partCost: '成本',
+    partSalt: '盐（16 字节）',
+    partSum: '哈希（23 字节）',
+    costRounds: '2^{cost} = {rounds} 轮',
+    issue_empty: '密码为空。Spring Security 7 和 Symfony 校验空密码时直接返回 false。',
+    issue_over72: 'bcrypt 只取前 72 字节。这个密码有 {bytes} 字节，“{tail}”之后的部分不起作用。Python bcrypt 5、Go、Spring Security 6.3 及以上会拒绝生成；PHP、Node.js bcrypt、bcryptjs 会悄悄截断。',
+    issue_split: '72 字节的边界落在“{ch}”中间，这个字只有一部分字节被计入。',
+    issue_nul: '密码里有 NUL 字符（U+0000）。PHP 的 password_hash() 会拒绝，password_verify() 读到它就停；本页、Python bcrypt、Node.js、Go、Spring Security 会把它算进去。',
+    issue_space: '密码开头或结尾有空格或换行，它们也是密码的一部分。',
+    err_notBcrypt: '这不是 bcrypt 哈希，看起来是 {scheme}。',
+    err_springOther: 'Spring Security 用 {id} 编码器存了这个值，不是 bcrypt。',
+    err_prefix: 'bcrypt 哈希以 $2a$、$2b$ 或 $2y$ 开头，第 {pos} 个字符却是“{ch}”。',
+    err_minor: '“$2{ch}$”不是 bcrypt 的版本，请用 $2a$、$2b$ 或 $2y$。',
+    err_cost: '第 {pos}–{pos2} 个字符应是两位数的成本，例如 10 或 12，实际是“{got}”。',
+    err_costRange: '成本 {cost} 超出 04–31。',
+    err_sep: '第 {pos} 个字符应是“$”，实际是“{ch}”。',
+    err_char: '第 {pos} 个字符（“{ch}”）不在 bcrypt 字母表 . / A–Z a–z 0–9 中。',
+    err_short: 'bcrypt 哈希应有 {want} 个字符，这里只有 {got} 个，可能复制时少了一截。',
+    err_long: 'bcrypt 哈希应有 {want} 个字符，这里有 {got} 个，请删掉末尾多出的字符。',
+    scheme_argon2: 'Argon2（$argon2…）',
+    scheme_scrypt: 'scrypt',
+    scheme_yescrypt: 'yescrypt（$y$）',
+    scheme_sha512crypt: 'SHA-512 crypt（$6$）',
+    scheme_sha256crypt: 'SHA-256 crypt（$5$）',
+    scheme_md5crypt: 'MD5 crypt（$1$）',
+    scheme_apr1: 'Apache APR1 MD5（$apr1$）',
+    scheme_phpass: 'phpass（$P$ / $H$，WordPress 6.8 之前）',
+    scheme_pbkdf2: 'Django PBKDF2（pbkdf2_sha256$）',
+    scheme_ldap: 'LDAP {SHA} / {SSHA}',
+    scheme_hex: '{bits} 位十六进制摘要，例如 {algo}',
+    note_trim: '已去掉哈希前后的空格或换行。',
+    note_quotes: '已去掉哈希两边的引号。',
+    note_backslash: '已去掉 $ 前面的反斜杠。',
+    note_dollar: '已把 $$ 换成 $（Docker Compose 用 $$ 表示字面量 $）。',
+    note_spring: '已去掉 Spring Security 的 DelegatingPasswordEncoder 写在哈希前面的 {bcrypt}。',
+    note_htpasswd: '已从 htpasswd 行中取出“{user}:”后面的哈希。',
+    note_django: '已去掉 Django 的“bcrypt$”前缀。',
+    note_djangoSha: 'Django BCryptSHA256PasswordHasher：先对密码做 SHA-256，再用 bcrypt 校验十六进制摘要。',
+    note_2x: '$2x$ 表示 crypt_blowfish 旧版符号扩展缺陷产生的哈希。密码全是 ASCII 字符时结果与 $2a$ 相同，因此按 $2a$ 校验。',
+    note_2: '$2$ 是 1999 年的最初版本，计算时不在密码末尾追加 NUL 字节。',
+    note_ncSalt: '盐的最后一个字符“{ch}”设置了本应为 0 的填充位，规范字符是“{fix}”。Python bcrypt 对这个哈希报 “Invalid salt”，PHP、Node.js、Spring Security 即使密码正确也会判为不匹配。',
+    note_ncSum: '最后一个字符“{ch}”设置了本应为 0 的填充位，规范字符是“{fix}”。PHP、Python、Node.js、Go、Spring Security 按字符串比较，即使密码正确也会判为不匹配。',
+    note_costTime: '成本 {cost}：在本浏览器校验约需 {time}。',
+    'note_lib_$2y$': 'Node.js bcrypt 6.0.0 对 $2y$ 哈希返回 false，下面的 $2b$ 形式可以用。',
+    'note_lib_$2a$': 'Laravel 的 Hash::check() 遇到 $2a$ 会抛异常，除非设置 HASH_VERIFY=false；下面的 $2y$ 形式可以用。',
+    'note_lib_$2b$': 'Laravel 的 Hash::check() 遇到 $2b$ 会抛异常，除非设置 HASH_VERIFY=false；下面的 $2y$ 形式可以用。',
+    res_match: '匹配：这个密码能算出这个哈希。',
+    res_noMatch: '不匹配：这个密码算不出这个哈希。',
+    res_matchNc: '密码正确，但哈希的填充位不为 0，多数库仍会判为不匹配。请改存下面的规范哈希。',
+    res_unsupported2x: '无法校验：密码含非 ASCII 字符，$2x$ 缺陷对这些字节的处理不同，本页不复现这个缺陷。',
+    res_72: '只比较了前 72 字节：前 72 字节相同的任何密码结果都一样。',
+    canonical: '规范哈希',
+    variants: '换成其他前缀的同一个哈希',
+    variantsHint: '对于短于 256 字节的 UTF-8 密码，在 $2a$、$2b$、$2y$ 之间换前缀后哈希仍然有效，三者算法相同。',
+    privacy: '哈希在本标签页的 Web Worker 中计算。密码和哈希不会发送到任何地方，也不会保存；本页不加载统计和广告。',
+    ms: '{n} 毫秒', s: '{n} 秒', min: '{n} 分钟', h: '{n} 小时',
   },
   ja: {
-    modeGenerate: '生成',
-    modeVerify: '検証',
+    tabGen: '生成',
+    tabVer: '検証',
     password: 'パスワード',
-    passwordPh: '平文パスワードを入力',
-    costFactor: 'コストファクター',
-    timeEst: '推定処理時間',
-    generate: 'ハッシュ生成',
-    generating: '生成中…',
-    hashOutput: 'ハッシュ',
+    passwordPh: 'ハッシュ化するパスワード',
+    verPwPh: '検証するパスワード',
+    prefix: 'プレフィックス',
+    cost: 'コスト',
+    generate: 'ハッシュを生成',
+    verify: 'パスワードを検証',
+    cancel: 'キャンセル',
+    example: '例',
     copy: 'コピー',
-    copied: 'コピーしました！',
-    hashInput: '検証するハッシュ',
-    hashInputPh: 'bcrypt ハッシュを入力（$2b$…）',
-    verify: '検証',
-    verifying: '検証中…',
-    resultMatch: '一致',
-    resultNoMatch: '不一致',
-    errEmpty: 'パスワードを入力してください',
-    errInvalidHash: 'ハッシュ形式が無効です',
-    privacy: 'すべてのハッシュ計算はブラウザ内で完結します。パスワードはこのページを離れません。',
+    copied: 'コピーしました',
+    copyFail: 'コピーできませんでした。文字を選択して手動でコピーしてください。',
+    hashLabel: 'bcrypt ハッシュ',
+    hashPh: '$2b$12$… や {bcrypt}$2a$10$… などの保存値',
+    'opt_$2b$': '$2b$ — Python・Node.js・OpenBSD',
+    'opt_$2y$': '$2y$ — PHP・Laravel・Symfony・htpasswd',
+    'opt_$2a$': '$2a$ — Go・Spring Security',
+    'note_$2b$': 'Python bcrypt・Node.js bcrypt・bcryptjs・Go・Spring Security・PHP の password_verify() は $2b$ を受け付けます。Laravel の Hash::check() は HASH_VERIFY=false にしない限り「This password does not use the Bcrypt algorithm.」を投げます。',
+    'note_$2y$': 'PHP・Laravel・Symfony・Python bcrypt・bcryptjs・Go・Spring Security は $2y$ を受け付けます。Node.js の bcrypt 6.0.0 は $2y$ のハッシュに常に false を返すので、Node.js 向けには $2b$ を選んでください。',
+    'note_$2a$': 'UTF-8 のパスワードなら $2a$ と $2b$ は同じアルゴリズムです。Go と Spring Security はこの接頭辞で出力します。Laravel の Hash::check() は HASH_VERIFY=false にしない限り拒否します。',
+    meta: '{chars} 文字 · 72 バイト中 {bytes} バイト（UTF-8）',
+    estimating: 'このブラウザーの速度を計測しています…',
+    estimate: 'コスト {cost} はこのブラウザーで約 {time} かかります。',
+    working: '計算中… {pct}%',
+    done: '{time} で完了しました（コスト {cost}）。',
+    cancelled: 'キャンセルしました。',
+    workerFail: 'ハッシュ計算用のワーカーでエラーが起きました: {msg}',
+    needPassword: 'パスワードを入力してください。',
+    needHash: 'bcrypt ハッシュを貼り付けてください。',
+    partPrefix: 'プレフィックス',
+    partCost: 'コスト',
+    partSalt: 'ソルト（16 バイト）',
+    partSum: 'ハッシュ値（23 バイト）',
+    costRounds: '2^{cost} = {rounds} ラウンド',
+    issue_empty: 'パスワードが空です。Spring Security 7 と Symfony は空のパスワードの照合で false を返します。',
+    issue_over72: 'bcrypt が使うのは先頭 72 バイトだけです。このパスワードは {bytes} バイトなので、「{tail}」より後ろは無視されます。Python bcrypt 5・Go・Spring Security 6.3 以降は生成を拒否し、PHP・Node.js bcrypt・bcryptjs は黙って切り捨てます。',
+    issue_split: '72 バイトの境界が「{ch}」の途中にあり、この文字は一部のバイトだけが使われます。',
+    issue_nul: 'パスワードに NUL 文字（U+0000）が含まれています。PHP の password_hash() は拒否し、password_verify() はそこで読み取りをやめます。このページ・Python bcrypt・Node.js・Go・Spring Security はそのまま含めて計算します。',
+    issue_space: 'パスワードの先頭か末尾に空白か改行があります。これもパスワードの一部です。',
+    err_notBcrypt: 'bcrypt のハッシュではありません。{scheme} のようです。',
+    err_springOther: 'Spring Security が {id} エンコーダーで保存した値で、bcrypt ではありません。',
+    err_prefix: 'bcrypt のハッシュは $2a$・$2b$・$2y$ で始まります。{pos} 文字目が「{ch}」です。',
+    err_minor: '「$2{ch}$」は bcrypt のリビジョンではありません。$2a$・$2b$・$2y$ のいずれかです。',
+    err_cost: '{pos}〜{pos2} 文字目は 10 や 12 のような 2 桁のコストです。「{got}」になっています。',
+    err_costRange: 'コスト {cost} は 04〜31 の範囲外です。',
+    err_sep: '{pos} 文字目は「$」のはずですが、「{ch}」です。',
+    err_char: '{pos} 文字目（「{ch}」）は bcrypt の文字（. / A–Z a–z 0–9）ではありません。',
+    err_short: 'bcrypt のハッシュは {want} 文字ですが、これは {got} 文字です。コピーの際に途中で切れた可能性があります。',
+    err_long: 'bcrypt のハッシュは {want} 文字ですが、これは {got} 文字です。末尾の余分な文字を消してください。',
+    scheme_argon2: 'Argon2（$argon2…）',
+    scheme_scrypt: 'scrypt',
+    scheme_yescrypt: 'yescrypt（$y$）',
+    scheme_sha512crypt: 'SHA-512 crypt（$6$）',
+    scheme_sha256crypt: 'SHA-256 crypt（$5$）',
+    scheme_md5crypt: 'MD5 crypt（$1$）',
+    scheme_apr1: 'Apache APR1 MD5（$apr1$）',
+    scheme_phpass: 'phpass（$P$ / $H$、WordPress 6.8 より前）',
+    scheme_pbkdf2: 'Django PBKDF2（pbkdf2_sha256$）',
+    scheme_ldap: 'LDAP {SHA} / {SSHA}',
+    scheme_hex: '{bits} ビットの 16 進ダイジェスト（{algo} など）',
+    note_trim: 'ハッシュ前後の空白・改行を取り除きました。',
+    note_quotes: 'ハッシュを囲む引用符を取り除きました。',
+    note_backslash: '$ の前のバックスラッシュを取り除きました。',
+    note_dollar: '$$ を $ に戻しました（Docker Compose ではリテラルの $ を $$ と書きます）。',
+    note_spring: 'Spring Security の DelegatingPasswordEncoder がハッシュの前に付ける {bcrypt} を取り除きました。',
+    note_htpasswd: 'htpasswd の行から「{user}:」の後ろのハッシュを取り出しました。',
+    note_django: 'Django の「bcrypt$」を取り除きました。',
+    note_djangoSha: 'Django の BCryptSHA256PasswordHasher: パスワードを SHA-256 にかけ、その 16 進ダイジェストを bcrypt で照合します。',
+    note_2x: '$2x$ は crypt_blowfish の古い符号拡張バグで作られたハッシュです。パスワードがすべて ASCII なら $2a$ と同じ結果になるので、$2a$ として照合します。',
+    note_2: '$2$ は 1999 年の最初のリビジョンで、パスワード末尾に NUL バイトを付けずに計算します。',
+    note_ncSalt: 'ソルトの最後の文字「{ch}」が、本来 0 であるべきパディングのビットを立てています。正規の文字は「{fix}」です。Python bcrypt はこのハッシュに「Invalid salt」を返し、PHP・Node.js・Spring Security は正しいパスワードでも不一致と判定します。',
+    note_ncSum: '最後の文字「{ch}」が、本来 0 であるべきパディングのビットを立てています。正規の文字は「{fix}」です。PHP・Python・Node.js・Go・Spring Security は文字列で比較するため、正しいパスワードでも不一致になります。',
+    note_costTime: 'コスト {cost}: このブラウザーで照合に約 {time} かかります。',
+    'note_lib_$2y$': 'Node.js の bcrypt 6.0.0 は $2y$ のハッシュに false を返します。下の $2b$ 形式ならそのまま使えます。',
+    'note_lib_$2a$': 'Laravel の Hash::check() は HASH_VERIFY=false にしない限り $2a$ のハッシュで例外を投げます。下の $2y$ 形式なら使えます。',
+    'note_lib_$2b$': 'Laravel の Hash::check() は HASH_VERIFY=false にしない限り $2b$ のハッシュで例外を投げます。下の $2y$ 形式なら使えます。',
+    res_match: '一致: このパスワードからこのハッシュが得られます。',
+    res_noMatch: '不一致: このパスワードからはこのハッシュになりません。',
+    res_matchNc: 'パスワードは正しいものの、ハッシュのパディングのビットが 0 でないため、多くのライブラリーは不一致と判定します。下の正規のハッシュに置き換えてください。',
+    res_unsupported2x: '照合できません: パスワードに非 ASCII 文字があり、$2x$ のバグはそのバイトを違う方法で扱いました。このページはバグを再現しません。',
+    res_72: '比較したのは先頭 72 バイトだけです。先頭 72 バイトが同じパスワードなら同じ結果になります。',
+    canonical: '正規のハッシュ',
+    variants: '別のプレフィックスに変えた同じハッシュ',
+    variantsHint: '256 バイト未満の UTF-8 パスワードなら、$2a$・$2b$・$2y$ の間でプレフィックスを変えてもハッシュはそのまま有効です。3 つは同じアルゴリズムです。',
+    privacy: 'ハッシュはこのタブの Web Worker で計算します。パスワードとハッシュはどこにも送信・保存せず、このページはアクセス解析も広告も読み込みません。',
+    ms: '{n} ミリ秒', s: '{n} 秒', min: '{n} 分', h: '{n} 時間',
   },
   ko: {
-    modeGenerate: '생성',
-    modeVerify: '검증',
+    tabGen: '생성',
+    tabVer: '검증',
     password: '비밀번호',
-    passwordPh: '평문 비밀번호 입력',
-    costFactor: '비용 계수',
-    timeEst: '예상 처리 시간',
+    passwordPh: '해시할 비밀번호',
+    verPwPh: '검증할 비밀번호',
+    prefix: '접두사',
+    cost: '비용',
     generate: '해시 생성',
-    generating: '생성 중…',
-    hashOutput: '해시',
+    verify: '비밀번호 검증',
+    cancel: '취소',
+    example: '예시',
     copy: '복사',
-    copied: '복사됨!',
-    hashInput: '검증할 해시',
-    hashInputPh: 'bcrypt 해시 입력 ($2b$…)',
-    verify: '검증',
-    verifying: '검증 중…',
-    resultMatch: '일치',
-    resultNoMatch: '불일치',
-    errEmpty: '비밀번호를 입력하세요',
-    errInvalidHash: '잘못된 해시 형식',
-    privacy: '모든 해시 계산은 브라우저에서 처리됩니다. 비밀번호는 이 페이지를 벗어나지 않습니다.',
+    copied: '복사됨',
+    copyFail: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.',
+    hashLabel: 'bcrypt 해시',
+    hashPh: '$2b$12$… 또는 {bcrypt}$2a$10$… 같은 저장값',
+    'opt_$2b$': '$2b$ — Python, Node.js, OpenBSD',
+    'opt_$2y$': '$2y$ — PHP, Laravel, Symfony, htpasswd',
+    'opt_$2a$': '$2a$ — Go, Spring Security',
+    'note_$2b$': 'Python bcrypt, Node.js bcrypt, bcryptjs, Go, Spring Security, PHP password_verify()는 $2b$를 받아들입니다. Laravel의 Hash::check()는 HASH_VERIFY=false가 아니면 “This password does not use the Bcrypt algorithm.” 예외를 던집니다.',
+    'note_$2y$': 'PHP, Laravel, Symfony, Python bcrypt, bcryptjs, Go, Spring Security는 $2y$를 받아들입니다. Node.js bcrypt 6.0.0은 모든 $2y$ 해시에 false를 돌려주므로 Node.js용이면 $2b$를 고르세요.',
+    'note_$2a$': 'UTF-8 비밀번호라면 $2a$와 $2b$는 같은 알고리즘입니다. Go와 Spring Security가 이 접두사로 씁니다. Laravel의 Hash::check()는 HASH_VERIFY=false가 아니면 거부합니다.',
+    meta: '{chars}자 · 72바이트 중 {bytes}바이트(UTF-8)',
+    estimating: '이 브라우저의 속도를 재는 중…',
+    estimate: '비용 {cost}는 이 브라우저에서 약 {time} 걸립니다.',
+    working: '계산 중… {pct}%',
+    done: '{time} 만에 끝났습니다(비용 {cost}).',
+    cancelled: '취소했습니다.',
+    workerFail: '해시 계산 워커에서 오류가 났습니다: {msg}',
+    needPassword: '비밀번호를 먼저 입력하세요.',
+    needHash: 'bcrypt 해시를 먼저 붙여 넣으세요.',
+    partPrefix: '접두사',
+    partCost: '비용',
+    partSalt: '솔트(16바이트)',
+    partSum: '해시(23바이트)',
+    costRounds: '2^{cost} = {rounds}라운드',
+    issue_empty: '비밀번호가 비어 있습니다. Spring Security 7과 Symfony는 빈 비밀번호를 검증하면 false를 돌려줍니다.',
+    issue_over72: 'bcrypt는 앞 72바이트만 씁니다. 이 비밀번호는 {bytes}바이트라 “{tail}” 뒤는 무시됩니다. Python bcrypt 5, Go, Spring Security 6.3 이상은 해시를 거부하고, PHP, Node.js bcrypt, bcryptjs는 경고 없이 잘라 냅니다.',
+    issue_split: '72바이트 경계가 “{ch}” 가운데에 걸려 이 글자는 일부 바이트만 쓰입니다.',
+    issue_nul: '비밀번호에 NUL 문자(U+0000)가 있습니다. PHP password_hash()는 거부하고 password_verify()는 그 앞까지만 읽습니다. 이 페이지, Python bcrypt, Node.js, Go, Spring Security는 그대로 포함해 계산합니다.',
+    issue_space: '비밀번호 앞이나 뒤에 공백이나 줄바꿈이 있습니다. 이것도 비밀번호의 일부입니다.',
+    err_notBcrypt: 'bcrypt 해시가 아닙니다. {scheme}로 보입니다.',
+    err_springOther: 'Spring Security가 bcrypt가 아닌 {id} 인코더로 저장한 값입니다.',
+    err_prefix: 'bcrypt 해시는 $2a$, $2b$, $2y$로 시작합니다. {pos}번째 문자가 “{ch}”입니다.',
+    err_minor: '“$2{ch}$”는 bcrypt 리비전이 아닙니다. $2a$, $2b$, $2y$ 중 하나를 쓰세요.',
+    err_cost: '{pos}–{pos2}번째 문자는 10이나 12 같은 두 자리 비용이어야 하는데 “{got}”입니다.',
+    err_costRange: '비용 {cost}는 04–31 범위를 벗어납니다.',
+    err_sep: '{pos}번째 문자는 “$”여야 하는데 “{ch}”입니다.',
+    err_char: '{pos}번째 문자(“{ch}”)는 bcrypt 문자(. / A–Z a–z 0–9)가 아닙니다.',
+    err_short: 'bcrypt 해시는 {want}자인데 이 값은 {got}자입니다. 복사하다 일부가 잘린 것 같습니다.',
+    err_long: 'bcrypt 해시는 {want}자인데 이 값은 {got}자입니다. 끝에 붙은 문자를 지우세요.',
+    scheme_argon2: 'Argon2($argon2…)',
+    scheme_scrypt: 'scrypt',
+    scheme_yescrypt: 'yescrypt($y$)',
+    scheme_sha512crypt: 'SHA-512 crypt($6$)',
+    scheme_sha256crypt: 'SHA-256 crypt($5$)',
+    scheme_md5crypt: 'MD5 crypt($1$)',
+    scheme_apr1: 'Apache APR1 MD5($apr1$)',
+    scheme_phpass: 'phpass($P$ / $H$, WordPress 6.8 이전)',
+    scheme_pbkdf2: 'Django PBKDF2(pbkdf2_sha256$)',
+    scheme_ldap: 'LDAP {SHA} / {SSHA}',
+    scheme_hex: '{bits}비트 16진수 다이제스트({algo} 등)',
+    note_trim: '해시 앞뒤의 공백이나 줄바꿈을 지웠습니다.',
+    note_quotes: '해시를 감싼 따옴표를 지웠습니다.',
+    note_backslash: '$ 앞의 역슬래시를 지웠습니다.',
+    note_dollar: '$$를 $로 바꿨습니다(Docker Compose는 리터럴 $를 $$로 씁니다).',
+    note_spring: 'Spring Security의 DelegatingPasswordEncoder가 해시 앞에 붙이는 {bcrypt}를 지웠습니다.',
+    note_htpasswd: 'htpasswd 줄에서 “{user}:” 뒤의 해시만 꺼냈습니다.',
+    note_django: 'Django의 “bcrypt$” 접두사를 지웠습니다.',
+    note_djangoSha: 'Django BCryptSHA256PasswordHasher: 비밀번호를 먼저 SHA-256으로 해시하고 그 16진수 다이제스트를 bcrypt로 검증합니다.',
+    note_2x: '$2x$는 crypt_blowfish의 옛 부호 확장 버그로 만든 해시입니다. 비밀번호가 모두 ASCII면 결과가 $2a$와 같으므로 $2a$로 검증합니다.',
+    note_2: '$2$는 1999년 최초 리비전으로, 비밀번호 끝에 NUL 바이트를 붙이지 않고 계산합니다.',
+    note_ncSalt: '솔트의 마지막 문자 “{ch}”가 0이어야 할 패딩 비트를 켜 두었습니다. 정규 문자는 “{fix}”입니다. Python bcrypt는 이 해시에 “Invalid salt”를 내고, PHP, Node.js, Spring Security는 비밀번호가 맞아도 불일치로 판정합니다.',
+    note_ncSum: '마지막 문자 “{ch}”가 0이어야 할 패딩 비트를 켜 두었습니다. 정규 문자는 “{fix}”입니다. PHP, Python, Node.js, Go, Spring Security는 문자열로 비교하므로 비밀번호가 맞아도 불일치가 됩니다.',
+    note_costTime: '비용 {cost}: 이 브라우저에서 검증에 약 {time} 걸립니다.',
+    'note_lib_$2y$': 'Node.js bcrypt 6.0.0은 $2y$ 해시에 false를 돌려줍니다. 아래 $2b$ 형식은 그대로 쓸 수 있습니다.',
+    'note_lib_$2a$': 'Laravel의 Hash::check()는 HASH_VERIFY=false가 아니면 $2a$ 해시에서 예외를 던집니다. 아래 $2y$ 형식은 쓸 수 있습니다.',
+    'note_lib_$2b$': 'Laravel의 Hash::check()는 HASH_VERIFY=false가 아니면 $2b$ 해시에서 예외를 던집니다. 아래 $2y$ 형식은 쓸 수 있습니다.',
+    res_match: '일치: 이 비밀번호로 이 해시가 나옵니다.',
+    res_noMatch: '불일치: 이 비밀번호로는 이 해시가 나오지 않습니다.',
+    res_matchNc: '비밀번호는 맞지만 해시의 패딩 비트가 0이 아니어서 대부분의 라이브러리는 불일치로 판정합니다. 아래 정규 해시로 바꿔 저장하세요.',
+    res_unsupported2x: '검증할 수 없습니다: 비밀번호에 ASCII가 아닌 문자가 있고, $2x$ 버그는 그 바이트를 다르게 처리했습니다. 이 페이지는 버그를 재현하지 않습니다.',
+    res_72: '앞 72바이트만 비교했습니다. 앞 72바이트가 같은 비밀번호는 모두 같은 결과가 나옵니다.',
+    canonical: '정규 해시',
+    variants: '다른 접두사로 바꾼 같은 해시',
+    variantsHint: '256바이트보다 짧은 UTF-8 비밀번호라면 $2a$, $2b$, $2y$ 사이에서 접두사를 바꿔도 해시는 그대로 유효합니다. 세 가지는 같은 알고리즘입니다.',
+    privacy: '해시는 이 탭의 Web Worker에서 계산합니다. 비밀번호와 해시는 어디로도 보내거나 저장하지 않으며, 이 페이지는 분석 도구와 광고를 불러오지 않습니다.',
+    ms: '{n}ms', s: '{n}초', min: '{n}분', h: '{n}시간',
   },
 };
 
-const L = labels[lang];
+const L = STRINGS[lang];
+const PREFIX_OPTIONS = ['$2b$', '$2y$', '$2a$'];
+const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
 ---
-
-<div
-  class="bcg-wrap"
-  data-l-copy={L.copy}
-  data-l-copied={L.copied}
-  data-l-generating={L.generating}
-  data-l-generate={L.generate}
-  data-l-verifying={L.verifying}
-  data-l-verify={L.verify}
-  data-l-match={L.resultMatch}
-  data-l-no-match={L.resultNoMatch}
-  data-l-err-empty={L.errEmpty}
-  data-l-err-hash={L.errInvalidHash}
->
-  {/* Privacy badge */}
-  <div class="bcg-privacy">
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
-    <span>{L.privacy}</span>
+<div class="bcg-wrap">
+  <div class="bcg-tabs" role="tablist">
+    <button type="button" class="bcg-tab is-active" id="bcg-tab-gen" role="tab" aria-selected="true" aria-controls="bcg-gen">{L.tabGen}</button>
+    <button type="button" class="bcg-tab" id="bcg-tab-ver" role="tab" aria-selected="false" aria-controls="bcg-ver">{L.tabVer}</button>
   </div>
 
-  {/* Mode tabs */}
-  <div class="bcg-mode-tabs" role="tablist">
-    <button type="button" class="bcg-mode-tab active" data-mode="generate" role="tab" aria-selected="true">{L.modeGenerate}</button>
-    <button type="button" class="bcg-mode-tab" data-mode="verify" role="tab" aria-selected="false">{L.modeVerify}</button>
-  </div>
-
-  {/* Generate panel */}
-  <div id="bcg-panel-generate" class="bcg-panel" role="tabpanel">
+  <section class="bcg-panel" id="bcg-gen" role="tabpanel" aria-labelledby="bcg-tab-gen">
     <div class="bcg-field">
-      <label class="bcg-label" for="bcg-gen-pw">{L.password}</label>
-      <input id="bcg-gen-pw" class="bcg-input" type="text" spellcheck="false" autocomplete="off" placeholder={L.passwordPh} />
+      <label class="tool-label" for="bcg-gen-pw">{L.password}</label>
+      <input id="bcg-gen-pw" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.passwordPh} />
+      <p id="bcg-gen-meta" class="bcg-meta"></p>
     </div>
-
-    <div class="bcg-field">
-      <div class="bcg-slider-header">
-        <label class="bcg-label" for="bcg-rounds">{L.costFactor}: <strong id="bcg-rounds-val">12</strong></label>
-        <span class="bcg-time-est">{L.timeEst}: <span id="bcg-time-est">~250 ms</span></span>
+    <ul id="bcg-gen-issues" class="bcg-issues" hidden></ul>
+    <div class="bcg-opts">
+      <div class="bcg-field bcg-field--prefix">
+        <label class="tool-label" for="bcg-prefix">{L.prefix}</label>
+        <select id="bcg-prefix" class="tool-input">
+          {PREFIX_OPTIONS.map((p) => <option value={p} selected={p === '$2b$'}>{L['opt_' + p]}</option>)}
+        </select>
       </div>
-      <input id="bcg-rounds" class="bcg-slider" type="range" min="4" max="14" value="12" />
-      <div class="bcg-slider-labels">
-        <span>4 (fast)</span>
-        <span>12 (default)</span>
-        <span>14 (high security)</span>
+      <div class="bcg-field bcg-field--cost">
+        <label class="tool-label" for="bcg-cost">{L.cost}</label>
+        <select id="bcg-cost" class="tool-input">
+          {COSTS.map((c) => <option value={c} selected={c === 12}>{c}</option>)}
+        </select>
       </div>
+      <button id="bcg-gen-btn" class="btn-primary bcg-main-btn" type="button">{L.generate}</button>
     </div>
-
-    <button id="bcg-gen-btn" class="btn-primary" type="button">{L.generate}</button>
-
-    <div id="bcg-gen-error" class="bcg-error" aria-live="polite"></div>
-
-    <div id="bcg-gen-output-wrap" class="bcg-output-wrap" style="display:none">
-      <div class="bcg-output-header">
-        <label class="bcg-label">{L.hashOutput}</label>
-        <button id="bcg-copy-btn" class="btn-ghost btn-sm" type="button">{L.copy}</button>
+    <div class="bcg-status-row">
+      <p id="bcg-gen-status" class="tool-status none" role="status" aria-live="polite"></p>
+      <button id="bcg-gen-cancel" class="btn-secondary btn-sm" type="button" hidden>{L.cancel}</button>
+    </div>
+    <div id="bcg-gen-out" class="bcg-out" hidden>
+      <div class="bcg-hash-row">
+        <code id="bcg-gen-hash" class="bcg-hash"></code>
+        <button id="bcg-gen-copy" class="btn-copy" type="button">{L.copy}</button>
       </div>
-      <input id="bcg-gen-output" class="bcg-output-input" type="text" readonly spellcheck="false" />
+      <dl id="bcg-gen-parts" class="bcg-parts"></dl>
     </div>
-  </div>
+    <p id="bcg-prefix-note" class="bcg-note"></p>
+  </section>
 
-  {/* Verify panel */}
-  <div id="bcg-panel-verify" class="bcg-panel" role="tabpanel" style="display:none">
+  <section class="bcg-panel" id="bcg-ver" role="tabpanel" aria-labelledby="bcg-tab-ver" hidden>
     <div class="bcg-field">
-      <label class="bcg-label" for="bcg-ver-pw">{L.password}</label>
-      <input id="bcg-ver-pw" class="bcg-input" type="text" spellcheck="false" autocomplete="off" placeholder={L.passwordPh} />
+      <div class="bcg-label-row">
+        <label class="tool-label" for="bcg-ver-hash">{L.hashLabel}</label>
+        <button id="bcg-ver-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+      </div>
+      <input id="bcg-ver-hash" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.hashPh} />
     </div>
-
+    <div id="bcg-ver-parse" class="bcg-parse" aria-live="polite"></div>
     <div class="bcg-field">
-      <label class="bcg-label" for="bcg-ver-hash">{L.hashInput}</label>
-      <input id="bcg-ver-hash" class="bcg-input" type="text" spellcheck="false" autocomplete="off" placeholder={L.hashInputPh} />
+      <label class="tool-label" for="bcg-ver-pw">{L.password}</label>
+      <input id="bcg-ver-pw" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.verPwPh} />
+      <p id="bcg-ver-meta" class="bcg-meta"></p>
     </div>
+    <ul id="bcg-ver-issues" class="bcg-issues" hidden></ul>
+    <div class="bcg-actions">
+      <button id="bcg-ver-btn" class="bcg-main-btn" type="button">{L.verify}</button>
+      <button id="bcg-ver-cancel" class="btn-secondary" type="button" hidden>{L.cancel}</button>
+    </div>
+    <p id="bcg-ver-status" class="tool-status none" role="status" aria-live="polite"></p>
+    <div id="bcg-ver-result" class="bcg-result" hidden></div>
+    <div id="bcg-ver-variants" class="bcg-variants" hidden></div>
+  </section>
 
-    <button id="bcg-ver-btn" class="btn-primary" type="button">{L.verify}</button>
-
-    <div id="bcg-ver-error" class="bcg-error" aria-live="polite"></div>
-
-    <div id="bcg-ver-result" class="bcg-ver-result" aria-live="polite" style="display:none"></div>
-  </div>
+  <p class="bcg-privacy">{L.privacy}</p>
 </div>
 
-<script is:inline>
-(function () {
-  var wrap = document.querySelector('.bcg-wrap');
-  if (!wrap) return;
+<script is:inline define:vars={{ S: L }}>
+  (function () {
+    /* ── engine:start ── */
+    var B64 = './ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    var PREFIXES = ['$2b$', '$2y$', '$2a$'];
+    var COST_MIN = 4, COST_MAX = 31;
 
-  var L = {
-    copy: wrap.dataset.lCopy,
-    copied: wrap.dataset.lCopied,
-    generating: wrap.dataset.lGenerating,
-    generate: wrap.dataset.lGenerate,
-    verifying: wrap.dataset.lVerifying,
-    verify: wrap.dataset.lVerify,
-    match: wrap.dataset.lMatch,
-    noMatch: wrap.dataset.lNoMatch,
-    errEmpty: wrap.dataset.lErrEmpty,
-    errHash: wrap.dataset.lErrHash,
-  };
+    function utf8Bytes(s) { return new TextEncoder().encode(s); }
 
-  var worker = new Worker('/vendor/bcrypt-worker.js');
-  var pendingId = 0;
-  var pendingResolve = null;
-
-  worker.onmessage = function (e) {
-    if (pendingResolve && e.data.id === pendingId) {
-      pendingResolve(e.data);
-      pendingResolve = null;
+    // bcrypt's own Base64: alphabet ./A-Za-z0-9, no padding (OpenBSD encode_base64).
+    function bcEncode(bytes) {
+      var out = '', i = 0, n = bytes.length, c1, c2;
+      while (i < n) {
+        c1 = bytes[i++];
+        out += B64[(c1 >> 2) & 0x3f];
+        c1 = (c1 & 0x03) << 4;
+        if (i >= n) { out += B64[c1 & 0x3f]; break; }
+        c2 = bytes[i++];
+        c1 |= (c2 >> 4) & 0x0f;
+        out += B64[c1 & 0x3f];
+        c1 = (c2 & 0x0f) << 2;
+        if (i >= n) { out += B64[c1 & 0x3f]; break; }
+        c2 = bytes[i++];
+        c1 |= (c2 >> 6) & 0x03;
+        out += B64[c1 & 0x3f];
+        out += B64[c2 & 0x3f];
+      }
+      return out;
     }
-  };
 
-  function callWorker(msg) {
-    return new Promise(function (resolve) {
-      pendingId = Date.now() + Math.random();
-      msg.id = pendingId;
-      pendingResolve = resolve;
-      worker.postMessage(msg);
-    });
-  }
-
-  // Mode switching
-  var modeTabs = wrap.querySelectorAll('.bcg-mode-tab');
-  var panels = { generate: document.getElementById('bcg-panel-generate'), verify: document.getElementById('bcg-panel-verify') };
-
-  modeTabs.forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      modeTabs.forEach(function (t) { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
-      tab.classList.add('active');
-      tab.setAttribute('aria-selected', 'true');
-      var mode = tab.dataset.mode;
-      panels.generate.style.display = mode === 'generate' ? '' : 'none';
-      panels.verify.style.display = mode === 'verify' ? '' : 'none';
-    });
-  });
-
-  // Rounds slider
-  var roundsEl = document.getElementById('bcg-rounds');
-  var roundsValEl = document.getElementById('bcg-rounds-val');
-  var timeEstEl = document.getElementById('bcg-time-est');
-
-  function estimateTime(rounds) {
-    var ms = 250 * Math.pow(2, rounds - 12);
-    if (ms < 1000) return '~' + Math.round(ms) + ' ms';
-    return '~' + (ms / 1000).toFixed(1) + ' s';
-  }
-
-  roundsEl.addEventListener('input', function () {
-    roundsValEl.textContent = roundsEl.value;
-    timeEstEl.textContent = estimateTime(parseInt(roundsEl.value, 10));
-  });
-
-  // Generate
-  var genBtn = document.getElementById('bcg-gen-btn');
-  var genPwEl = document.getElementById('bcg-gen-pw');
-  var genOutputWrap = document.getElementById('bcg-gen-output-wrap');
-  var genOutputEl = document.getElementById('bcg-gen-output');
-  var genErrorEl = document.getElementById('bcg-gen-error');
-  var copyBtn = document.getElementById('bcg-copy-btn');
-
-  function setGenError(msg) {
-    genErrorEl.textContent = msg;
-    genOutputWrap.style.display = 'none';
-  }
-
-  function clearGenError() { genErrorEl.textContent = ''; }
-
-  genBtn.addEventListener('click', async function () {
-    var pw = genPwEl.value;
-    if (!pw) { setGenError(L.errEmpty); return; }
-    clearGenError();
-    genBtn.disabled = true;
-    genBtn.textContent = L.generating;
-    genOutputWrap.style.display = 'none';
-
-    var result = await callWorker({ type: 'generate', password: pw, rounds: parseInt(roundsEl.value, 10) });
-
-    genBtn.disabled = false;
-    genBtn.textContent = L.generate;
-
-    if (result.type === 'error') {
-      setGenError(result.message);
-    } else {
-      genOutputEl.value = result.hash;
-      genOutputWrap.style.display = '';
-      window.trackTool && window.trackTool('bcrypt-generator', 'generate');
+    // Decodes the first n bytes; padding bits in the last character are dropped.
+    function bcDecode(str, n) {
+      var out = new Uint8Array(n), o = 0, i = 0, c1, c2, c3, c4;
+      function v(ch) { var k = B64.indexOf(ch); if (k < 0) throw new Error('bad char'); return k; }
+      while (o < n && i < str.length - 1) {
+        c1 = v(str[i++]); c2 = v(str[i++]);
+        out[o++] = ((c1 << 2) | ((c2 & 0x30) >> 4)) & 0xff;
+        if (o >= n || i >= str.length) break;
+        c3 = v(str[i++]);
+        out[o++] = (((c2 & 0x0f) << 4) | ((c3 & 0x3c) >> 2)) & 0xff;
+        if (o >= n || i >= str.length) break;
+        c4 = v(str[i++]);
+        out[o++] = (((c3 & 0x03) << 6) | c4) & 0xff;
+      }
+      return out;
     }
-  });
 
-  copyBtn.addEventListener('click', function () {
-    var text = genOutputEl.value;
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(function () {
-      copyBtn.textContent = L.copied;
-      setTimeout(function () { copyBtn.textContent = L.copy; }, 1500);
-    });
-  });
-
-  // Verify
-  var verBtn = document.getElementById('bcg-ver-btn');
-  var verPwEl = document.getElementById('bcg-ver-pw');
-  var verHashEl = document.getElementById('bcg-ver-hash');
-  var verErrorEl = document.getElementById('bcg-ver-error');
-  var verResultEl = document.getElementById('bcg-ver-result');
-
-  var BCRYPT_RE = /^\$2[abxy]\$\d{2}\$.{53}$/;
-
-  function setVerError(msg) {
-    verErrorEl.textContent = msg;
-    verResultEl.style.display = 'none';
-  }
-
-  function clearVerError() { verErrorEl.textContent = ''; }
-
-  verBtn.addEventListener('click', async function () {
-    var pw = verPwEl.value;
-    var hash = verHashEl.value.trim();
-    if (!pw) { setVerError(L.errEmpty); return; }
-    if (!BCRYPT_RE.test(hash)) { setVerError(L.errHash); return; }
-    clearVerError();
-    verBtn.disabled = true;
-    verBtn.textContent = L.verifying;
-    verResultEl.style.display = 'none';
-
-    var result = await callWorker({ type: 'verify', password: pw, hash: hash });
-
-    verBtn.disabled = false;
-    verBtn.textContent = L.verify;
-
-    if (result.type === 'error') {
-      setVerError(result.message);
-    } else {
-      verResultEl.style.display = '';
-      verResultEl.textContent = result.match ? L.match : L.noMatch;
-      verResultEl.className = 'bcg-ver-result ' + (result.match ? 'match' : 'no-match');
-      window.trackTool && window.trackTool('bcrypt-generator', 'verify');
+    function randomSaltBody() { var b = new Uint8Array(16); crypto.getRandomValues(b); return bcEncode(b); }
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
+    function makeSalt(prefix, cost, body) {
+      if (PREFIXES.indexOf(prefix) < 0) throw new Error('prefix');
+      if (!(cost >= COST_MIN && cost <= COST_MAX && Math.floor(cost) === cost)) throw new Error('cost');
+      return prefix + pad2(cost) + '$' + body;
     }
-  });
-})();
+
+    function cutAt72(pw) {
+      var used = 0, kept = '', split = '';
+      for (var ch of pw) {
+        var b = utf8Bytes(ch).length;
+        if (used + b > 72) { if (used < 72) split = ch; break; }
+        used += b; kept += ch;
+      }
+      return { kept: kept, used: used, split: split };
+    }
+
+    function tailOf(s, n) { var a = Array.from(s); return (a.length > n ? '…' : '') + a.slice(-n).join(''); }
+
+    function checkPassword(pw) {
+      var bytes = utf8Bytes(pw).length, issues = [];
+      if (!pw.length) issues.push({ level: 'warn', code: 'empty' });
+      if (bytes > 72) {
+        var c = cutAt72(pw);
+        issues.push({ level: 'warn', code: 'over72', vars: { bytes: bytes, tail: tailOf(c.kept, 12) } });
+        if (c.split) issues.push({ level: 'warn', code: 'split', vars: { ch: c.split } });
+      }
+      if (pw.indexOf('\u0000') >= 0) issues.push({ level: 'warn', code: 'nul' });
+      if (/^\s|\s$/.test(pw)) issues.push({ level: 'info', code: 'space' });
+      return { chars: Array.from(pw).length, bytes: bytes, issues: issues };
+    }
+
+    var OTHER_SCHEMES = [
+      [/^\$argon2(id|i|d)\$/, 'argon2'], [/^\$scrypt\$|^\$7\$/, 'scrypt'], [/^\$y\$/, 'yescrypt'],
+      [/^\$6\$/, 'sha512crypt'], [/^\$5\$/, 'sha256crypt'], [/^\$apr1\$/, 'apr1'], [/^\$1\$/, 'md5crypt'],
+      [/^\$[PH]\$/, 'phpass'], [/^pbkdf2_sha\d+\$/, 'pbkdf2'], [/^\{S?SHA\}/i, 'ldap'],
+    ];
+    var HEX_ALGOS = { 32: 'MD5', 40: 'SHA-1', 64: 'SHA-256', 128: 'SHA-512' };
+
+    function detectOtherScheme(h) {
+      for (var i = 0; i < OTHER_SCHEMES.length; i++) if (OTHER_SCHEMES[i][0].test(h)) return { scheme: OTHER_SCHEMES[i][1] };
+      if (/^[0-9a-f]+$/i.test(h) && HEX_ALGOS[h.length]) return { scheme: 'hex', vars: { bits: h.length * 4, algo: HEX_ALGOS[h.length] } };
+      return null;
+    }
+
+    // Strips the wrappers a bcrypt hash usually arrives in when it is copied from a config,
+    // a database dump or another framework's storage format.
+    function normalizeHashInput(raw) {
+      var s = String(raw), t = s.trim(), notes = [], prehash = null, m;
+      if (t && t !== s) notes.push({ code: 'trim' });
+      if ((m = /^(["'`])(.*)\1$/.exec(t))) { t = m[2].trim(); notes.push({ code: 'quotes' }); }
+      if (/\\\$/.test(t)) { t = t.replace(/\\\$/g, '$'); notes.push({ code: 'backslash' }); }
+      if ((m = /^([^\s:${]+):(.+)$/.exec(t)) && /^[$\\{]/.test(m[2])) { t = m[2]; notes.push({ code: 'htpasswd', vars: { user: m[1] } }); }
+      if ((m = /^\{([A-Za-z0-9_-]+)\}/.exec(t))) {
+        if (m[1].toLowerCase() === 'bcrypt') { t = t.slice(m[0].length); notes.push({ code: 'spring' }); }
+        else if (!/^S?SHA$/i.test(m[1])) return { hash: t, notes: notes, prehash: null, spring: m[1] };
+      }
+      if (/^bcrypt_sha256\$/.test(t)) { t = t.slice(14); prehash = 'sha256'; notes.push({ code: 'djangoSha' }); }
+      else if (/^bcrypt\$/.test(t)) { t = t.slice(7); notes.push({ code: 'django' }); }
+      if (/^\$\$2/.test(t)) { t = t.replace(/\$\$/g, '$'); notes.push({ code: 'dollar' }); }
+      return { hash: t, notes: notes, prehash: prehash };
+    }
+
+    function parseHash(raw) {
+      var n = normalizeHashInput(raw), h = n.hash;
+      var res = { ok: false, input: h, notes: n.notes, prehash: n.prehash };
+      function fail(code, pos, vars) { res.error = { code: code, pos: pos, vars: vars || {} }; return res; }
+      if (n.spring) return fail('springOther', 0, { id: '{' + n.spring + '}' });
+      if (!h) return fail('empty', 0);
+      var other = detectOtherScheme(h);
+      if (other) return fail('notBcrypt', 0, { scheme: other.scheme, schemeVars: other.vars || {} });
+      var cps = Array.from(h);
+      if (cps[0] !== '$') return fail('prefix', 1, { ch: cps[0] });
+      if (cps[1] !== '2') return fail('prefix', 2, { ch: cps[1] || '' });
+      var i, minor;
+      if (cps[2] === '$') { minor = ''; i = 3; }
+      else {
+        minor = cps[2] || '';
+        if (!/^[abxy]$/.test(minor)) return fail('minor', 3, { ch: minor });
+        if (cps[3] !== '$') return fail('sep', 4, { ch: cps[3] || '' });
+        i = 4;
+      }
+      var cc = (cps[i] || '') + (cps[i + 1] || '');
+      if (!/^\d\d$/.test(cc)) return fail('cost', i + 1, { pos2: i + 2, got: cc });
+      var cost = Number(cc);
+      if (cost < COST_MIN || cost > COST_MAX) return fail('costRange', i + 1, { cost: cc });
+      if (cps[i + 2] !== '$') return fail('sep', i + 3, { ch: cps[i + 2] || '' });
+      var start = i + 3, want = start + 53;
+      for (var k = start; k < cps.length; k++) if (B64.indexOf(cps[k]) < 0) return fail('char', k + 1, { ch: cps[k] });
+      if (cps.length !== want) return fail(cps.length < want ? 'short' : 'long', cps.length, { want: want, got: cps.length });
+      var header = h.slice(0, start), salt = h.slice(start, start + 22), sum = h.slice(start + 22);
+      var cSalt = bcEncode(bcDecode(salt, 16)), cSum = bcEncode(bcDecode(sum, 23));
+      res.ok = true;
+      res.hash = h; res.header = header; res.prefix = header.slice(0, i); res.minor = minor; res.cost = cost;
+      res.salt = salt; res.checksum = sum; res.canonicalSalt = cSalt; res.canonicalSum = cSum;
+      res.canonical = header + cSalt + cSum;
+      res.nonCanonicalSalt = cSalt !== salt; res.nonCanonicalSum = cSum !== sum;
+      return res;
+    }
+
+    function hashNotes(p) {
+      var out = [];
+      if (p.minor === 'x') out.push({ code: '2x' });
+      if (p.minor === '') out.push({ code: '2' });
+      if (p.nonCanonicalSalt) out.push({ code: 'ncSalt', vars: { ch: p.salt.slice(-1), fix: p.canonicalSalt.slice(-1) } });
+      if (p.nonCanonicalSum) out.push({ code: 'ncSum', vars: { ch: p.checksum.slice(-1), fix: p.canonicalSum.slice(-1) } });
+      if (p.prefix === '$2y$' || p.prefix === '$2a$' || p.prefix === '$2b$') out.push({ code: 'lib_' + p.prefix });
+      return out;
+    }
+
+    // The salt string handed to bcryptjs, or the reason it cannot be checked here.
+    function verifySalt(p, password) {
+      var tail = pad2(p.cost) + '$' + p.canonicalSalt;
+      if (p.minor === 'x') {
+        if (/^[\x00-\x7f]*$/.test(password)) return { salt: '$2a$' + tail };
+        return { unsupported: '2x' };
+      }
+      return { salt: p.header.slice(0, p.header.length - 3) + tail };
+    }
+
+    function judge(p, computed) { return computed.slice(-31) === p.canonicalSum; }
+
+    function prefixVariants(p) {
+      if (['a', 'b', 'y'].indexOf(p.minor) < 0) return null;
+      var tail = p.canonical.slice(4), out = {};
+      ['$2a$', '$2b$', '$2y$'].forEach(function (x) { out[x] = x + tail; });
+      return out;
+    }
+
+    async function sha256Hex(str) {
+      var d = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8Bytes(str)));
+      return Array.from(d, function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join('');
+    }
+
+    async function passwordFor(p, password) { return p.prehash === 'sha256' ? sha256Hex(password) : password; }
+
+    function estimateMs(cost, bench) { return bench.ms * Math.pow(2, cost - bench.cost); }
+
+    function splitDuration(ms) {
+      if (ms < 1000) return { unit: 'ms', n: String(Math.max(1, Math.round(ms))) };
+      if (ms < 60000) return { unit: 's', n: (ms < 10000 ? (ms / 1000).toFixed(1) : String(Math.round(ms / 1000))) };
+      if (ms < 3600000) return { unit: 'min', n: String(Math.round(ms / 60000)) };
+      return { unit: 'h', n: String(Math.round(ms / 3600000)) };
+    }
+
+    // One worker per caller; messages are matched by id so overlapping calls each get their own answer.
+    function createClient(factory) {
+      var worker = null, seq = 0, pending = {};
+      function rejectAll(err) {
+        Object.keys(pending).forEach(function (id) { var p = pending[id]; delete pending[id]; p.reject(err); });
+      }
+      function ensure() {
+        if (worker) return worker;
+        worker = factory();
+        worker.onmessage = function (e) {
+          var m = e.data || {}, p = pending[m.id];
+          if (!p) return;
+          if (m.type === 'progress') { if (p.progress) p.progress(m.p); return; }
+          delete pending[m.id];
+          if (m.type === 'error') p.reject(new Error(m.message)); else p.resolve(m);
+        };
+        worker.onerror = function (e) {
+          if (e && e.preventDefault) e.preventDefault();
+          try { worker.terminate(); } catch (x) { /* already gone */ }
+          worker = null;
+          rejectAll(new Error((e && e.message) || 'worker error'));
+        };
+        return worker;
+      }
+      return {
+        run: function (msg, progress) {
+          return new Promise(function (resolve, reject) {
+            var id = ++seq;
+            pending[id] = { resolve: resolve, reject: reject, progress: progress };
+            var m = {}; for (var k in msg) m[k] = msg[k]; m.id = id;
+            try { ensure().postMessage(m); } catch (err) { delete pending[id]; reject(err); }
+          });
+        },
+        cancel: function () {
+          if (worker) { try { worker.terminate(); } catch (x) { /* ignore */ } worker = null; }
+          var e = new Error('cancelled'); e.cancelled = true; rejectAll(e);
+        },
+        size: function () { return Object.keys(pending).length; },
+      };
+    }
+    /* ── engine:end ── */
+
+    function $(id) { return document.getElementById(id); }
+    function fill(tpl, vars) {
+      return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return vars && Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : m; });
+    }
+    function fmtTime(ms) { var d = splitDuration(ms); return fill(S[d.unit], { n: d.n }); }
+    function setStatus(el, text, kind) { el.textContent = text || ''; el.className = 'tool-status ' + (kind || 'none'); }
+    function renderList(el, items) {
+      el.textContent = '';
+      items.forEach(function (it) {
+        var li = document.createElement('li');
+        li.className = 'bcg-issue bcg-issue--' + (it.level || 'info');
+        li.textContent = it.text;
+        el.appendChild(li);
+      });
+      el.hidden = !items.length;
+    }
+    function issueText(i) { return fill(S['issue_' + i.code], i.vars || {}); }
+    function noteText(i) { return fill(S['note_' + i.code], i.vars || {}); }
+
+    var factory = function () { return new Worker('/vendor/bcrypt-worker.js'); };
+    var genClient = createClient(factory), verClient = createClient(factory);
+    var bench = null;
+
+    // ── tabs ──
+    var tabs = { gen: $('bcg-tab-gen'), ver: $('bcg-tab-ver') };
+    var panels = { gen: $('bcg-gen'), ver: $('bcg-ver') };
+    var mainBtns = { gen: $('bcg-gen-btn'), ver: $('bcg-ver-btn') };
+    function showTab(name) {
+      Object.keys(tabs).forEach(function (k) {
+        var on = k === name;
+        tabs[k].classList.toggle('is-active', on);
+        tabs[k].setAttribute('aria-selected', on ? 'true' : 'false');
+        tabs[k].tabIndex = on ? 0 : -1;
+        panels[k].hidden = !on;
+        // The site-wide Ctrl/⌘+Enter clicks the first .btn-primary in the widget.
+        mainBtns[k].classList.toggle('btn-primary', on);
+      });
+    }
+    Object.keys(tabs).forEach(function (k) {
+      tabs[k].addEventListener('click', function () { showTab(k); });
+      tabs[k].addEventListener('keydown', function (e) {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        var next = k === 'gen' ? 'ver' : 'gen';
+        showTab(next); tabs[next].focus(); e.preventDefault();
+      });
+    });
+    showTab('gen');
+
+    function copyText(text, btn, statusEl) {
+      if (!text) return;
+      var done = function () { btn.textContent = S.copied; setTimeout(function () { btn.textContent = S.copy; }, 1500); };
+      var fallback = function () {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        if (ok) done(); else setStatus(statusEl, S.copyFail, 'error');
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+      else fallback();
+    }
+
+    function renderParts(dl, p) {
+      dl.textContent = '';
+      var rows = [
+        [S.partPrefix, p.prefix, 'pre'],
+        [S.partCost, p.cost + ' · ' + fill(S.costRounds, { cost: p.cost, rounds: Math.pow(2, p.cost).toLocaleString() }), 'cost'],
+        [S.partSalt, p.salt, 'salt'],
+        [S.partSum, p.checksum, 'sum'],
+      ];
+      rows.forEach(function (r) {
+        var dt = document.createElement('dt'); dt.textContent = r[0];
+        var dd = document.createElement('dd'); dd.className = 'bcg-seg bcg-seg--' + r[2]; dd.textContent = r[1];
+        dl.appendChild(dt); dl.appendChild(dd);
+      });
+    }
+
+    function renderHash(code, p) {
+      code.textContent = '';
+      [[p.header.slice(0, p.prefix.length), 'pre'], [p.header.slice(p.prefix.length), 'cost'], [p.salt, 'salt'], [p.checksum, 'sum']].forEach(function (seg) {
+        var span = document.createElement('span'); span.className = 'bcg-seg bcg-seg--' + seg[1]; span.textContent = seg[0];
+        code.appendChild(span);
+      });
+    }
+
+    // ── speed ──
+    function benchmark() {
+      return genClient.run({ type: 'bench', cost: 8 }).then(function (r) {
+        if (!bench) bench = { cost: 8, ms: r.ms };
+        updateEstimate();
+        renderParse();
+      }, function () { /* the estimate stays hidden; hashing reports its own errors */ });
+    }
+
+    // ── generate ──
+    var genPw = $('bcg-gen-pw'), prefixSel = $('bcg-prefix'), costSel = $('bcg-cost');
+    var genBtn = $('bcg-gen-btn'), genCancel = $('bcg-gen-cancel'), genStatus = $('bcg-gen-status');
+    var genOut = $('bcg-gen-out'), genHash = $('bcg-gen-hash'), genParts = $('bcg-gen-parts');
+    var genBusy = false;
+
+    function updateGenPw() {
+      var r = checkPassword(genPw.value);
+      $('bcg-gen-meta').textContent = genPw.value ? fill(S.meta, { chars: r.chars, bytes: r.bytes }) : '';
+      renderList($('bcg-gen-issues'), genPw.value ? r.issues.map(function (i) { return { level: i.level, text: issueText(i) }; }) : []);
+    }
+    function updateEstimate() {
+      if (genBusy) return;
+      if (!bench) { setStatus(genStatus, S.estimating, 'none'); return; }
+      var cost = Number(costSel.value);
+      setStatus(genStatus, fill(S.estimate, { cost: cost, time: fmtTime(estimateMs(cost, bench)) }), 'none');
+    }
+    function updatePrefixNote() { $('bcg-prefix-note').textContent = S['note_' + prefixSel.value]; }
+
+    async function generate() {
+      if (genBusy) return;
+      var pw = genPw.value;
+      if (!pw) { setStatus(genStatus, S.needPassword, 'error'); genPw.focus(); return; }
+      var cost = Number(costSel.value), salt = makeSalt(prefixSel.value, cost, randomSaltBody());
+      genBusy = true; genBtn.disabled = true; genCancel.hidden = false;
+      setStatus(genStatus, fill(S.working, { pct: 0 }), 'info');
+      try {
+        var r = await genClient.run({ type: 'hash', password: pw, salt: salt }, function (p) {
+          setStatus(genStatus, fill(S.working, { pct: Math.round(p * 100) }), 'info');
+        });
+        bench = { cost: cost, ms: r.ms };
+        var parsed = parseHash(r.hash);
+        renderHash(genHash, parsed);
+        renderParts(genParts, parsed);
+        genOut.hidden = false;
+        genBusy = false;
+        setStatus(genStatus, fill(S.done, { time: fmtTime(r.ms), cost: cost }), 'success');
+        if (window.trackTool) window.trackTool('bcrypt-generator', 'generate');
+      } catch (err) {
+        genBusy = false;
+        if (err && err.cancelled) setStatus(genStatus, S.cancelled, 'none');
+        else setStatus(genStatus, fill(S.workerFail, { msg: (err && err.message) || String(err) }), 'error');
+      } finally {
+        genBusy = false; genBtn.disabled = false; genCancel.hidden = true;
+      }
+    }
+
+    genPw.addEventListener('input', function () { updateGenPw(); });
+    genPw.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.isComposing) { e.preventDefault(); generate(); }
+    });
+    costSel.addEventListener('change', updateEstimate);
+    prefixSel.addEventListener('change', updatePrefixNote);
+    genBtn.addEventListener('click', generate);
+    genCancel.addEventListener('click', function () { genClient.cancel(); });
+    $('bcg-gen-copy').addEventListener('click', function () { copyText(genHash.textContent, $('bcg-gen-copy'), genStatus); });
+
+    // ── verify ──
+    var verHash = $('bcg-ver-hash'), verPw = $('bcg-ver-pw'), verBtn = $('bcg-ver-btn'), verCancel = $('bcg-ver-cancel');
+    var verStatus = $('bcg-ver-status'), verResult = $('bcg-ver-result'), verVariants = $('bcg-ver-variants'), parseBox = $('bcg-ver-parse');
+    var verBusy = false;
+
+    function renderParse() {
+      var raw = verHash.value;
+      parseBox.textContent = '';
+      if (!raw.trim()) return null;
+      var p = parseHash(raw);
+      var notes = p.notes.slice();
+      if (p.ok) {
+        var dl = document.createElement('dl'); dl.className = 'bcg-parts';
+        renderParts(dl, p); parseBox.appendChild(dl);
+        notes = notes.concat(hashNotes(p));
+        if (bench) notes.push({ code: 'costTime', vars: { cost: p.cost, time: fmtTime(estimateMs(p.cost, bench)) } });
+      } else {
+        var e = p.error, vars = {};
+        for (var k in e.vars) vars[k] = e.vars[k];
+        vars.pos = e.pos;
+        if (e.code === 'notBcrypt') vars.scheme = fill(S['scheme_' + e.vars.scheme], e.vars.schemeVars);
+        var msg = document.createElement('p'); msg.className = 'bcg-err';
+        msg.textContent = fill(S['err_' + e.code], vars);
+        parseBox.appendChild(msg);
+        if (e.pos > 0 && ['prefix', 'minor', 'sep', 'char', 'cost', 'costRange'].indexOf(e.code) >= 0) {
+          var cps = Array.from(p.input), at = e.pos - 1, len = e.code === 'cost' || e.code === 'costRange' ? 2 : 1;
+          var code = document.createElement('code'); code.className = 'bcg-mark-line';
+          code.appendChild(document.createTextNode(cps.slice(0, at).join('')));
+          var mark = document.createElement('mark'); mark.textContent = cps.slice(at, at + len).join('') || ' ';
+          code.appendChild(mark);
+          code.appendChild(document.createTextNode(cps.slice(at + len).join('')));
+          parseBox.appendChild(code);
+        }
+      }
+      if (notes.length) {
+        var ul = document.createElement('ul'); ul.className = 'bcg-issues';
+        renderList(ul, notes.map(function (n) { return { level: 'info', text: noteText(n) }; }));
+        parseBox.appendChild(ul);
+      }
+      return p;
+    }
+
+    function updateVerPw() {
+      var r = checkPassword(verPw.value);
+      $('bcg-ver-meta').textContent = verPw.value ? fill(S.meta, { chars: r.chars, bytes: r.bytes }) : '';
+      renderList($('bcg-ver-issues'), r.issues.filter(function (i) { return i.code !== 'empty' || verPw.value; }).map(function (i) { return { level: i.level, text: issueText(i) }; }));
+    }
+
+    function clearVerResult() { verResult.hidden = true; verResult.textContent = ''; verVariants.hidden = true; verVariants.textContent = ''; }
+
+    function addCopyRow(box, label, value) {
+      var row = document.createElement('div'); row.className = 'bcg-variant';
+      var lab = document.createElement('span'); lab.className = 'bcg-variant-label'; lab.textContent = label;
+      var code = document.createElement('code'); code.className = 'bcg-hash'; code.textContent = value;
+      var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'btn-copy'; btn.textContent = S.copy;
+      btn.addEventListener('click', function () { copyText(value, btn, verStatus); });
+      row.appendChild(lab); row.appendChild(code); row.appendChild(btn); box.appendChild(row);
+    }
+
+    function showVariants(p) {
+      verVariants.textContent = '';
+      if (p.nonCanonicalSalt || p.nonCanonicalSum) addCopyRow(verVariants, S.canonical, p.canonical);
+      var v = prefixVariants(p);
+      if (v) {
+        var h = document.createElement('p'); h.className = 'bcg-variants-title'; h.textContent = S.variants;
+        verVariants.appendChild(h);
+        Object.keys(v).forEach(function (k) { if (k !== p.prefix) addCopyRow(verVariants, k, v[k]); });
+        var hint = document.createElement('p'); hint.className = 'bcg-note'; hint.textContent = S.variantsHint;
+        verVariants.appendChild(hint);
+      }
+      verVariants.hidden = !verVariants.childNodes.length;
+    }
+
+    async function verify() {
+      if (verBusy) return;
+      clearVerResult();
+      var p = renderParse();
+      if (!p) { setStatus(verStatus, S.needHash, 'error'); verHash.focus(); return; }
+      if (!p.ok) { setStatus(verStatus, '', 'none'); return; }
+      var pw = verPw.value;
+      var plan = verifySalt(p, pw);
+      if (plan.unsupported) { verResult.className = 'bcg-result is-unknown'; verResult.textContent = S.res_unsupported2x; verResult.hidden = false; return; }
+      verBusy = true; verBtn.disabled = true; verCancel.hidden = false;
+      setStatus(verStatus, fill(S.working, { pct: 0 }), 'info');
+      try {
+        var input = await passwordFor(p, pw);
+        var r = await verClient.run({ type: 'hash', password: input, salt: plan.salt }, function (x) {
+          setStatus(verStatus, fill(S.working, { pct: Math.round(x * 100) }), 'info');
+        });
+        if (!bench || p.cost >= bench.cost) bench = { cost: p.cost, ms: r.ms };
+        var ok = judge(p, r.hash), nc = p.nonCanonicalSalt || p.nonCanonicalSum;
+        var lines = [ok ? (nc ? S.res_matchNc : S.res_match) : S.res_noMatch];
+        if (utf8Bytes(input).length > 72) lines.push(S.res_72);
+        verResult.className = 'bcg-result ' + (ok ? (nc ? 'is-warn' : 'is-match') : 'is-nomatch');
+        verResult.textContent = '';
+        lines.forEach(function (t, i) { var el = document.createElement(i ? 'p' : 'strong'); el.textContent = t; verResult.appendChild(el); });
+        verResult.hidden = false;
+        showVariants(p);
+        setStatus(verStatus, fill(S.done, { time: fmtTime(r.ms), cost: p.cost }), 'none');
+        if (window.trackTool) window.trackTool('bcrypt-generator', 'verify');
+      } catch (err) {
+        if (err && err.cancelled) setStatus(verStatus, S.cancelled, 'none');
+        else setStatus(verStatus, fill(S.workerFail, { msg: (err && err.message) || String(err) }), 'error');
+      } finally {
+        verBusy = false; verBtn.disabled = false; verCancel.hidden = true;
+      }
+    }
+
+    verHash.addEventListener('input', function () { clearVerResult(); setStatus(verStatus, ''); renderParse(); });
+    verPw.addEventListener('input', function () { clearVerResult(); updateVerPw(); });
+    [verHash, verPw].forEach(function (el) {
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.isComposing) { e.preventDefault(); verify(); }
+      });
+    });
+    verBtn.addEventListener('click', verify);
+    verCancel.addEventListener('click', function () { verClient.cancel(); });
+    $('bcg-ver-example').addEventListener('click', function () {
+      // Spring Security reference, "Password Storage Format": the stored value for "password".
+      verHash.value = '{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG';
+      verPw.value = 'password';
+      clearVerResult(); renderParse(); updateVerPw();
+      verify();
+    });
+
+    // The site-wide Ctrl/⌘+L empties every text field in the widget; reset what depends on them.
+    document.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+      var widget = document.querySelector('.tool-widget');
+      if (!widget || !widget.contains(document.activeElement)) return;
+      setTimeout(function () {
+        genOut.hidden = true; genHash.textContent = ''; updateGenPw(); updateEstimate();
+        clearVerResult(); renderParse(); updateVerPw(); setStatus(verStatus, '');
+      }, 0);
+    });
+
+    updateGenPw();
+    updatePrefixNote();
+    updateEstimate();
+    benchmark();
+  })();
 </script>
 
 <style>
-  .bcg-wrap { display: flex; flex-direction: column; gap: 1rem; }
-
-  .bcg-privacy {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+  .bcg-wrap { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
+  .bcg-tabs {
+    display: inline-flex; align-self: flex-start; padding: 3px; gap: 3px;
+    border-radius: var(--radius-pill); background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .bcg-tab {
+    min-height: 34px; padding: 0.3rem 1.1rem; border: none; border-radius: var(--radius-pill);
+    background: transparent; color: var(--color-text-secondary); font-size: 0.88rem; font-weight: 700; cursor: pointer;
+  }
+  .bcg-tab.is-active { background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-subtle); }
+  .bcg-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .bcg-panel { display: flex; flex-direction: column; gap: 0.7rem; min-width: 0; }
+  .bcg-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+  .bcg-label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .bcg-meta { margin: 0; font-size: 0.8rem; color: var(--color-text-muted); min-height: 1.1em; }
+  .bcg-opts { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; }
+  .bcg-field--prefix { flex: 1 1 17rem; }
+  .bcg-field--cost { flex: 0 0 6.5rem; }
+  .bcg-opts .bcg-main-btn { flex: none; }
+  .bcg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .bcg-status-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .bcg-wrap .tool-status { margin: 0; }
+  .bcg-wrap .tool-status:empty { display: none; }
+  .bcg-out {
+    display: flex; flex-direction: column; gap: 0.6rem; padding: 0.75rem 0.85rem;
+    background: var(--color-bg-secondary); border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .bcg-wrap [hidden] { display: none !important; }
+  .bcg-hash-row { display: flex; align-items: flex-start; gap: 0.6rem; }
+  .bcg-wrap :global(.bcg-hash) {
+    flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 0.9rem; line-height: 1.5;
+    overflow-wrap: anywhere; word-break: break-all; color: var(--color-text); background: transparent;
+  }
+  .bcg-wrap :global(.bcg-parts) {
+    display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.2rem 0.8rem; margin: 0;
     font-size: 0.82rem;
-    color: var(--color-text-secondary);
   }
-
-  .bcg-mode-tabs {
-    display: flex;
-    gap: 0;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-    width: fit-content;
+  .bcg-wrap :global(.bcg-parts dt) { color: var(--color-text-secondary); }
+  .bcg-wrap :global(.bcg-parts dd) { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; word-break: break-all; }
+  .bcg-wrap :global(.bcg-seg--pre) { color: var(--color-primary); }
+  .bcg-wrap :global(.bcg-seg--cost) { color: var(--color-accent); }
+  .bcg-wrap :global(.bcg-seg--salt) { color: var(--color-success); }
+  .bcg-wrap :global(.bcg-seg--sum) { color: var(--color-text); }
+  .bcg-note, .bcg-privacy { margin: 0; font-size: 0.82rem; line-height: 1.5; color: var(--color-text-secondary); }
+  .bcg-privacy { color: var(--color-text-muted); }
+  .bcg-wrap :global(.bcg-issues) { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.84rem; line-height: 1.45; }
+  .bcg-wrap :global(.bcg-issue--warn) { color: var(--color-text); }
+  .bcg-wrap :global(.bcg-issue--info) { color: var(--color-text-secondary); }
+  .bcg-parse { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+  .bcg-parse:empty { display: none; }
+  .bcg-wrap :global(.bcg-err) { margin: 0; color: var(--color-danger); font-size: 0.86rem; line-height: 1.45; }
+  .bcg-wrap :global(.bcg-mark-line) {
+    font-family: var(--font-mono); font-size: 0.84rem; overflow-wrap: anywhere; word-break: break-all;
+    background: var(--color-bg-secondary); padding: 0.35rem 0.5rem; border-radius: var(--radius-sm);
   }
-
-  .bcg-mode-tab {
-    padding: 0.4rem 1.25rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border: none;
-    background: var(--color-bg-secondary);
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: background 0.1s, color 0.1s;
+  .bcg-wrap :global(.bcg-mark-line mark) {
+    background: color-mix(in oklch, var(--color-danger) 22%, transparent); color: var(--color-text);
+    outline: 1px solid var(--color-danger); border-radius: 2px;
   }
-
-  .bcg-mode-tab:not(:last-child) { border-right: 1px solid var(--color-border); }
-  .bcg-mode-tab.active { background: var(--color-primary); color: #fff; }
-  .bcg-mode-tab:not(.active):hover { background: var(--color-bg); color: var(--color-text); }
-
-  .bcg-panel { display: flex; flex-direction: column; gap: 0.875rem; }
-
-  .bcg-field { display: flex; flex-direction: column; gap: 0.35rem; }
-
-  .bcg-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
+  .bcg-result {
+    display: flex; flex-direction: column; gap: 0.3rem; padding: 0.75rem 0.9rem; border-radius: var(--radius-md);
+    background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1.5px var(--color-border-soft); font-size: 0.88rem;
   }
+  .bcg-wrap :global(.bcg-result strong) { font-size: 1rem; }
+  .bcg-wrap :global(.bcg-result p) { margin: 0; color: var(--color-text-secondary); }
+  .bcg-result.is-match { box-shadow: inset 0 0 0 1.5px var(--color-success); }
+  .bcg-result.is-match strong { color: var(--color-success); }
+  .bcg-result.is-nomatch { box-shadow: inset 0 0 0 1.5px var(--color-danger); }
+  .bcg-result.is-nomatch strong { color: var(--color-danger); }
+  .bcg-result.is-warn, .bcg-result.is-unknown { box-shadow: inset 0 0 0 1.5px var(--color-accent); }
+  .bcg-variants { display: flex; flex-direction: column; gap: 0.45rem; }
+  .bcg-wrap :global(.bcg-variants-title) { margin: 0; font-size: 0.84rem; font-weight: 650; color: var(--color-text); }
+  .bcg-wrap :global(.bcg-variant) { display: flex; align-items: flex-start; gap: 0.6rem; }
+  .bcg-wrap :global(.bcg-variant-label) { flex: none; min-width: 3.2rem; font-size: 0.8rem; color: var(--color-text-secondary); padding-top: 0.15rem; }
 
-  .bcg-input {
-    width: 100%;
-    padding: 0.6rem 0.75rem;
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    transition: border-color 0.15s;
-    box-sizing: border-box;
+  @media (max-width: 640px) {
+    .bcg-wrap { gap: 0.7rem; }
+    .bcg-panel { gap: 0.55rem; }
+    .bcg-tab { min-height: 40px; }
+    .bcg-opts { gap: 0.5rem; }
+    .bcg-field--prefix { flex: 1 1 100%; }
+    .bcg-field--cost { flex: 0 0 5.5rem; }
+    .bcg-opts .bcg-main-btn { flex: 1 1 0; }
+    .bcg-wrap :global(.bcg-parts) { grid-template-columns: minmax(0, 1fr); gap: 0.05rem; }
+    .bcg-wrap :global(.bcg-parts dd) { margin-bottom: 0.3rem; }
   }
-
-  .bcg-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .bcg-slider-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .bcg-time-est {
-    font-size: 0.82rem;
-    color: var(--color-text-secondary);
-  }
-
-  .bcg-slider {
-    width: 100%;
-    accent-color: var(--color-primary);
-    cursor: pointer;
-  }
-
-  .bcg-slider-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
-    margin-top: -0.25rem;
-  }
-
-  .bcg-error {
-    font-size: 0.85rem;
-    color: #c0392b;
-    min-height: 1.2rem;
-  }
-
-  .bcg-output-wrap { display: flex; flex-direction: column; gap: 0.35rem; }
-
-  .bcg-output-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .bcg-output-input {
-    width: 100%;
-    padding: 0.6rem 0.75rem;
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    cursor: default;
-    box-sizing: border-box;
-  }
-
-  .bcg-ver-result {
-    padding: 0.75rem 1rem;
-    border-radius: var(--radius-sm);
-    font-size: 1rem;
-    font-weight: 700;
-    text-align: center;
-    border: 2px solid transparent;
-  }
-
-  .bcg-ver-result.match {
-    background: #f0fdf4;
-    border-color: #22c55e;
-    color: #15803d;
-  }
-
-  .bcg-ver-result.no-match {
-    background: #fef2f2;
-    border-color: #ef4444;
-    color: #dc2626;
-  }
-
-  .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .bcg-error { color: #f87171; }
-    :root:not([data-theme="light"]) .bcg-ver-result.match { background: #052e16; border-color: #22c55e; color: #4ade80; }
-    :root:not([data-theme="light"]) .bcg-ver-result.no-match { background: #2d0000; border-color: #ef4444; color: #f87171; }
-  }
-  [data-theme="dark"] .bcg-error { color: #f87171; }
-  [data-theme="dark"] .bcg-ver-result.match { background: #052e16; border-color: #22c55e; color: #4ade80; }
-  [data-theme="dark"] .bcg-ver-result.no-match { background: #2d0000; border-color: #ef4444; color: #f87171; }
 </style>
