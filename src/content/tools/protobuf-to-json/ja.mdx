@@ -1,127 +1,116 @@
 ---
-seoTitle: "Protobuf → JSON 変換ツール — 無料オンライン | ZeroTool"
-seoDescription: "Protocol BuffersスキーマをサンプルJSONに変換、またはProtobufバイナリデータをJSONにデコード。proto3・ネストメッセージ・enumに対応。ブラウザ完結、データ送信なし。"
+seoTitle: "Protobuf JSON 変換ツール | ZeroTool"
+seoDescription: "Protobuf のバイナリを JSON に変換・デコード。.proto なしでも読めます。16 進・Base64・gRPC フレームに対応し、int64 や Timestamp は ProtoJSON どおりに出力。JSON からのエンコードも可能。"
 faqItems:
-  - question: "Protocol Buffers（Protobuf）とは何ですか？"
-    answer: "Protocol BuffersはGoogleが開発した言語・プラットフォーム非依存の構造化データシリアライズ機構です。JSON/XMLより高速・コンパクトな代替手段として使われます。.protoファイルにデータ構造を定義し、生成されたコードで読み書きします。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。すべての解析・デコードはprotobufjsライブラリによりブラウザ内で完結します。スキーマとバイナリデータはデバイス外に出ません。"
-  - question: "「Schema → サンプルJSON」モードとは？"
-    answer: ".protoスキーマを貼り付けてメッセージタイプを選択すると、デフォルト値（空文字列・ゼロ・空配列）を持つサンプルJSONが生成されます。実データなしにメッセージ構造を確認したい場合に便利です。"
-  - question: "「バイナリ → JSON」は何の形式を受け付けますか？"
-    answer: "16進数（例: 0a 05 41 6c 69 63 65）とBase64エンコードのProtobufバイナリデータ両方を受け付けます。16進数のスペースやコロンは自動的に無視されます。"
-  - question: "int64 の値が文字列で表示されるのはなぜですか？"
-    answer: "proto3 の JSON マッピングは int64・uint64・sint64・fixed64・sfixed64 を 10 進文字列で出力すると定めています。JSON の数値は JavaScript で読むと 2^53 までしか正確でないためです。このページは protobuf.js と一緒に long.js を読み込むので、2^53 を超える値も全桁そのまま出ます（18446744073709551615 は文字列 18446744073709551615 になります）。int32 と uint32 は JSON の数値のままです。"
-  - question: "どのproto構文がサポートされていますか？"
-    answer: "主にproto3が対象です。proto2の基本的な構文も内部のprotobufjsライブラリで処理できますが、proto3を推奨します。"
+  - question: ".proto ファイルがなくてもデコードできますか？"
+    answer: "できます。スキーマ欄を空にすると protoc --decode_raw と同じ方法で読み、フィールド番号・数値・文字列・入れ子のメッセージを表示します。フィールド名、enum 名、符号付きや 64 ビットの型、Timestamp などの Well-Known Types はバイト列に含まれないため、.proto が必要です。"
+  - question: "int64 が文字列で出力されるのはなぜですか？"
+    answer: "ProtoJSON の仕様で、int64・uint64・sint64・fixed64・sfixed64 は 10 進の文字列と決まっています。JavaScript は JSON の数値を double として読むので、2^53 を超えると下の桁が変わります。このツールは 64 ビットのフィールドを BigInt で読むため、桁は失われません。"
+  - question: "JSON にフィールドが出てこないのはなぜですか？"
+    answer: "ProtoJSON では、proto3 の通常のフィールドがデフォルト値（0、空文字列、false、enum の最初の値）のとき出力しません。「デフォルト値のフィールドも出力」をオンにすると表示されます。スキーマにない番号のフィールドは ProtoJSON に書けないため、「補足」にバイト位置付きで一覧表示します。"
+  - question: "gRPC のキャプチャはそのまま貼れますか？"
+    answer: "貼れます。gRPC フレームが「自動」のとき、各メッセージ先頭の 5 バイト（フラグと長さ）を外してから順にデコードします。gRPC-Web の trailers は補足に表示し、圧縮フラグ 01 のフレームは gzip で展開します。"
+  - question: "データはアップロードされますか？"
+    answer: "されません。解析・デコード・エンコードはすべてブラウザ内で行います。保存するのはオプションの選択だけで、スキーマ・バイト列・JSON は保存しません。"
 ---
 
-<h2>使い方</h2>
-<h3>Schema → サンプルJSON（デフォルトモード）</h3>
-<ol>
-  <li>左パネルに<code>.proto</code>スキーマを貼り付けます。</li>
-  <li>ツールが全メッセージタイプを自動検出してドロップダウンに表示します。</li>
-  <li>メッセージタイプを選択し、<strong>JSONを生成</strong>をクリックします。</li>
-  <li>デフォルト値を持つサンプルJSONが右側に表示されます。</li>
-</ol>
+## 使い方
 
-<h3>バイナリ → JSONモード</h3>
-<ol>
-  <li>トグルで<strong>バイナリ → JSON</strong>モードに切り替えます。</li>
-  <li>上のテキストエリアに<code>.proto</code>スキーマを貼り付けます。</li>
-  <li>2番目のテキストエリアにバイナリデータ（hexまたはbase64）を貼り付けます。</li>
-  <li>メッセージタイプを選択し、<strong>バイナリをデコード</strong>をクリックします。</li>
-</ol>
+1. 「Protobuf のバイト列」に貼り付けます。16 進、Base64（標準・URL セーフ）、Python のバイト列リテラル `b'\n\x05Alice'`、protoc 形式の 8 進エスケープ文字列、`[10, 5, 65]` のようなバイト列に対応し、「形式：自動」のときはどれとして読んだかをステータスに表示します。「ファイルを開く」で 2 MB までの `.bin`・`.pb` も読み込めます。
+2. 「.proto スキーマ」に定義を貼り付けます。自前の import 先は「.proto を追加」で入れてください。`google/protobuf/*.proto` の Well-Known Types は組み込み済みです。
+3. 「メッセージ型」を選びます。ほかの型から参照されていない型、つまり多くの場合トップレベルのメッセージが最初から選ばれます。「スキーマなし（raw デコード）」を選ぶと番号だけで表示します。
+4. 入力するとすぐ結果が出ます。「JSON → バイナリ」は ProtoJSON をバイト列に戻し、「サンプル JSON」は型のフィールドを一通り並べます。
 
-## Proto3構文クイックリファレンス
+## 例：日本語の店舗データ
+
+次の店舗マスタを例にします。
 
 ```proto
 syntax = "proto3";
 
-package myapp;
+package shop.v1;
 
-message User {
-  string id = 1;
-  string name = 2;
-  int32 age = 3;
-  repeated string roles = 4;
-  Address address = 5;
-  UserStatus status = 6;
-}
-
-message Address {
-  string street = 1;
-  string city = 2;
-  string country_code = 3;
-}
-
-enum UserStatus {
-  UNKNOWN = 0;
-  ACTIVE = 1;
-  INACTIVE = 2;
+message Store {
+  string name = 1;
+  string prefecture = 2;
+  string postal_code = 3;
+  repeated string tags = 4;
 }
 ```
 
-<h2>フィールドタイプ一覧</h2>
-<ul>
-  <li><strong>スカラー型：</strong><code>double</code>、<code>float</code>、<code>int32</code>、<code>int64</code>、<code>uint32</code>、<code>uint64</code>、<code>bool</code>、<code>string</code>、<code>bytes</code></li>
-  <li><strong>繰り返しフィールド：</strong>フィールドの前に<code>repeated</code>を付ける — JSON配列に対応</li>
-  <li><strong>ネストメッセージ：</strong>別のメッセージタイプをフィールド型として使用</li>
-  <li><strong>enum：</strong><code>enum</code>で定義、最初の値は必ず0</li>
-  <li><strong>oneof：</strong>グループ内の1つのフィールドのみ同時に設定可能</li>
-</ul>
+`protoc --encode` で作った 54 バイトのデータです。日本語は UTF-8 なので 1 文字 3 バイトになり、「渋」は `e6 b8 8b` です。
 
-<h2>プライバシー</h2>
-<p>処理はすべてクライアント側で行われます。スキーマとバイナリデータはアップロードも保存もされません。</p>
-
-## 例：バイナリメッセージをデコードする
-
-既定の `demo.Person` スキーマのまま **Binary → JSON** に切り替え、次の hex（43 バイト）を貼り付けます：
-
-```
-0a 06 e4 bd 90 e8 97 a4 10 29 1a 0f 73 61 74 6f 40 65 78 61 6d 70 6c 65 2e 6a 70 22 0c 12 06 e5 a4 a7 e9 98 aa 1a 02 4a 50 28 02
+```text
+0a 0c e6 b8 8b e8 b0 b7 e6 9c ac e5 ba 97 12 09 e6 9d b1 e4 ba ac e9 83 bd 1a 08 31 35 30 2d 30 30 30 32 22 0f e9 a7 90 e8 bb 8a e5 a0 b4 e3 81 82 e3 82 8a
 ```
 
-出力：
+`shop.v1.Store` としてデコードすると、こうなります。
 
+{/* pbj-check: {"schema": "syntax = \"proto3\";\n\npackage shop.v1;\n\nmessage Store {\n  string name = 1;\n  string prefecture = 2;\n  string postal_code = 3;\n  repeated string tags = 4;\n}\n", "input": "0a 0c e6 b8 8b e8 b0 b7 e6 9c ac e5 ba 97 12 09 e6 9d b1 e4 ba ac e9 83 bd 1a 08 31 35 30 2d 30 30 30 32 22 0f e9 a7 90 e8 bb 8a e5 a0 b4 e3 81 82 e3 82 8a", "type": "shop.v1.Store"} */}
 ```json
 {
-  "name": "佐藤",
-  "age": 41,
-  "emails": [
-    "sato@example.jp"
-  ],
-  "address": {
-    "city": "大阪",
-    "country": "JP"
-  },
-  "status": "INACTIVE"
+  "name": "渋谷本店",
+  "prefecture": "東京都",
+  "postalCode": "150-0002",
+  "tags": [
+    "駐車場あり"
+  ]
 }
 ```
 
-日本語は UTF-8 で、「佐藤」は 6 バイト（`e4 bd 90 e8 97 a4`）です。Shift_JIS のバイト列を `string` フィールドに入れても正しく表示されません。`address.street` はバイナリに含まれていないため出力されません。デコード結果には実際に送られたフィールドだけが並びます。同じスキーマを **Schema → Sample JSON** モードで使うと `{"emails": [], "name": "", "age": 0, "address": null, "status": "UNKNOWN"}` になります。
+`postal_code` が `postalCode` になるのは、[ProtoJSON の仕様](https://protobuf.dev/programming-guides/json/)でフィールド名を lowerCamelCase に変えるためです。`.proto` の名前のまま欲しいときは「フィールド名：.proto のまま」を選びます。
 
-## 公式 JSON マッピングとの違い
+## 例：スキーマがないとき
 
-`protoc` の生成コードが出力するのは [ProtoJSON 形式](https://protobuf.dev/programming-guides/json/)です。このツール（protobuf.js 8.0.1、ページが読み込むブラウザ版で確認）は次の点が異なります：
+スキーマ欄を空にして raw 表示を「JSON」にすると、同じバイト列は番号付きで読めます。
 
-| ケース | 公式 ProtoJSON | このツール |
-|---|---|---|
-| フィールド名 | lowerCamelCase（`country_code` → `countryCode`）。パーサーは両方受け付ける | `.proto` の表記のまま（`country_code`） |
-| `int64` / `uint64` / `sint64` / `fixed64` / `sfixed64` | 10 進文字列 | 10 進文字列。桁落ちなし（`"9007199254740993"`、`"18446744073709551615"`）。サンプルモードは `"0"` |
-| 列挙型 | 名前（`"ACTIVE"`） | 名前。スキーマにない数値は数値のまま（`7`） |
-| `bytes` | 標準 Base64 | 標準 Base64 |
-| `map<K, V>` | JSON オブジェクト | JSON オブジェクト |
-| サンプルモードのネストしたメッセージ | — | `null`。ドロップダウンでその型を選ぶとフィールドが見える |
+{/* pbj-check: {"input": "0a 0c e6 b8 8b e8 b0 b7 e6 9c ac e5 ba 97 12 09 e6 9d b1 e4 ba ac e9 83 bd 1a 08 31 35 30 2d 30 30 30 32 22 0f e9 a7 90 e8 bb 8a e5 a0 b4 e3 81 82 e3 82 8a", "raw": "json"} */}
+```json
+{
+  "1": "渋谷本店",
+  "2": "東京都",
+  "3": "150-0002",
+  "4": "駐車場あり"
+}
+```
 
-## キャプチャした gRPC ペイロードのデコード
+長さ付きの値のうち、UTF-8 として読めて制御文字を含まないものは文字列として出します。「protoc --decode_raw」表示に切り替えると `protoc --decode_raw` と同じ出力になり、日本語は `\346\270\213` のような 8 進エスケープになります。protoc は入れ子のメッセージとして読めるものを優先するので、`hi` のような短い ASCII 文字列が `1 { 13: 105 }` と表示されることもあります。
 
-gRPC は各メッセージの前に 5 バイト（1 バイトの圧縮フラグと 4 バイトのビッグエンディアン長）を付けます（[gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)）。貼り付ける前にこの 5 バイトを取り除き、フラグが `01` なら先に展開してください。サーバーのリフレクションが有効なら、`grpcurl` で `.proto` なしに呼び出して JSON を表示できます。
+## 例：JSON からバイナリへ、全角文字の混入
 
-## 制限事項
+日本語入力のまま JSON を書くと、全角のコロンや空白が紛れ込みがちです。
 
-- **スキーマは単体で完結している必要があります。** `import` は取得されません。import 行だけで `google.protobuf.Timestamp` 型のフィールドを使うと `no such Type or Enum 'google.protobuf.Timestamp'` になります。参照先のメッセージも同じ欄に貼り付けてください。こうして貼った既知型は通常のメッセージとして表示され（`{"seconds": "1695427584"}`）、公式マッピングの RFC 3339 文字列にはなりません。
-- **バイナリには型名がありません。** 違う型を選んでもデコードが成功し、的外れなフィールドが出ることがあります。`Customer` のバイト列 `0a 05 41 6c 69 63 65` を `Order` としてデコードすると `{"order_id": "Alice"}` になります。
-- **途中で切れたデータはエラー**になります（例：`index out of range: 2 + 16 > 3`）。
-- **hex か Base64 かは自動判定**：16 進文字だけで偶数長の入力は hex、それ以外は Base64 として読みます。たまたま 16 進文字だけでできた Base64 は hex と誤認されるので、先に hex に変換してください。
-- **サンプルモードは既定値のみ**：空文字列、0、空の配列と map、最初の列挙値、ネストしたメッセージは `null`。`oneof` のフィールドは表示されません。
+```json
+{"name": "渋谷本店",
+ "prefecture"： "東京都"}
+```
+
+「JSON → バイナリ」では、位置を示してエラーにします。
+
+{/* pbj-check: {"schema": "syntax = \"proto3\";\n\npackage shop.v1;\n\nmessage Store {\n  string name = 1;\n  string prefecture = 2;\n  string postal_code = 3;\n  repeated string tags = 4;\n}\n", "mode": "encode", "type": "shop.v1.Store", "json": "{\"name\": \"渋谷本店\",\n \"prefecture\"： \"東京都\"}", "error": "jsonUnexpected", "lang": "ja"} */}
+```text
+JSON 2 行 14 列：「：」は予期しない文字です。
+```
+
+全角スペース（U+3000）も同じく、その位置でエラーになります。直した JSON を出力「エスケープ文字列」でエンコードすると、Python でそのまま使えるバイト列リテラルになります。
+
+{/* pbj-check: {"schema": "syntax = \"proto3\";\n\npackage shop.v1;\n\nmessage Store {\n  string name = 1;\n  string prefecture = 2;\n  string postal_code = 3;\n  repeated string tags = 4;\n}\n", "mode": "encode", "type": "shop.v1.Store", "json": "{\"name\": \"渋谷本店\", \"postalCode\": \"150-0002\"}", "out": "escaped"} */}
+```text
+b'\n\x0c\xe6\xb8\x8b\xe8\xb0\xb7\xe6\x9c\xac\xe5\xba\x97\x1a\x08150-0002'
+```
+
+キーは `postalCode` でも `postal_code` でも受け付けます。enum は名前でも番号でもよく、int64 は文字列でも数値でも構いません。出力は 16 進・Base64・C の配列も選べ、gRPC フレームを付けたり `.bin` として保存したりできます。
+
+## ほかのツールとの違い
+
+2026-10-02 に、英語版ページの注文データ（Timestamp と 2^53 を超える int64 を含む）で試しました。Bing で「protobuf デコード」の上位に出る serenetia.com の Protobuf Decoder は pawitp の Protobuf Decoder と同じもので、スキーマなしで読み、gRPC のヘッダーも外し、uint・sint・double の読み方を並べて表示しますが、.proto は使えません。codertools.net（日本語版あり）と egohero.com は .proto を使えますが、`import "google/protobuf/timestamp.proto"` を含むと egohero は「no such Type or Enum 'google.protobuf.Timestamp'」で止まり、codertools はメッセージ型の一覧が空になります。Timestamp を外すと、どちらも `order_id` を `"9007199254740992"`（実際より 1 小さい）と出力し、名前は snake_case のままでした。どのツールも入力をサーバーに送っていませんでした。
+
+## 制限
+
+- **読み込めるのは .proto のソースだけ**です。`protoc --descriptor_set_out` で作ったディスクリプタやテキスト形式のメッセージは読めません。組み込みの import は `any`・`duration`・`empty`・`field_mask`・`struct`・`timestamp`・`wrappers` で、`google/api/annotations.proto` などから型を使う場合は追加が必要です。`descriptor.proto` を拡張するカスタムオプションは無視します。オプションはバイト列に影響しないためです。
+- **未知のフィールドは JSON に入りません。** 補足に番号・ワイヤタイプ・バイト位置を示し、未知のフィールドなしでデコードできる型も挙げます。
+- **型を間違えてもデコードが通ることがあります。** バイト列に型名は入っていないため、補足の未知フィールドの件数を確かめてください。
+- 入れ子は 100 段まで、開けるファイルは 2 MB までです。圧縮フレームは gzip だけ展開します。
+- proto2 と editions 2023/2024 のグループ、required、closed enum、拡張（`"[pkg.ext]"`）、フィールドの存在、packed と expanded、delimited に対応します。proto3 の `string` が UTF-8 として正しくないときは、バイト位置付きのエラーになります。バイナリは `bytes` に入れてください。
+
+関連ツール：キャプチャは [HAR ファイル解析](/ja/tools/har-file-analyzer/)、ペイロードの変換は [Base64 エンコード / デコード](/ja/tools/base64/)、JSON の検証は [JSON Schema バリデーター](/ja/tools/json-schema-validator/)で。

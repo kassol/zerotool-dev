@@ -878,6 +878,23 @@ check('component does not touch storage directly', !/localStorage|sessionStorage
 check('component sends no requests', !/\bfetch\(|XMLHttpRequest|sendBeacon/.test(script));
 check('only options are persisted', /window\.ztPersist\.save\(SLUG, prefs\)/.test(script));
 
+// Same as errText() in the component's UI script.
+function pageErrText(S, e) {
+  const fmt = (tpl, args) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (args && args[k] !== undefined && args[k] !== null ? String(args[k]) : m));
+  const a = Object.assign({}, e.pbArgs), code = e.pbCode, tpl = S.err[code] || code;
+  if (code === 'schemaUnresolved') {
+    a.where = a.where ? ' (' + a.where + ')' : '';
+    let t = fmt(tpl, a);
+    if (a.missing && a.missing.length) t += fmt(S.err.schemaUnresolvedHint, { list: a.missing.join(', ') });
+    return t;
+  }
+  if (code === 'unknownField') a.hint = a.hint ? fmt(S.err.unknownFieldHint, { name: a.hint }) : '';
+  let text = fmt(tpl, a);
+  if (a.path && tpl.indexOf('{path}') < 0) text += ' (' + a.path + ')';
+  return text;
+}
+check('pageErrText mirrors the component errText', /function errText\(e\) \{[\s\S]*?if \(code === 'unknownField'\) a\.hint = a\.hint \? fmt\(S\.err\.unknownFieldHint, \{ name: a\.hint \}\) : '';\s*var text = fmt\(tpl, a\);\s*if \(a\.path && tpl\.indexOf\('\{path\}'\) < 0\) text \+= ' \(' \+ a\.path \+ '\)';/.test(source));
+
 // ---------- tool page examples ----------
 // Blocks marked {/* pbj-check: {...} */} in the mdx are recomputed: the code block that follows
 // the marker must equal the engine output for the given schema, input and options.
@@ -910,12 +927,19 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
         if (fr) bytes = fr[0].payload;
         if (spec.raw) {
           const fields = E.parseRaw(bytes, 0, bytes.length, 0, null);
-          got = spec.raw === 'protoc' ? E.rawText(fields).replace(/\n$/, '') : E.stringifyJson(E.rawJson(fields), 2, false);
+          got = spec.raw === 'protoc' ? E.rawText(fields).replace(/\n$/, '') : E.stringifyJson(E.rawJson(fields, 0, spec.raw === 'readings'), 2, false);
         } else got = E.stringifyJson(E.msgJson(c, E.decodeTyped(c, spec.type, bytes), spec.opts || {}, '', 0), 2, false);
       }
     } catch (e) {
       got = 'ERROR ' + (e.pbCode || e.message);
-      if (spec.error) { check(lang + ' example error ' + spec.error, e.pbCode === spec.error, got); continue; }
+      if (spec.error) {
+        check(lang + ' example error ' + spec.error, e.pbCode === spec.error, got);
+        if (e.pbCode === spec.error) {
+          const msg = pageErrText(STRINGS[spec.lang || lang], e);
+          check(lang + '.mdx error example #' + mdxChecks + ' shows the page message', msg === want, '\n  page shows: ' + msg + '\n  mdx:        ' + want);
+        }
+        continue;
+      }
     }
     check(lang + '.mdx example #' + mdxChecks + ' matches the engine', got === want, '\n  engine:\n' + got + '\n  page:\n' + want);
   }
