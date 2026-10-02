@@ -1,146 +1,136 @@
 ---
-title: "Favicon Generator: Build the Modern Multi-File Set in Your Browser"
-description: "Generate the full modern favicon set — ICO, multi-size PNGs, apple-touch-icon, manifest — without uploading. Covers the ICO format, PWA maskable icons, and what each browser actually requests."
+title: "Favicon Sizes: Which Ones You Need and What Browsers Actually Fetch"
+description: "Favicon sizes explained from the specs and a browser test: 16, 32 and 48 in favicon.ico, 180 for iOS, 192 and 512 for the manifest, SVG, and what Google Search requires."
 pubDate: 2026-04-29
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["favicon", "favicon-generator", "pwa", "web-manifest", "developer-tools"]
+tags: ["favicon size", "favicon", "apple-touch-icon", "web app manifest", "pwa"]
 ---
 
-Search for almost anything technical on Google and look at the small icon next to each site name. That is the site's favicon; Google started showing favicons in mobile results in 2019 and shows them next to the site name in results today ([Google Search Central](https://developers.google.com/search/docs/appearance/favicon-in-search)). A site without a recognizable favicon there looks abandoned. A site with a sharp, on-brand favicon there looks polished. The mark is tiny and shows up next to your domain wherever a user is deciding whether to click.
+Most favicon size charts list a dozen dimensions without saying who uses them. The useful question is narrower: which files does a browser, a phone home screen or Google Search actually request, and at what size? This guide answers it from the specifications (the HTML Standard, Apple's Safari documentation, the Web App Manifest and Google Search Central) and from a test run on 2026-10-02 in Chromium 152 on macOS with a device pixel ratio of 2, where a local server logged every request each test page caused.
 
-[Open the Favicon Generator →](/tools/favicon-generator/)
+## The sizes that have a job
 
-That small mark is also one of the few visual elements that survives across browser tabs, bookmark bars, OS taskbars, iOS home screens, Android PWA installs, RSS readers, and shortcut tiles. Each of those surfaces wants a slightly different file — different size, sometimes a different format, sometimes its own manifest entry. This guide covers what the modern set actually looks like, why a single `favicon.ico` is no longer enough, what each file does at runtime, and how the ZeroTool generator builds the package in your browser without uploading anything.
+| Size | File | Who uses it | Source |
+|---|---|---|---|
+| 16×16, 32×32 (and 48×48) | `favicon.ico` or PNG via `<link rel="icon">` | Browser tabs, bookmarks, history | [HTML Standard, `rel=icon`](https://html.spec.whatwg.org/multipage/links.html#rel-icon) |
+| Any, larger than 48×48 recommended | The icon your home page declares | Google Search results | [Google Search Central](https://developers.google.com/search/docs/appearance/favicon-in-search) |
+| 180×180 | `apple-touch-icon.png` | iPhone "Add to Home Screen" | [Apple: Configuring Web Applications](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/ConfiguringWebApplications/ConfiguringWebApplications.html) |
+| 192×192 and 512×512 | PNGs listed in the web app manifest | Installed web apps on Android and desktop Chrome | [web.dev install criteria](https://web.dev/articles/install-criteria) |
+| Scalable | SVG via `<link rel="icon" type="image/svg+xml">` | Browsers that support SVG icons | HTML Standard (`sizes="any"`) |
 
-## What modern browsers actually request
+Most other numbers in big charts (57, 72, 114 and 144 from older iOS devices, 150 and 310 from Windows tiles) come from platform conventions that none of these sources require today. Apple's guide, for example, still lists 152×152 and 167×167 for iPad alongside 180×180 for a Retina iPhone; if you list several, Safari picks the closest size and otherwise "the smallest icon larger than the recommended size".
 
-Which files a browser fetches depends on the `<link>` tags in your page and on what the user does. Open DevTools on your own site, refresh, and watch the network panel: a desktop browser usually fetches only the one tab icon it picked. The three entry points are:
+## What Chromium actually requested
 
-| Request | Used by | Notes |
-|---|---|---|
-| `/favicon.ico` | Browsers fall back to this path when the page declares no icon | A multi-size container; keep it for tools and crawlers that only try the root path |
-| `/<href from <link rel="icon">>` | The tab, bookmarks, and history | The browser chooses among candidates by `sizes` and `type`; the [HTML standard](https://html.spec.whatwg.org/multipage/links.html#rel-icon) leaves the choice to the browser |
-| `/<href from <link rel="apple-touch-icon">>` | iOS Safari "Add to Home Screen" | Standard size is 180×180 |
+Each test page below was served from its own port, so no cached icon could interfere. The icons were a package made with the ZeroTool generator (letter "Z" on a blue background).
 
-Add a PWA install on Android Chrome and the picture grows:
-
-| Request | Used by |
+| Page `<head>` | Requests after the HTML |
 |---|---|
-| `/site.webmanifest` (or `manifest.json`) | Chrome, Edge, Brave, Samsung Internet — anywhere PWAs install |
-| 192×192 and 512×512 PNGs declared in the manifest's `icons` array | Android home-screen icon, Splash screen, Android share sheet |
+| No icon links at all | `/favicon.ico` |
+| The generator's snippet: ICO link, PNG links for 16, 32 and 48, apple-touch-icon, manifest | `/site.webmanifest`, `/favicon.ico` |
+| Only the three PNG links (16, 32, 48) | `/favicon-32.png` |
+| The three PNG links followed by the ICO link | `/favicon.ico` |
+| ICO with `sizes="32x32"`, then an SVG link, then apple-touch-icon | `/icon.svg` |
+| Only a 32×32 PNG link | `/favicon-32.png` |
 
-Mark an icon `purpose: "maskable"` and Android applies a circular or rounded-square mask, depending on the launcher, so the icon looks native in the launcher grid. A maskable icon must keep its visible mark inside the safe zone, a circle with a radius of 40% of the icon size (about 10% padding on each side), otherwise the mask clips the edges ([web.dev](https://web.dev/articles/maskable-icon)). web.dev advises against `"any maskable"` on one file: an icon padded for masking looks too small where it is used as-is, so ship separate `any` and `maskable` files.
+Four things follow from this log.
 
-Then there is the long tail. Pinned-site tiles on Windows 8 and 10 read `browserconfig.xml`; Windows 11 has no live tiles. Older Safari versions drew pinned tabs from a single-color SVG declared with `<link rel="mask-icon">`. Older Chrome on Android used `apple-touch-icon` for home-screen shortcuts. These explain why some generators emit twenty-plus files.
+First, `/favicon.ico` is fetched only when a page declares no icon. That is the HTML Standard's fallback: in the absence of an icon link, the user agent "may" fetch `/favicon.ico` from the site root. With a PNG link and no ICO link, Chromium did not request `/favicon.ico` at all.
 
-## Why a single `favicon.ico` is not enough
+Second, when an ICO link was present, Chromium chose the ICO over the PNG links, in either order. A 2× screen needs a 32-pixel image for a 16-point tab, and the ICO already contains one. The 16, 32 and 48 PNG links were never used in that case.
 
-The historical default was to drop one ICO at the site root and let the browser figure it out. That worked when monitors topped out at 1280×1024 and tabs were 16-pixel squares. Two things broke it:
+Third, an SVG link won over the ICO. With SVG, one file serves every size.
 
-1. **Retina displays.** A 16×16 ICO renders blurry on a 2× display when the browser scales it to 32 logical pixels. The `<link rel="icon" type="image/png" sizes="32x32">` tag lets the browser pick the right resource for the device pixel ratio.
-2. **Operating system surfaces beyond the tab.** iOS home-screen icons, Android home-screen icons, and PWA splash screens each take a specific size from your set, and none of them want the 16-pixel ICO. They want 180, 192, 512, and a manifest that tells them what is what.
+Fourth, desktop Chromium did not request `apple-touch-icon.png`, but it did fetch the manifest on page load. The HTML Standard leaves the choice among icon links to the browser, so Firefox and Safari may decide differently; this test covers Chromium only.
 
-The fix is the modern set: a small ICO for compatibility, a few PNG sizes for the modern `<link rel="icon">` chain, an apple-touch-icon for iOS, and a webmanifest with PWA icons.
+## What Google Search requires
 
-## The full file list, explained
+Google shows a favicon next to each result and reads it from the home page of the host. The rules in [Define a favicon to show in search results](https://developers.google.com/search/docs/appearance/favicon-in-search):
 
-Here is what the ZeroTool generator emits and what each file does at runtime:
+- The icon must be square and at least 8×8 pixels. Google recommends "larger than 48x48px so that it looks good on various surfaces".
+- Supported formats are BMP, GIF, ICO, PNG, JPEG, PPM and TIFF. SVG is not in that list, so keep an ICO or PNG icon link next to an SVG one.
+- One favicon per hostname: `example.com` and `news.example.com` can differ, `example.com/news` cannot.
+- Googlebot must be able to crawl the home page and Googlebot-Image the icon file. A `Disallow` for the icon path in robots.txt keeps it out of results.
+- Keep the icon URL stable, and expect days to weeks before a change appears. Google accepts `icon`, `shortcut icon`, `apple-touch-icon` and `apple-touch-icon-precomposed` as the `rel` value.
 
-| File | Size(s) | Surface |
-|---|---|---|
-| `favicon.ico` | 16+32+48 multi-size | Legacy browsers, bookmark managers, "request the canonical name first" code paths |
-| `favicon-16.png` | 16×16 | Browser tab on standard-DPI monitors |
-| `favicon-32.png` | 32×32 | Browser tab on retina monitors, some bookmark UIs |
-| `favicon-48.png` | 48×48 | Declared in the HTML snippet; Google Search recommends icons larger than 48×48 |
-| `favicon-64.png` | 64×64 | Not referenced by the snippet; add a `<link>` if you need it |
-| `favicon-96.png` | 96×96 | Not referenced by the snippet |
-| `favicon-128.png` | 128×128 | Not referenced by the snippet |
-| `apple-touch-icon.png` | 180×180 | iOS Safari "Add to Home Screen" |
-| `android-chrome-192.png` | 192×192 | Android home screen via PWA install (manifest icon) |
-| `android-chrome-512.png` | 512×512 | Android splash screen and other large surfaces |
-| `site.webmanifest` | text | Declares the 192/512 PNGs, theme color, and `purpose: "any maskable"` (see the note above about splitting them) |
+Search Console has no favicon report. To speed up a change, request indexing of the home page with the URL Inspection tool.
 
-Eleven files. The total size depends on the source: flat emoji and simple SVG marks compress far better than photos.
+## apple-touch-icon: 180 pixels and the root fallback
 
-## How the ICO format works
+iOS uses `apple-touch-icon` for the home-screen icon. Apple's guide documents two ways to provide it: a `<link rel="apple-touch-icon" href="...">` in the page, or, if no link is present, a file in the site root whose name starts with `apple-touch-icon`. The 180×180 size is the one Apple labels for a Retina iPhone (60 points at 3×). Apple's rule for a missing size covers iPads too: Safari uses the smallest icon larger than the recommended size, so one 180-pixel file also serves an iPad that wants 152 or 167.
 
-`favicon.ico` is the strangest file in the set because it predates PNG: it was born in Windows 3.0 and originally carried Device-Independent Bitmap (DIB / BMP) frames. Many current generators emit PNG-compressed entries instead, which Windows supports since Vista and current browsers read. PNG-compressed entries are smaller, they preserve alpha, and the format is straightforward.
+iOS adds its own rounded corners, so draw the icon as a full square. Apple's guide does not say how transparent pixels are rendered, so give this file an opaque background to get the same result on every device.
 
-An ICO file is:
+## Manifest icons, maskable and the safe zone
 
-```text
-ICONDIR (6 bytes)
-├── reserved (2 bytes, zero)
-├── type (2 bytes, 1 = ICO, 2 = CUR)
-└── count (2 bytes)
+For a site to be installable as an app, Chrome's [install criteria](https://web.dev/articles/install-criteria) require a manifest with `name` or `short_name`, a `start_url`, a `display` value of `fullscreen`, `standalone`, `minimal-ui` or `window-controls-overlay`, and icons that include a 192px and a 512px icon.
 
-ICONDIRENTRY × count (16 bytes each)
-├── width (1 byte, 0 means 256)
-├── height (1 byte, 0 means 256)
-├── colorCount (1 byte, zero for 32-bit)
-├── reserved (1 byte, zero)
-├── colorPlanes (2 bytes, 1)
-├── bitsPerPixel (2 bytes, 32)
-├── imageSize (4 bytes)
-└── imageOffset (4 bytes — absolute offset into the ICO file)
+Android launchers crop installed icons to their own shapes. An icon with `"purpose": "maskable"` tells the system it may crop; the visible mark must then fit inside a centered circle whose radius is 40% of the icon width, because the outer 10% can be cut off ([web.dev: maskable icons](https://web.dev/articles/maskable-icon)). web.dev also warns against declaring one file as `"any maskable"`: an icon padded for masking looks too small where it is shown unmasked. Ship two entries instead:
 
-(image payloads concatenated after the directory)
+```json
+{
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
 ```
 
-For PNG entries, the imageSize is the size of a complete PNG file (including its own IHDR / IDAT / IEND chunks) and the imageOffset points at the first byte of that PNG. Set the width/height fields in the ICONDIRENTRY to match the PNG's own width and height; readers use the directory to pick an entry before they decode it.
+Chrome DevTools shows the result under Application → Manifest, with an option to preview only the minimum safe area.
 
-The ZeroTool generator packs the 16, 32, and 48 PNGs into the ICO. It does not include the larger sizes: browsers that need more pixels get them from the `<link rel="icon">` PNGs, the apple-touch-icon, and the manifest. If you also want the ICO to serve as a Windows desktop icon, which can use 256×256, build a separate ICO with that size.
+## Inside favicon.ico
 
-## How the ZIP container works
+An ICO file is a 6-byte header, one 16-byte directory entry per image, then the images. Each entry stores width and height in one byte each (0 means 256), the bits per pixel, the image's byte length and its offset from the start of the file. Since Windows Vista an image may be a complete PNG file instead of a bitmap, and browsers read PNG-based ICO files.
 
-The browser needs a way to deliver eleven files in one click without firing eleven downloads, so the generator packs them into a ZIP. ZIP has been the default container for decades because every operating system can open it without third-party tooling. Inside, ZIP is layered: a sequence of local file headers each followed by a payload, then a "central directory" listing every entry, then an end-of-central-directory record telling readers where the central directory starts.
+{/* fav-ico: {"sizes":{"16":343,"32":539,"48":714},"total":1650} */}
 
-Each entry has two ways to encode payload bytes: STORED (no compression) or DEFLATE. PNG is already compressed, so re-running it through DEFLATE saves little. The ZeroTool generator uses STORED for all entries and does not ship a DEFLATE implementation.
+This is the directory of the `favicon.ico` the generator produced in the test above, read back with Python's `struct` module:
 
-CRC-32 is the one piece of the ZIP spec you cannot skip. Every entry must carry the 32-bit CRC of its uncompressed bytes. The generator precomputes a 256-entry lookup table at script start and walks the bytes once per file. Filenames are flagged as UTF-8 in bit 11 of the General Purpose Bit Field, which keeps non-ASCII names readable in macOS Finder, Windows Explorer, and 7-Zip.
+| Entry | Width × height | Bits per pixel | Bytes | Offset | Payload |
+|---|---|---|---|---|---|
+| 1 | 16 × 16 | 32 | 343 | 54 | PNG |
+| 2 | 32 × 32 | 32 | 539 | 397 | PNG |
+| 3 | 48 × 48 | 32 | 714 | 936 | PNG |
 
-## The Canvas pipeline
+The first image starts at byte 54 (6 + 3 × 16), and the file is 1,650 bytes. Putting 16, 32 and 48 into one ICO covers 1× and 2× tabs and Windows shortcuts. Larger sizes belong in PNG files that the manifest and the apple-touch-icon link point to.
 
-Drawing each PNG follows the same five steps:
+## SVG favicons
 
-```javascript
-// Pseudocode for one target size
-const canvas = createCanvas(size, size);
-const ctx = canvas.getContext('2d');
+An SVG icon scales to any tab size and can contain a `prefers-color-scheme` media query in its own `<style>` block, so one file can switch colors with the system theme:
 
-if (shape !== 'square') {
-  drawShapePath(ctx, shape, size);
-  ctx.clip();           // alpha mask for rounded / circle
-}
-if (bgMode === 'color') {
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, size, size);
-}
-const inner = size * (1 - padding * 2);
-drawSourceCentered(ctx, source, size, inner);  // emoji / text / image / svg
-const pngArrayBuffer = await canvasToPng(canvas);
+```html
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 ```
 
-`canvas.toBlob('image/png')` does the heavy lifting — sizing, dithering, alpha encoding. The output is a complete PNG payload with `IHDR`, one or more `IDAT` chunks, and `IEND`. The browser chooses the zlib compression level inside the IDAT chunks, so file sizes differ slightly between browsers.
+This was the fifth test page above, and Chromium requested only `icon.svg`. The ICO line stays for browsers without SVG icon support and for Google Search, which does not list SVG among its formats. Whether a browser re-renders the tab icon when the theme changes is up to the browser; the test did not check it. An SVG favicon must be self-contained: an icon is drawn as an image, so external fonts, images and scripts inside it do not load.
 
-There are three failure modes worth knowing:
+## Generating the set with the ZeroTool favicon generator
 
-1. **Tainted canvas.** If the canvas becomes tainted, `toBlob` throws a `SecurityError`. The generator catches it and asks you to inline external resources in the SVG first.
-2. **Missing emoji font.** Some Linux installs ship without a color emoji font. The canvas then draws a fallback glyph (often an empty box), and that box ends up in every PNG. The generator does not detect this; check the preview, or switch to Image or SVG input.
-3. **Memory pressure with large images.** The generator renders the nine sizes one after another and awaits each `toBlob` instead of holding nine canvases at once.
+The [favicon generator](/tools/favicon-generator/) draws an emoji, one to four characters, an uploaded image or pasted SVG onto a canvas in your browser and packs eleven files into a ZIP. Nothing is uploaded. These are the files from the test, generated twice: once from the default rocket emoji on a transparent background, once from the letter "Z" on blue.
 
-## SVG, emoji, and the cross-platform consistency problem
+{/* fav-files: {"names":["favicon.ico","favicon-16.png","favicon-32.png","favicon-48.png","favicon-64.png","favicon-96.png","favicon-128.png","apple-touch-icon.png","android-chrome-192.png","android-chrome-512.png","site.webmanifest"],"letter":[1650,343,539,714,904,1328,1852,2744,3003,9286,417],"letterStats":"11 files · 22.2 KB","emoji":[6029,855,1770,3350,5382,10278,16203,29689,33238,98017,417],"emojiStats":"11 files · 200.4 KB"} */}
 
-The most subtle output difference is the color emoji font. macOS ships Apple Color Emoji, Windows ships Segoe UI Emoji, Android and many Linux desktops ship Noto Color Emoji. Each font draws the same code point, such as 🚀, in its own style.
+| File | Pixels | Rocket emoji | Letter "Z" | Used by |
+|---|---|---|---|---|
+| `favicon.ico` | 16, 32, 48 | 6,029 B | 1,650 B | Tabs (Chromium picked it) |
+| `favicon-16.png` | 16 | 855 B | 343 B | Linked, not fetched by Chromium |
+| `favicon-32.png` | 32 | 1,770 B | 539 B | Linked, not fetched by Chromium |
+| `favicon-48.png` | 48 | 3,350 B | 714 B | Linked, not fetched by Chromium |
+| `favicon-64.png` | 64 | 5,382 B | 904 B | Not linked |
+| `favicon-96.png` | 96 | 10,278 B | 1,328 B | Not linked |
+| `favicon-128.png` | 128 | 16,203 B | 1,852 B | Not linked |
+| `apple-touch-icon.png` | 180 | 29,689 B | 2,744 B | iOS home screen |
+| `android-chrome-192.png` | 192 | 33,238 B | 3,003 B | Manifest |
+| `android-chrome-512.png` | 512 | 98,017 B | 9,286 B | Manifest |
+| `site.webmanifest` | — | 417 B | 417 B | Fetched on load |
 
-If you generate your favicon on macOS and someone visits your site from Windows, they still see the favicon you generated — the bytes are baked into the PNG. The Canvas renderer captures the emoji as drawn on the developer's machine, then ships those pixels to every visitor. So pick a machine, generate once, and the result is consistent for every visitor afterward. Where consistency matters is the developer's own iteration: regenerating six months later on a different OS will produce a slightly different favicon.
+The tool reported "11 files · 200.4 KB" for the emoji and "11 files · 22.2 KB" for the letter. Color emoji have many gradients, so their PNGs are about ten times larger than a flat letter. The emoji is drawn with the system emoji font, so the same emoji looks different when generated on Windows or Linux; use the Image or SVG input when the result must not depend on the machine.
 
-For pixel-identical output across machines, switch to the Image or SVG input. A vector mark in SVG renders to bitmap deterministically based on the SVG itself, not the OS font stack. The catch is that the SVG must be self-contained — no `<image href>` to remote resources, no external `<use>` fragments, no remote `@font-face` URLs. Inline everything before pasting.
-
-## What the HTML snippet does for you
-
-The generator produces this snippet, which goes inside `<head>`:
+The tool's HTML snippet is:
 
 ```html
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -152,43 +142,32 @@ The generator produces this snippet, which goes inside `<head>`:
 <meta name="theme-color" content="#ffffff">
 ```
 
-A few subtleties:
+And its `site.webmanifest`, here with the default theme color and a transparent background:
 
-- The HTML standard lets the browser choose among all `<link rel="icon">` candidates using `sizes` and `type`; it does not define an order of preference. Putting the ICO first is convention, not requirement.
-- `<meta name="theme-color">` colors the address bar on mobile Safari and Chrome and the title bar on installed PWAs. It is not a favicon, but it travels with the favicon set because it lives in the same head section and shares the brand-color decision.
-- `site.webmanifest` is by convention; many tutorials use `manifest.json`. Both work. Stick with whichever the rest of your project uses.
-- iOS Safari uses `apple-touch-icon` for the home screen when it is present. Android Chrome uses the manifest icons for installed web apps.
+```json
+{
+  "name": "",
+  "short_name": "",
+  "icons": [
+    {
+      "src": "/android-chrome-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/android-chrome-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff",
+  "display": "standalone"
+}
+```
 
-## How ZeroTool compares to other generators
+Before you deploy the package, make three edits. Fill in `name` and `short_name` and add `"start_url": "/"`; without them the site does not meet Chrome's install criteria. Change `"any maskable"` to `"any"`, and if you want a maskable icon, generate a separate 512-pixel file whose mark stays inside that central circle: about 10% padding on each side for a round mark, about 22% for a square one, whose corners must fit inside the circle too (the generator's padding slider goes to 30%) and list it with `"purpose": "maskable"`. And, if you like, delete `favicon-64.png`, `favicon-96.png` and `favicon-128.png`, which no tag references, and the 16/32/48 PNG lines, which Chromium did not use when the ICO line was present.
 
-[RealFaviconGenerator](https://realfavicongenerator.net/) is the long-standing reference. It covers more platform-specific options and can check an existing site's favicon setup. Use it when you need those options.
-
-[favicon.io](https://favicon.io/) is closest in spirit to ZeroTool: simple inputs (emoji, text, image) and a small package with a webmanifest.
-
-The ZeroTool generator emits eleven files, a webmanifest, and a copy-paste HTML snippet, and it renders everything in your browser without uploading the source image.
-
-## A pre-deploy checklist
-
-Before you deploy the package, run through these:
-
-1. **Drop the eleven files at the site root.** Browsers and crawlers that find no icon declaration request `/favicon.ico` at the root, and the HTML snippet and manifest use root paths.
-2. **Paste the HTML snippet inside `<head>`.** The PNGs and apple-touch-icon are only used when the page declares them with `<link>` tags.
-3. **Update `site.webmanifest`** with your site's `name` and `short_name`. The generator leaves them empty so you do not ship a placeholder name.
-4. **Test in DevTools' Application panel.** Application → Manifest shows the parsed manifest, the resolved icons, and any errors. The "Show only the minimum safe area for maskable icons" option previews the maskable crop.
-5. **Check the iOS path.** Add to Home Screen on a real iPhone (or in iOS Simulator). iOS rounds the corners itself and does not keep transparency, so give the apple-touch-icon an opaque background.
-6. **Check the Google Search favicon.** Google requires a square icon of at least 8×8 and recommends larger than 48×48 ([Google Search Central](https://developers.google.com/search/docs/appearance/favicon-in-search)). Google picks it up when it recrawls the home page; Search Console has no favicon report.
-7. **Regenerate when the brand changes.** Treat the favicon set as a build artifact, not a one-off. Keep the source file (the SVG or the high-resolution PNG you fed in) in version control, and regenerate from the same source whenever the mark or theme color changes.
-
-## Privacy notes
-
-Because the entire pipeline runs in your browser, no version of your source image leaves your machine. This matters more than it sounds: when you generate a favicon for an unreleased product, you are leaking the brand mark to whichever generator you use. ZeroTool keeps the image local. Open DevTools → Network and click Generate: no request carries the image; the analytics event records only the tool name and the action.
-
-## Further reading
-
-- [Apple's "Configuring web content" guide on apple-touch-icon sizing](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/ConfiguringWebApplications/ConfiguringWebApplications.html)
-- [W3C Web App Manifest specification](https://www.w3.org/TR/appmanifest/) — the source of truth for manifest icon `purpose` values
-- [web.dev: Maskable icons in PWAs](https://web.dev/articles/maskable-icon)
-- [Google Search Central: Define a favicon to show in search results](https://developers.google.com/search/docs/appearance/favicon-in-search)
-- [PKWARE ZIP file format specification (APPNOTE.TXT)](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT) — for anyone who wants to read the full ZIP layout
-
-Related tools on ZeroTool: [SVG to PNG Converter](/tools/svg-to-png-converter), [WebP Converter](/tools/webp-converter), [Image to Base64](/tools/image-to-base64), [QR Code Generator](/tools/qr-code-generator).
+Upload the files to the site root, because the snippet and manifest use root paths. Then check the result in DevTools under Application → Manifest, on an iPhone with Add to Home Screen, and, after Google recrawls the home page, in a search for your site. Related tools: [SVG to PNG Converter](/tools/svg-to-png-converter/) for making a high-resolution source, and [Image to Base64](/tools/image-to-base64/) if you want to inline a small icon.

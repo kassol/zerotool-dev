@@ -1,244 +1,219 @@
 ---
-title: "CSS Grid Generator Online: Build Grid Layouts Without Writing CSS"
-description: "Use a CSS grid generator online to visually design grid layouts and export clean CSS. Learn grid-template-columns, rows, gaps, and responsive patterns."
+title: "CSS Grid Explained: Tracks, fr, Named Areas, auto-fill vs auto-fit and Subgrid"
+description: "How CSS Grid sizes and places things, checked in Chrome: fr and minmax(), why 1fr columns overflow, implicit tracks, named lines and areas, auto-fill vs auto-fit, subgrid."
 pubDate: 2026-04-08
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["css-grid", "css", "layout", "grid-generator", "developer-tools"]
+tags: ["css grid", "grid layout", "css", "layout", "frontend"]
 ---
 
-CSS Grid is the most powerful layout system in CSS, but writing grid properties by hand can be tedious — especially when you're iterating on column counts, gap sizes, and named template areas. A **CSS grid generator online** lets you configure your layout visually and copy the exact CSS you need.
+CSS Grid lays out the children of a container in rows and columns at the same time. Its rules are in [CSS Grid Layout Module Level 2](https://www.w3.org/TR/css-grid-2/), a Candidate Recommendation Draft that keeps everything from Level 1 and adds subgrid. Most of the questions people search for, such as why a `1fr` column refuses to shrink, why `-1` does not reach the last column, or when `auto-fill` and `auto-fit` give different results, are answered in specific sections of that spec. This guide goes through them and checks each one in a browser. All measurements were taken on 2026-10-02 in Chrome 152 on macOS, by applying the declarations to test elements and reading `getComputedStyle()` and `getBoundingClientRect()`.
 
-[Try our CSS Grid Generator →](/tools/css-grid-generator)
+Browser support is no longer a concern for the basics: `display: grid` works in Chrome 57, Firefox 52, Safari 10.1 and Edge 16 and later, and `gap` in grid containers from Chrome 66, Firefox 61 and Safari 12 (MDN browser-compat-data 8.1.4). Subgrid is newer and is covered in its own section.
 
-## How CSS Grid Works
+## Lines, tracks, cells and areas
 
-CSS Grid turns any container into a two-dimensional layout system. Unlike Flexbox (which arranges items along a single axis), Grid gives you explicit control over both rows and columns simultaneously.
+Spec section 3 defines four words that the rest of the spec relies on:
+
+- **Grid lines** are the dividing lines. A grid with three columns has four vertical lines, numbered 1 to 4 from the start edge and −1 to −4 from the end edge.
+- **Tracks** are the rows and columns between two adjacent lines.
+- A **cell** is the intersection of one row and one column.
+- A **grid area** is any rectangle of one or more cells, bounded by four lines.
+
+`grid-template-columns` and `grid-template-rows` list the tracks. With
+
+```css
+.container {
+  display: grid;
+  width: 1000px;
+  grid-template-columns: 200px 1fr 1fr;
+}
+```
+
+Chrome resolved the columns to `200px 400px 400px`, so the four column lines sit at 0, 200, 600 and 1000px. Items are placed by line numbers (`grid-column: 2 / 4` covers the second and third columns), by names, or automatically in source order, one per cell.
+
+## Sizing tracks: fixed lengths, fr, auto and minmax()
+
+A track size is one of a few kinds of value (§7.2.1):
+
+| Value | Meaning |
+|---|---|
+| `240px`, `20%`, `15rem` | A fixed size; percentages are of the container's content box |
+| `1fr` | A share of the free space left after the other tracks are sized |
+| `auto` | Sized by the content, and stretched if there is space left over |
+| `min-content`, `max-content` | The smallest or largest size the content can take without overflowing |
+| `minmax(min, max)` | Anything between `min` and `max` |
+| `fit-content(300px)` | Like `auto`, but no larger than the argument |
+
+`repeat(3, 1fr)` is shorthand for `1fr 1fr 1fr`. Gaps are subtracted before the fr shares are worked out, so in a 1000px container with `repeat(3, 1fr)` and a 16px `column-gap`, each column is (1000 − 2 × 16) ÷ 3 = 322.67px; Chrome reported 322.664px.
+
+Rows behave less obviously, because the container usually has no fixed height. In a 600px-wide grid with `grid-template-rows: repeat(2, 1fr)` and six items, one of which was 200px tall and the rest 20px, Chrome gave both rows 200px: when the height is not definite, `1fr` rows are sized from their content and then equalised to the largest. With `repeat(2, auto)` the same items gave `200px 20px`. If you only want rows that fit their content, use `auto`, which is also what an unlisted (implicit) row gets.
+
+## Why a 1fr column grows past its share
+
+Section 7.2.4 says that a flexible size outside `minmax()` "implies an automatic minimum (i.e. `minmax(auto, <flex>)`)". The automatic minimum of a grid item (§6.6) is roughly its min-content width: the longest word, URL, image or table it contains. Grid will not make the track smaller than that.
+
+Two measurements in a 600px container with `repeat(3, 1fr)`:
+
+| Content of the middle cell | Columns in Chrome | Container scroll width |
+|---|---|---|
+| An unbreakable 500px element | `50px 500px 50px` | 600px |
+| An unbreakable 750px element | `9.20312px 750px 9.25px` | 768px |
+
+In the first case the middle track takes 500px and the other two share the remaining 100px. In the second there is no free space left, the outer tracks shrink to their own content (one letter each), and the grid overflows its container by 168px. A long URL in a table cell or a `<pre>` block causes exactly this.
+
+The fix is to give the tracks a zero minimum:
+
+```css
+.container {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+```
+
+With that, Chrome kept the columns at `200px 200px 200px`. The 750px element still overflows its own cell (the container's scroll width became 950px), so the content needs handling too: `overflow-wrap: anywhere` for text, `max-width: 100%` for images, or `overflow: auto` on a code block.
+
+## The explicit grid and the implicit grid
+
+The tracks you list are the **explicit grid** (§7.1). When an item is placed outside it, or there are more items than cells, the browser adds **implicit tracks** (§7.5), sized by `grid-auto-rows` and `grid-auto-columns` (both `auto` by default). `grid-auto-flow` decides whether extra items create rows (the default) or columns, and `dense` lets later items fill earlier holes.
+
+This matters for negative line numbers. Section 8.3 says a negative integer counts "starting from the end edge of the explicit grid", so `-1` is the last explicit line, not the last line of the whole grid. A test with three 200px explicit columns, `grid-auto-columns: 100px`, a header set to `grid-column: 1 / -1` and another item set to `grid-column: 5`:
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: repeat(3, 200px);
+  grid-auto-columns: 100px;
+}
+.header { grid-column: 1 / -1; }
+.far    { grid-column: 5; }
+```
+
+Chrome resolved the columns to `200px 200px 200px 100px 100px`. The far item sat at x = 700px in the fifth column, and the header covered only the first 600px. If a full-width element must also cover columns created later, give the grid enough explicit columns or place it with `1 / span 5`.
+
+## Named lines and named areas
+
+Line numbers break when a column is added. Names do not.
+
+**Named lines** go in square brackets inside the track list (§7.2.2). A line can have several names:
+
+```css
+.page {
+  display: grid;
+  grid-template-columns:
+    [full-start] 1fr [content-start] 600px [content-end] 1fr [full-end];
+}
+.page > * { grid-column: content; }
+.page > .wide { grid-column: full; }
+```
+
+`grid-column: content` works even though no area is called `content`: when lines named `foo-start` and `foo-end` exist, the grid has an implicitly named area `foo` (§7.3.3). In a 1000px container Chrome placed the normal children at x = 200px with a width of 600px, and `.wide` at x = 0 with the full 1000px. This is a common way to keep text in a readable column while letting images break out.
+
+**Named areas** draw the layout as strings (§7.3). Each string is a row, each word a cell, and a `.` is an empty cell:
+
+```css
+.app {
+  display: grid;
+  width: 960px;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 60px 300px 40px;
+  grid-template-areas:
+    "head head"
+    "side main"
+    "foot foot";
+  column-gap: 24px;
+}
+.app > header { grid-area: head; }
+.app > nav    { grid-area: side; }
+.app > main   { grid-area: main; }
+.app > footer { grid-area: foot; }
+```
+
+Chrome put `main` at x = 264px, y = 60px, 696 × 300px, and the header and footer across the full 960px. The order of the elements in the HTML did not matter. Defining areas also defines lines: the column line before `main` gets the name `main-start` and the one after it `main-end` (§7.3.2), so `grid-column: main-start / main-end` lands in the same place. `grid-area: main` sets all four placement properties to `main`, and the browser resolves each of them to those implicit lines.
+
+Two mistakes make the whole `grid-template-areas` declaration invalid, so the browser keeps whatever value applied before. Every string must have the same number of cells; a third row of just `"foot"` made Chrome compute `none`. And every area must be a rectangle; `"a b" "b a"` was rejected. The spec says non-rectangular or disconnected areas "may be permitted in a future version".
+
+## auto-fill vs auto-fit
+
+`repeat()` accepts `auto-fill` or `auto-fit` instead of a count, creating as many tracks as fit (§7.2.3.2). The count is the largest number of tracks that does not overflow the container, gaps included, using the minimum of a `minmax()` when the maximum is flexible. For a 1000px container, a 16px gap and `minmax(180px, 1fr)` that is floor((1000 + 16) ÷ (180 + 16)) = 5 columns.
+
+The two keywords differ only in what happens to tracks with no items in them. With two items:
+
+| Declaration | Columns in Chrome | Second item |
+|---|---|---|
+| `repeat(auto-fill, minmax(180px, 1fr))` | five columns of 187.2px (three empty) | x = 203.2px, 187.2px wide |
+| `repeat(auto-fit, minmax(180px, 1fr))` | `492px 492px 0px 0px 0px` | x = 508px, 492px wide |
+
+With `auto-fill` the empty columns keep their space, so two items stay card-sized and leave room on the right. With `auto-fit` the empty columns collapse to zero (their gaps collapse too) and the two items stretch across the row. Once there are enough items to fill every column, the two give the same result.
+
+Neither keyword helps when the container is narrower than the minimum. In a 150px container, `minmax(180px, 1fr)` produced one 180px column and a 30px overflow. Writing the minimum as `minmax(min(180px, 100%), 1fr)` gave one 150px column instead; `min()` works in Chrome 79, Firefox 75 and Safari 11.1 and later.
+
+## Subgrid: aligning rows across cards
+
+A grid item can be a grid container itself, but its tracks are normally independent of its parent's. That is why the footers of a row of cards do not line up when the titles have different lengths. Level 2 adds `subgrid` (§9): an item that spans several tracks of its parent can use those tracks as its own.
+
+```css
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  column-gap: 20px;
+}
+.card {
+  display: grid;
+  grid-row: span 3;               /* title, body, footer */
+  grid-template-rows: subgrid;
+}
+```
+
+In a test with three cards whose titles were 24, 72 and 48px tall, bodies 80, 80 and 120px, and 30px footers, the footers started at y = 104, 152 and 168px when each card had its own `auto auto auto` rows. With `grid-template-rows: subgrid` all three footers started at y = 192px, and the parent's rows resolved to `72px 120px 30px`: each shared row became as tall as the tallest entry from any card.
+
+Subgrid is supported in Chrome and Edge 117, Firefox 71 and Safari 16 and later (MDN browser-compat-data 8.1.4). In older browsers `grid-template-rows: subgrid` is an invalid value and is ignored, so the cards fall back to their own rows and still work, with unaligned footers.
+
+## Grid or flexbox
+
+Grid sizes rows and columns together: a cell's width depends on the column it is in, not only on its own content. Flexbox sizes each line independently, so items in different rows do not line up unless they have fixed widths. Use grid when things must align in two directions (page layouts, card grids, forms with a label column) and flexbox for a single row or column whose items should keep their own sizes (navigation bars, button groups, a row of tags). The two combine well: a grid card can use flexbox inside it. The [CSS flexbox guide](/blog/css-flexbox-generator-guide/) covers the other side.
+
+## Building the container with the generator
+
+The [CSS grid generator](/tools/css-grid-generator/) writes the container rule only. It has number fields for Columns (1–12) and Rows (1–8), text fields for the column and row gaps, and two free-text fields for `grid-template-columns` and `grid-template-rows`. Changing a count rewrites the matching template field to `repeat(N, 1fr)`, so set the counts first and type a custom template last. On load it shows:
+
+{/* cgg-check: {"cols":3,"rows":2,"colGap":"1rem","rowGap":"1rem"} */}
 
 ```css
 .container {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  column-gap: 1rem;
+  row-gap: 1rem;
+}
+```
+
+As shown above, those `1fr` rows make every row as tall as the tallest one. For the overflow-safe tile grid from the auto-fill section, set Rows to 1, type the template, and set the gaps:
+
+{/* cgg-check: {"cols":3,"rows":1,"colGap":"16px","rowGap":"16px","tmplCols":"repeat(auto-fill, minmax(min(180px, 100%), 1fr))","tmplRows":"auto"} */}
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
   grid-template-rows: auto;
-  gap: 1.5rem;
+  column-gap: 16px;
+  row-gap: 16px;
 }
 ```
 
-This creates a 3-column grid where each column takes an equal fraction of the available width, with a 1.5rem gap between all cells.
+Named lines can be typed into the template field as well; with Columns at 3 and Rows at 1:
 
-## Core Grid Properties
-
-### `grid-template-columns` and `grid-template-rows`
-
-These define the track structure of your grid. The most common patterns:
-
-| Pattern | CSS | Result |
-|---|---|---|
-| Equal columns | `repeat(3, 1fr)` | 3 equal-width columns |
-| Fixed + fluid | `240px 1fr` | Sidebar + main content |
-| Named lines | `[sidebar] 240px [main] 1fr` | Names the grid lines before each track |
-| Auto-fill | `repeat(auto-fill, minmax(200px, 1fr))` | Responsive card grid |
-| Mixed units | `200px 1fr 2fr` | Fixed, then two fluid columns |
-
-### `gap` (formerly `grid-gap`)
-
-Controls spacing between tracks. You can set row and column gaps independently:
+{/* cgg-check: {"cols":3,"rows":1,"colGap":"0","rowGap":"0","tmplCols":"[full-start] 1fr [content-start] 600px [content-end] 1fr [full-end]","tmplRows":"auto"} */}
 
 ```css
-gap: 1rem;           /* Same gap in both directions */
-gap: 1rem 2rem;      /* row-gap column-gap */
-row-gap: 1rem;
-column-gap: 2rem;
-```
-
-### `grid-column` and `grid-row`
-
-Place items explicitly within the grid:
-
-```css
-.hero {
-  grid-column: 1 / -1;   /* Span full width */
-  grid-row: 1 / 3;       /* Span 2 rows */
-}
-
-.sidebar {
-  grid-column: 1;
-  grid-row: 2 / 5;
-}
-
-.main {
-  grid-column: 2 / -1;
-  grid-row: 2 / 5;
-}
-```
-
-`-1` refers to the last line of the explicit grid, so `1 / -1` spans every explicit column regardless of the column count. Implicit columns created by auto-placement are not included.
-
-### `grid-template-areas`
-
-Named areas make complex layouts readable:
-
-```css
-.layout {
+.container {
   display: grid;
-  grid-template-columns: 240px 1fr;
-  grid-template-rows: 60px 1fr 40px;
-  grid-template-areas:
-    "header  header"
-    "sidebar main"
-    "footer  footer";
-}
-
-.header  { grid-area: header; }
-.sidebar { grid-area: sidebar; }
-.main    { grid-area: main; }
-.footer  { grid-area: footer; }
-```
-
-Each string in `grid-template-areas` represents one row. Repeated names span multiple cells. A `.` represents an empty cell.
-
-## Common Grid Patterns
-
-### Card Grid (Auto-Responsive)
-
-The most common use case: a grid of cards that fills the available space and wraps naturally without media queries.
-
-```css
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: [full-start] 1fr [content-start] 600px [content-end] 1fr [full-end];
+  grid-template-rows: auto;
+  column-gap: 0;
+  row-gap: 0;
 }
 ```
 
-`auto-fill` creates as many columns as fit. `minmax(280px, 1fr)` ensures each card is at least 280px wide but grows to fill available space. No media queries needed.
-
-### Holy Grail Layout
-
-The classic three-column layout with header and footer:
-
-```css
-.page {
-  display: grid;
-  grid-template-columns: 200px 1fr 160px;
-  grid-template-rows: auto 1fr auto;
-  grid-template-areas:
-    "header  header  header"
-    "nav     main    aside"
-    "footer  footer  footer";
-  min-height: 100vh;
-}
-```
-
-### Masonry-Style Grid
-
-While true masonry requires JavaScript, you can approximate it:
-
-```css
-.masonry {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: 10px;
-  gap: 10px;
-}
-
-/* Each item spans rows based on its content height */
-.item { grid-row-end: span 20; }    /* Short */
-.item.tall { grid-row-end: span 35; } /* Tall */
-```
-
-### Dashboard Grid
-
-```css
-.dashboard {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  gap: 1rem;
-}
-
-.widget-full    { grid-column: span 12; }
-.widget-half    { grid-column: span 6; }
-.widget-third   { grid-column: span 4; }
-.widget-quarter { grid-column: span 3; }
-```
-
-## Making Grid Layouts Responsive
-
-### Media Query Approach
-
-```css
-.grid {
-  display: grid;
-  grid-template-columns: 1fr;          /* 1 column on mobile */
-  gap: 1rem;
-}
-
-@media (min-width: 640px) {
-  .grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (min-width: 1024px) {
-  .grid { grid-template-columns: repeat(4, 1fr); }
-}
-```
-
-### Auto-Fill + minmax (No Media Queries)
-
-```css
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-  gap: 1rem;
-}
-```
-
-`min(100%, 280px)` prevents overflow on very narrow screens — a common gotcha with `minmax`.
-
-### Named Areas + Media Queries
-
-```css
-.layout {
-  display: grid;
-  grid-template-areas:
-    "header"
-    "main"
-    "sidebar"
-    "footer";
-}
-
-@media (min-width: 768px) {
-  .layout {
-    grid-template-columns: 1fr 300px;
-    grid-template-areas:
-      "header  header"
-      "main    sidebar"
-      "footer  footer";
-  }
-}
-```
-
-## Grid vs Flexbox: When to Use Each
-
-Both are modern layout tools. The distinction is simple:
-
-- **Grid**: Two-dimensional layouts. You control rows *and* columns. Use it for page structure, dashboards, card grids, and form layouts.
-- **Flexbox**: One-dimensional. Items flow along a single axis. Use it for navigation bars, button groups, centering a single element, and aligning items within a row.
-
-They also compose well — a Grid layout can contain Flex containers, and vice versa.
-
-## Debugging Grid Layouts
-
-Chrome, Firefox, and Edge all include a built-in Grid inspector. In DevTools, click the `grid` badge next to a grid container in the Elements panel. This overlays the grid lines directly on the page, showing column/row numbers and gaps.
-
-Firefox's Grid inspector is particularly strong: it highlights named areas and supports multiple simultaneous grid overlays.
-
-## CSS Grid Generator
-
-Configuring `grid-template-columns`, `grid-template-rows`, and `gap` values manually becomes trial-and-error for complex layouts. Our [CSS Grid Generator](/tools/css-grid-generator) lets you:
-
-- Set the column count (1–12) and row count (1–8); the templates follow as `repeat(n, 1fr)`
-- Type your own `grid-template-columns` and `grid-template-rows` values (any unit, `minmax()`, `repeat()`) to override them
-- Set column and row gaps separately
-- Copy the `.container` CSS block, ready to paste
-
-**[Try the CSS Grid Generator →](/tools/css-grid-generator)**
+Keep in mind what the tool does not do. It has no fields for `grid-template-areas`, item placement (`grid-column`, `grid-area`), alignment or subgrid; add those to the copied CSS. The preview always draws Columns × Rows cells, so with an `auto-fill` template the extra cells flow into rows just as real children would. The template and gap fields are copied as typed without validation: an invalid value such as `repeat(3 1fr)` ends up in the output, and the preview keeps the last valid template because the browser ignores the invalid one.
