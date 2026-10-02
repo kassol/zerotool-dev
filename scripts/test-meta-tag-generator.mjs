@@ -1,7 +1,9 @@
 // Meta Tag Generator — generated <head> block
 //
 // Read:  src/components/tools/MetaTagGeneratorTool.astro (runs the real buildHead() and its escape
-//        helpers between the `engine:start` / `engine:end` markers)
+//        helpers between the `engine:start` / `engine:end` markers),
+//        src/content/blog/meta-tag-generator-guide/{en,ja}.mdx (`mtg-check` examples, `mtg-live` tag
+//        lists), dist/{,ja/}tools/meta-tag-generator/index.html (SKIP without a build)
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -70,6 +72,50 @@ if (ld) {
   check('JSON-LD description round-trips', ld.description === tricky.description, ld.description);
   check('JSON-LD name round-trips', ld.name === tricky.title, ld.name);
   check('Article gets a Person author', ld.author && ld.author['@type'] === 'Person' && ld.author.name === 'Jane Doe');
+}
+
+// ---------- the Open Graph guide (en) and the OGP guide (ja) ----------
+// `mtg-check: {json}` → the next html block equals buildHead() for those fields on top of an empty
+// form (viewport off, robots index/follow, card summary_large_image). `mtg-live: path` → the next text
+// block equals the og:/twitter: tag names in that dist page, extracted with the regex the guides give
+// for the curl command (needs `npm run build`; SKIP without dist).
+{
+  const empty = {
+    title: '', description: '', canonical: '', siteName: '', author: '', keywords: '', language: 'en', themeColor: '',
+    robotsIndex: 'index', robotsFollow: 'follow', viewport: false, ogType: 'website', ogLocale: '', ogImage: '',
+    ogImageWidth: '', ogImageHeight: '', ogImageAlt: '', twCard: 'summary_large_image', twSite: '', twCreator: '', twImage: '', schemaType: '',
+  };
+  const tagRe = /(property|name)="(og|twitter):[a-z_:]+"/g;
+  for (const lang of ['en', 'ja']) {
+    const guide = readFileSync(join(root, 'src/content/blog/meta-tag-generator-guide', lang + '.mdx'), 'utf8');
+    const fm = guide.match(/^---\n([\s\S]*?)\n---/)[1];
+    check(lang + ' guide is indexable', !/^noindex:\s*true/m.test(fm) && !/^draft:\s*true/m.test(fm));
+    const tpl = [/^## What (is|are) /m, /^## .*Online/m, /^## .* in Code/m, /^## (Summary|Conclusion)/m].filter((re) => re.test(guide));
+    check(lang + ' guide has no template headings', tpl.length === 0, tpl.map(String).join(' '));
+    const checks = [...guide.matchAll(/\{\/\* mtg-check: (\{.*?\}) \*\/\}\s*```html\n([\s\S]*?)```/g)];
+    check(lang + ' guide has mtg-check blocks', checks.length >= 1, checks.length);
+    for (const m of checks) {
+      const v = { ...empty, ...JSON.parse(m[1]) };
+      const out = buildHead(v);
+      check(lang + ' mtg-check output: ' + v.title.slice(0, 20), m[2].trimEnd() === out, '\n' + out);
+      check(lang + ' mtg-check output parses as one head', headOf(out).bodyNodes === 0);
+      if (lang === 'ja') {
+        check('ja guide quotes the title and description counter values',
+          guide.includes(`タイトルは ${v.title.length} 文字、説明は ${v.description.length} 文字`), v.title.length + '/' + v.description.length);
+      }
+    }
+    const lives = [...guide.matchAll(/\{\/\* mtg-live: (\S+) \*\/\}\s*```text\n([\s\S]*?)```/g)];
+    check(lang + ' guide has an mtg-live block', lives.length === 1, lives.length);
+    for (const m of lives) {
+      let page = null;
+      try { page = readFileSync(join(root, 'dist', m[1]), 'utf8'); } catch {}
+      if (!page) { console.log('SKIP: ' + lang + ' mtg-live (no dist/' + m[1] + ')'); continue; }
+      const head = page.slice(0, page.indexOf('</head>'));
+      const names = (head.match(tagRe) || []).join('\n');
+      check(lang + ' mtg-live tag list matches dist/' + m[1], m[2].trimEnd() === names, '\n' + names);
+    }
+    check(lang + ' guide gives the curl regex the test uses', guide.includes(`grep -oE '(property|name)="(og|twitter):[a-z_:]+"'`));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

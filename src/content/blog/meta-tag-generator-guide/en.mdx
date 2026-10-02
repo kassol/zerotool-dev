@@ -1,176 +1,202 @@
 ---
-title: "Meta Tag Generator: One Page, Four Audiences"
-description: "Build a complete <head> meta block — Open Graph, Twitter Card, Schema.org JSON-LD, and SEO basics. Covers og:image specs, canonical URL pitfalls, and platform-specific quirks."
+title: "Open Graph Meta Tags: What Facebook, X, Slack and LINE Read From Your Page"
+description: "The Open Graph protocol's four required tags, how image arrays work, and what Facebook, X, Slack, LINE and Google each read, cache and ignore, with real generator output."
 pubDate: 2026-05-05
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["meta-tags", "open-graph", "twitter-card", "schema-org", "seo"]
+tags: ["open-graph", "meta-tags", "twitter-card", "schema-org", "seo"]
 ---
 
-The page is ready, the deploy button is one click away, and four audiences are about to read your `<head>`: Google's crawler, Facebook's unfurl bot, Twitter's card scraper, and Discord's link preview. None of them sees the rendered HTML body the way a human does. They see the meta tags.
+Open Graph is a set of `<meta>` tags in a page's `<head>` that tells other services what the page is: its title, an image, a canonical URL and a type. The [Open Graph protocol](https://ogp.me/) was created at Facebook and is based on RDFa, which is why the tags use a `property` attribute instead of `name`. Today the same tags drive the link cards on Facebook and Instagram, the fallback for X cards, Slack unfurls, LINE chat previews and the thumbnails on Hatena Bookmark. Each of those services reads a different subset, caches it for a different time, and documents its limits in a different place.
 
-[Generate a complete &lt;head&gt; block now →](/tools/meta-tag-generator)
+This guide goes through the protocol itself, then what each platform says it reads, and ends with the output of ZeroTool's [Meta Tag Generator](/tools/meta-tag-generator/) so you can compare a generated block with the rules.
 
-## The Four Layers of Page Metadata
+## The four required properties
 
-A modern page head answers four separate questions:
+The protocol names four properties that every page needs. The definitions below are quoted from ogp.me:
 
-| Layer | Audience | Key tags |
-|-------|----------|----------|
-| Basic SEO | Search engines, browsers | `title`, `description`, `canonical`, `robots`, `viewport` |
-| Open Graph | Facebook, LinkedIn, Slack, iMessage, Discord | `og:title`, `og:description`, `og:image`, `og:url`, `og:type` |
-| Twitter Card | Twitter / X | `twitter:card`, `twitter:image`, `twitter:site` |
-| Schema.org JSON-LD | Google rich results, voice assistants | `<script type="application/ld+json">` |
+| Property | ogp.me definition | Example |
+|---|---|---|
+| `og:title` | The title of your object as it should appear within the graph | `Rotating API keys without downtime` |
+| `og:type` | The type of your object; other properties may be required depending on the type | `article` |
+| `og:image` | An image URL which should represent your object | `https://example.com/og/rotate-api-keys.png` |
+| `og:url` | The canonical URL of your object that will be used as its permanent ID in the graph | `https://example.com/blog/rotate-api-keys/` |
 
-These layers are not redundant. Each was designed by a different vendor and answers questions the others don't. Search engines do not read Open Graph for unfurls. Facebook does not read Schema.org for the share preview. Skip a layer and that audience falls back to guessing — usually badly.
+The optional properties ogp.me recommends are `og:description` ("a one to two sentence description"), `og:site_name`, `og:locale` (format `language_TERRITORY`, default `en_US`), `og:locale:alternate`, `og:determiner`, `og:audio` and `og:video`. A page with no `og:type` is treated as `website`, which ogp.me states for any non-marked-up page and Facebook repeats as its default.
 
-## The Required Five for Social Cards
+The value types matter more than they look. ogp.me defines a URL as "all valid URLs that utilize the http:// or https:// protocols", so `og:image` must be absolute: `/og/post.png` is not a valid value, whatever a browser would do with it in an `<img>`. Integers are 32-bit, and dates such as `article:published_time` are ISO 8601.
 
-The [Open Graph protocol](https://ogp.me/) names four required properties — `og:title`, `og:type`, `og:image` and `og:url` — and a description is what most previews show under the title:
+The `article` type adds its own namespace: `article:published_time`, `article:modified_time`, `article:expiration_time`, `article:author` (an array of profiles), `article:section` and `article:tag`. Other global types are `book`, `profile`, `website` and the `music.*` and `video.*` verticals.
+
+## Structured properties and arrays
+
+Some properties take extra metadata after a colon. For `og:image` the protocol defines `og:image:url` (identical to `og:image`), `og:image:secure_url` (an alternate URL if the page requires HTTPS), `og:image:type`, `og:image:width`, `og:image:height` and `og:image:alt`. On `og:image:alt` the spec is direct: "If the page specifies an og:image it should specify og:image:alt."
+
+Repeating a tag makes an array, and order is the whole syntax. ogp.me says "the first tag (from top to bottom) is given preference during conflicts", and a structured property belongs to the most recent root tag before it. This block, taken from the spec, describes three images: the first is 300×300, the second has no size, and only the third is 1000 pixels tall.
 
 ```html
-<meta property="og:title" content="Article title">
-<meta property="og:type" content="article">
-<meta property="og:image" content="https://example.com/og/article.png">
-<meta property="og:url" content="https://example.com/article/">
-<meta name="description" content="One-sentence pitch under 160 chars.">
+<meta property="og:image" content="https://example.com/rock.jpg" />
+<meta property="og:image:width" content="300" />
+<meta property="og:image:height" content="300" />
+<meta property="og:image" content="https://example.com/rock2.jpg" />
+<meta property="og:image" content="https://example.com/rock3.jpg" />
+<meta property="og:image:height" content="1000" />
 ```
 
-If you only have time to write five lines, write these five.
+Two consequences follow. Put the image you want shown first, and never emit `og:image:width` before its `og:image`, because a width with no preceding root attaches to nothing.
 
-## og:image: The Spec That Catches Everyone
+## What each platform reads
 
-The single most common reason a Slack or Discord preview looks broken is an `og:image` problem. The spec is unforgiving:
+The table below lists only what each platform documents. Where a platform has removed its documentation, the archived copy is linked.
 
-**Size.** 1200x630 pixels (1.91:1) is the safe default and what Facebook, LinkedIn, and Discord render most reliably. Twitter's `summary_large_image` expects 2:1, so 1200x600 also works. Anything smaller than 200x200 is rejected outright by some scrapers.
+| Platform | Tags it reads | Image rules | Cache | Robots |
+|---|---|---|---|---|
+| Facebook, Instagram, Messenger ([webmasters guide](https://developers.facebook.com/documentation/sharing/webmasters), [crawler](https://developers.facebook.com/documentation/sharing/webmasters/web-crawlers), [images](https://developers.facebook.com/documentation/sharing/webmasters/images)) | `og:url`, `og:title`, `og:description`, `og:image`, `og:type`, `og:locale`, `fb:app_id`; OG tags must appear within the first 1 MB of the page | Minimum 200×200, at most 8 MB, at least 1200×630 recommended, aspect ratio close to 1.91:1; `og:image:type` one of `image/jpeg`, `image/gif`, `image/png` | Images are cached by URL; a replaced image needs a new URL | FacebookExternalHit may bypass robots.txt for security or integrity checks |
+| X ([markup](https://web.archive.org/web/20260116124848/https://developer.x.com/en/docs/x-for-websites/cards/overview/markup), [large image card](https://web.archive.org/web/20260204074639/https://developer.x.com/en/docs/x-for-websites/cards/overview/summary-card-with-large-image), [getting started](https://web.archive.org/web/20260101000233/https://developer.x.com/en/docs/x-for-websites/cards/guides/getting-started)) | `twitter:*` first, then falls back to `og:title`, `og:description`, `og:image`, `og:image:alt`; without `twitter:card`, a summary card may be rendered from `og:type`, `og:title` and `og:description` | `summary_large_image`: 2:1, 300×157 to 4096×4096, under 5 MB, JPG, PNG, WEBP or GIF (first frame only), no SVG; `summary`: 1:1, minimum 144×144 | 7 days after the link is posted | Twitterbot respects robots.txt; a blocked page shows no card |
+| Slack ([robots](https://api.slack.com/robots)) | oEmbed, Twitter Card and Open Graph tags; fetches as little of the page as it can with Range requests | Fetches the referenced image to check it | About 30 minutes, shared across Slack | Does not honor robots.txt |
+| LINE ([FAQ](https://developers.line.biz/en/faq/#how-are-the-url-previews-generated)) | Only `og:title`, `og:description`, `og:image`; falls back to `<title>`, the meta description or body text | Not documented | Not documented | Not documented |
+| Google Search ([title links](https://developers.google.com/search/docs/appearance/title-link), [site names](https://developers.google.com/search/docs/appearance/site-names)) | `og:title` is one of nine sources for the title link; `og:site_name` is considered for the site name, after WebSite structured data | Not documented for Open Graph | Changes show after a recrawl, "a few days to a few weeks" | — |
 
-**Format.** PNG or JPEG are the safe choice. X lists JPG, PNG, WEBP and GIF for card images, and SVG is not supported by X or Facebook even though it is a valid image on the web.
+As of 2 October 2026 the X card pages on developer.x.com redirect to the X API overview, so the links above point to the Internet Archive copies of January and February 2026. The same markup page caps `twitter:title` at 70 characters and `twitter:description` at 200, and says either `twitter:site` or `twitter:site:id` is required.
 
-**Absolute URL.** `og:image` must be an absolute URL with scheme and host. A relative path like `/og/article.png` is not a valid value, and scrapers will not resolve it the way a browser would.
+Facebook gives one more requirement that is easy to miss: the server must support gzip and deflate encodings, and the crawl must finish "within a few seconds".
 
-**Reachability.** The scraper fetches the URL on demand. If your CDN is slow, behind a CAPTCHA, or returns the image with `Content-Type: text/html` instead of `image/png`, the preview falls back to a generic site thumbnail.
+## og:url and the canonical link do different jobs
 
-**Cache.** Facebook caches the scrape result. After fixing an `og:image`, open the [Sharing Debugger](https://developers.facebook.com/tools/debug/) and click "Scrape Again" to force a refresh.
+Facebook's guide defines `og:url` as "the undecorated URL, without session variables, user identifying parameters, or counters" and says likes and shares aggregate at that URL. A page reachable as `/post/`, `/post` and `/post/?utm_source=newsletter` collects its shares in one place only if all three serve the same `og:url`.
 
-Always declare width and height alongside the image:
+`<link rel="canonical">` is for search engines. Google's [canonicalization guide](https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls) calls it "a strong signal that the specified URL should become canonical", which is still a signal and not a command. The two tags usually carry the same URL, but they are separate tags read by separate systems, and a page needs both.
 
+## A generated block, line by line
+
+These are the values entered into the Meta Tag Generator for a blog post, with **Schema.org @type** set to Article and the viewport checkbox cleared:
+
+{/* mtg-check: {"title":"Rotating API keys without downtime","description":"A four-step rotation plan: issue a second key, deploy readers, switch writers, revoke the old key.","canonical":"https://example.com/blog/rotate-api-keys/","siteName":"Example Engineering","author":"Jane Doe","ogType":"article","ogLocale":"en_US","ogImage":"https://example.com/og/rotate-api-keys.png","ogImageWidth":"1200","ogImageHeight":"630","ogImageAlt":"Two API keys overlapping during a rotation window","twSite":"@exampleeng","schemaType":"Article"} */}
 ```html
-<meta property="og:image" content="https://example.com/og/article.png">
+<title>Rotating API keys without downtime</title>
+<meta name="description" content="A four-step rotation plan: issue a second key, deploy readers, switch writers, revoke the old key.">
+<link rel="canonical" href="https://example.com/blog/rotate-api-keys/">
+<meta name="author" content="Jane Doe">
+<meta name="robots" content="index, follow">
+
+<!-- Open Graph / Facebook -->
+<meta property="og:type" content="article">
+<meta property="og:title" content="Rotating API keys without downtime">
+<meta property="og:description" content="A four-step rotation plan: issue a second key, deploy readers, switch writers, revoke the old key.">
+<meta property="og:url" content="https://example.com/blog/rotate-api-keys/">
+<meta property="og:site_name" content="Example Engineering">
+<meta property="og:image" content="https://example.com/og/rotate-api-keys.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Article cover with the title in large white serif on a green background.">
-```
+<meta property="og:image:alt" content="Two API keys overlapping during a rotation window">
+<meta property="og:locale" content="en_US">
 
-Declared dimensions let a scraper lay out the preview without downloading the image first, and `og:image:alt` describes the image for people who cannot see it.
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@exampleeng">
+<meta name="twitter:title" content="Rotating API keys without downtime">
+<meta name="twitter:description" content="A four-step rotation plan: issue a second key, deploy readers, switch writers, revoke the old key.">
+<meta name="twitter:image" content="https://example.com/og/rotate-api-keys.png">
 
-## Canonical URL: Why Wrong Values Fragment Share Counts
-
-`<link rel="canonical">` and `og:url` are separate tags that should carry the same value. The canonical link tells search engines which URL is authoritative; `og:url` tells Facebook which URL a share belongs to when the same page is reachable through multiple paths.
-
-Common reasons the same article has multiple URLs:
-
-- `https://example.com/post/` and `https://example.com/post`
-- `https://example.com/post` and `https://www.example.com/post`
-- `?utm_source=twitter` and the bare URL
-- `https://example.com/post` and `https://example.com/post?ref=newsletter`
-
-If two of these get shared without an `og:url`, Facebook can treat them as separate links with separate share counts. Setting `og:url` to the canonical URL on every variant makes Facebook attribute the shares to that one URL.
-
-The canonical URL must include the trailing slash if your routing serves it that way. ZeroTool's static build always emits trailing slashes; mismatching them in canonical breaks the dedupe.
-
-## Writing JSON-LD Without a Schema Library
-
-JSON-LD is just JSON inside a `<script type="application/ld+json">`. Google's rich-result parser is forgiving about field order and whitespace but strict about a few things:
-
-- Always include `"@context": "https://schema.org"`.
-- Always include `"@type"` matching one of [Schema.org's types](https://schema.org/docs/full.html).
-- All URLs must be absolute.
-- Dates use ISO 8601 (`2026-05-05`, not `May 5 2026`).
-- Fields that take several values (such as `author`) can be arrays; a single value can be written directly.
-
-A minimal `Article`:
-
-```html
+<!-- Schema.org JSON-LD -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "Article",
-  "headline": "Meta Tag Generator: One Page, Four Audiences",
-  "description": "Build a complete head meta block...",
-  "url": "https://example.com/blog/meta-tag-generator-guide/",
-  "image": "https://example.com/og/article.png",
-  "datePublished": "2026-05-05",
-  "author": { "@type": "Person", "name": "Jane Doe" }
+  "name": "Rotating API keys without downtime",
+  "description": "A four-step rotation plan: issue a second key, deploy readers, switch writers, revoke the old key.",
+  "url": "https://example.com/blog/rotate-api-keys/",
+  "image": "https://example.com/og/rotate-api-keys.png",
+  "author": {
+    "@type": "Person",
+    "name": "Jane Doe"
+  }
 }
 </script>
 ```
 
-You don't need every field Schema.org documents. Google's rich-result eligibility lists the required fields per result type — start there, add the rest only if you actually have the data.
+What the generator does with each field, read from its source:
 
-## Validating What You Shipped
+- The **Canonical URL** field is written twice, as `<link rel="canonical">` and as `og:url`. Leave it empty and both lines disappear, which drops one of the four required OG properties.
+- The **Title** field fills `<title>`, `og:title` and `twitter:title` with the same text. Facebook asks for an `og:title` "without any branding such as your site name", so if your `<title>` ends in `| Site Name`, edit the `og:title` line after copying.
+- `og:image:width`, `og:image:height` and `og:image:alt` are written only when an image URL is present, and always after `og:image`, which keeps them attached to the right root.
+- `twitter:image` repeats `og:image` unless you enter a separate Twitter image. Because X falls back to the OG tags anyway, the duplicate `twitter:title`, `twitter:description` and `twitter:image` lines are optional. `twitter:card` is the line that matters: without it X may render only a summary card, never the large image.
+- `<meta name="robots">` is always written. Google's [robots meta tag documentation](https://developers.google.com/search/docs/crawling-indexing/robots-meta-tag) does not list `index` or `follow` as rules; its default rule, `all`, means no restrictions. The line changes nothing until you pick `noindex` or `nofollow`.
+- JSON-LD uses `name`, not `headline`. Google's [Article documentation](https://developers.google.com/search/docs/appearance/structured-data/article) has no required properties but recommends `headline`, `image`, `datePublished`, `dateModified` and `author`, so add `headline` and the dates by hand for an article. The generator writes `<` in JSON-LD as `\u003c`, so a title containing `</script>` cannot end the script element early.
+- The title and description counters (60 and 160) count JavaScript string length. Google's snippet documentation says there is no length limit and the snippet "is truncated in Google Search results as needed, typically to fit the device width", so treat the counters as a rough guide, not a rule.
 
-Four free tools cover the four audiences:
+With only a title and an image entered, the block shrinks to this. `og:type` defaults to `website`, and `og:url` is missing:
 
-| Tool | What it tests | URL |
-|------|---------------|-----|
-| Facebook Sharing Debugger | og:* tags, scrape result, cached preview | https://developers.facebook.com/tools/debug/ |
-| X (Twitter) Card Validator | the preview function was removed; post to a test account to see the card | https://cards-dev.twitter.com/validator |
-| LinkedIn Post Inspector | og:* tags rendered as LinkedIn would | https://www.linkedin.com/post-inspector/ |
-| Google Rich Results Test | JSON-LD eligibility, structured-data warnings | https://search.google.com/test/rich-results |
+{/* mtg-check: {"title":"Rotating API keys without downtime","ogImage":"https://example.com/og/rotate-api-keys.png"} */}
+```html
+<title>Rotating API keys without downtime</title>
+<meta name="robots" content="index, follow">
 
-For Discord and Slack, paste a real message into a private channel — they fetch and cache aggressively, and there is no public debugger.
+<!-- Open Graph / Facebook -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Rotating API keys without downtime">
+<meta property="og:image" content="https://example.com/og/rotate-api-keys.png">
 
-The fifth check is `view-source:` (Cmd+Option+U in Chrome). Look for duplicate `og:title`, missing `og:image`, and any tag whose `content` is the literal string `undefined` — a sign your templating engine swallowed an empty variable.
-
-## Common Pitfalls
-
-**Multiple `og:image` tags.** The Open Graph protocol allows them as an array, and the first one is preferred when there is a conflict. Put the image you want shown first. `og:image:secure_url` is the HTTPS address of the same image, not a smaller variant.
-
-**`og:url` points to a different page.** Facebook builds the preview from the page at `og:url`, so a template that leaves the home page URL in `og:url` makes every article share look like the home page.
-
-**Setting `robots: noindex` and expecting og:* to still surface.** They will — social scrapers do not read robots — but search engines will not index the page, so the rich preview never shows up in SERPs.
-
-**Hard-coded `og:image:width` that disagrees with the actual file.** Keep the declared dimensions in sync with the image, or leave them out, so the preview is not laid out for the wrong aspect ratio.
-
-**JSON-LD with trailing commas or unescaped quotes.** That is invalid JSON: `JSON.parse` rejects it, and Google's Rich Results Test reports a parsing error instead of the structured data. Run the output through a JSON linter before shipping.
-
-**Two pages with identical canonical URLs.** A canonical tells search engines that the pages are duplicates, so only one of them is likely to be indexed. This usually happens when a CMS template forgets to update the canonical for paginated archive pages.
-
-## Generating It Inline
-
-If you are emitting meta tags from a templating engine, the logic is small enough to keep inline. JavaScript template:
-
-```javascript
-function metaBlock({ title, description, canonical, image, type = 'website' }) {
-  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  return `
-    <title>${esc(title)}</title>
-    <meta name="description" content="${esc(description)}">
-    <link rel="canonical" href="${esc(canonical)}">
-    <meta property="og:type" content="${esc(type)}">
-    <meta property="og:title" content="${esc(title)}">
-    <meta property="og:description" content="${esc(description)}">
-    <meta property="og:url" content="${esc(canonical)}">
-    <meta property="og:image" content="${esc(image)}">
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="${esc(title)}">
-    <meta name="twitter:description" content="${esc(description)}">
-    <meta name="twitter:image" content="${esc(image)}">
-  `.trim();
-}
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Rotating API keys without downtime">
+<meta name="twitter:image" content="https://example.com/og/rotate-api-keys.png">
 ```
 
-The escaping is important — un-escaped quotes in the title break the entire block silently.
+The preview tabs (Google, Facebook, Twitter, Discord) are drawings made by the tool from your input. They are not the platforms' renderers, and to draw them your browser loads the image URL you typed, so that image's host sees the request. The tags themselves are not sent anywhere.
 
-## Related Tools
+## Checking what a crawler receives
 
-- [Robots.txt Generator](/tools/robots-txt-generator) — set crawl rules alongside the meta tags
-- [Favicon Generator](/tools/favicon-generator) — produce the icon set referenced from `<head>`
-- [URL Parser](/tools/url-parser) — verify your canonical URL is well-formed before shipping
+Facebook's crawler page gives a command that imitates its request, including the `Range` header and the user agent. Running it against this site and listing the tag names shows exactly what the crawler gets:
 
-## References
+```bash
+curl -s --compressed -H "Range: bytes=0-524288" -H "Connection: close" \
+  -A "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)" \
+  "https://zerotool.dev/tools/meta-tag-generator/" \
+  | grep -oE '(property|name)="(og|twitter):[a-z_:]+"'
+```
 
-- [Open Graph protocol](https://ogp.me/) — the original spec
-- [Twitter — Cards Markup](https://developer.twitter.com/en/docs/twitter-for-websites/cards/overview/markup) — `twitter:*` reference
-- [Schema.org](https://schema.org/docs/gs.html) — getting started
-- [Google — Control your snippets](https://developers.google.com/search/docs/appearance/snippet) — how `description` becomes the snippet
+{/* mtg-live: tools/meta-tag-generator/index.html */}
+```text
+property="og:site_name"
+property="og:title"
+property="og:description"
+property="og:url"
+property="og:image"
+property="og:type"
+name="twitter:card"
+name="twitter:title"
+name="twitter:description"
+name="twitter:image"
+```
+
+The four required properties are there. `og:image:width`, `og:image:height` and `og:image:alt` are not, which means Facebook has to download the image before it can render the first share (its images page lists the dimension tags as one of three ways to avoid that). The same check is worth running on staging before a launch, because it shows problems that a browser hides: a login wall in front of the crawler, a CDN that blocks unknown user agents, or tags injected by JavaScript after the HTML arrives.
+
+## Changing a preview after it has been shared
+
+Every platform in the table caches, and each one clears differently:
+
+- **Facebook**: run the URL through the [Sharing Debugger](https://developers.facebook.com/tools/debug/) or the Graph API to scrape it again. Images are cached by image URL, so a new image needs a new URL; keep the old file, because older posts still reference it. Updating the page does not change previews in shares that already exist.
+- **X**: the cache lasts 7 days after the link is posted, according to the archived getting-started guide.
+- **Slack**: responses are cached for about 30 minutes.
+- **LINE**: the FAQ says neither how long previews are cached nor how to clear them.
+
+## Mistakes that break previews
+
+- **Relative image URLs.** ogp.me's URL type requires `http://` or `https://`.
+- **SVG images.** X says SVG is not supported, and Facebook's `og:image:type` allows only JPEG, GIF and PNG.
+- **Tags added by client-side JavaScript.** The crawler documents describe fetching response bytes: Facebook reads the first 1 MB, and Slack fetches "as little of the page as it can". None of them says it runs page scripts, so put the tags in the HTML the server sends.
+- **A robots.txt rule that blocks the page or the image.** X shows no card and no thumbnail. Slack ignores robots.txt, so the same page can unfurl in Slack and not on X.
+- **A wrong `og:url`.** A template that leaves the home page URL in `og:url` sends every article's shares to the home page, because shares aggregate at `og:url`.
+- **Dimension tags that disagree with the file.** The width and height are there so the crawler can lay out the card before it downloads the image; wrong numbers make it lay out the wrong shape.
+
+## Sources
+
+- [The Open Graph protocol](https://ogp.me/)
+- [Meta: A Guide to Sharing for Webmasters](https://developers.facebook.com/documentation/sharing/webmasters), [Meta Web Crawlers](https://developers.facebook.com/documentation/sharing/webmasters/web-crawlers), [Images in Link Shares](https://developers.facebook.com/documentation/sharing/webmasters/images)
+- X Cards markup, summary card with large image and getting started (archived copies linked in the table)
+- [Slack Robots](https://api.slack.com/robots)
+- [LINE Developers FAQ: How are URL previews generated in chats?](https://developers.line.biz/en/faq/#how-are-the-url-previews-generated)
+- Google Search Central: [title links](https://developers.google.com/search/docs/appearance/title-link), [site names](https://developers.google.com/search/docs/appearance/site-names), [meta descriptions](https://developers.google.com/search/docs/appearance/snippet), [Article structured data](https://developers.google.com/search/docs/appearance/structured-data/article)
+
+Related tools: [Favicon Generator](/tools/favicon-generator/) for the icons referenced from the same `<head>`, [Robots.txt Generator](/tools/robots-txt-generator/) for the crawl rules that decide whether X can fetch the card, and [URL Parser](/tools/url-parser/) to check that `og:url` has no tracking parameters.
