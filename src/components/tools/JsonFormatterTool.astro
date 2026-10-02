@@ -1,300 +1,1664 @@
 ---
-// No props needed — tool widget is language-independent
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// Counts are [one, other]; {n} is the number. Messages under "parse" are shared with the
+// JSON Schema Validator (same codes, same wording).
+const STRINGS = {
+  en: {
+    inputLabel: 'JSON input', outputLabel: 'Output',
+    placeholder: 'Paste JSON here or open a file. The output updates as you type.',
+    format: 'Format', minify: 'Minify', indentAria: 'Indent', indent2: '2 spaces', indent4: '4 spaces', indentTab: 'Tab',
+    open: 'Open file', sample: 'Sample', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFail: 'Copy failed. Select the text and copy it manually.', download: 'Download',
+    viewAria: 'Output view', viewText: 'Text', viewTree: 'Tree',
+    optionsAria: 'Output options', optSort: 'Sort keys', optAscii: 'Escape non-ASCII (\\uXXXX)', optJson5: 'Accept JSON5 / JSONC',
+    numbersLabel: 'Numbers', numRaw: 'Keep as written', numJs: 'As JavaScript reads them',
+    dupesLabel: 'Duplicate keys', dupKeep: 'Keep all', dupLast: 'Keep the last (JSON.parse)',
+    empty: 'Paste JSON or open a file.',
+    valid: 'Valid JSON. {summary}', validJson5: 'Converted from JSON5 / JSONC to JSON. {summary}',
+    summary: '{values} · depth {depth} · {inSize} → {outSize}',
+    values: ['1 value', '{n} values'],
+    invalid: 'Invalid JSON. {where}',
+    large: 'Large input ({size}). Press Format or Minify to process it.',
+    tooLarge: 'The file is {size}; the limit is {max}.',
+    readFail: 'The file could not be read: {message}',
+    notUtf8: 'The file is not UTF-8: byte {offset} (counting from 0) starts an invalid sequence. RFC 8259 requires UTF-8; re-save the file as UTF-8.',
+    utf16NoBom: 'The file looks like UTF-16 without a byte order mark. Re-save it as UTF-8.',
+    encodingNote: 'The file was {encoding} with a byte order mark; it was decoded. RFC 8259 requires UTF-8 for JSON that is exchanged.',
+    bomNote: 'A byte order mark (U+FEFF) at the start was removed. JSON.parse rejects it; RFC 8259 §8.1 lets a parser ignore it.',
+    highlightOff: 'The output is larger than 1 MB, so it is shown without colors.',
+    gotoError: 'Go to error',
+    where: 'Line {line}, column {col}: {reason}',
+    dupNote: ['1 duplicate key. JSON.parse, jq and Python keep only the last value; this output keeps every copy. Choose "Keep the last" to match them.', '{n} duplicate keys. JSON.parse, jq and Python keep only the last value; this output keeps every copy. Choose "Keep the last" to match them.'],
+    dupNoteLast: ['1 duplicate key; the last value is kept at the position of the first, as JSON.parse does.', '{n} duplicate keys; the last value is kept at the position of the first, as JSON.parse does.'],
+    dupItem: '"{key}" in {path}, line {line}',
+    numNote: ['1 number changes when JavaScript reads it (JSON.parse). It is kept as written.', '{n} numbers change when JavaScript reads them (JSON.parse). They are kept as written.'],
+    numNoteJs: ['1 number is written as JavaScript reads it, so its value changed.', '{n} numbers are written as JavaScript reads them, so their values changed.'],
+    numPrecision: '{raw} → {js} ({path}, line {line})',
+    numOverflow: '{raw} is out of range: JSON.parse gives Infinity and JSON.stringify writes null. Kept as written. ({path}, line {line})',
+    numUnderflow: '{raw} → 0 ({path}, line {line})',
+    numNegZero: '-0 → 0: JSON.stringify drops the sign. ({path}, line {line})',
+    surrNote: ['1 string has an unpaired surrogate (\\uD800–\\uDFFF without its pair). RFC 8259 §8.2 says software may handle it unpredictably: jq 1.7.1 rejects a lone \\uD800–\\uDBFF and turns a lone \\uDC00–\\uDFFF into U+FFFD.', '{n} strings have an unpaired surrogate (\\uD800–\\uDFFF without its pair). RFC 8259 §8.2 says software may handle them unpredictably: jq 1.7.1 rejects a lone \\uD800–\\uDBFF and turns a lone \\uDC00–\\uDFFF into U+FFFD.'],
+    surrItem: '{path}, line {line}',
+    moreItems: '… and {n} more',
+    json5Offer: 'This is not JSON, but it is valid JSON5 / JSONC: {list}.',
+    json5Accept: 'Convert to JSON',
+    json5Done: 'Changed to make it JSON: {list}.',
+    changes: {
+      comments: ['1 comment removed', '{n} comments removed'],
+      trailingCommas: ['1 trailing comma', '{n} trailing commas'],
+      singleQuotes: ['1 single-quoted string', '{n} single-quoted strings'],
+      unquotedKeys: ['1 unquoted key', '{n} unquoted keys'],
+      numbers: ['1 number rewritten (hex, +, .5 or 5.)', '{n} numbers rewritten (hex, +, .5 or 5.)'],
+      escapes: ['1 escape rewritten (\\x, \\v, \\0, \\\' or a line continuation)', '{n} escapes rewritten (\\x, \\v, \\0, \\\' or line continuations)'],
+      whitespace: ['1 whitespace character JSON does not allow', '{n} whitespace characters JSON does not allow'],
+    },
+    hint: {
+      fence: 'The JSON is inside a Markdown code fence (```).',
+      fenceBtn: 'Remove the fence',
+      escaped: 'This looks like JSON that was escaped into a string (\\" instead of ").',
+      escapedBtn: 'Unescape',
+      jsonl: 'This looks like JSON Lines: {n} lines, each a complete JSON value. To turn them into one array, use the {link}.',
+      jsonlLink: 'JSONL Converter',
+      python: '{word} is Python. JSON writes it as {fix}.',
+      undefined: 'undefined is not a JSON value. Use null or remove the property.',
+      nonFinite: 'JSON has no NaN or Infinity. Use null or a string such as "Infinity".',
+      inner: 'The whole input is one JSON string that contains JSON.',
+      innerBtn: 'Format the inner JSON',
+    },
+    tree: {
+      expandAll: 'Expand all', collapseAll: 'Collapse all', more: 'Show {n} more',
+      items: ['1 item', '{n} items'], keys: ['1 key', '{n} keys'],
+      pathHint: 'Select a row to see its path.', pointer: 'JSON Pointer', jq: 'jq', copyPath: 'Copy',
+      dup: 'duplicate', root: '(root)', expandLimit: 'Expanded the first {n} rows.',
+    },
+    parse: {
+      empty: 'the input is empty',
+      trailingComma: 'trailing comma before the closing bracket',
+      comment: 'comments are not allowed in JSON',
+      singleQuote: 'JSON strings and property names need double quotes (")',
+      smartQuote: 'curly quotes ({ch}) are not JSON quotes; use straight double quotes (")',
+      fullWidth: 'full-width character {ch}; JSON needs ASCII punctuation and spaces',
+      unquotedKey: 'property names must be in double quotes',
+      missingComma: 'missing comma between values',
+      missingColon: 'missing colon after the property name',
+      unterminatedString: 'the string is not closed',
+      unterminatedComment: 'the /* comment is not closed',
+      controlChar: 'a raw line break or tab inside a string; write \\n or \\t',
+      badEscape: 'invalid escape sequence in a string',
+      badNumber: 'invalid number (no leading zeros, "+", ".5", NaN or Infinity in JSON)',
+      nonFinite: 'NaN and Infinity have no JSON form',
+      badLiteral: 'unknown word; JSON only has true, false and null',
+      unexpectedEnd: 'the input ends too early (a bracket or quote is not closed)',
+      extraData: 'more data after the end of the JSON value',
+      unexpectedChar: 'unexpected character {ch}',
+    },
+  },
+  zh: {
+    inputLabel: '输入 JSON', outputLabel: '输出',
+    placeholder: '粘贴 JSON 或打开文件，输出随输入更新。',
+    format: '格式化', minify: '压缩', indentAria: '缩进', indent2: '2 空格', indent4: '4 空格', indentTab: 'Tab',
+    open: '打开文件', sample: '示例', clear: '清空', copy: '复制', copied: '已复制', copyFail: '复制失败，请选中文本手动复制。', download: '下载',
+    viewAria: '输出视图', viewText: '文本', viewTree: '树形',
+    optionsAria: '输出选项', optSort: '键排序', optAscii: '转义非 ASCII（\\uXXXX）', optJson5: '接受 JSON5 / JSONC',
+    numbersLabel: '数字', numRaw: '保留原写法', numJs: '按 JavaScript 读取的值',
+    dupesLabel: '重复键', dupKeep: '全部保留', dupLast: '只留最后一个（同 JSON.parse）',
+    empty: '粘贴 JSON 或打开文件。',
+    valid: 'JSON 有效。{summary}', validJson5: '已从 JSON5 / JSONC 转为 JSON。{summary}',
+    summary: '{values} · 深度 {depth} · {inSize} → {outSize}',
+    values: ['1 个值', '{n} 个值'],
+    invalid: 'JSON 无效。{where}',
+    large: '输入较大（{size}），点「格式化」或「压缩」开始处理。',
+    tooLarge: '文件大小 {size}，上限 {max}。',
+    readFail: '无法读取文件：{message}',
+    notUtf8: '文件不是 UTF-8：第 {offset} 个字节（从 0 数）开始的字节序列无效。RFC 8259 要求 UTF-8，请另存为 UTF-8（GBK 等编码的文件也会出现这条提示）。',
+    utf16NoBom: '文件像是没有字节序标记（BOM）的 UTF-16，请另存为 UTF-8。',
+    encodingNote: '文件是带字节序标记的 {encoding}，已解码。RFC 8259 要求交换的 JSON 使用 UTF-8。',
+    bomNote: '已去掉开头的字节序标记（U+FEFF）。JSON.parse 会拒绝它，RFC 8259 §8.1 允许解析器忽略它。',
+    highlightOff: '输出超过 1 MB，不显示语法颜色。',
+    gotoError: '定位到错误',
+    where: '第 {line} 行第 {col} 列：{reason}',
+    dupNote: ['有 1 个重复键。JSON.parse、jq 和 Python 只保留最后一个值；本输出全部保留。选「只留最后一个」可与它们一致。', '有 {n} 个重复键。JSON.parse、jq 和 Python 只保留最后一个值；本输出全部保留。选「只留最后一个」可与它们一致。'],
+    dupNoteLast: ['有 1 个重复键；与 JSON.parse 相同，取最后一个值，放在第一次出现的位置。', '有 {n} 个重复键；与 JSON.parse 相同，取最后一个值，放在第一次出现的位置。'],
+    dupItem: '"{key}"，位于 {path}，第 {line} 行',
+    numNote: ['有 1 个数字被 JavaScript（JSON.parse）读取后会变，已按原写法保留。', '有 {n} 个数字被 JavaScript（JSON.parse）读取后会变，已按原写法保留。'],
+    numNoteJs: ['有 1 个数字按 JavaScript 读取的值写出，值已改变。', '有 {n} 个数字按 JavaScript 读取的值写出，值已改变。'],
+    numPrecision: '{raw} → {js}（{path}，第 {line} 行）',
+    numOverflow: '{raw} 超出范围：JSON.parse 得到 Infinity，JSON.stringify 写成 null。已按原写法保留。（{path}，第 {line} 行）',
+    numUnderflow: '{raw} → 0（{path}，第 {line} 行）',
+    numNegZero: '-0 → 0：JSON.stringify 会去掉负号。（{path}，第 {line} 行）',
+    surrNote: ['有 1 个字符串含不成对的代理项（\\uD800–\\uDFFF 缺少另一半）。RFC 8259 §8.2 说软件对它的处理不可预测：jq 1.7.1 拒绝单独的 \\uD800–\\uDBFF，把单独的 \\uDC00–\\uDFFF 换成 U+FFFD。', '有 {n} 个字符串含不成对的代理项（\\uD800–\\uDFFF 缺少另一半）。RFC 8259 §8.2 说软件对它们的处理不可预测：jq 1.7.1 拒绝单独的 \\uD800–\\uDBFF，把单独的 \\uDC00–\\uDFFF 换成 U+FFFD。'],
+    surrItem: '{path}，第 {line} 行',
+    moreItems: '……另有 {n} 处',
+    json5Offer: '这不是 JSON，但是有效的 JSON5 / JSONC：{list}。',
+    json5Accept: '转为 JSON',
+    json5Done: '为转成 JSON 做了这些改动：{list}。',
+    changes: {
+      comments: ['去掉 1 条注释', '去掉 {n} 条注释'],
+      trailingCommas: ['1 个尾逗号', '{n} 个尾逗号'],
+      singleQuotes: ['1 个单引号字符串', '{n} 个单引号字符串'],
+      unquotedKeys: ['1 个未加引号的键', '{n} 个未加引号的键'],
+      numbers: ['改写 1 个数字（十六进制、+、.5 或 5.）', '改写 {n} 个数字（十六进制、+、.5 或 5.）'],
+      escapes: ['改写 1 个转义（\\x、\\v、\\0、\\\' 或续行）', '改写 {n} 个转义（\\x、\\v、\\0、\\\' 或续行）'],
+      whitespace: ['1 个 JSON 不允许的空白字符', '{n} 个 JSON 不允许的空白字符'],
+    },
+    hint: {
+      fence: 'JSON 被包在 Markdown 代码块（```）里。',
+      fenceBtn: '去掉代码块标记',
+      escaped: '这像是被转义成字符串的 JSON（" 写成了 \\"）。',
+      escapedBtn: '反转义',
+      jsonl: '这像是 JSON Lines：{n} 行，每行一个完整的 JSON 值。要合并成一个数组，请用 {link}。',
+      jsonlLink: 'JSONL 转换器',
+      python: '{word} 是 Python 写法，JSON 写作 {fix}。',
+      undefined: 'undefined 不是 JSON 值，请改成 null 或删掉这个属性。',
+      nonFinite: 'JSON 没有 NaN 和 Infinity，请改成 null 或 "Infinity" 这样的字符串。',
+      inner: '整个输入是一个 JSON 字符串，里面装着 JSON。',
+      innerBtn: '格式化里面的 JSON',
+    },
+    tree: {
+      expandAll: '全部展开', collapseAll: '全部折叠', more: '再显示 {n} 项',
+      items: ['1 项', '{n} 项'], keys: ['1 个键', '{n} 个键'],
+      pathHint: '选中一行查看它的路径。', pointer: 'JSON Pointer', jq: 'jq', copyPath: '复制',
+      dup: '重复', root: '（根）', expandLimit: '已展开前 {n} 行。',
+    },
+    parse: {
+      empty: '输入为空',
+      trailingComma: '右括号前多了一个逗号',
+      comment: 'JSON 不允许注释',
+      singleQuote: 'JSON 的字符串和属性名必须用双引号（"）',
+      smartQuote: '{ch} 是中文引号，JSON 要用英文双引号（"）',
+      fullWidth: '全角字符 {ch}；JSON 的标点和空格必须是半角',
+      unquotedKey: '属性名必须加双引号',
+      missingComma: '两个值之间缺少逗号',
+      missingColon: '属性名后缺少冒号',
+      unterminatedString: '字符串没有闭合',
+      unterminatedComment: '/* 注释没有闭合',
+      controlChar: '字符串里有直接的换行或制表符，要写成 \\n 或 \\t',
+      badEscape: '字符串里的转义序列无效',
+      badNumber: '数字写法无效（JSON 不允许前导 0、“+”、“.5”、NaN、Infinity）',
+      nonFinite: 'NaN 和 Infinity 在 JSON 里没有对应写法',
+      badLiteral: '未知单词；JSON 只有 true、false、null',
+      unexpectedEnd: '输入提前结束（有括号或引号没有闭合）',
+      extraData: 'JSON 值结束后还有内容',
+      unexpectedChar: '意外的字符 {ch}',
+    },
+  },
+  ja: {
+    inputLabel: 'JSON 入力', outputLabel: '出力',
+    placeholder: 'JSON を貼り付けるかファイルを開いてください。入力に合わせて出力が更新されます。',
+    format: '整形', minify: '圧縮', indentAria: 'インデント', indent2: 'スペース 2', indent4: 'スペース 4', indentTab: 'タブ',
+    open: 'ファイルを開く', sample: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピーしました', copyFail: 'コピーできませんでした。テキストを選択して手動でコピーしてください。', download: 'ダウンロード',
+    viewAria: '出力の表示', viewText: 'テキスト', viewTree: 'ツリー',
+    optionsAria: '出力オプション', optSort: 'キーを並べ替え', optAscii: '非 ASCII をエスケープ（\\uXXXX）', optJson5: 'JSON5 / JSONC を受け付ける',
+    numbersLabel: '数値', numRaw: '書かれたとおり', numJs: 'JavaScript が読む値',
+    dupesLabel: '重複キー', dupKeep: 'すべて残す', dupLast: '最後だけ残す（JSON.parse と同じ）',
+    empty: 'JSON を貼り付けるかファイルを開いてください。',
+    valid: '有効な JSON です。{summary}', validJson5: 'JSON5 / JSONC から JSON に変換しました。{summary}',
+    summary: '{values} · 深さ {depth} · {inSize} → {outSize}',
+    values: ['値 1 個', '値 {n} 個'],
+    invalid: '無効な JSON です。{where}',
+    large: '入力が大きいため（{size}）自動では処理しません。「整形」か「圧縮」を押してください。',
+    tooLarge: 'ファイルは {size} です。上限は {max} です。',
+    readFail: 'ファイルを読み込めませんでした：{message}',
+    notUtf8: 'ファイルが UTF-8 ではありません：{offset} バイト目（0 から数えて）から不正なバイト列です。RFC 8259 は UTF-8 を求めています。Shift_JIS で保存したファイルなら UTF-8 で保存し直してください。',
+    utf16NoBom: 'BOM のない UTF-16 のようです。UTF-8 で保存し直してください。',
+    encodingNote: 'ファイルは BOM 付きの {encoding} だったのでデコードしました。RFC 8259 はやり取りする JSON に UTF-8 を求めています。',
+    bomNote: '先頭の BOM（U+FEFF）を取り除きました。JSON.parse は BOM をエラーにします。RFC 8259 §8.1 はパーサーが無視してよいとしています。',
+    highlightOff: '出力が 1 MB を超えるため、色分けせずに表示しています。',
+    gotoError: 'エラー位置へ',
+    where: '{line} 行 {col} 列：{reason}',
+    dupNote: ['重複キーが 1 個あります。JSON.parse・jq・Python は最後の値だけを残しますが、この出力はすべて残します。合わせるには「最後だけ残す」を選んでください。', '重複キーが {n} 個あります。JSON.parse・jq・Python は最後の値だけを残しますが、この出力はすべて残します。合わせるには「最後だけ残す」を選んでください。'],
+    dupNoteLast: ['重複キーが 1 個あります。JSON.parse と同じく、最後の値を最初の位置に残しました。', '重複キーが {n} 個あります。JSON.parse と同じく、最後の値を最初の位置に残しました。'],
+    dupItem: '"{key}"（{path}、{line} 行）',
+    numNote: ['JavaScript（JSON.parse）で読むと値が変わる数値が 1 個あります。書かれたとおりに残しました。', 'JavaScript（JSON.parse）で読むと値が変わる数値が {n} 個あります。書かれたとおりに残しました。'],
+    numNoteJs: ['数値 1 個を JavaScript が読む値で書いたため、値が変わりました。', '数値 {n} 個を JavaScript が読む値で書いたため、値が変わりました。'],
+    numPrecision: '{raw} → {js}（{path}、{line} 行）',
+    numOverflow: '{raw} は範囲外です。JSON.parse は Infinity になり、JSON.stringify は null と書きます。書かれたとおりに残しました。（{path}、{line} 行）',
+    numUnderflow: '{raw} → 0（{path}、{line} 行）',
+    numNegZero: '-0 → 0：JSON.stringify は符号を落とします。（{path}、{line} 行）',
+    surrNote: ['対になっていないサロゲート（相方のない \\uD800–\\uDFFF）を含む文字列が 1 個あります。RFC 8259 §8.2 は扱いが予測できないとしています。jq 1.7.1 は単独の \\uD800–\\uDBFF をエラーにし、単独の \\uDC00–\\uDFFF を U+FFFD に置き換えます。', '対になっていないサロゲート（相方のない \\uD800–\\uDFFF）を含む文字列が {n} 個あります。RFC 8259 §8.2 は扱いが予測できないとしています。jq 1.7.1 は単独の \\uD800–\\uDBFF をエラーにし、単独の \\uDC00–\\uDFFF を U+FFFD に置き換えます。'],
+    surrItem: '{path}、{line} 行',
+    moreItems: '…ほか {n} 件',
+    json5Offer: 'JSON ではありませんが、JSON5 / JSONC としては有効です：{list}。',
+    json5Accept: 'JSON に変換',
+    json5Done: 'JSON にするために次を変更しました：{list}。',
+    changes: {
+      comments: ['コメント 1 個を削除', 'コメント {n} 個を削除'],
+      trailingCommas: ['末尾のカンマ 1 個', '末尾のカンマ {n} 個'],
+      singleQuotes: ['シングルクォートの文字列 1 個', 'シングルクォートの文字列 {n} 個'],
+      unquotedKeys: ['クォートのないキー 1 個', 'クォートのないキー {n} 個'],
+      numbers: ['数値 1 個を書き換え（16 進、+、.5、5.）', '数値 {n} 個を書き換え（16 進、+、.5、5.）'],
+      escapes: ['エスケープ 1 個を書き換え（\\x、\\v、\\0、\\\'、行継続）', 'エスケープ {n} 個を書き換え（\\x、\\v、\\0、\\\'、行継続）'],
+      whitespace: ['JSON で使えない空白文字 1 個', 'JSON で使えない空白文字 {n} 個'],
+    },
+    hint: {
+      fence: 'JSON が Markdown のコードブロック（```）で囲まれています。',
+      fenceBtn: 'コードブロックを外す',
+      escaped: '文字列としてエスケープされた JSON のようです（" が \\" になっています）。',
+      escapedBtn: 'アンエスケープ',
+      jsonl: 'JSON Lines のようです：{n} 行あり、各行が完全な JSON 値です。1 つの配列にするには {link} を使ってください。',
+      jsonlLink: 'JSONL コンバーター',
+      python: '{word} は Python の書き方です。JSON では {fix} と書きます。',
+      undefined: 'undefined は JSON の値ではありません。null にするかプロパティを削除してください。',
+      nonFinite: 'JSON に NaN と Infinity はありません。null か "Infinity" のような文字列にしてください。',
+      inner: '入力全体が、JSON を中に持つ 1 つの JSON 文字列です。',
+      innerBtn: '中の JSON を整形',
+    },
+    tree: {
+      expandAll: 'すべて展開', collapseAll: 'すべて折りたたむ', more: 'さらに {n} 件表示',
+      items: ['1 件', '{n} 件'], keys: ['キー 1 個', 'キー {n} 個'],
+      pathHint: '行を選ぶとパスを表示します。', pointer: 'JSON Pointer', jq: 'jq', copyPath: 'コピー',
+      dup: '重複', root: '（ルート）', expandLimit: '先頭の {n} 行まで展開しました。',
+    },
+    parse: {
+      empty: '入力が空です',
+      trailingComma: '閉じかっこの前に余分なカンマがあります',
+      comment: 'JSON にコメントは書けません',
+      singleQuote: 'JSON の文字列とプロパティ名はダブルクォート（"）で囲みます',
+      smartQuote: '{ch} は全角の引用符です。半角のダブルクォート（"）を使ってください',
+      fullWidth: '全角文字 {ch} があります。JSON の記号と空白は半角です',
+      unquotedKey: 'プロパティ名はダブルクォートで囲みます',
+      missingComma: '値と値の間にカンマがありません',
+      missingColon: 'プロパティ名の後にコロンがありません',
+      unterminatedString: '文字列が閉じていません',
+      unterminatedComment: '/* コメントが閉じていません',
+      controlChar: '文字列の中に改行やタブがそのまま入っています。\\n や \\t と書きます',
+      badEscape: '文字列のエスケープが正しくありません',
+      badNumber: '数値の書き方が正しくありません（JSON では先頭の 0、「+」、「.5」、NaN、Infinity は使えません）',
+      nonFinite: 'NaN と Infinity は JSON で表せません',
+      badLiteral: '不明な語です。JSON にあるのは true、false、null だけです',
+      unexpectedEnd: '入力が途中で終わっています（かっこか引用符が閉じていません）',
+      extraData: 'JSON の値の後に余分なデータがあります',
+      unexpectedChar: '予期しない文字 {ch}',
+    },
+  },
+  ko: {
+    inputLabel: 'JSON 입력', outputLabel: '출력',
+    placeholder: 'JSON을 붙여넣거나 파일을 여세요. 입력하는 대로 출력이 바뀝니다.',
+    format: '정렬', minify: '압축', indentAria: '들여쓰기', indent2: '공백 2칸', indent4: '공백 4칸', indentTab: '탭',
+    open: '파일 열기', sample: '예시', clear: '지우기', copy: '복사', copied: '복사됨', copyFail: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.', download: '다운로드',
+    viewAria: '출력 보기', viewText: '텍스트', viewTree: '트리',
+    optionsAria: '출력 옵션', optSort: '키 정렬', optAscii: '비 ASCII 이스케이프(\\uXXXX)', optJson5: 'JSON5 / JSONC 허용',
+    numbersLabel: '숫자', numRaw: '쓰인 그대로', numJs: 'JavaScript가 읽는 값',
+    dupesLabel: '중복 키', dupKeep: '모두 유지', dupLast: '마지막만 유지(JSON.parse와 같음)',
+    empty: 'JSON을 붙여넣거나 파일을 여세요.',
+    valid: '유효한 JSON입니다. {summary}', validJson5: 'JSON5 / JSONC를 JSON으로 변환했습니다. {summary}',
+    summary: '값 {values} · 깊이 {depth} · {inSize} → {outSize}',
+    values: ['1개', '{n}개'],
+    invalid: '유효하지 않은 JSON입니다. {where}',
+    large: '입력이 커서({size}) 자동으로 처리하지 않습니다. 「정렬」이나 「압축」을 누르세요.',
+    tooLarge: '파일 크기는 {size}이고 상한은 {max}입니다.',
+    readFail: '파일을 읽지 못했습니다: {message}',
+    notUtf8: '파일이 UTF-8이 아닙니다: {offset}번째 바이트(0부터 셈)부터 잘못된 바이트열입니다. RFC 8259는 UTF-8을 요구합니다. EUC-KR(CP949)로 저장한 파일이면 UTF-8로 다시 저장하세요.',
+    utf16NoBom: 'BOM이 없는 UTF-16 파일로 보입니다. UTF-8로 다시 저장하세요.',
+    encodingNote: '파일이 BOM이 있는 {encoding}여서 디코딩했습니다. RFC 8259는 주고받는 JSON에 UTF-8을 요구합니다.',
+    bomNote: '맨 앞의 BOM(U+FEFF)을 제거했습니다. JSON.parse는 BOM을 오류로 처리하고, RFC 8259 §8.1은 파서가 무시해도 된다고 합니다.',
+    highlightOff: '출력이 1 MB를 넘어 색 구분 없이 표시합니다.',
+    gotoError: '오류 위치로',
+    where: '{line}행 {col}열: {reason}',
+    dupNote: ['중복 키가 1개 있습니다. JSON.parse, jq, Python은 마지막 값만 남기지만 이 출력은 모두 남깁니다. 같게 하려면 「마지막만 유지」를 고르세요.', '중복 키가 {n}개 있습니다. JSON.parse, jq, Python은 마지막 값만 남기지만 이 출력은 모두 남깁니다. 같게 하려면 「마지막만 유지」를 고르세요.'],
+    dupNoteLast: ['중복 키가 1개 있습니다. JSON.parse처럼 마지막 값을 처음 위치에 남겼습니다.', '중복 키가 {n}개 있습니다. JSON.parse처럼 마지막 값을 처음 위치에 남겼습니다.'],
+    dupItem: '"{key}"({path}, {line}행)',
+    numNote: ['JavaScript(JSON.parse)가 읽으면 값이 바뀌는 숫자가 1개 있습니다. 쓰인 그대로 남겼습니다.', 'JavaScript(JSON.parse)가 읽으면 값이 바뀌는 숫자가 {n}개 있습니다. 쓰인 그대로 남겼습니다.'],
+    numNoteJs: ['숫자 1개를 JavaScript가 읽는 값으로 써서 값이 바뀌었습니다.', '숫자 {n}개를 JavaScript가 읽는 값으로 써서 값이 바뀌었습니다.'],
+    numPrecision: '{raw} → {js}({path}, {line}행)',
+    numOverflow: '{raw}는 범위를 벗어납니다. JSON.parse는 Infinity가 되고 JSON.stringify는 null로 씁니다. 쓰인 그대로 남겼습니다.({path}, {line}행)',
+    numUnderflow: '{raw} → 0({path}, {line}행)',
+    numNegZero: '-0 → 0: JSON.stringify는 부호를 버립니다.({path}, {line}행)',
+    surrNote: ['짝이 없는 서로게이트(짝 없는 \\uD800–\\uDFFF)가 든 문자열이 1개 있습니다. RFC 8259 §8.2는 처리 결과를 예측할 수 없다고 합니다. jq 1.7.1은 짝 없는 \\uD800–\\uDBFF를 오류로 처리하고, 짝 없는 \\uDC00–\\uDFFF는 U+FFFD로 바꿉니다.', '짝이 없는 서로게이트(짝 없는 \\uD800–\\uDFFF)가 든 문자열이 {n}개 있습니다. RFC 8259 §8.2는 처리 결과를 예측할 수 없다고 합니다. jq 1.7.1은 짝 없는 \\uD800–\\uDBFF를 오류로 처리하고, 짝 없는 \\uDC00–\\uDFFF는 U+FFFD로 바꿉니다.'],
+    surrItem: '{path}, {line}행',
+    moreItems: '… 외 {n}개',
+    json5Offer: 'JSON은 아니지만 JSON5 / JSONC로는 유효합니다: {list}.',
+    json5Accept: 'JSON으로 변환',
+    json5Done: 'JSON으로 만들기 위해 바꾼 것: {list}.',
+    changes: {
+      comments: ['주석 1개 제거', '주석 {n}개 제거'],
+      trailingCommas: ['끝 쉼표 1개', '끝 쉼표 {n}개'],
+      singleQuotes: ['작은따옴표 문자열 1개', '작은따옴표 문자열 {n}개'],
+      unquotedKeys: ['따옴표 없는 키 1개', '따옴표 없는 키 {n}개'],
+      numbers: ['숫자 1개 다시 씀(16진수, +, .5, 5.)', '숫자 {n}개 다시 씀(16진수, +, .5, 5.)'],
+      escapes: ['이스케이프 1개 다시 씀(\\x, \\v, \\0, \\\', 줄 이음)', '이스케이프 {n}개 다시 씀(\\x, \\v, \\0, \\\', 줄 이음)'],
+      whitespace: ['JSON에서 쓸 수 없는 공백 문자 1개', 'JSON에서 쓸 수 없는 공백 문자 {n}개'],
+    },
+    hint: {
+      fence: 'JSON이 Markdown 코드 블록(```)에 들어 있습니다.',
+      fenceBtn: '코드 블록 표시 제거',
+      escaped: '문자열로 이스케이프된 JSON으로 보입니다(" 대신 \\").',
+      escapedBtn: '이스케이프 해제',
+      jsonl: 'JSON Lines로 보입니다: {n}줄이고 줄마다 완전한 JSON 값입니다. 배열 하나로 합치려면 {link}를 쓰세요.',
+      jsonlLink: 'JSONL 변환기',
+      python: '{word}는 Python 표기입니다. JSON에서는 {fix}로 씁니다.',
+      undefined: 'undefined는 JSON 값이 아닙니다. null로 바꾸거나 속성을 지우세요.',
+      nonFinite: 'JSON에는 NaN과 Infinity가 없습니다. null이나 "Infinity" 같은 문자열로 바꾸세요.',
+      inner: '입력 전체가 JSON을 담은 JSON 문자열 하나입니다.',
+      innerBtn: '안쪽 JSON 정렬',
+    },
+    tree: {
+      expandAll: '모두 펼치기', collapseAll: '모두 접기', more: '{n}개 더 보기',
+      items: ['1개 항목', '{n}개 항목'], keys: ['키 1개', '키 {n}개'],
+      pathHint: '행을 고르면 경로를 보여 줍니다.', pointer: 'JSON Pointer', jq: 'jq', copyPath: '복사',
+      dup: '중복', root: '(루트)', expandLimit: '처음 {n}행까지 펼쳤습니다.',
+    },
+    parse: {
+      empty: '입력이 비어 있습니다',
+      trailingComma: '닫는 괄호 앞에 쉼표가 남아 있습니다',
+      comment: 'JSON에는 주석을 쓸 수 없습니다',
+      singleQuote: 'JSON 문자열과 속성 이름은 큰따옴표(")로 감쌉니다',
+      smartQuote: '{ch}는 둥근 따옴표입니다. 곧은 큰따옴표(")를 쓰세요',
+      fullWidth: '전각 문자 {ch}가 있습니다. JSON의 기호와 공백은 반각이어야 합니다',
+      unquotedKey: '속성 이름은 큰따옴표로 감싸야 합니다',
+      missingComma: '값 사이에 쉼표가 없습니다',
+      missingColon: '속성 이름 뒤에 콜론이 없습니다',
+      unterminatedString: '문자열이 닫히지 않았습니다',
+      unterminatedComment: '/* 주석이 닫히지 않았습니다',
+      controlChar: '문자열 안에 줄바꿈이나 탭이 그대로 있습니다. \\n 또는 \\t로 쓰세요',
+      badEscape: '문자열의 이스케이프가 잘못되었습니다',
+      badNumber: '숫자 형식이 잘못되었습니다(JSON에서는 앞자리 0, "+", ".5", NaN, Infinity를 쓸 수 없습니다)',
+      nonFinite: 'NaN과 Infinity는 JSON으로 나타낼 수 없습니다',
+      badLiteral: '알 수 없는 단어입니다. JSON에는 true, false, null만 있습니다',
+      unexpectedEnd: '입력이 중간에 끝났습니다(괄호나 따옴표가 닫히지 않았습니다)',
+      extraData: 'JSON 값이 끝난 뒤에 데이터가 더 있습니다',
+      unexpectedChar: '예상하지 못한 문자 {ch}',
+    },
+  },
+};
+const S = STRINGS[lang] || STRINGS.en;
+const jsonlHref = (lang === 'en' ? '' : '/' + lang) + '/tools/jsonl-converter/';
 ---
 
-<div>
-  <div class="jf-wrap">
-    <div class="jf-row">
-      <label for="jf-input" data-i18n="inputJson">Input JSON</label>
-      <textarea
-        id="jf-input"
-        placeholder='{"name":"ZeroTool","free":true}'
-        spellcheck="false"
-      ></textarea>
+<div class="jf-wrap" id="jf-wrap" data-strings={JSON.stringify(S)} data-jsonl={jsonlHref}>
+  <div class="jf-toolbar">
+    <button id="jf-format" class="btn-primary" type="button">{S.format}</button>
+    <button id="jf-minify" class="btn-secondary" type="button">{S.minify}</button>
+    <div class="jf-seg" role="group" aria-label={S.indentAria}>
+      <button type="button" class="jf-seg-btn" data-indent="2" aria-pressed="true">{S.indent2}</button>
+      <button type="button" class="jf-seg-btn" data-indent="4" aria-pressed="false">{S.indent4}</button>
+      <button type="button" class="jf-seg-btn" data-indent="tab" aria-pressed="false">{S.indentTab}</button>
     </div>
+    <span class="jf-toolbar-end">
+      <button id="jf-open" class="btn-ghost" type="button">{S.open}</button>
+      <button id="jf-sample" class="btn-ghost" type="button">{S.sample}</button>
+      <button id="jf-clear" class="btn-ghost" type="button">{S.clear}</button>
+    </span>
+  </div>
+  <input type="file" id="jf-file" accept=".json,.jsonc,.json5,.geojson,.har,.txt,application/json,text/plain" hidden />
 
-    <div class="jf-actions">
-      <button id="jf-format" class="btn-primary" data-i18n="format">Format</button>
-      <button id="jf-minify" class="btn-secondary" data-i18n="minify">Minify</button>
-      <button id="jf-validate" class="btn-secondary" data-i18n="validate">Validate</button>
-      <button id="jf-clear" class="btn-ghost" data-i18n="clear">Clear</button>
+  <p id="jf-status" class="jf-status" role="status" aria-live="polite">{S.empty}</p>
+
+  <div class="jf-panels">
+    <div class="jf-panel">
+      <label for="jf-input" class="jf-label">{S.inputLabel}</label>
+      <textarea id="jf-input" class="tool-textarea jf-text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder={S.placeholder}></textarea>
     </div>
-
-    <div id="jf-status" class="jf-status" aria-live="polite"></div>
-
-    <div class="jf-row">
-      <span class="jf-row-label">
-        <span id="jf-output-label" data-i18n="output">Output</span>
-        <button id="jf-copy" class="btn-copy" type="button" data-i18n="copy">Copy</button>
-      </span>
-      <pre id="jf-output" class="jf-output" role="group" aria-labelledby="jf-output-label"><code id="jf-output-code"></code></pre>
+    <div class="jf-panel">
+      <div class="jf-out-head">
+        <span class="jf-label" id="jf-output-label">{S.outputLabel}</span>
+        <div class="jf-seg jf-view" role="group" aria-label={S.viewAria}>
+          <button type="button" class="jf-seg-btn" data-view="text" aria-pressed="true">{S.viewText}</button>
+          <button type="button" class="jf-seg-btn" data-view="tree" aria-pressed="false">{S.viewTree}</button>
+        </div>
+        <span class="jf-out-actions">
+          <button id="jf-copy" class="btn-copy" type="button" disabled>{S.copy}</button>
+          <button id="jf-download" class="btn-copy" type="button" disabled>{S.download}</button>
+        </span>
+      </div>
+      <pre id="jf-output" class="jf-output" tabindex="0" aria-labelledby="jf-output-label"><code id="jf-output-code"></code></pre>
+      <div id="jf-tree-wrap" class="jf-tree-wrap" hidden>
+        <div class="jf-tree-bar">
+          <button id="jf-expand" class="btn-ghost jf-mini" type="button">{S.tree.expandAll}</button>
+          <button id="jf-collapse" class="btn-ghost jf-mini" type="button">{S.tree.collapseAll}</button>
+        </div>
+        <div id="jf-tree" class="jf-tree" role="tree" aria-labelledby="jf-output-label"></div>
+        <div id="jf-path" class="jf-path">{S.tree.pathHint}</div>
+      </div>
     </div>
   </div>
 
-  <script is:inline>
-    (function () {
-      var STRINGS = {
-        en: { inputJson: 'Input JSON', output: 'Output', format: 'Format', minify: 'Minify', validate: 'Validate', clear: 'Clear', copy: 'Copy', copied: 'Copied!', outputPlaceholder: 'Formatted JSON appears here...', validFormatted: 'Valid JSON \u2014 formatted.', invalidJson: 'Invalid JSON', minified: 'Minified.', valid: 'Valid JSON.' },
-        zh: { inputJson: '输入 JSON', output: '输出', format: '格式化', minify: '压缩', validate: '验证', clear: '清除', copy: '复制', copied: '已复制！', outputPlaceholder: '格式化结果显示在此处…', validFormatted: '有效 JSON \u2014 已格式化。', invalidJson: '无效 JSON', minified: '已压缩。', valid: '有效 JSON。' },
-        ja: { inputJson: 'JSON 入力', output: '出力', format: 'フォーマット', minify: '圧縮', validate: '検証', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', outputPlaceholder: 'フォーマット結果がここに表示されます…', validFormatted: '有効な JSON \u2014 フォーマット済み。', invalidJson: '無効な JSON', minified: '圧縮済み。', valid: '有効な JSON。' },
-        ko: { inputJson: 'JSON 입력', output: '출력', format: '포맷', minify: '압축', validate: '검증', clear: '지우기', copy: '복사', copied: '복사됨!', outputPlaceholder: '포맷된 결과가 여기에 표시됩니다…', validFormatted: '유효한 JSON \u2014 포맷 완료.', invalidJson: '유효하지 않은 JSON', minified: '압축 완료.', valid: '유효한 JSON.' }
-      };
+  <ul id="jf-notes" class="jf-notes" hidden></ul>
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.jf-wrap [data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-
-      var input = document.getElementById('jf-input');
-      var outputPre = document.getElementById('jf-output');
-      var outputCode = document.getElementById('jf-output-code');
-      var status = document.getElementById('jf-status');
-      var copyBtn = document.getElementById('jf-copy');
-      var plainText = '';
-
-      function highlightJson(jsonStr) {
-        // Escape HTML first to prevent injection
-        var escaped = jsonStr
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-        return escaped.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g, function (match) {
-          var cls = 'jv-num';
-          if (/^"/.test(match)) {
-            cls = /:$/.test(match) ? 'jv-key' : 'jv-str';
-          } else if (/true|false/.test(match)) {
-            cls = 'jv-bool';
-          } else if (/null/.test(match)) {
-            cls = 'jv-null';
-          }
-          return '<span class="' + cls + '">' + match + '</span>';
-        });
-      }
-
-      function setOutput(jsonStr, isError) {
-        plainText = jsonStr;
-        if (isError) {
-          outputCode.className = 'jf-output-error';
-          outputCode.textContent = jsonStr;
-        } else {
-          outputCode.className = '';
-          outputCode.innerHTML = highlightJson(jsonStr);
-        }
-      }
-
-      function clearOutput() {
-        plainText = '';
-        outputCode.className = '';
-        outputCode.textContent = t.outputPlaceholder;
-      }
-
-      function setStatus(msg, isError) {
-        status.textContent = msg;
-        status.className = 'jf-status ' + (isError ? 'error' : 'success');
-      }
-
-      function clearStatus() {
-        status.textContent = '';
-        status.className = 'jf-status';
-      }
-
-      function setInputError(hasError) {
-        if (hasError) {
-          input.classList.add('jf-input-error');
-        } else {
-          input.classList.remove('jf-input-error');
-        }
-      }
-
-      // Restore saved input
-      var _slug = 'json-formatter';
-      if (window.ztPersist) {
-        var _saved = window.ztPersist.load(_slug)['input'];
-        if (_saved) input.value = _saved;
-      }
-
-      // Real-time format on input (debounced 300ms) + save at 500ms
-      var _debounceTimer = null;
-      var _saveTimer = null;
-      input.addEventListener('input', function () {
-        clearTimeout(_debounceTimer);
-        clearTimeout(_saveTimer);
-        _debounceTimer = setTimeout(function () {
-          var raw = input.value.trim();
-          if (!raw) {
-            setInputError(false);
-            clearStatus();
-            return;
-          }
-          try {
-            var formatted = JSON.stringify(JSON.parse(raw), null, 2);
-            setOutput(formatted, false);
-            setInputError(false);
-            setStatus(t.validFormatted, false);
-          } catch (e) {
-            setInputError(true);
-            setStatus(t.invalidJson + ': ' + e.message, true);
-          }
-        }, 300);
-        _saveTimer = setTimeout(function () {
-          if (window.ztPersist) window.ztPersist.save(_slug, { input: input.value });
-        }, 500);
-      });
-
-      document.getElementById('jf-format').addEventListener('click', function () {
-        var raw = input.value.trim();
-        if (!raw) { clearStatus(); clearOutput(); return; }
-        try {
-          var formatted = JSON.stringify(JSON.parse(raw), null, 2);
-          setOutput(formatted, false);
-          setInputError(false);
-          setStatus(t.validFormatted, false);
-          window.trackTool && window.trackTool('json_formatter', 'format');
-        } catch (e) {
-          setInputError(true);
-          setStatus(t.invalidJson + ': ' + e.message, true);
-        }
-      });
-
-      document.getElementById('jf-minify').addEventListener('click', function () {
-        var raw = input.value.trim();
-        if (!raw) { clearStatus(); clearOutput(); return; }
-        try {
-          var minified = JSON.stringify(JSON.parse(raw));
-          setOutput(minified, false);
-          setInputError(false);
-          setStatus(t.minified, false);
-          window.trackTool && window.trackTool('json_formatter', 'minify');
-        } catch (e) {
-          setInputError(true);
-          setStatus(t.invalidJson + ': ' + e.message, true);
-        }
-      });
-
-      document.getElementById('jf-validate').addEventListener('click', function () {
-        var raw = input.value.trim();
-        if (!raw) { clearStatus(); return; }
-        try {
-          JSON.parse(raw);
-          setInputError(false);
-          setStatus(t.valid, false);
-          window.trackTool && window.trackTool('json_formatter', 'validate');
-        } catch (e) {
-          setInputError(true);
-          setStatus(t.invalidJson + ': ' + e.message, true);
-        }
-      });
-
-      document.getElementById('jf-clear').addEventListener('click', function () {
-        clearTimeout(_saveTimer);
-        input.value = '';
-        clearOutput();
-        clearStatus();
-        setInputError(false);
-        if (window.ztPersist) window.ztPersist.clear(_slug);
-      });
-
-      copyBtn.addEventListener('click', function () {
-        if (!plainText) return;
-        navigator.clipboard.writeText(plainText).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
-      });
-    })();
-  </script>
+  <div class="jf-options" role="group" aria-label={S.optionsAria}>
+    <label class="jf-check"><input type="checkbox" id="jf-sort" /> <span>{S.optSort}</span></label>
+    <label class="jf-check"><input type="checkbox" id="jf-ascii" /> <span>{S.optAscii}</span></label>
+    <label class="jf-check"><input type="checkbox" id="jf-json5" /> <span>{S.optJson5}</span></label>
+    <label class="jf-field">
+      <span>{S.numbersLabel}</span>
+      <select id="jf-numbers" class="tool-input jf-select">
+        <option value="raw">{S.numRaw}</option>
+        <option value="js">{S.numJs}</option>
+      </select>
+    </label>
+    <label class="jf-field">
+      <span>{S.dupesLabel}</span>
+      <select id="jf-dupes" class="tool-input jf-select">
+        <option value="keep">{S.dupKeep}</option>
+        <option value="last">{S.dupLast}</option>
+      </select>
+    </label>
+  </div>
 </div>
 
-<style>
-  .jf-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+<script>
+  /* ── engine:start ── */
+  // Pure functions. The test runs this block in Node (scripts/test-json-formatter.mjs).
+  // A parsed document is a tree of: null, true, false, a JS string, { t: 'n', r: '<number as
+  // written>' }, { t: 'a', v: [...] } or { t: 'o', k: [keys], v: [values] } (every member is
+  // kept, duplicates included). Numbers keep their source text, so 12345678901234567890, 1.0
+  // and 1e2 are written back unchanged; JSON.parse would read them as doubles.
+  var MAX_LIST = 50;
 
-  .jf-row { display: flex; flex-direction: column; gap: 0.4rem; }
-
-  .jf-row label,
-  .jf-row .jf-row-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  function fmt(tpl, params) {
+    return String(tpl).replace(/\{(\w+)\}/g, function (m, k) {
+      return params && params[k] !== undefined && params[k] !== null ? String(params[k]) : m;
+    });
+  }
+  function escSeg(s) { return String(s).replace(/~/g, '~0').replace(/\//g, '~1'); }
+  function pointerOf(segs) { return segs.map(function (s) { return '/' + escSeg(s); }).join(''); }
+  function jqPathOf(segs) {
+    if (!segs.length) return '.';
+    return segs.map(function (s) {
+      if (typeof s === 'number') return '[' + s + ']';
+      return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) ? '.' + s : '[' + JSON.stringify(s) + ']';
+    }).join('').replace(/^\[/, '.[');
   }
 
-  .jf-row textarea {
-    width: 100%;
-    min-height: 160px;
+  // Copied verbatim from JsonSchemaValidatorTool.astro (the test compares the source).
+  function lineCol(text, offset) {
+    var line = 1, last = -1;
+    for (var i = text.indexOf('\n'); i !== -1 && i < offset; i = text.indexOf('\n', i + 1)) { line++; last = i; }
+    return { line: line, col: offset - last };
+  }
+
+  // Copied verbatim from JsonSchemaValidatorTool.astro (the test compares the source).
+  // Called only after strict parsing failed: names the first error and its usual cause.
+  function jsonSyntaxError(text) {
+    var i = 0, n = text.length;
+    var SMART = '\u201c\u201d\u2018\u2019\u300c\u300d';
+    var WIDE = '\u3000\uff1a\uff0c\uff5b\uff5d\uff3b\uff3d\uff02';
+    function fail(code, at, ch) { throw { jsonErr: true, code: code, offset: at === undefined ? i : at, ch: ch }; }
+    function special(c) {
+      if (SMART.indexOf(c) >= 0) fail('smartQuote', i, c);
+      if (WIDE.indexOf(c) >= 0) fail('fullWidth', i, c);
+    }
+    function ws() {
+      while (i < n) {
+        var c = text[i];
+        if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
+        if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) fail('comment');
+        if (c === '#') fail('comment');
+        break;
+      }
+    }
+    var NUM = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+    var WORD = /[A-Za-z_$][\w$]*/y;
+    function str() {
+      var s = i; i++;
+      while (i < n) {
+        var c = text.charCodeAt(i);
+        if (c === 34) { i++; return; }
+        if (c === 92) {
+          var e = text[i + 1];
+          if (e !== undefined && '"\\/bfnrt'.indexOf(e) >= 0) { i += 2; continue; }
+          if (e === 'u' && /^[0-9a-fA-F]{4}$/.test(text.substr(i + 2, 4))) { i += 6; continue; }
+          fail('badEscape');
+        }
+        if (c < 0x20) fail('controlChar');
+        i++;
+      }
+      fail('unterminatedString', s);
+    }
+    function num() {
+      NUM.lastIndex = i;
+      var m = NUM.exec(text);
+      if (!m || m[0] === '-' || m[0] === '') fail('badNumber');
+      i += m[0].length;
+      if (i < n && /[0-9.eE]/.test(text[i])) fail('badNumber');
+    }
+    function startsValue(c) { return c === '{' || c === '[' || c === '"' || c === '-' || (c >= '0' && c <= '9') || c === 't' || c === 'f' || c === 'n'; }
+    function value(depth) {
+      if (depth > 3000) fail('unexpectedChar');
+      ws();
+      if (i >= n) fail('unexpectedEnd');
+      var c = text[i];
+      if (c === '{') return obj(depth);
+      if (c === '[') return arr(depth);
+      if (c === '"') return str();
+      if (c === "'") fail('singleQuote');
+      special(c);
+      if (c === '-' || (c >= '0' && c <= '9')) return num();
+      if (c === '+' || c === '.') fail('badNumber');
+      WORD.lastIndex = i;
+      var m = WORD.exec(text);
+      if (m) {
+        if (m[0] === 'true' || m[0] === 'false' || m[0] === 'null') { i += m[0].length; return; }
+        if (m[0] === 'NaN' || m[0] === 'Infinity') fail('badNumber');
+        fail('badLiteral');
+      }
+      fail('unexpectedChar', i, c);
+    }
+    function obj(depth) {
+      i++; ws();
+      if (text[i] === '}') { i++; return; }
+      for (;;) {
+        ws();
+        if (i >= n) fail('unexpectedEnd');
+        var c = text[i];
+        if (c === "'") fail('singleQuote');
+        special(c);
+        if (c !== '"') { if (/[A-Za-z_$0-9]/.test(c)) fail('unquotedKey'); fail('unexpectedChar', i, c); }
+        str(); ws();
+        if (i >= n) fail('unexpectedEnd');
+        if (text[i] !== ':') { special(text[i]); fail('missingColon'); }
+        i++;
+        value(depth + 1); ws();
+        if (i >= n) fail('unexpectedEnd');
+        c = text[i];
+        if (c === ',') { var comma = i; i++; ws(); if (text[i] === '}') fail('trailingComma', comma); continue; }
+        if (c === '}') { i++; return; }
+        special(c);
+        if (c === '"' || /[A-Za-z_$]/.test(c)) fail('missingComma');
+        fail('unexpectedChar', i, c);
+      }
+    }
+    function arr(depth) {
+      i++; ws();
+      if (text[i] === ']') { i++; return; }
+      for (;;) {
+        value(depth + 1); ws();
+        if (i >= n) fail('unexpectedEnd');
+        var c = text[i];
+        if (c === ',') { var comma = i; i++; ws(); if (text[i] === ']') fail('trailingComma', comma); continue; }
+        if (c === ']') { i++; return; }
+        special(c);
+        if (startsValue(c)) fail('missingComma');
+        fail('unexpectedChar', i, c);
+      }
+    }
+    try {
+      ws();
+      if (i >= n) return { code: 'empty', offset: 0 };
+      value(0);
+      ws();
+      if (i < n) fail('extraData');
+      return null;
+    } catch (e) {
+      if (e && e.jsonErr) return { code: e.code, offset: e.offset, ch: e.ch };
+      throw e;
+    }
+  }
+
+  /* Parser ------------------------------------------------------------------------------
+     j5 = false: RFC 8259 / ECMA-404 exactly (accepts what JSON.parse accepts).
+     j5 = true: JSON5 1.0.0 (spec.json5.org), which also covers JSONC: line and block comments,
+     trailing commas, single-quoted strings, unquoted (ECMAScript identifier) keys, hex,
+     leading +, .5 and 5. numbers, \x \v \0 \' escapes, line continuations and the extra
+     whitespace characters. Infinity and NaN have no JSON form and stay an error. */
+  var ID_START = /[$_\p{L}\p{Nl}]/u;
+  var ID_PART = /[$_\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}\u200c\u200d]/u;
+  var NUM_JSON = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+  var NUM_J5 = /[+-]?(?:Infinity|NaN|0[xX][0-9a-fA-F]+|(?:(?:0|[1-9]\d*)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/y;
+  function isJ5Space(c) {
+    return c === 11 || c === 12 || c === 0xa0 || c === 0xfeff || c === 0x2028 || c === 0x2029 ||
+      c === 0x1680 || (c >= 0x2000 && c <= 0x200a) || c === 0x202f || c === 0x205f || c === 0x3000;
+  }
+
+  function parseJson(text, j5) {
+    var n = text.length, i = 0;
+    var changes = j5 ? { comments: 0, trailingCommas: 0, singleQuotes: 0, unquotedKeys: 0, numbers: 0, escapes: 0, whitespace: 0 } : null;
+    var stats = { objects: 0, arrays: 0, strings: 0, numbers: 0, booleans: 0, nulls: 0, keys: 0, depth: 0 };
+    var dups = [], dupCount = 0, surr = [], surrCount = 0, nums = [], numCount = 0;
+    var stack = [];
+    function err(code, at) { throw { jfErr: true, code: code, offset: at === undefined ? i : at }; }
+    function segsNow() {
+      var s = [];
+      for (var d = 0; d < stack.length; d++) s.push(stack[d].node.t === 'o' ? stack[d].key : stack[d].node.v.length);
+      return s;
+    }
+    function ws() {
+      while (i < n) {
+        var c = text.charCodeAt(i);
+        if (c === 32 || c === 10 || c === 13 || c === 9) { i++; continue; }
+        if (!j5) return;
+        if (isJ5Space(c)) { changes.whitespace++; i++; continue; }
+        if (c === 47 && text.charCodeAt(i + 1) === 47) {
+          changes.comments++; i += 2;
+          while (i < n) { var d = text.charCodeAt(i); if (d === 10 || d === 13 || d === 0x2028 || d === 0x2029) break; i++; }
+          continue;
+        }
+        if (c === 47 && text.charCodeAt(i + 1) === 42) {
+          var end = text.indexOf('*/', i + 2);
+          if (end < 0) err('unterminatedComment');
+          changes.comments++; i = end + 2;
+          continue;
+        }
+        return;
+      }
+    }
+    function hex4(at) {
+      var h = text.substr(at, 4);
+      if (!/^[0-9a-fA-F]{4}$/.test(h)) err('badEscape', at - 2);
+      return parseInt(h, 16);
+    }
+    function readString() {
+      var q = text.charCodeAt(i), open = i;
+      if (q === 39) changes.singleQuotes++;
+      i++;
+      var out = '', seg = i, hadSurr = false;
+      for (;;) {
+        if (i >= n) err('unterminatedString', open);
+        var c = text.charCodeAt(i);
+        if (c === q) break;
+        if (c === 92) {
+          out += text.slice(seg, i);
+          var e = text.charCodeAt(i + 1);
+          switch (e) {
+            case 34: out += '"'; break;
+            case 92: out += '\\'; break;
+            case 47: out += '/'; break;
+            case 98: out += '\b'; break;
+            case 102: out += '\f'; break;
+            case 110: out += '\n'; break;
+            case 114: out += '\r'; break;
+            case 116: out += '\t'; break;
+            case 117: {
+              var u = hex4(i + 2);
+              if (u >= 0xd800 && u <= 0xdfff) hadSurr = true;
+              out += String.fromCharCode(u); i += 6; seg = i; continue;
+            }
+            default: {
+              if (!j5 || i + 1 >= n) err('badEscape');
+              changes.escapes++;
+              if (e === 39) out += "'";
+              else if (e === 118) out += '\v';
+              else if (e === 48) { var nx = text.charCodeAt(i + 2); if (nx >= 48 && nx <= 57) err('badEscape'); out += '\0'; }
+              else if (e === 120) {
+                var h = text.substr(i + 2, 2);
+                if (!/^[0-9a-fA-F]{2}$/.test(h)) err('badEscape');
+                out += String.fromCharCode(parseInt(h, 16)); i += 4; seg = i; continue;
+              } else if (e === 10 || e === 0x2028 || e === 0x2029) { /* line continuation */ }
+              else if (e === 13) { if (text.charCodeAt(i + 2) === 10) i++; }
+              else if (e >= 49 && e <= 57) err('badEscape');
+              else {
+                var cp = text.codePointAt(i + 1);
+                var ch = String.fromCodePoint(cp);
+                out += ch; i += 1 + ch.length; seg = i; continue;
+              }
+            }
+          }
+          i += 2; seg = i; continue;
+        }
+        if (c < 32) {
+          if (!j5 || c === 10 || c === 13) err('controlChar');
+        } else if (c >= 0xd800 && c <= 0xdfff) hadSurr = true;
+        i++;
+      }
+      out += text.slice(seg, i);
+      i++;
+      stats.strings++;
+      if (hadSurr && /[\ud800-\udbff](?![\udc00-\udfff])|(^|[^\ud800-\udbff])[\udc00-\udfff]/.test(out)) {
+        surrCount++;
+        if (surr.length < MAX_LIST) surr.push({ offset: open, path: segsNow() });
+      }
+      return out;
+    }
+    function readIdent() {
+      var start = i, out = '';
+      for (;;) {
+        var ch, cp;
+        if (text.charCodeAt(i) === 92) {
+          if (text.charCodeAt(i + 1) !== 117) err('unexpectedChar');
+          cp = hex4(i + 2); ch = String.fromCharCode(cp); i += 6;
+        } else {
+          cp = text.codePointAt(i);
+          if (cp === undefined) break;
+          ch = String.fromCodePoint(cp);
+          if (!(out ? ID_PART : ID_START).test(ch)) break;
+          i += ch.length;
+        }
+        if (!(out ? ID_PART : ID_START).test(ch)) err('unexpectedChar', start);
+        out += ch;
+      }
+      if (!out) err('unexpectedChar');
+      changes.unquotedKeys++;
+      return out;
+    }
+    function readKey(frame) {
+      ws();
+      if (i >= n) err('unexpectedEnd');
+      var c = text.charCodeAt(i), at = i, key;
+      if (c === 34 || (j5 && c === 39)) {
+        var before = surr.length;
+        key = readString(); stats.strings--;
+        if (surr.length > before) surr[surr.length - 1].path[stack.length - 1] = key;
+      }
+      else if (j5) key = readIdent();
+      else err('unquotedKey');
+      frame.key = key; frame.offs.push(at); stats.keys++;
+      ws();
+      if (text.charCodeAt(i) !== 58) err(i >= n ? 'unexpectedEnd' : 'missingColon');
+      i++;
+    }
+    function readNumber() {
+      var re = j5 ? NUM_J5 : NUM_JSON, at = i;
+      re.lastIndex = i;
+      var m = re.exec(text);
+      if (!m) err('badNumber');
+      var lex = m[0];
+      i += lex.length;
+      var raw = lex;
+      if (j5) {
+        var sign = lex.charAt(0) === '-' ? '-' : '';
+        var body = lex.replace(/^[+-]/, '');
+        if (body === 'Infinity' || body === 'NaN') err('nonFinite', at);
+        if (/^0[xX]/.test(body)) raw = sign + BigInt(body).toString();
+        else {
+          var p = /^(\d*)(?:\.(\d*))?(.*)$/.exec(body);
+          raw = sign + (p[1] || '0') + (p[2] ? '.' + p[2] : '') + p[3];
+        }
+        if (raw !== lex) changes.numbers++;
+      }
+      stats.numbers++;
+      var ch = numberChange(raw);
+      if (ch) {
+        numCount++;
+        if (nums.length < MAX_LIST) nums.push({ offset: at, raw: raw, kind: ch.kind, js: ch.js, path: segsNow() });
+      }
+      return { t: 'n', r: raw };
+    }
+    function closeFrame() {
+      var f = stack.pop(), node = f.node;
+      if (node.t === 'o' && node.k.length > 1) {
+        var k = node.k, path = null, seen = k.length > 16 ? new Map() : null;
+        for (var a = 1; a < k.length; a++) {
+          var dupe = false;
+          if (seen) { if (a === 1) seen.set(k[0], 0); if (seen.has(k[a])) dupe = true; else seen.set(k[a], a); }
+          else { for (var b = 0; b < a; b++) if (k[b] === k[a]) { dupe = true; break; } }
+          if (dupe) {
+            node.d = true; dupCount++;
+            if (dups.length < MAX_LIST) {
+              if (!path) path = segsNow();
+              dups.push({ offset: f.offs[a], key: k[a], path: path });
+            }
+          }
+        }
+      }
+      return node;
+    }
+    function scalar() {
+      var c = text.charCodeAt(i);
+      if (c === 34 || (j5 && c === 39)) return readString();
+      if (c === 45 || (c >= 48 && c <= 57) || (j5 && (c === 43 || c === 46 || c === 73 || c === 78))) return readNumber();
+      if (text.startsWith('true', i)) { i += 4; stats.booleans++; return true; }
+      if (text.startsWith('false', i)) { i += 5; stats.booleans++; return false; }
+      if (text.startsWith('null', i)) { i += 4; stats.nulls++; return null; }
+      err(i >= n ? 'unexpectedEnd' : 'unexpectedChar');
+    }
+    try {
+      var root, value;
+      ws();
+      if (i >= n) err('empty', 0);
+      parse: for (;;) {
+        // expecting a value
+        ws();
+        if (i >= n) err('unexpectedEnd');
+        var c = text.charCodeAt(i);
+        if (c === 123 || c === 91) {
+          var node = c === 123 ? { t: 'o', k: [], v: [] } : { t: 'a', v: [] };
+          if (c === 123) stats.objects++; else stats.arrays++;
+          var frame = { node: node, key: null, offs: [] };
+          stack.push(frame);
+          if (stack.length > stats.depth) stats.depth = stack.length;
+          i++; ws();
+          var close = c === 123 ? 125 : 93;
+          if (text.charCodeAt(i) === close) { i++; value = closeFrame(); }
+          else {
+            if (c === 123) readKey(frame);
+            continue parse;
+          }
+        } else value = scalar();
+        // a complete value: attach it and close finished containers
+        for (;;) {
+          if (!stack.length) { root = value; break parse; }
+          var top = stack[stack.length - 1];
+          if (top.node.t === 'o') top.node.k.push(top.key);
+          top.node.v.push(value);
+          ws();
+          var cc = text.charCodeAt(i), closer = top.node.t === 'o' ? 125 : 93;
+          if (cc === 44) {
+            i++; ws();
+            if (text.charCodeAt(i) === closer) {
+              if (!j5) err('trailingComma');
+              changes.trailingCommas++; i++; value = closeFrame(); continue;
+            }
+            if (top.node.t === 'o') readKey(top);
+            continue parse;
+          }
+          if (cc === closer) { i++; value = closeFrame(); continue; }
+          err(i >= n ? 'unexpectedEnd' : 'missingComma');
+        }
+      }
+      ws();
+      if (i < n) err('extraData');
+      return {
+        ok: true, root: root, stats: stats, changes: changes,
+        dups: dups, dupCount: dupCount, surrogates: surr, surrogateCount: surrCount, numbers: nums, numberCount: numCount,
+      };
+    } catch (e) {
+      if (e && e.jfErr) return { ok: false, code: e.code, offset: e.offset };
+      throw e;
+    }
+  }
+
+  /* Numbers: what JSON.parse followed by JSON.stringify makes of a number literal. Returns null
+     when the value is unchanged (only the spelling may differ: 1.0 → 1, 1e2 → 100). */
+  function decCanon(s) {
+    var m = /^(-?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(s);
+    if (!m) return s;
+    var digits = (m[2] || '') + (m[3] || ''), exp = (m[4] ? parseInt(m[4], 10) : 0) - (m[3] || '').length;
+    digits = digits.replace(/^0+/, '');
+    if (!digits) return m[1] + '0';
+    var t = /0+$/.exec(digits);
+    if (t) { exp += t[0].length; digits = digits.slice(0, -t[0].length); }
+    return m[1] + digits + 'e' + exp;
+  }
+  function numberChange(raw) {
+    var v = Number(raw);
+    if (!isFinite(v)) return { kind: 'overflow', js: 'null' };
+    var js = JSON.stringify(v);
+    if (js === raw) return null;
+    var a = decCanon(raw), b = decCanon(js);
+    if (a === b) return null;
+    if (a === '-0') return { kind: 'negZero', js: js };
+    if (v === 0) return { kind: 'underflow', js: js };
+    return { kind: 'precision', js: js };
+  }
+
+  /* Text → result. BOM: RFC 8259 §8.1 lets a parser ignore it; it is removed and reported. */
+  function analyze(text, opts) {
+    opts = opts || {};
+    var base = 0, bom = false;
+    if (text.charCodeAt(0) === 0xfeff) { text = text.slice(1); base = 1; bom = true; }
+    if (!/[^ \t\n\r]/.test(text)) return { ok: false, empty: true, base: base, bom: bom };
+    var r = parseJson(text, false);
+    if (r.ok) { r.base = base; r.bom = bom; r.mode = 'json'; r.inner = innerJson(r.root); return r; }
+    var j = parseJson(text, true);
+    if (j.ok && opts.json5) { j.base = base; j.bom = bom; j.mode = 'json5'; j.inner = innerJson(j.root); return j; }
+    var syn = jsonSyntaxError(text) || { code: r.code, offset: r.offset };
+    var res = { ok: false, base: base, bom: bom, error: syn };
+    if (opts.json5) res.error = { code: j.code, offset: j.offset };
+    else if (j.ok) res.json5 = j.changes;
+    else if (j.code === 'nonFinite') res.hint = { code: 'nonFinite', offset: j.offset };
+    var hint = hintFor(text, syn, opts);
+    if (hint && !res.hint) res.hint = hint;
+    return res;
+  }
+  function innerJson(root) {
+    if (typeof root !== 'string') return null;
+    var s = root.trim();
+    if (s.charAt(0) !== '{' && s.charAt(0) !== '[') return null;
+    return parseJson(s, false).ok ? s : null;
+  }
+  // Common non-JSON input with a one-step fix.
+  function hintFor(text, syn, opts) {
+    var t = text.trim();
+    var fence = /^```[\w-]*[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/.exec(t);
+    if (fence) {
+      var inner = fence[1];
+      if (parseJson(inner, false).ok || (opts.json5 && parseJson(inner, true).ok)) return { code: 'fence', text: inner };
+    }
+    if (t.indexOf('\\"') >= 0) {
+      try {
+        var un = JSON.parse('"' + t.replace(/^"|"$/g, '') + '"');
+        if (typeof un === 'string' && parseJson(un.trim(), false).ok) return { code: 'escaped', text: un.trim() };
+      } catch (e) { /* not an escaped string */ }
+    }
+    if (syn.code === 'extraData') {
+      var lines = text.split(/\r?\n/).filter(function (l) { return l.trim(); });
+      if (lines.length > 1 && lines.every(function (l) { return parseJson(l, false).ok; })) return { code: 'jsonl', n: lines.length };
+    }
+    if (syn.code === 'badLiteral' || syn.code === 'badNumber') {
+      var w = /^[A-Za-z_$][\w$]*/.exec(text.slice(syn.offset));
+      if (w) {
+        var py = { True: 'true', False: 'false', None: 'null' }[w[0]];
+        if (py) return { code: 'python', word: w[0], fix: py, offset: syn.offset };
+        if (w[0] === 'undefined') return { code: 'undefined', offset: syn.offset };
+        if (w[0] === 'NaN' || w[0] === 'Infinity') return { code: 'nonFinite', offset: syn.offset };
+      }
+    }
+    return null;
+  }
+
+  /* Output ------------------------------------------------------------------------------ */
+  // Code point order (Python sort_keys, jq -S). JS < compares UTF-16 code units, which puts
+  // U+E000–U+FFFF after astral characters; this mapping fixes that.
+  function cmpCodePoint(a, b) {
+    if (a === b) return 0;
+    var n = Math.min(a.length, b.length);
+    for (var x = 0; x < n; x++) {
+      var ca = a.charCodeAt(x), cb = b.charCodeAt(x);
+      if (ca !== cb) {
+        if (ca >= 0xd800 && cb >= 0xd800) {
+          ca = ca >= 0xe000 ? ca - 0x800 : ca + 0x2000;
+          cb = cb >= 0xe000 ? cb - 0x800 : cb + 0x2000;
+        }
+        return ca - cb;
+      }
+    }
+    return a.length - b.length;
+  }
+  // Member order for an object: dupes 'last' keeps the first position with the last value
+  // (what JSON.parse, Python and jq do); sortKeys sorts by code point (stable).
+  function orderOf(node, o) {
+    var k = node.k, order = [];
+    if (node.d && o.dupes === 'last') {
+      var last = new Map();
+      for (var a = 0; a < k.length; a++) last.set(k[a], a);
+      var done = new Set();
+      for (var b = 0; b < k.length; b++) if (!done.has(k[b])) { done.add(k[b]); order.push(last.get(k[b])); }
+    } else for (var c = 0; c < k.length; c++) order.push(c);
+    if (o.sortKeys) order.sort(function (x, y) { return cmpCodePoint(k[x], k[y]); });
+    return order;
+  }
+  function quote(s, ascii) {
+    var q = JSON.stringify(s);
+    return ascii ? q.replace(/[\u007f-\uffff]/g, function (c) { return '\\u' + ('000' + c.charCodeAt(0).toString(16)).slice(-4); }) : q;
+  }
+  function numberOut(raw, mode) {
+    if (mode !== 'js') return raw;
+    var v = Number(raw);
+    return isFinite(v) ? JSON.stringify(v) : raw;
+  }
+  function scalarOut(v, o) {
+    if (v === null) return 'null';
+    if (v === true) return 'true';
+    if (v === false) return 'false';
+    if (typeof v === 'string') return quote(v, o.ascii);
+    return numberOut(v.r, o.numbers);
+  }
+  // o: { indent: '' (minified) | '  ' | '    ' | '\t', sortKeys, ascii, numbers: 'raw' | 'js', dupes: 'keep' | 'last' }
+  function serialize(root, o) {
+    var ind = o.indent || '', nl = ind ? '\n' : '', colon = ind ? ': ' : ':';
+    var pads = [''], out = '', stack = [];
+    function pad(d) { while (pads.length <= d) pads.push(pads[pads.length - 1] + ind); return pads[d]; }
+    function emit(v) {
+      if (v !== null && typeof v === 'object' && v.t !== 'n') {
+        var isObj = v.t === 'o';
+        if (!v.v.length) { out += isObj ? '{}' : '[]'; return; }
+        out += isObj ? '{' : '[';
+        stack.push({ v: v, obj: isObj, order: isObj ? orderOf(v, o) : null, pos: 0 });
+        return;
+      }
+      out += scalarOut(v, o);
+    }
+    emit(root);
+    while (stack.length) {
+      var f = stack[stack.length - 1], len = f.obj ? f.order.length : f.v.v.length;
+      if (f.pos < len) {
+        var idx = f.obj ? f.order[f.pos] : f.pos;
+        out += (f.pos ? ',' : '') + nl + pad(stack.length);
+        if (f.obj) out += quote(f.v.k[idx], o.ascii) + colon;
+        f.pos++;
+        emit(f.v.v[idx]);
+      } else {
+        stack.pop();
+        out += nl + pad(stack.length) + (f.obj ? '}' : ']');
+      }
+    }
+    return out;
+  }
+
+  // Colours for the output text (valid JSON produced by serialize). HTML is escaped first.
+  function highlight(json) {
+    var esc = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return esc.replace(/("(?:\\u[0-9a-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g, function (m) {
+      var cls = m.charAt(0) === '"' ? (/:$/.test(m) ? 'jf-k' : 'jf-s') : m === 'null' ? 'jf-z' : (m === 'true' || m === 'false') ? 'jf-b' : 'jf-n';
+      return '<span class="' + cls + '">' + m + '</span>';
+    });
+  }
+
+  // Two lines of context and a caret; long lines (minified JSON) are cut to 72 characters
+  // around the column.
+  function codeFrame(text, offset) {
+    var lc = lineCol(text, offset);
+    var lines = text.split('\n');
+    var out = [], w = String(lc.line).length;
+    for (var ln = Math.max(1, lc.line - 1); ln <= lc.line; ln++) {
+      var s = (lines[ln - 1] || '').replace(/\r$/, ''), from = 0, col = lc.col - 1;
+      if (s.length > 72) {
+        from = ln === lc.line ? Math.max(0, Math.min(col - 36, s.length - 72)) : 0;
+        s = (from > 0 ? '…' : '') + s.slice(from, from + 72) + (from + 72 < s.length ? '…' : '');
+      }
+      out.push(String(ln).padStart(w) + ' | ' + s);
+      if (ln === lc.line) out.push(' '.repeat(w) + ' | ' + ' '.repeat(col - from + (from > 0 ? 1 : 0)) + '^');
+    }
+    return { line: lc.line, col: lc.col, text: out.join('\n') };
+  }
+
+  /* Files: RFC 8259 §8.1 requires UTF-8. UTF-16 with a BOM is decoded and reported; bytes
+     that are not UTF-8 are an error with the byte offset. */
+  function firstBadUtf8(u8) {
+    for (var x = 0; x < u8.length;) {
+      var b = u8[x], need, min;
+      if (b < 0x80) { x++; continue; }
+      if (b >= 0xc2 && b <= 0xdf) { need = 1; min = 0x80; }
+      else if (b >= 0xe0 && b <= 0xef) { need = 2; min = 0x800; }
+      else if (b >= 0xf0 && b <= 0xf4) { need = 3; min = 0x10000; }
+      else return x;
+      var cp = b & (0x3f >> need);
+      for (var y = 1; y <= need; y++) {
+        var c = u8[x + y];
+        if (c === undefined || (c & 0xc0) !== 0x80) return x;
+        cp = (cp << 6) | (c & 0x3f);
+      }
+      if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return x;
+      x += need + 1;
+    }
+    return -1;
+  }
+  function decodeBytes(u8) {
+    if (u8[0] === 0xff && u8[1] === 0xfe) return { text: new TextDecoder('utf-16le').decode(u8.subarray(2)), encoding: 'UTF-16LE' };
+    if (u8[0] === 0xfe && u8[1] === 0xff) return { text: new TextDecoder('utf-16be').decode(u8.subarray(2)), encoding: 'UTF-16BE' };
+    var bad = firstBadUtf8(u8);
+    if (bad >= 0) {
+      var zeros = 0;
+      for (var x = 0; x < Math.min(u8.length, 64); x++) if (u8[x] === 0) zeros++;
+      return { error: zeros * 4 >= Math.min(u8.length, 64) ? 'utf16NoBom' : 'notUtf8', offset: bad };
+    }
+    return { text: new TextDecoder('utf-8', { ignoreBOM: true }).decode(u8), encoding: 'UTF-8' };
+  }
+
+  /* Tree view helpers. */
+  function kindOf(v) {
+    if (v === null) return 'null';
+    if (typeof v === 'string') return 'string';
+    if (typeof v === 'boolean') return 'boolean';
+    return v.t === 'n' ? 'number' : v.t === 'o' ? 'object' : 'array';
+  }
+  function childrenOf(v, o) {
+    if (v === null || typeof v !== 'object' || v.t === 'n') return [];
+    if (v.t === 'a') return v.v.map(function (x, idx) { return { seg: idx, value: x }; });
+    return orderOf(v, o).map(function (idx) { return { seg: v.k[idx], value: v.v[idx], dup: !!v.d && o.dupes !== 'last' && v.k.indexOf(v.k[idx]) !== idx }; });
+  }
+  /* ── engine:end ── */
+
+  const wrap = document.getElementById('jf-wrap') as HTMLElement;
+  const T: any = JSON.parse(wrap.dataset.strings || '{}');
+  const SLUG = 'json-formatter';
+  const $ = (id: string) => document.getElementById(id) as any;
+  const input = $('jf-input') as HTMLTextAreaElement;
+  const statusEl = $('jf-status') as HTMLElement;
+  const outPre = $('jf-output') as HTMLElement;
+  const outCode = $('jf-output-code') as HTMLElement;
+  const treeWrap = $('jf-tree-wrap') as HTMLElement;
+  const treeEl = $('jf-tree') as HTMLElement;
+  const pathEl = $('jf-path') as HTMLElement;
+  const notesEl = $('jf-notes') as HTMLUListElement;
+  const copyBtn = $('jf-copy') as HTMLButtonElement;
+  const dlBtn = $('jf-download') as HTMLButtonElement;
+  const fileEl = $('jf-file') as HTMLInputElement;
+  const sortEl = $('jf-sort') as HTMLInputElement;
+  const asciiEl = $('jf-ascii') as HTMLInputElement;
+  const json5El = $('jf-json5') as HTMLInputElement;
+  const numbersEl = $('jf-numbers') as HTMLSelectElement;
+  const dupesEl = $('jf-dupes') as HTMLSelectElement;
+  const AUTO_LIMIT = 2_000_000;
+  const HIGHLIGHT_LIMIT = 1_000_000;
+  const FILE_LIMIT = 50 * 1024 * 1024;
+  const CHUNK = 200;
+  const EXPAND_LIMIT = 2000;
+  const SAMPLE = '{"id":1830000000000000001,"name":"ZeroTool","price":19.90,"tags":["json","formatter"],"owner":{"login":"kassol","verified":true},"updatedAt":"2026-10-02T09:30:00Z","notes":null}';
+
+  let mode: 'pretty' | 'min' = 'pretty';
+  let indent = '2';
+  let view: 'text' | 'tree' = 'text';
+  let outText = '';
+  let current: any = null;
+  let fileName = '';
+  let fileNote = '';
+  let errorRange: number[] | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function plural(pair: string[], n: number) { return fmt(n === 1 ? pair[0] : pair[1], { n: n.toLocaleString() }); }
+  function size(chars: number) {
+    if (chars < 1024) return chars + ' B';
+    if (chars < 1024 * 1024) return (chars / 1024).toFixed(1) + ' KB';
+    return (chars / 1024 / 1024).toFixed(1) + ' MB';
+  }
+  function utf8Size(s: string) { return new Blob([s]).size; }
+  function el(tag: string, cls?: string, text?: string): HTMLElement {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function opts() {
+    return {
+      indent: mode === 'min' ? '' : indent === 'tab' ? '\t' : indent === '4' ? '    ' : '  ',
+      sortKeys: sortEl.checked, ascii: asciiEl.checked,
+      numbers: numbersEl.value === 'js' ? 'js' : 'raw', dupes: dupesEl.value === 'last' ? 'last' : 'keep',
+    };
+  }
+  function prefs() {
+    return { mode, indent, view, sort: sortEl.checked, ascii: asciiEl.checked, json5: json5El.checked, numbers: numbersEl.value, dupes: dupesEl.value };
+  }
+  function save() {
+    const p: any = prefs();
+    if (input.value.length < 200_000) p.input = input.value;
+    (window as any).ztPersist?.save(SLUG, p);
+  }
+  function setStatus(text: string, kind: string) {
+    statusEl.textContent = text;
+    statusEl.className = 'jf-status' + (kind ? ' jf-' + kind : '');
+  }
+  function setPressed(sel: string, attr: string, value: string) {
+    wrap.querySelectorAll(sel).forEach((b: any) => b.setAttribute('aria-pressed', String(b.getAttribute(attr) === value)));
+  }
+
+  /* Notes ---------------------------------------------------------------------------- */
+  function note(text: string, kind: string, extra?: (li: HTMLElement) => void) {
+    const li = el('li', 'jf-note jf-note-' + kind);
+    li.appendChild(el('span', '', text));
+    if (extra) extra(li);
+    notesEl.appendChild(li);
+  }
+  function actionBtn(label: string, fn: () => void) {
+    return (li: HTMLElement) => {
+      const b = el('button', 'btn-ghost jf-mini', label) as HTMLButtonElement;
+      b.type = 'button';
+      b.addEventListener('click', fn);
+      li.appendChild(b);
+    };
+  }
+  function subList(items: string[], more: number) {
+    return (li: HTMLElement) => {
+      const ul = el('ul', 'jf-sub');
+      items.forEach((s) => ul.appendChild(el('li', '', s)));
+      if (more > 0) ul.appendChild(el('li', '', fmt(T.moreItems, { n: more })));
+      li.appendChild(ul);
+    };
+  }
+  function changeList(changes: any) {
+    return Object.keys(T.changes).filter((k) => changes && changes[k] > 0).map((k) => plural(T.changes[k], changes[k])).join(', ');
+  }
+  function lineOf(res: any, offset: number) { return lineCol(input.value, offset + res.base).line; }
+  function pathText(segs: any[]) { return segs.length ? pointerOf(segs) : T.tree.root; }
+  function replaceInput(text: string) {
+    input.value = text;
+    fileName = ''; fileNote = '';
+    run(true);
+    save();
+    input.focus({ preventScroll: true });
+  }
+
+  function renderNotes(res: any) {
+    notesEl.textContent = '';
+    if (fileNote) note(fileNote, 'info');
+    if (res.bom) note(T.bomNote, 'info');
+    if (res.ok) {
+      if (res.mode === 'json5') note(fmt(T.json5Done, { list: changeList(res.changes) }), 'info');
+      const o = opts();
+      if (res.dupCount) {
+        note(plural(o.dupes === 'last' ? T.dupNoteLast : T.dupNote, res.dupCount), 'warn',
+          subList(res.dups.map((d: any) => fmt(T.dupItem, { key: d.key, path: pathText(d.path), line: lineOf(res, d.offset) })), res.dupCount - res.dups.length));
+      }
+      if (res.numberCount) {
+        const msg = o.numbers === 'js' ? T.numNoteJs : T.numNote;
+        const key: any = { precision: 'numPrecision', overflow: 'numOverflow', underflow: 'numUnderflow', negZero: 'numNegZero' };
+        note(plural(msg, res.numberCount), 'warn',
+          subList(res.numbers.map((x: any) => fmt(T[key[x.kind]], { raw: x.raw, js: x.js, path: pathText(x.path), line: lineOf(res, x.offset) })), res.numberCount - res.numbers.length));
+      }
+      if (res.surrogateCount) {
+        note(plural(T.surrNote, res.surrogateCount), 'warn',
+          subList(res.surrogates.map((x: any) => fmt(T.surrItem, { path: pathText(x.path), line: lineOf(res, x.offset) })), res.surrogateCount - res.surrogates.length));
+      }
+      if (res.inner) note(T.hint.inner, 'info', actionBtn(T.hint.innerBtn, () => replaceInput(res.inner)));
+      if (view === 'text' && outText.length > HIGHLIGHT_LIMIT) note(T.highlightOff, 'info');
+    } else if (!res.empty) {
+      if (errorRange) note(fmt(T.where, { line: res.frame.line, col: res.frame.col, reason: '' }).replace(/[:：]\s*$/, ''), 'error', actionBtn(T.gotoError, gotoError));
+      if (res.hint && res.hint.code === 'nonFinite' && res.error.code === 'nonFinite') res.hint = null;
+      if (res.json5) note(fmt(T.json5Offer, { list: changeList(res.json5) }), 'info', actionBtn(T.json5Accept, () => { json5El.checked = true; save(); run(true); }));
+      const h = res.hint;
+      if (h) {
+        if (h.code === 'fence') note(T.hint.fence, 'info', actionBtn(T.hint.fenceBtn, () => replaceInput(h.text)));
+        else if (h.code === 'escaped') note(T.hint.escaped, 'info', actionBtn(T.hint.escapedBtn, () => replaceInput(h.text)));
+        else if (h.code === 'jsonl') {
+          const parts = T.hint.jsonl.split('{link}');
+          note('', 'info', (li) => {
+            li.textContent = '';
+            li.appendChild(document.createTextNode(fmt(parts[0], { n: h.n })));
+            const a = el('a', '', T.hint.jsonlLink) as HTMLAnchorElement;
+            a.href = wrap.dataset.jsonl || '/tools/jsonl-converter/';
+            li.appendChild(a);
+            li.appendChild(document.createTextNode(parts[1] || ''));
+          });
+        } else if (h.code === 'python') note(fmt(T.hint.python, { word: h.word, fix: h.fix }), 'info');
+        else if (h.code === 'undefined') note(T.hint.undefined, 'info');
+        else if (h.code === 'nonFinite') note(T.hint.nonFinite, 'info');
+      }
+    }
+    notesEl.hidden = !notesEl.childElementCount;
+  }
+  function reasonOf(e: any) { return fmt(T.parse[e.code] || T.parse.unexpectedChar, { ch: e.ch || input.value.charAt(e.offset) || '' }); }
+  function gotoError() {
+    if (!errorRange) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(errorRange[0], errorRange[1]);
+    const line = input.value.slice(0, errorRange[0]).split('\n').length - 1;
+    const lh = parseFloat(getComputedStyle(input).lineHeight) || 20;
+    input.scrollTop = Math.max(0, line * lh - input.clientHeight / 3);
+    const r = input.getBoundingClientRect();
+    if (r.top < 0 || r.top > window.innerHeight - 80) input.scrollIntoView({ block: 'center' });
+  }
+
+  /* Output --------------------------------------------------------------------------- */
+  function showText() {
+    outCode.className = '';
+    if (outText.length <= HIGHLIGHT_LIMIT) outCode.innerHTML = highlight(outText);
+    else outCode.textContent = outText;
+  }
+  function render(res: any) {
+    current = res;
+    errorRange = null;
+    if (res.ok) {
+      outText = serialize(res.root, opts());
+      const summary = fmt(T.summary, {
+        values: plural(T.values, res.stats.objects + res.stats.arrays + res.stats.strings + res.stats.numbers + res.stats.booleans + res.stats.nulls - 0),
+        depth: res.stats.depth, inSize: size(utf8Size(input.value)), outSize: size(utf8Size(outText)),
+      });
+      setStatus(fmt(res.mode === 'json5' ? T.validJson5 : T.valid, { summary }), 'ok');
+      if (view === 'text') showText(); else buildTree(res);
+      copyBtn.disabled = dlBtn.disabled = false;
+    } else {
+      outText = '';
+      copyBtn.disabled = dlBtn.disabled = true;
+      treeEl.textContent = '';
+      if (res.empty) {
+        setStatus(T.empty, '');
+        outCode.className = ''; outCode.textContent = '';
+      } else {
+        const off = res.error.offset + res.base;
+        const fr = codeFrame(input.value, off);
+        res.frame = fr;
+        errorRange = [off, Math.min(input.value.length, off + 1)];
+        setStatus(fmt(T.invalid, { where: fmt(T.where, { line: fr.line, col: fr.col, reason: reasonOf(res.error) }) }), 'error');
+        outCode.className = 'jf-error';
+        outCode.textContent = fr.text;
+      }
+    }
+    const showTree = view === 'tree' && !!res.ok;
+    outPre.hidden = showTree;
+    treeWrap.hidden = !showTree;
+    renderNotes(res);
+  }
+  function run(force: boolean) {
+    const text = input.value;
+    if (!force && text.length > AUTO_LIMIT) {
+      setStatus(fmt(T.large, { size: size(text.length) }), '');
+      return;
+    }
+    render(analyze(text, { json5: json5El.checked }));
+  }
+  function schedule() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => run(false), input.value.length > 200_000 ? 600 : 250);
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 500);
+  }
+  function rerender() { if (current && current.ok) render(current); else run(true); save(); }
+
+  /* Tree ----------------------------------------------------------------------------- */
+  let selected: HTMLElement | null = null;
+  let rows = 0;
+  function preview(v: any) {
+    const k = kindOf(v);
+    if (k === 'object') return '{ ' + plural(T.tree.keys, v.k.length) + ' }';
+    if (k === 'array') return '[ ' + plural(T.tree.items, v.v.length) + ' ]';
+    const s = scalarOut(v, opts());
+    return s.length > 200 ? s.slice(0, 199) + '…' : s;
+  }
+  function makeRow(seg: any, value: any, segs: any[], level: number, dup: boolean): HTMLElement {
+    const k = kindOf(value);
+    const box = el('div', 'jf-tn');
+    const row = el('button', 'jf-tr jf-t-' + k) as HTMLButtonElement;
+    row.type = 'button';
+    row.setAttribute('role', 'treeitem');
+    row.setAttribute('aria-level', String(level));
+    row.style.paddingLeft = (0.4 + (level - 1) * 1.1) + 'rem';
+    const container = k === 'object' || k === 'array';
+    const hasKids = container && value.v.length > 0;
+    row.appendChild(el('span', 'jf-tw', hasKids ? '▸' : ''));
+    if (seg !== null) row.appendChild(el('span', typeof seg === 'number' ? 'jf-ti' : 'jf-tk', typeof seg === 'number' ? String(seg) : JSON.stringify(seg)));
+    if (dup) row.appendChild(el('span', 'jf-tdup', T.tree.dup));
+    row.appendChild(el('span', 'jf-tv', preview(value)));
+    if (hasKids) row.setAttribute('aria-expanded', 'false');
+    (row as any)._segs = segs;
+    box.appendChild(row);
+    row.addEventListener('click', () => {
+      select(row);
+      if (hasKids) toggle(box, row, value, segs, level);
+    });
+    (box as any)._open = () => { if (hasKids && row.getAttribute('aria-expanded') !== 'true') toggle(box, row, value, segs, level); };
+    return box;
+  }
+  function toggle(box: HTMLElement, row: HTMLElement, value: any, segs: any[], level: number) {
+    const open = row.getAttribute('aria-expanded') === 'true';
+    const kids = box.querySelector(':scope > .jf-tc') as HTMLElement | null;
+    if (open) { row.setAttribute('aria-expanded', 'false'); (row.firstChild as HTMLElement).textContent = '▸'; if (kids) kids.hidden = true; return; }
+    row.setAttribute('aria-expanded', 'true');
+    (row.firstChild as HTMLElement).textContent = '▾';
+    if (kids) { kids.hidden = false; return; }
+    const c = el('div', 'jf-tc');
+    c.setAttribute('role', 'group');
+    box.appendChild(c);
+    const list = childrenOf(value, opts());
+    addChildren(c, list, 0, segs, level);
+  }
+  function addChildren(c: HTMLElement, list: any[], from: number, segs: any[], level: number) {
+    const end = Math.min(list.length, from + CHUNK);
+    for (let x = from; x < end; x++) {
+      c.appendChild(makeRow(list[x].seg, list[x].value, segs.concat([list[x].seg]), level + 1, !!list[x].dup && opts().dupes !== 'last'));
+      rows++;
+    }
+    if (end < list.length) {
+      const more = el('button', 'btn-ghost jf-mini jf-tmore', fmt(T.tree.more, { n: Math.min(CHUNK, list.length - end) })) as HTMLButtonElement;
+      more.type = 'button';
+      more.style.marginLeft = (0.4 + level * 1.1) + 'rem';
+      more.addEventListener('click', () => { more.remove(); addChildren(c, list, end, segs, level); });
+      c.appendChild(more);
+    }
+  }
+  function select(row: HTMLElement) {
+    if (selected) selected.removeAttribute('aria-selected');
+    selected = row;
+    row.setAttribute('aria-selected', 'true');
+    const segs = (row as any)._segs as any[];
+    pathEl.textContent = '';
+    const ptr = segs.length ? pointerOf(segs) : '';
+    const items: [string, string][] = [[T.tree.pointer, ptr], [T.tree.jq, jqPathOf(segs)]];
+    items.forEach(([label, val]) => {
+      const line = el('div', 'jf-path-line');
+      line.appendChild(el('span', 'jf-path-label', label));
+      line.appendChild(el('code', 'jf-path-val', val === '' ? '""' : val));
+      const b = el('button', 'btn-ghost jf-mini', T.tree.copyPath) as HTMLButtonElement;
+      b.type = 'button';
+      b.addEventListener('click', () => copyText(val, b));
+      line.appendChild(b);
+      pathEl.appendChild(line);
+    });
+  }
+  function buildTree(res: any) {
+    treeEl.textContent = '';
+    selected = null; rows = 0;
+    pathEl.textContent = T.tree.pathHint;
+    const root = makeRow(null, res.root, [], 1, false);
+    treeEl.appendChild(root);
+    (root as any)._open();
+    const first = root.querySelector(':scope > .jf-tc');
+    if (first && first.childElementCount <= 20) first.querySelectorAll(':scope > .jf-tn').forEach((b: any) => b._open && b._open());
+  }
+  function expandAll() {
+    let opened = 0;
+    for (;;) {
+      const closed = Array.from(treeEl.querySelectorAll('.jf-tr[aria-expanded="false"]'));
+      if (!closed.length || rows > EXPAND_LIMIT) break;
+      for (const r of closed) { if (rows > EXPAND_LIMIT) break; ((r.parentElement as any)._open)(); opened++; }
+    }
+    if (rows > EXPAND_LIMIT) pathEl.textContent = fmt(T.tree.expandLimit, { n: EXPAND_LIMIT.toLocaleString() });
+    return opened;
+  }
+  function collapseAll() { if (current && current.ok) buildTree(current); }
+
+  /* Copy, download, files ------------------------------------------------------------ */
+  function copyText(text: string, btn: HTMLButtonElement) {
+    const label = btn.textContent;
+    const done = () => { btn.textContent = T.copied; setTimeout(() => { btn.textContent = label; }, 1500); };
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      if (ok) done(); else setStatus(T.copyFail, 'error');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  }
+  copyBtn.addEventListener('click', () => { if (outText) copyText(outText, copyBtn); });
+  dlBtn.addEventListener('click', () => {
+    if (!outText) return;
+    const base = (fileName || 'data').replace(/\.(json5?|jsonc|txt|geojson|har)$/i, '');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([outText + (mode === 'min' ? '' : '\n')], { type: 'application/json' }));
+    a.download = base + (mode === 'min' ? '.min.json' : '.formatted.json');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+  async function openFile(file: File) {
+    if (file.size > FILE_LIMIT) { setStatus(fmt(T.tooLarge, { size: size(file.size), max: size(FILE_LIMIT) }), 'error'); return; }
+    let buf: ArrayBuffer;
+    try { buf = await file.arrayBuffer(); } catch (e: any) { setStatus(fmt(T.readFail, { message: e && e.message || String(e) }), 'error'); return; }
+    const d = decodeBytes(new Uint8Array(buf));
+    if (d.error) { setStatus(fmt(d.error === 'utf16NoBom' ? T.utf16NoBom : T.notUtf8, { offset: d.offset }), 'error'); return; }
+    input.value = d.text;
+    fileName = file.name;
+    fileNote = d.encoding !== 'UTF-8' ? fmt(T.encodingNote, { encoding: d.encoding }) : '';
+    run(true);
+    save();
+  }
+  $('jf-open').addEventListener('click', () => fileEl.click());
+  fileEl.addEventListener('change', () => { const f = fileEl.files && fileEl.files[0]; if (f) openFile(f); fileEl.value = ''; });
+  wrap.addEventListener('dragover', (e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); wrap.classList.add('jf-drop'); } });
+  wrap.addEventListener('dragleave', (e) => { if (e.target === wrap) wrap.classList.remove('jf-drop'); });
+  wrap.addEventListener('drop', (e) => {
+    wrap.classList.remove('jf-drop');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) { e.preventDefault(); openFile(f); }
+  });
+
+  /* Controls ------------------------------------------------------------------------- */
+  function track(action: string) { (window as any).trackTool && (window as any).trackTool('json_formatter', action); }
+  $('jf-format').addEventListener('click', () => { mode = 'pretty'; run(true); save(); track('format'); });
+  $('jf-minify').addEventListener('click', () => { mode = 'min'; run(true); save(); track('minify'); });
+  wrap.querySelectorAll('[data-indent]').forEach((b: any) => b.addEventListener('click', () => {
+    indent = b.getAttribute('data-indent'); mode = 'pretty';
+    setPressed('[data-indent]', 'data-indent', indent);
+    rerender();
+  }));
+  wrap.querySelectorAll('[data-view]').forEach((b: any) => b.addEventListener('click', () => {
+    view = b.getAttribute('data-view') === 'tree' ? 'tree' : 'text';
+    setPressed('[data-view]', 'data-view', view);
+    rerender();
+  }));
+  [sortEl, asciiEl, numbersEl, dupesEl].forEach((c) => c.addEventListener('change', rerender));
+  json5El.addEventListener('change', () => { run(true); save(); });
+  $('jf-sample').addEventListener('click', () => replaceInput(SAMPLE));
+  $('jf-clear').addEventListener('click', () => {
+    input.value = ''; fileName = ''; fileNote = '';
+    (window as any).ztPersist?.clear(SLUG);
+    run(true); save();
+    input.focus();
+  });
+  $('jf-expand').addEventListener('click', expandAll);
+  $('jf-collapse').addEventListener('click', collapseAll);
+  input.addEventListener('input', schedule);
+  // Ctrl/Cmd+L (ToolLayout) empties the textarea without an input event.
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(() => { if (!input.value) { fileName = ''; fileNote = ''; run(true); save(); } }, 0);
+  });
+
+  const saved = (window as any).ztPersist?.load(SLUG) || {};
+  if (saved.mode === 'min') mode = 'min';
+  if (saved.indent === '4' || saved.indent === 'tab') indent = saved.indent;
+  if (saved.view === 'tree') view = 'tree';
+  sortEl.checked = !!saved.sort;
+  asciiEl.checked = !!saved.ascii;
+  json5El.checked = !!saved.json5;
+  if (saved.numbers === 'js') numbersEl.value = 'js';
+  if (saved.dupes === 'last') dupesEl.value = 'last';
+  setPressed('[data-indent]', 'data-indent', indent);
+  setPressed('[data-view]', 'data-view', view);
+  if (typeof saved.input === 'string' && saved.input) input.value = saved.input;
+  if (input.value) run(false);
+</script>
+
+<style is:global>
+  /* Every selector uses the jf- prefix (unique to this tool); global because the tree,
+     notes and highlighted output are created by the script. */
+  .jf-wrap { display: flex; flex-direction: column; gap: 0.7rem; }
+  .jf-wrap.jf-drop { outline: 2px dashed var(--color-primary); outline-offset: 6px; border-radius: var(--radius-md); }
+
+  .jf-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .jf-toolbar-end { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; margin-left: auto; }
+
+  .jf-seg {
+    display: inline-flex;
+    padding: 3px;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .jf-seg-btn {
+    min-height: 32px;
+    padding: 0.25rem 0.75rem;
+    border: 0;
+    border-radius: calc(var(--radius-md) - 2px);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 0.86rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .jf-seg-btn[aria-pressed="true"] { background: var(--color-surface); color: var(--color-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+  .jf-seg-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+
+  .jf-status { margin: 0; font-size: 0.9rem; min-height: 1.35rem; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+  .jf-status.jf-ok { color: var(--color-success); }
+  .jf-status.jf-error { color: var(--color-danger); }
+
+  .jf-panels { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem; }
+  .jf-panel { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+  .jf-label { font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .jf-text { min-height: 380px; height: 380px; tab-size: 2; }
+  .jf-out-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.6rem; min-height: 32px; }
+  .jf-out-head .jf-seg-btn { min-height: 26px; padding: 0.1rem 0.6rem; font-size: 0.82rem; }
+  .jf-out-actions { display: inline-flex; gap: 0.4rem; margin-left: auto; }
+  .jf-output {
+    margin: 0;
+    height: 380px;
+    min-height: 120px;
+    overflow: auto;
+    resize: vertical;
+    padding: 0.82rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
     font-family: var(--font-mono);
     font-size: 0.88rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
     line-height: 1.5;
     color: var(--color-text);
-  }
-
-  .jf-row textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .jf-row textarea.jf-input-error { border-color: var(--color-error, #c0392b); }
-
-  /* Output pre block — matches textarea appearance */
-  .jf-output {
-    width: 100%;
-    min-height: 160px;
-    font-family: var(--font-mono);
-    font-size: 0.88rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    line-height: 1.5;
-    color: var(--color-text-secondary);
-    overflow: auto;
     white-space: pre;
-    margin: 0;
-    box-sizing: border-box;
+    tab-size: 2;
   }
+  .jf-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+  .jf-output code { font: inherit; background: none; padding: 0; color: inherit; }
+  .jf-output code.jf-error { color: var(--color-danger); }
+  .jf-output[hidden], .jf-tree-wrap[hidden], .jf-notes[hidden] { display: none; }
 
-  .jf-output code {
-    font-family: inherit;
-    font-size: inherit;
-    background: none;
-    padding: 0;
+  .jf-k { color: oklch(48% 0.12 265); }
+  .jf-s { color: oklch(47% 0.1 150); }
+  .jf-n { color: oklch(50% 0.13 40); }
+  .jf-b { color: oklch(48% 0.13 320); }
+  .jf-z { color: var(--color-text-muted); }
+
+  .jf-tree-wrap {
+    display: flex; flex-direction: column; gap: 0.4rem;
+    height: 380px; min-height: 160px; resize: vertical; overflow: hidden;
+    padding: 0.5rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
+  .jf-tree-bar { display: flex; gap: 0.4rem; }
+  .jf-tree { flex: 1; overflow: auto; font-family: var(--font-mono); font-size: 0.85rem; }
+  .jf-tr {
+    display: flex; align-items: baseline; gap: 0.45rem; width: 100%;
+    min-height: 26px; padding: 0.1rem 0.4rem; border: 0; border-radius: var(--radius-sm);
+    background: transparent; color: var(--color-text); font: inherit; text-align: left; cursor: pointer;
+    white-space: nowrap;
+  }
+  .jf-tr:hover { background: var(--color-surface-muted); }
+  .jf-tr[aria-selected="true"] { background: var(--color-primary-light); }
+  .jf-tr:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+  .jf-tw { display: inline-block; width: 0.8rem; flex: none; color: var(--color-text-muted); }
+  .jf-tk { color: oklch(48% 0.12 265); flex: none; }
+  .jf-tk::after, .jf-ti::after { content: ':'; color: var(--color-text-muted); }
+  .jf-ti { color: var(--color-text-muted); flex: none; }
+  .jf-tv { overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary); }
+  .jf-t-string .jf-tv { color: oklch(47% 0.1 150); }
+  .jf-t-number .jf-tv { color: oklch(50% 0.13 40); }
+  .jf-t-boolean .jf-tv { color: oklch(48% 0.13 320); }
+  .jf-t-null .jf-tv { color: var(--color-text-muted); }
+  .jf-tdup { flex: none; font-size: 0.72rem; padding: 0 0.3rem; border-radius: 4px; background: color-mix(in oklch, var(--color-danger) 14%, transparent); color: var(--color-danger); }
+  .jf-tc[hidden] { display: none; }
+  .jf-tmore { margin: 0.15rem 0; }
+  .jf-path { font-size: 0.82rem; color: var(--color-text-muted); display: flex; flex-direction: column; gap: 0.2rem; }
+  .jf-path-line { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+  .jf-path-label { flex: none; font-weight: 600; color: var(--color-text-secondary); }
+  .jf-path-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 
-  .jf-output-error { color: var(--color-error, #c0392b); }
+  .jf-mini { min-height: 28px; padding: 0.15rem 0.6rem; font-size: 0.82rem; }
 
-  .jf-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .jf-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+  .jf-note {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.75rem;
+    padding: 0.5rem 0.75rem; border-radius: var(--radius-md);
+    font-size: 0.88rem; line-height: 1.5; color: var(--color-text);
+    background: var(--color-surface-muted); box-shadow: inset 3px 0 0 var(--color-border);
+    overflow-wrap: anywhere;
+  }
+  .jf-note-warn { box-shadow: inset 3px 0 0 var(--color-accent); }
+  .jf-note-error { box-shadow: inset 3px 0 0 var(--color-danger); }
+  .jf-note-info { box-shadow: inset 3px 0 0 var(--color-primary); }
+  .jf-sub { flex-basis: 100%; margin: 0; padding-left: 1.2rem; font-family: var(--font-mono); font-size: 0.82rem; color: var(--color-text-secondary); }
 
-  .jf-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .jf-status.success { color: #057a55; }
-  .jf-status.error { color: #c0392b; }
+  .jf-options { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.2rem; font-size: 0.88rem; color: var(--color-text-secondary); }
+  .jf-check { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+  .jf-field { display: inline-flex; align-items: center; gap: 0.45rem; }
+  .jf-select { font-family: var(--font-sans, inherit); min-height: 34px; padding: 0.25rem 0.5rem; }
 
-  /* Syntax highlight colours — light (use :global because spans are injected via innerHTML) */
-  :global(.jv-key)  { color: #6366f1; }
-  :global(.jv-str)  { color: #e67e22; }
-  :global(.jv-num)  { color: #27ae60; }
-  :global(.jv-bool) { color: #8e44ad; }
-  :global(.jv-null) { color: #95a5a6; }
-
-  /* Dark mode */
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .jf-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .jf-status.error   { color: #f87171; }
-    :global(:root:not([data-theme="light"]) .jv-key)  { color: #818cf8; }
-    :global(:root:not([data-theme="light"]) .jv-str)  { color: #fb923c; }
-    :global(:root:not([data-theme="light"]) .jv-num)  { color: #4ade80; }
-    :global(:root:not([data-theme="light"]) .jv-bool) { color: #c084fc; }
-    :global(:root:not([data-theme="light"]) .jv-null) { color: #94a3b8; }
+    :root:not([data-theme="light"]) .jf-k, :root:not([data-theme="light"]) .jf-tk { color: oklch(78% 0.1 265); }
+    :root:not([data-theme="light"]) .jf-s, :root:not([data-theme="light"]) .jf-t-string .jf-tv { color: oklch(78% 0.11 150); }
+    :root:not([data-theme="light"]) .jf-n, :root:not([data-theme="light"]) .jf-t-number .jf-tv { color: oklch(78% 0.12 55); }
+    :root:not([data-theme="light"]) .jf-b, :root:not([data-theme="light"]) .jf-t-boolean .jf-tv { color: oklch(78% 0.11 320); }
   }
-  [data-theme="dark"] .jf-status.success { color: #34d399; }
-  [data-theme="dark"] .jf-status.error   { color: #f87171; }
-  :global([data-theme="dark"] .jv-key)  { color: #818cf8; }
-  :global([data-theme="dark"] .jv-str)  { color: #fb923c; }
-  :global([data-theme="dark"] .jv-num)  { color: #4ade80; }
-  :global([data-theme="dark"] .jv-bool) { color: #c084fc; }
-  :global([data-theme="dark"] .jv-null) { color: #94a3b8; }
+  [data-theme="dark"] .jf-k, [data-theme="dark"] .jf-tk { color: oklch(78% 0.1 265); }
+  [data-theme="dark"] .jf-s, [data-theme="dark"] .jf-t-string .jf-tv { color: oklch(78% 0.11 150); }
+  [data-theme="dark"] .jf-n, [data-theme="dark"] .jf-t-number .jf-tv { color: oklch(78% 0.12 55); }
+  [data-theme="dark"] .jf-b, [data-theme="dark"] .jf-t-boolean .jf-tv { color: oklch(78% 0.11 320); }
+
+  @media (max-width: 860px) {
+    .jf-panels { grid-template-columns: minmax(0, 1fr); }
+    .jf-text { min-height: 120px; height: 150px; }
+    .jf-output, .jf-tree-wrap { height: 300px; }
+  }
+  @media (max-width: 640px) {
+    .jf-wrap { gap: 0.55rem; }
+    .jf-toolbar { gap: 0.4rem; }
+    .jf-toolbar .btn-primary, .jf-toolbar .btn-secondary { flex: 1 1 0; }
+    .jf-toolbar > .jf-seg { flex: 1 1 100%; }
+    .jf-toolbar > .jf-seg .jf-seg-btn { flex: 1; min-height: 40px; }
+    .jf-toolbar-end { margin-left: 0; flex: 1 1 100%; }
+    .jf-toolbar-end .btn-ghost { flex: 1 1 0; padding-left: 0.3rem; padding-right: 0.3rem; white-space: nowrap; font-size: 0.85rem; }
+    .jf-panel > .jf-label[for] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .jf-text { min-height: 110px; height: 110px; }
+    .jf-out-head .jf-seg-btn { min-height: 32px; }
+    .jf-mini { min-height: 32px; }
+    .jf-tr { min-height: 32px; }
+    .jf-select { min-height: 44px; }
+    .jf-options { gap: 0.2rem 1rem; }
+    .jf-check { min-height: 44px; }
+  }
 </style>
