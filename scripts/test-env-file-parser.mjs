@@ -26,6 +26,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 
 const require = createRequire(import.meta.url);
 const dotenv = require('dotenv');
@@ -70,6 +71,47 @@ function sameAsDotenv(name, text) {
 function entry(text, key) {
   return E.parseEnv(text).find((e) => e.key === key);
 }
+
+// ---------- P3 dotenv dialect: exercise the complete Parse / Export JSON handlers ----------
+async function pageExport(text, lang = 'en') {
+  const elements = new Map(), downloads = [];
+  function element() { const events = {}; return { value: '', disabled: false, textContent: '', innerHTML: '', style: {}, children: [],
+    addEventListener(k, fn) { events[k] = fn; }, click() { if (this.disabled) return; if (this.download) downloads.push(this.href); events.click?.(); },
+    fire(k) { events[k]?.(); }, appendChild(child) { this.children.push(child); } }; }
+  const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
+  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
+    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element },
+    window: {}, Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} }
+  });
+  get('efp-input').value = text; get('efp-parse').click(); get('efp-export-json').click();
+  return { output: downloads.length ? JSON.parse(await downloads[0].text()) : {}, status: get('efp-status').textContent, get, downloads };
+}
+eq('reference is dotenv 16.6.1', require('dotenv/package.json').version, '16.6.1');
+const dialectCases = [
+  'KEY: value', 'KEY:value', 'MY KEY=1', 'MY KEY: 1', 'my-key=1\nmy.key=2\n9KEY=3',
+  'export KEY: value', 'export   KEY = 1', 'KEY : value', 'KEY:\tvalue', 'KEY:\nNEXT=1',
+  'KEY:\n  "line1\nline2"\nNEXT=1', 'A: "a#b" # note\nB=2', '__proto__=value\nconstructor=ok',
+  '中文=1\nA=2', 'A/B=1\nA=2', 'GOOD=1\nMY KEY=2\nGOOD=3', 'KEY: \nNEXT=1'
+];
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const [n, text] of dialectCases.entries()) {
+    const p = await pageExport(text, lang);
+    const expected = dotenv.parse(text);
+    if (text.includes('__proto__=')) Object.defineProperty(expected, '__proto__', { value: 'value', enumerable: true });
+     eq(lang + ' Parse/Export dialect ' + n, Object.entries(p.output).sort(), Object.entries(expected).sort());
+  }
+  for (const action of ['empty', 'edit', 'clear']) {
+    const p = await pageExport('A=old', lang);
+    p.get('efp-input').value = action === 'edit' ? 'A=new' : '';
+    if (action === 'empty') p.get('efp-parse').click();
+    else if (action === 'edit') p.get('efp-input').fire('input');
+    else p.get('efp-clear').click();
+    check(lang + ' ' + action + ' disables export', p.get('efp-export-json').disabled);
+    p.get('efp-export-json').click();
+    eq(lang + ' ' + action + ' cannot export old data', p.downloads.length, 1);
+  }
+}
+eq('dotenv drops __proto__; tool intentionally keeps this key', Object.keys(dotenv.parse('__proto__=value')), []);
 
 // ---------- the reported defect ----------
 eq('export prefix is not part of the key', exported('export DB_HOST=localhost'), { DB_HOST: 'localhost' });
