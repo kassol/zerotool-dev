@@ -1,7 +1,8 @@
 // Password Generator — character sets, uniform sampling, strength labels
 //
 // Read:  src/components/tools/PasswordGeneratorTool.astro (extracts the real engine block
-//        between the `engine:start` / `engine:end` markers, and the STRINGS table)
+//        between the `engine:start` / `engine:end` markers, and the STRINGS table);
+//        src/content/blog/password-generator-guide/{en,ja}.mdx (`pw-*` annotations, code blocks)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -119,6 +120,110 @@ if (sm) {
   }
   for (const key of ['veryWeak', 'weak', 'fair', 'strong', 'veryStrong']) {
     check('strength label ' + key + ' in all languages', ['en', 'zh', 'ja', 'ko'].every((l) => S[l][key]));
+  }
+}
+
+// ── password-generator-guide (en, ja) ──────────────────────────────────────────────────
+// Annotations in the guides are recomputed here: `pw-bits` (length × log2 size to 1 decimal,
+// and the generator's strength label), `pw-set` (charset size for an option combination),
+// `pw-time` (size^length / guesses per second, in the stated unit), `pw-dice` (words ×
+// log2 7776), `pw-miss` (chance that a password from the four-set charset has no digit /
+// lacks at least one of the four sets, inclusion–exclusion over the generator's set sizes),
+// `pw-sha1` (SHA-1 shown for a breach lookup), `pw-bias` (256 % 88 and the 3:2 frequency
+// ratio of byte % 88), `pw-nfc` (NFC / NFKC of a full-width string), `pw-utf8` (characters and
+// UTF-8 bytes). The en JavaScript block marked `pw-run-js` is executed with Node's Web Crypto;
+// the en Python block marked `pw-run-py` runs when python3 is installed.
+{
+  const { createHash } = await import('node:crypto');
+  const { execFileSync } = await import('node:child_process');
+  const stripComments = (s) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const sizeOf = { upper: 26, lower: 26, digits: 10, symbols: E.SYMBOLS.length };
+  const fmtCheck = (computed, value) => {
+    const v = Number(value.replace(/,/g, ''));
+    const dec = value.includes('.') ? value.split('.')[1].length : 0;
+    if (dec > 0) return computed.toFixed(dec) === value.replace(/,/g, '');
+    if (/00$/.test(value)) return Math.abs(computed - v) / v < 0.005;
+    return Math.round(computed) === v;
+  };
+  const YEAR = 365.25 * 86400;
+  const units = { seconds: 1, hours: 3600, years: YEAR, millionYears: YEAR * 1e6, billionYears: YEAR * 1e9 };
+  for (const lang of ['en', 'ja']) {
+    const guide = readFileSync(join(root, `src/content/blog/password-generator-guide/${lang}.mdx`), 'utf8');
+    const body = stripComments(guide);
+    const ann = (name) => [...guide.matchAll(new RegExp('\\{/\\* ' + name + ': (\\{.*?\\}) \\*/\\}', 'g'))].map((m) => JSON.parse(m[1]));
+    const bitsList = ann('pw-bits');
+    check(lang + ' guide has pw-bits annotations', bitsList.length >= 6, String(bitsList.length));
+    for (const c of bitsList) {
+      const b = bits(c.len, c.size);
+      check(`${lang} ${c.len} chars from ${c.size} = ${c.bits} bits`, b.toFixed(1) === c.bits, b.toFixed(3));
+      check(`${lang} guide shows ${c.bits}`, body.includes(c.bits));
+      if (c.label) check(`${lang} ${c.len} chars from ${c.size} labelled ${c.label}`, E.strengthInfo(b).key === c.label, E.strengthInfo(b).key);
+    }
+    for (const c of ann('pw-set')) {
+      const o = Object.fromEntries(c.opts.map((k) => [k, true]));
+      check(`${lang} charset ${c.opts.join('+')} = ${c.size}`, E.charsetFor(o).length === c.size, String(E.charsetFor(o).length));
+    }
+    for (const c of ann('pw-time')) {
+      const t = Math.pow(c.size, c.len) / c.rate / units[c.unit];
+      check(`${lang} ${c.len} chars from ${c.size} at ${c.rate}/s = ${c.value} ${c.unit}`, fmtCheck(t, c.value), String(t));
+    }
+    for (const c of ann('pw-dice')) {
+      const b = c.words * Math.log2(7776);
+      check(`${lang} ${c.words} Diceware words = ${c.bits} bits`, b.toFixed(1) === c.bits, b.toFixed(3));
+    }
+    const missList = ann('pw-miss');
+    check(lang + ' guide has pw-miss annotations', missList.length >= 1);
+    for (const c of missList) {
+      const keys = Object.keys(sizeOf);
+      const N = keys.reduce((a, k) => a + sizeOf[k], 0);
+      check(lang + ' four-set charset is 88', N === 88 && E.charsetFor(all).length === N);
+      let any = 0;
+      for (let m = 1; m < 16; m++) {
+        const sub = keys.filter((_, i) => (m >> i) & 1);
+        const sz = sub.reduce((a, k) => a + sizeOf[k], 0);
+        any += (sub.length % 2 ? 1 : -1) * Math.pow((N - sz) / N, c.len);
+      }
+      check(`${lang} ${c.len} chars: some set missing ${c.anyMissing}%`, (any * 100).toFixed(1) === c.anyMissing, (any * 100).toFixed(3));
+      if (c.noDigit) {
+        const nd = Math.pow((N - sizeOf.digits) / N, c.len) * 100;
+        check(`${lang} ${c.len} chars: no digit ${c.noDigit}%`, nd.toFixed(1) === c.noDigit, nd.toFixed(3));
+      }
+    }
+    for (const c of ann('pw-sha1')) {
+      check(`${lang} SHA-1 of ${c.pw}`, createHash('sha1').update(c.pw).digest('hex').toUpperCase() === c.sha1);
+      check(`${lang} guide shows ${c.pw}`, body.includes('`' + c.pw + '`'));
+    }
+    for (const c of ann('pw-bias')) {
+      check(`${lang} 256 % 88 = ${c.byteRemainder}`, 256 % 88 === c.byteRemainder);
+      check(`${lang} byte % 88 frequency ratio ${c.ratio}`, Math.ceil(256 / 88) / Math.floor(256 / 88) === c.ratio);
+    }
+    for (const c of ann('pw-nfc')) {
+      check(`${lang} NFC of ${c.in}`, c.in.normalize('NFC') === c.nfc);
+      check(`${lang} NFKC of ${c.in}`, c.in.normalize('NFKC') === c.nfkc);
+    }
+    for (const c of ann('pw-utf8')) {
+      check(`${lang} ${c.text} has ${c.chars} characters`, [...c.text].length === c.chars);
+      check(`${lang} ${c.text} is ${c.bytes} UTF-8 bytes`, Buffer.byteLength(c.text, 'utf8') === c.bytes);
+    }
+    check(`${lang} guide lists the generator's symbols`, body.includes('`' + E.SYMBOLS + '`'));
+    if (lang === 'en') {
+      const js = guide.match(/\{\/\* pw-run-js \*\/\}\s*```js\n([\s\S]*?)```/);
+      check('en JavaScript block found', !!js);
+      if (js) {
+        const logs = [];
+        new Function('console', 'crypto', js[1])({ log: (...a) => logs.push(a.join(' ')) }, globalThis.crypto);
+        check('en JavaScript block prints 20 letters/digits', /^[A-Za-z0-9]{20}$/.test(logs[0] || ''), logs[0]);
+        check('en JavaScript block uses the generator limit', js[1].includes('2 ** 32 - (2 ** 32 % n)') && block.includes('4294967296 - (4294967296 % n)'));
+      }
+      const py = guide.match(/\{\/\* pw-run-py \*\/\}\s*```python\n([\s\S]*?)```/);
+      check('en Python block found', !!py);
+      let havePy = true;
+      try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { havePy = false; }
+      if (py && havePy) {
+        const out = execFileSync('python3', ['-c', py[1]], { encoding: 'utf8' }).trim();
+        check('en Python block prints "94 20"', out === '94 20', out);
+      } else if (!havePy) console.log('SKIP en Python block (python3 not installed)');
+    }
   }
 }
 

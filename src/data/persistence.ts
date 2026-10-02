@@ -25,6 +25,7 @@ export const toolPersistencePolicy = {
   'eyedropper-color-picker': 'preference',
   'color-blindness-simulator': 'preference',
   'qr-code-generator': 'preference',
+  'protobuf-to-json': 'preference',
   'zero-width-character-detector': 'disabled',
   'csr-decoder': 'disabled',
   'secret-redactor': 'disabled',

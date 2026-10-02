@@ -1,220 +1,195 @@
 ---
-title: "chmod 755 vs 644 vs 777: Linux File Permissions Calculator Guide"
-description: "Compare chmod 755, 644, and 777, convert Linux permissions, and learn when to use each value safely with examples and a free chmod calculator."
+title: "chmod 755 Explained: Octal Modes, Directories, umask and Special Bits"
+description: "chmod 755 bit by bit: octal and symbolic modes, what r/w/x do on directories, umask, setuid/setgid/sticky, and where GNU and macOS chmod differ, all tested."
 pubDate: 2026-04-05
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["chmod", "linux", "file-permissions", "terminal", "developer-tools"]
+tags: ["chmod", "linux", "file-permissions", "umask", "terminal"]
 ---
 
-Linux file permissions confuse almost every developer at some point. A file locked at 644 when you need 755, or an entire directory accidentally set to 777 in production — these are common mistakes with real security consequences. This guide compares chmod 755, 644, and 777, shows the symbolic permissions behind each value, and links to a calculator when you need to convert permissions quickly.
+`chmod 755 file` gives the owner read, write and execute permission and gives the group and everyone else read and execute permission. That is the whole answer for a regular file, but the same three digits behave differently on a directory, interact with the process umask, and can leave a setgid bit in place that you thought you had cleared. This guide works through the bits first, then runs the cases that trip people up on two real systems.
 
-**Need the answer now?** [Use the free chmod calculator →](/tools/chmod-calculator/) to toggle read/write/execute bits and get the octal value instantly.
+Every command result below was recorded on 2026-10-02 in two places: Debian 13 in Docker with GNU coreutils 9.7 and GNU findutils 4.10.0, and macOS 27.0.1 with its BSD `chmod`, `stat` and `find`. Directory tests on Debian ran as an unprivileged user, because root bypasses most of these checks. The mode strings, octal values and commands quoted from the [chmod calculator](/tools/chmod-calculator/) are recomputed from the calculator's code by the site's test suite.
 
-## Quick Answer: chmod 755 vs 644 vs 777
+## chmod 755, bit by bit
 
-| chmod | Symbolic | Best for | Risk |
-|-------|----------|----------|------|
-| 755 | `rwxr-xr-x` | Directories, scripts, public executables | Safe default for executable paths |
-| 644 | `rw-r--r--` | Regular files, HTML, config templates | Safe default for readable files |
-| 777 | `rwxrwxrwx` | Almost never; local debugging only | Anyone can modify or execute |
+A file mode has twelve permission bits. The nine you see most often form three groups of three: owner (user), group and others. Inside each group, read is worth 4, write 2 and execute 1, so a single octal digit from 0 to 7 describes one group exactly:
 
-Use **755 for directories and executables**, **644 for normal files**, and **avoid 777** unless you are testing locally and will revert it immediately.
+| Octal | Binary | Symbolic | Meaning |
+|---|---|---|---|
+| 7 | 111 | `rwx` | read, write, execute |
+| 6 | 110 | `rw-` | read, write |
+| 5 | 101 | `r-x` | read, execute |
+| 4 | 100 | `r--` | read |
+| 0 | 000 | `---` | nothing |
 
-## The Unix Permission Model
+`755` is therefore `111 101 101` in binary and `rwxr-xr-x` in the form `ls -l` prints. The remaining three bits are setuid (4), setgid (2) and sticky (1). They sit in an optional fourth digit written in front, so `4755` is `755` plus setuid. In the `ls -l` string they take over the execute position: `s` for setuid or setgid, `t` for sticky, and a capital `S` or `T` when the execute bit underneath is off.
 
-Every file and directory on a Linux system has three permission sets:
+{/* chmod-check: {"mode":"755","symbolic":"rwxr-xr-x","cmd":"chmod u=rwx,g=rx,o=rx filename","find":"find . -type f -perm 0755"} */}
 
-- **Owner** — the user who owns the file
-- **Group** — users in the file's assigned group
-- **Others** — everyone else
+```text
+$ stat -c '%a %A %n' /usr/bin/passwd /tmp      # Debian 13
+4755 -rwsr-xr-x /usr/bin/passwd
+1777 drwxrwxrwt /tmp
+```
 
-Each set can have three permission types:
+{/* chmod-check: {"mode":"4755","symbolic":"rwsr-xr-x","cmd":"chmod u=rwxs,g=rx,o=rx filename","find":"find . -type f -perm 4755"} */}
+{/* chmod-check: {"mode":"1777","symbolic":"rwxrwxrwt","cmd":"chmod u=rwx,g=rwx,o=rwx,+t filename","find":"find . -type f -perm 1777"} */}
 
-| Symbol | Name    | On files                  | On directories                        |
-|--------|---------|---------------------------|---------------------------------------|
-| `r`    | read    | view file contents        | list directory contents (`ls`)        |
-| `w`    | write   | modify file contents      | create, rename, delete files inside   |
-| `x`    | execute | run as a program          | enter directory (`cd`) and access files |
+On the same Debian container, `chmod 4644` on a file shows `-rwSr--r--` and `chmod 1770` on a directory shows `drwxrwx--T`: the special bit is set, but nobody can execute or search through that position.
+
+{/* chmod-check: {"mode":"4644","symbolic":"rwSr--r--","cmd":"chmod u=rws,g=r,o=r filename","find":"find . -type f -perm 4644"} */}
+{/* chmod-check: {"mode":"1770","symbolic":"rwxrwx--T","cmd":"chmod u=rwx,g=rwx,o=,+t filename","find":"find . -type f -perm 1770"} */}
+
+## 755, 644, 600, 700 and 777: which goes where
+
+| Mode | Symbolic | Typical use | Why |
+|---|---|---|---|
+| `755` | `rwxr-xr-x` | Directories other people traverse, programs, scripts | Others can enter the directory or run the program, nobody else can change it |
+| `644` | `rw-r--r--` | Ordinary files: HTML, CSS, images, most config | Readable by all, writable by the owner |
+| `600` | `rw-------` | Private files: SSH keys, `.env`, tokens | Nobody but the owner can open it |
+| `700` | `rwx------` | `~/.ssh`, private scripts and directories | Owner only, still searchable or executable |
+| `750` / `640` | `rwxr-x---` / `rw-r-----` | Files a service account reads through its group | The group gets in, others do not |
+| `775` / `664` | `rwxrwxr-x` / `rw-rw-r--` | Team directories and files | Group members can write |
+| `777` | `rwxrwxrwx` | Nothing on a shared or public machine | Any local user or process can change or replace the contents |
+
+{/* chmod-check: {"mode":"644","symbolic":"rw-r--r--","cmd":"chmod u=rw,g=r,o=r filename","find":"find . -type f -perm 0644"} */}
+{/* chmod-check: {"mode":"600","symbolic":"rw-------","cmd":"chmod u=rw,g=,o= filename","find":"find . -type f -perm 0600"} */}
+{/* chmod-check: {"mode":"750","symbolic":"rwxr-x---","cmd":"chmod u=rwx,g=rx,o= filename","find":"find . -type f -perm 0750"} */}
+
+The usual reason someone reaches for `777` is a web application that cannot write to an upload or cache directory. The narrower fix is to make the directory belong to the account the server process runs as (`chown`), or to give that account's group write access with `775` and leave others out.
+
+## Octal digits and symbolic modes
+
+POSIX [`chmod`](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/chmod.html) accepts both forms. An octal mode replaces all the permission bits at once. A symbolic mode edits them: a class (`u`, `g`, `o`, `a`), an operator (`+`, `-`, `=`) and the permissions. Several clauses are joined with commas.
 
 ```bash
-ls -la
-# -rwxr-xr-- 1 alice dev 4096 Apr 5 10:00 deploy.sh
-#  ^^^ ^^^ ^^^
-#  |   |   others: r-- (4)
-#  |   group: r-x (5)
-#  owner: rwx (7)
+chmod u+x deploy.sh        # add execute for the owner only
+chmod go-w shared.cfg      # remove write from group and others
+chmod u=rw,go=r notes.txt  # set exactly rw-r--r--
+chmod a+x tool             # add execute for everyone
 ```
 
-## Octal Notation
+One detail is easy to miss. When a clause has no class letter, as in `chmod +x`, POSIX applies it to all classes except the bits that are set in the process umask. The same commands gave the same results on GNU and macOS:
 
-Each permission triple maps to a single digit using binary weights:
-
-```
-r = 4  (binary 100)
-w = 2  (binary 010)
-x = 1  (binary 001)
-```
-
-Add the values together for each set:
-
-| Octal | Binary | Permissions |
-|-------|--------|-------------|
-| 7     | 111    | rwx         |
-| 6     | 110    | rw-         |
-| 5     | 101    | r-x         |
-| 4     | 100    | r--         |
-| 0     | 000    | ---         |
-
-A three-digit octal value (e.g. `755`) represents owner / group / others in that order.
-
-## Common chmod Values
-
-### chmod 755
-
-```
-owner: rwx (7)  — read, write, execute
-group: r-x (5)  — read, execute
-other: r-x (5)  — read, execute
+```text
+$ umask 077; chmod 644 g; chmod +x g;  stat ...   # 744: only the owner got x
+$ umask 077; chmod 644 g; chmod a+x g; stat ...   # 755: a+x ignores the umask
+$ umask 022; chmod 600 g; chmod +w g;  stat ...   # 600: group and other w are masked
+$ umask 022; chmod 600 g; chmod +x g;  stat ...   # 711
 ```
 
-**Use for:** executables, shell scripts, and directories you want to be publicly accessible but not writable by others. The standard for binaries, application directories, and web server roots.
+Write `a+x` when you mean everyone. In scripts that run under an unknown umask, an explicit class is the only form whose result you can predict.
+
+## r, w and x on a directory
+
+A directory is a list of names. Read permission lets you list the names, execute (called search) lets you go through the directory to reach the files inside, and write lets you add, remove and rename entries. The three are independent, which produces cases that look wrong until you test them. On Debian, `/srv/box` belonged to `alice` and contained `note.txt` (mode 644); `bob` was a different user:
+
+| Mode of `/srv/box` | `ls /srv/box` as bob | `cat /srv/box/note.txt` | `cd /srv/box` |
+|---|---|---|---|
+| `744` (others `r--`) | prints `note.txt` | `Permission denied` | fails |
+| `711` (others `--x`) | `cannot open directory` | prints the file | works |
+
+With read but no search, `ls -l` printed the name with every other column as `?`, because it could not `stat` the entry. With search but no read, bob could open the file as long as he already knew its name. macOS gave the same pattern when the owner removed his own `x` or `r` from a directory.
+
+Write permission on a directory matters more than write permission on the files in it. In a `777` directory, bob deleted a file that alice had made read-only with `444`: `rm -f` exited with status 0. Removing an entry is an operation on the directory, not on the file.
+
+## umask: why new files come out 644 or 664
+
+Programs normally ask for mode 666 when they create a file and 777 when they create a directory. The kernel clears every bit that is set in the process umask. With umask `022` the results are `644` and `755`; with `077`, `600` and `700`.
+
+{/* chmod-umask: {"umask":"022","file":"644","dir":"755"} */}
+{/* chmod-umask: {"umask":"002","file":"664","dir":"775"} */}
+{/* chmod-umask: {"umask":"077","file":"600","dir":"700"} */}
+
+The default depends on the system. macOS gave `0022`. On Debian 13 and Ubuntu 24.04 containers, a user created with `useradd -m` got umask `0002` after `su`, so `touch` produced `664` and `mkdir` produced `775`. Both images set `USERGROUPS_ENAB yes` in `/etc/login.defs`, which relaxes the group bits for users whose primary group has the user's own name. The same files set `HOME_MODE` to `0700` on Debian 13 and `0750` on Ubuntu 24.04, which is why a new home directory on Ubuntu is readable by its group. If files keep appearing with the wrong mode, check `umask` before fixing them one at a time.
+
+## Changing a whole tree: -R, find and capital X
+
+`chmod -R 755 site/` sets every file to `755` as well, so HTML and CSS become executable. Two forms avoid that. The first runs `find` twice, once for directories and once for files:
 
 ```bash
-chmod 755 /var/www/html
-chmod 755 deploy.sh
+find site -type d -exec chmod 755 {} +
+find site -type f -exec chmod 644 {} +
 ```
 
-### chmod 644
+On a tree that started at `777`, Debian then showed `755` for `site` and `site/css`, and `644` for `index.html` and `css/site.css`.
 
-```
-owner: rw- (6)  — read, write
-group: r-- (4)  — read only
-other: r-- (4)  — read only
-```
-
-**Use for:** regular files like configuration files, HTML files, images, and text documents. The owner can modify them; everyone else can only read.
+The second uses capital `X`, which adds execute only to directories and to files that already have an execute bit for someone:
 
 ```bash
-chmod 644 index.html
-chmod 644 /etc/nginx/nginx.conf
+chmod -R u=rwX,go=rX site
 ```
 
-### chmod 600
+Starting from a `700` directory, a `600` file and a `700` script, this produced `755`, `644` and `755` on both GNU and macOS. Use the `find` form when an executable bit was set by mistake, because `X` keeps it.
 
-```
-owner: rw- (6)  — read, write
-group: --- (0)  — no access
-other: --- (0)  — no access
-```
+## setuid, setgid and the sticky bit
 
-**Use for:** private files that only the owner should access — SSH private keys (`~/.ssh/id_rsa`), password files, secret tokens. OpenSSH refuses to load a private key that group or others can access (any bit in `077` set) and prints `WARNING: UNPROTECTED PRIVATE KEY FILE!`, so `600` and `400` both work.
+**setuid (4000) on a program** makes it run with the file owner's user ID. A copy of `/usr/bin/id` owned by root with mode `4755` printed `0` when bob ran `id -u`. A shell script with the same mode printed bob's own ID, `1001`. The [execve(2)](https://man7.org/linux/man-pages/man2/execve.2.html) manual says it directly: "Linux (like most other modern UNIX systems) ignores the set-user-ID and set-group-ID bits on scripts."
 
-```bash
-chmod 600 ~/.ssh/id_rsa
-chmod 600 .env
-```
+**setgid (2000) on a directory** makes new entries take the directory's group instead of the creator's primary group. In a `2775` directory owned by group `devs`, a file alice created belonged to `devs`, and a new subdirectory came out as `2775` with the setgid bit copied. In a plain `775` directory, her file belonged to her own group `alice`. macOS behaves differently: BSD systems give every new file the directory's group even without setgid. A directory owned by group `everyone` produced files owned by `everyone`.
 
-### chmod 777
+**The sticky bit (1000) on a directory** limits deletion and renaming. [unlink(2)](https://man7.org/linux/man-pages/man2/unlink.2.html) returns `EPERM` when the directory has the sticky bit "and the process's effective UID is neither the UID of the file to be deleted nor that of the directory containing it, and the process is not privileged". In a `1777` directory, bob could not delete or rename alice's world-writable file (`Operation not permitted`), but appending to it worked: the file's own `666` mode still applied.
 
-```
-owner: rwx (7)  — read, write, execute
-group: rwx (7)  — read, write, execute
-other: rwx (7)  — read, write, execute
-```
+## GNU and macOS chmod disagree on directories
 
-**Danger zone.** Anyone on the system can read, write, and execute. Never use 777 on a production server, especially on directories inside a web root — it allows any process or user to write arbitrary files.
+GNU `chmod` keeps the setuid and setgid bits of a directory unless you clear them explicitly. The coreutils manual describes this in [Directories and the Set-User-ID and Set-Group-ID Bits](https://www.gnu.org/software/coreutils/manual/html_node/Directory-Setuid-and-Setgid.html) and calls it a GNU extension. Each row started from a `2775` directory:
 
-The one legitimate use: quick debugging in a local development environment where you need to rule out permissions as the cause of an issue. Always revert it.
+| Command | GNU coreutils 9.7 | macOS 27.0.1 |
+|---|---|---|
+| `chmod 755 d` | `2755` (setgid kept) | `755` |
+| `chmod 0755 d` | `2755` | `755` |
+| `chmod 00755 d` | `755` | `755` |
+| `chmod =755 d` | `755` | error: `Invalid file mode` |
+| `chmod u=rwx,g=rx,o=rx d` | `2755` | `755` |
+| `chmod g-s d` | `775` | `775` |
+| `chmod -- -2000 d` | `775` | error: `Invalid file mode` |
 
-### chmod 775 vs 755
+{/* chmod-gnu-dir: {"755":"2755","0755":"2755","00755":"755","=755":"755","u=rwx,g=rx,o=rx":"2755"} */}
 
-`775` gives the group write access. Use this in collaborative environments where multiple team members (all in the same group) need to modify shared files:
+On a regular file both systems clear setuid when you run `chmod 755`. The difference is easy to forget when a deployment script written on a Mac runs on a Linux server. Two more differences showed up: GNU `find` writes "any of these bits" as `-perm /022`, while macOS `find` rejects that (`illegal mode string`) and uses `-perm +022`; and macOS silently ignores `chmod o+t` on a directory, while `chmod +t` works on both.
 
-```bash
-chown -R :developers /var/www/project
-chmod -R 775 /var/www/project
-```
+## SSH keys and the files OpenSSH checks
 
-## Symbolic Notation
+When you own a private key file, OpenSSH refuses to load it if any group or other bit is set. The check in [`authfile.c`](https://github.com/openssh/openssh-portable/blob/master/authfile.c) is `(st.st_mode & 077) != 0`. With OpenSSH 10.3p1 on macOS, `ssh-keygen -y -f key` accepted modes `600`, `400` and `700`, and refused `640`, `604`, `644` and `660` with this message:
 
-The octal form is precise but requires mental arithmetic. Symbolic notation is more readable for incremental changes:
-
-```bash
-# Add execute for owner
-chmod u+x script.sh
-
-# Remove write for group and others
-chmod go-w sensitive.cfg
-
-# Set exact permissions: rw-r--r--
-chmod u=rw,go=r file.txt
-
-# Add execute bit to all
-chmod a+x script.sh
+```text
+WARNING: UNPROTECTED PRIVATE KEY FILE!
+Permissions 0644 for 'k' are too open.
+It is required that your private key files are NOT accessible by others.
+This private key will be ignored.
 ```
 
-Symbols: `u` = owner (user), `g` = group, `o` = others, `a` = all.
-Operators: `+` = add, `-` = remove, `=` = set exactly.
+The check only runs when the key belongs to the user running `ssh`; for a key owned by another account the code skips it. On the server side, `sshd` has [`StrictModes`](https://man.openbsd.org/sshd_config#StrictModes), on by default, which checks the modes and ownership of the user's files and home directory before accepting a login. A group-writable home directory or `~/.ssh` is a common reason key login fails after a `chmod -R`.
 
-## Recursive Permissions
+## Finding files by mode with find -perm
 
-Apply permissions to a directory and everything inside it:
+`find -perm` has three forms, and the difference decides what you find. On Debian, files `a` (755), `b` (775), `c` (644) and `d` (4755):
 
-```bash
-chmod -R 755 /var/www/html
+| Test | Meaning | Matched |
+|---|---|---|
+| `-perm 0755` | mode is exactly 755 | `a` |
+| `-perm -0755` | all of these bits are set | `a`, `b`, `d` |
+| `-perm /022` (GNU), `-perm +022` (macOS) | any of these bits is set | `b` |
+| `-perm -4000` | setuid is set | `d` |
+
+`find / -xdev -type f -perm -4000` is the usual audit for setuid programs. To look for group- or world-writable files under a web root, use `find /var/www -perm /022` on Linux.
+
+## Checking a mode with the chmod calculator
+
+The [chmod calculator](/tools/chmod-calculator/) converts in both directions. Tick the boxes or type 3 or 4 octal digits, and it shows the `ls -l` string, a numeric `chmod` command, an absolute symbolic command and a `find -perm` command. The Symbolic field also takes a string copied from `ls -l`, including the type letter in front and a `+`, `@` or `.` marker after it. Pasting `drwxrwsr-x` gives:
+
+{/* chmod-ls: {"in":"drwxrwsr-x","out":"rwxrwsr-x"} */}
+{/* chmod-check: {"mode":"2775","symbolic":"rwxrwsr-x","cmd":"chmod u=rwx,g=rwxs,o=rx filename","find":"find . -type f -perm 2775"} */}
+
+```text
+Numeric        2775
+Symbolic       rwxrwsr-x
+Command        chmod 2775 filename
+Symbolic cmd   chmod u=rwx,g=rwxs,o=rx filename
+find -perm     find . -type f -perm 2775
 ```
 
-**Warning:** `-R` applies the same mode to both files and directories. A directory needs `x` to be entered; a regular file usually does not need `x`. Blindly running `chmod -R 777` on a codebase gives every file execute permission, which is unnecessary and messy.
+Three things to know when you copy these. The `find` command always uses `-type f` and an exact match, so change it to `-type d` for a directory mode, or to `-perm -2000` to find every setgid entry. The symbolic command is absolute, so on GNU it keeps a directory's setgid bit like `chmod 755` does. The sticky bit appears as a separate `+t` clause because macOS ignores `o+t`. The calculator runs in the page and sends nothing to a server.
 
-Better: use `find` to apply different permissions to files vs directories:
-
-```bash
-# Directories: 755
-find /var/www/html -type d -exec chmod 755 {} \;
-
-# Files: 644
-find /var/www/html -type f -exec chmod 644 {} \;
-```
-
-## Special Bits
-
-Beyond the standard nine bits, three special modes exist:
-
-**Setuid (4xxx):** When set on an executable, the program runs as the file's owner rather than the user executing it. Used by `sudo`, `passwd`, etc.
-
-**Setgid (2xxx):** On a directory, new files inherit the directory's group rather than the creator's primary group. Useful for shared project directories.
-
-**Sticky bit (1xxx):** On a directory, prevents users from deleting files they don't own. Set on `/tmp` so users cannot delete each other's temporary files.
-
-```bash
-ls -la /
-# drwxrwxrwt  ... tmp   (sticky bit = 't' at the end)
-
-ls -la /usr/bin/passwd
-# -rwsr-xr-x  ... passwd  (setuid = 's')
-```
-
-## Quick Reference
-
-| Octal | Symbolic   | Common use                         |
-|-------|------------|------------------------------------|
-| 400   | r--------  | read-only for owner                |
-| 600   | rw-------  | private files, SSH keys, .env      |
-| 644   | rw-r--r--  | web files, config, regular files   |
-| 700   | rwx------  | private scripts, personal dirs     |
-| 755   | rwxr-xr-x  | scripts, binaries, public dirs     |
-| 775   | rwxrwxr-x  | shared group project directories   |
-| 777   | rwxrwxrwx  | avoid in production                |
-
-## Calculate chmod Values Without Math
-
-If you find yourself doing octal arithmetic in your head, use a calculator instead. **[Try the ZeroTool chmod Calculator →](/tools/chmod-calculator)**
-
-Check or uncheck read/write/execute for owner, group, and others, and the octal value updates instantly. You can also paste an octal value and see the exact permissions it grants — useful when reading someone else's deployment scripts.
-
-## Summary
-
-The two values you will use most often are **644** for files and **755** for directories and executables. Use **600** for anything that should stay private. Avoid **777** in any environment that matters.
-
-When in doubt about what a specific octal value means, **[check it with the chmod calculator](/tools/chmod-calculator)** rather than guessing.
+Permissions are only one layer. ACLs (the `+` after the mode in `ls -l`), SELinux labels, mount options such as `noexec` and `nosuid`, and the search bit on every parent directory can each deny access that the mode alone would allow.

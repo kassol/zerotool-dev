@@ -1,217 +1,201 @@
 ---
-title: "Strong Password Generator: What Makes a Secure Password"
-description: "Learn what makes a password strong, how random password generators work, and how to manage dozens of unique passwords without going insane. Free secure password generator included."
+title: "How to Create a Strong Password: Length, Randomness and the NIST Rules"
+description: "How to create a strong password: let a CSPRNG choose it, count its bits, see how fast GPUs guess, follow NIST SP 800-63B, use Diceware and check breach data."
 pubDate: 2026-04-05
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["password", "password-generator", "security", "developer-tools"]
+tags: ["password", "password-generator", "security", "nist", "entropy"]
 ---
 
-Most password advice is either wrong or impractical. "Use a mix of uppercase, lowercase, numbers, and symbols" sounds rigorous but produces passwords like `P@ssw0rd1!` that are easy for computers to crack and hard for humans to remember. This guide cuts through the noise.
+To create a strong password, let a cryptographically secure random generator pick it, make it at least 15 characters long, use it for one account only, and keep it in a password manager. Each of those four steps has a measurable reason behind it, and this guide works through them: how many bits a random password carries, how fast a graphics card can guess against a stolen hash, what the current NIST guideline asks of websites, and where human-made passwords fail.
 
-## What Actually Makes a Password Strong?
+The bit counts and probabilities below come from the code of the [ZeroTool password generator](/tools/password-generator/) and are recomputed by the site's test suite. Breach counts were looked up on 2026-10-02 and will have changed since.
 
-Password strength is fundamentally about **entropy** — how many guesses an attacker needs to find the password.
+## Start from a random generator, not a pattern
 
-An 11-character password like `Tr0ub4dor&3` (the example from [xkcd 936](https://xkcd.com/936/)) feels complex. But because it follows a common pattern (word + number substitutions + symbol), a dictionary attack with rule-based mutations can crack it faster than a random 8-character password.
+A password is strong when an attacker has to try many guesses before reaching it. Attackers do not try strings in alphabetical order. They start with passwords from earlier breaches and with common words, then apply rules such as capitalizing the first letter, swapping `a` for `@` and adding `1!` at the end. A password built from those habits is near the front of the queue however complicated it looks.
 
-True randomness beats perceived complexity every time.
+The [Have I Been Pwned](https://haveibeenpwned.com/Passwords) Pwned Passwords service lists how often a password appears in breach data. On 2026-10-02:
 
-### Password Entropy
+| Password | Times seen in breaches |
+|---|---|
+| `P@ssw0rd` | 6,421,042 |
+| `p@ssw0rd` | 941,966 |
+| `Password1!` | 584,516 |
+| `P@ssw0rd1!` | 40,649 |
+| `correcthorsebatterystaple` | 4,173 |
+| `Tr0ub4dor&3` | 3,196 |
 
-Entropy measures unpredictability in bits. Each bit doubles the search space.
+{/* pw-sha1: {"pw":"P@ssw0rd","sha1":"21BD12DC183F740EE76F27B78EB39C8AD972A757"} */}
+{/* pw-sha1: {"pw":"Tr0ub4dor&3","sha1":"874572E7A5AE6A49466A6AC578B98ADBA78C6AA6"} */}
+{/* pw-sha1: {"pw":"correcthorsebatterystaple","sha1":"BFD3617727EAB0E800E62A776C76381DEFBC4145"} */}
 
-If you choose from a pool of N characters and use a password of length L:
+`P@ssw0rd1!` satisfies a typical rule of upper case, lower case, digit and symbol, and it has still been seen tens of thousands of times. The last two rows are the examples from [xkcd 936](https://xkcd.com/936/). Once an example is published, people copy it, so it ends up in the lists too. The fix is to take the choice away from people: if every character is drawn at random, the attacker has no pattern to start from.
 
-```
-Entropy = L × log₂(N)
-```
+## How many bits a random password has
 
-| Character Pool | Pool Size | 12-char entropy |
-|---------------|-----------|-----------------|
-| Lowercase only | 26 | 56 bits |
-| Lower + upper | 52 | 68 bits |
-| Lower + upper + digits | 62 | 71 bits |
-| Lower + upper + digits + symbols (32) | 94 | 79 bits |
-| Passphrase (word list of 7776 words) | 7776 | ~12.9 bits per word (4 words ≈ 52 bits) |
+When each of L characters is drawn independently and uniformly from a set of N characters, there are N<sup>L</sup> possible passwords, and the strength in bits is L × log<sub>2</sub>N. Each extra bit doubles the number of guesses needed to try them all. The formula only applies to passwords that were generated this way; it says nothing about a password a person chose.
 
-For reference:
-- **< 50 bits**: weak once an attacker has a fast hash (such as unsalted MD5) to guess against offline
-- **50–70 bits**: adequate for low-risk accounts with rate limiting
-- **70+ bits**: strong for most purposes
-- **100+ bits**: future-proof
+| Character set | N | bits per character | 12 chars | 16 chars | 20 chars |
+|---|---|---|---|---|---|
+| lowercase | 26 | 4.70 | 56.4 | 75.2 | 94.0 |
+| lowercase + digits | 36 | 5.17 | 62.0 | 82.7 | 103.4 |
+| letters + digits | 62 | 5.95 | 71.5 | 95.3 | 119.1 |
+| ZeroTool, all four sets, look-alikes excluded | 83 | 6.38 | 76.5 | 102.0 | 127.5 |
+| ZeroTool, all four sets | 88 | 6.46 | 77.5 | 103.4 | 129.2 |
+| all 94 printable ASCII except space | 94 | 6.55 | 78.7 | 104.9 | 131.1 |
 
-## Generate a Strong Password
+{/* pw-bits: {"len":12,"size":26,"bits":"56.4"} */}
+{/* pw-bits: {"len":16,"size":62,"bits":"95.3"} */}
+{/* pw-bits: {"len":20,"size":83,"bits":"127.5","label":"veryStrong"} */}
+{/* pw-bits: {"len":20,"size":88,"bits":"129.2","label":"veryStrong"} */}
+{/* pw-bits: {"len":12,"size":88,"bits":"77.5","label":"fair"} */}
+{/* pw-bits: {"len":16,"size":88,"bits":"103.4","label":"veryStrong"} */}
+{/* pw-set: {"opts":["upper","lower","digits","symbols"],"size":88} */}
+{/* pw-set: {"opts":["upper","lower","digits","symbols","ambiguous"],"size":83} */}
+{/* pw-set: {"opts":["upper","lower","digits"],"size":62} */}
 
-**[Try the ZeroTool Password Generator →](/tools/password-generator)**
+Length does more than the character set. Going from 62 to 88 characters adds about half a bit per character; adding four characters from the same 62-character set adds about 24 bits. A 20-character password of letters and digits (119.1 bits) is stronger than a 16-character password that also uses symbols (103.4 bits).
 
-Generates cryptographically random passwords using your browser's `crypto.getRandomValues()` API. Options for length (4–128), character sets, excluding look-alike characters, and a batch of 10 passwords. Nothing is sent to a server.
+## How long offline guessing takes
 
-## How Password Generators Work
+Online guessing against a login form is slow because the site can limit attempts. The dangerous case is offline guessing: the attacker has stolen the stored password hashes and tests guesses on their own hardware, as fast as the hash function allows. A public [hashcat 6.2.6 benchmark of a single RTX 4090](https://gist.github.com/Chick3nman/32e662a5bb63bc4f51b847bb422222fd) gives these rates:
 
-A secure password generator must use a **cryptographically secure random number generator (CSPRNG)**, not a standard RNG.
+| Stored as | Guesses per second (one RTX 4090) |
+|---|---|
+| NTLM | 288.5 billion |
+| MD5 | 164.1 billion |
+| SHA-1 | 50.6 billion |
+| PBKDF2-HMAC-SHA256, 999 iterations | 8.87 million |
+| bcrypt, cost 5 (32 iterations) | 184,000 |
+| scrypt, N = 16384 | 7,126 |
 
-The difference matters:
+The time to try every random password from the 88-character set on that one card:
 
-```js
-// WRONG: Math.random() is NOT cryptographically secure
-// An attacker who knows the seed can predict all output
-const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-let password = '';
-for (let i = 0; i < 16; i++) {
-    password += chars[Math.floor(Math.random() * chars.length)];
-}
+| Length | Unsalted MD5 | bcrypt cost 5 |
+|---|---|---|
+| 8 | 6.1 hours | 619 years |
+| 10 | 5.4 years | 4.8 million years |
+| 12 | 41,600 years | 37 billion years |
 
-// CORRECT: crypto.getRandomValues() is cryptographically secure
-function generatePassword(length = 16, charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*') {
-    const array = new Uint32Array(length);
-    crypto.getRandomValues(array);
-    return Array.from(array, n => charset[n % charset.length]).join('');
-}
-```
+{/* pw-time: {"len":8,"size":88,"rate":164100000000,"unit":"hours","value":"6.1"} */}
+{/* pw-time: {"len":10,"size":88,"rate":164100000000,"unit":"years","value":"5.4"} */}
+{/* pw-time: {"len":12,"size":88,"rate":164100000000,"unit":"years","value":"41,600"} */}
+{/* pw-time: {"len":8,"size":88,"rate":184000,"unit":"years","value":"619"} */}
+{/* pw-time: {"len":10,"size":88,"rate":184000,"unit":"millionYears","value":"4.8"} */}
+{/* pw-time: {"len":12,"size":88,"rate":184000,"unit":"billionYears","value":"37"} */}
+{/* pw-time: {"len":8,"size":26,"rate":164100000000,"unit":"seconds","value":"1.3"} */}
 
-In Python:
+Eight lowercase letters stored as MD5 fall in 1.3 seconds. The table assumes one card and a fully random password; a cracking rig with eight cards is eight times faster, and a password with a human pattern falls far sooner than the table suggests. You cannot choose how a website stores your password, which is why the length you control matters. bcrypt's cost doubles the work at each step, so the cost 10 that many frameworks use is 32 times slower to attack than the cost 5 benchmarked here.
 
+## What NIST SP 800-63B says about length and rules
+
+[NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html) (revision 4, published in 2025) is the US guideline for how services handle passwords. Its rules for verifiers, the services that check your password, read as a checklist for both sides:
+
+- A password used as the only factor must be at least 15 characters. If it is one part of multi-factor authentication, it may be shorter but must be at least 8.
+- Services should allow at least 64 characters, accept all printing ASCII characters and the space, and accept Unicode, counting each code point as one character.
+- Services "SHALL NOT impose other composition rules (e.g., requiring mixtures of different character types)". The guideline's appendix explains why: a user who would have picked `password` tends to pick `Password1` when forced to add a capital and a digit.
+- Services must not require periodic password changes, but must force a change when there is evidence of compromise.
+- New passwords must be compared against a blocklist of commonly used, expected or compromised values, such as breach corpuses, dictionary words and the service name.
+- Services must allow password managers and autofill, and should let you paste a password.
+
+For a person, the practical reading is: 15 characters or more, random, unique, stored in a manager. If a site still enforces composition rules, see the last section for how to meet them with a generator.
+
+## Passphrases and Diceware
+
+A passphrase made of random words is easier to type on a phone and easier to remember when you must, such as the master password of a password manager. The math is the same as for characters, with a word list as the set. Arnold Reinhold's Diceware list, first published in 1995, has 7,776 words, one for each result of five six-sided dice (6<sup>5</sup> = 7,776). The [EFF published new lists](https://www.eff.org/deeplinks/2016/07/new-wordlists-random-passphrases) of the same size in 2016 with more familiar words.
+
+Each word chosen by dice from a 7,776-word list is worth log<sub>2</sub>7776 = 12.9 bits. Four words give 51.7 bits, five give 64.6 and six give 77.5, about the same as 12 random characters from the 88-character set.
+
+{/* pw-dice: {"words":4,"bits":"51.7"} */}
+{/* pw-dice: {"words":5,"bits":"64.6"} */}
+{/* pw-dice: {"words":6,"bits":"77.5"} */}
+
+The words must be chosen by dice or a secure random generator. A phrase you invent, such as a song lyric or a quote, is not random, and `correcthorsebatterystaple` shows that a famous phrase is no better than `P@ssw0rd`.
+
+## Generating a password with Python or JavaScript
+
+In Python, the [`secrets`](https://docs.python.org/3/library/secrets.html) module draws from the operating system's secure random source and `secrets.choice` picks uniformly:
+
+{/* pw-run-py */}
 ```python
 import secrets
 import string
 
-def generate_password(length=16, use_symbols=True):
-    alphabet = string.ascii_letters + string.digits
-    if use_symbols:
-        alphabet += string.punctuation
-
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
-
-# secrets module uses os.urandom() — cryptographically secure
-password = generate_password(20)
+alphabet = string.ascii_letters + string.digits + string.punctuation  # 94 characters
+password = "".join(secrets.choice(alphabet) for _ in range(20))
+print(len(alphabet), len(password))
 ```
 
-Note: `random.choice()` in Python is NOT cryptographically secure. Always use `secrets.choice()` for security-sensitive randomness.
+In JavaScript, `Math.random()` is not a secure source. Use `crypto.getRandomValues()`, and do not reduce the values with `%` alone: when the set size does not divide the range of the random values, the first characters of the set come up more often. With random bytes and the 88-character set, 256 % 88 = 80, so 80 characters have a 3-in-256 chance per position and the other 8 have 2 in 256. The ZeroTool generator draws 32-bit values and rejects any value at or above the largest multiple of the set size, then draws again. The same method, as a function you can paste:
 
-## Passphrases: An Alternative to Random Character Strings
+{/* pw-bias: {"byteRemainder":80,"ratio":1.5} */}
 
-A passphrase is a sequence of random dictionary words:
-
-```
-correct-horse-battery-staple
-violet-mountain-cloud-seven-river
-```
-
-Each word from a 7776-word list (Diceware) adds about 12.9 bits of entropy. Four words give ~52 bits, five words ~65 bits, six words ~78 bits.
-
-Advantages:
-- Easier to type on mobile
-- More memorable if you occasionally need to remember it
-- Visually distinct — less likely to be misread from a screen
-
-Disadvantages:
-- Longer (more characters to type)
-- Some systems have character limits that break long passphrases
-
-## Password Length vs Complexity
-
-If you must choose between longer and more complex, choose **longer**. An additional character multiplies the search space by the pool size (26–94x). Adding special characters when you already have lower/upper/digits adds less than you think: about 9.6 extra bits for a 16-character password (16 × (log₂94 − log₂62)), less than two more characters from the 62-character set would add (2 × 5.95 ≈ 11.9 bits).
-
-Practical recommendation: use at least **16 characters** with mixed character classes.
-
-## You Should Not Be Remembering Passwords
-
-If you are generating a unique random password for every account (which you should), you cannot memorize them. This is why **password managers** exist.
-
-A password manager stores all your passwords encrypted with a single master password. You memorize one strong passphrase; the manager handles the rest.
-
-Good options:
-- **Bitwarden** — open source, free tier is excellent, self-hostable
-- **1Password** — polished UX, strong team sharing features
-- **KeePassXC** — local-only, no cloud dependency
-
-Never reuse passwords. One data breach exposes all your accounts if you reuse.
-
-## Developer-Specific: Generating Secrets
-
-For application secrets (API keys, JWT secrets, session keys, encryption keys), use your platform's secure random bytes function:
-
-```bash
-# Shell — 32 random bytes as hex (good for most secrets)
-openssl rand -hex 32
-
-# Shell — base64 encoded
-openssl rand -base64 32
-```
-
-```python
-import secrets
-
-# 32-byte hex secret (64 chars)
-api_key = secrets.token_hex(32)
-
-# URL-safe base64 secret
-session_secret = secrets.token_urlsafe(32)
-```
-
+{/* pw-run-js */}
 ```js
-// Node.js
-import { randomBytes } from 'crypto';
-const apiKey = randomBytes(32).toString('hex');
+function randomPassword(length, charset) {
+  const n = charset.length;
+  const limit = 2 ** 32 - (2 ** 32 % n); // largest multiple of n below 2^32
+  const buf = new Uint32Array(length);
+  let out = '';
+  while (out.length < length) {
+    crypto.getRandomValues(buf);
+    for (const v of buf) {
+      if (v < limit && out.length < length) out += charset[v % n];
+    }
+  }
+  return out;
+}
+
+console.log(randomPassword(20, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'));
 ```
 
-For JWT secrets, use at least 256 bits (32 bytes). For AES-256, you need exactly 32 bytes. Never use a human-memorable string as a cryptographic key.
+For machine secrets such as session keys or API signing keys, skip the character set and take random bytes: `openssl rand -base64 32` or Python's `secrets.token_urlsafe(32)` both give 256 bits.
 
-## Have I Been Pwned Integration
+## Checking a password against breach data
 
-The Have I Been Pwned (HIBP) API lets you check whether a password has appeared in known data breaches — without sending the actual password:
-
-1. Compute SHA-1 hash of the password
-2. Send only the first 5 characters of the hash to the API
-3. The API returns all hashes starting with those 5 characters
-4. Check locally if the full hash is in the list
+The Pwned Passwords range API lets you check a password without sending it. You send the first five hexadecimal characters of its SHA-1 hash; the service returns every hash suffix in its data that starts with that prefix, with a count, and you look for your suffix locally. This is called k-anonymity. The `Add-Padding: true` header adds random dummy entries so the response size does not reveal much either. For `P@ssw0rd`, the SHA-1 hash starts with `21BD1`, and the padded response for that prefix had about two thousand lines.
 
 ```python
 import hashlib
-import requests
+import urllib.request
 
-def is_pwned(password):
-    sha1 = hashlib.sha1(password.encode()).hexdigest().upper()
-    prefix, suffix = sha1[:5], sha1[5:]
-
-    response = requests.get(f'https://api.pwnedpasswords.com/range/{prefix}')
-    hashes = (line.split(':') for line in response.text.splitlines())
-    return any(h == suffix for h, _ in hashes)
-
-if is_pwned("P@ssw0rd1"):
-    print("This password has appeared in a known breach!")
+def pwned_count(password: str) -> int:
+    digest = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
+    prefix, suffix = digest[:5], digest[5:]
+    req = urllib.request.Request(
+        f"https://api.pwnedpasswords.com/range/{prefix}",
+        headers={"Add-Padding": "true", "User-Agent": "password-check-example"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        for line in resp.read().decode().splitlines():
+            hash_suffix, count = line.split(":")
+            if hash_suffix == suffix:
+                return int(count)
+    return 0
 ```
 
-Any password that appears in the HIBP database should never be used, regardless of its apparent complexity.
+A count of zero does not make a password good; it only means this exact string is not in that data set. A password from a random generator will almost always return zero, and that is the expected result.
 
-## Password Requirements That Actually Help
+## Storing passwords if you run the login
 
-When building registration or password reset forms:
+If you build the service, the guessing speeds above are why the storage method matters. NIST SP 800-63B requires passwords to be salted and hashed with a password hashing scheme, a salt of at least 32 bits, and a cost factor "as high as practical", raised over time. [RFC 9106](https://www.rfc-editor.org/rfc/rfc9106) gives two recommended Argon2id settings: t=1, p=4 with 2 GiB of memory, or, when that much memory is not available, t=3, p=4 with 64 MiB. bcrypt is still widespread; it only uses the first 72 bytes of the password, which matters once you allow the 64 characters NIST asks for, because one Japanese or Chinese character takes three bytes in UTF-8. NIST also says the verifier must check the entire submitted password and not truncate it.
 
-**Do:**
-- Set a minimum length (at least 12, preferably 16)
-- Allow all printable characters including spaces
-- Reject passwords from the HIBP database
-- Show a strength meter
+## Using the ZeroTool password generator
 
-**Do not:**
-- Require specific character classes (pushes users toward predictable patterns; [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html) says verifiers should not impose composition rules)
-- Set a low maximum length (NIST SP 800-63B asks verifiers to accept at least 64 characters; if you hash with bcrypt, note that it only uses the first 72 bytes)
-- Rotate passwords on a fixed schedule (causes predictable increments)
-- Allow password hints
+The [password generator](/tools/password-generator/) runs in the browser with `crypto.getRandomValues()`, and the page loads no analytics or ad scripts. The settings map to the tables above:
 
-## Summary
+- **Length** from 4 to 128, default 20.
+- **Character sets**: upper case (26), lower case (26), digits (10) and 26 symbols `!@#$%^&*()-_=+[]{}|;:,.<>?`. The quote characters, backslash, slash, backtick and tilde are not in the list. With all four sets the generator draws from 88 characters.
+- **Exclude ambiguous** removes `0 O l 1 I`, leaving 83 characters, for passwords someone has to read off a screen.
+- **Strength label**: the bar shows length × log<sub>2</sub>(set size), labelled Very Weak below 40 bits, Weak below 60, Fair below 80, Strong below 100 and Very Strong from 100. The default of 20 characters from 88 shows Very Strong (129 bits).
+- **Generate 10** fills a box with ten passwords at once.
 
-| Goal | Recommendation |
-|------|---------------|
-| Random password | 16+ chars, mixed character set |
-| Memorable passphrase | 6+ random words from Diceware |
-| Application secret | `secrets.token_hex(32)` or `openssl rand -hex 32` |
-| Password storage | Argon2id, e.g. t=3, 64 MiB (second recommended option in RFC 9106 §4) |
-| Breach check | Have I Been Pwned API |
-| Daily password management | Bitwarden or 1Password |
+Every character is drawn independently from the whole set, so a password is not guaranteed to contain every type. For 20 characters from the 88-character set, the chance that there is no digit is 9.0%, and the chance that at least one of the four types is missing is 9.2%. At 8 characters it is 51.6%. If a site insists on one of each type, press Generate again; that keeps the result random, while editing a character by hand puts a pattern back in.
 
-Entropy, randomness, and uniqueness — not arbitrary complexity rules — are what make passwords secure.
+{/* pw-miss: {"len":20,"noDigit":"9.0","anyMissing":"9.2"} */}
+{/* pw-miss: {"len":8,"anyMissing":"51.6"} */}
 
-**[Generate a cryptographically strong password with ZeroTool →](/tools/password-generator)**
+If a site rejects some symbols, untick Symbols and add two or three characters of length to make up the difference: 22 characters from the 62-character set give 131.0 bits, more than the 129.2 bits of 20 characters with symbols.
+
+{/* pw-bits: {"len":22,"size":62,"bits":"131.0","label":"veryStrong"} */}
